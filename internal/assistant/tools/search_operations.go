@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codee/internal/util"
+	"codeactor/internal/util"
 )
 
 // SearchOperationsTool 实现搜索相关工具

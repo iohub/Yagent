@@ -1,7 +1,7 @@
 package assistant
 
 import (
-	"codee/pkg/messaging"
+	"codeactor/pkg/messaging"
 )
 
 // MessagePublisher provides a way to publish messages to the message dispatcher

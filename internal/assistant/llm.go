@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"codee/internal/config"
-	"codee/internal/util"
+	"codeactor/internal/config"
+	"codeactor/internal/util"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -29,7 +29,7 @@ func initLLMLogger() error {
 	if herr != nil {
 		return util.WrapError(context.Background(), herr, "failed to get user home directory")
 	}
-	logDir := filepath.Join(homeDir, ".codee", "logs")
+	logDir := filepath.Join(homeDir, ".codeactor", "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return util.WrapError(context.Background(), err, "failed to create logs directory")
 	}

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codee/internal/util"
+	"codeactor/internal/util"
 )
 
 // FileOperationsTool 实现文件操作相关工具

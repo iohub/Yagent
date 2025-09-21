@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"codee/internal/assistant"
+	"codeactor/internal/assistant"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"

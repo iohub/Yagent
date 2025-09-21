@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"codee/internal/config"
-	"codee/internal/util"
-	"codee/pkg/messaging"
+	"codeactor/internal/config"
+	"codeactor/internal/util"
+	"codeactor/pkg/messaging"
 
 	"github.com/rs/zerolog/log"
 	// 引入 tools_embed.go 以获得 ToolsJSON

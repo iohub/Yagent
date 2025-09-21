@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"codee/pkg/messaging"
+	"codeactor/pkg/messaging"
 
 	"github.com/charmbracelet/lipgloss"
 )

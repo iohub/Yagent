@@ -33,7 +33,7 @@ func (l *Logger) LogLLMInput(taskID string, messages []llms.MessageContent, tool
 		log.Error().Err(herr).Str("task_id", taskID).Msg("Failed to get user home directory")
 		return herr
 	}
-	taskLogDir := filepath.Join(homeDir, ".codee", "logs", taskID)
+	taskLogDir := filepath.Join(homeDir, ".codeactor", "logs", taskID)
 	if err := os.MkdirAll(taskLogDir, 0755); err != nil {
 		log.Error().Err(err).Str("task_id", taskID).Msg("Failed to create task log directory")
 		return err
@@ -64,7 +64,7 @@ func (l *Logger) LogLLMOutput(taskID string, response *llms.ContentResponse) err
 		log.Error().Err(herr).Str("task_id", taskID).Msg("Failed to get user home directory")
 		return herr
 	}
-	taskLogDir := filepath.Join(homeDir, ".codee", "logs", taskID)
+	taskLogDir := filepath.Join(homeDir, ".codeactor", "logs", taskID)
 	if err := os.MkdirAll(taskLogDir, 0755); err != nil {
 		log.Error().Err(err).Str("task_id", taskID).Msg("Failed to create task log directory")
 		return err
@@ -96,7 +96,7 @@ func (l *Logger) LogMemoryState(taskID string, memory *ConversationMemory) error
 		log.Error().Err(herr).Str("task_id", taskID).Msg("Failed to get user home directory")
 		return herr
 	}
-	taskLogDir := filepath.Join(homeDir, ".codee", "logs", taskID)
+	taskLogDir := filepath.Join(homeDir, ".codeactor", "logs", taskID)
 	if err := os.MkdirAll(taskLogDir, 0755); err != nil {
 		log.Error().Err(err).Str("task_id", taskID).Msg("Failed to create task log directory")
 		return err

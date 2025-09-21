@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"codee/internal/assistant/tools"
-	"codee/internal/util"
+	"codeactor/internal/assistant/tools"
+	"codeactor/internal/util"
 
 	"github.com/rs/zerolog/log"
 	"github.com/tmc/langchaingo/llms"

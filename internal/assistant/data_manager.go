@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	DataDirName = ".codee" // 隐藏数据目录名称
+	DataDirName = ".codeactor" // 隐藏数据目录名称
 )
 
 // DataManager 负责管理在home目录下的隐藏数据目录

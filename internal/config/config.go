@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"codee/internal/util"
+	"codeactor/internal/util"
 
 	"github.com/BurntSushi/toml"
 )

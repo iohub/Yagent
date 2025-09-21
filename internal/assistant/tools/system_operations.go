@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codee/internal/util"
+	"codeactor/internal/util"
 )
 
 // SystemOperationsTool 实现系统操作相关工具

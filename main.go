@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	assistant "codee/internal/assistant"
-	"codee/internal/util"
-	messaging "codee/pkg/messaging"
-	consumers "codee/pkg/messaging/consumers"
+	assistant "codeactor/internal/assistant"
+	"codeactor/internal/util"
+	messaging "codeactor/pkg/messaging"
+	consumers "codeactor/pkg/messaging/consumers"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -591,7 +591,7 @@ func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 func main() {
 	// Check if running in TUI mode or HTTP server mode based on command line arguments
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: codee [tui|http]")
+		fmt.Println("Usage: codeactor [tui|http]")
 		os.Exit(1)
 	}
 
@@ -674,7 +674,7 @@ func main() {
 		if herr != nil {
 			log.Fatal().Err(util.WrapError(ctx, herr, "main::UserHomeDir")).Msg("Failed to get user home directory")
 		}
-		logDir := filepath.Join(homeDir, ".codee", "logs")
+		logDir := filepath.Join(homeDir, ".codeactor", "logs")
 		if err := os.MkdirAll(logDir, 0755); err != nil {
 			log.Fatal().Err(util.WrapError(ctx, err, "main::MkdirAll")).Msg("Failed to create logs directory")
 		}
@@ -944,12 +944,12 @@ func main() {
 		r.Run(fmt.Sprintf(":%d", serverPort))
 	default:
 		fmt.Printf("Unknown mode: %s\n", mode)
-		fmt.Println("Usage: codee [tui|http]")
+		fmt.Println("Usage: codeactor [tui|http]")
 		os.Exit(1)
 	}
 }
 
-// getConfigPath 返回配置文件的路径，优先使用 $HOME/.codee/config/config.toml
+// getConfigPath 返回配置文件的路径，优先使用 $HOME/.codeactor/config/config.toml
 func getConfigPath() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -957,7 +957,7 @@ func getConfigPath() string {
 		return "config/config.toml"
 	}
 	
-	configDir := filepath.Join(homeDir, ".codee", "config")
+	configDir := filepath.Join(homeDir, ".codeactor", "config")
 	configPath := filepath.Join(configDir, "config.toml")
 	
 	// 检查配置文件是否存在

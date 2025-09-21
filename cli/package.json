@@ -1,10 +1,10 @@
 {
-  "name": "codee-cli",
+  "name": "codeactor-cli",
   "version": "1.0.0",
-  "description": "Interactive CLI for Codee WebSocket server",
+  "description": "Interactive CLI for codeactor WebSocket server",
   "main": "client.js",
   "bin": {
-    "codee": "./client.js"
+    "codeactor": "./client.js"
   },
   "scripts": {
     "start": "node client.js",
@@ -24,6 +24,6 @@
     "coding",
     "assistant"
   ],
-  "author": "Codee Team",
+  "author": "codeactor Team",
   "license": "MIT"
 } 

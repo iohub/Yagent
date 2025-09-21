@@ -1,4 +1,4 @@
-module codee
+module codeactor
 
 go 1.23.8
 
