@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	assistant "codeactor/internal/assistant"
@@ -596,10 +597,22 @@ func main() {
 	}
 
 	mode := os.Args[1]
+	// 解析 --taskfile 参数
+	var taskFilePath string
+	for i := 2; i < len(os.Args); i++ {
+		if os.Args[i] == "--taskfile" && i+1 < len(os.Args) {
+			taskFilePath = os.Args[i+1]
+			break
+		} else if strings.HasPrefix(os.Args[i], "--taskfile=") {
+			taskFilePath = strings.TrimPrefix(os.Args[i], "--taskfile=")
+			break
+		}
+	}
+
 	switch mode {
 	case "tui":
 		// Run TUI mode
-		projectDir, taskDesc := startTUI()
+		projectDir, taskDesc := startTUI(taskFilePath)
 		if projectDir != "" && taskDesc != "" {
 			// Execute task directly
 			ctx := context.Background()
