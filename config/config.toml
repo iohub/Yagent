@@ -1,0 +1,94 @@
+# LLM Configuration
+[http]
+server_port = 9080
+
+[llm]
+# 选择当前使用的提供商
+use_provider = "bedrock"
+
+# 阿里云配置
+[llm.providers.aliyun]
+model = "qwen3-max-preview"
+temperature = 0.0
+max_tokens = 28000
+api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key = "your-key"
+
+# SiliconFlow配置
+[llm.providers.siliconflow]
+model = "qwen3-coder-plus"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.siliconflow.cn/v1"
+api_key = "sk-REPLACE-ME"
+
+# OpenRouter配置
+[llm.providers.openrouter]
+model = "qwen3-coder-plus"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://openrouter.ai/api/v1"
+api_key = "your-key"
+
+# 本地配置
+[llm.providers.local]
+model = "qwen3-coder-plus"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "http://127.0.0.1:8000"
+api_key = "sk-none"
+
+# 其他模型配置示例
+[llm.providers.moonshot]
+model = "moonshotai/Kimi-K2-Instruct"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.moonshot.cn/v1"
+api_key = "your-moonshot-api-key"
+
+[llm.providers.deepseek]
+model = "deepseek-ai/DeepSeek-V3"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.deepseek.com/v1"
+api_key = "your-deepseek-api-key"
+
+[llm.providers.zai]
+model = "zai-org/GLM-4.5-Air"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.zai.org/v1"
+api_key = "your-zai-api-key"
+
+[llm.providers.mistral]
+model = "mistralai/devstral-small"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.mistral.ai/v1"
+api_key = "your-mistral-api-key"
+
+# AWS Bedrock 配置
+[llm.providers.bedrock]
+model = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+temperature = 0.0
+max_tokens = 3000
+aws_region = "us-east-1"
+# aws_profile = "default"  # 可选：使用特定的AWS profile
+# model_provider = "anthropic"  # 可选：显式指定模型提供商（自动检测）
+
+# Bedrock Nova 模型示例
+[llm.providers.bedrock-nova]
+model = "us.amazon.nova-lite-v1:0"
+temperature = 0.0
+max_tokens = 3000
+aws_region = "us-east-1"
+
+# Bedrock Meta 模型示例
+[llm.providers.bedrock-meta]
+model = "us.meta.llama3-1-405b-instruct-v1:0"
+temperature = 0.0
+max_tokens = 3000
+aws_region = "us-east-1"
+
+[app]
+enable_streaming = true
