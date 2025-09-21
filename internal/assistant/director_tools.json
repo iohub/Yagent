@@ -1,15 +1,15 @@
 [
     {
-        "description": "调用Code Agent执行代码相关任务，包括代码分析、生成、重构、Bug修复、代码审查、文件操作、语法检查和依赖管理等。Code Agent专门处理所有与代码开发相关的任务。",
+        "description": "Call Code Agent to execute code-related tasks, including code analysis, generation, refactoring, bug fixing, code review, file operations, syntax checking, and dependency management. Code Agent specializes in handling all code development-related tasks.",
         "name": "call_code_agent",
         "parameters": {
             "properties": {
                 "task_description": {
-                    "description": "详细描述需要Code Agent执行的任务，包括具体的代码操作类型、目标文件、预期结果等。",
+                    "description": "Detailed description of the task for Code Agent to execute, including specific code operation types, target files, expected results, etc.",
                     "type": "string"
                 },
                 "task_context": {
-                    "description": "任务执行的上下文信息，如工作目录、相关文件路径、依赖关系等。",
+                    "description": "Context information for task execution, such as working directory, related file paths, dependencies, etc.",
                     "type": "object",
                     "properties": {
                         "working_directory": {"type": "string"},
@@ -19,7 +19,7 @@
                     }
                 },
                 "priority": {
-                    "description": "任务优先级：high（高）、medium（中）、low（低）",
+                    "description": "Task priority: high, medium, low",
                     "type": "string",
                     "enum": ["high", "medium", "low"],
                     "default": "medium"
@@ -30,16 +30,16 @@
         }
     },
     {
-        "description": "调用Planning Agent执行项目规划相关任务，包括项目计划制定、任务分解、里程碑规划、资源分配、时间估算、依赖分析、风险评估和进度跟踪等。Planning Agent专门处理项目管理和规划相关的任务。",
+        "description": "Call Planning Agent to execute project planning-related tasks, including project plan formulation, task decomposition, milestone planning, resource allocation, time estimation, dependency analysis, risk assessment, and progress tracking. Planning Agent specializes in handling project management and planning-related tasks.",
         "name": "call_planning_agent",
         "parameters": {
             "properties": {
                 "task_description": {
-                    "description": "详细描述需要Planning Agent执行的规划任务，包括规划类型、范围、目标和约束条件等。",
+                    "description": "Detailed description of the planning task for Planning Agent to execute, including planning type, scope, objectives, and constraints.",
                     "type": "string"
                 },
                 "task_context": {
-                    "description": "规划任务的上下文信息，如项目背景、现有资源、时间限制等。",
+                    "description": "Context information for planning tasks, such as project background, existing resources, time constraints, etc.",
                     "type": "object",
                     "properties": {
                         "project_scope": {"type": "string"},
@@ -50,7 +50,7 @@
                     }
                 },
                 "priority": {
-                    "description": "任务优先级：high（高）、medium（中）、low（低）",
+                    "description": "Task priority: high, medium, low",
                     "type": "string",
                     "enum": ["high", "medium", "low"],
                     "default": "medium"
@@ -61,16 +61,16 @@
         }
     },
     {
-        "description": "调用Repository Agent执行代码仓库管理相关任务，包括Git操作、分支管理、提交管理、合并操作、仓库分析、代码搜索、文件跟踪和版本控制等。Repository Agent专门处理代码仓库和版本控制相关的任务。",
+        "description": "Call Repository Agent to execute code repository management-related tasks, including Git operations, branch management, commit management, merge operations, repository analysis, code search, file tracking, and version control. Repository Agent specializes in handling code repository and version control-related tasks.",
         "name": "call_repository_agent",
         "parameters": {
             "properties": {
                 "task_description": {
-                    "description": "详细描述需要Repository Agent执行的仓库操作任务，包括操作类型、目标分支、文件范围等。",
+                    "description": "Detailed description of the repository operation task for Repository Agent to execute, including operation type, target branch, file scope, etc.",
                     "type": "string"
                 },
                 "task_context": {
-                    "description": "仓库操作的上下文信息，如仓库路径、分支信息、提交历史等。",
+                    "description": "Context information for repository operations, such as repository path, branch information, commit history, etc.",
                     "type": "object",
                     "properties": {
                         "repository_path": {"type": "string"},
@@ -81,7 +81,7 @@
                     }
                 },
                 "priority": {
-                    "description": "任务优先级：high（高）、medium（中）、low（低）",
+                    "description": "Task priority: high, medium, low",
                     "type": "string",
                     "enum": ["high", "medium", "low"],
                     "default": "medium"
@@ -92,20 +92,20 @@
         }
     },
     {
-        "description": "创建一个新的复合任务，将复杂的用户请求分解为多个子任务，并协调不同Agent的执行。这个工具用于处理需要多个Agent协作完成的复杂任务。",
+        "description": "Create a new compound task that decomposes complex user requests into multiple subtasks and coordinates execution by different Agents. This tool is used to handle complex tasks that require collaboration between multiple Agents.",
         "name": "create_compound_task",
         "parameters": {
             "properties": {
                 "task_name": {
-                    "description": "复合任务的名称",
+                    "description": "Name of the compound task",
                     "type": "string"
                 },
                 "task_description": {
-                    "description": "复合任务的详细描述",
+                    "description": "Detailed description of the compound task",
                     "type": "string"
                 },
                 "subtasks": {
-                    "description": "子任务列表，每个子任务包含描述、分配的Agent、依赖关系等",
+                    "description": "List of subtasks, each containing description, assigned Agent, dependencies, etc.",
                     "type": "array",
                     "items": {
                         "type": "object",
@@ -120,7 +120,7 @@
                     }
                 },
                 "execution_strategy": {
-                    "description": "执行策略：sequential（顺序执行）、parallel（并行执行）、mixed（混合执行）",
+                    "description": "Execution strategy: sequential, parallel, mixed",
                     "type": "string",
                     "enum": ["sequential", "parallel", "mixed"],
                     "default": "sequential"
@@ -131,21 +131,21 @@
         }
     },
     {
-        "description": "查询任务执行状态，获取当前正在执行或已完成任务的详细信息，包括进度、结果、错误信息等。",
+        "description": "Query task execution status, get detailed information about currently executing or completed tasks, including progress, results, error information, etc.",
         "name": "query_task_status",
         "parameters": {
             "properties": {
                 "task_id": {
-                    "description": "要查询的任务ID，如果不提供则返回所有任务的状态",
+                    "description": "Task ID to query. If not provided, returns status of all tasks",
                     "type": "string"
                 },
                 "include_details": {
-                    "description": "是否包含详细信息，如执行日志、中间结果等",
+                    "description": "Whether to include detailed information such as execution logs, intermediate results, etc.",
                     "type": "boolean",
                     "default": false
                 },
                 "filter_status": {
-                    "description": "按状态过滤任务：pending（待执行）、running（执行中）、completed（已完成）、failed（失败）、cancelled（已取消）",
+                    "description": "Filter tasks by status: pending, running, completed, failed, cancelled",
                     "type": "string",
                     "enum": ["pending", "running", "completed", "failed", "cancelled"]
                 }
@@ -154,16 +154,16 @@
         }
     },
     {
-        "description": "取消正在执行或待执行的任务。只能取消状态为pending或running的任务。",
+        "description": "Cancel a task that is currently executing or pending. Only tasks with status pending or running can be cancelled.",
         "name": "cancel_task",
         "parameters": {
             "properties": {
                 "task_id": {
-                    "description": "要取消的任务ID",
+                    "description": "ID of the task to cancel",
                     "type": "string"
                 },
                 "reason": {
-                    "description": "取消任务的原因",
+                    "description": "Reason for cancelling the task",
                     "type": "string"
                 }
             },
@@ -172,17 +172,17 @@
         }
     },
     {
-        "description": "获取系统中所有可用Agent的信息，包括Agent名称、能力列表、当前状态等。用于了解系统资源和能力。",
+        "description": "Get information about all available Agents in the system, including Agent names, capability lists, current status, etc. Used to understand system resources and capabilities.",
         "name": "list_available_agents",
         "parameters": {
             "properties": {
                 "include_capabilities": {
-                    "description": "是否包含每个Agent的详细能力列表",
+                    "description": "Whether to include detailed capability list for each Agent",
                     "type": "boolean",
                     "default": true
                 },
                 "include_status": {
-                    "description": "是否包含每个Agent的当前状态信息",
+                    "description": "Whether to include current status information for each Agent",
                     "type": "boolean",
                     "default": true
                 }
@@ -191,22 +191,22 @@
         }
     },
     {
-        "description": "向用户发送进度更新或状态报告，保持用户对任务执行情况的了解。这个工具用于主动向用户汇报重要的进展或需要用户注意的事项。",
+        "description": "Send progress updates or status reports to users, keeping users informed about task execution status. This tool is used to proactively report important progress or matters that require user attention.",
         "name": "send_progress_update",
         "parameters": {
             "properties": {
                 "message": {
-                    "description": "要发送给用户的进度更新消息",
+                    "description": "Progress update message to send to the user",
                     "type": "string"
                 },
                 "update_type": {
-                    "description": "更新类型：info（信息）、progress（进度）、warning（警告）、error（错误）、success（成功）",
+                    "description": "Update type: info, progress, warning, error, success",
                     "type": "string",
                     "enum": ["info", "progress", "warning", "error", "success"],
                     "default": "info"
                 },
                 "task_context": {
-                    "description": "相关的任务上下文信息",
+                    "description": "Related task context information",
                     "type": "object",
                     "properties": {
                         "task_id": {"type": "string"},

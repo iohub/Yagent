@@ -130,45 +130,7 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 	// Handle interactive help specially
 	switch event.Type {
 	case "user_help_needed":
-		contentStr := fmt.Sprintf("%v", event.Content)
-		fmt.Fprintf(t.writer, "\n[需要用户帮助] %s\n", contentStr)
-		fmt.Fprintf(t.writer, "请输入您的回复（输入 'cancel' 取消）: ")
-
-		userInput, err := t.reader.ReadString('\n')
-		if err != nil {
-			return err
-		}
-		userInput = strings.TrimSpace(userInput)
-
-		if strings.ToLower(userInput) == "cancel" {
-			fmt.Fprintf(t.writer, "已取消用户帮助请求。\n")
-			return nil
-		}
-
-		if t.publisher != nil {
-			var taskID interface{}
-			if event.Metadata != nil {
-				taskID = event.Metadata["task_id"]
-			}
-			// Fallback: try to fetch from content map if provided there
-			if taskID == nil {
-				if m, ok := event.Content.(map[string]interface{}); ok {
-					taskID = m["task_id"]
-				}
-			}
-			if taskIDStr, ok := taskID.(string); ok && taskIDStr != "" {
-				t.publisher.Publish("user_help_response", map[string]interface{}{
-					"task_id":  taskIDStr,
-					"response": userInput,
-				})
-			} else {
-				// Publish without task_id to avoid panic; upstream may ignore
-				t.publisher.Publish("user_help_response", map[string]interface{}{
-					"response": userInput,
-				})
-			}
-		}
-		fmt.Fprintf(t.writer, "已发送回复，等待任务继续...\n")
+		t.showUserInputDialog(event)
 		return nil
 	}
 
@@ -224,4 +186,77 @@ func getToolNameFromContent(content interface{}) string {
 		}
 	}
 	return ""
+}
+
+// showUserInputDialog displays a styled input dialog similar to the image reference
+func (t *TUIConsumer) showUserInputDialog(event *messaging.MessageEvent) {
+	w := terminalWidth()
+
+	// Parse content to get help details
+	contentStr := fmt.Sprintf("%v", event.Content)
+
+	askStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFA500")).
+		Bold(true).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#FFA500")).
+		Padding(0, 1).
+		Width(w - 4)
+
+	askMsg := askStyle.Render("✨ Agent ask your help")
+
+	// Create help message
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		MarginTop(1).
+		MarginBottom(1)
+
+	helpMsg := helpStyle.Render("● " + contentStr)
+
+	// Display the styled interface
+	fmt.Fprintln(t.writer, "")
+	fmt.Fprintln(t.writer, askMsg)
+	fmt.Fprintln(t.writer, helpMsg)
+
+	// Wait for user input
+	fmt.Fprint(t.writer, "\n> ")
+	userInput, err := t.reader.ReadString('\n')
+	if err != nil {
+		fmt.Fprintf(t.writer, "Error reading input: %v\n", err)
+		return
+	}
+
+	userInput = strings.TrimSpace(userInput)
+
+	if strings.ToLower(userInput) == "cancel" {
+		fmt.Fprintf(t.writer, "已取消用户帮助请求。\n")
+		return
+	}
+
+	// Publish user response
+	if t.publisher != nil {
+		var taskID interface{}
+		if event.Metadata != nil {
+			taskID = event.Metadata["task_id"]
+		}
+		// Fallback: try to fetch from content map if provided there
+		if taskID == nil {
+			if m, ok := event.Content.(map[string]interface{}); ok {
+				taskID = m["task_id"]
+			}
+		}
+		if taskIDStr, ok := taskID.(string); ok && taskIDStr != "" {
+			t.publisher.Publish("user_help_response", map[string]interface{}{
+				"task_id":  taskIDStr,
+				"response": userInput,
+			})
+		} else {
+			// Publish without task_id to avoid panic; upstream may ignore
+			t.publisher.Publish("user_help_response", map[string]interface{}{
+				"response": userInput,
+			})
+		}
+	}
+
+	fmt.Fprintf(t.writer, "已发送回复，等待任务继续...\n")
 }

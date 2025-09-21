@@ -349,7 +349,22 @@ func (c *Client) GenerateCompletionWithTools(ctx context.Context, messages []llm
 		return nil, util.WrapError(ctx, err, "GenerateCompletionWithTools::GenerateContent")
 	}
 
+	// 检查completion是否为nil
+	if completion == nil {
+		log.Error().
+			Str("model", c.config.LLM.UseProvider).
+			Int("messages_length", len(messages)).
+			Int("tools_count", len(tools)).
+			Msg("Completion is nil")
+		return nil, util.WrapError(ctx, fmt.Errorf("completion is nil"), "GenerateCompletionWithTools")
+	}
+
 	if len(completion.Choices) == 0 {
+		log.Error().
+			Str("model", c.config.LLM.UseProvider).
+			Int("messages_length", len(messages)).
+			Int("tools_count", len(tools)).
+			Msg("No choices returned in completion")
 		return nil, util.WrapError(ctx, fmt.Errorf("no choices returned"), "GenerateCompletionWithTools")
 	}
 
@@ -379,6 +394,23 @@ func extractHTTPResponse(err error) string {
 
 	// 将错误转换为字符串
 	errStr := err.Error()
+
+	// 检查AWS Bedrock特定的错误
+	if strings.Contains(errStr, "ValidationException") {
+		return fmt.Sprintf("Bedrock Validation Error: %s", errStr)
+	}
+	
+	if strings.Contains(errStr, "ThrottlingException") {
+		return fmt.Sprintf("Bedrock Throttling Error: %s", errStr)
+	}
+	
+	if strings.Contains(errStr, "AccessDeniedException") {
+		return fmt.Sprintf("Bedrock Access Denied: %s", errStr)
+	}
+	
+	if strings.Contains(errStr, "ModelNotReadyException") {
+		return fmt.Sprintf("Bedrock Model Not Ready: %s", errStr)
+	}
 
 	// 检查其他常见的HTTP错误格式
 	if strings.Contains(errStr, "status code") || strings.Contains(errStr, "HTTP") {

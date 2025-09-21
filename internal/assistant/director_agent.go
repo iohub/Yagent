@@ -196,25 +196,25 @@ func (da *DirectorAgent) ProcessUserRequest(ctx context.Context, request *TaskRe
 
 // analyzeAndPlan 分析用户意图并制定执行计划
 func (da *DirectorAgent) analyzeAndPlan(ctx context.Context, userMessage string) (*ExecutionPlan, error) {
-	// 使用LLM分析用户意图
-	systemPrompt := `你是一个Director Agent，负责分析用户请求并制定执行计划。
+	// Use LLM to analyze user intent
+	systemPrompt := `You are a Director Agent responsible for analyzing user requests and creating execution plans.
 
-你需要：
-1. 理解用户的意图和需求
-2. 确定需要哪些专业Agent参与（code, planning, repository）
-3. 制定执行步骤和依赖关系
-4. 返回结构化的执行计划
+You need to:
+1. Understand the user's intent and requirements
+2. Determine which specialized Agents should participate (code, planning, repository)
+3. Create execution steps and dependencies
+4. Return a structured execution plan
 
-可用的专业Agent：
-- Code Agent: 负责代码生成、调试、测试、重构
-- Planning Agent: 负责技术分析、架构设计、实施规划
-- Repository Agent: 负责代码库分析、文档生成、架构理解
+Available specialized Agents:
+- Code Agent: Responsible for code generation, debugging, testing, refactoring
+- Planning Agent: Responsible for technical analysis, architecture design, implementation planning
+- Repository Agent: Responsible for codebase analysis, documentation generation, architecture understanding
 
-请以JSON格式返回执行计划。`
+Please return the execution plan in JSON format.`
 
 	memory := NewConversationMemory(50)
 	memory.AddSystemMessage(systemPrompt)
-	memory.AddHumanMessage(fmt.Sprintf("用户请求: %s\n\n请分析这个请求并制定执行计划。", userMessage))
+	memory.AddHumanMessage(fmt.Sprintf("User request: %s\n\nPlease analyze this request and create an execution plan.", userMessage))
 
 	messages := memory.ToLangChainMessages()
 	response, err := da.client.GenerateCompletionWithTools(ctx, messages, nil, nil)
@@ -417,17 +417,17 @@ func (da *DirectorAgent) GetTask(taskID string) (*AgentTask, bool) {
 func (da *DirectorAgent) aggregateResults(results map[string]*TaskResult) string {
 	var finalResult strings.Builder
 	
-	finalResult.WriteString("任务执行完成，结果如下：\n\n")
+	finalResult.WriteString("Task execution completed, results as follows:\n\n")
 	
 	for stepID, result := range results {
-		finalResult.WriteString(fmt.Sprintf("步骤 %s:\n", stepID))
+		finalResult.WriteString(fmt.Sprintf("Step %s:\n", stepID))
 		if result.Success {
-			finalResult.WriteString(fmt.Sprintf("✅ 成功: %s\n", result.Message))
+			finalResult.WriteString(fmt.Sprintf("✅ Success: %s\n", result.Message))
 			if data, ok := result.Data["result"].(string); ok && data != "" {
-				finalResult.WriteString(fmt.Sprintf("结果: %s\n", data))
+				finalResult.WriteString(fmt.Sprintf("Result: %s\n", data))
 			}
 		} else {
-			finalResult.WriteString(fmt.Sprintf("❌ 失败: %s\n", result.Error))
+			finalResult.WriteString(fmt.Sprintf("❌ Failed: %s\n", result.Error))
 		}
 		finalResult.WriteString("\n")
 	}

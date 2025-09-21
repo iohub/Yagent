@@ -505,20 +505,19 @@ func startTUI(taskFilePath string) (string, string) {
 // renderBanner draws a colorful ASCII banner similar in spirit to the reference image.
 func renderBanner() string {
 	bannerLines := []string{
-		" ██████╗   ██████╗  ██████╗  ███████╗ ███████╗  ██╗",
-		"██╔════╝  ██╔═══██╗ ██╔══██╗ ██╔════╝ ██╔════╝  ██║",
-		"██║       ██║   ██║ ██║  ██║ █████╗   █████╗    ██║",
-		"██║       ██║   ██║ ██║  ██║ ██╔══╝   ██╔══╝    ╚═╝",
-		"╚██████╗  ╚██████╔╝ ██████╔╝ ███████╗ ███████╗  ██╗",
-		" ╚═════╝   ╚═════╝  ╚═════╝  ╚══════╝ ╚══════╝  ╚═╝",
+		" ██████╗  ██████╗  ██████╗  ███████╗  █████╗   ██████╗ ████████╗  ██████╗  ██████╗ ",
+		"██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝ ██╔══██╗ ██╔════╝ ╚══██╔══╝ ██╔═══██╗ ██╔══██╗",
+		"██║      ██║   ██║ ██║  ██║ █████╗   ███████║ ██║         ██║    ██║   ██║ ██████╔╝",
+		"██║      ██║   ██║ ██║  ██║ ██╔══╝   ██╔══██║ ██║         ██║    ██║   ██║ ██╔══██╗",
+		"╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗ ██║  ██║ ╚██████╗    ██║    ╚██████╔╝ ██║  ██║",
+		" ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═╝  ╚═════╝    ╚═╝     ╚═════╝  ╚═╝  ╚═╝",
 	}
 	palette := []string{"213", "219", "159", "123", "81", "69"}
 	var rendered []string
 	for i, line := range bannerLines {
 		color := palette[i%len(palette)]
 		style := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-		shadow := bannerShadowStyle.Render(line)
-		rendered = append(rendered, lipgloss.JoinHorizontal(lipgloss.Top, style.Render(line), " ", shadow))
+		rendered = append(rendered, style.Render(line))
 	}
 	return bannerPadStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rendered...))
 }
