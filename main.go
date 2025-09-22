@@ -545,15 +545,32 @@ func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 		dispatcher.RegisterConsumer(wsConsumer)
 	}
 
-	// Create TaskManager WebSocket consumer to handle tool_call and tool_result messages
+	// Create TaskManager WebSocket consumer to handle all message types
 	taskManagerWSCallback := func(data []byte) error {
 		var event messaging.MessageEvent
 		if err := json.Unmarshal(data, &event); err != nil {
 			return err
 		}
 		
-		// Handle tool_call_start, tool_call_result, and tool_call_error messages
-		if event.Type == "tool_call_start" || event.Type == "tool_call_result" || event.Type == "tool_call_error" {
+		// Handle all message types from conversation_manager and other components
+		supportedTypes := []string{
+			"conversation_start", "conversation_end", "conversation_error", "conversation_result",
+			"llm_response", "llm_generation_error",
+			"tool_call_start", "tool_call_result", "tool_call_error", "tool_execution_complete",
+			"task_complete", "user_help_needed", "user_help_response",
+			"max_iterations_reached",
+		}
+		
+		// Check if this is a supported message type
+		isSupported := false
+		for _, supportedType := range supportedTypes {
+			if event.Type == supportedType {
+				isSupported = true
+				break
+			}
+		}
+		
+		if isSupported {
 			// Create socket message for melody broadcast
 			socketMsg := SocketMessage{
 				Type:   event.Type,
