@@ -275,19 +275,8 @@ func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskMana
 
 	// 发送开始执行消息
 	taskManager.SetTaskProgress(task.ID, "Starting coding task...")
-
-	// 创建WebSocket回调函数，用于广播消息
-	wsCallback := func(message string) {
-		taskManager.BroadcastMessage(SocketMessage{
-			Type:    "realtime",
-			Event:   "task_progress",
-			Message: message,
-			TaskID:  task.ID,
-		})
-	}
-
 	// 后台执行任务
-	go executeTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, codingAssistant, wsCallback)
+	go executeTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, codingAssistant)
 
 	// Publish task start event to TUI
 	fmt.Printf("🚀 任务 %s 已启动\n", task.ID)
@@ -517,7 +506,7 @@ func sendError(s *melody.Session, message string) {
 }
 
 // executeTask 执行任务的通用函数
-func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, wsCallback func(string)) {
+func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
 	ctx := context.Background()
 	task, ok := taskManager.GetTask(taskID)
 	if !ok {
@@ -534,52 +523,19 @@ func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	tuiConsumer := consumers.NewTUIConsumer(os.Stdout, uip)
 	dispatcher.RegisterConsumer(tuiConsumer)
 
-	// Create WebSocket consumer if callback is provided
-	if wsCallback != nil {
-		// 创建一个适配器函数，将 func(string) 转换为 func([]byte) error
-		wsCallbackAdapter := func(data []byte) error {
-			wsCallback(string(data))
-			return nil
-		}
-		wsConsumer := consumers.NewWebSocketConsumer(wsCallbackAdapter)
-		dispatcher.RegisterConsumer(wsConsumer)
-	}
-
 	// Create TaskManager WebSocket consumer to handle all message types
 	taskManagerWSCallback := func(data []byte) error {
 		var event messaging.MessageEvent
 		if err := json.Unmarshal(data, &event); err != nil {
 			return err
 		}
-		
-		// Handle all message types from conversation_manager and other components
-		supportedTypes := []string{
-			"conversation_start", "conversation_end", "conversation_error", "conversation_result",
-			"llm_response", "llm_generation_error",
-			"tool_call_start", "tool_call_result", "tool_call_error", "tool_execution_complete",
-			"task_complete", "user_help_needed", "user_help_response",
-			"max_iterations_reached",
+		socketMsg := SocketMessage{
+			Type:   event.Type,
+			Event:  event.Type,
+			Data:   event.Content,
+			TaskID: taskID,
 		}
-		
-		// Check if this is a supported message type
-		isSupported := false
-		for _, supportedType := range supportedTypes {
-			if event.Type == supportedType {
-				isSupported = true
-				break
-			}
-		}
-		
-		if isSupported {
-			// Create socket message for melody broadcast
-			socketMsg := SocketMessage{
-				Type:   event.Type,
-				Event:  event.Type,
-				Data:   event.Content,
-				TaskID: taskID,
-			}
-			taskManager.BroadcastMessage(socketMsg)
-		}
+		taskManager.BroadcastMessage(socketMsg)
 		return nil
 	}
 	taskManagerWSConsumer := consumers.NewWebSocketConsumer(taskManagerWSCallback)
@@ -591,11 +547,20 @@ func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	var result string
 	var err error
 
+	wsCallback := func(messageType string, content string) {
+		taskManager.BroadcastMessage(SocketMessage{
+			Type:   "agent_msg",
+			Event:  messageType,
+			Data:   content,
+			TaskID: taskID,
+		})
+	}
 	// 使用新的 TaskRequest 结构
 	request := assistant.NewTaskRequest(ctx, taskID).
 		WithProjectDir(projectDir).
 		WithTaskDesc(taskDesc).
-		WithMemory(task.Memory)
+		WithMemory(task.Memory).
+		WithWSCallback(wsCallback)
 
 	// Add message publisher to request
 	request = request.WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
@@ -683,7 +648,7 @@ func main() {
 
 			// Execute task
 			log.Info().Str("project_dir", projectDir).Str("task_desc", taskDesc).Msg("TUI coding task submitted")
-			executeTask(task.ID, projectDir, taskDesc, taskManager, codingAssistant, nil)
+			executeTask(task.ID, projectDir, taskDesc, taskManager, codingAssistant)
 
 			// Wait for task completion and display result
 			for {
@@ -868,7 +833,7 @@ func main() {
 			taskManager.lock.Unlock()
 
 			// 后台执行任务
-			go executeTask(task.ID, req.ProjectDir, req.TaskDesc, taskManager, codingAssistant, nil)
+			go executeTask(task.ID, req.ProjectDir, req.TaskDesc, taskManager, codingAssistant)
 
 			c.JSON(200, CodingTaskResponse{TaskID: task.ID})
 		})
@@ -1008,22 +973,22 @@ func getConfigPath() string {
 		// 如果无法获取用户主目录，回退到本地 config/config.toml
 		return "config/config.toml"
 	}
-	
+
 	configDir := filepath.Join(homeDir, ".codeactor", "config")
 	configPath := filepath.Join(configDir, "config.toml")
-	
+
 	// 检查配置文件是否存在
 	if _, err := os.Stat(configPath); err == nil {
 		return configPath
 	}
-	
+
 	// 如果用户目录下的配置文件不存在，检查并创建目录
 	if _, err := os.Stat(configDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(configDir, 0755); err != nil {
 			// 如果创建目录失败，回退到本地配置
 			return "config/config.toml"
 		}
-		
+
 		// 如果目录创建成功但配置文件不存在，创建默认配置文件
 		defaultConfig := `# LLM Configuration
 [http]
@@ -1060,13 +1025,13 @@ api_key = "your-openrouter-api-key"
 [app]
 enable_streaming = true
 `
-		
+
 		if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
 			// 如果创建默认配置失败，回退到本地配置
 			return "config/config.toml"
 		}
 	}
-	
+
 	return configPath
 }
 
@@ -1077,12 +1042,12 @@ func ensureDefaultConfig() {
 		// 如果使用的是本地配置，不需要额外处理
 		return
 	}
-	
+
 	// 检查配置文件是否存在
 	if _, err := os.Stat(configPath); err == nil {
 		return // 配置文件已存在
 	}
-	
+
 	// 创建默认配置
 	defaultConfig := `# LLM Configuration
 [http]
@@ -1119,7 +1084,7 @@ api_key = "your-openrouter-api-key"
 [app]
 enable_streaming = true
 `
-	
+
 	if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
 		log.Warn().Err(err).Str("config_path", configPath).Msg("Failed to create default config file")
 	}
