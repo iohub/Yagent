@@ -96,13 +96,15 @@ type Task struct {
 }
 
 type TaskManager struct {
-	tasks map[string]*Task
-	lock  sync.RWMutex
+	tasks  map[string]*Task
+	lock   sync.RWMutex
+	melody *melody.Melody
 }
 
-func NewTaskManager() *TaskManager {
+func NewTaskManager(m *melody.Melody) *TaskManager {
 	return &TaskManager{
-		tasks: make(map[string]*Task),
+		tasks:  make(map[string]*Task),
+		melody: m,
 	}
 }
 
@@ -188,6 +190,16 @@ func (tm *TaskManager) sendTaskUpdate(task *Task) {
 	}
 }
 
+// BroadcastMessage 广播消息到所有连接的session
+func (tm *TaskManager) BroadcastMessage(message interface{}) {
+	if tm.melody != nil {
+		data, err := json.Marshal(message)
+		if err == nil {
+			tm.melody.Broadcast(data)
+		}
+	}
+}
+
 // ========== WebSocket 处理器 ==========
 func handleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
 	m.HandleConnect(func(s *melody.Session) {
@@ -264,21 +276,14 @@ func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskMana
 	// 发送开始执行消息
 	taskManager.SetTaskProgress(task.ID, "Starting coding task...")
 
-	// 创建 WebSocket 回调函数
-	wsCallback := func(messageType string, content string) {
-		// 发送实时消息到前端
-		realTimeMsg := SocketMessage{
-			Type:  "realtime",
-			Event: messageType,
-			Data: gin.H{
-				"task_id":   task.ID,
-				"content":   content,
-				"timestamp": time.Now().Unix(),
-			},
-		}
-		if data, err := json.Marshal(realTimeMsg); err == nil {
-			task.Socket.Write(data)
-		}
+	// 创建WebSocket回调函数，用于广播消息
+	wsCallback := func(message string) {
+		taskManager.BroadcastMessage(SocketMessage{
+			Type:    "realtime",
+			Event:   "task_progress",
+			Message: message,
+			TaskID:  task.ID,
+		})
 	}
 
 	// 后台执行任务
@@ -512,7 +517,7 @@ func sendError(s *melody.Session, message string) {
 }
 
 // executeTask 执行任务的通用函数
-func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, wsCallback func(messageType string, content string)) {
+func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, wsCallback func(string)) {
 	ctx := context.Background()
 	task, ok := taskManager.GetTask(taskID)
 	if !ok {
@@ -523,38 +528,45 @@ func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	// Initialize message dispatcher
 	dispatcher := messaging.NewMessageDispatcher(100)
 
-	// Create WebSocket consumer if callback is provided
-	if wsCallback != nil {
-		wsConsumer := consumers.NewWebSocketConsumer(func(data []byte) error {
-			var event messaging.MessageEvent
-			if err := json.Unmarshal(data, &event); err != nil {
-				return err
-			}
-			// Convert event to SocketMessage format
-			socketMsg := SocketMessage{
-				Type:  "realtime",
-				Event: event.Type,
-				Data: gin.H{
-					"task_id":   taskID,
-					"content":   event.Content,
-					"timestamp": event.Timestamp.Unix(),
-					"metadata":  event.Metadata,
-				},
-			}
-			if socketData, err := json.Marshal(socketMsg); err == nil {
-				wsCallback(event.Type, string(socketData))
-				return nil
-			}
-			return nil
-		})
-		dispatcher.RegisterConsumer(wsConsumer)
-	}
-
 	// Create TUI consumer for terminal output
 	// Wire a real publisher so the TUI can send user responses back into the dispatcher
 	uip := messaging.NewMessagePublisher(dispatcher)
 	tuiConsumer := consumers.NewTUIConsumer(os.Stdout, uip)
 	dispatcher.RegisterConsumer(tuiConsumer)
+
+	// Create WebSocket consumer if callback is provided
+	if wsCallback != nil {
+		// 创建一个适配器函数，将 func(string) 转换为 func([]byte) error
+		wsCallbackAdapter := func(data []byte) error {
+			wsCallback(string(data))
+			return nil
+		}
+		wsConsumer := consumers.NewWebSocketConsumer(wsCallbackAdapter)
+		dispatcher.RegisterConsumer(wsConsumer)
+	}
+
+	// Create TaskManager WebSocket consumer to handle tool_call and tool_result messages
+	taskManagerWSCallback := func(data []byte) error {
+		var event messaging.MessageEvent
+		if err := json.Unmarshal(data, &event); err != nil {
+			return err
+		}
+		
+		// Handle tool_call_start, tool_call_result, and tool_call_error messages
+		if event.Type == "tool_call_start" || event.Type == "tool_call_result" || event.Type == "tool_call_error" {
+			// Create socket message for melody broadcast
+			socketMsg := SocketMessage{
+				Type:   event.Type,
+				Event:  event.Type,
+				Data:   event.Content,
+				TaskID: taskID,
+			}
+			taskManager.BroadcastMessage(socketMsg)
+		}
+		return nil
+	}
+	taskManagerWSConsumer := consumers.NewWebSocketConsumer(taskManagerWSCallback)
+	dispatcher.RegisterConsumer(taskManagerWSConsumer)
 
 	// Integrate messaging with coding assistant
 	codingAssistant.IntegrateMessaging(dispatcher)
@@ -567,10 +579,6 @@ func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 		WithProjectDir(projectDir).
 		WithTaskDesc(taskDesc).
 		WithMemory(task.Memory)
-
-	if wsCallback != nil {
-		request = request.WithWSCallback(wsCallback)
-	}
 
 	// Add message publisher to request
 	request = request.WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
@@ -639,7 +647,7 @@ func main() {
 			}
 
 			// Create task manager
-			taskManager := NewTaskManager()
+			taskManager := NewTaskManager(nil)
 
 			// Create task
 			task := &Task{
@@ -782,12 +790,12 @@ func main() {
 		directorCoordinator := assistant.NewDirectorCoordinator()
 		_ = directorCoordinator // 暂时标记为已使用，避免编译错误
 
-		// 创建全局任务管理器
-		taskManager := NewTaskManager()
-
 		// 创建 WebSocket 管理器
 		m := melody.New()
 		m.Config.MessageBufferSize = 256
+
+		// 创建全局任务管理器
+		taskManager := NewTaskManager(m)
 
 		// 设置 WebSocket 处理器
 		handleWebSocket(m, taskManager, codingAssistant)
