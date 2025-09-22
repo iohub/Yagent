@@ -119,5 +119,5 @@ func (rl *RateLimiter) IsRateLimitError(err error) bool {
 
 	errStr := err.Error()
 	return strings.Contains(errStr, fmt.Sprintf("status code: %d", HTTPStatusTooManyRequests)) ||
-		strings.Contains(errStr, fmt.Sprintf("429"))
+		strings.Contains(errStr, "429")
 }
