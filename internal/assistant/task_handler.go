@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"fmt"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -31,7 +32,7 @@ func (th *TaskHandler) ProcessCodingTask(request *TaskRequest) (string, error) {
 	memory.AddHumanMessage(request.TaskDesc)
 
 	// 处理对话
-	result, err := th.assistant.conversationManager.ProcessConversation(request.Context, memory, request.WSCallback, request.TaskID)
+	result, err := th.assistant.conversationManager.ProcessConversation(request.Context, memory, request.TaskID)
 	if err != nil {
 		return "", err
 	}
@@ -59,7 +60,7 @@ func (th *TaskHandler) ProcessConversation(request *TaskRequest) (string, error)
 	memory.AddHumanMessage(request.UserMessage)
 
 	// 处理对话
-	return th.assistant.conversationManager.ProcessConversation(request.Context, memory, request.WSCallback, request.TaskID)
+	return th.assistant.conversationManager.ProcessConversation(request.Context, memory, request.TaskID)
 }
 
 // ValidateRequest 验证任务请求的完整性

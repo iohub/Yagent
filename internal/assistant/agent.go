@@ -334,8 +334,8 @@ func (ca *CodingAssistant) isRateLimitError(err error) bool {
 }
 
 // handleRateLimitRetry 处理429限流错误的重试逻辑
-func (ca *CodingAssistant) handleRateLimitRetry(ctx context.Context, wsCallback func(messageType string, content string)) error {
-	return ca.rateLimiter.HandleRateLimitRetry(ctx, wsCallback)
+func (ca *CodingAssistant) handleRateLimitRetry(ctx context.Context) error {
+	return ca.rateLimiter.HandleRateLimitRetry(ctx)
 }
 
 // GetBedrockProviderInfo 获取Bedrock提供商信息

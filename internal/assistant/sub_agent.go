@@ -83,7 +83,7 @@ func (sam *SubAgent) RunSubAgentWithTools(ctx context.Context, systemPrompt stri
 					wsCallback("rate_limit_wait", "子代理检测到限流错误，正在等待重试...")
 				}
 
-				if retryErr := sam.assistant.rateLimiter.HandleRateLimitRetry(ctx, wsCallback); retryErr != nil {
+				if retryErr := sam.assistant.rateLimiter.HandleRateLimitRetry(ctx); retryErr != nil {
 					return "", fmt.Errorf("failed to handle rate limit retry in sub-agent: %w", retryErr)
 				}
 				continue

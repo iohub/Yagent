@@ -23,7 +23,7 @@ func NewRateLimiter(assistant *CodingAssistant) *RateLimiter {
 }
 
 // HandleRateLimitRetry 处理429限流错误的重试逻辑
-func (rl *RateLimiter) HandleRateLimitRetry(ctx context.Context, wsCallback func(messageType string, content string)) error {
+func (rl *RateLimiter) HandleRateLimitRetry(ctx context.Context) error {
 	waitTime := InitialRetryWaitTime
 	totalWaitTime := time.Duration(0)
 
@@ -32,10 +32,6 @@ func (rl *RateLimiter) HandleRateLimitRetry(ctx context.Context, wsCallback func
 			Dur("wait_time", waitTime).
 			Dur("total_wait_time", totalWaitTime).
 			Msg("Waiting before retry due to rate limit")
-
-		if wsCallback != nil {
-			wsCallback("rate_limit_wait", fmt.Sprintf("等待 %v 后重试...", waitTime))
-		}
 
 		// 等待指定时间
 		select {
@@ -49,26 +45,17 @@ func (rl *RateLimiter) HandleRateLimitRetry(ctx context.Context, wsCallback func
 
 		// 尝试重新调用API来检查限流是否已解除
 		log.Info().Msg("Testing API call after rate limit wait")
-		if wsCallback != nil {
-			wsCallback("rate_limit_test", "正在测试API调用...")
-		}
-
 		// 创建一个简单的测试请求来检查限流状态
 		testMessages := []llms.MessageContent{
 			llms.TextParts(llms.ChatMessageTypeHuman, "test"),
 		}
-
+		var err error
 		// 尝试调用API
-		_, err := rl.assistant.client.GenerateCompletionWithTools(ctx, testMessages, nil, nil)
-		if err == nil {
+		if _, err = rl.assistant.client.GenerateCompletionWithTools(ctx, testMessages, nil, nil); err == nil {
 			// 没有错误，说明限流已解除
 			log.Info().
 				Dur("total_wait_time", totalWaitTime).
 				Msg("Rate limit resolved, API call successful")
-
-			if wsCallback != nil {
-				wsCallback("rate_limit_resolved", "限流已恢复，继续处理")
-			}
 			return nil
 		}
 
@@ -84,11 +71,6 @@ func (rl *RateLimiter) HandleRateLimitRetry(ctx context.Context, wsCallback func
 			Dur("wait_time", waitTime).
 			Dur("total_wait_time", totalWaitTime).
 			Msg("Rate limit still active, continuing to wait")
-
-		if wsCallback != nil {
-			wsCallback("rate_limit_still_active", fmt.Sprintf("限流仍然存在，继续等待 %v...", waitTime*2))
-		}
-
 		// 指数退避：下次等待时间翻倍
 		waitTime *= 2
 
@@ -102,9 +84,6 @@ func (rl *RateLimiter) HandleRateLimitRetry(ctx context.Context, wsCallback func
 	if totalWaitTime >= MaxRetryWaitTime {
 		err := fmt.Errorf("rate limit retry timeout after %v", MaxRetryWaitTime)
 		log.Error().Err(err).Msg("Rate limit retry timeout")
-		if wsCallback != nil {
-			wsCallback("rate_limit_timeout", fmt.Sprintf("限流重试超时，已等待 %v", MaxRetryWaitTime))
-		}
 		return err
 	}
 

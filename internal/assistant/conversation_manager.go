@@ -45,7 +45,7 @@ func (cm *ConversationManager) PrepareMemory(memory *ConversationMemory) *Conver
 }
 
 // ProcessConversation 处理对话流程
-func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *ConversationMemory, wsCallback func(messageType string, content string), taskID string) (string, error) {
+func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *ConversationMemory, taskID string) (string, error) {
 	// 重置迭代计数器
 	cm.assistant.currentIteration = 0
 	var lastAssistantResponse string
@@ -67,9 +67,6 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 		// 检查是否超过最大迭代次数
 		if !cm.assistant.IncrementIteration() {
 			log.Warn().Int("max_iterations", cm.assistant.maxIterations).Msg("Maximum iterations reached, stopping conversation")
-			if wsCallback != nil {
-				wsCallback("max_iterations_reached", fmt.Sprintf("已达到最大迭代次数: %d", cm.assistant.maxIterations))
-			}
 			// Publish max iterations reached event
 			if cm.publisher != nil {
 				cm.publisher.Publish("max_iterations_reached", map[string]interface{}{
@@ -99,12 +96,9 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 			// 检查是否为429限流错误
 			if cm.assistant.isRateLimitError(err) {
 				log.Warn().Msg("Rate limit error (429) detected, starting retry with exponential backoff")
-				if wsCallback != nil {
-					wsCallback("rate_limit_wait", "检测到限流错误，正在等待重试...")
-				}
 
 				// 使用指数退避重试
-				if retryErr := cm.assistant.rateLimiter.HandleRateLimitRetry(ctx, wsCallback); retryErr != nil {
+				if retryErr := cm.assistant.rateLimiter.HandleRateLimitRetry(ctx); retryErr != nil {
 					return "", fmt.Errorf("failed to handle rate limit retry: %w", retryErr)
 				}
 
@@ -130,11 +124,6 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 				"task_id": taskID,
 				"content": choice.Content,
 			})
-		}
-
-		// 实时发送 LLM 响应到前端
-		if wsCallback != nil && choice.Content != "" {
-			wsCallback("llm_response", choice.Content)
 		}
 
 		// 提取工具调用
@@ -177,11 +166,6 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 				})
 			}
 
-			// 实时发送工具调用信息到前端
-			if wsCallback != nil {
-				wsCallback("tool_call", fmt.Sprintf("正在执行工具: %s", toolCall.Function.Name))
-			}
-
 			// 转换为 langchaingo FunctionCall 格式
 			var params map[string]interface{}
 			if err := json.Unmarshal(toolCall.Function.Arguments, &params); err != nil {
@@ -208,10 +192,6 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 					helpMessage := fmt.Sprintf("需要用户帮助:\n原因: %s\n问题: %s", reason, question)
 					if options != "" {
 						helpMessage += fmt.Sprintf("\n建议选项: %s", options)
-					}
-
-					if wsCallback != nil {
-						wsCallback("user_help_needed", helpMessage)
 					}
 				}
 			}
@@ -241,11 +221,6 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 						"error":        err.Error(),
 					})
 				}
-
-				// 实时发送错误信息到前端
-				if wsCallback != nil {
-					wsCallback("tool_error", fmt.Sprintf("工具执行错误: %s - %v", toolCall.Function.Name, err))
-				}
 				continue
 			}
 
@@ -274,12 +249,6 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 					log.Warn().Err(err).Str("task_id", taskID).Msg("Failed to save task memory to home directory")
 				}
 			}
-
-			// 实时发送工具执行结果到前端
-			if wsCallback != nil {
-				wsCallback("tool_result", fmt.Sprintf("工具 %s 执行完成", toolCall.Function.Name))
-			}
-
 			log.Info().
 				Str("tool_name", toolCall.Function.Name).
 				Str("tool_call_id", toolCall.ID).
@@ -289,9 +258,6 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 		// 如果 finish 工具被调用，发送完成消息但不退出迭代
 		if finishCalled {
 			log.Info().Msg("Finish tool called, but continuing conversation.")
-			if wsCallback != nil {
-				wsCallback("task_complete", "🎉 任务完成 - 您可以继续对话或开始新任务")
-			}
 			// Publish task complete event
 			if cm.publisher != nil {
 				cm.publisher.Publish("task_complete", map[string]interface{}{
@@ -305,9 +271,6 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 		// 如果 ask_user_for_help 工具被调用，暂停迭代并等待用户回复
 		if askUserHelpCalled {
 			log.Info().Msg("Ask user for help tool called, pausing iteration loop.")
-			if wsCallback != nil {
-				wsCallback("iteration_paused", "等待用户帮助")
-			}
 			// Publish user help needed event
 			if cm.publisher != nil {
 				cm.publisher.Publish("user_help_needed", map[string]interface{}{
