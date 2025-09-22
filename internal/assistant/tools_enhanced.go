@@ -324,11 +324,28 @@ func (tm *EnhancedToolManager) ExecuteInvestigateRepo(ctx context.Context, param
 	systemPrompt = strings.ReplaceAll(systemPrompt, "{{.ProjectInfo}}", string(projectInfoStr))
 	initialMessage = fmt.Sprintf("Analyze the project repository and provide a summary of the codebase's architecture. Project directory: %s", tm.workingDir)
 
-	// 运行子代理
-	result, err := tm.assistant.subAgent.RunSubAgentWithTools(ctx, systemPrompt, initialMessage, taskID, nil,
-		nil, []string{"investigate_repo", "planning", "finish", "ask_user_for_help", "delete_file", "edit_file", "create_file"})
+	/*
+		// 运行子代理
+		result, err := tm.assistant.subAgent.RunSubAgentWithTools(ctx, systemPrompt, initialMessage, taskID, nil,
+			nil, []string{"investigate_repo", "planning", "finish", "ask_user_for_help", "delete_file", "edit_file", "create_file"})
+		if err != nil {
+			return nil, util.WrapError(ctx, err, "executeInvestigateRepo::RunSubAgent")
+		}
+	*/
+
+	// 构建消息列表
+	messages := []llms.MessageContent{
+		llms.TextParts(llms.ChatMessageTypeSystem, systemPrompt),
+		llms.TextParts(llms.ChatMessageTypeHuman, initialMessage),
+	}
+	log.Info().
+		Str("task_id", taskID).
+		Str("systemPrompt", systemPrompt).
+		Msg("Executing investigate_repo using sub-agent mode")
+	// 直接调用 LLM
+	result, err := tm.assistant.client.GenerateCompletionWithMemory(ctx, messages, nil)
 	if err != nil {
-		return nil, util.WrapError(ctx, err, "executeInvestigateRepo::RunSubAgent")
+		return nil, util.WrapError(ctx, err, "executeArchitect::GenerateCompletionWithMemory")
 	}
 
 	// 返回结果使用 return_result_with_summary 工具格式
