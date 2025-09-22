@@ -339,24 +339,6 @@ func (tm *EnhancedToolManager) ExecuteInvestigateRepo(ctx context.Context, param
 	}, nil
 }
 
-func (tm *EnhancedToolManager) executeInvestigateRepo(ctx context.Context, memory *ConversationMemory, args map[string]interface{}) (map[string]interface{}, error) {
-	messages := memory.ToLangChainMessages()
-	result, err := tm.assistant.client.GenerateCompletionWithMemory(ctx, messages, nil)
-	if err != nil {
-		return nil, util.WrapError(ctx, err, "executeInvestigateRepo::GenerateCompletionWithMemory")
-	}
-	log.Info().
-		Str("result", result).
-		Msg("Investigate repo result")
-
-	resultMap := map[string]interface{}{
-		"success":      true,
-		"repo_summary": result,
-	}
-
-	return resultMap, nil
-}
-
 // ExecuteArchitect implements the architect tool using direct LLM call
 func (tm *EnhancedToolManager) ExecuteArchitect(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	requirements, ok := params["requirements"].(string)
