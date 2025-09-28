@@ -1,0 +1,322 @@
+package http
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"codeactor/internal/assistant"
+	messaging "codeactor/pkg/messaging"
+	consumers "codeactor/pkg/messaging/consumers"
+
+	"github.com/gin-gonic/gin"
+	"github.com/olahol/melody"
+	"github.com/rs/zerolog/log"
+)
+
+// HandleWebSocket 设置WebSocket处理器
+func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
+	m.HandleConnect(func(s *melody.Session) {
+		log.Info().Msg("WebSocket client connected")
+		// 发送连接确认消息
+		message := SocketMessage{
+			Type:  "connection",
+			Event: "connected",
+			Data:  gin.H{"message": "Connected to AI Coding Assistant"},
+		}
+		if data, err := json.Marshal(message); err == nil {
+			s.Write(data)
+		}
+	})
+
+	m.HandleDisconnect(func(s *melody.Session) {
+		log.Info().Msg("WebSocket client disconnected")
+	})
+
+	m.HandleMessage(func(s *melody.Session, msg []byte) {
+		var socketMsg SocketMessage
+		if err := json.Unmarshal(msg, &socketMsg); err != nil {
+			log.Error().Err(err).Msg("Failed to unmarshal socket message")
+			return
+		}
+
+		switch socketMsg.Event {
+		case "start_task":
+			handleStartTask(s, socketMsg, taskManager, codingAssistant)
+		case "chat_message":
+			handleChatMessage(s, socketMsg, taskManager, codingAssistant)
+		case "get_memory":
+			handleGetMemory(s, socketMsg, taskManager)
+		case "clear_memory":
+			handleClearMemory(s, socketMsg, taskManager)
+		default:
+			log.Warn().Str("event", socketMsg.Event).Msg("Unknown socket event")
+		}
+	})
+}
+
+func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
+	var taskData struct {
+		ProjectDir string `json:"project_dir"`
+		TaskDesc   string `json:"task_desc"`
+	}
+
+	if data, ok := msg.Data.(map[string]interface{}); ok {
+		if projectDir, exists := data["project_dir"].(string); exists {
+			taskData.ProjectDir = projectDir
+		}
+		if taskDesc, exists := data["task_desc"].(string); exists {
+			taskData.TaskDesc = taskDesc
+		}
+	}
+
+	if taskData.ProjectDir == "" || taskData.TaskDesc == "" {
+		sendError(s, "project_dir and task_desc are required")
+		return
+	}
+
+	task := taskManager.CreateTask(s, taskData.ProjectDir)
+
+	// 发送任务创建确认
+	response := SocketMessage{
+		Type:  "task_created",
+		Event: "task_created",
+		Data:  gin.H{"task_id": task.ID},
+	}
+	if data, err := json.Marshal(response); err == nil {
+		s.Write(data)
+	}
+
+	// 发送开始执行消息
+	taskManager.SetTaskProgress(task.ID, "Starting coding task...")
+	// 后台执行任务
+	go ExecuteTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, codingAssistant)
+
+	// Publish task start event to TUI
+	fmt.Printf("🚀 任务 %s 已启动\n", task.ID)
+}
+
+func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
+	var chatData struct {
+		TaskID  string `json:"task_id"`
+		Message string `json:"message"`
+	}
+
+	if data, ok := msg.Data.(map[string]interface{}); ok {
+		if taskID, exists := data["task_id"].(string); exists {
+			chatData.TaskID = taskID
+		}
+		if message, exists := data["message"].(string); exists {
+			chatData.Message = message
+		}
+	}
+
+	if chatData.TaskID == "" || chatData.Message == "" {
+		sendError(s, "task_id and message are required")
+		return
+	}
+
+	task, ok := taskManager.GetTask(chatData.TaskID)
+	if !ok {
+		sendError(s, "task not found")
+		return
+	}
+
+	// 添加用户消息到记忆
+	task.Memory.AddHumanMessage(chatData.Message)
+
+	// 后台处理AI回复
+	go func() {
+		ctx := context.Background()
+
+		// Initialize message dispatcher for this conversation
+		dispatcher := messaging.NewMessageDispatcher(100)
+
+		// Create WebSocket consumer
+		wsConsumer := consumers.NewWebSocketConsumer(func(data []byte) error {
+			var event messaging.MessageEvent
+			if err := json.Unmarshal(data, &event); err != nil {
+				return err
+			}
+			// Convert event to SocketMessage format
+			socketMsg := SocketMessage{
+				Type:  "realtime",
+				Event: event.Type,
+				Data: gin.H{
+					"task_id":   chatData.TaskID,
+					"content":   event.Content,
+					"timestamp": event.Timestamp.Unix(),
+					"metadata":  event.Metadata,
+				},
+			}
+			if socketData, err := json.Marshal(socketMsg); err == nil {
+				// Send to WebSocket
+				return s.Write(socketData)
+			}
+			return nil
+		})
+		dispatcher.RegisterConsumer(wsConsumer)
+
+		// Create TUI consumer for terminal output
+		// Wire a real publisher so the TUI can send user responses back into the dispatcher
+		uiPublisher := messaging.NewMessagePublisher(dispatcher)
+		tuiConsumer := consumers.NewTUIConsumer(os.Stdout, uiPublisher)
+		dispatcher.RegisterConsumer(tuiConsumer)
+
+		// Integrate messaging with coding assistant
+		codingAssistant.IntegrateMessaging(dispatcher)
+
+		// 使用新的 TaskRequest 结构调用重构后的方法
+		request := assistant.NewTaskRequest(ctx, chatData.TaskID).
+			WithProjectDir(task.ProjectDir).
+			WithUserMessage(chatData.Message).
+			WithMemory(task.Memory).
+			WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
+
+		// 调用 AI 助手处理对话
+		result, err := codingAssistant.ProcessConversation(request)
+		if err != nil {
+			log.Error().Err(err).Str("task_id", chatData.TaskID).Msg("Chat processing failed")
+
+			// Publish error event
+			if dispatcher != nil {
+				event := messaging.NewMessageEvent("conversation_error", map[string]interface{}{
+					"task_id": chatData.TaskID,
+					"error":   err.Error(),
+				})
+				dispatcher.Publish(event)
+			}
+
+			// 发送错误消息
+			errorMsg := ChatMessage{
+				Type:      "assistant",
+				Content:   fmt.Sprintf("处理对话时发生错误: %v", err),
+				Timestamp: time.Now().Unix(),
+			}
+
+			response := SocketMessage{
+				Type:  "chat_message",
+				Event: "ai_response",
+				Data:  errorMsg,
+			}
+			if data, err := json.Marshal(response); err == nil {
+				s.Write(data)
+			}
+
+			// Shutdown dispatcher
+			dispatcher.Shutdown()
+			return
+		}
+
+		// 发送AI回复
+		aiMsg := ChatMessage{
+			Type:      "assistant",
+			Content:   result,
+			Timestamp: time.Now().Unix(),
+		}
+
+		response := SocketMessage{
+			Type:  "chat_message",
+			Event: "ai_response",
+			Data:  aiMsg,
+		}
+		if data, err := json.Marshal(response); err == nil {
+			s.Write(data)
+		}
+
+		// Publish conversation result event
+		if dispatcher != nil {
+			event := messaging.NewMessageEvent("conversation_result", map[string]interface{}{
+				"task_id": chatData.TaskID,
+				"result":  result,
+			})
+			dispatcher.Publish(event)
+		}
+
+		// Shutdown dispatcher
+		dispatcher.Shutdown()
+	}()
+}
+
+func handleGetMemory(s *melody.Session, msg SocketMessage, taskManager *TaskManager) {
+	var memoryData struct {
+		TaskID string `json:"task_id"`
+	}
+
+	if data, ok := msg.Data.(map[string]interface{}); ok {
+		if taskID, exists := data["task_id"].(string); exists {
+			memoryData.TaskID = taskID
+		}
+	}
+
+	if memoryData.TaskID == "" {
+		sendError(s, "task_id is required")
+		return
+	}
+
+	task, ok := taskManager.GetTask(memoryData.TaskID)
+	if !ok {
+		sendError(s, "task not found")
+		return
+	}
+
+	response := SocketMessage{
+		Type:  "memory",
+		Event: "memory_data",
+		Data: gin.H{
+			"messages": task.Memory.GetMessages(),
+			"size":     task.Memory.Size(),
+			"max_size": task.Memory.MaxSize,
+		},
+	}
+	if data, err := json.Marshal(response); err == nil {
+		s.Write(data)
+	}
+}
+
+func handleClearMemory(s *melody.Session, msg SocketMessage, taskManager *TaskManager) {
+	var memoryData struct {
+		TaskID string `json:"task_id"`
+	}
+
+	if data, ok := msg.Data.(map[string]interface{}); ok {
+		if taskID, exists := data["task_id"].(string); exists {
+			memoryData.TaskID = taskID
+		}
+	}
+
+	if memoryData.TaskID == "" {
+		sendError(s, "task_id is required")
+		return
+	}
+
+	task, ok := taskManager.GetTask(memoryData.TaskID)
+	if !ok {
+		sendError(s, "task not found")
+		return
+	}
+
+	task.Memory.Clear()
+
+	response := SocketMessage{
+		Type:  "memory",
+		Event: "memory_cleared",
+		Data:  gin.H{"message": "Memory cleared successfully"},
+	}
+	if data, err := json.Marshal(response); err == nil {
+		s.Write(data)
+	}
+}
+
+func sendError(s *melody.Session, message string) {
+	errorMsg := SocketMessage{
+		Type:    "error",
+		Event:   "error",
+		Message: message,
+	}
+	if data, err := json.Marshal(errorMsg); err == nil {
+		s.Write(data)
+	}
+}
