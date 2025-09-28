@@ -24,7 +24,9 @@ import (
 
 func init() {
 	// Initialize language manager with default language (English)
-	langManager = NewLanguageManager()
+	if langManager == nil {
+		langManager = NewLanguageManager()
+	}
 }
 
 // ========== Socket.IO 消息结构 ==========
@@ -77,9 +79,10 @@ type ClearMemoryResponse struct {
 
 // ========== 任务管理相关结构 ==========
 const (
-	TaskStatusRunning  = "running"
-	TaskStatusFinished = "finished"
-	TaskStatusFailed   = "failed"
+	TaskStatusRunning   = "running"
+	TaskStatusFinished  = "finished"
+	TaskStatusFailed    = "failed"
+	TaskStatusCancelled = "cancelled"
 )
 
 type Task struct {
@@ -92,7 +95,9 @@ type Task struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	Memory     *assistant.ConversationMemory
-	Socket     *melody.Session // 关联的WebSocket连接
+	Socket     *melody.Session    // 关联的WebSocket连接
+	CancelFunc context.CancelFunc // 用于取消任务的函数
+	Context    context.Context    // 任务执行的上下文
 }
 
 type TaskManager struct {
@@ -111,6 +116,10 @@ func NewTaskManager(m *melody.Melody) *TaskManager {
 func (tm *TaskManager) CreateTask(socket *melody.Session, projectDir string) *Task {
 	tm.lock.Lock()
 	defer tm.lock.Unlock()
+
+	// 创建可取消的上下文
+	ctx, cancel := context.WithCancel(context.Background())
+
 	taskID := uuid.New().String()
 	task := &Task{
 		ID:         taskID,
@@ -120,6 +129,8 @@ func (tm *TaskManager) CreateTask(socket *melody.Session, projectDir string) *Ta
 		UpdatedAt:  time.Now(),
 		Memory:     assistant.NewConversationMemory(300),
 		Socket:     socket,
+		Context:    ctx,
+		CancelFunc: cancel,
 	}
 	tm.tasks[taskID] = task
 	return task
@@ -507,12 +518,14 @@ func sendError(s *melody.Session, message string) {
 
 // executeTask 执行任务的通用函数
 func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
-	ctx := context.Background()
 	task, ok := taskManager.GetTask(taskID)
 	if !ok {
 		log.Error().Str("task_id", taskID).Msg("Task not found")
 		return
 	}
+	
+	// 使用任务的可取消上下文
+	ctx := task.Context
 
 	// Initialize message dispatcher
 	dispatcher := messaging.NewMessageDispatcher(100)
@@ -569,7 +582,13 @@ func executeTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 
 	if err != nil {
 		log.Error().Err(err).Str("task_id", taskID).Msg("Coding task failed")
-		taskManager.SetTaskError(taskID, util.WrapError(ctx, err, "coding task failed").Error())
+		// 检查是否是因为上下文取消导致的错误
+		if ctx.Err() != nil {
+			log.Info().Str("task_id", taskID).Msg("Task was cancelled")
+			taskManager.SetTaskError(taskID, "Task was cancelled by user")
+		} else {
+			taskManager.SetTaskError(taskID, util.WrapError(ctx, err, "coding task failed").Error())
+		}
 		return
 	}
 	log.Info().Str("task_id", taskID).Msg("Coding task finished")
@@ -819,7 +838,8 @@ func main() {
 			}
 			log.Info().Str("project_dir", req.ProjectDir).Str("task_desc", req.TaskDesc).Msg("HTTP coding task submitted")
 
-			// 创建任务但不关联WebSocket
+			// 创建可取消的上下文
+			ctx, cancel := context.WithCancel(context.Background())
 			task := &Task{
 				ID:         uuid.New().String(),
 				Status:     TaskStatusRunning,
@@ -827,11 +847,13 @@ func main() {
 				CreatedAt:  time.Now(),
 				UpdatedAt:  time.Now(),
 				Memory:     assistant.NewConversationMemory(300),
+				Context:    ctx,
+				CancelFunc: cancel,
 			}
 			taskManager.lock.Lock()
 			taskManager.tasks[task.ID] = task
 			taskManager.lock.Unlock()
-
+			log.Info().Str("task_id", task.ID).Msg("Task created")
 			// 后台执行任务
 			go executeTask(task.ID, req.ProjectDir, req.TaskDesc, taskManager, codingAssistant)
 
@@ -909,6 +931,35 @@ func main() {
 			}
 			log.Info().Str("task_id", taskID).Msg("Memory cleared")
 			c.JSON(200, response)
+		})
+
+		// 取消任务的API
+		r.POST("/api/cancel_task", func(c *gin.Context) {
+			var req struct {
+				TaskID string `json:"task_id"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(400, gin.H{"error": "invalid request body"})
+				return
+			}
+			if req.TaskID == "" {
+				c.JSON(400, gin.H{"error": "task_id is required"})
+				return
+			}
+
+			log.Info().Str("task_id", req.TaskID).Msg("Cancel task")
+			success := taskManager.CancelTask(req.TaskID)
+
+			if success {
+				c.JSON(200, gin.H{
+					"task_id": req.TaskID,
+					"message": "Task cancelled successfully",
+				})
+				log.Info().Str("task_id", req.TaskID).Msg("Task cancelled successfully")
+			} else {
+				c.JSON(404, gin.H{"error": "Task not found or not running"})
+				log.Warn().Str("task_id", req.TaskID).Msg("Failed to cancel task")
+			}
 		})
 
 		// 获取特定类型消息的API
@@ -1035,57 +1086,21 @@ enable_streaming = true
 	return configPath
 }
 
-// ensureDefaultConfig 确保默认配置文件存在
-func ensureDefaultConfig() {
-	configPath := getConfigPath()
-	if configPath == "config/config.toml" {
-		// 如果使用的是本地配置，不需要额外处理
-		return
+// CancelTask 取消指定的任务
+func (tm *TaskManager) CancelTask(taskID string) bool {
+	log.Info().Str("task_id", taskID).Msg("Cancel task")
+	tm.lock.Lock()
+	defer tm.lock.Unlock()
+	if task, ok := tm.tasks[taskID]; ok {
+		task.Status = TaskStatusCancelled
+		task.UpdatedAt = time.Now()
+		if task.CancelFunc != nil {
+			task.CancelFunc()
+		}
+		tm.sendTaskUpdate(task)
+		return true
+	} else {
+		log.Warn().Str("task_id", taskID).Msg("Task not found or not running")
 	}
-
-	// 检查配置文件是否存在
-	if _, err := os.Stat(configPath); err == nil {
-		return // 配置文件已存在
-	}
-
-	// 创建默认配置
-	defaultConfig := `# LLM Configuration
-[http]
-server_port = 9080
-
-[llm]
-# 选择当前使用的提供商
-use_provider = "aliyun"
-
-# 阿里云配置
-[llm.providers.aliyun]
-model = "qwen3-max-preview"
-temperature = 0.0
-max_tokens = 28000
-api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-api_key = "your-aliyun-api-key"
-
-# SiliconFlow配置
-[llm.providers.siliconflow]
-model = "qwen3-coder-plus"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://api.siliconflow.cn/v1"
-api_key = "your-siliconflow-api-key"
-
-# OpenRouter配置
-[llm.providers.openrouter]
-model = "qwen3-coder-plus"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://openrouter.ai/api/v1"
-api_key = "your-openrouter-api-key"
-
-[app]
-enable_streaming = true
-`
-
-	if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
-		log.Warn().Err(err).Str("config_path", configPath).Msg("Failed to create default config file")
-	}
+	return false
 }

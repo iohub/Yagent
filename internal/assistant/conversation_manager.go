@@ -64,6 +64,21 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 	}
 
 	for {
+		// 检查上下文是否已被取消
+		select {
+		case <-ctx.Done():
+			log.Info().Str("task_id", taskID).Msg("Task cancelled, stopping conversation")
+			// Publish task cancelled event
+			if cm.publisher != nil {
+				cm.publisher.Publish("task_cancelled", map[string]interface{}{
+					"task_id": taskID,
+					"message": "Task cancelled by user",
+				})
+			}
+			return lastAssistantResponse, ctx.Err()
+		default:
+		}
+
 		// 检查是否超过最大迭代次数
 		if !cm.assistant.IncrementIteration() {
 			log.Warn().Int("max_iterations", cm.assistant.maxIterations).Msg("Maximum iterations reached, stopping conversation")
