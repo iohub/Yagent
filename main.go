@@ -78,6 +78,7 @@ func main() {
 			taskManager := http.NewTaskManager(nil)
 
 			// Create task
+			taskCtx, cancel := context.WithCancel(ctx)
 			task := &http.Task{
 				ID:         uuid.New().String(),
 				Status:     http.TaskStatusRunning,
@@ -85,6 +86,8 @@ func main() {
 				CreatedAt:  time.Now(),
 				UpdatedAt:  time.Now(),
 				Memory:     assistant.NewConversationMemory(300),
+				Context:    taskCtx,
+				CancelFunc: cancel,
 			}
 
 			// Add task to manager
