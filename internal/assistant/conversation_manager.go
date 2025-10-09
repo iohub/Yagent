@@ -165,7 +165,7 @@ func (cm *ConversationManager) ProcessConversation(ctx context.Context, memory *
 
 		// 执行所有工具调用
 		finishCalled := false
-		askUserHelpCalled := false
+		askUserHelpCalled := len(toolCalls) == 0
 		for _, toolCall := range toolCalls {
 			log.Info().
 				Str("tool_name", toolCall.Function.Name).
