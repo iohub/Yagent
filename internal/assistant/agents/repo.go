@@ -86,7 +86,8 @@ func NewRepoAgent(llm llms.LLM, fileOps *tools.FileOperationsTool, searchOps *to
 		BaseAgent: BaseAgent{
 			LLM: llm,
 		},
-		Adapters: adapters,
+		Adapters:   adapters,
+		projectDir: projectDir,
 	}
 }
 
