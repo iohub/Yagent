@@ -52,7 +52,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	ca.thinkingTool = tools.NewThinkingTool()
 
 	// Initialize agents
-	repoAgent := agents.NewRepoAgent(llm, ca.fileOps, ca.searchOps, ca.sysOps)
+	repoAgent := agents.NewRepoAgent(llm, ca.fileOps, ca.searchOps, ca.sysOps, workDir)
 	codingAgent := agents.NewCodingAgent(llm, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool)
 	ca.conductor = agents.NewConductorAgent(llm, repoAgent, codingAgent)
 }
