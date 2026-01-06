@@ -84,7 +84,7 @@ Do not write code yourself. Delegate to Coding-Agent.`)},
 		llmTools[i] = ad.ToLLMSTool()
 	}
 
-	maxSteps := 15
+	maxSteps := 3
 	for i := 0; i < maxSteps; i++ {
 		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))

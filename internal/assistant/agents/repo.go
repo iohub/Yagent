@@ -80,7 +80,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 		llmTools[i] = ad.ToLLMSTool()
 	}
 
-	maxSteps := 10
+	maxSteps := 3
 	for i := 0; i < maxSteps; i++ {
 		slog.Debug("RepoAgent calling LLM", "step", i, "messages", messages)
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))

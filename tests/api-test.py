@@ -13,7 +13,8 @@ client = OpenAI(
 # Single-round:
 print("----- standard request -----")
 completion = client.chat.completions.create(
-    model="KAT-Coder-Air-V1",  # kat-coder-exp-72b-1010 为您当前的智能体应用的ID
+    # model="KAT-Coder-Air-V1"
+    model="ep-w1klde-1767706500222997285", 
     messages=[
         {"role": "system", "content": "你是一个 AI 人工智能助手"},
         {"role": "user", "content": "请介绍一下太阳系的八大行星"},

@@ -101,7 +101,7 @@ Do not blindly retry. Analyze -> Plan -> Fix.`)},
 		llmTools[i] = ad.ToLLMSTool()
 	}
 
-	maxSteps := 20
+	maxSteps := 3
 	for i := 0; i < maxSteps; i++ {
 		slog.Debug("CodingAgent calling LLM", "step", i)
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
