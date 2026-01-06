@@ -58,7 +58,7 @@
 *   `code_search(query)`: 语义或关键词搜索代码库 (基于 grep 或 向量数据库)。
 
 ### 3.2. 反思工具 (Thinking Tool)
-**名称**：`thinking_reflection`
+**名称**：`thinking`
 **适用场景**：当 Sub-Agent 执行出错（如编译失败、测试不通过、找不到文件）时，**强制**优先调用此工具。
 **输入**：
 *   `error_message`: 错误信息。
@@ -97,13 +97,11 @@
 ### 阶段一：规划 (Conductor Phase)
 1.  **User**: "请把项目中的登录验证从 Session 改为 JWT。"
 2.  **Conductor**:
-    *   调用 `list_dir` 浏览项目结构。
+    *   调用 `Repo-Agent` 获取仓库信息、项目结构、依赖列表、目录树等。
     *   生成 Plan/Todo:
-        1. [Repo] 找到处理登录逻辑的代码文件。
-        2. [Coding] 安装 PyJWT 依赖。
-        3. [Coding] 修改 auth.py 实现 JWT 生成。
-        4. [Coding] 修改 middleware.py 验证 JWT。
-        5. [Coding] 运行测试验证。
+        1. [Coding] 修改 auth.py 实现 JWT 生成。
+        2. [Coding] 修改 middleware.py 验证 JWT。
+        3. [Coding] 运行测试验证。
 
 ### 阶段二：分析 (Repo-Agent Phase)
 1.  **Conductor**: 委派任务 "找到处理登录逻辑的代码"。
@@ -121,7 +119,7 @@
     *   **Self-Correction Loop**:
         *   Agent 主动调用 `run_shell_command("pytest tests/test_auth.py")`。
         *   **结果**: Failed. `ImportError: No module named 'jwt'`.
-        *   **Action**: Agent 调用 `thinking_reflection`。
+        *   **Action**: Agent 调用 `thinking`。
             *   *Think*: "我修改了代码但忘记安装依赖。我需要先安装库。"
         *   **Action**: 调用 `run_shell_command("pip install pyjwt")`。
         *   **Action**: 再次运行测试 -> Passed。
