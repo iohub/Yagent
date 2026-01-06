@@ -117,6 +117,7 @@ func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse
 
 	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")
+	slog.Info("RepoAgent pre-investigation request", "project_dir", projectDir)
 
 	// 发送请求
 	client := &http.Client{}
@@ -130,6 +131,7 @@ func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %v", err)
 	}
+	slog.Info("RepoAgent pre-investigation response", "status_code", resp.StatusCode, "body", string(body))
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
@@ -161,51 +163,52 @@ Use this information to answer user queries efficiently.
 If the provided information is sufficient, answer the user's question directly.
 If you need more details, use your available tools (read_file, grep_search, etc.) to explore further.`
 
-	// Perform pre-investigation
-	if a.projectDir != "" {
-		slog.Info("RepoAgent performing pre-investigation", "project_dir", a.projectDir)
-		investigation, err := a.doPreInvestigate(a.projectDir)
-		if err != nil {
-			slog.Warn("RepoAgent pre-investigation failed", "error", err)
-		} else {
-			// Add investigation results to system prompt
-			info := fmt.Sprintf("\n\nRepository Information:\nProject ID: %s\nTotal Functions: %d\n",
-				investigation.Data.ProjectID, investigation.Data.TotalFunctions)
+	if a.projectDir == "" {
+		return "", fmt.Errorf("project_dir is empty")
+	}
 
-			info += "\nDirectory Tree:\n" + investigation.Data.DirectoryTree + "\n"
+	slog.Info("RepoAgent performing pre-investigation", "project_dir", a.projectDir)
+	investigation, err := a.doPreInvestigate(a.projectDir)
+	if err != nil {
+		slog.Warn("RepoAgent pre-investigation failed", "error", err)
+	} else {
+		// Add investigation results to system prompt
+		info := fmt.Sprintf("\n\nRepository Information:\nProject ID: %s\nTotal Functions: %d\n",
+			investigation.Data.ProjectID, investigation.Data.TotalFunctions)
 
-			info += "\nCore Functions:\n"
-			for _, fn := range investigation.Data.CoreFunctions {
-				info += fmt.Sprintf("- %s (in %s)\n", fn.Name, fn.FilePath)
-				if len(fn.Callers) > 0 {
-					info += "  Callers: "
-					for i, caller := range fn.Callers {
-						if i > 0 {
-							info += ", "
-						}
-						info += fmt.Sprintf("%s (%s)", caller.FunctionName, caller.FilePath)
+		info += "\nDirectory Tree:\n" + investigation.Data.DirectoryTree + "\n"
+
+		info += "\nCore Functions:\n"
+		for _, fn := range investigation.Data.CoreFunctions {
+			info += fmt.Sprintf("- %s (in %s)\n", fn.Name, fn.FilePath)
+			if len(fn.Callers) > 0 {
+				info += "  Callers: "
+				for i, caller := range fn.Callers {
+					if i > 0 {
+						info += ", "
 					}
-					info += "\n"
+					info += fmt.Sprintf("%s (%s)", caller.FunctionName, caller.FilePath)
 				}
-				if len(fn.Callees) > 0 {
-					info += "  Callees: "
-					for i, callee := range fn.Callees {
-						if i > 0 {
-							info += ", "
-						}
-						info += fmt.Sprintf("%s (%s)", callee.FunctionName, callee.FilePath)
+				info += "\n"
+			}
+			if len(fn.Callees) > 0 {
+				info += "  Callees: "
+				for i, callee := range fn.Callees {
+					if i > 0 {
+						info += ", "
 					}
-					info += "\n"
+					info += fmt.Sprintf("%s (%s)", callee.FunctionName, callee.FilePath)
 				}
+				info += "\n"
 			}
-
-			info += "\nFile Skeletons (Context):\n"
-			for _, sk := range investigation.Data.FileSkeletons {
-				info += fmt.Sprintf("File: %s\n```%s\n%s\n```\n", sk.Filepath, sk.Language, sk.SkeletonText)
-			}
-
-			systemPrompt += info
 		}
+
+		info += "\nFile Skeletons (Context):\n"
+		for _, sk := range investigation.Data.FileSkeletons {
+			info += fmt.Sprintf("File: %s\n```%s\n%s\n```\n", sk.Filepath, sk.Language, sk.SkeletonText)
+		}
+
+		systemPrompt += info
 	}
 
 	messages := []llms.MessageContent{
