@@ -6,9 +6,10 @@ import (
 
 	"codeactor/internal/assistant/agents"
 	"codeactor/internal/assistant/tools"
-	"codeactor/internal/config"
 	"codeactor/pkg/messaging"
 
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/tmc/langchaingo/llms"
 )
 
@@ -19,6 +20,7 @@ type CodingAssistant struct {
 	dispatcher           *messaging.MessageDispatcher
 	mu                   sync.Mutex
 	userResponseChannels map[string]chan string
+	logger               zerolog.Logger
 
 	// Tools
 	fileOps      *tools.FileOperationsTool
@@ -29,10 +31,14 @@ type CodingAssistant struct {
 }
 
 // NewCodingAssistant creates a new CodingAssistant.
-func NewCodingAssistant(cfg *config.Config) *CodingAssistant {
-	return &CodingAssistant{
+func NewCodingAssistant(client *Client) (*CodingAssistant, error) {
+	ca := &CodingAssistant{
 		userResponseChannels: make(map[string]chan string),
+		logger:               log.With().Str("component", "coding_assistant").Logger(),
+		llm:                  client.llm,
 	}
+	client.assistant = ca
+	return ca, nil
 }
 
 // Init initializes the assistant with LLM and creates agents.

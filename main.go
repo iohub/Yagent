@@ -205,19 +205,9 @@ func main() {
 			log.Fatal().Err(util.WrapError(ctx, err, "main::NewCodingAssistant")).Msg("Failed to create coding assistant")
 		}
 
-		// 创建 Director Agent
-		directorAgent, err := assistant.NewDirectorAgent(client)
-		if err != nil {
-			log.Fatal().Err(util.WrapError(ctx, err, "main::NewDirectorAgent")).Msg("Failed to create director agent")
-		}
-
 		// 创建消息分发器并集成消息系统
 		messageDispatcher := messaging.NewMessageDispatcher(100)
-		directorAgent.IntegrateMessaging(messageDispatcher)
-
-		// 创建 Director Coordinator
-		directorCoordinator := assistant.NewDirectorCoordinator()
-		_ = directorCoordinator // 暂时标记为已使用，避免编译错误
+		codingAssistant.IntegrateMessaging(messageDispatcher)
 
 		// 创建HTTP服务器
 		server := http.NewServer(codingAssistant)
