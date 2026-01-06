@@ -1,0 +1,128 @@
+package assistant
+
+import (
+	"context"
+	"sync"
+
+	"codeactor/internal/assistant/agents"
+	"codeactor/internal/assistant/tools"
+	"codeactor/internal/config"
+	"codeactor/pkg/messaging"
+
+	"github.com/tmc/langchaingo/llms"
+)
+
+// CodingAssistant is the main entry point for the agent system.
+type CodingAssistant struct {
+	llm                  llms.LLM
+	conductor            *agents.ConductorAgent
+	dispatcher           *messaging.MessageDispatcher
+	mu                   sync.Mutex
+	userResponseChannels map[string]chan string
+
+	// Tools
+	fileOps      *tools.FileOperationsTool
+	searchOps    *tools.SearchOperationsTool
+	sysOps       *tools.SystemOperationsTool
+	replaceTool  *tools.ReplaceBlockTool
+	thinkingTool *tools.ThinkingTool
+}
+
+// NewCodingAssistant creates a new CodingAssistant.
+func NewCodingAssistant(cfg *config.Config) *CodingAssistant {
+	return &CodingAssistant{
+		userResponseChannels: make(map[string]chan string),
+	}
+}
+
+// Init initializes the assistant with LLM and creates agents.
+func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
+	ca.llm = llm
+
+	// Initialize tools
+	ca.fileOps = tools.NewFileOperationsTool(workDir)
+	ca.searchOps = tools.NewSearchOperationsTool(workDir)
+	ca.sysOps = tools.NewSystemOperationsTool(workDir)
+	ca.replaceTool = tools.NewReplaceBlockTool(workDir)
+	ca.thinkingTool = tools.NewThinkingTool()
+
+	// Initialize agents
+	repoAgent := agents.NewRepoAgent(llm, ca.fileOps, ca.searchOps, ca.sysOps)
+	codingAgent := agents.NewCodingAgent(llm, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool)
+	ca.conductor = agents.NewConductorAgent(llm, repoAgent, codingAgent)
+}
+
+func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
+	ca.dispatcher = dispatcher
+}
+
+// TaskRequest encapsulates the request context.
+type TaskRequest struct {
+	ctx         context.Context
+	taskID      string
+	projectDir  string
+	taskDesc    string
+	memory      *ConversationMemory
+	wsCallback  func(string, string)
+	publisher   *MessagePublisher
+	userMessage string
+}
+
+func NewTaskRequest(ctx context.Context, taskID string) *TaskRequest {
+	return &TaskRequest{
+		ctx:    ctx,
+		taskID: taskID,
+	}
+}
+
+func (r *TaskRequest) WithProjectDir(dir string) *TaskRequest {
+	r.projectDir = dir
+	return r
+}
+
+func (r *TaskRequest) WithTaskDesc(desc string) *TaskRequest {
+	r.taskDesc = desc
+	return r
+}
+
+func (r *TaskRequest) WithMemory(mem *ConversationMemory) *TaskRequest {
+	r.memory = mem
+	return r
+}
+
+func (r *TaskRequest) WithWSCallback(cb func(string, string)) *TaskRequest {
+	r.wsCallback = cb
+	return r
+}
+
+func (r *TaskRequest) WithMessagePublisher(p *MessagePublisher) *TaskRequest {
+	r.publisher = p
+	return r
+}
+
+func (r *TaskRequest) WithUserMessage(msg string) *TaskRequest {
+	r.userMessage = msg
+	return r
+}
+
+// ProcessCodingTaskWithCallback executes the task using the agent system.
+func (ca *CodingAssistant) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
+	if ca.conductor == nil {
+		ca.Init(ca.llm, req.projectDir)
+	} else {
+		ca.Init(ca.llm, req.projectDir)
+	}
+
+	return ca.conductor.Run(req.ctx, req.taskDesc)
+}
+
+// ProcessConversation handles chat messages.
+func (ca *CodingAssistant) ProcessConversation(req *TaskRequest) (string, error) {
+	if ca.conductor == nil {
+		ca.Init(ca.llm, req.projectDir)
+	} else {
+		ca.Init(ca.llm, req.projectDir)
+	}
+
+	return ca.conductor.Run(req.ctx, req.userMessage)
+}

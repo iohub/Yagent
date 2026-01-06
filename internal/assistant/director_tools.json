@@ -30,37 +30,6 @@
         }
     },
     {
-        "description": "Call Planning Agent to execute project planning-related tasks, including project plan formulation, task decomposition, milestone planning, resource allocation, time estimation, dependency analysis, risk assessment, and progress tracking. Planning Agent specializes in handling project management and planning-related tasks.",
-        "name": "call_planning_agent",
-        "parameters": {
-            "properties": {
-                "task_description": {
-                    "description": "Detailed description of the planning task for Planning Agent to execute, including planning type, scope, objectives, and constraints.",
-                    "type": "string"
-                },
-                "task_context": {
-                    "description": "Context information for planning tasks, such as project background, existing resources, time constraints, etc.",
-                    "type": "object",
-                    "properties": {
-                        "project_scope": {"type": "string"},
-                        "timeline": {"type": "string"},
-                        "resources": {"type": "array", "items": {"type": "string"}},
-                        "constraints": {"type": "array", "items": {"type": "string"}},
-                        "stakeholders": {"type": "array", "items": {"type": "string"}}
-                    }
-                },
-                "priority": {
-                    "description": "Task priority: high, medium, low",
-                    "type": "string",
-                    "enum": ["high", "medium", "low"],
-                    "default": "medium"
-                }
-            },
-            "required": ["task_description"],
-            "type": "object"
-        }
-    },
-    {
         "description": "Call Repository Agent to execute code repository management-related tasks, including Git operations, branch management, commit management, merge operations, repository analysis, code search, file tracking, and version control. Repository Agent specializes in handling code repository and version control-related tasks.",
         "name": "call_repository_agent",
         "parameters": {
@@ -112,7 +81,7 @@
                         "properties": {
                             "id": {"type": "string"},
                             "description": {"type": "string"},
-                            "assigned_agent": {"type": "string", "enum": ["code_agent", "planning_agent", "repository_agent"]},
+                            "assigned_agent": {"type": "string", "enum": ["code_agent", "repository_agent"]},
                             "dependencies": {"type": "array", "items": {"type": "string"}},
                             "priority": {"type": "string", "enum": ["high", "medium", "low"]}
                         },

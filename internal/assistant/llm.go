@@ -214,9 +214,11 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms
 	}
 
 	// Log LLM input using assistant's logger if available
-	if c.assistant != nil && c.assistant.logger != nil {
-		c.assistant.logger.LogLLMInput("", memory, nil)
-	}
+	/*
+		if c.assistant != nil && c.assistant.logger != nil {
+			c.assistant.logger.LogLLMInput("", memory, nil)
+		}
+	*/
 
 	// Get active provider configuration
 	activeProvider, err := c.config.GetActiveProvider()
@@ -283,9 +285,11 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms
 		}
 
 		// Log LLM output using assistant's logger if available
-		if c.assistant != nil && c.assistant.logger != nil {
-			c.assistant.logger.LogLLMOutput("", completion)
-		}
+		/*
+			if c.assistant != nil && c.assistant.logger != nil {
+				c.assistant.logger.LogLLMOutput("", completion)
+			}
+		*/
 
 		return result, nil
 	}
@@ -399,15 +403,15 @@ func extractHTTPResponse(err error) string {
 	if strings.Contains(errStr, "ValidationException") {
 		return fmt.Sprintf("Bedrock Validation Error: %s", errStr)
 	}
-	
+
 	if strings.Contains(errStr, "ThrottlingException") {
 		return fmt.Sprintf("Bedrock Throttling Error: %s", errStr)
 	}
-	
+
 	if strings.Contains(errStr, "AccessDeniedException") {
 		return fmt.Sprintf("Bedrock Access Denied: %s", errStr)
 	}
-	
+
 	if strings.Contains(errStr, "ModelNotReadyException") {
 		return fmt.Sprintf("Bedrock Model Not Ready: %s", errStr)
 	}
