@@ -2,24 +2,23 @@ package http
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 
 	"codeactor/internal/assistant"
 	"codeactor/internal/util"
 	messaging "codeactor/pkg/messaging"
 	consumers "codeactor/pkg/messaging/consumers"
-
-	"github.com/rs/zerolog/log"
 )
 
 // ExecuteTask 执行任务的通用函数
 func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
 	task, ok := taskManager.GetTask(taskID)
 	if !ok {
-		log.Error().Str("task_id", taskID).Msg("Task not found")
+		slog.Error("Task not found", "task_id", taskID)
 		return
 	}
-	
+
 	// 使用任务的可取消上下文
 	ctx := task.Context
 
@@ -77,17 +76,17 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	result, err = codingAssistant.ProcessCodingTaskWithCallback(request)
 
 	if err != nil {
-		log.Error().Err(err).Str("task_id", taskID).Msg("Coding task failed")
+		slog.Error("Coding task failed", "error", err, "task_id", taskID)
 		// 检查是否是因为上下文取消导致的错误
 		if ctx.Err() != nil {
-			log.Info().Str("task_id", taskID).Msg("Task was cancelled")
+			slog.Info("Task was cancelled", "task_id", taskID)
 			taskManager.SetTaskError(taskID, "Task was cancelled by user")
 		} else {
 			taskManager.SetTaskError(taskID, util.WrapError(ctx, err, "coding task failed").Error())
 		}
 		return
 	}
-	log.Info().Str("task_id", taskID).Msg("Coding task finished")
+	slog.Info("Coding task finished", "task_id", taskID)
 	taskManager.SetTaskResult(taskID, result)
 
 	// Shutdown dispatcher after task completion

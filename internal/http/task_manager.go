@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -10,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/olahol/melody"
-	"github.com/rs/zerolog/log"
 )
 
 type TaskManager struct {
@@ -132,7 +132,7 @@ func (tm *TaskManager) BroadcastMessage(message interface{}) {
 
 // CancelTask 取消指定的任务
 func (tm *TaskManager) CancelTask(taskID string) bool {
-	log.Info().Str("task_id", taskID).Msg("Cancel task")
+	slog.Info("Cancel task", "task_id", taskID)
 	tm.lock.Lock()
 	defer tm.lock.Unlock()
 	if task, ok := tm.tasks[taskID]; ok {
@@ -144,7 +144,7 @@ func (tm *TaskManager) CancelTask(taskID string) bool {
 		tm.sendTaskUpdate(task)
 		return true
 	} else {
-		log.Warn().Str("task_id", taskID).Msg("Task not found or not running")
+		slog.Warn("Task not found or not running", "task_id", taskID)
 	}
 	return false
 }

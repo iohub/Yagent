@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,11 +16,16 @@ import (
 	messaging "codeactor/pkg/messaging"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func init() {
+	// Initialize structured logger with text handler
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, opts))
+	slog.SetDefault(logger)
+
 	// Initialize language manager with default language (English)
 	if langManager == nil {
 		langManager = NewLanguageManager()
@@ -56,22 +63,25 @@ func main() {
 
 			// Load configuration
 			configPath := getConfigPath()
-			log.Info().Str("config_path", configPath).Msg("Loading configuration")
+			slog.Info("Loading configuration", "config_path", configPath)
 			config, err := assistant.LoadConfig(configPath)
 			if err != nil {
-				log.Fatal().Err(util.WrapError(ctx, err, "main::LoadConfig")).Msg("Failed to load configuration")
+				slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
+				os.Exit(1)
 			}
 
 			// Create client
 			client, err := assistant.NewClient(config)
 			if err != nil {
-				log.Fatal().Err(util.WrapError(ctx, err, "main::NewClient")).Msg("Failed to create client")
+				slog.Error("Failed to create client", "error", util.WrapError(ctx, err, "main::NewClient"))
+				os.Exit(1)
 			}
 
 			// Create coding assistant
 			codingAssistant, err := assistant.NewCodingAssistant(client)
 			if err != nil {
-				log.Fatal().Err(util.WrapError(ctx, err, "main::NewCodingAssistant")).Msg("Failed to create coding assistant")
+				slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodingAssistant"))
+				os.Exit(1)
 			}
 
 			// Create task manager
@@ -94,7 +104,7 @@ func main() {
 			taskManager.AddTask(task)
 
 			// Execute task
-			log.Info().Str("project_dir", projectDir).Str("task_desc", taskDesc).Msg("TUI coding task submitted")
+			slog.Info("TUI coding task submitted", "project_dir", projectDir, "task_desc", taskDesc)
 			http.ExecuteTask(task.ID, projectDir, taskDesc, taskManager, codingAssistant)
 
 			// Wait for task completion and display result
@@ -118,91 +128,53 @@ func main() {
 		return
 	case "http":
 		// Run HTTP server mode
-		// Setup zerolog for pretty console logging and file logging
+		// Setup slog for console logging and file logging
 		ctx := context.Background()
 		homeDir, herr := os.UserHomeDir()
 		if herr != nil {
-			log.Fatal().Err(util.WrapError(ctx, herr, "main::UserHomeDir")).Msg("Failed to get user home directory")
+			slog.Error("Failed to get user home directory", "error", util.WrapError(ctx, herr, "main::UserHomeDir"))
+			os.Exit(1)
 		}
 		logDir := filepath.Join(homeDir, ".codeactor", "logs")
 		if err := os.MkdirAll(logDir, 0755); err != nil {
-			log.Fatal().Err(util.WrapError(ctx, err, "main::MkdirAll")).Msg("Failed to create logs directory")
+			slog.Error("Failed to create logs directory", "error", util.WrapError(ctx, err, "main::MkdirAll"))
+			os.Exit(1)
 		}
 
 		logFile, err := os.OpenFile(filepath.Join(logDir, "server.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			log.Fatal().Err(util.WrapError(ctx, err, "main::OpenFile")).Msg("Failed to open log file")
+			slog.Error("Failed to open log file", "error", util.WrapError(ctx, err, "main::OpenFile"))
+			os.Exit(1)
 		}
 
-		// 配置纯文本格式的日志输出
-		consoleWriter := zerolog.ConsoleWriter{
-			Out:        os.Stderr,
-			TimeFormat: time.RFC3339,
-			FormatLevel: func(i interface{}) string {
-				if ll, ok := i.(string); ok {
-					return ll
-				}
-				return "INFO"
-			},
-			FormatMessage: func(i interface{}) string {
-				if i == nil {
-					return ""
-				}
-				return fmt.Sprintf("| %s", i)
-			},
-			FormatFieldName: func(i interface{}) string {
-				return fmt.Sprintf("%s=", i)
-			},
-			FormatFieldValue: func(i interface{}) string {
-				return fmt.Sprintf("%s", i)
-			},
-		}
-
-		// 文件输出也使用纯文本格式
-		fileWriter := zerolog.ConsoleWriter{
-			Out:        logFile,
-			TimeFormat: time.RFC3339,
-			NoColor:    true, // 文件中不使用颜色
-			FormatLevel: func(i interface{}) string {
-				if ll, ok := i.(string); ok {
-					return ll
-				}
-				return "INFO"
-			},
-			FormatMessage: func(i interface{}) string {
-				if i == nil {
-					return ""
-				}
-				return fmt.Sprintf("| %s", i)
-			},
-			FormatFieldName: func(i interface{}) string {
-				return fmt.Sprintf("%s=", i)
-			},
-			FormatFieldValue: func(i interface{}) string {
-				return fmt.Sprintf("%s", i)
-			},
-		}
-
-		multi := zerolog.MultiLevelWriter(consoleWriter, fileWriter)
-		log.Logger = log.Output(multi)
+		// Configure slog to write to both console and file
+		// Note: We use io.MultiWriter to write to both
+		multiWriter := io.MultiWriter(os.Stderr, logFile)
+		logger := slog.New(slog.NewTextHandler(multiWriter, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		}))
+		slog.SetDefault(logger)
 
 		// 加载配置和初始化 assistant.client
 		configPath := getConfigPath()
-		log.Info().Str("config_path", configPath).Msg("Loading configuration")
+		slog.Info("Loading configuration", "config_path", configPath)
 		config, err := assistant.LoadConfig(configPath)
 		if err != nil {
-			log.Fatal().Err(util.WrapError(ctx, err, "main::LoadConfig")).Msg("Failed to load configuration")
+			slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
+			os.Exit(1)
 		}
-		log.Info().Msg("Creating assistant.client")
+		slog.Info("Creating assistant.client")
 		client, err := assistant.NewClient(config)
 		if err != nil {
-			log.Fatal().Err(util.WrapError(ctx, err, "main::NewClient")).Msg("Failed to create assistant.client")
+			slog.Error("Failed to create assistant.client", "error", util.WrapError(ctx, err, "main::NewClient"))
+			os.Exit(1)
 		}
 
 		// 创建 AI Coding Assistant
 		codingAssistant, err := assistant.NewCodingAssistant(client)
 		if err != nil {
-			log.Fatal().Err(util.WrapError(ctx, err, "main::NewCodingAssistant")).Msg("Failed to create coding assistant")
+			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodingAssistant"))
+			os.Exit(1)
 		}
 
 		// 创建消息分发器并集成消息系统
@@ -220,7 +192,8 @@ func main() {
 
 		// 启动服务器
 		if err := server.Run(serverPort); err != nil {
-			log.Fatal().Err(util.WrapError(ctx, err, "main::ServerRun")).Msg("Failed to start HTTP server")
+			slog.Error("Failed to start HTTP server", "error", util.WrapError(ctx, err, "main::ServerRun"))
+			os.Exit(1)
 		}
 	default:
 		fmt.Printf("Unknown mode: %s\n", mode)

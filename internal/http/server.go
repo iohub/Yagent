@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"codeactor/internal/assistant"
@@ -10,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/olahol/melody"
-	"github.com/rs/zerolog/log"
 )
 
 // Server HTTP服务器结构
@@ -99,7 +99,7 @@ func (s *Server) handleStartTask(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "task_desc is required"})
 		return
 	}
-	log.Info().Str("project_dir", req.ProjectDir).Str("task_desc", req.TaskDesc).Msg("HTTP coding task submitted")
+	slog.Info("HTTP coding task submitted", "project_dir", req.ProjectDir, "task_desc", req.TaskDesc)
 
 	// 创建可取消的上下文
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,7 +116,7 @@ func (s *Server) handleStartTask(c *gin.Context) {
 	s.taskManager.lock.Lock()
 	s.taskManager.tasks[task.ID] = task
 	s.taskManager.lock.Unlock()
-	log.Info().Str("task_id", task.ID).Msg("Task created")
+	slog.Info("Task created", "task_id", task.ID)
 	// 后台执行任务
 	go ExecuteTask(task.ID, req.ProjectDir, req.TaskDesc, s.taskManager, s.codingAssistant)
 
@@ -189,7 +189,7 @@ func (s *Server) handleClearMemory(c *gin.Context) {
 		Success: true,
 		Message: "Memory cleared successfully",
 	}
-	log.Info().Str("task_id", taskID).Msg("Memory cleared")
+	slog.Info("Memory cleared", "task_id", taskID)
 	c.JSON(200, response)
 }
 
@@ -206,7 +206,7 @@ func (s *Server) handleCancelTask(c *gin.Context) {
 		return
 	}
 
-	log.Info().Str("task_id", req.TaskID).Msg("Cancel task")
+	slog.Info("Cancel task", "task_id", req.TaskID)
 	success := s.taskManager.CancelTask(req.TaskID)
 
 	if success {
@@ -214,10 +214,10 @@ func (s *Server) handleCancelTask(c *gin.Context) {
 			"task_id": req.TaskID,
 			"message": "Task cancelled successfully",
 		})
-		log.Info().Str("task_id", req.TaskID).Msg("Task cancelled successfully")
+		slog.Info("Task cancelled successfully", "task_id", req.TaskID)
 	} else {
 		c.JSON(404, gin.H{"error": "Task not found or not running"})
-		log.Warn().Str("task_id", req.TaskID).Msg("Failed to cancel task")
+		slog.Warn("Failed to cancel task", "task_id", req.TaskID)
 	}
 }
 
@@ -262,7 +262,7 @@ func (s *Server) handleGetMemoryByType(c *gin.Context) {
 
 // Run 启动HTTP服务器
 func (s *Server) Run(port int) error {
-	log.Info().Int("port", port).Msg("AI Coding Assistant HTTP server started")
-	log.Info().Str("ws_url", fmt.Sprintf("ws://localhost:%d/ws", port)).Msg("WebSocket server available at")
+	slog.Info("AI Coding Assistant HTTP server started", "port", port)
+	slog.Info("WebSocket server available at", "ws_url", fmt.Sprintf("ws://localhost:%d/ws", port))
 	return s.router.Run(fmt.Sprintf(":%d", port))
 }

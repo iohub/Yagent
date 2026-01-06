@@ -2,14 +2,13 @@ package assistant
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
 	"codeactor/internal/assistant/agents"
 	"codeactor/internal/assistant/tools"
 	"codeactor/pkg/messaging"
 
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"github.com/tmc/langchaingo/llms"
 )
 
@@ -20,7 +19,7 @@ type CodingAssistant struct {
 	dispatcher           *messaging.MessageDispatcher
 	mu                   sync.Mutex
 	userResponseChannels map[string]chan string
-	logger               zerolog.Logger
+	logger               *slog.Logger
 
 	// Tools
 	fileOps      *tools.FileOperationsTool
@@ -34,7 +33,7 @@ type CodingAssistant struct {
 func NewCodingAssistant(client *Client) (*CodingAssistant, error) {
 	ca := &CodingAssistant{
 		userResponseChannels: make(map[string]chan string),
-		logger:               log.With().Str("component", "coding_assistant").Logger(),
+		logger:               slog.Default().With("component", "coding_assistant"),
 		llm:                  client.llm,
 	}
 	client.assistant = ca

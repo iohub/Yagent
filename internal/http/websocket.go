@@ -11,15 +11,16 @@ import (
 	messaging "codeactor/pkg/messaging"
 	consumers "codeactor/pkg/messaging/consumers"
 
+	"log/slog"
+
 	"github.com/gin-gonic/gin"
 	"github.com/olahol/melody"
-	"github.com/rs/zerolog/log"
 )
 
 // HandleWebSocket 设置WebSocket处理器
 func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
 	m.HandleConnect(func(s *melody.Session) {
-		log.Info().Msg("WebSocket client connected")
+		slog.Info("WebSocket client connected")
 		// 发送连接确认消息
 		message := SocketMessage{
 			Type:  "connection",
@@ -32,13 +33,13 @@ func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant
 	})
 
 	m.HandleDisconnect(func(s *melody.Session) {
-		log.Info().Msg("WebSocket client disconnected")
+		slog.Info("WebSocket client disconnected")
 	})
 
 	m.HandleMessage(func(s *melody.Session, msg []byte) {
 		var socketMsg SocketMessage
 		if err := json.Unmarshal(msg, &socketMsg); err != nil {
-			log.Error().Err(err).Msg("Failed to unmarshal socket message")
+			slog.Error("Failed to unmarshal socket message", "error", err)
 			return
 		}
 
@@ -52,7 +53,7 @@ func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant
 		case "clear_memory":
 			handleClearMemory(s, socketMsg, taskManager)
 		default:
-			log.Warn().Str("event", socketMsg.Event).Msg("Unknown socket event")
+			slog.Warn("Unknown socket event", "event", socketMsg.Event)
 		}
 	})
 }
@@ -178,7 +179,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 		// 调用 AI 助手处理对话
 		result, err := codingAssistant.ProcessConversation(request)
 		if err != nil {
-			log.Error().Err(err).Str("task_id", chatData.TaskID).Msg("Chat processing failed")
+			slog.Error("Chat processing failed", "error", err, "task_id", chatData.TaskID)
 
 			// Publish error event
 			if dispatcher != nil {
