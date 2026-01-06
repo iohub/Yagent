@@ -303,6 +303,18 @@ func (c *Client) GenerateCompletionWithTools(ctx context.Context, messages []llm
 		opts = append(opts, llms.WithStreamingFunc(streamHandler))
 	}
 
+	// Log input messages and tools to LLM log file
+	if messagesJSON, err := json.Marshal(messages); err == nil {
+		toolsJSON, _ := json.Marshal(tools)
+		llmLogger.Info("LLM input (tools)",
+			"type", "input_tools",
+			"model", c.config.LLM.UseProvider,
+			"messages_length", len(messages),
+			"tools_count", len(tools),
+			"messages", string(messagesJSON),
+			"tools", string(toolsJSON))
+	}
+
 	// Generate completion
 	completion, err := c.llm.GenerateContent(ctx, messages, opts...)
 	if err != nil {

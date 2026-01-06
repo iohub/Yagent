@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"codeactor/internal/assistant/tools"
 
@@ -85,12 +86,15 @@ Do not write code yourself. Delegate to Coding-Agent.`)},
 
 	maxSteps := 15
 	for i := 0; i < maxSteps; i++ {
+		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
+			slog.Error("ConductorAgent LLM error", "error", err, "step", i)
 			return "", err
 		}
 
 		msg := resp.Choices[0]
+		slog.Debug("ConductorAgent LLM response", "step", i, "message", msg)
 
 		parts := []llms.ContentPart{llms.TextPart(msg.Content)}
 		for _, tc := range msg.ToolCalls {

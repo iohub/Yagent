@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"codeactor/internal/assistant/tools"
 
@@ -102,8 +103,10 @@ Do not blindly retry. Analyze -> Plan -> Fix.`)},
 
 	maxSteps := 20
 	for i := 0; i < maxSteps; i++ {
+		slog.Debug("CodingAgent calling LLM", "step", i)
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
+			slog.Error("CodingAgent LLM error", "error", err, "step", i)
 			return "", err
 		}
 
