@@ -84,20 +84,20 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
   }, [taskDesc]);
 
   return (
-    <form onSubmit={handleSubmit} className="relative group bg-black rounded-xl border border-neutral-800 overflow-hidden shadow-lg">
+    <form onSubmit={handleSubmit} className="relative group bg-card rounded-xl border border-border overflow-hidden shadow-lg">
       {/* Project Input Overlay */}
       {showProjectInput && (
-        <div className="absolute inset-0 z-20 bg-[#1e1e1e] flex flex-col p-4 animate-in fade-in duration-200">
+        <div className="absolute inset-0 z-20 bg-background flex flex-col p-4 animate-in fade-in duration-200">
           <div className="flex items-center gap-2 mb-4">
             <button 
               type="button" 
               onClick={() => setShowProjectInput(false)}
-              className="text-neutral-400 hover:text-white flex items-center gap-1 text-sm font-medium transition-colors"
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-sm font-medium transition-colors"
             >
               <ChevronLeft className="w-4 h-4" />
               Back
             </button>
-            <span className="text-sm text-neutral-500 font-medium ml-auto">Set Project Path</span>
+            <span className="text-sm text-muted-foreground font-medium ml-auto">Set Project Path</span>
           </div>
           
           <div className="flex gap-2 mb-4">
@@ -111,13 +111,13 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
                   handleProjectSubmit();
                 }
               }}
-              className="flex-1 bg-black border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-neutral-500 placeholder-neutral-600"
+              className="flex-1 bg-input border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-ring placeholder:text-muted-foreground"
               placeholder="/path/to/project"
             />
             <button
               type="button"
               onClick={() => handleProjectSubmit()}
-              className="bg-white text-black hover:bg-neutral-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
             >
               Set
             </button>
@@ -125,7 +125,7 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
 
           {projectHistory.length > 0 && (
             <div className="flex-1 overflow-y-auto min-h-0">
-              <div className="flex items-center gap-1 text-[10px] text-neutral-500 uppercase tracking-wider mb-2">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
                 <Clock className="w-3 h-3" />
                 <span>Recent Paths</span>
               </div>
@@ -135,7 +135,7 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
                     key={i}
                     type="button"
                     onClick={() => handleHistoryClick(path)}
-                    className="w-full text-left text-sm text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg px-3 py-2 truncate transition-colors border border-transparent hover:border-neutral-800"
+                    className="w-full text-left text-sm text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg px-3 py-2 truncate transition-colors border border-transparent hover:border-border"
                     title={path}
                   >
                     {path}
@@ -154,7 +154,7 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
           onChange={(e) => setTaskDesc(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Ask the agent to perform a task..."
-          className="w-full bg-transparent text-neutral-200 placeholder-neutral-500 resize-none focus:outline-none text-sm min-h-[80px] max-h-[200px]"
+          className="w-full bg-transparent text-foreground placeholder:text-muted-foreground resize-none focus:outline-none text-sm min-h-[80px] max-h-[200px]"
           rows={1}
         />
       </div>
@@ -167,8 +167,8 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
             onClick={() => setShowProjectInput(true)}
             className={`transition-colors p-1 rounded-md ${
               projectDir !== '.' 
-                ? 'text-blue-400 bg-blue-400/10' 
-                : 'text-neutral-500 hover:text-neutral-300'
+                ? 'text-primary bg-primary/10' 
+                : 'text-muted-foreground hover:text-foreground'
             }`}
             title={`Current project: ${projectDir}`}
           >
@@ -176,7 +176,7 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
           </button>
           <button 
             type="button" 
-            className="text-neutral-500 hover:text-neutral-300 transition-colors p-1"
+            className="text-muted-foreground hover:text-foreground transition-colors p-1"
             title="Settings"
           >
             <SlidersHorizontal className="w-4 h-4" />
@@ -189,10 +189,10 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
           className={`
             rounded-full p-1.5 h-8 w-8 flex items-center justify-center transition-all duration-200
             ${isLoading 
-              ? 'bg-neutral-800 text-white cursor-not-allowed' 
+              ? 'bg-muted text-muted-foreground cursor-not-allowed' 
               : !taskDesc.trim() 
-                ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed'
-                : 'bg-white text-black hover:bg-neutral-200'
+                ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                : 'bg-primary text-primary-foreground hover:bg-primary/90'
             }
           `}
         >

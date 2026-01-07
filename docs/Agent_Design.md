@@ -80,7 +80,7 @@
 1.  **文件修改类**:
     *   `write_file(file_path, content)`: 创建或全量覆盖文件。
     *   `apply_patch(file_path, diff_content)`: **(推荐)** 使用 unified diff 格式修改文件，比全量覆盖更节省 Token 且精准。
-    *   或者 `replace_block(file_path, search_block, replace_block)`: 精确查找替换代码块。
+    *   或者 `search_replace(file_path, search_block, replace_block)`: 精确查找替换代码块。
 
 2.  **环境执行类 (Execution Tools)**:
     *   `run_shell_command(command)`: **(核心)** 执行 shell 命令。用于安装依赖 (`pip install`), 运行测试 (`pytest`), 运行 Linter (`eslint`)。

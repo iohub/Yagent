@@ -12,7 +12,7 @@ import (
 	"codeactor/internal/util"
 )
 
-// ReplaceBlockTool implements the replace_block tool for file editing.
+// ReplaceBlockTool implements the search_replace tool for file editing.
 type ReplaceBlockTool struct {
 	workingDir string
 }
@@ -22,7 +22,7 @@ func NewReplaceBlockTool(workingDir string) *ReplaceBlockTool {
 }
 
 func (t *ReplaceBlockTool) Name() string {
-	return "replace_block"
+	return "search_replace"
 }
 
 func (t *ReplaceBlockTool) Description() string {

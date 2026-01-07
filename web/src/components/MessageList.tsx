@@ -16,7 +16,7 @@ export function MessageList({ messages }: MessageListProps) {
   return (
     <div className="flex flex-col gap-2 p-4 overflow-y-auto h-full min-h-0 custom-scrollbar">
       {messages.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-full text-[#6f6f6f] space-y-2">
+        <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2">
           <p>No messages yet.</p>
           <p className="text-sm">Start a task to see the agent in action.</p>
         </div>

@@ -29,7 +29,7 @@ func NewCodingAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps
 			},
 			"required": []string{"target_file"},
 		}),
-		tools.NewAdapter("replace_block", replaceTool.Description(), replaceTool.ExecuteReplaceBlock).WithSchema(map[string]interface{}{
+		tools.NewAdapter("search_replace", replaceTool.Description(), replaceTool.ExecuteReplaceBlock).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"file_path":     map[string]interface{}{"type": "string", "description": "File path to modify"},
@@ -86,7 +86,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
 		{
 			Role: llms.ChatMessageTypeSystem,
 			Parts: []llms.ContentPart{llms.TextPart(`You are the Coding-Agent. Your role is to write code, run tests, and fix errors.
-You have access to tools to read files, modify files (replace_block), and run shell commands.
+You have access to tools to read files, modify files (search_replace), and run shell commands.
 CRITICAL: If a tool execution fails (e.g., test failed, compilation error), you MUST use the 'thinking' tool to analyze the error before retrying.
 Do not blindly retry. Analyze -> Plan -> Fix.`)},
 		},
