@@ -14,7 +14,7 @@ export function MessageList({ messages }: MessageListProps) {
   }, [messages]);
 
   return (
-    <div className="flex flex-col gap-4 p-4 overflow-y-auto h-full min-h-0 custom-scrollbar">
+    <div className="flex flex-col gap-2 p-4 overflow-y-auto h-full min-h-0 custom-scrollbar">
       {messages.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-[#6f6f6f] space-y-2">
           <p>No messages yet.</p>

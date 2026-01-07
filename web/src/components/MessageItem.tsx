@@ -13,14 +13,17 @@ function SystemMessage({ content }: { content: string }) {
   const cleanContent = isStatus ? content.replace('[Status]', '').trim() : content;
 
   return (
-    <div className="flex items-center gap-3 py-2 px-3 my-1 max-w-[90%] mx-auto bg-neutral-900/50 border border-neutral-800 rounded-full backdrop-blur-sm">
+    <div className="flex items-center gap-3 py-1 px-1 my-1 mr-auto max-w-[85%] animate-in fade-in duration-300">
       <div className={cn(
-        "w-5 h-5 rounded-full flex items-center justify-center shrink-0",
-        isStatus ? "bg-blue-500/10 text-blue-400" : "bg-neutral-800 text-neutral-400"
+        "w-4 h-4 flex items-center justify-center shrink-0",
+        isStatus ? "text-blue-400" : "text-neutral-500"
       )}>
-        {isStatus ? <Activity className="w-3 h-3 animate-pulse" /> : <Cpu className="w-3 h-3" />}
+        {isStatus ? <Activity className="w-3.5 h-3.5 animate-pulse" /> : <Cpu className="w-3.5 h-3.5" />}
       </div>
-      <span className="text-xs text-neutral-300 font-medium truncate max-w-[500px]">
+      <span className={cn(
+        "text-xs font-medium truncate max-w-[500px]",
+        isStatus ? "text-blue-400/80" : "text-neutral-500"
+      )}>
         {cleanContent}
       </span>
     </div>
@@ -49,10 +52,10 @@ function ToolMessage({ content }: { content: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-1 my-2 max-w-[90%] mx-auto">
+    <div className="flex flex-col gap-1 my-2 mr-auto max-w-[85%] w-full">
       <button 
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center gap-3 p-2 bg-[#1e1e1e] hover:bg-[#252526] border border-[#333] rounded-md transition-all group w-full text-left"
+        className="flex items-center gap-3 p-2 bg-[#1e1e1e] hover:bg-[#252526] border border-[#333] rounded-md transition-all group w-full text-left shadow-sm"
       >
         <div className="w-6 h-6 rounded-md bg-purple-500/10 flex items-center justify-center shrink-0 border border-purple-500/20 group-hover:border-purple-500/40 transition-colors">
           <Terminal className="w-3.5 h-3.5 text-purple-400" />
