@@ -178,6 +178,9 @@ Do not write code yourself. Delegate to Coding-Agent.`)},
 					"arguments": tc.FunctionCall.Arguments,
 				})
 			}
+			if tc.FunctionCall.Name == "finish" {
+				return "Task completed successfully", nil
+			}
 
 			for _, t := range a.Adapters {
 				if t.Name() == tc.FunctionCall.Name {
