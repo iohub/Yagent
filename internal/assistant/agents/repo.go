@@ -103,7 +103,6 @@ func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %v", err)
 	}
-	slog.Info("RepoAgent pre-investigation response", "status_code", resp.StatusCode, "body", string(body))
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))

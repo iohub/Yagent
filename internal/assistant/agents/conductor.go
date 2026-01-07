@@ -51,8 +51,16 @@ func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo
 	fileOps := tools.NewFileOperationsTool(repo.projectDir)
 	sysOps := tools.NewSystemOperationsTool(repo.projectDir)
 	searchOps := tools.NewSearchOperationsTool(repo.projectDir)
+	flowOps := tools.NewFlowControlTool(repo.projectDir)
 
 	adapters := []*tools.Adapter{
+		tools.NewAdapter("finish", "Indicate that the current task is finished. The output of this tool call will be a description of why the task is finished, which could be because the task is completed or cannot be completed and must be terminated.", flowOps.ExecuteFinish).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"reason": map[string]interface{}{"type": "string", "description": "A description of why the task is finished, e.g., task completed, cannot complete, or must terminate."},
+			},
+			"required": []string{"reason"},
+		}),
 		tools.NewAdapter("read_file", "Read file content", fileOps.ExecuteReadFile).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
