@@ -86,7 +86,7 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 		}
 		return
 	}
-	slog.Info("Coding task finished", "task_id", taskID)
+	slog.Info("Task completed successfully", "task_id", taskID)
 	taskManager.SetTaskResult(taskID, result)
 
 	// Shutdown dispatcher after task completion

@@ -63,7 +63,7 @@ func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[str
 	if start < 0 {
 		start = 0
 	}
-	if end > len(lines) {
+	if end <= 0 || end > len(lines) {
 		end = len(lines)
 	}
 
