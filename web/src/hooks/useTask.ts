@@ -40,12 +40,49 @@ export function useTask() {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        // Handle different message types
-        if (msg.type === 'chat_message' && msg.event === 'ai_response' && msg.data?.content) {
-            setMessages(prev => [...prev, { type: 'assistant', content: msg.data.content }]);
-        } else if (msg.type === 'realtime' && msg.data?.task_id === taskId) {
-            // Realtime updates (e.g. tool execution)
-             setMessages(prev => [...prev, { type: 'tool', content: `[${msg.event}] ${msg.data.content}` }]);
+        console.log('WS Message:', msg); // Debug log
+
+        // Validate Task ID if present in message (top level)
+        if (msg.task_id && msg.task_id !== taskId) return;
+
+        const eventType = msg.type || msg.event;
+        const data = msg.data;
+
+        if (eventType === 'ai_response') {
+            setMessages(prev => [...prev, { type: 'assistant', content: String(data) }]);
+        } 
+        else if (['tool_call', 'tool_call_result'].includes(eventType)) {
+            let content = data;
+            if (typeof data === 'object' && data !== null) {
+                const toolName = data.tool_name || 'unknown';
+                content = `[${eventType}] ${toolName}\n${JSON.stringify(data, null, 2)}`;
+            } else {
+                content = `[${eventType}] ${String(data)}`;
+            }
+            setMessages(prev => [...prev, { type: 'tool', content: String(content), event: eventType }]);
+        }
+        else if (['status_update', 'ai_stream_start', 'ai_stream_end', 'ai_chunk'].includes(eventType)) {
+            // Optional: Filter out chunks if too noisy, or accumulate them
+            // For now, let's just show status updates and ignore raw chunks to avoid flood
+            if (eventType === 'status_update') {
+                 setMessages(prev => [...prev, { type: 'system', content: `[Status] ${String(data)}`, event: eventType }]);
+            }
+        }
+        else if (eventType === 'user_help_needed') {
+             setMessages(prev => [...prev, { type: 'system', content: `[Help Needed] ${String(data)}`, event: eventType }]);
+        }
+        else if (eventType === 'error') {
+             setMessages(prev => [...prev, { type: 'system', content: `[Error] ${msg.message || String(data)}`, event: eventType }]);
+        }
+        // Legacy / Chat specific handlers
+        else if (msg.type === 'chat_message' && msg.event === 'ai_response') {
+            const content = data?.content || data;
+            if (content) {
+                setMessages(prev => [...prev, { type: 'assistant', content: String(content) }]);
+            }
+        } 
+        else if (msg.type === 'realtime' && data?.task_id === taskId) {
+             setMessages(prev => [...prev, { type: 'tool', content: `[${msg.event}] ${data.content}` }]);
         }
       } catch (e) {
         console.error('Failed to parse WS message', e);
