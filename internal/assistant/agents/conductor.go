@@ -48,11 +48,49 @@ func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo
 		"required": []string{"task"},
 	})
 
+	fileOps := tools.NewFileOperationsTool(repo.projectDir)
+	sysOps := tools.NewSystemOperationsTool(repo.projectDir)
+	searchOps := tools.NewSearchOperationsTool(repo.projectDir)
+
+	adapters := []*tools.Adapter{
+		tools.NewAdapter("read_file", "Read file content", fileOps.ExecuteReadFile).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"target_file":                    map[string]interface{}{"type": "string", "description": "The path of the file to read"},
+				"start_line_one_indexed":         map[string]interface{}{"type": "integer", "description": "Start line (1-indexed)"},
+				"end_line_one_indexed_inclusive": map[string]interface{}{"type": "integer", "description": "End line (inclusive)"},
+			},
+			"required": []string{"target_file"},
+		}),
+		tools.NewAdapter("list_dir", "List directory", sysOps.ExecuteListDir).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"absolute_path": map[string]interface{}{"type": "string", "description": "Absolute path to list"},
+			},
+			"required": []string{"absolute_path"},
+		}),
+		tools.NewAdapter("grep_search", "Search code using grep", searchOps.ExecuteGrepSearch).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query":           map[string]interface{}{"type": "string", "description": "Regex query"},
+				"include_pattern": map[string]interface{}{"type": "string", "description": "File pattern to include"},
+			},
+			"required": []string{"query"},
+		}),
+		tools.NewAdapter("file_search", "Find file paths", searchOps.ExecuteFileSearch).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query": map[string]interface{}{"type": "string", "description": "Filename query"},
+			},
+			"required": []string{"query"},
+		}),
+	}
+
 	return &ConductorAgent{
 		BaseAgent:   BaseAgent{LLM: llm, Publisher: publisher},
 		RepoAgent:   repo,
 		CodingAgent: coding,
-		Adapters:    []*tools.Adapter{delegateRepo, delegateCoding},
+		Adapters:    append(adapters, delegateRepo, delegateCoding),
 		maxSteps:    maxSteps,
 	}
 }

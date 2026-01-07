@@ -73,7 +73,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		}
 	}
 
-	repoAgent := agents.NewRepoAgent(llm, publisher, ca.fileOps, ca.searchOps, ca.sysOps, workDir, repoMaxSteps)
+	repoAgent := agents.NewRepoAgent(llm, publisher, workDir, repoMaxSteps)
 	codingAgent := agents.NewCodingAgent(llm, publisher, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool, codingMaxSteps)
 	ca.conductor = agents.NewConductorAgent(llm, publisher, repoAgent, codingAgent, conductorMaxSteps)
 }
