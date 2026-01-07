@@ -254,8 +254,7 @@ Output a clear, structured summary that gives a developer a solid "mental map" o
 		}
 
 		msg := resp.Choices[0]
-		slog.Debug("RepoAgent LLM response", "step", i, "message", msg)
-
+		// slog.Debug("RepoAgent LLM response", "step", i, "message", msg)
 		if msg.Content != "" {
 			if a.Publisher != nil {
 				a.Publisher.Publish("ai_response", msg.Content)
