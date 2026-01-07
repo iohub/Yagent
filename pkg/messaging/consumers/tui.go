@@ -177,7 +177,6 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 
 // Extract tool name from content (assuming content is a map with "name" field for tool calls)
 func getToolNameFromContent(content interface{}) string {
-	fmt.Println("getToolNameFromContent", content)
 	if contentMap, ok := content.(map[string]interface{}); ok {
 		if name, ok := contentMap["tool_name"]; ok {
 			if nameStr, ok := name.(string); ok {
