@@ -49,6 +49,7 @@ type RepoAgent struct {
 }
 
 func NewRepoAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, searchOps *tools.SearchOperationsTool, sysOps *tools.SystemOperationsTool, projectDir string) *RepoAgent {
+	/**
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("read_file", "Read file content", fileOps.ExecuteReadFile).WithSchema(map[string]interface{}{
 			"type": "object",
@@ -82,13 +83,14 @@ func NewRepoAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *
 			"required": []string{"query"},
 		}),
 	}
+		**/
 
 	return &RepoAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
 			Publisher: publisher,
 		},
-		Adapters:   adapters,
+		Adapters:   []*tools.Adapter{},
 		projectDir: projectDir,
 	}
 }
@@ -186,9 +188,7 @@ Output a clear, structured summary that gives a developer a solid "mental map" o
 	} else {
 		// Add investigation results to system prompt
 		info := "\n\nRepository Information:\n"
-
 		info += "\nDirectory Tree:\n" + investigation.Data.DirectoryTree + "\n"
-
 		info += "\nCore Functions:\n"
 		for _, fn := range investigation.Data.CoreFunctions {
 			info += fmt.Sprintf("- %s (in %s)\n", fn.Name, fn.FilePath)
@@ -223,13 +223,15 @@ Output a clear, structured summary that gives a developer a solid "mental map" o
 	}
 
 	messages := []llms.MessageContent{
+		/**
 		{
 			Role:  llms.ChatMessageTypeSystem,
 			Parts: []llms.ContentPart{llms.TextPart(systemPrompt)},
 		},
+		**/
 		{
 			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart(input)},
+			Parts: []llms.ContentPart{llms.TextPart(systemPrompt)},
 		},
 	}
 
