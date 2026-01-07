@@ -3,6 +3,8 @@ package agents
 import (
 	"context"
 
+	"codeactor/pkg/messaging"
+
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/tools"
 )
@@ -15,6 +17,7 @@ type Agent interface {
 
 // BaseAgent holds common dependencies for agents.
 type BaseAgent struct {
-	LLM   llms.LLM
-	Tools []tools.Tool
+	LLM       llms.LLM
+	Tools     []tools.Tool
+	Publisher *messaging.MessagePublisher
 }

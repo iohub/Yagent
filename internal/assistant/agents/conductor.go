@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"codeactor/internal/assistant/tools"
+	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -17,7 +18,7 @@ type ConductorAgent struct {
 	Adapters    []*tools.Adapter
 }
 
-func NewConductorAgent(llm llms.LLM, repo *RepoAgent, coding *CodingAgent) *ConductorAgent {
+func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo *RepoAgent, coding *CodingAgent) *ConductorAgent {
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
@@ -47,7 +48,7 @@ func NewConductorAgent(llm llms.LLM, repo *RepoAgent, coding *CodingAgent) *Cond
 	})
 
 	return &ConductorAgent{
-		BaseAgent:   BaseAgent{LLM: llm},
+		BaseAgent:   BaseAgent{LLM: llm, Publisher: publisher},
 		RepoAgent:   repo,
 		CodingAgent: coding,
 		Adapters:    []*tools.Adapter{delegateRepo, delegateCoding},
@@ -87,6 +88,9 @@ Do not write code yourself. Delegate to Coding-Agent.`)},
 	maxSteps := 3
 	for i := 0; i < maxSteps; i++ {
 		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
+		if a.Publisher != nil {
+			a.Publisher.Publish("status_update", fmt.Sprintf("ConductorAgent is thinking (step %d/%d)...", i+1, maxSteps))
+		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
 			slog.Error("ConductorAgent LLM error", "error", err, "step", i)
@@ -95,6 +99,12 @@ Do not write code yourself. Delegate to Coding-Agent.`)},
 
 		msg := resp.Choices[0]
 		slog.Debug("ConductorAgent LLM response", "step", i, "message", msg)
+
+		if msg.Content != "" {
+			if a.Publisher != nil {
+				a.Publisher.Publish("ai_response", msg.Content)
+			}
+		}
 
 		parts := []llms.ContentPart{llms.TextPart(msg.Content)}
 		for _, tc := range msg.ToolCalls {
@@ -114,6 +124,14 @@ Do not write code yourself. Delegate to Coding-Agent.`)},
 			var toolResult string
 			var err error
 			found := false
+
+			if a.Publisher != nil {
+				a.Publisher.Publish("tool_call_start", map[string]interface{}{
+					"tool_name": tc.FunctionCall.Name,
+					"arguments": tc.FunctionCall.Arguments,
+				})
+			}
+
 			for _, t := range a.Adapters {
 				if t.Name() == tc.FunctionCall.Name {
 					found = true
@@ -126,6 +144,13 @@ Do not write code yourself. Delegate to Coding-Agent.`)},
 			}
 			if !found {
 				toolResult = fmt.Sprintf("Tool %s not found", tc.FunctionCall.Name)
+			}
+
+			if a.Publisher != nil {
+				a.Publisher.Publish("tool_call_result", map[string]interface{}{
+					"tool_name": tc.FunctionCall.Name,
+					"result":    toolResult,
+				})
 			}
 
 			messages = append(messages, llms.MessageContent{

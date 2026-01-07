@@ -52,9 +52,10 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	ca.thinkingTool = tools.NewThinkingTool()
 
 	// Initialize agents
-	repoAgent := agents.NewRepoAgent(llm, ca.fileOps, ca.searchOps, ca.sysOps, workDir)
-	codingAgent := agents.NewCodingAgent(llm, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool)
-	ca.conductor = agents.NewConductorAgent(llm, repoAgent, codingAgent)
+	publisher := messaging.NewMessagePublisher(ca.dispatcher)
+	repoAgent := agents.NewRepoAgent(llm, publisher, ca.fileOps, ca.searchOps, ca.sysOps, workDir)
+	codingAgent := agents.NewCodingAgent(llm, publisher, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool)
+	ca.conductor = agents.NewConductorAgent(llm, publisher, repoAgent, codingAgent)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {

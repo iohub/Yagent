@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"codeactor/internal/assistant/tools"
+	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -16,7 +17,7 @@ type CodingAgent struct {
 	Adapters []*tools.Adapter
 }
 
-func NewCodingAgent(llm llms.LLM, fileOps *tools.FileOperationsTool, sysOps *tools.SystemOperationsTool, replaceTool *tools.ReplaceBlockTool, thinkingTool *tools.ThinkingTool) *CodingAgent {
+func NewCodingAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, sysOps *tools.SystemOperationsTool, replaceTool *tools.ReplaceBlockTool, thinkingTool *tools.ThinkingTool) *CodingAgent {
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("read_file", "Read file content", fileOps.ExecuteReadFile).WithSchema(map[string]interface{}{
 			"type": "object",
@@ -70,7 +71,8 @@ func NewCodingAgent(llm llms.LLM, fileOps *tools.FileOperationsTool, sysOps *too
 
 	return &CodingAgent{
 		BaseAgent: BaseAgent{
-			LLM: llm,
+			LLM:       llm,
+			Publisher: publisher,
 		},
 		Adapters: adapters,
 	}
@@ -104,6 +106,9 @@ Do not blindly retry. Analyze -> Plan -> Fix.`)},
 	maxSteps := 3
 	for i := 0; i < maxSteps; i++ {
 		slog.Debug("CodingAgent calling LLM", "step", i)
+		if a.Publisher != nil {
+			a.Publisher.Publish("status_update", fmt.Sprintf("CodingAgent is thinking (step %d/%d)...", i+1, maxSteps))
+		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
 			slog.Error("CodingAgent LLM error", "error", err, "step", i)
@@ -111,6 +116,11 @@ Do not blindly retry. Analyze -> Plan -> Fix.`)},
 		}
 
 		msg := resp.Choices[0]
+		if msg.Content != "" {
+			if a.Publisher != nil {
+				a.Publisher.Publish("ai_response", msg.Content)
+			}
+		}
 
 		parts := []llms.ContentPart{llms.TextPart(msg.Content)}
 		for _, tc := range msg.ToolCalls {
@@ -130,6 +140,14 @@ Do not blindly retry. Analyze -> Plan -> Fix.`)},
 			var toolResult string
 			var err error
 			found := false
+
+			if a.Publisher != nil {
+				a.Publisher.Publish("tool_call_start", map[string]interface{}{
+					"tool_name": tc.FunctionCall.Name,
+					"arguments": tc.FunctionCall.Arguments,
+				})
+			}
+
 			for _, t := range a.Adapters {
 				if t.Name() == tc.FunctionCall.Name {
 					found = true
@@ -142,6 +160,13 @@ Do not blindly retry. Analyze -> Plan -> Fix.`)},
 			}
 			if !found {
 				toolResult = fmt.Sprintf("Tool %s not found", tc.FunctionCall.Name)
+			}
+
+			if a.Publisher != nil {
+				a.Publisher.Publish("tool_call_result", map[string]interface{}{
+					"tool_name": tc.FunctionCall.Name,
+					"result":    toolResult,
+				})
 			}
 
 			messages = append(messages, llms.MessageContent{

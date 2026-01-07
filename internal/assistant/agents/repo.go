@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"codeactor/internal/assistant/tools"
+	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -47,7 +48,7 @@ type RepoAgent struct {
 	projectDir string
 }
 
-func NewRepoAgent(llm llms.LLM, fileOps *tools.FileOperationsTool, searchOps *tools.SearchOperationsTool, sysOps *tools.SystemOperationsTool, projectDir string) *RepoAgent {
+func NewRepoAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, searchOps *tools.SearchOperationsTool, sysOps *tools.SystemOperationsTool, projectDir string) *RepoAgent {
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("read_file", "Read file content", fileOps.ExecuteReadFile).WithSchema(map[string]interface{}{
 			"type": "object",
@@ -84,7 +85,8 @@ func NewRepoAgent(llm llms.LLM, fileOps *tools.FileOperationsTool, searchOps *to
 
 	return &RepoAgent{
 		BaseAgent: BaseAgent{
-			LLM: llm,
+			LLM:       llm,
+			Publisher: publisher,
 		},
 		Adapters:   adapters,
 		projectDir: projectDir,
@@ -240,6 +242,9 @@ Output a clear, structured summary that gives a developer a solid "mental map" o
 	maxSteps := 3
 	for i := 0; i < maxSteps; i++ {
 		slog.Debug("RepoAgent calling LLM", "step", i, "messages", messages)
+		if a.Publisher != nil {
+			a.Publisher.Publish("status_update", fmt.Sprintf("RepoAgent is thinking (step %d/%d)...", i+1, maxSteps))
+		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
 			slog.Error("RepoAgent LLM error", "error", err, "step", i)
@@ -248,6 +253,12 @@ Output a clear, structured summary that gives a developer a solid "mental map" o
 
 		msg := resp.Choices[0]
 		slog.Debug("RepoAgent LLM response", "step", i, "message", msg)
+
+		if msg.Content != "" {
+			if a.Publisher != nil {
+				a.Publisher.Publish("ai_response", msg.Content)
+			}
+		}
 		parts := []llms.ContentPart{llms.TextPart(msg.Content)}
 		for _, tc := range msg.ToolCalls {
 			parts = append(parts, tc)
@@ -266,6 +277,14 @@ Output a clear, structured summary that gives a developer a solid "mental map" o
 			var toolResult string
 			var err error
 			found := false
+
+			if a.Publisher != nil {
+				a.Publisher.Publish("tool_call_start", map[string]interface{}{
+					"tool_name": tc.FunctionCall.Name,
+					"arguments": tc.FunctionCall.Arguments,
+				})
+			}
+
 			for _, t := range a.Adapters {
 				if t.Name() == tc.FunctionCall.Name {
 					found = true
@@ -278,6 +297,13 @@ Output a clear, structured summary that gives a developer a solid "mental map" o
 			}
 			if !found {
 				toolResult = fmt.Sprintf("Tool %s not found", tc.FunctionCall.Name)
+			}
+
+			if a.Publisher != nil {
+				a.Publisher.Publish("tool_call_result", map[string]interface{}{
+					"tool_name": tc.FunctionCall.Name,
+					"result":    toolResult,
+				})
 			}
 
 			messages = append(messages, llms.MessageContent{
