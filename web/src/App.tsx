@@ -10,7 +10,7 @@ function App() {
   return (
     <div className="flex h-screen bg-[#1e1e1e] font-sans text-[#cccccc] overflow-hidden">
       {/* Sidebar / Configuration Area */}
-      <div className="w-80 bg-[#252526] border-r border-[#3e3e42] flex flex-col shadow-lg z-10">
+      <div className="w-1/3 bg-[#252526] border-r border-[#3e3e42] flex flex-col shadow-lg z-10">
         <div className="p-4 border-b border-[#3e3e42] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="bg-[#007acc] p-1.5 rounded">
