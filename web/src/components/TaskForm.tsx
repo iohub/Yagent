@@ -153,7 +153,7 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
           value={taskDesc}
           onChange={(e) => setTaskDesc(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask v0 to build or plan..."
+          placeholder="Ask the agent to perform a task..."
           className="w-full bg-transparent text-neutral-200 placeholder-neutral-500 resize-none focus:outline-none text-sm min-h-[80px] max-h-[200px]"
           rows={1}
         />
