@@ -8,48 +8,48 @@ function App() {
   const { taskId, status, messages, error, isLoading, startTask } = useTask();
 
   return (
-    <div className="flex h-screen bg-gray-100 font-sans text-gray-900">
+    <div className="flex h-screen bg-[#1e1e1e] font-sans text-[#cccccc] overflow-hidden">
       {/* Sidebar / Configuration Area */}
-      <div className="w-96 bg-white border-r border-gray-200 flex flex-col shadow-lg z-10">
-        <div className="p-6 border-b border-gray-100">
-          <div className="flex items-center gap-3 mb-1">
-            <div className="bg-blue-600 p-2 rounded-lg">
-              <Code2 className="w-6 h-6 text-white" />
+      <div className="w-80 bg-[#252526] border-r border-[#3e3e42] flex flex-col shadow-lg z-10">
+        <div className="p-4 border-b border-[#3e3e42] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="bg-[#007acc] p-1.5 rounded">
+              <Code2 className="w-5 h-5 text-white" />
             </div>
-            <h1 className="text-xl font-bold text-gray-800 tracking-tight">CodeActor</h1>
+            <h1 className="text-lg font-bold text-[#cccccc] tracking-tight">CodeActor</h1>
           </div>
-          <p className="text-sm text-gray-500 ml-1">AI-Powered Coding Agent</p>
+          <span className="text-[10px] bg-[#3e3e42] px-1.5 py-0.5 rounded text-[#cccccc]">v0.1.0</span>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="space-y-8">
+        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+          <div className="space-y-6">
             <section>
-              <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Terminal className="w-4 h-4" />
+              <h2 className="text-xs font-semibold text-[#6f6f6f] uppercase tracking-wider mb-3 flex items-center gap-2">
+                <Terminal className="w-3 h-3" />
                 New Task
               </h2>
               <TaskForm onSubmit={startTask} isLoading={isLoading} />
             </section>
 
             {taskId && (
-              <section className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3 flex items-center gap-2">
-                  <Activity className="w-4 h-4" />
+              <section className="bg-[#2d2d2d] rounded-sm p-3 border border-[#3e3e42]">
+                <h2 className="text-xs font-semibold text-[#6f6f6f] uppercase tracking-wider mb-2 flex items-center gap-2">
+                  <Activity className="w-3 h-3" />
                   Status
                 </h2>
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-500">Task ID</span>
-                    <span className="font-mono text-xs bg-gray-200 px-2 py-1 rounded">{taskId.slice(0, 8)}...</span>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-[#969696]">Task ID</span>
+                    <span className="font-mono bg-[#3c3c3c] px-1.5 py-0.5 rounded text-[#cccccc]">{taskId.slice(0, 8)}...</span>
                   </div>
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-500">State</span>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-[#969696]">State</span>
                     <span className={cn(
-                      "px-2 py-0.5 rounded-full text-xs font-medium uppercase",
+                      "px-1.5 py-0.5 rounded text-[10px] font-medium uppercase border",
                       {
-                        'bg-blue-100 text-blue-700': status === 'running',
-                        'bg-green-100 text-green-700': status === 'finished',
-                        'bg-red-100 text-red-700': status === 'failed',
+                        'bg-[#007acc]/20 text-[#007acc] border-[#007acc]/30': status === 'running',
+                        'bg-green-500/20 text-green-400 border-green-500/30': status === 'finished',
+                        'bg-red-500/20 text-red-400 border-red-500/30': status === 'failed',
                       }
                     )}>
                       {status}
@@ -60,26 +60,29 @@ function App() {
             )}
 
             {error && (
-              <div className="p-4 bg-red-50 text-red-700 rounded-lg text-sm border border-red-100">
+              <div className="p-3 bg-red-900/20 text-red-300 rounded-sm text-xs border border-red-900/30">
                 {error}
               </div>
             )}
           </div>
         </div>
         
-        <div className="p-4 border-t border-gray-100 text-xs text-center text-gray-400">
-          v0.1.0 • Connected to Local Agent
+        <div className="p-2 border-t border-[#3e3e42] text-[10px] text-center text-[#6f6f6f]">
+          Connected to Local Agent
         </div>
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 bg-gray-50/50">
-        <header className="h-16 bg-white border-b border-gray-200 flex items-center px-6 justify-between shadow-sm">
-          <h2 className="font-semibold text-gray-800">Task Execution Log</h2>
+      <div className="flex-1 flex flex-col min-w-0 bg-[#1e1e1e]">
+        <header className="h-10 bg-[#1e1e1e] border-b border-[#3e3e42] flex items-center px-4 justify-between">
+          <div className="flex items-center gap-2 text-sm text-[#cccccc]">
+            <Terminal className="w-4 h-4 text-[#007acc]" />
+            <span className="font-medium">Task Execution Log</span>
+          </div>
           {status === 'running' && (
-            <div className="flex items-center gap-2 text-sm text-blue-600 animate-pulse">
-              <span className="w-2 h-2 bg-blue-600 rounded-full"></span>
-              Agent is working...
+            <div className="flex items-center gap-2 text-xs text-[#007acc]">
+              <span className="w-1.5 h-1.5 bg-[#007acc] rounded-full animate-pulse"></span>
+              Executing...
             </div>
           )}
         </header>

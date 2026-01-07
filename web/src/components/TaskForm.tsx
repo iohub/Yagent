@@ -20,9 +20,9 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 p-6 bg-white rounded-lg shadow-sm border border-gray-200">
+    <form onSubmit={handleSubmit} className="space-y-3">
       <div>
-        <label htmlFor="projectDir" className="block text-sm font-medium text-gray-700 mb-1">
+        <label htmlFor="projectDir" className="block text-xs font-medium text-[#969696] mb-1">
           Project Directory
         </label>
         <Input
@@ -34,7 +34,7 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
         />
       </div>
       <div>
-        <label htmlFor="taskDesc" className="block text-sm font-medium text-gray-700 mb-1">
+        <label htmlFor="taskDesc" className="block text-xs font-medium text-[#969696] mb-1">
           Task Description
         </label>
         <Input
@@ -48,7 +48,7 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
       <Button type="submit" disabled={isLoading} className="w-full">
         {isLoading ? 'Starting...' : (
           <>
-            <Play className="mr-2 h-4 w-4" /> Start Task
+            <Play className="mr-2 h-3 w-3" /> Start Task
           </>
         )}
       </Button>

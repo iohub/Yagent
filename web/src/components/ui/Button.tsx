@@ -12,15 +12,15 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         className={cn(
-          'inline-flex items-center justify-center rounded-md font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none',
+          'inline-flex items-center justify-center rounded-sm font-medium transition-colors focus:outline-none focus:ring-1 focus:ring-offset-0 disabled:opacity-50 disabled:pointer-events-none',
           {
-            'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500': variant === 'primary',
-            'bg-gray-200 text-gray-900 hover:bg-gray-300 focus:ring-gray-500': variant === 'secondary',
-            'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500': variant === 'danger',
-            'bg-transparent text-gray-700 hover:bg-gray-100': variant === 'ghost',
-            'h-8 px-3 text-sm': size === 'sm',
-            'h-10 px-4 py-2': size === 'md',
-            'h-12 px-6 text-lg': size === 'lg',
+            'bg-[#007acc] text-white hover:bg-[#0062a3] focus:ring-[#007acc]': variant === 'primary',
+            'bg-[#3c3c3c] text-[#cccccc] hover:bg-[#4a4a4a] focus:ring-[#505050]': variant === 'secondary',
+            'bg-red-700 text-white hover:bg-red-800 focus:ring-red-600': variant === 'danger',
+            'bg-transparent text-[#cccccc] hover:bg-[#3c3c3c]': variant === 'ghost',
+            'h-7 px-3 text-xs': size === 'sm',
+            'h-8 px-4 py-1 text-sm': size === 'md',
+            'h-10 px-6 text-base': size === 'lg',
           },
           className
         )}
