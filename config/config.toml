@@ -4,8 +4,17 @@ server_port = 9080
 
 [llm]
 # 选择当前使用的提供商
-use_provider = "streamlake"
+# use_provider = "streamlake"
 # use_provider = "siliconflow"
+use_provider = "xiaomi"
+
+# XiaoMI配置
+[llm.providers.xiaomi]
+model = "mimo-v2-flash"
+temperature = 0.0
+max_tokens = 8000
+api_base_url = "https://api.xiaomimimo.com/v1"
+api_key = "your-key"
 
 # 阿里云配置
 [llm.providers.aliyun]
@@ -18,15 +27,16 @@ api_key = "your-key"
 
 # SiliconFlow配置
 [llm.providers.siliconflow]
-model = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+model = "deepseek-ai/DeepSeek-V3.2"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.siliconflow.cn/v1"
-api_key = "sk-REPLACE-ME"
+api_key = "your-key"
 
 # StreamLake配置
 [llm.providers.streamlake]
-model = "KAT-Coder-Air-V1"
+# model = "KAT-Coder-Air-V1"
+model = "ep-w1klde-1767706500222997285"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints"
