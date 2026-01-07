@@ -16,9 +16,10 @@ type ConductorAgent struct {
 	RepoAgent   *RepoAgent
 	CodingAgent *CodingAgent
 	Adapters    []*tools.Adapter
+	maxSteps    int
 }
 
-func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo *RepoAgent, coding *CodingAgent) *ConductorAgent {
+func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo *RepoAgent, coding *CodingAgent, maxSteps int) *ConductorAgent {
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
@@ -52,6 +53,7 @@ func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo
 		RepoAgent:   repo,
 		CodingAgent: coding,
 		Adapters:    []*tools.Adapter{delegateRepo, delegateCoding},
+		maxSteps:    maxSteps,
 	}
 }
 
@@ -85,11 +87,10 @@ Do not write code yourself. Delegate to Coding-Agent.`)},
 		llmTools[i] = ad.ToLLMSTool()
 	}
 
-	maxSteps := 3
-	for i := 0; i < maxSteps; i++ {
+	for i := 0; i < a.maxSteps; i++ {
 		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
 		if a.Publisher != nil {
-			a.Publisher.Publish("status_update", fmt.Sprintf("ConductorAgent is thinking (step %d/%d)...", i+1, maxSteps))
+			a.Publisher.Publish("status_update", fmt.Sprintf("ConductorAgent is thinking (step %d/%d)...", i+1, a.maxSteps))
 		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {

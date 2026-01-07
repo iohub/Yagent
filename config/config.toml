@@ -11,8 +11,8 @@ use_provider = "xiaomi"
 # XiaoMI配置
 [llm.providers.xiaomi]
 model = "mimo-v2-flash"
-temperature = 0.0
-max_tokens = 8000
+temperature = 0.3
+max_tokens = 28000
 api_base_url = "https://api.xiaomimimo.com/v1"
 api_key = "your-key"
 
@@ -112,3 +112,8 @@ aws_region = "us-east-1"
 
 [app]
 enable_streaming = true
+
+[agent]
+conductor_max_steps = 20
+coding_max_steps = 30
+repo_max_steps = 20

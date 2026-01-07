@@ -15,9 +15,10 @@ import (
 type CodingAgent struct {
 	BaseAgent
 	Adapters []*tools.Adapter
+	maxSteps int
 }
 
-func NewCodingAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, sysOps *tools.SystemOperationsTool, replaceTool *tools.ReplaceBlockTool, thinkingTool *tools.ThinkingTool) *CodingAgent {
+func NewCodingAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, sysOps *tools.SystemOperationsTool, replaceTool *tools.ReplaceBlockTool, thinkingTool *tools.ThinkingTool, maxSteps int) *CodingAgent {
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("read_file", "Read file content", fileOps.ExecuteReadFile).WithSchema(map[string]interface{}{
 			"type": "object",
@@ -75,6 +76,7 @@ func NewCodingAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps
 			Publisher: publisher,
 		},
 		Adapters: adapters,
+		maxSteps: maxSteps,
 	}
 }
 
@@ -103,11 +105,10 @@ Do not blindly retry. Analyze -> Plan -> Fix.`)},
 		llmTools[i] = ad.ToLLMSTool()
 	}
 
-	maxSteps := 3
-	for i := 0; i < maxSteps; i++ {
+	for i := 0; i < a.maxSteps; i++ {
 		slog.Debug("CodingAgent calling LLM", "step", i)
 		if a.Publisher != nil {
-			a.Publisher.Publish("status_update", fmt.Sprintf("CodingAgent is thinking (step %d/%d)...", i+1, maxSteps))
+			a.Publisher.Publish("status_update", fmt.Sprintf("CodingAgent is thinking (step %d/%d)...", i+1, a.maxSteps))
 		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {

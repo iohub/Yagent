@@ -46,9 +46,10 @@ type RepoAgent struct {
 	BaseAgent
 	Adapters   []*tools.Adapter
 	projectDir string
+	maxSteps   int
 }
 
-func NewRepoAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, searchOps *tools.SearchOperationsTool, sysOps *tools.SystemOperationsTool, projectDir string) *RepoAgent {
+func NewRepoAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, searchOps *tools.SearchOperationsTool, sysOps *tools.SystemOperationsTool, projectDir string, maxSteps int) *RepoAgent {
 	/**
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("read_file", "Read file content", fileOps.ExecuteReadFile).WithSchema(map[string]interface{}{
@@ -92,6 +93,7 @@ func NewRepoAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *
 		},
 		Adapters:   []*tools.Adapter{},
 		projectDir: projectDir,
+		maxSteps:   maxSteps,
 	}
 }
 
@@ -241,11 +243,10 @@ Output a clear, structured summary that gives a developer a solid "mental map" o
 		llmTools[i] = ad.ToLLMSTool()
 	}
 
-	maxSteps := 3
-	for i := 0; i < maxSteps; i++ {
+	for i := 0; i < a.maxSteps; i++ {
 		slog.Debug("RepoAgent calling LLM", "step", i, "messages", messages)
 		if a.Publisher != nil {
-			a.Publisher.Publish("status_update", fmt.Sprintf("RepoAgent is thinking (step %d/%d)...", i+1, maxSteps))
+			a.Publisher.Publish("status_update", fmt.Sprintf("RepoAgent is thinking (step %d/%d)...", i+1, a.maxSteps))
 		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {

@@ -7,6 +7,7 @@ import (
 
 	"codeactor/internal/assistant/agents"
 	"codeactor/internal/assistant/tools"
+	"codeactor/internal/config"
 	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
@@ -15,6 +16,7 @@ import (
 // CodingAssistant is the main entry point for the agent system.
 type CodingAssistant struct {
 	llm                  llms.LLM
+	config               *config.Config
 	conductor            *agents.ConductorAgent
 	dispatcher           *messaging.MessageDispatcher
 	mu                   sync.Mutex
@@ -35,6 +37,7 @@ func NewCodingAssistant(client *Client) (*CodingAssistant, error) {
 		userResponseChannels: make(map[string]chan string),
 		logger:               slog.Default().With("component", "coding_assistant"),
 		llm:                  client.llm,
+		config:               client.config,
 	}
 	client.assistant = ca
 	return ca, nil
@@ -53,9 +56,26 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 
 	// Initialize agents
 	publisher := messaging.NewMessagePublisher(ca.dispatcher)
-	repoAgent := agents.NewRepoAgent(llm, publisher, ca.fileOps, ca.searchOps, ca.sysOps, workDir)
-	codingAgent := agents.NewCodingAgent(llm, publisher, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool)
-	ca.conductor = agents.NewConductorAgent(llm, publisher, repoAgent, codingAgent)
+	// Get max steps from config, default to 10 if not set
+	repoMaxSteps := 10
+	codingMaxSteps := 10
+	conductorMaxSteps := 10
+
+	if ca.config != nil {
+		if ca.config.Agent.RepoMaxSteps > 0 {
+			repoMaxSteps = ca.config.Agent.RepoMaxSteps
+		}
+		if ca.config.Agent.CodingMaxSteps > 0 {
+			codingMaxSteps = ca.config.Agent.CodingMaxSteps
+		}
+		if ca.config.Agent.ConductorMaxSteps > 0 {
+			conductorMaxSteps = ca.config.Agent.ConductorMaxSteps
+		}
+	}
+
+	repoAgent := agents.NewRepoAgent(llm, publisher, ca.fileOps, ca.searchOps, ca.sysOps, workDir, repoMaxSteps)
+	codingAgent := agents.NewCodingAgent(llm, publisher, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool, codingMaxSteps)
+	ca.conductor = agents.NewConductorAgent(llm, publisher, repoAgent, codingAgent, conductorMaxSteps)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
