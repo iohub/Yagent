@@ -152,17 +152,26 @@ func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse
 }
 
 func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
-	systemPrompt := `You are the Repo-Agent, an expert code analyst. Your goal is to help the user understand the codebase.
+	systemPrompt := `You are the Repo-Agent, an expert code analyst. Your goal is to analyze the repository investigation report and summarize core information to facilitate subsequent coding tasks.
 You are READ-ONLY. You cannot modify files.
 
-You have been provided with a pre-investigation report of the repository.
-Use this information to answer user queries efficiently.
-- **Directory Tree**: Use this to understand the project structure and locate relevant files.
-- **Core Functions**: These are key functions with their call graph. Use them to understand the control flow and main components.
-- **File Skeletons**: These provide outlines of important files. Use them to understand the code organization without reading the full content.
+You have been provided with a investigation report of the repository.
+Your task is to analyze this data to provide a comprehensive summary including:
 
-If the provided information is sufficient, answer the user's question directly.
-If you need more details, use your available tools (read_file, grep_search, etc.) to explore further.`
+1. **Technical Stack**: Identify the primary programming languages, frameworks, and key libraries used in the project.
+2. **Repository Structure**: Describe the high-level organization of the codebase. Explain the purpose of key directories and how the project is structured (e.g., hexagonal architecture, MVC, etc.).
+3. **Core Components**:
+   - Identify the most important functions and components based on the "Core Functions" list.
+   - Highlight critical data flows or control flows.
+4. **Key Entry Points**: Identify where the application starts or where the main logic resides.
+
+Use the provided investigation data:
+- **Directory Tree**: For structure analysis.
+- **Core Functions**: For component and dependency analysis.
+- **File Skeletons**: For technical stack identification and understanding file contents without reading them fully.
+
+If the provided investigation report is insufficient for a complete summary, use your available tools (read_file, grep_search, etc.) to gather missing details.
+Output a clear, structured summary that gives a developer a solid "mental map" of the codebase.`
 
 	if a.projectDir == "" {
 		return "", fmt.Errorf("project_dir is empty")
@@ -174,8 +183,7 @@ If you need more details, use your available tools (read_file, grep_search, etc.
 		slog.Warn("RepoAgent pre-investigation failed", "error", err)
 	} else {
 		// Add investigation results to system prompt
-		info := fmt.Sprintf("\n\nRepository Information:\nProject ID: %s\nTotal Functions: %d\n",
-			investigation.Data.ProjectID, investigation.Data.TotalFunctions)
+		info := "\n\nRepository Information:\n"
 
 		info += "\nDirectory Tree:\n" + investigation.Data.DirectoryTree + "\n"
 
