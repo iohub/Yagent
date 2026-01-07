@@ -77,7 +77,7 @@ function App() {
         <header className="h-10 bg-[#1e1e1e] border-b border-[#3e3e42] flex items-center px-4 justify-between">
           <div className="flex items-center gap-2 text-sm text-[#cccccc]">
             <Terminal className="w-4 h-4 text-[#007acc]" />
-            <span className="font-medium">Task Execution Log</span>
+            <span className="font-medium">Agent events</span>
           </div>
           {status === 'running' && (
             <div className="flex items-center gap-2 text-xs text-[#007acc]">
