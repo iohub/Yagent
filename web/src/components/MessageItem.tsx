@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { Message } from '../types';
 import { cn } from '../lib/utils';
 import { Bot, User, Terminal, Cpu, ChevronDown, ChevronRight, Activity, CheckCircle2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface MessageItemProps {
   message: Message;
@@ -119,7 +121,13 @@ export function MessageItem({ message }: MessageItemProps) {
       >
         {isUser ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-[#007acc]" />}
       </div>
-      <div className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</div>
+      {isUser ? (
+        <div className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</div>
+      ) : (
+        <div className="prose prose-invert prose-sm max-w-none break-words leading-relaxed">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+        </div>
+      )}
     </div>
   );
 }

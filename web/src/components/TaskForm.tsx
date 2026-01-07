@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { SlidersHorizontal, ArrowUp, Square, FolderGit2, X, Clock, ChevronLeft } from 'lucide-react';
+import { SlidersHorizontal, ArrowUp, Square, FolderGit2, Clock, ChevronLeft } from 'lucide-react';
 
 interface TaskFormProps {
   onSubmit: (projectDir: string, taskDesc: string) => void;
