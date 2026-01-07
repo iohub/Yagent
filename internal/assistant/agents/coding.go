@@ -29,10 +29,7 @@ func NewCodingAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps
 			},
 			"required": []string{"target_file"},
 		}),
-		tools.NewAdapter("replace_block", replaceTool.Description(), func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			inputBytes, _ := json.Marshal(params)
-			return replaceTool.Call(ctx, string(inputBytes))
-		}).WithSchema(map[string]interface{}{
+		tools.NewAdapter("replace_block", replaceTool.Description(), replaceTool.ExecuteReplaceBlock).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"file_path":     map[string]interface{}{"type": "string", "description": "File path to modify"},
