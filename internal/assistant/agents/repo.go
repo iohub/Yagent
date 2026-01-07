@@ -141,7 +141,7 @@ Use the provided investigation data:
 - **Core Functions**: For component and dependency analysis.
 - **File Skeletons**: For technical stack identification and understanding file contents without reading them fully.
 
-If the provided investigation report is insufficient for a complete summary, use your available tools (read_file, grep_search, etc.) to gather missing details.
+based on provided investigation report is insufficient for a complete summary
 Output a clear, structured summary that gives a developer a solid "mental map" of the codebase.`
 
 	if a.projectDir == "" {
