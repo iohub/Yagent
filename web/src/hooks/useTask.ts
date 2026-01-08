@@ -56,7 +56,7 @@ export function useTask() {
             let content = data;
             if (typeof data === 'object' && data !== null) {
                 const toolName = data.tool_name || 'unknown';
-                content = `[${eventType}] ${toolName}\n${JSON.stringify(data, null, 2)}`;
+                content = `[${eventType}] ${toolName}\n${JSON.stringify(JSON.parse(data.result), null, 2)}`;
             } else {
                 content = `[${eventType}] ${String(data)}`;
             }
