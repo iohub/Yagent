@@ -1,7 +1,7 @@
 import { useTask } from './hooks/useTask';
 import { TaskForm } from './components/TaskForm';
 import { MessageList } from './components/MessageList';
-import { Code2, Activity, Terminal } from 'lucide-react';
+import { Activity, Terminal } from 'lucide-react';
 import { cn } from './lib/utils';
 import { ThemeProvider } from './components/theme-provider';
 import { ThemeToggle } from './components/theme-toggle';
