@@ -34,7 +34,11 @@ func NewServer(codingAssistant *assistant.CodingAssistant) *Server {
 	HandleWebSocket(m, taskManager, codingAssistant)
 
 	// 使用 gin 创建路由
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
+		SkipPaths: []string{"/api/task_status"},
+	}))
 
 	server := &Server{
 		taskManager:     taskManager,

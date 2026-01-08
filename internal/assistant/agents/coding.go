@@ -130,7 +130,6 @@ Do not blindly retry. Analyze -> Plan -> Fix.`)},
 	}
 
 	for i := 0; i < a.maxSteps; i++ {
-		slog.Debug("CodingAgent calling LLM", "step", i)
 		if a.Publisher != nil {
 			a.Publisher.Publish("status_update", fmt.Sprintf("CodingAgent is thinking (step %d/%d)...", i+1, a.maxSteps))
 		}
