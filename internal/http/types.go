@@ -14,6 +14,7 @@ type SocketMessage struct {
 	Type    string      `json:"type"`
 	Event   string      `json:"event"`
 	Data    interface{} `json:"data"`
+	From    string      `json:"from,omitempty"`
 	TaskID  string      `json:"task_id,omitempty"`
 	Message string      `json:"message,omitempty"`
 }

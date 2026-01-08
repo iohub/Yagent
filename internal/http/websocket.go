@@ -26,6 +26,7 @@ func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant
 			Type:  "connection",
 			Event: "connected",
 			Data:  gin.H{"message": "Connected to AI Coding Assistant"},
+			From:  "System",
 		}
 		if data, err := json.Marshal(message); err == nil {
 			s.Write(data)
@@ -85,6 +86,7 @@ func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskMana
 		Type:  "task_created",
 		Event: "task_created",
 		Data:  gin.H{"task_id": task.ID},
+		From:  "System",
 	}
 	if data, err := json.Marshal(response); err == nil {
 		s.Write(data)
@@ -145,6 +147,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 			socketMsg := SocketMessage{
 				Type:  "realtime",
 				Event: event.Type,
+				From:  event.From,
 				Data: gin.H{
 					"task_id":   chatData.TaskID,
 					"content":   event.Content,
@@ -201,6 +204,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 				Type:  "chat_message",
 				Event: "ai_response",
 				Data:  errorMsg,
+				From:  "System",
 			}
 			if data, err := json.Marshal(response); err == nil {
 				s.Write(data)
@@ -222,6 +226,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 			Type:  "chat_message",
 			Event: "ai_response",
 			Data:  aiMsg,
+			From:  "CodingAgent",
 		}
 		if data, err := json.Marshal(response); err == nil {
 			s.Write(data)
@@ -271,6 +276,7 @@ func handleGetMemory(s *melody.Session, msg SocketMessage, taskManager *TaskMana
 			"size":     task.Memory.Size(),
 			"max_size": task.Memory.MaxSize,
 		},
+		From: "System",
 	}
 	if data, err := json.Marshal(response); err == nil {
 		s.Write(data)
@@ -305,6 +311,7 @@ func handleClearMemory(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 		Type:  "memory",
 		Event: "memory_cleared",
 		Data:  gin.H{"message": "Memory cleared successfully"},
+		From:  "System",
 	}
 	if data, err := json.Marshal(response); err == nil {
 		s.Write(data)
@@ -316,6 +323,7 @@ func sendError(s *melody.Session, message string) {
 		Type:    "error",
 		Event:   "error",
 		Message: message,
+		From:    "System",
 	}
 	if data, err := json.Marshal(errorMsg); err == nil {
 		s.Write(data)

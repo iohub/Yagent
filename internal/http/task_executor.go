@@ -41,6 +41,7 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 			Type:   event.Type,
 			Event:  event.Type,
 			Data:   event.Content,
+			From:   event.From,
 			TaskID: taskID,
 		}
 		taskManager.BroadcastMessage(socketMsg)

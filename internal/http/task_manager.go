@@ -112,6 +112,7 @@ func (tm *TaskManager) sendTaskUpdate(task *Task) {
 			Type:  "task_update",
 			Event: "task_update",
 			Data:  update,
+			From:  "System",
 		}
 
 		if data, err := json.Marshal(message); err == nil {

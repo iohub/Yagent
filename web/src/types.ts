@@ -12,6 +12,7 @@ export interface Message {
   type: 'system' | 'human' | 'assistant' | 'tool';
   content: string;
   event?: string; // For websocket messages
+  from?: string;
 }
 
 export interface StartTaskResponse {
