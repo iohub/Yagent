@@ -55,6 +55,28 @@ type RepoAgent struct {
 }
 
 func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, publisher *messaging.MessagePublisher, maxSteps int) *RepoAgent {
+	var toolDefs []ToolDefinition
+	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
+		slog.Error("Failed to unmarshal tools", "error", err)
+	}
+
+	adapters := make([]*tools.Adapter, 0)
+	for _, def := range toolDefs {
+		var fn tools.ToolFunc
+		switch def.Name {
+		case "read_file":
+			fn = globalCtx.FileOps.ExecuteReadFile
+		case "search_by_regex":
+			fn = globalCtx.SearchOps.ExecuteGrepSearch
+		case "list_dir":
+			fn = globalCtx.FileOps.ExecuteListDir
+		default:
+			continue
+		}
+
+		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		adapters = append(adapters, adapter)
+	}
 
 	return &RepoAgent{
 		BaseAgent: BaseAgent{
@@ -62,7 +84,7 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, publisher *messa
 			Publisher: publisher,
 		},
 		GlobalCtx: globalCtx,
-		Adapters:  []*tools.Adapter{},
+		Adapters:  adapters,
 		maxSteps:  maxSteps,
 	}
 }
