@@ -63,8 +63,8 @@ export function MessageList({ messages }: MessageListProps) {
             key={idx} 
             from={group.from} 
             messages={group.messages}
-            // Keep the last group open by default, collapse others to reduce clutter
-            defaultOpen={idx === groupedMessages.length - 1}
+            // Open the first 3 groups and the last 3 groups by default
+            defaultOpen={idx < 3 || idx >= groupedMessages.length - 3}
           />
         ))
       )}

@@ -15,10 +15,18 @@ export function MessageGroup({ from, messages, defaultOpen = true }: MessageGrou
 
   // Determine icon based on 'from'
   const getIcon = () => {
-    // Icons can be optional or very subtle in this minimalist design
-    // Keeping them but making them part of the header text line if needed
-    // Or we can just use the Chevron as the main icon
-    return null; 
+    const lowerFrom = from.toLowerCase();
+    if (lowerFrom.includes('user') || lowerFrom.includes('human')) 
+      return <User className="w-4 h-4 text-primary/70" />;
+    if (lowerFrom.includes('system')) 
+      return <Server className="w-4 h-4 text-orange-500/70" />;
+    if (lowerFrom.includes('coding') || lowerFrom.includes('assistant')) 
+      return <Bot className="w-4 h-4 text-green-500/70" />;
+    if (lowerFrom.includes('tool'))
+      return <Terminal className="w-4 h-4 text-purple-500/70" />;
+    
+    // Default for other agents
+    return <Sparkles className="w-4 h-4 text-indigo-500/70" />;
   };
 
   return (
@@ -34,7 +42,10 @@ export function MessageGroup({ from, messages, defaultOpen = true }: MessageGrou
           <ChevronRight className="w-4 h-4" />
         </div>
         
-        <span className="font-medium text-foreground/90">{from}</span>
+        <div className="flex items-center gap-2">
+           {getIcon()}
+           <span className="font-medium text-foreground/90">{from}</span>
+        </div>
         
         <span className="text-xs text-muted-foreground/50 ml-1">
           {messages.length} msg{messages.length !== 1 ? 's' : ''}
