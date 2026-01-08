@@ -57,7 +57,7 @@ You must process every interaction using the following thought process, followed
 *   Current Step Status: ...
 *   Reasoning for next action: ...
 
-### 2. Action (Choose A or B)
+### 2. Action
 
 **Option A: Delegate (Internal Monologue -> Tool Call)**
 *   Call the sub-agent with specific arguments:
