@@ -108,21 +108,21 @@
   },
   {
     "name": "thinking",
-    "description": "Use this tool to analyze errors and plan fixes. Input: error_message, current_action, observation.",
+    "description": "A cognitive tool for self-correction and deep analysis. Use this IMMEDIATELY when an action fails, an error occurs, or you are unsure how to proceed. Do NOT use this tool to execute actions (like writing files or running commands). Instead, use it to generate a 'Chain of Thought' log to: 1. Analyze the root cause of the error or unexpected result. 2. Brainstorm 2-3 potential solutions with their pros and cons. 3. Select the best solution to proceed. This helps avoid blind retries and infinite loops.",
     "parameters": {
       "type": "object",
       "properties": {
         "error_message": {
           "type": "string",
-          "description": "The error encountered"
+          "description": "The error message, failure description, or the problem to be solved."
         },
         "current_action": {
           "type": "string",
-          "description": "Action that failed"
+          "description": "The action that was attempted and failed, or the current context."
         },
         "observation": {
           "type": "string",
-          "description": "What happened"
+          "description": "Additional context, observations, or what happened."
         }
       },
       "required": [
