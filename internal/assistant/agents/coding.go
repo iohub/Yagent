@@ -16,7 +16,7 @@ import (
 //go:embed coding.prompt.md
 var codingPrompt string
 
-//go:embed coding_tools.json
+//go:embed coding.tools.json
 var codingToolsJSON []byte
 
 type ToolDefinition struct {
