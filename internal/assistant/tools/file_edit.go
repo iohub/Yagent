@@ -26,7 +26,57 @@ func (t *ReplaceBlockTool) Name() string {
 }
 
 func (t *ReplaceBlockTool) Description() string {
-	return "PROPOSE a command to run on behalf of the user.\nIf you have this tool, note that you DO have the ability to run commands directly on the USER's system.\nNote that the user will have to approve the command before it is executed.\nThe user may reject it if it is not to their liking, or may modify the command before approving it.  If they do change it, take those changes into account.\nThe actual command will NOT execute until the user approves it. The user may not approve it immediately. Do NOT assume the command has started running.\nIf the step is WAITING for user approval, it has NOT started running.\nIn using these tools, adhere to the following guidelines:\n1. Based on the contents of the conversation, you will be told if you are in the same shell as a previous step or a different shell.\n2. If in a new shell, you should `cd` to the appropriate directory and do necessary setup in addition to running the command.\n3. If in the same shell, LOOK IN CHAT HISTORY for your current working directory.\n4. For ANY commands that would require user interaction, ASSUME THE USER IS NOT AVAILABLE TO INTERACT and PASS THE NON-INTERACTIVE FLAGS (e.g. --yes for npx).\n5. If the command would use a pager, append ` | cat` to the command.\n6. For commands that are long running/expected to run indefinitely until interruption, please run them in the background. To run jobs in the background, set `is_background` to true rather than changing the details of the command.\n7. Dont include any newlines in the command."
+	return `This is a tool for editing files. For moving or renaming files, you should generally use the Bash tool with the 'mv' command instead. For larger edits, use the Write tool to overwrite files. 
+Before using this tool:
+
+    Use the View tool to understand the file's contents and context
+
+    Verify the directory path is correct (only applicable when creating new files):
+        Use the LS tool to verify the parent directory exists and is the correct location
+
+To make a file edit, provide the following:
+
+    file_path: The absolute path to the file to modify (must be absolute, not relative)
+    old_string: The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)
+    new_string: The edited text to replace the old_string
+
+The tool will replace ONE occurrence of old_string with new_string in the specified file.
+
+CRITICAL REQUIREMENTS FOR USING THIS TOOL:
+
+    UNIQUENESS: The old_string MUST uniquely identify the specific instance you want to change. This means:
+        Include AT LEAST 3-5 lines of context BEFORE the change point
+        Include AT LEAST 3-5 lines of context AFTER the change point
+        Include all whitespace, indentation, and surrounding code exactly as it appears in the file
+
+    SINGLE INSTANCE: This tool can only change ONE instance at a time. If you need to change multiple instances:
+        Make separate calls to this tool for each instance
+        Each call must uniquely identify its specific instance using extensive context
+
+    VERIFICATION: Before using this tool:
+        Check how many instances of the target text exist in the file
+        If multiple instances exist, gather enough context to uniquely identify each one
+        Plan separate tool calls for each instance
+
+WARNING: If you do not follow these requirements:
+
+    The tool will fail if old_string matches multiple locations
+    The tool will fail if old_string doesn't match exactly (including whitespace)
+    You may change the wrong instance if you don't include enough context
+
+When making edits:
+
+    Ensure the edit results in idiomatic, correct code
+    Do not leave the code in a broken state
+    Always use absolute file paths (starting with /)
+
+If you want to create a new file, use:
+
+    A new file path, including dir name if needed
+    An empty old_string
+    The new file's contents as new_string
+
+Remember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each.`
 }
 
 func (t *ReplaceBlockTool) resolveFilePath(filePath string) string {
@@ -44,22 +94,22 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 		return nil, util.WrapError(ctx, fmt.Errorf("file_path parameter must be a string"), "ExecuteReplaceBlock")
 	}
 
-	// Handle search_block (allow it to be empty for file creation if desired, but check type)
-	var searchBlock string
-	if val, exists := params["search_block"]; exists {
+	// Handle old_string (allow it to be empty for file creation if desired, but check type)
+	var oldString string
+	if val, exists := params["old_string"]; exists {
 		if valStr, ok := val.(string); ok {
-			searchBlock = valStr
+			oldString = valStr
 		} else {
-			return nil, util.WrapError(ctx, fmt.Errorf("search_block parameter must be a string"), "ExecuteReplaceBlock")
+			return nil, util.WrapError(ctx, fmt.Errorf("old_string parameter must be a string"), "ExecuteReplaceBlock")
 		}
 	} else {
 		// If missing, return error as it's required by schema usually
-		return nil, util.WrapError(ctx, fmt.Errorf("search_block parameter is required"), "ExecuteReplaceBlock")
+		return nil, util.WrapError(ctx, fmt.Errorf("old_string parameter is required"), "ExecuteReplaceBlock")
 	}
 
-	replaceBlock, ok := params["replace_block"].(string)
+	newString, ok := params["new_string"].(string)
 	if !ok {
-		return nil, util.WrapError(ctx, fmt.Errorf("replace_block parameter must be a string"), "ExecuteReplaceBlock")
+		return nil, util.WrapError(ctx, fmt.Errorf("new_string parameter must be a string"), "ExecuteReplaceBlock")
 	}
 
 	if filePath == "" {
@@ -73,8 +123,8 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 
 	fullPath := t.resolveFilePath(filePath)
 
-	// Case 1: Create new file (searchBlock is empty)
-	if searchBlock == "" {
+	// Case 1: Create new file (oldString is empty)
+	if oldString == "" {
 		if _, err := os.Stat(fullPath); err == nil {
 			return map[string]interface{}{
 				"success": false,
@@ -87,14 +137,14 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 			return nil, util.WrapError(ctx, err, "ExecuteReplaceBlock::MkdirAll")
 		}
 
-		if len(replaceBlock) > 10*1024*1024 {
+		if len(newString) > 10*1024*1024 {
 			return map[string]interface{}{
 				"success": false,
 				"error":   "new file content is too large (max 10MB)",
 			}, nil
 		}
 
-		if err := ioutil.WriteFile(fullPath, []byte(replaceBlock), 0644); err != nil {
+		if err := ioutil.WriteFile(fullPath, []byte(newString), 0644); err != nil {
 			return nil, util.WrapError(ctx, err, "ExecuteReplaceBlock::WriteFile")
 		}
 
@@ -127,22 +177,22 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 
 	content := string(data)
 
-	if !strings.Contains(content, searchBlock) {
+	if !strings.Contains(content, oldString) {
 		return map[string]interface{}{
 			"success": false,
-			"error":   "search_block not found in file",
+			"error":   "old_string not found in file",
 		}, nil
 	}
 
-	occurrences := strings.Count(content, searchBlock)
+	occurrences := strings.Count(content, oldString)
 	if occurrences > 1 {
 		return map[string]interface{}{
 			"success": false,
-			"error":   fmt.Sprintf("search_block appears %d times in file, please provide more context to make it unique", occurrences),
+			"error":   fmt.Sprintf("old_string appears %d times in file, please provide more context to make it unique", occurrences),
 		}, nil
 	}
 
-	newContent := strings.Replace(content, searchBlock, replaceBlock, 1)
+	newContent := strings.Replace(content, oldString, newString, 1)
 
 	if err := ioutil.WriteFile(fullPath, []byte(newContent), 0644); err != nil {
 		return nil, util.WrapError(ctx, err, "ExecuteReplaceBlock::WriteFile")

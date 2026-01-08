@@ -65,11 +65,11 @@ Reading the entire file is not allowed in most cases. You are only allowed to re
 		tools.NewAdapter("search_replace", globalCtx.ReplaceTool.Description(), globalCtx.ReplaceTool.ExecuteReplaceBlock).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"file_path":     map[string]interface{}{"type": "string", "description": "File path to modify"},
-				"search_block":  map[string]interface{}{"type": "string", "description": "Exact code block to replace"},
-				"replace_block": map[string]interface{}{"type": "string", "description": "New code block"},
+				"file_path":  map[string]interface{}{"type": "string", "description": "The absolute path to the file to modify (must be absolute, not relative)"},
+				"old_string": map[string]interface{}{"type": "string", "description": "The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)"},
+				"new_string": map[string]interface{}{"type": "string", "description": "The edited text to replace the old_string"},
 			},
-			"required": []string{"file_path", "search_block", "replace_block"},
+			"required": []string{"file_path", "old_string", "new_string"},
 		}),
 		tools.NewAdapter("write_file", "Create or overwrite file", globalCtx.FileOps.ExecuteWriteFile).WithSchema(map[string]interface{}{
 			"type": "object",
