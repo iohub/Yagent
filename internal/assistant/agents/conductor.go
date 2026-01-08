@@ -159,7 +159,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 	for i := 0; i < a.maxSteps; i++ {
 		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
 		if a.Publisher != nil {
-			a.Publisher.Publish("status_update", fmt.Sprintf("ConductorAgent is thinking (step %d/%d)...", i+1, a.maxSteps))
+			a.Publisher.Publish("status_update", fmt.Sprintf("ConductorAgent is thinking (step %d/%d)...", i+1, a.maxSteps), a.Name())
 		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
@@ -172,7 +172,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 
 		if msg.Content != "" {
 			if a.Publisher != nil {
-				a.Publisher.Publish("ai_response", msg.Content)
+				a.Publisher.Publish("ai_response", msg.Content, a.Name())
 			}
 		}
 
@@ -199,7 +199,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 				a.Publisher.Publish("tool_call_start", map[string]interface{}{
 					"tool_name": tc.FunctionCall.Name,
 					"arguments": tc.FunctionCall.Arguments,
-				})
+				}, a.Name())
 			}
 			if tc.FunctionCall.Name == "finish" {
 				return "Task completed successfully", nil
@@ -223,7 +223,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 				a.Publisher.Publish("tool_call_result", map[string]interface{}{
 					"tool_name": tc.FunctionCall.Name,
 					"result":    toolResult,
-				})
+				}, a.Name())
 			}
 
 			messages = append(messages, llms.MessageContent{

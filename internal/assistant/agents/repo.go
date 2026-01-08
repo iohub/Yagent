@@ -195,7 +195,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 	for i := 0; i < a.maxSteps; i++ {
 		slog.Debug("RepoAgent calling LLM", "step", i, "messages", messages)
 		if a.Publisher != nil {
-			a.Publisher.Publish("status_update", fmt.Sprintf("RepoAgent is thinking (step %d/%d)...", i+1, a.maxSteps))
+			a.Publisher.Publish("status_update", fmt.Sprintf("RepoAgent is thinking (step %d/%d)...", i+1, a.maxSteps), a.Name())
 		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
@@ -207,7 +207,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 		// slog.Debug("RepoAgent LLM response", "step", i, "message", msg)
 		if msg.Content != "" {
 			if a.Publisher != nil {
-				a.Publisher.Publish("ai_response", msg.Content)
+				a.Publisher.Publish("ai_response", msg.Content, a.Name())
 			}
 		}
 		parts := []llms.ContentPart{llms.TextPart(msg.Content)}
@@ -233,7 +233,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 				a.Publisher.Publish("tool_call_start", map[string]interface{}{
 					"tool_name": tc.FunctionCall.Name,
 					"arguments": tc.FunctionCall.Arguments,
-				})
+				}, a.Name())
 			}
 
 			for _, t := range a.Adapters {
@@ -254,7 +254,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 				a.Publisher.Publish("tool_call_result", map[string]interface{}{
 					"tool_name": tc.FunctionCall.Name,
 					"result":    toolResult,
-				})
+				}, a.Name())
 			}
 
 			messages = append(messages, llms.MessageContent{

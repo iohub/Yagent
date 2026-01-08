@@ -186,7 +186,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 				event := messaging.NewMessageEvent("conversation_error", map[string]interface{}{
 					"task_id": chatData.TaskID,
 					"error":   err.Error(),
-				})
+				}, "System")
 				dispatcher.Publish(event)
 			}
 
@@ -232,7 +232,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 			event := messaging.NewMessageEvent("conversation_result", map[string]interface{}{
 				"task_id": chatData.TaskID,
 				"result":  result,
-			})
+			}, "System")
 			dispatcher.Publish(event)
 		}
 

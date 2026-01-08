@@ -105,7 +105,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
 
 	for i := 0; i < a.maxSteps; i++ {
 		if a.Publisher != nil {
-			a.Publisher.Publish("status_update", fmt.Sprintf("CodingAgent is thinking (step %d/%d)...", i+1, a.maxSteps))
+			a.Publisher.Publish("status_update", fmt.Sprintf("CodingAgent is thinking (step %d/%d)...", i+1, a.maxSteps), a.Name())
 		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
@@ -116,7 +116,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
 		msg := resp.Choices[0]
 		if msg.Content != "" {
 			if a.Publisher != nil {
-				a.Publisher.Publish("ai_response", msg.Content)
+				a.Publisher.Publish("ai_response", msg.Content, a.Name())
 			}
 		}
 
@@ -143,7 +143,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
 				a.Publisher.Publish("tool_call_start", map[string]interface{}{
 					"tool_name": tc.FunctionCall.Name,
 					"arguments": tc.FunctionCall.Arguments,
-				})
+				}, a.Name())
 			}
 
 			for _, t := range a.Adapters {
@@ -164,7 +164,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
 				a.Publisher.Publish("tool_call_result", map[string]interface{}{
 					"tool_name": tc.FunctionCall.Name,
 					"result":    toolResult,
-				})
+				}, a.Name())
 			}
 
 			messages = append(messages, llms.MessageContent{

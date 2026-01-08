@@ -248,12 +248,12 @@ func (t *TUIConsumer) showUserInputDialog(event *messaging.MessageEvent) {
 			t.publisher.Publish("user_help_response", map[string]interface{}{
 				"task_id":  taskIDStr,
 				"response": userInput,
-			})
+			}, "User")
 		} else {
 			// Publish without task_id to avoid panic; upstream may ignore
 			t.publisher.Publish("user_help_response", map[string]interface{}{
 				"response": userInput,
-			})
+			}, "User")
 		}
 	}
 
