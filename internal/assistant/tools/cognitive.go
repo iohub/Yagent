@@ -17,10 +17,6 @@ func (t *ThinkingTool) Name() string {
 	return "thinking"
 }
 
-func (t *ThinkingTool) Description() string {
-	return "Use this tool to analyze errors and plan fixes. Input: error_message, current_action, observation."
-}
-
 func (t *ThinkingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
 		ErrorMessage  string `json:"error_message"`
@@ -33,6 +29,6 @@ func (t *ThinkingTool) Call(ctx context.Context, input string) (string, error) {
 		params.ErrorMessage = input
 	}
 
-	return fmt.Sprintf("Thinking Process Logged:\nError: %s\nAction: %s\nObservation: %s\n\nAnalysis: Please analyze the above error and propose a fix.", 
+	return fmt.Sprintf("Thinking Process Logged:\nError: %s\nAction: %s\nObservation: %s\n\nAnalysis: Please analyze the above error and propose a fix.",
 		params.ErrorMessage, params.CurrentAction, params.Observation), nil
 }
