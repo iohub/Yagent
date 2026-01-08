@@ -1,6 +1,7 @@
 package globalctx
 
 import (
+	"codeactor/internal/assistant/tools"
 	"codeactor/pkg/messaging"
 	"fmt"
 )
@@ -9,7 +10,16 @@ type GlobalCtx struct {
 	CustomizePrompt string
 	SpeakLang       string
 	ProjectPath     string
-	Publisher       *messaging.MessagePublisher
+	// Global utility
+	Publisher *messaging.MessagePublisher
+
+	// Tools
+	FileOps      *tools.FileOperationsTool
+	SearchOps    *tools.SearchOperationsTool
+	SysOps       *tools.SystemOperationsTool
+	ReplaceTool  *tools.ReplaceBlockTool
+	ThinkingTool *tools.ThinkingTool
+	FlowOps      *tools.FlowControlTool
 }
 
 func NewGlobalCtx() *GlobalCtx {

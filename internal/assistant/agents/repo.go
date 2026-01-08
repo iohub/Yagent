@@ -49,23 +49,21 @@ type PreInvestigateResponse struct {
 
 type RepoAgent struct {
 	BaseAgent
-	GlobalCtx  *globalctx.GlobalCtx
-	Adapters   []*tools.Adapter
-	projectDir string
-	maxSteps   int
+	GlobalCtx *globalctx.GlobalCtx
+	Adapters  []*tools.Adapter
+	maxSteps  int
 }
 
-func NewRepoAgent(llm llms.LLM, publisher *messaging.MessagePublisher, globalCtx *globalctx.GlobalCtx, projectDir string, maxSteps int) *RepoAgent {
+func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, publisher *messaging.MessagePublisher, maxSteps int) *RepoAgent {
 
 	return &RepoAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
 			Publisher: publisher,
 		},
-		GlobalCtx:  globalCtx,
-		Adapters:   []*tools.Adapter{},
-		projectDir: projectDir,
-		maxSteps:   maxSteps,
+		GlobalCtx: globalCtx,
+		Adapters:  []*tools.Adapter{},
+		maxSteps:  maxSteps,
 	}
 }
 
@@ -131,12 +129,12 @@ func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse
 func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 	systemPrompt := repoPrompt
 
-	if a.projectDir == "" {
+	if a.GlobalCtx.ProjectPath == "" {
 		return "", fmt.Errorf("project_dir is empty")
 	}
 
-	slog.Info("RepoAgent performing pre-investigation", "project_dir", a.projectDir)
-	investigation, err := a.doPreInvestigate(a.projectDir)
+	slog.Info("RepoAgent performing pre-investigation", "project_dir", a.GlobalCtx.ProjectPath)
+	investigation, err := a.doPreInvestigate(a.GlobalCtx.ProjectPath)
 	if err != nil {
 		slog.Warn("RepoAgent pre-investigation failed", "error", err)
 	} else {

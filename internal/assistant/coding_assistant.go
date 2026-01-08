@@ -50,20 +50,24 @@ func NewCodingAssistant(client *Client) (*CodingAssistant, error) {
 func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	ca.llm = llm
 
-	// Initialize global context
-	ca.globalCtx = globalctx.NewGlobalCtx()
-	ca.globalCtx.SetProjectPath(workDir)
-
-	// Initialize tools
-	ca.fileOps = tools.NewFileOperationsTool(workDir)
-	ca.searchOps = tools.NewSearchOperationsTool(workDir)
-	ca.sysOps = tools.NewSystemOperationsTool(workDir)
-	ca.replaceTool = tools.NewReplaceBlockTool(workDir)
-	ca.thinkingTool = tools.NewThinkingTool()
-
 	// Initialize agents
 	publisher := messaging.NewMessagePublisher(ca.dispatcher)
 	ca.globalCtx.SetPublisher(publisher)
+
+	gctx := globalctx.GlobalCtx{
+		ProjectPath: workDir,
+		// Global utility
+		Publisher: publisher,
+
+		// Tools
+		FileOps:      tools.NewFileOperationsTool(workDir),
+		SearchOps:    tools.NewSearchOperationsTool(workDir),
+		SysOps:       tools.NewSystemOperationsTool(workDir),
+		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
+		ThinkingTool: tools.NewThinkingTool(),
+		FlowOps:      tools.NewFlowControlTool(workDir),
+	}
+	ca.globalCtx = &gctx
 	// Get max steps from config, default to 10 if not set
 	repoMaxSteps := 10
 	codingMaxSteps := 10
@@ -81,9 +85,9 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		}
 	}
 
-	repoAgent := agents.NewRepoAgent(llm, publisher, ca.globalCtx, workDir, repoMaxSteps)
+	repoAgent := agents.NewRepoAgent(ca.globalCtx, llm, publisher, repoMaxSteps)
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool, codingMaxSteps)
-	ca.conductor = agents.NewConductorAgent(llm, publisher, ca.globalCtx, repoAgent, codingAgent, conductorMaxSteps)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, conductorMaxSteps)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {

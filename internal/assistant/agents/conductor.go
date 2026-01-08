@@ -8,7 +8,6 @@ import (
 
 	"codeactor/internal/assistant/tools"
 	"codeactor/internal/globalctx"
-	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -25,7 +24,7 @@ type ConductorAgent struct {
 	maxSteps    int
 }
 
-func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, globalCtx *globalctx.GlobalCtx, repo *RepoAgent, coding *CodingAgent, maxSteps int) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, maxSteps int) *ConductorAgent {
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
@@ -54,26 +53,22 @@ func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, glob
 		"required": []string{"task"},
 	})
 
-	sysOps := tools.NewSystemOperationsTool(repo.projectDir)
-	searchOps := tools.NewSearchOperationsTool(repo.projectDir)
-	flowOps := tools.NewFlowControlTool(repo.projectDir)
-
 	adapters := []*tools.Adapter{
-		tools.NewAdapter("finish", "Indicate that the current task is finished. The output of this tool call will be a description of why the task is finished, which could be because the task is completed or cannot be completed and must be terminated.", flowOps.ExecuteFinish).WithSchema(map[string]interface{}{
+		tools.NewAdapter("finish", "Indicate that the current task is finished. The output of this tool call will be a description of why the task is finished, which could be because the task is completed or cannot be completed and must be terminated.", globalCtx.FlowOps.ExecuteFinish).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"reason": map[string]interface{}{"type": "string", "description": "A description of why the task is finished, e.g., task completed, cannot complete, or must terminate."},
 			},
 			"required": []string{"reason"},
 		}),
-		tools.NewAdapter("list_dir", "List directory", sysOps.ExecuteListDir).WithSchema(map[string]interface{}{
+		tools.NewAdapter("list_dir", "List directory", globalCtx.SysOps.ExecuteListDir).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"absolute_path": map[string]interface{}{"type": "string", "description": "Absolute path to list"},
 			},
 			"required": []string{"absolute_path"},
 		}),
-		tools.NewAdapter("grep_search", "Search code using grep", searchOps.ExecuteGrepSearch).WithSchema(map[string]interface{}{
+		tools.NewAdapter("grep_search", "Search code using grep", globalCtx.SearchOps.ExecuteGrepSearch).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"query":           map[string]interface{}{"type": "string", "description": "Regex query"},
@@ -81,7 +76,7 @@ func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, glob
 			},
 			"required": []string{"query"},
 		}),
-		tools.NewAdapter("file_search", "Find file paths", searchOps.ExecuteFileSearch).WithSchema(map[string]interface{}{
+		tools.NewAdapter("file_search", "Find file paths", globalCtx.SearchOps.ExecuteFileSearch).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"query": map[string]interface{}{"type": "string", "description": "Filename query"},
@@ -91,7 +86,7 @@ func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, glob
 	}
 
 	return &ConductorAgent{
-		BaseAgent:   BaseAgent{LLM: llm, Publisher: publisher},
+		BaseAgent:   BaseAgent{LLM: llm, Publisher: globalCtx.Publisher},
 		RepoAgent:   repo,
 		CodingAgent: coding,
 		GlobalCtx:   globalCtx,
