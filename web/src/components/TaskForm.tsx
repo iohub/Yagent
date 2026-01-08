@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { SlidersHorizontal, ArrowUp, Square, FolderGit2, Clock, ChevronLeft } from 'lucide-react';
+import { SlidersHorizontal, ArrowUp, Square, FolderGit2, Clock, ChevronLeft, Check } from 'lucide-react';
 
 interface TaskFormProps {
   onSubmit: (projectDir: string, taskDesc: string) => void;
@@ -117,9 +117,10 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
             <button
               type="button"
               onClick={() => handleProjectSubmit()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 p-2.5 rounded-lg transition-colors shrink-0 flex items-center justify-center aspect-square"
+              title="Set Project Path"
             >
-              Set
+              <Check className="w-4 h-4" />
             </button>
           </div>
 
