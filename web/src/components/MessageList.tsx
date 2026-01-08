@@ -63,10 +63,8 @@ export function MessageList({ messages }: MessageListProps) {
             key={idx} 
             from={group.from} 
             messages={group.messages}
-            // Auto-collapse previous groups to reduce clutter, keep last one open
-            // or keep all open? User asked for "collapsible", implying capability.
-            // Let's keep all open by default as it's a stream.
-            defaultOpen={true}
+            // Keep the last group open by default, collapse others to reduce clutter
+            defaultOpen={idx === groupedMessages.length - 1}
           />
         ))
       )}
