@@ -16,9 +16,6 @@ import (
 //go:embed coding.prompt.md
 var codingPrompt string
 
-//go:embed coding.tools.json
-var codingToolsJSON []byte
-
 type ToolDefinition struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
@@ -34,7 +31,7 @@ type CodingAgent struct {
 
 func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) *CodingAgent {
 	var toolDefs []ToolDefinition
-	if err := json.Unmarshal(codingToolsJSON, &toolDefs); err != nil {
+	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal coding tools", "error", err)
 	}
 
