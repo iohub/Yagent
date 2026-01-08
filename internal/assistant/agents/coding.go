@@ -44,10 +44,10 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 		switch def.Name {
 		case "read_file":
 			fn = globalCtx.FileOps.ExecuteReadFile
-		case "search_replace":
+		case "search_replace_in_file":
 			fn = globalCtx.ReplaceTool.ExecuteReplaceBlock
-		case "write_file":
-			fn = globalCtx.FileOps.ExecuteWriteFile
+		case "create_file":
+			fn = globalCtx.FileOps.ExecuteCreateFile
 		case "run_terminal_cmd":
 			fn = globalCtx.SysOps.ExecuteRunTerminalCmd
 		case "thinking":

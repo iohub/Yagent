@@ -47,7 +47,7 @@ After you have made all the required code changes, do the following:
 	Run the app and try uploading and searching for photos. If you encounter any errors or want to add new features, please let me know!
 	</example>
 	
-IMPORTANT: When using any code edit tool, such as `search_replace`, ALWAYS generate the `file_path` argument first.
+IMPORTANT: When using any code edit tool, such as `search_replace_in_file`, ALWAYS generate the `file_path` argument first.
 </editFileInstructions>
 
 <running_commands>

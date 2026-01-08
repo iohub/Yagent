@@ -22,7 +22,7 @@ func NewReplaceBlockTool(workingDir string) *ReplaceBlockTool {
 }
 
 func (t *ReplaceBlockTool) Name() string {
-	return "search_replace"
+	return "search_replace_in_file"
 }
 
 func (t *ReplaceBlockTool) resolveFilePath(filePath string) string {

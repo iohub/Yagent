@@ -35,7 +35,7 @@
     }
   },
   {
-    "name": "search_replace",
+    "name": "search_replace_in_file",
     "description": "This is a tool for editing files. For moving or renaming files, you should generally use the Bash tool with the 'mv' command instead. For larger edits, use the Write tool to overwrite files. \nBefore using this tool:\n\n    Use the View tool to understand the file's contents and context\n\n    Verify the directory path is correct (only applicable when creating new files):\n        Use the LS tool to verify the parent directory exists and is the correct location\n\nTo make a file edit, provide the following:\n\n    file_path: The absolute path to the file to modify (must be absolute, not relative)\n    old_string: The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)\n    new_string: The edited text to replace the old_string\n\nThe tool will replace ONE occurrence of old_string with new_string in the specified file.\n\nCRITICAL REQUIREMENTS FOR USING THIS TOOL:\n\n    UNIQUENESS: The old_string MUST uniquely identify the specific instance you want to change. This means:\n        Include AT LEAST 3-5 lines of context BEFORE the change point\n        Include AT LEAST 3-5 lines of context AFTER the change point\n        Include all whitespace, indentation, and surrounding code exactly as it appears in the file\n\n    SINGLE INSTANCE: This tool can only change ONE instance at a time. If you need to change multiple instances:\n        Make separate calls to this tool for each instance\n        Each call must uniquely identify its specific instance using extensive context\n\n    VERIFICATION: Before using this tool:\n        Check how many instances of the target text exist in the file\n        If multiple instances exist, gather enough context to uniquely identify each one\n        Plan separate tool calls for each instance\n\nWARNING: If you do not follow these requirements:\n\n    The tool will fail if old_string matches multiple locations\n    The tool will fail if old_string doesn't match exactly (including whitespace)\n    You may change the wrong instance if you don't include enough context\n\nWhen making edits:\n\n    Ensure the edit results in idiomatic, correct code\n    Do not leave the code in a broken state\n    Always use absolute file paths (starting with /)\n\nIf you want to create a new file, use:\n\n    A new file path, including dir name if needed\n    An empty old_string\n    The new file's contents as new_string\n\nRemember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each.",
     "parameters": {
       "type": "object",
@@ -61,24 +61,24 @@
     }
   },
   {
-    "name": "write_file",
-    "description": "Create or overwrite file",
+    "description": "Create a new file at the specified path with the given content. Fails if the file already exists.",
+    "name": "create_file",
     "parameters": {
-      "type": "object",
       "properties": {
-        "file_path": {
-          "type": "string",
-          "description": "File path to write"
+        "target_file": {
+          "description": "The path of the file to create. You can use either a relative path in the workspace or an absolute path. If an absolute path is provided, it will be preserved as is.",
+          "type": "string"
         },
         "content": {
-          "type": "string",
-          "description": "File content"
+          "description": "The content to write to the new file.",
+          "type": "string"
         }
       },
       "required": [
-        "file_path",
+        "target_file",
         "content"
-      ]
+      ],
+      "type": "object"
     }
   },
   {

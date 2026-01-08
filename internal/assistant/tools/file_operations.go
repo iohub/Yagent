@@ -80,38 +80,6 @@ func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[str
 	}, nil
 }
 
-// ExecuteWriteFile implements write_file tool
-func (t *FileOperationsTool) ExecuteWriteFile(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-	filePath, ok := params["file_path"].(string)
-	if !ok {
-		return nil, util.WrapError(ctx, fmt.Errorf("file_path parameter must be a string"), "executeWriteFile")
-	}
-
-	content, ok := params["content"].(string)
-	if !ok {
-		return nil, util.WrapError(ctx, fmt.Errorf("content parameter must be a string"), "executeWriteFile")
-	}
-
-	fullPath := t.resolveFilePath(filePath)
-
-	// Ensure parent directory exists
-	parentDir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(parentDir, 0755); err != nil {
-		return nil, util.WrapError(ctx, err, "executeWriteFile::MkdirAll")
-	}
-
-	// Write file
-	if err := ioutil.WriteFile(fullPath, []byte(content), 0644); err != nil {
-		return nil, util.WrapError(ctx, err, "executeWriteFile::WriteFile")
-	}
-
-	return map[string]interface{}{
-		"success": true,
-		"file":    filePath,
-		"message": "File written successfully",
-	}, nil
-}
-
 // ExecuteDeleteFile 实现delete_file工具
 func (t *FileOperationsTool) ExecuteDeleteFile(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	targetFile, ok := params["target_file"].(string)
