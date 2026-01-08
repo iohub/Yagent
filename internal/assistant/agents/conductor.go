@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"log/slog"
 
@@ -10,6 +11,9 @@ import (
 
 	"github.com/tmc/langchaingo/llms"
 )
+
+//go:embed conductor.prompt.md
+var conductorPrompt string
 
 type ConductorAgent struct {
 	BaseAgent
