@@ -84,7 +84,7 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
   }, [taskDesc]);
 
   return (
-    <form onSubmit={handleSubmit} className="relative group bg-card rounded-xl border border-border overflow-hidden shadow-lg">
+    <form onSubmit={handleSubmit} className={`relative group bg-card rounded-xl border border-border overflow-hidden shadow-lg transition-[height,min-height] duration-200 ${showProjectInput ? 'min-h-[320px]' : ''}`}>
       {/* Project Input Overlay */}
       {showProjectInput && (
         <div className="absolute inset-0 z-20 bg-background flex flex-col p-4 animate-in fade-in duration-200">
@@ -97,7 +97,7 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
               <ChevronLeft className="w-4 h-4" />
               Back
             </button>
-            <span className="text-sm text-muted-foreground font-medium ml-auto">Set Project Path</span>
+            <span className="text-sm text-muted-foreground font-medium ml-auto">repository settings</span>
           </div>
           
           <div className="flex gap-2 mb-4">
@@ -124,9 +124,9 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
           </div>
 
           {projectHistory.length > 0 && (
-            <div className="flex-1 overflow-y-auto min-h-0">
-              <div className="flex items-center gap-1 text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
-                <Clock className="w-3 h-3" />
+            <div className="flex-1 overflow-y-auto min-h-0 mt-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium mb-2 px-1">
+                <Clock className="w-3.5 h-3.5" />
                 <span>Recent Paths</span>
               </div>
               <div className="space-y-1">
@@ -135,10 +135,11 @@ export function TaskForm({ onSubmit, isLoading }: TaskFormProps) {
                     key={i}
                     type="button"
                     onClick={() => handleHistoryClick(path)}
-                    className="w-full text-left text-sm text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg px-3 py-2 truncate transition-colors border border-transparent hover:border-border"
+                    className="w-full flex items-center gap-2 text-left text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg px-3 py-2.5 transition-all border border-transparent hover:border-border/50 group/item"
                     title={path}
                   >
-                    {path}
+                    <FolderGit2 className="w-4 h-4 opacity-50 group-hover/item:opacity-100 transition-opacity shrink-0" />
+                    <span className="truncate font-mono text-xs opacity-90">{path}</span>
                   </button>
                 ))}
               </div>
