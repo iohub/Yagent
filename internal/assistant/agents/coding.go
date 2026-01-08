@@ -47,6 +47,8 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 			fn = globalCtx.FileOps.ExecuteCreateFile
 		case "run_terminal_cmd":
 			fn = globalCtx.SysOps.ExecuteRunTerminalCmd
+		case "search_by_regex":
+			fn = globalCtx.SearchOps.ExecuteGrepSearch
 		case "thinking":
 			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				inputBytes, _ := json.Marshal(params)

@@ -32,9 +32,14 @@ func (t *SearchOperationsTool) ExecuteGrepSearch(ctx context.Context, params map
 		return nil, util.WrapError(ctx, fmt.Errorf("query parameter must be a string"), "executeGrepSearch")
 	}
 
-	includePattern, _ := params["include_pattern"].(string)
-	excludePattern, _ := params["exclude_pattern"].(string)
-	caseSensitive, _ := params["case_sensitive"].(bool)
+	searchDir, _ := params["search_directory"].(string)
+	if searchDir == "" {
+		searchDir = t.workingDir
+	} else {
+		if !filepath.IsAbs(searchDir) {
+			searchDir = filepath.Join(t.workingDir, searchDir)
+		}
+	}
 
 	// 默认排除的非源码目录
 	defaultExcludeDirs := []string{
@@ -50,31 +55,28 @@ func (t *SearchOperationsTool) ExecuteGrepSearch(ctx context.Context, params map
 		".DS_Store", "Thumbs.db", ".directory",
 	}
 
-	// 构建grep命令
-	args := []string{"-r", "-n"}
-	if !caseSensitive {
-		args = append(args, "-i")
+	// 构建rg命令
+	// rg -n --no-heading --with-filename --line-number --color=never --smart-case -e "query" "directory"
+	args := []string{
+		"--line-number",
+		"--with-filename",
+		"--no-heading",
+		"--color=never",
+		"--smart-case",
 	}
 
 	// 添加默认排除目录
 	for _, dir := range defaultExcludeDirs {
-		args = append(args, "--exclude-dir", dir)
+		args = append(args, "-g", "!"+dir)
 	}
 
-	if includePattern != "" {
-		args = append(args, "--include", includePattern)
-	}
-	if excludePattern != "" {
-		// 也支持排除目录模式
-		args = append(args, "--exclude-dir", excludePattern)
-	}
-	args = append(args, query, t.workingDir)
+	args = append(args, "-e", query, searchDir)
 
-	cmd := exec.CommandContext(ctx, "grep", args...)
+	cmd := exec.CommandContext(ctx, "rg", args...)
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		// grep返回非零退出码是正常的（没有找到匹配）
+		// rg返回非零退出码是正常的（没有找到匹配）
 		if strings.Contains(err.Error(), "exit status 1") {
 			return map[string]interface{}{
 				"matches": []string{},
