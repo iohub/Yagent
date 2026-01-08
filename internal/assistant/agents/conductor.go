@@ -76,7 +76,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 			},
 			"required": []string{"query"},
 		}),
-		tools.NewAdapter("file_search", "Find file paths", globalCtx.SearchOps.ExecuteFileSearch).WithSchema(map[string]interface{}{
+		tools.NewAdapter("file_search", tools.DescribeFileSearchTool(), globalCtx.SearchOps.ExecuteFileSearch).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"query": map[string]interface{}{"type": "string", "description": "Filename query"},

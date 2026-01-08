@@ -21,6 +21,10 @@ func NewSearchOperationsTool(workingDir string) *SearchOperationsTool {
 	}
 }
 
+func DescribeFileSearchTool() string {
+	return "Fast file search based on fuzzy matching against file path. (powered by fzf) Use if you know part of the file path but don't know where it's located exactly. Response will be capped to 10 results. Make your query more specific if need to filter results further."
+}
+
 // ExecuteGrepSearch 实现grep_search工具
 func (t *SearchOperationsTool) ExecuteGrepSearch(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	query, ok := params["query"].(string)
