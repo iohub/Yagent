@@ -39,11 +39,19 @@ type AppConfig struct {
 	EnableStreaming bool `toml:"enable_streaming"`
 }
 
+// AgentConfig contains agent-specific configuration
+type AgentConfig struct {
+	ConductorMaxSteps int `toml:"conductor_max_steps"`
+	CodingMaxSteps    int `toml:"coding_max_steps"`
+	RepoMaxSteps      int `toml:"repo_max_steps"`
+}
+
 // Config is the root configuration structure
 type Config struct {
-	HTTP HTTPConfig `toml:"http"`
-	LLM  LLMConfig  `toml:"llm"`
-	App  AppConfig  `toml:"app"`
+	HTTP  HTTPConfig  `toml:"http"`
+	LLM   LLMConfig   `toml:"llm"`
+	App   AppConfig   `toml:"app"`
+	Agent AgentConfig `toml:"agent"`
 }
 
 // GetActiveProvider returns the currently active provider configuration

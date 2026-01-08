@@ -4,11 +4,22 @@ server_port = 9080
 
 [llm]
 # 选择当前使用的提供商
-use_provider = "bedrock"
+# use_provider = "streamlake"
+# use_provider = "siliconflow"
+use_provider = "xiaomi"
+
+# XiaoMI配置
+[llm.providers.xiaomi]
+model = "mimo-v2-flash"
+temperature = 0.3
+max_tokens = 28000
+api_base_url = "https://api.xiaomimimo.com/v1"
+api_key = "your-key"
 
 # 阿里云配置
 [llm.providers.aliyun]
-model = "qwen3-max-preview"
+# model = "qwen3-max-preview"
+model = "qwen3-coder-plus"
 temperature = 0.0
 max_tokens = 28000
 api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -16,11 +27,20 @@ api_key = "your-key"
 
 # SiliconFlow配置
 [llm.providers.siliconflow]
-model = "qwen3-coder-plus"
+model = "deepseek-ai/DeepSeek-V3.2"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.siliconflow.cn/v1"
-api_key = "sk-REPLACE-ME"
+api_key = "your-key"
+
+# StreamLake配置
+[llm.providers.streamlake]
+# model = "KAT-Coder-Air-V1"
+model = "ep-w1klde-1767706500222997285"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints"
+api_key = "your-key"
 
 # OpenRouter配置
 [llm.providers.openrouter]
@@ -92,3 +112,8 @@ aws_region = "us-east-1"
 
 [app]
 enable_streaming = true
+
+[agent]
+conductor_max_steps = 20
+coding_max_steps = 30
+repo_max_steps = 20

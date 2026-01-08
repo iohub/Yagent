@@ -69,18 +69,21 @@ type model struct {
 	historySearch    textinput.Model
 }
 
-func initialModel() model {
+func initialModel(preloadedTaskContent string) model {
 	var inputs []textinput.Model
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = ""
 	}
 
-	// Check if TASK.md exists in current directory
-	taskContent := ""
-	taskFile := "TASK.md"
-	if data, err := os.ReadFile(taskFile); err == nil {
-		taskContent = string(data)
+	// 使用预加载的任务内容或尝试从默认文件加载
+	taskContent := preloadedTaskContent
+	if taskContent == "" {
+		// 如果没有预加载内容，检查默认的 TASK.md 文件
+		taskFile := "TASK.md"
+		if data, err := os.ReadFile(taskFile); err == nil {
+			taskContent = string(data)
+		}
 	}
 
 	for i := range []string{langManager.GetText("ProjectDirLabel"), langManager.GetText("TaskDescLabel")} {
@@ -474,11 +477,21 @@ func validateInputs(projectDir, taskDesc string) (bool, string) {
 }
 
 // 启动TUI界面
-func startTUI() (string, string) {
+func startTUI(taskFilePath string) (string, string) {
 	// Initialize language manager with default English
 	langManager = NewLanguageManager()
 
-	p := tea.NewProgram(initialModel())
+	// 如果提供了任务文件路径，则从文件加载任务描述
+	taskContent := ""
+	if taskFilePath != "" {
+		if data, err := os.ReadFile(taskFilePath); err == nil {
+			taskContent = string(data)
+		} else {
+			fmt.Printf("无法读取任务文件: %v\n", err)
+		}
+	}
+
+	p := tea.NewProgram(initialModel(taskContent))
 	if m, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
@@ -492,20 +505,19 @@ func startTUI() (string, string) {
 // renderBanner draws a colorful ASCII banner similar in spirit to the reference image.
 func renderBanner() string {
 	bannerLines := []string{
-		" ██████╗   ██████╗  ██████╗  ███████╗ ███████╗  ██╗",
-		"██╔════╝  ██╔═══██╗ ██╔══██╗ ██╔════╝ ██╔════╝  ██║",
-		"██║       ██║   ██║ ██║  ██║ █████╗   █████╗    ██║",
-		"██║       ██║   ██║ ██║  ██║ ██╔══╝   ██╔══╝    ╚═╝",
-		"╚██████╗  ╚██████╔╝ ██████╔╝ ███████╗ ███████╗  ██╗",
-		" ╚═════╝   ╚═════╝  ╚═════╝  ╚══════╝ ╚══════╝  ╚═╝",
+		" ██████╗  ██████╗  ██████╗  ███████╗  █████╗   ██████╗ ████████╗  ██████╗  ██████╗ ",
+		"██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝ ██╔══██╗ ██╔════╝ ╚══██╔══╝ ██╔═══██╗ ██╔══██╗",
+		"██║      ██║   ██║ ██║  ██║ █████╗   ███████║ ██║         ██║    ██║   ██║ ██████╔╝",
+		"██║      ██║   ██║ ██║  ██║ ██╔══╝   ██╔══██║ ██║         ██║    ██║   ██║ ██╔══██╗",
+		"╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗ ██║  ██║ ╚██████╗    ██║    ╚██████╔╝ ██║  ██║",
+		" ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═╝  ╚═════╝    ╚═╝     ╚═════╝  ╚═╝  ╚═╝",
 	}
 	palette := []string{"213", "219", "159", "123", "81", "69"}
 	var rendered []string
 	for i, line := range bannerLines {
 		color := palette[i%len(palette)]
 		style := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-		shadow := bannerShadowStyle.Render(line)
-		rendered = append(rendered, lipgloss.JoinHorizontal(lipgloss.Top, style.Render(line), " ", shadow))
+		rendered = append(rendered, style.Render(line))
 	}
 	return bannerPadStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rendered...))
 }

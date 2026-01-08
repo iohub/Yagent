@@ -17,9 +17,9 @@ func NewMessagePublisher(dispatcher *messaging.MessageDispatcher) *MessagePublis
 }
 
 // Publish publishes a message event
-func (mp *MessagePublisher) Publish(eventType string, content interface{}) {
+func (mp *MessagePublisher) Publish(eventType string, content interface{}, from string) {
 	if mp.dispatcher != nil {
-		event := messaging.NewMessageEvent(eventType, content)
+		event := messaging.NewMessageEvent(eventType, content, from)
 		mp.dispatcher.Publish(event)
 	}
 }

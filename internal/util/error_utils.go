@@ -3,11 +3,10 @@ package util
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"runtime"
 	"strings"
 	"time"
-
-	"github.com/rs/zerolog/log"
 )
 
 // CallStack represents a function call stack frame
@@ -93,21 +92,23 @@ func LogErrorWithContext(ctx context.Context, err error, message string) {
 	errWithCtx := NewErrorWithContext(ctx, err, message)
 
 	// Log the error with structured logging
-	logger := log.Error().
-		Err(err).
-		Str("message", message).
-		Str("context", errWithCtx.Context).
-		Time("time", errWithCtx.Time)
+	args := []any{
+		"error", err,
+		"context", errWithCtx.Context,
+		"time", errWithCtx.Time,
+	}
 
 	// Add call stack as structured data
 	for i, frame := range errWithCtx.CallStack {
-		logger = logger.Str(fmt.Sprintf("stack_%d_function", i), frame.Function).
-			Str(fmt.Sprintf("stack_%d_file", i), frame.File).
-			Int(fmt.Sprintf("stack_%d_line", i), frame.Line).
-			Str(fmt.Sprintf("stack_%d_time", i), frame.Time)
+		args = append(args,
+			fmt.Sprintf("stack_%d_function", i), frame.Function,
+			fmt.Sprintf("stack_%d_file", i), frame.File,
+			fmt.Sprintf("stack_%d_line", i), frame.Line,
+			fmt.Sprintf("stack_%d_time", i), frame.Time,
+		)
 	}
 
-	logger.Msg("Error occurred with context")
+	slog.Error(message, args...)
 
 	// Also print a human-readable backtrace
 	printBacktrace(errWithCtx)
