@@ -45,7 +45,6 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 
 	// Initialize agents
 	publisher := messaging.NewMessagePublisher(ca.dispatcher)
-	ca.globalCtx.SetPublisher(publisher)
 
 	gctx := globalctx.GlobalCtx{
 		ProjectPath: workDir,
