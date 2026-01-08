@@ -8,6 +8,7 @@ import (
 	"codeactor/internal/assistant/agents"
 	"codeactor/internal/assistant/tools"
 	"codeactor/internal/config"
+	"codeactor/internal/globalctx"
 	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
@@ -22,6 +23,8 @@ type CodingAssistant struct {
 	mu                   sync.Mutex
 	userResponseChannels map[string]chan string
 	logger               *slog.Logger
+
+	globalCtx *globalctx.GlobalCtx
 
 	// Tools
 	fileOps      *tools.FileOperationsTool
@@ -46,6 +49,10 @@ func NewCodingAssistant(client *Client) (*CodingAssistant, error) {
 // Init initializes the assistant with LLM and creates agents.
 func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	ca.llm = llm
+
+	// Initialize global context
+	ca.globalCtx = globalctx.NewGlobalCtx()
+	ca.globalCtx.SetProjectPath(workDir)
 
 	// Initialize tools
 	ca.fileOps = tools.NewFileOperationsTool(workDir)
@@ -73,9 +80,9 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		}
 	}
 
-	repoAgent := agents.NewRepoAgent(llm, publisher, workDir, repoMaxSteps)
-	codingAgent := agents.NewCodingAgent(llm, publisher, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool, codingMaxSteps)
-	ca.conductor = agents.NewConductorAgent(llm, publisher, repoAgent, codingAgent, conductorMaxSteps)
+	repoAgent := agents.NewRepoAgent(llm, publisher, ca.globalCtx, workDir, repoMaxSteps)
+	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, publisher, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool, codingMaxSteps)
+	ca.conductor = agents.NewConductorAgent(llm, publisher, ca.globalCtx, repoAgent, codingAgent, conductorMaxSteps)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"codeactor/internal/assistant/tools"
+	"codeactor/internal/globalctx"
 	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
@@ -48,18 +49,20 @@ type PreInvestigateResponse struct {
 
 type RepoAgent struct {
 	BaseAgent
+	GlobalCtx  *globalctx.GlobalCtx
 	Adapters   []*tools.Adapter
 	projectDir string
 	maxSteps   int
 }
 
-func NewRepoAgent(llm llms.LLM, publisher *messaging.MessagePublisher, projectDir string, maxSteps int) *RepoAgent {
+func NewRepoAgent(llm llms.LLM, publisher *messaging.MessagePublisher, globalCtx *globalctx.GlobalCtx, projectDir string, maxSteps int) *RepoAgent {
 
 	return &RepoAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
 			Publisher: publisher,
 		},
+		GlobalCtx:  globalCtx,
 		Adapters:   []*tools.Adapter{},
 		projectDir: projectDir,
 		maxSteps:   maxSteps,
@@ -172,6 +175,8 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 
 		systemPrompt += info
 	}
+
+	systemPrompt = a.GlobalCtx.FormatPrompt(systemPrompt)
 
 	messages := []llms.MessageContent{
 		/**

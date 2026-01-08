@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"codeactor/internal/assistant/tools"
+	"codeactor/internal/globalctx"
 	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
@@ -18,11 +19,12 @@ var codingPrompt string
 
 type CodingAgent struct {
 	BaseAgent
-	Adapters []*tools.Adapter
-	maxSteps int
+	GlobalCtx *globalctx.GlobalCtx
+	Adapters  []*tools.Adapter
+	maxSteps  int
 }
 
-func NewCodingAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, sysOps *tools.SystemOperationsTool, replaceTool *tools.ReplaceBlockTool, thinkingTool *tools.ThinkingTool, maxSteps int) *CodingAgent {
+func NewCodingAgent(ctx *globalctx.GlobalCtx, llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, sysOps *tools.SystemOperationsTool, replaceTool *tools.ReplaceBlockTool, thinkingTool *tools.ThinkingTool, maxSteps int) *CodingAgent {
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("read_file", `Read the contents of a file. the output of this tool call will be the 1-indexed file contents from start_line_one_indexed to end_line_one_indexed_inclusive, together with a summary of the lines outside start_line_one_indexed and end_line_one_indexed_inclusive.
 Note that this call can view at most 250 lines at a time and 200 lines minimum.
@@ -104,8 +106,9 @@ Reading the entire file is not allowed in most cases. You are only allowed to re
 			LLM:       llm,
 			Publisher: publisher,
 		},
-		Adapters: adapters,
-		maxSteps: maxSteps,
+		Adapters:  adapters,
+		maxSteps:  maxSteps,
+		GlobalCtx: ctx,
 	}
 }
 
@@ -117,7 +120,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
 	messages := []llms.MessageContent{
 		{
 			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(codingPrompt)},
+			Parts: []llms.ContentPart{llms.TextPart(a.GlobalCtx.FormatPrompt(codingPrompt))},
 		},
 		{
 			Role:  llms.ChatMessageTypeHuman,

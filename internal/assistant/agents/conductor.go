@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"codeactor/internal/assistant/tools"
+	"codeactor/internal/globalctx"
 	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
@@ -19,11 +20,12 @@ type ConductorAgent struct {
 	BaseAgent
 	RepoAgent   *RepoAgent
 	CodingAgent *CodingAgent
+	GlobalCtx   *globalctx.GlobalCtx
 	Adapters    []*tools.Adapter
 	maxSteps    int
 }
 
-func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo *RepoAgent, coding *CodingAgent, maxSteps int) *ConductorAgent {
+func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, globalCtx *globalctx.GlobalCtx, repo *RepoAgent, coding *CodingAgent, maxSteps int) *ConductorAgent {
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
@@ -92,6 +94,7 @@ func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo
 		BaseAgent:   BaseAgent{LLM: llm, Publisher: publisher},
 		RepoAgent:   repo,
 		CodingAgent: coding,
+		GlobalCtx:   globalCtx,
 		Adapters:    append(adapters, delegateRepo, delegateCoding),
 		maxSteps:    maxSteps,
 	}
@@ -105,7 +108,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 	messages := []llms.MessageContent{
 		{
 			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(conductorPrompt)},
+			Parts: []llms.ContentPart{llms.TextPart(a.GlobalCtx.FormatPrompt(conductorPrompt))},
 		},
 		{
 			Role:  llms.ChatMessageTypeHuman,
