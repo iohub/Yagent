@@ -189,7 +189,7 @@
   },
   {
     "name": "search_by_regex",
-    "description": "Fast text-based search that finds exact pattern matches within files or directories, utilizing the ripgrep command for efficient searching.",
+    "description": "A high-performance search tool powered by ripgrep (rg) designed for large codebases. It supports PCRE2 regular expressions and automatically respects .gitignore rules. Use this tool to precisely locate function definitions, variable references, error messages, or complex code patterns across multiple files. ",
     "parameters": {
       "type": "object",
       "properties": {
