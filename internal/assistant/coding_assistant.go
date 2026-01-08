@@ -25,13 +25,6 @@ type CodingAssistant struct {
 	logger               *slog.Logger
 
 	globalCtx *globalctx.GlobalCtx
-
-	// Tools
-	fileOps      *tools.FileOperationsTool
-	searchOps    *tools.SearchOperationsTool
-	sysOps       *tools.SystemOperationsTool
-	replaceTool  *tools.ReplaceBlockTool
-	thinkingTool *tools.ThinkingTool
 }
 
 // NewCodingAssistant creates a new CodingAssistant.
