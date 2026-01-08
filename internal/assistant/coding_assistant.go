@@ -63,6 +63,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 
 	// Initialize agents
 	publisher := messaging.NewMessagePublisher(ca.dispatcher)
+	ca.globalCtx.SetPublisher(publisher)
 	// Get max steps from config, default to 10 if not set
 	repoMaxSteps := 10
 	codingMaxSteps := 10
@@ -81,7 +82,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	}
 
 	repoAgent := agents.NewRepoAgent(llm, publisher, ca.globalCtx, workDir, repoMaxSteps)
-	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, publisher, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool, codingMaxSteps)
+	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool, codingMaxSteps)
 	ca.conductor = agents.NewConductorAgent(llm, publisher, ca.globalCtx, repoAgent, codingAgent, conductorMaxSteps)
 }
 

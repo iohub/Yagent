@@ -1,11 +1,15 @@
 package globalctx
 
-import "fmt"
+import (
+	"codeactor/pkg/messaging"
+	"fmt"
+)
 
 type GlobalCtx struct {
 	CustomizePrompt string
 	SpeakLang       string
 	ProjectPath     string
+	Publisher       *messaging.MessagePublisher
 }
 
 func NewGlobalCtx() *GlobalCtx {
@@ -26,6 +30,10 @@ func (g *GlobalCtx) FormatPrompt(prompt string) string {
 		extra += fmt.Sprintf("\n%s\n", g.CustomizePrompt)
 	}
 	return prompt + extra
+}
+
+func (g *GlobalCtx) SetPublisher(publisher *messaging.MessagePublisher) {
+	g.Publisher = publisher
 }
 
 func (g *GlobalCtx) SetProjectPath(path string) {

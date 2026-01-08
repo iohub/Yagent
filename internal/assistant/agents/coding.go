@@ -9,7 +9,6 @@ import (
 
 	"codeactor/internal/assistant/tools"
 	"codeactor/internal/globalctx"
-	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -24,7 +23,7 @@ type CodingAgent struct {
 	maxSteps  int
 }
 
-func NewCodingAgent(ctx *globalctx.GlobalCtx, llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, sysOps *tools.SystemOperationsTool, replaceTool *tools.ReplaceBlockTool, thinkingTool *tools.ThinkingTool, maxSteps int) *CodingAgent {
+func NewCodingAgent(ctx *globalctx.GlobalCtx, llm llms.LLM, fileOps *tools.FileOperationsTool, sysOps *tools.SystemOperationsTool, replaceTool *tools.ReplaceBlockTool, thinkingTool *tools.ThinkingTool, maxSteps int) *CodingAgent {
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("read_file", `Read the contents of a file. the output of this tool call will be the 1-indexed file contents from start_line_one_indexed to end_line_one_indexed_inclusive, together with a summary of the lines outside start_line_one_indexed and end_line_one_indexed_inclusive.
 Note that this call can view at most 250 lines at a time and 200 lines minimum.
@@ -104,7 +103,7 @@ Reading the entire file is not allowed in most cases. You are only allowed to re
 	return &CodingAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
-			Publisher: publisher,
+			Publisher: ctx.Publisher,
 		},
 		Adapters:  adapters,
 		maxSteps:  maxSteps,
