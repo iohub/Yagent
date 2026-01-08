@@ -33,13 +33,26 @@ func (t *SystemOperationsTool) ExecuteRunTerminalCmd(ctx context.Context, params
 
 	if isBackground {
 		// 后台执行
+		// 使用 context.Background() 确保命令在请求上下文取消后继续运行
+		cmd := exec.Command("bash", "-c", command)
+		cmd.Dir = t.workingDir
+
+		if err := cmd.Start(); err != nil {
+			return map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("failed to start background command: %v", err),
+			}, nil
+		}
+
+		// 在后台等待进程结束以避免僵尸进程
 		go func() {
-			cmd := exec.CommandContext(ctx, "bash", "-c", command)
-			cmd.Dir = t.workingDir
-			cmd.Run()
+			cmd.Wait()
 		}()
+
 		return map[string]interface{}{
+			"success": true,
 			"status":  "started_background",
+			"pid":     cmd.Process.Pid,
 			"command": command,
 		}, nil
 	}

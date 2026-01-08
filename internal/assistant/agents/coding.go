@@ -48,7 +48,7 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 			fn = globalCtx.ReplaceTool.ExecuteReplaceBlock
 		case "write_file":
 			fn = globalCtx.FileOps.ExecuteWriteFile
-		case "run_shell_command":
+		case "run_terminal_cmd":
 			fn = globalCtx.SysOps.ExecuteRunTerminalCmd
 		case "thinking":
 			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
