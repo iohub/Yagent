@@ -49,13 +49,19 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 			fn = globalCtx.SysOps.ExecuteRunTerminalCmd
 		case "search_by_regex":
 			fn = globalCtx.SearchOps.ExecuteGrepSearch
+		case "delete_file":
+			fn = globalCtx.FileOps.ExecuteDeleteFile
+		case "rename_file":
+			fn = globalCtx.FileOps.ExecuteRenameFile
+		case "list_dir":
+			fn = globalCtx.FileOps.ExecuteListDir
 		case "thinking":
 			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				inputBytes, _ := json.Marshal(params)
 				return globalCtx.ThinkingTool.Call(ctx, string(inputBytes))
 			}
 		default:
-			slog.Warn("Unknown tool in coding_tools.json", "name", def.Name)
+			slog.Warn("Unknown tool in tools.json", "name", def.Name)
 			continue
 		}
 

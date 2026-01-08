@@ -82,9 +82,38 @@ func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[str
 
 // ExecuteDeleteFile 实现delete_file工具
 func (t *FileOperationsTool) ExecuteDeleteFile(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	// 尝试获取 file_paths (数组)
+	if paths, ok := params["file_paths"].([]interface{}); ok {
+		var deletedFiles []string
+		var errors []string
+		for _, p := range paths {
+			if pathStr, ok := p.(string); ok {
+				fullPath := t.resolveFilePath(pathStr)
+				// 使用 RemoveAll 以支持目录删除
+				if err := os.RemoveAll(fullPath); err != nil {
+					errors = append(errors, fmt.Sprintf("%s: %v", pathStr, err))
+				} else {
+					deletedFiles = append(deletedFiles, pathStr)
+				}
+			}
+		}
+		if len(errors) > 0 {
+			return map[string]interface{}{
+				"success": false,
+				"deleted": deletedFiles,
+				"errors":  errors,
+			}, nil
+		}
+		return map[string]interface{}{
+			"success": true,
+			"deleted": deletedFiles,
+			"message": "Files deleted successfully",
+		}, nil
+	}
+
 	targetFile, ok := params["target_file"].(string)
 	if !ok {
-		return nil, util.WrapError(ctx, fmt.Errorf("target_file parameter must be a string"), "executeDeleteFile")
+		return nil, util.WrapError(ctx, fmt.Errorf("target_file or file_paths parameter missing"), "executeDeleteFile")
 	}
 
 	fullPath := t.resolveFilePath(targetFile)
@@ -97,6 +126,97 @@ func (t *FileOperationsTool) ExecuteDeleteFile(ctx context.Context, params map[s
 		"success": true,
 		"file":    targetFile,
 		"message": "File deleted successfully",
+	}, nil
+}
+
+// ExecuteRenameFile 实现rename_file工具
+func (t *FileOperationsTool) ExecuteRenameFile(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	filePath, ok := params["file_path"].(string)
+	if !ok {
+		return nil, util.WrapError(ctx, fmt.Errorf("file_path parameter must be a string"), "executeRenameFile")
+	}
+	renameFilePath, ok := params["rename_file_path"].(string)
+	if !ok {
+		return nil, util.WrapError(ctx, fmt.Errorf("rename_file_path parameter must be a string"), "executeRenameFile")
+	}
+
+	fullOldPath := t.resolveFilePath(filePath)
+	fullNewPath := t.resolveFilePath(renameFilePath)
+
+	// 检查源文件是否存在
+	if _, err := os.Stat(fullOldPath); os.IsNotExist(err) {
+		return nil, util.WrapError(ctx, fmt.Errorf("source file does not exist: %s", filePath), "executeRenameFile")
+	}
+
+	// 确保目标目录存在
+	newDir := filepath.Dir(fullNewPath)
+	if err := os.MkdirAll(newDir, 0755); err != nil {
+		return nil, util.WrapError(ctx, err, "executeRenameFile::MkdirAll")
+	}
+
+	if err := os.Rename(fullOldPath, fullNewPath); err != nil {
+		return nil, util.WrapError(ctx, err, "executeRenameFile::Rename")
+	}
+
+	return map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Renamed %s to %s", filePath, renameFilePath),
+	}, nil
+}
+
+// ExecuteListDir 实现list_dir工具
+func (t *FileOperationsTool) ExecuteListDir(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	dirPath, ok := params["dir_path"].(string)
+	if !ok {
+		return nil, util.WrapError(ctx, fmt.Errorf("dir_path parameter must be a string"), "executeListDir")
+	}
+
+	maxDepth := 3
+	if d, ok := params["max_depth"].(float64); ok {
+		maxDepth = int(d)
+	}
+
+	fullPath := t.resolveFilePath(dirPath)
+	var result []string
+
+	err := filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(fullPath, path)
+		if err != nil {
+			return nil
+		}
+
+		if relPath == "." {
+			return nil
+		}
+
+		// 计算深度
+		depth := strings.Count(relPath, string(os.PathSeparator)) + 1
+		if depth > maxDepth {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		prefix := ""
+		if info.IsDir() {
+			prefix = "[DIR] "
+		}
+		result = append(result, fmt.Sprintf("%s%s", prefix, relPath))
+		return nil
+	})
+
+	if err != nil {
+		return nil, util.WrapError(ctx, err, "executeListDir::Walk")
+	}
+
+	return map[string]interface{}{
+		"files": result,
+		"count": len(result),
 	}, nil
 }
 
