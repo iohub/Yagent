@@ -23,7 +23,7 @@ type CodingAgent struct {
 	maxSteps  int
 }
 
-func NewCodingAgent(ctx *globalctx.GlobalCtx, llm llms.LLM, fileOps *tools.FileOperationsTool, sysOps *tools.SystemOperationsTool, replaceTool *tools.ReplaceBlockTool, thinkingTool *tools.ThinkingTool, maxSteps int) *CodingAgent {
+func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) *CodingAgent {
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("read_file", `Read the contents of a file. the output of this tool call will be the 1-indexed file contents from start_line_one_indexed to end_line_one_indexed_inclusive, together with a summary of the lines outside start_line_one_indexed and end_line_one_indexed_inclusive.
 Note that this call can view at most 250 lines at a time and 200 lines minimum.
@@ -36,7 +36,7 @@ When using this tool to gather information, it's your responsibility to ensure y
 
 In some cases, if reading a range of lines is not enough, you may choose to read the entire file.
 Reading entire files is often wasteful and slow, especially for large files (i.e. more than a few hundred lines). So you should use this option sparingly.
-Reading the entire file is not allowed in most cases. You are only allowed to read the entire file if it has been edited or manually attached to the conversation by the user.`, fileOps.ExecuteReadFile).WithSchema(map[string]interface{}{
+Reading the entire file is not allowed in most cases. You are only allowed to read the entire file if it has been edited or manually attached to the conversation by the user.`, globalCtx.FileOps.ExecuteReadFile).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"target_file": map[string]interface{}{
@@ -62,7 +62,7 @@ Reading the entire file is not allowed in most cases. You are only allowed to re
 			},
 			"required": []string{"target_file", "should_read_entire_file", "start_line_one_indexed", "end_line_one_indexed_inclusive"},
 		}),
-		tools.NewAdapter("search_replace", replaceTool.Description(), replaceTool.ExecuteReplaceBlock).WithSchema(map[string]interface{}{
+		tools.NewAdapter("search_replace", globalCtx.ReplaceTool.Description(), globalCtx.ReplaceTool.ExecuteReplaceBlock).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"file_path":     map[string]interface{}{"type": "string", "description": "File path to modify"},
@@ -71,7 +71,7 @@ Reading the entire file is not allowed in most cases. You are only allowed to re
 			},
 			"required": []string{"file_path", "search_block", "replace_block"},
 		}),
-		tools.NewAdapter("write_file", "Create or overwrite file", fileOps.ExecuteWriteFile).WithSchema(map[string]interface{}{
+		tools.NewAdapter("write_file", "Create or overwrite file", globalCtx.FileOps.ExecuteWriteFile).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"file_path": map[string]interface{}{"type": "string", "description": "File path to write"},
@@ -79,16 +79,16 @@ Reading the entire file is not allowed in most cases. You are only allowed to re
 			},
 			"required": []string{"file_path", "content"},
 		}),
-		tools.NewAdapter("run_shell_command", "Run shell command", sysOps.ExecuteRunTerminalCmd).WithSchema(map[string]interface{}{
+		tools.NewAdapter("run_shell_command", "Run shell command", globalCtx.SysOps.ExecuteRunTerminalCmd).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"command": map[string]interface{}{"type": "string", "description": "Command to run"},
 			},
 			"required": []string{"command"},
 		}),
-		tools.NewAdapter("thinking", thinkingTool.Description(), func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		tools.NewAdapter("thinking", globalCtx.ThinkingTool.Description(), func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			inputBytes, _ := json.Marshal(params)
-			return thinkingTool.Call(ctx, string(inputBytes))
+			return globalCtx.ThinkingTool.Call(ctx, string(inputBytes))
 		}).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -103,11 +103,11 @@ Reading the entire file is not allowed in most cases. You are only allowed to re
 	return &CodingAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
-			Publisher: ctx.Publisher,
+			Publisher: globalCtx.Publisher,
 		},
 		Adapters:  adapters,
 		maxSteps:  maxSteps,
-		GlobalCtx: ctx,
+		GlobalCtx: globalCtx,
 	}
 }
 
