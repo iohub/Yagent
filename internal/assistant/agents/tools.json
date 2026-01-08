@@ -130,5 +130,79 @@
         "current_action"
       ]
     }
+  },
+  {
+    "name": "delete_file",
+    "description": "You can use this tool to delete files, you can delete multi files in one toolcall, and you MUST make sure the files is exist before deleting.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "file_paths"
+      ]
+    }
+  },
+  {
+    "name": "rename_file",
+    "description": "You can use this tool to move or rename an existing file.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string"
+        },
+        "rename_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_path",
+        "rename_file_path"
+      ]
+    }
+  },
+  {
+    "name": "list_dir",
+    "description": "You can use this tool to view files of the specified directory.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "dir_path": {
+          "type": "string"
+        },
+        "max_depth": {
+          "type": "integer",
+          "default": 3
+        }
+      },
+      "required": [
+        "dir_path"
+      ]
+    }
+  },
+  {
+    "name": "search_by_regex",
+    "description": "Fast text-based search that finds exact pattern matches within files or directories, utilizing the ripgrep command for efficient searching.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "search_directory": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
   }
 ]
