@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"sync"
 
 	"codeactor/internal/assistant/agents"
@@ -48,6 +49,8 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 
 	gctx := globalctx.GlobalCtx{
 		ProjectPath: workDir,
+		OS:          runtime.GOOS,
+		Arch:        runtime.GOARCH,
 		// Global utility
 		Publisher: publisher,
 

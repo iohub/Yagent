@@ -4,12 +4,15 @@ import (
 	"codeactor/internal/assistant/tools"
 	"codeactor/pkg/messaging"
 	"fmt"
+	"strings"
 )
 
 type GlobalCtx struct {
 	CustomizePrompt string
 	SpeakLang       string
 	ProjectPath     string
+	OS              string
+	Arch            string
 	// Global utility
 	Publisher *messaging.MessagePublisher
 
@@ -29,17 +32,33 @@ func NewGlobalCtx() *GlobalCtx {
 }
 
 func (g *GlobalCtx) FormatPrompt(prompt string) string {
-	extra := ""
+	var sb strings.Builder
+	sb.WriteString(prompt)
+
+	// Environment context
+	sb.WriteString("\n\n<env>\n")
 	if g.ProjectPath != "" {
-		extra += fmt.Sprintf("\nProject Path: %s\n", g.ProjectPath)
+		sb.WriteString(fmt.Sprintf("Project Path: %s\n", g.ProjectPath))
 	}
+	if g.OS != "" {
+		sb.WriteString(fmt.Sprintf("Operating System: %s\n", g.OS))
+	}
+	if g.Arch != "" {
+		sb.WriteString(fmt.Sprintf("Architecture: %s\n", g.Arch))
+	}
+	sb.WriteString("</env>\n")
+
+	// Language requirement
 	if g.SpeakLang != "" {
-		extra += fmt.Sprintf("\nYou must speak in %s.\n", g.SpeakLang)
+		sb.WriteString(fmt.Sprintf("\n<language_requirement>\nYou must speak in %s.\n</language_requirement>\n", g.SpeakLang))
 	}
+
+	// Custom prompt
 	if g.CustomizePrompt != "" {
-		extra += fmt.Sprintf("\n%s\n", g.CustomizePrompt)
+		sb.WriteString(fmt.Sprintf("\n<additional_instructions>\n%s\n</additional_instructions>\n", g.CustomizePrompt))
 	}
-	return prompt + extra
+
+	return sb.String()
 }
 
 func (g *GlobalCtx) SetPublisher(publisher *messaging.MessagePublisher) {
