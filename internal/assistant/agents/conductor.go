@@ -61,28 +61,6 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 			},
 			"required": []string{"reason"},
 		}),
-		tools.NewAdapter("list_dir", "List directory", globalCtx.SysOps.ExecuteListDir).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"absolute_path": map[string]interface{}{"type": "string", "description": "Absolute path to list"},
-			},
-			"required": []string{"absolute_path"},
-		}),
-		tools.NewAdapter("grep_search", "Search code using grep", globalCtx.SearchOps.ExecuteGrepSearch).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"query":           map[string]interface{}{"type": "string", "description": "Regex query"},
-				"include_pattern": map[string]interface{}{"type": "string", "description": "File pattern to include"},
-			},
-			"required": []string{"query"},
-		}),
-		tools.NewAdapter("file_search", tools.DescribeFileSearchTool(), globalCtx.SearchOps.ExecuteFileSearch).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"query": map[string]interface{}{"type": "string", "description": "Filename query"},
-			},
-			"required": []string{"query"},
-		}),
 	}
 
 	return &ConductorAgent{
