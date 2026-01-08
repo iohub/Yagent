@@ -179,6 +179,14 @@ func (t *FileOperationsTool) ExecuteListDir(ctx context.Context, params map[stri
 	fullPath := t.resolveFilePath(dirPath)
 	var result []string
 
+	ignoredDirs := map[string]bool{
+		".git":         true,
+		"node_modules": true,
+		".idea":        true,
+		".vscode":      true,
+		"__pycache__":  true,
+	}
+
 	err := filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -191,6 +199,12 @@ func (t *FileOperationsTool) ExecuteListDir(ctx context.Context, params map[stri
 
 		if relPath == "." {
 			return nil
+		}
+
+		// Check for ignored directories
+		if info.IsDir() && ignoredDirs[info.Name()] {
+			result = append(result, fmt.Sprintf("[DIR] %s", relPath))
+			return filepath.SkipDir
 		}
 
 		// 计算深度
