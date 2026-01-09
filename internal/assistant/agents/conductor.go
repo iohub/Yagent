@@ -172,6 +172,8 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 					toolResult, err = t.Call(ctx, tc.FunctionCall.Arguments)
 					if err != nil {
 						toolResult = fmt.Sprintf("Error: %v", err)
+					} else if t.Name() == "delegate_repo" {
+						a.GlobalCtx.RepoSummary = toolResult
 					}
 					break
 				}

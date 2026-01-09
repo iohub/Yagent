@@ -13,6 +13,7 @@ type GlobalCtx struct {
 	ProjectPath     string
 	OS              string
 	Arch            string
+	RepoSummary     string
 	// Global utility
 	Publisher *messaging.MessagePublisher
 
