@@ -64,9 +64,9 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	}
 	ca.globalCtx = &gctx
 	// Get max steps from config, default to 10 if not set
-	repoMaxSteps := 10
-	codingMaxSteps := 10
-	conductorMaxSteps := 10
+	repoMaxSteps := 20
+	codingMaxSteps := 30
+	conductorMaxSteps := 20
 
 	if ca.config != nil {
 		if ca.config.Agent.RepoMaxSteps > 0 {
