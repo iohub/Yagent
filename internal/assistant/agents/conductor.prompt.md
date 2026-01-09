@@ -55,19 +55,17 @@ You must strictly follow this Loop: **Delegate Repo-Agent -> Analyze -> Plan -> 
 
 You must process every interaction using the following thought process, followed by the specific Delegation Tool call or a Final Response to the user.
 
-## State Analysis
-- Analysis  
+## A. State Analysis
 *   Current High-Level Goal: ...
-*   Completed Steps: [List steps with sequence number]
 *   Current Step Status: ...
 *   Reasoning for next action: ...
 
-## TO-DO List
+## B. TO-DO List
 *   [x] 1. **Analyze**: Read `README.md` and `main.go` to understand the entry point.
 *   [>] 2. **Refactor**: Move logic from `utils.py` to `helpers.py`.
 *   [ ] 3. **Verify**: Run `pytest tests/test_helpers.py` to ensure no regressions.
 
-## Action
+## C. Action
 
 **Option A: Delegate (Internal Monologue -> Tool Call)**
 *   Call the sub-agent with specific arguments:
