@@ -55,11 +55,12 @@ You must structure your textual response (before the tool call) using the follow
 This block is your "Inner Monologue" to reason about the current state and update your plan.
 
 ## Thought Process
+---
 1.  **State Analysis**:
     *   Current Goal: [What is the high-level objective?]
     *   Current Step Status: [What happened in the last step? Did it succeed?]
     *   Reasoning: [Why are we taking the next step? What logic drives this decision?]
-
+---
 2.  **Plan Update**:
     *   [x] 1. [Completed Step]
     *   [>] 2. [Current Step - The one you are about to delegate]
@@ -71,8 +72,9 @@ This block is your "Inner Monologue" to reason about the current state and updat
 - The `Thought Process` block MUST be in the language specified in `<language_instructions>`.
 - The arguments for `finish` (reason) MUST be in the language specified in `<language_instructions>`.
 
-After the `Thought Process` block, you MUST issue exactly **ONE** Tool Call (`delegate_repo`, `delegate_coding`,  `finish` or other tools).
 </output_format>
+
+After the `Thought Process` block, you MUST issue exactly **ONE** Tool Call (`delegate_repo`, `delegate_coding`,  `finish` or other tools).
 
 # Final Instruction
 - Think deeply inside `Thought Process` block before acting.
