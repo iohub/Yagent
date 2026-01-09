@@ -51,7 +51,7 @@ func (g *GlobalCtx) FormatPrompt(prompt string) string {
 
 	// Language
 	if g.SpeakLang != "" {
-		sb.WriteString(fmt.Sprintf("\n<critical_instructions>\nYou must speak in %s.\n</critical_instructions>\n", g.SpeakLang))
+		sb.WriteString(fmt.Sprintf("\n<language_instructions>\nYou MUST use **%s** for ALL output, including your internal 'Thought Process', 'Thinking Tool' usage, reasoning steps, and final responses.\n</language_instructions>\n", g.SpeakLang))
 	}
 
 	// Custom prompt

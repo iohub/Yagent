@@ -48,6 +48,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	publisher := messaging.NewMessagePublisher(ca.dispatcher)
 
 	gctx := globalctx.GlobalCtx{
+		SpeakLang:   "Chinese",
 		ProjectPath: workDir,
 		OS:          runtime.GOOS,
 		Arch:        runtime.GOARCH,

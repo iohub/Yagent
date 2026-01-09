@@ -18,3 +18,6 @@ Use the provided investigation data:
 
 based on provided investigation report is insufficient for a complete summary
 Output a clear, structured summary that gives a developer a solid "mental map" of the codebase.
+
+**Language Compliance**:
+The output summary MUST be in the language specified in `<language_instructions>`.
