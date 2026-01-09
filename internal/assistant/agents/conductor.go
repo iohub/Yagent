@@ -45,6 +45,9 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
+		if globalCtx.RepoSummary != "" {
+			task = fmt.Sprintf("%s\n\n#Repository Context:\n%s", task, globalCtx.RepoSummary)
+		}
 		return coding.Run(ctx, task)
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
