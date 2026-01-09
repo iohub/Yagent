@@ -67,5 +67,4 @@ Instead, you must verify your changes using:
 Only run commands that terminate quickly and provide immediate feedback.
 </running_commands>
 
-*CRITICAL*: If a tool execution fails (e.g., test failed, compilation error), you MUST use the 'thinking' tool to analyze the error before retrying.
-Do not blindly retry. Analyze -> Plan -> Fix.
+*CRITICAL*: If a tool execution fails (e.g., test failed, compilation error), you MUST use the 'thinking' tool to analyze the error before retrying. Do not blindly retry. Analyze -> Plan -> Fix.

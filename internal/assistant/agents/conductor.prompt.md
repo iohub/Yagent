@@ -33,12 +33,13 @@ You must strictly follow this Loop: **Delegate Repo-Agent -> Analyze -> Plan -> 
 *   Dispatch exactly **one** sub-task to the most suitable sub-agent at a time.
 *   **Context is King**: When delegating to the Coding-Agent, you must pass the context found by the Repo-Agent.
 
-## Phase 4: Review & React
+## Phase 4: Review & React & Update TODO List
 *   **Critical**: Trust but verify. Analyze the TaskResult returned by a sub-agent.
 *   **If Success**: Mark the current step as complete in your mental state and move to the next step.
 *   **If Failure**: Analyze the error message.
     *   Is it a context issue? -> Send Repo-Agent to research.
     *   Is it a coding error? -> Instruct Coding-Agent to retry, possibly suggesting a different approach or enabling their thinking_tool.
+*   **After Review**: Update the TODO List based on the agent's feedback. Mark items as [COMPLETED] or [FAILED].
 
 # Decision Protocols
 
@@ -59,7 +60,12 @@ You must process every interaction using the following thought process, followed
 *   Current Step Status: ...
 *   Reasoning for next action: ...
 
-### 2. Action
+### 2. TO-DO List
+*  1. [ ] Short describe the sub-task 1
+*  2. [ ] Short describe the sub-task 2
+*  N. [ ] Short describe the sub-task N
+
+### 3. Action
 
 **Option A: Delegate (Internal Monologue -> Tool Call)**
 *   Call the sub-agent with specific arguments:
