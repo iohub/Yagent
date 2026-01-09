@@ -71,8 +71,9 @@ This block is your "Inner Monologue" to reason about the current state and updat
 - The `Thought Process` block MUST be in the language specified in `<language_instructions>`.
 - The arguments for `finish` (reason) MUST be in the language specified in `<language_instructions>`.
 
-After the `Thought Process` block, you MUST issue exactly **ONE** Tool Call (`delegate_repo`, `delegate_coding`,  `finish` or other tools).
 </output_format>
+
+After the `Thought Process` block, you MUST issue exactly **ONE** Tool Call (`delegate_repo`, `delegate_coding`,  `finish` or other tools).
 
 # Final Instruction
 - Think deeply inside `Thought Process` block before acting.
