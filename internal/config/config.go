@@ -41,9 +41,10 @@ type AppConfig struct {
 
 // AgentConfig contains agent-specific configuration
 type AgentConfig struct {
-	ConductorMaxSteps int `toml:"conductor_max_steps"`
-	CodingMaxSteps    int `toml:"coding_max_steps"`
-	RepoMaxSteps      int `toml:"repo_max_steps"`
+	ConductorMaxSteps int    `toml:"conductor_max_steps"`
+	CodingMaxSteps    int    `toml:"coding_max_steps"`
+	RepoMaxSteps      int    `toml:"repo_max_steps"`
+	SpeakLang         string `toml:"lang"`
 }
 
 // Config is the root configuration structure

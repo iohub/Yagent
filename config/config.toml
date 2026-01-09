@@ -29,7 +29,7 @@ api_key = "your-key"
 [llm.providers.siliconflow]
 model = "deepseek-ai/DeepSeek-V3.2"
 temperature = 0.0
-max_tokens = 3000
+max_tokens = 23000
 api_base_url = "https://api.siliconflow.cn/v1"
 api_key = "your-key"
 
@@ -114,6 +114,7 @@ aws_region = "us-east-1"
 enable_streaming = true
 
 [agent]
-conductor_max_steps = 20
-coding_max_steps = 30
-repo_max_steps = 20
+conductor_max_steps = 30
+coding_max_steps = 50
+repo_max_steps = 30
+lang = "Chinese"
