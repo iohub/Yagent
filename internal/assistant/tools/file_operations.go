@@ -203,7 +203,7 @@ func (t *FileOperationsTool) ExecuteListDir(ctx context.Context, params map[stri
 
 		// Check for ignored directories
 		if info.IsDir() && ignoredDirs[info.Name()] {
-			result = append(result, fmt.Sprintf("[DIR] %s", relPath))
+			result = append(result, fmt.Sprintf("%s/", relPath))
 			return filepath.SkipDir
 		}
 
@@ -216,11 +216,11 @@ func (t *FileOperationsTool) ExecuteListDir(ctx context.Context, params map[stri
 			return nil
 		}
 
-		prefix := ""
+		tail := ""
 		if info.IsDir() {
-			prefix = "[DIR] "
+			tail = "/"
 		}
-		result = append(result, fmt.Sprintf("%s%s", prefix, relPath))
+		result = append(result, fmt.Sprintf("%s%s", relPath, tail))
 		return nil
 	})
 
