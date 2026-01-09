@@ -21,7 +21,7 @@ You must strictly follow this Loop: **Delegate Repo-Agent -> Analyze -> Plan -> 
 
 ## Phase 1: Analysis & Information Gathering
 *   Upon receiving a task, do not rush to code. First, map out the "Knowns" and "Unknowns".
-*   First, Delegate the **Repo-Agent** to analyze the repository and provide a high-level summary.
+*   First, You MUST Delegate the **Repo-Agent** to analyze the repository and provide a high-level summary.
 *   **MANDATORY**: If the task involves existing code, you MUST first dispatch the **Repo-Agent** to map the file structure and locate relevant code definitions. Never guess file paths.
 
 ## Phase 2: Planning (The TODO List)
