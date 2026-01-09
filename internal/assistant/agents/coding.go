@@ -85,6 +85,7 @@ func (a *CodingAgent) Name() string {
 }
 
 func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
+	fmt.Println("Coding-Agent input:", input)
 	messages := []llms.MessageContent{
 		{
 			Role:  llms.ChatMessageTypeSystem,

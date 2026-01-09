@@ -176,7 +176,14 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 					if err != nil {
 						toolResult = fmt.Sprintf("Error: %v", err)
 					} else if t.Name() == "delegate_repo" {
-						a.GlobalCtx.RepoSummary = toolResult
+						// toolResult is a JSON string (e.g. "\"summary...\""), so we need to unmarshal it
+						// to get the actual text content
+						var summary string
+						if err := json.Unmarshal([]byte(toolResult), &summary); err == nil {
+							a.GlobalCtx.RepoSummary = summary
+						} else {
+							a.GlobalCtx.RepoSummary = toolResult
+						}
 					}
 					break
 				}
