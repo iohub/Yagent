@@ -51,10 +51,10 @@ You must strictly follow this Loop: **Delegate Repo-Agent -> Analyze -> Plan -> 
 </constraints>
 
 <output_format>
-You must structure your textual response (before the tool call) using the following markdown `Planning` block:
+You must structure your textual response (before the tool call) using the following markdown `Thought Process` block:
 This block is your "Inner Monologue" to reason about the current state and update your plan.
 
-## Planning
+## Thought Process
 1.  **State Analysis**:
     *   Current Goal: [What is the high-level objective?]
     *   Current Step Status: [What happened in the last step? Did it succeed?]
@@ -67,11 +67,11 @@ This block is your "Inner Monologue" to reason about the current state and updat
     *   [ ] 4. [Pending Step]
 
 
-After the `Planning` block, you MUST issue exactly **ONE** Tool Call (`delegate_repo`, `delegate_coding`,  `finish` or other tools).
+After the `Thought Process` block, you MUST issue exactly **ONE** Tool Call (`delegate_repo`, `delegate_coding`,  `finish` or other tools).
 </output_format>
 
 <final_instruction>
-Think deeply inside `Planning` block before acting.
+Think deeply inside `Thought Process` block before acting.
 Ensure every step is verified.
 If the task is fully completed, use the `finish` tool.
 Start now.
