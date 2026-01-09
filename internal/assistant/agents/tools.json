@@ -1,0 +1,208 @@
+[
+  {
+    "name": "read_file",
+    "description": "Read the contents of a file. the output of this tool call will be the 1-indexed file contents from start_line_one_indexed to end_line_one_indexed_inclusive, together with a summary of the lines outside start_line_one_indexed and end_line_one_indexed_inclusive.\nNote that this call can view at most 250 lines at a time and 200 lines minimum.\n\nWhen using this tool to gather information, it's your responsibility to ensure you have the COMPLETE context. Specifically, each time you call this command you should:\n1) Assess if the contents you viewed are sufficient to proceed with your task.\n2) Take note of where there are lines not shown.\n3) If the file contents you have viewed are insufficient, and you suspect they may be in lines not shown, proactively call the tool again to view those lines.\n4) When in doubt, call this tool again to gather more information. Remember that partial file views may miss critical dependencies, imports, or functionality.\n\nIn some cases, if reading a range of lines is not enough, you may choose to read the entire file.\nReading entire files is often wasteful and slow, especially for large files (i.e. more than a few hundred lines). So you should use this option sparingly.\nReading the entire file is not allowed in most cases. You are only allowed to read the entire file if it has been edited or manually attached to the conversation by the user.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "target_file": {
+          "type": "string",
+          "description": "The path of the file to read. You can use either a relative path in the workspace or an absolute path. If an absolute path is provided, it will be preserved as is."
+        },
+        "start_line_one_indexed": {
+          "type": "integer",
+          "description": "The one-indexed line number to start reading from (inclusive)."
+        },
+        "end_line_one_indexed_inclusive": {
+          "type": "integer",
+          "description": "The one-indexed line number to end reading at (inclusive)."
+        },
+        "should_read_entire_file": {
+          "type": "boolean",
+          "description": "Whether to read the entire file. Defaults to false."
+        },
+        "explanation": {
+          "type": "string",
+          "description": "One sentence explanation as to why this tool is being used, and how it contributes to the goal."
+        }
+      },
+      "required": [
+        "target_file",
+        "should_read_entire_file",
+        "start_line_one_indexed",
+        "end_line_one_indexed_inclusive"
+      ]
+    }
+  },
+  {
+    "name": "search_replace_in_file",
+    "description": "This is a tool for editing files. For moving or renaming files, you should generally use the Bash tool with the 'mv' command instead. For larger edits, use the Write tool to overwrite files. \nBefore using this tool:\n\n    Use the View tool to understand the file's contents and context\n\n    Verify the directory path is correct (only applicable when creating new files):\n        Use the LS tool to verify the parent directory exists and is the correct location\n\nTo make a file edit, provide the following:\n\n    file_path: The absolute path to the file to modify (must be absolute, not relative)\n    old_string: The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)\n    new_string: The edited text to replace the old_string\n\nThe tool will replace ONE occurrence of old_string with new_string in the specified file.\n\nCRITICAL REQUIREMENTS FOR USING THIS TOOL:\n\n    UNIQUENESS: The old_string MUST uniquely identify the specific instance you want to change. This means:\n        Include AT LEAST 3-5 lines of context BEFORE the change point\n        Include AT LEAST 3-5 lines of context AFTER the change point\n        Include all whitespace, indentation, and surrounding code exactly as it appears in the file\n\n    SINGLE INSTANCE: This tool can only change ONE instance at a time. If you need to change multiple instances:\n        Make separate calls to this tool for each instance\n        Each call must uniquely identify its specific instance using extensive context\n\n    VERIFICATION: Before using this tool:\n        Check how many instances of the target text exist in the file\n        If multiple instances exist, gather enough context to uniquely identify each one\n        Plan separate tool calls for each instance\n\nWARNING: If you do not follow these requirements:\n\n    The tool will fail if old_string matches multiple locations\n    The tool will fail if old_string doesn't match exactly (including whitespace)\n    You may change the wrong instance if you don't include enough context\n\nWhen making edits:\n\n    Ensure the edit results in idiomatic, correct code\n    Do not leave the code in a broken state\n    Always use absolute file paths (starting with /)\n\nIf you want to create a new file, use:\n\n    A new file path, including dir name if needed\n    An empty old_string\n    The new file's contents as new_string\n\nRemember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "The absolute path to the file to modify (must be absolute, not relative)"
+        },
+        "old_string": {
+          "type": "string",
+          "description": "The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)"
+        },
+        "new_string": {
+          "type": "string",
+          "description": "The edited text to replace the old_string"
+        }
+      },
+      "required": [
+        "file_path",
+        "old_string",
+        "new_string"
+      ]
+    }
+  },
+  {
+    "description": "Create a new file at the specified path with the given content. Fails if the file already exists.",
+    "name": "create_file",
+    "parameters": {
+      "properties": {
+        "target_file": {
+          "description": "The path of the file to create. You can use either a relative path in the workspace or an absolute path. If an absolute path is provided, it will be preserved as is.",
+          "type": "string"
+        },
+        "content": {
+          "description": "The content to write to the new file.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_file",
+        "content"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "run_terminal_cmd",
+    "description": "PROPOSE a command to run on behalf of the user.\nIf you have this tool, note that you DO have the ability to run commands directly on the USER's system.\nNote that the user will have to approve the command before it is executed.\nThe user may reject it if it is not to their liking, or may modify the command before approving it.  If they do change it, take those changes into account.\nThe actual command will NOT execute until the user approves it. The user may not approve it immediately. Do NOT assume the command has started running.\nIf the step is WAITING for user approval, it has NOT started running.\nIn using these tools, adhere to the following guidelines:\n1. Based on the contents of the conversation, you will be told if you are in the same shell as a previous step or a different shell.\n2. If in a new shell, you should `cd` to the appropriate directory and do necessary setup in addition to running the command.\n3. If in the same shell, LOOK IN CHAT HISTORY for your current working directory.\n4. For ANY commands that would require user interaction, ASSUME THE USER IS NOT AVAILABLE TO INTERACT and PASS THE NON-INTERACTIVE FLAGS (e.g. --yes for npx).\n5. If the command would use a pager, append ` | cat` to the command.\n6. For commands that are long running/expected to run indefinitely until interruption, please run them in the background. To run jobs in the background, set `is_background` to true rather than changing the details of the command.\n7. Dont include any newlines in the command.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "The terminal command to execute"
+        },
+        "explanation": {
+          "type": "string",
+          "description": "One sentence explanation as to why this command needs to be run and how it contributes to the goal."
+        },
+        "is_background": {
+          "type": "boolean",
+          "description": "Whether the command should be run in the background"
+        }
+      },
+      "required": [
+        "command",
+        "is_background"
+      ]
+    }
+  },
+  {
+    "name": "thinking",
+    "description": "A cognitive tool for self-correction and deep analysis. Use this IMMEDIATELY when an action fails, an error occurs, or you are unsure how to proceed. Do NOT use this tool to execute actions (like writing files or running commands). Instead, use it to generate a 'Chain of Thought' log to: 1. Analyze the root cause of the error or unexpected result. 2. Brainstorm 2-3 potential solutions with their pros and cons. 3. Select the best solution to proceed. This helps avoid blind retries and infinite loops.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "error_message": {
+          "type": "string",
+          "description": "The error message, failure description, or the problem to be solved."
+        },
+        "current_action": {
+          "type": "string",
+          "description": "The action that was attempted and failed, or the current context."
+        },
+        "observation": {
+          "type": "string",
+          "description": "Additional context, observations, or what happened."
+        }
+      },
+      "required": [
+        "error_message",
+        "current_action"
+      ]
+    }
+  },
+  {
+    "name": "delete_file",
+    "description": "You can use this tool to delete files, you can delete multi files in one toolcall, and you MUST make sure the files is exist before deleting.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "file_paths"
+      ]
+    }
+  },
+  {
+    "name": "rename_file",
+    "description": "You can use this tool to move or rename an existing file.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string"
+        },
+        "rename_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_path",
+        "rename_file_path"
+      ]
+    }
+  },
+  {
+    "name": "list_dir",
+    "description": "You can use this tool to view files of the specified directory.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "dir_path": {
+          "type": "string"
+        },
+        "max_depth": {
+          "type": "integer",
+          "default": 3
+        }
+      },
+      "required": [
+        "dir_path"
+      ]
+    }
+  },
+  {
+    "name": "search_by_regex",
+    "description": "A high-performance search tool powered by ripgrep (rg) designed for large codebases. It supports PCRE2 regular expressions and automatically respects .gitignore rules. Use this tool to precisely locate function definitions, variable references, error messages, or complex code patterns across multiple files. ",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "search_directory": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  }
+]

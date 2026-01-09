@@ -3,11 +3,12 @@ package agents
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
 	"codeactor/internal/assistant/tools"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/globalctx"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -19,11 +20,12 @@ type ConductorAgent struct {
 	BaseAgent
 	RepoAgent   *RepoAgent
 	CodingAgent *CodingAgent
+	GlobalCtx   *globalctx.GlobalCtx
 	Adapters    []*tools.Adapter
 	maxSteps    int
 }
 
-func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo *RepoAgent, coding *CodingAgent, maxSteps int) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, maxSteps int) *ConductorAgent {
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
@@ -43,6 +45,9 @@ func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
+		if globalCtx.RepoSummary != "" {
+			task = fmt.Sprintf("%s\n\n#Repository Context:\n%s", task, globalCtx.RepoSummary)
+		}
 		return coding.Run(ctx, task)
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
@@ -52,46 +57,43 @@ func NewConductorAgent(llm llms.LLM, publisher *messaging.MessagePublisher, repo
 		"required": []string{"task"},
 	})
 
-	sysOps := tools.NewSystemOperationsTool(repo.projectDir)
-	searchOps := tools.NewSearchOperationsTool(repo.projectDir)
-	flowOps := tools.NewFlowControlTool(repo.projectDir)
-
 	adapters := []*tools.Adapter{
-		tools.NewAdapter("finish", "Indicate that the current task is finished. The output of this tool call will be a description of why the task is finished, which could be because the task is completed or cannot be completed and must be terminated.", flowOps.ExecuteFinish).WithSchema(map[string]interface{}{
+		tools.NewAdapter("finish", "Indicate that the current task is finished. The output of this tool call will be a description of why the task is finished, which could be because the task is completed or cannot be completed and must be terminated.", globalCtx.FlowOps.ExecuteFinish).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"reason": map[string]interface{}{"type": "string", "description": "A description of why the task is finished, e.g., task completed, cannot complete, or must terminate."},
 			},
 			"required": []string{"reason"},
 		}),
-		tools.NewAdapter("list_dir", "List directory", sysOps.ExecuteListDir).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"absolute_path": map[string]interface{}{"type": "string", "description": "Absolute path to list"},
-			},
-			"required": []string{"absolute_path"},
-		}),
-		tools.NewAdapter("grep_search", "Search code using grep", searchOps.ExecuteGrepSearch).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"query":           map[string]interface{}{"type": "string", "description": "Regex query"},
-				"include_pattern": map[string]interface{}{"type": "string", "description": "File pattern to include"},
-			},
-			"required": []string{"query"},
-		}),
-		tools.NewAdapter("file_search", "Find file paths", searchOps.ExecuteFileSearch).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"query": map[string]interface{}{"type": "string", "description": "Filename query"},
-			},
-			"required": []string{"query"},
-		}),
+	}
+
+	var toolDefs []ToolDefinition
+	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
+		slog.Error("Failed to unmarshal tools", "error", err)
+	}
+
+	for _, def := range toolDefs {
+		var fn tools.ToolFunc
+		switch def.Name {
+		case "read_file":
+			fn = globalCtx.FileOps.ExecuteReadFile
+		case "search_by_regex":
+			fn = globalCtx.SearchOps.ExecuteGrepSearch
+		case "list_dir":
+			fn = globalCtx.FileOps.ExecuteListDir
+		default:
+			continue
+		}
+
+		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		adapters = append(adapters, adapter)
 	}
 
 	return &ConductorAgent{
-		BaseAgent:   BaseAgent{LLM: llm, Publisher: publisher},
+		BaseAgent:   BaseAgent{LLM: llm, Publisher: globalCtx.Publisher},
 		RepoAgent:   repo,
 		CodingAgent: coding,
+		GlobalCtx:   globalCtx,
 		Adapters:    append(adapters, delegateRepo, delegateCoding),
 		maxSteps:    maxSteps,
 	}
@@ -105,7 +107,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 	messages := []llms.MessageContent{
 		{
 			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(conductorPrompt)},
+			Parts: []llms.ContentPart{llms.TextPart(a.GlobalCtx.FormatPrompt(conductorPrompt))},
 		},
 		{
 			Role:  llms.ChatMessageTypeHuman,
@@ -173,6 +175,15 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 					toolResult, err = t.Call(ctx, tc.FunctionCall.Arguments)
 					if err != nil {
 						toolResult = fmt.Sprintf("Error: %v", err)
+					} else if t.Name() == "delegate_repo" {
+						// toolResult is a JSON string (e.g. "\"summary...\""), so we need to unmarshal it
+						// to get the actual text content
+						var summary string
+						if err := json.Unmarshal([]byte(toolResult), &summary); err == nil {
+							a.GlobalCtx.RepoSummary = summary
+						} else {
+							a.GlobalCtx.RepoSummary = toolResult
+						}
 					}
 					break
 				}

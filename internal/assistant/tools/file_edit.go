@@ -22,11 +22,7 @@ func NewReplaceBlockTool(workingDir string) *ReplaceBlockTool {
 }
 
 func (t *ReplaceBlockTool) Name() string {
-	return "search_replace"
-}
-
-func (t *ReplaceBlockTool) Description() string {
-	return "Replace a block of code in a file. Input: file_path, search_block, replace_block."
+	return "search_replace_in_file"
 }
 
 func (t *ReplaceBlockTool) resolveFilePath(filePath string) string {
@@ -44,22 +40,22 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 		return nil, util.WrapError(ctx, fmt.Errorf("file_path parameter must be a string"), "ExecuteReplaceBlock")
 	}
 
-	// Handle search_block (allow it to be empty for file creation if desired, but check type)
-	var searchBlock string
-	if val, exists := params["search_block"]; exists {
+	// Handle old_string (allow it to be empty for file creation if desired, but check type)
+	var oldString string
+	if val, exists := params["old_string"]; exists {
 		if valStr, ok := val.(string); ok {
-			searchBlock = valStr
+			oldString = valStr
 		} else {
-			return nil, util.WrapError(ctx, fmt.Errorf("search_block parameter must be a string"), "ExecuteReplaceBlock")
+			return nil, util.WrapError(ctx, fmt.Errorf("old_string parameter must be a string"), "ExecuteReplaceBlock")
 		}
 	} else {
 		// If missing, return error as it's required by schema usually
-		return nil, util.WrapError(ctx, fmt.Errorf("search_block parameter is required"), "ExecuteReplaceBlock")
+		return nil, util.WrapError(ctx, fmt.Errorf("old_string parameter is required"), "ExecuteReplaceBlock")
 	}
 
-	replaceBlock, ok := params["replace_block"].(string)
+	newString, ok := params["new_string"].(string)
 	if !ok {
-		return nil, util.WrapError(ctx, fmt.Errorf("replace_block parameter must be a string"), "ExecuteReplaceBlock")
+		return nil, util.WrapError(ctx, fmt.Errorf("new_string parameter must be a string"), "ExecuteReplaceBlock")
 	}
 
 	if filePath == "" {
@@ -73,8 +69,8 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 
 	fullPath := t.resolveFilePath(filePath)
 
-	// Case 1: Create new file (searchBlock is empty)
-	if searchBlock == "" {
+	// Case 1: Create new file (oldString is empty)
+	if oldString == "" {
 		if _, err := os.Stat(fullPath); err == nil {
 			return map[string]interface{}{
 				"success": false,
@@ -87,14 +83,14 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 			return nil, util.WrapError(ctx, err, "ExecuteReplaceBlock::MkdirAll")
 		}
 
-		if len(replaceBlock) > 10*1024*1024 {
+		if len(newString) > 10*1024*1024 {
 			return map[string]interface{}{
 				"success": false,
 				"error":   "new file content is too large (max 10MB)",
 			}, nil
 		}
 
-		if err := ioutil.WriteFile(fullPath, []byte(replaceBlock), 0644); err != nil {
+		if err := ioutil.WriteFile(fullPath, []byte(newString), 0644); err != nil {
 			return nil, util.WrapError(ctx, err, "ExecuteReplaceBlock::WriteFile")
 		}
 
@@ -127,22 +123,22 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 
 	content := string(data)
 
-	if !strings.Contains(content, searchBlock) {
+	if !strings.Contains(content, oldString) {
 		return map[string]interface{}{
 			"success": false,
-			"error":   "search_block not found in file",
+			"error":   "old_string not found in file",
 		}, nil
 	}
 
-	occurrences := strings.Count(content, searchBlock)
+	occurrences := strings.Count(content, oldString)
 	if occurrences > 1 {
 		return map[string]interface{}{
 			"success": false,
-			"error":   fmt.Sprintf("search_block appears %d times in file, please provide more context to make it unique", occurrences),
+			"error":   fmt.Sprintf("old_string appears %d times in file, please provide more context to make it unique", occurrences),
 		}, nil
 	}
 
-	newContent := strings.Replace(content, searchBlock, replaceBlock, 1)
+	newContent := strings.Replace(content, oldString, newString, 1)
 
 	if err := ioutil.WriteFile(fullPath, []byte(newContent), 0644); err != nil {
 		return nil, util.WrapError(ctx, err, "ExecuteReplaceBlock::WriteFile")

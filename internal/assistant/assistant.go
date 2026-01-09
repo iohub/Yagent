@@ -3,11 +3,13 @@ package assistant
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"sync"
 
 	"codeactor/internal/assistant/agents"
 	"codeactor/internal/assistant/tools"
 	"codeactor/internal/config"
+	"codeactor/internal/globalctx"
 	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
@@ -23,12 +25,7 @@ type CodingAssistant struct {
 	userResponseChannels map[string]chan string
 	logger               *slog.Logger
 
-	// Tools
-	fileOps      *tools.FileOperationsTool
-	searchOps    *tools.SearchOperationsTool
-	sysOps       *tools.SystemOperationsTool
-	replaceTool  *tools.ReplaceBlockTool
-	thinkingTool *tools.ThinkingTool
+	globalCtx *globalctx.GlobalCtx
 }
 
 // NewCodingAssistant creates a new CodingAssistant.
@@ -47,19 +44,29 @@ func NewCodingAssistant(client *Client) (*CodingAssistant, error) {
 func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	ca.llm = llm
 
-	// Initialize tools
-	ca.fileOps = tools.NewFileOperationsTool(workDir)
-	ca.searchOps = tools.NewSearchOperationsTool(workDir)
-	ca.sysOps = tools.NewSystemOperationsTool(workDir)
-	ca.replaceTool = tools.NewReplaceBlockTool(workDir)
-	ca.thinkingTool = tools.NewThinkingTool()
-
 	// Initialize agents
 	publisher := messaging.NewMessagePublisher(ca.dispatcher)
+
+	gctx := globalctx.GlobalCtx{
+		ProjectPath: workDir,
+		OS:          runtime.GOOS,
+		Arch:        runtime.GOARCH,
+		// Global utility
+		Publisher: publisher,
+
+		// Tools
+		FileOps:      tools.NewFileOperationsTool(workDir),
+		SearchOps:    tools.NewSearchOperationsTool(workDir),
+		SysOps:       tools.NewSystemOperationsTool(workDir),
+		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
+		ThinkingTool: tools.NewThinkingTool(),
+		FlowOps:      tools.NewFlowControlTool(workDir),
+	}
+	ca.globalCtx = &gctx
 	// Get max steps from config, default to 10 if not set
-	repoMaxSteps := 10
-	codingMaxSteps := 10
-	conductorMaxSteps := 10
+	repoMaxSteps := 20
+	codingMaxSteps := 30
+	conductorMaxSteps := 20
 
 	if ca.config != nil {
 		if ca.config.Agent.RepoMaxSteps > 0 {
@@ -73,9 +80,9 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		}
 	}
 
-	repoAgent := agents.NewRepoAgent(llm, publisher, workDir, repoMaxSteps)
-	codingAgent := agents.NewCodingAgent(llm, publisher, ca.fileOps, ca.sysOps, ca.replaceTool, ca.thinkingTool, codingMaxSteps)
-	ca.conductor = agents.NewConductorAgent(llm, publisher, repoAgent, codingAgent, conductorMaxSteps)
+	repoAgent := agents.NewRepoAgent(ca.globalCtx, llm, publisher, repoMaxSteps)
+	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, codingMaxSteps)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, conductorMaxSteps)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {

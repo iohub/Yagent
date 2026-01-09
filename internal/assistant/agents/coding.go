@@ -8,7 +8,7 @@ import (
 	"log/slog"
 
 	"codeactor/internal/assistant/tools"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/globalctx"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -16,96 +16,67 @@ import (
 //go:embed coding.prompt.md
 var codingPrompt string
 
-type CodingAgent struct {
-	BaseAgent
-	Adapters []*tools.Adapter
-	maxSteps int
+type ToolDefinition struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
 }
 
-func NewCodingAgent(llm llms.LLM, publisher *messaging.MessagePublisher, fileOps *tools.FileOperationsTool, sysOps *tools.SystemOperationsTool, replaceTool *tools.ReplaceBlockTool, thinkingTool *tools.ThinkingTool, maxSteps int) *CodingAgent {
-	adapters := []*tools.Adapter{
-		tools.NewAdapter("read_file", `Read the contents of a file. the output of this tool call will be the 1-indexed file contents from start_line_one_indexed to end_line_one_indexed_inclusive, together with a summary of the lines outside start_line_one_indexed and end_line_one_indexed_inclusive.
-Note that this call can view at most 250 lines at a time and 200 lines minimum.
+type CodingAgent struct {
+	BaseAgent
+	GlobalCtx *globalctx.GlobalCtx
+	Adapters  []*tools.Adapter
+	maxSteps  int
+}
 
-When using this tool to gather information, it's your responsibility to ensure you have the COMPLETE context. Specifically, each time you call this command you should:
-1) Assess if the contents you viewed are sufficient to proceed with your task.
-2) Take note of where there are lines not shown.
-3) If the file contents you have viewed are insufficient, and you suspect they may be in lines not shown, proactively call the tool again to view those lines.
-4) When in doubt, call this tool again to gather more information. Remember that partial file views may miss critical dependencies, imports, or functionality.
+func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) *CodingAgent {
+	var toolDefs []ToolDefinition
+	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
+		slog.Error("Failed to unmarshal coding tools", "error", err)
+	}
 
-In some cases, if reading a range of lines is not enough, you may choose to read the entire file.
-Reading entire files is often wasteful and slow, especially for large files (i.e. more than a few hundred lines). So you should use this option sparingly.
-Reading the entire file is not allowed in most cases. You are only allowed to read the entire file if it has been edited or manually attached to the conversation by the user.`, fileOps.ExecuteReadFile).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"target_file": map[string]interface{}{
-					"type":        "string",
-					"description": "The path of the file to read. You can use either a relative path in the workspace or an absolute path. If an absolute path is provided, it will be preserved as is.",
-				},
-				"start_line_one_indexed": map[string]interface{}{
-					"type":        "integer",
-					"description": "The one-indexed line number to start reading from (inclusive).",
-				},
-				"end_line_one_indexed_inclusive": map[string]interface{}{
-					"type":        "integer",
-					"description": "The one-indexed line number to end reading at (inclusive).",
-				},
-				"should_read_entire_file": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Whether to read the entire file. Defaults to false.",
-				},
-				"explanation": map[string]interface{}{
-					"type":        "string",
-					"description": "One sentence explanation as to why this tool is being used, and how it contributes to the goal.",
-				},
-			},
-			"required": []string{"target_file", "should_read_entire_file", "start_line_one_indexed", "end_line_one_indexed_inclusive"},
-		}),
-		tools.NewAdapter("search_replace", replaceTool.Description(), replaceTool.ExecuteReplaceBlock).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"file_path":     map[string]interface{}{"type": "string", "description": "File path to modify"},
-				"search_block":  map[string]interface{}{"type": "string", "description": "Exact code block to replace"},
-				"replace_block": map[string]interface{}{"type": "string", "description": "New code block"},
-			},
-			"required": []string{"file_path", "search_block", "replace_block"},
-		}),
-		tools.NewAdapter("write_file", "Create or overwrite file", fileOps.ExecuteWriteFile).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"file_path": map[string]interface{}{"type": "string", "description": "File path to write"},
-				"content":   map[string]interface{}{"type": "string", "description": "File content"},
-			},
-			"required": []string{"file_path", "content"},
-		}),
-		tools.NewAdapter("run_shell_command", "Run shell command", sysOps.ExecuteRunTerminalCmd).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"command": map[string]interface{}{"type": "string", "description": "Command to run"},
-			},
-			"required": []string{"command"},
-		}),
-		tools.NewAdapter("thinking", thinkingTool.Description(), func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			inputBytes, _ := json.Marshal(params)
-			return thinkingTool.Call(ctx, string(inputBytes))
-		}).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"error_message":  map[string]interface{}{"type": "string", "description": "The error encountered"},
-				"current_action": map[string]interface{}{"type": "string", "description": "Action that failed"},
-				"observation":    map[string]interface{}{"type": "string", "description": "What happened"},
-			},
-			"required": []string{"error_message", "current_action"},
-		}),
+	adapters := make([]*tools.Adapter, 0, len(toolDefs))
+	for _, def := range toolDefs {
+		var fn tools.ToolFunc
+		switch def.Name {
+		case "read_file":
+			fn = globalCtx.FileOps.ExecuteReadFile
+		case "search_replace_in_file":
+			fn = globalCtx.ReplaceTool.ExecuteReplaceBlock
+		case "create_file":
+			fn = globalCtx.FileOps.ExecuteCreateFile
+		case "run_terminal_cmd":
+			fn = globalCtx.SysOps.ExecuteRunTerminalCmd
+		case "search_by_regex":
+			fn = globalCtx.SearchOps.ExecuteGrepSearch
+		case "delete_file":
+			fn = globalCtx.FileOps.ExecuteDeleteFile
+		case "rename_file":
+			fn = globalCtx.FileOps.ExecuteRenameFile
+		case "list_dir":
+			fn = globalCtx.FileOps.ExecuteListDir
+		case "thinking":
+			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				inputBytes, _ := json.Marshal(params)
+				return globalCtx.ThinkingTool.Call(ctx, string(inputBytes))
+			}
+		default:
+			slog.Warn("Unknown tool in tools.json", "name", def.Name)
+			continue
+		}
+
+		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		adapters = append(adapters, adapter)
 	}
 
 	return &CodingAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
-			Publisher: publisher,
+			Publisher: globalCtx.Publisher,
 		},
-		Adapters: adapters,
-		maxSteps: maxSteps,
+		Adapters:  adapters,
+		maxSteps:  maxSteps,
+		GlobalCtx: globalCtx,
 	}
 }
 
@@ -114,10 +85,11 @@ func (a *CodingAgent) Name() string {
 }
 
 func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
+	fmt.Println("Coding-Agent input:", input)
 	messages := []llms.MessageContent{
 		{
 			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(codingPrompt)},
+			Parts: []llms.ContentPart{llms.TextPart(a.GlobalCtx.FormatPrompt(codingPrompt))},
 		},
 		{
 			Role:  llms.ChatMessageTypeHuman,
