@@ -195,10 +195,6 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 					"arguments": tc.FunctionCall.Arguments,
 				}, a.Name())
 			}
-			if tc.FunctionCall.Name == "finish" {
-				return "Task completed successfully", nil
-			}
-
 			for _, t := range a.Adapters {
 				if t.Name() == tc.FunctionCall.Name {
 					found = true
@@ -246,6 +242,10 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 					},
 				},
 			})
+			if tc.FunctionCall.Name == "finish" {
+				return "Task completed successfully", nil
+			}
+
 		}
 	}
 
