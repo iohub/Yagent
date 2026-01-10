@@ -98,9 +98,11 @@ func (dm *DataManager) ListTaskMemories() ([]string, error) {
 
 // TaskHistoryItem 用于TUI展示的历史任务信息
 type TaskHistoryItem struct {
-	TaskID    string    `json:"task_id"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"created_at"`
+	TaskID       string    `json:"task_id"`
+	Title        string    `json:"title"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	MessageCount int       `json:"message_count"`
 }
 
 // ListTaskHistory 返回最近的历史任务（按时间倒序），包含任务ID、标题（首条用户消息）与时间。
@@ -147,6 +149,20 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 				createdAt = time.Now()
 			}
 		}
+
+		// UpdatedAt: last message timestamp or file mod time
+		var updatedAt time.Time
+		if len(mem.Messages) > 0 {
+			updatedAt = mem.Messages[len(mem.Messages)-1].Timestamp
+		}
+		if updatedAt.IsZero() {
+			if info, err := entry.Info(); err == nil {
+				updatedAt = info.ModTime()
+			} else {
+				updatedAt = time.Now()
+			}
+		}
+
 		// 截断标题以适配TUI
 		if runeCount := len([]rune(title)); runeCount > 120 {
 			// 简单截断避免打断多字节
@@ -156,15 +172,17 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 		// 任务ID为文件名去后缀
 		taskID := entry.Name()[:len(entry.Name())-5]
 		items = append(items, TaskHistoryItem{
-			TaskID:    taskID,
-			Title:     title,
-			CreatedAt: createdAt,
+			TaskID:       taskID,
+			Title:        title,
+			CreatedAt:    createdAt,
+			UpdatedAt:    updatedAt,
+			MessageCount: len(mem.Messages),
 		})
 	}
 
 	// 按时间倒序
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].CreatedAt.After(items[j].CreatedAt)
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
 	})
 
 	if limit > 0 && len(items) > limit {

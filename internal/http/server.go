@@ -18,6 +18,7 @@ import (
 type Server struct {
 	taskManager     *TaskManager
 	codingAssistant *assistant.CodingAssistant
+	dataManager     *assistant.DataManager
 	melody          *melody.Melody
 	router          *gin.Engine
 }
@@ -31,8 +32,14 @@ func NewServer(codingAssistant *assistant.CodingAssistant) *Server {
 	// 创建全局任务管理器
 	taskManager := NewTaskManager(m)
 
+	// 初始化数据管理器
+	dataManager, err := assistant.NewDataManager()
+	if err != nil {
+		slog.Error("Failed to initialize DataManager", "error", err)
+	}
+
 	// 设置 WebSocket 处理器
-	HandleWebSocket(m, taskManager, codingAssistant)
+	HandleWebSocket(m, taskManager, codingAssistant, dataManager)
 
 	// 使用 gin 创建路由
 	r := gin.New()
@@ -44,6 +51,7 @@ func NewServer(codingAssistant *assistant.CodingAssistant) *Server {
 	server := &Server{
 		taskManager:     taskManager,
 		codingAssistant: codingAssistant,
+		dataManager:     dataManager,
 		melody:          m,
 		router:          r,
 	}
@@ -88,6 +96,88 @@ func (s *Server) setupRoutes() {
 
 	// 获取特定类型消息的API
 	s.router.GET("/api/memory/:type", s.handleGetMemoryByType)
+
+	// 获取历史任务列表
+	s.router.GET("/api/history", s.handleListHistory)
+
+	// 加载历史任务
+	s.router.POST("/api/load_task", s.handleLoadTask)
+}
+
+func (s *Server) handleListHistory(c *gin.Context) {
+	if s.dataManager == nil {
+		c.JSON(500, gin.H{"error": "DataManager not initialized"})
+		return
+	}
+
+	limit := 50 // Default limit
+	history, err := s.dataManager.ListTaskHistory(limit)
+	if err != nil {
+		slog.Error("Failed to list task history", "error", err)
+		c.JSON(500, gin.H{"error": "Failed to list task history"})
+		return
+	}
+
+	c.JSON(200, history)
+}
+
+func (s *Server) handleLoadTask(c *gin.Context) {
+	var req struct {
+		TaskID     string `json:"task_id"`
+		ProjectDir string `json:"project_dir"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid request body"})
+		return
+	}
+	if req.TaskID == "" {
+		c.JSON(400, gin.H{"error": "task_id is required"})
+		return
+	}
+
+	if s.dataManager == nil {
+		c.JSON(500, gin.H{"error": "DataManager not initialized"})
+		return
+	}
+
+	// 检查任务是否已经在运行
+	if _, ok := s.taskManager.GetTask(req.TaskID); ok {
+		// 已经在运行，直接返回成功
+		c.JSON(200, gin.H{"task_id": req.TaskID, "message": "Task is already running"})
+		return
+	}
+
+	// 加载Memory
+	mem, err := s.dataManager.LoadTaskMemory(req.TaskID)
+	if err != nil {
+		slog.Error("Failed to load task memory", "error", err, "task_id", req.TaskID)
+		c.JSON(404, gin.H{"error": "Task memory not found"})
+		return
+	}
+
+	// 创建新任务，使用加载的Memory
+	// 使用用户提供的ProjectDir，或者如果为空则尝试从Memory中推断（如果可能），或者设为空。
+	// 这里我们假设如果为空，用户可能只是想查看。
+	// 但为了支持继续任务，我们应该尽量有ProjectDir。
+	// 如果前端在Load时无法提供ProjectDir（因为可能不在历史记录中），我们可能需要让用户选择。
+	// 暂时只使用请求中的ProjectDir。
+
+	ctx, cancel := context.WithCancel(context.Background())
+	task := &Task{
+		ID:         req.TaskID,
+		Status:     TaskStatusRunning,
+		ProjectDir: req.ProjectDir,
+		CreatedAt:  time.Now(), // This is technically "restored at"
+		UpdatedAt:  time.Now(),
+		Memory:     mem,
+		Context:    ctx,
+		CancelFunc: cancel,
+	}
+
+	s.taskManager.AddTask(task)
+	slog.Info("Task loaded/restored", "task_id", req.TaskID)
+
+	c.JSON(200, gin.H{"task_id": req.TaskID, "message": "Task loaded successfully"})
 }
 
 func (s *Server) handleStartTask(c *gin.Context) {
@@ -123,7 +213,7 @@ func (s *Server) handleStartTask(c *gin.Context) {
 	s.taskManager.lock.Unlock()
 	slog.Info("Task created", "task_id", task.ID)
 	// 后台执行任务
-	go ExecuteTask(task.ID, req.ProjectDir, req.TaskDesc, s.taskManager, s.codingAssistant)
+	go ExecuteTask(task.ID, req.ProjectDir, req.TaskDesc, s.taskManager, s.codingAssistant, s.dataManager)
 
 	c.JSON(200, CodingTaskResponse{TaskID: task.ID})
 }

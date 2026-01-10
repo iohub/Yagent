@@ -19,7 +19,7 @@ import (
 )
 
 // HandleWebSocket 设置WebSocket处理器
-func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
+func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, dataManager *assistant.DataManager) {
 	m.HandleConnect(func(s *melody.Session) {
 		slog.Info("WebSocket client connected")
 		// 发送连接确认消息
@@ -47,9 +47,9 @@ func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant
 
 		switch socketMsg.Event {
 		case "start_task":
-			handleStartTask(s, socketMsg, taskManager, codingAssistant)
+			handleStartTask(s, socketMsg, taskManager, codingAssistant, dataManager)
 		case "chat_message":
-			handleChatMessage(s, socketMsg, taskManager, codingAssistant)
+			handleChatMessage(s, socketMsg, taskManager, codingAssistant, dataManager)
 		case "get_memory":
 			handleGetMemory(s, socketMsg, taskManager)
 		case "clear_memory":
@@ -60,7 +60,7 @@ func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant
 	})
 }
 
-func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
+func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, dataManager *assistant.DataManager) {
 	var taskData struct {
 		ProjectDir string `json:"project_dir"`
 		TaskDesc   string `json:"task_desc"`
@@ -96,13 +96,13 @@ func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskMana
 	// 发送开始执行消息
 	taskManager.SetTaskProgress(task.ID, "Starting coding task...")
 	// 后台执行任务
-	go ExecuteTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, codingAssistant)
+	go ExecuteTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, codingAssistant, dataManager)
 
 	// Publish task start event to TUI
 	fmt.Printf("🚀 任务 %s 已启动\n", task.ID)
 }
 
-func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
+func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, dataManager *assistant.DataManager) {
 	var chatData struct {
 		TaskID  string `json:"task_id"`
 		Message string `json:"message"`
@@ -130,6 +130,12 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 
 	// 添加用户消息到记忆
 	task.Memory.AddHumanMessage(chatData.Message)
+	// Save memory immediately after adding user message
+	if dataManager != nil {
+		if err := dataManager.SaveTaskMemory(chatData.TaskID, task.Memory); err != nil {
+			slog.Error("Failed to save task memory", "error", err, "task_id", chatData.TaskID)
+		}
+	}
 
 	// 后台处理AI回复
 	go func() {
@@ -137,6 +143,24 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 
 		// Initialize message dispatcher for this conversation
 		dispatcher := messaging.NewMessageDispatcher(100)
+
+		// Create Persistence consumer if dataManager is provided
+		if dataManager != nil {
+			persistenceCallback := func(data []byte) error {
+				var event messaging.MessageEvent
+				if err := json.Unmarshal(data, &event); err != nil {
+					return err
+				}
+				if event.Type == "memory_change" {
+					if err := dataManager.SaveTaskMemory(chatData.TaskID, task.Memory); err != nil {
+						slog.Error("Failed to save task memory", "error", err, "task_id", chatData.TaskID)
+					}
+				}
+				return nil
+			}
+			persistenceConsumer := consumers.NewWebSocketConsumer(persistenceCallback)
+			dispatcher.RegisterConsumer(persistenceConsumer)
+		}
 
 		// Create WebSocket consumer
 		wsConsumer := consumers.NewWebSocketConsumer(func(data []byte) error {
@@ -240,6 +264,13 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 				"result":  result,
 			}, "System")
 			dispatcher.Publish(event)
+		}
+
+		// Save memory after conversation turn
+		if dataManager != nil {
+			if err := dataManager.SaveTaskMemory(chatData.TaskID, task.Memory); err != nil {
+				slog.Error("Failed to save task memory at end of turn", "error", err, "task_id", chatData.TaskID)
+			}
 		}
 
 		// Shutdown dispatcher

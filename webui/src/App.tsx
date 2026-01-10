@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTask } from './hooks/useTask';
 import { TaskForm } from './components/TaskForm';
+import { HistoryList } from './components/HistoryList';
 import { MessageList } from './components/MessageList';
 import { DebuggerPanel } from './components/DebuggerPanel';
 import { Activity, Terminal, Bug } from 'lucide-react';
@@ -9,7 +10,7 @@ import { ThemeProvider } from './components/theme-provider';
 import { ThemeToggle } from './components/theme-toggle';
 
 function AppContent() {
-  const { taskId, status, messages, conductorMemory, error, isLoading, startTask, refreshMemory } = useTask();
+  const { taskId, status, messages, conductorMemory, error, isLoading, startTask, loadExistingTask, refreshMemory } = useTask();
   const [showDebugger, setShowDebugger] = useState(false);
 
   return (
@@ -25,6 +26,10 @@ function AppContent() {
                 CodeActor
               </h2>
               <TaskForm onSubmit={startTask} isLoading={isLoading} />
+            </section>
+
+            <section>
+                <HistoryList onLoad={loadExistingTask} currentTaskId={taskId} />
             </section>
 
             {taskId && (

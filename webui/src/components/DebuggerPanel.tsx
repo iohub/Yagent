@@ -27,7 +27,7 @@ export function DebuggerPanel({ isOpen, onClose, memory, taskId, onRefresh }: De
       <div className="flex items-center justify-between p-3 border-b border-border bg-secondary/20">
         <h2 className="text-sm font-semibold flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-orange-500"></span>
-          Conductor Memory
+          Memory
         </h2>
         <div className="flex items-center gap-1">
           <button 

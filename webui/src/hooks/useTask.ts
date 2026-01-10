@@ -36,6 +36,28 @@ export function useTask() {
     }
   };
 
+  const loadExistingTask = async (taskIdToLoad: string, projectDir: string = '') => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await import('../api/client').then(m => m.loadTask(taskIdToLoad, projectDir));
+      setTaskId(taskIdToLoad);
+      setStatus('running');
+      
+      // Fetch memory
+      const mem = await import('../api/client').then(m => m.getMemory(taskIdToLoad));
+      setConductorMemory(mem.messages);
+      
+      // Populate messages from memory
+      setMessages(mem.messages);
+      
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load task');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const connectWs = useCallback(() => {
     if (!taskId) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -125,5 +147,16 @@ export function useTask() {
     };
   }, [taskId, connectWs]);
 
-  return { taskId, status, messages, conductorMemory, error, isLoading, startTask, refreshMemory };
+  return {
+    taskId,
+    status,
+    messages,
+    conductorMemory,
+    error,
+    isLoading,
+    startTask,
+    loadExistingTask,
+    refreshMemory,
+    // Expose sendChatMessage if implemented or if we want to allow sending messages
+  };
 }

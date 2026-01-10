@@ -18,6 +18,19 @@ export interface Message {
   timestamp?: string; // Added for memory debugger
 }
 
+export interface TaskHistoryItem {
+  task_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface LoadTaskResponse {
+  task_id: string;
+  message: string;
+}
+
 export interface StartTaskResponse {
   task_id: string;
 }

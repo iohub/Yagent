@@ -88,6 +88,12 @@ func main() {
 			// Create task manager
 			taskManager := http.NewTaskManager(nil)
 
+			// Create DataManager
+			dataManager, err := assistant.NewDataManager()
+			if err != nil {
+				slog.Error("Failed to initialize DataManager", "error", err)
+			}
+
 			// Create task
 			taskCtx, cancel := context.WithCancel(ctx)
 			task := &http.Task{
@@ -106,7 +112,7 @@ func main() {
 
 			// Execute task
 			slog.Info("TUI coding task submitted", "project_dir", projectDir, "task_desc", taskDesc)
-			http.ExecuteTask(task.ID, projectDir, taskDesc, taskManager, codingAssistant)
+			http.ExecuteTask(task.ID, projectDir, taskDesc, taskManager, codingAssistant, dataManager)
 
 			// Wait for task completion and display result
 			for {
@@ -131,12 +137,15 @@ func main() {
 		// Run HTTP server mode
 		// Setup slog for console logging and file logging
 		ctx := context.Background()
-		homeDir, herr := os.UserHomeDir()
-		if herr != nil {
-			slog.Error("Failed to get user home directory", "error", util.WrapError(ctx, herr, "main::UserHomeDir"))
-			os.Exit(1)
-		}
-		logDir := filepath.Join(homeDir, ".codeactor", "logs")
+		// homeDir, herr := os.UserHomeDir()
+		// if herr != nil {
+		// 	slog.Error("Failed to get user home directory", "error", util.WrapError(ctx, herr, "main::UserHomeDir"))
+		// 	os.Exit(1)
+		// }
+		// logDir := filepath.Join(homeDir, ".codeactor", "logs")
+
+		// Use local directory for logs to avoid permission issues
+		logDir := "logs"
 		if err := os.MkdirAll(logDir, 0755); err != nil {
 			slog.Error("Failed to create logs directory", "error", util.WrapError(ctx, err, "main::MkdirAll"))
 			os.Exit(1)
