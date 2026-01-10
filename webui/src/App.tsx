@@ -10,7 +10,7 @@ import { ThemeProvider } from './components/theme-provider';
 import { ThemeToggle } from './components/theme-toggle';
 
 function AppContent() {
-  const { taskId, status, messages, conductorMemory, error, isLoading, startTask, loadExistingTask, refreshMemory } = useTask();
+  const { taskId, status, messages, conductorMemory, error, isLoading, isHistorical, startTask, loadExistingTask, refreshMemory } = useTask();
   const [showDebugger, setShowDebugger] = useState(false);
 
   return (
@@ -32,7 +32,7 @@ function AppContent() {
                 <HistoryList onLoad={loadExistingTask} currentTaskId={taskId} />
             </section>
 
-            {taskId && (
+            {taskId && !isHistorical && (
               <section className="bg-secondary/30 rounded-sm p-3 border border-border">
                 <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-2">
                   <Activity className="w-3 h-3" />
@@ -82,7 +82,7 @@ function AppContent() {
             <span className="font-medium">Actions</span>
           </div>
           <div className="flex items-center gap-4">
-             {status === 'running' && (
+             {status === 'running' && !isHistorical && (
               <div className="flex items-center gap-2 text-xs text-primary">
                 <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse"></span>
                 Executing...

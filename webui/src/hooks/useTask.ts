@@ -9,6 +9,7 @@ export function useTask() {
   const [conductorMemory, setConductorMemory] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isHistorical, setIsHistorical] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const refreshMemory = useCallback(async (currentTaskId: string) => {
@@ -27,6 +28,7 @@ export function useTask() {
       const { task_id } = await apiStartTask(projectDir, taskDesc);
       setTaskId(task_id);
       setStatus('running');
+      setIsHistorical(false);
       setMessages([]);
       setConductorMemory([]);
     } catch (err) {
@@ -43,6 +45,7 @@ export function useTask() {
       await import('../api/client').then(m => m.loadTask(taskIdToLoad, projectDir));
       setTaskId(taskIdToLoad);
       setStatus('running');
+      setIsHistorical(true);
       
       // Fetch memory
       const mem = await import('../api/client').then(m => m.getMemory(taskIdToLoad));
@@ -191,6 +194,7 @@ export function useTask() {
     conductorMemory,
     error,
     isLoading,
+    isHistorical,
     startTask,
     loadExistingTask,
     refreshMemory,
