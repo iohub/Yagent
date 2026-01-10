@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -24,6 +25,15 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 
 	// Initialize message dispatcher
 	dispatcher := messaging.NewMessageDispatcher(100)
+
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Panic in ExecuteTask", "error", r, "task_id", taskID)
+			taskManager.SetTaskError(taskID, fmt.Sprintf("Internal error: %v", r))
+		}
+		// Shutdown dispatcher after task completion
+		dispatcher.Shutdown()
+	}()
 
 	// Create TUI consumer for terminal output
 	// Wire a real publisher so the TUI can send user responses back into the dispatcher
@@ -95,7 +105,7 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	result, err = codingAssistant.ProcessCodingTaskWithCallback(request)
 
 	if err != nil {
-		slog.Error("Coding task failed", "error", err, "task_id", taskID)
+		slog.Error("Task failed", "error", err, "task_id", taskID)
 		// 检查是否是因为上下文取消导致的错误
 		if ctx.Err() != nil {
 			slog.Info("Task was cancelled", "task_id", taskID)
@@ -114,7 +124,4 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 			slog.Error("Failed to save task memory at completion", "error", err, "task_id", taskID)
 		}
 	}
-
-	// Shutdown dispatcher after task completion
-	dispatcher.Shutdown()
 }

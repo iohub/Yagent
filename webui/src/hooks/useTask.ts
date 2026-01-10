@@ -85,6 +85,20 @@ export function useTask() {
         if (eventType === 'ai_response') {
             setMessages(prev => [...prev, { type: 'assistant', content: String(data), from }]);
         } 
+        else if (eventType === 'task_update') {
+            // Handle task status updates
+            if (data.status) {
+                setStatus(data.status);
+            }
+            // Optionally log significant status changes to chat
+            if (data.status === 'finished') {
+                 setMessages(prev => [...prev, { type: 'system', content: `[Task Finished] ${data.result || ''}`, event: eventType, from }]);
+            } else if (data.status === 'failed') {
+                 setMessages(prev => [...prev, { type: 'system', content: `[Task Failed] ${data.error || ''}`, event: eventType, from }]);
+            } else if (data.status === 'cancelled') {
+                 setMessages(prev => [...prev, { type: 'system', content: `[Task Cancelled]`, event: eventType, from }]);
+            }
+        }
         else if (['tool_call', 'tool_call_result'].includes(eventType)) {
             let content = data;
             if (typeof data === 'object' && data !== null) {
@@ -146,6 +160,29 @@ export function useTask() {
       }
     };
   }, [taskId, connectWs]);
+
+  // Polling for task status to ensure consistency
+  useEffect(() => {
+    if (!taskId || status === 'finished' || status === 'failed') return;
+
+    const interval = setInterval(async () => {
+      try {
+        const task = await getTaskStatus(taskId);
+        if (task.status && task.status !== status) {
+           setStatus(task.status);
+           if (task.status === 'finished') {
+             setMessages(prev => [...prev, { type: 'system', content: `[Task Finished] ${task.result || ''}` }]);
+           } else if (task.status === 'failed') {
+             setMessages(prev => [...prev, { type: 'system', content: `[Task Failed] ${task.error || ''}` }]);
+           }
+        }
+      } catch (e) {
+        console.error('Failed to poll task status', e);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [taskId, status]);
 
   return {
     taskId,
