@@ -27,16 +27,6 @@ export function ThemeToggle() {
         <Moon className="h-4 w-4" />
         <span className="sr-only">Dark</span>
       </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        className={`h-6 w-6 px-0 ${theme === 'system' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}
-        onClick={() => setTheme("system")}
-        title="System"
-      >
-        <Laptop className="h-4 w-4" />
-        <span className="sr-only">System</span>
-      </Button>
     </div>
   )
 }

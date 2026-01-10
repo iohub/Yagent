@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, Task } from '../types';
-import { startTask as apiStartTask, getWebSocketUrl, getTaskStatus } from '../api/client';
+import { startTask as apiStartTask, getWebSocketUrl, getTaskStatus, cancelTask } from '../api/client';
 
 export function useTask() {
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -9,6 +9,7 @@ export function useTask() {
   const [conductorMemory, setConductorMemory] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isHistorical, setIsHistorical] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const refreshMemory = useCallback(async (currentTaskId: string) => {
@@ -20,6 +21,20 @@ export function useTask() {
     }
   }, []);
 
+  const stopTask = async () => {
+    if (!taskId) return;
+    try {
+      await cancelTask(taskId);
+      // We don't manually set status here, we wait for WS update or assume it will be handled
+      // But to be responsive we can set it to finished or failed if needed, 
+      // however the backend should send a status update.
+      // For now let's just log.
+      console.log('Task cancellation requested');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cancel task');
+    }
+  };
+
   const startTask = async (projectDir: string, taskDesc: string) => {
     setIsLoading(true);
     setError(null);
@@ -27,6 +42,7 @@ export function useTask() {
       const { task_id } = await apiStartTask(projectDir, taskDesc);
       setTaskId(task_id);
       setStatus('running');
+      setIsHistorical(false);
       setMessages([]);
       setConductorMemory([]);
     } catch (err) {
@@ -43,6 +59,7 @@ export function useTask() {
       await import('../api/client').then(m => m.loadTask(taskIdToLoad, projectDir));
       setTaskId(taskIdToLoad);
       setStatus('running');
+      setIsHistorical(true);
       
       // Fetch memory
       const mem = await import('../api/client').then(m => m.getMemory(taskIdToLoad));
@@ -191,9 +208,11 @@ export function useTask() {
     conductorMemory,
     error,
     isLoading,
+    isHistorical,
     startTask,
     loadExistingTask,
     refreshMemory,
+    stopTask,
     // Expose sendChatMessage if implemented or if we want to allow sending messages
   };
 }

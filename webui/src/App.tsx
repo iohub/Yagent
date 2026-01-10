@@ -10,8 +10,9 @@ import { ThemeProvider } from './components/theme-provider';
 import { ThemeToggle } from './components/theme-toggle';
 
 function AppContent() {
-  const { taskId, status, messages, conductorMemory, error, isLoading, startTask, loadExistingTask, refreshMemory } = useTask();
+  const { taskId, status, messages, conductorMemory, error, isLoading, isHistorical, startTask, stopTask, loadExistingTask, refreshMemory } = useTask();
   const [showDebugger, setShowDebugger] = useState(false);
+  const isRunning = status === 'running' && !isHistorical;
 
   return (
     <div className="flex h-screen bg-background font-sans text-foreground overflow-hidden">
@@ -22,43 +23,15 @@ function AppContent() {
           <div className="space-y-6">
             <section>
               <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Terminal className="w-3 h-3" />
+                <img src="/logo.svg" className="w-8 h-6" alt="CodeActor" />
                 CodeActor
               </h2>
-              <TaskForm onSubmit={startTask} isLoading={isLoading} />
+              <TaskForm onSubmit={startTask} onStop={stopTask} isLoading={isLoading} isRunning={isRunning} />
             </section>
 
             <section>
-                <HistoryList onLoad={loadExistingTask} currentTaskId={taskId} />
+                <HistoryList onLoad={loadExistingTask} currentTaskId={taskId} disabled={isRunning} />
             </section>
-
-            {taskId && (
-              <section className="bg-secondary/30 rounded-sm p-3 border border-border">
-                <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-2">
-                  <Activity className="w-3 h-3" />
-                  Status
-                </h2>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-muted-foreground">Task ID</span>
-                    <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-foreground">{taskId.slice(0, 8)}...</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-muted-foreground">State</span>
-                    <span className={cn(
-                      "px-1.5 py-0.5 rounded text-[10px] font-medium uppercase border",
-                      {
-                        'bg-primary/10 text-primary border-primary/20': status === 'running',
-                        'bg-green-500/10 text-green-500 border-green-500/20': status === 'finished',
-                        'bg-destructive/10 text-destructive border-destructive/20': status === 'failed',
-                      }
-                    )}>
-                      {status}
-                    </span>
-                  </div>
-                </div>
-              </section>
-            )}
 
             {error && (
               <div className="p-3 bg-destructive/10 text-destructive rounded-sm text-xs border border-destructive/20">
@@ -82,7 +55,7 @@ function AppContent() {
             <span className="font-medium">Actions</span>
           </div>
           <div className="flex items-center gap-4">
-             {status === 'running' && (
+             {status === 'running' && !isHistorical && (
               <div className="flex items-center gap-2 text-xs text-primary">
                 <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse"></span>
                 Executing...
