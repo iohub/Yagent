@@ -27,7 +27,7 @@ func NewDataManager() (*DataManager, error) {
 		return nil, err
 	}
 
-	dataDir := filepath.Join(homeDir, DataDirName)
+	dataDir := filepath.Join(homeDir, DataDirName, "tasks")
 
 	// 创建隐藏数据目录（如果不存在）
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
