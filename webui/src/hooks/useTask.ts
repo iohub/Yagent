@@ -6,9 +6,20 @@ export function useTask() {
   const [taskId, setTaskId] = useState<string | null>(null);
   const [status, setStatus] = useState<Task['status']>('finished'); // Default to finished so we can start new
   const [messages, setMessages] = useState<Message[]>([]);
+  const [conductorMemory, setConductorMemory] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isHistorical, setIsHistorical] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const refreshMemory = useCallback(async (currentTaskId: string) => {
+    try {
+      const mem = await import('../api/client').then(m => m.getMemory(currentTaskId));
+      setConductorMemory(mem.messages);
+    } catch (e) {
+      console.error('Failed to fetch memory:', e);
+    }
+  }, []);
 
   const startTask = async (projectDir: string, taskDesc: string) => {
     setIsLoading(true);
@@ -17,9 +28,34 @@ export function useTask() {
       const { task_id } = await apiStartTask(projectDir, taskDesc);
       setTaskId(task_id);
       setStatus('running');
+      setIsHistorical(false);
       setMessages([]);
+      setConductorMemory([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start task');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadExistingTask = async (taskIdToLoad: string, projectDir: string = '') => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await import('../api/client').then(m => m.loadTask(taskIdToLoad, projectDir));
+      setTaskId(taskIdToLoad);
+      setStatus('running');
+      setIsHistorical(true);
+      
+      // Fetch memory
+      const mem = await import('../api/client').then(m => m.getMemory(taskIdToLoad));
+      setConductorMemory(mem.messages);
+      
+      // Populate messages from memory
+      setMessages(mem.messages);
+      
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load task');
     } finally {
       setIsLoading(false);
     }
@@ -52,6 +88,20 @@ export function useTask() {
         if (eventType === 'ai_response') {
             setMessages(prev => [...prev, { type: 'assistant', content: String(data), from }]);
         } 
+        else if (eventType === 'task_update') {
+            // Handle task status updates
+            if (data.status) {
+                setStatus(data.status);
+            }
+            // Optionally log significant status changes to chat
+            if (data.status === 'finished') {
+                 setMessages(prev => [...prev, { type: 'system', content: `[Task Finished] ${data.result || ''}`, event: eventType, from }]);
+            } else if (data.status === 'failed') {
+                 setMessages(prev => [...prev, { type: 'system', content: `[Task Failed] ${data.error || ''}`, event: eventType, from }]);
+            } else if (data.status === 'cancelled') {
+                 setMessages(prev => [...prev, { type: 'system', content: `[Task Cancelled]`, event: eventType, from }]);
+            }
+        }
         else if (['tool_call', 'tool_call_result'].includes(eventType)) {
             let content = data;
             if (typeof data === 'object' && data !== null) {
@@ -83,7 +133,11 @@ export function useTask() {
             }
         } 
         else if (msg.type === 'realtime' && data?.task_id === taskId) {
-             setMessages(prev => [...prev, { type: 'tool', content: `[${msg.event}] ${data.content}`, from }]);
+             if (msg.event === 'memory_change') {
+                 refreshMemory(taskId);
+             } else {
+                 setMessages(prev => [...prev, { type: 'tool', content: `[${msg.event}] ${data.content}`, from }]);
+             }
         }
       } catch (e) {
         console.error('Failed to parse WS message', e);
@@ -97,52 +151,53 @@ export function useTask() {
     return () => {
         ws.close();
     };
-  }, [taskId]);
-
-  // Polling for status and memory as backup / for initial state
-  useEffect(() => {
-      if (!taskId || status !== 'running') return;
-
-      const pollInterval = setInterval(async () => {
-          try {
-              const taskStatus = await getTaskStatus(taskId);
-              setStatus(taskStatus.status);
-              
-              if (taskStatus.status === 'finished' || taskStatus.status === 'failed') {
-                  clearInterval(pollInterval);
-              }
-              
-              // Also sync memory to ensure we didn't miss anything
-              // const memory = await getMemory(taskId);
-              // Merge logic could be complex, for now just replace if significantly different length?
-              // Or better: just rely on WS for live updates and use memory for initial load if we were to support resuming.
-              // For this simple app, we might just trust WS + local state, 
-              // but if we want to be robust we should de-duplicate.
-              // Let's keep it simple: Use WS for live, but if we refresh, we loose state unless we load from memory.
-              // TODO: Implement proper sync.
-          } catch (e) {
-              console.error('Poll failed', e);
-          }
-      }, 2000);
-
-      return () => clearInterval(pollInterval);
-  }, [taskId, status]);
+  }, [taskId, refreshMemory]);
 
   useEffect(() => {
-      if (taskId) {
-          connectWs();
+    if (taskId) {
+      connectWs();
+    }
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
       }
-      return () => {
-          wsRef.current?.close();
-      }
+    };
   }, [taskId, connectWs]);
+
+  // Polling for task status to ensure consistency
+  useEffect(() => {
+    if (!taskId || status === 'finished' || status === 'failed') return;
+
+    const interval = setInterval(async () => {
+      try {
+        const task = await getTaskStatus(taskId);
+        if (task.status && task.status !== status) {
+           setStatus(task.status);
+           if (task.status === 'finished') {
+             setMessages(prev => [...prev, { type: 'system', content: `[Task Finished] ${task.result || ''}` }]);
+           } else if (task.status === 'failed') {
+             setMessages(prev => [...prev, { type: 'system', content: `[Task Failed] ${task.error || ''}` }]);
+           }
+        }
+      } catch (e) {
+        console.error('Failed to poll task status', e);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [taskId, status]);
 
   return {
     taskId,
     status,
     messages,
+    conductorMemory,
     error,
     isLoading,
+    isHistorical,
     startTask,
+    loadExistingTask,
+    refreshMemory,
+    // Expose sendChatMessage if implemented or if we want to allow sending messages
   };
 }

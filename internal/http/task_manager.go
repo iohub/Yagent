@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"codeactor/internal/assistant"
+	"codeactor/internal/memory"
 
 	"github.com/google/uuid"
 	"github.com/olahol/melody"
@@ -40,7 +40,7 @@ func (tm *TaskManager) CreateTask(socket *melody.Session, projectDir string) *Ta
 		ProjectDir: projectDir,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
-		Memory:     assistant.NewConversationMemory(300),
+		Memory:     memory.NewConversationMemory(300),
 		Socket:     socket,
 		Context:    ctx,
 		CancelFunc: cancel,
@@ -64,10 +64,13 @@ func (tm *TaskManager) SetTaskResult(taskID, result string) {
 		task.UpdatedAt = time.Now()
 		// 通过WebSocket发送更新
 		tm.sendTaskUpdate(task)
+	} else {
+		slog.Warn("SetTaskResult: Task not found", "task_id", taskID)
 	}
 }
 
 func (tm *TaskManager) SetTaskError(taskID, errMsg string) {
+	slog.Info("SetTaskError called", "task_id", taskID, "error", errMsg)
 	tm.lock.Lock()
 	defer tm.lock.Unlock()
 	if task, ok := tm.tasks[taskID]; ok {
@@ -76,6 +79,8 @@ func (tm *TaskManager) SetTaskError(taskID, errMsg string) {
 		task.UpdatedAt = time.Now()
 		// 通过WebSocket发送更新
 		tm.sendTaskUpdate(task)
+	} else {
+		slog.Warn("SetTaskError: Task not found", "task_id", taskID)
 	}
 }
 

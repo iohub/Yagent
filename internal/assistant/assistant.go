@@ -10,6 +10,7 @@ import (
 	"codeactor/internal/assistant/tools"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
+	"codeactor/internal/memory"
 	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"
@@ -48,6 +49,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	publisher := messaging.NewMessagePublisher(ca.dispatcher)
 
 	gctx := globalctx.GlobalCtx{
+		SpeakLang:   ca.config.Agent.SpeakLang,
 		ProjectPath: workDir,
 		OS:          runtime.GOOS,
 		Arch:        runtime.GOARCH,
@@ -95,7 +97,7 @@ type TaskRequest struct {
 	taskID      string
 	projectDir  string
 	taskDesc    string
-	memory      *ConversationMemory
+	memory      *memory.ConversationMemory
 	wsCallback  func(string, string)
 	publisher   *MessagePublisher
 	userMessage string
@@ -118,7 +120,7 @@ func (r *TaskRequest) WithTaskDesc(desc string) *TaskRequest {
 	return r
 }
 
-func (r *TaskRequest) WithMemory(mem *ConversationMemory) *TaskRequest {
+func (r *TaskRequest) WithMemory(mem *memory.ConversationMemory) *TaskRequest {
 	r.memory = mem
 	return r
 }
@@ -146,7 +148,7 @@ func (ca *CodingAssistant) ProcessCodingTaskWithCallback(req *TaskRequest) (stri
 		ca.Init(ca.llm, req.projectDir)
 	}
 
-	return ca.conductor.Run(req.ctx, req.taskDesc)
+	return ca.conductor.Run(req.ctx, req.taskDesc, req.memory)
 }
 
 // ProcessConversation handles chat messages.
@@ -157,5 +159,5 @@ func (ca *CodingAssistant) ProcessConversation(req *TaskRequest) (string, error)
 		ca.Init(ca.llm, req.projectDir)
 	}
 
-	return ca.conductor.Run(req.ctx, req.userMessage)
+	return ca.conductor.Run(req.ctx, req.userMessage, req.memory)
 }

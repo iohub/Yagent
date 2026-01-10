@@ -1,13 +1,17 @@
+import { useState } from 'react';
 import { useTask } from './hooks/useTask';
 import { TaskForm } from './components/TaskForm';
+import { HistoryList } from './components/HistoryList';
 import { MessageList } from './components/MessageList';
-import { Activity, Terminal } from 'lucide-react';
+import { DebuggerPanel } from './components/DebuggerPanel';
+import { Activity, Terminal, Bug } from 'lucide-react';
 import { cn } from './lib/utils';
 import { ThemeProvider } from './components/theme-provider';
 import { ThemeToggle } from './components/theme-toggle';
 
 function AppContent() {
-  const { taskId, status, messages, error, isLoading, startTask } = useTask();
+  const { taskId, status, messages, conductorMemory, error, isLoading, isHistorical, startTask, loadExistingTask, refreshMemory } = useTask();
+  const [showDebugger, setShowDebugger] = useState(false);
 
   return (
     <div className="flex h-screen bg-background font-sans text-foreground overflow-hidden">
@@ -24,7 +28,11 @@ function AppContent() {
               <TaskForm onSubmit={startTask} isLoading={isLoading} />
             </section>
 
-            {taskId && (
+            <section>
+                <HistoryList onLoad={loadExistingTask} currentTaskId={taskId} />
+            </section>
+
+            {taskId && !isHistorical && (
               <section className="bg-secondary/30 rounded-sm p-3 border border-border">
                 <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-2">
                   <Activity className="w-3 h-3" />
@@ -73,18 +81,41 @@ function AppContent() {
             <Terminal className="w-4 h-4 text-primary" />
             <span className="font-medium">Actions</span>
           </div>
-          {status === 'running' && (
-            <div className="flex items-center gap-2 text-xs text-primary">
-              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse"></span>
-              Executing...
-            </div>
-          )}
+          <div className="flex items-center gap-4">
+             {status === 'running' && !isHistorical && (
+              <div className="flex items-center gap-2 text-xs text-primary">
+                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse"></span>
+                Executing...
+              </div>
+            )}
+            
+            <button
+              onClick={() => setShowDebugger(!showDebugger)}
+              className={cn(
+                "flex items-center gap-1.5 text-xs px-2 py-1 rounded-sm border transition-colors",
+                showDebugger 
+                  ? "bg-primary/10 text-primary border-primary/20" 
+                  : "bg-secondary text-muted-foreground border-border hover:text-foreground"
+              )}
+            >
+              <Bug className="w-3 h-3" />
+              Debugger
+            </button>
+          </div>
         </header>
 
-        <main className="flex-1 overflow-hidden relative">
-          <div className="absolute inset-0">
+        <main className="flex-1 overflow-hidden relative flex">
+          <div className="flex-1 relative">
              <MessageList messages={messages} />
           </div>
+          
+          <DebuggerPanel 
+            isOpen={showDebugger} 
+            onClose={() => setShowDebugger(false)} 
+            memory={conductorMemory} 
+            taskId={taskId}
+            onRefresh={() => taskId && refreshMemory(taskId)}
+          />
         </main>
       </div>
     </div>

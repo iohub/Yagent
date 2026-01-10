@@ -24,11 +24,13 @@ var llmLogger *slog.Logger
 // initLLMLogger initializes the LLM logger
 func initLLMLogger() error {
 	// Create logs directory if it doesn't exist
-	homeDir, herr := os.UserHomeDir()
-	if herr != nil {
-		return util.WrapError(context.Background(), herr, "failed to get user home directory")
-	}
-	logDir := filepath.Join(homeDir, ".codeactor", "logs")
+	// homeDir, herr := os.UserHomeDir()
+	// if herr != nil {
+	// 	return util.WrapError(context.Background(), herr, "failed to get user home directory")
+	// }
+	// logDir := filepath.Join(homeDir, ".codeactor", "logs")
+
+	logDir := "logs"
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return util.WrapError(context.Background(), err, "failed to create logs directory")
 	}
