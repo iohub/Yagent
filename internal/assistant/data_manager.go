@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"codeactor/internal/memory"
 )
 
 const (
@@ -38,10 +40,10 @@ func NewDataManager() (*DataManager, error) {
 }
 
 // SaveTaskMemory 保存任务的memory到文件
-func (dm *DataManager) SaveTaskMemory(taskID string, memory *ConversationMemory) error {
+func (dm *DataManager) SaveTaskMemory(taskID string, mem *memory.ConversationMemory) error {
 	filePath := filepath.Join(dm.dataDir, taskID+".json")
 
-	memoryData, err := json.MarshalIndent(memory, "", "  ")
+	memoryData, err := json.MarshalIndent(mem, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -50,7 +52,7 @@ func (dm *DataManager) SaveTaskMemory(taskID string, memory *ConversationMemory)
 }
 
 // LoadTaskMemory 从文件加载任务的memory
-func (dm *DataManager) LoadTaskMemory(taskID string) (*ConversationMemory, error) {
+func (dm *DataManager) LoadTaskMemory(taskID string) (*memory.ConversationMemory, error) {
 	filePath := filepath.Join(dm.dataDir, taskID+".json")
 
 	memoryData, err := os.ReadFile(filePath)
@@ -58,12 +60,12 @@ func (dm *DataManager) LoadTaskMemory(taskID string) (*ConversationMemory, error
 		return nil, err
 	}
 
-	var memory ConversationMemory
-	if err := json.Unmarshal(memoryData, &memory); err != nil {
+	var mem memory.ConversationMemory
+	if err := json.Unmarshal(memoryData, &mem); err != nil {
 		return nil, err
 	}
 
-	return &memory, nil
+	return &mem, nil
 }
 
 // GetTaskMemoryPath 获取任务memory文件的路径
@@ -120,7 +122,7 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 		if err != nil {
 			continue
 		}
-		var mem ConversationMemory
+		var mem memory.ConversationMemory
 		if err := json.Unmarshal(raw, &mem); err != nil {
 			continue
 		}
@@ -128,7 +130,7 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 		title := ""
 		var createdAt time.Time
 		for _, m := range mem.Messages {
-			if m.Type == MessageTypeHuman {
+			if m.Type == memory.MessageTypeHuman {
 				title = strings.TrimSpace(m.Content)
 				createdAt = m.Timestamp
 				break

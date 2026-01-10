@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"codeactor/internal/assistant"
+	"codeactor/internal/memory"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -113,7 +114,7 @@ func (s *Server) handleStartTask(c *gin.Context) {
 		ProjectDir: req.ProjectDir,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
-		Memory:     assistant.NewConversationMemory(300),
+		Memory:     memory.NewConversationMemory(300),
 		Context:    ctx,
 		CancelFunc: cancel,
 	}
@@ -240,16 +241,16 @@ func (s *Server) handleGetMemoryByType(c *gin.Context) {
 
 	messageType := c.Param("type")
 
-	var msgType assistant.MessageType
+	var msgType memory.MessageType
 	switch messageType {
 	case "system":
-		msgType = assistant.MessageTypeSystem
+		msgType = memory.MessageTypeSystem
 	case "human":
-		msgType = assistant.MessageTypeHuman
+		msgType = memory.MessageTypeHuman
 	case "assistant":
-		msgType = assistant.MessageTypeAssistant
+		msgType = memory.MessageTypeAssistant
 	case "tool":
-		msgType = assistant.MessageTypeTool
+		msgType = memory.MessageTypeTool
 	default:
 		c.JSON(400, MemoryResponse{Error: "invalid message type. Valid types: system, human, assistant, tool"})
 		return

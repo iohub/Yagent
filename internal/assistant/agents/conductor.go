@@ -9,6 +9,7 @@ import (
 
 	"codeactor/internal/assistant/tools"
 	"codeactor/internal/globalctx"
+	"codeactor/internal/memory"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -103,7 +104,29 @@ func (a *ConductorAgent) Name() string {
 	return "Conductor"
 }
 
-func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) {
+func convertToolCalls(tcs []llms.ToolCall) []memory.ToolCallData {
+	var res []memory.ToolCallData
+	for _, tc := range tcs {
+		res = append(res, memory.ToolCallData{
+			ID:   tc.ID,
+			Type: string(tc.Type),
+			Function: memory.ToolCallFunction{
+				Name:      tc.FunctionCall.Name,
+				Arguments: json.RawMessage(tc.FunctionCall.Arguments),
+			},
+		})
+	}
+	return res
+}
+
+func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
+	if mem != nil {
+		mem.AddHumanMessage(input)
+		if a.Publisher != nil {
+			a.Publisher.Publish("memory_change", nil, a.Name())
+		}
+	}
+
 	messages := []llms.MessageContent{
 		{
 			Role:  llms.ChatMessageTypeSystem,
@@ -137,6 +160,13 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 		if msg.Content != "" {
 			if a.Publisher != nil {
 				a.Publisher.Publish("ai_response", msg.Content, a.Name())
+			}
+		}
+
+		if mem != nil {
+			mem.AddAssistantMessage(msg.Content, convertToolCalls(msg.ToolCalls))
+			if a.Publisher != nil {
+				a.Publisher.Publish("memory_change", nil, a.Name())
 			}
 		}
 
@@ -197,6 +227,13 @@ func (a *ConductorAgent) Run(ctx context.Context, input string) (string, error) 
 					"tool_name": tc.FunctionCall.Name,
 					"result":    toolResult,
 				}, a.Name())
+			}
+
+			if mem != nil {
+				mem.AddToolMessage(toolResult, tc.ID)
+				if a.Publisher != nil {
+					a.Publisher.Publish("memory_change", nil, a.Name())
+				}
 			}
 
 			messages = append(messages, llms.MessageContent{

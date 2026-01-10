@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"codeactor/internal/assistant"
+	"codeactor/internal/memory"
 
 	"github.com/olahol/melody"
 )
@@ -46,10 +46,10 @@ type CodingTaskResponse struct {
 }
 
 type MemoryResponse struct {
-	Messages []assistant.ChatMessage `json:"messages"`
-	Size     int                     `json:"size"`
-	MaxSize  int                     `json:"max_size"`
-	Error    string                  `json:"error,omitempty"`
+	Messages []memory.ChatMessage `json:"messages"`
+	Size     int                  `json:"size"`
+	MaxSize  int                  `json:"max_size"`
+	Error    string               `json:"error,omitempty"`
 }
 
 type ClearMemoryResponse struct {
@@ -75,7 +75,7 @@ type Task struct {
 	ProjectDir string // 添加项目目录字段
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
-	Memory     *assistant.ConversationMemory
+	Memory     *memory.ConversationMemory
 	Socket     *melody.Session    // 关联的WebSocket连接
 	CancelFunc context.CancelFunc // 用于取消任务的函数
 	Context    context.Context    // 任务执行的上下文

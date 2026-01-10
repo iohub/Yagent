@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"codeactor/internal/assistant"
+	"codeactor/internal/memory"
 	messaging "codeactor/pkg/messaging"
 	consumers "codeactor/pkg/messaging/consumers"
 
@@ -194,10 +195,10 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 			}
 
 			// 发送错误消息
-			errorMsg := ChatMessage{
-				Type:      "assistant",
+			errorMsg := memory.ChatMessage{
+				Type:      memory.MessageTypeAssistant,
 				Content:   fmt.Sprintf("处理对话时发生错误: %v", err),
-				Timestamp: time.Now().Unix(),
+				Timestamp: time.Now(),
 			}
 
 			response := SocketMessage{
@@ -216,10 +217,10 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 		}
 
 		// 发送AI回复
-		aiMsg := ChatMessage{
-			Type:      "assistant",
+		aiMsg := memory.ChatMessage{
+			Type:      memory.MessageTypeAssistant,
 			Content:   result,
-			Timestamp: time.Now().Unix(),
+			Timestamp: time.Now(),
 		}
 
 		response := SocketMessage{

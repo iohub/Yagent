@@ -1,4 +1,4 @@
-package assistant
+package memory
 
 import (
 	"encoding/json" // Added for fmt.Sprintf

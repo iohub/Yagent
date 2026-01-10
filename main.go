@@ -12,6 +12,7 @@ import (
 
 	"codeactor/internal/assistant"
 	"codeactor/internal/http"
+	"codeactor/internal/memory"
 	"codeactor/internal/util"
 	messaging "codeactor/pkg/messaging"
 
@@ -95,7 +96,7 @@ func main() {
 				ProjectDir: projectDir,
 				CreatedAt:  time.Now(),
 				UpdatedAt:  time.Now(),
-				Memory:     assistant.NewConversationMemory(300),
+				Memory:     memory.NewConversationMemory(300),
 				Context:    taskCtx,
 				CancelFunc: cancel,
 			}
