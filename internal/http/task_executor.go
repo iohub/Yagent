@@ -12,7 +12,7 @@ import (
 )
 
 // ExecuteTask 执行任务的通用函数
-func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant) {
+func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, dataManager *assistant.DataManager) {
 	task, ok := taskManager.GetTask(taskID)
 	if !ok {
 		slog.Error("Task not found", "task_id", taskID)
@@ -30,6 +30,24 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	uip := messaging.NewMessagePublisher(dispatcher)
 	tuiConsumer := consumers.NewTUIConsumer(os.Stdout, uip)
 	dispatcher.RegisterConsumer(tuiConsumer)
+
+	// Create Persistence consumer if dataManager is provided
+	if dataManager != nil {
+		persistenceCallback := func(data []byte) error {
+			var event messaging.MessageEvent
+			if err := json.Unmarshal(data, &event); err != nil {
+				return err
+			}
+			if event.Type == "memory_change" {
+				if err := dataManager.SaveTaskMemory(taskID, task.Memory); err != nil {
+					slog.Error("Failed to save task memory", "error", err, "task_id", taskID)
+				}
+			}
+			return nil
+		}
+		persistenceConsumer := consumers.NewWebSocketConsumer(persistenceCallback)
+		dispatcher.RegisterConsumer(persistenceConsumer)
+	}
 
 	// Create TaskManager WebSocket consumer to handle all message types
 	taskManagerWSCallback := func(data []byte) error {
@@ -89,6 +107,13 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	}
 	slog.Info("Task completed successfully", "task_id", taskID)
 	taskManager.SetTaskResult(taskID, result)
+
+	// Save memory one last time
+	if dataManager != nil {
+		if err := dataManager.SaveTaskMemory(taskID, task.Memory); err != nil {
+			slog.Error("Failed to save task memory at completion", "error", err, "task_id", taskID)
+		}
+	}
 
 	// Shutdown dispatcher after task completion
 	dispatcher.Shutdown()

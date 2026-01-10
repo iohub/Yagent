@@ -13,6 +13,22 @@ export interface Message {
   content: string;
   event?: string; // For websocket messages
   from?: string;
+  tool_calls?: any[]; // Added for memory debugger
+  tool_call_id?: string; // Added for memory debugger
+  timestamp?: string; // Added for memory debugger
+}
+
+export interface TaskHistoryItem {
+  task_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface LoadTaskResponse {
+  task_id: string;
+  message: string;
 }
 
 export interface StartTaskResponse {

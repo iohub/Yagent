@@ -1,6 +1,35 @@
-import type { StartTaskResponse, Task, MemoryResponse } from '../types';
+import type { StartTaskResponse, Task, MemoryResponse, TaskHistoryItem, LoadTaskResponse } from '../types';
 
 const API_BASE_URL = 'http://localhost:9080';
+
+export async function listHistory(): Promise<TaskHistoryItem[]> {
+  const response = await fetch(`${API_BASE_URL}/api/history`);
+  
+  if (!response.ok) {
+    throw new Error(`Failed to list history: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function loadTask(taskId: string, projectDir?: string): Promise<LoadTaskResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/load_task`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      task_id: taskId,
+      project_dir: projectDir,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load task: ${response.statusText}`);
+  }
+
+  return response.json();
+}
 
 export async function startTask(projectDir: string, taskDesc: string): Promise<StartTaskResponse> {
   const response = await fetch(`${API_BASE_URL}/api/start_task`, {

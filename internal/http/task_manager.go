@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"codeactor/internal/assistant"
+	"codeactor/internal/memory"
 
 	"github.com/google/uuid"
 	"github.com/olahol/melody"
@@ -40,7 +40,7 @@ func (tm *TaskManager) CreateTask(socket *melody.Session, projectDir string) *Ta
 		ProjectDir: projectDir,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
-		Memory:     assistant.NewConversationMemory(300),
+		Memory:     memory.NewConversationMemory(300),
 		Socket:     socket,
 		Context:    ctx,
 		CancelFunc: cancel,
