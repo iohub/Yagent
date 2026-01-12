@@ -8,14 +8,16 @@ import { Button } from './ui/Button';
 interface HistoryListProps {
   onLoad: (taskId: string) => void;
   currentTaskId?: string | null;
+  disabled?: boolean;
 }
 
-export function HistoryList({ onLoad, currentTaskId }: HistoryListProps) {
+export function HistoryList({ onLoad, currentTaskId, disabled }: HistoryListProps) {
   const [history, setHistory] = useState<TaskHistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchHistory = async () => {
+    if (disabled) return;
     setIsLoading(true);
     setError(null);
     try {
@@ -35,7 +37,7 @@ export function HistoryList({ onLoad, currentTaskId }: HistoryListProps) {
   }, []);
 
   return (
-    <div className="space-y-4">
+    <div className={cn("space-y-4", disabled && "opacity-50 pointer-events-none select-none")}>
       <div className="flex items-center justify-between">
         <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
           <History className="w-3 h-3" />
@@ -45,7 +47,7 @@ export function HistoryList({ onLoad, currentTaskId }: HistoryListProps) {
             variant="ghost" 
             size="sm" 
             onClick={fetchHistory}
-            disabled={isLoading}
+            disabled={isLoading || disabled}
             className="h-6 w-6 p-0"
         >
             <Clock className={cn("w-3 h-3", isLoading && "animate-spin")} />

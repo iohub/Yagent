@@ -10,8 +10,9 @@ import { ThemeProvider } from './components/theme-provider';
 import { ThemeToggle } from './components/theme-toggle';
 
 function AppContent() {
-  const { taskId, status, messages, conductorMemory, error, isLoading, isHistorical, startTask, loadExistingTask, refreshMemory } = useTask();
+  const { taskId, status, messages, conductorMemory, error, isLoading, isHistorical, startTask, stopTask, loadExistingTask, refreshMemory } = useTask();
   const [showDebugger, setShowDebugger] = useState(false);
+  const isRunning = status === 'running' && !isHistorical;
 
   return (
     <div className="flex h-screen bg-background font-sans text-foreground overflow-hidden">
@@ -25,11 +26,11 @@ function AppContent() {
                 <img src="/logo.svg" className="w-8 h-6" alt="CodeActor" />
                 CodeActor
               </h2>
-              <TaskForm onSubmit={startTask} isLoading={isLoading} />
+              <TaskForm onSubmit={startTask} onStop={stopTask} isLoading={isLoading} isRunning={isRunning} />
             </section>
 
             <section>
-                <HistoryList onLoad={loadExistingTask} currentTaskId={taskId} />
+                <HistoryList onLoad={loadExistingTask} currentTaskId={taskId} disabled={isRunning} />
             </section>
 
             {error && (
