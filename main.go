@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,6 +53,9 @@ func main() {
 			break
 		}
 	}
+
+	// Start codebase server
+	startCodebaseServer()
 
 	switch mode {
 	case "tui":
@@ -228,55 +232,48 @@ func getConfigPath() string {
 		return configPath
 	}
 
-	// 如果用户目录下的配置文件不存在，检查并创建目录
-	if _, err := os.Stat(configDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			// 如果创建目录失败，回退到本地配置
-			return "config/config.toml"
-		}
+	panic("config.toml not found")
+}
 
-		// 如果目录创建成功但配置文件不存在，创建默认配置文件
-		defaultConfig := `# LLM Configuration
-[http]
-server_port = 9080
-
-[llm]
-# 选择当前使用的提供商
-use_provider = "aliyun"
-
-# 阿里云配置
-[llm.providers.aliyun]
-model = "qwen3-max-preview"
-temperature = 0.0
-max_tokens = 28000
-api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-api_key = "your-aliyun-api-key"
-
-# SiliconFlow配置
-[llm.providers.siliconflow]
-model = "qwen3-coder-plus"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://api.siliconflow.cn/v1"
-api_key = "your-siliconflow-api-key"
-
-# OpenRouter配置
-[llm.providers.openrouter]
-model = "qwen3-coder-plus"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://openrouter.ai/api/v1"
-api_key = "your-openrouter-api-key"
-
-[app]
-enable_streaming = true
-`
-
-		if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
-			// 如果创建默认配置失败，回退到本地配置
-			return "config/config.toml"
-		}
+// startCodebaseServer starts the codeactor-codebase server as a background process
+func startCodebaseServer() {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		slog.Error("Failed to get user home directory", "error", err)
+		return
 	}
 
-	return configPath
+	binPath := filepath.Join(homeDir, ".codeactor/bin/codeactor-codebase")
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		slog.Warn("codeactor-codebase binary not found, skipping startup", "path", binPath)
+		return
+	}
+
+	logDir := filepath.Join(homeDir, ".codeactor/logs/codeactor-codebase")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		slog.Error("Failed to create log directory", "error", err)
+		return
+	}
+
+	now := time.Now()
+	logFileName := fmt.Sprintf("%s-%s.log", now.Format("2006-01-02"), now.Format("1504"))
+	logPath := filepath.Join(logDir, logFileName)
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		slog.Error("Failed to create log file", "error", err)
+		return
+	}
+
+	cmd := exec.Command(binPath, "-v", "server")
+	cmd.Env = append(os.Environ(), "RUST_LOG=debug")
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	if err := cmd.Start(); err != nil {
+		slog.Error("Failed to start codeactor-codebase", "error", err)
+		return
+	}
+
+	slog.Info("Started codeactor-codebase server", "pid", cmd.Process.Pid, "log", logPath)
 }
