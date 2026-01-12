@@ -55,6 +55,8 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 			fn = globalCtx.FileOps.ExecuteRenameFile
 		case "list_dir":
 			fn = globalCtx.FileOps.ExecuteListDir
+		case "print_dir_tree":
+			fn = globalCtx.FileOps.ExecutePrintDirTree
 		case "semantic_search":
 			fn = globalCtx.RepoOps.ExecuteSemanticSearch
 		case "query_code_skeleton":

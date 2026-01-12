@@ -188,6 +188,27 @@
     }
   },
   {
+    "name": "print_dir_tree",
+    "description": "Output the directory tree of the specified directory, excluding common ignored directories like .git and node_modules. Use this tool to visually check the project's directory structure.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "dir_path": {
+          "type": "string",
+          "description": "The absolute path to the directory."
+        },
+        "max_depth": {
+          "type": "integer",
+          "default": 3,
+          "description": "The maximum depth of the tree to print. Default is 3."
+        }
+      },
+      "required": [
+        "dir_path"
+      ]
+    }
+  },
+  {
     "name": "search_by_regex",
     "description": "A high-performance search tool powered by ripgrep (rg) designed for large codebases. It supports PCRE2 regular expressions and automatically respects .gitignore rules. Use this tool to precisely locate function definitions, variable references, error messages, or complex code patterns across multiple files. ",
     "parameters": {
