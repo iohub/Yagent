@@ -70,6 +70,18 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, publisher *messa
 			fn = globalCtx.SearchOps.ExecuteGrepSearch
 		case "list_dir":
 			fn = globalCtx.FileOps.ExecuteListDir
+		case "semantic_search":
+			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				query, ok := params["query"].(string)
+				if !ok {
+					return nil, fmt.Errorf("query parameter must be a string")
+				}
+				limit := 5
+				if l, ok := params["limit"].(float64); ok {
+					limit = int(l)
+				}
+				return doSemanticSearch(globalCtx, query, limit)
+			}
 		default:
 			continue
 		}
@@ -296,4 +308,56 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 	}
 
 	return "", fmt.Errorf("RepoAgent exceeded max steps")
+}
+
+func doSemanticSearch(globalCtx *globalctx.GlobalCtx, query string, limit int) (interface{}, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	requestData := map[string]interface{}{
+		"repo_path": globalCtx.ProjectPath,
+		"limit":     limit,
+		"text":      query,
+	}
+
+	jsonData, err := json.Marshal(requestData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request data: %v", err)
+	}
+
+	req, err := http.NewRequest(
+		"POST",
+		fmt.Sprintf("%s/semantic_search", globalCtx.CodebaseURL),
+		strings.NewReader(string(jsonData)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var response interface{}
+	err = json.Unmarshal(body, &response)
+	if err != nil {
+		// If response is not JSON, return as string
+		return string(body), nil
+	}
+
+	return response, nil
 }
