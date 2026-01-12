@@ -228,7 +228,7 @@
   },
   {
     "name": "semantic_search",
-    "description": "Perform semantic search on the repository to find relevant code snippets based on natural language query. Returns a list of matches including file paths, symbol names, and code blocks. Use this tool when you need to find specific functionality or implementation details but don't know the exact file or function name.",
+    "description": "Perform semantic search on the repository to find relevant code snippets based on natural language query or code snippet. Returns a list of matches including file paths, symbol names, and code blocks. Use this tool when you need to find specific functionality or implementation details but don't know the exact file or function name.",
     "parameters": {
       "type": "object",
       "properties": {
