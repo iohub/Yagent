@@ -244,5 +244,26 @@
         "filepaths"
       ]
     }
+  },
+  {
+    "name": "query_code_snippet",
+    "description": "Get the code snippet of a specific function in a file. Use this when you need to read the implementation of a specific function.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "filepath": {
+          "type": "string",
+          "description": "The absolute path to the file."
+        },
+        "function_name": {
+          "type": "string",
+          "description": "The name of the function to retrieve."
+        }
+      },
+      "required": [
+        "filepath",
+        "function_name"
+      ]
+    }
   }
 ]

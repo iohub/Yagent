@@ -31,6 +31,18 @@ type QueryCodeSkeletonResponse struct {
 	} `json:"data"`
 }
 
+type QueryCodeSnippetResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Filepath     string `json:"filepath"`
+		FunctionName string `json:"function_name"`
+		CodeSnippet  string `json:"code_snippet"`
+		LineStart    int    `json:"line_start"`
+		LineEnd      int    `json:"line_end"`
+		Language     string `json:"language"`
+	} `json:"data"`
+}
+
 type PreInvestigateResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
@@ -108,6 +120,18 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, publisher *messa
 					filepaths[i] = s
 				}
 				return doQueryCodeSkeleton(globalCtx, filepaths)
+			}
+		case "query_code_snippet":
+			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				filepath, ok := params["filepath"].(string)
+				if !ok {
+					return nil, fmt.Errorf("filepath parameter must be a string")
+				}
+				functionName, ok := params["function_name"].(string)
+				if !ok {
+					return nil, fmt.Errorf("function_name parameter must be a string")
+				}
+				return doQueryCodeSnippet(globalCtx, filepath, functionName)
 			}
 		default:
 			continue
@@ -384,6 +408,58 @@ func doSemanticSearch(globalCtx *globalctx.GlobalCtx, query string, limit int) (
 	if err != nil {
 		// If response is not JSON, return as string
 		return string(body), nil
+	}
+
+	return response, nil
+}
+
+func doQueryCodeSnippet(globalCtx *globalctx.GlobalCtx, filepath string, functionName string) (interface{}, error) {
+	requestData := map[string]interface{}{
+		"filepath":      filepath,
+		"function_name": functionName,
+	}
+
+	jsonData, err := json.Marshal(requestData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request data: %v", err)
+	}
+
+	req, err := http.NewRequest(
+		"POST",
+		fmt.Sprintf("%s/query_code_snippet", globalCtx.CodebaseURL),
+		strings.NewReader(string(jsonData)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var response QueryCodeSnippetResponse
+	err = json.Unmarshal(body, &response)
+	if err != nil {
+		// If response is not JSON, return as string
+		return string(body), nil
+	}
+
+	if !response.Success {
+		return nil, fmt.Errorf("server returned unsuccessful response: %s", string(body))
 	}
 
 	return response, nil
