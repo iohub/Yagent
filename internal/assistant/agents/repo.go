@@ -107,7 +107,7 @@ func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse
 	// 创建 HTTP 请求
 	req, err := http.NewRequest(
 		"POST",
-		"http://localhost:8080/investigate_repo",
+		fmt.Sprintf("%s/investigate_repo", a.GlobalCtx.CodebaseURL),
 		strings.NewReader(string(jsonData)),
 	)
 	if err != nil {
