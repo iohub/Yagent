@@ -76,8 +76,6 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 	for _, def := range toolDefs {
 		var fn tools.ToolFunc
 		switch def.Name {
-		case "read_file":
-			fn = globalCtx.FileOps.ExecuteReadFile
 		case "search_by_regex":
 			fn = globalCtx.SearchOps.ExecuteGrepSearch
 		case "list_dir":
