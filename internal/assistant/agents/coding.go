@@ -55,6 +55,12 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 			fn = globalCtx.FileOps.ExecuteRenameFile
 		case "list_dir":
 			fn = globalCtx.FileOps.ExecuteListDir
+		case "semantic_search":
+			fn = globalCtx.RepoOps.ExecuteSemanticSearch
+		case "query_code_skeleton":
+			fn = globalCtx.RepoOps.ExecuteQueryCodeSkeleton
+		case "query_code_snippet":
+			fn = globalCtx.RepoOps.ExecuteQueryCodeSnippet
 		case "thinking":
 			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				inputBytes, _ := json.Marshal(params)
