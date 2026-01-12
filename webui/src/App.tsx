@@ -22,7 +22,7 @@ function AppContent() {
           <div className="space-y-6">
             <section>
               <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Terminal className="w-3 h-3" />
+                <img src="/logo.svg" className="w-8 h-6" alt="CodeActor" />
                 CodeActor
               </h2>
               <TaskForm onSubmit={startTask} isLoading={isLoading} />
