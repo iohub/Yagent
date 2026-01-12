@@ -54,7 +54,8 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		OS:          runtime.GOOS,
 		Arch:        runtime.GOARCH,
 		// Global utility
-		Publisher: publisher,
+		Publisher:   publisher,
+		CodebaseURL: "http://127.0.0.1:12800",
 
 		// Tools
 		FileOps:      tools.NewFileOperationsTool(workDir),
