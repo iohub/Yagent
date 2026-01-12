@@ -32,34 +32,6 @@ function AppContent() {
                 <HistoryList onLoad={loadExistingTask} currentTaskId={taskId} />
             </section>
 
-            {taskId && !isHistorical && (
-              <section className="bg-secondary/30 rounded-sm p-3 border border-border">
-                <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-2">
-                  <Activity className="w-3 h-3" />
-                  Status
-                </h2>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-muted-foreground">Task ID</span>
-                    <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-foreground">{taskId.slice(0, 8)}...</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-muted-foreground">State</span>
-                    <span className={cn(
-                      "px-1.5 py-0.5 rounded text-[10px] font-medium uppercase border",
-                      {
-                        'bg-primary/10 text-primary border-primary/20': status === 'running',
-                        'bg-green-500/10 text-green-500 border-green-500/20': status === 'finished',
-                        'bg-destructive/10 text-destructive border-destructive/20': status === 'failed',
-                      }
-                    )}>
-                      {status}
-                    </span>
-                  </div>
-                </div>
-              </section>
-            )}
-
             {error && (
               <div className="p-3 bg-destructive/10 text-destructive rounded-sm text-xs border border-destructive/20">
                 {error}
