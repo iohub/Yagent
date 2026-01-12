@@ -16,7 +16,12 @@ Use the provided investigation data:
 - **Core Functions**: For component and dependency analysis.
 - **File Skeletons**: For technical stack identification and understanding file contents without reading them fully.
 
-based on provided investigation report is insufficient for a complete summary
+If the provided investigation report is insufficient for a complete summary, you may use available tools to explore further.
+
+**Tool Usage Priority**:
+1. **High Priority (Use first)**: `semantic_search`, `query_code_skeleton`, `query_code_snippet`, `print_dir_tree`. These tools provide high-level context and structure efficiently.
+2. **Low Priority (Fallback)**: `list_dir`, `read_file`, `search_by_regex`. Use these only when necessary for specific low-level details or when high-level tools are insufficient.
+
 Output a clear, structured summary that gives a developer a solid "mental map" of the codebase.
 
 **Language Compliance**:

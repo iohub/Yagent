@@ -26,6 +26,7 @@ type GlobalCtx struct {
 	ReplaceTool  *tools.ReplaceBlockTool
 	ThinkingTool *tools.ThinkingTool
 	FlowOps      *tools.FlowControlTool
+	RepoOps      *tools.RepoOperationsTool
 }
 
 func (g *GlobalCtx) FormatPrompt(prompt string) string {

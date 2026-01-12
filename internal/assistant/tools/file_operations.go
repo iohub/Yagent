@@ -273,3 +273,92 @@ func (t *FileOperationsTool) ExecuteCreateFile(ctx context.Context, params map[s
 		"message": "File created successfully",
 	}, nil
 }
+
+// ExecutePrintDirTree 实现print_dir_tree工具
+func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	dirPath, ok := params["dir_path"].(string)
+	if !ok {
+		return nil, util.WrapError(ctx, fmt.Errorf("dir_path parameter must be a string"), "executePrintDirTree")
+	}
+
+	maxDepth := 3
+	if d, ok := params["max_depth"].(float64); ok {
+		maxDepth = int(d)
+	}
+
+	fullPath := t.resolveFilePath(dirPath)
+
+	// Check if directory exists
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return nil, util.WrapError(ctx, err, "executePrintDirTree::Stat")
+	}
+	if !info.IsDir() {
+		return nil, util.WrapError(ctx, fmt.Errorf("path is not a directory: %s", dirPath), "executePrintDirTree")
+	}
+
+	ignoredDirs := map[string]bool{
+		".git":         true,
+		"node_modules": true,
+		".idea":        true,
+		".vscode":      true,
+		"__pycache__":  true,
+		".DS_Store":    true,
+	}
+
+	var buildTree func(path string, prefix string, depth int) (string, error)
+	buildTree = func(path string, prefix string, depth int) (string, error) {
+		if depth > maxDepth {
+			return "", nil
+		}
+
+		entries, err := ioutil.ReadDir(path)
+		if err != nil {
+			return "", err
+		}
+
+		// Filter entries
+		var filtered []os.FileInfo
+		for _, entry := range entries {
+			if ignoredDirs[entry.Name()] {
+				continue
+			}
+			filtered = append(filtered, entry)
+		}
+
+		var result strings.Builder
+		for i, entry := range filtered {
+			isLast := i == len(filtered)-1
+			connector := "├── "
+			if isLast {
+				connector = "└── "
+			}
+
+			result.WriteString(fmt.Sprintf("%s%s%s\n", prefix, connector, entry.Name()))
+
+			if entry.IsDir() {
+				newPrefix := prefix
+				if isLast {
+					newPrefix += "    "
+				} else {
+					newPrefix += "│   "
+				}
+				subTree, err := buildTree(filepath.Join(path, entry.Name()), newPrefix, depth+1)
+				if err != nil {
+					return "", err
+				}
+				result.WriteString(subTree)
+			}
+		}
+		return result.String(), nil
+	}
+
+	tree, err := buildTree(fullPath, "", 1)
+	if err != nil {
+		return nil, util.WrapError(ctx, err, "executePrintDirTree::buildTree")
+	}
+
+	return map[string]interface{}{
+		"tree": tree,
+	}, nil
+}
