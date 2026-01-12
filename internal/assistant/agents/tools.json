@@ -225,5 +225,24 @@
         "query"
       ]
     }
+  },
+  {
+    "name": "query_code_skeleton",
+    "description": "Get the skeleton (definitions of functions/classes without implementation) of specific files. Use this when you need to understand the structure of specific files without reading their full content.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "filepaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of absolute file paths to query skeletons for."
+        }
+      },
+      "required": [
+        "filepaths"
+      ]
+    }
   }
 ]

@@ -20,6 +20,17 @@ import (
 //go:embed repo.prompt.md
 var repoPrompt string
 
+type QueryCodeSkeletonResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Skeletons []struct {
+			Filepath     string `json:"filepath"`
+			Language     string `json:"language"`
+			SkeletonText string `json:"skeleton_text"`
+		} `json:"skeletons"`
+	} `json:"data"`
+}
+
 type PreInvestigateResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
@@ -81,6 +92,22 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, publisher *messa
 					limit = int(l)
 				}
 				return doSemanticSearch(globalCtx, query, limit)
+			}
+		case "query_code_skeleton":
+			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				filepathsInterface, ok := params["filepaths"].([]interface{})
+				if !ok {
+					return nil, fmt.Errorf("filepaths parameter must be an array")
+				}
+				filepaths := make([]string, len(filepathsInterface))
+				for i, v := range filepathsInterface {
+					s, ok := v.(string)
+					if !ok {
+						return nil, fmt.Errorf("filepaths element must be a string")
+					}
+					filepaths[i] = s
+				}
+				return doQueryCodeSkeleton(globalCtx, filepaths)
 			}
 		default:
 			continue
@@ -357,6 +384,57 @@ func doSemanticSearch(globalCtx *globalctx.GlobalCtx, query string, limit int) (
 	if err != nil {
 		// If response is not JSON, return as string
 		return string(body), nil
+	}
+
+	return response, nil
+}
+
+func doQueryCodeSkeleton(globalCtx *globalctx.GlobalCtx, filepaths []string) (interface{}, error) {
+	requestData := map[string]interface{}{
+		"filepaths": filepaths,
+	}
+
+	jsonData, err := json.Marshal(requestData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request data: %v", err)
+	}
+
+	req, err := http.NewRequest(
+		"POST",
+		fmt.Sprintf("%s/query_code_skeleton", globalCtx.CodebaseURL),
+		strings.NewReader(string(jsonData)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var response QueryCodeSkeletonResponse
+	err = json.Unmarshal(body, &response)
+	if err != nil {
+		// If response is not JSON, return as string
+		return string(body), nil
+	}
+
+	if !response.Success {
+		return nil, fmt.Errorf("server returned unsuccessful response: %s", string(body))
 	}
 
 	return response, nil
