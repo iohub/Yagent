@@ -359,6 +359,6 @@ func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map
 	}
 
 	return map[string]interface{}{
-		"tree": tree,
+		"output": tree,
 	}, nil
 }
