@@ -267,7 +267,7 @@ func startCodebaseServer() {
 	}
 
 	cmd := exec.Command(binPath, "-v", "server")
-	cmd.Env = append(os.Environ(), "RUST_LOG=debug")
+	cmd.Env = append(os.Environ(), "RUST_LOG=info")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
