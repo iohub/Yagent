@@ -9,7 +9,7 @@ interface TaskFormProps {
 }
 
 export function TaskForm({ onSubmit, onStop, isLoading, isRunning }: TaskFormProps) {
-  const [projectDir, setProjectDir] = useState('.');
+  const [projectDir, setProjectDir] = useState('');
   const [showProjectInput, setShowProjectInput] = useState(false);
   const [projectHistory, setProjectHistory] = useState<string[]>([]);
   const [tempProjectDir, setTempProjectDir] = useState('');
@@ -68,6 +68,11 @@ export function TaskForm({ onSubmit, onStop, isLoading, isRunning }: TaskFormPro
     if (isRunning && onStop) {
       onStop();
       return;
+    }
+
+    if (!projectDir) {
+        setShowProjectInput(true);
+        return;
     }
 
     if (taskDesc.trim() && !isLoading) {
@@ -186,11 +191,13 @@ export function TaskForm({ onSubmit, onStop, isLoading, isRunning }: TaskFormPro
                     type="button"
                     onClick={() => !isRunning && setShowProjectInput(true)}
                     disabled={isRunning}
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={projectDir}
+                    className={`flex items-center gap-1.5 text-xs ${!projectDir ? 'text-primary font-medium' : 'text-muted-foreground'} hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
+                    title={projectDir || 'Set Project Directory'}
                 >
                     <FolderGit2 className="w-3.5 h-3.5" />
-                    <span className="max-w-[150px] truncate font-mono">{projectDir === '.' ? 'Current Directory' : projectDir.split('/').pop()}</span>
+                    <span className="max-w-[150px] truncate font-mono">
+                        {!projectDir ? 'repository' : projectDir === '.' ? 'Current Directory' : projectDir.split('/').pop()}
+                    </span>
                 </button>
 
                 <div className="flex items-center gap-2">
