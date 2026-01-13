@@ -358,5 +358,7 @@ func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map
 		return nil, util.WrapError(ctx, err, "executePrintDirTree::buildTree")
 	}
 
-	return tree, nil
+	return map[string]interface{}{
+		"output": tree,
+	}, nil
 }
