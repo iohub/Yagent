@@ -256,7 +256,8 @@ func startCodebaseServer() {
 	}
 
 	now := time.Now()
-	logFileName := fmt.Sprintf("%s-%s.log", now.Format("2006-01-02"), now.Format("1504"))
+	// logFileName := fmt.Sprintf("%s-%s.log", now.Format("2006-01-02"), now.Format("1504"))
+	logFileName := fmt.Sprintf("%s.log", now.Format("2006-01-02"))
 	logPath := filepath.Join(logDir, logFileName)
 
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)

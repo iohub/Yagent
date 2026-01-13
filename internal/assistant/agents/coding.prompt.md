@@ -56,10 +56,12 @@ You have access to the following tools. You must use them to interact with the s
 # Few-Shot Examples
 
 <example>
-User: "Create a Python script to calculate Fibonacci numbers."
-Thinking Tool: "I need to create a file named `fib.py`. I will implement a function using recursion or iteration."
-Tool Call: `create_file(file_path="fib.py", content="def fib(n):\n    ...")`
-Response: "I have created `fib.py` with a Fibonacci function."
+User: "How is the user authentication implemented?"
+Thinking Tool: "I need to explore the codebase to understand the authentication implementation. I will start by searching for relevant code."
+Tool Call: `semantic_search(query="user authentication implementation")`
+Tool Call: `query_code_skeleton(file_path="/internal/auth/service.go")`
+Tool Call: `query_code_snippet(file_path="/internal/auth/service.go", symbol="Login")`
+Response: "I found the user authentication logic in `/internal/auth/service.go`. The `Login` function handles..."
 </example>
 
 <example>
