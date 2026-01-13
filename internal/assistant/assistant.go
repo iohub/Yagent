@@ -54,7 +54,8 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		OS:          runtime.GOOS,
 		Arch:        runtime.GOARCH,
 		// Global utility
-		Publisher: publisher,
+		Publisher:   publisher,
+		CodebaseURL: "http://127.0.0.1:12800",
 
 		// Tools
 		FileOps:      tools.NewFileOperationsTool(workDir),
@@ -63,6 +64,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
 		ThinkingTool: tools.NewThinkingTool(),
 		FlowOps:      tools.NewFlowControlTool(workDir),
+		RepoOps:      tools.NewRepoOperationsTool("http://127.0.0.1:12800", workDir),
 	}
 	ca.globalCtx = &gctx
 	// Get max steps from config, default to 10 if not set

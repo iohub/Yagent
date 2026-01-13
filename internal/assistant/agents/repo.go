@@ -70,6 +70,14 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, publisher *messa
 			fn = globalCtx.SearchOps.ExecuteGrepSearch
 		case "list_dir":
 			fn = globalCtx.FileOps.ExecuteListDir
+		case "print_dir_tree":
+			fn = globalCtx.FileOps.ExecutePrintDirTree
+		case "semantic_search":
+			fn = globalCtx.RepoOps.ExecuteSemanticSearch
+		case "query_code_skeleton":
+			fn = globalCtx.RepoOps.ExecuteQueryCodeSkeleton
+		case "query_code_snippet":
+			fn = globalCtx.RepoOps.ExecuteQueryCodeSnippet
 		default:
 			continue
 		}
@@ -107,7 +115,7 @@ func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse
 	// 创建 HTTP 请求
 	req, err := http.NewRequest(
 		"POST",
-		"http://localhost:8080/investigate_repo",
+		fmt.Sprintf("%s/investigate_repo", a.GlobalCtx.CodebaseURL),
 		strings.NewReader(string(jsonData)),
 	)
 	if err != nil {

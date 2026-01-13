@@ -1,9 +1,11 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"codeactor/internal/assistant"
@@ -19,6 +21,37 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 		slog.Error("Task not found", "task_id", taskID)
 		return
 	}
+
+	// Initialize codebase in background
+	go func() {
+		payload := map[string]string{"project_dir": projectDir}
+		jsonData, err := json.Marshal(payload)
+		if err != nil {
+			slog.Error("Failed to marshal codebase_init payload", "error", err)
+			return
+		}
+
+		req, err := http.NewRequest("POST", "http://127.0.0.1:12800/codebase_init", bytes.NewBuffer(jsonData))
+		if err != nil {
+			slog.Error("Failed to create codebase_init request", "error", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			slog.Error("Failed to send codebase_init request", "error", err)
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			slog.Error("codebase_init failed", "status_code", resp.StatusCode)
+		} else {
+			slog.Info("codebase_init request sent successfully", "project_dir", projectDir)
+		}
+	}()
 
 	// 使用任务的可取消上下文
 	ctx := task.Context

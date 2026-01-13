@@ -55,6 +55,14 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 			fn = globalCtx.FileOps.ExecuteRenameFile
 		case "list_dir":
 			fn = globalCtx.FileOps.ExecuteListDir
+		case "print_dir_tree":
+			fn = globalCtx.FileOps.ExecutePrintDirTree
+		case "semantic_search":
+			fn = globalCtx.RepoOps.ExecuteSemanticSearch
+		case "query_code_skeleton":
+			fn = globalCtx.RepoOps.ExecuteQueryCodeSkeleton
+		case "query_code_snippet":
+			fn = globalCtx.RepoOps.ExecuteQueryCodeSnippet
 		case "thinking":
 			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				inputBytes, _ := json.Marshal(params)
@@ -85,7 +93,7 @@ func (a *CodingAgent) Name() string {
 }
 
 func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
-	fmt.Println("Coding-Agent input:", input)
+
 	messages := []llms.MessageContent{
 		{
 			Role:  llms.ChatMessageTypeSystem,

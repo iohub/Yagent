@@ -16,6 +16,8 @@ type GlobalCtx struct {
 	RepoSummary     string
 	// Global utility
 	Publisher *messaging.MessagePublisher
+	// Codebase baseurl
+	CodebaseURL string
 
 	// Tools
 	FileOps      *tools.FileOperationsTool
@@ -24,12 +26,7 @@ type GlobalCtx struct {
 	ReplaceTool  *tools.ReplaceBlockTool
 	ThinkingTool *tools.ThinkingTool
 	FlowOps      *tools.FlowControlTool
-}
-
-func NewGlobalCtx() *GlobalCtx {
-	return &GlobalCtx{
-		SpeakLang: "Chinese",
-	}
+	RepoOps      *tools.RepoOperationsTool
 }
 
 func (g *GlobalCtx) FormatPrompt(prompt string) string {
@@ -76,4 +73,8 @@ func (g *GlobalCtx) SetSpeakLang(lang string) {
 
 func (g *GlobalCtx) SetCustomizePrompt(prompt string) {
 	g.CustomizePrompt = prompt
+}
+
+func (g *GlobalCtx) SetCodebaseURL(url string) {
+	g.CodebaseURL = url
 }
