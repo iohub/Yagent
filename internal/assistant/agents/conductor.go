@@ -195,6 +195,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				a.Publisher.Publish("tool_call_start", map[string]interface{}{
 					"tool_name": tc.FunctionCall.Name,
 					"arguments": tc.FunctionCall.Arguments,
+					"tool_call_id": tc.ID,
 				}, a.Name())
 			}
 			for _, t := range a.Adapters {
