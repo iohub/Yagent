@@ -193,8 +193,9 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 
 			if a.Publisher != nil {
 				a.Publisher.Publish("tool_call_start", map[string]interface{}{
-					"tool_name": tc.FunctionCall.Name,
-					"arguments": tc.FunctionCall.Arguments,
+					"tool_name":    tc.FunctionCall.Name,
+					"arguments":    tc.FunctionCall.Arguments,
+					"tool_call_id": tc.ID,
 				}, a.Name())
 			}
 			for _, t := range a.Adapters {
@@ -222,8 +223,9 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 
 			if a.Publisher != nil {
 				a.Publisher.Publish("tool_call_result", map[string]interface{}{
-					"tool_name": tc.FunctionCall.Name,
-					"result":    toolResult,
+					"tool_name":    tc.FunctionCall.Name,
+					"result":       toolResult,
+					"tool_call_id": tc.ID,
 				}, a.Name())
 			}
 
