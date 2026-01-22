@@ -121,23 +121,85 @@ func convertToolCalls(tcs []llms.ToolCall) []memory.ToolCallData {
 	return res
 }
 
-func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
-	if mem != nil {
-		mem.AddHumanMessage(input)
-		if a.Publisher != nil {
-			a.Publisher.Publish("memory_change", nil, a.Name())
+func convertMemoryMessageToLLMSMessage(msg memory.ChatMessage) llms.MessageContent {
+	role := llms.ChatMessageTypeHuman
+	switch msg.Type {
+	case memory.MessageTypeSystem:
+		role = llms.ChatMessageTypeSystem
+	case memory.MessageTypeHuman:
+		role = llms.ChatMessageTypeHuman
+	case memory.MessageTypeAssistant:
+		role = llms.ChatMessageTypeAI
+	case memory.MessageTypeTool:
+		role = llms.ChatMessageTypeTool
+	}
+
+	parts := []llms.ContentPart{}
+
+	if msg.Content != "" {
+		parts = append(parts, llms.TextPart(msg.Content))
+	}
+
+	if len(msg.ToolCalls) > 0 {
+		for _, tc := range msg.ToolCalls {
+			parts = append(parts, llms.ToolCall{
+				ID:   tc.ID,
+				Type: string(tc.Type),
+				FunctionCall: &llms.FunctionCall{
+					Name:      tc.Function.Name,
+					Arguments: string(tc.Function.Arguments),
+				},
+			})
 		}
 	}
 
-	messages := []llms.MessageContent{
-		{
-			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(a.GlobalCtx.FormatPrompt(conductorPrompt))},
-		},
-		{
+	if msg.Type == memory.MessageTypeTool && msg.ToolCallID != nil {
+		parts = append(parts, llms.ToolCallResponse{
+			ToolCallID: *msg.ToolCallID,
+			Content:    msg.Content,
+		})
+	}
+
+	return llms.MessageContent{
+		Role:  role,
+		Parts: parts,
+	}
+}
+
+func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
+	if mem != nil {
+		// Check if the last message is the same as input to avoid duplication
+		// because handleChatMessage might have already added it.
+		lastMsg := mem.GetLastMessage()
+		if lastMsg == nil || lastMsg.Content != input || lastMsg.Type != memory.MessageTypeHuman {
+			mem.AddHumanMessage(input)
+			if a.Publisher != nil {
+				a.Publisher.Publish("memory_change", nil, a.Name())
+			}
+		}
+	}
+
+	var messages []llms.MessageContent
+
+	// Always start with System Prompt
+	messages = append(messages, llms.MessageContent{
+		Role:  llms.ChatMessageTypeSystem,
+		Parts: []llms.ContentPart{llms.TextPart(a.GlobalCtx.FormatPrompt(conductorPrompt))},
+	})
+
+	if mem != nil {
+		for _, m := range mem.GetMessages() {
+			// Skip system messages from memory to avoid conflict with the fresh prompt
+			if m.Type == memory.MessageTypeSystem {
+				continue
+			}
+			messages = append(messages, convertMemoryMessageToLLMSMessage(m))
+		}
+	} else {
+		messages = append(messages, llms.MessageContent{
 			Role:  llms.ChatMessageTypeHuman,
 			Parts: []llms.ContentPart{llms.TextPart(input)},
-		},
+		})
 	}
 
 	llmTools := make([]llms.Tool, len(a.Adapters))
