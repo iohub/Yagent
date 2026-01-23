@@ -6,20 +6,20 @@ import (
 )
 
 type MessageDispatcher struct {
-	queue      chan *MessageEvent
-	consumers  []MessageConsumer
-	mu         sync.RWMutex
-	ctx        context.Context
-	cancelFunc context.CancelFunc
+	queue       chan *MessageEvent
+	consumerChs []chan *MessageEvent
+	mu          sync.RWMutex
+	ctx         context.Context
+	cancelFunc  context.CancelFunc
 }
 
 func NewMessageDispatcher(bufferSize int) *MessageDispatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	dispatcher := &MessageDispatcher{
-		queue:      make(chan *MessageEvent, bufferSize),
-		consumers:  make([]MessageConsumer, 0),
-		ctx:        ctx,
-		cancelFunc: cancel,
+		queue:       make(chan *MessageEvent, bufferSize),
+		consumerChs: make([]chan *MessageEvent, 0),
+		ctx:         ctx,
+		cancelFunc:  cancel,
 	}
 	go dispatcher.start()
 	return dispatcher
@@ -44,22 +44,37 @@ func (d *MessageDispatcher) dispatch(event *MessageEvent) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	for _, consumer := range d.consumers {
-		// Consume in a non-blocking manner to avoid slowing down the queue
-		go func(c MessageConsumer, e *MessageEvent) {
-			if err := c.Consume(e); err != nil {
-				// Log error but don't block the dispatcher
-				// In a real system, you might want to use a logger here
-				// For now, we'll just ignore errors to keep the system running
-			}
-		}(consumer, event)
+	for _, ch := range d.consumerChs {
+		select {
+		case ch <- event:
+		default:
+			// Channel is full, drop the event to avoid blocking
+			// In a production system, you might want to log this
+		}
 	}
 }
 
 func (d *MessageDispatcher) RegisterConsumer(consumer MessageConsumer) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.consumers = append(d.consumers, consumer)
+
+	// Create a buffered channel for the consumer
+	ch := make(chan *MessageEvent, 1000)
+	d.consumerChs = append(d.consumerChs, ch)
+
+	// Start a worker goroutine for this consumer
+	go func() {
+		for {
+			select {
+			case event := <-ch:
+				if err := consumer.Consume(event); err != nil {
+					// Log error but don't stop the worker
+				}
+			case <-d.ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 func (d *MessageDispatcher) Publish(event *MessageEvent) {

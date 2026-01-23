@@ -104,8 +104,9 @@ func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskMana
 
 func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, dataManager *assistant.DataManager) {
 	var chatData struct {
-		TaskID  string `json:"task_id"`
-		Message string `json:"message"`
+		TaskID     string `json:"task_id"`
+		Message    string `json:"message"`
+		ProjectDir string `json:"project_dir"`
 	}
 
 	if data, ok := msg.Data.(map[string]interface{}); ok {
@@ -114,6 +115,9 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 		}
 		if message, exists := data["message"].(string); exists {
 			chatData.Message = message
+		}
+		if projectDir, exists := data["project_dir"].(string); exists {
+			chatData.ProjectDir = projectDir
 		}
 	}
 
@@ -124,8 +128,42 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 
 	task, ok := taskManager.GetTask(chatData.TaskID)
 	if !ok {
-		sendError(s, "task not found")
-		return
+		// 尝试从DataManager加载
+		if dataManager != nil {
+			mem, err := dataManager.LoadTaskMemory(chatData.TaskID)
+			if err == nil {
+				// 恢复任务
+				// 使用客户端传递的ProjectDir，如果未传递则为空（可能会影响功能，但这是唯一的办法）
+				// 如果ProjectDir为空，我们可以尝试查找最近的一个ProjectDir，或者在Agent层面报错
+				projectDir := chatData.ProjectDir
+
+				ctx, cancel := context.WithCancel(context.Background())
+				task = &Task{
+					ID:         chatData.TaskID,
+					Status:     TaskStatusRunning, // 重新激活
+					ProjectDir: projectDir,
+					CreatedAt:  time.Now(),
+					UpdatedAt:  time.Now(),
+					Memory:     mem,
+					Socket:     s,
+					Context:    ctx,
+					CancelFunc: cancel,
+				}
+				taskManager.AddTask(task)
+				slog.Info("Task restored from memory for chat", "task_id", chatData.TaskID, "project_dir", projectDir)
+			} else {
+				sendError(s, "task not found and failed to load memory")
+				return
+			}
+		} else {
+			sendError(s, "task not found")
+			return
+		}
+	} else {
+		// 如果任务存在，更新ProjectDir（如果提供了新的）
+		if chatData.ProjectDir != "" && task.ProjectDir == "" {
+			task.ProjectDir = chatData.ProjectDir
+		}
 	}
 
 	// 添加用户消息到记忆
@@ -144,23 +182,6 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 		// Initialize message dispatcher for this conversation
 		dispatcher := messaging.NewMessageDispatcher(100)
 
-		// Create Persistence consumer if dataManager is provided
-		if dataManager != nil {
-			persistenceCallback := func(data []byte) error {
-				var event messaging.MessageEvent
-				if err := json.Unmarshal(data, &event); err != nil {
-					return err
-				}
-				if event.Type == "memory_change" {
-					if err := dataManager.SaveTaskMemory(chatData.TaskID, task.Memory); err != nil {
-						slog.Error("Failed to save task memory", "error", err, "task_id", chatData.TaskID)
-					}
-				}
-				return nil
-			}
-			persistenceConsumer := consumers.NewWebSocketConsumer(persistenceCallback)
-			dispatcher.RegisterConsumer(persistenceConsumer)
-		}
 
 		// Create WebSocket consumer
 		wsConsumer := consumers.NewWebSocketConsumer(func(data []byte) error {
