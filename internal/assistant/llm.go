@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"codeactor/internal/config"
 	"codeactor/internal/util"
@@ -20,25 +21,28 @@ import (
 
 // llmLogger is a separate logger for LLM responses
 var llmLogger *slog.Logger
+var llmLogFile *os.File
 
 // initLLMLogger initializes the LLM logger
 func initLLMLogger() error {
-	// Create logs directory if it doesn't exist
-	// homeDir, herr := os.UserHomeDir()
-	// if herr != nil {
-	// 	return util.WrapError(context.Background(), herr, "failed to get user home directory")
-	// }
-	// logDir := filepath.Join(homeDir, ".codeactor", "logs")
+	// Create logs directory in user home
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return util.WrapError(context.Background(), err, "failed to get user home directory")
+	}
+	logDir := filepath.Join(homeDir, ".codeactor", "logs")
 
-	logDir := "logs"
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return util.WrapError(context.Background(), err, "failed to create logs directory")
 	}
 
-	// Open LLM log file
-	llmLogFile, err := os.OpenFile(filepath.Join(logDir, "llm.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		return util.WrapError(context.Background(), err, "failed to open LLM log file")
+	// Open LLM log file with date
+	dateStr := time.Now().Format("2006-01-02")
+	logFileName := fmt.Sprintf("llm-%s.log", dateStr)
+	var errFile error
+	llmLogFile, errFile = os.OpenFile(filepath.Join(logDir, logFileName), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if errFile != nil {
+		return util.WrapError(context.Background(), errFile, "failed to open LLM log file")
 	}
 
 	// Create LLM logger with plain text format for better debugging
@@ -47,6 +51,66 @@ func initLLMLogger() error {
 	})
 	llmLogger = slog.New(handler)
 	return nil
+}
+
+// LogLLMContent writes a raw string to the LLM log file with a header
+func LogLLMContent(title string, content string) {
+	if llmLogFile == nil {
+		return
+	}
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	separator := strings.Repeat("-", 80)
+	logEntry := fmt.Sprintf("\n%s\n[%s] %s:\n%s\n%s\n", separator, timestamp, title, content, separator)
+	if _, err := llmLogFile.WriteString(logEntry); err != nil {
+		slog.Error("Failed to write to LLM log file", "error", err)
+	}
+}
+
+// LoggingLLM wraps an llms.LLM to add logging
+type LoggingLLM struct {
+	inner llms.LLM
+}
+
+func (l *LoggingLLM) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
+	LogLLMContent("LLM Input (Call)", prompt)
+	resp, err := l.inner.Call(ctx, prompt, options...)
+	if err == nil {
+		LogLLMContent("LLM Response (Call)", resp)
+	} else {
+		LogLLMContent("LLM Error (Call)", err.Error())
+	}
+	return resp, err
+}
+
+func (l *LoggingLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	if msgsJSON, err := json.MarshalIndent(messages, "", "  "); err == nil {
+		LogLLMContent("LLM Input (GenerateContent)", string(msgsJSON))
+	} else {
+		LogLLMContent("LLM Input (GenerateContent) - JSON Error", fmt.Sprintf("Failed to marshal messages: %v", err))
+	}
+
+	resp, err := l.inner.GenerateContent(ctx, messages, options...)
+	if err == nil && len(resp.Choices) > 0 {
+		choice := resp.Choices[0]
+		logContent := choice.Content
+
+		if len(choice.ToolCalls) > 0 {
+			var toolCallsLog strings.Builder
+			if logContent != "" {
+				toolCallsLog.WriteString("\n")
+			}
+			toolCallsLog.WriteString("[Tool Calls]:\n")
+			for i, tc := range choice.ToolCalls {
+				toolCallsLog.WriteString(fmt.Sprintf("%d. %s(%s)\n", i+1, tc.FunctionCall.Name, tc.FunctionCall.Arguments))
+			}
+			logContent += toolCallsLog.String()
+		}
+
+		LogLLMContent("LLM Response (GenerateContent)", logContent)
+	} else if err != nil {
+		LogLLMContent("LLM Error (GenerateContent)", err.Error())
+	}
+	return resp, err
 }
 
 // Client represents an LLM client
@@ -157,8 +221,11 @@ func NewClient(config *config.Config) (*Client, error) {
 
 	slog.Info("LLM client created successfully")
 
+	// Wrap with LoggingLLM
+	loggingLLM := &LoggingLLM{inner: llm}
+
 	return &Client{
-		llm:    llm,
+		llm:    loggingLLM,
 		config: config,
 	}, nil
 }
