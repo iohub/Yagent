@@ -193,18 +193,7 @@ The WebSocket API uses a JSON-based event system. Every message follows the `Soc
 
 These events are streamed during task execution with `type: "realtime"`.
 
-*   **Status Update** (Agent is thinking/working):
-    ```json
-    {
-        "type": "realtime",
-        "event": "status_update",
-        "data": {
-            "task_id": "...",
-            "content": "Reading file internal/main.go...",
-            "timestamp": 1698765432
-        }
-    }
-    ```
+
 
 *   **AI Response Chunk** (Streaming text):
     ```json
