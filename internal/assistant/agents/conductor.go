@@ -136,7 +136,7 @@ func convertMemoryMessageToLLMSMessage(msg memory.ChatMessage) llms.MessageConte
 
 	parts := []llms.ContentPart{}
 
-	if msg.Content != "" {
+	if msg.Content != "" && msg.Type != memory.MessageTypeTool {
 		parts = append(parts, llms.TextPart(msg.Content))
 	}
 

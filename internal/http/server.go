@@ -198,20 +198,79 @@ func (s *Server) handleStartTask(c *gin.Context) {
 
 	// 创建可取消的上下文
 	ctx, cancel := context.WithCancel(context.Background())
-	task := &Task{
-		ID:         uuid.New().String(),
-		Status:     TaskStatusRunning,
-		ProjectDir: req.ProjectDir,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		Memory:     memory.NewConversationMemory(300),
-		Context:    ctx,
-		CancelFunc: cancel,
+
+	var task *Task
+
+	if req.TaskID != "" {
+		// 尝试查找现有任务
+		existingTask, ok := s.taskManager.GetTask(req.TaskID)
+		if ok {
+			// 如果任务正在运行，拒绝请求（或者可以设计为排队）
+			if existingTask.Status == TaskStatusRunning {
+				cancel()
+				c.JSON(409, gin.H{"error": "Task is already running"})
+				return
+			}
+			task = existingTask
+			task.Status = TaskStatusRunning
+			task.UpdatedAt = time.Now()
+			task.CancelFunc = cancel
+			task.Context = ctx
+			// 保留 Memory，不重新创建
+			slog.Info("Continuing existing task", "task_id", task.ID)
+		} else {
+			// 如果内存中没有，尝试从 DataManager 加载 Memory
+			// 这通常发生在服务重启后，但 WebUI 保留了 task_id
+			mem, err := s.dataManager.LoadTaskMemory(req.TaskID)
+			if err == nil {
+				task = &Task{
+					ID:         req.TaskID,
+					Status:     TaskStatusRunning,
+					ProjectDir: req.ProjectDir,
+					CreatedAt:  time.Now(), // 实际上是恢复时间
+					UpdatedAt:  time.Now(),
+					Memory:     mem,
+					Context:    ctx,
+					CancelFunc: cancel,
+				}
+				s.taskManager.AddTask(task)
+				slog.Info("Restored task from memory", "task_id", req.TaskID)
+			} else {
+				// 如果无法加载 Memory，回退到创建新任务，但使用请求的 TaskID (或者生成新的，这里选择生成新的以避免混淆，或者报错)
+				// 为了稳健性，如果找不到以前的 Memory，我们把它当作新任务，但最好通知用户。
+				// 这里我们选择创建一个新任务，但使用请求的 ID，这样前端不用改 ID。
+				// 不过要注意，如果前端以为有 Memory 但实际没有，可能会很奇怪。
+				// 既然是 start_task，如果找不到之前的，就当新的开始吧。
+				task = &Task{
+					ID:         req.TaskID,
+					Status:     TaskStatusRunning,
+					ProjectDir: req.ProjectDir,
+					CreatedAt:  time.Now(),
+					UpdatedAt:  time.Now(),
+					Memory:     memory.NewConversationMemory(300),
+					Context:    ctx,
+					CancelFunc: cancel,
+				}
+				s.taskManager.AddTask(task)
+				slog.Info("Task memory not found, starting fresh with provided ID", "task_id", req.TaskID)
+			}
+		}
+	} else {
+		// 创建新任务
+		task = &Task{
+			ID:         uuid.New().String(),
+			Status:     TaskStatusRunning,
+			ProjectDir: req.ProjectDir,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			Memory:     memory.NewConversationMemory(300),
+			Context:    ctx,
+			CancelFunc: cancel,
+		}
+		s.taskManager.AddTask(task)
+		slog.Info("Task created", "task_id", task.ID)
 	}
-	s.taskManager.lock.Lock()
-	s.taskManager.tasks[task.ID] = task
-	s.taskManager.lock.Unlock()
-	slog.Info("Task created", "task_id", task.ID)
+
 	// 后台执行任务
 	go ExecuteTask(task.ID, req.ProjectDir, req.TaskDesc, s.taskManager, s.codingAssistant, s.dataManager)
 
