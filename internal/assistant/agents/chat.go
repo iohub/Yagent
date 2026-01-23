@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	_ "embed"
+	"fmt"
 
 	"codeactor/internal/globalctx"
 
@@ -45,11 +46,18 @@ func (a *ChatAgent) Run(ctx context.Context, input string) (string, error) {
 
 	resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTemperature(0.7))
 	if err != nil {
+		if a.Publisher != nil {
+			a.Publisher.Publish("ai_response", fmt.Sprintf("Error: %v", err), a.Name())
+		}
 		return "", err
 	}
 
 	if len(resp.Choices) > 0 {
-		return resp.Choices[0].Content, nil
+		content := resp.Choices[0].Content
+		if content != "" && a.Publisher != nil {
+			a.Publisher.Publish("ai_response", content, a.Name())
+		}
+		return content, nil
 	}
 	return "", nil
 }
