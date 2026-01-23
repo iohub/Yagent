@@ -86,7 +86,8 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, llm, publisher, repoMaxSteps)
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, codingMaxSteps)
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, conductorMaxSteps)
+	chatAgent := agents.NewChatAgent(ca.globalCtx, llm)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, chatAgent, conductorMaxSteps)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
