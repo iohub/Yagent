@@ -21,12 +21,13 @@ type ConductorAgent struct {
 	BaseAgent
 	RepoAgent   *RepoAgent
 	CodingAgent *CodingAgent
+	ChatAgent   *ChatAgent
 	GlobalCtx   *globalctx.GlobalCtx
 	Adapters    []*tools.Adapter
 	maxSteps    int
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, maxSteps int) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, maxSteps int) *ConductorAgent {
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
@@ -54,6 +55,20 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		"type": "object",
 		"properties": map[string]interface{}{
 			"task": map[string]interface{}{"type": "string", "description": "The task description for Coding-Agent"},
+		},
+		"required": []string{"task"},
+	})
+
+	delegateChat := tools.NewAdapter("delegate_chat", "Delegate general conversation, explanation, or non-coding tasks to Chat-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		task, ok := params["task"].(string)
+		if !ok {
+			return nil, fmt.Errorf("task parameter required")
+		}
+		return chat.Run(ctx, task)
+	}).WithSchema(map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"task": map[string]interface{}{"type": "string", "description": "The message or question for Chat-Agent"},
 		},
 		"required": []string{"task"},
 	})
@@ -96,8 +111,9 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		BaseAgent:   BaseAgent{LLM: llm, Publisher: globalCtx.Publisher},
 		RepoAgent:   repo,
 		CodingAgent: coding,
+		ChatAgent:   chat,
 		GlobalCtx:   globalCtx,
-		Adapters:    append(adapters, delegateRepo, delegateCoding),
+		Adapters:    append(adapters, delegateRepo, delegateCoding, delegateChat),
 		maxSteps:    maxSteps,
 	}
 }
