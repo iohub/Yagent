@@ -38,6 +38,7 @@ type TaskUpdate struct {
 type CodingTaskRequest struct {
 	ProjectDir string `json:"project_dir"`
 	TaskDesc   string `json:"task_desc"`
+	TaskID     string `json:"task_id,omitempty"` // 可选，用于多轮对话
 }
 
 type CodingTaskResponse struct {
