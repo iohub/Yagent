@@ -227,9 +227,6 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 
 	for i := 0; i < a.maxSteps; i++ {
 		slog.Debug("RepoAgent calling LLM", "step", i, "messages", messages)
-		if a.Publisher != nil {
-			a.Publisher.Publish("status_update", fmt.Sprintf("RepoAgent is thinking (step %d/%d)...", i+1, a.maxSteps), a.Name())
-		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
 			slog.Error("RepoAgent LLM error", "error", err, "step", i)

@@ -112,9 +112,6 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
 	}
 
 	for i := 0; i < a.maxSteps; i++ {
-		if a.Publisher != nil {
-			a.Publisher.Publish("status_update", fmt.Sprintf("CodingAgent is thinking (step %d/%d)...", i+1, a.maxSteps), a.Name())
-		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
 			slog.Error("CodingAgent LLM error", "error", err, "step", i)
