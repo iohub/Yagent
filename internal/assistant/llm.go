@@ -72,6 +72,7 @@ type LoggingLLM struct {
 }
 
 func (l *LoggingLLM) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
+	LogLLMContent("LLM Input (Call)", prompt)
 	resp, err := l.inner.Call(ctx, prompt, options...)
 	if err == nil {
 		LogLLMContent("LLM Response (Call)", resp)
@@ -82,6 +83,12 @@ func (l *LoggingLLM) Call(ctx context.Context, prompt string, options ...llms.Ca
 }
 
 func (l *LoggingLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	if msgsJSON, err := json.MarshalIndent(messages, "", "  "); err == nil {
+		LogLLMContent("LLM Input (GenerateContent)", string(msgsJSON))
+	} else {
+		LogLLMContent("LLM Input (GenerateContent) - JSON Error", fmt.Sprintf("Failed to marshal messages: %v", err))
+	}
+
 	resp, err := l.inner.GenerateContent(ctx, messages, options...)
 	if err == nil && len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
