@@ -56,7 +56,7 @@ model = "qwen3-coder-plus"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "http://127.0.0.1:8000"
-api_key = "sk-none"
+api_key = "your-key"
 
 # 其他模型配置示例
 [llm.providers.moonshot]
@@ -64,28 +64,28 @@ model = "moonshotai/Kimi-K2-Instruct"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.moonshot.cn/v1"
-api_key = "your-moonshot-api-key"
+api_key = "your-key"
 
 [llm.providers.deepseek]
 model = "deepseek-ai/DeepSeek-V3"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.deepseek.com/v1"
-api_key = "your-deepseek-api-key"
+api_key = "your-key"
 
 [llm.providers.zai]
 model = "zai-org/GLM-4.5-Air"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.zai.org/v1"
-api_key = "your-zai-api-key"
+api_key = "your-key"
 
 [llm.providers.mistral]
 model = "mistralai/devstral-small"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.mistral.ai/v1"
-api_key = "your-mistral-api-key"
+api_key = "your-key"
 
 # AWS Bedrock 配置
 [llm.providers.bedrock]
