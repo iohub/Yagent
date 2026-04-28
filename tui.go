@@ -115,6 +115,7 @@ type model struct {
 	logEntries      []logEntry
 	viewport        viewport.Model
 	glamourRenderer *glamour.TermRenderer
+	useDarkStyle    bool
 
 	// Task execution state
 	taskRunning bool
@@ -137,7 +138,7 @@ type model struct {
 	historySearch    textinput.Model
 }
 
-func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm *http.TaskManager, dm *assistant.DataManager) model {
+func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm *http.TaskManager, dm *assistant.DataManager, useDarkStyle bool) model {
 	ti := textinput.New()
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
@@ -162,9 +163,14 @@ func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm
 	vp := viewport.New(80, 10)
 	vp.Style = lipgloss.NewStyle().Padding(0, 1)
 
-	// Create glamour markdown renderer
+	// Create glamour markdown renderer with explicit style to avoid
+	// terminal background-color queries leaking into input.
+	glamourStyle := "dark"
+	if !useDarkStyle {
+		glamourStyle = "light"
+	}
 	glamourRenderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle(glamourStyle),
 		glamour.WithWordWrap(60),
 	)
 	if err != nil {
@@ -185,6 +191,7 @@ func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm
 		historySearch:   hSearch,
 		viewport:        vp,
 		glamourRenderer: glamourRenderer,
+		useDarkStyle:    useDarkStyle,
 	}
 }
 
@@ -495,8 +502,12 @@ func (m *model) resizeViewport() {
 		if glamourWidth < 40 {
 			glamourWidth = 40
 		}
+		glamourStyle := "dark"
+		if !m.useDarkStyle {
+			glamourStyle = "light"
+		}
 		renderer, err := glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
+			glamour.WithStandardStyle(glamourStyle),
 			glamour.WithWordWrap(glamourWidth),
 		)
 		if err == nil {
@@ -747,7 +758,11 @@ func startTUI(taskFilePath string, ca *assistant.CodingAssistant, tm *http.TaskM
 		}
 	}
 
-	p := tea.NewProgram(initialModel(taskContent, ca, tm, dm))
+	// Detect terminal background before entering raw mode to avoid
+	// escape-sequence leakage into the input field.
+	useDarkStyle := lipgloss.HasDarkBackground()
+
+	p := tea.NewProgram(initialModel(taskContent, ca, tm, dm, useDarkStyle))
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
