@@ -31,21 +31,21 @@ type translations struct {
 	CreateFileTips string
 	HelpTips       string
 	// New fields for history modal
-	HistoryButton       string
-	HistoryTitle        string
-	HistoryEmpty        string
-	HistorySearchHint   string
-	HistoryUseSelected  string
-	HistoryClose        string
+	HistoryButton      string
+	HistoryTitle       string
+	HistoryEmpty       string
+	HistorySearchHint  string
+	HistoryUseSelected string
+	HistoryClose       string
 }
 
 var langMap = map[Language]translations{
 	LangChinese: {
-		Title:                            "DeepCoder 助手",
+		Title:                            "CodeActor AI 助手",
 		ProjectDirLabel:                  "项目目录",
 		TaskDescLabel:                    "任务描述",
 		ProjectDirPlaceholder:            "输入项目目录路径",
-		TaskDescPlaceholder:              "输入任务描述，如：重构模块、修复 Bug、实现功能…",
+		TaskDescPlaceholder:              "输入任务描述，如：重构模块、修复 Bug…",
 		InfoMessage:                      "按 Tab/Shift+Tab 切换，Enter 确认下一个",
 		SubmitButton:                     "提交 (Ctrl+S)",
 		QuitMessage:                      "\n再见！\n\n",
@@ -67,11 +67,11 @@ var langMap = map[Language]translations{
 		HistoryClose:                     "关闭",
 	},
 	LangEnglish: {
-		Title:                            "DeepCoder Assistant",
+		Title:                            "CodeActor AI Assistant",
 		ProjectDirLabel:                  "Project Directory",
 		TaskDescLabel:                    "Task Description",
 		ProjectDirPlaceholder:            "Enter project directory path",
-		TaskDescPlaceholder:              "Enter task description, e.g.: refactor module, fix bug, implement feature...",
+		TaskDescPlaceholder:              "Enter task description, e.g.: refactor module, fix bug...",
 		InfoMessage:                      "Tab/Shift+Tab to switch, Enter to confirm next",
 		SubmitButton:                     "Submit (Ctrl+S)",
 		QuitMessage:                      "\nGoodbye!\n\n",
