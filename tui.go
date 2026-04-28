@@ -70,10 +70,6 @@ type model struct {
 
 func initialModel(preloadedTaskContent string) model {
 	var inputs []textinput.Model
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = ""
-	}
 
 	// 使用预加载的任务内容或尝试从默认文件加载
 	taskContent := preloadedTaskContent
@@ -85,28 +81,19 @@ func initialModel(preloadedTaskContent string) model {
 		}
 	}
 
-	for i := range []string{langManager.GetText("ProjectDirLabel"), langManager.GetText("TaskDescLabel")} {
-		ti := textinput.New()
-		ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-		if i == 0 {
-			ti.Placeholder = langManager.GetText("ProjectDirPlaceholder")
-			ti.Focus()
-			ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-			ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-			ti.CharLimit = 256
-			ti.Width = 60
-			ti.SetValue(cwd)
-		} else {
-			ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
-			ti.CharLimit = 256
-			ti.Width = 60
-			if taskContent != "" {
-				ti.SetValue(taskContent)
-			}
-		}
-
-		inputs = append(inputs, ti)
+	// Only task description input
+	ti := textinput.New()
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
+	ti.Focus()
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	ti.CharLimit = 256
+	ti.Width = 60
+	if taskContent != "" {
+		ti.SetValue(taskContent)
 	}
+	inputs = append(inputs, ti)
 
 	// history search input
 	hSearch := textinput.New()
@@ -115,8 +102,11 @@ func initialModel(preloadedTaskContent string) model {
 	hSearch.Width = 60
 	hSearch.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 
+	projectDir, _ := os.Getwd()
+
 	return model{
 		inputs:        inputs,
+		projectDir:    projectDir,
 		focusIndex:    0,
 		infoMsg:       langManager.GetText("InfoMessage"),
 		currentLang:   langManager.currentLang,
@@ -159,8 +149,7 @@ func (m *model) toggleLanguage() {
 		m.currentLang = LangEnglish
 	}
 	// refresh placeholders to reflect current language
-	m.inputs[0].Placeholder = langManager.GetText("ProjectDirPlaceholder")
-	m.inputs[1].Placeholder = langManager.GetText("TaskDescPlaceholder")
+	m.inputs[0].Placeholder = langManager.GetText("TaskDescPlaceholder")
 	m.infoMsg = langManager.GetText("InfoMessage")
 	// also refresh history search placeholder (modal might open later)
 	m.historySearch.Placeholder = langManager.GetText("HistorySearchHint")
@@ -199,7 +188,7 @@ func (m *model) applyHistorySelection() {
 	}
 	selected := m.filteredItems[m.historyIndex]
 	// Use the title (first human message) as task description
-	m.inputs[1].SetValue(selected.Title)
+	m.inputs[0].SetValue(selected.Title)
 	m.closeHistoryModal()
 	// Move focus to submit for quick execution
 	m.setFocus(len(m.inputs))
@@ -296,8 +285,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			} else if m.focusIndex == len(m.inputs) {
 				// focus is on submit button
-				m.projectDir = m.inputs[0].Value()
-				m.taskDesc = m.inputs[1].Value()
+				m.projectDir, _ = os.Getwd()
+				m.taskDesc = m.inputs[0].Value()
 				if ok, err := validateInputs(m.projectDir, m.taskDesc); ok {
 					m.quitting = true
 					return m, tea.Quit
@@ -316,8 +305,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "ctrl+s":
-			m.projectDir = m.inputs[0].Value()
-			m.taskDesc = m.inputs[1].Value()
+			m.projectDir, _ = os.Getwd()
+			m.taskDesc = m.inputs[0].Value()
 			if ok, err := validateInputs(m.projectDir, m.taskDesc); ok {
 				m.quitting = true
 				return m, tea.Quit
@@ -379,7 +368,6 @@ func (m model) View() string {
 	var form strings.Builder
 	fieldWidth := m.computeFieldWidth()
 	labels := []string{
-		langManager.GetText("ProjectDirLabel"),
 		langManager.GetText("TaskDescLabel"),
 	}
 
@@ -450,12 +438,6 @@ func (m model) View() string {
 }
 
 func validateInputs(projectDir, taskDesc string) (bool, string) {
-	if strings.TrimSpace(projectDir) == "" {
-		return false, langManager.GetText("ValidationErrorEmptyProjectDir")
-	}
-	if fi, err := os.Stat(projectDir); err != nil || !fi.IsDir() {
-		return false, langManager.GetText("ValidationErrorInvalidProjectDir")
-	}
 	if strings.TrimSpace(taskDesc) == "" {
 		return false, langManager.GetText("ValidationErrorEmptyTaskDesc")
 	}
@@ -491,22 +473,34 @@ func startTUI(taskFilePath string) (string, string) {
 	}
 }
 
-// renderBanner draws a colorful ASCII banner similar in spirit to the reference image.
+// renderBanner draws a rainbow ASCII logo with per-character coloring.
 func renderBanner() string {
-	bannerLines := []string{
-		" ██████╗  ██████╗  ██████╗  ███████╗  █████╗   ██████╗ ████████╗  ██████╗  ██████╗ ",
-		"██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝ ██╔══██╗ ██╔════╝ ╚══██╔══╝ ██╔═══██╗ ██╔══██╗",
-		"██║      ██║   ██║ ██║  ██║ █████╗   ███████║ ██║         ██║    ██║   ██║ ██████╔╝",
-		"██║      ██║   ██║ ██║  ██║ ██╔══╝   ██╔══██║ ██║         ██║    ██║   ██║ ██╔══██╗",
-		"╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗ ██║  ██║ ╚██████╗    ██║    ╚██████╔╝ ██║  ██║",
-		" ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═╝  ╚═════╝    ╚═╝     ╚═════╝  ╚═╝  ╚═╝",
+	asciiLogo := []string{
+		"╔╦╗╦  ╦  ╔═╗┌─┐┌┬┐┌─┐",
+		" ║║║  ║  ║  │ │ ││├┤ ",
+		"═╩╝╩═╝╩  ╚═╝└─┘─┴┘└─┘",
 	}
-	palette := []string{"213", "219", "159", "123", "81", "69"}
+
+	// RAINBOW_COLORS: muted pastel tones — red, orange, yellow, green, blue, indigo, violet
+	rainbowColors := []string{
+		"167", // soft red (salmon)
+		"180", // soft orange (tan)
+		"221", // soft yellow (golden)
+		"114", // soft green (mint)
+		"75",  // soft blue (sky)
+		"98",  // soft indigo (lavender)
+		"176", // soft violet (mauve)
+	}
+
 	var rendered []string
-	for i, line := range bannerLines {
-		color := palette[i%len(palette)]
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-		rendered = append(rendered, style.Render(line))
+	for _, line := range asciiLogo {
+		var chars []string
+		for i, r := range line {
+			color := rainbowColors[i%len(rainbowColors)]
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
+			chars = append(chars, style.Render(string(r)))
+		}
+		rendered = append(rendered, lipgloss.JoinHorizontal(lipgloss.Top, chars...))
 	}
 	return bannerPadStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rendered...))
 }
