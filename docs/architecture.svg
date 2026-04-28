@@ -1,0 +1,191 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 1050" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6"/>
+    </marker>
+    <linearGradient id="grad-interaction" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#eff6ff"/><stop offset="100%" stop-color="#dbeafe"/>
+    </linearGradient>
+    <linearGradient id="grad-agent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#faf5ff"/><stop offset="100%" stop-color="#ede9fe"/>
+    </linearGradient>
+    <linearGradient id="grad-msg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f0fdf4"/><stop offset="100%" stop-color="#dcfce7"/>
+    </linearGradient>
+    <linearGradient id="grad-tool" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fff7ed"/><stop offset="100%" stop-color="#ffedd5"/>
+    </linearGradient>
+    <linearGradient id="grad-infra" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f9fafb"/><stop offset="100%" stop-color="#f3f4f6"/>
+    </linearGradient>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="1050" fill="#ffffff" rx="8"/>
+
+  <!-- Title -->
+  <text x="480" y="38" text-anchor="middle" font-size="20" font-weight="700" fill="#1f2937">CodeActor Agent — System Architecture</text>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 1: Interaction -->
+  <!-- ============================================================ -->
+  <rect x="140" y="58" width="810" height="92" rx="8" fill="url(#grad-interaction)" stroke="#bfdbfe" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="0" y="58" width="130" height="40" rx="6" fill="#3b82f6"/>
+  <text x="65" y="83" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">INTERACTION</text>
+
+  <rect x="170" y="78" width="230" height="52" rx="6" fill="#fff" stroke="#93c5fd" stroke-width="1"/>
+  <text x="285" y="100" text-anchor="middle" font-size="14" font-weight="600" fill="#1e40af">TUI</text>
+  <text x="285" y="118" text-anchor="middle" font-size="11" fill="#64748b">bubbletea + lipgloss</text>
+
+  <rect x="430" y="78" width="230" height="52" rx="6" fill="#fff" stroke="#93c5fd" stroke-width="1"/>
+  <text x="545" y="100" text-anchor="middle" font-size="14" font-weight="600" fill="#1e40af">HTTP + WebSocket</text>
+  <text x="545" y="118" text-anchor="middle" font-size="11" fill="#64748b">gin + melody</text>
+
+  <rect x="690" y="78" width="230" height="52" rx="6" fill="#fff" stroke="#93c5fd" stroke-width="1"/>
+  <text x="805" y="100" text-anchor="middle" font-size="14" font-weight="600" fill="#1e40af">Task Manager</text>
+  <text x="805" y="118" text-anchor="middle" font-size="11" fill="#64748b">lifecycle · cancel · persist</text>
+
+  <!-- Arrow: Interaction → Agent -->
+  <line x1="480" y1="150" x2="480" y2="175" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow-blue)"/>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 2: Agent -->
+  <!-- ============================================================ -->
+  <rect x="140" y="180" width="810" height="200" rx="8" fill="url(#grad-agent)" stroke="#ddd6fe" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="0" y="180" width="130" height="40" rx="6" fill="#7c3aed"/>
+  <text x="65" y="203" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">AGENT</text>
+
+  <!-- CodingAssistant -->
+  <rect x="360" y="198" width="270" height="36" rx="6" fill="#ede9fe" stroke="#a78bfa" stroke-width="1"/>
+  <text x="495" y="221" text-anchor="middle" font-size="13" font-weight="600" fill="#5b21b6">CodingAssistant</text>
+
+  <line x1="495" y1="234" x2="495" y2="248" stroke="#7c3aed" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ConductorAgent -->
+  <rect x="280" y="250" width="430" height="60" rx="6" fill="#fff" stroke="#c4b5fd" stroke-width="1.5"/>
+  <text x="495" y="272" text-anchor="middle" font-size="14" font-weight="700" fill="#4c1d95">ConductorAgent</text>
+  <text x="495" y="294" text-anchor="middle" font-size="11" fill="#6b7280">plan → delegate → review → iterate</text>
+
+  <!-- Three sub-agents -->
+  <line x1="340" y1="310" x2="210" y2="340" stroke="#8b5cf6" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="495" y1="310" x2="495" y2="340" stroke="#8b5cf6" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="650" y1="310" x2="780" y2="340" stroke="#8b5cf6" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="170" y="342" width="200" height="30" rx="5" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1"/>
+  <text x="270" y="362" text-anchor="middle" font-size="12" font-weight="600" fill="#6d28d9">RepoAgent ⬝ read-only</text>
+
+  <rect x="380" y="342" width="230" height="30" rx="5" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1"/>
+  <text x="495" y="362" text-anchor="middle" font-size="12" font-weight="600" fill="#6d28d9">CodingAgent ⬝ read/write</text>
+
+  <rect x="620" y="342" width="210" height="30" rx="5" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1"/>
+  <text x="725" y="362" text-anchor="middle" font-size="12" font-weight="600" fill="#6d28d9">ChatAgent ⬝ general</text>
+
+  <!-- Agent → Message Bus -->
+  <line x1="250" y1="380" x2="250" y2="415" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="520" y1="380" x2="520" y2="415" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 3: Message Bus -->
+  <!-- ============================================================ -->
+  <rect x="140" y="420" width="810" height="110" rx="8" fill="url(#grad-msg)" stroke="#bbf7d0" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="0" y="420" width="130" height="40" rx="6" fill="#16a34a"/>
+  <text x="65" y="443" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">MESSAGE BUS</text>
+
+  <rect x="320" y="440" width="350" height="38" rx="6" fill="#fff" stroke="#86efac" stroke-width="1"/>
+  <text x="495" y="464" text-anchor="middle" font-size="13" font-weight="600" fill="#166534">MessageDispatcher ⬝ Pub-Sub Event Bus</text>
+
+  <line x1="380" y1="478" x2="240" y2="505" stroke="#16a34a" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="610" y1="478" x2="750" y2="505" stroke="#16a34a" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="170" y="496" width="200" height="26" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="270" y="514" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">TUIConsumer ⬝ stdout</text>
+
+  <rect x="620" y="496" width="270" height="26" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="755" y="514" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">WebSocketConsumer ⬝ broadcast</text>
+
+  <!-- Message Bus → Tools -->
+  <line x1="400" y1="530" x2="400" y2="555" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="755" y1="530" x2="755" y2="555" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 4: Tools -->
+  <!-- ============================================================ -->
+  <rect x="140" y="560" width="810" height="160" rx="8" fill="url(#grad-tool)" stroke="#fed7aa" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="0" y="560" width="130" height="40" rx="6" fill="#ea580c"/>
+  <text x="65" y="583" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">TOOLS</text>
+
+  <!-- File tools -->
+  <rect x="170" y="580" width="220" height="125" rx="6" fill="#fff" stroke="#fdba74" stroke-width="1"/>
+  <text x="280" y="600" text-anchor="middle" font-size="12" font-weight="700" fill="#9a3412">  File Operations</text>
+  <text x="180" y="620" font-size="10.5" fill="#4b5563">read_file</text>
+  <text x="280" y="620" font-size="10.5" fill="#4b5563">create_file</text>
+  <text x="180" y="638" font-size="10.5" fill="#4b5563">delete_file</text>
+  <text x="280" y="638" font-size="10.5" fill="#4b5563">rename_file</text>
+  <text x="180" y="656" font-size="10.5" fill="#4b5563">list_dir</text>
+  <text x="280" y="656" font-size="10.5" fill="#4b5563">print_dir_tree</text>
+  <text x="180" y="674" font-size="10.5" fill="#4b5563">search_replace_in_file</text>
+
+  <!-- Search tools -->
+  <rect x="405" y="580" width="220" height="125" rx="6" fill="#fff" stroke="#fdba74" stroke-width="1"/>
+  <text x="515" y="600" text-anchor="middle" font-size="12" font-weight="700" fill="#9a3412">  Search &amp; Repo</text>
+  <text x="415" y="620" font-size="10.5" fill="#4b5563">search_by_regex (rg)</text>
+  <text x="415" y="638" font-size="10.5" fill="#4b5563">semantic_search</text>
+  <text x="415" y="656" font-size="10.5" fill="#4b5563">query_code_skeleton</text>
+  <text x="415" y="674" font-size="10.5" fill="#4b5563">query_code_snippet</text>
+
+  <!-- System + Cognitive -->
+  <rect x="640" y="580" width="280" height="125" rx="6" fill="#fff" stroke="#fdba74" stroke-width="1"/>
+  <text x="780" y="600" text-anchor="middle" font-size="12" font-weight="700" fill="#9a3412">  System &amp; Cognitive</text>
+  <text x="650" y="620" font-size="10.5" fill="#4b5563">run_terminal_cmd</text>
+  <text x="650" y="638" font-size="10.5" fill="#4b5563">thinking (self-correction)</text>
+  <text x="650" y="656" font-size="10.5" fill="#4b5563">finish</text>
+
+  <!-- Tools → Infra -->
+  <line x1="400" y1="720" x2="400" y2="745" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="755" y1="720" x2="755" y2="745" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- DataManager (vertical side) -->
+  <rect x="40" y="640" width="80" height="70" rx="6" fill="#fef3c7" stroke="#fcd34d" stroke-width="1" filter="url(#shadow)"/>
+  <text x="80" y="665" text-anchor="middle" font-size="11" font-weight="600" fill="#92400e">Data</text>
+  <text x="80" y="682" text-anchor="middle" font-size="11" font-weight="600" fill="#92400e">Manager</text>
+  <text x="80" y="699" text-anchor="middle" font-size="9" fill="#92400e">persistence</text>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 5: Infrastructure -->
+  <!-- ============================================================ -->
+  <rect x="140" y="750" width="810" height="130" rx="8" fill="url(#grad-infra)" stroke="#d1d5db" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="0" y="750" width="130" height="40" rx="6" fill="#4b5563"/>
+  <text x="65" y="773" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">INFRA</text>
+
+  <rect x="170" y="772" width="360" height="95" rx="6" fill="#fff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="350" y="795" text-anchor="middle" font-size="13" font-weight="700" fill="#374151">  LLM Providers</text>
+  <text x="350" y="815" text-anchor="middle" font-size="11" fill="#4b5563">OpenAI-compatible API</text>
+  <text x="350" y="834" text-anchor="middle" font-size="11" fill="#6b7280">xiaomi · aliyun · siliconflow · deepseek</text>
+  <text x="350" y="852" text-anchor="middle" font-size="11" fill="#6b7280">moonshot · mistral · z.ai · bedrock · local</text>
+
+  <rect x="560" y="772" width="360" height="95" rx="6" fill="#fff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="740" y="795" text-anchor="middle" font-size="13" font-weight="700" fill="#374151">  Codebase Service</text>
+  <text x="740" y="815" text-anchor="middle" font-size="11" fill="#4b5563">Rust · 127.0.0.1:12800</text>
+  <text x="740" y="834" text-anchor="middle" font-size="11" fill="#6b7280">/investigate_repo · /semantic_search</text>
+  <text x="740" y="852" text-anchor="middle" font-size="11" fill="#6b7280">/query_code_skeleton · /query_code_snippet</text>
+
+  <!-- ============================================================ -->
+  <!-- Memo box (bottom right) -->
+  <!-- ============================================================ -->
+  <rect x="180" y="910" width="600" height="36" rx="6" fill="#fefce8" stroke="#fde68a" stroke-width="1"/>
+  <text x="480" y="933" text-anchor="middle" font-size="11" fill="#a16207">   solid arrows = direct invocation    ·    dashed arrows = event publishing via MessageDispatcher</text>
+
+  <!-- ============================================================ -->
+  <!-- Side labels / annotations -->
+  <!-- ============================================================ -->
+
+  <!-- Legend for arrow types -->
+  <rect x="40" y="920" width="100" height="26" rx="4" fill="none" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="90" y="937" text-anchor="middle" font-size="10" fill="#64748b">Legend</text>
+</svg>
