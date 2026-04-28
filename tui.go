@@ -20,12 +20,22 @@ var (
 	// Banner
 	bannerPadStyle = lipgloss.NewStyle().Padding(0, 1)
 
-	// Labels
-	labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("248")).Bold(true)
+	// Prompt input — ❯ prefix style
+	promptFocusedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	promptBlurredStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-	// Inputs — clean normal border, accent when focused
+	// Input border — used by history modal search
 	focusedInputStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
 	blurredInputStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Padding(0, 1)
+
+	// Welcome panel
+	welcomePanelStyle   = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2)
+	welcomeLeftStyle    = lipgloss.NewStyle().Width(38)
+	welcomeTitleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
+	welcomeSubStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	welcomeRightTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
+	welcomeTipStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	welcomeDimStyle     = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("242"))
 
 	// Buttons — text-only, bold accent when focused, dim otherwise
 	buttonFocusedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
@@ -353,88 +363,123 @@ func (m model) View() string {
 
 	var b strings.Builder
 
-	// Banner
-	b.WriteString(renderBanner())
-	b.WriteString("\n")
+	// Welcome panel with logo and tips
+	b.WriteString(m.renderWelcomePanel())
 
-	// Error or info message
-	if m.errorMsg != "" {
-		b.WriteString("\n" + errorStyle.Render("✖ "+m.errorMsg))
-	} else if m.infoMsg != "" {
-		b.WriteString("\n" + infoStyle.Render(m.infoMsg))
+	// Spacing
+	b.WriteString("\n\n")
+
+	// Prompt input line: ❯ [input]
+	promptChar := "❯ "
+	var promptStyled string
+	if m.inputs[0].Focused() {
+		promptStyled = promptFocusedStyle.Render(promptChar)
+	} else {
+		promptStyled = promptBlurredStyle.Render(promptChar)
 	}
-
-	// Form
-	var form strings.Builder
 	fieldWidth := m.computeFieldWidth()
-	labels := []string{
-		langManager.GetText("TaskDescLabel"),
+	m.inputs[0].Width = fieldWidth
+	inputLine := promptStyled + m.inputs[0].View()
+	b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(inputLine))
+
+	// Error message
+	if m.errorMsg != "" {
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(errorStyle.Render("✖ " + m.errorMsg)))
 	}
 
-	for i := range m.inputs {
-		form.WriteString(labelStyle.Render(labels[i]))
-		form.WriteString("\n")
-
-		m.inputs[i].Width = fieldWidth
-		inputView := m.inputs[i].View()
-		if m.inputs[i].Focused() {
-			inputView = focusedInputStyle.Render(inputView)
-		} else {
-			inputView = blurredInputStyle.Render(inputView)
-		}
-		form.WriteString(inputView)
-		if i < len(m.inputs)-1 {
-			form.WriteString("\n\n")
-		}
-	}
-
-	// Action buttons row
-	form.WriteString("\n\n")
-
-	// Submit
+	// Action buttons
+	b.WriteString("\n")
+	var buttons strings.Builder
 	submitLabel := langManager.GetText("SubmitButton")
 	if m.focusIndex == len(m.inputs) {
-		form.WriteString(buttonFocusedStyle.Render("● " + submitLabel))
+		buttons.WriteString(buttonFocusedStyle.Render("● " + submitLabel))
 	} else {
-		form.WriteString(buttonBlurredStyle.Render("○ " + submitLabel))
+		buttons.WriteString(buttonBlurredStyle.Render("○ " + submitLabel))
 	}
-	form.WriteString("  ")
+	buttons.WriteString("  ")
 
-	// Language
 	currentLangLabel := "EN"
 	if m.currentLang == LangChinese {
 		currentLangLabel = "中文"
 	}
 	langLabel := fmt.Sprintf("%s: %s", langManager.GetText("LanguageButton"), currentLangLabel)
 	if m.focusIndex == len(m.inputs)+1 {
-		form.WriteString(buttonFocusedStyle.Render("● " + langLabel))
+		buttons.WriteString(buttonFocusedStyle.Render("● " + langLabel))
 	} else {
-		form.WriteString(buttonBlurredStyle.Render("○ " + langLabel))
+		buttons.WriteString(buttonBlurredStyle.Render("○ " + langLabel))
 	}
-	form.WriteString("  ")
+	buttons.WriteString("  ")
 
-	// History
 	histLabel := langManager.GetText("HistoryButton")
 	if m.focusIndex == len(m.inputs)+2 {
-		form.WriteString(buttonFocusedStyle.Render("● " + histLabel))
+		buttons.WriteString(buttonFocusedStyle.Render("● " + histLabel))
 	} else {
-		form.WriteString(buttonBlurredStyle.Render("○ " + histLabel))
+		buttons.WriteString(buttonBlurredStyle.Render("○ " + histLabel))
 	}
+	b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(buttons.String()))
 
-	// Left-align form
-	leftAligned := lipgloss.NewStyle().MarginLeft(2).Render(form.String())
-	b.WriteString("\n" + leftAligned)
+	// Spacing before footer
+	b.WriteString("\n\n")
 
-	// Footer
-	b.WriteString("\n\n" + renderStatusBar(m))
+	// Status bar
+	b.WriteString(renderStatusBar(m))
 
-	// History modal
+	// History modal overlay
 	if m.showHistoryModal {
 		b.WriteString("\n")
 		b.WriteString(m.renderHistoryModal())
 	}
 
 	return b.String()
+}
+
+func (m model) renderWelcomePanel() string {
+	// Build left panel: welcome text + logo + model info
+	var left strings.Builder
+	// left.WriteString(welcomeTitleStyle.Render("      Welcome back!"))
+	// left.WriteString("\n\n")
+	left.WriteString(renderBanner())
+	left.WriteString("\n\n")
+	// Show cwd with home abbrev
+	cwd := m.projectDir
+	home, _ := os.UserHomeDir()
+	if strings.HasPrefix(cwd, home) {
+		cwd = "~" + strings.TrimPrefix(cwd, home)
+	}
+	left.WriteString(welcomeSubStyle.Render(cwd))
+
+	leftContent := welcomeLeftStyle.Render(left.String())
+
+		// Build right panel: recent activity
+		var right strings.Builder
+		right.WriteString(welcomeDimStyle.Render("─── Recent activity"))
+		right.WriteString("\n")
+		right.WriteString(welcomeDimStyle.Render("  Use Ctrl+H to browse history"))
+	// Compute responsive widths
+	panelWidth := m.computeFieldWidth() + 4
+	innerWidth := panelWidth - 4 // 2 border + 2 padding
+	leftWidth := 36
+	if innerWidth < 65 {
+		// Narrow terminal: stack vertically
+		boxInner := leftContent + "\n\n" + welcomeDimStyle.Render(strings.Repeat("─", leftWidth)) + "\n\n" + right.String()
+		return welcomePanelStyle.Width(panelWidth).Render(boxInner)
+	}
+	rightWidth := innerWidth - leftWidth - 3 // 3 for " │ "
+	if rightWidth < 20 {
+		rightWidth = 20
+	}
+
+	// Pad left content to fill the column
+	// leftContent is already width-styled via welcomeLeftStyle
+
+	separator := welcomeDimStyle.Render(" │ ")
+
+	leftStyled := lipgloss.NewStyle().Width(leftWidth).Render(leftContent)
+	rightStyled := lipgloss.NewStyle().Width(rightWidth).Render(right.String())
+
+	inner := lipgloss.JoinHorizontal(lipgloss.Top, leftStyled, separator, rightStyled)
+	return welcomePanelStyle.Width(panelWidth).Render(inner)
 }
 
 func validateInputs(projectDir, taskDesc string) (bool, string) {
@@ -507,23 +552,16 @@ func renderBanner() string {
 
 // renderStatusBar shows cwd and language in a subtle footer.
 func renderStatusBar(m model) string {
-	cwd, _ := os.Getwd()
 	lang := "EN"
 	if m.currentLang == LangChinese {
 		lang = "ZH"
 	}
-	left := cwd
 	right := fmt.Sprintf("%s │ esc quit", lang)
-	// Build a full-width bar
 	width := 80
 	if m.termWidth > 0 {
 		width = m.termWidth
 	}
-	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
-	}
-	return footerStyle.Render(left + strings.Repeat(" ", gap) + right)
+	return footerStyle.Render(strings.Repeat(" ", width-lipgloss.Width(right)) + right)
 }
 
 // computeFieldWidth returns a responsive width for input fields.
