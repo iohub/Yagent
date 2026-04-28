@@ -13,11 +13,8 @@ import (
 
 	"codeactor/internal/assistant"
 	"codeactor/internal/http"
-	"codeactor/internal/memory"
 	"codeactor/internal/util"
 	messaging "codeactor/pkg/messaging"
-
-	"github.com/google/uuid"
 )
 
 func init() {
@@ -59,83 +56,38 @@ func main() {
 
 	switch mode {
 	case "tui":
-		// Run TUI mode
-		projectDir, taskDesc := startTUI(taskFilePath)
-		if projectDir != "" && taskDesc != "" {
-			// Execute task directly
-			ctx := context.Background()
-			var err error
+		// Initialize assistant infrastructure before starting TUI
+		ctx := context.Background()
 
-			// Load configuration
-			configPath := getConfigPath()
-			slog.Info("Loading configuration", "config_path", configPath)
-			config, err := assistant.LoadConfig(configPath)
-			if err != nil {
-				slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
-				os.Exit(1)
-			}
-
-			// Create client
-			client, err := assistant.NewClient(config)
-			if err != nil {
-				slog.Error("Failed to create client", "error", util.WrapError(ctx, err, "main::NewClient"))
-				os.Exit(1)
-			}
-
-			// Create coding assistant
-			codingAssistant, err := assistant.NewCodingAssistant(client)
-			if err != nil {
-				slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodingAssistant"))
-				os.Exit(1)
-			}
-
-			// Create task manager
-			taskManager := http.NewTaskManager(nil)
-
-			// Create DataManager
-			dataManager, err := assistant.NewDataManager()
-			if err != nil {
-				slog.Error("Failed to initialize DataManager", "error", err)
-			}
-
-			// Create task
-			taskCtx, cancel := context.WithCancel(ctx)
-			task := &http.Task{
-				ID:         uuid.New().String(),
-				Status:     http.TaskStatusRunning,
-				ProjectDir: projectDir,
-				CreatedAt:  time.Now(),
-				UpdatedAt:  time.Now(),
-				Memory:     memory.NewConversationMemory(300),
-				Context:    taskCtx,
-				CancelFunc: cancel,
-			}
-
-			// Add task to manager
-			taskManager.AddTask(task)
-
-			// Execute task
-			slog.Info("TUI coding task submitted", "project_dir", projectDir, "task_desc", taskDesc)
-			http.ExecuteTask(task.ID, projectDir, taskDesc, taskManager, codingAssistant, dataManager)
-
-			// Wait for task completion and display result
-			for {
-				time.Sleep(1 * time.Second)
-				currentTask, ok := taskManager.GetTask(task.ID)
-				if ok && (currentTask.Status == http.TaskStatusFinished || currentTask.Status == http.TaskStatusFailed) {
-					break
-				}
-			}
-
-			// Display result
-			finalTask, _ := taskManager.GetTask(task.ID)
-			if finalTask.Status == http.TaskStatusFinished {
-				slog.Info("\n\nTask completed successfully!\n", finalTask.Result)
-			} else {
-				slog.Error("\n\nTask failed!\nError: %s\n", finalTask.Error)
-			}
-			return
+		configPath := getConfigPath()
+		slog.Info("Loading configuration", "config_path", configPath)
+		config, err := assistant.LoadConfig(configPath)
+		if err != nil {
+			slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
+			os.Exit(1)
 		}
+
+		client, err := assistant.NewClient(config)
+		if err != nil {
+			slog.Error("Failed to create client", "error", util.WrapError(ctx, err, "main::NewClient"))
+			os.Exit(1)
+		}
+
+		codingAssistant, err := assistant.NewCodingAssistant(client)
+		if err != nil {
+			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodingAssistant"))
+			os.Exit(1)
+		}
+
+		taskManager := http.NewTaskManager(nil)
+
+		dataManager, err := assistant.NewDataManager()
+		if err != nil {
+			slog.Error("Failed to initialize DataManager", "error", err)
+		}
+
+		// Start TUI — all interaction is handled inside the TUI loop
+		startTUI(taskFilePath, codingAssistant, taskManager, dataManager)
 		return
 	case "http":
 		// Run HTTP server mode

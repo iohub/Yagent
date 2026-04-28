@@ -145,22 +145,14 @@ func (r *TaskRequest) WithUserMessage(msg string) *TaskRequest {
 
 // ProcessCodingTaskWithCallback executes the task using the agent system.
 func (ca *CodingAssistant) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
-	if ca.conductor == nil {
-		ca.Init(ca.llm, req.projectDir)
-	} else {
-		ca.Init(ca.llm, req.projectDir)
-	}
+	ca.Init(ca.llm, req.projectDir)
 
 	return ca.conductor.Run(req.ctx, req.taskDesc, req.memory)
 }
 
 // ProcessConversation handles chat messages.
 func (ca *CodingAssistant) ProcessConversation(req *TaskRequest) (string, error) {
-	if ca.conductor == nil {
-		ca.Init(ca.llm, req.projectDir)
-	} else {
-		ca.Init(ca.llm, req.projectDir)
-	}
+	ca.Init(ca.llm, req.projectDir)
 
 	return ca.conductor.Run(req.ctx, req.userMessage, req.memory)
 }
