@@ -3,9 +3,7 @@ package util
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -87,57 +85,6 @@ func NewErrorWithContext(ctx context.Context, err error, message string) *ErrorW
 	}
 }
 
-// LogErrorWithContext logs an error with full context and call stack
-func LogErrorWithContext(ctx context.Context, err error, message string) {
-	errWithCtx := NewErrorWithContext(ctx, err, message)
-
-	// Log the error with structured logging
-	args := []any{
-		"error", err,
-		"context", errWithCtx.Context,
-		"time", errWithCtx.Time,
-	}
-
-	// Add call stack as structured data
-	for i, frame := range errWithCtx.CallStack {
-		args = append(args,
-			fmt.Sprintf("stack_%d_function", i), frame.Function,
-			fmt.Sprintf("stack_%d_file", i), frame.File,
-			fmt.Sprintf("stack_%d_line", i), frame.Line,
-			fmt.Sprintf("stack_%d_time", i), frame.Time,
-		)
-	}
-
-	slog.Error(message, args...)
-
-	// Also print a human-readable backtrace
-	printBacktrace(errWithCtx)
-}
-
-// printBacktrace prints a human-readable backtrace
-func printBacktrace(err *ErrorWithContext) {
-	fmt.Printf("\n=== ERROR BACKTRACE ===\n")
-	fmt.Printf("Time: %s\n", err.Time.Format(time.RFC3339))
-	fmt.Printf("Message: %s\n", err.Message)
-	fmt.Printf("Context: %s\n", err.Context)
-	fmt.Printf("Error: %v\n", err.Err)
-	fmt.Printf("\nCall Stack:\n")
-
-	for i, frame := range err.CallStack {
-		// Extract just the filename from the full path
-		parts := strings.Split(frame.File, "/")
-		filename := frame.File
-		if len(parts) > 0 {
-			filename = parts[len(parts)-1]
-		}
-
-		fmt.Printf("  %d. %s\n", i+1, frame.Function)
-		fmt.Printf("      at %s:%d\n", filename, frame.Line)
-		fmt.Printf("      time: %s\n", frame.Time)
-	}
-	fmt.Printf("=== END BACKTRACE ===\n\n")
-}
-
 // WrapError wraps an error with context if it's not already wrapped
 func WrapError(ctx context.Context, err error, message string) error {
 	if err == nil {
@@ -150,34 +97,4 @@ func WrapError(ctx context.Context, err error, message string) error {
 	}
 
 	return NewErrorWithContext(ctx, err, message)
-}
-
-// ExecuteWithContext executes a function with context and error handling
-func ExecuteWithContext(ctx context.Context, fn func(context.Context) error, operation string) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	err := fn(ctx)
-	if err != nil {
-		LogErrorWithContext(ctx, err, operation)
-		return WrapError(ctx, err, operation)
-	}
-
-	return nil
-}
-
-// ExecuteWithContextAndResult executes a function with context and returns both result and error
-func ExecuteWithContextAndResult[T any](ctx context.Context, fn func(context.Context) (T, error), operation string) (T, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	result, err := fn(ctx)
-	if err != nil {
-		LogErrorWithContext(ctx, err, operation)
-		return result, WrapError(ctx, err, operation)
-	}
-
-	return result, nil
 }

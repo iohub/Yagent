@@ -1,11 +1,9 @@
 package http
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 
 	"codeactor/internal/assistant"
@@ -23,6 +21,9 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	}
 
 	// Initialize codebase in background
+	/**
+	  * TODO: enable it after embed codebase binary.
+	  *
 	go func() {
 		payload := map[string]string{"project_dir": projectDir}
 		jsonData, err := json.Marshal(payload)
@@ -52,6 +53,8 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 			slog.Info("codebase_init request sent successfully", "project_dir", projectDir)
 		}
 	}()
+	*
+	*/
 
 	// 使用任务的可取消上下文
 	ctx := task.Context
@@ -73,7 +76,6 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	uip := messaging.NewMessagePublisher(dispatcher)
 	tuiConsumer := consumers.NewTUIConsumer(os.Stdout, uip)
 	dispatcher.RegisterConsumer(tuiConsumer)
-
 
 	// Create TaskManager WebSocket consumer to handle all message types
 	taskManagerWSCallback := func(data []byte) error {
