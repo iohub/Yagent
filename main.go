@@ -23,7 +23,7 @@ import (
 func init() {
 	// Initialize structured logger with text handler
 	opts := &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: slog.LevelError,
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, opts))
 	slog.SetDefault(logger)
@@ -130,9 +130,9 @@ func main() {
 			// Display result
 			finalTask, _ := taskManager.GetTask(task.ID)
 			if finalTask.Status == http.TaskStatusFinished {
-				fmt.Printf("\n\nTask completed successfully!\nResult: %s\n", finalTask.Result)
+				slog.Info("\n\nTask completed successfully!\n", finalTask.Result)
 			} else {
-				fmt.Printf("\n\nTask failed!\nError: %s\n", finalTask.Error)
+				slog.Error("\n\nTask failed!\nError: %s\n", finalTask.Error)
 			}
 			return
 		}

@@ -97,9 +97,6 @@ func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskMana
 	taskManager.SetTaskProgress(task.ID, "Starting coding task...")
 	// 后台执行任务
 	go ExecuteTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, codingAssistant, dataManager)
-
-	// Publish task start event to TUI
-	fmt.Printf("🚀 任务 %s 已启动\n", task.ID)
 }
 
 func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, dataManager *assistant.DataManager) {
