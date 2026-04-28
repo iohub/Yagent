@@ -12,40 +12,39 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Add language support
-var currentLanguage = "en" // Default to English
-
 // Global Language Manager
 var langManager *LanguageManager
 
-// Global styles
+// Global styles — Claude Code-like minimalist aesthetic
 var (
-	titleStyle         = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).MarginBottom(1)
-	labelStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Width(18)
-	focusedInputStyle  = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("205")).Padding(0, 1)
-	blurredInputStyle  = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1)
-	buttonFocusedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("205")).Padding(0, 2).MarginTop(1)
-	buttonBlurredStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 2).MarginTop(1)
-	helpStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).MarginTop(1)
-	errorStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	infoStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
-	containerStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(1, 2)
-	// New styles for banner/tips/footer
-	bannerShadowStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("240"))
-	bannerPadStyle    = lipgloss.NewStyle().Padding(0, 1)
-	tipBulletStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Bold(true)
-	tipTextStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-	sectionGapStyle   = lipgloss.NewStyle().MarginBottom(1)
-	footerStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color("236")).Padding(0, 1)
-	// Field label style (used above inputs, full width, left aligned)
-	fieldLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Bold(true)
-	// Modal styles
-	backdropStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
-	modalBoxStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("213")).Padding(1, 2).Background(lipgloss.Color("235"))
-	modalTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
+	// Banner
+	bannerPadStyle = lipgloss.NewStyle().Padding(0, 1)
+
+	// Labels
+	labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("248")).Bold(true)
+
+	// Inputs — clean normal border, accent when focused
+	focusedInputStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
+	blurredInputStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Padding(0, 1)
+
+	// Buttons — text-only, bold accent when focused, dim otherwise
+	buttonFocusedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	buttonBlurredStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+	// Messages
+	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
+	infoStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+	// Footer
+	footerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	// Modal
+	backdropStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+	modalBoxStyle   = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2)
+	modalTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 	itemStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	itemDimStyle    = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244"))
-	itemSelStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("213")).Padding(0, 1)
+	itemSelStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("39"))
 )
 
 // TUI Model
@@ -71,10 +70,6 @@ type model struct {
 
 func initialModel(preloadedTaskContent string) model {
 	var inputs []textinput.Model
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = ""
-	}
 
 	// 使用预加载的任务内容或尝试从默认文件加载
 	taskContent := preloadedTaskContent
@@ -86,38 +81,32 @@ func initialModel(preloadedTaskContent string) model {
 		}
 	}
 
-	for i := range []string{langManager.GetText("ProjectDirLabel"), langManager.GetText("TaskDescLabel")} {
-		ti := textinput.New()
-		ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-		if i == 0 {
-			ti.Placeholder = langManager.GetText("ProjectDirPlaceholder")
-			ti.Focus()
-			ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-			ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-			ti.CharLimit = 256
-			ti.Width = 60
-			ti.SetValue(cwd)
-		} else {
-			ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
-			ti.CharLimit = 256
-			ti.Width = 60
-			if taskContent != "" {
-				ti.SetValue(taskContent)
-			}
-		}
-
-		inputs = append(inputs, ti)
+	// Only task description input
+	ti := textinput.New()
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
+	ti.Focus()
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	ti.CharLimit = 256
+	ti.Width = 60
+	if taskContent != "" {
+		ti.SetValue(taskContent)
 	}
+	inputs = append(inputs, ti)
 
 	// history search input
 	hSearch := textinput.New()
 	hSearch.Placeholder = langManager.GetText("HistorySearchHint")
 	hSearch.CharLimit = 256
 	hSearch.Width = 60
-	hSearch.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	hSearch.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+
+	projectDir, _ := os.Getwd()
 
 	return model{
 		inputs:        inputs,
+		projectDir:    projectDir,
 		focusIndex:    0,
 		infoMsg:       langManager.GetText("InfoMessage"),
 		currentLang:   langManager.currentLang,
@@ -160,8 +149,7 @@ func (m *model) toggleLanguage() {
 		m.currentLang = LangEnglish
 	}
 	// refresh placeholders to reflect current language
-	m.inputs[0].Placeholder = langManager.GetText("ProjectDirPlaceholder")
-	m.inputs[1].Placeholder = langManager.GetText("TaskDescPlaceholder")
+	m.inputs[0].Placeholder = langManager.GetText("TaskDescPlaceholder")
 	m.infoMsg = langManager.GetText("InfoMessage")
 	// also refresh history search placeholder (modal might open later)
 	m.historySearch.Placeholder = langManager.GetText("HistorySearchHint")
@@ -200,7 +188,7 @@ func (m *model) applyHistorySelection() {
 	}
 	selected := m.filteredItems[m.historyIndex]
 	// Use the title (first human message) as task description
-	m.inputs[1].SetValue(selected.Title)
+	m.inputs[0].SetValue(selected.Title)
 	m.closeHistoryModal()
 	// Move focus to submit for quick execution
 	m.setFocus(len(m.inputs))
@@ -297,8 +285,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			} else if m.focusIndex == len(m.inputs) {
 				// focus is on submit button
-				m.projectDir = m.inputs[0].Value()
-				m.taskDesc = m.inputs[1].Value()
+				m.projectDir, _ = os.Getwd()
+				m.taskDesc = m.inputs[0].Value()
 				if ok, err := validateInputs(m.projectDir, m.taskDesc); ok {
 					m.quitting = true
 					return m, tea.Quit
@@ -317,8 +305,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "ctrl+s":
-			m.projectDir = m.inputs[0].Value()
-			m.taskDesc = m.inputs[1].Value()
+			m.projectDir, _ = os.Getwd()
+			m.taskDesc = m.inputs[0].Value()
 			if ok, err := validateInputs(m.projectDir, m.taskDesc); ok {
 				m.quitting = true
 				return m, tea.Quit
@@ -365,93 +353,82 @@ func (m model) View() string {
 
 	var b strings.Builder
 
-	// Fancy banner
+	// Banner
 	b.WriteString(renderBanner())
 	b.WriteString("\n")
 
-	// Error or info
+	// Error or info message
 	if m.errorMsg != "" {
 		b.WriteString("\n" + errorStyle.Render("✖ "+m.errorMsg))
 	} else if m.infoMsg != "" {
-		b.WriteString("\n" + infoStyle.Render("ℹ "+m.infoMsg))
+		b.WriteString("\n" + infoStyle.Render(m.infoMsg))
 	}
 
-	// Tips
-	b.WriteString("\n" + renderTips())
-
-	// Inputs with labels
+	// Form
 	var form strings.Builder
 	fieldWidth := m.computeFieldWidth()
-	for i := range m.inputs {
-		label := langManager.GetText("ProjectDirLabel")
-		if i == 1 {
-			label = langManager.GetText("TaskDescLabel")
-		}
+	labels := []string{
+		langManager.GetText("TaskDescLabel"),
+	}
 
-		// label on its own line for clean left alignment
-		form.WriteString(fieldLabelStyle.Render(label + ":"))
+	for i := range m.inputs {
+		form.WriteString(labelStyle.Render(labels[i]))
 		form.WriteString("\n")
 
-		// Ensure inputs render with the latest computed width
 		m.inputs[i].Width = fieldWidth
-
 		inputView := m.inputs[i].View()
 		if m.inputs[i].Focused() {
 			inputView = focusedInputStyle.Render(inputView)
 		} else {
 			inputView = blurredInputStyle.Render(inputView)
 		}
-
 		form.WriteString(inputView)
 		if i < len(m.inputs)-1 {
 			form.WriteString("\n\n")
 		}
 	}
 
-	// Submit button
-	var btn string
-	if m.focusIndex == len(m.inputs) {
-		btn = buttonFocusedStyle.Render(langManager.GetText("SubmitButton"))
-	} else {
-		btn = buttonBlurredStyle.Render(langManager.GetText("SubmitButton"))
-	}
-	form.WriteString("\n" + btn)
+	// Action buttons row
+	form.WriteString("\n\n")
 
-	// Language switch option shows current language code
+	// Submit
+	submitLabel := langManager.GetText("SubmitButton")
+	if m.focusIndex == len(m.inputs) {
+		form.WriteString(buttonFocusedStyle.Render("● " + submitLabel))
+	} else {
+		form.WriteString(buttonBlurredStyle.Render("○ " + submitLabel))
+	}
+	form.WriteString("  ")
+
+	// Language
 	currentLangLabel := "EN"
 	if m.currentLang == LangChinese {
 		currentLangLabel = "中文"
 	}
-	langBtnText := fmt.Sprintf("%s (%s / ctrl+L)", langManager.GetText("LanguageButton"), currentLangLabel)
+	langLabel := fmt.Sprintf("%s: %s", langManager.GetText("LanguageButton"), currentLangLabel)
 	if m.focusIndex == len(m.inputs)+1 {
-		langBtnText = buttonFocusedStyle.Render(langBtnText)
+		form.WriteString(buttonFocusedStyle.Render("● " + langLabel))
 	} else {
-		langBtnText = buttonBlurredStyle.Render(langBtnText)
+		form.WriteString(buttonBlurredStyle.Render("○ " + langLabel))
 	}
-	form.WriteString("\n" + langBtnText)
+	form.WriteString("  ")
 
-	// History button
-	hBtnText := fmt.Sprintf("%s (ctrl+H)", langManager.GetText("HistoryButton"))
+	// History
+	histLabel := langManager.GetText("HistoryButton")
 	if m.focusIndex == len(m.inputs)+2 {
-		hBtnText = buttonFocusedStyle.Render(hBtnText)
+		form.WriteString(buttonFocusedStyle.Render("● " + histLabel))
 	} else {
-		hBtnText = buttonBlurredStyle.Render(hBtnText)
+		form.WriteString(buttonBlurredStyle.Render("○ " + histLabel))
 	}
-	form.WriteString("\n" + hBtnText)
 
-	// Left-align the form container with a small margin
-	containerWidth := m.computeContainerWidth()
-	leftPad := 2
-	if m.termWidth > 0 && containerWidth > m.termWidth-2 {
-		containerWidth = m.termWidth - 2
-	}
-	container := containerStyle.Width(containerWidth).Render(form.String())
-	leftAligned := lipgloss.NewStyle().MarginLeft(leftPad).Render(container)
+	// Left-align form
+	leftAligned := lipgloss.NewStyle().MarginLeft(2).Render(form.String())
 	b.WriteString("\n" + leftAligned)
-	// Status bar footer
-	b.WriteString("\n" + renderStatusBar(m))
 
-	// Render modal if needed
+	// Footer
+	b.WriteString("\n\n" + renderStatusBar(m))
+
+	// History modal
 	if m.showHistoryModal {
 		b.WriteString("\n")
 		b.WriteString(m.renderHistoryModal())
@@ -461,12 +438,6 @@ func (m model) View() string {
 }
 
 func validateInputs(projectDir, taskDesc string) (bool, string) {
-	if strings.TrimSpace(projectDir) == "" {
-		return false, langManager.GetText("ValidationErrorEmptyProjectDir")
-	}
-	if fi, err := os.Stat(projectDir); err != nil || !fi.IsDir() {
-		return false, langManager.GetText("ValidationErrorInvalidProjectDir")
-	}
 	if strings.TrimSpace(taskDesc) == "" {
 		return false, langManager.GetText("ValidationErrorEmptyTaskDesc")
 	}
@@ -502,51 +473,51 @@ func startTUI(taskFilePath string) (string, string) {
 	}
 }
 
-// renderBanner draws a colorful ASCII banner similar in spirit to the reference image.
+// renderBanner draws a rainbow ASCII logo with per-character coloring.
 func renderBanner() string {
-	bannerLines := []string{
-		" ██████╗  ██████╗  ██████╗  ███████╗  █████╗   ██████╗ ████████╗  ██████╗  ██████╗ ",
-		"██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝ ██╔══██╗ ██╔════╝ ╚══██╔══╝ ██╔═══██╗ ██╔══██╗",
-		"██║      ██║   ██║ ██║  ██║ █████╗   ███████║ ██║         ██║    ██║   ██║ ██████╔╝",
-		"██║      ██║   ██║ ██║  ██║ ██╔══╝   ██╔══██║ ██║         ██║    ██║   ██║ ██╔══██╗",
-		"╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗ ██║  ██║ ╚██████╗    ██║    ╚██████╔╝ ██║  ██║",
-		" ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═╝  ╚═════╝    ╚═╝     ╚═════╝  ╚═╝  ╚═╝",
+	asciiLogo := []string{
+		"╔╦╗╦  ╦  ╔═╗┌─┐┌┬┐┌─┐",
+		" ║║║  ║  ║  │ │ ││├┤ ",
+		"═╩╝╩═╝╩  ╚═╝└─┘─┴┘└─┘",
 	}
-	palette := []string{"213", "219", "159", "123", "81", "69"}
+
+	// RAINBOW_COLORS: muted pastel tones — red, orange, yellow, green, blue, indigo, violet
+	rainbowColors := []string{
+		"167", // soft red (salmon)
+		"180", // soft orange (tan)
+		"221", // soft yellow (golden)
+		"114", // soft green (mint)
+		"75",  // soft blue (sky)
+		"98",  // soft indigo (lavender)
+		"176", // soft violet (mauve)
+	}
+
 	var rendered []string
-	for i, line := range bannerLines {
-		color := palette[i%len(palette)]
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-		rendered = append(rendered, style.Render(line))
+	for _, line := range asciiLogo {
+		var chars []string
+		for i, r := range line {
+			color := rainbowColors[i%len(rainbowColors)]
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
+			chars = append(chars, style.Render(string(r)))
+		}
+		rendered = append(rendered, lipgloss.JoinHorizontal(lipgloss.Top, chars...))
 	}
 	return bannerPadStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rendered...))
 }
 
-// renderTips shows getting-started tips styled like the screenshot.
-func renderTips() string {
-	tips := []string{
-		"1. " + langManager.GetText("AskTips"),
-		"2. " + langManager.GetText("BeSpecificTips"),
-	}
-	var rows []string
-	for _, t := range tips {
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, tipBulletStyle.Render("›"), " ", tipTextStyle.Render(t)))
-	}
-	return sectionGapStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
-}
-
-// renderStatusBar shows cwd and language in a subtle status bar.
+// renderStatusBar shows cwd and language in a subtle footer.
 func renderStatusBar(m model) string {
 	cwd, _ := os.Getwd()
 	lang := "EN"
 	if m.currentLang == LangChinese {
 		lang = "ZH"
 	}
-	left := fmt.Sprintf("%s", cwd)
-	right := fmt.Sprintf("%s", lang)
+	left := cwd
+	right := fmt.Sprintf("%s │ esc quit", lang)
+	// Build a full-width bar
 	width := 80
-	if w := lipgloss.Width(left) + lipgloss.Width(right) + 3; w > width {
-		width = w
+	if m.termWidth > 0 {
+		width = m.termWidth
 	}
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
@@ -573,57 +544,29 @@ func (m model) computeFieldWidth() int {
 	return avail
 }
 
-// computeContainerWidth returns a pleasant container width within terminal bounds.
-func (m model) computeContainerWidth() int {
-	const minWidth = 56
-	const maxWidth = 110
-	if m.termWidth <= 0 {
-		return 80
-	}
-	// base on field width plus container chrome (padding + borders)
-	field := m.computeFieldWidth()
-	computed := field + 8
-	if computed < minWidth {
-		computed = minWidth
-	}
-	if computed > maxWidth {
-		computed = maxWidth
-	}
-	if computed > m.termWidth-2 {
-		computed = m.termWidth - 2
-	}
-	if computed < 20 {
-		computed = 20
-	}
-	return computed
-}
-
-// renderHistoryModal renders a beautiful history selection popup
+// renderHistoryModal renders a clean history selection popup
 func (m model) renderHistoryModal() string {
 	var out strings.Builder
 
-	// Backdrop block (simple line to separate)
-	out.WriteString(backdropStyle.Render(strings.Repeat("⎯", max(40, m.computeContainerWidth()))))
+	// Divider
+	out.WriteString(backdropStyle.Render(strings.Repeat("─", max(40, m.computeFieldWidth()+8))))
 	out.WriteString("\n")
 
-	// Title
-	title := modalTitleStyle.Render(langManager.GetText("HistoryTitle"))
-	// Search input
+	// Title + search hint
+	title := modalTitleStyle.Render("◇ " + langManager.GetText("HistoryTitle"))
 	searchWidth := m.computeFieldWidth()
 	m.historySearch.Width = searchWidth
 	searchLine := focusedInputStyle.Render(m.historySearch.View())
 
-	header := lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", itemDimStyle.Render(langManager.GetText("HistorySearchHint")))
-	boxInner := header + "\n\n" + searchLine + "\n\n"
+	boxInner := title + "\n" + itemDimStyle.Render(langManager.GetText("HistorySearchHint")) + "\n\n" + searchLine + "\n"
 
-	// List items (cap display for performance)
+	// List items
 	maxItems := 12
 	if len(m.filteredItems) == 0 {
-		boxInner += itemDimStyle.Render(langManager.GetText("HistoryEmpty"))
+		boxInner += "\n" + itemDimStyle.Render(langManager.GetText("HistoryEmpty"))
 	} else {
 		end := len(m.filteredItems)
 		if end > maxItems {
-			// ensure selected is visible by computing a window around index
 			start := m.historyIndex - maxItems/2
 			if start < 0 {
 				start = 0
@@ -638,41 +581,34 @@ func (m model) renderHistoryModal() string {
 			}
 			for i := start; i < end; i++ {
 				it := m.filteredItems[i]
-				line := fmt.Sprintf("%s  %s", itemDimStyle.Render(it.CreatedAt.Format("2006-01-02 15:04")), it.Title)
+				line := fmt.Sprintf("%s  %s", itemDimStyle.Render(it.CreatedAt.Format("01-02 15:04")), it.Title)
 				if i == m.historyIndex {
-					boxInner += itemSelStyle.Render(line)
+					boxInner += "\n" + itemSelStyle.Render(line)
 				} else {
-					boxInner += itemStyle.Render(line)
-				}
-				if i < end-1 {
-					boxInner += "\n"
+					boxInner += "\n" + itemStyle.Render(line)
 				}
 			}
 		} else {
 			for i, it := range m.filteredItems {
-				line := fmt.Sprintf("%s  %s", itemDimStyle.Render(it.CreatedAt.Format("2006-01-02 15:04")), it.Title)
+				line := fmt.Sprintf("%s  %s", itemDimStyle.Render(it.CreatedAt.Format("01-02 15:04")), it.Title)
 				if i == m.historyIndex {
-					boxInner += itemSelStyle.Render(line)
+					boxInner += "\n" + itemSelStyle.Render(line)
 				} else {
-					boxInner += itemStyle.Render(line)
-				}
-				if i < len(m.filteredItems)-1 {
-					boxInner += "\n"
+					boxInner += "\n" + itemStyle.Render(line)
 				}
 			}
 		}
 	}
 
-	// Footer actions
+	// Footer
 	footer := lipgloss.JoinHorizontal(lipgloss.Top,
-		buttonFocusedStyle.Render(langManager.GetText("HistoryUseSelected")), "  ",
-		buttonBlurredStyle.Render(langManager.GetText("HistoryClose")),
+		buttonFocusedStyle.Render("● "+langManager.GetText("HistoryUseSelected")),
+		"  ",
+		buttonBlurredStyle.Render("○ "+langManager.GetText("HistoryClose")),
 	)
 	boxInner += "\n\n" + footer
 
-	// Box
-	box := modalBoxStyle.Width(m.computeContainerWidth()).Render(boxInner)
-	// Centering by left margin
+	box := modalBoxStyle.Width(m.computeFieldWidth() + 8).Render(boxInner)
 	leftAligned := lipgloss.NewStyle().MarginLeft(2).Render(box)
 	out.WriteString(leftAligned)
 	out.WriteString("\n")
