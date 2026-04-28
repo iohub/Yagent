@@ -4,9 +4,8 @@ server_port = 9080
 
 [llm]
 # 选择当前使用的提供商
-# use_provider = "streamlake"
-# use_provider = "siliconflow"
-use_provider = "xiaomi"
+# use_provider = "openrouter"
+use_provider = "aliyun"
 
 # XiaoMI配置
 [llm.providers.xiaomi]
