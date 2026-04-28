@@ -44,7 +44,7 @@ var (
 	buttonFocusedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 	buttonBlurredStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-	errorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
+	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
 	infoMsgStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
 	footerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -57,12 +57,12 @@ var (
 	itemSelStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("39"))
 
 	// Message log styles
-	logTimeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
-	logAIResStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	logToolStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
-	logResultStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	logStatusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
-	logErrorLogStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
+	logTimeStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
+	logAIResStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	logToolStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
+	logResultStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	logStatusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
+	logErrorLogStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
 	logSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 )
 
@@ -423,6 +423,7 @@ func (m model) View() string {
 	if m.taskRunning {
 		taskIndicator = logStatusStyle.Render(" ◷ Running...")
 	}
+	footer.WriteString("\n")
 	statusLine := footerStyle.Render("enter submit │ ctrl+l lang │ ctrl+h history │ esc quit") + taskIndicator
 	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
 
