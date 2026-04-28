@@ -382,12 +382,10 @@ func (m model) View() string {
 	inputLine := promptStyled + m.inputs[0].View()
 	b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(inputLine))
 
-	// Error or info message
-	b.WriteString("\n")
+	// Error message
 	if m.errorMsg != "" {
+		b.WriteString("\n")
 		b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(errorStyle.Render("✖ " + m.errorMsg)))
-	} else {
-		b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(infoStyle.Render(m.infoMsg)))
 	}
 
 	// Action buttons
@@ -554,23 +552,16 @@ func renderBanner() string {
 
 // renderStatusBar shows cwd and language in a subtle footer.
 func renderStatusBar(m model) string {
-	cwd, _ := os.Getwd()
 	lang := "EN"
 	if m.currentLang == LangChinese {
 		lang = "ZH"
 	}
-	left := cwd
 	right := fmt.Sprintf("%s │ esc quit", lang)
-	// Build a full-width bar
 	width := 80
 	if m.termWidth > 0 {
 		width = m.termWidth
 	}
-	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
-	}
-	return footerStyle.Render(left + strings.Repeat(" ", gap) + right)
+	return footerStyle.Render(strings.Repeat(" ", width-lipgloss.Width(right)) + right)
 }
 
 // computeFieldWidth returns a responsive width for input fields.
