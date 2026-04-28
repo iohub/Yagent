@@ -13,7 +13,9 @@ import (
 	"codeactor/pkg/messaging"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/uuid"
 )
@@ -110,7 +112,9 @@ type model struct {
 	input textinput.Model
 
 	// Message log
-	logEntries []logEntry
+	logEntries      []logEntry
+	viewport        viewport.Model
+	glamourRenderer *glamour.TermRenderer
 
 	// Task execution state
 	taskRunning bool
@@ -154,17 +158,33 @@ func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm
 
 	projectDir, _ := os.Getwd()
 
+	// Create viewport for scrollable message area
+	vp := viewport.New(80, 10)
+	vp.Style = lipgloss.NewStyle().Padding(0, 1)
+
+	// Create glamour markdown renderer
+	glamourRenderer, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(60),
+	)
+	if err != nil {
+		// Fallback: glamourRenderer will be nil, and we'll use plain text
+		glamourRenderer = nil
+	}
+
 	return model{
-		assistant:    ca,
-		taskManager:  tm,
-		dataManager:  dm,
-		input:        ti,
-		projectDir:   projectDir,
-		infoMsg:      langManager.GetText("InfoMessage"),
-		currentLang:  langManager.currentLang,
-		eventCh:      make(chan *messaging.MessageEvent, 1000),
-		logEntries:   make([]logEntry, 0),
-		historySearch: hSearch,
+		assistant:       ca,
+		taskManager:     tm,
+		dataManager:     dm,
+		input:           ti,
+		projectDir:      projectDir,
+		infoMsg:         langManager.GetText("InfoMessage"),
+		currentLang:     langManager.currentLang,
+		eventCh:         make(chan *messaging.MessageEvent, 1000),
+		logEntries:      make([]logEntry, 0),
+		historySearch:   hSearch,
+		viewport:        vp,
+		glamourRenderer: glamourRenderer,
 	}
 }
 
@@ -251,6 +271,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termHeight = msg.Height
 		m.input.Width = m.computeFieldWidth()
 		m.historySearch.Width = m.computeFieldWidth()
+		m.resizeViewport()
+		m.rebuildViewportContent()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -308,11 +330,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+h":
 			m.openHistoryModal()
 			return m, nil
+
+		default:
+			// Pass to viewport for scrolling (up/down/pgup/pgdown)
+			var vpCmd tea.Cmd
+			m.viewport, vpCmd = m.viewport.Update(msg)
+			// Also pass to input for text editing
+			var inputCmd tea.Cmd
+			m.input, inputCmd = m.input.Update(msg)
+			return m, tea.Batch(vpCmd, inputCmd)
 		}
 
 	case taskEventMsg:
 		entry := formatEventAsEntry(msg.event)
 		m.logEntries = append(m.logEntries, entry)
+		m.rebuildViewportContent()
 		return m, listenForEvents(m.eventCh)
 
 	case taskCompleteMsg:
@@ -325,6 +357,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				content:   msg.err.Error(),
 			})
 		}
+		m.rebuildViewportContent()
 		return m, nil
 	}
 
@@ -345,8 +378,8 @@ func (m model) View() string {
 	b.WriteString(m.renderWelcomePanel())
 	b.WriteString("\n")
 
-	// Message log area
-	b.WriteString(m.renderMessageLog())
+	// Scrollable message area with viewport
+	b.WriteString(m.viewport.View())
 
 	// Separator
 	sepWidth := m.termWidth
@@ -440,45 +473,59 @@ func (m model) renderWelcomePanel() string {
 	return welcomePanelStyle.Width(panelWidth).Render(inner)
 }
 
-// renderMessageLog renders the scrollable message area.
-func (m model) renderMessageLog() string {
-	reservedLines := 12
-	availHeight := m.termHeight - reservedLines
-	if availHeight < 3 {
-		availHeight = 3
+// resizeViewport recalculates viewport dimensions and recreates the glamour renderer.
+func (m *model) resizeViewport() {
+	welcomeHeight := lipgloss.Height(m.renderWelcomePanel())
+	footerHeight := 5
+	if m.errMsg != "" {
+		footerHeight++
 	}
+	vpHeight := m.termHeight - welcomeHeight - footerHeight
+	if vpHeight < 3 {
+		vpHeight = 3
+	}
+	m.viewport.Width = m.termWidth
+	m.viewport.Height = vpHeight
 
+	// Recreate glamour renderer with updated width
+	if m.viewport.Width > 0 {
+		frameSize := m.viewport.Style.GetHorizontalFrameSize()
+		const glamourGutter = 4
+		glamourWidth := m.viewport.Width - frameSize - glamourGutter
+		if glamourWidth < 40 {
+			glamourWidth = 40
+		}
+		renderer, err := glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(glamourWidth),
+		)
+		if err == nil {
+			m.glamourRenderer = renderer
+		}
+	}
+}
+
+// rebuildViewportContent rebuilds the full viewport content from logEntries,
+// using glamour for ai_response entries and plain formatting for others.
+func (m *model) rebuildViewportContent() {
 	var b strings.Builder
 
-	// Subtle header
-	headerHint := "─── Messages"
-	if m.taskRunning {
-		headerHint = logStatusStyle.Render("─── Messages (running...)")
-	} else {
-		headerHint = logSeparatorStyle.Render(headerHint)
-	}
-	b.WriteString(headerHint)
-	b.WriteString("\n")
-
-	// Show last N entries that fit
-	showCount := availHeight - 1 // minus header
-	start := len(m.logEntries) - showCount
-	if start < 0 {
-		start = 0
-	}
-
-	for i := start; i < len(m.logEntries); i++ {
-		b.WriteString(formatLogEntry(m.logEntries[i], m.termWidth-4))
+	for _, entry := range m.logEntries {
+		if entry.eventType == "ai_response" && m.glamourRenderer != nil {
+			rendered, err := m.glamourRenderer.Render(entry.content)
+			if err == nil {
+				b.WriteString(rendered)
+				b.WriteString("\n")
+				continue
+			}
+		}
+		// Fallback to simple text rendering
+		b.WriteString(formatLogEntry(entry, m.viewport.Width))
 		b.WriteString("\n")
 	}
 
-	// Fill remaining space
-	rendered := len(m.logEntries) - start
-	for i := rendered; i < showCount; i++ {
-		b.WriteString("\n")
-	}
-
-	return b.String()
+	m.viewport.SetContent(b.String())
+	m.viewport.GotoBottom()
 }
 
 // formatEventAsEntry converts a MessageEvent to a logEntry.
@@ -602,6 +649,7 @@ func (m *model) submitTask() tea.Cmd {
 		eventType: "status",
 		content:   "Task submitted: " + taskDesc,
 	})
+	m.rebuildViewportContent()
 
 	return tea.Batch(
 		executeTaskCmd(taskDesc, m.projectDir, m.assistant, m.taskManager, m.dataManager, m.eventCh),
