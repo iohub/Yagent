@@ -439,8 +439,8 @@ func (m model) View() string {
 func (m model) renderWelcomePanel() string {
 	// Build left panel: welcome text + logo + model info
 	var left strings.Builder
-	left.WriteString(welcomeTitleStyle.Render("      Welcome back!"))
-	left.WriteString("\n\n")
+	// left.WriteString(welcomeTitleStyle.Render("      Welcome back!"))
+	// left.WriteString("\n\n")
 	left.WriteString(renderBanner())
 	left.WriteString("\n\n")
 	// Show cwd with home abbrev
@@ -449,26 +449,15 @@ func (m model) renderWelcomePanel() string {
 	if strings.HasPrefix(cwd, home) {
 		cwd = "~" + strings.TrimPrefix(cwd, home)
 	}
-	left.WriteString(welcomeSubStyle.Render("   CodeActor  ·  " + cwd))
+	left.WriteString(welcomeSubStyle.Render(cwd))
 
 	leftContent := welcomeLeftStyle.Render(left.String())
 
-	// Build right panel: tips + recent activity
-	var right strings.Builder
-	right.WriteString(welcomeRightTitle.Render("Tips for getting started"))
-	right.WriteString("\n")
-	right.WriteString(welcomeTipStyle.Render("  • 详细描述你的任务需求和目标"))
-	right.WriteString("\n")
-	right.WriteString(welcomeTipStyle.Render("  • 尽量具体，包含技术栈和约束条件"))
-	right.WriteString("\n")
-	right.WriteString(welcomeTipStyle.Render("  • Tab/Shift+Tab 切换焦点"))
-	right.WriteString("\n")
-	right.WriteString(welcomeTipStyle.Render("  • Ctrl+S 直接提交，Esc 退出"))
-	right.WriteString("\n\n")
-	right.WriteString(welcomeDimStyle.Render("─── Recent activity"))
-	right.WriteString("\n")
-	right.WriteString(welcomeDimStyle.Render("  Use Ctrl+H to browse history"))
-
+		// Build right panel: recent activity
+		var right strings.Builder
+		right.WriteString(welcomeDimStyle.Render("─── Recent activity"))
+		right.WriteString("\n")
+		right.WriteString(welcomeDimStyle.Render("  Use Ctrl+H to browse history"))
 	// Compute responsive widths
 	panelWidth := m.computeFieldWidth() + 4
 	innerWidth := panelWidth - 4 // 2 border + 2 padding
