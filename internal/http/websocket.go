@@ -182,23 +182,6 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 		// Initialize message dispatcher for this conversation
 		dispatcher := messaging.NewMessageDispatcher(100)
 
-		// Create Persistence consumer if dataManager is provided
-		if dataManager != nil {
-			persistenceCallback := func(data []byte) error {
-				var event messaging.MessageEvent
-				if err := json.Unmarshal(data, &event); err != nil {
-					return err
-				}
-				if event.Type == "memory_change" {
-					if err := dataManager.SaveTaskMemory(chatData.TaskID, task.Memory); err != nil {
-						slog.Error("Failed to save task memory", "error", err, "task_id", chatData.TaskID)
-					}
-				}
-				return nil
-			}
-			persistenceConsumer := consumers.NewWebSocketConsumer(persistenceCallback)
-			dispatcher.RegisterConsumer(persistenceConsumer)
-		}
 
 		// Create WebSocket consumer
 		wsConsumer := consumers.NewWebSocketConsumer(func(data []byte) error {

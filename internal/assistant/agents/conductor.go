@@ -173,9 +173,6 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		lastMsg := mem.GetLastMessage()
 		if lastMsg == nil || lastMsg.Content != input || lastMsg.Type != memory.MessageTypeHuman {
 			mem.AddHumanMessage(input)
-			if a.Publisher != nil {
-				a.Publisher.Publish("memory_change", nil, a.Name())
-			}
 		}
 	}
 
@@ -209,9 +206,6 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 
 	for i := 0; i < a.maxSteps; i++ {
 		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
-		if a.Publisher != nil {
-			a.Publisher.Publish("status_update", fmt.Sprintf("ConductorAgent is thinking (step %d/%d)...", i+1, a.maxSteps), a.Name())
-		}
 		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
 		if err != nil {
 			slog.Error("ConductorAgent LLM error", "error", err, "step", i)
@@ -229,9 +223,6 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 
 		if mem != nil {
 			mem.AddAssistantMessage(msg.Content, convertToolCalls(msg.ToolCalls))
-			if a.Publisher != nil {
-				a.Publisher.Publish("memory_change", nil, a.Name())
-			}
 		}
 
 		parts := []llms.ContentPart{llms.TextPart(msg.Content)}
@@ -293,9 +284,6 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 
 			if mem != nil {
 				mem.AddToolMessage(toolResult, tc.ID)
-				if a.Publisher != nil {
-					a.Publisher.Publish("memory_change", nil, a.Name())
-				}
 			}
 
 			messages = append(messages, llms.MessageContent{

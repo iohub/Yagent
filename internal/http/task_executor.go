@@ -74,23 +74,6 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	tuiConsumer := consumers.NewTUIConsumer(os.Stdout, uip)
 	dispatcher.RegisterConsumer(tuiConsumer)
 
-	// Create Persistence consumer if dataManager is provided
-	if dataManager != nil {
-		persistenceCallback := func(data []byte) error {
-			var event messaging.MessageEvent
-			if err := json.Unmarshal(data, &event); err != nil {
-				return err
-			}
-			if event.Type == "memory_change" {
-				if err := dataManager.SaveTaskMemory(taskID, task.Memory); err != nil {
-					slog.Error("Failed to save task memory", "error", err, "task_id", taskID)
-				}
-			}
-			return nil
-		}
-		persistenceConsumer := consumers.NewWebSocketConsumer(persistenceCallback)
-		dispatcher.RegisterConsumer(persistenceConsumer)
-	}
 
 	// Create TaskManager WebSocket consumer to handle all message types
 	taskManagerWSCallback := func(data []byte) error {
