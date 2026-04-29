@@ -1,15 +1,23 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"codeactor/internal/assistant"
+	"codeactor/internal/http"
+	"codeactor/internal/memory"
+	"codeactor/pkg/messaging"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/google/uuid"
 )
 
 // Global Language Manager
@@ -17,60 +25,112 @@ var langManager *LanguageManager
 
 // Global styles — Claude Code-like minimalist aesthetic
 var (
-	// Banner
 	bannerPadStyle = lipgloss.NewStyle().Padding(0, 1)
 
-	// Prompt input — ❯ prefix style
 	promptFocusedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	promptBlurredStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-	// Input border — used by history modal search
 	focusedInputStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
 	blurredInputStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Padding(0, 1)
 
-	// Welcome panel
-	welcomePanelStyle   = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2)
-	welcomeLeftStyle    = lipgloss.NewStyle().Width(38)
-	welcomeTitleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
-	welcomeSubStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	welcomeRightTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
-	welcomeTipStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	welcomeDimStyle     = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("242"))
+	welcomePanelStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2)
+	welcomeLeftStyle  = lipgloss.NewStyle().Width(38)
+	welcomeTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
+	welcomeSubStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	welcomeRightTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
+	welcomeTipStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	welcomeDimStyle   = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("242"))
 
-	// Buttons — text-only, bold accent when focused, dim otherwise
 	buttonFocusedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 	buttonBlurredStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-	// Messages
-	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
-	infoStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
+	infoMsgStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-	// Footer
 	footerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
-	// Modal
 	backdropStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 	modalBoxStyle   = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2)
 	modalTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 	itemStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	itemDimStyle    = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244"))
 	itemSelStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("39"))
+
+	// Message log styles
+	logTimeStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
+	logAIResStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	logToolStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
+	logResultStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	logStatusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
+	logErrorLogStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
+	logSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 )
+
+// logEntry represents a single message in the TUI log area.
+type logEntry struct {
+	timestamp time.Time
+	eventType string
+	from      string
+	content   string
+	toolName  string
+}
+
+// taskEventMsg carries a MessageEvent from the task execution goroutine to the tea program.
+type taskEventMsg struct {
+	event *messaging.MessageEvent
+}
+
+// taskCompleteMsg signals that a task has finished (or failed).
+type taskCompleteMsg struct {
+	taskID string
+	result string
+	err    error
+}
+
+// tuiEventConsumer routes MessageEvents to a Go channel consumed by the tea program.
+type tuiEventConsumer struct {
+	ch chan *messaging.MessageEvent
+}
+
+func (c *tuiEventConsumer) Consume(event *messaging.MessageEvent) error {
+	select {
+	case c.ch <- event:
+	default:
+		// Drop event if channel is full to avoid blocking the task
+	}
+	return nil
+}
 
 // TUI Model
 type model struct {
-	focusIndex  int
-	inputs      []textinput.Model
-	projectDir  string
-	taskDesc    string
-	errorMsg    string
-	infoMsg     string
+	// External dependencies
+	assistant   *assistant.CodingAssistant
+	taskManager *http.TaskManager
+	dataManager *assistant.DataManager
+
+	// Input
+	input textinput.Model
+
+	// Message log
+	logEntries      []logEntry
+	viewport        viewport.Model
+	glamourRenderer *glamour.TermRenderer
+	useDarkStyle    bool
+
+	// Task execution state
+	taskRunning bool
+	eventCh     chan *messaging.MessageEvent
+
+	// Standard state
+	termWidth   int
+	termHeight  int
 	quitting    bool
+	errMsg      string
+	infoMsg     string
 	currentLang Language
-	// terminal dimensions for responsive layout
-	termWidth  int
-	termHeight int
-	// history modal state
+	projectDir  string
+
+	// History modal state
 	showHistoryModal bool
 	historyItems     []assistant.TaskHistoryItem
 	filteredItems    []assistant.TaskHistoryItem
@@ -78,20 +138,7 @@ type model struct {
 	historySearch    textinput.Model
 }
 
-func initialModel(preloadedTaskContent string) model {
-	var inputs []textinput.Model
-
-	// 使用预加载的任务内容或尝试从默认文件加载
-	taskContent := preloadedTaskContent
-	if taskContent == "" {
-		// 如果没有预加载内容，检查默认的 TASK.md 文件
-		taskFile := "TASK.md"
-		if data, err := os.ReadFile(taskFile); err == nil {
-			taskContent = string(data)
-		}
-	}
-
-	// Only task description input
+func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm *http.TaskManager, dm *assistant.DataManager, useDarkStyle bool) model {
 	ti := textinput.New()
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
@@ -100,12 +147,10 @@ func initialModel(preloadedTaskContent string) model {
 	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	ti.CharLimit = 256
 	ti.Width = 60
-	if taskContent != "" {
-		ti.SetValue(taskContent)
+	if preloadedTaskContent != "" {
+		ti.SetValue(preloadedTaskContent)
 	}
-	inputs = append(inputs, ti)
 
-	// history search input
 	hSearch := textinput.New()
 	hSearch.Placeholder = langManager.GetText("HistorySearchHint")
 	hSearch.CharLimit = 256
@@ -114,40 +159,47 @@ func initialModel(preloadedTaskContent string) model {
 
 	projectDir, _ := os.Getwd()
 
+	// Create viewport for scrollable message area
+	vp := viewport.New(80, 10)
+	vp.Style = lipgloss.NewStyle().Padding(0, 1)
+
+	// Create glamour markdown renderer with explicit style to avoid
+	// terminal background-color queries leaking into input.
+	glamourStyle := "dark"
+	if !useDarkStyle {
+		glamourStyle = "light"
+	}
+	glamourRenderer, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle(glamourStyle),
+		glamour.WithWordWrap(60),
+	)
+	if err != nil {
+		// Fallback: glamourRenderer will be nil, and we'll use plain text
+		glamourRenderer = nil
+	}
+
 	return model{
-		inputs:        inputs,
-		projectDir:    projectDir,
-		focusIndex:    0,
-		infoMsg:       langManager.GetText("InfoMessage"),
-		currentLang:   langManager.currentLang,
-		historySearch: hSearch,
+		assistant:       ca,
+		taskManager:     tm,
+		dataManager:     dm,
+		input:           ti,
+		projectDir:      projectDir,
+		infoMsg:         langManager.GetText("InfoMessage"),
+		currentLang:     langManager.currentLang,
+		eventCh:         make(chan *messaging.MessageEvent, 1000),
+		logEntries:      make([]logEntry, 0),
+		historySearch:   hSearch,
+		viewport:        vp,
+		glamourRenderer: glamourRenderer,
+		useDarkStyle:    useDarkStyle,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return textinput.Blink
-}
-
-// setFocus blurs the current focused input and focuses the new index if within range.
-func (m *model) setFocus(newIndex int) tea.Cmd {
-	// Blur all inputs to ensure only one is focused
-	for i := range m.inputs {
-		m.inputs[i].Blur()
-	}
-
-	if newIndex < 0 {
-		newIndex = 0
-	}
-	// allow focusing submit (len), language (len+1), history (len+2)
-	if newIndex > len(m.inputs)+2 {
-		newIndex = 0
-	}
-
-	m.focusIndex = newIndex
-	if newIndex < len(m.inputs) {
-		return m.inputs[newIndex].Focus()
-	}
-	return nil
+	return tea.Batch(
+		textinput.Blink,
+		listenForEvents(m.eventCh),
+	)
 }
 
 func (m *model) toggleLanguage() {
@@ -158,15 +210,12 @@ func (m *model) toggleLanguage() {
 		langManager.SetLanguage(LangEnglish)
 		m.currentLang = LangEnglish
 	}
-	// refresh placeholders to reflect current language
-	m.inputs[0].Placeholder = langManager.GetText("TaskDescPlaceholder")
+	m.input.Placeholder = langManager.GetText("TaskDescPlaceholder")
 	m.infoMsg = langManager.GetText("InfoMessage")
-	// also refresh history search placeholder (modal might open later)
 	m.historySearch.Placeholder = langManager.GetText("HistorySearchHint")
 }
 
 func (m *model) openHistoryModal() {
-	// load history
 	dm, err := assistant.NewDataManager()
 	if err == nil {
 		items, err2 := dm.ListTaskHistory(50)
@@ -197,11 +246,8 @@ func (m *model) applyHistorySelection() {
 		m.historyIndex = len(m.filteredItems) - 1
 	}
 	selected := m.filteredItems[m.historyIndex]
-	// Use the title (first human message) as task description
-	m.inputs[0].SetValue(selected.Title)
+	m.input.SetValue(selected.Title)
 	m.closeHistoryModal()
-	// Move focus to submit for quick execution
-	m.setFocus(len(m.inputs))
 }
 
 func (m *model) filterHistoryList() {
@@ -228,17 +274,16 @@ func (m *model) filterHistoryList() {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// Keep latest terminal size and update input widths responsively
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
-		fieldWidth := m.computeFieldWidth()
-		for i := range m.inputs {
-			m.inputs[i].Width = fieldWidth
-		}
-		m.historySearch.Width = fieldWidth
+		m.input.Width = m.computeFieldWidth()
+		m.historySearch.Width = m.computeFieldWidth()
+		m.resizeViewport()
+		m.rebuildViewportContent()
 		return m, nil
+
 	case tea.KeyMsg:
-		// If modal is open, handle modal controls first
+		// History modal key handling
 		if m.showHistoryModal {
 			switch msg.String() {
 			case "esc", "ctrl+c":
@@ -258,7 +303,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			default:
-				// update search input and filter
 				var cmd tea.Cmd
 				m.historySearch, cmd = m.historySearch.Update(msg)
 				m.filterHistoryList()
@@ -271,159 +315,119 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
-		case "tab", "down":
-			m.errorMsg = ""
-			newIndex := m.focusIndex + 1
-			if newIndex > len(m.inputs)+2 {
-				newIndex = 0
-			}
-			cmd := m.setFocus(newIndex)
-			return m, cmd
-
-		case "shift+tab", "up":
-			m.errorMsg = ""
-			newIndex := m.focusIndex - 1
-			if newIndex < 0 {
-				newIndex = len(m.inputs) + 2
-			}
-			cmd := m.setFocus(newIndex)
-			return m, cmd
-
 		case "enter":
-			if m.focusIndex < len(m.inputs) {
-				cmd := m.setFocus(m.focusIndex + 1)
-				return m, cmd
-			} else if m.focusIndex == len(m.inputs) {
-				// focus is on submit button
-				m.projectDir, _ = os.Getwd()
-				m.taskDesc = m.inputs[0].Value()
-				if ok, err := validateInputs(m.projectDir, m.taskDesc); ok {
-					m.quitting = true
-					return m, tea.Quit
-				} else {
-					m.errorMsg = err
-					return m, nil
-				}
-			} else if m.focusIndex == len(m.inputs)+1 {
-				// language button
-				m.toggleLanguage()
-				return m, nil
-			} else if m.focusIndex == len(m.inputs)+2 {
-				// history button
-				m.openHistoryModal()
+			if m.taskRunning {
+				m.errMsg = langManager.GetText("ValidationErrorEmptyTaskDesc")
 				return m, nil
 			}
+			taskDesc := strings.TrimSpace(m.input.Value())
+			if taskDesc == "" {
+				return m, nil
+			}
+			if ok, errStr := validateInputs(m.projectDir, taskDesc); !ok {
+				m.errMsg = errStr
+				return m, nil
+			}
+			return m, m.submitTask()
 
-		case "ctrl+s":
-			m.projectDir, _ = os.Getwd()
-			m.taskDesc = m.inputs[0].Value()
-			if ok, err := validateInputs(m.projectDir, m.taskDesc); ok {
-				m.quitting = true
-				return m, tea.Quit
-			} else {
-				m.errorMsg = err
-				return m, nil
-			}
+		case "ctrl+l":
+			m.toggleLanguage()
+			return m, nil
 
-		case "ctrl+l": // Language switch
-			if m.focusIndex == len(m.inputs)+1 {
-				m.toggleLanguage()
-				return m, nil
-			}
-			cmd := m.setFocus(len(m.inputs) + 1)
-			return m, cmd
-		case "ctrl+h": // Open history quickly
+		case "ctrl+h":
 			m.openHistoryModal()
 			return m, nil
+
+		default:
+			// Pass to viewport for scrolling (up/down/pgup/pgdown)
+			var vpCmd tea.Cmd
+			m.viewport, vpCmd = m.viewport.Update(msg)
+			// Also pass to input for text editing
+			var inputCmd tea.Cmd
+			m.input, inputCmd = m.input.Update(msg)
+			return m, tea.Batch(vpCmd, inputCmd)
 		}
+
+	case taskEventMsg:
+		entry := formatEventAsEntry(msg.event)
+		m.logEntries = append(m.logEntries, entry)
+		m.rebuildViewportContent()
+		return m, listenForEvents(m.eventCh)
+
+	case taskCompleteMsg:
+		m.taskRunning = false
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			m.logEntries = append(m.logEntries, logEntry{
+				timestamp: time.Now(),
+				eventType: "error",
+				content:   msg.err.Error(),
+			})
+		}
+		m.rebuildViewportContent()
+		return m, nil
 	}
 
-	// Handle character input and blinking
-	cmd := m.updateInputs(msg)
+	// Handle text input
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
 	return m, cmd
-}
-
-func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
-	var cmds []tea.Cmd
-	for i := range m.inputs {
-		// only update focused input
-		if m.inputs[i].Focused() {
-			newInput, cmd := m.inputs[i].Update(msg)
-			m.inputs[i] = newInput
-			cmds = append(cmds, cmd)
-		}
-	}
-	return tea.Batch(cmds...)
 }
 
 func (m model) View() string {
 	if m.quitting {
-		return langManager.GetText("QuitMessage")
+		return ""
 	}
 
 	var b strings.Builder
 
-	// Welcome panel with logo and tips
+	// Welcome panel with logo
 	b.WriteString(m.renderWelcomePanel())
+	b.WriteString("\n")
 
-	// Spacing
-	b.WriteString("\n\n")
+	// Scrollable message area with viewport
+	b.WriteString(m.viewport.View())
 
-	// Prompt input line: ❯ [input]
+	// Separator
+	sepWidth := m.termWidth
+	if sepWidth < 40 {
+		sepWidth = 40
+	}
+	b.WriteString(logSeparatorStyle.Render(strings.Repeat("─", sepWidth)))
+	b.WriteString("\n")
+
+	// Input line: ❯ [input]
 	promptChar := "❯ "
 	var promptStyled string
-	if m.inputs[0].Focused() {
+	if m.input.Focused() {
 		promptStyled = promptFocusedStyle.Render(promptChar)
 	} else {
 		promptStyled = promptBlurredStyle.Render(promptChar)
 	}
-	fieldWidth := m.computeFieldWidth()
-	m.inputs[0].Width = fieldWidth
-	inputLine := promptStyled + m.inputs[0].View()
-	b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(inputLine))
+	m.input.Width = m.computeFieldWidth()
+	inputLine := promptStyled + m.input.View()
+
+	// Build footer area
+	var footer strings.Builder
+	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(inputLine))
+	footer.WriteString("\n")
 
 	// Error message
-	if m.errorMsg != "" {
-		b.WriteString("\n")
-		b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(errorStyle.Render("✖ " + m.errorMsg)))
+	if m.errMsg != "" {
+		footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(errorStyle.Render("✖ " + m.errMsg)))
+		footer.WriteString("\n")
 	}
 
-	// Action buttons
-	b.WriteString("\n")
-	var buttons strings.Builder
-	submitLabel := langManager.GetText("SubmitButton")
-	if m.focusIndex == len(m.inputs) {
-		buttons.WriteString(buttonFocusedStyle.Render("● " + submitLabel))
-	} else {
-		buttons.WriteString(buttonBlurredStyle.Render("○ " + submitLabel))
+	// Status line: shortcuts + task indicator
+	taskIndicator := ""
+	if m.taskRunning {
+		taskIndicator = logStatusStyle.Render(" ◷ Running...")
 	}
-	buttons.WriteString("  ")
+	footer.WriteString("\n")
+	statusLine := footerStyle.Render("enter submit │ ctrl+l lang │ ctrl+h history │ esc quit") + taskIndicator
+	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
 
-	currentLangLabel := "EN"
-	if m.currentLang == LangChinese {
-		currentLangLabel = "中文"
-	}
-	langLabel := fmt.Sprintf("%s: %s", langManager.GetText("LanguageButton"), currentLangLabel)
-	if m.focusIndex == len(m.inputs)+1 {
-		buttons.WriteString(buttonFocusedStyle.Render("● " + langLabel))
-	} else {
-		buttons.WriteString(buttonBlurredStyle.Render("○ " + langLabel))
-	}
-	buttons.WriteString("  ")
-
-	histLabel := langManager.GetText("HistoryButton")
-	if m.focusIndex == len(m.inputs)+2 {
-		buttons.WriteString(buttonFocusedStyle.Render("● " + histLabel))
-	} else {
-		buttons.WriteString(buttonBlurredStyle.Render("○ " + histLabel))
-	}
-	b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(buttons.String()))
-
-	// Spacing before footer
-	b.WriteString("\n\n")
-
-	// Status bar
-	b.WriteString(renderStatusBar(m))
+	b.WriteString(footer.String())
 
 	// History modal overlay
 	if m.showHistoryModal {
@@ -435,13 +439,10 @@ func (m model) View() string {
 }
 
 func (m model) renderWelcomePanel() string {
-	// Build left panel: welcome text + logo + model info
+	// Build left panel: logo + cwd
 	var left strings.Builder
-	// left.WriteString(welcomeTitleStyle.Render("      Welcome back!"))
-	// left.WriteString("\n\n")
 	left.WriteString(renderBanner())
 	left.WriteString("\n\n")
-	// Show cwd with home abbrev
 	cwd := m.projectDir
 	home, _ := os.UserHomeDir()
 	if strings.HasPrefix(cwd, home) {
@@ -451,11 +452,12 @@ func (m model) renderWelcomePanel() string {
 
 	leftContent := welcomeLeftStyle.Render(left.String())
 
-		// Build right panel: recent activity
-		var right strings.Builder
-		right.WriteString(welcomeDimStyle.Render("─── Recent activity"))
-		right.WriteString("\n")
-		right.WriteString(welcomeDimStyle.Render("  Use Ctrl+H to browse history"))
+	// Build right panel: recent activity
+	var right strings.Builder
+	right.WriteString(welcomeDimStyle.Render("─── Recent activity"))
+	right.WriteString("\n")
+	right.WriteString(welcomeDimStyle.Render("  Use Ctrl+H to browse history"))
+
 	// Compute responsive widths
 	panelWidth := m.computeFieldWidth() + 4
 	innerWidth := panelWidth - 4 // 2 border + 2 padding
@@ -470,9 +472,6 @@ func (m model) renderWelcomePanel() string {
 		rightWidth = 20
 	}
 
-	// Pad left content to fill the column
-	// leftContent is already width-styled via welcomeLeftStyle
-
 	separator := welcomeDimStyle.Render(" │ ")
 
 	leftStyled := lipgloss.NewStyle().Width(leftWidth).Render(leftContent)
@@ -480,6 +479,261 @@ func (m model) renderWelcomePanel() string {
 
 	inner := lipgloss.JoinHorizontal(lipgloss.Top, leftStyled, separator, rightStyled)
 	return welcomePanelStyle.Width(panelWidth).Render(inner)
+}
+
+// resizeViewport recalculates viewport dimensions and recreates the glamour renderer.
+func (m *model) resizeViewport() {
+	welcomeHeight := lipgloss.Height(m.renderWelcomePanel())
+	footerHeight := 5
+	if m.errMsg != "" {
+		footerHeight++
+	}
+	vpHeight := m.termHeight - welcomeHeight - footerHeight
+	if vpHeight < 3 {
+		vpHeight = 3
+	}
+	m.viewport.Width = m.termWidth
+	m.viewport.Height = vpHeight
+
+	// Recreate glamour renderer with updated width
+	if m.viewport.Width > 0 {
+		frameSize := m.viewport.Style.GetHorizontalFrameSize()
+		const glamourGutter = 4
+		glamourWidth := m.viewport.Width - frameSize - glamourGutter
+		if glamourWidth < 40 {
+			glamourWidth = 40
+		}
+		glamourStyle := "dark"
+		if !m.useDarkStyle {
+			glamourStyle = "light"
+		}
+		renderer, err := glamour.NewTermRenderer(
+			glamour.WithStandardStyle(glamourStyle),
+			glamour.WithWordWrap(glamourWidth),
+		)
+		if err == nil {
+			m.glamourRenderer = renderer
+		}
+	}
+}
+
+// rebuildViewportContent rebuilds the full viewport content from logEntries,
+// using glamour for ai_response entries and plain formatting for others.
+func (m *model) rebuildViewportContent() {
+	var b strings.Builder
+
+	for _, entry := range m.logEntries {
+		if entry.eventType == "ai_response" && m.glamourRenderer != nil {
+			rendered, err := m.glamourRenderer.Render(entry.content)
+			if err == nil {
+				b.WriteString(rendered)
+				b.WriteString("\n")
+				continue
+			}
+		}
+		// Fallback to simple text rendering
+		b.WriteString(formatLogEntry(entry, m.viewport.Width))
+		b.WriteString("\n")
+	}
+
+	m.viewport.SetContent(b.String())
+	m.viewport.GotoBottom()
+}
+
+// formatEventAsEntry converts a MessageEvent to a logEntry.
+func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
+	entry := logEntry{
+		timestamp: event.Timestamp,
+		eventType: event.Type,
+		from:      event.From,
+	}
+
+	switch event.Type {
+	case "ai_response":
+		if s, ok := event.Content.(string); ok {
+			entry.content = s
+		} else {
+			entry.content = fmt.Sprintf("%v", event.Content)
+		}
+	case "tool_call_start":
+		if m, ok := event.Content.(map[string]interface{}); ok {
+			if name, ok := m["tool_name"].(string); ok {
+				entry.toolName = name
+			}
+			if args, ok := m["arguments"].(string); ok {
+				entry.content = args
+			}
+		}
+		if entry.content == "" {
+			entry.content = fmt.Sprintf("%v", event.Content)
+		}
+	case "tool_call_result":
+		if m, ok := event.Content.(map[string]interface{}); ok {
+			if name, ok := m["tool_name"].(string); ok {
+				entry.toolName = name
+			}
+			if result, ok := m["result"].(string); ok {
+				entry.content = result
+			}
+		}
+		if entry.content == "" {
+			entry.content = fmt.Sprintf("%v", event.Content)
+		}
+	case "user_help_needed":
+		if s, ok := event.Content.(string); ok {
+			entry.content = "HELP: " + s
+		} else {
+			entry.content = fmt.Sprintf("HELP: %v", event.Content)
+		}
+	default:
+		if s, ok := event.Content.(string); ok {
+			entry.content = s
+		} else {
+			entry.content = fmt.Sprintf("%v", event.Content)
+		}
+	}
+
+	return entry
+}
+
+// formatLogEntry renders a single log entry as a styled line.
+func formatLogEntry(entry logEntry, maxWidth int) string {
+	timeStr := logTimeStyle.Render(entry.timestamp.Format("15:04:05"))
+
+	var prefix string
+	var contentStyle lipgloss.Style
+
+	switch entry.eventType {
+	case "ai_response":
+		prefix = "AI  "
+		contentStyle = logAIResStyle
+	case "tool_call_start":
+		if entry.toolName != "" {
+			prefix = fmt.Sprintf("▶ %s", entry.toolName)
+		} else {
+			prefix = "▶ TOOL"
+		}
+		contentStyle = logToolStyle
+	case "tool_call_result":
+		if entry.toolName != "" {
+			prefix = fmt.Sprintf("✔ %s", entry.toolName)
+		} else {
+			prefix = "✔ RESULT"
+		}
+		contentStyle = logResultStyle
+	case "error":
+		prefix = "✖ ERROR"
+		contentStyle = logErrorLogStyle
+	case "user_help_needed":
+		prefix = "? HELP"
+		contentStyle = logToolStyle
+	default:
+		prefix = "● " + entry.eventType
+		contentStyle = logStatusStyle
+	}
+
+	// Ensure prefix is fixed width for alignment
+	prefixStr := lipgloss.NewStyle().Width(24).Render(prefix)
+
+	// Content: truncate long lines
+	content := strings.ReplaceAll(entry.content, "\n", " ")
+	contentWidth := maxWidth - 36
+	if contentWidth < 20 {
+		contentWidth = 20
+	}
+	if lipgloss.Width(content) > contentWidth {
+		content = content[:contentWidth-3] + "..."
+	}
+
+	return timeStr + " " + prefixStr + " " + contentStyle.Render(content)
+}
+
+// submitTask creates a new task and starts execution in the background.
+func (m *model) submitTask() tea.Cmd {
+	taskDesc := strings.TrimSpace(m.input.Value())
+	m.input.SetValue("")
+	m.taskRunning = true
+	m.errMsg = ""
+
+	// Add submission entry
+	m.logEntries = append(m.logEntries, logEntry{
+		timestamp: time.Now(),
+		eventType: "status",
+		content:   "Task submitted: " + taskDesc,
+	})
+	m.rebuildViewportContent()
+
+	return tea.Batch(
+		executeTaskCmd(taskDesc, m.projectDir, m.assistant, m.taskManager, m.dataManager, m.eventCh),
+		listenForEvents(m.eventCh),
+	)
+}
+
+// executeTaskCmd runs a coding task in a background goroutine.
+func executeTaskCmd(
+	taskDesc string,
+	projectDir string,
+	ca *assistant.CodingAssistant,
+	tm *http.TaskManager,
+	dm *assistant.DataManager,
+	eventCh chan *messaging.MessageEvent,
+) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		task := &http.Task{
+			ID:         uuid.New().String(),
+			Status:     http.TaskStatusRunning,
+			ProjectDir: projectDir,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			Memory:     memory.NewConversationMemory(300),
+			Context:    ctx,
+			CancelFunc: cancel,
+		}
+		tm.AddTask(task)
+
+		dispatcher := messaging.NewMessageDispatcher(100)
+		defer dispatcher.Shutdown()
+
+		consumer := &tuiEventConsumer{ch: eventCh}
+		dispatcher.RegisterConsumer(consumer)
+
+		ca.IntegrateMessaging(dispatcher)
+
+		request := assistant.NewTaskRequest(ctx, task.ID).
+			WithProjectDir(projectDir).
+			WithTaskDesc(taskDesc).
+			WithMemory(task.Memory).
+			WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
+
+		result, err := ca.ProcessCodingTaskWithCallback(request)
+
+		if dm != nil {
+			if saveErr := dm.SaveTaskMemory(task.ID, task.Memory); saveErr != nil {
+				// non-fatal
+			}
+		}
+
+		if err != nil {
+			tm.SetTaskError(task.ID, err.Error())
+		} else {
+			tm.SetTaskResult(task.ID, result)
+		}
+
+		return taskCompleteMsg{taskID: task.ID, result: result, err: err}
+	}
+}
+
+// listenForEvents returns a command that waits for the next MessageEvent on the channel.
+func listenForEvents(ch chan *messaging.MessageEvent) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return taskEventMsg{event: event}
+	}
 }
 
 func validateInputs(projectDir, taskDesc string) (bool, string) {
@@ -492,12 +746,10 @@ func validateInputs(projectDir, taskDesc string) (bool, string) {
 	return true, ""
 }
 
-// 启动TUI界面
-func startTUI(taskFilePath string) (string, string) {
-	// Initialize language manager with default English
+// startTUI starts the Bubble Tea TUI with the given dependencies.
+func startTUI(taskFilePath string, ca *assistant.CodingAssistant, tm *http.TaskManager, dm *assistant.DataManager) {
 	langManager = NewLanguageManager()
 
-	// 如果提供了任务文件路径，则从文件加载任务描述
 	taskContent := ""
 	if taskFilePath != "" {
 		if data, err := os.ReadFile(taskFilePath); err == nil {
@@ -507,34 +759,28 @@ func startTUI(taskFilePath string) (string, string) {
 		}
 	}
 
-	p := tea.NewProgram(initialModel(taskContent))
-	if m, err := p.Run(); err != nil {
+	// Detect terminal background before entering raw mode to avoid
+	// escape-sequence leakage into the input field.
+	useDarkStyle := lipgloss.HasDarkBackground()
+
+	p := tea.NewProgram(initialModel(taskContent, ca, tm, dm, useDarkStyle))
+	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
-		return "", ""
-	} else {
-		final := m.(model)
-		return final.projectDir, final.taskDesc
 	}
 }
 
 // renderBanner draws a rainbow ASCII logo with per-character coloring.
 func renderBanner() string {
 	asciiLogo := []string{
-		"╔╦╗╦  ╦  ╔═╗┌─┐┌┬┐┌─┐",
-		" ║║║  ║  ║  │ │ ││├┤ ",
-		"═╩╝╩═╝╩  ╚═╝└─┘─┴┘└─┘",
+
+		"╔═╗┌─┐┌┬┐┌─┐  ╔═╗┌─┐┌┬┐┌─┐┬─┐  ╔═╗╦",
+		"║  │ │ ││├┤   ╠═╣│   │ │ │├┬┘  ╠═╣║",
+		"╚═╝└─┘─┴┘└─┘  ╩ ╩└─┘ ┴ └─┘┴└─  ╩ ╩╩",
 	}
 
-	// RAINBOW_COLORS: muted pastel tones — red, orange, yellow, green, blue, indigo, violet
 	rainbowColors := []string{
-		"167", // soft red (salmon)
-		"180", // soft orange (tan)
-		"221", // soft yellow (golden)
-		"114", // soft green (mint)
-		"75",  // soft blue (sky)
-		"98",  // soft indigo (lavender)
-		"176", // soft violet (mauve)
+		"167", "180", "221", "114", "75", "98", "176",
 	}
 
 	var rendered []string
@@ -550,20 +796,6 @@ func renderBanner() string {
 	return bannerPadStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rendered...))
 }
 
-// renderStatusBar shows cwd and language in a subtle footer.
-func renderStatusBar(m model) string {
-	lang := "EN"
-	if m.currentLang == LangChinese {
-		lang = "ZH"
-	}
-	right := fmt.Sprintf("%s │ esc quit", lang)
-	width := 80
-	if m.termWidth > 0 {
-		width = m.termWidth
-	}
-	return footerStyle.Render(strings.Repeat(" ", width-lipgloss.Width(right)) + right)
-}
-
 // computeFieldWidth returns a responsive width for input fields.
 func (m model) computeFieldWidth() int {
 	const minField = 38
@@ -571,8 +803,7 @@ func (m model) computeFieldWidth() int {
 	if m.termWidth <= 0 {
 		return 60
 	}
-	// labels are stacked, only container paddings/borders count
-	avail := m.termWidth - 8 // container left/right padding + borders
+	avail := m.termWidth - 8
 	if avail < minField {
 		return minField
 	}
@@ -582,15 +813,13 @@ func (m model) computeFieldWidth() int {
 	return avail
 }
 
-// renderHistoryModal renders a clean history selection popup
+// renderHistoryModal renders the history selection popup.
 func (m model) renderHistoryModal() string {
 	var out strings.Builder
 
-	// Divider
 	out.WriteString(backdropStyle.Render(strings.Repeat("─", max(40, m.computeFieldWidth()+8))))
 	out.WriteString("\n")
 
-	// Title + search hint
 	title := modalTitleStyle.Render("◇ " + langManager.GetText("HistoryTitle"))
 	searchWidth := m.computeFieldWidth()
 	m.historySearch.Width = searchWidth
@@ -598,7 +827,6 @@ func (m model) renderHistoryModal() string {
 
 	boxInner := title + "\n" + itemDimStyle.Render(langManager.GetText("HistorySearchHint")) + "\n\n" + searchLine + "\n"
 
-	// List items
 	maxItems := 12
 	if len(m.filteredItems) == 0 {
 		boxInner += "\n" + itemDimStyle.Render(langManager.GetText("HistoryEmpty"))
@@ -638,7 +866,6 @@ func (m model) renderHistoryModal() string {
 		}
 	}
 
-	// Footer
 	footer := lipgloss.JoinHorizontal(lipgloss.Top,
 		buttonFocusedStyle.Render("● "+langManager.GetText("HistoryUseSelected")),
 		"  ",
@@ -654,7 +881,6 @@ func (m model) renderHistoryModal() string {
 	return out.String()
 }
 
-// small helper since we cannot import math for just Max
 func max(a, b int) int {
 	if a > b {
 		return a
