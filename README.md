@@ -15,6 +15,13 @@ CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Ana
 - **Conversation Memory** — Full conversation context with tool-call history, persisted across sessions
 - **Repository Analysis** — Automatic codebase investigation with directory trees, call graphs, and semantic search
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/sceenshot-1.png" alt="CodeActor TUI Screenshot 1" width="49%">
+  <img src="docs/sceenshot-2.png" alt="CodeActor TUI Screenshot 2" width="49%">
+</p>
+
 ## Quick Start
 
 ### Prerequisites
