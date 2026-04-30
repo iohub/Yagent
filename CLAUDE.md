@@ -20,6 +20,38 @@ go build -o codeactor .
 ./codeactor http
 ```
 
+## Testing with the CLI Client
+
+Start the server in one terminal:
+
+```bash
+./codeactor http
+```
+
+Use the Node.js CLI client in another terminal:
+
+```bash
+cd clients/nodejs-cli
+npm install
+
+# Create a task and stream output in real-time
+node index.js run <project-dir> "Your task description"
+
+# Continue a conversation
+node index.js chat <task-id> <project-dir>
+
+# Query status
+node index.js status <task-id>
+
+# List task history
+node index.js history
+
+# View conversation memory
+node index.js memory <task-id>
+```
+
+Server defaults to `localhost:9080`. Override via `--host`/`--port` or `CODECACTOR_HOST=host:port`.
+
 ## Tech Stack
 
 - **Language**: Go 1.23+
