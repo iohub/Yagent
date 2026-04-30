@@ -119,6 +119,7 @@ type model struct {
 
 	// Task execution state
 	taskRunning bool
+	currentTask *http.Task
 	eventCh     chan *messaging.MessageEvent
 
 	// Standard state
@@ -317,7 +318,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "enter":
 			if m.taskRunning {
-				m.errMsg = langManager.GetText("ValidationErrorEmptyTaskDesc")
 				return m, nil
 			}
 			taskDesc := strings.TrimSpace(m.input.Value())
@@ -327,6 +327,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if ok, errStr := validateInputs(m.projectDir, taskDesc); !ok {
 				m.errMsg = errStr
 				return m, nil
+			}
+			if m.currentTask != nil {
+				return m, m.submitFollowUp(taskDesc)
 			}
 			return m, m.submitTask()
 
@@ -358,6 +361,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.taskRunning = false
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
+			m.currentTask = nil
 			m.logEntries = append(m.logEntries, logEntry{
 				timestamp: time.Now(),
 				eventType: "error",
@@ -424,7 +428,11 @@ func (m model) View() string {
 		taskIndicator = logStatusStyle.Render(" ◷ Running...")
 	}
 	footer.WriteString("\n")
-	statusLine := footerStyle.Render("enter submit │ ctrl+l lang │ ctrl+h history │ esc quit") + taskIndicator
+	enterLabel := "enter submit"
+	if m.currentTask != nil && !m.taskRunning {
+		enterLabel = "enter send"
+	}
+	statusLine := footerStyle.Render(enterLabel+" │ ctrl+l lang │ ctrl+h history │ esc quit") + taskIndicator
 	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
 
 	b.WriteString(footer.String())
@@ -655,6 +663,20 @@ func (m *model) submitTask() tea.Cmd {
 	m.taskRunning = true
 	m.errMsg = ""
 
+	ctx, cancel := context.WithCancel(context.Background())
+	task := &http.Task{
+		ID:         uuid.New().String(),
+		Status:     http.TaskStatusRunning,
+		ProjectDir: m.projectDir,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		Memory:     memory.NewConversationMemory(300),
+		Context:    ctx,
+		CancelFunc: cancel,
+	}
+	m.taskManager.AddTask(task)
+	m.currentTask = task
+
 	// Add submission entry
 	m.logEntries = append(m.logEntries, logEntry{
 		timestamp: time.Now(),
@@ -664,7 +686,26 @@ func (m *model) submitTask() tea.Cmd {
 	m.rebuildViewportContent()
 
 	return tea.Batch(
-		executeTaskCmd(taskDesc, m.projectDir, m.assistant, m.taskManager, m.dataManager, m.eventCh),
+		executeTaskCmd(taskDesc, task, m.assistant, m.taskManager, m.dataManager, m.eventCh),
+		listenForEvents(m.eventCh),
+	)
+}
+
+// submitFollowUp sends a follow-up message to an existing task.
+func (m *model) submitFollowUp(message string) tea.Cmd {
+	m.input.SetValue("")
+	m.taskRunning = true
+	m.errMsg = ""
+
+	m.logEntries = append(m.logEntries, logEntry{
+		timestamp: time.Now(),
+		eventType: "status",
+		content:   message,
+	})
+	m.rebuildViewportContent()
+
+	return tea.Batch(
+		executeFollowUpCmd(message, m.currentTask, m.assistant, m.dataManager, m.eventCh),
 		listenForEvents(m.eventCh),
 	)
 }
@@ -672,27 +713,13 @@ func (m *model) submitTask() tea.Cmd {
 // executeTaskCmd runs a coding task in a background goroutine.
 func executeTaskCmd(
 	taskDesc string,
-	projectDir string,
+	task *http.Task,
 	ca *assistant.CodingAssistant,
 	tm *http.TaskManager,
 	dm *assistant.DataManager,
 	eventCh chan *messaging.MessageEvent,
 ) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithCancel(context.Background())
-
-		task := &http.Task{
-			ID:         uuid.New().String(),
-			Status:     http.TaskStatusRunning,
-			ProjectDir: projectDir,
-			CreatedAt:  time.Now(),
-			UpdatedAt:  time.Now(),
-			Memory:     memory.NewConversationMemory(300),
-			Context:    ctx,
-			CancelFunc: cancel,
-		}
-		tm.AddTask(task)
-
 		dispatcher := messaging.NewMessageDispatcher(100)
 		defer dispatcher.Shutdown()
 
@@ -701,8 +728,8 @@ func executeTaskCmd(
 
 		ca.IntegrateMessaging(dispatcher)
 
-		request := assistant.NewTaskRequest(ctx, task.ID).
-			WithProjectDir(projectDir).
+		request := assistant.NewTaskRequest(task.Context, task.ID).
+			WithProjectDir(task.ProjectDir).
 			WithTaskDesc(taskDesc).
 			WithMemory(task.Memory).
 			WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
@@ -719,6 +746,41 @@ func executeTaskCmd(
 			tm.SetTaskError(task.ID, err.Error())
 		} else {
 			tm.SetTaskResult(task.ID, result)
+		}
+
+		return taskCompleteMsg{taskID: task.ID, result: result, err: err}
+	}
+}
+
+// executeFollowUpCmd runs a follow-up message on an existing task.
+func executeFollowUpCmd(
+	message string,
+	task *http.Task,
+	ca *assistant.CodingAssistant,
+	dm *assistant.DataManager,
+	eventCh chan *messaging.MessageEvent,
+) tea.Cmd {
+	return func() tea.Msg {
+		dispatcher := messaging.NewMessageDispatcher(100)
+		defer dispatcher.Shutdown()
+
+		consumer := &tuiEventConsumer{ch: eventCh}
+		dispatcher.RegisterConsumer(consumer)
+
+		ca.IntegrateMessaging(dispatcher)
+
+		request := assistant.NewTaskRequest(task.Context, task.ID).
+			WithProjectDir(task.ProjectDir).
+			WithUserMessage(message).
+			WithMemory(task.Memory).
+			WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
+
+		result, err := ca.ProcessConversation(request)
+
+		if dm != nil {
+			if saveErr := dm.SaveTaskMemory(task.ID, task.Memory); saveErr != nil {
+				// non-fatal
+			}
 		}
 
 		return taskCompleteMsg{taskID: task.ID, result: result, err: err}
