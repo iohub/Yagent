@@ -13,6 +13,7 @@ import (
 	"codeactor/pkg/messaging"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -109,7 +110,7 @@ type model struct {
 	dataManager *assistant.DataManager
 
 	// Input
-	input textinput.Model
+	input textarea.Model
 
 	// Message log
 	logEntries      []logEntry
@@ -140,14 +141,28 @@ type model struct {
 }
 
 func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm *http.TaskManager, dm *assistant.DataManager, useDarkStyle bool) model {
-	ti := textinput.New()
+	ti := textarea.New()
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
 	ti.Focus()
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	ti.CharLimit = 256
-	ti.Width = 60
+	ti.CharLimit = 0
+	ti.SetWidth(60)
+	ti.SetHeight(2)
+	ti.ShowLineNumbers = false
+
+	// Text style for both focused and blurred states
+	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	ti.FocusedStyle.Text = textStyle
+	ti.BlurredStyle.Text = textStyle
+
+	// Dynamic prompt: "❯ " on first line, "  " on continuation lines
+	ti.SetPromptFunc(2, func(line int) string {
+		if line == 0 {
+			return "❯ "
+		}
+		return "  "
+	})
+
 	if preloadedTaskContent != "" {
 		ti.SetValue(preloadedTaskContent)
 	}
@@ -198,7 +213,7 @@ func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		textinput.Blink,
+		textarea.Blink,
 		listenForEvents(m.eventCh),
 	)
 }
@@ -277,7 +292,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
-		m.input.Width = m.computeFieldWidth()
+		m.input.SetWidth(m.computeFieldWidth())
 		m.historySearch.Width = m.computeFieldWidth()
 		m.resizeViewport()
 		m.rebuildViewportContent()
@@ -316,7 +331,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
-		case "enter":
+		case "shift+enter":
 			if m.taskRunning {
 				return m, nil
 			}
@@ -400,16 +415,9 @@ func (m model) View() string {
 	b.WriteString(logSeparatorStyle.Render(strings.Repeat("─", sepWidth)))
 	b.WriteString("\n")
 
-	// Input line: ❯ [input]
-	promptChar := "❯ "
-	var promptStyled string
-	if m.input.Focused() {
-		promptStyled = promptFocusedStyle.Render(promptChar)
-	} else {
-		promptStyled = promptBlurredStyle.Render(promptChar)
-	}
-	m.input.Width = m.computeFieldWidth()
-	inputLine := promptStyled + m.input.View()
+	// Input line (textarea handles its own prompt via PromptFunc)
+	m.input.SetWidth(m.computeFieldWidth())
+	inputLine := m.input.View()
 
 	// Build footer area
 	var footer strings.Builder
@@ -428,9 +436,9 @@ func (m model) View() string {
 		taskIndicator = logStatusStyle.Render(" ◷ Running...")
 	}
 	footer.WriteString("\n")
-	enterLabel := "enter submit"
+	enterLabel := "shift+enter submit"
 	if m.currentTask != nil && !m.taskRunning {
-		enterLabel = "enter send"
+		enterLabel = "shift+enter send"
 	}
 	statusLine := footerStyle.Render(enterLabel+" │ ctrl+l lang │ ctrl+h history │ esc quit") + taskIndicator
 	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))

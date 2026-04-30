@@ -34,20 +34,27 @@ func init() {
 func main() {
 	// Check if running in TUI mode or HTTP server mode based on command line arguments
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: codeactor [tui|http]")
+		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta] [--taskfile TASK.md]")
 		os.Exit(1)
 	}
 
 	mode := os.Args[1]
 	// 解析 --taskfile 参数
 	var taskFilePath string
+	// 解析 --disable-agents 参数
+	var disableAgents string
 	for i := 2; i < len(os.Args); i++ {
-		if os.Args[i] == "--taskfile" && i+1 < len(os.Args) {
+		arg := os.Args[i]
+		if arg == "--taskfile" && i+1 < len(os.Args) {
 			taskFilePath = os.Args[i+1]
-			break
-		} else if strings.HasPrefix(os.Args[i], "--taskfile=") {
-			taskFilePath = strings.TrimPrefix(os.Args[i], "--taskfile=")
-			break
+			i++
+		} else if strings.HasPrefix(arg, "--taskfile=") {
+			taskFilePath = strings.TrimPrefix(arg, "--taskfile=")
+		} else if arg == "--disable-agents" && i+1 < len(os.Args) {
+			disableAgents = os.Args[i+1]
+			i++
+		} else if strings.HasPrefix(arg, "--disable-agents=") {
+			disableAgents = strings.TrimPrefix(arg, "--disable-agents=")
 		}
 	}
 
@@ -78,6 +85,7 @@ func main() {
 			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodingAssistant"))
 			os.Exit(1)
 		}
+		codingAssistant.DisabledAgents = disableAgents
 
 		taskManager := http.NewTaskManager(nil)
 
@@ -142,6 +150,7 @@ func main() {
 			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodingAssistant"))
 			os.Exit(1)
 		}
+		codingAssistant.DisabledAgents = disableAgents
 
 		// 创建消息分发器并集成消息系统
 		messageDispatcher := messaging.NewMessageDispatcher(100)
@@ -163,7 +172,7 @@ func main() {
 		}
 	default:
 		fmt.Printf("Unknown mode: %s\n", mode)
-		fmt.Println("Usage: codeactor [tui|http]")
+		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta] [--taskfile TASK.md]")
 		os.Exit(1)
 	}
 }

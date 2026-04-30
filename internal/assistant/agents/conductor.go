@@ -48,7 +48,7 @@ type ConductorAgent struct {
 	customAgents map[string]*CustomAgent   // delegate_<name> → agent design
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, maxSteps int) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, maxSteps int, disabledAgents map[string]bool) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -196,6 +196,21 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		adapters = append(adapters, adapter)
 	}
 
+	// Conditionally register delegate tools based on disabledAgents
+	var delegateAdapters []*tools.Adapter
+	if !disabledAgents["repo"] {
+		delegateAdapters = append(delegateAdapters, delegateRepo)
+	}
+	if !disabledAgents["coding"] {
+		delegateAdapters = append(delegateAdapters, delegateCoding)
+	}
+	if !disabledAgents["chat"] {
+		delegateAdapters = append(delegateAdapters, delegateChat)
+	}
+	if !disabledAgents["meta"] {
+		delegateAdapters = append(delegateAdapters, delegateMeta)
+	}
+
 	self = &ConductorAgent{
 		BaseAgent:    BaseAgent{LLM: llm, Publisher: globalCtx.Publisher},
 		RepoAgent:    repo,
@@ -203,7 +218,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		ChatAgent:    chat,
 		MetaAgent:    meta,
 		GlobalCtx:    globalCtx,
-		Adapters:     append(adapters, delegateRepo, delegateCoding, delegateChat, delegateMeta),
+		Adapters:     append(adapters, delegateAdapters...),
 		maxSteps:     maxSteps,
 		toolDefMap:   toolDefMap,
 		customAgents: make(map[string]*CustomAgent),

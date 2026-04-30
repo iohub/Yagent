@@ -59,7 +59,7 @@ func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 func newTestConductorAgent(t *testing.T, workDir string) *ConductorAgent {
 	t.Helper()
 	gctx := newTestGlobalCtx(workDir)
-	return NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, nil, 10)
+	return NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, nil, 10, nil)
 }
 
 // makeMetaOutput builds a valid Meta-Agent output string.
@@ -336,7 +336,7 @@ func TestCustomAgentDelegateTool_Execution(t *testing.T) {
 	}
 
 	// Build conductor with mocked LLM
-	conductor := NewConductorAgent(gctx, customLLM, nil, nil, nil, nil, 10)
+	conductor := NewConductorAgent(gctx, customLLM, nil, nil, nil, nil, 10, nil)
 
 	ca := &CustomAgent{
 		Name:         "test_executor",
@@ -399,7 +399,7 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 		},
 	}
 
-	conductor := NewConductorAgent(gctx, customLLM, nil, nil, nil, nil, 10)
+	conductor := NewConductorAgent(gctx, customLLM, nil, nil, nil, nil, 10, nil)
 
 	ca := &CustomAgent{
 		Name:         "finisher",
@@ -534,7 +534,7 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 5)
 
 	// ConductorAgent
-	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10)
+	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil)
 	initialAdapterCount := len(conductor.Adapters)
 
 	// Find and call delegate_meta tool
@@ -611,7 +611,7 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 	)
 
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 5)
-	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10)
+	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil)
 
 	// Call delegate_meta twice with the same agent design
 	var delegateMeta *tools.Adapter
@@ -651,7 +651,7 @@ func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
 	// Meta-Agent returns malformed output (no execution_result block)
 	malformedOutput := "Just some plain text without structured blocks."
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(malformedOutput), 5)
-	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10)
+	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range conductor.Adapters {
@@ -695,7 +695,7 @@ func TestDelegateMeta_EmptyAgentName_NoRegistration(t *testing.T) {
 		map[string]interface{}{"status": "done"},
 	)
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 5)
-	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10)
+	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range conductor.Adapters {
@@ -732,7 +732,7 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 </execution_result>`
 
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(output), 5)
-	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10)
+	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range conductor.Adapters {
