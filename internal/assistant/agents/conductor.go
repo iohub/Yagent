@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"codeactor/internal/assistant/tools"
@@ -108,45 +109,76 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		}
 
 		// Try to parse the structured output and register the designed agent
-		systemPrompt, execResult, parseErr := parseMetaAgentOutput(rawOutput)
-		if parseErr != nil {
-			slog.Warn("Failed to parse Meta-Agent output, returning raw output", "error", parseErr)
-			return rawOutput, nil
-		}
+			systemPrompt, execResult, parseErr := parseMetaAgentOutput(rawOutput)
+			if parseErr != nil {
+				// ── Fallback: heuristic extraction when strict format not followed ──
+				slog.Warn("Strict Meta-Agent parse failed, trying heuristic extraction", "error", parseErr)
+				agentName, description, toolsUsed, _ := fallbackParseMetaAgentOutput(rawOutput)
 
-		// Register the newly designed agent if it has a valid name and prompt
-		if execResult.AgentName != "" && systemPrompt != "" {
-			// Convert agent name to snake_case for the delegate tool name
-			snakeName := toSnakeCase(execResult.AgentName)
-			customAgent := &CustomAgent{
-				Name:         snakeName,
-				DisplayName:  execResult.AgentName,
-				SystemPrompt: systemPrompt,
-				ToolsUsed:    execResult.ToolsUsed,
-				Description:  fmt.Sprintf("Custom agent designed for: %s. Uses tools: %s.", execResult.AgentName, strings.Join(execResult.ToolsUsed, ", ")),
+				if agentName != "" && len(toolsUsed) >= 1 {
+					// Heuristics found enough info to register a custom agent
+					snakeName := toSnakeCase(agentName)
+					synthPrompt := fmt.Sprintf("You are the **%s**, a specialized agent. %s\n\nExecute the given task using your assigned tools. Produce clear, structured output.", agentName, description)
+					customAgent := &CustomAgent{
+						Name:         snakeName,
+						DisplayName:  agentName,
+						SystemPrompt: synthPrompt,
+						ToolsUsed:    toolsUsed,
+						Description:  description,
+					}
+					self.registerCustomAgent(customAgent)
+
+					formattedResult := fmt.Sprintf(
+						"[Meta-Agent Execution Result (heuristic)]\nAgent: %s\nTools detected: %s\n\nResult:\n%s\n\n[New Agent Registered]\nA new specialized agent \"%s\" is now available via the `delegate_%s` tool for future tasks of this type.",
+						agentName,
+						strings.Join(toolsUsed, ", "),
+						rawOutput,
+						agentName,
+						snakeName,
+					)
+					slog.Info("Custom agent registered via heuristic fallback", "delegate_name", "delegate_"+snakeName, "display_name", agentName, "tools", toolsUsed)
+					return formattedResult, nil
+				}
+
+				// Heuristics couldn't extract enough info — return raw output gracefully
+				slog.Warn("Heuristic extraction insufficient, returning raw output", "agent_name_found", agentName, "tools_found", len(toolsUsed))
+				return fmt.Sprintf("[Meta-Agent Raw Output]\n%s", rawOutput), nil
 			}
-			self.registerCustomAgent(customAgent)
 
-			// Format the result to inform the LLM about the new agent
-			resultJSON, _ := json.Marshal(execResult.Result)
-			formattedResult := fmt.Sprintf(
-				"[Meta-Agent Execution Result]\nAgent: %s\nTools used: %s\nResult: %s\n\n[New Agent Registered]\nA new specialized agent \"%s\" is now available via the `delegate_%s` tool for future tasks of this type.",
-				execResult.AgentName,
-				strings.Join(execResult.ToolsUsed, ", "),
-				string(resultJSON),
-				execResult.AgentName,
-				snakeName,
-			)
-			return formattedResult, nil
-		}
+			// ── Strict parse succeeded ──
+			// Register the newly designed agent if it has a valid name and prompt
+			if execResult.AgentName != "" && systemPrompt != "" {
+				// Convert agent name to snake_case for the delegate tool name
+				snakeName := toSnakeCase(execResult.AgentName)
+				customAgent := &CustomAgent{
+					Name:         snakeName,
+					DisplayName:  execResult.AgentName,
+					SystemPrompt: systemPrompt,
+					ToolsUsed:    execResult.ToolsUsed,
+					Description:  fmt.Sprintf("Custom agent designed for: %s. Uses tools: %s.", execResult.AgentName, strings.Join(execResult.ToolsUsed, ", ")),
+				}
+				self.registerCustomAgent(customAgent)
 
-		// If parsing succeeded but no agent to register, just return the execution result
-		if execResult != nil {
-			resultJSON, _ := json.Marshal(execResult.Result)
-			return fmt.Sprintf("[Meta-Agent Execution Result]\nResult: %s", string(resultJSON)), nil
-		}
+				// Format the result to inform the LLM about the new agent
+				resultJSON, _ := json.Marshal(execResult.Result)
+				formattedResult := fmt.Sprintf(
+					"[Meta-Agent Execution Result]\nAgent: %s\nTools used: %s\nResult: %s\n\n[New Agent Registered]\nA new specialized agent \"%s\" is now available via the `delegate_%s` tool for future tasks of this type.",
+					execResult.AgentName,
+					strings.Join(execResult.ToolsUsed, ", "),
+					string(resultJSON),
+					execResult.AgentName,
+					snakeName,
+				)
+				return formattedResult, nil
+			}
 
-		return rawOutput, nil
+			// If parsing succeeded but no agent to register, just return the execution result
+			if execResult != nil {
+				resultJSON, _ := json.Marshal(execResult.Result)
+				return fmt.Sprintf("[Meta-Agent Execution Result]\nResult: %s", string(resultJSON)), nil
+			}
+
+			return rawOutput, nil
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -306,6 +338,98 @@ func toSnakeCase(name string) string {
 		raw = "custom_agent"
 	}
 	return raw
+}
+
+// fallbackParseMetaAgentOutput attempts heuristic extraction of agent design information
+// from raw Meta-Agent output that doesn't follow the strict <agent_design>/<execution_result> format.
+// It tries to identify: agent name, tools used, and the execution result.
+func fallbackParseMetaAgentOutput(output string) (agentName, description string, toolsUsed []string, result map[string]interface{}) {
+	result = make(map[string]interface{})
+	if strings.TrimSpace(output) == "" {
+		return "", "", nil, result
+	}
+
+	// ── 1. Try to extract agent name ──────────────────────────────────────
+	agentName = extractAgentName(output)
+
+	// ── 2. Try to find tool names mentioned in the output ─────────────────
+	toolsUsed = extractToolsUsed(output)
+
+	// ── 3. Build a description ────────────────────────────────────────────
+	if agentName != "" && len(toolsUsed) > 0 {
+		description = fmt.Sprintf("Heuristically extracted custom agent. Tools: %s.", strings.Join(toolsUsed, ", "))
+	} else if agentName != "" {
+		description = fmt.Sprintf("Heuristically extracted custom agent: %s.", agentName)
+	} else {
+		description = "Heuristically extracted custom agent from Meta-Agent output."
+	}
+
+	// ── 4. Store the raw output as the result ──────────────────────────────
+	result["raw_output"] = output
+	result["extraction_method"] = "heuristic"
+
+	return agentName, description, toolsUsed, result
+}
+
+// agentNamePatterns defines regex patterns for extracting agent names from free-form text.
+var agentNamePatterns = []*regexp.Regexp{
+	// Markdown heading with "Agent" suffix: "### Security Auditor Agent"
+	regexp.MustCompile(`(?i)#{1,4}\s*([^#\n]+?(?:Agent|代理|审计|分析|检测|扫描|检查|统计|评估|转换|迁移|报告|生成|测试|验证|优化)[^\n]{0,50})`),
+	// Bold agent name: "**Security Auditor**" or "**Agent Name**: Security Auditor"
+	regexp.MustCompile(`(?i)\*\*(?:Agent(?:\s*Name)?|名称)[:\s]*([^*\n]{3,60})\*\*`),
+	// "**Name** agent" or "**Name Agent**" — bold name followed by "agent" keyword
+	regexp.MustCompile(`(?i)\*\*([^*\n]{3,60})\*\*\s*(?:Agent|代理|agent)`),
+	regexp.MustCompile(`(?i)\*\*([^*\n]{3,60}?(?:Agent|代理|审计|分析|检测|扫描|检查|统计|评估|转换|迁移|报告|生成|测试)[^*\n]{0,40})\*\*`),
+	// "Agent: Name" or "Agent Name: Name" pattern
+	regexp.MustCompile(`(?i)(?:Agent|代理)(?:\s*Name)?[:\s]+([^\n]{3,60})`),
+	// "agent_name" JSON-like field
+	regexp.MustCompile(`(?i)"agent_name"\s*:\s*"([^"]+)"`),
+	// Plain "Name Agent" pattern: "Security-Auditor Agent", "file-stats Agent"
+	regexp.MustCompile(`(?i)([a-zA-Z][a-zA-Z0-9_-]{2,40}(?:\s+[a-zA-Z][a-zA-Z0-9_-]{2,40}){0,3})\s+(?:Agent|代理)`),
+	// Designed/created agent: "designed a **X** agent" or "设计了 **X** agent"
+	// Match "designed a **<name>**" or "created **<name>** agent"
+	regexp.MustCompile(`(?i)(?:design(?:ed)?|creat(?:ed)?|设计|创建)\s+(?:a\s+|an\s+|了\s+)?\*?\*?([^*\n]{3,60}?)\*?\*?\s*(?:Agent|代理|专用|agent)`),
+	// "designed a/an **Name**" (agent keyword may be outside the bold)
+	regexp.MustCompile(`(?i)(?:design(?:ed)?|creat(?:ed)?|设计|创建)\s+(?:a\s+|an\s+|了\s+)?\*\*([^*\n]{3,60})\*\*`),
+}
+
+// knownToolNames is the list of all tool names that Meta-Agent could assign.
+var knownToolNames = []string{
+	"read_file", "search_replace_in_file", "create_file", "run_terminal_cmd",
+	"search_by_regex", "delete_file", "rename_file", "list_dir",
+	"print_dir_tree", "semantic_search", "query_code_skeleton",
+	"query_code_snippet", "thinking", "finish",
+}
+
+// extractAgentName tries to extract a human-readable agent name from raw output.
+func extractAgentName(output string) string {
+	for _, pattern := range agentNamePatterns {
+		matches := pattern.FindStringSubmatch(output)
+		if len(matches) >= 2 {
+			name := strings.TrimSpace(matches[1])
+			// Filter out noise — skip if it looks like a code line or path
+			if strings.Contains(name, "/") || strings.Contains(name, ".go") ||
+				strings.Contains(name, "package ") || strings.Contains(name, "import ") ||
+					strings.HasPrefix(name, "package") || strings.HasPrefix(name, "import ") ||
+					name == "main" || name == "fmt" || name == "os" || name == "io" ||
+					len(name) < 2 || len(name) > 80 {				continue
+			}
+			return name
+		}
+	}
+	return ""
+}
+
+// extractToolsUsed scans the output for known tool names that are mentioned.
+func extractToolsUsed(output string) []string {
+	lower := strings.ToLower(output)
+	var found []string
+	for _, tool := range knownToolNames {
+		if strings.Contains(lower, tool) {
+			found = append(found, tool)
+		}
+	}
+	return found
 }
 
 // registerCustomAgent creates a new delegate_<name> tool for a custom agent designed by Meta-Agent
