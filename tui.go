@@ -327,9 +327,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+
+		case "esc":
+			// Cancel the currently running task
+			if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
+				m.currentTask.CancelFunc()
+				m.logEntries = append(m.logEntries, logEntry{
+					timestamp: time.Now(),
+					eventType: "status",
+					content:   "Task cancelled by user",
+				})
+				m.rebuildViewportContent()
+			}
+			return m, nil
 
 		case "ctrl+s":
 			if m.taskRunning {
@@ -440,7 +453,7 @@ func (m model) View() string {
 	if m.currentTask != nil && !m.taskRunning {
 		enterLabel = "ctrl+s send"
 	}
-	statusLine := footerStyle.Render(enterLabel+" │ ctrl+l lang │ ctrl+h history │ esc quit") + taskIndicator
+	statusLine := footerStyle.Render(enterLabel+" │ ctrl+l lang │ ctrl+h history │ esc cancel │ ctrl+c quit") + taskIndicator
 	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
 
 	b.WriteString(footer.String())
