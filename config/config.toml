@@ -1,7 +1,4 @@
 # LLM Configuration
-[http]
-server_port = 9080
-
 [llm]
 # 选择当前使用的提供商
 # use_provider = "openrouter"
@@ -116,4 +113,5 @@ enable_streaming = true
 conductor_max_steps = 30
 coding_max_steps = 50
 repo_max_steps = 30
+meta_retry_count = 5
 lang = "Chinese"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"runtime"
+	"strings"
 	"sync"
 
 	"codeactor/internal/assistant/agents"
@@ -26,7 +27,8 @@ type CodingAssistant struct {
 	userResponseChannels map[string]chan string
 	logger               *slog.Logger
 
-	globalCtx *globalctx.GlobalCtx
+	globalCtx      *globalctx.GlobalCtx
+	DisabledAgents string // comma-separated list of agent names to disable (e.g. "repo,coding,chat")
 }
 
 // NewCodingAssistant creates a new CodingAssistant.
@@ -84,10 +86,24 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		}
 	}
 
+	metaMaxSteps := 30
+	if ca.config != nil && ca.config.Agent.MetaMaxSteps > 0 {
+		metaMaxSteps = ca.config.Agent.MetaMaxSteps
+	}
+
+	metaRetryCount := 5 // default
+	if ca.config != nil && ca.config.Agent.MetaRetryCount > 0 {
+		metaRetryCount = ca.config.Agent.MetaRetryCount
+	}
+
+	// Parse disabled agents from comma-separated string
+	disabledAgents := parseDisabledAgents(ca.DisabledAgents)
+
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, llm, publisher, repoMaxSteps)
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, codingMaxSteps)
 	chatAgent := agents.NewChatAgent(ca.globalCtx, llm)
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, chatAgent, conductorMaxSteps)
+	metaAgent := agents.NewMetaAgent(ca.globalCtx, llm, metaMaxSteps)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, chatAgent, metaAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
@@ -155,4 +171,20 @@ func (ca *CodingAssistant) ProcessConversation(req *TaskRequest) (string, error)
 	ca.Init(ca.llm, req.projectDir)
 
 	return ca.conductor.Run(req.ctx, req.userMessage, req.memory)
+}
+
+// parseDisabledAgents converts a comma-separated string of agent names
+// into a map[string]bool for O(1) lookup. Valid agent names: repo, coding, chat, meta.
+func parseDisabledAgents(s string) map[string]bool {
+	result := make(map[string]bool)
+	if s == "" {
+		return result
+	}
+	for _, name := range strings.Split(s, ",") {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			result[name] = true
+		}
+	}
+	return result
 }

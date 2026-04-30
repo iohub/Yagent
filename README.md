@@ -2,7 +2,7 @@
 
 An AI-powered autonomous coding assistant built with a **Hub-and-Spoke multi-agent architecture** in Go.
 
-CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Analyst, Coding-Engineer, and Chat-Assistant — to autonomously analyze, plan, and execute complex software engineering tasks with self-correction capabilities.
+CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Analyst, Coding-Engineer, Chat-Assistant, and Meta-Agent — to autonomously analyze, plan, and execute complex software engineering tasks with self-correction capabilities.
 
 ## Features
 
@@ -14,6 +14,7 @@ CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Ana
 - **Streaming Output** — Real-time streaming of AI responses, tool calls, and results
 - **Conversation Memory** — Full conversation context with tool-call history, persisted across sessions
 - **Repository Analysis** — Automatic codebase investigation with directory trees, call graphs, and semantic search
+- **Meta-Agent** — Autonomous agent designer that creates custom sub-agents at runtime for specialized tasks beyond the built-in agents' capabilities
 
 ## Screenshots
 
@@ -44,9 +45,6 @@ go build -o codeactor .
 Create `$HOME/.codeactor/config/config.toml`:
 
 ```toml
-[http]
-server_port = 9080
-
 [llm]
 use_provider = "siliconflow"
 
@@ -64,6 +62,8 @@ enable_streaming = true
 conductor_max_steps = 30
 coding_max_steps = 50
 repo_max_steps = 30
+meta_max_steps = 30
+meta_retry_count = 5
 lang = "Chinese"
 ```
 
@@ -79,7 +79,10 @@ lang = "Chinese"
 **HTTP Server Mode** (API + WebSocket):
 ```bash
 ./codeactor http
-# Server starts at http://localhost:9080
+# Server starts at http://localhost:9800
+
+# Custom port:
+./codeactor http --port 9090
 ```
 
 ## Architecture
@@ -89,6 +92,34 @@ lang = "Chinese"
 </p>
 
 [Full architecture documentation →](docs/ARCHITECTURE.md)
+
+## Meta-Agent
+
+The **Meta-Agent** is an autonomous agent designer — it extends the system's capabilities at runtime by creating specialized sub-agents on demand. When the Conductor encounters a task that falls outside the expertise of the built-in agents (Repo/Coding/Chat), it delegates to the Meta-Agent, which:
+
+1. **Designs** a custom agent with a tailored system prompt, tool selection, and result schema
+2. **Executes** the task using the designed agent's configuration
+3. **Registers** the new agent as a permanent delegate tool available for the rest of the session
+
+### Example use cases
+
+- `delegate_security_auditor` — Full-codebase security vulnerability audit
+- `delegate_performance_profiler` — Performance bottleneck analysis
+- `delegate_db_migration_planner` — Database migration planning and validation
+
+### Configuration
+
+```toml
+[agent]
+meta_max_steps = 30    # Max LLM steps during Meta-Agent execution (default: 30)
+meta_retry_count = 5   # Retry count on JSON parse failure (default: 5)
+```
+
+Disable Meta-Agent via startup flag:
+
+```bash
+./codeactor tui --disable-agents=meta
+```
 
 ## API Overview
 
@@ -106,7 +137,7 @@ lang = "Chinese"
 
 ### WebSocket
 
-Connect to `ws://localhost:9080/ws`
+Connect to `ws://localhost:9800/ws`
 
 | Client Event | Description |
 |-------------|-------------|
