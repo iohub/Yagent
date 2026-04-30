@@ -68,6 +68,8 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 				inputBytes, _ := json.Marshal(params)
 				return globalCtx.ThinkingTool.Call(ctx, string(inputBytes))
 			}
+		case "finish":
+			fn = globalCtx.FlowOps.ExecuteFinish
 		default:
 			slog.Warn("Unknown tool in tools.json", "name", def.Name)
 			continue
