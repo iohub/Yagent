@@ -22,12 +22,13 @@ type ConductorAgent struct {
 	RepoAgent   *RepoAgent
 	CodingAgent *CodingAgent
 	ChatAgent   *ChatAgent
+	MetaAgent   *MetaAgent
 	GlobalCtx   *globalctx.GlobalCtx
 	Adapters    []*tools.Adapter
 	maxSteps    int
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, maxSteps int) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, maxSteps int) *ConductorAgent {
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
@@ -73,6 +74,26 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		"required": []string{"task"},
 	})
 
+	delegateMeta := tools.NewAdapter("delegate_meta", "Delegate to Meta-Agent to design and execute a custom specialized agent. Use this when NO existing agent (Repo/Coding/Chat) can adequately handle the task. Meta-Agent will craft a tailored system prompt using prompt engineering best practices, select appropriate tools, execute the task, and return structured JSON results.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		task, ok := params["task"].(string)
+		if !ok {
+			return nil, fmt.Errorf("task parameter required")
+		}
+		slog.Info("Conductor delegating to Meta-Agent", "task", task)
+		result, err := meta.Run(ctx, task)
+		if err != nil {
+			return nil, fmt.Errorf("Meta-Agent execution failed: %w", err)
+		}
+		// result is already a JSON string from MetaAgent, return as-is
+		return result, nil
+	}).WithSchema(map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"task": map[string]interface{}{"type": "string", "description": "Detailed task description for Meta-Agent. Include: what needs to be accomplished, why existing agents are insufficient, and what the expected output format should be."},
+		},
+		"required": []string{"task"},
+	})
+
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("finish", "Indicate that the current task is finished. The output of this tool call will be a description of why the task is finished, which could be because the task is completed or cannot be completed and must be terminated.", globalCtx.FlowOps.ExecuteFinish).WithSchema(map[string]interface{}{
 			"type": "object",
@@ -112,8 +133,9 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		RepoAgent:   repo,
 		CodingAgent: coding,
 		ChatAgent:   chat,
+		MetaAgent:   meta,
 		GlobalCtx:   globalCtx,
-		Adapters:    append(adapters, delegateRepo, delegateCoding, delegateChat),
+		Adapters:    append(adapters, delegateRepo, delegateCoding, delegateChat, delegateMeta),
 		maxSteps:    maxSteps,
 	}
 }

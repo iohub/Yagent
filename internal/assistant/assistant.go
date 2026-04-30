@@ -84,10 +84,16 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		}
 	}
 
+	metaMaxSteps := 30
+	if ca.config != nil && ca.config.Agent.MetaMaxSteps > 0 {
+		metaMaxSteps = ca.config.Agent.MetaMaxSteps
+	}
+
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, llm, publisher, repoMaxSteps)
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, codingMaxSteps)
 	chatAgent := agents.NewChatAgent(ca.globalCtx, llm)
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, chatAgent, conductorMaxSteps)
+	metaAgent := agents.NewMetaAgent(ca.globalCtx, llm, metaMaxSteps)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, chatAgent, metaAgent, conductorMaxSteps)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
