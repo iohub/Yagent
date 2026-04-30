@@ -98,33 +98,29 @@ You operate in TWO phases:
 </workflow>
 
 <output_format>
-You MUST output in the following structured format. First, think through your design inside `<thinking>` tags, then produce the final JSON result.
+Your final response MUST be a single valid JSON object. No markdown code fences, no surrounding text — just the JSON.
 
-<thinking>
-[Your design reasoning: what the task requires, which prompt techniques apply, why you selected specific tools, what the result schema should capture]
-</thinking>
-
-<agent_design>
-[The complete system prompt you designed for the new agent, incorporating best practices]
-</agent_design>
-
-<execution_result>
+```json
 {
-  "agent_name": "<descriptive name for the designed agent>",
+  "thinking": "<Your design reasoning: what the task requires, which prompt techniques apply, why you selected specific tools, what the result schema should capture>",
+  "agent_name": "<DescriptiveName for the designed agent>",
+  "agent_design": "<The COMPLETE system prompt for the designed agent, ready to be deployed directly>",
   "tools_used": ["<tool1>", "<tool2>"],
   "result": {
     "<key1>": "<value1>",
     "<key2>": "<value2>"
   }
 }
-</execution_result>
+```
 
 **CRITICAL RULES**:
-1. The `<agent_design>` block must contain the FULL system prompt for the designed agent, ready to be used directly.
-2. The `<execution_result>` must be valid JSON with `result` as a flat key-value object. Keys should be descriptive snake_case identifiers. Values should be strings.
-3. You MUST actually EXECUTE the designed agent — do not just design it. Use tool calls to perform the work.
-4. If the task requires tools you don't have access to, acknowledge the limitation in the result.
-5. The designed agent's system prompt MUST follow all applicable best practices from the design principles.
+1. Output ONLY the JSON object — no markdown fences, no surrounding text, no explanations outside the JSON.
+2. `agent_name` must be a descriptive, non-empty name for the designed agent.
+3. `agent_design` must contain the FULL system prompt for the designed agent, ready to be used directly. Incorporate prompt engineering best practices.
+4. `tools_used` must list exactly the tools your designed agent actually used during execution.
+5. `result` must be a flat key-value object. Keys in snake_case. Values as strings.
+6. You MUST actually EXECUTE the designed agent — use tool calls to perform real work. Do not just describe the design.
+7. If the task requires tools you don't have access to, acknowledge the limitation in `result`.
 </output_format>
 
 <constraints>

@@ -28,11 +28,13 @@ type CustomAgent struct {
 	Description  string   // short description for the LLM
 }
 
-// metaAgentResult parses the <execution_result> JSON block from Meta-Agent output.
+// metaAgentResult parses the JSON output from Meta-Agent.
 type metaAgentResult struct {
-	AgentName string                 `json:"agent_name"`
-	ToolsUsed []string               `json:"tools_used"`
-	Result    map[string]interface{} `json:"result"`
+	Thinking    string                 `json:"thinking"`
+	AgentName   string                 `json:"agent_name"`
+	AgentDesign string                 `json:"agent_design"`
+	ToolsUsed   []string               `json:"tools_used"`
+	Result      map[string]interface{} `json:"result"`
 }
 
 type ConductorAgent struct {
@@ -102,22 +104,34 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 			return nil, fmt.Errorf("task parameter required")
 		}
 		slog.Info("Conductor delegating to Meta-Agent", "task", task)
-		rawOutput, err := meta.Run(ctx, task)
-		if err != nil {
-			return nil, fmt.Errorf("Meta-Agent execution failed: %w", err)
-		}
 
-		// Try to parse the structured output and register the designed agent
-				systemPrompt, execResult, parseErr := parseMetaAgentOutput(rawOutput)
-				if parseErr != nil {
-					slog.Warn("Failed to parse Meta-Agent structured output, returning raw output", "error", parseErr)
-					return rawOutput, nil
-				}
+		const maxRetries = 3
+		var lastRawOutput string
 
-				// ── Strict parse succeeded ──
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			retryTask := task
+			if attempt > 0 {
+				retryTask = fmt.Sprintf(
+					"%s\n\n[FORMAT CORRECTION — Attempt %d/%d]\nYour previous output was NOT valid JSON or missing required fields. You MUST output ONLY a valid JSON object with these exact top-level keys:\n{\n  \"thinking\": \"...\",\n  \"agent_name\": \"...\",\n  \"agent_design\": \"...\",\n  \"tools_used\": [...],\n  \"result\": {...}\n}\n\nDo NOT wrap in markdown code fences (```). Do NOT include any text outside the JSON object.",
+					task, attempt, maxRetries-1,
+				)
+			}
+
+			rawOutput, err := meta.Run(ctx, retryTask)
+			if err != nil {
+				return nil, fmt.Errorf("Meta-Agent execution failed: %w", err)
+			}
+			lastRawOutput = rawOutput
+
+			systemPrompt, execResult, parseErr := parseMetaAgentOutput(rawOutput)
+			if parseErr != nil {
+				slog.Warn("Meta-Agent JSON parse failed, retrying", "attempt", attempt+1, "maxRetries", maxRetries, "error", parseErr)
+				continue
+			}
+
+			// ── Parse succeeded ──
 			// Register the newly designed agent if it has a valid name and prompt
 			if execResult.AgentName != "" && systemPrompt != "" {
-				// Convert agent name to snake_case for the delegate tool name
 				snakeName := toSnakeCase(execResult.AgentName)
 				customAgent := &CustomAgent{
 					Name:         snakeName,
@@ -128,7 +142,6 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 				}
 				self.registerCustomAgent(customAgent)
 
-				// Format the result to inform the LLM about the new agent
 				resultJSON, _ := json.Marshal(execResult.Result)
 				formattedResult := fmt.Sprintf(
 					"[Meta-Agent Execution Result]\nAgent: %s\nTools used: %s\nResult: %s\n\n[New Agent Registered]\nA new specialized agent \"%s\" is now available via the `delegate_%s` tool for future tasks of this type.",
@@ -141,15 +154,16 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 				return formattedResult, nil
 			}
 
-			// If parsing succeeded but no agent to register, just return the execution result
-			if execResult != nil {
-				resultJSON, _ := json.Marshal(execResult.Result)
-				return fmt.Sprintf("[Meta-Agent Execution Result]\nResult: %s", string(resultJSON)), nil
-			}
+			// Parse succeeded but no agent to register, just return the execution result
+			resultJSON, _ := json.Marshal(execResult.Result)
+			return fmt.Sprintf("[Meta-Agent Execution Result]\nResult: %s", string(resultJSON)), nil
+		}
 
-			return rawOutput, nil
+		// All retries exhausted
+		slog.Warn("Meta-Agent JSON parse failed after all retries, returning raw output")
+		return lastRawOutput, nil
 	}).WithSchema(map[string]interface{}{
-		"type": "object",
+			"type": "object",
 		"properties": map[string]interface{}{
 			"task": map[string]interface{}{"type": "string", "description": "Detailed task description for Meta-Agent. Include: what needs to be accomplished, why existing agents are insufficient, and what the expected output format should be."},
 		},
@@ -270,30 +284,67 @@ func (a *ConductorAgent) getToolFunc(name string) tools.ToolFunc {
 	}
 }
 
-// parseMetaAgentOutput extracts the <agent_design> system prompt and <execution_result> JSON
-// from the raw Meta-Agent output string.
+// parseMetaAgentOutput extracts and validates the JSON object from Meta-Agent's raw output.
+// It strips markdown code fences and surrounding text to find the JSON.
 func parseMetaAgentOutput(output string) (systemPrompt string, execResult *metaAgentResult, err error) {
-	// Extract <agent_design> block
-	designStart := strings.Index(output, "<agent_design>")
-	designEnd := strings.Index(output, "</agent_design>")
-	if designStart != -1 && designEnd != -1 {
-		systemPrompt = strings.TrimSpace(output[designStart+len("<agent_design>") : designEnd])
+	jsonStr := extractJSONObject(output)
+	if jsonStr == "" {
+		return "", nil, fmt.Errorf("no JSON object found in Meta-Agent output")
 	}
 
-	// Extract <execution_result> block
-	resultStart := strings.Index(output, "<execution_result>")
-	resultEnd := strings.Index(output, "</execution_result>")
-	if resultStart == -1 || resultEnd == -1 {
-		return systemPrompt, nil, fmt.Errorf("execution_result block not found in Meta-Agent output")
-	}
-
-	jsonStr := strings.TrimSpace(output[resultStart+len("<execution_result>") : resultEnd])
 	execResult = &metaAgentResult{}
 	if err := json.Unmarshal([]byte(jsonStr), execResult); err != nil {
-		return systemPrompt, nil, fmt.Errorf("failed to parse execution_result JSON: %w", err)
+		return "", nil, fmt.Errorf("failed to parse Meta-Agent JSON: %w", err)
 	}
 
-	return systemPrompt, execResult, nil
+	// Validate required fields
+	if execResult.AgentName == "" {
+		return "", nil, fmt.Errorf("agent_name is empty in Meta-Agent JSON")
+	}
+	if execResult.AgentDesign == "" {
+		return "", nil, fmt.Errorf("agent_design is empty in Meta-Agent JSON")
+	}
+
+	return execResult.AgentDesign, execResult, nil
+}
+
+// extractJSONObject finds the outermost JSON object in a string.
+// It strips markdown code fences and handles surrounding text.
+func extractJSONObject(s string) string {
+	raw := s
+
+	// Strip markdown code fences: ```json ... ``` or ``` ... ```
+	if idx := strings.Index(raw, "```"); idx != -1 {
+		endFence := strings.Index(raw[idx+3:], "```")
+		if endFence != -1 {
+			inner := raw[idx+3 : idx+3+endFence]
+			// Skip optional language tag after opening ```
+			if newline := strings.Index(inner, "\n"); newline != -1 {
+				inner = inner[newline+1:]
+			}
+			raw = inner
+		}
+	}
+
+	// Find the outermost { ... }
+	start := strings.Index(raw, "{")
+	if start == -1 {
+		return ""
+	}
+	// Walk braces to find the matching close brace
+	depth := 0
+	for i := start; i < len(raw); i++ {
+		switch raw[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return raw[start : i+1]
+			}
+		}
+	}
+	return ""
 }
 
 // toSnakeCase converts a display name like "Security Auditor" to "security_auditor".

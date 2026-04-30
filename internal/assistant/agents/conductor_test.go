@@ -62,23 +62,75 @@ func newTestConductorAgent(t *testing.T, workDir string) *ConductorAgent {
 	return NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, nil, 10, nil)
 }
 
-// makeMetaOutput builds a valid Meta-Agent output string.
+// makeMetaOutput builds a valid Meta-Agent JSON output string.
 func makeMetaOutput(agentName, systemPrompt string, toolsUsed []string, result map[string]interface{}) string {
-	resultJSON, _ := json.Marshal(result)
-	return fmt.Sprintf(`<thinking>Designing agent for the task.</thinking>
-<agent_design>%s</agent_design>
-<execution_result>
-{
-  "agent_name": "%s",
-  "tools_used": %s,
-  "result": %s
-}
-</execution_result>`, systemPrompt, agentName, toJSON(toolsUsed), string(resultJSON))
+	obj := map[string]interface{}{
+		"thinking":     "Designing agent for the task.",
+		"agent_name":   agentName,
+		"agent_design": systemPrompt,
+		"tools_used":   toolsUsed,
+		"result":       result,
+	}
+	b, _ := json.MarshalIndent(obj, "", "  ")
+	return string(b)
 }
 
-func toJSON(v interface{}) string {
-	b, _ := json.Marshal(v)
-	return string(b)
+// ─── extractJSONObject Tests ──────────────────────────────────────────────
+
+func TestExtractJSONObject_PureJSON(t *testing.T) {
+	input := `{"thinking": "test", "agent_name": "Test"}`
+	got := extractJSONObject(input)
+	if got != input {
+		t.Errorf("extractJSONObject = %q, want %q", got, input)
+	}
+}
+
+func TestExtractJSONObject_MarkdownFence(t *testing.T) {
+	input := "```json\n{\"key\": \"value\"}\n```"
+	expected := `{"key": "value"}`
+	got := extractJSONObject(input)
+	if got != expected {
+		t.Errorf("extractJSONObject = %q, want %q", got, expected)
+	}
+}
+
+func TestExtractJSONObject_SurroundingText(t *testing.T) {
+	input := `Here's the output: {"key": "value"} with some trailing text.`
+	expected := `{"key": "value"}`
+	got := extractJSONObject(input)
+	if got != expected {
+		t.Errorf("extractJSONObject = %q, want %q", got, expected)
+	}
+}
+
+func TestExtractJSONObject_NestedBraces(t *testing.T) {
+	input := `{"key": {"nested": true}, "list": [1,2,3]}`
+	got := extractJSONObject(input)
+	if got != input {
+		t.Errorf("extractJSONObject = %q, want %q", got, input)
+	}
+}
+
+func TestExtractJSONObject_NoBraces(t *testing.T) {
+	got := extractJSONObject("Just plain text without any braces.")
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+func TestExtractJSONObject_MetaOutput(t *testing.T) {
+	output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file"}, map[string]interface{}{"status": "ok"})
+	got := extractJSONObject(output)
+	if got == "" {
+		t.Fatal("extractJSONObject returned empty for valid Meta-Agent output")
+	}
+	var result metaAgentResult
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("extracted JSON is not valid: %v\nraw: %s", err, got)
+	}
+	if result.AgentName != "Security Auditor" {
+		t.Errorf("agent_name = %q, want 'Security Auditor'", result.AgentName)
+	}
 }
 
 // ─── toSnakeCase Tests ──────────────────────────────────────────────────────
@@ -137,65 +189,37 @@ func TestParseMetaAgentOutput_Valid(t *testing.T) {
 	}
 }
 
-func TestParseMetaAgentOutput_MissingExecutionResult(t *testing.T) {
-	output := "<agent_design>Some prompt</agent_design>\nNo result block here."
+func TestParseMetaAgentOutput_MissingJSON(t *testing.T) {
+	output := "Just some plain text without JSON."
 	_, _, err := parseMetaAgentOutput(output)
 	if err == nil {
-		t.Fatal("expected error for missing execution_result block")
+		t.Fatal("expected error for missing JSON object")
 	}
 }
 
 func TestParseMetaAgentOutput_InvalidJSON(t *testing.T) {
-	output := `<agent_design>Some prompt</agent_design>
-<execution_result>
-{not valid json}
-</execution_result>`
+	output := `{"thinking": "test", "agent_name": "Test", "agent_design": "prompt", "tools_used": ["read_file"], "result": {not valid json}}`
 	_, _, err := parseMetaAgentOutput(output)
 	if err == nil {
-		t.Fatal("expected error for invalid JSON in execution_result")
+		t.Fatal("expected error for invalid JSON")
 	}
 }
 
 func TestParseMetaAgentOutput_NoAgentDesign(t *testing.T) {
-	output := `<execution_result>
-{
-  "agent_name": "Test",
-  "tools_used": ["read_file"],
-  "result": {"key": "value"}
-}
-</execution_result>`
-
-	sysPrompt, result, err := parseMetaAgentOutput(output)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if sysPrompt != "" {
-		t.Errorf("expected empty system prompt, got %q", sysPrompt)
-	}
-	if result.AgentName != "Test" {
-		t.Errorf("agent name = %q, want 'Test'", result.AgentName)
+	// agent_design is now required — missing it should cause an error
+	output := `{"thinking": "designing...", "agent_name": "Test", "tools_used": ["read_file"], "result": {"key": "value"}}`
+	_, _, err := parseMetaAgentOutput(output)
+	if err == nil {
+		t.Fatal("expected error when agent_design is missing")
 	}
 }
 
-func TestParseMetaAgentOutput_EmptyResult(t *testing.T) {
-	output := `<agent_design></agent_design>
-<execution_result>
-{
-  "agent_name": "",
-  "tools_used": [],
-  "result": {}
-}
-</execution_result>`
-
-	sysPrompt, result, err := parseMetaAgentOutput(output)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if sysPrompt != "" {
-		t.Errorf("expected empty system prompt, got %q", sysPrompt)
-	}
-	if result.AgentName != "" {
-		t.Errorf("expected empty agent name, got %q", result.AgentName)
+func TestParseMetaAgentOutput_EmptyAgentName(t *testing.T) {
+	// agent_name is now required — empty should cause an error
+	output := `{"thinking": "test", "agent_name": "", "agent_design": "Some prompt", "tools_used": [], "result": {}}`
+	_, _, err := parseMetaAgentOutput(output)
+	if err == nil {
+		t.Fatal("expected error when agent_name is empty")
 	}
 }
 // ─── getToolFunc Tests ──────────────────────────────────────────────────────
@@ -721,15 +745,8 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
 
-	// Meta-Agent output with execution_result but NO agent_design block
-	output := `<thinking>designing...</thinking>
-<execution_result>
-{
-  "agent_name": "Test Agent",
-  "tools_used": ["read_file"],
-  "result": {"key": "value"}
-}
-</execution_result>`
+	// Meta-Agent output with missing agent_design field (all retries return same malformed output)
+	output := `{"thinking": "designing...", "agent_name": "Test Agent", "tools_used": ["read_file"], "result": {"key": "value"}}`
 
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(output), 5)
 	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil)
@@ -748,9 +765,9 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 		t.Fatalf("delegate_meta call failed: %v", err)
 	}
 
-	// No agent_design means empty systemPrompt, which means no registration
+	// No agent_design field → parse fails on all retries → no registration
 	if len(conductor.Adapters) != initialCount {
-		t.Errorf("no agent should be registered without agent_design block")
+		t.Errorf("no agent should be registered without agent_design field, adapters: %d → %d", initialCount, len(conductor.Adapters))
 	}
 }
 
