@@ -331,7 +331,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
-		case "ctrl+enter":
+		case "ctrl+s":
 			if m.taskRunning {
 				return m, nil
 			}
@@ -436,9 +436,9 @@ func (m model) View() string {
 		taskIndicator = logStatusStyle.Render(" ◷ Running...")
 	}
 	footer.WriteString("\n")
-	enterLabel := "ctrl+enter submit"
+	enterLabel := "ctrl+s submit"
 	if m.currentTask != nil && !m.taskRunning {
-		enterLabel = "ctrl+enter send"
+		enterLabel = "ctrl+s send"
 	}
 	statusLine := footerStyle.Render(enterLabel+" │ ctrl+l lang │ ctrl+h history │ esc quit") + taskIndicator
 	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
