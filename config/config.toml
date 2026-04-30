@@ -1,7 +1,4 @@
 # LLM Configuration
-[http]
-server_port = 9080
-
 [llm]
 # 选择当前使用的提供商
 # use_provider = "openrouter"

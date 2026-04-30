@@ -29,11 +29,6 @@ type LLMConfig struct {
 	Providers   map[string]ProviderConfig `toml:"providers"`
 }
 
-// HTTPConfig contains HTTP server configuration
-type HTTPConfig struct {
-	ServerPort int `toml:"server_port"`
-}
-
 // AppConfig contains application-level configuration
 type AppConfig struct {
 	EnableStreaming bool `toml:"enable_streaming"`
@@ -51,7 +46,6 @@ type AgentConfig struct {
 
 // Config is the root configuration structure
 type Config struct {
-	HTTP  HTTPConfig  `toml:"http"`
 	LLM   LLMConfig   `toml:"llm"`
 	App   AppConfig   `toml:"app"`
 	Agent AgentConfig `toml:"agent"`

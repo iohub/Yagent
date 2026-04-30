@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,7 +35,7 @@ func init() {
 func main() {
 	// Check if running in TUI mode or HTTP server mode based on command line arguments
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta] [--taskfile TASK.md]")
+		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta] [--taskfile TASK.md] [--port=9800]")
 		os.Exit(1)
 	}
 
@@ -43,6 +44,8 @@ func main() {
 	var taskFilePath string
 	// 解析 --disable-agents 参数
 	var disableAgents string
+	// 解析 --port 参数
+	httpPort := 9800
 	for i := 2; i < len(os.Args); i++ {
 		arg := os.Args[i]
 		if arg == "--taskfile" && i+1 < len(os.Args) {
@@ -55,6 +58,21 @@ func main() {
 			i++
 		} else if strings.HasPrefix(arg, "--disable-agents=") {
 			disableAgents = strings.TrimPrefix(arg, "--disable-agents=")
+		} else if arg == "--port" && i+1 < len(os.Args) {
+			port, err := strconv.Atoi(os.Args[i+1])
+			if err != nil {
+				fmt.Printf("Invalid port: %s\n", os.Args[i+1])
+				os.Exit(1)
+			}
+			httpPort = port
+			i++
+		} else if strings.HasPrefix(arg, "--port=") {
+			port, err := strconv.Atoi(strings.TrimPrefix(arg, "--port="))
+			if err != nil {
+				fmt.Printf("Invalid port: %s\n", strings.TrimPrefix(arg, "--port="))
+				os.Exit(1)
+			}
+			httpPort = port
 		}
 	}
 
@@ -159,20 +177,14 @@ func main() {
 		// 创建HTTP服务器
 		server := http.NewServer(codingAssistant)
 
-		// 从配置中读取HTTP服务端口
-		serverPort := config.HTTP.ServerPort
-		if serverPort == 0 {
-			serverPort = 10080 // 默认端口
-		}
-
-		// 启动服务器
-		if err := server.Run(serverPort); err != nil {
+		// 使用命令行参数指定的端口启动服务器
+		if err := server.Run(httpPort); err != nil {
 			slog.Error("Failed to start HTTP server", "error", util.WrapError(ctx, err, "main::ServerRun"))
 			os.Exit(1)
 		}
 	default:
 		fmt.Printf("Unknown mode: %s\n", mode)
-		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta] [--taskfile TASK.md]")
+		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta] [--taskfile TASK.md] [--port=9800]")
 		os.Exit(1)
 	}
 }
