@@ -39,18 +39,19 @@ type metaAgentResult struct {
 
 type ConductorAgent struct {
 	BaseAgent
-	RepoAgent    *RepoAgent
-	CodingAgent  *CodingAgent
-	ChatAgent    *ChatAgent
-	MetaAgent    *MetaAgent
-	GlobalCtx    *globalctx.GlobalCtx
-	Adapters     []*tools.Adapter
-	maxSteps     int
-	toolDefMap   map[string]ToolDefinition // tool name → definition from tools.json
-	customAgents map[string]*CustomAgent   // delegate_<name> → agent design
+	RepoAgent       *RepoAgent
+	CodingAgent     *CodingAgent
+	ChatAgent       *ChatAgent
+	MetaAgent       *MetaAgent
+	GlobalCtx       *globalctx.GlobalCtx
+	Adapters        []*tools.Adapter
+	maxSteps        int
+	metaRetryCount  int                                // max retries for Meta-Agent JSON parse failures
+	toolDefMap      map[string]ToolDefinition          // tool name → definition from tools.json
+	customAgents    map[string]*CustomAgent            // delegate_<name> → agent design
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, maxSteps int, disabledAgents map[string]bool) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -105,7 +106,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		}
 		slog.Info("Conductor delegating to Meta-Agent", "task", task)
 
-		const maxRetries = 3
+		maxRetries := self.metaRetryCount
 		var lastRawOutput string
 
 		for attempt := 0; attempt < maxRetries; attempt++ {
@@ -226,16 +227,17 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 	}
 
 	self = &ConductorAgent{
-		BaseAgent:    BaseAgent{LLM: llm, Publisher: globalCtx.Publisher},
-		RepoAgent:    repo,
-		CodingAgent:  coding,
-		ChatAgent:    chat,
-		MetaAgent:    meta,
-		GlobalCtx:    globalCtx,
-		Adapters:     append(adapters, delegateAdapters...),
-		maxSteps:     maxSteps,
-		toolDefMap:   toolDefMap,
-		customAgents: make(map[string]*CustomAgent),
+		BaseAgent:      BaseAgent{LLM: llm, Publisher: globalCtx.Publisher},
+		RepoAgent:      repo,
+		CodingAgent:    coding,
+		ChatAgent:      chat,
+		MetaAgent:      meta,
+		GlobalCtx:      globalCtx,
+		Adapters:       append(adapters, delegateAdapters...),
+		maxSteps:       maxSteps,
+		metaRetryCount: metaRetryCount,
+		toolDefMap:     toolDefMap,
+		customAgents:   make(map[string]*CustomAgent),
 	}
 	return self
 }

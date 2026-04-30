@@ -45,6 +45,7 @@ type AgentConfig struct {
 	CodingMaxSteps    int    `toml:"coding_max_steps"`
 	RepoMaxSteps      int    `toml:"repo_max_steps"`
 	MetaMaxSteps      int    `toml:"meta_max_steps"`
+	MetaRetryCount    int    `toml:"meta_retry_count"`
 	SpeakLang         string `toml:"lang"`
 }
 

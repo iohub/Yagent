@@ -116,4 +116,5 @@ enable_streaming = true
 conductor_max_steps = 30
 coding_max_steps = 50
 repo_max_steps = 30
+meta_retry_count = 5
 lang = "Chinese"

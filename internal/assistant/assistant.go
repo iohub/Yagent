@@ -91,6 +91,11 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		metaMaxSteps = ca.config.Agent.MetaMaxSteps
 	}
 
+	metaRetryCount := 5 // default
+	if ca.config != nil && ca.config.Agent.MetaRetryCount > 0 {
+		metaRetryCount = ca.config.Agent.MetaRetryCount
+	}
+
 	// Parse disabled agents from comma-separated string
 	disabledAgents := parseDisabledAgents(ca.DisabledAgents)
 
@@ -98,7 +103,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, codingMaxSteps)
 	chatAgent := agents.NewChatAgent(ca.globalCtx, llm)
 	metaAgent := agents.NewMetaAgent(ca.globalCtx, llm, metaMaxSteps)
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, chatAgent, metaAgent, conductorMaxSteps, disabledAgents)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, chatAgent, metaAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
