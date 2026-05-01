@@ -413,11 +413,7 @@ func (m model) View() string {
 
 	var b strings.Builder
 
-	// Welcome panel with logo
-	b.WriteString(m.renderWelcomePanel())
-	b.WriteString("\n")
-
-	// Scrollable message area with viewport
+	// Scrollable message area with viewport (welcome panel is now inside viewport content)
 	b.WriteString(m.viewport.View())
 
 	// Separator
@@ -512,12 +508,11 @@ func (m model) renderWelcomePanel() string {
 
 // resizeViewport recalculates viewport dimensions and recreates the glamour renderer.
 func (m *model) resizeViewport() {
-	welcomeHeight := lipgloss.Height(m.renderWelcomePanel())
 	footerHeight := 5
 	if m.errMsg != "" {
 		footerHeight++
 	}
-	vpHeight := m.termHeight - welcomeHeight - footerHeight
+	vpHeight := m.termHeight - footerHeight
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
@@ -550,6 +545,10 @@ func (m *model) resizeViewport() {
 // using glamour for ai_response entries and plain formatting for others.
 func (m *model) rebuildViewportContent() {
 	var b strings.Builder
+
+	// Welcome panel as scrollable content — scrolls together with messages
+	b.WriteString(m.renderWelcomePanel())
+	b.WriteString("\n")
 
 	for _, entry := range m.logEntries {
 		if entry.eventType == "ai_response" && m.glamourRenderer != nil {
