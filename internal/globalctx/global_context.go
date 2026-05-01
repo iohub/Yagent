@@ -25,8 +25,9 @@ type GlobalCtx struct {
 	SysOps       *tools.SystemOperationsTool
 	ReplaceTool  *tools.ReplaceBlockTool
 	ThinkingTool *tools.ThinkingTool
-	FlowOps      *tools.FlowControlTool
-	RepoOps      *tools.RepoOperationsTool
+	FlowOps           *tools.FlowControlTool
+	RepoOps           *tools.RepoOperationsTool
+	UserConfirmMgr    *tools.UserConfirmManager
 }
 
 func (g *GlobalCtx) FormatPrompt(prompt string) string {

@@ -70,6 +70,8 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 			}
 		case "finish":
 			fn = globalCtx.FlowOps.ExecuteFinish
+		case "ask_user_for_help":
+			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
 		default:
 			slog.Warn("Unknown tool in tools.json", "name", def.Name)
 			continue
