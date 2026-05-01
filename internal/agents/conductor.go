@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"codeactor/internal/assistant/tools"
+	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/memory"
 

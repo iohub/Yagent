@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/assistant"
+	"codeactor/internal/app"
+	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
+	"codeactor/internal/llm"
 	"codeactor/internal/util"
 	messaging "codeactor/pkg/messaging"
 )
@@ -86,19 +88,19 @@ func main() {
 
 		configPath := getConfigPath()
 		slog.Info("Loading configuration", "config_path", configPath)
-		config, err := assistant.LoadConfig(configPath)
+		config, err := llm.LoadConfig(configPath)
 		if err != nil {
 			slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
 			os.Exit(1)
 		}
 
-		client, err := assistant.NewClient(config)
+		client, err := llm.NewClient(config)
 		if err != nil {
 			slog.Error("Failed to create client", "error", util.WrapError(ctx, err, "main::NewClient"))
 			os.Exit(1)
 		}
 
-		codingAssistant, err := assistant.NewCodingAssistant(client)
+		codingAssistant, err := app.NewCodingAssistant(client)
 		if err != nil {
 			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodingAssistant"))
 			os.Exit(1)
@@ -107,7 +109,7 @@ func main() {
 
 		taskManager := http.NewTaskManager(nil)
 
-		dataManager, err := assistant.NewDataManager()
+		dataManager, err := datamanager.NewDataManager()
 		if err != nil {
 			slog.Error("Failed to initialize DataManager", "error", err)
 		}
@@ -150,20 +152,20 @@ func main() {
 		// 加载配置和初始化 assistant.client
 		configPath := getConfigPath()
 		slog.Info("Loading configuration", "config_path", configPath)
-		config, err := assistant.LoadConfig(configPath)
+		config, err := llm.LoadConfig(configPath)
 		if err != nil {
 			slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
 			os.Exit(1)
 		}
 		slog.Info("Creating assistant.client")
-		client, err := assistant.NewClient(config)
+		client, err := llm.NewClient(config)
 		if err != nil {
 			slog.Error("Failed to create assistant.client", "error", util.WrapError(ctx, err, "main::NewClient"))
 			os.Exit(1)
 		}
 
 		// 创建 AI Coding Assistant
-		codingAssistant, err := assistant.NewCodingAssistant(client)
+		codingAssistant, err := app.NewCodingAssistant(client)
 		if err != nil {
 			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodingAssistant"))
 			os.Exit(1)

@@ -1,4 +1,4 @@
-package assistant
+package datamanager
 
 import (
 	"encoding/json"

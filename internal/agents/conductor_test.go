@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"codeactor/internal/assistant/tools"
+	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/memory"
 

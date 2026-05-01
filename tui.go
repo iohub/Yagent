@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/assistant"
+	"codeactor/internal/app"
+	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
 	"codeactor/internal/memory"
 	"codeactor/pkg/messaging"
@@ -91,9 +92,9 @@ func (c *tuiEventConsumer) Consume(event *messaging.MessageEvent) error {
 // TUI Model
 type model struct {
 	// External dependencies
-	assistant   *assistant.CodingAssistant
+	assistant   *app.CodingAssistant
 	taskManager *http.TaskManager
-	dataManager *assistant.DataManager
+	dataManager *datamanager.DataManager
 
 	// Input
 	input textarea.Model
@@ -120,14 +121,14 @@ type model struct {
 
 	// History panel state
 	showHistoryPanel     bool
-	historyItems         []assistant.TaskHistoryItem
-	filteredItems        []assistant.TaskHistoryItem
+	historyItems         []datamanager.TaskHistoryItem
+	filteredItems        []datamanager.TaskHistoryItem
 	historyIndex         int
 	historyFilter        string
 	historyConfirmDelete bool
 }
 
-func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm *http.TaskManager, dm *assistant.DataManager, useDarkStyle bool) model {
+func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
 	ti := textarea.New()
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
@@ -211,7 +212,7 @@ func (m *model) toggleLanguage() {
 }
 
 func (m *model) openHistoryPanel() {
-	dm, err := assistant.NewDataManager()
+	dm, err := datamanager.NewDataManager()
 	if err == nil {
 		items, err2 := dm.ListTaskHistory(50)
 		if err2 == nil {
@@ -239,7 +240,7 @@ func (m *model) applyHistoryFilter() {
 		return
 	}
 	qLower := strings.ToLower(query)
-	filtered := make([]assistant.TaskHistoryItem, 0, len(m.historyItems))
+	filtered := make([]datamanager.TaskHistoryItem, 0, len(m.historyItems))
 	for _, it := range m.historyItems {
 		txt := strings.ToLower(it.Title + " " + it.TaskID)
 		if strings.Contains(txt, qLower) {
@@ -844,9 +845,9 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 func executeTaskCmd(
 	taskDesc string,
 	task *http.Task,
-	ca *assistant.CodingAssistant,
+	ca *app.CodingAssistant,
 	tm *http.TaskManager,
-	dm *assistant.DataManager,
+	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -858,11 +859,11 @@ func executeTaskCmd(
 
 		ca.IntegrateMessaging(dispatcher)
 
-		request := assistant.NewTaskRequest(task.Context, task.ID).
+		request := app.NewTaskRequest(task.Context, task.ID).
 			WithProjectDir(task.ProjectDir).
 			WithTaskDesc(taskDesc).
 			WithMemory(task.Memory).
-			WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
+			WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
 		result, err := ca.ProcessCodingTaskWithCallback(request)
 
@@ -886,8 +887,8 @@ func executeTaskCmd(
 func executeFollowUpCmd(
 	message string,
 	task *http.Task,
-	ca *assistant.CodingAssistant,
-	dm *assistant.DataManager,
+	ca *app.CodingAssistant,
+	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -899,11 +900,11 @@ func executeFollowUpCmd(
 
 		ca.IntegrateMessaging(dispatcher)
 
-		request := assistant.NewTaskRequest(task.Context, task.ID).
+		request := app.NewTaskRequest(task.Context, task.ID).
 			WithProjectDir(task.ProjectDir).
 			WithUserMessage(message).
 			WithMemory(task.Memory).
-			WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
+			WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
 		result, err := ca.ProcessConversation(request)
 
@@ -939,7 +940,7 @@ func validateInputs(projectDir, taskDesc string) (bool, string) {
 }
 
 // startTUI starts the Bubble Tea TUI with the given dependencies.
-func startTUI(taskFilePath string, ca *assistant.CodingAssistant, tm *http.TaskManager, dm *assistant.DataManager) {
+func startTUI(taskFilePath string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager) {
 	langManager = NewLanguageManager()
 
 	taskContent := ""

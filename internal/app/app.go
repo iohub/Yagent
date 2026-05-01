@@ -1,4 +1,4 @@
-package assistant
+package app
 
 import (
 	"context"
@@ -7,10 +7,11 @@ import (
 	"strings"
 	"sync"
 
-	"codeactor/internal/assistant/agents"
-	"codeactor/internal/assistant/tools"
+	"codeactor/internal/agents"
+	"codeactor/internal/tools"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
+	"codeactor/internal/llm"
 	"codeactor/internal/memory"
 	"codeactor/pkg/messaging"
 
@@ -32,14 +33,13 @@ type CodingAssistant struct {
 }
 
 // NewCodingAssistant creates a new CodingAssistant.
-func NewCodingAssistant(client *Client) (*CodingAssistant, error) {
+func NewCodingAssistant(client *llm.Client) (*CodingAssistant, error) {
 	ca := &CodingAssistant{
 		userResponseChannels: make(map[string]chan string),
 		logger:               slog.Default().With("component", "coding_assistant"),
-		llm:                  client.llm,
-		config:               client.config,
+		llm:                  client.LLM,
+		config:               client.Config,
 	}
-	client.assistant = ca
 	return ca, nil
 }
 
@@ -123,7 +123,7 @@ type TaskRequest struct {
 	taskDesc    string
 	memory      *memory.ConversationMemory
 	wsCallback  func(string, string)
-	publisher   *MessagePublisher
+	publisher   *messaging.MessagePublisher
 	userMessage string
 }
 
@@ -154,7 +154,7 @@ func (r *TaskRequest) WithWSCallback(cb func(string, string)) *TaskRequest {
 	return r
 }
 
-func (r *TaskRequest) WithMessagePublisher(p *MessagePublisher) *TaskRequest {
+func (r *TaskRequest) WithMessagePublisher(p *messaging.MessagePublisher) *TaskRequest {
 	r.publisher = p
 	return r
 }

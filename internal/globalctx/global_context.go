@@ -1,7 +1,7 @@
 package globalctx
 
 import (
-	"codeactor/internal/assistant/tools"
+	"codeactor/internal/tools"
 	"codeactor/pkg/messaging"
 	"fmt"
 	"strings"

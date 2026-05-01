@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"codeactor/internal/assistant/tools"
+	"codeactor/internal/tools"
 	"codeactor/pkg/messaging"
 
 	"github.com/tmc/langchaingo/llms"

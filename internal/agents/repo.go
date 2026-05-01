@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"codeactor/internal/assistant/tools"
+	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 	"codeactor/pkg/messaging"
 

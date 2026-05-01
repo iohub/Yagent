@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"codeactor/internal/assistant/tools"
+	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 
 	"github.com/tmc/langchaingo/llms"

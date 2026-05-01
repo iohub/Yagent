@@ -1,4 +1,4 @@
-package assistant
+package llm
 
 import (
 	"context"
@@ -115,9 +115,8 @@ func (l *LoggingLLM) GenerateContent(ctx context.Context, messages []llms.Messag
 
 // Client represents an LLM client
 type Client struct {
-	llm       llms.LLM
-	config    *config.Config
-	assistant *CodingAssistant // 对主助手的引用，用于日志记录
+	LLM    llms.LLM
+	Config *config.Config
 }
 
 // LoadConfig loads configuration from a TOML file using the new multi-provider structure
@@ -225,8 +224,8 @@ func NewClient(config *config.Config) (*Client, error) {
 	loggingLLM := &LoggingLLM{inner: llm}
 
 	return &Client{
-		llm:    loggingLLM,
-		config: config,
+		LLM:    loggingLLM,
+		Config: config,
 	}, nil
 }
 
@@ -244,13 +243,13 @@ func StreamDebugHandler(ctx context.Context, chunk []byte) error {
 func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms.MessageContent, streamHandler func(context.Context, []byte) error) (string, error) {
 	slog.Debug("Starting completion generation with memory",
 		"memory_length", len(memory),
-		"streaming_enabled", c.config.App.EnableStreaming)
+		"streaming_enabled", c.Config.App.EnableStreaming)
 
 	// Log input memory to LLM log file
 	if memoryJSON, err := json.Marshal(memory); err == nil {
 		llmLogger.Info("LLM input memory",
 			"type", "input_memory",
-			"model", c.config.LLM.UseProvider,
+			"model", c.Config.LLM.UseProvider,
 			"memory_length", len(memory),
 			"memory", string(memoryJSON))
 	}
@@ -263,7 +262,7 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms
 	*/
 
 	// Get active provider configuration
-	activeProvider, err := c.config.GetActiveProvider()
+	activeProvider, err := c.Config.GetActiveProvider()
 	if err != nil {
 		slog.Error("Failed to get active provider configuration", "error", err)
 		return "", util.WrapError(ctx, err, "failed to get active provider")
@@ -276,27 +275,27 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms
 	}
 
 	// Add streaming if enabled and handler provided
-	if c.config.App.EnableStreaming && streamHandler != nil {
+	if c.Config.App.EnableStreaming && streamHandler != nil {
 		opts = append(opts, llms.WithStreamingFunc(streamHandler))
 		slog.Debug("Streaming enabled for this request (memory)")
 	}
 
 	// Generate completion
-	completion, err := c.llm.GenerateContent(ctx, memory, opts...)
+	completion, err := c.LLM.GenerateContent(ctx, memory, opts...)
 	if err != nil {
 		// 尝试提取HTTP响应内容
 		httpResponse := extractHTTPResponse(err)
 
 		slog.Error("Failed to GenerateContent",
 			"error", err,
-			"model", c.config.LLM.UseProvider,
+			"model", c.Config.LLM.UseProvider,
 			"memory_length", len(memory),
 			"http_response", httpResponse)
 
 		// Log error to LLM log file
 		llmLogger.Error("LLM completion error",
 			"type", "completion_error",
-			"model", c.config.LLM.UseProvider,
+			"model", c.Config.LLM.UseProvider,
 			"memory_length", len(memory),
 			"error", err.Error(),
 			"http_response", httpResponse)
@@ -315,7 +314,7 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms
 		if choicesJSON, err := json.Marshal(completion.Choices); err == nil {
 			llmLogger.Info("LLM completion output",
 				"type", "completion_output",
-				"model", c.config.LLM.UseProvider,
+				"model", c.Config.LLM.UseProvider,
 				"choices_count", len(completion.Choices),
 				"memory_length", len(memory),
 				"response", result,
@@ -338,7 +337,7 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms
 	// Log empty response to LLM log file
 	llmLogger.Warn("LLM returned empty completion (with memory)",
 		"type", "empty_completion_memory",
-		"model", c.config.LLM.UseProvider,
+		"model", c.Config.LLM.UseProvider,
 		"choices_count", len(completion.Choices),
 		"memory_length", len(memory))
 

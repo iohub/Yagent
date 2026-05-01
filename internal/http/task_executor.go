@@ -6,14 +6,15 @@ import (
 	"log/slog"
 	"os"
 
-	"codeactor/internal/assistant"
+	"codeactor/internal/app"
+	"codeactor/internal/datamanager"
 	"codeactor/internal/util"
 	messaging "codeactor/pkg/messaging"
 	consumers "codeactor/pkg/messaging/consumers"
 )
 
 // ExecuteTask 执行任务的通用函数
-func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, dataManager *assistant.DataManager) {
+func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *app.CodingAssistant, dataManager *datamanager.DataManager) {
 	task, ok := taskManager.GetTask(taskID)
 	if !ok {
 		slog.Error("Task not found", "task_id", taskID)
@@ -111,14 +112,14 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 		})
 	}
 	// 使用新的 TaskRequest 结构
-	request := assistant.NewTaskRequest(ctx, taskID).
+	request := app.NewTaskRequest(ctx, taskID).
 		WithProjectDir(projectDir).
 		WithTaskDesc(taskDesc).
 		WithMemory(task.Memory).
 		WithWSCallback(wsCallback)
 
 	// Add message publisher to request
-	request = request.WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
+	request = request.WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
 	result, err = codingAssistant.ProcessCodingTaskWithCallback(request)
 
