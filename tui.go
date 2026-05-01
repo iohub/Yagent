@@ -380,6 +380,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
+			case "ctrl+f":
+				pageSize := m.termHeight - 10
+				if pageSize < 1 {
+					pageSize = 1
+				}
+				m.historyIndex += pageSize
+				if m.historyIndex >= len(m.filteredItems) {
+					m.historyIndex = len(m.filteredItems) - 1
+				}
+				return m, nil
+
+			case "ctrl+b":
+				pageSize := m.termHeight - 10
+				if pageSize < 1 {
+					pageSize = 1
+				}
+				m.historyIndex -= pageSize
+				if m.historyIndex < 0 {
+					m.historyIndex = 0
+				}
+				return m, nil
+
 			case "ctrl+d":
 				if len(m.filteredItems) > 0 {
 					m.historyConfirmDelete = true
@@ -449,6 +471,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+h":
 			m.openHistoryPanel()
+			return m, nil
+
+		case "ctrl+f":
+			m.viewport.ViewDown()
+			return m, nil
+
+		case "ctrl+b":
+			m.viewport.ViewUp()
 			return m, nil
 
 		default:
