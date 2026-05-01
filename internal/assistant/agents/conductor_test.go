@@ -69,6 +69,7 @@ func makeMetaOutput(agentName, systemPrompt string, toolsUsed []string) string {
 		"agent_name":   agentName,
 		"agent_design": systemPrompt,
 		"tools_used":   toolsUsed,
+			"task_for_agent": "Clean task for the agent to execute.",
 	}
 	b, _ := json.MarshalIndent(obj, "", "  ")
 	return string(b)

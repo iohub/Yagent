@@ -83,3 +83,57 @@ codeactor-agent/
 - Memory: `ConversationMemory` with system/human/assistant/tool message types
 - Task persistence: `~/.codeactor/tasks/{taskID}.json`
 - LLM logs: `~/.codeactor/logs/llm-{date}.log`
+
+## Testing Methodology
+
+### Unit Tests (mock LLM, fast)
+
+```bash
+# Run all agent tests (mock LLM, no real API calls)
+go test ./internal/assistant/agents/... -v -count=1
+
+# Run a specific test
+go test ./internal/assistant/agents/... -v -run TestDelegateMeta_DynamicRegistration
+```
+
+Agent tests use `mockLLM` in `conductor_test.go` — it returns pre-defined responses, so tests are deterministic and fast. Key test categories:
+- `TestExtractJSONObject*` — JSON extraction from MetaAgent output
+- `TestParseMetaAgentOutput*` — design JSON validation
+- `TestRegisterCustomAgent*` — custom agent registration and delegate tool creation
+- `TestCustomAgentDelegateTool*` — custom agent execution (LLM-tool loop)
+- `TestDelegateMeta*` — full delegate_meta flow (design → register → execute)
+
+### Full-Stack E2E (real LLM)
+
+1. **Build** the updated binary: `go build -o codeactor . && go vet ./...`
+
+2. **Start HTTP server** (background):
+   ```bash
+   pkill -f "codeactor http" 2>/dev/null
+   nohup ./codeactor http --port=9800 > /tmp/codeactor.log 2>&1 &
+   ```
+
+3. **Run a task** via CLI client that triggers MetaAgent:
+   ```bash
+   node clients/nodejs-cli/index.js --port 9800 run /path/to/project \
+     "使用delegate_meta设计一个代码统计agent，统计internal/assistant/agents/executor.go文件"
+   ```
+
+4. **Inspect task memory** to verify the full agent flow:
+   ```bash
+   curl -s "http://localhost:9800/api/memory?task_id=<task-id>" | python3 -m json.tool
+   ```
+   Look for: `delegate_meta` tool call → `Custom agent registered` → `Conductor executing newly designed agent` → execution result.
+
+5. **Check LLM logs** for detailed request/response traces:
+   ```bash
+   tail -200 ~/.codeactor/logs/llm-$(date +%Y-%m-%d).log
+   ```
+
+### What to Verify in E2E Logs
+
+- **Agent registration**: `INFO Custom agent registered delegate_name=delegate_<name>`
+- **Execution dispatch**: `INFO Conductor executing newly designed agent delegate=delegate_<name>`
+- **Result format**: `[Meta-Agent: Agent Designed and Executed]` wrapper in the tool result
+- **Error fallback**: When custom agent fails, Conductor falls back to CodingAgent/ChatAgent
+- **`task_for_agent` field**: Clean task (no meta-design instructions) passed to custom agent

@@ -30,10 +30,11 @@ type CustomAgent struct {
 
 // metaAgentResult parses the JSON output from Meta-Agent.
 type metaAgentResult struct {
-	Thinking    string   `json:"thinking"`
-	AgentName   string   `json:"agent_name"`
-	AgentDesign string   `json:"agent_design"`
-	ToolsUsed   []string `json:"tools_used"`
+	Thinking      string   `json:"thinking"`
+	AgentName     string   `json:"agent_name"`
+	AgentDesign   string   `json:"agent_design"`
+	ToolsUsed     []string `json:"tools_used"`
+	TaskForAgent  string   `json:"task_for_agent"`
 }
 
 type ConductorAgent struct {
@@ -112,7 +113,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 			retryTask := task
 			if attempt > 0 {
 				retryTask = fmt.Sprintf(
-					"%s\n\n[FORMAT CORRECTION — Attempt %d/%d]\nYour previous output was NOT valid JSON or missing required fields. You MUST output ONLY a valid JSON object with these exact top-level keys:\n{\n  \"thinking\": \"...\",\n  \"agent_name\": \"...\",\n  \"agent_design\": \"...\",\n  \"tools_used\": [...]\n}\n\nDo NOT wrap in markdown code fences (```). Do NOT include any text outside the JSON object.",
+					"%s\n\n[FORMAT CORRECTION — Attempt %d/%d]\nYour previous output was NOT valid JSON or missing required fields. You MUST output ONLY a valid JSON object with these exact top-level keys:\n{\n  \"thinking\": \"...\",\n  \"agent_name\": \"...\",\n  \"agent_design\": \"...\",\n  \"tools_used\": [...],\n  \"task_for_agent\": \"...\"\n}\n\nDo NOT wrap in markdown code fences (```). Do NOT include any text outside the JSON object.",
 					task, attempt, maxRetries-1,
 				)
 			}
@@ -142,13 +143,20 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 				}
 				self.registerCustomAgent(customAgent)
 
+				// Use task_for_agent (clean task without meta-design instructions) if available;
+				// otherwise fall back to the original task.
+				agentTask := execResult.TaskForAgent
+				if agentTask == "" {
+					agentTask = task
+				}
+
 				// ── Immediately execute the newly registered agent ──
 				// Find the just-created delegate tool and call it
 				delegateName := "delegate_" + snakeName
 				for _, ad := range self.Adapters {
 					if ad.Name() == delegateName {
 						slog.Info("Conductor executing newly designed agent", "delegate", delegateName, "display_name", execResult.AgentName)
-						callResult, callErr := ad.Call(ctx, fmt.Sprintf(`{"task": %q}`, task))
+						callResult, callErr := ad.Call(ctx, fmt.Sprintf(`{"task": %q}`, agentTask))
 						if callErr != nil {
 							return nil, fmt.Errorf("new agent %s execution failed: %w", execResult.AgentName, callErr)
 						}
