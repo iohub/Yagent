@@ -12,7 +12,6 @@ import (
 	"codeactor/internal/memory"
 	"codeactor/pkg/messaging"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,9 +30,6 @@ var (
 	promptFocusedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	promptBlurredStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-	focusedInputStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
-	blurredInputStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Padding(0, 1)
-
 	welcomePanelStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2)
 	welcomeLeftStyle  = lipgloss.NewStyle().Width(38)
 	welcomeTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
@@ -42,20 +38,10 @@ var (
 	welcomeTipStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	welcomeDimStyle   = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("242"))
 
-	buttonFocusedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	buttonBlurredStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
 	infoMsgStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
 	footerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-
-	backdropStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
-	modalBoxStyle   = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2)
-	modalTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	itemStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	itemDimStyle    = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244"))
-	itemSelStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("39"))
 
 	// Message log styles
 	logTimeStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
@@ -132,12 +118,13 @@ type model struct {
 	currentLang Language
 	projectDir  string
 
-	// History modal state
-	showHistoryModal bool
-	historyItems     []assistant.TaskHistoryItem
-	filteredItems    []assistant.TaskHistoryItem
-	historyIndex     int
-	historySearch    textinput.Model
+	// History panel state
+	showHistoryPanel     bool
+	historyItems         []assistant.TaskHistoryItem
+	filteredItems        []assistant.TaskHistoryItem
+	historyIndex         int
+	historyFilter        string
+	historyConfirmDelete bool
 }
 
 func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm *http.TaskManager, dm *assistant.DataManager, useDarkStyle bool) model {
@@ -166,12 +153,6 @@ func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm
 	if preloadedTaskContent != "" {
 		ti.SetValue(preloadedTaskContent)
 	}
-
-	hSearch := textinput.New()
-	hSearch.Placeholder = langManager.GetText("HistorySearchHint")
-	hSearch.CharLimit = 256
-	hSearch.Width = 60
-	hSearch.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 
 	projectDir, _ := os.Getwd()
 
@@ -204,7 +185,6 @@ func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm
 		currentLang:     langManager.currentLang,
 		eventCh:         make(chan *messaging.MessageEvent, 1000),
 		logEntries:      make([]logEntry, 0),
-		historySearch:   hSearch,
 		viewport:        vp,
 		glamourRenderer: glamourRenderer,
 		useDarkStyle:    useDarkStyle,
@@ -228,10 +208,9 @@ func (m *model) toggleLanguage() {
 	}
 	m.input.Placeholder = langManager.GetText("TaskDescPlaceholder")
 	m.infoMsg = langManager.GetText("InfoMessage")
-	m.historySearch.Placeholder = langManager.GetText("HistorySearchHint")
 }
 
-func (m *model) openHistoryModal() {
+func (m *model) openHistoryPanel() {
 	dm, err := assistant.NewDataManager()
 	if err == nil {
 		items, err2 := dm.ListTaskHistory(50)
@@ -241,33 +220,19 @@ func (m *model) openHistoryModal() {
 		}
 	}
 	m.historyIndex = 0
-	m.showHistoryModal = true
-	m.historySearch.SetValue("")
-	m.historySearch.Focus()
+	m.historyFilter = ""
+	m.historyConfirmDelete = false
+	m.showHistoryPanel = true
 }
 
-func (m *model) closeHistoryModal() {
-	m.showHistoryModal = false
-	m.historySearch.Blur()
+func (m *model) closeHistoryPanel() {
+	m.showHistoryPanel = false
+	m.historyFilter = ""
+	m.historyConfirmDelete = false
 }
 
-func (m *model) applyHistorySelection() {
-	if len(m.filteredItems) == 0 {
-		return
-	}
-	if m.historyIndex < 0 {
-		m.historyIndex = 0
-	}
-	if m.historyIndex >= len(m.filteredItems) {
-		m.historyIndex = len(m.filteredItems) - 1
-	}
-	selected := m.filteredItems[m.historyIndex]
-	m.input.SetValue(selected.Title)
-	m.closeHistoryModal()
-}
-
-func (m *model) filterHistoryList() {
-	query := strings.TrimSpace(m.historySearch.Value())
+func (m *model) applyHistoryFilter() {
+	query := strings.TrimSpace(m.historyFilter)
 	if query == "" {
 		m.filteredItems = m.historyItems
 		m.historyIndex = 0
@@ -287,42 +252,159 @@ func (m *model) filterHistoryList() {
 	}
 }
 
+func (m *model) continueConversation() tea.Cmd {
+	if len(m.filteredItems) == 0 {
+		return nil
+	}
+	if m.historyIndex < 0 {
+		m.historyIndex = 0
+	}
+	if m.historyIndex >= len(m.filteredItems) {
+		m.historyIndex = len(m.filteredItems) - 1
+	}
+	selected := m.filteredItems[m.historyIndex]
+
+	mem, err := m.dataManager.LoadTaskMemory(selected.TaskID)
+	if err != nil {
+		m.errMsg = fmt.Sprintf("Failed to load conversation: %v", err)
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	task := &http.Task{
+		ID:         uuid.New().String(),
+		Status:     http.TaskStatusRunning,
+		ProjectDir: m.projectDir,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		Memory:     mem,
+		Context:    ctx,
+		CancelFunc: cancel,
+	}
+	m.taskManager.AddTask(task)
+	m.currentTask = task
+	m.taskRunning = false
+
+	m.showHistoryPanel = false
+	m.historyFilter = ""
+	m.historyConfirmDelete = false
+
+	m.logEntries = append(m.logEntries, logEntry{
+		timestamp: time.Now(),
+		eventType: "status",
+		content:   fmt.Sprintf("Loaded conversation: %s (%d messages)", selected.Title, selected.MessageCount),
+	})
+	m.rebuildViewportContent()
+
+	return nil
+}
+
+func (m *model) deleteHistoryItem() {
+	if len(m.filteredItems) == 0 {
+		return
+	}
+	selected := m.filteredItems[m.historyIndex]
+
+	if err := m.dataManager.DeleteTaskMemory(selected.TaskID); err != nil {
+		m.errMsg = fmt.Sprintf("Failed to delete: %v", err)
+		return
+	}
+
+	// Remove from historyItems
+	for i, it := range m.historyItems {
+		if it.TaskID == selected.TaskID {
+			m.historyItems = append(m.historyItems[:i], m.historyItems[i+1:]...)
+			break
+		}
+	}
+	// Remove from filteredItems
+	for i, it := range m.filteredItems {
+		if it.TaskID == selected.TaskID {
+			m.filteredItems = append(m.filteredItems[:i], m.filteredItems[i+1:]...)
+			break
+		}
+	}
+
+	if m.historyIndex >= len(m.filteredItems) {
+		m.historyIndex = len(m.filteredItems) - 1
+	}
+	if m.historyIndex < 0 {
+		m.historyIndex = 0
+	}
+
+	m.historyConfirmDelete = false
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		m.input.SetWidth(m.computeFieldWidth())
-		m.historySearch.Width = m.computeFieldWidth()
 		m.resizeViewport()
 		m.rebuildViewportContent()
 		return m, nil
 
 	case tea.KeyMsg:
-		// History modal key handling
-		if m.showHistoryModal {
+		// History panel key handling
+		if m.showHistoryPanel {
+			// Delete confirmation mode
+			if m.historyConfirmDelete {
+				switch msg.String() {
+				case "y", "Y":
+					m.deleteHistoryItem()
+					return m, nil
+				default:
+					m.historyConfirmDelete = false
+					return m, nil
+				}
+			}
+
 			switch msg.String() {
-			case "esc", "ctrl+c":
-				m.closeHistoryModal()
+			case "esc", "ctrl+h":
+				m.closeHistoryPanel()
 				return m, nil
+
 			case "enter":
-				m.applyHistorySelection()
-				return m, nil
-			case "up":
+				return m, m.continueConversation()
+
+			case "up", "ctrl+k":
 				if m.historyIndex > 0 {
 					m.historyIndex--
 				}
 				return m, nil
-			case "down":
+
+			case "down", "ctrl+j":
 				if m.historyIndex < len(m.filteredItems)-1 {
 					m.historyIndex++
 				}
 				return m, nil
+
+			case "ctrl+d":
+				if len(m.filteredItems) > 0 {
+					m.historyConfirmDelete = true
+				}
+				return m, nil
+
+			case "backspace":
+				if len(m.historyFilter) > 0 {
+					m.historyFilter = m.historyFilter[:len(m.historyFilter)-1]
+					m.applyHistoryFilter()
+				}
+				return m, nil
+
+			case "ctrl+u":
+				m.historyFilter = ""
+				m.applyHistoryFilter()
+				return m, nil
+
 			default:
-				var cmd tea.Cmd
-				m.historySearch, cmd = m.historySearch.Update(msg)
-				m.filterHistoryList()
-				return m, cmd
+				// Printable characters → filter
+				if len(msg.Runes) > 0 {
+					m.historyFilter += string(msg.Runes)
+					m.applyHistoryFilter()
+				}
+				return m, nil
 			}
 		}
 
@@ -366,7 +448,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "ctrl+h":
-			m.openHistoryModal()
+			m.openHistoryPanel()
 			return m, nil
 
 		default:
@@ -413,8 +495,12 @@ func (m model) View() string {
 
 	var b strings.Builder
 
-	// Scrollable message area with viewport (welcome panel is now inside viewport content)
-	b.WriteString(m.viewport.View())
+	// Main content area: history panel or scrollable viewport
+	if m.showHistoryPanel {
+		b.WriteString(m.renderHistoryPanel())
+	} else {
+		b.WriteString(m.viewport.View())
+	}
 
 	// Separator
 	sepWidth := m.termWidth
@@ -453,12 +539,6 @@ func (m model) View() string {
 	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
 
 	b.WriteString(footer.String())
-
-	// History modal overlay
-	if m.showHistoryModal {
-		b.WriteString("\n")
-		b.WriteString(m.renderHistoryModal())
-	}
 
 	return b.String()
 }
@@ -895,72 +975,197 @@ func (m model) computeFieldWidth() int {
 	return avail
 }
 
-// renderHistoryModal renders the history selection popup.
-func (m model) renderHistoryModal() string {
-	var out strings.Builder
+// renderHistoryPanel renders the full-height history panel replacing the viewport area.
+func (m model) renderHistoryPanel() string {
+	panelWidth := m.termWidth - 4
+	if panelWidth < 40 {
+		panelWidth = 40
+	}
 
-	out.WriteString(backdropStyle.Render(strings.Repeat("─", max(40, m.computeFieldWidth()+8))))
-	out.WriteString("\n")
+	var b strings.Builder
 
-	title := modalTitleStyle.Render("◇ " + langManager.GetText("HistoryTitle"))
-	searchWidth := m.computeFieldWidth()
-	m.historySearch.Width = searchWidth
-	searchLine := focusedInputStyle.Render(m.historySearch.View())
+	// ── Header: title + filter ──
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("◇ " + langManager.GetText("HistoryTitle"))
 
-	boxInner := title + "\n" + itemDimStyle.Render(langManager.GetText("HistorySearchHint")) + "\n\n" + searchLine + "\n"
-
-	maxItems := 12
-	if len(m.filteredItems) == 0 {
-		boxInner += "\n" + itemDimStyle.Render(langManager.GetText("HistoryEmpty"))
+	filterText := m.historyFilter
+	filterDisplay := ""
+	if filterText != "" {
+		filterDisplay = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(filterText)
 	} else {
-		end := len(m.filteredItems)
-		if end > maxItems {
-			start := m.historyIndex - maxItems/2
+		filterDisplay = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Render(langManager.GetText("HistoryFilterPlaceholder"))
+	}
+
+	headerLeft := lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", filterDisplay)
+	counter := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Render(
+		fmt.Sprintf("%d/%d", m.historyIndex+1, len(m.filteredItems)),
+	)
+	headerText := lipgloss.JoinHorizontal(lipgloss.Center, headerLeft, "  ", counter)
+
+	headerStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, false, true, false).
+		BorderForeground(lipgloss.Color("237")).
+		Width(panelWidth).
+		Padding(0, 1)
+
+	b.WriteString(headerStyle.Render(headerText))
+	b.WriteString("\n")
+
+	// ── Body: item list ──
+	bodyHeight := m.termHeight - 10 // header(~3) + footer input area(~7)
+	if bodyHeight < 5 {
+		bodyHeight = 5
+	}
+
+	if len(m.filteredItems) == 0 {
+		empty := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Width(panelWidth).
+			Padding(1, 2).
+			Render(langManager.GetText("HistoryEmpty"))
+		b.WriteString(empty)
+	} else {
+		// Calculate visible window
+		start := m.historyIndex - bodyHeight/2
+		if start < 0 {
+			start = 0
+		}
+		end := start + bodyHeight
+		if end > len(m.filteredItems) {
+			end = len(m.filteredItems)
+			start = end - bodyHeight
 			if start < 0 {
 				start = 0
 			}
-			end = start + maxItems
-			if end > len(m.filteredItems) {
-				end = len(m.filteredItems)
-				start = end - maxItems
-				if start < 0 {
-					start = 0
+		}
+
+		// If there are items before visible window, show indicator
+		if start > 0 {
+			indicator := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Width(panelWidth).Padding(0, 2).Render(fmt.Sprintf(langManager.GetText("HistoryMoreAbove"), start))
+			b.WriteString(indicator)
+			b.WriteString("\n")
+		}
+
+		innerWidth := panelWidth - 4 // indent
+
+		for i := start; i < end; i++ {
+			item := m.filteredItems[i]
+			selected := i == m.historyIndex
+
+			// Format date and relative time
+			dateStr := item.CreatedAt.Format("01-02 15:04")
+			relTime := relativeTimeAgo(item.UpdatedAt)
+			msgCount := fmt.Sprintf("%d msg", item.MessageCount)
+			if item.MessageCount > 1 {
+				msgCount += "s"
+			}
+
+			// Truncate title
+			title := item.Title
+			maxTitle := innerWidth - 16
+			if lipgloss.Width(title) > maxTitle {
+				runes := []rune(title)
+				if len(runes) > maxTitle {
+					title = string(runes[:maxTitle-1]) + "…"
 				}
 			}
-			for i := start; i < end; i++ {
-				it := m.filteredItems[i]
-				line := fmt.Sprintf("%s  %s", itemDimStyle.Render(it.CreatedAt.Format("01-02 15:04")), it.Title)
-				if i == m.historyIndex {
-					boxInner += "\n" + itemSelStyle.Render(line)
-				} else {
-					boxInner += "\n" + itemStyle.Render(line)
-				}
+
+			datePart := lipgloss.NewStyle().Width(12).Render(dateStr)
+			metaLine := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Render("  " + msgCount + " · " + relTime)
+
+			var line string
+			if selected {
+				selBg := lipgloss.NewStyle().
+					Background(lipgloss.Color("39")).
+					Foreground(lipgloss.Color("0")).
+					Width(innerWidth).
+					Padding(0, 1)
+
+				selDate := lipgloss.NewStyle().
+					Background(lipgloss.Color("39")).
+					Foreground(lipgloss.Color("0")).
+					Width(12).
+					Render(dateStr)
+
+				selMeta := lipgloss.NewStyle().
+					Background(lipgloss.Color("39")).
+					Foreground(lipgloss.Color("0")).
+					Render("  " + msgCount + " · " + relTime)
+
+				line = selBg.Render(selDate + title) + "\n" +
+					lipgloss.NewStyle().Background(lipgloss.Color("39")).Width(innerWidth).Padding(0, 1).Render(selMeta)
+			} else {
+				dimmer := lipgloss.NewStyle().Width(innerWidth).Padding(0, 1)
+				line = dimmer.Render(datePart + lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(title)) +
+					"\n" + dimmer.Render(metaLine)
 			}
-		} else {
-			for i, it := range m.filteredItems {
-				line := fmt.Sprintf("%s  %s", itemDimStyle.Render(it.CreatedAt.Format("01-02 15:04")), it.Title)
-				if i == m.historyIndex {
-					boxInner += "\n" + itemSelStyle.Render(line)
-				} else {
-					boxInner += "\n" + itemStyle.Render(line)
-				}
-			}
+
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+
+		// If there are items after visible window, show indicator
+		if end < len(m.filteredItems) {
+			remaining := len(m.filteredItems) - end
+			indicator := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Width(panelWidth).Padding(0, 2).Render(fmt.Sprintf(langManager.GetText("HistoryMoreBelow"), remaining))
+			b.WriteString(indicator)
+			b.WriteString("\n")
 		}
 	}
 
-	footer := lipgloss.JoinHorizontal(lipgloss.Top,
-		buttonFocusedStyle.Render("● "+langManager.GetText("HistoryUseSelected")),
-		"  ",
-		buttonBlurredStyle.Render("○ "+langManager.GetText("HistoryClose")),
-	)
-	boxInner += "\n\n" + footer
+	// ── Footer: key hints ──
+	var hintLeft string
+	if m.historyConfirmDelete {
+		hintLeft = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true).Render(langManager.GetText("HistoryConfirmDelete"))
+	} else {
+		hintLeft = lipgloss.JoinHorizontal(lipgloss.Top,
+			lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render(langManager.GetText("HistoryKeyContinue")),
+			"  ",
+			lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("245")).Render(langManager.GetText("HistoryKeyDelete")),
+			"  ",
+			lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("245")).Render(langManager.GetText("HistoryKeyBack")),
+			"  ",
+			lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("245")).Render(langManager.GetText("HistoryKeyClearFilter")),
+		)
+	}
+	footerStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), true, false, false, false).
+		BorderForeground(lipgloss.Color("237")).
+		Width(panelWidth).
+		Padding(0, 1)
 
-	box := modalBoxStyle.Width(m.computeFieldWidth() + 8).Render(boxInner)
-	leftAligned := lipgloss.NewStyle().MarginLeft(2).Render(box)
-	out.WriteString(leftAligned)
-	out.WriteString("\n")
+	b.WriteString(footerStyle.Render(hintLeft))
 
-	return out.String()
+	return lipgloss.NewStyle().Width(panelWidth).Render(b.String())
+}
+
+// relativeTimeAgo returns a human-readable relative time string.
+func relativeTimeAgo(t time.Time) string {
+	d := time.Since(t)
+	if d < time.Minute {
+		return "just now"
+	}
+	if d < time.Hour {
+		m := int(d.Minutes())
+		if m == 1 {
+			return "1m ago"
+		}
+		return fmt.Sprintf("%dm ago", m)
+	}
+	if d < 24*time.Hour {
+		h := int(d.Hours())
+		if h == 1 {
+			return "1h ago"
+		}
+		return fmt.Sprintf("%dh ago", h)
+	}
+	days := int(d.Hours() / 24)
+	if days == 1 {
+		return "yesterday"
+	}
+	if days < 30 {
+		return fmt.Sprintf("%dd ago", days)
+	}
+	return t.Format("2006-01-02")
 }
 
 func max(a, b int) int {
