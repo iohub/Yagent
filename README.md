@@ -19,8 +19,8 @@ CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Ana
 ## Screenshots
 
 <p align="center">
-  <img src="docs/sceenshot-1.png" alt="CodeActor TUI Screenshot 1" width="49%">
-  <img src="docs/sceenshot-2.png" alt="CodeActor TUI Screenshot 2" width="49%">
+  <img src="docs/sceenshot-1.png" alt="CodeActor TUI Screenshot 1" width="100%">
+  <img src="docs/sceenshot-2.png" alt="CodeActor TUI Screenshot 2" width="100%">
 </p>
 
 ## Quick Start
