@@ -288,6 +288,28 @@
     }
   },
   {
+    "name": "ask_user_for_help",
+    "description": "When you encounter an issue that requires user authorization, confirmation, or input, use this tool to ask the user for help. The tool will pause execution and wait for the user's response. Use this when you need: 1) Authorization to proceed with a potentially risky operation, 2) Clarification on ambiguous requirements, 3) Confirmation before making a significant change. The user's response will be returned directly.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "A clear explanation of why you are stuck and need the user's help or authorization."
+        },
+        "specific_question": {
+          "type": "string",
+          "description": "A specific, concise question to ask the user. This will be shown to the user directly."
+        },
+        "suggested_options": {
+          "type": "string",
+          "description": "Optional. Suggested answer options for the user, e.g., 'Approve / Reject / More Info'."
+        }
+      },
+      "required": ["reason", "specific_question"]
+    }
+  },
+  {
     "name": "finish",
     "description": "Indicate that the current task is finished. The output of this tool call will be a description of why the task is finished, which could be because the task is completed or cannot be completed and must be terminated.",
     "parameters": {

@@ -281,6 +281,8 @@ func (a *ConductorAgent) getToolFunc(name string) tools.ToolFunc {
 		}
 	case "finish":
 		return a.GlobalCtx.FlowOps.ExecuteFinish
+	case "ask_user_for_help":
+		return a.GlobalCtx.FlowOps.ExecuteAskUserForHelp
 	default:
 		return nil
 	}

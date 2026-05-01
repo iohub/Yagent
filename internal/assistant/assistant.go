@@ -50,6 +50,8 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	// Initialize agents
 	publisher := messaging.NewMessagePublisher(ca.dispatcher)
 
+	userConfirmMgr := tools.NewUserConfirmManager()
+
 	gctx := globalctx.GlobalCtx{
 		SpeakLang:   ca.config.Agent.SpeakLang,
 		ProjectPath: workDir,
@@ -65,10 +67,18 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		SysOps:       tools.NewSystemOperationsTool(workDir),
 		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
 		ThinkingTool: tools.NewThinkingTool(),
-		FlowOps:      tools.NewFlowControlTool(workDir),
-		RepoOps:      tools.NewRepoOperationsTool("http://127.0.0.1:12800", workDir),
+		FlowOps:           tools.NewFlowControlTool(workDir),
+		RepoOps:           tools.NewRepoOperationsTool("http://127.0.0.1:12800", workDir),
+		UserConfirmMgr:    userConfirmMgr,
 	}
 	ca.globalCtx = &gctx
+
+	// Wire up UserConfirmManager: register as consumer and set publisher
+	userConfirmMgr.SetPublisher(publisher)
+	gctx.FlowOps.UserConfirmMgr = userConfirmMgr
+	if ca.dispatcher != nil {
+		ca.dispatcher.RegisterConsumer(userConfirmMgr)
+	}
 	// Get max steps from config, default to 10 if not set
 	repoMaxSteps := 20
 	codingMaxSteps := 30

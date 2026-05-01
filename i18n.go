@@ -30,13 +30,18 @@ type translations struct {
 	BeSpecificTips string
 	CreateFileTips string
 	HelpTips       string
-	// New fields for history modal
-	HistoryButton      string
-	HistoryTitle       string
-	HistoryEmpty       string
-	HistorySearchHint  string
-	HistoryUseSelected string
-	HistoryClose       string
+	// History panel
+	HistoryButton           string
+	HistoryTitle            string
+	HistoryEmpty            string
+	HistoryFilterPlaceholder string
+	HistoryMoreAbove        string
+	HistoryMoreBelow        string
+	HistoryKeyContinue      string
+	HistoryKeyDelete        string
+	HistoryKeyBack          string
+	HistoryKeyClearFilter   string
+	HistoryConfirmDelete    string
 }
 
 var langMap = map[Language]translations{
@@ -59,12 +64,17 @@ var langMap = map[Language]translations{
 		BeSpecificTips:                   "尽量具体，效果更佳。",
 		CreateFileTips:                   "创建 GEMINI.md 文件以定制你的交互。",
 		HelpTips:                         "输入 /help 查看更多信息。",
-		HistoryButton:                    "历史任务",
-		HistoryTitle:                     "选择历史任务",
-		HistoryEmpty:                     "暂无历史任务",
-		HistorySearchHint:                "上下移动选择，输入过滤，Enter 使用，Esc 关闭",
-		HistoryUseSelected:               "使用所选",
-		HistoryClose:                     "关闭",
+		HistoryButton:             "历史任务",
+		HistoryTitle:              "会话历史",
+		HistoryEmpty:              "暂无历史会话",
+		HistoryFilterPlaceholder:  "输入关键词过滤...",
+		HistoryMoreAbove:          "▲ 前面还有 %d 条",
+		HistoryMoreBelow:          "▼ 后面还有 %d 条",
+		HistoryKeyContinue:        "enter: 继续对话",
+		HistoryKeyDelete:          "ctrl+d: 删除",
+		HistoryKeyBack:            "esc: 返回",
+		HistoryKeyClearFilter:     "ctrl+u: 清除过滤",
+		HistoryConfirmDelete:      "确认删除此会话？(y = 确认, 其他键 = 取消)",
 	},
 	LangEnglish: {
 		Title:                            "CodeActor AI Assistant",
@@ -85,12 +95,17 @@ var langMap = map[Language]translations{
 		BeSpecificTips:                   "Be specific for the best results.",
 		CreateFileTips:                   "Create GEMINI.md files to customize interactions.",
 		HelpTips:                         "Type /help for more information.",
-		HistoryButton:                    "History",
-		HistoryTitle:                     "Select a Past Task",
-		HistoryEmpty:                     "No history yet",
-		HistorySearchHint:                "Move to select, type to filter, Enter to use, Esc to close",
-		HistoryUseSelected:               "Use Selected",
-		HistoryClose:                     "Close",
+		HistoryButton:             "History",
+		HistoryTitle:              "Conversation History",
+		HistoryEmpty:              "No conversations yet",
+		HistoryFilterPlaceholder:  "type to filter...",
+		HistoryMoreAbove:          "▲ %d more above",
+		HistoryMoreBelow:          "▼ %d more below",
+		HistoryKeyContinue:        "enter: continue",
+		HistoryKeyDelete:          "ctrl+d: delete",
+		HistoryKeyBack:            "esc: back",
+		HistoryKeyClearFilter:     "ctrl+u: clear filter",
+		HistoryConfirmDelete:      "Delete this conversation? (y = confirm, any other key = cancel)",
 	},
 }
 
@@ -154,12 +169,22 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.HistoryTitle
 	case "HistoryEmpty":
 		return translations.HistoryEmpty
-	case "HistorySearchHint":
-		return translations.HistorySearchHint
-	case "HistoryUseSelected":
-		return translations.HistoryUseSelected
-	case "HistoryClose":
-		return translations.HistoryClose
+	case "HistoryFilterPlaceholder":
+		return translations.HistoryFilterPlaceholder
+	case "HistoryMoreAbove":
+		return translations.HistoryMoreAbove
+	case "HistoryMoreBelow":
+		return translations.HistoryMoreBelow
+	case "HistoryKeyContinue":
+		return translations.HistoryKeyContinue
+	case "HistoryKeyDelete":
+		return translations.HistoryKeyDelete
+	case "HistoryKeyBack":
+		return translations.HistoryKeyBack
+	case "HistoryKeyClearFilter":
+		return translations.HistoryKeyClearFilter
+	case "HistoryConfirmDelete":
+		return translations.HistoryConfirmDelete
 	default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}

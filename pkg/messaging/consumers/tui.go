@@ -235,26 +235,31 @@ func (t *TUIConsumer) showUserInputDialog(event *messaging.MessageEvent) {
 	// Publish user response
 	if t.publisher != nil {
 		var taskID interface{}
+		var requestID interface{}
 		if event.Metadata != nil {
 			taskID = event.Metadata["task_id"]
+			requestID = event.Metadata["request_id"]
 		}
 		// Fallback: try to fetch from content map if provided there
-		if taskID == nil {
-			if m, ok := event.Content.(map[string]interface{}); ok {
+		if m, ok := event.Content.(map[string]interface{}); ok {
+			if taskID == nil {
 				taskID = m["task_id"]
 			}
+			if requestID == nil {
+				requestID = m["request_id"]
+			}
+		}
+
+		responseContent := map[string]interface{}{
+			"response": userInput,
 		}
 		if taskIDStr, ok := taskID.(string); ok && taskIDStr != "" {
-			t.publisher.Publish("user_help_response", map[string]interface{}{
-				"task_id":  taskIDStr,
-				"response": userInput,
-			}, "User")
-		} else {
-			// Publish without task_id to avoid panic; upstream may ignore
-			t.publisher.Publish("user_help_response", map[string]interface{}{
-				"response": userInput,
-			}, "User")
+			responseContent["task_id"] = taskIDStr
 		}
+		if requestIDStr, ok := requestID.(string); ok && requestIDStr != "" {
+			responseContent["request_id"] = requestIDStr
+		}
+		t.publisher.Publish("user_help_response", responseContent, "User")
 	}
 
 	fmt.Fprintf(t.writer, "已发送回复，等待任务继续...\n")
