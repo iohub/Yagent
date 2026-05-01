@@ -30,25 +30,24 @@ type CustomAgent struct {
 
 // metaAgentResult parses the JSON output from Meta-Agent.
 type metaAgentResult struct {
-	Thinking    string                 `json:"thinking"`
-	AgentName   string                 `json:"agent_name"`
-	AgentDesign string                 `json:"agent_design"`
-	ToolsUsed   []string               `json:"tools_used"`
-	Result      map[string]interface{} `json:"result"`
+	Thinking    string   `json:"thinking"`
+	AgentName   string   `json:"agent_name"`
+	AgentDesign string   `json:"agent_design"`
+	ToolsUsed   []string `json:"tools_used"`
 }
 
 type ConductorAgent struct {
 	BaseAgent
-	RepoAgent       *RepoAgent
-	CodingAgent     *CodingAgent
-	ChatAgent       *ChatAgent
-	MetaAgent       *MetaAgent
-	GlobalCtx       *globalctx.GlobalCtx
-	Adapters        []*tools.Adapter
-	maxSteps        int
-	metaRetryCount  int                                // max retries for Meta-Agent JSON parse failures
-	toolDefMap      map[string]ToolDefinition          // tool name → definition from tools.json
-	customAgents    map[string]*CustomAgent            // delegate_<name> → agent design
+	RepoAgent      *RepoAgent
+	CodingAgent    *CodingAgent
+	ChatAgent      *ChatAgent
+	MetaAgent      *MetaAgent
+	GlobalCtx      *globalctx.GlobalCtx
+	Adapters       []*tools.Adapter
+	maxSteps       int
+	metaRetryCount int                     // max retries for Meta-Agent JSON parse failures
+	toolDefMap     map[string]ToolDefinition // tool name → definition from tools.json
+	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
 }
 
 func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int) *ConductorAgent {
@@ -99,12 +98,12 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		"required": []string{"task"},
 	})
 
-	delegateMeta := tools.NewAdapter("delegate_meta", "Delegate to Meta-Agent to design and execute a custom specialized agent. Use this when NO existing agent (Repo/Coding/Chat) can adequately handle the task. Meta-Agent will craft a tailored system prompt using prompt engineering best practices, select appropriate tools, execute the task, and return structured JSON results. After execution, the designed agent is automatically registered as a new permanent delegate tool for future use.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	delegateMeta := tools.NewAdapter("delegate_meta", "Delegate to Meta-Agent to DESIGN a custom specialized agent. Meta-Agent will craft a tailored system prompt using prompt engineering best practices and select appropriate tools. The designed agent is automatically registered and immediately executed to complete the task. After this, the new agent becomes a permanent delegate tool for future use.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		slog.Info("Conductor delegating to Meta-Agent", "task", task)
+		slog.Info("Conductor delegating to Meta-Agent (design)", "task", task)
 
 		maxRetries := self.metaRetryCount
 		var lastRawOutput string
@@ -113,14 +112,14 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 			retryTask := task
 			if attempt > 0 {
 				retryTask = fmt.Sprintf(
-					"%s\n\n[FORMAT CORRECTION — Attempt %d/%d]\nYour previous output was NOT valid JSON or missing required fields. You MUST output ONLY a valid JSON object with these exact top-level keys:\n{\n  \"thinking\": \"...\",\n  \"agent_name\": \"...\",\n  \"agent_design\": \"...\",\n  \"tools_used\": [...],\n  \"result\": {...}\n}\n\nDo NOT wrap in markdown code fences (```). Do NOT include any text outside the JSON object.",
+					"%s\n\n[FORMAT CORRECTION — Attempt %d/%d]\nYour previous output was NOT valid JSON or missing required fields. You MUST output ONLY a valid JSON object with these exact top-level keys:\n{\n  \"thinking\": \"...\",\n  \"agent_name\": \"...\",\n  \"agent_design\": \"...\",\n  \"tools_used\": [...]\n}\n\nDo NOT wrap in markdown code fences (```). Do NOT include any text outside the JSON object.",
 					task, attempt, maxRetries-1,
 				)
 			}
 
 			rawOutput, err := meta.Run(ctx, retryTask)
 			if err != nil {
-				return nil, fmt.Errorf("Meta-Agent execution failed: %w", err)
+				return nil, fmt.Errorf("Meta-Agent design failed: %w", err)
 			}
 			lastRawOutput = rawOutput
 
@@ -143,21 +142,37 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 				}
 				self.registerCustomAgent(customAgent)
 
-				resultJSON, _ := json.Marshal(execResult.Result)
-				formattedResult := fmt.Sprintf(
-					"[Meta-Agent Execution Result]\nAgent: %s\nTools used: %s\nResult: %s\n\n[New Agent Registered]\nA new specialized agent \"%s\" is now available via the `delegate_%s` tool for future tasks of this type.",
-					execResult.AgentName,
-					strings.Join(execResult.ToolsUsed, ", "),
-					string(resultJSON),
-					execResult.AgentName,
-					snakeName,
-				)
-				return formattedResult, nil
+				// ── Immediately execute the newly registered agent ──
+				// Find the just-created delegate tool and call it
+				delegateName := "delegate_" + snakeName
+				for _, ad := range self.Adapters {
+					if ad.Name() == delegateName {
+						slog.Info("Conductor executing newly designed agent", "delegate", delegateName, "display_name", execResult.AgentName)
+						callResult, callErr := ad.Call(ctx, fmt.Sprintf(`{"task": %q}`, task))
+						if callErr != nil {
+							return nil, fmt.Errorf("new agent %s execution failed: %w", execResult.AgentName, callErr)
+						}
+						// ad.Call returns JSON-encoded string, unmarshal to get the raw result
+						var rawResult string
+						if err := json.Unmarshal([]byte(callResult), &rawResult); err != nil {
+							rawResult = callResult
+						}
+						formattedResult := fmt.Sprintf(
+							"[Meta-Agent: Agent Designed and Executed]\nDesigned Agent: %s\nTools: %s\n\n[Execution Result]\n%s\n\n[New Agent Registered]\nA new specialized agent \"%s\" is now available via the `%s` tool for future tasks of this type.",
+							execResult.AgentName,
+							strings.Join(execResult.ToolsUsed, ", "),
+							rawResult,
+							execResult.AgentName,
+							delegateName,
+						)
+						return formattedResult, nil
+					}
+				}
+				return nil, fmt.Errorf("newly registered agent %s not found in adapters", delegateName)
 			}
 
-			// Parse succeeded but no agent to register, just return the execution result
-			resultJSON, _ := json.Marshal(execResult.Result)
-			return fmt.Sprintf("[Meta-Agent Execution Result]\nResult: %s", string(resultJSON)), nil
+			// Parse succeeded but no agent to register
+			return fmt.Sprintf("[Meta-Agent Design Result]\nAgent could not be registered (missing name or design). Raw output: %s", rawOutput), nil
 		}
 
 		// All retries exhausted
@@ -445,110 +460,21 @@ func (a *ConductorAgent) registerCustomAgent(ca *CustomAgent) {
 }
 
 // executeCustomAgent runs a custom agent with its designed system prompt and selected tools.
-// It follows the same LLM-tool loop pattern as other agents.
+// Uses the unified AgentExecutor.
 func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent, adapters []*tools.Adapter, task string) (string, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(ca.SystemPrompt)
 
-	messages := []llms.MessageContent{
-		{
-			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(systemPrompt)},
-		},
-		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart(task)},
-		},
+	cfg := ExecutorConfig{
+		SystemPrompt: systemPrompt,
+		UserInput:    task,
+		Adapters:     adapters,
+		LLM:          a.LLM,
+		MaxSteps:     15,
+		Publisher:    a.Publisher,
+		AgentName:    ca.DisplayName,
+		StopOnFinish: true,
 	}
-
-	llmTools := make([]llms.Tool, len(adapters))
-	for i, ad := range adapters {
-		llmTools[i] = ad.ToLLMSTool()
-	}
-
-	// Use a reasonable max steps for custom agents
-	maxSteps := 15
-	for i := 0; i < maxSteps; i++ {
-		slog.Debug("CustomAgent calling LLM", "agent", ca.Name, "step", i)
-		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
-		if err != nil {
-			slog.Error("CustomAgent LLM error", "agent", ca.Name, "error", err, "step", i)
-			return "", err
-		}
-
-		msg := resp.Choices[0]
-		if msg.Content != "" {
-			if a.Publisher != nil {
-				a.Publisher.Publish("ai_response", msg.Content, ca.DisplayName)
-			}
-		}
-
-		parts := []llms.ContentPart{llms.TextPart(msg.Content)}
-		for _, tc := range msg.ToolCalls {
-			parts = append(parts, tc)
-		}
-
-		messages = append(messages, llms.MessageContent{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: parts,
-		})
-
-		if len(msg.ToolCalls) == 0 {
-			return msg.Content, nil
-		}
-
-		for _, tc := range msg.ToolCalls {
-			var toolResult string
-			var callErr error
-			found := false
-
-			if a.Publisher != nil {
-				a.Publisher.Publish("tool_call_start", map[string]interface{}{
-					"tool_name":    tc.FunctionCall.Name,
-					"arguments":    tc.FunctionCall.Arguments,
-					"tool_call_id": tc.ID,
-				}, ca.DisplayName)
-			}
-
-			for _, t := range adapters {
-				if t.Name() == tc.FunctionCall.Name {
-					found = true
-					toolResult, callErr = t.Call(ctx, tc.FunctionCall.Arguments)
-					if callErr != nil {
-						toolResult = fmt.Sprintf("Error: %v", callErr)
-					}
-					break
-				}
-			}
-			if !found {
-				toolResult = fmt.Sprintf("Tool %s not found", tc.FunctionCall.Name)
-			}
-
-			if a.Publisher != nil {
-				a.Publisher.Publish("tool_call_result", map[string]interface{}{
-					"tool_name":    tc.FunctionCall.Name,
-					"result":       toolResult,
-					"tool_call_id": tc.ID,
-				}, ca.DisplayName)
-			}
-
-			messages = append(messages, llms.MessageContent{
-				Role: llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{
-					llms.ToolCallResponse{
-						ToolCallID: tc.ID,
-						Name:       tc.FunctionCall.Name,
-						Content:    toolResult,
-					},
-				},
-			})
-
-			if tc.FunctionCall.Name == "finish" {
-				return toolResult, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("CustomAgent %s exceeded max steps", ca.Name)
+	return RunAgentLoop(ctx, cfg)
 }
 
 func convertToolCalls(tcs []llms.ToolCall) []memory.ToolCallData {

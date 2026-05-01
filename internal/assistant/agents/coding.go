@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 
 	"codeactor/internal/assistant/tools"
@@ -97,99 +96,14 @@ func (a *CodingAgent) Name() string {
 }
 
 func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
-
-	messages := []llms.MessageContent{
-		{
-			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(a.GlobalCtx.FormatPrompt(codingPrompt))},
-		},
-		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart(input)},
-		},
+	cfg := ExecutorConfig{
+		SystemPrompt: a.GlobalCtx.FormatPrompt(codingPrompt),
+		UserInput:    input,
+		Adapters:     a.Adapters,
+		LLM:          a.LLM,
+		MaxSteps:     a.maxSteps,
+		Publisher:    a.Publisher,
+		AgentName:    a.Name(),
 	}
-
-	// Convert adapters to llms.Tool
-	llmTools := make([]llms.Tool, len(a.Adapters))
-	for i, ad := range a.Adapters {
-		llmTools[i] = ad.ToLLMSTool()
-	}
-
-	for i := 0; i < a.maxSteps; i++ {
-		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
-		if err != nil {
-			slog.Error("CodingAgent LLM error", "error", err, "step", i)
-			return "", err
-		}
-
-		msg := resp.Choices[0]
-		if msg.Content != "" {
-			if a.Publisher != nil {
-				a.Publisher.Publish("ai_response", msg.Content, a.Name())
-			}
-		}
-
-		parts := []llms.ContentPart{llms.TextPart(msg.Content)}
-		for _, tc := range msg.ToolCalls {
-			parts = append(parts, tc)
-		}
-
-		messages = append(messages, llms.MessageContent{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: parts,
-		})
-
-		if len(msg.ToolCalls) == 0 {
-			return msg.Content, nil
-		}
-
-		for _, tc := range msg.ToolCalls {
-			var toolResult string
-			var err error
-			found := false
-
-			if a.Publisher != nil {
-				a.Publisher.Publish("tool_call_start", map[string]interface{}{
-					"tool_name":    tc.FunctionCall.Name,
-					"arguments":    tc.FunctionCall.Arguments,
-					"tool_call_id": tc.ID,
-				}, a.Name())
-			}
-
-			for _, t := range a.Adapters {
-				if t.Name() == tc.FunctionCall.Name {
-					found = true
-					toolResult, err = t.Call(ctx, tc.FunctionCall.Arguments)
-					if err != nil {
-						toolResult = fmt.Sprintf("Error: %v", err)
-					}
-					break
-				}
-			}
-			if !found {
-				toolResult = fmt.Sprintf("Tool %s not found", tc.FunctionCall.Name)
-			}
-
-			if a.Publisher != nil {
-				a.Publisher.Publish("tool_call_result", map[string]interface{}{
-					"tool_name":    tc.FunctionCall.Name,
-					"result":       toolResult,
-					"tool_call_id": tc.ID,
-				}, a.Name())
-			}
-
-			messages = append(messages, llms.MessageContent{
-				Role: llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{
-					llms.ToolCallResponse{
-						ToolCallID: tc.ID,
-						Name:       tc.FunctionCall.Name,
-						Content:    toolResult,
-					},
-				},
-			})
-		}
-	}
-
-	return "", fmt.Errorf("CodingAgent exceeded max steps")
+	return RunAgentLoop(ctx, cfg)
 }
