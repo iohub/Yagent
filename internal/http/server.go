@@ -6,7 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"codeactor/internal/assistant"
+	"codeactor/internal/app"
+	"codeactor/internal/datamanager"
 	"codeactor/internal/memory"
 
 	"github.com/gin-gonic/gin"
@@ -17,14 +18,14 @@ import (
 // Server HTTP服务器结构
 type Server struct {
 	taskManager     *TaskManager
-	codingAssistant *assistant.CodingAssistant
-	dataManager     *assistant.DataManager
+	codingAssistant *app.CodingAssistant
+	dataManager     *datamanager.DataManager
 	melody          *melody.Melody
 	router          *gin.Engine
 }
 
 // NewServer 创建新的HTTP服务器
-func NewServer(codingAssistant *assistant.CodingAssistant) *Server {
+func NewServer(codingAssistant *app.CodingAssistant) *Server {
 	// 创建 WebSocket 管理器
 	m := melody.New()
 	m.Config.MessageBufferSize = 256
@@ -33,7 +34,7 @@ func NewServer(codingAssistant *assistant.CodingAssistant) *Server {
 	taskManager := NewTaskManager(m)
 
 	// 初始化数据管理器
-	dataManager, err := assistant.NewDataManager()
+	dataManager, err := datamanager.NewDataManager()
 	if err != nil {
 		slog.Error("Failed to initialize DataManager", "error", err)
 	}

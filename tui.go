@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/assistant"
+	"codeactor/internal/app"
+	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
 	"codeactor/internal/memory"
 	"codeactor/pkg/messaging"
@@ -60,6 +61,7 @@ type logEntry struct {
 	from      string
 	content   string
 	toolName  string
+	rendered  string // cached rendered output (glamour or plain), cleared on resize
 }
 
 // taskEventMsg carries a MessageEvent from the task execution goroutine to the tea program.
@@ -91,9 +93,9 @@ func (c *tuiEventConsumer) Consume(event *messaging.MessageEvent) error {
 // TUI Model
 type model struct {
 	// External dependencies
-	assistant   *assistant.CodingAssistant
+	assistant   *app.CodingAssistant
 	taskManager *http.TaskManager
-	dataManager *assistant.DataManager
+	dataManager *datamanager.DataManager
 
 	// Input
 	input textarea.Model
@@ -101,6 +103,7 @@ type model struct {
 	// Message log
 	logEntries      []logEntry
 	viewport        viewport.Model
+	contentCache    *strings.Builder // incremental viewport content cache (pointer avoids copy panic)
 	glamourRenderer *glamour.TermRenderer
 	useDarkStyle    bool
 
@@ -120,14 +123,15 @@ type model struct {
 
 	// History panel state
 	showHistoryPanel     bool
-	historyItems         []assistant.TaskHistoryItem
-	filteredItems        []assistant.TaskHistoryItem
+	historyItems         []datamanager.TaskHistoryItem
+	filteredItems        []datamanager.TaskHistoryItem
 	historyIndex         int
+	historyScrollStart   int // first visible item index (for stable scroll)
 	historyFilter        string
 	historyConfirmDelete bool
 }
 
-func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm *http.TaskManager, dm *assistant.DataManager, useDarkStyle bool) model {
+func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
 	ti := textarea.New()
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
@@ -186,6 +190,7 @@ func initialModel(preloadedTaskContent string, ca *assistant.CodingAssistant, tm
 		eventCh:         make(chan *messaging.MessageEvent, 1000),
 		logEntries:      make([]logEntry, 0),
 		viewport:        vp,
+		contentCache:    &strings.Builder{},
 		glamourRenderer: glamourRenderer,
 		useDarkStyle:    useDarkStyle,
 	}
@@ -211,7 +216,7 @@ func (m *model) toggleLanguage() {
 }
 
 func (m *model) openHistoryPanel() {
-	dm, err := assistant.NewDataManager()
+	dm, err := datamanager.NewDataManager()
 	if err == nil {
 		items, err2 := dm.ListTaskHistory(50)
 		if err2 == nil {
@@ -220,6 +225,7 @@ func (m *model) openHistoryPanel() {
 		}
 	}
 	m.historyIndex = 0
+		m.historyScrollStart = 0
 	m.historyFilter = ""
 	m.historyConfirmDelete = false
 	m.showHistoryPanel = true
@@ -236,10 +242,11 @@ func (m *model) applyHistoryFilter() {
 	if query == "" {
 		m.filteredItems = m.historyItems
 		m.historyIndex = 0
+			m.historyScrollStart = 0
 		return
 	}
 	qLower := strings.ToLower(query)
-	filtered := make([]assistant.TaskHistoryItem, 0, len(m.historyItems))
+	filtered := make([]datamanager.TaskHistoryItem, 0, len(m.historyItems))
 	for _, it := range m.historyItems {
 		txt := strings.ToLower(it.Title + " " + it.TaskID)
 		if strings.Contains(txt, qLower) {
@@ -250,6 +257,7 @@ func (m *model) applyHistoryFilter() {
 	if m.historyIndex >= len(m.filteredItems) {
 		m.historyIndex = 0
 	}
+			m.historyScrollStart = 0
 }
 
 func (m *model) continueConversation() tea.Cmd {
@@ -294,7 +302,7 @@ func (m *model) continueConversation() tea.Cmd {
 		eventType: "status",
 		content:   fmt.Sprintf("Loaded conversation: %s (%d messages)", selected.Title, selected.MessageCount),
 	})
-	m.rebuildViewportContent()
+	m.buildViewportContent()
 
 	return nil
 }
@@ -342,7 +350,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termHeight = msg.Height
 		m.input.SetWidth(m.computeFieldWidth())
 		m.resizeViewport()
-		m.rebuildViewportContent()
+		m.invalidateRenderedCache()
+		m.buildViewportContent()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -381,7 +390,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "ctrl+f":
-				pageSize := m.termHeight - 10
+				pageSize := m.termHeight - 8
 				if pageSize < 1 {
 					pageSize = 1
 				}
@@ -392,7 +401,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "ctrl+b":
-				pageSize := m.termHeight - 10
+				pageSize := m.termHeight - 8
 				if pageSize < 1 {
 					pageSize = 1
 				}
@@ -444,7 +453,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					eventType: "status",
 					content:   "Task cancelled by user",
 				})
-				m.rebuildViewportContent()
+				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			}
 			return m, nil
 
@@ -474,11 +483,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "ctrl+f":
-			m.viewport.ViewDown()
+			m.viewport.PageDown()
 			return m, nil
 
 		case "ctrl+b":
-			m.viewport.ViewUp()
+			m.viewport.PageUp()
 			return m, nil
 
 		default:
@@ -494,7 +503,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskEventMsg:
 		entry := formatEventAsEntry(msg.event)
 		m.logEntries = append(m.logEntries, entry)
-		m.rebuildViewportContent()
+		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 		return m, listenForEvents(m.eventCh)
 
 	case taskCompleteMsg:
@@ -507,8 +516,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				eventType: "error",
 				content:   msg.err.Error(),
 			})
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 		}
-		m.rebuildViewportContent()
 		return m, nil
 	}
 
@@ -651,31 +660,74 @@ func (m *model) resizeViewport() {
 	}
 }
 
-// rebuildViewportContent rebuilds the full viewport content from logEntries,
-// using glamour for ai_response entries and plain formatting for others.
-func (m *model) rebuildViewportContent() {
-	var b strings.Builder
+
+// invalidateRenderedCache clears cached rendered output on all log entries.
+// Called on terminal resize since glamour rendering depends on viewport width.
+func (m *model) invalidateRenderedCache() {
+	for i := range m.logEntries {
+		m.logEntries[i].rendered = ""
+	}
+}
+
+// buildViewportContent rebuilds the full viewport content from scratch.
+// Used for initial load, terminal resize, or conversation switch.
+func (m *model) buildViewportContent() {
+	m.contentCache.Reset()
 
 	// Welcome panel as scrollable content — scrolls together with messages
-	b.WriteString(m.renderWelcomePanel())
-	b.WriteString("\n")
+	m.contentCache.WriteString(m.renderWelcomePanel())
+	m.contentCache.WriteString("\n")
 
-	for _, entry := range m.logEntries {
-		if entry.eventType == "ai_response" && m.glamourRenderer != nil {
-			rendered, err := m.glamourRenderer.Render(entry.content)
-			if err == nil {
-				b.WriteString(rendered)
-				b.WriteString("\n")
-				continue
-			}
-		}
-		// Fallback to simple text rendering
-		b.WriteString(formatLogEntry(entry, m.viewport.Width))
-		b.WriteString("\n")
+	for i := range m.logEntries {
+		entry := &m.logEntries[i]
+		m.renderEntryTo(entry, m.contentCache)
+		m.contentCache.WriteString("\n")
 	}
 
-	m.viewport.SetContent(b.String())
+	m.viewport.SetContent(m.contentCache.String())
 	m.viewport.GotoBottom()
+}
+
+// renderEntryTo renders a single log entry into the builder, caching the result
+// in the entry for reuse. Uses glamour for ai_response, plain formatting otherwise.
+func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
+	// Use cached rendered content if available
+	if entry.rendered != "" {
+		b.WriteString(entry.rendered)
+		return
+	}
+
+	// Capture the start position to cache the output
+	start := b.Len()
+
+	if entry.eventType == "ai_response" && m.glamourRenderer != nil {
+		rendered, err := m.glamourRenderer.Render(entry.content)
+		if err == nil {
+			b.WriteString(rendered)
+			entry.rendered = b.String()[start:]
+			return
+		}
+	}
+	// Fallback to simple text rendering
+	formatted := formatLogEntry(*entry, m.viewport.Width)
+	b.WriteString(formatted)
+	entry.rendered = b.String()[start:]
+}
+
+// appendLogEntry renders a single new entry and appends it incrementally to the viewport.
+// Uses scroll lock: only auto-scrolls to bottom if the user was already at the bottom.
+func (m *model) appendLogEntry(entry *logEntry) {
+	wasAtBottom := m.viewport.AtBottom()
+
+	if m.contentCache.Len() > 0 {
+		m.contentCache.WriteString("\n")
+	}
+	m.renderEntryTo(entry, m.contentCache)
+
+	m.viewport.SetContent(m.contentCache.String())
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 // formatEventAsEntry converts a MessageEvent to a logEntry.
@@ -813,7 +865,7 @@ func (m *model) submitTask() tea.Cmd {
 		eventType: "status",
 		content:   "Task submitted: " + taskDesc,
 	})
-	m.rebuildViewportContent()
+	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 
 	return tea.Batch(
 		executeTaskCmd(taskDesc, task, m.assistant, m.taskManager, m.dataManager, m.eventCh),
@@ -832,7 +884,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 		eventType: "status",
 		content:   message,
 	})
-	m.rebuildViewportContent()
+	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 
 	return tea.Batch(
 		executeFollowUpCmd(message, m.currentTask, m.assistant, m.dataManager, m.eventCh),
@@ -844,9 +896,9 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 func executeTaskCmd(
 	taskDesc string,
 	task *http.Task,
-	ca *assistant.CodingAssistant,
+	ca *app.CodingAssistant,
 	tm *http.TaskManager,
-	dm *assistant.DataManager,
+	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -858,11 +910,11 @@ func executeTaskCmd(
 
 		ca.IntegrateMessaging(dispatcher)
 
-		request := assistant.NewTaskRequest(task.Context, task.ID).
+		request := app.NewTaskRequest(task.Context, task.ID).
 			WithProjectDir(task.ProjectDir).
 			WithTaskDesc(taskDesc).
 			WithMemory(task.Memory).
-			WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
+			WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
 		result, err := ca.ProcessCodingTaskWithCallback(request)
 
@@ -886,8 +938,8 @@ func executeTaskCmd(
 func executeFollowUpCmd(
 	message string,
 	task *http.Task,
-	ca *assistant.CodingAssistant,
-	dm *assistant.DataManager,
+	ca *app.CodingAssistant,
+	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -899,11 +951,11 @@ func executeFollowUpCmd(
 
 		ca.IntegrateMessaging(dispatcher)
 
-		request := assistant.NewTaskRequest(task.Context, task.ID).
+		request := app.NewTaskRequest(task.Context, task.ID).
 			WithProjectDir(task.ProjectDir).
 			WithUserMessage(message).
 			WithMemory(task.Memory).
-			WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
+			WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
 		result, err := ca.ProcessConversation(request)
 
@@ -939,7 +991,7 @@ func validateInputs(projectDir, taskDesc string) (bool, string) {
 }
 
 // startTUI starts the Bubble Tea TUI with the given dependencies.
-func startTUI(taskFilePath string, ca *assistant.CodingAssistant, tm *http.TaskManager, dm *assistant.DataManager) {
+func startTUI(taskFilePath string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager) {
 	langManager = NewLanguageManager()
 
 	taskContent := ""
@@ -1005,7 +1057,7 @@ func (m model) computeFieldWidth() int {
 	return avail
 }
 
-// renderHistoryPanel renders the full-height history panel replacing the viewport area.
+// renderHistoryPanel renders the history panel with single-line items and stable scrolling.
 func (m model) renderHistoryPanel() string {
 	panelWidth := m.termWidth - 4
 	if panelWidth < 40 {
@@ -1014,22 +1066,23 @@ func (m model) renderHistoryPanel() string {
 
 	var b strings.Builder
 
-	// ── Header: title + filter ──
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("◇ " + langManager.GetText("HistoryTitle"))
+	// ── Header: title + filter input ──
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("◆ " + langManager.GetText("HistoryTitle"))
 
-	filterText := m.historyFilter
-	filterDisplay := ""
-	if filterText != "" {
-		filterDisplay = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(filterText)
+	var filterDisplay string
+	if m.historyFilter != "" {
+		cursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("▌")
+		filterDisplay = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(m.historyFilter) + cursor
 	} else {
 		filterDisplay = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Render(langManager.GetText("HistoryFilterPlaceholder"))
 	}
+	filterPart := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("│ ") + filterDisplay
 
-	headerLeft := lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", filterDisplay)
 	counter := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Render(
 		fmt.Sprintf("%d/%d", m.historyIndex+1, len(m.filteredItems)),
 	)
-	headerText := lipgloss.JoinHorizontal(lipgloss.Center, headerLeft, "  ", counter)
+
+	headerText := title + "  " + filterPart + "  " + counter
 
 	headerStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), false, false, true, false).
@@ -1040,10 +1093,10 @@ func (m model) renderHistoryPanel() string {
 	b.WriteString(headerStyle.Render(headerText))
 	b.WriteString("\n")
 
-	// ── Body: item list ──
-	bodyHeight := m.termHeight - 10 // header(~3) + footer input area(~7)
-	if bodyHeight < 5 {
-		bodyHeight = 5
+	// ── Body: single-line items ──
+	bodyHeight := m.termHeight - 8 // header(~2) + footer(~6)
+	if bodyHeight < 4 {
+		bodyHeight = 4
 	}
 
 	if len(m.filteredItems) == 0 {
@@ -1054,153 +1107,123 @@ func (m model) renderHistoryPanel() string {
 			Render(langManager.GetText("HistoryEmpty"))
 		b.WriteString(empty)
 	} else {
-		// Calculate visible window
-		start := m.historyIndex - bodyHeight/2
-		if start < 0 {
-			start = 0
+		// Edge-triggered scroll: update scrollStart only when selection leaves visible area
+		topMargin := 2
+		btmMargin := 2
+		if bodyHeight < topMargin+btmMargin+1 {
+			topMargin = 1
+			btmMargin = 1
 		}
-		end := start + bodyHeight
+		scrollStart := m.historyScrollStart
+		if m.historyIndex < scrollStart+topMargin {
+			scrollStart = m.historyIndex - topMargin
+		} else if m.historyIndex >= scrollStart+bodyHeight-btmMargin {
+			scrollStart = m.historyIndex - bodyHeight + btmMargin + 1
+		}
+		if scrollStart < 0 {
+			scrollStart = 0
+		}
+		maxStart := len(m.filteredItems) - bodyHeight
+		if maxStart < 0 {
+			maxStart = 0
+		}
+		if scrollStart > maxStart {
+			scrollStart = maxStart
+		}
+		m.historyScrollStart = scrollStart
+
+		end := scrollStart + bodyHeight
 		if end > len(m.filteredItems) {
 			end = len(m.filteredItems)
-			start = end - bodyHeight
-			if start < 0 {
-				start = 0
-			}
 		}
 
-		// If there are items before visible window, show indicator
-		if start > 0 {
-			indicator := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Width(panelWidth).Padding(0, 2).Render(fmt.Sprintf(langManager.GetText("HistoryMoreAbove"), start))
+		// "more above" indicator
+		if scrollStart > 0 {
+			indicator := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).
+				Width(panelWidth).Padding(0, 2).
+				Render(fmt.Sprintf("▲ %s", fmt.Sprintf(langManager.GetText("HistoryMoreAbove"), scrollStart)))
 			b.WriteString(indicator)
 			b.WriteString("\n")
 		}
 
-		innerWidth := panelWidth - 4 // indent
+		// Compute title area width: date(11) + indent(2) + spacer(2) + cursor(2 for selected)
+		const dateWidth = 11
+		const indentWidth = 2
+		const spacerWidth = 2
+		titleMaxWidth := panelWidth - dateWidth - indentWidth - spacerWidth - 2
+		if titleMaxWidth < 20 {
+			titleMaxWidth = 20
+		}
 
-		for i := start; i < end; i++ {
+		dateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+		selStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("39")).
+			Foreground(lipgloss.Color("0")).
+			Width(panelWidth - 2).
+			Padding(0, 1)
+
+		normalStyle := lipgloss.NewStyle().
+			Width(panelWidth - 2).
+			Padding(0, 1)
+
+		for i := scrollStart; i < end; i++ {
 			item := m.filteredItems[i]
 			selected := i == m.historyIndex
 
-			// Format date and relative time
-			dateStr := item.CreatedAt.Format("01-02 15:04")
-			relTime := relativeTimeAgo(item.UpdatedAt)
-			msgCount := fmt.Sprintf("%d msg", item.MessageCount)
-			if item.MessageCount > 1 {
-				msgCount += "s"
-			}
-
-			// Truncate title
+			// Truncate title to fit
 			title := item.Title
-			maxTitle := innerWidth - 16
-			if lipgloss.Width(title) > maxTitle {
-				runes := []rune(title)
-				if len(runes) > maxTitle {
-					title = string(runes[:maxTitle-1]) + "…"
-				}
+			titleRunes := []rune(title)
+			if len(titleRunes) > titleMaxWidth {
+				title = string(titleRunes[:titleMaxWidth-1]) + "…"
 			}
 
-			datePart := lipgloss.NewStyle().Width(12).Render(dateStr)
-			metaLine := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Render("  " + msgCount + " · " + relTime)
+			dateStr := item.CreatedAt.Format("01-02 15:04")
 
-			var line string
 			if selected {
-				selBg := lipgloss.NewStyle().
-					Background(lipgloss.Color("39")).
-					Foreground(lipgloss.Color("0")).
-					Width(innerWidth).
-					Padding(0, 1)
-
-				selDate := lipgloss.NewStyle().
-					Background(lipgloss.Color("39")).
-					Foreground(lipgloss.Color("0")).
-					Width(12).
-					Render(dateStr)
-
-				selMeta := lipgloss.NewStyle().
-					Background(lipgloss.Color("39")).
-					Foreground(lipgloss.Color("0")).
-					Render("  " + msgCount + " · " + relTime)
-
-				line = selBg.Render(selDate + title) + "\n" +
-					lipgloss.NewStyle().Background(lipgloss.Color("39")).Width(innerWidth).Padding(0, 1).Render(selMeta)
+				cursor := "▐ "
+				line := selStyle.Render(cursor + dateStyle.Foreground(lipgloss.Color("0")).Render(dateStr) + "  " + title)
+				b.WriteString(line)
 			} else {
-				dimmer := lipgloss.NewStyle().Width(innerWidth).Padding(0, 1)
-				line = dimmer.Render(datePart + lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(title)) +
-					"\n" + dimmer.Render(metaLine)
+				line := normalStyle.Render("  " + dateStyle.Render(dateStr) + "  " + titleStyle.Render(title))
+				b.WriteString(line)
 			}
-
-			b.WriteString(line)
 			b.WriteString("\n")
 		}
 
-		// If there are items after visible window, show indicator
+		// "more below" indicator
 		if end < len(m.filteredItems) {
 			remaining := len(m.filteredItems) - end
-			indicator := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Width(panelWidth).Padding(0, 2).Render(fmt.Sprintf(langManager.GetText("HistoryMoreBelow"), remaining))
+			indicator := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).
+				Width(panelWidth).Padding(0, 2).
+				Render(fmt.Sprintf("▼ %s", fmt.Sprintf(langManager.GetText("HistoryMoreBelow"), remaining)))
 			b.WriteString(indicator)
 			b.WriteString("\n")
 		}
 	}
 
 	// ── Footer: key hints ──
-	var hintLeft string
+	var hintText string
 	if m.historyConfirmDelete {
-		hintLeft = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true).Render(langManager.GetText("HistoryConfirmDelete"))
+		hintText = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true).Render(langManager.GetText("HistoryConfirmDelete"))
 	} else {
-		hintLeft = lipgloss.JoinHorizontal(lipgloss.Top,
+		hints := []string{
 			lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render(langManager.GetText("HistoryKeyContinue")),
-			"  ",
 			lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("245")).Render(langManager.GetText("HistoryKeyDelete")),
-			"  ",
 			lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("245")).Render(langManager.GetText("HistoryKeyBack")),
-			"  ",
 			lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("245")).Render(langManager.GetText("HistoryKeyClearFilter")),
-		)
+		}
+		hintText = strings.Join(hints, "  ")
 	}
+
 	footerStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), true, false, false, false).
 		BorderForeground(lipgloss.Color("237")).
 		Width(panelWidth).
 		Padding(0, 1)
 
-	b.WriteString(footerStyle.Render(hintLeft))
+	b.WriteString(footerStyle.Render(hintText))
 
-	return lipgloss.NewStyle().Width(panelWidth).Render(b.String())
+	return b.String()
 }
 
-// relativeTimeAgo returns a human-readable relative time string.
-func relativeTimeAgo(t time.Time) string {
-	d := time.Since(t)
-	if d < time.Minute {
-		return "just now"
-	}
-	if d < time.Hour {
-		m := int(d.Minutes())
-		if m == 1 {
-			return "1m ago"
-		}
-		return fmt.Sprintf("%dm ago", m)
-	}
-	if d < 24*time.Hour {
-		h := int(d.Hours())
-		if h == 1 {
-			return "1h ago"
-		}
-		return fmt.Sprintf("%dh ago", h)
-	}
-	days := int(d.Hours() / 24)
-	if days == 1 {
-		return "yesterday"
-	}
-	if days < 30 {
-		return fmt.Sprintf("%dd ago", days)
-	}
-	return t.Format("2006-01-02")
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}

@@ -7,7 +7,8 @@ import (
 	"os"
 	"time"
 
-	"codeactor/internal/assistant"
+	"codeactor/internal/app"
+	"codeactor/internal/datamanager"
 	"codeactor/internal/memory"
 	messaging "codeactor/pkg/messaging"
 	consumers "codeactor/pkg/messaging/consumers"
@@ -19,7 +20,7 @@ import (
 )
 
 // HandleWebSocket 设置WebSocket处理器
-func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, dataManager *assistant.DataManager) {
+func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant *app.CodingAssistant, dataManager *datamanager.DataManager) {
 	m.HandleConnect(func(s *melody.Session) {
 		slog.Info("WebSocket client connected")
 		// 发送连接确认消息
@@ -60,7 +61,7 @@ func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant
 	})
 }
 
-func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, dataManager *assistant.DataManager) {
+func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *app.CodingAssistant, dataManager *datamanager.DataManager) {
 	var taskData struct {
 		ProjectDir string `json:"project_dir"`
 		TaskDesc   string `json:"task_desc"`
@@ -99,7 +100,7 @@ func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskMana
 	go ExecuteTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, codingAssistant, dataManager)
 }
 
-func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *assistant.CodingAssistant, dataManager *assistant.DataManager) {
+func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *app.CodingAssistant, dataManager *datamanager.DataManager) {
 	var chatData struct {
 		TaskID     string `json:"task_id"`
 		Message    string `json:"message"`
@@ -216,11 +217,11 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 		codingAssistant.IntegrateMessaging(dispatcher)
 
 		// 使用新的 TaskRequest 结构调用重构后的方法
-		request := assistant.NewTaskRequest(ctx, chatData.TaskID).
+		request := app.NewTaskRequest(ctx, chatData.TaskID).
 			WithProjectDir(task.ProjectDir).
 			WithUserMessage(chatData.Message).
 			WithMemory(task.Memory).
-			WithMessagePublisher(assistant.NewMessagePublisher(dispatcher))
+			WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
 		// 调用 AI 助手处理对话
 		result, err := codingAssistant.ProcessConversation(request)

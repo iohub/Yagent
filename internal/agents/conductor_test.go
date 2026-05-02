@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"codeactor/internal/assistant/tools"
+	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/memory"
 
@@ -63,13 +63,13 @@ func newTestConductorAgent(t *testing.T, workDir string) *ConductorAgent {
 }
 
 // makeMetaOutput builds a valid Meta-Agent JSON output string.
-func makeMetaOutput(agentName, systemPrompt string, toolsUsed []string, result map[string]interface{}) string {
+func makeMetaOutput(agentName, systemPrompt string, toolsUsed []string) string {
 	obj := map[string]interface{}{
 		"thinking":     "Designing agent for the task.",
 		"agent_name":   agentName,
 		"agent_design": systemPrompt,
 		"tools_used":   toolsUsed,
-		"result":       result,
+			"task_for_agent": "Clean task for the agent to execute.",
 	}
 	b, _ := json.MarshalIndent(obj, "", "  ")
 	return string(b)
@@ -119,7 +119,7 @@ func TestExtractJSONObject_NoBraces(t *testing.T) {
 }
 
 func TestExtractJSONObject_MetaOutput(t *testing.T) {
-	output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file"}, map[string]interface{}{"status": "ok"})
+output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file"})
 	got := extractJSONObject(output)
 	if got == "" {
 		t.Fatal("extractJSONObject returned empty for valid Meta-Agent output")
@@ -167,9 +167,7 @@ func TestToSnakeCase(t *testing.T) {
 // ─── parseMetaAgentOutput Tests ──────────────────────────────────────────────
 
 func TestParseMetaAgentOutput_Valid(t *testing.T) {
-	output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file", "search_by_regex"}, map[string]interface{}{
-		"findings": "no issues found",
-	})
+	output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file", "search_by_regex"})
 
 	sysPrompt, result, err := parseMetaAgentOutput(output)
 	if err != nil {
@@ -184,11 +182,8 @@ func TestParseMetaAgentOutput_Valid(t *testing.T) {
 	if len(result.ToolsUsed) != 2 {
 		t.Errorf("tools count = %d, want 2", len(result.ToolsUsed))
 	}
-	if result.Result["findings"] != "no issues found" {
-		t.Errorf("result findings = %v, want 'no issues found'", result.Result["findings"])
-	}
-}
 
+}
 func TestParseMetaAgentOutput_MissingJSON(t *testing.T) {
 	output := "Just some plain text without JSON."
 	_, _, err := parseMetaAgentOutput(output)
@@ -548,14 +543,10 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 		"Security Auditor",
 		"You are a Security Auditor. Review code for vulnerabilities. Use tools to search and read files.",
 		[]string{"search_by_regex", "read_file", "thinking", "finish"},
-		map[string]interface{}{
-			"findings":      "No critical vulnerabilities found",
-			"files_checked": "3",
-		},
 	)
 
 	// MetaAgent that returns the pre-defined output (single LLM call, no tool calls)
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 5)
+	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput))
 
 	// ConductorAgent
 	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil, 3)
@@ -631,10 +622,9 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 		"Tester",
 		"You are a tester.",
 		[]string{"read_file"},
-		map[string]interface{}{"status": "done"},
 	)
 
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 5)
+	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput))
 	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil, 3)
 
 	// Call delegate_meta twice with the same agent design
@@ -674,7 +664,7 @@ func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
 
 	// Meta-Agent returns malformed output (no execution_result block)
 	malformedOutput := "Just some plain text without structured blocks."
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(malformedOutput), 5)
+	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(malformedOutput))
 	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil, 3)
 
 	var delegateMeta *tools.Adapter
@@ -716,9 +706,8 @@ func TestDelegateMeta_EmptyAgentName_NoRegistration(t *testing.T) {
 		"", // empty agent name
 		"Some system prompt",
 		[]string{"read_file"},
-		map[string]interface{}{"status": "done"},
 	)
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 5)
+	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput))
 	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil, 3)
 
 	var delegateMeta *tools.Adapter
@@ -748,7 +737,7 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 	// Meta-Agent output with missing agent_design field (all retries return same malformed output)
 	output := `{"thinking": "designing...", "agent_name": "Test Agent", "tools_used": ["read_file"], "result": {"key": "value"}}`
 
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(output), 5)
+	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(output))
 	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil, 3)
 
 	var delegateMeta *tools.Adapter

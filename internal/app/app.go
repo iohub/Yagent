@@ -1,4 +1,4 @@
-package assistant
+package app
 
 import (
 	"context"
@@ -7,10 +7,11 @@ import (
 	"strings"
 	"sync"
 
-	"codeactor/internal/assistant/agents"
-	"codeactor/internal/assistant/tools"
+	"codeactor/internal/agents"
+	"codeactor/internal/tools"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
+	"codeactor/internal/llm"
 	"codeactor/internal/memory"
 	"codeactor/pkg/messaging"
 
@@ -32,14 +33,13 @@ type CodingAssistant struct {
 }
 
 // NewCodingAssistant creates a new CodingAssistant.
-func NewCodingAssistant(client *Client) (*CodingAssistant, error) {
+func NewCodingAssistant(client *llm.Client) (*CodingAssistant, error) {
 	ca := &CodingAssistant{
 		userResponseChannels: make(map[string]chan string),
 		logger:               slog.Default().With("component", "coding_assistant"),
-		llm:                  client.llm,
-		config:               client.config,
+		llm:                  client.LLM,
+		config:               client.Config,
 	}
-	client.assistant = ca
 	return ca, nil
 }
 
@@ -96,11 +96,6 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		}
 	}
 
-	metaMaxSteps := 30
-	if ca.config != nil && ca.config.Agent.MetaMaxSteps > 0 {
-		metaMaxSteps = ca.config.Agent.MetaMaxSteps
-	}
-
 	metaRetryCount := 5 // default
 	if ca.config != nil && ca.config.Agent.MetaRetryCount > 0 {
 		metaRetryCount = ca.config.Agent.MetaRetryCount
@@ -112,7 +107,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, llm, publisher, repoMaxSteps)
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, codingMaxSteps)
 	chatAgent := agents.NewChatAgent(ca.globalCtx, llm)
-	metaAgent := agents.NewMetaAgent(ca.globalCtx, llm, metaMaxSteps)
+	metaAgent := agents.NewMetaAgent(ca.globalCtx, llm)
 	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, chatAgent, metaAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
 }
 
@@ -128,7 +123,7 @@ type TaskRequest struct {
 	taskDesc    string
 	memory      *memory.ConversationMemory
 	wsCallback  func(string, string)
-	publisher   *MessagePublisher
+	publisher   *messaging.MessagePublisher
 	userMessage string
 }
 
@@ -159,7 +154,7 @@ func (r *TaskRequest) WithWSCallback(cb func(string, string)) *TaskRequest {
 	return r
 }
 
-func (r *TaskRequest) WithMessagePublisher(p *MessagePublisher) *TaskRequest {
+func (r *TaskRequest) WithMessagePublisher(p *messaging.MessagePublisher) *TaskRequest {
 	r.publisher = p
 	return r
 }
