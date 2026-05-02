@@ -163,11 +163,10 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 			}
 		}
 
-		// 截断标题以适配TUI
-		if runeCount := len([]rune(title)); runeCount > 120 {
-			// 简单截断避免打断多字节
+		// 标题只展示用户第一条消息的前30个字符
+		if runeCount := len([]rune(title)); runeCount > 30 {
 			tr := []rune(title)
-			title = string(tr[:120]) + "…"
+			title = string(tr[:30]) + "…"
 		}
 		// 任务ID为文件名去后缀
 		taskID := entry.Name()[:len(entry.Name())-5]
