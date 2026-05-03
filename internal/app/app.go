@@ -68,6 +68,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
 		ThinkingTool: tools.NewThinkingTool(),
 		MicroAgentTool: tools.NewMicroAgentTool(llm),
+		ImplPlanTool:   tools.NewImplPlanTool(),
 		FlowOps:           tools.NewFlowControlTool(workDir),
 		RepoOps:           tools.NewRepoOperationsTool("http://127.0.0.1:12800", workDir),
 		UserConfirmMgr:    userConfirmMgr,
