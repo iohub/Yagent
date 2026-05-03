@@ -17,6 +17,7 @@ type Adapter struct {
 	description string
 	fn          ToolFunc
 	schema      map[string]interface{}
+	guard       *WorkspaceGuard
 }
 
 func NewAdapter(name, description string, fn ToolFunc) *Adapter {
@@ -55,11 +56,26 @@ func (a *Adapter) Description() string {
 	return a.description
 }
 
+// SetGuard sets the workspace guard for this adapter.
+func (a *Adapter) SetGuard(guard *WorkspaceGuard) {
+	a.guard = guard
+}
+
 func (a *Adapter) Call(ctx context.Context, input string) (string, error) {
 	var params map[string]interface{}
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		// Try to treat as single "input" param if JSON fails
 		params = map[string]interface{}{"input": input}
+	}
+
+	// Check workspace guard before executing dangerous operations
+	if a.guard != nil {
+		needsAuth, reason := a.guard.Check(a.name, params)
+		if needsAuth {
+			if err := a.guard.RequestAuth(ctx, a.name, reason); err != nil {
+				return "", err
+			}
+		}
 	}
 
 	result, err := a.fn(ctx, params)
@@ -72,6 +88,13 @@ func (a *Adapter) Call(ctx context.Context, input string) (string, error) {
 		return "", fmt.Errorf("failed to marshal result: %v", err)
 	}
 	return string(resBytes), nil
+}
+
+// SetGuardOnAdapters sets the workspace guard on a slice of adapters.
+func SetGuardOnAdapters(adapters []*Adapter, guard *WorkspaceGuard) {
+	for _, ad := range adapters {
+		ad.SetGuard(guard)
+	}
 }
 
 // ToLLMSTool converts the adapter to an llms.Tool definition

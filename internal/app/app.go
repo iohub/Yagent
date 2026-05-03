@@ -78,6 +78,10 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	// Wire up UserConfirmManager: register as consumer and set publisher
 	userConfirmMgr.SetPublisher(publisher)
 	gctx.FlowOps.UserConfirmMgr = userConfirmMgr
+
+	// Create workspace guard for authorizing dangerous operations
+	guard := tools.NewWorkspaceGuard(workDir, userConfirmMgr)
+	gctx.Guard = guard
 	if ca.dispatcher != nil {
 		ca.dispatcher.RegisterConsumer(userConfirmMgr)
 	}

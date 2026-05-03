@@ -249,6 +249,10 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 		delegateAdapters = append(delegateAdapters, delegateMeta)
 	}
 
+	// Set workspace guard on all adapters (delegate adapters are not dangerous tools)
+	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
+	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
+
 	self = &ConductorAgent{
 		BaseAgent:      BaseAgent{LLM: llm, Publisher: globalCtx.Publisher},
 		RepoAgent:      repo,
@@ -441,6 +445,9 @@ func (a *ConductorAgent) registerCustomAgent(ca *CustomAgent) {
 		adapter := tools.NewAdapter("agent_exit", finishDef.Description, fn).WithSchema(finishDef.Parameters)
 		customAdapters = append(customAdapters, adapter)
 	}
+
+	// Set workspace guard on the custom agent's adapters
+	tools.SetGuardOnAdapters(customAdapters, a.GlobalCtx.Guard)
 
 	// Create the delegate tool that executes the custom agent
 	// Capture ca and customAdapters in closure

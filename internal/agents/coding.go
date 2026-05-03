@@ -83,6 +83,7 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
 		adapters = append(adapters, adapter)
 	}
+	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 
 	return &CodingAgent{
 		BaseAgent: BaseAgent{

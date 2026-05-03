@@ -50,6 +50,7 @@ func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) *C
 		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
 		adapters = append(adapters, adapter)
 	}
+	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 
 	return &ChatAgent{
 		BaseAgent: BaseAgent{
