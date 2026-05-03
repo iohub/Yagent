@@ -302,6 +302,8 @@ func (a *ConductorAgent) getToolFunc(name string) tools.ToolFunc {
 			inputBytes, _ := json.Marshal(params)
 			return a.GlobalCtx.ThinkingTool.Call(ctx, string(inputBytes))
 		}
+	case "micro_agent":
+		return a.GlobalCtx.MicroAgentTool.Execute
 	case "agent_exit":
 		return a.GlobalCtx.FlowOps.ExecuteAgentExit
 	case "ask_user_for_help":

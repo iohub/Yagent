@@ -67,6 +67,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		SysOps:       tools.NewSystemOperationsTool(workDir),
 		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
 		ThinkingTool: tools.NewThinkingTool(),
+		MicroAgentTool: tools.NewMicroAgentTool(llm),
 		FlowOps:           tools.NewFlowControlTool(workDir),
 		RepoOps:           tools.NewRepoOperationsTool("http://127.0.0.1:12800", workDir),
 		UserConfirmMgr:    userConfirmMgr,
@@ -82,6 +83,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	// Get max steps from config, default to 10 if not set
 	repoMaxSteps := 20
 	codingMaxSteps := 30
+	chatMaxSteps := 10
 	conductorMaxSteps := 20
 
 	if ca.config != nil {
@@ -91,11 +93,13 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		if ca.config.Agent.CodingMaxSteps > 0 {
 			codingMaxSteps = ca.config.Agent.CodingMaxSteps
 		}
+		if ca.config.Agent.ChatMaxSteps > 0 {
+			chatMaxSteps = ca.config.Agent.ChatMaxSteps
+		}
 		if ca.config.Agent.ConductorMaxSteps > 0 {
 			conductorMaxSteps = ca.config.Agent.ConductorMaxSteps
 		}
 	}
-
 	metaRetryCount := 5 // default
 	if ca.config != nil && ca.config.Agent.MetaRetryCount > 0 {
 		metaRetryCount = ca.config.Agent.MetaRetryCount
@@ -106,7 +110,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, llm, publisher, repoMaxSteps)
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, codingMaxSteps)
-	chatAgent := agents.NewChatAgent(ca.globalCtx, llm)
+	chatAgent := agents.NewChatAgent(ca.globalCtx, llm, chatMaxSteps)
 	metaAgent := agents.NewMetaAgent(ca.globalCtx, llm)
 	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, chatAgent, metaAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
 }

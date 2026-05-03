@@ -67,6 +67,8 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 				inputBytes, _ := json.Marshal(params)
 				return globalCtx.ThinkingTool.Call(ctx, string(inputBytes))
 			}
+		case "micro_agent":
+			fn = globalCtx.MicroAgentTool.Execute
 		case "agent_exit":
 			fn = globalCtx.FlowOps.ExecuteAgentExit
 		case "ask_user_for_help":

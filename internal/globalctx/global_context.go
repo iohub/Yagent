@@ -20,14 +20,15 @@ type GlobalCtx struct {
 	CodebaseURL string
 
 	// Tools
-	FileOps      *tools.FileOperationsTool
-	SearchOps    *tools.SearchOperationsTool
-	SysOps       *tools.SystemOperationsTool
-	ReplaceTool  *tools.ReplaceBlockTool
-	ThinkingTool *tools.ThinkingTool
-	FlowOps           *tools.FlowControlTool
-	RepoOps           *tools.RepoOperationsTool
-	UserConfirmMgr    *tools.UserConfirmManager
+	FileOps         *tools.FileOperationsTool
+	SearchOps       *tools.SearchOperationsTool
+	SysOps          *tools.SystemOperationsTool
+	ReplaceTool     *tools.ReplaceBlockTool
+	ThinkingTool    *tools.ThinkingTool
+	MicroAgentTool  *tools.MicroAgentTool
+	FlowOps         *tools.FlowControlTool
+	RepoOps         *tools.RepoOperationsTool
+	UserConfirmMgr  *tools.UserConfirmManager
 }
 
 func (g *GlobalCtx) FormatPrompt(prompt string) string {
