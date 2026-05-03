@@ -104,7 +104,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
 
 	// Inject current implementation plan if one exists
 	if plan := a.GlobalCtx.ImplPlanTool.GetPlan(); plan != "" {
-		systemPrompt += "\n\n<current_implementation_plan>\n" + plan + "\n</current_implementation_plan>\n"
+		systemPrompt += "\n\n### Current Implementation Plan\n" + plan + "\n"
 	}
 
 	cfg := ExecutorConfig{

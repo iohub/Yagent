@@ -26,4 +26,4 @@ If the provided investigation report is insufficient for a complete summary, you
 Output a clear, structured summary that gives a developer a solid "mental map" of the codebase.
 
 **Language Compliance**:
-The output summary MUST be in the language specified in `<language_instructions>`.
+The output summary MUST be in the language specified in **Language Instructions**.
