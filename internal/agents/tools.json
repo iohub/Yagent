@@ -132,6 +132,24 @@
     }
   },
   {
+    "name": "micro_agent",
+    "description": "Make a raw LLM inference call with a custom system prompt and task. Use this tool when you need to perform reasoning, analysis, or generation that benefits from a fresh, isolated LLM context separate from the current conversation. This is essentially a \"sub-LLM call\" within your tool loop.\n\nTypical use cases:\n- Deep analysis of a complex piece of code or error message\n- Generating structured output (JSON, summaries, translations)\n- Self-reflection or verification of your own reasoning\n- Any task where a focused, single-purpose LLM call with a custom system prompt would produce better results\n\nThe tool returns the raw text output from the model.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "system_prompt": {
+          "type": "string",
+          "description": "The system prompt that defines the role, rules, and output format for this isolated LLM inference."
+        },
+        "task": {
+          "type": "string",
+          "description": "The task description, question, or content to process."
+        }
+      },
+      "required": ["system_prompt", "task"]
+    }
+  },
+  {
     "name": "delete_file",
     "description": "You can use this tool to delete files, you can delete multi files in one toolcall, and you MUST make sure the files is exist before deleting.",
     "parameters": {
