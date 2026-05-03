@@ -67,7 +67,7 @@ The following tools are available for assignment to your designed agents:
 | `print_dir_tree` | File | Print directory tree structure |
 | `search_replace_in_file` | Edit | Precise code block replacement (old_string → new_string) |
 | `search_by_regex` | Search | Full-text regex search via ripgrep |
-| `run_terminal_cmd` | System | Execute shell commands (foreground/background) |
+| `run_bash` | System | Execute shell commands (foreground/background) |
 | `thinking` | Cognitive | Error analysis and reasoning |
 | `semantic_search` | Repo | Semantic code search (via codebase service) |
 | `query_code_skeleton` | Repo | Query code skeleton (function/class definitions) |
@@ -78,7 +78,7 @@ The following tools are available for assignment to your designed agents:
 - For analysis/read-only tasks: assign only read/search tools
 - For code writing tasks: add file creation and editing tools
 - For investigation tasks: add search, semantic_search, and query tools
-- For system tasks: add run_terminal_cmd
+- For system tasks: add run_bash
 - Always consider whether `thinking` would improve output quality
 - Always include `agent_exit` so the agent can signal completion
 

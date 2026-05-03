@@ -29,7 +29,7 @@ var dangerousTools = map[string]bool{
 	"search_replace_in_file": true,
 	"delete_file":            true,
 	"rename_file":            true,
-	"run_terminal_cmd":       true,
+	"run_bash":               true,
 }
 
 // pathParamNames maps dangerous tool names to their file-path parameter names.
@@ -38,47 +38,6 @@ var pathParamNames = map[string][]string{
 	"search_replace_in_file": {"file_path"},
 	"delete_file":            {"target_file", "file_paths"},
 	"rename_file":            {"file_path", "rename_file_path"},
-}
-
-// systemModifyingCmds lists command prefixes/patterns that indicate
-// system-level changes requiring user authorization.
-var systemModifyingCmds = []string{
-	"sudo ",
-	"systemctl ",
-	"service ",
-	"apt ",
-	"apt-get ",
-	"yum ",
-	"dnf ",
-	"pacman ",
-	"zypper ",
-	"pip install",
-	"pip3 install",
-	"npm install -g",
-	"npm i -g",
-	"yarn global add",
-	"gem install",
-	"cargo install",
-	"make install",
-	"chmod 777",
-	"chown ",
-	"useradd ",
-	"usermod ",
-	"groupadd ",
-	"mount ",
-	"mkfs.",
-	"dd if=",
-	"> /etc/",
-	">>/etc/",
-	"curl ",
-	"wget ",
-	"shutdown",
-	"reboot",
-	"init ",
-	"docker ",
-	"podman ",
-	"kubectl ",
-	"iptables ",
 }
 
 // Check determines if a tool call requires user authorization.
@@ -93,8 +52,8 @@ func (g *WorkspaceGuard) Check(toolName string, params map[string]interface{}) (
 	}
 
 	switch toolName {
-	case "run_terminal_cmd":
-		return g.checkTerminalCmd(params)
+	case "run_bash":
+		return g.checkBash(params)
 
 	case "create_file", "delete_file", "rename_file", "search_replace_in_file":
 		return g.checkFileOp(toolName, params)
@@ -165,25 +124,25 @@ func (g *WorkspaceGuard) checkFileOp(toolName string, params map[string]interfac
 	return false, ""
 }
 
-func (g *WorkspaceGuard) checkTerminalCmd(params map[string]interface{}) (bool, string) {
+// checkBash checks whether a run_bash command needs authorization based on the
+// is_dangerous flag set by the LLM.
+func (g *WorkspaceGuard) checkBash(params map[string]interface{}) (bool, string) {
 	command, _ := params["command"].(string)
 	if command == "" {
 		return false, ""
 	}
 
-	// Check for absolute paths outside the workspace in the command
+	isDangerous, _ := params["is_dangerous"].(bool)
+	if isDangerous {
+		return true, fmt.Sprintf("危险命令:\n```bash\n%s\n```", command)
+	}
+
+	// Also verify by checking if the command references paths outside the workspace
+	// (defense in depth — catches cases where the LLM misjudges is_dangerous)
 	if g.referencesOutsideWorkspace(command) {
-		return true, fmt.Sprintf("命令引用了工作空间外的路径:\n```bash\n%s\n```", command)
+		return true, fmt.Sprintf("命令引用了工作空间外的路径 (is_dangerous 应为 true):\n```bash\n%s\n```", command)
 	}
 
-	// Check for system-modifying command patterns
-	for _, pattern := range systemModifyingCmds {
-		if strings.Contains(command, pattern) {
-			return true, fmt.Sprintf("命令可能修改系统环境:\n```bash\n%s\n```", command)
-		}
-	}
-
-	// Commands operating only within the workspace are allowed
 	return false, ""
 }
 
@@ -195,29 +154,25 @@ func (g *WorkspaceGuard) resolvePath(filePath string) string {
 }
 
 func (g *WorkspaceGuard) isInWorkspace(resolvedPath string) bool {
-	// The resolved path must have the workspace path as a prefix.
-	// Use filepath.Rel to handle edge cases correctly.
 	rel, err := filepath.Rel(g.workspacePath, resolvedPath)
 	if err != nil {
 		return false
 	}
-	// If the relative path starts with "..", it's outside the workspace.
 	return !strings.HasPrefix(rel, "..") && rel != "."
 }
 
+// referencesOutsideWorkspace checks if a command string contains absolute paths
+// that fall outside the workspace. Used as a defense-in-depth check when the
+// LLM sets is_dangerous=false.
 func (g *WorkspaceGuard) referencesOutsideWorkspace(command string) bool {
-	// Extract absolute paths (starting with /) from the command and check each.
-	// This is a heuristic — it won't catch everything but covers common cases.
 	fields := strings.Fields(command)
 	for _, field := range fields {
-		// Strip surrounding quotes
 		field = strings.Trim(field, `'"`)
 		if strings.HasPrefix(field, "/") {
 			cleaned := filepath.Clean(field)
 			if cleaned == "/" {
-				return true // root filesystem reference
+				return true
 			}
-			// Check if this absolute path is outside the workspace
 			if !g.isInWorkspace(cleaned) {
 				return true
 			}

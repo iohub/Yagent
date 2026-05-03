@@ -82,14 +82,14 @@
     }
   },
   {
-    "name": "run_terminal_cmd",
-    "description": "PROPOSE a command to run on behalf of the user.\nIf you have this tool, note that you DO have the ability to run commands directly on the USER's system.\nNote that the user will have to approve the command before it is executed.\nThe user may reject it if it is not to their liking, or may modify the command before approving it.  If they do change it, take those changes into account.\nThe actual command will NOT execute until the user approves it. The user may not approve it immediately. Do NOT assume the command has started running.\nIf the step is WAITING for user approval, it has NOT started running.\nIn using these tools, adhere to the following guidelines:\n1. Based on the contents of the conversation, you will be told if you are in the same shell as a previous step or a different shell.\n2. If in a new shell, you should `cd` to the appropriate directory and do necessary setup in addition to running the command.\n3. If in the same shell, LOOK IN CHAT HISTORY for your current working directory.\n4. For ANY commands that would require user interaction, ASSUME THE USER IS NOT AVAILABLE TO INTERACT and PASS THE NON-INTERACTIVE FLAGS (e.g. --yes for npx).\n5. If the command would use a pager, append ` | cat` to the command.\n6. For commands that are long running/expected to run indefinitely until interruption, please run them in the background. To run jobs in the background, set `is_background` to true rather than changing the details of the command.\n7. Dont include any newlines in the command.",
+    "name": "run_bash",
+    "description": "Execute a bash command on the user's system.\n\nBefore using this tool, determine whether the command is dangerous. The core principle: **is_dangerous=true when the command affects anything beyond the project workspace boundary.**\n\nSet `is_dangerous` to TRUE if the command:\n- Operates on any file or path outside the project workspace (read or write)\n- Modifies system-level configuration or state (packages, services, kernel, mounts, environment variables that persist beyond the shell)\n- Affects running processes (e.g., kill, pkill, killall, nice, renice) — even processes within the project\n- Changes network, firewall, or security settings\n- Requires privilege escalation (sudo, su, doas)\n- Modifies user-level config outside the project (shell rc files, dotfiles, cron, systemd user units)\n- Has side effects observable by other users or services\n\nSet `is_dangerous` to FALSE only if the command is fully scoped within the project workspace and has no lasting impact on the system (e.g., build commands, linters, tests, git operations, file reads/writes within the project).\n\nWhen in doubt, set is_dangerous=true — a false authorization prompt is safer than a missed dangerous operation.\n\nGuidelines:\n1. If in a new shell, cd to the appropriate directory first.\n2. If in the same shell, use the current working directory from chat history.\n3. For commands requiring user interaction, pass non-interactive flags (e.g. --yes for npx).\n4. If the command would use a pager, append ` | cat`.\n5. For long-running commands, set `is_background` to true.\n6. Do NOT include newlines in the command.\n\nNOTE: Dangerous commands (is_dangerous=true) will require user authorization before execution.",
     "parameters": {
       "type": "object",
       "properties": {
         "command": {
           "type": "string",
-          "description": "The terminal command to execute"
+          "description": "The bash command to execute"
         },
         "explanation": {
           "type": "string",
@@ -98,11 +98,16 @@
         "is_background": {
           "type": "boolean",
           "description": "Whether the command should be run in the background"
+        },
+        "is_dangerous": {
+          "type": "boolean",
+          "description": "Whether this command affects anything beyond the project workspace boundary — including files outside the project, system configuration, running processes, installed packages, network settings, or user-level dotfiles/shell config. When in doubt, set to true."
         }
       },
       "required": [
         "command",
-        "is_background"
+        "is_background",
+        "is_dangerous"
       ]
     }
   },

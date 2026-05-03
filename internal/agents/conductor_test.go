@@ -224,7 +224,7 @@ func TestGetToolFunc_KnownTools(t *testing.T) {
 	agent := newTestConductorAgent(t, workDir)
 
 	knownTools := []string{
-		"read_file", "search_replace_in_file", "create_file", "run_terminal_cmd",
+		"read_file", "search_replace_in_file", "create_file", "run_bash",
 		"search_by_regex", "delete_file", "rename_file", "list_dir",
 		"print_dir_tree", "semantic_search", "query_code_skeleton",
 		"query_code_snippet", "thinking", "micro_agent", "impl_plan", "agent_exit",
@@ -490,7 +490,7 @@ func TestSystemPrompt_WithCustomAgents(t *testing.T) {
 		Name:         "data_migrator",
 		DisplayName:  "Data Migrator",
 		SystemPrompt: "You are a data migration specialist.",
-		ToolsUsed:    []string{"create_file", "run_terminal_cmd"},
+		ToolsUsed:    []string{"create_file", "run_bash"},
 		Description:  "Handles database migration planning.",
 	})
 
@@ -826,7 +826,7 @@ func TestToolDefMap_Populated(t *testing.T) {
 
 	// toolDefMap should contain all tools from tools.json
 	expectedTools := []string{
-		"read_file", "search_replace_in_file", "create_file", "run_terminal_cmd",
+		"read_file", "search_replace_in_file", "create_file", "run_bash",
 		"search_by_regex", "delete_file", "rename_file", "list_dir",
 		"print_dir_tree", "semantic_search", "query_code_skeleton",
 		"query_code_snippet", "thinking", "micro_agent", "impl_plan", "agent_exit",

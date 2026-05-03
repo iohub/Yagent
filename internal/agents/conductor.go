@@ -283,8 +283,8 @@ func (a *ConductorAgent) getToolFunc(name string) tools.ToolFunc {
 		return a.GlobalCtx.ReplaceTool.ExecuteReplaceBlock
 	case "create_file":
 		return a.GlobalCtx.FileOps.ExecuteCreateFile
-	case "run_terminal_cmd":
-		return a.GlobalCtx.SysOps.ExecuteRunTerminalCmd
+	case "run_bash":
+		return a.GlobalCtx.SysOps.ExecuteRunBash
 	case "search_by_regex":
 		return a.GlobalCtx.SearchOps.ExecuteGrepSearch
 	case "delete_file":

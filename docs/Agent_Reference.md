@@ -29,7 +29,7 @@ Agent 配备了丰富的工具集：
 *   **File Operations**: `read_file`, `write_file` (via `create_file`), `list_dir`, `print_dir_tree`, `delete_file`, `rename_file`.
 *   **Code Editing**: `search_replace_in_file` (Precise search and replace).
 *   **Search**: `search_by_regex` (grep), `semantic_search` (Semantic Search), `query_code_skeleton`, `query_code_snippet`.
-*   **System Execution**: `run_terminal_cmd` (Execute Shell commands).
+*   **System Execution**: `run_bash` (Execute Shell commands).
 *   **Cognitive**: `thinking` (Error analysis and self-correction chain-of-thought).
 
 ### 2.3 Interaction Modes (交互模式)

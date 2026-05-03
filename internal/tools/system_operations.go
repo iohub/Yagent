@@ -22,8 +22,8 @@ func NewSystemOperationsTool(workingDir string) *SystemOperationsTool {
 	}
 }
 
-// ExecuteRunTerminalCmd 实现run_terminal_cmd工具
-func (t *SystemOperationsTool) ExecuteRunTerminalCmd(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// ExecuteRunBash 实现run_bash工具
+func (t *SystemOperationsTool) ExecuteRunBash(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	command, ok := params["command"].(string)
 	if !ok {
 		return nil, util.WrapError(ctx, fmt.Errorf("command parameter must be a string"), "executeRunTerminalCmd")

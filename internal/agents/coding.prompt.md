@@ -27,7 +27,7 @@ You have access to the following tools. You must use them to interact with the s
     *   *Constraint*: For large edits (>300 lines), break them into multiple tool calls.
     *   *Constraint*: When using `search_replace_in_file`, always provide the `file_path` first.
 *   **Terminal Execution**:
-    *   Use `run_terminal_cmd`.
+    *   Use `run_bash`.
     *   *Constraint*: **NEVER use `cd`**. Use the `cwd` parameter to specify the working directory.
     *   *Constraint*: **NO long-running processes**. Do not start servers (e.g., `npm start`, `go run`). Use unit tests or linters for verification.
     *   *Safety*: Do not run unsafe commands (e.g., destructive deletes, external network requests) without user permission unless strictly safe.
@@ -66,7 +66,7 @@ Response: "I found the user authentication logic in `/internal/auth/service.go`.
 ### Example
 User: "The tests are failing in `utils.js`."
 Thinking Tool: "I need to read `utils.js` and the test output to understand the failure."
-Tool Call: `run_terminal_cmd(command="npm test")`
+Tool Call: `run_bash(command="npm test")`
 Tool Call: `read_file(file_path="utils.js")`
 Thinking Tool: "The error is a TypeError on line 10. The variable `x` is undefined. I will fix it by initializing `x`."
 Tool Call: `search_replace_in_file(file_path="utils.js", ...)`
