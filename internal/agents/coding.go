@@ -44,8 +44,8 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 			fn = globalCtx.ReplaceTool.ExecuteReplaceBlock
 		case "create_file":
 			fn = globalCtx.FileOps.ExecuteCreateFile
-		case "run_terminal_cmd":
-			fn = globalCtx.SysOps.ExecuteRunTerminalCmd
+		case "run_bash":
+			fn = globalCtx.SysOps.ExecuteRunBash
 		case "search_by_regex":
 			fn = globalCtx.SearchOps.ExecuteGrepSearch
 		case "delete_file":

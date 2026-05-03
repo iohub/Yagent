@@ -248,7 +248,7 @@ type Agent interface {
   - 文件操作: `read_file`, `create_file`, `delete_file`, `rename_file`, `list_dir`, `print_dir_tree`
   - 代码编辑: `search_replace_in_file`
   - 搜索: `search_by_regex`, `semantic_search`, `query_code_skeleton`, `query_code_snippet`
-  - 系统: `run_terminal_cmd`
+  - 系统: `run_bash`
   - 反思: `thinking`
 - **工作流程**: Analyze → Explore → Plan → Implement → Verify
 - **最大步数限制**（默认 30 步，可配置）
@@ -301,7 +301,7 @@ type Adapter struct {
 | `print_dir_tree` | 文件 | `file_operations.go` | 打印目录树结构 |
 | `search_replace_in_file` | 编辑 | `file_edit.go` | 精准代码块替换（old_string → new_string） |
 | `search_by_regex` | 搜索 | `search_operations.go` | ripgrep 正则全文搜索 |
-| `run_terminal_cmd` | 系统 | `system_operations.go` | 执行 Shell 命令（前台/后台） |
+| `run_bash` | 系统 | `system_operations.go` | 执行 Shell 命令（前台/后台） |
 | `thinking` | 认知 | `cognitive.go` | 错误分析和反思思维链 |
 | `semantic_search` | 仓库 | `repo_operations.go` | 语义搜索（调用 codebase 服务） |
 | `query_code_skeleton` | 仓库 | `repo_operations.go` | 查询代码骨架（函数/类定义） |
@@ -697,7 +697,7 @@ lang = "Chinese"                       # 输出语言
 |------|------|---------|
 | `rg` (ripgrep) | 全文正则搜索 | `SearchOperationsTool.ExecuteGrepSearch` |
 | `fzf` | 模糊文件搜索 | `SearchOperationsTool.ExecuteFileSearch` |
-| `bash` | Shell 命令执行 | `SystemOperationsTool.ExecuteRunTerminalCmd` |
+| `bash` | Shell 命令执行 | `SystemOperationsTool.ExecuteRunBash` |
 
 ### 8.3 数据存储
 

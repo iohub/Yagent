@@ -28,7 +28,7 @@ var toolStyles = map[string]lipgloss.Style{
 	"ask_user_for_help": lipgloss.NewStyle().Foreground(lipgloss.Color("#32CD32")), // lime green
 	"edit_file":         lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6B6B")), // red
 	"read_file":         lipgloss.NewStyle().Foreground(lipgloss.Color("#4ECDC4")), // teal
-	"run_terminal_cmd":  lipgloss.NewStyle().Foreground(lipgloss.Color("#FFE66D")), // yellow
+	"run_bash":  lipgloss.NewStyle().Foreground(lipgloss.Color("#FFE66D")), // yellow
 	"grep_search":       lipgloss.NewStyle().Foreground(lipgloss.Color("#1A535C")), // dark cyan
 	"file_search":       lipgloss.NewStyle().Foreground(lipgloss.Color("#FF9F1C")), // coral
 	"create_file":       lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71")), // green

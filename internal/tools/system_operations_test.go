@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestExecuteRunTerminalCmd(t *testing.T) {
+func TestExecuteRunBash(t *testing.T) {
 	tmpDir, err := ioutil.TempDir("", "test_sys_ops")
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +24,7 @@ func TestExecuteRunTerminalCmd(t *testing.T) {
 		"explanation":   "Just saying hello",
 	}
 
-	result, err := tool.ExecuteRunTerminalCmd(ctx, params)
+	result, err := tool.ExecuteRunBash(ctx, params)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -53,7 +53,7 @@ func TestExecuteRunTerminalCmd(t *testing.T) {
 		"explanation":   "Sleeping in background",
 	}
 
-	resultBg, err := tool.ExecuteRunTerminalCmd(ctx, paramsBg)
+	resultBg, err := tool.ExecuteRunBash(ctx, paramsBg)
 	if err != nil {
 		t.Fatalf("Expected no error for background command, got %v", err)
 	}
