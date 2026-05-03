@@ -463,14 +463,14 @@ func TestSystemPrompt_NoCustomAgents(t *testing.T) {
 	// Build system prompt like Run() does
 	systemPrompt := agent.GlobalCtx.FormatPrompt(conductorPrompt)
 	if len(agent.customAgents) > 0 {
-		systemPrompt += "\n\n<custom_agents>..."
+		systemPrompt += "\n\n### Custom Agents..."
 	}
 
-	// The conductor prompt references <custom_agents> in the Meta-Agent section,
-	// so we check that the actual XML block (with agent listings) is NOT present.
-	// The key difference: the listing block starts with "\n\n<custom_agents>\nThe following specialized"
-	if strings.Contains(systemPrompt, "\n\n<custom_agents>\nThe following specialized agents") {
-		t.Error("system prompt should NOT contain the <custom_agents> listing block when no custom agents registered")
+	// The conductor prompt references ### Custom Agents in the Meta-Agent section,
+	// so we check that the actual markdown block (with agent listings) is NOT present.
+	// The key difference: the listing block starts with "\n\n### Custom Agents\nThe following specialized"
+	if strings.Contains(systemPrompt, "\n\n### Custom Agents\nThe following specialized agents") {
+		t.Error("system prompt should NOT contain the ### Custom Agents listing block when no custom agents registered")
 	}
 }
 
@@ -497,15 +497,15 @@ func TestSystemPrompt_WithCustomAgents(t *testing.T) {
 	// Build system prompt like Run() does
 	systemPrompt := agent.GlobalCtx.FormatPrompt(conductorPrompt)
 	if len(agent.customAgents) > 0 {
-		systemPrompt += "\n\n<custom_agents>\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
+		systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
 		for _, ca := range agent.customAgents {
 			systemPrompt += fmt.Sprintf("- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, ca.Description)
 		}
-		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n</custom_agents>\n"
+		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n\n"
 	}
 
-	if !strings.Contains(systemPrompt, "<custom_agents>") {
-		t.Error("system prompt SHOULD contain <custom_agents> block")
+	if !strings.Contains(systemPrompt, "### Custom Agents") {
+		t.Error("system prompt SHOULD contain ### Custom Agents block")
 	}
 	if !strings.Contains(systemPrompt, "Security Auditor") {
 		t.Error("system prompt should mention Security Auditor")

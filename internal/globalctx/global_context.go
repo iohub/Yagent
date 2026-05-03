@@ -37,26 +37,25 @@ func (g *GlobalCtx) FormatPrompt(prompt string) string {
 	sb.WriteString(prompt)
 
 	// Environment context
-	sb.WriteString("\n\n<env>\n")
+	sb.WriteString("\n\n### Environment\n")
 	if g.ProjectPath != "" {
-		sb.WriteString(fmt.Sprintf("Project Path: %s\n", g.ProjectPath))
+		sb.WriteString(fmt.Sprintf("- **Project Path**: %s\n", g.ProjectPath))
 	}
 	if g.OS != "" {
-		sb.WriteString(fmt.Sprintf("Operating System: %s\n", g.OS))
+		sb.WriteString(fmt.Sprintf("- **Operating System**: %s\n", g.OS))
 	}
 	if g.Arch != "" {
-		sb.WriteString(fmt.Sprintf("Architecture: %s\n", g.Arch))
+		sb.WriteString(fmt.Sprintf("- **Architecture**: %s\n", g.Arch))
 	}
-	sb.WriteString("</env>\n")
 
 	// Language
 	if g.SpeakLang != "" {
-		sb.WriteString(fmt.Sprintf("\n<language_instructions>\nYou MUST use **%s** for ALL output, including your internal 'Thought Process', 'Thinking Tool' usage, reasoning steps, and final responses.\n</language_instructions>\n", g.SpeakLang))
+		sb.WriteString(fmt.Sprintf("\n### Language Instructions\nYou MUST use **%s** for ALL output, including your internal 'Thought Process', 'Thinking Tool' usage, reasoning steps, and final responses.\n", g.SpeakLang))
 	}
 
 	// Custom prompt
 	if g.CustomizePrompt != "" {
-		sb.WriteString(fmt.Sprintf("\n<additional_instructions>\n%s\n</additional_instructions>\n", g.CustomizePrompt))
+		sb.WriteString(fmt.Sprintf("\n### Additional Instructions\n%s\n", g.CustomizePrompt))
 	}
 
 	return sb.String()

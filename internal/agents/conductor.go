@@ -564,11 +564,11 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 	// Always start with System Prompt (with any registered custom agents appended)
 	systemPrompt := a.GlobalCtx.FormatPrompt(conductorPrompt)
 	if len(a.customAgents) > 0 {
-		systemPrompt += "\n\n<custom_agents>\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
+		systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
 		for _, ca := range a.customAgents {
 			systemPrompt += fmt.Sprintf("- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, ca.Description)
 		}
-		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n</custom_agents>\n"
+		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n"
 	}
 	messages = append(messages, llms.MessageContent{
 		Role:  llms.ChatMessageTypeSystem,
