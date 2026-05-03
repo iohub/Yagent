@@ -19,16 +19,16 @@ func (t *ThinkingTool) Name() string {
 
 func (t *ThinkingTool) Call(ctx context.Context, input string) (string, error) {
 	var params struct {
-		ErrorMessage  string `json:"error_message"`
+		ProblemDescription string `json:"problem_description"`
 		CurrentAction string `json:"current_action"`
 		Observation   string `json:"observation"`
 	}
 
 	if err := json.Unmarshal([]byte(input), &params); err != nil {
 		// Try to handle if input is just a string description
-		params.ErrorMessage = input
+		params.ProblemDescription = input
 	}
 
 	return fmt.Sprintf("Thinking Process Logged:\nError: %s\nAction: %s\nObservation: %s\n\nAnalysis: Please analyze the above error and propose a fix.",
-		params.ErrorMessage, params.CurrentAction, params.Observation), nil
+		params.ProblemDescription, params.CurrentAction, params.Observation), nil
 }

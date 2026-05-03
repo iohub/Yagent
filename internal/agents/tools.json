@@ -112,7 +112,7 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "error_message": {
+        "problem_description": {
           "type": "string",
           "description": "The error message, failure description, or the problem to be solved."
         },
@@ -126,7 +126,7 @@
         }
       },
       "required": [
-        "error_message",
+        "problem_description",
         "current_action"
       ]
     }
