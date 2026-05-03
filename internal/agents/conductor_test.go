@@ -227,7 +227,7 @@ func TestGetToolFunc_KnownTools(t *testing.T) {
 		"read_file", "search_replace_in_file", "create_file", "run_terminal_cmd",
 		"search_by_regex", "delete_file", "rename_file", "list_dir",
 		"print_dir_tree", "semantic_search", "query_code_skeleton",
-		"query_code_snippet", "thinking", "agent_exit",
+		"query_code_snippet", "thinking", "micro_agent", "impl_plan", "agent_exit",
 	}
 
 	for _, name := range knownTools {
@@ -829,7 +829,7 @@ func TestToolDefMap_Populated(t *testing.T) {
 		"read_file", "search_replace_in_file", "create_file", "run_terminal_cmd",
 		"search_by_regex", "delete_file", "rename_file", "list_dir",
 		"print_dir_tree", "semantic_search", "query_code_skeleton",
-		"query_code_snippet", "thinking", "agent_exit",
+		"query_code_snippet", "thinking", "micro_agent", "impl_plan", "agent_exit",
 	}
 
 	for _, name := range expectedTools {

@@ -69,6 +69,8 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 			}
 		case "micro_agent":
 			fn = globalCtx.MicroAgentTool.Execute
+		case "impl_plan":
+			fn = globalCtx.ImplPlanTool.Execute
 		case "agent_exit":
 			fn = globalCtx.FlowOps.ExecuteAgentExit
 		case "ask_user_for_help":
@@ -98,8 +100,15 @@ func (a *CodingAgent) Name() string {
 }
 
 func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
+	systemPrompt := a.GlobalCtx.FormatPrompt(codingPrompt)
+
+	// Inject current implementation plan if one exists
+	if plan := a.GlobalCtx.ImplPlanTool.GetPlan(); plan != "" {
+		systemPrompt += "\n\n<current_implementation_plan>\n" + plan + "\n</current_implementation_plan>\n"
+	}
+
 	cfg := ExecutorConfig{
-		SystemPrompt: a.GlobalCtx.FormatPrompt(codingPrompt),
+		SystemPrompt: systemPrompt,
 		UserInput:    input,
 		Adapters:     a.Adapters,
 		LLM:          a.LLM,
