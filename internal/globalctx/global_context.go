@@ -30,6 +30,7 @@ type GlobalCtx struct {
 	FlowOps         *tools.FlowControlTool
 	RepoOps         *tools.RepoOperationsTool
 	UserConfirmMgr  *tools.UserConfirmManager
+	Guard           *tools.WorkspaceGuard
 }
 
 func (g *GlobalCtx) FormatPrompt(prompt string) string {
