@@ -1066,32 +1066,31 @@ func (m model) renderHistoryPanel() string {
 
 	var b strings.Builder
 
-	// ── Header: title + filter input ──
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("◆ " + langManager.GetText("HistoryTitle"))
+	// ── Header: ◆ title │ filter │ counter ──
+	{
+		htStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+		hdStyle := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244"))
 
-	var filterDisplay string
-	if m.historyFilter != "" {
-		cursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("▌")
-		filterDisplay = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(m.historyFilter) + cursor
-	} else {
-		filterDisplay = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Render(langManager.GetText("HistoryFilterPlaceholder"))
+		var parts []string
+		parts = append(parts, htStyle.Render("◆ "+langManager.GetText("HistoryTitle")))
+
+		if m.historyFilter != "" {
+			cur := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("▌")
+			parts = append(parts, hdStyle.Render("│")+" "+lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(m.historyFilter)+cur)
+		} else {
+			parts = append(parts, hdStyle.Render("│ "+langManager.GetText("HistoryFilterPlaceholder")))
+		}
+		parts = append(parts, hdStyle.Render(fmt.Sprintf("%d/%d", m.historyIndex+1, len(m.filteredItems))))
+
+		hbStyle := lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, false, true, false).
+			BorderForeground(lipgloss.Color("237")).
+			Width(panelWidth).
+			Padding(0, 1)
+
+		b.WriteString(hbStyle.Render(strings.Join(parts, "  ")))
+		b.WriteString("\n")
 	}
-	filterPart := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("│ ") + filterDisplay
-
-	counter := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).Render(
-		fmt.Sprintf("%d/%d", m.historyIndex+1, len(m.filteredItems)),
-	)
-
-	headerText := title + "  " + filterPart + "  " + counter
-
-	headerStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, true, false).
-		BorderForeground(lipgloss.Color("237")).
-		Width(panelWidth).
-		Padding(0, 1)
-
-	b.WriteString(headerStyle.Render(headerText))
-	b.WriteString("\n")
 
 	// ── Body: single-line items ──
 	bodyHeight := m.termHeight - 8 // header(~2) + footer(~6)
@@ -1103,8 +1102,8 @@ func (m model) renderHistoryPanel() string {
 		empty := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
 			Width(panelWidth).
-			Padding(1, 2).
-			Render(langManager.GetText("HistoryEmpty"))
+			Padding(2, 2).
+			Render("  " + langManager.GetText("HistoryEmpty"))
 		b.WriteString(empty)
 	} else {
 		// Edge-triggered scroll: update scrollStart only when selection leaves visible area
@@ -1146,47 +1145,53 @@ func (m model) renderHistoryPanel() string {
 			b.WriteString("\n")
 		}
 
-		// Compute title area width: date(11) + indent(2) + spacer(2) + cursor(2 for selected)
+		// Column layout: date(11) + title + count(Nm)
 		const dateWidth = 11
-		const indentWidth = 2
-		const spacerWidth = 2
-		titleMaxWidth := panelWidth - dateWidth - indentWidth - spacerWidth - 2
-		if titleMaxWidth < 20 {
-			titleMaxWidth = 20
+		const countArea = 6
+		const selMarker = 2
+		const spacing = 2
+		titleMaxWidth := panelWidth - dateWidth - countArea - selMarker - spacing - 2
+		if titleMaxWidth < 15 {
+			titleMaxWidth = 15
 		}
 
-		dateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		dateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
 		titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+		countStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
 		selStyle := lipgloss.NewStyle().
 			Background(lipgloss.Color("39")).
-			Foreground(lipgloss.Color("0")).
-			Width(panelWidth - 2).
+			Foreground(lipgloss.Color("15")).
+			Width(panelWidth).
 			Padding(0, 1)
 
 		normalStyle := lipgloss.NewStyle().
-			Width(panelWidth - 2).
+			Width(panelWidth).
 			Padding(0, 1)
 
 		for i := scrollStart; i < end; i++ {
 			item := m.filteredItems[i]
 			selected := i == m.historyIndex
 
-			// Truncate title to fit
-			title := item.Title
-			titleRunes := []rune(title)
+			// Title is pre-truncated to 30 chars; further truncate for narrow terminals
+			displayTitle := item.Title
+			titleRunes := []rune(displayTitle)
 			if len(titleRunes) > titleMaxWidth {
-				title = string(titleRunes[:titleMaxWidth-1]) + "…"
+				displayTitle = string(titleRunes[:titleMaxWidth-1]) + "…"
 			}
+			titlePadded := lipgloss.NewStyle().Width(titleMaxWidth).Render(displayTitle)
 
 			dateStr := item.CreatedAt.Format("01-02 15:04")
+			countStr := fmt.Sprintf("%dm", item.MessageCount)
 
 			if selected {
-				cursor := "▐ "
-				line := selStyle.Render(cursor + dateStyle.Foreground(lipgloss.Color("0")).Render(dateStr) + "  " + title)
-				b.WriteString(line)
+				line := fmt.Sprintf("▐ %s  %s  %s", dateStr, titlePadded, countStr)
+				b.WriteString(selStyle.Render(line))
 			} else {
-				line := normalStyle.Render("  " + dateStyle.Render(dateStr) + "  " + titleStyle.Render(title))
-				b.WriteString(line)
+				line := fmt.Sprintf("  %s  %s  %s",
+					dateStyle.Render(dateStr),
+					titleStyle.Render(titlePadded),
+					countStyle.Render(countStr))
+				b.WriteString(normalStyle.Render(line))
 			}
 			b.WriteString("\n")
 		}

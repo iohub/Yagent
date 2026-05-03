@@ -112,7 +112,7 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "error_message": {
+        "problem_description": {
           "type": "string",
           "description": "The error message, failure description, or the problem to be solved."
         },
@@ -126,7 +126,7 @@
         }
       },
       "required": [
-        "error_message",
+        "problem_description",
         "current_action"
       ]
     }
@@ -310,14 +310,14 @@
     }
   },
   {
-    "name": "finish",
-    "description": "Indicate that the current task is finished. The output of this tool call will be a description of why the task is finished, which could be because the task is completed or cannot be completed and must be terminated.",
+    "name": "agent_exit",
+    "description": "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.",
     "parameters": {
       "type": "object",
       "properties": {
         "reason": {
           "type": "string",
-          "description": "A description of why the task is finished, e.g., task completed, cannot complete, or must terminate."
+          "description": "The reason the agent is exiting, e.g., task completed, cannot proceed, blocked by missing information, or must terminate."
         }
       },
       "required": ["reason"]

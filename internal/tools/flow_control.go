@@ -19,8 +19,8 @@ func NewFlowControlTool(workingDir string) *FlowControlTool {
 	}
 }
 
-// ExecuteFinish 实现finish工具
-func (t *FlowControlTool) ExecuteFinish(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// ExecuteAgentExit 实现agent_exit工具
+func (t *FlowControlTool) ExecuteAgentExit(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	reason, ok := params["reason"].(string)
 	if !ok {
 		return nil, util.WrapError(ctx, fmt.Errorf("reason parameter must be a string"), "executeFinish")

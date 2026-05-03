@@ -109,11 +109,11 @@ This block is your "Inner Monologue" to reason about the current state and updat
 
 **Language Compliance**:
 - The `Thought Process` block MUST be in the language specified in `<language_instructions>`.
-- The arguments for `finish` (reason) MUST be in the language specified in `<language_instructions>`.
+- The arguments for `agent_exit` (reason) MUST be in the language specified in `<language_instructions>`.
 
-After the `Thought Process` block, you MUST issue exactly **ONE** Tool Call (`delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_meta`, `delegate_<name>` for custom agents, `finish`).
+After the `Thought Process` block, you MUST issue exactly **ONE** Tool Call (`delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_meta`, `delegate_<name>` for custom agents, `agent_exit`).
 
 # Final Instruction
 - Think deeply inside `Thought Process` block before acting.
 - Ensure every step is verified.
-- If the task is fully completed, use the `finish` tool.
+- If the task is fully completed, use the `agent_exit` tool.

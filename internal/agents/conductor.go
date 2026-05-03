@@ -195,10 +195,10 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 	})
 
 	adapters := []*tools.Adapter{
-		tools.NewAdapter("finish", "Indicate that the current task is finished. The output of this tool call will be a description of why the task is finished, which could be because the task is completed or cannot be completed and must be terminated.", globalCtx.FlowOps.ExecuteFinish).WithSchema(map[string]interface{}{
+		tools.NewAdapter("agent_exit", "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.", globalCtx.FlowOps.ExecuteAgentExit).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"reason": map[string]interface{}{"type": "string", "description": "A description of why the task is finished, e.g., task completed, cannot complete, or must terminate."},
+				"reason": map[string]interface{}{"type": "string", "description": "The reason the agent is exiting, e.g., task completed, cannot proceed, blocked by missing information, or must terminate."},
 			},
 			"required": []string{"reason"},
 		}),
@@ -302,8 +302,8 @@ func (a *ConductorAgent) getToolFunc(name string) tools.ToolFunc {
 			inputBytes, _ := json.Marshal(params)
 			return a.GlobalCtx.ThinkingTool.Call(ctx, string(inputBytes))
 		}
-	case "finish":
-		return a.GlobalCtx.FlowOps.ExecuteFinish
+	case "agent_exit":
+		return a.GlobalCtx.FlowOps.ExecuteAgentExit
 	case "ask_user_for_help":
 		return a.GlobalCtx.FlowOps.ExecuteAskUserForHelp
 	default:
@@ -430,11 +430,11 @@ func (a *ConductorAgent) registerCustomAgent(ca *CustomAgent) {
 		customAdapters = append(customAdapters, adapter)
 	}
 
-	// Add finish tool so the custom agent can signal completion
-	finishDef, ok := a.toolDefMap["finish"]
+	// Add agent_exit tool so the custom agent can signal exit
+	finishDef, ok := a.toolDefMap["agent_exit"]
 	if ok {
-		fn := a.getToolFunc("finish")
-		adapter := tools.NewAdapter("finish", finishDef.Description, fn).WithSchema(finishDef.Parameters)
+		fn := a.getToolFunc("agent_exit")
+		adapter := tools.NewAdapter("agent_exit", finishDef.Description, fn).WithSchema(finishDef.Parameters)
 		customAdapters = append(customAdapters, adapter)
 	}
 
@@ -683,7 +683,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 					},
 				},
 			})
-			if tc.FunctionCall.Name == "finish" {
+			if tc.FunctionCall.Name == "agent_exit" {
 				return "Task completed successfully", nil
 			}
 
