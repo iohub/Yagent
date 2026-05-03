@@ -67,8 +67,8 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) 
 				inputBytes, _ := json.Marshal(params)
 				return globalCtx.ThinkingTool.Call(ctx, string(inputBytes))
 			}
-		case "finish":
-			fn = globalCtx.FlowOps.ExecuteFinish
+		case "agent_exit":
+			fn = globalCtx.FlowOps.ExecuteAgentExit
 		case "ask_user_for_help":
 			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
 		default:

@@ -227,7 +227,7 @@ func TestGetToolFunc_KnownTools(t *testing.T) {
 		"read_file", "search_replace_in_file", "create_file", "run_terminal_cmd",
 		"search_by_regex", "delete_file", "rename_file", "list_dir",
 		"print_dir_tree", "semantic_search", "query_code_skeleton",
-		"query_code_snippet", "thinking", "finish",
+		"query_code_snippet", "thinking", "agent_exit",
 	}
 
 	for _, name := range knownTools {
@@ -361,7 +361,7 @@ func TestCustomAgentDelegateTool_Execution(t *testing.T) {
 		Name:         "test_executor",
 		DisplayName:  "Test Executor",
 		SystemPrompt: "You are a test executor. Complete the task.",
-		ToolsUsed:    []string{"read_file", "thinking", "finish"},
+		ToolsUsed:    []string{"read_file", "thinking", "agent_exit"},
 		Description:  "Executes test tasks.",
 	}
 	conductor.registerCustomAgent(ca)
@@ -397,15 +397,15 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 		generateContent: func(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
 			callCount++
 			if callCount == 1 {
-				// First call: use finish to complete
+				// First call: use agent_exit to complete
 				return &llms.ContentResponse{
 					Choices: []*llms.ContentChoice{{
 						Content: "Task is complete.",
 						ToolCalls: []llms.ToolCall{{
-							ID:   "call_finish",
+							ID:   "call_agent_exit",
 							Type: "function",
 							FunctionCall: &llms.FunctionCall{
-								Name:      "finish",
+								Name:      "agent_exit",
 								Arguments: `{"reason": "Test completed successfully"}`,
 							},
 						}},
@@ -423,9 +423,9 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 	ca := &CustomAgent{
 		Name:         "finisher",
 		DisplayName:  "Finisher Agent",
-		SystemPrompt: "You finish immediately.",
-		ToolsUsed:    []string{"finish"},
-		Description:  "Always finishes.",
+		SystemPrompt: "You exit immediately.",
+		ToolsUsed:    []string{"agent_exit"},
+		Description:  "Always exits.",
 	}
 	conductor.registerCustomAgent(ca)
 
@@ -542,7 +542,7 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	metaOutput := makeMetaOutput(
 		"Security Auditor",
 		"You are a Security Auditor. Review code for vulnerabilities. Use tools to search and read files.",
-		[]string{"search_by_regex", "read_file", "thinking", "finish"},
+		[]string{"search_by_regex", "read_file", "thinking", "agent_exit"},
 	)
 
 	// MetaAgent that returns the pre-defined output (single LLM call, no tool calls)
@@ -829,7 +829,7 @@ func TestToolDefMap_Populated(t *testing.T) {
 		"read_file", "search_replace_in_file", "create_file", "run_terminal_cmd",
 		"search_by_regex", "delete_file", "rename_file", "list_dir",
 		"print_dir_tree", "semantic_search", "query_code_skeleton",
-		"query_code_snippet", "thinking", "finish",
+		"query_code_snippet", "thinking", "agent_exit",
 	}
 
 	for _, name := range expectedTools {
@@ -845,7 +845,7 @@ func TestConductorAgent_InitialAdapters(t *testing.T) {
 	workDir := t.TempDir()
 	agent := newTestConductorAgent(t, workDir)
 
-	// Should have: finish + search_by_regex + list_dir + read_file + print_dir_tree
+	// Should have: agent_exit + search_by_regex + list_dir + read_file + print_dir_tree
 	// + delegate_repo + delegate_coding + delegate_chat + delegate_meta
 	// = 9 adapters minimum
 	if len(agent.Adapters) < 9 {
@@ -854,7 +854,7 @@ func TestConductorAgent_InitialAdapters(t *testing.T) {
 
 	// Verify all core adapters are present
 	coreNames := []string{
-		"finish", "search_by_regex", "list_dir", "read_file", "print_dir_tree",
+		"agent_exit", "search_by_regex", "list_dir", "read_file", "print_dir_tree",
 		"delegate_repo", "delegate_coding", "delegate_chat", "delegate_meta",
 	}
 	for _, name := range coreNames {

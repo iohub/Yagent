@@ -20,7 +20,7 @@ type ExecutorConfig struct {
 	MaxSteps     int
 	Publisher    *messaging.MessagePublisher
 	AgentName    string
-	StopOnFinish bool // if true, return immediately when finish tool is called
+	StopOnFinish bool // if true, return immediately when agent_exit tool is called
 	// SystemAsHuman places the system prompt in a Human role message instead of System.
 	// Used by RepoAgent which prefers this pattern.
 	SystemAsHuman bool
@@ -130,7 +130,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
 				},
 			})
 
-			if cfg.StopOnFinish && tc.FunctionCall.Name == "finish" {
+			if cfg.StopOnFinish && tc.FunctionCall.Name == "agent_exit" {
 				return toolResult, nil
 			}
 		}

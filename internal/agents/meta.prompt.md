@@ -73,7 +73,7 @@ The following tools are available for assignment to your designed agents:
 | `semantic_search` | Repo | Semantic code search (via codebase service) |
 | `query_code_skeleton` | Repo | Query code skeleton (function/class definitions) |
 | `query_code_snippet` | Repo | Query code snippet (function implementations) |
-| `finish` | Flow | Signal task completion |
+| `agent_exit` | Flow | Signal task completion |
 
 **Tool Assignment Guidelines**:
 - For analysis/read-only tasks: assign only read/search tools
@@ -81,7 +81,7 @@ The following tools are available for assignment to your designed agents:
 - For investigation tasks: add search, semantic_search, and query tools
 - For system tasks: add run_terminal_cmd
 - Always consider whether `thinking` would improve output quality
-- Always include `finish` so the agent can signal completion
+- Always include `agent_exit` so the agent can signal completion
 </available_tools_pool>
 
 <workflow>
@@ -113,7 +113,7 @@ Your ENTIRE response MUST be a single valid JSON object. No markdown code fences
 1. Output ONLY the JSON object — no markdown fences, no surrounding text.
 2. `agent_name` must be a descriptive, non-empty name (e.g. "Security Auditor", "Data Migration Planner").
 3. `agent_design` must contain the FULL system prompt, incorporating prompt engineering best practices from above. This prompt will be used directly as the agent's system message.
-4. `tools_used` must list exactly the tools your designed agent needs. Choose from the `<available_tools_pool>`. Always include `finish`.
+4. `tools_used` must list exactly the tools your designed agent needs. Choose from the `<available_tools_pool>`. Always include `agent_exit`.
 5. `task_for_agent` must distill the original task: strip all meta-design instructions, keep only the actual work description the agent needs to perform.
 6. You do NOT execute anything — the Conductor will create and run the agent with your design.
 </output_format>
