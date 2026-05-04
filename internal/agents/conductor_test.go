@@ -7,32 +7,23 @@ import (
 	"strings"
 	"testing"
 
+	"codeactor/internal/llm"
 	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/memory"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
-// ─── Mock LLM ────────────────────────────────────────────────────────────────
+// ─── Mock Engine ──────────────────────────────────────────────────────────────
 
-type mockLLM struct {
-	generateContent func(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error)
-	call            func(ctx context.Context, prompt string, options ...llms.CallOption) (string, error)
+type mockEngine struct {
+	generateContent func(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, opts *llm.CallOptions) (*llm.Response, error)
 }
 
-func (m *mockLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+func (m *mockEngine) GenerateContent(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, opts *llm.CallOptions) (*llm.Response, error) {
 	if m.generateContent != nil {
-		return m.generateContent(ctx, messages, options...)
+		return m.generateContent(ctx, messages, tools, opts)
 	}
-	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: ""}}}, nil
-}
-
-func (m *mockLLM) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
-	if m.call != nil {
-		return m.call(ctx, prompt, options...)
-	}
-	return "", nil
+	return &llm.Response{Choices: []llm.Choice{{Content: ""}}}, nil
 }
 
 // ─── Test Helpers ────────────────────────────────────────────────────────────
@@ -59,7 +50,8 @@ func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 func newTestConductorAgent(t *testing.T, workDir string) *ConductorAgent {
 	t.Helper()
 	gctx := newTestGlobalCtx(workDir)
-	return NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, nil, 10, nil, 3)
+	engine := &mockEngine{}
+	return NewConductorAgent(gctx, engine, nil, nil, nil, nil, 10, nil, 3)
 }
 
 // makeMetaOutput builds a valid Meta-Agent JSON output string.
@@ -344,10 +336,10 @@ func TestCustomAgentDelegateTool_Execution(t *testing.T) {
 	gctx := newTestGlobalCtx(workDir)
 
 	// Use a mock LLM that returns a simple response for the custom agent
-	customLLM := &mockLLM{
-		generateContent: func(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
-			return &llms.ContentResponse{
-				Choices: []*llms.ContentChoice{
+	customEngine := &mockEngine{
+		generateContent: func(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, opts *llm.CallOptions) (*llm.Response, error) {
+			return &llm.Response{
+				Choices: []llm.Choice{
 					{Content: "Custom agent task completed."},
 				},
 			}, nil
@@ -355,7 +347,7 @@ func TestCustomAgentDelegateTool_Execution(t *testing.T) {
 	}
 
 	// Build conductor with mocked LLM
-	conductor := NewConductorAgent(gctx, customLLM, nil, nil, nil, nil, 10, nil, 3)
+	conductor := NewConductorAgent(gctx, customEngine, nil, nil, nil, nil, 10, nil, 3)
 
 	ca := &CustomAgent{
 		Name:         "test_executor",
@@ -393,18 +385,18 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 	gctx := newTestGlobalCtx(workDir)
 
 	callCount := 0
-	customLLM := &mockLLM{
-		generateContent: func(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	customEngine := &mockEngine{
+		generateContent: func(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, opts *llm.CallOptions) (*llm.Response, error) {
 			callCount++
 			if callCount == 1 {
 				// First call: use agent_exit to complete
-				return &llms.ContentResponse{
-					Choices: []*llms.ContentChoice{{
+				return &llm.Response{
+					Choices: []llm.Choice{{
 						Content: "Task is complete.",
-						ToolCalls: []llms.ToolCall{{
+						ToolCalls: []llm.ToolCall{{
 							ID:   "call_agent_exit",
 							Type: "function",
-							FunctionCall: &llms.FunctionCall{
+							Function: llm.FunctionCall{
 								Name:      "agent_exit",
 								Arguments: `{"reason": "Test completed successfully"}`,
 							},
@@ -412,13 +404,13 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 					}},
 				}, nil
 			}
-			return &llms.ContentResponse{
-				Choices: []*llms.ContentChoice{{Content: "Should not reach here"}},
+			return &llm.Response{
+				Choices: []llm.Choice{{Content: "Should not reach here"}},
 			}, nil
 		},
 	}
 
-	conductor := NewConductorAgent(gctx, customLLM, nil, nil, nil, nil, 10, nil, 3)
+	conductor := NewConductorAgent(gctx, customEngine, nil, nil, nil, nil, 10, nil, 3)
 
 	ca := &CustomAgent{
 		Name:         "finisher",
@@ -524,11 +516,11 @@ func TestSystemPrompt_WithCustomAgents(t *testing.T) {
 // ─── delegate_meta Full Integration Tests ────────────────────────────────────
 
 // metaAgentMockLLM returns a Meta-Agent-style response based on the input.
-func metaAgentMockLLM(responseContent string) *mockLLM {
-	return &mockLLM{
-		generateContent: func(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
-			return &llms.ContentResponse{
-				Choices: []*llms.ContentChoice{{Content: responseContent}},
+func metaAgentMockLLM(responseContent string) *mockEngine {
+	return &mockEngine{
+		generateContent: func(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, opts *llm.CallOptions) (*llm.Response, error) {
+			return &llm.Response{
+				Choices: []llm.Choice{{Content: responseContent}},
 			}, nil
 		},
 	}
@@ -549,7 +541,7 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput))
 
 	// ConductorAgent
-	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil, 3)
+	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, 10, nil, 3)
 	initialAdapterCount := len(conductor.Adapters)
 
 	// Find and call delegate_meta tool
@@ -625,7 +617,7 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 	)
 
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput))
-	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil, 3)
+	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, 10, nil, 3)
 
 	// Call delegate_meta twice with the same agent design
 	var delegateMeta *tools.Adapter
@@ -665,7 +657,7 @@ func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
 	// Meta-Agent returns malformed output (no execution_result block)
 	malformedOutput := "Just some plain text without structured blocks."
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(malformedOutput))
-	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil, 3)
+	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, 10, nil, 3)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range conductor.Adapters {
@@ -708,7 +700,7 @@ func TestDelegateMeta_EmptyAgentName_NoRegistration(t *testing.T) {
 		[]string{"read_file"},
 	)
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput))
-	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil, 3)
+	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, 10, nil, 3)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range conductor.Adapters {
@@ -738,7 +730,7 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 	output := `{"thinking": "designing...", "agent_name": "Test Agent", "tools_used": ["read_file"], "result": {"key": "value"}}`
 
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(output))
-	conductor := NewConductorAgent(gctx, &mockLLM{}, nil, nil, nil, metaAgent, 10, nil, 3)
+	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, 10, nil, 3)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range conductor.Adapters {
@@ -774,14 +766,14 @@ func TestConvertMemoryMessageToLLMSMessage_ToolMessage(t *testing.T) {
 
 	llmMsg := convertMemoryMessageToLLMSMessage(msg)
 
-	if len(llmMsg.Parts) != 1 {
-		t.Errorf("Expected 1 part, got %d", len(llmMsg.Parts))
+	if llmMsg.Role != llm.RoleTool {
+		t.Errorf("Expected role %s, got %s", llm.RoleTool, llmMsg.Role)
 	}
-
-	part := llmMsg.Parts[0]
-	_, ok := part.(llms.ToolCallResponse)
-	if !ok {
-		t.Errorf("Expected part to be ToolCallResponse, got %T", part)
+	if llmMsg.ToolCallID != toolCallID {
+		t.Errorf("Expected ToolCallID %q, got %q", toolCallID, llmMsg.ToolCallID)
+	}
+	if llmMsg.Content != content {
+		t.Errorf("Expected Content %q, got %q", content, llmMsg.Content)
 	}
 }
 
@@ -803,18 +795,20 @@ func TestConvertMemoryMessageToLLMSMessage_AssistantWithToolCalls(t *testing.T) 
 
 	llmMsg := convertMemoryMessageToLLMSMessage(msg)
 
-	if len(llmMsg.Parts) != 2 {
-		t.Errorf("Expected 2 parts (text + tool call), got %d", len(llmMsg.Parts))
+	if llmMsg.Role != llm.RoleAssistant {
+		t.Errorf("Expected role %s, got %s", llm.RoleAssistant, llmMsg.Role)
 	}
-
-	// First part should be text (TextContent)
-	if _, ok := llmMsg.Parts[0].(llms.TextContent); !ok {
-		t.Errorf("Expected first part to be TextContent, got %T", llmMsg.Parts[0])
+	if llmMsg.Content != "Let me check that." {
+		t.Errorf("Expected Content to be set, got %q", llmMsg.Content)
 	}
-
-	// Second part should be ToolCall
-	if _, ok := llmMsg.Parts[1].(llms.ToolCall); !ok {
-		t.Errorf("Expected second part to be ToolCall")
+	if len(llmMsg.ToolCalls) != 1 {
+		t.Fatalf("Expected 1 ToolCall, got %d", len(llmMsg.ToolCalls))
+	}
+	if llmMsg.ToolCalls[0].ID != "call_1" {
+		t.Errorf("Expected ToolCall ID 'call_1', got %q", llmMsg.ToolCalls[0].ID)
+	}
+	if llmMsg.ToolCalls[0].Function.Name != "read_file" {
+		t.Errorf("Expected ToolCall function name 'read_file', got %q", llmMsg.ToolCalls[0].Function.Name)
 	}
 }
 

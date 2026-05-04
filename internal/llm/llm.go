@@ -13,10 +13,6 @@ import (
 	"codeactor/internal/util"
 
 	"log/slog"
-
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/bedrock"
-	"github.com/tmc/langchaingo/llms/openai"
 )
 
 // llmLogger is a separate logger for LLM responses
@@ -25,7 +21,6 @@ var llmLogFile *os.File
 
 // initLLMLogger initializes the LLM logger
 func initLLMLogger() error {
-	// Create logs directory in user home
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return util.WrapError(context.Background(), err, "failed to get user home directory")
@@ -36,7 +31,6 @@ func initLLMLogger() error {
 		return util.WrapError(context.Background(), err, "failed to create logs directory")
 	}
 
-	// Open LLM log file with date
 	dateStr := time.Now().Format("2006-01-02")
 	logFileName := fmt.Sprintf("llm-%s.log", dateStr)
 	var errFile error
@@ -45,7 +39,6 @@ func initLLMLogger() error {
 		return util.WrapError(context.Background(), errFile, "failed to open LLM log file")
 	}
 
-	// Create LLM logger with plain text format for better debugging
 	handler := slog.NewTextHandler(llmLogFile, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})
@@ -66,34 +59,23 @@ func LogLLMContent(title string, content string) {
 	}
 }
 
-// LoggingLLM wraps an llms.LLM to add logging
-type LoggingLLM struct {
-	inner llms.LLM
+// LoggingEngine wraps an Engine to add logging
+type LoggingEngine struct {
+	inner Engine
 }
 
-func (l *LoggingLLM) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
-	LogLLMContent("LLM Input (Call)", prompt)
-	resp, err := l.inner.Call(ctx, prompt, options...)
-	if err == nil {
-		LogLLMContent("LLM Response (Call)", resp)
-	} else {
-		LogLLMContent("LLM Error (Call)", err.Error())
-	}
-	return resp, err
-}
-
-func (l *LoggingLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
 	if msgsJSON, err := json.MarshalIndent(messages, "", "  "); err == nil {
-		LogLLMContent("LLM Input (GenerateContent)", string(msgsJSON))
-	} else {
-		LogLLMContent("LLM Input (GenerateContent) - JSON Error", fmt.Sprintf("Failed to marshal messages: %v", err))
+		LogLLMContent("LLM Input (messages)", string(msgsJSON))
+	}
+	if toolsJSON, err := json.MarshalIndent(tools, "", "  "); err == nil {
+		LogLLMContent("LLM Input (tools)", string(toolsJSON))
 	}
 
-	resp, err := l.inner.GenerateContent(ctx, messages, options...)
+	resp, err := l.inner.GenerateContent(ctx, messages, tools, opts)
 	if err == nil && len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
 		logContent := choice.Content
-
 		if len(choice.ToolCalls) > 0 {
 			var toolCallsLog strings.Builder
 			if logContent != "" {
@@ -101,25 +83,24 @@ func (l *LoggingLLM) GenerateContent(ctx context.Context, messages []llms.Messag
 			}
 			toolCallsLog.WriteString("[Tool Calls]:\n")
 			for i, tc := range choice.ToolCalls {
-				toolCallsLog.WriteString(fmt.Sprintf("%d. %s(%s)\n", i+1, tc.FunctionCall.Name, tc.FunctionCall.Arguments))
+				toolCallsLog.WriteString(fmt.Sprintf("%d. %s(%s)\n", i+1, tc.Function.Name, tc.Function.Arguments))
 			}
 			logContent += toolCallsLog.String()
 		}
-
-		LogLLMContent("LLM Response (GenerateContent)", logContent)
+		LogLLMContent("LLM Response", logContent)
 	} else if err != nil {
-		LogLLMContent("LLM Error (GenerateContent)", err.Error())
+		LogLLMContent("LLM Error", err.Error())
 	}
 	return resp, err
 }
 
 // Client represents an LLM client
 type Client struct {
-	LLM    llms.LLM
+	Engine Engine
 	Config *config.Config
 }
 
-// LoadConfig loads configuration from a TOML file using the new multi-provider structure
+// LoadConfig loads configuration from a TOML file using the multi-provider structure
 func LoadConfig(configPath string) (*config.Config, error) {
 	slog.Debug("Decoding TOML configuration file", "config_path", configPath)
 
@@ -131,7 +112,6 @@ func LoadConfig(configPath string) (*config.Config, error) {
 		return nil, err
 	}
 
-	// Get active provider for logging
 	activeProvider, err := config.GetActiveProvider()
 	if err != nil {
 		slog.Error("Failed to get active provider configuration", "error", err)
@@ -153,17 +133,20 @@ func LoadConfig(configPath string) (*config.Config, error) {
 func NewClient(config *config.Config) (*Client, error) {
 	ctx := context.Background()
 
-	// Initialize LLM logger
 	if err := initLLMLogger(); err != nil {
 		slog.Error("Failed to initialize LLM logger", "error", err)
 		return nil, util.WrapError(ctx, err, "failed to initialize LLM logger")
 	}
 
-	// Get active provider configuration
 	activeProvider, err := config.GetActiveProvider()
 	if err != nil {
 		slog.Error("Failed to get active provider configuration", "error", err)
 		return nil, util.WrapError(ctx, err, "failed to get active provider")
+	}
+
+	if activeProvider.APIKey == "" {
+		slog.Error("Cannot create LLM client: API key is empty")
+		return nil, util.WrapError(ctx, fmt.Errorf("API key not found in config"), "API key validation failed")
 	}
 
 	slog.Info("Creating new LLM client",
@@ -171,60 +154,14 @@ func NewClient(config *config.Config) (*Client, error) {
 		"model", activeProvider.Model,
 		"api_base_url", activeProvider.APIBaseURL)
 
-	var llm llms.LLM
-
-	// Handle Bedrock provider separately
-	if config.LLM.UseProvider == "bedrock" {
-		// Detect provider from model ID for Bedrock
-		modelProvider := activeProvider.ModelProvider
-
-		// Create Bedrock client
-		bedrockOpts := []bedrock.Option{
-			bedrock.WithModel(activeProvider.Model),
-		}
-		if modelProvider != "" {
-			bedrockOpts = append(bedrockOpts, bedrock.WithModelProvider(modelProvider))
-		}
-
-		llm, err = bedrock.New(bedrockOpts...)
-		if err != nil {
-			slog.Error("Failed to create Bedrock LLM client",
-				"error", err,
-				"provider", config.LLM.UseProvider,
-				"model", activeProvider.Model,
-				"model_provider", modelProvider)
-			return nil, util.WrapError(ctx, err, "failed to create Bedrock client")
-		}
-	} else {
-		// For non-Bedrock providers, require API key
-		if activeProvider.APIKey == "" {
-			slog.Error("Cannot create LLM client: API key is empty")
-			return nil, util.WrapError(ctx, fmt.Errorf("API key not found in config"), "API key validation failed")
-		}
-
-		// Create client using OpenAI's client but with specified API endpoint
-		llm, err = openai.New(
-			openai.WithModel(activeProvider.Model),
-			openai.WithBaseURL(activeProvider.APIBaseURL),
-			openai.WithToken(activeProvider.APIKey),
-		)
-		if err != nil {
-			slog.Error("Failed to create LLM client",
-				"error", err,
-				"provider", config.LLM.UseProvider,
-				"model", activeProvider.Model,
-				"api_base_url", activeProvider.APIBaseURL)
-			return nil, util.WrapError(ctx, err, "failed to create OpenAI client")
-		}
-	}
+	engine := NewOpenAIEngine(activeProvider.APIBaseURL, activeProvider.APIKey, activeProvider.Model)
 
 	slog.Info("LLM client created successfully")
 
-	// Wrap with LoggingLLM
-	loggingLLM := &LoggingLLM{inner: llm}
+	loggingEngine := &LoggingEngine{inner: engine}
 
 	return &Client{
-		LLM:    loggingLLM,
+		Engine: loggingEngine,
 		Config: config,
 	}, nil
 }
@@ -240,12 +177,11 @@ func StreamDebugHandler(ctx context.Context, chunk []byte) error {
 }
 
 // GenerateCompletionWithMemory generates a completion using the provided memory (conversation history)
-func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms.MessageContent, streamHandler func(context.Context, []byte) error) (string, error) {
+func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []Message, streamHandler func(context.Context, []byte) error) (string, error) {
 	slog.Debug("Starting completion generation with memory",
 		"memory_length", len(memory),
 		"streaming_enabled", c.Config.App.EnableStreaming)
 
-	// Log input memory to LLM log file
 	if memoryJSON, err := json.Marshal(memory); err == nil {
 		llmLogger.Info("LLM input memory",
 			"type", "input_memory",
@@ -254,36 +190,24 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms
 			"memory", string(memoryJSON))
 	}
 
-	// Log LLM input using assistant's logger if available
-	/*
-		if c.assistant != nil && c.assistant.logger != nil {
-			c.assistant.logger.LogLLMInput("", memory, nil)
-		}
-	*/
-
-	// Get active provider configuration
 	activeProvider, err := c.Config.GetActiveProvider()
 	if err != nil {
 		slog.Error("Failed to get active provider configuration", "error", err)
 		return "", util.WrapError(ctx, err, "failed to get active provider")
 	}
 
-	// Generate options
-	opts := []llms.CallOption{
-		llms.WithMaxTokens(activeProvider.MaxTokens),
-		llms.WithTemperature(activeProvider.Temperature),
+	opts := &CallOptions{
+		MaxTokens:   activeProvider.MaxTokens,
+		Temperature: activeProvider.Temperature,
 	}
 
-	// Add streaming if enabled and handler provided
 	if c.Config.App.EnableStreaming && streamHandler != nil {
-		opts = append(opts, llms.WithStreamingFunc(streamHandler))
+		opts.StreamHandler = streamHandler
 		slog.Debug("Streaming enabled for this request (memory)")
 	}
 
-	// Generate completion
-	completion, err := c.LLM.GenerateContent(ctx, memory, opts...)
+	completion, err := c.Engine.GenerateContent(ctx, memory, nil, opts)
 	if err != nil {
-		// 尝试提取HTTP响应内容
 		httpResponse := extractHTTPResponse(err)
 
 		slog.Error("Failed to GenerateContent",
@@ -292,7 +216,6 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms
 			"memory_length", len(memory),
 			"http_response", httpResponse)
 
-		// Log error to LLM log file
 		llmLogger.Error("LLM completion error",
 			"type", "completion_error",
 			"model", c.Config.LLM.UseProvider,
@@ -303,14 +226,12 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms
 		return "", util.WrapError(ctx, err, "error generating completion (memory)")
 	}
 
-	// Return result
 	if len(completion.Choices) > 0 {
 		result := completion.Choices[0].Content
 		slog.Info("Completion generated successfully (memory)",
 			"result_length", len(result),
 			"choices_count", len(completion.Choices))
 
-		// Log the complete response to LLM log file
 		if choicesJSON, err := json.Marshal(completion.Choices); err == nil {
 			llmLogger.Info("LLM completion output",
 				"type", "completion_output",
@@ -321,20 +242,12 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []llms
 				"response.Choices", string(choicesJSON))
 		}
 
-		// Log LLM output using assistant's logger if available
-		/*
-			if c.assistant != nil && c.assistant.logger != nil {
-				c.assistant.logger.LogLLMOutput("", completion)
-			}
-		*/
-
 		return result, nil
 	}
 
 	slog.Warn("No completion choices returned from LLM (memory)",
 		"choices_count", len(completion.Choices))
 
-	// Log empty response to LLM log file
 	llmLogger.Warn("LLM returned empty completion (with memory)",
 		"type", "empty_completion_memory",
 		"model", c.Config.LLM.UseProvider,
@@ -350,31 +263,5 @@ func extractHTTPResponse(err error) string {
 		return ""
 	}
 
-	// 将错误转换为字符串
-	errStr := err.Error()
-
-	// 检查AWS Bedrock特定的错误
-	if strings.Contains(errStr, "ValidationException") {
-		return fmt.Sprintf("Bedrock Validation Error: %s", errStr)
-	}
-
-	if strings.Contains(errStr, "ThrottlingException") {
-		return fmt.Sprintf("Bedrock Throttling Error: %s", errStr)
-	}
-
-	if strings.Contains(errStr, "AccessDeniedException") {
-		return fmt.Sprintf("Bedrock Access Denied: %s", errStr)
-	}
-
-	if strings.Contains(errStr, "ModelNotReadyException") {
-		return fmt.Sprintf("Bedrock Model Not Ready: %s", errStr)
-	}
-
-	// 检查其他常见的HTTP错误格式
-	if strings.Contains(errStr, "status code") || strings.Contains(errStr, "HTTP") {
-		return errStr
-	}
-
-	// 如果没有明显的HTTP错误信息，返回原始错误
-	return fmt.Sprintf("Error: %s", errStr)
+	return fmt.Sprintf("Error: %s", err.Error())
 }

@@ -8,11 +8,10 @@ import (
 	"log/slog"
 	"strings"
 
+	"codeactor/internal/llm"
 	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/memory"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 //go:embed conductor.prompt.md
@@ -51,7 +50,7 @@ type ConductorAgent struct {
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -254,7 +253,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, repo *RepoA
 	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
 
 	self = &ConductorAgent{
-		BaseAgent:      BaseAgent{LLM: llm, Publisher: globalCtx.Publisher},
+		BaseAgent:      BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
 		RepoAgent:      repo,
 		CodingAgent:    coding,
 		ChatAgent:      chat,
@@ -496,46 +495,48 @@ func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent
 	return RunAgentLoop(ctx, cfg)
 }
 
-func convertToolCalls(tcs []llms.ToolCall) []memory.ToolCallData {
+func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
 	var res []memory.ToolCallData
 	for _, tc := range tcs {
 		res = append(res, memory.ToolCallData{
 			ID:   tc.ID,
-			Type: string(tc.Type),
+			Type: tc.Type,
 			Function: memory.ToolCallFunction{
-				Name:      tc.FunctionCall.Name,
-				Arguments: json.RawMessage(tc.FunctionCall.Arguments),
+				Name:      tc.Function.Name,
+				Arguments: json.RawMessage(tc.Function.Arguments),
 			},
 		})
 	}
 	return res
 }
 
-func convertMemoryMessageToLLMSMessage(msg memory.ChatMessage) llms.MessageContent {
-	role := llms.ChatMessageTypeHuman
+func convertMemoryMessageToLLMSMessage(msg memory.ChatMessage) llm.Message {
+	role := llm.RoleUser
 	switch msg.Type {
 	case memory.MessageTypeSystem:
-		role = llms.ChatMessageTypeSystem
+		role = llm.RoleSystem
 	case memory.MessageTypeHuman:
-		role = llms.ChatMessageTypeHuman
+		role = llm.RoleUser
 	case memory.MessageTypeAssistant:
-		role = llms.ChatMessageTypeAI
+		role = llm.RoleAssistant
 	case memory.MessageTypeTool:
-		role = llms.ChatMessageTypeTool
+		role = llm.RoleTool
 	}
 
-	parts := []llms.ContentPart{}
+	result := llm.Message{
+		Role: role,
+	}
 
 	if msg.Content != "" && msg.Type != memory.MessageTypeTool {
-		parts = append(parts, llms.TextPart(msg.Content))
+		result.Content = msg.Content
 	}
 
 	if len(msg.ToolCalls) > 0 {
 		for _, tc := range msg.ToolCalls {
-			parts = append(parts, llms.ToolCall{
+			result.ToolCalls = append(result.ToolCalls, llm.ToolCall{
 				ID:   tc.ID,
-				Type: string(tc.Type),
-				FunctionCall: &llms.FunctionCall{
+				Type: tc.Type,
+				Function: llm.FunctionCall{
 					Name:      tc.Function.Name,
 					Arguments: string(tc.Function.Arguments),
 				},
@@ -544,16 +545,11 @@ func convertMemoryMessageToLLMSMessage(msg memory.ChatMessage) llms.MessageConte
 	}
 
 	if msg.Type == memory.MessageTypeTool && msg.ToolCallID != nil {
-		parts = append(parts, llms.ToolCallResponse{
-			ToolCallID: *msg.ToolCallID,
-			Content:    msg.Content,
-		})
+		result.ToolCallID = *msg.ToolCallID
+		result.Content = msg.Content
 	}
 
-	return llms.MessageContent{
-		Role:  role,
-		Parts: parts,
-	}
+	return result
 }
 
 func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
@@ -566,7 +562,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		}
 	}
 
-	var messages []llms.MessageContent
+	var messages []llm.Message
 
 	// Always start with System Prompt (with any registered custom agents appended)
 	systemPrompt := a.GlobalCtx.FormatPrompt(conductorPrompt)
@@ -577,9 +573,9 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		}
 		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n"
 	}
-	messages = append(messages, llms.MessageContent{
-		Role:  llms.ChatMessageTypeSystem,
-		Parts: []llms.ContentPart{llms.TextPart(systemPrompt)},
+	messages = append(messages, llm.Message{
+		Role:    llm.RoleSystem,
+		Content: systemPrompt,
 	})
 
 	if mem != nil {
@@ -591,68 +587,65 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			messages = append(messages, convertMemoryMessageToLLMSMessage(m))
 		}
 	} else {
-		messages = append(messages, llms.MessageContent{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart(input)},
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: input,
 		})
 	}
 
-	llmTools := make([]llms.Tool, len(a.Adapters))
+	toolDefs := make([]llm.ToolDef, len(a.Adapters))
 	for i, ad := range a.Adapters {
-		llmTools[i] = ad.ToLLMSTool()
+		toolDefs[i] = ad.ToToolDef()
 	}
 
 	for i := 0; i < a.maxSteps; i++ {
 		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
-		resp, err := a.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
+		resp, err := a.LLM.GenerateContent(ctx, messages, toolDefs, nil)
 		if err != nil {
 			slog.Error("ConductorAgent LLM error", "error", err, "step", i)
 			return "", err
 		}
 
-		msg := resp.Choices[0]
-		slog.Debug("ConductorAgent LLM response", "step", i, "message", msg)
+		choice := resp.Choices[0]
+		slog.Debug("ConductorAgent LLM response", "step", i, "content", choice.Content, "tool_calls", len(choice.ToolCalls))
 
-		if msg.Content != "" {
+		if choice.Content != "" {
 			if a.Publisher != nil {
-				a.Publisher.Publish("ai_response", msg.Content, a.Name())
+				a.Publisher.Publish("ai_response", choice.Content, a.Name())
 			}
 		}
 
 		if mem != nil {
-			mem.AddAssistantMessage(msg.Content, convertToolCalls(msg.ToolCalls))
+			mem.AddAssistantMessage(choice.Content, convertToolCalls(choice.ToolCalls))
 		}
 
-		parts := []llms.ContentPart{llms.TextPart(msg.Content)}
-		for _, tc := range msg.ToolCalls {
-			parts = append(parts, tc)
-		}
-
-		messages = append(messages, llms.MessageContent{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: parts,
+		messages = append(messages, llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   choice.Content,
+			Reasoning: choice.Reasoning,
+			ToolCalls: choice.ToolCalls,
 		})
 
-		if len(msg.ToolCalls) == 0 {
-			return msg.Content, nil
+		if len(choice.ToolCalls) == 0 {
+			return choice.Content, nil
 		}
 
-		for _, tc := range msg.ToolCalls {
+		for _, tc := range choice.ToolCalls {
 			var toolResult string
 			var err error
 			found := false
 
 			if a.Publisher != nil {
 				a.Publisher.Publish("tool_call_start", map[string]interface{}{
-					"tool_name":    tc.FunctionCall.Name,
-					"arguments":    tc.FunctionCall.Arguments,
+					"tool_name":    tc.Function.Name,
+					"arguments":    tc.Function.Arguments,
 					"tool_call_id": tc.ID,
 				}, a.Name())
 			}
 			for _, t := range a.Adapters {
-				if t.Name() == tc.FunctionCall.Name {
+				if t.Name() == tc.Function.Name {
 					found = true
-					toolResult, err = t.Call(ctx, tc.FunctionCall.Arguments)
+					toolResult, err = t.Call(ctx, tc.Function.Arguments)
 					if err != nil {
 						toolResult = fmt.Sprintf("Error: %v", err)
 					} else if t.Name() == "delegate_repo" {
@@ -669,12 +662,12 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				}
 			}
 			if !found {
-				toolResult = fmt.Sprintf("Tool %s not found", tc.FunctionCall.Name)
+				toolResult = fmt.Sprintf("Tool %s not found", tc.Function.Name)
 			}
 
 			if a.Publisher != nil {
 				a.Publisher.Publish("tool_call_result", map[string]interface{}{
-					"tool_name":    tc.FunctionCall.Name,
+					"tool_name":    tc.Function.Name,
 					"result":       toolResult,
 					"tool_call_id": tc.ID,
 				}, a.Name())
@@ -684,17 +677,13 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				mem.AddToolMessage(toolResult, tc.ID)
 			}
 
-			messages = append(messages, llms.MessageContent{
-				Role: llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{
-					llms.ToolCallResponse{
-						ToolCallID: tc.ID,
-						Name:       tc.FunctionCall.Name,
-						Content:    toolResult,
-					},
-				},
+			messages = append(messages, llm.Message{
+				Role:       llm.RoleTool,
+				Content:    toolResult,
+				ToolCallID: tc.ID,
+				ToolName:   tc.Function.Name,
 			})
-			if tc.FunctionCall.Name == "agent_exit" {
+			if tc.Function.Name == "agent_exit" {
 				return "Task completed successfully", nil
 			}
 

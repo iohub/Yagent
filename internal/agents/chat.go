@@ -8,7 +8,7 @@ import (
 	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 
-	"github.com/tmc/langchaingo/llms"
+	"codeactor/internal/llm"
 )
 
 //go:embed chat.prompt.md
@@ -21,7 +21,7 @@ type ChatAgent struct {
 	maxSteps  int
 }
 
-func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) *ChatAgent {
+func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *ChatAgent {
 	// Build a minimal tool set for ChatAgent: micro_agent for sub-LLM reasoning,
 	// thinking for cognitive reflection, and agent_exit for clean termination.
 	var toolDefs []ToolDefinition

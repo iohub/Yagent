@@ -15,7 +15,7 @@ import (
 	"codeactor/internal/globalctx"
 	"codeactor/pkg/messaging"
 
-	"github.com/tmc/langchaingo/llms"
+	"codeactor/internal/llm"
 )
 
 //go:embed repo.prompt.md
@@ -55,7 +55,7 @@ type RepoAgent struct {
 	maxSteps  int
 }
 
-func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, publisher *messaging.MessagePublisher, maxSteps int) *RepoAgent {
+func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *messaging.MessagePublisher, maxSteps int) *RepoAgent {
 	var toolDefs []ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal tools", "error", err)

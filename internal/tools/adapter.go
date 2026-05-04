@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/tmc/langchaingo/llms"
+	"codeactor/internal/llm"
 )
 
 // ToolFunc is a function type that matches the tool execution signature
 type ToolFunc func(ctx context.Context, params map[string]interface{}) (interface{}, error)
 
-// Adapter wraps a function to implement the langchaingo tools.Tool interface
+// Adapter wraps a ToolFunc with name, description, and schema for LLM function calling
 type Adapter struct {
 	name        string
 	description string
@@ -97,11 +97,11 @@ func SetGuardOnAdapters(adapters []*Adapter, guard *WorkspaceGuard) {
 	}
 }
 
-// ToLLMSTool converts the adapter to an llms.Tool definition
-func (a *Adapter) ToLLMSTool() llms.Tool {
-	return llms.Tool{
+// ToToolDef converts the adapter to an llm.ToolDef definition
+func (a *Adapter) ToToolDef() llm.ToolDef {
+	return llm.ToolDef{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: llm.FunctionDef{
 			Name:        a.name,
 			Description: a.description,
 			Parameters:  a.schema,

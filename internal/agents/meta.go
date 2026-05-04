@@ -7,8 +7,7 @@ import (
 	"log/slog"
 
 	"codeactor/internal/globalctx"
-
-	"github.com/tmc/langchaingo/llms"
+	"codeactor/internal/llm"
 )
 
 //go:embed meta.prompt.md
@@ -22,7 +21,7 @@ type MetaAgent struct {
 	GlobalCtx *globalctx.GlobalCtx
 }
 
-func NewMetaAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM) *MetaAgent {
+func NewMetaAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine) *MetaAgent {
 	return &MetaAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
@@ -41,19 +40,19 @@ func (a *MetaAgent) Name() string {
 func (a *MetaAgent) Run(ctx context.Context, input string) (string, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(metaPrompt)
 
-	messages := []llms.MessageContent{
+	messages := []llm.Message{
 		{
-			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(systemPrompt)},
+			Role:    llm.RoleSystem,
+			Content: systemPrompt,
 		},
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart(input)},
+			Role:    llm.RoleUser,
+			Content: input,
 		},
 	}
 
 	slog.Debug("MetaAgent calling LLM (design-only, no tools)", "input", input)
-	resp, err := a.LLM.GenerateContent(ctx, messages)
+	resp, err := a.LLM.GenerateContent(ctx, messages, nil, nil)
 	if err != nil {
 		slog.Error("MetaAgent LLM error", "error", err)
 		return "", fmt.Errorf("MetaAgent LLM call failed: %w", err)

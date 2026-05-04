@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 
+	"codeactor/internal/llm"
 	"codeactor/internal/tools"
 	"codeactor/pkg/messaging"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // ExecutorConfig holds the configuration for running an LLM-tool agent loop.
@@ -16,7 +15,7 @@ type ExecutorConfig struct {
 	SystemPrompt string
 	UserInput    string
 	Adapters     []*tools.Adapter
-	LLM          llms.LLM
+	LLM          llm.Engine
 	MaxSteps     int
 	Publisher    *messaging.MessagePublisher
 	AgentName    string
@@ -32,71 +31,72 @@ type ExecutorConfig struct {
 // RunAgentLoop runs the standard LLM-tool interaction loop.
 // It returns the final text response from the LLM.
 func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
-	systemRole := llms.ChatMessageTypeSystem
+	systemRole := llm.RoleSystem
 	if cfg.SystemAsHuman {
-		systemRole = llms.ChatMessageTypeHuman
+		systemRole = llm.RoleUser
 	}
 
-	messages := []llms.MessageContent{
+	messages := []llm.Message{
 		{
-			Role:  systemRole,
-			Parts: []llms.ContentPart{llms.TextPart(cfg.SystemPrompt)},
+			Role:    systemRole,
+			Content: cfg.SystemPrompt,
 		},
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart(cfg.UserInput)},
+			Role:    llm.RoleUser,
+			Content: cfg.UserInput,
 		},
 	}
 
-	llmTools := make([]llms.Tool, len(cfg.Adapters))
+	toolDefs := make([]llm.ToolDef, len(cfg.Adapters))
 	for i, ad := range cfg.Adapters {
-		llmTools[i] = ad.ToLLMSTool()
+		toolDefs[i] = ad.ToToolDef()
 	}
+
+	opts := &llm.CallOptions{}
 
 	for i := 0; i < cfg.MaxSteps; i++ {
 		slog.Debug("AgentExecutor calling LLM", "agent", cfg.AgentName, "step", i)
-		resp, err := cfg.LLM.GenerateContent(ctx, messages, llms.WithTools(llmTools))
+		resp, err := cfg.LLM.GenerateContent(ctx, messages, toolDefs, opts)
 		if err != nil {
 			slog.Error("AgentExecutor LLM error", "agent", cfg.AgentName, "error", err, "step", i)
 			return "", err
 		}
 
-		msg := resp.Choices[0]
-		if msg.Content != "" && cfg.Publisher != nil {
-			cfg.Publisher.Publish("ai_response", msg.Content, cfg.AgentName)
+		choice := resp.Choices[0]
+		if choice.Content != "" && cfg.Publisher != nil {
+			cfg.Publisher.Publish("ai_response", choice.Content, cfg.AgentName)
 		}
 
-		parts := []llms.ContentPart{llms.TextPart(msg.Content)}
-		for _, tc := range msg.ToolCalls {
-			parts = append(parts, tc)
+		// Build assistant message
+		assistantMsg := llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   choice.Content,
+			Reasoning: choice.Reasoning,
+			ToolCalls: choice.ToolCalls,
+		}
+		messages = append(messages, assistantMsg)
+
+		if len(choice.ToolCalls) == 0 {
+			return choice.Content, nil
 		}
 
-		messages = append(messages, llms.MessageContent{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: parts,
-		})
-
-		if len(msg.ToolCalls) == 0 {
-			return msg.Content, nil
-		}
-
-		for _, tc := range msg.ToolCalls {
+		for _, tc := range choice.ToolCalls {
 			var toolResult string
 			var callErr error
 			found := false
 
 			if cfg.Publisher != nil {
 				cfg.Publisher.Publish("tool_call_start", map[string]interface{}{
-					"tool_name":    tc.FunctionCall.Name,
-					"arguments":    tc.FunctionCall.Arguments,
+					"tool_name":    tc.Function.Name,
+					"arguments":    tc.Function.Arguments,
 					"tool_call_id": tc.ID,
 				}, cfg.AgentName)
 			}
 
 			for _, t := range cfg.Adapters {
-				if t.Name() == tc.FunctionCall.Name {
+				if t.Name() == tc.Function.Name {
 					found = true
-					toolResult, callErr = t.Call(ctx, tc.FunctionCall.Arguments)
+					toolResult, callErr = t.Call(ctx, tc.Function.Arguments)
 					if callErr != nil {
 						toolResult = fmt.Sprintf("Error: %v", callErr)
 					}
@@ -104,33 +104,29 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
 				}
 			}
 			if !found {
-				toolResult = fmt.Sprintf("Tool %s not found", tc.FunctionCall.Name)
+				toolResult = fmt.Sprintf("Tool %s not found", tc.Function.Name)
 			}
 
 			if cfg.OnToolResult != nil {
-				cfg.OnToolResult(tc.FunctionCall.Name, toolResult)
+				cfg.OnToolResult(tc.Function.Name, toolResult)
 			}
 
 			if cfg.Publisher != nil {
 				cfg.Publisher.Publish("tool_call_result", map[string]interface{}{
-					"tool_name":    tc.FunctionCall.Name,
+					"tool_name":    tc.Function.Name,
 					"result":       toolResult,
 					"tool_call_id": tc.ID,
 				}, cfg.AgentName)
 			}
 
-			messages = append(messages, llms.MessageContent{
-				Role: llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{
-					llms.ToolCallResponse{
-						ToolCallID: tc.ID,
-						Name:       tc.FunctionCall.Name,
-						Content:    toolResult,
-					},
-				},
+			messages = append(messages, llm.Message{
+				Role:       llm.RoleTool,
+				Content:    toolResult,
+				ToolCallID: tc.ID,
+				ToolName:   tc.Function.Name,
 			})
 
-			if cfg.StopOnFinish && tc.FunctionCall.Name == "agent_exit" {
+			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" {
 				return toolResult, nil
 			}
 		}
