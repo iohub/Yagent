@@ -39,7 +39,7 @@ Server defaults to `localhost:9080`. Override via `--host`/`--port` or `CODECACT
 - **LLM**: `github.com/tmc/langchaingo` (multi-provider: OpenAI-compatible, Bedrock)
 - **HTTP/WS**: `gin-gonic/gin` + `olahol/melody`
 - **TUI**: Bubble Tea
-- **External**: `codeactor-codebase` (Rust, `127.0.0.1:12800`) — semantic search, repo investigation, code skeleton/snippet
+- **External**: `codeactor-codebase` (Rust, `127.0.0.1:12800`) — semantic search, repo investigation, call graph, code skeleton/snippet. See [Codebase Component](#codebase-component) below.
 - **System deps**: `ripgrep` (rg), `fzf`
 
 ## Project Structure
@@ -74,6 +74,89 @@ codeactor-agent/
 3. **Adapter pattern**: `ToolFunc` wrapped via `Adapter` into langchaingo's `Tool` interface for LLM Function Calling
 4. **Config priority**: `$HOME/.codeactor/config/config.toml` → panics if not found
 5. **Agent disable**: Use `--disable-agents=repo,coding,...` at startup to conditionally exclude delegate tools. Disabled agents are still constructed but their delegate tools are not registered in the Conductor's Adapters.
+
+## Codebase Component
+
+`codeactor-codebase` is a standalone **Rust** service that provides deep code analysis capabilities. It runs as a background HTTP server on `127.0.0.1:12800` (configurable via `config.toml` `[http] codebase_port`).
+
+### Build & Run
+
+```bash
+cd codebase && cargo build --release
+
+# Start with target repo
+./target/release/codeactor-codebase server --repo-path /path/to/project
+
+# Custom address
+./target/release/codeactor-codebase server --repo-path /path/to/project --address 0.0.0.0:8080
+```
+
+The Go binary automatically launches `~/.codeactor/bin/codeactor-codebase` as a background process on startup (`main.go:startCodebaseServer()`). Logs go to `~/.codeactor/logs/codeactor-codebase/{date}.log`.
+
+### Architecture (Rust side)
+
+```
+codebase/src/
+├── main.rs              # CLI entry: server / vectorize subcommands
+├── config.rs            # Config loading from ~/.codeactor/config/config.toml
+├── codegraph/           # AST parsing + graph data structures
+│   ├── graph.rs         # Flat CodeGraph (HashMap-based)
+│   ├── types.rs         # PetCodeGraph (petgraph DiGraph<FunctionInfo, CallRelation>)
+│   ├── parser.rs        # CodeParser: tree-sitter parsing with FileIndex/SnippetIndex
+│   └── treesitter/      # Language parsers (Rust/Python/JS/TS/Java/C++/Go)
+├── services/
+│   ├── analyzer.rs      # CodeAnalyzer: call chains, cycles, complexity, reports
+│   ├── embedding_service.rs  # LanceDB vector embeddings + SQLite cache + semantic search
+│   └── snippet_service.rs    # Code snippet extraction + caching
+├── storage/             # Graph persistence (JSON/binary), file watching (notify, 20s debounce)
+└── http/                # Axum HTTP server (handlers, models, server)
+```
+
+Core design: **single repo per process** — binds to one repo at startup via `--repo-path`. All API endpoints use the bound repo.
+
+### HTTP API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+| GET | `/status` | Repo status (functions, files, embedding state) |
+| POST | `/investigate_repo` | Top-15 functions by out-degree, directory tree, file skeletons |
+| POST | `/semantic_search` | Vector-based semantic code search (text + `limit`) |
+| POST | `/query_code_skeleton` | Batch skeleton extraction from file paths |
+| POST | `/query_code_snippet` | Extract code snippet by `filepath` + `function_name` |
+| POST | `/query_call_graph` | Query call graph by file/function name |
+| POST | `/query_hierarchical_graph` | Hierarchical call tree with depth limit |
+| POST | `/query_indexing_status` | Embedding indexing status |
+| GET | `/draw_call_graph` | ECharts call graph visualization |
+
+### Integration in Go
+
+| Layer | File | Usage |
+|-------|------|-------|
+| Startup | `main.go:216-257` | `startCodebaseServer()` launches the Rust binary as a background process |
+| Global state | `internal/globalctx/global_context.go:20,31` | `CodebaseURL` field + `RepoOps *RepoOperationsTool` |
+| Initialization | `internal/app/app.go:62,73` | Sets `CodebaseURL=http://127.0.0.1:12800`, creates `RepoOperationsTool` |
+| Tool wrapper | `internal/tools/repo_operations.go` | `RepoOperationsTool` with 3 methods: `ExecuteSemanticSearch`, `ExecuteQueryCodeSkeleton`, `ExecuteQueryCodeSnippet` |
+| RepoAgent | `internal/agents/repo.go:105-139` | `doPreInvestigate()` calls `POST /investigate_repo` before each Run |
+| Tool routing | `internal/agents/conductor.go:298-303`, `coding.go:59-63`, `repo.go:75-79` | Routes `semantic_search`/`query_code_skeleton`/`query_code_snippet` to `RepoOps` |
+
+### Config sections (in project `config/config.toml`, deployed to `~/.codeactor/config/config.toml`)
+
+```toml
+[http]
+codebase_port = 12800
+
+[codebase]
+enable_embedding = true
+embedding_db_uri = "~/.codeactor/data/lancedb"
+graph_db_uri = "~/.codeactor/data/graph"
+
+[codebase.embedding]
+model = "text-embedding-3-small"
+api_token = "sk-..."
+api_base_url = "https://api.openai.com/v1"
+dimensions = 1536
+```
 
 ## Code Conventions
 

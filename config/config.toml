@@ -1,3 +1,8 @@
+# HTTP Server Configuration
+[http]
+server_port = 9080
+codebase_port = 12800
+
 # LLM Configuration
 [llm]
 # 选择当前使用的提供商
@@ -115,3 +120,15 @@ coding_max_steps = 50
 repo_max_steps = 30
 meta_retry_count = 5
 lang = "Chinese"
+
+# Codebase Component Configuration
+[codebase]
+enable_embedding = true
+embedding_db_uri = "~/.codeactor/data/embedding"
+graph_db_uri = "~/.codeactor/data/graph"
+
+[codebase.embedding]
+model = "Qwen/Qwen3-Embedding-4B"
+api_token = "your-key"
+api_base_url = "https://api.siliconflow.cn/v1"
+dimensions = 2560

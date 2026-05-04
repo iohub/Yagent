@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"runtime"
 	"strings"
@@ -30,6 +31,7 @@ type CodingAssistant struct {
 
 	globalCtx      *globalctx.GlobalCtx
 	DisabledAgents string // comma-separated list of agent names to disable (e.g. "repo,coding,chat")
+	CodebasePort   int    // codebase 服务端口，由 main 函数动态分配
 }
 
 // NewCodingAssistant creates a new CodingAssistant.
@@ -59,7 +61,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		Arch:        runtime.GOARCH,
 		// Global utility
 		Publisher:   publisher,
-		CodebaseURL: "http://127.0.0.1:12800",
+		CodebaseURL: fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort),
 
 		// Tools
 		FileOps:      tools.NewFileOperationsTool(workDir),
@@ -70,7 +72,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		MicroAgentTool: tools.NewMicroAgentTool(llm),
 		ImplPlanTool:   tools.NewImplPlanTool(),
 		FlowOps:           tools.NewFlowControlTool(workDir),
-		RepoOps:           tools.NewRepoOperationsTool("http://127.0.0.1:12800", workDir),
+		RepoOps:           tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort), workDir),
 		UserConfirmMgr:    userConfirmMgr,
 	}
 	ca.globalCtx = &gctx
