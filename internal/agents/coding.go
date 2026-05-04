@@ -9,7 +9,7 @@ import (
 	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 
-	"github.com/tmc/langchaingo/llms"
+	"codeactor/internal/llm"
 )
 
 //go:embed coding.prompt.md
@@ -28,7 +28,7 @@ type CodingAgent struct {
 	maxSteps  int
 }
 
-func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llms.LLM, maxSteps int) *CodingAgent {
+func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *CodingAgent {
 	var toolDefs []ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal coding tools", "error", err)

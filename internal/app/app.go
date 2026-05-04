@@ -15,13 +15,11 @@ import (
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
 	"codeactor/pkg/messaging"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // CodingAssistant is the main entry point for the agent system.
 type CodingAssistant struct {
-	llm                  llms.LLM
+	engine               llm.Engine
 	config               *config.Config
 	conductor            *agents.ConductorAgent
 	dispatcher           *messaging.MessageDispatcher
@@ -39,15 +37,15 @@ func NewCodingAssistant(client *llm.Client) (*CodingAssistant, error) {
 	ca := &CodingAssistant{
 		userResponseChannels: make(map[string]chan string),
 		logger:               slog.Default().With("component", "coding_assistant"),
-		llm:                  client.LLM,
+		engine:               client.Engine,
 		config:               client.Config,
 	}
 	return ca, nil
 }
 
-// Init initializes the assistant with LLM and creates agents.
-func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
-	ca.llm = llm
+// Init initializes the assistant with Engine and creates agents.
+func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
+	ca.engine = engine
 
 	// Initialize agents
 	publisher := messaging.NewMessagePublisher(ca.dispatcher)
@@ -69,7 +67,7 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 		SysOps:       tools.NewSystemOperationsTool(workDir),
 		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
 		ThinkingTool: tools.NewThinkingTool(),
-		MicroAgentTool: tools.NewMicroAgentTool(llm),
+		MicroAgentTool: tools.NewMicroAgentTool(engine),
 		ImplPlanTool:   tools.NewImplPlanTool(),
 		FlowOps:           tools.NewFlowControlTool(workDir),
 		RepoOps:           tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort), workDir),
@@ -115,11 +113,11 @@ func (ca *CodingAssistant) Init(llm llms.LLM, workDir string) {
 	// Parse disabled agents from comma-separated string
 	disabledAgents := parseDisabledAgents(ca.DisabledAgents)
 
-	repoAgent := agents.NewRepoAgent(ca.globalCtx, llm, publisher, repoMaxSteps)
-	codingAgent := agents.NewCodingAgent(ca.globalCtx, llm, codingMaxSteps)
-	chatAgent := agents.NewChatAgent(ca.globalCtx, llm, chatMaxSteps)
-	metaAgent := agents.NewMetaAgent(ca.globalCtx, llm)
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, llm, repoAgent, codingAgent, chatAgent, metaAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
+	repoAgent := agents.NewRepoAgent(ca.globalCtx, engine, publisher, repoMaxSteps)
+	codingAgent := agents.NewCodingAgent(ca.globalCtx, engine, codingMaxSteps)
+	chatAgent := agents.NewChatAgent(ca.globalCtx, engine, chatMaxSteps)
+	metaAgent := agents.NewMetaAgent(ca.globalCtx, engine)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, engine, repoAgent, codingAgent, chatAgent, metaAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
@@ -177,14 +175,14 @@ func (r *TaskRequest) WithUserMessage(msg string) *TaskRequest {
 
 // ProcessCodingTaskWithCallback executes the task using the agent system.
 func (ca *CodingAssistant) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
-	ca.Init(ca.llm, req.projectDir)
+	ca.Init(ca.engine, req.projectDir)
 
 	return ca.conductor.Run(req.ctx, req.taskDesc, req.memory)
 }
 
 // ProcessConversation handles chat messages.
 func (ca *CodingAssistant) ProcessConversation(req *TaskRequest) (string, error) {
-	ca.Init(ca.llm, req.projectDir)
+	ca.Init(ca.engine, req.projectDir)
 
 	return ca.conductor.Run(req.ctx, req.userMessage, req.memory)
 }

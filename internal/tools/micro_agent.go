@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tmc/langchaingo/llms"
+	"codeactor/internal/llm"
 )
 
 // MicroAgentTool enables agents to make raw LLM inference calls as a tool.
 // ChatAgent and CodingAgent use this when they need a sub-LLM reasoning step
 // with a custom system prompt, independent of the current conversation context.
 type MicroAgentTool struct {
-	LLM llms.LLM
+	LLM llm.Engine
 }
 
 // NewMicroAgentTool creates a new MicroAgentTool with the given LLM client.
-func NewMicroAgentTool(llm llms.LLM) *MicroAgentTool {
+func NewMicroAgentTool(llm llm.Engine) *MicroAgentTool {
 	return &MicroAgentTool{LLM: llm}
 }
 
@@ -32,18 +32,18 @@ func (t *MicroAgentTool) Execute(ctx context.Context, params map[string]interfac
 		return nil, fmt.Errorf("task parameter is required and must be a non-empty string")
 	}
 
-	messages := []llms.MessageContent{
+	messages := []llm.Message{
 		{
-			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(systemPrompt)},
+			Role:    llm.RoleSystem,
+			Content: systemPrompt,
 		},
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart(task)},
+			Role:    llm.RoleUser,
+			Content: task,
 		},
 	}
 
-	resp, err := t.LLM.GenerateContent(ctx, messages)
+	resp, err := t.LLM.GenerateContent(ctx, messages, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("micro_agent LLM call failed: %w", err)
 	}
