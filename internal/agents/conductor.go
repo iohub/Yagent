@@ -622,6 +622,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		messages = append(messages, llm.Message{
 			Role:      llm.RoleAssistant,
 			Content:   choice.Content,
+			Reasoning: choice.Reasoning,
 			ToolCalls: choice.ToolCalls,
 		})
 

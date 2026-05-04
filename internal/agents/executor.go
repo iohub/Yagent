@@ -71,6 +71,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
 		assistantMsg := llm.Message{
 			Role:      llm.RoleAssistant,
 			Content:   choice.Content,
+			Reasoning: choice.Reasoning,
 			ToolCalls: choice.ToolCalls,
 		}
 		messages = append(messages, assistantMsg)

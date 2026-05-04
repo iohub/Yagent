@@ -73,6 +73,7 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 	defer stream.Close()
 
 	var content string
+	var reasoning string
 	var toolCalls []ToolCall
 
 	for stream.Next() {
@@ -80,6 +81,16 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta
 			content += delta.Content
+
+			// Extract reasoning_content from raw JSON if present (DeepSeek thinking mode)
+			if raw := delta.RawJSON(); raw != "" {
+				var rawDelta map[string]any
+				if err := json.Unmarshal([]byte(raw), &rawDelta); err == nil {
+					if rc, ok := rawDelta["reasoning_content"].(string); ok {
+						reasoning += rc
+					}
+				}
+			}
 
 			// Accumulate tool call deltas
 			for _, tc := range delta.ToolCalls {
@@ -116,6 +127,7 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 	return &Response{
 		Choices: []Choice{{
 			Content:   content,
+			Reasoning: reasoning,
 			ToolCalls: toolCalls,
 		}},
 	}, nil
@@ -140,14 +152,24 @@ func (e *OpenAIEngine) convertMessage(msg Message) openai.ChatCompletionMessageP
 			return e.buildAssistantWithToolCalls(msg)
 		}
 		content := msg.Content
-		// Include reasoning in content if present (some models want it echoed)
 		if msg.Reasoning != "" {
-			// Store reasoning separately; openai-go types don't have reasoning_content field.
-			// We'll inject it via WithJSONSet if needed.
+			// DeepSeek thinking mode: reasoning_content must be echoed back.
+			// openai-go types don't expose reasoning_content, so inject via SetExtraFields.
+			assistant := &openai.ChatCompletionAssistantMessageParam{
+				Content: openai.ChatCompletionAssistantMessageParamContentUnion{
+					OfString: param.NewOpt(content),
+				},
+			}
+			assistant.SetExtraFields(map[string]any{
+				"reasoning_content": msg.Reasoning,
+			})
+			return openai.ChatCompletionMessageParamUnion{
+				OfAssistant: assistant,
+			}
 		}
 		return openai.AssistantMessage(content)
 	case RoleTool:
-		return openai.ToolMessage(msg.ToolCallID, msg.Content)
+		return openai.ToolMessage(msg.Content, msg.ToolCallID)
 	default:
 		return openai.UserMessage(msg.Content)
 	}
@@ -169,13 +191,19 @@ func (e *OpenAIEngine) buildAssistantWithToolCalls(msg Message) openai.ChatCompl
 	}
 
 	contentVal := msg.Content
-	return openai.ChatCompletionMessageParamUnion{
-		OfAssistant: &openai.ChatCompletionAssistantMessageParam{
-			Content: openai.ChatCompletionAssistantMessageParamContentUnion{
-				OfString: param.NewOpt(contentVal),
-			},
-			ToolCalls: toolCalls,
+	assistant := &openai.ChatCompletionAssistantMessageParam{
+		Content: openai.ChatCompletionAssistantMessageParamContentUnion{
+			OfString: param.NewOpt(contentVal),
 		},
+		ToolCalls: toolCalls,
+	}
+	if msg.Reasoning != "" {
+		assistant.SetExtraFields(map[string]any{
+			"reasoning_content": msg.Reasoning,
+		})
+	}
+	return openai.ChatCompletionMessageParamUnion{
+		OfAssistant: assistant,
 	}
 }
 
