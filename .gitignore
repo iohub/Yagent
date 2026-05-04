@@ -4,6 +4,7 @@
 logs
 # Binaries for programs and plugins
 vendor
+dist
 *.exe
 *.exe~
 *.dll

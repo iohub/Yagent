@@ -15,6 +15,7 @@ import (
 
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
+	"codeactor/internal/embedbin"
 	"codeactor/internal/http"
 	"codeactor/internal/llm"
 	"codeactor/internal/util"
@@ -93,6 +94,11 @@ func main() {
 	if err != nil {
 		fmt.Printf("Failed to find available port for codebase: %v\n", err)
 		os.Exit(1)
+	}
+
+	// 提取嵌入的 dist/bin 二进制到 ~/.codeactor/bin/
+	if _, err := embedbin.ExtractBinaries(distBinFS, "dist/bin"); err != nil {
+		slog.Warn("Failed to extract embedded binaries", "error", err)
 	}
 
 	// Start codebase server
@@ -250,7 +256,11 @@ func startCodebaseServer(port int, repoPath string) {
 		return
 	}
 
-	binPath := filepath.Join(homeDir, ".codeactor/bin/codeactor-codebase")
+	binPath, err := embedbin.BinPath("codeactor-codebase")
+	if err != nil {
+		slog.Error("Failed to get codeactor-codebase bin path", "error", err)
+		return
+	}
 	if _, err := os.Stat(binPath); os.IsNotExist(err) {
 		slog.Warn("codeactor-codebase binary not found, skipping startup", "path", binPath)
 		return
