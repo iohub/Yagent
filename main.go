@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,8 +81,22 @@ func main() {
 		}
 	}
 
+	// 获取当前工作目录作为仓库路径
+	repoPath, err := os.Getwd()
+	if err != nil {
+		fmt.Printf("Failed to get current working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 从 12800 开始动态查找可用端口
+	codebasePort, err := findAvailablePort(12800)
+	if err != nil {
+		fmt.Printf("Failed to find available port for codebase: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Start codebase server
-	startCodebaseServer()
+	startCodebaseServer(codebasePort, repoPath)
 
 	switch mode {
 	case "tui":
@@ -108,6 +123,7 @@ func main() {
 			os.Exit(1)
 		}
 		codingAssistant.DisabledAgents = disableAgents
+		codingAssistant.CodebasePort = codebasePort
 
 		taskManager := http.NewTaskManager(nil)
 
@@ -173,6 +189,7 @@ func main() {
 			os.Exit(1)
 		}
 		codingAssistant.DisabledAgents = disableAgents
+		codingAssistant.CodebasePort = codebasePort
 
 		// 创建消息分发器并集成消息系统
 		messageDispatcher := messaging.NewMessageDispatcher(100)
@@ -212,8 +229,21 @@ func getConfigPath() string {
 	panic("config.toml not found")
 }
 
+// findAvailablePort 从 startPort 开始递增查找第一个可用的 TCP 端口
+func findAvailablePort(startPort int) (int, error) {
+	for port := startPort; port < startPort+100; port++ {
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		listener, err := net.Listen("tcp", addr)
+		if err == nil {
+			listener.Close()
+			return port, nil
+		}
+	}
+	return 0, fmt.Errorf("no available port found starting from %d", startPort)
+}
+
 // startCodebaseServer starts the codeactor-codebase server as a background process
-func startCodebaseServer() {
+func startCodebaseServer(port int, repoPath string) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		slog.Error("Failed to get user home directory", "error", err)
@@ -233,7 +263,6 @@ func startCodebaseServer() {
 	}
 
 	now := time.Now()
-	// logFileName := fmt.Sprintf("%s-%s.log", now.Format("2006-01-02"), now.Format("1504"))
 	logFileName := fmt.Sprintf("%s.log", now.Format("2006-01-02"))
 	logPath := filepath.Join(logDir, logFileName)
 
@@ -243,7 +272,8 @@ func startCodebaseServer() {
 		return
 	}
 
-	cmd := exec.Command(binPath, "-v", "server")
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+	cmd := exec.Command(binPath, "-v", "server", "--repo-path", repoPath, "--address", address)
 	cmd.Env = append(os.Environ(), "RUST_LOG=info")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -253,5 +283,5 @@ func startCodebaseServer() {
 		return
 	}
 
-	slog.Info("Started codeactor-codebase server", "pid", cmd.Process.Pid, "log", logPath)
+	slog.Info("Started codeactor-codebase server", "pid", cmd.Process.Pid, "address", address, "repo", repoPath, "log", logPath)
 }
