@@ -3,7 +3,7 @@
 #
 logs
 # Binaries for programs and plugins
-.trae
+vendor
 *.exe
 *.exe~
 *.dll
