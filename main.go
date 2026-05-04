@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	nethttp "net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -304,5 +305,39 @@ func startCodebaseServer(port int, repoPath string) *exec.Cmd {
 	}
 
 	slog.Info("Started codeactor-codebase server", "pid", cmd.Process.Pid, "address", address, "repo", repoPath, "log", logPath)
+
+	// Wait for codebase service to become healthy
+	if err := waitForCodebase(address, 30*time.Second); err != nil {
+		slog.Error("Codebase server failed to become healthy", "error", err)
+		cmd.Process.Kill()
+		return nil
+	}
+
 	return cmd
+}
+
+// waitForCodebase polls the /health endpoint until the service responds or timeout.
+func waitForCodebase(address string, timeout time.Duration) error {
+	healthURL := fmt.Sprintf("http://%s/health", address)
+	deadline := time.Now().Add(timeout)
+	client := &nethttp.Client{Timeout: 2 * time.Second}
+
+	var lastErr error
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(healthURL)
+		if err != nil {
+			lastErr = err
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == nethttp.StatusOK {
+			slog.Info("Codebase server is healthy", "address", address)
+			return nil
+		}
+		lastErr = fmt.Errorf("health check returned status %d", resp.StatusCode)
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("codebase server at %s not healthy after %v: %w", address, timeout, lastErr)
 }

@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -8,7 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
+	"time"
 
 	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
@@ -103,7 +104,6 @@ func (a *RepoAgent) Name() string {
 }
 
 func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse, error) {
-	// 准备请求数据
 	requestData := map[string]string{
 		"project_dir": projectDir,
 	}
@@ -113,48 +113,55 @@ func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse
 		return nil, fmt.Errorf("failed to marshal request data: %v", err)
 	}
 
-	// 创建 HTTP 请求
-	req, err := http.NewRequest(
-		"POST",
-		fmt.Sprintf("%s/investigate_repo", a.GlobalCtx.CodebaseURL),
-		strings.NewReader(string(jsonData)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-
-	// 设置请求头
-	req.Header.Set("Content-Type", "application/json")
+	url := fmt.Sprintf("%s/investigate_repo", a.GlobalCtx.CodebaseURL)
 	slog.Info("RepoAgent pre-investigation request", "project_dir", projectDir)
 
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %v", err)
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %v", err)
+		req, err := http.NewRequest("POST", url, bytes.NewReader(jsonData))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to send request: %v", err)
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response body: %v", err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
+			continue
+		}
+
+		var response PreInvestigateResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			lastErr = fmt.Errorf("failed to unmarshal response: %v", err)
+			continue
+		}
+
+		if !response.Success {
+			lastErr = fmt.Errorf("server returned unsuccessful response: %s", string(body))
+			continue
+		}
+
+		return &response, nil
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
-	}
-
-	var response PreInvestigateResponse
-	err = json.Unmarshal(body, &response)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %v", err)
-	}
-
-	if !response.Success {
-		return nil, fmt.Errorf("server returned unsuccessful response: %s", string(body))
-	}
-
-	return &response, nil
+	return nil, fmt.Errorf("investigate_repo failed after 3 retries: %w", lastErr)
 }
 
 func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
