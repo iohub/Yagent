@@ -1,12 +1,13 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"time"
 )
 
 type RepoOperationsTool struct {
@@ -19,6 +20,53 @@ func NewRepoOperationsTool(codebaseURL, projectPath string) *RepoOperationsTool 
 		CodebaseURL: codebaseURL,
 		ProjectPath: projectPath,
 	}
+}
+
+// doCodebaseRequest sends an HTTP POST to the codebase service with retry logic.
+// Returns the raw response body on success.
+func (t *RepoOperationsTool) doCodebaseRequest(endpoint string, body interface{}) ([]byte, error) {
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s%s", t.CodebaseURL, endpoint)
+
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+
+		req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to send request: %w", err)
+			continue
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response: %w", err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(respBody))
+			continue
+		}
+
+		return respBody, nil
+	}
+
+	return nil, fmt.Errorf("codebase request failed after 3 retries: %w", lastErr)
 }
 
 type QueryCodeSkeletonResponse struct {
@@ -57,51 +105,19 @@ func (t *RepoOperationsTool) ExecuteSemanticSearch(ctx context.Context, params m
 		limit = 5
 	}
 
-	requestData := map[string]interface{}{
+	body, err := t.doCodebaseRequest("/semantic_search", map[string]interface{}{
 		"repo_path": t.ProjectPath,
 		"limit":     limit,
 		"text":      query,
-	}
-
-	jsonData, err := json.Marshal(requestData)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request data: %v", err)
-	}
-
-	req, err := http.NewRequest(
-		"POST",
-		fmt.Sprintf("%s/semantic_search", t.CodebaseURL),
-		strings.NewReader(string(jsonData)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
+		return nil, err
 	}
 
 	var response interface{}
-	err = json.Unmarshal(body, &response)
-	if err != nil {
-		// If response is not JSON, return as string
+	if err := json.Unmarshal(body, &response); err != nil {
 		return string(body), nil
 	}
-
 	return response, nil
 }
 
@@ -119,53 +135,20 @@ func (t *RepoOperationsTool) ExecuteQueryCodeSkeleton(ctx context.Context, param
 		filepaths[i] = s
 	}
 
-	requestData := map[string]interface{}{
+	body, err := t.doCodebaseRequest("/query_code_skeleton", map[string]interface{}{
 		"filepaths": filepaths,
-	}
-
-	jsonData, err := json.Marshal(requestData)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request data: %v", err)
-	}
-
-	req, err := http.NewRequest(
-		"POST",
-		fmt.Sprintf("%s/query_code_skeleton", t.CodebaseURL),
-		strings.NewReader(string(jsonData)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
+		return nil, err
 	}
 
 	var response QueryCodeSkeletonResponse
-	err = json.Unmarshal(body, &response)
-	if err != nil {
-		// If response is not JSON, return as string
+	if err := json.Unmarshal(body, &response); err != nil {
 		return string(body), nil
 	}
-
 	if !response.Success {
 		return nil, fmt.Errorf("server returned unsuccessful response: %s", string(body))
 	}
-
 	return response, nil
 }
 
@@ -179,53 +162,20 @@ func (t *RepoOperationsTool) ExecuteQueryCodeSnippet(ctx context.Context, params
 		return nil, fmt.Errorf("function_name parameter must be a string")
 	}
 
-	requestData := map[string]interface{}{
+	body, err := t.doCodebaseRequest("/query_code_snippet", map[string]interface{}{
 		"filepath":      filepath,
 		"function_name": functionName,
-	}
-
-	jsonData, err := json.Marshal(requestData)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request data: %v", err)
-	}
-
-	req, err := http.NewRequest(
-		"POST",
-		fmt.Sprintf("%s/query_code_snippet", t.CodebaseURL),
-		strings.NewReader(string(jsonData)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
+		return nil, err
 	}
 
 	var response QueryCodeSnippetResponse
-	err = json.Unmarshal(body, &response)
-	if err != nil {
-		// If response is not JSON, return as string
+	if err := json.Unmarshal(body, &response); err != nil {
 		return string(body), nil
 	}
-
 	if !response.Success {
 		return nil, fmt.Errorf("server returned unsuccessful response: %s", string(body))
 	}
-
 	return response, nil
 }
