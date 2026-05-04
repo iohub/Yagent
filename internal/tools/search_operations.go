@@ -3,12 +3,24 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"codeactor/internal/embedbin"
 	"codeactor/internal/util"
 )
+
+// fzfPath returns the path to the fzf binary, preferring the embedded one
+func fzfPath() string {
+	if path, err := embedbin.BinPath("fzf"); err == nil {
+		if _, statErr := os.Stat(path); statErr == nil {
+			return path
+		}
+	}
+	return "fzf" // fallback to system fzf
+}
 
 // SearchOperationsTool 实现搜索相关工具
 type SearchOperationsTool struct {
@@ -113,7 +125,7 @@ func (t *SearchOperationsTool) ExecuteFileSearch(ctx context.Context, params map
 	}
 
 	// 使用fzf进行模糊搜索
-	fzfCmd := exec.CommandContext(ctx, "fzf", "-f", query, "--print-query", "--no-sort", "--tac")
+	fzfCmd := exec.CommandContext(ctx, fzfPath(), "-f", query, "--print-query", "--no-sort", "--tac")
 	fzfCmd.Stdin = strings.NewReader(string(findOutput))
 	output, err := fzfCmd.CombinedOutput()
 

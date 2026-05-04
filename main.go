@@ -15,6 +15,7 @@ import (
 
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
+	"codeactor/internal/embedbin"
 	"codeactor/internal/http"
 	"codeactor/internal/llm"
 	"codeactor/internal/util"
@@ -95,8 +96,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 提取嵌入的 dist/bin 二进制到 ~/.codeactor/bin/
+	if _, err := embedbin.ExtractBinaries(distBinFS, "dist/bin"); err != nil {
+		slog.Warn("Failed to extract embedded binaries", "error", err)
+	}
+
 	// Start codebase server
-	startCodebaseServer(codebasePort, repoPath)
+	codebaseCmd := startCodebaseServer(codebasePort, repoPath)
+	if codebaseCmd != nil {
+		defer func() {
+			if err := codebaseCmd.Process.Kill(); err != nil {
+				slog.Warn("Failed to kill codebase process", "error", err)
+			} else {
+				slog.Info("Codebase process killed on exit", "pid", codebaseCmd.Process.Pid)
+			}
+		}()
+	}
 
 	switch mode {
 	case "tui":
@@ -242,24 +257,29 @@ func findAvailablePort(startPort int) (int, error) {
 	return 0, fmt.Errorf("no available port found starting from %d", startPort)
 }
 
-// startCodebaseServer starts the codeactor-codebase server as a background process
-func startCodebaseServer(port int, repoPath string) {
+// startCodebaseServer starts the codeactor-codebase server as a background process.
+// Returns the *exec.Cmd so the caller can kill the process on exit.
+func startCodebaseServer(port int, repoPath string) *exec.Cmd {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		slog.Error("Failed to get user home directory", "error", err)
-		return
+		return nil
 	}
 
-	binPath := filepath.Join(homeDir, ".codeactor/bin/codeactor-codebase")
+	binPath, err := embedbin.BinPath("codeactor-codebase")
+	if err != nil {
+		slog.Error("Failed to get codeactor-codebase bin path", "error", err)
+		return nil
+	}
 	if _, err := os.Stat(binPath); os.IsNotExist(err) {
 		slog.Warn("codeactor-codebase binary not found, skipping startup", "path", binPath)
-		return
+		return nil
 	}
 
 	logDir := filepath.Join(homeDir, ".codeactor/logs/codeactor-codebase")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		slog.Error("Failed to create log directory", "error", err)
-		return
+		return nil
 	}
 
 	now := time.Now()
@@ -269,7 +289,7 @@ func startCodebaseServer(port int, repoPath string) {
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		slog.Error("Failed to create log file", "error", err)
-		return
+		return nil
 	}
 
 	address := fmt.Sprintf("127.0.0.1:%d", port)
@@ -280,8 +300,9 @@ func startCodebaseServer(port int, repoPath string) {
 
 	if err := cmd.Start(); err != nil {
 		slog.Error("Failed to start codeactor-codebase", "error", err)
-		return
+		return nil
 	}
 
 	slog.Info("Started codeactor-codebase server", "pid", cmd.Process.Pid, "address", address, "repo", repoPath, "log", logPath)
+	return cmd
 }
