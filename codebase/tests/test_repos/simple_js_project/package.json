@@ -1,0 +1,13 @@
+{
+  "name": "simple-js-project",
+  "version": "1.0.0",
+  "description": "Simple JavaScript project for testing function call graphs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "keywords": ["test", "function-call-graph"],
+  "author": "Test",
+  "license": "MIT"
+} 
