@@ -6,6 +6,7 @@ toolchain go1.24.7
 
 require (
 	github.com/BurntSushi/toml v1.5.0
+	github.com/aymanbagabas/go-udiff v0.4.1
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/glamour v1.0.0

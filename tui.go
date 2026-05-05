@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -52,6 +53,14 @@ var (
 	logStatusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
 	logErrorLogStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
 	logSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+
+	// Diff rendering styles
+	diffHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	diffHunkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	diffAddStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+	diffDelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
+	diffCtxStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	diffNoNewlineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 )
 
 // logEntry represents a single message in the TUI log area.
@@ -61,6 +70,7 @@ type logEntry struct {
 	from      string
 	content   string
 	toolName  string
+	diffText  string // unified diff content for file edit results
 	rendered  string // cached rendered output (glamour or plain), cleared on resize
 }
 
@@ -811,7 +821,8 @@ func (m *model) buildViewportContent() {
 }
 
 // renderEntryTo renders a single log entry into the builder, caching the result
-// in the entry for reuse. Uses glamour for ai_response, plain formatting otherwise.
+// in the entry for reuse. Uses glamour for ai_response, diff styling for diffs,
+// plain formatting otherwise.
 func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 	// Use cached rendered content if available
 	if entry.rendered != "" {
@@ -821,6 +832,14 @@ func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 
 	// Capture the start position to cache the output
 	start := b.Len()
+
+	// Diff rendering takes priority
+	if entry.diffText != "" {
+		rendered := renderDiff(entry)
+		b.WriteString(rendered)
+		entry.rendered = b.String()[start:]
+		return
+	}
 
 	if entry.eventType == "ai_response" && m.glamourRenderer != nil {
 		rendered, err := m.glamourRenderer.Render(entry.content)
@@ -886,6 +905,8 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			}
 			if result, ok := m["result"].(string); ok {
 				entry.content = result
+				// Try to extract diff from JSON result
+				entry.diffText = extractDiffFromResult(result)
 			}
 		}
 		if entry.content == "" {
@@ -1360,6 +1381,54 @@ func wrapText(text string, maxWidth int) string {
 		}
 	}
 	return strings.Join(wrapped, "\n")
+}
+
+// extractDiffFromResult attempts to parse a JSON result string and extract the "diff" field.
+func extractDiffFromResult(result string) string {
+	// Quick check: does it look like JSON with a "diff" field?
+	if !strings.Contains(result, `"diff"`) {
+		return ""
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return ""
+	}
+	if diff, ok := parsed["diff"].(string); ok && diff != "" {
+		return diff
+	}
+	return ""
+}
+
+// renderDiff renders a unified diff string with ANSI color styling.
+func renderDiff(entry *logEntry) string {
+	timeStr := logTimeStyle.Render(entry.timestamp.Format("15:04:05"))
+	prefix := "✔ " + entry.toolName
+	prefixStr := lipgloss.NewStyle().Width(24).Render(prefix)
+
+	// Build styled diff content line by line
+	lines := strings.Split(entry.diffText, "\n")
+	var styledLines []string
+	for _, line := range lines {
+		var styled string
+		switch {
+		case strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ "):
+			styled = diffHeaderStyle.Render(line)
+		case strings.HasPrefix(line, "@@"):
+			styled = diffHunkStyle.Render(line)
+		case strings.HasPrefix(line, "+"):
+			styled = diffAddStyle.Render(line)
+		case strings.HasPrefix(line, "-"):
+			styled = diffDelStyle.Render(line)
+		case strings.HasPrefix(line, `\`):
+			styled = diffNoNewlineStyle.Render(line)
+		default:
+			styled = diffCtxStyle.Render(line)
+		}
+		styledLines = append(styledLines, styled)
+	}
+	diffContent := strings.Join(styledLines, "\n")
+
+	return timeStr + " " + prefixStr + "\n" + diffContent
 }
 
 // renderHistoryPanel renders the history panel with single-line items and stable scrolling.

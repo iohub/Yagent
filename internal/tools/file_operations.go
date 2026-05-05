@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"codeactor/internal/diff"
 	"codeactor/internal/util"
 )
 
@@ -267,10 +268,14 @@ func (t *FileOperationsTool) ExecuteCreateFile(ctx context.Context, params map[s
 		return nil, util.WrapError(ctx, err, "executeCreateFile::WriteFile")
 	}
 
+	// Generate diff for new file (empty → content)
+	diffText := diff.GenerateUnifiedDiff(targetFile, "", content)
+
 	return map[string]interface{}{
 		"success": true,
 		"file":    targetFile,
 		"message": "File created successfully",
+		"diff":    diffText,
 	}, nil
 }
 

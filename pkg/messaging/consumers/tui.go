@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -137,33 +138,48 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 	// For regular events, build a styled panel
 	w := terminalWidth()
 	contentStr := fmt.Sprintf("%v", event.Content)
-	wrappedContent := contentStyle.Copy().Width(w - 6).Render(contentStr)
 	// header prefix and badge
 	var prefixRendered string
 	var toolName string
+	var wrappedContent string
 
 	switch event.Type {
 	case "ai_response":
 		prefixRendered = aiPrefixStyle.Render("🤖 AI")
+		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	case "status_update":
 		prefixRendered = statusPrefixStyle.Render("ℹ️  Status")
+		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	case "ai_stream_start":
 		prefixRendered = aiPrefixStyle.Render("🚀 AI Stream Started")
+		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	case "ai_chunk":
 		prefixRendered = chunkPrefixStyle.Render("💬 AI Chunk")
+		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	case "ai_stream_end":
 		prefixRendered = aiPrefixStyle.Render("🏁 AI Stream Ended")
+		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	case "tool_call":
 		toolName = getToolNameFromContent(event.Content)
 		prefixRendered = toolPrefixStyle.Render("🛠️  Tool") + " " + buildToolBadge(toolName)
+		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	case "tool_call_start":
 		toolName = getToolNameFromContent(event.Content)
 		prefixRendered = toolPrefixStyle.Render("▶️  Tool Start") + " " + buildToolBadge(toolName)
+		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	case "tool_call_result":
 		toolName = getToolNameFromContent(event.Content)
 		prefixRendered = toolPrefixStyle.Render("⏹️  Tool Result") + " " + buildToolBadge(toolName)
+		// Check for diff content and render with ANSI colors
+		diffText := extractDiffContent(event.Content)
+		if diffText != "" {
+			wrappedContent = renderDiffContent(diffText, w-6)
+		} else {
+			wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
+		}
 	default:
 		prefixRendered = labelStyle.Render("📝 " + event.Type)
+		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	}
 
 	timestamp := timestampStyle.Render(event.Timestamp.Format("15:04:05"))
@@ -263,4 +279,68 @@ func (t *TUIConsumer) showUserInputDialog(event *messaging.MessageEvent) {
 	}
 
 	fmt.Fprintf(t.writer, "已发送回复，等待任务继续...\n")
+}
+
+// extractDiffContent extracts the "diff" field from a tool_call_result event content.
+func extractDiffContent(content interface{}) string {
+	m, ok := content.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	result, ok := m["result"].(string)
+	if !ok || !strings.Contains(result, `"diff"`) {
+		return ""
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return ""
+	}
+	if diff, ok := parsed["diff"].(string); ok {
+		return diff
+	}
+	return ""
+}
+
+// renderDiffContent renders a unified diff string with ANSI color styling for terminal output.
+func renderDiffContent(diffText string, maxWidth int) string {
+	// Diff color styles
+	addStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+	delStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
+	hunkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	ctxStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+
+	lines := strings.Split(diffText, "\n")
+	var styledLines []string
+	for _, line := range lines {
+		var styled string
+		switch {
+		case strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ "):
+			styled = headerStyle.Render(truncateLine(line, maxWidth))
+		case strings.HasPrefix(line, "@@"):
+			styled = hunkStyle.Render(truncateLine(line, maxWidth))
+		case strings.HasPrefix(line, "+"):
+			styled = addStyle.Render(truncateLine(line, maxWidth))
+		case strings.HasPrefix(line, "-"):
+			styled = delStyle.Render(truncateLine(line, maxWidth))
+		case strings.HasPrefix(line, `\`):
+			styled = ctxStyle.Render(truncateLine(line, maxWidth))
+		default:
+			styled = ctxStyle.Render(truncateLine(line, maxWidth))
+		}
+		styledLines = append(styledLines, styled)
+	}
+	return strings.Join(styledLines, "\n")
+}
+
+// truncateLine truncates a line to fit within maxWidth.
+func truncateLine(line string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return line
+	}
+	runes := []rune(line)
+	if len(runes) <= maxWidth {
+		return line
+	}
+	return string(runes[:maxWidth-1]) + "…"
 }
