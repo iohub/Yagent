@@ -149,53 +149,6 @@ Server defaults to `localhost:9080`. Override via `--host`/`--port` or `CODECACT
   <img src="docs/architecture.svg" alt="CodeActor Agent Architecture" width="900">
 </p>
 
-### Hub-and-Spoke Design
-
-```
-User (TUI / HTTP+WS)
-        │
-        ▼
-┌───────────────────┐
-│  CodingAssistant  │  ← task lifecycle, agent init
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────┐
-│  ConductorAgent   │  ← central orchestrator
-│  (Hub / 指挥家)    │
-│                   │
-│  delegate_repo ───┼──→ RepoAgent    (read-only code analysis)
-│  delegate_coding ─┼──→ CodingAgent  (file editing + shell)
-│  delegate_chat ───┼──→ ChatAgent    (general Q&A, no tools)
-│  delegate_meta ───┼──→ MetaAgent    (designs custom agents at runtime)
-└───────────────────┘
-         │
-         ▼
-┌───────────────────┐
-│  Tool Layer (17)  │  Adapter pattern wrapping ToolFunc → LLM Function Calling
-│                   │
-│  FileOps │ SearchOps │ SysOps │ ReplaceBlock │ Thinking │ MicroAgent
-│  ImplPlan │ FlowControl │ RepoOps │ WorkspaceGuard
-└───────┬───────────┘
-        │
-        ▼
-┌────────────────────────────┐
-│  codeactor-codebase (Rust) │  ← external analysis service (127.0.0.1:12800+)
-│  - Tree-sitter AST parsing │
-│  - Call graph / complexity │
-│  - Semantic search (LanceDB)│
-│  - Code skeleton / snippet │
-└────────────────────────────┘
-        │
-        ▼
-┌────────────────────────────┐
-│  LLM Providers (13)        │  ← OpenAI-compatible API via openai-go SDK
-│  MiMo / Qwen / DeepSeek    │
-│  Moonshot / Mistral / GLM  │
-│  Bedrock / OpenRouter / etc│
-└────────────────────────────┘
-```
-
 ### Tech Stack
 
 | Layer | Technology |

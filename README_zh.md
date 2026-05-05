@@ -149,53 +149,6 @@ node index.js history                                  # 列出最近任务
   <img src="docs/architecture.svg" alt="CodeActor Agent 架构图" width="900">
 </p>
 
-### Hub-and-Spoke 设计
-
-```
-用户 (TUI / HTTP+WS)
-        │
-        ▼
-┌───────────────────┐
-│  CodingAssistant  │  ← 任务生命周期、Agent 初始化
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────┐
-│  ConductorAgent   │  ← 中央调度器
-│  (中枢 / 指挥家)   │
-│                   │
-│  delegate_repo ───┼──→ RepoAgent    (只读代码分析)
-│  delegate_coding ─┼──→ CodingAgent  (文件编辑 + Shell)
-│  delegate_chat ───┼──→ ChatAgent    (通用问答，无工具)
-│  delegate_meta ───┼──→ MetaAgent    (运行时设计自定义 Agent)
-└───────────────────┘
-         │
-         ▼
-┌───────────────────┐
-│  工具层 (17 个)   │  Adapter 模式包装 ToolFunc → LLM Function Calling
-│                   │
-│  FileOps │ SearchOps │ SysOps │ ReplaceBlock │ Thinking │ MicroAgent
-│  ImplPlan │ FlowControl │ RepoOps │ WorkspaceGuard
-└───────┬───────────┘
-        │
-        ▼
-┌────────────────────────────┐
-│  codeactor-codebase (Rust) │  ← 外部分析服务 (127.0.0.1:12800+)
-│  - Tree-sitter AST 解析     │
-│  - 调用图 / 复杂度分析      │
-│  - 语义搜索 (LanceDB)       │
-│  - 代码骨架 / 片段          │
-└────────────────────────────┘
-        │
-        ▼
-┌────────────────────────────┐
-│  LLM 提供商 (13 个)         │  ← OpenAI 兼容 API（openai-go SDK）
-│  MiMo / Qwen / DeepSeek    │
-│  Moonshot / Mistral / GLM  │
-│  Bedrock / OpenRouter 等   │
-└────────────────────────────┘
-```
-
 ### 技术栈
 
 | 层级 | 技术 |
