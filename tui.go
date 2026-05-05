@@ -61,17 +61,26 @@ var (
 	diffDelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
 	diffCtxStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	diffNoNewlineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+
+	// Tool status styles (running → finished transition)
+	toolRunningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("228")) // gold — running
+	toolDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — success
+	toolErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")) // red — error
 )
 
 // logEntry represents a single message in the TUI log area.
 type logEntry struct {
-	timestamp time.Time
-	eventType string
-	from      string
-	content   string
-	toolName  string
-	diffText  string // unified diff content for file edit results
-	rendered  string // cached rendered output (glamour or plain), cleared on resize
+	timestamp        time.Time
+	eventType        string
+	from             string
+	content          string
+	toolName         string
+	toolCallID       string // tool_call_id for matching start/result events
+	isToolRunning    bool   // true when awaiting result
+	executionSummary string // short summary extracted from arguments (file path, command, etc.)
+	resultBrief      string // brief result description (e.g., "120 lines", "modified")
+	diffText         string // unified diff content for file edit results
+	rendered         string // cached rendered output (glamour or plain), cleared on resize
 }
 
 // taskEventMsg carries a MessageEvent from the task execution goroutine to the tea program.
@@ -157,6 +166,9 @@ type model struct {
 	confirmDialog confirmDialog
 	publisher     *messaging.MessagePublisher
 	publisherCh   chan *messaging.MessagePublisher
+
+	// Tool call state tracking: tool_call_id → logEntries index
+	toolCallEntries map[string]int
 }
 
 func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
@@ -217,10 +229,11 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 		currentLang:     langManager.currentLang,
 		eventCh:         make(chan *messaging.MessageEvent, 1000),
 		logEntries:      make([]logEntry, 0),
-		viewport:        vp,
-		contentCache:    &strings.Builder{},
-		glamourRenderer: glamourRenderer,
-		useDarkStyle:    useDarkStyle,
+		viewport:         vp,
+		contentCache:     &strings.Builder{},
+		glamourRenderer:  glamourRenderer,
+		useDarkStyle:     useDarkStyle,
+		toolCallEntries:  make(map[string]int),
 	}
 }
 
@@ -577,7 +590,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			return m, listenForEvents(m.eventCh)
 		}
+		// ── Tool call result: update the matching running entry ──
+		if msg.event.Type == "tool_call_result" {
+			entry := formatEventAsEntry(msg.event)
+			if entry.toolCallID != "" {
+				if idx, ok := m.toolCallEntries[entry.toolCallID]; ok {
+					running := &m.logEntries[idx]
+					running.content = entry.content
+					running.diffText = entry.diffText
+					running.resultBrief = entry.resultBrief
+					running.isToolRunning = false
+					running.timestamp = entry.timestamp
+					running.rendered = "" // invalidate cache
+					delete(m.toolCallEntries, entry.toolCallID)
+					m.buildViewportContent()
+					return m, listenForEvents(m.eventCh)
+				}
+			}
+			// No matching start entry — add as standalone
+		}
+
 		entry := formatEventAsEntry(msg.event)
+
+		// Track running tool calls for status transition
+		if entry.eventType == "tool_call_start" && entry.toolCallID != "" {
+			m.toolCallEntries[entry.toolCallID] = len(m.logEntries)
+		}
+
 		m.logEntries = append(m.logEntries, entry)
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 		return m, listenForEvents(m.eventCh)
@@ -871,6 +910,102 @@ func (m *model) appendLogEntry(entry *logEntry) {
 	}
 }
 
+// extractToolSummary extracts a concise execution summary from tool arguments.
+// Used to display what a tool is doing (file path, command, pattern, etc.).
+func extractToolSummary(toolName string, argsJSON string) string {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return ""
+	}
+	switch toolName {
+	case "read_file", "edit_file", "search_replace_in_file", "create_file", "delete_file":
+		if fp, ok := args["file_path"].(string); ok && fp != "" {
+			return fp
+		}
+		if fp, ok := args["path"].(string); ok && fp != "" {
+			return fp
+		}
+	case "run_bash":
+		if cmd, ok := args["command"].(string); ok && cmd != "" {
+			if len(cmd) > 80 {
+				return cmd[:77] + "..."
+			}
+			return cmd
+		}
+	case "search_by_regex", "grep_search":
+		if pattern, ok := args["pattern"].(string); ok && pattern != "" {
+			if len(pattern) > 60 {
+				return pattern[:57] + "..."
+			}
+			return pattern
+		}
+	case "list_dir", "print_dir_tree":
+		if path, ok := args["path"].(string); ok && path != "" {
+			return path
+		}
+		if dir, ok := args["directory"].(string); ok && dir != "" {
+			return dir
+		}
+	case "rename_file":
+		from, _ := args["from"].(string)
+		to, _ := args["to"].(string)
+		if from != "" && to != "" {
+			return from + " → " + to
+		}
+	case "thinking", "agent_exit":
+		if reason, ok := args["reason"].(string); ok && reason != "" {
+			return reason
+		}
+	}
+	// For delegate tools, show task summary
+	if strings.HasPrefix(toolName, "delegate_") {
+		if task, ok := args["task"].(string); ok && task != "" {
+			if len(task) > 60 {
+				return task[:57] + "..."
+			}
+			return task
+		}
+	}
+	return ""
+}
+
+// extractResultBrief generates a short result summary for the finished line.
+func extractResultBrief(toolName string, result string) string {
+	if strings.HasPrefix(result, "Error:") {
+		// Short error message
+		errMsg := strings.TrimPrefix(result, "Error: ")
+		if len(errMsg) > 50 {
+			return errMsg[:47] + "..."
+		}
+		return errMsg
+	}
+	switch toolName {
+	case "read_file":
+		lines := strings.Count(result, "\n")
+		if lines > 0 {
+			return fmt.Sprintf("%d lines", lines)
+		}
+		return fmt.Sprintf("%d bytes", len(result))
+	case "list_dir", "print_dir_tree":
+		return ""
+	case "run_bash":
+		// Show first non-empty line of output
+		trimmed := strings.TrimSpace(result)
+		if len(trimmed) > 60 {
+			return trimmed[:57] + "..."
+		}
+		return trimmed
+	case "search_by_regex", "grep_search":
+		lines := strings.Count(result, "\n")
+		return fmt.Sprintf("%d matches", lines)
+	default:
+		if strings.HasPrefix(toolName, "delegate_") {
+			return ""
+		}
+		return ""
+	}
+}
+
 // formatEventAsEntry converts a MessageEvent to a logEntry.
 func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 	entry := logEntry{
@@ -891,10 +1026,15 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			if name, ok := m["tool_name"].(string); ok {
 				entry.toolName = name
 			}
+			if id, ok := m["tool_call_id"].(string); ok {
+				entry.toolCallID = id
+			}
 			if args, ok := m["arguments"].(string); ok {
 				entry.content = args
+				entry.executionSummary = extractToolSummary(entry.toolName, args)
 			}
 		}
+		entry.isToolRunning = true
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
@@ -903,12 +1043,17 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			if name, ok := m["tool_name"].(string); ok {
 				entry.toolName = name
 			}
+			if id, ok := m["tool_call_id"].(string); ok {
+				entry.toolCallID = id
+			}
 			if result, ok := m["result"].(string); ok {
 				entry.content = result
+				entry.resultBrief = extractResultBrief(entry.toolName, result)
 				// Try to extract diff from JSON result
 				entry.diffText = extractDiffFromResult(result)
 			}
 		}
+		entry.isToolRunning = false
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
@@ -941,19 +1086,48 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		prefix = "AI  "
 		contentStyle = logAIResStyle
 	case "tool_call_start":
-		if entry.toolName != "" {
-			prefix = fmt.Sprintf("▶ %s", entry.toolName)
+		// Running or finished: unified single-line status display
+		if entry.isToolRunning {
+			if entry.toolName != "" {
+				prefix = fmt.Sprintf("🔘 %s", entry.toolName)
+			} else {
+				prefix = "🔘 TOOL"
+			}
+			contentStyle = toolRunningStyle
 		} else {
-			prefix = "▶ TOOL"
+			if strings.HasPrefix(entry.content, "Error:") {
+				if entry.toolName != "" {
+					prefix = fmt.Sprintf("❌ %s", entry.toolName)
+				} else {
+					prefix = "❌ TOOL"
+				}
+				contentStyle = toolErrorStyle
+			} else {
+				if entry.toolName != "" {
+					prefix = fmt.Sprintf("✅ %s", entry.toolName)
+				} else {
+					prefix = "✅ TOOL"
+				}
+				contentStyle = toolDoneStyle
+			}
 		}
-		contentStyle = logToolStyle
 	case "tool_call_result":
-		if entry.toolName != "" {
-			prefix = fmt.Sprintf("✔ %s", entry.toolName)
+		// Standalone result (no matching start entry)
+		if strings.HasPrefix(entry.content, "Error:") {
+			if entry.toolName != "" {
+				prefix = fmt.Sprintf("❌ %s", entry.toolName)
+			} else {
+				prefix = "❌ RESULT"
+			}
+			contentStyle = toolErrorStyle
 		} else {
-			prefix = "✔ RESULT"
+			if entry.toolName != "" {
+				prefix = fmt.Sprintf("✅ %s", entry.toolName)
+			} else {
+				prefix = "✅ RESULT"
+			}
+			contentStyle = toolDoneStyle
 		}
-		contentStyle = logResultStyle
 	case "error":
 		prefix = "✖ ERROR"
 		contentStyle = logErrorLogStyle
@@ -965,20 +1139,33 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		contentStyle = logStatusStyle
 	}
 
+	// Build display content: prefer execution summary + result brief
+	var displayContent string
+	if entry.executionSummary != "" {
+		displayContent = entry.executionSummary
+		if entry.resultBrief != "" {
+			displayContent += " · " + entry.resultBrief
+		}
+	} else {
+		displayContent = strings.ReplaceAll(entry.content, "\n", " ")
+	}
+
 	// Ensure prefix is fixed width for alignment
 	prefixStr := lipgloss.NewStyle().Width(24).Render(prefix)
 
-	// Content: truncate long lines
-	content := strings.ReplaceAll(entry.content, "\n", " ")
+	// Truncate long content
 	contentWidth := maxWidth - 36
 	if contentWidth < 20 {
 		contentWidth = 20
 	}
-	if lipgloss.Width(content) > contentWidth {
-		content = content[:contentWidth-3] + "..."
+	if lipgloss.Width(displayContent) > contentWidth {
+		runes := []rune(displayContent)
+		if len(runes) > contentWidth-3 {
+			displayContent = string(runes[:contentWidth-3]) + "..."
+		}
 	}
 
-	return timeStr + " " + prefixStr + " " + contentStyle.Render(content)
+	return timeStr + " " + prefixStr + " " + contentStyle.Render(displayContent)
 }
 
 // submitTask creates a new task and starts execution in the background.
@@ -1402,7 +1589,15 @@ func extractDiffFromResult(result string) string {
 // renderDiff renders a unified diff string with ANSI color styling.
 func renderDiff(entry *logEntry) string {
 	timeStr := logTimeStyle.Render(entry.timestamp.Format("15:04:05"))
-	prefix := "✔ " + entry.toolName
+	var prefix string
+	if entry.isToolRunning {
+		prefix = "🔘 " + entry.toolName
+	} else {
+		prefix = "✅ " + entry.toolName
+	}
+	if entry.executionSummary != "" {
+		prefix += " · " + entry.executionSummary
+	}
 	prefixStr := lipgloss.NewStyle().Width(24).Render(prefix)
 
 	// Build styled diff content line by line
