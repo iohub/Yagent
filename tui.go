@@ -1194,14 +1194,14 @@ func (m model) computeFieldWidth() int {
 var (
 	confirmBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("214")). // orange
-				Padding(1, 2)
+				BorderForeground(lipgloss.Color("240")).
+				Padding(0, 2)
 
-	confirmTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("214"))
+	confirmToolStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("214")).
+				Bold(true)
 
-	confirmQuestionStyle = lipgloss.NewStyle().
+	confirmDetailStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("252"))
 
 	confirmButtonFocused = lipgloss.NewStyle().
@@ -1212,74 +1212,114 @@ var (
 
 	confirmButtonBlurred = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("244")).
-				Background(lipgloss.Color("236")).
 				Padding(0, 2)
 
 	confirmHelpStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240")).
-				Faint(true)
+				Foreground(lipgloss.Color("240"))
 )
+
+// parseConfirmQuestion extracts toolName and detail body from the question string.
+func parseConfirmQuestion(question string) (toolName, body string) {
+	q := strings.TrimSpace(question)
+	// Remove markdown bold
+	q = strings.ReplaceAll(q, "**", "")
+
+	// Extract tool name from pattern: 工具 `name` or tool `name`
+	toolName = "?"
+	if idx := strings.Index(q, "工具 `"); idx >= 0 {
+		start := idx + len("工具 `")
+		if end := strings.Index(q[start:], "`"); end >= 0 {
+			toolName = q[start : start+end]
+		}
+	} else if idx := strings.Index(q, "tool `"); idx >= 0 {
+		start := idx + len("tool `")
+		if end := strings.Index(q[start:], "`"); end >= 0 {
+			toolName = q[start : start+end]
+		}
+	}
+
+	// Extract body: after first blank line, before boilerplate explanatory text
+	// Split by double newline to separate header / body / footer
+	parts := strings.SplitN(q, "\n\n", 3)
+	if len(parts) >= 2 {
+		// parts[0] = header line, parts[1..] = body (may include boilerplate)
+		body = strings.Join(parts[1:], "\n\n")
+	} else if len(parts) == 1 {
+		body = parts[0]
+	}
+
+	// Strip boilerplate suffixes
+	boilerplates := []string{
+		"此操作可能影响工作空间外的文件或系统环境。是否允许执行？",
+		"是否允许执行？",
+		"This operation may affect files or the system environment outside the workspace. Allow?",
+	}
+	for _, bp := range boilerplates {
+		body = strings.ReplaceAll(body, "\n\n"+bp, "")
+		body = strings.ReplaceAll(body, bp, "")
+	}
+	body = strings.TrimSpace(body)
+
+	if body == "" {
+		body = q
+	}
+	return toolName, body
+}
 
 // renderConfirmDialog renders the authorization confirmation overlay dialog.
 func (m model) renderConfirmDialog() string {
-	const maxDialogWidth = 76
+	const maxDialogWidth = 58
 	dialogWidth := maxDialogWidth
 	if m.termWidth-4 < dialogWidth {
 		dialogWidth = m.termWidth - 4
 	}
+	innerWidth := dialogWidth - 4
 
-	// Title
-	title := confirmTitleStyle.Render(langManager.GetText("ConfirmDialogTitle"))
+	toolName, body := parseConfirmQuestion(m.confirmDialog.question)
 
-	// Decorative separator line
-	sepChar := "╱"
-	sepWidth := dialogWidth - 4 - lipgloss.Width(title)
-	if sepWidth > 0 {
-		sepLine := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Faint(true).Render(strings.Repeat(sepChar, sepWidth))
-		title = title + " " + sepLine
+	// ── Tool name badge ──
+	toolLine := confirmToolStyle.Render("⚡ " + toolName)
+
+	// ── Command / detail ──
+	detailWidth := innerWidth
+	if detailWidth < 20 {
+		detailWidth = 20
 	}
+	detail := wrapText(body, detailWidth)
+	detail = confirmDetailStyle.Render(detail)
 
-	// Question text (strip markdown bold markers for clean display)
-	question := m.confirmDialog.question
-	question = strings.ReplaceAll(question, "**", "")
-	question = strings.ReplaceAll(question, "⚠️", "")
-	question = strings.TrimSpace(question)
-
-	// Wrap question text
-	textWidth := dialogWidth - 6
-	if textWidth < 30 {
-		textWidth = 30
-	}
-	wrapped := wrapText(question, textWidth)
-
-	// Buttons
+	// ── Buttons ──
 	var allowBtn, denyBtn string
 	if m.confirmDialog.selectedOption == 0 {
-		allowBtn = confirmButtonFocused.Render(langManager.GetText("ConfirmDialogAllow"))
-		denyBtn = confirmButtonBlurred.Render(langManager.GetText("ConfirmDialogDeny"))
+		allowBtn = confirmButtonFocused.Render("Allow")
+		denyBtn = confirmButtonBlurred.Render("Deny")
 	} else {
-		allowBtn = confirmButtonBlurred.Render(langManager.GetText("ConfirmDialogAllow"))
-		denyBtn = confirmButtonFocused.Render(langManager.GetText("ConfirmDialogDeny"))
+		allowBtn = confirmButtonBlurred.Render("Allow")
+		denyBtn = confirmButtonFocused.Render("Deny")
 	}
 	buttons := lipgloss.JoinHorizontal(lipgloss.Center, allowBtn, "  ", denyBtn)
 
-	// Help
+	// ── Help ──
 	help := confirmHelpStyle.Render(langManager.GetText("ConfirmDialogHelp"))
 
-	// Assemble
+	// ── Assemble with a horizontal separator between detail and buttons ──
+	sep := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("237")).
+		Width(innerWidth).
+		Render(strings.Repeat("─", innerWidth))
+
 	content := lipgloss.JoinVertical(lipgloss.Left,
-		title,
+		toolLine,
 		"",
-		wrapped,
+		detail,
 		"",
-		lipgloss.NewStyle().Width(dialogWidth-4).Align(lipgloss.Center).Render(buttons),
-		"",
+		sep,
+		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(buttons),
 		help,
 	)
 
 	dialog := confirmBorderStyle.Width(dialogWidth).Render(content)
 
-	// Center the dialog on screen
 	return lipgloss.Place(m.termWidth, m.termHeight,
 		lipgloss.Center, lipgloss.Center,
 		dialog,
