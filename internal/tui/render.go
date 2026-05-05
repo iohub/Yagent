@@ -21,6 +21,7 @@ var skipBodyTools = map[string]bool{
 	"read_file":   true,
 	"delete_file": true,
 	"rename_file": true,
+	"list_dir":    true,
 }
 
 // ── Tool Header Rendering ──
