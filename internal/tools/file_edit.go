@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"codeactor/internal/diff"
 	"codeactor/internal/util"
 )
 
@@ -94,10 +95,14 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 			return nil, util.WrapError(ctx, err, "ExecuteReplaceBlock::WriteFile")
 		}
 
+		// Generate diff for new file (empty → newString)
+		diffText := diff.GenerateUnifiedDiff(filePath, "", newString)
+
 		return map[string]interface{}{
 			"success": true,
 			"file":    filePath,
 			"message": "New file created successfully",
+			"diff":    diffText,
 		}, nil
 	}
 
@@ -144,10 +149,14 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 		return nil, util.WrapError(ctx, err, "ExecuteReplaceBlock::WriteFile")
 	}
 
+	// Generate diff between original and new content
+	diffText := diff.GenerateUnifiedDiff(filePath, content, newContent)
+
 	return map[string]interface{}{
 		"success": true,
 		"file":    filePath,
 		"message": "Successfully replaced block",
+		"diff":    diffText,
 	}, nil
 }
 
