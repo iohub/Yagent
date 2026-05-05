@@ -178,8 +178,9 @@ type model struct {
 	toolCallEntries map[string]*tui.ToolEntry
 
 	// Animation state for running tools
-	anim       *tui.Anim
-	activeAnim bool // true when there are running tool entries
+	anim        *tui.Anim
+	activeAnim  bool // true when there are running tool entries
+	animFrame   int  // frame counter for throttled viewport rebuilds
 }
 
 func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
@@ -410,13 +411,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Advance animation and rebuild viewport if there are running tools
 		if m.activeAnim {
 			m.anim.Tick()
-			// Invalidate cached renders for running tool entries
-			for _, te := range m.toolCallEntries {
-				if te.Status == tui.ToolStatusRunning {
-					te.InvalidateCache()
+			m.animFrame++
+			// Throttle viewport rebuild to every 3 ticks (~300ms) to avoid
+			// flooding viewport.SetContent() — the #1 cause of scroll lag.
+			if m.animFrame%3 == 0 {
+				for _, te := range m.toolCallEntries {
+					if te.Status == tui.ToolStatusRunning {
+						te.InvalidateCache()
+					}
 				}
+				m.rebuildViewportPreservingScroll()
 			}
-			m.buildViewportContent()
 		}
 		// Always continue ticking so that the animation resumes immediately
 		// when activeAnim becomes true — never let the tick die.
@@ -892,9 +897,41 @@ func (m *model) invalidateRenderedCache() {
 // buildViewportContent rebuilds the full viewport content from scratch.
 // Used for initial load, terminal resize, or conversation switch.
 func (m *model) buildViewportContent() {
-	m.contentCache.Reset()
+	m.rebuildContentCache()
+	m.viewport.SetContent(m.contentCache.String())
+	m.viewport.GotoBottom()
+}
 
-	// Welcome panel as scrollable content — scrolls together with messages
+// rebuildViewportPreservingScroll rebuilds viewport content but preserves
+// the current scroll position. Used for animation tick updates so that
+// scrolling up to read history isn't interrupted by SetContent+GotoBottom.
+func (m *model) rebuildViewportPreservingScroll() {
+	yOffset := m.viewport.YOffset
+	m.rebuildContentCache()
+	m.viewport.SetContent(m.contentCache.String())
+	// Restore Y offset, clamped to avoid overscroll
+	totalLines := m.viewport.TotalLineCount()
+	visibleLines := m.viewport.Height
+	maxOffset := totalLines - visibleLines
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if yOffset > maxOffset {
+		yOffset = maxOffset
+	}
+	m.viewport.YOffset = yOffset
+}
+
+// rebuildContentCache rebuilds m.contentCache with the current welcome panel
+// and all log entries. Callers must then call viewport.SetContent().
+func (m *model) rebuildContentCache() {
+	m.contentCache.Reset()
+	// Estimate capacity: ~200 bytes per entry to reduce reallocations
+	estCap := (len(m.logEntries) + 2) * 200
+	if estCap > m.contentCache.Cap() {
+		m.contentCache.Grow(estCap)
+	}
+
 	m.contentCache.WriteString(m.renderWelcomePanel())
 	m.contentCache.WriteString("\n")
 
@@ -903,9 +940,6 @@ func (m *model) buildViewportContent() {
 		m.renderEntryTo(entry, m.contentCache)
 		m.contentCache.WriteString("\n")
 	}
-
-	m.viewport.SetContent(m.contentCache.String())
-	m.viewport.GotoBottom()
 }
 
 // renderEntryTo renders a single log entry into the builder, caching the result
@@ -1154,8 +1188,6 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 
 // formatLogEntry renders a single log entry as a styled line.
 func formatLogEntry(entry logEntry, maxWidth int) string {
-	timeStr := logTimeStyle.Render(entry.timestamp.Format("15:04:05"))
-
 	var prefix string
 	var contentStyle lipgloss.Style
 
@@ -1170,7 +1202,7 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		}
 		// Fallback: legacy rendering
 		if entry.toolName != "" {
-			prefix = fmt.Sprintf("🔘 %s", entry.toolName)
+			prefix = "🔘 " + tui.RenderToolName(entry.toolName)
 		} else {
 			prefix = "🔘 TOOL"
 		}
@@ -1183,14 +1215,14 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		}
 		if strings.HasPrefix(entry.content, "Error:") {
 			if entry.toolName != "" {
-				prefix = fmt.Sprintf("❌ %s", entry.toolName)
+				prefix = "❌ " + tui.RenderToolName(entry.toolName)
 			} else {
 				prefix = "❌ RESULT"
 			}
 			contentStyle = toolErrorStyle
 		} else {
 			if entry.toolName != "" {
-				prefix = fmt.Sprintf("✅ %s", entry.toolName)
+				prefix = "✅ " + tui.RenderToolName(entry.toolName)
 			} else {
 				prefix = "✅ RESULT"
 			}
@@ -1218,11 +1250,8 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		displayContent = strings.ReplaceAll(entry.content, "\n", " ")
 	}
 
-	// Ensure prefix is fixed width for alignment
-	prefixStr := lipgloss.NewStyle().Width(24).Render(prefix)
-
 	// Truncate long content
-	contentWidth := maxWidth - 36
+	contentWidth := maxWidth - 10
 	if contentWidth < 20 {
 		contentWidth = 20
 	}
@@ -1233,7 +1262,7 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		}
 	}
 
-	return timeStr + " " + prefixStr + " " + contentStyle.Render(displayContent)
+	return prefix + " " + contentStyle.Render(displayContent)
 }
 
 // submitTask creates a new task and starts execution in the background.
@@ -1645,22 +1674,12 @@ func renderToolEntry(entry logEntry, maxWidth int) string {
 	if entry.toolEntry == nil {
 		return formatLogEntry(entry, maxWidth)
 	}
-	timeStr := tui.TimeStyle.Render(entry.timestamp.Format("15:04:05"))
 
-	if entry.toolEntry.Status == tui.ToolStatusRunning {
-		anim := tui.NewAnim(10)
-		_ = anim // use entry's associated animation state via view rebuild
-		// For running tools, the rendering is handled by buildViewportContent
-		// which has access to the global anim state
-	}
-
-	contentWidth := maxWidth - 30
+	contentWidth := maxWidth - 4
 	if contentWidth < 30 {
 		contentWidth = 30
 	}
-	toolLine := tui.RenderToolLine(entry.toolEntry, nil, contentWidth)
-
-	return timeStr + "  " + toolLine
+	return tui.RenderToolLine(entry.toolEntry, nil, contentWidth)
 }
 
 // getToolCallIDFromEventContent extracts tool_call_id from event content.
@@ -1713,13 +1732,11 @@ func renderToolEntryWithAnim(entry logEntry, maxWidth int, anim *tui.Anim) strin
 	if entry.toolEntry == nil {
 		return formatLogEntry(entry, maxWidth)
 	}
-	timeStr := tui.TimeStyle.Render(entry.timestamp.Format("15:04:05"))
 	params := entry.toolEntry.Call.Summary
 	if params == "" {
 		params = entry.executionSummary
 	}
-	toolLine := tui.RenderPending(entry.toolEntry.Call.Name, params, anim)
-	return timeStr + "  " + toolLine
+	return tui.RenderPending(entry.toolEntry.Call.Name, params, anim)
 }
 
 // extractDiffFromResult attempts to parse a JSON result string and extract the "diff" field.
@@ -1740,21 +1757,19 @@ func extractDiffFromResult(result string) string {
 
 // renderDiff renders a unified diff string with ANSI color styling.
 func renderDiff(entry *logEntry) string {
-	timeStr := tui.TimeStyle.Render(entry.timestamp.Format("15:04:05"))
 	var prefix string
 	icon := tui.IconSuccess
 	if entry.isToolRunning {
 		icon = tui.IconPending
 	}
-	prefix = icon + " " + entry.toolName
+	prefix = icon + " " + tui.RenderToolName(entry.toolName)
 	if entry.executionSummary != "" {
 		prefix += " " + tui.ParamMain.Render("· "+entry.executionSummary)
 	}
-	prefixStr := lipgloss.NewStyle().Width(26).Render(prefix)
 
 	diffContent := tui.RenderDiffContent(entry.diffText, 100)
 
-	return timeStr + " " + prefixStr + "\n" + diffContent
+	return prefix + "\n" + diffContent
 }
 
 // renderHistoryPanel renders the history panel with single-line items and stable scrolling.

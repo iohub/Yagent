@@ -10,6 +10,52 @@ var (
 	IconCanceled  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("●") // gray
 )
 
+// ── Tool name background color palette ──
+// Each tool gets a distinct background color based on its name hash.
+// All colors are from the 256-color palette, chosen to be dark enough
+// for white (color 15) text to remain readable.
+var toolBgColors = []string{
+	"52",  // dark red
+	"17",  // dark blue
+	"22",  // dark green
+	"94",  // brown
+	"53",  // plum
+	"18",  // navy
+	"23",  // teal
+	"58",  // olive
+	"95",  // mauve
+	"24",  // steel blue
+	"88",  // crimson
+	"59",  // slate
+	"131", // purple
+	"60",  // blue-gray
+	"96",  // sage
+	"97",  // warm gray
+}
+
+// ToolBgColor returns a stable background color for the given tool name.
+func ToolBgColor(name string) string {
+	h := 0
+	for _, c := range name {
+		h = h*31 + int(c)
+	}
+	if h < 0 {
+		h = -h
+	}
+	return toolBgColors[h%len(toolBgColors)]
+}
+
+// RenderToolName renders a tool name with its unique background highlight.
+func RenderToolName(name string) string {
+	bg := ToolBgColor(name)
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color(bg)).
+		Bold(true).
+		Padding(0, 1).
+		Render(name)
+}
+
 // ── Tool name styles ──
 var (
 	NameNormal = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))  // blue
