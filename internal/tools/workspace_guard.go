@@ -154,7 +154,7 @@ func (g *WorkspaceGuard) checkBash(params map[string]interface{}) (bool, string)
 	// Also verify by checking if the command references paths outside the workspace
 	// (defense in depth — catches cases where the LLM misjudges is_dangerous)
 	if g.referencesOutsideWorkspace(command) {
-		return true, fmt.Sprintf("命令引用了工作空间外的路径 (is_dangerous 应为 true):\n```bash\n%s\n```", command)
+		return true, fmt.Sprintf("\n%s\n", command)
 	}
 
 	return false, ""
