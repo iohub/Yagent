@@ -16,9 +16,15 @@ import (
 )
 
 type TUIConsumer struct {
-	writer    io.Writer
-	reader    *bufio.Reader
-	publisher *messaging.MessagePublisher
+	writer           io.Writer
+	reader           *bufio.Reader
+	publisher        *messaging.MessagePublisher
+	pendingToolCalls map[string]pendingToolCall // tool_call_id → pending entry
+}
+
+type pendingToolCall struct {
+	toolName string
+	summary  string
 }
 
 // Define tool-specific color styles
@@ -42,6 +48,14 @@ var colorPalette = []string{"#FF6B6B", "#4ECDC4", "#FFE66D", "#1A535C", "#FF9F1C
 var detailStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("240")).
 	Italic(true)
+
+// Tool status styles for compact single-line display
+var (
+	toolRunningStyle2 = lipgloss.NewStyle().Foreground(lipgloss.Color("228")) // gold — running
+	toolDoneStyle2    = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — done
+	toolErrorStyle2   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")) // red — error
+	toolSummaryStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // dim summary
+)
 
 // Additional styles for beautified UI
 var (
@@ -97,9 +111,10 @@ func getToolStyle(toolName string) lipgloss.Style {
 
 func NewTUIConsumer(writer io.Writer, publisher *messaging.MessagePublisher) *TUIConsumer {
 	return &TUIConsumer{
-		writer:    writer,
-		reader:    bufio.NewReader(os.Stdin),
-		publisher: publisher,
+		writer:           writer,
+		reader:           bufio.NewReader(os.Stdin),
+		publisher:        publisher,
+		pendingToolCalls: make(map[string]pendingToolCall),
 	}
 }
 
@@ -165,17 +180,57 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	case "tool_call_start":
 		toolName = getToolNameFromContent(event.Content)
-		prefixRendered = toolPrefixStyle.Render("▶️  Tool Start") + " " + buildToolBadge(toolName)
-		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
+		callID := getToolCallIDFromContent(event.Content)
+		argsJSON := getArgumentsFromContent(event.Content)
+		summary := extractToolSummary(toolName, argsJSON)
+		// Track pending call
+		if callID != "" {
+			t.pendingToolCalls[callID] = pendingToolCall{toolName: toolName, summary: summary}
+		}
+		// Compact running line: 🔘 tool_name · summary
+		prefixRendered = toolRunningStyle2.Render("🔘 " + toolName)
+		if summary != "" {
+			prefixRendered += " " + toolSummaryStyle.Render("· "+summary)
+		}
+		wrappedContent = ""
 	case "tool_call_result":
 		toolName = getToolNameFromContent(event.Content)
-		prefixRendered = toolPrefixStyle.Render("⏹️  Tool Result") + " " + buildToolBadge(toolName)
+		callID := getToolCallIDFromContent(event.Content)
+		// Look up pending call for summary
+		var summary string
+		if callID != "" {
+			if pending, ok := t.pendingToolCalls[callID]; ok {
+				summary = pending.summary
+				delete(t.pendingToolCalls, callID)
+			}
+		}
+		resultStr := getResultFromContent(event.Content)
+		isError := strings.HasPrefix(resultStr, "Error:")
+
+		// Compact done line: ✅ tool_name · summary  or  ❌ tool_name · summary — error
+		if isError {
+			prefixRendered = toolErrorStyle2.Render("❌ " + toolName)
+		} else {
+			prefixRendered = toolDoneStyle2.Render("✅ " + toolName)
+		}
+		if summary != "" {
+			prefixRendered += " " + toolSummaryStyle.Render("· "+summary)
+		}
+		// Show brief error message
+		if isError {
+			errBrief := strings.TrimPrefix(resultStr, "Error: ")
+			if len(errBrief) > 40 {
+				errBrief = errBrief[:37] + "..."
+			}
+			prefixRendered += " " + toolErrorStyle2.Render("— "+errBrief)
+		}
+
 		// Check for diff content and render with ANSI colors
 		diffText := extractDiffContent(event.Content)
 		if diffText != "" {
 			wrappedContent = renderDiffContent(diffText, w-6)
 		} else {
-			wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
+			wrappedContent = ""
 		}
 	default:
 		prefixRendered = labelStyle.Render("📝 " + event.Type)
@@ -183,11 +238,16 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 	}
 
 	timestamp := timestampStyle.Render(event.Timestamp.Format("15:04:05"))
-	header := lipgloss.JoinHorizontal(lipgloss.Top, "[", timestamp, "] ", headerStyle.Render(prefixRendered))
-	panel := lipgloss.JoinVertical(lipgloss.Left, header, wrappedContent)
-	panel = containerStyle.Width(w - 2).Render(panel)
-
-	_, err := fmt.Fprintln(t.writer, panel)
+	if wrappedContent != "" {
+		header := lipgloss.JoinHorizontal(lipgloss.Top, "[", timestamp, "] ", headerStyle.Render(prefixRendered))
+		panel := lipgloss.JoinVertical(lipgloss.Left, header, wrappedContent)
+		panel = containerStyle.Width(w - 2).Render(panel)
+		_, err := fmt.Fprintln(t.writer, panel)
+		return err
+	}
+	// Compact single-line output (no content body)
+	line := lipgloss.JoinHorizontal(lipgloss.Top, "[", timestamp, "] ", prefixRendered)
+	_, err := fmt.Fprintln(t.writer, line)
 	return err
 }
 
@@ -198,6 +258,98 @@ func getToolNameFromContent(content interface{}) string {
 			if nameStr, ok := name.(string); ok {
 				return nameStr
 			}
+		}
+	}
+	return ""
+}
+
+// getToolCallIDFromContent extracts the tool_call_id field.
+func getToolCallIDFromContent(content interface{}) string {
+	if m, ok := content.(map[string]interface{}); ok {
+		if id, ok := m["tool_call_id"]; ok {
+			if idStr, ok := id.(string); ok {
+				return idStr
+			}
+		}
+	}
+	return ""
+}
+
+// getArgumentsFromContent extracts the arguments field.
+func getArgumentsFromContent(content interface{}) string {
+	if m, ok := content.(map[string]interface{}); ok {
+		if args, ok := m["arguments"]; ok {
+			if argsStr, ok := args.(string); ok {
+				return argsStr
+			}
+		}
+	}
+	return ""
+}
+
+// getResultFromContent extracts the result field.
+func getResultFromContent(content interface{}) string {
+	if m, ok := content.(map[string]interface{}); ok {
+		if result, ok := m["result"]; ok {
+			if resultStr, ok := result.(string); ok {
+				return resultStr
+			}
+		}
+	}
+	return ""
+}
+
+// extractToolSummary generates a short summary from tool arguments for display.
+func extractToolSummary(toolName string, argsJSON string) string {
+	if argsJSON == "" {
+		return ""
+	}
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return ""
+	}
+	switch toolName {
+	case "read_file", "edit_file", "search_replace_in_file", "create_file", "delete_file":
+		if fp, ok := args["file_path"].(string); ok && fp != "" {
+			return fp
+		}
+		if fp, ok := args["path"].(string); ok && fp != "" {
+			return fp
+		}
+	case "run_bash":
+		if cmd, ok := args["command"].(string); ok && cmd != "" {
+			if len(cmd) > 60 {
+				return cmd[:57] + "..."
+			}
+			return cmd
+		}
+	case "search_by_regex", "grep_search":
+		if pattern, ok := args["pattern"].(string); ok && pattern != "" {
+			if len(pattern) > 40 {
+				return pattern[:37] + "..."
+			}
+			return pattern
+		}
+	case "list_dir", "print_dir_tree":
+		if path, ok := args["path"].(string); ok && path != "" {
+			return path
+		}
+		if dir, ok := args["directory"].(string); ok && dir != "" {
+			return dir
+		}
+	case "rename_file":
+		from, _ := args["from"].(string)
+		to, _ := args["to"].(string)
+		if from != "" && to != "" {
+			return from + " → " + to
+		}
+	}
+	if strings.HasPrefix(toolName, "delegate_") {
+		if task, ok := args["task"].(string); ok && task != "" {
+			if len(task) > 60 {
+				return task[:57] + "..."
+			}
+			return task
 		}
 	}
 	return ""

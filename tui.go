@@ -12,6 +12,7 @@ import (
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
 	"codeactor/internal/memory"
+	"codeactor/internal/tui"
 	"codeactor/pkg/messaging"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -61,18 +62,33 @@ var (
 	diffDelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
 	diffCtxStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	diffNoNewlineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+
+	// Tool status styles (running → finished transition)
+	toolRunningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("228")) // gold — running
+	toolDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — success
+	toolErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")) // red — error
 )
 
 // logEntry represents a single message in the TUI log area.
 type logEntry struct {
-	timestamp time.Time
-	eventType string
-	from      string
-	content   string
-	toolName  string
-	diffText  string // unified diff content for file edit results
-	rendered  string // cached rendered output (glamour or plain), cleared on resize
+	timestamp        time.Time
+	eventType        string
+	from             string
+	content          string
+	toolName         string
+	toolCallID       string // tool_call_id for matching start/result events
+	isToolRunning    bool   // true when awaiting result
+	executionSummary string // short summary extracted from arguments (file path, command, etc.)
+	resultBrief      string // brief result description (e.g., "120 lines", "modified")
+	diffText         string // unified diff content for file edit results
+	rendered         string // cached rendered output (glamour or plain), cleared on resize
+
+	// Tool entry for new-style rendering (non-nil for tool events)
+	toolEntry *tui.ToolEntry
 }
+
+// tickMsg is sent by the animation ticker to advance animations.
+type tickMsg struct{}
 
 // taskEventMsg carries a MessageEvent from the task execution goroutine to the tea program.
 type taskEventMsg struct {
@@ -157,6 +173,13 @@ type model struct {
 	confirmDialog confirmDialog
 	publisher     *messaging.MessagePublisher
 	publisherCh   chan *messaging.MessagePublisher
+
+	// Tool call state tracking: tool_call_id → ToolEntry
+	toolCallEntries map[string]*tui.ToolEntry
+
+	// Animation state for running tools
+	anim       *tui.Anim
+	activeAnim bool // true when there are running tool entries
 }
 
 func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
@@ -217,10 +240,12 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 		currentLang:     langManager.currentLang,
 		eventCh:         make(chan *messaging.MessageEvent, 1000),
 		logEntries:      make([]logEntry, 0),
-		viewport:        vp,
-		contentCache:    &strings.Builder{},
-		glamourRenderer: glamourRenderer,
-		useDarkStyle:    useDarkStyle,
+		viewport:         vp,
+		contentCache:     &strings.Builder{},
+		glamourRenderer:  glamourRenderer,
+		useDarkStyle:     useDarkStyle,
+		toolCallEntries:  make(map[string]*tui.ToolEntry),
+			anim:             tui.NewAnim(10),
 	}
 }
 
@@ -228,7 +253,15 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		textarea.Blink,
 		listenForEvents(m.eventCh),
+		tickCmd(),
 	)
+}
+
+// tickCmd returns a command that fires a tickMsg every 100ms for animation.
+func tickCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg{}
+	})
 }
 
 func (m *model) toggleLanguage() {
@@ -373,6 +406,23 @@ func (m *model) deleteHistoryItem() {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tickMsg:
+		// Advance animation and rebuild viewport if there are running tools
+		if m.activeAnim {
+			m.anim.Tick()
+			// Invalidate cached renders for running tool entries
+			for _, te := range m.toolCallEntries {
+				if te.Status == tui.ToolStatusRunning {
+					te.InvalidateCache()
+				}
+			}
+			m.buildViewportContent()
+		}
+		if m.activeAnim {
+			return m, tickCmd()
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
@@ -577,7 +627,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			return m, listenForEvents(m.eventCh)
 		}
+		// ── Tool call result: update the matching running entry ──
+		if msg.event.Type == "tool_call_result" {
+			callID := getToolCallIDFromEventContent(msg.event.Content)
+			if callID != "" {
+				if toolEntry, ok := m.toolCallEntries[callID]; ok {
+					resultContent := getResultFromEventContent(msg.event.Content)
+					isError := strings.HasPrefix(resultContent, "Error:")
+					toolEntry.SetResult(tui.ToolResultInfo{
+						ToolCallID: callID,
+						Name:       toolEntry.Call.Name,
+						Content:    resultContent,
+						IsError:    isError,
+					})
+					// Update the log entry content and diff for backward compat
+					if idx := findLogEntryByToolCallID(m.logEntries, callID); idx >= 0 {
+						le := &m.logEntries[idx]
+						le.content = resultContent
+						le.isToolRunning = false
+						le.rendered = "" // invalidate cache
+					}
+					delete(m.toolCallEntries, callID)
+					m.updateActiveAnim()
+					m.buildViewportContent()
+					return m, listenForEvents(m.eventCh)
+				}
+			}
+			// No matching start entry — add as standalone
+		}
+
 		entry := formatEventAsEntry(msg.event)
+
+		// Track running tool calls for status transition
+		if entry.eventType == "tool_call_start" && entry.toolCallID != "" {
+			m.toolCallEntries[entry.toolCallID] = entry.toolEntry
+			m.activeAnim = true
+		}
+
 		m.logEntries = append(m.logEntries, entry)
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 		return m, listenForEvents(m.eventCh)
@@ -794,10 +880,13 @@ func (m *model) resizeViewport() {
 
 
 // invalidateRenderedCache clears cached rendered output on all log entries.
-// Called on terminal resize since glamour rendering depends on viewport width.
+// Called on terminal resize since rendering depends on viewport width.
 func (m *model) invalidateRenderedCache() {
 	for i := range m.logEntries {
 		m.logEntries[i].rendered = ""
+		if m.logEntries[i].toolEntry != nil {
+			m.logEntries[i].toolEntry.InvalidateCache()
+		}
 	}
 }
 
@@ -824,6 +913,13 @@ func (m *model) buildViewportContent() {
 // in the entry for reuse. Uses glamour for ai_response, diff styling for diffs,
 // plain formatting otherwise.
 func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
+	// For running tool entries, never cache (animation changes each frame)
+	if entry.toolEntry != nil && entry.toolEntry.Status == tui.ToolStatusRunning {
+		toolLine := renderToolEntryWithAnim(*entry, m.viewport.Width, m.anim)
+		b.WriteString(toolLine)
+		return
+	}
+
 	// Use cached rendered content if available
 	if entry.rendered != "" {
 		b.WriteString(entry.rendered)
@@ -832,6 +928,14 @@ func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 
 	// Capture the start position to cache the output
 	start := b.Len()
+
+	// Tool entry rendering (non-running) — use new renderer
+	if entry.toolEntry != nil {
+		rendered := renderToolEntry(*entry, m.viewport.Width)
+		b.WriteString(rendered)
+		entry.rendered = b.String()[start:]
+		return
+	}
 
 	// Diff rendering takes priority
 	if entry.diffText != "" {
@@ -871,6 +975,102 @@ func (m *model) appendLogEntry(entry *logEntry) {
 	}
 }
 
+// extractToolSummary extracts a concise execution summary from tool arguments.
+// Used to display what a tool is doing (file path, command, pattern, etc.).
+func extractToolSummary(toolName string, argsJSON string) string {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return ""
+	}
+	switch toolName {
+	case "read_file", "edit_file", "search_replace_in_file", "create_file", "delete_file":
+		if fp, ok := args["file_path"].(string); ok && fp != "" {
+			return fp
+		}
+		if fp, ok := args["path"].(string); ok && fp != "" {
+			return fp
+		}
+	case "run_bash":
+		if cmd, ok := args["command"].(string); ok && cmd != "" {
+			if len(cmd) > 80 {
+				return cmd[:77] + "..."
+			}
+			return cmd
+		}
+	case "search_by_regex", "grep_search":
+		if pattern, ok := args["pattern"].(string); ok && pattern != "" {
+			if len(pattern) > 60 {
+				return pattern[:57] + "..."
+			}
+			return pattern
+		}
+	case "list_dir", "print_dir_tree":
+		if path, ok := args["path"].(string); ok && path != "" {
+			return path
+		}
+		if dir, ok := args["directory"].(string); ok && dir != "" {
+			return dir
+		}
+	case "rename_file":
+		from, _ := args["from"].(string)
+		to, _ := args["to"].(string)
+		if from != "" && to != "" {
+			return from + " → " + to
+		}
+	case "thinking", "agent_exit":
+		if reason, ok := args["reason"].(string); ok && reason != "" {
+			return reason
+		}
+	}
+	// For delegate tools, show task summary
+	if strings.HasPrefix(toolName, "delegate_") {
+		if task, ok := args["task"].(string); ok && task != "" {
+			if len(task) > 60 {
+				return task[:57] + "..."
+			}
+			return task
+		}
+	}
+	return ""
+}
+
+// extractResultBrief generates a short result summary for the finished line.
+func extractResultBrief(toolName string, result string) string {
+	if strings.HasPrefix(result, "Error:") {
+		// Short error message
+		errMsg := strings.TrimPrefix(result, "Error: ")
+		if len(errMsg) > 50 {
+			return errMsg[:47] + "..."
+		}
+		return errMsg
+	}
+	switch toolName {
+	case "read_file":
+		lines := strings.Count(result, "\n")
+		if lines > 0 {
+			return fmt.Sprintf("%d lines", lines)
+		}
+		return fmt.Sprintf("%d bytes", len(result))
+	case "list_dir", "print_dir_tree":
+		return ""
+	case "run_bash":
+		// Show first non-empty line of output
+		trimmed := strings.TrimSpace(result)
+		if len(trimmed) > 60 {
+			return trimmed[:57] + "..."
+		}
+		return trimmed
+	case "search_by_regex", "grep_search":
+		lines := strings.Count(result, "\n")
+		return fmt.Sprintf("%d matches", lines)
+	default:
+		if strings.HasPrefix(toolName, "delegate_") {
+			return ""
+		}
+		return ""
+	}
+}
+
 // formatEventAsEntry converts a MessageEvent to a logEntry.
 func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 	entry := logEntry{
@@ -891,24 +1091,48 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			if name, ok := m["tool_name"].(string); ok {
 				entry.toolName = name
 			}
+			if id, ok := m["tool_call_id"].(string); ok {
+				entry.toolCallID = id
+			}
 			if args, ok := m["arguments"].(string); ok {
 				entry.content = args
+				entry.executionSummary = extractToolSummary(entry.toolName, args)
+				// Create ToolEntry for new-style rendering
+				entry.toolEntry = tui.NewToolEntry(tui.ToolCallInfo{
+					ID:        entry.toolCallID,
+					Name:      entry.toolName,
+					Arguments: args,
+					Summary:   entry.executionSummary,
+				})
 			}
 		}
+		entry.isToolRunning = true
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
+		}
+		if entry.toolEntry == nil {
+			// Fallback: create ToolEntry even without parsed args
+			entry.toolEntry = tui.NewToolEntry(tui.ToolCallInfo{
+				ID:   entry.toolCallID,
+				Name: entry.toolName,
+			})
 		}
 	case "tool_call_result":
 		if m, ok := event.Content.(map[string]interface{}); ok {
 			if name, ok := m["tool_name"].(string); ok {
 				entry.toolName = name
 			}
+			if id, ok := m["tool_call_id"].(string); ok {
+				entry.toolCallID = id
+			}
 			if result, ok := m["result"].(string); ok {
 				entry.content = result
+				entry.resultBrief = extractResultBrief(entry.toolName, result)
 				// Try to extract diff from JSON result
 				entry.diffText = extractDiffFromResult(result)
 			}
 		}
+		entry.isToolRunning = false
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
@@ -941,19 +1165,38 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		prefix = "AI  "
 		contentStyle = logAIResStyle
 	case "tool_call_start":
-		if entry.toolName != "" {
-			prefix = fmt.Sprintf("▶ %s", entry.toolName)
-		} else {
-			prefix = "▶ TOOL"
+		// Use new-style rendering if ToolEntry is available
+		if entry.toolEntry != nil {
+			return renderToolEntry(entry, maxWidth)
 		}
-		contentStyle = logToolStyle
+		// Fallback: legacy rendering
+		if entry.toolName != "" {
+			prefix = fmt.Sprintf("🔘 %s", entry.toolName)
+		} else {
+			prefix = "🔘 TOOL"
+		}
+		contentStyle = toolRunningStyle
 	case "tool_call_result":
-		if entry.toolName != "" {
-			prefix = fmt.Sprintf("✔ %s", entry.toolName)
-		} else {
-			prefix = "✔ RESULT"
+		// Use new-style rendering if ToolEntry is available (via parent start entry)
+		// standalone entries use legacy rendering
+		if entry.toolEntry != nil {
+			return renderToolEntry(entry, maxWidth)
 		}
-		contentStyle = logResultStyle
+		if strings.HasPrefix(entry.content, "Error:") {
+			if entry.toolName != "" {
+				prefix = fmt.Sprintf("❌ %s", entry.toolName)
+			} else {
+				prefix = "❌ RESULT"
+			}
+			contentStyle = toolErrorStyle
+		} else {
+			if entry.toolName != "" {
+				prefix = fmt.Sprintf("✅ %s", entry.toolName)
+			} else {
+				prefix = "✅ RESULT"
+			}
+			contentStyle = toolDoneStyle
+		}
 	case "error":
 		prefix = "✖ ERROR"
 		contentStyle = logErrorLogStyle
@@ -965,20 +1208,33 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		contentStyle = logStatusStyle
 	}
 
+	// Build display content: prefer execution summary + result brief
+	var displayContent string
+	if entry.executionSummary != "" {
+		displayContent = entry.executionSummary
+		if entry.resultBrief != "" {
+			displayContent += " · " + entry.resultBrief
+		}
+	} else {
+		displayContent = strings.ReplaceAll(entry.content, "\n", " ")
+	}
+
 	// Ensure prefix is fixed width for alignment
 	prefixStr := lipgloss.NewStyle().Width(24).Render(prefix)
 
-	// Content: truncate long lines
-	content := strings.ReplaceAll(entry.content, "\n", " ")
+	// Truncate long content
 	contentWidth := maxWidth - 36
 	if contentWidth < 20 {
 		contentWidth = 20
 	}
-	if lipgloss.Width(content) > contentWidth {
-		content = content[:contentWidth-3] + "..."
+	if lipgloss.Width(displayContent) > contentWidth {
+		runes := []rune(displayContent)
+		if len(runes) > contentWidth-3 {
+			displayContent = string(runes[:contentWidth-3]) + "..."
+		}
 	}
 
-	return timeStr + " " + prefixStr + " " + contentStyle.Render(content)
+	return timeStr + " " + prefixStr + " " + contentStyle.Render(displayContent)
 }
 
 // submitTask creates a new task and starts execution in the background.
@@ -1383,6 +1639,88 @@ func wrapText(text string, maxWidth int) string {
 	return strings.Join(wrapped, "\n")
 }
 
+// renderToolEntry renders a logEntry using the new tool rendering pipeline.
+func renderToolEntry(entry logEntry, maxWidth int) string {
+	if entry.toolEntry == nil {
+		return formatLogEntry(entry, maxWidth)
+	}
+	timeStr := tui.TimeStyle.Render(entry.timestamp.Format("15:04:05"))
+
+	if entry.toolEntry.Status == tui.ToolStatusRunning {
+		anim := tui.NewAnim(10)
+		_ = anim // use entry's associated animation state via view rebuild
+		// For running tools, the rendering is handled by buildViewportContent
+		// which has access to the global anim state
+	}
+
+	contentWidth := maxWidth - 30
+	if contentWidth < 30 {
+		contentWidth = 30
+	}
+	toolLine := tui.RenderToolLine(entry.toolEntry, nil, contentWidth)
+
+	return timeStr + "  " + toolLine
+}
+
+// getToolCallIDFromEventContent extracts tool_call_id from event content.
+func getToolCallIDFromEventContent(content interface{}) string {
+	if m, ok := content.(map[string]interface{}); ok {
+		if id, ok := m["tool_call_id"]; ok {
+			if idStr, ok := id.(string); ok {
+				return idStr
+			}
+		}
+	}
+	return ""
+}
+
+// getResultFromEventContent extracts the result string from event content.
+func getResultFromEventContent(content interface{}) string {
+	if m, ok := content.(map[string]interface{}); ok {
+		if result, ok := m["result"]; ok {
+			if resultStr, ok := result.(string); ok {
+				return resultStr
+			}
+		}
+	}
+	return fmt.Sprintf("%v", content)
+}
+
+// findLogEntryByToolCallID finds the index of a log entry with the given tool_call_id.
+func findLogEntryByToolCallID(entries []logEntry, callID string) int {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].toolCallID == callID {
+			return i
+		}
+	}
+	return -1
+}
+
+// updateActiveAnim checks if there are any running tool entries and updates the flag.
+func (m *model) updateActiveAnim() {
+	for _, te := range m.toolCallEntries {
+		if te.Status == tui.ToolStatusRunning {
+			m.activeAnim = true
+			return
+		}
+	}
+	m.activeAnim = false
+}
+
+// renderToolEntryWithAnim renders a running tool entry using the provided animation.
+func renderToolEntryWithAnim(entry logEntry, maxWidth int, anim *tui.Anim) string {
+	if entry.toolEntry == nil {
+		return formatLogEntry(entry, maxWidth)
+	}
+	timeStr := tui.TimeStyle.Render(entry.timestamp.Format("15:04:05"))
+	params := entry.toolEntry.Call.Summary
+	if params == "" {
+		params = entry.executionSummary
+	}
+	toolLine := tui.RenderPending(entry.toolEntry.Call.Name, params, anim)
+	return timeStr + "  " + toolLine
+}
+
 // extractDiffFromResult attempts to parse a JSON result string and extract the "diff" field.
 func extractDiffFromResult(result string) string {
 	// Quick check: does it look like JSON with a "diff" field?
@@ -1401,32 +1739,19 @@ func extractDiffFromResult(result string) string {
 
 // renderDiff renders a unified diff string with ANSI color styling.
 func renderDiff(entry *logEntry) string {
-	timeStr := logTimeStyle.Render(entry.timestamp.Format("15:04:05"))
-	prefix := "✔ " + entry.toolName
-	prefixStr := lipgloss.NewStyle().Width(24).Render(prefix)
-
-	// Build styled diff content line by line
-	lines := strings.Split(entry.diffText, "\n")
-	var styledLines []string
-	for _, line := range lines {
-		var styled string
-		switch {
-		case strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ "):
-			styled = diffHeaderStyle.Render(line)
-		case strings.HasPrefix(line, "@@"):
-			styled = diffHunkStyle.Render(line)
-		case strings.HasPrefix(line, "+"):
-			styled = diffAddStyle.Render(line)
-		case strings.HasPrefix(line, "-"):
-			styled = diffDelStyle.Render(line)
-		case strings.HasPrefix(line, `\`):
-			styled = diffNoNewlineStyle.Render(line)
-		default:
-			styled = diffCtxStyle.Render(line)
-		}
-		styledLines = append(styledLines, styled)
+	timeStr := tui.TimeStyle.Render(entry.timestamp.Format("15:04:05"))
+	var prefix string
+	icon := tui.IconSuccess
+	if entry.isToolRunning {
+		icon = tui.IconPending
 	}
-	diffContent := strings.Join(styledLines, "\n")
+	prefix = icon + " " + entry.toolName
+	if entry.executionSummary != "" {
+		prefix += " " + tui.ParamMain.Render("· "+entry.executionSummary)
+	}
+	prefixStr := lipgloss.NewStyle().Width(26).Render(prefix)
+
+	diffContent := tui.RenderDiffContent(entry.diffText, 100)
 
 	return timeStr + " " + prefixStr + "\n" + diffContent
 }
