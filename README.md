@@ -1,20 +1,64 @@
 # CodeActor Agent
 
-An AI-powered autonomous coding assistant built with a **Hub-and-Spoke multi-agent architecture** in Go.
+An AI-powered autonomous coding assistant built with a **Hub-and-Spoke multi-agent architecture** in Go, backed by a Rust-based code analysis engine.
 
 CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Analyst, Coding-Engineer, Chat-Assistant, and Meta-Agent — to autonomously analyze, plan, and execute complex software engineering tasks with self-correction capabilities.
 
 ## Features
 
-- **Multi-Agent Architecture** — Central Conductor delegates tasks to specialized sub-agents (Repo analysis, Code editing, General chat)
-- **Rich Tool System** — 14 built-in tools for file operations, code search, semantic analysis, shell execution, and cognitive self-reflection
+### Multi-Agent System
+- **Hub-and-Spoke Architecture** — Central Conductor delegates tasks to specialized sub-agents (Repo analysis, Code editing, General chat)
+- **Meta-Agent** — Autonomous agent designer that creates custom sub-agents at runtime for tasks beyond built-in agents' capabilities
 - **Self-Correction** — `thinking` tool enables agents to analyze errors and recover without blind retries
-- **Dual Interaction Modes** — Terminal UI (TUI) for local use; HTTP + WebSocket server for IDE/Web integration
-- **Multi-Provider LLM Support** — Xiaomi MiMo, Alibaba Qwen, DeepSeek, Mistral, AWS Bedrock, and more via OpenAI-compatible API
-- **Streaming Output** — Real-time streaming of AI responses, tool calls, and results
-- **Conversation Memory** — Full conversation context with tool-call history, persisted across sessions
-- **Repository Analysis** — Automatic codebase investigation with directory trees, call graphs, and semantic search
-- **Meta-Agent** — Autonomous agent designer that creates custom sub-agents at runtime for specialized tasks beyond the built-in agents' capabilities
+- **Agent Disable** — Conditionally exclude sub-agents at startup via `--disable-agents=repo,coding,chat,meta`
+- **ImplPlan Tool** — Stateful implementation plan document for complex multi-step coding tasks
+
+### Rich Tool System (17 tools)
+- **File Operations** — Read, create, delete, rename, list directory, print directory tree
+- **Code Editing** — `search_replace_in_file` with unified diff output and 10MB size guard
+- **Code Search** — ripgrep regex search, semantic search via vector embeddings, code skeleton/snippet queries
+- **Shell Execution** — `run_bash` with foreground/background support, danger detection, and workspace-boundary checks
+- **Cognitive Tools** — `thinking` for error analysis, `micro_agent` for sub-LLM reasoning calls
+- **Flow Control** — `finish` to signal task completion, user help requests
+- **Repo Analysis** — Call graph queries, hierarchical call trees, directory trees, function-level code skeletons
+
+### Intelligent TUI
+- **Tool Call Animation** — Running tools display character-cycling marquee with gradient colors and ellipsis dots
+- **Smart Result Rendering** — Auto-detects content type (JSON/diff/markdown/plain text) and renders with appropriate styling
+- **Unified Diff Highlighting** — File edits return unified diffs rendered with ANSI color (green/red add/del, cyan hunk headers)
+- **Inline Authorization** — WorkspaceGuard prompts for dangerous operations directly in the TUI with Allow/Deny/Allow-All options
+- **Session-Wide "Allow All"** — Grant one-time authorization per tool for the entire session
+- **Claude Code-like Aesthetic** — Minimalist design with color-coded agent messages, tool status icons, and line-numbered code output
+
+### Dual Interaction Modes
+- **TUI Mode** — Full terminal UI built with Bubble Tea, with message log, agent streaming, and interactive authorization
+- **HTTP + WebSocket Server** — REST API and real-time WebSocket streaming for IDE/Web integration
+
+### LLM Infrastructure
+- **Official OpenAI Go SDK** — Replaced langchaingo with `openai-go/v3` for direct API control
+- **DeepSeek Reasoning Support** — Full `reasoning_content` round-trip (streaming + non-streaming), injected via `SetExtraFields`
+- **Custom Engine Abstraction** — Lightweight `Engine` interface with Message/ToolDef/ToolCall types, decoupled from any SDK
+- **13 LLM Providers** — Xiaomi MiMo, Alibaba Qwen, DeepSeek, SiliconFlow, Moonshot, Mistral, Zhipu GLM, OpenRouter, StreamLake, AWS Bedrock, and any OpenAI-compatible endpoint
+- **Structured LLM Logging** — All LLM I/O logged to `~/.codeactor/logs/llm-{date}.log` with JSON-formatted messages
+
+### Security
+- **WorkspaceGuard** — Validates file operations stay within the project workspace; intercepts dangerous shell commands
+- **Defense-in-Depth** — Checks both LLM-flagged `is_dangerous` and absolute-path analysis for shell commands
+- **User Confirmation Pipeline** — Pub-Sub based confirmation flow that works across TUI and WebSocket consumers
+
+### Codebase Analysis Engine (Rust)
+- **Tree-sitter Multi-Language Parsing** — AST-level parsing for Rust, Python, JavaScript, TypeScript, Java, C++, Go
+- **Call Graph Analysis** — Function-level call graphs with caller/callee relations, cycle detection, complexity scoring
+- **Semantic Code Search** — Vector embeddings via LanceDB + SQLite cache, OpenAI `text-embedding-3-small`
+- **Code Skeleton/Snippet** — Batch file skeleton extraction and per-function code snippet retrieval
+- **File Watching** — Automatic re-indexing on file changes with 20s debounce
+- **Auto-Launch** — Go binary automatically starts the Rust codebase server as a child process with dynamic port allocation, health-check polling, and cleanup on exit
+
+### Developer Experience
+- **Embedded Binary Distribution** — `codeactor-codebase` binary embedded in the Go binary via `embed.FS`, auto-extracted to `~/.codeactor/bin/`
+- **Node.js CLI Client** — Full-featured CLI (`run`, `chat`, `status`, `cancel`, `history`, `memory`, `load`) with WebSocket streaming
+- **Conversation Persistence** — Task memory saved to `~/.codeactor/tasks/{taskID}.json`, restorable across sessions
+- **i18n** — Chinese and English UI text via `LanguageManager`
 
 ## Screenshots
 
@@ -27,10 +71,9 @@ CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Ana
 
 ### Prerequisites
 
-- Go 1.23+
+- Go 1.24+
 - `ripgrep` (`rg`) — for full-text regex search
-- `fzf` — for fuzzy file search (optional)
-- A running `codeactor-codebase` service (or set `CODEBASE_URL`)
+- A running `codeactor-codebase` service (auto-launched by the Go binary, or set manually)
 
 ### Installation
 
@@ -74,6 +117,8 @@ lang = "Chinese"
 ./codeactor tui
 # Or with a task file:
 ./codeactor tui --taskfile TASK.md
+# Disable specific agents:
+./codeactor tui --disable-agents=meta
 ```
 
 **HTTP Server Mode** (API + WebSocket):
@@ -85,11 +130,91 @@ lang = "Chinese"
 ./codeactor http --port 9090
 ```
 
+### Node.js CLI Client
+
+```bash
+cd clients/nodejs-cli && npm install
+node index.js run <project-dir> "task description"     # create & stream task
+node index.js chat <task-id> <project-dir>             # continue conversation
+node index.js status <task-id>                         # query status
+node index.js memory <task-id>                         # view conversation history
+node index.js history                                  # list recent tasks
+```
+
+Server defaults to `localhost:9080`. Override via `--host`/`--port` or `CODECACTOR_HOST=host:port`.
+
 ## Architecture
 
 <p align="center">
   <img src="docs/architecture.svg" alt="CodeActor Agent Architecture" width="900">
 </p>
+
+### Hub-and-Spoke Design
+
+```
+User (TUI / HTTP+WS)
+        │
+        ▼
+┌───────────────────┐
+│  CodingAssistant  │  ← task lifecycle, agent init
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│  ConductorAgent   │  ← central orchestrator
+│  (Hub / 指挥家)    │
+│                   │
+│  delegate_repo ───┼──→ RepoAgent    (read-only code analysis)
+│  delegate_coding ─┼──→ CodingAgent  (file editing + shell)
+│  delegate_chat ───┼──→ ChatAgent    (general Q&A, no tools)
+│  delegate_meta ───┼──→ MetaAgent    (designs custom agents at runtime)
+└───────────────────┘
+         │
+         ▼
+┌───────────────────┐
+│  Tool Layer (17)  │  Adapter pattern wrapping ToolFunc → LLM Function Calling
+│                   │
+│  FileOps │ SearchOps │ SysOps │ ReplaceBlock │ Thinking │ MicroAgent
+│  ImplPlan │ FlowControl │ RepoOps │ WorkspaceGuard
+└───────┬───────────┘
+        │
+        ▼
+┌────────────────────────────┐
+│  codeactor-codebase (Rust) │  ← external analysis service (127.0.0.1:12800+)
+│  - Tree-sitter AST parsing │
+│  - Call graph / complexity │
+│  - Semantic search (LanceDB)│
+│  - Code skeleton / snippet │
+└────────────────────────────┘
+        │
+        ▼
+┌────────────────────────────┐
+│  LLM Providers (13)        │  ← OpenAI-compatible API via openai-go SDK
+│  MiMo / Qwen / DeepSeek    │
+│  Moonshot / Mistral / GLM  │
+│  Bedrock / OpenRouter / etc│
+└────────────────────────────┘
+```
+
+### Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Language | Go 1.24+, Rust (codebase engine) |
+| LLM SDK | `github.com/openai/openai-go/v3` |
+| HTTP/WS | Gin + Melody |
+| TUI | Bubble Tea + Lipgloss + Glamour |
+| Code Analysis | Tree-sitter, Petgraph, LanceDB, Axum |
+| Diff | `github.com/aymanbagabas/go-udiff` |
+
+### Tools by Agent
+
+| Agent | Tools | Count |
+|-------|-------|-------|
+| Conductor | `delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_meta`, `finish`, `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree` | 9 |
+| CodingAgent | All 17 tools (file ops, search, shell, thinking, impl_plan, micro_agent) | 17 |
+| RepoAgent | `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree`, `semantic_search`, `query_code_skeleton`, `query_code_snippet` | 7 |
+| ChatAgent | None (pure LLM conversation) | 0 |
 
 [Full architecture documentation →](docs/ARCHITECTURE.md)
 
@@ -119,6 +244,62 @@ Disable Meta-Agent via startup flag:
 
 ```bash
 ./codeactor tui --disable-agents=meta
+```
+
+## Codebase Analysis Engine
+
+The `codeactor-codebase` is a standalone **Rust** service that provides deep code analysis capabilities. It runs as a background HTTP server managed automatically by the Go binary.
+
+### Capabilities
+
+- **AST-Level Parsing** — Tree-sitter grammars for Rust, Python, JavaScript/TypeScript, Java, C++, Go
+- **Call Graphs** — Function-level `CallGraph` with out-degree ranking, caller/callee traversal, cycle detection, and complexity reports
+- **Semantic Search** — Vector embeddings (OpenAI `text-embedding-3-small`, 1536d) stored in LanceDB with SQLite metadata cache
+- **Code Skeleton / Snippet** — Batch extract function/class signatures or full implementations by file path
+- **File Watching** — `notify`-based file system watcher with 20s debounce for automatic re-indexing
+- **Hierarchical Call Trees** — Depth-limited call tree traversal for understanding code flow
+
+### HTTP API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/status` | Repo status (functions, files, embedding state) |
+| `POST` | `/investigate_repo` | Top-15 functions by out-degree, directory tree, file skeletons |
+| `POST` | `/semantic_search` | Vector-based semantic code search |
+| `POST` | `/query_code_skeleton` | Batch skeleton extraction from file paths |
+| `POST` | `/query_code_snippet` | Extract code snippet by `filepath` + `function_name` |
+| `POST` | `/query_call_graph` | Query call graph by file/function name |
+| `POST` | `/query_hierarchical_graph` | Hierarchical call tree with depth limit |
+| `POST` | `/query_indexing_status` | Embedding indexing status |
+| `GET` | `/draw_call_graph` | ECharts call graph visualization |
+
+### Lifecycle Management
+
+The Go binary handles the full lifecycle:
+1. **Dynamic port allocation** — Scans from 12800 upward to find an available port
+2. **Binary extraction** — Extracts embedded `codeactor-codebase` to `~/.codeactor/bin/`
+3. **Auto-launch** — Starts the Rust server as a child process with `--repo-path` and `--address`
+4. **Health polling** — Waits up to 30s for `/health` to return 200 before proceeding
+5. **HTTP retry** — All codebase API calls retry up to 3 times with backoff
+6. **Cleanup on exit** — `defer` kills the child process when the Go process terminates
+
+### Configuration
+
+```toml
+[http]
+codebase_port = 12800
+
+[codebase]
+enable_embedding = true
+embedding_db_uri = "~/.codeactor/data/lancedb"
+graph_db_uri = "~/.codeactor/data/graph"
+
+[codebase.embedding]
+model = "text-embedding-3-small"
+api_token = "sk-..."
+api_base_url = "https://api.openai.com/v1"
+dimensions = 1536
 ```
 
 ## API Overview
@@ -163,7 +344,6 @@ See [docs/Agent_Reference.md](docs/Agent_Reference.md) for detailed API document
 | StreamLake | `streamlake` | Custom endpoints |
 | AWS Bedrock | `bedrock` | `us.anthropic.claude-3-7-sonnet-*` |
 | Local | `local` | Any OpenAI-compatible server |
-
 
 ## Documentation
 
