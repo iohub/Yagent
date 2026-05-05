@@ -144,11 +144,15 @@ func RenderResultBody(content string, width int) string {
 		bodyWidth = 30
 	}
 
-	// 1. Try JSON — check for embedded diff field first
+	// 1. Try JSON — check for embedded fields first
 	if isJSON(content) {
 		// Check if JSON contains a "diff" field — extract and render as colored diff
 		if diff := extractDiffField(content); diff != "" {
 			return RenderDiffContent(diff, bodyWidth)
+		}
+		// Check if JSON contains an "output" field — extract and render as plain text
+		if output := extractOutputField(content); output != "" {
+			return renderPlainContent(output, bodyWidth)
 		}
 		// Otherwise pretty-print the JSON
 		pretty, err := jsonPrettyPrint(content)
@@ -182,6 +186,21 @@ func extractDiffField(jsonStr string) string {
 	}
 	if diff, ok := parsed["diff"].(string); ok && diff != "" {
 		return diff
+	}
+	return ""
+}
+
+// extractOutputField tries to extract an "output" field from a JSON result string.
+func extractOutputField(jsonStr string) string {
+	if !strings.Contains(jsonStr, `"output"`) {
+		return ""
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		return ""
+	}
+	if output, ok := parsed["output"].(string); ok && output != "" {
+		return output
 	}
 	return ""
 }
