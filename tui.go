@@ -418,10 +418,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.buildViewportContent()
 		}
-		if m.activeAnim {
-			return m, tickCmd()
-		}
-		return m, nil
+		// Always continue ticking so that the animation resumes immediately
+		// when activeAnim becomes true — never let the tick die.
+		return m, tickCmd()
 
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
@@ -625,7 +624,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			entry := formatEventAsEntry(msg.event)
 			m.logEntries = append(m.logEntries, entry)
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-			return m, listenForEvents(m.eventCh)
+			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 		}
 		// ── Tool call result: update the matching running entry ──
 		if msg.event.Type == "tool_call_result" {
@@ -650,7 +649,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					delete(m.toolCallEntries, callID)
 					m.updateActiveAnim()
 					m.buildViewportContent()
-					return m, listenForEvents(m.eventCh)
+					return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 				}
 			}
 			// No matching start entry — add as standalone
@@ -666,7 +665,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.logEntries = append(m.logEntries, entry)
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-		return m, listenForEvents(m.eventCh)
+		return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 
 	case taskCompleteMsg:
 		m.taskRunning = false
@@ -1271,6 +1270,7 @@ func (m *model) submitTask() tea.Cmd {
 		executeTaskCmd(taskDesc, task, m.assistant, m.taskManager, m.dataManager, m.eventCh, m.publisherCh),
 		listenForEvents(m.eventCh),
 		listenForPublisher(m.publisherCh),
+		tickCmd(),
 	)
 }
 
@@ -1292,6 +1292,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 		executeFollowUpCmd(message, m.currentTask, m.assistant, m.dataManager, m.eventCh, m.publisherCh),
 		listenForEvents(m.eventCh),
 		listenForPublisher(m.publisherCh),
+		tickCmd(),
 	)
 }
 
