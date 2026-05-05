@@ -11,15 +11,17 @@ import (
 // (modifications outside the workspace, system-changing commands) and
 // requests user authorization before allowing them to proceed.
 type WorkspaceGuard struct {
-	workspacePath string
-	confirmMgr    *UserConfirmManager
+	workspacePath  string
+	confirmMgr     *UserConfirmManager
+	sessionAllowed map[string]bool // tools granted session-wide authorization
 }
 
 // NewWorkspaceGuard creates a new WorkspaceGuard.
 func NewWorkspaceGuard(workspacePath string, confirmMgr *UserConfirmManager) *WorkspaceGuard {
 	return &WorkspaceGuard{
-		workspacePath: filepath.Clean(workspacePath),
-		confirmMgr:    confirmMgr,
+		workspacePath:  filepath.Clean(workspacePath),
+		confirmMgr:     confirmMgr,
+		sessionAllowed: make(map[string]bool),
 	}
 }
 
@@ -48,6 +50,11 @@ func (g *WorkspaceGuard) Check(toolName string, params map[string]interface{}) (
 	}
 
 	if !dangerousTools[toolName] {
+		return false, ""
+	}
+
+	// Session-wide authorization: skip check if tool was already approved
+	if g.sessionAllowed[toolName] {
 		return false, ""
 	}
 
@@ -81,6 +88,13 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 	}
 
 	response = strings.TrimSpace(strings.ToLower(response))
+
+	// Session-wide authorization: grant for all subsequent calls of this tool
+	if response == "allow_session" {
+		g.sessionAllowed[toolName] = true
+		return nil
+	}
+
 	if response != "allow" && response != "yes" && response != "y" && response != "允许" {
 		return fmt.Errorf("用户拒绝了操作: %s", toolName)
 	}
