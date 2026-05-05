@@ -15,6 +15,14 @@ const (
 	MaxContentWidth = 120 // max width for content rendering
 )
 
+// skipBodyTools lists tools whose result body is just a status confirmation
+// and should not be rendered — only the header (icon + name + file path) is shown.
+var skipBodyTools = map[string]bool{
+	"read_file":   true,
+	"delete_file": true,
+	"rename_file": true,
+}
+
 // ── Tool Header Rendering ──
 
 // RenderPending renders a running tool with animation.
@@ -105,6 +113,12 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 
 	// If still running, this should have been handled by RenderPending — fallback
 	if entry.Status == ToolStatusRunning {
+		return header
+	}
+
+	// Tools whose result body is just status JSON — skip body rendering,
+	// only show the tool name + file path in the header.
+	if skipBodyTools[entry.Call.Name] && entry.Status == ToolStatusSuccess {
 		return header
 	}
 
