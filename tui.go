@@ -86,7 +86,7 @@ type confirmDialog struct {
 	open           bool
 	question       string
 	requestID      string
-	selectedOption int // 0=Allow, 1=Deny
+	selectedOption int // 0=Allow, 1=Allow All, 2=Deny
 }
 
 // tuiEventConsumer routes MessageEvents to a Go channel consumed by the tea program.
@@ -383,18 +383,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				m.quitting = true
 				return m, tea.Quit
-			case "left", "right", "tab":
-				m.confirmDialog.selectedOption = 1 - m.confirmDialog.selectedOption
+			case "right", "tab":
+				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 1) % 3
+				return m, nil
+			case "left":
+				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 2) % 3
 				return m, nil
 			case "enter":
-				if m.confirmDialog.selectedOption == 0 {
+				switch m.confirmDialog.selectedOption {
+				case 0:
 					m.respondToAuth("allow")
-				} else {
+				case 1:
+					m.respondToAuth("allow_session")
+				case 2:
 					m.respondToAuth("deny")
 				}
 				return m, nil
 			case "a", "A":
 				m.respondToAuth("allow")
+				return m, nil
+			case "s", "S":
+				m.respondToAuth("allow_session")
 				return m, nil
 			case "d", "D", "esc":
 				m.respondToAuth("deny")
@@ -1268,7 +1277,7 @@ func parseConfirmQuestion(question string) (toolName, body string) {
 
 // renderConfirmDialog renders the authorization confirmation overlay dialog.
 func (m model) renderConfirmDialog() string {
-	const maxDialogWidth = 58
+	const maxDialogWidth = 64
 	dialogWidth := maxDialogWidth
 	if m.termWidth-4 < dialogWidth {
 		dialogWidth = m.termWidth - 4
@@ -1288,16 +1297,20 @@ func (m model) renderConfirmDialog() string {
 	detail := wrapText(body, detailWidth)
 	detail = confirmDetailStyle.Render(detail)
 
-	// ── Buttons ──
-	var allowBtn, denyBtn string
-	if m.confirmDialog.selectedOption == 0 {
-		allowBtn = confirmButtonFocused.Render("Allow")
-		denyBtn = confirmButtonBlurred.Render("Deny")
-	} else {
-		allowBtn = confirmButtonBlurred.Render("Allow")
-		denyBtn = confirmButtonFocused.Render("Deny")
+	// ── Buttons (3 options) ──
+	renderBtn := func(label string, idx int) string {
+		if m.confirmDialog.selectedOption == idx {
+			return confirmButtonFocused.Render(label)
+		}
+		return confirmButtonBlurred.Render(label)
 	}
-	buttons := lipgloss.JoinHorizontal(lipgloss.Center, allowBtn, "  ", denyBtn)
+	buttons := lipgloss.JoinHorizontal(lipgloss.Center,
+		renderBtn("Allow", 0),
+		"  ",
+		renderBtn("Allow All", 1),
+		"  ",
+		renderBtn("Deny", 2),
+	)
 
 	// ── Help ──
 	help := confirmHelpStyle.Render(langManager.GetText("ConfirmDialogHelp"))
