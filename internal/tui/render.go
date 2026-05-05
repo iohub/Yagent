@@ -29,7 +29,7 @@ var skipBodyTools = map[string]bool{
 // Output: "● tool_name · summary ████████~!@...."
 func RenderPending(name string, summary string, anim *Anim) string {
 	icon := IconPending
-	toolName := NameNormal.Render(name)
+	toolName := RenderToolName(name)
 
 	var parts []string
 	parts = append(parts, icon, toolName)
@@ -47,7 +47,7 @@ func RenderPending(name string, summary string, anim *Anim) string {
 // Output: "✓ tool_name · file_path" or "× tool_name · file_path — error_msg"
 func RenderHeader(status ToolStatus, name string, params string, errBrief string) string {
 	icon := ToolIcon(status, false)
-	toolName := NameNormal.Render(name)
+	toolName := RenderToolName(name)
 
 	var parts []string
 	parts = append(parts, icon, toolName)
@@ -68,7 +68,7 @@ func RenderEarlyState(status ToolStatus, name string, params string) (string, bo
 	switch status {
 	case ToolStatusCanceled:
 		icon := IconCanceled
-		toolName := NameNormal.Render(name)
+		toolName := RenderToolName(name)
 		line := fmt.Sprintf("%s %s", icon, toolName)
 		if params != "" {
 			line += " " + ParamMain.Render(params)
@@ -77,7 +77,7 @@ func RenderEarlyState(status ToolStatus, name string, params string) (string, bo
 		return line, true
 	case ToolStatusPending:
 		icon := IconPending
-		toolName := NameNormal.Render(name)
+		toolName := RenderToolName(name)
 		line := fmt.Sprintf("%s %s", icon, toolName)
 		if params != "" {
 			line += " " + ParamMain.Render(params)
@@ -144,11 +144,15 @@ func RenderResultBody(content string, width int) string {
 		bodyWidth = 30
 	}
 
-	// 1. Try JSON — check for embedded diff field first
+	// 1. Try JSON — check for embedded fields first
 	if isJSON(content) {
 		// Check if JSON contains a "diff" field — extract and render as colored diff
 		if diff := extractDiffField(content); diff != "" {
 			return RenderDiffContent(diff, bodyWidth)
+		}
+		// Check if JSON contains an "output" field — extract and render as plain text
+		if output := extractOutputField(content); output != "" {
+			return renderPlainContent(output, bodyWidth)
 		}
 		// Otherwise pretty-print the JSON
 		pretty, err := jsonPrettyPrint(content)
@@ -182,6 +186,21 @@ func extractDiffField(jsonStr string) string {
 	}
 	if diff, ok := parsed["diff"].(string); ok && diff != "" {
 		return diff
+	}
+	return ""
+}
+
+// extractOutputField tries to extract an "output" field from a JSON result string.
+func extractOutputField(jsonStr string) string {
+	if !strings.Contains(jsonStr, `"output"`) {
+		return ""
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		return ""
+	}
+	if output, ok := parsed["output"].(string); ok && output != "" {
+		return output
 	}
 	return ""
 }
