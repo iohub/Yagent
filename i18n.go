@@ -42,6 +42,11 @@ type translations struct {
 	HistoryKeyBack          string
 	HistoryKeyClearFilter   string
 	HistoryConfirmDelete    string
+	// Confirmation dialog
+	ConfirmDialogTitle string
+	ConfirmDialogAllow string
+	ConfirmDialogDeny  string
+	ConfirmDialogHelp  string
 }
 
 var langMap = map[Language]translations{
@@ -75,6 +80,10 @@ var langMap = map[Language]translations{
 		HistoryKeyBack:            "esc: 返回",
 		HistoryKeyClearFilter:     "ctrl+u: 清除过滤",
 		HistoryConfirmDelete:      "确认删除此会话？(y = 确认, 其他键 = 取消)",
+		ConfirmDialogTitle:        "授权确认",
+		ConfirmDialogAllow:        "允许 (Allow)",
+		ConfirmDialogDeny:         "拒绝 (Deny)",
+		ConfirmDialogHelp:         "←/→ 选择  enter 确认  a 允许  d/esc 拒绝",
 	},
 	LangEnglish: {
 		Title:                            "CodeActor AI Assistant",
@@ -106,6 +115,10 @@ var langMap = map[Language]translations{
 		HistoryKeyBack:            "esc: back",
 		HistoryKeyClearFilter:     "ctrl+u: clear filter",
 		HistoryConfirmDelete:      "Delete this conversation? (y = confirm, any other key = cancel)",
+		ConfirmDialogTitle:        "Permission Required",
+		ConfirmDialogAllow:        "Allow",
+		ConfirmDialogDeny:         "Deny",
+		ConfirmDialogHelp:         "\u2190/\u2192 choose  enter confirm  a allow  d/esc deny",
 	},
 }
 
@@ -185,6 +198,14 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.HistoryKeyClearFilter
 	case "HistoryConfirmDelete":
 		return translations.HistoryConfirmDelete
+	case "ConfirmDialogTitle":
+		return translations.ConfirmDialogTitle
+	case "ConfirmDialogAllow":
+		return translations.ConfirmDialogAllow
+	case "ConfirmDialogDeny":
+		return translations.ConfirmDialogDeny
+	case "ConfirmDialogHelp":
+		return translations.ConfirmDialogHelp
 	default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}

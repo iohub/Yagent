@@ -76,6 +76,19 @@ type taskCompleteMsg struct {
 	err    error
 }
 
+// publisherReadyMsg signals that the MessagePublisher is ready for dialog responses.
+type publisherReadyMsg struct {
+	publisher *messaging.MessagePublisher
+}
+
+// confirmDialog holds the state of the authorization confirmation dialog.
+type confirmDialog struct {
+	open           bool
+	question       string
+	requestID      string
+	selectedOption int // 0=Allow, 1=Deny
+}
+
 // tuiEventConsumer routes MessageEvents to a Go channel consumed by the tea program.
 type tuiEventConsumer struct {
 	ch chan *messaging.MessageEvent
@@ -129,6 +142,11 @@ type model struct {
 	historyScrollStart   int // first visible item index (for stable scroll)
 	historyFilter        string
 	historyConfirmDelete bool
+
+	// Authorization confirmation dialog
+	confirmDialog confirmDialog
+	publisher     *messaging.MessagePublisher
+	publisherCh   chan *messaging.MessagePublisher
 }
 
 func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
@@ -354,7 +372,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.buildViewportContent()
 		return m, nil
 
+	case publisherReadyMsg:
+		m.publisher = msg.publisher
+		return m, nil
+
 	case tea.KeyMsg:
+		// Confirmation dialog key handling — takes priority over everything
+		if m.confirmDialog.open {
+			switch msg.String() {
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			case "left", "right", "tab":
+				m.confirmDialog.selectedOption = 1 - m.confirmDialog.selectedOption
+				return m, nil
+			case "enter":
+				if m.confirmDialog.selectedOption == 0 {
+					m.respondToAuth("allow")
+				} else {
+					m.respondToAuth("deny")
+				}
+				return m, nil
+			case "a", "A":
+				m.respondToAuth("allow")
+				return m, nil
+			case "d", "D", "esc":
+				m.respondToAuth("deny")
+				return m, nil
+			}
+			return m, nil
+		}
+
 		// History panel key handling
 		if m.showHistoryPanel {
 			// Delete confirmation mode
@@ -501,6 +549,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case taskEventMsg:
+		// Intercept user_help_needed to show interactive dialog
+		if msg.event.Type == "user_help_needed" {
+			m.openConfirmDialog(msg.event)
+			// Still log the event so it appears in the background
+			entry := formatEventAsEntry(msg.event)
+			m.logEntries = append(m.logEntries, entry)
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+			return m, listenForEvents(m.eventCh)
+		}
 		entry := formatEventAsEntry(msg.event)
 		m.logEntries = append(m.logEntries, entry)
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -508,6 +565,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskCompleteMsg:
 		m.taskRunning = false
+		m.confirmDialog.open = false // safety: close any stale dialog
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
 			m.currentTask = nil
@@ -527,9 +585,64 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// openConfirmDialog parses a user_help_needed event and opens the confirmation dialog.
+func (m *model) openConfirmDialog(event *messaging.MessageEvent) {
+	content, ok := event.Content.(map[string]interface{})
+	if !ok {
+		return
+	}
+	question, _ := content["question"].(string)
+	if question == "" {
+		return
+	}
+	requestID, _ := content["request_id"].(string)
+
+	m.confirmDialog = confirmDialog{
+		open:           true,
+		question:       question,
+		requestID:      requestID,
+		selectedOption: 0, // default: Allow
+	}
+}
+
+// respondToAuth publishes the user response and closes the dialog.
+func (m *model) respondToAuth(response string) {
+	if m.publisher != nil {
+		m.publisher.Publish("user_help_response", map[string]interface{}{
+			"response":   response,
+			"request_id": m.confirmDialog.requestID,
+		}, "User")
+	}
+	m.confirmDialog.open = false
+
+	// Log the response
+	m.logEntries = append(m.logEntries, logEntry{
+		timestamp: time.Now(),
+		eventType: "status",
+		content:   fmt.Sprintf("Auth response: %s", response),
+	})
+	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+}
+
+// listenForPublisher waits for the publisher to become available via the channel.
+func listenForPublisher(ch chan *messaging.MessagePublisher) tea.Cmd {
+	return func() tea.Msg {
+		publisher, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return publisherReadyMsg{publisher: publisher}
+	}
+}
+
 func (m model) View() string {
 	if m.quitting {
 		return ""
+	}
+
+	// When confirmation dialog is open, render it as an overlay on top of the normal view
+	if m.confirmDialog.open {
+		return m.renderConfirmDialog()
 	}
 
 	var b strings.Builder
@@ -867,9 +980,11 @@ func (m *model) submitTask() tea.Cmd {
 	})
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 
+	m.publisherCh = make(chan *messaging.MessagePublisher, 1)
 	return tea.Batch(
-		executeTaskCmd(taskDesc, task, m.assistant, m.taskManager, m.dataManager, m.eventCh),
+		executeTaskCmd(taskDesc, task, m.assistant, m.taskManager, m.dataManager, m.eventCh, m.publisherCh),
 		listenForEvents(m.eventCh),
+		listenForPublisher(m.publisherCh),
 	)
 }
 
@@ -886,9 +1001,11 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 	})
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 
+	m.publisherCh = make(chan *messaging.MessagePublisher, 1)
 	return tea.Batch(
-		executeFollowUpCmd(message, m.currentTask, m.assistant, m.dataManager, m.eventCh),
+		executeFollowUpCmd(message, m.currentTask, m.assistant, m.dataManager, m.eventCh, m.publisherCh),
 		listenForEvents(m.eventCh),
+		listenForPublisher(m.publisherCh),
 	)
 }
 
@@ -900,6 +1017,7 @@ func executeTaskCmd(
 	tm *http.TaskManager,
 	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
+	publisherCh chan *messaging.MessagePublisher,
 ) tea.Cmd {
 	return func() tea.Msg {
 		dispatcher := messaging.NewMessageDispatcher(100)
@@ -909,6 +1027,13 @@ func executeTaskCmd(
 		dispatcher.RegisterConsumer(consumer)
 
 		ca.IntegrateMessaging(dispatcher)
+
+		// Send publisher to TUI so it can respond to authorization dialogs
+		publisher := messaging.NewMessagePublisher(dispatcher)
+		select {
+		case publisherCh <- publisher:
+		default:
+		}
 
 		request := app.NewTaskRequest(task.Context, task.ID).
 			WithProjectDir(task.ProjectDir).
@@ -941,6 +1066,7 @@ func executeFollowUpCmd(
 	ca *app.CodingAssistant,
 	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
+	publisherCh chan *messaging.MessagePublisher,
 ) tea.Cmd {
 	return func() tea.Msg {
 		dispatcher := messaging.NewMessageDispatcher(100)
@@ -950,6 +1076,13 @@ func executeFollowUpCmd(
 		dispatcher.RegisterConsumer(consumer)
 
 		ca.IntegrateMessaging(dispatcher)
+
+		// Send publisher to TUI so it can respond to authorization dialogs
+		publisher := messaging.NewMessagePublisher(dispatcher)
+		select {
+		case publisherCh <- publisher:
+		default:
+		}
 
 		request := app.NewTaskRequest(task.Context, task.ID).
 			WithProjectDir(task.ProjectDir).
@@ -1055,6 +1188,125 @@ func (m model) computeFieldWidth() int {
 		return maxField
 	}
 	return avail
+}
+
+// confirmDialog styles
+var (
+	confirmBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("214")). // orange
+				Padding(1, 2)
+
+	confirmTitleStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("214"))
+
+	confirmQuestionStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("252"))
+
+	confirmButtonFocused = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("0")).
+				Background(lipgloss.Color("214")).
+				Bold(true).
+				Padding(0, 2)
+
+	confirmButtonBlurred = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Background(lipgloss.Color("236")).
+				Padding(0, 2)
+
+	confirmHelpStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240")).
+				Faint(true)
+)
+
+// renderConfirmDialog renders the authorization confirmation overlay dialog.
+func (m model) renderConfirmDialog() string {
+	const maxDialogWidth = 76
+	dialogWidth := maxDialogWidth
+	if m.termWidth-4 < dialogWidth {
+		dialogWidth = m.termWidth - 4
+	}
+
+	// Title
+	title := confirmTitleStyle.Render(langManager.GetText("ConfirmDialogTitle"))
+
+	// Decorative separator line
+	sepChar := "╱"
+	sepWidth := dialogWidth - 4 - lipgloss.Width(title)
+	if sepWidth > 0 {
+		sepLine := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Faint(true).Render(strings.Repeat(sepChar, sepWidth))
+		title = title + " " + sepLine
+	}
+
+	// Question text (strip markdown bold markers for clean display)
+	question := m.confirmDialog.question
+	question = strings.ReplaceAll(question, "**", "")
+	question = strings.ReplaceAll(question, "⚠️", "")
+	question = strings.TrimSpace(question)
+
+	// Wrap question text
+	textWidth := dialogWidth - 6
+	if textWidth < 30 {
+		textWidth = 30
+	}
+	wrapped := wrapText(question, textWidth)
+
+	// Buttons
+	var allowBtn, denyBtn string
+	if m.confirmDialog.selectedOption == 0 {
+		allowBtn = confirmButtonFocused.Render(langManager.GetText("ConfirmDialogAllow"))
+		denyBtn = confirmButtonBlurred.Render(langManager.GetText("ConfirmDialogDeny"))
+	} else {
+		allowBtn = confirmButtonBlurred.Render(langManager.GetText("ConfirmDialogAllow"))
+		denyBtn = confirmButtonFocused.Render(langManager.GetText("ConfirmDialogDeny"))
+	}
+	buttons := lipgloss.JoinHorizontal(lipgloss.Center, allowBtn, "  ", denyBtn)
+
+	// Help
+	help := confirmHelpStyle.Render(langManager.GetText("ConfirmDialogHelp"))
+
+	// Assemble
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		title,
+		"",
+		wrapped,
+		"",
+		lipgloss.NewStyle().Width(dialogWidth-4).Align(lipgloss.Center).Render(buttons),
+		"",
+		help,
+	)
+
+	dialog := confirmBorderStyle.Width(dialogWidth).Render(content)
+
+	// Center the dialog on screen
+	return lipgloss.Place(m.termWidth, m.termHeight,
+		lipgloss.Center, lipgloss.Center,
+		dialog,
+	)
+}
+
+// wrapText wraps text to a maximum width, preserving line breaks.
+func wrapText(text string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	var wrapped []string
+	for _, line := range lines {
+		if line == "" {
+			wrapped = append(wrapped, "")
+			continue
+		}
+		for len(line) > maxWidth {
+			wrapped = append(wrapped, line[:maxWidth])
+			line = line[maxWidth:]
+		}
+		if len(line) > 0 {
+			wrapped = append(wrapped, line)
+		}
+	}
+	return strings.Join(wrapped, "\n")
 }
 
 // renderHistoryPanel renders the history panel with single-line items and stable scrolling.
