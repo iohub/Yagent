@@ -83,9 +83,9 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 		adapters = append(adapters, adapter)
 	}
 
-	// Add delegate_design tool to delegate design tasks to ImplPlanAgent
-	delegateDesign := tools.NewAdapter("delegate_design",
-		"Delegate to the Implementation Plan Designer agent to analyze a coding task and generate a structured implementation plan. The agent analyzes codebase context and produces a detailed plan document covering architecture design, module breakdown, interface definitions, data flow, implementation order, error handling, and testing strategy.",
+	// Add delegate_impl_plan tool to delegate design tasks to ImplPlanAgent
+	delegateDesign := tools.NewAdapter("delegate_impl_plan",
+		"Delegate to the Implementation Plan Agent to analyze a coding task and generate a structured implementation plan. The agent analyzes codebase context and produces a detailed plan document covering architecture design, module breakdown, interface definitions, data flow, implementation order, error handling, and testing strategy.",
 		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			task, ok := params["task"].(string)
 			if !ok {
