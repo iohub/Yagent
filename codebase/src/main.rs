@@ -36,8 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match &cli.command {
         Commands::Server { address, storage_mode, repo_path } => {
-            let default_port = config.as_ref().map(|c| c.http.codebase_port).unwrap_or(8080);
-            let default_addr = format!("127.0.0.1:{}", default_port);
+            let default_addr = format!("127.0.0.1:{}", 12700);
             let server_addr = address.as_deref().unwrap_or(&default_addr);
             info!("Starting CodeBase HTTP server on {}, repo: {}", server_addr, repo_path);
 
