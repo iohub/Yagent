@@ -15,6 +15,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/olahol/melody v1.3.0
 	github.com/openai/openai-go/v3 v3.33.0
+	github.com/pkoukk/tiktoken-go v0.1.8
 )
 
 require (

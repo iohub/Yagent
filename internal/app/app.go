@@ -9,18 +9,19 @@ import (
 	"sync"
 
 	"codeactor/internal/agents"
-	"codeactor/internal/tools"
+	"codeactor/internal/compact"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
+	"codeactor/internal/tools"
 	"codeactor/pkg/messaging"
 )
 
 // CodingAssistant is the main entry point for the agent system.
 type CodingAssistant struct {
-	engine               llm.Engine      // default engine (backward-compatible)
-	client               *llm.Client     // LLM client for per-agent/tool engine resolution
+	engine               llm.Engine  // default engine (backward-compatible)
+	client               *llm.Client // LLM client for per-agent/tool engine resolution
 	config               *config.Config
 	conductor            *agents.ConductorAgent
 	dispatcher           *messaging.MessageDispatcher
@@ -71,16 +72,16 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		CodebaseURL: fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort),
 
 		// Tools
-		FileOps:      tools.NewFileOperationsTool(workDir),
-		SearchOps:    tools.NewSearchOperationsTool(workDir),
-		SysOps:       tools.NewSystemOperationsTool(workDir),
-		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
-		ThinkingTool: tools.NewThinkingTool(),
+		FileOps:        tools.NewFileOperationsTool(workDir),
+		SearchOps:      tools.NewSearchOperationsTool(workDir),
+		SysOps:         tools.NewSystemOperationsTool(workDir),
+		ReplaceTool:    tools.NewReplaceBlockTool(workDir),
+		ThinkingTool:   tools.NewThinkingTool(),
 		MicroAgentTool: tools.NewMicroAgentTool(microAgentEngine),
 		ImplPlanTool:   tools.NewImplPlanTool(),
-		FlowOps:           tools.NewFlowControlTool(workDir),
-		RepoOps:           tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort), workDir),
-		UserConfirmMgr:    userConfirmMgr,
+		FlowOps:        tools.NewFlowControlTool(workDir),
+		RepoOps:        tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort), workDir),
+		UserConfirmMgr: userConfirmMgr,
 	}
 	ca.globalCtx = &gctx
 
@@ -147,7 +148,25 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps)
 	metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine)
 	devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
+	// 构建 compact config
+	var compactCfg *compact.Config
+	if ca.config != nil {
+		c := &ca.config.Compact
+		compactCfg = compact.ConfigFrom(
+			c.MaxContextTokens,
+			c.Strategy,
+			c.EnableAutoCompact,
+			c.SummarizationModel,
+			c.L1Threshold,
+			c.L2Threshold,
+			c.L3Threshold,
+			c.SummarizationTimeout,
+			c.KeepRecentRounds,
+			c.KeepTaskConclusions,
+		)
+	}
+
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, conductorMaxSteps, disabledAgents, metaRetryCount, compactCfg)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {

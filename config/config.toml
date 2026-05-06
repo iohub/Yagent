@@ -144,6 +144,40 @@ repo_max_steps = 30
 meta_retry_count = 5
 lang = "Chinese"
 
+# ═══════════════════════════════════════════════════════════
+# Context Compact Configuration
+# 上下文压缩配置
+# ═══════════════════════════════════════════════════════════
+[context]
+# 最大上下文token数，默认198000 (198k)
+max_context_tokens = 198000
+
+# 压缩策略: conservative | balanced | aggressive
+# conservative: 仅截断超长输出
+# balanced: L1摘要 + L2截断 (推荐，默认)
+# aggressive: 三级全开
+compression_strategy = "balanced"
+
+# 是否自动触发压缩
+enable_auto_compact = true
+
+# 用于L1摘要的轻量模型 (可选，不配置则跳过L1)
+# summarization_model = "gpt-3.5-turbo"
+
+# 触发各级压缩的阈值
+l1_token_threshold = 160000
+l2_token_threshold = 130000
+l3_token_threshold = 100000
+
+# L1摘要超时时间（秒）
+summarization_timeout = 15
+
+# 始终保留的最近对话轮数 (每轮约3条消息)
+keep_recent_rounds = 3
+
+# 保留的已完成任务结论数
+keep_task_conclusions = 2
+
 # Codebase Component Configuration
 [codebase]
 enable_embedding = true

@@ -10,10 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeactor/internal/llm"
-	"codeactor/internal/tools"
+	"codeactor/internal/compact"
 	"codeactor/internal/globalctx"
+	"codeactor/internal/llm"
 	"codeactor/internal/memory"
+	"codeactor/internal/tools"
 )
 
 //go:embed conductor.prompt.md
@@ -31,11 +32,11 @@ type CustomAgent struct {
 
 // metaAgentResult parses the JSON output from Meta-Agent.
 type metaAgentResult struct {
-	Thinking      string   `json:"thinking"`
-	AgentName     string   `json:"agent_name"`
-	AgentDesign   string   `json:"agent_design"`
-	ToolsUsed     []string `json:"tools_used"`
-	TaskForAgent  string   `json:"task_for_agent"`
+	Thinking     string   `json:"thinking"`
+	AgentName    string   `json:"agent_name"`
+	AgentDesign  string   `json:"agent_design"`
+	ToolsUsed    []string `json:"tools_used"`
+	TaskForAgent string   `json:"task_for_agent"`
 }
 
 // ProjectContextFile represents a successfully loaded project context file
@@ -60,9 +61,11 @@ type ConductorAgent struct {
 	GlobalCtx      *globalctx.GlobalCtx
 	Adapters       []*tools.Adapter
 	maxSteps       int
-	metaRetryCount int                     // max retries for Meta-Agent JSON parse failures
+	metaRetryCount int                       // max retries for Meta-Agent JSON parse failures
 	toolDefMap     map[string]ToolDefinition // tool name → definition from tools.json
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
+	compactEngine  *compact.Engine           // 上下文压缩引擎
+	compactConfig  *compact.Config           // 压缩配置
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -94,7 +97,7 @@ func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
 	return result
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -244,7 +247,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		slog.Warn("Meta-Agent JSON parse failed after all retries, returning raw output")
 		return lastRawOutput, nil
 	}).WithSchema(map[string]interface{}{
-			"type": "object",
+		"type": "object",
 		"properties": map[string]interface{}{
 			"task": map[string]interface{}{"type": "string", "description": "Detailed task description for Meta-Agent. Include: what needs to be accomplished, why existing agents are insufficient, and what the expected output format should be."},
 		},
@@ -326,6 +329,8 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		metaRetryCount: metaRetryCount,
 		toolDefMap:     toolDefMap,
 		customAgents:   make(map[string]*CustomAgent),
+		compactEngine:  nil, // 将在 Run 方法中根据配置初始化
+		compactConfig:  compactCfg,
 	}
 	return self
 }
@@ -671,6 +676,36 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 	}
 
 	for i := 0; i < a.maxSteps; i++ {
+		// ═══════════════════════════════════════════════════════════
+		// CONTEXT COMPACT GATEWAY
+		// ═══════════════════════════════════════════════════════════
+		if a.compactEngine != nil && a.compactConfig.EnableAutoCompact {
+			// 计算原始token数
+			originalTokens, err := a.compactEngine.CountTokens(messages)
+			if err != nil {
+				slog.Warn("Failed to count tokens, skipping compact", "error", err)
+			} else if originalTokens > a.compactConfig.MaxContextTokens {
+				slog.Info("Context exceeds limit, triggering compression",
+					"original_tokens", originalTokens,
+					"max_tokens", a.compactConfig.MaxContextTokens,
+					"strategy", a.compactConfig.Strategy.String())
+
+				// 执行压缩
+				result, err := a.compactEngine.Compress(ctx, messages)
+				if err != nil {
+					slog.Warn("Context compression failed, using original messages", "error", err)
+				} else {
+					messages = result.CompressedMessages
+					slog.Info("Context compressed successfully",
+						"original_tokens", result.OriginalTokens,
+						"compressed_tokens", result.CompressedTokens,
+						"ratio", fmt.Sprintf("%.2f%%", result.CompressionRatio*100),
+						"stats", result.CompressionStats)
+				}
+			}
+		}
+		// ═══════════════════════════════════════════════════════════
+
 		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
 		resp, err := a.LLM.GenerateContent(ctx, messages, toolDefs, nil)
 		if err != nil {
