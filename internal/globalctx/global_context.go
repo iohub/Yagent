@@ -19,6 +19,9 @@ type GlobalCtx struct {
 	// Codebase baseurl
 	CodebaseURL string
 
+	// MaxContextTokens 最大上下文token数
+	MaxContextTokens int
+
 	// Tools
 	FileOps         *tools.FileOperationsTool
 	SearchOps       *tools.SearchOperationsTool

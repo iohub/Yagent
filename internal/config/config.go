@@ -86,11 +86,12 @@ type TopLevelConfig struct {
 
 // Config is the root configuration structure
 type Config struct {
-	Global   TopLevelConfig  `toml:"global"`   // [global.llm]
-	Agents   AgentsLLMConfig `toml:"agents"`   // [agents.llm] + per-agent overrides
-	Tools    ToolsLLMConfig  `toml:"tools"`    // [tools.llm] + per-tool overrides
-	App      AppConfig       `toml:"app"`
-	Agent    AgentConfig     `toml:"agent"`
+	Global   TopLevelConfig          `toml:"global"`   // [global.llm]
+	Agents   AgentsLLMConfig         `toml:"agents"`   // [agents.llm] + per-agent overrides
+	Tools    ToolsLLMConfig          `toml:"tools"`    // [tools.llm] + per-tool overrides
+	App      AppConfig               `toml:"app"`
+	Agent    AgentConfig             `toml:"agent"`
+	Compact  ContextCompactConfig    `toml:"context"`  // [context] - 上下文压缩配置
 }
 
 // getProvider returns a provider config by name from the shared provider pool.
@@ -322,4 +323,38 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+// ContextCompactConfig 上下文压缩配置
+// 用于TOML解析，通过 compact.ConfigFrom() 转换为 compact.Config
+type ContextCompactConfig struct {
+	// MaxContextTokens 最大上下文token数，默认198000
+	MaxContextTokens int `toml:"max_context_tokens"`
+
+	// Strategy 压缩策略: conservative | balanced | aggressive
+	Strategy string `toml:"compression_strategy"`
+
+	// EnableAutoCompact 是否自动触发压缩
+	EnableAutoCompact bool `toml:"enable_auto_compact"`
+
+	// SummarizationModel 用于L1摘要的轻量模型
+	SummarizationModel string `toml:"summarization_model"`
+
+	// L1Threshold 触发L1压缩的阈值
+	L1Threshold int `toml:"l1_token_threshold"`
+
+	// L2Threshold 触发L2压缩的阈值
+	L2Threshold int `toml:"l2_token_threshold"`
+
+	// L3Threshold 触发L3压缩的阈值
+	L3Threshold int `toml:"l3_token_threshold"`
+
+	// SummarizationTimeout L1摘要超时时间（秒）
+	SummarizationTimeout int `toml:"summarization_timeout"`
+
+	// KeepRecentRounds 始终保留的最近对话轮数
+	KeepRecentRounds int `toml:"keep_recent_rounds"`
+
+	// KeepTaskConclusions 保留已完成任务的结论数
+	KeepTaskConclusions int `toml:"keep_task_conclusions"`
 }

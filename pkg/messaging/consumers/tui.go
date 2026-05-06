@@ -193,6 +193,32 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 			prefixRendered += " " + toolSummaryStyle.Render("· "+summary)
 		}
 		wrappedContent = ""
+	case "context_loaded":
+		prefixRendered = statusPrefixStyle.Render("📄 项目上下文")
+		// 解析加载的文件列表
+		contentMap, ok := event.Content.(map[string]interface{})
+		if !ok {
+			wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
+		} else {
+			// 获取加载的文件列表
+			loadedFiles, ok := contentMap["loaded_files"].([]interface{})
+			var fileNames []string
+			if ok {
+				for _, f := range loadedFiles {
+					if fileMap, ok := f.(map[string]interface{}); ok {
+						if fileName, ok := fileMap["file_name"].(string); ok {
+							fileNames = append(fileNames, fileName)
+						}
+					}
+				}
+			}
+			if len(fileNames) > 0 {
+				// 显示加载的文件名
+				wrappedContent = contentStyle.Copy().Width(w - 6).Render("✅ 已加载 " + strings.Join(fileNames, "、") + " 文件")
+			} else {
+				wrappedContent = contentStyle.Copy().Width(w - 6).Render("⚠️ 未找到项目上下文文件")
+			}
+		}
 	case "tool_call_result":
 		toolName = getToolNameFromContent(event.Content)
 		callID := getToolCallIDFromContent(event.Content)
