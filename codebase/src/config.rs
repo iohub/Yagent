@@ -5,17 +5,10 @@ use tracing::info;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
-    pub http: HttpConfig,
     pub llm: LlmConfig,
     pub app: AppConfig,
     pub agent: AgentConfig,
     pub codebase: CodeBaseConfig,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct HttpConfig {
-    pub server_port: u16,
-    pub codebase_port: u16,
 }
 
 #[derive(Debug, Deserialize, Clone)]

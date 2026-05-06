@@ -49,6 +49,8 @@ type translations struct {
 	CommandModeTips       string
 	CommandModeIdleTips   string
 	EditModeTips          string
+	HelpDialogTitle       string
+	HelpDialogContent     string
 }
 
 var langMap = map[Language]translations{
@@ -84,9 +86,31 @@ var langMap = map[Language]translations{
 		HistoryConfirmDelete:      "确认删除此会话？(y = 确认, 其他键 = 取消)",
 		ConfirmDialogHelp: "←/→ 选择  enter 确认  a 允许  s 全部允许  d/esc 拒绝",
 		CommandModePrompt:   "命令",
-		CommandModeTips:     "i:编辑  f:下翻页  b:上翻页  j/k:滚动  esc:取消任务  ctrl+c:退出",
-		CommandModeIdleTips: "i:编辑  f:下翻页  b:上翻页  j/k:滚动  :输入命令  esc:编辑  ctrl+c:退出",
+		CommandModeTips:     "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  i:编辑  esc:取消任务  ZZ:退出",
+		CommandModeIdleTips: "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  ::命令  /:搜索  ?:帮助  i:编辑  ZZ:退出",
 		EditModeTips:        "ctrl+s:提交  esc:命令模式  ctrl+h:历史  ctrl+l:语言  ctrl+c:退出",
+		HelpDialogTitle: "Vim 快捷键帮助",
+		HelpDialogContent: "  导航:\n" +
+			"    j / ↓          向下滚动一行\n" +
+			"    k / ↑          向上滚动一行\n" +
+			"    f / PageDown    向下翻页\n" +
+			"    b / PageUp      向上翻页\n" +
+			"    ctrl+d          向下半页\n" +
+			"    ctrl+u          向上半页\n" +
+			"    gg              跳到开头\n" +
+			"    G               跳到末尾\n" +
+			"  模式:\n" +
+			"    i               进入编辑模式\n" +
+			"    esc             退出命令模式\n" +
+			"  命令行:\n" +
+			"    :q / ZZ         退出程序\n" +
+			"    :help           显示命令帮助\n" +
+			"    /pattern        搜索日志\n" +
+			"  其他:\n" +
+			"    ctrl+h          历史会话\n" +
+			"    ctrl+l          切换语言\n" +
+			"    ?               显示此帮助\n" +
+			"    ctrl+c          强制退出",
 	},
 	LangEnglish: {
 		Title:                            "CodeActor AI Assistant",
@@ -120,9 +144,31 @@ var langMap = map[Language]translations{
 		HistoryConfirmDelete:      "Delete this conversation? (y = confirm, any other key = cancel)",
 		ConfirmDialogHelp: "←/→ choose  enter confirm  a allow  s all  d/esc deny",
 		CommandModePrompt:   "COMMAND",
-		CommandModeTips:     "i:edit  f:pgdn  b:pgup  j/k:scroll  esc:cancel  ctrl+c:quit",
-		CommandModeIdleTips: "i:edit  f:pgdn  b:pgup  j/k:scroll  ::cmd  esc:edit  ctrl+c:quit",
+		CommandModeTips:     "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  i:edit  esc:cancel  ZZ:quit",
+		CommandModeIdleTips: "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  ::cmd  /:search  ?:help  i:edit  ZZ:quit",
 		EditModeTips:        "ctrl+s:submit  esc:cmd  ctrl+h:history  ctrl+l:lang  ctrl+c:quit",
+		HelpDialogTitle: "Vim Keybindings Help",
+		HelpDialogContent: "  Navigation:\n" +
+			"    j / ↓          scroll down one line\n" +
+			"    k / ↑          scroll up one line\n" +
+			"    f / PageDown   page down\n" +
+			"    b / PageUp     page up\n" +
+			"    ctrl+d         half page down\n" +
+			"    ctrl+u         half page up\n" +
+			"    gg             go to top\n" +
+			"    G              go to bottom\n" +
+			"  Mode:\n" +
+			"    i              enter edit mode\n" +
+			"    esc            exit command mode\n" +
+			"  Command line:\n" +
+			"    :q / ZZ        quit\n" +
+			"    :help          show command help\n" +
+			"    /pattern       search log\n" +
+			"  Other:\n" +
+			"    ctrl+h         history\n" +
+			"    ctrl+l         toggle language\n" +
+			"    ?              show this help\n" +
+			"    ctrl+c         force quit",
 	},
 }
 
@@ -212,6 +258,10 @@ func (lm *LanguageManager) GetText(key string) string {
 			return translations.CommandModeIdleTips
 		case "EditModeTips":
 			return translations.EditModeTips
+		case "HelpDialogTitle":
+			return translations.HelpDialogTitle
+		case "HelpDialogContent":
+			return translations.HelpDialogContent
 		default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}

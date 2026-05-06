@@ -68,9 +68,7 @@ var (
 	toolDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — success
 	toolErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")) // red — error
 
-	// Mode-specific input area styles (vim-like edit / command modes)
-	editModeInputStyle    = lipgloss.NewStyle().Background(lipgloss.Color("235")).Padding(1, 2)
-	commandModeInputStyle = lipgloss.NewStyle().Background(lipgloss.Color("237")).Padding(1, 2)
+	// Mode-specific styles (vim-like edit / command modes)
 	commandPrefixStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)       // orange ":"
 	commandLabelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)       // "COMMAND"
 	commandHintStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))                  // tips text
@@ -192,6 +190,8 @@ type model struct {
 	// Toggled with Esc (edit→cmd) and i (cmd→edit). Auto-enabled on task submit.
 	commandMode   bool
 	commandBuffer string // hidden command input buffer in command mode
+	lastKey       string // tracks previous key for multi-key sequences (gg, ZZ)
+	showHelpDialog bool  // "?" help overlay in command mode
 
 	// Tool call state tracking: tool_call_id → ToolEntry
 	toolCallEntries map[string]*tui.ToolEntry
@@ -216,6 +216,17 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	ti.FocusedStyle.Text = textStyle
 	ti.BlurredStyle.Text = textStyle
+
+	// Edit mode base style: dark background shadow
+	editBaseStyle := lipgloss.NewStyle().Background(lipgloss.Color("235"))
+	ti.FocusedStyle.Base = editBaseStyle
+	ti.BlurredStyle.Base = editBaseStyle
+	ti.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Background(lipgloss.Color("235"))
+	ti.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("235"))
+	ti.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("235"))
+	ti.BlurredStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("235"))
+	ti.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("235"))
+	ti.BlurredStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("235"))
 
 	// Dynamic prompt: "❯ " on first line, "  " on continuation lines
 	ti.SetPromptFunc(2, func(line int) string {
@@ -300,21 +311,27 @@ func (m *model) toggleLanguage() {
 func (m *model) processCommand(cmd string) {
 	cmd = strings.TrimSpace(cmd)
 	switch {
-	case cmd == ":q" || cmd == ":quit":
+	case cmd == ":q" || cmd == ":quit" || cmd == ":q!":
 		m.quitting = true
 	case strings.HasPrefix(cmd, "/"):
 		// Search in log entries
 		query := strings.TrimPrefix(cmd, "/")
 		m.searchInLog(query)
-	case cmd == ":help":
+	case cmd == ":help" || cmd == ":h":
+		m.showHelpDialog = true
+	case cmd == ":mode":
+		mode := "COMMAND"
+		if !m.commandMode {
+			mode = "EDIT"
+		}
 		m.logEntries = append(m.logEntries, logEntry{
 			timestamp: time.Now(),
 			eventType: "status",
-			content:   "Commands: :q/quit, /search, :help, i=edit, esc=edit",
+			content:   fmt.Sprintf("Current mode: %s | Task running: %v | Buffer: %q", mode, m.taskRunning, m.commandBuffer),
 		})
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 	default:
-		m.infoMsg = fmt.Sprintf("Unknown command: %s", cmd)
+		m.infoMsg = fmt.Sprintf("Unknown command: %s (type :help or ? for available commands)", cmd)
 	}
 }
 
@@ -633,12 +650,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// ── Command mode key handling (vim-like: hidden input, single-key commands) ──
 		if m.commandMode {
-			switch msg.String() {
+			// Resolve multi-key sequences: check if lastKey + current key forms a valid combo
+			key := msg.String()
+			if m.lastKey != "" {
+				combo := m.lastKey + key
+				m.lastKey = ""
+				switch combo {
+				case "gg":
+					m.viewport.GotoTop()
+					return m, nil
+				case "ZZ":
+					m.quitting = true
+					return m, tea.Quit
+				default:
+					// Invalid combo: discard lastKey and fall through to process key normally
+				}
+			}
+
+			// Help dialog is open: let action keys (i/esc/enter/?/ctrl+c) pass through,
+			// dismiss on any other key without processing it.
+			if m.showHelpDialog && key != "i" && key != "esc" && key != "enter" && key != "?" && key != "ctrl+c" {
+				m.showHelpDialog = false
+				return m, nil
+			}
+
+			switch key {
 			case "ctrl+c":
 				m.quitting = true
 				return m, tea.Quit
 
 			case "esc":
+				if m.showHelpDialog {
+					m.showHelpDialog = false
+					return m, nil
+				}
+				if m.commandBuffer != "" {
+					// Clear command buffer, stay in command mode
+					m.commandBuffer = ""
+					return m, nil
+				}
 				if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
 					// Cancel the running task
 					m.currentTask.CancelFunc()
@@ -652,6 +702,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Idle: switch to edit mode
 					m.commandMode = false
 					m.commandBuffer = ""
+					m.lastKey = ""
 				}
 				return m, nil
 
@@ -659,12 +710,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Enter edit mode (vim-like: press i to insert)
 				m.commandMode = false
 				m.commandBuffer = ""
+				m.lastKey = ""
+				m.showHelpDialog = false
 				return m, nil
 
 			case "enter":
+				if m.showHelpDialog {
+					m.showHelpDialog = false
+					return m, nil
+				}
 				// Process command buffer if non-empty, otherwise enter edit mode
 				if m.commandBuffer != "" {
-					// Process the command (e.g., ":q", "/search")
 					m.processCommand(m.commandBuffer)
 					m.commandBuffer = ""
 				} else {
@@ -672,6 +728,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
+			// ── Scroll navigation ──
 			case "f":
 				m.viewport.PageDown()
 				return m, nil
@@ -688,16 +745,62 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.LineUp(1)
 				return m, nil
 
+			case "ctrl+d":
+				m.viewport.HalfPageDown()
+				return m, nil
+
+			case "ctrl+u":
+				m.viewport.HalfPageUp()
+				return m, nil
+
+			case "G":
+				// Vim: Shift+G → go to bottom
+				m.viewport.GotoBottom()
+				return m, nil
+
+			// ── Multi-key prefix: g (for gg), Z (for ZZ) ──
+			case "g", "Z":
+				if m.commandBuffer == "" {
+					m.lastKey = key
+				} else {
+					m.commandBuffer += key
+				}
+				return m, nil
+
+			// ── Command line prefixes ──
+			case ":":
+				if m.commandBuffer == "" {
+					m.commandBuffer = ":"
+				} else {
+					m.commandBuffer += ":"
+				}
+				return m, nil
+
+			case "/":
+				if m.commandBuffer == "" {
+					m.commandBuffer = "/"
+				} else {
+					m.commandBuffer += "/"
+				}
+				return m, nil
+
+			// ── Help overlay ──
+			case "?":
+				if m.commandBuffer == "" {
+					m.showHelpDialog = !m.showHelpDialog
+				} else {
+					m.commandBuffer += "?"
+				}
+				return m, nil
+
+			// ── Command buffer editing ──
 			case "backspace":
 				if len(m.commandBuffer) > 0 {
 					m.commandBuffer = m.commandBuffer[:len(m.commandBuffer)-1]
 				}
 				return m, nil
 
-			case "ctrl+u":
-				m.commandBuffer = ""
-				return m, nil
-
+			// ── Misc ──
 			case "ctrl+l":
 				m.toggleLanguage()
 				return m, nil
@@ -953,6 +1056,11 @@ func (m model) View() string {
 		return m.renderConfirmDialog()
 	}
 
+	// When help dialog is open in command mode, render it as an overlay
+	if m.showHelpDialog {
+		return m.renderHelpDialog()
+	}
+
 	// When task complete dialog is open, render it as an overlay
 	if m.taskCompleteDialog.open {
 		return m.renderTaskCompleteDialog()
@@ -979,21 +1087,24 @@ func (m model) View() string {
 		var footer strings.Builder
 
 		if m.commandMode {
-			// ── Command mode (vim-like): hidden input, ":" prefix, different bg ──
+			// ── Command mode (vim-like): hidden input, ":" prefix, colored bar ──
+			modeBar := lipgloss.NewStyle().
+				Background(lipgloss.Color("214")).
+				Foreground(lipgloss.Color("214")).
+				Render("▊")
+
 			var cmdLine string
-			cmdPrefix := commandPrefixStyle.Render(":")
+			cmdPrefix := commandPrefixStyle.Render(" :")
 			cmdLabel := commandLabelStyle.Render(" " + langManager.GetText("CommandModePrompt") + " ")
-			// Show typed command buffer if not empty (dim)
 			if m.commandBuffer != "" {
 				cmdBufDisplay := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(m.commandBuffer)
 				cmdCursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Blink(true).Render("▊")
-				cmdLine = cmdPrefix + cmdLabel + " " + cmdBufDisplay + cmdCursor
+				cmdLine = modeBar + cmdPrefix + cmdLabel + " " + cmdBufDisplay + cmdCursor
 			} else {
 				cmdCursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Blink(true).Render("▊")
-				cmdLine = cmdPrefix + cmdLabel + " " + cmdCursor
+				cmdLine = modeBar + cmdPrefix + cmdLabel + " " + cmdCursor
 			}
 
-			// Tips differ based on task state
 			var cmdTips string
 			if m.taskRunning {
 				cmdTips = langManager.GetText("CommandModeTips")
@@ -1002,15 +1113,13 @@ func (m model) View() string {
 			}
 			cmdTipsLine := commandHintStyle.Render("  " + cmdTips)
 
-			// Wrap in command-mode background container
-			cmdBox := commandModeInputStyle.Render(cmdLine + cmdTipsLine)
-			footer.WriteString(cmdBox)
+			footer.WriteString(cmdLine + cmdTipsLine)
 			footer.WriteString("\n")
 		} else {
-			// ── Edit mode (vim insert-like): normal textarea visible ──
+			// ── Edit mode: textarea with dark background (via Base style), no bar ──
 			m.input.SetWidth(m.computeFieldWidth())
 			inputLine := m.input.View()
-			footer.WriteString(editModeInputStyle.Render(inputLine))
+			footer.WriteString(lipgloss.NewStyle().Render(inputLine))
 			footer.WriteString("\n")
 		}
 
@@ -1084,7 +1193,7 @@ func (m model) renderWelcomePanel() string {
 
 // resizeViewport recalculates viewport dimensions and recreates the glamour renderer.
 func (m *model) resizeViewport() {
-	footerHeight := 5
+	footerHeight := 6
 	if m.errMsg != "" {
 		footerHeight++
 	}
@@ -1969,6 +2078,60 @@ func (m model) renderTaskCompleteDialog() string {
 	)
 
 	dialog := taskCompleteBorderStyle.Width(dialogWidth).Render(content)
+
+	return lipgloss.Place(m.termWidth, m.termHeight,
+		lipgloss.Center, lipgloss.Center,
+		dialog,
+	)
+}
+
+// renderHelpDialog renders the vim-like help overlay showing all command mode shortcuts.
+func (m model) renderHelpDialog() string {
+	const maxDialogWidth = 50
+	dialogWidth := maxDialogWidth
+	if m.termWidth-4 < dialogWidth {
+		dialogWidth = m.termWidth - 4
+	}
+	innerWidth := dialogWidth - 4
+
+	// ── Title ──
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("39")).Bold(true)
+	titleLine := titleStyle.Render("?  " + langManager.GetText("HelpDialogTitle"))
+
+	// ── Content ──
+	contentStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+	content := contentStyle.Render(langManager.GetText("HelpDialogContent"))
+
+	// ── Separator ──
+	sepStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("237")).
+		Width(innerWidth)
+	sep := sepStyle.Render(strings.Repeat("─", innerWidth))
+
+	// ── Dismiss hint ──
+	hintStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+	hint := hintStyle.Render("Press any key to dismiss")
+
+	// ── Assemble ──
+	dialogContent := lipgloss.JoinVertical(lipgloss.Left,
+		titleLine,
+		"",
+		content,
+		"",
+		sep,
+		"",
+		hint,
+	)
+
+	dialogStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("39")).
+		Padding(1, 2)
+
+	dialog := dialogStyle.Width(dialogWidth).Render(dialogContent)
 
 	return lipgloss.Place(m.termWidth, m.termHeight,
 		lipgloss.Center, lipgloss.Center,
