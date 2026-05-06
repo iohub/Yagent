@@ -38,6 +38,18 @@ type metaAgentResult struct {
 	TaskForAgent  string   `json:"task_for_agent"`
 }
 
+// ProjectContextFile represents a successfully loaded project context file
+type ProjectContextFile struct {
+	FileName string `json:"file_name"`
+	Content  string `json:"content"`
+}
+
+// ProjectContextLoadResult represents the result of loading project context files
+type ProjectContextLoadResult struct {
+	LoadedFiles []ProjectContextFile `json:"loaded_files"`
+	Content     string               `json:"content"`
+}
+
 type ConductorAgent struct {
 	BaseAgent
 	RepoAgent      *RepoAgent
@@ -55,7 +67,11 @@ type ConductorAgent struct {
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
 // 将成功读取的文件内容格式化后组合返回。文件按顺序尝试，不存在或读取失败时忽略。
-func (a *ConductorAgent) loadProjectContext() (string, error) {
+// 返回加载的文件列表和组合后的内容。
+func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
+	result := &ProjectContextLoadResult{
+		LoadedFiles: []ProjectContextFile{},
+	}
 	var sb strings.Builder
 	contextFiles := []string{"CODEACTOR.md", "CLAUDE.md", "AGENTS.md"}
 
@@ -67,11 +83,15 @@ func (a *ConductorAgent) loadProjectContext() (string, error) {
 			continue
 		}
 		if len(data) > 0 {
+			result.LoadedFiles = append(result.LoadedFiles, ProjectContextFile{
+				FileName: fname,
+				Content:  string(data),
+			})
 			sb.WriteString(fmt.Sprintf("\n### %s\n```\n%s\n```\n", fname, string(data)))
 		}
 	}
-
-	return sb.String(), nil
+	result.Content = sb.String()
+	return result
 }
 
 func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int) *ConductorAgent {
@@ -617,8 +637,12 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 	}
 
 	// 加载项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md）并前置到 System Prompt
-	if projectContext, err := a.loadProjectContext(); err == nil && projectContext != "" {
-		systemPrompt = fmt.Sprintf("### Project Workspace Context\n%s\n\n", projectContext) + systemPrompt
+	if loadResult := a.loadProjectContext(); loadResult != nil && loadResult.Content != "" {
+		// 发送上下文加载完成消息到消息通道
+		if a.Publisher != nil {
+			a.Publisher.Publish("context_loaded", loadResult, a.Name())
+		}
+		systemPrompt = fmt.Sprintf("### Project Workspace Context\n%s\n\n", loadResult.Content) + systemPrompt
 	}
 
 	messages = append(messages, llm.Message{
