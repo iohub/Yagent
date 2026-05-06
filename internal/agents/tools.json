@@ -155,33 +155,6 @@
     }
   },
   {
-    "name": "impl_plan",
-    "description": "Maintain a detailed implementation plan document for complex multi-step programming tasks. Use this BEFORE starting implementation on any non-trivial task.\n\nThe plan should cover: architecture design, module breakdown, interface definitions, data flow, error handling strategy, and implementation order.\n\nActions:\n- create: Write the initial plan document (provide full plan_content in markdown).\n- get: Retrieve the current plan to review progress or remind yourself of the design.\n- update: Modify a specific section when design flaws are discovered (via thinking analysis) or requirements change. Provide section name and new_content.\n- clear: Discard the plan when the task is fully complete.\n\nThe plan persists across agent steps and is always visible in your context.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "action": {
-          "type": "string",
-          "enum": ["create", "get", "update", "clear"],
-          "description": "Operation: create a new plan, get current plan, update a section, or clear the plan."
-        },
-        "plan_content": {
-          "type": "string",
-          "description": "Full plan document in markdown format. Required for create. Should include sections: ## Architecture, ## Modules, ## Interfaces, ## Data Flow, ## Implementation Order, ## Error Handling."
-        },
-        "section": {
-          "type": "string",
-          "description": "Name of the section to update (e.g. 'Architecture', 'Modules'). Required for targeted update."
-        },
-        "new_content": {
-          "type": "string",
-          "description": "New content for the specified section. Required for update."
-        }
-      },
-      "required": ["action"]
-    }
-  },
-  {
     "name": "delete_file",
     "description": "You can use this tool to delete files, you can delete multi files in one toolcall, and you MUST make sure the files is exist before deleting.",
     "parameters": {

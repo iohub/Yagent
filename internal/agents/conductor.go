@@ -374,8 +374,6 @@ func (a *ConductorAgent) getToolFunc(name string) tools.ToolFunc {
 		}
 	case "micro_agent":
 		return a.GlobalCtx.MicroAgentTool.Execute
-	case "impl_plan":
-		return a.GlobalCtx.ImplPlanTool.Execute
 	case "agent_exit":
 		return a.GlobalCtx.FlowOps.ExecuteAgentExit
 	case "ask_user_for_help":
