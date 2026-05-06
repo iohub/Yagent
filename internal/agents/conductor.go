@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"codeactor/internal/llm"
@@ -49,6 +51,27 @@ type ConductorAgent struct {
 	metaRetryCount int                     // max retries for Meta-Agent JSON parse failures
 	toolDefMap     map[string]ToolDefinition // tool name → definition from tools.json
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
+}
+
+// loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
+// 将成功读取的文件内容格式化后组合返回。文件按顺序尝试，不存在或读取失败时忽略。
+func (a *ConductorAgent) loadProjectContext() (string, error) {
+	var sb strings.Builder
+	contextFiles := []string{"CODEACTOR.md", "CLAUDE.md", "AGENTS.md"}
+
+	for _, fname := range contextFiles {
+		fullPath := filepath.Join(a.GlobalCtx.ProjectPath, fname)
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			// 文件不存在或读取失败，忽略并继续尝试下一个
+			continue
+		}
+		if len(data) > 0 {
+			sb.WriteString(fmt.Sprintf("\n### %s\n```\n%s\n```\n", fname, string(data)))
+		}
+	}
+
+	return sb.String(), nil
 }
 
 func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int) *ConductorAgent {
@@ -592,6 +615,12 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		}
 		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n"
 	}
+
+	// 加载项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md）并前置到 System Prompt
+	if projectContext, err := a.loadProjectContext(); err == nil && projectContext != "" {
+		systemPrompt = fmt.Sprintf("### Project Workspace Context\n%s\n\n", projectContext) + systemPrompt
+	}
+
 	messages = append(messages, llm.Message{
 		Role:    llm.RoleSystem,
 		Content: systemPrompt,
