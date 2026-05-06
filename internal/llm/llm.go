@@ -116,14 +116,14 @@ func LoadConfig(configPath string) (*config.Config, error) {
 		return nil, err
 	}
 
-	activeProvider, err := config.GetActiveProvider()
+	activeProvider, err := config.ResolveProvider("", "")
 	if err != nil {
 		slog.Error("Failed to get active provider configuration", "error", err)
 		return nil, err
 	}
 
 	slog.Debug("Configuration loaded successfully",
-		"provider", config.LLM.UseProvider,
+		"provider", config.Global.LLM.UseProvider,
 		"model", activeProvider.Model,
 		"api_base_url", activeProvider.APIBaseURL,
 		"temperature", activeProvider.Temperature,
@@ -177,7 +177,7 @@ func (c *Client) ResolveProviderName(agentName, toolName string) string {
 		return "unknown"
 	}
 	// Find the provider key from the config
-	for name, p := range c.Config.LLM.Providers {
+	for name, p := range c.Config.Global.LLM.Providers {
 		if p.Model == provider.Model && p.APIBaseURL == provider.APIBaseURL {
 			return name
 		}
@@ -261,7 +261,7 @@ func (c *Client) GetToolEngine(toolName string) Engine {
 
 // resolveProviderName finds the provider key in config for a given ProviderConfig.
 func (c *Client) resolveProviderName(provider *config.ProviderConfig) string {
-	for name, p := range c.Config.LLM.Providers {
+	for name, p := range c.Config.Global.LLM.Providers {
 		if p.APIBaseURL == provider.APIBaseURL && p.Model == provider.Model {
 			return name
 		}
@@ -296,12 +296,12 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []Mess
 	if memoryJSON, err := json.Marshal(memory); err == nil {
 		llmLogger.Info("LLM input memory",
 			"type", "input_memory",
-			"model", c.Config.LLM.UseProvider,
+			"model", c.Config.Global.LLM.UseProvider,
 			"memory_length", len(memory),
 			"memory", string(memoryJSON))
 	}
 
-	activeProvider, err := c.Config.GetActiveProvider()
+	activeProvider, err := c.Config.ResolveProvider("", "")
 	if err != nil {
 		slog.Error("Failed to get active provider configuration", "error", err)
 		return "", util.WrapError(ctx, err, "failed to get active provider")
@@ -323,13 +323,13 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []Mess
 
 		slog.Error("Failed to GenerateContent",
 			"error", err,
-			"model", c.Config.LLM.UseProvider,
+			"model", c.Config.Global.LLM.UseProvider,
 			"memory_length", len(memory),
 			"http_response", httpResponse)
 
 		llmLogger.Error("LLM completion error",
 			"type", "completion_error",
-			"model", c.Config.LLM.UseProvider,
+			"model", c.Config.Global.LLM.UseProvider,
 			"memory_length", len(memory),
 			"error", err.Error(),
 			"http_response", httpResponse)
@@ -346,7 +346,7 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []Mess
 		if choicesJSON, err := json.Marshal(completion.Choices); err == nil {
 			llmLogger.Info("LLM completion output",
 				"type", "completion_output",
-				"model", c.Config.LLM.UseProvider,
+				"model", c.Config.Global.LLM.UseProvider,
 				"choices_count", len(completion.Choices),
 				"memory_length", len(memory),
 				"response", result,
@@ -361,7 +361,7 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []Mess
 
 	llmLogger.Warn("LLM returned empty completion (with memory)",
 		"type", "empty_completion_memory",
-		"model", c.Config.LLM.UseProvider,
+		"model", c.Config.Global.LLM.UseProvider,
 		"choices_count", len(completion.Choices),
 		"memory_length", len(memory))
 

@@ -640,10 +640,10 @@ Conductor 接收到摘要 → 存储到 GlobalCtx.RepoSummary
 [http]
 server_port = 9080                     # HTTP/WebSocket 服务端口
 
-[llm]
+[global.llm]
 use_provider = "xiaomi"                # 当前使用的 LLM 提供商
 
-[llm.providers.<name>]
+[global.llm.providers.<name>]
 model = "mimo-v2-flash"               # 模型名称
 temperature = 0.3                      # 采样温度
 max_tokens = 28000                     # 最大输出 Token

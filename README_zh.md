@@ -71,10 +71,10 @@ go build -o codeactor .
 创建 `$HOME/.codeactor/config/config.toml`：
 
 ```toml
-[llm]
+[global.llm]
 use_provider = "siliconflow"
 
-[llm.providers.siliconflow]
+[global.llm.providers.siliconflow]
 model = "deepseek-ai/DeepSeek-V3.2"
 temperature = 0.0
 max_tokens = 23000
