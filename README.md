@@ -42,8 +42,6 @@ CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Ana
 - **Call Graph Analysis** — Function-level call graphs with caller/callee relations, cycle detection, complexity scoring
 - **Semantic Code Search** — Vector embeddings via LanceDB + SQLite cache, OpenAI `text-embedding-3-small`
 - **Code Skeleton/Snippet** — Batch file skeleton extraction and per-function code snippet retrieval
-- **File Watching** — Automatic re-indexing on file changes with 20s debounce
-- **Auto-Launch** — Go binary automatically starts the Rust codebase server as a child process with dynamic port allocation, health-check polling, and cleanup on exit
 
 
 ## Screenshots
