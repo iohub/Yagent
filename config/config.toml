@@ -164,6 +164,10 @@ enable_auto_compact = true
 # 用于L1摘要的轻量模型 (可选，不配置则跳过L1)
 # summarization_model = "gpt-3.5-turbo"
 
+# 用于L1摘要的provider（可选，指向 [global.llm.providers] 中定义的 provider name）
+# 不配置则复用主 agent 的 LLM 引擎
+# summarization_provider = "siliconflow"
+
 # 触发各级压缩的阈值
 l1_token_threshold = 160000
 l2_token_threshold = 130000

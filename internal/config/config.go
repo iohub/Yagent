@@ -106,8 +106,8 @@ type Config struct {
 	Compact ContextCompactConfig    `toml:"context"` // [context] - 上下文压缩配置
 }
 
-// getProvider returns a provider config by name from the shared provider pool.
-func (c *Config) getProvider(name string) (*ProviderConfig, error) {
+// GetProvider returns a provider config by name from the shared provider pool.
+func (c *Config) GetProvider(name string) (*ProviderConfig, error) {
 	if name == "" {
 		return nil, fmt.Errorf("empty provider name")
 	}
@@ -196,20 +196,20 @@ func (c *Config) ResolveProvider(agentName, toolName string) (*ProviderConfig, e
 	// 1-2. Tool-level override (highest priority)
 	if toolName != "" {
 		if name := c.resolveToolProvider(toolName); name != "" {
-			return c.getProvider(name)
+			return c.GetProvider(name)
 		}
 	}
 
 	// 3-4. Agent-level override
 	if agentName != "" {
 		if name := c.resolveAgentProvider(agentName); name != "" {
-			return c.getProvider(name)
+			return c.GetProvider(name)
 		}
 	}
 
 	// 5. Global override
 	if c.Global.LLM != nil && c.Global.LLM.UseProvider != "" {
-		return c.getProvider(c.Global.LLM.UseProvider)
+		return c.GetProvider(c.Global.LLM.UseProvider)
 	}
 
 	// 6. No provider configured
@@ -309,7 +309,7 @@ func (c *Config) validate() error {
 		return fmt.Errorf("no providers configured in LLM section")
 	}
 
-	activeProvider, err := c.getProvider(effectiveProvider)
+	activeProvider, err := c.GetProvider(effectiveProvider)
 	if err != nil {
 		return err
 	}
@@ -354,6 +354,10 @@ type ContextCompactConfig struct {
 	// SummarizationModel 用于L1摘要的轻量模型
 	SummarizationModel string `toml:"summarization_model"`
 
+	// SummarizationProvider 用于L1摘要的LLM provider名称（可选，指向 providers 中定义的 provider）
+	// 为空则复用主 agent 的 LLM 引擎
+	SummarizationProvider string `toml:"summarization_provider"`
+
 	// L1Threshold 触发L1压缩的阈值
 	L1Threshold int `toml:"l1_token_threshold"`
 
@@ -371,4 +375,7 @@ type ContextCompactConfig struct {
 
 	// KeepTaskConclusions 保留已完成任务的结论数
 	KeepTaskConclusions int `toml:"keep_task_conclusions"`
+
+	// SummarizationMaxInputTokens 摘要时单批次最大输入token数
+	SummarizationMaxInputTokens int `toml:"summarization_max_input_tokens"`
 }

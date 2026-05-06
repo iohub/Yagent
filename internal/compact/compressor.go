@@ -21,19 +21,22 @@ type Compressor interface {
 
 // RuleCompressor 规则压缩器（L2+L3）
 type RuleCompressor struct {
-	config *Config
+	config     *Config
+	summarizer *LLMSummarizer // 新增：LLM摘要器，可为nil（兼容无LLM客户端的场景）
 }
 
 // NewRuleCompressor 创建规则压缩器
-func NewRuleCompressor(config *Config) *RuleCompressor {
-	return &RuleCompressor{config: config}
+func NewRuleCompressor(config *Config, summarizer *LLMSummarizer) *RuleCompressor {
+	return &RuleCompressor{config: config, summarizer: summarizer}
 }
 
-// L1Compress LLM摘要压缩（当前为占位实现，需要SummarizationClient）
+// L1Compress LLM摘要压缩 — 使用LLM对低优先级消息做智能摘要
 func (rc *RuleCompressor) L1Compress(ctx context.Context, messages []llm.Message, priorities []MessagePriority) ([]llm.Message, error) {
-	// TODO: 当提供SummarizationClient时，实现LLM摘要压缩
-	// 当前返回原messages，不执行L1压缩
-	return messages, nil
+	if rc.summarizer == nil {
+		// 无LLM摘要器时降级，返回原始消息
+		return messages, nil
+	}
+	return rc.summarizer.Summarize(ctx, messages, priorities)
 }
 
 // L2Compress 规则压缩 - 截断超长tool输出
