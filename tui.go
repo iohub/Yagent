@@ -115,6 +115,12 @@ type confirmDialog struct {
 	selectedOption int // 0=Allow, 1=Allow All, 2=Deny
 }
 
+// taskCompleteDialog holds the state of the task completion overlay dialog.
+type taskCompleteDialog struct {
+	open    bool
+	message string
+}
+
 // tuiEventConsumer routes MessageEvents to a Go channel consumed by the tea program.
 type tuiEventConsumer struct {
 	ch chan *messaging.MessageEvent
@@ -170,8 +176,9 @@ type model struct {
 	historyConfirmDelete bool
 
 	// Authorization confirmation dialog
-	confirmDialog confirmDialog
-	publisher     *messaging.MessagePublisher
+	confirmDialog     confirmDialog
+	taskCompleteDialog taskCompleteDialog
+	publisher         *messaging.MessagePublisher
 	publisherCh   chan *messaging.MessagePublisher
 
 	// Tool call state tracking: tool_call_id → ToolEntry
@@ -476,6 +483,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Task complete dialog key handling
+		if m.taskCompleteDialog.open {
+			switch msg.String() {
+			case "enter", " ", "esc":
+				m.taskCompleteDialog.open = false
+				return m, nil
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
 		// History panel key handling
 		if m.showHistoryPanel {
 			// Delete confirmation mode
@@ -684,6 +704,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				content:   msg.err.Error(),
 			})
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+			// Show error dialog
+			m.taskCompleteDialog = taskCompleteDialog{
+				open:    true,
+				message: "❌ Task Failed\n\n" + msg.err.Error(),
+			}
+		} else {
+			// Show success dialog
+			m.taskCompleteDialog = taskCompleteDialog{
+				open:    true,
+				message: "Task Completed\n\nAll tasks have been finished.",
+			}
 		}
 		return m, nil
 	}
@@ -752,6 +783,11 @@ func (m model) View() string {
 	// When confirmation dialog is open, render it as an overlay on top of the normal view
 	if m.confirmDialog.open {
 		return m.renderConfirmDialog()
+	}
+
+	// When task complete dialog is open, render it as an overlay
+	if m.taskCompleteDialog.open {
+		return m.renderTaskCompleteDialog()
 	}
 
 	var b strings.Builder
@@ -1534,6 +1570,32 @@ var (
 				Foreground(lipgloss.Color("240"))
 )
 
+// taskCompleteDialog styles
+var (
+	taskCompleteBorderStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("36")). // 青绿色边框，表示成功
+		Padding(0, 2)
+
+	taskCompleteTitleStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("36")). // 青绿色
+		Bold(true)
+
+	taskCompleteMessageStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")). // 浅灰色详情文字
+		MaxWidth(50)
+
+	taskCompleteButtonFocused = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("0")).  // 黑字
+		Background(lipgloss.Color("36")). // 青绿色底
+		Bold(true).
+		Padding(0, 4)
+
+	taskCompleteButtonBlurred = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")). // 灰色未选中
+		Padding(0, 4)
+)
+
 // parseConfirmQuestion extracts toolName and detail body from the question string.
 func parseConfirmQuestion(question string) (toolName, body string) {
 	q := strings.TrimSpace(question)
@@ -1639,6 +1701,49 @@ func (m model) renderConfirmDialog() string {
 	)
 
 	dialog := confirmBorderStyle.Width(dialogWidth).Render(content)
+
+	return lipgloss.Place(m.termWidth, m.termHeight,
+		lipgloss.Center, lipgloss.Center,
+		dialog,
+	)
+}
+
+// renderTaskCompleteDialog renders the task completion overlay dialog.
+func (m model) renderTaskCompleteDialog() string {
+	const maxDialogWidth = 40
+	dialogWidth := maxDialogWidth
+	if m.termWidth-4 < dialogWidth {
+		dialogWidth = m.termWidth - 4
+	}
+	innerWidth := dialogWidth - 4
+
+	// ── Title ──
+	titleLine := taskCompleteTitleStyle.Render("Task Completed")
+
+	// ── OK Button ──
+	okBtn := taskCompleteButtonFocused.Render("OK")
+
+	// ── Help text ──
+	help := confirmHelpStyle.Render("Press ENTER or SPACE to close")
+
+	// ── Separator ──
+	sep := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("237")).
+		Width(innerWidth).
+		Render(strings.Repeat("─", innerWidth))
+
+	// ── Assemble ──
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		titleLine,
+		"",
+		sep,
+		"",
+		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(okBtn),
+		"",
+		help,
+	)
+
+	dialog := taskCompleteBorderStyle.Width(dialogWidth).Render(content)
 
 	return lipgloss.Place(m.termWidth, m.termHeight,
 		lipgloss.Center, lipgloss.Center,

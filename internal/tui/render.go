@@ -18,9 +18,11 @@ const (
 // skipBodyTools lists tools whose result body is just a status confirmation
 // and should not be rendered — only the header (icon + name + file path) is shown.
 var skipBodyTools = map[string]bool{
-	"read_file":   true,
-	"delete_file": true,
-	"rename_file": true,
+	"read_file":       true,
+	"delete_file":     true,
+	"rename_file":     true,
+	"list_dir":        true,
+	"search_by_regex": true,
 }
 
 // ── Tool Header Rendering ──
