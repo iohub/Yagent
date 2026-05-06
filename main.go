@@ -25,8 +25,9 @@ import (
 
 func init() {
 	// Initialize structured logger with text handler
+	// Use LevelWarn so that warnings (e.g. codebase startup failures) are visible.
 	opts := &slog.HandlerOptions{
-		Level: slog.LevelError,
+		Level: slog.LevelWarn,
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, opts))
 	slog.SetDefault(logger)
@@ -112,6 +113,8 @@ func main() {
 				slog.Info("Codebase process killed on exit", "pid", codebaseCmd.Process.Pid)
 			}
 		}()
+	} else {
+		fmt.Fprintf(os.Stderr, "WARNING: codeactor-codebase server failed to start. Semantic search and code analysis features will be unavailable.\n")
 	}
 
 	switch mode {
@@ -273,7 +276,7 @@ func startCodebaseServer(port int, repoPath string) *exec.Cmd {
 		return nil
 	}
 	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		slog.Warn("codeactor-codebase binary not found, skipping startup", "path", binPath)
+		slog.Error("codeactor-codebase binary not found, skipping startup", "path", binPath)
 		return nil
 	}
 
@@ -306,12 +309,15 @@ func startCodebaseServer(port int, repoPath string) *exec.Cmd {
 
 	slog.Info("Started codeactor-codebase server", "pid", cmd.Process.Pid, "address", address, "repo", repoPath, "log", logPath)
 
-	// Wait for codebase service to become healthy
-	if err := waitForCodebase(address, 30*time.Second); err != nil {
-		slog.Error("Codebase server failed to become healthy", "error", err)
-		cmd.Process.Kill()
-		return nil
-	}
+	// Health check runs asynchronously so TUI/HTTP startup is not blocked.
+	// If the codebase server never becomes healthy, the process is killed
+	// and tools that depend on it will surface errors at call time.
+	go func() {
+		if err := waitForCodebase(address, 60*time.Second); err != nil {
+			slog.Error("Codebase server failed to become healthy", "error", err)
+			cmd.Process.Kill()
+		}
+	}()
 
 	return cmd
 }
