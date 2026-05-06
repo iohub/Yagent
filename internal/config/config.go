@@ -23,12 +23,6 @@ type ProviderConfig struct {
 	ModelProvider string `toml:"model_provider,omitempty"` // Explicit provider for Bedrock (e.g., "anthropic", "amazon", "meta")
 }
 
-// LLMConfig contains configuration for multiple LLM providers
-type LLMConfig struct {
-	UseProvider string                    `toml:"use_provider"`
-	Providers   map[string]ProviderConfig `toml:"providers"`
-}
-
 // AppConfig contains application-level configuration
 type AppConfig struct {
 	EnableStreaming bool `toml:"enable_streaming"`
@@ -50,7 +44,8 @@ type AgentConfig struct {
 
 // GlobalLLMConfig is the global default LLM provider selection.
 type GlobalLLMConfig struct {
-	UseProvider string `toml:"use_provider"`
+	UseProvider string                    `toml:"use_provider"`
+	Providers   map[string]ProviderConfig `toml:"providers"`
 }
 
 // AgentLLMOverride selects a provider for a specific agent.
@@ -81,6 +76,7 @@ type ToolsLLMConfig struct {
 	UseProvider string                    `toml:"use_provider"` // default for all tools
 	MicroAgent  *ToolLLMOverride          `toml:"micro_agent,omitempty"`
 	Thinking    *ToolLLMOverride          `toml:"thinking,omitempty"`
+	ImplPlan    *ToolLLMOverride          `toml:"impl_plan,omitempty"`
 }
 
 // TopLevelConfig groups the [global] section.
@@ -90,27 +86,11 @@ type TopLevelConfig struct {
 
 // Config is the root configuration structure
 type Config struct {
-	LLM     LLMConfig      `toml:"llm"`     // backward-compat [llm] section
-	Global  TopLevelConfig `toml:"global"`  // [global.llm]
-	Agents  AgentsLLMConfig `toml:"agents"` // [agents.llm] + per-agent overrides
-	Tools   ToolsLLMConfig  `toml:"tools"`  // [tools.llm] + per-tool overrides
-	App     AppConfig       `toml:"app"`
-	Agent   AgentConfig     `toml:"agent"`
-}
-
-// GetActiveProvider returns the currently active provider configuration.
-// Uses the backward-compatible [llm] section as the ultimate fallback.
-func (c *Config) GetActiveProvider() (*ProviderConfig, error) {
-	if c.LLM.UseProvider == "" {
-		return nil, fmt.Errorf("no provider selected, please set 'use_provider' in config")
-	}
-
-	provider, exists := c.LLM.Providers[c.LLM.UseProvider]
-	if !exists {
-		return nil, fmt.Errorf("provider '%s' not found in configuration", c.LLM.UseProvider)
-	}
-
-	return &provider, nil
+	Global   TopLevelConfig  `toml:"global"`   // [global.llm]
+	Agents   AgentsLLMConfig `toml:"agents"`   // [agents.llm] + per-agent overrides
+	Tools    ToolsLLMConfig  `toml:"tools"`    // [tools.llm] + per-tool overrides
+	App      AppConfig       `toml:"app"`
+	Agent    AgentConfig     `toml:"agent"`
 }
 
 // getProvider returns a provider config by name from the shared provider pool.
@@ -118,7 +98,10 @@ func (c *Config) getProvider(name string) (*ProviderConfig, error) {
 	if name == "" {
 		return nil, fmt.Errorf("empty provider name")
 	}
-	provider, exists := c.LLM.Providers[name]
+	if c.Global.LLM == nil {
+		return nil, fmt.Errorf("provider '%s' not found in configuration", name)
+	}
+	provider, exists := c.Global.LLM.Providers[name]
 	if !exists {
 		return nil, fmt.Errorf("provider '%s' not found in configuration", name)
 	}
@@ -178,6 +161,8 @@ func (c *Config) getToolOverride(toolName string) *ToolLLMOverride {
 		return c.Tools.MicroAgent
 	case "thinking":
 		return c.Tools.Thinking
+	case "impl_plan":
+		return c.Tools.ImplPlan
 	default:
 		return nil
 	}
@@ -190,7 +175,6 @@ func (c *Config) getToolOverride(toolName string) *ToolLLMOverride {
 //   3. agents.llm.<agent>.use_provider
 //   4. agents.llm.use_provider
 //   5. global.llm.use_provider
-//   6. llm.use_provider (legacy fallback)
 //
 // agentName and toolName can be empty strings when no context is applicable.
 func (c *Config) ResolveProvider(agentName, toolName string) (*ProviderConfig, error) {
@@ -213,14 +197,17 @@ func (c *Config) ResolveProvider(agentName, toolName string) (*ProviderConfig, e
 		return c.getProvider(c.Global.LLM.UseProvider)
 	}
 
-	// 6. Legacy fallback
-	return c.GetActiveProvider()
+	// 6. No provider configured
+	return nil, fmt.Errorf("no LLM provider configured")
 }
 
 // GetProviderNames returns a list of all available provider names
 func (c *Config) GetProviderNames() []string {
-	names := make([]string, 0, len(c.LLM.Providers))
-	for name := range c.LLM.Providers {
+	if c.Global.LLM == nil {
+		return []string{}
+	}
+	names := make([]string, 0, len(c.Global.LLM.Providers))
+	for name := range c.Global.LLM.Providers {
 		names = append(names, name)
 	}
 	return names
@@ -292,18 +279,18 @@ func (c *Config) resolveEffectiveProviderName() string {
 	if c.Global.LLM != nil && c.Global.LLM.UseProvider != "" {
 		return c.Global.LLM.UseProvider
 	}
-	// legacy
-	return c.LLM.UseProvider
+	// No provider configured
+	return ""
 }
 
 // validate validates the configuration
 func (c *Config) validate() error {
 	effectiveProvider := c.resolveEffectiveProviderName()
 	if effectiveProvider == "" {
-		return fmt.Errorf("'use_provider' must be specified (in global.llm, agents.llm, tools.llm, or llm)")
+		return fmt.Errorf("'use_provider' must be specified (in global.llm, agents.llm, or tools.llm)")
 	}
 
-	if len(c.LLM.Providers) == 0 {
+	if c.Global.LLM == nil || len(c.Global.LLM.Providers) == 0 {
 		return fmt.Errorf("no providers configured in LLM section")
 	}
 

@@ -382,9 +382,9 @@ api_token = "sk-..."                # API 密钥
 api_base_url = "https://api.siliconflow.cn/v1"  # API 端点
 dimensions = 2560                   # 向量维度 (可选，覆盖模型默认值)
 
-[llm]                           # LLM 配置（预留给上层 Agent 使用）
+[global.llm]                    # 全局 LLM 配置
 use_provider = "siliconflow"
-[llm.providers.siliconflow]
+[global.llm.providers.siliconflow]
 model = "Qwen/Qwen3-235B-A22B"
 temperature = 0.7
 max_tokens = 8192

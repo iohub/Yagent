@@ -1,8 +1,8 @@
-# ── 三级LLM配置（优先级: tools.llm > agents.llm > global.llm > llm）──
+# ── 三级LLM配置（优先级: tools.llm > agents.llm > global.llm）──
 
-# 全局默认LLM提供商（优先级高于 [llm] 旧配置）
+# 全局默认LLM提供商
 [global.llm]
-# use_provider = "aliyun"  # 可选，不设置则回退到 [llm].use_provider
+use_provider = "aliyun"
 
 # Agent级LLM配置：可为所有agent设置默认值，也可按agent名单独指定
 [agents.llm]
@@ -33,13 +33,7 @@
 # use_provider = "xiaomi"
 
 # ── LLM提供商定义（所有层级共用）──
-[llm]
-# 选择当前使用的提供商（作为最终回退）
-# use_provider = "openrouter"
-use_provider = "aliyun"
-
-# XiaoMI配置
-[llm.providers.xiaomi]
+[global.llm.providers.xiaomi]
 model = "mimo-v2-flash"
 temperature = 0.3
 max_tokens = 28000
@@ -47,7 +41,7 @@ api_base_url = "https://api.xiaomimimo.com/v1"
 api_key = "your-key"
 
 # 阿里云配置
-[llm.providers.aliyun]
+[global.llm.providers.aliyun]
 # model = "qwen3-max-preview"
 model = "qwen3-coder-plus"
 temperature = 0.0
@@ -56,7 +50,7 @@ api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 api_key = "your-key"
 
 # SiliconFlow配置
-[llm.providers.siliconflow]
+[global.llm.providers.siliconflow]
 model = "deepseek-ai/DeepSeek-V3.2"
 temperature = 0.0
 max_tokens = 23000
@@ -64,7 +58,7 @@ api_base_url = "https://api.siliconflow.cn/v1"
 api_key = "your-key"
 
 # StreamLake配置
-[llm.providers.streamlake]
+[global.llm.providers.streamlake]
 # model = "KAT-Coder-Air-V1"
 model = "ep-w1klde-1767706500222997285"
 temperature = 0.0
@@ -73,7 +67,7 @@ api_base_url = "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints"
 api_key = "your-key"
 
 # OpenRouter配置
-[llm.providers.openrouter]
+[global.llm.providers.openrouter]
 model = "qwen3-coder-plus"
 temperature = 0.0
 max_tokens = 3000
@@ -81,7 +75,7 @@ api_base_url = "https://openrouter.ai/api/v1"
 api_key = "your-key"
 
 # 本地配置
-[llm.providers.local]
+[global.llm.providers.local]
 model = "qwen3-coder-plus"
 temperature = 0.0
 max_tokens = 3000
@@ -89,28 +83,28 @@ api_base_url = "http://127.0.0.1:8000"
 api_key = "your-key"
 
 # 其他模型配置示例
-[llm.providers.moonshot]
+[global.llm.providers.moonshot]
 model = "moonshotai/Kimi-K2-Instruct"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.moonshot.cn/v1"
 api_key = "your-key"
 
-[llm.providers.deepseek]
+[global.llm.providers.deepseek]
 model = "deepseek-ai/DeepSeek-V3"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.deepseek.com/v1"
 api_key = "your-key"
 
-[llm.providers.zai]
+[global.llm.providers.zai]
 model = "zai-org/GLM-4.5-Air"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.zai.org/v1"
 api_key = "your-key"
 
-[llm.providers.mistral]
+[global.llm.providers.mistral]
 model = "mistralai/devstral-small"
 temperature = 0.0
 max_tokens = 3000
@@ -118,7 +112,7 @@ api_base_url = "https://api.mistral.ai/v1"
 api_key = "your-key"
 
 # AWS Bedrock 配置
-[llm.providers.bedrock]
+[global.llm.providers.bedrock]
 model = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
 temperature = 0.0
 max_tokens = 3000
@@ -127,14 +121,14 @@ aws_region = "us-east-1"
 # model_provider = "anthropic"  # 可选：显式指定模型提供商（自动检测）
 
 # Bedrock Nova 模型示例
-[llm.providers.bedrock-nova]
+[global.llm.providers.bedrock-nova]
 model = "us.amazon.nova-lite-v1:0"
 temperature = 0.0
 max_tokens = 3000
 aws_region = "us-east-1"
 
 # Bedrock Meta 模型示例
-[llm.providers.bedrock-meta]
+[global.llm.providers.bedrock-meta]
 model = "us.meta.llama3-1-405b-instruct-v1:0"
 temperature = 0.0
 max_tokens = 3000
@@ -153,8 +147,6 @@ lang = "Chinese"
 # Codebase Component Configuration
 [codebase]
 enable_embedding = true
-embedding_db_uri = "~/.codeactor/data/embedding"
-graph_db_uri = "~/.codeactor/data/graph"
 
 [codebase.embedding]
 model = "Qwen/Qwen3-Embedding-4B"
