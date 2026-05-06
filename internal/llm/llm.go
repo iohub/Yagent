@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"codeactor/internal/config"
@@ -94,10 +95,13 @@ func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message,
 	return resp, err
 }
 
-// Client represents an LLM client
+// Client represents an LLM client with support for per-agent and per-tool engines.
+// Engines are lazily created and cached by provider name.
 type Client struct {
-	Engine Engine
-	Config *config.Config
+	Engine        Engine // default engine (backward-compatible)
+	Config        *config.Config
+	engines       map[string]Engine // cached engines keyed by provider name
+	mu            sync.RWMutex
 }
 
 // LoadConfig loads configuration from a TOML file using the multi-provider structure
@@ -129,7 +133,8 @@ func LoadConfig(configPath string) (*config.Config, error) {
 	return config, nil
 }
 
-// NewClient creates a new LLM client from config
+// NewClient creates a new LLM client from config.
+// The default engine is resolved using the full priority chain.
 func NewClient(config *config.Config) (*Client, error) {
 	ctx := context.Background()
 
@@ -138,32 +143,138 @@ func NewClient(config *config.Config) (*Client, error) {
 		return nil, util.WrapError(ctx, err, "failed to initialize LLM logger")
 	}
 
-	activeProvider, err := config.GetActiveProvider()
+	// Resolve the default (global) provider
+	defaultProvider, err := config.ResolveProvider("", "")
 	if err != nil {
-		slog.Error("Failed to get active provider configuration", "error", err)
-		return nil, util.WrapError(ctx, err, "failed to get active provider")
+		slog.Error("Failed to resolve default provider", "error", err)
+		return nil, util.WrapError(ctx, err, "failed to resolve default provider")
 	}
 
-	if activeProvider.APIKey == "" {
+	if defaultProvider.APIKey == "" {
 		slog.Error("Cannot create LLM client: API key is empty")
 		return nil, util.WrapError(ctx, fmt.Errorf("API key not found in config"), "API key validation failed")
 	}
 
 	slog.Info("Creating new LLM client",
-		"provider", config.LLM.UseProvider,
-		"model", activeProvider.Model,
-		"api_base_url", activeProvider.APIBaseURL)
+		"model", defaultProvider.Model,
+		"api_base_url", defaultProvider.APIBaseURL)
 
-	engine := NewOpenAIEngine(activeProvider.APIBaseURL, activeProvider.APIKey, activeProvider.Model)
-
-	slog.Info("LLM client created successfully")
-
+	engine := NewOpenAIEngine(defaultProvider.APIBaseURL, defaultProvider.APIKey, defaultProvider.Model)
 	loggingEngine := &LoggingEngine{inner: engine}
 
 	return &Client{
-		Engine: loggingEngine,
-		Config: config,
+		Engine:  loggingEngine,
+		Config:  config,
+		engines: make(map[string]Engine),
 	}, nil
+}
+
+// ResolveProviderName resolves the provider name using the full priority chain.
+// Exported for logging convenience.
+func (c *Client) ResolveProviderName(agentName, toolName string) string {
+	provider, err := c.Config.ResolveProvider(agentName, toolName)
+	if err != nil {
+		return "unknown"
+	}
+	// Find the provider key from the config
+	for name, p := range c.Config.LLM.Providers {
+		if p.Model == provider.Model && p.APIBaseURL == provider.APIBaseURL {
+			return name
+		}
+	}
+	return "unknown"
+}
+
+// getOrCreateEngine returns a cached engine for the given provider, or creates one.
+func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName string) Engine {
+	c.mu.RLock()
+	if eng, ok := c.engines[providerName]; ok {
+		c.mu.RUnlock()
+		return eng
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Double-check after acquiring write lock
+	if eng, ok := c.engines[providerName]; ok {
+		return eng
+	}
+
+	slog.Info("Creating engine for provider", "provider", providerName, "model", provider.Model)
+	engine := NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model)
+	loggingEngine := &LoggingEngine{inner: engine}
+	c.engines[providerName] = loggingEngine
+	return loggingEngine
+}
+
+// GetEngine returns the default (global) engine.
+func (c *Client) GetEngine() Engine {
+	return c.Engine
+}
+
+// GetAgentEngine resolves and returns the engine for a specific agent.
+// Uses the priority chain: agents.<agent> > agents.default > global > legacy.
+func (c *Client) GetAgentEngine(agentName string) Engine {
+	provider, err := c.Config.ResolveProvider(agentName, "")
+	if err != nil {
+		slog.Warn("Failed to resolve agent provider, falling back to default", "agent", agentName, "error", err)
+		return c.Engine
+	}
+
+	providerName := c.resolveProviderName(provider)
+	if providerName == "" {
+		return c.Engine
+	}
+
+	// If resolved provider matches the default engine's provider, reuse default
+	defaultProvider, defaultErr := c.Config.ResolveProvider("", "")
+	if defaultErr == nil && providersEqual(provider, defaultProvider) {
+		return c.Engine
+	}
+
+	return c.getOrCreateEngine(provider, providerName)
+}
+
+// GetToolEngine resolves and returns the engine for a specific tool.
+// Uses the priority chain: tools.<tool> > tools.default > agent > global > legacy.
+func (c *Client) GetToolEngine(toolName string) Engine {
+	provider, err := c.Config.ResolveProvider("", toolName)
+	if err != nil {
+		slog.Warn("Failed to resolve tool provider, falling back to default", "tool", toolName, "error", err)
+		return c.Engine
+	}
+
+	providerName := c.resolveProviderName(provider)
+	if providerName == "" {
+		return c.Engine
+	}
+
+	// If resolved provider matches the default engine's provider, reuse default
+	defaultProvider, defaultErr := c.Config.ResolveProvider("", "")
+	if defaultErr == nil && providersEqual(provider, defaultProvider) {
+		return c.Engine
+	}
+
+	return c.getOrCreateEngine(provider, providerName)
+}
+
+// resolveProviderName finds the provider key in config for a given ProviderConfig.
+func (c *Client) resolveProviderName(provider *config.ProviderConfig) string {
+	for name, p := range c.Config.LLM.Providers {
+		if p.APIBaseURL == provider.APIBaseURL && p.Model == provider.Model {
+			return name
+		}
+	}
+	return ""
+}
+
+// providersEqual checks if two provider configs refer to the same provider.
+func providersEqual(a, b *config.ProviderConfig) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.APIBaseURL == b.APIBaseURL && a.APIKey == b.APIKey && a.Model == b.Model
 }
 
 // StreamDebugHandler prints each stream output text to stdout and logs to LLM log file

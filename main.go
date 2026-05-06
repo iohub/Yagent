@@ -52,8 +52,9 @@ func main() {
 	var taskFilePath string
 	// 解析 --disable-agents 参数
 	var disableAgents string
-	// 解析 --port 参数
-	httpPort := 9800
+	// 解析 --port 参数（显式指定时使用指定端口，否则从 9800 自动查找）
+	httpPort := 0 // 0 表示未显式指定，将自动查找
+	hasExplicitPort := false
 	for i := 2; i < len(os.Args); i++ {
 		arg := os.Args[i]
 		if arg == "--taskfile" && i+1 < len(os.Args) {
@@ -73,6 +74,7 @@ func main() {
 				os.Exit(1)
 			}
 			httpPort = port
+			hasExplicitPort = true
 			i++
 		} else if strings.HasPrefix(arg, "--port=") {
 			port, err := strconv.Atoi(strings.TrimPrefix(arg, "--port="))
@@ -81,6 +83,7 @@ func main() {
 				os.Exit(1)
 			}
 			httpPort = port
+			hasExplicitPort = true
 		}
 	}
 
@@ -217,7 +220,17 @@ func main() {
 		// 创建HTTP服务器
 		server := http.NewServer(codingAssistant)
 
-		// 使用命令行参数指定的端口启动服务器
+		// 未显式指定端口时自动从 9800 查找可用端口
+		if !hasExplicitPort {
+			port, err := findAvailablePort(9800)
+			if err != nil {
+				slog.Error("Failed to find available port for HTTP server", "error", err)
+				os.Exit(1)
+			}
+			httpPort = port
+		}
+		slog.Info("Starting HTTP server", "port", httpPort)
+
 		if err := server.Run(httpPort); err != nil {
 			slog.Error("Failed to start HTTP server", "error", util.WrapError(ctx, err, "main::ServerRun"))
 			os.Exit(1)
