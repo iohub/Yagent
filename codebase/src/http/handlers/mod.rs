@@ -822,7 +822,7 @@ pub(crate) fn setup_watcher(
                 break; // Channel closed
             }
 
-            tracing::info!("File change detected, starting debounce timer (20s)");
+            // tracing::info!("File change detected, starting debounce timer (20s)");
 
             // Debounce logic
             let mut last_change = std::time::Instant::now();
@@ -840,7 +840,6 @@ pub(crate) fn setup_watcher(
                             Some(_) => {
                                 // New event received, reset timer
                                 last_change = std::time::Instant::now();
-                                tracing::info!("Change received during debounce, resetting timer");
                             }
                             None => return, // Channel closed
                         }

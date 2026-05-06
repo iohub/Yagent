@@ -313,7 +313,6 @@ impl EmbeddingService {
             if let Some(hashes) = existing_hashes {
                 if let Some(old_hash) = hashes.get(&file_key) {
                     if old_hash == &hash {
-                        info!("File {} unchanged, skipping", file_path.display());
                         continue;
                     }
                 }
