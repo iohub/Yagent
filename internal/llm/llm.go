@@ -65,6 +65,11 @@ type LoggingEngine struct {
 	inner Engine
 }
 
+// NewLoggingEngine creates a LoggingEngine that wraps the given inner engine
+func NewLoggingEngine(inner Engine) *LoggingEngine {
+	return &LoggingEngine{inner: inner}
+}
+
 func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
 	if msgsJSON, err := json.MarshalIndent(messages, "", "  "); err == nil {
 		LogLLMContent("LLM Input (messages)", string(msgsJSON))

@@ -159,6 +159,7 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)
 	// 构建 compact config
 	var compactCfg *compact.Config
+	var summaryEngine llm.Engine
 	if ca.config != nil {
 		c := &ca.config.Compact
 		compactCfg = compact.ConfigFrom(
@@ -166,16 +167,27 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 			c.Strategy,
 			c.EnableAutoCompact,
 			c.SummarizationModel,
+			c.SummarizationProvider,
 			c.L1Threshold,
 			c.L2Threshold,
 			c.L3Threshold,
 			c.SummarizationTimeout,
 			c.KeepRecentRounds,
 			c.KeepTaskConclusions,
+			c.SummarizationMaxInputTokens,
 		)
+
+		// 为 compact 摘要创建独立的 LLM 引擎（如果配置了 summarization_provider）
+		if c.SummarizationProvider != "" {
+			provider, err := ca.config.GetProvider(c.SummarizationProvider)
+			if err == nil {
+				summaryEngine = llm.NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model)
+				summaryEngine = llm.NewLoggingEngine(summaryEngine)
+			}
+		}
 	}
 
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, conductorMaxSteps, disabledAgents, metaRetryCount, compactCfg)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, conductorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {

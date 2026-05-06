@@ -15,19 +15,27 @@ type Engine struct {
 	tokenizer    Tokenizer
 	priorityCalc *PriorityCalculator
 	ruleComp     *RuleCompressor
+	summarizer   *LLMSummarizer // 新增：LLM摘要器
 }
 
 // NewEngine 创建压缩引擎
-func NewEngine(config *Config) (*Engine, error) {
+func NewEngine(config *Config, summarizationClient SummarizationClient) (*Engine, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid compact config: %w", err)
+	}
+
+	// 创建LLM摘要器（如果提供了客户端）
+	var summarizer *LLMSummarizer
+	if summarizationClient != nil {
+		summarizer = NewLLMSummarizer(summarizationClient, config)
 	}
 
 	return &Engine{
 		config:       config,
 		tokenizer:    GetGlobalTokenizer(),
 		priorityCalc: NewPriorityCalculator(DefaultPriorityWeights),
-		ruleComp:     NewRuleCompressor(config),
+		ruleComp:     NewRuleCompressor(config, summarizer),
+		summarizer:   summarizer,
 	}, nil
 }
 
@@ -140,9 +148,17 @@ func (e *Engine) compressBalanced(
 ) ([]llm.Message, []string) {
 	current := messages
 
-	// L1: 尝试摘要压缩
-	if originalTokens > e.config.L1Threshold {
-		// TODO: 当有SummarizationClient时调用
+	// L1: 尝试LLM摘要压缩
+	if originalTokens > e.config.L1Threshold && e.summarizer != nil {
+		compressed, err := e.ruleComp.L1Compress(context.Background(), current, priorities)
+		if err != nil {
+			stats = append(stats, "L1: Failed - "+err.Error())
+		} else {
+			current = compressed
+			tokens, _ := e.CountTokens(current)
+			stats = append(stats, fmt.Sprintf("L1: LLM summarization applied (%d tokens)", tokens))
+		}
+	} else if originalTokens > e.config.L1Threshold {
 		stats = append(stats, "L1: Skipped (no summarization client)")
 	}
 
@@ -172,8 +188,17 @@ func (e *Engine) compressAggressive(
 ) ([]llm.Message, []string) {
 	current := messages
 
-	// L1: 尝试摘要
-	if originalTokens > e.config.L1Threshold {
+	// L1: 尝试LLM摘要
+	if originalTokens > e.config.L1Threshold && e.summarizer != nil {
+		compressed, err := e.ruleComp.L1Compress(context.Background(), current, priorities)
+		if err != nil {
+			stats = append(stats, "L1: Failed - "+err.Error())
+		} else {
+			current = compressed
+			tokens, _ := e.CountTokens(current)
+			stats = append(stats, fmt.Sprintf("L1: LLM summarization applied (%d tokens)", tokens))
+		}
+	} else if originalTokens > e.config.L1Threshold {
 		stats = append(stats, "L1: Skipped (no summarization client)")
 	}
 

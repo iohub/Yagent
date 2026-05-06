@@ -66,6 +66,7 @@ type ConductorAgent struct {
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
 	compactEngine  *compact.Engine           // 上下文压缩引擎
 	compactConfig  *compact.Config           // 压缩配置
+	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -97,7 +98,7 @@ func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
 	return result
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -331,6 +332,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		customAgents:   make(map[string]*CustomAgent),
 		compactEngine:  nil, // 将在 Run 方法中根据配置初始化
 		compactConfig:  compactCfg,
+		summaryEngine:  summaryEngine,
 	}
 	return self
 }
@@ -627,6 +629,20 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		}
 	}
 
+	// ═══════ 初始化上下文压缩引擎 ═══════
+	if a.compactEngine == nil && a.compactConfig != nil && a.compactConfig.EnableAutoCompact {
+		summaryClient := a.createSummaryClient()
+		engine, err := compact.NewEngine(a.compactConfig, summaryClient)
+		if err != nil {
+			slog.Warn("Failed to create compact engine", "error", err)
+		} else {
+			a.compactEngine = engine
+			slog.Info("Context compact engine initialized",
+				"strategy", a.compactConfig.Strategy.String(),
+				"max_tokens", a.compactConfig.MaxContextTokens)
+		}
+	}
+
 	var messages []llm.Message
 
 	// Always start with System Prompt (with any registered custom agents appended)
@@ -804,4 +820,77 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 	}
 
 	return "", fmt.Errorf("ConductorAgent exceeded max steps")
+}
+
+// createSummaryClient 创建用于上下文摘要的轻量LLM客户端
+// 如果配置了独立的 summaryEngine 则优先使用，否则复用主引擎
+func (a *ConductorAgent) createSummaryClient() compact.SummarizationClient {
+	engine := a.LLM
+	if a.summaryEngine != nil {
+		engine = a.summaryEngine
+	}
+	return &summaryClientAdapter{
+		LLM:         engine,
+		Model:       a.compactConfig.SummarizationModel,
+		Temperature: 0.1, // 摘要使用低温，确保一致性
+		MaxTokens:   2000, // 摘要输出限制
+	}
+}
+
+// summaryClientAdapter 将 llm.Engine 适配为 compact.SummarizationClient
+type summaryClientAdapter struct {
+	LLM         llm.Engine
+	Model       string
+	Temperature float64
+	MaxTokens   int
+}
+
+func (s *summaryClientAdapter) GenerateSummary(ctx context.Context, messages []llm.Message) (string, error) {
+	// 构造摘要请求：System prompt + 待摘要消息
+	allMessages := append([]llm.Message{
+		{
+			Role:    llm.RoleSystem,
+			Content: getSummarizationPrompt(),
+		},
+	}, messages...)
+
+	opts := &llm.CallOptions{
+		MaxTokens:   s.MaxTokens,
+		Temperature: s.Temperature,
+	}
+	resp, err := s.LLM.GenerateContent(ctx, allMessages, nil, opts)
+	if err != nil {
+		return "", fmt.Errorf("summarization failed: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("summarization returned empty response")
+	}
+	return resp.Choices[0].Content, nil
+}
+
+// getSummarizationPrompt 返回默认摘要提示词（英文版本）
+func getSummarizationPrompt() string {
+	return `# Role
+You are a **Conversation Summarizer** for an AI-powered coding assistant system. Your task is to compress conversation history without losing any critical context needed for ongoing development work.
+
+# Task
+Extract the following from the provided conversation fragment:
+
+1. **Task Progress**: What tasks have been completed? What is currently in progress?
+2. **Key Decisions**: What important architectural or design decisions were made? Why?
+3. **Code Changes**: Which files were modified? What are the key code patterns introduced?
+4. **Errors & Fixes**: What problems were encountered? How were they resolved?
+5. **Critical Discoveries**: Important facts about the codebase — file structure, dependencies, tech stack, conventions, etc.
+
+# Rules
+- **Preserve Identifiers**: Retain ALL specific identifiers — file names, function names, class names, variable names, paths.
+- **Preserve Error Details**: Keep concrete error messages and their corresponding fix strategies verbatim.
+- **Ignore Redundancy**: Skip duplicated tool output content; keep only the meaningful results.
+- **Be Complete**: Do NOT omit any context that could be useful for continuing the work.
+- **Be Concise**: Summarize efficiently; prefer bullet points over verbose prose.
+
+# Output Format
+- Use clear, structured Markdown.
+- Output in **English**.
+- Organize extracted information under the 5 categories listed above.`
 }

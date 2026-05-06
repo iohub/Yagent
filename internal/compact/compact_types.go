@@ -5,6 +5,13 @@ import (
 	"codeactor/internal/llm"
 )
 
+// SummarizationClient 摘要LLM客户端接口（最小化，只用于摘要）
+// 用于对低优先级消息进行智能摘要压缩
+type SummarizationClient interface {
+	// GenerateSummary 生成消息摘要。输入一批消息，输出结构化摘要文本。
+	GenerateSummary(ctx context.Context, messages []llm.Message) (string, error)
+}
+
 // ContextCompressor 上下文压缩器接口
 type ContextCompressor interface {
 	// Compress 压缩上下文，返回压缩后的messages和统计信息
