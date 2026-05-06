@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"codeactor/internal/tools"
@@ -28,7 +29,7 @@ type CodingAgent struct {
 	maxSteps  int
 }
 
-func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *CodingAgent {
+func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, implPlanAgent *ImplPlanAgent) *CodingAgent {
 	var toolDefs []ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal coding tools", "error", err)
@@ -69,8 +70,6 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 			}
 		case "micro_agent":
 			fn = globalCtx.MicroAgentTool.Execute
-		case "impl_plan":
-			fn = globalCtx.ImplPlanTool.Execute
 		case "agent_exit":
 			fn = globalCtx.FlowOps.ExecuteAgentExit
 		case "ask_user_for_help":
@@ -83,6 +82,27 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
 		adapters = append(adapters, adapter)
 	}
+
+	// Add delegate_impl_plan tool to delegate design tasks to ImplPlanAgent
+	delegateDesign := tools.NewAdapter("delegate_impl_plan",
+		"Delegate to the Implementation Plan Agent to analyze a coding task and generate a structured implementation plan. The agent analyzes codebase context and produces a detailed plan document covering architecture design, module breakdown, interface definitions, data flow, implementation order, error handling, and testing strategy.",
+		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			task, ok := params["task"].(string)
+			if !ok {
+				return nil, fmt.Errorf("task parameter required")
+			}
+			contextInfo, _ := params["context"].(string) // optional
+			return implPlanAgent.Run(ctx, task, contextInfo)
+		}).WithSchema(map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"task":    map[string]interface{}{"type": "string", "description": "The coding task description that needs a design plan"},
+			"context": map[string]interface{}{"type": "string", "description": "Additional context information, such as repository analysis results, relevant code background, etc."},
+		},
+		"required": []string{"task"},
+	})
+	adapters = append(adapters, delegateDesign)
+
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 
 	return &CodingAgent{
@@ -102,11 +122,6 @@ func (a *CodingAgent) Name() string {
 
 func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(codingPrompt)
-
-	// Inject current implementation plan if one exists
-	if plan := a.GlobalCtx.ImplPlanTool.GetPlan(); plan != "" {
-		systemPrompt += "\n\n### Current Implementation Plan\n" + plan + "\n"
-	}
 
 	cfg := ExecutorConfig{
 		SystemPrompt: systemPrompt,

@@ -485,16 +485,16 @@ func renderDiffContent(diffText string, maxWidth int) string {
 	addStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	delStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
 	hunkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
 	ctxStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	lines := strings.Split(diffText, "\n")
 	var styledLines []string
 	for _, line := range lines {
+		if strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ") {
+			continue
+		}
 		var styled string
 		switch {
-		case strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ "):
-			styled = headerStyle.Render(truncateLine(line, maxWidth))
 		case strings.HasPrefix(line, "@@"):
 			styled = hunkStyle.Render(truncateLine(line, maxWidth))
 		case strings.HasPrefix(line, "+"):

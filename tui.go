@@ -56,7 +56,6 @@ var (
 	logSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 
 	// Diff rendering styles
-	diffHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
 	diffHunkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	diffAddStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	diffDelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
@@ -203,6 +202,10 @@ type model struct {
 	anim        *tui.Anim
 	activeAnim  bool // true when there are running tool entries
 	animFrame   int  // frame counter for throttled viewport rebuilds
+
+	// Task history cycling in edit mode (up/down arrows when input is empty)
+	taskHistoryItems []datamanager.TaskHistoryItem
+	taskHistoryIdx   int // -1 = not activated
 }
 
 func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
@@ -280,6 +283,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 		useDarkStyle:     useDarkStyle,
 		toolCallEntries:  make(map[string]*tui.ToolEntry),
 			anim:             tui.NewAnim(10),
+		taskHistoryIdx:   -1,
 	}
 }
 
@@ -353,6 +357,63 @@ func (m *model) searchInLog(query string) {
 		content:   fmt.Sprintf("Search '/%s': %d matches", query, found),
 	})
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+}
+
+// loadTaskHistoryItems loads the task history list (cached) for quick cycling
+// in edit mode. Called lazily on first up/down press.
+func (m *model) loadTaskHistoryItems() {
+	if len(m.taskHistoryItems) > 0 {
+		return // already loaded
+	}
+	dm, err := datamanager.NewDataManager()
+	if err != nil {
+		return
+	}
+	items, err := dm.ListTaskHistory(50)
+	if err != nil {
+		return
+	}
+	m.taskHistoryItems = items
+}
+
+// handleTaskHistoryCycle handles up/down arrow key presses in edit mode when
+// the input is empty. It cycles through the task history list and loads the
+// selected task description into the input field.
+func (m *model) handleTaskHistoryCycle(direction string) {
+	m.loadTaskHistoryItems()
+	if len(m.taskHistoryItems) == 0 {
+		return
+	}
+
+	n := len(m.taskHistoryItems)
+
+	switch direction {
+	case "up":
+		if m.taskHistoryIdx < 0 {
+			// First press: start from the newest (index 0)
+			m.taskHistoryIdx = 0
+		} else {
+			m.taskHistoryIdx++
+			if m.taskHistoryIdx >= n {
+				m.taskHistoryIdx = 0 // wrap around
+			}
+		}
+	case "down":
+		if m.taskHistoryIdx < 0 {
+			// First press: start from the newest (index 0)
+			m.taskHistoryIdx = 0
+		} else {
+			m.taskHistoryIdx--
+			if m.taskHistoryIdx < 0 {
+				m.taskHistoryIdx = n - 1 // wrap around
+			}
+		}
+	}
+
+	// Load the selected task description
+	if m.taskHistoryIdx >= 0 && m.taskHistoryIdx < n {
+		m.input.SetValue(m.taskHistoryItems[m.taskHistoryIdx].Title)
+	}
 }
 
 func (m *model) openHistoryPanel() {
@@ -672,7 +733,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Help dialog is open: let action keys (i/esc/enter/?/ctrl+c) pass through,
 			// dismiss on any other key without processing it.
-			if m.showHelpDialog && key != "i" && key != "esc" && key != "enter" && key != "?" && key != "ctrl+c" {
+			if m.showHelpDialog && key != "i" && key != "ctrl+e" && key != "enter" && key != "?" && key != "ctrl+c" {
 				m.showHelpDialog = false
 				return m, nil
 			}
@@ -701,11 +762,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						content:   "Task cancelled by user",
 					})
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-				} else {
-					// Idle: switch to edit mode
-					m.commandMode = false
-					m.commandBuffer = ""
-					m.lastKey = ""
 				}
 				return m, nil
 
@@ -832,7 +888,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "esc":
-			// Enter command mode (cancel task if running)
+			// Cancel task if running (no mode switch)
 			if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
 				m.currentTask.CancelFunc()
 				m.logEntries = append(m.logEntries, logEntry{
@@ -842,6 +898,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			}
+			return m, nil
+
+		case "ctrl+e":
+			// Enter command mode
+			m.taskHistoryIdx = -1
 			m.commandMode = true
 			m.commandBuffer = ""
 			return m, nil
@@ -858,6 +919,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errMsg = errStr
 				return m, nil
 			}
+			m.taskHistoryIdx = -1
 			if m.currentTask != nil {
 				return m, m.submitFollowUp(taskDesc)
 			}
@@ -879,7 +941,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.PageUp()
 			return m, nil
 
+		case "up", "down":
+			// Cycle through task history when input is empty
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.handleTaskHistoryCycle(msg.String())
+				return m, nil
+			}
+			// Non-empty: pass to viewport for scrolling
+			var vpCmd tea.Cmd
+			m.viewport, vpCmd = m.viewport.Update(msg)
+			return m, vpCmd
+
 		default:
+			// Reset history cursor when user starts typing
+			if len(msg.Runes) > 0 {
+				m.taskHistoryIdx = -1
+			}
 			// Pass to viewport for scrolling (up/down/pgup/pgdown)
 			var vpCmd tea.Cmd
 			m.viewport, vpCmd = m.viewport.Update(msg)

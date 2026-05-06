@@ -134,6 +134,7 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	chatEngine := engine
 	metaEngine := engine
 	devopsEngine := engine
+	implPlanEngine := engine
 	if ca.client != nil {
 		conductorEngine = ca.client.GetAgentEngine("conductor")
 		repoEngine = ca.client.GetAgentEngine("repo")
@@ -141,10 +142,18 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		chatEngine = ca.client.GetAgentEngine("chat")
 		metaEngine = ca.client.GetAgentEngine("meta")
 		devopsEngine = ca.client.GetAgentEngine("devops")
+		implPlanEngine = ca.client.GetAgentEngine("impl_plan")
 	}
 
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
-	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps)
+
+	implPlanMaxSteps := 15
+	if ca.config != nil && ca.config.Agent.ImplPlanMaxSteps > 0 {
+		implPlanMaxSteps = ca.config.Agent.ImplPlanMaxSteps
+	}
+	implPlanAgent := agents.NewImplPlanAgent(ca.globalCtx, implPlanEngine, publisher, implPlanMaxSteps)
+
+	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, implPlanAgent)
 	chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps)
 	metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine)
 	devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)

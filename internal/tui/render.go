@@ -221,6 +221,9 @@ func RenderDiffContent(diffText string, maxWidth int) string {
 
 	var styledLines []string
 	for _, line := range visibleLines {
+		if isDiffHeaderLine(line) {
+			continue
+		}
 		styled := styleDiffLine(line, maxWidth)
 		styled = Body.Render(styled)
 		styledLines = append(styledLines, styled)
@@ -334,6 +337,12 @@ func isJSON(s string) bool {
 		return json.Unmarshal([]byte(s), &v) == nil
 	}
 	return false
+}
+
+// isDiffHeaderLine returns true if the line is a diff file path header ("--- a/" or "+++ b/").
+func isDiffHeaderLine(line string) bool {
+	return strings.HasPrefix(line, "--- a/") || strings.HasPrefix(line, "+++ b/") ||
+		strings.HasPrefix(line, "--- /") || strings.HasPrefix(line, "+++ /")
 }
 
 func isUnifiedDiff(s string) bool {

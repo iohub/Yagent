@@ -86,9 +86,9 @@ var langMap = map[Language]translations{
 		HistoryConfirmDelete:      "确认删除此会话？(y = 确认, 其他键 = 取消)",
 		ConfirmDialogHelp: "←/→ 选择  enter 确认  a 允许  s 全部允许  d/esc 拒绝",
 		CommandModePrompt:   "命令",
-		CommandModeTips:     "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  i:编辑  esc:取消任务  ZZ:退出",
+		CommandModeTips:     "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  i:编辑  ctrl+e:编辑模式  ZZ:退出",
 		CommandModeIdleTips: "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  ::命令  /:搜索  ?:帮助  i:编辑  ZZ:退出",
-		EditModeTips:        "ctrl+s:提交  esc:命令模式  ctrl+h:历史  ctrl+l:语言  ctrl+c:退出",
+		EditModeTips:        "ctrl+s:提交  ctrl+e:命令模式  ctrl+h:历史  ctrl+l:语言  ctrl+c:退出",
 		HelpDialogTitle: "Vim 快捷键帮助",
 		HelpDialogContent: "  导航:\n" +
 			"    j / ↓          向下滚动一行\n" +
@@ -101,7 +101,7 @@ var langMap = map[Language]translations{
 			"    G               跳到末尾\n" +
 			"  模式:\n" +
 			"    i               进入编辑模式\n" +
-			"    esc             退出命令模式\n" +
+			"    ctrl+e          进入命令模式\n" +
 			"  命令行:\n" +
 			"    :q / ZZ         退出程序\n" +
 			"    :help           显示命令帮助\n" +
@@ -144,9 +144,9 @@ var langMap = map[Language]translations{
 		HistoryConfirmDelete:      "Delete this conversation? (y = confirm, any other key = cancel)",
 		ConfirmDialogHelp: "←/→ choose  enter confirm  a allow  s all  d/esc deny",
 		CommandModePrompt:   "COMMAND",
-		CommandModeTips:     "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  i:edit  esc:cancel  ZZ:quit",
+		CommandModeTips:     "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  i:edit  ctrl+e:edit  ZZ:quit",
 		CommandModeIdleTips: "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  ::cmd  /:search  ?:help  i:edit  ZZ:quit",
-		EditModeTips:        "ctrl+s:submit  esc:cmd  ctrl+h:history  ctrl+l:lang  ctrl+c:quit",
+		EditModeTips:        "ctrl+s:submit  ctrl+e:cmd  ctrl+h:history  ctrl+l:lang  ctrl+c:quit",
 		HelpDialogTitle: "Vim Keybindings Help",
 		HelpDialogContent: "  Navigation:\n" +
 			"    j / ↓          scroll down one line\n" +
@@ -159,7 +159,7 @@ var langMap = map[Language]translations{
 			"    G              go to bottom\n" +
 			"  Mode:\n" +
 			"    i              enter edit mode\n" +
-			"    esc            exit command mode\n" +
+			"    ctrl+e         enter command mode\n" +
 			"  Command line:\n" +
 			"    :q / ZZ        quit\n" +
 			"    :help          show command help\n" +

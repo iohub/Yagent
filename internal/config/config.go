@@ -35,6 +35,7 @@ type AgentConfig struct {
 	ChatMaxSteps      int    `toml:"chat_max_steps"`
 	RepoMaxSteps      int    `toml:"repo_max_steps"`
 	DevOpsMaxSteps    int    `toml:"devops_max_steps"`
+	ImplPlanMaxSteps  int    `toml:"impl_plan_max_steps"`
 	MetaMaxSteps      int    `toml:"meta_max_steps"`
 	MetaRetryCount    int    `toml:"meta_retry_count"`
 	SpeakLang         string `toml:"lang"`
@@ -63,6 +64,7 @@ type AgentsLLMConfig struct {
 	Chat        *AgentLLMOverride         `toml:"chat,omitempty"`
 	Meta        *AgentLLMOverride         `toml:"meta,omitempty"`
 	DevOps      *AgentLLMOverride         `toml:"devops,omitempty"`
+	ImplPlan    *AgentLLMOverride         `toml:"impl_plan,omitempty"`
 }
 
 // ToolLLMOverride selects a provider for a specific tool.
@@ -147,6 +149,8 @@ func (c *Config) getAgentOverride(agentName string) *AgentLLMOverride {
 		return c.Agents.LLM.Meta
 	case "devops-agent", "devops":
 		return c.Agents.LLM.DevOps
+	case "impl_plan-agent", "impl_plan":
+		return c.Agents.LLM.ImplPlan
 	default:
 		return nil
 	}
