@@ -56,7 +56,6 @@ var (
 	logSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 
 	// Diff rendering styles
-	diffHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
 	diffHunkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	diffAddStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	diffDelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
