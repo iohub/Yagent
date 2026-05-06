@@ -89,6 +89,7 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	repoMaxSteps := 20
 	codingMaxSteps := 30
 	chatMaxSteps := 10
+	devopsMaxSteps := 15
 	conductorMaxSteps := 20
 
 	if ca.config != nil {
@@ -100,6 +101,9 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		}
 		if ca.config.Agent.ChatMaxSteps > 0 {
 			chatMaxSteps = ca.config.Agent.ChatMaxSteps
+		}
+		if ca.config.Agent.DevOpsMaxSteps > 0 {
+			devopsMaxSteps = ca.config.Agent.DevOpsMaxSteps
 		}
 		if ca.config.Agent.ConductorMaxSteps > 0 {
 			conductorMaxSteps = ca.config.Agent.ConductorMaxSteps
@@ -117,7 +121,8 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, engine, codingMaxSteps)
 	chatAgent := agents.NewChatAgent(ca.globalCtx, engine, chatMaxSteps)
 	metaAgent := agents.NewMetaAgent(ca.globalCtx, engine)
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, engine, repoAgent, codingAgent, chatAgent, metaAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
+	devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, engine, devopsMaxSteps)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, engine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
@@ -188,7 +193,7 @@ func (ca *CodingAssistant) ProcessConversation(req *TaskRequest) (string, error)
 }
 
 // parseDisabledAgents converts a comma-separated string of agent names
-// into a map[string]bool for O(1) lookup. Valid agent names: repo, coding, chat, meta.
+// into a map[string]bool for O(1) lookup. Valid agent names: repo, coding, chat, meta, devops.
 func parseDisabledAgents(s string) map[string]bool {
 	result := make(map[string]bool)
 	if s == "" {

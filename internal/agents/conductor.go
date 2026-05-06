@@ -42,6 +42,7 @@ type ConductorAgent struct {
 	CodingAgent    *CodingAgent
 	ChatAgent      *ChatAgent
 	MetaAgent      *MetaAgent
+	DevOpsAgent    *DevOpsAgent
 	GlobalCtx      *globalctx.GlobalCtx
 	Adapters       []*tools.Adapter
 	maxSteps       int
@@ -50,7 +51,7 @@ type ConductorAgent struct {
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -94,6 +95,20 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		"type": "object",
 		"properties": map[string]interface{}{
 			"task": map[string]interface{}{"type": "string", "description": "The message or question for Chat-Agent"},
+		},
+		"required": []string{"task"},
+	})
+
+	delegateDevOps := tools.NewAdapter("delegate_devops", "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		task, ok := params["task"].(string)
+		if !ok {
+			return nil, fmt.Errorf("task parameter required")
+		}
+		return devops.Run(ctx, task)
+	}).WithSchema(map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"task": map[string]interface{}{"type": "string", "description": "The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."},
 		},
 		"required": []string{"task"},
 	})
@@ -247,6 +262,9 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	if !disabledAgents["meta"] {
 		delegateAdapters = append(delegateAdapters, delegateMeta)
 	}
+	if !disabledAgents["devops"] {
+		delegateAdapters = append(delegateAdapters, delegateDevOps)
+	}
 
 	// Set workspace guard on all adapters (delegate adapters are not dangerous tools)
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
@@ -258,6 +276,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		CodingAgent:    coding,
 		ChatAgent:      chat,
 		MetaAgent:      meta,
+		DevOpsAgent:    devops,
 		GlobalCtx:      globalCtx,
 		Adapters:       append(adapters, delegateAdapters...),
 		maxSteps:       maxSteps,
