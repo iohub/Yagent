@@ -675,6 +675,14 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		toolDefs[i] = ad.ToToolDef()
 	}
 
+	// Publish model info so the TUI can display it in the status bar.
+	if a.Publisher != nil {
+		a.Publisher.Publish("model_info", map[string]interface{}{
+			"model": a.LLM.Model(),
+			"agent": a.Name(),
+		}, a.Name())
+	}
+
 	for i := 0; i < a.maxSteps; i++ {
 		// ═══════════════════════════════════════════════════════════
 		// CONTEXT COMPACT GATEWAY

@@ -95,6 +95,11 @@ func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message,
 	return resp, err
 }
 
+// Model delegates to the inner engine.
+func (l *LoggingEngine) Model() string {
+	return l.inner.Model()
+}
+
 // Client represents an LLM client with support for per-agent and per-tool engines.
 // Engines are lazily created and cached by provider name.
 type Client struct {

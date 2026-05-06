@@ -30,6 +30,11 @@ func NewOpenAIEngine(baseURL, apiKey, model string) *OpenAIEngine {
 	return &OpenAIEngine{client: &client, model: model}
 }
 
+// Model returns the model name this engine is configured to use.
+func (e *OpenAIEngine) Model() string {
+	return e.model
+}
+
 // GenerateContent implements Engine.
 func (e *OpenAIEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
 	params := e.buildParams(messages, tools, opts)

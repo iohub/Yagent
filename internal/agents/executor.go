@@ -31,6 +31,14 @@ type ExecutorConfig struct {
 // RunAgentLoop runs the standard LLM-tool interaction loop.
 // It returns the final text response from the LLM.
 func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
+	// Publish model info so the TUI can display it in the status bar.
+	if cfg.Publisher != nil {
+		cfg.Publisher.Publish("model_info", map[string]interface{}{
+			"model": cfg.LLM.Model(),
+			"agent": cfg.AgentName,
+		}, cfg.AgentName)
+	}
+
 	systemRole := llm.RoleSystem
 	if cfg.SystemAsHuman {
 		systemRole = llm.RoleUser

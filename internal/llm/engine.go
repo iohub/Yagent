@@ -76,4 +76,7 @@ type StreamHandler func(ctx context.Context, chunk []byte) error
 type Engine interface {
 	// GenerateContent sends messages and tools to the LLM and returns the response.
 	GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error)
+
+	// Model returns the model name this engine is configured to use.
+	Model() string
 }
