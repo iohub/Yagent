@@ -2,15 +2,15 @@
 
 An AI-powered autonomous coding assistant built with a **Hub-and-Spoke multi-agent architecture** in Go, backed by a Rust-based code analysis engine.
 
-CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Analyst, Coding-Engineer, Chat-Assistant, and Meta-Agent — to autonomously analyze, plan, and execute complex software engineering tasks with self-correction capabilities.
+CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Analyst, Coding-Engineer, Chat-Assistant, DevOps-Operator, and Meta-Agent — to autonomously analyze, plan, and execute complex software engineering tasks with self-correction capabilities.
 
 ## Features
 
 ### Multi-Agent System
-- **Hub-and-Spoke Architecture** — Central Conductor delegates tasks to specialized sub-agents (Repo analysis, Code editing, General chat)
+- **Hub-and-Spoke Architecture** — Central Conductor delegates tasks to specialized sub-agents (Repo analysis, Code editing, General chat, DevOps operations)
 - **Meta-Agent** — Autonomous agent designer that creates custom sub-agents at runtime for tasks beyond built-in agents' capabilities
 - **Self-Correction** — `thinking` tool enables agents to analyze errors and recover without blind retries
-- **Agent Disable** — Conditionally exclude sub-agents at startup via `--disable-agents=repo,coding,chat,meta`
+- **Agent Disable** — Conditionally exclude sub-agents at startup via `--disable-agents=repo,coding,chat,meta,devops`
 - **ImplPlan Tool** — Stateful implementation plan document for complex multi-step coding tasks
 
 ### Rich Tool System (17 tools)
@@ -91,6 +91,7 @@ enable_streaming = true
 conductor_max_steps = 30
 coding_max_steps = 50
 repo_max_steps = 30
+devops_max_steps = 15
 meta_max_steps = 30
 meta_retry_count = 5
 lang = "Chinese"
@@ -150,10 +151,11 @@ Server defaults to `localhost:9080`. Override via `--host`/`--port` or `CODECACT
 
 | Agent | Tools | Count |
 |-------|-------|-------|
-| Conductor | `delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_meta`, `finish`, `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree` | 9 |
+| Conductor | `delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_devops`, `delegate_meta`, `finish`, `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree` | 10 |
 | CodingAgent | All 17 tools (file ops, search, shell, thinking, impl_plan, micro_agent) | 17 |
 | RepoAgent | `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree`, `semantic_search`, `query_code_skeleton`, `query_code_snippet` | 7 |
-| ChatAgent | None (pure LLM conversation) | 0 |
+| ChatAgent | `micro_agent`, `thinking`, `finish` | 3 |
+| DevOpsAgent | `run_bash`, `read_file`, `list_dir`, `print_dir_tree`, `search_by_regex`, `thinking`, `micro_agent`, `finish` | 8 |
 
 [Full architecture documentation →](docs/ARCHITECTURE.md)
 
@@ -183,6 +185,39 @@ Disable Meta-Agent via startup flag:
 
 ```bash
 ./codeactor tui --disable-agents=meta
+```
+
+## DevOps-Agent
+
+The **DevOps-Agent** is the operations and infrastructure specialist — it handles all non-coding operational tasks by executing shell commands, inspecting the file system, and analyzing command output. When the Conductor encounters a task involving system administration, log inspection, process management, or ad-hoc shell commands, it delegates to the DevOps-Agent via `delegate_devops`.
+
+### Capabilities
+
+- **Shell Command Execution** (`run_bash`) — Run any bash command with foreground/background support, danger detection, and workspace boundary checks
+- **File System Inspection** — `read_file`, `list_dir`, `print_dir_tree`, `search_by_regex` for browsing logs, configs, and directories
+- **Self-Correction** — `thinking` tool for analyzing command failures and adjusting approach before retrying
+- **Isolated Analysis** — `micro_agent` for deep reasoning on command output or generating structured reports
+
+### Example use cases
+
+- Check disk usage, memory, and system resources
+- Find all log files modified in the last 24 hours
+- Restart services or check process status
+- Inspect configuration files
+- Run system diagnostics and generate reports
+- Execute ad-hoc shell pipelines for data processing
+
+### Configuration
+
+```toml
+[agent]
+devops_max_steps = 15    # Max LLM steps for DevOps-Agent (default: 15)
+```
+
+Disable DevOps-Agent via startup flag:
+
+```bash
+./codeactor tui --disable-agents=devops
 ```
 
 ## Codebase Analysis Engine

@@ -2,15 +2,15 @@
 
 基于 Go 语言开发的 **Hub-and-Spoke（中枢-辐条）多智能体架构** AI 自主编程助手，后端由 Rust 代码分析引擎支撑。
 
-CodeActor Agent 协调多个专用智能体——指挥家（Conductor）、仓库分析员（Repo-Analyst）、编码工程师（Coding-Engineer）、对话助手（Chat-Assistant）和元代理（Meta-Agent）——自主完成复杂的软件工程任务，具备自我纠错能力。
+CodeActor Agent 协调多个专用智能体——指挥家（Conductor）、仓库分析员（Repo-Analyst）、编码工程师（Coding-Engineer）、对话助手（Chat-Assistant）、运维操作员（DevOps-Operator）和元代理（Meta-Agent）——自主完成复杂的软件工程任务，具备自我纠错能力。
 
 ## 特性
 
 ### 多智能体系统
-- **中枢-辐条架构** — 中央 Conductor 将任务委派给专用子智能体（仓库分析、代码编辑、通用对话）
+- **中枢-辐条架构** — 中央 Conductor 将任务委派给专用子智能体（仓库分析、代码编辑、通用对话、运维操作）
 - **元代理（Meta-Agent）** — 自主设计代理，在运行时为超出内置 Agent 能力的任务动态创建自定义子智能体
 - **自我修正** — `thinking` 工具使 Agent 能够在出错时分析原因并恢复，避免盲目重试
-- **Agent 禁用** — 通过 `--disable-agents=repo,coding,chat,meta` 在启动时有条件地排除子智能体
+- **Agent 禁用** — 通过 `--disable-agents=repo,coding,chat,meta,devops` 在启动时有条件地排除子智能体
 - **ImplPlan 工具** — 状态化实现计划文档，用于复杂多步骤编码任务的分步规划
 
 ### 丰富工具系统（17 个工具）
@@ -90,6 +90,7 @@ enable_streaming = true
 conductor_max_steps = 30
 coding_max_steps = 50
 repo_max_steps = 30
+devops_max_steps = 15
 meta_max_steps = 30
 meta_retry_count = 5
 lang = "Chinese"
@@ -149,10 +150,11 @@ node index.js history                                  # 列出最近任务
 
 | Agent | 工具 | 数量 |
 |-------|-------|-------|
-| Conductor | `delegate_repo`、`delegate_coding`、`delegate_chat`、`delegate_meta`、`finish`、`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree` | 9 |
+| Conductor | `delegate_repo`、`delegate_coding`、`delegate_chat`、`delegate_devops`、`delegate_meta`、`finish`、`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree` | 10 |
 | CodingAgent | 全部 17 个工具（文件、搜索、Shell、thinking、impl_plan、micro_agent） | 17 |
 | RepoAgent | `read_file`、`search_by_regex`、`list_dir`、`print_dir_tree`、`semantic_search`、`query_code_skeleton`、`query_code_snippet` | 7 |
-| ChatAgent | 无（纯 LLM 对话） | 0 |
+| ChatAgent | `micro_agent`、`thinking`、`finish` | 3 |
+| DevOpsAgent | `run_bash`、`read_file`、`list_dir`、`print_dir_tree`、`search_by_regex`、`thinking`、`micro_agent`、`finish` | 8 |
 
 [完整架构文档 →](docs/ARCHITECTURE.md)
 
@@ -182,6 +184,39 @@ meta_retry_count = 5   # JSON 解析失败重试次数（默认 5）
 
 ```bash
 ./codeactor tui --disable-agents=meta
+```
+
+## DevOps-Agent（运维代理）
+
+**DevOps-Agent** 是运维和基础设施专家——通过执行 Shell 命令、检查文件系统和分析命令输出来处理所有非编码的运维任务。当 Conductor 遇到系统管理、日志检查、进程管理或 ad-hoc shell 命令类任务时，会通过 `delegate_devops` 委派给 DevOps-Agent。
+
+### 核心能力
+
+- **Shell 命令执行** (`run_bash`) — 运行任意 bash 命令，支持前台/后台运行，含危险检测和工作空间边界检查
+- **文件系统检查** — `read_file`、`list_dir`、`print_dir_tree`、`search_by_regex` 用于浏览日志、配置和目录
+- **自我修正** — 使用 `thinking` 工具分析命令失败原因，调整策略后重试
+- **独立分析** — 使用 `micro_agent` 对命令输出进行深度推理或生成结构化报告
+
+### 示例用例
+
+- 检查磁盘使用率、内存和系统资源
+- 查找最近 24 小时内修改的所有日志文件
+- 重启服务或检查进程状态
+- 检查配置文件
+- 运行系统诊断并生成报告
+- 执行 ad-hoc shell 管道进行数据处理
+
+### 配置
+
+```toml
+[agent]
+devops_max_steps = 15    # DevOps-Agent 最大 LLM 步数（默认 15）
+```
+
+通过启动参数禁用 DevOps-Agent：
+
+```bash
+./codeactor tui --disable-agents=devops
 ```
 
 ## Codebase 分析引擎
