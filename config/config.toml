@@ -1,11 +1,40 @@
-# HTTP Server Configuration
-[http]
-server_port = 9080
-codebase_port = 12800
+# ── 三级LLM配置（优先级: tools.llm > agents.llm > global.llm > llm）──
 
-# LLM Configuration
+# 全局默认LLM提供商（优先级高于 [llm] 旧配置）
+[global.llm]
+# use_provider = "aliyun"  # 可选，不设置则回退到 [llm].use_provider
+
+# Agent级LLM配置：可为所有agent设置默认值，也可按agent名单独指定
+[agents.llm]
+# use_provider = "openrouter"  # 所有agent的默认提供商（可选）
+
+# 按agent名指定（优先级高于 agents.llm.use_provider）
+# [agents.llm.conductor]
+# use_provider = "aliyun"
+# [agents.llm.coding]
+# use_provider = "deepseek"
+# [agents.llm.repo]
+# use_provider = "siliconflow"
+# [agents.llm.chat]
+# use_provider = "xiaomi"
+# [agents.llm.meta]
+# use_provider = "openrouter"
+# [agents.llm.devops]
+# use_provider = "local"
+
+# Tool级LLM配置：可为需要LLM调用的tool指定专用提供商
+[tools.llm]
+# use_provider = "siliconflow"  # 所有tool的默认提供商（可选）
+
+# 按tool名指定（优先级高于 tools.llm.use_provider）
+# [tools.llm.micro_agent]
+# use_provider = "local"
+# [tools.llm.thinking]
+# use_provider = "xiaomi"
+
+# ── LLM提供商定义（所有层级共用）──
 [llm]
-# 选择当前使用的提供商
+# 选择当前使用的提供商（作为最终回退）
 # use_provider = "openrouter"
 use_provider = "aliyun"
 

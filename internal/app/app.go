@@ -19,7 +19,8 @@ import (
 
 // CodingAssistant is the main entry point for the agent system.
 type CodingAssistant struct {
-	engine               llm.Engine
+	engine               llm.Engine      // default engine (backward-compatible)
+	client               *llm.Client     // LLM client for per-agent/tool engine resolution
 	config               *config.Config
 	conductor            *agents.ConductorAgent
 	dispatcher           *messaging.MessageDispatcher
@@ -38,12 +39,14 @@ func NewCodingAssistant(client *llm.Client) (*CodingAssistant, error) {
 		userResponseChannels: make(map[string]chan string),
 		logger:               slog.Default().With("component", "coding_assistant"),
 		engine:               client.Engine,
+		client:               client,
 		config:               client.Config,
 	}
 	return ca, nil
 }
 
 // Init initializes the assistant with Engine and creates agents.
+// Uses per-agent and per-tool engine resolution from the LLM client.
 func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	ca.engine = engine
 
@@ -51,6 +54,12 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	publisher := messaging.NewMessagePublisher(ca.dispatcher)
 
 	userConfirmMgr := tools.NewUserConfirmManager()
+
+	// Resolve tool-specific engine for micro_agent
+	microAgentEngine := engine
+	if ca.client != nil {
+		microAgentEngine = ca.client.GetToolEngine("micro_agent")
+	}
 
 	gctx := globalctx.GlobalCtx{
 		SpeakLang:   ca.config.Agent.SpeakLang,
@@ -67,7 +76,7 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		SysOps:       tools.NewSystemOperationsTool(workDir),
 		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
 		ThinkingTool: tools.NewThinkingTool(),
-		MicroAgentTool: tools.NewMicroAgentTool(engine),
+		MicroAgentTool: tools.NewMicroAgentTool(microAgentEngine),
 		ImplPlanTool:   tools.NewImplPlanTool(),
 		FlowOps:           tools.NewFlowControlTool(workDir),
 		RepoOps:           tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort), workDir),
@@ -117,12 +126,28 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	// Parse disabled agents from comma-separated string
 	disabledAgents := parseDisabledAgents(ca.DisabledAgents)
 
-	repoAgent := agents.NewRepoAgent(ca.globalCtx, engine, publisher, repoMaxSteps)
-	codingAgent := agents.NewCodingAgent(ca.globalCtx, engine, codingMaxSteps)
-	chatAgent := agents.NewChatAgent(ca.globalCtx, engine, chatMaxSteps)
-	metaAgent := agents.NewMetaAgent(ca.globalCtx, engine)
-	devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, engine, devopsMaxSteps)
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, engine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
+	// Resolve per-agent engines
+	conductorEngine := engine
+	repoEngine := engine
+	codingEngine := engine
+	chatEngine := engine
+	metaEngine := engine
+	devopsEngine := engine
+	if ca.client != nil {
+		conductorEngine = ca.client.GetAgentEngine("conductor")
+		repoEngine = ca.client.GetAgentEngine("repo")
+		codingEngine = ca.client.GetAgentEngine("coding")
+		chatEngine = ca.client.GetAgentEngine("chat")
+		metaEngine = ca.client.GetAgentEngine("meta")
+		devopsEngine = ca.client.GetAgentEngine("devops")
+	}
+
+	repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
+	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps)
+	chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps)
+	metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine)
+	devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, conductorMaxSteps, disabledAgents, metaRetryCount)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
