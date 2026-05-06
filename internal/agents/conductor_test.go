@@ -26,6 +26,10 @@ func (m *mockEngine) GenerateContent(ctx context.Context, messages []llm.Message
 	return &llm.Response{Choices: []llm.Choice{{Content: ""}}}, nil
 }
 
+func (m *mockEngine) Model() string {
+	return "mock-model"
+}
+
 // ─── Test Helpers ────────────────────────────────────────────────────────────
 
 func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {

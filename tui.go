@@ -196,6 +196,9 @@ type model struct {
 	// Tool call state tracking: tool_call_id → ToolEntry
 	toolCallEntries map[string]*tui.ToolEntry
 
+	// Current LLM model being used (extracted from model_info events)
+	currentModel string
+
 	// Animation state for running tools
 	anim        *tui.Anim
 	activeAnim  bool // true when there are running tool entries
@@ -887,6 +890,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case taskEventMsg:
+		// Capture model info for status bar display
+		if msg.event.Type == "model_info" {
+			if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+				if modelName, ok := contentMap["model"].(string); ok {
+					m.currentModel = modelName
+				}
+			}
+			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+		}
+
 		// Intercept user_help_needed to show interactive dialog
 		if msg.event.Type == "user_help_needed" {
 			m.openConfirmDialog(msg.event)
@@ -964,6 +977,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskCompleteMsg:
 		m.taskRunning = false
+		m.currentModel = ""
 		m.commandMode = false
 		m.confirmDialog.open = false // safety: close any stale dialog
 		if msg.err != nil {
@@ -1129,10 +1143,14 @@ func (m model) View() string {
 			footer.WriteString("\n")
 		}
 
-		// Status line: mode indicator + task indicator
+		// Status line: mode indicator + task indicator + model name
 		taskIndicator := ""
 		if m.taskRunning {
-			taskIndicator = logStatusStyle.Render(" ◷ Running...")
+			if m.currentModel != "" {
+				taskIndicator = logStatusStyle.Render(fmt.Sprintf(" ◷ Running [%s]...", m.currentModel))
+			} else {
+				taskIndicator = logStatusStyle.Render(" ◷ Running...")
+			}
 		}
 		footer.WriteString("\n")
 		var statusLine string

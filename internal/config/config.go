@@ -84,14 +84,24 @@ type TopLevelConfig struct {
 	LLM *GlobalLLMConfig `toml:"llm"` // [global.llm]
 }
 
+// AgentsConfig wraps the agents LLM section: [agents.llm]
+type AgentsConfig struct {
+	LLM AgentsLLMConfig `toml:"llm"`
+}
+
+// ToolsConfig wraps the tools LLM section: [tools.llm]
+type ToolsConfig struct {
+	LLM ToolsLLMConfig `toml:"llm"`
+}
+
 // Config is the root configuration structure
 type Config struct {
-	Global   TopLevelConfig          `toml:"global"`   // [global.llm]
-	Agents   AgentsLLMConfig         `toml:"agents"`   // [agents.llm] + per-agent overrides
-	Tools    ToolsLLMConfig          `toml:"tools"`    // [tools.llm] + per-tool overrides
-	App      AppConfig               `toml:"app"`
-	Agent    AgentConfig             `toml:"agent"`
-	Compact  ContextCompactConfig    `toml:"context"`  // [context] - 上下文压缩配置
+	Global  TopLevelConfig          `toml:"global"`  // [global.llm]
+	Agents  AgentsConfig            `toml:"agents"`  // [agents.llm] + per-agent overrides
+	Tools   ToolsConfig             `toml:"tools"`   // [tools.llm] + per-tool overrides
+	App     AppConfig               `toml:"app"`
+	Agent   AgentConfig             `toml:"agent"`
+	Compact ContextCompactConfig    `toml:"context"` // [context] - 上下文压缩配置
 }
 
 // getProvider returns a provider config by name from the shared provider pool.
@@ -117,8 +127,8 @@ func (c *Config) resolveAgentProvider(agentName string) string {
 		return override.UseProvider
 	}
 	// Agents default
-	if c.Agents.UseProvider != "" {
-		return c.Agents.UseProvider
+	if c.Agents.LLM.UseProvider != "" {
+		return c.Agents.LLM.UseProvider
 	}
 	return ""
 }
@@ -126,17 +136,17 @@ func (c *Config) resolveAgentProvider(agentName string) string {
 func (c *Config) getAgentOverride(agentName string) *AgentLLMOverride {
 	switch strings.ToLower(agentName) {
 	case "conductor-agent", "conductor":
-		return c.Agents.Conductor
+		return c.Agents.LLM.Conductor
 	case "coding-agent", "coding":
-		return c.Agents.Coding
+		return c.Agents.LLM.Coding
 	case "repo-agent", "repo":
-		return c.Agents.Repo
+		return c.Agents.LLM.Repo
 	case "chat-agent", "chat":
-		return c.Agents.Chat
+		return c.Agents.LLM.Chat
 	case "meta-agent", "meta":
-		return c.Agents.Meta
+		return c.Agents.LLM.Meta
 	case "devops-agent", "devops":
-		return c.Agents.DevOps
+		return c.Agents.LLM.DevOps
 	default:
 		return nil
 	}
@@ -150,8 +160,8 @@ func (c *Config) resolveToolProvider(toolName string) string {
 		return override.UseProvider
 	}
 	// Tools default
-	if c.Tools.UseProvider != "" {
-		return c.Tools.UseProvider
+	if c.Tools.LLM.UseProvider != "" {
+		return c.Tools.LLM.UseProvider
 	}
 	return ""
 }
@@ -159,11 +169,11 @@ func (c *Config) resolveToolProvider(toolName string) string {
 func (c *Config) getToolOverride(toolName string) *ToolLLMOverride {
 	switch strings.ToLower(toolName) {
 	case "micro_agent":
-		return c.Tools.MicroAgent
+		return c.Tools.LLM.MicroAgent
 	case "thinking":
-		return c.Tools.Thinking
+		return c.Tools.LLM.Thinking
 	case "impl_plan":
-		return c.Tools.ImplPlan
+		return c.Tools.LLM.ImplPlan
 	default:
 		return nil
 	}
@@ -269,12 +279,12 @@ func LoadConfig(path string) (*Config, error) {
 // priority chain. Used during validation to find the fallback provider to validate.
 func (c *Config) resolveEffectiveProviderName() string {
 	// tools default
-	if c.Tools.UseProvider != "" {
-		return c.Tools.UseProvider
+	if c.Tools.LLM.UseProvider != "" {
+		return c.Tools.LLM.UseProvider
 	}
 	// agents default
-	if c.Agents.UseProvider != "" {
-		return c.Agents.UseProvider
+	if c.Agents.LLM.UseProvider != "" {
+		return c.Agents.LLM.UseProvider
 	}
 	// global
 	if c.Global.LLM != nil && c.Global.LLM.UseProvider != "" {
