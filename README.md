@@ -22,14 +22,6 @@ CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Ana
 - **Flow Control** — `finish` to signal task completion, user help requests
 - **Repo Analysis** — Call graph queries, hierarchical call trees, directory trees, function-level code skeletons
 
-### Intelligent TUI
-- **Tool Call Animation** — Running tools display character-cycling marquee with gradient colors and ellipsis dots
-- **Smart Result Rendering** — Auto-detects content type (JSON/diff/markdown/plain text) and renders with appropriate styling
-- **Unified Diff Highlighting** — File edits return unified diffs rendered with ANSI color (green/red add/del, cyan hunk headers)
-- **Inline Authorization** — WorkspaceGuard prompts for dangerous operations directly in the TUI with Allow/Deny/Allow-All options
-- **Session-Wide "Allow All"** — Grant one-time authorization per tool for the entire session
-- **Claude Code-like Aesthetic** — Minimalist design with color-coded agent messages, tool status icons, and line-numbered code output
-
 ### Dual Interaction Modes
 - **TUI Mode** — Full terminal UI built with Bubble Tea, with message log, agent streaming, and interactive authorization
 - **HTTP + WebSocket Server** — REST API and real-time WebSocket streaming for IDE/Web integration
@@ -39,7 +31,6 @@ CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Ana
 - **DeepSeek Reasoning Support** — Full `reasoning_content` round-trip (streaming + non-streaming), injected via `SetExtraFields`
 - **Custom Engine Abstraction** — Lightweight `Engine` interface with Message/ToolDef/ToolCall types, decoupled from any SDK
 - **13 LLM Providers** — Xiaomi MiMo, Alibaba Qwen, DeepSeek, SiliconFlow, Moonshot, Mistral, Zhipu GLM, OpenRouter, StreamLake, AWS Bedrock, and any OpenAI-compatible endpoint
-- **Structured LLM Logging** — All LLM I/O logged to `~/.codeactor/logs/llm-{date}.log` with JSON-formatted messages
 
 ### Security
 - **WorkspaceGuard** — Validates file operations stay within the project workspace; intercepts dangerous shell commands
@@ -54,11 +45,6 @@ CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Ana
 - **File Watching** — Automatic re-indexing on file changes with 20s debounce
 - **Auto-Launch** — Go binary automatically starts the Rust codebase server as a child process with dynamic port allocation, health-check polling, and cleanup on exit
 
-### Developer Experience
-- **Embedded Binary Distribution** — `codeactor-codebase` binary embedded in the Go binary via `embed.FS`, auto-extracted to `~/.codeactor/bin/`
-- **Node.js CLI Client** — Full-featured CLI (`run`, `chat`, `status`, `cancel`, `history`, `memory`, `load`) with WebSocket streaming
-- **Conversation Persistence** — Task memory saved to `~/.codeactor/tasks/{taskID}.json`, restorable across sessions
-- **i18n** — Chinese and English UI text via `LanguageManager`
 
 ## Screenshots
 
