@@ -43,7 +43,7 @@ func main() {
 
 	// Check if running in TUI mode or HTTP server mode based on command line arguments
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta] [--taskfile TASK.md] [--port=9800]")
+		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta,devops] [--taskfile TASK.md] [--port=9800]")
 		os.Exit(1)
 	}
 
@@ -224,7 +224,7 @@ func main() {
 		}
 	default:
 		fmt.Printf("Unknown mode: %s\n", mode)
-		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta] [--taskfile TASK.md] [--port=9800]")
+		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta,devops] [--taskfile TASK.md] [--port=9800]")
 		os.Exit(1)
 	}
 }

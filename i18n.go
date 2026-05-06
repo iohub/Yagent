@@ -44,6 +44,9 @@ type translations struct {
 	HistoryConfirmDelete    string
 	// Confirmation dialog
 	ConfirmDialogHelp string
+	// Command mode
+	CommandModePrompt string
+	CommandModeTips   string
 }
 
 var langMap = map[Language]translations{
@@ -78,6 +81,8 @@ var langMap = map[Language]translations{
 		HistoryKeyClearFilter:     "ctrl+u: 清除过滤",
 		HistoryConfirmDelete:      "确认删除此会话？(y = 确认, 其他键 = 取消)",
 		ConfirmDialogHelp: "←/→ 选择  enter 确认  a 允许  s 全部允许  d/esc 拒绝",
+		CommandModePrompt: "命令模式",
+		CommandModeTips:   "f:下翻页  b:上翻页  i:输入  esc:取消",
 	},
 	LangEnglish: {
 		Title:                            "CodeActor AI Assistant",
@@ -109,7 +114,9 @@ var langMap = map[Language]translations{
 		HistoryKeyBack:            "esc: back",
 		HistoryKeyClearFilter:     "ctrl+u: clear filter",
 		HistoryConfirmDelete:      "Delete this conversation? (y = confirm, any other key = cancel)",
-		ConfirmDialogHelp: "\u2190/\u2192 choose  enter confirm  a allow  s all  d/esc deny",
+		ConfirmDialogHelp: "←/→ choose  enter confirm  a allow  s all  d/esc deny",
+		CommandModePrompt: "COMMAND",
+		CommandModeTips:   "f:pgdn  b:pgup  i:input  esc:cancel",
 	},
 }
 
@@ -190,8 +197,12 @@ func (lm *LanguageManager) GetText(key string) string {
 	case "HistoryConfirmDelete":
 		return translations.HistoryConfirmDelete
 	case "ConfirmDialogHelp":
-		return translations.ConfirmDialogHelp
-	default:
+			return translations.ConfirmDialogHelp
+		case "CommandModePrompt":
+			return translations.CommandModePrompt
+		case "CommandModeTips":
+			return translations.CommandModeTips
+		default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}
 }

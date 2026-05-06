@@ -181,6 +181,9 @@ type model struct {
 	publisher         *messaging.MessagePublisher
 	publisherCh   chan *messaging.MessagePublisher
 
+	// Command mode: input hidden, minimal tips shown (auto-enabled after task submission)
+	commandMode bool
+
 	// Tool call state tracking: tool_call_id → ToolEntry
 	toolCallEntries map[string]*tui.ToolEntry
 
@@ -580,6 +583,55 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Command mode key handling (input hidden, minimal keys active)
+		if m.commandMode && m.taskRunning {
+			switch msg.String() {
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+
+			case "esc":
+				// Cancel the currently running task
+				if m.currentTask != nil && m.currentTask.CancelFunc != nil {
+					m.currentTask.CancelFunc()
+					m.logEntries = append(m.logEntries, logEntry{
+						timestamp: time.Now(),
+						eventType: "status",
+						content:   "Task cancelled by user",
+					})
+					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				}
+				return m, nil
+
+			case "i", "enter":
+				// Exit command mode, show input for follow-up
+				m.commandMode = false
+				return m, nil
+
+			case "f":
+				m.viewport.PageDown()
+				return m, nil
+
+			case "b":
+				m.viewport.PageUp()
+				return m, nil
+
+			case "j", "down":
+				m.viewport.LineDown(1)
+				return m, nil
+
+			case "k", "up":
+				m.viewport.LineUp(1)
+				return m, nil
+
+			default:
+				// Pass to viewport for scrolling
+				var vpCmd tea.Cmd
+				m.viewport, vpCmd = m.viewport.Update(msg)
+				return m, vpCmd
+			}
+		}
+
 		switch msg.String() {
 		case "ctrl+c":
 			m.quitting = true
@@ -719,6 +771,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskCompleteMsg:
 		m.taskRunning = false
+		m.commandMode = false
 		m.confirmDialog.open = false // safety: close any stale dialog
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
@@ -832,33 +885,46 @@ func (m model) View() string {
 	b.WriteString(logSeparatorStyle.Render(strings.Repeat("─", sepWidth)))
 	b.WriteString("\n")
 
-	// Input line (textarea handles its own prompt via PromptFunc)
-	m.input.SetWidth(m.computeFieldWidth())
-	inputLine := m.input.View()
+		// Input line / command mode
+		// Build footer area
+		var footer strings.Builder
 
-	// Build footer area
-	var footer strings.Builder
-	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(inputLine))
-	footer.WriteString("\n")
+		if m.commandMode && m.taskRunning {
+			// Command mode: hidden input, minimal prompt with tips
+			cmdPromptStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+			cmdTipStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+			cmdPrompt := cmdPromptStyle.Render("❯ " + langManager.GetText("CommandModePrompt"))
+			cmdTips := cmdTipStyle.Render(langManager.GetText("CommandModeTips"))
+			cmdLine := cmdPrompt + "  " + cmdTips
+			footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(cmdLine))
+			footer.WriteString("\n")
+		} else {
+			m.input.SetWidth(m.computeFieldWidth())
+			inputLine := m.input.View()
+			footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(inputLine))
+			footer.WriteString("\n")
+		}
 
-	// Error message
-	if m.errMsg != "" {
-		footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(errorStyle.Render("✖ " + m.errMsg)))
-		footer.WriteString("\n")
-	}
+		// Error message
+		if m.errMsg != "" {
+			footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(errorStyle.Render("✖ " + m.errMsg)))
+			footer.WriteString("\n")
+		}
 
-	// Status line: shortcuts + task indicator
-	taskIndicator := ""
-	if m.taskRunning {
-		taskIndicator = logStatusStyle.Render(" ◷ Running...")
-	}
-	footer.WriteString("\n")
-	enterLabel := "ctrl+s submit"
-	if m.currentTask != nil && !m.taskRunning {
-		enterLabel = "ctrl+s send"
-	}
-	statusLine := footerStyle.Render(enterLabel+" │ ctrl+l lang │ ctrl+h history │ esc cancel │ ctrl+c quit") + taskIndicator
-	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
+		// Status line: shortcuts + task indicator (hidden in command mode)
+		if !m.commandMode || !m.taskRunning {
+			taskIndicator := ""
+			if m.taskRunning {
+				taskIndicator = logStatusStyle.Render(" ◷ Running...")
+			}
+			footer.WriteString("\n")
+			enterLabel := "ctrl+s submit"
+			if m.currentTask != nil && !m.taskRunning {
+				enterLabel = "ctrl+s send"
+			}
+			statusLine := footerStyle.Render(enterLabel+" │ ctrl+l lang │ ctrl+h history │ esc cancel │ ctrl+c quit") + taskIndicator
+			footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
+		}
 
 	b.WriteString(footer.String())
 
@@ -1355,6 +1421,7 @@ func (m *model) submitTask() tea.Cmd {
 	taskDesc := strings.TrimSpace(m.input.Value())
 	m.input.SetValue("")
 	m.taskRunning = true
+	m.commandMode = true
 	m.errMsg = ""
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1392,6 +1459,7 @@ func (m *model) submitTask() tea.Cmd {
 func (m *model) submitFollowUp(message string) tea.Cmd {
 	m.input.SetValue("")
 	m.taskRunning = true
+	m.commandMode = true
 	m.errMsg = ""
 
 	m.logEntries = append(m.logEntries, logEntry{
