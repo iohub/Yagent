@@ -677,6 +677,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 				}
 			}
+			// No matching start entry by callID — try matching by tool name
+			// as a fallback for the most recent running entry of the same type.
+			toolName := getToolNameFromEventContent(msg.event.Content)
+			if toolName != "" {
+				if matchedID, matchedEntry := findRunningEntryByName(m.toolCallEntries, toolName); matchedEntry != nil {
+					resultContent := getResultFromEventContent(msg.event.Content)
+					isError := strings.HasPrefix(resultContent, "Error:")
+					matchedEntry.SetResult(tui.ToolResultInfo{
+						ToolCallID: matchedID,
+						Name:       matchedEntry.Call.Name,
+						Content:    resultContent,
+						IsError:    isError,
+					})
+					if idx := findLogEntryByToolCallID(m.logEntries, matchedID); idx >= 0 {
+						le := &m.logEntries[idx]
+						le.content = resultContent
+						le.isToolRunning = false
+						le.rendered = ""
+					}
+					delete(m.toolCallEntries, matchedID)
+					m.updateActiveAnim()
+					m.buildViewportContent()
+					return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+				}
+			}
 			// No matching start entry — add as standalone
 		}
 
@@ -1204,6 +1229,30 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		entry.isToolRunning = false
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
+		}
+		// Create a ToolEntry for standalone results so they use new-style
+		// rendering (✓ read_file · /path/to/file) instead of the legacy
+		// emoji path (✅ read_file).
+		isErr := strings.HasPrefix(entry.content, "Error:")
+		entry.toolEntry = tui.NewToolEntry(tui.ToolCallInfo{
+			ID:      entry.toolCallID,
+			Name:    entry.toolName,
+			Summary: extractToolSummary(entry.toolName, ""),
+		})
+		if isErr {
+			entry.toolEntry.SetResult(tui.ToolResultInfo{
+				ToolCallID: entry.toolCallID,
+				Name:       entry.toolName,
+				Content:    entry.content,
+				IsError:    true,
+			})
+		} else {
+			entry.toolEntry.SetResult(tui.ToolResultInfo{
+				ToolCallID: entry.toolCallID,
+				Name:       entry.toolName,
+				Content:    entry.content,
+				IsError:    false,
+			})
 		}
 	case "user_help_needed":
 		if s, ok := event.Content.(string); ok {
@@ -1797,6 +1846,29 @@ func getToolCallIDFromEventContent(content interface{}) string {
 		}
 	}
 	return ""
+}
+
+// getToolNameFromEventContent extracts tool_name from event content.
+func getToolNameFromEventContent(content interface{}) string {
+	if m, ok := content.(map[string]interface{}); ok {
+		if name, ok := m["tool_name"]; ok {
+			if nameStr, ok := name.(string); ok {
+				return nameStr
+			}
+		}
+	}
+	return ""
+}
+
+// findRunningEntryByName finds the most recently-added running entry with the
+// given tool name in the toolCallEntries map. Returns the call ID and the entry.
+func findRunningEntryByName(entries map[string]*tui.ToolEntry, toolName string) (string, *tui.ToolEntry) {
+	for id, entry := range entries {
+		if entry.Call.Name == toolName && entry.Status == tui.ToolStatusRunning {
+			return id, entry
+		}
+	}
+	return "", nil
 }
 
 // getResultFromEventContent extracts the result string from event content.
