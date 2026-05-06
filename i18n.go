@@ -44,9 +44,11 @@ type translations struct {
 	HistoryConfirmDelete    string
 	// Confirmation dialog
 	ConfirmDialogHelp string
-	// Command mode
-	CommandModePrompt string
-	CommandModeTips   string
+	// Command mode (vim-like modal editing)
+	CommandModePrompt     string
+	CommandModeTips       string
+	CommandModeIdleTips   string
+	EditModeTips          string
 }
 
 var langMap = map[Language]translations{
@@ -81,8 +83,10 @@ var langMap = map[Language]translations{
 		HistoryKeyClearFilter:     "ctrl+u: 清除过滤",
 		HistoryConfirmDelete:      "确认删除此会话？(y = 确认, 其他键 = 取消)",
 		ConfirmDialogHelp: "←/→ 选择  enter 确认  a 允许  s 全部允许  d/esc 拒绝",
-		CommandModePrompt: "命令模式",
-		CommandModeTips:   "f:下翻页  b:上翻页  i:输入  esc:取消",
+		CommandModePrompt:   "命令",
+		CommandModeTips:     "i:编辑  f:下翻页  b:上翻页  j/k:滚动  esc:取消任务  ctrl+c:退出",
+		CommandModeIdleTips: "i:编辑  f:下翻页  b:上翻页  j/k:滚动  :输入命令  esc:编辑  ctrl+c:退出",
+		EditModeTips:        "ctrl+s:提交  esc:命令模式  ctrl+h:历史  ctrl+l:语言  ctrl+c:退出",
 	},
 	LangEnglish: {
 		Title:                            "CodeActor AI Assistant",
@@ -115,8 +119,10 @@ var langMap = map[Language]translations{
 		HistoryKeyClearFilter:     "ctrl+u: clear filter",
 		HistoryConfirmDelete:      "Delete this conversation? (y = confirm, any other key = cancel)",
 		ConfirmDialogHelp: "←/→ choose  enter confirm  a allow  s all  d/esc deny",
-		CommandModePrompt: "COMMAND",
-		CommandModeTips:   "f:pgdn  b:pgup  i:input  esc:cancel",
+		CommandModePrompt:   "COMMAND",
+		CommandModeTips:     "i:edit  f:pgdn  b:pgup  j/k:scroll  esc:cancel  ctrl+c:quit",
+		CommandModeIdleTips: "i:edit  f:pgdn  b:pgup  j/k:scroll  ::cmd  esc:edit  ctrl+c:quit",
+		EditModeTips:        "ctrl+s:submit  esc:cmd  ctrl+h:history  ctrl+l:lang  ctrl+c:quit",
 	},
 }
 
@@ -202,6 +208,10 @@ func (lm *LanguageManager) GetText(key string) string {
 			return translations.CommandModePrompt
 		case "CommandModeTips":
 			return translations.CommandModeTips
+		case "CommandModeIdleTips":
+			return translations.CommandModeIdleTips
+		case "EditModeTips":
+			return translations.EditModeTips
 		default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}

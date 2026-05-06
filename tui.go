@@ -67,6 +67,13 @@ var (
 	toolRunningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("228")) // gold — running
 	toolDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — success
 	toolErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")) // red — error
+
+	// Mode-specific input area styles (vim-like edit / command modes)
+	editModeInputStyle    = lipgloss.NewStyle().Background(lipgloss.Color("235")).Padding(1, 2)
+	commandModeInputStyle = lipgloss.NewStyle().Background(lipgloss.Color("237")).Padding(1, 2)
+	commandPrefixStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)       // orange ":"
+	commandLabelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)       // "COMMAND"
+	commandHintStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))                  // tips text
 )
 
 // logEntry represents a single message in the TUI log area.
@@ -181,8 +188,10 @@ type model struct {
 	publisher         *messaging.MessagePublisher
 	publisherCh   chan *messaging.MessagePublisher
 
-	// Command mode: input hidden, minimal tips shown (auto-enabled after task submission)
-	commandMode bool
+	// Command mode (vim-like): hidden input, ":" prefix, different bg.
+	// Toggled with Esc (edit→cmd) and i (cmd→edit). Auto-enabled on task submit.
+	commandMode   bool
+	commandBuffer string // hidden command input buffer in command mode
 
 	// Tool call state tracking: tool_call_id → ToolEntry
 	toolCallEntries map[string]*tui.ToolEntry
@@ -285,6 +294,45 @@ func (m *model) toggleLanguage() {
 	}
 	m.input.Placeholder = langManager.GetText("TaskDescPlaceholder")
 	m.infoMsg = langManager.GetText("InfoMessage")
+}
+
+// processCommand handles vim-like command input (hidden buffer) in command mode.
+func (m *model) processCommand(cmd string) {
+	cmd = strings.TrimSpace(cmd)
+	switch {
+	case cmd == ":q" || cmd == ":quit":
+		m.quitting = true
+	case strings.HasPrefix(cmd, "/"):
+		// Search in log entries
+		query := strings.TrimPrefix(cmd, "/")
+		m.searchInLog(query)
+	case cmd == ":help":
+		m.logEntries = append(m.logEntries, logEntry{
+			timestamp: time.Now(),
+			eventType: "status",
+			content:   "Commands: :q/quit, /search, :help, i=edit, esc=edit",
+		})
+		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+	default:
+		m.infoMsg = fmt.Sprintf("Unknown command: %s", cmd)
+	}
+}
+
+// searchInLog highlights entries containing the query string.
+func (m *model) searchInLog(query string) {
+	queryLower := strings.ToLower(query)
+	found := 0
+	for i := range m.logEntries {
+		if strings.Contains(strings.ToLower(m.logEntries[i].content), queryLower) {
+			found++
+		}
+	}
+	m.logEntries = append(m.logEntries, logEntry{
+		timestamp: time.Now(),
+		eventType: "status",
+		content:   fmt.Sprintf("Search '/%s': %d matches", query, found),
+	})
+	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 }
 
 func (m *model) openHistoryPanel() {
@@ -583,16 +631,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Command mode key handling (input hidden, minimal keys active)
-		if m.commandMode && m.taskRunning {
+		// ── Command mode key handling (vim-like: hidden input, single-key commands) ──
+		if m.commandMode {
 			switch msg.String() {
 			case "ctrl+c":
 				m.quitting = true
 				return m, tea.Quit
 
 			case "esc":
-				// Cancel the currently running task
-				if m.currentTask != nil && m.currentTask.CancelFunc != nil {
+				if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
+					// Cancel the running task
 					m.currentTask.CancelFunc()
 					m.logEntries = append(m.logEntries, logEntry{
 						timestamp: time.Now(),
@@ -600,12 +648,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						content:   "Task cancelled by user",
 					})
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				} else {
+					// Idle: switch to edit mode
+					m.commandMode = false
+					m.commandBuffer = ""
 				}
 				return m, nil
 
-			case "i", "enter":
-				// Exit command mode, show input for follow-up
+			case "i":
+				// Enter edit mode (vim-like: press i to insert)
 				m.commandMode = false
+				m.commandBuffer = ""
+				return m, nil
+
+			case "enter":
+				// Process command buffer if non-empty, otherwise enter edit mode
+				if m.commandBuffer != "" {
+					// Process the command (e.g., ":q", "/search")
+					m.processCommand(m.commandBuffer)
+					m.commandBuffer = ""
+				} else {
+					m.commandMode = false
+				}
 				return m, nil
 
 			case "f":
@@ -624,7 +688,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.LineUp(1)
 				return m, nil
 
+			case "backspace":
+				if len(m.commandBuffer) > 0 {
+					m.commandBuffer = m.commandBuffer[:len(m.commandBuffer)-1]
+				}
+				return m, nil
+
+			case "ctrl+u":
+				m.commandBuffer = ""
+				return m, nil
+
+			case "ctrl+l":
+				m.toggleLanguage()
+				return m, nil
+
+			case "ctrl+h":
+				m.openHistoryPanel()
+				return m, nil
+
 			default:
+				// Append printable characters to command buffer (hidden input)
+				if len(msg.Runes) > 0 {
+					m.commandBuffer += string(msg.Runes)
+					return m, nil
+				}
 				// Pass to viewport for scrolling
 				var vpCmd tea.Cmd
 				m.viewport, vpCmd = m.viewport.Update(msg)
@@ -632,13 +719,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// ── Edit mode key handling ──
 		switch msg.String() {
 		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
 
 		case "esc":
-			// Cancel the currently running task
+			// Enter command mode (cancel task if running)
 			if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
 				m.currentTask.CancelFunc()
 				m.logEntries = append(m.logEntries, logEntry{
@@ -648,6 +736,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			}
+			m.commandMode = true
+			m.commandBuffer = ""
 			return m, nil
 
 		case "ctrl+s":
@@ -885,23 +975,42 @@ func (m model) View() string {
 	b.WriteString(logSeparatorStyle.Render(strings.Repeat("─", sepWidth)))
 	b.WriteString("\n")
 
-		// Input line / command mode
-		// Build footer area
+		// ── Input area: edit mode vs command mode ──
 		var footer strings.Builder
 
-		if m.commandMode && m.taskRunning {
-			// Command mode: hidden input, minimal prompt with tips
-			cmdPromptStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
-			cmdTipStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-			cmdPrompt := cmdPromptStyle.Render("❯ " + langManager.GetText("CommandModePrompt"))
-			cmdTips := cmdTipStyle.Render(langManager.GetText("CommandModeTips"))
-			cmdLine := cmdPrompt + "  " + cmdTips
-			footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(cmdLine))
+		if m.commandMode {
+			// ── Command mode (vim-like): hidden input, ":" prefix, different bg ──
+			var cmdLine string
+			cmdPrefix := commandPrefixStyle.Render(":")
+			cmdLabel := commandLabelStyle.Render(" " + langManager.GetText("CommandModePrompt") + " ")
+			// Show typed command buffer if not empty (dim)
+			if m.commandBuffer != "" {
+				cmdBufDisplay := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(m.commandBuffer)
+				cmdCursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Blink(true).Render("▊")
+				cmdLine = cmdPrefix + cmdLabel + " " + cmdBufDisplay + cmdCursor
+			} else {
+				cmdCursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Blink(true).Render("▊")
+				cmdLine = cmdPrefix + cmdLabel + " " + cmdCursor
+			}
+
+			// Tips differ based on task state
+			var cmdTips string
+			if m.taskRunning {
+				cmdTips = langManager.GetText("CommandModeTips")
+			} else {
+				cmdTips = langManager.GetText("CommandModeIdleTips")
+			}
+			cmdTipsLine := commandHintStyle.Render("  " + cmdTips)
+
+			// Wrap in command-mode background container
+			cmdBox := commandModeInputStyle.Render(cmdLine + cmdTipsLine)
+			footer.WriteString(cmdBox)
 			footer.WriteString("\n")
 		} else {
+			// ── Edit mode (vim insert-like): normal textarea visible ──
 			m.input.SetWidth(m.computeFieldWidth())
 			inputLine := m.input.View()
-			footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(inputLine))
+			footer.WriteString(editModeInputStyle.Render(inputLine))
 			footer.WriteString("\n")
 		}
 
@@ -911,20 +1020,19 @@ func (m model) View() string {
 			footer.WriteString("\n")
 		}
 
-		// Status line: shortcuts + task indicator (hidden in command mode)
-		if !m.commandMode || !m.taskRunning {
-			taskIndicator := ""
-			if m.taskRunning {
-				taskIndicator = logStatusStyle.Render(" ◷ Running...")
-			}
-			footer.WriteString("\n")
-			enterLabel := "ctrl+s submit"
-			if m.currentTask != nil && !m.taskRunning {
-				enterLabel = "ctrl+s send"
-			}
-			statusLine := footerStyle.Render(enterLabel+" │ ctrl+l lang │ ctrl+h history │ esc cancel │ ctrl+c quit") + taskIndicator
-			footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
+		// Status line: mode indicator + task indicator
+		taskIndicator := ""
+		if m.taskRunning {
+			taskIndicator = logStatusStyle.Render(" ◷ Running...")
 		}
+		footer.WriteString("\n")
+		var statusLine string
+		if m.commandMode {
+			statusLine = footerStyle.Render("COMMAND MODE")
+		} else {
+			statusLine = footerStyle.Render(langManager.GetText("EditModeTips"))
+		}
+		footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine + taskIndicator))
 
 	b.WriteString(footer.String())
 
