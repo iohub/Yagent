@@ -101,7 +101,7 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 		params = formatToolParams(entry.Call.Name, entry.Call.Arguments)
 	}
 
-	// Check for early states first
+	// Check for early states first — no borders
 	if early, ok := RenderEarlyState(entry.Status, entry.Call.Name, params); ok {
 		return early
 	}
@@ -113,7 +113,7 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 
 	header := RenderHeader(entry.Status, entry.Call.Name, params, errBrief)
 
-	// If still running, this should have been handled by RenderPending — fallback
+	// If still running, no borders — animation is in progress
 	if entry.Status == ToolStatusRunning {
 		return header
 	}
@@ -121,18 +121,27 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 	// Tools whose result body is just status JSON — skip body rendering,
 	// only show the tool name + file path in the header.
 	if skipBodyTools[entry.Call.Name] && entry.Status == ToolStatusSuccess {
-		return header
+		return addToolCallBorders(header, width)
 	}
 
 	// Render body if we have a result
 	if entry.Result != nil && entry.Result.Content != "" {
 		body := RenderResultBody(entry.Result.Content, width)
 		if body != "" {
-			return header + "\n" + body
+			// Border only wraps header; body goes below the border
+			return addToolCallBorders(header, width) + "\n" + body
 		}
 	}
 
-	return header
+	return addToolCallBorders(header, width)
+}
+
+// addToolCallBorders wraps header with a thin top and bottom border line.
+// Body content should be appended OUTSIDE the border.
+func addToolCallBorders(header string, width int) string {
+	topBorder := ToolCallBorderTop.Render(makeBorderLine('─', width))
+	bottomBorder := ToolCallBorderBottom.Render(makeBorderLine('─', width))
+	return topBorder + "\n" + header + "\n" + bottomBorder
 }
 
 // RenderResultBody renders the tool result content with smart detection.
@@ -326,6 +335,15 @@ func renderCodeLines(content string, filename string, width int) string {
 }
 
 // ── Content Detection ──
+
+// makeBorderLine generates a compact border line using half-block characters.
+func makeBorderLine(char rune, width int) string {
+	runes := make([]rune, width)
+	for i := range runes {
+		runes[i] = char
+	}
+	return string(runes)
+}
 
 func isJSON(s string) bool {
 	s = strings.TrimSpace(s)
