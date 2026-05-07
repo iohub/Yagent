@@ -89,6 +89,10 @@ func (m model) View() string {
 		footer.WriteString("\n")
 	}
 
+	// Token consumption display (before status line)
+	footer.WriteString(m.renderTokenLine())
+	footer.WriteString("\n")
+
 	// Status line: mode indicator + task indicator + model name
 	taskIndicator := ""
 	if m.taskRunning {
@@ -181,4 +185,25 @@ func renderBanner() string {
 		rendered = append(rendered, lipgloss.JoinHorizontal(lipgloss.Top, chars...))
 	}
 	return bannerPadStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rendered...))
+}
+
+// formatToken formats a token count with k/m suffixes (e.g. "1.2k", "1.5m")
+func formatToken(n int64) string {
+	switch {
+	case n >= 1000000:
+		return fmt.Sprintf("%.1fm", float64(n)/1000000)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// renderTokenLine renders the token consumption line in the footer.
+// Format: "In: 1.2k | Out: 3.5k"
+func (m model) renderTokenLine() string {
+	tokenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")) // muted gray
+	inStr := formatToken(m.inputTokens)
+	outStr := formatToken(m.outputTokens)
+	return tokenStyle.Render(fmt.Sprintf("In: %s | Out: %s", inStr, outStr))
 }

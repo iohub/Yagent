@@ -207,6 +207,10 @@ type model struct {
 	// Current LLM model being used (extracted from model_info events)
 	currentModel string
 
+	// Token consumption tracking
+	inputTokens  int64 // accumulated input tokens
+	outputTokens int64 // accumulated output tokens
+
 	// Animation state for running tools
 	anim       *Anim
 	activeAnim bool // true when there are running tool entries

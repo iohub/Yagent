@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"codeactor/internal/compact"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
 
@@ -744,6 +745,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case taskEventMsg:
+		// Count output tokens for AI response events
+		if msg.event.Type == "ai_response" || msg.event.Type == "ai_stream_end" {
+			if content, ok := msg.event.Content.(string); ok && content != "" {
+				if tok := compact.GetGlobalTokenizer(); tok != nil {
+					if count, err := tok.CountTokens(content); err == nil && count > 0 {
+						m.outputTokens += int64(count)
+					}
+				}
+			}
+		}
+
 		// Capture model info for status bar display
 		if msg.event.Type == "model_info" {
 			if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {

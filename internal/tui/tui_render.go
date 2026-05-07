@@ -12,7 +12,7 @@ import (
 )
 
 func (m *model) resizeViewport() {
-	footerHeight := 6
+	footerHeight := 7
 	if m.errMsg != "" {
 		footerHeight++
 	}
