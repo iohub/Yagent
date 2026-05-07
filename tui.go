@@ -125,6 +125,18 @@ type taskCompleteDialog struct {
 	message string
 }
 
+// confirmQuitDialog holds the state of the quit confirmation dialog.
+type confirmQuitDialog struct {
+	open           bool
+	selectedOption int // 0=Confirm, 1=Cancel
+}
+
+// confirmCancelDialog holds the state of the cancel task confirmation dialog.
+type confirmCancelDialog struct {
+	open           bool
+	selectedOption int // 0=Confirm, 1=Cancel
+}
+
 // tuiEventConsumer routes MessageEvents to a Go channel consumed by the tea program.
 type tuiEventConsumer struct {
 	ch chan *messaging.MessageEvent
@@ -182,6 +194,9 @@ type model struct {
 	// Authorization confirmation dialog
 	confirmDialog     confirmDialog
 	taskCompleteDialog taskCompleteDialog
+	// Quit / Cancel confirmation dialogs
+	confirmQuitDialog   confirmQuitDialog
+	confirmCancelDialog confirmCancelDialog
 	publisher         *messaging.MessagePublisher
 	publisherCh   chan *messaging.MessagePublisher
 
@@ -319,7 +334,7 @@ func (m *model) processCommand(cmd string) {
 	cmd = strings.TrimSpace(cmd)
 	switch {
 	case cmd == ":q" || cmd == ":quit" || cmd == ":q!":
-		m.quitting = true
+		m.confirmQuitDialog.open = true
 	case strings.HasPrefix(cmd, "/"):
 		// Search in log entries
 		query := strings.TrimPrefix(cmd, "/")
@@ -628,6 +643,86 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Quit confirmation dialog key handling
+		if m.confirmQuitDialog.open {
+			switch msg.String() {
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			case "right", "tab":
+				m.confirmQuitDialog.selectedOption = (m.confirmQuitDialog.selectedOption + 1) % 2
+				return m, nil
+			case "left":
+				m.confirmQuitDialog.selectedOption = (m.confirmQuitDialog.selectedOption + 1) % 2
+				return m, nil
+			case "enter":
+				if m.confirmQuitDialog.selectedOption == 0 {
+					m.quitting = true
+					return m, tea.Quit
+				}
+				m.confirmQuitDialog.open = false
+				m.confirmQuitDialog.selectedOption = 0
+				return m, nil
+			case "y", "Y":
+				m.quitting = true
+				return m, tea.Quit
+			case "n", "N", "esc":
+				m.confirmQuitDialog.open = false
+				m.confirmQuitDialog.selectedOption = 0
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Cancel task confirmation dialog key handling
+		if m.confirmCancelDialog.open {
+			switch msg.String() {
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			case "right", "tab":
+				m.confirmCancelDialog.selectedOption = (m.confirmCancelDialog.selectedOption + 1) % 2
+				return m, nil
+			case "left":
+				m.confirmCancelDialog.selectedOption = (m.confirmCancelDialog.selectedOption + 1) % 2
+				return m, nil
+			case "enter":
+				if m.confirmCancelDialog.selectedOption == 0 {
+					// Confirm cancel
+					if m.currentTask != nil && m.currentTask.CancelFunc != nil {
+						m.currentTask.CancelFunc()
+						m.logEntries = append(m.logEntries, logEntry{
+							timestamp: time.Now(),
+							eventType: "status",
+							content:   "Task cancelled by user",
+						})
+						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+					}
+				}
+				m.confirmCancelDialog.open = false
+				m.confirmCancelDialog.selectedOption = 0
+				return m, nil
+			case "y", "Y":
+				if m.currentTask != nil && m.currentTask.CancelFunc != nil {
+					m.currentTask.CancelFunc()
+					m.logEntries = append(m.logEntries, logEntry{
+						timestamp: time.Now(),
+						eventType: "status",
+						content:   "Task cancelled by user",
+					})
+					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				}
+				m.confirmCancelDialog.open = false
+				m.confirmCancelDialog.selectedOption = 0
+				return m, nil
+			case "n", "N", "esc":
+				m.confirmCancelDialog.open = false
+				m.confirmCancelDialog.selectedOption = 0
+				return m, nil
+			}
+			return m, nil
+		}
+
 		// History panel key handling
 		if m.showHistoryPanel {
 			// Delete confirmation mode
@@ -724,8 +819,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.viewport.GotoTop()
 					return m, nil
 				case "ZZ":
-					m.quitting = true
-					return m, tea.Quit
+					m.confirmQuitDialog.open = true
+					return m, nil
 				default:
 					// Invalid combo: discard lastKey and fall through to process key normally
 				}
@@ -740,8 +835,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			switch key {
 			case "ctrl+c":
-				m.quitting = true
-				return m, tea.Quit
+				m.confirmQuitDialog.open = true
+				return m, nil
 
 			case "esc":
 				if m.showHelpDialog {
@@ -754,14 +849,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
-					// Cancel the running task
-					m.currentTask.CancelFunc()
-					m.logEntries = append(m.logEntries, logEntry{
-						timestamp: time.Now(),
-						eventType: "status",
-						content:   "Task cancelled by user",
-					})
-					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+					// Show cancel confirmation dialog
+					m.confirmCancelDialog.open = true
 				}
 				return m, nil
 
@@ -884,19 +973,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ── Edit mode key handling ──
 		switch msg.String() {
 		case "ctrl+c":
-			m.quitting = true
-			return m, tea.Quit
+			m.confirmQuitDialog.open = true
+			return m, nil
 
 		case "esc":
-			// Cancel task if running (no mode switch)
+			// Show cancel confirmation dialog if task is running
 			if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
-				m.currentTask.CancelFunc()
-				m.logEntries = append(m.logEntries, logEntry{
-					timestamp: time.Now(),
-					eventType: "status",
-					content:   "Task cancelled by user",
-				})
-				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				m.confirmCancelDialog.open = true
 			}
 			return m, nil
 
@@ -1150,6 +1233,16 @@ func (m model) View() string {
 	// When help dialog is open in command mode, render it as an overlay
 	if m.showHelpDialog {
 		return m.renderHelpDialog()
+	}
+
+	// When quit confirmation dialog is open, render it as an overlay
+	if m.confirmQuitDialog.open {
+		return m.renderConfirmQuitDialog()
+	}
+
+	// When cancel task confirmation dialog is open, render it as an overlay
+	if m.confirmCancelDialog.open {
+		return m.renderConfirmCancelDialog()
 	}
 
 	// When task complete dialog is open, render it as an overlay
@@ -2025,6 +2118,54 @@ var (
 		Padding(0, 4)
 )
 
+// confirmQuitDialog styles
+var (
+	confirmQuitBorderStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("167")). // red border for warning
+		Padding(0, 2)
+
+	confirmQuitTitleStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("167")). // red
+		Bold(true)
+
+	confirmQuitMessageStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")). // light gray
+		MaxWidth(50)
+
+	confirmQuitButtonFocused = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("0")).
+		Background(lipgloss.Color("167")). // red bg
+		Bold(true).
+		Padding(0, 2)
+
+	confirmQuitButtonBlurred = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Padding(0, 2)
+)
+
+// confirmCancelDialog styles
+var (
+	confirmCancelBorderStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("214")). // yellow/orange border for warning
+		Padding(0, 2)
+
+	confirmCancelTitleStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("214")). // yellow/orange
+		Bold(true)
+
+	confirmCancelButtonFocused = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("0")).
+		Background(lipgloss.Color("214")). // yellow/orange bg
+		Bold(true).
+		Padding(0, 2)
+
+	confirmCancelButtonBlurred = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Padding(0, 2)
+)
+
 // parseConfirmQuestion extracts toolName and detail body from the question string.
 func parseConfirmQuestion(question string) (toolName, body string) {
 	q := strings.TrimSpace(question)
@@ -2173,6 +2314,122 @@ func (m model) renderTaskCompleteDialog() string {
 	)
 
 	dialog := taskCompleteBorderStyle.Width(dialogWidth).Render(content)
+
+	return lipgloss.Place(m.termWidth, m.termHeight,
+		lipgloss.Center, lipgloss.Center,
+		dialog,
+	)
+}
+
+// renderConfirmQuitDialog renders the quit confirmation overlay dialog.
+func (m model) renderConfirmQuitDialog() string {
+	const maxDialogWidth = 44
+	dialogWidth := maxDialogWidth
+	if m.termWidth-4 < dialogWidth {
+		dialogWidth = m.termWidth - 4
+	}
+	innerWidth := dialogWidth - 4
+
+	// ── Title ──
+	titleLine := confirmQuitTitleStyle.Render(langManager.GetText("ConfirmQuitTitle"))
+
+	// ── Message ──
+	message := confirmQuitMessageStyle.Render(langManager.GetText("ConfirmQuitMessage"))
+
+	// ── Buttons (2 options) ──
+	renderBtn := func(label string, idx int) string {
+		if m.confirmQuitDialog.selectedOption == idx {
+			return confirmQuitButtonFocused.Render(label)
+		}
+		return confirmQuitButtonBlurred.Render(label)
+	}
+	buttons := lipgloss.JoinHorizontal(lipgloss.Center,
+		renderBtn(langManager.GetText("ConfirmDialogYes"), 0),
+		"  ",
+		renderBtn(langManager.GetText("ConfirmDialogNo"), 1),
+	)
+
+	// ── Help ──
+	help := confirmHelpStyle.Render("←/→ choose  enter confirm  y/n")
+
+	// ── Separator ──
+	sep := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("237")).
+		Width(innerWidth).
+		Render(strings.Repeat("─", innerWidth))
+
+	// ── Assemble ──
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		titleLine,
+		"",
+		message,
+		"",
+		sep,
+		"",
+		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(buttons),
+		"",
+		help,
+	)
+
+	dialog := confirmQuitBorderStyle.Width(dialogWidth).Render(content)
+
+	return lipgloss.Place(m.termWidth, m.termHeight,
+		lipgloss.Center, lipgloss.Center,
+		dialog,
+	)
+}
+
+// renderConfirmCancelDialog renders the cancel task confirmation overlay dialog.
+func (m model) renderConfirmCancelDialog() string {
+	const maxDialogWidth = 48
+	dialogWidth := maxDialogWidth
+	if m.termWidth-4 < dialogWidth {
+		dialogWidth = m.termWidth - 4
+	}
+	innerWidth := dialogWidth - 4
+
+	// ── Title ──
+	titleLine := confirmCancelTitleStyle.Render(langManager.GetText("ConfirmCancelTitle"))
+
+	// ── Message ──
+	message := confirmQuitMessageStyle.Render(langManager.GetText("ConfirmCancelMessage"))
+
+	// ── Buttons (2 options) ──
+	renderBtn := func(label string, idx int) string {
+		if m.confirmCancelDialog.selectedOption == idx {
+			return confirmCancelButtonFocused.Render(label)
+		}
+		return confirmCancelButtonBlurred.Render(label)
+	}
+	buttons := lipgloss.JoinHorizontal(lipgloss.Center,
+		renderBtn(langManager.GetText("ConfirmDialogYes"), 0),
+		"  ",
+		renderBtn(langManager.GetText("ConfirmDialogNo"), 1),
+	)
+
+	// ── Help ──
+	help := confirmHelpStyle.Render("←/→ choose  enter confirm  y yes  n/esc cancel")
+
+	// ── Separator ──
+	sep := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("237")).
+		Width(innerWidth).
+		Render(strings.Repeat("─", innerWidth))
+
+	// ── Assemble ──
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		titleLine,
+		"",
+		message,
+		"",
+		sep,
+		"",
+		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(buttons),
+		"",
+		help,
+	)
+
+	dialog := confirmCancelBorderStyle.Width(dialogWidth).Render(content)
 
 	return lipgloss.Place(m.termWidth, m.termHeight,
 		lipgloss.Center, lipgloss.Center,
