@@ -754,27 +754,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.event.Type == "ai_response" || msg.event.Type == "ai_stream_end" {
 			if usageData, ok := msg.event.Metadata["usage"]; ok {
 				if usageMap, ok := usageData.(map[string]interface{}); ok {
+					var completionVal int64
 					if completionTokens, ok := usageMap["completion_tokens"]; ok {
 						switch v := completionTokens.(type) {
 						case float64:
-							m.outputTokens += int64(v)
+							completionVal = int64(v)
 						case int64:
-							m.outputTokens += v
+							completionVal = v
 						case int:
-							m.outputTokens += int64(v)
+							completionVal = int64(v)
 						}
+						m.outputTokens += completionVal
 					}
 					// Also track input tokens from API (PromptTokens)
+					var promptVal int64
 					if promptTokens, ok := usageMap["prompt_tokens"]; ok {
 						switch v := promptTokens.(type) {
 						case float64:
-							m.inputTokens += int64(v)
+							promptVal = int64(v)
 						case int64:
-							m.inputTokens += v
+							promptVal = v
 						case int:
-							m.inputTokens += int64(v)
+							promptVal = int64(v)
 						}
+						m.inputTokens += promptVal
 					}
+
+					// Per-agent token tracking
+					agentName := msg.event.From
+					if agentName == "" {
+						agentName = "Unknown"
+					}
+					agentUsage, exists := m.tokenUsagePerAgent[agentName]
+					if !exists {
+						agentUsage = &AgentTokenUsage{AgentName: agentName}
+						m.tokenUsagePerAgent[agentName] = agentUsage
+					}
+					agentUsage.InputTokens += promptVal
+					agentUsage.OutputTokens += completionVal
 				}
 			} else {
 				// Fallback: estimate tokens from content string
