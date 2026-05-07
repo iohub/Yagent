@@ -120,7 +120,11 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 
 	// Tools whose result body is just status JSON — skip body rendering,
 	// only show the tool name + file path in the header.
+	// For read_file, skip borders as well; other tools keep borders.
 	if skipBodyTools[entry.Call.Name] && entry.Status == ToolStatusSuccess {
+		if entry.Call.Name == "read_file" {
+			return header
+		}
 		return addToolCallBorders(header, width)
 	}
 
