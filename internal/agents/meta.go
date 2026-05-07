@@ -68,7 +68,19 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (string, error) {
 	}
 
 	if a.Publisher != nil {
-		a.Publisher.Publish("ai_response", content, a.Name())
+		metadata := map[string]interface{}{}
+		if resp.Usage != nil {
+			metadata["usage"] = map[string]interface{}{
+				"prompt_tokens":     resp.Usage.PromptTokens,
+				"completion_tokens": resp.Usage.CompletionTokens,
+				"total_tokens":      resp.Usage.TotalTokens,
+			}
+		}
+		if len(metadata) > 0 {
+			a.Publisher.PublishWithMetadata("ai_response", content, a.Name(), metadata)
+		} else {
+			a.Publisher.Publish("ai_response", content, a.Name())
+		}
 	}
 
 	return content, nil

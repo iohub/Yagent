@@ -72,7 +72,19 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
 
 		choice := resp.Choices[0]
 		if choice.Content != "" && cfg.Publisher != nil {
-			cfg.Publisher.Publish("ai_response", choice.Content, cfg.AgentName)
+			metadata := map[string]interface{}{}
+			if resp.Usage != nil {
+				metadata["usage"] = map[string]interface{}{
+					"prompt_tokens":     resp.Usage.PromptTokens,
+					"completion_tokens": resp.Usage.CompletionTokens,
+					"total_tokens":      resp.Usage.TotalTokens,
+				}
+			}
+			if len(metadata) > 0 {
+				cfg.Publisher.PublishWithMetadata("ai_response", choice.Content, cfg.AgentName, metadata)
+			} else {
+				cfg.Publisher.Publish("ai_response", choice.Content, cfg.AgentName)
+			}
 		}
 
 		// Build assistant message
