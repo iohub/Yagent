@@ -7,11 +7,11 @@ import "time"
 type ToolStatus int
 
 const (
-	ToolStatusPending   ToolStatus = iota // waiting to start
-	ToolStatusRunning                     // currently executing
-	ToolStatusSuccess                     // completed successfully
-	ToolStatusError                       // completed with error
-	ToolStatusCanceled                    // user-canceled
+	ToolStatusPending  ToolStatus = iota // waiting to start
+	ToolStatusRunning                    // currently executing
+	ToolStatusSuccess                    // completed successfully
+	ToolStatusError                      // completed with error
+	ToolStatusCanceled                   // user-canceled
 )
 
 // ToolCallInfo holds parsed information about a tool call.

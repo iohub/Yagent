@@ -19,6 +19,7 @@ import (
 	"codeactor/internal/embedbin"
 	"codeactor/internal/http"
 	"codeactor/internal/llm"
+	"codeactor/internal/tui"
 	"codeactor/internal/util"
 	messaging "codeactor/pkg/messaging"
 )
@@ -33,9 +34,7 @@ func init() {
 	slog.SetDefault(logger)
 
 	// Initialize language manager with default language (English)
-	if langManager == nil {
-		langManager = NewLanguageManager()
-	}
+	tui.InitLangManager()
 }
 
 func main() {
@@ -155,7 +154,7 @@ func main() {
 		}
 
 		// Start TUI — all interaction is handled inside the TUI loop
-		startTUI(taskFilePath, codingAssistant, taskManager, dataManager)
+		tui.StartTUI(taskFilePath, codingAssistant, taskManager, dataManager)
 		return
 	case "http":
 		// Run HTTP server mode

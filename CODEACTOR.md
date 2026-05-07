@@ -62,9 +62,9 @@
 
 | 类别 | 技术 | 版本 | 用途 |
 |------|------|------|------|
-| **主程序** | Go | 1.23+ | 核心实现语言，模块名 `codeactor` |
+| **主程序** | Go | 1.24+ | 核心实现语言，模块名 `codeactor` |
 | **代码引擎** | Rust | 1.70+ (Tokio) | `codeactor-codebase` 服务，运行在 `127.0.0.1:12800` |
-| **LLM 抽象层** | `github.com/tmc/langchaingo` | - | 支持多 LLM 提供商的统一接口 |
+| **LLM 抽象层** | `github.com/openai/openai-go/v3` | - | 多 LLM 提供商的统一接口 (OpenAI-compatible) |
 | **HTTP 框架** | `gin-gonic/gin` | - | REST API 服务器 |
 | **WebSocket** | `olahol/melody` | - | WebSocket 连接管理 |
 | **TUI** | Charmbracelet/Bubble Tea | - | 终端交互界面 |
@@ -228,6 +228,43 @@ registerCustomAgent() - 创建 delegate_<name> 工具
 返回格式化结果，新 Agent 永久可用
 ```
 
+### 3.7 ImplPlan (实现计划)
+
+**定位**: 实现计划生成器，**只读模式**。
+
+**核心职责**:
+| 职责 | 说明 |
+|------|------|
+| 计划生成 | 分析需求生成结构化实现计划文档 |
+| 上下文收集 | 通过只读工具收集代码上下文 |
+| 影响分析 | 评估修改范围和依赖关系 |
+
+**拥有工具**: `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree`, `semantic_search`, `query_code_skeleton`, `query_code_snippet`
+
+### 3.8 Executor (执行器)
+
+**定位**: 通用 Agent 执行循环引擎。
+
+**核心职责**:
+| 职责 | 说明 |
+|------|------|
+| 标准循环 | 所有 Agent 共享的 LLM 调用-工具执行循环 |
+| 步骤管理 | 步骤计数、超时控制、结果返回 |
+
+**关键配置**:
+```go
+type ExecutorConfig struct {
+    SystemPrompt   string
+    UserInput      string
+    Adapters       []*tools.Adapter
+    LLM            llm.Engine
+    MaxSteps       int
+    Publisher      *messaging.MessagePublisher
+    AgentName      string
+    StopOnFinish   bool
+}
+```
+
 ---
 
 ## 4. 核心工具
@@ -249,9 +286,12 @@ registerCustomAgent() - 创建 delegate_<name> 工具
 | `query_code_snippet` | 仓库 | R | 查询函数实现 |
 | `run_bash` | 系统 | S | 执行 Shell 命令 |
 | `thinking` | 认知 | C | 错误分析和反思思维链 |
+| `micro_agent` | 认知 | MC | 子 LLM 推理调用，允许 Agent 进行深度思考 |
+| `impl_plan` | 编辑 | IP | 状态化的实现计划文档生成 |
+| `flow_control` | 流程 | FC | Agent 退出和用户帮助请求 |
 | `agent_exit` | 流程 | P | 通知任务完成 |
 
-**图例**: R=只读, W=写入, D=删除, M=移动/重命名, E=编辑, S=系统, C=认知, P=流程
+**图例**: R=只读, W=写入, D=删除, M=移动/重命名, E=编辑, S=系统, C=认知, MC=子LLM调用, IP=实现计划, FC=流控制, P=流程
 
 ### 4.2 文件操作工具
 
@@ -359,9 +399,40 @@ thinking(
 )
 ```
 
+#### micro_agent
+
+```go
+// 子 LLM 推理调用
+micro_agent(
+    task: string,          // 子推理任务描述
+    context: string        // 上下文信息
+)
+```
+
+#### impl_plan
+
+```go
+// 生成实现计划文档
+impl_plan(
+    action: string,        // create / update / read
+    plan_id: string,       // 计划 ID
+    content: string        // 计划内容
+)
+```
+
+#### flow_control
+
+```go
+// Agent 退出或请求帮助
+flow_control(
+    action: string,        // exit / ask_user_help
+    reason: string         // 原因描述
+)
+```
+
 ### 4.6 工具适配器模式
 
-所有工具通过 `Adapter` 模式包装为 langchaingo 的 `Tool` 接口：
+所有工具通过 `Adapter` 模式包装为 LLM 的 `Tool` 接口：
 
 ```go
 type ToolFunc func(ctx context.Context, params map[string]interface{}) (interface{}, error)
@@ -436,29 +507,64 @@ Agent → MessagePublisher → MessageDispatcher → TUIConsumer / WebSocketCons
 codeactor-agent/
 ├── main.go                    # 入口
 ├── internal/
-│   ├── agents/                # Agent 实现
-│   │   ├── conductor/         # Conductor Agent
-│   │   ├── coding/            # Coding Agent
-│   │   ├── repo/              # Repo Agent
-│   │   ├── chat/              # Chat Agent
-│   │   ├── devops/            # DevOps Agent
-│   │   └── meta/              # Meta Agent
+│   ├── agents/                # Agent 实现（扁平文件）
+│   │   ├── conductor.go       # Conductor Agent
+│   │   ├── coding.go          # Coding Agent
+│   │   ├── repo.go            # Repo Agent
+│   │   ├── chat.go            # Chat Agent
+│   │   ├── devops.go          # DevOps Agent
+│   │   ├── meta.go            # Meta Agent
+│   │   ├── impl_plan_agent.go # ImplPlan Agent
+│   │   ├── executor.go        # 通用执行循环
+│   │   ├── tools.go           # 工具注册
+│   │   ├── types.go           # 类型定义
+│   │   └── *.prompt.md        # 各 Agent 的 System Prompt
 │   ├── app/                   # 应用入口
+│   │   └── app.go             # CodingAssistant 编排
+│   ├── compact/               # 上下文压缩引擎
+│   │   ├── engine.go          # 压缩引擎
+│   │   ├── compressor.go      # 规则压缩器
+│   │   ├── summarizer.go      # LLM 摘要器
+│   │   ├── tokenizer.go       # Token 计数器
+│   │   ├── priority.go        # 优先级计算
+│   │   └── compact_config.go  # 压缩配置
 │   ├── config/                # 配置加载
 │   ├── datamanager/           # 数据存储
-│   ├── diff/                  # 差异计算
-│   ├── embedbin/              # 嵌入二进制
+│   ├── diff/                  # 差异计算 (unified diff)
+│   ├── embedbin/              # 嵌入二进制 (Rust codebase 服务)
 │   ├── globalctx/             # 全局上下文
 │   ├── http/                  # HTTP API
 │   ├── llm/                   # LLM 抽象层
+│   │   ├── engine.go          # Engine 接口 + 日志包装器
+│   │   ├── engine_openai.go   # OpenAI 兼容引擎
+│   │   └── llm.go             # LLM 客户端
 │   ├── memory/                # 任务记忆
-│   ├── tools/                 # 工具适配器
+│   ├── tools/                 # 工具适配器（17 个工具）
+│   │   ├── adapter.go         # Adapter 模式实现
+│   │   ├── file_operations.go # 文件操作 (6 个)
+│   │   ├── file_edit.go       # 代码编辑
+│   │   ├── search_operations.go # 搜索操作 (2 个)
+│   │   ├── system_operations.go # 系统操作
+│   │   ├── repo_operations.go # 仓库操作 (3 个)
+│   │   ├── cognitive.go       # 认知工具 (thinking)
+│   │   ├── micro_agent.go     # 子 LLM 推理
+│   │   ├── impl_plan.go       # 实现计划
+│   │   ├── flow_control.go    # 流控制
+│   │   ├── workspace_guard.go # 工作空间守卫
+│   │   └── user_confirm.go    # 用户确认管道
 │   ├── tui/                   # 终端界面
 │   └── util/                  # 工具函数
 ├── pkg/messaging/             # 消息总线
-├── codebase/                  # Rust 代码引擎
+├── codebase/                  # Rust 代码引擎 (独立二进制)
+│   ├── src/
+│   │   ├── codegraph/         # AST 解析 + 调用图 (tree-sitter, petgraph)
+│   │   ├── http/              # Axum HTTP 服务
+│   │   ├── storage/           # 图谱持久化 + 增量文件检测
+│   │   ├── services/          # 高层分析服务 (analyzer, embedding, snippet)
+│   │   ├── cli/               # CLI 子命令
+│   │   └── config.rs          # 配置加载
+│   └── grammar/               # Tree-sitter 语法定义 (Go, Python)
 ├── clients/                   # 客户端
-│   └── nodejs-cli/            # Node.js CLI
 ├── config/                    # 配置文件
 ├── docs/                      # 文档
 └── benchmark/                 # 基准测试
@@ -541,6 +647,24 @@ conductor_max_steps = 30
 coding_max_steps = 50
 repo_max_steps = 30
 lang = "Chinese"
+```
+
+**三级 LLM 配置优先级** (tools > agents > global):
+
+```toml
+# 第一级: global.llm (全局默认)
+[global.llm]
+use_provider = "siliconflow"
+
+# 第二级: agents.llm (按 Agent 覆盖)
+[agents.llm]
+conductor.use_provider = "aliyun"
+coding.use_provider = "deepseek"
+
+# 第三级: tools.llm (按 Tool 覆盖)
+[tools.llm]
+micro_agent.use_provider = "local"
+thinking.use_provider = "xiaomi"
 ```
 
 ### 6.6 数据存储
@@ -677,6 +801,15 @@ go build -o codeactor .          # 构建
 go test ./internal/... -v -count=1  # 测试
 cd codebase && cargo build       # Rust 构建
 ```
+
+### C. 安全机制
+
+| 机制 | 说明 |
+|------|------|
+| **WorkspaceGuard** | 工作空间边界检查，确保文件操作不超出项目目录 |
+| **UserConfirmManager** | Pub-Sub 确认管道，危险操作需用户批准 |
+| **3 级压缩策略** | 保守/平衡/激进，防止上下文溢出 |
+| **文件大小限制** | 10MB 文件编辑上限 |
 
 ---
 
