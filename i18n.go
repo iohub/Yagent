@@ -43,7 +43,13 @@ type translations struct {
 	HistoryKeyClearFilter   string
 	HistoryConfirmDelete    string
 	// Confirmation dialog
-	ConfirmDialogHelp string
+	ConfirmDialogHelp  string
+	ConfirmQuitTitle   string
+	ConfirmQuitMessage string
+	ConfirmCancelTitle string
+	ConfirmCancelMessage string
+	ConfirmDialogYes   string
+	ConfirmDialogNo    string
 	// Command mode (vim-like modal editing)
 	CommandModePrompt     string
 	CommandModeTips       string
@@ -85,6 +91,12 @@ var langMap = map[Language]translations{
 		HistoryKeyClearFilter:     "ctrl+u: 清除过滤",
 		HistoryConfirmDelete:      "确认删除此会话？(y = 确认, 其他键 = 取消)",
 		ConfirmDialogHelp: "←/→ 选择  enter 确认  a 允许  s 全部允许  d/esc 拒绝",
+		ConfirmQuitTitle:   "退出程序",
+		ConfirmQuitMessage: "确定要退出程序吗？",
+		ConfirmCancelTitle: "取消任务",
+		ConfirmCancelMessage: "确定要取消当前任务吗？",
+		ConfirmDialogYes:   "确认 (Enter)",
+		ConfirmDialogNo:    "取消 (Esc)",
 		CommandModePrompt:   "命令",
 		CommandModeTips:     "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  i:编辑  ctrl+e:编辑模式  ZZ:退出",
 		CommandModeIdleTips: "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  ::命令  /:搜索  ?:帮助  i:编辑  ZZ:退出",
@@ -143,6 +155,12 @@ var langMap = map[Language]translations{
 		HistoryKeyClearFilter:     "ctrl+u: clear filter",
 		HistoryConfirmDelete:      "Delete this conversation? (y = confirm, any other key = cancel)",
 		ConfirmDialogHelp: "←/→ choose  enter confirm  a allow  s all  d/esc deny",
+		ConfirmQuitTitle:   "Quit Program",
+		ConfirmQuitMessage: "Are you sure you want to quit?",
+		ConfirmCancelTitle: "Cancel Task",
+		ConfirmCancelMessage: "Are you sure you want to cancel the current task?",
+		ConfirmDialogYes:   "Confirm (Enter)",
+		ConfirmDialogNo:    "Cancel (Esc)",
 		CommandModePrompt:   "COMMAND",
 		CommandModeTips:     "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  i:edit  ctrl+e:edit  ZZ:quit",
 		CommandModeIdleTips: "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  ::cmd  /:search  ?:help  i:edit  ZZ:quit",
@@ -250,6 +268,18 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.HistoryConfirmDelete
 	case "ConfirmDialogHelp":
 			return translations.ConfirmDialogHelp
+		case "ConfirmQuitTitle":
+			return translations.ConfirmQuitTitle
+		case "ConfirmQuitMessage":
+			return translations.ConfirmQuitMessage
+		case "ConfirmCancelTitle":
+			return translations.ConfirmCancelTitle
+		case "ConfirmCancelMessage":
+			return translations.ConfirmCancelMessage
+		case "ConfirmDialogYes":
+			return translations.ConfirmDialogYes
+		case "ConfirmDialogNo":
+			return translations.ConfirmDialogNo
 		case "CommandModePrompt":
 			return translations.CommandModePrompt
 		case "CommandModeTips":
