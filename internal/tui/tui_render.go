@@ -84,6 +84,19 @@ func (m *model) rebuildViewportPreservingScroll() {
 	m.viewport.YOffset = yOffset
 }
 
+// rebuildViewportScrollLock rebuilds viewport content and scrolls to bottom
+// only if the user was already at the bottom. Used when tool call results
+// arrive — new content should be shown to users who are following along,
+// but shouldn't interrupt users reading history.
+func (m *model) rebuildViewportScrollLock() {
+	wasAtBottom := m.viewport.AtBottom()
+	m.rebuildContentCache()
+	m.viewport.SetContent(m.contentCache.String())
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
+}
+
 // rebuildContentCache rebuilds m.contentCache with the current welcome panel
 // and all log entries. Callers must then call viewport.SetContent().
 func (m *model) rebuildContentCache() {

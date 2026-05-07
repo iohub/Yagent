@@ -735,13 +735,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(msg.Runes) > 0 {
 				m.taskHistoryIdx = -1
 			}
-			// Pass to viewport for scrolling (up/down/pgup/pgdown)
-			var vpCmd tea.Cmd
-			m.viewport, vpCmd = m.viewport.Update(msg)
-			// Also pass to input for text editing
+			// Only update input — viewport scrolling keys (ctrl+f, ctrl+b)
+			// are handled in dedicated case branches above.
 			var inputCmd tea.Cmd
 			m.input, inputCmd = m.input.Update(msg)
-			return m, tea.Batch(vpCmd, inputCmd)
+			return m, inputCmd
 		}
 
 	case taskEventMsg:
@@ -825,7 +823,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					delete(m.toolCallEntries, callID)
 					m.updateActiveAnim()
-					m.buildViewportContent()
+					m.rebuildViewportScrollLock()
 					return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 				}
 			}
@@ -850,7 +848,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					delete(m.toolCallEntries, matchedID)
 					m.updateActiveAnim()
-					m.buildViewportContent()
+					m.rebuildViewportScrollLock()
 					return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 				}
 			}
