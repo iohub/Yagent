@@ -185,39 +185,6 @@ Disable Meta-Agent via startup flag:
 ./codeactor tui --disable-agents=meta
 ```
 
-## DevOps-Agent
-
-The **DevOps-Agent** is the operations and infrastructure specialist — it handles all non-coding operational tasks by executing shell commands, inspecting the file system, and analyzing command output. When the Conductor encounters a task involving system administration, log inspection, process management, or ad-hoc shell commands, it delegates to the DevOps-Agent via `delegate_devops`.
-
-### Capabilities
-
-- **Shell Command Execution** (`run_bash`) — Run any bash command with foreground/background support, danger detection, and workspace boundary checks
-- **File System Inspection** — `read_file`, `list_dir`, `print_dir_tree`, `search_by_regex` for browsing logs, configs, and directories
-- **Self-Correction** — `thinking` tool for analyzing command failures and adjusting approach before retrying
-- **Isolated Analysis** — `micro_agent` for deep reasoning on command output or generating structured reports
-
-### Example use cases
-
-- Check disk usage, memory, and system resources
-- Find all log files modified in the last 24 hours
-- Restart services or check process status
-- Inspect configuration files
-- Run system diagnostics and generate reports
-- Execute ad-hoc shell pipelines for data processing
-
-### Configuration
-
-```toml
-[agent]
-devops_max_steps = 15    # Max LLM steps for DevOps-Agent (default: 15)
-```
-
-Disable DevOps-Agent via startup flag:
-
-```bash
-./codeactor tui --disable-agents=devops
-```
-
 ## Codebase Analysis Engine
 
 The `codeactor-codebase` is a standalone **Rust** service that provides deep code analysis capabilities. It runs as a background HTTP server managed automatically by the Go binary.

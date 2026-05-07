@@ -107,6 +107,12 @@ var (
 	HelpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
 )
 
+// ── Tool call area borders ──
+var (
+	ToolCallBorderTop    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	ToolCallBorderBottom = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+)
+
 // ── Separator ──
 var SeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 

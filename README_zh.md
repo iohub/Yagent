@@ -184,39 +184,6 @@ meta_retry_count = 5   # JSON 解析失败重试次数（默认 5）
 ./codeactor tui --disable-agents=meta
 ```
 
-## DevOps-Agent（运维代理）
-
-**DevOps-Agent** 是运维和基础设施专家——通过执行 Shell 命令、检查文件系统和分析命令输出来处理所有非编码的运维任务。当 Conductor 遇到系统管理、日志检查、进程管理或 ad-hoc shell 命令类任务时，会通过 `delegate_devops` 委派给 DevOps-Agent。
-
-### 核心能力
-
-- **Shell 命令执行** (`run_bash`) — 运行任意 bash 命令，支持前台/后台运行，含危险检测和工作空间边界检查
-- **文件系统检查** — `read_file`、`list_dir`、`print_dir_tree`、`search_by_regex` 用于浏览日志、配置和目录
-- **自我修正** — 使用 `thinking` 工具分析命令失败原因，调整策略后重试
-- **独立分析** — 使用 `micro_agent` 对命令输出进行深度推理或生成结构化报告
-
-### 示例用例
-
-- 检查磁盘使用率、内存和系统资源
-- 查找最近 24 小时内修改的所有日志文件
-- 重启服务或检查进程状态
-- 检查配置文件
-- 运行系统诊断并生成报告
-- 执行 ad-hoc shell 管道进行数据处理
-
-### 配置
-
-```toml
-[agent]
-devops_max_steps = 15    # DevOps-Agent 最大 LLM 步数（默认 15）
-```
-
-通过启动参数禁用 DevOps-Agent：
-
-```bash
-./codeactor tui --disable-agents=devops
-```
-
 ## Codebase 分析引擎
 
 `codeactor-codebase` 是一个独立的 **Rust** 服务，提供深度代码分析能力。它作为后台 HTTP 服务器运行，由 Go 二进制自动管理。

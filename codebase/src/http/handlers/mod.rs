@@ -871,6 +871,15 @@ pub(crate) fn setup_watcher(
         match res {
             Ok(event) => {
                 if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
+                    // Filter out events from .git directory
+                    let should_process = event.paths.iter().any(|path| {
+                        !path.components().any(|comp| comp.as_os_str() == ".git")
+                    });
+                    
+                    if !should_process {
+                        return;
+                    }
+                    
                      tracing::info!("File change detected: {:?}, queueing re-analysis", event.paths);
                      let _ = tx.send(());
                 }

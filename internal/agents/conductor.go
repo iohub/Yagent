@@ -67,12 +67,17 @@ type ConductorAgent struct {
 	compactEngine  *compact.Engine           // 上下文压缩引擎
 	compactConfig  *compact.Config           // 压缩配置
 	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
+	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
 // 将成功读取的文件内容格式化后组合返回。文件按顺序尝试，不存在或读取失败时忽略。
 // 返回加载的文件列表和组合后的内容。
 func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
+	// 如果已经加载过，直接返回缓存（同一 Agent 实例会话内只加载一次）
+	if a.cachedProjectContext != nil {
+		return a.cachedProjectContext
+	}
 	result := &ProjectContextLoadResult{
 		LoadedFiles: []ProjectContextFile{},
 	}
@@ -95,6 +100,8 @@ func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
 		}
 	}
 	result.Content = sb.String()
+	// 缓存加载结果，避免后续调用重复读取文件
+	a.cachedProjectContext = result
 	return result
 }
 
@@ -655,13 +662,17 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n"
 	}
 
-	// 加载项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md）并前置到 System Prompt
-	if loadResult := a.loadProjectContext(); loadResult != nil && loadResult.Content != "" {
-		// 发送上下文加载完成消息到消息通道
-		if a.Publisher != nil {
-			a.Publisher.Publish("context_loaded", loadResult, a.Name())
+	// 只在首次对话时加载项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
+	// 同一会话的后续追问无需重复注入，避免浪费 token。
+	// memory 中不存储 system 消息，因此 len(mem.GetMessages()) == 0 即可判断是否为首次对话。
+	if mem == nil || len(mem.GetMessages()) == 0 {
+		if loadResult := a.loadProjectContext(); loadResult != nil && loadResult.Content != "" {
+			// 发送上下文加载完成消息到消息通道
+			if a.Publisher != nil {
+				a.Publisher.Publish("context_loaded", loadResult, a.Name())
+			}
+			systemPrompt = fmt.Sprintf("### Project Workspace Context\n%s\n\n", loadResult.Content) + systemPrompt
 		}
-		systemPrompt = fmt.Sprintf("### Project Workspace Context\n%s\n\n", loadResult.Content) + systemPrompt
 	}
 
 	messages = append(messages, llm.Message{
