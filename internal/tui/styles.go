@@ -4,10 +4,10 @@ import "github.com/charmbracelet/lipgloss"
 
 // ── Tool icon styles ──
 var (
-	IconPending   = lipgloss.NewStyle().Foreground(lipgloss.Color("108")).Render("●") // dim green
-	IconSuccess   = lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Render("✓") // green
-	IconError     = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Render("×") // red
-	IconCanceled  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("●") // gray
+	IconPending  = lipgloss.NewStyle().Foreground(lipgloss.Color("108")).Render("●") // dim green
+	IconSuccess  = lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Render("✓") // green
+	IconError    = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Render("×") // red
+	IconCanceled = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("●") // gray
 )
 
 // ── Tool name background color palette ──
@@ -58,8 +58,8 @@ func RenderToolName(name string) string {
 
 // ── Tool name styles ──
 var (
-	NameNormal = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))  // blue
-	NameNested = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))  // lighter blue
+	NameNormal = lipgloss.NewStyle().Foreground(lipgloss.Color("39")) // blue
+	NameNested = lipgloss.NewStyle().Foreground(lipgloss.Color("75")) // lighter blue
 )
 
 // ── Parameter styles ──
@@ -70,9 +70,9 @@ var (
 
 // ── Status message styles ──
 var (
-	StateRunning   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	StateCanceled  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	StateWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	StateRunning  = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	StateCanceled = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	StateWaiting  = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 )
 
 // ── Error styles ──
@@ -83,18 +83,18 @@ var (
 
 // ── Body/content styles ──
 var (
-	Body           = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).PaddingLeft(2)
-	ContentLine    = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).PaddingLeft(1)
-	ContentTrunc   = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).PaddingLeft(1)
+	Body         = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).PaddingLeft(2)
+	ContentLine  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).PaddingLeft(1)
+	ContentTrunc = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).PaddingLeft(1)
 )
 
 // ── Diff styles ──
 var (
-	DiffAdd     = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
-	DiffDel     = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
-	DiffHunk    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	DiffHeader  = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
-	DiffCtx     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	DiffAdd       = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+	DiffDel       = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
+	DiffHunk      = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	DiffHeader    = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	DiffCtx       = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	DiffNoNewline = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 )
 
