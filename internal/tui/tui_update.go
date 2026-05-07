@@ -540,6 +540,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "i":
+				// Block switching to edit mode while task is running
+				if m.taskRunning {
+					m.infoMsg = "Task is running, cannot switch to edit mode"
+					return m, nil
+				}
 				// Enter edit mode (vim-like: press i to insert)
 				m.commandMode = false
 				m.commandBuffer = ""
@@ -556,7 +561,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.commandBuffer != "" {
 					m.processCommand(m.commandBuffer)
 					m.commandBuffer = ""
-				} else {
+				} else if !m.taskRunning {
+					// Only enter edit mode if task is not running
 					m.commandMode = false
 				}
 				return m, nil
