@@ -60,32 +60,20 @@ func (m model) View() string {
 
 	if m.commandMode {
 		// ── Command mode (vim-like): hidden input, ":" prefix, colored bar ──
-		modeBar := lipgloss.NewStyle().
-			Background(lipgloss.Color("214")).
-			Foreground(lipgloss.Color("214")).
-			Render("▊")
+		modeBar := commandModeBarStyle.Render(" COMMAND ")
 
 		var cmdLine string
 		cmdPrefix := commandPrefixStyle.Render(" :")
-		cmdLabel := commandLabelStyle.Render(" " + langManager.GetText("CommandModePrompt") + " ")
 		if m.commandBuffer != "" {
 			cmdBufDisplay := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(m.commandBuffer)
 			cmdCursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Blink(true).Render("▊")
-			cmdLine = modeBar + cmdPrefix + cmdLabel + " " + cmdBufDisplay + cmdCursor
+			cmdLine = modeBar + cmdPrefix + " " + cmdBufDisplay + cmdCursor
 		} else {
 			cmdCursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Blink(true).Render("▊")
-			cmdLine = modeBar + cmdPrefix + cmdLabel + " " + cmdCursor
+			cmdLine = modeBar + cmdPrefix + " " + cmdCursor
 		}
 
-		var cmdTips string
-		if m.taskRunning {
-			cmdTips = langManager.GetText("CommandModeTips")
-		} else {
-			cmdTips = langManager.GetText("CommandModeIdleTips")
-		}
-		cmdTipsLine := commandHintStyle.Render("  " + cmdTips)
-
-		footer.WriteString(cmdLine + cmdTipsLine)
+		footer.WriteString(cmdLine)
 		footer.WriteString("\n")
 	} else {
 		// ── Edit mode: textarea with dark background (via Base style), no bar ──
@@ -113,7 +101,11 @@ func (m model) View() string {
 	footer.WriteString("\n")
 	var statusLine string
 	if m.commandMode {
-		statusLine = footerStyle.Render("COMMAND MODE")
+		if m.taskRunning {
+			statusLine = footerStyle.Render(langManager.GetText("CommandModeTips"))
+		} else {
+			statusLine = footerStyle.Render(langManager.GetText("CommandModeIdleTips"))
+		}
 	} else {
 		statusLine = footerStyle.Render(langManager.GetText("EditModeTips"))
 	}
