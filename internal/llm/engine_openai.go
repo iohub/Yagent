@@ -129,12 +129,23 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 		return nil, fmt.Errorf("openai streaming: %w", err)
 	}
 
+	// Extract real token usage from streaming accumulator
+	var usage *TokenUsage
+	if acc := stream.Current(); acc.Usage.PromptTokens > 0 || acc.Usage.CompletionTokens > 0 {
+		usage = &TokenUsage{
+			PromptTokens:     acc.Usage.PromptTokens,
+			CompletionTokens: acc.Usage.CompletionTokens,
+			TotalTokens:      acc.Usage.TotalTokens,
+		}
+	}
+
 	return &Response{
 		Choices: []Choice{{
 			Content:   content,
 			Reasoning: reasoning,
 			ToolCalls: toolCalls,
 		}},
+		Usage: usage,
 	}, nil
 }
 
@@ -260,5 +271,15 @@ func (e *OpenAIEngine) toResponse(completion *openai.ChatCompletion) *Response {
 
 		resp.Choices = append(resp.Choices, c)
 	}
+
+	// Extract real token usage from API response
+	if completion.Usage.PromptTokens > 0 || completion.Usage.CompletionTokens > 0 {
+		resp.Usage = &TokenUsage{
+			PromptTokens:     completion.Usage.PromptTokens,
+			CompletionTokens: completion.Usage.CompletionTokens,
+			TotalTokens:      completion.Usage.TotalTokens,
+		}
+	}
+
 	return resp
 }

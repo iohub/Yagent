@@ -50,9 +50,17 @@ type FunctionCall struct {
 	Arguments string `json:"arguments"`
 }
 
+// TokenUsage contains token usage information returned by the LLM API.
+type TokenUsage struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+}
+
 // Response represents the LLM's response to a GenerateContent call.
 type Response struct {
-	Choices []Choice `json:"choices"`
+	Choices []Choice    `json:"choices"`
+	Usage   *TokenUsage `json:"usage,omitempty"`
 }
 
 // Choice represents a single choice in the LLM response.

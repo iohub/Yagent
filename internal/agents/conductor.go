@@ -751,7 +751,19 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 
 		if choice.Content != "" {
 			if a.Publisher != nil {
-				a.Publisher.Publish("ai_response", choice.Content, a.Name())
+				metadata := map[string]interface{}{}
+				if resp.Usage != nil {
+					metadata["usage"] = map[string]interface{}{
+						"prompt_tokens":     resp.Usage.PromptTokens,
+						"completion_tokens": resp.Usage.CompletionTokens,
+						"total_tokens":      resp.Usage.TotalTokens,
+					}
+				}
+				if len(metadata) > 0 {
+					a.Publisher.PublishWithMetadata("ai_response", choice.Content, a.Name(), metadata)
+				} else {
+					a.Publisher.Publish("ai_response", choice.Content, a.Name())
+				}
 			}
 		}
 

@@ -61,8 +61,10 @@ var (
 
 	// Mode-specific styles (vim-like edit / command modes)
 	commandPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true) // orange ":"
-	commandLabelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true) // "COMMAND"
-	commandHintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // tips text
+	commandModeBarStyle = lipgloss.NewStyle().
+		Background(lipgloss.Color("214")).
+		Foreground(lipgloss.Color("0")).
+		Bold(true)
 )
 
 // logEntry represents a single message in the TUI log area.
@@ -204,6 +206,10 @@ type model struct {
 
 	// Current LLM model being used (extracted from model_info events)
 	currentModel string
+
+	// Token consumption tracking
+	inputTokens  int64 // accumulated input tokens
+	outputTokens int64 // accumulated output tokens
 
 	// Animation state for running tools
 	anim       *Anim

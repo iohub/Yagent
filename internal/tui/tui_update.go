@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"codeactor/internal/compact"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
 
@@ -744,6 +745,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case taskEventMsg:
+		// Count tokens for AI response events
+		// Prefer real token usage from API metadata, fallback to estimation
+		if msg.event.Type == "ai_response" || msg.event.Type == "ai_stream_end" {
+			if usageData, ok := msg.event.Metadata["usage"]; ok {
+				if usageMap, ok := usageData.(map[string]interface{}); ok {
+					if completionTokens, ok := usageMap["completion_tokens"]; ok {
+						switch v := completionTokens.(type) {
+						case float64:
+							m.outputTokens += int64(v)
+						case int64:
+							m.outputTokens += v
+						case int:
+							m.outputTokens += int64(v)
+						}
+					}
+					// Also track input tokens from API (PromptTokens)
+					if promptTokens, ok := usageMap["prompt_tokens"]; ok {
+						switch v := promptTokens.(type) {
+						case float64:
+							m.inputTokens += int64(v)
+						case int64:
+							m.inputTokens += v
+						case int:
+							m.inputTokens += int64(v)
+						}
+					}
+				}
+			} else {
+				// Fallback: estimate tokens from content string
+				if content, ok := msg.event.Content.(string); ok && content != "" {
+					if tok := compact.GetGlobalTokenizer(); tok != nil {
+						if count, err := tok.CountTokens(content); err == nil && count > 0 {
+							m.outputTokens += int64(count)
+						}
+					}
+				}
+			}
+		}
+
 		// Capture model info for status bar display
 		if msg.event.Type == "model_info" {
 			if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {

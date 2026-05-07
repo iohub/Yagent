@@ -60,32 +60,20 @@ func (m model) View() string {
 
 	if m.commandMode {
 		// ── Command mode (vim-like): hidden input, ":" prefix, colored bar ──
-		modeBar := lipgloss.NewStyle().
-			Background(lipgloss.Color("214")).
-			Foreground(lipgloss.Color("214")).
-			Render("▊")
+		modeBar := commandModeBarStyle.Render(" COMMAND ")
 
 		var cmdLine string
 		cmdPrefix := commandPrefixStyle.Render(" :")
-		cmdLabel := commandLabelStyle.Render(" " + langManager.GetText("CommandModePrompt") + " ")
 		if m.commandBuffer != "" {
 			cmdBufDisplay := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(m.commandBuffer)
 			cmdCursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Blink(true).Render("▊")
-			cmdLine = modeBar + cmdPrefix + cmdLabel + " " + cmdBufDisplay + cmdCursor
+			cmdLine = modeBar + cmdPrefix + " " + cmdBufDisplay + cmdCursor
 		} else {
 			cmdCursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Blink(true).Render("▊")
-			cmdLine = modeBar + cmdPrefix + cmdLabel + " " + cmdCursor
+			cmdLine = modeBar + cmdPrefix + " " + cmdCursor
 		}
 
-		var cmdTips string
-		if m.taskRunning {
-			cmdTips = langManager.GetText("CommandModeTips")
-		} else {
-			cmdTips = langManager.GetText("CommandModeIdleTips")
-		}
-		cmdTipsLine := commandHintStyle.Render("  " + cmdTips)
-
-		footer.WriteString(cmdLine + cmdTipsLine)
+		footer.WriteString(cmdLine)
 		footer.WriteString("\n")
 	} else {
 		// ── Edit mode: textarea with dark background (via Base style), no bar ──
@@ -101,6 +89,10 @@ func (m model) View() string {
 		footer.WriteString("\n")
 	}
 
+	// Token consumption display (before status line)
+	footer.WriteString(m.renderTokenLine())
+	footer.WriteString("\n")
+
 	// Status line: mode indicator + task indicator + model name
 	taskIndicator := ""
 	if m.taskRunning {
@@ -113,7 +105,11 @@ func (m model) View() string {
 	footer.WriteString("\n")
 	var statusLine string
 	if m.commandMode {
-		statusLine = footerStyle.Render("COMMAND MODE")
+		if m.taskRunning {
+			statusLine = footerStyle.Render(langManager.GetText("CommandModeTips"))
+		} else {
+			statusLine = footerStyle.Render(langManager.GetText("CommandModeIdleTips"))
+		}
 	} else {
 		statusLine = footerStyle.Render(langManager.GetText("EditModeTips"))
 	}
@@ -189,4 +185,25 @@ func renderBanner() string {
 		rendered = append(rendered, lipgloss.JoinHorizontal(lipgloss.Top, chars...))
 	}
 	return bannerPadStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rendered...))
+}
+
+// formatToken formats a token count with k/m suffixes (e.g. "1.2k", "1.5m")
+func formatToken(n int64) string {
+	switch {
+	case n >= 1000000:
+		return fmt.Sprintf("%.1fm", float64(n)/1000000)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// renderTokenLine renders the token consumption line in the footer.
+// Format: "In: 1.2k | Out: 3.5k"
+func (m model) renderTokenLine() string {
+	tokenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")) // muted gray
+	inStr := formatToken(m.inputTokens)
+	outStr := formatToken(m.outputTokens)
+	return tokenStyle.Render(fmt.Sprintf("In: %s | Out: %s", inStr, outStr))
 }

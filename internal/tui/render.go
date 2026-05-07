@@ -126,7 +126,7 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 
 	// Render body if we have a result
 	if entry.Result != nil && entry.Result.Content != "" {
-		body := RenderResultBody(entry.Result.Content, width)
+		body := RenderResultBody(entry.Call.Name, entry.Result.Content, width)
 		if body != "" {
 			// Border only wraps header; body goes below the border
 			return addToolCallBorders(header, width) + "\n" + body
@@ -145,7 +145,7 @@ func addToolCallBorders(header string, width int) string {
 }
 
 // RenderResultBody renders the tool result content with smart detection.
-func RenderResultBody(content string, width int) string {
+func RenderResultBody(toolName string, content string, width int) string {
 	// Determine content width
 	bodyWidth := width - 4 // account for padding
 	if bodyWidth > MaxContentWidth {
@@ -157,6 +157,10 @@ func RenderResultBody(content string, width int) string {
 
 	// 1. Try JSON — check for embedded fields first
 	if isJSON(content) {
+		// Detect codebase tool results by JSON structure (not tool name)
+		if formatted := tryFormatCodebaseResult(content, bodyWidth); formatted != "" {
+			return formatted
+		}
 		// Check if JSON contains a "diff" field — extract and render as colored diff
 		if diff := extractDiffField(content); diff != "" {
 			return RenderDiffContent(diff, bodyWidth)
@@ -214,6 +218,236 @@ func extractOutputField(jsonStr string) string {
 		return output
 	}
 	return ""
+}
+
+// tryFormatCodebaseResult detects codebase tool result JSON by structure and formats it.
+// Returns empty string if the JSON doesn't match any known codebase result pattern.
+func tryFormatCodebaseResult(content string, width int) string {
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return ""
+	}
+
+	data, hasData := parsed["data"].(map[string]interface{})
+	if !hasData {
+		return ""
+	}
+
+	// Pattern 1: semantic_search — data.results array with file_path/semantic_distance
+	if resultsRaw, ok := data["results"]; ok {
+		if results, ok := resultsRaw.([]interface{}); ok && len(results) > 0 {
+			// Verify it looks like semantic_search (has file_path or semantic_distance)
+			if first, ok := results[0].(map[string]interface{}); ok {
+				if _, hasPath := first["file_path"]; hasPath {
+					return formatSemanticSearchResults(results, width)
+				}
+			}
+		}
+	}
+
+	// Pattern 2: query_code_snippet — data.code_snippet with filepath
+	if snippet, ok := data["code_snippet"].(string); ok && snippet != "" {
+		filepath, _ := data["filepath"].(string)
+		funcName, _ := data["function_name"].(string)
+		lineStart, _ := data["line_start"].(float64)
+		lineEnd, _ := data["line_end"].(float64)
+		language, _ := data["language"].(string)
+		return formatCodeSnippetResult(filepath, funcName, snippet, int(lineStart), int(lineEnd), language, width)
+	}
+
+	// Pattern 3: query_code_skeleton — data.skeletons array
+	if skelsRaw, ok := data["skeletons"]; ok {
+		if skels, ok := skelsRaw.([]interface{}); ok && len(skels) > 0 {
+			return formatCodeSkeletonResults(skels, width)
+		}
+	}
+
+	return ""
+}
+
+// formatSemanticSearchResults formats semantic_search results array in a human-readable way.
+func formatSemanticSearchResults(results []interface{}, width int) string {
+	if len(results) == 0 {
+		return ContentLine.Render("  (no results)")
+	}
+
+	idxStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
+	fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	scoreStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	codeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	symbolStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
+
+	maxResults := MaxBodyLines
+	totalResults := len(results)
+	if totalResults > maxResults {
+		results = results[:maxResults]
+	}
+
+	var lines []string
+	for i, r := range results {
+		item, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		var headerParts []string
+		num := idxStyle.Render(fmt.Sprintf("#%d", i+1))
+
+		filePath := ""
+		if fp, ok := item["file_path"].(string); ok {
+			filePath = fp
+		}
+		maxPathLen := width - 25
+		if maxPathLen < 20 {
+			maxPathLen = 20
+		}
+		if len(filePath) > maxPathLen {
+			filePath = "..." + filePath[len(filePath)-maxPathLen+3:]
+		}
+		filePart := fileStyle.Render(filePath)
+		headerParts = append(headerParts, num, " ", filePart)
+
+		if score, ok := item["semantic_distance"].(float64); ok {
+			headerParts = append(headerParts, "  ", scoreStyle.Render(fmt.Sprintf("(score: %.3f)", score)))
+		}
+
+		if sym, ok := item["symbol_name"].(string); ok && sym != "" && !strings.HasPrefix(sym, "anon-") {
+			headerParts = append(headerParts, "  ", symbolStyle.Render(sym))
+		}
+
+		lines = append(lines, strings.Join(headerParts, ""))
+
+		if cb, ok := item["code_block"].(string); ok && cb != "" {
+			firstLine := strings.SplitN(cb, "\n", 2)[0]
+			firstLine = strings.TrimSpace(firstLine)
+			maxCodeLen := width - 6
+			if maxCodeLen < 30 {
+				maxCodeLen = 30
+			}
+			if len(firstLine) > maxCodeLen {
+				firstLine = firstLine[:maxCodeLen-1] + "…"
+			}
+			lines = append(lines, "  "+codeStyle.Render("  "+firstLine))
+		}
+	}
+
+	if totalResults > maxResults {
+		hidden := totalResults - maxResults
+		lines = append(lines, ContentTrunc.Render(fmt.Sprintf("... (%d more results hidden)", hidden)))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// formatCodeSnippetResult formats a query_code_snippet result in a human-readable way.
+func formatCodeSnippetResult(filepath, funcName, snippet string, lineStart, lineEnd int, language string, width int) string {
+	fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	funcStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	langStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
+	locStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
+	codeLineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
+	var lines []string
+
+	// Header: filepath  funcName  (language)  L{start}-{end}
+	headerParts := []string{
+		fileStyle.Render(filepath),
+		"  ",
+		funcStyle.Render(funcName),
+	}
+	if language != "" {
+		headerParts = append(headerParts, "  ", langStyle.Render(language))
+	}
+	if lineStart > 0 {
+		lineRange := fmt.Sprintf("L%d-%d", lineStart, lineEnd)
+		headerParts = append(headerParts, "  ", locStyle.Render(lineRange))
+	}
+	lines = append(lines, strings.Join(headerParts, ""))
+
+	// Code content — show each line with prefix
+	codeLines := strings.Split(snippet, "\n")
+	maxLines := MaxBodyLines - 1 // reserve one line for header
+	truncated := false
+	if len(codeLines) > maxLines {
+		codeLines = codeLines[:maxLines]
+		truncated = true
+	}
+	for _, cl := range codeLines {
+		truncated := truncateLine(cl, width-2)
+		lines = append(lines, "  "+codeLineStyle.Render(truncated))
+	}
+	if truncated {
+		hidden := len(strings.Split(snippet, "\n")) - maxLines
+		lines = append(lines, ContentTrunc.Render(fmt.Sprintf("... (%d more lines hidden)", hidden)))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// formatCodeSkeletonResults formats query_code_skeleton results array in a human-readable way.
+func formatCodeSkeletonResults(skels []interface{}, width int) string {
+	if len(skels) == 0 {
+		return ContentLine.Render("  (no skeletons)")
+	}
+
+	idxStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
+	fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	langStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
+	codeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
+	maxResults := MaxBodyLines
+	totalResults := len(skels)
+	if totalResults > maxResults {
+		skels = skels[:maxResults]
+	}
+
+	var lines []string
+	for i, s := range skels {
+		item, ok := s.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		num := idxStyle.Render(fmt.Sprintf("#%d", i+1))
+		filepath, _ := item["filepath"].(string)
+		language, _ := item["language"].(string)
+
+		// Truncate filepath
+		maxPathLen := width - 20
+		if maxPathLen < 20 {
+			maxPathLen = 20
+		}
+		if len(filepath) > maxPathLen {
+			filepath = "..." + filepath[len(filepath)-maxPathLen+3:]
+		}
+
+		headerParts := []string{num, " ", fileStyle.Render(filepath)}
+		if language != "" {
+			headerParts = append(headerParts, "  ", langStyle.Render(language))
+		}
+		lines = append(lines, strings.Join(headerParts, ""))
+
+		// Skeleton text
+		if st, ok := item["skeleton_text"].(string); ok && st != "" {
+			firstLine := strings.SplitN(st, "\n", 2)[0]
+			firstLine = strings.TrimSpace(firstLine)
+			maxCodeLen := width - 6
+			if maxCodeLen < 30 {
+				maxCodeLen = 30
+			}
+			if len(firstLine) > maxCodeLen {
+				firstLine = firstLine[:maxCodeLen-1] + "…"
+			}
+			lines = append(lines, "  "+codeStyle.Render("  "+firstLine))
+		}
+	}
+
+	if totalResults > maxResults {
+		hidden := totalResults - maxResults
+		lines = append(lines, ContentTrunc.Render(fmt.Sprintf("... (%d more skeletons hidden)", hidden)))
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // RenderDiffContent renders a unified diff string with ANSI color styling.
