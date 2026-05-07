@@ -708,6 +708,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.PageUp()
 			return m, nil
 
+		case "@":
+			// Trigger fzf file fuzzy finder
+			// First, let @ be inserted into textarea, then start fzf
+			var inputCmd tea.Cmd
+			m.input, inputCmd = m.input.Update(msg)
+			return m, tea.Batch(
+				inputCmd,
+				runFzfCmd(m.projectDir),
+			)
+
 		case "up", "down":
 			// Cycle through task history when input is empty
 			if strings.TrimSpace(m.input.Value()) == "" {
@@ -843,6 +853,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.taskCompleteDialog = taskCompleteDialog{
 				open:    true,
 				message: "Task Completed\n\nAll tasks have been finished.",
+			}
+		}
+		return m, nil
+	}
+
+	// Handle fzf file selection
+	if msg, ok := msg.(fzfFileSelectedMsg); ok {
+		if msg.path != "" {
+			currentVal := m.input.Value()
+			// Find the last @ and insert the file path after it
+			lastAt := strings.LastIndex(currentVal, "@")
+			if lastAt >= 0 {
+				newVal := currentVal[:lastAt+1] + msg.path + currentVal[lastAt+1:]
+				m.input.SetValue(newVal)
 			}
 		}
 		return m, nil
