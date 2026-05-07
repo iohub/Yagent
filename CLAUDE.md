@@ -35,8 +35,8 @@ Server defaults to `localhost:9080`. Override via `--host`/`--port` or `CODECACT
 
 ## Tech Stack
 
-- **Language**: Go 1.23+, module `codeactor`
-- **LLM**: `github.com/tmc/langchaingo` (multi-provider: OpenAI-compatible, Bedrock)
+- **Language**: Go 1.24+, module `codeactor`
+- **LLM**: `github.com/openai/openai-go/v3` (multi-provider: OpenAI-compatible, Bedrock)
 - **HTTP/WS**: `gin-gonic/gin` + `olahol/melody`
 - **TUI**: Bubble Tea
 - **External**: `codeactor-codebase` (Rust, `127.0.0.1:12800`) — semantic search, repo investigation, call graph, code skeleton/snippet. See [Codebase Component](#codebase-component) below.
@@ -47,33 +47,88 @@ Server defaults to `localhost:9080`. Override via `--host`/`--port` or `CODECACT
 ```
 codeactor-agent/
 ├── main.go                      # Entry point, CLI parsing, start codebase service
-├── tui.go                       # Bubble Tea terminal UI
-├── i18n.go                      # i18n (Chinese/English)
-├── config/config.toml           # LLM providers, HTTP port, agent step limits
-├── docs/                        # Architecture, testing, prompt guides
 ├── internal/
-│   ├── assistant/               # Core orchestration
-│   │   ├── assistant.go         # CodingAssistant entry point
-│   │   ├── llm.go               # Multi-provider LLM client
-│   │   ├── data_manager.go      # Task memory persistence
-│   │   ├── integration.go       # Messaging integration
-│   │   ├── agents/              # Agent implementations (conductor/coding/repo/chat/meta)
-│   │   └── tools/               # 14 tools (Adapter pattern wrapping langchaingo Tool)
-│   ├── http/                    # REST API + WebSocket server (server, task_executor, task_manager)
+│   ├── app/
+│   │   └── app.go               # CodingAssistant: agent orchestration & init
+│   ├── agents/                  # Agent implementations (flat files)
+│   │   ├── conductor.go         # ConductorAgent: hub coordinator
+│   │   ├── conductor.prompt.md  # Conductor system prompt
+│   │   ├── coding.go            # CodingAgent: code writer/editor
+│   │   ├── coding.prompt.md     # Coding system prompt
+│   │   ├── repo.go              # RepoAgent: codebase analyst
+│   │   ├── repo.prompt.md       # Repo system prompt
+│   │   ├── chat.go              # ChatAgent: general Q&A
+│   │   ├── chat.prompt.md       # Chat system prompt
+│   │   ├── devops.go            # DevOpsAgent: shell/system ops
+│   │   ├── devops.prompt.md     # DevOps system prompt
+│   │   ├── meta.go              # MetaAgent: custom agent designer
+│   │   ├── meta.prompt.md       # Meta system prompt
+│   │   ├── impl_plan_agent.go   # ImplPlanAgent: read-only implementation planner
+│   │   ├── impl_plan.prompt.md  # ImplPlan system prompt
+│   │   ├── executor.go          # Generic agent execution loop (RunAgentLoop)
+│   │   ├── tools.go             # Tool registration helpers
+│   │   ├── tools.json           # Tool definitions
+│   │   └── types.go             # BaseAgent, shared types
+│   ├── llm/
+│   │   ├── engine.go            # Engine interface + LoggingEngine wrapper
+│   │   ├── engine_openai.go     # OpenAI-compatible engine (openai-go/v3)
+│   │   └── llm.go               # LLM client, provider registry (13+ providers)
+│   ├── tools/                   # 17 tools (Adapter pattern)
+│   │   ├── adapter.go           # Adapter: ToolFunc → langchaingo Tool interface
+│   │   ├── file_operations.go   # read_file, create_file, delete_file, rename_file, list_dir, print_dir_tree
+│   │   ├── file_edit.go         # search_replace_in_file (unified diff, 10MB limit)
+│   │   ├── search_operations.go # search_by_regex (ripgrep), file_search (fzf)
+│   │   ├── repo_operations.go   # semantic_search, query_code_skeleton, query_code_snippet
+│   │   ├── system_operations.go # run_bash (foreground/background)
+│   │   ├── cognitive.go         # thinking (error analysis & reflection)
+│   │   ├── micro_agent.go       # micro_agent (sub-LLM reasoning)
+│   │   ├── impl_plan.go         # impl_plan (stateful implementation plan)
+│   │   ├── flow_control.go      # agent_exit, ask_user_for_help
+│   │   ├── workspace_guard.go   # Workspace boundary enforcement
+│   │   └── user_confirm.go      # User confirmation pipeline (Pub-Sub)
+│   ├── compact/                 # Context compression engine
+│   │   ├── engine.go            # Compression engine (conservative/balanced/aggressive)
+│   │   ├── compressor.go        # Rule-based compressor
+│   │   ├── summarizer.go        # LLM-based summarizer
+│   │   ├── tokenizer.go         # Token counter
+│   │   ├── priority.go          # Message priority calculator
+│   │   └── compact_config.go    # Compression configuration
+│   ├── http/                    # REST API + WebSocket server
+│   │   ├── server.go            # Gin server, route registration
+│   │   ├── task_executor.go     # Task execution orchestration
+│   │   ├── task_manager.go      # Task lifecycle management
+│   │   ├── types.go             # Request/Response types
+│   │   └── websocket.go         # WebSocket handler (melody)
+│   ├── tui/                     # Bubble Tea terminal UI
 │   ├── memory/                  # ConversationMemory (system/human/assistant/tool)
-│   ├── config/                  # TOML config parsing
-│   ├── globalctx/               # Global context (project path, language, prompt formatting)
-│   └── util/                    # Error handling with call stacks
-└── pkg/messaging/               # Pub-Sub message bus (MessageEvent → Dispatcher → Consumers)
+│   ├── config/                  # Three-tier TOML config (tools > agents > global)
+│   ├── diff/                    # Unified diff computation
+│   ├── embedbin/                # Embed Rust codebase binary
+│   ├── datamanager/             # Task persistence (~/.codeactor/tasks/)
+│   ├── globalctx/               # Global context (CodebaseURL, tool references)
+│   └── util/                    # Error handling, crash recovery
+├── pkg/messaging/               # Pub-Sub message bus
+│   ├── message_event.go         # MessageEvent definition
+│   ├── message_publisher.go     # Agent → Dispatcher
+│   ├── message_dispatcher.go    # Central dispatcher (fan-out)
+│   ├── message_consumer.go      # Consumer interface
+│   └── consumers/
+│       ├── tui.go               # TUI event consumer
+│       └── websock.go           # WebSocket event consumer
+├── config/config.toml           # Config template
+├── docs/                        # Architecture, testing, prompt guides
+└── benchmark/                   # Benchmark tasks (Python/Rust/non-code)
 ```
 
 ## Core Architecture
 
 1. **Hub-and-Spoke**: ConductorAgent is the sole user-facing agent, delegating to sub-agents via `delegate_repo` / `delegate_coding` / `delegate_chat` / `delegate_meta` tools. MetaAgent can dynamically create custom agents registered at runtime.
 2. **Pub-Sub messaging**: Agent publishes `MessageEvent` → `MessageDispatcher` broadcasts → `TUIConsumer` / `WebSocketConsumer`
-3. **Adapter pattern**: `ToolFunc` wrapped via `Adapter` into langchaingo's `Tool` interface for LLM Function Calling
+3. **Adapter pattern**: `ToolFunc` wrapped via `Adapter` into LLM's `Tool` interface for LLM Function Calling
 4. **Config priority**: `$HOME/.codeactor/config/config.toml` → panics if not found
 5. **Agent disable**: Use `--disable-agents=repo,coding,...` at startup to conditionally exclude delegate tools. Disabled agents are still constructed but their delegate tools are not registered in the Conductor's Adapters.
+6. **Context compression**: Multi-strategy (conservative/balanced/aggressive) context compression with priority-based message selection and LLM summarization to handle long conversations.
+7. **WorkspaceGuard**: All file operations and bash commands are validated against workspace boundaries. Dangerous operations require user confirmation via Pub-Sub confirmation pipeline.
 
 ## Codebase Component
 
@@ -102,7 +157,7 @@ codebase/src/
 ├── codegraph/           # AST parsing + graph data structures
 │   ├── graph.rs         # Flat CodeGraph (HashMap-based)
 │   ├── types.rs         # PetCodeGraph (petgraph DiGraph<FunctionInfo, CallRelation>)
-│   ├── parser.rs        # CodeParser: tree-sitter parsing with FileIndex/SnippetIndex
+│   ├── parser.rs        # CodeParser: tree-sitter multi-language parsing (Rust/Python/JS/TS/Java/C++/Go)
 │   └── treesitter/      # Language parsers (Rust/Python/JS/TS/Java/C++/Go)
 ├── services/
 │   ├── analyzer.rs      # CodeAnalyzer: call chains, cycles, complexity, reports
@@ -128,6 +183,15 @@ Core design: **single repo per process** — binds to one repo at startup via `-
 | POST | `/query_hierarchical_graph` | Hierarchical call tree with depth limit |
 | POST | `/query_indexing_status` | Embedding indexing status |
 | GET | `/draw_call_graph` | ECharts call graph visualization |
+
+### Embedding & Vector Search
+
+The codebase service supports semantic code search via vector embeddings:
+- **Embedding model**: Configurable (default: `text-embedding-3-small`, 1536 dimensions)
+- **Vector store**: LanceDB for vector indexing
+- **Cache**: SQLite for embedding cache (avoids re-embedding unchanged code)
+- **Background indexing**: Triggers automatically after initial analysis
+- **Status**: Query via `POST /query_indexing_status`
 
 ### Integration in Go
 
@@ -166,6 +230,7 @@ dimensions = 1536
 - Memory: `ConversationMemory` with system/human/assistant/tool message types
 - Task persistence: `~/.codeactor/tasks/{taskID}.json`
 - LLM logs: `~/.codeactor/logs/llm-{date}.log`
+- Config: Three-tier LLM provider selection (tools.llm > agents.llm > global.llm)
 
 ## Testing Methodology
 
@@ -173,10 +238,10 @@ dimensions = 1536
 
 ```bash
 # Run all agent tests (mock LLM, no real API calls)
-go test ./internal/assistant/agents/... -v -count=1
+go test ./internal/agents/... -v -count=1
 
 # Run a specific test
-go test ./internal/assistant/agents/... -v -run TestDelegateMeta_DynamicRegistration
+go test ./internal/agents/... -v -run TestDelegateMeta_DynamicRegistration
 ```
 
 Agent tests use `mockLLM` in `conductor_test.go` — it returns pre-defined responses, so tests are deterministic and fast. Key test categories:
