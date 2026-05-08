@@ -15,8 +15,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func (m *model) processCommand(cmd string) {
+func (m *model) processCommand(cmd string) tea.Cmd {
 	cmd = strings.TrimSpace(cmd)
+
+	// 优先尝试匹配 skill 命令
+	if m.assistant.SkillRegistry != nil {
+		if skill, ok := m.assistant.SkillRegistry.Match(cmd); ok {
+			m.infoMsg = fmt.Sprintf("Executing skill: %s", skill.Name)
+			return m.submitTaskWithContent(skill.Content)
+		}
+	}
+
 	switch {
 	case cmd == ":q" || cmd == ":quit" || cmd == ":q!":
 		m.confirmQuitDialog.open = true
@@ -40,6 +49,7 @@ func (m *model) processCommand(cmd string) {
 	default:
 		m.infoMsg = fmt.Sprintf("Unknown command: %s (type :help or ? for available commands)", cmd)
 	}
+	return nil
 }
 
 // searchInLog highlights entries containing the query string.
@@ -559,8 +569,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				// Process command buffer if non-empty, otherwise enter edit mode
 				if m.commandBuffer != "" {
-					m.processCommand(m.commandBuffer)
+					cmd := m.processCommand(m.commandBuffer)
 					m.commandBuffer = ""
+					if cmd != nil {
+						return m, cmd
+					}
 				} else if !m.taskRunning {
 					// Only enter edit mode if task is not running
 					m.commandMode = false
