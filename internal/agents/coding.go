@@ -70,6 +70,8 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 			}
 		case "micro_agent":
 			fn = globalCtx.MicroAgentTool.Execute
+		case "deepthinking":
+			fn = globalCtx.DeepThinkingTool.Execute
 		case "agent_exit":
 			fn = globalCtx.FlowOps.ExecuteAgentExit
 		case "ask_user_for_help":

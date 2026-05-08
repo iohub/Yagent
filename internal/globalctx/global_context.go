@@ -23,17 +23,18 @@ type GlobalCtx struct {
 	MaxContextTokens int
 
 	// Tools
-	FileOps         *tools.FileOperationsTool
-	SearchOps       *tools.SearchOperationsTool
-	SysOps          *tools.SystemOperationsTool
-	ReplaceTool     *tools.ReplaceBlockTool
-	ThinkingTool    *tools.ThinkingTool
-	MicroAgentTool  *tools.MicroAgentTool
-	ImplPlanTool    *tools.ImplPlanTool
-	FlowOps         *tools.FlowControlTool
-	RepoOps         *tools.RepoOperationsTool
-	UserConfirmMgr  *tools.UserConfirmManager
-	Guard           *tools.WorkspaceGuard
+	FileOps          *tools.FileOperationsTool
+	SearchOps        *tools.SearchOperationsTool
+	SysOps           *tools.SystemOperationsTool
+	ReplaceTool      *tools.ReplaceBlockTool
+	ThinkingTool     *tools.ThinkingTool
+	MicroAgentTool   *tools.MicroAgentTool
+	ImplPlanTool     *tools.ImplPlanTool
+	FlowOps          *tools.FlowControlTool
+	RepoOps          *tools.RepoOperationsTool
+	UserConfirmMgr   *tools.UserConfirmManager
+	Guard            *tools.WorkspaceGuard
+	DeepThinkingTool *tools.DeepThinkingTool
 }
 
 func (g *GlobalCtx) FormatPrompt(prompt string) string {

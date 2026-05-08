@@ -75,10 +75,11 @@ type ToolLLMOverride struct {
 // ToolsLLMConfig holds per-tool LLM overrides.
 // Priority: per-tool > tools.default > agent > global.
 type ToolsLLMConfig struct {
-	UseProvider string                    `toml:"use_provider"` // default for all tools
-	MicroAgent  *ToolLLMOverride          `toml:"micro_agent,omitempty"`
-	Thinking    *ToolLLMOverride          `toml:"thinking,omitempty"`
-	ImplPlan    *ToolLLMOverride          `toml:"impl_plan,omitempty"`
+	UseProvider  string           `toml:"use_provider"` // default for all tools
+	MicroAgent   *ToolLLMOverride `toml:"micro_agent,omitempty"`
+	Thinking     *ToolLLMOverride `toml:"thinking,omitempty"`
+	ImplPlan     *ToolLLMOverride `toml:"impl_plan,omitempty"`
+	DeepThinking *ToolLLMOverride `toml:"deepthinking,omitempty"`
 }
 
 // TopLevelConfig groups the [global] section.
@@ -178,6 +179,8 @@ func (c *Config) getToolOverride(toolName string) *ToolLLMOverride {
 		return c.Tools.LLM.Thinking
 	case "impl_plan":
 		return c.Tools.LLM.ImplPlan
+	case "deepthinking":
+		return c.Tools.LLM.DeepThinking
 	default:
 		return nil
 	}

@@ -294,6 +294,8 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 			fn = globalCtx.FileOps.ExecuteReadFile
 		case "print_dir_tree":
 			fn = globalCtx.FileOps.ExecutePrintDirTree
+		case "deepthinking":
+			fn = globalCtx.DeepThinkingTool.Execute
 		default:
 			continue
 		}
@@ -383,6 +385,8 @@ func (a *ConductorAgent) getToolFunc(name string) tools.ToolFunc {
 		}
 	case "micro_agent":
 		return a.GlobalCtx.MicroAgentTool.Execute
+	case "deepthinking":
+		return a.GlobalCtx.DeepThinkingTool.Execute
 	case "agent_exit":
 		return a.GlobalCtx.FlowOps.ExecuteAgentExit
 	case "ask_user_for_help":

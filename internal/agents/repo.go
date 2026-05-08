@@ -79,6 +79,8 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 			fn = globalCtx.RepoOps.ExecuteQueryCodeSkeleton
 		case "query_code_snippet":
 			fn = globalCtx.RepoOps.ExecuteQueryCodeSnippet
+		case "deepthinking":
+			fn = globalCtx.DeepThinkingTool.Execute
 		default:
 			continue
 		}
