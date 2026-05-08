@@ -125,13 +125,13 @@ func (m model) View() string {
 	footer.WriteString(m.renderTokenDashboard())
 	footer.WriteString("\n")
 
-	// Status line: mode indicator + task indicator + model name
-	taskIndicator := ""
+	// Status line: Running indicator (leftmost) + mode indicator
+	var runningBadge string
 	if m.taskRunning {
 		if m.currentModel != "" {
-			taskIndicator = logStatusStyle.Render(fmt.Sprintf(" ◷ Running [%s]...", m.currentModel))
+			runningBadge = logStatusStyle.Render(fmt.Sprintf(" ◷ Running [%s]...", m.currentModel))
 		} else {
-			taskIndicator = logStatusStyle.Render(" ◷ Running...")
+			runningBadge = logStatusStyle.Render(" ◷ Running...")
 		}
 	}
 	footer.WriteString("\n")
@@ -145,7 +145,11 @@ func (m model) View() string {
 	} else {
 		statusLine = footerStyle.Render(langManager.GetText("EditModeTips"))
 	}
-	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine + taskIndicator))
+	if runningBadge != "" {
+		footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(runningBadge + " " + statusLine))
+	} else {
+		footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
+	}
 
 	b.WriteString(footer.String())
 
