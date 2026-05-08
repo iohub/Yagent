@@ -39,6 +39,72 @@ func (m model) View() string {
 		return m.renderTaskCompleteDialog()
 	}
 
+	// Skill popup overlay (edit mode, triggered by '/')
+	if m.showSkillPopup && m.assistant.SkillRegistry != nil {
+		// Define styles for skill popup (matching renderHelpDialog)
+		titleStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("39")).Bold(true)
+		highlightStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).Bold(true)
+		subtleStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245"))
+
+		skillNames := m.assistant.SkillRegistry.List()
+		if len(skillNames) > 0 {
+			// Calculate max width needed
+			maxNameWidth := 0
+			for _, name := range skillNames {
+				if len(name) > maxNameWidth {
+					maxNameWidth = len(name)
+				}
+			}
+			dialogWidth := maxNameWidth + 20
+			if dialogWidth < 50 {
+				dialogWidth = 50
+			}
+			if dialogWidth > m.termWidth-4 {
+				dialogWidth = m.termWidth - 4
+			}
+
+			// Build content lines
+			var lines []string
+
+			titleLine := titleStyle.Render(" Skills ")
+			lines = append(lines, titleLine)
+			lines = append(lines, "")
+
+			hintLine := subtleStyle.Render("j/k/↑/↓ navigate  Enter select  Esc cancel")
+			lines = append(lines, hintLine)
+			lines = append(lines, "")
+
+			for i, name := range skillNames {
+				desc := ""
+				if skill, ok := m.assistant.SkillRegistry.Get(name); ok && skill.Description != "" {
+					desc = "  " + subtleStyle.Render(skill.Description)
+				}
+				if i == m.skillPopupIdx {
+					lines = append(lines, highlightStyle.Render("▶ "+name)+desc)
+				} else {
+					lines = append(lines, "  "+name+desc)
+				}
+			}
+
+			dialogContent := lipgloss.JoinVertical(lipgloss.Left, lines...)
+
+			dialogStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("39")).
+				Padding(1, 2)
+
+			dialog := dialogStyle.Width(dialogWidth).Render(dialogContent)
+
+			return lipgloss.Place(m.termWidth, m.termHeight,
+				lipgloss.Center, lipgloss.Center,
+				dialog,
+			)
+		}
+	}
+
 	var b strings.Builder
 
 	// Main content area: history panel or scrollable viewport
