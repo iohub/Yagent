@@ -29,18 +29,14 @@
 1. 运行 `git status --short` 获取所有变更文件列表。
 2. **过滤排除以下文件**：
 
-   | 类别 | 排除规则 |
-   |------|----------|
-   | **数据文件** | 扩展名：`.csv`, `.tsv`, `.xlsx`, `.xls`, `.parquet`, `.arrow`, `.feather`, `.h5`, `.hdf5`, `.npz`, `.npy`, `.pkl`, `.joblib`, `.sqlite`, `.sqlite3`, `.db`, `.dta`, `.sav`, `.rds`, `.rda` |
-   | **二进制/编译产物** | 扩展名：`.exe`, `.dll`, `.so`, `.a`, `.o`, `.obj`, `.bin`, `.pt`, `.pth`, `.onnx`, `.safetensors`, `.gguf`, `.wasm`, `.pyc`, `.pyo`, `.class`, `.jar`, `.war`, `.apk`, `.ipa`, `.whl`, `.egg` |
-   | **媒体文件** | 扩展名：`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.tif`, `.tiff`, `.webp`, `.svg`（非图标/UI资源时排除），`.mp3`, `.wav`, `.flac`, `.ogg`, `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm` |
-   | **压缩包** | 扩展名：`.zip`, `.tar`, `.gz`, `.bz2`, `.7z`, `.rar`, `.xz`, `.zst`, `.tgz`, `.tar.gz`, `.tar.bz2` |
-   | **测试数据/夹具** | 路径包含：`test/data/`、`tests/data/`、`test/fixtures/`、`tests/fixtures/`、`testdata/`、`__test_data__/`、`sample_data/`、`*.testdata.*` |
-   | **大文件提醒** | 单个文件超过 **5MB** 时，跳过并提醒用户手动处理 |
+   | **数据文件** |
+   | **二进制/编译产物** |
+   | **媒体文件** | 
+   | **压缩包** | 
+   | **测试数据/夹具** |
 
 3. 对过滤后的代码文件执行 `git add <file1> <file2> ...`。
 4. 执行 `git commit -m "<message>"` 提交。**无需用户确认，直接提交。**
-5. 如果过滤后没有任何文件可提交，告知用户「没有需要提交的代码文件（数据文件、二进制文件已自动排除）」，然后结束。
 
 ## 步骤 4：展示提交结果
 提交完成后，运行 `git log --oneline -3` 展示最近3条提交记录，让用户确认 commit 内容是否正确。
@@ -53,4 +49,3 @@
 **注意事项**：
 - 如果仓库没有变更，直接告知用户 "没有需要提交的变更" 并结束
 - 所有 git 命令使用 `run_bash` 工具执行
-- 保持交互自然，不要过度自动化
