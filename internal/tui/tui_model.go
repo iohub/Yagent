@@ -208,9 +208,10 @@ type model struct {
 	lastKey        string // tracks previous key for multi-key sequences (gg, ZZ)
 	showHelpDialog bool   // "?" help overlay in command mode
 
-	// Skill popup in edit mode (triggered by '/')
-	showSkillPopup bool
-	skillPopupIdx  int
+	// Skill autocomplete in edit mode (inline, not popup)
+	skillAutoComplete  bool       // whether autocomplete suggestions are shown
+	skillSuggestions   []string   // matching skill names based on current query
+	skillSuggestionIdx int        // currently selected suggestion index
 
 	// Tool call state tracking: tool_call_id → ToolEntry
 	toolCallEntries map[string]*ToolEntry

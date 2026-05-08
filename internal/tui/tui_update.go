@@ -250,7 +250,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
 	// All other message types (tickMsg, taskEventMsg, WindowSizeMsg, etc.) are
 	// blocked to prevent viewport scrolling behind the overlay.
-	if m.showSkillPopup || m.showHelpDialog || m.confirmDialog.open ||
+	if m.showHelpDialog || m.confirmDialog.open ||
 		m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
 		if _, ok := msg.(tea.KeyMsg); !ok {
 			return m, nil
@@ -275,7 +275,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		// Don't schedule next tick if any popup/dialog is showing
-		if m.showSkillPopup || m.showHelpDialog || m.confirmDialog.open ||
+		if m.showHelpDialog || m.confirmDialog.open ||
 			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
 			return m, nil
 		}
@@ -297,42 +297,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Skill popup navigation (takes priority over mode-specific handling)
-		if m.showSkillPopup {
-			switch msg.String() {
-			case "esc", "ctrl+c":
-				m.showSkillPopup = false
-				m.skillPopupIdx = 0
-				return m, nil
-			case "up", "k":
-				if m.skillPopupIdx > 0 {
-					m.skillPopupIdx--
-				}
-				return m, nil
-			case "down", "j":
-				skillNames := m.assistant.SkillRegistry.List()
-				if m.skillPopupIdx < len(skillNames)-1 {
-					m.skillPopupIdx++
-				}
-				return m, nil
-			case "enter":
-				skillNames := m.assistant.SkillRegistry.List()
-				if m.skillPopupIdx >= 0 && m.skillPopupIdx < len(skillNames) {
-					if skill, ok := m.assistant.SkillRegistry.Get(skillNames[m.skillPopupIdx]); ok {
-						m.showSkillPopup = false
-						m.skillPopupIdx = 0
-						m.infoMsg = fmt.Sprintf("Executing skill: %s", skill.Name)
-						return m, m.submitTaskWithContent(skill.Content)
-					}
-				}
-				return m, nil
-			default:
-				// Any other key dismisses the popup
-				m.showSkillPopup = false
-				m.skillPopupIdx = 0
-				return m, nil
-			}
-		}
 
 		// Confirmation dialog key handling — takes priority over everything
 		if m.confirmDialog.open {
@@ -725,6 +689,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "esc":
+			// Dismiss skill autocomplete if active
+			if m.skillAutoComplete {
+				m.skillAutoComplete = false
+				m.skillSuggestions = nil
+				m.skillSuggestionIdx = 0
+				return m, nil
+			}
 			// Show cancel confirmation dialog if task is running
 			if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
 				m.confirmCancelDialog.open = true
@@ -772,16 +743,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.PageUp()
 			return m, nil
 
-		case "/":
-			// Trigger skill popup in edit mode
-			if !m.taskRunning && m.assistant.SkillRegistry != nil && m.assistant.SkillRegistry.Count() > 0 {
-				m.showSkillPopup = true
-				m.skillPopupIdx = 0
+		case "tab":
+			// Cycle through skill autocomplete suggestions
+			if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
+				m.skillSuggestionIdx = (m.skillSuggestionIdx + 1) % len(m.skillSuggestions)
 				return m, nil
 			}
-			// Fall through to default: pass '/' to textarea normally
+			// No autocomplete active: pass tab to textarea
 			var inputCmd tea.Cmd
 			m.input, inputCmd = m.input.Update(msg)
+			return m, inputCmd
+
+		case "enter":
+			// If skill autocomplete is active, expand the selected skill
+			if m.skillAutoComplete && len(m.skillSuggestions) > 0 && m.skillSuggestionIdx >= 0 && m.skillSuggestionIdx < len(m.skillSuggestions) {
+				skillName := m.skillSuggestions[m.skillSuggestionIdx]
+				if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
+					userContext := strings.TrimSpace(m.input.Value())
+					// Combine skill content with user's input as context
+					combinedContent := skill.Content + "\n\n---\n用户上下文: " + userContext
+					m.skillAutoComplete = false
+					m.skillSuggestions = nil
+					m.skillSuggestionIdx = 0
+					m.infoMsg = fmt.Sprintf("正在执行 skill: %s", skill.Name)
+					return m, m.submitTaskWithContent(combinedContent)
+				}
+			}
+			// Otherwise, insert newline into textarea
+			var inputCmd tea.Cmd
+			m.input, inputCmd = m.input.Update(msg)
+			m.updateSkillAutocomplete()
+			return m, inputCmd
+
+		case "/":
+			// Pass '/' to textarea normally, then check for skill autocomplete
+			var inputCmd tea.Cmd
+			m.input, inputCmd = m.input.Update(msg)
+			m.updateSkillAutocomplete()
 			return m, inputCmd
 
 		case "@":
@@ -814,6 +812,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// are handled in dedicated case branches above.
 			var inputCmd tea.Cmd
 			m.input, inputCmd = m.input.Update(msg)
+			m.updateSkillAutocomplete()
 			return m, inputCmd
 		}
 
@@ -821,7 +820,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Don't process task events while any popup/dialog is showing.
 		// The global guard at the top of Update() already blocks these messages,
 		// but keep this as a defensive double-check.
-		if m.showSkillPopup || m.showHelpDialog || m.confirmDialog.open ||
+		if m.showHelpDialog || m.confirmDialog.open ||
 			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
 			return m, nil
 		}
@@ -1014,4 +1013,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+// updateSkillAutocomplete checks the current input for skill references (/skillname)
+// and updates the autocomplete suggestions accordingly.
+func (m *model) updateSkillAutocomplete() {
+	// Only active in edit mode, when not task running, and skills available
+	if m.commandMode || m.taskRunning || m.assistant.SkillRegistry == nil || m.assistant.SkillRegistry.Count() == 0 {
+		m.skillAutoComplete = false
+		m.skillSuggestions = nil
+		m.skillSuggestionIdx = 0
+		return
+	}
+
+	inputValue := m.input.Value()
+
+	// Find the last '/' in the input to extract the skill query
+	lastSlash := strings.LastIndex(inputValue, "/")
+	if lastSlash < 0 {
+		m.skillAutoComplete = false
+		m.skillSuggestions = nil
+		m.skillSuggestionIdx = 0
+		return
+	}
+
+	// Extract the text after the last '/' as the query
+	query := inputValue[lastSlash+1:]
+
+	// Don't trigger if query is empty (just typed '/')
+	// But do show all skills as suggestions
+	allSkills := m.assistant.SkillRegistry.List()
+
+	// Filter skills that match the query (case-insensitive prefix match)
+	var matches []string
+	queryLower := strings.ToLower(query)
+	for _, name := range allSkills {
+		if strings.HasPrefix(strings.ToLower(name), queryLower) {
+			matches = append(matches, name)
+		}
+	}
+
+	if len(matches) > 0 {
+		m.skillAutoComplete = true
+		m.skillSuggestions = matches
+		// Reset index if out of bounds
+		if m.skillSuggestionIdx >= len(matches) {
+			m.skillSuggestionIdx = 0
+		}
+	} else {
+		m.skillAutoComplete = false
+		m.skillSuggestions = nil
+		m.skillSuggestionIdx = 0
+	}
 }
