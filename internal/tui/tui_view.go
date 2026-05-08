@@ -259,11 +259,18 @@ func (m model) renderTokenDashboard() string {
 		Padding(0, 1).
 		Width(m.termWidth - 2) // account for viewport padding
 
-	// Header
+	// Header — left-aligned "Total" label + token summary
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("240"))
 	var header string
+
+	// Token column width for alignment
+	const maxAgentNameWidth = 10
+
+	inStr := formatToken(m.inputTokens)
+	outStr := formatToken(m.outputTokens)
+	sumStr := formatToken(totalTokens)
 
 	// Total line — highlighted
 	inputStyle := lipgloss.NewStyle().
@@ -276,12 +283,8 @@ func (m model) renderTokenDashboard() string {
 		Bold(true).
 		Foreground(lipgloss.Color("243")) // medium gray for sum
 
-	inStr := formatToken(m.inputTokens)
-	outStr := formatToken(m.outputTokens)
-	sumStr := formatToken(totalTokens)
-
 	// Combined header with token summary
-	header = headerStyle.Render("─ ") +
+	header = headerStyle.Render(fmt.Sprintf("%-*s", maxAgentNameWidth, "Total")) + " " +
 		inputStyle.Render(fmt.Sprintf("In: %s  ", inStr)) +
 		outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
 	if m.cacheReadInputTokens > 0 {
@@ -300,12 +303,8 @@ func (m model) renderTokenDashboard() string {
 		}
 	}
 	sort.Slice(agents, func(i, j int) bool {
-		return (agents[i].InputTokens+agents[i].OutputTokens) > (agents[j].InputTokens+agents[j].OutputTokens)
+		return (agents[i].InputTokens + agents[i].OutputTokens) > (agents[j].InputTokens + agents[j].OutputTokens)
 	})
-
-	// Calculate column widths for alignment
-	const maxAgentNameWidth = 18
-	const colFormat = "In: %-6s Out: %-6s"
 
 	var lines []string
 	lines = append(lines, header)
