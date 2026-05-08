@@ -282,6 +282,9 @@ func (m model) renderTokenDashboard() string {
 	totalLine := fmt.Sprintf("Total:  ")
 	totalLine += inputStyle.Render(fmt.Sprintf("In: %s  ", inStr))
 	totalLine += outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
+	if m.cacheReadInputTokens > 0 {
+		totalLine += fmt.Sprintf("Cache: %s  ", formatToken(m.cacheReadInputTokens))
+	}
 	totalLine += sumStyle.Render(fmt.Sprintf("Σ %s", sumStr))
 
 	// Separator
@@ -326,6 +329,9 @@ func (m model) renderTokenDashboard() string {
 		agentLine := agentStyle.Render(paddedName)
 		agentLine += " " + agentInStyle.Render(fmt.Sprintf("In: %s  ", agentIn))
 		agentLine += agentOutStyle.Render(fmt.Sprintf("Out: %s", agentOut))
+		if au.CacheReadInputTokens > 0 {
+			agentLine += "  " + agentInStyle.Render(fmt.Sprintf("Cache: %s", formatToken(au.CacheReadInputTokens)))
+		}
 		lines = append(lines, agentLine)
 	}
 

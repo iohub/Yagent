@@ -754,9 +754,11 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				metadata := map[string]interface{}{}
 				if resp.Usage != nil {
 					metadata["usage"] = map[string]interface{}{
-						"prompt_tokens":     resp.Usage.PromptTokens,
-						"completion_tokens": resp.Usage.CompletionTokens,
-						"total_tokens":      resp.Usage.TotalTokens,
+						"prompt_tokens":             resp.Usage.PromptTokens,
+						"completion_tokens":         resp.Usage.CompletionTokens,
+						"total_tokens":              resp.Usage.TotalTokens,
+						"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
+						"cache_read_input_tokens":   resp.Usage.CacheReadInputTokens,
 					}
 				}
 				if len(metadata) > 0 {

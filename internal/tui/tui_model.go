@@ -147,9 +147,11 @@ func (c *tuiEventConsumer) Consume(event *messaging.MessageEvent) error {
 
 // AgentTokenUsage tracks token consumption for a single agent.
 type AgentTokenUsage struct {
-	AgentName    string
-	InputTokens  int64
-	OutputTokens int64
+	AgentName                string
+	InputTokens              int64
+	OutputTokens             int64
+	CacheCreationInputTokens int64
+	CacheReadInputTokens     int64
 }
 
 // TUI Model
@@ -220,8 +222,10 @@ type model struct {
 	currentModel string
 
 	// Token consumption tracking
-	inputTokens  int64 // accumulated input tokens
-	outputTokens int64 // accumulated output tokens
+	inputTokens              int64 // accumulated input tokens
+	outputTokens             int64 // accumulated output tokens
+	cacheCreationInputTokens int64 // accumulated cache creation input tokens
+	cacheReadInputTokens     int64 // accumulated cache read (hit) tokens
 
 	// Per-agent token tracking
 	tokenUsagePerAgent map[string]*AgentTokenUsage
