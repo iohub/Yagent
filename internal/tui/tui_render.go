@@ -11,12 +11,50 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (m *model) resizeViewport() {
-	// footer estimate: separator(1) + input(max 12) + token_dashboard(3) + status(1) + padding(1) = 18
-	footerHeight := 18
-	if m.errMsg != "" {
-		footerHeight++
+// computeFooterHeight calculates the actual footer height based on current state.
+// This must match the row count produced by model.View() footer rendering.
+func (m *model) computeFooterHeight() int {
+	height := 1 // separator line
+
+	// Input area
+	if m.commandMode {
+		height += 1 // command mode line
+	} else {
+		height += m.computeInputHeight()
+		// Skill autocomplete suggestions
+		if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
+			height += len(m.skillSuggestions) + 1 // suggestion lines + hint line
+		}
 	}
+
+	// Error message
+	if m.errMsg != "" {
+		height += 1
+	}
+
+	// Token dashboard
+	totalTokens := m.inputTokens + m.outputTokens
+	if totalTokens == 0 {
+		// Single line: "In: 0 | Out: 0"
+		height += 1
+	} else {
+		// Dashboard with border: 2 (borders) + 1 (header) + 1 (separator) + agent rows
+		height += 4 // 2 borders + 1 header + 1 separator
+		for _, au := range m.tokenUsagePerAgent {
+			if au.InputTokens+au.OutputTokens > 0 {
+				height++
+			}
+		}
+	}
+
+	// Two blank lines + status line (see View() — footer.WriteString("\n") twice + statusLine)
+	height += 3
+
+	return height
+}
+
+func (m *model) resizeViewport() {
+	footerHeight := m.computeFooterHeight()
 	vpHeight := m.termHeight - footerHeight
 	if vpHeight < 3 {
 		vpHeight = 3
