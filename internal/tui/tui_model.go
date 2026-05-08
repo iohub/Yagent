@@ -59,7 +59,7 @@ var (
 	toolDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — success
 	toolErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")) // red — error
 
-	// Mode-specific styles (vim-like edit / command modes)
+	// Mode-specific styles (vim-like edit / command modes) — harmonized with TUI 256-color palette
 	commandPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true) // orange ":"
 	commandModeBarStyle = lipgloss.NewStyle().
 		Background(lipgloss.Color("214")).
@@ -242,29 +242,35 @@ type model struct {
 
 func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
 	ti := textarea.New()
+
+	// ── Editor input styles (harmonized with TUI 256-color palette) ──
+	// Accent: 39 (blue, matches NameNormal/tool names)
+	// Text: 252 (light gray, matches Body/AIResStyle)
+	// Muted: 245 (gray, matches ContentLine/ParamKey)
+	// Subtle bg: 236 (dark gray, barely visible on dark terminals)
+	// Cursor line: 237 (matches SeparatorStyle)
+
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
 	ti.Focus()
 	ti.CharLimit = 0
 	ti.SetWidth(60)
-	ti.SetHeight(2)
+	ti.SetHeight(3)
 	ti.ShowLineNumbers = false
 
-	// Text style for both focused and blurred states
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	ti.FocusedStyle.Text = textStyle
 	ti.BlurredStyle.Text = textStyle
 
-	// Edit mode base style: dark background shadow
-	editBaseStyle := lipgloss.NewStyle().Background(lipgloss.Color("235"))
+	editBaseStyle := lipgloss.NewStyle().Background(lipgloss.Color("236"))
 	ti.FocusedStyle.Base = editBaseStyle
 	ti.BlurredStyle.Base = editBaseStyle
-	ti.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Background(lipgloss.Color("235"))
-	ti.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("235"))
-	ti.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("235"))
-	ti.BlurredStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("235"))
-	ti.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("235"))
-	ti.BlurredStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("235"))
+	ti.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Background(lipgloss.Color("236"))
+	ti.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("236"))
+	ti.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("237"))
+	ti.BlurredStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("237"))
+	ti.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236"))
+	ti.BlurredStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236"))
 
 	// Dynamic prompt: "❯ " on first line, "  " on continuation lines
 	ti.SetPromptFunc(2, func(line int) string {

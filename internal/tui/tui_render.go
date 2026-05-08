@@ -12,7 +12,8 @@ import (
 )
 
 func (m *model) resizeViewport() {
-	footerHeight := 7
+	// footer estimate: separator(1) + input(max 12) + token_dashboard(3) + status(1) + padding(1) = 18
+	footerHeight := 18
 	if m.errMsg != "" {
 		footerHeight++
 	}

@@ -79,6 +79,7 @@ func (m model) View() string {
 	} else {
 		// ── Edit mode: textarea with dark background (via Base style), no bar ──
 		m.input.SetWidth(m.computeFieldWidth())
+		m.input.SetHeight(m.computeInputHeight())
 		inputLine := m.input.View()
 		footer.WriteString(lipgloss.NewStyle().Render(inputLine))
 		footer.WriteString("\n")

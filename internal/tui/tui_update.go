@@ -798,10 +798,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.handleTaskHistoryCycle(msg.String())
 				return m, nil
 			}
-			// Non-empty: pass to viewport for scrolling
-			var vpCmd tea.Cmd
-			m.viewport, vpCmd = m.viewport.Update(msg)
-			return m, vpCmd
+			// Input has content: pass to textarea for line navigation
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
 
 		default:
 			// Reset history cursor when user starts typing
