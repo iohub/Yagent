@@ -263,7 +263,7 @@ func (m model) renderTokenDashboard() string {
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("240"))
-	header := headerStyle.Render("─ Token 消耗 ")
+	var header string
 
 	// Total line — highlighted
 	inputStyle := lipgloss.NewStyle().
@@ -280,13 +280,14 @@ func (m model) renderTokenDashboard() string {
 	outStr := formatToken(m.outputTokens)
 	sumStr := formatToken(totalTokens)
 
-	totalLine := fmt.Sprintf("Total:  ")
-	totalLine += inputStyle.Render(fmt.Sprintf("In: %s  ", inStr))
-	totalLine += outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
+	// Combined header with token summary
+	header = headerStyle.Render("─ ") +
+		inputStyle.Render(fmt.Sprintf("In: %s  ", inStr)) +
+		outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
 	if m.cacheReadInputTokens > 0 {
-		totalLine += fmt.Sprintf("Cache: %s  ", formatToken(m.cacheReadInputTokens))
+		header += fmt.Sprintf("Cache: %s  ", formatToken(m.cacheReadInputTokens))
 	}
-	totalLine += sumStyle.Render(fmt.Sprintf("Σ %s", sumStr))
+	header += sumStyle.Render(fmt.Sprintf("Σ %s", sumStr))
 
 	// Separator
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
@@ -308,7 +309,6 @@ func (m model) renderTokenDashboard() string {
 
 	var lines []string
 	lines = append(lines, header)
-	lines = append(lines, totalLine)
 	lines = append(lines, sepStyle.Render(strings.Repeat("─", 48)))
 
 	for _, au := range agents {
@@ -317,7 +317,7 @@ func (m model) renderTokenDashboard() string {
 			agentLabel = agentLabel[:maxAgentNameWidth-1] + "…"
 		}
 		// Pad agent name to fixed width
-		paddedName := fmt.Sprintf("%-"+fmt.Sprintf("%ds", maxAgentNameWidth)+"s", agentLabel)
+		paddedName := fmt.Sprintf("%-*s", maxAgentNameWidth, agentLabel)
 
 		agentIn := formatToken(au.InputTokens)
 		agentOut := formatToken(au.OutputTokens)
