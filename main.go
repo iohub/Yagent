@@ -19,6 +19,7 @@ import (
 	"codeactor/internal/embedbin"
 	"codeactor/internal/http"
 	"codeactor/internal/llm"
+	"codeactor/internal/skills"
 	"codeactor/internal/tui"
 	"codeactor/internal/util"
 	messaging "codeactor/pkg/messaging"
@@ -145,6 +146,27 @@ func main() {
 		}
 		codingAssistant.DisabledAgents = disableAgents
 		codingAssistant.CodebasePort = codebasePort
+
+		// 加载 skills
+		homeDir, _ := os.UserHomeDir()
+		projectSkillsDir := filepath.Join(repoPath, ".codeactor", "skills")
+		homeSkillsDir := filepath.Join(homeDir, ".codeactor", "skills")
+
+		var skillRegistry *skills.SkillRegistry
+		skillRegistry, err = skills.LoadSkills(projectSkillsDir)
+		if err != nil {
+			// 打印警告但不中断启动
+			slog.Warn("Failed to load project skills", "path", projectSkillsDir, "error", err)
+		}
+		// 如果没有项目级 skill，尝试家目录
+		if skillRegistry.Count() == 0 {
+			skillRegistry, err = skills.LoadSkills(homeSkillsDir)
+			if err != nil {
+				slog.Warn("Failed to load home skills", "path", homeSkillsDir, "error", err)
+			}
+		}
+		codingAssistant.SkillRegistry = skillRegistry
+		slog.Info("Skill registry loaded", "count", skillRegistry.Count())
 
 		taskManager := http.NewTaskManager(nil)
 

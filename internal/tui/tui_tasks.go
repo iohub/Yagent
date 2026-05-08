@@ -17,7 +17,18 @@ import (
 )
 
 func (m *model) submitTask() tea.Cmd {
-	taskDesc := strings.TrimSpace(m.input.Value())
+	return m.submitTaskWithContent(m.input.Value())
+}
+
+// submitTaskWithContent 使用指定的任务描述提交任务
+func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
+	taskDesc = strings.TrimSpace(taskDesc)
+
+	// 验证输入
+	if valid, errMsg := validateInputs(m.projectDir, taskDesc); !valid {
+		m.errMsg = errMsg
+		return nil
+	}
 
 	// Count input tokens
 	if taskDesc != "" {
@@ -28,6 +39,8 @@ func (m *model) submitTask() tea.Cmd {
 		}
 	}
 
+	// 将任务描述设置到 input 中，以便用户能看到提交了什么
+	m.input.SetValue(taskDesc)
 	m.input.SetValue("")
 	m.taskRunning = true
 	m.commandMode = true

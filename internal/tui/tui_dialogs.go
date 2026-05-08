@@ -350,6 +350,21 @@ func (m model) renderHelpDialog() string {
 		Foreground(lipgloss.Color("252"))
 	content := contentStyle.Render(langManager.GetText("HelpDialogContent"))
 
+	// ── Skills section (if any skills are loaded) ──
+	var skillsSection string
+	if m.assistant.SkillRegistry != nil && m.assistant.SkillRegistry.Count() > 0 {
+		skillNames := m.assistant.SkillRegistry.List()
+		skillsContent := "  Skills (type :<name> to execute):\n"
+		for _, name := range skillNames {
+			if skill, ok := m.assistant.SkillRegistry.Get(name); ok && skill.Description != "" {
+				skillsContent += fmt.Sprintf("    :%s  %s\n", name, skill.Description)
+			} else {
+				skillsContent += fmt.Sprintf("    :%s\n", name)
+			}
+		}
+		skillsSection = skillsContent
+	}
+
 	// ── Separator ──
 	sepStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("237")).
@@ -362,15 +377,30 @@ func (m model) renderHelpDialog() string {
 	hint := hintStyle.Render("Press any key to dismiss")
 
 	// ── Assemble ──
-	dialogContent := lipgloss.JoinVertical(lipgloss.Left,
-		titleLine,
-		"",
-		content,
-		"",
-		sep,
-		"",
-		hint,
-	)
+	var dialogContent string
+	if skillsSection != "" {
+		dialogContent = lipgloss.JoinVertical(lipgloss.Left,
+			titleLine,
+			"",
+			content,
+			"",
+			contentStyle.Render(skillsSection),
+			"",
+			sep,
+			"",
+			hint,
+		)
+	} else {
+		dialogContent = lipgloss.JoinVertical(lipgloss.Left,
+			titleLine,
+			"",
+			content,
+			"",
+			sep,
+			"",
+			hint,
+		)
+	}
 
 	dialogStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

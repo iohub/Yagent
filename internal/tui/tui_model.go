@@ -145,6 +145,13 @@ func (c *tuiEventConsumer) Consume(event *messaging.MessageEvent) error {
 	return nil
 }
 
+// AgentTokenUsage tracks token consumption for a single agent.
+type AgentTokenUsage struct {
+	AgentName    string
+	InputTokens  int64
+	OutputTokens int64
+}
+
 // TUI Model
 type model struct {
 	// External dependencies
@@ -210,6 +217,9 @@ type model struct {
 	// Token consumption tracking
 	inputTokens  int64 // accumulated input tokens
 	outputTokens int64 // accumulated output tokens
+
+	// Per-agent token tracking
+	tokenUsagePerAgent map[string]*AgentTokenUsage
 
 	// Animation state for running tools
 	anim       *Anim
@@ -297,6 +307,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 		toolCallEntries: make(map[string]*ToolEntry),
 		anim:            NewAnim(10),
 		taskHistoryIdx:  -1,
+		tokenUsagePerAgent: make(map[string]*AgentTokenUsage),
 	}
 }
 

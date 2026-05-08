@@ -14,6 +14,7 @@ import (
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
+	"codeactor/internal/skills"
 	"codeactor/internal/tools"
 	"codeactor/pkg/messaging"
 )
@@ -32,6 +33,8 @@ type CodingAssistant struct {
 	globalCtx      *globalctx.GlobalCtx
 	DisabledAgents string // comma-separated list of agent names to disable (e.g. "repo,coding,chat")
 	CodebasePort   int    // codebase 服务端口，由 main 函数动态分配
+
+	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
 }
 
 // NewCodingAssistant creates a new CodingAssistant.

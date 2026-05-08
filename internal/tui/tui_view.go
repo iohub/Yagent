@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -90,7 +91,7 @@ func (m model) View() string {
 	}
 
 	// Token consumption display (before status line)
-	footer.WriteString(m.renderTokenLine())
+	footer.WriteString(m.renderTokenDashboard())
 	footer.WriteString("\n")
 
 	// Status line: mode indicator + task indicator + model name
@@ -206,4 +207,97 @@ func (m model) renderTokenLine() string {
 	inStr := formatToken(m.inputTokens)
 	outStr := formatToken(m.outputTokens)
 	return tokenStyle.Render(fmt.Sprintf("In: %s | Out: %s", inStr, outStr))
+}
+
+// renderTokenDashboard renders a dashboard-style token consumption display.
+// Shows total tokens in a highlighted row, followed by per-agent breakdown sorted by total.
+func (m model) renderTokenDashboard() string {
+	totalTokens := m.inputTokens + m.outputTokens
+	if totalTokens == 0 {
+		// No data: fall back to compact single-line format
+		tokenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+		inStr := formatToken(m.inputTokens)
+		outStr := formatToken(m.outputTokens)
+		return tokenStyle.Render(fmt.Sprintf("In: %s | Out: %s", inStr, outStr))
+	}
+
+	// Build dashboard with border
+	dashStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("237")).
+		Padding(0, 1).
+		Width(m.termWidth - 2) // account for viewport padding
+
+	// Header
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("240"))
+	header := headerStyle.Render("─ Token 消耗 ")
+
+	// Total line — highlighted
+	inputStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("111")) // light blue for input
+	outputStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("114")) // light green for output
+	sumStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("243")) // medium gray for sum
+
+	inStr := formatToken(m.inputTokens)
+	outStr := formatToken(m.outputTokens)
+	sumStr := formatToken(totalTokens)
+
+	totalLine := fmt.Sprintf("Total:  ")
+	totalLine += inputStyle.Render(fmt.Sprintf("In: %s  ", inStr))
+	totalLine += outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
+	totalLine += sumStyle.Render(fmt.Sprintf("Σ %s", sumStr))
+
+	// Separator
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
+
+	// Per-agent rows — sort by total token count descending
+	agents := make([]*AgentTokenUsage, 0, len(m.tokenUsagePerAgent))
+	for _, au := range m.tokenUsagePerAgent {
+		if au.InputTokens+au.OutputTokens > 0 {
+			agents = append(agents, au)
+		}
+	}
+	sort.Slice(agents, func(i, j int) bool {
+		return (agents[i].InputTokens+agents[i].OutputTokens) > (agents[j].InputTokens+agents[j].OutputTokens)
+	})
+
+	// Calculate column widths for alignment
+	const maxAgentNameWidth = 18
+	const colFormat = "In: %-6s Out: %-6s"
+
+	var lines []string
+	lines = append(lines, header)
+	lines = append(lines, totalLine)
+	lines = append(lines, sepStyle.Render(strings.Repeat("─", 48)))
+
+	for _, au := range agents {
+		agentLabel := au.AgentName
+		if len(agentLabel) > maxAgentNameWidth {
+			agentLabel = agentLabel[:maxAgentNameWidth-1] + "…"
+		}
+		// Pad agent name to fixed width
+		paddedName := fmt.Sprintf("%-"+fmt.Sprintf("%ds", maxAgentNameWidth)+"s", agentLabel)
+
+		agentIn := formatToken(au.InputTokens)
+		agentOut := formatToken(au.OutputTokens)
+
+		// Dimmer style for agent rows
+		agentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+		agentInStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+		agentOutStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+		agentLine := agentStyle.Render(paddedName)
+		agentLine += " " + agentInStyle.Render(fmt.Sprintf("In: %s  ", agentIn))
+		agentLine += agentOutStyle.Render(fmt.Sprintf("Out: %s", agentOut))
+		lines = append(lines, agentLine)
+	}
+
+	return dashStyle.Render(strings.Join(lines, "\n"))
 }

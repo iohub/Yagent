@@ -1,11 +1,13 @@
 package datamanager
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"codeactor/internal/memory"
@@ -15,9 +17,20 @@ const (
 	DataDirName = ".codeactor" // 隐藏数据目录名称
 )
 
+// taskWriterState 管理单个任务的写入状态
+type taskWriterState struct {
+	mu               sync.Mutex
+	pending          []memory.ChatMessage
+	timer            *time.Timer
+	lastFlushedCount int
+	needsFullRewrite bool // 当消息被截断时设为 true
+}
+
 // DataManager 负责管理在home目录下的隐藏数据目录
 type DataManager struct {
 	dataDir string
+	mu      sync.Mutex
+	writers map[string]*taskWriterState
 }
 
 // NewDataManager 创建新的数据管理器
@@ -36,46 +49,214 @@ func NewDataManager() (*DataManager, error) {
 
 	return &DataManager{
 		dataDir: dataDir,
+		writers: make(map[string]*taskWriterState),
 	}, nil
 }
 
-// SaveTaskMemory 保存任务的memory到文件
-func (dm *DataManager) SaveTaskMemory(taskID string, mem *memory.ConversationMemory) error {
-	filePath := filepath.Join(dm.dataDir, taskID+".json")
+// getOrCreateWriter 获取或创建任务的写入状态
+func (dm *DataManager) getOrCreateWriter(taskID, filePath string) *taskWriterState {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
 
-	memoryData, err := json.MarshalIndent(mem, "", "  ")
-	if err != nil {
-		return err
+	ws, ok := dm.writers[taskID]
+	if !ok {
+		ws = &taskWriterState{
+			pending: make([]memory.ChatMessage, 0),
+		}
+		dm.writers[taskID] = ws
+	}
+	return ws
+}
+
+// flushWriter 内部方法：刷新单个任务的待写入消息
+func (dm *DataManager) flushWriter(taskID, filePath string, ws *taskWriterState) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	dm.doFlush(filePath, ws)
+}
+
+// doFlush 执行实际的写入操作（调用者需持有 ws.mu 锁）
+func (dm *DataManager) doFlush(filePath string, ws *taskWriterState) error {
+	if ws.needsFullRewrite {
+		// 全量覆写：打开文件（truncate），写入所有 pending
+		f, err := os.Create(filePath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		for _, msg := range ws.pending {
+			data, err := json.Marshal(msg)
+			if err != nil {
+				return err
+			}
+			if _, err := f.Write(append(data, '\n')); err != nil {
+				return err
+			}
+		}
+		ws.needsFullRewrite = false
+	} else if len(ws.pending) > 0 {
+		// 增量追加
+		f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		for _, msg := range ws.pending {
+			data, err := json.Marshal(msg)
+			if err != nil {
+				return err
+			}
+			if _, err := f.Write(append(data, '\n')); err != nil {
+				return err
+			}
+		}
 	}
 
-	return os.WriteFile(filePath, memoryData, 0644)
+	ws.pending = ws.pending[:0]
+	return nil
+}
+
+// SaveTaskMemory 保存任务的memory到文件（增量追加 + 5秒防抖）
+func (dm *DataManager) SaveTaskMemory(taskID string, mem *memory.ConversationMemory) error {
+	filePath := filepath.Join(dm.dataDir, taskID+".jsonl")
+
+	ws := dm.getOrCreateWriter(taskID, filePath)
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	currentCount := len(mem.Messages)
+
+	if currentCount < ws.lastFlushedCount {
+		// 消息被截断或重置，需要全量覆写
+		ws.needsFullRewrite = true
+		ws.pending = ws.pending[:0] // 清空旧 pending（磁盘将被截断）
+		ws.lastFlushedCount = 0     // 重置，让下面逻辑重新收集所有消息
+	}
+
+	// 提取新消息加入 pending
+	newStart := ws.lastFlushedCount
+	if newStart < 0 {
+		newStart = 0
+	}
+	if currentCount > newStart {
+		for i := newStart; i < currentCount; i++ {
+			ws.pending = append(ws.pending, mem.Messages[i])
+		}
+	}
+	ws.lastFlushedCount = currentCount
+
+	// 重置 5s 定时器
+	if ws.timer != nil {
+		ws.timer.Stop()
+	}
+	ws.timer = time.AfterFunc(5*time.Second, func() {
+		dm.flushWriter(taskID, filePath, ws)
+	})
+
+	return nil
+}
+
+// FlushTaskMemory 立即刷新指定任务的待写入消息到磁盘
+func (dm *DataManager) FlushTaskMemory(taskID string) error {
+	filePath := filepath.Join(dm.dataDir, taskID+".jsonl")
+
+	dm.mu.Lock()
+	ws, ok := dm.writers[taskID]
+	dm.mu.Unlock()
+
+	if !ok {
+		return nil
+	}
+
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	// 停止定时器
+	if ws.timer != nil {
+		ws.timer.Stop()
+		ws.timer = nil
+	}
+
+	return dm.doFlush(filePath, ws)
+}
+
+// FlushAll 刷新所有任务的待写入消息
+func (dm *DataManager) FlushAll() error {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+
+	for taskID, ws := range dm.writers {
+		ws.mu.Lock()
+		if ws.timer != nil {
+			ws.timer.Stop()
+			ws.timer = nil
+		}
+		filePath := filepath.Join(dm.dataDir, taskID+".jsonl")
+		if err := dm.doFlush(filePath, ws); err != nil {
+			ws.mu.Unlock()
+			return err
+		}
+		ws.mu.Unlock()
+	}
+	return nil
 }
 
 // LoadTaskMemory 从文件加载任务的memory
 func (dm *DataManager) LoadTaskMemory(taskID string) (*memory.ConversationMemory, error) {
-	filePath := filepath.Join(dm.dataDir, taskID+".json")
+	filePath := filepath.Join(dm.dataDir, taskID+".jsonl")
 
-	memoryData, err := os.ReadFile(filePath)
+	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
 
-	var mem memory.ConversationMemory
-	if err := json.Unmarshal(memoryData, &mem); err != nil {
+	mem := memory.NewConversationMemory(300)
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024) // 支持大行
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(line) == 0 {
+			continue
+		}
+		var msg memory.ChatMessage
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			// 跳过无法解析的行（健壮性）
+			continue
+		}
+		mem.Messages = append(mem.Messages, msg)
+	}
+
+	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 
-	return &mem, nil
+	return mem, nil
 }
 
 // GetTaskMemoryPath 获取任务memory文件的路径
 func (dm *DataManager) GetTaskMemoryPath(taskID string) string {
-	return filepath.Join(dm.dataDir, taskID+".json")
+	return filepath.Join(dm.dataDir, taskID+".jsonl")
 }
 
 // DeleteTaskMemory 删除任务的memory文件
 func (dm *DataManager) DeleteTaskMemory(taskID string) error {
-	filePath := filepath.Join(dm.dataDir, taskID+".json")
+	filePath := filepath.Join(dm.dataDir, taskID+".jsonl")
+
+	// 清理 writer 状态
+	dm.mu.Lock()
+	if ws, ok := dm.writers[taskID]; ok {
+		ws.mu.Lock()
+		if ws.timer != nil {
+			ws.timer.Stop()
+		}
+		ws.mu.Unlock()
+		delete(dm.writers, taskID)
+	}
+	dm.mu.Unlock()
+
 	return os.Remove(filePath)
 }
 
@@ -88,8 +269,8 @@ func (dm *DataManager) ListTaskMemories() ([]string, error) {
 
 	var taskIDs []string
 	for _, file := range files {
-		if !file.IsDir() && filepath.Ext(file.Name()) == ".json" {
-			taskIDs = append(taskIDs, file.Name()[:len(file.Name())-5]) // 去掉.json后缀
+		if !file.IsDir() && strings.HasSuffix(file.Name(), ".jsonl") {
+			taskIDs = append(taskIDs, file.Name()[:len(file.Name())-6]) // 去掉.jsonl后缀
 		}
 	}
 
@@ -115,19 +296,36 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 
 	var items []TaskHistoryItem
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
 			continue
 		}
 		path := filepath.Join(dm.dataDir, entry.Name())
-		// 读取文件
-		raw, err := os.ReadFile(path)
+
+		// 逐行解析 JSONL 文件
+		f, err := os.Open(path)
 		if err != nil {
 			continue
 		}
+
 		var mem memory.ConversationMemory
-		if err := json.Unmarshal(raw, &mem); err != nil {
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if len(line) == 0 {
+				continue
+			}
+			var msg memory.ChatMessage
+			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+				continue
+			}
+			mem.Messages = append(mem.Messages, msg)
+		}
+		f.Close()
+		if err := scanner.Err(); err != nil {
 			continue
 		}
+
 		// 提取首条用户消息作为标题
 		title := ""
 		var createdAt time.Time
@@ -169,14 +367,17 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 			title = string(tr[:30]) + "…"
 		}
 		// 任务ID为文件名去后缀
-		taskID := entry.Name()[:len(entry.Name())-5]
-		items = append(items, TaskHistoryItem{
-			TaskID:       taskID,
-			Title:        title,
-			CreatedAt:    createdAt,
-			UpdatedAt:    updatedAt,
-			MessageCount: len(mem.Messages),
-		})
+		nameLen := len(entry.Name())
+		if nameLen > 6 {
+			taskID := entry.Name()[:nameLen-6]
+			items = append(items, TaskHistoryItem{
+				TaskID:       taskID,
+				Title:        title,
+				CreatedAt:    createdAt,
+				UpdatedAt:    updatedAt,
+				MessageCount: len(mem.Messages),
+			})
+		}
 	}
 
 	// 按时间倒序

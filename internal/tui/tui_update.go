@@ -15,8 +15,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func (m *model) processCommand(cmd string) {
+func (m *model) processCommand(cmd string) tea.Cmd {
 	cmd = strings.TrimSpace(cmd)
+
+	// 优先尝试匹配 skill 命令
+	if m.assistant.SkillRegistry != nil {
+		if skill, ok := m.assistant.SkillRegistry.Match(cmd); ok {
+			m.infoMsg = fmt.Sprintf("Executing skill: %s", skill.Name)
+			return m.submitTaskWithContent(skill.Content)
+		}
+	}
+
 	switch {
 	case cmd == ":q" || cmd == ":quit" || cmd == ":q!":
 		m.confirmQuitDialog.open = true
@@ -40,6 +49,7 @@ func (m *model) processCommand(cmd string) {
 	default:
 		m.infoMsg = fmt.Sprintf("Unknown command: %s (type :help or ? for available commands)", cmd)
 	}
+	return nil
 }
 
 // searchInLog highlights entries containing the query string.
@@ -559,8 +569,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				// Process command buffer if non-empty, otherwise enter edit mode
 				if m.commandBuffer != "" {
-					m.processCommand(m.commandBuffer)
+					cmd := m.processCommand(m.commandBuffer)
 					m.commandBuffer = ""
+					if cmd != nil {
+						return m, cmd
+					}
 				} else if !m.taskRunning {
 					// Only enter edit mode if task is not running
 					m.commandMode = false
@@ -754,27 +767,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.event.Type == "ai_response" || msg.event.Type == "ai_stream_end" {
 			if usageData, ok := msg.event.Metadata["usage"]; ok {
 				if usageMap, ok := usageData.(map[string]interface{}); ok {
+					var completionVal int64
 					if completionTokens, ok := usageMap["completion_tokens"]; ok {
 						switch v := completionTokens.(type) {
 						case float64:
-							m.outputTokens += int64(v)
+							completionVal = int64(v)
 						case int64:
-							m.outputTokens += v
+							completionVal = v
 						case int:
-							m.outputTokens += int64(v)
+							completionVal = int64(v)
 						}
+						m.outputTokens += completionVal
 					}
 					// Also track input tokens from API (PromptTokens)
+					var promptVal int64
 					if promptTokens, ok := usageMap["prompt_tokens"]; ok {
 						switch v := promptTokens.(type) {
 						case float64:
-							m.inputTokens += int64(v)
+							promptVal = int64(v)
 						case int64:
-							m.inputTokens += v
+							promptVal = v
 						case int:
-							m.inputTokens += int64(v)
+							promptVal = int64(v)
 						}
+						m.inputTokens += promptVal
 					}
+
+					// Per-agent token tracking
+					agentName := msg.event.From
+					if agentName == "" {
+						agentName = "Unknown"
+					}
+					agentUsage, exists := m.tokenUsagePerAgent[agentName]
+					if !exists {
+						agentUsage = &AgentTokenUsage{AgentName: agentName}
+						m.tokenUsagePerAgent[agentName] = agentUsage
+					}
+					agentUsage.InputTokens += promptVal
+					agentUsage.OutputTokens += completionVal
 				}
 			} else {
 				// Fallback: estimate tokens from content string
