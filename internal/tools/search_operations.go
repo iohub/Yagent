@@ -22,6 +22,16 @@ func fzfPath() string {
 	return "fzf" // fallback to system fzf
 }
 
+// rgPath returns the path to the rg binary, preferring the embedded one
+func rgPath() string {
+	if path, err := embedbin.BinPath("rg"); err == nil {
+		if _, statErr := os.Stat(path); statErr == nil {
+			return path
+		}
+	}
+	return "rg" // fallback to system rg
+}
+
 // SearchOperationsTool 实现搜索相关工具
 type SearchOperationsTool struct {
 	workingDir string
@@ -84,7 +94,7 @@ func (t *SearchOperationsTool) ExecuteGrepSearch(ctx context.Context, params map
 
 	args = append(args, "-e", query, searchDir)
 
-	cmd := exec.CommandContext(ctx, "rg", args...)
+	cmd := exec.CommandContext(ctx, rgPath(), args...)
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
