@@ -77,7 +77,7 @@ var langMap = map[Language]translations{
 		AskTips:                          "提问、编辑文件或运行命令。",
 		BeSpecificTips:                   "尽量具体，效果更佳。",
 		CreateFileTips:                   "创建 GEMINI.md 文件以定制你的交互。",
-		HelpTips:                         "输入 /help 查看更多信息。",
+		HelpTips:                         "输入 / 选择技能命令。",
 		HistoryButton:                    "历史任务",
 		HistoryTitle:                     "会话历史",
 		HistoryEmpty:                     "暂无历史会话",
@@ -97,8 +97,8 @@ var langMap = map[Language]translations{
 		ConfirmDialogYes:                 "确认 (Enter)",
 		ConfirmDialogNo:                  "取消 (Esc)",
 		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  i:编辑  ctrl+e:编辑模式  ZZ:退出",
-		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  ::命令  /:搜索  ?:帮助  i:编辑  ZZ:退出",
-		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  ctrl+h:历史  ctrl+l:语言  ctrl+c:退出",
+		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  /:搜索  ?:帮助  i:编辑  ZZ:退出",
+		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  ctrl+h:历史  ctrl+l:语言  /:技能  ctrl+c:退出",
 		HelpDialogTitle:                  "Vim 快捷键帮助",
 		HelpDialogContent: "  导航:\n" +
 			"    j / ↓          向下滚动一行\n" +
@@ -140,7 +140,7 @@ var langMap = map[Language]translations{
 		AskTips:                          "Ask questions, edit files, or run commands.",
 		BeSpecificTips:                   "Be specific for the best results.",
 		CreateFileTips:                   "Create GEMINI.md files to customize interactions.",
-		HelpTips:                         "Type /help for more information.",
+		HelpTips:                         "Type / to select a skill command.",
 		HistoryButton:                    "History",
 		HistoryTitle:                     "Conversation History",
 		HistoryEmpty:                     "No conversations yet",
@@ -160,8 +160,8 @@ var langMap = map[Language]translations{
 		ConfirmDialogYes:                 "Confirm (Enter)",
 		ConfirmDialogNo:                  "Cancel (Esc)",
 		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  i:edit  ctrl+e:edit  ZZ:quit",
-		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  ::cmd  /:search  ?:help  i:edit  ZZ:quit",
-		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  ctrl+h:history  ctrl+l:lang  ctrl+c:quit",
+		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  /:search  ?:help  i:edit  ZZ:quit",
+		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  ctrl+h:history  ctrl+l:lang  /:skill  ctrl+c:quit",
 		HelpDialogTitle:                  "Vim Keybindings Help",
 		HelpDialogContent: "  Navigation:\n" +
 			"    j / ↓          scroll down one line\n" +

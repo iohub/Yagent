@@ -354,12 +354,12 @@ func (m model) renderHelpDialog() string {
 	var skillsSection string
 	if m.assistant.SkillRegistry != nil && m.assistant.SkillRegistry.Count() > 0 {
 		skillNames := m.assistant.SkillRegistry.List()
-		skillsContent := "  Skills (type :<name> to execute):\n"
+		skillsContent := "  Skills (type / in edit mode to select):\n"
 		for _, name := range skillNames {
 			if skill, ok := m.assistant.SkillRegistry.Get(name); ok && skill.Description != "" {
-				skillsContent += fmt.Sprintf("    :%s  %s\n", name, skill.Description)
+				skillsContent += fmt.Sprintf("    /%s  %s\n", name, skill.Description)
 			} else {
-				skillsContent += fmt.Sprintf("    :%s\n", name)
+				skillsContent += fmt.Sprintf("    /%s\n", name)
 			}
 		}
 		skillsSection = skillsContent

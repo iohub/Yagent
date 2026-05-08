@@ -18,14 +18,6 @@ import (
 func (m *model) processCommand(cmd string) tea.Cmd {
 	cmd = strings.TrimSpace(cmd)
 
-	// 优先尝试匹配 skill 命令
-	if m.assistant.SkillRegistry != nil {
-		if skill, ok := m.assistant.SkillRegistry.Match(cmd); ok {
-			m.infoMsg = fmt.Sprintf("Executing skill: %s", skill.Name)
-			return m.submitTaskWithContent(skill.Content)
-		}
-	}
-
 	switch {
 	case cmd == ":q" || cmd == ":quit" || cmd == ":q!":
 		m.confirmQuitDialog.open = true
@@ -255,6 +247,16 @@ func (m *model) deleteHistoryItem() {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
+	// All other message types (tickMsg, taskEventMsg, WindowSizeMsg, etc.) are
+	// blocked to prevent viewport scrolling behind the overlay.
+	if m.showSkillPopup || m.showHelpDialog || m.confirmDialog.open ||
+		m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
+		if _, ok := msg.(tea.KeyMsg); !ok {
+			return m, nil
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tickMsg:
 		// Advance animation and rebuild viewport if there are running tools
@@ -272,7 +274,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rebuildViewportPreservingScroll()
 			}
 		}
-		// Always continue ticking so that the animation resumes immediately
+		// Don't schedule next tick if any popup/dialog is showing
+		if m.showSkillPopup || m.showHelpDialog || m.confirmDialog.open ||
+			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
+			return m, nil
+		}
+		// Continue ticking so that the animation resumes immediately
 		// when activeAnim becomes true — never let the tick die.
 		return m, tickCmd()
 
@@ -290,6 +297,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Skill popup navigation (takes priority over mode-specific handling)
+		if m.showSkillPopup {
+			switch msg.String() {
+			case "esc", "ctrl+c":
+				m.showSkillPopup = false
+				m.skillPopupIdx = 0
+				return m, nil
+			case "up", "k":
+				if m.skillPopupIdx > 0 {
+					m.skillPopupIdx--
+				}
+				return m, nil
+			case "down", "j":
+				skillNames := m.assistant.SkillRegistry.List()
+				if m.skillPopupIdx < len(skillNames)-1 {
+					m.skillPopupIdx++
+				}
+				return m, nil
+			case "enter":
+				skillNames := m.assistant.SkillRegistry.List()
+				if m.skillPopupIdx >= 0 && m.skillPopupIdx < len(skillNames) {
+					if skill, ok := m.assistant.SkillRegistry.Get(skillNames[m.skillPopupIdx]); ok {
+						m.showSkillPopup = false
+						m.skillPopupIdx = 0
+						m.infoMsg = fmt.Sprintf("Executing skill: %s", skill.Name)
+						return m, m.submitTaskWithContent(skill.Content)
+					}
+				}
+				return m, nil
+			default:
+				// Any other key dismisses the popup
+				m.showSkillPopup = false
+				m.skillPopupIdx = 0
+				return m, nil
+			}
+		}
+
 		// Confirmation dialog key handling — takes priority over everything
 		if m.confirmDialog.open {
 			switch msg.String() {
@@ -728,6 +772,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.PageUp()
 			return m, nil
 
+		case "/":
+			// Trigger skill popup in edit mode
+			if !m.taskRunning && m.assistant.SkillRegistry != nil && m.assistant.SkillRegistry.Count() > 0 {
+				m.showSkillPopup = true
+				m.skillPopupIdx = 0
+				return m, nil
+			}
+			// Fall through to default: pass '/' to textarea normally
+			var inputCmd tea.Cmd
+			m.input, inputCmd = m.input.Update(msg)
+			return m, inputCmd
+
 		case "@":
 			// Trigger fzf file fuzzy finder
 			// First, let @ be inserted into textarea, then start fzf
@@ -762,6 +818,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case taskEventMsg:
+		// Don't process task events while any popup/dialog is showing.
+		// The global guard at the top of Update() already blocks these messages,
+		// but keep this as a defensive double-check.
+		if m.showSkillPopup || m.showHelpDialog || m.confirmDialog.open ||
+			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
+			return m, nil
+		}
+
 		// Count tokens for AI response events
 		// Prefer real token usage from API metadata, fallback to estimation
 		if msg.event.Type == "ai_response" || msg.event.Type == "ai_stream_end" {
