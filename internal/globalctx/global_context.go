@@ -42,16 +42,23 @@ func (g *GlobalCtx) FormatPrompt(prompt string) string {
 	sb.WriteString(prompt)
 
 	// Environment context
+	projectPath := g.ProjectPath
+	if projectPath == "" {
+		projectPath = "[NOT SET]"
+	}
+	os := g.OS
+	if os == "" {
+		os = "[NOT SET]"
+	}
+	arch := g.Arch
+	if arch == "" {
+		arch = "[NOT SET]"
+	}
+
 	sb.WriteString("\n\n### Environment\n")
-	if g.ProjectPath != "" {
-		sb.WriteString(fmt.Sprintf("- **Project Path**: %s\n", g.ProjectPath))
-	}
-	if g.OS != "" {
-		sb.WriteString(fmt.Sprintf("- **Operating System**: %s\n", g.OS))
-	}
-	if g.Arch != "" {
-		sb.WriteString(fmt.Sprintf("- **Architecture**: %s\n", g.Arch))
-	}
+	sb.WriteString(fmt.Sprintf("- **Project Path**: %s\n", projectPath))
+	sb.WriteString(fmt.Sprintf("- **Operating System**: %s\n", os))
+	sb.WriteString(fmt.Sprintf("- **Architecture**: %s\n", arch))
 
 	// Language
 	if g.SpeakLang != "" {

@@ -31,6 +31,11 @@ type ToolDef struct {
 }
 
 // FunctionDef defines a function tool's signature.
+//
+// ⚠️ IMPORTANT: The current implementation relies on encoding/json's deterministic
+// sorting of map keys (alphabetical order). If migrating to sonic, jsoniter, or
+// another JSON library in the future, ensure SortMapKeys is enabled to maintain
+// deterministic key ordering and prevent prompt cache fragmentation.
 type FunctionDef struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`

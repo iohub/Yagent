@@ -658,14 +658,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 
 	// Always start with System Prompt (with any registered custom agents appended)
 	systemPrompt := a.GlobalCtx.FormatPrompt(conductorPrompt)
-	if len(a.customAgents) > 0 {
-		systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
-		for _, ca := range a.customAgents {
-			systemPrompt += fmt.Sprintf("- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, ca.Description)
-		}
-		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n"
-	}
-
+	var projectContext string
 	// 只在首次对话时加载项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
 	// 同一会话的后续追问无需重复注入，避免浪费 token。
 	// memory 中不存储 system 消息，因此 len(mem.GetMessages()) == 0 即可判断是否为首次对话。
@@ -675,8 +668,24 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			if a.Publisher != nil {
 				a.Publisher.Publish("context_loaded", loadResult, a.Name())
 			}
-			systemPrompt = fmt.Sprintf("### Project Workspace Context\n%s\n\n", loadResult.Content) + systemPrompt
+			// 延迟追加：先构建完整的 system prompt（静态前缀 + 环境信息 + 自定义 Agent），
+			// 最后才追加项目上下文，确保静态前缀可被 LLM Prompt Cache 复用
+			projectContext = fmt.Sprintf("\n\n### Project Workspace Context\n%s\n", loadResult.Content)
 		}
+	}
+
+	// 自定义 Agent 描述
+	if len(a.customAgents) > 0 {
+		systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
+		for _, ca := range a.customAgents {
+			systemPrompt += fmt.Sprintf("- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, ca.Description)
+		}
+		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n"
+	}
+
+	// 追加项目上下文（放在所有静态内容之后，确保缓存命中率）
+	if projectContext != "" {
+		systemPrompt += projectContext
 	}
 
 	messages = append(messages, llm.Message{
