@@ -513,28 +513,30 @@ func renderHistoryContent(m *model, width, height int) string {
 
 // renderHistoryItem renders a single history item line.
 func renderHistoryItem(m *model, item datamanager.TaskHistoryItem, selected bool, width int) string {
-	// Date and message count for right alignment
+	// Date for right alignment
 	dateStr := item.CreatedAt.Format("01-02 15:04")
-	msgCountStr := fmt.Sprintf("%d msgs", item.MessageCount)
 
-	// Calculate max title width (reserve space for indicator, date, and message count)
+	// Calculate max title width (reserve space for indicator and date)
 	indicatorLen := 2 // "● " or "  "
-	rightSpace := 16  // date + spacing + message count
+	rightSpace := 12  // date + spacing
 	maxTitleWidth := width - indicatorLen - rightSpace
 	if maxTitleWidth < 10 {
 		maxTitleWidth = 10
 	}
 
-	// Truncate title to fit (rune-safe)
+	// Truncate title to fit (rune-safe), replace newlines with spaces
 	title := item.Title
+	title = strings.ReplaceAll(title, "\r\n", " ")
+	title = strings.ReplaceAll(title, "\n", " ")
+	title = strings.ReplaceAll(title, "\r", " ")
 	if runeCount := len([]rune(title)); runeCount > maxTitleWidth {
 		tr := []rune(title)
 		title = string(tr[:maxTitleWidth]) + "…"
 	}
 
-	// Format date+count on the right
+	// Format date on the right
 	rightStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	right := rightStyle.Render(dateStr + "   " + msgCountStr)
+	right := rightStyle.Render(dateStr)
 
 	if selected {
 		// Selected: blue background, black text, bold
