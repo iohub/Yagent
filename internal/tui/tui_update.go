@@ -492,22 +492,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
-			case "ctrl+d":
-				if len(m.filteredItems) > 0 {
-					m.historyConfirmDelete = true
-				}
-				return m, nil
-
 			case "backspace":
 				if len(m.historyFilter) > 0 {
 					m.historyFilter = m.historyFilter[:len(m.historyFilter)-1]
 					m.applyHistoryFilter()
 				}
-				return m, nil
-
-			case "ctrl+u":
-				m.historyFilter = ""
-				m.applyHistoryFilter()
 				return m, nil
 
 			default:
@@ -530,9 +519,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch combo {
 				case "gg":
 					m.viewport.GotoTop()
-					return m, nil
-				case "ZZ":
-					m.confirmQuitDialog.open = true
 					return m, nil
 				default:
 					// Invalid combo: discard lastKey and fall through to process key normally
@@ -615,21 +601,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.ScrollUp(1)
 				return m, nil
 
-			case "ctrl+d":
-				m.viewport.HalfPageDown()
-				return m, nil
-
-			case "ctrl+u":
-				m.viewport.HalfPageUp()
-				return m, nil
-
 			case "G":
 				// Vim: Shift+G → go to bottom
 				m.viewport.GotoBottom()
 				return m, nil
 
-			// ── Multi-key prefix: g (for gg), Z (for ZZ) ──
-			case "g", "Z":
+			// ── Multi-key prefix: g (for gg) ──
+			case "g":
 				if m.commandBuffer == "" {
 					m.lastKey = key
 				} else {

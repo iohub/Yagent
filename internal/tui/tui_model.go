@@ -208,7 +208,7 @@ type model struct {
 	// Toggled with Esc (edit→cmd) and i (cmd→edit). Auto-enabled on task submit.
 	commandMode    bool
 	commandBuffer  string // hidden command input buffer in command mode
-	lastKey        string // tracks previous key for multi-key sequences (gg, ZZ)
+	lastKey        string // tracks previous key for multi-key sequences (gg)
 	showHelpDialog bool   // "?" help overlay in command mode
 
 	// Skill autocomplete in edit mode (inline, not popup)

@@ -38,9 +38,7 @@ type translations struct {
 	HistoryMoreAbove         string
 	HistoryMoreBelow         string
 	HistoryKeyContinue       string
-	HistoryKeyDelete         string
 	HistoryKeyBack           string
-	HistoryKeyClearFilter    string
 	HistoryConfirmDelete     string
 	// Confirmation dialog
 	ConfirmDialogHelp    string
@@ -107,9 +105,7 @@ var langMap = map[Language]translations{
 		HistoryMoreAbove:                 "▲ 前面还有 %d 条",
 		HistoryMoreBelow:                 "▼ 后面还有 %d 条",
 		HistoryKeyContinue:               "enter: 继续对话",
-		HistoryKeyDelete:                 "ctrl+d: 删除",
 		HistoryKeyBack:                   "esc: 返回",
-		HistoryKeyClearFilter:            "ctrl+u: 清除过滤",
 		HistoryConfirmDelete:             "确认删除此会话？(y = 确认, 其他键 = 取消)",
 		ConfirmDialogHelp:                "↑↓ 切换 · Enter 确认 · 字母键快捷选择",
 		ConfirmQuitTitle:                 "退出程序",
@@ -135,29 +131,26 @@ var langMap = map[Language]translations{
 		TaskCompleteTitle: "任务完成",
 		TaskCompleteOK:    "确定",
 		TaskCompleteHelp:  "按 ENTER 或 SPACE 关闭",
-		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  i:编辑  ctrl+e:编辑模式  ZZ:退出",
-		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  /:搜索  ?:帮助  i:编辑  ZZ:退出",
-		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  ctrl+h:历史  ctrl+l:语言  /:技能  ctrl+c:退出",
+		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  i:编辑  ctrl+e:编辑模式",
+		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  /:搜索  ?:帮助  i:编辑",
+		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  ctrl+h:历史  /:技能  ctrl+c:退出",
 		HelpDialogTitle:                  "Vim 快捷键帮助",
 		HelpDialogContent: "  导航:\n" +
 			"    j / ↓          向下滚动一行\n" +
 			"    k / ↑          向上滚动一行\n" +
 			"    f / PageDown    向下翻页\n" +
 			"    b / PageUp      向上翻页\n" +
-			"    ctrl+d          向下半页\n" +
-			"    ctrl+u          向上半页\n" +
 			"    gg              跳到开头\n" +
 			"    G               跳到末尾\n" +
 			"  模式:\n" +
 			"    i               进入编辑模式\n" +
 			"    ctrl+e          进入命令模式\n" +
 			"  命令行:\n" +
-			"    :q / ZZ         退出程序\n" +
+			"    :q              退出程序\n" +
 			"    :help           显示命令帮助\n" +
 			"    /pattern        搜索日志\n" +
 			"  其他:\n" +
 			"    ctrl+h          历史会话\n" +
-			"    ctrl+l          切换语言\n" +
 			"    ?               显示此帮助\n" +
 			"    ctrl+c          强制退出",
 	},
@@ -187,9 +180,7 @@ var langMap = map[Language]translations{
 		HistoryMoreAbove:                 "▲ %d more above",
 		HistoryMoreBelow:                 "▼ %d more below",
 		HistoryKeyContinue:               "enter: continue",
-		HistoryKeyDelete:                 "ctrl+d: delete",
 		HistoryKeyBack:                   "esc: back",
-		HistoryKeyClearFilter:            "ctrl+u: clear filter",
 		HistoryConfirmDelete:             "Delete this conversation? (y = confirm, any other key = cancel)",
 		ConfirmDialogHelp:                "↑↓ navigate  ·  Enter confirm  ·  letter shortcuts",
 		ConfirmQuitTitle:                 "Quit Program",
@@ -215,29 +206,26 @@ var langMap = map[Language]translations{
 		TaskCompleteTitle: "Task Completed",
 		TaskCompleteOK:    "OK",
 		TaskCompleteHelp:  "Press ENTER or SPACE to close",
-		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  i:edit  ctrl+e:edit  ZZ:quit",
-		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  /:search  ?:help  i:edit  ZZ:quit",
-		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  ctrl+h:history  ctrl+l:lang  /:skill  ctrl+c:quit",
+		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  i:edit  ctrl+e:edit",
+		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  /:search  ?:help  i:edit",
+		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  ctrl+h:history  /:skill  ctrl+c:quit",
 		HelpDialogTitle:                  "Vim Keybindings Help",
 		HelpDialogContent: "  Navigation:\n" +
 			"    j / ↓          scroll down one line\n" +
 			"    k / ↑          scroll up one line\n" +
 			"    f / PageDown   page down\n" +
 			"    b / PageUp     page up\n" +
-			"    ctrl+d         half page down\n" +
-			"    ctrl+u         half page up\n" +
 			"    gg             go to top\n" +
 			"    G              go to bottom\n" +
 			"  Mode:\n" +
 			"    i              enter edit mode\n" +
 			"    ctrl+e         enter command mode\n" +
 			"  Command line:\n" +
-			"    :q / ZZ        quit\n" +
+			"    :q             quit\n" +
 			"    :help          show command help\n" +
 			"    /pattern       search log\n" +
 			"  Other:\n" +
 			"    ctrl+h         history\n" +
-			"    ctrl+l         toggle language\n" +
 			"    ?              show this help\n" +
 			"    ctrl+c         force quit",
 	},
@@ -319,12 +307,8 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.HistoryMoreBelow
 	case "HistoryKeyContinue":
 		return translations.HistoryKeyContinue
-	case "HistoryKeyDelete":
-		return translations.HistoryKeyDelete
 	case "HistoryKeyBack":
 		return translations.HistoryKeyBack
-	case "HistoryKeyClearFilter":
-		return translations.HistoryKeyClearFilter
 	case "HistoryConfirmDelete":
 		return translations.HistoryConfirmDelete
 	case "ConfirmDialogHelp":
