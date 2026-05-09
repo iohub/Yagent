@@ -363,5 +363,19 @@
       },
       "required": ["reason"]
     }
+  },
+  {
+    "name": "delegate_browser",
+    "description": "Delegate a web research task to the Browser-Agent. Use this tool ONLY when the required information CANNOT be obtained from local documentation sources (go docs, python docs, help, man pages, --help, etc.). The Browser-Agent will navigate the web and return findings. Provide a clear, self-contained task description.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "description": "A clear, self-contained research task for the browser agent, e.g., 'Search for the latest documentation on Python's asyncio.run function' or 'Find common solutions for Go error: undefined: sql.NullString'."
+        }
+      },
+      "required": ["task"]
+    }
   }
 ]

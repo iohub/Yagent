@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"fmt"
 	_ "embed"
 	"encoding/json"
 	"log/slog"
@@ -23,18 +24,20 @@ type ToolDefinition struct {
 
 type CodingAgent struct {
 	BaseAgent
-	GlobalCtx *globalctx.GlobalCtx
-	Adapters  []*tools.Adapter
-	maxSteps  int
+	GlobalCtx    *globalctx.GlobalCtx
+	Adapters     []*tools.Adapter
+	BrowserAgent *BrowserAgent
+	maxSteps     int
 }
 
-func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *CodingAgent {
+func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, browser *BrowserAgent) *CodingAgent {
 	var toolDefs []ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal coding tools", "error", err)
 	}
 
 	adapters := make([]*tools.Adapter, 0, len(toolDefs))
+	browserAgent := browser
 	for _, def := range toolDefs {
 		var fn tools.ToolFunc
 		switch def.Name {
@@ -75,6 +78,17 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 			fn = globalCtx.FlowOps.ExecuteAgentExit
 		case "ask_user_for_help":
 			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
+		case "delegate_browser":
+			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				task, ok := params["task"].(string)
+				if !ok || task == "" {
+					return nil, fmt.Errorf("delegate_browser requires a non-empty 'task' parameter")
+				}
+				if browserAgent == nil {
+					return nil, fmt.Errorf("browser agent is not available")
+				}
+				return browserAgent.Run(ctx, task)
+			}
 		default:
 			slog.Warn("Unknown tool in tools.json", "name", def.Name)
 			continue
@@ -91,9 +105,10 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 			LLM:       llm,
 			Publisher: globalCtx.Publisher,
 		},
-		Adapters:  adapters,
-		maxSteps:  maxSteps,
-		GlobalCtx: globalCtx,
+		Adapters:     adapters,
+		maxSteps:     maxSteps,
+		BrowserAgent: browser,
+		GlobalCtx:    globalCtx,
 	}
 }
 

@@ -167,7 +167,6 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
 
-	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps)
 	chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps)
 	metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine)
 	devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)
@@ -206,6 +205,7 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	browserMgr := browser.NewManager(browserCfg, browserCfg.AllowedDomains, browserCfg.BlockedDomains)
 	ca.globalCtx.BrowserMgr = browserMgr
 	browserAgent := agents.NewBrowserAgent(ca.globalCtx, browserMgr, browserEngine, browserMaxSteps)
+	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent)
 	// 构建 compact config
 	var compactCfg *compact.Config
 	var summaryEngine llm.Engine
