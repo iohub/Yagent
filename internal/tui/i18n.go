@@ -133,7 +133,7 @@ var langMap = map[Language]translations{
 		TaskCompleteHelp:  "按 ENTER 或 SPACE 关闭",
 		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  i:编辑  ctrl+e:编辑模式",
 		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  /:搜索  ?:帮助  i:编辑",
-		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  ctrl+h:历史  /:技能  ctrl+c:退出",
+		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  /history:历史  /:技能  ctrl+c:退出",
 		HelpDialogTitle:                  "Vim 快捷键帮助",
 		HelpDialogContent: "  导航:\n" +
 			"    j / ↓          向下滚动一行\n" +
@@ -150,7 +150,7 @@ var langMap = map[Language]translations{
 			"    :help           显示命令帮助\n" +
 			"    /pattern        搜索日志\n" +
 			"  其他:\n" +
-			"    ctrl+h          历史会话\n" +
+			"    /history       历史会话\n" +
 			"    ?               显示此帮助\n" +
 			"    ctrl+c          强制退出",
 	},
@@ -208,7 +208,7 @@ var langMap = map[Language]translations{
 		TaskCompleteHelp:  "Press ENTER or SPACE to close",
 		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  i:edit  ctrl+e:edit",
 		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  /:search  ?:help  i:edit",
-		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  ctrl+h:history  /:skill  ctrl+c:quit",
+		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  /history:history  /:skill  ctrl+c:quit",
 		HelpDialogTitle:                  "Vim Keybindings Help",
 		HelpDialogContent: "  Navigation:\n" +
 			"    j / ↓          scroll down one line\n" +
@@ -225,7 +225,7 @@ var langMap = map[Language]translations{
 			"    :help          show command help\n" +
 			"    /pattern       search log\n" +
 			"  Other:\n" +
-			"    ctrl+h         history\n" +
+			"    /history       history\n" +
 			"    ?              show this help\n" +
 			"    ctrl+c         force quit",
 	},

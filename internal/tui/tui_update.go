@@ -451,7 +451,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			switch msg.String() {
-			case "esc", "ctrl+h":
+			case "esc":
 				m.closeHistoryPanel()
 				return m, nil
 
@@ -653,10 +653,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toggleLanguage()
 				return m, nil
 
-			case "ctrl+h":
-				m.openHistoryPanel()
-				return m, nil
-
 			default:
 				// Append printable characters to command buffer (hidden input)
 				if len(msg.Key().Text) > 0 {
@@ -719,10 +715,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleLanguage()
 			return m, nil
 
-		case "ctrl+h":
-			m.openHistoryPanel()
-			return m, nil
-
 		case "ctrl+f":
 			m.viewport.PageDown()
 			return m, nil
@@ -746,6 +738,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// If skill autocomplete is active, expand the selected skill
 			if m.skillAutoComplete && len(m.skillSuggestions) > 0 && m.skillSuggestionIdx >= 0 && m.skillSuggestionIdx < len(m.skillSuggestions) {
 				skillName := m.skillSuggestions[m.skillSuggestionIdx]
+				// Built-in command: history
+				if skillName == "history" {
+					m.skillAutoComplete = false
+					m.skillSuggestions = nil
+					m.skillSuggestionIdx = 0
+					m.input.Reset()
+					m.openHistoryPanel()
+					return m, nil
+				}
 				if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 					userContext := strings.TrimSpace(m.input.Value())
 					// Combine skill content with user's input as context
@@ -1036,8 +1037,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // updateSkillAutocomplete checks the current input for skill references (/skillname)
 // and updates the autocomplete suggestions accordingly.
 func (m *model) updateSkillAutocomplete() {
-	// Only active in edit mode, when not task running, and skills available
-	if m.commandMode || m.taskRunning || m.assistant.SkillRegistry == nil || m.assistant.SkillRegistry.Count() == 0 {
+	// Only active in edit mode and when not task running
+	if m.commandMode || m.taskRunning {
 		m.skillAutoComplete = false
 		m.skillSuggestions = nil
 		m.skillSuggestionIdx = 0
@@ -1058,16 +1059,25 @@ func (m *model) updateSkillAutocomplete() {
 	// Extract the text after the last '/' as the query
 	query := inputValue[lastSlash+1:]
 
-	// Don't trigger if query is empty (just typed '/')
-	// But do show all skills as suggestions
-	allSkills := m.assistant.SkillRegistry.List()
-
-	// Filter skills that match the query (case-insensitive prefix match)
+	// Build the list of matching skills
 	var matches []string
 	queryLower := strings.ToLower(query)
-	for _, name := range allSkills {
-		if strings.HasPrefix(strings.ToLower(name), queryLower) {
-			matches = append(matches, name)
+
+	// Add built-in commands first (always available)
+	builtinCommands := []string{"history"}
+	for _, cmd := range builtinCommands {
+		if strings.HasPrefix(strings.ToLower(cmd), queryLower) {
+			matches = append(matches, cmd)
+		}
+	}
+
+	// Add skills from registry (if available)
+	if m.assistant.SkillRegistry != nil {
+		allSkills := m.assistant.SkillRegistry.List()
+		for _, name := range allSkills {
+			if strings.HasPrefix(strings.ToLower(name), queryLower) {
+				matches = append(matches, name)
+			}
 		}
 	}
 

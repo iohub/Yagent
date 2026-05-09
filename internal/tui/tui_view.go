@@ -186,7 +186,7 @@ func (m model) renderWelcomePanel() string {
 	var right strings.Builder
 	right.WriteString(welcomeDimStyle.Render("─── Recent activity"))
 	right.WriteString("\n")
-	right.WriteString(welcomeDimStyle.Render("  Use Ctrl+H to browse history"))
+	right.WriteString(welcomeDimStyle.Render("  Use /history to browse history"))
 
 	// Compute responsive widths
 	panelWidth := m.computeFieldWidth() + 4
