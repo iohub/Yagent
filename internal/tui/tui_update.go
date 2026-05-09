@@ -798,10 +798,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.handleTaskHistoryCycle(msg.String())
 				return m, nil
 			}
-			// Non-empty: pass to viewport for scrolling
-			var vpCmd tea.Cmd
-			m.viewport, vpCmd = m.viewport.Update(msg)
-			return m, vpCmd
+			// Input has content: pass to textarea for line navigation
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
 
 		default:
 			// Reset history cursor when user starts typing
@@ -840,8 +840,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						case int:
 							completionVal = int64(v)
 						}
-						m.outputTokens += completionVal
 					}
+					m.outputTokens += completionVal
+
 					// Also track input tokens from API (PromptTokens)
 					var promptVal int64
 					if promptTokens, ok := usageMap["prompt_tokens"]; ok {
@@ -853,8 +854,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						case int:
 							promptVal = int64(v)
 						}
-						m.inputTokens += promptVal
 					}
+					m.inputTokens += promptVal
+
+					// Parse cache tokens
+					var cacheCreationVal int64
+					if cacheCreationTokens, ok := usageMap["cache_creation_input_tokens"]; ok {
+						switch v := cacheCreationTokens.(type) {
+						case float64:
+							cacheCreationVal = int64(v)
+						case int64:
+							cacheCreationVal = v
+						case int:
+							cacheCreationVal = int64(v)
+						}
+					}
+					m.cacheCreationInputTokens += cacheCreationVal
+
+					var cacheReadVal int64
+					if cacheReadTokens, ok := usageMap["cache_read_input_tokens"]; ok {
+						switch v := cacheReadTokens.(type) {
+						case float64:
+							cacheReadVal = int64(v)
+						case int64:
+							cacheReadVal = v
+						case int:
+							cacheReadVal = int64(v)
+						}
+					}
+					m.cacheReadInputTokens += cacheReadVal
 
 					// Per-agent token tracking
 					agentName := msg.event.From
@@ -868,6 +896,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					agentUsage.InputTokens += promptVal
 					agentUsage.OutputTokens += completionVal
+					agentUsage.CacheCreationInputTokens += cacheCreationVal
+					agentUsage.CacheReadInputTokens += cacheReadVal
 				}
 			} else {
 				// Fallback: estimate tokens from content string

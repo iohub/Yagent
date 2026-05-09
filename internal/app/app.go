@@ -65,6 +65,12 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		microAgentEngine = ca.client.GetToolEngine("micro_agent")
 	}
 
+	// Resolve tool-specific engine for deepthinking
+	deepthinkingEngine := engine
+	if ca.client != nil {
+		deepthinkingEngine = ca.client.GetToolEngine("deepthinking")
+	}
+
 	gctx := globalctx.GlobalCtx{
 		SpeakLang:   ca.config.Agent.SpeakLang,
 		ProjectPath: workDir,
@@ -75,16 +81,17 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		CodebaseURL: fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort),
 
 		// Tools
-		FileOps:        tools.NewFileOperationsTool(workDir),
-		SearchOps:      tools.NewSearchOperationsTool(workDir),
-		SysOps:         tools.NewSystemOperationsTool(workDir),
-		ReplaceTool:    tools.NewReplaceBlockTool(workDir),
-		ThinkingTool:   tools.NewThinkingTool(),
-		MicroAgentTool: tools.NewMicroAgentTool(microAgentEngine),
-		ImplPlanTool:   tools.NewImplPlanTool(),
-		FlowOps:        tools.NewFlowControlTool(workDir),
-		RepoOps:        tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort), workDir),
-		UserConfirmMgr: userConfirmMgr,
+		FileOps:          tools.NewFileOperationsTool(workDir),
+		SearchOps:        tools.NewSearchOperationsTool(workDir),
+		SysOps:           tools.NewSystemOperationsTool(workDir),
+		ReplaceTool:      tools.NewReplaceBlockTool(workDir),
+		ThinkingTool:     tools.NewThinkingTool(),
+		MicroAgentTool:   tools.NewMicroAgentTool(microAgentEngine),
+		ImplPlanTool:     tools.NewImplPlanTool(),
+		FlowOps:          tools.NewFlowControlTool(workDir),
+		RepoOps:          tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort), workDir),
+		UserConfirmMgr:   userConfirmMgr,
+		DeepThinkingTool: tools.NewDeepThinkingTool(deepthinkingEngine),
 	}
 	ca.globalCtx = &gctx
 

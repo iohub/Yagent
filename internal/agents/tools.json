@@ -155,6 +155,24 @@
     }
   },
   {
+    "name": "deepthinking",
+    "description": "A deep system analysis and design tool for complex, difficult problems. This tool performs exhaustive multi-dimensional analysis — including root cause analysis, system-level impact assessment, constraint analysis, and solution architecture design — using an isolated, expensive LLM call with a specialized system prompt. **IMPORTANT: This tool is VERY EXPENSIVE (high token cost and latency). Only use it when:** 1) Conventional methods (thinking tool, micro_agent, repo analysis, delegation to sub-agents) have been tried and failed to produce a satisfactory solution, 2) The problem is inherently complex and requires systematic design, or 3) Multiple failed attempts indicate a fundamental misunderstanding that needs deep analysis. **Do NOT use this tool** for simple issues, quick fixes, or routine tasks. The input must include the full problem context (execution environment feedback, key errors, problem background, constraints) and the specific goal to achieve.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "type": "string",
+          "description": "The complete problem context including: execution environment feedback, key errors encountered, problem background, constraints, what has been tried and failed, and any other relevant information needed for deep analysis."
+        },
+        "goal": {
+          "type": "string",
+          "description": "The specific objective to achieve. What should the deep analysis produce? A solution design, a debugging strategy, an architectural decision, or a comprehensive plan."
+        }
+      },
+      "required": ["context", "goal"]
+    }
+  },
+  {
     "name": "delete_file",
     "description": "You can use this tool to delete files, you can delete multi files in one toolcall, and you MUST make sure the files is exist before deleting.",
     "parameters": {

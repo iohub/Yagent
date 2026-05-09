@@ -59,18 +59,50 @@ func StartTUI(taskFilePath string, ca *app.CodingAssistant, tm *http.TaskManager
 }
 func (m model) computeFieldWidth() int {
 	const minField = 38
-	const maxField = 90
+	const margin = 4 // small padding from terminal edges
 	if m.termWidth <= 0 {
-		return 60
+		return 80
 	}
-	avail := m.termWidth - 8
+	avail := m.termWidth - margin
 	if avail < minField {
 		return minField
 	}
-	if avail > maxField {
-		return maxField
-	}
 	return avail
+}
+
+// computeInputHeight calculates the textarea height based on content lines
+// and available terminal space. Height grows with content but is capped.
+func (m model) computeInputHeight() int {
+	const minHeight = 3
+	const maxHeight = 12
+
+	// Count lines in current value (at least 1 for empty input)
+	lines := strings.Count(m.input.Value(), "\n") + 1
+	desired := lines + 1 // +1 line for comfortable editing headroom
+
+	if desired < minHeight {
+		desired = minHeight
+	}
+
+	// Cap to at most ~1/3 of terminal height so viewport remains usable
+	if m.termHeight > 0 {
+		termMax := (m.termHeight - 8) / 2 // 8 lines reserved for separator + status + token dashboard
+		if termMax < minHeight {
+			termMax = minHeight
+		}
+		if termMax > maxHeight {
+			termMax = maxHeight
+		}
+		if desired > termMax {
+			desired = termMax
+		}
+	} else {
+		if desired > maxHeight {
+			desired = maxHeight
+		}
+	}
+
+	return desired
 }
 
 // getToolCallIDFromEventContent extracts tool_call_id from event content.

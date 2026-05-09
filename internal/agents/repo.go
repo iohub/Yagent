@@ -79,6 +79,8 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 			fn = globalCtx.RepoOps.ExecuteQueryCodeSkeleton
 		case "query_code_snippet":
 			fn = globalCtx.RepoOps.ExecuteQueryCodeSnippet
+		case "deepthinking":
+			fn = globalCtx.DeepThinkingTool.Execute
 		default:
 			continue
 		}
@@ -173,11 +175,12 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 
 	slog.Info("RepoAgent performing pre-investigation", "project_dir", a.GlobalCtx.ProjectPath)
 	investigation, err := a.doPreInvestigate(a.GlobalCtx.ProjectPath)
+	var info string
 	if err != nil {
 		slog.Warn("RepoAgent pre-investigation failed", "error", err)
 	} else {
 		// Add investigation results to system prompt
-		info := "\n\nRepository Information:\n"
+		info = "\n\nRepository Information:\n"
 		info += "\nDirectory Tree:\n" + investigation.Data.DirectoryTree + "\n"
 		info += "\nCore Functions:\n"
 		for _, fn := range investigation.Data.CoreFunctions {
@@ -209,10 +212,10 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 			info += fmt.Sprintf("File: %s\n```%s\n%s\n```\n", sk.Filepath, sk.Language, sk.SkeletonText)
 		}
 
-		systemPrompt += info
 	}
 
 	systemPrompt = a.GlobalCtx.FormatPrompt(systemPrompt)
+	systemPrompt += info
 
 	cfg := ExecutorConfig{
 		SystemPrompt:  systemPrompt,

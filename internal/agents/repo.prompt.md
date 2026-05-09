@@ -49,3 +49,6 @@ Output a clear, structured summary that gives a developer a solid "mental map" o
 
 **Language Compliance**:
 The output summary MUST be in the language specified in **Language Instructions**.
+
+### DeepThinking Tool (Last Resort)
+- **`deepthinking`**: An extremely expensive deep analysis tool. ONLY use as a last resort when all other analysis methods have failed. Input: `context` (full problem context) and `goal` (specific objective). This tool is VERY expensive — do NOT use for simple code exploration tasks.

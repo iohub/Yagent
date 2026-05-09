@@ -79,6 +79,7 @@ func (m model) View() string {
 	} else {
 		// ── Edit mode: textarea with dark background (via Base style), no bar ──
 		m.input.SetWidth(m.computeFieldWidth())
+		m.input.SetHeight(m.computeInputHeight())
 		inputLine := m.input.View()
 		footer.WriteString(lipgloss.NewStyle().Render(inputLine))
 		footer.WriteString("\n")
@@ -124,13 +125,13 @@ func (m model) View() string {
 	footer.WriteString(m.renderTokenDashboard())
 	footer.WriteString("\n")
 
-	// Status line: mode indicator + task indicator + model name
-	taskIndicator := ""
+	// Status line: Running indicator (leftmost) + mode indicator
+	var runningBadge string
 	if m.taskRunning {
 		if m.currentModel != "" {
-			taskIndicator = logStatusStyle.Render(fmt.Sprintf(" ◷ Running [%s]...", m.currentModel))
+			runningBadge = logStatusStyle.Render(fmt.Sprintf(" ◷ Running [%s]...", m.currentModel))
 		} else {
-			taskIndicator = logStatusStyle.Render(" ◷ Running...")
+			runningBadge = logStatusStyle.Render(" ◷ Running...")
 		}
 	}
 	footer.WriteString("\n")
@@ -144,7 +145,11 @@ func (m model) View() string {
 	} else {
 		statusLine = footerStyle.Render(langManager.GetText("EditModeTips"))
 	}
-	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine + taskIndicator))
+	if runningBadge != "" {
+		footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(runningBadge + " " + statusLine))
+	} else {
+		footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
+	}
 
 	b.WriteString(footer.String())
 
@@ -258,11 +263,18 @@ func (m model) renderTokenDashboard() string {
 		Padding(0, 1).
 		Width(m.termWidth - 2) // account for viewport padding
 
-	// Header
+	// Header — left-aligned "Total" label + token summary
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("240"))
-	header := headerStyle.Render("─ Token 消耗 ")
+	var header string
+
+	// Token column width for alignment
+	const maxAgentNameWidth = 10
+
+	inStr := formatToken(m.inputTokens)
+	outStr := formatToken(m.outputTokens)
+	sumStr := formatToken(totalTokens)
 
 	// Total line — highlighted
 	inputStyle := lipgloss.NewStyle().
@@ -275,14 +287,14 @@ func (m model) renderTokenDashboard() string {
 		Bold(true).
 		Foreground(lipgloss.Color("243")) // medium gray for sum
 
-	inStr := formatToken(m.inputTokens)
-	outStr := formatToken(m.outputTokens)
-	sumStr := formatToken(totalTokens)
-
-	totalLine := fmt.Sprintf("Total:  ")
-	totalLine += inputStyle.Render(fmt.Sprintf("In: %s  ", inStr))
-	totalLine += outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
-	totalLine += sumStyle.Render(fmt.Sprintf("Σ %s", sumStr))
+	// Combined header with token summary
+	header = headerStyle.Render(fmt.Sprintf("%-*s", maxAgentNameWidth, "Total")) + " " +
+		inputStyle.Render(fmt.Sprintf("In: %s  ", inStr)) +
+		outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
+	if m.cacheReadInputTokens > 0 {
+		header += fmt.Sprintf("Cache: %s  ", formatToken(m.cacheReadInputTokens))
+	}
+	header += sumStyle.Render(fmt.Sprintf("Σ %s", sumStr))
 
 	// Separator
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
@@ -295,16 +307,11 @@ func (m model) renderTokenDashboard() string {
 		}
 	}
 	sort.Slice(agents, func(i, j int) bool {
-		return (agents[i].InputTokens+agents[i].OutputTokens) > (agents[j].InputTokens+agents[j].OutputTokens)
+		return (agents[i].InputTokens + agents[i].OutputTokens) > (agents[j].InputTokens + agents[j].OutputTokens)
 	})
-
-	// Calculate column widths for alignment
-	const maxAgentNameWidth = 18
-	const colFormat = "In: %-6s Out: %-6s"
 
 	var lines []string
 	lines = append(lines, header)
-	lines = append(lines, totalLine)
 	lines = append(lines, sepStyle.Render(strings.Repeat("─", 48)))
 
 	for _, au := range agents {
@@ -313,7 +320,7 @@ func (m model) renderTokenDashboard() string {
 			agentLabel = agentLabel[:maxAgentNameWidth-1] + "…"
 		}
 		// Pad agent name to fixed width
-		paddedName := fmt.Sprintf("%-"+fmt.Sprintf("%ds", maxAgentNameWidth)+"s", agentLabel)
+		paddedName := fmt.Sprintf("%-*s", maxAgentNameWidth, agentLabel)
 
 		agentIn := formatToken(au.InputTokens)
 		agentOut := formatToken(au.OutputTokens)
@@ -326,6 +333,9 @@ func (m model) renderTokenDashboard() string {
 		agentLine := agentStyle.Render(paddedName)
 		agentLine += " " + agentInStyle.Render(fmt.Sprintf("In: %s  ", agentIn))
 		agentLine += agentOutStyle.Render(fmt.Sprintf("Out: %s", agentOut))
+		if au.CacheReadInputTokens > 0 {
+			agentLine += "  " + agentInStyle.Render(fmt.Sprintf("Cache: %s", formatToken(au.CacheReadInputTokens)))
+		}
 		lines = append(lines, agentLine)
 	}
 

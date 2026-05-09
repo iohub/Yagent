@@ -137,6 +137,24 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 			CompletionTokens: acc.Usage.CompletionTokens,
 			TotalTokens:      acc.Usage.TotalTokens,
 		}
+
+		// Extract cache-related tokens from prompt_tokens_details.cached_tokens (OpenAI format)
+		if acc.Usage.PromptTokensDetails.CachedTokens > 0 {
+			usage.CacheReadInputTokens = acc.Usage.PromptTokensDetails.CachedTokens
+		}
+
+		// Also try to extract cache fields from raw JSON (for Anthropic-compatible APIs)
+		if raw := acc.Usage.RawJSON(); raw != "" {
+			var rawUsage map[string]any
+			if err := json.Unmarshal([]byte(raw), &rawUsage); err == nil {
+				if cacheRead, ok := rawUsage["cache_read_input_tokens"].(float64); ok && cacheRead > 0 {
+					usage.CacheReadInputTokens = int64(cacheRead)
+				}
+				if cacheCreate, ok := rawUsage["cache_creation_input_tokens"].(float64); ok && cacheCreate > 0 {
+					usage.CacheCreationInputTokens = int64(cacheCreate)
+				}
+			}
+		}
 	}
 
 	return &Response{
@@ -278,6 +296,24 @@ func (e *OpenAIEngine) toResponse(completion *openai.ChatCompletion) *Response {
 			PromptTokens:     completion.Usage.PromptTokens,
 			CompletionTokens: completion.Usage.CompletionTokens,
 			TotalTokens:      completion.Usage.TotalTokens,
+		}
+
+		// Extract cache-related tokens from prompt_tokens_details.cached_tokens (OpenAI format)
+		if completion.Usage.PromptTokensDetails.CachedTokens > 0 {
+			resp.Usage.CacheReadInputTokens = completion.Usage.PromptTokensDetails.CachedTokens
+		}
+
+		// Also try to extract cache fields from raw JSON (for Anthropic-compatible APIs)
+		if raw := completion.Usage.RawJSON(); raw != "" {
+			var rawUsage map[string]any
+			if err := json.Unmarshal([]byte(raw), &rawUsage); err == nil {
+				if cacheRead, ok := rawUsage["cache_read_input_tokens"].(float64); ok && cacheRead > 0 {
+					resp.Usage.CacheReadInputTokens = int64(cacheRead)
+				}
+				if cacheCreate, ok := rawUsage["cache_creation_input_tokens"].(float64); ok && cacheCreate > 0 {
+					resp.Usage.CacheCreationInputTokens = int64(cacheCreate)
+				}
+			}
 		}
 	}
 

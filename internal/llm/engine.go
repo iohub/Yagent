@@ -31,6 +31,11 @@ type ToolDef struct {
 }
 
 // FunctionDef defines a function tool's signature.
+//
+// ⚠️ IMPORTANT: The current implementation relies on encoding/json's deterministic
+// sorting of map keys (alphabetical order). If migrating to sonic, jsoniter, or
+// another JSON library in the future, ensure SortMapKeys is enabled to maintain
+// deterministic key ordering and prevent prompt cache fragmentation.
 type FunctionDef struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
@@ -52,9 +57,11 @@ type FunctionCall struct {
 
 // TokenUsage contains token usage information returned by the LLM API.
 type TokenUsage struct {
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	TotalTokens      int64 `json:"total_tokens"`
+	PromptTokens             int64 `json:"prompt_tokens"`
+	CompletionTokens         int64 `json:"completion_tokens"`
+	TotalTokens              int64 `json:"total_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens,omitempty"`
 }
 
 // Response represents the LLM's response to a GenerateContent call.
