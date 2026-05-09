@@ -228,19 +228,6 @@ registerCustomAgent() - 创建 delegate_<name> 工具
 返回格式化结果，新 Agent 永久可用
 ```
 
-### 3.7 ImplPlan (实现计划)
-
-**定位**: 实现计划生成器，**只读模式**。
-
-**核心职责**:
-| 职责 | 说明 |
-|------|------|
-| 计划生成 | 分析需求生成结构化实现计划文档 |
-| 上下文收集 | 通过只读工具收集代码上下文 |
-| 影响分析 | 评估修改范围和依赖关系 |
-
-**拥有工具**: `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree`, `semantic_search`, `query_code_skeleton`, `query_code_snippet`
-
 ### 3.8 Executor (执行器)
 
 **定位**: 通用 Agent 执行循环引擎。
@@ -287,11 +274,10 @@ type ExecutorConfig struct {
 | `run_bash` | 系统 | S | 执行 Shell 命令 |
 | `thinking` | 认知 | C | 错误分析和反思思维链 |
 | `micro_agent` | 认知 | MC | 子 LLM 推理调用，允许 Agent 进行深度思考 |
-| `impl_plan` | 编辑 | IP | 状态化的实现计划文档生成 |
 | `flow_control` | 流程 | FC | Agent 退出和用户帮助请求 |
 | `agent_exit` | 流程 | P | 通知任务完成 |
 
-**图例**: R=只读, W=写入, D=删除, M=移动/重命名, E=编辑, S=系统, C=认知, MC=子LLM调用, IP=实现计划, FC=流控制, P=流程
+**图例**: R=只读, W=写入, D=删除, M=移动/重命名, E=编辑, S=系统, C=认知, MC=子LLM调用, FC=流控制, P=流程
 
 ### 4.2 文件操作工具
 
@@ -409,17 +395,6 @@ micro_agent(
 )
 ```
 
-#### impl_plan
-
-```go
-// 生成实现计划文档
-impl_plan(
-    action: string,        // create / update / read
-    plan_id: string,       // 计划 ID
-    content: string        // 计划内容
-)
-```
-
 #### flow_control
 
 ```go
@@ -514,7 +489,6 @@ codeactor-agent/
 │   │   ├── chat.go            # Chat Agent
 │   │   ├── devops.go          # DevOps Agent
 │   │   ├── meta.go            # Meta Agent
-│   │   ├── impl_plan_agent.go # ImplPlan Agent
 │   │   ├── executor.go        # 通用执行循环
 │   │   ├── tools.go           # 工具注册
 │   │   ├── types.go           # 类型定义
@@ -539,7 +513,7 @@ codeactor-agent/
 │   │   ├── engine_openai.go   # OpenAI 兼容引擎
 │   │   └── llm.go             # LLM 客户端
 │   ├── memory/                # 任务记忆
-│   ├── tools/                 # 工具适配器（17 个工具）
+│   ├── tools/                 # 工具适配器（16 个工具）
 │   │   ├── adapter.go         # Adapter 模式实现
 │   │   ├── file_operations.go # 文件操作 (6 个)
 │   │   ├── file_edit.go       # 代码编辑
@@ -548,7 +522,6 @@ codeactor-agent/
 │   │   ├── repo_operations.go # 仓库操作 (3 个)
 │   │   ├── cognitive.go       # 认知工具 (thinking)
 │   │   ├── micro_agent.go     # 子 LLM 推理
-│   │   ├── impl_plan.go       # 实现计划
 │   │   ├── flow_control.go    # 流控制
 │   │   ├── workspace_guard.go # 工作空间守卫
 │   │   └── user_confirm.go    # 用户确认管道

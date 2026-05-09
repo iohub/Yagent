@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,9 +20,23 @@ import (
 // llmLogger is a separate logger for LLM responses
 var llmLogger *slog.Logger
 var llmLogFile *os.File
+var llmDebugEnabled bool
 
 // initLLMLogger initializes the LLM logger
 func initLLMLogger() error {
+	// Check debug mode first
+	llmDebugEnabled = os.Getenv("LLM_DEBUG_LOG") == "1"
+
+	if !llmDebugEnabled {
+		// Non-debug mode: no log file, discard llmLogger output
+		// Error logs are still output via main slog.Error() to stderr
+		llmLogger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
+			Level: slog.LevelWarn,
+		}))
+		return nil
+	}
+
+	// Debug mode: create log file as before
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return util.WrapError(context.Background(), err, "failed to get user home directory")

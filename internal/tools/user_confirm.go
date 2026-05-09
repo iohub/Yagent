@@ -36,7 +36,8 @@ func (m *UserConfirmManager) SetPublisher(p *messaging.MessagePublisher) {
 
 // RequestConfirmation publishes a user_help_needed event and blocks until
 // a user_help_response is received, or the context is cancelled, or timeout.
-func (m *UserConfirmManager) RequestConfirmation(ctx context.Context, question string, options string) (string, error) {
+// Extra fields (tool_name, reason) are also included for structured dialog rendering.
+func (m *UserConfirmManager) RequestConfirmation(ctx context.Context, question string, options string, extraFields ...map[string]interface{}) (string, error) {
 	if m.publisher == nil {
 		return "", fmt.Errorf("UserConfirmManager: publisher not set")
 	}
@@ -54,11 +55,19 @@ func (m *UserConfirmManager) RequestConfirmation(ctx context.Context, question s
 		m.mu.Unlock()
 	}()
 
-	m.publisher.Publish("user_help_needed", map[string]interface{}{
+	// Build content with question and optional extra fields
+	content := map[string]interface{}{
 		"question":   question,
 		"options":    options,
 		"request_id": requestID,
-	}, "Agent")
+	}
+	if len(extraFields) > 0 {
+		for k, v := range extraFields[0] {
+			content[k] = v
+		}
+	}
+
+	m.publisher.Publish("user_help_needed", content, "Agent")
 
 	slog.Info("UserConfirmManager waiting for user response", "request_id", requestID, "question", question)
 

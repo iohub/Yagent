@@ -7,8 +7,8 @@ import (
 
 	"codeactor/pkg/messaging"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 func (m *model) openConfirmDialog(event *messaging.MessageEvent) {
@@ -16,15 +16,25 @@ func (m *model) openConfirmDialog(event *messaging.MessageEvent) {
 	if !ok {
 		return
 	}
-	question, _ := content["question"].(string)
-	if question == "" {
-		return
-	}
+
+	// 优先解析结构化字段
+	toolName, _ := content["tool_name"].(string)
+	reason, _ := content["reason"].(string)
 	requestID, _ := content["request_id"].(string)
+
+	if toolName == "" && reason == "" {
+		// 向后兼容旧格式：从 question 字段解析
+		question, _ := content["question"].(string)
+		if question == "" {
+			return
+		}
+		toolName, reason = parseConfirmQuestion(question)
+	}
 
 	m.confirmDialog = confirmDialog{
 		open:           true,
-		question:       question,
+		toolName:       toolName,
+		reason:         reason,
 		requestID:      requestID,
 		selectedOption: 0, // default: Allow
 	}
@@ -60,7 +70,8 @@ func listenForPublisher(ch chan *messaging.MessagePublisher) tea.Cmd {
 	}
 }
 
-// parseConfirmQuestion extracts toolName and detail body from the question string.
+// parseConfirmQuestion extracts toolName and detail body from the old question string.
+// Only used for backward compatibility with old workspace_guard format.
 func parseConfirmQuestion(question string) (toolName, body string) {
 	q := strings.TrimSpace(question)
 	// Remove markdown bold
@@ -81,12 +92,10 @@ func parseConfirmQuestion(question string) (toolName, body string) {
 	}
 
 	// Extract body: after first blank line, before boilerplate explanatory text
-	// Split by double newline to separate header / body / footer
-	parts := strings.SplitN(q, "\n\n", 3)
+	parts := strings.SplitN(q, "\n\n", 2)
 	if len(parts) >= 2 {
-		// parts[0] = header line, parts[1..] = body (may include boilerplate)
-		body = strings.Join(parts[1:], "\n\n")
-	} else if len(parts) == 1 {
+		body = parts[1]
+	} else {
 		body = parts[0]
 	}
 
@@ -115,52 +124,107 @@ func (m model) renderConfirmDialog() string {
 	if m.termWidth-4 < dialogWidth {
 		dialogWidth = m.termWidth - 4
 	}
-	innerWidth := dialogWidth - 4
+	// border(4字符) + 内部padding(4字符) = 8字符额外开销
+	innerWidth := dialogWidth - 8
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
 
-	toolName, body := parseConfirmQuestion(m.confirmDialog.question)
+	// ── 标题行 ──
+	// 关键原则：先构建纯文本，在纯文本上截断，再应用样式
+	titlePrefix := langManager.GetText("ConfirmAuthTitle")
+	rawTitle := "⚡ " + titlePrefix + " — " + m.confirmDialog.toolName
+	if lipgloss.Width(rawTitle) > innerWidth {
+		runes := []rune(rawTitle)
+		if len(runes) > innerWidth-3 {
+			rawTitle = string(runes[:innerWidth-3]) + "..."
+		}
+	}
+	toolLine := confirmToolStyle.Render(rawTitle)
 
-	// ── Tool name badge ──
-	toolLine := confirmToolStyle.Render("⚡ " + toolName)
-
-	// ── Command / detail ──
+	// ── 详情区域 ──
+	var bodyContent string
+	if m.confirmDialog.reason != "" {
+		bodyContent = m.confirmDialog.reason + "\n\n"
+	}
+	bodyContent += langManager.GetText("ConfirmAuthWarning")
 	detailWidth := innerWidth
 	if detailWidth < 20 {
 		detailWidth = 20
 	}
-	detail := wrapText(body, detailWidth)
+	detail := wrapText(bodyContent, detailWidth)
 	detail = confirmDetailStyle.Render(detail)
 
-	// ── Buttons (3 options) ──
-	renderBtn := func(label string, idx int) string {
-		if m.confirmDialog.selectedOption == idx {
-			return confirmButtonFocused.Render(label)
-		}
-		return confirmButtonBlurred.Render(label)
-	}
-	buttons := lipgloss.JoinHorizontal(lipgloss.Center,
-		renderBtn("Allow", 0),
-		"  ",
-		renderBtn("Allow All", 1),
-		"  ",
-		renderBtn("Deny", 2),
-	)
+	// ── 选项列表 ──
+	options := getConfirmOptions()
+	const indicatorOn = "▶"
+	const indicatorOff = "  "
+	const stylePadding = 2 // Padding(0,1) = 左右各1 = 总共2字符
 
-	// ── Help ──
+	var optionLines []string
+	for i, opt := range options {
+		// 步骤1：构建纯文本（无任何 ANSI 样式）
+		indicator := indicatorOff
+		if m.confirmDialog.selectedOption == i {
+			indicator = indicatorOn
+		}
+		plainLabel := indicator + " " + opt.label
+
+		// 步骤2：计算可用宽度
+		shortcutPlain := opt.shortcut
+		shortcutWidth := lipgloss.Width(shortcutPlain)
+		// label 可用宽度 = innerWidth - shortcutWidth - 1(间距) - stylePadding
+		maxPlainWidth := innerWidth - shortcutWidth - 1 - stylePadding
+		if maxPlainWidth < 10 {
+			maxPlainWidth = 10
+		}
+
+		// 步骤3：纯文本截断（在应用样式之前！）
+		truncatedPlain := plainLabel
+		if lipgloss.Width(plainLabel) > maxPlainWidth {
+			runes := []rune(plainLabel)
+			if maxPlainWidth > 1 {
+				if len(runes) > maxPlainWidth-1 {
+					truncatedPlain = string(runes[:maxPlainWidth-1]) + "…"
+				} else {
+					truncatedPlain = string(runes[:maxPlainWidth])
+				}
+			} else {
+				truncatedPlain = string(runes[:maxPlainWidth])
+			}
+		}
+
+		// 步骤4：应用样式（这是唯一一次渲染）
+		var styledLabel string
+		if m.confirmDialog.selectedOption == i {
+			styledLabel = confirmOptionFocused.Render(truncatedPlain)
+		} else {
+			styledLabel = confirmOptionBlurred.Render(truncatedPlain)
+		}
+
+		// 步骤5：拼接 label 和 shortcut（不再用 Width/Align 约束 ANSI 字符串）
+		line := lipgloss.JoinHorizontal(lipgloss.Left, styledLabel, shortcutPlain)
+		optionLines = append(optionLines, line)
+	}
+	optionsBlock := lipgloss.JoinVertical(lipgloss.Left, optionLines...)
+
+	// ── 帮助文字 ──
 	help := confirmHelpStyle.Render(langManager.GetText("ConfirmDialogHelp"))
 
-	// ── Assemble with a horizontal separator between detail and buttons ──
+	// ── 分隔线 ──
 	sep := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("237")).
 		Width(innerWidth).
 		Render(strings.Repeat("─", innerWidth))
 
+	// ── 组装 ──
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		toolLine,
 		"",
 		detail,
 		"",
 		sep,
-		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(buttons),
+		optionsBlock,
 		help,
 	)
 
@@ -182,13 +246,13 @@ func (m model) renderTaskCompleteDialog() string {
 	innerWidth := dialogWidth - 4
 
 	// ── Title ──
-	titleLine := taskCompleteTitleStyle.Render("Task Completed")
+	titleLine := taskCompleteTitleStyle.Render(langManager.GetText("TaskCompleteTitle"))
 
 	// ── OK Button ──
-	okBtn := taskCompleteButtonFocused.Render("OK")
+	okBtn := taskCompleteButtonFocused.Render(langManager.GetText("TaskCompleteOK"))
 
 	// ── Help text ──
-	help := confirmHelpStyle.Render("Press ENTER or SPACE to close")
+	help := confirmHelpStyle.Render(langManager.GetText("TaskCompleteHelp"))
 
 	// ── Separator ──
 	sep := lipgloss.NewStyle().
@@ -244,7 +308,7 @@ func (m model) renderConfirmQuitDialog() string {
 	)
 
 	// ── Help ──
-	help := confirmHelpStyle.Render("←/→ choose  enter confirm  y/n")
+	help := confirmHelpStyle.Render(langManager.GetText("ConfirmQuitHelp"))
 
 	// ── Separator ──
 	sep := lipgloss.NewStyle().
@@ -302,7 +366,7 @@ func (m model) renderConfirmCancelDialog() string {
 	)
 
 	// ── Help ──
-	help := confirmHelpStyle.Render("←/→ choose  enter confirm  y yes  n/esc cancel")
+	help := confirmHelpStyle.Render(langManager.GetText("ConfirmCancelHelp"))
 
 	// ── Separator ──
 	sep := lipgloss.NewStyle().
@@ -415,6 +479,24 @@ func (m model) renderHelpDialog() string {
 	)
 }
 
+// confirmOption represents a single option in the authorization confirmation dialog.
+type confirmOption struct {
+	label    string // 显示文字
+	shortcut string // 快捷键提示
+	action   string // 响应动作
+}
+
+// 授权确认弹窗的5个选项 — 动态构建以支持国际化
+func getConfirmOptions() []confirmOption {
+	return []confirmOption{
+		{label: langManager.GetText("ConfirmOptionAllow"), shortcut: langManager.GetText("ConfirmShortcutAllow"), action: "allow"},
+		{label: langManager.GetText("ConfirmOptionAllowTool"), shortcut: langManager.GetText("ConfirmShortcutAllowTool"), action: "allow_session"},
+		{label: langManager.GetText("ConfirmOptionAllowSession"), shortcut: langManager.GetText("ConfirmShortcutAllowSession"), action: "allow_all_session"},
+		{label: langManager.GetText("ConfirmOptionAllowProject"), shortcut: langManager.GetText("ConfirmShortcutAllowProject"), action: "allow_all_project"},
+		{label: langManager.GetText("ConfirmOptionDeny"), shortcut: langManager.GetText("ConfirmShortcutDeny"), action: "deny"},
+	}
+}
+
 // confirmDialog styles
 var (
 	confirmBorderStyle = lipgloss.NewStyle().
@@ -429,15 +511,17 @@ var (
 	confirmDetailStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("252"))
 
-	confirmButtonFocused = lipgloss.NewStyle().
+	// 选中行样式：醒目橙色背景 + 白色粗体文字
+	confirmOptionFocused = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("0")).
 				Background(lipgloss.Color("214")).
 				Bold(true).
-				Padding(0, 2)
+				Padding(0, 1)
 
-	confirmButtonBlurred = lipgloss.NewStyle().
+	// 未选中行样式：灰色文字
+	confirmOptionBlurred = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("244")).
-				Padding(0, 2)
+				Padding(0, 1)
 
 	confirmHelpStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240"))

@@ -391,6 +391,136 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 	return items, nil
 }
 
+// ListTaskHistoryFast 快速返回历史任务列表，只读取必要的行。
+// 相比 ListTaskHistory 性能更好，因为它：
+// 1. 只解析第一条人类消息作为标题
+// 2. 用行计数代替全量 JSON 解析来计算消息数
+func (dm *DataManager) ListTaskHistoryFast(limit int) ([]TaskHistoryItem, error) {
+	entries, err := os.ReadDir(dm.dataDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var items []TaskHistoryItem
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		path := filepath.Join(dm.dataDir, entry.Name())
+
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+
+		var (
+			title       string
+			createdAt   time.Time
+			updatedAt   time.Time
+			lineCount   int
+			foundHuman  bool
+		)
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
+
+		// 轻量结构体，只解析需要的字段
+		var fieldOnly struct {
+			Type      string `json:"type"`
+			Content   string `json:"content"`
+			Timestamp string `json:"timestamp"`
+		}
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			if len(line) == 0 {
+				continue
+			}
+			lineCount++
+
+			// 只解析有 type 字段的行（减少无效解析）
+			if !strings.Contains(line, `"type"`) {
+				continue
+			}
+
+			if err := json.Unmarshal([]byte(line), &fieldOnly); err != nil {
+				continue
+			}
+
+			// 追踪第一条人类消息
+			if !foundHuman && fieldOnly.Type == "human" {
+				title = strings.TrimSpace(fieldOnly.Content)
+				if ts, err := time.Parse(time.RFC3339, fieldOnly.Timestamp); err == nil {
+					createdAt = ts
+				}
+				foundHuman = true
+			}
+
+			// 追踪最后一条消息的时间
+			if fieldOnly.Timestamp != "" {
+				if ts, err := time.Parse(time.RFC3339, fieldOnly.Timestamp); err == nil {
+					updatedAt = ts
+				}
+			}
+		}
+		f.Close()
+		if err := scanner.Err(); err != nil {
+			continue
+		}
+
+		// 如果没有找到人类消息，使用文件名作为标题
+		if !foundHuman || title == "" {
+			title = entry.Name()
+		}
+
+		// CreatedAt fallback
+		if createdAt.IsZero() {
+			if info, err := entry.Info(); err == nil {
+				createdAt = info.ModTime()
+			} else {
+				createdAt = time.Now()
+			}
+		}
+
+		// UpdatedAt fallback
+		if updatedAt.IsZero() {
+			if info, err := entry.Info(); err == nil {
+				updatedAt = info.ModTime()
+			} else {
+				updatedAt = time.Now()
+			}
+		}
+
+		// 标题截断到 30 字符
+		if runeCount := len([]rune(title)); runeCount > 30 {
+			tr := []rune(title)
+			title = string(tr[:30]) + "…"
+		}
+
+		// 任务ID为文件名去后缀
+		nameLen := len(entry.Name())
+		if nameLen > 6 {
+			taskID := entry.Name()[:nameLen-6]
+			items = append(items, TaskHistoryItem{
+				TaskID:       taskID,
+				Title:        title,
+				CreatedAt:    createdAt,
+				UpdatedAt:    updatedAt,
+				MessageCount: lineCount,
+			})
+		}
+	}
+
+	// 按时间倒序
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
+
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
 // GetDataDir 获取数据目录路径
 func (dm *DataManager) GetDataDir() string {
 	return dm.dataDir

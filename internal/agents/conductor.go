@@ -58,6 +58,7 @@ type ConductorAgent struct {
 	ChatAgent      *ChatAgent
 	MetaAgent      *MetaAgent
 	DevOpsAgent    *DevOpsAgent
+	BrowserAgent   *BrowserAgent
 	GlobalCtx      *globalctx.GlobalCtx
 	Adapters       []*tools.Adapter
 	maxSteps       int
@@ -105,7 +106,7 @@ func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
 	return result
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -163,6 +164,29 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		"type": "object",
 		"properties": map[string]interface{}{
 			"task": map[string]interface{}{"type": "string", "description": "The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."},
+		},
+		"required": []string{"task"},
+	})
+
+	delegateBrowser := tools.NewAdapter("delegate_browser",
+		"Delegate browser automation tasks to Browser-Agent. Browser-Agent controls a headless Chrome browser using go-rod to navigate websites, click elements, fill forms, extract data, take screenshots, generate PDFs, execute JavaScript (with user confirmation), and manage cookies. Use this for tasks like: 'screenshot https://example.com', 'extract text from https://example.com/article', 'fill and submit the login form at https://example.com/login', 'check if website is reachable', 'get the current URL after navigation'. The agent handles all browser lifecycle and page management internally.",
+		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			task, ok := params["task"].(string)
+			if !ok {
+				return nil, fmt.Errorf("task parameter required")
+			}
+			// 注入仓库摘要上下文（如果有）
+			if globalCtx.RepoSummary != "" {
+				task = fmt.Sprintf("%s\n\n#Repository Context (for reference only - focus on browser tasks):\n%s", task, globalCtx.RepoSummary)
+			}
+			return browser.Run(ctx, task)
+		}).WithSchema(map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"task": map[string]interface{}{
+				"type": "string",
+				"description": "The browser automation task for Browser-Agent, e.g., 'screenshot https://example.com homepage', 'extract article text from https://example.com/blog/post-1', 'fill the login form and submit', 'navigate to https://example.com and return the page title'.",
+			},
 		},
 		"required": []string{"task"},
 	})
@@ -321,6 +345,9 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	if !disabledAgents["devops"] {
 		delegateAdapters = append(delegateAdapters, delegateDevOps)
 	}
+	if !disabledAgents["browser"] {
+		delegateAdapters = append(delegateAdapters, delegateBrowser)
+	}
 
 	// Set workspace guard on all adapters (delegate adapters are not dangerous tools)
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
@@ -333,6 +360,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		ChatAgent:      chat,
 		MetaAgent:      meta,
 		DevOpsAgent:    devops,
+		BrowserAgent:   browser,
 		GlobalCtx:      globalCtx,
 		Adapters:       append(adapters, delegateAdapters...),
 		maxSteps:       maxSteps,

@@ -8,7 +8,7 @@
 
 ## 一、审计背景
 
-对照 LLM Prompt Cache 最佳实践文档的五项核心检查清单，对项目中 7 个 Agent（Conductor、Coding、Repo、Chat、DevOps、Meta、ImplPlan）的 prompt 构建方式进行了全面审计。
+对照 LLM Prompt Cache 最佳实践文档的五项核心检查清单，对项目中 6 个 Agent（Conductor、Coding、Repo、Chat、DevOps、Meta）的 prompt 构建方式进行了全面审计。
 
 LLM 缓存采用**严格前缀匹配**（Prefix Matching）机制：从第一个 Token 开始必须完全一致，一旦中途有任何字符不同，该字符之后的所有缓存全部失效。
 

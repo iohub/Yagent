@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"codeactor/internal/agents"
+	"codeactor/internal/browser"
 	"codeactor/internal/compact"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
@@ -87,7 +88,6 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		ReplaceTool:      tools.NewReplaceBlockTool(workDir),
 		ThinkingTool:     tools.NewThinkingTool(),
 		MicroAgentTool:   tools.NewMicroAgentTool(microAgentEngine),
-		ImplPlanTool:     tools.NewImplPlanTool(),
 		FlowOps:          tools.NewFlowControlTool(workDir),
 		RepoOps:          tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort), workDir),
 		UserConfirmMgr:   userConfirmMgr,
@@ -110,6 +110,7 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	codingMaxSteps := 30
 	chatMaxSteps := 10
 	devopsMaxSteps := 15
+	browserMaxSteps := 15
 	conductorMaxSteps := 20
 
 	if ca.config != nil {
@@ -125,6 +126,9 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		if ca.config.Agent.DevOpsMaxSteps > 0 {
 			devopsMaxSteps = ca.config.Agent.DevOpsMaxSteps
 		}
+		if ca.config.Agent.BrowserMaxSteps > 0 {
+			browserMaxSteps = ca.config.Agent.BrowserMaxSteps
+		}
 		if ca.config.Agent.ConductorMaxSteps > 0 {
 			conductorMaxSteps = ca.config.Agent.ConductorMaxSteps
 		}
@@ -137,6 +141,12 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	// Parse disabled agents from comma-separated string
 	disabledAgents := parseDisabledAgents(ca.DisabledAgents)
 
+	// 检查配置文件中的 enable_browser_agent 设置
+	// 如果配置明确禁用了 browser agent，则加入禁用列表
+	if ca.config != nil && !ca.config.Browser.EnableBrowserAgent {
+		disabledAgents["browser"] = true
+	}
+
 	// Resolve per-agent engines
 	conductorEngine := engine
 	repoEngine := engine
@@ -144,7 +154,7 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	chatEngine := engine
 	metaEngine := engine
 	devopsEngine := engine
-	implPlanEngine := engine
+	browserEngine := engine
 	if ca.client != nil {
 		conductorEngine = ca.client.GetAgentEngine("conductor")
 		repoEngine = ca.client.GetAgentEngine("repo")
@@ -152,21 +162,50 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		chatEngine = ca.client.GetAgentEngine("chat")
 		metaEngine = ca.client.GetAgentEngine("meta")
 		devopsEngine = ca.client.GetAgentEngine("devops")
-		implPlanEngine = ca.client.GetAgentEngine("impl_plan")
+		browserEngine = ca.client.GetAgentEngine("browser")
 	}
 
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
 
-	implPlanMaxSteps := 15
-	if ca.config != nil && ca.config.Agent.ImplPlanMaxSteps > 0 {
-		implPlanMaxSteps = ca.config.Agent.ImplPlanMaxSteps
-	}
-	implPlanAgent := agents.NewImplPlanAgent(ca.globalCtx, implPlanEngine, publisher, implPlanMaxSteps)
-
-	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, implPlanAgent)
 	chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps)
 	metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine)
 	devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)
+	// 合并浏览器配置：从 config 读取，未设置的使用默认值
+	browserCfg := browser.DefaultBrowserConfig()
+	if ca.config != nil {
+		cfg := ca.config.Browser
+		if cfg.ViewportWidth > 0 {
+			browserCfg.ViewportWidth = cfg.ViewportWidth
+		}
+		if cfg.ViewportHeight > 0 {
+			browserCfg.ViewportHeight = cfg.ViewportHeight
+		}
+		if cfg.TimeoutSeconds > 0 {
+			browserCfg.TimeoutSeconds = cfg.TimeoutSeconds
+		}
+		if cfg.MaxConcurrentPages > 0 {
+			browserCfg.MaxConcurrentPages = cfg.MaxConcurrentPages
+		}
+		if cfg.IdleTimeout != "" {
+			browserCfg.IdleTimeout = cfg.IdleTimeout
+		}
+		if cfg.BrowserPath != "" {
+			browserCfg.BrowserPath = cfg.BrowserPath
+		}
+		if cfg.UserDataDir != "" {
+			browserCfg.UserDataDir = cfg.UserDataDir
+		}
+		browserCfg.Headless = cfg.Headless
+		browserCfg.AutoLaunch = cfg.AutoLaunch
+		browserCfg.AllowNoSandbox = cfg.AllowNoSandbox
+		browserCfg.AllowedDomains = cfg.AllowedDomains
+		browserCfg.BlockedDomains = cfg.BlockedDomains
+		browserCfg.ExtraArgs = cfg.ExtraArgs
+	}
+	browserMgr := browser.NewManager(browserCfg, browserCfg.AllowedDomains, browserCfg.BlockedDomains)
+	ca.globalCtx.BrowserMgr = browserMgr
+	browserAgent := agents.NewBrowserAgent(ca.globalCtx, browserMgr, browserEngine, browserMaxSteps)
+	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent)
 	// 构建 compact config
 	var compactCfg *compact.Config
 	var summaryEngine llm.Engine
@@ -197,7 +236,7 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		}
 	}
 
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, conductorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, conductorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine)
 }
 
 func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
@@ -268,7 +307,7 @@ func (ca *CodingAssistant) ProcessConversation(req *TaskRequest) (string, error)
 }
 
 // parseDisabledAgents converts a comma-separated string of agent names
-// into a map[string]bool for O(1) lookup. Valid agent names: repo, coding, chat, meta, devops.
+// into a map[string]bool for O(1) lookup. Valid agent names: repo, coding, chat, meta, devops, browser.
 func parseDisabledAgents(s string) map[string]bool {
 	result := make(map[string]bool)
 	if s == "" {
@@ -281,4 +320,14 @@ func parseDisabledAgents(s string) map[string]bool {
 		}
 	}
 	return result
+}
+
+// Close 清理资源
+func (ca *CodingAssistant) Close() {
+	if ca.globalCtx != nil && ca.globalCtx.BrowserMgr != nil {
+		slog.Info("Closing browser manager...")
+		if err := ca.globalCtx.BrowserMgr.Close(); err != nil {
+			slog.Warn("Failed to close browser manager", "error", err)
+		}
+	}
 }

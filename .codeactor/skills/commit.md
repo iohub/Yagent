@@ -1,51 +1,14 @@
 # Git Commit
 
-请帮我完成一次专业的开源项目 git commit，按以下步骤执行：
+帮我完成 git commit，流程如下：
 
-## 步骤 1：检查仓库状态
-运行 `git status` 和 `git diff --staged` 查看已暂存的变更。如果没有已暂存的变更，运行 `git diff` 查看未暂存的变更。同时运行 `git log --oneline -5` 查看最近的提交风格。
+## 步骤 1：检查状态
+并行运行 `git status`、`git diff --cached --name-only`、`git log --oneline -3`。若 `--cached` 有文件则只提交已暂存文件；若无变更直接结束。
 
-**提示**：如果 `git diff --cached --name-only` 输出非空（即用户已手动暂存了特定文件），则提示「检测到用户已手动暂存 N 个文件，将只提交这些文件」，后续跳过文件过滤步骤。
+## 步骤 2：提交
+- 根据 diff 内容编写 Conventional Commits 格式的 message：`<type>(<scope>): <subject>`（type: feat/fix/docs/style/refactor/perf/test/chore/ci/build，subject 英文小写 ≤72字符）
+- **禁止**任何 AI 署名（Co-authored-by/Signed-off-by/AI-generated 等）
+- 若用户未手动暂存，先 `git add` 代码文件再 `git commit -m`；若已暂存则直接 `git commit -m`
 
-## 步骤 2：编写 commit message
-根据变更内容，编写一条专业的开源项目 commit message，要求：
-- 使用 Conventional Commits 格式：`<type>(<scope>): <subject>`
-- type 从以下选择：feat, fix, docs, style, refactor, perf, test, chore, ci, build
-- subject 使用英文，简洁明了（不超过 72 字符），首字母小写
-- 如果需要详细说明，空一行后用英文写 body，每行不超过 72 字符
-- **严禁**在 commit message 中出现任何 AI 相关签名，包括但不限于：Co-authored-by: AI, Signed-off-by: AI, AI-generated, ChatGPT, Claude, Copilot 等
-- **严禁**在代码或 commit 中添加任何形式的 AI 署名
-- 风格参考知名的开源项目（如 Linux kernel, Kubernetes, Rust 等）
-
-## 步骤 3：执行提交
-
-**智能过滤策略**（按优先级判断）：
-
-### 情况 A：用户已手动暂存文件
-如果 `git diff --cached --name-only` 输出非空：
-- 跳过过滤，直接对这些已暂存文件执行 `git commit -m "<message>"`
-
-### 情况 B：未手动暂存（智能过滤）
-1. 运行 `git status --short` 获取所有变更文件列表。
-2. **过滤排除以下文件**：
-
-   | **数据文件** |
-   | **二进制/编译产物** |
-   | **媒体文件** | 
-   | **压缩包** | 
-   | **测试数据/夹具** |
-
-3. 对过滤后的代码文件执行 `git add <file1> <file2> ...`。
-4. 执行 `git commit -m "<message>"` 提交。**无需用户确认，直接提交。**
-
-## 步骤 4：展示提交结果
-提交完成后，运行 `git log --oneline -3` 展示最近3条提交记录，让用户确认 commit 内容是否正确。
-
-## 步骤 5：询问推送
-展示 git log 后，询问用户："提交已完成，以上是最近3条提交记录，是否需要推送到远程仓库？(git push)"。等待用户回复后执行。
-
----
-
-**注意事项**：
-- 如果仓库没有变更，直接告知用户 "没有需要提交的变更" 并结束
-- 所有 git 命令使用 `run_bash` 工具执行
+## 步骤 3：收尾
+运行 `git log --oneline -3` 展示结果，然后询问是否推送。

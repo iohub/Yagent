@@ -11,7 +11,6 @@ CodeActor Agent 协调多个专用智能体——指挥家（Conductor）、仓�
 - **元代理（Meta-Agent）** — 自主设计代理，在运行时为超出内置 Agent 能力的任务动态创建自定义子智能体
 - **自我修正** — `thinking` 工具使 Agent 能够在出错时分析原因并恢复，避免盲目重试
 - **Agent 禁用** — 通过 `--disable-agents=repo,coding,chat,meta,devops` 在启动时有条件地排除子智能体
-- **ImplPlan 工具** — 状态化实现计划文档，用于复杂多步骤编码任务的分步规划
 
 ### 丰富工具系统（17 个工具）
 - **文件操作** — 读取、创建、删除、重命名、列出目录、打印目录树
@@ -149,7 +148,7 @@ node index.js history                                  # 列出最近任务
 | Agent | 工具 | 数量 |
 |-------|-------|-------|
 | Conductor | `delegate_repo`、`delegate_coding`、`delegate_chat`、`delegate_devops`、`delegate_meta`、`finish`、`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree` | 10 |
-| CodingAgent | 全部 17 个工具（文件、搜索、Shell、thinking、impl_plan、micro_agent） | 17 |
+| CodingAgent | 全部 16 个工具（文件、搜索、Shell、thinking、micro_agent） | 16 |
 | RepoAgent | `read_file`、`search_by_regex`、`list_dir`、`print_dir_tree`、`semantic_search`、`query_code_skeleton`、`query_code_snippet` | 7 |
 | ChatAgent | `micro_agent`、`thinking`、`finish` | 3 |
 | DevOpsAgent | `run_bash`、`read_file`、`list_dir`、`print_dir_tree`、`search_by_regex`、`thinking`、`micro_agent`、`finish` | 8 |

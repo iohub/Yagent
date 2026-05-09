@@ -1,18 +1,13 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	"codeactor/internal/compact"
-	"codeactor/internal/datamanager"
-	"codeactor/internal/http"
 
-	"github.com/google/uuid"
-
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func (m *model) processCommand(cmd string) tea.Cmd {
@@ -38,6 +33,17 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 			content:   fmt.Sprintf("Current mode: %s | Task running: %v | Buffer: %q", mode, m.taskRunning, m.commandBuffer),
 		})
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+	case cmd == ":hist" || cmd == ":history":
+		if m.taskRunning {
+			m.infoMsg = "Cannot browse history while a task is running"
+			return nil
+		}
+		if !m.commandMode {
+			// Switch to command mode first since history is accessed from there
+			m.commandMode = true
+			m.commandBuffer = ""
+		}
+		return enterHistoryMode(m)
 	default:
 		m.infoMsg = fmt.Sprintf("Unknown command: %s (type :help or ? for available commands)", cmd)
 	}
@@ -61,200 +67,20 @@ func (m *model) searchInLog(query string) {
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 }
 
-// loadTaskHistoryItems loads the task history list (cached) for quick cycling
-// in edit mode. Called lazily on first up/down press.
-func (m *model) loadTaskHistoryItems() {
-	if len(m.taskHistoryItems) > 0 {
-		return // already loaded
-	}
-	dm, err := datamanager.NewDataManager()
-	if err != nil {
-		return
-	}
-	items, err := dm.ListTaskHistory(50)
-	if err != nil {
-		return
-	}
-	m.taskHistoryItems = items
-}
-
-// handleTaskHistoryCycle handles up/down arrow key presses in edit mode when
-// the input is empty. It cycles through the task history list and loads the
-// selected task description into the input field.
-func (m *model) handleTaskHistoryCycle(direction string) {
-	m.loadTaskHistoryItems()
-	if len(m.taskHistoryItems) == 0 {
-		return
-	}
-
-	n := len(m.taskHistoryItems)
-
-	switch direction {
-	case "up":
-		if m.taskHistoryIdx < 0 {
-			// First press: start from the newest (index 0)
-			m.taskHistoryIdx = 0
-		} else {
-			m.taskHistoryIdx++
-			if m.taskHistoryIdx >= n {
-				m.taskHistoryIdx = 0 // wrap around
-			}
-		}
-	case "down":
-		if m.taskHistoryIdx < 0 {
-			// First press: start from the newest (index 0)
-			m.taskHistoryIdx = 0
-		} else {
-			m.taskHistoryIdx--
-			if m.taskHistoryIdx < 0 {
-				m.taskHistoryIdx = n - 1 // wrap around
-			}
-		}
-	}
-
-	// Load the selected task description
-	if m.taskHistoryIdx >= 0 && m.taskHistoryIdx < n {
-		m.input.SetValue(m.taskHistoryItems[m.taskHistoryIdx].Title)
-	}
-}
-
-func (m *model) openHistoryPanel() {
-	dm, err := datamanager.NewDataManager()
-	if err == nil {
-		items, err2 := dm.ListTaskHistory(50)
-		if err2 == nil {
-			m.historyItems = items
-			m.filteredItems = items
-		}
-	}
-	m.historyIndex = 0
-	m.historyScrollStart = 0
-	m.historyFilter = ""
-	m.historyConfirmDelete = false
-	m.showHistoryPanel = true
-}
-
-func (m *model) closeHistoryPanel() {
-	m.showHistoryPanel = false
-	m.historyFilter = ""
-	m.historyConfirmDelete = false
-}
-
-func (m *model) applyHistoryFilter() {
-	query := strings.TrimSpace(m.historyFilter)
-	if query == "" {
-		m.filteredItems = m.historyItems
-		m.historyIndex = 0
-		m.historyScrollStart = 0
-		return
-	}
-	qLower := strings.ToLower(query)
-	filtered := make([]datamanager.TaskHistoryItem, 0, len(m.historyItems))
-	for _, it := range m.historyItems {
-		txt := strings.ToLower(it.Title + " " + it.TaskID)
-		if strings.Contains(txt, qLower) {
-			filtered = append(filtered, it)
-		}
-	}
-	m.filteredItems = filtered
-	if m.historyIndex >= len(m.filteredItems) {
-		m.historyIndex = 0
-	}
-	m.historyScrollStart = 0
-}
-
-func (m *model) continueConversation() tea.Cmd {
-	if len(m.filteredItems) == 0 {
-		return nil
-	}
-	if m.historyIndex < 0 {
-		m.historyIndex = 0
-	}
-	if m.historyIndex >= len(m.filteredItems) {
-		m.historyIndex = len(m.filteredItems) - 1
-	}
-	selected := m.filteredItems[m.historyIndex]
-
-	mem, err := m.dataManager.LoadTaskMemory(selected.TaskID)
-	if err != nil {
-		m.errMsg = fmt.Sprintf("Failed to load conversation: %v", err)
-		return nil
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	task := &http.Task{
-		ID:         uuid.New().String(),
-		Status:     http.TaskStatusRunning,
-		ProjectDir: m.projectDir,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		Memory:     mem,
-		Context:    ctx,
-		CancelFunc: cancel,
-	}
-	m.taskManager.AddTask(task)
-	m.currentTask = task
-	m.taskRunning = false
-
-	m.showHistoryPanel = false
-	m.historyFilter = ""
-	m.historyConfirmDelete = false
-
-	m.logEntries = append(m.logEntries, logEntry{
-		timestamp: time.Now(),
-		eventType: "status",
-		content:   fmt.Sprintf("Loaded conversation: %s (%d messages)", selected.Title, selected.MessageCount),
-	})
-	m.buildViewportContent()
-
-	return nil
-}
-
-func (m *model) deleteHistoryItem() {
-	if len(m.filteredItems) == 0 {
-		return
-	}
-	selected := m.filteredItems[m.historyIndex]
-
-	if err := m.dataManager.DeleteTaskMemory(selected.TaskID); err != nil {
-		m.errMsg = fmt.Sprintf("Failed to delete: %v", err)
-		return
-	}
-
-	// Remove from historyItems
-	for i, it := range m.historyItems {
-		if it.TaskID == selected.TaskID {
-			m.historyItems = append(m.historyItems[:i], m.historyItems[i+1:]...)
-			break
-		}
-	}
-	// Remove from filteredItems
-	for i, it := range m.filteredItems {
-		if it.TaskID == selected.TaskID {
-			m.filteredItems = append(m.filteredItems[:i], m.filteredItems[i+1:]...)
-			break
-		}
-	}
-
-	if m.historyIndex >= len(m.filteredItems) {
-		m.historyIndex = len(m.filteredItems) - 1
-	}
-	if m.historyIndex < 0 {
-		m.historyIndex = 0
-	}
-
-	m.historyConfirmDelete = false
-}
-
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
 	// All other message types (tickMsg, taskEventMsg, WindowSizeMsg, etc.) are
 	// blocked to prevent viewport scrolling behind the overlay.
 	if m.showHelpDialog || m.confirmDialog.open ||
-		m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
+		m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open {
 		if _, ok := msg.(tea.KeyMsg); !ok {
 			return m, nil
 		}
+	}
+
+	// History mode: intercept all messages and delegate to history handler
+	if m.historyMode {
+		return historyUpdate(msg, &m)
 	}
 
 	switch msg := msg.(type) {
@@ -276,7 +102,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Don't schedule next tick if any popup/dialog is showing
 		if m.showHelpDialog || m.confirmDialog.open ||
-			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
+			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open {
 			return m, nil
 		}
 		// Continue ticking so that the animation resumes immediately
@@ -304,11 +130,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				m.quitting = true
 				return m, tea.Quit
-			case "right", "tab":
-				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 1) % 3
+			case "down", "tab":
+				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 1) % 5
 				return m, nil
-			case "left":
-				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 2) % 3
+			case "up", "k":
+				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 4) % 5
 				return m, nil
 			case "enter":
 				switch m.confirmDialog.selectedOption {
@@ -317,14 +143,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case 1:
 					m.respondToAuth("allow_session")
 				case 2:
+					m.respondToAuth("allow_all_session")
+				case 3:
+					m.respondToAuth("allow_all_project")
+				case 4:
 					m.respondToAuth("deny")
 				}
 				return m, nil
 			case "a", "A":
 				m.respondToAuth("allow")
 				return m, nil
-			case "s", "S":
+			case "t", "T":
 				m.respondToAuth("allow_session")
+				return m, nil
+			case "s", "S":
+				m.respondToAuth("allow_all_session")
+				return m, nil
+			case "p", "P":
+				m.respondToAuth("allow_all_project")
 				return m, nil
 			case "d", "D", "esc":
 				m.respondToAuth("deny")
@@ -426,90 +262,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// History panel key handling
-		if m.showHistoryPanel {
-			// Delete confirmation mode
-			if m.historyConfirmDelete {
-				switch msg.String() {
-				case "y", "Y":
-					m.deleteHistoryItem()
-					return m, nil
-				default:
-					m.historyConfirmDelete = false
-					return m, nil
-				}
-			}
-
-			switch msg.String() {
-			case "esc", "ctrl+h":
-				m.closeHistoryPanel()
-				return m, nil
-
-			case "enter":
-				return m, m.continueConversation()
-
-			case "up", "ctrl+k":
-				if m.historyIndex > 0 {
-					m.historyIndex--
-				}
-				return m, nil
-
-			case "down", "ctrl+j":
-				if m.historyIndex < len(m.filteredItems)-1 {
-					m.historyIndex++
-				}
-				return m, nil
-
-			case "ctrl+f":
-				pageSize := m.termHeight - 8
-				if pageSize < 1 {
-					pageSize = 1
-				}
-				m.historyIndex += pageSize
-				if m.historyIndex >= len(m.filteredItems) {
-					m.historyIndex = len(m.filteredItems) - 1
-				}
-				return m, nil
-
-			case "ctrl+b":
-				pageSize := m.termHeight - 8
-				if pageSize < 1 {
-					pageSize = 1
-				}
-				m.historyIndex -= pageSize
-				if m.historyIndex < 0 {
-					m.historyIndex = 0
-				}
-				return m, nil
-
-			case "ctrl+d":
-				if len(m.filteredItems) > 0 {
-					m.historyConfirmDelete = true
-				}
-				return m, nil
-
-			case "backspace":
-				if len(m.historyFilter) > 0 {
-					m.historyFilter = m.historyFilter[:len(m.historyFilter)-1]
-					m.applyHistoryFilter()
-				}
-				return m, nil
-
-			case "ctrl+u":
-				m.historyFilter = ""
-				m.applyHistoryFilter()
-				return m, nil
-
-			default:
-				// Printable characters → filter
-				if len(msg.Runes) > 0 {
-					m.historyFilter += string(msg.Runes)
-					m.applyHistoryFilter()
-				}
-				return m, nil
-			}
-		}
-
 		// ── Command mode key handling (vim-like: hidden input, single-key commands) ──
 		if m.commandMode {
 			// Resolve multi-key sequences: check if lastKey + current key forms a valid combo
@@ -520,9 +272,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch combo {
 				case "gg":
 					m.viewport.GotoTop()
-					return m, nil
-				case "ZZ":
-					m.confirmQuitDialog.open = true
 					return m, nil
 				default:
 					// Invalid combo: discard lastKey and fall through to process key normally
@@ -598,19 +347,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "j", "down":
-				m.viewport.LineDown(1)
+				m.viewport.ScrollDown(1)
 				return m, nil
 
 			case "k", "up":
-				m.viewport.LineUp(1)
-				return m, nil
-
-			case "ctrl+d":
-				m.viewport.HalfPageDown()
-				return m, nil
-
-			case "ctrl+u":
-				m.viewport.HalfPageUp()
+				m.viewport.ScrollUp(1)
 				return m, nil
 
 			case "G":
@@ -618,8 +359,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.GotoBottom()
 				return m, nil
 
-			// ── Multi-key prefix: g (for gg), Z (for ZZ) ──
-			case "g", "Z":
+			// ── Multi-key prefix: g (for gg) ──
+			case "g":
 				if m.commandBuffer == "" {
 					m.lastKey = key
 				} else {
@@ -665,14 +406,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toggleLanguage()
 				return m, nil
 
-			case "ctrl+h":
-				m.openHistoryPanel()
-				return m, nil
-
 			default:
 				// Append printable characters to command buffer (hidden input)
-				if len(msg.Runes) > 0 {
-					m.commandBuffer += string(msg.Runes)
+				if len(msg.Key().Text) > 0 {
+					m.commandBuffer += msg.Key().Text
 					return m, nil
 				}
 				// Pass to viewport for scrolling
@@ -704,7 +441,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+e":
 			// Enter command mode
-			m.taskHistoryIdx = -1
 			m.commandMode = true
 			m.commandBuffer = ""
 			return m, nil
@@ -721,7 +457,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errMsg = errStr
 				return m, nil
 			}
-			m.taskHistoryIdx = -1
 			if m.currentTask != nil {
 				return m, m.submitFollowUp(taskDesc)
 			}
@@ -729,10 +464,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+l":
 			m.toggleLanguage()
-			return m, nil
-
-		case "ctrl+h":
-			m.openHistoryPanel()
 			return m, nil
 
 		case "ctrl+f":
@@ -758,6 +489,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// If skill autocomplete is active, expand the selected skill
 			if m.skillAutoComplete && len(m.skillSuggestions) > 0 && m.skillSuggestionIdx >= 0 && m.skillSuggestionIdx < len(m.skillSuggestions) {
 				skillName := m.skillSuggestions[m.skillSuggestionIdx]
+				// If "history" is selected, open history dialog instead of executing a skill
+				if skillName == "history" {
+					m.skillAutoComplete = false
+					m.skillSuggestions = nil
+					m.skillSuggestionIdx = 0
+					if m.taskRunning {
+						m.infoMsg = "Cannot browse history while a task is running"
+						return m, nil
+					}
+					// Clear the input field
+					m.input.SetValue("")
+					return m, enterHistoryMode(&m)
+				}
 				if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 					userContext := strings.TrimSpace(m.input.Value())
 					// Combine skill content with user's input as context
@@ -793,21 +537,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 
 		case "up", "down":
-			// Cycle through task history when input is empty
-			if strings.TrimSpace(m.input.Value()) == "" {
-				m.handleTaskHistoryCycle(msg.String())
-				return m, nil
-			}
 			// Input has content: pass to textarea for line navigation
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
 			return m, cmd
 
 		default:
-			// Reset history cursor when user starts typing
-			if len(msg.Runes) > 0 {
-				m.taskHistoryIdx = -1
-			}
 			// Only update input — viewport scrolling keys (ctrl+f, ctrl+b)
 			// are handled in dedicated case branches above.
 			var inputCmd tea.Cmd
@@ -821,7 +556,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The global guard at the top of Update() already blocks these messages,
 		// but keep this as a defensive double-check.
 		if m.showHelpDialog || m.confirmDialog.open ||
-			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
+			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open {
 			return m, nil
 		}
 
@@ -1048,8 +783,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // updateSkillAutocomplete checks the current input for skill references (/skillname)
 // and updates the autocomplete suggestions accordingly.
 func (m *model) updateSkillAutocomplete() {
-	// Only active in edit mode, when not task running, and skills available
-	if m.commandMode || m.taskRunning || m.assistant.SkillRegistry == nil || m.assistant.SkillRegistry.Count() == 0 {
+	// Only active in edit mode and when not task running
+	if m.commandMode || m.taskRunning {
 		m.skillAutoComplete = false
 		m.skillSuggestions = nil
 		m.skillSuggestionIdx = 0
@@ -1070,17 +805,23 @@ func (m *model) updateSkillAutocomplete() {
 	// Extract the text after the last '/' as the query
 	query := inputValue[lastSlash+1:]
 
-	// Don't trigger if query is empty (just typed '/')
-	// But do show all skills as suggestions
-	allSkills := m.assistant.SkillRegistry.List()
-
-	// Filter skills that match the query (case-insensitive prefix match)
+	// Build the list of matching skills
 	var matches []string
 	queryLower := strings.ToLower(query)
-	for _, name := range allSkills {
-		if strings.HasPrefix(strings.ToLower(name), queryLower) {
-			matches = append(matches, name)
+
+	// Add skills from registry (if available)
+	if m.assistant.SkillRegistry != nil {
+		allSkills := m.assistant.SkillRegistry.List()
+		for _, name := range allSkills {
+			if strings.HasPrefix(strings.ToLower(name), queryLower) {
+				matches = append(matches, name)
+			}
 		}
+	}
+
+	// Add "history" as a built-in command (opens history dialog, not a skill)
+	if strings.HasPrefix("history", queryLower) {
+		matches = append([]string{"history"}, matches...)
 	}
 
 	if len(matches) > 0 {

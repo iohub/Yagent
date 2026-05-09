@@ -1,6 +1,7 @@
 package globalctx
 
 import (
+	"codeactor/internal/browser"
 	"codeactor/internal/tools"
 	"codeactor/pkg/messaging"
 	"fmt"
@@ -29,12 +30,13 @@ type GlobalCtx struct {
 	ReplaceTool      *tools.ReplaceBlockTool
 	ThinkingTool     *tools.ThinkingTool
 	MicroAgentTool   *tools.MicroAgentTool
-	ImplPlanTool     *tools.ImplPlanTool
 	FlowOps          *tools.FlowControlTool
 	RepoOps          *tools.RepoOperationsTool
 	UserConfirmMgr   *tools.UserConfirmManager
 	Guard            *tools.WorkspaceGuard
 	DeepThinkingTool *tools.DeepThinkingTool
+	// BrowserMgr 浏览器管理器（单例，管理 Chromium 浏览器实例生命周期）
+	BrowserMgr *browser.Manager
 }
 
 func (g *GlobalCtx) FormatPrompt(prompt string) string {

@@ -6,47 +6,57 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	if m.quitting {
-		return ""
+		return tea.NewView("")
+	}
+
+	// History mode: render fullscreen history browser
+	if m.historyMode {
+		return renderHistoryView(&m)
 	}
 
 	// When confirmation dialog is open, render it as an overlay on top of the normal view
 	if m.confirmDialog.open {
-		return m.renderConfirmDialog()
+		return tea.NewView(m.renderConfirmDialog())
 	}
 
 	// When help dialog is open in command mode, render it as an overlay
 	if m.showHelpDialog {
-		return m.renderHelpDialog()
+		return tea.NewView(m.renderHelpDialog())
 	}
 
 	// When quit confirmation dialog is open, render it as an overlay
 	if m.confirmQuitDialog.open {
-		return m.renderConfirmQuitDialog()
+		return tea.NewView(m.renderConfirmQuitDialog())
 	}
 
 	// When cancel task confirmation dialog is open, render it as an overlay
 	if m.confirmCancelDialog.open {
-		return m.renderConfirmCancelDialog()
+		return tea.NewView(m.renderConfirmCancelDialog())
 	}
 
 	// When task complete dialog is open, render it as an overlay
 	if m.taskCompleteDialog.open {
-		return m.renderTaskCompleteDialog()
+		return tea.NewView(m.renderTaskCompleteDialog())
 	}
 
 	var b strings.Builder
 
-	// Main content area: history panel or scrollable viewport
-	if m.showHistoryPanel {
-		b.WriteString(m.renderHistoryPanel())
-	} else {
-		b.WriteString(m.viewport.View())
+	// Main content area: scrollable viewport
+	footerHeight := m.computeFooterHeight()
+	vpHeight := m.termHeight - footerHeight
+	if vpHeight < 3 {
+		vpHeight = 3
 	}
+	if m.viewport.Height() != vpHeight {
+		(&m.viewport).SetHeight(vpHeight)
+	}
+	b.WriteString(m.viewport.View())
 
 	// Separator
 	sepWidth := m.termWidth
@@ -153,7 +163,7 @@ func (m model) View() string {
 
 	b.WriteString(footer.String())
 
-	return b.String()
+	return tea.NewView(b.String())
 }
 
 func (m model) renderWelcomePanel() string {
@@ -174,7 +184,6 @@ func (m model) renderWelcomePanel() string {
 	var right strings.Builder
 	right.WriteString(welcomeDimStyle.Render("─── Recent activity"))
 	right.WriteString("\n")
-	right.WriteString(welcomeDimStyle.Render("  Use Ctrl+H to browse history"))
 
 	// Compute responsive widths
 	panelWidth := m.computeFieldWidth() + 4
@@ -249,11 +258,8 @@ func (m model) renderTokenLine() string {
 func (m model) renderTokenDashboard() string {
 	totalTokens := m.inputTokens + m.outputTokens
 	if totalTokens == 0 {
-		// No data: fall back to compact single-line format
-		tokenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-		inStr := formatToken(m.inputTokens)
-		outStr := formatToken(m.outputTokens)
-		return tokenStyle.Render(fmt.Sprintf("In: %s | Out: %s", inStr, outStr))
+		// No data: no task submitted yet, don't show useless info
+		return ""
 	}
 
 	// Build dashboard with border

@@ -199,8 +199,7 @@
   <text x="660" y="680" text-anchor="middle" font-size="11" font-weight="700" fill="#9a3412">System &amp; Edit</text>
   <line x1="575" y1="686" x2="745" y2="686" stroke="#fed7aa" stroke-width="0.5"/>
   <text x="575" y="701" font-size="10" fill="#4b5563">run_bash (fg/bg)</text>
-  <text x="575" y="718" font-size="10" fill="#4b5563">ImplPlan (stateful)</text>
-  <text x="575" y="735" font-size="10" fill="#4b5563">finish · ask_user</text>
+  <text x="575" y="718" font-size="10" fill="#4b5563">finish · ask_user</text>
   <text x="575" y="752" font-size="10" fill="#4b5563">delegate_repo</text>
   <text x="575" y="769" font-size="9" fill="#f97316">delegate_coding/chat/devops/meta</text>
 

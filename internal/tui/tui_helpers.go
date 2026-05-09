@@ -10,8 +10,8 @@ import (
 	"codeactor/internal/http"
 	"codeactor/pkg/messaging"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 func listenForEvents(ch chan *messaging.MessageEvent) tea.Cmd {
@@ -49,7 +49,7 @@ func StartTUI(taskFilePath string, ca *app.CodingAssistant, tm *http.TaskManager
 
 	// Detect terminal background before entering raw mode to avoid
 	// escape-sequence leakage into the input field.
-	useDarkStyle := lipgloss.HasDarkBackground()
+	useDarkStyle := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
 
 	p := tea.NewProgram(initialModel(taskContent, ca, tm, dm, useDarkStyle))
 	if _, err := p.Run(); err != nil {
