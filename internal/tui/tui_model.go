@@ -229,6 +229,14 @@ type model struct {
 	activeAnim bool // true when there are running tool entries
 	animFrame  int  // frame counter for throttled viewport rebuilds
 
+	// History mode
+	historyMode     bool
+	historyItems    []datamanager.TaskHistoryItem
+	historyCursor   int
+	historyPage     int     // 当前页码，0-indexed
+	historyPageSize int     // 每页条数，固定20
+	historyLoading  bool
+
 	
 }
 

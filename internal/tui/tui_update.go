@@ -33,6 +33,17 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 			content:   fmt.Sprintf("Current mode: %s | Task running: %v | Buffer: %q", mode, m.taskRunning, m.commandBuffer),
 		})
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+	case cmd == ":hist" || cmd == ":history":
+		if m.taskRunning {
+			m.infoMsg = "Cannot browse history while a task is running"
+			return nil
+		}
+		if !m.commandMode {
+			// Switch to command mode first since history is accessed from there
+			m.commandMode = true
+			m.commandBuffer = ""
+		}
+		return enterHistoryMode(m)
 	default:
 		m.infoMsg = fmt.Sprintf("Unknown command: %s (type :help or ? for available commands)", cmd)
 	}
@@ -65,6 +76,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if _, ok := msg.(tea.KeyMsg); !ok {
 			return m, nil
 		}
+	}
+
+	// History mode: intercept all messages and delegate to history handler
+	if m.historyMode {
+		return historyUpdate(msg, &m)
 	}
 
 	switch msg := msg.(type) {
@@ -427,6 +443,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Enter command mode
 			m.commandMode = true
 			m.commandBuffer = ""
+			return m, nil
+
+		case "ctrl+h":
+			// Open history browser (only when not running and no dialog open)
+			if !m.taskRunning {
+				return m, enterHistoryMode(&m)
+			}
+			m.infoMsg = "Cannot browse history while a task is running"
 			return m, nil
 
 		case "ctrl+s":

@@ -15,6 +15,11 @@ func (m model) View() tea.View {
 		return tea.NewView("")
 	}
 
+	// History mode: render fullscreen history browser
+	if m.historyMode {
+		return renderHistoryView(&m)
+	}
+
 	// When confirmation dialog is open, render it as an overlay on top of the normal view
 	if m.confirmDialog.open {
 		return tea.NewView(m.renderConfirmDialog())
