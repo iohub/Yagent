@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func (m *model) processCommand(cmd string) tea.Cmd {
@@ -502,8 +502,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			default:
 				// Printable characters → filter
-				if len(msg.Runes) > 0 {
-					m.historyFilter += string(msg.Runes)
+				if len(msg.Key().Text) > 0 {
+					m.historyFilter += msg.Key().Text
 					m.applyHistoryFilter()
 				}
 				return m, nil
@@ -598,11 +598,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "j", "down":
-				m.viewport.LineDown(1)
+				m.viewport.ScrollDown(1)
 				return m, nil
 
 			case "k", "up":
-				m.viewport.LineUp(1)
+				m.viewport.ScrollUp(1)
 				return m, nil
 
 			case "ctrl+d":
@@ -671,8 +671,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			default:
 				// Append printable characters to command buffer (hidden input)
-				if len(msg.Runes) > 0 {
-					m.commandBuffer += string(msg.Runes)
+				if len(msg.Key().Text) > 0 {
+					m.commandBuffer += msg.Key().Text
 					return m, nil
 				}
 				// Pass to viewport for scrolling
@@ -805,7 +805,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		default:
 			// Reset history cursor when user starts typing
-			if len(msg.Runes) > 0 {
+			if len(msg.Key().Text) > 0 {
 				m.taskHistoryIdx = -1
 			}
 			// Only update input — viewport scrolling keys (ctrl+f, ctrl+b)

@@ -12,7 +12,7 @@ import (
 
 	"codeactor/pkg/messaging"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 type TUIConsumer struct {

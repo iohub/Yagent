@@ -10,11 +10,11 @@ import (
 	"codeactor/internal/http"
 	"codeactor/pkg/messaging"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // Global Language Manager
@@ -250,7 +250,6 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 	// Subtle bg: 236 (dark gray, barely visible on dark terminals)
 	// Cursor line: 237 (matches SeparatorStyle)
 
-	ti.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
 	ti.Focus()
 	ti.CharLimit = 0
@@ -258,23 +257,45 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 	ti.SetHeight(3)
 	ti.ShowLineNumbers = false
 
+	// Text style (lipgloss v2)
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	ti.FocusedStyle.Text = textStyle
-	ti.BlurredStyle.Text = textStyle
 
+	// Edit base style (lipgloss v2)
 	editBaseStyle := lipgloss.NewStyle().Background(lipgloss.Color("236"))
-	ti.FocusedStyle.Base = editBaseStyle
-	ti.BlurredStyle.Base = editBaseStyle
-	ti.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Background(lipgloss.Color("236"))
-	ti.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("236"))
-	ti.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("237"))
-	ti.BlurredStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("237"))
-	ti.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236"))
-	ti.BlurredStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236"))
+
+	// Focused state styles
+	focusedStyle := textarea.StyleState{
+		Base:          editBaseStyle,
+		Text:          textStyle,
+		Prompt:        lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Background(lipgloss.Color("236")),
+		CursorLine:    lipgloss.NewStyle().Background(lipgloss.Color("237")),
+		Placeholder:   lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236")),
+	}
+
+	// Blurred state styles
+	blurredStyle := textarea.StyleState{
+		Base:          editBaseStyle,
+		Text:          textStyle,
+		Prompt:        lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("236")),
+		CursorLine:    lipgloss.NewStyle().Background(lipgloss.Color("237")),
+		Placeholder:   lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236")),
+	}
+
+	// Cursor style
+	cursorStyle := textarea.CursorStyle{
+		Color: lipgloss.Color("39"),
+	}
+
+	// Apply styles to textarea
+	ti.SetStyles(textarea.Styles{
+		Focused: focusedStyle,
+		Blurred: blurredStyle,
+		Cursor:  cursorStyle,
+	})
 
 	// Dynamic prompt: "❯ " on first line, "  " on continuation lines
-	ti.SetPromptFunc(2, func(line int) string {
-		if line == 0 {
+	ti.SetPromptFunc(2, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
 			return "❯ "
 		}
 		return "  "
@@ -286,8 +307,8 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 
 	projectDir, _ := os.Getwd()
 
-	// Create viewport for scrollable message area
-	vp := viewport.New(80, 10)
+	// Create viewport for scrollable message area (v1 lipgloss for bubbles compatibility)
+	vp := viewport.New(viewport.WithWidth(80), viewport.WithHeight(10))
 	vp.Style = lipgloss.NewStyle().Padding(0, 1)
 
 	// Create glamour markdown renderer with explicit style to avoid
@@ -328,7 +349,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		textarea.Blink,
+		tea.Raw(textarea.Blink()),
 		listenForEvents(m.eventCh),
 		tickCmd(),
 	)

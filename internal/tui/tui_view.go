@@ -6,37 +6,38 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	if m.quitting {
-		return ""
+		return tea.NewView("")
 	}
 
 	// When confirmation dialog is open, render it as an overlay on top of the normal view
 	if m.confirmDialog.open {
-		return m.renderConfirmDialog()
+		return tea.NewView(m.renderConfirmDialog())
 	}
 
 	// When help dialog is open in command mode, render it as an overlay
 	if m.showHelpDialog {
-		return m.renderHelpDialog()
+		return tea.NewView(m.renderHelpDialog())
 	}
 
 	// When quit confirmation dialog is open, render it as an overlay
 	if m.confirmQuitDialog.open {
-		return m.renderConfirmQuitDialog()
+		return tea.NewView(m.renderConfirmQuitDialog())
 	}
 
 	// When cancel task confirmation dialog is open, render it as an overlay
 	if m.confirmCancelDialog.open {
-		return m.renderConfirmCancelDialog()
+		return tea.NewView(m.renderConfirmCancelDialog())
 	}
 
 	// When task complete dialog is open, render it as an overlay
 	if m.taskCompleteDialog.open {
-		return m.renderTaskCompleteDialog()
+		return tea.NewView(m.renderTaskCompleteDialog())
 	}
 
 	var b strings.Builder
@@ -153,7 +154,7 @@ func (m model) View() string {
 
 	b.WriteString(footer.String())
 
-	return b.String()
+	return tea.NewView(b.String())
 }
 
 func (m model) renderWelcomePanel() string {

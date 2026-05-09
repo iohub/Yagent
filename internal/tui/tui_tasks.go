@@ -12,7 +12,7 @@ import (
 	"codeactor/internal/memory"
 	"codeactor/pkg/messaging"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
 )
 

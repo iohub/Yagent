@@ -9,7 +9,7 @@ import (
 
 	"codeactor/internal/embedbin"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // fzfFileSelectedMsg is sent when the user selects a file in the fzf fuzzy finder.

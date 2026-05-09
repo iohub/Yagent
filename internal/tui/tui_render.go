@@ -7,8 +7,8 @@ import (
 
 	"codeactor/pkg/messaging"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // computeFooterHeight calculates the actual footer height based on current state.
@@ -59,14 +59,14 @@ func (m *model) resizeViewport() {
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
-	m.viewport.Width = m.termWidth
-	m.viewport.Height = vpHeight
+	m.viewport.SetWidth(m.termWidth)
+	m.viewport.SetHeight(vpHeight)
 
 	// Recreate glamour renderer with updated width
-	if m.viewport.Width > 0 {
+	if m.viewport.Width() > 0 {
 		frameSize := m.viewport.Style.GetHorizontalFrameSize()
 		const glamourGutter = 4
-		glamourWidth := m.viewport.Width - frameSize - glamourGutter
+		glamourWidth := m.viewport.Width() - frameSize - glamourGutter
 		if glamourWidth < 40 {
 			glamourWidth = 40
 		}
@@ -107,12 +107,12 @@ func (m *model) buildViewportContent() {
 // the current scroll position. Used for animation tick updates so that
 // scrolling up to read history isn't interrupted by SetContent+GotoBottom.
 func (m *model) rebuildViewportPreservingScroll() {
-	yOffset := m.viewport.YOffset
+	yOffset := m.viewport.YOffset()
 	m.rebuildContentCache()
 	m.viewport.SetContent(m.contentCache.String())
 	// Restore Y offset, clamped to avoid overscroll
 	totalLines := m.viewport.TotalLineCount()
-	visibleLines := m.viewport.Height
+	visibleLines := m.viewport.Height()
 	maxOffset := totalLines - visibleLines
 	if maxOffset < 0 {
 		maxOffset = 0
@@ -120,7 +120,7 @@ func (m *model) rebuildViewportPreservingScroll() {
 	if yOffset > maxOffset {
 		yOffset = maxOffset
 	}
-	m.viewport.YOffset = yOffset
+	m.viewport.SetYOffset(yOffset)
 }
 
 // rebuildViewportScrollLock rebuilds viewport content and scrolls to bottom
@@ -162,7 +162,7 @@ func (m *model) rebuildContentCache() {
 func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 	// For running tool entries, never cache (animation changes each frame)
 	if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
-		toolLine := renderToolEntryWithAnim(*entry, m.viewport.Width, m.anim)
+		toolLine := renderToolEntryWithAnim(*entry, m.viewport.Width(), m.anim)
 		b.WriteString(toolLine)
 		return
 	}
@@ -178,7 +178,7 @@ func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 
 	// Tool entry rendering (non-running) — use new renderer
 	if entry.toolEntry != nil {
-		rendered := renderToolEntry(*entry, m.viewport.Width)
+		rendered := renderToolEntry(*entry, m.viewport.Width())
 		b.WriteString(rendered)
 		entry.rendered = b.String()[start:]
 		return
@@ -201,7 +201,7 @@ func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 		}
 	}
 	// Fallback to simple text rendering
-	formatted := formatLogEntry(*entry, m.viewport.Width)
+	formatted := formatLogEntry(*entry, m.viewport.Width())
 	b.WriteString(formatted)
 	entry.rendered = b.String()[start:]
 }
