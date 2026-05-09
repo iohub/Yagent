@@ -15,21 +15,30 @@ func (m model) renderHistoryPanel() string {
 
 	var b strings.Builder
 
-	// ── Header: ◆ title │ filter │ counter ──
+	// ── Header: ◆ title │ filter │ counter │ page info ──
 	{
-		htStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-		hdStyle := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244"))
-
 		var parts []string
-		parts = append(parts, htStyle.Render("◆ "+langManager.GetText("HistoryTitle")))
+		parts = append(parts, historyHeaderTitle.Render("◆ "+langManager.GetText("HistoryTitle")))
 
 		if m.historyFilter != "" {
-			cur := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("▌")
-			parts = append(parts, hdStyle.Render("│")+" "+lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(m.historyFilter)+cur)
+			parts = append(parts, historyHeaderDim.Render("│")+" "+historyFilterText.Render(m.historyFilter)+historyFilterCursor)
 		} else {
-			parts = append(parts, hdStyle.Render("│ "+langManager.GetText("HistoryFilterPlaceholder")))
+			parts = append(parts, historyHeaderDim.Render("│ "+langManager.GetText("HistoryFilterPlaceholder")))
 		}
-		parts = append(parts, hdStyle.Render(fmt.Sprintf("%d/%d", m.historyIndex+1, len(m.filteredItems))))
+
+		// Counter with page info
+		totalVisible := len(m.filteredItems)
+		pageInfo := ""
+		bodyHeight := m.termHeight - 9
+		if bodyHeight < 4 {
+			bodyHeight = 4
+		}
+		if totalVisible > bodyHeight {
+			currentPage := m.historyScrollStart/bodyHeight + 1
+			totalPages := (totalVisible + bodyHeight - 1) / bodyHeight
+			pageInfo = fmt.Sprintf(" Pg %d/%d", currentPage, totalPages)
+		}
+		parts = append(parts, historyHeaderDim.Render(fmt.Sprintf("%d/%d%s", m.historyIndex+1, totalVisible, pageInfo)))
 
 		hbStyle := lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, false, true, false).
@@ -41,21 +50,31 @@ func (m model) renderHistoryPanel() string {
 		b.WriteString("\n")
 	}
 
-	// ── Body: single-line items ──
-	bodyHeight := m.termHeight - 8 // header(~2) + footer(~6)
+	// ── Loading state ──
+	if m.historyLoading {
+		loading := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Width(panelWidth).
+			Padding(2, 2).
+			Render("  ⏳ Loading...")
+		b.WriteString(loading)
+		return b.String()
+	}
+
+	// ── Body: single-line items with edge-triggered scroll ──
+	bodyHeight := m.termHeight - 9
 	if bodyHeight < 4 {
 		bodyHeight = 4
 	}
 
 	if len(m.filteredItems) == 0 {
-		empty := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
+		empty := historyEmptyStyle.
 			Width(panelWidth).
 			Padding(2, 2).
 			Render("  " + langManager.GetText("HistoryEmpty"))
 		b.WriteString(empty)
 	} else {
-		// Edge-triggered scroll: update scrollStart only when selection leaves visible area
+		// Edge-triggered scroll
 		topMargin := 2
 		btmMargin := 2
 		if bodyHeight < topMargin+btmMargin+1 {
@@ -87,14 +106,14 @@ func (m model) renderHistoryPanel() string {
 
 		// "more above" indicator
 		if scrollStart > 0 {
-			indicator := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).
+			indicator := historyMoreStyle.
 				Width(panelWidth).Padding(0, 2).
 				Render(fmt.Sprintf("▲ %s", fmt.Sprintf(langManager.GetText("HistoryMoreAbove"), scrollStart)))
 			b.WriteString(indicator)
 			b.WriteString("\n")
 		}
 
-		// Column layout: date(11) + title + count(Nm)
+		// Column layout: selMarker(2) + date(11) + spacing(2) + title + count(6)
 		const dateWidth = 11
 		const countArea = 6
 		const selMarker = 2
@@ -104,24 +123,10 @@ func (m model) renderHistoryPanel() string {
 			titleMaxWidth = 15
 		}
 
-		dateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
-		titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-		countStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
-		selStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("39")).
-			Foreground(lipgloss.Color("15")).
-			Width(panelWidth).
-			Padding(0, 1)
-
-		normalStyle := lipgloss.NewStyle().
-			Width(panelWidth).
-			Padding(0, 1)
-
 		for i := scrollStart; i < end; i++ {
 			item := m.filteredItems[i]
 			selected := i == m.historyIndex
 
-			// Title is pre-truncated to 30 chars; further truncate for narrow terminals
 			displayTitle := item.Title
 			titleRunes := []rune(displayTitle)
 			if len(titleRunes) > titleMaxWidth {
@@ -134,13 +139,13 @@ func (m model) renderHistoryPanel() string {
 
 			if selected {
 				line := fmt.Sprintf("▐ %s  %s  %s", dateStr, titlePadded, countStr)
-				b.WriteString(selStyle.Render(line))
+				b.WriteString(historySelStyle.Width(panelWidth).Padding(0, 1).Render(line))
 			} else {
 				line := fmt.Sprintf("  %s  %s  %s",
-					dateStyle.Render(dateStr),
-					titleStyle.Render(titlePadded),
-					countStyle.Render(countStr))
-				b.WriteString(normalStyle.Render(line))
+					historyDateStyle.Render(dateStr),
+					historyTitleStyle.Render(titlePadded),
+					historyCountStyle.Render(countStr))
+				b.WriteString(line)
 			}
 			b.WriteString("\n")
 		}
@@ -148,7 +153,7 @@ func (m model) renderHistoryPanel() string {
 		// "more below" indicator
 		if end < len(m.filteredItems) {
 			remaining := len(m.filteredItems) - end
-			indicator := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")).
+			indicator := historyMoreStyle.
 				Width(panelWidth).Padding(0, 2).
 				Render(fmt.Sprintf("▼ %s", fmt.Sprintf(langManager.GetText("HistoryMoreBelow"), remaining)))
 			b.WriteString(indicator)
@@ -159,11 +164,14 @@ func (m model) renderHistoryPanel() string {
 	// ── Footer: key hints ──
 	var hintText string
 	if m.historyConfirmDelete {
-		hintText = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true).Render(langManager.GetText("HistoryConfirmDelete"))
+		hintText = historyDeleteStyle.Render(langManager.GetText("HistoryConfirmDelete"))
 	} else {
 		hints := []string{
-			lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render(langManager.GetText("HistoryKeyContinue")),
-			lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("245")).Render(langManager.GetText("HistoryKeyBack")),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("↑↓:选择"),
+			historyFooterStyle.Render("PgUp/PgDn:翻页"),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("enter:继续"),
+			historyFooterStyle.Render("Home/End:首尾"),
+			historyFooterStyle.Render("esc:返回"),
 		}
 		hintText = strings.Join(hints, "  ")
 	}

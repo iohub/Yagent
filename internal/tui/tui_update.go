@@ -118,26 +118,39 @@ func (m *model) handleTaskHistoryCycle(direction string) {
 	}
 }
 
-func (m *model) openHistoryPanel() {
-	dm, err := datamanager.NewDataManager()
-	if err == nil {
-		items, err2 := dm.ListTaskHistory(50)
-		if err2 == nil {
-			m.historyItems = items
-			m.filteredItems = items
+// historyLoadedMsg carries the loaded history items back to the Update loop.
+type historyLoadedMsg struct {
+	items []datamanager.TaskHistoryItem
+	err   error
+}
+
+// loadHistoryCmd returns a command that loads history items asynchronously.
+func loadHistoryCmd(dm *datamanager.DataManager) tea.Cmd {
+	return func() tea.Msg {
+		items, err := dm.ListTaskHistoryFast(200)
+		if err != nil {
+			return historyLoadedMsg{err: err}
 		}
+		return historyLoadedMsg{items: items}
 	}
+}
+
+func (m *model) openHistoryPanel() {
+	m.historyLoading = true
 	m.historyIndex = 0
 	m.historyScrollStart = 0
 	m.historyFilter = ""
 	m.historyConfirmDelete = false
 	m.showHistoryPanel = true
+	m.historyItems = nil
+	m.filteredItems = nil
 }
 
 func (m *model) closeHistoryPanel() {
 	m.showHistoryPanel = false
 	m.historyFilter = ""
 	m.historyConfirmDelete = false
+	m.historyLoading = false
 }
 
 func (m *model) applyHistoryFilter() {
@@ -250,9 +263,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
 	// All other message types (tickMsg, taskEventMsg, WindowSizeMsg, etc.) are
 	// blocked to prevent viewport scrolling behind the overlay.
+	// NOTE: showHistoryPanel is handled separately below to allow historyLoadedMsg.
 	if m.showHelpDialog || m.confirmDialog.open ||
-		m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
+		m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open {
 		if _, ok := msg.(tea.KeyMsg); !ok {
+			return m, nil
+		}
+	}
+	// History panel: allow KeyMsg, historyLoadedMsg, and WindowSizeMsg to pass through.
+	if m.showHistoryPanel {
+		switch msg.(type) {
+		case tea.KeyMsg, historyLoadedMsg, tea.WindowSizeMsg:
+			// allowed — fall through to main switch
+		default:
 			return m, nil
 		}
 	}
@@ -274,9 +297,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rebuildViewportPreservingScroll()
 			}
 		}
-		// Don't schedule next tick if any popup/dialog is showing
+		// Don't schedule next tick if any popup/dialog is showing (except history panel)
 		if m.showHelpDialog || m.confirmDialog.open ||
-			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
+			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open {
 			return m, nil
 		}
 		// Continue ticking so that the animation resumes immediately
@@ -290,6 +313,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeViewport()
 		m.invalidateRenderedCache()
 		m.buildViewportContent()
+		return m, nil
+
+	case historyLoadedMsg:
+		if !m.showHistoryPanel {
+			return m, nil // panel closed while loading
+		}
+		m.historyLoading = false
+		if msg.err != nil {
+			m.errMsg = fmt.Sprintf("Failed to load history: %v", msg.err)
+			m.showHistoryPanel = false
+			return m, nil
+		}
+		m.historyItems = msg.items
+		m.filteredItems = msg.items
+		m.historyIndex = 0
+		m.historyScrollStart = 0
 		return m, nil
 
 	case publisherReadyMsg:
@@ -438,6 +477,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// History panel key handling
 		if m.showHistoryPanel {
+			// Ignore input while loading
+			if m.historyLoading {
+				return m, nil
+			}
+
 			// Delete confirmation mode
 			if m.historyConfirmDelete {
 				switch msg.String() {
@@ -470,8 +514,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
-			case "ctrl+f":
-				pageSize := m.termHeight - 8
+			case "pgdown", "ctrl+f":
+				// Page down
+				pageSize := m.termHeight - 9
 				if pageSize < 1 {
 					pageSize = 1
 				}
@@ -481,14 +526,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
-			case "ctrl+b":
-				pageSize := m.termHeight - 8
+			case "pgup", "ctrl+b":
+				// Page up
+				pageSize := m.termHeight - 9
 				if pageSize < 1 {
 					pageSize = 1
 				}
 				m.historyIndex -= pageSize
 				if m.historyIndex < 0 {
 					m.historyIndex = 0
+				}
+				return m, nil
+
+			case "home", "ctrl+a":
+				// Go to first item
+				m.historyIndex = 0
+				return m, nil
+
+			case "end", "ctrl+e":
+				// Go to last item
+				if len(m.filteredItems) > 0 {
+					m.historyIndex = len(m.filteredItems) - 1
+				}
+				return m, nil
+
+			case "delete", "ctrl+d":
+				// Delete current item (with confirmation)
+				if len(m.filteredItems) > 0 {
+					m.historyConfirmDelete = true
 				}
 				return m, nil
 
@@ -745,7 +810,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.skillSuggestionIdx = 0
 					m.input.Reset()
 					m.openHistoryPanel()
-					return m, nil
+					return m, loadHistoryCmd(m.dataManager)
 				}
 				if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 					userContext := strings.TrimSpace(m.input.Value())

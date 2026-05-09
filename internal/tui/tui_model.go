@@ -194,6 +194,7 @@ type model struct {
 	historyScrollStart   int // first visible item index (for stable scroll)
 	historyFilter        string
 	historyConfirmDelete bool
+	historyLoading       bool // true when async loading history items
 
 	// Authorization confirmation dialog
 	confirmDialog      confirmDialog
