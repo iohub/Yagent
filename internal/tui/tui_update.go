@@ -304,10 +304,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				m.quitting = true
 				return m, tea.Quit
-			case "right", "tab":
+			case "down", "tab":
 				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 1) % 5
 				return m, nil
-			case "left":
+			case "up", "k":
 				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 4) % 5
 				return m, nil
 			case "enter":

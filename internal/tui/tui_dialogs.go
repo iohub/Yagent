@@ -130,29 +130,33 @@ func (m model) renderConfirmDialog() string {
 	detail := wrapText(body, detailWidth)
 	detail = confirmDetailStyle.Render(detail)
 
-	// ── Buttons (3 options) ──
-	renderBtn := func(label string, idx int) string {
-		if m.confirmDialog.selectedOption == idx {
-			return confirmButtonFocused.Render(label)
+	// ── Vertical option list ──
+	var optionLines []string
+	for i, opt := range confirmOptions {
+		if m.confirmDialog.selectedOption == i {
+			// 选中行：指示器 + 高亮标签 + 右侧快捷键
+			labelPart := confirmOptionFocused.Render(confirmIndicator + " " + opt.label)
+			shortcutsPart := confirmShortcutStyle.Render(opt.shortcut)
+			line := lipgloss.NewStyle().Width(innerWidth).Render(
+				lipgloss.JoinHorizontal(lipgloss.Left, labelPart, shortcutsPart),
+			)
+			optionLines = append(optionLines, line)
+		} else {
+			// 未选中行：占位符 + 灰色标签 + 右侧快捷键
+			labelPart := confirmOptionBlurred.Render(confirmIndicatorBlank + " " + opt.label)
+			shortcutsPart := confirmShortcutStyle.Render(opt.shortcut)
+			line := lipgloss.NewStyle().Width(innerWidth).Render(
+				lipgloss.JoinHorizontal(lipgloss.Left, labelPart, shortcutsPart),
+			)
+			optionLines = append(optionLines, line)
 		}
-		return confirmButtonBlurred.Render(label)
 	}
-	buttons := lipgloss.JoinHorizontal(lipgloss.Center,
-		renderBtn("Allow", 0),
-		" ",
-		renderBtn("Allow Tool", 1),
-		" ",
-		renderBtn("Allow Session", 2),
-		" ",
-		renderBtn("Allow Project", 3),
-		" ",
-		renderBtn("Deny", 4),
-	)
+	options := lipgloss.JoinVertical(lipgloss.Left, optionLines...)
 
 	// ── Help ──
 	help := confirmHelpStyle.Render(langManager.GetText("ConfirmDialogHelp"))
 
-	// ── Assemble with a horizontal separator between detail and buttons ──
+	// ── Assemble with a horizontal separator between detail and options ──
 	sep := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("237")).
 		Width(innerWidth).
@@ -164,7 +168,7 @@ func (m model) renderConfirmDialog() string {
 		detail,
 		"",
 		sep,
-		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(buttons),
+		options,
 		help,
 	)
 
@@ -419,6 +423,22 @@ func (m model) renderHelpDialog() string {
 	)
 }
 
+// confirmOption represents a single option in the authorization confirmation dialog.
+type confirmOption struct {
+	label    string // 显示文字
+	shortcut string // 快捷键提示
+	action   string // 响应动作
+}
+
+// 授权确认弹窗的5个选项
+var confirmOptions = []confirmOption{
+	{label: "允许 (本次)", shortcut: "Enter / a", action: "allow"},
+	{label: "允许 (本工具会话)", shortcut: "t", action: "allow_session"},
+	{label: "允许 (本次会话全部)", shortcut: "s", action: "allow_all_session"},
+	{label: "允许 (项目全部)", shortcut: "p", action: "allow_all_project"},
+	{label: "拒绝", shortcut: "d / Esc", action: "deny"},
+}
+
 // confirmDialog styles
 var (
 	confirmBorderStyle = lipgloss.NewStyle().
@@ -433,15 +453,27 @@ var (
 	confirmDetailStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("252"))
 
-	confirmButtonFocused = lipgloss.NewStyle().
+	// 选中行样式：醒目橙色背景 + 白色粗体文字
+	confirmOptionFocused = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("0")).
 				Background(lipgloss.Color("214")).
 				Bold(true).
-				Padding(0, 2)
+				Padding(0, 1)
 
-	confirmButtonBlurred = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244")).
-				Padding(0, 2)
+	// 未选中行样式：灰色文字
+	confirmOptionBlurred = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244"))
+
+	// 右侧快捷键提示样式
+	confirmShortcutStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("238")).
+				Faint(true)
+
+	// 选中指示器
+	confirmIndicator = "▶"
+
+	// 未选中行占位符（与指示器等宽）
+	confirmIndicatorBlank = " "
 
 	confirmHelpStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240"))
