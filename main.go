@@ -147,6 +147,9 @@ func main() {
 		codingAssistant.DisabledAgents = disableAgents
 		codingAssistant.CodebasePort = codebasePort
 
+		// Register cleanup for browser manager
+		defer codingAssistant.Close()
+
 		// 加载 skills
 		homeDir, _ := os.UserHomeDir()
 		projectSkillsDir := filepath.Join(repoPath, ".codeactor", "skills")
@@ -233,6 +236,9 @@ func main() {
 		}
 		codingAssistant.DisabledAgents = disableAgents
 		codingAssistant.CodebasePort = codebasePort
+
+		// Register cleanup for browser manager
+		defer codingAssistant.Close()
 
 		// 创建消息分发器并集成消息系统
 		messageDispatcher := messaging.NewMessageDispatcher(100)

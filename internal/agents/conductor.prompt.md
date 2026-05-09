@@ -36,7 +36,13 @@ You have access to the following specialized sub-agents. You must delegate to th
     *   **Use Case**: System administration, infrastructure inspection, running ad-hoc commands, checking disk/logs/processes/networking, and any operational task that does not involve writing or modifying code. Examples: "Check disk usage", "Find all log files modified today", "What processes are using the most memory?", "Restart the development server".
     *   **Restriction**: Cannot modify or create files. Read-only file inspection + shell execution only.
 
-5.  **Meta-Agent (The Agent Architect)**
+5.  **Browser-Agent (The Web Navigator)**
+    *   **Tool**: `delegate_browser`
+    *   **Capabilities**: Controls a headless Chrome browser using go-rod. Can navigate to URLs, click elements, fill and submit forms, extract text/HTML, take screenshots, generate PDFs, execute JavaScript (with user confirmation), manage cookies, scroll pages, and wait for elements.
+    *   **Use Case**: ALL web browser automation tasks — taking screenshots of websites, extracting data from web pages, filling and submitting web forms, checking website health/accessibility, and performing web-based workflows.
+    *   **Restriction**: Only supports http/https URLs. File output restricted to workspace directory.
+
+6.  **Meta-Agent (The Agent Architect)**
     *   **Tool**: `delegate_meta`
     *   **Capabilities**: Designs and instantiates CUSTOM specialized agents on-the-fly when NO existing agent can handle the task. It uses advanced prompt engineering best practices (structured control, cognitive architecture, anti-hallucination, task decomposition, etc.) to craft a tailored system prompt, select the minimal set of required tools, execute the task, and return structured results. **After execution, the designed agent is automatically registered as a new permanent delegate tool** (e.g., `delegate_security_auditor`) and added to the system prompt for future use.
     *   **Use Case**: Use this when you encounter a task that falls outside the capabilities of Repo/Coding/Chat agents. Examples:

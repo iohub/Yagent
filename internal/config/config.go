@@ -35,6 +35,7 @@ type AgentConfig struct {
 	ChatMaxSteps      int    `toml:"chat_max_steps"`
 	RepoMaxSteps      int    `toml:"repo_max_steps"`
 	DevOpsMaxSteps    int    `toml:"devops_max_steps"`
+	BrowserMaxSteps   int    `toml:"browser_max_steps"`
 	ImplPlanMaxSteps  int    `toml:"impl_plan_max_steps"`
 	MetaMaxSteps      int    `toml:"meta_max_steps"`
 	MetaRetryCount    int    `toml:"meta_retry_count"`
@@ -105,6 +106,7 @@ type Config struct {
 	App     AppConfig               `toml:"app"`
 	Agent   AgentConfig             `toml:"agent"`
 	Compact ContextCompactConfig    `toml:"context"` // [context] - 上下文压缩配置
+	Browser BrowserConfig           `toml:"browser"` // [browser] - 浏览器配置
 }
 
 // GetProvider returns a provider config by name from the shared provider pool.
@@ -381,4 +383,22 @@ type ContextCompactConfig struct {
 
 	// SummarizationMaxInputTokens 摘要时单批次最大输入token数
 	SummarizationMaxInputTokens int `toml:"summarization_max_input_tokens"`
+}
+
+// BrowserConfig 浏览器配置
+type BrowserConfig struct {
+	Headless             bool     `toml:"headless"`              // 无头模式，默认 true
+	BrowserPath          string   `toml:"browser_path"`          // 浏览器可执行文件路径（空=自动查找/下载）
+	UserDataDir          string   `toml:"user_data_dir"`         // 用户数据目录（空=临时目录）
+	ViewportWidth        int      `toml:"viewport_width"`        // 视口宽度，默认 1280
+	ViewportHeight       int      `toml:"viewport_height"`       // 视口高度，默认 720
+	AllowedDomains       []string `toml:"allowed_domains"`       // 允许访问的域名列表（空=全部允许）
+	BlockedDomains       []string `toml:"blocked_domains"`       // 阻止访问的域名列表
+	TimeoutSeconds       int      `toml:"timeout_seconds"`       // 单个操作超时秒数，默认 30
+	MaxConcurrentPages   int      `toml:"max_concurrent_pages"`  // 最大并发页面数，默认 4
+	AutoLaunch           bool     `toml:"auto_launch"`           // 首次请求时自动启动浏览器，默认 true
+	IdleTimeout          string   `toml:"idle_timeout"`          // 空闲超时（如 "5m"），空=不自动关闭
+	AllowNoSandbox       bool     `toml:"allow_no_sandbox"`      // 允许 --no-sandbox（Docker环境需要），默认 false
+	ExtraArgs            []string `toml:"extra_args"`            // 额外的 Chrome 命令行参数
+	EnableBrowserAgent   bool     `toml:"enable_browser_agent"`  // 是否启用 Browser-Agent，默认 true
 }
