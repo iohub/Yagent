@@ -305,10 +305,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quitting = true
 				return m, tea.Quit
 			case "right", "tab":
-				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 1) % 3
+				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 1) % 5
 				return m, nil
 			case "left":
-				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 2) % 3
+				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 4) % 5
 				return m, nil
 			case "enter":
 				switch m.confirmDialog.selectedOption {
@@ -317,14 +317,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case 1:
 					m.respondToAuth("allow_session")
 				case 2:
+					m.respondToAuth("allow_all_session")
+				case 3:
+					m.respondToAuth("allow_all_project")
+				case 4:
 					m.respondToAuth("deny")
 				}
 				return m, nil
 			case "a", "A":
 				m.respondToAuth("allow")
 				return m, nil
-			case "s", "S":
+			case "t", "T":
 				m.respondToAuth("allow_session")
+				return m, nil
+			case "s", "S":
+				m.respondToAuth("allow_all_session")
+				return m, nil
+			case "p", "P":
+				m.respondToAuth("allow_all_project")
 				return m, nil
 			case "d", "D", "esc":
 				m.respondToAuth("deny")

@@ -110,7 +110,7 @@ type confirmDialog struct {
 	open           bool
 	question       string
 	requestID      string
-	selectedOption int // 0=Allow, 1=Allow All, 2=Deny
+	selectedOption int // 0=Allow, 1=Allow Tool(session), 2=Allow Session All, 3=Allow Project All, 4=Deny
 }
 
 // taskCompleteDialog holds the state of the task completion overlay dialog.

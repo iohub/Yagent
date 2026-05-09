@@ -139,10 +139,14 @@ func (m model) renderConfirmDialog() string {
 	}
 	buttons := lipgloss.JoinHorizontal(lipgloss.Center,
 		renderBtn("Allow", 0),
-		"  ",
-		renderBtn("Allow All", 1),
-		"  ",
-		renderBtn("Deny", 2),
+		" ",
+		renderBtn("Allow Tool", 1),
+		" ",
+		renderBtn("Allow Session", 2),
+		" ",
+		renderBtn("Allow Project", 3),
+		" ",
+		renderBtn("Deny", 4),
 	)
 
 	// ── Help ──

@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -11,18 +13,22 @@ import (
 // (modifications outside the workspace, system-changing commands) and
 // requests user authorization before allowing them to proceed.
 type WorkspaceGuard struct {
-	workspacePath  string
-	confirmMgr     *UserConfirmManager
-	sessionAllowed map[string]bool // tools granted session-wide authorization
+	workspacePath    string
+	confirmMgr       *UserConfirmManager
+	sessionAllowed   map[string]bool // tools granted session-wide authorization
+	sessionAllAllowed bool  // 会话内所有工具全部授权
+	projectAuthorized bool  // 项目永久授权（从 settings.json 加载）
 }
 
 // NewWorkspaceGuard creates a new WorkspaceGuard.
 func NewWorkspaceGuard(workspacePath string, confirmMgr *UserConfirmManager) *WorkspaceGuard {
-	return &WorkspaceGuard{
+	g := &WorkspaceGuard{
 		workspacePath:  filepath.Clean(workspacePath),
 		confirmMgr:     confirmMgr,
 		sessionAllowed: make(map[string]bool),
 	}
+	g.loadProjectAuth()
+	return g
 }
 
 // dangerousTools lists tool names that can modify files or system state.
@@ -50,6 +56,16 @@ func (g *WorkspaceGuard) Check(toolName string, params map[string]interface{}) (
 	}
 
 	if !dangerousTools[toolName] {
+		return false, ""
+	}
+
+	// 项目级授权：跳过所有检查
+	if g.projectAuthorized {
+		return false, ""
+	}
+
+	// 会话级全部授权：跳过所有检查
+	if g.sessionAllAllowed {
 		return false, ""
 	}
 
@@ -92,6 +108,19 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 	// Session-wide authorization: grant for all subsequent calls of this tool
 	if response == "allow_session" {
 		g.sessionAllowed[toolName] = true
+		return nil
+	}
+
+	// 会话内全部工具授权
+	if response == "allow_all_session" {
+		g.sessionAllAllowed = true
+		return nil
+	}
+
+	// 项目永久授权
+	if response == "allow_all_project" {
+		g.projectAuthorized = true
+		g.saveProjectAuth()
 		return nil
 	}
 
@@ -193,4 +222,64 @@ func (g *WorkspaceGuard) referencesOutsideWorkspace(command string) bool {
 		}
 	}
 	return false
+}
+
+// loadProjectAuth 从 ~/.codeactor/settings.json 加载项目授权状态
+func (g *WorkspaceGuard) loadProjectAuth() {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	settingsPath := filepath.Join(homeDir, ".codeactor", "settings.json")
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return // 文件不存在，无需授权
+	}
+
+	var settings struct {
+		AuthorizedProjects map[string]bool `json:"authorized_projects"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return
+	}
+
+	if settings.AuthorizedProjects[g.workspacePath] {
+		g.projectAuthorized = true
+	}
+}
+
+// saveProjectAuth 将当前项目路径保存到 ~/.codeactor/settings.json
+func (g *WorkspaceGuard) saveProjectAuth() {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	settingsPath := filepath.Join(homeDir, ".codeactor", "settings.json")
+
+	// 确保目录存在
+	settingsDir := filepath.Dir(settingsPath)
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		return
+	}
+
+	var settings struct {
+		AuthorizedProjects map[string]bool `json:"authorized_projects"`
+	}
+
+	// 读取已有配置（如果存在）
+	if existingData, err := os.ReadFile(settingsPath); err == nil {
+		json.Unmarshal(existingData, &settings)
+	}
+
+	if settings.AuthorizedProjects == nil {
+		settings.AuthorizedProjects = make(map[string]bool)
+	}
+	settings.AuthorizedProjects[g.workspacePath] = true
+
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return
+	}
+	os.WriteFile(settingsPath, data, 0644)
 }
