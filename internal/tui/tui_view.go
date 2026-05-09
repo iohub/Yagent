@@ -261,11 +261,8 @@ func (m model) renderTokenLine() string {
 func (m model) renderTokenDashboard() string {
 	totalTokens := m.inputTokens + m.outputTokens
 	if totalTokens == 0 {
-		// No data: fall back to compact single-line format
-		tokenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-		inStr := formatToken(m.inputTokens)
-		outStr := formatToken(m.outputTokens)
-		return tokenStyle.Render(fmt.Sprintf("In: %s | Out: %s", inStr, outStr))
+		// No data: no task submitted yet, don't show useless info
+		return ""
 	}
 
 	// Build dashboard with border
