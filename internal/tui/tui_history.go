@@ -513,13 +513,12 @@ func renderHistoryContent(m *model, width, height int) string {
 
 // renderHistoryItem renders a single history item line.
 func renderHistoryItem(m *model, item datamanager.TaskHistoryItem, selected bool, width int) string {
-	// Date for right alignment
+	// Date for left alignment
 	dateStr := item.CreatedAt.Format("01-02 15:04")
 
-	// Calculate max title width (reserve space for indicator and date)
-	indicatorLen := 2 // "● " or "  "
-	rightSpace := 12  // date + spacing
-	maxTitleWidth := width - indicatorLen - rightSpace
+	// Fixed left part: indicator (2) + date (11) + space (1) = 14
+	// Title takes remaining width
+	maxTitleWidth := width - 14
 	if maxTitleWidth < 10 {
 		maxTitleWidth = 10
 	}
@@ -534,10 +533,6 @@ func renderHistoryItem(m *model, item datamanager.TaskHistoryItem, selected bool
 		title = string(tr[:maxTitleWidth]) + "…"
 	}
 
-	// Format date on the right
-	rightStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	right := rightStyle.Render(dateStr)
-
 	if selected {
 		// Selected: blue background, black text, bold
 		indicator := lipgloss.NewStyle().
@@ -546,17 +541,22 @@ func renderHistoryItem(m *model, item datamanager.TaskHistoryItem, selected bool
 			Bold(true).
 			Render("● ")
 
+		dateStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("39")).
+			Foreground(lipgloss.Color("0")).
+			Bold(true)
+
 		titleStyle := lipgloss.NewStyle().
 			Background(lipgloss.Color("39")).
 			Foreground(lipgloss.Color("0")).
 			Bold(true)
 
-		left := indicator + titleStyle.Render(title)
+		left := indicator + dateStyle.Render(dateStr) + " " + titleStyle.Render(title)
 
-		// Pad to fill width
-		totalLen := len(left) + len(right)
-		if totalLen < width {
-			left += strings.Repeat(" ", width-totalLen)
+		// Pad to fill width (use lipgloss.Width for display width, not byte length)
+		displayWidth := lipgloss.Width(left)
+		if displayWidth < width {
+			left += strings.Repeat(" ", width-displayWidth)
 		}
 
 		lineStyle := lipgloss.NewStyle().
@@ -565,7 +565,7 @@ func renderHistoryItem(m *model, item datamanager.TaskHistoryItem, selected bool
 			Bold(true).
 			Width(width)
 
-		return lineStyle.Render(left + right)
+		return lineStyle.Render(left)
 	}
 
 	// Non-selected: gray text, double-space indicator
@@ -573,18 +573,21 @@ func renderHistoryItem(m *model, item datamanager.TaskHistoryItem, selected bool
 		Foreground(lipgloss.Color("240")).
 		Render("  ")
 
+	dateStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245"))
+
 	titleStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("252"))
 
-	left := indicator + titleStyle.Render(title)
+	left := indicator + dateStyle.Render(dateStr) + " " + titleStyle.Render(title)
 
 	// Pad to fill width
-	totalLen := len(left) + len(right)
-	if totalLen < width {
-		left += strings.Repeat(" ", width-totalLen)
+	displayWidth := lipgloss.Width(left)
+	if displayWidth < width {
+		left += strings.Repeat(" ", width-displayWidth)
 	}
 
-	return left + right
+	return left
 }
 
 // renderHistoryStatusBar renders the bottom pagination status bar.
