@@ -93,8 +93,8 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 	}
 
 	question := fmt.Sprintf(
-		"⚠️ **授权请求** — 工具 `%s`\n\n%s\n\n此操作可能影响工作空间外的文件或系统环境。是否允许执行？",
-		toolName, reason,
+		"⚠️ **授权请求** — 工具 `%s`\n\n%s\n\n此操作可能影响工作空间外的文件或系统环境。是否允许执行？\n\n⚠️ **Authorization Request** — tool `%s`\n\n%s\n\nThis operation may affect files or the system environment outside the workspace. Allow?",
+		toolName, reason, toolName, reason,
 	)
 	options := "allow / deny"
 

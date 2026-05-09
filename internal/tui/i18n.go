@@ -50,6 +50,27 @@ type translations struct {
 	ConfirmCancelMessage string
 	ConfirmDialogYes     string
 	ConfirmDialogNo      string
+	// 授权确认弹窗选项
+	ConfirmOptionAllow        string
+	ConfirmOptionAllowTool    string
+	ConfirmOptionAllowSession string
+	ConfirmOptionAllowProject string
+	ConfirmOptionDeny         string
+	// 授权确认弹窗快捷方式
+	ConfirmShortcutAllow        string
+	ConfirmShortcutAllowTool    string
+	ConfirmShortcutAllowSession string
+	ConfirmShortcutAllowProject string
+	ConfirmShortcutDeny         string
+	// 授权确认弹窗 - 授权请求标题
+	ConfirmAuthTitle string
+	// 退出/取消弹窗帮助文字
+	ConfirmQuitHelp   string
+	ConfirmCancelHelp string
+	// 任务完成弹窗
+	TaskCompleteTitle string
+	TaskCompleteOK    string
+	TaskCompleteHelp  string
 	// Command mode (vim-like modal editing)
 	CommandModeTips     string
 	CommandModeIdleTips string
@@ -96,6 +117,22 @@ var langMap = map[Language]translations{
 		ConfirmCancelMessage:             "确定要取消当前任务吗？",
 		ConfirmDialogYes:                 "确认 (Enter)",
 		ConfirmDialogNo:                  "取消 (Esc)",
+		ConfirmOptionAllow:        "允许 (本次)",
+		ConfirmOptionAllowTool:    "允许 (本工具会话)",
+		ConfirmOptionAllowSession: "允许 (本次会话全部)",
+		ConfirmOptionAllowProject: "允许 (项目全部)",
+		ConfirmOptionDeny:         "拒绝",
+		ConfirmShortcutAllow:        "Enter / a",
+		ConfirmShortcutAllowTool:    "t",
+		ConfirmShortcutAllowSession: "s",
+		ConfirmShortcutAllowProject: "p",
+		ConfirmShortcutDeny:         "d / Esc",
+		ConfirmAuthTitle:            "⚠️ 授权请求",
+		ConfirmQuitHelp:   "←/→ 选择  Enter 确认  y/n",
+		ConfirmCancelHelp: "←/→ 选择  Enter 确认  y 确认  n/Esc 取消",
+		TaskCompleteTitle: "任务完成",
+		TaskCompleteOK:    "确定",
+		TaskCompleteHelp:  "按 ENTER 或 SPACE 关闭",
 		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  i:编辑  ctrl+e:编辑模式  ZZ:退出",
 		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  ctrl+d/u:半页  /:搜索  ?:帮助  i:编辑  ZZ:退出",
 		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  ctrl+h:历史  ctrl+l:语言  /:技能  ctrl+c:退出",
@@ -159,6 +196,22 @@ var langMap = map[Language]translations{
 		ConfirmCancelMessage:             "Are you sure you want to cancel the current task?",
 		ConfirmDialogYes:                 "Confirm (Enter)",
 		ConfirmDialogNo:                  "Cancel (Esc)",
+		ConfirmOptionAllow:        "Allow (Once)",
+		ConfirmOptionAllowTool:    "Allow (Tool Session)",
+		ConfirmOptionAllowSession: "Allow (All Session)",
+		ConfirmOptionAllowProject: "Allow (Project)",
+		ConfirmOptionDeny:         "Deny",
+		ConfirmShortcutAllow:        "Enter / a",
+		ConfirmShortcutAllowTool:    "t",
+		ConfirmShortcutAllowSession: "s",
+		ConfirmShortcutAllowProject: "p",
+		ConfirmShortcutDeny:         "d / Esc",
+		ConfirmAuthTitle:            "⚠️ Authorization Request",
+		ConfirmQuitHelp:   "←/→ navigate  Enter confirm  y/n",
+		ConfirmCancelHelp: "←/→ navigate  Enter confirm  y yes  n/Esc cancel",
+		TaskCompleteTitle: "Task Completed",
+		TaskCompleteOK:    "OK",
+		TaskCompleteHelp:  "Press ENTER or SPACE to close",
 		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  i:edit  ctrl+e:edit  ZZ:quit",
 		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ctrl+d/u:half  /:search  ?:help  i:edit  ZZ:quit",
 		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  ctrl+h:history  ctrl+l:lang  /:skill  ctrl+c:quit",
@@ -285,6 +338,38 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.ConfirmDialogYes
 	case "ConfirmDialogNo":
 		return translations.ConfirmDialogNo
+	case "ConfirmOptionAllow":
+		return translations.ConfirmOptionAllow
+	case "ConfirmOptionAllowTool":
+		return translations.ConfirmOptionAllowTool
+	case "ConfirmOptionAllowSession":
+		return translations.ConfirmOptionAllowSession
+	case "ConfirmOptionAllowProject":
+		return translations.ConfirmOptionAllowProject
+	case "ConfirmOptionDeny":
+		return translations.ConfirmOptionDeny
+	case "ConfirmShortcutAllow":
+		return translations.ConfirmShortcutAllow
+	case "ConfirmShortcutAllowTool":
+		return translations.ConfirmShortcutAllowTool
+	case "ConfirmShortcutAllowSession":
+		return translations.ConfirmShortcutAllowSession
+	case "ConfirmShortcutAllowProject":
+		return translations.ConfirmShortcutAllowProject
+	case "ConfirmShortcutDeny":
+		return translations.ConfirmShortcutDeny
+	case "ConfirmAuthTitle":
+		return translations.ConfirmAuthTitle
+	case "ConfirmQuitHelp":
+		return translations.ConfirmQuitHelp
+	case "ConfirmCancelHelp":
+		return translations.ConfirmCancelHelp
+	case "TaskCompleteTitle":
+		return translations.TaskCompleteTitle
+	case "TaskCompleteOK":
+		return translations.TaskCompleteOK
+	case "TaskCompleteHelp":
+		return translations.TaskCompleteHelp
 	case "CommandModeTips":
 		return translations.CommandModeTips
 	case "CommandModeIdleTips":

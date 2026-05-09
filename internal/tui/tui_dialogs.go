@@ -120,7 +120,8 @@ func (m model) renderConfirmDialog() string {
 	toolName, body := parseConfirmQuestion(m.confirmDialog.question)
 
 	// ── Tool name badge ──
-	toolLine := confirmToolStyle.Render("⚡ " + toolName)
+	titlePrefix := langManager.GetText("ConfirmAuthTitle")
+	toolLine := confirmToolStyle.Render("⚡ " + titlePrefix + " — " + toolName)
 
 	// ── Command / detail ──
 	detailWidth := innerWidth
@@ -131,8 +132,9 @@ func (m model) renderConfirmDialog() string {
 	detail = confirmDetailStyle.Render(detail)
 
 	// ── Vertical option list ──
+	options := getConfirmOptions()
 	var optionLines []string
-	for i, opt := range confirmOptions {
+	for i, opt := range options {
 		if m.confirmDialog.selectedOption == i {
 			// 选中行：指示器 + 高亮标签 + 右侧快捷键
 			labelPart := confirmOptionFocused.Render(confirmIndicator + " " + opt.label)
@@ -151,7 +153,7 @@ func (m model) renderConfirmDialog() string {
 			optionLines = append(optionLines, line)
 		}
 	}
-	options := lipgloss.JoinVertical(lipgloss.Left, optionLines...)
+	optionStr := lipgloss.JoinVertical(lipgloss.Left, optionLines...)
 
 	// ── Help ──
 	help := confirmHelpStyle.Render(langManager.GetText("ConfirmDialogHelp"))
@@ -168,7 +170,7 @@ func (m model) renderConfirmDialog() string {
 		detail,
 		"",
 		sep,
-		options,
+		optionStr,
 		help,
 	)
 
@@ -190,13 +192,13 @@ func (m model) renderTaskCompleteDialog() string {
 	innerWidth := dialogWidth - 4
 
 	// ── Title ──
-	titleLine := taskCompleteTitleStyle.Render("Task Completed")
+	titleLine := taskCompleteTitleStyle.Render(langManager.GetText("TaskCompleteTitle"))
 
 	// ── OK Button ──
-	okBtn := taskCompleteButtonFocused.Render("OK")
+	okBtn := taskCompleteButtonFocused.Render(langManager.GetText("TaskCompleteOK"))
 
 	// ── Help text ──
-	help := confirmHelpStyle.Render("Press ENTER or SPACE to close")
+	help := confirmHelpStyle.Render(langManager.GetText("TaskCompleteHelp"))
 
 	// ── Separator ──
 	sep := lipgloss.NewStyle().
@@ -252,7 +254,7 @@ func (m model) renderConfirmQuitDialog() string {
 	)
 
 	// ── Help ──
-	help := confirmHelpStyle.Render("←/→ choose  enter confirm  y/n")
+	help := confirmHelpStyle.Render(langManager.GetText("ConfirmQuitHelp"))
 
 	// ── Separator ──
 	sep := lipgloss.NewStyle().
@@ -310,7 +312,7 @@ func (m model) renderConfirmCancelDialog() string {
 	)
 
 	// ── Help ──
-	help := confirmHelpStyle.Render("←/→ choose  enter confirm  y yes  n/esc cancel")
+	help := confirmHelpStyle.Render(langManager.GetText("ConfirmCancelHelp"))
 
 	// ── Separator ──
 	sep := lipgloss.NewStyle().
@@ -430,13 +432,15 @@ type confirmOption struct {
 	action   string // 响应动作
 }
 
-// 授权确认弹窗的5个选项
-var confirmOptions = []confirmOption{
-	{label: "允许 (本次)", shortcut: "Enter / a", action: "allow"},
-	{label: "允许 (本工具会话)", shortcut: "t", action: "allow_session"},
-	{label: "允许 (本次会话全部)", shortcut: "s", action: "allow_all_session"},
-	{label: "允许 (项目全部)", shortcut: "p", action: "allow_all_project"},
-	{label: "拒绝", shortcut: "d / Esc", action: "deny"},
+// 授权确认弹窗的5个选项 — 动态构建以支持国际化
+func getConfirmOptions() []confirmOption {
+	return []confirmOption{
+		{label: langManager.GetText("ConfirmOptionAllow"), shortcut: langManager.GetText("ConfirmShortcutAllow"), action: "allow"},
+		{label: langManager.GetText("ConfirmOptionAllowTool"), shortcut: langManager.GetText("ConfirmShortcutAllowTool"), action: "allow_session"},
+		{label: langManager.GetText("ConfirmOptionAllowSession"), shortcut: langManager.GetText("ConfirmShortcutAllowSession"), action: "allow_all_session"},
+		{label: langManager.GetText("ConfirmOptionAllowProject"), shortcut: langManager.GetText("ConfirmShortcutAllowProject"), action: "allow_all_project"},
+		{label: langManager.GetText("ConfirmOptionDeny"), shortcut: langManager.GetText("ConfirmShortcutDeny"), action: "deny"},
+	}
 }
 
 // confirmDialog styles
