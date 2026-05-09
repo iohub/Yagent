@@ -108,7 +108,8 @@ type publisherReadyMsg struct {
 // confirmDialog holds the state of the authorization confirmation dialog.
 type confirmDialog struct {
 	open           bool
-	question       string
+	toolName       string // 工具名，如 "run_bash"
+	reason         string // 原因/命令
 	requestID      string
 	selectedOption int // 0=Allow, 1=Allow Tool(session), 2=Allow Session All, 3=Allow Project All, 4=Deny
 }

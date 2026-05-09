@@ -92,13 +92,21 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 		return nil
 	}
 
+	// 向后兼容：保留 question 字段（旧版 TUI 仍可解析）
 	question := fmt.Sprintf(
-		"⚠️ **授权请求** — 工具 `%s`\n\n%s\n\n此操作可能影响工作空间外的文件或系统环境。是否允许执行？\n\n⚠️ **Authorization Request** — tool `%s`\n\n%s\n\nThis operation may affect files or the system environment outside the workspace. Allow?",
-		toolName, reason, toolName, reason,
+		"⚠️ **授权请求** — 工具 `%s`\n\n%s",
+		toolName, reason,
 	)
+
+	// 结构化数据供 TUI 渲染（避免中英双语混合）
+	extraFields := map[string]interface{}{
+		"tool_name":  toolName,
+		"reason":     reason,
+	}
+
 	options := "allow / deny"
 
-	response, err := g.confirmMgr.RequestConfirmation(ctx, question, options)
+	response, err := g.confirmMgr.RequestConfirmation(ctx, question, options, extraFields)
 	if err != nil {
 		return fmt.Errorf("授权请求失败: %w", err)
 	}

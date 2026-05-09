@@ -511,9 +511,12 @@ func wrapText(text string, maxWidth int) string {
 			wrapped = append(wrapped, "")
 			continue
 		}
-		for len(line) > maxWidth {
-			wrapped = append(wrapped, line[:maxWidth])
-			line = line[maxWidth:]
+		// 使用 lipgloss.Width 处理中英文混排的宽度差异
+		for lipgloss.Width(line) > maxWidth {
+			// 逐字符截断，确保宽度不超标
+			for len(line) > 0 && lipgloss.Width(line) > maxWidth {
+				line = line[:len(line)-1]
+			}
 		}
 		if len(line) > 0 {
 			wrapped = append(wrapped, line)

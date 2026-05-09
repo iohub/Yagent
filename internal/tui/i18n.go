@@ -63,7 +63,8 @@ type translations struct {
 	ConfirmShortcutAllowProject string
 	ConfirmShortcutDeny         string
 	// 授权确认弹窗 - 授权请求标题
-	ConfirmAuthTitle string
+	ConfirmAuthTitle     string
+	ConfirmAuthWarning   string
 	// 退出/取消弹窗帮助文字
 	ConfirmQuitHelp   string
 	ConfirmCancelHelp string
@@ -127,7 +128,8 @@ var langMap = map[Language]translations{
 		ConfirmShortcutAllowSession: "s",
 		ConfirmShortcutAllowProject: "p",
 		ConfirmShortcutDeny:         "d / Esc",
-		ConfirmAuthTitle:            "⚠️ 授权请求",
+		ConfirmAuthTitle:     "⚠️ 授权请求",
+		ConfirmAuthWarning:   "此操作可能影响工作空间外的文件或系统环境。是否允许执行？",
 		ConfirmQuitHelp:   "←/→ 选择  Enter 确认  y/n",
 		ConfirmCancelHelp: "←/→ 选择  Enter 确认  y 确认  n/Esc 取消",
 		TaskCompleteTitle: "任务完成",
@@ -206,7 +208,8 @@ var langMap = map[Language]translations{
 		ConfirmShortcutAllowSession: "s",
 		ConfirmShortcutAllowProject: "p",
 		ConfirmShortcutDeny:         "d / Esc",
-		ConfirmAuthTitle:            "⚠️ Authorization Request",
+		ConfirmAuthTitle:     "⚠️ Authorization Request",
+		ConfirmAuthWarning:   "This operation may affect files or the system environment outside the workspace. Allow?",
 		ConfirmQuitHelp:   "←/→ navigate  Enter confirm  y/n",
 		ConfirmCancelHelp: "←/→ navigate  Enter confirm  y yes  n/Esc cancel",
 		TaskCompleteTitle: "Task Completed",
@@ -360,6 +363,8 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.ConfirmShortcutDeny
 	case "ConfirmAuthTitle":
 		return translations.ConfirmAuthTitle
+	case "ConfirmAuthWarning":
+		return translations.ConfirmAuthWarning
 	case "ConfirmQuitHelp":
 		return translations.ConfirmQuitHelp
 	case "ConfirmCancelHelp":
