@@ -142,6 +142,12 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	// Parse disabled agents from comma-separated string
 	disabledAgents := parseDisabledAgents(ca.DisabledAgents)
 
+	// 检查配置文件中的 enable_browser_agent 设置
+	// 如果配置明确禁用了 browser agent，则加入禁用列表
+	if ca.config != nil && !ca.config.Browser.EnableBrowserAgent {
+		disabledAgents["browser"] = true
+	}
+
 	// Resolve per-agent engines
 	conductorEngine := engine
 	repoEngine := engine
