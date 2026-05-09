@@ -30,16 +30,6 @@ type translations struct {
 	BeSpecificTips string
 	CreateFileTips string
 	HelpTips       string
-	// History panel
-	HistoryButton            string
-	HistoryTitle             string
-	HistoryEmpty             string
-	HistoryFilterPlaceholder string
-	HistoryMoreAbove         string
-	HistoryMoreBelow         string
-	HistoryKeyContinue       string
-	HistoryKeyBack           string
-	HistoryConfirmDelete     string
 	// Confirmation dialog
 	ConfirmDialogHelp    string
 	ConfirmQuitTitle     string
@@ -98,15 +88,6 @@ var langMap = map[Language]translations{
 		BeSpecificTips:                   "尽量具体，效果更佳。",
 		CreateFileTips:                   "创建 GEMINI.md 文件以定制你的交互。",
 		HelpTips:                         "输入 / 选择技能命令。",
-		HistoryButton:                    "历史任务",
-		HistoryTitle:                     "会话历史",
-		HistoryEmpty:                     "暂无历史会话",
-		HistoryFilterPlaceholder:         "输入关键词过滤...",
-		HistoryMoreAbove:                 "▲ 前面还有 %d 条",
-		HistoryMoreBelow:                 "▼ 后面还有 %d 条",
-		HistoryKeyContinue:               "enter: 继续对话",
-		HistoryKeyBack:                   "esc: 返回",
-		HistoryConfirmDelete:             "确认删除此会话？(y = 确认, 其他键 = 取消)",
 		ConfirmDialogHelp:                "↑↓ 切换 · Enter 确认 · 字母键快捷选择",
 		ConfirmQuitTitle:                 "退出程序",
 		ConfirmQuitMessage:               "确定要退出程序吗？",
@@ -133,7 +114,7 @@ var langMap = map[Language]translations{
 		TaskCompleteHelp:  "按 ENTER 或 SPACE 关闭",
 		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  i:编辑  ctrl+e:编辑模式",
 		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  /:搜索  ?:帮助  i:编辑",
-		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  /history:历史  /:技能  ctrl+c:退出",
+		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  /:技能  ctrl+c:退出",
 		HelpDialogTitle:                  "Vim 快捷键帮助",
 		HelpDialogContent: "  导航:\n" +
 			"    j / ↓          向下滚动一行\n" +
@@ -150,7 +131,6 @@ var langMap = map[Language]translations{
 			"    :help           显示命令帮助\n" +
 			"    /pattern        搜索日志\n" +
 			"  其他:\n" +
-			"    /history       历史会话\n" +
 			"    ?               显示此帮助\n" +
 			"    ctrl+c          强制退出",
 	},
@@ -173,15 +153,6 @@ var langMap = map[Language]translations{
 		BeSpecificTips:                   "Be specific for the best results.",
 		CreateFileTips:                   "Create GEMINI.md files to customize interactions.",
 		HelpTips:                         "Type / to select a skill command.",
-		HistoryButton:                    "History",
-		HistoryTitle:                     "Conversation History",
-		HistoryEmpty:                     "No conversations yet",
-		HistoryFilterPlaceholder:         "type to filter...",
-		HistoryMoreAbove:                 "▲ %d more above",
-		HistoryMoreBelow:                 "▼ %d more below",
-		HistoryKeyContinue:               "enter: continue",
-		HistoryKeyBack:                   "esc: back",
-		HistoryConfirmDelete:             "Delete this conversation? (y = confirm, any other key = cancel)",
 		ConfirmDialogHelp:                "↑↓ navigate  ·  Enter confirm  ·  letter shortcuts",
 		ConfirmQuitTitle:                 "Quit Program",
 		ConfirmQuitMessage:               "Are you sure you want to quit?",
@@ -208,7 +179,7 @@ var langMap = map[Language]translations{
 		TaskCompleteHelp:  "Press ENTER or SPACE to close",
 		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  i:edit  ctrl+e:edit",
 		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  /:search  ?:help  i:edit",
-		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  /history:history  /:skill  ctrl+c:quit",
+		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  /:skill  ctrl+c:quit",
 		HelpDialogTitle:                  "Vim Keybindings Help",
 		HelpDialogContent: "  Navigation:\n" +
 			"    j / ↓          scroll down one line\n" +
@@ -225,7 +196,6 @@ var langMap = map[Language]translations{
 			"    :help          show command help\n" +
 			"    /pattern       search log\n" +
 			"  Other:\n" +
-			"    /history       history\n" +
 			"    ?              show this help\n" +
 			"    ctrl+c         force quit",
 	},
@@ -293,24 +263,6 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.CreateFileTips
 	case "HelpTips":
 		return translations.HelpTips
-	case "HistoryButton":
-		return translations.HistoryButton
-	case "HistoryTitle":
-		return translations.HistoryTitle
-	case "HistoryEmpty":
-		return translations.HistoryEmpty
-	case "HistoryFilterPlaceholder":
-		return translations.HistoryFilterPlaceholder
-	case "HistoryMoreAbove":
-		return translations.HistoryMoreAbove
-	case "HistoryMoreBelow":
-		return translations.HistoryMoreBelow
-	case "HistoryKeyContinue":
-		return translations.HistoryKeyContinue
-	case "HistoryKeyBack":
-		return translations.HistoryKeyBack
-	case "HistoryConfirmDelete":
-		return translations.HistoryConfirmDelete
 	case "ConfirmDialogHelp":
 		return translations.ConfirmDialogHelp
 	case "ConfirmQuitTitle":

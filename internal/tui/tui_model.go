@@ -186,8 +186,7 @@ type model struct {
 	currentLang Language
 	projectDir  string
 
-	// History panel
-	historyPanel *HistoryPanel
+	
 
 	// Authorization confirmation dialog
 	confirmDialog      confirmDialog
@@ -230,9 +229,7 @@ type model struct {
 	activeAnim bool // true when there are running tool entries
 	animFrame  int  // frame counter for throttled viewport rebuilds
 
-	// Task history cycling in edit mode (up/down arrows when input is empty)
-	taskHistoryItems []datamanager.TaskHistoryItem
-	taskHistoryIdx   int // -1 = not activated
+	
 }
 
 func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
@@ -337,7 +334,6 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 		useDarkStyle:    useDarkStyle,
 		toolCallEntries: make(map[string]*ToolEntry),
 		anim:            NewAnim(10),
-		taskHistoryIdx:  -1,
 		tokenUsagePerAgent: make(map[string]*AgentTokenUsage),
 	}
 }

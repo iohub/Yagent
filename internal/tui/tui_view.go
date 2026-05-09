@@ -42,23 +42,16 @@ func (m model) View() tea.View {
 
 	var b strings.Builder
 
-	// Main content area: history panel or scrollable viewport
-	if m.historyPanel != nil && m.historyPanel.active {
-		b.WriteString(m.historyPanel.Render())
-	} else {
-		// Dynamically adjust viewport height to match current footer height.
-		// This prevents flickering when footer height changes due to token
-		// dashboard expansion, skill autocomplete, error messages, etc.
-		footerHeight := m.computeFooterHeight()
-		vpHeight := m.termHeight - footerHeight
-		if vpHeight < 3 {
-			vpHeight = 3
-		}
-		if m.viewport.Height() != vpHeight {
-			(&m.viewport).SetHeight(vpHeight)
-		}
-		b.WriteString(m.viewport.View())
+	// Main content area: scrollable viewport
+	footerHeight := m.computeFooterHeight()
+	vpHeight := m.termHeight - footerHeight
+	if vpHeight < 3 {
+		vpHeight = 3
 	}
+	if m.viewport.Height() != vpHeight {
+		(&m.viewport).SetHeight(vpHeight)
+	}
+	b.WriteString(m.viewport.View())
 
 	// Separator
 	sepWidth := m.termWidth
@@ -186,7 +179,6 @@ func (m model) renderWelcomePanel() string {
 	var right strings.Builder
 	right.WriteString(welcomeDimStyle.Render("─── Recent activity"))
 	right.WriteString("\n")
-	right.WriteString(welcomeDimStyle.Render("  Use /history to browse history"))
 
 	// Compute responsive widths
 	panelWidth := m.computeFieldWidth() + 4
