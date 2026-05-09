@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -118,147 +119,6 @@ func (m *model) handleTaskHistoryCycle(direction string) {
 	}
 }
 
-// historyLoadedMsg carries the loaded history items back to the Update loop.
-type historyLoadedMsg struct {
-	items []datamanager.TaskHistoryItem
-	err   error
-}
-
-// loadHistoryCmd returns a command that loads history items asynchronously.
-func loadHistoryCmd(dm *datamanager.DataManager) tea.Cmd {
-	return func() tea.Msg {
-		items, err := dm.ListTaskHistoryFast(200)
-		if err != nil {
-			return historyLoadedMsg{err: err}
-		}
-		return historyLoadedMsg{items: items}
-	}
-}
-
-func (m *model) openHistoryPanel() {
-	m.historyLoading = true
-	m.historyIndex = 0
-	m.historyScrollStart = 0
-	m.historyFilter = ""
-	m.historyConfirmDelete = false
-	m.showHistoryPanel = true
-	m.historyItems = nil
-	m.filteredItems = nil
-}
-
-func (m *model) closeHistoryPanel() {
-	m.showHistoryPanel = false
-	m.historyFilter = ""
-	m.historyConfirmDelete = false
-	m.historyLoading = false
-}
-
-func (m *model) applyHistoryFilter() {
-	query := strings.TrimSpace(m.historyFilter)
-	if query == "" {
-		m.filteredItems = m.historyItems
-		m.historyIndex = 0
-		m.historyScrollStart = 0
-		return
-	}
-	qLower := strings.ToLower(query)
-	filtered := make([]datamanager.TaskHistoryItem, 0, len(m.historyItems))
-	for _, it := range m.historyItems {
-		txt := strings.ToLower(it.Title + " " + it.TaskID)
-		if strings.Contains(txt, qLower) {
-			filtered = append(filtered, it)
-		}
-	}
-	m.filteredItems = filtered
-	if m.historyIndex >= len(m.filteredItems) {
-		m.historyIndex = 0
-	}
-	m.historyScrollStart = 0
-}
-
-func (m *model) continueConversation() tea.Cmd {
-	if len(m.filteredItems) == 0 {
-		return nil
-	}
-	if m.historyIndex < 0 {
-		m.historyIndex = 0
-	}
-	if m.historyIndex >= len(m.filteredItems) {
-		m.historyIndex = len(m.filteredItems) - 1
-	}
-	selected := m.filteredItems[m.historyIndex]
-
-	mem, err := m.dataManager.LoadTaskMemory(selected.TaskID)
-	if err != nil {
-		m.errMsg = fmt.Sprintf("Failed to load conversation: %v", err)
-		return nil
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	task := &http.Task{
-		ID:         uuid.New().String(),
-		Status:     http.TaskStatusRunning,
-		ProjectDir: m.projectDir,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		Memory:     mem,
-		Context:    ctx,
-		CancelFunc: cancel,
-	}
-	m.taskManager.AddTask(task)
-	m.currentTask = task
-	m.taskRunning = false
-
-	m.showHistoryPanel = false
-	m.historyFilter = ""
-	m.historyConfirmDelete = false
-
-	m.logEntries = append(m.logEntries, logEntry{
-		timestamp: time.Now(),
-		eventType: "status",
-		content:   fmt.Sprintf("Loaded conversation: %s (%d messages)", selected.Title, selected.MessageCount),
-	})
-	m.buildViewportContent()
-
-	return nil
-}
-
-func (m *model) deleteHistoryItem() {
-	if len(m.filteredItems) == 0 {
-		return
-	}
-	selected := m.filteredItems[m.historyIndex]
-
-	if err := m.dataManager.DeleteTaskMemory(selected.TaskID); err != nil {
-		m.errMsg = fmt.Sprintf("Failed to delete: %v", err)
-		return
-	}
-
-	// Remove from historyItems
-	for i, it := range m.historyItems {
-		if it.TaskID == selected.TaskID {
-			m.historyItems = append(m.historyItems[:i], m.historyItems[i+1:]...)
-			break
-		}
-	}
-	// Remove from filteredItems
-	for i, it := range m.filteredItems {
-		if it.TaskID == selected.TaskID {
-			m.filteredItems = append(m.filteredItems[:i], m.filteredItems[i+1:]...)
-			break
-		}
-	}
-
-	if m.historyIndex >= len(m.filteredItems) {
-		m.historyIndex = len(m.filteredItems) - 1
-	}
-	if m.historyIndex < 0 {
-		m.historyIndex = 0
-	}
-
-	m.historyConfirmDelete = false
-}
-
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
 	// All other message types (tickMsg, taskEventMsg, WindowSizeMsg, etc.) are
@@ -270,10 +130,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	// History panel: allow KeyMsg, historyLoadedMsg, and WindowSizeMsg to pass through.
-	if m.showHistoryPanel {
+	// History panel: allow KeyMsg, historyLoadedMsg, historyDeletedMsg,
+	// continueWithTaskMsg, and WindowSizeMsg to pass through.
+	if m.historyPanel != nil && m.historyPanel.active {
 		switch msg.(type) {
-		case tea.KeyMsg, historyLoadedMsg, tea.WindowSizeMsg:
+		case tea.KeyMsg, historyLoadedMsg, historyDeletedMsg, continueWithTaskMsg, tea.WindowSizeMsg:
 			// allowed — fall through to main switch
 		default:
 			return m, nil
@@ -309,6 +170,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
+		if m.historyPanel != nil && m.historyPanel.active {
+			m.historyPanel.SetSize(msg.Width, msg.Height)
+		}
 		m.input.SetWidth(m.computeFieldWidth())
 		m.resizeViewport()
 		m.invalidateRenderedCache()
@@ -316,19 +180,80 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case historyLoadedMsg:
-		if !m.showHistoryPanel {
-			return m, nil // panel closed while loading
-		}
-		m.historyLoading = false
-		if msg.err != nil {
-			m.errMsg = fmt.Sprintf("Failed to load history: %v", msg.err)
-			m.showHistoryPanel = false
+		if m.historyPanel == nil || !m.historyPanel.active {
 			return m, nil
 		}
-		m.historyItems = msg.items
-		m.filteredItems = msg.items
-		m.historyIndex = 0
-		m.historyScrollStart = 0
+		if msg.err != nil {
+			m.errMsg = fmt.Sprintf("Failed to load history: %v", msg.err)
+			m.historyPanel.Close()
+			m.historyPanel = nil
+			return m, nil
+		}
+		// 转换为 historyItem 列表
+		items := make([]list.Item, len(msg.items))
+		for i, it := range msg.items {
+			items[i] = historyItem(it)
+		}
+		if msg.offset == 0 {
+			m.historyPanel.list.SetItems(items)
+		} else {
+			currentItems := m.historyPanel.list.Items()
+			newItems := append(currentItems, items...)
+			m.historyPanel.list.SetItems(newItems)
+		}
+		m.historyPanel.offset = msg.offset + len(msg.items)
+		m.historyPanel.hasMore = m.historyPanel.offset < msg.total
+		m.historyPanel.loading = false
+		return m, nil
+
+	case historyDeletedMsg:
+		if m.historyPanel == nil || !m.historyPanel.active {
+			return m, nil
+		}
+		m.historyPanel.loading = false
+		if msg.err != nil {
+			m.errMsg = fmt.Sprintf("Failed to delete: %v", msg.err)
+			return m, nil
+		}
+		// 重新加载面板数据
+		m.historyPanel.offset = 0
+		m.historyPanel.hasMore = true
+		m.historyPanel.loading = true
+		m.historyPanel.list.SetItems([]list.Item{})
+		m.historyPanel.list.Select(0)
+		return m, LoadHistoryCmd(m.dataManager, m.historyPanel.ctx, 0, m.historyPanel.pageSize)
+
+	case continueWithTaskMsg:
+		// 继续对话处理
+		mem, err := m.dataManager.LoadTaskMemory(msg.taskID)
+		if err != nil {
+			m.errMsg = fmt.Sprintf("Failed to load conversation: %v", err)
+			return m, nil
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		task := &http.Task{
+			ID:         uuid.New().String(),
+			Status:     http.TaskStatusRunning,
+			ProjectDir: m.projectDir,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			Memory:     mem,
+			Context:    ctx,
+			CancelFunc: cancel,
+		}
+		m.taskManager.AddTask(task)
+		m.currentTask = task
+		m.taskRunning = false
+		if m.historyPanel != nil {
+			m.historyPanel.Close()
+			m.historyPanel = nil
+		}
+		m.logEntries = append(m.logEntries, logEntry{
+			timestamp: time.Now(),
+			eventType: "status",
+			content:   fmt.Sprintf("Loaded conversation: %s", msg.taskID),
+		})
+		m.buildViewportContent()
 		return m, nil
 
 	case publisherReadyMsg:
@@ -476,101 +401,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// History panel key handling
-		if m.showHistoryPanel {
-			// Ignore input while loading
-			if m.historyLoading {
+		if m.historyPanel != nil && m.historyPanel.active {
+			if m.historyPanel.loading {
 				return m, nil
-			}
-
-			// Delete confirmation mode
-			if m.historyConfirmDelete {
-				switch msg.String() {
-				case "y", "Y":
-					m.deleteHistoryItem()
-					return m, nil
-				default:
-					m.historyConfirmDelete = false
-					return m, nil
-				}
 			}
 
 			switch msg.String() {
-			case "esc":
-				m.closeHistoryPanel()
+			case "esc", "q":
+				m.historyPanel.Close()
+				m.historyPanel = nil
 				return m, nil
 
 			case "enter":
-				return m, m.continueConversation()
-
-			case "up", "ctrl+k":
-				if m.historyIndex > 0 {
-					m.historyIndex--
+				if selected, ok := m.historyPanel.SelectedItem(); ok {
+					m.historyPanel.Close()
+					m.historyPanel = nil
+					return m, ContinueConversationCmd(selected.TaskID)
 				}
 				return m, nil
 
-			case "down", "ctrl+j":
-				if m.historyIndex < len(m.filteredItems)-1 {
-					m.historyIndex++
-				}
-				return m, nil
-
-			case "pgdown", "ctrl+f":
-				// Page down
-				pageSize := m.termHeight - 9
-				if pageSize < 1 {
-					pageSize = 1
-				}
-				m.historyIndex += pageSize
-				if m.historyIndex >= len(m.filteredItems) {
-					m.historyIndex = len(m.filteredItems) - 1
-				}
-				return m, nil
-
-			case "pgup", "ctrl+b":
-				// Page up
-				pageSize := m.termHeight - 9
-				if pageSize < 1 {
-					pageSize = 1
-				}
-				m.historyIndex -= pageSize
-				if m.historyIndex < 0 {
-					m.historyIndex = 0
-				}
-				return m, nil
-
-			case "home", "ctrl+a":
-				// Go to first item
-				m.historyIndex = 0
-				return m, nil
-
-			case "end", "ctrl+e":
-				// Go to last item
-				if len(m.filteredItems) > 0 {
-					m.historyIndex = len(m.filteredItems) - 1
-				}
-				return m, nil
-
-			case "delete", "ctrl+d":
-				// Delete current item (with confirmation)
-				if len(m.filteredItems) > 0 {
-					m.historyConfirmDelete = true
-				}
-				return m, nil
-
-			case "backspace":
-				if len(m.historyFilter) > 0 {
-					m.historyFilter = m.historyFilter[:len(m.historyFilter)-1]
-					m.applyHistoryFilter()
+			case "d", "D":
+				if selected, ok := m.historyPanel.SelectedItem(); ok {
+					m.historyPanel.loading = true
+					return m, DeleteHistoryCmd(m.dataManager, m.historyPanel.ctx, selected.TaskID)
 				}
 				return m, nil
 
 			default:
-				// Printable characters → filter
-				if len(msg.Key().Text) > 0 {
-					m.historyFilter += msg.Key().Text
-					m.applyHistoryFilter()
+				// 其他按键交给 list 组件处理（方向键等）
+				var listCmd tea.Cmd
+				m.historyPanel.list, listCmd = m.historyPanel.list.Update(msg)
+
+				// 自动加载更多
+				hp := m.historyPanel
+				if !hp.loading && hp.hasMore && hp.list.Index() >= len(hp.list.Items())-3 {
+					hp.loading = true
+					return m, tea.Batch(listCmd, LoadHistoryCmd(m.dataManager, hp.ctx, hp.offset, hp.pageSize))
 				}
-				return m, nil
+				return m, listCmd
 			}
 		}
 
@@ -809,8 +677,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.skillSuggestions = nil
 					m.skillSuggestionIdx = 0
 					m.input.Reset()
-					m.openHistoryPanel()
-					return m, loadHistoryCmd(m.dataManager)
+					m.historyPanel = NewHistoryPanel(m.termWidth, m.termHeight)
+					return m, LoadHistoryCmd(m.dataManager, m.historyPanel.ctx, 0, m.historyPanel.pageSize)
 				}
 				if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 					userContext := strings.TrimSpace(m.input.Value())
@@ -875,7 +743,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The global guard at the top of Update() already blocks these messages,
 		// but keep this as a defensive double-check.
 		if m.showHelpDialog || m.confirmDialog.open ||
-			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || m.showHistoryPanel {
+			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open || (m.historyPanel != nil && m.historyPanel.active) {
 			return m, nil
 		}
 

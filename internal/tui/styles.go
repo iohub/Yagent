@@ -122,33 +122,6 @@ var (
 	AnimGradTo   = lipgloss.Color("250")
 )
 
-// ── History panel styles (precomputed for performance) ──
-var (
-	// Header styles
-	historyHeaderTitle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	historyHeaderDim    = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244"))
-	historyFilterCursor = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("▌")
-	historyFilterText   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-
-	// Body styles
-	historyDateStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
-	historyTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	historyCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
-
-	// Selected row
-	historySelStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("39")).
-				Foreground(lipgloss.Color("15"))
-
-	// Indicator styles
-	historyMoreStyle   = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244"))
-	historyEmptyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	historyFooterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-
-	// Delete confirm
-	historyDeleteStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
-)
-
 // ToolIcon returns the appropriate icon string for a tool status.
 func ToolIcon(status ToolStatus, nested bool) string {
 	switch status {

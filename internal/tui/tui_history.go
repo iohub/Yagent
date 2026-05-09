@@ -1,188 +1,275 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"strings"
 
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"codeactor/internal/datamanager"
 )
 
-func (m model) renderHistoryPanel() string {
-	panelWidth := m.termWidth - 4
-	if panelWidth < 40 {
-		panelWidth = 40
+// ──────────────────── 消息类型 ────────────────────
+
+// historyLoadedMsg 历史数据加载完成
+type historyLoadedMsg struct {
+	items  []datamanager.TaskHistoryItem
+	total  int
+	offset int
+	err    error
+}
+
+// historyDeletedMsg 删除完成
+type historyDeletedMsg struct {
+	taskID string
+	err    error
+}
+
+// continueWithTaskMsg 继续对话
+type continueWithTaskMsg struct {
+	taskID string
+}
+
+// ──────────────────── HistoryPanel ────────────────────
+
+// HistoryPanel 封装所有历史面板状态
+type HistoryPanel struct {
+	list     list.Model
+	loading  bool
+	hasMore  bool
+	offset   int
+	pageSize int
+	ctx      context.Context
+	cancel   context.CancelFunc
+	active   bool
+}
+
+// NewHistoryPanel 创建新的历史面板
+func NewHistoryPanel(width, height int) *HistoryPanel {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	delegate := newHistoryDelegate()
+	l := list.New([]list.Item{}, delegate, width, height-2)
+	l.SetShowTitle(false)
+	l.SetShowStatusBar(false)
+	l.SetShowFilter(false)          // 关键：禁用过滤
+	l.SetFilteringEnabled(false)     // 关键：禁用过滤
+	l.SetShowHelp(false)
+	l.DisableQuitKeybindings()
+
+	// 自定义按键：只保留上下移动，移除默认的 enter/filter
+	l.KeyMap.CursorUp = list.DefaultKeyMap().CursorUp
+	l.KeyMap.CursorDown = list.DefaultKeyMap().CursorDown
+	// 清空其他按键绑定，由我们在 Update 中统一处理
+	l.KeyMap.NextPage = list.DefaultKeyMap().NextPage
+	l.KeyMap.PrevPage = list.DefaultKeyMap().PrevPage
+	l.KeyMap.GoToStart = list.DefaultKeyMap().GoToStart
+	l.KeyMap.GoToEnd = list.DefaultKeyMap().GoToEnd
+
+	return &HistoryPanel{
+		list:     l,
+		pageSize: 20,
+		loading:  true,
+		hasMore:  true,
+		offset:   0,
+		ctx:      ctx,
+		cancel:   cancel,
+		active:   true,
+	}
+}
+
+// Close 释放资源
+func (hp *HistoryPanel) Close() {
+	if hp.cancel != nil {
+		hp.cancel()
+		hp.cancel = nil
+	}
+	hp.active = false
+	hp.list = list.Model{}
+	hp.ctx = nil
+}
+
+// SetSize 更新面板尺寸
+func (hp *HistoryPanel) SetSize(width, height int) {
+	hp.list.SetSize(width, height-2)
+}
+
+// SelectedItem 返回当前选中项
+func (hp *HistoryPanel) SelectedItem() (datamanager.TaskHistoryItem, bool) {
+	if hp.list.SelectedItem() == nil {
+		return datamanager.TaskHistoryItem{}, false
+	}
+	item, ok := hp.list.SelectedItem().(historyItem)
+	if !ok {
+		return datamanager.TaskHistoryItem{}, false
+	}
+	return datamanager.TaskHistoryItem(item), true
+}
+
+// ──────────────────── list.Item 适配 ────────────────────
+
+// historyItem 包装 TaskHistoryItem 以实现 list.Item
+type historyItem datamanager.TaskHistoryItem
+
+func (i historyItem) FilterValue() string {
+	return i.Title
+}
+
+// ──────────────────── Delegate ────────────────────
+
+type historyDelegate struct {
+	styles historyItemStyles
+}
+
+type historyItemStyles struct {
+	normal   lipgloss.Style
+	selected lipgloss.Style
+	date     lipgloss.Style
+	title    lipgloss.Style
+	count    lipgloss.Style
+	dot      string
+	dotSel   string
+}
+
+func newHistoryDelegate() historyDelegate {
+	selBg := lipgloss.Color("39") // 蓝色
+	d := historyDelegate{
+		styles: historyItemStyles{
+			normal:   lipgloss.NewStyle().Padding(0, 1).Width(0),
+			selected: lipgloss.NewStyle().Padding(0, 1).Background(selBg).Width(0),
+			date:     lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Width(11),
+			title:    lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Padding(0, 1),
+			count:    lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Width(5),
+			dot:      lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render(" "),
+			dotSel:   lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(selBg).Render("▸"),
+		},
+	}
+	return d
+}
+
+func (d historyDelegate) Height() int                     { return 1 }
+func (d historyDelegate) Spacing() int                    { return 0 }
+func (d historyDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
+
+func (d historyDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	h, ok := item.(historyItem)
+	if !ok {
+		return
 	}
 
-	var b strings.Builder
-
-	// ── Header: ◆ title │ filter │ counter │ page info ──
-	{
-		var parts []string
-		parts = append(parts, historyHeaderTitle.Render("◆ "+langManager.GetText("HistoryTitle")))
-
-		if m.historyFilter != "" {
-			parts = append(parts, historyHeaderDim.Render("│")+" "+historyFilterText.Render(m.historyFilter)+historyFilterCursor)
-		} else {
-			parts = append(parts, historyHeaderDim.Render("│ "+langManager.GetText("HistoryFilterPlaceholder")))
-		}
-
-		// Counter with page info
-		totalVisible := len(m.filteredItems)
-		pageInfo := ""
-		bodyHeight := m.termHeight - 9
-		if bodyHeight < 4 {
-			bodyHeight = 4
-		}
-		if totalVisible > bodyHeight {
-			currentPage := m.historyScrollStart/bodyHeight + 1
-			totalPages := (totalVisible + bodyHeight - 1) / bodyHeight
-			pageInfo = fmt.Sprintf(" Pg %d/%d", currentPage, totalPages)
-		}
-		parts = append(parts, historyHeaderDim.Render(fmt.Sprintf("%d/%d%s", m.historyIndex+1, totalVisible, pageInfo)))
-
-		hbStyle := lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), false, false, true, false).
-			BorderForeground(lipgloss.Color("237")).
-			Width(panelWidth).
-			Padding(0, 1)
-
-		b.WriteString(hbStyle.Render(strings.Join(parts, "  ")))
-		b.WriteString("\n")
+	dateStr := h.CreatedAt.Format("01-02 15:04")
+	title := truncateTitle(h.Title, 40)
+	countStr := ""
+	if h.MessageCount > 0 {
+		countStr = fmt.Sprintf("%d💬", h.MessageCount)
 	}
 
-	// ── Loading state ──
-	if m.historyLoading {
-		loading := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Width(panelWidth).
-			Padding(2, 2).
-			Render("  ⏳ Loading...")
-		b.WriteString(loading)
-		return b.String()
-	}
+	s := d.styles
+	line := lipgloss.JoinHorizontal(lipgloss.Left,
+		s.date.Render(dateStr),
+		s.title.Render(title),
+		s.count.Render(countStr),
+	)
 
-	// ── Body: single-line items with edge-triggered scroll ──
-	bodyHeight := m.termHeight - 9
-	if bodyHeight < 4 {
-		bodyHeight = 4
-	}
-
-	if len(m.filteredItems) == 0 {
-		empty := historyEmptyStyle.
-			Width(panelWidth).
-			Padding(2, 2).
-			Render("  " + langManager.GetText("HistoryEmpty"))
-		b.WriteString(empty)
+	if index == m.Index() {
+		fmt.Fprint(w, s.selected.Width(m.Width()).Render(s.dotSel + line))
 	} else {
-		// Edge-triggered scroll
-		topMargin := 2
-		btmMargin := 2
-		if bodyHeight < topMargin+btmMargin+1 {
-			topMargin = 1
-			btmMargin = 1
-		}
-		scrollStart := m.historyScrollStart
-		if m.historyIndex < scrollStart+topMargin {
-			scrollStart = m.historyIndex - topMargin
-		} else if m.historyIndex >= scrollStart+bodyHeight-btmMargin {
-			scrollStart = m.historyIndex - bodyHeight + btmMargin + 1
-		}
-		if scrollStart < 0 {
-			scrollStart = 0
-		}
-		maxStart := len(m.filteredItems) - bodyHeight
-		if maxStart < 0 {
-			maxStart = 0
-		}
-		if scrollStart > maxStart {
-			scrollStart = maxStart
-		}
-		m.historyScrollStart = scrollStart
+		fmt.Fprint(w, s.normal.Width(m.Width()).Render(s.dot + line))
+	}
+}
 
-		end := scrollStart + bodyHeight
-		if end > len(m.filteredItems) {
-			end = len(m.filteredItems)
+// ──────────────────── 渲染 ────────────────────
+
+// 面板样式（在 View 中使用）
+var (
+	hpTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Padding(0, 1)
+	hpFooterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Padding(0, 1)
+	hpEmptyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Padding(1, 1).Italic(true)
+)
+
+// Render 渲染完整历史面板
+func (hp *HistoryPanel) Render() string {
+	if hp.list.Items() == nil || len(hp.list.Items()) == 0 {
+		if hp.loading {
+			return lipgloss.JoinVertical(lipgloss.Left,
+				hpTitleStyle.Render("📜 历史会话"),
+				lipgloss.NewStyle().Padding(1, 1).Foreground(lipgloss.Color("243")).Render("⏳ 加载中..."),
+				hpFooterStyle.Render("ESC 关闭"),
+			)
 		}
-
-		// "more above" indicator
-		if scrollStart > 0 {
-			indicator := historyMoreStyle.
-				Width(panelWidth).Padding(0, 2).
-				Render(fmt.Sprintf("▲ %s", fmt.Sprintf(langManager.GetText("HistoryMoreAbove"), scrollStart)))
-			b.WriteString(indicator)
-			b.WriteString("\n")
-		}
-
-		// Column layout: selMarker(2) + date(11) + spacing(2) + title + count(6)
-		const dateWidth = 11
-		const countArea = 6
-		const selMarker = 2
-		const spacing = 2
-		titleMaxWidth := panelWidth - dateWidth - countArea - selMarker - spacing - 2
-		if titleMaxWidth < 15 {
-			titleMaxWidth = 15
-		}
-
-		for i := scrollStart; i < end; i++ {
-			item := m.filteredItems[i]
-			selected := i == m.historyIndex
-
-			displayTitle := item.Title
-			titleRunes := []rune(displayTitle)
-			if len(titleRunes) > titleMaxWidth {
-				displayTitle = string(titleRunes[:titleMaxWidth-1]) + "…"
-			}
-			titlePadded := lipgloss.NewStyle().Width(titleMaxWidth).Render(displayTitle)
-
-			dateStr := item.CreatedAt.Format("01-02 15:04")
-			countStr := fmt.Sprintf("%dm", item.MessageCount)
-
-			if selected {
-				line := fmt.Sprintf("▐ %s  %s  %s", dateStr, titlePadded, countStr)
-				b.WriteString(historySelStyle.Width(panelWidth).Padding(0, 1).Render(line))
-			} else {
-				line := fmt.Sprintf("  %s  %s  %s",
-					historyDateStyle.Render(dateStr),
-					historyTitleStyle.Render(titlePadded),
-					historyCountStyle.Render(countStr))
-				b.WriteString(line)
-			}
-			b.WriteString("\n")
-		}
-
-		// "more below" indicator
-		if end < len(m.filteredItems) {
-			remaining := len(m.filteredItems) - end
-			indicator := historyMoreStyle.
-				Width(panelWidth).Padding(0, 2).
-				Render(fmt.Sprintf("▼ %s", fmt.Sprintf(langManager.GetText("HistoryMoreBelow"), remaining)))
-			b.WriteString(indicator)
-			b.WriteString("\n")
-		}
+		return lipgloss.JoinVertical(lipgloss.Left,
+			hpTitleStyle.Render("📜 历史会话"),
+			hpEmptyStyle.Render("暂无历史会话"),
+			hpFooterStyle.Render("ESC 关闭"),
+		)
 	}
 
-	// ── Footer: key hints ──
-	var hintText string
-	if m.historyConfirmDelete {
-		hintText = historyDeleteStyle.Render(langManager.GetText("HistoryConfirmDelete"))
-	} else {
-		hints := []string{
-			lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("↑↓:选择"),
-			historyFooterStyle.Render("PgUp/PgDn:翻页"),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("enter:继续"),
-			historyFooterStyle.Render("Home/End:首尾"),
-			historyFooterStyle.Render("esc:返回"),
+	return lipgloss.JoinVertical(lipgloss.Left,
+		hpTitleStyle.Render("📜 历史会话"),
+		hp.list.View(),
+		hpFooterStyle.Render("↑↓ 选择  Enter 继续  D 删除  ESC 关闭"),
+	)
+}
+
+// ──────────────────── 命令 ────────────────────
+
+// LoadHistoryCmd 加载历史数据
+func LoadHistoryCmd(dm *datamanager.DataManager, ctx context.Context, offset, limit int) tea.Cmd {
+	return func() tea.Msg {
+		items, err := dm.ListTaskHistoryFast(200)
+		if err != nil {
+			return historyLoadedMsg{err: err}
 		}
-		hintText = strings.Join(hints, "  ")
+
+		total := len(items)
+		// 手动分页
+		start := offset
+		if start > total {
+			start = total
+		}
+		end := start + limit
+		if end > total {
+			end = total
+		}
+		page := items[start:end]
+
+		return historyLoadedMsg{
+			items:  page,
+			total:  total,
+			offset: offset,
+			err:    nil,
+		}
 	}
+}
 
-	footerStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, false, false).
-		BorderForeground(lipgloss.Color("237")).
-		Width(panelWidth).
-		Padding(0, 1)
+// DeleteHistoryCmd 删除历史项
+func DeleteHistoryCmd(dm *datamanager.DataManager, ctx context.Context, taskID string) tea.Cmd {
+	return func() tea.Msg {
+		err := dm.DeleteTaskMemory(taskID)
+		return historyDeletedMsg{taskID: taskID, err: err}
+	}
+}
 
-	b.WriteString(footerStyle.Render(hintText))
+// ContinueConversationCmd 继续对话
+func ContinueConversationCmd(taskID string) tea.Cmd {
+	return func() tea.Msg {
+		return continueWithTaskMsg{taskID: taskID}
+	}
+}
 
-	return b.String()
+// ──────────────────── 辅助函数 ────────────────────
+
+func truncateTitle(s string, max int) string {
+	s = strings.TrimSpace(s)
+	// 移除换行符
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", "")
+	if len([]rune(s)) <= max {
+		return s
+	}
+	return string([]rune(s)[:max-1]) + "…"
 }

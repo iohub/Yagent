@@ -186,15 +186,8 @@ type model struct {
 	currentLang Language
 	projectDir  string
 
-	// History panel state
-	showHistoryPanel     bool
-	historyItems         []datamanager.TaskHistoryItem
-	filteredItems        []datamanager.TaskHistoryItem
-	historyIndex         int
-	historyScrollStart   int // first visible item index (for stable scroll)
-	historyFilter        string
-	historyConfirmDelete bool
-	historyLoading       bool // true when async loading history items
+	// History panel
+	historyPanel *HistoryPanel
 
 	// Authorization confirmation dialog
 	confirmDialog      confirmDialog

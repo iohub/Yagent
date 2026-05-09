@@ -43,8 +43,8 @@ func (m model) View() tea.View {
 	var b strings.Builder
 
 	// Main content area: history panel or scrollable viewport
-	if m.showHistoryPanel {
-		b.WriteString(m.renderHistoryPanel())
+	if m.historyPanel != nil && m.historyPanel.active {
+		b.WriteString(m.historyPanel.Render())
 	} else {
 		// Dynamically adjust viewport height to match current footer height.
 		// This prevents flickering when footer height changes due to token
