@@ -197,7 +197,7 @@ dimensions = 2560
 # ─────────────────────────────────────────────────────────────
 [browser]
 headless = true
-browser_path = ""
+browser_path = "/bin/google-chrome"
 user_data_dir = ""
 viewport_width = 1280
 viewport_height = 720
