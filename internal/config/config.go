@@ -36,7 +36,6 @@ type AgentConfig struct {
 	RepoMaxSteps      int    `toml:"repo_max_steps"`
 	DevOpsMaxSteps    int    `toml:"devops_max_steps"`
 	BrowserMaxSteps   int    `toml:"browser_max_steps"`
-	ImplPlanMaxSteps  int    `toml:"impl_plan_max_steps"`
 	MetaMaxSteps      int    `toml:"meta_max_steps"`
 	MetaRetryCount    int    `toml:"meta_retry_count"`
 	SpeakLang         string `toml:"lang"`
@@ -65,7 +64,6 @@ type AgentsLLMConfig struct {
 	Chat        *AgentLLMOverride         `toml:"chat,omitempty"`
 	Meta        *AgentLLMOverride         `toml:"meta,omitempty"`
 	DevOps      *AgentLLMOverride         `toml:"devops,omitempty"`
-	ImplPlan    *AgentLLMOverride         `toml:"impl_plan,omitempty"`
 }
 
 // ToolLLMOverride selects a provider for a specific tool.
@@ -79,7 +77,6 @@ type ToolsLLMConfig struct {
 	UseProvider  string           `toml:"use_provider"` // default for all tools
 	MicroAgent   *ToolLLMOverride `toml:"micro_agent,omitempty"`
 	Thinking     *ToolLLMOverride `toml:"thinking,omitempty"`
-	ImplPlan     *ToolLLMOverride `toml:"impl_plan,omitempty"`
 	DeepThinking *ToolLLMOverride `toml:"deepthinking,omitempty"`
 }
 
@@ -152,8 +149,6 @@ func (c *Config) getAgentOverride(agentName string) *AgentLLMOverride {
 		return c.Agents.LLM.Meta
 	case "devops-agent", "devops":
 		return c.Agents.LLM.DevOps
-	case "impl_plan-agent", "impl_plan":
-		return c.Agents.LLM.ImplPlan
 	default:
 		return nil
 	}
@@ -179,8 +174,6 @@ func (c *Config) getToolOverride(toolName string) *ToolLLMOverride {
 		return c.Tools.LLM.MicroAgent
 	case "thinking":
 		return c.Tools.LLM.Thinking
-	case "impl_plan":
-		return c.Tools.LLM.ImplPlan
 	case "deepthinking":
 		return c.Tools.LLM.DeepThinking
 	default:

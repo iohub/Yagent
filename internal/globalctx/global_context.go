@@ -30,7 +30,6 @@ type GlobalCtx struct {
 	ReplaceTool      *tools.ReplaceBlockTool
 	ThinkingTool     *tools.ThinkingTool
 	MicroAgentTool   *tools.MicroAgentTool
-	ImplPlanTool     *tools.ImplPlanTool
 	FlowOps          *tools.FlowControlTool
 	RepoOps          *tools.RepoOperationsTool
 	UserConfirmMgr   *tools.UserConfirmManager

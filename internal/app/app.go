@@ -88,7 +88,6 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		ReplaceTool:      tools.NewReplaceBlockTool(workDir),
 		ThinkingTool:     tools.NewThinkingTool(),
 		MicroAgentTool:   tools.NewMicroAgentTool(microAgentEngine),
-		ImplPlanTool:     tools.NewImplPlanTool(),
 		FlowOps:          tools.NewFlowControlTool(workDir),
 		RepoOps:          tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort), workDir),
 		UserConfirmMgr:   userConfirmMgr,
@@ -156,7 +155,6 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	metaEngine := engine
 	devopsEngine := engine
 	browserEngine := engine
-	implPlanEngine := engine
 	if ca.client != nil {
 		conductorEngine = ca.client.GetAgentEngine("conductor")
 		repoEngine = ca.client.GetAgentEngine("repo")
@@ -165,18 +163,11 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		metaEngine = ca.client.GetAgentEngine("meta")
 		devopsEngine = ca.client.GetAgentEngine("devops")
 		browserEngine = ca.client.GetAgentEngine("browser")
-		implPlanEngine = ca.client.GetAgentEngine("impl_plan")
 	}
 
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
 
-	implPlanMaxSteps := 15
-	if ca.config != nil && ca.config.Agent.ImplPlanMaxSteps > 0 {
-		implPlanMaxSteps = ca.config.Agent.ImplPlanMaxSteps
-	}
-	implPlanAgent := agents.NewImplPlanAgent(ca.globalCtx, implPlanEngine, publisher, implPlanMaxSteps)
-
-	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, implPlanAgent)
+	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps)
 	chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps)
 	metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine)
 	devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)

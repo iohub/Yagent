@@ -11,7 +11,6 @@ CodeActor Agent orchestrates multiple specialized agents — Conductor, Repo-Ana
 - **Meta-Agent** — Autonomous agent designer that creates custom sub-agents at runtime for tasks beyond built-in agents' capabilities
 - **Self-Correction** — `thinking` tool enables agents to analyze errors and recover without blind retries
 - **Agent Disable** — Conditionally exclude sub-agents at startup via `--disable-agents=repo,coding,chat,meta,devops`
-- **ImplPlan Tool** — Stateful implementation plan document for complex multi-step coding tasks
 
 ### Rich Tool System (17 tools)
 - **File Operations** — Read, create, delete, rename, list directory, print directory tree
@@ -150,7 +149,7 @@ Server defaults to `localhost:9080`. Override via `--host`/`--port` or `CODECACT
 | Agent | Tools | Count |
 |-------|-------|-------|
 | Conductor | `delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_devops`, `delegate_meta`, `finish`, `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree` | 10 |
-| CodingAgent | All 17 tools (file ops, search, shell, thinking, impl_plan, micro_agent) | 17 |
+| CodingAgent | All 16 tools (file ops, search, shell, thinking, micro_agent) | 16 |
 | RepoAgent | `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree`, `semantic_search`, `query_code_skeleton`, `query_code_snippet` | 7 |
 | ChatAgent | `micro_agent`, `thinking`, `finish` | 3 |
 | DevOpsAgent | `run_bash`, `read_file`, `list_dir`, `print_dir_tree`, `search_by_regex`, `thinking`, `micro_agent`, `finish` | 8 |

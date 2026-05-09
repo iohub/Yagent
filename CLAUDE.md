@@ -63,8 +63,6 @@ codeactor-agent/
 │   │   ├── devops.prompt.md     # DevOps system prompt
 │   │   ├── meta.go              # MetaAgent: custom agent designer
 │   │   ├── meta.prompt.md       # Meta system prompt
-│   │   ├── impl_plan_agent.go   # ImplPlanAgent: read-only implementation planner
-│   │   ├── impl_plan.prompt.md  # ImplPlan system prompt
 │   │   ├── executor.go          # Generic agent execution loop (RunAgentLoop)
 │   │   ├── tools.go             # Tool registration helpers
 │   │   ├── tools.json           # Tool definitions
@@ -82,7 +80,7 @@ codeactor-agent/
 │   │   ├── system_operations.go # run_bash (foreground/background)
 │   │   ├── cognitive.go         # thinking (error analysis & reflection)
 │   │   ├── micro_agent.go       # micro_agent (sub-LLM reasoning)
-│   │   ├── impl_plan.go         # impl_plan (stateful implementation plan)
+│   │   ├── deepthinking.go      # deepthinking (deep system analysis)
 │   │   ├── flow_control.go      # agent_exit, ask_user_for_help
 │   │   ├── workspace_guard.go   # Workspace boundary enforcement
 │   │   └── user_confirm.go      # User confirmation pipeline (Pub-Sub)
