@@ -445,14 +445,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commandBuffer = ""
 			return m, nil
 
-		case "ctrl+h":
-			// Open history browser (only when not running and no dialog open)
-			if !m.taskRunning {
-				return m, enterHistoryMode(&m)
-			}
-			m.infoMsg = "Cannot browse history while a task is running"
-			return m, nil
-
 		case "ctrl+s":
 			if m.taskRunning {
 				return m, nil
@@ -497,6 +489,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// If skill autocomplete is active, expand the selected skill
 			if m.skillAutoComplete && len(m.skillSuggestions) > 0 && m.skillSuggestionIdx >= 0 && m.skillSuggestionIdx < len(m.skillSuggestions) {
 				skillName := m.skillSuggestions[m.skillSuggestionIdx]
+				// If "history" is selected, open history dialog instead of executing a skill
+				if skillName == "history" {
+					m.skillAutoComplete = false
+					m.skillSuggestions = nil
+					m.skillSuggestionIdx = 0
+					if m.taskRunning {
+						m.infoMsg = "Cannot browse history while a task is running"
+						return m, nil
+					}
+					// Clear the input field
+					m.input.SetValue("")
+					return m, enterHistoryMode(&m)
+				}
 				if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 					userContext := strings.TrimSpace(m.input.Value())
 					// Combine skill content with user's input as context
@@ -812,6 +817,11 @@ func (m *model) updateSkillAutocomplete() {
 				matches = append(matches, name)
 			}
 		}
+	}
+
+	// Add "history" as a built-in command (opens history dialog, not a skill)
+	if strings.HasPrefix("history", queryLower) {
+		matches = append([]string{"history"}, matches...)
 	}
 
 	if len(matches) > 0 {
