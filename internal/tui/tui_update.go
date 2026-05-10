@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/tui/components"
 	"codeactor/internal/compact"
+	"codeactor/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -958,13 +958,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			// Show success dialog via DialogStack
 			if m.dialogStack != nil {
-				d := components.NewTaskCompleteDialog(true, "Task Completed\n\nAll tasks have been finished.", components.Language(m.currentLang))
+				d := components.NewTaskCompleteDialog(true, "All tasks have been finished.", components.Language(m.currentLang))
 				d.SetBounds(m.termWidth, m.termHeight)
 				m.dialogStack.Push(d)
 			} else {
 				m.taskCompleteDialog = taskCompleteDialog{
 					open:    true,
-					message: "Task Completed\n\nAll tasks have been finished.",
+					message: "All tasks have been finished.",
 				}
 			}
 		}
