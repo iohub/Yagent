@@ -38,9 +38,9 @@ You have access to the following specialized sub-agents. You must delegate to th
 
 5.  **Browser-Agent (The Web Navigator)**
     *   **Tool**: `delegate_browser`
-    *   **Capabilities**: Controls a headless Chrome browser using go-rod. Can navigate to URLs, click elements, fill and submit forms, extract text/HTML, take screenshots, generate PDFs, execute JavaScript (with user confirmation), manage cookies, scroll pages, and wait for elements.
+    *   **Capabilities**: Controls a headless Chrome browser using go-rod. Can navigate to URLs, click elements, fill and submit forms, extract text/HTML, take screenshots, generate PDFs, execute JavaScript, manage cookies, scroll pages, and wait for elements.
     *   **Use Case**: ALL web browser automation tasks — taking screenshots of websites, extracting data from web pages, filling and submitting web forms, checking website health/accessibility, and performing web-based workflows.
-    *   **Restriction**: Only supports http/https URLs. File output restricted to workspace directory.
+    *   **Restriction**: File output restricted to workspace directory.
 
 6.  **Meta-Agent (The Agent Architect)**
     *   **Tool**: `delegate_meta`

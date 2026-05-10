@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/proto"
 )
 
 // SecurityPolicy 浏览器安全策略
@@ -28,58 +27,9 @@ func NewSecurityPolicy(allowedDomains, blockedDomains []string) *SecurityPolicy 
 	}
 }
 
-// ValidateURL 验证 URL 安全性
-// 返回错误如果 URL 不被允许
+// ValidateURL 验证 URL 安全性（已禁用安全检查）
+// 始终返回 nil，不做任何验证
 func (sp *SecurityPolicy) ValidateURL(rawURL string) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("无效的 URL: %w", err)
-	}
-
-	// 检查协议
-	scheme := strings.ToLower(parsed.Scheme)
-	switch scheme {
-	case "http", "https":
-		// 允许，继续检查域名
-	case "file":
-		if !sp.AllowFileAccess {
-			return fmt.Errorf("file:// 协议不允许访问")
-		}
-	case "data":
-		if !sp.AllowDataURL {
-			return fmt.Errorf("data: URL 不允许访问")
-		}
-	default:
-		return fmt.Errorf("不允许的协议: %s，仅支持 http/https", scheme)
-	}
-
-	// 检查域名
-	hostname := strings.ToLower(parsed.Hostname())
-	if hostname == "" {
-		// 对于 file:// 或没有主机名的 URL，跳过域名检查
-		if scheme == "http" || scheme == "https" {
-			return fmt.Errorf("URL 缺少主机名: %s", rawURL)
-		}
-		return nil
-	}
-
-	// 检查阻止列表
-	for _, blocked := range sp.BlockedDomains {
-		if matchDomain(hostname, blocked) {
-			return fmt.Errorf("域名 %s 在阻止列表中 (匹配规则: %s)", hostname, blocked)
-		}
-	}
-
-	// 如果配置了允许列表，检查是否在列表中
-	if len(sp.AllowedDomains) > 0 {
-		for _, allowed := range sp.AllowedDomains {
-			if matchDomain(hostname, allowed) {
-				return nil
-			}
-		}
-		return fmt.Errorf("域名 %s 不在允许列表中", hostname)
-	}
-
 	return nil
 }
 
@@ -102,65 +52,15 @@ func matchDomain(hostname, pattern string) bool {
 	return false
 }
 
-// ShouldBlockRequest 判断是否应阻止请求（用于 HijackRequests）
+// ShouldBlockRequest 判断是否应阻止请求（已禁用安全检查）
+// 始终返回 false，不拦截任何请求
 func (sp *SecurityPolicy) ShouldBlockRequest(reqURL string) bool {
-	parsed, err := url.Parse(reqURL)
-	if err != nil {
-		return true // 解析失败则阻止
-	}
-
-	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return true
-	}
-
-	hostname := strings.ToLower(parsed.Hostname())
-
-	// 检查阻止列表
-	for _, blocked := range sp.BlockedDomains {
-		if matchDomain(hostname, blocked) {
-			return true
-		}
-	}
-
-	// 如果配置了允许列表
-	if len(sp.AllowedDomains) > 0 {
-		for _, allowed := range sp.AllowedDomains {
-			if matchDomain(hostname, allowed) {
-				return false
-			}
-		}
-		return true // 不在允许列表中
-	}
-
 	return false
 }
 
-// SetupPageSecurity 为页面设置安全路由器
-// 使用 rod 的 HijackRequests 拦截不允许的请求
+// SetupPageSecurity 为页面设置安全路由器（已禁用安全检查）
+// 空操作，不注册任何 HijackRequests 拦截器
 func SetupPageSecurity(page *rod.Page, sp *SecurityPolicy) error {
-	if page == nil {
-		return fmt.Errorf("页面为空")
-	}
-
-	// 使用 router 拦截请求
-	router := page.HijackRequests()
-	if router == nil {
-		return fmt.Errorf("无法创建请求路由器")
-	}
-
-	// 必须调用 router.MustAdd 或 router.Add 来添加规则
-	// 拦截所有请求，检查是否应阻止
-	router.MustAdd("*", func(ctx *rod.Hijack) {
-		reqURL := ctx.Request.URL().String()
-		if sp.ShouldBlockRequest(reqURL) {
-			ctx.Response.Fail(proto.NetworkErrorReasonBlockedByClient)
-			return
-		}
-		ctx.ContinueRequest(&proto.FetchContinueRequest{})
-	})
-
-	go router.Run()
 	return nil
 }
 
