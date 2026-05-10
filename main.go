@@ -22,7 +22,7 @@ import (
 	"codeactor/internal/skills"
 	"codeactor/internal/tui"
 	"codeactor/internal/util"
-	messaging "codeactor/pkg/messaging"
+	messaging "codeactor/internal/messaging"
 )
 
 func init() {

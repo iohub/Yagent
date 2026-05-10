@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"codeactor/internal/llm"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 )
 
 // Agent defines the interface for all agents in the system.

@@ -10,7 +10,7 @@ dist
 *.dll
 *.so
 *.dylib
-TASK.md
+deps
 
 # Test binary, built with `go test -c`
 *.test

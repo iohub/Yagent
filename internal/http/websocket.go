@@ -10,8 +10,8 @@ import (
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/memory"
-	messaging "codeactor/pkg/messaging"
-	consumers "codeactor/pkg/messaging/consumers"
+	messaging "codeactor/internal/messaging"
+	consumers "codeactor/internal/messaging/consumers"
 
 	"log/slog"
 

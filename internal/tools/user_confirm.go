@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 
 	"github.com/google/uuid"
 )

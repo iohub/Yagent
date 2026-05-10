@@ -8,7 +8,7 @@ import (
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"

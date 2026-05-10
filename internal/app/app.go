@@ -17,7 +17,7 @@ import (
 	"codeactor/internal/memory"
 	"codeactor/internal/skills"
 	"codeactor/internal/tools"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 )
 
 // CodingAssistant is the main entry point for the agent system.

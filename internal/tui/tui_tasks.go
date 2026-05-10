@@ -10,7 +10,7 @@ import (
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
 	"codeactor/internal/memory"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"

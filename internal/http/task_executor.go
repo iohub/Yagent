@@ -9,8 +9,8 @@ import (
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/util"
-	messaging "codeactor/pkg/messaging"
-	consumers "codeactor/pkg/messaging/consumers"
+	messaging "codeactor/internal/messaging"
+	consumers "codeactor/internal/messaging/consumers"
 )
 
 // ExecuteTask 执行任务的通用函数

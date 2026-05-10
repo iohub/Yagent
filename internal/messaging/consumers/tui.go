@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 
 	"charm.land/lipgloss/v2"
 )
