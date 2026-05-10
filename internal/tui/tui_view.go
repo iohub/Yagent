@@ -170,7 +170,7 @@ func (m model) renderWelcomePanel() string {
 
 	// Build right panel: recent activity
 	var right strings.Builder
-	right.WriteString(welcomeDimStyle.Render("─── Recent activity"))
+	right.WriteString(welcomeDimStyle.Render("─── Self-Evolving Agents. Flawless Code."))
 	right.WriteString("\n")
 
 	// Compute responsive widths

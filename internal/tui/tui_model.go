@@ -33,7 +33,7 @@ var (
 	welcomeSubStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	welcomeRightTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
 	welcomeTipStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	welcomeDimStyle   = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("242"))
+	welcomeDimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
 	infoMsgStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
