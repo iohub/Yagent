@@ -51,13 +51,12 @@ func (m *model) computeFooterHeight() int {
 		}
 	}
 
-	// Blank line (edit mode only) + status line (see View() — footer.WriteString("\n") in edit mode only)
+	// Status line always starts on its own line (see View()).
+	// Edit mode adds an extra blank line before the status line.
 	if m.commandMode {
-		// No blank line before status line in command mode
-		height += 1 // status line only
+		height += 2 // newline terminator + status line
 	} else {
-		// One blank line before status line in edit mode
-		height += 2 // blank line + status line
+		height += 3 // newline terminator + blank line + status line
 	}
 
 	return height

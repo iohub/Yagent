@@ -134,7 +134,9 @@ func (m model) View() tea.View {
 		}
 	}
 
-	// Add spacing before status line: empty line in edit mode, compact in command mode
+	// Ensure status line always starts on a new line
+	footer.WriteString("\n")
+	// Add extra spacing before status line: empty line in edit mode
 	if !m.commandMode {
 		footer.WriteString("\n")
 	}
