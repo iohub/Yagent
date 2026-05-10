@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"codeactor/internal/tui/components"
 	"codeactor/internal/compact"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,13 +16,30 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 
 	switch {
 	case cmd == ":q" || cmd == ":quit" || cmd == ":q!":
-		m.confirmQuitDialog.open = true
+		if m.dialogStack != nil {
+			d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
+			d.SetBounds(m.termWidth, m.termHeight)
+			m.dialogStack.Push(d)
+		} else {
+			m.confirmQuitDialog.open = true
+		}
 	case strings.HasPrefix(cmd, "/"):
 		// Search in log entries
 		query := strings.TrimPrefix(cmd, "/")
 		m.searchInLog(query)
 	case cmd == ":help" || cmd == ":h":
-		m.showHelpDialog = true
+		if m.dialogStack != nil {
+			if m.showHelpDialog {
+				// 关闭帮助弹窗（从栈中移除）
+				m.dialogStack.CloseDialog("help_dialog")
+			} else {
+				// 打开帮助弹窗
+				m.dialogStack.Push(components.NewHelpDialog(components.Language(m.currentLang)))
+			}
+			m.showHelpDialog = !m.showHelpDialog
+		} else {
+			m.showHelpDialog = true
+		}
 	case cmd == ":mode":
 		mode := "COMMAND"
 		if !m.commandMode {
@@ -72,7 +90,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// All other message types (tickMsg, taskEventMsg, WindowSizeMsg, etc.) are
 	// blocked to prevent viewport scrolling behind the overlay.
 	if m.showHelpDialog || m.confirmDialog.open ||
-		m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open {
+		m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open ||
+		(m.dialogStack != nil && m.dialogStack.Len() > 0) {
 		if _, ok := msg.(tea.KeyMsg); !ok {
 			return m, nil
 		}
@@ -83,12 +102,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return historyUpdate(msg, &m)
 	}
 
+	// ====== 新组件：弹窗栈优先处理 ======
+	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
+		topDialog := m.dialogStack.Top()
+		if topDialog != nil {
+			newComp, cmd := topDialog.Update(msg)
+			if newComp != nil {
+				// 更新栈顶弹窗
+				m.dialogStack.ReplaceTop(newComp.(components.Dialog))
+			}
+			if cmd != nil {
+				return m, cmd
+			}
+			// 弹窗已处理消息，不再向下传递
+			return m, nil
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tickMsg:
 		// Advance animation and rebuild viewport if there are running tools
+		m.animFrame++
+
+		// 通知动画管理器推进可见动画的帧
+		if m.animManager != nil {
+			// 使用 Tick 方法直接推进帧（100ms 间隔）
+			m.animManager.Tick(100)
+		}
+
 		if m.activeAnim {
 			m.anim.Tick()
-			m.animFrame++
 			// Throttle viewport rebuild to every 3 ticks (~300ms) to avoid
 			// flooding viewport.SetContent() — the #1 cause of scroll lag.
 			if m.animFrame%3 == 0 {
@@ -102,7 +145,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Don't schedule next tick if any popup/dialog is showing
 		if m.showHelpDialog || m.confirmDialog.open ||
-			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open {
+			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open ||
+			(m.dialogStack != nil && m.dialogStack.Len() > 0) {
 			return m, nil
 		}
 		// Continue ticking so that the animation resumes immediately
@@ -116,15 +160,138 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeViewport()
 		m.invalidateRenderedCache()
 		m.buildViewportContent()
+		// 更新布局引擎
+		if m.layoutEngine != nil {
+			m.layoutEngine.Resize(msg.Width, msg.Height)
+		}
+		// 重置 glamour renderer 的宽度
+		if m.glamourRenderer != nil {
+			m.glamourRenderer = nil // 将在下次 buildViewportContent 时重建
+		}
 		return m, nil
 
 	case publisherReadyMsg:
 		m.publisher = msg.publisher
 		return m, nil
 
+	case tea.MouseMsg:
+		if m.mouseHandler != nil {
+			action, x, y := m.mouseHandler.Detect(msg)
+			switch action {
+			case components.MouseScrollUp:
+				// 滚动向上（viewport 减少行）
+				m.viewport.ScrollUp(3)
+			case components.MouseScrollDown:
+				// 滚动向下（viewport 增加行）
+				m.viewport.ScrollDown(3)
+			case components.MouseClick:
+				// 单击：检测是否点击了弹窗按钮
+				m.handleMouseClick(x, y)
+			case components.MouseDoubleClick:
+				// 双击：选词（暂时占位）
+				_ = x
+				_ = y
+			case components.MouseTripleClick:
+				// 三击：选行（暂时占位）
+				_ = x
+				_ = y
+			case components.MouseDragStart:
+				// 拖拽开始（暂时占位）
+			case components.MouseDragMove:
+				// 拖拽移动（暂时占位）
+			case components.MouseDragEnd:
+				// 拖拽结束（暂时占位）
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 
-		// Confirmation dialog key handling — takes priority over everything
+		// ====== DialogStack 键处理：优先于所有旧弹窗 ======
+		if m.dialogStack != nil && m.dialogStack.Len() > 0 {
+			top := m.dialogStack.Top()
+			if top != nil {
+				key := msg.String()
+
+				// Ctrl+C: 强制退出
+				if key == "ctrl+c" {
+					m.quitting = true
+					return m, tea.Quit
+				}
+
+				// 更新弹窗
+				newComp, cmd := top.Update(msg)
+				if newComp != nil {
+					m.dialogStack.ReplaceTop(newComp.(components.Dialog))
+					top = newComp.(components.Dialog)
+				}
+
+				// 如果有 Cmd，返回
+				if cmd != nil {
+					return m, cmd
+				}
+
+				// 根据弹窗类型处理确认操作
+				switch d := top.(type) {
+				case *components.ConfirmDialog:
+					switch key {
+					case "enter":
+						action := d.GetResponseAction()
+						m.respondToAuth(action)
+						return m, nil
+					}
+					return m, nil
+
+				case *components.QuitConfirmDialog:
+					switch key {
+					case "enter":
+						if d.GetConfirmed() {
+							if d.ID() == "quit_confirm" || d.ID() == "quit_confirm_dialog" {
+								m.quitting = true
+								return m, tea.Quit
+							}
+							// Cancel confirmation
+							if m.currentTask != nil && m.currentTask.CancelFunc != nil {
+								m.currentTask.CancelFunc()
+								m.logEntries = append(m.logEntries, logEntry{
+									timestamp: time.Now(),
+									eventType: "status",
+									content:   "Task cancelled by user",
+								})
+								m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+							}
+						}
+						m.dialogStack.Pop()
+						return m, nil
+					case "esc", "n", "N":
+						d.SetConfirmed(false)
+						d.SelectedIndex = 0
+						m.dialogStack.Pop()
+						return m, nil
+					}
+					return m, nil
+
+				case *components.HelpDialog:
+					switch key {
+					case "esc", "i", "I":
+						m.dialogStack.Pop()
+						m.showHelpDialog = false
+						return m, nil
+					}
+					return m, nil
+
+				case *components.TaskCompleteDialog:
+					switch key {
+					case "enter", " ", "esc":
+						m.dialogStack.Pop()
+						return m, nil
+					}
+					return m, nil
+				}
+			}
+		}
+
+		// Confirmation dialog key handling (fallback for old dialog) — takes priority over everything
 		if m.confirmDialog.open {
 			switch msg.String() {
 			case "ctrl+c":
@@ -281,17 +448,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Help dialog is open: let action keys (i/esc/enter/?/ctrl+c) pass through,
 			// dismiss on any other key without processing it.
 			if m.showHelpDialog && key != "i" && key != "ctrl+e" && key != "enter" && key != "?" && key != "ctrl+c" {
+				// 如果 dialogStack 中有 help_dialog，从栈中关闭
+				if m.dialogStack != nil && m.showHelpDialog {
+					m.dialogStack.CloseDialog("help_dialog")
+				}
 				m.showHelpDialog = false
 				return m, nil
 			}
 
 			switch key {
 			case "ctrl+c":
-				m.confirmQuitDialog.open = true
+				if m.dialogStack != nil {
+					d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
+					d.SetBounds(m.termWidth, m.termHeight)
+					m.dialogStack.Push(d)
+				} else {
+					m.confirmQuitDialog.open = true
+				}
 				return m, nil
 
 			case "esc":
 				if m.showHelpDialog {
+					// 如果 dialogStack 中有 help_dialog，从栈中关闭
+					if m.dialogStack != nil {
+						m.dialogStack.CloseDialog("help_dialog")
+					}
 					m.showHelpDialog = false
 					return m, nil
 				}
@@ -302,7 +483,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
 					// Show cancel confirmation dialog
-					m.confirmCancelDialog.open = true
+					if m.dialogStack != nil {
+						d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
+						d.SetBounds(m.termWidth, m.termHeight)
+						m.dialogStack.Push(d)
+					} else {
+						m.confirmCancelDialog.open = true
+					}
 				}
 				return m, nil
 
@@ -388,7 +575,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// ── Help overlay ──
 			case "?":
 				if m.commandBuffer == "" {
-					m.showHelpDialog = !m.showHelpDialog
+					if m.dialogStack != nil {
+						if m.showHelpDialog {
+							// 关闭帮助弹窗（从栈中移除）
+							m.dialogStack.CloseDialog("help_dialog")
+						} else {
+							// 打开帮助弹窗
+							m.dialogStack.Push(components.NewHelpDialog(components.Language(m.currentLang)))
+						}
+						m.showHelpDialog = !m.showHelpDialog
+					} else {
+						m.showHelpDialog = !m.showHelpDialog
+					}
 				} else {
 					m.commandBuffer += "?"
 				}
@@ -422,7 +620,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ── Edit mode key handling ──
 		switch msg.String() {
 		case "ctrl+c":
-			m.confirmQuitDialog.open = true
+			if m.dialogStack != nil {
+				d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
+				d.SetBounds(m.termWidth, m.termHeight)
+				m.dialogStack.Push(d)
+			} else {
+				m.confirmQuitDialog.open = true
+			}
 			return m, nil
 
 		case "esc":
@@ -435,7 +639,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Show cancel confirmation dialog if task is running
 			if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
-				m.confirmCancelDialog.open = true
+				if m.dialogStack != nil {
+					d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
+					d.SetBounds(m.termWidth, m.termHeight)
+					m.dialogStack.Push(d)
+				} else {
+					m.confirmCancelDialog.open = true
+				}
 			}
 			return m, nil
 
@@ -556,7 +766,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The global guard at the top of Update() already blocks these messages,
 		// but keep this as a defensive double-check.
 		if m.showHelpDialog || m.confirmDialog.open ||
-			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open {
+			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open ||
+			(m.dialogStack != nil && m.dialogStack.Len() > 0) {
 			return m, nil
 		}
 
@@ -745,16 +956,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				content:   msg.err.Error(),
 			})
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-			// Show error dialog
-			m.taskCompleteDialog = taskCompleteDialog{
-				open:    true,
-				message: "❌ Task Failed\n\n" + msg.err.Error(),
+			// Show error dialog via DialogStack
+			if m.dialogStack != nil {
+				d := components.NewTaskCompleteDialog(false, "❌ Task Failed\n\n"+msg.err.Error(), components.Language(m.currentLang))
+				d.SetBounds(m.termWidth, m.termHeight)
+				m.dialogStack.Push(d)
+			} else {
+				m.taskCompleteDialog = taskCompleteDialog{
+					open:    true,
+					message: "❌ Task Failed\n\n" + msg.err.Error(),
+				}
 			}
 		} else {
-			// Show success dialog
-			m.taskCompleteDialog = taskCompleteDialog{
-				open:    true,
-				message: "Task Completed\n\nAll tasks have been finished.",
+			// Show success dialog via DialogStack
+			if m.dialogStack != nil {
+				d := components.NewTaskCompleteDialog(true, "Task Completed\n\nAll tasks have been finished.", components.Language(m.currentLang))
+				d.SetBounds(m.termWidth, m.termHeight)
+				m.dialogStack.Push(d)
+			} else {
+				m.taskCompleteDialog = taskCompleteDialog{
+					open:    true,
+					message: "Task Completed\n\nAll tasks have been finished.",
+				}
 			}
 		}
 		return m, nil
@@ -836,4 +1059,12 @@ func (m *model) updateSkillAutocomplete() {
 		m.skillSuggestions = nil
 		m.skillSuggestionIdx = 0
 	}
+}
+
+// handleMouseClick 处理鼠标点击事件
+func (m *model) handleMouseClick(x, y int) {
+	// 检查是否点击了弹窗中的按钮
+	// 简化实现：记录点击位置，等待后续扩展
+	_ = x
+	_ = y
 }

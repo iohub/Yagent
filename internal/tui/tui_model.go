@@ -9,6 +9,10 @@ import (
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
 	"codeactor/internal/messaging"
+	"codeactor/internal/tui/anim"
+	"codeactor/internal/tui/components"
+	"codeactor/internal/tui/diffview"
+	"codeactor/internal/tui/layout"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -237,7 +241,12 @@ type model struct {
 	historyPageSize int     // 每页条数，固定20
 	historyLoading  bool
 
-	
+	// ── 新组件（TUI 改进） ──
+	dialogStack   *components.DialogStack // 栈式弹窗管理器
+	animManager   *anim.Manager         // 可见性感知动画管理器
+	layoutEngine  *layout.LayoutEngine  // 动态布局引擎
+	mouseHandler  *components.ClickDetector // 鼠标事件处理器
+	diffView      *diffview.DiffView    // Diff 查看器
 }
 
 func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
@@ -326,6 +335,16 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 		glamourRenderer = nil
 	}
 
+	// 初始化新组件
+	ds := components.NewDialogStack()
+	am := anim.NewManager()
+	le := layout.NewLayoutEngine()
+	md := components.NewClickDetector()
+	dv := diffview.New()
+
+	// 注册默认的 tool_call 动画
+	am.Register("tool_call_anim", 10) // 10 FPS
+
 	return model{
 		assistant:       ca,
 		taskManager:     tm,
@@ -343,6 +362,13 @@ func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http
 		toolCallEntries: make(map[string]*ToolEntry),
 		anim:            NewAnim(10),
 		tokenUsagePerAgent: make(map[string]*AgentTokenUsage),
+
+		// 新组件
+		dialogStack:   ds,
+		animManager:   am,
+		layoutEngine:  le,
+		mouseHandler:  md,
+		diffView:      dv,
 	}
 }
 
@@ -350,7 +376,7 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.Raw(textarea.Blink()),
 		listenForEvents(m.eventCh),
-		tickCmd(),
+		m.animManager.TickWithCmd(),
 	)
 }
 

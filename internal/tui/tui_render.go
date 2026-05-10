@@ -16,6 +16,11 @@ import (
 func (m *model) computeFooterHeight() int {
 	height := 1 // separator line
 
+	// 弹窗栈占用额外空间（弹窗覆盖层不影响 footer，但为安全起见预留）
+	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
+		height += 10 // 弹窗默认高度预留
+	}
+
 	// Input area (only in edit mode; hidden in command mode)
 	if !m.commandMode {
 		height += m.computeInputHeight()

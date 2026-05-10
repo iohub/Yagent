@@ -20,27 +20,35 @@ func (m model) View() tea.View {
 		return renderHistoryView(&m)
 	}
 
-	// When confirmation dialog is open, render it as an overlay on top of the normal view
+	// ====== 新组件：检查弹窗栈 ======
+	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
+		overlay := m.dialogStack.Overlay(m.termWidth, m.termHeight)
+		if overlay != "" {
+			return tea.NewView(overlay)
+		}
+	}
+
+	// When confirmation dialog is open (fallback for old dialog), render it as an overlay
 	if m.confirmDialog.open {
 		return tea.NewView(m.renderConfirmDialog())
 	}
 
-	// When help dialog is open in command mode, render it as an overlay
+	// When help dialog is open in command mode (fallback for old dialog), render it
 	if m.showHelpDialog {
 		return tea.NewView(m.renderHelpDialog())
 	}
 
-	// When quit confirmation dialog is open, render it as an overlay
+	// When quit confirmation dialog is open (fallback for old dialog), render it
 	if m.confirmQuitDialog.open {
 		return tea.NewView(m.renderConfirmQuitDialog())
 	}
 
-	// When cancel task confirmation dialog is open, render it as an overlay
+	// When cancel task confirmation dialog is open (fallback for old dialog), render it
 	if m.confirmCancelDialog.open {
 		return tea.NewView(m.renderConfirmCancelDialog())
 	}
 
-	// When task complete dialog is open, render it as an overlay
+	// When task complete dialog is open (fallback for old dialog), render it
 	if m.taskCompleteDialog.open {
 		return tea.NewView(m.renderTaskCompleteDialog())
 	}
@@ -334,4 +342,13 @@ func (m model) renderTokenDashboard() string {
 	}
 
 	return dashStyle.Render(strings.Join(lines, "\n"))
+}
+
+// renderOverlay 渲染弹窗叠加层
+// 如果 dialogStack 为空则返回空字符串，否则返回完整的覆盖层渲染结果
+func (m model) renderOverlay() string {
+	if m.dialogStack == nil || m.dialogStack.Len() == 0 {
+		return ""
+	}
+	return m.dialogStack.Overlay(m.termWidth, m.termHeight)
 }
