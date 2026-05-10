@@ -187,12 +187,12 @@ func (m model) renderWelcomePanel() string {
 
 	// Compute responsive widths
 	panelWidth := m.computeFieldWidth() + 4
-	innerWidth := panelWidth - 4 // 2 border + 2 padding
-	leftWidth := 36
+	innerWidth := panelWidth - 6 // 2 border + 4 padding
+	leftWidth := 38
 	if innerWidth < 65 {
 		// Narrow terminal: stack vertically
-		boxInner := leftContent + "\n\n" + welcomeDimStyle.Render(strings.Repeat("─", leftWidth)) + "\n\n" + right.String()
-		return welcomePanelStyle.Width(panelWidth).Render(boxInner)
+		boxInner := leftContent + "\n\n" + welcomeDimStyle.Render(strings.Repeat("─", 38)) + "\n\n" + right.String()
+		return welcomePanelStyle.Width(innerWidth).Render(boxInner)
 	}
 	rightWidth := innerWidth - leftWidth - 3 // 3 for " │ "
 	if rightWidth < 20 {
@@ -205,7 +205,7 @@ func (m model) renderWelcomePanel() string {
 	rightStyled := lipgloss.NewStyle().Width(rightWidth).Render(right.String())
 
 	inner := lipgloss.JoinHorizontal(lipgloss.Top, leftStyled, separator, rightStyled)
-	return welcomePanelStyle.Width(panelWidth).Render(inner)
+	return welcomePanelStyle.Width(innerWidth).Render(inner)
 }
 func renderBanner() string {
 	asciiLogo := []string{
