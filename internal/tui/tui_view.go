@@ -115,7 +115,6 @@ func (m model) View() tea.View {
 
 	// Token consumption display (before status line)
 	footer.WriteString(m.renderTokenDashboard())
-	footer.WriteString("\n")
 
 	// Status line: [COMMAND] tag (if in command mode) + Running indicator + mode indicator
 	var runningBadge string
