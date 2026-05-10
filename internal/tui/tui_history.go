@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -319,12 +320,15 @@ func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 	}
 
 	// 4. Add task to task manager
+	ctx, cancel := context.WithCancel(context.Background())
 	m.taskManager.AddTask(&http.Task{
 		ID:         taskID,
 		Status:     "finished",
 		Result:     fmt.Sprintf("Session restored: %d messages", len(mem.Messages)),
 		ProjectDir: m.projectDir,
 		Memory:     mem,
+		Context:    ctx,
+		CancelFunc: cancel,
 	})
 
 	// 5. Set as current task
