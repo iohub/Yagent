@@ -767,7 +767,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Find the last @ and insert the file path after it
 			lastAt := strings.LastIndex(currentVal, "@")
 			if lastAt >= 0 {
-				newVal := currentVal[:lastAt+1] + msg.path + currentVal[lastAt+1:]
+				newVal := currentVal[:lastAt+1] + msg.path + " " + currentVal[lastAt+1:]
 				m.input.SetValue(newVal)
 			}
 		}

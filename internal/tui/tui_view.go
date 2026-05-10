@@ -125,7 +125,12 @@ func (m model) View() tea.View {
 			runningBadge = logStatusStyle.Render(" ◷ Running...")
 		}
 	}
-	footer.WriteString("\n")
+
+	// Add spacing before status line: empty line in edit mode, compact in command mode
+	if !m.commandMode {
+		footer.WriteString("\n")
+	}
+
 	var statusLine string
 	if m.commandMode {
 		commandTag := commandModeBarStyle.Render("[COMMAND]")
@@ -141,7 +146,8 @@ func (m model) View() tea.View {
 			statusLine = footerStyle.Render(langManager.GetText("EditModeTips"))
 		}
 	}
-	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
+	// Compact margin for command mode: only left margin, no extra top/bottom spacing
+	footer.WriteString(lipgloss.NewStyle().MarginTop(0).MarginBottom(0).MarginLeft(2).Render(statusLine))
 
 	b.WriteString(footer.String())
 
