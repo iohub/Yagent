@@ -114,8 +114,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd != nil {
 				return m, cmd
 			}
-			// 弹窗已处理消息，不再向下传递
-			return m, nil
+			// 弹窗已处理消息，但仍需继续传递 KeyMsg 到后续 switch 处理（如确认退出逻辑）
+			// 注意：此处不再 return m, nil，否则 KeyMsg 会被吞掉，导致 tea.Quit 无法执行
 		}
 	}
 
@@ -219,18 +219,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				}
 
-				// 更新弹窗
-				newComp, cmd := top.Update(msg)
-				if newComp != nil {
-					m.dialogStack.ReplaceTop(newComp.(components.Dialog))
-					top = newComp.(components.Dialog)
-				}
-
-				// 如果有 Cmd，返回
-				if cmd != nil {
-					return m, cmd
-				}
-
 				// 根据弹窗类型处理确认操作
 				switch d := top.(type) {
 				case *components.ConfirmDialog:
@@ -244,7 +232,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				case *components.QuitConfirmDialog:
 					switch key {
-					case "enter":
+					case "enter", "y", "Y":
 						if d.GetConfirmed() {
 							if d.ID() == "quit_confirm" || d.ID() == "quit_confirm_dialog" {
 								m.quitting = true

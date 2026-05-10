@@ -83,10 +83,13 @@ func (d *QuitConfirmDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 	case "enter":
 		if d.SelectedIndex == 0 {
 			d.Confirmed = true
+		} else {
+			d.Confirmed = false
 		}
 		return d, nil
 	case "y", "Y":
 		d.Confirmed = true
+		d.SelectedIndex = 0
 		return d, nil
 	case "n", "N", "esc":
 		d.Confirmed = false
@@ -117,7 +120,6 @@ func (d *QuitConfirmDialog) View() string {
 
 	// ── Message ──
 	message := d.messageStyle.Render(d.NoLabel) // reusing NoLabel area as message placeholder
-	_ = message
 
 	// ── Buttons (2 options) ──
 	renderBtn := func(label string, idx int) string {
