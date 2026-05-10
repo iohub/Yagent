@@ -16,16 +16,15 @@ import (
 func (m *model) computeFooterHeight() int {
 	height := 1 // separator line
 
-	// Input area
-	if m.commandMode {
-		height += 1 // command mode line
-	} else {
+	// Input area (only in edit mode; hidden in command mode)
+	if !m.commandMode {
 		height += m.computeInputHeight()
 		// Skill autocomplete suggestions
 		if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
 			height += len(m.skillSuggestions) + 1 // suggestion lines + hint line
 		}
 	}
+	// In command mode, no input line is rendered, so no height addition needed.
 
 	// Error message
 	if m.errMsg != "" {
@@ -47,8 +46,14 @@ func (m *model) computeFooterHeight() int {
 		}
 	}
 
-	// Two blank lines + status line (see View() — footer.WriteString("\n") twice + statusLine)
-	height += 3
+	// Blank line (edit mode only) + status line (see View() — footer.WriteString("\n") in edit mode only)
+	if m.commandMode {
+		// No blank line before status line in command mode
+		height += 1 // status line only
+	} else {
+		// One blank line before status line in edit mode
+		height += 2 // blank line + status line
+	}
 
 	return height
 }
