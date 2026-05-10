@@ -81,6 +81,8 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 			fn = globalCtx.RepoOps.ExecuteQueryCodeSnippet
 		case "deepthinking":
 			fn = globalCtx.DeepThinkingTool.Execute
+		case "get_repo_overview":
+			fn = makeGetRepoOverviewFn(globalCtx)
 		default:
 			continue
 		}
@@ -166,6 +168,120 @@ func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse
 	return nil, fmt.Errorf("investigate_repo failed after 3 retries: %w", lastErr)
 }
 
+// makeGetRepoOverviewFn 创建一个闭包，捕获 globalCtx 用于后续调用
+func makeGetRepoOverviewFn(globalCtx *globalctx.GlobalCtx) tools.ToolFunc {
+	return func(_ context.Context, _ map[string]interface{}) (interface{}, error) {
+		return executeGetRepoOverview(globalCtx)
+	}
+}
+
+// executeGetRepoOverview 是 get_repo_overview 工具的实际实现
+// 它调用 codebase 服务的 /investigate_repo 端点获取仓库全景画像
+func executeGetRepoOverview(globalCtx *globalctx.GlobalCtx) (interface{}, error) {
+	projectDir := globalCtx.ProjectPath
+
+	if projectDir == "" {
+		return "", fmt.Errorf("project_dir is empty")
+	}
+
+	requestData := map[string]string{
+		"project_dir": projectDir,
+	}
+
+	jsonData, err := json.Marshal(requestData)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request data: %v", err)
+	}
+
+	url := fmt.Sprintf("%s/investigate_repo", globalCtx.CodebaseURL)
+	slog.Info("get_repo_overview request", "project_dir", projectDir)
+
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+
+		req, err := http.NewRequest("POST", url, bytes.NewReader(jsonData))
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create request: %v", err)
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to send request: %v", err)
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response body: %v", err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
+			continue
+		}
+
+		var response PreInvestigateResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			lastErr = fmt.Errorf("failed to unmarshal response: %v", err)
+			continue
+		}
+
+		if !response.Success {
+			lastErr = fmt.Errorf("server returned unsuccessful response: %s", string(body))
+			continue
+		}
+
+		// Format output as readable text
+		var result string
+		result = fmt.Sprintf("=== Repository Overview (Project: %s) ===\n\n", projectDir)
+		result += fmt.Sprintf("Total Functions: %d\n\n", response.Data.TotalFunctions)
+
+		result += "Directory Tree:\n" + response.Data.DirectoryTree + "\n\n"
+
+		result += "Core Functions (ranked by call relationships):\n"
+		for _, fn := range response.Data.CoreFunctions {
+			result += fmt.Sprintf("  - %s (in %s, out_degree: %d)\n", fn.Name, fn.FilePath, fn.OutDegree)
+			if len(fn.Callers) > 0 {
+				result += "    Callers: "
+				for i, caller := range fn.Callers {
+					if i > 0 {
+						result += ", "
+					}
+					result += fmt.Sprintf("%s (%s)", caller.FunctionName, caller.FilePath)
+				}
+				result += "\n"
+			}
+			if len(fn.Callees) > 0 {
+				result += "    Callees: "
+				for i, callee := range fn.Callees {
+					if i > 0 {
+						result += ", "
+					}
+					result += fmt.Sprintf("%s (%s)", callee.FunctionName, callee.FilePath)
+				}
+				result += "\n"
+			}
+		}
+
+		result += "\nFile Skeletons:\n"
+		for _, sk := range response.Data.FileSkeletons {
+			result += fmt.Sprintf("\nFile: %s (%s)\n```%s\n%s\n```\n", sk.Filepath, sk.Language, sk.Language, sk.SkeletonText)
+		}
+
+		return result, nil
+	}
+
+	return "", fmt.Errorf("get_repo_overview failed after 3 retries: %w", lastErr)
+}
+
 func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 	systemPrompt := repoPrompt
 
@@ -173,49 +289,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 		return "", fmt.Errorf("project_dir is empty")
 	}
 
-	slog.Info("RepoAgent performing pre-investigation", "project_dir", a.GlobalCtx.ProjectPath)
-	investigation, err := a.doPreInvestigate(a.GlobalCtx.ProjectPath)
-	var info string
-	if err != nil {
-		slog.Warn("RepoAgent pre-investigation failed", "error", err)
-	} else {
-		// Add investigation results to system prompt
-		info = "\n\nRepository Information:\n"
-		info += "\nDirectory Tree:\n" + investigation.Data.DirectoryTree + "\n"
-		info += "\nCore Functions:\n"
-		for _, fn := range investigation.Data.CoreFunctions {
-			info += fmt.Sprintf("- %s (in %s)\n", fn.Name, fn.FilePath)
-			if len(fn.Callers) > 0 {
-				info += "  Callers: "
-				for i, caller := range fn.Callers {
-					if i > 0 {
-						info += ", "
-					}
-					info += fmt.Sprintf("%s (%s)", caller.FunctionName, caller.FilePath)
-				}
-				info += "\n"
-			}
-			if len(fn.Callees) > 0 {
-				info += "  Callees: "
-				for i, callee := range fn.Callees {
-					if i > 0 {
-						info += ", "
-					}
-					info += fmt.Sprintf("%s (%s)", callee.FunctionName, callee.FilePath)
-				}
-				info += "\n"
-			}
-		}
-
-		info += "\nFile Skeletons (Context):\n"
-		for _, sk := range investigation.Data.FileSkeletons {
-			info += fmt.Sprintf("File: %s\n```%s\n%s\n```\n", sk.Filepath, sk.Language, sk.SkeletonText)
-		}
-
-	}
-
 	systemPrompt = a.GlobalCtx.FormatPrompt(systemPrompt)
-	systemPrompt += info
 
 	cfg := ExecutorConfig{
 		SystemPrompt:  systemPrompt,
