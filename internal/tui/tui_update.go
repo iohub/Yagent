@@ -164,10 +164,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.layoutEngine != nil {
 			m.layoutEngine.Resize(msg.Width, msg.Height)
 		}
-		// 重置 glamour renderer 的宽度
-		if m.glamourRenderer != nil {
-			m.glamourRenderer = nil // 将在下次 buildViewportContent 时重建
-		}
 		return m, nil
 
 	case publisherReadyMsg:
