@@ -113,7 +113,7 @@ var langMap = map[Language]translations{
 		TaskCompleteOK:    "确定",
 		TaskCompleteHelp:  "按 ENTER 或 SPACE 关闭",
 		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  i:编辑  ctrl+e:编辑模式",
-		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  /:搜索  ?:帮助  i:编辑",
+		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  ?:帮助  i:编辑",
 		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  /:技能  ctrl+c:退出",
 		HelpDialogTitle:                  "Vim 快捷键帮助",
 		HelpDialogContent: "  导航:\n" +
@@ -178,7 +178,7 @@ var langMap = map[Language]translations{
 		TaskCompleteOK:    "OK",
 		TaskCompleteHelp:  "Press ENTER or SPACE to close",
 		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  i:edit  ctrl+e:edit",
-		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  /:search  ?:help  i:edit",
+		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ?:help  i:edit",
 		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  /:skill  ctrl+c:quit",
 		HelpDialogTitle:                  "Vim Keybindings Help",
 		HelpDialogContent: "  Navigation:\n" +

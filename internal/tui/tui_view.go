@@ -66,27 +66,9 @@ func (m model) View() tea.View {
 	b.WriteString(logSeparatorStyle.Render(strings.Repeat("─", sepWidth)))
 	b.WriteString("\n")
 
-	// ── Input area: edit mode vs command mode ──
+	// ── Input area: command mode hidden, edit mode with textarea ──
 	var footer strings.Builder
-
-	if m.commandMode {
-		// ── Command mode (vim-like): hidden input, ":" prefix, colored bar ──
-		modeBar := commandModeBarStyle.Render(" COMMAND ")
-
-		var cmdLine string
-		cmdPrefix := commandPrefixStyle.Render(" :")
-		if m.commandBuffer != "" {
-			cmdBufDisplay := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(m.commandBuffer)
-			cmdCursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Blink(true).Render("▊")
-			cmdLine = modeBar + cmdPrefix + " " + cmdBufDisplay + cmdCursor
-		} else {
-			cmdCursor := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Blink(true).Render("▊")
-			cmdLine = modeBar + cmdPrefix + " " + cmdCursor
-		}
-
-		footer.WriteString(cmdLine)
-		footer.WriteString("\n")
-	} else {
+	if !m.commandMode {
 		// ── Edit mode: textarea with dark background (via Base style), no bar ──
 		m.input.SetWidth(m.computeFieldWidth())
 		m.input.SetHeight(m.computeInputHeight())
@@ -133,13 +115,12 @@ func (m model) View() tea.View {
 
 	// Token consumption display (before status line)
 	footer.WriteString(m.renderTokenDashboard())
-	footer.WriteString("\n")
 
-	// Status line: Running indicator (leftmost) + mode indicator
+	// Status line: [COMMAND] tag (if in command mode) + Running indicator + mode indicator
 	var runningBadge string
 	if m.taskRunning {
 		if m.currentModel != "" {
-			runningBadge = logStatusStyle.Render(fmt.Sprintf(" ◷ Running [%s]...", m.currentModel))
+			runningBadge = logStatusStyle.Render(" ◷ Running [" + m.currentModel + "]...")
 		} else {
 			runningBadge = logStatusStyle.Render(" ◷ Running...")
 		}
@@ -147,19 +128,20 @@ func (m model) View() tea.View {
 	footer.WriteString("\n")
 	var statusLine string
 	if m.commandMode {
+		commandTag := commandModeBarStyle.Render("[COMMAND]")
 		if m.taskRunning {
-			statusLine = footerStyle.Render(langManager.GetText("CommandModeTips"))
+			statusLine = footerStyle.Render(commandTag + " " + runningBadge + " " + langManager.GetText("CommandModeTips"))
 		} else {
-			statusLine = footerStyle.Render(langManager.GetText("CommandModeIdleTips"))
+			statusLine = footerStyle.Render(commandTag + " " + langManager.GetText("CommandModeIdleTips"))
 		}
 	} else {
-		statusLine = footerStyle.Render(langManager.GetText("EditModeTips"))
+		if runningBadge != "" {
+			statusLine = footerStyle.Render(runningBadge + " " + langManager.GetText("EditModeTips"))
+		} else {
+			statusLine = footerStyle.Render(langManager.GetText("EditModeTips"))
+		}
 	}
-	if runningBadge != "" {
-		footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(runningBadge + " " + statusLine))
-	} else {
-		footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
-	}
+	footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(statusLine))
 
 	b.WriteString(footer.String())
 
@@ -187,12 +169,12 @@ func (m model) renderWelcomePanel() string {
 
 	// Compute responsive widths
 	panelWidth := m.computeFieldWidth() + 4
-	innerWidth := panelWidth - 4 // 2 border + 2 padding
-	leftWidth := 36
+	innerWidth := panelWidth - 6 // 2 border + 4 padding
+	leftWidth := 38
 	if innerWidth < 65 {
 		// Narrow terminal: stack vertically
-		boxInner := leftContent + "\n\n" + welcomeDimStyle.Render(strings.Repeat("─", leftWidth)) + "\n\n" + right.String()
-		return welcomePanelStyle.Width(panelWidth).Render(boxInner)
+		boxInner := leftContent + "\n\n" + welcomeDimStyle.Render(strings.Repeat("─", 38)) + "\n\n" + right.String()
+		return welcomePanelStyle.Width(innerWidth).Render(boxInner)
 	}
 	rightWidth := innerWidth - leftWidth - 3 // 3 for " │ "
 	if rightWidth < 20 {
@@ -205,7 +187,7 @@ func (m model) renderWelcomePanel() string {
 	rightStyled := lipgloss.NewStyle().Width(rightWidth).Render(right.String())
 
 	inner := lipgloss.JoinHorizontal(lipgloss.Top, leftStyled, separator, rightStyled)
-	return welcomePanelStyle.Width(panelWidth).Render(inner)
+	return welcomePanelStyle.Width(innerWidth).Render(inner)
 }
 func renderBanner() string {
 	asciiLogo := []string{
