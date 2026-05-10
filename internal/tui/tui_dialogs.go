@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"codeactor/internal/messaging"
+	"codeactor/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -21,6 +22,8 @@ func (m *model) openConfirmDialog(event *messaging.MessageEvent) {
 	toolName, _ := content["tool_name"].(string)
 	reason, _ := content["reason"].(string)
 	requestID, _ := content["request_id"].(string)
+	command, _ := content["command"].(string)
+	warning, _ := content["warning"].(string)
 
 	if toolName == "" && reason == "" {
 		// 向后兼容旧格式：从 question 字段解析
@@ -29,26 +32,45 @@ func (m *model) openConfirmDialog(event *messaging.MessageEvent) {
 			return
 		}
 		toolName, reason = parseConfirmQuestion(question)
+		command = reason
+		warning = ""
 	}
 
-	m.confirmDialog = confirmDialog{
-		open:           true,
-		toolName:       toolName,
-		reason:         reason,
-		requestID:      requestID,
-		selectedOption: 0, // default: Allow
+	if m.dialogStack != nil {
+		// 通过 DialogStack 打开确认弹窗
+		d := components.NewConfirmDialog(toolName, command, warning, components.Language(m.currentLang))
+		d.SetBounds(m.termWidth, m.termHeight)
+		m.dialogStack.Push(d)
+	} else {
+		// 降级：使用原有 confirmDialog
+		m.confirmDialog = confirmDialog{
+			open:           true,
+			toolName:       toolName,
+			reason:         reason,
+			requestID:      requestID,
+			selectedOption: 0, // default: Allow
+		}
 	}
 }
 
 // respondToAuth publishes the user response and closes the dialog.
 func (m *model) respondToAuth(response string) {
 	if m.publisher != nil {
+		// 优先从 DialogStack 获取 requestID
+		requestID := ""
+		if m.dialogStack != nil && m.dialogStack.Len() > 0 {
+			m.dialogStack.Pop()
+		} else {
+			requestID = m.confirmDialog.requestID
+		}
 		m.publisher.Publish("user_help_response", map[string]interface{}{
 			"response":   response,
-			"request_id": m.confirmDialog.requestID,
+			"request_id": requestID,
 		}, "User")
 	}
-	m.confirmDialog.open = false
+	if m.dialogStack == nil || m.dialogStack.Len() == 0 {
+		m.confirmDialog.open = false
+	}
 
 	// Log the response
 	m.logEntries = append(m.logEntries, logEntry{
