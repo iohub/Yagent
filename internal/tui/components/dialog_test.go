@@ -70,7 +70,7 @@ func TestConfirmDialogChinese(t *testing.T) {
 
 // TestQuitConfirmDialogCreation tests QuitConfirmDialog constructor.
 func TestQuitConfirmDialogCreation(t *testing.T) {
-	d := NewQuitConfirmDialog("quit_confirm", "Quit?", "Yes", "No", "167")
+	d := NewQuitConfirmDialog("quit_confirm", "Quit?", "Are you sure?", "Yes", "No", "167")
 	if d.ID() != "quit_confirm" {
 		t.Errorf("expected ID 'quit_confirm', got %q", d.ID())
 	}

@@ -12,6 +12,7 @@ import (
 type QuitConfirmDialog struct {
 	DialogID      string
 	Title         string
+	Message       string
 	YesLabel      string
 	NoLabel       string
 	SelectedIndex int // 0=Yes, 1=No
@@ -27,10 +28,11 @@ type QuitConfirmDialog struct {
 }
 
 // NewQuitConfirmDialog creates a new quit/cancel confirmation dialog.
-func NewQuitConfirmDialog(id, title, yes, no string, borderColor string) *QuitConfirmDialog {
+func NewQuitConfirmDialog(id, title, message, yes, no string, borderColor string) *QuitConfirmDialog {
 	return &QuitConfirmDialog{
 		DialogID:      id,
 		Title:         title,
+		Message:       message,
 		YesLabel:      yes,
 		NoLabel:       no,
 		SelectedIndex: 0,
@@ -119,7 +121,7 @@ func (d *QuitConfirmDialog) View() string {
 	titleLine := d.titleStyle.Render(d.Title)
 
 	// ── Message ──
-	message := d.messageStyle.Render(d.NoLabel) // reusing NoLabel area as message placeholder
+	message := d.messageStyle.Render(d.Message)
 
 	// ── Buttons (2 options) ──
 	renderBtn := func(label string, idx int) string {
@@ -195,30 +197,34 @@ func (d *QuitConfirmDialog) SetConfirmed(confirmed bool) { d.Confirmed = confirm
 
 // NewQuitConfirmDialogForQuit creates a quit confirmation dialog.
 func NewQuitConfirmDialogForQuit(lang Language) *QuitConfirmDialog {
-	var title, yes, no string
+	var title, message, yes, no string
 	if lang == LanguageZh {
 		title = "退出程序"
+		message = "确定要退出程序吗？"
 		yes = "是"
 		no = "否"
 	} else {
 		title = "Quit Program"
+		message = "Are you sure you want to quit?"
 		yes = "Yes"
 		no = "No"
 	}
-	return NewQuitConfirmDialog("quit_confirm", title, yes, no, "167")
+	return NewQuitConfirmDialog("quit_confirm", title, message, yes, no, "167")
 }
 
 // NewQuitConfirmDialogForCancel creates a cancel task confirmation dialog.
 func NewQuitConfirmDialogForCancel(lang Language) *QuitConfirmDialog {
-	var title, yes, no string
+	var title, message, yes, no string
 	if lang == LanguageZh {
 		title = "取消任务"
+		message = "确定要取消当前正在运行的任务吗？"
 		yes = "确定"
 		no = "取消"
 	} else {
 		title = "Cancel Task"
+		message = "Are you sure you want to cancel?"
 		yes = "Yes"
 		no = "No"
 	}
-	return NewQuitConfirmDialog("cancel_confirm", title, yes, no, "214")
+	return NewQuitConfirmDialog("cancel_confirm", title, message, yes, no, "214")
 }
