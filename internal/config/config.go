@@ -388,6 +388,7 @@ type BrowserConfig struct {
 	AllowedDomains       []string `toml:"allowed_domains"`       // 允许访问的域名列表（空=全部允许）
 	BlockedDomains       []string `toml:"blocked_domains"`       // 阻止访问的域名列表
 	TimeoutSeconds       int      `toml:"timeout_seconds"`       // 单个操作超时秒数，默认 30
+	TaskTimeoutSeconds   int      `toml:"task_timeout_seconds"`   // 单个浏览器任务总超时秒数，默认 300
 	MaxConcurrentPages   int      `toml:"max_concurrent_pages"`  // 最大并发页面数，默认 4
 	AutoLaunch           bool     `toml:"auto_launch"`           // 首次请求时自动启动浏览器，默认 true
 	IdleTimeout          string   `toml:"idle_timeout"`          // 空闲超时（如 "5m"），空=不自动关闭

@@ -144,11 +144,8 @@ func (m model) View() tea.View {
 	var statusLine string
 	if m.commandMode {
 		commandTag := commandModeBarStyle.Render("[COMMAND]")
-		if m.taskRunning {
-			statusLine = footerStyle.Render(commandTag + " " + runningBadge + " " + langManager.GetText("CommandModeTips"))
-		} else {
-			statusLine = footerStyle.Render(commandTag + " " + langManager.GetText("CommandModeIdleTips"))
-		}
+		// Running badge is now inside token dashboard, not in status line
+		statusLine = footerStyle.Render(commandTag + " " + langManager.GetText("CommandModeIdleTips"))
 	} else {
 		if runningBadge != "" {
 			statusLine = footerStyle.Render(runningBadge + " " + langManager.GetText("EditModeTips"))
@@ -315,6 +312,17 @@ func (m model) renderTokenDashboard() string {
 	})
 
 	var lines []string
+
+	// In command mode with running task, show running badge at top of dashboard
+	if m.commandMode && m.taskRunning {
+		var runningLine string
+		if m.currentModel != "" {
+			runningLine = logStatusStyle.Render(" ◷ Running [" + m.currentModel + "]...")
+		} else {
+			runningLine = logStatusStyle.Render(" ◷ Running...")
+		}
+		lines = append(lines, runningLine)
+	}
 	lines = append(lines, header)
 	lines = append(lines, sepStyle.Render(strings.Repeat("─", 48)))
 

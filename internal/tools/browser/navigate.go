@@ -91,7 +91,7 @@ func (t *NavigateTool) Execute(ctx context.Context, params map[string]interface{
 	}
 
 	// 等待页面加载
-	page.WaitLoad()
+	page.Timeout(timeout).WaitLoad()
 
 	// 获取页面信息
 	info, err := page.Info()

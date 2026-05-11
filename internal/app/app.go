@@ -183,6 +183,9 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 		if cfg.TimeoutSeconds > 0 {
 			browserCfg.TimeoutSeconds = cfg.TimeoutSeconds
 		}
+		if cfg.TaskTimeoutSeconds > 0 {
+			browserCfg.TaskTimeoutSeconds = cfg.TaskTimeoutSeconds
+		}
 		if cfg.MaxConcurrentPages > 0 {
 			browserCfg.MaxConcurrentPages = cfg.MaxConcurrentPages
 		}
