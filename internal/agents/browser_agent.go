@@ -26,7 +26,6 @@ type BrowserAgent struct {
 	Adapters       []*tools.Adapter
 	maxSteps       int
 	browserMgr     *browser.Manager
-	defaultTimeout time.Duration
 }
 
 // NewBrowserAgent 创建 Browser-Agent
@@ -91,7 +90,6 @@ func NewBrowserAgent(
 		Adapters:       allAdapters,
 		maxSteps:       maxSteps,
 		browserMgr:     browserMgr,
-		defaultTimeout: 60 * time.Second,
 	}
 }
 
@@ -111,8 +109,14 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (string, error) {
 		return "", fmt.Errorf("浏览器未启动且 AutoLaunch 被禁用")
 	}
 
+	// 从浏览器配置读取任务超时，默认180秒
+	taskTimeout := 180 * time.Second
+	if cfg := a.browserMgr.GetConfig(); cfg.TaskTimeoutSeconds > 0 {
+		taskTimeout = time.Duration(cfg.TaskTimeoutSeconds) * time.Second
+	}
+
 	// 创建带超时的上下文
-	taskCtx, cancel := context.WithTimeout(ctx, a.defaultTimeout)
+	taskCtx, cancel := context.WithTimeout(ctx, taskTimeout)
 	defer cancel()
 
 	// 从浏览器管理器获取页面

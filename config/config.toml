@@ -210,3 +210,4 @@ idle_timeout = "5m"
 allow_no_sandbox = false   # Docker 环境设为 true
 extra_args = []
 enable_browser_agent = true
+task_timeout_seconds = 300

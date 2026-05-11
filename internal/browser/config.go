@@ -65,6 +65,7 @@ type BrowserCfg struct {
 	AllowedDomains     []string
 	BlockedDomains     []string
 	TimeoutSeconds     int
+	TaskTimeoutSeconds int
 	MaxConcurrentPages int
 	AutoLaunch         bool
 	IdleTimeout        string
@@ -88,6 +89,7 @@ func DefaultBrowserConfig() BrowserCfg {
 		ViewportWidth:      1280,
 		ViewportHeight:     720,
 		TimeoutSeconds:     30,
+		TaskTimeoutSeconds: 300,
 		MaxConcurrentPages: 4,
 		AutoLaunch:         true,
 		IdleTimeout:        "5m",

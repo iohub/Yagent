@@ -51,7 +51,7 @@ func (t *ExtractTextTool) Execute(ctx context.Context, params map[string]interfa
 	el, err := page.Timeout(getTimeout(params)).Element("body")
 	if err != nil {
 		// 降级：使用 JS 获取
-		result, err := page.Eval("() => document.body ? document.body.innerText : ''")
+		result, err := page.Timeout(getTimeout(params)).Eval("() => document.body ? document.body.innerText : ''")
 		if err != nil {
 			return nil, fmt.Errorf("提取页面文本失败: %w", err)
 		}
@@ -124,7 +124,7 @@ func (t *ExtractHTMLTool) Execute(ctx context.Context, params map[string]interfa
 	}
 
 	// 提取整个页面 HTML
-	html, err := page.HTML()
+	html, err := page.Timeout(getTimeout(params)).HTML()
 	if err != nil {
 		return nil, fmt.Errorf("提取页面 HTML 失败: %w", err)
 	}
