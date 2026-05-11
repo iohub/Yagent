@@ -162,7 +162,7 @@ type AgentTokenUsage struct {
 // TUI Model
 type model struct {
 	// External dependencies
-	assistant   *app.CodingAssistant
+	assistant   *app.CodeActor
 	taskManager *http.TaskManager
 	dataManager *datamanager.DataManager
 
@@ -249,7 +249,7 @@ type model struct {
 	diffView      *diffview.DiffView    // Diff 查看器
 }
 
-func initialModel(preloadedTaskContent string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
+func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
 	ti := textarea.New()
 
 	// ── Editor input styles (harmonized with TUI 256-color palette) ──

@@ -20,7 +20,7 @@ import (
 )
 
 // HandleWebSocket 设置WebSocket处理器
-func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant *app.CodingAssistant, dataManager *datamanager.DataManager) {
+func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codeActor *app.CodeActor, dataManager *datamanager.DataManager) {
 	m.HandleConnect(func(s *melody.Session) {
 		slog.Info("WebSocket client connected")
 		// 发送连接确认消息
@@ -48,9 +48,9 @@ func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant
 
 		switch socketMsg.Event {
 		case "start_task":
-			handleStartTask(s, socketMsg, taskManager, codingAssistant, dataManager)
+			handleStartTask(s, socketMsg, taskManager, codeActor, dataManager)
 		case "chat_message":
-			handleChatMessage(s, socketMsg, taskManager, codingAssistant, dataManager)
+			handleChatMessage(s, socketMsg, taskManager, codeActor, dataManager)
 		case "get_memory":
 			handleGetMemory(s, socketMsg, taskManager)
 		case "clear_memory":
@@ -61,7 +61,7 @@ func HandleWebSocket(m *melody.Melody, taskManager *TaskManager, codingAssistant
 	})
 }
 
-func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *app.CodingAssistant, dataManager *datamanager.DataManager) {
+func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codeActor *app.CodeActor, dataManager *datamanager.DataManager) {
 	var taskData struct {
 		ProjectDir string `json:"project_dir"`
 		TaskDesc   string `json:"task_desc"`
@@ -97,10 +97,10 @@ func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskMana
 	// 发送开始执行消息
 	taskManager.SetTaskProgress(task.ID, "Starting coding task...")
 	// 后台执行任务
-	go ExecuteTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, codingAssistant, dataManager)
+	go ExecuteTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, codeActor, dataManager)
 }
 
-func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codingAssistant *app.CodingAssistant, dataManager *datamanager.DataManager) {
+func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskManager, codeActor *app.CodeActor, dataManager *datamanager.DataManager) {
 	var chatData struct {
 		TaskID     string `json:"task_id"`
 		Message    string `json:"message"`
@@ -214,7 +214,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 		dispatcher.RegisterConsumer(tuiConsumer)
 
 		// Integrate messaging with coding assistant
-		codingAssistant.IntegrateMessaging(dispatcher)
+		codeActor.IntegrateMessaging(dispatcher)
 
 		// 使用新的 TaskRequest 结构调用重构后的方法
 		request := app.NewTaskRequest(ctx, chatData.TaskID).
@@ -224,7 +224,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 			WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
 		// 调用 AI 助手处理对话
-		result, err := codingAssistant.ProcessConversation(request)
+		result, err := codeActor.ProcessConversation(request)
 		if err != nil {
 			slog.Error("Chat processing failed", "error", err, "task_id", chatData.TaskID)
 

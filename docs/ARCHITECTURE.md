@@ -52,7 +52,7 @@ codeactor-agent/
 │   ├── globalctx/
 │   │   └── global_context.go        # 全局上下文：项目路径、OS/Arch、语言、Prompt 格式化、工具引用
 │   ├── assistant/
-│   │   ├── assistant.go             # CodingAssistant 核心：初始化 Agent、任务处理入口
+│   │   ├── assistant.go             # CodeActor 核心：初始化 Agent、任务处理入口
 │   │   ├── llm.go                   # LLM 客户端：多提供商支持、流式输出、Bedrock 集成、日志记录
 │   │   ├── integration.go           # 消息集成：MessagePublisher 封装
 │   │   ├── data_manager.go          # 数据持久化：任务 Memory 的保存/加载/历史列表
@@ -149,7 +149,7 @@ main.go
                           ┌───────┼──────────────────┼───────────┐
                           │       ▼                  ▼            │
                           │  ┌──────────────────────────────┐    │
-                          │  │     CodingAssistant          │    │
+                          │  │     CodeActor          │    │
                           │  │  (任务调度 + Agent 初始化)     │    │
                           │  └─────────────┬────────────────┘    │
                           │                │                      │
@@ -560,10 +560,10 @@ llms.Tool{Type: "function", Function: &llms.FunctionDefinition{...}}
    ├── 创建 MessageDispatcher(100)
    ├── 注册 TUIConsumer (终端输出)
    ├── 注册 WebSocketConsumer (广播到 ws 客户端)
-   ├── CodingAssistant.IntegrateMessaging(dispatcher)
-   └── CodingAssistant.ProcessCodingTaskWithCallback(req)
+   ├── CodeActor.IntegrateMessaging(dispatcher)
+   └── CodeActor.ProcessCodingTaskWithCallback(req)
         │
-4. CodingAssistant.Init() → ConductorAgent.Run()
+4. CodeActor.Init() → ConductorAgent.Run()
         │
 5. Conductor 循环 (最多 maxSteps 步):
    ├── 构造 messages: [SystemPrompt, ...Memory.Messages]
@@ -599,7 +599,7 @@ Client (WebSocket) → event: chat_message → Server
   3. DataManager.SaveTaskMemory() (保存用户消息)
   4. go 处理:
      ├── 创建独立的 MessageDispatcher
-     ├── CodingAssistant.ProcessConversation(req)
+     ├── CodeActor.ProcessConversation(req)
      │   → ConductorAgent.Run() (使用完整 Memory 上下文)
      ├── 广播 ai_response（实时流和最终回复）
      └── DataManager.SaveTaskMemory() (保存 AI 回复)

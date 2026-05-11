@@ -36,7 +36,7 @@
                     用户交互层
                 TUI / HTTP / WebSocket
                         │
-              CodingAssistant (任务调度)
+              CodeActor (任务调度)
                         │
               ConductorAgent (中枢指挥家)
               ┌───────────┼───────────┬───────────┐
@@ -430,7 +430,7 @@ type Adapter struct {
                     用户交互层
                 TUI / HTTP / WebSocket
                         │
-              CodingAssistant (任务调度)
+              CodeActor (任务调度)
                         │
               ConductorAgent (中枢指挥家)
               ┌───────────┼───────────┬───────────┐
@@ -494,7 +494,7 @@ codeactor-agent/
 │   │   ├── types.go           # 类型定义
 │   │   └── *.prompt.md        # 各 Agent 的 System Prompt
 │   ├── app/                   # 应用入口
-│   │   └── app.go             # CodingAssistant 编排
+│   │   └── app.go             # CodeActor 编排
 │   ├── compact/               # 上下文压缩引擎
 │   │   ├── engine.go          # 压缩引擎
 │   │   ├── compressor.go      # 规则压缩器

@@ -139,16 +139,16 @@ func main() {
 			os.Exit(1)
 		}
 
-		codingAssistant, err := app.NewCodingAssistant(client)
+		codeActor, err := app.NewCodeActor(client)
 		if err != nil {
-			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodingAssistant"))
+			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
 			os.Exit(1)
 		}
-		codingAssistant.DisabledAgents = disableAgents
-		codingAssistant.CodebasePort = codebasePort
+		codeActor.DisabledAgents = disableAgents
+		codeActor.CodebasePort = codebasePort
 
 		// Register cleanup for browser manager
-		defer codingAssistant.Close()
+		defer codeActor.Close()
 
 		// 加载 skills
 		homeDir, _ := os.UserHomeDir()
@@ -168,7 +168,7 @@ func main() {
 				slog.Warn("Failed to load home skills", "path", homeSkillsDir, "error", err)
 			}
 		}
-		codingAssistant.SkillRegistry = skillRegistry
+		codeActor.SkillRegistry = skillRegistry
 		slog.Info("Skill registry loaded", "count", skillRegistry.Count())
 
 		taskManager := http.NewTaskManager(nil)
@@ -179,7 +179,7 @@ func main() {
 		}
 
 		// Start TUI — all interaction is handled inside the TUI loop
-		tui.StartTUI(taskFilePath, codingAssistant, taskManager, dataManager)
+		tui.StartTUI(taskFilePath, codeActor, taskManager, dataManager)
 		return
 	case "http":
 		// Run HTTP server mode
@@ -229,23 +229,23 @@ func main() {
 		}
 
 		// 创建 AI Coding Assistant
-		codingAssistant, err := app.NewCodingAssistant(client)
+		codeActor, err := app.NewCodeActor(client)
 		if err != nil {
-			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodingAssistant"))
+			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
 			os.Exit(1)
 		}
-		codingAssistant.DisabledAgents = disableAgents
-		codingAssistant.CodebasePort = codebasePort
+		codeActor.DisabledAgents = disableAgents
+		codeActor.CodebasePort = codebasePort
 
 		// Register cleanup for browser manager
-		defer codingAssistant.Close()
+		defer codeActor.Close()
 
 		// 创建消息分发器并集成消息系统
 		messageDispatcher := messaging.NewMessageDispatcher(100)
-		codingAssistant.IntegrateMessaging(messageDispatcher)
+		codeActor.IntegrateMessaging(messageDispatcher)
 
 		// 创建HTTP服务器
-		server := http.NewServer(codingAssistant)
+		server := http.NewServer(codeActor)
 
 		// 未显式指定端口时自动从 9800 查找可用端口
 		if !hasExplicitPort {

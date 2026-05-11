@@ -18,14 +18,14 @@ import (
 // Server HTTP服务器结构
 type Server struct {
 	taskManager     *TaskManager
-	codingAssistant *app.CodingAssistant
+	codeActor *app.CodeActor
 	dataManager     *datamanager.DataManager
 	melody          *melody.Melody
 	router          *gin.Engine
 }
 
 // NewServer 创建新的HTTP服务器
-func NewServer(codingAssistant *app.CodingAssistant) *Server {
+func NewServer(codeActor *app.CodeActor) *Server {
 	// 创建 WebSocket 管理器
 	m := melody.New()
 	m.Config.MessageBufferSize = 256
@@ -40,7 +40,7 @@ func NewServer(codingAssistant *app.CodingAssistant) *Server {
 	}
 
 	// 设置 WebSocket 处理器
-	HandleWebSocket(m, taskManager, codingAssistant, dataManager)
+	HandleWebSocket(m, taskManager, codeActor, dataManager)
 
 	// 使用 gin 创建路由
 	r := gin.New()
@@ -51,7 +51,7 @@ func NewServer(codingAssistant *app.CodingAssistant) *Server {
 
 	server := &Server{
 		taskManager:     taskManager,
-		codingAssistant: codingAssistant,
+		codeActor: codeActor,
 		dataManager:     dataManager,
 		melody:          m,
 		router:          r,
@@ -273,7 +273,7 @@ func (s *Server) handleStartTask(c *gin.Context) {
 	}
 
 	// 后台执行任务
-	go ExecuteTask(task.ID, req.ProjectDir, req.TaskDesc, s.taskManager, s.codingAssistant, s.dataManager)
+	go ExecuteTask(task.ID, req.ProjectDir, req.TaskDesc, s.taskManager, s.codeActor, s.dataManager)
 
 	c.JSON(200, CodingTaskResponse{TaskID: task.ID})
 }

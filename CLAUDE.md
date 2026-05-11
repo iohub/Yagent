@@ -49,7 +49,7 @@ codeactor-agent/
 ├── main.go                      # Entry point, CLI parsing, start codebase service
 ├── internal/
 │   ├── app/
-│   │   └── app.go               # CodingAssistant: agent orchestration & init
+│   │   └── app.go               # CodeActor: agent orchestration & init
 │   ├── agents/                  # Agent implementations (flat files)
 │   │   ├── conductor.go         # ConductorAgent: hub coordinator
 │   │   ├── conductor.prompt.md  # Conductor system prompt

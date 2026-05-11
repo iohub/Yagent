@@ -60,7 +60,7 @@ internal/tui/
 // internal/tui/tui_model.go
 type model struct {
     // 外部依赖
-    assistant   *app.CodingAssistant
+    assistant   *app.CodeActor
     taskManager *http.TaskManager
     dataManager *datamanager.DataManager
 
@@ -288,7 +288,7 @@ func (m *Chat) HandleMouseDown(x, y int) (bool, tea.Cmd) {
 ```go
 // internal/tui/tui_model.go — 所有逻辑耦合
 type model struct {
-    assistant *app.CodingAssistant
+    assistant *app.CodeActor
     taskManager *http.TaskManager
     input textarea.Model
     logEntries   []logEntry

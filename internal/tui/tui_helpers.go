@@ -35,7 +35,7 @@ func validateInputs(projectDir, taskDesc string) (bool, string) {
 }
 
 // StartTUI starts the Bubble Tea TUI with the given dependencies.
-func StartTUI(taskFilePath string, ca *app.CodingAssistant, tm *http.TaskManager, dm *datamanager.DataManager) {
+func StartTUI(taskFilePath string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager) {
 	langManager = NewLanguageManager()
 
 	taskContent := ""

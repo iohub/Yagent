@@ -113,7 +113,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 func executeTaskCmd(
 	taskDesc string,
 	task *http.Task,
-	ca *app.CodingAssistant,
+	ca *app.CodeActor,
 	tm *http.TaskManager,
 	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
@@ -163,7 +163,7 @@ func executeTaskCmd(
 func executeFollowUpCmd(
 	message string,
 	task *http.Task,
-	ca *app.CodingAssistant,
+	ca *app.CodeActor,
 	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
 	publisherCh chan *messaging.MessagePublisher,

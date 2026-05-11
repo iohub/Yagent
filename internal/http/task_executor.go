@@ -14,7 +14,7 @@ import (
 )
 
 // ExecuteTask 执行任务的通用函数
-func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codingAssistant *app.CodingAssistant, dataManager *datamanager.DataManager) {
+func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codeActor *app.CodeActor, dataManager *datamanager.DataManager) {
 	task, ok := taskManager.GetTask(taskID)
 	if !ok {
 		slog.Error("Task not found", "task_id", taskID)
@@ -62,7 +62,7 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	dispatcher.RegisterConsumer(taskManagerWSConsumer)
 
 	// Integrate messaging with coding assistant
-	codingAssistant.IntegrateMessaging(dispatcher)
+	codeActor.IntegrateMessaging(dispatcher)
 
 	var result string
 	var err error
@@ -85,7 +85,7 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	// Add message publisher to request
 	request = request.WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
-	result, err = codingAssistant.ProcessCodingTaskWithCallback(request)
+	result, err = codeActor.ProcessCodingTaskWithCallback(request)
 
 	if err != nil {
 		slog.Error("Task failed", "error", err, "task_id", taskID)

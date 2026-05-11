@@ -20,8 +20,8 @@ import (
 	"codeactor/internal/messaging"
 )
 
-// CodingAssistant is the main entry point for the agent system.
-type CodingAssistant struct {
+// CodeActor is the main entry point for the agent system.
+type CodeActor struct {
 	engine               llm.Engine  // default engine (backward-compatible)
 	client               *llm.Client // LLM client for per-agent/tool engine resolution
 	config               *config.Config
@@ -38,9 +38,9 @@ type CodingAssistant struct {
 	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
 }
 
-// NewCodingAssistant creates a new CodingAssistant.
-func NewCodingAssistant(client *llm.Client) (*CodingAssistant, error) {
-	ca := &CodingAssistant{
+// NewCodeActor creates a new CodeActor.
+func NewCodeActor(client *llm.Client) (*CodeActor, error) {
+	ca := &CodeActor{
 		userResponseChannels: make(map[string]chan string),
 		logger:               slog.Default().With("component", "coding_assistant"),
 		engine:               client.Engine,
@@ -52,7 +52,7 @@ func NewCodingAssistant(client *llm.Client) (*CodingAssistant, error) {
 
 // Init initializes the assistant with Engine and creates agents.
 // Uses per-agent and per-tool engine resolution from the LLM client.
-func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
+func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	ca.engine = engine
 
 	// Initialize agents
@@ -242,7 +242,7 @@ func (ca *CodingAssistant) Init(engine llm.Engine, workDir string) {
 	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, conductorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine)
 }
 
-func (ca *CodingAssistant) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
+func (ca *CodeActor) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
 	ca.dispatcher = dispatcher
 }
 
@@ -296,14 +296,14 @@ func (r *TaskRequest) WithUserMessage(msg string) *TaskRequest {
 }
 
 // ProcessCodingTaskWithCallback executes the task using the agent system.
-func (ca *CodingAssistant) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
+func (ca *CodeActor) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 
 	return ca.conductor.Run(req.ctx, req.taskDesc, req.memory)
 }
 
 // ProcessConversation handles chat messages.
-func (ca *CodingAssistant) ProcessConversation(req *TaskRequest) (string, error) {
+func (ca *CodeActor) ProcessConversation(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 
 	return ca.conductor.Run(req.ctx, req.userMessage, req.memory)
@@ -326,7 +326,7 @@ func parseDisabledAgents(s string) map[string]bool {
 }
 
 // Close 清理资源
-func (ca *CodingAssistant) Close() {
+func (ca *CodeActor) Close() {
 	if ca.globalCtx != nil && ca.globalCtx.BrowserMgr != nil {
 		slog.Info("Closing browser manager...")
 		if err := ca.globalCtx.BrowserMgr.Close(); err != nil {
