@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
@@ -16,16 +16,20 @@ import (
 func (m *model) computeFooterHeight() int {
 	height := 1 // separator line
 
-	// Input area
-	if m.commandMode {
-		height += 1 // command mode line
-	} else {
+	// 弹窗栈占用额外空间（弹窗覆盖层不影响 footer，但为安全起见预留）
+	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
+		height += 10 // 弹窗默认高度预留
+	}
+
+	// Input area (only in edit mode; hidden in command mode)
+	if !m.commandMode {
 		height += m.computeInputHeight()
 		// Skill autocomplete suggestions
 		if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
 			height += len(m.skillSuggestions) + 1 // suggestion lines + hint line
 		}
 	}
+	// In command mode, no input line is rendered, so no height addition needed.
 
 	// Error message
 	if m.errMsg != "" {
@@ -47,8 +51,13 @@ func (m *model) computeFooterHeight() int {
 		}
 	}
 
-	// Two blank lines + status line (see View() — footer.WriteString("\n") twice + statusLine)
-	height += 3
+	// Status line always starts on its own line (see View()).
+	// Edit mode adds an extra blank line before the status line.
+	if m.commandMode {
+		height += 2 // newline terminator + status line
+	} else {
+		height += 3 // newline terminator + blank line + status line
+	}
 
 	return height
 }

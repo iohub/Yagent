@@ -13,7 +13,7 @@ import (
 
 	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 
 	"codeactor/internal/llm"
 )

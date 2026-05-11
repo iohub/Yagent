@@ -2,7 +2,7 @@ package messaging
 
 import (
 	"encoding/json"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 )
 
 type WebSocketConsumer struct {

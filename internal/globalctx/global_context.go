@@ -3,7 +3,7 @@ package globalctx
 import (
 	"codeactor/internal/browser"
 	"codeactor/internal/tools"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 	"fmt"
 	"strings"
 )

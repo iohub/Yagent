@@ -8,7 +8,7 @@ import (
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"

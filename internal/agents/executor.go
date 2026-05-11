@@ -7,7 +7,7 @@ import (
 
 	"codeactor/internal/llm"
 	"codeactor/internal/tools"
-	"codeactor/pkg/messaging"
+	"codeactor/internal/messaging"
 )
 
 // ExecutorConfig holds the configuration for running an LLM-tool agent loop.
