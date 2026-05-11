@@ -128,9 +128,9 @@ func (m model) View() tea.View {
 	var runningBadge string
 	if m.taskRunning {
 		if m.currentModel != "" {
-			runningBadge = logStatusStyle.Render(" ◷ Running [" + m.currentModel + "]...")
+			runningBadge = logStatusStyle.Render("Running [" + m.currentModel + "]...")
 		} else {
-			runningBadge = logStatusStyle.Render(" ◷ Running...")
+			runningBadge = logStatusStyle.Render("Running...")
 		}
 	}
 
@@ -317,9 +317,9 @@ func (m model) renderTokenDashboard() string {
 	if m.commandMode && m.taskRunning {
 		var runningLine string
 		if m.currentModel != "" {
-			runningLine = logStatusStyle.Render(" ◷ Running [" + m.currentModel + "]...")
+			runningLine = logStatusStyle.Render("Running [" + m.currentModel + "]...")
 		} else {
-			runningLine = logStatusStyle.Render(" ◷ Running...")
+			runningLine = logStatusStyle.Render("Running...")
 		}
 		lines = append(lines, runningLine)
 	}
