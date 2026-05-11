@@ -133,28 +133,6 @@ Each agent is equipped with tools tailored to its domain, ensuring focused and e
   <img src="docs/architecture.svg" alt="CodeActor Agent Architecture" width="900">
 </p>
 
-### Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Language | Go 1.24+, Rust (codebase engine) |
-| LLM SDK | `github.com/openai/openai-go/v3` |
-| HTTP/WS | Gin + Melody |
-| TUI | Bubble Tea + Lipgloss + Glamour |
-| Code Analysis | Tree-sitter, Petgraph, LanceDB, Axum |
-| Diff | `github.com/aymanbagabas/go-udiff` |
-
-### Tools by Agent
-
-| Agent | Tools | Count |
-|-------|-------|-------|
-| Conductor | `delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_devops`, `delegate_meta`, `delegate_browser`, `finish`, `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree` | 12 |
-| CodingAgent | All 16 tools (file ops, search, shell, thinking, micro_agent) | 16 |
-| RepoAgent | `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree`, `semantic_search`, `query_code_skeleton`, `query_code_snippet` | 7 |
-| ChatAgent | `micro_agent`, `thinking`, `finish` | 3 |
-| DevOpsAgent | `run_bash`, `read_file`, `list_dir`, `print_dir_tree`, `search_by_regex`, `thinking`, `micro_agent`, `finish` | 8 |
-| BrowserAgent | `navigate`, `go_back`, `go_forward`, `reload`, `get_current_url`, `click`, `input`, `scroll`, `wait_element`, `wait`, `extract_text`, `extract_html`, `screenshot`, `pdf`, `execute_js`, `thinking`, `micro_agent`, `finish` | 18 |
-
 [Full architecture documentation →](docs/ARCHITECTURE.md)
 
 ## Meta-Agent
