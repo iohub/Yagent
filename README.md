@@ -311,33 +311,6 @@ node index.js history                                  # list recent tasks
 
 Server defaults to `localhost:9080`. Override via `--host`/`--port` or `CODECACTOR_HOST=host:port`.
 
-## API Overview
-
-### REST Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/start_task` | Start or resume a coding task |
-| `GET` | `/api/task_status?task_id=` | Query task status and memory |
-| `POST` | `/api/cancel_task` | Cancel a running task |
-| `GET` | `/api/history` | List historical tasks |
-| `POST` | `/api/load_task` | Restore a task from persistence |
-| `GET` | `/api/memory?task_id=` | Get conversation memory |
-| `DELETE` | `/api/memory?task_id=` | Clear conversation memory |
-
-### WebSocket
-
-Connect to `ws://localhost:9800/ws`
-
-| Client Event | Description |
-|-------------|-------------|
-| `start_task` | Create and start a new coding task |
-| `chat_message` | Send a follow-up message |
-| `get_memory` | Retrieve conversation memory |
-| `clear_memory` | Clear conversation memory |
-
-See [docs/Agent_Reference.md](docs/Agent_Reference.md) for detailed API documentation.
-
 ## Supported LLM Providers
 
 | Provider | Config Key | Example Model |

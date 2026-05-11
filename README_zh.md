@@ -312,33 +312,6 @@ node index.js history                                  # 列出最近任务
 
 服务默认连接 `localhost:9080`。可通过 `--host`/`--port` 或环境变量 `CODECACTOR_HOST=host:port` 覆盖。
 
-## API 概览
-
-### REST 接口
-
-| 方法 | 路径 | 说明 |
-|--------|------|------|
-| `POST` | `/api/start_task` | 启动或恢复编码任务 |
-| `GET` | `/api/task_status?task_id=` | 查询任务状态和记忆 |
-| `POST` | `/api/cancel_task` | 取消运行中的任务 |
-| `GET` | `/api/history` | 历史任务列表 |
-| `POST` | `/api/load_task` | 从持久化恢复任务 |
-| `GET` | `/api/memory?task_id=` | 获取对话记忆 |
-| `DELETE` | `/api/memory?task_id=` | 清空对话记忆 |
-
-### WebSocket
-
-连接到 `ws://localhost:9800/ws`
-
-| 客户端事件 | 说明 |
-|-------------|------|
-| `start_task` | 创建并启动新编码任务 |
-| `chat_message` | 发送后续对话消息 |
-| `get_memory` | 获取对话记忆 |
-| `clear_memory` | 清空对话记忆 |
-
-详细 API 文档见 [docs/Agent_Reference.md](docs/Agent_Reference.md)。
-
 ## 支持的 LLM 提供商
 
 | 提供商 | 配置键 | 模型示例 |
