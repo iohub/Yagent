@@ -28,27 +28,48 @@ CodeActor's **Repo-Agent** solves this at the root. Powered by a Rust-based code
 | No complexity insight | Cycle detection & complexity scoring |
 | Regex-based search | Natural-language "find auth logic" queries |
 | Single-agent | Hub-and-Spoke multi-agent with Meta-Agent runtime extension |
+| 🌐 **Live Web Research** | Cannot autonomously browse the internet | Built-in Browser-Agent navigates the web to find latest docs, APIs, and issue discussions |
 
 ## Features
 
 ### Multi-Agent System
-- **Hub-and-Spoke Architecture** — Central Conductor delegates tasks to specialized sub-agents (Repo analysis, Code editing, General chat, DevOps operations)
+- **Hub-and-Spoke Architecture** — Central Conductor delegates tasks to specialized sub-agents (Repo analysis, Code editing, General chat, DevOps operations, Browser automation)
 - **Meta-Agent** — Autonomous agent designer that creates custom sub-agents at runtime for tasks beyond built-in agents' capabilities
 - **Self-Correction** — `thinking` tool enables agents to analyze errors and recover without blind retries
-- **Agent Disable** — Conditionally exclude sub-agents at startup via `--disable-agents=repo,coding,chat,meta,devops`
+- **Agent Disable** — Conditionally exclude sub-agents at startup via `--disable-agents=repo,coding,chat,meta,devops,browser`
 
-### Rich Tool System (17 tools)
+### Rich Tool System (22 tools)
 - **File Operations** — Read, create, delete, rename, list directory, print directory tree
 - **Code Editing** — `search_replace_in_file` with unified diff output and 10MB size guard
 - **Code Search** — ripgrep regex search, semantic search via vector embeddings, code skeleton/snippet queries
 - **Shell Execution** — `run_bash` with foreground/background support, danger detection, and workspace-boundary checks
 - **Cognitive Tools** — `thinking` for error analysis, `micro_agent` for sub-LLM reasoning calls
 - **Flow Control** — `finish` to signal task completion, user help requests
+- **Browser Automation** — `delegate_browser` for headless Chrome web research, navigation, data extraction, screenshots, and PDF generation
 - **Repo Analysis** — Call graph queries, hierarchical call trees, directory trees, function-level code skeletons
 
 ### Dual Interaction Modes
 - **TUI Mode** — Full terminal UI built with Bubble Tea, with message log, agent streaming, and interactive authorization
 - **HTTP + WebSocket Server** — REST API and real-time WebSocket streaming for IDE/Web integration
+
+### 🌐 Browser-Agent: Autonomous Web Intelligence
+
+> *"Your AI that can read the web for you — finding answers in live documentation, community threads, and API references."*
+
+The **Browser-Agent** transforms CodeActor into a true web-native assistant. Powered by headless Chrome via [go-rod](https://github.com/go-rod/rod), it autonomously navigates websites, interacts with page elements, and extracts knowledge — all within a secure, sandboxed environment. When local documentation falls short, the Conductor delegates web research tasks to Browser-Agent, which browses the internet to find the latest answers.
+
+**What it can do:**
+
+- **🔍 Autonomous Web Research** — Browse documentation portals, GitHub issues, Stack Overflow, and API references. Find answers in the live web without manually copying URLs.
+- **🖱️ Full Page Interaction** — Click buttons, fill and submit forms, scroll pages, wait for dynamic content to load.
+- **📄 Data Extraction** — Extract text and HTML from any page. Capture full-page or element-level screenshots and generate PDFs.
+- **🧠 JavaScript Execution** — Run custom JS in the page context (with explicit user confirmation) to unlock web apps requiring client-side logic.
+- **🔒 Security-First** — All file outputs are restricted to the workspace directory. Each task gets an isolated browser session via Cookie management.
+- **📊 Health Monitoring** — Check website availability and monitor content changes for proactive maintenance.
+
+The Browser-Agent is invoked by the Conductor via `delegate_browser`, seamlessly integrating with the multi-agent workflow. It is equipped with its own toolset (`navigate`, `go_back`, `go_forward`, `reload`, `get_current_url`, `click`, `input`, `scroll`, `wait_element`, `wait`, `extract_text`, `extract_html`, `screenshot`, `pdf`, `execute_js`) and follows the same LLM-tool-loop pattern as all other agents.
+
+> *Example:* A developer asks, "Find the latest FastAPI middleware documentation and summarize the CORS configuration." The Browser-Agent navigates to the FastAPI docs, locates the middleware section, extracts the relevant text, and returns a concise summary — without the developer ever leaving the editor.
 
 ### LLM Infrastructure
 - **Official OpenAI Go SDK** — Replaced langchaingo with `openai-go/v3` for direct API control
@@ -97,11 +118,12 @@ CodeActor employs a **Hub-and-Spoke architecture** where a central Conductor orc
 
 | Agent | Tools | Count |
 |-------|-------|-------|
-| Conductor | `delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_devops`, `delegate_meta`, `finish`, `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree` | 10 |
+| Conductor | `delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_devops`, `delegate_meta`, `delegate_browser`, `finish`, `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree` | 12 |
 | CodingAgent | All 16 tools (file ops, search, shell, thinking, micro_agent) | 16 |
 | RepoAgent | `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree`, `semantic_search`, `query_code_skeleton`, `query_code_snippet` | 7 |
 | ChatAgent | `micro_agent`, `thinking`, `finish` | 3 |
 | DevOpsAgent | `run_bash`, `read_file`, `list_dir`, `print_dir_tree`, `search_by_regex`, `thinking`, `micro_agent`, `finish` | 8 |
+| BrowserAgent | `navigate`, `go_back`, `go_forward`, `reload`, `get_current_url`, `click`, `input`, `scroll`, `wait_element`, `wait`, `extract_text`, `extract_html`, `screenshot`, `pdf`, `execute_js`, `thinking`, `micro_agent`, `finish` | 18 |
 
 Each agent is equipped with tools tailored to its domain, ensuring focused and efficient task execution. The Conductor routes requests to the most appropriate agent based on task type.
 
@@ -126,11 +148,12 @@ Each agent is equipped with tools tailored to its domain, ensuring focused and e
 
 | Agent | Tools | Count |
 |-------|-------|-------|
-| Conductor | `delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_devops`, `delegate_meta`, `finish`, `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree` | 10 |
+| Conductor | `delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_devops`, `delegate_meta`, `delegate_browser`, `finish`, `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree` | 12 |
 | CodingAgent | All 16 tools (file ops, search, shell, thinking, micro_agent) | 16 |
 | RepoAgent | `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree`, `semantic_search`, `query_code_skeleton`, `query_code_snippet` | 7 |
 | ChatAgent | `micro_agent`, `thinking`, `finish` | 3 |
 | DevOpsAgent | `run_bash`, `read_file`, `list_dir`, `print_dir_tree`, `search_by_regex`, `thinking`, `micro_agent`, `finish` | 8 |
+| BrowserAgent | `navigate`, `go_back`, `go_forward`, `reload`, `get_current_url`, `click`, `input`, `scroll`, `wait_element`, `wait`, `extract_text`, `extract_html`, `screenshot`, `pdf`, `execute_js`, `thinking`, `micro_agent`, `finish` | 18 |
 
 [Full architecture documentation →](docs/ARCHITECTURE.md)
 
@@ -336,6 +359,7 @@ See [docs/Agent_Reference.md](docs/Agent_Reference.md) for detailed API document
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — System architecture, modules, data flow, protocols
 - [Agent_Reference.md](docs/Agent_Reference.md) — API reference and configuration guide
 - [Agent_Design.md](docs/Agent_Design.md) — Multi-agent design rationale
+- [Browser_Agent_Design.md](docs/Browser_Agent_Design.md) — Browser automation architecture and implementation
 
 ## Community & Contributing
 

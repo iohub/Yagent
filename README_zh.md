@@ -28,27 +28,49 @@ CodeActor 从根源上解决了这个问题。由 Rust 代码智能引擎驱动�
 | 无复杂度感知 | 环路检测与复杂度评分 |
 | 基于正则搜索 | 自然语言查询「找到认证逻辑」 |
 | 单智能体 | 中枢-辐条多智能体 + Meta-Agent 运行时扩展 |
+| 🌐 **实时网络调研** | 无法自主上网浏览 | 内置浏览器智能体可自主导航网页，查找最新文档、API 及 Issue 讨论 |
 
 ## 特性
 
 ### 多智能体系统
-- **中枢-辐条架构** — 中央 Conductor 将任务委派给专用子智能体（仓库分析、代码编辑、通用对话、运维操作）
+- **中枢-辐条架构** — 中央 Conductor 将任务委派给专用子智能体（仓库分析、代码编辑、通用对话、运维操作、浏览器自动化）
 - **元代理（Meta-Agent）** — 自主设计代理，在运行时为超出内置 Agent 能力的任务动态创建自定义子智能体
 - **自我修正** — `thinking` 工具使 Agent 能够在出错时分析原因并恢复，避免盲目重试
-- **Agent 禁用** — 通过 `--disable-agents=repo,coding,chat,meta,devops` 在启动时有条件地排除子智能体
+- **Agent 禁用** — 通过 `--disable-agents=repo,coding,chat,meta,devops,browser` 在启动时有条件地排除子智能体
 
-### 丰富工具系统（17 个工具）
+### 丰富工具系统（22 个工具）
 - **文件操作** — 读取、创建、删除、重命名、列出目录、打印目录树
 - **代码编辑** — `search_replace_in_file` 精准替换，返回 unified diff，带 10MB 大小保护
 - **代码搜索** — ripgrep 正则搜索、基于向量嵌入的语义搜索、代码骨架/片段查询
 - **Shell 执行** — `run_bash` 支持前台/后台运行，含危险检测和工作空间边界检查
 - **认知工具** — `thinking` 错误分析反思、`micro_agent` 子 LLM 推理调用
 - **流程控制** — `finish` 任务完成通知、用户帮助请求
+- **浏览器自动化** — `delegate_browser` 无头 Chrome 网页调研、导航、数据提取、截图和 PDF 生成
 - **仓库分析** — 调用图查询、层级调用树、目录树、函数级代码骨架
 
 ### 双交互模式
 - **TUI 模式** — 基于 Bubble Tea 的全功能终端界面，支持消息日志、Agent 流式输出和交互式授权
 - **HTTP + WebSocket 服务** — REST API 和实时 WebSocket 流式推送，用于 IDE/Web 集成
+
+### 🌐 浏览器智能体：自主网页智能
+
+> *「让你的 AI 替你上网阅读——从在线文档、社区讨论和 API 参考中实时查找答案。」*
+
+**浏览器智能体（Browser-Agent）**让 CodeActor 成为真正的网络原生助手。它基于 [go-rod](https://github.com/go-rod/rod) 驱动无头 Chrome，能够在安全的沙箱环境中自主导航网页、与页面元素交互并提取知识。当本地文档不足时，指挥 Agent 会将网络调研任务委派给浏览器智能体，由它上网查找最新答案。
+
+**它能做什么：**
+
+- **🔍 自主网络调研** — 浏览文档站点、GitHub Issues、Stack Overflow 和 API 参考。在互联网上实时查找答案，无需人工复制链接。
+- **🖱️ 完整页面交互** — 点击按钮、填写并提交表单、滚动页面、等待动态内容加载。
+- **📄 数据提取** — 从任意网页提取文本和 HTML。捕获全页面或元素级截图，生成 PDF 文件。
+- **🧠 JavaScript 执行** — 在页面上下文中运行自定义 JS（需用户明确确认），解锁需要客户端逻辑的 Web 应用。
+- **🔒 安全优先** — 所有文件输出限制在工作区目录内。每个任务通过 Cookie 管理获得独立的浏览器会话。
+- **📊 健康监控** — 检查网站可用性并监控内容变动，支持主动运维。
+
+浏览器智能体由指挥 Agent 通过 `delegate_browser` 调度，无缝融入多智能体工作流。它配备专属工具集（`navigate`、`go_back`、`go_forward`、`reload`、`get_current_url`、`click`、`input`、`scroll`、`wait_element`、`wait`、`extract_text`、`extract_html`、`screenshot`、`pdf`、`execute_js`），遵循与其他 Agent 相同的 LLM-工具循环模式。
+
+> *示例：* 开发者提问：「查找最新的 FastAPI 中间件文档并总结 CORS 配置。」浏览器智能体导航至 FastAPI 文档，定位中间件章节，提取相关文本，返回简洁摘要——全程无需开发者离开编辑器。
+
 
 ### LLM 基础设施
 - **官方 OpenAI Go SDK** — 用 `openai-go/v3` 替换 langchaingo，实现直接 API 控制
@@ -97,11 +119,12 @@ CodeActor 采用**中枢-辐条（Hub-and-Spoke）架构**，由中央 Conductor
 
 | Agent | 工具 | 数量 |
 |-------|-------|-------|
-| Conductor | `delegate_repo`、`delegate_coding`、`delegate_chat`、`delegate_devops`、`delegate_meta`、`finish`、`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree` | 10 |
+| Conductor | `delegate_repo`、`delegate_coding`、`delegate_chat`、`delegate_devops`、`delegate_meta`、`delegate_browser`、`finish`、`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree` | 12 |
 | CodingAgent | 全部 16 个工具（文件、搜索、Shell、thinking、micro_agent） | 16 |
 | RepoAgent | `read_file`、`search_by_regex`、`list_dir`、`print_dir_tree`、`semantic_search`、`query_code_skeleton`、`query_code_snippet` | 7 |
 | ChatAgent | `micro_agent`、`thinking`、`finish` | 3 |
 | DevOpsAgent | `run_bash`、`read_file`、`list_dir`、`print_dir_tree`、`search_by_regex`、`thinking`、`micro_agent`、`finish` | 8 |
+| BrowserAgent | `navigate`、`go_back`、`go_forward`、`reload`、`get_current_url`、`click`、`input`、`scroll`、`wait_element`、`wait`、`extract_text`、`extract_html`、`screenshot`、`pdf`、`execute_js`、`thinking`、`micro_agent`、`finish` | 18 |
 
 每个 Agent 配备专属工具集，确保专注高效地完成任务。Conductor 根据任务类型智能路由到最合适的 Agent。
 
@@ -126,11 +149,12 @@ CodeActor 采用**中枢-辐条（Hub-and-Spoke）架构**，由中央 Conductor
 
 | Agent | 工具 | 数量 |
 |-------|-------|-------|
-| Conductor | `delegate_repo`、`delegate_coding`、`delegate_chat`、`delegate_devops`、`delegate_meta`、`finish`、`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree` | 10 |
+| Conductor | `delegate_repo`、`delegate_coding`、`delegate_chat`、`delegate_devops`、`delegate_meta`、`delegate_browser`、`finish`、`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree` | 12 |
 | CodingAgent | 全部 16 个工具（文件、搜索、Shell、thinking、micro_agent） | 16 |
 | RepoAgent | `read_file`、`search_by_regex`、`list_dir`、`print_dir_tree`、`semantic_search`、`query_code_skeleton`、`query_code_snippet` | 7 |
 | ChatAgent | `micro_agent`、`thinking`、`finish` | 3 |
 | DevOpsAgent | `run_bash`、`read_file`、`list_dir`、`print_dir_tree`、`search_by_regex`、`thinking`、`micro_agent`、`finish` | 8 |
+| BrowserAgent | `navigate`、`go_back`、`go_forward`、`reload`、`get_current_url`、`click`、`input`、`scroll`、`wait_element`、`wait`、`extract_text`、`extract_html`、`screenshot`、`pdf`、`execute_js`、`thinking`、`micro_agent`、`finish` | 18 |
 
 [完整架构文档 →](docs/ARCHITECTURE.md)
 
@@ -336,6 +360,7 @@ node index.js history                                  # 列出最近任务
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — 系统架构、模块、数据流、协议
 - [Agent_Reference.md](docs/Agent_Reference.md) — API 参考和配置指南
 - [Agent_Design.md](docs/Agent_Design.md) — 多智能体设计理念
+- [Browser_Agent_Design.md](docs/Browser_Agent_Design.md) — 浏览器自动化架构与实现
 
 ## 社区与贡献
 
