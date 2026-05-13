@@ -87,13 +87,32 @@ func (m *model) searchInLog(query string) {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
-	// All other message types (tickMsg, taskEventMsg, WindowSizeMsg, etc.) are
-	// blocked to prevent viewport scrolling behind the overlay.
+	// taskEventMsg is allowed through so the listenForEvents chain stays alive;
+	// its handler drops the event when dialogs are open but reschedules the chain.
+	// tickMsg is intercepted here and the tick is re-scheduled (not processed)
+	// so animations keep running without touching the hidden viewport.
+	// Other non-KeyMsg events (WindowSizeMsg, MouseMsg, etc.) also keep both
+	// chains alive when the task is running, to prevent permanent TUI freeze.
 	if m.showHelpDialog || m.confirmDialog.open ||
 		m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open ||
 		(m.dialogStack != nil && m.dialogStack.Len() > 0) {
 		if _, ok := msg.(tea.KeyMsg); !ok {
-			return m, nil
+			switch msg.(type) {
+			case taskEventMsg:
+				// Let through — the handler's defensive check keeps chains alive
+			case tickMsg:
+				// Keep ticking for animation, but don't touch the viewport
+				if m.taskRunning {
+					return m, tickCmd()
+				}
+				return m, nil
+			default:
+				// WindowSizeMsg, MouseMsg, publisherReadyMsg, etc.
+				if m.taskRunning {
+					return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+				}
+				return m, nil
+			}
 		}
 	}
 
@@ -747,11 +766,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskEventMsg:
 		// Don't process task events while any popup/dialog is showing.
-		// The global guard at the top of Update() already blocks these messages,
-		// but keep this as a defensive double-check.
+		// Keep the event chain alive so the TUI resumes after dialog dismissal.
 		if m.showHelpDialog || m.confirmDialog.open ||
 			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open ||
 			(m.dialogStack != nil && m.dialogStack.Len() > 0) {
+			if m.taskRunning {
+				return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+			}
 			return m, nil
 		}
 
