@@ -259,6 +259,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 							// Cancel confirmation
 							if m.currentTask != nil && m.currentTask.CancelFunc != nil {
+								m.taskCancelled = true
 								m.currentTask.CancelFunc()
 								m.logEntries = append(m.logEntries, logEntry{
 									timestamp: time.Now(),
@@ -403,6 +404,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.confirmCancelDialog.selectedOption == 0 {
 					// Confirm cancel
 					if m.currentTask != nil && m.currentTask.CancelFunc != nil {
+						m.taskCancelled = true
 						m.currentTask.CancelFunc()
 						m.logEntries = append(m.logEntries, logEntry{
 							timestamp: time.Now(),
@@ -417,6 +419,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "y", "Y":
 				if m.currentTask != nil && m.currentTask.CancelFunc != nil {
+					m.taskCancelled = true
 					m.currentTask.CancelFunc()
 					m.logEntries = append(m.logEntries, logEntry{
 						timestamp: time.Now(),
@@ -957,9 +960,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskCompleteMsg:
 		m.taskRunning = false
+		m.taskCancelled = false // 重置取消标志
 		m.currentModel = ""
 		m.commandMode = false
 		m.confirmDialog.open = false // safety: close any stale dialog
+
+		// 如果是用户主动取消，不显示错误弹窗或完成弹窗
+		if m.taskCancelled {
+			m.currentTask = nil
+			return m, nil
+		}
+
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
 			m.currentTask = nil

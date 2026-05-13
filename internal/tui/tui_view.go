@@ -81,7 +81,7 @@ func (m model) View() tea.View {
 		m.input.SetWidth(m.computeFieldWidth())
 		m.input.SetHeight(m.computeInputHeight())
 		inputLine := m.input.View()
-		footer.WriteString(lipgloss.NewStyle().Render(inputLine))
+		footer.WriteString(lipgloss.NewStyle().MarginTop(1).Render(inputLine))
 		footer.WriteString("\n")
 
 		// Inline skill autocomplete suggestions (below textarea)

@@ -311,7 +311,22 @@ func extractResultBrief(toolName string, result string) string {
 	case "list_dir", "print_dir_tree":
 		return ""
 	case "run_bash":
-		// Show first non-empty line of output
+		// Parse JSON to extract the output field.
+		var r struct {
+			Output string `json:"output"`
+		}
+		if err := json.Unmarshal([]byte(result), &r); err == nil {
+			// Successfully parsed JSON. Show output if non-empty.
+			if r.Output == "" {
+				return ""
+			}
+			trimmed := strings.TrimSpace(r.Output)
+			if len(trimmed) > 60 {
+				return trimmed[:57] + "..."
+			}
+			return trimmed
+		}
+		// Fallback for non-JSON (e.g., raw error string).
 		trimmed := strings.TrimSpace(result)
 		if len(trimmed) > 60 {
 			return trimmed[:57] + "..."

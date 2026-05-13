@@ -180,9 +180,10 @@ type model struct {
 	useDarkStyle    bool
 
 	// Task execution state
-	taskRunning bool
-	currentTask *http.Task
-	eventCh     chan *messaging.MessageEvent
+	taskRunning   bool
+	taskCancelled bool    // 标记任务是否由用户主动取消
+	currentTask   *http.Task
+	eventCh       chan *messaging.MessageEvent
 
 	// Standard state
 	termWidth   int
