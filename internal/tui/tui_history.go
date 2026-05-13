@@ -76,8 +76,12 @@ func (m *model) totalNumPages() int {
 	if len(m.historyItems) == 0 {
 		return 1
 	}
-	pages := len(m.historyItems) / m.historyPageSize
-	if len(m.historyItems)%m.historyPageSize > 0 {
+	pageSize := m.historyPageSize
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
+	pages := len(m.historyItems) / pageSize
+	if len(m.historyItems)%pageSize > 0 {
 		pages++
 	}
 	return pages
@@ -87,6 +91,9 @@ func (m *model) totalNumPages() int {
 func (m *model) visibleRange() (startIdx, endIdx int) {
 	total := len(m.historyItems)
 	pageSize := m.historyPageSize
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
 	page := m.historyPage
 	totalPages := m.totalNumPages()
 
@@ -264,6 +271,13 @@ func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 		m.historyLoading = false
 		return
 	}
+
+	// Guard against double-load (e.g., rapid double-press on history item)
+	if m.historyLoading {
+		return
+	}
+	m.historyLoading = true
+	defer func() { m.historyLoading = false }()
 
 	// 1. Clear existing log entries
 	m.logEntries = nil

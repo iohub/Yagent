@@ -39,9 +39,6 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 		}
 	}
 
-	// 将任务描述设置到 input 中，以便用户能看到提交了什么
-	m.input.SetValue(taskDesc)
-	m.input.SetValue("")
 	m.taskRunning = true
 	m.commandMode = true
 	m.errMsg = ""

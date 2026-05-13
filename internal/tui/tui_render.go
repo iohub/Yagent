@@ -39,11 +39,14 @@ func (m *model) computeFooterHeight() int {
 	// Token dashboard
 	totalTokens := m.inputTokens + m.outputTokens
 	if totalTokens == 0 {
-		// Single line: "In: 0 | Out: 0"
-		height += 1
+		// No data — dashboard is empty, no extra height
 	} else {
 		// Dashboard with border: 2 (borders) + 1 (header) + 1 (separator) + agent rows
 		height += 4 // 2 borders + 1 header + 1 separator
+		// Running badge line (shown inside dashboard in command mode)
+		if m.commandMode && m.taskRunning {
+			height++
+		}
 		for _, au := range m.tokenUsagePerAgent {
 			if au.InputTokens+au.OutputTokens > 0 {
 				height++
@@ -509,29 +512,45 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 
 	return prefix + " " + contentStyle.Render(displayContent)
 }
+// wrapText word-wraps text to fit within maxWidth columns.
+// Preserves existing newlines and wraps long lines at word boundaries.
 func wrapText(text string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return text
 	}
 	lines := strings.Split(text, "\n")
-	var wrapped []string
+	var result []string
 	for _, line := range lines {
 		if line == "" {
-			wrapped = append(wrapped, "")
+			result = append(result, "")
 			continue
 		}
-		// 使用 lipgloss.Width 处理中英文混排的宽度差异
-		for lipgloss.Width(line) > maxWidth {
-			// 逐字符截断，确保宽度不超标
-			for len(line) > 0 && lipgloss.Width(line) > maxWidth {
-				line = line[:len(line)-1]
+		words := strings.Fields(line)
+		if len(words) == 0 {
+			result = append(result, "")
+			continue
+		}
+		var current string
+		var currentWidth int
+		for _, word := range words {
+			w := lipgloss.Width(word)
+			if current == "" {
+				current = word
+				currentWidth = w
+			} else if currentWidth+1+w <= maxWidth {
+				current += " " + word
+				currentWidth += 1 + w
+			} else {
+				result = append(result, current)
+				current = word
+				currentWidth = w
 			}
 		}
-		if len(line) > 0 {
-			wrapped = append(wrapped, line)
+		if current != "" {
+			result = append(result, current)
 		}
 	}
-	return strings.Join(wrapped, "\n")
+	return strings.Join(result, "\n")
 }
 
 // renderToolEntry renders a logEntry using the new tool rendering pipeline.

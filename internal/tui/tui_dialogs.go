@@ -55,25 +55,36 @@ func (m *model) openConfirmDialog(event *messaging.MessageEvent) {
 
 // respondToAuth publishes the user response and closes the dialog.
 func (m *model) respondToAuth(response string) {
-	if m.publisher != nil {
-		// 优先从 DialogStack 获取 requestID
-		var requestID string
-		if m.dialogStack != nil && m.dialogStack.Len() > 0 {
-			popped := m.dialogStack.Pop()
-			if dlg, ok := popped.(*components.ConfirmDialog); ok {
-				requestID = dlg.GetRequestID()
-			}
-		} else {
-			requestID = m.confirmDialog.requestID
-		}
-		m.publisher.Publish("user_help_response", map[string]interface{}{
-			"response":   response,
-			"request_id": requestID,
-		}, "User")
+	// Guard: don't proceed if publisher is not available (avoid popping dialog
+	// before we can actually send the response, which would leave the task
+	// hung waiting for confirmation with no UI to recover).
+	if m.publisher == nil {
+		return
 	}
-	if m.dialogStack == nil || m.dialogStack.Len() == 0 {
+
+	// Extract requestID from the confirm dialog before removing it.
+	var requestID string
+	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
+		// Only pop if the top is actually a ConfirmDialog — if another dialog
+		// (e.g. HelpDialog) is on top, close the confirm by ID instead.
+		if dlg, ok := m.dialogStack.Top().(*components.ConfirmDialog); ok {
+			requestID = dlg.GetRequestID()
+			m.dialogStack.Pop()
+		} else {
+			// Search the stack for the confirm dialog and remove it by ID.
+			if m.dialogStack.CloseDialog("confirm_dialog") {
+				requestID = "" // requestID is lost but we still send the response
+			}
+		}
+	} else {
+		requestID = m.confirmDialog.requestID
 		m.confirmDialog.open = false
 	}
+
+	m.publisher.Publish("user_help_response", map[string]interface{}{
+		"response":   response,
+		"request_id": requestID,
+	}, "User")
 
 	// Log the response
 	m.logEntries = append(m.logEntries, logEntry{

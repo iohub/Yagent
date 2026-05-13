@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -145,7 +146,9 @@ func (c *tuiEventConsumer) Consume(event *messaging.MessageEvent) error {
 	select {
 	case c.ch <- event:
 	default:
-		// Drop event if channel is full to avoid blocking the task
+		// Drop event if channel is full to avoid blocking the task.
+		// Log a warning so the user / developer knows events were lost.
+		fmt.Fprintf(os.Stderr, "WARNING: TUI event channel full, dropping event type=%s from=%s\n", event.Type, event.From)
 	}
 	return nil
 }

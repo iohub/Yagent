@@ -15,7 +15,11 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	cmd = strings.TrimSpace(cmd)
 
 	switch {
-	case cmd == ":q" || cmd == ":quit" || cmd == ":q!":
+	case cmd == ":q!":
+		// Force quit — skip confirmation (vim convention)
+		m.quitting = true
+		return tea.Quit
+	case cmd == ":q" || cmd == ":quit":
 		if m.dialogStack != nil {
 			d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
 			d.SetBounds(m.termWidth, m.termHeight)
@@ -178,7 +182,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.SetWidth(m.computeFieldWidth())
 		m.resizeViewport()
 		m.invalidateRenderedCache()
-		m.buildViewportContent()
+		m.rebuildViewportScrollLock()
 		// 更新布局引擎
 		if m.layoutEngine != nil {
 			m.layoutEngine.Resize(msg.Width, msg.Height)
@@ -670,8 +674,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errMsg = errStr
 				return m, nil
 			}
-			if m.currentTask != nil {
+			if m.currentTask != nil && m.taskRunning {
 				return m, m.submitFollowUp(taskDesc)
+			}
+			if m.currentTask != nil && !m.taskRunning {
+				m.errMsg = "Task has already finished, cannot submit follow-up"
+				return m, nil
 			}
 			return m, m.submitTask()
 
@@ -973,6 +981,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
+			m.currentTask = nil
 			// Show success dialog via DialogStack
 			if m.dialogStack != nil {
 				d := components.NewTaskCompleteDialog(true, "All tasks have been finished.", components.Language(m.currentLang))

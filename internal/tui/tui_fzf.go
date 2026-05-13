@@ -114,12 +114,11 @@ func runFzfCmd(projectDir string) tea.Cmd {
 	// Read output in a goroutine
 	go func() {
 		defer close(ch)
-		buf := make([]byte, 4096)
-		n, err := pr.Read(buf)
-		if err != nil || n == 0 {
+		data, err := io.ReadAll(pr)
+		if err != nil || len(data) == 0 {
 			return
 		}
-		ch <- strings.TrimSpace(string(buf[:n]))
+		ch <- strings.TrimSpace(string(data))
 	}()
 
 	// Step 3: Build fzf command (no shell, safe args)
