@@ -1005,6 +1005,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+
+		// 清空编辑器输入框
+		m.input.SetValue("")
 		return m, nil
 	}
 

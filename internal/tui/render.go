@@ -173,6 +173,11 @@ func RenderResultBody(toolName string, content string, width int) string {
 		if output := extractOutputField(content); output != "" {
 			return renderPlainContent(output, bodyWidth)
 		}
+		// If JSON contains "output" field but it's empty, return empty string
+		// instead of pretty-printing a meaningless JSON
+		if strings.Contains(content, `"output"`) {
+			return ""
+		}
 		// Otherwise pretty-print the JSON
 		pretty, err := jsonPrettyPrint(content)
 		if err == nil {
