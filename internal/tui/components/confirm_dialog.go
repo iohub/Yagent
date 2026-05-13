@@ -29,23 +29,24 @@ type ConfirmOption struct {
 // ConfirmDialog is the authorization confirmation dialog component.
 // It prompts the user to allow/deny a tool execution.
 type ConfirmDialog struct {
-	toolName        string
-	command         string
-	warning         string
-	selectedIndex   int
-	options         []ConfirmOption
-	width           int
-	height          int
-	borderStyle     lipgloss.Style
-	titleStyle      lipgloss.Style
-	detailStyle     lipgloss.Style
-	focusedOption   lipgloss.Style
-	blurredOption   lipgloss.Style
-	helpStyle       lipgloss.Style
+	requestID     string  // 用于匹配用户确认请求
+	toolName      string
+	command       string
+	warning       string
+	selectedIndex int
+	options       []ConfirmOption
+	width         int
+	height        int
+	borderStyle   lipgloss.Style
+	titleStyle    lipgloss.Style
+	detailStyle   lipgloss.Style
+	focusedOption lipgloss.Style
+	blurredOption lipgloss.Style
+	helpStyle     lipgloss.Style
 }
 
 // NewConfirmDialog creates a new authorization confirmation dialog.
-func NewConfirmDialog(toolName, command, warning string, lang Language) *ConfirmDialog {
+func NewConfirmDialog(toolName, command, warning, requestID string, lang Language) *ConfirmDialog {
 	// Build options list from i18n translations
 	options := []ConfirmOption{
 		{Key: "a", Label: getConfirmText("ConfirmOptionAllow", lang), Value: Allow},
@@ -56,6 +57,7 @@ func NewConfirmDialog(toolName, command, warning string, lang Language) *Confirm
 	}
 
 	return &ConfirmDialog{
+		requestID:     requestID,
 		toolName:      toolName,
 		command:       command,
 		warning:       warning,
@@ -92,6 +94,9 @@ func (d *ConfirmDialog) Type() DialogType { return DialogModal }
 
 // Init initializes the component. No setup needed.
 func (d *ConfirmDialog) Init() tea.Cmd { return nil }
+
+// GetRequestID returns the request ID for matching user confirm requests.
+func (d *ConfirmDialog) GetRequestID() string { return d.requestID }
 
 // Update processes incoming messages and returns the updated component.
 func (d *ConfirmDialog) Update(msg tea.Msg) (Component, tea.Cmd) {

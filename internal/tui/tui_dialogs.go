@@ -38,7 +38,7 @@ func (m *model) openConfirmDialog(event *messaging.MessageEvent) {
 
 	if m.dialogStack != nil {
 		// 通过 DialogStack 打开确认弹窗
-		d := components.NewConfirmDialog(toolName, command, warning, components.Language(m.currentLang))
+		d := components.NewConfirmDialog(toolName, command, warning, requestID, components.Language(m.currentLang))
 		d.SetBounds(m.termWidth, m.termHeight)
 		m.dialogStack.Push(d)
 	} else {
@@ -57,9 +57,12 @@ func (m *model) openConfirmDialog(event *messaging.MessageEvent) {
 func (m *model) respondToAuth(response string) {
 	if m.publisher != nil {
 		// 优先从 DialogStack 获取 requestID
-		requestID := ""
+		var requestID string
 		if m.dialogStack != nil && m.dialogStack.Len() > 0 {
-			m.dialogStack.Pop()
+			popped := m.dialogStack.Pop()
+			if dlg, ok := popped.(*components.ConfirmDialog); ok {
+				requestID = dlg.GetRequestID()
+			}
 		} else {
 			requestID = m.confirmDialog.requestID
 		}
