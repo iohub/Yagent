@@ -71,6 +71,48 @@ The Browser-Agent is invoked by the Conductor via `delegate_browser`, seamlessly
 
 > *Example:* A developer asks, "Find the latest FastAPI middleware documentation and summarize the CORS configuration." The Browser-Agent navigates to the FastAPI docs, locates the middleware section, extracts the relevant text, and returns a concise summary — without the developer ever leaving the editor.
 
+### 📝 Git Commit Learning
+
+> *"Teach your AI about your project's recent evolution — so it never repeats work or conflicts with new architecture."*
+
+The **Git Commit Learning** system enables CodeActor to automatically learn from the project's git history, understand recent code changes, and leverage that knowledge as context for user tasks. The Conductor analyzes the latest commits, generates structured summaries via LLM, and stores them in a vector database for semantic similarity search.
+
+**What it does:**
+
+- **📖 Automatic Commit Analysis** — Fetches the latest N commits (default: 30), parses commit messages, changed files, and diffs
+- **🧠 Structured Summarization** — LLM generates concise summaries covering: requirement addressed, files changed, technical approach, and implementation details
+- **🔍 Semantic Similarity Search** — Commit embeddings are stored in LanceDB; user queries are matched against commit summaries by meaning, not just keywords
+- **🔗 Context Injection** — High-similarity commit summaries are automatically injected into the Agent's context, keeping it aware of recent project evolution
+- **⚡ Smart Caching** — Uses git HEAD hash as cache key; skips redundant processing when no new commits exist
+- **🛠️ Manual Control** — Trigger learning via `learn_commits` tool or search explicitly with `search_similar_commits("user authentication")`
+
+**Configuration:**
+
+```toml
+[commit_learner]
+enabled = true                          # Enable/disable
+max_commits = 30                        # Number of recent commits to learn
+similarity_threshold = 0.75             # Minimum cosine similarity to include in context
+top_k = 3                               # Number of most relevant commits to inject
+trigger = "both"                        # "on_demand" | "on_session_start" | "both"
+cache_ttl = 3600                        # Cache validity period in seconds
+rust_service_url = "http://127.0.0.1:12800"  # Rust codebase service URL
+```
+
+**Workflow:**
+
+```
+git log (fetch commits)
+    → LLM (generate structured summaries)
+    → Embedding Service (convert to vectors)
+    → LanceDB (store in commit_embeddings table)
+    → User query (semantic search)
+    → Top-K matching commits
+    → Inject into Agent context
+```
+
+The system integrates seamlessly with the multi-agent workflow. The Conductor automatically triggers learning on session start (configurable) and injects relevant commit context before delegating tasks to sub-agents.
+
 ### LLM Infrastructure
 - **Official OpenAI Go SDK** — Replaced langchaingo with `openai-go/v3` for direct API control
 - **DeepSeek Reasoning Support** — Full `reasoning_content` round-trip (streaming + non-streaming), injected via `SetExtraFields`
