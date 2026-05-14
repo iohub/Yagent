@@ -438,6 +438,47 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		} else {
 			entry.content = fmt.Sprintf("HELP: %v", event.Content)
 		}
+	case "commit_context_loaded":
+		if m, ok := event.Content.(map[string]interface{}); ok {
+			if summaries, ok := m["summaries"].([]interface{}); ok && len(summaries) > 0 {
+				var parts []string
+				maxShow := len(summaries)
+				if maxShow > 3 {
+					maxShow = 3
+				}
+				for i := 0; i < maxShow; i++ {
+					sum, ok := summaries[i].(map[string]interface{})
+					if !ok {
+						continue
+					}
+					hash := ""
+					if h, ok := sum["hash"].(string); ok {
+						hash = h[:8]
+					}
+					req := ""
+					if r, ok := sum["requirement"].(string); ok {
+						req = r
+					}
+					if hash != "" && req != "" {
+						parts = append(parts, fmt.Sprintf("[%s] %s", hash, req))
+					} else if hash != "" {
+						parts = append(parts, fmt.Sprintf("[%s]", hash))
+					}
+				}
+				if len(parts) > 0 {
+					entry.content = fmt.Sprintf("📦 Commit Knowledge (%d total): %s", len(summaries), strings.Join(parts, " | "))
+				} else {
+					entry.content = fmt.Sprintf("📦 Loaded %d relevant commit(s)", len(summaries))
+				}
+			} else {
+				if count, ok := m["count"].(float64); ok {
+					entry.content = fmt.Sprintf("📦 Loaded %d relevant commit(s)", int(count))
+				}
+			}
+		}
+		if entry.content == "" {
+			entry.content = fmt.Sprintf("%v", event.Content)
+		}
 	default:
 		if s, ok := event.Content.(string); ok {
 			entry.content = s

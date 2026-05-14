@@ -508,7 +508,18 @@ func (a *ConductorAgent) GetCommitContext(ctx context.Context, userInput string)
 		return ""
 	}
 
-	return FormatSummaryAsText(summaries)
+	result := FormatSummaryAsText(summaries)
+
+	// 发布 commit 知识加载事件到 TUI
+	if a.Publisher != nil {
+		commitEvent := map[string]interface{}{
+			"count":     len(summaries),
+			"summaries": summaries,
+		}
+		a.Publisher.Publish("commit_context_loaded", commitEvent, a.Name())
+	}
+
+	return result
 }
 
 // parseMetaAgentOutput extracts and validates the JSON object from Meta-Agent's raw output.

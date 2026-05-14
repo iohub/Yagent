@@ -1236,6 +1236,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 		}
+
+		// Handle commit context loaded event — log it in the TUI
+		if msg.event.Type == "commit_context_loaded" {
+			if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+				if count, ok := contentMap["count"].(float64); ok {
+					countInt := int(count)
+					entry := logEntry{
+						timestamp: msg.event.Timestamp,
+						eventType: "commit_context",
+						from:      msg.event.From,
+						content:   fmt.Sprintf("📦 Loaded %d relevant commit(s) for context", countInt),
+					}
+					m.logEntries = append(m.logEntries, entry)
+					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				}
+			}
+			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+		}
+
 		// ── Tool call result: update the matching running entry ──
 		if msg.event.Type == "tool_call_result" {
 			callID := getToolCallIDFromEventContent(msg.event.Content)
