@@ -387,7 +387,6 @@ impl EmbeddingService {
                 let hash = format!("{:x}", md5::compute(hash_input));
                 
                 let embedding = if let Some(cached) = self.cache.get(&hash) {
-                    info!("Cache hit for symbol: {}", name);
                     cached
                 } else {
                     info!("Cache miss for symbol: {}", name);
