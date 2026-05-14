@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"codeactor/internal/util"
@@ -105,6 +106,7 @@ type Config struct {
 	Compact       ContextCompactConfig  `toml:"context"`  // [context] - 上下文压缩配置
 	Browser       BrowserConfig         `toml:"browser"`  // [browser] - 浏览器配置
 	CommitLearner CommitLearnerConfig   `toml:"commit_learner"` // [commit_learner] - commit 学习器配置
+	Keywords      KeywordsConfig        `toml:"keywords"` // [keywords] - 关键词词典配置
 }
 
 // GetProvider returns a provider config by name from the shared provider pool.
@@ -355,7 +357,37 @@ func (c *Config) validate() error {
 	// Enabled 默认为 true（零值为 true 时无需设置）
 	// LLMSystemPrompt 为空时在 agents 包中使用默认值
 
+	// ═══════ Keywords 默认值设置（向后兼容） ═══════
+	// 如果 config.toml 中不存在 [keywords] 段，则创建默认配置
+	if !c.hasKeywordsConfig() {
+		homeDir, _ := os.UserHomeDir()
+		c.Keywords.DefaultPath = homeDir + "/.codeactor/keywords.txt"
+		c.Keywords.HotReload = false
+		c.Keywords.Dicts = []DictConfig{
+			{
+				Name:        "autocomplete",
+				Files:       []string{}, // 空表示使用 DefaultPath
+				Type:        DictTypePrefix,
+				BuiltinType: "default",
+			},
+		}
+	}
+
 	return nil
+}
+
+// hasKeywordsConfig 检查是否已配置 [keywords] 段
+// 用于向后兼容：如果用户没有显式配置 keywords，则使用默认值
+func (c *Config) hasKeywordsConfig() bool {
+	// 如果 Dicts 非空，说明用户有显式配置
+	if len(c.Keywords.Dicts) > 0 {
+		return true
+	}
+	// 如果 DefaultPath 非空，说明用户有显式配置
+	if c.Keywords.DefaultPath != "" {
+		return true
+	}
+	return false
 }
 
 // ContextCompactConfig 上下文压缩配置
@@ -429,4 +461,29 @@ type BrowserConfig struct {
 	AllowNoSandbox       bool     `toml:"allow_no_sandbox"`      // 允许 --no-sandbox（Docker环境需要），默认 false
 	ExtraArgs            []string `toml:"extra_args"`            // 额外的 Chrome 命令行参数
 	EnableBrowserAgent   bool     `toml:"enable_browser_agent"`  // 是否启用 Browser-Agent，默认 true
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 关键词词典配置
+// ═══════════════════════════════════════════════════════════════
+
+// 词典类型: "prefix" (前缀匹配/补全) 或 "exact" (精确匹配/扫描)
+const (
+	DictTypePrefix = "prefix"
+	DictTypeExact  = "exact"
+)
+
+// DictConfig 词典配置项
+type DictConfig struct {
+	Name        string   `toml:"name"`
+	Files       []string `toml:"files"`
+	Type        string   `toml:"type"`          // "prefix" or "exact"
+	BuiltinType string   `toml:"builtin_type"`  // "default", "none"
+}
+
+// KeywordsConfig 关键词词典配置
+type KeywordsConfig struct {
+	DefaultPath string       `toml:"default_path"` // 用户默认关键词文件路径
+	HotReload   bool         `toml:"hot_reload"`   // 是否启用热重载
+	Dicts       []DictConfig `toml:"dict"`         // 词典列表
 }

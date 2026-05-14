@@ -3,11 +3,13 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
+	"codeactor/internal/dict"
 	"codeactor/internal/http"
 	"codeactor/internal/messaging"
 	"codeactor/internal/tui/anim"
@@ -217,6 +219,12 @@ type model struct {
 	skillSuggestions   []string   // matching skill names based on current query
 	skillSuggestionIdx int        // currently selected suggestion index
 
+	// Keyword autocomplete in edit mode (triggered by Tab key)
+	keywordAutoComplete  bool              // whether keyword autocomplete suggestions are shown
+	keywordSuggestions   []string          // matching keyword suggestions based on current word at cursor
+	keywordSuggestionIdx int               // currently selected suggestion index
+	keywordDict          *dict.CompletionDict // keyword dictionary for autocomplete
+
 	// Tool call state tracking: tool_call_id → ToolEntry
 	toolCallEntries map[string]*ToolEntry
 
@@ -349,6 +357,18 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	// 注册默认的 tool_call 动画
 	am.Register("tool_call_anim", 10) // 10 FPS
 
+	// Initialize keyword completion dictionary using dict包
+	// Load from user and project dictionaries, then add builtin keywords
+	homeDir, _ := os.UserHomeDir()
+	userDictPath := filepath.Join(homeDir, ".codeactor", "keywords.txt")
+	projectDictPath := filepath.Join(projectDir, ".codeactor", "keywords.txt")
+
+	// Create dict with sources (will auto-load existing files)
+	keywordDict := dict.NewCompletionDict("autocomplete", []string{userDictPath, projectDictPath})
+
+	// Add builtin default keywords
+	keywordDict.AddWords(dict.DefaultKeywords())
+
 	return model{
 		assistant:       ca,
 		taskManager:     tm,
@@ -373,6 +393,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		layoutEngine:  le,
 		mouseHandler:  md,
 		diffView:      dv,
+		keywordDict:   keywordDict,
 	}
 }
 

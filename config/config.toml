@@ -238,3 +238,28 @@ summarization_provider = ""
 # - implementation: Key implementation details
 # Keep each field concise (2-3 sentences max).
 # """
+
+# ═══════════════════════════════════════════════════════════
+# Keywords Dictionary Configuration
+# 关键词词典配置
+# ═══════════════════════════════════════════════════════════
+[keywords]
+default_path = "~/.codeactor/keywords.txt"
+hot_reload = false
+
+# 自动补全词典（使用默认路径和项目级文件）
+# 如果 [[dict]] 留空 Files，将自动使用 default_path 和项目级文件
+
+# 白名单词典（精确匹配，用于允许的内容）
+# [[dict]]
+# name = "whitelist"
+# files = [".codeactor/whitelist.txt"]
+# type = "exact"
+# builtin_type = "none"
+
+# 黑名单词典（精确匹配，用于禁止的内容）
+# [[dict]]
+# name = "blacklist"
+# files = [".codeactor/blacklist.txt"]
+# type = "exact"
+# builtin_type = "none"
