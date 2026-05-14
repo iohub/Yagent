@@ -19,7 +19,7 @@ chrono = { version = "=0.4.38", features = ["serde"] }
 axum = "0.7"
 tokio = { version = "1.43", features = ["full"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # File processing dependencies
 md5 = "0.7"

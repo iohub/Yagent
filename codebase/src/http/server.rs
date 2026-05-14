@@ -4,8 +4,14 @@ use axum::{
     response::Json,
 };
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+use tower_http::classify::ServerErrorsFailureClass;
+use axum::extract::Request;
+use axum::response::Response;
+use tracing::Span;
 use crate::storage::StorageManager;
 
 use super::{
@@ -101,7 +107,81 @@ impl CodeBaseServer {
 
     fn create_router(&self) -> Router {
         let cors = CorsLayer::permissive();
-
+        
+        // 创建 HTTP 请求日志中间件
+        let request_logging = TraceLayer::new_for_http()
+            .make_span_with(|request: &Request| {
+                let method = request.method().to_string();
+                let path = request.uri().path().to_string();
+                let query = request.uri().query().unwrap_or("");
+                
+                tracing::info_span!(
+                    "http_request",
+                    method = %method,
+                    path = %path,
+                    query = %query,
+                )
+            })
+            .on_request(|request: &Request, _span: &Span| {
+                let method = request.method().to_string();
+                let path = request.uri().path().to_string();
+                let client_ip = request
+                    .headers()
+                    .get("x-forwarded-for")
+                    .map(|v| v.to_str().unwrap_or(""))
+                    .unwrap_or("");
+                
+                tracing::info!(
+                    method = method,
+                    path = path,
+                    client_ip = %client_ip,
+                    "Request started"
+                );
+            })
+            .on_response(|response: &Response, latency: Duration, _span: &Span| {
+                let status = response.status().as_u16();
+                let latency_ms = latency.as_millis();
+                
+                if status >= 500 {
+                    tracing::error!(
+                        status = status,
+                        latency_ms = latency_ms,
+                        "Request completed (server error)"
+                    );
+                } else if status >= 400 {
+                    tracing::warn!(
+                        status = status,
+                        latency_ms = latency_ms,
+                        "Request completed (client error)"
+                    );
+                } else {
+                    tracing::info!(
+                        status = status,
+                        latency_ms = latency_ms,
+                        "Request completed (success)"
+                    );
+                }
+            })
+            .on_failure(|failure: ServerErrorsFailureClass, latency: Duration, _span: &Span| {
+                let latency_ms = latency.as_millis();
+                match &failure {
+                    ServerErrorsFailureClass::Error(error) => {
+                        tracing::error!(
+                            error = %error,
+                            latency_ms = latency_ms,
+                            "Server error occurred"
+                        );
+                    }
+                    ServerErrorsFailureClass::StatusCode(status) => {
+                        tracing::error!(
+                            status = %status,
+                            latency_ms = latency_ms,
+                            "Request failed with status code"
+                        );
+                    }
+                }
+            });
+        
         Router::new()
             .route("/health", get(health_check))
             .route("/status", get(get_status))
@@ -117,6 +197,8 @@ impl CodeBaseServer {
             .route("/commit/clear", post(commit_clear))
             .route("/", get(draw_call_graph_home))
             .route("/draw_call_graph", get(draw_call_graph))
+            // 中间件顺序：先应用日志，再应用 CORS
+            .layer(request_logging)
             .layer(cors)
             .with_state(self.storage.clone())
     }
