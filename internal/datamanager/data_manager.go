@@ -3,6 +3,7 @@ package datamanager
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -399,6 +400,11 @@ func (dm *DataManager) ListTaskHistoryFast(limit int) ([]TaskHistoryItem, error)
 	entries, err := os.ReadDir(dm.dataDir)
 	if err != nil {
 		return nil, err
+	}
+
+	// 添加调试日志（输出到 stderr，不影响正常运行）
+	if len(entries) == 0 {
+		fmt.Fprintf(os.Stderr, "[history] no entries in task directory: %s\n", dm.dataDir)
 	}
 
 	var items []TaskHistoryItem

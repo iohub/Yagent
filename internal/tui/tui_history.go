@@ -49,15 +49,20 @@ func historyUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		m.historyItems = msg.items
 		m.historyPage = 0
 		m.historyCursor = 0
+		m.historyLoading = false
+		if len(msg.items) == 0 {
+			m.infoMsg = "No conversation history found"
+		}
 		return m, nil
 
 	case memoryLoadedMsg:
+		m.historyLoading = false
 		restoreSession(m, msg.memory, msg.taskID)
 		exitHistoryMode(m)
 		return m, nil
 
 	case historyErrMsg:
-		m.infoMsg = fmt.Sprintf("Error: %v", msg.err)
+		m.infoMsg = fmt.Sprintf("History error: %v", msg.err)
 		m.historyLoading = false
 		return m, nil
 
@@ -252,11 +257,14 @@ func loadHistoryCmd(m *model) tea.Cmd {
 func loadMemoryCmd(m *model, taskID string) tea.Cmd {
 	return func() tea.Msg {
 		if m.dataManager == nil {
-			return memoryLoadedMsg{taskID: taskID, memory: nil}
+			return historyErrMsg{err: fmt.Errorf("data manager is not initialized")}
 		}
 		mem, err := m.dataManager.LoadTaskMemory(taskID)
 		if err != nil {
 			return historyErrMsg{err: err}
+		}
+		if mem == nil || len(mem.Messages) == 0 {
+			return historyErrMsg{err: fmt.Errorf("no messages found in task %s", taskID)}
 		}
 		return memoryLoadedMsg{taskID: taskID, memory: mem}
 	}
@@ -266,18 +274,17 @@ func loadMemoryCmd(m *model, taskID string) tea.Cmd {
 
 // restoreSession restores a conversation from loaded memory into the current TUI session.
 func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
-	if mem == nil {
-		m.infoMsg = "Failed to load session memory"
-		m.historyLoading = false
-		return
-	}
-
 	// Guard against double-load (e.g., rapid double-press on history item)
 	if m.historyLoading {
 		return
 	}
 	m.historyLoading = true
 	defer func() { m.historyLoading = false }()
+
+	if mem == nil || len(mem.Messages) == 0 {
+		m.infoMsg = "No messages in this session"
+		return
+	}
 
 	// 1. Clear existing log entries
 	m.logEntries = nil
@@ -355,9 +362,6 @@ func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 
 	// 7. Set info message
 	m.infoMsg = fmt.Sprintf("Loaded session: %s", title)
-
-	// 8. Reset loading flag
-	m.historyLoading = false
 }
 
 // ── History Mode Entry/Exit ──
@@ -369,7 +373,7 @@ func enterHistoryMode(m *model) tea.Cmd {
 	m.historyCursor = 0
 	m.historyPage = 0
 	m.historyPageSize = defaultPageSize
-	m.historyLoading = false
+	m.historyLoading = true
 	m.lastKey = ""
 	return loadHistoryCmd(m)
 }
