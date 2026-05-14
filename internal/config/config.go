@@ -352,9 +352,6 @@ func (c *Config) validate() error {
 	if c.CommitLearner.CacheTTL == 0 {
 		c.CommitLearner.CacheTTL = 3600
 	}
-	if c.CommitLearner.RustServiceURL == "" {
-		c.CommitLearner.RustServiceURL = "http://127.0.0.1:12800"
-	}
 	// Enabled 默认为 true（零值为 true 时无需设置）
 	// LLMSystemPrompt 为空时在 agents 包中使用默认值
 
@@ -411,7 +408,6 @@ type CommitLearnerConfig struct {
 	TopK                  int     `toml:"top_k"`                 // 搜索结果数量
 	Trigger               string  `toml:"trigger"`               // 触发方式："on_demand", "on_session_start", "both"
 	CacheTTL              int     `toml:"cache_ttl"`             // 缓存有效期（秒）
-	RustServiceURL        string  `toml:"rust_service_url"`      // Rust 向量服务地址
 	LLMSystemPrompt       string  `toml:"llm_system_prompt"`     // LLM 系统提示词（空时使用默认值）
 	SummarizationProvider string  `toml:"summarization_provider"` // 专用的 LLM provider 名称，空时使用全局默认
 }

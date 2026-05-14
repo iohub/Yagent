@@ -96,7 +96,6 @@ similarity_threshold = 0.75             # 包含在上下文中的最小余弦�
 top_k = 3                               # 注入的最相关提交数量
 trigger = "both"                        # "on_demand" | "on_session_start" | "both"
 cache_ttl = 3600                        # 缓存有效期（秒）
-rust_service_url = "http://127.0.0.1:12800"  # Rust 代码分析服务地址
 ```
 
 **工作流程：**

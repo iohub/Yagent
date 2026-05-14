@@ -96,7 +96,6 @@ similarity_threshold = 0.75             # Minimum cosine similarity to include i
 top_k = 3                               # Number of most relevant commits to inject
 trigger = "both"                        # "on_demand" | "on_session_start" | "both"
 cache_ttl = 3600                        # Cache validity period in seconds
-rust_service_url = "http://127.0.0.1:12800"  # Rust codebase service URL
 ```
 
 **Workflow:**

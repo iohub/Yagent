@@ -222,7 +222,6 @@ similarity_threshold = 0.75
 top_k = 3
 trigger = "both"
 cache_ttl = 3600
-rust_service_url = "http://127.0.0.1:12800"
 
 # 专用的 LLM provider 名称（可选）
 # 配置后，commit 总结和信息提取将使用此 provider 的模型

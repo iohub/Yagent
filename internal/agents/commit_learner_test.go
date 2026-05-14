@@ -29,9 +29,6 @@ func TestDefaultCommitLearnConfig(t *testing.T) {
 	if config.Trigger != "both" {
 		t.Errorf("expected Trigger='both', got %q", config.Trigger)
 	}
-	if config.RustServiceURL != "http://127.0.0.1:12800" {
-		t.Errorf("expected RustServiceURL='http://127.0.0.1:12800', got %q", config.RustServiceURL)
-	}
 	if config.LLMSystemPrompt == "" {
 		t.Error("expected non-empty LLMSystemPrompt")
 	}
@@ -40,7 +37,7 @@ func TestDefaultCommitLearnConfig(t *testing.T) {
 // TestNewCommitLearner 测试 CommitLearner 创建
 func TestNewCommitLearner(t *testing.T) {
 	config := DefaultCommitLearnConfig()
-	learner := NewCommitLearner(config, nil, nil)
+	learner := NewCommitLearner(config, nil, nil, nil)
 
 	if learner == nil {
 		t.Fatal("expected non-nil CommitLearner")
@@ -60,7 +57,7 @@ func TestNewCommitLearner(t *testing.T) {
 func TestCommitLearnerConfig(t *testing.T) {
 	config := DefaultCommitLearnConfig()
 	config.MaxCommits = 50
-	learner := NewCommitLearner(config, nil, nil)
+	learner := NewCommitLearner(config, nil, nil, nil)
 
 	retrievedConfig := learner.Config()
 	if retrievedConfig.MaxCommits != 50 {
@@ -146,7 +143,7 @@ func TestFormatSummaryAsTextSingle(t *testing.T) {
 func TestCommitLearnerCache(t *testing.T) {
 	config := DefaultCommitLearnConfig()
 	config.CacheTTL = 300 // 5 分钟
-	learner := NewCommitLearner(config, nil, nil)
+	learner := NewCommitLearner(config, nil, nil, nil)
 
 	// 模拟设置缓存
 	learner.cacheMu.Lock()
@@ -171,7 +168,7 @@ func TestCommitLearnerCache(t *testing.T) {
 // TestCommitLearnerCacheWithSummaries 测试缓存存储和检索
 func TestCommitLearnerCacheWithSummaries(t *testing.T) {
 	config := DefaultCommitLearnConfig()
-	learner := NewCommitLearner(config, nil, nil)
+	learner := NewCommitLearner(config, nil, nil, nil)
 
 	// 添加缓存项
 	summary := CommitSummary{
@@ -377,7 +374,6 @@ func TestCommitLearnConfigStructure(t *testing.T) {
 		TopK:                5,
 		Trigger:             "on_demand",
 		CacheTTL:            1800,
-		RustServiceURL:      "http://localhost:12800",
 		LLMSystemPrompt:     "Test prompt",
 	}
 
@@ -409,7 +405,7 @@ func TestCommitLearnConfigTriggerValues(t *testing.T) {
 		config := DefaultCommitLearnConfig()
 		config.Trigger = trigger
 
-		learner := NewCommitLearner(config, nil, nil)
+		learner := NewCommitLearner(config, nil, nil, nil)
 		retrievedConfig := learner.Config()
 
 		if retrievedConfig.Trigger != trigger {
@@ -466,7 +462,7 @@ func TestFormatSummaryAsTextHashTruncation(t *testing.T) {
 // TestNewCommitLearnerWithNilEngine 测试使用 nil engine 创建 CommitLearner
 func TestNewCommitLearnerWithNilEngine(t *testing.T) {
 	config := DefaultCommitLearnConfig()
-	learner := NewCommitLearner(config, nil, nil)
+	learner := NewCommitLearner(config, nil, nil, nil)
 
 	if learner == nil {
 		t.Fatal("expected non-nil CommitLearner")
@@ -479,7 +475,7 @@ func TestNewCommitLearnerWithNilEngine(t *testing.T) {
 // TestCommitLearnerConcurrentCacheAccess 测试并发缓存访问
 func TestCommitLearnerConcurrentCacheAccess(t *testing.T) {
 	config := DefaultCommitLearnConfig()
-	learner := NewCommitLearner(config, nil, nil)
+	learner := NewCommitLearner(config, nil, nil, nil)
 
 	// 并发写入
 	done := make(chan bool)
@@ -592,7 +588,7 @@ Implementation: Test implementation`
 // TestClearCache 测试清除缓存
 func TestClearCache(t *testing.T) {
 	config := DefaultCommitLearnConfig()
-	learner := NewCommitLearner(config, nil, nil)
+	learner := NewCommitLearner(config, nil, nil, nil)
 
 	// 添加缓存项
 	summary := CommitSummary{
@@ -655,7 +651,6 @@ func TestDefaultConfigValues(t *testing.T) {
 		"TopK":                3,
 		"Trigger":             "both",
 		"CacheTTL":            3600,
-		"RustServiceURL":      "http://127.0.0.1:12800",
 	}
 
 	for key := range expectedValues {
@@ -683,10 +678,6 @@ func TestDefaultConfigValues(t *testing.T) {
 		case "CacheTTL":
 			if config.CacheTTL != 3600 {
 				t.Errorf("expected %s=3600, got %d", key, config.CacheTTL)
-			}
-		case "RustServiceURL":
-			if config.RustServiceURL != "http://127.0.0.1:12800" {
-				t.Errorf("expected %s='http://127.0.0.1:12800', got %q", key, config.RustServiceURL)
 			}
 		}
 	}

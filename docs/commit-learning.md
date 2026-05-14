@@ -23,7 +23,6 @@ similarity_threshold = 0.75             # 相似度阈值
 top_k = 3                               # 返回的最多匹配数
 trigger = "both"                        # 触发模式: "on_demand" | "on_session_start" | "both"
 cache_ttl = 3600                        # 缓存有效期（秒）
-rust_service_url = "http://127.0.0.1:12800"  # Rust 服务地址
 ```
 
 ## 触发模式

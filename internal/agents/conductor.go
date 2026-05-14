@@ -361,10 +361,10 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	// 先创建 commit 管理器，以便 closures 可以捕获它
 	var commitManager *CommitManager
 	if llmClient != nil {
-		commitManager = NewCommitManager(cfg, engine, llmClient)
+		commitManager = NewCommitManager(cfg, engine, llmClient, globalCtx)
 	} else {
 		// fallback to no dedicated engine
-		commitManager = NewCommitManager(cfg, engine, nil)
+		commitManager = NewCommitManager(cfg, engine, nil, globalCtx)
 	}
 
 	// learn_commits 工具：触发 commit 学习流程

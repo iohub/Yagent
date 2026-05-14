@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
 )
 
@@ -49,7 +50,6 @@ type CommitLearnConfig struct {
 	Trigger               string  `toml:"trigger"`                 // 触发方式："on_demand", "on_session_start", "both"
 	CacheTTL              int     `toml:"cache_ttl"`               // 缓存有效期（秒）
 	LLMSystemPrompt       string  `toml:"llm_system_prompt"`       // LLM 系统提示词
-	RustServiceURL        string  `toml:"rust_service_url"`        // Rust 服务地址
 	SummarizationProvider string  `toml:"summarization_provider"`  // 专用的 LLM provider 名称
 }
 
@@ -62,7 +62,6 @@ func DefaultCommitLearnConfig() CommitLearnConfig {
 		TopK:                3,
 		Trigger:             "both",
 		CacheTTL:            3600,
-		RustServiceURL:      "http://127.0.0.1:12800",
 		LLMSystemPrompt: `You are a software engineering analyst. Analyze the following git commit and provide a structured summary.
 Output in JSON format with these fields:
 - requirement: A brief description of what requirement this commit addresses
@@ -85,6 +84,7 @@ type CommitLearner struct {
 	config          CommitLearnConfig
 	llmEngine       llm.Engine           // 默认 LLM 引擎
 	dedicatedEngine llm.Engine           // 专用的 LLM 引擎（可选，用于摘要生成）
+	globalCtx       *globalctx.GlobalCtx // 全局上下文，包含 CodebaseURL
 	httpClient      *http.Client
 	cache           map[string]*CachedSummary
 	cacheMu         sync.RWMutex
@@ -93,11 +93,12 @@ type CommitLearner struct {
 }
 
 // NewCommitLearner 创建新的 CommitLearner 实例
-func NewCommitLearner(config CommitLearnConfig, llmEngine llm.Engine, dedicatedEngine llm.Engine) *CommitLearner {
+func NewCommitLearner(config CommitLearnConfig, llmEngine llm.Engine, dedicatedEngine llm.Engine, globalCtx *globalctx.GlobalCtx) *CommitLearner {
 	return &CommitLearner{
 		config:          config,
 		llmEngine:       llmEngine,
 		dedicatedEngine: dedicatedEngine,
+		globalCtx:       globalCtx,
 		httpClient:      &http.Client{Timeout: 30 * time.Second},
 		cache:           make(map[string]*CachedSummary),
 	}
@@ -206,8 +207,8 @@ func (cl *CommitLearner) StoreEmbeddings(ctx context.Context, summaries []Commit
 		}
 
 		// 调用 Rust API
-		rustURL := cl.config.RustServiceURL
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rustURL+"/commit/embed", bytes.NewReader(reqJSON))
+		reqURL := cl.globalCtx.CodebaseURL + "/commit/embed"
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqJSON))
 		if err != nil {
 			fmt.Printf("[CommitLearner] Failed to create request for commit %s: %v\n", s.Hash, err)
 			continue
@@ -261,8 +262,8 @@ func (cl *CommitLearner) SearchSimilar(ctx context.Context, userInput string, to
 	}
 
 	// 调用 Rust API
-	rustURL := cl.config.RustServiceURL
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rustURL+"/commit/search", bytes.NewReader(reqJSON))
+	reqURL := cl.globalCtx.CodebaseURL + "/commit/search"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqJSON))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create search request: %w", err)
 	}
@@ -318,8 +319,8 @@ func (cl *CommitLearner) ClearCommits(ctx context.Context) error {
 		return fmt.Errorf("failed to marshal clear request: %w", err)
 	}
 
-	rustURL := cl.config.RustServiceURL
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rustURL+"/commit/clear", bytes.NewReader(reqJSON))
+	reqURL := cl.globalCtx.CodebaseURL + "/commit/clear"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqJSON))
 	if err != nil {
 		return fmt.Errorf("failed to create clear request: %w", err)
 	}
