@@ -168,9 +168,9 @@ func (cl *CommitLearner) SummarizeCommits(ctx context.Context, commits []CommitM
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 
+			// 调用 LLM 生成摘要，失败时静默处理，不中断其他 commit 的处理
 			summary, err := cl.summarizeSingleCommit(ctx, c)
 			if err != nil {
-				fmt.Printf("[CommitLearner] Failed to summarize commit %s: %v\n", c.Hash[:min(8, len(c.Hash))], err)
 				return
 			}
 
@@ -202,7 +202,7 @@ func (cl *CommitLearner) StoreEmbeddings(ctx context.Context, summaries []Commit
 
 		reqJSON, err := json.Marshal(reqBody)
 		if err != nil {
-			fmt.Printf("[CommitLearner] Failed to marshal request for commit %s: %v\n", s.Hash, err)
+			// Marshal 失败，跳过该 commit
 			continue
 		}
 
@@ -210,22 +210,20 @@ func (cl *CommitLearner) StoreEmbeddings(ctx context.Context, summaries []Commit
 		reqURL := cl.globalCtx.CodebaseURL + "/commit/embed"
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqJSON))
 		if err != nil {
-			fmt.Printf("[CommitLearner] Failed to create request for commit %s: %v\n", s.Hash, err)
+			// 创建请求失败，跳过该 commit
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := cl.httpClient.Do(req)
 		if err != nil {
-			fmt.Printf("[CommitLearner] Failed to store embedding for commit %s: %v\n", s.Hash, err)
+			// HTTP 请求失败，跳过该 commit
 			continue
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			fmt.Printf("[CommitLearner] Failed to store embedding for commit %s: status %d, body: %s\n",
-				s.Hash, resp.StatusCode, string(body))
+			// 状态码非 200，跳过该 commit
 			continue
 		}
 
@@ -365,23 +363,17 @@ func (cl *CommitLearner) EnsureLatest(ctx context.Context, repoPath string) erro
 		return nil // 缓存有效，跳过
 	}
 
-	fmt.Printf("[CommitLearner] Starting commit learning (head: %s)\n", head[:min(8, len(head))])
-
 	// 获取 commits
 	commits, err := cl.FetchRecentCommits(ctx, repoPath, cl.config.MaxCommits)
 	if err != nil {
 		return fmt.Errorf("failed to fetch commits: %w", err)
 	}
 
-	fmt.Printf("[CommitLearner] Fetched %d commits\n", len(commits))
-
 	// 生成摘要
 	summaries, err := cl.SummarizeCommits(ctx, commits)
 	if err != nil {
 		return fmt.Errorf("failed to summarize commits: %w", err)
 	}
-
-	fmt.Printf("[CommitLearner] Generated %d summaries\n", len(summaries))
 
 	// 存储到向量数据库
 	if err := cl.StoreEmbeddings(ctx, summaries); err != nil {
@@ -394,7 +386,6 @@ func (cl *CommitLearner) EnsureLatest(ctx context.Context, repoPath string) erro
 	cl.lastFetch = time.Now()
 	cl.cacheMu.Unlock()
 
-	fmt.Printf("[CommitLearner] Commit learning complete\n")
 	return nil
 }
 

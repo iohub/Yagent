@@ -120,9 +120,6 @@ func (cm *CommitManager) Initialize(ctx context.Context, repoPath string) error 
 		go func() {
 			if err := learner.EnsureLatest(ctx, repoPath); err != nil {
 				cm.err = fmt.Errorf("failed to initialize commit learner: %w", err)
-				fmt.Printf("[CommitLearner] Warning: %v\n", cm.err)
-			} else {
-				fmt.Printf("[CommitLearner] Initialized successfully\n")
 			}
 		}()
 	})
