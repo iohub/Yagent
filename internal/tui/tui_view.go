@@ -110,9 +110,34 @@ func (m model) View() tea.View {
 			footer.WriteString("\n")
 			// Hint line
 			hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).PaddingLeft(4)
-			footer.WriteString(hintStyle.Render("Tab 切换  Enter 选择并执行  Esc 关闭"))
+			footer.WriteString(hintStyle.Render("Tab 切换  Enter 选择  Esc 关闭"))
 			footer.WriteString("\n")
 		}
+	}
+
+	// Inline keyword autocomplete suggestions (below textarea)
+	if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 {
+		var suggestionParts []string
+		for i, suggestion := range m.keywordSuggestions {
+			if i == m.keywordSuggestionIdx {
+				// Highlight selected suggestion
+				suggestionParts = append(suggestionParts,
+					lipgloss.NewStyle().
+						Background(lipgloss.Color("57")). // Light blue background
+						Foreground(lipgloss.Color("15")). // White text
+						PaddingLeft(1).
+						Render(suggestion))
+			} else {
+				// Dim non-selected suggestions
+				suggestionParts = append(suggestionParts,
+					lipgloss.NewStyle().
+						Foreground(lipgloss.Color("243")).
+						PaddingLeft(1).
+						Render(suggestion))
+			}
+		}
+		footer.WriteString(strings.Join(suggestionParts, "  "))
+		footer.WriteString("\n")
 	}
 
 	// Error message

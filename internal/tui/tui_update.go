@@ -640,6 +640,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "esc":
+			// Dismiss keyword autocomplete if active
+			if m.keywordAutoComplete {
+				m.keywordAutoComplete = false
+				m.keywordSuggestions = nil
+				m.keywordSuggestionIdx = 0
+				return m, nil
+			}
 			// Dismiss skill autocomplete if active
 			if m.skillAutoComplete {
 				m.skillAutoComplete = false
@@ -700,6 +707,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "tab":
+			// Cycle through keyword autocomplete suggestions first
+			if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 {
+				m.keywordSuggestionIdx = (m.keywordSuggestionIdx + 1) % len(m.keywordSuggestions)
+				return m, nil
+			}
 			// Cycle through skill autocomplete suggestions
 			if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
 				m.skillSuggestionIdx = (m.skillSuggestionIdx + 1) % len(m.skillSuggestions)
@@ -711,6 +723,57 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, inputCmd
 
 		case "enter":
+			// If keyword autocomplete is active, insert the selected keyword at cursor
+			if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 && m.keywordSuggestionIdx >= 0 && m.keywordSuggestionIdx < len(m.keywordSuggestions) {
+				keyword := m.keywordSuggestions[m.keywordSuggestionIdx]
+				content := m.input.Value()
+
+				// Calculate byte offset from cursor line and column
+				cursorLine := m.input.Line()
+				cursorCol := m.input.Column()
+
+				// Calculate byte offset: sum of lengths of all previous lines + current column
+				contentRunes := []rune(content)
+				byteOffset := 0
+				if cursorLine > 0 {
+					// Split content into logical lines and sum their lengths (+1 for newline)
+					lines := splitLogicalLines(contentRunes, cursorLine-1)
+					for _, line := range lines {
+						byteOffset += len(line) + 1 // +1 for newline character
+					}
+				}
+				// Add current column (which is the character offset within the current line)
+				if cursorCol <= len(contentRunes)-byteOffset {
+					byteOffset += cursorCol
+				}
+
+				// Find the word boundary before cursor to replace the current word
+				wordStart := byteOffset
+				for wordStart > 0 {
+					prevRune := contentRunes[wordStart-1]
+					if (prevRune >= 'a' && prevRune <= 'z') || (prevRune >= 'A' && prevRune <= 'Z') ||
+						(prevRune >= '0' && prevRune <= '9') || prevRune == '_' ||
+						(prevRune >= 0x4e00 && prevRune <= 0x9fff) {
+						wordStart--
+					} else {
+						break
+					}
+				}
+
+				// Build new content: replace word at cursor with selected keyword
+				var newContent []rune
+				newContent = append(newContent, contentRunes[:wordStart]...)
+				newContent = append(newContent, []rune(keyword)...)
+				newContent = append(newContent, contentRunes[byteOffset:]...)
+
+				m.input.SetValue(string(newContent))
+
+				// Reset autocomplete state
+				m.keywordAutoComplete = false
+				m.keywordSuggestions = nil
+				m.keywordSuggestionIdx = 0
+				return m, nil
+			}
 			// If skill autocomplete is active, expand the selected skill
 			if m.skillAutoComplete && len(m.skillSuggestions) > 0 && m.skillSuggestionIdx >= 0 && m.skillSuggestionIdx < len(m.skillSuggestions) {
 				skillName := m.skillSuggestions[m.skillSuggestionIdx]
@@ -749,6 +812,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var inputCmd tea.Cmd
 			m.input, inputCmd = m.input.Update(msg)
 			m.updateSkillAutocomplete()
+			m.updateKeywordAutocomplete()
 			return m, inputCmd
 
 		case "@":
@@ -773,6 +837,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var inputCmd tea.Cmd
 			m.input, inputCmd = m.input.Update(msg)
 			m.updateSkillAutocomplete()
+			m.updateKeywordAutocomplete()
 			return m, inputCmd
 		}
 
@@ -1089,6 +1154,113 @@ func (m *model) updateSkillAutocomplete() {
 		m.skillSuggestions = nil
 		m.skillSuggestionIdx = 0
 	}
+}
+
+// updateKeywordAutocomplete checks if keyword autocomplete should be triggered
+// based on current input and cursor position.
+func (m *model) updateKeywordAutocomplete() {
+	// Only activate in edit mode and when not task running
+	if m.commandMode || m.taskRunning {
+		m.keywordAutoComplete = false
+		m.keywordSuggestions = nil
+		m.keywordSuggestionIdx = 0
+		return
+	}
+
+	// Calculate byte offset from cursor line and column
+	cursorLine := m.input.Line()
+	cursorCol := m.input.Column()
+	content := m.input.Value()
+	contentRunes := []rune(content)
+
+	// Calculate byte offset: sum of lengths of all previous lines + current column
+	byteOffset := 0
+	if cursorLine > 0 {
+		lines := splitLogicalLines(contentRunes, cursorLine-1)
+		for _, line := range lines {
+			byteOffset += len(line) + 1 // +1 for newline character
+		}
+	}
+	// Add current column (character offset within the current line)
+	if cursorCol <= len(contentRunes)-byteOffset {
+		byteOffset += cursorCol
+	}
+
+	// Extract word before cursor
+	word := extractWordAtCursor(content, byteOffset)
+
+	// Only trigger if word has content and no special prefix (like /skill)
+	if word == "" || strings.HasPrefix(word, "/") {
+		m.keywordAutoComplete = false
+		m.keywordSuggestions = nil
+		m.keywordSuggestionIdx = 0
+		return
+	}
+
+	// Get completions from keyword dictionary
+	suggestions := GetKeywordCompletions(m, word, 20)
+
+	if len(suggestions) > 0 {
+		m.keywordAutoComplete = true
+		m.keywordSuggestions = suggestions
+		m.keywordSuggestionIdx = 0
+	} else {
+		m.keywordAutoComplete = false
+		m.keywordSuggestions = nil
+		m.keywordSuggestionIdx = 0
+	}
+}
+
+// extractWordAtCursor extracts the word immediately before the cursor position.
+// A word is defined as a sequence of alphanumeric characters, underscores,
+// and common Chinese characters.
+func extractWordAtCursor(content string, cursorPos int) string {
+	// Convert to runes for proper Unicode handling
+	runes := []rune(content)
+
+	// Ensure cursor position is valid
+	if cursorPos < 0 || cursorPos > len(runes) {
+		return ""
+	}
+
+	// Extract backwards from cursor position
+	var word []rune
+	for i := cursorPos - 1; i >= 0; i-- {
+		r := runes[i]
+		// Allow alphanumeric, underscore, and common Chinese characters
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_' || (r >= 0x4e00 && r <= 0x9fff) {
+			word = append([]rune{r}, word...)
+		} else {
+			break
+		}
+	}
+
+	return string(word)
+}
+
+// splitLogicalLines splits the content runes into logical lines (separated by newlines).
+// It returns the first `count` logical lines from the content.
+func splitLogicalLines(content []rune, count int) [][]rune {
+	var lines [][]rune
+	var currentLine []rune
+
+	for _, r := range content {
+		if r == '\n' {
+			lines = append(lines, currentLine)
+			currentLine = nil
+			if len(lines) >= count {
+				return lines
+			}
+		} else {
+			currentLine = append(currentLine, r)
+		}
+	}
+	// Add the last line if not empty
+	if len(currentLine) > 0 {
+		lines = append(lines, currentLine)
+	}
+	return lines
 }
 
 // handleMouseClick 处理鼠标点击事件
