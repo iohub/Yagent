@@ -405,14 +405,15 @@ type ContextCompactConfig struct {
 // CommitLearnerConfig commit 学习器配置
 // 用于 TOML 解析，在 agents 包中转换为 CommitLearnConfig
 type CommitLearnerConfig struct {
-	Enabled             bool    `toml:"enabled"`               // 是否启用 commit 学习功能
-	MaxCommits          int     `toml:"max_commits"`           // 最大获取 commit 数量
-	SimilarityThreshold float64 `toml:"similarity_threshold"`  // 相似度阈值（0.0-1.0）
-	TopK                int     `toml:"top_k"`                 // 搜索结果数量
-	Trigger             string  `toml:"trigger"`               // 触发方式："on_demand", "on_session_start", "both"
-	CacheTTL            int     `toml:"cache_ttl"`             // 缓存有效期（秒）
-	RustServiceURL      string  `toml:"rust_service_url"`      // Rust 向量服务地址
-	LLMSystemPrompt     string  `toml:"llm_system_prompt"`     // LLM 系统提示词（空时使用默认值）
+	Enabled               bool    `toml:"enabled"`               // 是否启用 commit 学习功能
+	MaxCommits            int     `toml:"max_commits"`           // 最大获取 commit 数量
+	SimilarityThreshold   float64 `toml:"similarity_threshold"`  // 相似度阈值（0.0-1.0）
+	TopK                  int     `toml:"top_k"`                 // 搜索结果数量
+	Trigger               string  `toml:"trigger"`               // 触发方式："on_demand", "on_session_start", "both"
+	CacheTTL              int     `toml:"cache_ttl"`             // 缓存有效期（秒）
+	RustServiceURL        string  `toml:"rust_service_url"`      // Rust 向量服务地址
+	LLMSystemPrompt       string  `toml:"llm_system_prompt"`     // LLM 系统提示词（空时使用默认值）
+	SummarizationProvider string  `toml:"summarization_provider"` // 专用的 LLM provider 名称，空时使用全局默认
 }
 
 // BrowserConfig 浏览器配置

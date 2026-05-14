@@ -26,15 +26,26 @@ type CommitManager struct {
 // 参数:
 //   - cfg: 全局配置（从中读取 CommitLearner 配置）
 //   - llmEngine: LLM 引擎，用于生成 commit 摘要
+//   - llmClient: LLM 客户端，用于获取专用引擎（如果配置了 summarization_provider）
 //
 // 返回值:
 //   - *CommitManager: 初始化的管理器实例
-func NewCommitManager(cfg config.Config, llmEngine llm.Engine) *CommitManager {
+func NewCommitManager(cfg config.Config, llmEngine llm.Engine, llmClient *llm.Client) *CommitManager {
 	// 将 config.CommitLearnerConfig 转换为 agents.CommitLearnConfig
 	agentConfig := convertConfig(cfg.CommitLearner)
 
+	// 如果配置了专用的 summarization_provider，创建专用引擎
+	var dedicatedEngine llm.Engine
+	if agentConfig.SummarizationProvider != "" {
+		dedicatedEngine = llmClient.GetAgentEngine("commit-learner")
+		if dedicatedEngine == nil {
+			// fallback to default
+			dedicatedEngine = llmEngine
+		}
+	}
+
 	return &CommitManager{
-		learner: NewCommitLearner(agentConfig, llmEngine),
+		learner: NewCommitLearner(agentConfig, llmEngine, dedicatedEngine),
 	}
 }
 
@@ -48,14 +59,15 @@ func convertConfig(c config.CommitLearnerConfig) CommitLearnConfig {
 		c.LLMSystemPrompt = defaultConfig.LLMSystemPrompt
 	}
 	return CommitLearnConfig{
-		Enabled:             c.Enabled,
-		MaxCommits:          c.MaxCommits,
-		SimilarityThreshold: c.SimilarityThreshold,
-		TopK:                c.TopK,
-		Trigger:             c.Trigger,
-		CacheTTL:            c.CacheTTL,
-		LLMSystemPrompt:     c.LLMSystemPrompt,
-		RustServiceURL:      c.RustServiceURL,
+		Enabled:               c.Enabled,
+		MaxCommits:            c.MaxCommits,
+		SimilarityThreshold:   c.SimilarityThreshold,
+		TopK:                  c.TopK,
+		Trigger:               c.Trigger,
+		CacheTTL:              c.CacheTTL,
+		LLMSystemPrompt:       c.LLMSystemPrompt,
+		RustServiceURL:        c.RustServiceURL,
+		SummarizationProvider: c.SummarizationProvider,
 	}
 }
 

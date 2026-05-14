@@ -40,7 +40,7 @@ func TestDefaultCommitLearnConfig(t *testing.T) {
 // TestNewCommitLearner 测试 CommitLearner 创建
 func TestNewCommitLearner(t *testing.T) {
 	config := DefaultCommitLearnConfig()
-	learner := NewCommitLearner(config, nil)
+	learner := NewCommitLearner(config, nil, nil)
 
 	if learner == nil {
 		t.Fatal("expected non-nil CommitLearner")
@@ -60,7 +60,7 @@ func TestNewCommitLearner(t *testing.T) {
 func TestCommitLearnerConfig(t *testing.T) {
 	config := DefaultCommitLearnConfig()
 	config.MaxCommits = 50
-	learner := NewCommitLearner(config, nil)
+	learner := NewCommitLearner(config, nil, nil)
 
 	retrievedConfig := learner.Config()
 	if retrievedConfig.MaxCommits != 50 {
@@ -146,7 +146,7 @@ func TestFormatSummaryAsTextSingle(t *testing.T) {
 func TestCommitLearnerCache(t *testing.T) {
 	config := DefaultCommitLearnConfig()
 	config.CacheTTL = 300 // 5 分钟
-	learner := NewCommitLearner(config, nil)
+	learner := NewCommitLearner(config, nil, nil)
 
 	// 模拟设置缓存
 	learner.cacheMu.Lock()
@@ -171,7 +171,7 @@ func TestCommitLearnerCache(t *testing.T) {
 // TestCommitLearnerCacheWithSummaries 测试缓存存储和检索
 func TestCommitLearnerCacheWithSummaries(t *testing.T) {
 	config := DefaultCommitLearnConfig()
-	learner := NewCommitLearner(config, nil)
+	learner := NewCommitLearner(config, nil, nil)
 
 	// 添加缓存项
 	summary := CommitSummary{
@@ -409,7 +409,7 @@ func TestCommitLearnConfigTriggerValues(t *testing.T) {
 		config := DefaultCommitLearnConfig()
 		config.Trigger = trigger
 
-		learner := NewCommitLearner(config, nil)
+		learner := NewCommitLearner(config, nil, nil)
 		retrievedConfig := learner.Config()
 
 		if retrievedConfig.Trigger != trigger {
@@ -466,7 +466,7 @@ func TestFormatSummaryAsTextHashTruncation(t *testing.T) {
 // TestNewCommitLearnerWithNilEngine 测试使用 nil engine 创建 CommitLearner
 func TestNewCommitLearnerWithNilEngine(t *testing.T) {
 	config := DefaultCommitLearnConfig()
-	learner := NewCommitLearner(config, nil)
+	learner := NewCommitLearner(config, nil, nil)
 
 	if learner == nil {
 		t.Fatal("expected non-nil CommitLearner")
@@ -479,7 +479,7 @@ func TestNewCommitLearnerWithNilEngine(t *testing.T) {
 // TestCommitLearnerConcurrentCacheAccess 测试并发缓存访问
 func TestCommitLearnerConcurrentCacheAccess(t *testing.T) {
 	config := DefaultCommitLearnConfig()
-	learner := NewCommitLearner(config, nil)
+	learner := NewCommitLearner(config, nil, nil)
 
 	// 并发写入
 	done := make(chan bool)
@@ -592,7 +592,7 @@ Implementation: Test implementation`
 // TestClearCache 测试清除缓存
 func TestClearCache(t *testing.T) {
 	config := DefaultCommitLearnConfig()
-	learner := NewCommitLearner(config, nil)
+	learner := NewCommitLearner(config, nil, nil)
 
 	// 添加缓存项
 	summary := CommitSummary{

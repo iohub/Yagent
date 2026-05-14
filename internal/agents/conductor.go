@@ -108,7 +108,7 @@ func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
 	return result
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine, cfg config.Config) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine, cfg config.Config, llmClient *llm.Client) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -359,7 +359,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	// 注意：commit 工具不需要工作区保护，因为它们只读取 git 历史
 	
 	// 先创建 commit 管理器，以便 closures 可以捕获它
-	commitManager := NewCommitManager(cfg, engine)
+	var commitManager *CommitManager
+	if llmClient != nil {
+		commitManager = NewCommitManager(cfg, engine, llmClient)
+	} else {
+		// fallback to no dedicated engine
+		commitManager = NewCommitManager(cfg, engine, nil)
+	}
 
 	// learn_commits 工具：触发 commit 学习流程
 	learnCommitsAdapter := tools.NewAdapter(

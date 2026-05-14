@@ -42,14 +42,15 @@ type CachedSummary struct {
 
 // CommitLearnConfig commit 学习器配置
 type CommitLearnConfig struct {
-	Enabled             bool    `toml:"enabled"`                 // 是否启用
-	MaxCommits          int     `toml:"max_commits"`             // 最大获取 commit 数量
-	SimilarityThreshold float64 `toml:"similarity_threshold"`    // 相似度阈值
-	TopK                int     `toml:"top_k"`                   // 搜索结果数量
-	Trigger             string  `toml:"trigger"`                 // 触发方式："on_demand", "on_session_start", "both"
-	CacheTTL            int     `toml:"cache_ttl"`               // 缓存有效期（秒）
-	LLMSystemPrompt     string  `toml:"llm_system_prompt"`       // LLM 系统提示词
-	RustServiceURL      string  `toml:"rust_service_url"`        // Rust 服务地址
+	Enabled               bool    `toml:"enabled"`                 // 是否启用
+	MaxCommits            int     `toml:"max_commits"`             // 最大获取 commit 数量
+	SimilarityThreshold   float64 `toml:"similarity_threshold"`    // 相似度阈值
+	TopK                  int     `toml:"top_k"`                   // 搜索结果数量
+	Trigger               string  `toml:"trigger"`                 // 触发方式："on_demand", "on_session_start", "both"
+	CacheTTL              int     `toml:"cache_ttl"`               // 缓存有效期（秒）
+	LLMSystemPrompt       string  `toml:"llm_system_prompt"`       // LLM 系统提示词
+	RustServiceURL        string  `toml:"rust_service_url"`        // Rust 服务地址
+	SummarizationProvider string  `toml:"summarization_provider"`  // 专用的 LLM provider 名称
 }
 
 // DefaultCommitLearnConfig 返回默认配置
@@ -81,22 +82,24 @@ Keep each field concise (2-3 sentences max).`,
 // 3. 将摘要存储到 Rust 侧的向量数据库
 // 4. 支持搜索与用户输入相似的 commit
 type CommitLearner struct {
-	config     CommitLearnConfig
-	llmEngine  llm.Engine
-	httpClient *http.Client
-	cache      map[string]*CachedSummary
-	cacheMu    sync.RWMutex
-	lastHead   string
-	lastFetch  time.Time
+	config          CommitLearnConfig
+	llmEngine       llm.Engine           // 默认 LLM 引擎
+	dedicatedEngine llm.Engine           // 专用的 LLM 引擎（可选，用于摘要生成）
+	httpClient      *http.Client
+	cache           map[string]*CachedSummary
+	cacheMu         sync.RWMutex
+	lastHead        string
+	lastFetch       time.Time
 }
 
 // NewCommitLearner 创建新的 CommitLearner 实例
-func NewCommitLearner(config CommitLearnConfig, llmEngine llm.Engine) *CommitLearner {
+func NewCommitLearner(config CommitLearnConfig, llmEngine llm.Engine, dedicatedEngine llm.Engine) *CommitLearner {
 	return &CommitLearner{
-		config:     config,
-		llmEngine:  llmEngine,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		cache:      make(map[string]*CachedSummary),
+		config:          config,
+		llmEngine:       llmEngine,
+		dedicatedEngine: dedicatedEngine,
+		httpClient:      &http.Client{Timeout: 30 * time.Second},
+		cache:           make(map[string]*CachedSummary),
 	}
 }
 
@@ -460,11 +463,59 @@ func (cl *CommitLearner) summarizeSingleCommit(ctx context.Context, commit Commi
 	// 尝试解析 JSON 响应
 	var summary CommitSummary
 	if err := json.Unmarshal([]byte(resp.Choices[0].Content), &summary); err != nil {
-		// 如果不是有效 JSON，尝试从文本中提取字段
-		return extractSummaryFromText(resp.Choices[0].Content, commit.Hash), nil
+		// 如果不是有效 JSON，使用 LLM 重新提取结构化信息
+		return cl.extractSummaryWithLLM(ctx, resp.Choices[0].Content, commit.Hash)
 	}
 	summary.Hash = commit.Hash
 
+	return summary, nil
+}
+
+// extractSummaryWithLLM 使用 LLM 从原始文本中提取结构化 commit 摘要
+// 当 LLM 返回非 JSON 响应时调用此方法进行二次提取
+func (cl *CommitLearner) extractSummaryWithLLM(ctx context.Context, rawContent string, hash string) (CommitSummary, error) {
+	// 构建一个 prompt，要求 LLM 从原始文本中提取结构化信息
+	// 如果原始文本本身就是 LLM 的回答但格式不对，让它重新输出 JSON
+	prompt := fmt.Sprintf(`The previous attempt to generate a structured commit summary failed. Please extract the following information from this text and output ONLY a valid JSON object (no markdown, no explanation):
+
+{
+  "hash": "%s",
+  "requirement": "Brief description of what this commit addresses",
+  "files": "List of changed files with brief description of changes",
+  "approach": "The technical approach or strategy used",
+  "implementation": "Key implementation details"
+}
+
+Original text:
+%s`, hash, rawContent)
+
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: cl.config.LLMSystemPrompt},
+		{Role: llm.RoleUser, Content: prompt},
+	}
+
+	// 使用 dedicatedEngine（如果有），否则使用默认引擎
+	engine := cl.llmEngine
+	if cl.dedicatedEngine != nil {
+		engine = cl.dedicatedEngine
+	}
+
+	resp, err := engine.GenerateContent(ctx, messages, nil, nil)
+	if err != nil {
+		return CommitSummary{}, fmt.Errorf("LLM extraction fallback failed: %w", err)
+	}
+
+	if len(resp.Choices) == 0 || resp.Choices[0].Content == "" {
+		return CommitSummary{}, fmt.Errorf("empty LLM extraction response")
+	}
+
+	// 尝试解析 JSON
+	var summary CommitSummary
+	if err := json.Unmarshal([]byte(resp.Choices[0].Content), &summary); err != nil {
+		// 最终降级：从文本中提取
+		summary = extractSummaryFromText(resp.Choices[0].Content, hash)
+	}
+	summary.Hash = hash
 	return summary, nil
 }
 

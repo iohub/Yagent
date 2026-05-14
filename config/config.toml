@@ -211,3 +211,31 @@ allow_no_sandbox = false   # Docker 环境设为 true
 extra_args = []
 enable_browser_agent = true
 task_timeout_seconds = 300
+
+# ─────────────────────────────────────────────────────────────
+# Commit Learner Configuration
+# ─────────────────────────────────────────────────────────────
+[commit_learner]
+enabled = true
+max_commits = 30
+similarity_threshold = 0.75
+top_k = 3
+trigger = "both"
+cache_ttl = 3600
+rust_service_url = "http://127.0.0.1:12800"
+
+# 专用的 LLM provider 名称（可选）
+# 配置后，commit 总结和信息提取将使用此 provider 的模型
+# 不配置则使用全局默认 LLM (global.llm.use_provider)
+summarization_provider = ""
+
+# 自定义 LLM 系统提示词（可选，不配置使用默认值）
+# llm_system_prompt = """
+# You are a software engineering analyst. Analyze the following git commit and provide a structured summary.
+# Output in JSON format with these fields:
+# - requirement: A brief description of what requirement this commit addresses
+# - files: List of changed files with brief description of changes
+# - approach: The technical approach or strategy used
+# - implementation: Key implementation details
+# Keep each field concise (2-3 sentences max).
+# """
