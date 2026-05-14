@@ -9,9 +9,9 @@ import (
 
 // HelpDialog shows vim-like keybindings help.
 type HelpDialog struct {
-	width     int
-	height    int
-	content   string
+	width       int
+	height      int
+	content     string
 	borderStyle lipgloss.Style
 }
 

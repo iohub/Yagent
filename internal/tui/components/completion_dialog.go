@@ -9,11 +9,11 @@ import (
 
 // TaskCompleteDialog is the task completion/failure dialog.
 type TaskCompleteDialog struct {
-	Success   bool
-	Message   string
-	Closed    bool
-	width     int
-	height    int
+	Success     bool
+	Message     string
+	Closed      bool
+	width       int
+	height      int
 	borderStyle lipgloss.Style
 	titleStyle  lipgloss.Style
 	buttonStyle lipgloss.Style

@@ -12,11 +12,11 @@ import (
 type ConfirmResult int
 
 const (
-	Allow ConfirmResult = iota // Allow once
-	AllowTool                  // Allow this tool in current session
-	AllowSession               // Allow all tools in current session
-	AllowProject               // Allow this tool for the entire project
-	Deny                       // Deny
+	Allow        ConfirmResult = iota // Allow once
+	AllowTool                         // Allow this tool in current session
+	AllowSession                      // Allow all tools in current session
+	AllowProject                      // Allow this tool for the entire project
+	Deny                              // Deny
 )
 
 // ConfirmOption represents a single option in the authorization confirmation dialog.
@@ -29,7 +29,7 @@ type ConfirmOption struct {
 // ConfirmDialog is the authorization confirmation dialog component.
 // It prompts the user to allow/deny a tool execution.
 type ConfirmDialog struct {
-	requestID     string  // 用于匹配用户确认请求
+	requestID     string // 用于匹配用户确认请求
 	toolName      string
 	command       string
 	warning       string

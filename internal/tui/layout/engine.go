@@ -4,7 +4,7 @@ import "sync"
 
 // Region 定义布局区域
 type Region struct {
-	X, Y    int
+	X, Y          int
 	Width, Height int
 }
 
@@ -28,12 +28,12 @@ type LayoutEngine struct {
 
 // 区域 ID 常量
 const (
-	RegionHeader   = "header"
-	RegionMain     = "main"
-	RegionEditor   = "editor"
-	RegionStatus   = "status"
-	RegionDialog   = "dialog"
-	RegionSidebar  = "sidebar"
+	RegionHeader  = "header"
+	RegionMain    = "main"
+	RegionEditor  = "editor"
+	RegionStatus  = "status"
+	RegionDialog  = "dialog"
+	RegionSidebar = "sidebar"
 )
 
 // 紧凑模式阈值
@@ -87,19 +87,19 @@ func (l *LayoutEngine) computeRegions() {
 	if !l.compact {
 		sidebarWidth := 30
 		if w > sidebarWidth+10 {
-			sidebarY := 2 // 从 header 下方开始
+			sidebarY := 2     // 从 header 下方开始
 			sidebarH := h - 3 // 减去 header 和 status
 			l.regions[RegionSidebar] = Region{
-				X: w - sidebarWidth,
-				Y: sidebarY,
-				Width: sidebarWidth,
+				X:      w - sidebarWidth,
+				Y:      sidebarY,
+				Width:  sidebarWidth,
 				Height: sidebarH,
 			}
 			// main 区域排除 sidebar
 			mainW := w - sidebarWidth
 			l.regions[RegionMain] = Region{
 				X: 0, Y: 2,
-				Width: mainW,
+				Width:  mainW,
 				Height: sidebarH,
 			}
 		} else {
@@ -107,7 +107,7 @@ func (l *LayoutEngine) computeRegions() {
 			delete(l.regions, RegionSidebar)
 			l.regions[RegionMain] = Region{
 				X: 0, Y: 2,
-				Width: w,
+				Width:  w,
 				Height: h - 3,
 			}
 		}
@@ -115,7 +115,7 @@ func (l *LayoutEngine) computeRegions() {
 		// 紧凑模式：无 sidebar，main 占满
 		l.regions[RegionMain] = Region{
 			X: 0, Y: 2,
-			Width: w,
+			Width:  w,
 			Height: h - 3,
 		}
 	}
@@ -125,7 +125,7 @@ func (l *LayoutEngine) computeRegions() {
 	editorY := h - 4
 	l.regions[RegionEditor] = Region{
 		X: 0, Y: editorY,
-		Width: w,
+		Width:  w,
 		Height: 2,
 	}
 

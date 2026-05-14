@@ -86,14 +86,6 @@ func (m model) View() tea.View {
 
 		// Inline skill autocomplete suggestions (below textarea)
 		if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
-			suggestionStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245")).
-				PaddingLeft(4)
-			highlightSuggestionStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("39")).
-				Bold(true).
-				PaddingLeft(4)
-
 			var suggestionParts []string
 			for i, name := range m.skillSuggestions {
 				displayName := name
@@ -101,16 +93,15 @@ func (m model) View() tea.View {
 					displayName = name + " - " + skill.Description
 				}
 				if i == m.skillSuggestionIdx {
-					suggestionParts = append(suggestionParts, highlightSuggestionStyle.Render("▶ "+displayName))
+					suggestionParts = append(suggestionParts, m.skillHighlightStyle.Render("▶ "+displayName))
 				} else {
-					suggestionParts = append(suggestionParts, suggestionStyle.Render("  "+displayName))
+					suggestionParts = append(suggestionParts, m.skillSuggestionStyle.Render("  "+displayName))
 				}
 			}
 			footer.WriteString(strings.Join(suggestionParts, "\n"))
 			footer.WriteString("\n")
 			// Hint line
-			hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).PaddingLeft(4)
-			footer.WriteString(hintStyle.Render("Tab 切换  Enter 选择  Esc 关闭"))
+			footer.WriteString(m.skillHintStyle.Render("Tab 切换  Enter 选择  Esc 关闭"))
 			footer.WriteString("\n")
 		}
 	}
@@ -122,18 +113,11 @@ func (m model) View() tea.View {
 			if i == m.keywordSuggestionIdx {
 				// Highlight selected suggestion
 				suggestionParts = append(suggestionParts,
-					lipgloss.NewStyle().
-						Background(lipgloss.Color("57")). // Light blue background
-						Foreground(lipgloss.Color("15")). // White text
-						PaddingLeft(1).
-						Render(suggestion))
+					m.keywordHighlightStyle.Render(suggestion))
 			} else {
 				// Dim non-selected suggestions
 				suggestionParts = append(suggestionParts,
-					lipgloss.NewStyle().
-						Foreground(lipgloss.Color("243")).
-						PaddingLeft(1).
-						Render(suggestion))
+					m.keywordSuggestionStyle.Render(suggestion))
 			}
 		}
 		footer.WriteString(strings.Join(suggestionParts, "  "))

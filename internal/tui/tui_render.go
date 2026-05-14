@@ -527,6 +527,7 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 
 	return prefix + " " + contentStyle.Render(displayContent)
 }
+
 // wrapText word-wraps text to fit within maxWidth columns.
 // Preserves existing newlines and wraps long lines at word boundaries.
 func wrapText(text string, maxWidth int) string {

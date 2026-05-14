@@ -67,11 +67,11 @@ var (
 	toolErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")) // red — error
 
 	// Mode-specific styles (vim-like edit / command modes) — harmonized with TUI 256-color palette
-	commandPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true) // orange ":"
+	commandPrefixStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true) // orange ":"
 	commandModeBarStyle = lipgloss.NewStyle().
-		Background(lipgloss.Color("214")).
-		Foreground(lipgloss.Color("0")).
-		Bold(true)
+				Background(lipgloss.Color("214")).
+				Foreground(lipgloss.Color("0")).
+				Bold(true)
 )
 
 // logEntry represents a single message in the TUI log area.
@@ -183,7 +183,7 @@ type model struct {
 
 	// Task execution state
 	taskRunning   bool
-	taskCancelled bool    // 标记任务是否由用户主动取消
+	taskCancelled bool // 标记任务是否由用户主动取消
 	currentTask   *http.Task
 	eventCh       chan *messaging.MessageEvent
 
@@ -195,8 +195,6 @@ type model struct {
 	infoMsg     string
 	currentLang Language
 	projectDir  string
-
-	
 
 	// Authorization confirmation dialog
 	confirmDialog      confirmDialog
@@ -215,14 +213,14 @@ type model struct {
 	showHelpDialog bool   // "?" help overlay in command mode
 
 	// Skill autocomplete in edit mode (inline, not popup)
-	skillAutoComplete  bool       // whether autocomplete suggestions are shown
-	skillSuggestions   []string   // matching skill names based on current query
-	skillSuggestionIdx int        // currently selected suggestion index
+	skillAutoComplete  bool     // whether autocomplete suggestions are shown
+	skillSuggestions   []string // matching skill names based on current query
+	skillSuggestionIdx int      // currently selected suggestion index
 
 	// Keyword autocomplete in edit mode (triggered by Tab key)
-	keywordAutoComplete  bool              // whether keyword autocomplete suggestions are shown
-	keywordSuggestions   []string          // matching keyword suggestions based on current word at cursor
-	keywordSuggestionIdx int               // currently selected suggestion index
+	keywordAutoComplete  bool                 // whether keyword autocomplete suggestions are shown
+	keywordSuggestions   []string             // matching keyword suggestions based on current word at cursor
+	keywordSuggestionIdx int                  // currently selected suggestion index
 	keywordDict          *dict.CompletionDict // keyword dictionary for autocomplete
 
 	// Tool call state tracking: tool_call_id → ToolEntry
@@ -249,16 +247,49 @@ type model struct {
 	historyMode     bool
 	historyItems    []datamanager.TaskHistoryItem
 	historyCursor   int
-	historyPage     int     // 当前页码，0-indexed
-	historyPageSize int     // 每页条数，固定20
+	historyPage     int // 当前页码，0-indexed
+	historyPageSize int // 每页条数，固定20
 	historyLoading  bool
 
 	// ── 新组件（TUI 改进） ──
-	dialogStack   *components.DialogStack // 栈式弹窗管理器
-	animManager   *anim.Manager         // 可见性感知动画管理器
-	layoutEngine  *layout.LayoutEngine  // 动态布局引擎
-	mouseHandler  *components.ClickDetector // 鼠标事件处理器
-	diffView      *diffview.DiffView    // Diff 查看器
+	dialogStack  *components.DialogStack   // 栈式弹窗管理器
+	animManager  *anim.Manager             // 可见性感知动画管理器
+	layoutEngine *layout.LayoutEngine      // 动态布局引擎
+	mouseHandler *components.ClickDetector // 鼠标事件处理器
+	diffView     *diffview.DiffView        // Diff 查看器
+
+	// ── 预创建的渲染样式（避免循环内重复创建） ──
+	skillSuggestionStyle   lipgloss.Style // 普通技能建议样式
+	skillHighlightStyle    lipgloss.Style // 高亮技能建议样式
+	skillHintStyle         lipgloss.Style // 技能建议提示行样式
+	keywordSuggestionStyle lipgloss.Style // 普通关键词建议样式
+	keywordHighlightStyle  lipgloss.Style // 高亮关键词建议样式
+
+	// ── 补全防抖相关 ──
+	pendingAutocomplete bool        // 是否有待处理的补全请求
+	debounceTimer       *time.Timer // 防抖定时器
+	snapshotText        string      // 补全计算时的输入文本快照
+	snapshotCursor      int         // 补全计算时的光标位置快照
+
+	// ── 补全结果缓存 - key: (光标前的单词, 是否有/) value: 补全结果 ──
+	// 使用细粒度缓存键，在快速输入时缓存命中率更高
+	autocompleteCache map[autocompleteCacheKey]*AutocompleteResult
+}
+
+// autocompleteCacheKey is a fine-grained cache key for autocomplete results.
+// Using (word, hasSlash) instead of full text provides better hit rates
+// during fast typing since the word changes less frequently than the full text.
+type autocompleteCacheKey struct {
+	word     string // 光标前的单词
+	hasSlash bool   // 是否有 / 字符
+}
+
+// AutocompleteResult holds the cached result of autocomplete computation.
+type AutocompleteResult struct {
+	skillSuggestions     []string
+	skillSuggestionIdx   int
+	keywordSuggestions   []string
+	keywordSuggestionIdx int
 }
 
 func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
@@ -286,20 +317,20 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 
 	// Focused state styles
 	focusedStyle := textarea.StyleState{
-		Base:          editBaseStyle,
-		Text:          textStyle,
-		Prompt:        lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Background(lipgloss.Color("236")),
-		CursorLine:    lipgloss.NewStyle().Background(lipgloss.Color("237")),
-		Placeholder:   lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236")),
+		Base:        editBaseStyle,
+		Text:        textStyle,
+		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Background(lipgloss.Color("236")),
+		CursorLine:  lipgloss.NewStyle().Background(lipgloss.Color("237")),
+		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236")),
 	}
 
 	// Blurred state styles
 	blurredStyle := textarea.StyleState{
-		Base:          editBaseStyle,
-		Text:          textStyle,
-		Prompt:        lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("236")),
-		CursorLine:    lipgloss.NewStyle().Background(lipgloss.Color("237")),
-		Placeholder:   lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236")),
+		Base:        editBaseStyle,
+		Text:        textStyle,
+		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("236")),
+		CursorLine:  lipgloss.NewStyle().Background(lipgloss.Color("237")),
+		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236")),
 	}
 
 	// Cursor style
@@ -370,30 +401,52 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	keywordDict.AddWords(dict.DefaultKeywords())
 
 	return model{
-		assistant:       ca,
-		taskManager:     tm,
-		dataManager:     dm,
-		input:           ti,
-		projectDir:      projectDir,
-		infoMsg:         langManager.GetText("InfoMessage"),
-		currentLang:     langManager.currentLang,
-		eventCh:         make(chan *messaging.MessageEvent, 1000),
-		logEntries:      make([]logEntry, 0),
-		viewport:        vp,
-		contentCache:    &strings.Builder{},
-		glamourRenderer: glamourRenderer,
-		useDarkStyle:    useDarkStyle,
-		toolCallEntries: make(map[string]*ToolEntry),
-		anim:            NewAnim(10),
+		assistant:          ca,
+		taskManager:        tm,
+		dataManager:        dm,
+		input:              ti,
+		projectDir:         projectDir,
+		infoMsg:            langManager.GetText("InfoMessage"),
+		currentLang:        langManager.currentLang,
+		eventCh:            make(chan *messaging.MessageEvent, 1000),
+		logEntries:         make([]logEntry, 0),
+		viewport:           vp,
+		contentCache:       &strings.Builder{},
+		glamourRenderer:    glamourRenderer,
+		useDarkStyle:       useDarkStyle,
+		toolCallEntries:    make(map[string]*ToolEntry),
+		anim:               NewAnim(10),
 		tokenUsagePerAgent: make(map[string]*AgentTokenUsage),
 
 		// 新组件
-		dialogStack:   ds,
-		animManager:   am,
-		layoutEngine:  le,
-		mouseHandler:  md,
-		diffView:      dv,
-		keywordDict:   keywordDict,
+		dialogStack:  ds,
+		animManager:  am,
+		layoutEngine: le,
+		mouseHandler: md,
+		diffView:     dv,
+		keywordDict:  keywordDict,
+
+		// 预创建的渲染样式（避免循环内重复创建）
+		skillSuggestionStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245")).
+			PaddingLeft(4),
+		skillHighlightStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("39")).
+			Bold(true).
+			PaddingLeft(4),
+		skillHintStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			PaddingLeft(4),
+		keywordSuggestionStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("243")).
+			PaddingLeft(1),
+		keywordHighlightStyle: lipgloss.NewStyle().
+			Background(lipgloss.Color("57")).
+			Foreground(lipgloss.Color("15")).
+			PaddingLeft(1),
+
+		// 补全结果缓存 - 使用细粒度缓存键
+		autocompleteCache: make(map[autocompleteCacheKey]*AutocompleteResult),
 	}
 }
 

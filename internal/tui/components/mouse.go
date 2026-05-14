@@ -10,15 +10,15 @@ import (
 type MouseAction int
 
 const (
-	MouseNone MouseAction = iota // No action
-	MouseClick                     // Single click
-	MouseDoubleClick               // Double click
-	MouseTripleClick               // Triple click
-	MouseScrollUp                  // Scroll wheel up
-	MouseScrollDown                // Scroll wheel down
-	MouseDragStart                 // Drag start
-	MouseDragMove                  // Drag move
-	MouseDragEnd                   // Drag end
+	MouseNone        MouseAction = iota // No action
+	MouseClick                          // Single click
+	MouseDoubleClick                    // Double click
+	MouseTripleClick                    // Triple click
+	MouseScrollUp                       // Scroll wheel up
+	MouseScrollDown                     // Scroll wheel down
+	MouseDragStart                      // Drag start
+	MouseDragMove                       // Drag move
+	MouseDragEnd                        // Drag end
 )
 
 const (
@@ -28,13 +28,13 @@ const (
 
 // ClickDetector detects single-click, double-click, and triple-click events.
 type ClickDetector struct {
-	lastClickTime  time.Time
-	clickCount     int
-	lastClickX     int
-	lastClickY     int
-	pendingAction  MouseAction
-	pendingCoordX  int
-	pendingCoordY  int
+	lastClickTime time.Time
+	clickCount    int
+	lastClickX    int
+	lastClickY    int
+	pendingAction MouseAction
+	pendingCoordX int
+	pendingCoordY int
 }
 
 // NewClickDetector creates a new ClickDetector.

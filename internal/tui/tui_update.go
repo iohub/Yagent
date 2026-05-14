@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -11,6 +12,242 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+// autocompleteMsg is sent by the debounce timer to trigger autocomplete computation.
+type autocompleteMsg struct{}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 补全防抖与缓存辅助函数
+// ─────────────────────────────────────────────────────────────────────────────
+
+// shouldAttemptCompletion 检查是否有触发补全的条件
+// 优化：仅检查基本状态和光标位置，避免调用 m.input.Value()
+// 实际字符检查在 scheduleAutocomplete 中进行
+func (m *model) shouldAttemptCompletion() bool {
+	if m.commandMode || m.taskRunning {
+		return false
+	}
+
+	// 快速检查：光标在有效范围内（Column 从 0 开始，0 表示行首）
+	// 如果 Column > 0 或者 Line > 0，说明光标不在文档开头
+	column := m.input.Column()
+	if column > 0 {
+		return true
+	}
+
+	// Column == 0 时，如果 Line > 0，说明光标在后续行的行首，也是有效的
+	if m.input.Line() > 0 {
+		return true
+	}
+
+	// 光标在文档开头（Line=0, Column=0），不触发补全
+	return false
+}
+
+// clearAutocomplete 清除补全状态
+func (m *model) clearAutocomplete() {
+	m.skillAutoComplete = false
+	m.skillSuggestions = nil
+	m.skillSuggestionIdx = 0
+	m.keywordAutoComplete = false
+	m.keywordSuggestions = nil
+	m.keywordSuggestionIdx = 0
+}
+
+// scheduleAutocomplete 启动或重置补全防抖
+// 优化：
+// 1. 使用细粒度缓存键（单词+是否有/）提高命中率
+// 2. 只调用一次 Value() 和 Line()/Column()
+// 3. 共享 rune 切片给后续函数
+// 4. 防抖时间增加到 100ms
+func (m *model) scheduleAutocomplete() tea.Cmd {
+	// 提前退出检查：无触发条件时直接清除补全
+	if !m.shouldAttemptCompletion() {
+		m.clearAutocomplete()
+		return nil
+	}
+
+	// 获取当前输入快照（只调用一次）
+	text := m.input.Value()
+	line := m.input.Line()
+	column := m.input.Column()
+
+	// 提取光标前的单词和检查是否有 /（只转换一次 rune 切片）
+	contentRunes := []rune(text)
+	word := extractWordAtCursorRunes(contentRunes, column)
+	hasSlash := strings.Contains(text, "/")
+
+	cacheKey := autocompleteCacheKey{word: word, hasSlash: hasSlash}
+
+	// 检查缓存
+	if cached, ok := m.autocompleteCache[cacheKey]; ok {
+		// 缓存命中，直接应用结果
+		result := *cached
+		m.skillSuggestions = result.skillSuggestions
+		m.skillSuggestionIdx = result.skillSuggestionIdx
+		m.keywordSuggestions = result.keywordSuggestions
+		m.keywordSuggestionIdx = result.keywordSuggestionIdx
+		return nil
+	}
+
+	// 缓存未命中，启动或重置防抖
+	if m.debounceTimer != nil {
+		m.debounceTimer.Stop()
+		// drain timer channel to prevent leak
+		select {
+		case <-m.debounceTimer.C:
+		default:
+		}
+	}
+
+	// 保存快照
+	m.snapshotText = text
+	m.snapshotCursor = line*10000 + column // 编码 line 和 column
+	m.pendingAutocomplete = true
+
+	// 启动 100ms 防抖（从 50ms 增加到 100ms，减少快速输入时的计算频率）
+	m.debounceTimer = time.NewTimer(100 * time.Millisecond)
+
+	// 返回 Cmd 用于在防抖超时后发送 autocompleteMsg
+	return func() tea.Msg {
+		// 等待 100ms 后发送消息
+		return autocompleteMsg{}
+	}
+}
+
+// doAutocomplete 执行补全计算（接收已提取的文本和光标，避免重复调用 Value()）
+// 优化：共享 rune 切片，避免在多个函数中重复转换
+func (m *model) doAutocomplete(text string, cursor int) {
+	// 只转换一次 rune 切片
+	contentRunes := []rune(text)
+
+	// 执行技能补全
+	m.doSkillAutocomplete(text, contentRunes, cursor)
+
+	// 执行关键词补全
+	m.doKeywordAutocomplete(text, contentRunes, cursor)
+}
+
+// doSkillAutocomplete 执行技能补全计算
+// 优化：接收 contentRunes 参数（为未来优化预留）
+func (m *model) doSkillAutocomplete(text string, contentRunes []rune, cursor int) {
+	// 仅在编辑模式且任务未运行时激活
+	if m.commandMode || m.taskRunning {
+		m.skillAutoComplete = false
+		m.skillSuggestions = nil
+		m.skillSuggestionIdx = 0
+		return
+	}
+
+	// 查找最后一个 '/'
+	lastSlash := strings.LastIndex(text, "/")
+	if lastSlash < 0 {
+		m.skillAutoComplete = false
+		m.skillSuggestions = nil
+		m.skillSuggestionIdx = 0
+		return
+	}
+
+	// 提取 '/' 之后的文本作为查询
+	query := text[lastSlash+1:]
+
+	// 构建匹配的技能列表
+	var matches []string
+	if m.assistant.SkillRegistry != nil {
+		allSkills := m.assistant.SkillRegistry.List()
+		matches = make([]string, 0, len(allSkills)+1)
+		for _, name := range allSkills {
+			if hasPrefixIgnoreCase(name, query) {
+				matches = append(matches, name)
+			}
+		}
+
+		// 添加 "history" 作为内置命令
+		if hasPrefixIgnoreCase("history", query) {
+			matches = append([]string{"history"}, matches...)
+		}
+	}
+
+	if len(matches) > 0 {
+		m.skillAutoComplete = true
+		m.skillSuggestions = matches
+		// 重置索引如果超出范围
+		if m.skillSuggestionIdx >= len(matches) {
+			m.skillSuggestionIdx = 0
+		}
+	} else {
+		m.skillAutoComplete = false
+		m.skillSuggestions = nil
+		m.skillSuggestionIdx = 0
+	}
+}
+
+// doKeywordAutocomplete 执行关键词补全计算
+// 优化：
+// 1. 接收 contentRunes 参数，避免重复转换
+// 2. 如果光标在第一行，避免调用 splitLogicalLines
+func (m *model) doKeywordAutocomplete(text string, contentRunes []rune, cursor int) {
+	// 仅在编辑模式且任务未运行时激活
+	if m.commandMode || m.taskRunning {
+		m.keywordAutoComplete = false
+		m.keywordSuggestions = nil
+		m.keywordSuggestionIdx = 0
+		return
+	}
+
+	// 将编码的 cursor 解码为实际的光标位置（字节偏移量）
+	// cursor = line*10000 + column
+	line := cursor / 10000
+	column := cursor % 10000
+
+	// 计算光标前的字节偏移量
+	byteOffset := 0
+	if line > 0 {
+		// 只有在多行时才调用 splitLogicalLines
+		lines := splitLogicalLines(contentRunes, line)
+		for _, l := range lines {
+			byteOffset += len(l) + 1 // +1 for newline
+		}
+	}
+	byteOffset += column
+
+	// 提取光标前的单词
+	word := extractWordAtCursorRunes(contentRunes, byteOffset)
+
+	// 仅在单词非空且无特殊前缀时触发
+	if word == "" || strings.HasPrefix(word, "/") {
+		m.keywordAutoComplete = false
+		m.keywordSuggestions = nil
+		m.keywordSuggestionIdx = 0
+		return
+	}
+
+	// 从关键词字典获取补全建议
+	suggestions := GetKeywordCompletions(m, word, 20)
+
+	if len(suggestions) > 0 {
+		m.keywordAutoComplete = true
+		m.keywordSuggestions = suggestions
+		m.keywordSuggestionIdx = 0
+	} else {
+		m.keywordAutoComplete = false
+		m.keywordSuggestions = nil
+		m.keywordSuggestionIdx = 0
+	}
+}
+
+// cleanupDebounceTimer 清理防抖定时器（在退出时调用）
+func (m *model) cleanupDebounceTimer() {
+	if m.debounceTimer != nil {
+		m.debounceTimer.Stop()
+		// drain timer channel to prevent leak
+		select {
+		case <-m.debounceTimer.C:
+		default:
+		}
+		m.debounceTimer = nil
+	}
+}
+
 func (m *model) processCommand(cmd string) tea.Cmd {
 	cmd = strings.TrimSpace(cmd)
 
@@ -18,6 +255,7 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	case cmd == ":q!":
 		// Force quit — skip confirmation (vim convention)
 		m.quitting = true
+		m.cleanupDebounceTimer()
 		return tea.Quit
 	case cmd == ":q" || cmd == ":quit":
 		if m.dialogStack != nil {
@@ -255,6 +493,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if d.GetConfirmed() {
 							if d.ID() == "quit_confirm" || d.ID() == "quit_confirm_dialog" {
 								m.quitting = true
+								m.cleanupDebounceTimer()
 								return m, tea.Quit
 							}
 							// Cancel confirmation
@@ -304,6 +543,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "ctrl+c":
 				m.quitting = true
+				m.cleanupDebounceTimer()
 				return m, tea.Quit
 			case "down", "tab":
 				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 1) % 5
@@ -352,6 +592,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "ctrl+c":
 				m.quitting = true
+				m.cleanupDebounceTimer()
 				return m, tea.Quit
 			}
 			return m, nil
@@ -362,6 +603,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "ctrl+c":
 				m.quitting = true
+				m.cleanupDebounceTimer()
 				return m, tea.Quit
 			case "right", "tab":
 				m.confirmQuitDialog.selectedOption = (m.confirmQuitDialog.selectedOption + 1) % 2
@@ -372,6 +614,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				if m.confirmQuitDialog.selectedOption == 0 {
 					m.quitting = true
+					m.cleanupDebounceTimer()
 					return m, tea.Quit
 				}
 				m.confirmQuitDialog.open = false
@@ -379,6 +622,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "y", "Y":
 				m.quitting = true
+				m.cleanupDebounceTimer()
 				return m, tea.Quit
 			case "n", "N", "esc":
 				m.confirmQuitDialog.open = false
@@ -393,6 +637,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "ctrl+c":
 				m.quitting = true
+				m.cleanupDebounceTimer()
 				return m, tea.Quit
 			case "right", "tab":
 				m.confirmCancelDialog.selectedOption = (m.confirmCancelDialog.selectedOption + 1) % 2
@@ -804,16 +1049,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Otherwise, insert newline into textarea
 			var inputCmd tea.Cmd
 			m.input, inputCmd = m.input.Update(msg)
-			m.updateSkillAutocomplete()
-			return m, inputCmd
+			// 启动或重置补全防抖
+			return m, tea.Batch(inputCmd, m.scheduleAutocomplete())
 
 		case "/":
 			// Pass '/' to textarea normally, then check for skill autocomplete
 			var inputCmd tea.Cmd
 			m.input, inputCmd = m.input.Update(msg)
-			m.updateSkillAutocomplete()
-			m.updateKeywordAutocomplete()
-			return m, inputCmd
+			return m, tea.Batch(inputCmd, m.scheduleAutocomplete())
 
 		case "@":
 			// Trigger fzf file fuzzy finder
@@ -836,10 +1079,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// are handled in dedicated case branches above.
 			var inputCmd tea.Cmd
 			m.input, inputCmd = m.input.Update(msg)
-			m.updateSkillAutocomplete()
-			m.updateKeywordAutocomplete()
-			return m, inputCmd
+			// 启动或重置补全防抖
+			return m, tea.Batch(inputCmd, m.scheduleAutocomplete())
 		}
+
+	case autocompleteMsg:
+		if !m.pendingAutocomplete {
+			return m, nil
+		}
+
+		// 检查快照是否仍然有效
+		if currentText := m.input.Value(); currentText != m.snapshotText {
+			// 输入已变化，重新调度
+			m.scheduleAutocomplete()
+			return m, nil
+		}
+
+		// 执行补全计算
+		m.doAutocomplete(m.snapshotText, m.snapshotCursor)
+
+		// 存入缓存 - 使用细粒度缓存键（基于单词和是否有/）
+		contentRunes := []rune(m.snapshotText)
+		column := m.input.Column()
+		word := extractWordAtCursorRunes(contentRunes, column)
+		hasSlash := strings.Contains(m.snapshotText, "/")
+		cacheKey := autocompleteCacheKey{word: word, hasSlash: hasSlash}
+		m.autocompleteCache[cacheKey] = &AutocompleteResult{
+			skillSuggestions:     m.skillSuggestions,
+			skillSuggestionIdx:   m.skillSuggestionIdx,
+			keywordSuggestions:   m.keywordSuggestions,
+			keywordSuggestionIdx: m.keywordSuggestionIdx,
+		}
+
+		// 清理缓存大小（防止内存泄漏）
+		if len(m.autocompleteCache) > 64 {
+			m.autocompleteCache = make(map[autocompleteCacheKey]*AutocompleteResult)
+		}
+
+		m.pendingAutocomplete = false
+		return m, nil
 
 	case taskEventMsg:
 		// Don't process task events while any popup/dialog is showing.
@@ -1100,140 +1378,64 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateSkillAutocomplete checks the current input for skill references (/skillname)
 // and updates the autocomplete suggestions accordingly.
+// 已优化：委托给 doSkillAutocomplete 以减少代码重复
 func (m *model) updateSkillAutocomplete() {
-	// Only active in edit mode and when not task running
-	if m.commandMode || m.taskRunning {
-		m.skillAutoComplete = false
-		m.skillSuggestions = nil
-		m.skillSuggestionIdx = 0
-		return
-	}
-
-	inputValue := m.input.Value()
-
-	// Find the last '/' in the input to extract the skill query
-	lastSlash := strings.LastIndex(inputValue, "/")
-	if lastSlash < 0 {
-		m.skillAutoComplete = false
-		m.skillSuggestions = nil
-		m.skillSuggestionIdx = 0
-		return
-	}
-
-	// Extract the text after the last '/' as the query
-	query := inputValue[lastSlash+1:]
-
-	// Build the list of matching skills
-	var matches []string
-	queryLower := strings.ToLower(query)
-
-	// Add skills from registry (if available)
-	if m.assistant.SkillRegistry != nil {
-		allSkills := m.assistant.SkillRegistry.List()
-		for _, name := range allSkills {
-			if strings.HasPrefix(strings.ToLower(name), queryLower) {
-				matches = append(matches, name)
-			}
-		}
-	}
-
-	// Add "history" as a built-in command (opens history dialog, not a skill)
-	if strings.HasPrefix("history", queryLower) {
-		matches = append([]string{"history"}, matches...)
-	}
-
-	if len(matches) > 0 {
-		m.skillAutoComplete = true
-		m.skillSuggestions = matches
-		// Reset index if out of bounds
-		if m.skillSuggestionIdx >= len(matches) {
-			m.skillSuggestionIdx = 0
-		}
-	} else {
-		m.skillAutoComplete = false
-		m.skillSuggestions = nil
-		m.skillSuggestionIdx = 0
-	}
+	text := m.input.Value()
+	line := m.input.Line()
+	column := m.input.Column()
+	cursor := line*10000 + column
+	// 提前转换 rune 切片，避免在 doSkillAutocomplete 中重复转换
+	contentRunes := []rune(text)
+	m.doSkillAutocomplete(text, contentRunes, cursor)
 }
 
 // updateKeywordAutocomplete checks if keyword autocomplete should be triggered
 // based on current input and cursor position.
+// 已优化：委托给 doKeywordAutocomplete 以减少代码重复
 func (m *model) updateKeywordAutocomplete() {
-	// Only activate in edit mode and when not task running
-	if m.commandMode || m.taskRunning {
-		m.keywordAutoComplete = false
-		m.keywordSuggestions = nil
-		m.keywordSuggestionIdx = 0
-		return
-	}
-
-	// Calculate byte offset from cursor line and column
-	cursorLine := m.input.Line()
-	cursorCol := m.input.Column()
-	content := m.input.Value()
-	contentRunes := []rune(content)
-
-	// Calculate byte offset: sum of lengths of all previous lines + current column
-	byteOffset := 0
-	if cursorLine > 0 {
-		lines := splitLogicalLines(contentRunes, cursorLine-1)
-		for _, line := range lines {
-			byteOffset += len(line) + 1 // +1 for newline character
-		}
-	}
-	// Add current column (character offset within the current line)
-	if cursorCol <= len(contentRunes)-byteOffset {
-		byteOffset += cursorCol
-	}
-
-	// Extract word before cursor
-	word := extractWordAtCursor(content, byteOffset)
-
-	// Only trigger if word has content and no special prefix (like /skill)
-	if word == "" || strings.HasPrefix(word, "/") {
-		m.keywordAutoComplete = false
-		m.keywordSuggestions = nil
-		m.keywordSuggestionIdx = 0
-		return
-	}
-
-	// Get completions from keyword dictionary
-	suggestions := GetKeywordCompletions(m, word, 20)
-
-	if len(suggestions) > 0 {
-		m.keywordAutoComplete = true
-		m.keywordSuggestions = suggestions
-		m.keywordSuggestionIdx = 0
-	} else {
-		m.keywordAutoComplete = false
-		m.keywordSuggestions = nil
-		m.keywordSuggestionIdx = 0
-	}
+	text := m.input.Value()
+	line := m.input.Line()
+	column := m.input.Column()
+	cursor := line*10000 + column
+	// 提前转换 rune 切片，避免在 doKeywordAutocomplete 中重复转换
+	contentRunes := []rune(text)
+	m.doKeywordAutocomplete(text, contentRunes, cursor)
 }
 
 // extractWordAtCursor extracts the word immediately before the cursor position.
 // A word is defined as a sequence of alphanumeric characters, underscores,
 // and common Chinese characters.
+//
+// Optimizations:
+//   - Uses append + reverse instead of O(n²) prepend
 func extractWordAtCursor(content string, cursorPos int) string {
-	// Convert to runes for proper Unicode handling
-	runes := []rune(content)
+	return extractWordAtCursorRunes([]rune(content), cursorPos)
+}
 
-	// Ensure cursor position is valid
-	if cursorPos < 0 || cursorPos > len(runes) {
+// extractWordAtCursorRunes extracts the word immediately before the cursor position
+// from a pre-computed runes slice. This avoids the overhead of converting the
+// string to runes again when the runes are already available.
+func extractWordAtCursorRunes(runes []rune, cursorPos int) string {
+	if cursorPos <= 0 || cursorPos > len(runes) {
 		return ""
 	}
 
-	// Extract backwards from cursor position
+	// Extract backwards from cursor position using append (O(n) instead of O(n²))
 	var word []rune
 	for i := cursorPos - 1; i >= 0; i-- {
 		r := runes[i]
 		// Allow alphanumeric, underscore, and common Chinese characters
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
 			(r >= '0' && r <= '9') || r == '_' || (r >= 0x4e00 && r <= 0x9fff) {
-			word = append([]rune{r}, word...)
+			word = append(word, r)
 		} else {
 			break
 		}
+	}
+
+	// Reverse the word (collected backwards)
+	for i, j := 0, len(word)-1; i < j; i, j = i+1, j-1 {
+		word[i], word[j] = word[j], word[i]
 	}
 
 	return string(word)
@@ -1241,26 +1443,35 @@ func extractWordAtCursor(content string, cursorPos int) string {
 
 // splitLogicalLines splits the content runes into logical lines (separated by newlines).
 // It returns the first `count` logical lines from the content.
+//
+// Optimized for early termination: uses efficient slices.Index to skip directly to
+// newline positions, and returns immediately once count lines are found.
 func splitLogicalLines(content []rune, count int) [][]rune {
-	var lines [][]rune
-	var currentLine []rune
+	if count <= 0 {
+		return nil
+	}
 
-	for _, r := range content {
-		if r == '\n' {
-			lines = append(lines, currentLine)
-			currentLine = nil
-			if len(lines) >= count {
-				return lines
+	result := make([][]rune, 0, count)
+	// Use slices.Index for efficient newline scanning
+	rest := content
+	for len(rest) > 0 {
+		// Find next newline position (fast slice search)
+		idx := slices.Index(rest, '\n')
+		if idx < 0 {
+			// No more newlines: remaining content is the last line
+			if len(rest) > 0 {
+				result = append(result, rest)
 			}
-		} else {
-			currentLine = append(currentLine, r)
+			break
+		}
+		// Extract line before newline (exclusive)
+		result = append(result, rest[:idx])
+		rest = rest[idx+1:] // Skip the newline character
+		if len(result) >= count {
+			return result
 		}
 	}
-	// Add the last line if not empty
-	if len(currentLine) > 0 {
-		lines = append(lines, currentLine)
-	}
-	return lines
+	return result
 }
 
 // handleMouseClick 处理鼠标点击事件
@@ -1269,4 +1480,29 @@ func (m *model) handleMouseClick(x, y int) {
 	// 简化实现：记录点击位置，等待后续扩展
 	_ = x
 	_ = y
+}
+
+// hasPrefixIgnoreCase reports whether string s starts with prefix, ignoring case.
+// Uses byte-level comparison for ASCII characters, avoiding the overhead of
+// strings.ToLower() which creates a new string allocation on every call.
+// This is safe for ASCII-only prefixes (skill names are typically ASCII).
+func hasPrefixIgnoreCase(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		a := s[i]
+		b := prefix[i]
+		// Convert to lowercase if uppercase ASCII
+		if a >= 'A' && a <= 'Z' {
+			a += 32
+		}
+		if b >= 'A' && b <= 'Z' {
+			b += 32
+		}
+		if a != b {
+			return false
+		}
+	}
+	return true
 }

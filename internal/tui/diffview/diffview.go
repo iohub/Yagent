@@ -58,17 +58,17 @@ const (
 
 // DiffView 代码差异查看组件（Builder 模式）
 type DiffView struct {
-	beforeFile   string
+	beforeFile    string
 	beforeContent string
-	afterFile    string
-	afterContent string
-	mode         DiffMode
-	lineNumbers  bool
-	contextLines int
-	diffLines    []diffLine
-	styles       Styles
-	computed     bool
-	mu           sync.RWMutex
+	afterFile     string
+	afterContent  string
+	mode          DiffMode
+	lineNumbers   bool
+	contextLines  int
+	diffLines     []diffLine
+	styles        Styles
+	computed      bool
+	mu            sync.RWMutex
 }
 
 // New 创建一个新的 DiffView Builder

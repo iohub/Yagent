@@ -12,8 +12,8 @@ type DialogType int
 
 const (
 	DialogNormal DialogType = iota // Normal dialog
-	DialogModal                     // Modal dialog, intercepts all events
-	DialogToast                     // Toast dialog, auto-closes after short display
+	DialogModal                    // Modal dialog, intercepts all events
+	DialogToast                    // Toast dialog, auto-closes after short display
 )
 
 // Dialog is a dialog component interface.
@@ -26,8 +26,8 @@ type Dialog interface {
 // DialogStack manages a stack of dialogs.
 // The last element in the slice is the top of the stack (most recently added).
 type DialogStack struct {
-	dialogs     []Dialog
-	overlayBg   string // overlay background color
+	dialogs   []Dialog
+	overlayBg string // overlay background color
 }
 
 // NewDialogStack creates an empty DialogStack.
