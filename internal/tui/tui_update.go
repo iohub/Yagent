@@ -1336,7 +1336,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskCompleteMsg:
 		m.taskRunning = false
-		m.taskCancelled = false // 重置取消标志
 		m.currentModel = ""
 		m.currentAgent = ""
 		m.commandMode = false
@@ -1344,9 +1343,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// 如果是用户主动取消，不显示错误弹窗或完成弹窗
 		if m.taskCancelled {
+			m.taskCancelled = false
 			m.currentTask = nil
 			return m, nil
 		}
+		m.taskCancelled = false
 
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
