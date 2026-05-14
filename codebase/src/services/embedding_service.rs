@@ -294,8 +294,6 @@ impl EmbeddingService {
         let mut new_hashes = std::collections::HashMap::new();
         
         for file_path in files {
-            info!("Processing file: {}", file_path.display());
-            
             // Calculate MD5
             let content = match fs::read_to_string(&file_path) {
                 Ok(c) => c,
