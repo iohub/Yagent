@@ -69,6 +69,16 @@ func (w *pipeCommand) SetStderr(w2 io.Writer) {
 // string concatenation to prevent shell injection when projectDir contains
 // special characters like ', ", $, etc.
 func runFzfCmd(projectDir string) tea.Cmd {
+	// Normalize projectDir to absolute path
+	projectDir = filepath.Clean(projectDir)
+	if !filepath.IsAbs(projectDir) {
+		var err error
+		projectDir, err = os.Getwd()
+		if err != nil {
+			projectDir = "."
+		}
+	}
+
 	fzfBin, err := embedbin.BinPath("fzf")
 	if err != nil {
 		fzfBin = "fzf" // fallback to system fzf
@@ -126,6 +136,7 @@ func runFzfCmd(projectDir string) tea.Cmd {
 		"--height=40%",
 		"--layout=reverse",
 		"--border",
+		"--no-multi", // 只允许选择单个文件
 		"--preview", "head -20 {} 2>/dev/null || cat {} 2>/dev/null || echo [binary file]",
 		"--preview-window", "right:60%:wrap",
 	}
@@ -135,8 +146,13 @@ func runFzfCmd(projectDir string) tea.Cmd {
 	execCmd := &pipeCommand{cmd: fzfCmd, pw: pw}
 
 	return tea.Exec(execCmd, func(err error) tea.Msg {
-		// Close the pipe to signal EOF to the reader
+		// Close the write end first to signal EOF to the reader goroutine
 		pw.Close()
+
+		// Wait for goroutine to finish reading and send to channel
+		selectedPath := <-ch
+
+		// Now close the read end
 		pr.Close()
 
 		if err != nil {
@@ -144,14 +160,13 @@ func runFzfCmd(projectDir string) tea.Cmd {
 			return fzfFileSelectedMsg{path: ""}
 		}
 
-		selectedPath := <-ch
 		if selectedPath == "" {
 			return fzfFileSelectedMsg{path: ""}
 		}
 
 		// Convert to relative path
-		relPath, err := filepath.Rel(projectDir, selectedPath)
-		if err != nil {
+		relPath, relErr := filepath.Rel(projectDir, selectedPath)
+		if relErr != nil {
 			relPath = selectedPath
 		}
 
