@@ -136,11 +136,16 @@ func (m model) View() tea.View {
 	// Status line: [COMMAND] tag (if in command mode) + Running indicator + mode indicator
 	var runningBadge string
 	if m.taskRunning {
-		if m.currentModel != "" {
-			runningBadge = logStatusStyle.Render("Running [" + m.currentModel + "]...")
-		} else {
-			runningBadge = logStatusStyle.Render("Running...")
+		var parts []string
+		parts = append(parts, "●")
+		if m.currentAgent != "" {
+			parts = append(parts, m.currentAgent)
 		}
+		if m.currentModel != "" {
+			parts = append(parts, " [" + m.currentModel + "]")
+		}
+		parts = append(parts, " ", m.anim.Render(), "...")
+		runningBadge = logStatusStyle.Render(strings.Join(parts, ""))
 	}
 
 	// Ensure status line always starts on a new line
@@ -324,13 +329,16 @@ func (m model) renderTokenDashboard() string {
 
 	// In command mode with running task, show running badge at top of dashboard
 	if m.commandMode && m.taskRunning {
-		var runningLine string
-		if m.currentModel != "" {
-			runningLine = logStatusStyle.Render("Running [" + m.currentModel + "]...")
-		} else {
-			runningLine = logStatusStyle.Render("Running...")
+		var parts []string
+		parts = append(parts, "●")
+		if m.currentAgent != "" {
+			parts = append(parts, m.currentAgent)
 		}
-		lines = append(lines, runningLine)
+		if m.currentModel != "" {
+			parts = append(parts, " [" + m.currentModel + "]")
+		}
+		parts = append(parts, " ", m.anim.Render(), "...")
+		lines = append(lines, logStatusStyle.Render(strings.Join(parts, "")))
 	}
 	lines = append(lines, header)
 	lines = append(lines, sepStyle.Render(strings.Repeat("─", 48)))

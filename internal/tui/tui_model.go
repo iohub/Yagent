@@ -229,6 +229,9 @@ type model struct {
 	// Current LLM model being used (extracted from model_info events)
 	currentModel string
 
+	// Current agent name (set when task is running, cleared when finished)
+	currentAgent string
+
 	// Token consumption tracking
 	inputTokens              int64 // accumulated input tokens
 	outputTokens             int64 // accumulated output tokens

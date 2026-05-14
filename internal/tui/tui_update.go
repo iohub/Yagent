@@ -391,14 +391,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.animManager.Tick(100)
 		}
 
-		if m.activeAnim {
+		if m.activeAnim || m.taskRunning {
 			m.anim.Tick()
 			// Throttle viewport rebuild to every 3 ticks (~300ms) to avoid
 			// flooding viewport.SetContent() — the #1 cause of scroll lag.
 			if m.animFrame%3 == 0 {
-				for _, te := range m.toolCallEntries {
-					if te.Status == ToolStatusRunning {
-						te.InvalidateCache()
+				if m.activeAnim {
+					for _, te := range m.toolCallEntries {
+						if te.Status == ToolStatusRunning {
+							te.InvalidateCache()
+						}
 					}
 				}
 				m.rebuildViewportPreservingScroll()
@@ -1190,6 +1192,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.cacheReadInputTokens += cacheReadVal
 
+					// Track current running agent
+					if m.taskRunning {
+						if msg.event.From != "" {
+							m.currentAgent = msg.event.From
+						}
+					}
+
 					// Per-agent token tracking
 					agentName := msg.event.From
 					if agentName == "" {
@@ -1222,6 +1231,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 				if modelName, ok := contentMap["model"].(string); ok {
 					m.currentModel = modelName
+				}
+				// Also capture agent name from model_info event
+				if agentName, ok := contentMap["agent"].(string); ok && agentName != "" {
+					m.currentAgent = agentName
 				}
 			}
 			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
@@ -1325,6 +1338,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.taskRunning = false
 		m.taskCancelled = false // 重置取消标志
 		m.currentModel = ""
+		m.currentAgent = ""
 		m.commandMode = false
 		m.confirmDialog.open = false // safety: close any stale dialog
 
