@@ -74,7 +74,7 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 	sorted := make([]MessagePriority, len(priorities))
 	copy(sorted, priorities)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].Score < sorted[j].Score
+		return sorted[i].Priority < sorted[j].Priority
 	})
 
 	slog.Info("Context compression triggered",
@@ -239,7 +239,7 @@ func (e *Engine) CountTokens(messages []llm.Message) (int, error) {
 	return total, nil
 }
 
-// GetPriorityScores 获取优先级分数
-func (e *Engine) GetPriorityScores(messages []llm.Message) map[int]float64 {
-	return e.priorityCalc.GetScores(messages, e.config)
+// GetPriorities 获取优先级分数
+func (e *Engine) GetPriorities(messages []llm.Message) map[int]float64 {
+	return e.priorityCalc.GetPriorities(messages, e.config)
 }

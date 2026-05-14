@@ -181,7 +181,7 @@ func (s *LLMSummarizer) calculateThreshold(priorities []MessagePriority) float64
 	if idx >= len(priorities) {
 		idx = len(priorities) - 1
 	}
-	return priorities[idx].Score
+	return priorities[idx].Priority
 }
 
 // segmentMessages 将摘要区消息按token限制分段

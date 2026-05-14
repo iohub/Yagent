@@ -20,8 +20,8 @@ type ContextCompressor interface {
 	// CountTokens 计算messages的总token数
 	CountTokens(messages []llm.Message) (int, error)
 
-	// GetPriorityScores 获取每条消息的优先级分数（用于调试）
-	GetPriorityScores(messages []llm.Message) map[int]float64
+	// GetPriorities 获取每条消息的优先级（用于调试）
+	GetPriorities(messages []llm.Message) map[int]float64
 }
 
 // CompressResult 压缩结果

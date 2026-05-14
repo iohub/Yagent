@@ -10,7 +10,15 @@ import (
 // MessagePriority 消息优先级信息
 type MessagePriority struct {
 	Index          int     // 消息在列表中的索引
-	Score          float64 // 优先级分数（越高越重要）
+	Priority       float64 // 消息优先级分数，取值范围约 1.0 ~ 40.0
+	// 值越高表示消息越重要，越不应该被压缩
+	// 计算规则：
+	//   - 基础分：System=10.0, User=8.0, Assistant=4.0, Tool=2.0
+	//   - 近期消息（最近N轮）：×2.0
+	//   - 早期对话（前1/3）：×1.2
+	//   - 中间区域Tool消息：×0.5
+	//   - 时间衰减：×(1+TimeDecayRate)^depth
+	//   - 超长消息（>5000字符）：×0.7
 	Role           string
 	IsSystem       bool
 	IsUser         bool
@@ -99,7 +107,7 @@ func (pc *PriorityCalculator) CalculatePriorities(
 		
 		priorities[i] = MessagePriority{
 			Index:          i,
-			Score:          score,
+			Priority:       score,
 			Role:           string(msg.Role),
 			IsSystem:       msg.Role == llm.RoleSystem,
 			IsUser:         msg.Role == llm.RoleUser,
@@ -149,12 +157,12 @@ func (pc *PriorityCalculator) calculateBaseScore(msg llm.Message, isRecent, isEa
 	return score
 }
 
-// GetScores 获取所有消息的优先级分数
-func (pc *PriorityCalculator) GetScores(messages []llm.Message, config *Config) map[int]float64 {
+// GetPriorities 获取所有消息的优先级分数
+func (pc *PriorityCalculator) GetPriorities(messages []llm.Message, config *Config) map[int]float64 {
 	priorities := pc.CalculatePriorities(context.Background(), messages, config)
 	scores := make(map[int]float64)
 	for _, p := range priorities {
-		scores[p.Index] = p.Score
+		scores[p.Index] = p.Priority
 	}
 	return scores
 }

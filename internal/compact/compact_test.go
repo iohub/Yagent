@@ -267,13 +267,13 @@ func TestPriority_CalculatePriorities(t *testing.T) {
 	priorities := calc.CalculatePriorities(context.Background(), messages, cfg)
 
 	// System应该有最高优先级
-	if priorities[0].Score <= priorities[2].Score {
+	if priorities[0].Priority <= priorities[2].Priority {
 		t.Error("System message should have highest priority")
 	}
 
 	// 最近的消息（索引3，User）应该比早期的Assistant（索引2）优先级高
 	// 因为User基础分(8.0) > Assistant基础分(4.0)，且时间衰减会进一步提升
-	if priorities[3].Score <= priorities[2].Score {
+	if priorities[3].Priority <= priorities[2].Priority {
 		t.Error("Recent User message should have higher priority than older assistant")
 	}
 }
@@ -343,12 +343,12 @@ func TestLLMSummarizer_Basic(t *testing.T) {
 	}
 
 	priorities := []MessagePriority{
-		{Index: 0, Score: 10.0, IsSystem: true},
-		{Index: 1, Score: 8.0, IsUser: true},
-		{Index: 2, Score: 4.0, IsIntermediate: true},
-		{Index: 3, Score: 2.0, IsIntermediate: true},
-		{Index: 4, Score: 4.0, IsIntermediate: true},
-		{Index: 5, Score: 8.0, IsUser: true},
+		{Index: 0, Priority: 10.0, IsSystem: true},
+		{Index: 1, Priority: 8.0, IsUser: true},
+		{Index: 2, Priority: 4.0, IsIntermediate: true},
+		{Index: 3, Priority: 2.0, IsIntermediate: true},
+		{Index: 4, Priority: 4.0, IsIntermediate: true},
+		{Index: 5, Priority: 8.0, IsUser: true},
 	}
 
 	result, err := summarizer.Summarize(context.Background(), messages, priorities)
@@ -440,12 +440,12 @@ func TestLLMSummarizer_Segmentation(t *testing.T) {
 
 	// 构造优先级（前2条保留，后面全部可摘要）
 	priorities := make([]MessagePriority, len(messages))
-	priorities[0] = MessagePriority{Index: 0, Score: 10.0, IsSystem: true}
-	priorities[1] = MessagePriority{Index: 1, Score: 8.0, IsUser: true}
+	priorities[0] = MessagePriority{Index: 0, Priority: 10.0, IsSystem: true}
+	priorities[1] = MessagePriority{Index: 1, Priority: 8.0, IsUser: true}
 	for i := 2; i < len(priorities); i++ {
 		priorities[i] = MessagePriority{
 			Index:          i,
-			Score:          2.0,
+			Priority:       2.0,
 			IsIntermediate: true,
 		}
 	}
@@ -586,11 +586,11 @@ func TestRuleCompressor_L1WithSummarizer(t *testing.T) {
 	}
 
 	priorities := []MessagePriority{
-		{Index: 0, Score: 10.0, IsSystem: true},
-		{Index: 1, Score: 8.0, IsUser: true},
-		{Index: 2, Score: 4.0, IsIntermediate: true},
-		{Index: 3, Score: 2.0, IsIntermediate: true},
-		{Index: 4, Score: 8.0, IsUser: true},
+		{Index: 0, Priority: 10.0, IsSystem: true},
+		{Index: 1, Priority: 8.0, IsUser: true},
+		{Index: 2, Priority: 4.0, IsIntermediate: true},
+		{Index: 3, Priority: 2.0, IsIntermediate: true},
+		{Index: 4, Priority: 8.0, IsUser: true},
 	}
 
 	result, err := rc.L1Compress(context.Background(), messages, priorities)
