@@ -882,8 +882,7 @@ pub(crate) fn setup_watcher(
                         return;
                     }
                     
-                     tracing::info!("File change detected: {:?}, queueing re-analysis", event.paths);
-                     let _ = tx.send(());
+                    let _ = tx.send(());
                 }
             }
             Err(e) => tracing::error!("Watch error: {:?}", e),
