@@ -12,7 +12,8 @@ use super::{
     handlers::{query_call_graph, query_code_snippet, query_code_skeleton,
          query_hierarchical_graph, draw_call_graph, draw_call_graph_home,
          investigate_repo, semantic_search, query_indexing_status,
-         perform_analysis, setup_watcher, trigger_embedding_build},
+         perform_analysis, setup_watcher, trigger_embedding_build,
+         commit_embed, commit_search, commit_clear},
     models::ApiResponse,
 };
 
@@ -111,6 +112,9 @@ impl CodeBaseServer {
             .route("/investigate_repo", post(investigate_repo))
             .route("/semantic_search", post(semantic_search))
             .route("/query_indexing_status", post(query_indexing_status))
+            .route("/commit/embed", post(commit_embed))
+            .route("/commit/search", post(commit_search))
+            .route("/commit/clear", post(commit_clear))
             .route("/", get(draw_call_graph_home))
             .route("/draw_call_graph", get(draw_call_graph))
             .layer(cors)

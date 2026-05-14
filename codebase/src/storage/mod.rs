@@ -14,9 +14,12 @@ use std::sync::Mutex;
 use std::collections::{HashMap, HashSet};
 use notify::RecommendedWatcher;
 use parking_lot::RwLock;
+use anyhow::{Result, anyhow};
+use tracing::info;
 use crate::codegraph::types::PetCodeGraph;
 use crate::cli::args::StorageMode;
 use crate::config::Config;
+use crate::services::commit_embedding_service::{CommitEmbeddingService, CommitEmbeddingProvider};
 
 pub struct StorageManager {
     persistence: Arc<PersistenceManager>,
@@ -28,6 +31,8 @@ pub struct StorageManager {
     pub config: Arc<RwLock<Option<Config>>>,
     /// 当前进程绑定的仓库路径，一个进程只支持索引一个仓库
     current_repo: Arc<RwLock<Option<String>>>,
+    /// Commit 向量嵌入服务
+    commit_embedding_service: Option<Arc<CommitEmbeddingService>>,
 }
 
 impl StorageManager {
@@ -49,6 +54,7 @@ impl StorageManager {
             vector_tasks: Arc::new(Mutex::new(HashSet::new())),
             config: Arc::new(RwLock::new(None)),
             current_repo: Arc::new(RwLock::new(None)),
+            commit_embedding_service: None,
         }
     }
 
@@ -64,6 +70,7 @@ impl StorageManager {
             vector_tasks: Arc::new(Mutex::new(HashSet::new())),
             config: Arc::new(RwLock::new(Some(config))),
             current_repo: Arc::new(RwLock::new(None)),
+            commit_embedding_service: None,
         }
     }
 
@@ -133,5 +140,58 @@ impl StorageManager {
     /// 获取当前进程绑定的仓库路径
     pub fn get_current_repo(&self) -> Option<String> {
         self.current_repo.read().clone()
+    }
+
+    /// 初始化 Commit Embedding Service
+    ///
+    /// # Arguments
+    /// * `provider` - Commit 嵌入提供者，用于生成 commit summary 的向量嵌入
+    ///
+    /// # Errors
+    /// 当配置不存在或初始化失败时返回错误
+    pub async fn init_commit_embedding_service(
+        &mut self,
+        provider: Box<dyn CommitEmbeddingProvider + Send + Sync>,
+    ) -> Result<()> {
+        use lancedb::connect;
+
+        // 从配置中获取数据库路径
+        let config = self.config.read();
+        let config = config.as_ref().ok_or_else(|| {
+            anyhow!("Config not set. Please call set_config() before initializing commit embedding service")
+        })?;
+
+        let graph_db_uri = &config.codebase.graph_db_uri;
+        let dimensions = config.codebase.embedding.dimensions.unwrap_or(2560) as i32;
+
+        // 构建 LanceDB 连接路径
+        let db_path = format!("{}/commit_embeddings.lance", graph_db_uri.trim_end_matches('/'));
+
+        // 创建 LanceDB 连接
+        let connection = connect(&db_path).execute().await?;
+
+        info!(
+            "Initializing CommitEmbeddingService with dimensions: {}, db_path: {}",
+            dimensions, db_path
+        );
+
+        // 创建服务并初始化表
+        let service = CommitEmbeddingService::new(connection, provider, dimensions)
+            .await
+            .map_err(|e| anyhow!("Failed to create commit embedding service: {}", e))?;
+        service.init_table().await.map_err(|e| anyhow!("Failed to initialize commit embeddings table: {}", e))?;
+
+        self.commit_embedding_service = Some(Arc::new(service));
+        Ok(())
+    }
+
+    /// 获取 Commit Embedding Service 实例
+    ///
+    /// # Errors
+    /// 当服务未初始化时返回错误
+    pub fn get_commit_embedding_service(&self) -> Result<Arc<CommitEmbeddingService>> {
+        self.commit_embedding_service
+            .clone()
+            .ok_or_else(|| anyhow!("Commit embedding service not initialized. Call init_commit_embedding_service() first"))
     }
 } 

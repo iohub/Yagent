@@ -13,8 +13,10 @@ use serde_json::json;
 use notify::Watcher;
 
 pub mod vectorize;
+pub mod commit;
 
 pub use vectorize::{semantic_search, query_indexing_status, trigger_embedding_build};
+pub use commit::{commit_embed, commit_search, commit_clear};
 
 pub async fn query_call_graph(
     State(storage): State<Arc<StorageManager>>,

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"codeactor/internal/compact"
+	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
@@ -69,6 +70,7 @@ type ConductorAgent struct {
 	compactConfig  *compact.Config           // 压缩配置
 	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
+	commitManager        *CommitManager            // commit 学习器管理器
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -106,7 +108,7 @@ func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
 	return result
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine, cfg config.Config) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -353,6 +355,50 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
 
+	// ==================== 创建 Commit 学习工具适配器 ====================
+	// 注意：commit 工具不需要工作区保护，因为它们只读取 git 历史
+	
+	// 先创建 commit 管理器，以便 closures 可以捕获它
+	commitManager := NewCommitManager(cfg, engine)
+
+	// learn_commits 工具：触发 commit 学习流程
+	learnCommitsAdapter := tools.NewAdapter(
+		LearnCommitsToolDef.Name,
+		LearnCommitsToolDef.Description,
+		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			// 提取 repo_path 参数
+			repoPath := ""
+			if rp, ok := params["repo_path"].(string); ok {
+				repoPath = rp
+			}
+			// 调用执行器
+			return LearnCommitsToolExec(ctx, commitManager, repoPath)
+		},
+	).WithSchema(LearnCommitsToolDef.Parameters)
+
+	// search_similar_commits 工具：搜索相似 commit
+	searchSimilarCommitsAdapter := tools.NewAdapter(
+		SearchSimilarCommitsToolDef.Name,
+		SearchSimilarCommitsToolDef.Description,
+		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			// 提取 query 参数（必需）
+			query, ok := params["query"].(string)
+			if !ok || query == "" {
+				return nil, fmt.Errorf("query is required")
+			}
+			// 提取 top_k 参数
+			topK := 0
+			if tk, ok := params["top_k"].(float64); ok {
+				topK = int(tk)
+			}
+			// 调用执行器
+			return SearchSimilarCommitsToolExec(ctx, commitManager, query, topK)
+		},
+	).WithSchema(SearchSimilarCommitsToolDef.Parameters)
+
+	// 将所有 commit 工具适配器添加到 adapters 列表
+	commitAdapters := []*tools.Adapter{learnCommitsAdapter, searchSimilarCommitsAdapter}
+
 	self = &ConductorAgent{
 		BaseAgent:      BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
 		RepoAgent:      repo,
@@ -362,7 +408,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		DevOpsAgent:    devops,
 		BrowserAgent:   browser,
 		GlobalCtx:      globalCtx,
-		Adapters:       append(adapters, delegateAdapters...),
+		Adapters:       append(adapters, append(delegateAdapters, commitAdapters...)...),
 		maxSteps:       maxSteps,
 		metaRetryCount: metaRetryCount,
 		toolDefMap:     toolDefMap,
@@ -370,6 +416,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		compactEngine:  nil, // 将在 Run 方法中根据配置初始化
 		compactConfig:  compactCfg,
 		summaryEngine:  summaryEngine,
+		commitManager:  commitManager, // 设置 commit 学习器管理器
 	}
 	return self
 }
@@ -422,6 +469,40 @@ func (a *ConductorAgent) getToolFunc(name string) tools.ToolFunc {
 	default:
 		return nil
 	}
+}
+
+// GetCommitContext 获取与用户输入最匹配的 commit 上下文
+//
+// 该方法用于在系统提示中注入相关的历史 commit 信息，帮助 LLM
+// 了解相似的历史变更，从而提高代码生成的准确性。
+//
+// 参数:
+//   - ctx: 上下文
+//   - userInput: 用户输入文本
+//
+// 返回值:
+//   - string: 格式化的 commit 摘要文本（空字符串表示无可用的 commit 上下文）
+func (a *ConductorAgent) GetCommitContext(ctx context.Context, userInput string) string {
+	if a.commitManager == nil || !a.commitManager.Enabled() {
+		return ""
+	}
+
+	learner, err := a.commitManager.GetLearner()
+	if err != nil || learner == nil {
+		return ""
+	}
+
+	summaries, err := learner.SearchSimilar(ctx, userInput, learner.Config().TopK)
+	if err != nil {
+		slog.Warn("[CommitLearner] Search error", "error", err)
+		return ""
+	}
+
+	if len(summaries) == 0 {
+		return ""
+	}
+
+	return FormatSummaryAsText(summaries)
 }
 
 // parseMetaAgentOutput extracts and validates the JSON object from Meta-Agent's raw output.
@@ -682,6 +763,13 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		}
 	}
 
+	// ═══════ 初始化 CommitLearner ═══════
+	if a.commitManager != nil {
+		if err := a.commitManager.Initialize(ctx, a.GlobalCtx.ProjectPath); err != nil {
+			slog.Warn("CommitLearner initialization failed", "error", err)
+		}
+	}
+
 	var messages []llm.Message
 
 	// Always start with System Prompt (with any registered custom agents appended)
@@ -714,6 +802,14 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 	// 追加项目上下文（放在所有静态内容之后，确保缓存命中率）
 	if projectContext != "" {
 		systemPrompt += projectContext
+	}
+
+	// 追加 commit 上下文（首次对话时搜索相似的 commit）
+	if (mem == nil || len(mem.GetMessages()) == 0) && input != "" {
+		if commitCtx := a.GetCommitContext(ctx, input); commitCtx != "" {
+			systemPrompt += fmt.Sprintf("\n\n### Recent Relevant Commits\n%s", commitCtx)
+			slog.Info("Commit context injected into system prompt")
+		}
 	}
 
 	messages = append(messages, llm.Message{
