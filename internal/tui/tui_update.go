@@ -677,11 +677,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errMsg = errStr
 				return m, nil
 			}
-			if m.currentTask != nil && m.taskRunning {
-				return m, m.submitFollowUp(taskDesc)
-			}
-			if m.currentTask != nil && !m.taskRunning {
-				m.errMsg = "Task has already finished, cannot submit follow-up"
+			if m.currentTask != nil {
+				if !m.taskRunning {
+					// 任务已完成或空闲，允许提交 follow-up
+					return m, m.submitFollowUp(taskDesc)
+				}
+				// 任务正在运行，不处理
 				return m, nil
 			}
 			return m, m.submitTask()
@@ -992,7 +993,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
-			m.currentTask = nil
+			// 保留 currentTask 以支持任务完成后继续对话
+			// m.currentTask = nil  // 不再清除
 			// Show success dialog via DialogStack
 			if m.dialogStack != nil {
 				d := components.NewTaskCompleteDialog(true, "All tasks have been finished.", components.Language(m.currentLang))
