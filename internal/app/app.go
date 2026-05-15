@@ -239,7 +239,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		}
 	}
 
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, conductorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine, *ca.config, ca.client)
+	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, conductorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine, *ca.config, ca.client, agents.NewRepoKnowledgeManager(repoAgent, ca.globalCtx, 0.95))
 }
 
 func (ca *CodeActor) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {

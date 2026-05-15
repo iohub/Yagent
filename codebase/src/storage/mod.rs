@@ -20,6 +20,7 @@ use crate::codegraph::types::PetCodeGraph;
 use crate::cli::args::StorageMode;
 use crate::config::Config;
 use crate::services::commit_embedding_service::{CommitEmbeddingService, CommitEmbeddingProvider};
+use crate::services::repo_knowledge_service::{RepoKnowledgeService, RepoKnowledgeEmbeddingProvider};
 
 pub struct StorageManager {
     persistence: Arc<PersistenceManager>,
@@ -33,6 +34,8 @@ pub struct StorageManager {
     current_repo: Arc<RwLock<Option<String>>>,
     /// Commit 向量嵌入服务（使用 Mutex 支持内部可变性）
     commit_embedding_service: parking_lot::Mutex<Option<Arc<CommitEmbeddingService>>>,
+    /// Repo Knowledge 向量嵌入服务（使用 Mutex 支持内部可变性）
+    repo_knowledge_service: parking_lot::Mutex<Option<Arc<RepoKnowledgeService>>>,
 }
 
 impl StorageManager {
@@ -55,6 +58,7 @@ impl StorageManager {
             config: Arc::new(RwLock::new(None)),
             current_repo: Arc::new(RwLock::new(None)),
             commit_embedding_service: parking_lot::Mutex::new(None),
+            repo_knowledge_service: parking_lot::Mutex::new(None),
         }
     }
 
@@ -71,6 +75,7 @@ impl StorageManager {
             config: Arc::new(RwLock::new(Some(config))),
             current_repo: Arc::new(RwLock::new(None)),
             commit_embedding_service: parking_lot::Mutex::new(None),
+            repo_knowledge_service: parking_lot::Mutex::new(None),
         }
     }
 
@@ -194,5 +199,59 @@ impl StorageManager {
             .lock()
             .clone()
             .ok_or_else(|| anyhow!("Commit embedding service not initialized. Call init_commit_embedding_service() first"))
+    }
+
+    /// 初始化 Repo Knowledge Service
+    ///
+    /// # Arguments
+    /// * `embedding_provider` - 嵌入提供者，用于生成 task 的向量嵌入
+    ///
+    /// # Errors
+    /// 当配置不存在或初始化失败时返回错误
+    pub async fn init_repo_knowledge_service(
+        &self,
+        embedding_provider: Box<dyn RepoKnowledgeEmbeddingProvider + Send + Sync>,
+    ) -> Result<()> {
+        use lancedb::connect;
+
+        // 从配置中获取数据库路径
+        let config = self.config.read();
+        let config = config.as_ref().ok_or_else(|| {
+            anyhow!("Config not set. Please call set_config() before initializing repo knowledge service")
+        })?;
+
+        let graph_db_uri = &config.codebase.graph_db_uri;
+        let dimensions = config.codebase.embedding.dimensions.unwrap_or(2560) as i32;
+
+        // 构建 LanceDB 连接路径
+        let db_path = format!("{}/repo_knowledge.lance", graph_db_uri.trim_end_matches('/'));
+
+        // 创建 LanceDB 连接
+        let connection = connect(&db_path).execute().await?;
+
+        info!(
+            "Initializing RepoKnowledgeService with dimensions: {}, db_path: {}",
+            dimensions, db_path
+        );
+
+        // 创建服务并初始化表
+        let service = RepoKnowledgeService::new(connection, embedding_provider, dimensions)
+            .await
+            .map_err(|e| anyhow!("Failed to create repo knowledge service: {}", e))?;
+        service.init_table().await.map_err(|e| anyhow!("Failed to initialize repo knowledge table: {}", e))?;
+
+        *self.repo_knowledge_service.lock() = Some(Arc::new(service));
+        Ok(())
+    }
+
+    /// 获取 Repo Knowledge Service 实例
+    ///
+    /// # Errors
+    /// 当服务未初始化时返回错误
+    pub fn get_repo_knowledge_service(&self) -> Result<Arc<RepoKnowledgeService>> {
+        self.repo_knowledge_service
+            .lock()
+            .clone()
+            .ok_or_else(|| anyhow!("Repo knowledge service not initialized. Call init_repo_knowledge_service() first"))
     }
 } 

@@ -30,6 +30,8 @@ pub struct CodeBaseConfig {
     #[serde(default = "default_graph_db_uri")]
     pub graph_db_uri: String,
     pub embedding: EmbeddingConfig,
+    #[serde(default)]
+    pub repo_knowledge: RepoKnowledgeConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -38,6 +40,16 @@ pub struct EmbeddingConfig {
     pub api_token: String,
     pub api_base_url: String,
     pub dimensions: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct RepoKnowledgeConfig {
+    #[serde(default = "default_repo_knowledge_table_name")]
+    pub table_name: String,
+}
+
+fn default_repo_knowledge_table_name() -> String {
+    "repo_knowledge".to_string()
 }
 
 impl Config {

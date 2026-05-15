@@ -19,11 +19,13 @@ use super::{
          query_hierarchical_graph, draw_call_graph, draw_call_graph_home,
          investigate_repo, semantic_search, query_indexing_status,
          perform_analysis, setup_watcher, trigger_embedding_build,
-         commit_embed, commit_search, commit_clear},
+         commit_embed, commit_search, commit_clear,
+         repo_knowledge_embed, repo_knowledge_search},
     models::ApiResponse,
 };
 use crate::services::embedding_service::OpenAICompatibleEmbeddingProvider;
 use crate::services::commit_embedding_service::EmbeddingProviderAdapter;
+use crate::services::repo_knowledge_service::{EmbeddingProviderAdapter as RepoKnowledgeEmbeddingProviderAdapter};
 
 pub struct CodeBaseServer {
     storage: Arc<StorageManager>,
@@ -102,6 +104,11 @@ impl CodeBaseServer {
             tracing::warn!("Failed to initialize commit embedding service: {}", e);
         }
 
+        // 初始化 Repo Knowledge Service
+        if let Err(e) = self.init_repo_knowledge_service().await {
+            tracing::warn!("Failed to initialize repo knowledge service: {}", e);
+        }
+
         // 启动文件监听
         setup_watcher(self.storage.clone(), project_dir.to_path_buf(), project_id.clone());
 
@@ -143,14 +150,53 @@ impl CodeBaseServer {
 
         let api_token = api_token.ok_or("API Key not found in config or environment variable SILICONFLOW_API_KEY")?;
         
-        // 创建 embedding provider
-        let provider = OpenAICompatibleEmbeddingProvider::new(api_token, base_url, model);
+         // 创建 embedding provider
+       let provider = OpenAICompatibleEmbeddingProvider::new(api_token, base_url, model);
         let adapter = EmbeddingProviderAdapter::from_openai_provider(provider);
         
         // 初始化 commit embedding service
         self.storage.init_commit_embedding_service(Box::new(adapter)).await?;
         
         tracing::info!("Commit embedding service initialized successfully");
+        Ok(())
+    }
+
+    /// 初始化 Repo Knowledge Service
+    async fn init_repo_knowledge_service(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // 获取配置
+        let config = self.storage.get_config().ok_or("Config not set")?;
+        
+        // 检查 embedding 是否启用
+        if !config.codebase.enable_embedding {
+            return Err("Embedding not enabled in config".into());
+        }
+
+        // 获取 embedding 配置
+        let mut api_token = std::env::var("SILICONFLOW_API_KEY").ok();
+        let mut base_url = None;
+        let mut model = "Qwen/Qwen3-Embedding-4B".to_string();
+
+        let embedding_config = &config.codebase.embedding;
+        if !embedding_config.api_token.is_empty() {
+            api_token = Some(embedding_config.api_token.clone());
+        }
+        if !embedding_config.api_base_url.is_empty() {
+            base_url = Some(embedding_config.api_base_url.clone());
+        }
+        if !embedding_config.model.is_empty() {
+            model = embedding_config.model.clone();
+        }
+
+        let api_token = api_token.ok_or("API Key not found in config or environment variable SILICONFLOW_API_KEY")?;
+        
+        // 创建 embedding provider
+        let provider = OpenAICompatibleEmbeddingProvider::new(api_token, base_url, model);
+        let adapter = RepoKnowledgeEmbeddingProviderAdapter::from_embedding_provider(Box::new(provider));
+        
+        // 初始化 repo knowledge service
+        self.storage.init_repo_knowledge_service(Box::new(adapter)).await?;
+        
+        tracing::info!("Repo knowledge service initialized successfully");
         Ok(())
     }
 
@@ -244,6 +290,8 @@ impl CodeBaseServer {
             .route("/commit/embed", post(commit_embed))
             .route("/commit/search", post(commit_search))
             .route("/commit/clear", post(commit_clear))
+            .route("/repo_knowledge/embed", post(repo_knowledge_embed))
+            .route("/repo_knowledge/search", post(repo_knowledge_search))
             .route("/", get(draw_call_graph_home))
             .route("/draw_call_graph", get(draw_call_graph))
             // 中间件顺序：先应用日志，再应用 CORS

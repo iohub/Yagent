@@ -108,13 +108,16 @@ func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
 	return result
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine, cfg config.Config, llmClient *llm.Client) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine, cfg config.Config, llmClient *llm.Client, repoKnowledgeMgr *RepoKnowledgeManager) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
+		}
+		if repoKnowledgeMgr != nil {
+			return repoKnowledgeMgr.AnalyseTask(ctx, task)
 		}
 		return repo.Run(ctx, task)
 	}).WithSchema(map[string]interface{}{

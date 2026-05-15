@@ -5,6 +5,7 @@ pub mod init;
 pub mod investigate;
 pub mod embedding;
 pub mod commit;
+pub mod repo_knowledge;
 
 pub use query::*;
 pub use snippet::*;
@@ -13,6 +14,7 @@ pub use init::*;
 pub use investigate::*;
 pub use embedding::*;
 pub use commit::*;
+pub use repo_knowledge::*;
 
 use serde::{Deserialize, Serialize};
 

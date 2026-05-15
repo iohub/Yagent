@@ -14,9 +14,11 @@ use notify::Watcher;
 
 pub mod vectorize;
 pub mod commit;
+pub mod repo_knowledge;
 
 pub use vectorize::{semantic_search, query_indexing_status, trigger_embedding_build};
 pub use commit::{commit_embed, commit_search, commit_clear};
+pub use repo_knowledge::{repo_knowledge_embed, repo_knowledge_search};
 
 pub async fn query_call_graph(
     State(storage): State<Arc<StorageManager>>,
