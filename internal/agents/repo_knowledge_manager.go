@@ -26,7 +26,7 @@ type RepoKnowledgeMatch struct {
 //   2. 如果有高相似度匹配（>= threshold），直接返回缓存结果
 //   3. 否则执行 RepoAgent 并异步存储结果到知识库
 type RepoKnowledgeManager struct {
-	agent      *RepoAgent
+	agent      Agent
 	globalCtx  *globalctx.GlobalCtx
 	threshold  float64
 	httpClient *http.Client
@@ -34,7 +34,7 @@ type RepoKnowledgeManager struct {
 
 // NewRepoKnowledgeManager 创建一个新的 RepoKnowledgeManager。
 // 如果 threshold <= 0，默认为 0.95。
-func NewRepoKnowledgeManager(agent *RepoAgent, globalCtx *globalctx.GlobalCtx, threshold float64) *RepoKnowledgeManager {
+func NewRepoKnowledgeManager(agent Agent, globalCtx *globalctx.GlobalCtx, threshold float64) *RepoKnowledgeManager {
 	if threshold <= 0 {
 		threshold = 0.95 // 默认阈值
 	}
