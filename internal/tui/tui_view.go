@@ -253,6 +253,22 @@ func formatToken(n int64) string {
 	}
 }
 
+// formatCacheHitRate 计算并格式化缓存命中率
+// 返回格式: "命中率: XX.X%(cache)"，例如 "命中率: 50.0%(0.5k)"
+// 当 inputTokens 为 0 时返回空字符串
+func formatCacheHitRate(cacheTokens, inputTokens int64) string {
+	if inputTokens == 0 {
+		return ""
+	}
+	// 仅在 cacheTokens > 0 时有意义
+	if cacheTokens <= 0 {
+		return ""
+	}
+	rate := float64(cacheTokens) / float64(inputTokens) * 100
+	cacheStr := formatToken(cacheTokens)
+	return fmt.Sprintf("命中率: %.1f%%(%s)", rate, cacheStr)
+}
+
 // renderTokenLine renders the token consumption line in the footer.
 // Format: "In: 1.2k | Out: 3.5k"
 func (m model) renderTokenLine() string {
@@ -307,7 +323,10 @@ func (m model) renderTokenDashboard() string {
 		inputStyle.Render(fmt.Sprintf("In: %s  ", inStr)) +
 		outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
 	if m.cacheReadInputTokens > 0 {
-		header += fmt.Sprintf("Cache: %s  ", formatToken(m.cacheReadInputTokens))
+		hitRate := formatCacheHitRate(m.cacheReadInputTokens, m.inputTokens)
+		if hitRate != "" {
+			header += inputStyle.Render(hitRate + "  ")
+		}
 	}
 	header += sumStyle.Render(fmt.Sprintf("Σ %s", sumStr))
 
@@ -363,7 +382,10 @@ func (m model) renderTokenDashboard() string {
 		agentLine += " " + agentInStyle.Render(fmt.Sprintf("In: %s  ", agentIn))
 		agentLine += agentOutStyle.Render(fmt.Sprintf("Out: %s", agentOut))
 		if au.CacheReadInputTokens > 0 {
-			agentLine += "  " + agentInStyle.Render(fmt.Sprintf("Cache: %s", formatToken(au.CacheReadInputTokens)))
+			hitRate := formatCacheHitRate(au.CacheReadInputTokens, au.InputTokens)
+			if hitRate != "" {
+				agentLine += "  " + agentInStyle.Render(hitRate)
+			}
 		}
 		lines = append(lines, agentLine)
 	}
