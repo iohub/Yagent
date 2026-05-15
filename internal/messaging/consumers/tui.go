@@ -35,10 +35,24 @@ var toolStyles = map[string]lipgloss.Style{
 	"ask_user_for_help": lipgloss.NewStyle().Foreground(lipgloss.Color("#32CD32")), // lime green
 	"edit_file":         lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6B6B")), // red
 	"read_file":         lipgloss.NewStyle().Foreground(lipgloss.Color("#4ECDC4")), // teal
-	"run_bash":  lipgloss.NewStyle().Foreground(lipgloss.Color("#FFE66D")), // yellow
+	"run_bash":          lipgloss.NewStyle().Foreground(lipgloss.Color("#FFE66D")), // yellow
 	"grep_search":       lipgloss.NewStyle().Foreground(lipgloss.Color("#1A535C")), // dark cyan
 	"file_search":       lipgloss.NewStyle().Foreground(lipgloss.Color("#FF9F1C")), // coral
 	"create_file":       lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71")), // green
+}
+
+// displayToolNameAliases maps internal tool names to their display names.
+// This is used to show user-friendly names without changing tool definitions.
+var displayToolNameAliases = map[string]string{
+	"search_replace_in_file": "edit_file",
+}
+
+// DisplayToolName returns the display name for a tool.
+func DisplayToolName(name string) string {
+	if displayName, ok := displayToolNameAliases[name]; ok {
+		return displayName
+	}
+	return name
 }
 
 // Color palette for fallback colors
@@ -133,13 +147,14 @@ func buildToolBadge(toolName string) string {
 	if toolName == "" {
 		return ""
 	}
-	style := getToolStyle(toolName)
+	displayName := DisplayToolName(toolName)
+	style := getToolStyle(displayName)
 	badge := lipgloss.NewStyle().
 		Background(style.GetForeground()).
 		Foreground(lipgloss.Color("0")).
 		Bold(true).
 		Padding(0, 1)
-	return badge.Render(toolName)
+	return badge.Render(displayName)
 }
 
 func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
@@ -187,8 +202,9 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 		if callID != "" {
 			t.pendingToolCalls[callID] = pendingToolCall{toolName: toolName, summary: summary}
 		}
-		// Compact running line: 🔘 tool_name · summary
-		prefixRendered = toolRunningStyle2.Render("🔘 " + toolName)
+		// Compact running line: 🔘 display_tool_name · summary
+		displayToolName := DisplayToolName(toolName)
+		prefixRendered = toolRunningStyle2.Render("🔘 " + displayToolName)
 		if summary != "" {
 			prefixRendered += " " + toolSummaryStyle.Render("· "+summary)
 		}
@@ -233,11 +249,12 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 		resultStr := getResultFromContent(event.Content)
 		isError := strings.HasPrefix(resultStr, "Error:")
 
-		// Compact done line: ✅ tool_name · summary  or  ❌ tool_name · summary — error
+		// Compact done line: ✅ display_tool_name · summary  or  ❌ display_tool_name · summary — error
+		displayToolName := DisplayToolName(toolName)
 		if isError {
-			prefixRendered = toolErrorStyle2.Render("❌ " + toolName)
+			prefixRendered = toolErrorStyle2.Render("❌ " + displayToolName)
 		} else {
-			prefixRendered = toolDoneStyle2.Render("✅ " + toolName)
+			prefixRendered = toolDoneStyle2.Render("✅ " + displayToolName)
 		}
 		if summary != "" {
 			prefixRendered += " " + toolSummaryStyle.Render("· "+summary)

@@ -266,7 +266,7 @@ func formatCacheHitRate(cacheTokens, inputTokens int64) string {
 	}
 	rate := float64(cacheTokens) / float64(inputTokens) * 100
 	cacheStr := formatToken(cacheTokens)
-	return fmt.Sprintf("命中率: %.1f%%(%s)", rate, cacheStr)
+	return fmt.Sprintf("Cache: %.1f%%(%s)", rate, cacheStr)
 }
 
 // renderTokenLine renders the token consumption line in the footer.

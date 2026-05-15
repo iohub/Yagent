@@ -56,6 +56,17 @@ func RenderToolName(name string) string {
 		Render(name)
 }
 
+// DisplayToolName maps internal tool names to their display names in the TUI.
+// This allows us to show a user-friendly name without changing the actual tool definition.
+func DisplayToolName(name string) string {
+	switch name {
+	case "search_replace_in_file":
+		return "edit_file"
+	default:
+		return name
+	}
+}
+
 // ── Tool name styles ──
 var (
 	NameNormal = lipgloss.NewStyle().Foreground(lipgloss.Color("39")) // blue

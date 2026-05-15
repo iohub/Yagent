@@ -506,7 +506,7 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		}
 		// Fallback: legacy rendering
 		if entry.toolName != "" {
-			prefix = "🔘 " + RenderToolName(entry.toolName)
+			prefix = "🔘 " + RenderToolName(DisplayToolName(entry.toolName))
 		} else {
 			prefix = "🔘 TOOL"
 		}
@@ -519,14 +519,14 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		}
 		if strings.HasPrefix(entry.content, "Error:") {
 			if entry.toolName != "" {
-				prefix = "❌ " + RenderToolName(entry.toolName)
+				prefix = "❌ " + RenderToolName(DisplayToolName(entry.toolName))
 			} else {
 				prefix = "❌ RESULT"
 			}
 			contentStyle = toolErrorStyle
 		} else {
 			if entry.toolName != "" {
-				prefix = "✅ " + RenderToolName(entry.toolName)
+				prefix = "✅ " + RenderToolName(DisplayToolName(entry.toolName))
 			} else {
 				prefix = "✅ RESULT"
 			}
@@ -656,7 +656,7 @@ func renderDiff(entry *logEntry) string {
 	if entry.isToolRunning {
 		icon = IconPending
 	}
-	prefix = icon + " " + RenderToolName(entry.toolName)
+	prefix = icon + " " + RenderToolName(DisplayToolName(entry.toolName))
 	if entry.executionSummary != "" {
 		prefix += " " + ParamMain.Render("· "+entry.executionSummary)
 	}

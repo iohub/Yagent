@@ -31,7 +31,7 @@ var skipBodyTools = map[string]bool{
 // Output: "● tool_name · summary ████████~!@...."
 func RenderPending(name string, summary string, anim *Anim) string {
 	icon := IconPending
-	toolName := RenderToolName(name)
+	toolName := RenderToolName(DisplayToolName(name))
 
 	var parts []string
 	parts = append(parts, icon, toolName)
@@ -49,7 +49,7 @@ func RenderPending(name string, summary string, anim *Anim) string {
 // Output: "✓ tool_name · file_path" or "× tool_name · file_path — error_msg"
 func RenderHeader(status ToolStatus, name string, params string, errBrief string) string {
 	icon := ToolIcon(status, false)
-	toolName := RenderToolName(name)
+	toolName := RenderToolName(DisplayToolName(name))
 
 	var parts []string
 	parts = append(parts, icon, toolName)
@@ -70,7 +70,7 @@ func RenderEarlyState(status ToolStatus, name string, params string) (string, bo
 	switch status {
 	case ToolStatusCanceled:
 		icon := IconCanceled
-		toolName := RenderToolName(name)
+		toolName := RenderToolName(DisplayToolName(name))
 		line := fmt.Sprintf("%s %s", icon, toolName)
 		if params != "" {
 			line += " " + ParamMain.Render(params)
@@ -79,7 +79,7 @@ func RenderEarlyState(status ToolStatus, name string, params string) (string, bo
 		return line, true
 	case ToolStatusPending:
 		icon := IconPending
-		toolName := RenderToolName(name)
+		toolName := RenderToolName(DisplayToolName(name))
 		line := fmt.Sprintf("%s %s", icon, toolName)
 		if params != "" {
 			line += " " + ParamMain.Render(params)
