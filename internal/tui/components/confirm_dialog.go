@@ -216,19 +216,12 @@ func (d *ConfirmDialog) View() string {
 	// ── Help text ──
 	help := d.helpStyle.Render(getConfirmText("ConfirmDialogHelp", langForDialog))
 
-	// ── Separator ──
-	sep := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("237")).
-		Width(innerWidth).
-		Render(strings.Repeat("─", innerWidth))
-
 	// ── Assemble ──
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		toolLine,
 		"",
 		detail,
 		"",
-		sep,
 		optionsBlock,
 		help,
 	)

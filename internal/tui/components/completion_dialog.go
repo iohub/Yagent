@@ -1,8 +1,6 @@
 package components
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -109,12 +107,6 @@ func (d *TaskCompleteDialog) View() string {
 	// ── Help text ──
 	help := d.helpStyle.Render("Press ENTER or SPACE to close")
 
-	// ── Separator ──
-	sep := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("237")).
-		Width(innerWidth).
-		Render(strings.Repeat("─", innerWidth))
-
 	// ── Assemble ──
 	var content string
 	if msgLine != "" {
@@ -123,8 +115,6 @@ func (d *TaskCompleteDialog) View() string {
 			"",
 			msgLine,
 			"",
-			sep,
-			"",
 			lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(okBtn),
 			"",
 			help,
@@ -132,8 +122,6 @@ func (d *TaskCompleteDialog) View() string {
 	} else {
 		content = lipgloss.JoinVertical(lipgloss.Left,
 			titleLine,
-			"",
-			sep,
 			"",
 			lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(okBtn),
 			"",

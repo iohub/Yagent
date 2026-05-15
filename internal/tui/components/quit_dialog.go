@@ -1,8 +1,6 @@
 package components
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -139,19 +137,11 @@ func (d *QuitConfirmDialog) View() string {
 	// ── Help ──
 	help := d.helpStyle.Render("←/→ 选择  Enter 确认  y/n")
 
-	// ── Separator ──
-	sep := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("237")).
-		Width(innerWidth).
-		Render(strings.Repeat("─", innerWidth))
-
 	// ── Assemble ──
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		titleLine,
 		"",
 		message,
-		"",
-		sep,
 		"",
 		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(buttons),
 		"",

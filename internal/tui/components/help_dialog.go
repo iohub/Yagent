@@ -1,8 +1,6 @@
 package components
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -64,7 +62,6 @@ func (d *HelpDialog) View() string {
 	if d.width-4 < dialogWidth {
 		dialogWidth = d.width - 4
 	}
-	innerWidth := dialogWidth - 4
 
 	// ── Title ──
 	titleStyle := lipgloss.NewStyle().
@@ -77,12 +74,6 @@ func (d *HelpDialog) View() string {
 		Foreground(lipgloss.Color("252"))
 	renderedContent := contentStyle.Render(d.content)
 
-	// ── Separator ──
-	sepStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("237")).
-		Width(innerWidth)
-	sep := sepStyle.Render(strings.Repeat("─", innerWidth))
-
 	// ── Dismiss hint ──
 	hintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240"))
@@ -93,8 +84,6 @@ func (d *HelpDialog) View() string {
 		titleLine,
 		"",
 		renderedContent,
-		"",
-		sep,
 		"",
 		hint,
 	)

@@ -290,17 +290,9 @@ func (m model) renderTaskCompleteDialog() string {
 	// ── Help text ──
 	help := confirmHelpStyle.Render(langManager.GetText("TaskCompleteHelp"))
 
-	// ── Separator ──
-	sep := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("237")).
-		Width(innerWidth).
-		Render(strings.Repeat("─", innerWidth))
-
 	// ── Assemble ──
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		titleLine,
-		"",
-		sep,
 		"",
 		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(okBtn),
 		"",
@@ -346,19 +338,11 @@ func (m model) renderConfirmQuitDialog() string {
 	// ── Help ──
 	help := confirmHelpStyle.Render(langManager.GetText("ConfirmQuitHelp"))
 
-	// ── Separator ──
-	sep := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("237")).
-		Width(innerWidth).
-		Render(strings.Repeat("─", innerWidth))
-
 	// ── Assemble ──
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		titleLine,
 		"",
 		message,
-		"",
-		sep,
 		"",
 		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(buttons),
 		"",
@@ -404,19 +388,11 @@ func (m model) renderConfirmCancelDialog() string {
 	// ── Help ──
 	help := confirmHelpStyle.Render(langManager.GetText("ConfirmCancelHelp"))
 
-	// ── Separator ──
-	sep := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("237")).
-		Width(innerWidth).
-		Render(strings.Repeat("─", innerWidth))
-
 	// ── Assemble ──
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		titleLine,
 		"",
 		message,
-		"",
-		sep,
 		"",
 		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(buttons),
 		"",
@@ -438,7 +414,6 @@ func (m model) renderHelpDialog() string {
 	if m.termWidth-4 < dialogWidth {
 		dialogWidth = m.termWidth - 4
 	}
-	innerWidth := dialogWidth - 4
 
 	// ── Title ──
 	titleStyle := lipgloss.NewStyle().
@@ -465,12 +440,6 @@ func (m model) renderHelpDialog() string {
 		skillsSection = skillsContent
 	}
 
-	// ── Separator ──
-	sepStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("237")).
-		Width(innerWidth)
-	sep := sepStyle.Render(strings.Repeat("─", innerWidth))
-
 	// ── Dismiss hint ──
 	hintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240"))
@@ -486,8 +455,6 @@ func (m model) renderHelpDialog() string {
 			"",
 			contentStyle.Render(skillsSection),
 			"",
-			sep,
-			"",
 			hint,
 		)
 	} else {
@@ -495,8 +462,6 @@ func (m model) renderHelpDialog() string {
 			titleLine,
 			"",
 			content,
-			"",
-			sep,
 			"",
 			hint,
 		)
