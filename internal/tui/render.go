@@ -710,6 +710,13 @@ func formatToolParams(toolName string, argsJSON string) string {
 			}
 			return cmd
 		}
+	case "semantic_search":
+		if query, ok := args["query"].(string); ok && query != "" {
+			if len(query) > 40 {
+				return query[:37] + "..."
+			}
+			return query
+		}
 	case "search_by_regex", "grep_search":
 		if pattern, ok := args["query"].(string); ok && pattern != "" {
 			if len(pattern) > 40 {
