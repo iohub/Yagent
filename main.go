@@ -179,7 +179,7 @@ func main() {
 		}
 
 		// Start TUI — all interaction is handled inside the TUI loop
-		tui.StartTUI(taskFilePath, codeActor, taskManager, dataManager)
+		tui.StartTUI(taskFilePath, codeActor, taskManager, dataManager, config)
 		return
 	case "http":
 		// Run HTTP server mode

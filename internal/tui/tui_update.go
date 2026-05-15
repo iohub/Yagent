@@ -186,6 +186,14 @@ func (m *model) doSkillAutocomplete(text string, contentRunes []rune, cursor int
 // 1. 接收 contentRunes 参数，避免重复转换
 // 2. 如果光标在第一行，避免调用 splitLogicalLines
 func (m *model) doKeywordAutocomplete(text string, contentRunes []rune, cursor int) {
+	// 检查配置：如果补全功能被禁用，直接返回
+	if !m.keywordCompletionCfg.enabled {
+		m.keywordAutoComplete = false
+		m.keywordSuggestions = nil
+		m.keywordSuggestionIdx = 0
+		return
+	}
+
 	// 仅在编辑模式且任务未运行时激活
 	if m.commandMode || m.taskRunning {
 		m.keywordAutoComplete = false

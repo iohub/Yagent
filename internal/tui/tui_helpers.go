@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"codeactor/internal/app"
+	"codeactor/internal/config"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
 	"codeactor/internal/messaging"
@@ -35,7 +36,7 @@ func validateInputs(projectDir, taskDesc string) (bool, string) {
 }
 
 // StartTUI starts the Bubble Tea TUI with the given dependencies.
-func StartTUI(taskFilePath string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager) {
+func StartTUI(taskFilePath string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, cfg *config.Config) {
 	langManager = NewLanguageManager()
 
 	taskContent := ""
@@ -51,7 +52,7 @@ func StartTUI(taskFilePath string, ca *app.CodeActor, tm *http.TaskManager, dm *
 	// escape-sequence leakage into the input field.
 	useDarkStyle := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
 
-	p := tea.NewProgram(initialModel(taskContent, ca, tm, dm, useDarkStyle))
+	p := tea.NewProgram(initialModel(taskContent, ca, tm, dm, useDarkStyle, cfg))
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)

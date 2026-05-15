@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"codeactor/internal/app"
+	"codeactor/internal/config"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/dict"
 	"codeactor/internal/http"
@@ -26,6 +27,11 @@ import (
 
 // Global Language Manager
 var langManager *LanguageManager
+
+// keywordCompletionConfig 关键词补全配置
+type keywordCompletionConfig struct {
+	enabled bool // 是否启用关键词补全
+}
 
 // Global styles — Claude Code-like minimalist aesthetic
 var (
@@ -222,6 +228,7 @@ type model struct {
 	keywordSuggestions   []string             // matching keyword suggestions based on current word at cursor
 	keywordSuggestionIdx int                  // currently selected suggestion index
 	keywordDict          *dict.CompletionDict // keyword dictionary for autocomplete
+	keywordCompletionCfg keywordCompletionConfig // 关键词补全配置
 
 	// Tool call state tracking: tool_call_id → ToolEntry
 	toolCallEntries map[string]*ToolEntry
@@ -295,7 +302,7 @@ type AutocompleteResult struct {
 	keywordSuggestionIdx int
 }
 
-func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool) model {
+func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config) model {
 	ti := textarea.New()
 
 	// ── Editor input styles (harmonized with TUI 256-color palette) ──
@@ -391,17 +398,27 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	// 注册默认的 tool_call 动画
 	am.Register("tool_call_anim", 10) // 10 FPS
 
-	// Initialize keyword completion dictionary using dict包
-	// Load from user and project dictionaries, then add builtin keywords
-	homeDir, _ := os.UserHomeDir()
-	userDictPath := filepath.Join(homeDir, ".codeactor", "keywords.txt")
-	projectDictPath := filepath.Join(projectDir, ".codeactor", "keywords.txt")
+	// Initialize keyword completion dictionary (conditionally based on config)
+	var keywordDict *dict.CompletionDict
+	var completionEnabled bool
 
-	// Create dict with sources (will auto-load existing files)
-	keywordDict := dict.NewCompletionDict("autocomplete", []string{userDictPath, projectDictPath})
+	// 检查配置：如果 keywords.disable_completion = true，则禁用补全（向后兼容）
+	// 默认行为：启用补全
+	if cfg != nil && cfg.Keywords.DisableCompletion {
+		completionEnabled = false
+	} else {
+		// 默认启用补全，创建词典
+		completionEnabled = true
+		homeDir, _ := os.UserHomeDir()
+		userDictPath := filepath.Join(homeDir, ".codeactor", "keywords.txt")
+		projectDictPath := filepath.Join(projectDir, ".codeactor", "keywords.txt")
 
-	// Add builtin default keywords
-	keywordDict.AddWords(dict.DefaultKeywords())
+		// Create dict with sources (will auto-load existing files)
+		keywordDict = dict.NewCompletionDict("autocomplete", []string{userDictPath, projectDictPath})
+
+		// Add builtin default keywords
+		keywordDict.AddWords(dict.DefaultKeywords())
+	}
 
 	return model{
 		assistant:          ca,
@@ -428,6 +445,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		mouseHandler: md,
 		diffView:     dv,
 		keywordDict:  keywordDict,
+		keywordCompletionCfg: keywordCompletionConfig{enabled: completionEnabled},
 
 		// 预创建的渲染样式（避免循环内重复创建）
 		skillSuggestionStyle: lipgloss.NewStyle().

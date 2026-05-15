@@ -483,7 +483,8 @@ type DictConfig struct {
 
 // KeywordsConfig 关键词词典配置
 type KeywordsConfig struct {
-	DefaultPath string       `toml:"default_path"` // 用户默认关键词文件路径
-	HotReload   bool         `toml:"hot_reload"`   // 是否启用热重载
-	Dicts       []DictConfig `toml:"dict"`         // 词典列表
+	DefaultPath       string       `toml:"default_path"`          // 用户默认关键词文件路径
+	HotReload         bool         `toml:"hot_reload"`            // 是否启用热重载
+	DisableCompletion bool         `toml:"disable_completion"`    // 禁用关键词自动补全（默认 false 表示启用，保持向后兼容）
+	Dicts             []DictConfig `toml:"dict"`                  // 词典列表
 }
