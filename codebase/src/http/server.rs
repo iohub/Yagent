@@ -22,6 +22,8 @@ use super::{
          commit_embed, commit_search, commit_clear},
     models::ApiResponse,
 };
+use crate::services::embedding_service::OpenAICompatibleEmbeddingProvider;
+use crate::services::commit_embedding_service::EmbeddingProviderAdapter;
 
 pub struct CodeBaseServer {
     storage: Arc<StorageManager>,
@@ -43,9 +45,12 @@ impl CodeBaseServer {
         Self { storage, repo_path }
     }
 
-    pub async fn start(self, addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn start(&mut self, addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+        // 提前 clone repo_path 避免后续借用冲突
+        let repo_path = self.repo_path.clone();
+        
         // ---- 启动时自动初始化仓库 ----
-        let project_dir = std::path::Path::new(&self.repo_path);
+        let project_dir = std::path::Path::new(&repo_path);
         if !project_dir.exists() || !project_dir.is_dir() {
             return Err(format!("Repository path does not exist or is not a directory: {}", self.repo_path).into());
         }
@@ -88,8 +93,13 @@ impl CodeBaseServer {
         }
 
         // 触发嵌入索引构建
-        if let Err(e) = trigger_embedding_build(self.storage.clone(), self.repo_path.clone()).await {
+        if let Err(e) = trigger_embedding_build(self.storage.clone(), repo_path.clone()).await {
             tracing::info!("Embedding build skipped: {}", e);
+        }
+
+        // 初始化 Commit Embedding Service
+        if let Err(e) = self.init_commit_embedding_service().await {
+            tracing::warn!("Failed to initialize commit embedding service: {}", e);
         }
 
         // 启动文件监听
@@ -99,9 +109,48 @@ impl CodeBaseServer {
         let app = self.create_router();
 
         let listener = TcpListener::bind(addr).await?;
-        println!("CodeGraph HTTP server starting on {}, repo: {}", addr, self.repo_path);
+        println!("CodeGraph HTTP server starting on {}, repo: {}", addr, repo_path);
 
         axum::serve(listener, app).await?;
+        Ok(())
+    }
+
+    /// 初始化 Commit Embedding Service
+    async fn init_commit_embedding_service(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // 获取配置
+        let config = self.storage.get_config().ok_or("Config not set")?;
+        
+        // 检查 embedding 是否启用
+        if !config.codebase.enable_embedding {
+            return Err("Embedding not enabled in config".into());
+        }
+
+        // 获取 embedding 配置
+        let mut api_token = std::env::var("SILICONFLOW_API_KEY").ok();
+        let mut base_url = None;
+        let mut model = "Qwen/Qwen3-Embedding-4B".to_string();
+
+        let embedding_config = &config.codebase.embedding;
+        if !embedding_config.api_token.is_empty() {
+            api_token = Some(embedding_config.api_token.clone());
+        }
+        if !embedding_config.api_base_url.is_empty() {
+            base_url = Some(embedding_config.api_base_url.clone());
+        }
+        if !embedding_config.model.is_empty() {
+            model = embedding_config.model.clone();
+        }
+
+        let api_token = api_token.ok_or("API Key not found in config or environment variable SILICONFLOW_API_KEY")?;
+        
+        // 创建 embedding provider
+        let provider = OpenAICompatibleEmbeddingProvider::new(api_token, base_url, model);
+        let adapter = EmbeddingProviderAdapter::from_openai_provider(provider);
+        
+        // 初始化 commit embedding service
+        self.storage.init_commit_embedding_service(Box::new(adapter)).await?;
+        
+        tracing::info!("Commit embedding service initialized successfully");
         Ok(())
     }
 

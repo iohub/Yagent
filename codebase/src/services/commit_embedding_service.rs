@@ -34,12 +34,12 @@ pub trait CommitEmbeddingProvider: Send + Sync {
 }
 
 /// 适配器：将 EmbeddingProvider 适配到 CommitEmbeddingProvider
-struct EmbeddingProviderAdapter {
+pub(crate) struct EmbeddingProviderAdapter {
     inner: Box<dyn EmbeddingProvider + Send + Sync>,
 }
 
 impl EmbeddingProviderAdapter {
-    fn from_openai_provider(provider: OpenAICompatibleEmbeddingProvider) -> Self {
+    pub(crate) fn from_openai_provider(provider: OpenAICompatibleEmbeddingProvider) -> Self {
         Self {
             inner: Box::new(provider),
         }

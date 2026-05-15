@@ -26,7 +26,7 @@ impl CodeBaseRunner {
                 };
 
                 let addr = address.unwrap_or_else(|| "127.0.0.1:3000".to_string());
-                let server = CodeBaseServer::new(storage, repo_path);
+                let mut server = CodeBaseServer::new(storage, repo_path);
                 server.start(&addr).await?;
             }
             Commands::Vectorize { path, collection, db_uri } => {

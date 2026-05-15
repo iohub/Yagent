@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Arc::new(StorageManager::with_storage_mode(storage_mode))
             };
 
-            let server = CodeBaseServer::new(storage, repo_path.clone());
+            let mut server = CodeBaseServer::new(storage, repo_path.clone());
             server.start(server_addr).await?;
         }
         Commands::Vectorize { .. } => {

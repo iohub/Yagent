@@ -31,8 +31,8 @@ pub struct StorageManager {
     pub config: Arc<RwLock<Option<Config>>>,
     /// 当前进程绑定的仓库路径，一个进程只支持索引一个仓库
     current_repo: Arc<RwLock<Option<String>>>,
-    /// Commit 向量嵌入服务
-    commit_embedding_service: Option<Arc<CommitEmbeddingService>>,
+    /// Commit 向量嵌入服务（使用 Mutex 支持内部可变性）
+    commit_embedding_service: parking_lot::Mutex<Option<Arc<CommitEmbeddingService>>>,
 }
 
 impl StorageManager {
@@ -54,7 +54,7 @@ impl StorageManager {
             vector_tasks: Arc::new(Mutex::new(HashSet::new())),
             config: Arc::new(RwLock::new(None)),
             current_repo: Arc::new(RwLock::new(None)),
-            commit_embedding_service: None,
+            commit_embedding_service: parking_lot::Mutex::new(None),
         }
     }
 
@@ -70,7 +70,7 @@ impl StorageManager {
             vector_tasks: Arc::new(Mutex::new(HashSet::new())),
             config: Arc::new(RwLock::new(Some(config))),
             current_repo: Arc::new(RwLock::new(None)),
-            commit_embedding_service: None,
+            commit_embedding_service: parking_lot::Mutex::new(None),
         }
     }
 
@@ -150,7 +150,7 @@ impl StorageManager {
     /// # Errors
     /// 当配置不存在或初始化失败时返回错误
     pub async fn init_commit_embedding_service(
-        &mut self,
+        &self,
         provider: Box<dyn CommitEmbeddingProvider + Send + Sync>,
     ) -> Result<()> {
         use lancedb::connect;
@@ -181,7 +181,7 @@ impl StorageManager {
             .map_err(|e| anyhow!("Failed to create commit embedding service: {}", e))?;
         service.init_table().await.map_err(|e| anyhow!("Failed to initialize commit embeddings table: {}", e))?;
 
-        self.commit_embedding_service = Some(Arc::new(service));
+        *self.commit_embedding_service.lock() = Some(Arc::new(service));
         Ok(())
     }
 
@@ -191,6 +191,7 @@ impl StorageManager {
     /// 当服务未初始化时返回错误
     pub fn get_commit_embedding_service(&self) -> Result<Arc<CommitEmbeddingService>> {
         self.commit_embedding_service
+            .lock()
             .clone()
             .ok_or_else(|| anyhow!("Commit embedding service not initialized. Call init_commit_embedding_service() first"))
     }
