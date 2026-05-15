@@ -2,8 +2,10 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"codeactor/internal/llm"
 	"codeactor/internal/tools"
@@ -118,10 +120,12 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
 			for _, t := range cfg.Adapters {
 				if t.Name() == tc.Function.Name {
 					found = true
+					startTime := time.Now()
 					toolResult, callErr = t.Call(ctx, tc.Function.Arguments)
 					if callErr != nil {
 						toolResult = fmt.Sprintf("Error: %v", callErr)
 					}
+					logToolCall(tc.Function.Name, cfg.AgentName, tc.Function.Arguments, toolResult, callErr, startTime)
 					break
 				}
 			}
@@ -155,4 +159,26 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
 	}
 
 	return "", fmt.Errorf("%s exceeded max steps (%d)", cfg.AgentName, cfg.MaxSteps)
+}
+
+// logToolCall records a tool call with formatted arguments, duration, and error info.
+func logToolCall(toolName, agentName, args string, result string, err error, startTime time.Time) {
+	// Format arguments as JSON if possible
+	argsJSON := args
+	if data, err := json.MarshalIndent(json.RawMessage(args), "", "  "); err == nil {
+		argsJSON = string(data)
+	}
+
+	// Ensure tool logger is initialized (idempotent)
+	_ = InitToolLogger()
+
+	// Calculate duration
+	duration := time.Since(startTime)
+
+	// Log the tool call
+	errMsg := ""
+	if err != nil {
+		errMsg = err.Error()
+	}
+	LogToolCall(toolName, agentName, argsJSON, result, errMsg, duration)
 }

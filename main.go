@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"codeactor/internal/app"
+	"codeactor/internal/agents"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/embedbin"
 	"codeactor/internal/http"
@@ -144,6 +145,12 @@ func main() {
 			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
 			os.Exit(1)
 		}
+
+		// 初始化工具日志
+		if err := agents.InitToolLogger(); err != nil {
+			slog.Warn("Failed to initialize tool logger", "error", err)
+		}
+
 		codeActor.DisabledAgents = disableAgents
 		codeActor.CodebasePort = codebasePort
 
