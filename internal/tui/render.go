@@ -165,10 +165,6 @@ func RenderResultBody(toolName string, content string, width int) string {
 		if formatted := tryFormatCodebaseResult(content, bodyWidth); formatted != "" {
 			return formatted
 		}
-		// Suppress empty tool results that would only show meaningless formatted JSON
-		if isEmptyResultJSON(content) {
-			return ""
-		}
 		// Check if JSON contains a "diff" field — extract and render as colored diff
 		if diff := extractDiffField(content); diff != "" {
 			return RenderDiffContent(diff, bodyWidth)
@@ -276,56 +272,6 @@ func tryFormatCodebaseResult(content string, width int) string {
 	}
 
 	return ""
-}
-
-// isEmptyResultJSON detects whether the JSON represents an empty tool result
-// that should be suppressed to avoid meaningless formatted JSON output.
-//
-// Detection patterns:
-//   - Pattern 1 (Codebase results): {"data": {"results": []}} or {"data": {"skeletons": []}}
-//   - Pattern 2 (grep_search empty): {"count": 0, "matches": []}
-//   - Pattern 3 (file_search empty): {"count": 0, "files": []}
-func isEmptyResultJSON(content string) bool {
-	var parsed map[string]interface{}
-	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
-		return false
-	}
-
-	// Pattern 1: Codebase results with empty data arrays
-	data, hasData := parsed["data"].(map[string]interface{})
-	if hasData {
-		// Check if data.results is an empty array
-		if resultsRaw, ok := data["results"]; ok {
-			if results, ok := resultsRaw.([]interface{}); ok && len(results) == 0 {
-				return true
-			}
-		}
-		// Check if data.skeletons is an empty array
-		if skelsRaw, ok := data["skeletons"]; ok {
-			if skels, ok := skelsRaw.([]interface{}); ok && len(skels) == 0 {
-				return true
-			}
-		}
-	}
-
-	// Pattern 2 & 3: Search tools empty results
-	// Check if "count" is 0 (JSON numbers are parsed as float64)
-	if count, ok := parsed["count"].(float64); ok && count == 0 {
-		// grep_search: {"matches": []}
-		if matchesRaw, ok := parsed["matches"]; ok {
-			if matches, ok := matchesRaw.([]interface{}); ok && len(matches) == 0 {
-				return true
-			}
-		}
-		// file_search: {"files": []}
-		if filesRaw, ok := parsed["files"]; ok {
-			if files, ok := filesRaw.([]interface{}); ok && len(files) == 0 {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 // formatSemanticSearchResults formats semantic_search results array in a human-readable way.
