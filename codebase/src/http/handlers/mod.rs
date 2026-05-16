@@ -924,127 +924,6 @@ pub async fn investigate_repo(
 	let top = items.into_iter().take(15).collect::<Vec<_>>();
 
 	use std::collections::BTreeSet;
-	
-	// Helper function to build directory tree
-	fn build_directory_tree(root_path: &std::path::Path) -> std::io::Result<String> {
-		// List of directories to ignore
-		let ignored_dirs = [
-			"node_modules",
-			"target",
-			"dist",
-			"build",
-			"vendor",
-			".git",
-			".svn",
-			".hg",
-			".vscode",
-			".idea",
-			".DS_Store",
-			"__pycache__",
-			".pytest_cache",
-			"coverage",
-			".nyc_output",
-			".sass-cache",
-			".yarn",
-			".pnpm",
-			"go/pkg",
-			"go/bin",
-		];
-		
-		fn is_ignored(name: &str, ignored_dirs: &[&str]) -> bool {
-			// Ignore hidden files/directories (starting with .)
-			if name.starts_with('.') {
-				return true;
-			}
-			
-			// Ignore specific directories
-			ignored_dirs.contains(&name)
-		}
-		
-		// Recursive function to build tree structure
-		fn build_tree_recursive(
-			path: &std::path::Path,
-			prefix: &str,
-			ignored_dirs: &[&str],
-			is_ignored: fn(&str, &[&str]) -> bool,
-		) -> std::io::Result<String> {
-			let mut result = String::new();
-			
-			// If it's a directory, process its contents
-			if path.is_dir() {
-				let mut entries: Vec<_> = std::fs::read_dir(path)?
-					.filter_map(|entry| entry.ok())
-					.filter(|entry| {
-						let name = entry.file_name();
-						let name_str = name.to_string_lossy();
-						!is_ignored(&name_str, ignored_dirs)
-					})
-					.collect();
-				
-				// Sort entries: directories first, then files, both alphabetically
-				entries.sort_by(|a, b| {
-					let a_is_dir = a.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-					let b_is_dir = b.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-					
-					match (a_is_dir, b_is_dir) {
-						(true, false) => std::cmp::Ordering::Less,
-						(false, true) => std::cmp::Ordering::Greater,
-						_ => {
-							let a_name = a.file_name().to_string_lossy().to_string();
-							let b_name = b.file_name().to_string_lossy().to_string();
-							a_name.cmp(&b_name)
-						}
-					}
-				});
-				
-				// Process each entry
-				let count = entries.len();
-				for (i, entry) in entries.iter().enumerate() {
-					let is_last_entry = i == count - 1;
-					
-					// Get file name
-					let file_name = entry.file_name()
-						.to_string_lossy()
-						.to_string();
-					
-					// Add current item to result
-					let connector = if is_last_entry { "└── " } else { "├── " };
-					result.push_str(&format!("{}{}{}\n", prefix, connector, file_name));
-					
-					// If it's a directory, recursively process its contents
-					if entry.path().is_dir() {
-						let new_prefix = if is_last_entry {
-							format!("{}    ", prefix)
-						} else {
-							format!("{}│   ", prefix)
-						};
-						
-						let entry_result = build_tree_recursive(
-							entry.path().as_path(),
-							&new_prefix,
-							ignored_dirs,
-							is_ignored,
-						)?;
-						
-						result.push_str(&entry_result);
-					}
-				}
-			}
-			
-			Ok(result)
-		}
-		
-		// Start building the tree
-		let file_name = root_path.file_name()
-			.and_then(|name| name.to_str())
-			.unwrap_or("");
-		let mut result = String::new();
-		result.push_str(&format!("{}\n", file_name));
-		let tree_content = build_tree_recursive(root_path, "", &ignored_dirs, is_ignored)?;
-		result.push_str(&tree_content);
-		Ok(result)
-	}
-	
 	let mut files_needed: BTreeSet<std::path::PathBuf> = BTreeSet::new();
 	let mut core_functions: Vec<super::models::InvestigateFunctionInfo> = Vec::new();
 	for (out_degree, func_id) in top.iter() {
@@ -1149,20 +1028,12 @@ pub async fn investigate_repo(
 		});
 	}
 
-	// Build directory tree
-	let repo_path_buf = std::path::Path::new(&repo_path);
-	let directory_tree = match build_directory_tree(repo_path_buf) {
-		Ok(tree) => tree,
-		Err(_) => "".to_string(),
-	};
-
 	let stats = graph.get_stats();
 	let resp = super::models::InvestigateRepoResponse {
 		project_id,
 		total_functions: stats.total_functions,
 		core_functions,
 		file_skeletons,
-		directory_tree,
 	};
 
 	Ok(Json(ApiResponse { success: true, data: resp }))

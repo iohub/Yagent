@@ -20,5 +20,4 @@ pub struct InvestigateRepoResponse {
     pub total_functions: usize,
     pub core_functions: Vec<InvestigateFunctionInfo>,
     pub file_skeletons: Vec<CodeSkeletonResponse>,
-    pub directory_tree: String
 } 

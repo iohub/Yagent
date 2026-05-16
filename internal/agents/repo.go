@@ -44,7 +44,6 @@ type PreInvestigateResponse struct {
 			Language     string `json:"language"`
 			SkeletonText string `json:"skeleton_text"`
 		} `json:"file_skeletons"`
-		DirectoryTree string `json:"directory_tree"`
 	} `json:"data"`
 }
 
@@ -243,8 +242,6 @@ func executeGetRepoOverview(globalCtx *globalctx.GlobalCtx) (interface{}, error)
 		var result string
 		result = fmt.Sprintf("=== Repository Overview (Project: %s) ===\n\n", projectDir)
 		result += fmt.Sprintf("Total Functions: %d\n\n", response.Data.TotalFunctions)
-
-		result += "Directory Tree:\n" + response.Data.DirectoryTree + "\n\n"
 
 		result += "Core Functions (ranked by call relationships):\n"
 		for _, fn := range response.Data.CoreFunctions {
