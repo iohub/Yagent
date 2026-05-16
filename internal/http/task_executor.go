@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
@@ -84,6 +85,34 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 
 	// Add message publisher to request
 	request = request.WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
+
+	// 启动定期保存 memory 的 goroutine，确保运行期间的消息也能及时写入文件
+	stopPeriodicSave := make(chan struct{})
+	if dataManager != nil {
+		ticker := time.NewTicker(5 * time.Second)
+		go func() {
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if err := dataManager.SaveTaskMemory(taskID, task.Memory); err != nil {
+						slog.Warn("Failed to periodic save task memory", "task_id", taskID, "error", err)
+					}
+				case <-stopPeriodicSave:
+					return
+				}
+			}
+		}()
+		// 任务结束时停止定时保存并刷新
+		defer close(stopPeriodicSave)
+		defer func() {
+			if dataManager != nil {
+				if err := dataManager.FlushTaskMemory(taskID); err != nil {
+					slog.Warn("Failed to flush task memory", "task_id", taskID, "error", err)
+				}
+			}
+		}()
+	}
 
 	result, err = codeActor.ProcessCodingTaskWithCallback(request)
 
