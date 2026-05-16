@@ -486,178 +486,441 @@ impl HybridRetriever {
 }
 ```
 
-### 4.2 Cross-Encoder Reranker (`retrieval/reranker.rs`)
+### 4.2 Cloud Reranker - 云端 Reranker API 客户端 (`retrieval/reranker.rs`)
 
 ```rust
 use anyhow::{Result, anyhow};
-use ort::{
-    session::{Session, builder::GraphOptimizationLevel},
-    value::Value,
-};
-use ndarray::Array2;
-use std::sync::Arc;
-use tracing::info;
-use tokenizers::Tokenizer;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::time::Duration;
+use tracing::{info, warn, debug};
+
 use crate::retrieval::types::ScoredCandidate;
 
-pub struct CrossEncoder {
-    session: Session,
-    tokenizer: Arc<Tokenizer>,
-    max_length: usize,
-    batch_size: usize,
+// ==================== 统一接口 ====================
+
+/// Reranker API 后端类型
+pub enum RerankerProvider {
+    Bge,      // BGE-Reranker (OpenAI 兼容)
+    Cohere,   // Cohere Rerank API
+    Jina,     // Jina Reranker
 }
 
-impl CrossEncoder {
-    /// 从 ONNX 模型文件加载 Cross-Encoder
-    pub fn new(
-        model_path: &str,
-        tokenizer_path: &str,
-        batch_size: usize,
-    ) -> Result<Self> {
-        let session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(4)?
-            .commit_from_file(model_path)?;
+impl std::fmt::Display for RerankerProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bge => write!(f, "bge"),
+            Self::Cohere => write!(f, "cohere"),
+            Self::Jina => write!(f, "jina"),
+        }
+    }
+}
+
+// ==================== 配置 ====================
+
+#[derive(Debug, Clone)]
+pub struct RerankerConfig {
+    /// API 提供商
+    pub provider: RerankerProvider,
+    /// API 基础 URL
+    pub api_url: String,
+    /// API 认证令牌
+    pub api_token: String,
+    /// 模型名称
+    pub model: String,
+    /// 返回 Top-N 数量
+    pub top_n: usize,
+    /// 请求超时 (秒)
+    pub timeout_secs: u64,
+    /// 最大重试次数
+    pub max_retries: u32,
+}
+
+impl RerankerConfig {
+    pub fn new(provider: RerankerProvider, api_url: &str, api_token: &str, model: &str) -> Self {
+        Self {
+            provider,
+            api_url: api_url.to_string(),
+            api_token: api_token.to_string(),
+            model: model.to_string(),
+            top_n: 10,
+            timeout_secs: 5,
+            max_retries: 3,
+        }
+    }
+}
+
+// ==================== 统一请求/响应类型 ====================
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RerankRequest {
+    pub query: String,
+    pub documents: Vec<String>,
+    pub top_n: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScoredDocument {
+    pub index: usize,
+    pub relevance_score: f32,
+}
+
+// ==================== 统一错误类型 ====================
+
+#[derive(Debug)]
+pub enum RerankerError {
+    /// HTTP 错误 (网络、超时)
+    Http(reqwest::Error),
+    /// API 返回非 2xx 状态码
+    ApiError(reqwest::StatusCode, String),
+    /// JSON 解析错误
+    Deserialize(reqwest::Error),
+    /// 空文档列表
+    EmptyDocuments,
+    /// 其他错误
+    Other(String),
+}
+
+impl std::fmt::Display for RerankerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Http(e) => write!(f, "HTTP error: {}", e),
+            Self::ApiError(code, body) => write!(f, "API error {}: {}", code, body),
+            Self::Deserialize(e) => write!(f, "Deserialize error: {}", e),
+            Self::EmptyDocuments => write!(f, "Empty documents list"),
+            Self::Other(msg) => write!(f, "Error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for RerankerError {}
+
+// ==================== Reranker 主结构体 ====================
+
+pub struct CloudReranker {
+    client: Client,
+    config: RerankerConfig,
+}
+
+impl CloudReranker {
+    /// 创建 Reranker 实例
+    pub fn new(config: RerankerConfig) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(config.timeout_secs))
+            .build()
+            .expect("Failed to create HTTP client");
         
-        let tokenizer = Tokenizer::from_file(tokenizer_path)
-            .map_err(|e| anyhow!("Failed to load tokenizer: {}", e))?;
-        
-        info!("Loaded Cross-Encoder model: {}", model_path);
-        
-        Ok(Self {
-            session,
-            tokenizer: Arc::new(tokenizer),
-            max_length: 512,
-            batch_size,
-        })
+        Self { client, config }
     }
     
     /// 对候选列表进行重排序
-    pub fn rerank(
+    pub async fn rerank(
         &self,
         query: &str,
         candidates: &[ScoredCandidate],
-        top_n: usize,
-    ) -> Result<Vec<crate::retrieval::types::RankedCodeNode>> {
+    ) -> Result<Vec<ScoredCandidate>, RerankerError> {
         if candidates.is_empty() {
-            return Ok(vec![]);
+            return Ok(Vec::new());
         }
         
-        // 构建查询-代码对
-        let pairs: Vec<(String, String)> = candidates.iter()
-            .map(|c| (query.clone(), c.code_snippet.clone()))
+        // 准备文档列表 (截断每个文档到 1024 字符，控制 payload 大小)
+        let documents: Vec<String> = candidates.iter()
+            .map(|c| {
+                let snippet = &c.code_snippet;
+                if snippet.len() > 1024 {
+                    snippet[..1024].to_string()
+                } else {
+                    snippet.clone()
+                }
+            })
             .collect();
         
-        // 批处理推理
-        let mut all_scores: Vec<(usize, f32)> = Vec::with_capacity(candidates.len());
+        // 创建请求
+        let request = RerankRequest {
+            query: query.to_string(),
+            documents,
+            top_n: self.config.top_n,
+        };
         
-        for (chunk_idx, chunk) in pairs.chunks(self.batch_size).enumerate() {
-            let scores = self.inference_batch(query, chunk)?;
-            for (i, &score) in scores.iter().enumerate() {
-                let global_idx = chunk_idx * self.batch_size + i;
-                if global_idx < candidates.len() {
-                    all_scores.push((global_idx, score));
+        // 执行带重试的 API 调用
+        self._rerank_with_retry(&request).await
+    }
+    
+    /// 带重试的重排序 (指数退避)
+    async fn _rerank_with_retry(
+        &self,
+        request: &RerankRequest,
+    ) -> Result<Vec<ScoredCandidate>, RerankerError> {
+        let mut attempts = 0;
+        let mut delay_ms = 100;
+        
+        loop {
+            attempts += 1;
+            
+            match self._call_api(request).await {
+                Ok(scores) => return Ok(scores),
+                Err(e) => {
+                    // 只有可重试错误才重试
+                    if self._is_retryable_error(&e) && attempts < self.config.max_retries {
+                        warn!(
+                            "Rerank API call failed (attempt {}/{}): {:?}, retrying in {}ms",
+                            attempts, self.config.max_retries, e, delay_ms
+                        );
+                        
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        delay_ms *= 2; // 指数退避
+                    } else {
+                        return Err(e);
+                    }
                 }
             }
         }
-        
-        // 排序并取 Top-N
-        all_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        let top_scores: Vec<(usize, f32)> = all_scores.into_iter().take(top_n).collect();
-        
-        // 构建返回结果
-        let mut results = Vec::with_capacity(top_scores.len());
-        for (idx, rerank_score) in top_scores {
-            if let Some(candidate) = candidates.get(idx) {
-                results.push(crate::retrieval::types::RankedCodeNode {
-                    node_id: candidate.node_id.clone(),
-                    file_path: candidate.file_path.clone(),
-                    symbol_name: candidate.symbol_name.clone(),
-                    symbol_type: String::from("function"),
-                    code_snippet: candidate.code_snippet.clone(),
-                    score: rerank_score,
-                    score_breakdown: crate::retrieval::types::ScoreBreakdown {
-                        sparse_score: candidate.sparse_score,
-                        dense_score: candidate.dense_score,
-                        rrf_score: candidate.rrf_score,
-                        rerank_score: Some(rerank_score),
-                    },
-                    position: crate::retrieval::types::CodePosition {
-                        line_start: candidate.line_start,
-                        line_end: candidate.line_end,
-                        column_start: None,
-                        column_end: None,
-                    },
-                    context_node_ids: vec![],
-                    trace: format!(
-                        "BM25:{:.2} Dense:{:.2} RRF:{:.2} Rerank:{:.2}",
-                        candidate.sparse_score,
-                        candidate.dense_score,
-                        candidate.rrf_score,
-                        rerank_score
-                    ),
-                });
-            }
+    }
+    
+    /// 判断是否为可重试错误
+    fn _is_retryable_error(&self, error: &RerankerError) -> bool {
+        match error {
+            RerankerError::Http(_) => true,
+            RerankerError::ApiError(code, _) => matches!(code, reqwest::StatusCode::TOO_MANY_REQUESTS | reqwest::StatusCode::SERVICE_UNAVAILABLE | reqwest::StatusCode::GATEWAY_TIMEOUT),
+            _ => false,
         }
+    }
+    
+    /// 调用 Reranker API (根据提供商类型)
+    async fn _call_api(&self, request: &RerankRequest) -> Result<Vec<ScoredCandidate>, RerankerError> {
+        match self.config.provider {
+            RerankerProvider::Bge => self._call_bge_api(request).await,
+            RerankerProvider::Cohere => self._call_cohere_api(request).await,
+            RerankerProvider::Jina => self._call_jina_api(request).await,
+        }
+    }
+    
+    /// BGE-Reranker API (OpenAI 兼容格式)
+    /// POST {base_url}/rerank
+    async fn _call_bge_api(&self, request: &RerankRequest) -> Result<Vec<ScoredCandidate>, RerankerError> {
+        let body = json!({
+            "model": self.config.model,
+            "query": request.query,
+            "documents": request.documents,
+            "top_n": request.top_n,
+        });
+        
+        let response = self.client
+            .post(format!("{}/rerank", self.config.api_url))
+            .header("Authorization", format!("Bearer {}", self.config.api_token))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(RerankerError::Http)?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(RerankerError::ApiError(status, body));
+        }
+        
+        let resp: BgeResponse = response.json().await
+            .map_err(RerankerError::Deserialize)?;
+        
+        // 转换为 ScoredCandidate
+        let mut results: Vec<ScoredCandidate> = resp.results.into_iter()
+            .map(|r| ScoredCandidate {
+                index: r.index,
+                sparse_score: 0.0,
+                dense_score: 0.0,
+                rrf_score: r.relevance_score,
+                file_path: String::new(),
+                symbol_name: String::new(),
+                code_snippet: String::new(),
+                line_start: 0,
+                line_end: 0,
+                language: String::new(),
+                score: r.relevance_score,
+                score_breakdown: crate::retrieval::types::ScoreBreakdown {
+                    sparse_score: 0.0,
+                    dense_score: 0.0,
+                    rrf_score: 0.0,
+                    rerank_score: Some(r.relevance_score),
+                },
+                position: crate::retrieval::types::CodePosition {
+                    line_start: 0,
+                    line_end: 0,
+                    column_start: None,
+                    column_end: None,
+                },
+                context_node_ids: vec![],
+                trace: format!("BGE Rerank: {:.2}", r.relevance_score),
+            })
+            .collect();
+        
+        // 按分数排序
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         
         Ok(results)
     }
     
-    /// 单批推理
-    fn inference_batch(
-        &self,
-        _query: &str,
-        batch: &[(String, String)],
-    ) -> Result<Vec<f32>> {
-        let batch_size = batch.len();
+    /// Cohere Rerank API
+    /// POST https://api.cohere.ai/v1/rerank
+    async fn _call_cohere_api(&self, request: &RerankRequest) -> Result<Vec<ScoredCandidate>, RerankerError> {
+        let body = json!({
+            "model": self.config.model,
+            "query": request.query,
+            "documents": request.documents,
+            "top_n": request.top_n,
+        });
         
-        // 构建输入
-        let mut input_ids = vec![0i64; batch_size * self.max_length];
-        let mut attention_mask = vec![0i64; batch_size * self.max_length];
+        let response = self.client
+            .post("https://api.cohere.ai/v1/rerank")
+            .header("Authorization", format!("Bearer {}", self.config.api_token))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(RerankerError::Http)?;
         
-        for (i, (q, code)) in batch.iter().enumerate() {
-            let input = format!("{} [SEP] {}", q, code);
-            let encoding = self.tokenizer.encode(input, true)
-                .map_err(|e| anyhow!("Tokenization error: {}", e))?;
-            
-            let ids = encoding.get_ids();
-            let len = std::cmp::min(ids.len(), self.max_length);
-            
-            for j in 0..len {
-                input_ids[i * self.max_length + j] = ids[j] as i64;
-                attention_mask[i * self.max_length + j] = 1;
-            }
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(RerankerError::ApiError(status, body));
         }
         
-        // 构建 Tensor
-        let input_ids_tensor = Array2::from_shape_vec(
-            (batch_size, self.max_length), input_ids)?;
-        let attention_mask_tensor = Array2::from_shape_vec(
-            (batch_size, self.max_length), attention_mask)?;
+        let resp: CohereResponse = response.json().await
+            .map_err(RerankerError::Deserialize)?;
         
-        let input_ids_value = Value::from_array(
-            self.session.allocator(), &input_ids_tensor)?;
-        let attention_mask_value = Value::from_array(
-            self.session.allocator(), &attention_mask_tensor)?;
-        
-        // 执行推理
-        let outputs = self.session.run(vec![input_ids_value, attention_mask_value])?;
-        
-        // 提取 logits
-        let logits: Array2<f32> = outputs[0].try_extract()?;
-        
-        // Sigmoid 归一化
-        let scores: Vec<f32> = (0..batch_size)
-            .map(|i| sigmoid(logits[[i, 0]]))
+        let mut results: Vec<ScoredCandidate> = resp.results.into_iter()
+            .map(|r| ScoredCandidate {
+                index: r.index,
+                sparse_score: 0.0,
+                dense_score: 0.0,
+                rrf_score: r.relevance_score,
+                file_path: String::new(),
+                symbol_name: String::new(),
+                code_snippet: String::new(),
+                line_start: 0,
+                line_end: 0,
+                language: String::new(),
+                score: r.relevance_score,
+                score_breakdown: crate::retrieval::types::ScoreBreakdown {
+                    sparse_score: 0.0,
+                    dense_score: 0.0,
+                    rrf_score: 0.0,
+                    rerank_score: Some(r.relevance_score),
+                },
+                position: crate::retrieval::types::CodePosition {
+                    line_start: 0,
+                    line_end: 0,
+                    column_start: None,
+                    column_end: None,
+                },
+                context_node_ids: vec![],
+                trace: format!("Cohere Rerank: {:.2}", r.relevance_score),
+            })
             .collect();
         
-        Ok(scores)
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        
+        Ok(results)
+    }
+    
+    /// Jina Reranker API
+    /// POST https://api.jina.ai/v1/rerank
+    async fn _call_jina_api(&self, request: &RerankRequest) -> Result<Vec<ScoredCandidate>, RerankerError> {
+        let body = json!({
+            "model": self.config.model,
+            "query": request.query,
+            "documents": request.documents,
+            "top_k": request.top_n,
+        });
+        
+        let response = self.client
+            .post("https://api.jina.ai/v1/rerank")
+            .header("Authorization", format!("Bearer {}", self.config.api_token))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(RerankerError::Http)?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(RerankerError::ApiError(status, body));
+        }
+        
+        let resp: JinaResponse = response.json().await
+            .map_err(RerankerError::Deserialize)?;
+        
+        let mut results: Vec<ScoredCandidate> = resp.results.into_iter()
+            .map(|r| ScoredCandidate {
+                index: r.index,
+                sparse_score: 0.0,
+                dense_score: 0.0,
+                rrf_score: r.relevance_score,
+                file_path: String::new(),
+                symbol_name: String::new(),
+                code_snippet: String::new(),
+                line_start: 0,
+                line_end: 0,
+                language: String::new(),
+                score: r.relevance_score,
+                score_breakdown: crate::retrieval::types::ScoreBreakdown {
+                    sparse_score: 0.0,
+                    dense_score: 0.0,
+                    rrf_score: 0.0,
+                    rerank_score: Some(r.relevance_score),
+                },
+                position: crate::retrieval::types::CodePosition {
+                    line_start: 0,
+                    line_end: 0,
+                    column_start: None,
+                    column_end: None,
+                },
+                context_node_ids: vec![],
+                trace: format!("Jina Rerank: {:.2}", r.relevance_score),
+            })
+            .collect();
+        
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        
+        Ok(results)
     }
 }
 
-/// Sigmoid 激活函数
-fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
+// ==================== 各 API 响应类型 ====================
+
+#[derive(Debug, Deserialize)]
+struct BgeResponse {
+    results: Vec<BgeResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BgeResult {
+    index: usize,
+    relevance_score: f32,
+}
+
+#[derive(Debug, Deserialize)]
+struct CohereResponse {
+    results: Vec<CohereResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CohereResult {
+    index: usize,
+    relevance_score: f32,
+}
+
+#[derive(Debug, Deserialize)]
+struct JinaResponse {
+    results: Vec<JinaResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JinaResult {
+    index: usize,
+    relevance_score: f32,
 }
 ```
 
@@ -1251,13 +1514,21 @@ pub async fn create_evo_session_handler(
 # Tantivy 全文检索 (BM25)
 tantivy = "0.22"
 
-# ONNX Runtime for Rust (Cross-Encoder 推理)
-ort = { version = "2.0", features = ["load-on-demand", "ndarray"] }
-ndarray = "0.15"
+# Reranker API 客户端 (已有 reqwest，确保包含 json 特性)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 
-# Tokenizer for Cross-Encoder
-tokenizers = { version = "0.20", features = ["onnxruntime"] }
+# 序列化 (已有，确认)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 异步 trait
+async-trait = "0.1"
+
+# 重试机制 (指数退避)
+backoff = { version = "0.4", features = ["tokio"] }
 ```
+
+**说明**：移除了 `ort`、`ndarray`、`tokenizers` 依赖。Reranker 改为通过 HTTP API 调用云端大模型，无需本地推理引擎。
 
 ## 七、实施计划 (分阶段)
 
@@ -1414,10 +1685,23 @@ expand_max_nodes = 50
 |--------|------|------|
 | **融合算法** | RRF (Reciprocal Rank Fusion) | 无需调参，对两种检索尺度不敏感 |
 | **BM25 引擎** | Tantivy | Rust 原生，生产级全文检索 |
-| **Cross-Encoder** | ONNX Runtime (ort) | 轻量级，CPU 推理，无需 Python 依赖 |
+| **Cross-Encoder** | 云端 Reranker API (BGE/Cohere/Jina) | 无需本地推理引擎，模型灵活可切换，无需 GPU |
 | **图扩展** | Petgraph BFS | 复用现有 CodeGraph，无新增存储 |
 | **EvoR 会话** | 内存 HashMap | 简单高效，生产环境可替换为 Redis |
-| **默认降级** | 无 reranker 时跳过 | 保证系统可用性，模型可选 |
+| **默认降级** | API 不可用时跳过重排 | 保证系统可用性，支持优雅降级 |
+
+**与旧方案对比**：
+
+| 维度 | 旧方案 (本地 ONNX) | 新方案 (云端 API) |
+|------|-------------------|-------------------|
+| **内存占用** | ~500MB (模型加载) | <10MB |
+| **依赖复杂度** | ort + ndarray + tokenizers | reqwest + serde |
+| **模型更新** | 需重新编译/部署 | API 端更新，无需变更 |
+| **硬件要求** | 需要 GPU 或高性能 CPU | 任意硬件 |
+| **网络延迟** | 无 (本地推理) | 100-500ms (RTT) |
+| **可用性** | 100% (本地) | 依赖 API 可用性 |
+| **成本** | 免费 | API 调用可能收费 |
+| **可扩展性** | 受限于本地硬件 | 云端弹性伸缩 |
 
 ---
 
