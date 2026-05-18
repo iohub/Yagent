@@ -1,12 +1,15 @@
 use axum::{
     extract::State,
     Json,
-    http::StatusCode as AxumStatusCode,
+    http::StatusCode,
 };
 use std::sync::Arc;
 use crate::storage::StorageManager;
+use crate::storage::TantivyBm25Index;
 use crate::services::embedding_service::EmbeddingService;
+use crate::storage::traits_bm25::CandidateSource;
 use crate::http::models::{ApiResponse, SemanticSearchRequest, SemanticSearchResponse, QueryIndexingStatusResponse, ProjectInfo};
+use crate::http::server::AppState;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
 use md5;
@@ -59,8 +62,21 @@ pub async fn trigger_embedding_build(
             let hash = md5::compute(&repo_path_clone);
             let collection = format!("{}_{:x}", last_dir, hash);
 
+            // Create Tantivy BM25 index alongside EmbeddingService
+            let tantivy_dir = std::path::Path::new(&db_path_clone).join("tantivy_bm25");
+            let bm25_index = match TantivyBm25Index::open_or_create(&tantivy_dir) {
+                Ok(idx) => {
+                    tracing::info!("Tantivy BM25 index ready at {:?}", tantivy_dir);
+                    Some(Arc::new(idx) as Arc<dyn crate::storage::traits_bm25::TextSearchProvider>)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to create Tantivy index (search will fall back to dense-only): {}", e);
+                    None
+                }
+            };
+
             // Create service and run vectorization
-            let service = EmbeddingService::new(&db_path_clone, collection.clone(), Some(&config_clone)).await
+            let service = EmbeddingService::new(&db_path_clone, collection.clone(), Some(&config_clone), bm25_index).await
                 .map_err(|e| format!("Failed to create vectorize service: {}", e))?;
 
             // Ensure collection exists
@@ -131,10 +147,10 @@ async fn update_project_status(db_path: &str, info: ProjectInfo) -> Result<(), B
 }
 
 pub async fn query_indexing_status(
-    State(storage): State<Arc<StorageManager>>,
-) -> Result<Json<ApiResponse<QueryIndexingStatusResponse>>, AxumStatusCode> {
+    State(storage): State<AppState>,
+) -> Result<Json<ApiResponse<QueryIndexingStatusResponse>>, StatusCode> {
     // 使用当前绑定的仓库
-    let repo_path = match storage.get_current_repo() {
+    let repo_path = match storage.storage.get_current_repo() {
         Some(p) => p,
         None => {
             return Ok(Json(ApiResponse {
@@ -149,7 +165,7 @@ pub async fn query_indexing_status(
 
     // Check running tasks
     {
-        let tasks = storage.vector_tasks.lock().unwrap();
+        let tasks = storage.storage.vector_tasks.lock().unwrap();
         if tasks.contains(&repo_path) {
             return Ok(Json(ApiResponse {
                 success: true,
@@ -162,7 +178,7 @@ pub async fn query_indexing_status(
     }
 
     // Check projects.json
-    let config = storage.get_config().ok_or(AxumStatusCode::INTERNAL_SERVER_ERROR)?;
+    let config = storage.storage.get_config().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let db_path = config.codebase.embedding_db_uri;
     let projects_path = std::path::Path::new(&db_path).join("projects.json");
 
@@ -191,63 +207,44 @@ pub async fn query_indexing_status(
     }))
 }
 
+#[axum::debug_handler]
 pub async fn semantic_search(
-    State(storage): State<Arc<StorageManager>>,
+    State(state): State<AppState>,
     Json(request): Json<SemanticSearchRequest>,
-) -> Result<Json<ApiResponse<SemanticSearchResponse>>, AxumStatusCode> {
-    // Get config
-    let config = storage.get_config().ok_or(AxumStatusCode::INTERNAL_SERVER_ERROR)?;
-    let db_path = config.codebase.embedding_db_uri.clone();
-
-    // 使用当前绑定的仓库
-    let repo_path = storage.get_current_repo().ok_or(AxumStatusCode::BAD_REQUEST)?;
-
-    // Check index status
-    let projects_path = std::path::Path::new(&db_path).join("projects.json");
-    let mut is_indexed = false;
-
-    if projects_path.exists() {
-         if let Ok(content) = tokio::fs::read_to_string(&projects_path).await {
-            if let Ok(projects) = serde_json::from_str::<HashMap<String, ProjectInfo>>(&content) {
-                if let Some(info) = projects.get(&repo_path) {
-                    if info.status == "completed" {
-                        is_indexed = true;
-                    }
-                }
-            }
-         }
-    }
-
-    if !is_indexed {
-        tracing::warn!("Index not ready for repo: {}", repo_path);
-        return Err(AxumStatusCode::NOT_FOUND);
-    }
-
-    let path = std::path::Path::new(&repo_path);
-    let last_dir = path.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-    let hash = md5::compute(&repo_path);
-    let collection = format!("{}_{:x}", last_dir, hash);
-
-    // Create service
-    let service = EmbeddingService::new(&db_path, collection, Some(&config)).await
-        .map_err(|e| {
-            tracing::error!("Failed to create vectorize service: {}", e);
-            AxumStatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
+) -> Result<Json<ApiResponse<SemanticSearchResponse>>, StatusCode> {
+    // 获取 hybrid service，如果不存在则返回 503
+    let hybrid = state.hybrid.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    
+    // 1. 执行混合搜索
     let limit = request.limit.unwrap_or(10);
-
-    // Search
-    let results = service.search(&request.text, limit).await
+    let fused_candidates = hybrid.search(&request.text, limit).await
         .map_err(|e| {
-            tracing::error!("Search failed: {}", e);
-            AxumStatusCode::INTERNAL_SERVER_ERROR
+            tracing::error!("Hybrid search failed: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
+    // 2. 转换结果为 SemanticSearchResponse 格式（向后兼容）
+    let results: Vec<crate::services::embedding_service::SearchResult> = fused_candidates
+        .into_iter()
+        .map(|c| crate::services::embedding_service::SearchResult {
+            file_path: c.file_path,
+            symbol_name: c.symbol_name,
+            code_block: c.code_block,
+            semantic_distance: if c.source == CandidateSource::DenseOnly {
+                c.final_score as f32
+            } else {
+                c.final_score as f32
+            },
+            symbol_type: c.symbol_type,
+            language: c.language,
+            line_start: c.line_start,
+            line_end: c.line_end,
+        })
+        .collect();
+
+    // 3. 返回结果
     Ok(Json(ApiResponse {
         success: true,
-        data: SemanticSearchResponse { results }
+        data: SemanticSearchResponse { results },
     }))
 }

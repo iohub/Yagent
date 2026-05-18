@@ -2,12 +2,15 @@ pub mod persistence;
 pub mod incremental;
 pub mod petgraph_storage;
 pub mod traits;
+pub mod traits_bm25;
+pub mod tantivy_index;
 pub mod prelude;
 
 pub use persistence::PersistenceManager;
 pub use incremental::IncrementalManager;
 pub use petgraph_storage::{PetGraphStorage, PetGraphStorageManager};
 pub use traits::{GraphPersistence, IncrementalUpdater, GraphSerializer};
+pub use tantivy_index::TantivyBm25Index;
 
 use std::sync::Arc;
 use std::sync::Mutex;

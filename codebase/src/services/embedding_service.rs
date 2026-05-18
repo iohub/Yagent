@@ -12,14 +12,16 @@ use arrow::record_batch::RecordBatchIterator;
 use uuid::Uuid;
 use tracing::{info, error, debug};
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use futures::TryStreamExt;
 use rusqlite::{params, Connection as SqliteConnection};
+use anyhow::anyhow;
 
 use crate::codegraph::treesitter::TreeSitterParser;
 use crate::codegraph::parser::CodeParser;
 use crate::config::Config;
+use crate::storage::traits_bm25::{TextSearchProvider, CodeChunk};
 
 struct EmbeddingCache {
     conn: Mutex<SqliteConnection>,
@@ -85,12 +87,17 @@ struct CodePoint {
     code_block: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub file_path: String,
     pub symbol_name: String,
     pub code_block: String,
     pub semantic_distance: f32,
+    // Fields for hybrid search
+    pub symbol_type: String,
+    pub language: String,
+    pub line_start: usize,
+    pub line_end: usize,
 }
 
 #[async_trait]
@@ -175,10 +182,18 @@ pub struct EmbeddingService {
     embedding_provider: Box<dyn EmbeddingProvider + Send + Sync>,
     pub dimensions: i32,
     cache: Arc<EmbeddingCache>,
+    /// Optional BM25 text search index for sparse channel.
+    /// When Some, chunks are indexed here alongside LanceDB vector indexing.
+    pub bm25_index: Option<Arc<dyn TextSearchProvider>>,
 }
 
 impl EmbeddingService {
-    pub async fn new(db_path: &str, table_name: String, config: Option<&Config>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(
+        db_path: &str, 
+        table_name: String, 
+        config: Option<&Config>,
+        bm25_index: Option<Arc<dyn TextSearchProvider>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         // LanceDB connection (embedded)
         let connection = connect(db_path).execute().await?;
         
@@ -220,6 +235,7 @@ impl EmbeddingService {
             embedding_provider: Box::new(provider),
             dimensions,
             cache,
+            bm25_index,
         })
     }
     
@@ -243,6 +259,7 @@ impl EmbeddingService {
             embedding_provider: provider,
             dimensions: 2560,
             cache,
+            bm25_index: None,
         })
     }
 
@@ -350,6 +367,7 @@ impl EmbeddingService {
         
         let mut vectors_created = 0;
         let mut points = Vec::new();
+        let mut bm25_chunks: Vec<CodeChunk> = Vec::new();
         
         for symbol in symbols {
             // Extract data and drop guard immediately
@@ -381,6 +399,20 @@ impl EmbeddingService {
             };
 
             if let Some((code_block, name, symbol_type_str, language_str, start_row, end_row)) = extracted {
+                // Index into BM25 if available
+                if self.bm25_index.is_some() {
+                    let chunk = CodeChunk::new(
+                        file_path.to_string_lossy().into_owned(),
+                        code_block.clone(),
+                        name.clone(),
+                        symbol_type_str.clone(),
+                        language_str.clone(),
+                        start_row + 1,
+                        end_row + 1,
+                    );
+                    bm25_chunks.push(chunk);
+                }
+
                 // Check cache first
                 let model = self.embedding_provider.model();
                 let hash_input = format!("{}{}", model, code_block);
@@ -434,6 +466,16 @@ impl EmbeddingService {
         // Upload remaining vectors
         if !points.is_empty() {
             self.upload_points(&points).await?;
+        }
+        
+        // Batch index chunks into BM25
+        if !bm25_chunks.is_empty() {
+            if let Some(bm25) = &self.bm25_index {
+                if let Err(e) = bm25.index_chunks(bm25_chunks.clone()).await {
+                    tracing::warn!("BM25 indexing failed for {:?}: {}", file_path, e);
+                    // Non-fatal: continue with vector indexing
+                }
+            }
         }
         
         Ok(vectors_created)
@@ -518,9 +560,9 @@ impl EmbeddingService {
     }
 
     /// Search for code blocks using semantic search
-    pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, Box<dyn std::error::Error>> {
+    pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, anyhow::Error> {
         // 1. Generate embedding for the query
-        let query_vector = self.embedding_provider.get_embedding(query).await?;
+        let query_vector = self.embedding_provider.get_embedding(query).await.map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // 2. Search in LanceDB
         let table = self.connection.open_table(&self.table_name).execute().await?;
@@ -535,9 +577,9 @@ impl EmbeddingService {
         let mut search_results = Vec::new();
         
         while let Some(batch) = results_stream.try_next().await? {
-            let file_path_col = batch.column_by_name("file_path").ok_or("Missing file_path column")?.as_string::<i32>();
-            let symbol_name_col = batch.column_by_name("symbol_name").ok_or("Missing symbol_name column")?.as_string::<i32>();
-            let code_block_col = batch.column_by_name("code_block").ok_or("Missing code_block column")?.as_string::<i32>();
+            let file_path_col = batch.column_by_name("file_path").ok_or(anyhow!("Missing file_path column"))?.as_string::<i32>();
+            let symbol_name_col = batch.column_by_name("symbol_name").ok_or(anyhow!("Missing symbol_name column"))?.as_string::<i32>();
+            let code_block_col = batch.column_by_name("code_block").ok_or(anyhow!("Missing code_block column"))?.as_string::<i32>();
             
             let dist_col = batch.column_by_name("_distance");
             let dist_vals = if let Some(d) = dist_col {
@@ -553,11 +595,41 @@ impl EmbeddingService {
                 }
                 let semantic_distance = if let Some(d) = dist_vals { d.value(i) } else { 0.0 };
                 
+                // Try to get additional fields from LanceDB batch
+                let symbol_type_col = batch.column_by_name("symbol_type");
+                let language_col = batch.column_by_name("language");
+                let line_start_col = batch.column_by_name("line_start");
+                let line_end_col = batch.column_by_name("line_end");
+
+                let symbol_type = symbol_type_col
+                    .and_then(|c| c.as_any().downcast_ref::<arrow::array::StringArray>())
+                    .map(|col| col.value(i).to_string())
+                    .unwrap_or_default();
+
+                let language = language_col
+                    .and_then(|c| c.as_any().downcast_ref::<arrow::array::StringArray>())
+                    .map(|col| col.value(i).to_string())
+                    .unwrap_or_default();
+
+                let line_start = line_start_col
+                    .and_then(|c| c.as_any().downcast_ref::<arrow::array::Int64Array>())
+                    .map(|col| col.value(i) as usize)
+                    .unwrap_or(0);
+
+                let line_end = line_end_col
+                    .and_then(|c| c.as_any().downcast_ref::<arrow::array::Int64Array>())
+                    .map(|col| col.value(i) as usize)
+                    .unwrap_or(0);
+
                 search_results.push(SearchResult {
                     file_path,
                     symbol_name: symbol_name_col.value(i).to_string(),
                     code_block: code_block_col.value(i).to_string(),
                     semantic_distance,
+                    symbol_type,
+                    language,
+                    line_start,
+                    line_end,
                 });
             }
         }

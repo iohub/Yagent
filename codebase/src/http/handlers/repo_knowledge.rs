@@ -3,23 +3,22 @@ use axum::{
     Json,
     http::StatusCode as AxumStatusCode,
 };
-use std::sync::Arc;
-use crate::storage::StorageManager;
 use crate::http::models::{
     ApiResponse, RepoKnowledgeEmbedRequest, RepoKnowledgeSearchRequest, RepoKnowledgeSearchResponse,
     EmbedResponse,
 };
+use crate::http::server::AppState;
 use tracing::{info, error};
 
 /// 添加知识条目
 ///
 /// 接收 task 和 result，生成 task 的向量嵌入并存储到 LanceDB
 pub async fn repo_knowledge_embed(
-    State(storage): State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
     Json(request): Json<RepoKnowledgeEmbedRequest>,
 ) -> Result<Json<ApiResponse<EmbedResponse>>, AxumStatusCode> {
     // 获取已初始化的 repo knowledge service
-    let service = match storage.get_repo_knowledge_service() {
+    let service = match storage.storage.get_repo_knowledge_service() {
         Ok(s) => s,
         Err(e) => {
             error!("Repo knowledge service not available: {}", e);
@@ -48,11 +47,11 @@ pub async fn repo_knowledge_embed(
 ///
 /// 使用任务描述搜索相似的历史分析结果
 pub async fn repo_knowledge_search(
-    State(storage): State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
     Json(request): Json<RepoKnowledgeSearchRequest>,
 ) -> Result<Json<ApiResponse<RepoKnowledgeSearchResponse>>, AxumStatusCode> {
     // 获取已初始化的 repo knowledge service
-    let service = match storage.get_repo_knowledge_service() {
+    let service = match storage.storage.get_repo_knowledge_service() {
         Ok(s) => s,
         Err(e) => {
             error!("Repo knowledge service not available: {}", e);

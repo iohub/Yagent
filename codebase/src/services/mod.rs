@@ -3,6 +3,7 @@ pub mod snippet_service;
 pub mod embedding_service;
 pub mod commit_embedding_service;
 pub mod repo_knowledge_service;
+pub mod hybrid_search;
 
 pub use analyzer::CodeAnalyzer;
 pub use snippet_service::SnippetService;

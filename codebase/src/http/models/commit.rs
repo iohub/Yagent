@@ -22,13 +22,13 @@ pub struct CommitSearchRequest {
 }
 
 /// Commit 相似性搜索响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CommitSearchResponse {
     pub matches: Vec<CommitMatch>,
 }
 
 /// Commit 匹配结果
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommitMatch {
     pub commit_hash: String,
     pub summary_text: String,

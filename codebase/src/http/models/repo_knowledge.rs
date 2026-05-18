@@ -8,7 +8,7 @@ pub struct RepoKnowledgeEmbedRequest {
 }
 
 /// 向量化响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EmbedResponse {
     pub id: String,
 }
@@ -26,7 +26,7 @@ fn default_top_k() -> usize {
 }
 
 /// 知识搜索响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RepoKnowledgeSearchResponse {
     pub matches: Vec<crate::services::RepoKnowledgeMatch>,
 }

@@ -16,7 +16,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "=0.4.38", features = ["serde"] }
 
 # HTTP service dependencies
-axum = "0.7"
+axum = { version = "0.7", features = ["macros"] }
 tokio = { version = "1.43", features = ["full"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
@@ -56,6 +56,9 @@ toml = "0.8"
 dirs = "5.0"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 anyhow = "1"
+
+# BM25 full-text search
+tantivy = "0.22"
 
 [dev-dependencies]
 tempfile = "3.8"

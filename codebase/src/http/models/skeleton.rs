@@ -5,14 +5,14 @@ pub struct QueryCodeSkeletonRequest {
     pub filepaths: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CodeSkeletonResponse {
     pub filepath: String,
     pub language: String,
     pub skeleton_text: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CodeSkeletonBatchResponse {
     pub skeletons: Vec<CodeSkeletonResponse>,
 } 

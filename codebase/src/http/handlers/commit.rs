@@ -3,23 +3,22 @@ use axum::{
     Json,
     http::StatusCode as AxumStatusCode,
 };
-use std::sync::Arc;
-use crate::storage::StorageManager;
 use crate::http::models::{
     ApiResponse, CommitEmbedRequest, CommitSearchRequest, CommitSearchResponse,
     CommitMatch, ClearCommitsRequest,
 };
+use crate::http::server::AppState;
 use tracing::{info, error};
 
 /// Commit 向量化处理
 ///
 /// 接收 commit hash 和 summary text，生成向量嵌入并存储到 LanceDB
 pub async fn commit_embed(
-    State(storage): State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
     Json(request): Json<CommitEmbedRequest>,
 ) -> Result<Json<ApiResponse<()>>, AxumStatusCode> {
     // 获取已初始化的 commit embedding service
-    let service = match storage.get_commit_embedding_service() {
+    let service = match storage.storage.get_commit_embedding_service() {
         Ok(s) => s,
         Err(e) => {
             error!("Commit embedding service not available: {}", e);
@@ -45,11 +44,11 @@ pub async fn commit_embed(
 ///
 /// 使用查询文本搜索相似的 commit
 pub async fn commit_search(
-    State(storage): State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
     Json(request): Json<CommitSearchRequest>,
 ) -> Result<Json<ApiResponse<CommitSearchResponse>>, AxumStatusCode> {
     // 获取已初始化的 commit embedding service
-    let service = match storage.get_commit_embedding_service() {
+    let service = match storage.storage.get_commit_embedding_service() {
         Ok(s) => s,
         Err(e) => {
             error!("Commit embedding service not available: {}", e);
@@ -87,11 +86,11 @@ pub async fn commit_search(
 ///
 /// 删除 LanceDB 中存储的所有 commit 嵌入
 pub async fn commit_clear(
-    State(storage): State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
     Json(_request): Json<ClearCommitsRequest>,
 ) -> Result<Json<ApiResponse<()>>, AxumStatusCode> {
     // 获取已初始化的 commit embedding service
-    let service = match storage.get_commit_embedding_service() {
+    let service = match storage.storage.get_commit_embedding_service() {
         Ok(s) => s,
         Err(e) => {
             error!("Commit embedding service not available: {}", e);
@@ -105,7 +104,7 @@ pub async fn commit_clear(
         return Err(AxumStatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    let repo_path = storage.get_current_repo().unwrap_or_default();
+    let repo_path = storage.storage.get_current_repo().unwrap_or_default();
     info!("Cleared all commit embeddings for repo: {}", repo_path);
 
     Ok(Json(ApiResponse {

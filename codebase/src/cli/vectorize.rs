@@ -10,7 +10,7 @@ pub async fn run_vectorize(path: String, collection: String, db_path: String, co
     info!("LanceDB Path: {}", db_path);
     
     // Create vectorize service
-    let service = EmbeddingService::new(&db_path, collection, config.as_ref()).await?;
+    let service = EmbeddingService::new(&db_path, collection, config.as_ref(), None).await?;
     
     // Ensure collection exists
     service.ensure_collection().await?;

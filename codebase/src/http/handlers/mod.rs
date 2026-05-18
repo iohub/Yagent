@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::storage::StorageManager;
 use crate::services::CodeAnalyzer;
 use super::models::*;
+use super::server::AppState;
 use md5;
 use uuid;
 use serde_json::json;
@@ -21,7 +22,7 @@ pub use commit::{commit_embed, commit_search, commit_clear};
 pub use repo_knowledge::{repo_knowledge_embed, repo_knowledge_search};
 
 pub async fn query_call_graph(
-    State(storage): State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
     Json(request): Json<QueryCallGraphRequest>,
 ) -> Result<Json<ApiResponse<QueryCallGraphResponse>>, StatusCode> {
     // Extract request parameters
@@ -30,7 +31,7 @@ pub async fn query_call_graph(
     let max_depth = request.max_depth.unwrap_or(2); // Default max depth is 2
     
     // Retrieve a graph from the in-memory cache populated by init/build_graph
-    let graph = storage.get_graph_clone().ok_or(StatusCode::NOT_FOUND)?;
+    let graph = storage.storage.get_graph_clone().ok_or(StatusCode::NOT_FOUND)?;
     
     // Debug: Log graph information
     tracing::info!("Loaded graph with {} functions", graph.get_stats().total_functions);
@@ -239,17 +240,17 @@ fn expand_call_chain(
 
 /// New handler for hierarchical tree structure output
 pub async fn query_hierarchical_graph(
-    State(storage): State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
     Json(request): Json<super::models::QueryHierarchicalGraphRequest>,
 ) -> Result<Json<ApiResponse<super::models::QueryHierarchicalGraphResponse>>, StatusCode> {
     let max_depth = request.max_depth.unwrap_or(2);
     let include_file_info = request.include_file_info.unwrap_or(true);
 
     // 使用内存中的图谱
-    let graph = storage.get_graph_clone().ok_or(StatusCode::NOT_FOUND)?;
+    let graph = storage.storage.get_graph_clone().ok_or(StatusCode::NOT_FOUND)?;
 
     let project_id = request.project_id.unwrap_or_else(|| {
-        storage.get_current_repo().unwrap_or_default()
+        storage.storage.get_current_repo().unwrap_or_default()
     });
     
     let stats = graph.get_stats();
@@ -418,11 +419,11 @@ fn build_hierarchical_node(
 }
 
 pub async fn query_code_snippet(
-    State(storage): State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
     Json(request): Json<QueryCodeSnippetRequest>,
 ) -> Result<Json<ApiResponse<CodeSnippetResponse>>, StatusCode> {
     // 使用内存中的图谱
-    let graph = storage.get_graph_clone().ok_or(StatusCode::NOT_FOUND)?;
+    let graph = storage.storage.get_graph_clone().ok_or(StatusCode::NOT_FOUND)?;
     
     // Find the target function
     let target_function = if let Some(func_name) = &request.function_name {
@@ -520,7 +521,7 @@ pub async fn query_code_snippet(
 } 
 
 pub async fn query_code_skeleton(
-    State(_storage): State<Arc<StorageManager>>,
+    State(_storage): State<AppState>,
     Json(request): Json<QueryCodeSkeletonRequest>,
 ) -> Result<Json<ApiResponse<CodeSkeletonBatchResponse>>, StatusCode> {
     let mut skeletons = Vec::new();
@@ -616,7 +617,7 @@ pub async fn query_code_skeleton(
 } 
 
 pub async fn draw_call_graph(
-    State(storage): State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
     Query(query): Query<super::models::DrawCallGraphQuery>,
 ) -> Result<Html<String>, StatusCode> {
     // Check if we have the required parameters
@@ -905,12 +906,12 @@ pub(crate) fn setup_watcher(
 }
 
 pub async fn investigate_repo(
-    State(storage): State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
     _: Json<super::models::InvestigateRepoRequest>,
 ) -> Result<Json<ApiResponse<super::models::InvestigateRepoResponse>>, StatusCode> {
     // 使用内存中的图谱和当前绑定的仓库
-    let graph = storage.get_graph_clone().ok_or(StatusCode::NOT_FOUND)?;
-    let repo_path = storage.get_current_repo().ok_or(StatusCode::NOT_FOUND)?;
+    let graph = storage.storage.get_graph_clone().ok_or(StatusCode::NOT_FOUND)?;
+    let repo_path = storage.storage.get_current_repo().ok_or(StatusCode::NOT_FOUND)?;
     let project_id = format!("{:x}", md5::compute(&repo_path)); 
 
 	// Compute out-degree for each function and collect top 15

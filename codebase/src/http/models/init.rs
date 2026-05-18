@@ -5,7 +5,7 @@ pub struct InitRequest {
     pub project_dir: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct InitResponse {
     pub project_id: String,
     pub loaded_from_cache: bool,

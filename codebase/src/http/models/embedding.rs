@@ -1,18 +1,18 @@
 use serde::{Deserialize, Serialize};
 use crate::services::embedding_service::SearchResult;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SemanticSearchRequest {
     pub text: String,
     pub limit: Option<usize>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SemanticSearchResponse {
     pub results: Vec<SearchResult>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct QueryIndexingStatusResponse {
     pub status: String, // "indexing", "completed", "not_found", "failed"
     pub message: Option<String>,

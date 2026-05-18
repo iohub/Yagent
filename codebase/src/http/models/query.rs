@@ -7,7 +7,7 @@ pub struct QueryCallGraphRequest {
     pub max_depth: Option<usize>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionInfo {
     pub id: String,
     pub name: String,
@@ -17,13 +17,13 @@ pub struct FunctionInfo {
     pub callees: Vec<CallRelation>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CallRelation {
     pub function_name: String,
     pub file_path: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct QueryCallGraphResponse {
     pub filepath: String,
     pub functions: Vec<FunctionInfo>,
@@ -38,7 +38,7 @@ pub struct QueryHierarchicalGraphRequest {
     pub include_file_info: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct HierarchicalNode {
     pub name: String,
     pub function_id: Option<String>,
@@ -49,7 +49,7 @@ pub struct HierarchicalNode {
     pub call_type: Option<String>, // "direct", "indirect", etc.
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct QueryHierarchicalGraphResponse {
     pub project_id: String,
     pub root_function: Option<String>,

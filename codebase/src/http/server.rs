@@ -2,6 +2,7 @@ use axum::{
     routing::{post, get},
     Router,
     response::Json,
+    extract::State,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +14,10 @@ use axum::extract::Request;
 use axum::response::Response;
 use tracing::Span;
 use crate::storage::StorageManager;
+use crate::storage::TantivyBm25Index;
+use crate::services::hybrid_search::{HybridSearchService, HybridSearchConfig};
+use crate::storage::traits_bm25::TextSearchProvider;
+use crate::services::embedding_service::EmbeddingService;
 
 use super::{
     handlers::{query_call_graph, query_code_snippet, query_code_skeleton,
@@ -27,9 +32,19 @@ use crate::services::embedding_service::OpenAICompatibleEmbeddingProvider;
 use crate::services::commit_embedding_service::EmbeddingProviderAdapter;
 use crate::services::repo_knowledge_service::{EmbeddingProviderAdapter as RepoKnowledgeEmbeddingProviderAdapter};
 
+/// Combined state for routes that need both StorageManager and HybridSearchService
+#[derive(Clone)]
+pub struct AppState {
+    pub storage: Arc<StorageManager>,
+    pub hybrid: Option<Arc<HybridSearchService>>,
+}
+
 pub struct CodeBaseServer {
     storage: Arc<StorageManager>,
     repo_path: String,
+    /// Hybrid search service for semantic search endpoint.
+    /// Initialized in `start()` using Tantivy BM25 index + EmbeddingService.
+    hybrid_search_service: Option<Arc<HybridSearchService>>,
 }
 
 #[derive(serde::Serialize)]
@@ -44,7 +59,11 @@ struct StatusResponse {
 
 impl CodeBaseServer {
     pub fn new(storage: Arc<StorageManager>, repo_path: String) -> Self {
-        Self { storage, repo_path }
+        Self {
+            storage,
+            repo_path,
+            hybrid_search_service: None,
+        }
     }
 
     pub async fn start(&mut self, addr: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -102,6 +121,62 @@ impl CodeBaseServer {
         // 初始化 Commit Embedding Service
         if let Err(e) = self.init_commit_embedding_service().await {
             tracing::warn!("Failed to initialize commit embedding service: {}", e);
+        }
+
+        // 初始化混合检索服务 (Hybrid Search)
+        if let Ok(config) = self.storage.get_config().ok_or("Config not set") {
+            if config.codebase.enable_embedding {
+                let _embedding_config = &config.codebase.embedding;
+                let db_path = &config.codebase.embedding_db_uri;
+                
+                // 生成 collection 名称
+                let path = std::path::Path::new(&self.repo_path);
+                let last_dir = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                let hash = md5::compute(&self.repo_path);
+                let hash_hex = format!("{:x}", hash);
+                let collection = format!("{}_{}", last_dir, hash_hex);
+                
+                // 创建 EmbeddingService
+                let embedding_service = match EmbeddingService::new(db_path, collection.clone(), Some(&config), None).await {
+                    Ok(s) => Some(Arc::new(s)),
+                    Err(e) => {
+                        tracing::warn!("Failed to create EmbeddingService for hybrid search: {}", e);
+                        None
+                    }
+                };
+                
+                // 创建 Tantivy BM25 Index (复用现有 index 目录)
+                let tantivy_dir = std::path::Path::new(db_path).join("tantivy_bm25");
+                let tantivy_index = match TantivyBm25Index::open_or_create(&tantivy_dir) {
+                    Ok(idx) => {
+                        tracing::info!("Tantivy BM25 index ready at {:?}", tantivy_dir);
+                        Arc::new(idx) as Arc<dyn TextSearchProvider>
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create Tantivy index (search will fall back to dense-only): {}", e);
+                        Arc::new(FallbackTextSearchProvider) as Arc<dyn TextSearchProvider>
+                    }
+                };
+                
+                // 创建 HybridSearchService
+                if let Some(embedding_service) = embedding_service {
+                    let hybrid = HybridSearchService::new(
+                        embedding_service,
+                        tantivy_index,
+                        HybridSearchConfig {
+                            enable_sparse: true,
+                            rrf_k: 60.0,
+                            dense_limit: 100,
+                            sparse_limit: 100,
+                            timeout_ms: 0,
+                        },
+                    );
+                    self.hybrid_search_service = Some(Arc::new(hybrid));
+                    tracing::info!("HybridSearchService initialized");
+                }
+            }
         }
 
         // 初始化 Repo Knowledge Service
@@ -277,7 +352,14 @@ impl CodeBaseServer {
                 }
             });
         
-        Router::new()
+         // Create unified AppState
+        let app_state = AppState {
+            storage: self.storage.clone(),
+            hybrid: self.hybrid_search_service.clone(),
+        };
+        
+            // Build all routes with unified state
+        let app = Router::new()
             .route("/health", get(health_check))
             .route("/status", get(get_status))
             .route("/query_call_graph", post(query_call_graph))
@@ -285,7 +367,6 @@ impl CodeBaseServer {
             .route("/query_code_skeleton", post(query_code_skeleton))
             .route("/query_hierarchical_graph", post(query_hierarchical_graph))
             .route("/investigate_repo", post(investigate_repo))
-            .route("/semantic_search", post(semantic_search))
             .route("/query_indexing_status", post(query_indexing_status))
             .route("/commit/embed", post(commit_embed))
             .route("/commit/search", post(commit_search))
@@ -294,10 +375,12 @@ impl CodeBaseServer {
             .route("/repo_knowledge/search", post(repo_knowledge_search))
             .route("/", get(draw_call_graph_home))
             .route("/draw_call_graph", get(draw_call_graph))
-            // 中间件顺序：先应用日志，再应用 CORS
+            .route("/semantic_search", post(semantic_search))
+            .with_state(app_state)
             .layer(request_logging)
-            .layer(cors)
-            .with_state(self.storage.clone())
+            .layer(cors);
+        
+        app
     }
 }
 
@@ -311,12 +394,12 @@ async fn health_check() -> Json<ApiResponse<&'static str>> {
 
 // Status endpoint - returns info about the currently indexed repo
 async fn get_status(
-    axum::extract::State(storage): axum::extract::State<Arc<StorageManager>>,
+    State(storage): State<AppState>,
 ) -> Json<ApiResponse<StatusResponse>> {
-    let repo_path = storage.get_current_repo().unwrap_or_default();
+    let repo_path = storage.storage.get_current_repo().unwrap_or_default();
     let project_id = format!("{:x}", md5::compute(&repo_path));
 
-    let (total_functions, total_files) = storage
+    let (total_functions, total_files) = storage.storage
         .get_graph_clone()
         .map(|g| {
             let stats = g.get_stats();
@@ -324,13 +407,13 @@ async fn get_status(
         })
         .unwrap_or((0, 0));
 
-    let embedding_enabled = storage
+    let embedding_enabled = storage.storage
         .get_config()
         .map(|c| c.codebase.enable_embedding)
         .unwrap_or(false);
 
     let indexing_status = {
-        let tasks = storage.vector_tasks.lock().unwrap();
+        let tasks = storage.storage.vector_tasks.lock().unwrap();
         if tasks.contains(&repo_path) {
             "indexing".to_string()
         } else {
@@ -349,4 +432,27 @@ async fn get_status(
             indexing_status,
         },
     })
+}
+
+/// Fallback provider when Tantivy index is unavailable.
+/// Always returns empty results to trigger dense-only fallback.
+struct FallbackTextSearchProvider;
+
+#[async_trait::async_trait]
+impl crate::storage::traits_bm25::TextSearchProvider for FallbackTextSearchProvider {
+    async fn index_chunks(&self, _chunks: Vec<crate::storage::traits_bm25::CodeChunk>) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn search(&self, _query: &str, _limit: usize) -> anyhow::Result<Vec<crate::storage::traits_bm25::TextSearchResult>> {
+        Ok(Vec::new())
+    }
+    async fn remove_by_path(&self, _file_path: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn commit(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn is_ready(&self) -> bool {
+        false
+    }
 }

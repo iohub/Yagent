@@ -8,7 +8,7 @@ pub struct QueryCodeSnippetRequest {
     pub context_lines: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CodeSnippetResponse {
     pub filepath: String,
     pub function_name: Option<String>,
