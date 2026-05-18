@@ -87,12 +87,14 @@ struct CodePoint {
     code_block: String,
 }
 
+/// 搜索结果（统一使用 score 字段，越大越相关）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub file_path: String,
     pub symbol_name: String,
     pub code_block: String,
-    pub semantic_distance: f32,
+    /// 相关性分数，越大表示越相关（统一转换自所有搜索来源）
+    pub score: f32,
     // Fields for hybrid search
     pub symbol_type: String,
     pub language: String,
@@ -594,7 +596,9 @@ impl EmbeddingService {
                 if !std::path::Path::new(&file_path).exists() {
                     continue;
                 }
-                let semantic_distance = if let Some(d) = dist_vals { d.value(i) } else { 0.0 };
+                // L2 距离 → 相关性分数 (0,1]，越大越相关
+                let distance = if let Some(d) = dist_vals { d.value(i) } else { 0.0 };
+                let score = (1.0 / (1.0 + distance)) as f32;
                 
                 // Try to get additional fields from LanceDB batch
                 let symbol_type_col = batch.column_by_name("symbol_type");
@@ -626,7 +630,7 @@ impl EmbeddingService {
                     file_path,
                     symbol_name: symbol_name_col.value(i).to_string(),
                     code_block: code_block_col.value(i).to_string(),
-                    semantic_distance,
+                    score,
                     symbol_type,
                     language,
                     line_start,

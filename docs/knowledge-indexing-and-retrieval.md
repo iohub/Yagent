@@ -909,7 +909,7 @@ Content-Type: application/json
         "symbol_name": "verify_jwt_token",
         "symbol_type": "Function",
         "code_block": "pub fn verify_jwt_token(token: &str) -> Result<User> {\n    ...\n}",
-        "semantic_distance": 0.1234,
+        "score": 0.8766,
         "line_start": 45,
         "line_end": 62,
         "language": "rust"
@@ -919,7 +919,7 @@ Content-Type: application/json
         "symbol_name": "authenticate",
         "symbol_type": "Function",
         "code_block": "pub async fn authenticate(req: Request) -> Result<Response> {\n    ...\n}",
-        "semantic_distance": 0.2567,
+        "score": 0.7433,
         "line_start": 12,
         "line_end": 38,
         "language": "rust"
@@ -937,7 +937,7 @@ Content-Type: application/json
 | `symbol_name` | string | 符号名称 |
 | `symbol_type` | string | 符号类型: `Function` / `Struct` / `Class` / `Method` |
 | `code_block` | string | 源代码片段 |
-| `semantic_distance` | float | 语义距离（越小越相关） |
+| `score` | float | 相关性分数（越大越相关） |
 | `line_start` | integer | 起始行 |
 | `line_end` | integer | 结束行 |
 | `language` | string | 编程语言 |
@@ -1948,8 +1948,8 @@ A: 不同模型的嵌入向量不兼容，切换模型后必须重新计算。�
 **Q3: 如何切换嵌入模型？**  
 A: 修改 `config.toml` 中的 `model` 字段，重启 CodeBase 服务。旧缓存不会误用，但需要重新构建索引。
 
-**Q4: 语义搜索的 `semantic_distance` 越小越好吗？**  
-A: 是的。该值表示查询向量与代码块向量的距离（通常为余弦距离），值越小表示语义越相似。
+**Q4: 语义搜索的 `score` 越大越相关吗？**  
+A: 是的。该值已统一转换为相关性分数（范围 0-1），值越大表示语义越相似。底层 Dense 搜索使用 `1 / (1 + L2距离)` 将距离转换为分数。
 
 **Q5: CodeBase 服务与 Agent 如何协同？**  
 A: Agent 启动时自动启动 CodeBase 子进程 (:12800)，通过 `RepoOperationsTool` 封装 HTTP 调用。服务生命周期由 Agent 管理。

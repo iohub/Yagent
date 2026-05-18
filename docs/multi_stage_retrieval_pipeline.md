@@ -174,7 +174,7 @@ POST /semantic_search
         │   .limit(limit)
         │
         └── 返回 Vec<SearchResult>
-            { file_path, symbol_name, code_block, semantic_distance }
+            { file_path, symbol_name, code_block, score }
 ```
 
 #### 代码图谱查询（Graph Query Only）

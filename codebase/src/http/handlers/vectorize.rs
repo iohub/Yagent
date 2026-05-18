@@ -7,7 +7,6 @@ use std::sync::Arc;
 use crate::storage::StorageManager;
 use crate::storage::TantivyBm25Index;
 use crate::services::embedding_service::EmbeddingService;
-use crate::storage::traits_bm25::CandidateSource;
 use crate::http::models::{ApiResponse, SemanticSearchRequest, SemanticSearchResponse, QueryIndexingStatusResponse, ProjectInfo};
 use crate::http::server::AppState;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -260,11 +259,7 @@ pub async fn semantic_search(
             file_path: c.file_path,
             symbol_name: c.symbol_name,
             code_block: c.code_block,
-            semantic_distance: if c.source == CandidateSource::DenseOnly {
-                c.final_score as f32
-            } else {
-                c.final_score as f32
-            },
+            score: c.final_score as f32,
             symbol_type: c.symbol_type,
             language: c.language,
             line_start: c.line_start,

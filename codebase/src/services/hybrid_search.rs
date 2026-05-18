@@ -160,7 +160,7 @@ impl HybridSearchService {
                         .into_iter()
                         .map(|sr| FusedCandidate {
                             snippet_id: format!("{}#{}", sr.file_path, sr.symbol_name),
-                            final_score: sr.semantic_distance as f64,
+                            final_score: sr.score as f64,
                             file_path: sr.file_path,
                             symbol_name: sr.symbol_name,
                             symbol_type: String::new(),

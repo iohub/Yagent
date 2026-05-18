@@ -242,10 +242,10 @@ func tryFormatCodebaseResult(content string, width int) string {
 		return ""
 	}
 
-	// Pattern 1: semantic_search — data.results array with file_path/semantic_distance
+	// Pattern 1: semantic_search — data.results array with file_path/score
 	if resultsRaw, ok := data["results"]; ok {
 		if results, ok := resultsRaw.([]interface{}); ok && len(results) > 0 {
-			// Verify it looks like semantic_search (has file_path or semantic_distance)
+			// Verify it looks like semantic_search (has file_path or score)
 			if first, ok := results[0].(map[string]interface{}); ok {
 				if _, hasPath := first["file_path"]; hasPath {
 					return formatSemanticSearchResults(results, width)
@@ -316,7 +316,7 @@ func formatSemanticSearchResults(results []interface{}, width int) string {
 		filePart := fileStyle.Render(filePath)
 		headerParts = append(headerParts, num, " ", filePart)
 
-		if score, ok := item["semantic_distance"].(float64); ok {
+		if score, ok := item["score"].(float64); ok {
 			headerParts = append(headerParts, "  ", scoreStyle.Render(fmt.Sprintf("(score: %.3f)", score)))
 		}
 
