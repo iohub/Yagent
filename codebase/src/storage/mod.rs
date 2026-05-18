@@ -164,16 +164,18 @@ impl StorageManager {
         self.current_repo.read().clone()
     }
 
-    /// 初始化 Commit Embedding Service
+   /// 初始化 Commit Embedding Service
     ///
     /// # Arguments
     /// * `provider` - Commit 嵌入提供者，用于生成 commit summary 的向量嵌入
+    /// * `project_id` - 项目 ID，用于表名隔离
     ///
     /// # Errors
     /// 当配置不存在或初始化失败时返回错误
     pub async fn init_commit_embedding_service(
         &self,
         provider: Box<dyn CommitEmbeddingProvider + Send + Sync>,
+        project_id: &str,
     ) -> Result<()> {
         use lancedb::connect;
 
@@ -193,15 +195,14 @@ impl StorageManager {
         let connection = connect(&db_path).execute().await?;
 
         info!(
-            "Initializing CommitEmbeddingService with dimensions: {}, db_path: {}",
-            dimensions, db_path
+            "Initializing CommitEmbeddingService for project: {}, dimensions: {}, db_path: {}",
+            project_id, dimensions, db_path
         );
 
-        // 创建服务并初始化表
-        let service = CommitEmbeddingService::new(connection, provider, dimensions)
+        // 创建服务（new 方法会自动初始化表）
+        let service = CommitEmbeddingService::new(connection, provider, dimensions, project_id)
             .await
             .map_err(|e| anyhow!("Failed to create commit embedding service: {}", e))?;
-        service.init_table().await.map_err(|e| anyhow!("Failed to initialize commit embeddings table: {}", e))?;
 
         *self.commit_embedding_service.lock() = Some(Arc::new(service));
         Ok(())
@@ -222,12 +223,14 @@ impl StorageManager {
     ///
     /// # Arguments
     /// * `embedding_provider` - 嵌入提供者，用于生成 task 的向量嵌入
+    /// * `project_id` - 项目 ID，用于表名隔离
     ///
     /// # Errors
     /// 当配置不存在或初始化失败时返回错误
     pub async fn init_repo_knowledge_service(
         &self,
         embedding_provider: Box<dyn RepoKnowledgeEmbeddingProvider + Send + Sync>,
+        project_id: &str,
     ) -> Result<()> {
         use lancedb::connect;
 
@@ -247,15 +250,14 @@ impl StorageManager {
         let connection = connect(&db_path).execute().await?;
 
         info!(
-            "Initializing RepoKnowledgeService with dimensions: {}, db_path: {}",
-            dimensions, db_path
+            "Initializing RepoKnowledgeService for project: {}, dimensions: {}, db_path: {}",
+            project_id, dimensions, db_path
         );
 
-        // 创建服务并初始化表
-        let service = RepoKnowledgeService::new(connection, embedding_provider, dimensions)
+        // 创建服务（new 方法会自动初始化表）
+        let service = RepoKnowledgeService::new(connection, embedding_provider, dimensions, project_id)
             .await
             .map_err(|e| anyhow!("Failed to create repo knowledge service: {}", e))?;
-        service.init_table().await.map_err(|e| anyhow!("Failed to initialize repo knowledge table: {}", e))?;
 
         *self.repo_knowledge_service.lock() = Some(Arc::new(service));
         Ok(())

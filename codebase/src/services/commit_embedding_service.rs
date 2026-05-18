@@ -78,32 +78,39 @@ impl CommitEmbeddingService {
     /// * `connection` - LanceDB 连接
     /// * `embedding_provider` - 嵌入提供者
     /// * `dimensions` - 向量维度
+    /// * `project_id` - 项目 ID，用于表名隔离
     pub async fn new(
         connection: Connection,
         embedding_provider: Box<dyn CommitEmbeddingProvider + Send + Sync>,
         dimensions: i32,
+        project_id: &str,
     ) -> ServiceResult<Self> {
-        let table_name = "commit_embeddings".to_string();
+        let table_name = format!("commit_embeddings_{}", project_id);
         
-        info!("Creating CommitEmbeddingService with dimensions: {}", dimensions);
+        info!("Creating CommitEmbeddingService for project: {}, dimensions: {}", project_id, dimensions);
         
-        Ok(Self {
+        let service = Self {
             connection,
             embedding_provider,
             dimensions,
             table_name,
-        })
+        };
+        
+        // 自动初始化表
+        service.init_table().await?;
+        
+        Ok(service)
     }
 
     /// 从配置创建 CommitEmbeddingService（便捷方法）
     /// 
     /// # Arguments
     /// * `db_path` - LanceDB 数据库路径
-    /// * `table_name` - 表名（会被忽略，使用默认表名）
+    /// * `project_id` - 项目 ID，用于表名隔离
     /// * `config` - 可选的配置引用
     pub async fn from_config(
         db_path: &str,
-        _table_name: String,
+        project_id: &str,
         config: Option<&Config>,
     ) -> ServiceResult<Self> {
         let connection = connect(db_path).execute().await?;
@@ -135,7 +142,7 @@ impl CommitEmbeddingService {
         let provider = OpenAICompatibleEmbeddingProvider::new(api_token, base_url, model);
         let adapter = EmbeddingProviderAdapter::from_openai_provider(provider);
 
-        Self::new(connection, Box::new(adapter), dimensions).await
+        Self::new(connection, Box::new(adapter), dimensions, project_id).await
     }
 
     /// 初始化 commit 嵌入表
@@ -317,18 +324,21 @@ impl CommitEmbeddingService {
         Ok(matches)
     }
 
-    /// 清空所有 commit 数据
+   /// 清空所有 commit 数据
+    /// 
+    /// 使用 drop_table 后重建的方式，确保表结构始终可用
     pub async fn clear_all(&self) -> ServiceResult<()> {
-        let table = self
-            .connection
-            .open_table(&self.table_name)
-            .execute()
+        // 先删除表
+        info!("Dropping table: {}", self.table_name);
+        self.connection
+            .drop_table(&self.table_name)
             .await?;
-
-        // 删除所有行
-        table.delete("true").await?;
-
-        info!("Cleared all commits from vector store");
+        
+        // 重建空表
+        info!("Recreating empty table: {}", self.table_name);
+        self.init_table().await?;
+        
+        info!("Cleared all commits from vector store (table dropped and recreated)");
         Ok(())
     }
 
@@ -466,13 +476,11 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockCommitEmbeddingProvider::new());
-        let service = CommitEmbeddingService::new(connection, provider, 256).await?;
+        let service = CommitEmbeddingService::new(connection, provider, 256, "test").await?;
 
-        service.init_table().await?;
-
-        // 验证表已创建
+        // new 方法已经自动调用了 init_table，验证表已创建
         let table_names = service.connection.table_names().execute().await?;
-        assert!(table_names.contains(&"commit_embeddings".to_string()));
+        assert!(table_names.contains(&"commit_embeddings_test".to_string()));
 
         Ok(())
     }
@@ -484,9 +492,7 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockCommitEmbeddingProvider::new());
-        let service = CommitEmbeddingService::new(connection, provider, 256).await?;
-
-        service.init_table().await?;
+        let service = CommitEmbeddingService::new(connection, provider, 256, "test").await?;
 
         // 添加 commit
         service
@@ -507,9 +513,7 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockCommitEmbeddingProvider::new());
-        let service = CommitEmbeddingService::new(connection, provider, 256).await?;
-
-        service.init_table().await?;
+        let service = CommitEmbeddingService::new(connection, provider, 256, "test").await?;
 
         // 添加多个 commits
         service
@@ -544,9 +548,7 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockCommitEmbeddingProvider::new());
-        let service = CommitEmbeddingService::new(connection, provider, 256).await?;
-
-        service.init_table().await?;
+        let service = CommitEmbeddingService::new(connection, provider, 256, "test").await?;
 
         // 添加 commits
         service
@@ -577,9 +579,7 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockCommitEmbeddingProvider::new());
-        let service = CommitEmbeddingService::new(connection, provider, 256).await?;
-
-        service.init_table().await?;
+        let service = CommitEmbeddingService::new(connection, provider, 256, "test").await?;
 
         // 批量添加 commits
         let commits = vec![
@@ -603,9 +603,7 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockCommitEmbeddingProvider::new());
-        let service = CommitEmbeddingService::new(connection, provider, 256).await?;
-
-        service.init_table().await?;
+        let service = CommitEmbeddingService::new(connection, provider, 256, "test").await?;
 
         // 测试空 commit hash
         let result = service.add_commit("", "Add feature").await;

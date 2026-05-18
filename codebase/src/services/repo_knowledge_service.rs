@@ -77,30 +77,39 @@ impl RepoKnowledgeService {
     /// * `connection` - LanceDB 连接
     /// * `embedding_provider` - 嵌入提供者
     /// * `dimensions` - 向量维度
+    /// * `project_id` - 项目 ID，用于表名隔离
     pub async fn new(
         connection: Connection,
         embedding_provider: Box<dyn RepoKnowledgeEmbeddingProvider + Send + Sync>,
         dimensions: i32,
+        project_id: &str,
     ) -> ServiceResult<Self> {
-        let table_name = "repo_knowledge".to_string();
+        let table_name = format!("repo_knowledge_{}", project_id);
 
-        info!("Creating RepoKnowledgeService with dimensions: {}", dimensions);
+        info!("Creating RepoKnowledgeService for project: {}, dimensions: {}", project_id, dimensions);
 
-        Ok(Self {
+        let service = Self {
             connection,
             embedding_provider,
             dimensions,
             table_name,
-        })
+        };
+
+        // 自动初始化表
+        service.init_table().await?;
+
+        Ok(service)
     }
 
     /// 从配置创建 RepoKnowledgeService（便捷方法）
     ///
     /// # Arguments
     /// * `db_path` - LanceDB 数据库路径
+    /// * `project_id` - 项目 ID，用于表名隔离
     /// * `config` - 可选的配置引用
     pub async fn from_config(
         db_path: &str,
+        project_id: &str,
         config: Option<&super::super::config::Config>,
         embedding_provider: Box<dyn EmbeddingProvider + Send + Sync>,
     ) -> ServiceResult<Self> {
@@ -117,7 +126,7 @@ impl RepoKnowledgeService {
 
         let adapter = EmbeddingProviderAdapter::from_embedding_provider(embedding_provider);
 
-        Self::new(connection, Box::new(adapter), dimensions).await
+        Self::new(connection, Box::new(adapter), dimensions, project_id).await
     }
 
     /// 初始化 repo knowledge 表
@@ -311,14 +320,21 @@ impl RepoKnowledgeService {
         Ok(matches)
     }
 
-    /// 清空所有知识数据
+   /// 清空所有知识数据
+    ///
+    /// 使用 drop_table 后重建的方式，确保表结构始终可用
     pub async fn clear_all(&self) -> ServiceResult<()> {
-        let table = self.connection.open_table(&self.table_name).execute().await?;
+        // 先删除表
+        info!("Dropping table: {}", self.table_name);
+        self.connection
+            .drop_table(&self.table_name)
+            .await?;
 
-        // 删除所有行
-        table.delete("true").await?;
+        // 重建空表
+        info!("Recreating empty table: {}", self.table_name);
+        self.init_table().await?;
 
-        info!("Cleared all knowledge from vector store");
+        info!("Cleared all knowledge from vector store (table dropped and recreated)");
         Ok(())
     }
 
@@ -420,13 +436,11 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockRepoKnowledgeEmbeddingProvider::new());
-        let service = RepoKnowledgeService::new(connection, provider, 256).await?;
+        let service = RepoKnowledgeService::new(connection, provider, 256, "test").await?;
 
-        service.init_table().await?;
-
-        // 验证表已创建
+        // new 方法已经自动调用了 init_table，验证表已创建
         let table_names = service.connection.table_names().execute().await?;
-        assert!(table_names.contains(&"repo_knowledge".to_string()));
+        assert!(table_names.contains(&"repo_knowledge_test".to_string()));
 
         Ok(())
     }
@@ -438,9 +452,7 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockRepoKnowledgeEmbeddingProvider::new());
-        let service = RepoKnowledgeService::new(connection, provider, 256).await?;
-
-        service.init_table().await?;
+        let service = RepoKnowledgeService::new(connection, provider, 256, "test").await?;
 
         // 添加知识
         service
@@ -461,9 +473,7 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockRepoKnowledgeEmbeddingProvider::new());
-        let service = RepoKnowledgeService::new(connection, provider, 256).await?;
-
-        service.init_table().await?;
+        let service = RepoKnowledgeService::new(connection, provider, 256, "test").await?;
 
         // 添加多条知识
         service
@@ -498,9 +508,7 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockRepoKnowledgeEmbeddingProvider::new());
-        let service = RepoKnowledgeService::new(connection, provider, 256).await?;
-
-        service.init_table().await?;
+        let service = RepoKnowledgeService::new(connection, provider, 256, "test").await?;
 
         // 添加知识
         service
@@ -531,9 +539,7 @@ mod tests {
         let connection = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
 
         let provider = Box::new(MockRepoKnowledgeEmbeddingProvider::new());
-        let service = RepoKnowledgeService::new(connection, provider, 256).await?;
-
-        service.init_table().await?;
+        let service = RepoKnowledgeService::new(connection, provider, 256, "test").await?;
 
         // 测试空 task
         let result = service.add_knowledge("", "Result").await;

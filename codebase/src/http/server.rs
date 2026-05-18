@@ -144,8 +144,9 @@ impl CodeBaseServer {
             tracing::info!("Embedding build skipped: {}", e);
         }
 
-        // 初始化 Commit Embedding Service
-        if let Err(e) = self.init_commit_embedding_service().await {
+       // 初始化 Commit Embedding Service
+        let project_id = format!("{:x}", md5::compute(self.repo_path.as_bytes()));
+        if let Err(e) = self.init_commit_embedding_service(&project_id).await {
             tracing::warn!("Failed to initialize commit embedding service: {}", e);
         }
 
@@ -196,7 +197,7 @@ impl CodeBaseServer {
         }
 
         // 初始化 Repo Knowledge Service
-        if let Err(e) = self.init_repo_knowledge_service().await {
+        if let Err(e) = self.init_repo_knowledge_service(&project_id).await {
             tracing::warn!("Failed to initialize repo knowledge service: {}", e);
         }
 
@@ -213,8 +214,11 @@ impl CodeBaseServer {
         Ok(())
     }
 
-    /// 初始化 Commit Embedding Service
-    async fn init_commit_embedding_service(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+     /// 初始化 Commit Embedding Service
+    async fn init_commit_embedding_service(
+        &mut self, 
+        project_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // 获取配置
         let config = self.storage.get_config().ok_or("Config not set")?;
         
@@ -246,14 +250,14 @@ impl CodeBaseServer {
         let adapter = EmbeddingProviderAdapter::from_openai_provider(provider);
         
         // 初始化 commit embedding service
-        self.storage.init_commit_embedding_service(Box::new(adapter)).await?;
+        self.storage.init_commit_embedding_service(Box::new(adapter), project_id).await?;
         
-        tracing::info!("Commit embedding service initialized successfully");
+        tracing::info!("Commit embedding service initialized successfully for project: {}", project_id);
         Ok(())
     }
 
     /// 初始化 Repo Knowledge Service
-    async fn init_repo_knowledge_service(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn init_repo_knowledge_service(&mut self, project_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         // 获取配置
         let config = self.storage.get_config().ok_or("Config not set")?;
         
@@ -285,7 +289,7 @@ impl CodeBaseServer {
         let adapter = RepoKnowledgeEmbeddingProviderAdapter::from_embedding_provider(Box::new(provider));
         
         // 初始化 repo knowledge service
-        self.storage.init_repo_knowledge_service(Box::new(adapter)).await?;
+        self.storage.init_repo_knowledge_service(Box::new(adapter), project_id).await?;
         
         tracing::info!("Repo knowledge service initialized successfully");
         Ok(())

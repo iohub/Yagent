@@ -197,11 +197,11 @@ impl EmbeddingService {
         // LanceDB connection (embedded)
         let connection = connect(db_path).execute().await?;
         
-        // Initialize Cache
-        let cache_path = Path::new(db_path).parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("embedding_cache.sqlite");
-        let cache = Arc::new(EmbeddingCache::new(cache_path.to_str().unwrap())?);
+        // Initialize Cache - use a subdirectory within db_path to keep cache
+        // isolated per service instance
+        let cache_dir = Path::new(db_path).join("_cache");
+        fs::create_dir_all(&cache_dir)?;
+        let cache = Arc::new(EmbeddingCache::new(cache_dir.join("embedding_cache.sqlite").to_str().unwrap())?);
 
         // Initialize HTTP client and get API token
         let mut api_token = env::var("SILICONFLOW_API_KEY").ok();
@@ -247,10 +247,11 @@ impl EmbeddingService {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let connection = connect(db_path).execute().await?;
         
-        // Initialize Cache
-        let cache_path = Path::new(db_path).parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("embedding_cache.sqlite");
+        // Initialize Cache - use a subdirectory within db_path to keep cache
+        // isolated per service instance and avoid conflicts between tests
+        let cache_dir = Path::new(db_path).join("_cache");
+        fs::create_dir_all(&cache_dir)?;
+        let cache_path = cache_dir.join("embedding_cache.sqlite");
         let cache = Arc::new(EmbeddingCache::new(cache_path.to_str().unwrap())?);
 
         Ok(Self {
@@ -416,7 +417,7 @@ impl EmbeddingService {
                 // Check cache first
                 let model = self.embedding_provider.model();
                 let hash_input = format!("{}{}", model, code_block);
-                let hash = format!("{:x}", md5::compute(hash_input));
+                let hash = format!("{:x}", md5::compute(&hash_input));
                 
                 let embedding = if let Some(cached) = self.cache.get(&hash) {
                     cached
