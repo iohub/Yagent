@@ -17,6 +17,10 @@ func (m model) View() tea.View {
 
 	// History mode: render fullscreen history browser
 	if m.historyMode {
+		// If delete confirmation dialog is active, render it as an overlay
+		if m.confirmDeleteDialog.open {
+			return tea.NewView(m.renderConfirmDeleteHistoryDialog())
+		}
 		return renderHistoryView(&m)
 	}
 

@@ -602,4 +602,78 @@ var (
 					Padding(0, 2)
 )
 
-// parseConfirmQuestion extracts toolName and detail body from the question string.
+// renderConfirmDeleteHistoryDialog renders the delete history confirmation overlay dialog.
+func (m model) renderConfirmDeleteHistoryDialog() string {
+	const maxDialogWidth = 50
+	dialogWidth := maxDialogWidth
+	if m.termWidth-4 < dialogWidth {
+		dialogWidth = m.termWidth - 4
+	}
+	innerWidth := dialogWidth - 4
+
+	// ── Title ──
+	titleLine := confirmDeleteTitleStyle.Render(langManager.GetText("DeleteConfirmTitle"))
+
+	// ── Message ──
+	message := confirmDeleteMessageStyle.Render(langManager.GetText("DeleteConfirmMessage"))
+
+	// ── Buttons (2 options: Cancel / Delete) ──
+	renderBtn := func(label string, idx int) string {
+		if m.confirmDeleteDialog.selectedOption == idx {
+			return confirmDeleteButtonFocused.Render(label)
+		}
+		return confirmDeleteButtonBlurred.Render(label)
+	}
+	buttons := lipgloss.JoinHorizontal(lipgloss.Center,
+		renderBtn(langManager.GetText("ConfirmDialogNo"), 0),
+		"  ",
+		renderBtn(langManager.GetText("ConfirmDialogYes"), 1),
+	)
+
+	// ── Help ──
+	help := confirmHelpStyle.Render(langManager.GetText("ConfirmQuitHelp"))
+
+	// ── Assemble ──
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		titleLine,
+		"",
+		message,
+		"",
+		lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(buttons),
+		"",
+		help,
+	)
+
+	dialog := confirmDeleteBorderStyle.Width(dialogWidth).Render(content)
+
+	return lipgloss.Place(m.termWidth, m.termHeight,
+		lipgloss.Center, lipgloss.Center,
+		dialog,
+	)
+}
+
+// confirmDeleteDialog styles
+var (
+	confirmDeleteBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("167")). // red border for warning
+				Padding(0, 2)
+
+	confirmDeleteTitleStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("167")). // red
+				Bold(true)
+
+	confirmDeleteMessageStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("252")). // light gray
+				MaxWidth(50)
+
+	confirmDeleteButtonFocused = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("0")).
+					Background(lipgloss.Color("167")). // red bg
+					Bold(true).
+					Padding(0, 2)
+
+	confirmDeleteButtonBlurred = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("244")).
+					Padding(0, 2)
+)

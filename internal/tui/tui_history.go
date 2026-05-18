@@ -152,6 +152,32 @@ func (m *model) clampCursor() {
 
 // historyHandleKey processes keyboard input in history mode.
 func historyHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
+	// If delete confirmation dialog is active, only handle dialog keys
+	if m.confirmDeleteDialog.open {
+		switch key.String() {
+		case "left", "right", "h", "l":
+			// Toggle between 0=Cancel, 1=Confirm
+			m.confirmDeleteDialog.selectedOption ^= 1
+			return m, nil
+		case "enter":
+			if m.confirmDeleteDialog.selectedOption == 1 {
+				// Confirm delete
+				return confirmDeleteHistoryEntry(m)
+			}
+			// Cancel
+			m.confirmDeleteDialog.open = false
+			m.confirmDeleteDialog.selectedOption = 0
+			m.confirmDeleteDialog.taskID = ""
+			return m, nil
+		case "esc":
+			m.confirmDeleteDialog.open = false
+			m.confirmDeleteDialog.selectedOption = 0
+			m.confirmDeleteDialog.taskID = ""
+			return m, nil
+		}
+		return m, nil
+	}
+
 	k := key.String()
 
 	// Exit history mode on escape or ctrl+c
@@ -232,6 +258,20 @@ func historyHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		item := m.historyItems[absIdx]
 		m.historyLoading = true
 		return m, loadMemoryCmd(m, item.TaskID)
+
+	case "d", "delete", "ctrl+d":
+		if len(m.historyItems) == 0 || m.historyLoading {
+			return m, nil
+		}
+		absIdx := m.absCursor()
+		if absIdx < 0 || absIdx >= len(m.historyItems) {
+			return m, nil
+		}
+		item := m.historyItems[absIdx]
+		m.confirmDeleteDialog.open = true
+		m.confirmDeleteDialog.taskID = item.TaskID
+		m.confirmDeleteDialog.selectedOption = 0 // default to Cancel
+		return m, nil
 	}
 
 	return m, nil
@@ -633,7 +673,7 @@ func renderHistoryStatusBar(m *model, width int) string {
 			startIdx+1, endIdx,
 			len(m.historyItems))
 
-		commandHint = "n:next  p:prev  j/k:select"
+		commandHint = "n:next  p:prev  j/k:select  d:delete"
 	}
 
 	separator := "── "
@@ -662,4 +702,58 @@ func renderHistoryStatusBar(m *model, width int) string {
 		Width(width)
 
 	return style.Render(line)
+}
+
+// confirmDeleteHistoryEntry executes the deletion of a history entry after confirmation.
+func confirmDeleteHistoryEntry(m *model) (*model, tea.Cmd) {
+	taskID := m.confirmDeleteDialog.taskID
+
+	// Reset dialog state
+	m.confirmDeleteDialog.open = false
+	m.confirmDeleteDialog.selectedOption = 0
+	m.confirmDeleteDialog.taskID = ""
+
+	if taskID == "" || m.dataManager == nil {
+		m.infoMsg = "Cannot delete: data manager not available"
+		return m, nil
+	}
+
+	err := m.dataManager.DeleteTaskMemory(taskID)
+	if err != nil {
+		m.infoMsg = langManager.GetText("DeleteFailed") + err.Error()
+		return m, nil
+	}
+
+	// Remove the deleted item from historyItems
+	absIdx := -1
+	for i, item := range m.historyItems {
+		if item.TaskID == taskID {
+			absIdx = i
+			break
+		}
+	}
+
+	if absIdx >= 0 {
+		m.historyItems = append(m.historyItems[:absIdx], m.historyItems[absIdx+1:]...)
+	}
+
+	// Adjust cursor if needed
+	if len(m.historyItems) == 0 {
+		m.historyCursor = 0
+		m.historyPage = 0
+	} else {
+		// If cursor was on the last item, move up
+		startIdx, _ := m.visibleRange()
+		absCursor := startIdx + m.historyCursor
+		if absCursor >= len(m.historyItems) {
+			m.historyCursor--
+			if m.historyCursor < 0 {
+				m.historyCursor = 0
+			}
+		}
+	}
+	m.clampCursor()
+
+	m.infoMsg = langManager.GetText("DeleteSuccess")
+	return m, nil
 }

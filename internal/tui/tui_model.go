@@ -145,6 +145,13 @@ type confirmCancelDialog struct {
 	selectedOption int // 0=Confirm, 1=Cancel
 }
 
+// confirmDeleteDialog holds the state of the delete history confirmation dialog.
+type confirmDeleteDialog struct {
+	open           bool
+	taskID         string // taskID of the item to delete
+	selectedOption int    // 0=Cancel, 1=Confirm (delete)
+}
+
 // tuiEventConsumer routes MessageEvents to a Go channel consumed by the tea program.
 type tuiEventConsumer struct {
 	ch chan *messaging.MessageEvent
@@ -208,6 +215,10 @@ type model struct {
 	// Quit / Cancel confirmation dialogs
 	confirmQuitDialog   confirmQuitDialog
 	confirmCancelDialog confirmCancelDialog
+
+	// Delete history confirmation dialog
+	confirmDeleteDialog confirmDeleteDialog
+
 	publisher           *messaging.MessagePublisher
 	publisherCh         chan *messaging.MessagePublisher
 

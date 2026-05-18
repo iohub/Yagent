@@ -66,6 +66,11 @@ type translations struct {
 	EditModeTips        string
 	HelpDialogTitle     string
 	HelpDialogContent   string
+	// Delete history confirmation dialog
+	DeleteConfirmTitle   string
+	DeleteConfirmMessage string
+	DeleteSuccess        string
+	DeleteFailed         string
 }
 
 var langMap = map[Language]translations{
@@ -133,6 +138,10 @@ var langMap = map[Language]translations{
 			"  其他:\n" +
 			"    ?               显示此帮助\n" +
 			"    ctrl+c          强制退出",
+		DeleteConfirmTitle:   "确认删除",
+		DeleteConfirmMessage: "确定要删除这条历史记录吗？此操作不可恢复。",
+		DeleteSuccess:        "历史记录已删除",
+		DeleteFailed:         "删除失败：",
 	},
 	LangEnglish: {
 		Title:                            "CodeActor AI Assistant",
@@ -198,6 +207,10 @@ var langMap = map[Language]translations{
 			"  Other:\n" +
 			"    ?              show this help\n" +
 			"    ctrl+c         force quit",
+		DeleteConfirmTitle:   "Confirm Delete",
+		DeleteConfirmMessage: "Are you sure you want to delete this history entry? This action cannot be undone.",
+		DeleteSuccess:        "History entry deleted",
+		DeleteFailed:         "Delete failed: ",
 	},
 }
 
@@ -321,6 +334,14 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.HelpDialogTitle
 	case "HelpDialogContent":
 		return translations.HelpDialogContent
+	case "DeleteConfirmTitle":
+		return translations.DeleteConfirmTitle
+	case "DeleteConfirmMessage":
+		return translations.DeleteConfirmMessage
+	case "DeleteSuccess":
+		return translations.DeleteSuccess
+	case "DeleteFailed":
+		return translations.DeleteFailed
 	default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}
