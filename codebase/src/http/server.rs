@@ -113,8 +113,34 @@ impl CodeBaseServer {
             }
         }
 
-        // 触发嵌入索引构建
-        if let Err(e) = trigger_embedding_build(self.storage.clone(), repo_path.clone()).await {
+        // ===== Create shared Tantivy BM25 index FIRST (before background tasks) =====
+        // This avoids LockBusy conflicts from multiple open_or_create calls on the same dir.
+        let shared_bm25_index: Arc<dyn TextSearchProvider> = {
+            let config = self.storage.get_config();
+            if config.as_ref().map_or(false, |c| c.codebase.enable_embedding) {
+                let config = config.unwrap();
+                let db_path = &config.codebase.embedding_db_uri;
+                let tantivy_dir = std::path::Path::new(db_path).join("tantivy_bm25");
+                match TantivyBm25Index::open_or_create(&tantivy_dir) {
+                    Ok(idx) => {
+                        tracing::info!("Tantivy BM25 index ready at {:?}", tantivy_dir);
+                        Arc::new(idx) as Arc<dyn TextSearchProvider>
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create Tantivy index (search will fall back to dense-only): {}", e);
+                        Arc::new(FallbackTextSearchProvider) as Arc<dyn TextSearchProvider>
+                    }
+                }
+            } else {
+                Arc::new(FallbackTextSearchProvider) as Arc<dyn TextSearchProvider>
+            }
+        };
+
+        // Store shared index in StorageManager for file watcher access
+        self.storage.set_bm25_index(shared_bm25_index.clone());
+
+        // 触发嵌入索引构建 (pass shared index to avoid LockBusy)
+        if let Err(e) = trigger_embedding_build(self.storage.clone(), repo_path.clone(), Some(shared_bm25_index.clone())).await {
             tracing::info!("Embedding build skipped: {}", e);
         }
 
@@ -147,18 +173,8 @@ impl CodeBaseServer {
                     }
                 };
                 
-                // 创建 Tantivy BM25 Index (复用现有 index 目录)
-                let tantivy_dir = std::path::Path::new(db_path).join("tantivy_bm25");
-                let tantivy_index = match TantivyBm25Index::open_or_create(&tantivy_dir) {
-                    Ok(idx) => {
-                        tracing::info!("Tantivy BM25 index ready at {:?}", tantivy_dir);
-                        Arc::new(idx) as Arc<dyn TextSearchProvider>
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to create Tantivy index (search will fall back to dense-only): {}", e);
-                        Arc::new(FallbackTextSearchProvider) as Arc<dyn TextSearchProvider>
-                    }
-                };
+                // 复用已创建的共享 Tantivy BM25 Index (避免 LockBusy)
+                let tantivy_index = shared_bm25_index.clone();
                 
                 // 创建 HybridSearchService
                 if let Some(embedding_service) = embedding_service {
@@ -454,5 +470,8 @@ impl crate::storage::traits_bm25::TextSearchProvider for FallbackTextSearchProvi
     }
     async fn is_ready(&self) -> bool {
         false
+    }
+    async fn document_count(&self) -> anyhow::Result<usize> {
+        Ok(0)
     }
 }

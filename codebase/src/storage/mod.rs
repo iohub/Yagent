@@ -24,6 +24,7 @@ use crate::cli::args::StorageMode;
 use crate::config::Config;
 use crate::services::commit_embedding_service::{CommitEmbeddingService, CommitEmbeddingProvider};
 use crate::services::repo_knowledge_service::{RepoKnowledgeService, RepoKnowledgeEmbeddingProvider};
+use crate::storage::traits_bm25::TextSearchProvider;
 
 pub struct StorageManager {
     persistence: Arc<PersistenceManager>,
@@ -39,6 +40,9 @@ pub struct StorageManager {
     commit_embedding_service: parking_lot::Mutex<Option<Arc<CommitEmbeddingService>>>,
     /// Repo Knowledge 向量嵌入服务（使用 Mutex 支持内部可变性）
     repo_knowledge_service: parking_lot::Mutex<Option<Arc<RepoKnowledgeService>>>,
+    /// 共享的 BM25 全文搜索索引（Tantivy）
+    /// 用于在 server 启动、background embedding task 和文件 watcher 之间共享同一实例
+    pub bm25_index: Arc<parking_lot::RwLock<Option<Arc<dyn TextSearchProvider>>>>,
 }
 
 impl StorageManager {
@@ -62,6 +66,7 @@ impl StorageManager {
             current_repo: Arc::new(RwLock::new(None)),
             commit_embedding_service: parking_lot::Mutex::new(None),
             repo_knowledge_service: parking_lot::Mutex::new(None),
+            bm25_index: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -79,6 +84,7 @@ impl StorageManager {
             current_repo: Arc::new(RwLock::new(None)),
             commit_embedding_service: parking_lot::Mutex::new(None),
             repo_knowledge_service: parking_lot::Mutex::new(None),
+            bm25_index: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -116,6 +122,14 @@ impl StorageManager {
 
     pub fn get_incremental(&self) -> Arc<IncrementalManager> {
         self.incremental.clone()
+    }
+
+    pub fn set_bm25_index(&self, index: Arc<dyn TextSearchProvider>) {
+        *self.bm25_index.write() = Some(index);
+    }
+
+    pub fn get_bm25_index(&self) -> Option<Arc<dyn TextSearchProvider>> {
+        self.bm25_index.read().clone()
     }
 
     pub fn get_graph(&self) -> Arc<RwLock<Option<PetCodeGraph>>> {

@@ -1,0 +1,716 @@
+{
+  "functions": [
+    {
+      "id": "83b966d1-993a-4a2d-b24c-d2c818d4495e",
+      "name": "subtract",
+      "file_path": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_start": 7,
+      "line_end": 11,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "subtract()"
+    },
+    {
+      "id": "203c8905-333b-4feb-89e1-99a1a11fc46d",
+      "name": "get_raw_data",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 26,
+      "line_end": 28,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "get_raw_data()"
+    },
+    {
+      "id": "d5b6327d-ec4a-4e01-a832-a43f594e8220",
+      "name": "new",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 90,
+      "line_end": 94,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "new()"
+    },
+    {
+      "id": "e3aede9b-94c1-4a77-80a3-f1c9b53ded79",
+      "name": "log_operation",
+      "file_path": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_start": 29,
+      "line_end": 33,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "log_operation()"
+    },
+    {
+      "id": "98761c8e-3eb2-45cd-99a1-5fe63594f9e9",
+      "name": "parse_raw_data",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 30,
+      "line_end": 32,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "parse_raw_data()"
+    },
+    {
+      "id": "418aa3b7-e199-419f-b19e-804d81dd0e80",
+      "name": "divide",
+      "file_path": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_start": 19,
+      "line_end": 27,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "divide()"
+    },
+    {
+      "id": "e79c21d1-56ab-478c-9953-e6a9b7e3a2b0",
+      "name": "filter_even_numbers",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 71,
+      "line_end": 79,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "filter_even_numbers()"
+    },
+    {
+      "id": "f626e44b-ca99-4746-b4da-1ca309e9e5ef",
+      "name": "complex_calculation",
+      "file_path": "tests/test_repos/simple_rust_project/src/lib.rs",
+      "line_start": 13,
+      "line_end": 17,
+      "namespace": "tests",
+      "language": "rust",
+      "signature": "complex_calculation()"
+    },
+    {
+      "id": "a0913ec7-e1a4-4596-bc7e-e32dca2f6357",
+      "name": "apply_multiplier",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 115,
+      "line_end": 117,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "apply_multiplier()"
+    },
+    {
+      "id": "0126f559-2bd2-4af0-b9e6-69f98fd339c9",
+      "name": "multiply",
+      "file_path": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_start": 13,
+      "line_end": 17,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "multiply()"
+    },
+    {
+      "id": "106d89c8-7e34-43eb-bfe4-4f49aae687b6",
+      "name": "factorial",
+      "file_path": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_start": 45,
+      "line_end": 51,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "factorial()"
+    },
+    {
+      "id": "861a3d45-56cf-4d53-8ab9-4f77e0908c22",
+      "name": "default_value",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 55,
+      "line_end": 57,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "default_value()"
+    },
+    {
+      "id": "9bca134c-8a9d-4075-8438-a7979ba4011b",
+      "name": "add_to_sum",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 67,
+      "line_end": 69,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "add_to_sum()"
+    },
+    {
+      "id": "4a9de5b5-170b-440b-ba5d-e20642655273",
+      "name": "double_value",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 39,
+      "line_end": 41,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "double_value()"
+    },
+    {
+      "id": "13508886-9f59-4752-aa79-40d2533ac0bf",
+      "name": "get_operator_symbol",
+      "file_path": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_start": 35,
+      "line_end": 43,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "get_operator_symbol()"
+    },
+    {
+      "id": "0a659982-479c-4bd8-aa38-8120e1ad06c5",
+      "name": "process",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 96,
+      "line_end": 104,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "process()"
+    },
+    {
+      "id": "e3d2a7d8-ccfc-4d13-975c-614ce263aeec",
+      "name": "compute_value",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 106,
+      "line_end": 109,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "compute_value()"
+    },
+    {
+      "id": "8c00b7f0-4f85-4057-af85-9418fa31af59",
+      "name": "transform_data",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 34,
+      "line_end": 37,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "transform_data()"
+    },
+    {
+      "id": "8ad0372c-f3d1-4da7-8b38-e966fcaf0ff1",
+      "name": "public_function",
+      "file_path": "tests/test_repos/simple_rust_project/src/lib.rs",
+      "line_start": 4,
+      "line_end": 7,
+      "namespace": "tests",
+      "language": "rust",
+      "signature": "public_function()"
+    },
+    {
+      "id": "c515ebc6-91ed-47c1-95ec-1a305d2af5bd",
+      "name": "fibonacci",
+      "file_path": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_start": 53,
+      "line_end": 59,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "fibonacci()"
+    },
+    {
+      "id": "155c4d7e-30bc-44c1-b464-711a7fda5adb",
+      "name": "main",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 3,
+      "line_end": 13,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "main()"
+    },
+    {
+      "id": "473cb739-4ae3-4921-b280-527b42841dae",
+      "name": "is_even",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 81,
+      "line_end": 83,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "is_even()"
+    },
+    {
+      "id": "2a4952cd-c102-4cd2-bab1-e5dd353218e8",
+      "name": "get_base_value",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 111,
+      "line_end": 113,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "get_base_value()"
+    },
+    {
+      "id": "f35899bb-db58-4b44-b9d3-83fcb95417e0",
+      "name": "private_helper",
+      "file_path": "tests/test_repos/simple_rust_project/src/lib.rs",
+      "line_start": 9,
+      "line_end": 11,
+      "namespace": "tests",
+      "language": "rust",
+      "signature": "private_helper()"
+    },
+    {
+      "id": "e9feaa8d-d9ab-40ca-b680-a7960abfc8d6",
+      "name": "calculate_sum",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 59,
+      "line_end": 65,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "calculate_sum()"
+    },
+    {
+      "id": "683b8aa1-104e-4bcd-8653-3f68a3f6510a",
+      "name": "validate_data",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 47,
+      "line_end": 53,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "validate_data()"
+    },
+    {
+      "id": "0e45bf9d-da9a-4670-b3df-bd456193a57d",
+      "name": "process_data",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 15,
+      "line_end": 19,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "process_data()"
+    },
+    {
+      "id": "2b67b5b2-04b6-4cad-bee1-cadb4ebed60c",
+      "name": "add",
+      "file_path": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_start": 1,
+      "line_end": 5,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "add()"
+    },
+    {
+      "id": "30f7d3bc-d6a1-4297-b4d6-78d1e74fcd52",
+      "name": "fetch_data",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 21,
+      "line_end": 24,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "fetch_data()"
+    },
+    {
+      "id": "dbbee9fd-870a-449a-bf95-24a36e492fb8",
+      "name": "add_offset",
+      "file_path": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_start": 43,
+      "line_end": 45,
+      "namespace": "crate",
+      "language": "rust",
+      "signature": "add_offset()"
+    }
+  ],
+  "call_relations": [
+    {
+      "caller_id": "8ad0372c-f3d1-4da7-8b38-e966fcaf0ff1",
+      "callee_id": "f35899bb-db58-4b44-b9d3-83fcb95417e0",
+      "caller_name": "public_function",
+      "callee_name": "private_helper",
+      "caller_file": "tests/test_repos/simple_rust_project/src/lib.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/lib.rs",
+      "line_number": 5,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "f626e44b-ca99-4746-b4da-1ca309e9e5ef",
+      "callee_id": "2b67b5b2-04b6-4cad-bee1-cadb4ebed60c",
+      "caller_name": "complex_calculation",
+      "callee_name": "add",
+      "caller_file": "tests/test_repos/simple_rust_project/src/lib.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_number": 14,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "f626e44b-ca99-4746-b4da-1ca309e9e5ef",
+      "callee_id": "0126f559-2bd2-4af0-b9e6-69f98fd339c9",
+      "caller_name": "complex_calculation",
+      "callee_name": "multiply",
+      "caller_file": "tests/test_repos/simple_rust_project/src/lib.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_number": 15,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "2b67b5b2-04b6-4cad-bee1-cadb4ebed60c",
+      "callee_id": "e3aede9b-94c1-4a77-80a3-f1c9b53ded79",
+      "caller_name": "add",
+      "callee_name": "log_operation",
+      "caller_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_number": 3,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "83b966d1-993a-4a2d-b24c-d2c818d4495e",
+      "callee_id": "e3aede9b-94c1-4a77-80a3-f1c9b53ded79",
+      "caller_name": "subtract",
+      "callee_name": "log_operation",
+      "caller_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_number": 9,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "0126f559-2bd2-4af0-b9e6-69f98fd339c9",
+      "callee_id": "e3aede9b-94c1-4a77-80a3-f1c9b53ded79",
+      "caller_name": "multiply",
+      "callee_name": "log_operation",
+      "caller_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_number": 15,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "418aa3b7-e199-419f-b19e-804d81dd0e80",
+      "callee_id": "e3aede9b-94c1-4a77-80a3-f1c9b53ded79",
+      "caller_name": "divide",
+      "callee_name": "log_operation",
+      "caller_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_number": 24,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "106d89c8-7e34-43eb-bfe4-4f49aae687b6",
+      "callee_id": "106d89c8-7e34-43eb-bfe4-4f49aae687b6",
+      "caller_name": "factorial",
+      "callee_name": "factorial",
+      "caller_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_number": 49,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "c515ebc6-91ed-47c1-95ec-1a305d2af5bd",
+      "callee_id": "c515ebc6-91ed-47c1-95ec-1a305d2af5bd",
+      "caller_name": "fibonacci",
+      "callee_name": "fibonacci",
+      "caller_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_number": 57,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "c515ebc6-91ed-47c1-95ec-1a305d2af5bd",
+      "callee_id": "c515ebc6-91ed-47c1-95ec-1a305d2af5bd",
+      "caller_name": "fibonacci",
+      "callee_name": "fibonacci",
+      "caller_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/math.rs",
+      "line_number": 57,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "155c4d7e-30bc-44c1-b464-711a7fda5adb",
+      "callee_id": "0e45bf9d-da9a-4670-b3df-bd456193a57d",
+      "caller_name": "main",
+      "callee_name": "process_data",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 4,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "155c4d7e-30bc-44c1-b464-711a7fda5adb",
+      "callee_id": "e9feaa8d-d9ab-40ca-b680-a7960abfc8d6",
+      "caller_name": "main",
+      "callee_name": "calculate_sum",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 8,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "155c4d7e-30bc-44c1-b464-711a7fda5adb",
+      "callee_id": "e79c21d1-56ab-478c-9953-e6a9b7e3a2b0",
+      "caller_name": "main",
+      "callee_name": "filter_even_numbers",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 11,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "0e45bf9d-da9a-4670-b3df-bd456193a57d",
+      "callee_id": "30f7d3bc-d6a1-4297-b4d6-78d1e74fcd52",
+      "caller_name": "process_data",
+      "callee_name": "fetch_data",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 16,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "0e45bf9d-da9a-4670-b3df-bd456193a57d",
+      "callee_id": "8c00b7f0-4f85-4057-af85-9418fa31af59",
+      "caller_name": "process_data",
+      "callee_name": "transform_data",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 17,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "0e45bf9d-da9a-4670-b3df-bd456193a57d",
+      "callee_id": "683b8aa1-104e-4bcd-8653-3f68a3f6510a",
+      "caller_name": "process_data",
+      "callee_name": "validate_data",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 18,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "30f7d3bc-d6a1-4297-b4d6-78d1e74fcd52",
+      "callee_id": "203c8905-333b-4feb-89e1-99a1a11fc46d",
+      "caller_name": "fetch_data",
+      "callee_name": "get_raw_data",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 22,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "30f7d3bc-d6a1-4297-b4d6-78d1e74fcd52",
+      "callee_id": "98761c8e-3eb2-45cd-99a1-5fe63594f9e9",
+      "caller_name": "fetch_data",
+      "callee_name": "parse_raw_data",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 23,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "8c00b7f0-4f85-4057-af85-9418fa31af59",
+      "callee_id": "4a9de5b5-170b-440b-ba5d-e20642655273",
+      "caller_name": "transform_data",
+      "callee_name": "double_value",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 35,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "8c00b7f0-4f85-4057-af85-9418fa31af59",
+      "callee_id": "dbbee9fd-870a-449a-bf95-24a36e492fb8",
+      "caller_name": "transform_data",
+      "callee_name": "add_offset",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 36,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "683b8aa1-104e-4bcd-8653-3f68a3f6510a",
+      "callee_id": "861a3d45-56cf-4d53-8ab9-4f77e0908c22",
+      "caller_name": "validate_data",
+      "callee_name": "default_value",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 51,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "e9feaa8d-d9ab-40ca-b680-a7960abfc8d6",
+      "callee_id": "9bca134c-8a9d-4075-8438-a7979ba4011b",
+      "caller_name": "calculate_sum",
+      "callee_name": "add_to_sum",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 62,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "e79c21d1-56ab-478c-9953-e6a9b7e3a2b0",
+      "callee_id": "d5b6327d-ec4a-4e01-a832-a43f594e8220",
+      "caller_name": "filter_even_numbers",
+      "callee_name": "new",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 72,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "e79c21d1-56ab-478c-9953-e6a9b7e3a2b0",
+      "callee_id": "473cb739-4ae3-4921-b280-527b42841dae",
+      "caller_name": "filter_even_numbers",
+      "callee_name": "is_even",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 74,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "0a659982-479c-4bd8-aa38-8120e1ad06c5",
+      "callee_id": "e3d2a7d8-ccfc-4d13-975c-614ce263aeec",
+      "caller_name": "process",
+      "callee_name": "compute_value",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 101,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "e3d2a7d8-ccfc-4d13-975c-614ce263aeec",
+      "callee_id": "2a4952cd-c102-4cd2-bab1-e5dd353218e8",
+      "caller_name": "compute_value",
+      "callee_name": "get_base_value",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 107,
+      "is_resolved": true
+    },
+    {
+      "caller_id": "e3d2a7d8-ccfc-4d13-975c-614ce263aeec",
+      "callee_id": "a0913ec7-e1a4-4596-bc7e-e32dca2f6357",
+      "caller_name": "compute_value",
+      "callee_name": "apply_multiplier",
+      "caller_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "callee_file": "tests/test_repos/simple_rust_project/src/main.rs",
+      "line_number": 108,
+      "is_resolved": true
+    }
+  ],
+  "function_names": {
+    "divide": [
+      "418aa3b7-e199-419f-b19e-804d81dd0e80"
+    ],
+    "get_raw_data": [
+      "203c8905-333b-4feb-89e1-99a1a11fc46d"
+    ],
+    "calculate_sum": [
+      "e9feaa8d-d9ab-40ca-b680-a7960abfc8d6"
+    ],
+    "factorial": [
+      "106d89c8-7e34-43eb-bfe4-4f49aae687b6"
+    ],
+    "compute_value": [
+      "e3d2a7d8-ccfc-4d13-975c-614ce263aeec"
+    ],
+    "is_even": [
+      "473cb739-4ae3-4921-b280-527b42841dae"
+    ],
+    "fibonacci": [
+      "c515ebc6-91ed-47c1-95ec-1a305d2af5bd"
+    ],
+    "process_data": [
+      "0e45bf9d-da9a-4670-b3df-bd456193a57d"
+    ],
+    "add_to_sum": [
+      "9bca134c-8a9d-4075-8438-a7979ba4011b"
+    ],
+    "multiply": [
+      "0126f559-2bd2-4af0-b9e6-69f98fd339c9"
+    ],
+    "subtract": [
+      "83b966d1-993a-4a2d-b24c-d2c818d4495e"
+    ],
+    "default_value": [
+      "861a3d45-56cf-4d53-8ab9-4f77e0908c22"
+    ],
+    "add_offset": [
+      "dbbee9fd-870a-449a-bf95-24a36e492fb8"
+    ],
+    "add": [
+      "2b67b5b2-04b6-4cad-bee1-cadb4ebed60c"
+    ],
+    "process": [
+      "0a659982-479c-4bd8-aa38-8120e1ad06c5"
+    ],
+    "new": [
+      "d5b6327d-ec4a-4e01-a832-a43f594e8220"
+    ],
+    "log_operation": [
+      "e3aede9b-94c1-4a77-80a3-f1c9b53ded79"
+    ],
+    "fetch_data": [
+      "30f7d3bc-d6a1-4297-b4d6-78d1e74fcd52"
+    ],
+    "complex_calculation": [
+      "f626e44b-ca99-4746-b4da-1ca309e9e5ef"
+    ],
+    "transform_data": [
+      "8c00b7f0-4f85-4057-af85-9418fa31af59"
+    ],
+    "double_value": [
+      "4a9de5b5-170b-440b-ba5d-e20642655273"
+    ],
+    "get_operator_symbol": [
+      "13508886-9f59-4752-aa79-40d2533ac0bf"
+    ],
+    "parse_raw_data": [
+      "98761c8e-3eb2-45cd-99a1-5fe63594f9e9"
+    ],
+    "validate_data": [
+      "683b8aa1-104e-4bcd-8653-3f68a3f6510a"
+    ],
+    "filter_even_numbers": [
+      "e79c21d1-56ab-478c-9953-e6a9b7e3a2b0"
+    ],
+    "private_helper": [
+      "f35899bb-db58-4b44-b9d3-83fcb95417e0"
+    ],
+    "apply_multiplier": [
+      "a0913ec7-e1a4-4596-bc7e-e32dca2f6357"
+    ],
+    "get_base_value": [
+      "2a4952cd-c102-4cd2-bab1-e5dd353218e8"
+    ],
+    "public_function": [
+      "8ad0372c-f3d1-4da7-8b38-e966fcaf0ff1"
+    ],
+    "main": [
+      "155c4d7e-30bc-44c1-b464-711a7fda5adb"
+    ]
+  },
+  "file_functions": {
+    "tests/test_repos/simple_rust_project/src/lib.rs": [
+      "f626e44b-ca99-4746-b4da-1ca309e9e5ef",
+      "8ad0372c-f3d1-4da7-8b38-e966fcaf0ff1",
+      "f35899bb-db58-4b44-b9d3-83fcb95417e0"
+    ],
+    "tests/test_repos/simple_rust_project/src/main.rs": [
+      "203c8905-333b-4feb-89e1-99a1a11fc46d",
+      "d5b6327d-ec4a-4e01-a832-a43f594e8220",
+      "98761c8e-3eb2-45cd-99a1-5fe63594f9e9",
+      "e79c21d1-56ab-478c-9953-e6a9b7e3a2b0",
+      "a0913ec7-e1a4-4596-bc7e-e32dca2f6357",
+      "861a3d45-56cf-4d53-8ab9-4f77e0908c22",
+      "9bca134c-8a9d-4075-8438-a7979ba4011b",
+      "4a9de5b5-170b-440b-ba5d-e20642655273",
+      "0a659982-479c-4bd8-aa38-8120e1ad06c5",
+      "e3d2a7d8-ccfc-4d13-975c-614ce263aeec",
+      "8c00b7f0-4f85-4057-af85-9418fa31af59",
+      "155c4d7e-30bc-44c1-b464-711a7fda5adb",
+      "473cb739-4ae3-4921-b280-527b42841dae",
+      "2a4952cd-c102-4cd2-bab1-e5dd353218e8",
+      "e9feaa8d-d9ab-40ca-b680-a7960abfc8d6",
+      "683b8aa1-104e-4bcd-8653-3f68a3f6510a",
+      "0e45bf9d-da9a-4670-b3df-bd456193a57d",
+      "30f7d3bc-d6a1-4297-b4d6-78d1e74fcd52",
+      "dbbee9fd-870a-449a-bf95-24a36e492fb8"
+    ],
+    "tests/test_repos/simple_rust_project/src/math.rs": [
+      "83b966d1-993a-4a2d-b24c-d2c818d4495e",
+      "e3aede9b-94c1-4a77-80a3-f1c9b53ded79",
+      "418aa3b7-e199-419f-b19e-804d81dd0e80",
+      "0126f559-2bd2-4af0-b9e6-69f98fd339c9",
+      "106d89c8-7e34-43eb-bfe4-4f49aae687b6",
+      "13508886-9f59-4752-aa79-40d2533ac0bf",
+      "c515ebc6-91ed-47c1-95ec-1a305d2af5bd",
+      "2b67b5b2-04b6-4cad-bee1-cadb4ebed60c"
+    ]
+  },
+  "stats": {
+    "total_functions": 30,
+    "total_files": 3,
+    "total_languages": 1,
+    "resolved_calls": 27,
+    "unresolved_calls": 0,
+    "languages": {
+      "rust": 30
+    }
+  }
+}

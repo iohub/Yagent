@@ -17,6 +17,7 @@ use md5;
 pub async fn trigger_embedding_build(
     storage: Arc<StorageManager>,
     repo_path: String,
+    shared_bm25: Option<Arc<dyn crate::storage::traits_bm25::TextSearchProvider>>,
 ) -> Result<(), String> {
     // Check and set lock
     {
@@ -50,6 +51,7 @@ pub async fn trigger_embedding_build(
     let repo_path_clone = repo_path.clone();
     let db_path_clone = db_path.clone();
     let config_clone = config.clone();
+    let shared_bm25_for_task = shared_bm25.clone();
 
     // Spawn background task
     tokio::spawn(async move {
@@ -62,18 +64,37 @@ pub async fn trigger_embedding_build(
             let hash = md5::compute(&repo_path_clone);
             let collection = format!("{}_{:x}", last_dir, hash);
 
-            // Create Tantivy BM25 index alongside EmbeddingService
-            let tantivy_dir = std::path::Path::new(&db_path_clone).join("tantivy_bm25");
-            let bm25_index = match TantivyBm25Index::open_or_create(&tantivy_dir) {
-                Ok(idx) => {
-                    tracing::info!("Tantivy BM25 index ready at {:?}", tantivy_dir);
-                    Some(Arc::new(idx) as Arc<dyn crate::storage::traits_bm25::TextSearchProvider>)
+            // Use shared BM25 index if provided, otherwise create a new one
+            let bm25_index: Option<Arc<dyn crate::storage::traits_bm25::TextSearchProvider>> = 
+                if let Some(idx) = shared_bm25_for_task {
+                    // Reuse the shared index (avoids LockBusy conflict)
+                    tracing::info!("Reusing shared Tantivy BM25 index");
+                    Some(idx)
+                } else {
+                    // Fallback: create a new index (may fail with LockBusy if server holds the lock)
+                    let tantivy_dir = std::path::Path::new(&db_path_clone).join("tantivy_bm25");
+                    match TantivyBm25Index::open_or_create(&tantivy_dir) {
+                        Ok(idx) => {
+                            tracing::info!("Tantivy BM25 index ready at {:?}", tantivy_dir);
+                            Some(Arc::new(idx) as Arc<dyn crate::storage::traits_bm25::TextSearchProvider>)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to create Tantivy index (search will fall back to dense-only): {}", e);
+                            None
+                        }
+                    }
+                };
+
+            // ===== 检查 BM25 索引是否为空（在 bm25_index 被移动到 EmbeddingService 之前） =====
+            let mut force_full_rebuild = false;
+            if let Some(ref bm25) = bm25_index {
+                if let Ok(count) = bm25.document_count().await {
+                    if count == 0 {
+                        tracing::warn!("BM25 index is empty (0 docs)");
+                        force_full_rebuild = true;
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to create Tantivy index (search will fall back to dense-only): {}", e);
-                    None
-                }
-            };
+            }
 
             // Create service and run vectorization
             let service = EmbeddingService::new(&db_path_clone, collection.clone(), Some(&config_clone), bm25_index).await
@@ -95,6 +116,15 @@ pub async fn trigger_embedding_build(
                         }
                     }
                 }
+            }
+
+            // 如果索引为空且有已有哈希，则强制全量重建
+            if force_full_rebuild && existing_hashes.is_some() {
+                tracing::warn!(
+                    "BM25 index is empty but projects.json has existing hashes. \
+                     Forcing full rebuild to populate the index."
+                );
+                existing_hashes = None;
             }
 
             // Vectorize directory

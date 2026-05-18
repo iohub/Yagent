@@ -863,10 +863,10 @@ pub(crate) fn setup_watcher(
             } else {
                 tracing::info!("Re-analysis completed successfully");
             }
-            // Trigger embedding build
+            // Try to reuse shared BM25 index from StorageManager (avoids LockBusy)
             let repo_path = project_dir_clone.to_string_lossy().to_string();
-            tracing::info!("Triggering embedding rebuild for {}", repo_path);
-            if let Err(e) = vectorize::trigger_embedding_build(storage_clone.clone(), repo_path).await {
+            let bm25_for_watcher = storage_clone.get_bm25_index();
+            if let Err(e) = vectorize::trigger_embedding_build(storage_clone.clone(), repo_path, bm25_for_watcher).await {
                     tracing::info!("Embedding build skipped: {}", e);
             }
         }

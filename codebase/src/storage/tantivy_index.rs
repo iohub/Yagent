@@ -349,4 +349,10 @@ impl TextSearchProvider for TantivyBm25Index {
         // Check if we can read from the index
         self.index.reader().is_ok()
     }
+
+    async fn document_count(&self) -> anyhow::Result<usize> {
+        let reader = self.index.reader().map_err(|e| anyhow!("Tantivy reader error: {}", e))?;
+        let searcher = reader.searcher();
+        Ok(searcher.num_docs() as usize)
+    }
 }

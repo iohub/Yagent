@@ -117,4 +117,7 @@ pub trait TextSearchProvider: Send + Sync {
 
     /// 检查索引是否已就绪（目录存在且可读）。用于降级决策。
     async fn is_ready(&self) -> bool;
+
+    /// 返回索引中的文档总数。用于判断索引是否为空。
+    async fn document_count(&self) -> anyhow::Result<usize>;
 }
