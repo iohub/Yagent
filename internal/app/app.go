@@ -216,17 +216,13 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		c := &ca.config.Compact
 		compactCfg = compact.ConfigFrom(
 			c.MaxContextTokens,
-			c.Strategy,
 			c.EnableAutoCompact,
 			c.SummarizationModel,
 			c.SummarizationProvider,
-			c.L1Threshold,
-			c.L2Threshold,
-			c.L3Threshold,
 			c.SummarizationTimeout,
-			c.KeepRecentRounds,
-			c.KeepTaskConclusions,
 			c.SummarizationMaxInputTokens,
+			c.SummarizationPrompt,
+			c.KeepRecentRounds,
 		)
 
 		// 为 compact 摘要创建独立的 LLM 引擎（如果配置了 summarization_provider）

@@ -778,8 +778,8 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		} else {
 			a.compactEngine = engine
 			slog.Info("Context compact engine initialized",
-				"strategy", a.compactConfig.Strategy.String(),
-				"max_tokens", a.compactConfig.MaxContextTokens)
+				"max_tokens", a.compactConfig.MaxContextTokens,
+				"summarization_model", a.compactConfig.SummarizationModel)
 		}
 	}
 
@@ -877,8 +877,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			} else if originalTokens > a.compactConfig.MaxContextTokens {
 				slog.Info("Context exceeds limit, triggering compression",
 					"original_tokens", originalTokens,
-					"max_tokens", a.compactConfig.MaxContextTokens,
-					"strategy", a.compactConfig.Strategy.String())
+					"max_tokens", a.compactConfig.MaxContextTokens)
 
 				// 执行压缩
 				result, err := a.compactEngine.Compress(ctx, messages)

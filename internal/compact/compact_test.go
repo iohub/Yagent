@@ -28,7 +28,6 @@ func (m *mockSummaryClient) GenerateSummary(ctx context.Context, messages []llm.
 func TestEngine_NoCompression(t *testing.T) {
 	cfg := &DefaultConfig
 	cfg.MaxContextTokens = 10000
-	cfg.Strategy = StrategyBalanced
 
 	engine, err := NewEngine(cfg, nil)
 	if err != nil {
@@ -52,158 +51,15 @@ func TestEngine_NoCompression(t *testing.T) {
 		t.Errorf("Expected no compression, got ratio %.2f", result.CompressionRatio)
 	}
 
-	if result.StrategyUsed != "balanced" {
-		t.Errorf("Expected strategy 'balanced', got '%s'", result.StrategyUsed)
-	}
-}
-
-// TestEngine_Conservative 测试保守策略
-func TestEngine_Conservative(t *testing.T) {
-	cfg := &Config{
-		MaxContextTokens:   500,
-		Strategy:           StrategyConservative,
-		L1Threshold:        400,
-		L2Threshold:        300,
-		L3Threshold:        200,
-		KeepRecentRounds:   2,
-	}
-
-	engine, err := NewEngine(cfg, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 包含超长tool输出，总token数要超过L2Threshold
-	// L2Compress 只在 >3000 字符时截断，所以这里用 4000 字符
-	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: "System prompt for the assistant"},
-		{Role: llm.RoleUser, Content: "User request with some details"},
-		{Role: llm.RoleTool, Content: strings.Repeat("x", 4000)}, // >3000 字符才会截断
-		{Role: llm.RoleAssistant, Content: "Done processing"},
-		{Role: llm.RoleUser, Content: "More content"},
-		{Role: llm.RoleAssistant, Content: "Final response"},
-	}
-
-	result, err := engine.Compress(context.Background(), messages)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 找到被截断的tool输出
-	foundTruncated := false
-	for _, msg := range result.CompressedMessages {
-		if msg.Role == llm.RoleTool && strings.Contains(msg.Content, "[...TRUNCATED...]") {
-			foundTruncated = true
-			break
-		}
-	}
-	if !foundTruncated {
-		t.Error("Tool output should be truncated with [..TRUNCATED..]")
-	}
-}
-
-// TestEngine_Balanced 测试平衡策略
-func TestEngine_Balanced(t *testing.T) {
-	cfg := &Config{
-		MaxContextTokens:   500,
-		Strategy:           StrategyBalanced,
-		L1Threshold:        400,
-		L2Threshold:        300,
-		KeepRecentRounds:   2,
-	}
-
-	engine, err := NewEngine(cfg, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 长对话
-	messages := make([]llm.Message, 0, 20)
-	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: "System"})
-	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: "User request"})
-
-	for i := 0; i < 10; i++ {
-		messages = append(messages, llm.Message{
-			Role:    llm.RoleAssistant,
-			Content: strings.Repeat("a", 100),
-		})
-		messages = append(messages, llm.Message{
-			Role:    llm.RoleTool,
-			Content: strings.Repeat("b", 100),
-		})
-	}
-
-	result, err := engine.Compress(context.Background(), messages)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// System和User应该被保留
-	if result.CompressedMessages[0].Role != llm.RoleSystem {
-		t.Error("System message should be preserved")
-	}
-	if result.CompressedMessages[1].Role != llm.RoleUser {
-		t.Error("User message should be preserved")
-	}
-}
-
-// TestEngine_Aggressive 测试激进策略
-func TestEngine_Aggressive(t *testing.T) {
-	cfg := &Config{
-		MaxContextTokens:   200,
-		Strategy:           StrategyAggressive,
-		L1Threshold:        500,
-		L2Threshold:        400,
-		L3Threshold:        300,
-		KeepRecentRounds:   2,
-	}
-
-	engine, err := NewEngine(cfg, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 很长对话
-	messages := make([]llm.Message, 0, 30)
-	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: "System"})
-	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: "User"})
-
-	for i := 0; i < 15; i++ {
-		messages = append(messages, llm.Message{
-			Role:    llm.RoleAssistant,
-			Content: strings.Repeat("a", 50),
-		})
-		messages = append(messages, llm.Message{
-			Role:    llm.RoleTool,
-			Content: strings.Repeat("b", 50),
-		})
-	}
-
-	result, err := engine.Compress(context.Background(), messages)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 验证压缩比
-	if result.CompressionRatio >= 1.0 {
-		t.Errorf("Expected compression ratio < 1.0, got %.2f", result.CompressionRatio)
-	}
-
-	// System消息应该被保留（L3Compress 始终保留第一条消息）
-	if result.CompressedMessages[0].Role != llm.RoleSystem {
-		t.Error("System message should be preserved")
+	if result.CompressionStats != "No compression needed" {
+		t.Errorf("Expected stats 'No compression needed', got '%s'", result.CompressionStats)
 	}
 }
 
 // TestEngine_EmptyMessages 测试空消息列表
 func TestEngine_EmptyMessages(t *testing.T) {
-	cfg := &Config{
-		MaxContextTokens: 1000,
-		Strategy:         StrategyBalanced,
-		L1Threshold:      800,
-		L2Threshold:      600,
-		L3Threshold:      400,
-	}
+	cfg := &DefaultConfig
+	cfg.MaxContextTokens = 1000
 
 	engine, err := NewEngine(cfg, nil)
 	if err != nil {
@@ -222,13 +78,8 @@ func TestEngine_EmptyMessages(t *testing.T) {
 
 // TestEngine_CountTokens 测试token计数
 func TestEngine_CountTokens(t *testing.T) {
-	cfg := &Config{
-		MaxContextTokens: 1000,
-		Strategy:         StrategyBalanced,
-		L1Threshold:      800,
-		L2Threshold:      600,
-		L3Threshold:      400,
-	}
+	cfg := &DefaultConfig
+	cfg.MaxContextTokens = 1000
 
 	engine, err := NewEngine(cfg, nil)
 	if err != nil {
@@ -250,12 +101,109 @@ func TestEngine_CountTokens(t *testing.T) {
 	}
 }
 
-// TestPriority_CalculatePriorities 测试优先级计算
-func TestPriority_CalculatePriorities(t *testing.T) {
+// TestEngine_CompressWithSummarizer 测试完整的 Engine + Mock Summarizer 压缩流程
+func TestEngine_CompressWithSummarizer(t *testing.T) {
 	cfg := &Config{
-		KeepRecentRounds: 3,
+		MaxContextTokens:            300,
+		EnableAutoCompact:           true,
+		SummarizationTimeout:        5 * time.Second,
+		SummarizationMaxInputTokens: 8000,
 	}
 
+	mockClient := &mockSummaryClient{
+		summary: "Summarized context: The conversation covered file operations and debugging.",
+	}
+
+	engine, err := NewEngine(cfg, mockClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 创建长对话 - 确保token数超过阈值
+	messages := make([]llm.Message, 0, 15)
+	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: "System prompt for the assistant"})
+	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: "Help me with the project"})
+
+	for i := 0; i < 7; i++ {
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleAssistant,
+			Content: strings.Repeat("a", 200), // 每条约50 tokens
+		})
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleTool,
+			Content: strings.Repeat("b", 200), // 每条约50 tokens
+		})
+	}
+	// 保留最近一轮
+	messages = append(messages, llm.Message{
+		Role:    llm.RoleUser,
+		Content: "Final question",
+	})
+
+	result, err := engine.Compress(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 验证压缩比 < 1（说明有压缩发生）
+	if result.CompressionRatio >= 1.0 {
+		t.Errorf("Expected compression ratio < 1.0 with summarizer, got %.2f", result.CompressionRatio)
+	}
+
+	// 验证 System 消息被保留
+	if result.CompressedMessages[0].Role != llm.RoleSystem {
+		t.Error("System message should be preserved")
+	}
+
+	// 验证压缩统计信息包含摘要信息
+	if !strings.Contains(result.CompressionStats, "LLM summarization") {
+		t.Error("Compression stats should mention LLM summarization")
+	}
+
+	// 验证 mock client 被调用
+	if mockClient.called == 0 {
+		t.Error("Mock summarization client should have been called")
+	}
+}
+
+// TestEngine_WithoutSummarizer 测试没有 summarizer 时的行为
+func TestEngine_WithoutSummarizer(t *testing.T) {
+	cfg := &Config{
+		MaxContextTokens: 100,
+	}
+
+	engine, err := NewEngine(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 创建超长消息
+	messages := make([]llm.Message, 0, 10)
+	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: "System prompt"})
+	for i := 0; i < 9; i++ {
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleAssistant,
+			Content: strings.Repeat("x", 500),
+		})
+	}
+
+	result, err := engine.Compress(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 没有 summarizer 时应该返回原始消息
+	if result.CompressionRatio != 1.0 {
+		t.Errorf("Expected compression ratio 1.0 without summarizer, got %.2f", result.CompressionRatio)
+	}
+
+	if result.CompressionStats != "No summarizer available" {
+		t.Errorf("Expected 'No summarizer available' stats, got '%s'", result.CompressionStats)
+	}
+}
+
+// TestPriority_CalculatePriorities 测试优先级计算
+func TestPriority_CalculatePriorities(t *testing.T) {
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: "System"},
 		{Role: llm.RoleUser, Content: "User"},
@@ -264,7 +212,7 @@ func TestPriority_CalculatePriorities(t *testing.T) {
 	}
 
 	calc := NewPriorityCalculator(DefaultPriorityWeights)
-	priorities := calc.CalculatePriorities(context.Background(), messages, cfg)
+	priorities := calc.CalculatePriorities(context.Background(), messages, 3)
 
 	// System应该有最高优先级
 	if priorities[0].Priority <= priorities[2].Priority {
@@ -280,10 +228,6 @@ func TestPriority_CalculatePriorities(t *testing.T) {
 
 // TestPriority_Intermediate 测试"优先压缩中间"策略
 func TestPriority_Intermediate(t *testing.T) {
-	cfg := &Config{
-		KeepRecentRounds: 3,
-	}
-
 	// 模拟10条消息
 	messages := make([]llm.Message, 10)
 	messages[0] = llm.Message{Role: llm.RoleSystem, Content: "System"}
@@ -297,7 +241,7 @@ func TestPriority_Intermediate(t *testing.T) {
 	}
 
 	calc := NewPriorityCalculator(DefaultPriorityWeights)
-	priorities := calc.CalculatePriorities(context.Background(), messages, cfg)
+	priorities := calc.CalculatePriorities(context.Background(), messages, 3)
 
 	// 中间区域的消息（索引3-6）应该是中间对话
 	for i := 3; i <= 6; i++ {
@@ -466,181 +410,104 @@ func TestLLMSummarizer_Segmentation(t *testing.T) {
 	}
 }
 
-// TestEngine_WithSummarizer 完整的 Engine + Mock Summarizer 集成测试
-func TestEngine_WithSummarizer(t *testing.T) {
-	cfg := &Config{
-		MaxContextTokens:            300,
-		Strategy:                    StrategyBalanced,
-		L1Threshold:                 250,
-		L2Threshold:                 200,
-		L3Threshold:                 150,
-		KeepRecentRounds:            2,
-		SummarizationTimeout:        5 * time.Second,
-		SummarizationMaxInputTokens: 8000,
+// TestConfig_Validate 测试配置验证
+func TestConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     *Config
+		wantErr bool
+	}{
+		{
+			name: "valid config",
+			cfg: &Config{
+				MaxContextTokens: 1000,
+			},
+			wantErr: false,
+		},
+		{
+			name: "zero max tokens",
+			cfg: &Config{
+				MaxContextTokens: 0,
+			},
+			wantErr: false, // 允许0值
+		},
 	}
 
-	mockClient := &mockSummaryClient{
-		summary: "Summarized context: The conversation covered file operations and debugging.",
-	}
-
-	engine, err := NewEngine(cfg, mockClient)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 创建长对话 - 确保token数超过阈值
-	messages := make([]llm.Message, 0, 15)
-	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: "System prompt for the assistant"})
-	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: "Help me with the project"})
-
-	for i := 0; i < 7; i++ {
-		messages = append(messages, llm.Message{
-			Role:    llm.RoleAssistant,
-			Content: strings.Repeat("a", 200), // 每条约50 tokens
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Config.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
 		})
-		messages = append(messages, llm.Message{
-			Role:    llm.RoleTool,
-			Content: strings.Repeat("b", 200), // 每条约50 tokens
-		})
-	}
-	// 保留最近一轮
-	messages = append(messages, llm.Message{
-		Role:    llm.RoleUser,
-		Content: "Final question",
-	})
-
-	result, err := engine.Compress(context.Background(), messages)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 验证压缩比 < 1（说明有压缩发生）
-	if result.CompressionRatio >= 1.0 {
-		t.Errorf("Expected compression ratio < 1.0 with summarizer, got %.2f", result.CompressionRatio)
-	}
-
-	// 验证 System 和 User 消息被保留
-	if result.CompressedMessages[0].Role != llm.RoleSystem {
-		t.Error("System message should be preserved")
-	}
-
-	// 验证压缩统计信息包含 L1
-	if !strings.Contains(result.CompressionStats, "L1") {
-		t.Error("Compression stats should mention L1")
-	}
-
-	// 验证 mock client 被调用
-	if mockClient.called == 0 {
-		t.Error("Mock summarization client should have been called")
 	}
 }
 
-// TestRuleCompressor_L1WithNilSummarizer 测试 RuleCompressor L1 在 summarizer 为 nil 时降级
-func TestRuleCompressor_L1WithNilSummarizer(t *testing.T) {
-	cfg := &Config{
-		MaxContextTokens: 1000,
-		Strategy:         StrategyBalanced,
-	}
+// TestConfigFrom 测试 ConfigFrom 函数
+func TestConfigFrom(t *testing.T) {
+	cfg := ConfigFrom(
+		1000,     // maxTokens
+		true,     // enableAuto
+		"gpt-3.5", // model
+		"test",   // provider
+		30,       // timeoutSec
+		4000,     // summaryMaxInputTokens
+		"custom prompt", // summaryPrompt
+		3,        // keepRecentRounds
+	)
 
-	// 不传入 summarizer
-	rc := NewRuleCompressor(cfg, nil)
+	if cfg.MaxContextTokens != 1000 {
+		t.Errorf("Expected MaxContextTokens 1000, got %d", cfg.MaxContextTokens)
+	}
+	if !cfg.EnableAutoCompact {
+		t.Error("Expected EnableAutoCompact true")
+	}
+	if cfg.SummarizationModel != "gpt-3.5" {
+		t.Errorf("Expected SummarizationModel 'gpt-3.5', got '%s'", cfg.SummarizationModel)
+	}
+	if cfg.SummarizationProvider != "test" {
+		t.Errorf("Expected SummarizationProvider 'test', got '%s'", cfg.SummarizationProvider)
+	}
+	if cfg.SummarizationTimeout != 30*time.Second {
+		t.Errorf("Expected SummarizationTimeout 30s, got %v", cfg.SummarizationTimeout)
+	}
+	if cfg.SummarizationMaxInputTokens != 4000 {
+		t.Errorf("Expected SummarizationMaxInputTokens 4000, got %d", cfg.SummarizationMaxInputTokens)
+	}
+	if cfg.SummarizationPrompt != "custom prompt" {
+		t.Errorf("Expected SummarizationPrompt 'custom prompt', got '%s'", cfg.SummarizationPrompt)
+	}
+	if cfg.KeepRecentRounds != 3 {
+		t.Errorf("Expected KeepRecentRounds 3, got %d", cfg.KeepRecentRounds)
+	}
+}
+
+// TestGetPriorities 测试 GetPriorities 方法
+func TestGetPriorities(t *testing.T) {
+	cfg := &DefaultConfig
+	cfg.KeepRecentRounds = 3
+
+	engine, err := NewEngine(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: "System"},
 		{Role: llm.RoleUser, Content: "User"},
 		{Role: llm.RoleAssistant, Content: "Assistant"},
+		{Role: llm.RoleUser, Content: "Recent user"},
 	}
 
-	result, err := rc.L1Compress(context.Background(), messages, nil)
-	if err != nil {
-		t.Fatal(err)
+	priorities := engine.GetPriorities(messages)
+
+	// 应该有4个优先级
+	if len(priorities) != 4 {
+		t.Errorf("Expected 4 priorities, got %d", len(priorities))
 	}
 
-	// 应该返回原始消息
-	if len(result) != len(messages) {
-		t.Errorf("Expected %d messages, got %d", len(messages), len(result))
+	// System 消息应该有最高优先级
+	if priorities[0] <= priorities[2] {
+		t.Error("System message should have highest priority")
 	}
-}
-
-// TestRuleCompressor_L1WithSummarizer 测试 RuleCompressor L1 在 summarizer 存在时正常工作
-func TestRuleCompressor_L1WithSummarizer(t *testing.T) {
-	cfg := &Config{
-		KeepRecentRounds:            1,
-		SummarizationTimeout:        5 * time.Second,
-		SummarizationMaxInputTokens: 8000,
-	}
-
-	mockClient := &mockSummaryClient{
-		summary: "Summarized: project structure and auth module",
-	}
-
-	summarizer := NewLLMSummarizer(mockClient, cfg)
-	rc := NewRuleCompressor(cfg, summarizer)
-
-	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: "System"},
-		{Role: llm.RoleUser, Content: "User"},
-		{Role: llm.RoleAssistant, Content: strings.Repeat("x", 500)},
-		{Role: llm.RoleTool, Content: strings.Repeat("y", 500)},
-		{Role: llm.RoleUser, Content: "Final question"},
-	}
-
-	priorities := []MessagePriority{
-		{Index: 0, Priority: 10.0, IsSystem: true},
-		{Index: 1, Priority: 8.0, IsUser: true},
-		{Index: 2, Priority: 4.0, IsIntermediate: true},
-		{Index: 3, Priority: 2.0, IsIntermediate: true},
-		{Index: 4, Priority: 8.0, IsUser: true},
-	}
-
-	result, err := rc.L1Compress(context.Background(), messages, priorities)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 应该包含摘要消息
-	foundSummary := false
-	for _, msg := range result {
-		if strings.Contains(msg.Content, "[CONTEXT SUMMARY]") {
-			foundSummary = true
-			break
-		}
-	}
-	if !foundSummary {
-		t.Error("Result should contain summary message")
-	}
-}
-
-// FuzzEngine 模糊测试
-func FuzzEngine(f *testing.F) {
-	cfg := &Config{
-		MaxContextTokens: 1000,
-		Strategy:         StrategyBalanced,
-		L1Threshold:      800,
-		L2Threshold:      600,
-		L3Threshold:      400,
-		KeepRecentRounds: 2,
-	}
-
-	f.Add("system", "user", "assistant", "tool")
-	f.Add("", "", "", "")
-
-	engine, err := NewEngine(cfg, nil)
-	if err != nil {
-		f.Fatal(err)
-	}
-
-	f.Fuzz(func(t *testing.T, s1, s2, s3, s4 string) {
-		messages := []llm.Message{
-			{Role: llm.RoleSystem, Content: s1},
-			{Role: llm.RoleUser, Content: s2},
-			{Role: llm.RoleAssistant, Content: s3},
-			{Role: llm.RoleTool, Content: s4},
-		}
-
-		_, err := engine.Compress(context.Background(), messages)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-	})
 }

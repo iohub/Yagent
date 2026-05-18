@@ -4,18 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
-	"strings"
 	"codeactor/internal/llm"
 )
 
 // Engine 压缩引擎
 type Engine struct {
-	config       *Config
-	tokenizer    Tokenizer
+	config     *Config
+	tokenizer  Tokenizer
 	priorityCalc *PriorityCalculator
-	ruleComp     *RuleCompressor
-	summarizer   *LLMSummarizer // 新增：LLM摘要器
+	summarizer *LLMSummarizer
 }
 
 // NewEngine 创建压缩引擎
@@ -34,7 +31,6 @@ func NewEngine(config *Config, summarizationClient SummarizationClient) (*Engine
 		config:       config,
 		tokenizer:    GetGlobalTokenizer(),
 		priorityCalc: NewPriorityCalculator(DefaultPriorityWeights),
-		ruleComp:     NewRuleCompressor(config, summarizer),
 		summarizer:   summarizer,
 	}, nil
 }
@@ -62,168 +58,54 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 			OriginalTokens:     originalTokens,
 			CompressedTokens:   originalTokens,
 			CompressionRatio:   1.0,
-			StrategyUsed:       e.config.Strategy.String(),
 			CompressionStats:   "No compression needed",
 		}, nil
 	}
 
-	// 计算优先级
-	priorities := e.priorityCalc.CalculatePriorities(ctx, messages, e.config)
+	// 如果没有摘要器，返回原始消息
+	if e.summarizer == nil {
+		slog.Warn("Context compression triggered but no summarizer available")
+		return &CompressResult{
+			CompressedMessages: messages,
+			OriginalTokens:     originalTokens,
+			CompressedTokens:   originalTokens,
+			CompressionRatio:   1.0,
+			CompressionStats:   "No summarizer available",
+		}, nil
+	}
 
-	// 按优先级排序（升序：低分优先被压缩）
-	sorted := make([]MessagePriority, len(priorities))
-	copy(sorted, priorities)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].Priority < sorted[j].Priority
-	})
+	// 计算优先级
+	priorities := e.priorityCalc.CalculatePriorities(ctx, messages, e.config.KeepRecentRounds)
 
 	slog.Info("Context compression triggered",
 		"original_tokens", originalTokens,
-		"max_tokens", e.config.MaxContextTokens,
-		"strategy", e.config.Strategy.String())
+		"max_tokens", e.config.MaxContextTokens)
 
-	// 执行多级压缩
-	var currentMessages []llm.Message
-	stats := []string{fmt.Sprintf("Strategy: %s", e.config.Strategy.String())}
-
-	switch e.config.Strategy {
-	case StrategyConservative:
-		currentMessages, stats = e.compressConservative(messages, priorities, originalTokens, stats)
-	case StrategyBalanced:
-		currentMessages, stats = e.compressBalanced(messages, priorities, originalTokens, stats)
-	case StrategyAggressive:
-		currentMessages, stats = e.compressAggressive(messages, priorities, originalTokens, stats)
-	}
-
-	// 最终校验
-	compressedTokens, err := e.CountTokens(currentMessages)
+	// 执行LLM摘要压缩
+	compressedMessages, err := e.summarizer.Summarize(ctx, messages, priorities)
 	if err != nil {
-		compressedTokens = len(currentMessages) // 降级估算
+		slog.Error("LLM summarization failed", "error", err)
+		return nil, fmt.Errorf("summarization failed: %w", err)
 	}
 
-	stats = append(stats, fmt.Sprintf("Final tokens: %d", compressedTokens))
+	// 计算压缩后token数
+	compressedTokens, err := e.CountTokens(compressedMessages)
+	if err != nil {
+		compressedTokens = len(compressedMessages) // 降级估算
+	}
+
+	compressionRatio := float64(compressedTokens) / float64(originalTokens)
+
+	stats := fmt.Sprintf("LLM summarization applied | Original: %d tokens | Compressed: %d tokens | Ratio: %.2f",
+		originalTokens, compressedTokens, compressionRatio)
 
 	return &CompressResult{
-		CompressedMessages: currentMessages,
+		CompressedMessages: compressedMessages,
 		OriginalTokens:     originalTokens,
 		CompressedTokens:   compressedTokens,
-		CompressionRatio:   float64(compressedTokens) / float64(originalTokens),
-		StrategyUsed:       e.config.Strategy.String(),
-		CompressionStats:   strings.Join(stats, " | "),
+		CompressionRatio:   compressionRatio,
+		CompressionStats:   stats,
 	}, nil
-}
-
-// compressConservative 保守策略
-func (e *Engine) compressConservative(
-	messages []llm.Message,
-	priorities []MessagePriority,
-	originalTokens int,
-	stats []string,
-) ([]llm.Message, []string) {
-	current := messages
-
-	// 只执行L2截断
-	if originalTokens > e.config.L2Threshold {
-		current = e.ruleComp.L2Compress(current)
-		stats = append(stats, "L2: Tool output truncated")
-
-		// 检查压缩后是否达标
-		tokens, _ := e.CountTokens(current)
-		if tokens > e.config.MaxContextTokens {
-			// 仍超限，强制L3
-			current = e.ruleComp.L3Compress(current, e.config.KeepRecentRounds)
-			stats = append(stats, "L3: Early context dropped")
-		}
-	}
-
-	return current, stats
-}
-
-// compressBalanced 平衡策略（默认）
-func (e *Engine) compressBalanced(
-	messages []llm.Message,
-	priorities []MessagePriority,
-	originalTokens int,
-	stats []string,
-) ([]llm.Message, []string) {
-	current := messages
-
-	// L1: 尝试LLM摘要压缩
-	if originalTokens > e.config.L1Threshold && e.summarizer != nil {
-		compressed, err := e.ruleComp.L1Compress(context.Background(), current, priorities)
-		if err != nil {
-			stats = append(stats, "L1: Failed - "+err.Error())
-		} else {
-			current = compressed
-			tokens, _ := e.CountTokens(current)
-			stats = append(stats, fmt.Sprintf("L1: LLM summarization applied (%d tokens)", tokens))
-		}
-	} else if originalTokens > e.config.L1Threshold {
-		stats = append(stats, "L1: Skipped (no summarization client)")
-	}
-
-	// L2: 规则截断
-	tokens, _ := e.CountTokens(current)
-	if tokens > e.config.L2Threshold {
-		current = e.ruleComp.L2Compress(current)
-		stats = append(stats, "L2: Tool output truncated")
-
-		tokens, _ = e.CountTokens(current)
-		if tokens > e.config.MaxContextTokens {
-			// L3: 丢弃早期
-			current = e.ruleComp.L3Compress(current, e.config.KeepRecentRounds)
-			stats = append(stats, "L3: Early context dropped")
-		}
-	}
-
-	return current, stats
-}
-
-// compressAggressive 激进策略
-func (e *Engine) compressAggressive(
-	messages []llm.Message,
-	priorities []MessagePriority,
-	originalTokens int,
-	stats []string,
-) ([]llm.Message, []string) {
-	current := messages
-
-	// L1: 尝试LLM摘要
-	if originalTokens > e.config.L1Threshold && e.summarizer != nil {
-		compressed, err := e.ruleComp.L1Compress(context.Background(), current, priorities)
-		if err != nil {
-			stats = append(stats, "L1: Failed - "+err.Error())
-		} else {
-			current = compressed
-			tokens, _ := e.CountTokens(current)
-			stats = append(stats, fmt.Sprintf("L1: LLM summarization applied (%d tokens)", tokens))
-		}
-	} else if originalTokens > e.config.L1Threshold {
-		stats = append(stats, "L1: Skipped (no summarization client)")
-	}
-
-	// L2: 截断
-	tokens, _ := e.CountTokens(current)
-	if tokens > e.config.L2Threshold {
-		current = e.ruleComp.L2Compress(current)
-		stats = append(stats, "L2: Tool output truncated")
-	}
-
-	// L3: 丢弃早期
-	tokens, _ = e.CountTokens(current)
-	if tokens > e.config.L3Threshold {
-		current = e.ruleComp.L3Compress(current, e.config.KeepRecentRounds)
-		stats = append(stats, "L3: Early context dropped")
-	}
-
-	// 最终兜底：如果仍超限，强制保留最近8轮
-	tokens, _ = e.CountTokens(current)
-	if tokens > e.config.MaxContextTokens {
-		current = e.ruleComp.L3Compress(current, 8)
-		stats = append(stats, "L3: Force keep recent 8 rounds")
-	}
-
-	return current, stats
 }
 
 // CountTokens 计算messages的总token数
@@ -241,5 +123,5 @@ func (e *Engine) CountTokens(messages []llm.Message) (int, error) {
 
 // GetPriorities 获取优先级分数
 func (e *Engine) GetPriorities(messages []llm.Message) map[int]float64 {
-	return e.priorityCalc.GetPriorities(messages, e.config)
+	return e.priorityCalc.GetPriorities(messages, e.config.KeepRecentRounds)
 }

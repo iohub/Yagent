@@ -81,14 +81,18 @@ func NewPriorityCalculator(weights PriorityWeights) *PriorityCalculator {
 func (pc *PriorityCalculator) CalculatePriorities(
 	ctx context.Context, 
 	messages []llm.Message, 
-	config *Config,
+	keepRecentRounds int,
 ) []MessagePriority {
+	if keepRecentRounds < 1 {
+		keepRecentRounds = 3 // 默认保留3轮
+	}
+	
 	priorities := make([]MessagePriority, len(messages))
 	totalLen := len(messages)
 	
 	for i, msg := range messages {
 		depth := totalLen - i // 距离末尾的深度（0=最新）
-		isRecent := depth <= config.KeepRecentRounds
+		isRecent := depth <= keepRecentRounds
 		isEarly := i < totalLen/3 // 前1/3是早期对话
 		isIntermediate := !isRecent && !isEarly // 中间区域
 		
@@ -158,8 +162,8 @@ func (pc *PriorityCalculator) calculateBaseScore(msg llm.Message, isRecent, isEa
 }
 
 // GetPriorities 获取所有消息的优先级分数
-func (pc *PriorityCalculator) GetPriorities(messages []llm.Message, config *Config) map[int]float64 {
-	priorities := pc.CalculatePriorities(context.Background(), messages, config)
+func (pc *PriorityCalculator) GetPriorities(messages []llm.Message, keepRecentRounds int) map[int]float64 {
+	priorities := pc.CalculatePriorities(context.Background(), messages, keepRecentRounds)
 	scores := make(map[int]float64)
 	for _, p := range priorities {
 		scores[p.Index] = p.Priority

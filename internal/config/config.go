@@ -396,39 +396,27 @@ type ContextCompactConfig struct {
 	// MaxContextTokens 最大上下文token数，默认198000
 	MaxContextTokens int `toml:"max_context_tokens"`
 
-	// Strategy 压缩策略: conservative | balanced | aggressive
-	Strategy string `toml:"compression_strategy"`
-
 	// EnableAutoCompact 是否自动触发压缩
 	EnableAutoCompact bool `toml:"enable_auto_compact"`
 
-	// SummarizationModel 用于L1摘要的轻量模型
+	// SummarizationModel 用于摘要的轻量模型
 	SummarizationModel string `toml:"summarization_model"`
 
-	// SummarizationProvider 用于L1摘要的LLM provider名称（可选，指向 providers 中定义的 provider）
+	// SummarizationProvider 用于摘要的LLM provider名称（可选，指向 providers 中定义的 provider）
 	// 为空则复用主 agent 的 LLM 引擎
 	SummarizationProvider string `toml:"summarization_provider"`
 
-	// L1Threshold 触发L1压缩的阈值
-	L1Threshold int `toml:"l1_token_threshold"`
-
-	// L2Threshold 触发L2压缩的阈值
-	L2Threshold int `toml:"l2_token_threshold"`
-
-	// L3Threshold 触发L3压缩的阈值
-	L3Threshold int `toml:"l3_token_threshold"`
-
-	// SummarizationTimeout L1摘要超时时间（秒）
+	// SummarizationTimeout 摘要超时时间（秒）
 	SummarizationTimeout int `toml:"summarization_timeout"`
-
-	// KeepRecentRounds 始终保留的最近对话轮数
-	KeepRecentRounds int `toml:"keep_recent_rounds"`
-
-	// KeepTaskConclusions 保留已完成任务的结论数
-	KeepTaskConclusions int `toml:"keep_task_conclusions"`
 
 	// SummarizationMaxInputTokens 摘要时单批次最大输入token数
 	SummarizationMaxInputTokens int `toml:"summarization_max_input_tokens"`
+
+	// SummarizationPrompt 自定义摘要提示词（可选）
+	SummarizationPrompt string `toml:"summarization_prompt"`
+
+	// KeepRecentRounds 始终保留的最近对话轮数（用于优先级计算）
+	KeepRecentRounds int `toml:"keep_recent_rounds"`
 }
 
 // CommitLearnerConfig commit 学习器配置

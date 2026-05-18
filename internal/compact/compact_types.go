@@ -6,7 +6,7 @@ import (
 )
 
 // SummarizationClient 摘要LLM客户端接口（最小化，只用于摘要）
-// 用于对低优先级消息进行智能摘要压缩
+// 用于对低优先级消息做智能摘要压缩
 type SummarizationClient interface {
 	// GenerateSummary 生成消息摘要。输入一批消息，输出结构化摘要文本。
 	GenerateSummary(ctx context.Context, messages []llm.Message) (string, error)
@@ -31,30 +31,5 @@ type CompressResult struct {
 	CompressedTokens   int
 	CompressionRatio   float64 // 压缩比 (0~1)，越小压缩越多
 	CompressionStats   string  // 压缩统计信息
-	StrategyUsed       string  // 使用的策略名称
-}
-
-// Strategy 压缩策略
-type Strategy int
-
-const (
-	// StrategyConservative 保守策略：只压缩最冗长的tool输出
-	StrategyConservative Strategy = iota
-	// StrategyBalanced 平衡策略：L1摘要 + L2截断
-	StrategyBalanced
-	// StrategyAggressive 激进策略：三级全开
-	StrategyAggressive
-)
-
-func (s Strategy) String() string {
-	switch s {
-	case StrategyConservative:
-		return "conservative"
-	case StrategyBalanced:
-		return "balanced"
-	case StrategyAggressive:
-		return "aggressive"
-	default:
-		return "unknown"
-	}
+	SummaryInfo        string  // 摘要信息（可选）
 }
