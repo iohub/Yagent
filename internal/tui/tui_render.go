@@ -190,6 +190,17 @@ func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 
 	// Tool entry rendering (non-running) — use new renderer
 	if entry.toolEntry != nil {
+		// Special case: deepthinking output should be rendered as formatted Markdown via Glamour
+		if entry.toolEntry.Call.Name == "deepthinking" &&
+			entry.toolEntry.Status == ToolStatusSuccess &&
+			entry.toolEntry.Result != nil &&
+			entry.toolEntry.Result.Content != "" &&
+			m.glamourRenderer != nil {
+			rendered := m.renderDeepThinkingEntry(entry)
+			b.WriteString(rendered)
+			entry.rendered = b.String()[start:]
+			return
+		}
 		rendered := renderToolEntry(*entry, m.viewport.Width())
 		b.WriteString(rendered)
 		entry.rendered = b.String()[start:]
@@ -216,6 +227,32 @@ func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 	formatted := formatLogEntry(*entry, m.viewport.Width())
 	b.WriteString(formatted)
 	entry.rendered = b.String()[start:]
+}
+
+// renderDeepThinkingEntry renders a deepthinking tool result with Glamour markdown formatting.
+// It produces the same tool header + border style as RenderToolLine, but uses Glamour
+// for the body content instead of renderCodeLines (line-numbered code style).
+func (m *model) renderDeepThinkingEntry(entry *logEntry) string {
+	maxWidth := m.viewport.Width()
+
+	toolEntry := entry.toolEntry
+	params := toolEntry.Call.Summary
+	if params == "" {
+		params = formatToolParams(toolEntry.Call.Name, toolEntry.Call.Arguments)
+	}
+
+	header := RenderHeader(toolEntry.Status, toolEntry.Call.Name, params, "")
+
+	// Decode potential JSON-encoded string from Adapter.Call (json.Marshal on string)
+	mdContent := decodeIfJSONString(toolEntry.Result.Content)
+	renderedBody, err := m.glamourRenderer.Render(mdContent)
+	if err != nil {
+		// Fallback: use default tool rendering
+		return renderToolEntry(*entry, maxWidth)
+	}
+
+	// Wrap header with borders and append Glamour-rendered body below
+	return addToolCallBorders(header, maxWidth) + "\n" + renderedBody
 }
 
 // appendLogEntry renders a single new entry and appends it incrementally to the viewport.
@@ -664,4 +701,20 @@ func renderDiff(entry *logEntry) string {
 	diffContent := RenderDiffContent(entry.diffText, 100)
 
 	return prefix + "\n" + diffContent
+}
+
+// decodeIfJSONString attempts to decode a JSON-encoded string back to its original value.
+// If s begins and ends with '"' and can be successfully unmarshalled as a JSON string,
+// the decoded value is returned. Otherwise s is returned unchanged.
+// This is needed because Adapter.Call applies json.Marshal to all tool results,
+// which wraps plain strings in quotes and escapes special characters.
+func decodeIfJSONString(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if len(trimmed) >= 2 && trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"' {
+		var decoded string
+		if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+			return decoded
+		}
+	}
+	return s
 }
