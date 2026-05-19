@@ -358,10 +358,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
 
-	// ==================== 创建 Commit 学习工具适配器 ====================
-	// 注意：commit 工具不需要工作区保护，因为它们只读取 git 历史
-	
-	// 先创建 commit 管理器，以便 closures 可以捕获它
+	// 创建 commit 管理器（用于后台自动学习和查询，不再暴露为 Agent 工具）
 	var commitManager *CommitManager
 	if llmClient != nil {
 		commitManager = NewCommitManager(cfg, engine, llmClient, globalCtx)
@@ -369,44 +366,6 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		// fallback to no dedicated engine
 		commitManager = NewCommitManager(cfg, engine, nil, globalCtx)
 	}
-
-	// learn_commits 工具：触发 commit 学习流程
-	learnCommitsAdapter := tools.NewAdapter(
-		LearnCommitsToolDef.Name,
-		LearnCommitsToolDef.Description,
-		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			// 提取 repo_path 参数
-			repoPath := ""
-			if rp, ok := params["repo_path"].(string); ok {
-				repoPath = rp
-			}
-			// 调用执行器
-			return LearnCommitsToolExec(ctx, commitManager, repoPath)
-		},
-	).WithSchema(LearnCommitsToolDef.Parameters)
-
-	// search_similar_commits 工具：搜索相似 commit
-	searchSimilarCommitsAdapter := tools.NewAdapter(
-		SearchSimilarCommitsToolDef.Name,
-		SearchSimilarCommitsToolDef.Description,
-		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			// 提取 query 参数（必需）
-			query, ok := params["query"].(string)
-			if !ok || query == "" {
-				return nil, fmt.Errorf("query is required")
-			}
-			// 提取 top_k 参数
-			topK := 0
-			if tk, ok := params["top_k"].(float64); ok {
-				topK = int(tk)
-			}
-			// 调用执行器
-			return SearchSimilarCommitsToolExec(ctx, commitManager, query, topK)
-		},
-	).WithSchema(SearchSimilarCommitsToolDef.Parameters)
-
-	// 将所有 commit 工具适配器添加到 adapters 列表
-	commitAdapters := []*tools.Adapter{learnCommitsAdapter, searchSimilarCommitsAdapter}
 
 	self = &ConductorAgent{
 		BaseAgent:      BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
@@ -417,7 +376,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		DevOpsAgent:    devops,
 		BrowserAgent:   browser,
 		GlobalCtx:      globalCtx,
-		Adapters:       append(adapters, append(delegateAdapters, commitAdapters...)...),
+		Adapters:       append(adapters, delegateAdapters...),
 		maxSteps:       maxSteps,
 		metaRetryCount: metaRetryCount,
 		toolDefMap:     toolDefMap,
@@ -824,11 +783,11 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		systemPrompt += projectContext
 	}
 
-	// 追加 commit 上下文（首次对话时搜索相似的 commit）
-	if (mem == nil || len(mem.GetMessages()) == 0) && input != "" {
+	// 追加相关 commit 上下文（基于当前用户输入动态检索相关 commit）
+	if input != "" {
 		if commitCtx := a.GetCommitContext(ctx, input); commitCtx != "" {
 			systemPrompt += fmt.Sprintf("\n\n### Recent Relevant Commits\n%s", commitCtx)
-			slog.Info("Commit context injected into system prompt")
+			slog.Debug("Commit context injected into system prompt")
 		}
 	}
 

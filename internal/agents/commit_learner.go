@@ -707,6 +707,12 @@ func extractFieldValue(text string, key string) string {
 	return strings.TrimSpace(rest[:endIdx])
 }
 
+// GetHeadHash 获取当前仓库的 HEAD commit hash（公共方法）
+// 用于 CommitManager 在异步初始化后获取当前 HEAD hash 并持久化
+func (cl *CommitLearner) GetHeadHash(ctx context.Context, repoPath string) (string, error) {
+	return cl.getCurrentHead(repoPath)
+}
+
 // getCurrentHead 获取当前 git HEAD 的完整 hash
 func (cl *CommitLearner) getCurrentHead(repoPath string) (string, error) {
 	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "HEAD")

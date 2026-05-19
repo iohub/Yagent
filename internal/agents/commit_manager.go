@@ -2,13 +2,29 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
 )
+
+// CommitState 持久化 commit 学习状态
+type CommitState struct {
+	LastHeadHash string    `json:"last_head_hash"` // 上次学习的 HEAD hash
+	UpdatedAt    time.Time `json:"updated_at"`     // 上次更新时间
+	CommitCount  int       `json:"commit_count"`   // 已学习的 commit 数量
+}
+
+// commitStateFileName 状态文件路径（相对于项目根）
+const commitStateFileName = ".codeactor/commit_state.json"
 
 // CommitManager 负责初始化和提供 CommitLearner 实例
 //
@@ -16,10 +32,15 @@ import (
 // 1. 根据配置创建 CommitLearner 实例
 // 2. 在适当的时机（会话开始或按需）触发 commit 学习
 // 3. 提供线程安全的访问接口
+// 4. 持久化学习状态，支持增量学习
 type CommitManager struct {
 	learner *CommitLearner
 	once    sync.Once
 	err     error
+	// 新增字段
+	ready   atomic.Bool   // 初始学习是否完成
+	stateMu sync.RWMutex
+	state   *CommitState  // 持久化状态
 }
 
 // NewCommitManager 创建新的 CommitManager
@@ -91,6 +112,12 @@ func (cm *CommitManager) GetLearner() (*CommitLearner, error) {
 // - "on_session_start": 在会话开始时异步初始化
 // - "both": 在会话开始时异步初始化
 //
+// 增强功能：
+// - 加载持久化状态，支持增量学习
+// - 如果状态存在且有 last HEAD hash → 增量学习
+// - 如果状态不存在 → 全量学习
+// - 学习完成后更新 ready 标志
+//
 // 参数:
 //   - ctx: 上下文
 //   - repoPath: 仓库路径
@@ -105,22 +132,58 @@ func (cm *CommitManager) Initialize(ctx context.Context, repoPath string) error 
 
 		// 如果功能未启用，跳过初始化
 		if !cm.learner.Config().Enabled {
+			cm.ready.Store(true)
 			return
 		}
 
 		learner := cm.learner
 		trigger := learner.Config().Trigger
 
-		// on_demand 模式下不自动初始化
+		// on_demand 模式下不自动初始化，但标记 ready
 		if trigger == "on_demand" {
+			cm.ready.Store(true)
 			return
 		}
 
 		// on_session_start 或 both 模式下异步初始化
 		go func() {
-			if err := learner.EnsureLatest(ctx, repoPath); err != nil {
-				cm.err = fmt.Errorf("failed to initialize commit learner: %w", err)
+			// 尝试加载持久化状态
+			state, err := cm.loadState(repoPath)
+			if err != nil {
+				slog.Warn("[CommitManager] Failed to load state, will do full learn", "error", err)
 			}
+
+			fullLearn := false
+			if state == nil || state.LastHeadHash == "" {
+				// 无状态或首次运行 → 全量学习
+				fullLearn = true
+			} else if err := learner.EnsureLatest(ctx, repoPath); err != nil {
+				slog.Warn("[CommitManager] Incremental learn failed, fallback to full learn", "error", err)
+				fullLearn = true
+			}
+
+			if fullLearn {
+				if err := learner.EnsureLatest(ctx, repoPath); err != nil {
+					cm.err = fmt.Errorf("failed to initialize commit learner: %w", err)
+					slog.Error("[CommitManager] Full learn failed", "error", err)
+				}
+			}
+
+			// 获取当前 HEAD 并保存状态
+			head, headErr := learner.getCurrentHead(repoPath)
+			if headErr == nil {
+				newState := &CommitState{
+					LastHeadHash: head,
+					UpdatedAt:    time.Now(),
+				}
+				if saveErr := cm.saveState(repoPath, newState); saveErr != nil {
+					slog.Warn("[CommitManager] Failed to save state", "error", saveErr)
+				}
+			}
+
+			// 标记为就绪
+			cm.ready.Store(true)
+			slog.Info("[CommitManager] Initialization complete")
 		}()
 	})
 
@@ -152,4 +215,41 @@ func (cm *CommitManager) Enabled() bool {
 		return false
 	}
 	return cm.learner.Config().Enabled
+}
+
+// loadState 从文件加载 commit 学习状态
+func (cm *CommitManager) loadState(projectPath string) (*CommitState, error) {
+	statePath := filepath.Join(projectPath, commitStateFileName)
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // 首次运行，没有状态
+		}
+		return nil, err
+	}
+	var state CommitState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// saveState 保存 commit 学习状态到文件
+func (cm *CommitManager) saveState(projectPath string, state *CommitState) error {
+	statePath := filepath.Join(projectPath, commitStateFileName)
+	// 确保目录存在
+	dir := filepath.Dir(statePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(statePath, data, 0644)
+}
+
+// IsReady 返回初始学习是否已完成
+func (cm *CommitManager) IsReady() bool {
+	return cm.ready.Load()
 }
