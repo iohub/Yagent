@@ -4,6 +4,7 @@
 //! providing better recall and precision than either channel alone.
 
 use crate::services::embedding_service::{EmbeddingService, SearchResult};
+use crate::services::reranker_service::RerankerService;
 use crate::storage::traits_bm25::{CandidateSource, FusedCandidate, TextSearchProvider, TextSearchResult};
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
@@ -61,6 +62,8 @@ impl Default for HybridSearchConfig {
 ///      └──→ TextSearchProvider.search() ──→ SparseResults (BM25)
 ///      │
 ///      └──→ RRF Fusion ──→ FusedCandidates (sorted by fused score)
+///      │
+///      └──→ (Optional) Cross-Encoder Reranker ──→ Final Results
 /// ```
 ///
 /// Internal metadata structure used to track line info during RRF fusion.
@@ -90,16 +93,28 @@ pub struct HybridSearchService {
     dense: Arc<EmbeddingService>,
     sparse: Arc<dyn TextSearchProvider>,
     config: HybridSearchConfig,
+    /// 可选的 Cross-Encoder Reranker 服务（RRF 融合后执行精排）
+    reranker: Option<RerankerService>,
 }
 
 impl HybridSearchService {
-    /// Create a new hybrid search service.
+    /// Create a new hybrid search service without reranker.
     pub fn new(
         dense: Arc<EmbeddingService>,
         sparse: Arc<dyn TextSearchProvider>,
         config: HybridSearchConfig,
     ) -> Self {
-        Self { dense, sparse, config }
+        Self { dense, sparse, config, reranker: None }
+    }
+
+    /// Create a new hybrid search service with optional reranker.
+    pub fn with_reranker(
+        dense: Arc<EmbeddingService>,
+        sparse: Arc<dyn TextSearchProvider>,
+        config: HybridSearchConfig,
+        reranker: Option<RerankerService>,
+    ) -> Self {
+        Self { dense, sparse, config, reranker }
     }
 
     /// Execute hybrid search: query both channels, fuse results via RRF.
@@ -184,10 +199,22 @@ impl HybridSearchService {
             }
         };
 
-        // Perform RRF fusion
-        let fused = self.reciprocal_rank_fusion(dense_raw, sparse_results.unwrap_or_default(), limit);
-        debug!("Hybrid search returned {} fused candidates", fused.len());
-        Ok(fused)
+        // Perform RRF fusion — 返回足够的候选供后续 rerank 使用
+        let rrf_limit = self.config.dense_limit.max(self.config.sparse_limit);
+        let fused = self.reciprocal_rank_fusion(dense_raw, sparse_results.unwrap_or_default(), rrf_limit);
+        debug!("Hybrid search returned {} fused candidates (before rerank)", fused.len());
+
+        // Phase 2: Optional Cross-Encoder Rerank
+        if let Some(ref reranker) = self.reranker {
+            if reranker.config().enabled {
+                return self.apply_rerank(reranker, query, fused, limit).await;
+            }
+        }
+
+        // 无 rerank 时截断到 limit
+        let mut result = fused;
+        result.truncate(limit);
+        Ok(result)
     }
 
     /// Reciprocal Rank Fusion (RRF) for combining ranked lists.
@@ -284,5 +311,48 @@ impl HybridSearchService {
     /// Get the current config.
     pub fn config(&self) -> &HybridSearchConfig {
         &self.config
+    }
+
+    /// 对 RRF 融合结果执行 Cross-Encoder 重排
+    async fn apply_rerank(
+        &self,
+        reranker: &RerankerService,
+        query: &str,
+        fused: Vec<FusedCandidate>,
+        limit: usize,
+    ) -> Result<Vec<FusedCandidate>> {
+        // 取 RRF 候选池（limit * candidate_multiplier），但不超过 fused 总长度
+        let pool_size = (limit * reranker.config().candidate_multiplier).min(fused.len());
+        let (candidate_pool, remaining) = fused.split_at(pool_size);
+
+        debug!("Reranker: sending {} candidates (limit={}, multiplier={})", 
+            pool_size, limit, reranker.config().candidate_multiplier);
+
+        match reranker.rerank(query, candidate_pool.to_vec()).await {
+            Ok(mut reranked) => {
+                // 重排结果只取 top limit
+                reranked.truncate(limit);
+                
+                // 如果重排结果不足 limit，用剩余的 RRF 候选填充
+                if reranked.len() < limit {
+                    let need = limit - reranked.len();
+                    reranked.extend(
+                        remaining.iter()
+                            .take(need)
+                            .cloned()
+                    );
+                }
+                
+                debug!("Reranker: final {} results after rerank", reranked.len());
+                Ok(reranked)
+            }
+            Err(e) => {
+                // 降级：返回 RRF 结果
+                warn!("Reranker failed, falling back to RRF results: {}", e);
+                let mut fallback = fused;
+                fallback.truncate(limit);
+                Ok(fallback)
+            }
+        }
     }
 }

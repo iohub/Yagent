@@ -161,6 +161,12 @@ pub struct RerankerConfig {
     /// 重排后保留的 Top-N 结果数
     #[serde(default = "default_reranker_top_n")]
     pub top_n: usize,
+    /// 候选池倍数：RRF 融合后取 limit * candidate_multiplier 个候选传给 reranker
+    #[serde(default = "default_reranker_candidate_multiplier")]
+    pub candidate_multiplier: usize,
+    /// Reranker API 调用超时时间（秒）
+    #[serde(default = "default_reranker_timeout_secs")]
+    pub timeout_secs: u64,
 }
 
 impl Default for RerankerConfig {
@@ -170,6 +176,8 @@ impl Default for RerankerConfig {
             model: default_reranker_model(),
             base_url: default_reranker_base_url(),
             top_n: default_reranker_top_n(),
+            candidate_multiplier: default_reranker_candidate_multiplier(),
+            timeout_secs: default_reranker_timeout_secs(),
         }
     }
 }
@@ -181,6 +189,8 @@ fn default_reranker_base_url() -> String {
     "https://api.siliconflow.cn".to_string()
 }
 fn default_reranker_top_n() -> usize { 10 }
+fn default_reranker_candidate_multiplier() -> usize { 5 }
+fn default_reranker_timeout_secs() -> u64 { 30 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct GraphExpansionConfig {
