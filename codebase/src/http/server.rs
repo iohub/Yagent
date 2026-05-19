@@ -16,6 +16,7 @@ use tracing::Span;
 use crate::storage::StorageManager;
 use crate::storage::TantivyBm25Index;
 use crate::services::hybrid_search::{HybridSearchService, HybridSearchConfig};
+use crate::services::reranker_service::RerankerService;
 use crate::storage::traits_bm25::TextSearchProvider;
 use crate::services::embedding_service::EmbeddingService;
 
@@ -180,7 +181,15 @@ impl CodeBaseServer {
                  // 创建 HybridSearchService
                 if let Some(embedding_service) = embedding_service {
                     let hybrid_cfg = &config.codebase.retrieval_pipeline.hybrid;
-                    let hybrid = HybridSearchService::new(
+                    
+                    // 可选：创建 RerankerService
+                    let reranker = if config.codebase.retrieval_pipeline.reranker.enabled {
+                        Some(RerankerService::new(config.codebase.retrieval_pipeline.reranker.clone()))
+                    } else {
+                        None
+                    };
+                    
+                    let hybrid = HybridSearchService::with_reranker(
                         embedding_service,
                         tantivy_index,
                         HybridSearchConfig {
@@ -192,6 +201,7 @@ impl CodeBaseServer {
                             short_code_threshold: hybrid_cfg.short_code_threshold,
                             short_code_penalty: hybrid_cfg.short_code_penalty,
                         },
+                        reranker,
                     );
                     self.hybrid_search_service = Some(Arc::new(hybrid));
                     tracing::info!("HybridSearchService initialized");
