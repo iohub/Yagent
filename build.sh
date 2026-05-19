@@ -324,6 +324,12 @@ build_go() {
     
     log_info "📦 构建 Go 项目 (${GO_PROJECT_DIR}/${GO_BIN})..."
     
+    # 检查 dist/bin 是否为空
+    if [[ ! -d "$DIST_DIR" ]] || [[ -z "$(ls -A "$DIST_DIR" 2>/dev/null)" ]]; then
+        log_warning "dist/bin 目录为空，Go 二进制将不会嵌入任何二进制文件！"
+        log_warning "请确保在构建 Go 之前先构建 Rust 项目。"
+    fi
+    
     cd "$GO_PROJECT_DIR"
     start_time=$(date +%s%N)
     
@@ -519,44 +525,21 @@ cmd_build() {
     # 确保 dist/bin 目录存在
     mkdir -p "$DIST_DIR"
     
-    # 清理旧产物
-    clean_dist_bin
-    
-    # 并行构建 Rust 和 Go 项目
-    local pids=()
-    local failed=false
-    
+    # 先构建 Rust（除非跳过）
     if [[ "${SKIP_RUST}" != "true" ]]; then
-        (
-            build_rust || exit 1
-        ) &
-        pids+=($!)
-        log_info "  Rust 构建已启动 (PID: $!)"
+        # 只在构建 Rust 前清理
+        clean_dist_bin
+        build_rust || exit 1
     else
         log_warning "⊘ 跳过 Rust 构建 (SKIP_RUST=true)"
+        log_info "  将使用 dist/bin 中现有的文件嵌入 Go 二进制"
     fi
     
+    # 再构建 Go
     if [[ "${SKIP_GO}" != "true" ]]; then
-        (
-            build_go || exit 1
-        ) &
-        pids+=($!)
-        log_info "  Go 构建已启动 (PID: $!)"
+        build_go || exit 1
     else
         log_warning "⊘ 跳过 Go 构建 (SKIP_GO=true)"
-    fi
-    
-    # 等待所有并行任务完成
-    log_info "⏳ 等待并行构建完成..."
-    for pid in "${pids[@]}"; do
-        wait "$pid" || {
-            failed=true
-        }
-    done
-    
-    if [[ "$failed" == "true" ]]; then
-        log_error "部分构建失败，请查看上方错误信息"
-        exit 1
     fi
     
     # 显示产物信息
