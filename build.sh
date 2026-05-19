@@ -167,56 +167,6 @@ build_ldflags() {
     echo "${ldflags}"
 }
 
-# 清理 dist/bin 中的旧产物（保留非本脚本文件）
-clean_dist_bin() {
-    log_info "🧹 清理构建产物..."
-    
-    if [[ ! -d "$DIST_DIR" ]]; then
-        log_info "  创建目录: ${DIST_DIR}"
-        mkdir -p "$DIST_DIR"
-        return 0
-    fi
-    
-    local cleaned_count=0
-    for file in "$DIST_DIR"/*; do
-        [[ -e "$file" ]] || continue  # 跳过没有匹配的情况
-        
-        local basename
-        basename=$(basename "$file")
-        
-        # 检查是否是保留文件
-        local is_preserved=false
-        for pattern in "${PRESERVE_PATTERNS[@]}"; do
-            if [[ "$basename" == "$pattern" ]]; then
-                is_preserved=true
-                break
-            fi
-        done
-        
-        # 清理本脚本的产物（仅 Rust，Go 产物已在项目根目录）
-        if [[ "$basename" == "${RUST_BIN}"* ]]; then
-            if rm -f "$file"; then
-                log_debug "  已删除: ${basename}"
-                ((cleaned_count++))
-            fi
-        elif [[ "$is_preserved" == "false" ]]; then
-            # 不确定是否是本脚本产物，但也不在保留列表中
-            # 检查是否是之前构建的 Rust 产物（codeactor 已不在 dist/bin 中）
-            if [[ "$basename" =~ ^codeactor-codebase ]]; then
-                if rm -f "$file"; then
-                    log_debug "  已删除: ${basename}"
-                    ((cleaned_count++))
-                fi
-            fi
-        fi
-    done
-    
-    if (( cleaned_count > 0 )); then
-        log_success "  已清理 ${cleaned_count} 个旧产物"
-    else
-        log_debug "  无需清理"
-    fi
-}
 
 # =============================================================================
 # 前置检查
@@ -525,10 +475,17 @@ cmd_build() {
     # 确保 dist/bin 目录存在
     mkdir -p "$DIST_DIR"
     
+    # 清理旧的 Go 二进制产物
+    if [[ -f "${SCRIPT_DIR}/${GO_BIN}" ]]; then
+        log_info "  清理旧 Go 二进制: ${SCRIPT_DIR}/${GO_BIN}"
+        rm -f "${SCRIPT_DIR}/${GO_BIN}"
+        log_success "  旧 Go 二进制已清理"
+    fi
+    
     # 先构建 Rust（除非跳过）
     if [[ "${SKIP_RUST}" != "true" ]]; then
         # 只在构建 Rust 前清理
-        clean_dist_bin
+        log_info "building codebase"
         build_rust || exit 1
     else
         log_warning "⊘ 跳过 Rust 构建 (SKIP_RUST=true)"
@@ -537,6 +494,7 @@ cmd_build() {
     
     # 再构建 Go
     if [[ "${SKIP_GO}" != "true" ]]; then
+        log_info "building codeactor"
         build_go || exit 1
     else
         log_warning "⊘ 跳过 Go 构建 (SKIP_GO=true)"
