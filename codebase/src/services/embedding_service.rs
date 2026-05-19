@@ -187,6 +187,8 @@ pub struct EmbeddingService {
     /// Optional BM25 text search index for sparse channel.
     /// When Some, chunks are indexed here alongside LanceDB vector indexing.
     pub bm25_index: Option<Arc<dyn TextSearchProvider>>,
+    /// Minimum code block length (chars after trim) to be indexed.
+    min_code_block_length: usize,
 }
 
 impl EmbeddingService {
@@ -231,6 +233,10 @@ impl EmbeddingService {
         
         let provider = OpenAICompatibleEmbeddingProvider::new(api_token, base_url, model);
         
+        let min_code_block_length = config
+            .map(|cfg| cfg.codebase.retrieval_pipeline.min_code_block_length)
+            .unwrap_or(16);
+        
         Ok(Self {
             connection,
             table_name,
@@ -238,6 +244,7 @@ impl EmbeddingService {
             dimensions,
             cache,
             bm25_index,
+            min_code_block_length,
         })
     }
     
@@ -256,13 +263,14 @@ impl EmbeddingService {
         let cache_path = cache_dir.join("embedding_cache.sqlite");
         let cache = Arc::new(EmbeddingCache::new(cache_path.to_str().unwrap())?);
 
-        Ok(Self {
+       Ok(Self {
             connection,
             table_name,
             embedding_provider: provider,
             dimensions: 2560,
             cache,
             bm25_index: None,
+            min_code_block_length: 16,
         })
     }
 
@@ -402,6 +410,14 @@ impl EmbeddingService {
             };
 
             if let Some((code_block, name, symbol_type_str, language_str, start_row, end_row)) = extracted {
+                // P0: Skip short code blocks to improve retrieval quality
+                // See: docs/retrieval-quality-analysis.md
+                if code_block.trim().chars().count() < self.min_code_block_length {
+                    debug!("Skipping short symbol '{}' ({} chars, min: {})", 
+                        name, code_block.len(), self.min_code_block_length);
+                    continue;
+                }
+                
                 // Index into BM25 if available
                 if self.bm25_index.is_some() {
                     let chunk = CodeChunk::new(

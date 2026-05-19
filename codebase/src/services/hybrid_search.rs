@@ -28,6 +28,12 @@ pub struct HybridSearchConfig {
     /// Timeout for the entire hybrid search operation (milliseconds).
     /// 0 means no timeout.
     pub timeout_ms: u64,
+    /// Threshold (in chars) for short code penalty. 
+    /// Code blocks shorter than this get their score reduced.
+    pub short_code_threshold: usize,
+    /// Penalty strength for short code blocks (0.0 = no penalty, 1.0 = full penalty).
+    /// Applied as: penalty = 1.0 - max(0, 1 - len/threshold) * strength
+    pub short_code_penalty: f64,
 }
 
 impl Default for HybridSearchConfig {
@@ -38,6 +44,8 @@ impl Default for HybridSearchConfig {
             sparse_limit: 100,
             enable_sparse: true,
             timeout_ms: 0,
+            short_code_threshold: 30,
+            short_code_penalty: 0.5,
         }
     }
 }
@@ -243,12 +251,23 @@ impl HybridSearchService {
                     (false, false) => return None,
                 };
 
-                // Get metadata from dense result
+                   // Get metadata from dense result
                 let meta = meta_map.get(&snippet_id)?;
-
+                
+                // P1: Apply short code penalty
+                let code_len = meta.code_block.trim().chars().count();
+                let final_score = if code_len < self.config.short_code_threshold {
+                    let ratio = code_len as f64 / self.config.short_code_threshold as f64;
+                    let penalty_factor = 1.0 - (1.0 - ratio) * self.config.short_code_penalty;
+                    let penalty_factor = penalty_factor.max(0.0); // clamp to [0, 1]
+                    fused_score * penalty_factor
+                } else {
+                    fused_score
+                };
+                
                 Some(FusedCandidate {
                     snippet_id,
-                    final_score: fused_score,
+                    final_score,
                     file_path: meta.file_path.clone(),
                     symbol_name: meta.symbol_name.clone(),
                     symbol_type: String::new(),

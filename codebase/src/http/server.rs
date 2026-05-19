@@ -177,8 +177,9 @@ impl CodeBaseServer {
                 // 复用已创建的共享 Tantivy BM25 Index (避免 LockBusy)
                 let tantivy_index = shared_bm25_index.clone();
                 
-                // 创建 HybridSearchService
+                 // 创建 HybridSearchService
                 if let Some(embedding_service) = embedding_service {
+                    let hybrid_cfg = &config.codebase.retrieval_pipeline.hybrid;
                     let hybrid = HybridSearchService::new(
                         embedding_service,
                         tantivy_index,
@@ -188,6 +189,8 @@ impl CodeBaseServer {
                             dense_limit: 100,
                             sparse_limit: 100,
                             timeout_ms: 0,
+                            short_code_threshold: hybrid_cfg.short_code_threshold,
+                            short_code_penalty: hybrid_cfg.short_code_penalty,
                         },
                     );
                     self.hybrid_search_service = Some(Arc::new(hybrid));

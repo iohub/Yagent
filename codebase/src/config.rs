@@ -68,6 +68,10 @@ pub struct RetrievalPipelineConfig {
     /// Graph Expansion 配置
     #[serde(default)]
     pub graph_expansion: GraphExpansionConfig,
+    /// Minimum code block length (in chars after trim) to be indexed.
+    /// Blocks shorter than this are skipped during embedding indexing.
+    #[serde(default = "default_min_code_block_length")]
+    pub min_code_block_length: usize,
 }
 
 impl Default for RetrievalPipelineConfig {
@@ -77,6 +81,7 @@ impl Default for RetrievalPipelineConfig {
             hybrid: HybridSearchConfig::default(),
             reranker: RerankerConfig::default(),
             graph_expansion: GraphExpansionConfig::default(),
+            min_code_block_length: default_min_code_block_length(),
         }
     }
 }
@@ -105,6 +110,14 @@ pub struct HybridSearchConfig {
     /// 是否启用 BM25 稀疏检索通道
     #[serde(default = "default_enable_bm25")]
     pub enable_bm25: bool,
+    /// Short code threshold for penalty during fusion. Blocks shorter than this 
+    /// get score penalty in RRF fusion.
+    #[serde(default = "default_short_code_threshold")]
+    pub short_code_threshold: usize,
+    /// Penalty factor for short code blocks (0.0 ~ 1.0). 
+    /// final_score *= (1.0 - max(0.0, 1.0 - len/threshold) * penalty)
+    #[serde(default = "default_short_code_penalty")]
+    pub short_code_penalty: f64,
 }
 
 impl Default for HybridSearchConfig {
@@ -116,6 +129,8 @@ impl Default for HybridSearchConfig {
             rrf_k: default_rrf_k(),
             rrf_top_k: default_rrf_top_k(),
             enable_bm25: default_enable_bm25(),
+            short_code_threshold: default_short_code_threshold(),
+            short_code_penalty: default_short_code_penalty(),
         }
     }
 }
@@ -128,6 +143,9 @@ fn default_vector_top_k() -> usize { 100 }
 fn default_rrf_k() -> f64 { 60.0 }
 fn default_rrf_top_k() -> usize { 20 }
 fn default_enable_bm25() -> bool { true }
+fn default_min_code_block_length() -> usize { 16 }
+fn default_short_code_threshold() -> usize { 30 }
+fn default_short_code_penalty() -> f64 { 0.5 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct RerankerConfig {
