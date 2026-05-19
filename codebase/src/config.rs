@@ -155,9 +155,12 @@ pub struct RerankerConfig {
     /// Reranker 模型名称
     #[serde(default = "default_reranker_model")]
     pub model: String,
-    /// Reranker API 基础 URL
+    /// Reranker API 的 API Key（从 TOML 配置读取，参考 embedding.api_token）
+    #[serde(default)]
+    pub api_token: String,
+    /// Reranker API 基础 URL（如 https://api.siliconflow.cn）
     #[serde(default = "default_reranker_base_url")]
-    pub base_url: String,
+    pub api_base_url: String,
     /// 重排后保留的 Top-N 结果数
     #[serde(default = "default_reranker_top_n")]
     pub top_n: usize,
@@ -174,7 +177,8 @@ impl Default for RerankerConfig {
         Self {
             enabled: false,
             model: default_reranker_model(),
-            base_url: default_reranker_base_url(),
+            api_token: String::new(),  // 默认空字符串
+            api_base_url: default_reranker_base_url(),
             top_n: default_reranker_top_n(),
             candidate_multiplier: default_reranker_candidate_multiplier(),
             timeout_secs: default_reranker_timeout_secs(),

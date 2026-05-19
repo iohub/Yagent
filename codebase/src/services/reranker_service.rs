@@ -1,10 +1,15 @@
 use serde::{Deserialize, Serialize};
 use crate::config::RerankerConfig;
 use crate::storage::traits_bm25::FusedCandidate;
-use std::env;
 use anyhow::{Result, anyhow};
 use tracing::debug;
 
+/// Cross-Encoder Reranker 服务
+///
+/// 调用兼容 OpenAI API 协议的 Reranker 端点（如 SiliconFlow /v1/rerank）
+/// 对 RRF 融合后的候选结果进行语义精排。
+/// 
+/// 参考：`embedding_service.rs` 中 `OpenAICompatibleEmbeddingProvider` 的调用模式。
 pub struct RerankerService {
     config: RerankerConfig,
     client: reqwest::Client,
@@ -44,6 +49,17 @@ impl RerankerService {
         &self.config
     }
 
+    /// 执行 Cross-Encoder 重排
+    ///
+    /// # 参数
+    /// - `query`: 用户的原始搜索查询
+    /// - `candidates`: RRF 融合后的候选列表
+    ///
+    /// # 返回
+    /// 重排后的候选列表（按相关性分数降序），如果未启用则原样返回。
+    ///
+    /// # 参考
+    /// 调用模式参考 `embedding_service.rs` 中的 `OpenAICompatibleEmbeddingProvider`。
     pub async fn rerank(
         &self,
         query: &str,
@@ -51,6 +67,13 @@ impl RerankerService {
     ) -> Result<Vec<FusedCandidate>> {
         if !self.config.enabled || candidates.is_empty() {
             return Ok(candidates);
+        }
+
+        // 检查 API Token 是否已配置
+        if self.config.api_token.is_empty() {
+            return Err(anyhow!(
+                "Reranker API token not configured. Set [codebase.retrieval_pipeline.reranker] api_token in config.toml"
+            ));
         }
 
         let documents: Vec<String> = candidates.iter().map(|c| c.code_block.clone()).collect();
@@ -63,16 +86,22 @@ impl RerankerService {
             top_n,
         };
 
-        let api_key = env::var("SILICONFLOW_API_KEY")
-            .map_err(|_| anyhow!("SILICONFLOW_API_KEY environment variable not set"))?;
+        // 构建 API URL：兼容 base_url 带或不带 /v1 后缀
+        let base_url = self.config.api_base_url.trim_end_matches('/');
+        let url = if base_url.ends_with("/v1") {
+            format!("{}/rerank", base_url)
+        } else {
+            format!("{}/v1/rerank", base_url)
+        };
 
-        let url = format!("{}/v1/rerank", self.config.base_url.trim_end_matches('/'));
-
-        debug!("Reranker: calling {} with top_n={}", url, top_n);
+        debug!(
+            "Reranker: calling {} with model={}, top_n={}",
+            url, self.config.model, top_n
+        );
 
         let response = self.client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", format!("Bearer {}", self.config.api_token))
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
@@ -81,8 +110,12 @@ impl RerankerService {
 
         let status = response.status();
         if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            return Err(anyhow!("Reranker API returned error status {}: {}", status, text));
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "Reranker API returned error status {}: {}",
+                status,
+                body
+            ));
         }
 
         let rerank_resp: RerankResponse = response
