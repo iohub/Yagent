@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::RerankerConfig;
 use crate::storage::traits_bm25::FusedCandidate;
 use anyhow::{Result, anyhow};
-use tracing::debug;
+use tracing::{info, debug};
 
 /// Cross-Encoder Reranker 服务
 ///
@@ -88,19 +88,14 @@ impl RerankerService {
 
         // 构建 API URL：兼容 base_url 带或不带 /v1 后缀
         let base_url = self.config.api_base_url.trim_end_matches('/');
-        let url = if base_url.ends_with("/v1") {
-            format!("{}/rerank", base_url)
-        } else {
-            format!("{}/v1/rerank", base_url)
-        };
 
-        debug!(
+        info!(
             "Reranker: calling {} with model={}, top_n={}",
-            url, self.config.model, top_n
+            base_url, self.config.model, top_n
         );
 
         let response = self.client
-            .post(&url)
+            .post(base_url)
             .header("Authorization", format!("Bearer {}", self.config.api_token))
             .header("Content-Type", "application/json")
             .json(&request)
