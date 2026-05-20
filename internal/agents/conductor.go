@@ -849,6 +849,16 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 						"compressed_tokens", result.CompressedTokens,
 						"ratio", fmt.Sprintf("%.2f%%", result.CompressionRatio*100),
 						"stats", result.CompressionStats)
+
+				// Publish compression event to TUI
+				if a.Publisher != nil {
+					a.Publisher.Publish("context_compressed", map[string]interface{}{
+						"original_tokens":   result.OriginalTokens,
+						"compressed_tokens": result.CompressedTokens,
+						"ratio":             fmt.Sprintf("%.2f%%", result.CompressionRatio*100),
+						"compression_stats": result.CompressionStats,
+					}, a.Name())
+				}
 				}
 			}
 		}

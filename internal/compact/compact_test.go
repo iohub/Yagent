@@ -111,7 +111,7 @@ func TestEngine_CompressWithSummarizer(t *testing.T) {
 	}
 
 	mockClient := &mockSummaryClient{
-		summary: "Summarized context: The conversation covered file operations and debugging.",
+		summary: "Context: project setup completed.",
 	}
 
 	engine, err := NewEngine(cfg, mockClient)
@@ -509,5 +509,220 @@ func TestGetPriorities(t *testing.T) {
 	// System 消息应该有最高优先级
 	if priorities[0] <= priorities[2] {
 		t.Error("System message should have highest priority")
+	}
+}
+
+// TestIsSummaryMarking 测试 [CONTEXT SUMMARY] 消息被正确标记为 IsSummary
+func TestIsSummaryMarking(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "System prompt"},
+		{Role: llm.RoleSystem, Content: "[CONTEXT SUMMARY]\nThis is an old summary..."},
+		{Role: llm.RoleUser, Content: "User message"},
+		{Role: llm.RoleAssistant, Content: "Assistant message"},
+		{Role: llm.RoleUser, Content: "[CONTEXT SUMMARY] Not a summary, just starts with prefix"},
+	}
+
+	calc := NewPriorityCalculator(DefaultPriorityWeights)
+	priorities := calc.CalculatePriorities(context.Background(), messages, 3)
+
+	// 索引 0: 普通 System 消息，IsSummary 应该为 false
+	if priorities[0].IsSummary {
+		t.Error("Expected IsSummary=false for normal system message")
+	}
+
+	// 索引 1: [CONTEXT SUMMARY] 开头的 System 消息，IsSummary 应该为 true
+	if !priorities[1].IsSummary {
+		t.Error("Expected IsSummary=true for [CONTEXT SUMMARY] message")
+	}
+
+	// 索引 2: 普通 User 消息，IsSummary 应该为 false
+	if priorities[2].IsSummary {
+		t.Error("Expected IsSummary=false for normal user message")
+	}
+
+	// 索引 3: 普通 Assistant 消息，IsSummary 应该为 false
+	if priorities[3].IsSummary {
+		t.Error("Expected IsSummary=false for normal assistant message")
+	}
+}
+
+// TestIncrementalCompression 测试增量压缩：模拟两轮压缩，验证第二次压缩时已有摘要不被再次压缩
+func TestIncrementalCompression(t *testing.T) {
+	cfg := &Config{
+		MaxContextTokens:            300,
+		KeepRecentRounds:            2,
+		SummarizationTimeout:        5 * time.Second,
+		SummarizationMaxInputTokens: 8000,
+	}
+
+	mockClient := &mockSummaryClient{
+		summary: "First round: project setup completed.",
+	}
+
+	engine, err := NewEngine(cfg, mockClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// === 第一轮压缩 ===
+	// 创建长对话，触发压缩
+	messages := make([]llm.Message, 0, 12)
+	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: "System prompt for the assistant"})
+	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: "Help me with the project"})
+
+	for i := 0; i < 5; i++ {
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleAssistant,
+			Content: strings.Repeat("a", 200),
+		})
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleTool,
+			Content: strings.Repeat("b", 200),
+		})
+	}
+
+	result1, err := engine.Compress(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 验证第一轮压缩后消息数量减少了
+	if len(result1.CompressedMessages) >= len(messages) {
+		t.Errorf("First round: expected fewer messages after compression, got %d (was %d)",
+			len(result1.CompressedMessages), len(messages))
+	}
+
+	// 验证生成的结果包含 [CONTEXT SUMMARY] 消息
+	hasSummary := false
+	for _, msg := range result1.CompressedMessages {
+		if strings.HasPrefix(msg.Content, "[CONTEXT SUMMARY]") {
+			hasSummary = true
+			break
+		}
+	}
+	if !hasSummary {
+		t.Error("First round: expected [CONTEXT SUMMARY] message in result")
+	}
+
+	// 重置 mock 调用计数
+	mockClient.called = 0
+	mockClient.summary = "Second round: incremental new content."
+
+	// === 第二轮压缩 ===
+	// 添加新消息，模拟对话继续，再次触发压缩
+	newMessages := append(result1.CompressedMessages,
+		llm.Message{Role: llm.RoleUser, Content: "New user question about the implementation"},
+		llm.Message{Role: llm.RoleAssistant, Content: strings.Repeat("c", 200)},
+	)
+
+	result2, err := engine.Compress(context.Background(), newMessages)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 验证第二次压缩后仍然包含已有的摘要消息（不被重复压缩）
+	oldSummaryFound := false
+	newSummaryFound := false
+	for _, msg := range result2.CompressedMessages {
+		if strings.HasPrefix(msg.Content, "[CONTEXT SUMMARY]") {
+			if strings.Contains(msg.Content, "First round") {
+				oldSummaryFound = true
+			}
+			if strings.Contains(msg.Content, "Second round") {
+				newSummaryFound = true
+			}
+		}
+	}
+
+	// 应该至少有一个旧摘要（即第一轮生成的摘要被保留）
+	if !oldSummaryFound {
+		t.Error("Second round: expected old [CONTEXT SUMMARY] to be preserved")
+	}
+
+	// 应该有新摘要（因为新增消息可能仍需压缩）
+	if !newSummaryFound {
+		t.Error("Second round: expected new [CONTEXT SUMMARY] to be added")
+	}
+
+	// mock client 应该被调用（因为新增消息仍可能超限）
+	if mockClient.called == 0 {
+		t.Error("Second round: expected summarizer to be called for new messages")
+	}
+}
+
+// TestSummarizer_SkipExistingSummary 测试 Summarize 方法中跳过已有的 [CONTEXT SUMMARY] 消息
+func TestSummarizer_SkipExistingSummary(t *testing.T) {
+	cfg := &Config{
+		KeepRecentRounds:            2, // 只保留最近2轮
+		SummarizationTimeout:        5 * time.Second,
+		SummarizationMaxInputTokens: 8000,
+	}
+
+	mockClient := &mockSummaryClient{
+		summary: "New summary for new messages",
+	}
+
+	summarizer := NewLLMSummarizer(mockClient, cfg)
+
+	// 6条消息：前4条不在最近2轮内，可以被摘要
+	// 索引0: System → keepRegion (IsSystem=true)
+	// 索引1: [CONTEXT SUMMARY] → keepRegion (IsSummary=true)
+	// 索引2: Assistant → summaryRegion (depth=4 > 2)
+	// 索引3: Tool → summaryRegion (depth=3 > 2)
+	// 索引4: Assistant → keepRegion (depth=2 <= 2, IsRecent=true)
+	// 索引5: Tool → keepRegion (depth=1 <= 2, IsRecent=true)
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "System prompt"},
+		{Role: llm.RoleSystem, Content: "[CONTEXT SUMMARY]\nExisting context about user auth system"},
+		{Role: llm.RoleAssistant, Content: strings.Repeat("x", 300)},
+		{Role: llm.RoleTool, Content: strings.Repeat("y", 300)},
+		{Role: llm.RoleAssistant, Content: "Recent assistant response"},
+		{Role: llm.RoleTool, Content: "Recent tool output"},
+	}
+
+	// 使用 CalculatePriorities 计算优先级（自动标记 IsSummary）
+	calc := NewPriorityCalculator(DefaultPriorityWeights)
+	priorities := calc.CalculatePriorities(context.Background(), messages, 2)
+
+	// 验证 [CONTEXT SUMMARY] 消息被标记
+	if !priorities[1].IsSummary {
+		t.Error("Expected IsSummary=true for [CONTEXT SUMMARY] message")
+	}
+
+	result, err := summarizer.Summarize(context.Background(), messages, priorities)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 验证 mock client 被调用（因为 summaryRegion 有2条消息）
+	if mockClient.called == 0 {
+		t.Error("Expected summarizer to be called")
+	}
+
+	// 结果应该包含：
+	// 1. 原始 System 消息
+	// 2. 新摘要消息
+	// 3. 已有的 [CONTEXT SUMMARY] 消息（来自 keepRegion）
+	// 4. 其他保留消息（Recent 消息）
+
+	// 验证已有摘要被保留
+	hasOldSummary := false
+	hasNewSummary := false
+	for _, msg := range result {
+		if strings.HasPrefix(msg.Content, "[CONTEXT SUMMARY]") {
+			if strings.Contains(msg.Content, "Existing context") {
+				hasOldSummary = true
+			}
+			if strings.Contains(msg.Content, "New summary") {
+				hasNewSummary = true
+			}
+		}
+	}
+
+	if !hasOldSummary {
+		t.Error("Expected old [CONTEXT SUMMARY] to be preserved in result")
+	}
+	if !hasNewSummary {
+		t.Error("Expected new [CONTEXT SUMMARY] to be added")
 	}
 }

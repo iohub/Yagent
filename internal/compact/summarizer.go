@@ -70,6 +70,12 @@ func (s *LLMSummarizer) Summarize(
 	for i, p := range priorities {
 		msg := messages[i]
 
+		// 已摘要消息（Content 以 [CONTEXT SUMMARY] 开头）强制保留，跳过二次压缩
+		if p.IsSummary {
+			keepRegion = append(keepRegion, msg)
+			continue
+		}
+
 		// 始终保留的消息
 		if p.IsSystem || p.IsUser || p.IsRecent {
 			keepRegion = append(keepRegion, msg)

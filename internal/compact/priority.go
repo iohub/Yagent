@@ -3,6 +3,7 @@ package compact
 import (
 	"context"
 	"math"
+	"strings"
 	"sync"
 	"codeactor/internal/llm"
 )
@@ -25,6 +26,7 @@ type MessagePriority struct {
 	IsRecent       bool // 是否在"保留窗口"内
 	IsEarly        bool // 是否是早期对话（前1/3）
 	IsIntermediate bool // 是否是中间对话（优先压缩区域）
+	IsSummary      bool // 是否是已有的摘要消息（Content 以 [CONTEXT SUMMARY] 开头）
 	Depth          int  // 距离最近的轮数（0=最新）
 	ContentLen     int  // 内容长度（字符数）
 }
@@ -96,6 +98,9 @@ func (pc *PriorityCalculator) CalculatePriorities(
 		isEarly := i < totalLen/3 // 前1/3是早期对话
 		isIntermediate := !isRecent && !isEarly // 中间区域
 		
+		// 检测是否为已有摘要消息
+		isSummary := strings.HasPrefix(msg.Content, "[CONTEXT SUMMARY]")
+		
 		// 计算基础分数
 		score := pc.calculateBaseScore(msg, isRecent, isEarly, isIntermediate)
 		
@@ -119,6 +124,7 @@ func (pc *PriorityCalculator) CalculatePriorities(
 			IsRecent:       isRecent,
 			IsEarly:        isEarly,
 			IsIntermediate: isIntermediate,
+			IsSummary:      isSummary,
 			ContentLen:     contentLen,
 		}
 	}
