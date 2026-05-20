@@ -3,7 +3,11 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"os"
+	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -43,7 +47,7 @@ func (e *OpenAIEngine) GenerateContent(ctx context.Context, messages []Message, 
 		return e.generateStreaming(ctx, params, opts.StreamHandler)
 	}
 
-	completion, err := e.client.Chat.Completions.New(ctx, params)
+	completion, err := e.retryChatCompletion(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("openai chat completion: %w", err)
 	}
@@ -318,4 +322,86 @@ func (e *OpenAIEngine) toResponse(completion *openai.ChatCompletion) *Response {
 	}
 
 	return resp
+}
+
+// isRetriableError checks if the error can be retried.
+// Retriable errors include:
+// - HTTP 429 Too Many Requests
+// - HTTP 5xx Server Errors (500, 502, 503, 504)
+// - Context deadline exceeded (timeout)
+// - Network timeout errors
+func isRetriableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for openai.Error with status code
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) {
+		status := apiErr.StatusCode
+		// 429 Too Many Requests - definitely retriable
+		if status == 429 {
+			return true
+		}
+		// 5xx Server Errors - retriable
+		if status >= 500 && status < 600 {
+			return true
+		}
+	}
+
+	// Context deadline exceeded (timeout from context)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	// Network timeout errors (e.g., from http.Client)
+	if os.IsTimeout(err) {
+		return true
+	}
+
+	// net.Error with Timeout() method
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	return false
+}
+
+// retryChatCompletion wraps the chat completion API call with exponential backoff retry.
+// It retries on 429 (rate limit), 5xx server errors, and timeout errors.
+// The backoff sequence is: 10s, 20s, 40s, 80s, 160s (max 5 retries).
+func (e *OpenAIEngine) retryChatCompletion(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+	const maxRetries = 5
+	baseDelay := 10 * time.Second
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// On retry attempts, wait with exponential backoff before making the request
+		if attempt > 0 {
+			delay := baseDelay * (1 << (attempt - 1)) // 2^(attempt-1) * 10s: 10, 20, 40, 80, 160
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, fmt.Errorf("retry aborted: context cancelled during backoff: %w", ctx.Err())
+			case <-timer.C:
+			}
+		}
+
+		completion, err := e.client.Chat.Completions.New(ctx, params)
+		if err == nil {
+			return completion, nil
+		}
+
+		if !isRetriableError(err) {
+			return nil, err
+		}
+
+		lastErr = err
+		// Log the retry (attempt number and error)
+		// Note: we don't have a logger here, the error propagation will provide context
+	}
+
+	return nil, fmt.Errorf("max retries (%d) exceeded: %w", maxRetries, lastErr)
 }
