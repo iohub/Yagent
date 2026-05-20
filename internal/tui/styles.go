@@ -1,6 +1,10 @@
 package tui
 
-import "charm.land/lipgloss/v2"
+import (
+	"fmt"
+
+	"charm.land/lipgloss/v2"
+)
 
 // ── Tool icon styles ──
 var (
@@ -155,4 +159,46 @@ func ToolNameStyle(nested bool) lipgloss.Style {
 		return NameNested
 	}
 	return NameNormal
+}
+
+// ── Context compression styles ──
+var (
+	CompactBadgeStyle = lipgloss.NewStyle().
+		Background(lipgloss.Color("23")).
+		Foreground(lipgloss.Color("15")).
+		Bold(true).
+		Padding(0, 1)
+
+	CompactTokenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
+	CompactArrowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+)
+
+// CompactRatioStyle returns a style with color based on compression ratio.
+func CompactRatioStyle(ratio float64) lipgloss.Style {
+	var color string
+	switch {
+	case ratio < 30:
+		color = "114"
+	case ratio < 60:
+		color = "228"
+	default:
+		color = "167"
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
+}
+
+// FormatTokenCount formats a token count with comma separators.
+func FormatTokenCount(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var result []byte
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, byte(c))
+	}
+	return string(result)
 }

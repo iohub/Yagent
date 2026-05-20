@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"codeactor/internal/messaging"
@@ -187,6 +188,14 @@ func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 
 	// Capture the start position to cache the output
 	start := b.Len()
+
+	// Context compression rendering
+	if entry.compactData != nil {
+		rendered := renderContextCompressed(*entry, m.viewport.Width())
+		b.WriteString(rendered)
+		entry.rendered = b.String()[start:]
+		return
+	}
 
 	// Tool entry rendering (non-running) — use new renderer
 	if entry.toolEntry != nil {
@@ -516,6 +525,43 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
+	case "context_compressed":
+		if m, ok := event.Content.(map[string]interface{}); ok {
+			origTokens := 0
+			if v, ok := m["original_tokens"].(float64); ok {
+				origTokens = int(v)
+			}
+			compTokens := 0
+			if v, ok := m["compressed_tokens"].(float64); ok {
+				compTokens = int(v)
+			}
+			ratioStr := ""
+			if v, ok := m["ratio"].(string); ok {
+				ratioStr = v
+			}
+			statsStr := ""
+			if v, ok := m["compression_stats"].(string); ok {
+				statsStr = v
+			}
+			ratioVal := 0.0
+			if ratioStr != "" {
+				s := strings.TrimSuffix(ratioStr, "%")
+				if f, err := strconv.ParseFloat(s, 64); err == nil {
+					ratioVal = f
+				}
+			}
+			entry.compactData = &CompactData{
+				OriginalTokens:   origTokens,
+				CompressedTokens: compTokens,
+				Ratio:            ratioVal,
+				Stats:            statsStr,
+			}
+			entry.content = fmt.Sprintf("上下文压缩 %s → %s (%s)",
+				FormatTokenCount(origTokens), FormatTokenCount(compTokens), ratioStr)
+		}
+		if entry.content == "" {
+			entry.content = fmt.Sprintf("%v", event.Content)
+		}
 	default:
 		if s, ok := event.Content.(string); ok {
 			entry.content = s
@@ -569,6 +615,12 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 			}
 			contentStyle = toolDoneStyle
 		}
+	case "context_compressed":
+		if entry.compactData != nil {
+			return renderContextCompressed(entry, maxWidth)
+		}
+		prefix = "🗜️ 上下文压缩"
+		contentStyle = StatusStyle
 	case "error":
 		prefix = "✖ ERROR"
 		contentStyle = logErrorLogStyle
@@ -668,6 +720,30 @@ func renderToolEntryWithAnim(entry logEntry, maxWidth int, anim *Anim) string {
 		params = entry.executionSummary
 	}
 	return RenderPending(entry.toolEntry.Call.Name, params, anim)
+}
+
+func renderContextCompressed(entry logEntry, width int) string {
+	data := entry.compactData
+	if data == nil {
+		return formatLogEntry(entry, width)
+	}
+
+	contentWidth := width - 4
+	if contentWidth < 30 {
+		contentWidth = 30
+	}
+
+	icon := IconSuccess
+	badge := CompactBadgeStyle.Render("上下文压缩")
+	original := CompactTokenStyle.Render(FormatTokenCount(data.OriginalTokens))
+	arrow := CompactArrowStyle.Render("→")
+	compressed := CompactTokenStyle.Render(FormatTokenCount(data.CompressedTokens))
+	ratioStr := fmt.Sprintf("%.2f%%", data.Ratio)
+	ratio := CompactRatioStyle(data.Ratio).Render(ratioStr)
+
+	header := fmt.Sprintf("%s %s  %s %s %s  %s", icon, badge, original, arrow, compressed, ratio)
+
+	return addToolCallBorders(header, contentWidth)
 }
 
 // extractDiffFromResult attempts to parse a JSON result string and extract the "diff" field.

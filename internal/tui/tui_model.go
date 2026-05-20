@@ -80,6 +80,14 @@ var (
 				Bold(true)
 )
 
+// CompactData carries context compression statistics.
+type CompactData struct {
+	OriginalTokens   int
+	CompressedTokens int
+	Ratio            float64 // 0-100 percentage
+	Stats            string  // compression stats description
+}
+
 // logEntry represents a single message in the TUI log area.
 type logEntry struct {
 	timestamp        time.Time
@@ -93,6 +101,8 @@ type logEntry struct {
 	resultBrief      string // brief result description (e.g., "120 lines", "modified")
 	diffText         string // unified diff content for file edit results
 	rendered         string // cached rendered output (glamour or plain), cleared on resize
+
+	compactData *CompactData
 
 	// Tool entry for new-style rendering (non-nil for tool events)
 	toolEntry *ToolEntry
