@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"os"
 	"sort"
 	"strings"
@@ -9,6 +10,40 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
+
+// =============================================================================
+// Powerline separator helpers
+// =============================================================================
+
+const (
+	powerlineRightSep = "\ue0b0" //  — right-pointing solid triangle
+	powerlineLeftSep  = "\ue0b2" //  — left-pointing solid triangle
+)
+
+// makeRightSep renders  transitioning from prevBg (left) to nextBg (right).
+// The triangle uses prevBg as foreground fill, nextBg as background.
+func makeRightSep(prevBg, nextBg color.Color) string {
+	return lipgloss.NewStyle().
+		Foreground(prevBg).
+		Background(nextBg).
+		Render(powerlineRightSep)
+}
+
+// makeRightSepToEnd renders  transitioning from prevBg to terminal default background.
+func makeRightSepToEnd(prevBg color.Color) string {
+	return lipgloss.NewStyle().
+		Foreground(prevBg).
+		Render(powerlineRightSep)
+}
+
+// makeLeftSep renders  for right-side segments.
+// The triangle uses rightBg as foreground fill, leftBg as background.
+func makeLeftSep(leftBg, rightBg color.Color) string {
+	return lipgloss.NewStyle().
+		Foreground(rightBg).
+		Background(leftBg).
+		Render(powerlineLeftSep)
+}
 
 func (m model) View() tea.View {
 	if m.quitting {
@@ -137,46 +172,125 @@ func (m model) View() tea.View {
 	// Token consumption display (before status line)
 	footer.WriteString(m.renderTokenDashboard())
 
-	// Status line: [COMMAND] tag (if in command mode) + Running indicator + mode indicator
-	var runningBadge string
-	if m.taskRunning {
-		var parts []string
-		parts = append(parts, "●")
-		if m.currentAgent != "" {
-			parts = append(parts, m.currentAgent)
-		}
-		if m.currentModel != "" {
-			parts = append(parts, " [" + m.currentModel + "]")
-		}
-		parts = append(parts, " ", m.anim.Render(), "...")
-		runningBadge = logStatusStyle.Render(strings.Join(parts, ""))
-	}
-
-	// Ensure status line always starts on a new line
+	// Status line: nvim airline-style segmented bar
 	footer.WriteString("\n")
 	// Add extra spacing before status line: empty line in edit mode
 	if !m.commandMode {
 		footer.WriteString("\n")
 	}
-
-	var statusLine string
-	if m.commandMode {
-		commandTag := commandModeBarStyle.Render("[COMMAND]")
-		// Running badge is now inside token dashboard, not in status line
-		statusLine = footerStyle.Render(commandTag + " " + langManager.GetText("CommandModeIdleTips"))
-	} else {
-		if runningBadge != "" {
-			statusLine = footerStyle.Render(runningBadge + " " + langManager.GetText("EditModeTips"))
-		} else {
-			statusLine = footerStyle.Render(langManager.GetText("EditModeTips"))
-		}
-	}
-	// Compact margin for command mode: only left margin, no extra top/bottom spacing
-	footer.WriteString(lipgloss.NewStyle().MarginTop(0).MarginBottom(0).MarginLeft(2).Render(statusLine))
+	footer.WriteString(m.renderAirlineStatusBar())
 
 	b.WriteString(footer.String())
 
 	return tea.NewView(b.String())
+}
+
+// renderAirlineStatusBar renders an nvim airline-style segmented status bar.
+// Layout: [Mode][Filler─────]([RightSeg1][RightSeg2]...)
+func (m model) renderAirlineStatusBar() string {
+	width := m.termWidth
+	if width <= 0 {
+		width = 80 // fallback before WindowSizeMsg
+	}
+
+	// ── Determine mode segment ──────────────────────────────────────────
+	var modeSeg string
+	var modeBg color.Color
+	var tipsText string
+
+	if m.commandMode {
+		modeSeg = airlineCommandModeStyle.Render("COMMAND")
+		modeBg = airlineColorCmdBg
+		tipsText = langManager.GetText("CommandModeIdleTips")
+	} else if m.taskRunning {
+		modeSeg = airlineRunModeStyle.Render("● RUN")
+		modeBg = airlineColorRunBg
+		tipsText = langManager.GetText("EditModeTips")
+	} else {
+		modeSeg = airlineNormalModeStyle.Render("NORMAL")
+		modeBg = airlineColorNormalBg
+		tipsText = langManager.GetText("EditModeTips")
+	}
+
+	// ── Build left part: mode +  transition to filler ─────────────────
+	leftPart := modeSeg + makeRightSep(modeBg, airlineColorInfoBg)
+
+	// ── Build right segments (only in running state) ────────────────────
+	type segDef struct {
+		bg    color.Color
+		style lipgloss.Style
+		text  string
+	}
+
+	var rightSegs []segDef
+	if m.taskRunning && !m.commandMode {
+		if m.currentAgent != "" {
+			rightSegs = append(rightSegs, segDef{
+				bg:    airlineColorInfoAltBg,
+				style: airlineInfoAltStyle,
+				text:  m.currentAgent,
+			})
+		}
+		if m.currentModel != "" {
+			rightSegs = append(rightSegs, segDef{
+				bg:    airlineColorAccentBg,
+				style: airlineAccentStyle,
+				text:  m.currentModel,
+			})
+		}
+		// Spinner animation — always present when running
+		rightSegs = append(rightSegs, segDef{
+			bg:    airlineColorInfoBg,
+			style: airlineInfoStyle,
+			text:  m.anim.Render(),
+		})
+	}
+
+	// ── Render right part ───────────────────────────────────────────────
+	var rightPart string
+	if len(rightSegs) > 0 {
+		var rParts []string
+		// First : transition from filler bg to first right segment bg
+		rParts = append(rParts, makeLeftSep(airlineColorInfoBg, rightSegs[0].bg))
+		for i, seg := range rightSegs {
+			rParts = append(rParts, seg.style.Render(seg.text))
+			if i < len(rightSegs)-1 {
+				rParts = append(rParts, makeLeftSep(seg.bg, rightSegs[i+1].bg))
+			}
+		}
+		rightPart = strings.Join(rParts, "")
+	}
+
+	// ── Edge case: very narrow terminal ────────────────────────────────
+	leftRenderedWidth := lipgloss.Width(leftPart)
+	if leftRenderedWidth >= width {
+		return modeSeg + makeRightSepToEnd(modeBg)
+	}
+
+	rightRenderedWidth := lipgloss.Width(rightPart)
+	fillerWidth := width - leftRenderedWidth - rightRenderedWidth
+	if fillerWidth < 0 {
+		// Can't fit right segments — drop them
+		rightPart = ""
+		rightRenderedWidth = 0
+		fillerWidth = width - leftRenderedWidth
+		if fillerWidth < 0 {
+			fillerWidth = 0
+		}
+	}
+
+	// ── Render filler segment ───────────────────────────────────────────
+	fillerPart := airlineFillerStyle.Width(fillerWidth).Render(tipsText)
+
+	// ── End transition ──────────────────────────────────────────────────
+	var endSep string
+	if len(rightSegs) == 0 {
+		endSep = makeRightSepToEnd(airlineColorInfoBg)
+	}
+
+	// ── Assemble full bar ───────────────────────────────────────────────
+	// Layout: [Mode][Filler─────](→end | [RightSegs])
+	return leftPart + fillerPart + endSep + rightPart
 }
 
 func (m model) renderWelcomePanel() string {

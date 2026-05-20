@@ -23,6 +23,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 )
 
 // Global Language Manager
@@ -78,6 +79,70 @@ var (
 				Background(lipgloss.Color("214")).
 				Foreground(lipgloss.Color("0")).
 				Bold(true)
+)
+
+// =============================================================================
+// Airline-style status bar — color palette
+// =============================================================================
+
+var (
+	// Mode segment colors
+	airlineColorNormalBg = compat.AdaptiveColor{Light: lipgloss.Color("24"), Dark: lipgloss.Color("24")}   // Blue
+	airlineColorNormalFg = compat.AdaptiveColor{Light: lipgloss.Color("15"), Dark: lipgloss.Color("15")}   // White
+	airlineColorRunBg    = compat.AdaptiveColor{Light: lipgloss.Color("70"), Dark: lipgloss.Color("76")}   // Green
+	airlineColorRunFg    = compat.AdaptiveColor{Light: lipgloss.Color("15"), Dark: lipgloss.Color("15")}   // White
+	airlineColorCmdBg    = compat.AdaptiveColor{Light: lipgloss.Color("202"), Dark: lipgloss.Color("214")} // Orange
+	airlineColorCmdFg    = compat.AdaptiveColor{Light: lipgloss.Color("0"), Dark: lipgloss.Color("0")}     // Black
+
+	// Info/secondary segment colors
+	airlineColorInfoBg    = compat.AdaptiveColor{Light: lipgloss.Color("235"), Dark: lipgloss.Color("236")} // Dark gray
+	airlineColorInfoFg    = compat.AdaptiveColor{Light: lipgloss.Color("252"), Dark: lipgloss.Color("250")} // Light gray
+	airlineColorInfoAltBg = compat.AdaptiveColor{Light: lipgloss.Color("237"), Dark: lipgloss.Color("238")} // Slightly lighter dark gray
+	airlineColorInfoAltFg = compat.AdaptiveColor{Light: lipgloss.Color("252"), Dark: lipgloss.Color("250")} // Light gray
+
+	// Accent/highlight segment colors
+	airlineColorAccentBg = compat.AdaptiveColor{Light: lipgloss.Color("166"), Dark: lipgloss.Color("166")} // Orange accent
+	airlineColorAccentFg = compat.AdaptiveColor{Light: lipgloss.Color("15"), Dark: lipgloss.Color("15")}   // White
+)
+
+// Pre-defined segment styles
+var (
+	airlineNormalModeStyle = lipgloss.NewStyle().
+				Background(airlineColorNormalBg).
+				Foreground(airlineColorNormalFg).
+				Bold(true).
+				Padding(0, 1)
+
+	airlineRunModeStyle = lipgloss.NewStyle().
+				Background(airlineColorRunBg).
+				Foreground(airlineColorRunFg).
+				Bold(true).
+				Padding(0, 1)
+
+	airlineCommandModeStyle = lipgloss.NewStyle().
+				Background(airlineColorCmdBg).
+				Foreground(airlineColorCmdFg).
+				Bold(true).
+				Padding(0, 1)
+
+	airlineInfoStyle = lipgloss.NewStyle().
+				Background(airlineColorInfoBg).
+				Foreground(airlineColorInfoFg).
+				Padding(0, 1)
+
+	airlineInfoAltStyle = lipgloss.NewStyle().
+				Background(airlineColorInfoAltBg).
+				Foreground(airlineColorInfoAltFg).
+				Padding(0, 1)
+
+	airlineAccentStyle = lipgloss.NewStyle().
+				Background(airlineColorAccentBg).
+				Foreground(airlineColorAccentFg).
+				Padding(0, 1)
+
+	airlineFillerStyle = lipgloss.NewStyle().
+				Background(airlineColorInfoBg).
+				Foreground(airlineColorInfoFg)
 )
 
 // CompactData carries context compression statistics.
