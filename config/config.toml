@@ -9,18 +9,17 @@ use_provider = "aliyun"
 # use_provider = "openrouter"  # 所有agent的默认提供商（可选）
 
 # 按agent名指定（优先级高于 agents.llm.use_provider）
-# [agents.llm.conductor]
-# use_provider = "aliyun"
-# [agents.llm.coding]
-# use_provider = "deepseek"
-# [agents.llm.repo]
-# use_provider = "siliconflow"
-# [agents.llm.chat]
-# use_provider = "xiaomi"
-# [agents.llm.meta]
-# use_provider = "openrouter"
-# [agents.llm.devops]
-# use_provider = "local"
+[agents.llm.conductor]
+use_provider = "ds4_flash"
+
+[agents.llm.coding]
+use_provider = "local"
+
+[agents.llm.repo]
+use_provider = "local"
+
+[agents.llm.browser]
+use_provider = "local"
 
 # Tool级LLM配置：可为需要LLM调用的tool指定专用提供商
 [tools.llm]
@@ -29,8 +28,11 @@ use_provider = "aliyun"
 # 按tool名指定（优先级高于 tools.llm.use_provider）
 # [tools.llm.micro_agent]
 # use_provider = "local"
-# [tools.llm.thinking]
-# use_provider = "xiaomi"
+[tools.llm.thinking]
+use_provider = "deepseek_v4_pro"
+
+[tools.llm.deepthinking]
+use_provider = "deepseek_v4_pro"
 
 # ── LLM提供商定义（所有层级共用）──
 [global.llm.providers.xiaomi]
@@ -138,9 +140,10 @@ aws_region = "us-east-1"
 enable_streaming = true
 
 [agent]
-conductor_max_steps = 30
-coding_max_steps = 50
-repo_max_steps = 30
+conductor_max_steps = 100
+coding_max_steps = 150
+repo_max_steps = 50
+browser_max_steps = 200
 meta_retry_count = 5
 lang = "Chinese"
 
@@ -183,14 +186,58 @@ dimensions = 2560
 
 # ── Reranker 重排配置（可选）──
 # 启用后可在 RRF 融合后对候选结果进行 Cross-Encoder 精排
+[codebase.retrieval_pipeline]
+# 是否启用级联检索 Pipeline（启用后将使用混合搜索 + Reranker + 图扩展）
+enabled = true
+
+# ----------------------------------------------------------
+# 混合检索（Hybrid Search: BM25 + Vector + RRF）配置
+# ----------------------------------------------------------
+[codebase.retrieval_pipeline.hybrid]
+# BM25 稀疏检索通道开关
+enable_bm25 = true
+# BM25 索引存储路径（相对于 embedding_db_uri）
+bm25_index_path = "tantivy_bm25"
+# BM25 每通道召回数量
+bm25_top_k = 20
+# Vector 每通道召回数量
+vector_top_k = 20
+# RRF（Reciprocal Rank Fusion）融合参数 k
+rrf_k = 60
+# RRF 融合后保留的 Top-K 数量
+rrf_top_k = 20
+
+# ----------------------------------------------------------
+# Reranker 重排配置
+# ----------------------------------------------------------
 [codebase.retrieval_pipeline.reranker]
+# 是否启用 Reranker 重排
 enabled = false
-model = "BAAI/bge-reranker-v2-m3"
-api_token = "your-siliconflow-api-key"
-api_base_url = "https://api.siliconflow.cn"
+# SiliconFlow（或兼容 API）的 API Key
+api_token = "your-key"
+# 重排序模型名称
+model = "Qwen/Qwen3-Reranker-4B"
+# API 基础 URL
+api_base_url = "https://api.siliconflow.cn/v1/rerank"
+# 重排后保留的 Top-N 文档数
 top_n = 10
 candidate_multiplier = 5
-timeout_secs = 30
+timeout_secs = 60
+
+# ----------------------------------------------------------
+# 图扩展（Graph Expansion）配置
+# ----------------------------------------------------------
+[codebase.retrieval_pipeline.graph_expansion]
+# 是否启用图扩展（基于代码依赖图的 BFS 扩展）
+enabled = false
+# BFS 扩展最大深度
+max_depth = 2
+# Token 预算上限
+token_budget = 4096
+# 扩展方向："bidirectional"（双向）、"upward"（向上依赖）、"downward"（向下引用）
+direction = "bidirectional"
+# 最大扩展节点数
+max_nodes = 10
 
 # ─────────────────────────────────────────────────────────────
 # Browser Configuration (go-rod headless Chrome)
@@ -203,7 +250,7 @@ viewport_width = 1280
 viewport_height = 720
 allowed_domains = []
 blocked_domains = []
-timeout_seconds = 30
+timeout_seconds = 120
 max_concurrent_pages = 4
 auto_launch = true
 idle_timeout = "5m"
@@ -217,7 +264,7 @@ task_timeout_seconds = 300
 # ─────────────────────────────────────────────────────────────
 [commit_learner]
 enabled = true
-max_commits = 30
+max_commits = 50
 similarity_threshold = 0.75
 top_k = 3
 trigger = "both"
