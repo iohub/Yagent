@@ -12,6 +12,7 @@ dist
 *.dylib
 refs
 
+.codeactor
 # Test binary, built with `go test -c`
 *.test
 
