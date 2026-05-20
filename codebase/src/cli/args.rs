@@ -13,7 +13,7 @@ pub enum StorageMode {
 
 impl Default for StorageMode {
     fn default() -> Self {
-        StorageMode::Json
+        StorageMode::Binary
     }
 }
 
@@ -25,7 +25,7 @@ pub struct Cli {
     pub verbose: bool,
 
     /// Storage mode for code graph persistence
-    #[clap(long, value_enum, default_value = "json")]
+    #[clap(long, value_enum, default_value = "binary")]
     pub storage_mode: StorageMode,
 
     #[clap(subcommand)]

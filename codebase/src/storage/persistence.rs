@@ -31,7 +31,7 @@ impl PersistenceManager {
     pub fn new() -> Self {
         let config = Config::load().expect("Failed to load configuration");
         let base_dir = PathBuf::from(config.codebase.graph_db_uri);
-        Self::with_storage_mode(StorageMode::Json, base_dir)
+        Self::with_storage_mode(StorageMode::default(), base_dir)
     }
 
     pub fn with_storage_mode(storage_mode: StorageMode, base_dir: PathBuf) -> Self {

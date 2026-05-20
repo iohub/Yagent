@@ -47,7 +47,7 @@ pub struct StorageManager {
 
 impl StorageManager {
     pub fn new() -> Self {
-        Self::with_storage_mode(StorageMode::Json)
+        Self::with_storage_mode(StorageMode::default())
     }
 
     pub fn with_storage_mode(storage_mode: StorageMode) -> Self {
