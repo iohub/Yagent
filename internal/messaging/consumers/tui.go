@@ -237,17 +237,12 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 		}
 	case "context_compressed":
 		prefixRendered = statusPrefixStyle.Render("🗜️ 上下文压缩")
-		// 解析统计信息
 		contentMap, ok := event.Content.(map[string]interface{})
-		if !ok {
-			wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
-		} else {
+		if ok {
 			origTokens, _ := contentMap["original_tokens"].(float64)
 			compTokens, _ := contentMap["compressed_tokens"].(float64)
 			ratio, _ := contentMap["ratio"].(string)
-			stats, _ := contentMap["compression_stats"].(string)
 
-			// 压缩比越接近0说明压缩越多
 			var ratioColor string
 			ratioVal := 1.0
 			if compTokens > 0 && origTokens > 0 {
@@ -260,18 +255,14 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 			} else {
 				ratioColor = "167" // red
 			}
-
 			ratioStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ratioColor)).Bold(true)
 
-			line := fmt.Sprintf("📊 %d → %d tokens (%s)",
+			// 精简显示: 📊 原tokens → 压缩后tokens (彩色压缩比)
+			line := fmt.Sprintf("📊 %d → %d %s",
 				int(origTokens), int(compTokens), ratioStyle.Render(ratio))
-
-			if stats != "" {
-				line += " " + toolSummaryStyle.Render("· "+stats)
-			}
 			prefixRendered += " " + toolSummaryStyle.Render(line)
-			wrappedContent = ""  // 单行显示，不显示内容面板
 		}
+		wrappedContent = "" // 单行显示，不显示内容面板
 	case "tool_call_result":
 		toolName = getToolNameFromContent(event.Content)
 		callID := getToolCallIDFromContent(event.Content)
