@@ -301,6 +301,85 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 			content:   fmt.Sprintf("Current mode: %s | Task running: %v | Buffer: %q", mode, m.taskRunning, m.commandBuffer),
 		})
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+	case strings.HasPrefix(cmd, "/model"):
+		// Block switching while a task is running
+		if m.taskRunning {
+			m.logEntries = append(m.logEntries, logEntry{
+				timestamp: time.Now(),
+				eventType: "status",
+				content:   "Cannot switch provider while a task is running. Wait for the task to complete first.",
+			})
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+			return nil
+		}
+		// Switch LLM provider
+		parts := strings.Fields(cmd)
+		if len(parts) >= 2 {
+			// /model <provider_name> - switch directly
+			providerName := parts[1]
+			// Get the list of valid providers
+			validProviders := m.assistant.GetClient().Config.GetProviderNames()
+			found := false
+			for _, p := range validProviders {
+				if p == providerName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				m.logEntries = append(m.logEntries, logEntry{
+					timestamp: time.Now(),
+					eventType: "status",
+					content:   fmt.Sprintf("Unknown provider: %s. Available providers: %s", providerName, strings.Join(validProviders, ", ")),
+				})
+				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				return nil
+			}
+			if err := m.assistant.SwitchProvider(providerName); err != nil {
+				m.logEntries = append(m.logEntries, logEntry{
+					timestamp: time.Now(),
+					eventType: "error",
+					content:   fmt.Sprintf("Failed to switch provider: %v", err),
+				})
+				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				return nil
+			}
+			// Get the model name for display
+			_, modelName := m.assistant.GetClient().GetCurrentProviderInfo()
+			m.currentProvider = providerName
+			m.currentModel = modelName
+			m.logEntries = append(m.logEntries, logEntry{
+				timestamp: time.Now(),
+				eventType: "status",
+				content:   fmt.Sprintf("Switched provider to: %s (model: %s)", providerName, modelName),
+			})
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+		} else {
+			// /model with no args - list available providers
+			providers := m.assistant.GetClient().Config.GetProviderNames()
+			msg := "Available providers:\n"
+			currentProvider, _ := m.assistant.GetClient().GetCurrentProviderInfo()
+			for _, p := range providers {
+				marker := "  "
+				if p == currentProvider {
+					marker = " ›"  // current provider indicator
+				}
+				// Get provider details
+				if provCfg, err := m.assistant.GetClient().Config.GetProvider(p); err == nil {
+					msg += fmt.Sprintf("  %s %-16s (model: %s)\n", marker, p, provCfg.Model)
+				} else {
+					msg += fmt.Sprintf("  %s %s\n", marker, p)
+				}
+			}
+			msg += "\nUse: /model <provider_name> to switch"
+			m.logEntries = append(m.logEntries, logEntry{
+				timestamp: time.Now(),
+				eventType: "status",
+				content:   msg,
+			})
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+		}
+		return nil
 	case cmd == ":hist" || cmd == ":history":
 		if m.taskRunning {
 			m.infoMsg = "Cannot browse history while a task is running"
@@ -1244,6 +1323,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if agentName, ok := contentMap["agent"].(string); ok && agentName != "" {
 					m.currentAgent = agentName
 				}
+				// Capture provider name if available
+				if providerName, ok := contentMap["provider"].(string); ok && providerName != "" {
+					m.currentProvider = providerName
+				}
 			}
 			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 		}
@@ -1411,7 +1494,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskCompleteMsg:
 		m.taskRunning = false
-		m.currentModel = ""
+		// Don't clear currentModel/currentProvider — they represent the persistent
+		// LLM provider configuration and should remain visible in the status bar
+		// even when no task is running.
 		m.currentAgent = ""
 		m.commandMode = false
 		m.confirmDialog.open = false // safety: close any stale dialog

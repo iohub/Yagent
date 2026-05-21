@@ -332,6 +332,9 @@ type model struct {
 	// Current agent name (set when task is running, cleared when finished)
 	currentAgent string
 
+	// Current provider name for status bar display
+	currentProvider string
+
 	// Token consumption tracking
 	inputTokens              int64 // accumulated input tokens
 	outputTokens             int64 // accumulated output tokens
@@ -513,6 +516,15 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		keywordDict.AddWords(dict.DefaultKeywords())
 	}
 
+	// Get current provider info for status bar display
+	initProvider := ""
+	initModel := ""
+	if ca != nil && ca.GetClient() != nil {
+		prov, model := ca.GetClient().GetCurrentProviderInfo()
+		initProvider = prov
+		initModel = model
+	}
+
 	return model{
 		assistant:          ca,
 		taskManager:        tm,
@@ -540,6 +552,10 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		diffView:     dv,
 		keywordDict:  keywordDict,
 		keywordCompletionCfg: keywordCompletionConfig{enabled: completionEnabled},
+
+		// will be populated on first task via model_info event
+		currentProvider:    initProvider,
+		currentModel:       initModel,
 
 		// 预创建的渲染样式（避免循环内重复创建）
 		skillSuggestionStyle: lipgloss.NewStyle().

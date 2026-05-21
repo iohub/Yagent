@@ -223,19 +223,30 @@ func (m model) renderAirlineStatusBar() string {
 	}
 
 	var rightSegs []segDef
+	
+	// Show provider/model info in both running and idle states
+	modelDisplay := ""
+	if m.currentProvider != "" && m.currentModel != "" {
+		modelDisplay = m.currentProvider + "/" + m.currentModel
+	} else if m.currentModel != "" {
+		modelDisplay = m.currentModel
+	} else if m.currentProvider != "" {
+		modelDisplay = m.currentProvider
+	}
+	if modelDisplay != "" {
+		rightSegs = append(rightSegs, segDef{
+			bg:    airlineColorAccentBg,
+			style: airlineAccentStyle,
+			text:  modelDisplay,
+		})
+	}
+
 	if m.taskRunning && !m.commandMode {
 		if m.currentAgent != "" {
 			rightSegs = append(rightSegs, segDef{
 				bg:    airlineColorInfoAltBg,
 				style: airlineInfoAltStyle,
 				text:  m.currentAgent,
-			})
-		}
-		if m.currentModel != "" {
-			rightSegs = append(rightSegs, segDef{
-				bg:    airlineColorAccentBg,
-				style: airlineAccentStyle,
-				text:  m.currentModel,
 			})
 		}
 		// Spinner animation — always present when running

@@ -305,6 +305,26 @@ func (ca *CodeActor) ProcessConversation(req *TaskRequest) (string, error) {
 	return ca.conductor.Run(req.ctx, req.userMessage, req.memory)
 }
 
+// SwitchProvider dynamically switches the LLM provider for all agents.
+// The change takes effect on the next task execution (since Init() is called
+// at the start of ProcessCodingTaskWithCallback / ProcessConversation).
+func (ca *CodeActor) SwitchProvider(providerName string) error {
+	if ca.client == nil {
+		return fmt.Errorf("LLM client not available")
+	}
+	if err := ca.client.SwitchProvider(providerName); err != nil {
+		return err
+	}
+	// Also update the local engine reference to keep it in sync
+	ca.engine = ca.client.Engine
+	return nil
+}
+
+// GetClient returns the underlying LLM client.
+func (ca *CodeActor) GetClient() *llm.Client {
+	return ca.client
+}
+
 // parseDisabledAgents converts a comma-separated string of agent names
 // into a map[string]bool for O(1) lookup. Valid agent names: repo, coding, chat, meta, devops, browser.
 func parseDisabledAgents(s string) map[string]bool {

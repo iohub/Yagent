@@ -401,3 +401,49 @@ func extractHTTPResponse(err error) string {
 
 	return fmt.Sprintf("Error: %s", err.Error())
 }
+
+// SwitchProvider dynamically switches the default provider at runtime.
+// It creates a new engine for the given provider name and sets it as the default.
+// It also clears the cached engines map so that GetAgentEngine/GetToolEngine
+// will recreate engines with the new provider on next call.
+func (c *Client) SwitchProvider(providerName string) error {
+	provider, err := c.Config.GetProvider(providerName)
+	if err != nil {
+		return fmt.Errorf("SwitchProvider: %w", err)
+	}
+
+	if provider.APIKey == "" {
+		return fmt.Errorf("SwitchProvider: API key is empty for provider '%s'", providerName)
+	}
+
+	slog.Info("Switching default provider",
+		"provider", providerName,
+		"model", provider.Model,
+		"api_base_url", provider.APIBaseURL)
+
+	engine := NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model)
+	loggingEngine := &LoggingEngine{inner: engine}
+
+	// Clear all cached engines so they'll be recreated on next GetAgentEngine/GetToolEngine call
+	c.mu.Lock()
+	c.Engine = loggingEngine
+	c.engines = make(map[string]Engine)
+	c.mu.Unlock()
+
+	return nil
+}
+
+// GetCurrentProviderInfo returns the current default provider name and model name.
+func (c *Client) GetCurrentProviderInfo() (providerName string, modelName string) {
+	provider, err := c.Config.ResolveProvider("", "")
+	if err != nil {
+		return "unknown", "unknown"
+	}
+	// Find the provider name that matches this config
+	for name, p := range c.Config.Global.LLM.Providers {
+		if p.APIBaseURL == provider.APIBaseURL && p.Model == provider.Model {
+			return name, provider.Model
+		}
+	}
+	return "unknown", provider.Model
+}
