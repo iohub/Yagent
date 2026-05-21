@@ -463,20 +463,6 @@ func (m model) renderTokenDashboard() string {
 	})
 
 	var lines []string
-
-	// In command mode with running task, show running badge at top of dashboard
-	if m.commandMode && m.taskRunning {
-		var parts []string
-		parts = append(parts, "●")
-		if m.currentAgent != "" {
-			parts = append(parts, m.currentAgent)
-		}
-		if m.currentModel != "" {
-			parts = append(parts, " [" + m.currentModel + "]")
-		}
-		parts = append(parts, " ", m.anim.Render(), "...")
-		lines = append(lines, logStatusStyle.Render(strings.Join(parts, "")))
-	}
 	lines = append(lines, header)
 	lines = append(lines, sepStyle.Render(strings.Repeat("─", 48)))
 
