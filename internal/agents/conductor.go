@@ -72,6 +72,7 @@ type ConductorAgent struct {
 	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
 	commitManager        *CommitManager            // commit 学习器管理器
+	hasDelegated         bool                      // 标记是否已委派过 agent
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -386,6 +387,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		compactConfig:  compactCfg,
 		summaryEngine:  summaryEngine,
 		commitManager:  commitManager, // 设置 commit 学习器管理器
+		hasDelegated:   false,         // 初始未委派过
 	}
 	return self
 }
@@ -935,7 +937,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			ToolCalls: choice.ToolCalls,
 		})
 
-		if len(choice.ToolCalls) == 0 {
+		if len(choice.ToolCalls) == 0 && !a.hasDelegated {
 			// LLM 没有调用任何工具，强制它调用工具
 			messages = append(messages, llm.Message{
 				Role:    llm.RoleUser,
@@ -971,6 +973,10 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 						} else {
 							a.GlobalCtx.RepoSummary = toolResult
 						}
+					}
+					// 检测是否是 delegate 工具（委派成功）
+					if err == nil && strings.HasPrefix(t.Name(), "delegate_") {
+						a.hasDelegated = true
 					}
 					break
 				}
