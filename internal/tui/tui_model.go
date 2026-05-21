@@ -323,6 +323,9 @@ type model struct {
 	// Tool call state tracking: tool_call_id → ToolEntry
 	toolCallEntries map[string]*ToolEntry
 
+	// Active LLM calls: agent_name → log entry index for matching start/end
+	llmCallActiveEntries map[string]int
+
 	// Current LLM model being used (extracted from model_info events)
 	currentModel string
 
@@ -520,7 +523,8 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		currentLang:        langManager.currentLang,
 		eventCh:            make(chan *messaging.MessageEvent, 1000),
 		logEntries:         make([]logEntry, 0),
-		viewport:           vp,
+			llmCallActiveEntries: make(map[string]int),
+			viewport:           vp,
 		contentCache:       &strings.Builder{},
 		glamourRenderer:    glamourRenderer,
 		useDarkStyle:       useDarkStyle,

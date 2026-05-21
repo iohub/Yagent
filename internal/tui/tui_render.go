@@ -180,6 +180,13 @@ func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 		return
 	}
 
+	// For running LLM call entries, render with animation (single line)
+	if entry.eventType == "llm_call_start" && entry.isToolRunning {
+		llmLine := renderLLMCallWithAnim(*entry, m.viewport.Width(), m.anim)
+		b.WriteString(llmLine)
+		return
+	}
+
 	// Use cached rendered content if available
 	if entry.rendered != "" {
 		b.WriteString(entry.rendered)
@@ -844,4 +851,22 @@ func decodeIfJSONString(s string) string {
 		}
 	}
 	return s
+}
+
+// renderLLMCallWithAnim renders a running LLM call entry with animation characters.
+func renderLLMCallWithAnim(entry logEntry, maxWidth int, anim *Anim) string {
+	icon := IconPending
+	content := strings.ReplaceAll(entry.content, "\n", " ")
+	// Truncate if too long
+	contentWidth := maxWidth - 20
+	if contentWidth < 20 {
+		contentWidth = 20
+	}
+	if lipgloss.Width(content) > contentWidth {
+		runes := []rune(content)
+		if len(runes) > contentWidth-3 {
+			content = string(runes[:contentWidth-3]) + "..."
+		}
+	}
+	return icon + " " + llmCallStyle.Render(content) + " " + anim.Render()
 }

@@ -1248,11 +1248,70 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 		}
 
-		// Handle llm_call_start/end — log them as compact entries
-		if msg.event.Type == "llm_call_start" || msg.event.Type == "llm_call_end" {
+		// Handle llm_call_start — create a running entry with animation (single line)
+		if msg.event.Type == "llm_call_start" {
 			entry := formatEventAsEntry(msg.event)
+			entry.isToolRunning = true
+
+			// Generate a unique ID for this LLM call (use agent name + timestamp)
+			callID := fmt.Sprintf("llm_%s_%d", msg.event.From, msg.event.Timestamp.UnixNano())
+			entry.toolCallID = callID
+
 			m.logEntries = append(m.logEntries, entry)
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+
+			// Store the entry index for llm_call_end to update
+			m.llmCallActiveEntries[msg.event.From] = len(m.logEntries) - 1
+			m.activeAnim = true
+
+			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+		}
+
+		// Handle llm_call_end — update the matching start entry (no new entry created)
+		if msg.event.Type == "llm_call_end" {
+			if idx, ok := m.llmCallActiveEntries[msg.event.From]; ok && idx >= 0 && idx < len(m.logEntries) {
+				delete(m.llmCallActiveEntries, msg.event.From)
+
+				// Update the log entry with end information
+				le := &m.logEntries[idx]
+				le.isToolRunning = false
+
+				// Format content like current llm_call_end with duration
+				if durationRaw, ok := msg.event.Metadata["duration_seconds"]; ok {
+					var duration float64
+					switch v := durationRaw.(type) {
+					case float64:
+						duration = v
+					case int:
+						duration = float64(v)
+					}
+
+					modelName, _ := msg.event.Metadata["model"].(string)
+					agentName, _ := msg.event.Metadata["agent"].(string)
+					if modelName == "" {
+						if m, ok := msg.event.Content.(map[string]interface{}); ok {
+							modelName, _ = m["model"].(string)
+						}
+					}
+
+					hasError := false
+					if errStr, ok := msg.event.Metadata["error"]; ok && errStr != "" {
+						hasError = true
+					}
+
+					if hasError {
+						le.content = fmt.Sprintf("◂ %s  [%s]  ✗ %.2fs", agentName, modelName, duration)
+					} else {
+						le.content = fmt.Sprintf("◂ %s  [%s]  ✓ %.2fs", agentName, modelName, duration)
+					}
+				} else {
+					le.content = "◂ LLM call completed"
+				}
+
+				le.rendered = "" // invalidate cache
+				m.updateActiveAnim()
+				m.rebuildViewportScrollLock()
+			}
 			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 		}
 
