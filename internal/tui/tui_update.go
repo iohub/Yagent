@@ -161,9 +161,12 @@ func (m *model) doSkillAutocomplete(text string, contentRunes []rune, cursor int
 			}
 		}
 
-		// 添加 "history" 作为内置命令
+		// 添加 "history" 和 "model" 作为内置命令
 		if hasPrefixIgnoreCase("history", query) {
 			matches = append([]string{"history"}, matches...)
+		}
+		if hasPrefixIgnoreCase("model", query) {
+			matches = append([]string{"model"}, matches...)
 		}
 	}
 
@@ -273,10 +276,6 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		} else {
 			m.confirmQuitDialog.open = true
 		}
-	case strings.HasPrefix(cmd, "/"):
-		// Search in log entries
-		query := strings.TrimPrefix(cmd, "/")
-		m.searchInLog(query)
 	case cmd == ":help" || cmd == ":h":
 		if m.dialogStack != nil {
 			if m.showHelpDialog {
@@ -301,7 +300,10 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 			content:   fmt.Sprintf("Current mode: %s | Task running: %v | Buffer: %q", mode, m.taskRunning, m.commandBuffer),
 		})
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-	case strings.HasPrefix(cmd, "/model"):
+	// ═══════════════════════════════════════════════════════════════
+	// :model — Switch LLM provider (interactive dialog or direct)
+	// ═══════════════════════════════════════════════════════════════
+	case cmd == ":model" || strings.HasPrefix(cmd, ":model "):
 		// Block switching while a task is running
 		if m.taskRunning {
 			m.logEntries = append(m.logEntries, logEntry{
@@ -312,12 +314,11 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			return nil
 		}
-		// Switch LLM provider
+
+		// Check for direct provider argument: :model <name>
 		parts := strings.Fields(cmd)
 		if len(parts) >= 2 {
-			// /model <provider_name> - switch directly
 			providerName := parts[1]
-			// Get the list of valid providers
 			validProviders := m.assistant.GetClient().Config.GetProviderNames()
 			found := false
 			for _, p := range validProviders {
@@ -354,32 +355,31 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 				content:   fmt.Sprintf("Switched provider to: %s (model: %s)", providerName, modelName),
 			})
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-		} else {
-			// /model with no args - list available providers
-			providers := m.assistant.GetClient().Config.GetProviderNames()
-			msg := "Available providers:\n"
-			currentProvider, _ := m.assistant.GetClient().GetCurrentProviderInfo()
-			for _, p := range providers {
-				marker := "  "
-				if p == currentProvider {
-					marker = " ›"  // current provider indicator
-				}
-				// Get provider details
-				if provCfg, err := m.assistant.GetClient().Config.GetProvider(p); err == nil {
-					msg += fmt.Sprintf("  %s %-16s (model: %s)\n", marker, p, provCfg.Model)
-				} else {
-					msg += fmt.Sprintf("  %s %s\n", marker, p)
-				}
-			}
-			msg += "\nUse: /model <provider_name> to switch"
-			m.logEntries = append(m.logEntries, logEntry{
-				timestamp: time.Now(),
-				eventType: "status",
-				content:   msg,
-			})
-			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+			return nil
 		}
+
+		// No argument — show interactive model selection dialog
+		providers := m.assistant.GetClient().Config.GetProviderNames()
+		providerDescs := make(map[string]string)
+		currentProv, _ := m.assistant.GetClient().GetCurrentProviderInfo()
+		for _, p := range providers {
+			if provCfg, err := m.assistant.GetClient().Config.GetProvider(p); err == nil {
+				providerDescs[p] = components.FormatProviderDesc(p, provCfg.Model)
+			} else {
+				providerDescs[p] = p
+			}
+		}
+		dialog := components.NewModelSelectDialog(providers, providerDescs, currentProv)
+		dialog.SetBounds(m.termWidth, m.termHeight)
+		m.dialogStack.Push(dialog)
 		return nil
+	// ═══════════════════════════════════════════════════════════════
+	// /pattern — Search in log entries (must come AFTER more specific / commands)
+	// ═══════════════════════════════════════════════════════════════
+	case strings.HasPrefix(cmd, "/"):
+		// Search in log entries
+		query := strings.TrimPrefix(cmd, "/")
+		m.searchInLog(query)
 	case cmd == ":hist" || cmd == ":history":
 		if m.taskRunning {
 			m.infoMsg = "Cannot browse history while a task is running"
@@ -602,6 +602,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					case "esc", "n", "N":
 						d.SetConfirmed(false)
 						d.SelectedIndex = 0
+						m.dialogStack.Pop()
+						return m, nil
+					}
+					return m, nil
+
+				case *components.ModelSelectDialog:
+					switch key {
+					case "enter", " ":
+						if d.Selected != "" {
+							providers := m.assistant.GetClient().Config.GetProviderNames()
+							found := false
+							for _, p := range providers {
+								if p == d.Selected {
+									found = true
+									break
+								}
+							}
+							if !found {
+								m.logEntries = append(m.logEntries, logEntry{
+									timestamp: time.Now(),
+									eventType: "status",
+									content:   fmt.Sprintf("Unknown provider: %s", d.Selected),
+								})
+								m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+								m.dialogStack.Pop()
+								return m, nil
+							}
+							if err := m.assistant.SwitchProvider(d.Selected); err != nil {
+								m.logEntries = append(m.logEntries, logEntry{
+									timestamp: time.Now(),
+									eventType: "error",
+									content:   fmt.Sprintf("Failed to switch provider: %v", err),
+								})
+								m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+							} else {
+								_, modelName := m.assistant.GetClient().GetCurrentProviderInfo()
+								m.currentProvider = d.Selected
+								m.currentModel = modelName
+								m.logEntries = append(m.logEntries, logEntry{
+									timestamp: time.Now(),
+									eventType: "status",
+									content:   fmt.Sprintf("Switched provider to: %s (model: %s)", d.Selected, modelName),
+								})
+								m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+							}
+						}
+						m.dialogStack.Pop()
+						return m, nil
+					case "esc", "q", "Q":
+						d.Selected = ""
 						m.dialogStack.Pop()
 						return m, nil
 					}
@@ -1123,6 +1173,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Clear the input field
 					m.input.SetValue("")
 					return m, enterHistoryMode(&m)
+				}
+				// If "model" is selected, open model selection dialog
+				if skillName == "model" {
+					m.skillAutoComplete = false
+					m.skillSuggestions = nil
+					m.skillSuggestionIdx = 0
+					if m.taskRunning {
+						m.infoMsg = "Cannot switch model while a task is running"
+						return m, nil
+					}
+					// Clear the input field
+					m.input.SetValue("")
+
+					// Show model selection dialog (same as :model command)
+					providers := m.assistant.GetClient().Config.GetProviderNames()
+					providerDescs := make(map[string]string)
+					currentProv, _ := m.assistant.GetClient().GetCurrentProviderInfo()
+					for _, p := range providers {
+						if provCfg, err := m.assistant.GetClient().Config.GetProvider(p); err == nil {
+							providerDescs[p] = components.FormatProviderDesc(p, provCfg.Model)
+						} else {
+							providerDescs[p] = p
+						}
+					}
+					dialog := components.NewModelSelectDialog(providers, providerDescs, currentProv)
+					dialog.SetBounds(m.termWidth, m.termHeight)
+					m.dialogStack.Push(dialog)
+					return m, nil
 				}
 				if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 					userContext := strings.TrimSpace(m.input.Value())
