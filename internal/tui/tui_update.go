@@ -1248,6 +1248,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 		}
 
+		// Handle llm_call_start/end — log them as compact entries
+		if msg.event.Type == "llm_call_start" || msg.event.Type == "llm_call_end" {
+			entry := formatEventAsEntry(msg.event)
+			m.logEntries = append(m.logEntries, entry)
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+		}
+
 		// Intercept user_help_needed to show interactive dialog
 		if msg.event.Type == "user_help_needed" {
 			m.openConfirmDialog(msg.event)

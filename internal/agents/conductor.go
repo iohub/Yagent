@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"codeactor/internal/compact"
 	"codeactor/internal/config"
@@ -865,7 +866,36 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		// ═══════════════════════════════════════════════════════════
 
 		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
+		
+		// Publish llm_call_start event before LLM invocation
+		if a.Publisher != nil {
+			a.Publisher.Publish("llm_call_start", map[string]interface{}{
+				"model": a.LLM.Model(),
+				"agent": a.Name(),
+			}, a.Name())
+		}
+		
+		// Record start time
+		llmStartTime := time.Now()
+		
 		resp, err := a.LLM.GenerateContent(ctx, messages, toolDefs, nil)
+		
+		// Calculate duration
+		llmDuration := time.Since(llmStartTime).Seconds()
+		
+		// Publish llm_call_end event after LLM invocation (regardless of error)
+		if a.Publisher != nil {
+			metadata := map[string]interface{}{
+				"model":          a.LLM.Model(),
+				"agent":          a.Name(),
+				"duration_seconds": llmDuration,
+			}
+			if err != nil {
+				metadata["error"] = err.Error()
+			}
+			a.Publisher.PublishWithMetadata("llm_call_end", "", a.Name(), metadata)
+		}
+		
 		if err != nil {
 			slog.Error("ConductorAgent LLM error", "error", err, "step", i)
 			return "", err

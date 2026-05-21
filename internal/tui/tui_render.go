@@ -562,6 +562,51 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
+	case "llm_call_start":
+		if m, ok := event.Content.(map[string]interface{}); ok {
+			modelName, _ := m["model"].(string)
+			agentName, _ := m["agent"].(string)
+			displayAgent := agentName
+			if displayAgent == "" {
+				displayAgent = "Agent"
+			}
+			entry.content = fmt.Sprintf("▸ %s  [%s]", displayAgent, modelName)
+		} else {
+			entry.content = fmt.Sprintf("▸ %v", event.Content)
+		}
+	case "llm_call_end":
+		// Extract duration from metadata
+		if durationRaw, ok := event.Metadata["duration_seconds"]; ok {
+			var duration float64
+			switch v := durationRaw.(type) {
+			case float64:
+				duration = v
+			case int:
+				duration = float64(v)
+			}
+
+			// Also get model and agent from metadata
+			modelName, _ := event.Metadata["model"].(string)
+			agentName, _ := event.Metadata["agent"].(string)
+			if modelName == "" {
+				if m, ok := event.Content.(map[string]interface{}); ok {
+					modelName, _ = m["model"].(string)
+				}
+			}
+
+			hasError := false
+			if errStr, ok := event.Metadata["error"]; ok && errStr != "" {
+				hasError = true
+			}
+
+			if hasError {
+				entry.content = fmt.Sprintf("◂ %s  [%s]  ✗ %.2fs", agentName, modelName, duration)
+			} else {
+				entry.content = fmt.Sprintf("◂ %s  [%s]  ✓ %.2fs", agentName, modelName, duration)
+			}
+		} else {
+			entry.content = "◂ LLM call completed"
+		}
 	default:
 		if s, ok := event.Content.(string); ok {
 			entry.content = s
@@ -621,6 +666,12 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		}
 		prefix = "🗜️ 上下文压缩"
 		contentStyle = StatusStyle
+	case "llm_call_start":
+		prefix = ""
+		contentStyle = llmCallStyle
+	case "llm_call_end":
+		prefix = ""
+		contentStyle = llmCallEndStyle
 	case "error":
 		prefix = "✖ ERROR"
 		contentStyle = logErrorLogStyle

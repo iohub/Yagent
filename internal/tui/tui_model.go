@@ -73,6 +73,10 @@ var (
 	toolDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — success
 	toolErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")) // red — error
 
+	// LLM call styles
+	llmCallStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // purple — LLM call start
+	llmCallEndStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("111")) // blue — LLM call end
+
 	// Mode-specific styles (vim-like edit / command modes) — harmonized with TUI 256-color palette
 	commandPrefixStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true) // orange ":"
 	commandModeBarStyle = lipgloss.NewStyle().
