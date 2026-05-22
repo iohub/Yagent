@@ -29,9 +29,6 @@ func validateInputs(projectDir, taskDesc string) (bool, string) {
 	if strings.TrimSpace(taskDesc) == "" {
 		return false, langManager.GetText("ValidationErrorEmptyTaskDesc")
 	}
-	if len([]rune(taskDesc)) < 4 {
-		return false, langManager.GetText("ValidationErrorShortTaskDesc")
-	}
 	return true, ""
 }
 
