@@ -127,6 +127,9 @@ type Client struct {
 	Config        *config.Config
 	engines       map[string]Engine // cached engines keyed by provider name
 	mu            sync.RWMutex
+	// agentProviderOverrides 存储运行时 per-agent provider 覆盖
+	// 优先链：runtime_override > agents.<agent> > agents.default > global
+	agentProviderOverrides map[string]string // agentName → providerName
 }
 
 // LoadConfig loads configuration from a TOML file using the multi-provider structure
@@ -191,6 +194,7 @@ func NewClient(config *config.Config) (*Client, error) {
 		Engine:  loggingEngine,
 		Config:  config,
 		engines: make(map[string]Engine),
+		agentProviderOverrides: make(map[string]string),
 	}, nil
 }
 
@@ -238,9 +242,92 @@ func (c *Client) GetEngine() Engine {
 	return c.Engine
 }
 
+// SetAgentProvider 为指定 agent 设置运行时 provider 覆盖
+// 该方法设置的覆盖优先于配置文件中的 agents.<agent>.use_provider
+func (c *Client) SetAgentProvider(agentName, providerName string) error {
+	// 验证 provider 是否存在
+	_, err := c.Config.GetProvider(providerName)
+	if err != nil {
+		return fmt.Errorf("SetAgentProvider: %w", err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.agentProviderOverrides == nil {
+		c.agentProviderOverrides = make(map[string]string)
+	}
+	c.agentProviderOverrides[agentName] = providerName
+	slog.Info("Set runtime agent provider override", "agent", agentName, "provider", providerName)
+	return nil
+}
+
+// ClearAgentProvider 清除指定 agent 的运行时 provider 覆盖
+func (c *Client) ClearAgentProvider(agentName string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.agentProviderOverrides, agentName)
+}
+
+// GetAllAgentOverrides 返回所有运行时 agent provider 覆盖的副本
+func (c *Client) GetAllAgentOverrides() map[string]string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	result := make(map[string]string, len(c.agentProviderOverrides))
+	for k, v := range c.agentProviderOverrides {
+		result[k] = v
+	}
+	return result
+}
+
+// GetAgentProvider 返回指定 agent 当前生效的 provider 名称和模型名
+// 优先返回运行时覆盖，其次返回配置中的解析结果
+func (c *Client) GetAgentProvider(agentName string) (providerName string, modelName string) {
+	// 1. 检查运行时覆盖
+	c.mu.RLock()
+	override, hasOverride := c.agentProviderOverrides[agentName]
+	c.mu.RUnlock()
+
+	if hasOverride {
+		provider, err := c.Config.GetProvider(override)
+		if err == nil {
+			return override, provider.Model
+		}
+	}
+
+	// 2. 回退到配置解析
+	provider, err := c.Config.ResolveProvider(agentName, "")
+	if err != nil {
+		return "", ""
+	}
+	for name, p := range c.Config.Global.LLM.Providers {
+		if p.APIBaseURL == provider.APIBaseURL && p.Model == provider.Model {
+			return name, provider.Model
+		}
+	}
+	return "unknown", provider.Model
+}
+
 // GetAgentEngine resolves and returns the engine for a specific agent.
-// Uses the priority chain: agents.<agent> > agents.default > global > legacy.
+// Priority chain (highest first):
+//  1. Runtime per-agent override (set via SetAgentProvider)
+//  2. agents.<agent>.use_provider (config)
+//  3. agents.llm.use_provider (config, default for all agents)
+//  4. global.llm.use_provider (config, global default)
 func (c *Client) GetAgentEngine(agentName string) Engine {
+	// 1. Check runtime per-agent override (highest priority for agents)
+	c.mu.RLock()
+	override, hasOverride := c.agentProviderOverrides[agentName]
+	c.mu.RUnlock()
+
+	if hasOverride {
+		provider, err := c.Config.GetProvider(override)
+		if err == nil {
+			return c.getOrCreateEngine(provider, override)
+		}
+		slog.Warn("Runtime agent override provider not found, falling back to config",
+			"agent", agentName, "provider", override, "error", err)
+	}
+
+	// 2. Fall back to config-based resolution (agents.<agent> > agents.default > global)
 	provider, err := c.Config.ResolveProvider(agentName, "")
 	if err != nil {
 		slog.Warn("Failed to resolve agent provider, falling back to default", "agent", agentName, "error", err)

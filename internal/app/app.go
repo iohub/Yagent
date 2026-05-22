@@ -325,6 +325,30 @@ func (ca *CodeActor) GetClient() *llm.Client {
 	return ca.client
 }
 
+// SetAgentProvider 为指定 agent 设置运行时 provider 覆盖（通过 LLM Client）
+func (ca *CodeActor) SetAgentProvider(agentName, providerName string) error {
+	if ca.client == nil {
+		return fmt.Errorf("LLM client not available")
+	}
+	return ca.client.SetAgentProvider(agentName, providerName)
+}
+
+// GetAgentProvider 返回指定 agent 当前生效的 provider 名称和模型名
+func (ca *CodeActor) GetAgentProvider(agentName string) (string, string) {
+	if ca.client == nil {
+		return "", ""
+	}
+	return ca.client.GetAgentProvider(agentName)
+}
+
+// GetAllAgentOverrides 返回所有运行时 agent provider 覆盖的副本
+func (ca *CodeActor) GetAllAgentOverrides() map[string]string {
+	if ca.client == nil {
+		return nil
+	}
+	return ca.client.GetAllAgentOverrides()
+}
+
 // parseDisabledAgents converts a comma-separated string of agent names
 // into a map[string]bool for O(1) lookup. Valid agent names: repo, coding, chat, meta, devops, browser.
 func parseDisabledAgents(s string) map[string]bool {

@@ -334,6 +334,8 @@ type model struct {
 
 	// Current provider name for status bar display
 	currentProvider string
+	// pendingModelTarget 记录 :model 命令当前正在配置的目标 agent（空=全局默认）
+	pendingModelTarget string
 
 	// Token consumption tracking
 	inputTokens              int64 // accumulated input tokens
