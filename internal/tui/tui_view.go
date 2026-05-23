@@ -169,16 +169,26 @@ func (m model) View() tea.View {
 		footer.WriteString("\n")
 	}
 
-	// Token consumption display (before status line)
-	footer.WriteString(m.renderTokenDashboard())
+	// Token consumption display (use cached render to skip expensive computation)
+	// The cache is maintained in Update() when token counts change.
+	tokenDash := m.cachedTokenDashboard
+	if !m.tokenDashboardValid {
+		tokenDash = m.renderTokenDashboard()
+	}
+	footer.WriteString(tokenDash)
 
 	// Status line: nvim airline-style segmented bar
+	// The cache is maintained in Update() on each tick.
+	statusBar := m.cachedStatusBar
+	if !m.statusBarValid {
+		statusBar = m.renderAirlineStatusBar()
+	}
 	footer.WriteString("\n")
 	// Add extra spacing before status line: empty line in edit mode
 	if !m.commandMode {
 		footer.WriteString("\n")
 	}
-	footer.WriteString(m.renderAirlineStatusBar())
+	footer.WriteString(statusBar)
 
 	b.WriteString(footer.String())
 

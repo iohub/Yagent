@@ -42,6 +42,12 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 	m.taskRunning = true
 	m.commandMode = true
 	m.errMsg = ""
+	// Task started — update status bar cache
+	m.cachedStatusBar = m.renderAirlineStatusBar()
+	m.statusBarValid = true
+	// Also update token dashboard since we counted input tokens
+	m.cachedTokenDashboard = m.renderTokenDashboard()
+	m.tokenDashboardValid = true
 
 	ctx, cancel := context.WithCancel(context.Background())
 	task := &http.Task{
@@ -89,6 +95,12 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 	m.taskRunning = true
 	m.commandMode = true
 	m.errMsg = ""
+	// Task started — update status bar cache
+	m.cachedStatusBar = m.renderAirlineStatusBar()
+	m.statusBarValid = true
+	// Also update token dashboard since we counted input tokens
+	m.cachedTokenDashboard = m.renderTokenDashboard()
+	m.tokenDashboardValid = true
 
 	m.logEntries = append(m.logEntries, logEntry{
 		timestamp: time.Now(),

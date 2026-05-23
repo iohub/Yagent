@@ -565,6 +565,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.activeAnim || m.taskRunning {
 			m.anim.Tick()
+			// Update status bar cache: spinner animation changed on each tick
+			m.cachedStatusBar = m.renderAirlineStatusBar()
+			m.statusBarValid = true
 			// Throttle viewport rebuild to every 3 ticks (~300ms) to avoid
 			// flooding viewport.SetContent() — the #1 cause of scroll lag.
 			if m.animFrame%3 == 0 {
@@ -599,6 +602,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.layoutEngine != nil {
 			m.layoutEngine.Resize(msg.Width, msg.Height)
 		}
+		// 窗口大小变化时，清空所有渲染缓存
+		m.cachedTokenDashboard = ""
+		m.cachedStatusBar = ""
+		m.tokenDashboardValid = false
+		m.statusBarValid = false
 		return m, nil
 
 	case publisherReadyMsg:
@@ -1051,6 +1059,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commandBuffer = ""
 				m.lastKey = ""
 				m.showHelpDialog = false
+				// Mode changed — update status bar cache
+				m.cachedStatusBar = m.renderAirlineStatusBar()
+				m.statusBarValid = true
 				return m, nil
 
 			case "enter":
@@ -1541,6 +1552,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					agentUsage.CacheCreationInputTokens += cacheCreationVal
 					agentUsage.CacheReadInputTokens += cacheReadVal
 				}
+				// Token counts changed — update cached token dashboard render
+				m.cachedTokenDashboard = m.renderTokenDashboard()
+				m.tokenDashboardValid = true
 			} else {
 				// Fallback: estimate tokens from content string
 				if content, ok := msg.event.Content.(string); ok && content != "" {
@@ -1568,6 +1582,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.currentProvider = providerName
 				}
 			}
+			// Model info changed — update status bar cache
+			m.cachedStatusBar = m.renderAirlineStatusBar()
+			m.statusBarValid = true
 			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 		}
 
@@ -1740,6 +1757,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentAgent = ""
 		m.commandMode = false
 		m.confirmDialog.open = false // safety: close any stale dialog
+		// Task state changed — update status bar cache
+		m.cachedStatusBar = m.renderAirlineStatusBar()
+		m.statusBarValid = true
 
 		// 如果是用户主动取消，不显示错误弹窗或完成弹窗
 		if m.taskCancelled {

@@ -382,6 +382,12 @@ type model struct {
 	// ── 补全结果缓存 - key: (光标前的单词, 是否有/) value: 补全结果 ──
 	// 使用细粒度缓存键，在快速输入时缓存命中率更高
 	autocompleteCache map[autocompleteCacheKey]*AutocompleteResult
+
+	// ── Footer 渲染缓存（在 Update() 中维护，View() 直接使用）──
+	cachedTokenDashboard string // 缓存的 token 面板渲染结果
+	tokenDashboardValid  bool   // tokenDashboard 缓存是否有效
+	cachedStatusBar      string // 缓存的状态栏渲染结果
+	statusBarValid       bool   // statusBar 缓存是否有效
 }
 
 // autocompleteCacheKey is a fine-grained cache key for autocomplete results.
