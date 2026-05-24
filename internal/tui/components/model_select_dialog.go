@@ -114,7 +114,7 @@ func (d *ModelSelectDialog) View() string {
 	}
 
 	// ── Title ──
-	titleLine := d.titleStyle.Render("Select Model Provider (↑↓ navigate, Enter select, Esc cancel)")
+	titleLine := d.titleStyle.Render("Select Model Provider")
 
 	// ── Items ──
 	var items []string
