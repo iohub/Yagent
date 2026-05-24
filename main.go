@@ -42,13 +42,17 @@ func init() {
 func main() {
 	defer util.RecoverPanic()
 
-	// Check if running in TUI mode or HTTP server mode based on command line arguments
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta,devops] [--taskfile TASK.md] [--port=9800]")
-		os.Exit(1)
+	// Determine mode: default to "tui" if no mode specified, or first arg is not a known mode
+	var mode string
+	var argIndex int
+	if len(os.Args) >= 2 && (os.Args[1] == "tui" || os.Args[1] == "http") {
+		mode = os.Args[1]
+		argIndex = 2
+	} else {
+		mode = "tui" // default mode
+		argIndex = 1
 	}
 
-	mode := os.Args[1]
 	// 解析 --taskfile 参数
 	var taskFilePath string
 	// 解析 --disable-agents 参数
@@ -56,7 +60,7 @@ func main() {
 	// 解析 --port 参数（显式指定时使用指定端口，否则从 9800 自动查找）
 	httpPort := 0 // 0 表示未显式指定，将自动查找
 	hasExplicitPort := false
-	for i := 2; i < len(os.Args); i++ {
+	for i := argIndex; i < len(os.Args); i++ {
 		arg := os.Args[i]
 		if arg == "--taskfile" && i+1 < len(os.Args) {
 			taskFilePath = os.Args[i+1]
