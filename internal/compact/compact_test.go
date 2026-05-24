@@ -3,6 +3,7 @@ package compact
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,13 +12,16 @@ import (
 
 // mockSummaryClient 用于测试的 mock 摘要客户端
 type mockSummaryClient struct {
+	mu      sync.Mutex
 	summary string
 	err     error
 	called  int
 }
 
 func (m *mockSummaryClient) GenerateSummary(ctx context.Context, messages []llm.Message) (string, error) {
+	m.mu.Lock()
 	m.called++
+	m.mu.Unlock()
 	if m.err != nil {
 		return "", m.err
 	}

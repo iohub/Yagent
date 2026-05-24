@@ -132,7 +132,8 @@ func (s *LLMSummarizer) Summarize(
 				errMu.Unlock()
 				return
 			}
-			summaryResults[idx] = summary
+			cleaned := CleanSummaryOutput(summary)
+			summaryResults[idx] = cleaned
 		}(i, batch)
 	}
 
@@ -176,6 +177,87 @@ func (s *LLMSummarizer) Summarize(
 	return result, nil
 }
 
+// SummarizeSegment 对一批增量消息做 LLM 摘要（用于增量压缩）
+// 输入：一批新消息（待摘要）
+// 输出：摘要文本、摘要 token 数、错误
+func (s *LLMSummarizer) SummarizeSegment(
+	ctx context.Context,
+	messages []llm.Message,
+) (string, int, error) {
+	if s.client == nil || len(messages) == 0 {
+		return "", 0, nil
+	}
+
+	// 分段
+	batches := s.segmentMessages(messages)
+	if len(batches) == 0 {
+		return "", 0, nil
+	}
+
+	// 使用信号量控制并发
+	sem := make(chan struct{}, s.config.MaxConcurrentSummaries)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var summaries []string
+	var firstErr error
+
+	for _, batch := range batches {
+		sem <- struct{}{} // 获取信号量
+		wg.Add(1)
+
+		go func(batchMsgs []llm.Message) {
+			defer wg.Done()
+			defer func() { <-sem }() // 释放信号量
+
+			sumCtx, cancel := context.WithTimeout(ctx, s.config.SummarizationTimeout)
+			defer cancel()
+
+			summary, err := s.client.GenerateSummary(sumCtx, batchMsgs)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("segment summarization failed: %w", err)
+				}
+				mu.Unlock()
+				return
+			}
+
+			// 清洗摘要输出
+			cleaned := CleanSummaryOutput(summary)
+
+			mu.Lock()
+			summaries = append(summaries, cleaned)
+			mu.Unlock()
+		}(batch)
+	}
+
+	wg.Wait()
+
+	if firstErr != nil && len(summaries) == 0 {
+		return "", 0, firstErr
+	}
+
+	// 合并多段摘要
+	var sb strings.Builder
+	sb.WriteString("[CONTEXT SUMMARY]\n")
+	for i, summary := range summaries {
+		if i > 0 {
+			sb.WriteString("\n---\n")
+		}
+		sb.WriteString(summary)
+	}
+
+	finalSummary := sb.String()
+
+	// 用精确的 tiktoken 计数
+	tokenCount, err := s.countTokens(finalSummary)
+	if err != nil {
+		tokenCount = len([]rune(finalSummary)) / 4 // 降级估算
+	}
+
+	return finalSummary, tokenCount, nil
+}
+
 // calculateThreshold 计算优先级阈值
 // 取所有消息优先级的中位数作为分界线
 func (s *LLMSummarizer) calculateThreshold(priorities []MessagePriority) float64 {
@@ -192,6 +274,7 @@ func (s *LLMSummarizer) calculateThreshold(priorities []MessagePriority) float64
 
 // segmentMessages 将摘要区消息按token限制分段
 // 每段不超过 SummarizationMaxInputTokens
+// 使用精确的 tiktoken 计数替代估算
 func (s *LLMSummarizer) segmentMessages(messages []llm.Message) [][]llm.Message {
 	if len(messages) == 0 {
 		return nil
@@ -206,13 +289,13 @@ func (s *LLMSummarizer) segmentMessages(messages []llm.Message) [][]llm.Message 
 	var currentBatch []llm.Message
 	var currentTokens int
 
-	getApproxTokens := func(content string) int {
-		// 粗略估算：约4个字符=1个token
-		return len([]rune(content)) / 4
-	}
-
 	for _, msg := range messages {
-		msgTokens := getApproxTokens(msg.Content)
+		// 使用精确的 tiktoken 计数
+		msgTokens, err := s.countTokens(msg.Content)
+		if err != nil {
+			// 降级估算：约4个字符=1个token
+			msgTokens = len([]rune(msg.Content)) / 4
+		}
 
 		// 单条消息就超限，强制拆分为一段
 		if msgTokens > maxTokens && len(currentBatch) == 0 {
@@ -272,6 +355,51 @@ func (s *LLMSummarizer) buildResult(
 	result = append(result, keepRegion...)
 
 	return result
+}
+
+// countTokens 使用 tiktoken 精确计数
+func (s *LLMSummarizer) countTokens(content string) (int, error) {
+	return GetGlobalTokenizer().CountTokens(content)
+}
+
+// MergeTwoSummaries 用 LLM 合并两个摘要块
+// 用于摘要栈管理：当栈过深时合并底层摘要
+func (s *LLMSummarizer) MergeTwoSummaries(
+	ctx context.Context,
+	summaryA, summaryB string,
+) (string, int, error) {
+	if s.client == nil {
+		return "", 0, fmt.Errorf("no summarization client available")
+	}
+
+	mergePrompt := `Merge the following two conversation summaries into a single consolidated summary. 
+Preserve all important technical details, decisions, and constraints.
+Output in the same structured format as the originals.
+
+Summary A:
+` + summaryA + `
+
+Summary B:
+` + summaryB + `
+
+Consolidated Summary:`
+
+	msgs := []llm.Message{
+		{Role: llm.RoleUser, Content: mergePrompt},
+	}
+
+	sumCtx, cancel := context.WithTimeout(ctx, s.config.SummarizationTimeout)
+	defer cancel()
+
+	merged, err := s.client.GenerateSummary(sumCtx, msgs)
+	if err != nil {
+		return "", 0, fmt.Errorf("summary merge failed: %w", err)
+	}
+
+	cleaned := CleanSummaryOutput(merged)
+	tokenCount, _ := s.countTokens(cleaned)
+
+	return cleaned, tokenCount, nil
 }
 
 // ─────────────────────────────────────────────────────────

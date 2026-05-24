@@ -67,9 +67,15 @@ type ConductorAgent struct {
 	metaRetryCount int                       // max retries for Meta-Agent JSON parse failures
 	toolDefMap     map[string]ToolDefinition // tool name → definition from tools.json
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
-	compactEngine  *compact.Engine           // 上下文压缩引擎
-	compactConfig  *compact.Config           // 压缩配置
-	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
+	compactEngine    *compact.Engine             // 上下文压缩引擎
+	compactConfig    *compact.Config             // 压缩配置
+	summaryEngine    llm.Engine                  // 独立的摘要 LLM 引擎（nil 则复用主引擎）
+
+	// 新增：异步增量压缩字段
+	asyncCompactor   *compact.AsyncCompactor     // 异步压缩管理器
+	compState        *compact.CompressionState   // 增量压缩状态
+	pendingCompRes   *compact.CompactJobResult   // 待应用的压缩结果（异步）
+
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
 	commitManager        *CommitManager            // commit 学习器管理器
 	hasDelegated         bool                      // 标记是否已委派过 agent
@@ -745,6 +751,15 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		}
 	}
 
+	// ═══════ 初始化异步压缩管理器 ═══════
+	if a.compactEngine != nil && a.compactConfig != nil && a.compactConfig.AsyncCompactEnabled {
+		a.asyncCompactor = compact.NewAsyncCompactor(a.compactEngine, a.compactConfig)
+		a.asyncCompactor.Start(ctx)
+		a.compState = &compact.CompressionState{}
+		slog.Info("Async compactor started",
+			"trigger_threshold", a.compactConfig.CompactTriggerThreshold)
+	}
+
 	// ═══════ 初始化 CommitLearner ═══════
 	if a.commitManager != nil {
 		if err := a.commitManager.Initialize(ctx, a.GlobalCtx.ProjectPath); err != nil {
@@ -829,39 +844,126 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 
 	for i := 0; i < a.maxSteps; i++ {
 		// ═══════════════════════════════════════════════════════════
-		// CONTEXT COMPACT GATEWAY
+		// CONTEXT COMPACT GATEWAY（增强版：支持异步增量压缩）
 		// ═══════════════════════════════════════════════════════════
 		if a.compactEngine != nil && a.compactConfig.EnableAutoCompact {
-			// 计算原始token数
+			// 1. 检查是否有异步压缩结果待应用
+			if a.pendingCompRes != nil {
+				result := a.pendingCompRes
+				a.pendingCompRes = nil
+				
+				if result.Err == nil && len(result.CompressedMessages) > 0 {
+					// 替换消息列表（保留最新的未处理消息）
+					if len(result.CompressedMessages) < len(messages) {
+						messages = result.CompressedMessages
+						if result.NewState != nil {
+							a.compState = result.NewState
+						}
+						slog.Info("Async compression result applied",
+							"stats", result.Stats,
+							"duration", result.Duration)
+						
+						if a.Publisher != nil {
+							a.Publisher.Publish("context_compressed", map[string]interface{}{
+								"compressed":     len(result.CompressedMessages),
+								"stats":          result.Stats,
+								"duration_sec":   result.Duration.Seconds(),
+							}, a.Name())
+						}
+					}
+				} else if result.Err != nil {
+					slog.Warn("Async compression failed, skipping", "error", result.Err)
+				}
+			}
+
+			// 2. 计算当前 token 数
 			originalTokens, err := a.compactEngine.CountTokens(messages)
 			if err != nil {
-				slog.Warn("Failed to count tokens, skipping compact", "error", err)
-			} else if originalTokens > a.compactConfig.MaxContextTokens {
-				slog.Info("Context exceeds limit, triggering compression",
-					"original_tokens", originalTokens,
-					"max_tokens", a.compactConfig.MaxContextTokens)
+				slog.Warn("Failed to count tokens", "error", err)
+			} else {
+				// 3. 检查是否超限 — 如果接近硬上限则同步压缩（紧急降级）
+				if originalTokens > a.compactConfig.MaxContextTokens {
+					slog.Warn("Context exceeded hard limit, emergency sync compression",
+						"tokens", originalTokens,
+						"max", a.compactConfig.MaxContextTokens)
 
-				// 执行压缩
-				result, err := a.compactEngine.Compress(ctx, messages)
-				if err != nil {
-					slog.Warn("Context compression failed, using original messages", "error", err)
-				} else {
-					messages = result.CompressedMessages
-					slog.Info("Context compressed successfully",
-						"original_tokens", result.OriginalTokens,
-						"compressed_tokens", result.CompressedTokens,
-						"ratio", fmt.Sprintf("%.2f%%", result.CompressionRatio*100),
-						"stats", result.CompressionStats)
-
-				// Publish compression event to TUI
-				if a.Publisher != nil {
-					a.Publisher.Publish("context_compressed", map[string]interface{}{
-						"original_tokens":   result.OriginalTokens,
-						"compressed_tokens": result.CompressedTokens,
-						"ratio":             fmt.Sprintf("%.2f%%", result.CompressionRatio*100),
-						"compression_stats": result.CompressionStats,
-					}, a.Name())
-				}
+					// 尝试异步（如果有且未触发）
+					if a.asyncCompactor != nil && a.asyncCompactor.IsRunning() && a.pendingCompRes == nil {
+						// 快照当前消息
+						snap := make([]llm.Message, len(messages))
+						copy(snap, messages)
+						stateCopy := a.compState.DeepCopy()
+						job := &compact.CompactJob{
+							MessageSnapshot: snap,
+							State:           stateCopy,
+							ResultCh:        make(chan *compact.CompactJobResult, 1),
+						}
+						a.asyncCompactor.SubmitJob(job)
+						// 等待结果（带超时）
+						select {
+						case res := <-job.ResultCh:
+							if res.Err == nil && len(res.CompressedMessages) > 0 {
+								messages = res.CompressedMessages
+								if res.NewState != nil {
+									a.compState = res.NewState
+								}
+								slog.Info("Emergency async compression applied",
+									"tokens_after", len(res.CompressedMessages))
+							}
+						case <-time.After(10 * time.Second):
+							slog.Warn("Emergency async compression timed out")
+							// 降级：对现有消息做同步全量压缩
+							result, err := a.compactEngine.Compress(ctx, messages)
+							if err == nil {
+								messages = result.CompressedMessages
+							}
+						}
+					} else {
+						// 没有异步管理器，走同步全量压缩（原逻辑）
+						slog.Info("Context exceeds limit, triggering sync compression",
+							"original_tokens", originalTokens,
+							"max_tokens", a.compactConfig.MaxContextTokens)
+						result, err := a.compactEngine.Compress(ctx, messages)
+						if err != nil {
+							slog.Warn("Context compression failed", "error", err)
+						} else {
+							messages = result.CompressedMessages
+							slog.Info("Context compressed",
+								"compressed_tokens", result.CompressedTokens,
+								"ratio", fmt.Sprintf("%.2f%%", result.CompressionRatio*100))
+							if a.Publisher != nil {
+								a.Publisher.Publish("context_compressed", map[string]interface{}{
+									"original_tokens":   result.OriginalTokens,
+									"compressed_tokens": result.CompressedTokens,
+									"ratio":             fmt.Sprintf("%.2f%%", result.CompressionRatio*100),
+								}, a.Name())
+							}
+						}
+					}
+				} else if a.asyncCompactor != nil && a.asyncCompactor.IsRunning() && a.pendingCompRes == nil {
+					// 4. 未超限，但超过阈值时提前触发异步压缩（预压缩）
+					threshold := int(float64(a.compactConfig.MaxContextTokens) * a.compactConfig.CompactTriggerThreshold)
+					if originalTokens > threshold {
+						slog.Debug("Triggering async pre-compression",
+							"tokens", originalTokens,
+							"threshold", threshold)
+						
+						snap := make([]llm.Message, len(messages))
+						copy(snap, messages)
+						stateCopy := a.compState.DeepCopy()
+						job := &compact.CompactJob{
+							MessageSnapshot: snap,
+							State:           stateCopy,
+							ResultCh:        make(chan *compact.CompactJobResult, 1),
+						}
+						if a.asyncCompactor.SubmitJob(job) {
+							// 启动一个 goroutine 等待结果
+							go func(j *compact.CompactJob) {
+								res := <-j.ResultCh
+								a.pendingCompRes = res
+							}(job)
+						}
+					}
 				}
 			}
 		}
@@ -1008,6 +1110,11 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			}
 
 		}
+	}
+
+	// ═══════ 清理异步压缩资源 ═══════
+	if a.asyncCompactor != nil {
+		a.asyncCompactor.Stop()
 	}
 
 	return "", fmt.Errorf("ConductorAgent exceeded max steps")
