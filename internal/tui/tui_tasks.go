@@ -114,7 +114,6 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 		executeFollowUpCmd(message, m.currentTask, m.assistant, m.dataManager, m.eventCh, m.publisherCh),
 		listenForEvents(m.eventCh),
 		listenForPublisher(m.publisherCh),
-		tickCmd(),
 	)
 }
 

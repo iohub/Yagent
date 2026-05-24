@@ -581,14 +581,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rebuildViewportPreservingScroll()
 			}
 		}
-		// Don't schedule next tick if any popup/dialog is showing
-		if m.showHelpDialog || m.confirmDialog.open ||
-			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open ||
-			(m.dialogStack != nil && m.dialogStack.Len() > 0) {
-			return m, nil
-		}
-		// Continue ticking so that the animation resumes immediately
-		// when activeAnim becomes true — never let the tick die.
+		// Always continue ticking — the tick loop is perpetual and self-sustaining.
+		// Animation advancement is already guarded by m.activeAnim/m.taskRunning below,
+		// so there are no visual side effects during dialogs.
 		return m, tickCmd()
 
 	case tea.WindowSizeMsg:
@@ -1466,7 +1461,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open ||
 			(m.dialogStack != nil && m.dialogStack.Len() > 0) {
 			if m.taskRunning {
-				return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+				return m, listenForEvents(m.eventCh)
 			}
 			return m, nil
 		}
@@ -1585,7 +1580,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Model info changed — update status bar cache
 			m.cachedStatusBar = m.renderAirlineStatusBar()
 			m.statusBarValid = true
-			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+			return m, listenForEvents(m.eventCh)
 		}
 
 		// Handle llm_call_start — create a running entry with animation (single line)
@@ -1604,7 +1599,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.llmCallActiveEntries[msg.event.From] = len(m.logEntries) - 1
 			m.activeAnim = true
 
-			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+			return m, listenForEvents(m.eventCh)
 		}
 
 		// Handle llm_call_end — update the matching start entry (no new entry created)
@@ -1652,7 +1647,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateActiveAnim()
 				m.rebuildViewportScrollLock()
 			}
-			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+			return m, listenForEvents(m.eventCh)
 		}
 
 		// Intercept user_help_needed to show interactive dialog
@@ -1662,7 +1657,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			entry := formatEventAsEntry(msg.event)
 			m.logEntries = append(m.logEntries, entry)
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+			return m, listenForEvents(m.eventCh)
 		}
 
 		// Handle commit context loaded event — log it in the TUI
@@ -1680,7 +1675,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 				}
 			}
-			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+			return m, listenForEvents(m.eventCh)
 		}
 
 		// ── Tool call result: update the matching running entry ──
@@ -1706,7 +1701,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					delete(m.toolCallEntries, callID)
 					m.updateActiveAnim()
 					m.rebuildViewportScrollLock()
-					return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+					return m, listenForEvents(m.eventCh)
 				}
 			}
 			// No matching start entry by callID — try matching by tool name
@@ -1731,7 +1726,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					delete(m.toolCallEntries, matchedID)
 					m.updateActiveAnim()
 					m.rebuildViewportScrollLock()
-					return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+					return m, listenForEvents(m.eventCh)
 				}
 			}
 			// No matching start entry — add as standalone
@@ -1747,7 +1742,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.logEntries = append(m.logEntries, entry)
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-		return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+		return m, listenForEvents(m.eventCh)
 
 	case taskCompleteMsg:
 		m.taskRunning = false

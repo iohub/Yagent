@@ -31,7 +31,7 @@ func NewAnim(size int) *Anim {
 	return &Anim{
 		prog: prog,
 		pct:  0.0,
-		step: 0.025,
+		step: 0.015,
 	}
 }
 
