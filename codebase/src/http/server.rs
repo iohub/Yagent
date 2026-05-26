@@ -121,7 +121,16 @@ impl CodeBaseServer {
             if config.as_ref().map_or(false, |c| c.codebase.enable_embedding) {
                 let config = config.unwrap();
                 let db_path = &config.codebase.embedding_db_uri;
-                let tantivy_dir = std::path::Path::new(db_path).join("tantivy_bm25");
+                // 使用项目特定子目录实现 BM25 索引隔离（与向量索引 collection 命名对齐）
+                let repo_path = std::path::Path::new(&self.repo_path);
+                let last_dir = repo_path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                let hash = md5::compute(&self.repo_path);
+                let hash_hex = format!("{:x}", hash);
+                let tantivy_dir = std::path::Path::new(db_path)
+                    .join("tantivy_bm25")
+                    .join(format!("{}_{}", last_dir, hash_hex));
                 match TantivyBm25Index::open_or_create(&tantivy_dir) {
                     Ok(idx) => {
                         tracing::info!("Tantivy BM25 index ready at {:?}", tantivy_dir);
