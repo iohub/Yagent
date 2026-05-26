@@ -1766,7 +1766,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
-			m.currentTask = nil
 			m.logEntries = append(m.logEntries, logEntry{
 				timestamp: time.Now(),
 				eventType: "error",

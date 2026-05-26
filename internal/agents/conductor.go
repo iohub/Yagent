@@ -79,6 +79,7 @@ type ConductorAgent struct {
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
 	commitManager        *CommitManager            // commit 学习器管理器
 	hasDelegated         bool                      // 标记是否已委派过 agent
+	delegationAttempts   int                       // 委派尝试次数统计
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -394,6 +395,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		summaryEngine:  summaryEngine,
 		commitManager:  commitManager, // 设置 commit 学习器管理器
 		hasDelegated:   false,         // 初始未委派过
+		delegationAttempts: 0,         // 委派尝试次数初始为0
 	}
 	return self
 }
@@ -1039,13 +1041,17 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			ToolCalls: choice.ToolCalls,
 		})
 
-		if len(choice.ToolCalls) == 0 && !a.hasDelegated {
-			// LLM 没有调用任何工具，强制它调用工具
-			messages = append(messages, llm.Message{
-				Role:    llm.RoleUser,
-				Content: "You must use a delegate tool (like delegate_repo, delegate_coding, etc.) to proceed. Please do not just return text.",
-			})
-			continue // 进入下一次循环，让 LLM 重新生成包含工具调用的响应
+		if len(choice.ToolCalls) == 0 {
+			if a.delegationAttempts == 0 {
+				// LLM 还没有尝试过任何委派工具，强制它调用工具
+				messages = append(messages, llm.Message{
+					Role:    llm.RoleUser,
+					Content: "You must use a delegate tool (like delegate_repo, delegate_coding, etc.) to proceed. Please do not just return text.",
+				})
+				continue // 进入下一次循环，让 LLM 重新生成包含工具调用的响应
+			}
+			// 已经尝试过委派但失败了，直接返回错误，避免继续注入消息污染上下文
+			return "", fmt.Errorf("ConductorAgent: no tool call after %d delegation attempt(s); task may have failed", a.delegationAttempts)
 		}
 
 		for _, tc := range choice.ToolCalls {
@@ -1064,8 +1070,22 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				if t.Name() == tc.Function.Name {
 					found = true
 					toolResult, err = t.Call(ctx, tc.Function.Arguments)
+					
+					// 检测是否是 delegate 工具，无论成功失败都记录尝试次数
+					if strings.HasPrefix(t.Name(), "delegate_") {
+						a.delegationAttempts++
+						if err == nil {
+							a.hasDelegated = true
+						}
+					}
+					
 					if err != nil {
-						toolResult = fmt.Sprintf("Error: %v", err)
+						// 截断过长的错误消息，避免污染上下文
+						errMsg := err.Error()
+						if len(errMsg) > 1000 {
+							errMsg = errMsg[:1000] + "... [truncated]"
+						}
+						toolResult = fmt.Sprintf("Error: %s", errMsg)
 					} else if t.Name() == "delegate_repo" {
 						// toolResult is a JSON string (e.g. "\"summary...\""), so we need to unmarshal it
 						// to get the actual text content
@@ -1075,10 +1095,6 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 						} else {
 							a.GlobalCtx.RepoSummary = toolResult
 						}
-					}
-					// 检测是否是 delegate 工具（委派成功）
-					if err == nil && strings.HasPrefix(t.Name(), "delegate_") {
-						a.hasDelegated = true
 					}
 					break
 				}
