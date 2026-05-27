@@ -71,7 +71,9 @@ pub async fn trigger_embedding_build(
                     Some(idx)
                 } else {
                     // Fallback: create a new index (may fail with LockBusy if server holds the lock)
-                    let tantivy_dir = std::path::Path::new(&db_path_clone).join("tantivy_bm25");
+                    let tantivy_dir = std::path::Path::new(&db_path_clone)
+                        .join("tantivy_bm25")
+                        .join(format!("{}_{:x}", last_dir, hash));
                     match TantivyBm25Index::open_or_create(&tantivy_dir) {
                         Ok(idx) => {
                             tracing::info!("Tantivy BM25 index ready at {:?}", tantivy_dir);
