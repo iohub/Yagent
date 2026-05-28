@@ -23,6 +23,20 @@ Most AI coding tools share a fundamental flaw: **they treat code as text, not st
 
 ---
 
+## 🤖 The Agent Team
+
+| Agent | Role | Core Capability |
+|-------|------|-----------------|
+| 🎼 **Conductor** | Orchestrator | Task decomposition, dynamic planning, delegation, review |
+| 🔬 **Repo-Agent** | Code Archaeologist | AST parsing, semantic search, call graphs, code skeletons |
+| ✏️ **Coding-Agent** | Staff Engineer | 22+ tools, autonomous coding, self-correction |
+| 🌐 **Browser-Agent** | Web Researcher | Headless Chrome, page navigation, data extraction |
+| 🔧 **DevOps-Agent** | SRE | Shell execution, environment diagnostics, process management |
+| 💬 **Chat-Agent** | Technical Advisor | General Q&A, technical explanations |
+| 🧬 **Meta-Agent** | Agent Factory | Runtime agent design & registration |
+
+---
+
 ## 🏗️ Architecture
 
 ```
@@ -110,20 +124,6 @@ User Query
 | Context | ❌ Returns isolated code blocks with no call relationships | ✅ PetCodeGraph auto-expands call chains, restores architectural context |
 | Code-Aware | ❌ Generic tokenizers don't understand code naming | ✅ Custom CodeTokenizer designed for snake_case & CamelCase |
 | Robustness | ❌ Single point of failure | ✅ Triple degradation: BM25 fails→dense-only, Reranker fails→RRF, one channel→other |
-
----
-
-## 🤖 The Agent Team
-
-| Agent | Role | Core Capability |
-|-------|------|-----------------|
-| 🎼 **Conductor** | Orchestrator | Task decomposition, dynamic planning, delegation, review |
-| 🔬 **Repo-Agent** | Code Archaeologist | AST parsing, semantic search, call graphs, code skeletons |
-| ✏️ **Coding-Agent** | Staff Engineer | 22+ tools, autonomous coding, self-correction |
-| 🌐 **Browser-Agent** | Web Researcher | Headless Chrome, page navigation, data extraction |
-| 🔧 **DevOps-Agent** | SRE | Shell execution, environment diagnostics, process management |
-| 💬 **Chat-Agent** | Technical Advisor | General Q&A, technical explanations |
-| 🧬 **Meta-Agent** | Agent Factory | Runtime agent design & registration |
 
 ---
 
