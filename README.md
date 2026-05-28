@@ -75,6 +75,78 @@ Automatically fetches recent commits → LLM generates structured summaries → 
 
 ---
 
+### 🔬 5. Hybrid Retrieval + Code Graph Expansion: From "Found" to "Understood"
+
+> **Traditional code search tells you *where* keywords match. CodeActor finds the code, then automatically analyzes the structural world around it.**
+
+#### 🎯 Three-Stage Cascading Retrieval Pipeline
+
+```
+User Query
+    │
+    ├─→ Stage 1: Hybrid Search (Dual-Channel High Recall)
+    │   ├── 🧠 Dense: LanceDB Vector Search (Qwen3-Embedding-4B, 2560-dim)
+    │   └── 🔤 Sparse: Tantivy BM25 Full-Text Search (CodeTokenizer for snake_case/CamelCase)
+    │   └── 🔗 RRF Fusion: Reciprocal Rank Fusion merges both channels
+    │
+    ├─→ Stage 2: Code Graph Expansion (Structural Context Injection)
+    │   └── PetCodeGraph BFS Traversal: from seed functions, auto-expand callers/callees
+    │   └── Cross-file context: place isolated code blocks back into their architectural position
+    │
+    └─→ Stage 3: Cross-Encoder Rerank (Precision Refinement)
+        └── Optional Reranker API for Query-Document cross-encoding rerank
+```
+
+#### Why This Matters
+
+**Pure vector search treats code blocks as isolated islands** — it computes semantic similarity but has no idea what the function calls, who calls it, or what module it belongs to.
+
+**CodeActor's breakthrough**: Hybrid retrieval + code graph expansion = **a leap from "found" to "understood"**.
+
+| Aspect | Pure Vector Search | CodeActor Hybrid + Graph Expansion |
+|--------|-------------------|-------------------------------------|
+| Recall | ❌ Semantic matches with different keywords → missed | ✅ BM25 + Vector dual-channel covers both semantics and exact match |
+| Precision | ❌ Short text / noise often ranks high | ✅ RRF fusion + short-code penalty + Cross-Encoder triple filtering |
+| Context | ❌ Returns isolated code blocks with no call relationships | ✅ PetCodeGraph auto-expands call chains, restores architectural context |
+| Code-Aware | ❌ Generic tokenizers don't understand code naming | ✅ Custom CodeTokenizer designed for snake_case & CamelCase |
+| Robustness | ❌ Single point of failure | ✅ Triple degradation: BM25 fails→dense-only, Reranker fails→RRF, one channel→other |
+
+#### Core Technical Details
+
+**Dual-Channel Complementarity**:
+- **BM25 Channel**: Exact matching — function names (`getUserById`), types (`UserRepository`), API endpoints (`/api/v1/users`)
+- **Vector Channel**: Semantic matching — natural language queries like "find user authentication logic" or "handle database connection"
+
+**Code Graph Expansion (PetCodeGraph)**:
+```
+Search hits handleLogin(request)
+    │
+    ├─→ get_callees() expands: handleLogin calls:
+    │   ├── validateCredentials()  ← same file
+    │   ├── generateToken()       ← auth/token.rs
+    │   └── logAuditTrail()       ← audit/log.rs
+    │
+    └─→ get_callers() expands: handleLogin is called by:
+        └── loginController()     ← routes/login.rs
+```
+
+**RRF Fusion + Short Code Penalty + Graceful Degradation**:
+- RRF (k=60) ensures documents ranked high in both channels dominate
+- Code blocks < 30 chars get automatic penalty (coefficient 0.5)
+- BM25 failure → automatic fallback to dense-only vector search
+- Reranker failure → automatic fallback to RRF results
+
+**Flexible Configuration**:
+```toml
+[codebase.retrieval_pipeline.hybrid]
+bm25_top_k = 20       # BM25 per-channel recall count
+vector_top_k = 20     # Vector per-channel recall count
+rrf_k = 60            # RRF fusion parameter
+enable_sparse = true  # Enable/disable sparse channel
+```
+
+---
+
 ## 🤖 The Agent Team
 
 | Agent | Role | Core Capability |

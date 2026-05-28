@@ -75,6 +75,77 @@
 
 ---
 
+### 🔬 5. 混合检索 + 代码图扩展：从"搜到"到"理解上下文"
+
+> **传统代码搜索只告诉你「哪里匹配了关键词」。CodeActor 不仅找到代码，还自动分析它周围的结构世界。**
+
+#### 🎯 三阶段级联检索 Pipeline
+
+```
+用户查询
+    │
+    ├─→ Stage 1: 混合检索（双通道高召回）
+    │   ├── 🧠 稠密通道：LanceDB 向量搜索（Qwen3-Embedding-4B，2560维语义嵌入）
+    │   └── 🔤 稀疏通道：Tantivy BM25 全文搜索（自定义 CodeTokenizer 识别 snake_case/CamelCase）
+    │   └── 🔗 RRF 融合：Reciprocal Rank Fusion 合并双通道排名
+    │
+    ├─→ Stage 2: 代码图扩展（结构上下文注入）
+    │   └── PetCodeGraph BFS 遍历：从种子函数出发，自动获取调用者/被调者链
+    │   └── 跨文件上下文：将孤立代码块还原到其架构位置
+    │
+    └─→ Stage 3: Cross-Encoder 重排（精排提纯）
+        └── 可选 Reranker API 对候选结果做 Query-Document 交叉编码精排
+```
+
+#### 为什么这很重要？
+
+**传统向量搜索的局限**：纯向量搜索把代码块当孤岛，只计算语义相似度，却不理解它和谁一起工作、被谁调用、调用了什么。
+
+**CodeActor 的突破**：混合检索 + 代码图扩展 = **从「搜到」到「理解」的质变**。
+
+| 维度 | 纯向量搜索 | CodeActor 混合检索 + 图扩展 |
+|------|-----------|--------------------------|
+| 查全率 | ❌ 语义近但关键词不同 → 可能漏掉 | ✅ BM25 + Vector 双通道互补，覆盖语义 + 精确匹配 |
+| 精确度 | ❌ 短文本/噪音常误中 | ✅ RRF 融合 + 短文本惩罚 + Cross-Encoder 精排三重过滤 |
+| 上下文 | ❌ 返回孤立代码块，看不到调用关系 | ✅ PetCodeGraph 自动展开调用链，还原架构上下文 |
+| 代码感知 | ❌ 通用 Tokenizer 不懂代码命名 | ✅ 自定义 CodeTokenizer 专为 snake_case/CamelCase 设计 |
+| 鲁棒性 | ❌ 单点故障 | ✅ 三重降级：BM25 失败→纯向量，Reranker 失败→RRF，单通道→另一通道 |
+
+#### 核心技术细节
+
+**双通道互补**：
+- **BM25 通道**：专精精确匹配——函数名 `getUserById`、类型名 `UserRepository`、API 端点 `/api/v1/users` 等标识符级搜索
+- **向量通道**：专精语义匹配——「找到用户认证的逻辑」「查询数据库连接的处理」等自然语言意图搜索
+
+**代码图扩展（PetCodeGraph）**：
+```
+搜索命中 handleLogin(request)
+    │
+    ├─→ get_callees() 展开：handleLogin 调用了：
+    │   ├── validateCredentials()  ← 同一文件
+    │   ├── generateToken()       ← auth/token.rs
+    │   └── logAuditTrail()       ← audit/log.rs
+    │
+    └─→ get_callers() 展开：handleLogin 被：
+        └── loginController()     ← routes/login.rs 调用
+```
+
+**RRF 融合 + 短文本惩罚 + 降级策略**：
+- RRF（k=60）确保双通道都排高的结果显著领先
+- 长度 < 30 字符的代码块自动降权（惩罚系数 0.5）
+- BM25 失败时自动降级为纯向量搜索，永不中断
+
+**配置灵活**：
+```toml
+[codebase.retrieval_pipeline.hybrid]
+bm25_top_k = 20       # BM25 每通道召回数
+vector_top_k = 20     # 向量每通道召回数
+rrf_k = 60            # RRF 融合参数
+enable_sparse = true  # 是否启用稀疏通道
+```
+
+---
+
 ## 🤖 智能体团队
 
 | Agent | 角色 | 核心能力 |
