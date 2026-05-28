@@ -111,40 +111,6 @@ User Query
 | Code-Aware | ❌ Generic tokenizers don't understand code naming | ✅ Custom CodeTokenizer designed for snake_case & CamelCase |
 | Robustness | ❌ Single point of failure | ✅ Triple degradation: BM25 fails→dense-only, Reranker fails→RRF, one channel→other |
 
-#### Core Technical Details
-
-**Dual-Channel Complementarity**:
-- **BM25 Channel**: Exact matching — function names (`getUserById`), types (`UserRepository`), API endpoints (`/api/v1/users`)
-- **Vector Channel**: Semantic matching — natural language queries like "find user authentication logic" or "handle database connection"
-
-**Code Graph Expansion (PetCodeGraph)**:
-```
-Search hits handleLogin(request)
-    │
-    ├─→ get_callees() expands: handleLogin calls:
-    │   ├── validateCredentials()  ← same file
-    │   ├── generateToken()       ← auth/token.rs
-    │   └── logAuditTrail()       ← audit/log.rs
-    │
-    └─→ get_callers() expands: handleLogin is called by:
-        └── loginController()     ← routes/login.rs
-```
-
-**RRF Fusion + Short Code Penalty + Graceful Degradation**:
-- RRF (k=60) ensures documents ranked high in both channels dominate
-- Code blocks < 30 chars get automatic penalty (coefficient 0.5)
-- BM25 failure → automatic fallback to dense-only vector search
-- Reranker failure → automatic fallback to RRF results
-
-**Flexible Configuration**:
-```toml
-[codebase.retrieval_pipeline.hybrid]
-bm25_top_k = 20       # BM25 per-channel recall count
-vector_top_k = 20     # Vector per-channel recall count
-rrf_k = 60            # RRF fusion parameter
-enable_sparse = true  # Enable/disable sparse channel
-```
-
 ---
 
 ## 🤖 The Agent Team

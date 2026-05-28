@@ -111,39 +111,6 @@
 | 代码感知 | ❌ 通用 Tokenizer 不懂代码命名 | ✅ 自定义 CodeTokenizer 专为 snake_case/CamelCase 设计 |
 | 鲁棒性 | ❌ 单点故障 | ✅ 三重降级：BM25 失败→纯向量，Reranker 失败→RRF，单通道→另一通道 |
 
-#### 核心技术细节
-
-**双通道互补**：
-- **BM25 通道**：专精精确匹配——函数名 `getUserById`、类型名 `UserRepository`、API 端点 `/api/v1/users` 等标识符级搜索
-- **向量通道**：专精语义匹配——「找到用户认证的逻辑」「查询数据库连接的处理」等自然语言意图搜索
-
-**代码图扩展（PetCodeGraph）**：
-```
-搜索命中 handleLogin(request)
-    │
-    ├─→ get_callees() 展开：handleLogin 调用了：
-    │   ├── validateCredentials()  ← 同一文件
-    │   ├── generateToken()       ← auth/token.rs
-    │   └── logAuditTrail()       ← audit/log.rs
-    │
-    └─→ get_callers() 展开：handleLogin 被：
-        └── loginController()     ← routes/login.rs 调用
-```
-
-**RRF 融合 + 短文本惩罚 + 降级策略**：
-- RRF（k=60）确保双通道都排高的结果显著领先
-- 长度 < 30 字符的代码块自动降权（惩罚系数 0.5）
-- BM25 失败时自动降级为纯向量搜索，永不中断
-
-**配置灵活**：
-```toml
-[codebase.retrieval_pipeline.hybrid]
-bm25_top_k = 20       # BM25 每通道召回数
-vector_top_k = 20     # 向量每通道召回数
-rrf_k = 60            # RRF 融合参数
-enable_sparse = true  # 是否启用稀疏通道
-```
-
 ---
 
 ## 🤖 智能体团队
