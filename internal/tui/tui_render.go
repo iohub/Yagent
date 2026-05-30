@@ -635,8 +635,7 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		prefix = "AI  "
 		contentStyle = logAIResStyle
 	case "user_message":
-		prefix = userPrefixStyle.Render("You ")
-		contentStyle = logUserMsgStyle
+		return renderUserMessageBox(entry.content, maxWidth)
 	case "tool_call_start":
 		// Use new-style rendering if ToolEntry is available
 		if entry.toolEntry != nil {
@@ -717,6 +716,82 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 	}
 
 	return prefix + " " + contentStyle.Render(displayContent)
+}
+
+// renderUserMessageBox renders a user message as a simple read-only textbox
+// with a "You" title label in the top border, supporting multi-line content
+// and automatic word wrapping.
+func renderUserMessageBox(content string, maxWidth int) string {
+	// Available width for the box (accounting for left padding in viewport)
+	boxWidth := maxWidth - 4
+	if boxWidth < 20 {
+		// Very narrow terminal: fallback to simple prefix + wrapped text
+		wrapped := wrapText(content, boxWidth)
+		wrappedLines := strings.Split(wrapped, "\n")
+		var lines []string
+		lines = append(lines, userPrefixStyle.Render("You:")+" "+wrappedLines[0])
+		for i := 1; i < len(wrappedLines); i++ {
+			lines = append(lines, "     "+wrappedLines[i])
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	// Inner width of the box (between the ││ border pipes)
+	innerWidth := boxWidth - 2 // subtract 2 for the left and right border pipes
+	if innerWidth < 4 {
+		innerWidth = 4
+	}
+	textWidth := innerWidth - 2 // subtract 1 space padding on each side
+
+	// Wrap the message content, preserving explicit newlines
+	var msgLines []string
+	for _, para := range strings.Split(content, "\n") {
+		if para == "" {
+			msgLines = append(msgLines, "") // preserve blank lines
+		} else {
+			wrapped := wrapText(para, textWidth)
+			msgLines = append(msgLines, strings.Split(wrapped, "\n")...)
+		}
+	}
+	if len(msgLines) == 0 {
+		msgLines = []string{""}
+	}
+
+	// ---- Build the textbox ----
+
+	// Top border with "You" title label
+	// ┌─ You ───────────────┐
+	label := " You "
+	labelWidth := lipgloss.Width(label)
+	dashCount := textWidth - labelWidth
+	if dashCount < 0 {
+		dashCount = 0
+	}
+	topLine := userMsgBoxBorderStyle.Render("┌─") +
+		userPrefixStyle.Render(label) +
+		userMsgBoxBorderStyle.Render(strings.Repeat("─", dashCount)+"┐")
+
+	// Interior lines: │  content text with padding  │
+	var interior []string
+	for _, line := range msgLines {
+		lineWidth := lipgloss.Width(line)
+		padding := textWidth - lineWidth
+		if padding < 0 {
+			padding = 0
+		}
+		// │ + space + text + space-fill + space + │
+		interiorLine := userMsgBoxBorderStyle.Render("│") +
+			userMsgBoxTextStyle.Render(" "+line+strings.Repeat(" ", padding)+" ") +
+			userMsgBoxBorderStyle.Render("│")
+		interior = append(interior, interiorLine)
+	}
+
+	// Bottom border
+	// └────────────────────────┘
+	bottomLine := userMsgBoxBorderStyle.Render("└" + strings.Repeat("─", textWidth) + "┘")
+
+	// Assemble
+	return topLine + "\n" + strings.Join(interior, "\n") + "\n" + bottomLine
 }
 
 // wrapText word-wraps text to fit within maxWidth columns.

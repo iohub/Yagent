@@ -64,6 +64,11 @@ var (
 			BorderLeft(true).                         // thin left border accent
 			BorderForeground(lipgloss.Color("214")).  // border in gold
 			PaddingLeft(1)                            // space after border
+	// User message textbox styles — simple read-only textbox with "You" label
+	userMsgBoxBorderStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")) // subtle grey border to match separator style
+	userMsgBoxTextStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("222")) // warm cream, same as logUserMsgStyle foreground
 	logToolStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
 	logResultStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	logStatusStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
