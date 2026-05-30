@@ -16,6 +16,7 @@ import (
 
 	"codeactor/internal/app"
 	"codeactor/internal/agents"
+	"codeactor/internal/config"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/embedbin"
 	"codeactor/internal/http"
@@ -281,22 +282,30 @@ func main() {
 }
 
 // getConfigPath 返回配置文件的路径，优先使用 $HOME/.codeactor/config/config.toml
+// 如果配置文件不存在，则自动生成默认配置模板
 func getConfigPath() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		// 如果无法获取用户主目录，回退到本地 config/config.toml
-		return "config/config.toml"
+		// 无法获取用户主目录，回退到本地 config/config.toml
+		localPath := "config/config.toml"
+		if _, err := os.Stat(localPath); os.IsNotExist(err) {
+			// 本地也不存在，自动生成
+			if genErr := config.EnsureConfigExists(localPath); genErr != nil {
+				panic(fmt.Sprintf("无法创建配置文件: %v", genErr))
+			}
+		}
+		return localPath
 	}
 
 	configDir := filepath.Join(homeDir, ".codeactor", "config")
 	configPath := filepath.Join(configDir, "config.toml")
 
-	// 检查配置文件是否存在
-	if _, err := os.Stat(configPath); err == nil {
-		return configPath
+	// 确保配置文件存在（不存在则自动生成）
+	if err := config.EnsureConfigExists(configPath); err != nil {
+		panic(fmt.Sprintf("无法创建配置文件: %v", err))
 	}
 
-	panic("config.toml not found")
+	return configPath
 }
 
 // findAvailablePort 从 startPort 开始递增查找第一个可用的 TCP 端口
