@@ -66,8 +66,8 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 	// Add submission entry
 	m.logEntries = append(m.logEntries, logEntry{
 		timestamp: time.Now(),
-		eventType: "status",
-		content:   "Task submitted: " + taskDesc,
+		eventType: "user_message",
+		content:   taskDesc,
 	})
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 
@@ -104,7 +104,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 
 	m.logEntries = append(m.logEntries, logEntry{
 		timestamp: time.Now(),
-		eventType: "status",
+		eventType: "user_message",
 		content:   message,
 	})
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])

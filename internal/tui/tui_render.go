@@ -634,6 +634,9 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 	case "ai_response":
 		prefix = "AI  "
 		contentStyle = logAIResStyle
+	case "user_message":
+		prefix = userPrefixStyle.Render("You ")
+		contentStyle = logUserMsgStyle
 	case "tool_call_start":
 		// Use new-style rendering if ToolEntry is available
 		if entry.toolEntry != nil {

@@ -57,6 +57,13 @@ var (
 	// Message log styles
 	logTimeStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
 	logAIResStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	// User message styles - warm gold accents to visually distinguish from AI messages
+	userPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true) // warm gold for "You" prefix
+	logUserMsgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("222")).       // warm cream/beige for content
+			BorderLeft(true).                         // thin left border accent
+			BorderForeground(lipgloss.Color("214")).  // border in gold
+			PaddingLeft(1)                            // space after border
 	logToolStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
 	logResultStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	logStatusStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))

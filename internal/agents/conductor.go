@@ -67,14 +67,14 @@ type ConductorAgent struct {
 	metaRetryCount int                       // max retries for Meta-Agent JSON parse failures
 	toolDefMap     map[string]ToolDefinition // tool name → definition from tools.json
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
-	compactEngine    *compact.Engine             // 上下文压缩引擎
-	compactConfig    *compact.Config             // 压缩配置
-	summaryEngine    llm.Engine                  // 独立的摘要 LLM 引擎（nil 则复用主引擎）
+	compactEngine  *compact.Engine           // 上下文压缩引擎
+	compactConfig  *compact.Config           // 压缩配置
+	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 
 	// 新增：异步增量压缩字段
-	asyncCompactor   *compact.AsyncCompactor     // 异步压缩管理器
-	compState        *compact.CompressionState   // 增量压缩状态
-	pendingCompRes   *compact.CompactJobResult   // 待应用的压缩结果（异步）
+	asyncCompactor *compact.AsyncCompactor   // 异步压缩管理器
+	compState      *compact.CompressionState // 增量压缩状态
+	pendingCompRes *compact.CompactJobResult // 待应用的压缩结果（异步）
 
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
 	commitManager        *CommitManager            // commit 学习器管理器
@@ -198,7 +198,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		"type": "object",
 		"properties": map[string]interface{}{
 			"task": map[string]interface{}{
-				"type": "string",
+				"type":        "string",
 				"description": "The browser automation task for Browser-Agent, e.g., 'screenshot https://example.com homepage', 'extract article text from https://example.com/blog/post-1', 'fill the login form and submit', 'navigate to https://example.com and return the page title'.",
 			},
 		},
@@ -377,25 +377,25 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	}
 
 	self = &ConductorAgent{
-		BaseAgent:      BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
-		RepoAgent:      repo,
-		CodingAgent:    coding,
-		ChatAgent:      chat,
-		MetaAgent:      meta,
-		DevOpsAgent:    devops,
-		BrowserAgent:   browser,
-		GlobalCtx:      globalCtx,
-		Adapters:       append(adapters, delegateAdapters...),
-		maxSteps:       maxSteps,
-		metaRetryCount: metaRetryCount,
-		toolDefMap:     toolDefMap,
-		customAgents:   make(map[string]*CustomAgent),
-		compactEngine:  nil, // 将在 Run 方法中根据配置初始化
-		compactConfig:  compactCfg,
-		summaryEngine:  summaryEngine,
-		commitManager:  commitManager, // 设置 commit 学习器管理器
-		hasDelegated:   false,         // 初始未委派过
-		delegationAttempts: 0,         // 委派尝试次数初始为0
+		BaseAgent:          BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
+		RepoAgent:          repo,
+		CodingAgent:        coding,
+		ChatAgent:          chat,
+		MetaAgent:          meta,
+		DevOpsAgent:        devops,
+		BrowserAgent:       browser,
+		GlobalCtx:          globalCtx,
+		Adapters:           append(adapters, delegateAdapters...),
+		maxSteps:           maxSteps,
+		metaRetryCount:     metaRetryCount,
+		toolDefMap:         toolDefMap,
+		customAgents:       make(map[string]*CustomAgent),
+		compactEngine:      nil, // 将在 Run 方法中根据配置初始化
+		compactConfig:      compactCfg,
+		summaryEngine:      summaryEngine,
+		commitManager:      commitManager, // 设置 commit 学习器管理器
+		hasDelegated:       false,         // 初始未委派过
+		delegationAttempts: 0,             // 委派尝试次数初始为0
 	}
 	return self
 }
@@ -853,7 +853,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			if a.pendingCompRes != nil {
 				result := a.pendingCompRes
 				a.pendingCompRes = nil
-				
+
 				if result.Err == nil && len(result.CompressedMessages) > 0 {
 					// 替换消息列表（保留最新的未处理消息）
 					if len(result.CompressedMessages) < len(messages) {
@@ -864,12 +864,12 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 						slog.Info("Async compression result applied",
 							"stats", result.Stats,
 							"duration", result.Duration)
-						
+
 						if a.Publisher != nil {
 							a.Publisher.Publish("context_compressed", map[string]interface{}{
-								"compressed":     len(result.CompressedMessages),
-								"stats":          result.Stats,
-								"duration_sec":   result.Duration.Seconds(),
+								"compressed":   len(result.CompressedMessages),
+								"stats":        result.Stats,
+								"duration_sec": result.Duration.Seconds(),
 							}, a.Name())
 						}
 					}
@@ -949,7 +949,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 						slog.Debug("Triggering async pre-compression",
 							"tokens", originalTokens,
 							"threshold", threshold)
-						
+
 						snap := make([]llm.Message, len(messages))
 						copy(snap, messages)
 						stateCopy := a.compState.DeepCopy()
@@ -972,7 +972,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		// ═══════════════════════════════════════════════════════════
 
 		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
-		
+
 		// Publish llm_call_start event before LLM invocation
 		if a.Publisher != nil {
 			a.Publisher.Publish("llm_call_start", map[string]interface{}{
@@ -980,20 +980,20 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				"agent": a.Name(),
 			}, a.Name())
 		}
-		
+
 		// Record start time
 		llmStartTime := time.Now()
-		
+
 		resp, err := a.LLM.GenerateContent(ctx, messages, toolDefs, nil)
-		
+
 		// Calculate duration
 		llmDuration := time.Since(llmStartTime).Seconds()
-		
+
 		// Publish llm_call_end event after LLM invocation (regardless of error)
 		if a.Publisher != nil {
 			metadata := map[string]interface{}{
-				"model":          a.LLM.Model(),
-				"agent":          a.Name(),
+				"model":            a.LLM.Model(),
+				"agent":            a.Name(),
 				"duration_seconds": llmDuration,
 			}
 			if err != nil {
@@ -1001,7 +1001,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			}
 			a.Publisher.PublishWithMetadata("llm_call_end", "", a.Name(), metadata)
 		}
-		
+
 		if err != nil {
 			slog.Error("ConductorAgent LLM error", "error", err, "step", i)
 			return "", err
@@ -1015,11 +1015,11 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				metadata := map[string]interface{}{}
 				if resp.Usage != nil {
 					metadata["usage"] = map[string]interface{}{
-						"prompt_tokens":             resp.Usage.PromptTokens,
-						"completion_tokens":         resp.Usage.CompletionTokens,
-						"total_tokens":              resp.Usage.TotalTokens,
+						"prompt_tokens":               resp.Usage.PromptTokens,
+						"completion_tokens":           resp.Usage.CompletionTokens,
+						"total_tokens":                resp.Usage.TotalTokens,
 						"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
-						"cache_read_input_tokens":   resp.Usage.CacheReadInputTokens,
+						"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
 					}
 				}
 				if len(metadata) > 0 {
@@ -1042,16 +1042,12 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		})
 
 		if len(choice.ToolCalls) == 0 {
-			if a.delegationAttempts == 0 {
-				// LLM 还没有尝试过任何委派工具，强制它调用工具
-				messages = append(messages, llm.Message{
-					Role:    llm.RoleUser,
-					Content: "You must use a delegate tool (like delegate_repo, delegate_coding, etc.) to proceed. Please do not just return text.",
-				})
-				continue // 进入下一次循环，让 LLM 重新生成包含工具调用的响应
-			}
-			// 已经尝试过委派但失败了，直接返回错误，避免继续注入消息污染上下文
-			return "", fmt.Errorf("ConductorAgent: no tool call after %d delegation attempt(s); task may have failed", a.delegationAttempts)
+			// LLM 没有调用任何委派工具，强制它调用工具
+			messages = append(messages, llm.Message{
+				Role:    llm.RoleUser,
+				Content: "You must use a delegate tool (like delegate_repo, delegate_coding, agent_exit etc.) to proceed. Please do not just return text.",
+			})
+			continue // 进入下一次循环，让 LLM 重新生成包含工具调用的响应
 		}
 
 		for _, tc := range choice.ToolCalls {
@@ -1070,7 +1066,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				if t.Name() == tc.Function.Name {
 					found = true
 					toolResult, err = t.Call(ctx, tc.Function.Arguments)
-					
+
 					// 检测是否是 delegate 工具，无论成功失败都记录尝试次数
 					if strings.HasPrefix(t.Name(), "delegate_") {
 						a.delegationAttempts++
@@ -1078,7 +1074,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 							a.hasDelegated = true
 						}
 					}
-					
+
 					if err != nil {
 						// 截断过长的错误消息，避免污染上下文
 						errMsg := err.Error()
@@ -1146,7 +1142,7 @@ func (a *ConductorAgent) createSummaryClient() compact.SummarizationClient {
 	return &summaryClientAdapter{
 		LLM:         engine,
 		Model:       a.compactConfig.SummarizationModel,
-		Temperature: 0.1, // 摘要使用低温，确保一致性
+		Temperature: 0.1,  // 摘要使用低温，确保一致性
 		MaxTokens:   2000, // 摘要输出限制
 	}
 }
