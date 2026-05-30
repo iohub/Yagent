@@ -58,13 +58,13 @@ type AgentLLMOverride struct {
 // AgentsLLMConfig holds per-agent LLM overrides.
 // Priority: per-agent > agents.default > global.
 type AgentsLLMConfig struct {
-	UseProvider string                    `toml:"use_provider"` // default for all agents
-	Conductor   *AgentLLMOverride         `toml:"conductor,omitempty"`
-	Coding      *AgentLLMOverride         `toml:"coding,omitempty"`
-	Repo        *AgentLLMOverride         `toml:"repo,omitempty"`
-	Chat        *AgentLLMOverride         `toml:"chat,omitempty"`
-	Meta        *AgentLLMOverride         `toml:"meta,omitempty"`
-	DevOps      *AgentLLMOverride         `toml:"devops,omitempty"`
+	UseProvider string            `toml:"use_provider"` // default for all agents
+	Conductor   *AgentLLMOverride `toml:"conductor,omitempty"`
+	Coding      *AgentLLMOverride `toml:"coding,omitempty"`
+	Repo        *AgentLLMOverride `toml:"repo,omitempty"`
+	Chat        *AgentLLMOverride `toml:"chat,omitempty"`
+	Meta        *AgentLLMOverride `toml:"meta,omitempty"`
+	DevOps      *AgentLLMOverride `toml:"devops,omitempty"`
 }
 
 // ToolLLMOverride selects a provider for a specific tool.
@@ -98,15 +98,15 @@ type ToolsConfig struct {
 
 // Config is the root configuration structure
 type Config struct {
-	Global        TopLevelConfig        `toml:"global"`   // [global.llm]
-	Agents        AgentsConfig          `toml:"agents"`   // [agents.llm] + per-agent overrides
-	Tools         ToolsConfig           `toml:"tools"`    // [tools.llm] + per-tool overrides
-	App           AppConfig             `toml:"app"`
-	Agent         AgentConfig           `toml:"agent"`
-	Compact       ContextCompactConfig  `toml:"context"`  // [context] - 上下文压缩配置
-	Browser       BrowserConfig         `toml:"browser"`  // [browser] - 浏览器配置
-	CommitLearner CommitLearnerConfig   `toml:"commit_learner"` // [commit_learner] - commit 学习器配置
-	Keywords      KeywordsConfig        `toml:"keywords"` // [keywords] - 关键词词典配置
+	Global        TopLevelConfig       `toml:"global"` // [global.llm]
+	Agents        AgentsConfig         `toml:"agents"` // [agents.llm] + per-agent overrides
+	Tools         ToolsConfig          `toml:"tools"`  // [tools.llm] + per-tool overrides
+	App           AppConfig            `toml:"app"`
+	Agent         AgentConfig          `toml:"agent"`
+	Compact       ContextCompactConfig `toml:"context"`        // [context] - 上下文压缩配置
+	Browser       BrowserConfig        `toml:"browser"`        // [browser] - 浏览器配置
+	CommitLearner CommitLearnerConfig  `toml:"commit_learner"` // [commit_learner] - commit 学习器配置
+	Keywords      KeywordsConfig       `toml:"keywords"`       // [keywords] - 关键词词典配置
 }
 
 // GetProvider returns a provider config by name from the shared provider pool.
@@ -186,11 +186,11 @@ func (c *Config) getToolOverride(toolName string) *ToolLLMOverride {
 
 // ResolveProvider resolves the effective provider for a given context.
 // Priority chain (highest first):
-//   1. tools.llm.<tool>.use_provider
-//   2. tools.llm.use_provider
-//   3. agents.llm.<agent>.use_provider
-//   4. agents.llm.use_provider
-//   5. global.llm.use_provider
+//  1. tools.llm.<tool>.use_provider
+//  2. tools.llm.use_provider
+//  3. agents.llm.<agent>.use_provider
+//  4. agents.llm.use_provider
+//  5. global.llm.use_provider
 //
 // agentName and toolName can be empty strings when no context is applicable.
 func (c *Config) ResolveProvider(agentName, toolName string) (*ProviderConfig, error) {
@@ -422,33 +422,33 @@ type ContextCompactConfig struct {
 // CommitLearnerConfig commit 学习器配置
 // 用于 TOML 解析，在 agents 包中转换为 CommitLearnConfig
 type CommitLearnerConfig struct {
-	Enabled               bool    `toml:"enabled"`               // 是否启用 commit 学习功能
-	MaxCommits            int     `toml:"max_commits"`           // 最大获取 commit 数量
-	SimilarityThreshold   float64 `toml:"similarity_threshold"`  // 相似度阈值（0.0-1.0）
-	TopK                  int     `toml:"top_k"`                 // 搜索结果数量
-	Trigger               string  `toml:"trigger"`               // 触发方式："on_demand", "on_session_start", "both"
-	CacheTTL              int     `toml:"cache_ttl"`             // 缓存有效期（秒）
-	LLMSystemPrompt       string  `toml:"llm_system_prompt"`     // LLM 系统提示词（空时使用默认值）
+	Enabled               bool    `toml:"enabled"`                // 是否启用 commit 学习功能
+	MaxCommits            int     `toml:"max_commits"`            // 最大获取 commit 数量
+	SimilarityThreshold   float64 `toml:"similarity_threshold"`   // 相似度阈值（0.0-1.0）
+	TopK                  int     `toml:"top_k"`                  // 搜索结果数量
+	Trigger               string  `toml:"trigger"`                // 触发方式："on_demand", "on_session_start", "both"
+	CacheTTL              int     `toml:"cache_ttl"`              // 缓存有效期（秒）
+	LLMSystemPrompt       string  `toml:"llm_system_prompt"`      // LLM 系统提示词（空时使用默认值）
 	SummarizationProvider string  `toml:"summarization_provider"` // 专用的 LLM provider 名称，空时使用全局默认
 }
 
 // BrowserConfig 浏览器配置
 type BrowserConfig struct {
-	Headless             bool     `toml:"headless"`              // 无头模式，默认 true
-	BrowserPath          string   `toml:"browser_path"`          // 浏览器可执行文件路径（空=自动查找/下载）
-	UserDataDir          string   `toml:"user_data_dir"`         // 用户数据目录（空=临时目录）
-	ViewportWidth        int      `toml:"viewport_width"`        // 视口宽度，默认 1280
-	ViewportHeight       int      `toml:"viewport_height"`       // 视口高度，默认 720
-	AllowedDomains       []string `toml:"allowed_domains"`       // 允许访问的域名列表（空=全部允许）
-	BlockedDomains       []string `toml:"blocked_domains"`       // 阻止访问的域名列表
-	TimeoutSeconds       int      `toml:"timeout_seconds"`       // 单个操作超时秒数，默认 30
-	TaskTimeoutSeconds   int      `toml:"task_timeout_seconds"`   // 单个浏览器任务总超时秒数，默认 300
-	MaxConcurrentPages   int      `toml:"max_concurrent_pages"`  // 最大并发页面数，默认 4
-	AutoLaunch           bool     `toml:"auto_launch"`           // 首次请求时自动启动浏览器，默认 true
-	IdleTimeout          string   `toml:"idle_timeout"`          // 空闲超时（如 "5m"），空=不自动关闭
-	AllowNoSandbox       bool     `toml:"allow_no_sandbox"`      // 允许 --no-sandbox（Docker环境需要），默认 false
-	ExtraArgs            []string `toml:"extra_args"`            // 额外的 Chrome 命令行参数
-	EnableBrowserAgent   bool     `toml:"enable_browser_agent"`  // 是否启用 Browser-Agent，默认 true
+	Headless           bool     `toml:"headless"`             // 无头模式，默认 true
+	BrowserPath        string   `toml:"browser_path"`         // 浏览器可执行文件路径（空=自动查找/下载）
+	UserDataDir        string   `toml:"user_data_dir"`        // 用户数据目录（空=临时目录）
+	ViewportWidth      int      `toml:"viewport_width"`       // 视口宽度，默认 1280
+	ViewportHeight     int      `toml:"viewport_height"`      // 视口高度，默认 720
+	AllowedDomains     []string `toml:"allowed_domains"`      // 允许访问的域名列表（空=全部允许）
+	BlockedDomains     []string `toml:"blocked_domains"`      // 阻止访问的域名列表
+	TimeoutSeconds     int      `toml:"timeout_seconds"`      // 单个操作超时秒数，默认 30
+	TaskTimeoutSeconds int      `toml:"task_timeout_seconds"` // 单个浏览器任务总超时秒数，默认 300
+	MaxConcurrentPages int      `toml:"max_concurrent_pages"` // 最大并发页面数，默认 4
+	AutoLaunch         bool     `toml:"auto_launch"`          // 首次请求时自动启动浏览器，默认 true
+	IdleTimeout        string   `toml:"idle_timeout"`         // 空闲超时（如 "5m"），空=不自动关闭
+	AllowNoSandbox     bool     `toml:"allow_no_sandbox"`     // 允许 --no-sandbox（Docker环境需要），默认 false
+	ExtraArgs          []string `toml:"extra_args"`           // 额外的 Chrome 命令行参数
+	EnableBrowserAgent bool     `toml:"enable_browser_agent"` // 是否启用 Browser-Agent，默认 true
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -465,14 +465,14 @@ const (
 type DictConfig struct {
 	Name        string   `toml:"name"`
 	Files       []string `toml:"files"`
-	Type        string   `toml:"type"`          // "prefix" or "exact"
-	BuiltinType string   `toml:"builtin_type"`  // "default", "none"
+	Type        string   `toml:"type"`         // "prefix" or "exact"
+	BuiltinType string   `toml:"builtin_type"` // "default", "none"
 }
 
 // KeywordsConfig 关键词词典配置
 type KeywordsConfig struct {
-	DefaultPath       string       `toml:"default_path"`          // 用户默认关键词文件路径
-	HotReload         bool         `toml:"hot_reload"`            // 是否启用热重载
-	DisableCompletion bool         `toml:"disable_completion"`    // 禁用关键词自动补全（默认 false 表示启用，保持向后兼容）
-	Dicts             []DictConfig `toml:"dict"`                  // 词典列表
+	DefaultPath       string       `toml:"default_path"`       // 用户默认关键词文件路径
+	HotReload         bool         `toml:"hot_reload"`         // 是否启用热重载
+	DisableCompletion bool         `toml:"disable_completion"` // 禁用关键词自动补全（默认 false 表示启用，保持向后兼容）
+	Dicts             []DictConfig `toml:"dict"`               // 词典列表
 }

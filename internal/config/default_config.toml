@@ -1,0 +1,420 @@
+# ═══════════════════════════════════════════════════════════════
+# CodeActor Default Configuration Template
+# ═══════════════════════════════════════════════════════════════
+# This file is auto-generated when no configuration file exists.
+# Users should copy it to ~/.codeactor/config/config.toml and modify.
+# ═══════════════════════════════════════════════════════════════
+
+
+# ── Three-Level LLM Configuration (Priority: tools.llm > agents.llm > global.llm)──
+# global.llm: Global default LLM provider, serves as the lowest priority fallback.
+# agents.llm: Agent-level LLM override, can set defaults for all agents,
+#             can also be specified per agent name (priority: per-agent > agents.llm default > global).
+# tools.llm:  Tool-level LLM override, specifies dedicated providers for tools that need LLM calls.
+#             Highest priority: per-tool > tools.llm default > agent > global.
+
+
+# ── Global Default LLM Provider ──
+[global.llm]
+# Default provider name (corresponds to the key defined in [global.llm.providers])
+use_provider = "aliyun"
+
+
+# ── Agent-Level LLM Configuration ──
+# Can set a default provider for all agents, or specify per agent name.
+# Priority: per-agent > agents.llm.use_provider > global.llm.use_provider
+[agents.llm]
+# Default provider for all agents (optional, inherits global.llm.use_provider if not configured)
+# use_provider = "openrouter"
+
+# Specify by agent name (priority higher than agents.llm.use_provider)
+[agents.llm.conductor]
+use_provider = "ds4_flash"
+
+[agents.llm.coding]
+use_provider = "local"
+
+[agents.llm.repo]
+use_provider = "local"
+
+[agents.llm.browser]
+use_provider = "local"
+
+[agents.llm.chat]
+use_provider = "local"
+
+[agents.llm.meta]
+use_provider = "local"
+
+[agents.llm.devops]
+use_provider = "local"
+
+
+# ── Tool-Level LLM Configuration ──
+# Specify dedicated providers for tools that need LLM calls.
+# Priority: per-tool > tools.llm.use_provider > agent > global
+[tools.llm]
+# Default provider for all tools (optional)
+# use_provider = "siliconflow"
+
+# Specify by tool name (priority higher than tools.llm.use_provider)
+[tools.llm.micro_agent]
+use_provider = "local"
+
+[tools.llm.thinking]
+use_provider = "deepseek_v4_pro"
+
+[tools.llm.deepthinking]
+use_provider = "deepseek_v4_pro"
+
+
+# ═══════════════════════════════════════════════════════════════
+# LLM Provider Definitions
+# All levels (global/agents/tools) share this provider pool.
+# Each provider must define model, temperature, max_tokens, api_base_url, api_key.
+# ═══════════════════════════════════════════════════════════════
+[global.llm.providers]
+
+# Example: Xiaomi Mimo Model
+[global.llm.providers.xiaomi]
+model = "mimo-v2-flash"
+temperature = 0.3
+max_tokens = 28000
+api_base_url = "https://api.xiaomimimo.com/v1"
+api_key = "your-key"
+
+# Alibaba Cloud DashScope Model (Recommended: qwen3-coder-plus)
+[global.llm.providers.aliyun]
+model = "qwen3-coder-plus"
+temperature = 0.0
+max_tokens = 28000
+api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key = "your-key"
+
+# SiliconFlow Model (Hosts multiple open-source models)
+[global.llm.providers.siliconflow]
+model = "deepseek-ai/DeepSeek-V3.2"
+temperature = 0.0
+max_tokens = 23000
+api_base_url = "https://api.siliconflow.cn/v1"
+api_key = "your-key"
+
+# StreamLake Model
+[global.llm.providers.streamlake]
+model = "ep-w1klde-1767706500222997285"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints"
+api_key = "your-key"
+
+# OpenRouter Model (Unified API supporting multiple models)
+[global.llm.providers.openrouter]
+model = "qwen3-coder-plus"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://openrouter.ai/api/v1"
+api_key = "your-key"
+
+# Locally Deployed Model (e.g., Ollama, vLLM, etc.)
+[global.llm.providers.local]
+model = "qwen3-coder-plus"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "http://127.0.0.1:8000"
+api_key = "your-key"
+
+# Moonshot Model
+[global.llm.providers.moonshot]
+model = "moonshotai/Kimi-K2-Instruct"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.moonshot.cn/v1"
+api_key = "your-key"
+
+# DeepSeek Official API
+[global.llm.providers.deepseek]
+model = "deepseek-ai/DeepSeek-V3"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.deepseek.com/v1"
+api_key = "your-key"
+
+# ZAI Model
+[global.llm.providers.zai]
+model = "zai-org/GLM-4.5-Air"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.zai.org/v1"
+api_key = "your-key"
+
+# Mistral AI Model
+[global.llm.providers.mistral]
+model = "mistralai/devstral-small"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.mistral.ai/v1"
+api_key = "your-key"
+
+# AWS Bedrock (Claude Model)
+[global.llm.providers.bedrock]
+model = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+temperature = 0.0
+max_tokens = 3000
+aws_region = "us-east-1"
+# aws_profile = "default"       # Optional: Use a specific AWS profile
+# model_provider = "anthropic"  # Optional: Explicitly specify the model provider (not needed when auto-detected)
+
+# AWS Bedrock Nova Model
+[global.llm.providers.bedrock-nova]
+model = "us.amazon.nova-lite-v1:0"
+temperature = 0.0
+max_tokens = 3000
+aws_region = "us-east-1"
+
+# AWS Bedrock Meta Llama Model
+[global.llm.providers.bedrock-meta]
+model = "us.meta.llama3-1-405b-instruct-v1:0"
+temperature = 0.0
+max_tokens = 3000
+aws_region = "us-east-1"
+
+
+# ── Application Common Configuration ──
+[app]
+# Whether to enable streaming output
+enable_streaming = true
+
+
+# ── Agent Behavior Configuration ──
+[agent]
+# Maximum execution steps for each agent
+conductor_max_steps = 100
+coding_max_steps = 150
+repo_max_steps = 50
+browser_max_steps = 200
+chat_max_steps = 50
+meta_max_steps = 50
+devops_max_steps = 50
+
+# Retry count for the meta agent
+meta_retry_count = 5
+
+# Agent interaction language (e.g., "Chinese", "English")
+lang = "Chinese"
+
+
+# ═══════════════════════════════════════════════════════════════
+# Context Compression Configuration (Context Compact Configuration)
+# Controls conversation context compression and truncation strategies to avoid exceeding the LLM context window.
+# ═══════════════════════════════════════════════════════════════
+[context]
+# Maximum context tokens, compression is triggered when exceeded
+max_context_tokens = 198000
+
+# Whether to automatically trigger compression (auto-executes when max_context_tokens is reached)
+enable_auto_compact = true
+
+# Lightweight model for summarization (optional, reuses main agent's LLM engine if not configured)
+# summarization_model = ""
+
+# Provider name for summarization (optional, points to a provider defined in [global.llm.providers])
+# Reuses main agent's LLM engine if not configured
+# summarization_provider = ""
+
+# Summarization timeout (seconds)
+summarization_timeout = 15
+
+# Maximum input tokens per batch during summarization
+summarization_max_input_tokens = 8000
+
+# Number of recent conversation rounds always kept (used for priority calculation, more recent rounds are more important)
+keep_recent_rounds = 3
+
+
+# ═══════════════════════════════════════════════════════════════
+# Codebase Retrieval Configuration (Codebase Component Configuration)
+# Used for semantic code search, vector embeddings, and hybrid retrieval.
+# ═══════════════════════════════════════════════════════════════
+[codebase]
+# Whether to enable embedding vectorization (enables semantic search when enabled)
+enable_embedding = true
+
+# Embedding vector database storage path (relative to project root or absolute path)
+# embedding_db_uri = "~/.codeactor/data/embedding"
+
+# Graph database storage path
+# graph_db_uri = "~/.codeactor/data/graph"
+
+
+# ── Embedding Model Configuration ──
+[codebase.embedding]
+# Embedding model name
+model = "Qwen/Qwen3-Embedding-4B"
+# API Token / Key
+api_token = "your-key"
+# API Base URL
+api_base_url = "https://api.siliconflow.cn/v1"
+# Embedding vector dimensions
+# dimensions = 2560
+
+
+# ── Multi-Stage Cascade Retrieval Pipeline Configuration ──
+[codebase.retrieval_pipeline]
+# Whether to enable the cascade retrieval pipeline (enables hybrid search + Reranker + graph expansion)
+enabled = true
+# Minimum code block length (blocks shorter than this are skipped during indexing)
+# min_code_block_length = 16
+
+
+# ── Hybrid Retrieval (Hybrid Search: BM25 + Vector + RRF) Configuration ──
+[codebase.retrieval_pipeline.hybrid]
+# BM25 sparse retrieval channel toggle
+enable_bm25 = true
+# BM25 index storage path (relative to embedding_db_uri)
+bm25_index_path = "tantivy_bm25"
+# BM25 top-k recall per channel
+bm25_top_k = 100
+# Vector top-k recall per channel
+vector_top_k = 100
+# RRF (Reciprocal Rank Fusion) fusion parameter k
+rrf_k = 60
+# Top-K results retained after RRF fusion
+rrf_top_k = 20
+# Short code block threshold (blocks shorter than this are penalized during fusion)
+# short_code_threshold = 30
+# Short code block penalty factor (0.0~1.0)
+# short_code_penalty = 0.5
+
+
+# ── Reranker Re-ranking Configuration (Optional)──
+# When enabled, performs Cross-Encoder fine-ranking on candidates after RRF fusion
+[codebase.retrieval_pipeline.reranker]
+# Whether to enable Reranker re-ranking
+enabled = false
+# API Token / Key
+api_token = "your-key"
+# Re-ranking model name
+model = "BAAI/bge-reranker-v2-m3"
+# API Base URL (points to a compatible Reranker endpoint)
+api_base_url = "https://api.siliconflow.cn"
+# Top-N documents retained after re-ranking
+top_n = 10
+# Candidate pool multiplier: takes limit * candidate_multiplier candidates from RRF fusion to pass to reranker
+candidate_multiplier = 5
+# Reranker API call timeout (seconds)
+timeout_secs = 30
+
+
+# ── Graph Expansion Configuration ──
+# BFS expansion based on code dependency graph to improve retrieval coverage
+[codebase.retrieval_pipeline.graph_expansion]
+# Whether to enable graph expansion
+enabled = false
+# Maximum BFS expansion depth
+max_depth = 2
+# Token budget upper limit
+token_budget = 4096
+# Expansion direction: "bidirectional", "upward" (upward dependencies), "downward" (downward references)
+direction = "bidirectional"
+# Maximum number of expansion nodes
+max_nodes = 10
+
+
+# ═══════════════════════════════════════════════════════════════
+# Browser Configuration (Browser Configuration)
+# Implements web interaction capability based on go-rod (headless Chrome).
+# ═══════════════════════════════════════════════════════════════
+[browser]
+# Whether to enable headless mode
+headless = true
+# Chrome/Chromium executable path (leave empty for auto-detection or download)
+browser_path = "/bin/google-chrome"
+# User data directory (leave empty to use a temporary directory)
+user_data_dir = ""
+# Browser viewport width
+viewport_width = 1280
+# Browser viewport height
+viewport_height = 720
+# List of allowed domains (empty list means all allowed)
+allowed_domains = []
+# List of blocked domains
+blocked_domains = []
+# Single operation timeout in seconds
+timeout_seconds = 120
+# Maximum concurrent pages
+max_concurrent_pages = 4
+# Whether to auto-launch the browser on first request
+auto_launch = true
+# Idle timeout (e.g., "5m" means auto-close after 5 minutes of inactivity), leave empty to not auto-close
+idle_timeout = "5m"
+# Whether to allow the --no-sandbox flag (set to true in Docker environments)
+allow_no_sandbox = false
+# Additional Chrome command-line arguments
+extra_args = []
+# Whether to enable the Browser-Agent feature
+enable_browser_agent = true
+# Total timeout in seconds for a single browser task
+task_timeout_seconds = 300
+
+
+# ═══════════════════════════════════════════════════════════════
+# Commit Learner Configuration (Commit Learner Configuration)
+# Learns code change patterns from git commit history to assist code understanding and generation.
+# ═══════════════════════════════════════════════════════════════
+[commit_learner]
+# Whether to enable commit learning
+enabled = true
+# Maximum number of commits to fetch
+max_commits = 50
+# Similarity threshold (0.0-1.0) for matching similar commits
+similarity_threshold = 0.75
+# Number of search results to return
+top_k = 3
+# Trigger mode: "on_demand", "on_session_start", "both"
+trigger = "both"
+# Cache TTL (seconds)
+cache_ttl = 3600
+
+# Dedicated LLM provider name (optional)
+# When configured, commit summarization and info extraction will use this provider's model.
+# Falls back to the global default LLM (global.llm.use_provider) if not configured
+summarization_provider = ""
+
+# Custom LLM system prompt (optional, uses default if not configured)
+# llm_system_prompt = """
+# You are a software engineering analyst. Analyze the following git commit
+# and provide a structured summary in JSON format.
+# """
+
+
+# ═══════════════════════════════════════════════════════════════
+# Keywords Dictionary Configuration (Keywords Dictionary Configuration)
+# Provides auto-completion and keyword matching capabilities for agents.
+# ═══════════════════════════════════════════════════════════════
+[keywords]
+# Default user keywords file path
+default_path = "~/.codeactor/keywords.txt"
+# Whether to enable hot reload (auto-reload after file modification)
+hot_reload = false
+# Whether to disable keyword auto-completion (default false means enabled, for backward compatibility)
+# disable_completion = false
+
+# Dictionary list configuration
+# If [[dict]] files is empty, default_path and project-level files will be used automatically.
+# Supported types: "prefix" (prefix matching/completion), "exact" (exact matching/scanning)
+# Supported builtin_type: "default" (use built-in default dictionary), "none" (no built-in dictionary)
+
+# Example: Whitelist dictionary (exact match, for allowed content)
+# [[dict]]
+# name = "whitelist"
+# files = [".codeactor/whitelist.txt"]
+# type = "exact"
+# builtin_type = "none"
+
+# Example: Blacklist dictionary (exact match, for blocked content)
+# [[dict]]
+# name = "blacklist"
+# files = [".codeactor/blacklist.txt"]
+# type = "exact"
+# builtin_type = "none"
+
