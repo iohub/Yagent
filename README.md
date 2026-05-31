@@ -3,7 +3,11 @@
 > **Not a copilot. A crew of autonomous agents that understand, navigate, and evolve your codebase — together.**
 
 <p align="center">
-  <a href="docs/agent-usage-demo.mov">▶️ Watch Demo</a>
+  <a href="https://youtu.be/hFsy0VnW-3U">
+    <img src="https://img.youtube.com/vi/hFsy0VnW-3U/maxresdefault.jpg" alt="Watch Demo Video" width="800">
+  </a>
+  <br>
+  <em>▶️ Click the image above to watch the demo video on YouTube</em>
 </p>
 
 ---

@@ -3,7 +3,11 @@
 > **不是 Copilot，而是一支能理解、导航、演进你代码库的自主智能体团队。**
 
 <p align="center">
-  <a href="docs/agent-usage-demo.mov">▶️ 观看演示</a>
+  <a href="https://youtu.be/hFsy0VnW-3U">
+    <img src="https://img.youtube.com/vi/hFsy0VnW-3U/maxresdefault.jpg" alt="观看演示视频" width="800">
+  </a>
+  <br>
+  <em>▶️ 点击上方图片观看演示视频（YouTube）</em>
 </p>
 
 ---
