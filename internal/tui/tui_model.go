@@ -175,6 +175,7 @@ type logEntry struct {
 	eventType        string
 	from             string
 	content          string
+	prefix           string // indentation prefix for sub-agent messages (e.g., "  │ ")
 	toolName         string
 	toolCallID       string // tool_call_id for matching start/result events
 	isToolRunning    bool   // true when awaiting result

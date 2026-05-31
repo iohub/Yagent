@@ -631,6 +631,11 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 	var contentStyle lipgloss.Style
 
 	switch entry.eventType {
+	case "sub_agent_header":
+		// Render a dim separator line for sub-agent group headers
+		separator := strings.Repeat("─", maxWidth-2)
+		return logSeparatorStyle.Render(" " + separator + " ")
+
 	case "ai_response":
 		prefix = "AI  "
 		contentStyle = logAIResStyle
@@ -701,6 +706,11 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		}
 	} else {
 		displayContent = strings.ReplaceAll(entry.content, "\n", " ")
+	}
+
+	// Prepend prefix (indentation for sub-agent messages) to display content
+	if entry.prefix != "" {
+		displayContent = entry.prefix + displayContent
 	}
 
 	// Truncate long content

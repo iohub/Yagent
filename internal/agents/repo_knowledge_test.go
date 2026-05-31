@@ -256,9 +256,9 @@ func TestRepoKnowledgeManager_AnalyseTask_CacheHit(t *testing.T) {
 
 	// 创建一个 mock RepoAgent，通过 atomic 记录是否被调用
 	mockAgent := &mockRepoAgent{
-		runFn: func(ctx context.Context, task string) (string, error) {
+		runFn: func(ctx context.Context, task string) (AgentResult, error) {
 			atomic.StoreInt32(&repoAgentCalled, 1)
-			return "不应该被调用的结果", nil
+			return AgentResult{Text: "不应该被调用的结果"}, nil
 		},
 		GlobalCtx: gctx,
 	}
@@ -325,10 +325,10 @@ func TestRepoKnowledgeManager_AnalyseTask_CacheMiss(t *testing.T) {
 	gctx.CodebaseURL = server.URL
 
 	mockAgent := &mockRepoAgent{
-		runFn: func(ctx context.Context, task string) (string, error) {
+		runFn: func(ctx context.Context, task string) (AgentResult, error) {
 			atomic.StoreInt32(&repoAgentCalled, 1)
 			repoAgentResult = "RepoAgent 的真实结果"
-			return repoAgentResult, nil
+			return AgentResult{Text: repoAgentResult}, nil
 		},
 		GlobalCtx: gctx,
 	}
@@ -367,9 +367,9 @@ func TestRepoKnowledgeManager_AnalyseTask_EmptyCodebaseURL(t *testing.T) {
 	gctx.CodebaseURL = "" // 设置为空字符串
 
 	mockAgent := &mockRepoAgent{
-		runFn: func(ctx context.Context, task string) (string, error) {
+		runFn: func(ctx context.Context, task string) (AgentResult, error) {
 			atomic.StoreInt32(&repoAgentCalled, 1)
-			return "直接 RepoAgent 结果", nil
+			return AgentResult{Text: "直接 RepoAgent 结果"}, nil
 		},
 		GlobalCtx: gctx,
 	}
@@ -414,9 +414,9 @@ func TestRepoKnowledgeManager_AnalyseTask_SearchErrorFallback(t *testing.T) {
 	gctx.CodebaseURL = server.URL
 
 	mockAgent := &mockRepoAgent{
-		runFn: func(ctx context.Context, task string) (string, error) {
+		runFn: func(ctx context.Context, task string) (AgentResult, error) {
 			atomic.StoreInt32(&repoAgentCalled, 1)
-			return "fallback 结果", nil
+			return AgentResult{Text: "fallback 结果"}, nil
 		},
 		GlobalCtx: gctx,
 	}
@@ -792,8 +792,8 @@ func TestSearchSimilar_RequestFormat(t *testing.T) {
 func TestRepoKnowledgeManager_AnalyseTask_NilGlobalCtx(t *testing.T) {
 	// 当 globalCtx 为 nil 时，验证 AnalyseTask 优雅降级
 	mockAgent := &mockRepoAgent{
-		runFn: func(ctx context.Context, task string) (string, error) {
-			return "nil globalCtx fallback", nil
+		runFn: func(ctx context.Context, task string) (AgentResult, error) {
+			return AgentResult{Text: "nil globalCtx fallback"}, nil
 		},
 	}
 
@@ -848,9 +848,9 @@ func TestRepoKnowledgeManager_AnalyseTask_EmbedErrorNonFatal(t *testing.T) {
 	gctx.CodebaseURL = server.URL
 
 	mockAgent := &mockRepoAgent{
-		runFn: func(ctx context.Context, task string) (string, error) {
+		runFn: func(ctx context.Context, task string) (AgentResult, error) {
 			atomic.StoreInt32(&repoAgentCalled, 1)
-			return "真实分析结果", nil
+			return AgentResult{Text: "真实分析结果"}, nil
 		},
 		GlobalCtx: gctx,
 	}
@@ -960,9 +960,9 @@ func TestRepoKnowledgeManager_EmptyMatches_ReturnsCacheMiss(t *testing.T) {
 	gctx.CodebaseURL = server.URL
 
 	mockAgent := &mockRepoAgent{
-		runFn: func(ctx context.Context, task string) (string, error) {
+		runFn: func(ctx context.Context, task string) (AgentResult, error) {
 			atomic.StoreInt32(&repoAgentCalled, 1)
-			return "空匹配结果", nil
+			return AgentResult{Text: "空匹配结果"}, nil
 		},
 		GlobalCtx: gctx,
 	}
@@ -989,11 +989,11 @@ func TestRepoKnowledgeManager_EmptyMatches_ReturnsCacheMiss(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // mockRepoAgentRunFunc is a function that replaces RepoAgent.Run for testing.
-type mockRepoAgentRunFunc func(ctx context.Context, task string) (string, error)
+type mockRepoAgentRunFunc func(ctx context.Context, task string) (AgentResult, error)
 
 // mockRepoAgent wraps RepoAgent to override the Run method.
 type mockRepoAgent struct {
-	runFn   mockRepoAgentRunFunc
+	runFn     mockRepoAgentRunFunc
 	GlobalCtx *globalctx.GlobalCtx
 }
 
@@ -1001,11 +1001,11 @@ func (m *mockRepoAgent) Name() string {
 	return "mock-repo-agent"
 }
 
-func (m *mockRepoAgent) Run(ctx context.Context, task string) (string, error) {
+func (m *mockRepoAgent) Run(ctx context.Context, task string) (AgentResult, error) {
 	if m.runFn != nil {
 		return m.runFn(ctx, task)
 	}
-	return "", fmt.Errorf("mockRepoAgent: no runFn set")
+	return AgentResult{}, fmt.Errorf("mockRepoAgent: no runFn set")
 }
 
 // containsString checks if s contains substr.

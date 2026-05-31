@@ -81,3 +81,74 @@ func TestJSONSerialization(t *testing.T) {
 		t.Errorf("Expected content 'sys', got '%s'", mem2.Messages[0].Content)
 	}
 }
+
+func TestNewFields_JSONOmitEmpty(t *testing.T) {
+	// Test 1: default zero values should be omitted in JSON
+	msg := ChatMessage{
+		Type:    MessageTypeHuman,
+		Content: "hello",
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("Failed to marshal message: %v", err)
+	}
+
+	// Should NOT contain group_id, parent_id, is_sub_agent when zero-valued
+	if containsJSONKey(data, "group_id") {
+		t.Errorf("Expected group_id to be omitted when empty, got: %s", string(data))
+	}
+	if containsJSONKey(data, "parent_id") {
+		t.Errorf("Expected parent_id to be omitted when empty, got: %s", string(data))
+	}
+	if containsJSONKey(data, "is_sub_agent") {
+		t.Errorf("Expected is_sub_agent to be omitted when false, got: %s", string(data))
+	}
+
+	// Test 2: non-zero values should appear in JSON
+	msg2 := ChatMessage{
+		Type:       MessageTypeHuman,
+		Content:    "hello",
+		GroupID:    "group-123",
+		ParentID:   "call_abc",
+		IsSubAgent: true,
+	}
+	data2, err := json.Marshal(msg2)
+	if err != nil {
+		t.Fatalf("Failed to marshal message: %v", err)
+	}
+
+	if !containsJSONKey(data2, "group_id") {
+		t.Errorf("Expected group_id to be present when set, got: %s", string(data2))
+	}
+	if !containsJSONKey(data2, "parent_id") {
+		t.Errorf("Expected parent_id to be present when set, got: %s", string(data2))
+	}
+	if !containsJSONKey(data2, "is_sub_agent") {
+		t.Errorf("Expected is_sub_agent to be present when true, got: %s", string(data2))
+	}
+
+	// Test 3: round-trip deserialization preserves the new fields
+	var msg3 ChatMessage
+	if err := json.Unmarshal(data2, &msg3); err != nil {
+		t.Fatalf("Failed to unmarshal message: %v", err)
+	}
+	if msg3.GroupID != "group-123" {
+		t.Errorf("Expected GroupID 'group-123', got '%s'", msg3.GroupID)
+	}
+	if msg3.ParentID != "call_abc" {
+		t.Errorf("Expected ParentID 'call_abc', got '%s'", msg3.ParentID)
+	}
+	if !msg3.IsSubAgent {
+		t.Errorf("Expected IsSubAgent to be true")
+	}
+}
+
+// containsJSONKey checks if a JSON byte slice contains a specific key.
+func containsJSONKey(data []byte, key string) bool {
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	_, ok := m[key]
+	return ok
+}

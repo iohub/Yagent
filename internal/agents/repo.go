@@ -279,11 +279,11 @@ func executeGetRepoOverview(globalCtx *globalctx.GlobalCtx) (interface{}, error)
 	return "", fmt.Errorf("get_repo_overview failed after 3 retries: %w", lastErr)
 }
 
-func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
+func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	systemPrompt := repoPrompt
 
 	if a.GlobalCtx.ProjectPath == "" {
-		return "", fmt.Errorf("project_dir is empty")
+		return AgentResult{}, fmt.Errorf("project_dir is empty")
 	}
 
 	systemPrompt = a.GlobalCtx.FormatPrompt(systemPrompt)
@@ -298,5 +298,12 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (string, error) {
 		AgentName:     a.Name(),
 		SystemAsHuman: true, // RepoAgent uses Human role for its prompt
 	}
-	return RunAgentLoop(ctx, cfg)
+	result, err := RunAgentLoop(ctx, cfg)
+	if err != nil {
+		return AgentResult{}, err
+	}
+	return AgentResult{
+		Text:   result.Text,
+		Memory: ConvertLLMHistoryToMemory(result.History),
+	}, nil
 }

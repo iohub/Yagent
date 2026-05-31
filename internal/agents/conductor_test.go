@@ -769,7 +769,7 @@ func TestConvertMemoryMessageToLLMSMessage_ToolMessage(t *testing.T) {
 		ToolCallID: &toolCallID,
 	}
 
-	llmMsg := convertMemoryMessageToLLMSMessage(msg)
+	llmMsg := memory.ConvertMemoryMessageToLLMSMessage(msg)
 
 	if llmMsg.Role != llm.RoleTool {
 		t.Errorf("Expected role %s, got %s", llm.RoleTool, llmMsg.Role)
@@ -798,7 +798,7 @@ func TestConvertMemoryMessageToLLMSMessage_AssistantWithToolCalls(t *testing.T) 
 		},
 	}
 
-	llmMsg := convertMemoryMessageToLLMSMessage(msg)
+	llmMsg := memory.ConvertMemoryMessageToLLMSMessage(msg)
 
 	if llmMsg.Role != llm.RoleAssistant {
 		t.Errorf("Expected role %s, got %s", llm.RoleAssistant, llmMsg.Role)

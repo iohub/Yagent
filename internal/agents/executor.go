@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"codeactor/internal/llm"
+	"codeactor/internal/memory"
 	"codeactor/internal/tools"
 	"codeactor/internal/messaging"
 )
@@ -30,9 +31,14 @@ type ExecutorConfig struct {
 	OnToolResult func(toolName string, result string)
 }
 
+// ExecutorResult 封装 RunAgentLoop 的完整执行结果
+type ExecutorResult struct {
+	Text    string        // 最终文本输出（agent 的最后一条消息内容或 agent_exit 的返回值）
+	History []llm.Message // 完整的内部消息历史，包括 system prompt、user input、所有 assistant/tool 交互
+}
+
 // RunAgentLoop runs the standard LLM-tool interaction loop.
-// It returns the final text response from the LLM.
-func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
+func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, error) {
 	// Publish model info so the TUI can display it in the status bar.
 	if cfg.Publisher != nil {
 		cfg.Publisher.Publish("model_info", map[string]interface{}{
@@ -46,16 +52,18 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
 		systemRole = llm.RoleUser
 	}
 
-	messages := []llm.Message{
-		{
-			Role:    systemRole,
-			Content: cfg.SystemPrompt,
-		},
-		{
-			Role:    llm.RoleUser,
-			Content: cfg.UserInput,
-		},
+	systemMsg := llm.Message{
+		Role:    systemRole,
+		Content: cfg.SystemPrompt,
 	}
+	userMsg := llm.Message{
+		Role:    llm.RoleUser,
+		Content: cfg.UserInput,
+	}
+
+	messages := []llm.Message{systemMsg, userMsg}
+	history := make([]llm.Message, 0)
+	history = append(history, systemMsg, userMsg)
 
 	toolDefs := make([]llm.ToolDef, len(cfg.Adapters))
 	for i, ad := range cfg.Adapters {
@@ -98,7 +106,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
 		
 		if err != nil {
 			slog.Error("AgentExecutor LLM error", "agent", cfg.AgentName, "error", err, "step", i)
-			return "", err
+			return ExecutorResult{}, err
 		}
 
 		choice := resp.Choices[0]
@@ -128,9 +136,10 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
 			ToolCalls: choice.ToolCalls,
 		}
 		messages = append(messages, assistantMsg)
+		history = append(history, assistantMsg)
 
 		if len(choice.ToolCalls) == 0 {
-			return choice.Content, nil
+			return ExecutorResult{Text: choice.Content, History: history}, nil
 		}
 
 		for _, tc := range choice.ToolCalls {
@@ -180,14 +189,57 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (string, error) {
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
 			})
+			history = append(history, llm.Message{
+				Role:       llm.RoleTool,
+				Content:    toolResult,
+				ToolCallID: tc.ID,
+				ToolName:   tc.Function.Name,
+			})
 
 			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" {
-				return toolResult, nil
+				return ExecutorResult{Text: toolResult, History: history}, nil
 			}
 		}
 	}
 
-	return "", fmt.Errorf("%s exceeded max steps (%d)", cfg.AgentName, cfg.MaxSteps)
+	return ExecutorResult{}, fmt.Errorf("%s exceeded max steps (%d)", cfg.AgentName, cfg.MaxSteps)
+}
+
+// ConvertLLMHistoryToMemory 将 RunAgentLoop 返回的 llm.Message 历史转换为 memory.ChatMessage 切片
+// 所有消息的 IsSubAgent 设为 true（GroupID 和 ParentID 由 Conductor 后续填充）
+func ConvertLLMHistoryToMemory(history []llm.Message) []memory.ChatMessage {
+	result := make([]memory.ChatMessage, 0, len(history))
+	for _, msg := range history {
+		cm := memory.ChatMessage{
+			IsSubAgent: true, // 标记为 sub-agent 内部消息
+		}
+		// 根据 role 映射 Type
+		switch msg.Role {
+		case llm.RoleSystem:
+			cm.Type = memory.MessageTypeSystem
+		case llm.RoleUser:
+			cm.Type = memory.MessageTypeHuman
+		case llm.RoleAssistant:
+			cm.Type = memory.MessageTypeAssistant
+			// 转换 ToolCalls
+			for _, tc := range msg.ToolCalls {
+				cm.ToolCalls = append(cm.ToolCalls, memory.ToolCallData{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: memory.ToolCallFunction{
+						Name:      tc.Function.Name,
+						Arguments: json.RawMessage(tc.Function.Arguments),
+					},
+				})
+			}
+		case llm.RoleTool:
+			cm.Type = memory.MessageTypeTool
+			cm.ToolCallID = &msg.ToolCallID
+		}
+		cm.Content = msg.Content
+		result = append(result, cm)
+	}
+	return result
 }
 
 // logToolCall records a tool call with formatted arguments, duration, and error info.

@@ -80,6 +80,9 @@ type ConductorAgent struct {
 	commitManager        *CommitManager            // commit 学习器管理器
 	hasDelegated         bool                      // 标记是否已委派过 agent
 	delegationAttempts   int                       // 委派尝试次数统计
+
+	currentMemory            *memory.ConversationMemory // 当前正在使用的 memory（Run 期间设置）
+	pendingSubAgentMemory    *AgentResult               // 最近一次 delegate 调用的完整结果（用于 memory 注入）
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -128,7 +131,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		if repoKnowledgeMgr != nil {
 			return repoKnowledgeMgr.AnalyseTask(ctx, task)
 		}
-		return repo.Run(ctx, task)
+		result, err := repo.Run(ctx, task)
+		if err != nil {
+			return nil, err
+		}
+		// 存储 sub-agent memory 供 Run 方法注入
+		self.pendingSubAgentMemory = &result
+		return result.Text, nil
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -145,7 +154,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		if globalCtx.RepoSummary != "" {
 			task = fmt.Sprintf("%s\n\n#Repository Context:\n%s", task, globalCtx.RepoSummary)
 		}
-		return coding.Run(ctx, task)
+		result, err := coding.Run(ctx, task)
+		if err != nil {
+			return nil, err
+		}
+		// 存储 sub-agent memory 供 Run 方法注入
+		self.pendingSubAgentMemory = &result
+		return result.Text, nil
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -159,7 +174,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		return chat.Run(ctx, task)
+		result, err := chat.Run(ctx, task)
+		if err != nil {
+			return nil, err
+		}
+		// 存储 sub-agent memory 供 Run 方法注入
+		self.pendingSubAgentMemory = &result
+		return result.Text, nil
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -173,7 +194,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		return devops.Run(ctx, task)
+		result, err := devops.Run(ctx, task)
+		if err != nil {
+			return nil, err
+		}
+		// 存储 sub-agent memory 供 Run 方法注入
+		self.pendingSubAgentMemory = &result
+		return result.Text, nil
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -193,7 +220,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 			if globalCtx.RepoSummary != "" {
 				task = fmt.Sprintf("%s\n\n#Repository Context (for reference only - focus on browser tasks):\n%s", task, globalCtx.RepoSummary)
 			}
-			return browser.Run(ctx, task)
+			result, err := browser.Run(ctx, task)
+			if err != nil {
+				return nil, err
+			}
+			// 存储 sub-agent memory 供 Run 方法注入
+			self.pendingSubAgentMemory = &result
+			return result.Text, nil
 		}).WithSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -224,13 +257,15 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 				)
 			}
 
-			rawOutput, err := meta.Run(ctx, retryTask)
+			metaResult, err := meta.Run(ctx, retryTask)
 			if err != nil {
 				return nil, fmt.Errorf("Meta-Agent design failed: %w", err)
 			}
-			lastRawOutput = rawOutput
+			// 存储 meta-agent memory（如果后续执行了自定义 agent，会被覆盖为自定义 agent 的 memory）
+			self.pendingSubAgentMemory = &metaResult
+			lastRawOutput = metaResult.Text
 
-			systemPrompt, execResult, parseErr := parseMetaAgentOutput(rawOutput)
+			systemPrompt, execResult, parseErr := parseMetaAgentOutput(metaResult.Text)
 			if parseErr != nil {
 				slog.Warn("Meta-Agent JSON parse failed, retrying", "attempt", attempt+1, "maxRetries", maxRetries, "error", parseErr)
 				continue
@@ -286,7 +321,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 			}
 
 			// Parse succeeded but no agent to register
-			return fmt.Sprintf("[Meta-Agent Design Result]\nAgent could not be registered (missing name or design). Raw output: %s", rawOutput), nil
+			return fmt.Sprintf("[Meta-Agent Design Result]\nAgent could not be registered (missing name or design). Raw output: %s", metaResult.Text), nil
 		}
 
 		// All retries exhausted
@@ -669,7 +704,31 @@ func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent
 		AgentName:    ca.DisplayName,
 		StopOnFinish: true,
 	}
-	return RunAgentLoop(ctx, cfg)
+	result, err := RunAgentLoop(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+	// 存储自定义 agent memory 供 Run 方法注入
+	agentResult := AgentResult{
+		Text:   result.Text,
+		Memory: ConvertLLMHistoryToMemory(result.History),
+	}
+	a.pendingSubAgentMemory = &agentResult
+	return result.Text, nil
+}
+
+// injectSubAgentMemory 将 sub-agent 的完整对话历史注入到 Conductor memory 中
+func (a *ConductorAgent) injectSubAgentMemory(result AgentResult, toolCallID string, toolName string) {
+	if a.currentMemory == nil || len(result.Memory) == 0 {
+		return
+	}
+	groupID := fmt.Sprintf("%s_%s_%d", toolName, "sub", time.Now().UnixNano())
+	for i := range result.Memory {
+		result.Memory[i].GroupID = groupID
+		result.Memory[i].ParentID = toolCallID
+		// IsSubAgent 已在 ConvertLLMHistoryToMemory 中设为 true，无需再设
+		a.currentMemory.Messages = append(a.currentMemory.Messages, result.Memory[i])
+	}
 }
 
 func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
@@ -687,49 +746,11 @@ func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
 	return res
 }
 
-func convertMemoryMessageToLLMSMessage(msg memory.ChatMessage) llm.Message {
-	role := llm.RoleUser
-	switch msg.Type {
-	case memory.MessageTypeSystem:
-		role = llm.RoleSystem
-	case memory.MessageTypeHuman:
-		role = llm.RoleUser
-	case memory.MessageTypeAssistant:
-		role = llm.RoleAssistant
-	case memory.MessageTypeTool:
-		role = llm.RoleTool
-	}
-
-	result := llm.Message{
-		Role: role,
-	}
-
-	if msg.Content != "" && msg.Type != memory.MessageTypeTool {
-		result.Content = msg.Content
-	}
-
-	if len(msg.ToolCalls) > 0 {
-		for _, tc := range msg.ToolCalls {
-			result.ToolCalls = append(result.ToolCalls, llm.ToolCall{
-				ID:   tc.ID,
-				Type: tc.Type,
-				Function: llm.FunctionCall{
-					Name:      tc.Function.Name,
-					Arguments: string(tc.Function.Arguments),
-				},
-			})
-		}
-	}
-
-	if msg.Type == memory.MessageTypeTool && msg.ToolCallID != nil {
-		result.ToolCallID = *msg.ToolCallID
-		result.Content = msg.Content
-	}
-
-	return result
-}
-
 func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
+	// 设置当前 memory（delegate 闭包通过 a.currentMemory 访问）
+	a.currentMemory = mem
+	defer func() { a.currentMemory = nil }()
+
 	if mem != nil {
 		// Check if the last message is the same as input to avoid duplication
 		// because handleChatMessage might have already added it.
@@ -822,7 +843,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			if m.Type == memory.MessageTypeSystem {
 				continue
 			}
-			messages = append(messages, convertMemoryMessageToLLMSMessage(m))
+			messages = append(messages, memory.ConvertMemoryMessageToLLMSMessage(m))
 		}
 	} else {
 		messages = append(messages, llm.Message{
@@ -1066,6 +1087,12 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				if t.Name() == tc.Function.Name {
 					found = true
 					toolResult, err = t.Call(ctx, tc.Function.Arguments)
+
+					// 注入 sub-agent memory（delegate 闭包中设置了 pendingSubAgentMemory）
+					if a.pendingSubAgentMemory != nil {
+						a.injectSubAgentMemory(*a.pendingSubAgentMemory, tc.ID, tc.Function.Name)
+						a.pendingSubAgentMemory = nil
+					}
 
 					// 检测是否是 delegate 工具，无论成功失败都记录尝试次数
 					if strings.HasPrefix(t.Name(), "delegate_") {

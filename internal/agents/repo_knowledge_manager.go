@@ -52,7 +52,11 @@ func NewRepoKnowledgeManager(agent Agent, globalCtx *globalctx.GlobalCtx, thresh
 func (m *RepoKnowledgeManager) AnalyseTask(ctx context.Context, task string) (string, error) {
 	// 如果 CodebaseURL 为空，优雅降级
 	if m.globalCtx == nil || m.globalCtx.CodebaseURL == "" {
-		return m.agent.Run(ctx, task)
+		result, err := m.agent.Run(ctx, task)
+		if err != nil {
+			return "", err
+		}
+		return result.Text, nil
 	}
 
 	// 1. 搜索相似的历史分析
@@ -60,7 +64,11 @@ func (m *RepoKnowledgeManager) AnalyseTask(ctx context.Context, task string) (st
 	if err != nil {
 		// 搜索失败，fallback 到正常 RepoAgent 执行
 		fmt.Printf("[RepoKnowledge] search failed, falling back to full run: %v\n", err)
-		return m.agent.Run(ctx, task)
+		result, err := m.agent.Run(ctx, task)
+		if err != nil {
+			return "", err
+		}
+		return result.Text, nil
 	}
 
 	// 2. 检查是否有高相似度匹配
@@ -70,19 +78,19 @@ func (m *RepoKnowledgeManager) AnalyseTask(ctx context.Context, task string) (st
 	}
 
 	// 3. Cache miss: 正常执行 RepoAgent
-	result, err := m.agent.Run(ctx, task)
+	agentResult, err := m.agent.Run(ctx, task)
 	if err != nil {
 		return "", err
 	}
 
 	// 4. 存储分析结果到知识库（异步，非致命错误）
 	go func() {
-		if err := m.embedTaskAndResult(context.Background(), task, result); err != nil {
+		if err := m.embedTaskAndResult(context.Background(), task, agentResult.Text); err != nil {
 			fmt.Printf("[RepoKnowledge] failed to embed: %v\n", err)
 		}
 	}()
 
-	return result, nil
+	return agentResult.Text, nil
 }
 
 // searchSimilar 调用 Rust /repo_knowledge/search 搜索相似的历史分析。

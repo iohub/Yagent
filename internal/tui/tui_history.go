@@ -330,35 +330,65 @@ func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 	m.logEntries = nil
 
 	// 2. Convert each message to a logEntry
+	lastGroupID := "" // track GroupID changes for inserting sub-agent headers
 	for _, msg := range mem.Messages {
 		entry := logEntry{
 			timestamp: msg.Timestamp,
 		}
 
+		// 检测 GroupID 变化，插入分组头部
+		if msg.IsSubAgent && msg.GroupID != "" && msg.GroupID != lastGroupID {
+			headerEntry := logEntry{
+				eventType: "sub_agent_header",
+				from:      "System",
+				content:   "── Sub-Agent ──",
+			}
+			m.logEntries = append(m.logEntries, headerEntry)
+			lastGroupID = msg.GroupID
+		} else if !msg.IsSubAgent {
+			lastGroupID = ""
+		}
+
+		// Sub-agent 消息加上前缀和缩进标记
+		if msg.IsSubAgent {
+			entry.prefix = "  │ "
+			entry.from = "Sub-Agent"
+		}
+
 		switch msg.Type {
 		case memory.MessageTypeSystem:
 			entry.eventType = "system"
-			entry.from = "System"
+			if !msg.IsSubAgent {
+				entry.from = "System"
+			}
 			entry.content = msg.Content
 
 		case memory.MessageTypeHuman:
 			entry.eventType = "user_input"
-			entry.from = "You"
+			if !msg.IsSubAgent {
+				entry.from = "You"
+			}
 			entry.content = msg.Content
 
 		case memory.MessageTypeAssistant:
 			entry.eventType = "ai_response"
-			entry.from = "Assistant"
+			if !msg.IsSubAgent {
+				entry.from = "Assistant"
+			}
 			entry.content = msg.Content
 
 		case memory.MessageTypeTool:
 			entry.eventType = "tool_result"
-			entry.from = "Tool"
+			if !msg.IsSubAgent {
+				entry.from = "Tool"
+			}
 			entry.content = msg.Content
 
 		default:
 			entry.eventType = string(msg.Type)
-			entry.from = "Unknown"
+			if !msg.IsSubAgent {
+				entry.from = "Unknown"
+			}
 			entry.content = msg.Content
 		}
 

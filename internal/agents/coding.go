@@ -89,7 +89,11 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 				if browserAgent == nil {
 					return nil, fmt.Errorf("browser agent is not available")
 				}
-				return browserAgent.Run(ctx, task)
+				result, err := browserAgent.Run(ctx, task)
+				if err != nil {
+					return nil, err
+				}
+				return result.Text, nil
 			}
 		default:
 			slog.Warn("Unknown tool in tools.json", "name", def.Name)
@@ -118,7 +122,7 @@ func (a *CodingAgent) Name() string {
 	return "Coding-Agent"
 }
 
-func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
+func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(codingPrompt)
 
 	cfg := ExecutorConfig{
@@ -130,5 +134,12 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (string, error) {
 		Publisher:    a.Publisher,
 		AgentName:    a.Name(),
 	}
-	return RunAgentLoop(ctx, cfg)
+	result, err := RunAgentLoop(ctx, cfg)
+	if err != nil {
+		return AgentResult{}, err
+	}
+	return AgentResult{
+		Text:   result.Text,
+		Memory: ConvertLLMHistoryToMemory(result.History),
+	}, nil
 }

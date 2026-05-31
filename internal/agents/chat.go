@@ -67,7 +67,7 @@ func (a *ChatAgent) Name() string {
 	return "Chat-Agent"
 }
 
-func (a *ChatAgent) Run(ctx context.Context, input string) (string, error) {
+func (a *ChatAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	cfg := ExecutorConfig{
 		SystemPrompt: a.GlobalCtx.FormatPrompt(chatPrompt),
 		UserInput:    input,
@@ -78,5 +78,12 @@ func (a *ChatAgent) Run(ctx context.Context, input string) (string, error) {
 		AgentName:    a.Name(),
 		StopOnFinish: true,
 	}
-	return RunAgentLoop(ctx, cfg)
+	result, err := RunAgentLoop(ctx, cfg)
+	if err != nil {
+		return AgentResult{}, err
+	}
+	return AgentResult{
+		Text:   result.Text,
+		Memory: ConvertLLMHistoryToMemory(result.History),
+	}, nil
 }

@@ -101,12 +101,12 @@ func (a *BrowserAgent) Name() string {
 // Run 执行浏览器任务
 // 输入：用户的任务描述（如 "截图 https://example.com 首页"）
 // 输出：任务结果摘要
-func (a *BrowserAgent) Run(ctx context.Context, input string) (string, error) {
+func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	log.Printf("[BrowserAgent] 开始执行任务: %s", truncateForLog(input, 100))
 
 	// 检查浏览器管理器是否可用
 	if !a.browserMgr.IsRunning() && !a.browserMgr.GetConfig().AutoLaunch {
-		return "", fmt.Errorf("浏览器未启动且 AutoLaunch 被禁用")
+		return AgentResult{}, fmt.Errorf("浏览器未启动且 AutoLaunch 被禁用")
 	}
 
 	// 从浏览器配置读取任务超时，默认180秒
@@ -123,7 +123,7 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (string, error) {
 	page, release, err := a.browserMgr.AcquirePage(taskCtx)
 	if err != nil {
 		log.Printf("[BrowserAgent] 获取页面失败: %v", err)
-		return "", fmt.Errorf("获取浏览器页面失败: %w", err)
+		return AgentResult{}, fmt.Errorf("获取浏览器页面失败: %w", err)
 	}
 	defer release()
 
@@ -153,11 +153,14 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (string, error) {
 	result, err := RunAgentLoop(pageCtx, cfg)
 	if err != nil {
 		log.Printf("[BrowserAgent] 执行失败: %v", err)
-		return "", fmt.Errorf("Browser-Agent 执行失败: %w", err)
+		return AgentResult{}, fmt.Errorf("Browser-Agent 执行失败: %w", err)
 	}
 
 	log.Printf("[BrowserAgent] 任务完成")
-	return result, nil
+	return AgentResult{
+		Text:   result.Text,
+		Memory: ConvertLLMHistoryToMemory(result.History),
+	}, nil
 }
 
 // GetBrowserManager 获取浏览器管理器（供外部使用）

@@ -1,8 +1,10 @@
 package memory
 
 import (
-	"encoding/json" // Added for fmt.Sprintf
+	"encoding/json"
 	"time"
+
+	"codeactor/internal/llm"
 )
 
 // MessageType 定义消息类型
@@ -36,6 +38,11 @@ type ChatMessage struct {
 	ToolCallID *string                `json:"tool_call_id,omitempty"` // 用于 tool message
 	Timestamp  time.Time              `json:"timestamp"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+
+	// Sub-agent 分组元数据
+	GroupID    string `json:"group_id,omitempty"`     // 标识一次 sub-agent 调用，同一调用的消息共享此ID
+	ParentID   string `json:"parent_id,omitempty"`    // 指向触发此调用的 Conductor tool_call_id
+	IsSubAgent bool   `json:"is_sub_agent,omitempty"` // 快速过滤标记，true表示此消息属于sub-agent内部
 }
 
 // ConversationMemory 管理完整的对话上下文
@@ -158,4 +165,60 @@ func (cm *ConversationMemory) GetMessagesByType(msgType MessageType) []ChatMessa
 // Size 返回消息数量
 func (cm *ConversationMemory) Size() int {
 	return len(cm.Messages)
+}
+
+// ToMessages 将对话记忆转换为 LLM 消息格式，自动跳过 sub-agent 内部消息
+func (cm *ConversationMemory) ToMessages() []llm.Message {
+	var messages []llm.Message
+	for _, m := range cm.Messages {
+		// 跳过 sub-agent 内部消息
+		if m.IsSubAgent {
+			continue
+		}
+		messages = append(messages, ConvertMemoryMessageToLLMSMessage(m))
+	}
+	return messages
+}
+
+// ConvertMemoryMessageToLLMSMessage 将内存中的 ChatMessage 转换为 LLM Message
+func ConvertMemoryMessageToLLMSMessage(msg ChatMessage) llm.Message {
+	role := llm.RoleUser
+	switch msg.Type {
+	case MessageTypeSystem:
+		role = llm.RoleSystem
+	case MessageTypeHuman:
+		role = llm.RoleUser
+	case MessageTypeAssistant:
+		role = llm.RoleAssistant
+	case MessageTypeTool:
+		role = llm.RoleTool
+	}
+
+	result := llm.Message{
+		Role: role,
+	}
+
+	if msg.Content != "" && msg.Type != MessageTypeTool {
+		result.Content = msg.Content
+	}
+
+	if len(msg.ToolCalls) > 0 {
+		for _, tc := range msg.ToolCalls {
+			result.ToolCalls = append(result.ToolCalls, llm.ToolCall{
+				ID:   tc.ID,
+				Type: tc.Type,
+				Function: llm.FunctionCall{
+					Name:      tc.Function.Name,
+					Arguments: string(tc.Function.Arguments),
+				},
+			})
+		}
+	}
+
+	if msg.Type == MessageTypeTool && msg.ToolCallID != nil {
+		result.ToolCallID = *msg.ToolCallID
+		result.Content = msg.Content
+	}
+
+	return result
 }
