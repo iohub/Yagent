@@ -3,8 +3,7 @@
 > **Not a copilot. A crew of autonomous agents that understand, navigate, and evolve your codebase — together.**
 
 <p align="center">
-  <img src="docs/sceenshot-1.png" alt="CodeActor TUI" width="49%">
-  <img src="docs/sceenshot-2.png" alt="CodeActor TUI" width="49%">
+  <a href="docs/agent-usage-demo.mov">▶️ Watch Demo</a>
 </p>
 
 ---

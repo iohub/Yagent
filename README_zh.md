@@ -3,8 +3,7 @@
 > **不是 Copilot，而是一支能理解、导航、演进你代码库的自主智能体团队。**
 
 <p align="center">
-  <img src="docs/sceenshot-1.png" alt="CodeActor TUI" width="49%">
-  <img src="docs/sceenshot-2.png" alt="CodeActor TUI" width="49%">
+  <a href="docs/agent-usage-demo.mov">▶️ 观看演示</a>
 </p>
 
 ---
