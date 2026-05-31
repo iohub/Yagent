@@ -265,6 +265,7 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	switch {
 	case cmd == ":q!":
 		// Force quit — skip confirmation (vim convention)
+		m.saveRunningTaskMemory()
 		m.quitting = true
 		m.cleanupDebounceTimer()
 		return tea.Quit
@@ -649,6 +650,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				// Ctrl+C: 强制退出
 				if key == "ctrl+c" {
+					m.saveRunningTaskMemory()
 					m.quitting = true
 					return m, tea.Quit
 				}
@@ -669,6 +671,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					case "enter", "y", "Y":
 						if d.GetConfirmed() {
 							if d.ID() == "quit_confirm" || d.ID() == "quit_confirm_dialog" {
+								m.saveRunningTaskMemory()
 								m.quitting = true
 								m.cleanupDebounceTimer()
 								return m, tea.Quit
@@ -837,6 +840,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.confirmDialog.open {
 			switch msg.String() {
 			case "ctrl+c":
+				m.saveRunningTaskMemory()
 				m.quitting = true
 				m.cleanupDebounceTimer()
 				return m, tea.Quit
@@ -886,6 +890,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.taskCompleteDialog.open = false
 				return m, nil
 			case "ctrl+c":
+				m.saveRunningTaskMemory()
 				m.quitting = true
 				m.cleanupDebounceTimer()
 				return m, tea.Quit
@@ -897,6 +902,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.confirmQuitDialog.open {
 			switch msg.String() {
 			case "ctrl+c":
+				m.saveRunningTaskMemory()
 				m.quitting = true
 				m.cleanupDebounceTimer()
 				return m, tea.Quit
@@ -908,6 +914,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				if m.confirmQuitDialog.selectedOption == 0 {
+					m.saveRunningTaskMemory()
 					m.quitting = true
 					m.cleanupDebounceTimer()
 					return m, tea.Quit
@@ -916,6 +923,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.confirmQuitDialog.selectedOption = 0
 				return m, nil
 			case "y", "Y":
+				m.saveRunningTaskMemory()
 				m.quitting = true
 				m.cleanupDebounceTimer()
 				return m, tea.Quit
@@ -931,6 +939,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.confirmCancelDialog.open {
 			switch msg.String() {
 			case "ctrl+c":
+				m.saveRunningTaskMemory()
 				m.quitting = true
 				m.cleanupDebounceTimer()
 				return m, tea.Quit
@@ -1953,4 +1962,13 @@ func hasPrefixIgnoreCase(s, prefix string) bool {
 		}
 	}
 	return true
+}
+
+// saveRunningTaskMemory saves the current task's memory before quitting,
+// ensuring conversation history is not lost when TUI exits mid-execution.
+func (m *model) saveRunningTaskMemory() {
+	if m.currentTask != nil && m.dataManager != nil && m.taskRunning {
+		m.dataManager.SaveTaskMemory(m.currentTask.ID, m.currentTask.Memory)
+		m.dataManager.FlushTaskMemory(m.currentTask.ID)
+	}
 }

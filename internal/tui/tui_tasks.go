@@ -149,12 +149,29 @@ func executeTaskCmd(
 			WithMemory(task.Memory).
 			WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
+		// Start periodic save (every 5 seconds)
+		stopPeriodicSave := make(chan struct{})
+		ticker := time.NewTicker(5 * time.Second)
+		go func() {
+			for {
+				select {
+				case <-ticker.C:
+					if dm != nil {
+						dm.SaveTaskMemory(task.ID, task.Memory)
+					}
+				case <-stopPeriodicSave:
+					return
+				}
+			}
+		}()
+		defer close(stopPeriodicSave)
+		defer ticker.Stop()
+
 		result, err := ca.ProcessCodingTaskWithCallback(request)
 
 		if dm != nil {
-			if saveErr := dm.SaveTaskMemory(task.ID, task.Memory); saveErr != nil {
-				// non-fatal
-			}
+			dm.SaveTaskMemory(task.ID, task.Memory)
+			dm.FlushTaskMemory(task.ID)
 		}
 
 		if err != nil {
@@ -198,12 +215,29 @@ func executeFollowUpCmd(
 			WithMemory(task.Memory).
 			WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
+		// Start periodic save (every 5 seconds)
+		stopPeriodicSave := make(chan struct{})
+		ticker := time.NewTicker(5 * time.Second)
+		go func() {
+			for {
+				select {
+				case <-ticker.C:
+					if dm != nil {
+						dm.SaveTaskMemory(task.ID, task.Memory)
+					}
+				case <-stopPeriodicSave:
+					return
+				}
+			}
+		}()
+		defer close(stopPeriodicSave)
+		defer ticker.Stop()
+
 		result, err := ca.ProcessConversation(request)
 
 		if dm != nil {
-			if saveErr := dm.SaveTaskMemory(task.ID, task.Memory); saveErr != nil {
-				// non-fatal
-			}
+			dm.SaveTaskMemory(task.ID, task.Memory)
+			dm.FlushTaskMemory(task.ID)
 		}
 
 		return taskCompleteMsg{taskID: task.ID, result: result, err: err}
