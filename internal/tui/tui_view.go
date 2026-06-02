@@ -110,7 +110,7 @@ func (m model) View() tea.View {
 	if sepWidth < 40 {
 		sepWidth = 40
 	}
-	b.WriteString(logSeparatorStyle.Render(strings.Repeat("─", sepWidth)))
+	b.WriteString(inputSeparatorStyle.Render(strings.Repeat("─", sepWidth)))
 	b.WriteString("\n")
 
 	// ── Input area: command mode hidden, edit mode with textarea ──
@@ -120,7 +120,8 @@ func (m model) View() tea.View {
 		m.input.SetWidth(m.computeFieldWidth())
 		m.input.SetHeight(m.computeInputHeight())
 		inputLine := m.input.View()
-		footer.WriteString(lipgloss.NewStyle().MarginTop(1).Render(inputLine))
+		// Wrap textarea in a bordered panel to visually distinguish from message body
+		footer.WriteString(inputPanelStyle.Render(inputLine))
 		footer.WriteString("\n")
 
 		// Inline skill autocomplete suggestions (below textarea)

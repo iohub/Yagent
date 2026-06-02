@@ -73,7 +73,26 @@ var (
 	logResultStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	logStatusStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
 	logErrorLogStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
-	logSeparatorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+	logSeparatorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	// Input panel styles — visually separate the input area from the message body
+	inputPanelStyle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("39")).  // blue accent, matches prompt ❯ color
+		BorderBackground(lipgloss.Color("236")). // blends with textarea background
+		Padding(0, 1).
+		MarginTop(1)
+
+	inputPanelBlurredStyle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")). // muted border when not focused
+		BorderBackground(lipgloss.Color("236")).
+		Padding(0, 1).
+		MarginTop(1)
+
+	// Separator between message body and input panel — slightly brighter for clarity
+	inputSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
 	diffHunkStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	diffAddStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	diffDelStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
@@ -440,24 +459,24 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 
 	// Edit base style (lipgloss v2)
-	editBaseStyle := lipgloss.NewStyle().Background(lipgloss.Color("236"))
+	editBaseStyle := lipgloss.NewStyle().Background(lipgloss.Color("235"))
 
 	// Focused state styles
 	focusedStyle := textarea.StyleState{
 		Base:        editBaseStyle,
 		Text:        textStyle,
-		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Background(lipgloss.Color("236")),
+		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Background(lipgloss.Color("235")),
 		CursorLine:  lipgloss.NewStyle().Background(lipgloss.Color("237")),
-		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236")),
+		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("235")),
 	}
 
 	// Blurred state styles
 	blurredStyle := textarea.StyleState{
 		Base:        editBaseStyle,
 		Text:        textStyle,
-		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("236")),
+		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("235")),
 		CursorLine:  lipgloss.NewStyle().Background(lipgloss.Color("237")),
-		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("236")),
+		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("235")),
 	}
 
 	// Cursor style
