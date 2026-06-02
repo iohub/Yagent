@@ -9,6 +9,8 @@ import (
 	"os"
 	"time"
 
+	"codeactor/internal/config"
+
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
@@ -19,11 +21,12 @@ import (
 type OpenAIEngine struct {
 	client *openai.Client
 	model  string
+	cfg    config.LLMConfig
 }
 
 // NewOpenAIEngine creates a new OpenAIEngine.
 // baseURL is optional - if empty, uses OpenAI's default API endpoint.
-func NewOpenAIEngine(baseURL, apiKey, model string) *OpenAIEngine {
+func NewOpenAIEngine(baseURL, apiKey, model string, cfg config.LLMConfig) *OpenAIEngine {
 	opts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
 	}
@@ -31,7 +34,7 @@ func NewOpenAIEngine(baseURL, apiKey, model string) *OpenAIEngine {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 	client := openai.NewClient(opts...)
-	return &OpenAIEngine{client: &client, model: model}
+	return &OpenAIEngine{client: &client, model: model, cfg: cfg}
 }
 
 // Model returns the model name this engine is configured to use.
@@ -41,6 +44,13 @@ func (e *OpenAIEngine) Model() string {
 
 // GenerateContent implements Engine.
 func (e *OpenAIEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
+	// Apply timeout if configured
+	if e.cfg.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, e.cfg.Timeout)
+		defer cancel()
+	}
+
 	params := e.buildParams(messages, tools, opts)
 
 	if opts != nil && opts.StreamHandler != nil {
@@ -130,6 +140,14 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 	}
 
 	if err := stream.Err(); err != nil {
+		if isRetriableError(err) {
+			// 回退到非流式调用
+			completion, retryErr := e.retryChatCompletion(ctx, params)
+			if retryErr != nil {
+				return nil, fmt.Errorf("openai streaming failed and non-streaming fallback also failed: %w", retryErr)
+			}
+			return e.toResponse(completion), nil
+		}
 		return nil, fmt.Errorf("openai streaming: %w", err)
 	}
 
@@ -359,9 +377,9 @@ func isRetriableError(err error) bool {
 		return true
 	}
 
-	// net.Error with Timeout() method
+	// net.Error with Timeout() or Temporary() method (e.g., connection reset, DNS failure)
 	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
 		return true
 	}
 
@@ -372,7 +390,11 @@ func isRetriableError(err error) bool {
 // It retries on 429 (rate limit), 5xx server errors, and timeout errors.
 // The backoff sequence is: 10s, 20s, 40s, 80s, 160s (max 5 retries).
 func (e *OpenAIEngine) retryChatCompletion(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
-	const maxRetries = 5
+	// Use configured max retries, default to 5
+	maxRetries := e.cfg.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = 5
+	}
 	baseDelay := 10 * time.Second
 
 	var lastErr error

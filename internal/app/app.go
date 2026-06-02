@@ -168,7 +168,11 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
 
 	chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps)
-	metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine)
+	stepRetries := 0
+	if ca.config != nil {
+		stepRetries = ca.config.LLM.StepRetries
+	}
+	metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine, stepRetries)
 	devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)
 	// 合并浏览器配置：从 config 读取，未设置的使用默认值
 	browserCfg := browser.DefaultBrowserConfig()
@@ -229,7 +233,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		if c.SummarizationProvider != "" {
 			provider, err := ca.config.GetProvider(c.SummarizationProvider)
 			if err == nil {
-				summaryEngine = llm.NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model)
+				summaryEngine = llm.NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, ca.config.LLM)
 				summaryEngine = llm.NewLoggingEngine(summaryEngine)
 			}
 		}

@@ -543,7 +543,7 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	)
 
 	// MetaAgent that returns the pre-defined output (single LLM call, no tool calls)
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput))
+	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
 
 	// ConductorAgent
 	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil, nil)
@@ -621,7 +621,7 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 		[]string{"read_file"},
 	)
 
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput))
+	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
 	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil, nil)
 
 	// Call delegate_meta twice with the same agent design
@@ -661,7 +661,7 @@ func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
 
 	// Meta-Agent returns malformed output (no execution_result block)
 	malformedOutput := "Just some plain text without structured blocks."
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(malformedOutput))
+	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(malformedOutput), 0)
 	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil, nil)
 
 	var delegateMeta *tools.Adapter
@@ -704,7 +704,7 @@ func TestDelegateMeta_EmptyAgentName_NoRegistration(t *testing.T) {
 		"Some system prompt",
 		[]string{"read_file"},
 	)
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput))
+	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
 	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil, nil)
 
 	var delegateMeta *tools.Adapter
@@ -734,7 +734,7 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 	// Meta-Agent output with missing agent_design field (all retries return same malformed output)
 	output := `{"thinking": "designing...", "agent_name": "Test Agent", "tools_used": ["read_file"], "result": {"key": "value"}}`
 
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(output))
+	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(output), 0)
 	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil, nil)
 
 	var delegateMeta *tools.Adapter

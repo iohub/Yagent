@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
@@ -18,16 +19,18 @@ var metaPrompt string
 // JSON. The Conductor then registers and executes the designed agent.
 type MetaAgent struct {
 	BaseAgent
-	GlobalCtx *globalctx.GlobalCtx
+	GlobalCtx  *globalctx.GlobalCtx
+	StepRetries int // 步骤重试次数，0=不重试
 }
 
-func NewMetaAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine) *MetaAgent {
+func NewMetaAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, stepRetries int) *MetaAgent {
 	return &MetaAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
 			Publisher: globalCtx.Publisher,
 		},
-		GlobalCtx: globalCtx,
+		GlobalCtx:   globalCtx,
+		StepRetries: stepRetries,
 	}
 }
 
@@ -52,10 +55,36 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	}
 
 	slog.Debug("MetaAgent calling LLM (design-only, no tools)", "input", input)
-	resp, err := a.LLM.GenerateContent(ctx, messages, nil, nil)
+
+	maxRetries := a.StepRetries
+	var resp *llm.Response
+	var err error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// 指数退避：1s, 2s, 4s, ..., 上限30s
+			wait := time.Duration(1<<(attempt-1)) * time.Second
+			if wait > 30*time.Second {
+				wait = 30 * time.Second
+			}
+			slog.Warn("MetaAgent retrying LLM call", "attempt", attempt, "maxRetries", maxRetries, "wait", wait)
+			select {
+			case <-ctx.Done():
+				return AgentResult{}, fmt.Errorf("MetaAgent LLM call aborted: %w", ctx.Err())
+			case <-time.After(wait):
+			}
+		}
+
+		resp, err = a.LLM.GenerateContent(ctx, messages, nil, nil)
+		if err == nil {
+			break
+		}
+		slog.Warn("MetaAgent LLM error, will retry", "error", err, "attempt", attempt)
+	}
+
 	if err != nil {
-		slog.Error("MetaAgent LLM error", "error", err)
-		return AgentResult{}, fmt.Errorf("MetaAgent LLM call failed: %w", err)
+		slog.Error("MetaAgent LLM error after all retries", "error", err, "maxRetries", maxRetries)
+		return AgentResult{}, fmt.Errorf("MetaAgent LLM call failed after %d retries: %w", maxRetries, err)
 	}
 
 	if len(resp.Choices) == 0 {

@@ -23,6 +23,8 @@ type ExecutorConfig struct {
 	Publisher    *messaging.MessagePublisher
 	AgentName    string
 	StopOnFinish bool // if true, return immediately when agent_exit tool is called
+	// StepRetries 步骤重试次数，0=不重试（默认）
+	StepRetries int
 	// SystemAsHuman places the system prompt in a Human role message instead of System.
 	// Used by RepoAgent which prefers this pattern.
 	SystemAsHuman bool
@@ -74,38 +76,63 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 	for i := 0; i < cfg.MaxSteps; i++ {
 		slog.Debug("AgentExecutor calling LLM", "agent", cfg.AgentName, "step", i)
-		
-		// Publish llm_call_start event before LLM invocation
-		if cfg.Publisher != nil {
-			cfg.Publisher.Publish("llm_call_start", map[string]interface{}{
-				"model": cfg.LLM.Model(),
-				"agent": cfg.AgentName,
-			}, cfg.AgentName)
-		}
-		
-		// Record start time
-		llmStartTime := time.Now()
-		
-		resp, err := cfg.LLM.GenerateContent(ctx, messages, toolDefs, opts)
-		
-		// Calculate duration
-		llmDuration := time.Since(llmStartTime).Seconds()
-		
-		// Publish llm_call_end event after LLM invocation (regardless of error)
-		if cfg.Publisher != nil {
-			metadata := map[string]interface{}{
-				"model":            cfg.LLM.Model(),
-				"agent":            cfg.AgentName,
-				"duration_seconds": llmDuration,
+
+		maxRetries := cfg.StepRetries
+		var resp *llm.Response
+		var err error
+
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			if attempt > 0 {
+				// 指数退避，上限30s
+				wait := time.Duration(1<<(attempt-1)) * time.Second
+				if wait > 30*time.Second {
+					wait = 30 * time.Second
+				}
+				slog.Warn("AgentExecutor retrying LLM call", "agent", cfg.AgentName, "step", i, "attempt", attempt, "wait", wait)
+				select {
+				case <-ctx.Done():
+					return ExecutorResult{}, ctx.Err()
+				case <-time.After(wait):
+				}
 			}
-			if err != nil {
-				metadata["error"] = err.Error()
+
+			// Publish llm_call_start event before LLM invocation
+			if cfg.Publisher != nil {
+				cfg.Publisher.Publish("llm_call_start", map[string]interface{}{
+					"model": cfg.LLM.Model(),
+					"agent": cfg.AgentName,
+				}, cfg.AgentName)
 			}
-			cfg.Publisher.PublishWithMetadata("llm_call_end", "", cfg.AgentName, metadata)
+
+			// Record start time
+			llmStartTime := time.Now()
+
+			resp, err = cfg.LLM.GenerateContent(ctx, messages, toolDefs, opts)
+
+			// Calculate duration
+			llmDuration := time.Since(llmStartTime).Seconds()
+
+			// Publish llm_call_end event after LLM invocation (regardless of error)
+			if cfg.Publisher != nil {
+				metadata := map[string]interface{}{
+					"model":            cfg.LLM.Model(),
+					"agent":            cfg.AgentName,
+					"duration_seconds": llmDuration,
+				}
+				if err != nil {
+					metadata["error"] = err.Error()
+				}
+				cfg.Publisher.PublishWithMetadata("llm_call_end", "", cfg.AgentName, metadata)
+			}
+
+			if err == nil {
+				break
+			}
+			slog.Warn("AgentExecutor LLM error, will retry", "agent", cfg.AgentName, "error", err, "step", i, "attempt", attempt)
 		}
-		
+
 		if err != nil {
-			slog.Error("AgentExecutor LLM error", "agent", cfg.AgentName, "error", err, "step", i)
+			slog.Error("AgentExecutor LLM error after all retries", "agent", cfg.AgentName, "error", err, "step", i)
 			return ExecutorResult{}, err
 		}
 

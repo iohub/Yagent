@@ -183,7 +183,7 @@ func main() {
 		codeActor.SkillRegistry = skillRegistry
 		slog.Info("Skill registry loaded", "count", skillRegistry.Count())
 
-		taskManager := http.NewTaskManager(nil)
+		taskManager := http.NewTaskManager(nil, config.TaskTimeout)
 
 		dataManager, err := datamanager.NewDataManager()
 		if err != nil {

@@ -14,15 +14,17 @@ import (
 )
 
 type TaskManager struct {
-	tasks  map[string]*Task
-	lock   sync.RWMutex
-	melody *melody.Melody
+	tasks       map[string]*Task
+	lock        sync.RWMutex
+	melody      *melody.Melody
+	taskTimeout time.Duration
 }
 
-func NewTaskManager(m *melody.Melody) *TaskManager {
+func NewTaskManager(m *melody.Melody, taskTimeout time.Duration) *TaskManager {
 	return &TaskManager{
-		tasks:  make(map[string]*Task),
-		melody: m,
+		tasks:       make(map[string]*Task),
+		melody:      m,
+		taskTimeout: taskTimeout,
 	}
 }
 
@@ -30,8 +32,14 @@ func (tm *TaskManager) CreateTask(socket *melody.Session, projectDir string) *Ta
 	tm.lock.Lock()
 	defer tm.lock.Unlock()
 
-	// 创建可取消的上下文
-	ctx, cancel := context.WithCancel(context.Background())
+	// 创建可取消的上下文，如果配置了超时则使用 WithTimeout
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if tm.taskTimeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), tm.taskTimeout)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
 
 	taskID := uuid.New().String()
 	task := &Task{

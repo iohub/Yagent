@@ -30,8 +30,14 @@ func NewServer(codeActor *app.CodeActor) *Server {
 	m := melody.New()
 	m.Config.MessageBufferSize = 256
 
+	// 从配置中获取全局任务超时
+	taskTimeout := time.Duration(0)
+	if codeActor.GetClient() != nil && codeActor.GetClient().Config != nil {
+		taskTimeout = codeActor.GetClient().Config.TaskTimeout
+	}
+
 	// 创建全局任务管理器
-	taskManager := NewTaskManager(m)
+	taskManager := NewTaskManager(m, taskTimeout)
 
 	// 初始化数据管理器
 	dataManager, err := datamanager.NewDataManager()
@@ -163,7 +169,20 @@ func (s *Server) handleLoadTask(c *gin.Context) {
 	// 如果前端在Load时无法提供ProjectDir（因为可能不在历史记录中），我们可能需要让用户选择。
 	// 暂时只使用请求中的ProjectDir。
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// 从配置中获取任务超时
+	taskTimeout := time.Duration(0)
+	if s.codeActor.GetClient() != nil && s.codeActor.GetClient().Config != nil {
+		taskTimeout = s.codeActor.GetClient().Config.TaskTimeout
+	}
+
+	// 创建可取消的上下文，如果配置了超时则使用 WithTimeout
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if taskTimeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), taskTimeout)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
 	task := &Task{
 		ID:         req.TaskID,
 		Status:     TaskStatusRunning,
@@ -197,8 +216,20 @@ func (s *Server) handleStartTask(c *gin.Context) {
 	}
 	slog.Info("HTTP coding task submitted", "project_dir", req.ProjectDir, "task_desc", req.TaskDesc)
 
-	// 创建可取消的上下文
-	ctx, cancel := context.WithCancel(context.Background())
+	// 从配置中获取任务超时
+	taskTimeout := time.Duration(0)
+	if s.codeActor.GetClient() != nil && s.codeActor.GetClient().Config != nil {
+		taskTimeout = s.codeActor.GetClient().Config.TaskTimeout
+	}
+
+	// 创建可取消的上下文，如果配置了超时则使用 WithTimeout
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if taskTimeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), taskTimeout)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
 
 	var task *Task
 

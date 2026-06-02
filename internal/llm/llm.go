@@ -187,7 +187,7 @@ func NewClient(config *config.Config) (*Client, error) {
 		"model", defaultProvider.Model,
 		"api_base_url", defaultProvider.APIBaseURL)
 
-	engine := NewOpenAIEngine(defaultProvider.APIBaseURL, defaultProvider.APIKey, defaultProvider.Model)
+	engine := NewOpenAIEngine(defaultProvider.APIBaseURL, defaultProvider.APIKey, defaultProvider.Model, config.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
 
 	return &Client{
@@ -231,7 +231,7 @@ func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName
 	}
 
 	slog.Info("Creating engine for provider", "provider", providerName, "model", provider.Model)
-	engine := NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model)
+	engine := NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, c.Config.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
 	c.engines[providerName] = loggingEngine
 	return loggingEngine
@@ -508,7 +508,7 @@ func (c *Client) SwitchProvider(providerName string) error {
 		"model", provider.Model,
 		"api_base_url", provider.APIBaseURL)
 
-	engine := NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model)
+	engine := NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, c.Config.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
 
 	// Clear all cached engines so they'll be recreated on next GetAgentEngine/GetToolEngine call

@@ -83,6 +83,13 @@ type ConductorAgent struct {
 
 	currentMemory            *memory.ConversationMemory // 当前正在使用的 memory（Run 期间设置）
 	pendingSubAgentMemory    *AgentResult               // 最近一次 delegate 调用的完整结果（用于 memory 注入）
+
+	// LLM 兜底机制字段
+	stepRetries                int           // 步骤重试次数（从 config.LLM.StepRetries 读取）
+	circuitBreakerThreshold    int           // 熔断阈值（连续失败次数），0=不启用
+	circuitBreakerResetTimeout time.Duration // 熔断恢复时间
+	consecutiveLLMFailures     int           // 连续 LLM 调用失败计数
+	lastLLMFailureTime         time.Time     // 最近一次 LLM 失败时间
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -431,6 +438,12 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		commitManager:      commitManager, // 设置 commit 学习器管理器
 		hasDelegated:       false,         // 初始未委派过
 		delegationAttempts: 0,             // 委派尝试次数初始为0
+
+		// LLM 兜底机制配置
+		stepRetries:              cfg.LLM.StepRetries,
+		circuitBreakerThreshold:  cfg.LLM.CircuitBreakerThreshold,
+		circuitBreakerResetTimeout: cfg.LLM.CircuitBreakerResetTimeout,
+		// consecutiveLLMFailures 和 lastLLMFailureTime 保持零值即可
 	}
 	return self
 }
@@ -992,40 +1005,82 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		}
 		// ═══════════════════════════════════════════════════════════
 
-		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
-
-		// Publish llm_call_start event before LLM invocation
-		if a.Publisher != nil {
-			a.Publisher.Publish("llm_call_start", map[string]interface{}{
-				"model": a.LLM.Model(),
-				"agent": a.Name(),
-			}, a.Name())
+		// --- 熔断检查 ---
+		if a.circuitBreakerThreshold > 0 && a.consecutiveLLMFailures >= a.circuitBreakerThreshold {
+			if time.Since(a.lastLLMFailureTime) < a.circuitBreakerResetTimeout {
+				slog.Error("Circuit breaker open, too many consecutive LLM failures",
+					"failures", a.consecutiveLLMFailures,
+					"threshold", a.circuitBreakerThreshold,
+					"step", i)
+				return "", fmt.Errorf("circuit breaker open: %d consecutive LLM failures", a.consecutiveLLMFailures)
+			}
+			// 熔断恢复：超时后重置
+			slog.Info("Circuit breaker reset timeout reached, resetting failure count",
+				"step", i)
+			a.consecutiveLLMFailures = 0
 		}
 
-		// Record start time
-		llmStartTime := time.Now()
-
-		resp, err := a.LLM.GenerateContent(ctx, messages, toolDefs, nil)
-
-		// Calculate duration
-		llmDuration := time.Since(llmStartTime).Seconds()
-
-		// Publish llm_call_end event after LLM invocation (regardless of error)
-		if a.Publisher != nil {
-			metadata := map[string]interface{}{
-				"model":            a.LLM.Model(),
-				"agent":            a.Name(),
-				"duration_seconds": llmDuration,
+		// --- 步骤级重试 ---
+		maxRetries := a.stepRetries
+		var resp *llm.Response
+		var llmErr error
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			if attempt > 0 {
+				// 指数退避：1s, 2s, 4s, 8s, ... 最大30s
+				wait := time.Duration(1<<(attempt-1)) * time.Second
+				if wait > 30*time.Second {
+					wait = 30 * time.Second
+				}
+				slog.Warn("ConductorAgent retrying LLM call", "step", i, "attempt", attempt, "wait", wait)
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(wait):
+				}
 			}
-			if err != nil {
-				metadata["error"] = err.Error()
+
+			slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
+
+			// Publish llm_call_start event
+			if a.Publisher != nil {
+				a.Publisher.Publish("llm_call_start", map[string]interface{}{
+					"model": a.LLM.Model(),
+					"agent": a.Name(),
+				}, a.Name())
 			}
-			a.Publisher.PublishWithMetadata("llm_call_end", "", a.Name(), metadata)
+
+			llmStartTime := time.Now()
+			resp, llmErr = a.LLM.GenerateContent(ctx, messages, toolDefs, nil)
+			llmDuration := time.Since(llmStartTime).Seconds()
+
+			// Publish llm_call_end event
+			if a.Publisher != nil {
+				metadata := map[string]interface{}{
+					"model":            a.LLM.Model(),
+					"agent":            a.Name(),
+					"duration_seconds": llmDuration,
+				}
+				if llmErr != nil {
+					metadata["error"] = llmErr.Error()
+				}
+				a.Publisher.PublishWithMetadata("llm_call_end", "", a.Name(), metadata)
+			}
+
+			if llmErr == nil {
+				a.consecutiveLLMFailures = 0
+				break
+			}
+			a.consecutiveLLMFailures++
+			a.lastLLMFailureTime = time.Now()
+			slog.Warn("ConductorAgent LLM error, will retry",
+				"error", llmErr, "step", i, "attempt", attempt,
+				"consecutive_failures", a.consecutiveLLMFailures)
 		}
 
-		if err != nil {
-			slog.Error("ConductorAgent LLM error", "error", err, "step", i)
-			return "", err
+		if llmErr != nil {
+			slog.Error("ConductorAgent LLM error after all retries",
+				"error", llmErr, "step", i)
+			return "", llmErr
 		}
 
 		choice := resp.Choices[0]

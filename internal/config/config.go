@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"codeactor/internal/util"
 
@@ -96,6 +97,24 @@ type ToolsConfig struct {
 	LLM ToolsLLMConfig `toml:"llm"`
 }
 
+// LLMConfig contains LLM resilience and fallback configuration
+type LLMConfig struct {
+	// Timeout 单次 LLM 调用超时，0=不启用
+	Timeout time.Duration `toml:"timeout" json:"timeout" yaml:"timeout"`
+
+	// MaxRetries 底层引擎重试次数（默认5，保持原行为）
+	MaxRetries int `toml:"max_retries" json:"max_retries" yaml:"max_retries"`
+
+	// StepRetries 步骤重试次数（executor/conductor/meta），0=不重试
+	StepRetries int `toml:"step_retries" json:"step_retries" yaml:"step_retries"`
+
+	// CircuitBreakerThreshold 熔断阈值（连续失败次数），0=不启用
+	CircuitBreakerThreshold int `toml:"circuit_breaker_threshold" json:"circuit_breaker_threshold" yaml:"circuit_breaker_threshold"`
+
+	// CircuitBreakerResetTimeout 熔断恢复时间（仅当阈值>0时有效）
+	CircuitBreakerResetTimeout time.Duration `toml:"circuit_breaker_reset_timeout" json:"circuit_breaker_reset_timeout" yaml:"circuit_breaker_reset_timeout"`
+}
+
 // Config is the root configuration structure
 type Config struct {
 	Global        TopLevelConfig       `toml:"global"` // [global.llm]
@@ -103,10 +122,12 @@ type Config struct {
 	Tools         ToolsConfig          `toml:"tools"`  // [tools.llm] + per-tool overrides
 	App           AppConfig            `toml:"app"`
 	Agent         AgentConfig          `toml:"agent"`
+	LLM           LLMConfig            `toml:"llm" json:"llm" yaml:"llm"`    // [llm] - LLM 推理兜底配置
 	Compact       ContextCompactConfig `toml:"context"`        // [context] - 上下文压缩配置
 	Browser       BrowserConfig        `toml:"browser"`        // [browser] - 浏览器配置
 	CommitLearner CommitLearnerConfig  `toml:"commit_learner"` // [commit_learner] - commit 学习器配置
 	Keywords      KeywordsConfig       `toml:"keywords"`       // [keywords] - 关键词词典配置
+	TaskTimeout   time.Duration        `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"` // 全局任务超时，0=不启用
 }
 
 // GetProvider returns a provider config by name from the shared provider pool.
@@ -335,6 +356,16 @@ func (c *Config) validate() error {
 
 	if activeProvider.APIBaseURL == "" {
 		return fmt.Errorf("api_base_url must be specified for provider '%s'", effectiveProvider)
+	}
+
+	// ═══════ LLM 推理兜底默认值设置 ═══════
+	// 如果 MaxRetries == 0，设置为 5（保持原硬编码行为）
+	if c.LLM.MaxRetries == 0 {
+		c.LLM.MaxRetries = 5
+	}
+	// 如果 CircuitBreakerResetTimeout == 0 且 CircuitBreakerThreshold > 0，设置为 60s
+	if c.LLM.CircuitBreakerResetTimeout == 0 && c.LLM.CircuitBreakerThreshold > 0 {
+		c.LLM.CircuitBreakerResetTimeout = 60 * time.Second
 	}
 
 	// ═══════ CommitLearner 默认值设置 ═══════
