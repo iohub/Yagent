@@ -1,4 +1,4 @@
-# 🎻 CodeActor — A Self-Evolving Multi-Agent AI Coding Engine
+# 🎻 CodeActor — A Self-Evolving AI Coding Engine
 
 > **Not a copilot. A crew of autonomous agents that understand, navigate, and evolve your codebase — together.**
 
