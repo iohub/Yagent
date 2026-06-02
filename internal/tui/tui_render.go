@@ -773,7 +773,8 @@ func renderUserMessageBox(content string, maxWidth int) string {
 	// ┌─ You ───────────────┐
 	label := " You "
 	labelWidth := lipgloss.Width(label)
-	dashCount := textWidth - labelWidth
+	// ┌─ (2) + label + dashes + ┐ (1) = boxWidth
+	dashCount := boxWidth - labelWidth - 3
 	if dashCount < 0 {
 		dashCount = 0
 	}
@@ -798,7 +799,8 @@ func renderUserMessageBox(content string, maxWidth int) string {
 
 	// Bottom border
 	// └────────────────────────┘
-	bottomLine := userMsgBoxBorderStyle.Render("└" + strings.Repeat("─", textWidth) + "┘")
+	// └ (1) + dashes + ┘ (1) = boxWidth
+	bottomLine := userMsgBoxBorderStyle.Render("└" + strings.Repeat("─", boxWidth-2) + "┘")
 
 	// Assemble
 	return topLine + "\n" + strings.Join(interior, "\n") + "\n" + bottomLine
