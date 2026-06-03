@@ -105,13 +105,14 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	if ca.dispatcher != nil {
 		ca.dispatcher.RegisterConsumer(userConfirmMgr)
 	}
-	// Get max steps from config, default to 10 if not set
-	repoMaxSteps := 20
-	codingMaxSteps := 30
-	chatMaxSteps := 10
-	devopsMaxSteps := 15
-	browserMaxSteps := 15
-	conductorMaxSteps := 20
+	// Get max steps from config, default to DefaultMaxSteps if not set
+	defaultSteps := config.DefaultMaxSteps
+	repoMaxSteps := defaultSteps.Repo
+	codingMaxSteps := defaultSteps.Coding
+	chatMaxSteps := defaultSteps.Chat
+	devopsMaxSteps := defaultSteps.DevOps
+	browserMaxSteps := defaultSteps.Browser
+	conductorMaxSteps := defaultSteps.Conductor
 
 	if ca.config != nil {
 		if ca.config.Agent.RepoMaxSteps > 0 {
@@ -133,7 +134,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			conductorMaxSteps = ca.config.Agent.ConductorMaxSteps
 		}
 	}
-	metaRetryCount := 5 // default
+	metaRetryCount := defaultSteps.MetaRetry // default
 	if ca.config != nil && ca.config.Agent.MetaRetryCount > 0 {
 		metaRetryCount = ca.config.Agent.MetaRetryCount
 	}

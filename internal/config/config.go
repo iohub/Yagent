@@ -362,10 +362,38 @@ func (c *Config) validate() error {
 		return fmt.Errorf("api_base_url must be specified for provider '%s'", effectiveProvider)
 	}
 
+	// ═══════ Agent MaxSteps 默认值设置 ═══════
+	// 为各 agent 的最大步数设置默认值（如果未在 TOML 中配置）
+	defaultSteps := DefaultMaxSteps
+	if c.Agent.ConductorMaxSteps == 0 {
+		c.Agent.ConductorMaxSteps = defaultSteps.Conductor
+	}
+	if c.Agent.CodingMaxSteps == 0 {
+		c.Agent.CodingMaxSteps = defaultSteps.Coding
+	}
+	if c.Agent.RepoMaxSteps == 0 {
+		c.Agent.RepoMaxSteps = defaultSteps.Repo
+	}
+	if c.Agent.ChatMaxSteps == 0 {
+		c.Agent.ChatMaxSteps = defaultSteps.Chat
+	}
+	if c.Agent.DevOpsMaxSteps == 0 {
+		c.Agent.DevOpsMaxSteps = defaultSteps.DevOps
+	}
+	if c.Agent.BrowserMaxSteps == 0 {
+		c.Agent.BrowserMaxSteps = defaultSteps.Browser
+	}
+	if c.Agent.MetaMaxSteps == 0 {
+		c.Agent.MetaMaxSteps = defaultSteps.Meta
+	}
+	if c.Agent.MetaRetryCount == 0 {
+		c.Agent.MetaRetryCount = defaultSteps.MetaRetry
+	}
+
 	// ═══════ LLM 推理兜底默认值设置 ═══════
-	// 如果 MaxRetries == 0，设置为 5（保持原硬编码行为）
+	llmDefaults := DefaultLLMConfig()
 	if c.LLM.MaxRetries == 0 {
-		c.LLM.MaxRetries = 5
+		c.LLM.MaxRetries = llmDefaults.MaxRetries
 	}
 	// 如果 CircuitBreakerResetTimeout == 0 且 CircuitBreakerThreshold > 0，设置为 60s
 	if c.LLM.CircuitBreakerResetTimeout == 0 && c.LLM.CircuitBreakerThreshold > 0 {
@@ -373,21 +401,21 @@ func (c *Config) validate() error {
 	}
 
 	// ═══════ CommitLearner 默认值设置 ═══════
-	// 为 CommitLearner 配置设置默认值（如果未显式配置）
+	commitDefaults := DefaultCommitLearnerConfig()
 	if c.CommitLearner.MaxCommits == 0 {
-		c.CommitLearner.MaxCommits = 30
+		c.CommitLearner.MaxCommits = commitDefaults.MaxCommits
 	}
 	if c.CommitLearner.SimilarityThreshold == 0 {
-		c.CommitLearner.SimilarityThreshold = 0.75
+		c.CommitLearner.SimilarityThreshold = commitDefaults.SimilarityThreshold
 	}
 	if c.CommitLearner.TopK == 0 {
-		c.CommitLearner.TopK = 3
+		c.CommitLearner.TopK = commitDefaults.TopK
 	}
 	if c.CommitLearner.Trigger == "" {
-		c.CommitLearner.Trigger = "both"
+		c.CommitLearner.Trigger = commitDefaults.Trigger
 	}
 	if c.CommitLearner.CacheTTL == 0 {
-		c.CommitLearner.CacheTTL = 3600
+		c.CommitLearner.CacheTTL = commitDefaults.CacheTTL
 	}
 	// Enabled 默认为 true（零值为 true 时无需设置）
 	// LLMSystemPrompt 为空时在 agents 包中使用默认值
