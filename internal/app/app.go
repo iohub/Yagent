@@ -233,7 +233,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		if c.SummarizationProvider != "" {
 			provider, err := ca.config.GetProvider(c.SummarizationProvider)
 			if err == nil {
-				summaryEngine = llm.NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, ca.config.LLM)
+				summaryEngine = llm.NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, ca.config.LLM, provider.ReasoningEffort)
 				summaryEngine = llm.NewLoggingEngine(summaryEngine)
 			}
 		}

@@ -19,14 +19,15 @@ import (
 
 // OpenAIEngine implements Engine using the official OpenAI Go SDK.
 type OpenAIEngine struct {
-	client *openai.Client
-	model  string
-	cfg    config.LLMConfig
+	client          *openai.Client
+	model           string
+	cfg             config.LLMConfig
+	reasoningEffort string // provider-level default reasoning effort
 }
 
 // NewOpenAIEngine creates a new OpenAIEngine.
 // baseURL is optional - if empty, uses OpenAI's default API endpoint.
-func NewOpenAIEngine(baseURL, apiKey, model string, cfg config.LLMConfig) *OpenAIEngine {
+func NewOpenAIEngine(baseURL, apiKey, model string, cfg config.LLMConfig, reasoningEffort string) *OpenAIEngine {
 	opts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
 	}
@@ -34,7 +35,7 @@ func NewOpenAIEngine(baseURL, apiKey, model string, cfg config.LLMConfig) *OpenA
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 	client := openai.NewClient(opts...)
-	return &OpenAIEngine{client: &client, model: model, cfg: cfg}
+	return &OpenAIEngine{client: &client, model: model, cfg: cfg, reasoningEffort: reasoningEffort}
 }
 
 // Model returns the model name this engine is configured to use.
@@ -75,6 +76,8 @@ func (e *OpenAIEngine) buildParams(messages []Message, tools []ToolDef, opts *Ca
 		params.Tools = e.convertTools(tools)
 	}
 
+	// Resolve reasoning effort: per-call override takes precedence over provider default
+	effort := e.reasoningEffort
 	if opts != nil {
 		if opts.MaxTokens > 0 {
 			params.MaxCompletionTokens = openai.Int(int64(opts.MaxTokens))
@@ -82,6 +85,16 @@ func (e *OpenAIEngine) buildParams(messages []Message, tools []ToolDef, opts *Ca
 		if opts.Temperature > 0 {
 			params.Temperature = openai.Float(opts.Temperature)
 		}
+		if opts.ReasoningEffort != "" {
+			effort = opts.ReasoningEffort
+		}
+	}
+
+	if effort != "" {
+		params.ReasoningEffort = shared.ReasoningEffort(effort)
+		params.SetExtraFields(map[string]any{
+			"thinking": map[string]string{"type": "enabled"},
+		})
 	}
 
 	return params

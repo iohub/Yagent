@@ -139,6 +139,24 @@ max_tokens = 3000
 api_base_url = "https://api.deepseek.com/v1"
 api_key = "your-key"
 
+# DeepSeek V4 Pro (用于 thinking/deepthinking 工具，启用 max 思考模式)
+[global.llm.providers.deepseek_v4_pro]
+model = "deepseek-v4-pro"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.deepseek.com/v1"
+api_key = "your-key"
+reasoning_effort = "max"
+
+# DeepSeek V4 Flash (用于 conductor，启用 high 思考模式)
+[global.llm.providers.ds4_flash]
+model = "ds4-flash"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.deepseek.com/v1"
+api_key = "your-key"
+reasoning_effort = "high"
+
 # ZAI Model
 [global.llm.providers.zai]
 model = "zai-org/GLM-4.5-Air"

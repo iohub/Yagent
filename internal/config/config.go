@@ -23,6 +23,10 @@ type ProviderConfig struct {
 	AWSRegion     string `toml:"aws_region,omitempty"`
 	AWSProfile    string `toml:"aws_profile,omitempty"`
 	ModelProvider string `toml:"model_provider,omitempty"` // Explicit provider for Bedrock (e.g., "anthropic", "amazon", "meta")
+
+	// ReasoningEffort controls DeepSeek thinking mode intensity ("high" or "max").
+	// Empty string means thinking mode is disabled (default, backward-compatible).
+	ReasoningEffort string `toml:"reasoning_effort,omitempty"`
 }
 
 // AppConfig contains application-level configuration

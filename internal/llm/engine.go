@@ -79,9 +79,12 @@ type Choice struct {
 
 // CallOptions holds optional parameters for LLM calls.
 type CallOptions struct {
-	MaxTokens     int
-	Temperature   float64
-	StreamHandler StreamHandler
+	MaxTokens       int
+	Temperature     float64
+	StreamHandler   StreamHandler
+	// ReasoningEffort overrides the provider-level reasoning effort for this call.
+	// Non-empty value ("high" or "max") enables DeepSeek thinking mode.
+	ReasoningEffort string
 }
 
 // StreamHandler is called for each chunk during streaming.
