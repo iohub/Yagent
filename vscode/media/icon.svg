@@ -1,0 +1,45 @@
+<svg width="200" height="150" viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Gradient for C: Blue top to Green bottom -->
+    <linearGradient id="cGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:1" /> <!-- Blue-600 -->
+      <stop offset="45%" style="stop-color:#3b82f6;stop-opacity:1" /> <!-- Blue-500 -->
+      <stop offset="75%" style="stop-color:#22c55e;stop-opacity:1" /> <!-- Green-500 -->
+      <stop offset="100%" style="stop-color:#4ade80;stop-opacity:1" /> <!-- Green-400 -->
+    </linearGradient>
+    
+    <!-- Gradient for A: Solid Blueish -->
+    <linearGradient id="aGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2563eb;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- C Shape -->
+  <!-- Center approx (70, 75), Radius 35 -->
+  <!-- Path starts top-right, goes CCW to bottom-right -->
+  <path d="M 95 55 A 35 35 0 1 0 95 95" 
+        fill="none" 
+        stroke="url(#cGradient)" 
+        stroke-width="22" 
+        stroke-linecap="round" />
+
+  <!-- A Shape -->
+  <!-- Apex at (130, 40) -->
+  <!-- Left leg connects near C -->
+  <path d="M 105 110 L 135 40 L 165 110" 
+        fill="none" 
+        stroke="url(#aGradient)" 
+        stroke-width="22" 
+        stroke-linejoin="round" 
+        stroke-linecap="round" />
+        
+  <!-- A Crossbar -->
+  <!-- Adjusted position to match visual weight -->
+  <path d="M 118 88 L 152 88" 
+        fill="none" 
+        stroke="url(#aGradient)" 
+        stroke-width="14" 
+        stroke-linecap="butt" />
+
+</svg>
