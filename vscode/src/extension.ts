@@ -214,7 +214,12 @@ class CodeActorViewProvider implements vscode.WebviewViewProvider {
   private updateHtmlForWebview(html: string): string {
     const webuiPath = this.getWebviewRoot().fsPath;
     const webview = this.webview!;
-    const serverUrl = process.env.SERVER_URL || 'ws://localhost:3000';
+
+    // Read server URL from VSCode config, then env var, then default
+    const configServerUrl = vscode.workspace.getConfiguration('codeactor').get<string>('serverUrl', '');
+    const rawUrl = configServerUrl || process.env.SERVER_URL || 'ws://localhost:3000/ws';
+    // Ensure the URL ends with /ws
+    const serverUrl = rawUrl.endsWith('/ws') ? rawUrl : `${rawUrl.replace(/\/+$/, '')}/ws`;
 
     // Update script and link src to use webview protocol
     html = html.replace(/src="(\/static\/[^"]+)"/g, (_, src) => {
@@ -236,11 +241,8 @@ class CodeActorViewProvider implements vscode.WebviewViewProvider {
         (function() {
           // Set server URL for WebSocket connection
           window.SERVER_URL = '${serverUrl}';
-          // Provide VSCode API for other features
+          // Provide VSCode API for other features (config, theme, codelens)
           window.vscode = acquireVsCodeApi();
-          window.addEventListener('message', function(event) {
-            window.vscode.postMessage(event.data);
-          });
         })();
       </script>
     `;
@@ -259,20 +261,50 @@ class CodeActorViewProvider implements vscode.WebviewViewProvider {
         vscode.window.showErrorMessage(message.message);
         break;
       case 'configRequest':
-        // Respond with default config for server mode
+        // Respond with actual config from VSCode settings
+        const cfg = vscode.workspace.getConfiguration('codeactor');
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        const projectDir = workspaceFolders && workspaceFolders.length > 0
+          ? workspaceFolders[0].uri.fsPath
+          : '';
+
+        // Get the same normalized server URL used in updateHtmlForWebview
+        const configServerUrl = cfg.get<string>('serverUrl', '');
+        const rawUrl = configServerUrl || process.env.SERVER_URL || 'ws://localhost:3000/ws';
+        const serverUrl = rawUrl.endsWith('/ws') ? rawUrl : `${rawUrl.replace(/\/+$/, '')}/ws`;
+
         this.webview?.webview.postMessage({
           type: 'configResponse',
           id: message.id,
           config: {
-            selectedModel: 'Claude 3.5 Sonnet',
-            selectedRole: 'Developer',
-            theme: 'dark',
-            language: 'en',
-            enableAutoSave: true,
-            enableNotifications: true,
-            customModels: []
+            selectedModel: cfg.get<string>('selectedModel', 'Claude 3.5 Sonnet'),
+            selectedRole: cfg.get<string>('selectedRole', 'Developer'),
+            theme: this.themeKindToName(vscode.window.activeColorTheme.kind),
+            language: cfg.get<string>('language', 'en'),
+            enableAutoSave: cfg.get<boolean>('enableAutoSave', true),
+            enableNotifications: cfg.get<boolean>('enableNotifications', true),
+            customModels: cfg.get<any[]>('customModels', []),
+            serverUrl,
+            projectDir,
           }
         });
+        break;
+      case 'configUpdate':
+        // Save configuration updates to VSCode settings
+        if (message.config) {
+          const cfg = vscode.workspace.getConfiguration('codeactor');
+          for (const [key, value] of Object.entries(message.config)) {
+            cfg.update(key, value, vscode.ConfigurationTarget.Global);
+          }
+        }
+        break;
+      // In hybrid mode, chat/task messages are sent directly via WebView's WebSocket
+      // These handlers exist for forward compatibility only
+      case 'chat':
+      case 'agent':
+      case 'submitTask':
+      case 'terminateTask':
+        console.log(`[CodeActor] Ignoring '${message.type}' in extension (handled by WebView WebSocket)`);
         break;
       default:
         console.log('Unknown message:', message.type);

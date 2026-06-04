@@ -399,6 +399,35 @@ export const useChat = () => {
       addMessageFromExtension(toolMessage);
       return;
     }
+
+    if (type === 'error') {
+      // 全局/对话错误 - 与 tool_call_error 不同，这是整体对话层面的错误
+      console.log(`❌ 对话错误: ${message.error || data?.error || '未知错误'}`);
+
+      // 停止处理状态
+      setProcessing(false);
+
+      // 更新任务状态
+      setTaskState(prev => ({
+        ...prev,
+        taskStatus: 'error',
+        isTaskRunning: false,
+      }));
+
+      // 将错误显示为聊天消息
+      const errorMessage: Message = {
+        id: message.id || generateMessageId(),
+        text: `❌ Error: ${message.error || data?.error || '未知错误'}`,
+        sender: 'system',
+        timestamp: Date.now(),
+        type: 'error',
+        metadata: {
+          taskId: message.taskId || data?.task_id,
+        }
+      };
+      addMessageFromExtension(errorMessage);
+      return;
+    }
   };
 
   useEffect(() => {
