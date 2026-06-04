@@ -126,7 +126,6 @@
     "copy-webui": "node scripts/copy-webui.js",
     "copy-wasm": "node scripts/copy-wasm.js",
     "build": "npm run copy-webui && npm run bundle -- --production && npm run copy-wasm && vsce package --no-yarn --no-git-tag-version",
-    "build:plugin": "cd .. && node scripts/build-vscode-plugin.js",
     "postinstall": "cd ../webui && npm install"
   },
   "devDependencies": {

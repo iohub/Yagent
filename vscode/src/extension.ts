@@ -184,19 +184,27 @@ class CodeActorViewProvider implements vscode.WebviewViewProvider {
   }
 
   private getWebviewRoot(): vscode.Uri {
-    const possiblePaths = [
-      path.join(this.context.extensionPath, 'media', 'webui'),
-      path.join(this.context.extensionPath, 'dist'),
-      path.join(this.context.extensionPath, '..', 'webui', 'build'),
-    ];
+    // Primary production path (packaged with the extension)
+    const prodPath = path.join(this.context.extensionPath, 'media', 'webui');
+    if (fs.existsSync(path.join(prodPath, 'index.html'))) {
+      return vscode.Uri.file(prodPath);
+    }
 
-    for (const p of possiblePaths) {
-      if (fs.existsSync(path.join(p, 'index.html'))) {
-        return vscode.Uri.file(p);
+    // Development fallback: only use local webui build when running in dev mode
+    if (this.context.extensionMode === vscode.ExtensionMode.Development) {
+      const devPath = path.join(this.context.extensionPath, '..', 'webui', 'build');
+      if (fs.existsSync(path.join(devPath, 'index.html'))) {
+        console.warn('[CodeActor] Using development webui from', devPath);
+        return vscode.Uri.file(devPath);
       }
     }
 
-    return vscode.Uri.file(possiblePaths[0]);
+    // If neither exists, throw a clear error instead of silently failing
+    throw new Error(
+      'WebUI build not found. ' +
+      'Please run "bash scripts/build-extension.sh" from the project root, ' +
+      'or manually: cd webui && npm run build && cd ../vscode && npm run copy-webui'
+    );
   }
 
   private getWebviewHtml(): string {

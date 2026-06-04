@@ -22,9 +22,6 @@
     "serve": "npx serve -s build -l 8080",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "build:extension": "npm run build && npm run copy-to-extension",
-    "build:server:extension": "npm run build:server && npm run copy-to-extension",
-    "copy-to-extension": "bash build-and-copy.sh",
     "preview": "npm run start:web"
   },
   "eslintConfig": {
