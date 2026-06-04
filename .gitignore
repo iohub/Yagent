@@ -3,6 +3,7 @@
 #
 vscode/media/webui/
 webui/node_modules/
+vscode/node_modules/
 logs
 # Binaries for programs and plugins
 vendor
