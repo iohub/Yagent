@@ -48,9 +48,17 @@ impl CodeParser {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    // 跳过常见的忽略目录
+                    // 跳过常见的忽略目录（隐藏目录、构建产物、依赖缓存等）
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if name.starts_with('.') || name == "target" || name == "node_modules" || name == "__pycache__" {
+                        if name.starts_with('.')
+                            || name == "target"
+                            || name == "node_modules"
+                            || name == "__pycache__"
+                            || name == "out"
+                            || name == "build"
+                            || name == "dist"
+                            || name == "vendor"
+                        {
                             continue;
                         }
                     }
