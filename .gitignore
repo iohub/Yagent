@@ -2,6 +2,7 @@
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
 vscode/out/
+vscode/bin/
 vscode/media/webui/
 webui/node_modules/
 vscode/node_modules/

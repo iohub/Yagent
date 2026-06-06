@@ -1,10 +1,44 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as cp from 'child_process';
+import * as net from 'net';
+import { ChildProcess } from 'child_process';
 import { CommandCodeLensProvider, CodeLensCommand } from './integrations/codelens/CommandCodeLens';
 import { SelectionCodeLensProvider } from './integrations/codelens/SelectionCodeLens';
 import { GlobalParser } from './services/tree-sitter/GlobalParser';
 import { EventTypes, getEventDescription, ALL_EVENT_TYPES } from './protocol/agent-events';
+
+let backendProcess: ChildProcess | null = null;
+
+async function findAvailablePort(startPort: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    function tryPort(port: number) {
+      const server = net.createServer();
+      server.on('error', () => {
+        server.close();
+        if (port - startPort < 100) {
+          tryPort(port + 1);
+        } else {
+          reject(new Error(`No available port found starting from ${startPort}`));
+        }
+      });
+      server.listen(port, '127.0.0.1', () => {
+        const addr = server.address() as net.AddressInfo;
+        server.close(() => resolve(addr.port));
+      });
+    }
+    tryPort(startPort);
+  });
+}
+
+function getBinaryPath(context: vscode.ExtensionContext): string {
+  const platform = process.platform;
+  const arch = process.arch;
+  const ext = platform === 'win32' ? '.exe' : '';
+  const binaryName = `codeactor-${platform}-${arch}${ext}`;
+  return path.join(context.extensionPath, 'bin', binaryName);
+}
 
 const SUPPORTED_LANGUAGES = [
   'javascript', 'javascriptreact', 'typescript', 'typescriptreact',
@@ -20,8 +54,94 @@ function getCodeLensCommands(): CodeLensCommand[] {
   ]);
 }
 
-export function activate(context: vscode.ExtensionContext) {
-  const provider = new CodeActorViewProvider(context);
+export async function activate(context: vscode.ExtensionContext) {
+  // 读取用户配置的 serverUrl
+  const config = vscode.workspace.getConfiguration('codeactor');
+  const configuredUrl = config.get<string>('serverUrl', '');
+
+  let serverUrl: string;
+  let backendPort: number | null = null;
+
+  if (configuredUrl && configuredUrl.trim() !== '') {
+    serverUrl = configuredUrl;
+    console.log('[CodeActor] Using configured serverUrl:', serverUrl);
+  } else {
+    try {
+      const port = await findAvailablePort(9200);
+      console.log('[CodeActor] Found available port:', port);
+
+      const binaryPath = getBinaryPath(context);
+      console.log('[CodeActor] Binary path:', binaryPath);
+
+      if (!fs.existsSync(binaryPath)) {
+        vscode.window.showErrorMessage(
+          `CodeActor backend binary not found at ${binaryPath}. Please reinstall the extension.`
+        );
+        serverUrl = 'ws://localhost:3000/ws';
+      } else {
+        if (process.platform !== 'win32') {
+          try { fs.chmodSync(binaryPath, 0o755); } catch (e) { console.warn('[CodeActor] Failed to set binary permissions:', e); }
+        }
+
+        // 获取工作区目录作为后端进程的工作目录
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        const cwd = workspaceFolders && workspaceFolders.length > 0
+          ? workspaceFolders[0].uri.fsPath
+          : process.cwd();
+
+        // 确保环境变量完整（Go 的 os.UserHomeDir() 依赖 HOME/USERPROFILE）
+        const env = { ...process.env };
+        if (process.platform !== 'win32') {
+          if (!env.HOME) {
+            const { homedir } = await import('os');
+            env.HOME = homedir();
+          }
+        } else {
+          if (!env.USERPROFILE) {
+            const { homedir } = await import('os');
+            env.USERPROFILE = homedir();
+          }
+        }
+
+        console.log(`[CodeActor] Starting backend with cwd: ${cwd}`);
+
+        backendProcess = cp.spawn(binaryPath, ['http', '--port', `${port}`], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: false,
+          cwd,
+          env,
+        });
+
+        backendPort = port;
+
+        backendProcess.stdout?.on('data', (data: Buffer) => {
+          console.log(`[CodeActor Backend] ${data.toString().trim()}`);
+        });
+        backendProcess.stderr?.on('data', (data: Buffer) => {
+          console.log(`[CodeActor Backend] ${data.toString().trim()}`);
+        });
+        backendProcess.on('exit', (code: number | null) => {
+          console.log(`[CodeActor] Backend exited with code ${code}`);
+          backendProcess = null;
+        });
+        backendProcess.on('error', (err: Error) => {
+          vscode.window.showErrorMessage(`Failed to start CodeActor backend: ${err.message}`);
+          backendProcess = null;
+        });
+
+        serverUrl = `ws://localhost:${port}/ws`;
+        console.log('[CodeActor] Started backend, server URL:', serverUrl);
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      vscode.window.showWarningMessage(
+        `Could not start CodeActor backend automatically: ${errorMsg}. Using default connection.`
+      );
+      serverUrl = 'ws://localhost:3000/ws';
+    }
+  }
+
+  const provider = new CodeActorViewProvider(context, serverUrl, backendPort);
 
   // Register the webview view provider
   vscode.window.registerWebviewViewProvider(
@@ -164,7 +284,7 @@ class CodeActorViewProvider implements vscode.WebviewViewProvider {
 
   private webview?: vscode.WebviewView;
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly context: vscode.ExtensionContext, private serverUrl: string, private backendPort: number | null) {}
 
   public sendMessage(message: Record<string, unknown>): void {
     this.webview?.webview.postMessage(message);
@@ -250,11 +370,8 @@ class CodeActorViewProvider implements vscode.WebviewViewProvider {
     const webuiPath = this.getWebviewRoot().fsPath;
     const webview = this.webview!;
 
-    // Read server URL from VSCode config, then env var, then default
-    const configServerUrl = vscode.workspace.getConfiguration('codeactor').get<string>('serverUrl', '');
-    const rawUrl = configServerUrl || process.env.SERVER_URL || 'ws://localhost:3000/ws';
-    // Ensure the URL ends with /ws
-    const serverUrl = rawUrl.endsWith('/ws') ? rawUrl : `${rawUrl.replace(/\/+$/, '')}/ws`;
+    // Use the server URL provided by the extension activation
+    const serverUrl = this.serverUrl;
 
     // Get project directory from workspace folders
     const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -312,10 +429,8 @@ class CodeActorViewProvider implements vscode.WebviewViewProvider {
           ? workspaceFolders[0].uri.fsPath
           : '';
 
-        // Get the same normalized server URL used in updateHtmlForWebview
-        const configServerUrl = cfg.get<string>('serverUrl', '');
-        const rawUrl = configServerUrl || process.env.SERVER_URL || 'ws://localhost:3000/ws';
-        const serverUrl = rawUrl.endsWith('/ws') ? rawUrl : `${rawUrl.replace(/\/+$/, '')}/ws`;
+        // Use the server URL provided by the extension activation
+        const serverUrl = this.serverUrl;
 
         this.webview?.webview.postMessage({
           type: 'configResponse',
@@ -387,4 +502,27 @@ class CodeActorViewProvider implements vscode.WebviewViewProvider {
   }
 }
 
-export function deactivate() {}
+export function deactivate() {
+  if (backendProcess) {
+    const pid = backendProcess.pid;
+    console.log('[CodeActor] Stopping backend process (pid:', pid, ')');
+
+    if (process.platform === 'win32') {
+      try {
+        cp.execSync(`taskkill /pid ${pid} /T /F`, { stdio: 'ignore' });
+      } catch (e) {
+        console.warn('[CodeActor] Failed to kill backend process:', e);
+      }
+    } else {
+      backendProcess.kill('SIGTERM');
+      setTimeout(() => {
+        try {
+          if (backendProcess) {
+            backendProcess.kill('SIGKILL');
+          }
+        } catch (e) { /* 进程可能已经退出 */ }
+      }, 3000);
+    }
+    backendProcess = null;
+  }
+}
