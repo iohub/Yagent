@@ -16,6 +16,7 @@ export interface AgentClientMessage {
 declare global {
   interface Window {
     SERVER_URL?: string;
+    PROJECT_DIR?: string;
   }
 }
 
@@ -360,11 +361,18 @@ export class ServerAPI {
    * 将 WebviewMessage 转换为 Agent 协议格式
    */
   private convertWebviewToAgent(message: WebviewMessage): AgentClientMessage | null {
+    // 获取 projectDir：优先从消息 payload 获取，其次从 window.PROJECT_DIR 全局变量
+    const getProjectDir = (payloadProjectDir?: string): string => {
+      if (payloadProjectDir) return payloadProjectDir;
+      if (typeof window !== 'undefined' && window.PROJECT_DIR) return window.PROJECT_DIR;
+      return '';
+    };
+
     switch (message.type) {
       case 'submitTask': {
         // 首次提交任务 → start_task
         const taskDesc = message.payload.taskDesc || message.payload.text || '';
-        const projectDir = message.payload.projectDir || '';
+        const projectDir = getProjectDir(message.payload.projectDir);
         return {
           type: 'event',
           event: 'start_task',
@@ -378,7 +386,7 @@ export class ServerAPI {
       case 'chat':
       case 'agent': {
         const text = message.payload.text || '';
-        const projectDir = message.payload.projectDir || '';
+        const projectDir = getProjectDir(message.payload.projectDir);
 
         if (this.currentTaskId) {
           // 已有任务 ID → chat_message
@@ -433,6 +441,7 @@ export class ServerAPI {
       case 'code': {
         // 代码相关消息，作为聊天消息发送
         const text = message.payload.text || '';
+        const projectDir = getProjectDir(message.payload.projectDir);
         if (this.currentTaskId) {
           return {
             type: 'event',
@@ -441,7 +450,7 @@ export class ServerAPI {
             data: {
               task_id: this.currentTaskId,
               message: text,
-              project_dir: message.payload.projectDir || '',
+              project_dir: projectDir,
             },
           };
         }

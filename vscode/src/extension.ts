@@ -229,6 +229,12 @@ class CodeActorViewProvider implements vscode.WebviewViewProvider {
     // Ensure the URL ends with /ws
     const serverUrl = rawUrl.endsWith('/ws') ? rawUrl : `${rawUrl.replace(/\/+$/, '')}/ws`;
 
+    // Get project directory from workspace folders
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    const projectDir = workspaceFolders && workspaceFolders.length > 0
+      ? workspaceFolders[0].uri.fsPath
+      : '';
+
     // Update script and link src to use webview protocol
     html = html.replace(/src="(\/static\/[^"]+)"/g, (_, src) => {
       const filePath = path.join(webuiPath, src);
@@ -242,13 +248,16 @@ class CodeActorViewProvider implements vscode.WebviewViewProvider {
       return `href="${uri}"`;
     });
 
-    // Inject server URL and VS Code API
+    // Inject server URL, project directory, and VS Code API
     // Use server mode (WebSocket) for connection
+    const projectDirJson = JSON.stringify(projectDir);
     const injectionScript = `
       <script>
         (function() {
           // Set server URL for WebSocket connection
           window.SERVER_URL = '${serverUrl}';
+          // Set project directory (for file operations)
+          window.PROJECT_DIR = ${projectDirJson};
           // Provide VSCode API for other features (config, theme, codelens)
           window.vscode = acquireVsCodeApi();
         })();
