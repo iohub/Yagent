@@ -12,6 +12,8 @@ import (
 	"codeactor/internal/util"
 	messaging "codeactor/internal/messaging"
 	consumers "codeactor/internal/messaging/consumers"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ExecuteTask 执行任务的通用函数
@@ -49,13 +51,17 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 		if err := json.Unmarshal(data, &event); err != nil {
 			return err
 		}
-		socketMsg := SocketMessage{
-			Type:   event.Type,
-			Event:  event.Type,
-			Data:   event.Content,
-			From:   event.From,
-			TaskID: taskID,
-		}
+		socketMsg := NewRealtimeMessage(
+			event.Type,
+			gin.H{
+				"task_id":   taskID,
+				"content":   event.Content,
+				"timestamp": event.Timestamp.Unix(),
+				"metadata":  event.Metadata,
+			},
+			event.From,
+			taskID,
+		)
 		taskManager.BroadcastMessage(socketMsg)
 		return nil
 	}
@@ -68,20 +74,11 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	var result string
 	var err error
 
-	wsCallback := func(messageType string, content string) {
-		taskManager.BroadcastMessage(SocketMessage{
-			Type:   "agent_msg",
-			Event:  messageType,
-			Data:   content,
-			TaskID: taskID,
-		})
-	}
 	// 使用新的 TaskRequest 结构
 	request := app.NewTaskRequest(ctx, taskID).
 		WithProjectDir(projectDir).
 		WithTaskDesc(taskDesc).
-		WithMemory(task.Memory).
-		WithWSCallback(wsCallback)
+		WithMemory(task.Memory)
 
 	// Add message publisher to request
 	request = request.WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))

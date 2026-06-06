@@ -19,6 +19,19 @@ type SocketMessage struct {
 	Message string      `json:"message,omitempty"`
 }
 
+// NewRealtimeMessage 创建一个 Type 固定为 "realtime" 的标准实时消息。
+// 前端 convertAgentToExtension 根据 type="realtime" 分发到 convertRealtimeEvent，
+// 然后根据 event 字段进一步处理。请始终使用此函数构造实时消息，避免直接设置 Type。
+func NewRealtimeMessage(event string, data interface{}, from string, taskID string) SocketMessage {
+	return SocketMessage{
+		Type:   "realtime",
+		Event:  event,
+		Data:   data,
+		From:   from,
+		TaskID: taskID,
+	}
+}
+
 type ChatMessage struct {
 	Type      string `json:"type"` // "human" or "assistant"
 	Content   string `json:"content"`
