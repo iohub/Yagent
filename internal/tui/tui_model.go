@@ -41,7 +41,7 @@ var (
 	promptFocusedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	promptBlurredStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-	welcomePanelStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2)
+	welcomePanelStyle = lipgloss.NewStyle().Padding(1, 2)
 	welcomeLeftStyle  = lipgloss.NewStyle().Width(38)
 	welcomeTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
 	welcomeSubStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))

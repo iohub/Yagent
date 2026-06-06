@@ -336,7 +336,7 @@ func (m model) renderWelcomePanel() string {
 
 	// Compute responsive widths
 	panelWidth := m.computeFieldWidth() + 4
-	innerWidth := panelWidth - 6 // 2 border + 4 padding
+	innerWidth := panelWidth - 4 // 4 padding
 	leftWidth := 38
 	if innerWidth < 65 {
 		// Narrow terminal: stack vertically
