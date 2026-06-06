@@ -10,8 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 
 	"codeactor/internal/app"
@@ -25,7 +23,46 @@ import (
 	"codeactor/internal/tui"
 	"codeactor/internal/util"
 	messaging "codeactor/internal/messaging"
+
+	"github.com/spf13/cobra"
 )
+
+// 全局 Cobra flag 绑定变量
+var (
+	taskFile      string
+	disableAgents string
+	httpPort      int
+)
+
+// rootCmd 根命令 — 无子命令时默认启动 TUI
+var rootCmd = &cobra.Command{
+	Use:   "codeactor",
+	Short: "CodeActor - AI-powered coding assistant",
+	Long: `CodeActor is an AI-powered coding assistant that can run in
+terminal UI mode or HTTP server mode.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		runTUI(taskFile, disableAgents)
+	},
+	SilenceUsage: true,
+}
+
+// tuiCmd 显式 TUI 子命令
+var tuiCmd = &cobra.Command{
+	Use:   "tui",
+	Short: "Start in terminal UI mode (default)",
+	Run: func(cmd *cobra.Command, args []string) {
+		runTUI(taskFile, disableAgents)
+	},
+}
+
+// httpCmd HTTP 服务器子命令
+var httpCmd = &cobra.Command{
+	Use:   "http",
+	Short: "Start in HTTP server mode",
+	Run: func(cmd *cobra.Command, args []string) {
+		runHTTP(taskFile, disableAgents, httpPort)
+	},
+}
 
 func init() {
 	// Initialize structured logger with text handler
@@ -38,82 +75,54 @@ func init() {
 
 	// Initialize language manager with default language (English)
 	tui.InitLangManager()
+
+	// --- Cobra 命令配置 ---
+	// 持久 flags（所有子命令可用）
+	rootCmd.PersistentFlags().StringVarP(&taskFile, "taskfile", "f", "", "Load task from file")
+	rootCmd.PersistentFlags().StringVarP(&disableAgents, "disable-agents", "d", "", "Disable specified agents (comma-separated)")
+	// http 子命令专属 flags
+	httpCmd.Flags().IntVarP(&httpPort, "port", "p", 0, "HTTP server port (0 = auto-detect from 9800)")
+	// 注册子命令
+	rootCmd.AddCommand(tuiCmd)
+	rootCmd.AddCommand(httpCmd)
 }
 
 func main() {
 	defer util.RecoverPanic()
 
-	// Determine mode: default to "tui" if no mode specified, or first arg is not a known mode
-	var mode string
-	var argIndex int
-	if len(os.Args) >= 2 && (os.Args[1] == "tui" || os.Args[1] == "http") {
-		mode = os.Args[1]
-		argIndex = 2
-	} else {
-		mode = "tui" // default mode
-		argIndex = 1
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
 	}
+}
 
-	// 解析 --taskfile 参数
-	var taskFilePath string
-	// 解析 --disable-agents 参数
-	var disableAgents string
-	// 解析 --port 参数（显式指定时使用指定端口，否则从 9800 自动查找）
-	httpPort := 0 // 0 表示未显式指定，将自动查找
-	hasExplicitPort := false
-	for i := argIndex; i < len(os.Args); i++ {
-		arg := os.Args[i]
-		if arg == "--taskfile" && i+1 < len(os.Args) {
-			taskFilePath = os.Args[i+1]
-			i++
-		} else if strings.HasPrefix(arg, "--taskfile=") {
-			taskFilePath = strings.TrimPrefix(arg, "--taskfile=")
-		} else if arg == "--disable-agents" && i+1 < len(os.Args) {
-			disableAgents = os.Args[i+1]
-			i++
-		} else if strings.HasPrefix(arg, "--disable-agents=") {
-			disableAgents = strings.TrimPrefix(arg, "--disable-agents=")
-		} else if arg == "--port" && i+1 < len(os.Args) {
-			port, err := strconv.Atoi(os.Args[i+1])
-			if err != nil {
-				fmt.Printf("Invalid port: %s\n", os.Args[i+1])
-				os.Exit(1)
-			}
-			httpPort = port
-			hasExplicitPort = true
-			i++
-		} else if strings.HasPrefix(arg, "--port=") {
-			port, err := strconv.Atoi(strings.TrimPrefix(arg, "--port="))
-			if err != nil {
-				fmt.Printf("Invalid port: %s\n", strings.TrimPrefix(arg, "--port="))
-				os.Exit(1)
-			}
-			httpPort = port
-			hasExplicitPort = true
-		}
-	}
-
-	// 获取当前工作目录作为仓库路径
+// initApp 执行 TUI 和 HTTP 模式共用的初始化逻辑
+// 返回: repoPath, codebasePort, codebaseCmd (用于清理), error
+func initApp() (string, int, *exec.Cmd, error) {
 	repoPath, err := os.Getwd()
 	if err != nil {
-		fmt.Printf("Failed to get current working directory: %v\n", err)
-		os.Exit(1)
+		return "", 0, nil, fmt.Errorf("failed to get current working directory: %w", err)
 	}
 
-	// 从 12800 开始动态查找可用端口
 	codebasePort, err := findAvailablePort(12800)
 	if err != nil {
-		fmt.Printf("Failed to find available port for codebase: %v\n", err)
-		os.Exit(1)
+		return "", 0, nil, fmt.Errorf("failed to find available port for codebase: %w", err)
 	}
 
-	// 提取嵌入的 dist/bin 二进制到 ~/.codeactor/bin/
 	if _, err := embedbin.ExtractBinaries(distBinFS, "dist/bin"); err != nil {
 		slog.Warn("Failed to extract embedded binaries", "error", err)
 	}
 
-	// Start codebase server
 	codebaseCmd := startCodebaseServer(codebasePort, repoPath)
+	return repoPath, codebasePort, codebaseCmd, nil
+}
+
+// runTUI 启动终端 UI 模式
+func runTUI(taskFile, disableAgents string) {
+	repoPath, codebasePort, codebaseCmd, err := initApp()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 	if codebaseCmd != nil {
 		defer func() {
 			if err := codebaseCmd.Process.Kill(); err != nil {
@@ -126,159 +135,147 @@ func main() {
 		fmt.Fprintf(os.Stderr, "WARNING: codeactor-codebase server failed to start. Semantic search and code analysis features will be unavailable.\n")
 	}
 
-	switch mode {
-	case "tui":
-		// Initialize assistant infrastructure before starting TUI
-		ctx := context.Background()
+	// TUI mode init — matches original switch "tui" case exactly
+	ctx := context.Background()
 
-		configPath := getConfigPath()
-		slog.Info("Loading configuration", "config_path", configPath)
-		config, err := llm.LoadConfig(configPath)
+	configPath := getConfigPath()
+	slog.Info("Loading configuration", "config_path", configPath)
+	config, err := llm.LoadConfig(configPath)
+	if err != nil {
+		slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
+		os.Exit(1)
+	}
+
+	client, err := llm.NewClient(config)
+	if err != nil {
+		slog.Error("Failed to create client", "error", util.WrapError(ctx, err, "main::NewClient"))
+		os.Exit(1)
+	}
+
+	codeActor, err := app.NewCodeActor(client)
+	if err != nil {
+		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
+		os.Exit(1)
+	}
+
+	if err := agents.InitToolLogger(); err != nil {
+		slog.Warn("Failed to initialize tool logger", "error", err)
+	}
+
+	codeActor.DisabledAgents = disableAgents
+	codeActor.CodebasePort = codebasePort
+
+	defer codeActor.Close()
+
+	// 加载 skills
+	homeDir, _ := os.UserHomeDir()
+	projectSkillsDir := filepath.Join(repoPath, ".codeactor", "skills")
+	homeSkillsDir := filepath.Join(homeDir, ".codeactor", "skills")
+
+	var skillRegistry *skills.SkillRegistry
+	skillRegistry, err = skills.LoadSkills(projectSkillsDir)
+	if err != nil {
+		slog.Warn("Failed to load project skills", "path", projectSkillsDir, "error", err)
+	}
+	if skillRegistry.Count() == 0 {
+		skillRegistry, err = skills.LoadSkills(homeSkillsDir)
 		if err != nil {
-			slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
-			os.Exit(1)
+			slog.Warn("Failed to load home skills", "path", homeSkillsDir, "error", err)
 		}
+	}
+	codeActor.SkillRegistry = skillRegistry
+	slog.Info("Skill registry loaded", "count", skillRegistry.Count())
 
-		client, err := llm.NewClient(config)
-		if err != nil {
-			slog.Error("Failed to create client", "error", util.WrapError(ctx, err, "main::NewClient"))
-			os.Exit(1)
-		}
+	taskManager := http.NewTaskManager(nil, config.TaskTimeout)
 
-		codeActor, err := app.NewCodeActor(client)
-		if err != nil {
-			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
-			os.Exit(1)
-		}
+	dataManager, err := datamanager.NewDataManager()
+	if err != nil {
+		slog.Error("Failed to initialize DataManager", "error", err)
+	}
 
-		// 初始化工具日志
-		if err := agents.InitToolLogger(); err != nil {
-			slog.Warn("Failed to initialize tool logger", "error", err)
-		}
+	tui.StartTUI(taskFile, codeActor, taskManager, dataManager, config)
+	dataManager.FlushAll()
+}
 
-		codeActor.DisabledAgents = disableAgents
-		codeActor.CodebasePort = codebasePort
-
-		// Register cleanup for browser manager
-		defer codeActor.Close()
-
-		// 加载 skills
-		homeDir, _ := os.UserHomeDir()
-		projectSkillsDir := filepath.Join(repoPath, ".codeactor", "skills")
-		homeSkillsDir := filepath.Join(homeDir, ".codeactor", "skills")
-
-		var skillRegistry *skills.SkillRegistry
-		skillRegistry, err = skills.LoadSkills(projectSkillsDir)
-		if err != nil {
-			// 打印警告但不中断启动
-			slog.Warn("Failed to load project skills", "path", projectSkillsDir, "error", err)
-		}
-		// 如果没有项目级 skill，尝试家目录
-		if skillRegistry.Count() == 0 {
-			skillRegistry, err = skills.LoadSkills(homeSkillsDir)
-			if err != nil {
-				slog.Warn("Failed to load home skills", "path", homeSkillsDir, "error", err)
+// runHTTP 启动 HTTP 服务器模式
+func runHTTP(taskFile, disableAgents string, httpPort int) {
+	_, codebasePort, codebaseCmd, err := initApp()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if codebaseCmd != nil {
+		defer func() {
+			if err := codebaseCmd.Process.Kill(); err != nil {
+				slog.Warn("Failed to kill codebase process", "error", err)
+			} else {
+				slog.Info("Codebase process killed on exit", "pid", codebaseCmd.Process.Pid)
 			}
-		}
-		codeActor.SkillRegistry = skillRegistry
-		slog.Info("Skill registry loaded", "count", skillRegistry.Count())
+		}()
+	}
 
-		taskManager := http.NewTaskManager(nil, config.TaskTimeout)
+	// HTTP mode init — matches original switch "http" case exactly
+	ctx := context.Background()
 
-		dataManager, err := datamanager.NewDataManager()
+	logDir := "logs"
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		slog.Error("Failed to create logs directory", "error", util.WrapError(ctx, err, "main::MkdirAll"))
+		os.Exit(1)
+	}
+
+	logFile, err := os.OpenFile(filepath.Join(logDir, "server.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		slog.Error("Failed to open log file", "error", util.WrapError(ctx, err, "main::OpenFile"))
+		os.Exit(1)
+	}
+
+	multiWriter := io.MultiWriter(os.Stderr, logFile)
+	logger := slog.New(slog.NewTextHandler(multiWriter, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
+	configPath := getConfigPath()
+	slog.Info("Loading configuration", "config_path", configPath)
+	config, err := llm.LoadConfig(configPath)
+	if err != nil {
+		slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
+		os.Exit(1)
+	}
+	slog.Info("Creating assistant.client")
+	client, err := llm.NewClient(config)
+	if err != nil {
+		slog.Error("Failed to create assistant.client", "error", util.WrapError(ctx, err, "main::NewClient"))
+		os.Exit(1)
+	}
+
+	codeActor, err := app.NewCodeActor(client)
+	if err != nil {
+		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
+		os.Exit(1)
+	}
+	codeActor.DisabledAgents = disableAgents
+	codeActor.CodebasePort = codebasePort
+
+	defer codeActor.Close()
+
+	messageDispatcher := messaging.NewMessageDispatcher(100)
+	codeActor.IntegrateMessaging(messageDispatcher)
+
+	server := http.NewServer(codeActor)
+
+	if httpPort == 0 {
+		port, err := findAvailablePort(9800)
 		if err != nil {
-			slog.Error("Failed to initialize DataManager", "error", err)
-		}
-
-		// Start TUI — all interaction is handled inside the TUI loop
-		tui.StartTUI(taskFilePath, codeActor, taskManager, dataManager, config)
-		// Flush any remaining data after TUI exits
-		dataManager.FlushAll()
-		return
-	case "http":
-		// Run HTTP server mode
-		// Setup slog for console logging and file logging
-		ctx := context.Background()
-		// homeDir, herr := os.UserHomeDir()
-		// if herr != nil {
-		// 	slog.Error("Failed to get user home directory", "error", util.WrapError(ctx, herr, "main::UserHomeDir"))
-		// 	os.Exit(1)
-		// }
-		// logDir := filepath.Join(homeDir, ".codeactor", "logs")
-
-		// Use local directory for logs to avoid permission issues
-		logDir := "logs"
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			slog.Error("Failed to create logs directory", "error", util.WrapError(ctx, err, "main::MkdirAll"))
+			slog.Error("Failed to find available port for HTTP server", "error", err)
 			os.Exit(1)
 		}
+		httpPort = port
+	}
+	slog.Info("Starting HTTP server", "port", httpPort)
 
-		logFile, err := os.OpenFile(filepath.Join(logDir, "server.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-		if err != nil {
-			slog.Error("Failed to open log file", "error", util.WrapError(ctx, err, "main::OpenFile"))
-			os.Exit(1)
-		}
-
-		// Configure slog to write to both console and file
-		// Note: We use io.MultiWriter to write to both
-		multiWriter := io.MultiWriter(os.Stderr, logFile)
-		logger := slog.New(slog.NewTextHandler(multiWriter, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		}))
-		slog.SetDefault(logger)
-
-		// 加载配置和初始化 assistant.client
-		configPath := getConfigPath()
-		slog.Info("Loading configuration", "config_path", configPath)
-		config, err := llm.LoadConfig(configPath)
-		if err != nil {
-			slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
-			os.Exit(1)
-		}
-		slog.Info("Creating assistant.client")
-		client, err := llm.NewClient(config)
-		if err != nil {
-			slog.Error("Failed to create assistant.client", "error", util.WrapError(ctx, err, "main::NewClient"))
-			os.Exit(1)
-		}
-
-		// 创建 AI Coding Assistant
-		codeActor, err := app.NewCodeActor(client)
-		if err != nil {
-			slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
-			os.Exit(1)
-		}
-		codeActor.DisabledAgents = disableAgents
-		codeActor.CodebasePort = codebasePort
-
-		// Register cleanup for browser manager
-		defer codeActor.Close()
-
-		// 创建消息分发器并集成消息系统
-		messageDispatcher := messaging.NewMessageDispatcher(100)
-		codeActor.IntegrateMessaging(messageDispatcher)
-
-		// 创建HTTP服务器
-		server := http.NewServer(codeActor)
-
-		// 未显式指定端口时自动从 9800 查找可用端口
-		if !hasExplicitPort {
-			port, err := findAvailablePort(9800)
-			if err != nil {
-				slog.Error("Failed to find available port for HTTP server", "error", err)
-				os.Exit(1)
-			}
-			httpPort = port
-		}
-		slog.Info("Starting HTTP server", "port", httpPort)
-
-		if err := server.Run(httpPort); err != nil {
-			slog.Error("Failed to start HTTP server", "error", util.WrapError(ctx, err, "main::ServerRun"))
-			os.Exit(1)
-		}
-	default:
-		fmt.Printf("Unknown mode: %s\n", mode)
-		fmt.Println("Usage: codeactor [tui|http] [--disable-agents=repo,coding,chat,meta,devops] [--taskfile TASK.md] [--port=9800]")
+	if err := server.Run(httpPort); err != nil {
+		slog.Error("Failed to start HTTP server", "error", util.WrapError(ctx, err, "main::ServerRun"))
 		os.Exit(1)
 	}
 }
@@ -288,10 +285,8 @@ func main() {
 func getConfigPath() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		// 无法获取用户主目录，回退到本地 config/config.toml
 		localPath := "config/config.toml"
 		if _, err := os.Stat(localPath); os.IsNotExist(err) {
-			// 本地也不存在，自动生成
 			if genErr := config.EnsureConfigExists(localPath); genErr != nil {
 				panic(fmt.Sprintf("无法创建配置文件: %v", genErr))
 			}
@@ -302,7 +297,6 @@ func getConfigPath() string {
 	configDir := filepath.Join(homeDir, ".codeactor", "config")
 	configPath := filepath.Join(configDir, "config.toml")
 
-	// 确保配置文件存在（不存在则自动生成）
 	if err := config.EnsureConfigExists(configPath); err != nil {
 		panic(fmt.Sprintf("无法创建配置文件: %v", err))
 	}
@@ -371,9 +365,6 @@ func startCodebaseServer(port int, repoPath string) *exec.Cmd {
 
 	slog.Info("Started codeactor-codebase server", "pid", cmd.Process.Pid, "address", address, "repo", repoPath, "log", logPath)
 
-	// Health check runs asynchronously so TUI/HTTP startup is not blocked.
-	// If the codebase server never becomes healthy, the process is killed
-	// and tools that depend on it will surface errors at call time.
 	go func() {
 		if err := waitForCodebase(address, 60*time.Second); err != nil {
 			slog.Error("Codebase server failed to become healthy", "error", err)
