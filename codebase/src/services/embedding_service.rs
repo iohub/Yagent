@@ -10,7 +10,7 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatchIterator;
 use uuid::Uuid;
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
@@ -356,6 +356,32 @@ impl EmbeddingService {
         }
         
         info!("Vectorization completed. Total vectors created: {}", total_vectors);
+
+        // [新增] 清理已删除文件的孤儿 embedding
+        if let Some(old_hashes) = existing_hashes {
+            let orphaned: Vec<String> = old_hashes
+                .keys()
+                .filter(|k| !new_hashes.contains_key(*k))
+                .cloned()
+                .collect();
+            
+            if !orphaned.is_empty() {
+                info!("Cleaning up {} orphaned file embeddings from deleted files", orphaned.len());
+                for file_path in &orphaned {
+                    // 从 LanceDB 中删除
+                    if let Err(e) = self.delete_file_embeddings(file_path).await {
+                        warn!("Failed to remove LanceDB embeddings for deleted file {}: {}", file_path, e);
+                    }
+                    // 从 BM25 索引中删除
+                    if let Some(ref bm25) = self.bm25_index {
+                        if let Err(e) = bm25.remove_by_path(file_path).await {
+                            warn!("Failed to remove BM25 index for deleted file {}: {}", file_path, e);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(new_hashes)
     }
 
@@ -488,8 +514,14 @@ impl EmbeddingService {
         }
         
         // Batch index chunks into BM25
-        if !bm25_chunks.is_empty() {
-            if let Some(bm25) = &self.bm25_index {
+        // 先删除该文件的所有旧 BM25 条目，再添加新条目（确保一致性）
+        if let Some(bm25) = &self.bm25_index {
+            // 先清空该文件的旧 BM25 索引（就像 LanceDB 的 delete_file_embeddings 一样）
+            if let Err(e) = bm25.remove_by_path(&file_path.to_string_lossy()).await {
+                tracing::warn!("Failed to remove old BM25 entries for {:?}: {}", file_path, e);
+            }
+            // 再添加当前符号的新条目
+            if !bm25_chunks.is_empty() {
                 if let Err(e) = bm25.index_chunks(bm25_chunks.clone()).await {
                     tracing::warn!("BM25 indexing failed for {:?}: {}", file_path, e);
                     // Non-fatal: continue with vector indexing
@@ -778,9 +810,9 @@ mod tests {
         let service = EmbeddingService::new_with_provider(db_path_str, table_name.clone(), provider).await?;
         service.ensure_collection().await?;
 
-        // Create a dummy file
+        // Create a dummy file with content long enough to pass min_code_block_length check
         let file_path = dir.path().join("test_dedup.rs");
-        fs::write(&file_path, "fn test_fn() {}")?;
+        fs::write(&file_path, "fn test_function() { let x = 1; }")?;
 
         // Vectorize first time
         service.vectorize_directory(dir.path().to_str().unwrap(), None).await?;
