@@ -1,0 +1,449 @@
+# ==============================================================================
+# CodeActor Agent 事件协议定义（单一真相源）
+# ==============================================================================
+# 此文件是系统中所有 Agent 事件消息的权威定义。
+# 修改此文件后，请运行 `go generate ./scripts/protoc-gen-codeactor/...` 
+# 重新生成 Go 类型、TypeScript 类型、JSON Schema 和渲染映射表。
+# ==============================================================================
+
+# 协议元信息
+protocol:
+  name: "CodeActor Agent Events"
+  version: "1.0.0"
+  description: "定义 Agent 系统与 WebUI 之间通过 WebSocket 传输的所有事件消息"
+
+# ==============================================================================
+# 事件类型枚举
+# ==============================================================================
+event_types:
+  # ---- Agent 核心事件 ----
+  - name: model_info
+    description: "LLM 模型信息"
+    fields:
+      - name: model
+        type: string
+        description: "模型名称（如 claude-3-5-sonnet）"
+        required: true
+      - name: agent
+        type: string
+        description: "当前 Agent 名称"
+        required: true
+      - name: provider
+        type: string
+        description: "LLM 提供商"
+        required: false
+
+  - name: llm_call_start
+    description: "LLM 调用开始"
+    fields:
+      - name: model
+        type: string
+        description: "模型名称"
+        required: true
+      - name: agent
+        type: string
+        description: "发起调用的 Agent 名称"
+        required: true
+
+  - name: llm_call_end
+    description: "LLM 调用结束"
+    fields:
+      - name: model
+        type: string
+        description: "模型名称"
+        required: true
+      - name: agent
+        type: string
+        description: "Agent 名称"
+        required: true
+      - name: duration_seconds
+        type: number
+        description: "调用耗时（秒）"
+        required: false
+      - name: error
+        type: string
+        description: "错误信息（如果有）"
+        required: false
+
+  - name: ai_response
+    description: "AI 响应内容（流式或一次性）"
+    render_hint:
+      component: StreamingText
+      stream_mode: true
+      heading: "AI 响应"
+    fields:
+      - name: content
+        type: string
+        description: "AI 生成的文本内容"
+        required: true
+      - name: usage
+        type: object
+        description: "Token 使用统计"
+        required: false
+        fields:
+          - name: prompt_tokens
+            type: number
+            required: false
+          - name: completion_tokens
+            type: number
+            required: false
+          - name: total_tokens
+            type: number
+            required: false
+          - name: cache_creation_input_tokens
+            type: number
+            required: false
+          - name: cache_read_input_tokens
+            type: number
+            required: false
+
+  - name: tool_call_start
+    description: "工具调用开始"
+    render_hint:
+      component: ToolCallCard
+      heading: "工具调用"
+      show_header: true
+      collapse: false
+    fields:
+      - name: tool_name
+        type: string
+        description: "工具名称（如 delegate_repo, delegate_coding）"
+        required: true
+      - name: arguments
+        type: string
+        description: "工具调用参数的 JSON 字符串"
+        required: true
+      - name: tool_call_id
+        type: string
+        description: "工具调用唯一标识"
+        required: true
+
+  - name: tool_call_result
+    description: "工具调用结果"
+    render_hint:
+      component: ToolResultCard
+      heading: "工具结果"
+      show_header: true
+      collapse: false
+      max_preview_lines: 10
+    fields:
+      - name: tool_name
+        type: string
+        description: "工具名称"
+        required: true
+      - name: result
+        type: string
+        description: "工具执行结果文本"
+        required: true
+      - name: tool_call_id
+        type: string
+        description: "工具调用唯一标识"
+        required: true
+
+  - name: tool_call_error
+    description: "工具调用错误"
+    render_hint:
+      component: ToolCallErrorCard
+      heading: "工具错误"
+      show_header: true
+    fields:
+      - name: tool_name
+        type: string
+        description: "工具名称"
+        required: true
+      - name: error
+        type: string
+        description: "错误信息"
+        required: true
+      - name: tool_call_id
+        type: string
+        description: "工具调用唯一标识"
+        required: true
+      - name: arguments
+        type: string
+        description: "导致错误的参数"
+        required: false
+
+  # ---- 上下文管理事件 ----
+  - name: context_loaded
+    description: "项目上下文加载完成"
+    render_hint:
+      component: StatusPill
+      heading: "上下文"
+    fields:
+      - name: file_count
+        type: number
+        description: "加载的文件数量"
+        required: true
+      - name: files
+        type: array
+        items:
+          type: string
+        description: "加载的文件列表"
+        required: false
+
+  - name: context_compressed
+    description: "上下文压缩完成"
+    render_hint:
+      component: StatusPill
+      heading: "压缩"
+    fields:
+      - name: original_tokens
+        type: number
+        description: "压缩前的 token 数"
+        required: true
+      - name: compressed_tokens
+        type: number
+        description: "压缩后的 token 数"
+        required: true
+      - name: ratio
+        type: number
+        description: "压缩比"
+        required: false
+
+  - name: commit_context_loaded
+    description: "Commit 学习器上下文加载"
+    render_hint:
+      component: StatusPill
+      heading: "Commit"
+    fields:
+      - name: commit_count
+        type: number
+        description: "加载的 commit 数量"
+        required: true
+
+  # ---- 流式事件 ----
+  - name: ai_stream_start
+    description: "AI 流式响应开始"
+    render_hint:
+      component: StreamingText
+      stream_mode: true
+    fields:
+      - name: agent
+        type: string
+        description: "Agent 名称"
+        required: true
+
+  - name: ai_chunk
+    description: "AI 流式响应数据块"
+    render_hint:
+      component: StreamingText
+      stream_mode: true
+      merge_consecutive: true
+    fields:
+      - name: content
+        type: string
+        description: "文本块"
+        required: true
+      - name: agent
+        type: string
+        description: "Agent 名称"
+        required: false
+
+  - name: ai_stream_end
+    description: "AI 流式响应结束"
+    render_hint:
+      component: StreamingText
+      stream_mode: true
+    fields:
+      - name: agent
+        type: string
+        description: "Agent 名称"
+        required: true
+      - name: usage
+        type: object
+        description: "Token 使用统计（可选）"
+        required: false
+        fields:
+          - name: prompt_tokens
+            type: number
+            required: false
+          - name: completion_tokens
+            type: number
+            required: false
+
+  # ---- 用户交互事件 ----
+  - name: user_help_needed
+    description: "需要用户帮助/确认"
+    render_hint:
+      component: UserConfirmCard
+      heading: "需要确认"
+      actions:
+        - label: "确认"
+          action_id: "confirm"
+        - label: "拒绝"
+          action_id: "reject"
+    fields:
+      - name: question
+        type: string
+        description: "向用户提出的问题"
+        required: true
+      - name: context
+        type: string
+        description: "附加上下文信息"
+        required: false
+
+  - name: user_help_response
+    description: "用户回复了帮助请求"
+    render_hint:
+      component: StatusPill
+      heading: "用户回复"
+    fields:
+      - name: response
+        type: string
+        description: "用户的回复内容"
+        required: true
+      - name: approved
+        type: boolean
+        description: "是否批准"
+        required: false
+
+  # ---- 任务生命周期事件 ----
+  - name: conversation_error
+    description: "对话处理错误"
+    render_hint:
+      component: ErrorCard
+      heading: "错误"
+    fields:
+      - name: task_id
+        type: string
+        description: "任务 ID"
+        required: true
+      - name: error
+        type: string
+        description: "错误描述"
+        required: true
+
+  - name: conversation_result
+    description: "对话任务完成"
+    render_hint:
+      component: ResultCard
+      heading: "任务结果"
+    fields:
+      - name: task_id
+        type: string
+        description: "任务 ID"
+        required: true
+      - name: result
+        type: string
+        description: "最终结果文本"
+        required: true
+
+  # ---- 状态更新事件 ----
+  - name: status_update
+    description: "通用状态更新"
+    render_hint:
+      component: StatusPill
+      heading: "状态"
+    fields:
+      - name: status
+        type: string
+        description: "状态描述"
+        required: true
+      - name: progress
+        type: number
+        description: "进度百分比（0-100）"
+        required: false
+
+  - name: thinking
+    description: "Agent 思考过程（推理过程）"
+    render_hint:
+      component: ThinkingCard
+      heading: "思考过程"
+      collapse: true
+      merge_consecutive: true
+    fields:
+      - name: content
+        type: string
+        description: "思考内容"
+        required: true
+      - name: agent
+        type: string
+        description: "Agent 名称"
+        required: false
+
+  - name: task_complete
+    description: "任务完成通知"
+    render_hint:
+      component: TaskCompleteCard
+      heading: "任务完成"
+    fields:
+      - name: task_id
+        type: string
+        description: "任务 ID"
+        required: true
+      - name: status
+        type: string
+        enum: ["completed", "failed", "cancelled"]
+        description: "完成状态"
+        required: true
+      - name: summary
+        type: string
+        description: "任务摘要"
+        required: false
+
+# ==============================================================================
+# WebSocket 消息包装（传输层协议）
+# ==============================================================================
+websocket_message:
+  description: "WebSocket 传输的消息包装格式"
+  fields:
+    - name: type
+      type: string
+      description: "消息类型标识（如 'realtime', 'connection', 'error'）"
+      required: true
+    - name: event
+      type: string
+      description: "事件名称（对应 event_types 中的 name）"
+      required: true
+    - name: data
+      type: object
+      description: "事件数据（具体结构由 event 决定）"
+      required: true
+    - name: from
+      type: string
+      description: "消息来源（Agent 名称或 'System'）"
+      required: false
+    - name: task_id
+      type: string
+      description: "关联的任务 ID"
+      required: false
+    - name: message
+      type: string
+      description: "简短文本消息（用于错误通知等）"
+      required: false
+
+# ==============================================================================
+# VSCode 扩展通信协议
+# ==============================================================================
+extension_message:
+  description: "WebUI 与 VSCode Extension 之间的通信协议"
+  fields:
+    - name: type
+      type: string
+      description: "消息类型"
+      required: true
+      enum:
+        - "themeChange"
+        - "configResponse"
+        - "configRequest"
+        - "configUpdate"
+        - "codeLensAction"
+        - "selectionCodeLensAction"
+        - "initialize"
+        - "ready"
+        - "error"
+        - "chat"
+        - "agent"
+        - "submitTask"
+        - "terminateTask"
+        - "clearChat"
+        - "saveMessages"
+    - name: id
+      type: string
+      description: "消息唯一标识"
+      required: false
+    - name: payload
+      type: object
+      description: "消息负载"
+      required: false

@@ -9,9 +9,10 @@ import (
 
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
-	"codeactor/internal/util"
 	messaging "codeactor/internal/messaging"
 	consumers "codeactor/internal/messaging/consumers"
+	"codeactor/internal/protocol"
+	"codeactor/internal/util"
 
 	"github.com/gin-gonic/gin"
 )
@@ -52,7 +53,7 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 			return err
 		}
 		socketMsg := NewRealtimeMessage(
-			event.Type,
+			protocol.EventType(event.Type),
 			gin.H{
 				"task_id":   taskID,
 				"content":   event.Content,

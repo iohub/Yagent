@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { CommandCodeLensProvider, CodeLensCommand } from './integrations/codelens/CommandCodeLens';
 import { SelectionCodeLensProvider } from './integrations/codelens/SelectionCodeLens';
 import { GlobalParser } from './services/tree-sitter/GlobalParser';
+import { EventTypes, getEventDescription, ALL_EVENT_TYPES } from './protocol/agent-events';
 
 const SUPPORTED_LANGUAGES = [
   'javascript', 'javascriptreact', 'typescript', 'typescriptreact',
@@ -130,6 +131,32 @@ export function activate(context: vscode.ExtensionContext) {
       await vscode.commands.executeCommand('codeactorView.focus');
     })
   );
+
+  // ── Protocol Event Channel ──────────────────────────────────────────────────
+  const protocolChannel = vscode.window.createOutputChannel('CodeActor Protocol');
+  context.subscriptions.push(protocolChannel);
+
+  protocolChannel.appendLine('📋 CodeActor 事件协议已加载');
+  protocolChannel.appendLine(`   支持 ${ALL_EVENT_TYPES.length} 种事件类型:`);
+  for (const et of ALL_EVENT_TYPES) {
+    protocolChannel.appendLine(`  - ${et}: ${getEventDescription(et)}`);
+  }
+  protocolChannel.show(false);
+
+  // 提供协议信息给 Webview（当请求时）
+  const originalSendMessage = provider.sendMessage.bind(provider);
+  provider.sendMessage = function(msg: Record<string, unknown>) {
+    if (msg.type === 'configResponse' && typeof msg === 'object') {
+      (msg as any).protocol = {
+        version: '1.0.0',
+        events: ALL_EVENT_TYPES.map(et => ({
+          event: et,
+          description: getEventDescription(et),
+        })),
+      };
+    }
+    return originalSendMessage(msg);
+  };
 }
 
 class CodeActorViewProvider implements vscode.WebviewViewProvider {

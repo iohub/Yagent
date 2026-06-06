@@ -115,7 +115,13 @@
           ]
         }
       }
-    }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": "*.codeactor-protocol.json",
+        "url": "./protocol/agent-events.schema.json"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run bundle -- --production && npm run copy-wasm",

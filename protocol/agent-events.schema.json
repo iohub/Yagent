@@ -1,0 +1,784 @@
+{
+  "$id": "https://codeactor.dev/schemas/agent-events.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AiChunkEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "description": "Agent 名称",
+          "type": "string"
+        },
+        "content": {
+          "description": "文本块",
+          "type": "string"
+        },
+        "event": {
+          "description": "AI 流式响应数据块",
+          "enum": [
+            "ai_chunk"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "content"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StreamingText"
+      }
+    },
+    "AiResponseEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "description": "AI 生成的文本内容",
+          "type": "string"
+        },
+        "event": {
+          "description": "AI 响应内容（流式或一次性）",
+          "enum": [
+            "ai_response"
+          ],
+          "type": "string"
+        },
+        "usage": {
+          "description": "Token 使用统计",
+          "properties": {
+            "cache_creation_input_tokens": {
+              "description": "",
+              "type": "number"
+            },
+            "cache_read_input_tokens": {
+              "description": "",
+              "type": "number"
+            },
+            "completion_tokens": {
+              "description": "",
+              "type": "number"
+            },
+            "prompt_tokens": {
+              "description": "",
+              "type": "number"
+            },
+            "total_tokens": {
+              "description": "",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "event",
+        "content"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StreamingText",
+        "heading": "AI 响应"
+      }
+    },
+    "AiStreamEndEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "description": "Agent 名称",
+          "type": "string"
+        },
+        "event": {
+          "description": "AI 流式响应结束",
+          "enum": [
+            "ai_stream_end"
+          ],
+          "type": "string"
+        },
+        "usage": {
+          "description": "Token 使用统计（可选）",
+          "properties": {
+            "completion_tokens": {
+              "description": "",
+              "type": "number"
+            },
+            "prompt_tokens": {
+              "description": "",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "event",
+        "agent"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StreamingText"
+      }
+    },
+    "AiStreamStartEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "description": "Agent 名称",
+          "type": "string"
+        },
+        "event": {
+          "description": "AI 流式响应开始",
+          "enum": [
+            "ai_stream_start"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "agent"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StreamingText"
+      }
+    },
+    "CommitContextLoadedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "commit_count": {
+          "description": "加载的 commit 数量",
+          "type": "number"
+        },
+        "event": {
+          "description": "Commit 学习器上下文加载",
+          "enum": [
+            "commit_context_loaded"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "commit_count"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StatusPill",
+        "heading": "Commit"
+      }
+    },
+    "ContextCompressedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "compressed_tokens": {
+          "description": "压缩后的 token 数",
+          "type": "number"
+        },
+        "event": {
+          "description": "上下文压缩完成",
+          "enum": [
+            "context_compressed"
+          ],
+          "type": "string"
+        },
+        "original_tokens": {
+          "description": "压缩前的 token 数",
+          "type": "number"
+        },
+        "ratio": {
+          "description": "压缩比",
+          "type": "number"
+        }
+      },
+      "required": [
+        "event",
+        "original_tokens",
+        "compressed_tokens"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StatusPill",
+        "heading": "压缩"
+      }
+    },
+    "ContextLoadedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "description": "项目上下文加载完成",
+          "enum": [
+            "context_loaded"
+          ],
+          "type": "string"
+        },
+        "file_count": {
+          "description": "加载的文件数量",
+          "type": "number"
+        },
+        "files": {
+          "description": "加载的文件列表",
+          "items": {
+            "description": "",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "event",
+        "file_count"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StatusPill",
+        "heading": "上下文"
+      }
+    },
+    "ConversationErrorEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "description": "错误描述",
+          "type": "string"
+        },
+        "event": {
+          "description": "对话处理错误",
+          "enum": [
+            "conversation_error"
+          ],
+          "type": "string"
+        },
+        "task_id": {
+          "description": "任务 ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "task_id",
+        "error"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "ErrorCard",
+        "heading": "错误"
+      }
+    },
+    "ConversationResultEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "description": "对话任务完成",
+          "enum": [
+            "conversation_result"
+          ],
+          "type": "string"
+        },
+        "result": {
+          "description": "最终结果文本",
+          "type": "string"
+        },
+        "task_id": {
+          "description": "任务 ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "task_id",
+        "result"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "ResultCard",
+        "heading": "任务结果"
+      }
+    },
+    "ExtensionMessage": {
+      "properties": {
+        "id": {
+          "description": "消息唯一标识",
+          "type": "string"
+        },
+        "payload": {
+          "description": "消息负载",
+          "type": "object"
+        },
+        "type": {
+          "description": "消息类型",
+          "enum": [
+            "themeChange",
+            "configResponse",
+            "configRequest",
+            "configUpdate",
+            "codeLensAction",
+            "selectionCodeLensAction",
+            "initialize",
+            "ready",
+            "error",
+            "chat",
+            "agent",
+            "submitTask",
+            "terminateTask",
+            "clearChat",
+            "saveMessages"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "LlmCallEndEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "description": "Agent 名称",
+          "type": "string"
+        },
+        "duration_seconds": {
+          "description": "调用耗时（秒）",
+          "type": "number"
+        },
+        "error": {
+          "description": "错误信息（如果有）",
+          "type": "string"
+        },
+        "event": {
+          "description": "LLM 调用结束",
+          "enum": [
+            "llm_call_end"
+          ],
+          "type": "string"
+        },
+        "model": {
+          "description": "模型名称",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "model",
+        "agent"
+      ],
+      "type": "object"
+    },
+    "LlmCallStartEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "description": "发起调用的 Agent 名称",
+          "type": "string"
+        },
+        "event": {
+          "description": "LLM 调用开始",
+          "enum": [
+            "llm_call_start"
+          ],
+          "type": "string"
+        },
+        "model": {
+          "description": "模型名称",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "model",
+        "agent"
+      ],
+      "type": "object"
+    },
+    "ModelInfoEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "description": "当前 Agent 名称",
+          "type": "string"
+        },
+        "event": {
+          "description": "LLM 模型信息",
+          "enum": [
+            "model_info"
+          ],
+          "type": "string"
+        },
+        "model": {
+          "description": "模型名称（如 claude-3-5-sonnet）",
+          "type": "string"
+        },
+        "provider": {
+          "description": "LLM 提供商",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "model",
+        "agent"
+      ],
+      "type": "object"
+    },
+    "StatusUpdateEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "description": "通用状态更新",
+          "enum": [
+            "status_update"
+          ],
+          "type": "string"
+        },
+        "progress": {
+          "description": "进度百分比（0-100）",
+          "type": "number"
+        },
+        "status": {
+          "description": "状态描述",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "status"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StatusPill",
+        "heading": "状态"
+      }
+    },
+    "TaskCompleteEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "description": "任务完成通知",
+          "enum": [
+            "task_complete"
+          ],
+          "type": "string"
+        },
+        "status": {
+          "description": "完成状态",
+          "enum": [
+            "completed",
+            "failed",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        "summary": {
+          "description": "任务摘要",
+          "type": "string"
+        },
+        "task_id": {
+          "description": "任务 ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "task_id",
+        "status"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "TaskCompleteCard",
+        "heading": "任务完成"
+      }
+    },
+    "ThinkingEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "description": "Agent 名称",
+          "type": "string"
+        },
+        "content": {
+          "description": "思考内容",
+          "type": "string"
+        },
+        "event": {
+          "description": "Agent 思考过程（推理过程）",
+          "enum": [
+            "thinking"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "content"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "ThinkingCard",
+        "heading": "思考过程"
+      }
+    },
+    "ToolCallErrorEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "description": "导致错误的参数",
+          "type": "string"
+        },
+        "error": {
+          "description": "错误信息",
+          "type": "string"
+        },
+        "event": {
+          "description": "工具调用错误",
+          "enum": [
+            "tool_call_error"
+          ],
+          "type": "string"
+        },
+        "tool_call_id": {
+          "description": "工具调用唯一标识",
+          "type": "string"
+        },
+        "tool_name": {
+          "description": "工具名称",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "tool_name",
+        "error",
+        "tool_call_id"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "ToolCallErrorCard",
+        "heading": "工具错误"
+      }
+    },
+    "ToolCallResultEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "description": "工具调用结果",
+          "enum": [
+            "tool_call_result"
+          ],
+          "type": "string"
+        },
+        "result": {
+          "description": "工具执行结果文本",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "description": "工具调用唯一标识",
+          "type": "string"
+        },
+        "tool_name": {
+          "description": "工具名称",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "tool_name",
+        "result",
+        "tool_call_id"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "ToolResultCard",
+        "heading": "工具结果"
+      }
+    },
+    "ToolCallStartEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "description": "工具调用参数的 JSON 字符串",
+          "type": "string"
+        },
+        "event": {
+          "description": "工具调用开始",
+          "enum": [
+            "tool_call_start"
+          ],
+          "type": "string"
+        },
+        "tool_call_id": {
+          "description": "工具调用唯一标识",
+          "type": "string"
+        },
+        "tool_name": {
+          "description": "工具名称（如 delegate_repo, delegate_coding）",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "tool_name",
+        "arguments",
+        "tool_call_id"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "ToolCallCard",
+        "heading": "工具调用"
+      }
+    },
+    "UserHelpNeededEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "description": "附加上下文信息",
+          "type": "string"
+        },
+        "event": {
+          "description": "需要用户帮助/确认",
+          "enum": [
+            "user_help_needed"
+          ],
+          "type": "string"
+        },
+        "question": {
+          "description": "向用户提出的问题",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "question"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "UserConfirmCard",
+        "heading": "需要确认"
+      }
+    },
+    "UserHelpResponseEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "approved": {
+          "description": "是否批准",
+          "type": "boolean"
+        },
+        "event": {
+          "description": "用户回复了帮助请求",
+          "enum": [
+            "user_help_response"
+          ],
+          "type": "string"
+        },
+        "response": {
+          "description": "用户的回复内容",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "response"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StatusPill",
+        "heading": "用户回复"
+      }
+    },
+    "WebSocketMessage": {
+      "properties": {
+        "data": {
+          "description": "事件数据（具体结构由 event 决定）",
+          "type": "object"
+        },
+        "event": {
+          "description": "事件名称（对应 event_types 中的 name）",
+          "type": "string"
+        },
+        "from": {
+          "description": "消息来源（Agent 名称或 'System'）",
+          "type": "string"
+        },
+        "message": {
+          "description": "简短文本消息（用于错误通知等）",
+          "type": "string"
+        },
+        "task_id": {
+          "description": "关联的任务 ID",
+          "type": "string"
+        },
+        "type": {
+          "description": "消息类型标识（如 'realtime', 'connection', 'error'）",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    }
+  },
+  "description": "定义 Agent 系统与 WebUI 之间通过 WebSocket 传输的所有事件消息",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/ModelInfoEvent"
+    },
+    {
+      "$ref": "#/definitions/LlmCallStartEvent"
+    },
+    {
+      "$ref": "#/definitions/LlmCallEndEvent"
+    },
+    {
+      "$ref": "#/definitions/AiResponseEvent"
+    },
+    {
+      "$ref": "#/definitions/ToolCallStartEvent"
+    },
+    {
+      "$ref": "#/definitions/ToolCallResultEvent"
+    },
+    {
+      "$ref": "#/definitions/ToolCallErrorEvent"
+    },
+    {
+      "$ref": "#/definitions/ContextLoadedEvent"
+    },
+    {
+      "$ref": "#/definitions/ContextCompressedEvent"
+    },
+    {
+      "$ref": "#/definitions/CommitContextLoadedEvent"
+    },
+    {
+      "$ref": "#/definitions/AiStreamStartEvent"
+    },
+    {
+      "$ref": "#/definitions/AiChunkEvent"
+    },
+    {
+      "$ref": "#/definitions/AiStreamEndEvent"
+    },
+    {
+      "$ref": "#/definitions/UserHelpNeededEvent"
+    },
+    {
+      "$ref": "#/definitions/UserHelpResponseEvent"
+    },
+    {
+      "$ref": "#/definitions/ConversationErrorEvent"
+    },
+    {
+      "$ref": "#/definitions/ConversationResultEvent"
+    },
+    {
+      "$ref": "#/definitions/StatusUpdateEvent"
+    },
+    {
+      "$ref": "#/definitions/ThinkingEvent"
+    },
+    {
+      "$ref": "#/definitions/TaskCompleteEvent"
+    }
+  ],
+  "title": "CodeActor Agent Events",
+  "type": "object",
+  "version": "1.0.0"
+}
