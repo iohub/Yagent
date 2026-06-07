@@ -15,6 +15,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use futures::TryStreamExt;
+use futures::future::join_all;
+use tokio::sync::Semaphore;
 use rusqlite::{params, Connection as SqliteConnection};
 use anyhow::anyhow;
 
@@ -181,7 +183,7 @@ impl EmbeddingProvider for OpenAICompatibleEmbeddingProvider {
 pub struct EmbeddingService {
     connection: Connection, 
     pub table_name: String,
-    embedding_provider: Box<dyn EmbeddingProvider + Send + Sync>,
+    embedding_provider: Arc<dyn EmbeddingProvider + Send + Sync>,
     pub dimensions: i32,
     cache: Arc<EmbeddingCache>,
     /// Optional BM25 text search index for sparse channel.
@@ -189,6 +191,8 @@ pub struct EmbeddingService {
     pub bm25_index: Option<Arc<dyn TextSearchProvider>>,
     /// Minimum code block length (chars after trim) to be indexed.
     min_code_block_length: usize,
+    /// Concurrency limit for embedding API calls (default: 2x CPU cores).
+    concurrency: usize,
 }
 
 impl EmbeddingService {
@@ -237,22 +241,28 @@ impl EmbeddingService {
             .map(|cfg| cfg.codebase.retrieval_pipeline.min_code_block_length)
             .unwrap_or(16);
         
+        let cpu_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        let concurrency = cpu_count * 2;
+        
         Ok(Self {
             connection,
             table_name,
-            embedding_provider: Box::new(provider),
+            embedding_provider: Arc::new(provider),
             dimensions,
             cache,
             bm25_index,
             min_code_block_length,
+            concurrency,
         })
     }
     
-    /// Create a new VectorizeService with a custom embedding provider
+    /// Create a new EmbeddingService with a custom embedding provider
     pub async fn new_with_provider(
         db_path: &str, 
         table_name: String, 
-        provider: Box<dyn EmbeddingProvider>
+        provider: Arc<dyn EmbeddingProvider + Send + Sync>
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let connection = connect(db_path).execute().await?;
         
@@ -262,8 +272,13 @@ impl EmbeddingService {
         fs::create_dir_all(&cache_dir)?;
         let cache_path = cache_dir.join("embedding_cache.sqlite");
         let cache = Arc::new(EmbeddingCache::new(cache_path.to_str().unwrap())?);
+        
+        let cpu_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        let concurrency = cpu_count * 2;
 
-       Ok(Self {
+        Ok(Self {
             connection,
             table_name,
             embedding_provider: provider,
@@ -271,6 +286,7 @@ impl EmbeddingService {
             cache,
             bm25_index: None,
             min_code_block_length: 16,
+            concurrency,
         })
     }
 
@@ -394,7 +410,7 @@ impl EmbeddingService {
         Ok(())
     }
 
-    /// Process single file content
+    /// Process single file content with concurrent embedding API calls
     async fn process_file_content(&self, file_path: &Path, _content: &str, ts_parser: &mut TreeSitterParser) -> Result<usize, Box<dyn std::error::Error>> {
         // Delete existing embeddings for this file to prevent duplicates
         self.delete_file_embeddings(&file_path.to_string_lossy()).await?;
@@ -402,9 +418,22 @@ impl EmbeddingService {
         // Parse with TreeSitter
         let symbols = ts_parser.parse_file(&file_path.to_path_buf())?;
         
-        let mut vectors_created = 0;
-        let mut points = Vec::new();
+        // Local struct to hold task data for each symbol
+        struct EmbeddingTask {
+            code_block: String,
+            name: String,
+            symbol_type_str: String,
+            language_str: String,
+            start_row: usize,
+            end_row: usize,
+            hash: String,
+        }
+        
+        let mut tasks: Vec<EmbeddingTask> = Vec::new();
         let mut bm25_chunks: Vec<CodeChunk> = Vec::new();
+        
+        // Step 1: Collect all valid symbols and build BM25 chunks
+        let model = self.embedding_provider.model();
         
         for symbol in symbols {
             // Extract data and drop guard immediately
@@ -458,42 +487,98 @@ impl EmbeddingService {
                     bm25_chunks.push(chunk);
                 }
 
-                // Check cache first
-                let model = self.embedding_provider.model();
+                // Pre-compute cache hash
                 let hash_input = format!("{}{}", model, code_block);
                 let hash = format!("{:x}", md5::compute(&hash_input));
                 
-                let embedding = if let Some(cached) = self.cache.get(&hash) {
-                    cached
-                } else {
-                    info!("Cache miss for symbol: {}", name);
-                    // Generate embedding (now safe to await)
-                    let vec = match self.embedding_provider.get_embedding(&code_block).await {
-                        Ok(vec) => vec,
+                tasks.push(EmbeddingTask {
+                    code_block,
+                    name,
+                    symbol_type_str,
+                    language_str,
+                    start_row,
+                    end_row,
+                    hash,
+                });
+            }
+        }
+
+        // Step 2: Check cache for each task, identify cache misses
+        let cache = self.cache.clone();
+        let mut embeddings: Vec<Option<Vec<f32>>> = vec![None; tasks.len()];
+        let mut miss_indices: Vec<usize> = Vec::new();
+
+        for (i, task) in tasks.iter().enumerate() {
+            if let Some(cached) = cache.get(&task.hash) {
+                embeddings[i] = Some(cached);
+            } else {
+                miss_indices.push(i);
+            }
+        }
+
+        // Step 3: Concurrent API calls for cache misses using Semaphore
+        if !miss_indices.is_empty() {
+            let provider = self.embedding_provider.clone();
+            let cache = self.cache.clone();
+            let semaphore = Arc::new(Semaphore::new(self.concurrency));
+            
+            let futures: Vec<_> = miss_indices.iter().map(|&idx| {
+                let provider = provider.clone();
+                let cache = cache.clone();
+                let semaphore = semaphore.clone();
+                let code_block = tasks[idx].code_block.clone();
+                let hash = tasks[idx].hash.clone();
+                let name = tasks[idx].name.clone();
+                
+                async move {
+                    // Acquire semaphore permit to limit concurrency
+                    let _permit = semaphore.acquire().await.unwrap_or_else(|e| {
+                        panic!("Semaphore closed: {}", e);
+                    });
+                    
+                    // Double-check cache (another concurrent request may have cached this hash)
+                    if let Some(cached) = cache.get(&hash) {
+                        return (idx, Some(cached));
+                    }
+                    
+                    match provider.get_embedding(&code_block).await {
+                        Ok(vec) => {
+                            // Cache the result
+                            if let Err(e) = cache.insert(&hash, &vec) {
+                                error!("Failed to cache embedding for symbol {}: {}", name, e);
+                            }
+                            (idx, Some(vec))
+                        }
                         Err(e) => {
                             error!("Failed to get embedding for symbol {}: {}", name, e);
-                            continue;
+                            (idx, None)
                         }
-                    };
-                    
-                    // Cache the result
-                    if let Err(e) = self.cache.insert(&hash, &vec) {
-                        error!("Failed to cache embedding for symbol {}: {}", name, e);
                     }
-                    vec
-                };
+                }
+            }).collect();
+            
+            let results = join_all(futures).await;
+            for (idx, vec_opt) in results {
+                embeddings[idx] = vec_opt;
+            }
+        }
 
-                // Create point
+        // Step 4: Build CodePoints in original order and batch upload
+        let mut points = Vec::new();
+        let mut vectors_created = 0;
+
+        for (i, task) in tasks.iter().enumerate() {
+            if let Some(embedding) = embeddings[i].take() {
                 let point = CodePoint {
                     id: Uuid::new_v4().to_string(),
                     vector: embedding,
                     file_path: file_path.to_string_lossy().to_string(),
-                    symbol_name: name,
-                    symbol_type: symbol_type_str,
-                    language: language_str,
-                    line_start: (start_row + 1) as i64,
-                    line_end: (end_row + 1) as i64,
-                    code_block,
+                    symbol_name: task.name.clone(),
+                    symbol_type: task.symbol_type_str.clone(),
+                    language: task.language_str.clone(),
+                    line_start: (task.start_row + 1) as i64,
+                    line_end: (task.end_row + 1) as i64,
+                    code_block: task.code_block.clone(),
                 };
                 
                 debug!("Point created for symbol: {}", point.symbol_name);
@@ -513,7 +598,7 @@ impl EmbeddingService {
             self.upload_points(&points).await?;
         }
         
-        // Batch index chunks into BM25
+        // Step 5: Batch index chunks into BM25
         // 先删除该文件的所有旧 BM25 条目，再添加新条目（确保一致性）
         if let Some(bm25) = &self.bm25_index {
             // 先清空该文件的旧 BM25 索引（就像 LanceDB 的 delete_file_embeddings 一样）
@@ -728,7 +813,7 @@ mod tests {
         let db_path = dir.path().to_str().unwrap();
         let table_name = "test_vectors".to_string();
 
-        let provider = Box::new(MockEmbeddingProvider::new());
+        let provider = Arc::new(MockEmbeddingProvider::new());
         let service = EmbeddingService::new_with_provider(db_path, table_name.clone(), provider).await?;
         
         service.ensure_collection().await?;
@@ -771,7 +856,7 @@ mod tests {
 
         let mock_provider = MockEmbeddingProvider::new();
         let call_count = mock_provider.call_count.clone();
-        let provider = Box::new(mock_provider);
+        let provider = Arc::new(mock_provider);
         
         let service = EmbeddingService::new_with_provider(db_path, table_name.clone(), provider).await?;
         service.ensure_collection().await?;
@@ -806,7 +891,7 @@ mod tests {
         let db_path_str = db_path.to_str().unwrap();
         let table_name = "test_vectors_dedup".to_string();
 
-        let provider = Box::new(MockEmbeddingProvider::new());
+        let provider = Arc::new(MockEmbeddingProvider::new());
         let service = EmbeddingService::new_with_provider(db_path_str, table_name.clone(), provider).await?;
         service.ensure_collection().await?;
 
