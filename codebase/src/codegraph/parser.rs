@@ -833,14 +833,17 @@ impl CodeParser {
         let persistence = PersistenceManager::new();
         
         // 尝试多种方式的项目ID
+        let last_dir = dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("default");
+        let hash = format!("{:x}", md5::compute(dir.to_string_lossy().as_bytes()));
         let project_ids = vec![
-            // 1. 使用目录名（原始方式）
-            dir.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("default")
-                .to_string(),
-            // 2. 使用目录路径的MD5哈希（HTTP接口方式）
-            format!("{:x}", md5::compute(dir.to_string_lossy().as_bytes())),
+            // 1. 新格式：last_dir_hash（最优先）
+            format!("{}_{}", last_dir, hash),
+            // 2. 使用目录名（原始方式）
+            last_dir.to_string(),
+            // 3. 使用目录路径的MD5哈希（HTTP接口方式）
+            hash,
         ];
         
         for project_id in project_ids {
@@ -908,21 +911,44 @@ impl CodeParser {
     /// 尝试从本地数据库加载现有的图
     fn _load_existing_graph(&self, dir: &Path) -> Result<Option<PetCodeGraph>, String> {
         use crate::storage::PersistenceManager;
-        
-        // 使用项目路径作为项目ID
-        let project_id = dir.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("default");
+        use md5;
         
         let persistence = PersistenceManager::new();
-        match persistence.load_graph(project_id) {
-            Ok(Some(graph)) => Ok(Some(graph)),
-            Ok(None) => Ok(None),
-            Err(e) => {
-                warn!("Failed to load existing graph: {}", e);
-                Ok(None)
+        
+        // 尝试多种方式的项目ID
+        let last_dir = dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("default");
+        let hash = format!("{:x}", md5::compute(dir.to_string_lossy().as_bytes()));
+        let project_ids = vec![
+            // 1. 新格式：last_dir_hash（最优先）
+            format!("{}_{}", last_dir, hash),
+            // 2. 使用目录名（原始方式）
+            last_dir.to_string(),
+            // 3. 使用目录路径的MD5哈希（HTTP接口方式）
+            hash,
+        ];
+        
+        for project_id in project_ids {
+            info!("Attempting to load existing graph for project ID: {}", project_id);
+            match persistence.load_graph(&project_id) {
+                Ok(Some(graph)) => {
+                    info!("Found existing graph for project ID: {}", project_id);
+                    return Ok(Some(graph));
+                },
+                Ok(None) => {
+                    debug!("No graph found for project ID: {}", project_id);
+                    continue;
+                },
+                Err(e) => {
+                    warn!("Failed to load existing graph for project ID {}: {}", project_id, e);
+                    continue;
+                }
             }
         }
+        
+        info!("No existing graph found for any project ID");
+        Ok(None)
     }
 
     /// 加载文件哈希值
@@ -933,14 +959,17 @@ impl CodeParser {
         let persistence = PersistenceManager::new();
         
         // 尝试多种方式的项目ID
+        let last_dir = dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("default");
+        let hash = format!("{:x}", md5::compute(dir.to_string_lossy().as_bytes()));
         let project_ids = vec![
-            // 1. 使用目录名（原始方式）
-            dir.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("default")
-                .to_string(),
-            // 2. 使用目录路径的MD5哈希（HTTP接口方式）
-            format!("{:x}", md5::compute(dir.to_string_lossy().as_bytes())),
+            // 1. 新格式：last_dir_hash（最优先）
+            format!("{}_{}", last_dir, hash),
+            // 2. 使用目录名（原始方式）
+            last_dir.to_string(),
+            // 3. 使用目录路径的MD5哈希（HTTP接口方式）
+            hash,
         ];
         
         for project_id in project_ids {
@@ -969,8 +998,12 @@ impl CodeParser {
         
         let persistence = PersistenceManager::new();
         
-        // 使用目录路径的MD5哈希作为项目ID（与HTTP接口保持一致）
-        let project_id = format!("{:x}", md5::compute(dir.to_string_lossy().as_bytes()));
+        // 使用 {last_dir}_{hash} 格式作为项目ID（与HTTP接口保持一致）
+        let last_dir = dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("default");
+        let hash = format!("{:x}", md5::compute(dir.to_string_lossy().as_bytes()));
+        let project_id = format!("{}_{}", last_dir, hash);
         info!("Saving file hashes for project ID: {}", project_id);
         
         // 为每个文件保存哈希值

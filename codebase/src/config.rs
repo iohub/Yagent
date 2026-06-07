@@ -232,6 +232,11 @@ impl Config {
         self.data_dir().join("graph")
     }
 
+    /// 获取 BM25 全文索引目录（全局共享，与 embedding 同级）
+    pub fn bm25_dir(&self) -> PathBuf {
+        self.data_dir().join("tantivy_bm25")
+    }
+
     pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
         let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
         let config_path = home_dir.join(".codeactor/config/config.toml");
