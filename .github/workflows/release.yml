@@ -26,16 +26,22 @@ jobs:
             suffix: darwin-x64
             goos: darwin
             goarch: amd64
+            fzf_url: https://github.com/junegunn/fzf/releases/download/v0.73.1/fzf-0.73.1-darwin_amd64.tar.gz
+            rg_url: https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-apple-darwin.tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
             suffix: darwin-arm64
             goos: darwin
             goarch: arm64
+            fzf_url: https://github.com/junegunn/fzf/releases/download/v0.73.1/fzf-0.73.1-darwin_arm64.tar.gz
+            rg_url: https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-aarch64-apple-darwin.tar.gz
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             suffix: linux-x64
             goos: linux
             goarch: amd64
+            fzf_url: https://github.com/junegunn/fzf/releases/download/v0.73.1/fzf-0.73.1-linux_amd64.tar.gz
+            rg_url: https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz
 
     steps:
       - name: Checkout
@@ -73,9 +79,33 @@ jobs:
 
       - name: Prepare embedded binaries
         run: |
+          set -euo pipefail
+
           mkdir -p dist/bin
+
+          # Copy codeactor-codebase built from Rust
           cp codebase/target/${{ matrix.target }}/release/codeactor-codebase dist/bin/
-          chmod +x dist/bin/codeactor-codebase
+          
+          # Download and extract fzf
+          echo "Downloading fzf from ${{ matrix.fzf_url }}"
+          curl -fLo /tmp/fzf.tar.gz "${{ matrix.fzf_url }}"
+          tar -xzf /tmp/fzf.tar.gz -C /tmp
+          mv /tmp/fzf dist/bin/fzf
+          rm -f /tmp/fzf.tar.gz
+
+          # Download and extract rg (rg 在 tar 中有目录前缀，用 find 定位)
+          echo "Downloading rg from ${{ matrix.rg_url }}"
+          curl -fLo /tmp/rg.tar.gz "${{ matrix.rg_url }}"
+          mkdir -p /tmp/rg_extract
+          tar -xzf /tmp/rg.tar.gz -C /tmp/rg_extract
+          find /tmp/rg_extract -name rg -type f -exec mv {} dist/bin/rg \;
+          rm -rf /tmp/rg_extract /tmp/rg.tar.gz
+
+          # Set executable permissions
+          chmod +x dist/bin/codeactor-codebase dist/bin/fzf dist/bin/rg
+
+          # Verify
+          ls -la dist/bin/
 
       - name: Build Go codeactor (${{ matrix.suffix }})
         run: |
