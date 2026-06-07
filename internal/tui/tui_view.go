@@ -349,7 +349,7 @@ func (m model) renderCenteredStartupScreen(width, height int) string {
 	var block strings.Builder
 	block.WriteString(banner)
 	block.WriteString("\n")
-	block.WriteString(welcomeDimStyle.Render("─── A Repository-Aware, Self-Evolving Agent"))
+	block.WriteString(welcomeDimStyle.Render("A Repository-Aware, Self-Evolving Agent"))
 	block.WriteString("\n\n")
 	block.WriteString(welcomeSubStyle.Render(cwd))
 
@@ -380,7 +380,7 @@ func (m model) renderWelcomePanelLayout() string {
 
 	// Build right panel: recent activity
 	var right strings.Builder
-	right.WriteString(welcomeDimStyle.Render("─── Self-Evolving Agents. Flawless Code."))
+	right.WriteString(welcomeDimStyle.Render("─── A Repository-Aware, Self-Evolving Agent"))
 	right.WriteString("\n")
 
 	// Compute responsive widths
