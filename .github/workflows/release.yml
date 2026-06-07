@@ -52,6 +52,12 @@ jobs:
           workspaces: "codebase"
           key: ${{ matrix.target }}
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
