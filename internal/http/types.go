@@ -5,30 +5,23 @@ import (
 	"time"
 
 	"codeactor/internal/memory"
+	"codeactor/internal/protocol"
 
 	"github.com/olahol/melody"
 )
 
 // ========== Socket.IO 消息结构 ==========
-type SocketMessage struct {
-	Type    string      `json:"type"`
-	Event   string      `json:"event"`
-	Data    interface{} `json:"data"`
-	From    string      `json:"from,omitempty"`
-	TaskID  string      `json:"task_id,omitempty"`
-	Message string      `json:"message,omitempty"`
-}
+// SocketMessage 是 AgentEventEnvelope 的类型别名，保持向后兼容
+type SocketMessage = protocol.AgentEventEnvelope
 
-// NewRealtimeMessage 创建一个 Type 固定为 "realtime" 的标准实时消息。
-// 前端 convertAgentToExtension 根据 type="realtime" 分发到 convertRealtimeEvent，
-// 然后根据 event 字段进一步处理。请始终使用此函数构造实时消息，避免直接设置 Type。
-func NewRealtimeMessage(event string, data interface{}, from string, taskID string) SocketMessage {
-	return SocketMessage{
+// NewRealtimeMessage 创建一个标准实时消息
+func NewRealtimeMessage(event protocol.EventType, data interface{}, from string, taskID string) protocol.AgentEventEnvelope {
+	return protocol.AgentEventEnvelope{
 		Type:   "realtime",
-		Event:  event,
+		Event:  string(event),
 		Data:   data,
 		From:   from,
-		TaskID: taskID,
+		TaskId: taskID,
 	}
 }
 

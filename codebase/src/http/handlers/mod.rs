@@ -914,6 +914,10 @@ pub async fn investigate_repo(
     let repo_path = storage.storage.get_current_repo().ok_or(StatusCode::NOT_FOUND)?;
     let project_id = format!("{:x}", md5::compute(&repo_path)); 
 
+	const MAX_CALLERS_PER_FUNC: usize = 50;
+	const MAX_CALLEES_PER_FUNC: usize = 50;
+	const MAX_SKELETON_CHARS: usize = 8000;
+
 	// Compute out-degree for each function and collect top 15
 	use std::cmp::Reverse;
 	let mut items: Vec<(usize, uuid::Uuid)> = Vec::new();
@@ -930,8 +934,10 @@ pub async fn investigate_repo(
 	for (out_degree, func_id) in top.iter() {
 		if let Some(f) = graph.get_function_by_id(func_id) {
 			// Collect callers with deduplication based on function_name + file_path
+			let all_callers = graph.get_callers(func_id);
+			let total_callers = all_callers.len();
 			let mut callers_set: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-			let callers = graph.get_callers(func_id)
+			let callers: Vec<_> = all_callers
 				.into_iter()
 				.filter_map(|(caller, _rel)| {
 					let function_name = caller.name.clone();
@@ -946,11 +952,15 @@ pub async fn investigate_repo(
 						None
 					}
 				})
+				.take(MAX_CALLERS_PER_FUNC)
 				.collect();
+			let callers_truncated = total_callers > MAX_CALLERS_PER_FUNC;
 
 			// Collect callees with deduplication based on function_name + file_path
+			let all_callees = graph.get_callees(func_id);
+			let total_callees = all_callees.len();
 			let mut callees_set: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-			let callees = graph.get_callees(func_id)
+			let callees: Vec<_> = all_callees
 				.into_iter()
 				.filter_map(|(callee, _rel)| {
 					let function_name = callee.name.clone();
@@ -965,7 +975,9 @@ pub async fn investigate_repo(
 						None
 					}
 				})
+				.take(MAX_CALLEES_PER_FUNC)
 				.collect();
+			let callees_truncated = total_callees > MAX_CALLEES_PER_FUNC;
 
 			core_functions.push(super::models::InvestigateFunctionInfo {
 				name: f.name.clone(),
@@ -973,6 +985,8 @@ pub async fn investigate_repo(
 				out_degree: *out_degree,
 				callers,
 				callees,
+				callers_truncated,
+				callees_truncated,
 			});
 			files_needed.insert(f.file_path.clone());
 		}
@@ -1021,7 +1035,15 @@ pub async fn investigate_repo(
 			let skeleton_line = formatter.make_skeleton(&symbol, &code.to_string(), &guid_to_children, &guid_to_info);
 			lines.push(skeleton_line);
 		}
-		let skeleton_text = if lines.is_empty() { String::new() } else { lines.join("\n\n") };
+		let mut skeleton_text = if lines.is_empty() { String::new() } else { lines.join("\n\n") };
+		if skeleton_text.len() > MAX_SKELETON_CHARS {
+			let mut new_len = MAX_SKELETON_CHARS;
+			while !skeleton_text.is_char_boundary(new_len) {
+				new_len -= 1;
+			}
+			skeleton_text.truncate(new_len);
+			skeleton_text.push_str("\n// ... [skeleton truncated due to length]");
+		}
 		file_skeletons.push(super::models::CodeSkeletonResponse {
 			filepath: rel_path,
 			language: language_id.to_string(),

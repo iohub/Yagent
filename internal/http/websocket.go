@@ -3,13 +3,11 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"time"
 
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
-	"codeactor/internal/memory"
 	messaging "codeactor/internal/messaging"
 	consumers "codeactor/internal/messaging/consumers"
 
@@ -237,43 +235,9 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 				dispatcher.Publish(event)
 			}
 
-			// 发送错误消息
-			errorMsg := memory.ChatMessage{
-				Type:      memory.MessageTypeAssistant,
-				Content:   fmt.Sprintf("处理对话时发生错误: %v", err),
-				Timestamp: time.Now(),
-			}
-
-			response := SocketMessage{
-				Type:  "chat_message",
-				Event: "ai_response",
-				Data:  errorMsg,
-				From:  "System",
-			}
-			if data, err := json.Marshal(response); err == nil {
-				s.Write(data)
-			}
-
 			// Shutdown dispatcher
 			dispatcher.Shutdown()
 			return
-		}
-
-		// 发送AI回复
-		aiMsg := memory.ChatMessage{
-			Type:      memory.MessageTypeAssistant,
-			Content:   result,
-			Timestamp: time.Now(),
-		}
-
-		response := SocketMessage{
-			Type:  "chat_message",
-			Event: "ai_response",
-			Data:  aiMsg,
-			From:  "CodingAgent",
-		}
-		if data, err := json.Marshal(response); err == nil {
-			s.Write(data)
 		}
 
 		// Publish conversation result event

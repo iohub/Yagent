@@ -12,6 +12,8 @@ pub struct InvestigateFunctionInfo {
     pub out_degree: usize,
     pub callers: Vec<CallRelation>,
     pub callees: Vec<CallRelation>,
+    pub callers_truncated: bool,
+    pub callees_truncated: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

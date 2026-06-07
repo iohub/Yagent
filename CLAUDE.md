@@ -210,8 +210,9 @@ codebase_port = 12800
 
 [codebase]
 enable_embedding = true
-embedding_db_uri = "~/.codeactor/data/lancedb"
-graph_db_uri = "~/.codeactor/data/graph"
+# 数据目录自动生成在 $HOME/.codeactor/data/
+# embedding/ — 全局共享索引（BM25 + LanceDB 向量库）
+# graph/     — 项目隔离数据（按 project_id 分目录）
 
 [codebase.embedding]
 model = "text-embedding-3-small"

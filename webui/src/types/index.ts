@@ -89,3 +89,180 @@ export interface WebviewMessage {
     [key: string]: any;
   };
 }
+
+// =============================================================================
+// 以下类型由 protocol/ts/agent-events.ts 生成，保持同步
+// =============================================================================
+
+/** 
+ * WebSocket 消息类型（来自后端的原始消息）
+ * 与 protocol.AgentEventEnvelope 对应
+ */
+export interface ServerWebSocketMessage {
+  type: string;
+  event: string;
+  data?: any;
+  from?: string;
+  task_id?: string;
+  message?: string;
+}
+
+/**
+ * 从 ServerWebSocketMessage 转换为前端的 Message
+ */
+export function serverMessageToChatMessage(
+  serverMsg: ServerWebSocketMessage,
+  existingMessages: Message[]
+): Message | null {
+  const event = serverMsg.event;
+  const data = serverMsg.data || {};
+  const timestamp = data?.timestamp || Date.now();
+  const taskId = data?.task_id || serverMsg.task_id;
+
+  switch (event) {
+    case 'ai_response':
+      return {
+        id: `msg-${taskId}-${timestamp}`,
+        text: data?.content || serverMsg.message || '',
+        sender: serverMsg.from || 'assistant',
+        timestamp,
+        type: 'result',
+        metadata: {
+          taskId,
+          usage: data?.usage,
+        },
+      };
+
+    case 'tool_call_start':
+      return {
+        id: `tool-start-${data?.tool_call_id || timestamp}`,
+        text: `⚡ ${data?.tool_name || '未知工具'}`,
+        sender: 'system',
+        timestamp,
+        type: 'tool_call_start',
+        metadata: {
+          toolName: data?.tool_name,
+          toolCallId: data?.tool_call_id,
+          arguments: data?.arguments,
+        },
+      };
+
+    case 'tool_call_result':
+      return {
+        id: `tool-result-${data?.tool_call_id || timestamp}`,
+        text: data?.result || '',
+        sender: 'system',
+        timestamp,
+        type: 'tool_call_result',
+        metadata: {
+          toolName: data?.tool_name,
+          toolCallId: data?.tool_call_id,
+          result: data?.result,
+        },
+      };
+
+    case 'tool_call_error':
+      return {
+        id: `tool-error-${data?.tool_call_id || timestamp}`,
+        text: `❌ ${data?.error || '工具执行失败'}`,
+        sender: 'system',
+        timestamp,
+        type: 'tool_call_error',
+        metadata: {
+          toolName: data?.tool_name,
+          toolCallId: data?.tool_call_id,
+          error: data?.error,
+        },
+      };
+
+    case 'thinking':
+      return {
+        id: `thinking-${taskId}-${timestamp}`,
+        text: data?.content || '',
+        sender: 'assistant',
+        timestamp,
+        type: 'thinking',
+        metadata: {
+          taskId,
+          agent: data?.agent,
+        },
+      };
+
+    case 'task_complete':
+      return {
+        id: `complete-${taskId}-${timestamp}`,
+        text: data?.summary || '任务已完成',
+        sender: 'system',
+        timestamp,
+        type: 'task_complete',
+        metadata: {
+          taskId,
+          taskStatus: data?.status === 'completed' ? 'completed' : 
+                      data?.status === 'failed' ? 'failed' : 'in_progress',
+        },
+      };
+
+    case 'status_update':
+      return {
+        id: `status-${taskId}-${timestamp}`,
+        text: data?.status || '',
+        sender: 'system',
+        timestamp,
+        type: 'status_update',
+        metadata: { taskId },
+      };
+
+    case 'conversation_error':
+      return {
+        id: `error-${taskId}-${timestamp}`,
+        text: `❌ ${data?.error || serverMsg.message || '发生错误'}`,
+        sender: 'system',
+        timestamp,
+        type: 'error',
+        metadata: { taskId, canRetry: true },
+      };
+
+    case 'conversation_result':
+      return {
+        id: `result-${taskId}-${timestamp}`,
+        text: data?.result || '',
+        sender: 'assistant',
+        timestamp,
+        type: 'result',
+        metadata: { taskId },
+      };
+
+    case 'context_loaded':
+      return {
+        id: `ctx-${taskId}-${timestamp}`,
+        text: `📂 已加载 ${data?.file_count || 0} 个文件`,
+        sender: 'system',
+        timestamp,
+        type: 'status_update',
+        metadata: { taskId },
+      };
+
+    case 'context_compressed':
+      return {
+        id: `compress-${taskId}-${timestamp}`,
+        text: `📦 上下文已压缩 (${data?.compressed_tokens || 0} tokens)`,
+        sender: 'system',
+        timestamp,
+        type: 'status_update',
+        metadata: { taskId },
+      };
+
+    default:
+      // 未知事件类型，降级显示
+      if (serverMsg.message) {
+        return {
+          id: `unknown-${timestamp}`,
+          text: serverMsg.message,
+          sender: serverMsg.from || 'system',
+          timestamp,
+          type: 'system',
+        };
+      }
+      return null;
+  }
+}

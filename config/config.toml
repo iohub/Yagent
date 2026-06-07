@@ -214,7 +214,7 @@ enabled = true
 [codebase.retrieval_pipeline.hybrid]
 # BM25 稀疏检索通道开关
 enable_bm25 = true
-# BM25 索引存储路径（相对于 embedding_db_uri）
+# BM25 索引存储路径（相对于 embedding 目录）
 bm25_index_path = "tantivy_bm25"
 # BM25 每通道召回数量
 bm25_top_k = 20

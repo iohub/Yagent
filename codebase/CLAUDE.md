@@ -89,7 +89,7 @@ All handlers use `State<Arc<StorageManager>>` for shared state. Response type is
 Config file at `~/.codeactor/config/config.toml`. Key sections:
 
 - `[http]` — `server_port`, `codebase_port` (default 12800)
-- `[codebase]` — `enable_embedding`, `embedding_db_uri`, `graph_db_uri`
+- `[codebase]` — `enable_embedding`
 - `[codebase.embedding]` — `model`, `api_token`, `api_base_url`, `dimensions`
 
 ## File Watching

@@ -248,29 +248,50 @@ func executeGetRepoOverview(globalCtx *globalctx.GlobalCtx) (interface{}, error)
 			result += fmt.Sprintf("  - %s (in %s, out_degree: %d)\n", fn.Name, fn.FilePath, fn.OutDegree)
 			if len(fn.Callers) > 0 {
 				result += "    Callers: "
-				for i, caller := range fn.Callers {
+				displayCount := len(fn.Callers)
+				const maxDisplayCallers = 20
+				if displayCount > maxDisplayCallers {
+					displayCount = maxDisplayCallers
+				}
+				for i := 0; i < displayCount; i++ {
 					if i > 0 {
 						result += ", "
 					}
-					result += fmt.Sprintf("%s (%s)", caller.FunctionName, caller.FilePath)
+					result += fmt.Sprintf("%s (%s)", fn.Callers[i].FunctionName, fn.Callers[i].FilePath)
+				}
+				if len(fn.Callers) > maxDisplayCallers {
+					result += fmt.Sprintf("\n    ... and %d more callers (use semantic_search or query_code_snippet for details)", len(fn.Callers)-maxDisplayCallers)
 				}
 				result += "\n"
 			}
 			if len(fn.Callees) > 0 {
 				result += "    Callees: "
-				for i, callee := range fn.Callees {
+				displayCount := len(fn.Callees)
+				const maxDisplayCallees = 20
+				if displayCount > maxDisplayCallees {
+					displayCount = maxDisplayCallees
+				}
+				for i := 0; i < displayCount; i++ {
 					if i > 0 {
 						result += ", "
 					}
-					result += fmt.Sprintf("%s (%s)", callee.FunctionName, callee.FilePath)
+					result += fmt.Sprintf("%s (%s)", fn.Callees[i].FunctionName, fn.Callees[i].FilePath)
+				}
+				if len(fn.Callees) > maxDisplayCallees {
+					result += fmt.Sprintf("\n    ... and %d more callees (use semantic_search or query_code_snippet for details)", len(fn.Callees)-maxDisplayCallees)
 				}
 				result += "\n"
 			}
 		}
 
 		result += "\nFile Skeletons:\n"
+		const maxSkeletonChars = 5000
 		for _, sk := range response.Data.FileSkeletons {
-			result += fmt.Sprintf("\nFile: %s (%s)\n```%s\n%s\n```\n", sk.Filepath, sk.Language, sk.Language, sk.SkeletonText)
+			skeletonText := sk.SkeletonText
+			if len(skeletonText) > maxSkeletonChars {
+				skeletonText = skeletonText[:maxSkeletonChars] + "\n// ... [skelton truncated due to length, use query_code_skeleton for full content]"
+			}
+			result += fmt.Sprintf("\nFile: %s (%s)\n```%s\n%s\n```\n", sk.Filepath, sk.Language, sk.Language, skeletonText)
 		}
 
 		return result, nil

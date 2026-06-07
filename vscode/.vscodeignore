@@ -13,3 +13,10 @@ Thumbs.db
 
 # Test files
 src/test/
+
+# Source files (not needed in production)
+*.ts
+!out/**
+
+# Include binary directory
+!bin/**

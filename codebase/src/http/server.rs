@@ -82,7 +82,13 @@ impl CodeBaseServer {
             return Err(format!("Process already bound to repo '{}'", existing).into());
         }
 
-        let project_id = format!("{:x}", md5::compute(self.repo_path.as_bytes()));
+        // 统一使用 {last_dir}_{hash} 格式作为 project_id
+        let repo_path_for_id = std::path::Path::new(&self.repo_path);
+        let last_dir = repo_path_for_id.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let hash_hex = format!("{:x}", md5::compute(self.repo_path.as_bytes()));
+        let project_id = format!("{}_{}", last_dir, hash_hex);
         tracing::info!("Initializing repo: {} (project_id: {})", self.repo_path, project_id);
 
         // 加载已有图谱或执行分析
@@ -120,7 +126,6 @@ impl CodeBaseServer {
             let config = self.storage.get_config();
             if config.as_ref().map_or(false, |c| c.codebase.enable_embedding) {
                 let config = config.unwrap();
-                let db_path = &config.codebase.embedding_db_uri;
                 // 使用项目特定子目录实现 BM25 索引隔离（与向量索引 collection 命名对齐）
                 let repo_path = std::path::Path::new(&self.repo_path);
                 let last_dir = repo_path.file_name()
@@ -128,8 +133,8 @@ impl CodeBaseServer {
                     .unwrap_or("unknown");
                 let hash = md5::compute(&self.repo_path);
                 let hash_hex = format!("{:x}", hash);
-                let tantivy_dir = std::path::Path::new(db_path)
-                    .join("tantivy_bm25")
+                let tantivy_dir = config
+                    .bm25_dir()
                     .join(format!("{}_{}", last_dir, hash_hex));
                 match TantivyBm25Index::open_or_create(&tantivy_dir) {
                     Ok(idx) => {
@@ -154,8 +159,7 @@ impl CodeBaseServer {
             tracing::info!("Embedding build skipped: {}", e);
         }
 
-       // 初始化 Commit Embedding Service
-        let project_id = format!("{:x}", md5::compute(self.repo_path.as_bytes()));
+       // 初始化 Commit Embedding Service (复用在顶部已计算的 project_id)
         if let Err(e) = self.init_commit_embedding_service(&project_id).await {
             tracing::warn!("Failed to initialize commit embedding service: {}", e);
         }
@@ -164,7 +168,8 @@ impl CodeBaseServer {
         if let Ok(config) = self.storage.get_config().ok_or("Config not set") {
             if config.codebase.enable_embedding {
                 let _embedding_config = &config.codebase.embedding;
-                let db_path = &config.codebase.embedding_db_uri;
+                let embedding_dir = config.embedding_dir();
+                let db_path_str = embedding_dir.to_string_lossy().to_string();
                 
                 // 生成 collection 名称
                 let path = std::path::Path::new(&self.repo_path);
@@ -176,7 +181,7 @@ impl CodeBaseServer {
                 let collection = format!("{}_{}", last_dir, hash_hex);
                 
                 // 创建 EmbeddingService
-                let embedding_service = match EmbeddingService::new(db_path, collection.clone(), Some(&config), None).await {
+                let embedding_service = match EmbeddingService::new(&db_path_str, collection.clone(), Some(&config), None).await {
                     Ok(s) => Some(Arc::new(s)),
                     Err(e) => {
                         tracing::warn!("Failed to create EmbeddingService for hybrid search: {}", e);
@@ -439,7 +444,12 @@ async fn get_status(
     State(storage): State<AppState>,
 ) -> Json<ApiResponse<StatusResponse>> {
     let repo_path = storage.storage.get_current_repo().unwrap_or_default();
-    let project_id = format!("{:x}", md5::compute(&repo_path));
+    let path = std::path::Path::new(&repo_path);
+    let last_dir = path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+    let hash_hex = format!("{:x}", md5::compute(&repo_path));
+    let project_id = format!("{}_{}", last_dir, hash_hex);
 
     let (total_functions, total_files) = storage.storage
         .get_graph_clone()
