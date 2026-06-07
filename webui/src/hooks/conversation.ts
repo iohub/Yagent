@@ -388,7 +388,59 @@ export const useChat = () => {
       if (data?.tool_name === 'session') {
         return;
       }
-      // 工具调用结果
+      // 处理 agent_exit 消息
+      // 注意：只有 Conductor（主控 agent）发送的 agent_exit 才表示任务真正结束
+      // 子 agent（如 Chat-Agent、Coding-Agent 等）的 agent_exit 只是完成子任务
+      if (data?.tool_name === 'agent_exit') {
+        // 只有 Conductor 发送的 agent_exit 才表示任务结束
+        if (message.from === 'Conductor') {
+          console.log('🏁 收到 Conductor 的 agent_exit 消息，任务完成');
+          
+          // 解析 result 获取完成任务的详细信息
+          let exitReason = '任务已完成';
+          try {
+            const exitData = data?.result ? JSON.parse(data.result) : null;
+            if (exitData?.finished === true) {
+              exitReason = exitData.reason || '任务已完成';
+              console.log('✅ 任务完成: ' + exitReason);
+            }
+          } catch (e) {
+            console.warn('⚠️ 解析 agent_exit result 失败:', e);
+          }
+          
+          // 更新任务状态为已完成
+          setTaskState(prev => ({
+            ...prev,
+            taskStatus: 'completed',
+            isTaskRunning: false,
+            taskProgress: 100,
+            currentStep: '任务已完成'
+          }));
+          
+          // 停止 loading 动画
+          setProcessing(false);
+          
+          // 添加任务完成通知消息
+          const completeMessage: Message = {
+            id: `task-complete-${Date.now()}`,
+            text: `✅ ${exitReason}`,
+            sender: 'system',
+            timestamp: Date.now(),
+            type: 'status_update',
+            metadata: {
+              taskId: data?.task_id || message.taskId
+            }
+          };
+          addMessageFromExtension(completeMessage);
+          
+          return;
+        } else {
+          // 子 agent 的 agent_exit，仅显示为普通工具调用结果
+          console.log('📌 收到子 agent (' + message.from + ') 的 agent_exit，仅记录不结束任务');
+        }
+      }
+      
+      // 工具调用结果（其他工具）
       const toolMessage: Message = {
         id: message.id || `tool-${Date.now()}`,
         text: data?.result || '',
