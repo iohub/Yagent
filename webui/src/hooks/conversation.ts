@@ -365,6 +365,28 @@ export const useChat = () => {
         addMessageFromExtension(resultMessage);
         return;
       }
+
+      // 兜底处理：当以上 assistant / user / result 分支都不匹配时，
+      // 直接基于 message.data 构建一条 result 消息（如纯字符串 data 场景）
+      if (message.data) {
+        const rawText = typeof message.data === 'string' ? message.data : String(message.data);
+        const contentText = normalizeAIResponseContent(rawText);
+
+        if (contentText.trim()) {
+          const fallbackMessage: Message = {
+            id: message.id || `result-${Date.now()}`,
+            text: contentText,
+            sender: message.from || 'assistant',
+            timestamp: Date.now(),
+            type: 'result',
+            metadata: {
+              taskId: message.taskId,
+            },
+          };
+          addMessageFromExtension(fallbackMessage);
+        }
+        return;
+      }
     }
 
     if (type === 'tool_call_start') {
