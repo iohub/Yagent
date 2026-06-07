@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            suffix: darwin-x64
+            goos: darwin
+            goarch: amd64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            suffix: darwin-arm64
+            goos: darwin
+            goarch: arm64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            suffix: linux-x64
+            goos: linux
+            goarch: amd64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "codebase"
+          key: ${{ matrix.target }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache: true
+
+      - name: Build Rust codebase (${{ matrix.target }})
+        working-directory: codebase
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CC_x86_64_apple_darwin: clang -arch x86_64
+          MACOSX_DEPLOYMENT_TARGET: "10.15"
+
+      - name: Prepare embedded binaries
+        run: |
+          mkdir -p dist/bin
+          cp codebase/target/${{ matrix.target }}/release/codeactor-codebase dist/bin/
+          chmod +x dist/bin/codeactor-codebase
+
+      - name: Build Go codeactor (${{ matrix.suffix }})
+        run: |
+          go build \
+            -ldflags="-s -w" \
+            -o codeactor \
+            .
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+
+      - name: Verify artifact
+        run: |
+          file codeactor
+          echo "---"
+          ls -lh codeactor
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeactor-${{ matrix.suffix }}
+          path: codeactor
+          if-no-files-found: error
+
+  create-release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure
+        run: |
+          find artifacts -type f -exec ls -lh {} \;
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/codeactor-darwin-x64/codeactor
+            artifacts/codeactor-darwin-arm64/codeactor
+            artifacts/codeactor-linux-x64/codeactor
+          generate_release_notes: true
+          fail_on_unmatched_files: true
