@@ -289,28 +289,27 @@ func ParseAgentEvent(envelope AgentEventEnvelope) (interface{}, error) {
   }
 
   data := envelope.Data
-  if data == nil {
+  if len(data) == 0 {
     return factory(), nil
   }
 
-  // 如果 Data 是字符串，先解析为 json.RawMessage
-  switch v := data.(type) {
-  case string:
-    target := factory()
-    if err := json.Unmarshal([]byte(v), target); err != nil {
-      return nil, err
-    }
-    return target, nil
-  default:
-    // 先序列化再反序列化到目标类型
-    raw, err := json.Marshal(data)
-    if err != nil {
+  // 如果 data 是 JSON 字符串 token，先解析为字符串再解析到目标类型
+  if data[0] == '"' {
+    var str string
+    if err := json.Unmarshal(data, &str); err != nil {
       return nil, err
     }
     target := factory()
-    if err := json.Unmarshal(raw, target); err != nil {
+    if err := json.Unmarshal([]byte(str), target); err != nil {
       return nil, err
     }
     return target, nil
   }
+
+  // 直接反序列化 raw message 到目标类型
+  target := factory()
+  if err := json.Unmarshal(data, target); err != nil {
+    return nil, err
+  }
+  return target, nil
 }

@@ -44,11 +44,12 @@ pub async fn trigger_embedding_build(
         return Err("Embedding is not enabled".to_string());
     }
 
-    let db_path = config.codebase.embedding_db_uri.clone();
+    let embedding_dir = config.embedding_dir();
+    let db_path_str = embedding_dir.to_string_lossy().to_string();
 
     let storage_clone = storage.clone();
     let repo_path_clone = repo_path.clone();
-    let db_path_clone = db_path.clone();
+    let db_path_clone = db_path_str.clone();
     let config_clone = config.clone();
     let shared_bm25_for_task = shared_bm25.clone();
 
@@ -210,7 +211,7 @@ pub async fn query_indexing_status(
 
     // Check projects.json
     let config = storage.storage.get_config().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let db_path = config.codebase.embedding_db_uri;
+    let db_path = config.embedding_dir().to_string_lossy().to_string();
     let projects_path = std::path::Path::new(&db_path).join("projects.json");
 
     if projects_path.exists() {

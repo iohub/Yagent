@@ -1,20 +1,7 @@
 use serde::Deserialize;
 use std::fs;
-use tracing::info;
-
-fn default_embedding_db_uri() -> String {
-    let home = dirs::home_dir().unwrap_or_default();
-    home.join(".codeactor/data/embedding")
-        .to_string_lossy()
-        .to_string()
-}
-
-fn default_graph_db_uri() -> String {
-    let home = dirs::home_dir().unwrap_or_default();
-    home.join(".codeactor/data/graph")
-        .to_string_lossy()
-        .to_string()
-}
+use std::path::PathBuf;
+use tracing::{info, warn};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -25,10 +12,6 @@ pub struct Config {
 pub struct CodeBaseConfig {
     #[serde(default)]
     pub enable_embedding: bool,
-    #[serde(default = "default_embedding_db_uri")]
-    pub embedding_db_uri: String,
-    #[serde(default = "default_graph_db_uri")]
-    pub graph_db_uri: String,
     pub embedding: EmbeddingConfig,
     #[serde(default)]
     pub repo_knowledge: RepoKnowledgeConfig,
@@ -92,7 +75,7 @@ fn default_retrieval_enabled() -> bool {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct HybridSearchConfig {
-    /// BM25 索引存储路径（相对于 embedding_db_uri）
+    /// BM25 索引存储路径（相对于 embedding 目录）
     #[serde(default = "default_bm25_index_path")]
     pub bm25_index_path: String,
     /// BM25 每通道召回数
@@ -233,6 +216,22 @@ fn default_graph_direction() -> String { "bidirectional".to_string() }
 fn default_graph_max_nodes() -> usize { 10 }
 
 impl Config {
+    /// 获取根数据目录路径
+    pub fn data_dir(&self) -> PathBuf {
+        let home = dirs::home_dir().expect("Could not find home directory");
+        home.join(".codeactor").join("data")
+    }
+
+    /// 获取 embedding 索引目录（全局共享）
+    pub fn embedding_dir(&self) -> PathBuf {
+        self.data_dir().join("embedding")
+    }
+
+    /// 获取图数据目录（项目隔离）
+    pub fn graph_dir(&self) -> PathBuf {
+        self.data_dir().join("graph")
+    }
+
     pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
         let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
         let config_path = home_dir.join(".codeactor/config/config.toml");
@@ -242,6 +241,24 @@ impl Config {
         let contents = fs::read_to_string(&config_path).map_err(|e| {
             format!("Failed to read config file at {:?}: {}", config_path, e)
         })?;
+
+        // 检测旧的已废弃配置字段并发出警告
+        if let Ok(value) = toml::from_str::<toml::Value>(&contents) {
+            if let Some(codebase) = value.get("codebase") {
+                if codebase.get("embedding_db_uri").is_some() {
+                    warn!(
+                        "Config field 'codebase.embedding_db_uri' is deprecated and will be ignored. \
+                        Embedding data is now stored under <data_dir>/embedding/ automatically."
+                    );
+                }
+                if codebase.get("graph_db_uri").is_some() {
+                    warn!(
+                        "Config field 'codebase.graph_db_uri' is deprecated and will be ignored. \
+                        Graph data is now stored under <data_dir>/graph/ automatically."
+                    );
+                }
+            }
+        }
 
         let config: Config = toml::from_str(&contents).map_err(|e| {
             format!("Failed to parse config file: {}", e)

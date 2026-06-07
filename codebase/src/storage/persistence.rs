@@ -30,7 +30,7 @@ struct ProjectsRegistry {
 impl PersistenceManager {
     pub fn new() -> Self {
         let config = Config::load().expect("Failed to load configuration");
-        let base_dir = PathBuf::from(config.codebase.graph_db_uri);
+        let base_dir = config.graph_dir();
         Self::with_storage_mode(StorageMode::default(), base_dir)
     }
 

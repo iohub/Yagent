@@ -120,7 +120,7 @@ impl CodeBaseServer {
             let config = self.storage.get_config();
             if config.as_ref().map_or(false, |c| c.codebase.enable_embedding) {
                 let config = config.unwrap();
-                let db_path = &config.codebase.embedding_db_uri;
+                let embedding_dir = config.embedding_dir();
                 // 使用项目特定子目录实现 BM25 索引隔离（与向量索引 collection 命名对齐）
                 let repo_path = std::path::Path::new(&self.repo_path);
                 let last_dir = repo_path.file_name()
@@ -128,7 +128,7 @@ impl CodeBaseServer {
                     .unwrap_or("unknown");
                 let hash = md5::compute(&self.repo_path);
                 let hash_hex = format!("{:x}", hash);
-                let tantivy_dir = std::path::Path::new(db_path)
+                let tantivy_dir = embedding_dir
                     .join("tantivy_bm25")
                     .join(format!("{}_{}", last_dir, hash_hex));
                 match TantivyBm25Index::open_or_create(&tantivy_dir) {
@@ -164,7 +164,8 @@ impl CodeBaseServer {
         if let Ok(config) = self.storage.get_config().ok_or("Config not set") {
             if config.codebase.enable_embedding {
                 let _embedding_config = &config.codebase.embedding;
-                let db_path = &config.codebase.embedding_db_uri;
+                let embedding_dir = config.embedding_dir();
+                let db_path_str = embedding_dir.to_string_lossy().to_string();
                 
                 // 生成 collection 名称
                 let path = std::path::Path::new(&self.repo_path);
@@ -176,7 +177,7 @@ impl CodeBaseServer {
                 let collection = format!("{}_{}", last_dir, hash_hex);
                 
                 // 创建 EmbeddingService
-                let embedding_service = match EmbeddingService::new(db_path, collection.clone(), Some(&config), None).await {
+                let embedding_service = match EmbeddingService::new(&db_path_str, collection.clone(), Some(&config), None).await {
                     Ok(s) => Some(Arc::new(s)),
                     Err(e) => {
                         tracing::warn!("Failed to create EmbeddingService for hybrid search: {}", e);

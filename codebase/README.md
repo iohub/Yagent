@@ -243,8 +243,6 @@ server_port = 12800
 
 [codebase]
 enable_embedding = true
-embedding_db_uri = "data/lancedb"
-graph_db_uri = ".codegraph_db"
 
 [codebase.embedding]
 model = "Qwen/Qwen3-Embedding-4B"

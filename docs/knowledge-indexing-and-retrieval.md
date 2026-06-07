@@ -1893,8 +1893,9 @@ server_port = 12800           # CodeBase HTTP 端口
 
 [codebase]
 enable_embedding = true       # 是否启用语义搜索
-embedding_db_uri = "data/lancedb"  # LanceDB 路径
-graph_db_uri = ".codegraph_db"     # 图谱持久化路径
+# 数据目录自动生成在 $HOME/.codeactor/data/
+#   embedding/ — 全局共享索引（BM25 + LanceDB 向量库）
+#   graph/     — 项目隔离数据（按 project_id 分目录）
 storage_mode = "both"         # JSON / Binary / Both
 ```
 

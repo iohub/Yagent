@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use notify::RecommendedWatcher;
 use parking_lot::RwLock;
 use anyhow::{Result, anyhow};
-use tracing::info;
+use tracing::{info, warn};
 use crate::codegraph::types::PetCodeGraph;
 use crate::cli::args::StorageMode;
 use crate::config::Config;
@@ -71,10 +71,10 @@ impl StorageManager {
     }
 
     pub fn with_config(storage_mode: StorageMode, config: Config) -> Self {
-        let base_dir = std::path::PathBuf::from(&config.codebase.graph_db_uri);
+        let graph_dir = config.graph_dir();
 
         Self {
-            persistence: Arc::new(PersistenceManager::with_storage_mode(storage_mode.clone(), base_dir)),
+            persistence: Arc::new(PersistenceManager::with_storage_mode(storage_mode.clone(), graph_dir)),
             incremental: Arc::new(IncrementalManager::new()),
             graph: Arc::new(RwLock::new(None)),
             storage_mode,
@@ -185,18 +185,29 @@ impl StorageManager {
             anyhow!("Config not set. Please call set_config() before initializing commit embedding service")
         })?;
 
-        let graph_db_uri = &config.codebase.graph_db_uri;
+        let embedding_dir = config.embedding_dir();
         let dimensions = config.codebase.embedding.dimensions.unwrap_or(2560) as i32;
 
         // 构建 LanceDB 连接路径
-        let db_path = format!("{}/commit_embeddings.lance", graph_db_uri.trim_end_matches('/'));
+        let db_path = embedding_dir.join("commit_embeddings.lance");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        // 检测旧路径中的遗留数据
+        let old_path = config.graph_dir().join("commit_embeddings.lance");
+        if old_path.exists() && !db_path.exists() {
+            warn!(
+                "Found old embedding data at {:?}. It should be moved to {:?} for the new version, \
+                or you can re-index the repository.",
+                old_path, db_path
+            );
+        }
 
         // 创建 LanceDB 连接
-        let connection = connect(&db_path).execute().await?;
+        let connection = connect(&db_path_str).execute().await?;
 
         info!(
             "Initializing CommitEmbeddingService for project: {}, dimensions: {}, db_path: {}",
-            project_id, dimensions, db_path
+            project_id, dimensions, db_path_str
         );
 
         // 创建服务（new 方法会自动初始化表）
@@ -240,18 +251,29 @@ impl StorageManager {
             anyhow!("Config not set. Please call set_config() before initializing repo knowledge service")
         })?;
 
-        let graph_db_uri = &config.codebase.graph_db_uri;
+        let embedding_dir = config.embedding_dir();
         let dimensions = config.codebase.embedding.dimensions.unwrap_or(2560) as i32;
 
         // 构建 LanceDB 连接路径
-        let db_path = format!("{}/repo_knowledge.lance", graph_db_uri.trim_end_matches('/'));
+        let db_path = embedding_dir.join("repo_knowledge.lance");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        // 检测旧路径中的遗留数据
+        let old_path = config.graph_dir().join("repo_knowledge.lance");
+        if old_path.exists() && !db_path.exists() {
+            warn!(
+                "Found old repo knowledge data at {:?}. It should be moved to {:?} for the new version, \
+                or you can re-index the repository.",
+                old_path, db_path
+            );
+        }
 
         // 创建 LanceDB 连接
-        let connection = connect(&db_path).execute().await?;
+        let connection = connect(&db_path_str).execute().await?;
 
         info!(
             "Initializing RepoKnowledgeService for project: {}, dimensions: {}, db_path: {}",
-            project_id, dimensions, db_path
+            project_id, dimensions, db_path_str
         );
 
         // 创建服务（new 方法会自动初始化表）

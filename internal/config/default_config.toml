@@ -257,11 +257,11 @@ keep_recent_rounds = 3
 # Whether to enable embedding vectorization (enables semantic search when enabled)
 enable_embedding = true
 
-# Embedding vector database storage path (relative to project root or absolute path)
-# embedding_db_uri = "~/.codeactor/data/embedding"
-
-# Graph database storage path
-# graph_db_uri = "~/.codeactor/data/graph"
+# ⚠️ 已废弃：embedding_db_uri 和 graph_db_uri 不再需要
+# 数据目录自动生成在 $HOME/.codeactor/data/ 下
+#   embedding/ — 全局共享索引（BM25 + LanceDB 向量库）
+#   graph/     — 项目隔离数据（按 project_id 分目录）
+# 如需自定义根目录，使用 [codebase].data_dir
 
 
 # ── Embedding Model Configuration ──
@@ -288,7 +288,7 @@ enabled = true
 [codebase.retrieval_pipeline.hybrid]
 # BM25 sparse retrieval channel toggle
 enable_bm25 = true
-# BM25 index storage path (relative to embedding_db_uri)
+# BM25 index storage path (relative to embedding directory)
 bm25_index_path = "tantivy_bm25"
 # BM25 top-k recall per channel
 bm25_top_k = 100
