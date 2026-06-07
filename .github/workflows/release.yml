@@ -124,11 +124,14 @@ jobs:
           echo "---"
           ls -lh codeactor
 
+      - name: Package artifact
+        run: zip "codeactor-${{ matrix.suffix }}.zip" codeactor
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: codeactor-${{ matrix.suffix }}
-          path: codeactor
+          path: codeactor-${{ matrix.suffix }}.zip
           if-no-files-found: error
 
   create-release:
@@ -150,8 +153,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/codeactor-darwin-x64/codeactor
-            artifacts/codeactor-darwin-arm64/codeactor
-            artifacts/codeactor-linux-x64/codeactor
+            artifacts/codeactor-darwin-x64/codeactor-darwin-x64.zip
+            artifacts/codeactor-darwin-arm64/codeactor-darwin-arm64.zip
+            artifacts/codeactor-linux-x64/codeactor-linux-x64.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
