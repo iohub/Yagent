@@ -84,7 +84,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   // Derived state
   const isAutoMode = currentMode === 'agent';
-  const projectName = 'claude-code-best';
+  const projectName = '';
 
   // Filtered file suggestions
   const filteredFiles = filePickerQuery
