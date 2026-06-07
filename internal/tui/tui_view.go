@@ -234,7 +234,7 @@ func (m model) renderAirlineStatusBar() string {
 	}
 
 	var rightSegs []segDef
-	
+
 	// Show provider/model info in both running and idle states
 	modelDisplay := ""
 	if m.currentProvider != "" && m.currentModel != "" {
@@ -315,7 +315,56 @@ func (m model) renderAirlineStatusBar() string {
 	return leftPart + fillerPart + endSep + rightPart
 }
 
+// renderWelcomePanel renders the welcome panel.
+// In the initial state (no log entries), it centers the logo on screen.
+// After tasks have run, it falls back to the original left/right layout.
 func (m model) renderWelcomePanel() string {
+	if len(m.logEntries) == 0 {
+		// Initial startup state: center logo in the viewport
+		vpHeight := m.termHeight - m.computeFooterHeight()
+		if vpHeight < 8 {
+			vpHeight = 8
+		}
+		width := m.termWidth
+		if width <= 0 {
+			width = 80
+		}
+		return m.renderCenteredStartupScreen(width, vpHeight)
+	}
+	// After tasks have run: restore the original layout
+	return m.renderWelcomePanelLayout()
+}
+
+// renderCenteredStartupScreen renders the startup screen with logo centered
+// both horizontally and vertically in the available viewport.
+func (m model) renderCenteredStartupScreen(width, height int) string {
+	banner := renderBanner()
+
+	cwd := m.projectDir
+	home, _ := os.UserHomeDir()
+	if strings.HasPrefix(cwd, home) {
+		cwd = "~" + strings.TrimPrefix(cwd, home)
+	}
+
+	var block strings.Builder
+	block.WriteString(banner)
+	block.WriteString("\n")
+	block.WriteString(welcomeDimStyle.Render("─── A Repository-Aware, Self-Evolving Agent"))
+	block.WriteString("\n\n")
+	block.WriteString(welcomeSubStyle.Render(cwd))
+
+	return lipgloss.Place(
+		width,
+		height,
+		lipgloss.Center,
+		lipgloss.Center,
+		block.String(),
+	)
+}
+
+// renderWelcomePanelLayout renders the original left/right panel layout.
+// This is used when there are log entries (tasks have run).
+func (m model) renderWelcomePanelLayout() string {
 	// Build left panel: logo + cwd
 	var left strings.Builder
 	left.WriteString(renderBanner())
