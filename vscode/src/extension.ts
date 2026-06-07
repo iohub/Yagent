@@ -107,7 +107,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
         backendProcess = cp.spawn(binaryPath, ['http', '--port', `${port}`], {
           stdio: ['ignore', 'pipe', 'pipe'],
-          detached: false,
+          detached: true,
           cwd,
           env,
         });
@@ -514,12 +514,18 @@ export function deactivate() {
         console.warn('[CodeActor] Failed to kill backend process:', e);
       }
     } else {
+      // Unix/macOS: 先优雅关闭单进程，再向整个进程组发信号
       backendProcess.kill('SIGTERM');
+      try {
+        process.kill(-pid, 'SIGTERM');
+      } catch (e) { /* 进程组可能已不存在 */ }
+
       setTimeout(() => {
         try {
           if (backendProcess) {
             backendProcess.kill('SIGKILL');
           }
+          process.kill(-pid, 'SIGKILL');
         } catch (e) { /* 进程可能已经退出 */ }
       }, 3000);
     }
