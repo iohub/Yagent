@@ -483,7 +483,8 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({ messages, isProcessi
       if (message.type === 'tool_call_start' && message.metadata?.toolCallId) {
         const { toolCallId, toolName } = message.metadata;
         const args = message.metadata.input || message.metadata.arguments || {};
-        newToolCallStates.set(toolCallId, { toolCallId, toolName: toolName || 'Unknown Tool', status: 'running', startTime: message.timestamp, arguments: args });
+        const isExit = (toolName || 'Unknown Tool') === 'agent_exit';
+        newToolCallStates.set(toolCallId, { toolCallId, toolName: toolName || 'Unknown Tool', status: isExit ? 'completed' : 'running', startTime: message.timestamp, endTime: isExit ? message.timestamp : undefined, arguments: args });
       }
       if (message.type === 'tool_call_result' && message.metadata?.toolCallId) {
         const existing = newToolCallStates.get(message.metadata.toolCallId);
@@ -497,7 +498,8 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({ messages, isProcessi
         if (message.type === 'tool_call_start') {
           const toolName = (message.data as any)?.tool_name || 'Unknown Tool';
           const args = (message.data as any)?.input || (message.data as any)?.arguments || {};
-          newToolCallStates.set(message.id, { toolCallId: message.id, toolName, status: 'running', startTime: message.timestamp, arguments: args });
+          const isExit = toolName === 'agent_exit';
+          newToolCallStates.set(message.id, { toolCallId: message.id, toolName, status: isExit ? 'completed' : 'running', startTime: message.timestamp, endTime: isExit ? message.timestamp : undefined, arguments: args });
           pendingTools.set(toolName, message.id);
         }
         if (message.type === 'tool_call_result') {
