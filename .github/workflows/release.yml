@@ -124,18 +124,15 @@ jobs:
           echo "---"
           ls -lh codeactor
 
-      - name: Package artifact
-        run: zip "codeactor-${{ matrix.suffix }}.zip" codeactor
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: codeactor-${{ matrix.suffix }}
-          path: codeactor-${{ matrix.suffix }}.zip
+          path: codeactor
           if-no-files-found: error
 
   centos7-build:
-    name: Build centos7-x64 (static musl)
+    name: Build linux-x64 (musl static)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -202,7 +199,7 @@ jobs:
           chmod +x dist/bin/codeactor-codebase dist/bin/fzf dist/bin/rg
           ls -la dist/bin/
 
-      - name: Build Go codeactor (centos7-x64)
+      - name: Build Go codeactor (linux-x64-musl)
         run: |
           go build \
             -ldflags="-s -w" \
@@ -232,14 +229,11 @@ jobs:
           echo "---"
           ls -lh codeactor
 
-      - name: Package artifact
-        run: zip "codeactor-linux-x64-centos7.zip" codeactor dist/bin/codeactor-codebase dist/bin/fzf dist/bin/rg
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codeactor-linux-x64-centos7
-          path: codeactor-linux-x64-centos7.zip
+          name: codeactor-linux-x64-musl
+          path: codeactor
           if-no-files-found: error
 
   create-release:
@@ -253,9 +247,23 @@ jobs:
         with:
           path: artifacts
 
-      - name: Display structure
+      - name: Package release assets
         run: |
+          set -euo pipefail
+          echo "=== Artifacts structure ==="
           find artifacts -type f -exec ls -lh {} \;
+          echo ""
+          echo "=== Packaging release assets ==="
+          for dir in artifacts/*/; do
+            name="$(basename "$dir")"
+            cd "artifacts/$name"
+            zip "${name}.zip" codeactor
+            cd ../..
+            echo "Created artifacts/${name}/${name}.zip"
+          done
+          echo ""
+          echo "=== Release assets ==="
+          find artifacts -type f -name "*.zip" -exec ls -lh {} \;
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
@@ -264,6 +272,6 @@ jobs:
             artifacts/codeactor-darwin-x64/codeactor-darwin-x64.zip
             artifacts/codeactor-darwin-arm64/codeactor-darwin-arm64.zip
             artifacts/codeactor-linux-x64/codeactor-linux-x64.zip
-            artifacts/codeactor-linux-x64-centos7/codeactor-linux-x64-centos7.zip
+            artifacts/codeactor-linux-x64-musl/codeactor-linux-x64-musl.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
