@@ -134,11 +134,119 @@ jobs:
           path: codeactor-${{ matrix.suffix }}.zip
           if-no-files-found: error
 
+  centos7-build:
+    name: Build centos7-x64 (static musl)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install musl tools and build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools perl make pkg-config
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "codebase"
+          key: musl
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache: true
+
+      - name: Build Rust codebase (static musl)
+        working-directory: codebase
+        run: |
+          export CC_x86_64_unknown_linux_musl=musl-gcc
+          export CXX_x86_64_unknown_linux_musl=musl-g++
+          cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Prepare embedded binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin
+
+          # Copy codeactor-codebase (musl static)
+          cp codebase/target/x86_64-unknown-linux-musl/release/codeactor-codebase dist/bin/
+
+          # Download fzf
+          echo "Downloading fzf..."
+          curl -fLo /tmp/fzf.tar.gz "https://github.com/junegunn/fzf/releases/download/v0.73.1/fzf-0.73.1-linux_amd64.tar.gz"
+          tar -xzf /tmp/fzf.tar.gz -C /tmp
+          mv /tmp/fzf dist/bin/fzf
+          rm -f /tmp/fzf.tar.gz
+
+          # Download ripgrep (musl build for static linking)
+          echo "Downloading ripgrep..."
+          curl -fLo /tmp/rg.tar.gz "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz"
+          mkdir -p /tmp/rg_extract
+          tar -xzf /tmp/rg.tar.gz -C /tmp/rg_extract
+          find /tmp/rg_extract -name rg -type f -exec mv {} dist/bin/rg \;
+          rm -rf /tmp/rg_extract /tmp/rg.tar.gz
+
+          chmod +x dist/bin/codeactor-codebase dist/bin/fzf dist/bin/rg
+          ls -la dist/bin/
+
+      - name: Build Go codeactor (centos7-x64)
+        run: |
+          go build \
+            -ldflags="-s -w" \
+            -o codeactor \
+            .
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+
+      - name: Verify static linking
+        run: |
+          echo "=== Verifying static linking ==="
+          file dist/bin/codeactor-codebase
+          echo ""
+          echo "=== Checking for dynamic symbols ==="
+          if command -v readelf &> /dev/null; then
+            readelf -d dist/bin/codeactor-codebase 2>&1 | head -20 || echo "(no dynamic section = fully static)"
+          fi
+          if command -v ldd &> /dev/null; then
+            ldd dist/bin/codeactor-codebase 2>&1 | head -10 || true
+          fi
+
+      - name: Verify artifact
+        run: |
+          file codeactor
+          echo "---"
+          ls -lh codeactor
+
+      - name: Package artifact
+        run: zip "codeactor-linux-x64-centos7.zip" codeactor dist/bin/codeactor-codebase dist/bin/fzf dist/bin/rg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeactor-linux-x64-centos7
+          path: codeactor-linux-x64-centos7.zip
+          if-no-files-found: error
+
   create-release:
     name: Create Release
-    needs: build
+    needs: [build, centos7-build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -156,5 +264,6 @@ jobs:
             artifacts/codeactor-darwin-x64/codeactor-darwin-x64.zip
             artifacts/codeactor-darwin-arm64/codeactor-darwin-arm64.zip
             artifacts/codeactor-linux-x64/codeactor-linux-x64.zip
+            artifacts/codeactor-linux-x64-centos7/codeactor-linux-x64-centos7.zip
           generate_release_notes: true
           fail_on_unmatched_files: true

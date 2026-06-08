@@ -60,5 +60,8 @@ anyhow = "1"
 # BM25 full-text search
 tantivy = "0.22"
 
+# 强制 openssl-sys 从源码编译 OpenSSL，支持 musl 静态链接
+openssl-sys = { version = "0.9", features = ["vendored"] }
+
 [dev-dependencies]
 tempfile = "3.8"
