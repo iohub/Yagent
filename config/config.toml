@@ -29,7 +29,7 @@ model = "qwen3-30b-a3b"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "http://127.0.0.1:8000"
-api_key = "your-key"
+api_key = "dummy-key"
 
 # ── Agent 级 LLM（优先级: agent > agents > global）──
 [agents.llm.conductor]

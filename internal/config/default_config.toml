@@ -6,9 +6,8 @@
 
 # ── 全局 LLM ──
 [global.llm]
-use_provider = "aliyun"
+use_provider = "deepseek_v4_pro"
 
-# ── LLM 提供商（仅 3 个必要示例）──
 [global.llm.providers.aliyun]
 model = "qwen3-coder-plus"
 temperature = 0.0
@@ -25,11 +24,11 @@ api_key = "your-key"
 reasoning_effort = "max"
 
 [global.llm.providers.local]
-model = "qwen3-coder-plus"
+model = "Qwen3-30B-A3B"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "http://127.0.0.1:8000"
-api_key = "your-key"
+api_key = "dummy-key"
 
 # ── Agent 级 LLM（优先级: agent > agents > global）──
 [agents.llm.conductor]
