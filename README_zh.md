@@ -142,14 +142,18 @@
 
 ## 🚀 快速开始
 
-### 前置要求
+### 下载预编译包（推荐）
+
+从 [GitHub Releases 页面](https://github.com/iohub/codeactor-agent/releases) 下载最新的 all-in-one 二进制包。包内已集成 **codebase 代码智能引擎**（Rust）、**fzf**（模糊搜索）和 **ripgrep**（正则搜索）——所有依赖一应俱全。解压后直接运行 `./codeactor`，零依赖、零配置，开箱即用。
+
+### 前置要求（从源码编译）
 - Go 1.24+
 - `ripgrep`（全文正则搜索）
 
-### 安装
+### 从源码编译
 
 ```bash
-git clone https://github.com/your-org/codeactor-agent.git
+git clone https://github.com/iohub/codeactor-agent.git
 cd codeactor-agent
 go build -o codeactor .
 ```
@@ -183,14 +187,6 @@ max_tokens = 23000
 ./codeactor http
 ```
 
-### Node.js CLI 客户端
-
-```bash
-cd clients/nodejs-cli && npm install
-node index.js run <项目目录> "你的任务描述"
-node index.js chat <task-id> <项目目录>     # 继续对话
-```
-
 ---
 
 ## 📖 文档
@@ -208,9 +204,9 @@ node index.js chat <task-id> <项目目录>     # 继续对话
 
 我们欢迎任何形式的贡献——Bug 报告、功能建议、文档完善、代码贡献。
 
-- 🐛 [提交 Issue](https://github.com/your-org/codeactor-agent/issues)
-- 🔀 [提交 Pull Request](https://github.com/your-org/codeactor-agent/pulls)
-- 💬 [参与讨论](https://github.com/your-org/codeactor-agent/discussions)
+- 🐛 [提交 Issue](https://github.com/iohub/codeactor-agent/issues)
+- 🔀 [提交 Pull Request](https://github.com/iohub/codeactor-agent/pulls)
+- 💬 [参与讨论](https://github.com/iohub/codeactor-agent/discussions)
 
 ---
 

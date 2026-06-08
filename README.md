@@ -142,14 +142,18 @@ User Query
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Download Pre-built Binary (Recommended)
+
+Download the latest all-in-one release for your platform from the [GitHub Releases page](https://github.com/iohub/codeactor-agent/releases). The binary bundles the **codebase intelligence engine** (Rust), **fzf** (fuzzy finder), and **ripgrep** (regex search) — everything you need is included. Just extract and run `./codeactor` — zero dependencies, zero configuration.
+
+### Prerequisites (for building from source)
 - Go 1.24+
 - `ripgrep` (full-text regex search)
 
-### Install
+### Build from Source
 
 ```bash
-git clone https://github.com/your-org/codeactor-agent.git
+git clone https://github.com/iohub/codeactor-agent.git
 cd codeactor-agent
 go build -o codeactor .
 ```
@@ -183,14 +187,6 @@ max_tokens = 23000
 ./codeactor http
 ```
 
-### Node.js CLI Client
-
-```bash
-cd clients/nodejs-cli && npm install
-node index.js run <project-dir> "your task description"
-node index.js chat <task-id> <project-dir>     # continue conversation
-```
-
 ---
 
 ## 📖 Documentation
@@ -208,9 +204,9 @@ node index.js chat <task-id> <project-dir>     # continue conversation
 
 We welcome all contributions — bug reports, feature requests, docs, and code.
 
-- 🐛 [Open an Issue](https://github.com/your-org/codeactor-agent/issues)
-- 🔀 [Submit a PR](https://github.com/your-org/codeactor-agent/pulls)
-- 💬 [Join the Discussion](https://github.com/your-org/codeactor-agent/discussions)
+- 🐛 [Open an Issue](https://github.com/iohub/codeactor-agent/issues)
+- 🔀 [Submit a PR](https://github.com/iohub/codeactor-agent/pulls)
+- 💬 [Join the Discussion](https://github.com/iohub/codeactor-agent/discussions)
 
 ---
 
