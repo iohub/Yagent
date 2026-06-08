@@ -216,14 +216,18 @@ enabled = true
 enable_bm25 = true
 # BM25 索引存储路径（相对于 embedding 目录）
 bm25_index_path = "tantivy_bm25"
-# BM25 每通道召回数量
-bm25_top_k = 20
-# Vector 每通道召回数量
-vector_top_k = 20
-# RRF（Reciprocal Rank Fusion）融合参数 k
+# BM25 通道每路召回数，推荐 100（保证 RRF 融合有足够候选池）
+bm25_top_k = 100
+# 向量通道每路召回数，推荐 100
+vector_top_k = 100
+# RRF 融合常数，论文标准值 60
 rrf_k = 60
-# RRF 融合后保留的 Top-K 数量
+# RRF 融合后保留候选数，推荐 20
 rrf_top_k = 20
+# 短代码惩罚阈值，低于此值的代码块受分数衰减（降低噪声片段影响）
+short_code_threshold = 30
+# 短代码惩罚因子，0.5 表示温和衰减
+short_code_penalty = 0.5
 
 # ----------------------------------------------------------
 # Reranker 重排配置

@@ -139,7 +139,7 @@ max_tokens = 3000
 api_base_url = "https://api.deepseek.com/v1"
 api_key = "your-key"
 
-# DeepSeek V4 Pro (用于 thinking/deepthinking 工具，启用 max 思考模式)
+# DeepSeek V4 Pro (for thinking/deepthinking tools, enables max reasoning mode)
 [global.llm.providers.deepseek_v4_pro]
 model = "deepseek-v4-pro"
 temperature = 0.0
@@ -148,7 +148,7 @@ api_base_url = "https://api.deepseek.com/v1"
 api_key = "your-key"
 reasoning_effort = "max"
 
-# DeepSeek V4 Flash (用于 conductor，启用 high 思考模式)
+# DeepSeek V4 Flash (for conductor, enables high reasoning mode)
 [global.llm.providers.ds4_flash]
 model = "ds4-flash"
 temperature = 0.0
@@ -257,11 +257,11 @@ keep_recent_rounds = 3
 # Whether to enable embedding vectorization (enables semantic search when enabled)
 enable_embedding = true
 
-# ⚠️ 已废弃：embedding_db_uri 和 graph_db_uri 不再需要
-# 数据目录自动生成在 $HOME/.codeactor/data/ 下
-#   embedding/ — 全局共享索引（BM25 + LanceDB 向量库）
-#   graph/     — 项目隔离数据（按 project_id 分目录）
-# 如需自定义根目录，使用 [codebase].data_dir
+# ⚠️ Deprecated: embedding_db_uri and graph_db_uri are no longer needed
+# Data directories are auto-created under $HOME/.codeactor/data/
+#   embedding/ — Global shared index (BM25 + LanceDB vector store)
+#   graph/     — Project-scoped data (organized by project_id)
+# To customize the root directory, use [codebase].data_dir
 
 
 # ── Embedding Model Configuration ──
@@ -284,24 +284,31 @@ enabled = true
 # min_code_block_length = 16
 
 
-# ── Hybrid Retrieval (Hybrid Search: BM25 + Vector + RRF) Configuration ──
+# ═══════════════════════════════════════════════════════════════
+# Hybrid Search Configuration
+# Controls the dual-channel fusion strategy of BM25 sparse retrieval
+# and dense vector retrieval.
+# ═══════════════════════════════════════════════════════════════
+# These parameters are pre-set to recommended optimal values
+# and generally do not need modification.
 [codebase.retrieval_pipeline.hybrid]
 # BM25 sparse retrieval channel toggle
 enable_bm25 = true
 # BM25 index storage path (relative to embedding directory)
 bm25_index_path = "tantivy_bm25"
-# BM25 top-k recall per channel
+# BM25 recall candidates per channel (higher = better recall, slower). Recommended: 100
 bm25_top_k = 100
-# Vector top-k recall per channel
+# Dense vector recall candidates per channel. Recommended: 100
 vector_top_k = 100
-# RRF (Reciprocal Rank Fusion) fusion parameter k
+# RRF (Reciprocal Rank Fusion) constant k, controls rank difference impact.
+# Higher values reduce rank difference influence; lower values favor top-ranked docs. Recommended paper value: 60
 rrf_k = 60
-# Top-K results retained after RRF fusion
+# Candidates retained after RRF fusion, for downstream reranker or graph expansion. Recommended: 20
 rrf_top_k = 20
-# Short code block threshold (blocks shorter than this are penalized during fusion)
-# short_code_threshold = 30
-# Short code block penalty factor (0.0~1.0)
-# short_code_penalty = 0.5
+# Short code block penalty threshold (characters). Blocks shorter than this get score penalty to reduce noise.
+short_code_threshold = 30
+# Short code block penalty factor (0.0~1.0). 0.0=full penalty, 1.0=no penalty. Recommended: 0.5 (gentle penalty)
+short_code_penalty = 0.5
 
 
 # ── Reranker Re-ranking Configuration (Optional)──
