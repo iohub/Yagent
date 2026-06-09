@@ -158,9 +158,9 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		if globalCtx.RepoSummary != "" {
-			task = fmt.Sprintf("%s\n\n#Repository Context:\n%s", task, globalCtx.RepoSummary)
-		}
+		// RepoSummary is no longer injected into the task here — it is now passed
+		// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt,
+		// keeping the user message (task) variable and the system prompt cacheable.
 		result, err := coding.Run(ctx, task)
 		if err != nil {
 			return nil, err
@@ -223,10 +223,8 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 			if !ok {
 				return nil, fmt.Errorf("task parameter required")
 			}
-			// 注入仓库摘要上下文（如果有）
-			if globalCtx.RepoSummary != "" {
-				task = fmt.Sprintf("%s\n\n#Repository Context (for reference only - focus on browser tasks):\n%s", task, globalCtx.RepoSummary)
-			}
+			// RepoSummary is no longer injected into the task here — it is now passed
+			// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt.
 			result, err := browser.Run(ctx, task)
 			if err != nil {
 				return nil, err
@@ -418,6 +416,8 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		commitManager = NewCommitManager(cfg, engine, nil, globalCtx)
 	}
 
+	allAdapters := append(adapters, delegateAdapters...)
+
 	self = &ConductorAgent{
 		BaseAgent:          BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
 		RepoAgent:          repo,
@@ -427,7 +427,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		DevOpsAgent:        devops,
 		BrowserAgent:       browser,
 		GlobalCtx:          globalCtx,
-		Adapters:           append(adapters, delegateAdapters...),
+		Adapters:           allAdapters,
 		maxSteps:           maxSteps,
 		metaRetryCount:     metaRetryCount,
 		toolDefMap:         toolDefMap,
@@ -445,6 +445,22 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		circuitBreakerResetTimeout: cfg.LLM.CircuitBreakerResetTimeout,
 		// consecutiveLLMFailures 和 lastLLMFailureTime 保持零值即可
 	}
+
+	// 计算并记录 Tool Definitions 哈希，用于验证 Prompt Cache 一致性
+	toolDefsForHash := make([]llm.ToolDef, len(allAdapters))
+	for i, ad := range allAdapters {
+		toolDefsForHash[i] = ad.ToToolDef()
+	}
+	toolHash := tools.ComputeToolDefsHash(toolDefsForHash)
+	names := make([]string, len(toolDefsForHash))
+	for i, td := range toolDefsForHash {
+		names[i] = td.Function.Name
+	}
+	slog.Info("Conductor tool definitions initialized",
+		"hash", toolHash,
+		"tool_count", len(toolDefsForHash),
+		"tool_names", names)
+
 	return self
 }
 
@@ -870,6 +886,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 	for i, ad := range a.Adapters {
 		toolDefs[i] = ad.ToToolDef()
 	}
+	tools.SortToolDefs(toolDefs)
 
 	// Publish model info so the TUI can display it in the status bar.
 	if a.Publisher != nil {

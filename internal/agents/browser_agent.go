@@ -146,6 +146,7 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 		Publisher:    a.Publisher,
 		AgentName:    "browser",
 		StopOnFinish: true, // agent_exit 时立即返回
+		RepoContext:  a.GlobalCtx.RepoSummary,
 	}
 
 	// 运行 Agent 循环

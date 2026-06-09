@@ -2,8 +2,11 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"codeactor/internal/llm"
 )
@@ -95,6 +98,30 @@ func SetGuardOnAdapters(adapters []*Adapter, guard *WorkspaceGuard) {
 	for _, ad := range adapters {
 		ad.SetGuard(guard)
 	}
+}
+
+// SortToolDefs sorts tool definitions alphabetically by function name.
+// This ensures deterministic ordering for LLM prompt cache stability —
+// the same set of tools always produces the same byte sequence.
+func SortToolDefs(defs []llm.ToolDef) {
+	sort.Slice(defs, func(i, j int) bool {
+		return defs[i].Function.Name < defs[j].Function.Name
+	})
+}
+
+// ComputeToolDefsHash returns a hex-encoded SHA256 hash (first 8 bytes) of the
+// sorted tool definitions. Used for logging and verifying prompt cache consistency
+// across sessions and after custom agent registration.
+func ComputeToolDefsHash(defs []llm.ToolDef) string {
+	sorted := make([]llm.ToolDef, len(defs))
+	copy(sorted, defs)
+	SortToolDefs(sorted)
+	data, err := json.Marshal(sorted)
+	if err != nil {
+		return "error"
+	}
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:8])
 }
 
 // ToToolDef converts the adapter to an llm.ToolDef definition
