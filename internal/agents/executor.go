@@ -28,6 +28,10 @@ type ExecutorConfig struct {
 	// SystemAsHuman places the system prompt in a Human role message instead of System.
 	// Used by RepoAgent which prefers this pattern.
 	SystemAsHuman bool
+	// RepoContext is appended to the system prompt (after the base prompt and environment info).
+	// It contains stable repository summary context that changes infrequently, making it ideal
+	// for the system prompt where it benefits from LLM prompt caching.
+	RepoContext string
 	// OnToolResult is an optional callback invoked after each tool executes.
 	// Used by Conductor for special handling (e.g. delegate_repo → RepoSummary).
 	OnToolResult func(toolName string, result string)
@@ -54,9 +58,13 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		systemRole = llm.RoleUser
 	}
 
+	systemPrompt := cfg.SystemPrompt
+	if cfg.RepoContext != "" {
+		systemPrompt += "\n\n" + cfg.RepoContext
+	}
 	systemMsg := llm.Message{
 		Role:    systemRole,
-		Content: cfg.SystemPrompt,
+		Content: systemPrompt,
 	}
 	userMsg := llm.Message{
 		Role:    llm.RoleUser,
@@ -71,6 +79,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	for i, ad := range cfg.Adapters {
 		toolDefs[i] = ad.ToToolDef()
 	}
+	tools.SortToolDefs(toolDefs)
 
 	opts := &llm.CallOptions{}
 
