@@ -527,7 +527,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	ti.SetWidth(60)
 	ti.SetHeight(3)
 	ti.ShowLineNumbers = false
-	ti.SetVirtualCursor(false) // 禁用虚拟光标避免闪烁，让终端管理真实光标
+	ti.SetVirtualCursor(true) // 启用虚拟光标，显示编辑位置
 
 	// Text style (lipgloss v2)
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
