@@ -508,7 +508,7 @@ func renderHistoryTitleBar(m *model, width int) string {
 	totalPages := m.totalNumPages()
 	pageNum := m.historyPage + 1 // 1-based for display
 	titleText := fmt.Sprintf(" History          Page %d/%d ", pageNum, totalPages)
-	rightText := "esc: back  enter: load"
+	rightText := "esc: back  enter: load  d: delete"
 
 	// Calculate available width for right text
 	contentWidth := width - 2 // account for border
