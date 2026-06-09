@@ -1023,6 +1023,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
+			// ── Collapse toggle ──
+			case "ctrl+p":
+				m.toggleCollapseAtViewport()
+				return m, nil
+
 			// ── Misc ──
 			case "ctrl+l":
 				m.toggleLanguage()

@@ -337,10 +337,19 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	if entry.eventType == "ai_response" && m.glamourRenderer != nil {
 		rendered, err := m.glamourRenderer.Render(entry.content)
 		if err == nil {
-			entry.setCachedRender(rendered, width)
-			return rendered
+			collapsed, _ := collapseContent(rendered, entry, collapseMaxLines)
+			entry.setCachedRender(collapsed, width)
+			return collapsed
 		}
 	}
+
+	// User message with collapse support
+	if entry.eventType == "user_message" {
+		rendered := renderUserMessageBoxCollapsible(entry.content, width, entry)
+		entry.setCachedRender(rendered, width)
+		return rendered
+	}
+
 	// Fallback to simple text rendering
 	formatted := formatLogEntry(*entry, width)
 	entry.setCachedRender(formatted, width)
@@ -547,6 +556,10 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			entry.content = s
 		} else {
 			entry.content = fmt.Sprintf("%v", event.Content)
+		}
+		// Pre-collapse long content to avoid first-frame flash
+		if strings.Count(entry.content, "\n") >= collapseMaxLines {
+			entry.collapsed = true
 		}
 	case "tool_call_start":
 		if m, ok := event.Content.(map[string]interface{}); ok {
@@ -943,6 +956,91 @@ func renderUserMessageBox(content string, maxWidth int) string {
 	return topLine + "\n" + strings.Join(interior, "\n") + "\n" + bottomLine
 }
 
+// renderUserMessageBoxCollapsible renders a user message box with collapse support.
+// When the message exceeds collapseMaxLines and the entry is collapsed, only the
+// first collapseMaxLines are shown with an expand hint inside the box.
+func renderUserMessageBoxCollapsible(content string, maxWidth int, entry *logEntry) string {
+	boxWidth := maxWidth - 4
+	if boxWidth < 20 {
+		// Very narrow terminal: no collapse support, just use simple rendering
+		return renderUserMessageBox(content, maxWidth)
+	}
+
+	innerWidth := boxWidth - 2
+	if innerWidth < 4 {
+		innerWidth = 4
+	}
+	textWidth := innerWidth - 2
+
+	// Wrap the message content
+	var msgLines []string
+	for _, para := range strings.Split(content, "\n") {
+		if para == "" {
+			msgLines = append(msgLines, "")
+		} else {
+			wrapped := wrapText(para, textWidth)
+			msgLines = append(msgLines, strings.Split(wrapped, "\n")...)
+		}
+	}
+	if len(msgLines) == 0 {
+		msgLines = []string{""}
+	}
+
+	// Apply collapse if entry is collapsed and content exceeds threshold
+	hidden := 0
+	if len(msgLines) > collapseMaxLines && entry.collapsed {
+		hidden = len(msgLines) - collapseMaxLines
+		msgLines = msgLines[:collapseMaxLines]
+	}
+
+	// Build the textbox
+	label := " You "
+	labelWidth := lipgloss.Width(label)
+	dashCount := boxWidth - labelWidth - 3
+	if dashCount < 0 {
+		dashCount = 0
+	}
+	topLine := userMsgBoxBorderStyle.Render("┌─") +
+		userPrefixStyle.Render(label) +
+		userMsgBoxBorderStyle.Render(strings.Repeat("─", dashCount)+"┐")
+
+	var interior []string
+	for _, line := range msgLines {
+		lineWidth := lipgloss.Width(line)
+		padding := textWidth - lineWidth
+		if padding < 0 {
+			padding = 0
+		}
+		interiorLine := userMsgBoxBorderStyle.Render("│") +
+			userMsgBoxTextStyle.Render(" "+line+strings.Repeat(" ", padding)+" ") +
+			userMsgBoxBorderStyle.Render("│")
+		interior = append(interior, interiorLine)
+	}
+
+	// Add collapse hint inside the box if collapsed
+	if hidden > 0 {
+		hintText := fmt.Sprintf(" ▼ Expand (%d more lines) — Ctrl+P ", hidden)
+		hintWidth := lipgloss.Width(hintText)
+		hintPadding := textWidth - hintWidth
+		if hintPadding < 0 {
+			hintPadding = 0
+		}
+		// Separator line
+		sepLine := userMsgBoxBorderStyle.Render("├") +
+			collapseHintLineStyle.Render(strings.Repeat("╌", textWidth+2)) +
+			userMsgBoxBorderStyle.Render("┤")
+		// Hint line
+		hintLine := userMsgBoxBorderStyle.Render("│") +
+			collapseHintTextStyle.Render(" "+hintText+strings.Repeat(" ", hintPadding)+" ") +
+			userMsgBoxBorderStyle.Render("│")
+		interior = append(interior, sepLine, hintLine)
+	}
+
+	bottomLine := userMsgBoxBorderStyle.Render("└" + strings.Repeat("─", boxWidth-2) + "┘")
+
+	return topLine + "\n" + strings.Join(interior, "\n") + "\n" + bottomLine
+}
+
 // wrapText word-wraps text to fit within maxWidth columns.
 // Preserves existing newlines and wraps long lines at word boundaries.
 func wrapText(text string, maxWidth int) string {
@@ -982,6 +1080,60 @@ func wrapText(text string, maxWidth int) string {
 		}
 	}
 	return strings.Join(result, "\n")
+}
+
+// collapseMaxLines is the threshold above which message content is folded.
+const collapseMaxLines = 20
+
+// collapseContent truncates rendered content if it exceeds maxLines and the entry
+// is collapsed. Returns the (possibly truncated) content and the number of hidden lines.
+// The entry's collapsed state is only set at creation time (via pre-estimation) or
+// toggled by the user — never mutated here, so expand survives terminal resize.
+func collapseContent(rendered string, entry *logEntry, maxLines int) (string, int) {
+	lines := strings.Split(rendered, "\n")
+	if len(lines) <= maxLines || !entry.collapsed {
+		return rendered, 0
+	}
+	hidden := len(lines) - maxLines
+	visible := strings.Join(lines[:maxLines], "\n")
+	hint := renderCollapseHint(hidden, false)
+	return visible + "\n" + hint, hidden
+}
+
+// toggleCollapseAtViewport toggles the collapsed state of the first visible
+// collapsible entry (ai_response or user_message) at the top of the viewport.
+// Returns true if a toggle was performed.
+func (m *model) toggleCollapseAtViewport() bool {
+	start, end := m.visibleEntryIndices()
+	for i := start; i <= end && i < len(m.logEntries); i++ {
+		entry := &m.logEntries[i]
+		// Only toggle collapsible message types
+		if entry.eventType != "ai_response" && entry.eventType != "user_message" {
+			continue
+		}
+		entry.collapsed = !entry.collapsed
+		entry.clearRenderCache()
+		m.contentPartsDirty = true
+		m.rebuildViewportPreservingScroll()
+		return true
+	}
+	return false
+}
+
+// renderCollapseHint builds the expand/collapse indicator line.
+func renderCollapseHint(hidden int, expanded bool) string {
+	var icon, label string
+	if expanded {
+		icon = "▲"
+		label = "Collapse"
+	} else {
+		icon = "▼"
+		label = fmt.Sprintf("Expand (%d more lines)", hidden)
+	}
+	prefix := collapseHintLineStyle.Render("╌╌╌")
+	suffix := collapseHintLineStyle.Render("╌╌╌")
+	text := collapseHintTextStyle.Render(fmt.Sprintf(" %s %s (Ctrl+P) ", icon, label))
+	return " " + prefix + text + suffix
 }
 
 // renderToolEntry renders a logEntry using the new tool rendering pipeline.

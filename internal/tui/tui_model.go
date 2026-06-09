@@ -78,6 +78,10 @@ var (
 	logErrorLogStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
 	logSeparatorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
+	// Collapse/expand hint styles for long messages
+	collapseHintLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	collapseHintTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+
 	// Input panel styles — visually separate the input area from the message body
 	inputPanelStyle = lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
@@ -203,6 +207,7 @@ type logEntry struct {
 	resultBrief      string // brief result description (e.g., "120 lines", "modified")
 	diffText         string // unified diff content for file edit results
 	renderedCache    map[int]string // width-keyed cache: key=width, value=rendered content
+	collapsed        bool           // true if content is currently folded (>15 lines)
 
 	compactData *CompactData
 
