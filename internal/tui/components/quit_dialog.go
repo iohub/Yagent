@@ -218,3 +218,20 @@ func NewQuitConfirmDialogForCancel(lang Language) *QuitConfirmDialog {
 	}
 	return NewQuitConfirmDialog("cancel_confirm", title, message, yes, no, "214")
 }
+
+// NewQuitConfirmDialogForDelete creates a delete history confirmation dialog.
+func NewQuitConfirmDialogForDelete(lang Language, detail string) *QuitConfirmDialog {
+	var title, message, yes, no string
+	if lang == LanguageZh {
+		title = "删除历史"
+		message = "确定要删除 " + detail + " 的历史记录吗？"
+		yes = "删除"
+		no = "取消"
+	} else {
+		title = "Delete History"
+		message = "Are you sure you want to delete " + detail + "?"
+		yes = "Delete"
+		no = "Cancel"
+	}
+	return NewQuitConfirmDialog("delete_history_confirm", title, message, yes, no, "167")
+}

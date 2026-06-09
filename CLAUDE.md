@@ -97,7 +97,37 @@ codeactor-agent/
 │   │   ├── task_manager.go      # Task lifecycle management
 │   │   ├── types.go             # Request/Response types
 │   │   └── websocket.go         # WebSocket handler (melody)
-│   ├── tui/                     # Bubble Tea terminal UI
+│   ├── tui/                     # Bubble Tea terminal UI (重构中，参见 TUI_REFACTOR.md)
+│   │   ├── model.go             # UI struct, 顶层 Model
+│   │   ├── root_update.go       # 状态机 Update 分发
+│   │   ├── root_view.go         # 基于布局的 View 渲染管道
+│   │   ├── layout.go            # 布局引擎 (UILayout, Rect, computeLayout)
+│   │   ├── state.go             # 状态枚举 + 状态机 (UIState, UIFocusState)
+│   │   ├── keys.go              # 集中化快捷键 (KeyMap)
+│   │   ├── chat/                # 消息项渲染器 (Chat, MessageItem 接口)
+│   │   ├── list/                # 通用虚拟化列表
+│   │   │   └── list_test.go     # 11 项测试
+│   │   ├── common/              # 通用 UI 组件 + 样式
+│   │   │   ├── styles.go        # Styles 主题系统 (Dark/Light)
+│   │   │   └── elements.go      # Header, StatusBar, DialogTitle, Button
+│   │   ├── dialog/              # 弹窗系统
+│   │   ├── components/          # 弹窗底层实现 (DialogStack, 7 种 Dialog)
+│   │   ├── sidebar/             # 侧边栏 (Token 统计, Skills, Model info)
+│   │   ├── input/               # 输入处理 (命令解析, 补全)
+│   │   ├── anim/                # 动画系统 (可见性感知帧管理)
+│   │   ├── diffview/            # Diff 查看器
+│   │   ├── layout/              # 布局引擎 (骨架, layout.go 为实际使用)
+│   │   ├── completion.go        # 补全系统
+│   │   ├── tui_model.go         # 旧 model struct (逐步迁移到新架构)
+│   │   ├── tui_update.go        # 旧 Update 管道 (~2013行)
+│   │   ├── tui_view.go          # 旧 View 管道 (~594行)
+│   │   ├── tui_render.go        # 渲染辅助
+│   │   ├── tui_helpers.go       # 辅助函数
+│   │   ├── tui_history.go       # 历史模式
+│   │   ├── tui_tasks.go         # 任务管理
+│   │   ├── tui_fzf.go           # FZF 集成
+│   │   ├── types.go             # 基础类型
+│   │   └── i18n.go              # 多语言
 │   ├── memory/                  # ConversationMemory (system/human/assistant/tool)
 │   ├── config/                  # Three-tier TOML config (tools > agents > global)
 │   ├── diff/                    # Unified diff computation

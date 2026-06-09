@@ -13,24 +13,29 @@ import (
 )
 
 // computeFooterHeight calculates the actual footer height based on current state.
-// This must match the row count produced by model.View() footer rendering.
+// Uses caching to avoid repeated expensive computation.
 func (m *model) computeFooterHeight() int {
-	height := 1 // separator line
-
-	// 弹窗栈占用额外空间（弹窗覆盖层不影响 footer，但为安全起见预留）
-	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
-		height += 10 // 弹窗默认高度预留
+	if m.footerHeightValid {
+		return m.cachedFooterHeight
 	}
+
+	height := 1 // separator line
 
 	// Input area (only in edit mode; hidden in command mode)
 	if !m.commandMode {
-		height += m.computeInputHeight()
+		// inputPanelStyle = Border(top+bottom=2) + MarginTop(1) → 3 extra lines
+		height += 3 + m.computeInputHeight()
+		// Newline after input panel
+		height += 1
 		// Skill autocomplete suggestions
 		if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
 			height += len(m.skillSuggestions) + 1 // suggestion lines + hint line
 		}
+		// Keyword autocomplete suggestions
+		if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 {
+			height += 1
+		}
 	}
-	// In command mode, no input line is rendered, so no height addition needed.
 
 	// Error message
 	if m.errMsg != "" {
@@ -39,12 +44,8 @@ func (m *model) computeFooterHeight() int {
 
 	// Token dashboard
 	totalTokens := m.inputTokens + m.outputTokens
-	if totalTokens == 0 {
-		// No data — dashboard is empty, no extra height
-	} else {
-		// Dashboard with border: 2 (borders) + 1 (header) + 1 (separator) + agent rows
+	if totalTokens > 0 {
 		height += 4 // 2 borders + 1 header + 1 separator
-		// Running badge line (shown inside dashboard in command mode)
 		if m.commandMode && m.taskRunning {
 			height++
 		}
@@ -55,19 +56,77 @@ func (m *model) computeFooterHeight() int {
 		}
 	}
 
-	// Status line always starts on its own line (see View()).
-	// Edit mode adds an extra blank line before the status line.
+	// Spacing + Status line
 	if m.commandMode {
-		height += 2 // newline terminator + status line
+		height += 1 // spacing before status
+		height += 1 // status bar
 	} else {
-		height += 3 // newline terminator + blank line + status line
+		height += 2 // two newlines before status bar
+		height += 1 // status bar
 	}
 
+	m.cachedFooterHeight = height
+	m.footerHeightValid = true
 	return height
 }
 
+// updateViewportCache refreshes the cached viewport view.
+// Call this whenever viewport state changes (scroll, resize, content update).
+func (m *model) updateViewportCache() {
+	m.cachedViewportView = m.viewport.View()
+	m.viewportViewValid = true
+	m.prevViewportYOffset = m.viewport.YOffset()
+	m.prevViewportHeight = m.viewport.Height()
+}
+
+// invalidateFooterCache marks the footer cache as stale.
+// Call this whenever state affecting footer height changes.
+func (m *model) invalidateFooterCache() {
+	m.footerHeightValid = false
+	m.cachedSeparator = ""
+	// Status bar also needs recalculation
+	m.cachedStatusBar = ""
+	m.statusBarValid = false
+	// Token dashboard too
+	m.cachedTokenDashboard = ""
+	m.tokenDashboardValid = false
+}
+
+// getGlamourRenderer returns a cached glamour renderer for the given width.
+func (m *model) getGlamourRenderer(width int) *glamour.TermRenderer {
+	if width <= 0 {
+		width = 80
+	}
+	if m.glamourRenderers == nil {
+		m.glamourRenderers = make(map[int]*glamour.TermRenderer)
+	}
+	if r, ok := m.glamourRenderers[width]; ok {
+		return r
+	}
+	glamourStyle := "dark"
+	if !m.useDarkStyle {
+		glamourStyle = "light"
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle(glamourStyle),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		// Return a fallback with safe defaults
+		r, _ = glamour.NewTermRenderer(
+			glamour.WithStandardStyle(glamourStyle),
+			glamour.WithWordWrap(80),
+		)
+	}
+	m.glamourRenderers[width] = r
+	return r
+}
+
 func (m *model) resizeViewport() {
-	footerHeight := m.computeFooterHeight()
+	footerHeight := m.cachedFooterHeight
+	if !m.footerHeightValid {
+		footerHeight = m.computeFooterHeight()
+	}
 	vpHeight := m.termHeight - footerHeight
 	if vpHeight < 3 {
 		vpHeight = 3
@@ -75,51 +134,54 @@ func (m *model) resizeViewport() {
 	m.viewport.SetWidth(m.termWidth)
 	m.viewport.SetHeight(vpHeight)
 
-	// Recreate glamour renderer with updated width
-	if m.viewport.Width() > 0 {
+	// Update glamour renderer reference for backward compat
+	if m.termWidth > 0 && m.viewport.Width() > 0 {
 		frameSize := m.viewport.Style.GetHorizontalFrameSize()
 		const glamourGutter = 4
 		glamourWidth := m.viewport.Width() - frameSize - glamourGutter
 		if glamourWidth < 40 {
 			glamourWidth = 40
 		}
-		glamourStyle := "dark"
-		if !m.useDarkStyle {
-			glamourStyle = "light"
-		}
-		renderer, err := glamour.NewTermRenderer(
-			glamour.WithStandardStyle(glamourStyle),
-			glamour.WithWordWrap(glamourWidth),
-		)
-		if err == nil {
-			m.glamourRenderer = renderer
-		}
+		m.glamourRenderer = m.getGlamourRenderer(glamourWidth)
 	}
+	m.updateViewportCache()
 }
 
 // invalidateRenderedCache clears cached rendered output on all log entries.
 // Called on terminal resize since rendering depends on viewport width.
 func (m *model) invalidateRenderedCache() {
 	for i := range m.logEntries {
-		m.logEntries[i].rendered = ""
+		m.logEntries[i].clearRenderCache()
 		if m.logEntries[i].toolEntry != nil {
 			m.logEntries[i].toolEntry.InvalidateCache()
 		}
 	}
+	// Clear glamour renderer cache on resize
+	m.glamourRenderers = nil
+	m.contentPartsDirty = true
 }
 
 // buildViewportContent rebuilds the full viewport content from scratch.
 // Used for initial load, terminal resize, or conversation switch.
 func (m *model) buildViewportContent() {
+	// Skip rebuild if dimensions are not initialized
+	if m.termWidth <= 0 || m.termHeight <= 0 {
+		return
+	}
 	m.rebuildContentCache()
 	m.viewport.SetContent(m.contentCache.String())
 	m.viewport.GotoBottom()
+	m.updateViewportCache()
 }
 
 // rebuildViewportPreservingScroll rebuilds viewport content but preserves
 // the current scroll position. Used for animation tick updates so that
 // scrolling up to read history isn't interrupted by SetContent+GotoBottom.
 func (m *model) rebuildViewportPreservingScroll() {
+	// Skip rebuild if dimensions are not initialized
+	if m.termWidth <= 0 || m.termHeight <= 0 {
+		return
+	}
 	yOffset := m.viewport.YOffset()
 	m.rebuildContentCache()
 	m.viewport.SetContent(m.contentCache.String())
@@ -134,6 +196,7 @@ func (m *model) rebuildViewportPreservingScroll() {
 		yOffset = maxOffset
 	}
 	m.viewport.SetYOffset(yOffset)
+	m.updateViewportCache()
 }
 
 // rebuildViewportScrollLock rebuilds viewport content and scrolls to bottom
@@ -141,67 +204,110 @@ func (m *model) rebuildViewportPreservingScroll() {
 // arrive — new content should be shown to users who are following along,
 // but shouldn't interrupt users reading history.
 func (m *model) rebuildViewportScrollLock() {
+	// Skip rebuild if dimensions are not initialized
+	if m.termWidth <= 0 || m.termHeight <= 0 {
+		return
+	}
 	wasAtBottom := m.viewport.AtBottom()
 	m.rebuildContentCache()
 	m.viewport.SetContent(m.contentCache.String())
 	if wasAtBottom {
 		m.viewport.GotoBottom()
 	}
+	m.updateViewportCache()
 }
 
-// rebuildContentCache rebuilds m.contentCache with the current welcome panel
-// and all log entries. Callers must then call viewport.SetContent().
+// rebuildContentCache 增量重建viewport内容缓存。
+// 只在宽度变化、新条目到达或条目内容变化时重建。
 func (m *model) rebuildContentCache() {
+	if m.termWidth <= 0 || m.termHeight <= 0 {
+		return
+	}
+
+	currentWidth := m.viewport.Width()
+	widthChanged := currentWidth != m.prevViewportWidth
+
+	// 宽度变化：完全重建
+	if widthChanged {
+		// 清除所有条目的renderedCache以防止内存泄漏
+		for i := range m.logEntries {
+			m.logEntries[i].clearRenderCache()
+		}
+		m.contentParts = make([]string, len(m.logEntries))
+		for i := range m.logEntries {
+			entry := &m.logEntries[i]
+			m.contentParts[i] = m.renderSingleEntry(entry, currentWidth)
+		}
+		m.prevViewportWidth = currentWidth
+		m.contentPartsDirty = false
+		m.assembleViewportContent()
+		return
+	}
+
+	// contentPartsDirty：完全重建（如对话切换）
+	if m.contentPartsDirty {
+		m.contentParts = make([]string, len(m.logEntries))
+		for i := range m.logEntries {
+			entry := &m.logEntries[i]
+			m.contentParts[i] = m.renderSingleEntry(entry, currentWidth)
+		}
+		m.contentPartsDirty = false
+		m.assembleViewportContent()
+		return
+	}
+
+	// 增量追加：contentParts比logEntries短时，追加新条目
+	if len(m.contentParts) < len(m.logEntries) {
+		newParts := make([]string, len(m.logEntries))
+		copy(newParts, m.contentParts)
+		for i := len(m.contentParts); i < len(m.logEntries); i++ {
+			entry := &m.logEntries[i]
+			newParts[i] = m.renderSingleEntry(entry, currentWidth)
+		}
+		m.contentParts = newParts
+		m.assembleViewportContent()
+	}
+	// 如果长度相等且没有dirty标志，说明内容未变化，跳过重建
+}
+
+// assembleViewportContent 将contentParts组装为完整viewport内容
+// Uses strings.Join for O(n) single-pass concatenation instead of WriteString loop.
+func (m *model) assembleViewportContent() {
 	m.contentCache.Reset()
-	// Estimate capacity: ~200 bytes per entry to reduce reallocations
-	estCap := (len(m.logEntries) + 2) * 200
+	// Estimate capacity to avoid reallocations
+	estCap := len(m.contentParts)*200 + 1024
 	if estCap > m.contentCache.Cap() {
 		m.contentCache.Grow(estCap)
 	}
-
 	m.contentCache.WriteString(m.renderWelcomePanel())
-	m.contentCache.WriteString("\n")
-
-	for i := range m.logEntries {
-		entry := &m.logEntries[i]
-		m.renderEntryTo(entry, m.contentCache)
+	if len(m.contentParts) > 0 {
 		m.contentCache.WriteString("\n")
+		m.contentCache.WriteString(strings.Join(m.contentParts, "\n"))
 	}
 }
 
-// renderEntryTo renders a single log entry into the builder, caching the result
-// in the entry for reuse. Uses glamour for ai_response, diff styling for diffs,
-// plain formatting otherwise.
-func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
+// renderSingleEntry 渲染单个logEntry并返回字符串，使用宽度键控缓存
+func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	// For running tool entries, never cache (animation changes each frame)
 	if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
-		toolLine := renderToolEntryWithAnim(*entry, m.viewport.Width(), m.anim)
-		b.WriteString(toolLine)
-		return
+		return renderToolEntryWithAnim(*entry, width, m.anim)
 	}
 
 	// For running LLM call entries, render with animation (single line)
 	if entry.eventType == "llm_call_start" && entry.isToolRunning {
-		llmLine := renderLLMCallWithAnim(*entry, m.viewport.Width(), m.anim)
-		b.WriteString(llmLine)
-		return
+		return renderLLMCallWithAnim(*entry, width, m.anim)
 	}
 
-	// Use cached rendered content if available
-	if entry.rendered != "" {
-		b.WriteString(entry.rendered)
-		return
+	// Check width-keyed cache
+	if cached, ok := entry.getCachedRender(width); ok {
+		return cached
 	}
-
-	// Capture the start position to cache the output
-	start := b.Len()
 
 	// Context compression rendering
 	if entry.compactData != nil {
-		rendered := renderContextCompressed(*entry, m.viewport.Width())
-		b.WriteString(rendered)
-		entry.rendered = b.String()[start:]
-		return
+		rendered := renderContextCompressed(*entry, width)
+		entry.setCachedRender(rendered, width)
+		return rendered
 	}
 
 	// Tool entry rendering (non-running) — use new renderer
@@ -213,41 +319,65 @@ func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 			entry.toolEntry.Result.Content != "" &&
 			m.glamourRenderer != nil {
 			rendered := m.renderDeepThinkingEntry(entry)
-			b.WriteString(rendered)
-			entry.rendered = b.String()[start:]
-			return
+			entry.setCachedRender(rendered, width)
+			return rendered
 		}
-		rendered := renderToolEntry(*entry, m.viewport.Width())
-		b.WriteString(rendered)
-		entry.rendered = b.String()[start:]
-		return
+		rendered := renderToolEntry(*entry, width)
+		entry.setCachedRender(rendered, width)
+		return rendered
 	}
 
 	// Diff rendering takes priority
 	if entry.diffText != "" {
 		rendered := renderDiff(entry)
-		b.WriteString(rendered)
-		entry.rendered = b.String()[start:]
-		return
+		entry.setCachedRender(rendered, width)
+		return rendered
 	}
 
 	if entry.eventType == "ai_response" && m.glamourRenderer != nil {
 		rendered, err := m.glamourRenderer.Render(entry.content)
 		if err == nil {
-			b.WriteString(rendered)
-			entry.rendered = b.String()[start:]
-			return
+			entry.setCachedRender(rendered, width)
+			return rendered
 		}
 	}
 	// Fallback to simple text rendering
-	formatted := formatLogEntry(*entry, m.viewport.Width())
-	b.WriteString(formatted)
-	entry.rendered = b.String()[start:]
+	formatted := formatLogEntry(*entry, width)
+	entry.setCachedRender(formatted, width)
+	return formatted
+}
+
+// renderEntryTo renders a single log entry into the builder, caching the result
+// in the entry for reuse. Uses glamour for ai_response, diff styling for diffs,
+// plain formatting otherwise.
+//
+// Deprecated: prefer renderSingleEntry which uses width-keyed cache.
+func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
+	width := m.viewport.Width()
+
+	// For running tool entries, never cache (animation changes each frame)
+	if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
+		b.WriteString(renderToolEntryWithAnim(*entry, width, m.anim))
+		return
+	}
+
+	// For running LLM call entries, render with animation (single line)
+	if entry.eventType == "llm_call_start" && entry.isToolRunning {
+		b.WriteString(renderLLMCallWithAnim(*entry, width, m.anim))
+		return
+	}
+
+	// Use width-keyed cache
+	if cached, ok := entry.getCachedRender(width); ok {
+		b.WriteString(cached)
+		return
+	}
+
+	// Delegate to renderSingleEntry which handles caching
+	b.WriteString(m.renderSingleEntry(entry, width))
 }
 
 // renderDeepThinkingEntry renders a deepthinking tool result with Glamour markdown formatting.
-// It produces the same tool header + border style as RenderToolLine, but uses Glamour
-// for the body content instead of renderCodeLines (line-numbered code style).
 func (m *model) renderDeepThinkingEntry(entry *logEntry) string {
 	maxWidth := m.viewport.Width()
 
@@ -259,32 +389,39 @@ func (m *model) renderDeepThinkingEntry(entry *logEntry) string {
 
 	header := RenderHeader(toolEntry.Status, toolEntry.Call.Name, params, "")
 
-	// Decode potential JSON-encoded string from Adapter.Call (json.Marshal on string)
 	mdContent := decodeIfJSONString(toolEntry.Result.Content)
-	renderedBody, err := m.glamourRenderer.Render(mdContent)
+	renderedBody, err := m.getGlamourRenderer(maxWidth - 4).Render(mdContent)
 	if err != nil {
-		// Fallback: use default tool rendering
 		return renderToolEntry(*entry, maxWidth)
 	}
 
-	// Wrap header with borders and append Glamour-rendered body below
 	return addToolCallBorders(header, maxWidth) + "\n" + renderedBody
 }
 
 // appendLogEntry renders a single new entry and appends it incrementally to the viewport.
 // Uses scroll lock: only auto-scrolls to bottom if the user was already at the bottom.
 func (m *model) appendLogEntry(entry *logEntry) {
+	m.viewportDirty = true
 	wasAtBottom := m.viewport.AtBottom()
 
-	if m.contentCache.Len() > 0 {
-		m.contentCache.WriteString("\n")
+	// Step 2 增量构建：将新条目渲染到 contentParts
+	if m.termWidth > 0 && m.termHeight > 0 {
+		currentWidth := m.viewport.Width()
+		rendered := m.renderSingleEntry(entry, currentWidth)
+		m.contentParts = append(m.contentParts, rendered)
+	} else {
+		// Fallback: direct append to contentCache (old behavior)
+		if m.contentCache.Len() > 0 {
+			m.contentCache.WriteString("\n")
+		}
+		m.renderEntryTo(entry, m.contentCache)
 	}
-	m.renderEntryTo(entry, m.contentCache)
 
 	m.viewport.SetContent(m.contentCache.String())
 	if wasAtBottom {
 		m.viewport.GotoBottom()
 	}
+	m.updateViewportCache()
 }
 
 func extractToolSummary(toolName string, argsJSON string) string {

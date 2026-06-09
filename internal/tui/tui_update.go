@@ -270,25 +270,15 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		m.cleanupDebounceTimer()
 		return tea.Quit
 	case cmd == ":q" || cmd == ":quit":
-		if m.dialogStack != nil {
-			d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
-			d.SetBounds(m.termWidth, m.termHeight)
-			m.dialogStack.Push(d)
-		} else {
-			m.confirmQuitDialog.open = true
-		}
+		d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
+		d.SetBounds(m.termWidth, m.termHeight)
+		m.dialogStack.Push(d)
 	case cmd == ":help" || cmd == ":h":
-		if m.dialogStack != nil {
-			if m.showHelpDialog {
-				// 关闭帮助弹窗（从栈中移除）
-				m.dialogStack.CloseDialog("help_dialog")
-			} else {
-				// 打开帮助弹窗
-				m.dialogStack.Push(components.NewHelpDialog(components.Language(m.currentLang)))
-			}
-			m.showHelpDialog = !m.showHelpDialog
+		top := m.dialogStack.Top()
+		if top != nil && top.ID() == "help_dialog" {
+			m.dialogStack.CloseDialog("help_dialog")
 		} else {
-			m.showHelpDialog = true
+			m.dialogStack.Push(components.NewHelpDialog(components.Language(m.currentLang)))
 		}
 	case cmd == ":mode":
 		mode := "COMMAND"
@@ -497,6 +487,7 @@ func (m *model) searchInLog(query string) {
 		eventType: "status",
 		content:   fmt.Sprintf("Search '/%s': %d matches", query, found),
 	})
+	m.viewportDirty = true
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 }
 
@@ -508,9 +499,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// so animations keep running without touching the hidden viewport.
 	// Other non-KeyMsg events (WindowSizeMsg, MouseMsg, etc.) also keep both
 	// chains alive when the task is running, to prevent permanent TUI freeze.
-	if m.showHelpDialog || m.confirmDialog.open ||
-		m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open ||
-		(m.dialogStack != nil && m.dialogStack.Len() > 0) {
+	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
 		if _, ok := msg.(tea.KeyMsg); !ok {
 			switch msg.(type) {
 			case taskEventMsg:
@@ -531,60 +520,90 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// History mode: intercept all messages and delegate to history handler
-	if m.historyMode {
-		return historyUpdate(msg, &m)
-	}
-
-	// ====== 新组件：弹窗栈优先处理 ======
+	// ====== DialogStack: takes priority even over history mode ======
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
 		topDialog := m.dialogStack.Top()
 		if topDialog != nil {
 			newComp, cmd := topDialog.Update(msg)
 			if newComp != nil {
-				// 更新栈顶弹窗
 				m.dialogStack.ReplaceTop(newComp.(components.Dialog))
 			}
 			if cmd != nil {
 				return m, cmd
 			}
-			// 弹窗已处理消息，但仍需继续传递 KeyMsg 到后续 switch 处理（如确认退出逻辑）
-			// 注意：此处不再 return m, nil，否则 KeyMsg 会被吞掉，导致 tea.Quit 无法执行
 		}
+	}
+
+	// History mode: intercept all messages and delegate to history handler
+	if m.historyMode {
+		return historyUpdate(msg, &m)
 	}
 
 	switch msg := msg.(type) {
 	case tickMsg:
-		// Advance animation and rebuild viewport if there are running tools
 		m.animFrame++
 
-		// 通知动画管理器推进可见动画的帧
 		if m.animManager != nil {
-			// 使用 Tick 方法直接推进帧（100ms 间隔）
 			m.animManager.Tick(100)
+		}
+
+		// Stop tick early when idle: avoids unnecessary View() calls that cause flicker
+		if !m.activeAnim && !m.taskRunning {
+			m.tickStarted = false
+			return m, nil
 		}
 
 		if m.activeAnim || m.taskRunning {
 			m.anim.Tick()
-			// Update status bar cache: spinner animation changed on each tick
+
+			// Update status bar — includes spinner animation
 			m.cachedStatusBar = m.renderAirlineStatusBar()
 			m.statusBarValid = true
-			// Throttle viewport rebuild to every 3 ticks (~300ms) to avoid
-			// flooding viewport.SetContent() — the #1 cause of scroll lag.
-			if m.animFrame%3 == 0 {
-				if m.activeAnim {
-					for _, te := range m.toolCallEntries {
-						if te.Status == ToolStatusRunning {
-							te.InvalidateCache()
-						}
+
+			// Only update viewport content if there are visible animated entries.
+			// Skip the expensive assembleViewportContent + SetContent if nothing
+			// visible is animating.
+			if m.activeAnim {
+				visStart, visEnd := m.visibleEntryIndices()
+				hasVisibleAnim := false
+
+				// Invalidate cache only for visible running entries
+				for i := visStart; i <= visEnd && i < len(m.logEntries); i++ {
+					entry := &m.logEntries[i]
+					if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
+						entry.clearRenderCache()
+						entry.toolEntry.InvalidateCache()
+						hasVisibleAnim = true
+					} else if entry.eventType == "llm_call_start" && entry.isToolRunning {
+						entry.clearRenderCache()
+						hasVisibleAnim = true
 					}
 				}
+
+				if hasVisibleAnim {
+					// Re-render only the visible animated entries
+					width := m.viewport.Width()
+					for i := visStart; i <= visEnd && i < len(m.logEntries); i++ {
+						entry := &m.logEntries[i]
+						if (entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning) ||
+							(entry.eventType == "llm_call_start" && entry.isToolRunning) {
+							m.contentParts[i] = m.renderSingleEntry(entry, width)
+						}
+					}
+					m.assembleViewportContent()
+					m.viewport.SetContent(m.contentCache.String())
+					if m.viewport.AtBottom() {
+						m.viewport.GotoBottom()
+					}
+				}
+			}
+
+			// Non-animation dirty rebuild
+			if m.viewportDirty && !m.activeAnim {
 				m.rebuildViewportPreservingScroll()
+				m.viewportDirty = false
 			}
 		}
-		// Always continue ticking — the tick loop is perpetual and self-sustaining.
-		// Animation advancement is already guarded by m.activeAnim/m.taskRunning below,
-		// so there are no visual side effects during dialogs.
 		return m, tickCmd()
 
 	case tea.WindowSizeMsg:
@@ -593,17 +612,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.SetWidth(m.computeFieldWidth())
 		m.resizeViewport()
 		m.invalidateRenderedCache()
+		m.invalidateFooterCache()
+		m.viewportDirty = true
 		m.rebuildViewportScrollLock()
-		// 更新布局引擎
+		// 始终启动/重启 tick 循环（空闲时 tick 会自动停止）
 		if m.layoutEngine != nil {
 			m.layoutEngine.Resize(msg.Width, msg.Height)
 		}
-		// 窗口大小变化时，清空所有渲染缓存
-		m.cachedTokenDashboard = ""
-		m.cachedStatusBar = ""
-		m.tokenDashboardValid = false
-		m.statusBarValid = false
-		return m, nil
+		return m, tickCmd()
 
 	case publisherReadyMsg:
 		m.publisher = msg.publisher
@@ -616,9 +632,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case components.MouseScrollUp:
 				// 滚动向上（viewport 减少行）
 				m.viewport.ScrollUp(3)
+				m.updateViewportCache()
 			case components.MouseScrollDown:
 				// 滚动向下（viewport 增加行）
 				m.viewport.ScrollDown(3)
+				m.updateViewportCache()
 			case components.MouseClick:
 				// 单击：检测是否点击了弹窗按钮
 				m.handleMouseClick(x, y)
@@ -675,6 +693,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.quitting = true
 								m.cleanupDebounceTimer()
 								return m, tea.Quit
+							}
+							// Delete history confirmation
+							if d.ID() == "delete_history_confirm" {
+								taskID := m.pendingDeleteTaskID
+								m.pendingDeleteTaskID = ""
+								m.dialogStack.Pop()
+								return m, confirmDeleteHistoryEntryByID(&m, taskID)
 							}
 							// Cancel confirmation
 							if m.currentTask != nil && m.currentTask.CancelFunc != nil {
@@ -820,7 +845,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					switch key {
 					case "esc", "i", "I":
 						m.dialogStack.Pop()
-						m.showHelpDialog = false
 						return m, nil
 					}
 					return m, nil
@@ -836,158 +860,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Confirmation dialog key handling (fallback for old dialog) — takes priority over everything
-		if m.confirmDialog.open {
-			switch msg.String() {
-			case "ctrl+c":
-				m.saveRunningTaskMemory()
-				m.quitting = true
-				m.cleanupDebounceTimer()
-				return m, tea.Quit
-			case "down", "tab":
-				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 1) % 5
-				return m, nil
-			case "up", "k":
-				m.confirmDialog.selectedOption = (m.confirmDialog.selectedOption + 4) % 5
-				return m, nil
-			case "enter":
-				switch m.confirmDialog.selectedOption {
-				case 0:
-					m.respondToAuth("allow")
-				case 1:
-					m.respondToAuth("allow_session")
-				case 2:
-					m.respondToAuth("allow_all_session")
-				case 3:
-					m.respondToAuth("allow_all_project")
-				case 4:
-					m.respondToAuth("deny")
-				}
-				return m, nil
-			case "a", "A":
-				m.respondToAuth("allow")
-				return m, nil
-			case "t", "T":
-				m.respondToAuth("allow_session")
-				return m, nil
-			case "s", "S":
-				m.respondToAuth("allow_all_session")
-				return m, nil
-			case "p", "P":
-				m.respondToAuth("allow_all_project")
-				return m, nil
-			case "d", "D", "esc":
-				m.respondToAuth("deny")
-				return m, nil
-			}
-			return m, nil
-		}
-
-		// Task complete dialog key handling
-		if m.taskCompleteDialog.open {
-			switch msg.String() {
-			case "enter", " ", "esc":
-				m.taskCompleteDialog.open = false
-				return m, nil
-			case "ctrl+c":
-				m.saveRunningTaskMemory()
-				m.quitting = true
-				m.cleanupDebounceTimer()
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-
-		// Quit confirmation dialog key handling
-		if m.confirmQuitDialog.open {
-			switch msg.String() {
-			case "ctrl+c":
-				m.saveRunningTaskMemory()
-				m.quitting = true
-				m.cleanupDebounceTimer()
-				return m, tea.Quit
-			case "right", "tab":
-				m.confirmQuitDialog.selectedOption = (m.confirmQuitDialog.selectedOption + 1) % 2
-				return m, nil
-			case "left":
-				m.confirmQuitDialog.selectedOption = (m.confirmQuitDialog.selectedOption + 1) % 2
-				return m, nil
-			case "enter":
-				if m.confirmQuitDialog.selectedOption == 0 {
-					m.saveRunningTaskMemory()
-					m.quitting = true
-					m.cleanupDebounceTimer()
-					return m, tea.Quit
-				}
-				m.confirmQuitDialog.open = false
-				m.confirmQuitDialog.selectedOption = 0
-				return m, nil
-			case "y", "Y":
-				m.saveRunningTaskMemory()
-				m.quitting = true
-				m.cleanupDebounceTimer()
-				return m, tea.Quit
-			case "n", "N", "esc":
-				m.confirmQuitDialog.open = false
-				m.confirmQuitDialog.selectedOption = 0
-				return m, nil
-			}
-			return m, nil
-		}
-
-		// Cancel task confirmation dialog key handling
-		if m.confirmCancelDialog.open {
-			switch msg.String() {
-			case "ctrl+c":
-				m.saveRunningTaskMemory()
-				m.quitting = true
-				m.cleanupDebounceTimer()
-				return m, tea.Quit
-			case "right", "tab":
-				m.confirmCancelDialog.selectedOption = (m.confirmCancelDialog.selectedOption + 1) % 2
-				return m, nil
-			case "left":
-				m.confirmCancelDialog.selectedOption = (m.confirmCancelDialog.selectedOption + 1) % 2
-				return m, nil
-			case "enter":
-				if m.confirmCancelDialog.selectedOption == 0 {
-					// Confirm cancel
-					if m.currentTask != nil && m.currentTask.CancelFunc != nil {
-						m.taskCancelled = true
-						m.currentTask.CancelFunc()
-						m.logEntries = append(m.logEntries, logEntry{
-							timestamp: time.Now(),
-							eventType: "status",
-							content:   "Task cancelled by user",
-						})
-						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-					}
-				}
-				m.confirmCancelDialog.open = false
-				m.confirmCancelDialog.selectedOption = 0
-				return m, nil
-			case "y", "Y":
-				if m.currentTask != nil && m.currentTask.CancelFunc != nil {
-					m.taskCancelled = true
-					m.currentTask.CancelFunc()
-					m.logEntries = append(m.logEntries, logEntry{
-						timestamp: time.Now(),
-						eventType: "status",
-						content:   "Task cancelled by user",
-					})
-					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-				}
-				m.confirmCancelDialog.open = false
-				m.confirmCancelDialog.selectedOption = 0
-				return m, nil
-			case "n", "N", "esc":
-				m.confirmCancelDialog.open = false
-				m.confirmCancelDialog.selectedOption = 0
-				return m, nil
-			}
-			return m, nil
-		}
-
 		// ── Command mode key handling (vim-like: hidden input, single-key commands) ──
 		if m.commandMode {
 			// Resolve multi-key sequences: check if lastKey + current key forms a valid combo
@@ -998,6 +870,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch combo {
 				case "gg":
 					m.viewport.GotoTop()
+					m.updateViewportCache()
 					return m, nil
 				default:
 					// Invalid combo: discard lastKey and fall through to process key normally
@@ -1006,34 +879,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Help dialog is open: let action keys (i/esc/enter/?/ctrl+c) pass through,
 			// dismiss on any other key without processing it.
-			if m.showHelpDialog && key != "i" && key != "ctrl+e" && key != "enter" && key != "?" && key != "ctrl+c" {
-				// 如果 dialogStack 中有 help_dialog，从栈中关闭
-				if m.dialogStack != nil && m.showHelpDialog {
-					m.dialogStack.CloseDialog("help_dialog")
-				}
-				m.showHelpDialog = false
+			helpOpen := m.dialogStack != nil && func() bool {
+				top := m.dialogStack.Top()
+				return top != nil && top.ID() == "help_dialog"
+			}()
+			if helpOpen && key != "i" && key != "ctrl+e" && key != "enter" && key != "?" && key != "ctrl+c" {
+				m.dialogStack.CloseDialog("help_dialog")
 				return m, nil
 			}
 
 			switch key {
 			case "ctrl+c":
-				if m.dialogStack != nil {
-					d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
-					d.SetBounds(m.termWidth, m.termHeight)
-					m.dialogStack.Push(d)
-				} else {
-					m.confirmQuitDialog.open = true
-				}
+				d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
+				d.SetBounds(m.termWidth, m.termHeight)
+				m.dialogStack.Push(d)
 				return m, nil
 
 			case "esc":
-				if m.showHelpDialog {
-					// 如果 dialogStack 中有 help_dialog，从栈中关闭
-					if m.dialogStack != nil {
+				if m.dialogStack != nil {
+					top := m.dialogStack.Top()
+					if top != nil && top.ID() == "help_dialog" {
 						m.dialogStack.CloseDialog("help_dialog")
+						return m, nil
 					}
-					m.showHelpDialog = false
-					return m, nil
 				}
 				if m.commandBuffer != "" {
 					// Clear command buffer, stay in command mode
@@ -1041,14 +909,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
-					// Show cancel confirmation dialog
-					if m.dialogStack != nil {
-						d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
-						d.SetBounds(m.termWidth, m.termHeight)
-						m.dialogStack.Push(d)
-					} else {
-						m.confirmCancelDialog.open = true
-					}
+					d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
+					d.SetBounds(m.termWidth, m.termHeight)
+					m.dialogStack.Push(d)
 				}
 				return m, nil
 
@@ -1062,16 +925,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commandMode = false
 				m.commandBuffer = ""
 				m.lastKey = ""
-				m.showHelpDialog = false
-				// Mode changed — update status bar cache
-				m.cachedStatusBar = m.renderAirlineStatusBar()
-				m.statusBarValid = true
+				m.invalidateFooterCache()
 				return m, nil
 
 			case "enter":
-				if m.showHelpDialog {
-					m.showHelpDialog = false
-					return m, nil
+				if m.dialogStack != nil {
+					top := m.dialogStack.Top()
+					if top != nil && top.ID() == "help_dialog" {
+						m.dialogStack.CloseDialog("help_dialog")
+						return m, nil
+					}
 				}
 				// Process command buffer if non-empty, otherwise enter edit mode
 				if m.commandBuffer != "" {
@@ -1089,23 +952,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// ── Scroll navigation ──
 			case "f":
 				m.viewport.PageDown()
+				m.updateViewportCache()
 				return m, nil
 
 			case "b":
 				m.viewport.PageUp()
+				m.updateViewportCache()
 				return m, nil
 
 			case "j", "down":
 				m.viewport.ScrollDown(1)
+				m.updateViewportCache()
 				return m, nil
 
 			case "k", "up":
 				m.viewport.ScrollUp(1)
+				m.updateViewportCache()
 				return m, nil
 
 			case "G":
 				// Vim: Shift+G → go to bottom
 				m.viewport.GotoBottom()
+				m.updateViewportCache()
 				return m, nil
 
 			// ── Multi-key prefix: g (for gg) ──
@@ -1137,17 +1005,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// ── Help overlay ──
 			case "?":
 				if m.commandBuffer == "" {
-					if m.dialogStack != nil {
-						if m.showHelpDialog {
-							// 关闭帮助弹窗（从栈中移除）
-							m.dialogStack.CloseDialog("help_dialog")
-						} else {
-							// 打开帮助弹窗
-							m.dialogStack.Push(components.NewHelpDialog(components.Language(m.currentLang)))
-						}
-						m.showHelpDialog = !m.showHelpDialog
+					top := m.dialogStack.Top()
+					if top != nil && top.ID() == "help_dialog" {
+						m.dialogStack.CloseDialog("help_dialog")
 					} else {
-						m.showHelpDialog = !m.showHelpDialog
+						m.dialogStack.Push(components.NewHelpDialog(components.Language(m.currentLang)))
 					}
 				} else {
 					m.commandBuffer += "?"
@@ -1182,13 +1044,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ── Edit mode key handling ──
 		switch msg.String() {
 		case "ctrl+c":
-			if m.dialogStack != nil {
-				d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
-				d.SetBounds(m.termWidth, m.termHeight)
-				m.dialogStack.Push(d)
-			} else {
-				m.confirmQuitDialog.open = true
-			}
+			d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
+			d.SetBounds(m.termWidth, m.termHeight)
+			m.dialogStack.Push(d)
 			return m, nil
 
 		case "esc":
@@ -1208,13 +1066,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Show cancel confirmation dialog if task is running
 			if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
-				if m.dialogStack != nil {
-					d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
-					d.SetBounds(m.termWidth, m.termHeight)
-					m.dialogStack.Push(d)
-				} else {
-					m.confirmCancelDialog.open = true
-				}
+				d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
+				d.SetBounds(m.termWidth, m.termHeight)
+				m.dialogStack.Push(d)
 			}
 			return m, nil
 
@@ -1222,6 +1076,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Enter command mode
 			m.commandMode = true
 			m.commandBuffer = ""
+			m.invalidateFooterCache()
 			return m, nil
 
 		case "ctrl+s":
@@ -1441,6 +1296,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// 执行补全计算
 		m.doAutocomplete(m.snapshotText, m.snapshotCursor)
+		// 补全状态变化时刷新 footer 缓存以正确计算 viewport 高度
+		m.invalidateFooterCache()
+
 
 		// 存入缓存 - 使用细粒度缓存键（基于单词和是否有/）
 		contentRunes := []rune(m.snapshotText)
@@ -1466,9 +1324,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskEventMsg:
 		// Don't process task events while any popup/dialog is showing.
 		// Keep the event chain alive so the TUI resumes after dialog dismissal.
-		if m.showHelpDialog || m.confirmDialog.open ||
-			m.taskCompleteDialog.open || m.confirmQuitDialog.open || m.confirmCancelDialog.open ||
-			(m.dialogStack != nil && m.dialogStack.Len() > 0) {
+		if m.dialogStack != nil && m.dialogStack.Len() > 0 {
 			if m.taskRunning {
 				return m, listenForEvents(m.eventCh)
 			}
@@ -1559,6 +1415,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Token counts changed — update cached token dashboard render
 				m.cachedTokenDashboard = m.renderTokenDashboard()
 				m.tokenDashboardValid = true
+				m.invalidateFooterCache()
 			} else {
 				// Fallback: estimate tokens from content string
 				if content, ok := msg.event.Content.(string); ok && content != "" {
@@ -1587,8 +1444,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			// Model info changed — update status bar cache
-			m.cachedStatusBar = m.renderAirlineStatusBar()
-			m.statusBarValid = true
+			m.invalidateFooterCache()
 			return m, listenForEvents(m.eventCh)
 		}
 
@@ -1602,6 +1458,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			entry.toolCallID = callID
 
 			m.logEntries = append(m.logEntries, entry)
+			m.viewportDirty = true
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 
 			// Store the entry index for llm_call_end to update
@@ -1652,8 +1509,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					le.content = "◂ LLM call completed"
 				}
 
-				le.rendered = "" // invalidate cache
+				le.clearRenderCache()      // invalidate cache
+				m.contentPartsDirty = true // Step 2: 标记增量构建需重建
 				m.updateActiveAnim()
+				m.viewportDirty = true
 				m.rebuildViewportScrollLock()
 			}
 			return m, listenForEvents(m.eventCh)
@@ -1665,6 +1524,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Still log the event so it appears in the background
 			entry := formatEventAsEntry(msg.event)
 			m.logEntries = append(m.logEntries, entry)
+			m.viewportDirty = true
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			return m, listenForEvents(m.eventCh)
 		}
@@ -1681,6 +1541,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						content:   fmt.Sprintf("📦 Loaded %d relevant commit(s) for context", countInt),
 					}
 					m.logEntries = append(m.logEntries, entry)
+					m.viewportDirty = true
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 				}
 			}
@@ -1705,10 +1566,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						le := &m.logEntries[idx]
 						le.content = resultContent
 						le.isToolRunning = false
-						le.rendered = "" // invalidate cache
+						le.clearRenderCache()      // invalidate cache
+						m.contentPartsDirty = true // Step 2: 标记增量构建需重建
+						m.viewportDirty = true
 					}
 					delete(m.toolCallEntries, callID)
 					m.updateActiveAnim()
+					m.viewportDirty = true
 					m.rebuildViewportScrollLock()
 					return m, listenForEvents(m.eventCh)
 				}
@@ -1730,10 +1594,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						le := &m.logEntries[idx]
 						le.content = resultContent
 						le.isToolRunning = false
-						le.rendered = ""
+						le.clearRenderCache()
+						m.contentPartsDirty = true // Step 2: 标记增量构建需重建
+						m.viewportDirty = true
 					}
 					delete(m.toolCallEntries, matchedID)
 					m.updateActiveAnim()
+					m.viewportDirty = true
 					m.rebuildViewportScrollLock()
 					return m, listenForEvents(m.eventCh)
 				}
@@ -1750,20 +1617,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.logEntries = append(m.logEntries, entry)
+		m.viewportDirty = true
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 		return m, listenForEvents(m.eventCh)
 
 	case taskCompleteMsg:
 		m.taskRunning = false
-		// Don't clear currentModel/currentProvider — they represent the persistent
-		// LLM provider configuration and should remain visible in the status bar
-		// even when no task is running.
 		m.currentAgent = ""
 		m.commandMode = false
-		m.confirmDialog.open = false // safety: close any stale dialog
-		// Task state changed — update status bar cache
-		m.cachedStatusBar = m.renderAirlineStatusBar()
-		m.statusBarValid = true
+		m.dialogStack.CloseDialog("confirm_dialog") // safety: close any stale dialog
+		m.invalidateFooterCache()
 
 		// 如果是用户主动取消，不显示错误弹窗或完成弹窗
 		if m.taskCancelled {
@@ -1782,31 +1645,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			// Show error dialog via DialogStack
-			if m.dialogStack != nil {
-				d := components.NewTaskCompleteDialog(false, "❌ Task Failed\n\n"+msg.err.Error(), components.Language(m.currentLang))
-				d.SetBounds(m.termWidth, m.termHeight)
-				m.dialogStack.Push(d)
-			} else {
-				m.taskCompleteDialog = taskCompleteDialog{
-					open:    true,
-					message: "❌ Task Failed\n\n" + msg.err.Error(),
-				}
-			}
-		} else {
-			// 保留 currentTask 以支持任务完成后继续对话
-			// m.currentTask = nil  // 不再清除
-			// Show success dialog via DialogStack
-			if m.dialogStack != nil {
-				d := components.NewTaskCompleteDialog(true, "All tasks have been finished.", components.Language(m.currentLang))
-				d.SetBounds(m.termWidth, m.termHeight)
-				m.dialogStack.Push(d)
-			} else {
-				m.taskCompleteDialog = taskCompleteDialog{
-					open:    true,
-					message: "All tasks have been finished.",
-				}
-			}
-		}
+		d := components.NewTaskCompleteDialog(false, "❌ Task Failed\n\n"+msg.err.Error(), components.Language(m.currentLang))
+		d.SetBounds(m.termWidth, m.termHeight)
+		m.dialogStack.Push(d)
+	} else {
+		// 保留 currentTask 以支持任务完成后继续对话
+		// m.currentTask = nil  // 不再清除
+		d := components.NewTaskCompleteDialog(true, "All tasks have been finished.", components.Language(m.currentLang))
+		d.SetBounds(m.termWidth, m.termHeight)
+		m.dialogStack.Push(d)
+	}
 
 		// 清空编辑器输入框
 		m.input.SetValue("")
@@ -1831,42 +1679,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
-}
-
-// updateSkillAutocomplete checks the current input for skill references (/skillname)
-// and updates the autocomplete suggestions accordingly.
-// 已优化：委托给 doSkillAutocomplete 以减少代码重复
-func (m *model) updateSkillAutocomplete() {
-	text := m.input.Value()
-	line := m.input.Line()
-	column := m.input.Column()
-	cursor := line*10000 + column
-	// 提前转换 rune 切片，避免在 doSkillAutocomplete 中重复转换
-	contentRunes := []rune(text)
-	m.doSkillAutocomplete(text, contentRunes, cursor)
-}
-
-// updateKeywordAutocomplete checks if keyword autocomplete should be triggered
-// based on current input and cursor position.
-// 已优化：委托给 doKeywordAutocomplete 以减少代码重复
-func (m *model) updateKeywordAutocomplete() {
-	text := m.input.Value()
-	line := m.input.Line()
-	column := m.input.Column()
-	cursor := line*10000 + column
-	// 提前转换 rune 切片，避免在 doKeywordAutocomplete 中重复转换
-	contentRunes := []rune(text)
-	m.doKeywordAutocomplete(text, contentRunes, cursor)
-}
-
-// extractWordAtCursor extracts the word immediately before the cursor position.
-// A word is defined as a sequence of alphanumeric characters, underscores,
-// and common Chinese characters.
-//
-// Optimizations:
-//   - Uses append + reverse instead of O(n²) prepend
-func extractWordAtCursor(content string, cursorPos int) string {
-	return extractWordAtCursorRunes([]rune(content), cursorPos)
 }
 
 // extractWordAtCursorRunes extracts the word immediately before the cursor position

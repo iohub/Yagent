@@ -14,8 +14,8 @@ import (
 	"codeactor/internal/http"
 	"codeactor/internal/messaging"
 	"codeactor/internal/tui/anim"
+	"codeactor/internal/tui/common"
 	"codeactor/internal/tui/components"
-	"codeactor/internal/tui/diffview"
 	"codeactor/internal/tui/layout"
 
 	"charm.land/bubbles/v2/textarea"
@@ -34,25 +34,28 @@ type keywordCompletionConfig struct {
 	enabled bool // 是否启用关键词补全
 }
 
-// Global styles — Claude Code-like minimalist aesthetic
+// Global styles — Claude Code-like minimalist aesthetic.
+// Deprecated: prefer m.com.Styles for new code. These globals are kept for
+// backward compatibility with the old View/Update rendering path.
 var (
 	bannerPadStyle = lipgloss.NewStyle().Padding(0, 1)
 
-	promptFocusedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
-	promptBlurredStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	// Deprecated: use m.com.Styles.PromptFocused / PromptBlurred instead.
+	// promptFocusedStyle / promptBlurredStyle removed (unused).
 
 	welcomePanelStyle = lipgloss.NewStyle().Padding(1, 2)
 	welcomeLeftStyle  = lipgloss.NewStyle().Width(38)
-	welcomeTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
-	welcomeSubStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	welcomeRightTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
-	welcomeTipStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	welcomeDimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	// Deprecated: use m.com.Styles.WelcomeTitle instead.
+	// welcomeTitleStyle removed (unused).
+	welcomeSubStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	// Deprecated: use m.com.Styles.WelcomeDim instead.
+	// welcomeRightTitle removed (unused).
+	welcomeTipStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	welcomeDimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
-	infoMsgStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-
-	footerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	// Deprecated: use m.com.Styles.InfoMsg / Footer instead.
+	// infoMsgStyle and footerStyle removed (unused).
 
 	// Message log styles
 	logTimeStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
@@ -83,12 +86,8 @@ var (
 		Padding(0, 1).
 		MarginTop(1)
 
-	inputPanelBlurredStyle = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240")). // muted border when not focused
-		BorderBackground(lipgloss.Color("236")).
-		Padding(0, 1).
-		MarginTop(1)
+	// Deprecated: use m.com.Styles.InputPanelBlurred instead.
+	// inputPanelBlurredStyle removed (unused).
 
 	// Separator between message body and input panel — slightly brighter for clarity
 	inputSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -97,7 +96,8 @@ var (
 	diffAddStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	diffDelStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
 	diffCtxStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	diffNoNewlineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	// Deprecated: use m.com.Styles.DiffNoNewline instead.
+	// diffNoNewlineStyle removed (unused).
 
 	// Tool status styles (running → finished transition)
 	toolRunningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("228")) // gold — running
@@ -117,7 +117,8 @@ var (
 )
 
 // =============================================================================
-// Airline-style status bar — color palette
+// Airline-style status bar — color palette.
+// Deprecated: prefer m.com.Styles for new code. Globals kept for old View path.
 // =============================================================================
 
 var (
@@ -201,12 +202,34 @@ type logEntry struct {
 	executionSummary string // short summary extracted from arguments (file path, command, etc.)
 	resultBrief      string // brief result description (e.g., "120 lines", "modified")
 	diffText         string // unified diff content for file edit results
-	rendered         string // cached rendered output (glamour or plain), cleared on resize
+	renderedCache    map[int]string // width-keyed cache: key=width, value=rendered content
 
 	compactData *CompactData
 
 	// Tool entry for new-style rendering (non-nil for tool events)
 	toolEntry *ToolEntry
+}
+
+// getCachedRender returns the cached render for the given width.
+func (e *logEntry) getCachedRender(width int) (string, bool) {
+	if e.renderedCache == nil {
+		return "", false
+	}
+	cached, ok := e.renderedCache[width]
+	return cached, ok
+}
+
+// setCachedRender stores the rendered content for the given width.
+func (e *logEntry) setCachedRender(content string, width int) {
+	if e.renderedCache == nil {
+		e.renderedCache = make(map[int]string)
+	}
+	e.renderedCache[width] = content
+}
+
+// clearRenderCache clears all cached renders.
+func (e *logEntry) clearRenderCache() {
+	e.renderedCache = nil
 }
 
 // tickMsg is sent by the animation ticker to advance animations.
@@ -229,39 +252,13 @@ type publisherReadyMsg struct {
 	publisher *messaging.MessagePublisher
 }
 
-// confirmDialog holds the state of the authorization confirmation dialog.
-type confirmDialog struct {
-	open           bool
-	toolName       string // 工具名，如 "run_bash"
-	reason         string // 原因/命令
-	requestID      string
-	selectedOption int // 0=Allow, 1=Allow Tool(session), 2=Allow Session All, 3=Allow Project All, 4=Deny
-}
-
-// taskCompleteDialog holds the state of the task completion overlay dialog.
-type taskCompleteDialog struct {
-	open    bool
-	message string
-}
-
-// confirmQuitDialog holds the state of the quit confirmation dialog.
-type confirmQuitDialog struct {
-	open           bool
-	selectedOption int // 0=Confirm, 1=Cancel
-}
-
-// confirmCancelDialog holds the state of the cancel task confirmation dialog.
-type confirmCancelDialog struct {
-	open           bool
-	selectedOption int // 0=Confirm, 1=Cancel
-}
-
-// confirmDeleteDialog holds the state of the delete history confirmation dialog.
-type confirmDeleteDialog struct {
-	open           bool
-	taskID         string // taskID of the item to delete
-	selectedOption int    // 0=Cancel, 1=Confirm (delete)
-}
+// All dialogs are now managed via the DialogStack (m.dialogStack).
+// See components/ for dialog implementations:
+//   - ConfirmDialog      → authorization confirmation
+//   - QuitConfirmDialog   → quit / cancel task confirmation
+//   - TaskCompleteDialog  → task completion notification
+//   - HelpDialog          → command mode help
+//   - HistoryDialog       → history browsing (placeholder)
 
 // tuiEventConsumer routes MessageEvents to a Go channel consumed by the tea program.
 type tuiEventConsumer struct {
@@ -288,8 +285,67 @@ type AgentTokenUsage struct {
 	CacheReadInputTokens     int64
 }
 
+// visibleEntryIndices 返回当前视口中可见的logEntry索引范围 [start, end]。
+// 通过遍历contentParts累加行数来确定可见范围。
+// 如果contentParts和logEntries长度不一致，使用较短的长度。
+// 返回的索引是logEntries中的索引，与contentParts一一对应。
+func (m *model) visibleEntryIndices() (start, end int) {
+	if len(m.logEntries) == 0 || m.termHeight <= 0 {
+		return 0, 0
+	}
+
+	// 计算viewport高度
+	footerHeight := m.computeFooterHeight()
+	vpHeight := m.termHeight - footerHeight
+	if vpHeight < 3 {
+		vpHeight = 3
+	}
+
+	// 获取viewport当前的YOffset（滚动位置）
+	yOffset := m.viewport.YOffset()
+
+	// 使用contentParts的行数信息来确定可见范围
+	// 注意：contentParts和logEntries可能长度不一致（增量追加过程中），使用较短的长度
+	partCount := len(m.contentParts)
+	if len(m.logEntries) < partCount {
+		partCount = len(m.logEntries)
+	}
+
+	if partCount == 0 {
+		return 0, 0
+	}
+
+	currentLine := 0
+	start = -1
+	end = -1
+
+	for i := 0; i < partCount; i++ {
+		lineCount := strings.Count(m.contentParts[i], "\n") + 1
+		partStart := currentLine
+		partEnd := currentLine + lineCount
+
+		// 检查这个部分是否与可见区域 [yOffset, yOffset+vpHeight) 有重叠
+		if partEnd > yOffset && partStart < yOffset+vpHeight {
+			if start == -1 {
+				start = i
+			}
+			end = i
+		}
+
+		currentLine += lineCount
+	}
+
+	if start == -1 {
+		return 0, 0
+	}
+	return start, end
+}
+
 // TUI Model
 type model struct {
+	// ── 新架构：共享上下文 ──
+	com *common.Common // 共享样式、配置、助手引用
+
 	// External dependencies
 	assistant   *app.CodeActor
 	taskManager *http.TaskManager
@@ -320,25 +376,14 @@ type model struct {
 	currentLang Language
 	projectDir  string
 
-	// Authorization confirmation dialog
-	confirmDialog      confirmDialog
-	taskCompleteDialog taskCompleteDialog
-	// Quit / Cancel confirmation dialogs
-	confirmQuitDialog   confirmQuitDialog
-	confirmCancelDialog confirmCancelDialog
-
-	// Delete history confirmation dialog
-	confirmDeleteDialog confirmDeleteDialog
-
-	publisher           *messaging.MessagePublisher
-	publisherCh         chan *messaging.MessagePublisher
+	publisher   *messaging.MessagePublisher
+	publisherCh chan *messaging.MessagePublisher
 
 	// Command mode (vim-like): hidden input, ":" prefix, different bg.
 	// Toggled with Esc (edit→cmd) and i (cmd→edit). Auto-enabled on task submit.
-	commandMode    bool
-	commandBuffer  string // hidden command input buffer in command mode
-	lastKey        string // tracks previous key for multi-key sequences (gg)
-	showHelpDialog bool   // "?" help overlay in command mode
+	commandMode   bool
+	commandBuffer string // hidden command input buffer in command mode
+	lastKey       string // tracks previous key for multi-key sequences (gg)
 
 	// Skill autocomplete in edit mode (inline, not popup)
 	skillAutoComplete  bool     // whether autocomplete suggestions are shown
@@ -381,7 +426,7 @@ type model struct {
 	// Animation state for running tools
 	anim       *Anim
 	activeAnim bool // true when there are running tool entries
-	animFrame  int  // frame counter for throttled viewport rebuilds
+	animFrame   int           // frame counter for throttled viewport rebuilds
 
 	// History mode
 	historyMode     bool
@@ -391,12 +436,15 @@ type model struct {
 	historyPageSize int // 每页条数，固定20
 	historyLoading  bool
 
+	// pendingDeleteTaskID tracks the task to delete when the delete confirmation
+	// dialog (a QuitConfirmDialog) is on the DialogStack.
+	pendingDeleteTaskID string
+
 	// ── 新组件（TUI 改进） ──
 	dialogStack  *components.DialogStack   // 栈式弹窗管理器
 	animManager  *anim.Manager             // 可见性感知动画管理器
 	layoutEngine *layout.LayoutEngine      // 动态布局引擎
 	mouseHandler *components.ClickDetector // 鼠标事件处理器
-	diffView     *diffview.DiffView        // Diff 查看器
 
 	// ── 预创建的渲染样式（避免循环内重复创建） ──
 	skillSuggestionStyle   lipgloss.Style // 普通技能建议样式
@@ -420,6 +468,31 @@ type model struct {
 	tokenDashboardValid  bool   // tokenDashboard 缓存是否有效
 	cachedStatusBar      string // 缓存的状态栏渲染结果
 	statusBarValid       bool   // statusBar 缓存是否有效
+
+	// ── 性能优化标志 ──
+	tickStarted   bool // tick 循环是否已启动
+	viewportDirty bool // 标记 viewport 内容是否需要重建
+
+	// ── Glamour renderer 缓存 (key=width) ──
+	glamourRenderers map[int]*glamour.TermRenderer
+
+	// ── Footer 缓存 ──
+	cachedFooterHeight int
+	cachedSeparator    string
+	footerHeightValid  bool
+
+	// ── Viewport 渲染缓存 ──
+	// viewport.View() 内部对每帧做 strings.Split 裁剪大段内容，
+	// 在快速输入时这是卡顿的主要原因。缓存避免重复的 split/join。
+	cachedViewportView  string
+	viewportViewValid   bool
+	prevViewportYOffset int
+	prevViewportHeight  int
+
+	// ── 增量内容构建相关 ──
+	contentParts      []string // 每个logEntry的已渲染内容，与logEntries一一对应
+	contentPartsDirty bool     // 是否需要完全重建contentParts
+	prevViewportWidth int      // 上次渲染时的viewport宽度，用于检测resize
 }
 
 // autocompleteCacheKey is a fine-grained cache key for autocomplete results.
@@ -438,7 +511,7 @@ type AutocompleteResult struct {
 	keywordSuggestionIdx int
 }
 
-func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config) model {
+func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) model {
 	ti := textarea.New()
 
 	// ── Editor input styles (harmonized with TUI 256-color palette) ──
@@ -454,6 +527,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	ti.SetWidth(60)
 	ti.SetHeight(3)
 	ti.ShowLineNumbers = false
+	ti.SetVirtualCursor(false) // 禁用虚拟光标避免闪烁，让终端管理真实光标
 
 	// Text style (lipgloss v2)
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
@@ -505,8 +579,8 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 
 	projectDir, _ := os.Getwd()
 
-	// Create viewport for scrollable message area (v1 lipgloss for bubbles compatibility)
-	vp := viewport.New(viewport.WithWidth(80), viewport.WithHeight(10))
+	// Create viewport with real terminal dimensions to eliminate startup flash
+	vp := viewport.New(viewport.WithWidth(termWidth), viewport.WithHeight(termHeight))
 	vp.Style = lipgloss.NewStyle().Padding(0, 1)
 
 	// Create glamour markdown renderer with explicit style to avoid
@@ -517,7 +591,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	}
 	glamourRenderer, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle(glamourStyle),
-		glamour.WithWordWrap(60),
+		glamour.WithWordWrap(termWidth-10), // 使用真实宽度
 	)
 	if err != nil {
 		// Fallback: glamourRenderer will be nil, and we'll use plain text
@@ -529,7 +603,6 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	am := anim.NewManager()
 	le := layout.NewLayoutEngine()
 	md := components.NewClickDetector()
-	dv := diffview.New()
 
 	// 注册默认的 tool_call 动画
 	am.Register("tool_call_anim", 10) // 10 FPS
@@ -565,7 +638,13 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		initModel = model
 	}
 
+	// —— 创建共享组件 ——
+	styles := common.NewStyles()
+	com := common.NewCommon(styles, cfg, ca, projectDir, useDarkStyle)
+
 	return model{
+		com: com,
+
 		assistant:          ca,
 		taskManager:        tm,
 		dataManager:        dm,
@@ -581,7 +660,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		glamourRenderer:    glamourRenderer,
 		useDarkStyle:       useDarkStyle,
 		toolCallEntries:    make(map[string]*ToolEntry),
-		anim:               NewAnim(10),
+		anim: NewAnim(10),
 		tokenUsagePerAgent: make(map[string]*AgentTokenUsage),
 
 		// 新组件
@@ -589,7 +668,6 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		animManager:  am,
 		layoutEngine: le,
 		mouseHandler: md,
-		diffView:     dv,
 		keywordDict:  keywordDict,
 		keywordCompletionCfg: keywordCompletionConfig{enabled: completionEnabled},
 
@@ -618,14 +696,27 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 
 		// 补全结果缓存 - 使用细粒度缓存键
 		autocompleteCache: make(map[autocompleteCacheKey]*AutocompleteResult),
+
+		// 性能优化标志
+		tickStarted:   false,
+		viewportDirty: false,
+
+		// ── 增量内容构建相关 (Step 2) ──
+		contentParts:      make([]string, 0),
+		contentPartsDirty: false,
+		prevViewportWidth: 0,
+
+		// 使用传入的终端尺寸初始化
+		termWidth:   termWidth,
+		termHeight:  termHeight,
 	}
 }
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		tea.Raw(textarea.Blink()),
 		listenForEvents(m.eventCh),
-		m.animManager.TickWithCmd(),
+		// 延迟启动 tick 循环：初始时不启动 tick，
+		// 在首次收到 WindowSizeMsg 后才真正启动 tickCmd()
 	)
 }
 

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"codeactor/internal/tui/common"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -47,15 +49,16 @@ func makeLeftSep(leftBg, rightBg color.Color) string {
 
 func (m model) View() tea.View {
 	if m.quitting {
-		return tea.NewView("")
+		return tea.View{AltScreen: true}
+	}
+
+	// 新增：在终端尺寸初始化前返回空视图
+	if m.termWidth <= 0 || m.termHeight <= 0 {
+		return tea.View{AltScreen: true}
 	}
 
 	// History mode: render fullscreen history browser
 	if m.historyMode {
-		// If delete confirmation dialog is active, render it as an overlay
-		if m.confirmDeleteDialog.open {
-			return tea.NewView(m.renderConfirmDeleteHistoryDialog())
-		}
 		return renderHistoryView(&m)
 	}
 
@@ -63,33 +66,8 @@ func (m model) View() tea.View {
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
 		overlay := m.dialogStack.Overlay(m.termWidth, m.termHeight)
 		if overlay != "" {
-			return tea.NewView(overlay)
+			return tea.View{AltScreen: true, Content: overlay}
 		}
-	}
-
-	// When confirmation dialog is open (fallback for old dialog), render it as an overlay
-	if m.confirmDialog.open {
-		return tea.NewView(m.renderConfirmDialog())
-	}
-
-	// When help dialog is open in command mode (fallback for old dialog), render it
-	if m.showHelpDialog {
-		return tea.NewView(m.renderHelpDialog())
-	}
-
-	// When quit confirmation dialog is open (fallback for old dialog), render it
-	if m.confirmQuitDialog.open {
-		return tea.NewView(m.renderConfirmQuitDialog())
-	}
-
-	// When cancel task confirmation dialog is open (fallback for old dialog), render it
-	if m.confirmCancelDialog.open {
-		return tea.NewView(m.renderConfirmCancelDialog())
-	}
-
-	// When task complete dialog is open (fallback for old dialog), render it
-	if m.taskCompleteDialog.open {
-		return tea.NewView(m.renderTaskCompleteDialog())
 	}
 
 	var b strings.Builder
@@ -101,16 +79,79 @@ func (m model) View() tea.View {
 		vpHeight = 3
 	}
 	if m.viewport.Height() != vpHeight {
-		(&m.viewport).SetHeight(vpHeight)
+		m.viewport.SetHeight(vpHeight)
+		m.viewportViewValid = false
 	}
-	b.WriteString(m.viewport.View())
 
-	// Separator
-	sepWidth := m.termWidth
-	if sepWidth < 40 {
-		sepWidth = 40
+	// Scrollbar: reserve 2 columns if content exceeds viewport
+	scrollbarWidth := 0
+	totalLines := m.viewport.TotalLineCount()
+	if totalLines > vpHeight {
+		scrollbarWidth = 2
 	}
-	b.WriteString(inputSeparatorStyle.Render(strings.Repeat("─", sepWidth)))
+	contentWidth := m.termWidth - scrollbarWidth
+
+	// 仅在dirty、宽度变化或新条目到达时重建内容
+	if m.contentPartsDirty || contentWidth != m.prevViewportWidth ||
+		len(m.contentParts) != len(m.logEntries) {
+		// Resize viewport to make room for scrollbar
+		if m.viewport.Width() != contentWidth {
+			m.viewport.SetWidth(contentWidth)
+		}
+		m.rebuildContentCache()
+		m.viewportViewValid = false
+	}
+
+	// 使用缓存的 viewport 视图
+	if !m.viewportViewValid {
+		m.cachedViewportView = m.viewport.View()
+		m.viewportViewValid = true
+		m.prevViewportYOffset = m.viewport.YOffset()
+		m.prevViewportHeight = m.viewport.Height()
+	}
+
+	// Render viewport with optional scrollbar
+	if scrollbarWidth > 0 {
+		sbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+		trackStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+		scrollbar := common.Scrollbar(sbStyle, trackStyle,
+			vpHeight, totalLines, vpHeight, m.viewport.YOffset())
+
+		vpLines := strings.Split(m.cachedViewportView, "\n")
+		sbLines := strings.Split(scrollbar, "\n")
+
+		var combinedLines []string
+		maxLines := len(vpLines)
+		if len(sbLines) > maxLines {
+			maxLines = len(sbLines)
+		}
+		for i := 0; i < maxLines; i++ {
+			vpLine := ""
+			sbLine := ""
+			if i < len(vpLines) {
+				vpLine = vpLines[i]
+			}
+			if i < len(sbLines) {
+				sbLine = sbLines[i]
+			}
+			// Pad vpLine to contentWidth then add scrollbar
+			vpPadded := lipgloss.NewStyle().Width(contentWidth).Render(vpLine)
+			combinedLines = append(combinedLines, vpPadded+sbLine)
+		}
+		b.WriteString(strings.Join(combinedLines, "\n"))
+	} else {
+		b.WriteString(m.cachedViewportView)
+	}
+
+	// Separator (cached)
+	if m.cachedSeparator == "" {
+		sepWidth := m.termWidth
+		if sepWidth < 40 {
+			sepWidth = 40
+		}
+		m.cachedSeparator = inputSeparatorStyle.Render(strings.Repeat("─", sepWidth))
+	}
+	b.WriteString(m.cachedSeparator)
 	b.WriteString("\n")
 
 	// ── Input area: command mode hidden, edit mode with textarea ──
@@ -193,7 +234,7 @@ func (m model) View() tea.View {
 
 	b.WriteString(footer.String())
 
-	return tea.NewView(b.String())
+	return tea.View{AltScreen: true, Content: b.String()}
 }
 
 // renderAirlineStatusBar renders an nvim airline-style segmented status bar.
@@ -204,21 +245,36 @@ func (m model) renderAirlineStatusBar() string {
 		width = 80 // fallback before WindowSizeMsg
 	}
 
-	// ── Determine mode segment ──────────────────────────────────────────
+	// ── Determine mode segment with gradient text ──
 	var modeSeg string
 	var modeBg color.Color
 	var tipsText string
 
+	gradModeStyle := lipgloss.NewStyle().Bold(true).Padding(0, 1)
+
 	if m.commandMode {
-		modeSeg = airlineCommandModeStyle.Render("COMMAND")
+		modeSeg = gradModeStyle.
+			Background(airlineColorCmdBg).
+			Foreground(lipgloss.Color("15")).
+			Render("COMMAND")
 		modeBg = airlineColorCmdBg
 		tipsText = langManager.GetText("CommandModeIdleTips")
 	} else if m.taskRunning {
-		modeSeg = airlineRunModeStyle.Render("● RUN")
+		// Gradient mode indicator for running state
+		modeText := common.ApplyBoldForegroundGrad(
+			lipgloss.NewStyle().Background(airlineColorRunBg),
+			"● RUN",
+			common.DefaultGradFrom,
+			common.DefaultGradTo,
+		)
+		modeSeg = modeText
 		modeBg = airlineColorRunBg
 		tipsText = langManager.GetText("EditModeTips")
 	} else {
-		modeSeg = airlineNormalModeStyle.Render("NORMAL")
+		modeSeg = gradModeStyle.
+			Background(airlineColorNormalBg).
+			Foreground(lipgloss.Color("15")).
+			Render("NORMAL")
 		modeBg = airlineColorNormalBg
 		tipsText = langManager.GetText("EditModeTips")
 	}
@@ -349,7 +405,9 @@ func (m model) renderCenteredStartupScreen(width, height int) string {
 	var block strings.Builder
 	block.WriteString(banner)
 	block.WriteString("\n")
-	block.WriteString(welcomeDimStyle.Render("A Repository-Aware, Self-Evolving Agent"))
+	// Use gradient for the tagline
+	tagline := common.ApplyGrad("A Repository-Aware, Self-Evolving Agent")
+	block.WriteString(tagline)
 	block.WriteString("\n\n")
 	block.WriteString(welcomeSubStyle.Render(cwd))
 
@@ -380,7 +438,8 @@ func (m model) renderWelcomePanelLayout() string {
 
 	// Build right panel: recent activity
 	var right strings.Builder
-	right.WriteString(welcomeDimStyle.Render("─── A Repository-Aware, Self-Evolving Agent"))
+	tagline := common.ApplyGrad("─── A Repository-Aware, Self-Evolving Agent")
+	right.WriteString(tagline)
 	right.WriteString("\n")
 
 	// Compute responsive widths
@@ -407,25 +466,24 @@ func (m model) renderWelcomePanelLayout() string {
 }
 func renderBanner() string {
 	asciiLogo := []string{
-
 		"╔═╗┌─┐┌┬┐┌─┐  ╔═╗┌─┐┌┬┐┌─┐┬─┐  ╔═╗╦",
 		"║  │ │ ││├┤   ╠═╣│   │ │ │├┬┘  ╠═╣║",
 		"╚═╝└─┘─┴┘└─┘  ╩ ╩└─┘ ┴ └─┘┴└─  ╩ ╩╩",
 	}
 
-	rainbowColors := []string{
-		"167", "180", "221", "114", "75", "98", "176",
-	}
+	// Use gradient text (blue → cyan) instead of fixed rainbow colors
+	gradFrom := common.DefaultGradFrom
+	gradTo := common.DefaultGradTo
 
 	var rendered []string
 	for _, line := range asciiLogo {
-		var chars []string
-		for i, r := range line {
-			color := rainbowColors[i%len(rainbowColors)]
-			style := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-			chars = append(chars, style.Render(string(r)))
-		}
-		rendered = append(rendered, lipgloss.JoinHorizontal(lipgloss.Top, chars...))
+		gradLine := common.ApplyBoldForegroundGrad(
+			lipgloss.NewStyle(),
+			line,
+			gradFrom,
+			gradTo,
+		)
+		rendered = append(rendered, gradLine)
 	}
 	return bannerPadStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rendered...))
 }
@@ -456,15 +514,6 @@ func formatCacheHitRate(cacheTokens, inputTokens int64) string {
 	rate := float64(cacheTokens) / float64(inputTokens) * 100
 	cacheStr := formatToken(cacheTokens)
 	return fmt.Sprintf("Cache: %.1f%%(%s)", rate, cacheStr)
-}
-
-// renderTokenLine renders the token consumption line in the footer.
-// Format: "In: 1.2k | Out: 3.5k"
-func (m model) renderTokenLine() string {
-	tokenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")) // muted gray
-	inStr := formatToken(m.inputTokens)
-	outStr := formatToken(m.outputTokens)
-	return tokenStyle.Render(fmt.Sprintf("In: %s | Out: %s", inStr, outStr))
 }
 
 // renderTokenDashboard renders a dashboard-style token consumption display.
@@ -568,11 +617,3 @@ func (m model) renderTokenDashboard() string {
 	return dashStyle.Render(strings.Join(lines, "\n"))
 }
 
-// renderOverlay 渲染弹窗叠加层
-// 如果 dialogStack 为空则返回空字符串，否则返回完整的覆盖层渲染结果
-func (m model) renderOverlay() string {
-	if m.dialogStack == nil || m.dialogStack.Len() == 0 {
-		return ""
-	}
-	return m.dialogStack.Overlay(m.termWidth, m.termHeight)
-}
