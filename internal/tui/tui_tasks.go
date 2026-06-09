@@ -40,6 +40,7 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 	}
 
 	m.taskRunning = true
+	m.taskStarted = true
 	m.commandMode = true
 	m.errMsg = ""
 	// Task started — update status bar cache
@@ -94,6 +95,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 
 	m.input.SetValue("")
 	m.taskRunning = true
+	m.taskStarted = true
 	m.commandMode = true
 	m.errMsg = ""
 	// Task started — update status bar cache

@@ -161,6 +161,14 @@ func ToolNameStyle(nested bool) lipgloss.Style {
 	return NameNormal
 }
 
+// inputPanelIdleStyle is used for the input panel border when no task has been
+// submitted yet — a dim, non-highlighted gray border.
+var inputPanelIdleStyle = lipgloss.NewStyle().
+	Border(lipgloss.NormalBorder()).
+	BorderForeground(lipgloss.Color("237")). // very dim gray, barely visible
+	Padding(0, 1).
+	MarginTop(1)
+
 // ── Context compression styles ──
 var (
 	CompactBadgeStyle = lipgloss.NewStyle().

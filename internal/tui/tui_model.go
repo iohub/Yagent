@@ -368,6 +368,7 @@ type model struct {
 
 	// Task execution state
 	taskRunning   bool
+	taskStarted   bool   // 标记用户是否已经提交过任务（用于控制输入面板边框高亮）
 	taskCancelled bool // 标记任务是否由用户主动取消
 	currentTask   *http.Task
 	eventCh       chan *messaging.MessageEvent

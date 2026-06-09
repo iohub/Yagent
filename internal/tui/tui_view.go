@@ -162,7 +162,12 @@ func (m model) View() tea.View {
 		m.input.SetHeight(m.computeInputHeight())
 		inputLine := m.input.View()
 		// Wrap textarea in a bordered panel to visually distinguish from message body
-		footer.WriteString(inputPanelStyle.Render(inputLine))
+		// Use blue border when task has started, gray border when idle
+		panelStyle := inputPanelIdleStyle
+		if m.taskStarted {
+			panelStyle = inputPanelStyle
+		}
+		footer.WriteString(panelStyle.Render(inputLine))
 		footer.WriteString("\n")
 
 		// Inline skill autocomplete suggestions (below textarea)
