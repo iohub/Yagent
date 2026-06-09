@@ -764,6 +764,15 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 	a.currentMemory = mem
 	defer func() { a.currentMemory = nil }()
 
+	// 将 commit 上下文移出 system prompt，前置到用户输入中，
+	// 确保 system prompt 完全静态，提高 LLM Prompt Cache 命中率。
+	if input != "" {
+		if commitCtx := a.GetCommitContext(ctx, input); commitCtx != "" {
+			input = fmt.Sprintf("### Recent Relevant Commits\n%s\n\n### Current Task\n%s", commitCtx, input)
+			slog.Debug("Commit context prepended to user input")
+		}
+	}
+
 	if mem != nil {
 		// Check if the last message is the same as input to avoid duplication
 		// because handleChatMessage might have already added it.
@@ -835,14 +844,6 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 	// 追加项目上下文（放在所有静态内容之后，确保缓存命中率）
 	if projectContext != "" {
 		systemPrompt += projectContext
-	}
-
-	// 追加相关 commit 上下文（基于当前用户输入动态检索相关 commit）
-	if input != "" {
-		if commitCtx := a.GetCommitContext(ctx, input); commitCtx != "" {
-			systemPrompt += fmt.Sprintf("\n\n### Recent Relevant Commits\n%s", commitCtx)
-			slog.Debug("Commit context injected into system prompt")
-		}
 	}
 
 	messages = append(messages, llm.Message{
