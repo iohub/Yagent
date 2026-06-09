@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -276,7 +276,7 @@ func (c *tuiEventConsumer) Consume(event *messaging.MessageEvent) error {
 	default:
 		// Drop event if channel is full to avoid blocking the task.
 		// Log a warning so the user / developer knows events were lost.
-		fmt.Fprintf(os.Stderr, "WARNING: TUI event channel full, dropping event type=%s from=%s\n", event.Type, event.From)
+		slog.Warn("TUI 事件通道已满，丢弃事件", "component", "tui-model", "event_type", event.Type, "event_from", event.From)
 	}
 	return nil
 }

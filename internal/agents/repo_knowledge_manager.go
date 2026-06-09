@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -63,7 +64,7 @@ func (m *RepoKnowledgeManager) AnalyseTask(ctx context.Context, task string) (st
 	matches, err := m.searchSimilar(ctx, task)
 	if err != nil {
 		// 搜索失败，fallback 到正常 RepoAgent 执行
-		fmt.Printf("[RepoKnowledge] search failed, falling back to full run: %v\n", err)
+		slog.Warn("知识库搜索失败，回退到完整分析", "component", "repo-knowledge", "error", err)
 		result, err := m.agent.Run(ctx, task)
 		if err != nil {
 			return "", err
@@ -73,7 +74,7 @@ func (m *RepoKnowledgeManager) AnalyseTask(ctx context.Context, task string) (st
 
 	// 2. 检查是否有高相似度匹配
 	if len(matches) > 0 && matches[0].Score >= m.threshold {
-		fmt.Printf("[RepoKnowledge] cache hit! score=%.4f, returning cached result\n", matches[0].Score)
+		slog.Info("知识库缓存命中，返回缓存结果", "component", "repo-knowledge", "score", matches[0].Score)
 		return matches[0].Result, nil
 	}
 
@@ -86,7 +87,7 @@ func (m *RepoKnowledgeManager) AnalyseTask(ctx context.Context, task string) (st
 	// 4. 存储分析结果到知识库（异步，非致命错误）
 	go func() {
 		if err := m.embedTaskAndResult(context.Background(), task, agentResult.Text); err != nil {
-			fmt.Printf("[RepoKnowledge] failed to embed: %v\n", err)
+			slog.Warn("知识库嵌入存储失败", "component", "repo-knowledge", "error", err)
 		}
 	}()
 

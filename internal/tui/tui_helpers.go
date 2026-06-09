@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"syscall"
@@ -43,7 +44,7 @@ func StartTUI(taskFilePath string, ca *app.CodeActor, tm *http.TaskManager, dm *
 		if data, err := os.ReadFile(taskFilePath); err == nil {
 			taskContent = string(data)
 		} else {
-			fmt.Printf("无法读取任务文件: %v\n", err)
+			slog.Error("无法读取任务文件", "component", "tui-helpers", "error", err)
 		}
 	}
 
@@ -59,7 +60,7 @@ func StartTUI(taskFilePath string, ca *app.CodeActor, tm *http.TaskManager, dm *
 
 	p := tea.NewProgram(initialModel(taskContent, ca, tm, dm, useDarkStyle, cfg, termWidth, termHeight))
 	if _, err := p.Run(); err != nil {
-		fmt.Printf("Alas, there's been an error: %v", err)
+		slog.Error("TUI 运行出错", "component", "tui-helpers", "error", err)
 		os.Exit(1)
 	}
 }

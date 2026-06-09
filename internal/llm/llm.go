@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"codeactor/internal/config"
+	"codeactor/internal/logging"
 	"codeactor/internal/util"
 
 	"log/slog"
@@ -37,11 +38,7 @@ func initLLMLogger() error {
 	}
 
 	// Debug mode: create log file as before
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return util.WrapError(context.Background(), err, "failed to get user home directory")
-	}
-	logDir := filepath.Join(homeDir, ".codeactor", "logs")
+	logDir := logging.GetLogDir()
 
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return util.WrapError(context.Background(), err, "failed to create logs directory")

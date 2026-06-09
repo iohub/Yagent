@@ -1,13 +1,12 @@
 package agents
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
-	"codeactor/internal/util"
+	"codeactor/internal/logging"
 
 	"log/slog"
 )
@@ -18,17 +17,20 @@ var toolLogFile *os.File
 
 // InitToolLogger initializes the tool logger in TUI mode.
 // Creates the log directory if it doesn't exist.
-// On file open failure, degrades gracefully with a warning.
+// On file open failure, degrades gracefully using logging.GetFallbackWriter()
+// which ensures TUI mode NEVER falls back to os.Stdout.
 func InitToolLogger() error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return util.WrapError(context.Background(), err, "failed to get user home directory")
-	}
-	logDir := filepath.Join(homeDir, ".codeactor", "logs")
+	logDir := logging.GetLogDir()
 
-	// Create log directory if it doesn't exist
+	// Ensure log directory exists
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return util.WrapError(context.Background(), err, "failed to create logs directory")
+		slog.Warn("Failed to create tool log directory, using fallback writer",
+			"dir", logDir, "error", err)
+		handler := slog.NewTextHandler(logging.GetFallbackWriter(), &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})
+		toolLogger = slog.New(handler)
+		return nil
 	}
 
 	dateStr := time.Now().Format("2006-01-02")
@@ -38,13 +40,14 @@ func InitToolLogger() error {
 	var fileErr error
 	toolLogFile, fileErr = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if fileErr != nil {
-		slog.Warn("Failed to open tool log file, tool calls will not be logged to file",
-			"file", logFilePath,
-			"error", fileErr)
-		// Degrade gracefully: set logger to discard handler
-		toolLogger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		slog.Warn("Failed to open tool log file, using fallback writer",
+			"file", logFilePath, "error", fileErr)
+		// CRITICAL: Never fall back to os.Stdout in TUI mode.
+		// Use logging.GetFallbackWriter() which returns discard or app log file in TUI mode.
+		handler := slog.NewTextHandler(logging.GetFallbackWriter(), &slog.HandlerOptions{
 			Level: slog.LevelInfo,
-		}))
+		})
+		toolLogger = slog.New(handler)
 		return nil
 	}
 

@@ -2,6 +2,7 @@ package skills
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +52,7 @@ func LoadSkills(dirPath string) (*SkillRegistry, error) {
 		filePath := filepath.Join(dirPath, entry.Name())
 		content, err := os.ReadFile(filePath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to read skill file %s: %v\n", filePath, err)
+			slog.Warn("读取技能文件失败", "component", "skills", "path", filePath, "error", err)
 			continue
 		}
 
