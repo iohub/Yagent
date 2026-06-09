@@ -35,6 +35,9 @@ pub struct HybridSearchConfig {
     /// Penalty strength for short code blocks (0.0 = no penalty, 1.0 = full penalty).
     /// Applied as: penalty = 1.0 - max(0, 1 - len/threshold) * strength
     pub short_code_penalty: f64,
+    /// Number of top candidates to keep after RRF fusion.
+    /// These candidates are then passed to the reranker or returned as final results.
+    pub rrf_top_k: usize,
 }
 
 impl Default for HybridSearchConfig {
@@ -47,6 +50,7 @@ impl Default for HybridSearchConfig {
             timeout_ms: 0,
             short_code_threshold: 30,
             short_code_penalty: 0.5,
+            rrf_top_k: 20,
         }
     }
 }
@@ -200,7 +204,8 @@ impl HybridSearchService {
         };
 
         // Perform RRF fusion — 返回足够的候选供后续 rerank 使用
-        let rrf_limit = self.config.dense_limit.max(self.config.sparse_limit);
+        // Use rrf_top_k for final RRF fusion limit (configurable via TOML)
+        let rrf_limit = self.config.rrf_top_k;
         let fused = self.reciprocal_rank_fusion(dense_raw, sparse_results.unwrap_or_default(), rrf_limit);
         debug!("Hybrid search returned {} fused candidates (before rerank)", fused.len());
 

@@ -1,16 +1,39 @@
-# ── 三级LLM配置（优先级: tools.llm > agents.llm > global.llm）──
+# ═══════════════════════════════════════════════════════════════
+# CodeActor 配置文件
+# 使用方式：复制到 ~/.codeactor/config/config.toml 后修改
+# 完整配置说明：https://github.com/codeactor/codeactor
+# ═══════════════════════════════════════════════════════════════
 
-# 全局默认LLM提供商
+# ── 全局 LLM ──
 [global.llm]
 use_provider = "aliyun"
 
-# Agent级LLM配置：可为所有agent设置默认值，也可按agent名单独指定
-[agents.llm]
-# use_provider = "openrouter"  # 所有agent的默认提供商（可选）
+# ── LLM 提供商（仅 3 个必要示例）──
+[global.llm.providers.aliyun]
+model = "qwen3-coder-plus"
+temperature = 0.0
+max_tokens = 28000
+api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key = "your-key"
 
-# 按agent名指定（优先级高于 agents.llm.use_provider）
+[global.llm.providers.deepseek_v4_pro]
+model = "deepseek-v4-pro"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "https://api.deepseek.com/v1"
+api_key = "your-key"
+reasoning_effort = "max"
+
+[global.llm.providers.local]
+model = "qwen3-30b-a3b"
+temperature = 0.0
+max_tokens = 3000
+api_base_url = "http://127.0.0.1:8000"
+api_key = "dummy-key"
+
+# ── Agent 级 LLM（优先级: agent > agents > global）──
 [agents.llm.conductor]
-use_provider = "ds4_flash"
+use_provider = "deepseek_v4_pro"
 
 [agents.llm.coding]
 use_provider = "local"
@@ -21,178 +44,27 @@ use_provider = "local"
 [agents.llm.browser]
 use_provider = "local"
 
-# Tool级LLM配置：可为需要LLM调用的tool指定专用提供商
-[tools.llm]
-# use_provider = "siliconflow"  # 所有tool的默认提供商（可选）
+[agents.llm.chat]
+use_provider = "local"
 
-# 按tool名指定（优先级高于 tools.llm.use_provider）
-# [tools.llm.micro_agent]
-# use_provider = "local"
+[agents.llm.meta]
+use_provider = "local"
+
+[agents.llm.devops]
+use_provider = "local"
+
+# ── 工具级 LLM（优先级: tool > tools > agent > global）──
 [tools.llm.thinking]
 use_provider = "deepseek_v4_pro"
 
 [tools.llm.deepthinking]
 use_provider = "deepseek_v4_pro"
 
-# ── LLM提供商定义（所有层级共用）──
-[global.llm.providers.xiaomi]
-model = "mimo-v2-flash"
-temperature = 0.3
-max_tokens = 28000
-api_base_url = "https://api.xiaomimimo.com/v1"
-api_key = "your-key"
-
-# 阿里云配置
-[global.llm.providers.aliyun]
-# model = "qwen3-max-preview"
-model = "qwen3-coder-plus"
-temperature = 0.0
-max_tokens = 28000
-api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-api_key = "your-key"
-
-# SiliconFlow配置
-[global.llm.providers.siliconflow]
-model = "deepseek-ai/DeepSeek-V3.2"
-temperature = 0.0
-max_tokens = 23000
-api_base_url = "https://api.siliconflow.cn/v1"
-api_key = "your-key"
-
-# StreamLake配置
-[global.llm.providers.streamlake]
-# model = "KAT-Coder-Air-V1"
-model = "ep-w1klde-1767706500222997285"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints"
-api_key = "your-key"
-
-# OpenRouter配置
-[global.llm.providers.openrouter]
-model = "qwen3-coder-plus"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://openrouter.ai/api/v1"
-api_key = "your-key"
-
-# 本地配置
-[global.llm.providers.local]
-model = "qwen3-coder-plus"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "http://127.0.0.1:8000"
-api_key = "your-key"
-
-# 其他模型配置示例
-[global.llm.providers.moonshot]
-model = "moonshotai/Kimi-K2-Instruct"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://api.moonshot.cn/v1"
-api_key = "your-key"
-
-[global.llm.providers.deepseek]
-model = "deepseek-ai/DeepSeek-V3"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://api.deepseek.com/v1"
-api_key = "your-key"
-
-# DeepSeek V4 Pro (用于 thinking/deepthinking 工具，启用 max 思考模式)
-[global.llm.providers.deepseek_v4_pro]
-model = "deepseek-v4-pro"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://api.deepseek.com/v1"
-api_key = "your-key"
-reasoning_effort = "max"
-
-# DeepSeek V4 Flash (用于 conductor，启用 high 思考模式)
-[global.llm.providers.ds4_flash]
-model = "ds4-flash"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://api.deepseek.com/v1"
-api_key = "your-key"
-reasoning_effort = "high"
-
-[global.llm.providers.zai]
-model = "zai-org/GLM-4.5-Air"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://api.zai.org/v1"
-api_key = "your-key"
-
-[global.llm.providers.mistral]
-model = "mistralai/devstral-small"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://api.mistral.ai/v1"
-api_key = "your-key"
-
-# AWS Bedrock 配置
-[global.llm.providers.bedrock]
-model = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
-temperature = 0.0
-max_tokens = 3000
-aws_region = "us-east-1"
-# aws_profile = "default"  # 可选：使用特定的AWS profile
-# model_provider = "anthropic"  # 可选：显式指定模型提供商（自动检测）
-
-# Bedrock Nova 模型示例
-[global.llm.providers.bedrock-nova]
-model = "us.amazon.nova-lite-v1:0"
-temperature = 0.0
-max_tokens = 3000
-aws_region = "us-east-1"
-
-# Bedrock Meta 模型示例
-[global.llm.providers.bedrock-meta]
-model = "us.meta.llama3-1-405b-instruct-v1:0"
-temperature = 0.0
-max_tokens = 3000
-aws_region = "us-east-1"
-
+# ── 应用设置 ──
 [app]
 enable_streaming = true
 
-[agent]
-conductor_max_steps = 100
-coding_max_steps = 150
-repo_max_steps = 50
-browser_max_steps = 200
-meta_retry_count = 5
-lang = "Chinese"
-
-# ═══════════════════════════════════════════════════════════
-# Context Compact Configuration
-# 上下文压缩配置（仅使用 LLM 摘要压缩）
-# ═══════════════════════════════════════════════════════════
-[context]
-# 最大上下文token数，默认198000 (198k)
-max_context_tokens = 198000
-
-# 是否自动触发压缩
-enable_auto_compact = true
-
-# 用于摘要的轻量模型 (可选，不配置则跳过L1)
-# summarization_model = "gpt-3.5-turbo"
-
-# 用于摘要的provider（可选，指向 [global.llm.providers] 中定义的 provider name）
-# 不配置则复用主 agent 的 LLM 引擎
-# summarization_provider = "siliconflow"
-
-# 摘要超时时间（秒）
-summarization_timeout = 15
-
-# 摘要时单批次最大输入token数
-summarization_max_input_tokens = 8000
-
-# 始终保留的最近对话轮数（用于优先级计算）
-keep_recent_rounds = 3
-
-# Codebase Component Configuration
+# ── 代码库（语义搜索）──
 [codebase]
 enable_embedding = true
 
@@ -202,129 +74,12 @@ api_token = "your-key"
 api_base_url = "https://api.siliconflow.cn/v1"
 dimensions = 2560
 
-# ── Reranker 重排配置（可选）──
-# 启用后可在 RRF 融合后对候选结果进行 Cross-Encoder 精排
+# ── 检索管线（多阶段级联检索，默认启用）──
 [codebase.retrieval_pipeline]
-# 是否启用级联检索 Pipeline（启用后将使用混合搜索 + Reranker + 图扩展）
 enabled = true
 
-# ----------------------------------------------------------
-# 混合检索（Hybrid Search: BM25 + Vector + RRF）配置
-# ----------------------------------------------------------
-[codebase.retrieval_pipeline.hybrid]
-# BM25 稀疏检索通道开关
-enable_bm25 = true
-# BM25 索引存储路径（相对于 embedding 目录）
-bm25_index_path = "tantivy_bm25"
-# BM25 每通道召回数量
-bm25_top_k = 20
-# Vector 每通道召回数量
-vector_top_k = 20
-# RRF（Reciprocal Rank Fusion）融合参数 k
-rrf_k = 60
-# RRF 融合后保留的 Top-K 数量
-rrf_top_k = 20
-
-# ----------------------------------------------------------
-# Reranker 重排配置
-# ----------------------------------------------------------
 [codebase.retrieval_pipeline.reranker]
-# 是否启用 Reranker 重排
 enabled = false
-# SiliconFlow（或兼容 API）的 API Key
 api_token = "your-key"
-# 重排序模型名称
 model = "Qwen/Qwen3-Reranker-4B"
-# API 基础 URL
 api_base_url = "https://api.siliconflow.cn/v1/rerank"
-# 重排后保留的 Top-N 文档数
-top_n = 10
-candidate_multiplier = 5
-timeout_secs = 60
-
-# ----------------------------------------------------------
-# 图扩展（Graph Expansion）配置
-# ----------------------------------------------------------
-[codebase.retrieval_pipeline.graph_expansion]
-# 是否启用图扩展（基于代码依赖图的 BFS 扩展）
-enabled = false
-# BFS 扩展最大深度
-max_depth = 2
-# Token 预算上限
-token_budget = 4096
-# 扩展方向："bidirectional"（双向）、"upward"（向上依赖）、"downward"（向下引用）
-direction = "bidirectional"
-# 最大扩展节点数
-max_nodes = 10
-
-# ─────────────────────────────────────────────────────────────
-# Browser Configuration (go-rod headless Chrome)
-# ─────────────────────────────────────────────────────────────
-[browser]
-headless = true
-browser_path = "/bin/google-chrome"
-user_data_dir = ""
-viewport_width = 1280
-viewport_height = 720
-allowed_domains = []
-blocked_domains = []
-timeout_seconds = 120
-max_concurrent_pages = 4
-auto_launch = true
-idle_timeout = "5m"
-allow_no_sandbox = false   # Docker 环境设为 true
-extra_args = []
-enable_browser_agent = true
-task_timeout_seconds = 300
-
-# ─────────────────────────────────────────────────────────────
-# Commit Learner Configuration
-# ─────────────────────────────────────────────────────────────
-[commit_learner]
-enabled = true
-max_commits = 50
-similarity_threshold = 0.75
-top_k = 3
-trigger = "both"
-cache_ttl = 3600
-
-# 专用的 LLM provider 名称（可选）
-# 配置后，commit 总结和信息提取将使用此 provider 的模型
-# 不配置则使用全局默认 LLM (global.llm.use_provider)
-summarization_provider = ""
-
-# 自定义 LLM 系统提示词（可选，不配置使用默认值）
-# llm_system_prompt = """
-# You are a software engineering analyst. Analyze the following git commit and provide a structured summary.
-# Output in JSON format with these fields:
-# - requirement: A brief description of what requirement this commit addresses
-# - files: List of changed files with brief description of changes
-# - approach: The technical approach or strategy used
-# - implementation: Key implementation details
-# Keep each field concise (2-3 sentences max).
-# """
-
-# ═══════════════════════════════════════════════════════════
-# Keywords Dictionary Configuration
-# 关键词词典配置
-# ═══════════════════════════════════════════════════════════
-[keywords]
-default_path = "~/.codeactor/keywords.txt"
-hot_reload = false
-
-# 自动补全词典（使用默认路径和项目级文件）
-# 如果 [[dict]] 留空 Files，将自动使用 default_path 和项目级文件
-
-# 白名单词典（精确匹配，用于允许的内容）
-# [[dict]]
-# name = "whitelist"
-# files = [".codeactor/whitelist.txt"]
-# type = "exact"
-# builtin_type = "none"
-
-# 黑名单词典（精确匹配，用于禁止的内容）
-# [[dict]]
-# name = "blacklist"
-# files = [".codeactor/blacklist.txt"]
-# type = "exact"
-# builtin_type = "none"

@@ -131,45 +131,37 @@ func (ds *DialogStack) Update(msg tea.Msg) (tea.Cmd, Dialog) {
 	return cmd, top
 }
 
-// Overlay renders the overlay (background mask + all dialogs in the stack).
-// Later-rendered dialogs cover earlier ones, creating a Z-index effect.
+// Overlay renders the overlay (background mask + dialogs stacked by z-index).
+// Uses a dimmed dark background to separate dialog content from the main view.
 func (ds *DialogStack) Overlay(maxWidth, maxHeight int) string {
 	if len(ds.dialogs) == 0 {
 		return ""
 	}
 
-	// Build background overlay
-	overlayStyle := lipgloss.NewStyle().
-		Width(maxWidth).
-		Height(maxHeight).
-		Background(lipgloss.Color("236")).
-		Align(lipgloss.Center, lipgloss.Center)
-
-	background := overlayStyle.Render("")
-
-	// Render each dialog on top (later dialogs cover earlier ones)
-	var dialogLines []string
+	// Collect visible dialog views
+	var dialogViews []string
 	for _, d := range ds.dialogs {
 		if d == nil || !d.IsVisible() {
 			continue
 		}
 		content := d.View()
 		if content != "" {
-			dialogLines = append(dialogLines, content)
+			dialogViews = append(dialogViews, content)
 		}
 	}
 
-	if len(dialogLines) == 0 {
-		return background
+	if len(dialogViews) == 0 {
+		return ""
 	}
 
-	// Join dialog content vertically
-	dialogsContent := strings.Join(dialogLines, "\n")
+	dialogsContent := strings.Join(dialogViews, "\n")
 
-	// Place dialogs centered over the background
+	// Place dialogs centered with dimmed overlay
+	wsStyle := lipgloss.NewStyle().Background(lipgloss.Color("234"))
 	result := lipgloss.Place(maxWidth, maxHeight,
 		lipgloss.Center, lipgloss.Center,
 		dialogsContent,
+		lipgloss.WithWhitespaceStyle(wsStyle),
 	)
 
 	return result

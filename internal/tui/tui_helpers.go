@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
+	"unsafe"
 
 	"codeactor/internal/app"
 	"codeactor/internal/config"
@@ -49,7 +51,13 @@ func StartTUI(taskFilePath string, ca *app.CodeActor, tm *http.TaskManager, dm *
 	// escape-sequence leakage into the input field.
 	useDarkStyle := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
 
-	p := tea.NewProgram(initialModel(taskContent, ca, tm, dm, useDarkStyle, cfg))
+	// 获取终端尺寸，消除启动闪烁 — 使用 syscall 避免外部依赖
+	termWidth, termHeight := 80, 24 // fallback
+	if ws, err := getWindowSize(int(os.Stdout.Fd())); err == nil {
+		termWidth, termHeight = int(ws.Width), int(ws.Height)
+	}
+
+	p := tea.NewProgram(initialModel(taskContent, ca, tm, dm, useDarkStyle, cfg, termWidth, termHeight))
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
@@ -174,4 +182,29 @@ func (m *model) updateActiveAnim() {
 		return
 	}
 	m.activeAnim = false
+}
+
+// winsize holds terminal window size information.
+type winsize struct {
+	Width, Height uint16
+}
+
+// getWindowSize retrieves the current terminal dimensions using TIOCGWINSZ ioctl.
+// This is used before entering raw mode to initialize the viewport correctly
+// and eliminate startup flash caused by hardcoded default dimensions.
+func getWindowSize(fd int) (*winsize, error) {
+	var ws winsize
+	if _, _, err := syscall.Syscall6(
+		syscall.SYS_IOCTL,
+		uintptr(fd),
+		uintptr(syscall.TIOCGWINSZ),
+		uintptr(unsafe.Pointer(&ws)),
+		0, 0, 0,
+	); err != 0 {
+		return nil, err
+	}
+	if ws.Width == 0 || ws.Height == 0 {
+		return nil, fmt.Errorf("invalid terminal size")
+	}
+	return &ws, nil
 }

@@ -208,12 +208,13 @@ impl CodeBaseServer {
                         tantivy_index,
                         HybridSearchConfig {
                             enable_sparse: true,
-                            rrf_k: 60.0,
-                            dense_limit: 100,
-                            sparse_limit: 100,
+                            rrf_k: hybrid_cfg.rrf_k,
+                            dense_limit: hybrid_cfg.vector_top_k,
+                            sparse_limit: hybrid_cfg.bm25_top_k,
                             timeout_ms: 0,
                             short_code_threshold: hybrid_cfg.short_code_threshold,
                             short_code_penalty: hybrid_cfg.short_code_penalty,
+                            rrf_top_k: hybrid_cfg.rrf_top_k,
                         },
                         reranker,
                     );

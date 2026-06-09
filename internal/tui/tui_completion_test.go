@@ -5,7 +5,7 @@ import (
 )
 
 // ============================================================================
-// TestExtractWordAtCursor - 测试 extractWordAtCursor 函数
+// TestExtractWordAtCursor - 测试 extractWordAtCursorRunes 函数
 // ============================================================================
 
 func TestExtractWordAtCursor(t *testing.T) {
@@ -103,9 +103,9 @@ func TestExtractWordAtCursor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractWordAtCursor(tt.content, tt.cursorPos)
+			got := extractWordAtCursorRunes([]rune(tt.content), tt.cursorPos)
 			if got != tt.wantWord {
-				t.Errorf("extractWordAtCursor(%q, %d) = %q, want %q", tt.content, tt.cursorPos, got, tt.wantWord)
+				t.Errorf("extractWordAtCursorRunes(%q, %d) = %q, want %q", tt.content, tt.cursorPos, got, tt.wantWord)
 			}
 		})
 	}
@@ -487,22 +487,24 @@ func TestHasPrefixIgnoreCase(t *testing.T) {
 // ============================================================================
 
 func TestExtractWordAtCursor_Integration(t *testing.T) {
-	// Test that extractWordAtCursor correctly delegates to extractWordAtCursorRunes
+	// Test that extractWordAtCursorRunes correctly extracts words from rune slices
 	content := "hello world 测试"
 	// Total rune length: hello(5) + space(1) + world(5) + space(1) + 测试(2) = 14
 
+	runes := []rune(content)
+
 	// Position at end of "hello"
-	if got := extractWordAtCursor(content, 5); got != "hello" {
+	if got := extractWordAtCursorRunes(runes, 5); got != "hello" {
 		t.Errorf("expected 'hello', got %q", got)
 	}
 
 	// Position at end of "world" (rune position 11)
-	if got := extractWordAtCursor(content, 11); got != "world" {
+	if got := extractWordAtCursorRunes(runes, 11); got != "world" {
 		t.Errorf("expected 'world', got %q", got)
 	}
 
 	// Position at end of "测试" (rune position 14 = string length)
-	if got := extractWordAtCursor(content, 14); got != "测试" {
+	if got := extractWordAtCursorRunes(runes, 14); got != "测试" {
 		t.Errorf("expected '测试', got %q", got)
 	}
 }

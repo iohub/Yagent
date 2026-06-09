@@ -174,6 +174,21 @@ func (m *Manager) ResetFrame(id string) {
 	}
 }
 
+// Step returns a monotonically increasing step counter for simple frame-based
+// animations that don't need per-animation tracking. It increments each Tick().
+func (m *Manager) Step() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.animations) == 0 {
+		return 0
+	}
+	// Return the frame of the first registered animation as a global step
+	for _, anim := range m.animations {
+		return anim.Frame
+	}
+	return 0
+}
+
 // ResetAllFrames 重置所有动画的帧
 func (m *Manager) ResetAllFrames() {
 	m.mu.Lock()
