@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"codeactor/internal/config"
+	"codeactor/internal/logging"
 	"codeactor/internal/util"
 
 	"log/slog"
@@ -20,28 +20,10 @@ import (
 // llmLogger is a separate logger for LLM responses
 var llmLogger *slog.Logger
 var llmLogFile *os.File
-var llmDebugEnabled bool
 
 // initLLMLogger initializes the LLM logger
 func initLLMLogger() error {
-	// Check debug mode first
-	llmDebugEnabled = os.Getenv("LLM_DEBUG_LOG") == "1"
-
-	if !llmDebugEnabled {
-		// Non-debug mode: no log file, discard llmLogger output
-		// Error logs are still output via main slog.Error() to stderr
-		llmLogger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
-			Level: slog.LevelWarn,
-		}))
-		return nil
-	}
-
-	// Debug mode: create log file as before
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return util.WrapError(context.Background(), err, "failed to get user home directory")
-	}
-	logDir := filepath.Join(homeDir, ".codeactor", "logs")
+	logDir := logging.GetLogDir()
 
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return util.WrapError(context.Background(), err, "failed to create logs directory")
@@ -55,8 +37,14 @@ func initLLMLogger() error {
 		return util.WrapError(context.Background(), errFile, "failed to open LLM log file")
 	}
 
+	// Default level is INFO; upgrade to DEBUG if LLM_DEBUG_LOG=1 is set
+	level := slog.LevelInfo
+	if os.Getenv("LLM_DEBUG_LOG") == "1" {
+		level = slog.LevelDebug
+	}
+
 	handler := slog.NewTextHandler(llmLogFile, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: level,
 	})
 	llmLogger = slog.New(handler)
 	return nil

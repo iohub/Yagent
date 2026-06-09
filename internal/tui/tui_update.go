@@ -534,8 +534,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// History mode: intercept all messages and delegate to history handler
-	if m.historyMode {
+	// History mode: intercept all messages and delegate to history handler.
+	// Skip when a dialog is active so dialog confirmations (e.g. delete_history_confirm)
+	// can be processed by the DialogStack key handler below.
+	if m.historyMode && (m.dialogStack == nil || m.dialogStack.Len() == 0) {
 		return historyUpdate(msg, &m)
 	}
 
@@ -1021,6 +1023,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.commandBuffer) > 0 {
 					m.commandBuffer = m.commandBuffer[:len(m.commandBuffer)-1]
 				}
+				return m, nil
+
+			// ── Collapse toggle ──
+			case "ctrl+p":
+				m.toggleCollapseAtViewport()
 				return m, nil
 
 			// ── Misc ──

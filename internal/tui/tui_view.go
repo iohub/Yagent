@@ -57,17 +57,17 @@ func (m model) View() tea.View {
 		return tea.View{AltScreen: true}
 	}
 
-	// History mode: render fullscreen history browser
-	if m.historyMode {
-		return renderHistoryView(&m)
-	}
-
-	// ====== 新组件：检查弹窗栈 ======
+	// ====== Dialog overlay: takes priority over history mode ======
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
 		overlay := m.dialogStack.Overlay(m.termWidth, m.termHeight)
 		if overlay != "" {
 			return tea.View{AltScreen: true, Content: overlay}
 		}
+	}
+
+	// History mode: render fullscreen history browser
+	if m.historyMode {
+		return renderHistoryView(&m)
 	}
 
 	var b strings.Builder

@@ -147,6 +147,10 @@ type Styles struct {
 	// Separator
 	Separator lipgloss.Style
 
+	// Collapse hint
+	CollapseHintLine lipgloss.Style
+	CollapseHintText lipgloss.Style
+
 	// Context compression
 	CompactBadge  lipgloss.Style
 	CompactToken  lipgloss.Style
@@ -280,6 +284,9 @@ func newDarkStyles() *Styles {
 
 		ToolCallBorderTop:    lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 		ToolCallBorderBottom: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+
+		CollapseHintLine: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+		CollapseHintText: lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
 
 		Separator: lipgloss.NewStyle().Foreground(lipgloss.Color("237")),
 
@@ -425,6 +432,9 @@ func newLightStyles() *Styles {
 
 		ToolCallBorderTop:    lipgloss.NewStyle().Foreground(lipgloss.Color("248")),
 		ToolCallBorderBottom: lipgloss.NewStyle().Foreground(lipgloss.Color("248")),
+
+		CollapseHintLine: lipgloss.NewStyle().Foreground(lipgloss.Color("248")),
+		CollapseHintText: lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
 
 		Separator: lipgloss.NewStyle().Foreground(lipgloss.Color("250")),
 

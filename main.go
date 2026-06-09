@@ -19,6 +19,7 @@ import (
 	"codeactor/internal/embedbin"
 	"codeactor/internal/http"
 	"codeactor/internal/llm"
+	"codeactor/internal/logging"
 	"codeactor/internal/skills"
 	"codeactor/internal/tui"
 	"codeactor/internal/util"
@@ -65,13 +66,9 @@ var httpCmd = &cobra.Command{
 }
 
 func init() {
-	// Initialize structured logger with text handler
-	// Use LevelWarn so that warnings (e.g. codebase startup failures) are visible.
-	opts := &slog.HandlerOptions{
-		Level: slog.LevelWarn,
-	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, opts))
-	slog.SetDefault(logger)
+	// Safety net: silence all slog output until proper initialization in main().
+	// This prevents any pre-main() logging from corrupting the TUI display.
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	// Initialize language manager with default language (English)
 	tui.InitLangManager()
@@ -118,6 +115,12 @@ func initApp() (string, int, *exec.Cmd, error) {
 
 // runTUI 启动终端 UI 模式
 func runTUI(taskFile, disableAgents string) {
+	// Initialize mode-aware logging: file only, never stdout/stderr
+	if err := logging.Init(logging.ModeTUI); err != nil {
+		slog.Error("Failed to initialize logging", "error", err)
+	}
+	defer logging.Close()
+
 	repoPath, codebasePort, codebaseCmd, err := initApp()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -199,6 +202,12 @@ func runTUI(taskFile, disableAgents string) {
 
 // runHTTP 启动 HTTP 服务器模式
 func runHTTP(taskFile, disableAgents string, httpPort int) {
+	// Initialize mode-aware logging: stderr + file
+	if err := logging.Init(logging.ModeHTTP); err != nil {
+		slog.Error("Failed to initialize logging", "error", err)
+	}
+	defer logging.Close()
+
 	_, codebasePort, codebaseCmd, err := initApp()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

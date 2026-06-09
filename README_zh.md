@@ -130,16 +130,6 @@
 
 ---
 
-## 🛠️ 开发者体验
-
-- **双模式交互**：TUI 终端界面 (Bubble Tea) + HTTP/WebSocket API 服务器
-- **13+ LLM 提供商**：OpenAI、DeepSeek、阿里 Qwen、Moonshot、AWS Bedrock……一键切换
-- **流式输出**：实时观察 Agent 的思考与执行过程
-- **上下文压缩引擎**：自动管理 Token 预算，长对话不丢失关键信息
-- **安全沙箱**：WorkspaceGuard 工作空间边界 + 危险命令拦截 + 用户确认管道
-
----
-
 ## 🚀 快速开始
 
 ### 下载预编译包（推荐）

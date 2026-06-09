@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +77,10 @@ var (
 	logStatusStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
 	logErrorLogStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
 	logSeparatorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	// Collapse/expand hint styles for long messages
+	collapseHintLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	collapseHintTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	// Input panel styles — visually separate the input area from the message body
 	inputPanelStyle = lipgloss.NewStyle().
@@ -203,6 +207,7 @@ type logEntry struct {
 	resultBrief      string // brief result description (e.g., "120 lines", "modified")
 	diffText         string // unified diff content for file edit results
 	renderedCache    map[int]string // width-keyed cache: key=width, value=rendered content
+	collapsed        bool           // true if content is currently folded (>15 lines)
 
 	compactData *CompactData
 
@@ -271,7 +276,7 @@ func (c *tuiEventConsumer) Consume(event *messaging.MessageEvent) error {
 	default:
 		// Drop event if channel is full to avoid blocking the task.
 		// Log a warning so the user / developer knows events were lost.
-		fmt.Fprintf(os.Stderr, "WARNING: TUI event channel full, dropping event type=%s from=%s\n", event.Type, event.From)
+		slog.Warn("TUI 事件通道已满，丢弃事件", "component", "tui-model", "event_type", event.Type, "event_from", event.From)
 	}
 	return nil
 }

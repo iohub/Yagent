@@ -2,6 +2,7 @@ package dict
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -112,7 +113,7 @@ func NewManager(config *KeywordsConfig, defaultPath string) (*ManagerImpl, error
 	if m.hotReload {
 		if err := m.initHotReload(); err != nil {
 			// 热重载初始化失败不影响词典加载，只记录错误
-			fmt.Printf("[dict] 警告: 热重载初始化失败: %v\n", err)
+			slog.Warn("热重载初始化失败", "component", "dict", "error", err)
 			m.hotReload = false
 		}
 	}
@@ -161,7 +162,7 @@ func (m *ManagerImpl) initHotReload() error {
 	// 添加监控
 	for _, path := range watchPaths {
 		if err := m.addFileWatch(path); err != nil {
-			fmt.Printf("[dict] 警告: 无法监控文件 %s: %v\n", path, err)
+			slog.Warn("无法监控文件", "component", "dict", "path", path, "error", err)
 		}
 	}
 
@@ -258,7 +259,7 @@ func (m *ManagerImpl) watchEvents() {
 			if !ok {
 				return
 			}
-			fmt.Printf("[dict] 监控错误: %v\n", err)
+			slog.Warn("词典监控错误", "component", "dict", "error", err)
 		}
 	}
 }
@@ -272,7 +273,7 @@ func (m *ManagerImpl) handleFileEvent(event fsnotify.Event) {
 		return
 	}
 
-	fmt.Printf("[dict] 文件变化: %s\n", event.String())
+	slog.Info("词典文件变化", "component", "dict", "event", event.String())
 
 	switch {
 	case event.Has(fsnotify.Write):
@@ -294,7 +295,7 @@ func (m *ManagerImpl) handleFileEvent(event fsnotify.Event) {
 		// 文件被创建（编辑器的原子写入会创建新文件）
 		// 添加新文件监控
 		if err := m.addFileWatch(path); err != nil {
-			fmt.Printf("[dict] 警告: 添加新文件监控失败: %v\n", err)
+			slog.Warn("添加新文件监控失败", "component", "dict", "error", err)
 		}
 		// 触发重载
 		m.triggerReload(path)
@@ -315,9 +316,9 @@ func (m *ManagerImpl) triggerReload(changedPath string) {
 		defer m.reloadPending.Store(false)
 
 		if err := m.ReloadAll(); err != nil {
-			fmt.Printf("[dict] 重载失败: %v\n", err)
+			slog.Error("词典重载失败", "component", "dict", "error", err)
 		} else {
-			fmt.Printf("[dict] 重载成功: %s\n", changedPath)
+			slog.Info("词典重载成功", "component", "dict", "changed_path", changedPath)
 		}
 	}()
 }

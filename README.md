@@ -130,16 +130,6 @@ User Query
 
 ---
 
-## 🛠️ Developer Experience
-
-- **Dual interfaces**: TUI terminal mode (Bubble Tea) + HTTP/WebSocket API server
-- **13+ LLM providers**: OpenAI, DeepSeek, Alibaba Qwen, Moonshot, AWS Bedrock... switch with one config line
-- **Streaming output**: watch agents think and act in real-time
-- **Context compression engine**: automatic token budget management for long sessions
-- **Security sandbox**: WorkspaceGuard boundary enforcement + dangerous command interception + user confirmation pipeline
-
----
-
 ## 🚀 Quick Start
 
 ### Download Pre-built Binary (Recommended)
