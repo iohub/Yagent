@@ -90,7 +90,7 @@ func Init(mode Mode) error {
 // In TUI mode: io.Discard (never corrupt terminal).
 // In HTTP mode: os.Stderr (still visible to operator).
 func setupFallbackHandler(mode Mode, cause error) {
-	opts := &slog.HandlerOptions{Level: slog.LevelWarn}
+	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
 	switch mode {
 	case ModeTUI:
 		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, opts)))
@@ -104,7 +104,7 @@ func setupFallbackHandler(mode Mode, cause error) {
 }
 
 // parseLogLevel reads CODEACTOR_LOG_LEVEL env var.
-// Defaults to slog.LevelWarn for production safety.
+// Defaults to slog.LevelInfo for more verbose logging.
 func parseLogLevel() slog.Level {
 	envLevel := os.Getenv("CODEACTOR_LOG_LEVEL")
 	switch envLevel {
@@ -117,7 +117,7 @@ func parseLogLevel() slog.Level {
 	case "ERROR":
 		return slog.LevelError
 	default:
-		return slog.LevelWarn
+		return slog.LevelInfo
 	}
 }
 

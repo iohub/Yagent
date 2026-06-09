@@ -68,7 +68,7 @@ var httpCmd = &cobra.Command{
 func init() {
 	// Safety net: silence all slog output until proper initialization in main().
 	// This prevents any pre-main() logging from corrupting the TUI display.
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	// Initialize language manager with default language (English)
 	tui.InitLangManager()
