@@ -218,7 +218,7 @@ impl EmbeddingService {
         let mut dimensions = 2560;
 
         if let Some(conf) = config {
-             let embedding_config = &conf.codebase.embedding;
+             let embedding_config = &conf.codexray.embedding;
              if !embedding_config.api_token.is_empty() {
                  api_token = Some(embedding_config.api_token.clone());
              }
@@ -238,7 +238,7 @@ impl EmbeddingService {
         let provider = OpenAICompatibleEmbeddingProvider::new(api_token, base_url, model);
         
         let min_code_block_length = config
-            .map(|cfg| cfg.codebase.retrieval_pipeline.min_code_block_length)
+            .map(|cfg| cfg.codexray.retrieval_pipeline.min_code_block_length)
             .unwrap_or(16);
         
         let cpu_count = std::thread::available_parallelism()

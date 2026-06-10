@@ -42,4 +42,4 @@ go.work.sum
 # .idea/
 # .vscode/
 codeactor
-codebase/config/config.toml
+codexray/config/config.toml

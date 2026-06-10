@@ -84,7 +84,7 @@ type CommitLearner struct {
 	config          CommitLearnConfig
 	llmEngine       llm.Engine           // 默认 LLM 引擎
 	dedicatedEngine llm.Engine           // 专用的 LLM 引擎（可选，用于摘要生成）
-	globalCtx       *globalctx.GlobalCtx // 全局上下文，包含 CodebaseURL
+	globalCtx       *globalctx.GlobalCtx // 全局上下文，包含 CodexrayURL
 	httpClient      *http.Client
 	cache           map[string]*CachedSummary
 	cacheMu         sync.RWMutex
@@ -207,7 +207,7 @@ func (cl *CommitLearner) StoreEmbeddings(ctx context.Context, summaries []Commit
 		}
 
 		// 调用 Rust API
-		reqURL := cl.globalCtx.CodebaseURL + "/commit/embed"
+		reqURL := cl.globalCtx.CodexrayURL + "/commit/embed"
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqJSON))
 		if err != nil {
 			// 创建请求失败，跳过该 commit
@@ -260,7 +260,7 @@ func (cl *CommitLearner) SearchSimilar(ctx context.Context, userInput string, to
 	}
 
 	// 调用 Rust API
-	reqURL := cl.globalCtx.CodebaseURL + "/commit/search"
+	reqURL := cl.globalCtx.CodexrayURL + "/commit/search"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqJSON))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create search request: %w", err)
@@ -317,7 +317,7 @@ func (cl *CommitLearner) ClearCommits(ctx context.Context) error {
 		return fmt.Errorf("failed to marshal clear request: %w", err)
 	}
 
-	reqURL := cl.globalCtx.CodebaseURL + "/commit/clear"
+	reqURL := cl.globalCtx.CodexrayURL + "/commit/clear"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqJSON))
 	if err != nil {
 		return fmt.Errorf("failed to create clear request: %w", err)

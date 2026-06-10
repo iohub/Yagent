@@ -33,7 +33,7 @@ type CodeActor struct {
 
 	globalCtx      *globalctx.GlobalCtx
 	DisabledAgents string // comma-separated list of agent names to disable (e.g. "repo,coding,chat")
-	CodebasePort   int    // codebase 服务端口，由 main 函数动态分配
+	CodexrayPort   int    // codebase 服务端口，由 main 函数动态分配
 
 	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
 }
@@ -79,7 +79,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		Arch:        runtime.GOARCH,
 		// Global utility
 		Publisher:   publisher,
-		CodebaseURL: fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort),
+		CodexrayURL: fmt.Sprintf("http://127.0.0.1:%d", ca.CodexrayPort),
 
 		// Tools
 		FileOps:          tools.NewFileOperationsTool(workDir),
@@ -89,7 +89,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		ThinkingTool:     tools.NewThinkingTool(),
 		MicroAgentTool:   tools.NewMicroAgentTool(microAgentEngine),
 		FlowOps:          tools.NewFlowControlTool(workDir),
-		RepoOps:          tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodebasePort), workDir),
+		RepoOps:          tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodexrayPort), workDir),
 		UserConfirmMgr:   userConfirmMgr,
 		DeepThinkingTool: tools.NewDeepThinkingTool(deepthinkingEngine),
 	}

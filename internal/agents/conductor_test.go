@@ -39,7 +39,7 @@ func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 		OS:           "linux",
 		Arch:         "amd64",
 		SpeakLang:    "Chinese",
-		CodebaseURL:  "http://127.0.0.1:12800",
+		CodexrayURL:  "http://127.0.0.1:12800",
 		FileOps:      tools.NewFileOperationsTool(workDir),
 		SearchOps:    tools.NewSearchOperationsTool(workDir),
 		SysOps:       tools.NewSystemOperationsTool(workDir),

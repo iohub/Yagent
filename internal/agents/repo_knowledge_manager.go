@@ -49,10 +49,10 @@ func NewRepoKnowledgeManager(agent Agent, globalCtx *globalctx.GlobalCtx, thresh
 
 // AnalyseTask 核心方法：先搜索相似历史，命中则返回缓存，否则执行并异步存储。
 // 如果搜索失败，fallback 到正常 RepoAgent 执行。
-// 如果 globalCtx.CodebaseURL 为空，直接 fallback 到正常执行。
+// 如果 globalCtx.CodexrayURL 为空，直接 fallback 到正常执行。
 func (m *RepoKnowledgeManager) AnalyseTask(ctx context.Context, task string) (string, error) {
-	// 如果 CodebaseURL 为空，优雅降级
-	if m.globalCtx == nil || m.globalCtx.CodebaseURL == "" {
+	// 如果 CodexrayURL 为空，优雅降级
+	if m.globalCtx == nil || m.globalCtx.CodexrayURL == "" {
 		result, err := m.agent.Run(ctx, task)
 		if err != nil {
 			return "", err
@@ -105,7 +105,7 @@ func (m *RepoKnowledgeManager) searchSimilar(ctx context.Context, task string) (
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	reqURL := m.globalCtx.CodebaseURL + "/repo_knowledge/search"
+	reqURL := m.globalCtx.CodexrayURL + "/repo_knowledge/search"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqJSON))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -153,7 +153,7 @@ func (m *RepoKnowledgeManager) embedTaskAndResult(ctx context.Context, task, res
 		return fmt.Errorf("marshal request: %w", err)
 	}
 
-	reqURL := m.globalCtx.CodebaseURL + "/repo_knowledge/embed"
+	reqURL := m.globalCtx.CodexrayURL + "/repo_knowledge/embed"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqJSON))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)

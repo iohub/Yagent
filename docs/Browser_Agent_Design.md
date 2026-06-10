@@ -77,7 +77,7 @@
 | `internal/tui/` | **低** | 浏览器输出文本/文件路径在聊天 UI 中显示 |
 | `main.go` | **中** | Agent 注册、依赖注入、生命周期钩子 |
 | `go.mod` | **低** | 添加 `github.com/go-rod/rod` |
-| `codebase/` (Rust) | **无** | 不受影响 |
+| `codexray/` (Rust) | **无** | 不受影响 |
 
 ---
 

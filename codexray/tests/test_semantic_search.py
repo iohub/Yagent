@@ -2,7 +2,7 @@
 """
 CodeActor Semantic Search 功能测试脚本
 
-测试 codebase 语义搜索接口（运行在本地 12800 端口）的准确性，
+测试 codexray 语义搜索接口（运行在本地 12800 端口）的准确性，
 特别关注混合检索（Hybrid Search）与纯 Embedding 检索的对比分析。
 
 版本: 2.0

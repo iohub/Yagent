@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="CodeActor Logo" width="120"/>
 </p>
 
-<h1 align="center">CodeActor Codebase</h1>
+<h1 align="center">CodeActor CodeXRay</h1>
 
 <p align="center">
   <b>A Dual-Engine Code Intelligence & Retrieval System</b> <br>
@@ -21,7 +21,7 @@
 
 ## 🔥 Overview
 
-**CodeActor Codebase** is a high-performance code intelligence and retrieval system built with **Rust**. Think of it as a **CT scan for your codebase** — it doesn't just parse your source code; it builds a complete **function call graph** AND a **semantic vector index**, then fuses them together through a sophisticated hybrid retrieval pipeline.
+**CodeActor CodeXRay** is a high-performance code intelligence and retrieval system built with **Rust**. Think of it as a **CT scan for your codebase** — it doesn't just parse your source code; it builds a complete **function call graph** AND a **semantic vector index**, then fuses them together through a sophisticated hybrid retrieval pipeline.
 
 > 🎯 **Core Value**: Transform your chaotic codebase into a navigable, searchable, and machine-understandable knowledge graph.
 
@@ -123,7 +123,7 @@ sequenceDiagram
 
 ```bash
 git clone <your-repo-url>
-cd codeactor-agent/codebase
+cd codeactor-agent/codexray
 cargo build --release
 ```
 
@@ -241,16 +241,16 @@ Configuration file at `~/.codeactor/config/config.toml`:
 [http]
 server_port = 12800
 
-[codebase]
+[codexray]
 enable_embedding = true
 
-[codebase.embedding]
+[codexray.embedding]
 model = "Qwen/Qwen3-Embedding-4B"
 api_token = "sk-..."
 api_base_url = "https://api.siliconflow.cn/v1"
 dimensions = 2560
 
-[codebase.retrieval_pipeline]
+[codexray.retrieval_pipeline]
 enable_sparse = true              # Enable BM25 full-text search
 sparse_search_limit_factor = 2    # Sparse search amplification factor
 short_code_threshold = 30         # Short code penalty threshold (chars)
@@ -302,7 +302,7 @@ src/
 │   ├── incremental.rs   # MD5 incremental change detection
 │   └── tantivy_index.rs       # BM25 full-text search index
 └── http/                # HTTP service layer
-    ├── server.rs        # CodeBaseServer: startup + routes
+    ├── server.rs        # CodeXRayServer: startup + routes
     ├── handlers/        # Request handlers (query / search / investigate / embed)
     └── models/          # Request/response data structures
 ```

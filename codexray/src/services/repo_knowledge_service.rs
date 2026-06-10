@@ -119,7 +119,7 @@ impl RepoKnowledgeService {
         let mut dimensions = 2560i32;
 
         if let Some(conf) = config {
-            if let Some(dim) = conf.codebase.embedding.dimensions {
+            if let Some(dim) = conf.codexray.embedding.dimensions {
                 dimensions = dim as i32;
             }
         }

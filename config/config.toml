@@ -65,20 +65,20 @@ use_provider = "deepseek_v4_pro"
 enable_streaming = true
 
 # ── 代码库（语义搜索）──
-[codebase]
+[codexray]
 enable_embedding = true
 
-[codebase.embedding]
+[codexray.embedding]
 model = "Qwen/Qwen3-Embedding-4B"
 api_token = "your-key"
 api_base_url = "https://api.siliconflow.cn/v1"
 dimensions = 2560
 
 # ── 检索管线（多阶段级联检索，默认启用）──
-[codebase.retrieval_pipeline]
+[codexray.retrieval_pipeline]
 enabled = true
 
-[codebase.retrieval_pipeline.reranker]
+[codexray.retrieval_pipeline.reranker]
 enabled = false
 api_token = "your-key"
 model = "Qwen/Qwen3-Reranker-4B"

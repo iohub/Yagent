@@ -1,7 +1,7 @@
 # 多阶段级联检索 Pipeline：架构设计与实现路径
 
 > **版本**: v1.0  
-> **项目**: codeactor-agent / codebase (Rust 代码分析引擎)  
+> **项目**: codeactor-agent / codexray (Rust 代码分析引擎)  
 > **目标读者**: 核心 Rust 开发、AI Agent 架构师、检索系统工程师  
 > **文档性质**: 架构设计与实现路径规格书（Architecture RFC）
 
@@ -11,7 +11,7 @@
 
 ### 1.1 项目定位
 
-`codebase` 是 `codeactor-agent` 系统的**代码分析与检索中枢**。它为上层 Agent（Conductor、Coding-Agent、Repo-Agent）提供以下核心能力：
+`codexray` 是 `codeactor-agent` 系统的**代码分析与检索中枢**。它为上层 Agent（Conductor、Coding-Agent、Repo-Agent）提供以下核心能力：
 
 | 能力 | 实现模块 | 技术栈 |
 |------|---------|--------|
@@ -70,10 +70,10 @@
 
 ### 2.1 索引构建数据流
 
-当前系统的索引构建在 `CodeBaseServer::start()` 启动时触发，完整流程如下：
+当前系统的索引构建在 `CodeXRayServer::start()` 启动时触发，完整流程如下：
 
 ```
-CodeBaseServer::start()
+CodeXRayServer::start()
     │
     ├── try_bind_repo() ── 绑定仓库路径
     │
@@ -1392,7 +1392,7 @@ pub fn retrieval_routes() -> Router<Arc<StorageManager>> {
 
 ### 7.5 配置管理
 
-建议通过 `codebase/` 的 `config.toml` 管理 Pipeline 配置：
+建议通过 `codexray/` 的 `config.toml` 管理 Pipeline 配置：
 
 ```toml
 # config.toml（扩展）
@@ -1405,7 +1405,7 @@ enable_graph_expansion = false  # 待边类型完善后开启
 
 # Stage 1: Hybrid Search
 [retrieval_pipeline.hybrid]
-bm25_index_path = ".codebase/index.bm25/"
+bm25_index_path = ".codexray/index.bm25/"
 fusion_k = 60
 top_k_per_channel = 200
 
@@ -1529,18 +1529,18 @@ pub struct PipelineFeatures {
 
 | 文件 | 关键类型/函数 | 文档章节 |
 |------|-------------|---------|
-| `codebase/src/codegraph/types.rs` | `PetCodeGraph`, `FunctionInfo`, `CallRelation`, `FileIndex`, `SnippetIndex` | §2.2, §4 |
-| `codebase/src/codegraph/parser.rs` | `CodeParser::build_petgraph_code_graph()`, `_analyze_file_calls()` | §2.1 |
-| `codebase/src/services/embedding_service.rs` | `EmbeddingService::search()`, `vectorize_directory()` | §2.3, §3 |
-| `codebase/src/services/analyzer.rs` | `CodeAnalyzer::find_callers()`, `find_callees()`, `find_call_chains()` | §2.3, §4 |
-| `codebase/src/storage/traits.rs` | `GraphPersistence`, `IncrementalUpdater`, `GraphSerializer` | §2.4 |
-| `codebase/src/storage/incremental.rs` | `IncrementalManager::refresh_file()`, `needs_update()` | §2.4, §3.5 |
-| `codebase/src/storage/persistence.rs` | `PersistenceManager` | §2.1 |
-| `codebase/src/http/handlers/mod.rs` | `query_call_graph()`, `query_code_snippet()`, `expand_call_chain()` | §2.3 |
-| `codebase/src/http/handlers/vectorize.rs` | `semantic_search()` | §2.3 |
-| `codebase/src/http/models/query.rs` | `QueryCallGraphRequest/Response` | §2.3 |
-| `codebase/src/http/models/embedding.rs` | `SemanticSearchRequest/Response` | §2.3 |
-| `codebase/src/storage/mod.rs` | `StorageManager` | §2.1 |
+| `codexray/src/codegraph/types.rs` | `PetCodeGraph`, `FunctionInfo`, `CallRelation`, `FileIndex`, `SnippetIndex` | §2.2, §4 |
+| `codexray/src/codegraph/parser.rs` | `CodeParser::build_petgraph_code_graph()`, `_analyze_file_calls()` | §2.1 |
+| `codexray/src/services/embedding_service.rs` | `EmbeddingService::search()`, `vectorize_directory()` | §2.3, §3 |
+| `codexray/src/services/analyzer.rs` | `CodeAnalyzer::find_callers()`, `find_callees()`, `find_call_chains()` | §2.3, §4 |
+| `codexray/src/storage/traits.rs` | `GraphPersistence`, `IncrementalUpdater`, `GraphSerializer` | §2.4 |
+| `codexray/src/storage/incremental.rs` | `IncrementalManager::refresh_file()`, `needs_update()` | §2.4, §3.5 |
+| `codexray/src/storage/persistence.rs` | `PersistenceManager` | §2.1 |
+| `codexray/src/http/handlers/mod.rs` | `query_call_graph()`, `query_code_snippet()`, `expand_call_chain()` | §2.3 |
+| `codexray/src/http/handlers/vectorize.rs` | `semantic_search()` | §2.3 |
+| `codexray/src/http/models/query.rs` | `QueryCallGraphRequest/Response` | §2.3 |
+| `codexray/src/http/models/embedding.rs` | `SemanticSearchRequest/Response` | §2.3 |
+| `codexray/src/storage/mod.rs` | `StorageManager` | §2.1 |
 
 ---
 

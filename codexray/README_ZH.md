@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="CodeActor Logo" width="120"/>
 </p>
 
-<h1 align="center">CodeActor Codebase</h1>
+<h1 align="center">CodeActor CodeXRay</h1>
 
 <p align="center">
   <b>融合代码图与语义向量的双引擎代码智能检索系统</b> <br>
@@ -21,7 +21,7 @@
 
 ## 🔥 项目简介
 
-**CodeActor Codebase** 是一个用 **Rust** 构建的双引擎代码智能检索系统。它不仅像一张「代码的 CT 扫描图」——深入解析 AST 构建函数调用图谱，还同时为代码建立**语义向量索引**，让你可以用自然语言搜索代码，并通过**混合检索流水线**将图遍历、向量搜索、BM25 关键词匹配融合为精准结果。
+**CodeActor CodeXRay** 是一个用 **Rust** 构建的双引擎代码智能检索系统。它不仅像一张「代码的 CT 扫描图」——深入解析 AST 构建函数调用图谱，还同时为代码建立**语义向量索引**，让你可以用自然语言搜索代码，并通过**混合检索流水线**将图遍历、向量搜索、BM25 关键词匹配融合为精准结果。
 
 > 🎯 **核心价值**：将混乱的代码仓库变为可导航、可搜索、可理解的知识图谱
 
@@ -123,7 +123,7 @@ sequenceDiagram
 
 ```bash
 git clone <your-repo-url>
-cd codeactor-agent/codebase
+cd codeactor-agent/codexray
 cargo build --release
 ```
 
@@ -225,16 +225,16 @@ curl -X POST http://localhost:12800/query_call_graph \
 [http]
 server_port = 12800
 
-[codebase]
+[codexray]
 enable_embedding = true
 
-[codebase.embedding]
+[codexray.embedding]
 model = "Qwen/Qwen3-Embedding-4B"
 api_token = "sk-..."
 api_base_url = "https://api.siliconflow.cn/v1"
 dimensions = 2560
 
-[codebase.retrieval_pipeline]
+[codexray.retrieval_pipeline]
 enable_sparse = true              # 启用 BM25 全文搜索
 sparse_search_limit_factor = 2    # 稀疏搜索放大系数
 short_code_threshold = 30         # 短代码惩罚阈值
@@ -286,7 +286,7 @@ src/
 │   ├── incremental.rs   # MD5 增量变更检测
 │   └── tantivy_index.rs       # BM25 全文搜索索引
 └── http/                # HTTP 服务层
-    ├── server.rs        # CodeBaseServer：启动 + 路由
+    ├── server.rs        # CodeXRayServer：启动 + 路由
     ├── handlers/        # 请求处理（query / search / investigate / embed）
     └── models/          # 请求/响应数据结构
 ```

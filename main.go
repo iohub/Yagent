@@ -93,24 +93,24 @@ func main() {
 }
 
 // initApp 执行 TUI 和 HTTP 模式共用的初始化逻辑
-// 返回: repoPath, codebasePort, codebaseCmd (用于清理), error
+// 返回: repoPath, codexrayPort, codexrayCmd (用于清理), error
 func initApp() (string, int, *exec.Cmd, error) {
 	repoPath, err := os.Getwd()
 	if err != nil {
 		return "", 0, nil, fmt.Errorf("failed to get current working directory: %w", err)
 	}
 
-	codebasePort, err := findAvailablePort(12800)
+	codexrayPort, err := findAvailablePort(12800)
 	if err != nil {
-		return "", 0, nil, fmt.Errorf("failed to find available port for codebase: %w", err)
+		return "", 0, nil, fmt.Errorf("failed to find available port for codexray: %w", err)
 	}
 
 	if _, err := embedbin.ExtractBinaries(distBinFS, "dist/bin"); err != nil {
 		slog.Warn("Failed to extract embedded binaries", "error", err)
 	}
 
-	codebaseCmd := startCodebaseServer(codebasePort, repoPath)
-	return repoPath, codebasePort, codebaseCmd, nil
+	codexrayCmd := startCodexrayServer(codexrayPort, repoPath)
+	return repoPath, codexrayPort, codexrayCmd, nil
 }
 
 // runTUI 启动终端 UI 模式
@@ -121,21 +121,21 @@ func runTUI(taskFile, disableAgents string) {
 	}
 	defer logging.Close()
 
-	repoPath, codebasePort, codebaseCmd, err := initApp()
+	repoPath, codexrayPort, codexrayCmd, err := initApp()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	if codebaseCmd != nil {
+	if codexrayCmd != nil {
 		defer func() {
-			if err := codebaseCmd.Process.Kill(); err != nil {
-				slog.Warn("Failed to kill codebase process", "error", err)
+			if err := codexrayCmd.Process.Kill(); err != nil {
+				slog.Warn("Failed to kill codexray process", "error", err)
 			} else {
-				slog.Info("Codebase process killed on exit", "pid", codebaseCmd.Process.Pid)
+				slog.Info("Codebase process killed on exit", "pid", codexrayCmd.Process.Pid)
 			}
 		}()
 	} else {
-		fmt.Fprintf(os.Stderr, "WARNING: codeactor-codebase server failed to start. Semantic search and code analysis features will be unavailable.\n")
+		fmt.Fprintf(os.Stderr, "WARNING: codeactor-codexray server failed to start. Semantic search and code analysis features will be unavailable.\n")
 	}
 
 	// TUI mode init — matches original switch "tui" case exactly
@@ -166,7 +166,7 @@ func runTUI(taskFile, disableAgents string) {
 	}
 
 	codeActor.DisabledAgents = disableAgents
-	codeActor.CodebasePort = codebasePort
+	codeActor.CodexrayPort = codexrayPort
 
 	defer codeActor.Close()
 
@@ -208,17 +208,17 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	}
 	defer logging.Close()
 
-	_, codebasePort, codebaseCmd, err := initApp()
+	_, codexrayPort, codexrayCmd, err := initApp()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	if codebaseCmd != nil {
+	if codexrayCmd != nil {
 		defer func() {
-			if err := codebaseCmd.Process.Kill(); err != nil {
-				slog.Warn("Failed to kill codebase process", "error", err)
+			if err := codexrayCmd.Process.Kill(); err != nil {
+				slog.Warn("Failed to kill codexray process", "error", err)
 			} else {
-				slog.Info("Codebase process killed on exit", "pid", codebaseCmd.Process.Pid)
+				slog.Info("Codebase process killed on exit", "pid", codexrayCmd.Process.Pid)
 			}
 		}()
 	}
@@ -264,7 +264,7 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 		os.Exit(1)
 	}
 	codeActor.DisabledAgents = disableAgents
-	codeActor.CodebasePort = codebasePort
+	codeActor.CodexrayPort = codexrayPort
 
 	defer codeActor.Close()
 
@@ -326,26 +326,26 @@ func findAvailablePort(startPort int) (int, error) {
 	return 0, fmt.Errorf("no available port found starting from %d", startPort)
 }
 
-// startCodebaseServer starts the codeactor-codebase server as a background process.
+// startCodexrayServer starts the codeactor-codexray server as a background process.
 // Returns the *exec.Cmd so the caller can kill the process on exit.
-func startCodebaseServer(port int, repoPath string) *exec.Cmd {
+func startCodexrayServer(port int, repoPath string) *exec.Cmd {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		slog.Error("Failed to get user home directory", "error", err)
 		return nil
 	}
 
-	binPath, err := embedbin.BinPath("codeactor-codebase")
+	binPath, err := embedbin.BinPath("codeactor-codexray")
 	if err != nil {
-		slog.Error("Failed to get codeactor-codebase bin path", "error", err)
+		slog.Error("Failed to get codeactor-codexray bin path", "error", err)
 		return nil
 	}
 	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		slog.Error("codeactor-codebase binary not found, skipping startup", "path", binPath)
+		slog.Error("codeactor-codexray binary not found, skipping startup", "path", binPath)
 		return nil
 	}
 
-	logDir := filepath.Join(homeDir, ".codeactor/logs/codeactor-codebase")
+	logDir := filepath.Join(homeDir, ".codeactor/logs/codeactor-codexray")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		slog.Error("Failed to create log directory", "error", err)
 		return nil
@@ -368,14 +368,14 @@ func startCodebaseServer(port int, repoPath string) *exec.Cmd {
 	cmd.Stderr = logFile
 
 	if err := cmd.Start(); err != nil {
-		slog.Error("Failed to start codeactor-codebase", "error", err)
+		slog.Error("Failed to start codeactor-codexray", "error", err)
 		return nil
 	}
 
-	slog.Info("Started codeactor-codebase server", "pid", cmd.Process.Pid, "address", address, "repo", repoPath, "log", logPath)
+	slog.Info("Started codeactor-codexray server", "pid", cmd.Process.Pid, "address", address, "repo", repoPath, "log", logPath)
 
 	go func() {
-		if err := waitForCodebase(address, 60*time.Second); err != nil {
+		if err := waitForCodexray(address, 60*time.Second); err != nil {
 			slog.Error("Codebase server failed to become healthy", "error", err)
 			cmd.Process.Kill()
 		}
@@ -384,8 +384,8 @@ func startCodebaseServer(port int, repoPath string) *exec.Cmd {
 	return cmd
 }
 
-// waitForCodebase polls the /health endpoint until the service responds or timeout.
-func waitForCodebase(address string, timeout time.Duration) error {
+// waitForCodexray polls the /health endpoint until the service responds or timeout.
+func waitForCodexray(address string, timeout time.Duration) error {
 	healthURL := fmt.Sprintf("http://%s/health", address)
 	deadline := time.Now().Add(timeout)
 	client := &nethttp.Client{Timeout: 2 * time.Second}
@@ -407,5 +407,5 @@ func waitForCodebase(address string, timeout time.Duration) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	return fmt.Errorf("codebase server at %s not healthy after %v: %w", address, timeout, lastErr)
+	return fmt.Errorf("codexray server at %s not healthy after %v: %w", address, timeout, lastErr)
 }

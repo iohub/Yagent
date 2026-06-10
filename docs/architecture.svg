@@ -40,7 +40,7 @@
 
   <!-- Title -->
   <text x="480" y="36" text-anchor="middle" font-size="20" font-weight="700" fill="#1f2937">CodeActor Agent — System Architecture</text>
-  <text x="480" y="56" text-anchor="middle" font-size="11" fill="#9ca3af">Hub-and-Spoke Multi-Agent · 6 Sub-Agents · 22 Tools · Rust Codebase Engine</text>
+  <text x="480" y="56" text-anchor="middle" font-size="11" fill="#9ca3af">Hub-and-Spoke Multi-Agent · 6 Sub-Agents · 22 Tools · Rust Codexray Engine</text>
 
   <!-- ============================================================ -->
   <!-- LAYER 1: Interaction -->
@@ -239,9 +239,9 @@
   <text x="345" y="954" text-anchor="middle" font-size="10" fill="#6b7280">DeepSeek reasoning_content · streaming + non-streaming</text>
   <text x="345" y="970" text-anchor="middle" font-size="9" fill="#9ca3af">LoggingEngine → ~/.codeactor/logs/llm-{date}.log</text>
 
-  <!-- Codebase Service -->
+  <!-- Codexray Service -->
   <rect x="555" y="862" width="380" height="115" rx="6" fill="#fff" stroke="#d1d5db" stroke-width="1"/>
-  <text x="745" y="882" text-anchor="middle" font-size="12" font-weight="700" fill="#374151">Codebase Service (Rust)</text>
+  <text x="745" y="882" text-anchor="middle" font-size="12" font-weight="700" fill="#374151">Codexray Service (Rust)</text>
   <text x="745" y="899" text-anchor="middle" font-size="10.5" fill="#4b5563">auto-launch · health-check · retry ×3 · cleanup</text>
   <line x1="570" y1="906" x2="920" y2="906" stroke="#e5e7eb" stroke-width="0.5"/>
   <text x="745" y="922" text-anchor="middle" font-size="10" fill="#6b7280">Tree-sitter: Rust · Python · JS/TS · Java · C++ · Go</text>
