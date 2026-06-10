@@ -161,7 +161,7 @@ func RenderResultBody(toolName string, content string, width int) string {
 
 	// 1. Try JSON — check for embedded fields first
 	if isJSON(content) {
-		// Detect codebase tool results by JSON structure (not tool name)
+		// Detect codexray tool results by JSON structure (not tool name)
 		if formatted := tryFormatCodebaseResult(content, bodyWidth); formatted != "" {
 			return formatted
 		}
@@ -229,8 +229,8 @@ func extractOutputField(jsonStr string) string {
 	return ""
 }
 
-// tryFormatCodebaseResult detects codebase tool result JSON by structure and formats it.
-// Returns empty string if the JSON doesn't match any known codebase result pattern.
+// tryFormatCodebaseResult detects codexray tool result JSON by structure and formats it.
+// Returns empty string if the JSON doesn't match any known codexray result pattern.
 func tryFormatCodebaseResult(content string, width int) string {
 	var parsed map[string]interface{}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {

@@ -5,11 +5,11 @@ use tracing::{info, warn};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
-    pub codebase: CodeBaseConfig,
+    pub codexray: CodeXRayConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct CodeBaseConfig {
+pub struct CodeXRayConfig {
     #[serde(default)]
     pub enable_embedding: bool,
     pub embedding: EmbeddingConfig,
@@ -249,16 +249,16 @@ impl Config {
 
         // 检测旧的已废弃配置字段并发出警告
         if let Ok(value) = toml::from_str::<toml::Value>(&contents) {
-            if let Some(codebase) = value.get("codebase") {
-                if codebase.get("embedding_db_uri").is_some() {
+            if let Some(codexray) = value.get("codexray") {
+                if codexray.get("embedding_db_uri").is_some() {
                     warn!(
-                        "Config field 'codebase.embedding_db_uri' is deprecated and will be ignored. \
+                        "Config field 'codexray.embedding_db_uri' is deprecated and will be ignored. \
                         Embedding data is now stored under <data_dir>/embedding/ automatically."
                     );
                 }
-                if codebase.get("graph_db_uri").is_some() {
+                if codexray.get("graph_db_uri").is_some() {
                     warn!(
-                        "Config field 'codebase.graph_db_uri' is deprecated and will be ignored. \
+                        "Config field 'codexray.graph_db_uri' is deprecated and will be ignored. \
                         Graph data is now stored under <data_dir>/graph/ automatically."
                     );
                 }

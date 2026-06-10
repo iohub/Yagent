@@ -47,8 +47,8 @@ RRF融合 (hybrid_search.rs:207-218): 双通道分数叠加 → 排名显著前�
 
 #### 环节一：符号解析 — interface 被当作 StructDeclaration
 
-**文件**: `codebase/src/codegraph/treesitter/structs.rs:26-38`  
-**文件**: `codebase/src/codegraph/treesitter/parsers/ts.rs:605`
+**文件**: `codexray/src/codegraph/treesitter/structs.rs:26-38`  
+**文件**: `codexray/src/codegraph/treesitter/parsers/ts.rs:605`
 
 ```rust
 // structs.rs — SymbolType 枚举：没有 InterfaceDeclaration 变体
@@ -70,7 +70,7 @@ pub enum SymbolType {
 
 #### 环节二：索引构建 — 无任何质量过滤
 
-**文件**: `codebase/src/services/embedding_service.rs:364-450`
+**文件**: `codexray/src/services/embedding_service.rs:364-450`
 
 ```rust
 // process_file_content() 方法中
@@ -106,7 +106,7 @@ for symbol in symbols {
 
 #### 环节三：向量搜索 — 无分数阈值
 
-**文件**: `codebase/src/services/embedding_service.rs:595-602`
+**文件**: `codexray/src/services/embedding_service.rs:595-602`
 
 ```rust
 // 从 LanceDB 搜索结果中读取距离并转换分数
@@ -121,7 +121,7 @@ let score = (1.0 / (1.0 + distance)) as f32;
 
 #### 环节四：BM25 搜索 — 算法偏袒短文档
 
-**文件**: `codebase/src/storage/tantivy_index.rs:282-284`
+**文件**: `codexray/src/storage/tantivy_index.rs:282-284`
 
 ```rust
 let query_parser = QueryParser::for_index(
@@ -139,7 +139,7 @@ let query_parser = QueryParser::for_index(
 
 #### 环节五：RRF 融合 — 双通道叠加放大
 
-**文件**: `codebase/src/services/hybrid_search.rs:195-235`
+**文件**: `codexray/src/services/hybrid_search.rs:195-235`
 
 ```rust
 fn reciprocal_rank_fusion(&self, dense, sparse, limit) {
@@ -185,7 +185,7 @@ fn reciprocal_rank_fusion(&self, dense, sparse, limit) {
 **文件**: `config.toml`
 
 ```toml
-[codebase.retrieval_pipeline.hybrid]
+[codexray.retrieval_pipeline.hybrid]
 bm25_top_k = 20      # BM25每通道召回20条
 vector_top_k = 20    # 向量每通道召回20条
 rrf_k = 60           # RRF融合参数
@@ -200,7 +200,7 @@ rrf_top_k = 20       # 最终保留20条
 
 ### P0 — 索引阶段添加最小长度过滤（高优先级，低成本）
 
-**文件**: `codebase/src/services/embedding_service.rs`，在 `process_file_content()` 第405行之前
+**文件**: `codexray/src/services/embedding_service.rs`，在 `process_file_content()` 第405行之前
 
 ```rust
 // 在 extracted 解构之后、索引之前添加
@@ -226,7 +226,7 @@ if let Some((code_block, name, symbol_type_str, language_str, start_row, end_row
 
 ### P1 — 搜索结果后处理短文档降权（中优先级，安全网）
 
-**文件**: `codebase/src/services/hybrid_search.rs`，在 `reciprocal_rank_fusion()` 返回前
+**文件**: `codexray/src/services/hybrid_search.rs`，在 `reciprocal_rank_fusion()` 返回前
 
 对最终排序结果，对 `code_block` 过短的候选进行软惩罚：
 
@@ -239,13 +239,13 @@ final_score *= penalty_factor
 
 ### P2 — SymbolType 增加 InterfaceDeclaration 变体（低优先级，可独立做）
 
-**文件**: `codebase/src/codegraph/treesitter/structs.rs` + `parsers/ts.rs`
+**文件**: `codexray/src/codegraph/treesitter/structs.rs` + `parsers/ts.rs`
 
 将 interface 从 StructDeclaration 中分离出来，使索引层可以独立控制是否索引 interface 类型。
 
 ### P3 — Fallback 机制增加保护（低优先级，但建议尽快做）
 
-**文件**: `codebase/src/services/embedding_service.rs:394-398`
+**文件**: `codexray/src/services/embedding_service.rs:394-398`
 
 当前 fallback 逻辑：
 ```rust

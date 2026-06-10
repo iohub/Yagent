@@ -11,26 +11,26 @@ import (
 )
 
 type RepoOperationsTool struct {
-	CodebaseURL string
+	CodexrayURL string
 	ProjectPath string
 }
 
-func NewRepoOperationsTool(codebaseURL, projectPath string) *RepoOperationsTool {
+func NewRepoOperationsTool(codexrayURL, projectPath string) *RepoOperationsTool {
 	return &RepoOperationsTool{
-		CodebaseURL: codebaseURL,
+		CodexrayURL: codexrayURL,
 		ProjectPath: projectPath,
 	}
 }
 
-// doCodebaseRequest sends an HTTP POST to the codebase service with retry logic.
+// doCodexrayRequest sends an HTTP POST to the codexray service with retry logic.
 // Returns the raw response body on success.
-func (t *RepoOperationsTool) doCodebaseRequest(endpoint string, body interface{}) ([]byte, error) {
+func (t *RepoOperationsTool) doCodexrayRequest(endpoint string, body interface{}) ([]byte, error) {
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s%s", t.CodebaseURL, endpoint)
+	url := fmt.Sprintf("%s%s", t.CodexrayURL, endpoint)
 
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -66,7 +66,7 @@ func (t *RepoOperationsTool) doCodebaseRequest(endpoint string, body interface{}
 		return respBody, nil
 	}
 
-	return nil, fmt.Errorf("codebase request failed after 3 retries: %w", lastErr)
+	return nil, fmt.Errorf("codexray request failed after 3 retries: %w", lastErr)
 }
 
 type QueryCodeSkeletonResponse struct {
@@ -105,7 +105,7 @@ func (t *RepoOperationsTool) ExecuteSemanticSearch(ctx context.Context, params m
 		limit = 5
 	}
 
-	body, err := t.doCodebaseRequest("/semantic_search", map[string]interface{}{
+	body, err := t.doCodexrayRequest("/semantic_search", map[string]interface{}{
 		"repo_path": t.ProjectPath,
 		"limit":     limit,
 		"text":      query,
@@ -135,7 +135,7 @@ func (t *RepoOperationsTool) ExecuteQueryCodeSkeleton(ctx context.Context, param
 		filepaths[i] = s
 	}
 
-	body, err := t.doCodebaseRequest("/query_code_skeleton", map[string]interface{}{
+	body, err := t.doCodexrayRequest("/query_code_skeleton", map[string]interface{}{
 		"filepaths": filepaths,
 	})
 	if err != nil {
@@ -162,7 +162,7 @@ func (t *RepoOperationsTool) ExecuteQueryCodeSnippet(ctx context.Context, params
 		return nil, fmt.Errorf("function_name parameter must be a string")
 	}
 
-	body, err := t.doCodebaseRequest("/query_code_snippet", map[string]interface{}{
+	body, err := t.doCodexrayRequest("/query_code_snippet", map[string]interface{}{
 		"filepath":      filepath,
 		"function_name": functionName,
 	})

@@ -25,14 +25,14 @@
 
 ### 1.1 背景
 
-CodeActor 项目采用 **Hub-and-Spoke（中枢-辐条）** 多智能体架构，由 Go 实现的 Agent 系统（`codeactor-agent`）与 Rust 实现的代码分析服务（`codeactor-codebase`）协同工作。知识索引与检索是整个系统的核心基础设施，为 Agent 提供代码理解、语义搜索和依赖分析能力。
+CodeActor 项目采用 **Hub-and-Spoke（中枢-辐条）** 多智能体架构，由 Go 实现的 Agent 系统（`codeactor-agent`）与 Rust 实现的代码分析服务（`codeactor-codexray`）协同工作。知识索引与检索是整个系统的核心基础设施，为 Agent 提供代码理解、语义搜索和依赖分析能力。
 
 ### 1.2 核心组件
 
 | 组件 | 语言 | 职责 |
 |------|------|------|
-| **CodeBase Server** | Rust | 源码解析、图谱构建、向量嵌入、HTTP API 服务 |
-| **RepoOperationsTool** | Go | Agent 侧封装，通过 HTTP 调用 CodeBase 服务 |
+| **CodeXRay Server** | Rust | 源码解析、图谱构建、向量嵌入、HTTP API 服务 |
+| **RepoOperationsTool** | Go | Agent 侧封装，通过 HTTP 调用 CodeXRay 服务 |
 | **StorageManager** | Rust | 图谱缓存、持久化、文件监听、嵌入任务调度 |
 | **CodeGraph** | Rust | 函数调用有向图（Petgraph DiGraph） |
 | **EmbeddingService** | Rust | 向量索引构建与语义检索 |
@@ -41,7 +41,7 @@ CodeActor 项目采用 **Hub-and-Spoke（中枢-辐条）** 多智能体架构�
 
 #### 1.3.1 单进程单仓库
 
-每个 CodeBase 进程在启动时通过 `--repo-path` 参数绑定一个代码仓库，生命周期内不可切换。
+每个 CodeXRay 进程在启动时通过 `--repo-path` 参数绑定一个代码仓库，生命周期内不可切换。
 
 **设计动机**：
 - 简化 API 设计，端点无需携带仓库路径参数
@@ -64,7 +64,7 @@ fn try_bind_repo(&self, repo_path: &str) -> Result<(), String> {
 
 #### 1.3.2 启动自初始化
 
-`CodeBaseServer::start()` 在绑定端口前执行完整初始化：
+`CodeXRayServer::start()` 在绑定端口前执行完整初始化：
 
 ```
 启动流程:
@@ -484,7 +484,7 @@ Tree-sitter 解析 → 提取函数/结构体声明
 |------|------|---------|------|------|
 | `GET` | `/health` | `health_check` | 健康检查 | 无 |
 | `GET` | `/status` | `get_status` | 当前仓库状态 | 无 |
-| `POST` | `/codebase_init` | `perform_analysis` | 初始化代码索引 | 无 |
+| `POST` | `/codexray_init` | `perform_analysis` | 初始化代码索引 | 无 |
 | `POST` | `/query_call_graph` | `query_call_graph` | 查询函数调用图谱 | 无 |
 | `POST` | `/query_hierarchical_graph` | `query_hierarchical_graph` | 查询层级调用树 | 无 |
 | `POST` | `/query_code_skeleton` | `query_code_skeleton` | 批量提取代码骨架 | 无 |
@@ -574,11 +574,11 @@ GET /status
 | `embedding_enabled` | boolean | 是否启用嵌入索引 |
 | `indexing_status` | string | 索引状态: `not_started` / `indexing` / `completed` / `failed` |
 
-#### 4.3.3 `POST /codebase_init` — 初始化代码索引
+#### 4.3.3 `POST /codexray_init` — 初始化代码索引
 
 **请求**:
 ```http
-POST /codebase_init
+POST /codexray_init
 Content-Type: application/json
 
 {
@@ -988,16 +988,16 @@ package tools
 
 import "context"
 
-// RepoOperationsTool 封装与 codebase Rust 服务的 HTTP 通信
+// RepoOperationsTool 封装与 codexray Rust 服务的 HTTP 通信
 type RepoOperationsTool struct {
-    CodebaseURL string            // CodeBase 服务地址，如 "http://127.0.0.1:12800"
+    CodexrayURL string            // CodeXRay 服务地址，如 "http://127.0.0.1:12800"
     ProjectPath string            // 当前项目/仓库路径
 }
 
 // NewRepoOperationsTool 构造函数
-func NewRepoOperationsTool(codebaseURL, projectPath string) *RepoOperationsTool {
+func NewRepoOperationsTool(codexrayURL, projectPath string) *RepoOperationsTool {
     return &RepoOperationsTool{
-        CodebaseURL: codebaseURL,
+        CodexrayURL: codexrayURL,
         ProjectPath: projectPath,
     }
 }
@@ -1041,7 +1041,7 @@ func (t *RepoOperationsTool) ExecuteSemanticSearch(ctx context.Context, params m
     }
 
     // 2. 发送 HTTP 请求 (含 3 次重试)
-    body, err := t.doCodebaseRequest("/semantic_search", map[string]interface{}{
+    body, err := t.doCodexrayRequest("/semantic_search", map[string]interface{}{
         "repo_path": t.ProjectPath,
         "limit":     limit,
         "text":      query,
@@ -1124,18 +1124,18 @@ QueryCodeSnippetResponse{
 
 ### 5.3 底层 HTTP 请求封装
 
-#### 5.3.1 doCodebaseRequest — 带重试的 HTTP 请求
+#### 5.3.1 doCodexrayRequest — 带重试的 HTTP 请求
 
 ```go
-// doCodebaseRequest 发送 HTTP POST 到 codebase 服务，含重试逻辑
+// doCodexrayRequest 发送 HTTP POST 到 codexray 服务，含重试逻辑
 // 返回成功时的响应体字节
-func (t *RepoOperationsTool) doCodebaseRequest(endpoint string, body interface{}) ([]byte, error) {
+func (t *RepoOperationsTool) doCodexrayRequest(endpoint string, body interface{}) ([]byte, error) {
     bodyBytes, err := json.Marshal(body)
     if err != nil {
         return nil, fmt.Errorf("failed to marshal request: %w", err)
     }
 
-    url := fmt.Sprintf("%s%s", t.CodebaseURL, endpoint)
+    url := fmt.Sprintf("%s%s", t.CodexrayURL, endpoint)
 
     var lastErr error
     for attempt := 0; attempt < 3; attempt++ {
@@ -1172,7 +1172,7 @@ func (t *RepoOperationsTool) doCodebaseRequest(endpoint string, body interface{}
         return respBody, nil
     }
 
-    return nil, fmt.Errorf("codebase request failed after 3 retries: %w", lastErr)
+    return nil, fmt.Errorf("codexray request failed after 3 retries: %w", lastErr)
 }
 ```
 
@@ -1184,7 +1184,7 @@ func (t *RepoOperationsTool) doCodebaseRequest(endpoint string, body interface{}
 ### 5.4 响应结构定义
 
 ```go
-// QueryCodeSkeletonResponse codebase /query_code_skeleton 响应
+// QueryCodeSkeletonResponse codexray /query_code_skeleton 响应
 type QueryCodeSkeletonResponse struct {
     Success bool `json:"success"`
     Data    struct {
@@ -1196,7 +1196,7 @@ type QueryCodeSkeletonResponse struct {
     } `json:"data"`
 }
 
-// QueryCodeSnippetResponse codebase /query_code_snippet 响应
+// QueryCodeSnippetResponse codexray /query_code_snippet 响应
 type QueryCodeSnippetResponse struct {
     Success bool `json:"success"`
     Data    struct {
@@ -1290,17 +1290,17 @@ func registerRepoOperationsTool(agentType string, tool *RepoOperationsTool) []ll
 
 ### 5.6 错误处理
 
-Go 层通过 `doCodebaseRequest` 统一处理错误：
+Go 层通过 `doCodexrayRequest` 统一处理错误：
 
 | 错误类型 | 返回 | 示例 |
 |----------|------|------|
 | JSON 序列化失败 | `nil, error` | `"failed to marshal request: ..."` |
 | HTTP 请求失败 | `nil, error` | `"failed to send request: ..."` |
 | 非 200 状态码 | `nil, error` | `"server returned status 500: ..."` |
-| 重试耗尽 | `nil, error` | `"codebase request failed after 3 retries: ..."` |
+| 重试耗尽 | `nil, error` | `"codexray request failed after 3 retries: ..."` |
 | 参数类型错误 | `nil, error` | `"query parameter must be a string"` |
 | 响应 unsuccessful | `nil, error` | `"server returned unsuccessful response: ..."` |
-| 服务不可用 | `nil, error` | `"codebase request failed after 3 retries: failed to send request: dial tcp 127.0.0.1:12800: connect: connection refused"` |
+| 服务不可用 | `nil, error` | `"codexray request failed after 3 retries: failed to send request: dial tcp 127.0.0.1:12800: connect: connection refused"` |
 
 ---
 
@@ -1326,7 +1326,7 @@ Go 层通过 `doCodebaseRequest` 统一处理错误：
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  ExecuteTask()                                                          │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │ Step 1: POST /codebase_init (Go → Rust codebase service)        │    │
+│  │ Step 1: POST /codexray_init (Go → Rust codexray service)        │    │
 │  │   目的: 初始化代码索引                                            │    │
 │  │   触发: 全量 AST 解析 + 图谱构建 + 嵌入索引构建                   │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
@@ -1378,7 +1378,7 @@ Go 层通过 `doCodebaseRequest` 统一处理错误：
        │                     │ HTTP POST
        │                     ▼
        │          ┌──────────────────────┐
-       │          │ CodeBase Server      │
+       │          │ CodeXRay Server      │
        │          │ (Rust, :12800)       │
        │          └──────────┬───────────┘
        │                     │
@@ -1459,7 +1459,7 @@ ConductorAgent 接收摘要
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    CodeBase Server 后台任务                      │
+│                    CodeXRay Server 后台任务                      │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  setup_watcher()                                                 │
@@ -1500,11 +1500,11 @@ ConductorAgent 接收摘要
 
 | 文档 | 路径 | 本文档与之的关系 |
 |------|------|-----------------|
-| `codebase/docs/ARCHITECTURE.md` | `codebase/docs/ARCHITECTURE.md` | **补充细化**: 本文档将其中关于检索 API 的部分系统化，补充 Go 层封装细节 |
+| `codexray/docs/ARCHITECTURE.md` | `codexray/docs/ARCHITECTURE.md` | **补充细化**: 本文档将其中关于检索 API 的部分系统化，补充 Go 层封装细节 |
 | `docs/ARCHITECTURE.md` | `docs/ARCHITECTURE.md` | **引用关系**: 本文档描述 Go 层 `RepoOperationsTool` 如何调用 Rust 服务，与其中第 5.5 节、第 6.3 节互补 |
 | `docs/Agent_Design.md` | `docs/Agent_Design.md` | **实现落地**: 将其中"代码检索"、"code_search"设计转化为具体的接口定义 |
 
-### 7.2 与 codebase/docs/ARCHITECTURE.md 的关系
+### 7.2 与 codexray/docs/ARCHITECTURE.md 的关系
 
 | 章节 | 原文档 | 本文档补充 |
 |------|--------|-----------|
@@ -1527,7 +1527,7 @@ ConductorAgent 接收摘要
 ┌─────────────────────────────────────────────────────────────┐
 │                    文档体系                                   │
 ├──────────────────┬──────────────────────────────────────────┤
-│ codebase docs    │ 聚焦 Rust 服务内部实现细节                 │
+│ codexray docs    │ 聚焦 Rust 服务内部实现细节                 │
 │ ARCHITECTURE     │ - 模块架构                                │
 │                  │ - 核心数据结构                             │
 │                  │ - 持久化格式                               │
@@ -1562,13 +1562,13 @@ ConductorAgent 接收摘要
 #### 8.1.1 Rust 层测试
 
 ```rust
-// codebase/tests/test_functional.rs 中新增
+// codexray/tests/test_functional.rs 中新增
 
 #[tokio::test]
 async fn test_query_call_graph() {
     // 1. 启动测试服务器
     let storage = create_test_storage();
-    let server = CodeBaseServer::new(storage, "/path/to/test/repo");
+    let server = CodeXRayServer::new(storage, "/path/to/test/repo");
     
     // 2. 发送请求
     let resp = reqwest::Client::new()
@@ -1674,7 +1674,7 @@ func TestRetryLogic(t *testing.T) {
     defer server.Close()
     
     tool := NewRepoOperationsTool(server.URL, "/path/to/repo")
-    _, err := tool.doCodebaseRequest("/semantic_search", nil)
+    _, err := tool.doCodexrayRequest("/semantic_search", nil)
     
     assert.NoError(t, err)
     assert.Equal(t, 3, callCount)
@@ -1693,8 +1693,8 @@ set -e
 
 echo "=== Knowledge Retrieval Integration Tests ==="
 
-# 1. 启动 CodeBase 服务
-echo "[1/5] Starting codebase server..."
+# 1. 启动 CodeXRay 服务
+echo "[1/5] Starting codexray server..."
 cargo run -- server --repo-path /tmp/test-repo --address 127.0.0.1:12800 &
 SERVER_PID=$!
 sleep 5
@@ -1768,7 +1768,7 @@ echo "=== All tests passed ==="
 | 不存在的文件 | 返回 `success: false, error: "file not found"` |
 | 不存在的函数 | 返回空 functions 列表 |
 | 语义搜索无结果 | 返回空 results 列表 |
-| CodeBase 服务未启动 | Go 层重试 3 次后返回错误 |
+| CodeXRay 服务未启动 | Go 层重试 3 次后返回错误 |
 | 超大响应 (>1MB) | 设置响应体大小限制 |
 | 非法 JSON 输入 | 返回 400 Bad Request |
 
@@ -1783,7 +1783,7 @@ echo "=== All tests passed ==="
 ```toml
 # ~/.codeactor/config/config.toml
 
-[codebase.embedding]
+[codexray.embedding]
 model = "Qwen/Qwen3-Embedding-4B"          # 嵌入模型
 api_base_url = "https://api.siliconflow.cn/v1"  # API 端点
 api_token = "sk-..."                        # API 密钥
@@ -1838,7 +1838,7 @@ Authorization: Bearer sk-...
 
 ### 9.2 存储路径规范
 
-#### 9.2.1 CodeBase 持久化
+#### 9.2.1 CodeXRay 持久化
 
 ```
 .codegraph_db/
@@ -1883,15 +1883,15 @@ data/
 
 ### 9.3 配置系统
 
-#### 9.3.1 CodeBase 配置
+#### 9.3.1 CodeXRay 配置
 
 ```toml
 # ~/.codeactor/config/config.toml
 
 [http]
-server_port = 12800           # CodeBase HTTP 端口
+server_port = 12800           # CodeXRay HTTP 端口
 
-[codebase]
+[codexray]
 enable_embedding = true       # 是否启用语义搜索
 # 数据目录自动生成在 $HOME/.codeactor/data/
 #   embedding/ — 全局共享索引（BM25 + LanceDB 向量库）
@@ -1947,13 +1947,13 @@ A: 简化 API 设计、避免并发冲突。多仓库场景通过启动多个进
 A: 不同模型的嵌入向量不兼容，切换模型后必须重新计算。包含模型名的 hash 确保缓存隔离。
 
 **Q3: 如何切换嵌入模型？**  
-A: 修改 `config.toml` 中的 `model` 字段，重启 CodeBase 服务。旧缓存不会误用，但需要重新构建索引。
+A: 修改 `config.toml` 中的 `model` 字段，重启 CodeXRay 服务。旧缓存不会误用，但需要重新构建索引。
 
 **Q4: 语义搜索的 `score` 越大越相关吗？**  
 A: 是的。该值已统一转换为相关性分数（范围 0-1），值越大表示语义越相似。底层 Dense 搜索使用 `1 / (1 + L2距离)` 将距离转换为分数。
 
-**Q5: CodeBase 服务与 Agent 如何协同？**  
-A: Agent 启动时自动启动 CodeBase 子进程 (:12800)，通过 `RepoOperationsTool` 封装 HTTP 调用。服务生命周期由 Agent 管理。
+**Q5: CodeXRay 服务与 Agent 如何协同？**  
+A: Agent 启动时自动启动 CodeXRay 子进程 (:12800)，通过 `RepoOperationsTool` 封装 HTTP 调用。服务生命周期由 Agent 管理。
 
 ### 9.6 术语表
 

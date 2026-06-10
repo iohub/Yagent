@@ -122,7 +122,7 @@ impl CommitEmbeddingService {
         let mut dimensions = 2560;
 
         if let Some(conf) = config {
-            let embedding_config = &conf.codebase.embedding;
+            let embedding_config = &conf.codexray.embedding;
             if !embedding_config.api_token.is_empty() {
                 api_token = Some(embedding_config.api_token.clone());
             }

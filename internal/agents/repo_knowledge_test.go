@@ -57,10 +57,10 @@ func TestRepoKnowledgeManager_SearchSimilar_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// 创建 globalCtx 并覆盖 CodebaseURL 为 mock server
+	// 创建 globalCtx 并覆盖 CodexrayURL 为 mock server
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	// 创建 mock RepoAgent
 	agent := &RepoAgent{
@@ -105,7 +105,7 @@ func TestRepoKnowledgeManager_SearchSimilar_ServerError(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	agent := &RepoAgent{GlobalCtx: gctx}
 	mgr := NewRepoKnowledgeManager(agent, gctx, 0.95)
@@ -133,7 +133,7 @@ func TestRepoKnowledgeManager_SearchSimilar_InvalidJSON(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	agent := &RepoAgent{GlobalCtx: gctx}
 	mgr := NewRepoKnowledgeManager(agent, gctx, 0.95)
@@ -173,7 +173,7 @@ func TestRepoKnowledgeManager_EmbedTaskAndResult_Success(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	agent := &RepoAgent{GlobalCtx: gctx}
 	mgr := NewRepoKnowledgeManager(agent, gctx, 0.95)
@@ -204,7 +204,7 @@ func TestRepoKnowledgeManager_EmbedTaskAndResult_ServerError(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	agent := &RepoAgent{GlobalCtx: gctx}
 	mgr := NewRepoKnowledgeManager(agent, gctx, 0.95)
@@ -252,7 +252,7 @@ func TestRepoKnowledgeManager_AnalyseTask_CacheHit(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	// 创建一个 mock RepoAgent，通过 atomic 记录是否被调用
 	mockAgent := &mockRepoAgent{
@@ -322,7 +322,7 @@ func TestRepoKnowledgeManager_AnalyseTask_CacheMiss(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	mockAgent := &mockRepoAgent{
 		runFn: func(ctx context.Context, task string) (AgentResult, error) {
@@ -356,15 +356,15 @@ func TestRepoKnowledgeManager_AnalyseTask_CacheMiss(t *testing.T) {
 	}
 }
 
-// ── TestRepoKnowledgeManager_AnalyseTask_EmptyCodebaseURL ──
+// ── TestRepoKnowledgeManager_AnalyseTask_EmptyCodexrayURL ──
 
-func TestRepoKnowledgeManager_AnalyseTask_EmptyCodebaseURL(t *testing.T) {
-	// 当 CodebaseURL 为空字符串时，验证 AnalyseTask 直接调用 RepoAgent
+func TestRepoKnowledgeManager_AnalyseTask_EmptyCodexrayURL(t *testing.T) {
+	// 当 CodexrayURL 为空字符串时，验证 AnalyseTask 直接调用 RepoAgent
 	var repoAgentCalled int32
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = "" // 设置为空字符串
+	gctx.CodexrayURL = "" // 设置为空字符串
 
 	mockAgent := &mockRepoAgent{
 		runFn: func(ctx context.Context, task string) (AgentResult, error) {
@@ -379,7 +379,7 @@ func TestRepoKnowledgeManager_AnalyseTask_EmptyCodebaseURL(t *testing.T) {
 	ctx := context.Background()
 	result, err := mgr.AnalyseTask(ctx, "分析项目结构")
 	if err != nil {
-		t.Fatalf("AnalyseTask failed: nil CodebaseURL should fallback gracefully: %v", err)
+		t.Fatalf("AnalyseTask failed: nil CodexrayURL should fallback gracefully: %v", err)
 	}
 
 	if result != "直接 RepoAgent 结果" {
@@ -387,7 +387,7 @@ func TestRepoKnowledgeManager_AnalyseTask_EmptyCodebaseURL(t *testing.T) {
 	}
 
 	if atomic.LoadInt32(&repoAgentCalled) != 1 {
-		t.Error("RepoAgent.Run should have been called when CodebaseURL is empty")
+		t.Error("RepoAgent.Run should have been called when CodexrayURL is empty")
 	}
 }
 
@@ -411,7 +411,7 @@ func TestRepoKnowledgeManager_AnalyseTask_SearchErrorFallback(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	mockAgent := &mockRepoAgent{
 		runFn: func(ctx context.Context, task string) (AgentResult, error) {
@@ -483,38 +483,38 @@ func TestRepoKnowledgeManager_CustomThreshold(t *testing.T) {
 	}
 }
 
-// ─── Test 2: CodebaseURL 硬编码验证（端口写死 12800） ─────────────────────
+// ─── Test 2: CodexrayURL 硬编码验证（端口写死 12800） ─────────────────────
 
-// ── TestRepoOperationsTool_CodebaseURL_DefaultsTo12800 ──
+// ── TestRepoOperationsTool_CodexrayURL_DefaultsTo12800 ──
 
-func TestRepoOperationsTool_CodebaseURL_DefaultsTo12800(t *testing.T) {
+func TestRepoOperationsTool_CodexrayURL_DefaultsTo12800(t *testing.T) {
 	repoOps := tools.NewRepoOperationsTool("http://127.0.0.1:12800", "/tmp/test")
-	if repoOps.CodebaseURL != "http://127.0.0.1:12800" {
-		t.Errorf("CodebaseURL = %q, want %q", repoOps.CodebaseURL, "http://127.0.0.1:12800")
+	if repoOps.CodexrayURL != "http://127.0.0.1:12800" {
+		t.Errorf("CodexrayURL = %q, want %q", repoOps.CodexrayURL, "http://127.0.0.1:12800")
 	}
 }
 
-// ── TestGlobalCtx_CodebaseURL_DefaultsTo12800 ──
+// ── TestGlobalCtx_CodexrayURL_DefaultsTo12800 ──
 
-func TestGlobalCtx_CodebaseURL_DefaultsTo12800(t *testing.T) {
+func TestGlobalCtx_CodexrayURL_DefaultsTo12800(t *testing.T) {
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
 
-	// 验证 GlobalCtx 的 CodebaseURL
-	if gctx.CodebaseURL != "http://127.0.0.1:12800" {
-		t.Errorf("GlobalCtx.CodebaseURL = %q, want %q", gctx.CodebaseURL, "http://127.0.0.1:12800")
+	// 验证 GlobalCtx 的 CodexrayURL
+	if gctx.CodexrayURL != "http://127.0.0.1:12800" {
+		t.Errorf("GlobalCtx.CodexrayURL = %q, want %q", gctx.CodexrayURL, "http://127.0.0.1:12800")
 	}
 
-	// 验证 RepoOps 的 CodebaseURL
-	if gctx.RepoOps.CodebaseURL != "http://127.0.0.1:12800" {
-		t.Errorf("GlobalCtx.RepoOps.CodebaseURL = %q, want %q", gctx.RepoOps.CodebaseURL, "http://127.0.0.1:12800")
+	// 验证 RepoOps 的 CodexrayURL
+	if gctx.RepoOps.CodexrayURL != "http://127.0.0.1:12800" {
+		t.Errorf("GlobalCtx.RepoOps.CodexrayURL = %q, want %q", gctx.RepoOps.CodexrayURL, "http://127.0.0.1:12800")
 	}
 }
 
-// ── TestRepoKnowledgeManager_UsesCodebaseURL ──
+// ── TestRepoKnowledgeManager_UsesCodexrayURL ──
 
-func TestRepoKnowledgeManager_UsesCodebaseURL(t *testing.T) {
-	// 验证 RepoKnowledgeManager 使用 globalCtx.CodebaseURL 构建请求 URL
+func TestRepoKnowledgeManager_UsesCodexrayURL(t *testing.T) {
+	// 验证 RepoKnowledgeManager 使用 globalCtx.CodexrayURL 构建请求 URL
 	var capturedURL string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedURL = r.URL.String()
@@ -526,7 +526,7 @@ func TestRepoKnowledgeManager_UsesCodebaseURL(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	agent := &RepoAgent{GlobalCtx: gctx}
 	mgr := NewRepoKnowledgeManager(agent, gctx, 0.95)
@@ -586,7 +586,7 @@ func TestDelegateRepo_WithRepoKnowledgeMgr(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	// 使用 mockEngine
 	engine := &mockEngine{
@@ -762,7 +762,7 @@ func TestSearchSimilar_RequestFormat(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	agent := &RepoAgent{GlobalCtx: gctx}
 	mgr := NewRepoKnowledgeManager(agent, gctx, 0.95)
@@ -845,7 +845,7 @@ func TestRepoKnowledgeManager_AnalyseTask_EmbedErrorNonFatal(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	mockAgent := &mockRepoAgent{
 		runFn: func(ctx context.Context, task string) (AgentResult, error) {
@@ -894,7 +894,7 @@ func TestRepoKnowledgeManager_SearchSimilar_ContextCancellation(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	agent := &RepoAgent{GlobalCtx: gctx}
 	mgr := NewRepoKnowledgeManager(agent, gctx, 0.95)
@@ -923,7 +923,7 @@ func TestRepoKnowledgeManager_EmbedTaskAndResult_ContextCancellation(t *testing.
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	agent := &RepoAgent{GlobalCtx: gctx}
 	mgr := NewRepoKnowledgeManager(agent, gctx, 0.95)
@@ -957,7 +957,7 @@ func TestRepoKnowledgeManager_EmptyMatches_ReturnsCacheMiss(t *testing.T) {
 
 	workDir := t.TempDir()
 	gctx := newTestGlobalCtx(workDir)
-	gctx.CodebaseURL = server.URL
+	gctx.CodexrayURL = server.URL
 
 	mockAgent := &mockRepoAgent{
 		runFn: func(ctx context.Context, task string) (AgentResult, error) {

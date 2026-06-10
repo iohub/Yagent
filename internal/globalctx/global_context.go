@@ -17,8 +17,8 @@ type GlobalCtx struct {
 	RepoSummary     string
 	// Global utility
 	Publisher *messaging.MessagePublisher
-	// Codebase baseurl
-	CodebaseURL string
+	// Codexray baseurl
+	CodexrayURL string
 
 	// MaxContextTokens 最大上下文token数
 	MaxContextTokens int
@@ -91,6 +91,6 @@ func (g *GlobalCtx) SetCustomizePrompt(prompt string) {
 	g.CustomizePrompt = prompt
 }
 
-func (g *GlobalCtx) SetCodebaseURL(url string) {
-	g.CodebaseURL = url
+func (g *GlobalCtx) SetCodexrayURL(url string) {
+	g.CodexrayURL = url
 }

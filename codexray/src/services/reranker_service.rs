@@ -72,7 +72,7 @@ impl RerankerService {
         // 检查 API Token 是否已配置
         if self.config.api_token.is_empty() {
             return Err(anyhow!(
-                "Reranker API token not configured. Set [codebase.retrieval_pipeline.reranker] api_token in config.toml"
+                "Reranker API token not configured. Set [codexray.retrieval_pipeline.reranker] api_token in config.toml"
             ));
         }
 

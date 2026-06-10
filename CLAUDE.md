@@ -39,14 +39,14 @@ Server defaults to `localhost:9080`. Override via `--host`/`--port` or `CODECACT
 - **LLM**: `github.com/openai/openai-go/v3` (multi-provider: OpenAI-compatible, Bedrock)
 - **HTTP/WS**: `gin-gonic/gin` + `olahol/melody`
 - **TUI**: Bubble Tea
-- **External**: `codeactor-codebase` (Rust, `127.0.0.1:12800`) — semantic search, repo investigation, call graph, code skeleton/snippet. See [Codebase Component](#codebase-component) below.
+- **External**: `codeactor-codexray` (Rust, `127.0.0.1:12800`) — semantic search, repo investigation, call graph, code skeleton/snippet. See [Codexray Component](#codexray-component) below.
 - **System deps**: `ripgrep` (rg), `fzf`
 
 ## Project Structure
 
 ```
 codeactor-agent/
-├── main.go                      # Entry point, CLI parsing, start codebase service
+├── main.go                      # Entry point, CLI parsing, start codexray service
 ├── internal/
 │   ├── app/
 │   │   └── app.go               # CodeActor: agent orchestration & init
@@ -131,9 +131,9 @@ codeactor-agent/
 │   ├── memory/                  # ConversationMemory (system/human/assistant/tool)
 │   ├── config/                  # Three-tier TOML config (tools > agents > global)
 │   ├── diff/                    # Unified diff computation
-│   ├── embedbin/                # Embed Rust codebase binary
+│   ├── embedbin/                # Embed Rust codexray binary
 │   ├── datamanager/             # Task persistence (~/.codeactor/tasks/)
-│   ├── globalctx/               # Global context (CodebaseURL, tool references)
+│   ├── globalctx/               # Global context (CodexrayURL, tool references)
 │   └── util/                    # Error handling, crash recovery
 ├── pkg/messaging/               # Pub-Sub message bus
 │   ├── message_event.go         # MessageEvent definition
@@ -158,28 +158,28 @@ codeactor-agent/
 6. **Context compression**: Multi-strategy (conservative/balanced/aggressive) context compression with priority-based message selection and LLM summarization to handle long conversations.
 7. **WorkspaceGuard**: All file operations and bash commands are validated against workspace boundaries. Dangerous operations require user confirmation via Pub-Sub confirmation pipeline.
 
-## Codebase Component
+## Codexray Component
 
-`codeactor-codebase` is a standalone **Rust** service that provides deep code analysis capabilities. It runs as a background HTTP server on `127.0.0.1:12800` (configurable via `config.toml` `[http] codebase_port`).
+`codeactor-codexray` is a standalone **Rust** service that provides deep code analysis capabilities. It runs as a background HTTP server on `127.0.0.1:12800` (configurable via `config.toml` `[http] codexray_port`).
 
 ### Build & Run
 
 ```bash
-cd codebase && cargo build --release
+cd codexray && cargo build --release
 
 # Start with target repo
-./target/release/codeactor-codebase server --repo-path /path/to/project
+./target/release/codeactor-codexray server --repo-path /path/to/project
 
 # Custom address
-./target/release/codeactor-codebase server --repo-path /path/to/project --address 0.0.0.0:8080
+./target/release/codeactor-codexray server --repo-path /path/to/project --address 0.0.0.0:8080
 ```
 
-The Go binary automatically launches `~/.codeactor/bin/codeactor-codebase` as a background process on startup (`main.go:startCodebaseServer()`). Logs go to `~/.codeactor/logs/codeactor-codebase/{date}.log`.
+The Go binary automatically launches `~/.codeactor/bin/codeactor-codexray` as a background process on startup (`main.go:startCodexrayServer()`). Logs go to `~/.codeactor/logs/codeactor-codexray/{date}.log`.
 
 ### Architecture (Rust side)
 
 ```
-codebase/src/
+codexray/src/
 ├── main.rs              # CLI entry: server / vectorize subcommands
 ├── config.rs            # Config loading from ~/.codeactor/config/config.toml
 ├── codegraph/           # AST parsing + graph data structures
@@ -214,7 +214,7 @@ Core design: **single repo per process** — binds to one repo at startup via `-
 
 ### Embedding & Vector Search
 
-The codebase service supports semantic code search via vector embeddings:
+The codexray service supports semantic code search via vector embeddings:
 - **Embedding model**: Configurable (default: `text-embedding-3-small`, 1536 dimensions)
 - **Vector store**: LanceDB for vector indexing
 - **Cache**: SQLite for embedding cache (avoids re-embedding unchanged code)
@@ -225,9 +225,9 @@ The codebase service supports semantic code search via vector embeddings:
 
 | Layer | File | Usage |
 |-------|------|-------|
-| Startup | `main.go:216-257` | `startCodebaseServer()` launches the Rust binary as a background process |
-| Global state | `internal/globalctx/global_context.go:20,31` | `CodebaseURL` field + `RepoOps *RepoOperationsTool` |
-| Initialization | `internal/app/app.go:62,73` | Sets `CodebaseURL=http://127.0.0.1:12800`, creates `RepoOperationsTool` |
+| Startup | `main.go:216-257` | `startCodexrayServer()` launches the Rust binary as a background process |
+| Global state | `internal/globalctx/global_context.go:20,31` | `CodexrayURL` field + `RepoOps *RepoOperationsTool` |
+| Initialization | `internal/app/app.go:62,73` | Sets `CodexrayURL=http://127.0.0.1:12800`, creates `RepoOperationsTool` |
 | Tool wrapper | `internal/tools/repo_operations.go` | `RepoOperationsTool` with 3 methods: `ExecuteSemanticSearch`, `ExecuteQueryCodeSkeleton`, `ExecuteQueryCodeSnippet` |
 | RepoAgent | `internal/agents/repo.go:105-139` | `doPreInvestigate()` calls `POST /investigate_repo` before each Run |
 | Tool routing | `internal/agents/conductor.go:298-303`, `coding.go:59-63`, `repo.go:75-79` | Routes `semantic_search`/`query_code_skeleton`/`query_code_snippet` to `RepoOps` |
@@ -236,15 +236,15 @@ The codebase service supports semantic code search via vector embeddings:
 
 ```toml
 [http]
-codebase_port = 12800
+codexray_port = 12800
 
-[codebase]
+[codexray]
 enable_embedding = true
 # 数据目录自动生成在 $HOME/.codeactor/data/
 # embedding/ — 全局共享索引（BM25 + LanceDB 向量库）
 # graph/     — 项目隔离数据（按 project_id 分目录）
 
-[codebase.embedding]
+[codexray.embedding]
 model = "text-embedding-3-small"
 api_token = "sk-..."
 api_base_url = "https://api.openai.com/v1"

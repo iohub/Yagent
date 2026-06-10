@@ -1185,7 +1185,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "codeactor-codebase"
+name = "codeactor-codexray"
 version = "0.1.0"
 dependencies = [
  "anyhow",

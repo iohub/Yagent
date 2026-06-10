@@ -69,7 +69,7 @@
         </div>
         <div class="content">
             <div class="step" id="step1">
-                <h2 class="step-title"><span class="badge">1</span> Build Codebase</h2>
+                <h2 class="step-title"><span class="badge">1</span> Build Codexray</h2>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="project_dir">Project Directory *</label>
@@ -83,7 +83,7 @@
                     </div>
                 </div>
                 <div class="actions">
-                    <button class="btn" id="build_btn" onclick="buildCodebase()">🚀 Build Codebase</button>
+                    <button class="btn" id="build_btn" onclick="buildCodexray()">🚀 Build Codexray</button>
                 </div>
                 <div id="build_status" class="status" style="display:none;"></div>
             </div>
@@ -112,7 +112,7 @@
         </div>
     </div>
     <script>
-        async function buildCodebase() {
+        async function buildCodexray() {
             const btn = document.getElementById('build_btn');
             const statusEl = document.getElementById('build_status');
             const projectDir = document.getElementById('project_dir').value.trim();

@@ -40,7 +40,7 @@ pub struct AppState {
     pub hybrid: Option<Arc<HybridSearchService>>,
 }
 
-pub struct CodeBaseServer {
+pub struct CodeXRayServer {
     storage: Arc<StorageManager>,
     repo_path: String,
     /// Hybrid search service for semantic search endpoint.
@@ -58,7 +58,7 @@ struct StatusResponse {
     indexing_status: String,
 }
 
-impl CodeBaseServer {
+impl CodeXRayServer {
     pub fn new(storage: Arc<StorageManager>, repo_path: String) -> Self {
         Self {
             storage,
@@ -124,7 +124,7 @@ impl CodeBaseServer {
         // This avoids LockBusy conflicts from multiple open_or_create calls on the same dir.
         let shared_bm25_index: Arc<dyn TextSearchProvider> = {
             let config = self.storage.get_config();
-            if config.as_ref().map_or(false, |c| c.codebase.enable_embedding) {
+            if config.as_ref().map_or(false, |c| c.codexray.enable_embedding) {
                 let config = config.unwrap();
                 // 使用项目特定子目录实现 BM25 索引隔离（与向量索引 collection 命名对齐）
                 let repo_path = std::path::Path::new(&self.repo_path);
@@ -166,8 +166,8 @@ impl CodeBaseServer {
 
         // 初始化混合检索服务 (Hybrid Search)
         if let Ok(config) = self.storage.get_config().ok_or("Config not set") {
-            if config.codebase.enable_embedding {
-                let _embedding_config = &config.codebase.embedding;
+            if config.codexray.enable_embedding {
+                let _embedding_config = &config.codexray.embedding;
                 let embedding_dir = config.embedding_dir();
                 let db_path_str = embedding_dir.to_string_lossy().to_string();
                 
@@ -194,11 +194,11 @@ impl CodeBaseServer {
                 
                  // 创建 HybridSearchService
                 if let Some(embedding_service) = embedding_service {
-                    let hybrid_cfg = &config.codebase.retrieval_pipeline.hybrid;
+                    let hybrid_cfg = &config.codexray.retrieval_pipeline.hybrid;
                     
                     // 可选：创建 RerankerService
-                    let reranker = if config.codebase.retrieval_pipeline.reranker.enabled {
-                        Some(RerankerService::new(config.codebase.retrieval_pipeline.reranker.clone()))
+                    let reranker = if config.codexray.retrieval_pipeline.reranker.enabled {
+                        Some(RerankerService::new(config.codexray.retrieval_pipeline.reranker.clone()))
                     } else {
                         None
                     };
@@ -251,7 +251,7 @@ impl CodeBaseServer {
         let config = self.storage.get_config().ok_or("Config not set")?;
         
         // 检查 embedding 是否启用
-        if !config.codebase.enable_embedding {
+        if !config.codexray.enable_embedding {
             return Err("Embedding not enabled in config".into());
         }
 
@@ -260,7 +260,7 @@ impl CodeBaseServer {
         let mut base_url = None;
         let mut model = "Qwen/Qwen3-Embedding-4B".to_string();
 
-        let embedding_config = &config.codebase.embedding;
+        let embedding_config = &config.codexray.embedding;
         if !embedding_config.api_token.is_empty() {
             api_token = Some(embedding_config.api_token.clone());
         }
@@ -290,7 +290,7 @@ impl CodeBaseServer {
         let config = self.storage.get_config().ok_or("Config not set")?;
         
         // 检查 embedding 是否启用
-        if !config.codebase.enable_embedding {
+        if !config.codexray.enable_embedding {
             return Err("Embedding not enabled in config".into());
         }
 
@@ -299,7 +299,7 @@ impl CodeBaseServer {
         let mut base_url = None;
         let mut model = "Qwen/Qwen3-Embedding-4B".to_string();
 
-        let embedding_config = &config.codebase.embedding;
+        let embedding_config = &config.codexray.embedding;
         if !embedding_config.api_token.is_empty() {
             api_token = Some(embedding_config.api_token.clone());
         }
@@ -436,7 +436,7 @@ impl CodeBaseServer {
 async fn health_check() -> Json<ApiResponse<&'static str>> {
     Json(ApiResponse {
         success: true,
-        data: "Codebase HTTP service is running",
+        data: "Codexray HTTP service is running",
     })
 }
 
@@ -462,7 +462,7 @@ async fn get_status(
 
     let embedding_enabled = storage.storage
         .get_config()
-        .map(|c| c.codebase.enable_embedding)
+        .map(|c| c.codexray.enable_embedding)
         .unwrap_or(false);
 
     let indexing_status = {

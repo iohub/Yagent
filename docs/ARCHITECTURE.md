@@ -78,13 +78,13 @@ codeactor-agent/
 │   │   │   ├── flow_control.go      # FlowControlTool：finish、ask_user_for_help
 │   │   │   ├── search_operations.go # SearchOperationsTool：ripgrep 全文搜索、fzf 文件搜索
 │   │   │   ├── system_operations.go # SystemOperationsTool：Shell 命令执行（前台/后台）
-│   │   │   ├── repo_operations.go   # RepoOperationsTool：语义搜索/代码骨架/代码片段（调用 codebase 服务）
+│   │   │   ├── repo_operations.go   # RepoOperationsTool：语义搜索/代码骨架/代码片段（调用 codexray 服务）
 │   │   │   ├── file_operations_test.go
 │   │   │   └── system_operations_test.go
 │   ├── http/
 │   │   ├── server.go                # HTTP 服务器：路由注册、REST API 处理、CORS
 │   │   ├── task_manager.go          # 任务生命周期管理：创建、状态更新、取消、WebSocket 推送
-│   │   ├── task_executor.go         # 任务执行引擎：启动 codebase_init、消息分发、Agent 调用
+│   │   ├── task_executor.go         # 任务执行引擎：启动 codexray_init、消息分发、Agent 调用
 │   │   ├── websocket.go             # WebSocket 事件处理：start_task、chat_message、get_memory、clear_memory
 │   │   └── types.go                 # 数据结构：Task、SocketMessage、TaskUpdate、API 请求/响应
 │   ├── memory/
@@ -120,7 +120,7 @@ main.go
   │     └── agents/
   │           ├── conductor.go ── tools (Adapter), memory, globalctx
   │           ├── coding.go ───── tools (Adapter), tools.json
-  │           ├── repo.go ─────── tools (codebase HTTP API), globalctx
+  │           ├── repo.go ─────── tools (codexray HTTP API), globalctx
   │           └── chat.go ─────── globalctx
   ├── internal/http/
   │     ├── server.go ─────────── gin, melody (WebSocket), assistant
@@ -192,13 +192,13 @@ main.go
                           ┌───────┼───────────────────────────────┐
                           │       ▼                                │
                           │  ┌──────────────────────────────┐    │
-                          │  │  codeactor-codebase (Rust)    │    │
+                          │  │  codeactor-codexray (Rust)    │    │
                           │  │  外部代码分析服务 (127.0.0.1:12800)│   │  外部服务
                           │  │  - semantic_search             │    │
                           │  │  - investigate_repo            │    │
                           │  │  - query_code_skeleton         │    │
                           │  │  - query_code_snippet          │    │
-                          │  │  - codebase_init               │    │
+                          │  │  - codexray_init               │    │
                           │  └──────────────────────────────┘    │
                           └──────────────────────────────────────┘
                                   │
@@ -261,7 +261,7 @@ type Agent interface {
   - `read_file`, `search_by_regex`, `list_dir`, `print_dir_tree`
   - `semantic_search`, `query_code_skeleton`, `query_code_snippet`
 - **预调查机制** (`doPreInvestigate`):
-  - 在每次 Run 之前，自动调用 `POST /investigate_repo` 到 codebase 服务
+  - 在每次 Run 之前，自动调用 `POST /investigate_repo` 到 codexray 服务
   - 获取目录树、核心函数列表（含调用者/被调者依赖图）、文件骨架
   - 将调查结果注入系统提示词
 - **最大步数限制**（默认 20 步，可配置）
@@ -303,7 +303,7 @@ type Adapter struct {
 | `search_by_regex` | 搜索 | `search_operations.go` | ripgrep 正则全文搜索 |
 | `run_bash` | 系统 | `system_operations.go` | 执行 Shell 命令（前台/后台） |
 | `thinking` | 认知 | `cognitive.go` | 错误分析和反思思维链 |
-| `semantic_search` | 仓库 | `repo_operations.go` | 语义搜索（调用 codebase 服务） |
+| `semantic_search` | 仓库 | `repo_operations.go` | 语义搜索（调用 codexray 服务） |
 | `query_code_skeleton` | 仓库 | `repo_operations.go` | 查询代码骨架（函数/类定义） |
 | `query_code_snippet` | 仓库 | `repo_operations.go` | 查询代码片段（函数实现） |
 | `finish` | 流程 | `flow_control.go` | 通知 Conductor 任务完成 |
@@ -523,13 +523,13 @@ llms.ToolCallResponse{ToolCallID, Name, Content}
 llms.Tool{Type: "function", Function: &llms.FunctionDefinition{...}}
 ```
 
-### 5.5 Codebase 服务 API（Rust 外部服务）
+### 5.5 Codexray 服务 API（Rust 外部服务）
 
 运行在 `http://127.0.0.1:12800`：
 
 | 端点 | 方法 | 调用方 | 说明 |
 |------|------|--------|------|
-| `/codebase_init` | POST | task_executor | 初始化代码库索引 |
+| `/codexray_init` | POST | task_executor | 初始化代码库索引 |
 | `/investigate_repo` | POST | RepoAgent | 仓库预调查 → 返回目录树+核心函数+文件骨架 |
 | `/semantic_search` | POST | RepoAgent/CodingAgent | 语义搜索代码 |
 | `/query_code_skeleton` | POST | RepoAgent/CodingAgent | 查询文件骨架 |
@@ -556,7 +556,7 @@ llms.Tool{Type: "function", Function: &llms.FunctionDefinition{...}}
    - 设置状态为 "running"
         │
 3. go ExecuteTask()
-   ├── 后台: POST /codebase_init (初始化代码索引)
+   ├── 后台: POST /codexray_init (初始化代码索引)
    ├── 创建 MessageDispatcher(100)
    ├── 注册 TUIConsumer (终端输出)
    ├── 注册 WebSocketConsumer (广播到 ws 客户端)
@@ -684,11 +684,11 @@ lang = "Chinese"                       # 输出语言
 
 ## 8. 外部依赖服务
 
-### 8.1 codeactor-codebase（Rust 服务）
+### 8.1 codeactor-codexray（Rust 服务）
 
-- **路径**: `~/.codeactor/bin/codeactor-codebase`
+- **路径**: `~/.codeactor/bin/codeactor-codexray`
 - **端口**: `127.0.0.1:12800`
-- **启动**: `main.go::startCodebaseServer()` 在程序启动时自动以子进程方式启动
+- **启动**: `main.go::startCodexrayServer()` 在程序启动时自动以子进程方式启动
 - **功能**: 代码索引、语义搜索、仓库分析、代码骨架/Snippet 查询
 
 ### 8.2 系统工具依赖
@@ -704,4 +704,4 @@ lang = "Chinese"                       # 输出语言
 - **任务 Memory**: `~/.codeactor/tasks/{taskID}.json`
 - **LLM 日志**: `~/.codeactor/logs/llm-{YYYY-MM-DD}.log`
 - **服务日志**: `./logs/server.log`（HTTP 模式）
-- **Codebase 日志**: `~/.codeactor/logs/codeactor-codebase/{date}.log`
+- **Codexray 日志**: `~/.codeactor/logs/codeactor-codexray/{date}.log`

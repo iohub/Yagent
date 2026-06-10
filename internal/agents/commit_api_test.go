@@ -56,7 +56,7 @@ type CommitSearchRequest struct {
 
 // getBaseURL 获取 API 基础 URL，支持环境变量覆盖端口
 func getBaseURL(t *testing.T) string {
-	port := os.Getenv("CODEBASE_PORT")
+	port := os.Getenv("CODEXRAY_PORT")
 	if port == "" {
 		port = "12800"
 	}

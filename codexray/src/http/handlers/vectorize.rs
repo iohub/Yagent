@@ -38,7 +38,7 @@ pub async fn trigger_embedding_build(
     };
 
     // Check if embedding is enabled
-    if !config.codebase.enable_embedding {
+    if !config.codexray.enable_embedding {
         let mut tasks = storage.vector_tasks.lock().unwrap();
         tasks.remove(&repo_path);
         return Err("Embedding is not enabled".to_string());

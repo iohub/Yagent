@@ -55,7 +55,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "codebase"
+          workspaces: "codexray"
           key: ${{ matrix.target }}
 
       - name: Install protoc
@@ -70,8 +70,8 @@ jobs:
           go-version-file: "go.mod"
           cache: true
 
-      - name: Build Rust codebase (${{ matrix.target }})
-        working-directory: codebase
+      - name: Build Rust codexray (${{ matrix.target }})
+        working-directory: codexray
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CC_x86_64_apple_darwin: clang -arch x86_64
@@ -83,8 +83,8 @@ jobs:
 
           mkdir -p dist/bin
 
-          # Copy codeactor-codebase built from Rust
-          cp codebase/target/${{ matrix.target }}/release/codeactor-codebase dist/bin/
+          # Copy codeactor-codexray built from Rust
+          cp codexray/target/${{ matrix.target }}/release/codeactor-codexray dist/bin/
           
           # Download and extract fzf
           echo "Downloading fzf from ${{ matrix.fzf_url }}"
@@ -102,7 +102,7 @@ jobs:
           rm -rf /tmp/rg_extract /tmp/rg.tar.gz
 
           # Set executable permissions
-          chmod +x dist/bin/codeactor-codebase dist/bin/fzf dist/bin/rg
+          chmod +x dist/bin/codeactor-codexray dist/bin/fzf dist/bin/rg
 
           # Verify
           ls -la dist/bin/
@@ -151,7 +151,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "codebase"
+          workspaces: "codexray"
           key: musl
 
       - name: Install protoc
@@ -166,8 +166,8 @@ jobs:
           go-version-file: "go.mod"
           cache: true
 
-      - name: Build Rust codebase (static musl)
-        working-directory: codebase
+      - name: Build Rust codexray (static musl)
+        working-directory: codexray
         run: |
           export CC_x86_64_unknown_linux_musl=musl-gcc
           export CXX_x86_64_unknown_linux_musl=musl-g++
@@ -178,8 +178,8 @@ jobs:
           set -euo pipefail
           mkdir -p dist/bin
 
-          # Copy codeactor-codebase (musl static)
-          cp codebase/target/x86_64-unknown-linux-musl/release/codeactor-codebase dist/bin/
+          # Copy codeactor-codexray (musl static)
+          cp codexray/target/x86_64-unknown-linux-musl/release/codeactor-codexray dist/bin/
 
           # Download fzf
           echo "Downloading fzf..."
@@ -196,7 +196,7 @@ jobs:
           find /tmp/rg_extract -name rg -type f -exec mv {} dist/bin/rg \;
           rm -rf /tmp/rg_extract /tmp/rg.tar.gz
 
-          chmod +x dist/bin/codeactor-codebase dist/bin/fzf dist/bin/rg
+          chmod +x dist/bin/codeactor-codexray dist/bin/fzf dist/bin/rg
           ls -la dist/bin/
 
       - name: Build Go codeactor (linux-x64-musl)
@@ -213,14 +213,14 @@ jobs:
       - name: Verify static linking
         run: |
           echo "=== Verifying static linking ==="
-          file dist/bin/codeactor-codebase
+          file dist/bin/codeactor-codexray
           echo ""
           echo "=== Checking for dynamic symbols ==="
           if command -v readelf &> /dev/null; then
-            readelf -d dist/bin/codeactor-codebase 2>&1 | head -20 || echo "(no dynamic section = fully static)"
+            readelf -d dist/bin/codeactor-codexray 2>&1 | head -20 || echo "(no dynamic section = fully static)"
           fi
           if command -v ldd &> /dev/null; then
-            ldd dist/bin/codeactor-codebase 2>&1 | head -10 || true
+            ldd dist/bin/codeactor-codexray 2>&1 | head -10 || true
           fi
 
       - name: Verify artifact

@@ -116,7 +116,7 @@ func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse
 		return nil, fmt.Errorf("failed to marshal request data: %v", err)
 	}
 
-	url := fmt.Sprintf("%s/investigate_repo", a.GlobalCtx.CodebaseURL)
+	url := fmt.Sprintf("%s/investigate_repo", a.GlobalCtx.CodexrayURL)
 	slog.Info("RepoAgent pre-investigation request", "project_dir", projectDir)
 
 	var lastErr error
@@ -175,7 +175,7 @@ func makeGetRepoOverviewFn(globalCtx *globalctx.GlobalCtx) tools.ToolFunc {
 }
 
 // executeGetRepoOverview 是 get_repo_overview 工具的实际实现
-// 它调用 codebase 服务的 /investigate_repo 端点获取仓库全景画像
+// 它调用 codexray 服务的 /investigate_repo 端点获取仓库全景画像
 func executeGetRepoOverview(globalCtx *globalctx.GlobalCtx) (interface{}, error) {
 	projectDir := globalCtx.ProjectPath
 
@@ -192,7 +192,7 @@ func executeGetRepoOverview(globalCtx *globalctx.GlobalCtx) (interface{}, error)
 		return "", fmt.Errorf("failed to marshal request data: %v", err)
 	}
 
-	url := fmt.Sprintf("%s/investigate_repo", globalCtx.CodebaseURL)
+	url := fmt.Sprintf("%s/investigate_repo", globalCtx.CodexrayURL)
 	slog.Info("get_repo_overview request", "project_dir", projectDir)
 
 	var lastErr error

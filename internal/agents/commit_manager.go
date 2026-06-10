@@ -49,7 +49,7 @@ type CommitManager struct {
 //   - cfg: 全局配置（从中读取 CommitLearner 配置）
 //   - llmEngine: LLM 引擎，用于生成 commit 摘要
 //   - llmClient: LLM 客户端，用于获取专用引擎（如果配置了 summarization_provider）
-//   - globalCtx: 全局上下文，包含 CodebaseURL
+//   - globalCtx: 全局上下文，包含 CodexrayURL
 //
 // 返回值:
 //   - *CommitManager: 初始化的管理器实例

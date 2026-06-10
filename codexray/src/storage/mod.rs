@@ -186,7 +186,7 @@ impl StorageManager {
         })?;
 
         let embedding_dir = config.embedding_dir();
-        let dimensions = config.codebase.embedding.dimensions.unwrap_or(2560) as i32;
+        let dimensions = config.codexray.embedding.dimensions.unwrap_or(2560) as i32;
 
         // 构建 LanceDB 连接路径
         let db_path = embedding_dir.join("commit_embeddings.lance");
@@ -252,7 +252,7 @@ impl StorageManager {
         })?;
 
         let embedding_dir = config.embedding_dir();
-        let dimensions = config.codebase.embedding.dimensions.unwrap_or(2560) as i32;
+        let dimensions = config.codexray.embedding.dimensions.unwrap_or(2560) as i32;
 
         // 构建 LanceDB 连接路径
         let db_path = embedding_dir.join("repo_knowledge.lance");

@@ -25,11 +25,11 @@ set -euo pipefail
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly DIST_DIR="${SCRIPT_DIR}/dist/bin"
-readonly RUST_PROJECT_DIR="${SCRIPT_DIR}/codebase"
+readonly RUST_PROJECT_DIR="${SCRIPT_DIR}/codexray"
 readonly GO_PROJECT_DIR="${SCRIPT_DIR}"
 
 # 产物名称
-readonly RUST_BIN="codeactor-codebase"
+readonly RUST_BIN="codeactor-codexray"
 readonly GO_BIN="codeactor"
 
 # 保留的文件模式（不清理的文件）
@@ -222,7 +222,7 @@ build_rust() {
     cd "$RUST_PROJECT_DIR"
     start_time=$(date +%s%N)
     
-    local cargo_flags="-p codeactor-codebase"
+    local cargo_flags="-p codeactor-codexray"
     cargo_flags+=" --manifest-path ${RUST_PROJECT_DIR}/Cargo.toml"
     if [[ "${BUILD_TYPE}" == "release" ]]; then
         cargo_flags+=" --release"
@@ -400,7 +400,7 @@ ${BOLD}示例:${RESET}
   DEBUG=1 ${SCRIPT_NAME}            # 显示调试信息
 
 ${BOLD}产物:${RESET}
-  dist/bin/codeactor-codebase    # Rust 子项目产物
+  dist/bin/codeactor-codexray    # Rust 子项目产物
   ./codeactor                    # Go 主项目产物
 
 EOF
@@ -485,7 +485,7 @@ cmd_build() {
     # 先构建 Rust（除非跳过）
     if [[ "${SKIP_RUST}" != "true" ]]; then
         # 只在构建 Rust 前清理
-        log_info "building codebase"
+        log_info "building codexray"
         build_rust || exit 1
     else
         log_warning "⊘ 跳过 Rust 构建 (SKIP_RUST=true)"
