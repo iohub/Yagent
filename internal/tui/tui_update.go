@@ -1026,8 +1026,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			// ── Collapse toggle ──
-			case "ctrl+p":
-				m.toggleCollapseAtViewport()
+			case "ctrl+o":
+				m.toggleCollapseAll()
 				return m, nil
 
 			// ── Misc ──

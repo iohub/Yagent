@@ -1100,24 +1100,35 @@ func collapseContent(rendered string, entry *logEntry, maxLines int) (string, in
 	return visible + "\n" + hint, hidden
 }
 
-// toggleCollapseAtViewport toggles the collapsed state of the first visible
-// collapsible entry (ai_response or user_message) at the top of the viewport.
-// Returns true if a toggle was performed.
-func (m *model) toggleCollapseAtViewport() bool {
-	start, end := m.visibleEntryIndices()
-	for i := start; i <= end && i < len(m.logEntries); i++ {
-		entry := &m.logEntries[i]
-		// Only toggle collapsible message types
-		if entry.eventType != "ai_response" && entry.eventType != "user_message" {
-			continue
-		}
-		entry.collapsed = !entry.collapsed
-		entry.clearRenderCache()
-		m.contentPartsDirty = true
-		m.rebuildViewportPreservingScroll()
-		return true
+// toggleCollapseAll toggles ALL collapsible entries at once.
+// If ANY entry is expanded, collapses all; otherwise expands all.
+// Returns true if any toggle was performed.
+func (m *model) toggleCollapseAll() bool {
+	if len(m.logEntries) == 0 {
+		return false
 	}
-	return false
+	// Determine current state: if any collapsible entry is expanded, we collapse all.
+	anyExpanded := false
+	for i := range m.logEntries {
+		entry := &m.logEntries[i]
+		if entry.eventType == "ai_response" || entry.eventType == "user_message" {
+			if !entry.collapsed {
+				anyExpanded = true
+				break
+			}
+		}
+	}
+	// Toggle all: if any expanded, collapse all; otherwise expand all.
+	for i := range m.logEntries {
+		entry := &m.logEntries[i]
+		if entry.eventType == "ai_response" || entry.eventType == "user_message" {
+			entry.collapsed = anyExpanded
+			entry.clearRenderCache()
+		}
+	}
+	m.contentPartsDirty = true
+	m.rebuildViewportPreservingScroll()
+	return true
 }
 
 // renderCollapseHint builds the expand/collapse indicator line.
@@ -1132,7 +1143,7 @@ func renderCollapseHint(hidden int, expanded bool) string {
 	}
 	prefix := collapseHintLineStyle.Render("╌╌╌")
 	suffix := collapseHintLineStyle.Render("╌╌╌")
-	text := collapseHintTextStyle.Render(fmt.Sprintf(" %s %s (Ctrl+P) ", icon, label))
+	text := collapseHintTextStyle.Render(fmt.Sprintf(" %s %s (Ctrl+O) ", icon, label))
 	return " " + prefix + text + suffix
 }
 
