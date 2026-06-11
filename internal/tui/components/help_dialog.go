@@ -138,7 +138,7 @@ func getHelpContent(lang Language) string {
 			"    /pattern        搜索日志\n" +
 			"    :model          切换模型提供商\n" +
 			"  消息:\n" +
-			"    ctrl+p         展开/折叠长消息\n" +
+			"    ctrl+o         全部展开/全部折叠长消息\n" +
 			"  其他:\n" +
 			"    ?               显示此帮助\n" +
 			"    ctrl+c          强制退出"
@@ -159,7 +159,7 @@ func getHelpContent(lang Language) string {
 		"    /pattern       search log\n" +
 		"    :model         switch LLM provider\n" +
 		"  Messages:\n" +
-		"    ctrl+p         expand/collapse long messages\n" +
+		"    ctrl+o         expand/collapse all long messages\n" +
 		"  Other:\n" +
 		"    ?              show this help\n" +
 		"    ctrl+c         force quit"
