@@ -257,21 +257,21 @@ jobs:
           for dir in artifacts/*/; do
             name="$(basename "$dir")"
             cd "artifacts/$name"
-            zip "${name}.zip" codeactor
+            tar -czf "${name}.tar.gz" codeactor
             cd ../..
-            echo "Created artifacts/${name}/${name}.zip"
+            echo "Created artifacts/${name}/${name}.tar.gz"
           done
           echo ""
           echo "=== Release assets ==="
-          find artifacts -type f -name "*.zip" -exec ls -lh {} \;
+          find artifacts -type f -name "*.tar.gz" -exec ls -lh {} \;
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/codeactor-darwin-x64/codeactor-darwin-x64.zip
-            artifacts/codeactor-darwin-arm64/codeactor-darwin-arm64.zip
-            artifacts/codeactor-linux-x64/codeactor-linux-x64.zip
-            artifacts/codeactor-linux-x64-musl/codeactor-linux-x64-musl.zip
+            artifacts/codeactor-darwin-x64/codeactor-darwin-x64.tar.gz
+            artifacts/codeactor-darwin-arm64/codeactor-darwin-arm64.tar.gz
+            artifacts/codeactor-linux-x64/codeactor-linux-x64.tar.gz
+            artifacts/codeactor-linux-x64-musl/codeactor-linux-x64-musl.tar.gz
           generate_release_notes: true
           fail_on_unmatched_files: true
