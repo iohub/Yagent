@@ -314,3 +314,19 @@ Agent tests use `mockLLM` in `conductor_test.go` — it returns pre-defined resp
 - **Result format**: `[Meta-Agent: Agent Designed and Executed]` wrapper in the tool result
 - **Error fallback**: When custom agent fails, Conductor falls back to CodingAgent/ChatAgent
 - **`task_for_agent` field**: Clean task (no meta-design instructions) passed to custom agent
+
+<!-- CODERAY_INJECTION -->
+# Code exploration: use codexray MCP tools first
+
+Before any Grep/Glob/Bash for code search, try codexray tools first.
+They give you AST-verified definitions with signatures and line numbers.
+
+Tool priority (use in this order):
+1. codexray_explore("how does X work?") — FIRST for architecture questions
+2. codexray_search("what does Y do?")  — FIRST for finding code by behavior
+3. codexray_find("Z")                  — FIRST for finding code by name
+4. codexray_callers("fn")             — REQUIRED before modifying any function
+5. codexray_callees("fn")             — to understand internal dependencies
+6. Grep — ONLY for exact strings (error messages, UUIDs, log formats)
+7. Glob — ONLY when you already know the exact filename pattern
+<!-- /CODERAY_INJECTION -->

@@ -555,17 +555,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		animChanged := m.anim.Tick()
+
 		if m.activeAnim || m.taskRunning {
-			m.anim.Tick()
+			// Only rebuild status bar cache when animation actually changed
+			// or when taskRunning first becomes true (status bar shows RUN mode)
+			if animChanged || !m.statusBarValid {
+				m.cachedStatusBar = m.renderAirlineStatusBar()
+				m.statusBarValid = true
+			}
 
-			// Update status bar — includes spinner animation
-			m.cachedStatusBar = m.renderAirlineStatusBar()
-			m.statusBarValid = true
-
-			// Only update viewport content if there are visible animated entries.
-			// Skip the expensive assembleViewportContent + SetContent if nothing
-			// visible is animating.
-			if m.activeAnim {
+			// Only update viewport content if animation changed and there are
+			// visible animated entries. Skip the expensive re-render + SetContent
+			// when the progress bar position didn't move.
+			if m.activeAnim && animChanged {
 				visStart, visEnd := m.visibleEntryIndices()
 				hasVisibleAnim := false
 
@@ -589,7 +592,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						entry := &m.logEntries[i]
 						if (entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning) ||
 							(entry.eventType == "llm_call_start" && entry.isToolRunning) {
-							m.contentParts[i] = m.renderSingleEntry(entry, width)
+							m.setEntryContent(i, m.renderSingleEntry(entry, width))
 						}
 					}
 					m.assembleViewportContent()
@@ -605,6 +608,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rebuildViewportPreservingScroll()
 				m.viewportDirty = false
 			}
+
 		}
 		return m, tickCmd()
 
@@ -1517,7 +1521,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				le.clearRenderCache()      // invalidate cache
-				m.contentPartsDirty = true // Step 2: 标记增量构建需重建
+				m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
 				m.updateActiveAnim()
 				m.viewportDirty = true
 				m.rebuildViewportScrollLock()
@@ -1574,7 +1578,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						le.content = resultContent
 						le.isToolRunning = false
 						le.clearRenderCache()      // invalidate cache
-						m.contentPartsDirty = true // Step 2: 标记增量构建需重建
+						m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
 						m.viewportDirty = true
 					}
 					delete(m.toolCallEntries, callID)
@@ -1602,7 +1606,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						le.content = resultContent
 						le.isToolRunning = false
 						le.clearRenderCache()
-						m.contentPartsDirty = true // Step 2: 标记增量构建需重建
+						m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
 						m.viewportDirty = true
 					}
 					delete(m.toolCallEntries, matchedID)

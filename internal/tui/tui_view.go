@@ -91,8 +91,8 @@ func (m model) View() tea.View {
 	}
 	contentWidth := m.termWidth - scrollbarWidth
 
-	// 仅在dirty、宽度变化或新条目到达时重建内容
-	if m.contentPartsDirty || contentWidth != m.prevViewportWidth ||
+	// 仅在以下情况重建内容：脏标记、宽度变化或新条目到达
+	if m.hasDirtyEntries() || contentWidth != m.prevViewportWidth ||
 		len(m.contentParts) != len(m.logEntries) {
 		// Resize viewport to make room for scrollbar
 		if m.viewport.Width() != contentWidth {

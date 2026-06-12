@@ -158,7 +158,7 @@ func (m *model) invalidateRenderedCache() {
 	}
 	// Clear glamour renderer cache on resize
 	m.glamourRenderers = nil
-	m.contentPartsDirty = true
+	m.markAllEntriesDirty()
 }
 
 // buildViewportContent rebuilds the full viewport content from scratch.
@@ -218,7 +218,12 @@ func (m *model) rebuildViewportScrollLock() {
 }
 
 // rebuildContentCache 增量重建viewport内容缓存。
-// 只在宽度变化、新条目到达或条目内容变化时重建。
+// 仅在以下情况重建：
+//   1. 宽度变化 → 完全重建（所有条目重新渲染）
+//   2. needFullRebuild → 完全重建
+//   3. dirtyEntryIndices 非空 → 仅重新渲染脏条目
+//   4. 新条目到达 (len(contentParts) < len(logEntries)) → 追加渲染
+// 其他情况跳过，避免不必要的计算。
 func (m *model) rebuildContentCache() {
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return
@@ -227,9 +232,8 @@ func (m *model) rebuildContentCache() {
 	currentWidth := m.viewport.Width()
 	widthChanged := currentWidth != m.prevViewportWidth
 
-	// 宽度变化：完全重建
+	// ── 宽度变化：完全重建 ──
 	if widthChanged {
-		// 清除所有条目的renderedCache以防止内存泄漏
 		for i := range m.logEntries {
 			m.logEntries[i].clearRenderCache()
 		}
@@ -239,35 +243,64 @@ func (m *model) rebuildContentCache() {
 			m.contentParts[i] = m.renderSingleEntry(entry, currentWidth)
 		}
 		m.prevViewportWidth = currentWidth
-		m.contentPartsDirty = false
+		m.needFullRebuild = false
+		// 清除所有脏标记
+		for k := range m.dirtyEntryIndices {
+			delete(m.dirtyEntryIndices, k)
+		}
+		m.rebuildLinePrefix()
 		m.assembleViewportContent()
 		return
 	}
 
-	// contentPartsDirty：完全重建（如对话切换）
-	if m.contentPartsDirty {
+	contentChanged := false
+
+	// ── needFullRebuild：完全重建（如对话切换）──
+	if m.needFullRebuild {
 		m.contentParts = make([]string, len(m.logEntries))
 		for i := range m.logEntries {
 			entry := &m.logEntries[i]
 			m.contentParts[i] = m.renderSingleEntry(entry, currentWidth)
 		}
-		m.contentPartsDirty = false
-		m.assembleViewportContent()
-		return
+		m.needFullRebuild = false
+		for k := range m.dirtyEntryIndices {
+			delete(m.dirtyEntryIndices, k)
+		}
+		contentChanged = true
+	} else {
+		// ── 细粒度脏标记：仅重新渲染变更的条目 ──
+		if len(m.dirtyEntryIndices) > 0 {
+			for idx := range m.dirtyEntryIndices {
+				if idx >= 0 && idx < len(m.logEntries) {
+					entry := &m.logEntries[idx]
+					entry.clearRenderCache()
+					m.contentParts[idx] = m.renderSingleEntry(entry, currentWidth)
+				}
+				delete(m.dirtyEntryIndices, idx)
+			}
+			// 增量更新前缀和（比全量 rebuildLinePrefix 更高效）
+			m.rebuildLinePrefix()
+			contentChanged = true
+		}
+
+		// ── 增量追加：新条目到达 ──
+		if len(m.contentParts) < len(m.logEntries) {
+			oldLen := len(m.contentParts)
+			newParts := make([]string, len(m.logEntries))
+			copy(newParts, m.contentParts)
+			for i := oldLen; i < len(m.logEntries); i++ {
+				entry := &m.logEntries[i]
+				newParts[i] = m.renderSingleEntry(entry, currentWidth)
+			}
+			m.contentParts = newParts
+			m.appendLinePrefix(oldLen)
+			contentChanged = true
+		}
 	}
 
-	// 增量追加：contentParts比logEntries短时，追加新条目
-	if len(m.contentParts) < len(m.logEntries) {
-		newParts := make([]string, len(m.logEntries))
-		copy(newParts, m.contentParts)
-		for i := len(m.contentParts); i < len(m.logEntries); i++ {
-			entry := &m.logEntries[i]
-			newParts[i] = m.renderSingleEntry(entry, currentWidth)
-		}
-		m.contentParts = newParts
+	if contentChanged {
 		m.assembleViewportContent()
 	}
-	// 如果长度相等且没有dirty标志，说明内容未变化，跳过重建
 }
 
 // assembleViewportContent 将contentParts组装为完整viewport内容
@@ -417,7 +450,10 @@ func (m *model) appendLogEntry(entry *logEntry) {
 	if m.termWidth > 0 && m.termHeight > 0 {
 		currentWidth := m.viewport.Width()
 		rendered := m.renderSingleEntry(entry, currentWidth)
+		oldLen := len(m.contentParts)
 		m.contentParts = append(m.contentParts, rendered)
+		m.appendLinePrefix(oldLen)
+		m.assembleViewportContent()
 	} else {
 		// Fallback: direct append to contentCache (old behavior)
 		if m.contentCache.Len() > 0 {
@@ -1126,7 +1162,7 @@ func (m *model) toggleCollapseAll() bool {
 			entry.clearRenderCache()
 		}
 	}
-	m.contentPartsDirty = true
+	m.markAllEntriesDirty()
 	m.rebuildViewportPreservingScroll()
 	return true
 }
