@@ -1521,7 +1521,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				le.clearRenderCache()      // invalidate cache
-				m.contentPartsDirty = true // Step 2: 标记增量构建需重建
+				m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
 				m.updateActiveAnim()
 				m.viewportDirty = true
 				m.rebuildViewportScrollLock()
@@ -1578,7 +1578,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						le.content = resultContent
 						le.isToolRunning = false
 						le.clearRenderCache()      // invalidate cache
-						m.contentPartsDirty = true // Step 2: 标记增量构建需重建
+						m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
 						m.viewportDirty = true
 					}
 					delete(m.toolCallEntries, callID)
@@ -1606,7 +1606,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						le.content = resultContent
 						le.isToolRunning = false
 						le.clearRenderCache()
-						m.contentPartsDirty = true // Step 2: 标记增量构建需重建
+						m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
 						m.viewportDirty = true
 					}
 					delete(m.toolCallEntries, matchedID)

@@ -567,9 +567,10 @@ type model struct {
 	prevViewportHeight  int
 
 	// ── 增量内容构建相关 ──
-	contentParts      []string // 每个logEntry的已渲染内容，与logEntries一一对应
-	contentPartsDirty bool     // 是否需要完全重建contentParts
-	prevViewportWidth int      // 上次渲染时的viewport宽度，用于检测resize
+	contentParts      []string            // 每个logEntry的已渲染内容，与logEntries一一对应
+	dirtyEntryIndices map[int]struct{}    // 需要重新渲染的条目索引（细粒度脏标记）
+	needFullRebuild   bool                // 需要完全重建（resize、对话重置）
+	prevViewportWidth int                 // 上次渲染时的viewport宽度，用于检测resize
 
 	// ── 前缀和数组（用于 visibleEntryIndices 二分查找）──
 	// contentPartLinePrefix[i] = 第 i 个 part 的起始行号（从 0 开始）。
@@ -592,6 +593,28 @@ type AutocompleteResult struct {
 	skillSuggestionIdx   int
 	keywordSuggestions   []string
 	keywordSuggestionIdx int
+}
+
+// markEntryDirty 标记指定索引的条目需要重新渲染。
+func (m *model) markEntryDirty(idx int) {
+	if m.dirtyEntryIndices == nil {
+		m.dirtyEntryIndices = make(map[int]struct{})
+	}
+	m.dirtyEntryIndices[idx] = struct{}{}
+}
+
+// markAllEntriesDirty 强制完全重建所有条目（如 resize、对话重置）。
+func (m *model) markAllEntriesDirty() {
+	m.needFullRebuild = true
+	// 清除细粒度脏标记，因为全量重建会覆盖一切
+	for k := range m.dirtyEntryIndices {
+		delete(m.dirtyEntryIndices, k)
+	}
+}
+
+// hasDirtyEntries 返回是否有待处理的脏标记。
+func (m *model) hasDirtyEntries() bool {
+	return m.needFullRebuild || len(m.dirtyEntryIndices) > 0
 }
 
 func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) model {
@@ -785,9 +808,10 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		viewportDirty: false,
 
 		// ── 增量内容构建相关 (Step 2) ──
-		contentParts:      make([]string, 0),
-		contentPartsDirty: false,
-		prevViewportWidth: 0,
+		contentParts:        make([]string, 0),
+		dirtyEntryIndices:   make(map[int]struct{}),
+		needFullRebuild:     true, // 首次构建需要完全重建
+		prevViewportWidth:   0,
 
 		// 使用传入的终端尺寸初始化
 		termWidth:   termWidth,
