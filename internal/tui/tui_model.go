@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -291,12 +292,13 @@ type AgentTokenUsage struct {
 }
 
 // visibleEntryIndices 返回当前视口中可见的logEntry索引范围 [start, end]。
-// 通过遍历contentParts累加行数来确定可见范围。
-// 如果contentParts和logEntries长度不一致，使用较短的长度。
+// 使用前缀和数组 + 二分查找，O(log n) 定位可见范围。
 // 返回的索引是logEntries中的索引，与contentParts一一对应。
 func (m *model) visibleEntryIndices() (start, end int) {
-	if len(m.logEntries) == 0 || m.termHeight <= 0 {
-		return 0, 0
+	prefix := m.contentPartLinePrefix
+	n := len(prefix) - 1 // number of parts
+	if n <= 0 || m.termHeight <= 0 {
+		return 0, -1
 	}
 
 	// 计算viewport高度
@@ -306,44 +308,113 @@ func (m *model) visibleEntryIndices() (start, end int) {
 		vpHeight = 3
 	}
 
-	// 获取viewport当前的YOffset（滚动位置）
 	yOffset := m.viewport.YOffset()
+	viewEnd := yOffset + vpHeight
 
-	// 使用contentParts的行数信息来确定可见范围
-	// 注意：contentParts和logEntries可能长度不一致（增量追加过程中），使用较短的长度
-	partCount := len(m.contentParts)
-	if len(m.logEntries) < partCount {
-		partCount = len(m.logEntries)
+	// 二分查找：找到第一个 partStart < viewEnd 的 part（即 end）
+	// prefix[i] 是 part i 的起始行号，part i 占据 [prefix[i], prefix[i+1])
+	// part i 与 [yOffset, viewEnd) 有重叠 ⟺ prefix[i+1] > yOffset && prefix[i] < viewEnd
+
+	// 找 start：最小的 i 使得 prefix[i+1] > yOffset
+	// 即 prefix[i+1] > yOffset，等价于在 prefix[1:] 中找第一个 > yOffset 的位置
+	start = sort.Search(n, func(i int) bool {
+		return prefix[i+1] > yOffset
+	})
+
+	// 找 end：最大的 i 使得 prefix[i] < viewEnd
+	// 即在 prefix[0:n] 中找第一个 >= viewEnd 的位置，然后 -1
+	endIdx := sort.Search(n, func(i int) bool {
+		return prefix[i] >= viewEnd
+	})
+	end = endIdx - 1
+
+	// 边界检查
+	if start > end || start >= n {
+		return 0, -1
+	}
+	if end >= n {
+		end = n - 1
 	}
 
-	if partCount == 0 {
-		return 0, 0
-	}
-
-	currentLine := 0
-	start = -1
-	end = -1
-
-	for i := 0; i < partCount; i++ {
-		lineCount := strings.Count(m.contentParts[i], "\n") + 1
-		partStart := currentLine
-		partEnd := currentLine + lineCount
-
-		// 检查这个部分是否与可见区域 [yOffset, yOffset+vpHeight) 有重叠
-		if partEnd > yOffset && partStart < yOffset+vpHeight {
-			if start == -1 {
-				start = i
-			}
-			end = i
-		}
-
-		currentLine += lineCount
-	}
-
-	if start == -1 {
-		return 0, 0
-	}
 	return start, end
+}
+
+// rebuildLinePrefix 完全重建前缀和数组。
+// 在 contentParts 整体重建后调用。
+func (m *model) rebuildLinePrefix() {
+	n := len(m.contentParts)
+	if n == 0 {
+		m.contentPartLinePrefix = nil
+		return
+	}
+	prefix := make([]int, n+1)
+	prefix[0] = 0
+	for i, part := range m.contentParts {
+		prefix[i+1] = prefix[i] + strings.Count(part, "\n") + 1
+	}
+	m.contentPartLinePrefix = prefix
+}
+
+// appendLinePrefix 追加新增 part 的前缀和。
+// oldLen 是追加前的 contentParts 长度。
+func (m *model) appendLinePrefix(oldLen int) {
+	newLen := len(m.contentParts)
+	if newLen == 0 {
+		m.contentPartLinePrefix = nil
+		return
+	}
+	// 确保 prefix 长度足够
+	prefix := m.contentPartLinePrefix
+	if len(prefix) < oldLen+1 {
+		// 前缀和不存在或过短，完全重建
+		m.rebuildLinePrefix()
+		return
+	}
+	// 扩展到 newLen+1
+	if cap(prefix) >= newLen+1 {
+		prefix = prefix[:newLen+1]
+	} else {
+		newPrefix := make([]int, newLen+1)
+		copy(newPrefix, prefix)
+		prefix = newPrefix
+	}
+	base := prefix[oldLen]
+	for i := oldLen; i < newLen; i++ {
+		prefix[i+1] = base + strings.Count(m.contentParts[i], "\n") + 1
+		base = prefix[i+1]
+	}
+	m.contentPartLinePrefix = prefix
+}
+
+// updateLinePrefixEntry 更新单个 part 的前缀和。
+// 当 part i 的行数可能变化时调用（如动画帧更新）。
+// 如果行数不变则前缀和不变，否则从 i 开始重新计算后续值。
+func (m *model) updateLinePrefixEntry(i int) {
+	prefix := m.contentPartLinePrefix
+	n := len(m.contentParts)
+	if i < 0 || i >= n || len(prefix) < n+1 {
+		m.rebuildLinePrefix()
+		return
+	}
+	newLines := strings.Count(m.contentParts[i], "\n") + 1
+	oldLines := prefix[i+1] - prefix[i]
+	if newLines == oldLines {
+		return // 行数不变，前缀和无需更新
+	}
+	// 差值传播到后续所有元素
+	delta := newLines - oldLines
+	for j := i + 1; j <= n; j++ {
+		prefix[j] += delta
+	}
+}
+
+// setEntryContent 安全更新 contentParts[i] 并自动维护前缀和。
+func (m *model) setEntryContent(i int, content string) {
+	if i < 0 || i >= len(m.contentParts) {
+		return
+	}
+	m.contentParts[i] = content
+	m.updateLinePrefixEntry(i)
 }
 
 // TUI Model
@@ -499,6 +570,12 @@ type model struct {
 	contentParts      []string // 每个logEntry的已渲染内容，与logEntries一一对应
 	contentPartsDirty bool     // 是否需要完全重建contentParts
 	prevViewportWidth int      // 上次渲染时的viewport宽度，用于检测resize
+
+	// ── 前缀和数组（用于 visibleEntryIndices 二分查找）──
+	// contentPartLinePrefix[i] = 第 i 个 part 的起始行号（从 0 开始）。
+	// 长度 = len(contentParts)+1，最后一个元素是总行数。
+	// 由 rebuildLinePrefix / appendLinePrefix 维护。
+	contentPartLinePrefix []int
 }
 
 // autocompleteCacheKey is a fine-grained cache key for autocomplete results.

@@ -240,6 +240,7 @@ func (m *model) rebuildContentCache() {
 		}
 		m.prevViewportWidth = currentWidth
 		m.contentPartsDirty = false
+		m.rebuildLinePrefix()
 		m.assembleViewportContent()
 		return
 	}
@@ -252,19 +253,22 @@ func (m *model) rebuildContentCache() {
 			m.contentParts[i] = m.renderSingleEntry(entry, currentWidth)
 		}
 		m.contentPartsDirty = false
+		m.rebuildLinePrefix()
 		m.assembleViewportContent()
 		return
 	}
 
 	// 增量追加：contentParts比logEntries短时，追加新条目
 	if len(m.contentParts) < len(m.logEntries) {
+		oldLen := len(m.contentParts)
 		newParts := make([]string, len(m.logEntries))
 		copy(newParts, m.contentParts)
-		for i := len(m.contentParts); i < len(m.logEntries); i++ {
+		for i := oldLen; i < len(m.logEntries); i++ {
 			entry := &m.logEntries[i]
 			newParts[i] = m.renderSingleEntry(entry, currentWidth)
 		}
 		m.contentParts = newParts
+		m.appendLinePrefix(oldLen)
 		m.assembleViewportContent()
 	}
 	// 如果长度相等且没有dirty标志，说明内容未变化，跳过重建
@@ -417,7 +421,10 @@ func (m *model) appendLogEntry(entry *logEntry) {
 	if m.termWidth > 0 && m.termHeight > 0 {
 		currentWidth := m.viewport.Width()
 		rendered := m.renderSingleEntry(entry, currentWidth)
+		oldLen := len(m.contentParts)
 		m.contentParts = append(m.contentParts, rendered)
+		m.appendLinePrefix(oldLen)
+		m.assembleViewportContent()
 	} else {
 		// Fallback: direct append to contentCache (old behavior)
 		if m.contentCache.Len() > 0 {
