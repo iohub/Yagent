@@ -257,6 +257,7 @@ jobs:
           for dir in artifacts/*/; do
             name="$(basename "$dir")"
             cd "artifacts/$name"
+            chmod +x codeactor
             tar -czf "${name}.tar.gz" codeactor
             cd ../..
             echo "Created artifacts/${name}/${name}.tar.gz"
