@@ -74,7 +74,7 @@ func (m *model) scheduleAutocomplete() tea.Cmd {
 	// 提取光标前的单词和检查是否有 /（只转换一次 rune 切片）
 	contentRunes := []rune(text)
 	word := extractWordAtCursorRunes(contentRunes, column)
-	hasSlash := strings.Contains(text, "/")
+	hasSlash := hasSlashAtWordBoundary(text)
 
 	cacheKey := autocompleteCacheKey{word: word, hasSlash: hasSlash}
 
@@ -138,9 +138,9 @@ func (m *model) doSkillAutocomplete(text string, contentRunes []rune, cursor int
 		return
 	}
 
-	// 查找最后一个 '/'
+	// 查找最后一个 '/'，且必须在单词边界上（避免粘贴 URL/路径时误触发）
 	lastSlash := strings.LastIndex(text, "/")
-	if lastSlash < 0 {
+	if lastSlash < 0 || !isSlashAtWordBoundary(text, lastSlash) {
 		m.skillAutoComplete = false
 		m.skillSuggestions = nil
 		m.skillSuggestionIdx = 0
@@ -1315,7 +1315,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		contentRunes := []rune(m.snapshotText)
 		column := m.input.Column()
 		word := extractWordAtCursorRunes(contentRunes, column)
-		hasSlash := strings.Contains(m.snapshotText, "/")
+		hasSlash := hasSlashAtWordBoundary(m.snapshotText)
 		cacheKey := autocompleteCacheKey{word: word, hasSlash: hasSlash}
 		m.autocompleteCache[cacheKey] = &AutocompleteResult{
 			skillSuggestions:     m.skillSuggestions,
@@ -1785,6 +1785,26 @@ func hasPrefixIgnoreCase(s, prefix string) bool {
 		}
 	}
 	return true
+}
+
+// isSlashAtWordBoundary 判断指定位置的 "/" 是否在单词边界上。
+// 单词边界定义为："/" 在文本开头，或前面是空白字符（空格、制表符、换行、回车）。
+func isSlashAtWordBoundary(text string, slashIndex int) bool {
+	if slashIndex == 0 {
+		return true
+	}
+	prev := text[slashIndex-1]
+	return prev == ' ' || prev == '\t' || prev == '\n' || prev == '\r'
+}
+
+// hasSlashAtWordBoundary 判断文本中最后一个 "/" 是否在单词边界上。
+// 这是统一的触发条件判断函数，确保触发逻辑和缓存键计算使用相同的判断标准。
+func hasSlashAtWordBoundary(text string) bool {
+	lastSlash := strings.LastIndex(text, "/")
+	if lastSlash < 0 {
+		return false
+	}
+	return isSlashAtWordBoundary(text, lastSlash)
 }
 
 // saveRunningTaskMemory saves the current task's memory before quitting,
