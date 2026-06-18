@@ -11,7 +11,6 @@ import (
 // ── Constants ──
 
 const (
-	MaxBodyLines    = 10  // max lines shown when collapsed
 	MaxContentWidth = 120 // max width for content rendering
 )
 
@@ -286,12 +285,6 @@ func formatSemanticSearchResults(results []interface{}, width int) string {
 	codeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	symbolStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
 
-	maxResults := MaxBodyLines
-	totalResults := len(results)
-	if totalResults > maxResults {
-		results = results[:maxResults]
-	}
-
 	var lines []string
 	for i, r := range results {
 		item, ok := r.(map[string]interface{})
@@ -340,11 +333,6 @@ func formatSemanticSearchResults(results []interface{}, width int) string {
 		}
 	}
 
-	if totalResults > maxResults {
-		hidden := totalResults - maxResults
-		lines = append(lines, ContentTrunc.Render(fmt.Sprintf("... (%d more results hidden)", hidden)))
-	}
-
 	return strings.Join(lines, "\n")
 }
 
@@ -375,19 +363,9 @@ func formatCodeSnippetResult(filepath, funcName, snippet string, lineStart, line
 
 	// Code content — show each line with prefix
 	codeLines := strings.Split(snippet, "\n")
-	maxLines := MaxBodyLines - 1 // reserve one line for header
-	truncated := false
-	if len(codeLines) > maxLines {
-		codeLines = codeLines[:maxLines]
-		truncated = true
-	}
 	for _, cl := range codeLines {
 		truncated := truncateLine(cl, width-2)
 		lines = append(lines, "  "+codeLineStyle.Render(truncated))
-	}
-	if truncated {
-		hidden := len(strings.Split(snippet, "\n")) - maxLines
-		lines = append(lines, ContentTrunc.Render(fmt.Sprintf("... (%d more lines hidden)", hidden)))
 	}
 
 	return strings.Join(lines, "\n")
@@ -403,12 +381,6 @@ func formatCodeSkeletonResults(skels []interface{}, width int) string {
 	fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	langStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
 	codeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-
-	maxResults := MaxBodyLines
-	totalResults := len(skels)
-	if totalResults > maxResults {
-		skels = skels[:maxResults]
-	}
 
 	var lines []string
 	for i, s := range skels {
@@ -451,28 +423,14 @@ func formatCodeSkeletonResults(skels []interface{}, width int) string {
 		}
 	}
 
-	if totalResults > maxResults {
-		hidden := totalResults - maxResults
-		lines = append(lines, ContentTrunc.Render(fmt.Sprintf("... (%d more skeletons hidden)", hidden)))
-	}
-
 	return strings.Join(lines, "\n")
 }
 
 // RenderDiffContent renders a unified diff string with ANSI color styling.
 func RenderDiffContent(diffText string, maxWidth int) string {
 	lines := strings.Split(diffText, "\n")
-
-	// Truncate to max visible lines
-	visibleLines := lines
-	truncated := false
-	if len(lines) > MaxBodyLines {
-		visibleLines = lines[:MaxBodyLines]
-		truncated = true
-	}
-
 	var styledLines []string
-	for _, line := range visibleLines {
+	for _, line := range lines {
 		if isDiffHeaderLine(line) {
 			continue
 		}
@@ -480,13 +438,6 @@ func RenderDiffContent(diffText string, maxWidth int) string {
 		styled = Body.Render(styled)
 		styledLines = append(styledLines, styled)
 	}
-
-	if truncated {
-		hidden := len(lines) - MaxBodyLines
-		msg := fmt.Sprintf("... (%d lines hidden)", hidden)
-		styledLines = append(styledLines, ContentTrunc.Render(msg))
-	}
-
 	return strings.Join(styledLines, "\n")
 }
 
@@ -514,66 +465,33 @@ func styleDiffLine(line string, maxWidth int) string {
 // renderPlainContent renders plain text output with line prefix and truncation.
 func renderPlainContent(content string, width int) string {
 	lines := strings.Split(content, "\n")
-
-	truncated := false
-	visibleLines := lines
-	if len(lines) > MaxBodyLines {
-		visibleLines = lines[:MaxBodyLines]
-		truncated = true
-	}
-
 	var rendered []string
-	for _, line := range visibleLines {
+	for _, line := range lines {
 		truncated := truncateLine(line, width-1)
 		rendered = append(rendered, ContentLine.Render(truncated))
 	}
-
-	if truncated {
-		hidden := len(lines) - MaxBodyLines
-		msg := fmt.Sprintf("... (%d lines hidden)", hidden)
-		rendered = append(rendered, ContentTrunc.Render(msg))
-	}
-
 	return strings.Join(rendered, "\n")
 }
 
 // renderCodeLines renders content as code with optional syntax context.
 func renderCodeLines(content string, filename string, width int) string {
 	lines := strings.Split(content, "\n")
-
-	truncated := false
-	visibleLines := lines
-	if len(lines) > MaxBodyLines {
-		visibleLines = lines[:MaxBodyLines]
-		truncated = true
-	}
-
-	// Line number width
-	numWidth := len(fmt.Sprintf("%d", len(visibleLines)))
+	numWidth := len(fmt.Sprintf("%d", len(lines)))
 	if numWidth < 2 {
 		numWidth = 2
 	}
-	codeWidth := width - numWidth - 2 // line number + margin + padding
+	codeWidth := width - numWidth - 2
 	if codeWidth < 20 {
 		codeWidth = 20
 	}
-
 	numStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
 	codeLineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-
 	var rendered []string
-	for i, line := range visibleLines {
+	for i, line := range lines {
 		num := numStyle.Render(fmt.Sprintf("%*d", numWidth, i+1))
 		code := codeLineStyle.Render(truncateLine(line, codeWidth))
 		rendered = append(rendered, " "+num+"  "+code)
 	}
-
-	if truncated {
-		hidden := len(lines) - MaxBodyLines
-		msg := fmt.Sprintf("... (%d lines hidden)", hidden)
-		rendered = append(rendered, ContentTrunc.Render(msg))
-	}
-
 	return strings.Join(rendered, "\n")
 }
 

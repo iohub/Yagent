@@ -138,10 +138,16 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				break
 			}
 			slog.Warn("AgentExecutor LLM error, will retry", "agent", cfg.AgentName, "error", err, "step", i, "attempt", attempt)
+			llm.LogLLMError("AgentExecutor LLM error, will retry",
+				"agent", cfg.AgentName, "error", err, "step", i, "attempt", attempt,
+			)
 		}
 
 		if err != nil {
 			slog.Error("AgentExecutor LLM error after all retries", "agent", cfg.AgentName, "error", err, "step", i)
+			llm.LogLLMError("AgentExecutor LLM error after all retries",
+				"agent", cfg.AgentName, "error", err, "step", i,
+			)
 			return ExecutorResult{}, err
 		}
 

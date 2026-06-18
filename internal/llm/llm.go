@@ -21,6 +21,10 @@ import (
 var llmLogger *slog.Logger
 var llmLogFile *os.File
 
+// llmErrorLogger is a separate logger for LLM errors only
+var llmErrorLogger *slog.Logger
+var llmErrorLogFile *os.File
+
 // initLLMLogger initializes the LLM logger
 func initLLMLogger() error {
 	logDir := logging.GetLogDir()
@@ -31,10 +35,10 @@ func initLLMLogger() error {
 
 	dateStr := time.Now().Format("2006-01-02")
 	logFileName := fmt.Sprintf("llm-%s.log", dateStr)
-	var errFile error
-	llmLogFile, errFile = os.OpenFile(filepath.Join(logDir, logFileName), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if errFile != nil {
-		return util.WrapError(context.Background(), errFile, "failed to open LLM log file")
+	var err error
+	llmLogFile, err = os.OpenFile(filepath.Join(logDir, logFileName), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return util.WrapError(context.Background(), err, "failed to open LLM log file")
 	}
 
 	// Default level is INFO; upgrade to DEBUG if LLM_DEBUG_LOG=1 is set
@@ -47,6 +51,35 @@ func initLLMLogger() error {
 		Level: level,
 	})
 	llmLogger = slog.New(handler)
+
+	// 初始化 LLM 错误专用日志（失败不影响主流程）
+	if err := initLLMErrorLogger(); err != nil {
+		slog.Warn("Failed to initialize LLM error logger, LLM errors will fallback", "error", err)
+	}
+	return nil
+}
+
+// initLLMErrorLogger 初始化 LLM 错误专用日志文件 llm-error-YYYY-MM-DD.log。
+// 失败时降级到 llmLogger，保证主流程不受影响。
+func initLLMErrorLogger() error {
+	logDir := logging.GetLogDir()
+
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return util.WrapError(context.Background(), err, "failed to create logs directory for LLM error")
+	}
+
+	dateStr := time.Now().Format("2006-01-02")
+	logFileName := fmt.Sprintf("llm-error-%s.log", dateStr)
+	var err error
+	llmErrorLogFile, err = os.OpenFile(filepath.Join(logDir, logFileName), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return util.WrapError(context.Background(), err, "failed to open LLM error log file")
+	}
+
+	handler := slog.NewTextHandler(llmErrorLogFile, &slog.HandlerOptions{
+		Level: slog.LevelError,
+	})
+	llmErrorLogger = slog.New(handler)
 	return nil
 }
 
@@ -61,6 +94,23 @@ func LogLLMContent(title string, content string) {
 	if _, err := llmLogFile.WriteString(logEntry); err != nil {
 		slog.Error("Failed to write to LLM log file", "error", err)
 	}
+}
+
+// LogLLMError 将 LLM 相关错误记录到独立的 llm-error-*.log 文件。
+// 若错误日志 logger 未初始化（降级场景），自动回退到 llmLogger。
+// 供 llm 包内部及 agents 包（如 executor.go）调用。
+func LogLLMError(msg string, args ...any) {
+	if llmErrorLogger != nil {
+		llmErrorLogger.Error(msg, args...)
+		return
+	}
+	// 降级路径
+	if llmLogger != nil {
+		llmLogger.Error(msg, args...)
+		return
+	}
+	// 最终兜底
+	slog.Error(msg, args...)
 }
 
 // LoggingEngine wraps an Engine to add logging
@@ -98,6 +148,10 @@ func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message,
 		}
 		LogLLMContent("LLM Response", logContent)
 	} else if err != nil {
+		LogLLMError("LLM GenerateContent error",
+			"error", err,
+		)
+		// 在 llm-*.log中也保留原始错误内容，便于排查请求上下文
 		LogLLMContent("LLM Error", err.Error())
 	}
 	return resp, err
@@ -427,7 +481,7 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []Mess
 			"memory_length", len(memory),
 			"http_response", httpResponse)
 
-		llmLogger.Error("LLM completion error",
+		LogLLMError("LLM completion error",
 			"type", "completion_error",
 			"model", c.Config.Global.LLM.UseProvider,
 			"memory_length", len(memory),
