@@ -582,9 +582,11 @@ type model struct {
 // autocompleteCacheKey is a fine-grained cache key for autocomplete results.
 // Using (word, hasSlash) instead of full text provides better hit rates
 // during fast typing since the word changes less frequently than the full text.
+// Note: hasSlash now has word-boundary semantics — it indicates whether the
+// last '/' is at a word boundary (start of text or preceded by whitespace).
 type autocompleteCacheKey struct {
 	word     string // 光标前的单词
-	hasSlash bool   // 是否有 / 字符
+	hasSlash bool   // 最后一个 / 是否在单词边界上（文本开头或前面是空白）
 }
 
 // AutocompleteResult holds the cached result of autocomplete computation.

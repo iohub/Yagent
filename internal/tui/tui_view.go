@@ -428,16 +428,18 @@ func (m model) renderCenteredStartupScreen(width, height int) string {
 // renderWelcomePanelLayout renders the original left/right panel layout.
 // This is used when there are log entries (tasks have run).
 func (m model) renderWelcomePanelLayout() string {
-	// Build left panel: logo + cwd
-	var left strings.Builder
-	left.WriteString(renderBanner())
-	left.WriteString("\n\n")
+	// --- 项目路径（将在左+右面板下方占整行显示）---
 	cwd := m.projectDir
 	home, _ := os.UserHomeDir()
 	if strings.HasPrefix(cwd, home) {
 		cwd = "~" + strings.TrimPrefix(cwd, home)
 	}
-	left.WriteString(welcomeSubStyle.Render(cwd))
+	cwdLine := welcomeSubStyle.Render(cwd)
+
+	// Build left panel: logo ONLY (cwd removed)
+	var left strings.Builder
+	left.WriteString(renderBanner())
+	left.WriteString("\n\n")
 
 	leftContent := welcomeLeftStyle.Render(left.String())
 
@@ -454,6 +456,8 @@ func (m model) renderWelcomePanelLayout() string {
 	if innerWidth < 65 {
 		// Narrow terminal: stack vertically
 		boxInner := leftContent + "\n\n" + welcomeDimStyle.Render(strings.Repeat("─", 38)) + "\n\n" + right.String()
+		// 在下方添加占整行的项目路径
+		boxInner += "\n\n" + cwdLine
 		return welcomePanelStyle.Width(innerWidth).Render(boxInner)
 	}
 	rightWidth := innerWidth - leftWidth - 3 // 3 for " │ "
@@ -467,6 +471,8 @@ func (m model) renderWelcomePanelLayout() string {
 	rightStyled := lipgloss.NewStyle().Width(rightWidth).Render(right.String())
 
 	inner := lipgloss.JoinHorizontal(lipgloss.Top, leftStyled, separator, rightStyled)
+	// 在左+右面板下方添加占整行的项目路径
+	inner += "\n\n" + cwdLine
 	return welcomePanelStyle.Width(innerWidth).Render(inner)
 }
 func renderBanner() string {

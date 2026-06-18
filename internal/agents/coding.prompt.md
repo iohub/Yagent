@@ -72,3 +72,28 @@ You have access to the following tools. You must use them to interact with the s
   * **Simple Tasks** — Skip `deepthinking`: syntax fixes, minor edits, one-line changes. Use the `thinking` tool instead.
   * **Your Judgment Matters**: These are not exhaustive. When in doubt, assess the task's complexity, risk, and ambiguity — use `deepthinking` if the problem warrants deep analysis.
   * Input: `context` (full problem context including requirements, constraints, background, and errors) and `goal` (specific objective).
+
+## Large File Safety Practices
+
+When using `read_file`, the tool now enforces strict protections:
+
+### Before Reading
+1. **Start small**: When opening an unfamiliar file, first read lines 1-50 to understand its structure and size
+2. **Check response metadata**: After every `read_file` call, examine `file_size_bytes`, `total_lines`, and `truncated` in the response
+3. **Use grep first**: For files > 2MB, use `search_by_regex` or `semantic_search` to find relevant line numbers first
+
+### Reading Strategy
+- **Default to range reads**: Use `should_read_entire_file=false` with `start_line_one_indexed` and `end_line_one_indexed_inclusive`
+- **Chunk size**: Read up to 250 lines per call and paginate (e.g., [1,250], [251,500], [501,750])
+- **Check `lines_after_range`**: This tells you how many lines remain — plan accordingly
+- **Never force entire reads**: If `should_read_entire_file` returns an error (file > 10MB), switch to line ranges immediately
+
+### When You See Key Flags
+- **`truncated: true`**: File has more content — use `start_line_one_indexed = returned_lines + 1` to continue
+- **`warning` field**: File exceeds 2MB soft limit — be conservative with further reads
+- **`error` field with `suggestion`**: Read the suggestion — it tells you exactly how to proceed
+
+### What's Blocked
+- **Files > 500MB**: Refused entirely — use grep/search to find relevant content
+- **Files > 10MB with should_read_entire_file=true**: Blocked — must use line ranges
+- **Entire file reads capped**: Max 2000 lines or 200KB content
