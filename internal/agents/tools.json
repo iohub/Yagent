@@ -239,18 +239,36 @@
   },
   {
     "name": "print_dir_tree",
-    "description": "Output the directory tree of the specified directory, excluding common ignored directories like .git and node_modules. Use this tool to visually check the project's directory structure.",
+    "description": "Print a directory tree structure. Automatically ignores common build artifacts, cache directories, dependency folders, and compiled files. Use show_files=false for a concise directory-only overview (includes file counts per directory). Output is truncated per-directory when exceeding max_items.",
     "parameters": {
       "type": "object",
       "properties": {
         "dir_path": {
           "type": "string",
-          "description": "The absolute path to the directory."
+          "description": "The directory path to print the tree for"
         },
         "max_depth": {
           "type": "integer",
           "default": 3,
-          "description": "The maximum depth of the tree to print. Default is 3."
+          "description": "Maximum depth to traverse (default: 3). Depth 0 shows only the root directory name."
+        },
+        "show_files": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to show individual files (true) or only directories (false). When false, file counts are shown per directory. Default: true"
+        },
+        "max_items": {
+          "type": "integer",
+          "default": 50,
+          "description": "Maximum number of items to display per directory. Additional items are truncated with a count. Default: 50"
+        },
+        "ignore_extra": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional directory names to ignore (merged with built-in defaults). Useful for project-specific noise directories."
         }
       },
       "required": [

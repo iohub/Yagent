@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"codeactor/internal/diff"
@@ -28,6 +29,76 @@ func (t *FileOperationsTool) resolveFilePath(filePath string) string {
 		return filePath
 	}
 	return filepath.Join(t.workingDir, filePath)
+}
+
+// defaultIgnoredDirs contains directories that are typically non-informative.
+var defaultIgnoredDirs = map[string]bool{
+	// Version Control
+	".git": true, ".svn": true, ".hg": true, ".bzr": true,
+
+	// Dependencies / Package Managers
+	"node_modules": true, "bower_components": true, "jspm_packages": true,
+	"vendor": true, "venv": true, ".venv": true, "env": true,
+	".cargo": true, ".npm": true, ".yarn": true,
+	"Pods": true, "Carthage": true, ".swiftpm": true,
+
+	// Build / Compilation Output
+	"build": true, "dist": true, "out": true, "target": true,
+	"Debug": true, "Release": true,
+	".next": true, ".nuxt": true, ".svelte-kit": true,
+	".gradle": true, "cmake-build-debug": true, "cmake-build-release": true,
+	".dart_tool": true, "bin": true, "obj": true,
+
+	// Python Cache & Virtual Environments
+	"__pycache__": true, ".pytest_cache": true, ".mypy_cache": true,
+	".ruff_cache": true, ".tox": true, ".eggs": true,
+	".ipynb_checkpoints": true,
+
+	// Cache / Temp
+	".cache": true, ".parcel-cache": true, ".turbo": true,
+	"tmp": true, "temp": true, ".tmp": true,
+	".sass-cache": true, ".eslintcache": true,
+
+	// Test Coverage
+	"coverage": true, ".nyc_output": true,
+
+	// IDE / Editor
+	".idea": true, ".vscode": true, ".vs": true,
+	".project": true, ".settings": true,
+
+	// Infrastructure / Deploy
+	".terraform": true, ".serverless": true, ".vercel": true,
+
+	// Logs
+	"logs": true, "log": true,
+}
+
+// defaultIgnoredFiles contains individual files that are typically non-informative.
+var defaultIgnoredFiles = map[string]bool{
+	".DS_Store":   true,
+	"Thumbs.db":   true,
+	"desktop.ini": true,
+}
+
+// defaultIgnoredExts contains file extensions for compiled/binary artifacts.
+var defaultIgnoredExts = map[string]bool{
+	".pyc": true, ".pyo": true, ".pyd": true,
+	".class": true,
+	".o": true, ".a": true, ".so": true, ".dylib": true,
+	".exe": true, ".dll": true, ".lib": true,
+	".obj": true, ".pdb": true, ".idb": true,
+}
+
+// hasIgnoredExt checks if a file has an ignored extension.
+func hasIgnoredExt(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return defaultIgnoredExts[ext]
+}
+
+// treeEntry represents a single item in the directory tree output.
+type treeEntry struct {
+	name  string
+	isDir bool
 }
 
 // ExecuteReadFile 实现read_file工具
@@ -282,18 +353,46 @@ func (t *FileOperationsTool) ExecuteCreateFile(ctx context.Context, params map[s
 // ExecutePrintDirTree 实现print_dir_tree工具
 func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	dirPath, ok := params["dir_path"].(string)
-	if !ok {
-		return nil, util.WrapError(ctx, fmt.Errorf("dir_path parameter must be a string"), "executePrintDirTree")
+	if !ok || dirPath == "" {
+		return nil, util.WrapError(ctx, fmt.Errorf("dir_path parameter must be a valid string"), "executePrintDirTree")
 	}
 
+	// --- Parse optional: max_depth (default 3) ---
 	maxDepth := 3
 	if d, ok := params["max_depth"].(float64); ok {
 		maxDepth = int(d)
 	}
 
-	fullPath := t.resolveFilePath(dirPath)
+	// --- Parse optional: show_files (default true) ---
+	showFiles := true
+	if v, ok := params["show_files"]; ok {
+		if b, ok := v.(bool); ok {
+			showFiles = b
+		}
+	}
 
-	// Check if directory exists
+	// --- Parse optional: max_items (default 50, ≤0 means unlimited) ---
+	maxItems := 50
+	if v, ok := params["max_items"]; ok {
+		if f, ok := v.(float64); ok && f > 0 {
+			maxItems = int(f)
+		}
+	}
+
+	// --- Parse optional: ignore_extra (merged with defaults) ---
+	extraIgnores := make(map[string]bool)
+	if v, ok := params["ignore_extra"]; ok {
+		if arr, ok := v.([]interface{}); ok {
+			for _, item := range arr {
+				if s, ok := item.(string); ok && s != "" {
+					extraIgnores[s] = true
+				}
+			}
+		}
+	}
+
+	// --- Resolve & validate path ---
+	fullPath := t.resolveFilePath(dirPath)
 	info, err := os.Stat(fullPath)
 	if err != nil {
 		return nil, util.WrapError(ctx, err, "executePrintDirTree::Stat")
@@ -302,68 +401,156 @@ func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map
 		return nil, util.WrapError(ctx, fmt.Errorf("path is not a directory: %s", dirPath), "executePrintDirTree")
 	}
 
-	ignoredDirs := map[string]bool{
-		".git":         true,
-		"node_modules": true,
-		".idea":        true,
-		".vscode":      true,
-		"__pycache__":  true,
-		".DS_Store":    true,
+	// --- Build tree ---
+	var sb strings.Builder
+
+	// Root display
+	rootDisplay := dirPath
+	if !strings.HasSuffix(rootDisplay, "/") {
+		rootDisplay += "/"
 	}
+	sb.WriteString(rootDisplay + "\n")
 
-	var buildTree func(path string, prefix string, depth int) (string, error)
-	buildTree = func(path string, prefix string, depth int) (string, error) {
-		if depth > maxDepth {
-			return "", nil
+	if maxDepth > 0 {
+		if err := t.walkDirTree(fullPath, 1, maxDepth, showFiles, maxItems, extraIgnores, "", &sb); err != nil {
+			return nil, util.WrapError(ctx, err, "executePrintDirTree::walkDirTree")
 		}
-
-		entries, err := ioutil.ReadDir(path)
-		if err != nil {
-			return "", err
-		}
-
-		// Filter entries
-		var filtered []os.FileInfo
-		for _, entry := range entries {
-			if ignoredDirs[entry.Name()] {
-				continue
-			}
-			filtered = append(filtered, entry)
-		}
-
-		var result strings.Builder
-		for i, entry := range filtered {
-			isLast := i == len(filtered)-1
-			connector := "├── "
-			if isLast {
-				connector = "└── "
-			}
-
-			result.WriteString(fmt.Sprintf("%s%s%s\n", prefix, connector, entry.Name()))
-
-			if entry.IsDir() {
-				newPrefix := prefix
-				if isLast {
-					newPrefix += "    "
-				} else {
-					newPrefix += "│   "
-				}
-				subTree, err := buildTree(filepath.Join(path, entry.Name()), newPrefix, depth+1)
-				if err != nil {
-					return "", err
-				}
-				result.WriteString(subTree)
-			}
-		}
-		return result.String(), nil
-	}
-
-	tree, err := buildTree(fullPath, "", 1)
-	if err != nil {
-		return nil, util.WrapError(ctx, err, "executePrintDirTree::buildTree")
 	}
 
 	return map[string]interface{}{
-		"output": tree,
+		"output": sb.String(),
 	}, nil
+}
+
+// walkDirTree recursively walks a directory and appends tree structure to sb.
+func (t *FileOperationsTool) walkDirTree(
+	dir string,
+	depth, maxDepth int,
+	showFiles bool,
+	maxItems int,
+	extraIgnores map[string]bool,
+	prefix string,
+	sb *strings.Builder,
+) error {
+	if depth > maxDepth {
+		return nil
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// Graceful degradation: show error but don't halt
+		sb.WriteString(fmt.Sprintf("%s[error: %v]\n", prefix, err))
+		return nil
+	}
+
+	// --- Filter & categorize ---
+	var items []treeEntry
+	for _, entry := range entries {
+		name := entry.Name()
+
+		// Skip symlinks to prevent cycles
+		if entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+
+		if entry.IsDir() {
+			// Skip ignored directories
+			if defaultIgnoredDirs[name] || extraIgnores[name] {
+				continue
+			}
+			items = append(items, treeEntry{name: name, isDir: true})
+		} else {
+			// Skip ignored files and extensions
+			if defaultIgnoredFiles[name] || hasIgnoredExt(name) {
+				continue
+			}
+			if showFiles {
+				items = append(items, treeEntry{name: name, isDir: false})
+			}
+			// When !showFiles, files are silently skipped
+		}
+	}
+
+	// --- Sort: directories first, then alphabetically within each group ---
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].isDir != items[j].isDir {
+			return items[i].isDir // directories first
+		}
+		return items[i].name < items[j].name
+	})
+
+	// --- Truncate if exceeding max_items ---
+	total := len(items)
+	truncated := false
+	if maxItems > 0 && total > maxItems {
+		items = items[:maxItems]
+		truncated = true
+	}
+
+	// --- Print items ---
+	for i, e := range items {
+		isLast := i == len(items)-1 && !truncated
+
+		connector := "├── "
+		if isLast {
+			connector = "└── "
+		}
+
+		displayName := e.name
+		if e.isDir {
+			displayName += "/"
+
+			// When showFiles is false, show file count per directory
+			if !showFiles {
+				childPath := filepath.Join(dir, e.name)
+				childEntries, err := os.ReadDir(childPath)
+				if err == nil {
+					fileCount := 0
+					for _, ce := range childEntries {
+						if ce.IsDir() || ce.Type()&os.ModeSymlink != 0 {
+							continue
+						}
+						cn := ce.Name()
+						if defaultIgnoredFiles[cn] || hasIgnoredExt(cn) {
+							continue
+						}
+						fileCount++
+					}
+					if fileCount > 0 {
+						displayName += fmt.Sprintf(" (%d files)", fileCount)
+					}
+				}
+			}
+		}
+
+		sb.WriteString(prefix + connector + displayName + "\n")
+
+		// Recurse into subdirectories
+		if e.isDir {
+			childPrefix := prefix + "│   "
+			if isLast {
+				childPrefix = prefix + "    "
+			}
+			if err := t.walkDirTree(
+				filepath.Join(dir, e.name),
+				depth+1, maxDepth,
+				showFiles, maxItems,
+				extraIgnores,
+				childPrefix, sb,
+			); err != nil {
+				return err
+			}
+		}
+	}
+
+	// --- Truncation indicator ---
+	if truncated {
+		remaining := total - maxItems
+		sb.WriteString(fmt.Sprintf(
+			"%s└── ... %d more items omitted (max_items=%d)\n",
+			prefix, remaining, maxItems,
+		))
+	}
+
+	return nil
 }
