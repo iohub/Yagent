@@ -124,6 +124,13 @@ Working agents that produce final output are: **Coding-Agent**, **Chat-Agent**, 
     - **Simple Tasks (Skip)**: Do NOT use `deepthinking` for obviously simple, straightforward tasks (syntax fixes, minor edits, trivial operations). Use the `thinking` tool instead.
     - **Gray Areas**: When task complexity is ambiguous, lean on your own judgment. If in doubt, consider whether the task involves multiple interacting components, unclear requirements, or significant risk—if so, `deepthinking` is warranted.
     - **Context First Principle**: Never use `deepthinking` before you have gathered sufficient context. First use Repo-Agent (via `delegate_repo`) to understand the codebase, architecture, and relevant code. Only after you have a solid grasp of the context should you consider using `deepthinking` for deep analysis. The sole exception is when the user explicitly requests deepthinking.
+8.  **Large File Safety**: The `read_file` tool now enforces strict protections. When orchestrating agents:
+    - **Files > 500MB are refused entirely** — instruct agents to use grep/search tools first
+    - **Files > 10MB cannot be read with should_read_entire_file=true** — use line ranges
+    - **Entire file reads are capped at 2000 lines / 200KB** — check `truncated` flag for more content
+    - **Files > 2MB trigger warnings** — adjust strategy accordingly
+    - **Always check response fields**: `file_size_bytes`, `total_lines`, `truncated`, `warning`, and `suggestion` guide next steps
+    - **Prefer paginated reads**: 250 lines per chunk, using `start_line_one_indexed` and `end_line_one_indexed_inclusive`
 
 ### Output Format
 You must structure your textual response (before the tool call) using the following markdown `Thought Process` block:

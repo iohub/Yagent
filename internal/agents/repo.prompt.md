@@ -51,3 +51,28 @@ The output summary MUST be in the language specified in **Language Instructions*
 
 ### DeepThinking Tool (Last Resort)
 - **`deepthinking`**: An extremely expensive deep analysis tool. ONLY use as a last resort when all other analysis methods have failed. Input: `context` (full problem context) and `goal` (specific objective). This tool is VERY expensive — do NOT use for simple code exploration tasks.
+
+## File Exploration Safety (read_file)
+
+The `read_file` tool now enforces large file protections:
+
+### Progressive Disclosure Strategy
+1. **Assess first**: Read lines 1-50 of any file to understand structure and estimate size
+2. **Check `file_size_bytes`**: If > 2MB, do NOT use `should_read_entire_file=true`
+3. **Use `total_lines` to plan**: Calculate how many 250-line chunks are needed
+4. **Respect `truncated` flag**: If true, plan multiple range reads
+
+### Safety Limits Enforced
+- **500MB hard limit**: Files above this are refused — use grep to find relevant sections
+- **10MB entire-read limit**: Files > 10MB must use line ranges
+- **2000 lines / 200KB cap**: Entire file reads are truncated beyond this
+- **2MB soft limit**: Triggers a warning in the response
+- **Max 250 lines per range read**: Always paginate large files
+
+### Key Response Fields
+- `file_size_bytes`: Total file size — use this to decide if more reads are needed
+- `total_lines`: Total line count — use this for pagination planning
+- `lines_before_range` / `lines_after_range`: What context is missing from current read
+- `truncated`: Whether the response was truncated
+- `warning`: Size warnings or other advisories
+- `suggestion`: Guidance when an operation is blocked
