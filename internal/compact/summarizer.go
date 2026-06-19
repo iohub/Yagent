@@ -39,15 +39,17 @@ Extract the following from the provided conversation fragment:
 
 // LLMSummarizer LLM驱动的上下文摘要器
 type LLMSummarizer struct {
-	client SummarizationClient
-	config *Config
+	client        SummarizationClient
+	config        *Config
+	degradation   *DegradationResolver
 }
 
 // NewLLMSummarizer 创建LLM摘要器
 func NewLLMSummarizer(client SummarizationClient, config *Config) *LLMSummarizer {
 	return &LLMSummarizer{
-		client: client,
-		config: config,
+		client:      client,
+		config:      config,
+		degradation: NewDegradationResolver(DefaultDegradationConfig, config),
 	}
 }
 
@@ -209,24 +211,47 @@ func (s *LLMSummarizer) SummarizeSegment(
 			defer wg.Done()
 			defer func() { <-sem }() // 释放信号量
 
-			sumCtx, cancel := context.WithTimeout(ctx, s.config.SummarizationTimeout)
-			defer cancel()
+			// 使用 DegradationResolver 包装 LLM 调用
+			batchCopy := batchMsgs // 确保闭包安全
+			result := s.degradation.ExecuteWithDegradation(
+				ctx,
+				"summarize_segment",
+				// 主要的 LLM 调用
+				func(innerCtx context.Context) (string, error) {
+					sumCtx, cancel := context.WithTimeout(innerCtx, s.config.SummarizationTimeout)
+					defer cancel()
 
-			summary, err := s.client.GenerateSummary(sumCtx, batchMsgs)
-			if err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("segment summarization failed: %w", err)
-				}
-				mu.Unlock()
-				return
-			}
-
-			// 清洗摘要输出
-			cleaned := CleanSummaryOutput(summary)
+					summary, err := s.client.GenerateSummary(sumCtx, batchCopy)
+					if err != nil {
+						return "", err
+					}
+					cleaned := CleanSummaryOutput(summary)
+					if cleaned == "" {
+						return "", fmt.Errorf("summarization returned empty after cleaning")
+					}
+					return cleaned, nil
+				},
+				// 降级回退
+				func() string {
+					// 从 batch 中提取关键信息做简单摘要
+					return extractBatchFallback(batchCopy)
+				},
+			)
 
 			mu.Lock()
-			summaries = append(summaries, cleaned)
+			if result.Err != nil {
+				if firstErr == nil {
+					firstErr = result.Err
+				}
+			} else if result.Result != "" {
+				summaries = append(summaries, result.Result)
+				// 记录降级日志
+				if result.Tier.IsFallback() {
+					slog.Warn("Summarization degraded",
+						"tier", result.Tier,
+						"batch_size", len(batchCopy))
+				}
+			}
 			mu.Unlock()
 		}(batch)
 	}
@@ -388,18 +413,92 @@ Consolidated Summary:`
 		{Role: llm.RoleUser, Content: mergePrompt},
 	}
 
-	sumCtx, cancel := context.WithTimeout(ctx, s.config.SummarizationTimeout)
-	defer cancel()
+	// 使用 DegradationResolver
+	result := s.degradation.ExecuteWithDegradation(
+		ctx,
+		"merge_summaries",
+		func(innerCtx context.Context) (string, error) {
+			sumCtx, cancel := context.WithTimeout(innerCtx, s.config.SummarizationTimeout)
+			defer cancel()
 
-	merged, err := s.client.GenerateSummary(sumCtx, msgs)
-	if err != nil {
-		return "", 0, fmt.Errorf("summary merge failed: %w", err)
+			merged, err := s.client.GenerateSummary(sumCtx, msgs)
+			if err != nil {
+				return "", err
+			}
+			cleaned := CleanSummaryOutput(merged)
+			if cleaned == "" {
+				return "", fmt.Errorf("merge returned empty after cleaning")
+			}
+			return cleaned, nil
+		},
+		// 降级回退：简单拼接
+		func() string {
+			return "[CONTEXT SUMMARY] (concatenated fallback)\n\n" +
+				summaryA + "\n\n---\n\n" + summaryB
+		},
+	)
+
+	if result.Err != nil {
+		return "", 0, result.Err
 	}
 
-	cleaned := CleanSummaryOutput(merged)
-	tokenCount, _ := s.countTokens(cleaned)
+	tokenCount, _ := s.countTokens(result.Result)
 
-	return cleaned, tokenCount, nil
+	if result.Tier.IsFallback() {
+		slog.Warn("Summary merge degraded",
+			"tier", result.Tier,
+			"tokens", tokenCount)
+	}
+
+	return result.Result, tokenCount, nil
+}
+
+// extractBatchFallback 从一批消息中提取关键信息的简单摘要
+// 用作 LLM 摘要调用失败的保底降级策略
+func extractBatchFallback(messages []llm.Message) string {
+	if len(messages) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("[CONTEXT SUMMARY] (auto-extracted)\n\n")
+
+	userMsgs := 0
+	assistantMsgs := 0
+	toolMsgs := 0
+	totalLen := 0
+
+	for _, msg := range messages {
+		totalLen += len(msg.Content)
+		switch msg.Role {
+		case llm.RoleUser:
+			userMsgs++
+		case llm.RoleAssistant:
+			assistantMsgs++
+		case llm.RoleTool:
+			toolMsgs++
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("This segment contains %d messages:\n", len(messages)))
+	sb.WriteString(fmt.Sprintf("- User messages: %d\n", userMsgs))
+	sb.WriteString(fmt.Sprintf("- Assistant messages: %d\n", assistantMsgs))
+	sb.WriteString(fmt.Sprintf("- Tool result messages: %d\n", toolMsgs))
+	sb.WriteString(fmt.Sprintf("- Total content length: %d characters\n", totalLen))
+
+	// 提取关键信息：包含 first/last user message
+	for _, msg := range messages {
+		if msg.Role == llm.RoleUser {
+			content := msg.Content
+			if len(content) > 200 {
+				content = content[:200] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("\nKey user message: %s", content))
+			break
+		}
+	}
+
+	return sb.String()
 }
 
 // ─────────────────────────────────────────────────────────
