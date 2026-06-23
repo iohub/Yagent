@@ -869,8 +869,12 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 
 	if mem != nil {
 		for _, m := range mem.GetMessages() {
-			// Skip system messages from memory to avoid conflict with the fresh prompt
 			if m.Type == memory.MessageTypeSystem {
+				continue
+			}
+			// 过滤 sub-agent 内部消息，避免破坏 tool_calls → tool 消息配对规则
+			// sub-agent 消息由 injectSubAgentMemory() 注入，仅用于内存记录，不应发送给 LLM
+			if m.IsSubAgent {
 				continue
 			}
 			messages = append(messages, memory.ConvertMemoryMessageToLLMSMessage(m))
@@ -1057,7 +1061,10 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				}
 			}
 
-			slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
+			// 验证并修复 tool_call/tool_response 配对完整性
+			messages = validateAndRepairToolCallPairs(messages)
+
+		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
 
 			// Publish llm_call_start event
 			if a.Publisher != nil {
@@ -1303,4 +1310,101 @@ Extract the following from the provided conversation fragment:
 - Use clear, structured Markdown.
 - Output in **English**.
 - Organize extracted information under the 5 categories listed above.`
+}
+
+// validateAndRepairToolCallPairs 检查 messages 中的 tool_call/tool_response 配对完整性
+// 如果发现孤立的 tool_calls（assistant 有 tool_calls 但缺少对应的 tool 响应），自动修复：
+// 1. 将缺少 tool 响应的 assistant 消息降级为纯文本消息（添加说明）
+// 2. 移除孤立的 tool 响应（没有对应 assistant 的消息）
+func validateAndRepairToolCallPairs(messages []llm.Message) []llm.Message {
+	result := make([]llm.Message, 0, len(messages))
+
+	for i := 0; i < len(messages); i++ {
+		msg := messages[i]
+
+		if msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0 {
+			// 收集这个 assistant 消息的所有 tool_call_ids
+			expectedIDs := make(map[string]bool)
+			for _, tc := range msg.ToolCalls {
+				expectedIDs[tc.ID] = true
+			}
+
+			// 向后扫描，找到所有 tool 响应
+			foundIDs := make(map[string]bool)
+			j := i + 1
+			for j < len(messages) && len(foundIDs) < len(expectedIDs) {
+				if messages[j].Role == llm.RoleTool && messages[j].ToolCallID != "" {
+					if expectedIDs[messages[j].ToolCallID] {
+						foundIDs[messages[j].ToolCallID] = true
+					}
+				} else if messages[j].Role == llm.RoleAssistant || messages[j].Role == llm.RoleUser {
+					// 遇到新的 assistant 或 user 消息，停止扫描
+					break
+				}
+				j++
+			}
+
+			// 检查是否所有 tool_calls 都有对应的 tool 响应
+			if len(foundIDs) < len(expectedIDs) {
+				// 有缺失的 tool 响应！修复：将 assistant 降级为纯文本
+				missingIDs := make([]string, 0)
+				for id := range expectedIDs {
+					if !foundIDs[id] {
+						missingIDs = append(missingIDs, id)
+					}
+				}
+
+				repairedContent := msg.Content
+				if repairedContent == "" {
+					repairedContent = "[系统提示：以下工具调用结果因上下文压缩而不可用]"
+				} else {
+					repairedContent += "\n\n[系统提示：以下工具调用结果因上下文压缩而不可用：" + strings.Join(missingIDs, ", ") + "]"
+				}
+
+				result = append(result, llm.Message{
+					Role:    llm.RoleAssistant,
+					Content: repairedContent,
+				})
+
+				// 将已找到的 tool 响应也添加到结果中
+				for k := i + 1; k < j; k++ {
+					if messages[k].Role == llm.RoleTool && messages[k].ToolCallID != "" {
+						if foundIDs[messages[k].ToolCallID] {
+							result = append(result, messages[k])
+						}
+					}
+				}
+
+				i = j - 1 // 跳过已处理的消息
+				continue
+			}
+		}
+
+		// 检查孤立的 tool 响应（前面没有匹配的 assistant）
+		if msg.Role == llm.RoleTool && msg.ToolCallID != "" {
+			hasMatchingAssistant := false
+			for k := len(result) - 1; k >= 0; k-- {
+				if result[k].Role == llm.RoleAssistant && len(result[k].ToolCalls) > 0 {
+					for _, tc := range result[k].ToolCalls {
+						if tc.ID == msg.ToolCallID {
+							hasMatchingAssistant = true
+							break
+						}
+					}
+					break
+				}
+				if result[k].Role == llm.RoleUser || result[k].Role == llm.RoleAssistant {
+					break
+				}
+			}
+			if !hasMatchingAssistant {
+				// 孤立的 tool 响应，跳过
+				continue
+			}
+		}
+
+		result = append(result, msg)
+	}
+
+	return result
 }
