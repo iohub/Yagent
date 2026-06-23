@@ -133,6 +133,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 		MaxSteps:     a.maxSteps,
 		Publisher:    a.Publisher,
 		AgentName:    a.Name(),
+		StopOnFinish: true,
 		RepoContext:  a.GlobalCtx.RepoSummary,
 	}
 	result, err := RunAgentLoop(ctx, cfg)
