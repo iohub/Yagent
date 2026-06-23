@@ -20,30 +20,30 @@ type FailureRecord struct {
 
 // RecoveryConfig 恢复配置
 type RecoveryConfig struct {
-	MaxRetries                      int           // 单个任务最大重试次数（默认 3）
-	RetryDelay                      time.Duration // 重试基础延迟（默认 1s）
-	CircuitBreakerThreshold         int           // 熔断阈值，连续失败次数（默认 5）
-	CircuitBreakerResetTimeout      time.Duration // 熔断恢复时间（默认 30s）
+	MaxRetries                 int           // 单个任务最大重试次数（默认 3）
+	RetryDelay                 time.Duration // 重试基础延迟（默认 1s）
+	CircuitBreakerThreshold    int           // 熔断阈值，连续失败次数（默认 5）
+	CircuitBreakerResetTimeout time.Duration // 熔断恢复时间（默认 30s）
 }
 
 // DefaultRecoveryConfig 默认恢复配置
 func DefaultRecoveryConfig() RecoveryConfig {
 	return RecoveryConfig{
-		MaxRetries:                      3,
-		RetryDelay:                      1 * time.Second,
-		CircuitBreakerThreshold:         5,
-		CircuitBreakerResetTimeout:      30 * time.Second,
+		MaxRetries:                 3,
+		RetryDelay:                 1 * time.Second,
+		CircuitBreakerThreshold:    5,
+		CircuitBreakerResetTimeout: 30 * time.Second,
 	}
 }
 
 // CircuitBreaker 熔断器
 type CircuitBreaker struct {
-	state          string            // "closed", "open", "half-open"
-	failures       int
-	threshold      int
-	resetTimeout   time.Duration
-	lastFailure    time.Time
-	mu             sync.Mutex
+	state        string // "closed", "open", "half-open"
+	failures     int
+	threshold    int
+	resetTimeout time.Duration
+	lastFailure  time.Time
+	mu           sync.Mutex
 }
 
 // NewCircuitBreaker 创建熔断器
@@ -87,6 +87,10 @@ func (cb *CircuitBreaker) Success() {
 		cb.state = "closed"
 		cb.failures = 0
 		slog.Info("Circuit breaker closed (recovered)")
+	case "open":
+		cb.state = "closed"
+		cb.failures = 0
+		slog.Info("Circuit breaker closed (recovered from open)")
 	case "closed":
 		cb.failures = 0
 	}
