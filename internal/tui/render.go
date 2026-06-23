@@ -21,6 +21,7 @@ var skipBodyTools = map[string]bool{
 	"delete_file":     true,
 	"rename_file":     true,
 	"list_dir":        true,
+	"print_dir_tree":  true,
 	"search_by_regex": true,
 }
 
