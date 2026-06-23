@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"codeactor/internal/llm"
 )
@@ -37,7 +38,7 @@ func NewEngine(config *Config, summarizationClient SummarizationClient) (*Engine
 		tokenizer:    GetGlobalTokenizer(),
 		priorityCalc: NewPriorityCalculator(DefaultPriorityWeights),
 		summarizer:   summarizer,
-		state:        &CompressionState{},  // 初始化空状态
+		state:        NewEmptyCompressionState(), // 初始化空状态（v2）
 		stateMu:      sync.Mutex{},
 	}, nil
 }
@@ -198,10 +199,8 @@ func (e *Engine) CompressIncremental(
 			return nil, state, err
 		}
 
-		// 创建新状态
-		newState = &CompressionState{
-			LastCompressedIndex: len(messages),
-		}
+		// 创建新状态（v2：使用 AnchorSet）
+		newState = NewCompressionStateWithMessages("", len(messages))
 		// 构建初始摘要栈
 		newState.AppendSummary(SummaryBlock{
 			StartIndex:       0,
@@ -209,6 +208,7 @@ func (e *Engine) CompressIncremental(
 			Summary:          extractSummaryFromResult(result),
 			TokenCount:       result.CompressedTokens,
 			CompressionLevel: 1,
+			SourceRange:      AnchorRange{StartIndex: 0, EndIndex: len(messages)},
 		})
 
 		compressedMessages = result.CompressedMessages
@@ -224,8 +224,8 @@ func (e *Engine) CompressIncremental(
 	// 增量压缩：只处理新增消息
 	slog.Info("Incremental compression triggered",
 		"original_tokens", originalTokens,
-		"last_compressed_index", state.LastCompressedIndex,
-		"current_messages", len(messages))
+		"total_messages", len(messages),
+		"unsummarized_count", state.Anchors.UnsummarizedCount())
 
 	result, err := e.incrementalCompress(ctx, messages, state)
 	if err != nil {
@@ -246,46 +246,60 @@ type incrementalResult struct {
 	newState *CompressionState
 }
 
-// incrementalCompress 增量压缩核心逻辑
+// incrementalCompress 增量压缩核心逻辑（v3：AnchorSet + ExtractRecentMessagesV2 + 锁修复）
 func (e *Engine) incrementalCompress(
 	ctx context.Context,
 	messages []llm.Message,
 	state *CompressionState,
 ) (*incrementalResult, error) {
+	// 锁定状态：增量压缩是独占操作
+	state.Lock()
+	defer state.Unlock()
 
 	// 1. 提取 System 消息
 	systemMsg := ExtractSystemMessage(messages)
 
-	// 2. 确定增量范围：上次压缩点 → 当前消息末尾
-	startIdx := state.LastCompressedIndex
-	if startIdx >= len(messages) {
-		// 没有新消息，只做摘要栈整合
-		return e.consolidateSummaryStack(ctx, messages, state)
+	// 2. 通过 AnchorSet 确定下一个未摘要区间
+	if state.Anchors == nil || state.Anchors.IsEmpty() {
+		// 没有锚点，初始化
+		state.Anchors = NewAnchorSet(len(messages))
 	}
 
-	// 3. 提取保留区消息（最近几轮的高优先级消息）
-	recentMsgs, compressibleMsgs := ExtractRecentMessages(messages, e.config.KeepRecentRounds)
-
-	// 4. 如果待压缩消息为空，只做整合
-	if len(compressibleMsgs) == 0 {
-		return e.consolidateSummaryStack(ctx, messages, state)
+	startIdx, endIdx, hasUnsummarized := state.Anchors.NextUnsummarizedRange(0)
+	if !hasUnsummarized {
+		// 所有消息都已摘要，只做整合
+		return e.consolidateSummaryStack(state, messages)
 	}
 
-	// 5. 从 compressibleMsgs 中过滤出真正新增的（从 startIdx 之后）
+	// 3. 使用 ExtractRecentMessagesV2 确定保留区和可压缩区间
+	extractResult := ExtractRecentMessagesV2(messages, e.config.KeepRecentRounds)
+
+	// 4. 确定实际可压缩范围：AnchorSet 未摘要区间 ∩ 可压缩区间
+	compressStart := startIdx
+	if compressStart < extractResult.CompressibleStartIndex {
+		compressStart = extractResult.CompressibleStartIndex
+	}
+	compressEnd := endIdx
+	if compressEnd > extractResult.CompressibleEndIndex {
+		compressEnd = extractResult.CompressibleEndIndex
+	}
+
+	if compressStart >= compressEnd {
+		// 没有可压缩的消息，直接整合
+		return e.consolidateSummaryStack(state, messages)
+	}
+
+	// 5. 提取待压缩的消息
 	var newMsgs []llm.Message
-	// 由于 ExtractRecentMessages 返回的是切片（非原始索引），
-	// 简化方式：直接使用 startIdx 后的所有非保留消息
-	for i := startIdx; i < len(messages)-len(recentMsgs); i++ {
-		if i >= 0 && i < len(messages) {
-			msg := messages[i]
-			if msg.Role != llm.RoleSystem && !IsSummaryMessage(&msg) {
-				newMsgs = append(newMsgs, msg)
-			}
+	for i := compressStart; i < compressEnd; i++ {
+		msg := messages[i]
+		if msg.Role != llm.RoleSystem && !IsSummaryMessage(&msg) {
+			newMsgs = append(newMsgs, msg)
 		}
 	}
 
 	if len(newMsgs) == 0 {
-		return e.consolidateSummaryStack(ctx, messages, state)
+		return e.consolidateSummaryStack(state, messages)
 	}
 
 	// 6. 对增量消息做摘要
@@ -293,7 +307,9 @@ func (e *Engine) incrementalCompress(
 	if err != nil {
 		slog.Warn("Incremental summarization failed, falling back to full", "error", err)
 		// 降级到全量压缩
+		state.Unlock() // 临时解锁避免死锁
 		result, err := e.Compress(ctx, messages)
+		state.Lock()
 		if err != nil {
 			return nil, fmt.Errorf("fallback full compression also failed: %w", err)
 		}
@@ -304,35 +320,37 @@ func (e *Engine) incrementalCompress(
 	}
 
 	if summary == "" {
-		// 没有生成摘要，直接整合现有摘要栈
-		return e.consolidateSummaryStack(ctx, messages, state)
+		return e.consolidateSummaryStack(state, messages)
 	}
 
-	// 7. 追加新摘要块到摘要栈
-	state.AppendSummary(SummaryBlock{
-		StartIndex:       startIdx,
-		EndIndex:         len(messages) - len(recentMsgs),
+	// 7. 追加新摘要块到摘要栈（使用 SourceRange 而非 StartIndex/EndIndex）
+	block := SummaryBlock{
 		Summary:          summary,
 		TokenCount:       tokenCount,
 		CompressionLevel: 1,
-	})
-
-	// 8. 如果摘要栈过深，合并底层摘要
-	if len(state.SummaryStack) > e.config.SummaryStackMaxDepth {
-		e.mergeDeepSummaries(ctx, state)
+		SourceRange:      AnchorRange{StartIndex: compressStart, EndIndex: compressEnd},
+		CreatedAt:        time.Now(),
 	}
+	state.AppendSummary(block)
 
-	// 9. 更新压缩索引
-	state.LastCompressedIndex = len(messages) - len(recentMsgs)
+	// 8. 更新锚点
+	state.Anchors.MarkSummarized(compressStart, compressEnd, len(state.SummaryStack)-1)
+
+	// 9. 如果摘要栈过深，合并底层摘要（先解锁再合并，避免持有锁调用 LLM）
+	if len(state.SummaryStack) > e.config.SummaryStackMaxDepth {
+		state.Unlock()
+		e.mergeDeepSummaries(ctx, state)
+		state.Lock()
+	}
 
 	// 10. 构建缓存友好的消息布局
 	constraints := state.ConstraintsBlock
-	if constraints == "" {
-		// 首次提取约束
+	if constraints == "" && extractResult.CompressibleStartIndex > 0 {
 		constraints = FormatConstraintsFromMessages(messages)
 		state.ConstraintsBlock = constraints
 	}
 
+	recentMsgs := extractResult.Recent
 	compressedMessages := BuildCacheAwareMessages(
 		systemMsg,
 		constraints,
@@ -349,21 +367,24 @@ func (e *Engine) incrementalCompress(
 			OriginalTokens:     len(messages),
 			CompressedTokens:   compressedTokens,
 			CompressionRatio:   float64(compressedTokens) / float64(len(messages)),
-			CompressionStats:   fmt.Sprintf("Incremental compression | New messages: %d | Summary stack: %d blocks | Tokens: %d",
-				len(newMsgs), len(state.SummaryStack), compressedTokens),
+			CompressionStats: fmt.Sprintf("Incremental compression | Range [%d:%d] | Summary stack: %d blocks | Tokens: %d",
+				compressStart, compressEnd, len(state.SummaryStack), compressedTokens),
 		},
 		newState: state,
 	}, nil
 }
 
-// consolidateSummaryStack 整合摘要栈（当没有新消息时压缩摘要栈深度）
+// consolidateSummaryStack 整合摘要栈（当没有新消息时构建消息布局）
+// 注意：调用方应已持有 state 的读锁或写锁
 func (e *Engine) consolidateSummaryStack(
-	ctx context.Context,
-	messages []llm.Message,
 	state *CompressionState,
+	messages []llm.Message,
 ) (*incrementalResult, error) {
 	systemMsg := ExtractSystemMessage(messages)
-	recentMsgs, _ := ExtractRecentMessages(messages, e.config.KeepRecentRounds)
+	
+	// 使用 V2 获取保留区（不需要待压缩区）
+	extractResult := ExtractRecentMessagesV2(messages, e.config.KeepRecentRounds)
+	recentMsgs := extractResult.Recent
 
 	constraints := state.ConstraintsBlock
 
@@ -382,7 +403,7 @@ func (e *Engine) consolidateSummaryStack(
 			OriginalTokens:     len(messages),
 			CompressedTokens:   compressedTokens,
 			CompressionRatio:   float64(compressedTokens) / float64(len(messages)),
-			CompressionStats:   fmt.Sprintf("Summary stack consolidated | Stack depth: %d | Tokens: %d",
+			CompressionStats: fmt.Sprintf("Summary stack consolidated | Stack depth: %d | Tokens: %d",
 				len(state.SummaryStack), compressedTokens),
 		},
 		newState: state,
@@ -390,6 +411,9 @@ func (e *Engine) consolidateSummaryStack(
 }
 
 // mergeDeepSummaries 合并底层摘要（当栈过深时）
+// 注意：调用方需要在传入前决定锁的状态
+// - 如果调用时已持有锁，此函数不会额外加锁（避免重复加锁）
+// - 如果调用时未持有锁，此函数会自己加锁
 func (e *Engine) mergeDeepSummaries(ctx context.Context, state *CompressionState) {
 	if len(state.SummaryStack) < 2 || e.summarizer == nil {
 		return
@@ -405,16 +429,32 @@ func (e *Engine) mergeDeepSummaries(ctx context.Context, state *CompressionState
 		return
 	}
 
+	// 合并后的 SourceRange 覆盖两个块的范围
+	mergedRange := AnchorRange{
+		StartIndex: a.SourceRange.StartIndex,
+		EndIndex:   b.SourceRange.EndIndex,
+	}
+	// 兼容旧版：如果 SourceRange 为空，使用 StartIndex/EndIndex
+	if mergedRange.StartIndex == 0 && mergedRange.EndIndex == 0 {
+		mergedRange.StartIndex = a.StartIndex
+		mergedRange.EndIndex = b.EndIndex
+	}
+
+	newBlock := SummaryBlock{
+		Summary:          merged,
+		TokenCount:       tokenCount,
+		CompressionLevel: 2,
+		SourceRange:      mergedRange,
+		CreatedAt:        time.Now(),
+	}
+
+	// 替换前两个块为合并后的块
+	state.Lock()
 	state.SummaryStack = append(
-		[]SummaryBlock{{
-			StartIndex:       a.StartIndex,
-			EndIndex:         b.EndIndex,
-			Summary:          merged,
-			TokenCount:       tokenCount,
-			CompressionLevel: 2,
-		}},
+		[]SummaryBlock{newBlock},
 		state.SummaryStack[2:]...,
 	)
+	state.Unlock()
 
 	slog.Info("Summary stack merged",
 		"previous_depth", len(state.SummaryStack)+1,

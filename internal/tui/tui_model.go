@@ -436,6 +436,7 @@ type model struct {
 	contentCache    *strings.Builder // incremental viewport content cache (pointer avoids copy panic)
 	glamourRenderer *glamour.TermRenderer
 	useDarkStyle    bool
+	verboseMode     bool
 
 	// Task execution state
 	taskRunning   bool
@@ -846,4 +847,14 @@ func (m *model) toggleLanguage() {
 	}
 	m.input.Placeholder = langManager.GetText("TaskDescPlaceholder")
 	m.infoMsg = langManager.GetText("InfoMessage")
+}
+
+// toggleVerbose 切换 verbose 模式
+func (m *model) toggleVerbose() {
+	m.verboseMode = !m.verboseMode
+	if m.verboseMode {
+		m.infoMsg = "Verbose mode: ON"
+	} else {
+		m.infoMsg = "Verbose mode: OFF"
+	}
 }
