@@ -96,6 +96,57 @@ func (s *LLMSummarizer) Summarize(
 		summaryRegion = append(summaryRegion, msg)
 	}
 
+	// ─── Tool-Call Atomicity Repair ───
+	// Ensure tool_call/tool_response pairs are never split between keep and summary regions.
+
+	// Build a set of tool_call_ids referenced by assistant messages in keepRegion.
+	keepToolCallIDs := make(map[string]bool)
+	for _, msg := range keepRegion {
+		if msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0 {
+			for _, tc := range msg.ToolCalls {
+				keepToolCallIDs[tc.ID] = true
+			}
+		}
+	}
+
+	// If any tool_call_id from keepRegion has its tool response in summaryRegion,
+	// move that tool response to keepRegion.
+	if len(keepToolCallIDs) > 0 {
+		var summaryToMove []llm.Message
+		var filteredSummary []llm.Message
+		for _, msg := range summaryRegion {
+			if msg.Role == llm.RoleTool && msg.ToolCallID != "" && keepToolCallIDs[msg.ToolCallID] {
+				summaryToMove = append(summaryToMove, msg)
+			} else {
+				filteredSummary = append(filteredSummary, msg)
+			}
+		}
+		if len(summaryToMove) > 0 {
+			keepRegion = append(keepRegion, summaryToMove...)
+			summaryRegion = filteredSummary
+			slog.Debug("Tool-call atomicity repair: moved tool messages from summary to keep",
+				"moved_count", len(summaryToMove))
+		}
+	}
+
+	// If any tool message in keepRegion references a tool_call_id whose
+	// assistant message is NOT in keepRegion, move that tool message to summaryRegion.
+	var keepToMove []llm.Message
+	var filteredKeep []llm.Message
+	for _, msg := range keepRegion {
+		if msg.Role == llm.RoleTool && msg.ToolCallID != "" && !keepToolCallIDs[msg.ToolCallID] {
+			keepToMove = append(keepToMove, msg)
+		} else {
+			filteredKeep = append(filteredKeep, msg)
+		}
+	}
+	if len(keepToMove) > 0 {
+		keepRegion = filteredKeep
+		summaryRegion = append(summaryRegion, keepToMove...)
+		slog.Debug("Tool-call atomicity repair: moved orphaned tool messages from keep to summary",
+			"moved_count", len(keepToMove))
+	}
+
 	// 如果没有可摘要的消息，直接返回原始消息
 	if len(summaryRegion) == 0 {
 		slog.Debug("LLM summarizer: no messages to summarize")
