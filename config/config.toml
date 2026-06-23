@@ -83,3 +83,49 @@ enabled = false
 api_token = "your-key"
 model = "Qwen/Qwen3-Reranker-4B"
 api_base_url = "https://api.siliconflow.cn/v1/rerank"
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 1 Stage 1.0: 新增配置段落
+# ═══════════════════════════════════════════════════════════════
+
+# ── 消息总线配置 ──
+[messaging]
+enabled = true
+queue_size = 256
+publish_timeout = "5s"
+dispatch_timeout = "3s"
+max_retries = 3
+enable_dlq = true
+dlq_size = 1000
+enable_metrics = true
+backpressure_mode = "block"  # "block" = 新行为（阻塞+重试+DLQ）, "drop" = 向后兼容旧行为（静默丢弃）
+
+# ── codexray 分析引擎配置 ──
+[codexray.client]
+enabled = true
+base_url = ""
+timeout = "30s"
+max_retries = 3
+retry_interval = "500ms"
+enable_circuit_breaker = true
+cb_failure_threshold = 5
+cb_reset_timeout = "30s"
+enable_cache = true
+cache_ttl = "30m"
+cache_max_entries = 100
+enable_fallback = true
+
+# ── Conductor 配置 ──
+[conductor]
+enable_checkpoint = true
+checkpoint_path = ""
+checkpoint_interval = "30s"
+sync_on_critical = true
+
+# ── 工具注册配置（Phase 2 使用）──
+[tools_registry]
+enable_registry = false
+
+# ── Agent 直接通信配置（Phase 2 使用）──
+[agent_comm]
+enable_direct = false
