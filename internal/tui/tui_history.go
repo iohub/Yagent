@@ -14,6 +14,46 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// ── History 样式缓存 ──
+
+// historyStyles 预计算的样式集合，避免每帧重建
+type historyStyles struct {
+	badgeBgColor  string         // 选中行背景色 (lipgloss.Color string)
+	indicatorStyle lipgloss.Style  // 选中指示器 "● "
+	dateStyle     lipgloss.Style  // 日期样式
+	titleStyle    lipgloss.Style  // 标题样式
+	spacerStyle   lipgloss.Style  // 空白填充
+	normalStyle   lipgloss.Style  // 普通状态
+}
+
+// initHistoryStyles 预创建样式对象（在 enterHistoryMode 中首次调用时初始化）
+func (m *model) initHistoryStyles() *historyStyles {
+	bgColor := lipgloss.Color("39")    // 蓝色
+	fgColor := lipgloss.Color("0")     // 黑色
+	dimFg := lipgloss.Color("245")
+	normalFg := lipgloss.Color("252")
+
+	return &historyStyles{
+		badgeBgColor: "39",
+		indicatorStyle: lipgloss.NewStyle().
+			Background(bgColor).
+			Foreground(fgColor).
+			Bold(true),
+		dateStyle: lipgloss.NewStyle().
+			Background(bgColor).
+			Foreground(fgColor).
+			Bold(true),
+		titleStyle: lipgloss.NewStyle().
+			Background(bgColor).
+			Foreground(fgColor).
+			Bold(true),
+		spacerStyle: lipgloss.NewStyle().
+			Foreground(dimFg),
+		normalStyle: lipgloss.NewStyle().
+			Foreground(normalFg),
+	}
+}
+
 // ── History message types ──
 
 // historyItemsMsg is sent when async history list loading completes.
@@ -433,6 +473,10 @@ func enterHistoryMode(m *model) tea.Cmd {
 	m.historyPageSize = defaultPageSize
 	m.historyLoading = true
 	m.lastKey = ""
+
+	// 初始化或重置历史样式
+	m.historyStyles = m.initHistoryStyles()
+
 	return loadHistoryCmd(m)
 }
 
@@ -592,76 +636,103 @@ func renderHistoryContent(m *model, width, height int) string {
 }
 
 // renderHistoryItem renders a single history item line.
+// renderHistoryItem 渲染单个历史条目（使用预计算样式，零分配模式）
 func renderHistoryItem(m *model, item datamanager.TaskHistoryItem, selected bool, width int) string {
-	// Date for left alignment
 	dateStr := item.CreatedAt.Format("01-02 15:04")
 
-	// Fixed left part: indicator (2) + date (11) + space (1) = 14
-	// Title takes remaining width
+	// Title 宽度计算
 	maxTitleWidth := width - 14
 	if maxTitleWidth < 10 {
 		maxTitleWidth = 10
 	}
 
-	// Truncate title to fit (rune-safe), replace newlines with spaces
-	title := item.Title
-	title = strings.ReplaceAll(title, "\r\n", " ")
-	title = strings.ReplaceAll(title, "\n", " ")
-	title = strings.ReplaceAll(title, "\r", " ")
-	if runeCount := len([]rune(title)); runeCount > maxTitleWidth {
-		tr := []rune(title)
-		title = string(tr[:maxTitleWidth]) + "…"
-	}
+	// 用 Builder 优化字符串替换（一次遍历替换所有换行符）
+	title := cleanTitle(item.Title, maxTitleWidth)
 
 	if selected {
-		// Selected: blue background, black text, bold
-		indicator := lipgloss.NewStyle().
-			Background(lipgloss.Color("39")).
-			Foreground(lipgloss.Color("0")).
-			Bold(true).
-			Render("● ")
+		return renderSelectedItem(m, dateStr, title, width)
+	}
+	return renderNormalItem(m, dateStr, title, width)
+}
 
-		dateStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("39")).
-			Foreground(lipgloss.Color("0")).
-			Bold(true)
-
-		titleStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("39")).
-			Foreground(lipgloss.Color("0")).
-			Bold(true)
-
-		left := indicator + dateStyle.Render(dateStr) + " " + titleStyle.Render(title)
-
-		// Pad to fill width (use lipgloss.Width for display width, not byte length)
-		displayWidth := lipgloss.Width(left)
-		if displayWidth < width {
-			left += strings.Repeat(" ", width-displayWidth)
-		}
-
-		lineStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("39")).
-			Foreground(lipgloss.Color("0")).
-			Bold(true).
-			Width(width)
-
-		return lineStyle.Render(left)
+// cleanTitle 高效清理和截断标题（一次性遍历，避免多次 ReplaceAll）
+func cleanTitle(raw string, maxWidth int) string {
+	if raw == "" {
+		return ""
 	}
 
-	// Non-selected: gray text, double-space indicator
+	var b strings.Builder
+	b.Grow(len(raw))
+
+	runeCount := 0
+	for _, r := range raw {
+		if r == '\r' || r == '\n' {
+			b.WriteByte(' ')
+			continue
+		}
+		if runeCount >= maxWidth {
+			continue
+		}
+		b.WriteRune(r)
+		runeCount++
+	}
+
+	result := b.String()
+	if runeCount < len([]rune(raw)) {
+		result += "…"
+	}
+	return result
+}
+
+// renderSelectedItem 渲染选中状态的条目
+func renderSelectedItem(m *model, dateStr, title string, width int) string {
+	s := m.historyStyles
+	if s == nil {
+		s = m.initHistoryStyles()
+	}
+
+	indicator := s.indicatorStyle.Render("● ")
+	datePart := s.dateStyle.Render(dateStr)
+	titlePart := s.titleStyle.Render(title)
+
+	left := indicator + datePart + " " + titlePart
+
+	displayWidth := lipgloss.Width(left)
+	if displayWidth < width {
+		left += strings.Repeat(" ", width-displayWidth)
+	}
+
+	return lipgloss.NewStyle().
+		Background(lipgloss.Color(s.badgeBgColor)).
+		Foreground(lipgloss.Color("0")).
+		Bold(true).
+		Width(width).
+		Render(left)
+}
+
+// renderNormalItem 渲染普通状态的条目
+func renderNormalItem(m *model, dateStr, title string, width int) string {
+	s := m.historyStyles
+	if s == nil {
+		s = m.initHistoryStyles()
+	}
+
 	indicator := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240")).
 		Render("  ")
+	datePart := s.normalStyle.Render(dateStr)
+	titlePart := s.normalStyle.Render(title)
 
-	dateStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245"))
+	// 使用不同的颜色分别渲染日期和标题
+	datePart = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245")).
+		Render(dateStr)
+	titlePart = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Render(title)
 
-	titleStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+	left := indicator + datePart + " " + titlePart
 
-	left := indicator + dateStyle.Render(dateStr) + " " + titleStyle.Render(title)
-
-	// Pad to fill width
 	displayWidth := lipgloss.Width(left)
 	if displayWidth < width {
 		left += strings.Repeat(" ", width-displayWidth)
