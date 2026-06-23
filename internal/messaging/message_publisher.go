@@ -16,27 +16,29 @@ func NewMessagePublisher(dispatcher *MessageDispatcher) *MessagePublisher {
 	}
 }
 
-// Publish 发布消息
-func (p *MessagePublisher) Publish(eventType string, content interface{}, from string) {
-	if p.dispatcher != nil {
-		p.dispatcher.Publish(&MessageEvent{
-			Type:      eventType,
-			From:      from,
-			Content:   content,
-			Timestamp: time.Now(),
-		})
+// Publish 发布消息（新接口，返回 error）
+func (p *MessagePublisher) Publish(eventType string, content interface{}, from string) error {
+	if p.dispatcher == nil {
+		return nil
 	}
+	return p.dispatcher.Publish(&Event{
+		Type:      EventType(eventType),
+		Source:    from,
+		Content:   content,
+		Timestamp: time.Now(),
+	})
 }
 
 // PublishWithMetadata 发布带元数据的消息
-func (p *MessagePublisher) PublishWithMetadata(eventType string, content interface{}, from string, metadata map[string]interface{}) {
-	if p.dispatcher != nil {
-		p.dispatcher.Publish(&MessageEvent{
-			Type:      eventType,
-			From:      from,
-			Content:   content,
-			Timestamp: time.Now(),
-			Metadata:  metadata,
-		})
+func (p *MessagePublisher) PublishWithMetadata(eventType string, content interface{}, from string, metadata map[string]interface{}) error {
+	if p.dispatcher == nil {
+		return nil
 	}
+	return p.dispatcher.Publish(&Event{
+		Type:      EventType(eventType),
+		Source:    from,
+		Content:   content,
+		Timestamp: time.Now(),
+		Metadata:  metadata,
+	})
 }

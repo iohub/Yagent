@@ -21,7 +21,7 @@ type DevOpsAgent struct {
 }
 
 func NewDevOpsAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *DevOpsAgent {
-	var toolDefs []ToolDefinition
+	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		// Non-fatal: agent falls back to no-tool mode.
 	}

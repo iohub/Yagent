@@ -55,7 +55,7 @@ type RepoAgent struct {
 }
 
 func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *messaging.MessagePublisher, maxSteps int) *RepoAgent {
-	var toolDefs []ToolDefinition
+	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal tools", "error", err)
 	}

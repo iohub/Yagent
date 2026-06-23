@@ -597,7 +597,7 @@ func extractResultBrief(toolName string, result string) string {
 func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 	entry := logEntry{
 		timestamp: event.Timestamp,
-		eventType: event.Type,
+		eventType: string(event.Type),
 		from:      event.From,
 	}
 

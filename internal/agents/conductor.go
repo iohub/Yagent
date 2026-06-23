@@ -65,7 +65,7 @@ type ConductorAgent struct {
 	Adapters       []*tools.Adapter
 	maxSteps       int
 	metaRetryCount int                       // max retries for Meta-Agent JSON parse failures
-	toolDefMap     map[string]ToolDefinition // tool name → definition from tools.json
+	toolDefMap     map[string]tools.ToolDefinition // tool name → definition from tools.json
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
 	compactEngine  *compact.Engine           // 上下文压缩引擎
 	compactConfig  *compact.Config           // 压缩配置
@@ -350,13 +350,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		}),
 	}
 
-	var toolDefs []ToolDefinition
+	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal tools", "error", err)
 	}
 
 	// Build a map from tool name to definition for later use by custom agents
-	toolDefMap := make(map[string]ToolDefinition, len(toolDefs))
+	toolDefMap := make(map[string]tools.ToolDefinition, len(toolDefs))
 	for _, def := range toolDefs {
 		toolDefMap[def.Name] = def
 	}

@@ -188,7 +188,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 			// Convert event to SocketMessage format
 			socketMsg := SocketMessage{
 				Type:  "realtime",
-				Event: event.Type,
+				Event: string(event.Type),
 				From:  event.From,
 				Data: gin.H{
 					"task_id":   chatData.TaskID,
