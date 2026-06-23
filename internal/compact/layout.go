@@ -105,6 +105,39 @@ func ExtractRecentMessages(
 
 	recentStart := len(messages) - keepCount
 
+	// ─── Tool-Call Atomicity Repair ───
+	// Ensure the boundary does not split tool_call/tool_response pairs.
+	if recentStart > 0 {
+		toolCallIDsInRecent := make(map[string]bool)
+		for i := recentStart; i < len(messages); i++ {
+			msg := messages[i]
+			if msg.Role == llm.RoleTool && msg.ToolCallID != "" {
+				toolCallIDsInRecent[msg.ToolCallID] = true
+			}
+		}
+		if len(toolCallIDsInRecent) > 0 {
+			for i := recentStart - 1; i >= 0; i-- {
+				msg := messages[i]
+				if msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0 {
+					needsAdjustment := false
+					for _, tc := range msg.ToolCalls {
+						if toolCallIDsInRecent[tc.ID] {
+							needsAdjustment = true
+							break
+						}
+					}
+					if needsAdjustment {
+						recentStart = i
+						break
+					}
+				}
+				if msg.Role == llm.RoleUser {
+					break
+				}
+			}
+		}
+	}
+
 	// 保留区：最后 keepRecentRounds 轮的消息
 	recent = make([]llm.Message, keepCount)
 	copy(recent, messages[recentStart:])
@@ -149,6 +182,39 @@ func ExtractRecentMessagesV2(
 	}
 
 	recentStart := len(messages) - keepCount
+
+	// ─── Tool-Call Atomicity Repair ───
+	// Ensure the boundary does not split tool_call/tool_response pairs.
+	if recentStart > 0 {
+		toolCallIDsInRecent := make(map[string]bool)
+		for i := recentStart; i < len(messages); i++ {
+			msg := messages[i]
+			if msg.Role == llm.RoleTool && msg.ToolCallID != "" {
+				toolCallIDsInRecent[msg.ToolCallID] = true
+			}
+		}
+		if len(toolCallIDsInRecent) > 0 {
+			for i := recentStart - 1; i >= 0; i-- {
+				msg := messages[i]
+				if msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0 {
+					needsAdjustment := false
+					for _, tc := range msg.ToolCalls {
+						if toolCallIDsInRecent[tc.ID] {
+							needsAdjustment = true
+							break
+						}
+					}
+					if needsAdjustment {
+						recentStart = i
+						break
+					}
+				}
+				if msg.Role == llm.RoleUser {
+					break
+				}
+			}
+		}
+	}
 
 	// 保留区：最后 keepRecentRounds 轮的消息
 	result.Recent = make([]llm.Message, keepCount)
@@ -204,6 +270,38 @@ func ExtractCompressibleRange(
 	}
 
 	endIdx = len(messages) - keepCount
+
+	// ─── Tool-Call Atomicity Repair ───
+	// Ensure the compressible range boundary does not split tool_call/tool_response pairs.
+	if endIdx > 0 && endIdx < len(messages) {
+		toolCallIDsAtBoundary := make(map[string]bool)
+		for i := endIdx; i < len(messages); i++ {
+			msg := messages[i]
+			if msg.Role == llm.RoleTool && msg.ToolCallID != "" {
+				toolCallIDsAtBoundary[msg.ToolCallID] = true
+			} else {
+				break // Only check immediately adjacent
+			}
+		}
+		if len(toolCallIDsAtBoundary) > 0 {
+			for i := endIdx - 1; i >= 0; i-- {
+				msg := messages[i]
+				if msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0 {
+					for _, tc := range msg.ToolCalls {
+						if toolCallIDsAtBoundary[tc.ID] {
+							endIdx = i // Expand compressible range backwards
+							break
+						}
+					}
+					break
+				}
+				if msg.Role == llm.RoleUser {
+					break
+				}
+			}
+		}
+	}
+
 	if endIdx <= 0 {
 		return 0, 0, false
 	}

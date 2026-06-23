@@ -2,6 +2,7 @@ package memory
 
 import (
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"codeactor/internal/llm"
@@ -130,6 +131,9 @@ func (cm *ConversationMemory) addMessage(msg ChatMessage) {
 
 		// 重新组合消息：系统消息 + 最新的其他消息
 		cm.Messages = append(systemMessages, otherMessages...)
+
+		// 修复 tool_call/tool_response 配对（防止溢出截断破坏原子性）
+		cm.repairToolCallPairsAfterTruncation()
 	}
 }
 
@@ -221,4 +225,65 @@ func ConvertMemoryMessageToLLMSMessage(msg ChatMessage) llm.Message {
 	}
 
 	return result
+}
+
+// repairToolCallPairsAfterTruncation 在内存溢出截断后修复 tool_call/tool_response 配对
+// 确保不会出现孤立的消息
+func (cm *ConversationMemory) repairToolCallPairsAfterTruncation() {
+	// 构建一个 tool_call_id → 是否有对应 assistant 的映射
+	toolCallIDsWithAssistant := make(map[string]bool)
+	// 构建一个 tool_call_id → 是否有对应 tool 响应的映射
+	toolCallIDsWithToolResponse := make(map[string]bool)
+
+	// 第一遍：收集所有 assistant 消息中的 tool_calls
+	for _, m := range cm.Messages {
+		if m.Type == MessageTypeAssistant && len(m.ToolCalls) > 0 {
+			for _, tc := range m.ToolCalls {
+				toolCallIDsWithAssistant[tc.ID] = true
+			}
+		}
+	}
+
+	// 第二遍：收集所有 tool 消息中的 tool_call_id
+	for _, m := range cm.Messages {
+		if m.Type == MessageTypeTool && m.ToolCallID != nil {
+			toolCallIDsWithToolResponse[*m.ToolCallID] = true
+		}
+	}
+
+	// 找出需要删除的消息索引（从后往前遍历，避免索引偏移）
+	removeIndices := make(map[int]bool)
+	for i, m := range cm.Messages {
+		if m.Type == MessageTypeAssistant && len(m.ToolCalls) > 0 {
+			for _, tc := range m.ToolCalls {
+				if !toolCallIDsWithToolResponse[tc.ID] {
+					// 这个 assistant 有 tool_calls 但没有对应的 tool 响应
+					// 降级此消息：移除 ToolCalls
+					cm.Messages[i].ToolCalls = nil
+					if cm.Messages[i].Content == "" {
+						cm.Messages[i].Content = "[系统提示：工具调用结果因内存限制被截断]"
+					}
+					slog.Warn("Memory truncation: removed orphaned tool_calls from assistant message", "tool_call_id", tc.ID)
+				}
+			}
+		}
+		if m.Type == MessageTypeTool && m.ToolCallID != nil {
+			if !toolCallIDsWithAssistant[*m.ToolCallID] {
+				// 孤立的 tool 响应，需要删除
+				removeIndices[i] = true
+				slog.Warn("Memory truncation: removing orphaned tool response", "tool_call_id", *m.ToolCallID)
+			}
+		}
+	}
+
+	// 从后往前删除孤立消息
+	if len(removeIndices) > 0 {
+		filtered := make([]ChatMessage, 0, len(cm.Messages)-len(removeIndices))
+		for i, m := range cm.Messages {
+			if !removeIndices[i] {
+				filtered = append(filtered, m)
+			}
+		}
+		cm.Messages = filtered
+	}
 }

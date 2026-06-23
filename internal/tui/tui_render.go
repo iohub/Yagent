@@ -351,7 +351,14 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 			entry.toolEntry.Result != nil &&
 			entry.toolEntry.Result.Content != "" &&
 			m.glamourRenderer != nil {
+			// 先查 Glamour 缓存
+			if cached, ok := m.getGlamourCached(entry.toolEntry.Result.Content); ok {
+				entry.setCachedRender(cached, width)
+				return cached
+			}
 			rendered := m.renderDeepThinkingEntry(entry)
+			// 写入 Glamour 缓存
+			m.putGlamourCached(entry.toolEntry.Result.Content, rendered)
 			entry.setCachedRender(rendered, width)
 			return rendered
 		}
@@ -368,8 +375,16 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	}
 
 	if entry.eventType == "ai_response" && m.glamourRenderer != nil {
+		// 先查 Glamour 缓存
+		if cached, ok := m.getGlamourCached(entry.content); ok {
+			collapsed := collapseAndHint(cached, entry, DefaultCollapseLines)
+			entry.setCachedRender(collapsed, width)
+			return collapsed
+		}
 		rendered, err := m.glamourRenderer.Render(entry.content)
 		if err == nil {
+			// 写入 Glamour 缓存
+			m.putGlamourCached(entry.content, rendered)
 			collapsed := collapseAndHint(rendered, entry, DefaultCollapseLines)
 			entry.setCachedRender(collapsed, width)
 			return collapsed

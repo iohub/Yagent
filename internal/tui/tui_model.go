@@ -1,12 +1,16 @@
 package tui
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"sync"
 
 	"codeactor/internal/app"
 	"codeactor/internal/config"
@@ -29,6 +33,55 @@ import (
 
 // Global Language Manager
 var langManager *LanguageManager
+
+// ── Glamour 缓存辅助函数 ──
+
+// glamourCacheKey 从内容生成缓存 key
+func glamourCacheKey(content string) string {
+	if len(content) == 0 {
+		return ""
+	}
+	h := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(h[:8]) // 16 字符，冲突概率极低
+}
+
+// getGlamourCached 获取缓存的渲染结果
+func (m *model) getGlamourCached(content string) (string, bool) {
+	key := glamourCacheKey(content)
+	m.glamourCacheMu.Lock()
+	defer m.glamourCacheMu.Unlock()
+	if r, ok := m.glamourCache[key]; ok {
+		return r, true
+	}
+	return "", false
+}
+
+// putGlamourCached 缓存渲染结果（LRU 淘汰）
+func (m *model) putGlamourCached(content, rendered string) {
+	key := glamourCacheKey(content)
+	if key == "" || rendered == "" {
+		return
+	}
+	m.glamourCacheMu.Lock()
+	defer m.glamourCacheMu.Unlock()
+
+	// 已存在则更新
+	if _, ok := m.glamourCache[key]; ok {
+		m.glamourCache[key] = rendered
+		return
+	}
+
+	// 插入新条目
+	m.glamourCache[key] = rendered
+	m.glamourLRU = append(m.glamourLRU, key)
+
+	// LRU 淘汰
+	for len(m.glamourLRU) > m.glamourCacheCap {
+		oldest := m.glamourLRU[0]
+		m.glamourLRU = m.glamourLRU[1:]
+		delete(m.glamourCache, oldest)
+	}
+}
 
 // keywordCompletionConfig 关键词补全配置
 type keywordCompletionConfig struct {
@@ -513,6 +566,7 @@ type model struct {
 	historyPage     int // 当前页码，0-indexed
 	historyPageSize int // 每页条数，固定20
 	historyLoading  bool
+	historyStyles   *historyStyles // 预计算的历史列表样式
 
 	// pendingDeleteTaskID tracks the task to delete when the delete confirmation
 	// dialog (a QuitConfirmDialog) is on the DialogStack.
@@ -558,6 +612,12 @@ type model struct {
 	cachedFooterHeight int
 	cachedSeparator    string
 	footerHeightValid  bool
+
+	// ── Glamour 渲染缓存（LRU） ──
+	glamourCache    map[string]string // key=content短哈希(16), value=渲染结果
+	glamourLRU      []string          // LRU 顺序列表
+	glamourCacheMu  sync.Mutex        // 因可能在 batch goroutine 中访问
+	glamourCacheCap int               // 缓存容量，初始化时设为 32
 
 	// ── Viewport 渲染缓存 ──
 	// viewport.View() 内部对每帧做 strings.Split 裁剪大段内容，
@@ -809,6 +869,11 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		// 性能优化标志
 		tickStarted:   false,
 		viewportDirty: false,
+
+		// ── Glamour 渲染缓存（LRU） ──
+		glamourCache:    make(map[string]string),
+		glamourLRU:      make([]string, 0, 32),
+		glamourCacheCap: 32,
 
 		// ── 增量内容构建相关 (Step 2) ──
 		contentParts:        make([]string, 0),

@@ -194,10 +194,13 @@ func runTUI(taskFile, disableAgents string) {
 	dataManager, err := datamanager.NewDataManager()
 	if err != nil {
 		slog.Error("Failed to initialize DataManager", "error", err)
+	} else {
+		dataManager.Start()
 	}
 
 	tui.StartTUI(taskFile, codeActor, taskManager, dataManager, config)
 	dataManager.FlushAll()
+	dataManager.Stop()
 }
 
 // runHTTP 启动 HTTP 服务器模式

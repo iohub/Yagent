@@ -32,6 +32,13 @@ type DataManager struct {
 	dataDir string
 	mu      sync.Mutex
 	writers map[string]*taskWriterState
+
+	// ── 任务历史索引 ──
+	index       *taskIndex
+	indexMu     sync.RWMutex
+	indexLoaded bool
+	persistCh   chan struct{} // 防抖持久化信号通道
+	stopCh      chan struct{} // 关闭信号
 }
 
 // NewDataManager 创建新的数据管理器
@@ -49,9 +56,16 @@ func NewDataManager() (*DataManager, error) {
 	}
 
 	return &DataManager{
-		dataDir: dataDir,
-		writers: make(map[string]*taskWriterState),
+		dataDir:     dataDir,
+		writers:     make(map[string]*taskWriterState),
+		persistCh:   make(chan struct{}, 1),
+		stopCh:      make(chan struct{}),
 	}, nil
+}
+
+// Start 启动 DataManager 的后台 goroutine（由调用方在初始化后调用）
+func (dm *DataManager) Start() {
+	go dm.indexPersistLoop()
 }
 
 // getOrCreateWriter 获取或创建任务的写入状态
@@ -74,6 +88,7 @@ func (dm *DataManager) flushWriter(taskID, filePath string, ws *taskWriterState)
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 	dm.doFlush(filePath, ws)
+	dm.updateIndexFromFile(taskID, filePath)
 }
 
 // doFlush 执行实际的写入操作（调用者需持有 ws.mu 锁）
@@ -156,6 +171,9 @@ func (dm *DataManager) SaveTaskMemory(taskID string, mem *memory.ConversationMem
 		dm.flushWriter(taskID, filePath, ws)
 	})
 
+	// 更新索引元数据（从 memory 中提取 title 和 timestamps）
+	dm.updateIndexFromMemory(taskID, mem)
+
 	return nil
 }
 
@@ -180,6 +198,9 @@ func (dm *DataManager) FlushTaskMemory(taskID string) error {
 		ws.timer = nil
 	}
 
+	// 更新索引（flush 后从文件状态同步）
+	dm.updateIndexFromFile(taskID, filePath)
+
 	return dm.doFlush(filePath, ws)
 }
 
@@ -199,6 +220,8 @@ func (dm *DataManager) FlushAll() error {
 			ws.mu.Unlock()
 			return err
 		}
+		// 更新索引（flush 后从文件状态同步）
+		dm.updateIndexFromFile(taskID, filePath)
 		ws.mu.Unlock()
 	}
 	return nil
@@ -392,131 +415,33 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 	return items, nil
 }
 
-// ListTaskHistoryFast 快速返回历史任务列表，只读取必要的行。
+// ListTaskHistoryFast 快速返回历史任务列表。
+// 优先使用内存索引（O(1) 读取），索引不可用时自动降级到全量扫描。
 // 相比 ListTaskHistory 性能更好，因为它：
-// 1. 只解析第一条人类消息作为标题
-// 2. 用行计数代替全量 JSON 解析来计算消息数
+// 1. 首次调用时自动构建内存索引（只扫描每个文件前 50 行）
+// 2. 后续调用直接从内存返回，零 I/O
+// 3. 写入路径自动更新索引并防抖持久化到磁盘
+// 4. 索引不可用时自动降级到 listTaskHistoryFallback（原来的全量扫描逻辑）
 func (dm *DataManager) ListTaskHistoryFast(limit int) ([]TaskHistoryItem, error) {
-	entries, err := os.ReadDir(dm.dataDir)
-	if err != nil {
-		return nil, err
+	if err := dm.ensureIndex(); err != nil {
+		fmt.Fprintf(os.Stderr, "[history] index unavailable, fallback: %v\n", err)
+		return dm.listTaskHistoryFallback(limit)
 	}
 
-	// 添加调试日志（输出到 stderr，不影响正常运行）
-	if len(entries) == 0 {
-		fmt.Fprintf(os.Stderr, "[history] no entries in task directory: %s\n", dm.dataDir)
+	dm.indexMu.RLock()
+	defer dm.indexMu.RUnlock()
+
+	items := make([]TaskHistoryItem, 0, len(dm.index.Tasks))
+	for _, e := range dm.index.Tasks {
+		items = append(items, TaskHistoryItem{
+			TaskID:       e.TaskID,
+			Title:        e.Title,
+			CreatedAt:    e.CreatedAt,
+			UpdatedAt:    e.UpdatedAt,
+			MessageCount: e.MsgCount,
+		})
 	}
 
-	var items []TaskHistoryItem
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			continue
-		}
-		path := filepath.Join(dm.dataDir, entry.Name())
-
-		f, err := os.Open(path)
-		if err != nil {
-			continue
-		}
-
-		var (
-			title       string
-			createdAt   time.Time
-			updatedAt   time.Time
-			lineCount   int
-			foundHuman  bool
-		)
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
-
-		// 轻量结构体，只解析需要的字段
-		var fieldOnly struct {
-			Type      string `json:"type"`
-			Content   string `json:"content"`
-			Timestamp string `json:"timestamp"`
-		}
-
-		for scanner.Scan() {
-			line := scanner.Text()
-			if len(line) == 0 {
-				continue
-			}
-			lineCount++
-
-			// 只解析有 type 字段的行（减少无效解析）
-			if !strings.Contains(line, `"type"`) {
-				continue
-			}
-
-			if err := json.Unmarshal([]byte(line), &fieldOnly); err != nil {
-				continue
-			}
-
-			// 追踪第一条人类消息
-			if !foundHuman && fieldOnly.Type == "human" {
-				title = strings.TrimSpace(fieldOnly.Content)
-				if ts, err := time.Parse(time.RFC3339, fieldOnly.Timestamp); err == nil {
-					createdAt = ts
-				}
-				foundHuman = true
-			}
-
-			// 追踪最后一条消息的时间
-			if fieldOnly.Timestamp != "" {
-				if ts, err := time.Parse(time.RFC3339, fieldOnly.Timestamp); err == nil {
-					updatedAt = ts
-				}
-			}
-		}
-		f.Close()
-		if err := scanner.Err(); err != nil {
-			continue
-		}
-
-		// 如果没有找到人类消息，使用文件名作为标题
-		if !foundHuman || title == "" {
-			title = entry.Name()
-		}
-
-		// CreatedAt fallback
-		if createdAt.IsZero() {
-			if info, err := entry.Info(); err == nil {
-				createdAt = info.ModTime()
-			} else {
-				createdAt = time.Now()
-			}
-		}
-
-		// UpdatedAt fallback
-		if updatedAt.IsZero() {
-			if info, err := entry.Info(); err == nil {
-				updatedAt = info.ModTime()
-			} else {
-				updatedAt = time.Now()
-			}
-		}
-
-		// 标题截断到 30 字符
-		if runeCount := len([]rune(title)); runeCount > 30 {
-			tr := []rune(title)
-			title = string(tr[:30]) + "…"
-		}
-
-		// 任务ID为文件名去后缀
-		nameLen := len(entry.Name())
-		if nameLen > 6 {
-			taskID := entry.Name()[:nameLen-6]
-			items = append(items, TaskHistoryItem{
-				TaskID:       taskID,
-				Title:        title,
-				CreatedAt:    createdAt,
-				UpdatedAt:    updatedAt,
-				MessageCount: lineCount,
-			})
-		}
-	}
-
-	// 按时间倒序
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].UpdatedAt.After(items[j].UpdatedAt)
 	})
@@ -525,6 +450,83 @@ func (dm *DataManager) ListTaskHistoryFast(limit int) ([]TaskHistoryItem, error)
 		items = items[:limit]
 	}
 	return items, nil
+}
+
+// updateIndexFromMemory 从 ConversationMemory 更新索引元数据
+func (dm *DataManager) updateIndexFromMemory(taskID string, mem *memory.ConversationMemory) {
+	if mem == nil || len(mem.Messages) == 0 {
+		return
+	}
+
+	var title string
+	var createdAt time.Time
+	var updatedAt time.Time
+
+	for _, msg := range mem.Messages {
+		if msg.Type == memory.MessageTypeHuman && title == "" {
+			title = strings.TrimSpace(msg.Content)
+			createdAt = msg.Timestamp
+		}
+		if !msg.Timestamp.IsZero() {
+			updatedAt = msg.Timestamp
+		}
+	}
+
+	// 标题截断
+	if runeCount := len([]rune(title)); runeCount > 30 {
+		tr := []rune(title)
+		title = string(tr[:30]) + "…"
+	}
+
+	msgCount := len(mem.Messages)
+
+	// 获取文件信息
+	filePath := filepath.Join(dm.dataDir, taskID+".jsonl")
+	info, err := os.Stat(filePath)
+	var fileSize int64
+	var mtime time.Time
+	if err == nil {
+		fileSize = info.Size()
+		mtime = info.ModTime()
+	}
+
+	dm.updateIndexEntry(taskID, title, createdAt, updatedAt, msgCount, fileSize, mtime)
+}
+
+// updateIndexFromFile 从文件状态更新索引（flush 后调用）
+func (dm *DataManager) updateIndexFromFile(taskID, filePath string) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return
+	}
+
+	dm.indexMu.RLock()
+	if dm.index == nil {
+		dm.indexMu.RUnlock()
+		return
+	}
+	entry, exists := dm.index.Tasks[taskID]
+	dm.indexMu.RUnlock()
+
+	if !exists {
+		// 条目不存在，从文件提取（懒加载）
+		newEntry, err := dm.extractMetaFromFile(filePath)
+		if err != nil {
+			return
+		}
+		dm.indexMu.Lock()
+		dm.index.Tasks[taskID] = newEntry
+		dm.indexMu.Unlock()
+		dm.schedulePersist()
+		return
+	}
+
+	dm.indexMu.Lock()
+	entry.FileSize = info.Size()
+	entry.Mtime = info.ModTime()
+	dm.index.Tasks[taskID] = entry
+	dm.indexMu.Unlock()
+	dm.schedulePersist()
 }
 
 // GetDataDir 获取数据目录路径

@@ -43,6 +43,9 @@ func NewServer(codeActor *app.CodeActor) *Server {
 	dataManager, err := datamanager.NewDataManager()
 	if err != nil {
 		slog.Error("Failed to initialize DataManager", "error", err)
+	} else {
+		dataManager.Start()
+		defer dataManager.Stop()
 	}
 
 	// 设置 WebSocket 处理器
