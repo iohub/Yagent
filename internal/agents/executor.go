@@ -11,6 +11,7 @@ import (
 	"codeactor/internal/memory"
 	"codeactor/internal/tools"
 	"codeactor/internal/messaging"
+	"codeactor/internal/messaging/peer"
 )
 
 // ExecutorConfig holds the configuration for running an LLM-tool agent loop.
@@ -35,6 +36,14 @@ type ExecutorConfig struct {
 	// OnToolResult is an optional callback invoked after each tool executes.
 	// Used by Conductor for special handling (e.g. delegate_repo → RepoSummary).
 	OnToolResult func(toolName string, result string)
+	// Mesh fields (Phase 1: P2P + Memory)
+	// AgentID identifies this agent in the Mesh topology.
+	AgentID string
+	// LayeredMem is the layered memory instance for cross-session context persistence.
+	// If nil, the loop behaves exactly as before (backward compatible).
+	LayeredMem *memory.LayeredMemory
+	// Peer provides P2P communication capability for this agent.
+	Peer peer.AgentPeer
 }
 
 // ExecutorResult 封装 RunAgentLoop 的完整执行结果
@@ -74,6 +83,58 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	messages := []llm.Message{systemMsg, userMsg}
 	history := make([]llm.Message, 0)
 	history = append(history, systemMsg, userMsg)
+
+	// Phase 1: Memory recovery — restore local messages from LayeredMem
+	if cfg.LayeredMem != nil {
+		if localMsgs := cfg.LayeredMem.GetLocalMessages(); len(localMsgs) > 0 {
+			for _, msg := range localMsgs {
+				// Convert memory.ChatMessage to llm.Message
+				var role llm.Role
+				switch msg.Type {
+				case memory.MessageTypeSystem:
+					role = llm.RoleSystem
+				case memory.MessageTypeHuman:
+					role = llm.RoleUser
+				case memory.MessageTypeAssistant:
+					role = llm.RoleAssistant
+				case memory.MessageTypeTool:
+					role = llm.RoleTool
+				default:
+					role = llm.RoleUser
+				}
+				llmMsg := llm.Message{
+					Role:    role,
+					Content: msg.Content,
+				}
+				// Map tool calls for assistant messages
+				if role == llm.RoleAssistant {
+					for _, tc := range msg.ToolCalls {
+						llmMsg.ToolCalls = append(llmMsg.ToolCalls, llm.ToolCall{
+							ID:   tc.ID,
+							Type: tc.Type,
+							Function: llm.FunctionCall{
+								Name:      tc.Function.Name,
+								Arguments: string(tc.Function.Arguments),
+							},
+						})
+					}
+				}
+				// Map tool call id for tool messages
+				if role == llm.RoleTool && msg.ToolCallID != nil {
+					llmMsg.ToolCallID = *msg.ToolCallID
+				}
+				messages = append(messages, llmMsg)
+				history = append(history, llmMsg)
+			}
+		}
+	}
+
+	// Phase 1: P2P tool injection
+	var p2pAdapters []*tools.Adapter
+	if cfg.Peer != nil && cfg.AgentID != "" {
+		p2pAdapters = buildP2PTeamAdapters(cfg.Peer, cfg.AgentID)
+		cfg.Adapters = append(cfg.Adapters, p2pAdapters...)
+	}
 
 	toolDefs := make([]llm.ToolDef, len(cfg.Adapters))
 	for i, ad := range cfg.Adapters {
@@ -180,6 +241,11 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		messages = append(messages, assistantMsg)
 		history = append(history, assistantMsg)
 
+		// Phase 1: Write assistant message to LayeredMem
+		if cfg.LayeredMem != nil {
+			cfg.LayeredMem.AddMessage(convertLLMToChatMessage(assistantMsg))
+		}
+
 		if len(choice.ToolCalls) == 0 {
 			return ExecutorResult{Text: choice.Content, History: history}, nil
 		}
@@ -231,12 +297,18 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
 			})
-			history = append(history, llm.Message{
+			toolMsg := llm.Message{
 				Role:       llm.RoleTool,
 				Content:    toolResult,
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
-			})
+			}
+			history = append(history, toolMsg)
+
+			// Phase 1: Write tool message to LayeredMem
+			if cfg.LayeredMem != nil {
+				cfg.LayeredMem.AddMessage(convertLLMToChatMessage(toolMsg))
+			}
 
 			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" {
 				return ExecutorResult{Text: toolResult, History: history}, nil
@@ -282,6 +354,150 @@ func ConvertLLMHistoryToMemory(history []llm.Message) []memory.ChatMessage {
 		result = append(result, cm)
 	}
 	return result
+}
+
+// convertLLMToChatMessage 将单条 llm.Message 转换为 memory.ChatMessage
+// 不标记 IsSubAgent，用于 LayeredMem 内部存储
+func convertLLMToChatMessage(msg llm.Message) memory.ChatMessage {
+	cm := memory.ChatMessage{}
+	switch msg.Role {
+	case llm.RoleSystem:
+		cm.Type = memory.MessageTypeSystem
+	case llm.RoleUser:
+		cm.Type = memory.MessageTypeHuman
+	case llm.RoleAssistant:
+		cm.Type = memory.MessageTypeAssistant
+		for _, tc := range msg.ToolCalls {
+			cm.ToolCalls = append(cm.ToolCalls, memory.ToolCallData{
+				ID:   tc.ID,
+				Type: tc.Type,
+				Function: memory.ToolCallFunction{
+					Name:      tc.Function.Name,
+					Arguments: json.RawMessage(tc.Function.Arguments),
+				},
+			})
+		}
+	case llm.RoleTool:
+		cm.Type = memory.MessageTypeTool
+		cm.ToolCallID = &msg.ToolCallID
+	}
+	cm.Content = msg.Content
+	return cm
+}
+
+// buildP2PTeamAdapters 构建 P2P 工具适配器（p2p_query 和 p2p_notify）
+func buildP2PTeamAdapters(p peer.AgentPeer, agentID string) []*tools.Adapter {
+	return []*tools.Adapter{
+		tools.NewAdapter("p2p_query",
+			"Send a synchronous P2P query to another agent and get a structured response. Use this when you need information that another agent has (e.g., ask repo-agent for code analysis, browser-agent for web page state).",
+			func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				targetID, _ := params["target_agent"].(string)
+				method, _ := params["method"].(string)
+				payloadRaw, _ := params["payload"]
+				if targetID == "" || method == "" {
+					return nil, fmt.Errorf("p2p_query: target_agent and method are required")
+				}
+				var payloadBytes []byte
+				if payloadRaw != nil {
+					switch v := payloadRaw.(type) {
+					case string:
+						payloadBytes = []byte(v)
+					case []byte:
+						payloadBytes = v
+					case map[string]interface{}:
+						var err error
+						payloadBytes, err = json.Marshal(v)
+						if err != nil {
+							return nil, fmt.Errorf("p2p_query: marshal payload: %w", err)
+						}
+					case nil:
+						payloadBytes = []byte("{}")
+					default:
+						payloadBytes = []byte("{}")
+					}
+				} else {
+					payloadBytes = []byte("{}")
+				}
+				timeout := 10 * time.Second
+				if to, ok := params["timeout"].(float64); ok && to > 0 {
+					timeout = time.Duration(to) * time.Second
+				}
+				resp, err := p.Request(ctx, method, targetID, payloadBytes, timeout)
+				if err != nil {
+					return nil, fmt.Errorf("p2p_query to %s via %s: %w", targetID, method, err)
+				}
+				return string(resp), nil
+			}).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"target_agent": map[string]interface{}{
+					"type":        "string",
+					"description": "Target agent ID (e.g., 'repo-agent', 'browser-agent', 'devops-agent')",
+				},
+				"method": map[string]interface{}{
+					"type":        "string",
+					"description": "The P2P method/rpc name to call on the target agent",
+				},
+				"payload": map[string]interface{}{
+					"type":        "object",
+					"description": "JSON-serializable payload to send to the target agent",
+				},
+				"timeout": map[string]interface{}{
+					"type":        "number",
+					"description": "Timeout in seconds (default: 10)",
+				},
+			},
+			"required": []string{"target_agent", "method"},
+		}),
+		tools.NewAdapter("p2p_notify",
+			"Broadcast a P2P notification event to all subscribed agents. Use this to inform other agents about state changes (e.g., file modified, task completed).",
+			func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				topic, _ := params["topic"].(string)
+				payloadRaw, _ := params["payload"]
+				if topic == "" {
+					return nil, fmt.Errorf("p2p_notify: topic is required")
+				}
+				var payloadBytes []byte
+				if payloadRaw != nil {
+					switch v := payloadRaw.(type) {
+					case string:
+						payloadBytes = []byte(v)
+					case []byte:
+						payloadBytes = v
+					case map[string]interface{}:
+						var err error
+						payloadBytes, err = json.Marshal(v)
+						if err != nil {
+							return nil, fmt.Errorf("p2p_notify: marshal payload: %w", err)
+						}
+					case nil:
+						payloadBytes = []byte("{}")
+					default:
+						payloadBytes = []byte("{}")
+					}
+				} else {
+					payloadBytes = []byte("{}")
+				}
+				err := p.Publish(ctx, topic, payloadBytes)
+				if err != nil {
+					return nil, fmt.Errorf("p2p_notify on topic %s: %w", topic, err)
+				}
+				return map[string]interface{}{"status": "published", "topic": topic}, nil
+			}).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"topic": map[string]interface{}{
+					"type":        "string",
+					"description": "The topic to publish to (e.g., 'file.modified', 'task.completed')",
+				},
+				"payload": map[string]interface{}{
+					"type":        "object",
+					"description": "JSON-serializable event data to broadcast",
+				},
+			},
+			"required": []string{"topic"},
+		}),
+	}
 }
 
 // logToolCall records a tool call with formatted arguments, duration, and error info.

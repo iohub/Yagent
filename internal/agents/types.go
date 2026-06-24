@@ -27,7 +27,8 @@ type Agent interface {
 type BaseAgent struct {
 	LLM       llm.Engine
 	Publisher *messaging.MessagePublisher
-	Peer      peer.AgentPeer // 新增：P2P 通信能力
+	Peer      peer.AgentPeer     // 新增：P2P 通信能力
+	LayeredMem *memory.LayeredMemory // 分层记忆（Local + Shared）
 }
 
 // InitPeer 在共享 EventBus 上初始化 Agent 的 P2P 身份。

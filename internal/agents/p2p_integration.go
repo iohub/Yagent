@@ -12,6 +12,57 @@ import (
 )
 
 // ============================================================================
+// 通用 P2P 工具（不限于符号表），供所有 Agent 使用
+// ============================================================================
+
+// P2PQuery 通用 P2P 查询工具
+// 可以通过此工具直接向其他 Agent 查询信息（例如 coding-agent 向 repo-agent 查询代码分析）
+func P2PQuery(ctx context.Context, peer peer.AgentPeer, targetID string, method string, payload interface{}, timeout time.Duration) ([]byte, error) {
+	if peer == nil {
+		return nil, fmt.Errorf("p2p: peer is nil")
+	}
+	if targetID == "" || method == "" {
+		return nil, fmt.Errorf("p2p: targetID and method are required")
+	}
+	var payloadBytes []byte
+	if payload != nil {
+		var err error
+		payloadBytes, err = json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("p2p: marshal payload: %w", err)
+		}
+	} else {
+		payloadBytes = []byte("{}")
+	}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	return peer.Request(ctx, method, targetID, payloadBytes, timeout)
+}
+
+// P2PNotify 通用 P2P 通知工具
+// 向所有订阅了特定 topic 的 Agent 广播事件
+func P2PNotify(ctx context.Context, peer peer.AgentPeer, topic string, payload interface{}) error {
+	if peer == nil {
+		return fmt.Errorf("p2p: peer is nil")
+	}
+	if topic == "" {
+		return fmt.Errorf("p2p: topic is required")
+	}
+	var payloadBytes []byte
+	if payload != nil {
+		var err error
+		payloadBytes, err = json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("p2p: marshal payload: %w", err)
+		}
+	} else {
+		payloadBytes = []byte("{}")
+	}
+	return peer.Publish(ctx, topic, payloadBytes)
+}
+
+// ============================================================================
 // 符号表结构
 // ============================================================================
 
