@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 )
@@ -716,4 +717,173 @@ func RenderAgentSeparator(agent string, width int) string {
 	middle := lineStyle.Render(strings.Repeat("─", dashes))
 
 	return prefix + name + middle + suffix
+}
+
+// ── Timeline Rendering ──
+
+// timelineNodeFor returns the appropriate node glyph for a timeline entry.
+func timelineNodeFor(e *TimelineEntry) string {
+	if e.Kind == TimelineKindLLMCall {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true).Render("◇") // blue diamond
+	}
+	if e.Kind == TimelineKindContextEvent {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("⊛") // magenta asterisk
+	}
+	// Tool call
+	switch e.Status {
+	case ToolStatusRunning:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true).Render("●") // yellow
+	case ToolStatusSuccess:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Bold(true).Render("●") // green
+	case ToolStatusError:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true).Render("●") // red
+	case ToolStatusPending:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Bold(true).Render("○") // gray
+	case ToolStatusCanceled:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true).Render("●") // dim gray
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Bold(true).Render("○")
+	}
+}
+
+// formatTimelineDuration formats a duration for timeline display.
+func formatTimelineDuration(d time.Duration) string {
+	if d == 0 {
+		return ""
+	}
+	if d < time.Millisecond {
+		return fmt.Sprintf("%dµs", d.Microseconds())
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%.1fm", d.Minutes())
+}
+
+// RenderTimeline renders the full tool timeline panel.
+// When expanded is false, only shows the currently running tool (or last completed tool).
+// When expanded is true, shows up to maxTimelineEntries entries.
+func RenderTimeline(entries []*TimelineEntry, expanded bool, width int) string {
+	const maxTimelineEntries = 20
+	if width < 30 {
+		width = 30
+	}
+
+	// Determine visible entries
+	var visible []*TimelineEntry
+	if len(entries) == 0 {
+		// Idle state
+		line := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("○ idle")
+		return addTimelineTopBorder(line, width)
+	}
+
+	if expanded {
+		// Show up to maxTimelineEntries most recent
+		start := 0
+		if len(entries) > maxTimelineEntries {
+			start = len(entries) - maxTimelineEntries
+		}
+		visible = entries[start:]
+	} else {
+		// Compact: find running tool first, then last entry
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entries[i].Kind == TimelineKindTool && entries[i].Status == ToolStatusRunning {
+				visible = []*TimelineEntry{entries[i]}
+				break
+			}
+		}
+		if len(visible) == 0 {
+			// Show the most recent entry
+			visible = []*TimelineEntry{entries[len(entries)-1]}
+		}
+	}
+
+	// Build timeline lines
+	var lines []string
+	for i, e := range visible {
+		isLast := i == len(visible)-1
+		lines = append(lines, renderTimelineRow(e, width))
+
+		// Vertical connector between entries
+		if !isLast && expanded {
+			connector := timelineLineStyle.Render("│")
+			lines = append(lines, " "+connector)
+		}
+	}
+
+	content := strings.Join(lines, "\n")
+	return addTimelineTopBorder(content, width)
+}
+
+// timeline visual styles
+var (
+	timelineLineStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	timelineBorderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+	timelineNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	timelineDetailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	timelineDurationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	timelineRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("228")) // yellow for running
+)
+
+// addTimelineTopBorder wraps content with a thin top border line.
+func addTimelineTopBorder(content string, width int) string {
+	border := timelineBorderStyle.Render(strings.Repeat("─", width))
+	return border + "\n" + content
+}
+
+// renderTimelineRow renders a single timeline entry row.
+// Format: " ● read_file  /path/to/file          1.2s"
+func renderTimelineRow(e *TimelineEntry, width int) string {
+	node := timelineNodeFor(e)
+
+	// Name styling
+	nameStr := e.Name
+	if displayName := DisplayToolName(e.Name); displayName != e.Name {
+		nameStr = displayName
+	}
+	nameStyle := timelineNameStyle
+	var name string
+	if e.Status == ToolStatusRunning {
+		name = timelineRunningStyle.Render(nameStr)
+	} else if e.IsError || e.Status == ToolStatusError {
+		name = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Render(nameStr)
+	} else {
+		name = nameStyle.Render(nameStr)
+	}
+
+	// Duration
+	var durStr string
+	if e.Duration > 0 {
+		dur := formatTimelineDuration(e.Duration)
+		durStr = " " + timelineDurationStyle.Render(dur)
+	} else if e.Status == ToolStatusRunning {
+		durStr = " " + timelineRunningStyle.Render("running")
+	}
+
+	// Build base line: "◇ llm_call          1.2s"
+	// or "● read_file   ...   running"
+	leftPart := fmt.Sprintf(" %s %s", node, name)
+	if e.Detail != "" {
+		// Truncate detail to fit
+		detailMax := 40
+		detail := e.Detail
+		if len(detail) > detailMax {
+			detail = detail[:detailMax-1] + "…"
+		}
+		leftPart += " " + timelineDetailStyle.Render("· "+detail)
+	}
+
+	// Right-align duration
+	rightPart := durStr
+	leftWidth := lipgloss.Width(leftPart)
+	rightWidth := lipgloss.Width(rightPart)
+	padding := width - leftWidth - rightWidth - 2 // -2 for safety margin
+	if padding < 1 {
+		padding = 1
+	}
+
+	return leftPart + strings.Repeat(" ", padding) + rightPart
 }

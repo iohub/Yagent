@@ -81,3 +81,24 @@ func (e *ToolEntry) Rendered() string {
 func (e *ToolEntry) SetRendered(r string) {
 	e.rendered = r
 }
+
+// TimelineKind 表示时间线条目的种类
+type TimelineKind int
+
+const (
+	TimelineKindTool    TimelineKind = iota // 工具调用
+	TimelineKindLLMCall                     // LLM 调用
+	TimelineKindContextEvent                // 上下文事件（压缩、commit加载等）
+)
+
+// TimelineEntry 表示时间线面板中的一个执行条目
+type TimelineEntry struct {
+	ID        string        // 工具调用 ID 或合成 ID
+	Kind      TimelineKind  // 条目种类
+	Timestamp time.Time     // 事件发生时间
+	Status    ToolStatus    // 工具状态
+	Name      string        // 名称，如 "read_file", "llm_call", "context_compressed"
+	Detail    string        // 详细信息（文件路径、命令摘要等）
+	Duration  time.Duration // 执行耗时（完成后设置）
+	IsError   bool          // 是否出错
+}

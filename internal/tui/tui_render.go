@@ -21,6 +21,22 @@ func (m *model) computeFooterHeight() int {
 
 	height := 1 // separator line
 
+	// Tool timeline panel (when entries exist)
+	if m.taskRunning || len(m.timelineEntries) > 0 {
+		height += 2 // top border + at least 1 content line
+		if m.timelineExpanded {
+			n := len(m.timelineEntries)
+			if n > 20 {
+				n = 20
+			}
+			if n > 1 {
+				height += n*2 - 1 // entries + connectors between them
+			} else if n == 1 {
+				height += 1
+			}
+		}
+	}
+
 	// Input area (only in edit mode; hidden in command mode)
 	if !m.commandMode {
 		// inputPanelStyle = Border(top+bottom=2) + MarginTop(1) → 3 extra lines
@@ -322,6 +338,12 @@ func (m *model) assembleViewportContent() {
 		for i, part := range m.contentParts {
 			entry := &m.logEntries[i]
 
+			// Verbose entries (tool calls, LLM calls, context events) are now 
+			// displayed in the tool timeline panel instead of the main view.
+			if entry.isVerbose {
+				continue
+			}
+
 			// 统一Agent上下文管理：所有条目类型都追踪Agent切换
 			if entry.from != "" && entry.from != lastAgent {
 				if entry.eventType == "ai_response" {
@@ -621,6 +643,33 @@ func extractResultBrief(toolName string, result string) string {
 	}
 }
 
+// isVerboseEventType returns true if the event type contains operational
+// details that should be hidden by default (shown only in verbose mode).
+//
+// Verbose events include:
+//   - Tool calls (file operations, command execution, etc.)
+//   - LLM API calls (request/response details)
+//   - Context compression notifications
+//   - Commit knowledge loading notifications
+//
+// Non-verbose events (always shown):
+//   - User messages
+//   - Assistant responses
+//   - Error messages
+//   - System status messages
+//   - Agent headers
+//   - Task completion notifications
+func isVerboseEventType(eventType string) bool {
+	switch eventType {
+	case "tool_call_start", "tool_call_result",
+		"llm_call_start", "llm_call_end",
+		"context_compressed", "commit_context_loaded",
+		"model_info", "thinking":
+		return true
+	}
+	return false
+}
+
 // formatEventAsEntry converts a MessageEvent to a logEntry.
 func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 	entry := logEntry{
@@ -849,6 +898,9 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			}
 		}
 	}
+
+	// Set verbose flag based on event type
+	entry.isVerbose = isVerboseEventType(string(event.Type))
 
 	return entry
 }

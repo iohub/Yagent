@@ -143,6 +143,15 @@ func (m model) View() tea.View {
 		b.WriteString(m.cachedViewportView)
 	}
 
+	// ── Tool Timeline Panel (between viewport and separator) ──
+	if m.taskRunning || len(m.timelineEntries) > 0 {
+		timelineContent := m.renderTimelinePanel(m.termWidth)
+		if timelineContent != "" {
+			b.WriteString("\n")
+			b.WriteString(timelineContent)
+		}
+	}
+
 	// Separator (cached)
 	if m.cachedSeparator == "" {
 		sepWidth := m.termWidth
@@ -240,6 +249,28 @@ func (m model) View() tea.View {
 	b.WriteString(footer.String())
 
 	return tea.View{AltScreen: true, Content: b.String()}
+}
+
+// renderTimelinePanel renders the tool timeline panel with caching.
+func (m *model) renderTimelinePanel(width int) string {
+	// Build cache key: entries count + last entry ID + expanded state + width
+	var lastID string
+	if len(m.timelineEntries) > 0 {
+		lastID = m.timelineEntries[len(m.timelineEntries)-1].ID
+	}
+	expandedStr := "0"
+	if m.timelineExpanded {
+		expandedStr = "1"
+	}
+	key := fmt.Sprintf("%d|%s|%s|%d", len(m.timelineEntries), lastID, expandedStr, width)
+
+	if key == m.timelineCacheKey && m.timelineCache != "" {
+		return m.timelineCache
+	}
+
+	m.timelineCache = RenderTimeline(m.timelineEntries, m.timelineExpanded, width)
+	m.timelineCacheKey = key
+	return m.timelineCache
 }
 
 // renderAirlineStatusBar renders an nvim airline-style segmented status bar.

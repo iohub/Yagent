@@ -137,10 +137,12 @@ func getHelpContent(lang Language) string {
 			"    :help           显示命令帮助\n" +
 			"    /pattern        搜索日志\n" +
 			"    :model          切换模型提供商\n" +
+			"    :timeline       切换工具时间线\n" +
 			"  消息:\n" +
 			"    ctrl+o         全部展开/全部折叠长消息\n" +
 			"  其他:\n" +
 			"    ?               显示此帮助\n" +
+			"    ctrl+v          切换工具时间线（折叠/展开历史）\n" +
 			"    ctrl+c          强制退出"
 	}
 	return "  Navigation:\n" +
@@ -158,9 +160,11 @@ func getHelpContent(lang Language) string {
 		"    :help          show command help\n" +
 		"    /pattern       search log\n" +
 		"    :model         switch LLM provider\n" +
+		"    :timeline       toggle tool timeline\n" +
 		"  Messages:\n" +
 		"    ctrl+o         expand/collapse all long messages\n" +
 		"  Other:\n" +
 		"    ?              show this help\n" +
+		"    ctrl+v          toggle tool timeline (compact/full history)\n" +
 		"    ctrl+c         force quit"
 }

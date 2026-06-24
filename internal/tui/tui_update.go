@@ -291,6 +291,17 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 			content:   fmt.Sprintf("Current mode: %s | Task running: %v | Buffer: %q", mode, m.taskRunning, m.commandBuffer),
 		})
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+
+	// ═══════════════════════════════════════════════════════════════
+	// :timeline — Toggle tool timeline (compact / full history)
+	// Replaces the old :verbose command. Uses ctrl+v keyboard shortcut.
+	// ═══════════════════════════════════════════════════════════════
+	case cmd == ":timeline":
+		m.timelineExpanded = !m.timelineExpanded
+		m.timelineCacheKey = "" // invalidate cache
+		m.invalidateFooterCache()
+		return nil
+
 	// ═══════════════════════════════════════════════════════════════
 	// :model — Switch LLM provider (interactive dialog or direct)
 	// 支持设置不同 agent 的模型，不支持设置 tool 的模型
@@ -1042,6 +1053,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.invalidateFooterCache()
 				return m, nil
 
+			// ── Tool timeline toggle ──
+			case "ctrl+v":
+				m.timelineExpanded = !m.timelineExpanded
+				m.timelineCacheKey = "" // invalidate cache
+				m.invalidateFooterCache()
+				return m, nil
+
 			// ── Misc ──
 			case "ctrl+l":
 				m.toggleLanguage()
@@ -1095,6 +1113,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Enter command mode
 			m.commandMode = true
 			m.commandBuffer = ""
+			m.invalidateFooterCache()
+			return m, nil
+
+		case "ctrl+v":
+			// Toggle tool timeline (compact / full history)
+			m.timelineExpanded = !m.timelineExpanded
+			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
 			return m, nil
 
@@ -1492,6 +1517,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			callID := fmt.Sprintf("llm_%s_%d", msg.event.From, msg.event.Timestamp.UnixNano())
 			entry.toolCallID = callID
 
+			// Add timeline entry for LLM call
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        callID,
+				Kind:      TimelineKindLLMCall,
+				Timestamp: msg.event.Timestamp,
+				Status:    ToolStatusRunning,
+				Name:      "llm_call",
+				Detail:    entry.content,
+			})
+			m.timelineCacheKey = "" // invalidate cache
+
 			m.logEntries = append(m.logEntries, entry)
 			m.viewportDirty = true
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -1507,6 +1543,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.event.Type == "llm_call_end" {
 			if idx, ok := m.llmCallActiveEntries[msg.event.From]; ok && idx >= 0 && idx < len(m.logEntries) {
 				delete(m.llmCallActiveEntries, msg.event.From)
+
+				// Update timeline entry for LLM call end
+				for i := len(m.timelineEntries) - 1; i >= 0; i-- {
+					if m.timelineEntries[i].Kind == TimelineKindLLMCall && m.timelineEntries[i].Status == ToolStatusRunning {
+						var duration time.Duration
+						if durationRaw, ok := msg.event.Metadata["duration_seconds"]; ok {
+							if dur, ok := durationRaw.(float64); ok {
+								duration = time.Duration(dur * float64(time.Second))
+							}
+						}
+						m.timelineEntries[i].Status = ToolStatusSuccess
+						m.timelineEntries[i].Duration = duration
+						m.timelineEntries[i].IsError = false
+						if errStr, ok := msg.event.Metadata["error"]; ok && errStr != "" {
+							m.timelineEntries[i].Status = ToolStatusError
+							m.timelineEntries[i].IsError = true
+							m.timelineEntries[i].Detail = fmt.Sprintf("%v", errStr)
+						}
+						break
+					}
+				}
+				m.timelineCacheKey = ""
 
 				// Update the log entry with end information
 				le := &m.logEntries[idx]
@@ -1574,6 +1632,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						from:      msg.event.From,
 						content:   fmt.Sprintf("📦 Loaded %d relevant commit(s) for context", countInt),
 					}
+					// Add timeline entry for commit context loading
+					m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+						ID:        fmt.Sprintf("ctx_%d", msg.event.Timestamp.UnixNano()),
+						Kind:      TimelineKindContextEvent,
+						Timestamp: msg.event.Timestamp,
+						Status:    ToolStatusSuccess,
+						Name:      "commit_context",
+						Detail:    fmt.Sprintf("Loaded %d commits", countInt),
+					})
+					m.timelineCacheKey = ""
 					m.logEntries = append(m.logEntries, entry)
 					m.viewportDirty = true
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -1595,6 +1663,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Content:    resultContent,
 						IsError:    isError,
 					})
+					// Update timeline entry for tool result
+					for i := len(m.timelineEntries) - 1; i >= 0; i-- {
+						if m.timelineEntries[i].ID == callID && m.timelineEntries[i].Kind == TimelineKindTool {
+							m.timelineEntries[i].Status = ToolStatusSuccess
+							m.timelineEntries[i].Duration = time.Since(m.timelineEntries[i].Timestamp)
+							m.timelineEntries[i].IsError = isError
+							if isError {
+								m.timelineEntries[i].Status = ToolStatusError
+							}
+							m.timelineEntries[i].Detail = extractToolSummary(toolEntry.Call.Name, toolEntry.Call.Arguments)
+							break
+						}
+					}
+					m.timelineCacheKey = ""
 					// Update the log entry content and diff for backward compat
 					if idx := findLogEntryByToolCallID(m.logEntries, callID); idx >= 0 {
 						le := &m.logEntries[idx]
@@ -1624,6 +1706,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Content:    resultContent,
 						IsError:    isError,
 					})
+					// Update timeline entry for tool result
+					for i := len(m.timelineEntries) - 1; i >= 0; i-- {
+						if m.timelineEntries[i].ID == matchedID && m.timelineEntries[i].Kind == TimelineKindTool {
+							m.timelineEntries[i].Status = ToolStatusSuccess
+							m.timelineEntries[i].Duration = time.Since(m.timelineEntries[i].Timestamp)
+							m.timelineEntries[i].IsError = isError
+							if isError {
+								m.timelineEntries[i].Status = ToolStatusError
+							}
+							m.timelineEntries[i].Detail = extractToolSummary(matchedEntry.Call.Name, matchedEntry.Call.Arguments)
+							break
+						}
+					}
+					m.timelineCacheKey = ""
 					if idx := findLogEntryByToolCallID(m.logEntries, matchedID); idx >= 0 {
 						le := &m.logEntries[idx]
 						le.content = resultContent
@@ -1648,6 +1744,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if entry.eventType == "tool_call_start" && entry.toolCallID != "" {
 			m.toolCallEntries[entry.toolCallID] = entry.toolEntry
 			m.activeAnim = true
+		}
+
+		// Route tool_call_start to timeline
+		if entry.eventType == "tool_call_start" && entry.toolCallID != "" && entry.toolEntry != nil {
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        entry.toolCallID,
+				Kind:      TimelineKindTool,
+				Timestamp: entry.timestamp,
+				Status:    ToolStatusRunning,
+				Name:      entry.toolName,
+				Detail:    entry.executionSummary,
+			})
+			m.timelineCacheKey = ""
+		}
+
+		// Route context_compressed events to timeline
+		if entry.eventType == "context_compressed" {
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        fmt.Sprintf("cmp_%d", entry.timestamp.UnixNano()),
+				Kind:      TimelineKindContextEvent,
+				Timestamp: entry.timestamp,
+				Status:    ToolStatusSuccess,
+				Name:      "context_compressed",
+				Detail:    entry.content,
+			})
+			m.timelineCacheKey = ""
 		}
 
 		m.logEntries = append(m.logEntries, entry)

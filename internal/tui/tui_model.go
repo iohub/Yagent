@@ -267,6 +267,12 @@ type logEntry struct {
 
 	// Tool entry for new-style rendering (non-nil for tool events)
 	toolEntry *ToolEntry
+
+	// isVerbose marks entries that contain operational details
+	// (tool calls, LLM calls, internal operations).
+	// These are always hidden from the main view and displayed
+	// in the tool timeline panel instead (toggle with ctrl+v).
+	isVerbose bool
 }
 
 // getCachedRender returns the cached render for the given width.
@@ -523,6 +529,12 @@ type model struct {
 	commandMode   bool
 	commandBuffer string // hidden command input buffer in command mode
 	lastKey       string // tracks previous key for multi-key sequences (gg)
+
+	// Timeline entries for the tool timeline panel (replaces verbose mode)
+	timelineEntries  []*TimelineEntry // 有序的时间线条目
+	timelineExpanded bool             // 是否展开显示全部历史
+	timelineCache    string           // 缓存的渲染结果
+	timelineCacheKey string           // 缓存键 (len + expanded + width)
 
 	// Skill autocomplete in edit mode (inline, not popup)
 	skillAutoComplete  bool     // whether autocomplete suggestions are shown
@@ -881,9 +893,13 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		// 补全结果缓存 - 使用细粒度缓存键
 		autocompleteCache: make(map[autocompleteCacheKey]*AutocompleteResult),
 
-		// 性能优化标志
+		// Performance optimization flags
 		tickStarted:   false,
 		viewportDirty: false,
+
+		// Timeline initialization
+		timelineEntries:  make([]*TimelineEntry, 0),
+		timelineExpanded: false,
 
 		// ── Glamour 渲染缓存（LRU） ──
 		glamourCache:    make(map[string]string),
