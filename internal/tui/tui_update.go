@@ -1814,7 +1814,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskCompleteMsg:
 		m.taskRunning = false
 		m.currentAgent = ""
-		m.commandMode = false
 		m.dialogStack.CloseDialog("confirm_dialog") // safety: close any stale dialog
 		m.invalidateFooterCache()
 
@@ -2019,11 +2018,18 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.invalidateFooterCache()
 			return m, nil
 
-		// ── ctrl+c: 强制退出 ──
+		// ── ctrl+c: 退出全屏 → 显示退出确认 ──
 		case "ctrl+c":
-			m.saveRunningTaskMemory()
-			m.quitting = true
-			return m, tea.Quit
+			m.timelineExpanded = true
+			m.timelineFullscreenMode = false
+			m.timelineFullscreenCursor = 0
+			m.timelineDetailVP = nil
+			m.timelineCacheKey = ""
+			m.invalidateFooterCache()
+			d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
+			d.SetBounds(m.termWidth, m.termHeight)
+			m.dialogStack.Push(d)
+			return m, nil
 
 		// ── 列表导航 ──
 		case "j", "down":
