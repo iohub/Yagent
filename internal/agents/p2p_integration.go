@@ -9,6 +9,7 @@ import (
 
 	"codeactor/internal/messaging/bus"
 	"codeactor/internal/messaging/peer"
+	"codeactor/internal/registry"
 )
 
 // ============================================================================
@@ -227,4 +228,81 @@ func InitAgentMeshP2P(repo *RepoAgent, coding *CodingAgent) error {
 		return fmt.Errorf("init coding p2p: %w", err)
 	}
 	return nil
+}
+
+// ============================================================================
+// 默认能力注册（供 AgentMesh 在初始化时调用）
+// ============================================================================
+
+// DefaultRepoCapability 返回 RepoAgent 的默认能力定义
+func DefaultRepoCapability() registry.AgentCapability {
+	return registry.AgentCapability{
+		Name:        "Code Analyst",
+		Description: "Analyzes code repositories using semantic search and codebase tools. Can find function definitions, explore code structure, search for patterns, and analyze code architecture.",
+		Tags:        []string{"go", "python", "javascript", "typescript", "rust", "code-analysis", "code-search", "repository", "semantic-search", "codebase"},
+		Version:     "1.0.0",
+	}
+}
+
+// DefaultCodingCapability 返回 CodingAgent 的默认能力定义
+func DefaultCodingCapability() registry.AgentCapability {
+	return registry.AgentCapability{
+		Name:        "Code Engineer",
+		Description: "Writes, edits, and debugs code. Can create new files, apply patches, run shell commands, execute tests, and perform debugging. Supports Go, Python, JavaScript, TypeScript, Rust, and other languages.",
+		Tags:        []string{"go", "python", "javascript", "typescript", "rust", "coding", "debugging", "testing", "file-editing", "shell"},
+		Version:     "1.0.0",
+	}
+}
+
+// DefaultChatCapability 返回 ChatAgent 的默认能力定义
+func DefaultChatCapability() registry.AgentCapability {
+	return registry.AgentCapability{
+		Name:        "Communicator",
+		Description: "Provides general knowledge, explanations, and casual conversation. Can answer questions about programming concepts, technologies, and general topics.",
+		Tags:        []string{"general-knowledge", "explanation", "qa", "documentation", "chat"},
+		Version:     "1.0.0",
+	}
+}
+
+// DefaultDevOpsCapability 返回 DevOpsAgent 的默认能力定义
+func DefaultDevOpsCapability() registry.AgentCapability {
+	return registry.AgentCapability{
+		Name:        "DevOps Engineer",
+		Description: "Handles system administration and operational tasks. Can run shell commands, inspect files, check logs, manage processes, and perform system diagnostics.",
+		Tags:        []string{"shell", "system", "devops", "infrastructure", "monitoring", "logging", "process"},
+		Version:     "1.0.0",
+	}
+}
+
+// DefaultBrowserCapability 返回 BrowserAgent 的默认能力定义
+func DefaultBrowserCapability() registry.AgentCapability {
+	return registry.AgentCapability{
+		Name:        "Web Navigator",
+		Description: "Controls a headless browser to navigate websites, extract data, take screenshots, fill forms, and execute JavaScript in web pages.",
+		Tags:        []string{"browser", "web", "screenshot", "form-filling", "data-extraction", "javascript"},
+		Version:     "1.0.0",
+	}
+}
+
+// DefaultMetaCapability 返回 MetaAgent 的默认能力定义
+func DefaultMetaCapability() registry.AgentCapability {
+	return registry.AgentCapability{
+		Name:        "Agent Architect",
+		Description: "Designs and instantiates custom specialized agents on-the-fly. Creates tailored system prompts and selects appropriate tools for novel tasks.",
+		Tags:        []string{"agent-design", "prompt-engineering", "meta", "custom-agent"},
+		Version:     "1.0.0",
+	}
+}
+
+// GetAllDefaultCapabilities 返回所有 Agent 的默认能力映射（agentID → capability）
+// 用于在系统初始化时批量注册
+func GetAllDefaultCapabilities() map[string]registry.AgentCapability {
+	return map[string]registry.AgentCapability{
+		"repo-agent":    DefaultRepoCapability(),
+		"coding-agent":  DefaultCodingCapability(),
+		"chat-agent":    DefaultChatCapability(),
+		"devops-agent":  DefaultDevOpsCapability(),
+		"browser-agent": DefaultBrowserCapability(),
+		"meta-agent":    DefaultMetaCapability(),
+	}
 }

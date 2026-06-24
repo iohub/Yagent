@@ -44,6 +44,25 @@ type ExecutorConfig struct {
 	LayeredMem *memory.LayeredMemory
 	// Peer provides P2P communication capability for this agent.
 	Peer peer.AgentPeer
+
+	// ── 分布式认知架构：协作能力字段（Phase 1） ──
+	// EnableCollaboration 是否启用协作工具（默认 false，向后兼容）
+	EnableCollaboration bool
+	// CapRegistry 能力注册中心接口（用于 capability_search 工具）
+	CapRegistry interface {
+		Search(query interface{}) ([]interface{}, error)
+	}
+	// BlackboardAccess 黑板访问接口（用于 blackboard_read/post 工具）
+	BlackboardAccess interface {
+		Post(region string, author string, content map[string]interface{}, tags []string, references []string) (string, error)
+		Read(region string, filter map[string]interface{}) ([]map[string]interface{}, error)
+		Get(entryID string) (map[string]interface{}, bool)
+	}
+	// DelegChecker 委派安全检查器（环检测+深度+超时）
+	DelegChecker interface {
+		CanDelegate(targetID string, fromID string) error
+		Fork(targetID string) interface{}
+	}
 }
 
 // ExecutorResult 封装 RunAgentLoop 的完整执行结果
@@ -70,6 +89,10 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	systemPrompt := cfg.SystemPrompt
 	if cfg.RepoContext != "" {
 		systemPrompt += "\n\n" + cfg.RepoContext
+	}
+	// 追加协作能力描述
+	if cfg.EnableCollaboration {
+		systemPrompt += SubAgentCollaborationPrompt
 	}
 	systemMsg := llm.Message{
 		Role:    systemRole,
@@ -134,6 +157,12 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	if cfg.Peer != nil && cfg.AgentID != "" {
 		p2pAdapters = buildP2PTeamAdapters(cfg.Peer, cfg.AgentID)
 		cfg.Adapters = append(cfg.Adapters, p2pAdapters...)
+	}
+
+	// Phase 1b: Collaboration tool injection (分布式认知架构)
+	if cfg.EnableCollaboration && cfg.Peer != nil && cfg.AgentID != "" {
+		collabAdapters := buildCollaborationAdapters(cfg)
+		cfg.Adapters = append(cfg.Adapters, collabAdapters...)
 	}
 
 	toolDefs := make([]llm.ToolDef, len(cfg.Adapters))
@@ -520,4 +549,68 @@ func logToolCall(toolName, agentName, args string, result string, err error, sta
 		errMsg = err.Error()
 	}
 	LogToolCall(toolName, agentName, argsJSON, result, errMsg, duration)
+}
+
+// buildCollaborationAdapters 构建分布式认知协作工具集
+func buildCollaborationAdapters(cfg ExecutorConfig) []*tools.Adapter {
+	var adapters []*tools.Adapter
+
+	// 1. capability_search
+	if cfg.CapRegistry != nil {
+		adapters = append(adapters,
+			tools.NewCapabilitySearchAdapter(cfg.CapRegistry))
+	}
+
+	// 2. blackboard_read + blackboard_post
+	if cfg.BlackboardAccess != nil {
+		adapters = append(adapters,
+			tools.NewBlackboardReadAdapter(cfg.BlackboardAccess))
+		adapters = append(adapters,
+			tools.NewBlackboardPostAdapter(cfg.BlackboardAccess))
+	}
+
+	// 3. p2p_delegate (增强版: 带 DelegationContext 安全检查)
+	if cfg.Peer != nil && cfg.AgentID != "" {
+		delegator := &executorP2PDelegator{
+			peer:    cfg.Peer,
+			agentID: cfg.AgentID,
+		}
+		var checker tools.DelegationChecker
+		if cfg.DelegChecker != nil {
+			checker = cfg.DelegChecker
+		}
+		adapters = append(adapters,
+			tools.NewP2PDelegateAdapter(delegator, checker))
+	}
+
+	return adapters
+}
+
+// executorP2PDelegator 实现 tools.P2PDelegator 接口
+type executorP2PDelegator struct {
+	peer    peer.AgentPeer
+	agentID string
+}
+
+func (d *executorP2PDelegator) Delegate(targetID string, taskDescription string, contextJSON string, timeout time.Duration) (string, error) {
+	if d.peer == nil {
+		return "", fmt.Errorf("p2p: peer not initialized")
+	}
+
+	// 将任务描述作为 method，context 作为 payload 发送
+	payload := map[string]interface{}{
+		"task":    taskDescription,
+		"context": contextJSON,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	resp, err := d.peer.Request(context.Background(), taskDescription, targetID, payloadBytes, timeout)
+	if err != nil {
+		return "", fmt.Errorf("p2p delegate to %s: %w", targetID, err)
+	}
+	return string(resp), nil
+}
+
+func (d *executorP2PDelegator) GetAgentID() string {
+	return d.agentID
 }

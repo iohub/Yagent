@@ -7,6 +7,7 @@ import (
 
 	"codeactor/internal/messaging/bus"
 	"codeactor/internal/messaging/peer"
+	"codeactor/internal/registry"
 )
 
 // AgentMesh 管理 Agent 间的 P2P 通信网格。
@@ -14,19 +15,23 @@ import (
 type AgentMesh struct {
 	EventBus *bus.EventBus
 	agents   []*BaseAgent
+	// 分布式认知架构：能力注册中心
+	CapRegistry registry.CapabilityRegistry
 }
 
 // NewAgentMesh 创建新的 Agent 通信网格。
 func NewAgentMesh() *AgentMesh {
 	return &AgentMesh{
-		EventBus: bus.NewEventBus(),
-		agents:   make([]*BaseAgent, 0),
+		EventBus:    bus.NewEventBus(),
+		agents:      make([]*BaseAgent, 0),
+		CapRegistry: registry.NewCapabilityRegistry(),
 	}
 }
 
 // RegisterAgent 在网格中注册 Agent，初始化其 P2P 身份。
 // id 是 Agent 的唯一标识（如 "repo-agent", "coding-agent"）。
-func (m *AgentMesh) RegisterAgent(id string, base *BaseAgent) error {
+// caps 是可选的 AgentCapability，如果提供则自动注册到 CapabilityRegistry。
+func (m *AgentMesh) RegisterAgent(id string, base *BaseAgent, caps ...registry.AgentCapability) error {
 	if base == nil {
 		return errors.New("agentmesh: base agent is nil")
 	}
@@ -34,7 +39,33 @@ func (m *AgentMesh) RegisterAgent(id string, base *BaseAgent) error {
 		return err
 	}
 	m.agents = append(m.agents, base)
+
+	// 自动注册能力到 CapabilityRegistry
+	if len(caps) > 0 && m.CapRegistry != nil {
+		cap := caps[0]
+		cap.AgentID = id
+		if cap.RegisteredAt.IsZero() {
+			cap.RegisteredAt = time.Now()
+		}
+		if err := m.CapRegistry.Register(cap); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// GetCapRegistry 返回能力注册中心
+func (m *AgentMesh) GetCapRegistry() registry.CapabilityRegistry {
+	return m.CapRegistry
+}
+
+// RegisterAgentCapability 为已注册的 Agent 注册/更新能力
+func (m *AgentMesh) RegisterAgentCapability(cap registry.AgentCapability) error {
+	if m.CapRegistry == nil {
+		return errors.New("agentmesh: capability registry not initialized")
+	}
+	return m.CapRegistry.Register(cap)
 }
 
 // RegisterConductorObserver 将 Conductor 注册为全局 Observer，
