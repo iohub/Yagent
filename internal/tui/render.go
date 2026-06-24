@@ -668,18 +668,19 @@ func RenderAgentTag(agent string) string {
 		Render(name)
 }
 
-// WithAgentPrefix prepends an agent tag line before rendered content.
-// If agent is empty or content is empty, returns content unchanged.
-// Visual: "Conductor\n<existing content>"
-func WithAgentPrefix(agent, content string) string {
-	if agent == "" || content == "" {
-		return content
+// RenderAgentBadge renders a compact agent indicator for non-ai_response entries.
+// Unlike RenderAgentSeparator (full-width line), this is a single-line colored badge
+// for light context signaling when tool entries switch to a new agent.
+// Visual: "  ◈ AgentName"
+func RenderAgentBadge(agent string) string {
+	if agent == "" {
+		return ""
 	}
-	tag := RenderAgentTag(agent)
-	if tag == "" {
-		return content
-	}
-	return tag + "\n" + content
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(AgentColor(agent))).
+		Bold(true).
+		PaddingLeft(2).
+		Render("◈ " + agent)
 }
 
 // RenderAgentSeparator produces a thin separator line with agent name

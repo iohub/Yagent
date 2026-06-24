@@ -322,18 +322,22 @@ func (m *model) assembleViewportContent() {
 		for i, part := range m.contentParts {
 			entry := &m.logEntries[i]
 
-			// ai_response: 只在 agent 切换或从非 ai_response 进入时插入分割线
-			if entry.eventType == "ai_response" && entry.from != "" {
-				if entry.from != lastAgent {
+			// 统一Agent上下文管理：所有条目类型都追踪Agent切换
+			if entry.from != "" && entry.from != lastAgent {
+				if entry.eventType == "ai_response" {
+					// ai_response: 全宽分割线（强视觉信号）
 					sep := RenderAgentSeparator(entry.from, m.viewport.Width())
 					if sep != "" {
 						parts = append(parts, sep)
 					}
-					lastAgent = entry.from
+				} else {
+					// 非 ai_response: 紧凑Badge（轻量上下文提示）
+					badge := RenderAgentBadge(entry.from)
+					if badge != "" {
+						parts = append(parts, badge)
+					}
 				}
-				// 如果 agent 相同，不插入分割线，直接输出内容
-			} else {
-				lastAgent = "" // 非 ai_response 重置，下次遇到 ai_response 会显示分割线
+				lastAgent = entry.from
 			}
 
 			parts = append(parts, part)
@@ -793,14 +797,9 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 	case "llm_call_start":
 		if m, ok := event.Content.(map[string]interface{}); ok {
 			modelName, _ := m["model"].(string)
-			agentName, _ := m["agent"].(string)
-			displayAgent := agentName
-			if displayAgent == "" {
-				displayAgent = "Agent"
-			}
-			entry.content = fmt.Sprintf("▸ %s  [%s]", displayAgent, modelName)
+			entry.content = fmt.Sprintf("[%s]", modelName)
 		} else {
-			entry.content = fmt.Sprintf("▸ %v", event.Content)
+			entry.content = fmt.Sprintf("%v", event.Content)
 		}
 	case "llm_call_end":
 		// Extract duration from metadata
@@ -813,9 +812,7 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 				duration = float64(v)
 			}
 
-			// Also get model and agent from metadata
 			modelName, _ := event.Metadata["model"].(string)
-			agentName, _ := event.Metadata["agent"].(string)
 			if modelName == "" {
 				if m, ok := event.Content.(map[string]interface{}); ok {
 					modelName, _ = m["model"].(string)
@@ -828,12 +825,12 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			}
 
 			if hasError {
-				entry.content = fmt.Sprintf("◂ %s  [%s]  ✗ %.2fs", agentName, modelName, duration)
+				entry.content = fmt.Sprintf("✗ [%s] · %.2fs", modelName, duration)
 			} else {
-				entry.content = fmt.Sprintf("◂ %s  [%s]  ✓ %.2fs", agentName, modelName, duration)
+				entry.content = fmt.Sprintf("✓ [%s] · %.2fs", modelName, duration)
 			}
 		} else {
-			entry.content = "◂ LLM call completed"
+			entry.content = "✓ LLM call completed"
 		}
 	default:
 		if s, ok := event.Content.(string); ok {
@@ -1221,11 +1218,6 @@ func renderToolEntry(entry logEntry, maxWidth int) string {
 		contentWidth = 30
 	}
 	full := RenderToolLine(entry.toolEntry, nil, contentWidth)
-
-	// === Agent attribution: prepend agent tag ===
-	if entry.from != "" {
-		full = WithAgentPrefix(entry.from, full)
-	}
 
 	// Split rendered output into header (border+header+border) and body,
 	// then apply collapse only to the body.

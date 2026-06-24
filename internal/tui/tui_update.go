@@ -1523,7 +1523,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 
 					modelName, _ := msg.event.Metadata["model"].(string)
-					agentName, _ := msg.event.Metadata["agent"].(string)
 					if modelName == "" {
 						if m, ok := msg.event.Content.(map[string]interface{}); ok {
 							modelName, _ = m["model"].(string)
@@ -1535,12 +1534,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						hasError = true
 					}
 
-						// Always show duration (verbose is default)
-						if hasError {
-							le.content = fmt.Sprintf("◂ %s  [%s]  ✗ %.2fs", agentName, modelName, duration)
-						} else {
-							le.content = fmt.Sprintf("◂ %s  [%s]  ✓ %.2fs", agentName, modelName, duration)
-						}
+					if hasError {
+						le.content = fmt.Sprintf("✗ [%s] · %.2fs", modelName, duration)
+					} else {
+						le.content = fmt.Sprintf("✓ [%s] · %.2fs", modelName, duration)
+					}
 				} else {
 					le.content = "◂ LLM call completed"
 				}
