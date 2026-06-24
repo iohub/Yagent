@@ -1034,6 +1034,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toggleCollapseAll()
 				return m, nil
 
+			// ── Token dashboard collapse toggle ──
+			case "ctrl+t":
+				m.tokenDashboardCollapsed = !m.tokenDashboardCollapsed
+				m.cachedTokenDashboard = m.renderTokenDashboard()
+				m.tokenDashboardValid = true
+				m.invalidateFooterCache()
+				return m, nil
+
 			// ── Misc ──
 			case "ctrl+l":
 				m.toggleLanguage()
@@ -1408,6 +1416,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					m.cacheReadInputTokens += cacheReadVal
+
+					// Track current agent run tokens (reset on agent switch)
+					agentNameForRun := msg.event.From
+					if agentNameForRun == "" {
+						agentNameForRun = "Unknown"
+					}
+					if m.currentAgentRunTokens.AgentName != agentNameForRun {
+						// Agent switched — reset run tokens for new agent
+						m.currentAgentRunTokens = AgentRunTokens{
+							AgentName: agentNameForRun,
+						}
+					}
+					m.currentAgentRunTokens.InputTokens += promptVal
+					m.currentAgentRunTokens.OutputTokens += completionVal
+					m.currentAgentRunTokens.CacheReadInputTokens += cacheReadVal
+					m.currentAgentRunTokens.CacheCreationInputTokens += cacheCreationVal
 
 					// Track current running agent
 					if m.taskRunning {

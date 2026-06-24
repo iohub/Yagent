@@ -344,6 +344,15 @@ type AgentTokenUsage struct {
 	CacheReadInputTokens     int64
 }
 
+// AgentRunTokens 追踪当前 agent 本次运行的 token 消耗（非历史累计）
+type AgentRunTokens struct {
+	AgentName                string
+	InputTokens              int64
+	OutputTokens             int64
+	CacheReadInputTokens     int64
+	CacheCreationInputTokens int64
+}
+
 // visibleEntryIndices 返回当前视口中可见的logEntry索引范围 [start, end]。
 // 使用前缀和数组 + 二分查找，O(log n) 定位可见范围。
 // 返回的索引是logEntries中的索引，与contentParts一一对应。
@@ -553,6 +562,12 @@ type model struct {
 
 	// Per-agent token tracking
 	tokenUsagePerAgent map[string]*AgentTokenUsage
+
+	// Token dashboard collapse/expand control
+	tokenDashboardCollapsed bool // 默认 true（折叠），按 ctrl+t 切换
+
+	// Current agent run-specific token tracking (reset on agent switch)
+	currentAgentRunTokens AgentRunTokens
 
 	// Animation state for running tools
 	anim       *Anim
@@ -831,6 +846,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		toolCallEntries:    make(map[string]*ToolEntry),
 		anim: NewAnim(10),
 		tokenUsagePerAgent: make(map[string]*AgentTokenUsage),
+		tokenDashboardCollapsed: true, // 默认折叠
 
 		// 新组件
 		dialogStack:  ds,

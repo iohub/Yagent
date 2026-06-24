@@ -538,6 +538,11 @@ func formatCacheHitRate(cacheTokens, inputTokens int64) string {
 // renderTokenDashboard renders a dashboard-style token consumption display.
 // Shows total tokens in a highlighted row, followed by per-agent breakdown sorted by total.
 func (m model) renderTokenDashboard() string {
+	// 折叠模式：只显示当前 agent 本次运行的 token 统计
+	if m.tokenDashboardCollapsed {
+		return m.renderCollapsedTokenDashboard()
+	}
+
 	totalTokens := m.inputTokens + m.outputTokens
 	if totalTokens == 0 {
 		// No data: no task submitted yet, don't show useless info
@@ -634,5 +639,58 @@ func (m model) renderTokenDashboard() string {
 	}
 
 	return dashStyle.Render(strings.Join(lines, "\n"))
+}
+
+// renderCollapsedTokenDashboard 渲染折叠状态的 token 仪表盘
+// 只显示当前 agent 本次运行的 token 消耗和 cache 命中率
+func (m model) renderCollapsedTokenDashboard() string {
+	rt := m.currentAgentRunTokens
+
+	// 如果没有任何 token 数据，返回空字符串
+	if rt.InputTokens == 0 && rt.OutputTokens == 0 {
+		return ""
+	}
+
+	// 处理 agent 名称
+	agentName := rt.AgentName
+	if agentName == "" {
+		agentName = "—"
+	}
+
+	// 计算总输入 token（用于 cache 命中率计算）
+	totalInput := rt.InputTokens + rt.CacheReadInputTokens + rt.CacheCreationInputTokens
+
+	inStr := formatToken(totalInput)
+	outStr := formatToken(rt.OutputTokens)
+
+	// 计算 cache 命中率
+	cacheStr := ""
+	if rt.CacheReadInputTokens > 0 && totalInput > 0 {
+		rate := float64(rt.CacheReadInputTokens) / float64(totalInput) * 100
+		cacheStr = fmt.Sprintf("Cache: %.1f%%(%s)", rate, formatToken(rt.CacheReadInputTokens))
+	}
+
+	// 使用与现有 UI 一致的样式
+	dashStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("237")).
+		Padding(0, 1).
+		Width(m.termWidth - 2)
+
+	style := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240"))
+	inputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
+	outputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114"))
+
+	line := style.Render(fmt.Sprintf("[%s]", agentName)) + " " +
+		inputStyle.Render(fmt.Sprintf("In: %s  ", inStr)) +
+		outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
+
+	if cacheStr != "" {
+		line += inputStyle.Render(cacheStr + "  ")
+	}
+
+	line += style.Render("(ctrl+t: expand)")
+
+	return dashStyle.Render(line)
 }
 
