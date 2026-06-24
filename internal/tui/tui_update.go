@@ -545,6 +545,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// 全屏 timeline 模式：拦截所有消息，委托给全屏处理器
+	if m.timelineFullscreenMode {
+		return timelineFullscreenUpdate(msg, &m)
+	}
+
 	// History mode: intercept all messages and delegate to history handler.
 	// Skip when a dialog is active so dialog confirmations (e.g. delete_history_confirm)
 	// can be processed by the DialogStack key handler below.
@@ -1053,10 +1058,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.invalidateFooterCache()
 				return m, nil
 
-			// ── Tool timeline toggle ──
+			// ── Tool timeline toggle (three-state: collapsed → expanded → fullscreen) ──
 			case "ctrl+v":
-				m.timelineExpanded = !m.timelineExpanded
-				m.timelineCacheKey = "" // invalidate cache
+				// 三态切换：collapsed → expanded → fullscreen → collapsed
+				if !m.timelineExpanded && !m.timelineFullscreenMode {
+					// collapsed → expanded
+					m.timelineExpanded = true
+					m.timelineFullscreenMode = false
+				} else if m.timelineExpanded && !m.timelineFullscreenMode {
+					// expanded → fullscreen
+					m.timelineExpanded = false
+					m.timelineFullscreenMode = true
+					m.timelineFullscreenCursor = 0
+					initTimelineDetailViewport(&m)
+				} else {
+					// fullscreen → collapsed
+					m.ExitTimelineFullscreen()
+					m.timelineExpanded = false
+				}
+				m.timelineCacheKey = ""
 				m.invalidateFooterCache()
 				return m, nil
 
@@ -1117,8 +1137,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "ctrl+v":
-			// Toggle tool timeline (compact / full history)
-			m.timelineExpanded = !m.timelineExpanded
+			// 三态切换：collapsed → expanded → fullscreen → collapsed
+			if !m.timelineExpanded && !m.timelineFullscreenMode {
+				// collapsed → expanded
+				m.timelineExpanded = true
+				m.timelineFullscreenMode = false
+			} else if m.timelineExpanded && !m.timelineFullscreenMode {
+				// expanded → fullscreen
+				m.timelineExpanded = false
+				m.timelineFullscreenMode = true
+				m.timelineFullscreenCursor = 0
+				initTimelineDetailViewport(&m)
+			} else {
+				// fullscreen → collapsed
+				m.ExitTimelineFullscreen()
+				m.timelineExpanded = false
+			}
 			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
 			return m, nil
@@ -1958,5 +1992,131 @@ func (m *model) saveRunningTaskMemory() {
 	if m.currentTask != nil && m.dataManager != nil && m.taskRunning {
 		m.dataManager.SaveTaskMemory(m.currentTask.ID, m.currentTask.Memory)
 		m.dataManager.FlushTaskMemory(m.currentTask.ID)
+	}
+}
+
+// timelineFullscreenUpdate 处理全屏时间线模式下的所有消息。
+func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		key := msg.String()
+		switch key {
+		// ── 退出全屏 → 回到 expanded ──
+		case "esc":
+			m.timelineExpanded = true
+			m.timelineFullscreenMode = false
+			m.timelineFullscreenCursor = 0
+			m.timelineDetailVP = nil
+			m.timelineCacheKey = ""
+			m.invalidateFooterCache()
+			return m, nil
+
+		// ── ctrl+v: 退出到 collapsed ──
+		case "ctrl+v":
+			m.ExitTimelineFullscreen()
+			m.timelineExpanded = false
+			m.timelineCacheKey = ""
+			m.invalidateFooterCache()
+			return m, nil
+
+		// ── ctrl+c: 强制退出 ──
+		case "ctrl+c":
+			m.saveRunningTaskMemory()
+			m.quitting = true
+			return m, tea.Quit
+
+		// ── 列表导航 ──
+		case "j", "down":
+			moveTimelineCursor(m, 1)
+			return m, nil
+
+		case "k", "up":
+			moveTimelineCursor(m, -1)
+			return m, nil
+
+		case "g":
+			if len(m.timelineEntries) > 0 {
+				m.timelineFullscreenCursor = 0
+				refreshTimelineDetail(m)
+			}
+			return m, nil
+
+		case "G":
+			if len(m.timelineEntries) > 0 {
+				m.timelineFullscreenCursor = len(m.timelineEntries) - 1
+				refreshTimelineDetail(m)
+			}
+			return m, nil
+
+		// ── 详情 viewport 滚动 ──
+		case "pageup", "ctrl+u":
+			if m.timelineDetailVP != nil {
+				m.timelineDetailVP.ScrollUp(5)
+			}
+			return m, nil
+
+		case "pagedown", " ":
+			if m.timelineDetailVP != nil {
+				m.timelineDetailVP.ScrollDown(5)
+			}
+			return m, nil
+
+		// ── 详情 viewport 滚动（单行）──
+		case "ctrl+y":
+			if m.timelineDetailVP != nil {
+				m.timelineDetailVP.ScrollUp(1)
+			}
+			return m, nil
+
+		case "ctrl+e":
+			if m.timelineDetailVP != nil {
+				m.timelineDetailVP.ScrollDown(1)
+			}
+			return m, nil
+
+		default:
+			return m, nil
+		}
+
+	case tea.WindowSizeMsg:
+		m.termWidth = msg.Width
+		m.termHeight = msg.Height
+		// 如果 viewport 已初始化，更新尺寸并刷新内容
+		if m.timelineDetailVP != nil {
+			leftWidth := int(float64(m.termWidth-3) * 0.35)
+			if leftWidth < 25 {
+				leftWidth = 25
+			}
+			rightWidth := m.termWidth - 3 - leftWidth - 4
+			contentHeight := m.termHeight - 4
+			if contentHeight < 3 {
+				contentHeight = 3
+			}
+			m.timelineDetailVP.SetWidth(rightWidth)
+			m.timelineDetailVP.SetHeight(contentHeight)
+			refreshTimelineDetail(m)
+		}
+		return m, nil
+
+	case tickMsg:
+		// 全屏模式下也处理动画 tick，并保持 tick 循环
+		if m.anim != nil {
+			m.anim.Tick()
+		}
+		if m.taskRunning {
+			return m, tickCmd()
+		}
+		return m, nil
+
+	case taskEventMsg:
+		// 全屏模式下保持事件监听链存活，但事件暂不处理
+		// 退出全屏后事件会被正常消费
+		if m.taskRunning {
+			return m, listenForEvents(m.eventCh)
+		}
+		return m, nil
+
+	default:
+		return m, nil
 	}
 }

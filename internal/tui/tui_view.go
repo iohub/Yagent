@@ -57,6 +57,11 @@ func (m model) View() tea.View {
 		return tea.View{AltScreen: true}
 	}
 
+	// 全屏 timeline 模式：分屏展示时间线条目和详细内容
+	if m.timelineFullscreenMode {
+		return renderTimelineFullscreenView(&m)
+	}
+
 	// ====== Dialog overlay: takes priority over history mode ======
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
 		overlay := m.dialogStack.Overlay(m.termWidth, m.termHeight)

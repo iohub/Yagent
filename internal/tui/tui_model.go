@@ -664,6 +664,11 @@ type model struct {
 	// 长度 = len(contentParts)+1，最后一个元素是总行数。
 	// 由 rebuildLinePrefix / appendLinePrefix 维护。
 	contentPartLinePrefix []int
+
+	// ── Timeline 全屏模式状态 ──
+	timelineFullscreenMode   bool              // 是否处于全屏时间线模式
+	timelineFullscreenCursor int               // 全屏模式下当前选中的条目索引
+	timelineDetailVP         *viewport.Model   // 全屏模式下右侧详情 viewport
 }
 
 // autocompleteCacheKey is a fine-grained cache key for autocomplete results.
