@@ -448,21 +448,51 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	}
 
 	// 注册所有子 Agent 到网格
-	for _, reg := range []struct {
+	agentRegistrations := []struct {
 		id    string
 		agent *BaseAgent
-	}{
-		{"repo-agent", &repo.BaseAgent},
-		{"coding-agent", &coding.BaseAgent},
-		{"chat-agent", &chat.BaseAgent},
-		{"meta-agent", &meta.BaseAgent},
-		{"devops-agent", &devops.BaseAgent},
-		{"browser-agent", &browser.BaseAgent},
-	} {
-		if reg.agent != nil {
-			if err := agentMesh.RegisterAgent(reg.id, reg.agent); err != nil {
-				slog.Warn("Failed to register agent in mesh", "agent", reg.id, "error", err)
-			}
+	}{}
+
+	if repo != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"repo-agent", &repo.BaseAgent})
+	}
+	if coding != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"coding-agent", &coding.BaseAgent})
+	}
+	if chat != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"chat-agent", &chat.BaseAgent})
+	}
+	if meta != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"meta-agent", &meta.BaseAgent})
+	}
+	if devops != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"devops-agent", &devops.BaseAgent})
+	}
+	if browser != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"browser-agent", &browser.BaseAgent})
+	}
+
+	for _, reg := range agentRegistrations {
+		if err := agentMesh.RegisterAgent(reg.id, reg.agent); err != nil {
+			slog.Warn("Failed to register agent in mesh", "agent", reg.id, "error", err)
 		}
 	}
 
@@ -806,18 +836,36 @@ func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent
 	return result.Text, nil
 }
 
-// injectSubAgentMemory 将 sub-agent 的完整对话历史注入到 Conductor memory 中
+// injectSubAgentMemory 将 sub-agent 的执行结果摘要注入到 Conductor memory 中
+// Phase 1: 只注入摘要，不再注入 sub-agent 的完整对话历史
+// Phase 3+ : Sub-agent 的关键发现通过 SharedMemory 发布/订阅机制共享
 func (a *ConductorAgent) injectSubAgentMemory(result AgentResult, toolCallID string, toolName string) {
-	if a.currentMemory == nil || len(result.Memory) == 0 {
+	if a.currentMemory == nil {
 		return
 	}
-	groupID := fmt.Sprintf("%s_%s_%d", toolName, "sub", time.Now().UnixNano())
-	for i := range result.Memory {
-		result.Memory[i].GroupID = groupID
-		result.Memory[i].ParentID = toolCallID
-		// IsSubAgent 已在 ConvertLLMHistoryToMemory 中设为 true，无需再设
-		a.currentMemory.Messages = append(a.currentMemory.Messages, result.Memory[i])
+
+	// 只注入摘要消息（result.Text），不注入完整历史
+	// sub-agent 的完整对话历史保留在其自身的 LocalMemory 中（Phase 3）
+	if result.Text != "" {
+		summaryMsg := memory.ChatMessage{
+			Type:       memory.MessageTypeAssistant,
+			Content:    fmt.Sprintf("[Sub-Agent Result: %s]\n%s", toolName, result.Text),
+			Timestamp:  time.Now(),
+			GroupID:    fmt.Sprintf("%s_summary_%d", toolName, time.Now().UnixNano()),
+			ParentID:   toolCallID,
+			IsSubAgent: true,
+			Metadata: map[string]interface{}{
+				"type":      "sub_agent_summary",
+				"tool":      toolName,
+				"msg_count": len(result.Memory),
+			},
+		}
+		a.currentMemory.Messages = append(a.currentMemory.Messages, summaryMsg)
 	}
+
+	// 重要：result.Memory（sub-agent 的完整对话历史）不再注入到 Conductor 的 memory 中
+	// 这避免了 Conductor 上下文快速膨胀和 Compact Engine 频繁压缩造成的信息丢失
+	// sub-agent 内部消息保留在 sub-agent 本地，通过 SharedMemory 的 publish/subscribe 机制共享关键信息（Phase 3）
 }
 
 func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {

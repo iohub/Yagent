@@ -27,6 +27,14 @@ func DefaultMemoryConfig() MemoryConfig {
 	}
 }
 
+// KeyFinding 表示 sub-agent 的关键发现摘要
+// 替代全量 Memory 注入，只传递有价值的信息
+type KeyFinding struct {
+	Type    string                 `json:"type"`    // "file_change", "error", "decision", "artifact", "completion"
+	Content string                 `json:"content"` // 简洁描述
+	Meta    map[string]interface{} `json:"meta,omitempty"`
+}
+
 // MemoryStats 内存统计
 type MemoryStats struct {
 	AgentID       string `json:"agent_id"`
@@ -380,4 +388,147 @@ func (m *MemoryManager) ListAgentIDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// ============================================================================
+// Phase 3: Layered Memory Lifecycle Management
+// ============================================================================
+
+// GetPromotionPolicyForAgent 根据 agent 类型返回合适的 PromotionPolicy
+func (m *MemoryManager) GetPromotionPolicyForAgent(agentType string) memory.PromotionPolicy {
+	switch agentType {
+	case "coding":
+		return memory.DefaultCodingPromotionPolicy()
+	case "repo":
+		return memory.DefaultRepoPromotionPolicy()
+	case "chat":
+		return memory.DefaultPromotionPolicy()
+	case "devops":
+		return memory.DefaultPromotionPolicy()
+	case "browser":
+		return memory.DefaultPromotionPolicy()
+	case "meta":
+		return memory.DefaultPromotionPolicy()
+	default:
+		return memory.DefaultPromotionPolicy()
+	}
+}
+
+// CreateAgentMemory 为指定 agent 创建带策略的 LayeredMemory
+// 这是 CreateMemory 的增强版本，支持按 agent 类型配置 promotion 策略
+func (m *MemoryManager) CreateAgentMemory(agentID string, agentType string) *memory.LayeredMemory {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 如果已存在，返回现有实例
+	if existing, ok := m.layeredMemories[agentID]; ok {
+		return existing
+	}
+
+	localMax := m.config.LocalMaxSize
+	if localMax <= 0 {
+		localMax = 200
+	}
+
+	local := memory.NewLocalMemory(agentID, localMax)
+	layered := memory.NewLayeredMemory(local, m.shared, memory.DefaultLayeredConfig())
+
+	// 设置 promotion 策略
+	policy := m.GetPromotionPolicyForAgent(agentType)
+	layered.SetPromotionPolicy(policy)
+	layered.SetAgentID(agentID)
+
+	m.layeredMemories[agentID] = layered
+	m.agentMemories[agentID] = layered
+
+	slog.Debug("Created agent memory with promotion policy",
+		"agent_id", agentID,
+		"agent_type", agentType,
+		"local_max", localMax,
+		"auto_promote_types", policy.AutoPromoteTypes,
+		"summary_threshold", policy.SummaryThreshold)
+
+	return layered
+}
+
+// ShareKeyFinding 将关键发现发布到 SharedMemory
+// 这是 sub-agent 与 Conductor 共享信息的轻量方式（非全量 Memory 注入）
+func (m *MemoryManager) ShareKeyFinding(agentID string, finding KeyFinding) error {
+	layered := m.GetLayeredMemory(agentID)
+	if layered == nil {
+		return fmt.Errorf("no layered memory for agent %s", agentID)
+	}
+
+	msg := memory.ChatMessage{
+		Type:      memory.MessageTypeAssistant,
+		Content:   fmt.Sprintf("[KeyFinding:%s] %s", finding.Type, finding.Content),
+		Timestamp: time.Now(),
+		Metadata: map[string]interface{}{
+			"type":         "key_finding",
+			"finding_type": finding.Type,
+			"agent_id":     agentID,
+		},
+	}
+	// 合并额外的 meta
+	if finding.Meta != nil {
+		for k, v := range finding.Meta {
+			msg.Metadata[k] = v
+		}
+	}
+
+	return layered.PromoteToShared(msg)
+}
+
+// GetAgentMemoryStats 获取指定 agent 的详细内存统计
+func (m *MemoryManager) GetAgentMemoryStats(agentID string) (*MemoryStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	stats := &MemoryStats{
+		AgentID:       agentID,
+		LocalMaxSize:  m.config.LocalMaxSize,
+		SharedMaxSize: m.config.SharedMaxSize,
+		CompactCount:  m.compactCount,
+	}
+
+	if layered, ok := m.layeredMemories[agentID]; ok {
+		stats.LocalSize = layered.LocalSize()
+		stats.SharedSize = layered.SharedSize()
+		stats.TotalSize = layered.Size()
+	} else if mem, ok := m.agentMemories[agentID]; ok {
+		stats.LocalSize = mem.Size()
+		stats.TotalSize = mem.Size()
+	} else {
+		return nil, fmt.Errorf("no memory for agent %s", agentID)
+	}
+
+	return stats, nil
+}
+
+// GetMemorySnapshot 获取所有 agent 内存的快照信息（用于调试和监控）
+func (m *MemoryManager) GetMemorySnapshot() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	snapshot := make(map[string]interface{})
+
+	agentList := make([]map[string]interface{}, 0)
+	for id, mem := range m.agentMemories {
+		info := map[string]interface{}{
+			"agent_id": id,
+			"type":     fmt.Sprintf("%T", mem),
+			"size":     mem.Size(),
+		}
+		if layered, ok := m.layeredMemories[id]; ok {
+			info["local_size"] = layered.LocalSize()
+			info["shared_size"] = layered.SharedSize()
+		}
+		agentList = append(agentList, info)
+	}
+
+	snapshot["agents"] = agentList
+	snapshot["shared_size"] = m.shared.Size()
+	snapshot["shared_version"] = m.shared.Snapshot()
+
+	return snapshot
 }
