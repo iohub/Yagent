@@ -210,3 +210,35 @@ func FormatTokenCount(n int) string {
 	}
 	return string(result)
 }
+
+// ── Agent color palette ──
+// Each agent gets a distinct foreground color for its compact tag.
+// Colors are 256-color ANSI codes, chosen for readability on dark terminals.
+var agentColors = []string{
+	"135", // soft purple
+	"75",  // soft blue
+	"108", // muted green
+	"214", // warm gold
+	"141", // lavender
+	"73",  // teal
+	"209", // coral
+	"186", // olive
+	"140", // mauve
+	"117", // light blue
+}
+
+// AgentColor returns a stable foreground color for the given agent name.
+// Uses the same hash function pattern as ToolBgColor.
+func AgentColor(name string) string {
+	if name == "" {
+		return "240" // dim gray for empty/unknown
+	}
+	h := 0
+	for _, c := range name {
+		h = h*31 + int(c)
+	}
+	if h < 0 {
+		h = -h
+	}
+	return agentColors[h%len(agentColors)]
+}

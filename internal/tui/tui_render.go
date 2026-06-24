@@ -315,7 +315,31 @@ func (m *model) assembleViewportContent() {
 	m.contentCache.WriteString(m.renderWelcomePanel())
 	if len(m.contentParts) > 0 {
 		m.contentCache.WriteString("\n")
-		m.contentCache.WriteString(strings.Join(m.contentParts, "\n"))
+
+		var parts []string
+		lastAgent := ""
+
+		for i, part := range m.contentParts {
+			entry := &m.logEntries[i]
+
+			// ai_response: 只在 agent 切换或从非 ai_response 进入时插入分割线
+			if entry.eventType == "ai_response" && entry.from != "" {
+				if entry.from != lastAgent {
+					sep := RenderAgentSeparator(entry.from, m.viewport.Width())
+					if sep != "" {
+						parts = append(parts, sep)
+					}
+					lastAgent = entry.from
+				}
+				// 如果 agent 相同，不插入分割线，直接输出内容
+			} else {
+				lastAgent = "" // 非 ai_response 重置，下次遇到 ai_response 会显示分割线
+			}
+
+			parts = append(parts, part)
+		}
+
+		m.contentCache.WriteString(strings.Join(parts, "\n"))
 	}
 }
 
@@ -844,7 +868,11 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		return logSeparatorStyle.Render(" " + separator + " ")
 
 	case "ai_response":
-		prefix = "AI  "
+		if entry.from != "" {
+			prefix = RenderAgentTag(entry.from) + " "
+		} else {
+			prefix = "AI  "
+		}
 		contentStyle = logAIResStyle
 	case "user_message":
 		return renderUserMessageBox(entry.content, maxWidth)
@@ -1193,6 +1221,11 @@ func renderToolEntry(entry logEntry, maxWidth int) string {
 		contentWidth = 30
 	}
 	full := RenderToolLine(entry.toolEntry, nil, contentWidth)
+
+	// === Agent attribution: prepend agent tag ===
+	if entry.from != "" {
+		full = WithAgentPrefix(entry.from, full)
+	}
 
 	// Split rendered output into header (border+header+border) and body,
 	// then apply collapse only to the body.

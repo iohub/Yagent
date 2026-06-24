@@ -645,3 +645,74 @@ func truncateLine(line string, maxWidth int) string {
 	}
 	return string(runes[:maxWidth-1]) + "…"
 }
+
+// ── Agent Attribution Functions ──
+
+// maxAgentTagLen limits agent name display length in compact tags.
+const maxAgentTagLen = 12
+
+// RenderAgentTag produces a compact, colored agent name string.
+// Returns empty string if agent is empty.
+// Visual: "Conductor" in agent's unique color, bold, no background.
+func RenderAgentTag(agent string) string {
+	if agent == "" {
+		return ""
+	}
+	name := agent
+	if len(name) > maxAgentTagLen {
+		name = name[:maxAgentTagLen-1] + "…"
+	}
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(AgentColor(agent))).
+		Bold(true).
+		Render(name)
+}
+
+// WithAgentPrefix prepends an agent tag line before rendered content.
+// If agent is empty or content is empty, returns content unchanged.
+// Visual: "Conductor\n<existing content>"
+func WithAgentPrefix(agent, content string) string {
+	if agent == "" || content == "" {
+		return content
+	}
+	tag := RenderAgentTag(agent)
+	if tag == "" {
+		return content
+	}
+	return tag + "\n" + content
+}
+
+// RenderAgentSeparator produces a thin separator line with agent name
+// for AI response blocks.
+// Visual: "── Conductor ──────────────────────"
+// If agent is empty, returns empty string.
+func RenderAgentSeparator(agent string, width int) string {
+	if agent == "" || width <= 0 {
+		return ""
+	}
+
+	color := lipgloss.Color(AgentColor(agent))
+	name := lipgloss.NewStyle().
+		Foreground(color).
+		Bold(true).
+		Render(agent)
+
+	lineStyle := lipgloss.NewStyle().
+		Foreground(color).
+		Faint(true)
+
+	// Layout: "── Agent ──────"
+	prefix := lineStyle.Render("── ")
+	suffix := lineStyle.Render(" ──")
+	nameLen := lipgloss.Width(name)
+	prefixLen := lipgloss.Width(prefix)
+	suffixLen := lipgloss.Width(suffix)
+
+	dashes := width - prefixLen - nameLen - suffixLen
+	if dashes < 0 {
+		dashes = 0
+	}
+	middle := lineStyle.Render(strings.Repeat("─", dashes))
+
+	return prefix + name + middle + suffix
+}
