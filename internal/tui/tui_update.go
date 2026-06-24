@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -265,7 +266,7 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	switch {
 	case cmd == ":q!":
 		// Force quit — skip confirmation (vim convention)
-		m.saveRunningTaskMemory()
+		m.saveAndFlushTaskMemory()
 		m.quitting = true
 		m.cleanupDebounceTimer()
 		return tea.Quit
@@ -697,7 +698,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				// Ctrl+C: 强制退出
 				if key == "ctrl+c" {
-					m.saveRunningTaskMemory()
+					m.saveAndFlushTaskMemory()
 					m.quitting = true
 					return m, tea.Quit
 				}
@@ -718,7 +719,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					case "enter", "y", "Y":
 						if d.GetConfirmed() {
 							if d.ID() == "quit_confirm" || d.ID() == "quit_confirm_dialog" {
-								m.saveRunningTaskMemory()
+								m.saveAndFlushTaskMemory()
 								m.quitting = true
 								m.cleanupDebounceTimer()
 								return m, tea.Quit
@@ -2058,12 +2059,22 @@ func hasSlashAtWordBoundary(text string) bool {
 	return isSlashAtWordBoundary(text, lastSlash)
 }
 
-// saveRunningTaskMemory saves the current task's memory before quitting,
-// ensuring conversation history is not lost when TUI exits mid-execution.
-func (m *model) saveRunningTaskMemory() {
-	if m.currentTask != nil && m.dataManager != nil && m.taskRunning {
-		m.dataManager.SaveTaskMemory(m.currentTask.ID, m.currentTask.Memory)
-		m.dataManager.FlushTaskMemory(m.currentTask.ID)
+// saveAndFlushTaskMemory saves the current task's memory to the pending buffer
+// and immediately flushes it to disk. This is called on TUI exit to ensure
+// no conversation history is lost, regardless of whether the task is still
+// running or has already completed.
+func (m *model) saveAndFlushTaskMemory() {
+	if m.currentTask != nil && m.dataManager != nil {
+		if err := m.dataManager.SaveTaskMemory(m.currentTask.ID, m.currentTask.Memory); err != nil {
+			slog.Error("Failed to save task memory on exit",
+				"taskID", m.currentTask.ID,
+				"error", err)
+		}
+		if err := m.dataManager.FlushTaskMemory(m.currentTask.ID); err != nil {
+			slog.Error("Failed to flush task memory on exit",
+				"taskID", m.currentTask.ID,
+				"error", err)
+		}
 	}
 }
 
