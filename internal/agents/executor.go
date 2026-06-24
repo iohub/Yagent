@@ -65,6 +65,17 @@ type ExecutorConfig struct {
 	}
 }
 
+// DefaultExecutorConfig returns an ExecutorConfig with sensible defaults applied.
+// Always prefer this constructor over bare ExecutorConfig{} literals to ensure
+// new defaults are automatically picked up.
+//
+// To explicitly disable collaboration, set cfg.EnableCollaboration = false after construction.
+func DefaultExecutorConfig() ExecutorConfig {
+	return ExecutorConfig{
+		EnableCollaboration: true,
+	}
+}
+
 // ExecutorResult 封装 RunAgentLoop 的完整执行结果
 type ExecutorResult struct {
 	Text    string        // 最终文本输出（agent 的最后一条消息内容或 agent_exit 的返回值）

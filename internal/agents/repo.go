@@ -309,16 +309,16 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 
 	systemPrompt = a.GlobalCtx.FormatPrompt(systemPrompt)
 
-	cfg := ExecutorConfig{
-		SystemPrompt:  systemPrompt,
-		UserInput:     input,
-		Adapters:      a.Adapters,
-		LLM:           a.LLM,
-		MaxSteps:      a.maxSteps,
-		Publisher:     a.Publisher,
-		AgentName:     a.Name(),
-		SystemAsHuman: true, // RepoAgent uses Human role for its prompt
-	}
+	cfg := DefaultExecutorConfig()
+	cfg.SystemPrompt = systemPrompt
+	cfg.UserInput = input
+	cfg.Adapters = a.Adapters
+	cfg.LLM = a.LLM
+	cfg.MaxSteps = a.maxSteps
+	cfg.Publisher = a.Publisher
+	cfg.AgentName = a.Name()
+	cfg.SystemAsHuman = true // RepoAgent uses Human role for its prompt
+	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return AgentResult{}, err

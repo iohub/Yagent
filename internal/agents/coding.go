@@ -147,17 +147,17 @@ func (a *CodingAgent) Name() string {
 func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(codingPrompt)
 
-	cfg := ExecutorConfig{
-		SystemPrompt: systemPrompt,
-		UserInput:    input,
-		Adapters:     a.Adapters,
-		LLM:          a.LLM,
-		MaxSteps:     a.maxSteps,
-		Publisher:    a.Publisher,
-		AgentName:    a.Name(),
-		StopOnFinish: true,
-		RepoContext:  a.GlobalCtx.RepoSummary,
-	}
+	cfg := DefaultExecutorConfig()
+	cfg.SystemPrompt = systemPrompt
+	cfg.UserInput = input
+	cfg.Adapters = a.Adapters
+	cfg.LLM = a.LLM
+	cfg.MaxSteps = a.maxSteps
+	cfg.Publisher = a.Publisher
+	cfg.AgentName = a.Name()
+	cfg.StopOnFinish = true
+	cfg.RepoContext = a.GlobalCtx.RepoSummary
+	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return AgentResult{}, err

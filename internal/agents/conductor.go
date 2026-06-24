@@ -813,16 +813,16 @@ func (a *ConductorAgent) registerCustomAgent(ca *CustomAgent) {
 func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent, adapters []*tools.Adapter, task string) (string, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(ca.SystemPrompt)
 
-	cfg := ExecutorConfig{
-		SystemPrompt: systemPrompt,
-		UserInput:    task,
-		Adapters:     adapters,
-		LLM:          a.LLM,
-		MaxSteps:     15,
-		Publisher:    a.Publisher,
-		AgentName:    ca.DisplayName,
-		StopOnFinish: true,
-	}
+	cfg := DefaultExecutorConfig()
+	cfg.SystemPrompt = systemPrompt
+	cfg.UserInput = task
+	cfg.Adapters = adapters
+	cfg.LLM = a.LLM
+	cfg.MaxSteps = 15
+	cfg.Publisher = a.Publisher
+	cfg.AgentName = ca.DisplayName
+	cfg.StopOnFinish = true
+	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return "", err
