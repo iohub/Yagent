@@ -283,7 +283,34 @@ func (m *model) renderTimelinePanel(width int) string {
 		return m.timelineCache
 	}
 
-	m.timelineCache = RenderTimeline(m.timelineEntries, m.timelineExpanded, width, m.anim)
+	// 渲染 timeline 内容（传 width-4 给内部 padding 空间）
+	content := RenderTimeline(m.timelineEntries, m.timelineExpanded, width-4, m.anim)
+	if content == "" {
+		return ""
+	}
+
+	// 去掉 addTimelineTopBorder 添加的顶部边框（面板已有 lipgloss border）
+	lines := strings.Split(content, "\n")
+	if len(lines) > 1 {
+		content = strings.Join(lines[1:], "\n")
+	} else {
+		return ""
+	}
+
+	// 构建提示行
+	hint := timelineHintStyle.Render(" ctrl+l 全屏 │ ctrl+v 展开/折叠 ")
+
+	// 组装面板内容
+	panelContent := content + "\n" + hint
+
+	// 应用面板样式
+	panelWidth := width - 2
+	if panelWidth < 30 {
+		panelWidth = 30
+	}
+	rendered := timelinePanelStyle.Width(panelWidth).Render(panelContent)
+
+	m.timelineCache = rendered
 	m.timelineCacheKey = key
 	return m.timelineCache
 }

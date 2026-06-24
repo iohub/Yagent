@@ -788,17 +788,9 @@ func RenderTimeline(entries []*TimelineEntry, expanded bool, width int, anim *An
 		}
 		visible = entries[start:]
 	} else {
-		// Compact: find running tool first, then last entry
-		for i := len(entries) - 1; i >= 0; i-- {
-			if entries[i].Kind == TimelineKindTool && entries[i].Status == ToolStatusRunning {
-				visible = []*TimelineEntry{entries[i]}
-				break
-			}
-		}
-		if len(visible) == 0 {
-			// Show the most recent entry
-			visible = []*TimelineEntry{entries[len(entries)-1]}
-		}
+		// 折叠模式：展示最近3条记录（优先包含运行中的工具）
+		const defaultCollapsedCount = 3
+		visible = selectCollapsedEntries(entries, defaultCollapsedCount)
 	}
 
 	// Build timeline lines
@@ -890,4 +882,124 @@ func renderTimelineRow(e *TimelineEntry, width int, anim *Anim) string {
 	}
 
 	return leftPart + strings.Repeat(" ", padding) + rightPart
+}
+
+// selectCollapsedEntries 选择折叠模式要显示的条目。
+// 优先包含运行中的工具，然后用最近的非运行条目填满 maxCount。
+func selectCollapsedEntries(entries []*TimelineEntry, maxCount int) []*TimelineEntry {
+	n := len(entries)
+	if n == 0 {
+		return nil
+	}
+	if n <= maxCount {
+		return entries
+	}
+
+	// 从末尾开始收集，优先包含运行中的工具
+	selected := make([]bool, n)
+	count := 0
+
+	// 第一遍：从最近的开始，收集运行中的工具
+	for i := n - 1; i >= 0 && count < maxCount; i-- {
+		if entries[i].Kind == TimelineKindTool && entries[i].Status == ToolStatusRunning && !selected[i] {
+			selected[i] = true
+			count++
+		}
+	}
+
+	// 第二遍：从最近的开始，填充到 maxCount
+	for i := n - 1; i >= 0 && count < maxCount; i-- {
+		if !selected[i] {
+			selected[i] = true
+			count++
+		}
+	}
+
+	// 按原始顺序构建结果
+	result := make([]*TimelineEntry, 0, count)
+	for i := 0; i < n; i++ {
+		if selected[i] {
+			result = append(result, entries[i])
+		}
+	}
+
+	return result
+}
+
+// renderTimelineRowWithCursor 渲染带光标和选中高亮的timeline行。
+// 用于全屏模式的左侧列表，使用与非全屏一致的 dot+name+duration 样式。
+func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCursor bool) string {
+	// 先渲染基础行内容（使用原有的renderTimelineRow核心逻辑，但不含顶部边框）
+	node := timelineNodeFor(e)
+
+	// Name styling
+	nameStr := e.Name
+	if displayName := DisplayToolName(e.Name); displayName != e.Name {
+		nameStr = displayName
+	}
+	nameStyle := timelineNameStyle
+	var name string
+	if e.Status == ToolStatusRunning {
+		name = timelineRunningStyle.Render(nameStr)
+	} else if e.IsError || e.Status == ToolStatusError {
+		name = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Render(nameStr)
+	} else {
+		name = nameStyle.Render(nameStr)
+	}
+
+	// Duration
+	var durStr string
+	if e.Duration > 0 {
+		dur := formatTimelineDuration(e.Duration)
+		durStr = " " + timelineDurationStyle.Render(dur)
+	} else if e.Status == ToolStatusRunning {
+		if anim != nil {
+			durStr = " " + anim.Render()
+		} else {
+			durStr = " " + timelineRunningStyle.Render("running")
+		}
+	}
+
+	// Build base line
+	leftPart := fmt.Sprintf(" %s %s", node, name)
+	if e.Detail != "" {
+		detailMax := 40
+		detail := e.Detail
+		if len(detail) > detailMax {
+			detail = detail[:detailMax-1] + "…"
+		}
+		leftPart += " " + timelineDetailStyle.Render("· " + detail)
+	}
+
+	// Right-align duration
+	rightPart := durStr
+	leftWidth := lipgloss.Width(leftPart)
+	rightWidth := lipgloss.Width(rightPart)
+	padding := width - leftWidth - rightWidth - 4 // -4 for cursor(2) + margin(2)
+	if padding < 1 {
+		padding = 1
+	}
+
+	content := leftPart + strings.Repeat(" ", padding) + rightPart
+
+	// 光标指示符
+	var cursorStr string
+	if isCursor {
+		cursorStr = "▸ "
+	} else {
+		cursorStr = "  "
+	}
+
+	line := cursorStr + content
+
+	// 选中行高亮（暗色背景）
+	if isCursor {
+		line = lipgloss.NewStyle().
+			Background(lipgloss.Color("236")).
+			Foreground(lipgloss.Color("255")).
+			Width(width).
+			Render(line)
+	}
+
+	return line
 }

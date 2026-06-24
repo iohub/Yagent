@@ -303,6 +303,13 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		return nil
 
 	// ═══════════════════════════════════════════════════════════════
+	// :language — 切换语言（原 ctrl+l 快捷键的功能迁移至此）
+	// ═══════════════════════════════════════════════════════════════
+	case cmd == ":language":
+		m.toggleLanguage()
+		return nil
+
+	// ═══════════════════════════════════════════════════════════════
 	// :model — Switch LLM provider (interactive dialog or direct)
 	// 支持设置不同 agent 的模型，不支持设置 tool 的模型
 	// 语法:
@@ -1058,31 +1065,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.invalidateFooterCache()
 				return m, nil
 
-			// ── Tool timeline toggle (three-state: collapsed → expanded → fullscreen) ──
+			// ── Tool timeline toggle (two-state: collapsed ↔ expanded) ──
 			case "ctrl+v":
-				// 三态切换：collapsed → expanded → fullscreen → collapsed
-				if !m.timelineExpanded && !m.timelineFullscreenMode {
-					// collapsed → expanded
-					m.timelineExpanded = true
-					m.timelineFullscreenMode = false
-				} else if m.timelineExpanded && !m.timelineFullscreenMode {
-					// expanded → fullscreen
-					m.timelineExpanded = false
-					m.timelineFullscreenMode = true
-					m.timelineFullscreenCursor = 0
-					initTimelineDetailViewport(&m)
-				} else {
-					// fullscreen → collapsed
-					m.ExitTimelineFullscreen()
-					m.timelineExpanded = false
-				}
+				// 两态切换：collapsed ↔ expanded（不再经过全屏）
+				m.timelineExpanded = !m.timelineExpanded
 				m.timelineCacheKey = ""
 				m.invalidateFooterCache()
 				return m, nil
 
 			// ── Misc ──
 			case "ctrl+l":
-				m.toggleLanguage()
+				// 切换全屏时间线模式
+				if !m.timelineFullscreenMode {
+					// 进入全屏模式
+					m.timelineFullscreenMode = true
+					m.timelineExpanded = false
+					m.timelineFullscreenCursor = 0
+					initTimelineDetailViewport(&m)
+					m.timelineCacheKey = ""
+					m.invalidateFooterCache()
+				} else {
+					// 退出全屏模式
+					m.ExitTimelineFullscreen()
+					m.timelineExpanded = false
+					m.timelineCacheKey = ""
+					m.invalidateFooterCache()
+				}
 				return m, nil
 
 			default:
@@ -1137,22 +1145,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "ctrl+v":
-			// 三态切换：collapsed → expanded → fullscreen → collapsed
-			if !m.timelineExpanded && !m.timelineFullscreenMode {
-				// collapsed → expanded
-				m.timelineExpanded = true
-				m.timelineFullscreenMode = false
-			} else if m.timelineExpanded && !m.timelineFullscreenMode {
-				// expanded → fullscreen
-				m.timelineExpanded = false
-				m.timelineFullscreenMode = true
-				m.timelineFullscreenCursor = 0
-				initTimelineDetailViewport(&m)
-			} else {
-				// fullscreen → collapsed
-				m.ExitTimelineFullscreen()
-				m.timelineExpanded = false
-			}
+			// 两态切换：collapsed ↔ expanded（不再经过全屏）
+			m.timelineExpanded = !m.timelineExpanded
 			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
 			return m, nil
@@ -1180,7 +1174,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.submitTask()
 
 		case "ctrl+l":
-			m.toggleLanguage()
+			// 切换全屏时间线模式
+			if !m.timelineFullscreenMode {
+				// 进入全屏模式
+				m.timelineFullscreenMode = true
+				m.timelineExpanded = false
+				m.timelineFullscreenCursor = 0
+				initTimelineDetailViewport(&m)
+				m.timelineCacheKey = ""
+				m.invalidateFooterCache()
+			} else {
+				// 退出全屏模式
+				m.ExitTimelineFullscreen()
+				m.timelineExpanded = false
+				m.timelineCacheKey = ""
+				m.invalidateFooterCache()
+			}
 			return m, nil
 
 		case "ctrl+f":
@@ -2002,6 +2011,16 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		switch key {
 		// ── 退出全屏 → 回到 expanded ──
 		case "esc":
+			m.timelineExpanded = true
+			m.timelineFullscreenMode = false
+			m.timelineFullscreenCursor = 0
+			m.timelineDetailVP = nil
+			m.timelineCacheKey = ""
+			m.invalidateFooterCache()
+			return m, nil
+
+		// ── q 键退出全屏（与 esc 行为一致）──
+		case "q":
 			m.timelineExpanded = true
 			m.timelineFullscreenMode = false
 			m.timelineFullscreenCursor = 0

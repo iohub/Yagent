@@ -21,19 +21,18 @@ func (m *model) computeFooterHeight() int {
 
 	height := 1 // separator line
 
-	// Tool timeline panel (when entries exist)
+	// Tool timeline panel (when entries exist) — 使用悬浮面板样式
 	if m.taskRunning || len(m.timelineEntries) > 0 {
-		height += 2 // top border + at least 1 content line
 		if m.timelineExpanded {
 			n := len(m.timelineEntries)
 			if n > 20 {
 				n = 20
 			}
-			if n > 1 {
-				height += n*2 - 1 // entries + connectors between them
-			} else if n == 1 {
-				height += 1
-			}
+			// border-top(1) + n entries + (n-1) connectors + hint(1) + border-bottom(1)
+			height += 2 + n*2
+		} else {
+			// border-top(1) + 3 entries + hint(1) + border-bottom(1)
+			height += 6
 		}
 	}
 

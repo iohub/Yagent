@@ -83,7 +83,7 @@ func renderTimelineFullscreenTitleBar(m *model, width int) string {
 		Width(width - 2)
 
 	entryCount := len(m.timelineEntries)
-	text := fmt.Sprintf(" Timeline │ %d entries │ j/k Navigate · esc Exit ", entryCount)
+	text := fmt.Sprintf(" Timeline │ %d entries │ j/k Navigate · esc/q Exit ", entryCount)
 	return titleStyle.Render(text)
 }
 
@@ -138,101 +138,15 @@ func renderTimelineFullscreenList(m *model, width, height int) string {
 }
 
 // renderTimelineFullscreenListItem 渲染单个 timeline 条目行。
-// 格式： "▸ ✓ [T] read_file             12ms"
+// 使用与非全屏一致的 dot+name+duration 样式（更好看），
+// 并添加光标指示器▸和选中高亮。
 func renderTimelineFullscreenListItem(entry *TimelineEntry, width int, isCursor bool) string {
-	// 光标指示符
-	var cursorStr string
-	if isCursor {
-		cursorStr = "▸ "
-	} else {
-		cursorStr = "  "
+	// 宽度预留 -2 用于边框内边距
+	contentWidth := width - 2
+	if contentWidth < 20 {
+		contentWidth = 20
 	}
-
-	// 状态图标和样式
-	var icon string
-	var iconStyle lipgloss.Style
-	switch entry.Kind {
-	case TimelineKindLLMCall:
-		icon = "◇"
-		iconStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("75")) // 蓝色
-	case TimelineKindContextEvent:
-		icon = "⊛"
-		iconStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // 紫色
-	default:
-		switch entry.Status {
-		case ToolStatusSuccess:
-			icon, iconStyle = "✓", lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // 绿色
-		case ToolStatusRunning:
-			icon, iconStyle = "●", lipgloss.NewStyle().Foreground(lipgloss.Color("228")) // 黄色
-		case ToolStatusError:
-			icon, iconStyle = "✗", lipgloss.NewStyle().Foreground(lipgloss.Color("167")) // 红色
-		case ToolStatusPending:
-			icon, iconStyle = "○", lipgloss.NewStyle().Foreground(lipgloss.Color("243")) // 灰色
-		case ToolStatusCanceled:
-			icon, iconStyle = "○", lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // 灰色
-		default:
-			icon, iconStyle = "○", lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-		}
-	}
-
-	// 类型标签
-	kindLabel := timelineKindLabel(entry.Kind)
-
-	// 名称
-	nameStr := entry.Name
-	if displayName := DisplayToolName(entry.Name); displayName != entry.Name {
-		nameStr = displayName
-	}
-
-	// 耗时
-	var durStr string
-	if entry.Duration > 0 {
-		durStr = formatTimelineDuration(entry.Duration)
-	}
-
-	// 构建行
-	// 格式："[cursor] [icon] [kind] [name] [duration]"
-	var sb strings.Builder
-	sb.WriteString(cursorStr)
-	sb.WriteString(icon)
-	sb.WriteString(" ")
-
-	kindStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
-	sb.WriteString(kindStyle.Render(kindLabel))
-	sb.WriteString(" ")
-
-	// 计算名称宽度
-	nameWidth := width - lipgloss.Width(cursorStr) - lipgloss.Width(icon) - 3 - lipgloss.Width(kindLabel) - 2
-	if nameWidth > 10 {
-		if len(nameStr) > nameWidth {
-			nameStr = nameStr[:nameWidth-1] + "…"
-		}
-		sb.WriteString(nameStr)
-	} else {
-		sb.WriteString(nameStr)
-	}
-
-	// 耗时右对齐
-	if durStr != "" {
-		durStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Width(8).Align(lipgloss.Right)
-		sb.WriteString(" ")
-		sb.WriteString(durStyle.Render(durStr))
-	}
-
-	// 应用行级样式
-	var lineStyle lipgloss.Style
-	if isCursor {
-		lineStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("62")).
-			Foreground(lipgloss.Color("255")).
-			Bold(true)
-	} else if entry.IsError || entry.Status == ToolStatusError {
-		lineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	} else {
-		lineStyle = iconStyle
-	}
-
-	return lineStyle.Render(sb.String())
+	return renderTimelineRowWithCursor(entry, contentWidth, nil, isCursor)
 }
 
 // renderTimelineFullscreenStatusBar 渲染底部状态栏。
