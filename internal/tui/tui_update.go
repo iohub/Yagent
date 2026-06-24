@@ -1706,16 +1706,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Content:    resultContent,
 						IsError:    isError,
 					})
-					// Update timeline entry for tool result
+					// Update timeline entry for tool result (search both parent and SubEntries)
 					for i := len(m.timelineEntries) - 1; i >= 0; i-- {
-						if m.timelineEntries[i].ID == callID && m.timelineEntries[i].Kind == TimelineKindTool {
-							m.timelineEntries[i].Status = ToolStatusSuccess
-							m.timelineEntries[i].Duration = time.Since(m.timelineEntries[i].Timestamp)
-							m.timelineEntries[i].IsError = isError
+						entry := m.timelineEntries[i]
+						// Check parent entry
+						if entry.ID == callID && entry.Kind == TimelineKindTool {
+							entry.Status = ToolStatusSuccess
+							entry.Duration = time.Since(entry.Timestamp)
+							entry.IsError = isError
 							if isError {
-								m.timelineEntries[i].Status = ToolStatusError
+								entry.Status = ToolStatusError
 							}
-							m.timelineEntries[i].Detail = extractToolSummary(toolEntry.Call.Name, toolEntry.Call.Arguments)
+							entry.Detail = extractToolSummary(toolEntry.Call.Name, toolEntry.Call.Arguments)
+							break
+						}
+						// Check SubEntries for merged tools
+						found := false
+						for j := range entry.SubEntries {
+							if entry.SubEntries[j].ID == callID {
+								entry.SubEntries[j].Status = ToolStatusSuccess
+								entry.SubEntries[j].Duration = time.Since(entry.SubEntries[j].Timestamp)
+								entry.SubEntries[j].IsError = isError
+								if isError {
+									entry.SubEntries[j].Status = ToolStatusError
+								}
+								entry.SubEntries[j].Detail = extractToolSummary(toolEntry.Call.Name, toolEntry.Call.Arguments)
+								found = true
+								break
+							}
+						}
+						if found {
 							break
 						}
 					}
@@ -1749,16 +1769,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Content:    resultContent,
 						IsError:    isError,
 					})
-					// Update timeline entry for tool result
+					// Update timeline entry for tool result (search both parent and SubEntries)
 					for i := len(m.timelineEntries) - 1; i >= 0; i-- {
-						if m.timelineEntries[i].ID == matchedID && m.timelineEntries[i].Kind == TimelineKindTool {
-							m.timelineEntries[i].Status = ToolStatusSuccess
-							m.timelineEntries[i].Duration = time.Since(m.timelineEntries[i].Timestamp)
-							m.timelineEntries[i].IsError = isError
+						entry := m.timelineEntries[i]
+						// Check parent entry
+						if entry.ID == matchedID && entry.Kind == TimelineKindTool {
+							entry.Status = ToolStatusSuccess
+							entry.Duration = time.Since(entry.Timestamp)
+							entry.IsError = isError
 							if isError {
-								m.timelineEntries[i].Status = ToolStatusError
+								entry.Status = ToolStatusError
 							}
-							m.timelineEntries[i].Detail = extractToolSummary(matchedEntry.Call.Name, matchedEntry.Call.Arguments)
+							entry.Detail = extractToolSummary(matchedEntry.Call.Name, matchedEntry.Call.Arguments)
+							break
+						}
+						// Check SubEntries for merged tools
+						found := false
+						for j := range entry.SubEntries {
+							if entry.SubEntries[j].ID == matchedID {
+								entry.SubEntries[j].Status = ToolStatusSuccess
+								entry.SubEntries[j].Duration = time.Since(entry.SubEntries[j].Timestamp)
+								entry.SubEntries[j].IsError = isError
+								if isError {
+									entry.SubEntries[j].Status = ToolStatusError
+								}
+								entry.SubEntries[j].Detail = extractToolSummary(matchedEntry.Call.Name, matchedEntry.Call.Arguments)
+								found = true
+								break
+							}
+						}
+						if found {
 							break
 						}
 					}
@@ -1791,14 +1831,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Route tool_call_start to timeline
 		if entry.eventType == "tool_call_start" && entry.toolCallID != "" && entry.toolEntry != nil {
-			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
-				ID:        entry.toolCallID,
-				Kind:      TimelineKindTool,
-				Timestamp: entry.timestamp,
-				Status:    ToolStatusRunning,
-				Name:      entry.toolName,
-				Detail:    entry.executionSummary,
-			})
+			// 检查是否可与最后一个 timeline 条目合并
+			merged := false
+			if len(m.timelineEntries) > 0 {
+				lastEntry := m.timelineEntries[len(m.timelineEntries)-1]
+				if lastEntry.Kind == TimelineKindTool &&
+					lastEntry.Name == entry.toolName &&
+					IsMergeableTool(entry.toolName) {
+					// 合併：將新調用添加為子條目
+					lastEntry.SubEntries = append(lastEntry.SubEntries, &TimelineEntry{
+						ID:        entry.toolCallID,
+						Kind:      TimelineKindTool,
+						Timestamp: entry.timestamp,
+						Status:    ToolStatusRunning,
+						Name:      entry.toolName,
+						Detail:    entry.executionSummary,
+					})
+					// 更新父條目的 Duration 為從第一個到最新一個的時間跨度
+					// 這樣能反映整體合併組的時間範圍
+					merged = true
+				}
+			}
+
+			if !merged {
+				m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+					ID:        entry.toolCallID,
+					Kind:      TimelineKindTool,
+					Timestamp: entry.timestamp,
+					Status:    ToolStatusRunning,
+					Name:      entry.toolName,
+					Detail:    entry.executionSummary,
+				})
+			}
 			m.timelineCacheKey = ""
 		}
 

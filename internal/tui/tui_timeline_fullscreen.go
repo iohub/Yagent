@@ -198,10 +198,14 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 
 	var sb strings.Builder
 
-	// 头部：名称
+	// 头部：名称（合并条目显示计数）
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213")) // 粉色
 	kindLabel := timelineKindLabel(entry.Kind)
-	sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", kindLabel, entry.Name)))
+	nameDisplay := entry.Name
+	if entry.MergedCount() > 1 {
+		nameDisplay = fmt.Sprintf("%s ×%d", nameDisplay, entry.MergedCount())
+	}
+	sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", kindLabel, nameDisplay)))
 	sb.WriteString("\n")
 
 	// 元数据行
@@ -224,14 +228,58 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 	// 主体内容（按类型分发）
 	switch entry.Kind {
 	case TimelineKindTool:
-		// 查找关联的 toolEntry
-		toolEntry := findToolEntryByCallID(m, entry.ID)
-		if toolEntry != nil {
-			// 复用 RenderToolLine 渲染工具调用行（header + body）
-			rendered := RenderToolLine(toolEntry, m.anim, width)
-			sb.WriteString(rendered)
+		if len(entry.SubEntries) > 0 {
+			// 合并条目：渲染所有子条目（父条目 + SubEntries）
+			allEntries := []*TimelineEntry{entry}
+			allEntries = append(allEntries, entry.SubEntries...)
+
+			for idx, sub := range allEntries {
+				// 子条目编号行
+				numStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("248"))
+				detailStr := sub.Detail
+				if detailStr == "" {
+					detailStr = sub.Name
+				}
+				sb.WriteString(numStyle.Render(fmt.Sprintf("  #%d  %s", idx+1, detailStr)))
+				sb.WriteString("\n")
+
+				// 查找关联的 toolEntry 并渲染
+				toolEntry := findToolEntryByCallID(m, sub.ID)
+				if toolEntry != nil {
+					rendered := RenderToolLine(toolEntry, m.anim, width-4)
+					if rendered != "" {
+						lines := strings.Split(rendered, "\n")
+						for _, line := range lines {
+							sb.WriteString("  ")
+							sb.WriteString(line)
+							sb.WriteString("\n")
+						}
+					}
+				} else {
+					// 没有 toolEntry 时显示简要状态
+					statusIcon := "●"
+					if sub.Status == ToolStatusRunning {
+						statusIcon = "○"
+					}
+					statusStr := statusTextFor(sub)
+					sb.WriteString(fmt.Sprintf("    %s  %s\n", statusIcon, statusStr))
+				}
+
+				// 子条目间添加空行分隔
+				if idx < len(allEntries)-1 {
+					sb.WriteString("\n")
+				}
+			}
 		} else {
-			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (tool data not available)"))
+			// 单条目：保持原有逻辑
+			toolEntry := findToolEntryByCallID(m, entry.ID)
+			if toolEntry != nil {
+				// 复用 RenderToolLine 渲染工具调用行（header + body）
+				rendered := RenderToolLine(toolEntry, m.anim, width)
+				sb.WriteString(rendered)
+			} else {
+				sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (tool data not available)"))
+			}
 		}
 	case TimelineKindLLMCall:
 		if entry.Detail != "" {

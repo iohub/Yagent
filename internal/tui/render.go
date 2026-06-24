@@ -721,8 +721,16 @@ func RenderAgentSeparator(agent string, width int) string {
 
 // ── Timeline Rendering ──
 
-// timelineNodeFor returns the appropriate node glyph for a timeline entry.
+// timelineNodeFor renders the node symbol + color for a TimelineEntry.
+// DEPRECATED: Prefer timelineNodeForStatus for merged entries.
 func timelineNodeFor(e *TimelineEntry) string {
+	return timelineNodeForStatus(e, e.Status)
+}
+
+// timelineNodeForStatus renders the node symbol + color for a TimelineEntry
+// using an explicitly-provided status. This is needed for merged entries where
+// the effective (aggregated) status may differ from e.Status.
+func timelineNodeForStatus(e *TimelineEntry, status ToolStatus) string {
 	if e.Kind == TimelineKindLLMCall {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true).Render("◇") // blue diamond
 	}
@@ -730,7 +738,7 @@ func timelineNodeFor(e *TimelineEntry) string {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("⊛") // magenta asterisk
 	}
 	// Tool call
-	switch e.Status {
+	switch status {
 	case ToolStatusRunning:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true).Render("●") // yellow
 	case ToolStatusSuccess:
@@ -829,18 +837,26 @@ func addTimelineTopBorder(content string, width int) string {
 // renderTimelineRow renders a single timeline entry row.
 // Format: " ● read_file  /path/to/file          1.2s"
 func renderTimelineRow(e *TimelineEntry, width int, anim *Anim) string {
-	node := timelineNodeFor(e)
+	// Use EffectiveStatus() for merged entries
+	effectiveStatus := e.EffectiveStatus()
+	node := timelineNodeForStatus(e, effectiveStatus)
 
 	// Name styling
 	nameStr := e.Name
 	if displayName := DisplayToolName(e.Name); displayName != e.Name {
 		nameStr = displayName
 	}
+
+	// Show merged count for merged entries
+	if e.MergedCount() > 1 {
+		nameStr = fmt.Sprintf("%s ×%d", nameStr, e.MergedCount())
+	}
+
 	nameStyle := timelineNameStyle
 	var name string
-	if e.Status == ToolStatusRunning {
+	if effectiveStatus == ToolStatusRunning {
 		name = timelineRunningStyle.Render(nameStr)
-	} else if e.IsError || e.Status == ToolStatusError {
+	} else if e.IsError || effectiveStatus == ToolStatusError {
 		name = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Render(nameStr)
 	} else {
 		name = nameStyle.Render(nameStr)
@@ -851,7 +867,7 @@ func renderTimelineRow(e *TimelineEntry, width int, anim *Anim) string {
 	if e.Duration > 0 {
 		dur := formatTimelineDuration(e.Duration)
 		durStr = " " + timelineDurationStyle.Render(dur)
-	} else if e.Status == ToolStatusRunning {
+	} else if effectiveStatus == ToolStatusRunning {
 		if anim != nil {
 			durStr = " " + anim.Render()
 		} else {
@@ -860,7 +876,7 @@ func renderTimelineRow(e *TimelineEntry, width int, anim *Anim) string {
 	}
 
 	// Build base line: "◇ llm_call          1.2s"
-	// or "● read_file   ...   running"
+	// or "● read_file ×3  /path/to/file   running"
 	leftPart := fmt.Sprintf(" %s %s", node, name)
 	if e.Detail != "" {
 		// Truncate detail to fit
@@ -929,19 +945,26 @@ func selectCollapsedEntries(entries []*TimelineEntry, maxCount int) []*TimelineE
 // renderTimelineRowWithCursor 渲染带光标和选中高亮的timeline行。
 // 用于全屏模式的左侧列表，使用与非全屏一致的 dot+name+duration 样式。
 func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCursor bool) string {
-	// 先渲染基础行内容（使用原有的renderTimelineRow核心逻辑，但不含顶部边框）
-	node := timelineNodeFor(e)
+	// Use EffectiveStatus() to get the aggregated status (correct for merged entries)
+	effectiveStatus := e.EffectiveStatus()
+	node := timelineNodeForStatus(e, effectiveStatus)
 
 	// Name styling
 	nameStr := e.Name
 	if displayName := DisplayToolName(e.Name); displayName != e.Name {
 		nameStr = displayName
 	}
+
+	// Show merged count: "read_file ×3"
+	if e.MergedCount() > 1 {
+		nameStr = fmt.Sprintf("%s ×%d", nameStr, e.MergedCount())
+	}
+
 	nameStyle := timelineNameStyle
 	var name string
-	if e.Status == ToolStatusRunning {
+	if effectiveStatus == ToolStatusRunning {
 		name = timelineRunningStyle.Render(nameStr)
-	} else if e.IsError || e.Status == ToolStatusError {
+	} else if e.IsError || effectiveStatus == ToolStatusError {
 		name = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Render(nameStr)
 	} else {
 		name = nameStyle.Render(nameStr)
@@ -952,7 +975,7 @@ func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCurs
 	if e.Duration > 0 {
 		dur := formatTimelineDuration(e.Duration)
 		durStr = " " + timelineDurationStyle.Render(dur)
-	} else if e.Status == ToolStatusRunning {
+	} else if effectiveStatus == ToolStatusRunning {
 		if anim != nil {
 			durStr = " " + anim.Render()
 		} else {
@@ -960,16 +983,8 @@ func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCurs
 		}
 	}
 
-	// Build base line
+	// Build base line — fullscreen sidebar no longer shows detail summary
 	leftPart := fmt.Sprintf(" %s %s", node, name)
-	if e.Detail != "" {
-		detailMax := 40
-		detail := e.Detail
-		if len(detail) > detailMax {
-			detail = detail[:detailMax-1] + "…"
-		}
-		leftPart += " " + timelineDetailStyle.Render("· " + detail)
-	}
 
 	// Right-align duration
 	rightPart := durStr
