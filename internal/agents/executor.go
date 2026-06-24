@@ -281,12 +281,22 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		messages = append(messages, assistantMsg)
 		history = append(history, assistantMsg)
 
-		// Phase 1: Write assistant message to LayeredMem
+	// Phase 1: Write assistant message to LayeredMem with auto-promote
 		if cfg.LayeredMem != nil {
-			cfg.LayeredMem.AddMessage(convertLLMToChatMessage(assistantMsg))
+			if err := cfg.LayeredMem.AddMessageWithPromote(convertLLMToChatMessage(assistantMsg)); err != nil {
+				slog.Warn("Failed to store assistant message with promote", "error", err, "agent", cfg.AgentName)
+			}
 		}
 
 		if len(choice.ToolCalls) == 0 {
+			// Phase 3: No tool calls — trigger batch promote before returning
+			if cfg.LayeredMem != nil {
+				if lm := cfg.LayeredMem.GetLocalMemory(); lm != nil && lm.Size() > 0 {
+					if err := cfg.LayeredMem.PromoteLastToShared(); err != nil {
+						slog.Debug("Post-loop promote skipped", "reason", err, "agent", cfg.AgentName)
+					}
+				}
+			}
 			return ExecutorResult{Text: choice.Content, History: history}, nil
 		}
 
@@ -345,17 +355,35 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			}
 			history = append(history, toolMsg)
 
-			// Phase 1: Write tool message to LayeredMem
+			// Phase 1: Write tool message to LayeredMem with auto-promote
 			if cfg.LayeredMem != nil {
-				cfg.LayeredMem.AddMessage(convertLLMToChatMessage(toolMsg))
+				if err := cfg.LayeredMem.AddMessageWithPromote(convertLLMToChatMessage(toolMsg)); err != nil {
+					slog.Warn("Failed to store tool message with promote", "error", err, "agent", cfg.AgentName, "tool", tc.Function.Name)
+				}
 			}
 
 			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" {
+				// Phase 3: agent_exit triggered — trigger batch promote before returning
+				if cfg.LayeredMem != nil {
+					if lm := cfg.LayeredMem.GetLocalMemory(); lm != nil && lm.Size() > 0 {
+						if err := cfg.LayeredMem.PromoteLastToShared(); err != nil {
+							slog.Debug("Post-loop promote skipped", "reason", err, "agent", cfg.AgentName)
+						}
+					}
+				}
 				return ExecutorResult{Text: toolResult, History: history}, nil
 			}
 		}
 	}
 
+	// Phase 3: Loop exhausted — trigger batch promote before timeout return
+	if cfg.LayeredMem != nil {
+		if lm := cfg.LayeredMem.GetLocalMemory(); lm != nil && lm.Size() > 0 {
+			if err := cfg.LayeredMem.PromoteLastToShared(); err != nil {
+				slog.Debug("Post-loop promote skipped", "reason", err, "agent", cfg.AgentName)
+			}
+		}
+	}
 	return ExecutorResult{}, fmt.Errorf("%s exceeded max steps (%d)", cfg.AgentName, cfg.MaxSteps)
 }
 

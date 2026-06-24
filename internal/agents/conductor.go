@@ -14,6 +14,7 @@ import (
 	"codeactor/internal/compact"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
+	conductor "codeactor/internal/agents/conductor"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
 	"codeactor/internal/messaging/bus"
@@ -72,6 +73,7 @@ type ConductorAgent struct {
 	Mesh           *AgentMesh                // P2P 通信网格
 	compactEngine  *compact.Engine           // 上下文压缩引擎
 	compactConfig  *compact.Config           // 压缩配置
+	adapter        *ConductorAdapter         // 新旧整合适配器（Strangler Fig 过渡层）
 	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 
 	// 新增：异步增量压缩字段
@@ -507,6 +509,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 
 	allAdapters := append(adapters, delegateAdapters...)
 
+	// Strangler Fig: 创建适配器桥接层，开始使用新组件（Metrics + CircuitBreaker）
+	adapterCfg := conductor.DefaultRecoveryConfig()
+	adapterCfg.MaxRetries = maxSteps                  // 使用 maxSteps 作为重试次数
+	adapterCfg.CircuitBreakerThreshold = cfg.LLM.CircuitBreakerThreshold
+	adapterCfg.CircuitBreakerResetTimeout = cfg.LLM.CircuitBreakerResetTimeout
+	conductorAdapter := NewConductorAdapter(true, adapterCfg) // enabled=true 启动 Metrics
+
 	self = &ConductorAgent{
 		BaseAgent:          BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
 		RepoAgent:          repo,
@@ -524,6 +533,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		Mesh:               agentMesh, // P2P 通信网格
 		compactEngine:      nil, // 将在 Run 方法中根据配置初始化
 		compactConfig:      compactCfg,
+		adapter:            conductorAdapter,
 		summaryEngine:      summaryEngine,
 		commitManager:      commitManager, // 设置 commit 学习器管理器
 		hasDelegated:       false,         // 初始未委派过
@@ -1135,19 +1145,11 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		}
 		// ═══════════════════════════════════════════════════════════
 
-		// --- 熔断检查 ---
-		if a.circuitBreakerThreshold > 0 && a.consecutiveLLMFailures >= a.circuitBreakerThreshold {
-			if time.Since(a.lastLLMFailureTime) < a.circuitBreakerResetTimeout {
-				slog.Error("Circuit breaker open, too many consecutive LLM failures",
-					"failures", a.consecutiveLLMFailures,
-					"threshold", a.circuitBreakerThreshold,
-					"step", i)
-				return "", fmt.Errorf("circuit breaker open: %d consecutive LLM failures", a.consecutiveLLMFailures)
-			}
-			// 熔断恢复：超时后重置
-			slog.Info("Circuit breaker reset timeout reached, resetting failure count",
+		// --- 熔断检查（通过适配器委托到新组件）---
+		if a.adapter != nil && a.adapter.IsCircuitBreakerOpen() {
+			slog.Error("Circuit breaker open, too many consecutive LLM failures",
 				"step", i)
-			a.consecutiveLLMFailures = 0
+			return "", fmt.Errorf("circuit breaker open: LLM calls blocked")
 		}
 
 		// --- 步骤级重试 ---
@@ -1186,6 +1188,11 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			resp, llmErr = a.LLM.GenerateContent(ctx, messages, toolDefs, nil)
 			llmDuration := time.Since(llmStartTime).Seconds()
 
+			// 记录 LLM 耗时指标
+			if a.adapter != nil {
+				a.adapter.RecordLLMDuration(time.Since(llmStartTime))
+			}
+
 			// Publish llm_call_end event
 			if a.Publisher != nil {
 				metadata := map[string]interface{}{
@@ -1200,8 +1207,15 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			}
 
 			if llmErr == nil {
-				a.consecutiveLLMFailures = 0
+				// 通过适配器记录成功（重置熔断器状态）
+				if a.adapter != nil {
+					a.adapter.RecordLLMSuccess()
+				}
 				break
+			}
+			// 通过适配器记录失败（可能触发熔断）
+			if a.adapter != nil {
+				a.adapter.RecordLLMFailure()
 			}
 			a.consecutiveLLMFailures++
 			a.lastLLMFailureTime = time.Now()

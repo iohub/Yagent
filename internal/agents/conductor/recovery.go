@@ -228,6 +228,18 @@ func (r *RecoveryHandler) GetFailureStats() map[string]int {
 	return stats
 }
 
+// Reset 重置恢复管理器状态（步骤失败计数 + 熔断器）
+func (r *RecoveryHandler) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k := range r.stepFailures {
+		delete(r.stepFailures, k)
+	}
+	if r.breaker != nil {
+		r.breaker.Reset()
+	}
+}
+
 // IsLLMFailureTransient 判断 LLM 错误是否为可重试的瞬态错误。
 func IsLLMFailureTransient(err error) bool {
 	if err == nil {
