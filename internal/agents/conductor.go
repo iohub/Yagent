@@ -16,6 +16,8 @@ import (
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
+	"codeactor/internal/messaging/bus"
+	"codeactor/internal/messaging/peer"
 	"codeactor/internal/tools"
 )
 
@@ -67,6 +69,7 @@ type ConductorAgent struct {
 	metaRetryCount int                       // max retries for Meta-Agent JSON parse failures
 	toolDefMap     map[string]tools.ToolDefinition // tool name → definition from tools.json
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
+	Mesh           *AgentMesh                // P2P 通信网格
 	compactEngine  *compact.Engine           // 上下文压缩引擎
 	compactConfig  *compact.Config           // 压缩配置
 	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
@@ -407,6 +410,62 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
 
+	// ─── 创建 P2P 通信网格 ───
+	agentMesh := NewAgentMesh()
+
+	// 注册 Conductor 自己的 Peer
+	if err := agentMesh.RegisterAgent("conductor", &BaseAgent{LLM: engine, Publisher: globalCtx.Publisher}); err != nil {
+		slog.Warn("Failed to register conductor in agent mesh", "error", err)
+	}
+
+	// 注册 Conductor 为全局 Observer，感知所有 P2P 事件
+	observerHandler := func(ctx context.Context, ev *bus.Event) error {
+		// 1. 转发到 TUI/WebSocket（通过现有 Publisher，非阻塞）
+		if globalCtx.Publisher != nil {
+			metadata := map[string]interface{}{
+				"source":       ev.Source,
+				"target":       ev.Target,
+				"topic":        ev.Topic,
+				"event_type":   fmt.Sprintf("%d", ev.Type),
+				"payload_size": len(ev.Payload),
+				"version":      ev.Version,
+			}
+			_ = globalCtx.Publisher.PublishWithMetadata("p2p_event",
+				fmt.Sprintf("P2P: %s → [%s] → %s", ev.Source, ev.Topic, ev.Target),
+				"conductor", metadata)
+		}
+
+		// 2. 跨域协调：coordination.* topic 需要 Conductor 仲裁
+		if peer.IsConductorTopic(ev.Topic) {
+			slog.Debug("Conductor observed coordination event",
+				"topic", ev.Topic, "source", ev.Source)
+		}
+
+		return nil
+	}
+	if err := agentMesh.RegisterConductorObserver(observerHandler); err != nil {
+		slog.Warn("Failed to register conductor observer", "error", err)
+	}
+
+	// 注册所有子 Agent 到网格
+	for _, reg := range []struct {
+		id    string
+		agent *BaseAgent
+	}{
+		{"repo-agent", &repo.BaseAgent},
+		{"coding-agent", &coding.BaseAgent},
+		{"chat-agent", &chat.BaseAgent},
+		{"meta-agent", &meta.BaseAgent},
+		{"devops-agent", &devops.BaseAgent},
+		{"browser-agent", &browser.BaseAgent},
+	} {
+		if reg.agent != nil {
+			if err := agentMesh.RegisterAgent(reg.id, reg.agent); err != nil {
+				slog.Warn("Failed to register agent in mesh", "agent", reg.id, "error", err)
+			}
+		}
+	}
+
 	// 创建 commit 管理器（用于后台自动学习和查询，不再暴露为 Agent 工具）
 	var commitManager *CommitManager
 	if llmClient != nil {
@@ -432,6 +491,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		metaRetryCount:     metaRetryCount,
 		toolDefMap:         toolDefMap,
 		customAgents:       make(map[string]*CustomAgent),
+		Mesh:               agentMesh, // P2P 通信网格
 		compactEngine:      nil, // 将在 Run 方法中根据配置初始化
 		compactConfig:      compactCfg,
 		summaryEngine:      summaryEngine,

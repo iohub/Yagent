@@ -2,10 +2,13 @@ package agents
 
 import (
 	"context"
+	"errors"
 
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
 	"codeactor/internal/messaging"
+	"codeactor/internal/messaging/bus"
+	"codeactor/internal/messaging/peer"
 )
 
 // AgentResult 封装 sub-agent 的完整执行结果
@@ -24,4 +27,30 @@ type Agent interface {
 type BaseAgent struct {
 	LLM       llm.Engine
 	Publisher *messaging.MessagePublisher
+	Peer      peer.AgentPeer // 新增：P2P 通信能力
+}
+
+// InitPeer 在共享 EventBus 上初始化 Agent 的 P2P 身份。
+// 必须在 Agent 参与任何 P2P 通信前调用。
+func (b *BaseAgent) InitPeer(id string, eventBus *bus.EventBus) error {
+	if id == "" {
+		return errors.New("baseagent: id must not be empty")
+	}
+	if eventBus == nil {
+		return nil // nil bus = P2P 禁用，静默跳过
+	}
+	p, err := peer.NewAgentPeer(id, eventBus)
+	if err != nil {
+		return err
+	}
+	b.Peer = p
+	return nil
+}
+
+// ClosePeer 释放 Peer 资源
+func (b *BaseAgent) ClosePeer() error {
+	if b.Peer != nil {
+		return b.Peer.Close()
+	}
+	return nil
 }
