@@ -766,7 +766,7 @@ func formatTimelineDuration(d time.Duration) string {
 // RenderTimeline renders the full tool timeline panel.
 // When expanded is false, only shows the currently running tool (or last completed tool).
 // When expanded is true, shows up to maxTimelineEntries entries.
-func RenderTimeline(entries []*TimelineEntry, expanded bool, width int) string {
+func RenderTimeline(entries []*TimelineEntry, expanded bool, width int, anim *Anim) string {
 	const maxTimelineEntries = 20
 	if width < 30 {
 		width = 30
@@ -805,7 +805,7 @@ func RenderTimeline(entries []*TimelineEntry, expanded bool, width int) string {
 	var lines []string
 	for i, e := range visible {
 		isLast := i == len(visible)-1
-		lines = append(lines, renderTimelineRow(e, width))
+		lines = append(lines, renderTimelineRow(e, width, anim))
 
 		// Vertical connector between entries
 		if !isLast && expanded {
@@ -836,7 +836,7 @@ func addTimelineTopBorder(content string, width int) string {
 
 // renderTimelineRow renders a single timeline entry row.
 // Format: " ● read_file  /path/to/file          1.2s"
-func renderTimelineRow(e *TimelineEntry, width int) string {
+func renderTimelineRow(e *TimelineEntry, width int, anim *Anim) string {
 	node := timelineNodeFor(e)
 
 	// Name styling
@@ -860,7 +860,11 @@ func renderTimelineRow(e *TimelineEntry, width int) string {
 		dur := formatTimelineDuration(e.Duration)
 		durStr = " " + timelineDurationStyle.Render(dur)
 	} else if e.Status == ToolStatusRunning {
-		durStr = " " + timelineRunningStyle.Render("running")
+		if anim != nil {
+			durStr = " " + anim.Render()
+		} else {
+			durStr = " " + timelineRunningStyle.Render("running")
+		}
 	}
 
 	// Build base line: "◇ llm_call          1.2s"

@@ -253,6 +253,15 @@ func (m model) View() tea.View {
 
 // renderTimelinePanel renders the tool timeline panel with caching.
 func (m *model) renderTimelinePanel(width int) string {
+	// 检查是否有正在运行的条目 — 有则跳过缓存以支持动画
+	hasRunning := false
+	for _, e := range m.timelineEntries {
+		if e.Status == ToolStatusRunning {
+			hasRunning = true
+			break
+		}
+	}
+
 	// Build cache key: entries count + last entry ID + expanded state + width
 	var lastID string
 	if len(m.timelineEntries) > 0 {
@@ -264,11 +273,12 @@ func (m *model) renderTimelinePanel(width int) string {
 	}
 	key := fmt.Sprintf("%d|%s|%s|%d", len(m.timelineEntries), lastID, expandedStr, width)
 
-	if key == m.timelineCacheKey && m.timelineCache != "" {
+	// 只在没有运行条目时使用缓存（动画帧会变化，不能用缓存）
+	if !hasRunning && key == m.timelineCacheKey && m.timelineCache != "" {
 		return m.timelineCache
 	}
 
-	m.timelineCache = RenderTimeline(m.timelineEntries, m.timelineExpanded, width)
+	m.timelineCache = RenderTimeline(m.timelineEntries, m.timelineExpanded, width, m.anim)
 	m.timelineCacheKey = key
 	return m.timelineCache
 }
