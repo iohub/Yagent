@@ -914,9 +914,8 @@ pub async fn investigate_repo(
     let repo_path = storage.storage.get_current_repo().ok_or(StatusCode::NOT_FOUND)?;
     let project_id = format!("{:x}", md5::compute(&repo_path)); 
 
-	const MAX_CALLERS_PER_FUNC: usize = 50;
-	const MAX_CALLEES_PER_FUNC: usize = 50;
-	const MAX_SKELETON_CHARS: usize = 8000;
+	use super::models::{MAX_CORE_FUNCTIONS, MAX_CALLERS_PER_FUNC, MAX_CALLEES_PER_FUNC, MAX_FILE_SKELETONS};
+	use super::models::skeleton::MAX_SKELETON_TEXT_CHARS;
 
 	// Compute out-degree for each function and collect top 15
 	use std::cmp::Reverse;
@@ -926,7 +925,7 @@ pub async fn investigate_repo(
 		items.push((out_degree, *func_id));
 	}
 	items.sort_by_key(|(deg, _)| Reverse(*deg));
-	let top = items.into_iter().take(15).collect::<Vec<_>>();
+	let top = items.into_iter().take(MAX_CORE_FUNCTIONS).collect::<Vec<_>>();
 
 	use std::collections::BTreeSet;
 	let mut files_needed: BTreeSet<std::path::PathBuf> = BTreeSet::new();
@@ -994,7 +993,7 @@ pub async fn investigate_repo(
 
 	// For each unique file, build code skeleton text (reuse skeleton builder logic)
 	let mut file_skeletons: Vec<super::models::CodeSkeletonResponse> = Vec::new();
-	for path in files_needed.into_iter() {
+	for path in files_needed.into_iter().take(MAX_FILE_SKELETONS) {
 		let rel_path = path.display().to_string().replace(&repo_path, "").trim_start_matches('/').to_string();
 		// Reuse existing batch skeletonizer by calling internal logic inline
 		let code = match std::fs::read_to_string(&path) {
@@ -1036,8 +1035,8 @@ pub async fn investigate_repo(
 			lines.push(skeleton_line);
 		}
 		let mut skeleton_text = if lines.is_empty() { String::new() } else { lines.join("\n\n") };
-		if skeleton_text.len() > MAX_SKELETON_CHARS {
-			let mut new_len = MAX_SKELETON_CHARS;
+		if skeleton_text.len() > MAX_SKELETON_TEXT_CHARS {
+			let mut new_len = MAX_SKELETON_TEXT_CHARS;
 			while !skeleton_text.is_char_boundary(new_len) {
 				new_len -= 1;
 			}
