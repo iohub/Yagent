@@ -276,18 +276,10 @@ func (m model) renderAirlineStatusBar() string {
 		modeBg = airlineColorRunBg
 		tipsText = langManager.GetText("EditModeTips")
 	} else {
-		if m.verboseMode {
-			modeSeg = gradModeStyle.
-				Background(airlineColorNormalBg).
-				Foreground(lipgloss.Color("15")).
-				Render("NORMAL") + " " +
-				lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("220")).Foreground(lipgloss.Color("236")).Render("VERBOSE")
-		} else {
-			modeSeg = gradModeStyle.
-				Background(airlineColorNormalBg).
-				Foreground(lipgloss.Color("15")).
-				Render("NORMAL")
-		}
+		modeSeg = gradModeStyle.
+			Background(airlineColorNormalBg).
+			Foreground(lipgloss.Color("15")).
+			Render("NORMAL")
 		modeBg = airlineColorNormalBg
 		tipsText = langManager.GetText("EditModeTips")
 	}

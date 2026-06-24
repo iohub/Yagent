@@ -1047,10 +1047,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toggleLanguage()
 				return m, nil
 
-			case "v":
-				m.toggleVerbose()
-				return m, nil
-
 			default:
 				// Append printable characters to command buffer (hidden input)
 				if len(msg.Key().Text) > 0 {
@@ -1126,10 +1122,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+l":
 			m.toggleLanguage()
-			return m, nil
-
-		case "ctrl+v":
-			m.toggleVerbose()
 			return m, nil
 
 		case "ctrl+f":
@@ -1543,17 +1535,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						hasError = true
 					}
 
-					if m.verboseMode {
-						// Verbose mode: show duration
+						// Always show duration (verbose is default)
 						if hasError {
 							le.content = fmt.Sprintf("◂ %s  [%s]  ✗ %.2fs", agentName, modelName, duration)
 						} else {
 							le.content = fmt.Sprintf("◂ %s  [%s]  ✓ %.2fs", agentName, modelName, duration)
 						}
-					} else {
-						// Non-verbose mode: no duration
-						le.content = fmt.Sprintf("◂ %s  [%s]", agentName, modelName)
-					}
 				} else {
 					le.content = "◂ LLM call completed"
 				}
