@@ -71,6 +71,9 @@ type translations struct {
 	DeleteConfirmMessage string
 	DeleteSuccess        string
 	DeleteFailed         string
+	// Timeline panel hints
+	TimelineDetailHint string
+	TimelineExpandHint string
 }
 
 var langMap = map[Language]translations{
@@ -144,6 +147,8 @@ var langMap = map[Language]translations{
 		DeleteConfirmMessage: "确定要删除这条历史记录吗？此操作不可恢复。",
 		DeleteSuccess:        "历史记录已删除",
 		DeleteFailed:         "删除失败：",
+		TimelineDetailHint:   "详情",
+		TimelineExpandHint:   "展开/折叠",
 	},
 	LangEnglish: {
 		Title:                            "CodeActor AI Assistant",
@@ -215,6 +220,8 @@ var langMap = map[Language]translations{
 		DeleteConfirmMessage: "Are you sure you want to delete this history entry? This action cannot be undone.",
 		DeleteSuccess:        "History entry deleted",
 		DeleteFailed:         "Delete failed: ",
+		TimelineDetailHint:   "Detail",
+		TimelineExpandHint:   "Expand/Collapse",
 	},
 }
 
@@ -346,6 +353,10 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.DeleteSuccess
 	case "DeleteFailed":
 		return translations.DeleteFailed
+	case "TimelineDetailHint":
+		return translations.TimelineDetailHint
+	case "TimelineExpandHint":
+		return translations.TimelineExpandHint
 	default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}

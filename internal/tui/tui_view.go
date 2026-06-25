@@ -298,7 +298,7 @@ func (m *model) renderTimelinePanel(width int) string {
 	}
 
 	// 构建提示行
-	hint := timelineHintStyle.Render(" ctrl+l 全屏 │ ctrl+v 展开/折叠 ")
+	hint := timelineHintStyle.Render(" ctrl+l " + langManager.GetText("TimelineDetailHint") + " │ ctrl+v " + langManager.GetText("TimelineExpandHint") + " ")
 
 	// 组装面板内容
 	panelContent := content + "\n" + hint

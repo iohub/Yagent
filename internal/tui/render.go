@@ -862,22 +862,26 @@ func renderTimelineRow(e *TimelineEntry, width int, anim *Anim) string {
 		name = nameStyle.Render(nameStr)
 	}
 
-	// Duration
+	// Build animation string (for running tools)
+	var animStr string
+	if effectiveStatus == ToolStatusRunning {
+		if anim != nil {
+			animStr = " " + anim.Render()
+		} else {
+			animStr = " " + timelineRunningStyle.Render("running")
+		}
+	}
+
+	// Build duration string (for completed tools only)
 	var durStr string
 	if e.Duration > 0 {
 		dur := formatTimelineDuration(e.Duration)
 		durStr = " " + timelineDurationStyle.Render(dur)
-	} else if effectiveStatus == ToolStatusRunning {
-		if anim != nil {
-			durStr = " " + anim.Render()
-		} else {
-			durStr = " " + timelineRunningStyle.Render("running")
-		}
 	}
 
-	// Build base line: "◇ llm_call          1.2s"
-	// or "● read_file ×3  /path/to/file   running"
+	// Build base line: node + name + animation + detail
 	leftPart := fmt.Sprintf(" %s %s", node, name)
+	leftPart += animStr
 	if e.Detail != "" {
 		// Truncate detail to fit
 		detailMax := 40
@@ -888,7 +892,7 @@ func renderTimelineRow(e *TimelineEntry, width int, anim *Anim) string {
 		leftPart += " " + timelineDetailStyle.Render("· "+detail)
 	}
 
-	// Right-align duration
+	// Right-align duration (rightPart is purely duration, no animation)
 	rightPart := durStr
 	leftWidth := lipgloss.Width(leftPart)
 	rightWidth := lipgloss.Width(rightPart)
@@ -970,21 +974,26 @@ func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCurs
 		name = nameStyle.Render(nameStr)
 	}
 
-	// Duration
+	// Build animation string (for running tools)
+	var animStr string
+	if effectiveStatus == ToolStatusRunning {
+		if anim != nil {
+			animStr = " " + anim.Render()
+		} else {
+			animStr = " " + timelineRunningStyle.Render("running")
+		}
+	}
+
+	// Build duration string (for completed tools only)
 	var durStr string
 	if e.Duration > 0 {
 		dur := formatTimelineDuration(e.Duration)
 		durStr = " " + timelineDurationStyle.Render(dur)
-	} else if effectiveStatus == ToolStatusRunning {
-		if anim != nil {
-			durStr = " " + anim.Render()
-		} else {
-			durStr = " " + timelineRunningStyle.Render("running")
-		}
 	}
 
 	// Build base line — fullscreen sidebar no longer shows detail summary
 	leftPart := fmt.Sprintf(" %s %s", node, name)
+	leftPart += animStr
 
 	// Right-align duration
 	rightPart := durStr
