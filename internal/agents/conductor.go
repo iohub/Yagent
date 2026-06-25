@@ -498,6 +498,30 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		}
 	}
 
+	// ── Blackboard 初始化 ──
+	var blackboardAccess interface {
+		Post(region string, author string, content map[string]interface{}, tags []string, references []string) (string, error)
+		Read(region string, filter map[string]interface{}) ([]map[string]interface{}, error)
+		Get(entryID string) (map[string]interface{}, bool)
+	}
+	if isBlackboardEnabled() {
+		bb := memory.NewBlackboard()
+		blackboardAccess = memory.NewBlackboardAccessAdapter(bb)
+		slog.Info("Blackboard enabled — agents will have shared state tools (blackboard_read, blackboard_post)")
+	}
+
+	// 注入到所有子 Agent
+	if blackboardAccess != nil {
+		if repo != nil { repo.BaseAgent.BlackboardAccess = blackboardAccess }
+		if coding != nil { coding.BaseAgent.BlackboardAccess = blackboardAccess }
+		if chat != nil { chat.BaseAgent.BlackboardAccess = blackboardAccess }
+		if meta != nil { meta.BaseAgent.BlackboardAccess = blackboardAccess }
+		if devops != nil { devops.BaseAgent.BlackboardAccess = blackboardAccess }
+		if browser != nil { browser.BaseAgent.BlackboardAccess = blackboardAccess }
+	} else {
+		slog.Info("Blackboard disabled (set ENABLE_BLACKBOARD=true to enable shared state between agents)")
+	}
+
 	// 创建 commit 管理器（用于后台自动学习和查询，不再暴露为 Agent 工具）
 	var commitManager *CommitManager
 	if llmClient != nil {
@@ -832,6 +856,7 @@ func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = ca.DisplayName
 	cfg.StopOnFinish = true
+	a.BaseAgent.FillCollaborationConfig(&cfg, ca.DisplayName)
 	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
@@ -1529,4 +1554,10 @@ func validateAndRepairToolCallPairs(messages []llm.Message) []llm.Message {
 	}
 
 	return result
+}
+
+// isBlackboardEnabled checks the ENABLE_BLACKBOARD environment variable.
+func isBlackboardEnabled() bool {
+	return strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_BLACKBOARD"))) == "true" ||
+		strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_BLACKBOARD"))) == "1"
 }

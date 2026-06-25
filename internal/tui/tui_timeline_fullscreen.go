@@ -260,10 +260,10 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 					if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
 						(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
 						if toolEntry.Call.Name == "get_repo_overview" {
-							// get_repo_overview: 直接以 markdown 文本方式展示，无行号
-							plainContent := renderPlainContent(toolEntry.Result.Content, width-12)
-							if plainContent != "" {
-								bodyLines := strings.Split(plainContent, "\n")
+							// get_repo_overview: 使用 RenderResultBody 统一处理，支持 JSON output 字段提取
+							bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-8)
+							if bodyContent != "" {
+								bodyLines := strings.Split(bodyContent, "\n")
 								for _, line := range bodyLines {
 									sb.WriteString("    ")
 									sb.WriteString(line)
@@ -310,11 +310,11 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 				if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
 					(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
 					if toolEntry.Call.Name == "get_repo_overview" {
-						// get_repo_overview: 直接以 markdown 文本方式展示，无行号
-						plainContent := renderPlainContent(toolEntry.Result.Content, width-8)
-						if plainContent != "" {
+						// get_repo_overview: 使用 RenderResultBody 统一处理，支持 JSON output 字段提取
+						bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-4)
+						if bodyContent != "" {
 							sb.WriteString("\n")
-							sb.WriteString(plainContent)
+							sb.WriteString(bodyContent)
 						}
 					} else {
 						// semantic_search: 保持原有逻辑

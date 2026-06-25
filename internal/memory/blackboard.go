@@ -588,3 +588,114 @@ func deepCopySlice(src []interface{}) []interface{} {
 	}
 	return dst
 }
+
+// ============================================================
+// BlackboardAccessAdapter — 桥接 memory.Blackboard 与 BlackboardAccess
+// ============================================================
+
+// BlackboardAccessAdapter wraps a Blackboard to satisfy the
+// BlackboardAccess interface (string-based signatures) expected
+// by ExecutorConfig and tools.BlackboardAccessor.
+type BlackboardAccessAdapter struct {
+	bb Blackboard
+}
+
+// NewBlackboardAccessAdapter creates a new adapter.
+func NewBlackboardAccessAdapter(bb Blackboard) *BlackboardAccessAdapter {
+	return &BlackboardAccessAdapter{bb: bb}
+}
+
+func (a *BlackboardAccessAdapter) Post(region string, author string, content map[string]interface{}, tags []string, references []string) (string, error) {
+	return a.bb.Post(BlackboardRegion(region), author, content, tags, references)
+}
+
+func (a *BlackboardAccessAdapter) Read(region string, filter map[string]interface{}) ([]map[string]interface{}, error) {
+	entries, err := a.bb.Read(BlackboardRegion(region), convertToBlackboardFilter(filter))
+	if err != nil {
+		return nil, err
+	}
+	result := make([]map[string]interface{}, 0, len(entries))
+	for _, e := range entries {
+		result = append(result, blackboardEntryToMap(e))
+	}
+	return result, nil
+}
+
+func (a *BlackboardAccessAdapter) Get(entryID string) (map[string]interface{}, bool) {
+	entry, ok := a.bb.Get(entryID)
+	if !ok {
+		return nil, false
+	}
+	return blackboardEntryToMap(entry), true
+}
+
+// convertToBlackboardFilter converts a generic map (from JSON/LLM) to BlackboardFilter.
+func convertToBlackboardFilter(m map[string]interface{}) BlackboardFilter {
+	f := BlackboardFilter{}
+	if m == nil {
+		return f
+	}
+	if v, ok := m["tags"]; ok {
+		f.Tags = toStringSlice(v)
+	}
+	if v, ok := m["author"].(string); ok {
+		f.Author = v
+	}
+	if v, ok := m["status"].(string); ok {
+		f.Status = v
+	}
+	if v, ok := m["limit"]; ok {
+		switch n := v.(type) {
+		case int:
+			f.Limit = n
+		case float64:
+			f.Limit = int(n)
+		}
+	}
+	return f
+}
+
+// blackboardEntryToMap converts a BlackboardEntry to a generic map.
+func blackboardEntryToMap(e BlackboardEntry) map[string]interface{} {
+	return map[string]interface{}{
+		"id":         e.ID,
+		"region":     string(e.Region),
+		"author":     e.Author,
+		"content":    e.Content,
+		"tags":       e.Tags,
+		"references": e.References,
+		"status":     e.Status,
+		"version":    e.Version,
+		"created_at": e.CreatedAt.Format(time.RFC3339),
+		"updated_at": e.UpdatedAt.Format(time.RFC3339),
+	}
+}
+
+// toStringSlice safely converts interface{} to []string,
+// handling both []string and []interface{} (JSON array case).
+func toStringSlice(v interface{}) []string {
+	if v == nil {
+		return nil
+	}
+	switch s := v.(type) {
+	case []string:
+		return s
+	case []interface{}:
+		result := make([]string, 0, len(s))
+		for _, item := range s {
+			if str, ok := item.(string); ok {
+				result = append(result, str)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+// Compile-time interface check
+var _ interface {
+	Post(string, string, map[string]interface{}, []string, []string) (string, error)
+	Read(string, map[string]interface{}) ([]map[string]interface{}, error)
+	Get(string) (map[string]interface{}, bool)
+} = (*BlackboardAccessAdapter)(nil)

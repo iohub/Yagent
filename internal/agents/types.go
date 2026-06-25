@@ -25,10 +25,15 @@ type Agent interface {
 
 // BaseAgent holds common dependencies for agents.
 type BaseAgent struct {
-	LLM       llm.Engine
-	Publisher *messaging.MessagePublisher
-	Peer      peer.AgentPeer     // 新增：P2P 通信能力
-	LayeredMem *memory.LayeredMemory // 分层记忆（Local + Shared）
+	LLM              llm.Engine
+	Publisher        *messaging.MessagePublisher
+	Peer             peer.AgentPeer        // 新增：P2P 通信能力
+	LayeredMem       *memory.LayeredMemory // 分层记忆（Local + Shared）
+	BlackboardAccess interface{
+		Post(region string, author string, content map[string]interface{}, tags []string, references []string) (string, error)
+		Read(region string, filter map[string]interface{}) ([]map[string]interface{}, error)
+		Get(entryID string) (map[string]interface{}, bool)
+	} // 黑板访问接口（为 nil 表示黑板未启用）
 }
 
 // InitPeer 在共享 EventBus 上初始化 Agent 的 P2P 身份。
@@ -54,4 +59,13 @@ func (b *BaseAgent) ClosePeer() error {
 		return b.Peer.Close()
 	}
 	return nil
+}
+
+// FillCollaborationConfig 注入协作相关字段到 ExecutorConfig。
+// 每个子 Agent 的 Run() 方法中应调用此方法。
+func (ba *BaseAgent) FillCollaborationConfig(cfg *ExecutorConfig, agentName string) {
+	cfg.Peer = ba.Peer
+	cfg.AgentID = agentName
+	cfg.BlackboardAccess = ba.BlackboardAccess
+	cfg.EnableCollaboration = ba.Peer != nil
 }

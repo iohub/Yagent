@@ -578,6 +578,8 @@ func formatToolParams(toolName string, argsJSON string) string {
 			}
 			return cmd
 		}
+	case "get_repo_overview":
+		return "Repo Overview"
 	case "semantic_search":
 		if query, ok := args["query"].(string); ok && query != "" {
 			if len(query) > 40 {
