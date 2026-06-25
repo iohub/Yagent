@@ -120,15 +120,15 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			if err == nil {
 				systemPrompt += "\n\n" + supplement
 			} else {
-				// 渲染失败时降级：使用默认的通用协作 prompt
-				slog.Warn("Failed to render P2P supplement, using default", "role", role, "error", err)
-				systemPrompt += SubAgentCollaborationPrompt
+				// 渲染失败时降级：记录警告但不注入旧版协作 prompt
+				// （旧版 SubAgentCollaborationPrompt 已被 p2p_supplement.go 取代）
+				slog.Warn("Failed to render P2P supplement, skipping collaboration prompt",
+					"role", role, "agent", cfg.AgentID, "error", err)
 			}
-		} else {
-			// 使用默认的通用协作 prompt（向后兼容）
-			systemPrompt += SubAgentCollaborationPrompt
 		}
 	}
+	// 注意：P2PSupplementEnabled=false 时不注入任何协作 prompt
+	// （旧版 SubAgentCollaborationPrompt 已被移除）
 	systemMsg := llm.Message{
 		Role:    systemRole,
 		Content: systemPrompt,
