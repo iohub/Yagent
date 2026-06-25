@@ -3,6 +3,8 @@ package agents
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"time"
 
 	"codeactor/internal/messaging/bus"
@@ -10,21 +12,60 @@ import (
 	"codeactor/internal/registry"
 )
 
+// AgentStatus Agent 状态枚举
+type AgentStatus string
+
+const (
+	AgentStatusActive    AgentStatus = "active"
+	AgentStatusBusy      AgentStatus = "busy"
+	AgentStatusCompleted AgentStatus = "completed"
+	AgentStatusFailed    AgentStatus = "failed"
+	AgentStatusEvicted   AgentStatus = "evicted"
+)
+
+// AgentRole Agent 角色枚举
+type AgentRole string
+
+const (
+	AgentRoleExecutor    AgentRole = "executor"
+	AgentRoleExplorer    AgentRole = "explorer"
+	AgentRoleAnalyst     AgentRole = "analyst"
+	AgentRoleCoordinator AgentRole = "coordinator"
+)
+
+// EnhancedAgentCapability 增强的 Agent 能力描述
+type EnhancedAgentCapability struct {
+	AgentID      string        `json:"agent_id"`
+	Name         string        `json:"name"`
+	Role         AgentRole     `json:"role"`
+	Status       AgentStatus   `json:"status"`
+	TaskID       string        `json:"task_id,omitempty"`
+	Capabilities []string      `json:"capabilities"`
+	RegisteredAt time.Time     `json:"registered_at"`
+	CompletedAt  *time.Time    `json:"completed_at,omitempty"`
+	ExpiresAt    time.Time     `json:"expires_at"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
 // AgentMesh 管理 Agent 间的 P2P 通信网格。
 // 持有共享的 EventBus，并为每个 Agent 初始化 Peer。
 type AgentMesh struct {
-	EventBus *bus.EventBus
-	agents   []*BaseAgent
-	// 分布式认知架构：能力注册中心
-	CapRegistry registry.CapabilityRegistry
+	EventBus     *bus.EventBus
+	agents       []*BaseAgent
+	CapRegistry  registry.CapabilityRegistry
+
+	// 增强型 Commander 支持
+	mu           sync.RWMutex
+	capabilities map[string]*EnhancedAgentCapability
 }
 
 // NewAgentMesh 创建新的 Agent 通信网格。
 func NewAgentMesh() *AgentMesh {
 	return &AgentMesh{
-		EventBus:    bus.NewEventBus(),
-		agents:      make([]*BaseAgent, 0),
-		CapRegistry: registry.NewCapabilityRegistry(),
+		EventBus:     bus.NewEventBus(),
+		agents:       make([]*BaseAgent, 0),
+		CapRegistry:  registry.NewCapabilityRegistry(),
+		capabilities: make(map[string]*EnhancedAgentCapability),
 	}
 }
 
@@ -116,4 +157,128 @@ func IsP2PTopic(topic string) bool {
 // IsConductorTopic 检查 topic 是否需要 Conductor 仲裁
 func IsConductorTopic(topic string) bool {
 	return peer.IsConductorTopic(topic)
+}
+
+// Find 根据 AgentID 查找 Agent，返回 nil 表示未找到或已过期
+func (m *AgentMesh) Find(agentID string) *EnhancedAgentCapability {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cap, exists := m.capabilities[agentID]
+	if !exists {
+		return nil
+	}
+	// 检查是否过期
+	if !cap.ExpiresAt.IsZero() && time.Now().After(cap.ExpiresAt) {
+		return nil
+	}
+	return cap
+}
+
+// ListActiveAgents 列出所有活跃状态的 Agent
+func (m *AgentMesh) ListActiveAgents() []*EnhancedAgentCapability {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	now := time.Now()
+	var result []*EnhancedAgentCapability
+	for _, cap := range m.capabilities {
+		if !cap.ExpiresAt.IsZero() && now.After(cap.ExpiresAt) {
+			continue // 跳过已过期
+		}
+		if cap.Status == AgentStatusActive || cap.Status == AgentStatusBusy {
+			result = append(result, cap)
+		}
+	}
+	return result
+}
+
+// QueryByRole 根据角色查询未过期的 Agent
+func (m *AgentMesh) QueryByRole(role AgentRole) []*EnhancedAgentCapability {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	now := time.Now()
+	var result []*EnhancedAgentCapability
+	for _, cap := range m.capabilities {
+		if !cap.ExpiresAt.IsZero() && now.After(cap.ExpiresAt) {
+			continue
+		}
+		if cap.Role == role {
+			result = append(result, cap)
+		}
+	}
+	return result
+}
+
+// UpdateStatus 更新 Agent 状态
+// 如果 taskID 不为空，同时更新关联的任务 ID
+// 如果状态为 completed 或 failed，自动设置 CompletedAt 时间
+func (m *AgentMesh) UpdateStatus(agentID string, status AgentStatus, taskID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cap, exists := m.capabilities[agentID]
+	if !exists {
+		return fmt.Errorf("agent %s not found in mesh", agentID)
+	}
+
+	cap.Status = status
+	if taskID != "" {
+		cap.TaskID = taskID
+	}
+	if status == AgentStatusCompleted || status == AgentStatusFailed {
+		now := time.Now()
+		cap.CompletedAt = &now
+	}
+	m.capabilities[agentID] = cap
+	return nil
+}
+
+// CleanupExpired 清理过期的 Agent 注册，返回清理数量
+func (m *AgentMesh) CleanupExpired() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	count := 0
+	for id, cap := range m.capabilities {
+		if !cap.ExpiresAt.IsZero() && now.After(cap.ExpiresAt) {
+			delete(m.capabilities, id)
+			count++
+		}
+	}
+	return count
+}
+
+// RegisterEnhanced 注册增强型 Agent 能力
+// 返回注册后的 Agent 引用
+func (m *AgentMesh) RegisterEnhanced(cap *EnhancedAgentCapability) error {
+	if cap == nil {
+		return fmt.Errorf("agentmesh: capability is nil")
+	}
+	if cap.AgentID == "" {
+		return fmt.Errorf("agentmesh: agent_id is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if cap.RegisteredAt.IsZero() {
+		cap.RegisteredAt = time.Now()
+	}
+	m.capabilities[cap.AgentID] = cap
+	return nil
+}
+
+// UnregisterEnhanced 注销增强型 Agent
+func (m *AgentMesh) UnregisterEnhanced(agentID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.capabilities[agentID]; !exists {
+		return fmt.Errorf("agent %s not found in mesh", agentID)
+	}
+	delete(m.capabilities, agentID)
+	return nil
 }

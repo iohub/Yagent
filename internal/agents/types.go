@@ -34,6 +34,11 @@ type BaseAgent struct {
 		Read(region string, filter map[string]interface{}) ([]map[string]interface{}, error)
 		Get(entryID string) (map[string]interface{}, bool)
 	} // 黑板访问接口（为 nil 表示黑板未启用）
+
+	// P2PSupplementEnabled 是否启用角色化 P2P Supplement
+	// 开启后，sub-agent 的 system prompt 中会注入角色化的协作能力描述
+	// 由 app.go 根据 EnhancedCommanderConfig.EnableP2PSupplement 设置
+	P2PSupplementEnabled bool
 }
 
 // InitPeer 在共享 EventBus 上初始化 Agent 的 P2P 身份。
@@ -68,4 +73,6 @@ func (ba *BaseAgent) FillCollaborationConfig(cfg *ExecutorConfig, agentName stri
 	cfg.AgentID = agentName
 	cfg.BlackboardAccess = ba.BlackboardAccess
 	cfg.EnableCollaboration = ba.Peer != nil
+	// 新增：传递 P2P Supplement 标志
+	cfg.P2PSupplementEnabled = ba.P2PSupplementEnabled
 }

@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"codeactor/internal/agents/prompts"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
-	"codeactor/internal/tools"
 	"codeactor/internal/messaging"
 	"codeactor/internal/messaging/peer"
+	"codeactor/internal/tools"
 )
 
 // ExecutorConfig holds the configuration for running an LLM-tool agent loop.
@@ -63,6 +65,8 @@ type ExecutorConfig struct {
 		CanDelegate(targetID string, fromID string) error
 		Fork(targetID string) interface{}
 	}
+	// P2PSupplementEnabled 是否启用角色化 P2P Supplement（由 BaseAgent.FillCollaborationConfig 注入）
+	P2PSupplementEnabled bool
 }
 
 // DefaultExecutorConfig returns an ExecutorConfig with sensible defaults applied.
@@ -103,7 +107,27 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	}
 	// 追加协作能力描述
 	if cfg.EnableCollaboration {
-		systemPrompt += SubAgentCollaborationPrompt
+		if cfg.P2PSupplementEnabled {
+			// 使用角色化的 P2P Supplement（增强型 Commander 模式）
+			role := prompts.DefaultRole(cfg.AgentID)
+			supplement, err := prompts.RenderSupplement(prompts.P2PSupplementConfig{
+				Role:               role,
+				AgentID:            cfg.AgentID,
+				AgentName:          cfg.AgentName,
+				Capabilities:       strings.Join(prompts.DefaultCapabilities(cfg.AgentID), ", "),
+				MaxDelegationDepth: 3,
+			})
+			if err == nil {
+				systemPrompt += "\n\n" + supplement
+			} else {
+				// 渲染失败时降级：使用默认的通用协作 prompt
+				slog.Warn("Failed to render P2P supplement, using default", "role", role, "error", err)
+				systemPrompt += SubAgentCollaborationPrompt
+			}
+		} else {
+			// 使用默认的通用协作 prompt（向后兼容）
+			systemPrompt += SubAgentCollaborationPrompt
+		}
 	}
 	systemMsg := llm.Message{
 		Role:    systemRole,

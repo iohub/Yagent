@@ -82,3 +82,16 @@ enabled = false
 api_token = "your-key"
 model = "BAAI/bge-reranker-v2-m3"
 api_base_url = "https://api.siliconflow.cn"
+
+# ── 增强型 Commander（分布式认知架构）──
+# 所有选项默认关闭，启用时需显式设置
+# [enhanced_commander]
+# enable = false
+# enable_p2p_supplement = false
+# enable_result_compression = false
+# enable_observer_filter = false
+# enable_mesh_registration = false
+# agent_ttl = 300
+# compression_threshold = 4096
+# summary_max_length = 2048
+# max_delegation_depth = 3
