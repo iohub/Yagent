@@ -226,34 +226,44 @@ const (
 │  │  ┌──────────────────┐  ┌────────────────┐  ┌───────────────┐  │  │
 │  │  │ Mesh Register    │  │ P2P Supplement │  │ Result        │  │  │
 │  │  │ (on delegate)    │  │ (inject to     │  │ Compressor    │  │  │
-│  │  │ + TTL evict      │  │  sub-agent)    │  │ (summary→Cond)│  │  │
+│  │  │ + TTL evict      │  │  sub-agent,    │  │ (summary→Cond)│  │  │
+│  │  │                  │  │  role-based)   │  │               │  │  │
 │  │  └──────────────────┘  └────────────────┘  └───────────────┘  │  │
 │  └───────────────────────────┬────────────────────────────────────┘  │
 │                              │                                       │
 │         ┌────────────────────┼────────────────────┐                 │
 │         ▼                    ▼                    ▼                  │
 │  ┌────────────┐     ┌────────────┐      ┌────────────┐             │
-│  │ Repo-Agent │◄───►│Coding-Agent│◄────►│DevOps-Agent│             │
-│  │ (Sub-Thread)│    │ (Sub-Thread)│     │ (Sub-Thread)│             │
-│  │            │     │            │      │            │             │
-│  │ +P2P aware │     │ +P2P aware │      │ +P2P aware │             │
-│  │ prompt     │     │ prompt     │      │ prompt     │             │
-│  └─────┬──────┘     └─────┬──────┘      └─────┬──────┘             │
-│        │                  │                   │                     │
-│        └──────────────────┼───────────────────┘                     │
-│                           │      P2P 直连（Conductor 不可见）       │
-│              ┌────────────▼────────────┐                             │
-│              │      AgentMesh          │                             │
-│              │  ┌──────────────────┐   │                             │
-│              │  │   AgentPeer P2P  │   │  p2p_query / p2p_notify    │
-│              │  │   Transport      │   │  p2p_delegate (new)        │
-│              │  └──────────────────┘   │                             │
-│              │  ┌──────────────────┐   │                             │
-│              │  │  SharedMemory    │   │  Full Results / P2P Logs   │
-│              │  │  (MVCC)          │   │  Task Context / Artifacts  │
-│              │  └──────────────────┘   │                             │
-│              └─────────────────────────┘                             │
+│  │ Repo-Agent │     │Coding-Agent│      │DevOps-Agent│             │
+│  │ (explorer) │◄────│ (executor) │◄────►│ (executor) │             │
+│  │ Read-Only  │ p2p │            │ p2p  │            │             │
+│  │ Code Search│query│ +P2P aware │deleg.│ +P2P aware │             │
+│  │            │     │ prompt     │      │ prompt     │             │
+│  └────────────┘     └─────┬──────┘      └─────┬──────┘             │
+│                           │                   │                     │
+│                    p2p_delegate│        p2p_delegate│               │
+│                           ▼                   ▼                     │
+│                    ┌───────────────────────────────────┐            │
+│                    │        AgentMesh                  │            │
+│                    │  ┌──────────────────────────┐     │            │
+│                    │  │  AgentEntry              │     │            │
+│                    │  │  - agent_id              │     │            │
+│                    │  │  - role (explorer|exec) │     │            │
+│                    │  │  - capabilities          │     │            │
+│                    │  │  - endpoint              │     │            │
+│                    │  └──────────────────────────┘     │            │
+│                    │  ┌──────────────────────────┐     │            │
+│                    │  │  SharedMemory (MVCC)     │     │            │
+│                    │  │  Full Results / P2P Logs │     │            │
+│                    │  └──────────────────────────┘     │            │
+│                    └───────────────────────────────────┘            │
 │                                                                      │
+│ 图例:                                                                 │
+│   ◄──── p2p_query : 只读查询（Repo-Agent 仅接受入站查询）            │
+│   ────► p2p_delegate : 任务委派（仅 executor→executor）              │
+│   ◄────► p2p 双向 : executor 之间可相互委派                          │
+│   (explorer) : 只读探索角色，不接受/不发起 p2p_delegate              │
+│   (executor) : 执行角色，可发起/接受 p2p_delegate                    │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -283,6 +293,14 @@ Step 4: delegate_repo(task_1)
     e. 完整结果存入 SharedMemory: /tasks/{id}/agents/repo-agent/result
     f. 压缩摘要返回给 Conductor  ← Conductor 只看到摘要
     g. Repo-Agent 在 Mesh 中标记为 "completed" (保留 TTL 供 P2P 查询)
+
+   ⚠️ Repo-Agent 角色约束:
+      - Repo-Agent 是 **只读探索者（explorer）**，不改变代码环境
+      - 它 **不接受** p2p_delegate（其他 Agent 不能委派任务给它）
+      - 它的 prompt 中 **不注入** p2p_delegate 工具（它不能委派其他 Agent）
+      - 它仅响应 p2p_query 提供代码信息，是纯粹的能力提供者
+      - 当 Coding-Agent 需要 Repo-Agent 的信息时，只能用 p2p_query
+      - AgentMesh 的 Role 守卫会拒绝任何指向 explorer 的 p2p_delegate
 
 Step 5: delegate_coding(task_2)
   [新增] Delegation Layer 自动:
@@ -339,13 +357,18 @@ Step 5: delegate_coding(task_2)
 
 **定位**: 在子 Agent 的 system prompt 末尾动态追加 P2P 协作能力描述，让 LLM 知道可用工具。
 
-#### 模板定义
+#### 角色化模板（Role-Based Templates）
+
+根据 Agent 的 `role`（explorer / executor），注入不同的 P2P 工具集。
+
+##### Executor 模板（适用于 Coding-Agent / DevOps-Agent 等执行型 Agent）
 
 ```go
 package prompts
 
 type P2PAgentInfo struct {
-    Name         string // "repo-agent"
+    Name         string // "repo-agent" | "coding-agent" | ...
+    Role         string // "explorer" | "executor"   ← 新增角色字段
     Status       string // "running" | "completed"
     Capabilities string // 人类可读的能力描述
 }
@@ -356,60 +379,62 @@ type P2PSupplementData struct {
     MaxDepth        int             // P2P 委派最大深度（默认 2）
 }
 
-const P2PSupplementTemplate = `
+const ExecutorSupplementTemplate = `
 ## Collaboration Capabilities
 
 You are part of a multi-agent system. You can communicate directly with other agents.
 
 ### Available Tools
 
-1. **p2p_query(agent_name, query)** — Query another agent for information.
+1. **p2p_query(agent_name, query)** — Query another agent for information (read-only).
    Use when: You need context from another agent's domain expertise.
    Example: p2p_query("repo-agent", "What is the structure of internal/handlers/?")
+   NOTE: You can query ANY agent, including read-only explorers like Repo-Agent.
 
 2. **p2p_notify(agent_name, message)** — Notify another agent asynchronously.
-   Use when: You've done something that affects another agent's work.
 
-3. **p2p_delegate(agent_name, subtask)** — Delegate a sub-task to another agent.
+3. **p2p_delegate(agent_name, subtask)** — Delegate a sub-task to another EXECUTOR agent.
    Use when: A sub-task is better handled by another agent's expertise.
+   IMPORTANT: You CANNOT delegate to explorer agents (e.g., Repo-Agent).
+   They are read-only and do not accept task delegation.
    Max delegation depth: {{.MaxDepth}}.
 
 ### Available Peers
 {{range .AvailableAgents}}
-- **{{.Name}}** ({{.Status}}): {{.Capabilities}}
+- **{{.Name}}** (role: {{.Role}}, status: {{.Status}}): {{.Capabilities}}
 {{end}}
 
-### Guidelines
-- Use P2P tools to resolve cross-agent dependencies directly
-- Do NOT wait for the Conductor to relay information
-- Keep queries concise and specific
-- If an agent is "completed", query results come from SharedMemory cache
-- Report significant collaborations in your final result summary
+### Role-Based Rules
+- **explorer** agents (like Repo-Agent): Query-only. Use p2p_query, NOT p2p_delegate.
+- **executor** agents (like Coding/DevOps): Can delegate and be delegated to.
+- If you need code analysis, p2p_query the repo-agent.
+- If you need a task executed, p2p_delegate an executor agent.
 `
 ```
 
-#### 注入时机
+##### Explorer 模板（适用于 Repo-Agent 等只读探索型 Agent）
 
 ```go
-// 在 Delegation Layer 中，创建子 Agent 时动态注入
-func (d *Delegator) buildAgentSystemPrompt(agentType AgentType, taskID string) string {
-    basePrompt := d.getPromptTemplate(agentType)
+const ExplorerSupplementTemplate = `
+## Collaboration Capabilities
 
-    if config.P2PCollaborationEnabled() {
-        availableAgents := d.mesh.ListActiveAgents(taskID)
-        supplement := renderP2PSupplement(P2PSupplementData{
-            AvailableAgents: availableAgents,
-            TaskID:          taskID,
-            MaxDepth:        config.P2PMaxDepth(),
-        })
-        return basePrompt + "\n\n" + supplement
-    }
+You are a **read-only code explorer**. Other agents may query you for code context.
 
-    return basePrompt
-}
+### Available Tools
+
+1. **p2p_query** — You will be queried by other agents for code information.
+   Respond with code structure, symbol locations, dependency information, etc.
+   NOTE: You can only RESPOND to queries. You cannot initiate queries to other agents.
+
+### Constraints
+- You do NOT have the p2p_delegate tool — you cannot delegate tasks to anyone.
+- You do NOT accept p2p_delegate — if another agent tries, the runtime rejects it.
+- Your responses are informational only. You do NOT modify code or the environment.
+- Your access to the codebase is **read-only** at all times.
+`
 ```
 
-**Token 预算**：全文约 600 tokens，在现有子 Agent prompt（约 2000-3000 tokens）的预算内。
+**Token 预算**：Executor 模板约 650 tokens，Explorer 模板约 300 tokens，均在现有子 Agent prompt 预算内。
 
 ---
 
@@ -427,6 +452,7 @@ package mesh
 // AgentCapability 描述 Agent 的能力和状态
 type AgentCapability struct {
     Name         string       // "repo-agent"
+    Role         string       // "explorer" | "executor"   ← 新增
     TaskID       string       // 关联任务 ID
     Status       string       // "running" | "completed" | "evicted"
     Capabilities string       // 能力描述（给 LLM 看）
@@ -462,19 +488,46 @@ func (m *AgentMesh) QueryAgent(agentName string, query string) (string, error) {
 }
 ```
 
-#### P2P 查询降级逻辑
+#### Role 字段语义
+
+| Role | p2p_query 入站 | p2p_delegate 入站 | p2p_delegate 出站 | 代码写权限 |
+|------|---------------|-------------------|-------------------|-----------|
+| `explorer` | ✅ 接受查询 | ❌ 运行时拒绝 | ❌ 工具未注入 | ❌ 只读 |
+| `executor` | ✅ 接受查询 | ✅ 接受委派 | ✅ 可委派其他 executor | ✅ 按职责 |
+
+#### P2P 查询降级逻辑（更新版）
+
+当 Coding-Agent 通过 p2p_query 查询 Repo-Agent 时：
 
 ```
 Agent A p2p_query("repo-agent", "..."):
 
   1. AgentMesh.Find("repo-agent")
+     ├── role == "explorer" → 允许查询 ✅
      ├── Status = "running" → AgentPeer.Request(query) → 实时响应 ✅
-     ├── Status = "completed" → SharedMemory.Read("/tasks/{id}/agents/repo-agent/result")
+     ├── Status = "completed" → SharedMemory.Read("...")
      │   └── 返回 [Cached] 标注的缓存结果 ✅
-     └── Status = "evicted" 或未找到 → 返回 "agent unavailable, no cached results" ❌
+     └── Status = "evicted" 或未找到 → 返回 "agent unavailable" ❌
 
-  2. 超时控制: AgentPeer.Request 默认 30s 超时
+  2. 查询不受 role 限制，explorer 和 executor 都可被查询
+
+#### Repo-Agent 查询最佳实践
+
+当其他 Agent 需要代码上下文时，应优先使用 p2p_query 而非等待 Conductor 中转：
+
 ```
+Coding-Agent 内部:
+  1. p2p_query("repo-agent", "Find all route definitions")
+     → Repo-Agent 返回路由位置和结构
+  2. p2p_query("repo-agent", "What middleware is currently used?")
+     → Repo-Agent 返回中间件列表
+  3. 基于这些信息，Coding-Agent 自行决策并编码
+```
+
+**优势**：
+- 避免 Conductor context 中充斥探索中间结果
+- Repo-Agent 的只读保证让 Coding-Agent 可以安全地反复查询
+- Repo-Agent 完成后（completed 状态），查询自动降级为 SharedMemory 缓存
 
 #### TTL 管理
 
@@ -645,6 +698,14 @@ func (t *P2PDelegateTool) Execute(ctx context.Context, params map[string]interfa
         return "", fmt.Errorf("agent %s not available: %w", targetAgent, err)
     }
 
+    // 2.5 Role 守卫: 不能委派给 explorer 角色
+    if cap.Role == "explorer" {
+        return "", fmt.Errorf(
+            "cannot delegate to %s (role=explorer): it is a read-only agent. "+
+                "Use p2p_query instead to obtain information from it.",
+            targetAgent)
+    }
+
     // 3. 循环检测
     if detectCycle(ctx, targetAgent) {
         return "", fmt.Errorf("cycle detected: %s already in delegation chain", targetAgent)
@@ -714,6 +775,7 @@ func detectCycle(ctx context.Context, targetAgent string) bool {
 | A → B → A (chain中无重复) | ❌ 循环检测拒绝 | A 已在委派链中 |
 | A → B → C → D (depth≥3) | ❌ 深度限制拒绝 | 默认 MaxDepth=2 |
 | A → A | ❌ 禁止 | 不能委派给自己 |
+| A(executor) → B(explorer) (p2p_delegate) | ❌ Role 守卫拒绝 | explorer 不接受委派，请用 p2p_query |
 ```
 
 ---
@@ -892,7 +954,7 @@ func LoadEnhancedCommanderConfig() EnhancedCommanderConfig {
 
 | # | 路径 | 说明 | 工作量 |
 |---|------|------|--------|
-| 1 | `internal/agents/prompts/p2p_supplement.go` | P2P 工具描述模板，动态注入子 Agent | Low |
+| 1 | `internal/agents/prompts/p2p_supplement.go` | **两套** P2P 工具描述模板（executor / explorer），按 role 动态注入 | Low |
 | 2 | `internal/agents/result_compressor.go` | 结果压缩 + SharedMemory 存储 | Medium |
 | 3 | `internal/agents/p2p_delegate.go` | p2p_delegate 工具实现（深度控制+循环检测） | Medium |
 | 4 | `internal/agents/observer_filter.go` | P2P 事件过滤器，防止注入 Conductor context | Low |
@@ -976,6 +1038,9 @@ Phase 1: 激活 Mesh 注册     Phase 2: P2P Supplement    Phase 3: 结果压缩
   - 开启 P2P_COLLABORATION 后，子 Agent prompt 包含 P2P 工具描述
   - 可用 Agent 列表动态正确（已完成 Agent 显示为 "completed"）
   - 关闭 Flag 后，prompt 不受影响
+  - Executor 类型 Agent 获得 p2p_query + p2p_delegate 工具
+  - Explorer 类型 Agent（Repo-Agent）**仅获得 p2p_query**，不含 p2p_delegate
+  - 其他 Agent 尝试 p2p_delegate 到 Repo-Agent 时被 Role 守卫拒绝
 ```
 
 ### 步骤 3: 结果压缩（半天）
@@ -1150,6 +1215,25 @@ Suggestions:
 // 场景 8: 深度限制
 // A → B → C → D (MAX_DEPTH=2)
 // 验证: C → D 被拒绝
+
+// 场景 9: Repo-Agent Role 约束 — 拒绝委派
+// Coder p2p_delegate 到 Repo-Agent
+// 验证: Role 守卫拒绝，返回 "cannot delegate to explorer"
+// 验证: 错误信息引导使用 p2p_query
+
+// 场景 10: Repo-Agent Role 约束 — 查询正常
+// Coder p2p_query 到 Repo-Agent
+// 验证: 查询正常执行，Repo-Agent 返回代码信息
+// 验证: Repo-Agent 不改变代码环境
+
+// 场景 11: Repo-Agent 无 delegate 工具
+// 检查 Repo-Agent 的 system prompt
+// 验证: prompt 中不包含 p2p_delegate 工具描述
+// 验证: prompt 中包含 "read-only" 角色声明
+
+// 场景 12: Delegation 候选列表过滤
+// 获取 delegation candidates 列表
+// 验证: 不包含 role=explorer 的 Agent
 ```
 
 ### 8.3 Context 压缩效果验证
@@ -1260,6 +1344,10 @@ AgentMesh 已管理 Agent 注册，只需增加 `capabilities` 字段即可。�
 | Delegation Layer | Conductor 和子 Agent 之间的基础设施层，自动处理注册/注入/压缩 |
 | Result Compressor | 结果压缩器，将大结果压缩为摘要返回给 Conductor |
 | Observer Filter | 事件过滤器，防止 P2P 通信事件污染 Conductor context |
+| Explorer Agent / 探索型 Agent | `role=explorer` 的 Agent。仅响应 p2p_query，提供只读代码探索能力。不接受/不发起 p2p_delegate。代表：Repo-Agent。 |
+| Executor Agent / 执行型 Agent | `role=executor` 的 Agent。可接受 p2p_delegate 承担子任务，也可向其他 executor 发起委派。代表：Coding-Agent, DevOps-Agent。 |
+| Role Guard / 角色守卫 | p2p_delegate 入口处的前置校验，根据目标 Agent 的 role 字段拒绝委派给 explorer。 |
+| Role-Based Injection / 角色化注入 | 根据 Agent 的 role 选择性注入 P2P 工具。Explorer 不注入 p2p_delegate。 |
 
 ---
 
