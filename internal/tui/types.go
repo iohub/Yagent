@@ -108,7 +108,7 @@ type TimelineEntry struct {
 // 目前只合併 read_file, list_dir, search_by_regex 這三類檔案操作工具。
 func IsMergeableTool(name string) bool {
 	switch name {
-	case "read_file", "list_dir", "search_by_regex":
+	case "read_file", "list_dir", "search_by_regex", "semantic_search":
 		return true
 	}
 	return false

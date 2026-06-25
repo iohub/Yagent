@@ -711,7 +711,7 @@ func (m *model) hasDirtyEntries() bool {
 	return m.needFullRebuild || len(m.dirtyEntryIndices) > 0
 }
 
-func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) model {
+func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) *model {
 	ti := textarea.New()
 
 	// ── Editor input styles (harmonized with TUI 256-color palette) ──
@@ -842,7 +842,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	styles := common.NewStyles()
 	com := common.NewCommon(styles, cfg, ca, projectDir, useDarkStyle)
 
-	return model{
+return &model{
 		com: com,
 
 		assistant:          ca,
@@ -923,7 +923,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	}
 }
 
-func (m model) Init() tea.Cmd {
+func (m *model) Init() tea.Cmd {
 	return tea.Batch(
 		listenForEvents(m.eventCh),
 		// 延迟启动 tick 循环：初始时不启动 tick，

@@ -255,6 +255,20 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 							sb.WriteString("\n")
 						}
 					}
+
+					// 详情页展示：为 semantic_search 和 get_repo_overview 补充完整结果内容
+					if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
+						(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
+						bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-8)
+						if bodyContent != "" {
+							bodyLines := strings.Split(bodyContent, "\n")
+							for _, line := range bodyLines {
+								sb.WriteString("    ")
+								sb.WriteString(line)
+								sb.WriteString("\n")
+							}
+						}
+					}
 				} else {
 					// 没有 toolEntry 时显示简要状态
 					statusIcon := "●"
@@ -277,6 +291,16 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 				// 复用 RenderToolLine 渲染工具调用行（header + body）
 				rendered := RenderToolLine(toolEntry, m.anim, width)
 				sb.WriteString(rendered)
+
+				// 详情页展示：为 semantic_search 和 get_repo_overview 补充完整结果内容
+				if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
+					(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
+					bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-4)
+					if bodyContent != "" {
+						sb.WriteString("\n")
+						sb.WriteString(bodyContent)
+					}
+				}
 			} else {
 				sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (tool data not available)"))
 			}

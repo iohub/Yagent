@@ -47,7 +47,7 @@ func makeLeftSep(leftBg, rightBg color.Color) string {
 		Render(powerlineLeftSep)
 }
 
-func (m model) View() tea.View {
+func (m *model) View() tea.View {
 	if m.quitting {
 		return tea.View{AltScreen: true}
 	}
@@ -59,7 +59,7 @@ func (m model) View() tea.View {
 
 	// 全屏 timeline 模式：分屏展示时间线条目和详细内容
 	if m.timelineFullscreenMode {
-		return renderTimelineFullscreenView(&m)
+		return renderTimelineFullscreenView(m)
 	}
 
 	// ====== Dialog overlay: takes priority over history mode ======
@@ -72,7 +72,7 @@ func (m model) View() tea.View {
 
 	// History mode: render fullscreen history browser
 	if m.historyMode {
-		return renderHistoryView(&m)
+		return renderHistoryView(m)
 	}
 
 	var b strings.Builder
@@ -317,7 +317,7 @@ func (m *model) renderTimelinePanel(width int) string {
 
 // renderAirlineStatusBar renders an nvim airline-style segmented status bar.
 // Layout: [Mode][Filler─────]([RightSeg1][RightSeg2]...)
-func (m model) renderAirlineStatusBar() string {
+func (m *model) renderAirlineStatusBar() string {
 	width := m.termWidth
 	if width <= 0 {
 		width = 80 // fallback before WindowSizeMsg
@@ -452,7 +452,7 @@ func (m model) renderAirlineStatusBar() string {
 // renderWelcomePanel renders the welcome panel.
 // In the initial state (no log entries), it centers the logo on screen.
 // After tasks have run, it falls back to the original left/right layout.
-func (m model) renderWelcomePanel() string {
+func (m *model) renderWelcomePanel() string {
 	if len(m.logEntries) == 0 {
 		// Initial startup state: center logo in the viewport
 		vpHeight := m.termHeight - m.computeFooterHeight()
@@ -471,7 +471,7 @@ func (m model) renderWelcomePanel() string {
 
 // renderCenteredStartupScreen renders the startup screen with logo centered
 // both horizontally and vertically in the available viewport.
-func (m model) renderCenteredStartupScreen(width, height int) string {
+func (m *model) renderCenteredStartupScreen(width, height int) string {
 	banner := renderBanner()
 
 	cwd := m.projectDir
@@ -500,7 +500,7 @@ func (m model) renderCenteredStartupScreen(width, height int) string {
 
 // renderWelcomePanelLayout renders the original left/right panel layout.
 // This is used when there are log entries (tasks have run).
-func (m model) renderWelcomePanelLayout() string {
+func (m *model) renderWelcomePanelLayout() string {
 	// --- 项目路径（将在左+右面板下方占整行显示）---
 	cwd := m.projectDir
 	home, _ := os.UserHomeDir()
@@ -602,7 +602,7 @@ func formatCacheHitRate(cacheTokens, inputTokens int64) string {
 
 // renderTokenDashboard renders a dashboard-style token consumption display.
 // Shows total tokens in a highlighted row, followed by per-agent breakdown sorted by total.
-func (m model) renderTokenDashboard() string {
+func (m *model) renderTokenDashboard() string {
 	// 折叠模式：只显示当前 agent 本次运行的 token 统计
 	if m.tokenDashboardCollapsed {
 		return m.renderCollapsedTokenDashboard()
@@ -708,7 +708,7 @@ func (m model) renderTokenDashboard() string {
 
 // renderCollapsedTokenDashboard 渲染折叠状态的 token 仪表盘
 // 只显示当前 agent 本次运行的 token 消耗和 cache 命中率
-func (m model) renderCollapsedTokenDashboard() string {
+func (m *model) renderCollapsedTokenDashboard() string {
 	rt := m.currentAgentRunTokens
 
 	// 如果没有任何 token 数据，返回空字符串

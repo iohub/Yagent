@@ -13,6 +13,7 @@ func TestIsMergeableTool(t *testing.T) {
 		{"read_file", true, ""},
 		{"list_dir", true, ""},
 		{"search_by_regex", true, ""},
+		{"semantic_search", true, ""},
 		{"edit_file", false, ""},
 		{"llm_call", false, ""},
 		{"run_bash", false, ""},

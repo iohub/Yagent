@@ -512,7 +512,7 @@ func (m *model) searchInLog(query string) {
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
 	// taskEventMsg is allowed through so the listenForEvents chain stays alive;
 	// its handler drops the event when dialogs are open but reschedules the chain.
@@ -557,14 +557,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// 全屏 timeline 模式：拦截所有消息，委托给全屏处理器
 	if m.timelineFullscreenMode {
-		return timelineFullscreenUpdate(msg, &m)
+		return timelineFullscreenUpdate(msg, m)
 	}
 
 	// History mode: intercept all messages and delegate to history handler.
 	// Skip when a dialog is active so dialog confirmations (e.g. delete_history_confirm)
 	// can be processed by the DialogStack key handler below.
 	if m.historyMode && (m.dialogStack == nil || m.dialogStack.Len() == 0) {
-		return historyUpdate(msg, &m)
+		return historyUpdate(msg, m)
 	}
 
 	switch msg := msg.(type) {
@@ -731,7 +731,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								taskID := m.pendingDeleteTaskID
 								m.pendingDeleteTaskID = ""
 								m.dialogStack.Pop()
-								return m, confirmDeleteHistoryEntryByID(&m, taskID)
+								return m, confirmDeleteHistoryEntryByID(m, taskID)
 							}
 							// Cancel confirmation
 							if m.currentTask != nil && m.currentTask.CancelFunc != nil {
@@ -1086,7 +1086,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.timelineFullscreenMode = true
 					m.timelineExpanded = false
 					m.timelineFullscreenCursor = 0
-					initTimelineDetailViewport(&m)
+					initTimelineDetailViewport(m)
 					m.timelineCacheKey = ""
 					m.invalidateFooterCache()
 				} else {
@@ -1202,7 +1202,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.timelineFullscreenMode = true
 				m.timelineExpanded = false
 				m.timelineFullscreenCursor = 0
-				initTimelineDetailViewport(&m)
+				initTimelineDetailViewport(m)
 				m.timelineCacheKey = ""
 				m.invalidateFooterCache()
 			} else {
@@ -1304,7 +1304,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Clear the input field
 					m.input.SetValue("")
-					return m, enterHistoryMode(&m)
+					return m, enterHistoryMode(m)
 				}
 				// If "model" is selected, open model selection dialog with target picker
 				if skillName == "model" {
