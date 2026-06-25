@@ -259,13 +259,27 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 					// 详情页展示：为 semantic_search 和 get_repo_overview 补充完整结果内容
 					if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
 						(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
-						bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-8)
-						if bodyContent != "" {
-							bodyLines := strings.Split(bodyContent, "\n")
-							for _, line := range bodyLines {
-								sb.WriteString("    ")
-								sb.WriteString(line)
-								sb.WriteString("\n")
+						if toolEntry.Call.Name == "get_repo_overview" {
+							// get_repo_overview: 直接以 markdown 文本方式展示，无行号
+							plainContent := renderPlainContent(toolEntry.Result.Content, width-12)
+							if plainContent != "" {
+								bodyLines := strings.Split(plainContent, "\n")
+								for _, line := range bodyLines {
+									sb.WriteString("    ")
+									sb.WriteString(line)
+									sb.WriteString("\n")
+								}
+							}
+						} else {
+							// semantic_search: 保持原有逻辑
+							bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-8)
+							if bodyContent != "" {
+								bodyLines := strings.Split(bodyContent, "\n")
+								for _, line := range bodyLines {
+									sb.WriteString("    ")
+									sb.WriteString(line)
+									sb.WriteString("\n")
+								}
 							}
 						}
 					}
@@ -295,10 +309,20 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 				// 详情页展示：为 semantic_search 和 get_repo_overview 补充完整结果内容
 				if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
 					(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
-					bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-4)
-					if bodyContent != "" {
-						sb.WriteString("\n")
-						sb.WriteString(bodyContent)
+					if toolEntry.Call.Name == "get_repo_overview" {
+						// get_repo_overview: 直接以 markdown 文本方式展示，无行号
+						plainContent := renderPlainContent(toolEntry.Result.Content, width-8)
+						if plainContent != "" {
+							sb.WriteString("\n")
+							sb.WriteString(plainContent)
+						}
+					} else {
+						// semantic_search: 保持原有逻辑
+						bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-4)
+						if bodyContent != "" {
+							sb.WriteString("\n")
+							sb.WriteString(bodyContent)
+						}
 					}
 				}
 			} else {
