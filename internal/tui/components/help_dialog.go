@@ -1,27 +1,72 @@
 package components
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
-// HelpDialog shows vim-like keybindings help.
-type HelpDialog struct {
-	width       int
-	height      int
-	content     string
-	borderStyle lipgloss.Style
+// ── Data Structures ──
+
+// keyItem represents a single keybinding: multiple keys with one description.
+type keyItem struct {
+	Keys []string
+	Desc string
 }
 
-// NewHelpDialog creates a new help dialog with the current language.
+// keySection represents a grouped set of keybindings with a title.
+type keySection struct {
+	Title string
+	Items []keyItem
+}
+
+// helpData holds the full help dialog data for a given language.
+type helpData struct {
+	Title   string
+	Sections []keySection
+	Dismiss string
+}
+
+// ── Constants ──
+
+const (
+	maxDialogWidth = 50
+	keyColWidth    = 16
+)
+
+// ── Color Palette (ANSI color codes) ──
+
+const (
+	colorKeycapBg     = "236" // dark grey background
+	colorKeycapFg     = "252" // light grey text
+	colorSectionTitle = "39"  // cyan
+	colorDescFg       = "245" // soft grey
+	colorSepLine      = "237" // very light grey (separator)
+	colorDismissFg    = "240" // pale grey
+)
+
+// ── HelpDialog ──
+
+// HelpDialog shows vim-like keybindings help.
+type HelpDialog struct {
+	width        int
+	height       int
+	lang         Language
+	cachedView   string
+	langCache    Language
+	content      helpData
+	outerPadding lipgloss.Style
+}
+
+// NewHelpDialog creates a new help dialog with the given language.
 func NewHelpDialog(lang Language) *HelpDialog {
-	content := getHelpContent(lang)
+	content := buildHelpData(lang)
+	outerPadding := lipgloss.NewStyle().Padding(1, 2)
 	return &HelpDialog{
-		content: content,
-		borderStyle: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("39")).
-			Padding(1, 2),
+		lang:         lang,
+		content:      content,
+		outerPadding: outerPadding,
 	}
 }
 
@@ -57,43 +102,65 @@ func (d *HelpDialog) View() string {
 		return ""
 	}
 
-	const maxDialogWidth = 50
-	dialogWidth := maxDialogWidth
-	if d.width-4 < dialogWidth {
-		dialogWidth = d.width - 4
+	// Rebuild cache if language changed.
+	if d.lang != d.langCache {
+		d.content = buildHelpData(d.lang)
+		d.cachedView = ""
+		d.langCache = d.lang
 	}
 
-	// ── Title ──
+	// Return cached view if available.
+	if d.cachedView != "" {
+		return d.cachedView
+	}
+
+	// ── Dynamic content width ──
+	// outerPadding adds 4 cols (2 left + 2 right), so available content width
+	// = d.width - 4. Cap at maxDialogWidth but keep a minimum of 40.
+	contentWidth := d.width - 4
+	if contentWidth > maxDialogWidth {
+		contentWidth = maxDialogWidth
+	}
+	if contentWidth < 40 {
+		contentWidth = 40
+	}
+
+	// ── Title (centered) ──
 	titleStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("39")).
-		Bold(true)
-	titleLine := titleStyle.Render("?  " + "Help")
+		Foreground(lipgloss.Color(colorSectionTitle)).
+		Bold(true).
+		Width(contentWidth).
+		Align(lipgloss.Center)
+	titleLine := titleStyle.Render(d.content.Title)
 
-	// ── Content ──
-	contentStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
-	renderedContent := contentStyle.Render(d.content)
+	// ── Sections (left-aligned) ──
+	sectionsLine := renderSections(d.content.Sections, contentWidth)
 
-	// ── Dismiss hint ──
+	// ── Dismiss hint (centered) ──
 	hintStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
-	hint := hintStyle.Render("Press any key to dismiss")
+		Foreground(lipgloss.Color(colorDismissFg)).
+		Italic(true).
+		Width(contentWidth).
+		Align(lipgloss.Center)
+	hintLine := hintStyle.Render(d.content.Dismiss)
 
 	// ── Assemble ──
-	dialogContent := lipgloss.JoinVertical(lipgloss.Left,
+	body := lipgloss.JoinVertical(lipgloss.Left,
 		titleLine,
 		"",
-		renderedContent,
+		sectionsLine,
 		"",
-		hint,
+		hintLine,
 	)
 
-	dialog := d.borderStyle.Width(dialogWidth).Render(dialogContent)
+	rendered := d.outerPadding.Render(body)
 
-	return lipgloss.Place(d.width, d.height,
+	d.cachedView = lipgloss.Place(d.width, d.height,
 		lipgloss.Center, lipgloss.Center,
-		dialog,
+		rendered,
 	)
+
+	return d.cachedView
 }
 
 // IsFocused reports whether this dialog has keyboard focus.
@@ -117,54 +184,189 @@ func (d *HelpDialog) IsVisible() bool { return true }
 // SetVisible sets the visibility of this dialog.
 func (d *HelpDialog) SetVisible(bool) {}
 
-// ── Helper function ──
+// ── Data Builder ──
 
-// getHelpContent returns the help dialog content for the given language.
-func getHelpContent(lang Language) string {
+// buildHelpData returns the help dialog data for the given language.
+func buildHelpData(lang Language) helpData {
 	if lang == LanguageZh {
-		return "  导航:\n" +
-			"    j / ↓          向下滚动一行\n" +
-			"    k / ↑          向上滚动一行\n" +
-			"    f / PageDown    向下翻页\n" +
-			"    b / PageUp      向上翻页\n" +
-			"    gg              跳到开头\n" +
-			"    G               跳到末尾\n" +
-			"  模式:\n" +
-			"    i               进入编辑模式\n" +
-			"    ctrl+e          进入命令模式\n" +
-			"  命令行:\n" +
-			"    :q              退出程序\n" +
-			"    :help           显示命令帮助\n" +
-			"    /pattern        搜索日志\n" +
-			"    :model          切换模型提供商\n" +
-			"    :timeline       切换工具时间线\n" +
-			"  消息:\n" +
-			"    ctrl+o         全部展开/全部折叠长消息\n" +
-			"  其他:\n" +
-			"    ?               显示此帮助\n" +
-			"    ctrl+v          切换工具时间线（折叠/展开历史）\n" +
-			"    ctrl+c          强制退出"
+		return helpData{
+			Title:   "⌨  帮助",
+			Dismiss: "按任意键关闭",
+			Sections: []keySection{
+				{
+					Title: "导航",
+					Items: []keyItem{
+						{[]string{"j", "↓"}, "向下滚动一行"},
+						{[]string{"k", "↑"}, "向上滚动一行"},
+						{[]string{"f", "PageDown"}, "向下翻页"},
+						{[]string{"b", "PageUp"}, "向上翻页"},
+						{[]string{"gg"}, "跳到开头"},
+						{[]string{"G"}, "跳到末尾"},
+					},
+				},
+				{
+					Title: "模式",
+					Items: []keyItem{
+						{[]string{"i"}, "进入编辑模式"},
+						{[]string{"Ctrl+E"}, "进入命令模式"},
+					},
+				},
+				{
+					Title: "命令行",
+					Items: []keyItem{
+						{[]string{":q"}, "退出程序"},
+						{[]string{":help"}, "显示命令帮助"},
+						{[]string{"/pattern"}, "搜索日志"},
+						{[]string{":model"}, "切换模型提供商"},
+						{[]string{":timeline"}, "切换工具时间线"},
+					},
+				},
+				{
+					Title: "消息",
+					Items: []keyItem{
+						{[]string{"Ctrl+O"}, "全部展开 / 全部折叠长消息"},
+					},
+				},
+				{
+					Title: "其他",
+					Items: []keyItem{
+						{[]string{"?"}, "显示此帮助"},
+						{[]string{"Ctrl+V"}, "切换工具时间线（折叠 / 展开历史）"},
+						{[]string{"Ctrl+C"}, "强制退出"},
+					},
+				},
+			},
+		}
 	}
-	return "  Navigation:\n" +
-		"    j / ↓          scroll down one line\n" +
-		"    k / ↑          scroll up one line\n" +
-		"    f / PageDown   page down\n" +
-		"    b / PageUp     page up\n" +
-		"    gg             go to top\n" +
-		"    G              go to bottom\n" +
-		"  Mode:\n" +
-		"    i              enter edit mode\n" +
-		"    ctrl+e         enter command mode\n" +
-		"  Command line:\n" +
-		"    :q             quit\n" +
-		"    :help          show command help\n" +
-		"    /pattern       search log\n" +
-		"    :model         switch LLM provider\n" +
-		"    :timeline       toggle tool timeline\n" +
-		"  Messages:\n" +
-		"    ctrl+o         expand/collapse all long messages\n" +
-		"  Other:\n" +
-		"    ?              show this help\n" +
-		"    ctrl+v          toggle tool timeline (compact/full history)\n" +
-		"    ctrl+c         force quit"
+	return helpData{
+		Title:   "⌨  Help",
+		Dismiss: "Press any key to dismiss",
+		Sections: []keySection{
+			{
+				Title: "Navigation",
+				Items: []keyItem{
+					{[]string{"j", "↓"}, "scroll down one line"},
+					{[]string{"k", "↑"}, "scroll up one line"},
+					{[]string{"f", "PageDown"}, "page down"},
+					{[]string{"b", "PageUp"}, "page up"},
+					{[]string{"gg"}, "go to top"},
+					{[]string{"G"}, "go to bottom"},
+				},
+			},
+			{
+				Title: "Mode",
+				Items: []keyItem{
+					{[]string{"i"}, "enter edit mode"},
+					{[]string{"Ctrl+E"}, "enter command mode"},
+				},
+			},
+			{
+				Title: "Commands",
+				Items: []keyItem{
+					{[]string{":q"}, "quit"},
+					{[]string{":help"}, "show command help"},
+					{[]string{"/pattern"}, "search log"},
+					{[]string{":model"}, "switch LLM provider"},
+					{[]string{":timeline"}, "toggle tool timeline"},
+				},
+			},
+			{
+				Title: "Messages",
+				Items: []keyItem{
+					{[]string{"Ctrl+O"}, "expand/collapse all long messages"},
+				},
+			},
+			{
+				Title: "Other",
+				Items: []keyItem{
+					{[]string{"?"}, "show this help"},
+					{[]string{"Ctrl+V"}, "toggle tool timeline (compact / full history)"},
+					{[]string{"Ctrl+C"}, "force quit"},
+				},
+			},
+		},
+	}
+}
+
+// ── Rendering Functions ──
+
+// keycapStyle returns a lipgloss Style for rendering a single keycap.
+func keycapStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Background(lipgloss.Color(colorKeycapBg)).
+		Foreground(lipgloss.Color(colorKeycapFg)).
+		Bold(true).
+		Padding(0, 1)
+}
+
+// renderKeycap renders a single key name as a keycap badge.
+func renderKeycap(k string) string {
+	return keycapStyle().Render(k)
+}
+
+// renderKeyColumn renders multiple synonymous keycaps separated by spaces,
+// right-aligned within a fixed-width column.
+func renderKeyColumn(item keyItem) string {
+	if len(item.Keys) == 0 {
+		return strings.Repeat(" ", keyColWidth)
+	}
+
+	keycaps := make([]string, len(item.Keys))
+	for i, k := range item.Keys {
+		keycaps[i] = renderKeycap(k)
+	}
+	joined := strings.Join(keycaps, " ")
+
+	// Measure total rendered width (with spaces included).
+	var totalW int
+	for i, k := range item.Keys {
+		totalW += lipgloss.Width(renderKeycap(k))
+		if i < len(item.Keys)-1 {
+			totalW += 1 // one space between keycaps
+		}
+	}
+
+	padding := keyColWidth - totalW
+	if padding > 0 {
+		return strings.Repeat(" ", padding) + joined
+	}
+	return joined
+}
+
+// renderRow renders one keybinding row: keycaps column + description.
+func renderRow(item keyItem) string {
+	return renderKeyColumn(item) + "  " + lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorDescFg)).
+		Render(item.Desc)
+}
+
+// renderSection renders one section: title, separator line, and all rows.
+func renderSection(s keySection, dialogWidth int) string {
+	var lines []string
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorSectionTitle)).
+		Bold(true).
+		Width(dialogWidth)
+	lines = append(lines, titleStyle.Render(s.Title))
+
+	sepStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorSepLine)).
+		Width(dialogWidth)
+	lines = append(lines, sepStyle.Render(strings.Repeat("─", dialogWidth)))
+
+	for _, item := range s.Items {
+		lines = append(lines, renderRow(item))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// renderSections renders all sections as a single vertical block.
+func renderSections(sections []keySection, dialogWidth int) string {
+	var blocks []string
+	for _, s := range sections {
+		blocks = append(blocks, renderSection(s, dialogWidth))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, blocks...)
 }

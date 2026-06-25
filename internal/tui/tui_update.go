@@ -279,7 +279,9 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		if top != nil && top.ID() == "help_dialog" {
 			m.dialogStack.CloseDialog("help_dialog")
 		} else {
-			m.dialogStack.Push(components.NewHelpDialog(components.Language(m.currentLang)))
+			d := components.NewHelpDialog(components.Language(m.currentLang))
+			d.SetBounds(m.termWidth, m.termHeight)
+			m.dialogStack.Push(d)
 		}
 	case cmd == ":mode":
 		mode := "COMMAND"
@@ -873,7 +875,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				case *components.HelpDialog:
 					switch key {
-					case "esc", "i", "I":
+					case "esc", "i", "I", "ctrl+h":
 						m.dialogStack.Pop()
 						return m, nil
 					}
@@ -1039,7 +1041,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if top != nil && top.ID() == "help_dialog" {
 						m.dialogStack.CloseDialog("help_dialog")
 					} else {
-						m.dialogStack.Push(components.NewHelpDialog(components.Language(m.currentLang)))
+						d := components.NewHelpDialog(components.Language(m.currentLang))
+						d.SetBounds(m.termWidth, m.termHeight)
+						m.dialogStack.Push(d)
 					}
 				} else {
 					m.commandBuffer += "?"
@@ -1143,6 +1147,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commandMode = true
 			m.commandBuffer = ""
 			m.invalidateFooterCache()
+			return m, nil
+
+		case "ctrl+h":
+			// Toggle HelpDialog
+			if m.dialogStack != nil {
+				top := m.dialogStack.Top()
+				if top != nil && top.ID() == "help_dialog" {
+					m.dialogStack.Pop()
+					return m, nil
+				}
+			}
+			d := components.NewHelpDialog(components.Language(m.currentLang))
+			d.SetBounds(m.termWidth, m.termHeight)
+			if m.dialogStack == nil {
+				m.dialogStack = components.NewDialogStack()
+			}
+			m.dialogStack.Push(d)
 			return m, nil
 
 		case "ctrl+v":
