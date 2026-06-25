@@ -304,7 +304,7 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 			wrappedContent = ""
 		}
 	default:
-		prefixRendered = labelStyle.Render("📝 " + event.Type)
+		prefixRendered = labelStyle.Render("📝 " + string(event.Type))
 		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	}
 

@@ -21,6 +21,21 @@ func (m *model) computeFooterHeight() int {
 
 	height := 1 // separator line
 
+	// Tool timeline panel (when entries exist) — 使用悬浮面板样式
+	if m.taskRunning || len(m.timelineEntries) > 0 {
+		if m.timelineExpanded {
+			n := len(m.timelineEntries)
+			if n > 20 {
+				n = 20
+			}
+			// border-top(1) + n entries + (n-1) connectors + hint(1) + border-bottom(1)
+			height += 2 + n*2
+		} else {
+			// border-top(1) + 3 entries + hint(1) + border-bottom(1)
+			height += 6
+		}
+	}
+
 	// Input area (only in edit mode; hidden in command mode)
 	if !m.commandMode {
 		// inputPanelStyle = Border(top+bottom=2) + MarginTop(1) → 3 extra lines
@@ -315,7 +330,41 @@ func (m *model) assembleViewportContent() {
 	m.contentCache.WriteString(m.renderWelcomePanel())
 	if len(m.contentParts) > 0 {
 		m.contentCache.WriteString("\n")
-		m.contentCache.WriteString(strings.Join(m.contentParts, "\n"))
+
+		var parts []string
+		lastAgent := ""
+
+		for i, part := range m.contentParts {
+			entry := &m.logEntries[i]
+
+			// Verbose entries (tool calls, LLM calls, context events) are now 
+			// displayed in the tool timeline panel instead of the main view.
+			if entry.isVerbose {
+				continue
+			}
+
+			// 统一Agent上下文管理：所有条目类型都追踪Agent切换
+			if entry.from != "" && entry.from != lastAgent {
+				if entry.eventType == "ai_response" {
+					// ai_response: 全宽分割线（强视觉信号）
+					sep := RenderAgentSeparator(entry.from, m.viewport.Width())
+					if sep != "" {
+						parts = append(parts, sep)
+					}
+				} else {
+					// 非 ai_response: 紧凑Badge（轻量上下文提示）
+					badge := RenderAgentBadge(entry.from)
+					if badge != "" {
+						parts = append(parts, badge)
+					}
+				}
+				lastAgent = entry.from
+			}
+
+			parts = append(parts, part)
+		}
+
+		m.contentCache.WriteString(strings.Join(parts, "\n"))
 	}
 }
 
@@ -528,6 +577,8 @@ func extractToolSummary(toolName string, argsJSON string) string {
 		if reason, ok := args["reason"].(string); ok && reason != "" {
 			return reason
 		}
+	case "get_repo_overview":
+		return "Repo Overview"
 	}
 	// For delegate tools, show task summary
 	if strings.HasPrefix(toolName, "delegate_") {
@@ -593,11 +644,38 @@ func extractResultBrief(toolName string, result string) string {
 	}
 }
 
+// isVerboseEventType returns true if the event type contains operational
+// details that should be hidden by default (shown only in verbose mode).
+//
+// Verbose events include:
+//   - Tool calls (file operations, command execution, etc.)
+//   - LLM API calls (request/response details)
+//   - Context compression notifications
+//   - Commit knowledge loading notifications
+//
+// Non-verbose events (always shown):
+//   - User messages
+//   - Assistant responses
+//   - Error messages
+//   - System status messages
+//   - Agent headers
+//   - Task completion notifications
+func isVerboseEventType(eventType string) bool {
+	switch eventType {
+	case "tool_call_start", "tool_call_result",
+		"llm_call_start", "llm_call_end",
+		"context_compressed", "commit_context_loaded",
+		"model_info", "thinking":
+		return true
+	}
+	return false
+}
+
 // formatEventAsEntry converts a MessageEvent to a logEntry.
 func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 	entry := logEntry{
 		timestamp: event.Timestamp,
-		eventType: event.Type,
+		eventType: string(event.Type),
 		from:      event.From,
 	}
 
@@ -769,14 +847,9 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 	case "llm_call_start":
 		if m, ok := event.Content.(map[string]interface{}); ok {
 			modelName, _ := m["model"].(string)
-			agentName, _ := m["agent"].(string)
-			displayAgent := agentName
-			if displayAgent == "" {
-				displayAgent = "Agent"
-			}
-			entry.content = fmt.Sprintf("▸ %s  [%s]", displayAgent, modelName)
+			entry.content = fmt.Sprintf("[%s]", modelName)
 		} else {
-			entry.content = fmt.Sprintf("▸ %v", event.Content)
+			entry.content = fmt.Sprintf("%v", event.Content)
 		}
 	case "llm_call_end":
 		// Extract duration from metadata
@@ -789,9 +862,7 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 				duration = float64(v)
 			}
 
-			// Also get model and agent from metadata
 			modelName, _ := event.Metadata["model"].(string)
-			agentName, _ := event.Metadata["agent"].(string)
 			if modelName == "" {
 				if m, ok := event.Content.(map[string]interface{}); ok {
 					modelName, _ = m["model"].(string)
@@ -804,12 +875,12 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			}
 
 			if hasError {
-				entry.content = fmt.Sprintf("◂ %s  [%s]  ✗ %.2fs", agentName, modelName, duration)
+				entry.content = fmt.Sprintf("✗ [%s] · %.2fs", modelName, duration)
 			} else {
-				entry.content = fmt.Sprintf("◂ %s  [%s]  ✓ %.2fs", agentName, modelName, duration)
+				entry.content = fmt.Sprintf("✓ [%s] · %.2fs", modelName, duration)
 			}
 		} else {
-			entry.content = "◂ LLM call completed"
+			entry.content = "✓ LLM call completed"
 		}
 	default:
 		if s, ok := event.Content.(string); ok {
@@ -829,6 +900,9 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		}
 	}
 
+	// Set verbose flag based on event type
+	entry.isVerbose = isVerboseEventType(string(event.Type))
+
 	return entry
 }
 
@@ -844,7 +918,11 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		return logSeparatorStyle.Render(" " + separator + " ")
 
 	case "ai_response":
-		prefix = "AI  "
+		if entry.from != "" {
+			prefix = RenderAgentTag(entry.from) + " "
+		} else {
+			prefix = "AI  "
+		}
 		contentStyle = logAIResStyle
 	case "user_message":
 		return renderUserMessageBox(entry.content, maxWidth)

@@ -97,3 +97,15 @@ When using `read_file`, the tool now enforces strict protections:
 - **Files > 500MB**: Refused entirely — use grep/search to find relevant content
 - **Files > 10MB with should_read_entire_file=true**: Blocked — must use line ranges
 - **Entire file reads capped**: Max 2000 lines or 200KB content
+
+### P2P Collaboration
+You have direct P2P communication capabilities with other agents:
+- **`p2p_query`**: Query another agent for information (e.g., ask repo-agent for code analysis)
+- **`p2p_notify`**: Notify other agents about events (e.g., notify that a file was modified)
+
+Available agents:
+- `repo-agent`: Code analysis, symbol lookup, dependency graph, impact analysis
+- `browser-agent`: Web page state, DOM content, form interaction results
+- `devops-agent`: System logs, process info, disk/network status
+
+Use P2P for direct collaboration — do NOT route through Conductor for simple queries.

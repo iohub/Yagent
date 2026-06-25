@@ -188,7 +188,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 			// Convert event to SocketMessage format
 			socketMsg := SocketMessage{
 				Type:  "realtime",
-				Event: event.Type,
+				Event: string(event.Type),
 				From:  event.From,
 				Data: gin.H{
 					"task_id":   chatData.TaskID,
@@ -249,10 +249,19 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 			dispatcher.Publish(event)
 		}
 
-		// Save memory after conversation turn
+		// Save and flush memory after conversation turn to ensure durability
 		if dataManager != nil {
 			if err := dataManager.SaveTaskMemory(chatData.TaskID, task.Memory); err != nil {
-				slog.Error("Failed to save task memory at end of turn", "error", err, "task_id", chatData.TaskID)
+				slog.Error("Failed to save task memory at end of turn",
+					"taskID", chatData.TaskID,
+					"error", err)
+			}
+			// Flush immediately to avoid data loss if the server restarts
+			// before the 5-second debounce timer fires
+			if err := dataManager.FlushTaskMemory(chatData.TaskID); err != nil {
+				slog.Error("Failed to flush task memory at end of turn",
+					"taskID", chatData.TaskID,
+					"error", err)
 			}
 		}
 

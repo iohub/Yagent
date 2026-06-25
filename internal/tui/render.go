@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 )
@@ -17,12 +18,14 @@ const (
 // skipBodyTools lists tools whose result body is just a status confirmation
 // and should not be rendered — only the header (icon + name + file path) is shown.
 var skipBodyTools = map[string]bool{
-	"read_file":       true,
-	"delete_file":     true,
-	"rename_file":     true,
-	"list_dir":        true,
-	"print_dir_tree":  true,
-	"search_by_regex": true,
+	"read_file":          true,
+	"delete_file":        true,
+	"rename_file":        true,
+	"list_dir":           true,
+	"print_dir_tree":     true,
+	"search_by_regex":    true,
+	"semantic_search":    true,
+	"get_repo_overview":  true,  // 主视口仅显示 header，详情页通过 RenderResultBody 补充
 }
 
 // ── Tool Header Rendering ──
@@ -122,7 +125,7 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 	// only show the tool name + file path in the header.
 	// For read_file and search_by_regex, skip borders as well; other tools keep borders.
 	if skipBodyTools[entry.Call.Name] && entry.Status == ToolStatusSuccess {
-		if entry.Call.Name == "read_file" || entry.Call.Name == "search_by_regex" {
+		if entry.Call.Name == "read_file" || entry.Call.Name == "search_by_regex" || entry.Call.Name == "semantic_search" || entry.Call.Name == "get_repo_overview" {
 			return header
 		}
 		return addToolCallBorders(header, width)
@@ -575,6 +578,8 @@ func formatToolParams(toolName string, argsJSON string) string {
 			}
 			return cmd
 		}
+	case "get_repo_overview":
+		return "Repo Overview"
 	case "semantic_search":
 		if query, ok := args["query"].(string); ok && query != "" {
 			if len(query) > 40 {
@@ -644,4 +649,385 @@ func truncateLine(line string, maxWidth int) string {
 		return line
 	}
 	return string(runes[:maxWidth-1]) + "…"
+}
+
+// ── Agent Attribution Functions ──
+
+// maxAgentTagLen limits agent name display length in compact tags.
+const maxAgentTagLen = 12
+
+// RenderAgentTag produces a compact, colored agent name string.
+// Returns empty string if agent is empty.
+// Visual: "Conductor" in agent's unique color, bold, no background.
+func RenderAgentTag(agent string) string {
+	if agent == "" {
+		return ""
+	}
+	name := agent
+	if len(name) > maxAgentTagLen {
+		name = name[:maxAgentTagLen-1] + "…"
+	}
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(AgentColor(agent))).
+		Bold(true).
+		Render(name)
+}
+
+// RenderAgentBadge renders a compact agent indicator for non-ai_response entries.
+// Unlike RenderAgentSeparator (full-width line), this is a single-line colored badge
+// for light context signaling when tool entries switch to a new agent.
+// Visual: "  ◈ AgentName"
+func RenderAgentBadge(agent string) string {
+	if agent == "" {
+		return ""
+	}
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(AgentColor(agent))).
+		Bold(true).
+		PaddingLeft(2).
+		Render("◈ " + agent)
+}
+
+// RenderAgentSeparator produces a thin separator line with agent name
+// for AI response blocks.
+// Visual: "── Conductor ──────────────────────"
+// If agent is empty, returns empty string.
+func RenderAgentSeparator(agent string, width int) string {
+	if agent == "" || width <= 0 {
+		return ""
+	}
+
+	color := lipgloss.Color(AgentColor(agent))
+	name := lipgloss.NewStyle().
+		Foreground(color).
+		Bold(true).
+		Render(agent)
+
+	lineStyle := lipgloss.NewStyle().
+		Foreground(color).
+		Faint(true)
+
+	// Layout: "── Agent ──────"
+	prefix := lineStyle.Render("── ")
+	suffix := lineStyle.Render(" ──")
+	nameLen := lipgloss.Width(name)
+	prefixLen := lipgloss.Width(prefix)
+	suffixLen := lipgloss.Width(suffix)
+
+	dashes := width - prefixLen - nameLen - suffixLen
+	if dashes < 0 {
+		dashes = 0
+	}
+	middle := lineStyle.Render(strings.Repeat("─", dashes))
+
+	return prefix + name + middle + suffix
+}
+
+// ── Timeline Rendering ──
+
+// timelineNodeFor renders the node symbol + color for a TimelineEntry.
+// DEPRECATED: Prefer timelineNodeForStatus for merged entries.
+func timelineNodeFor(e *TimelineEntry) string {
+	return timelineNodeForStatus(e, e.Status)
+}
+
+// timelineNodeForStatus renders the node symbol + color for a TimelineEntry
+// using an explicitly-provided status. This is needed for merged entries where
+// the effective (aggregated) status may differ from e.Status.
+func timelineNodeForStatus(e *TimelineEntry, status ToolStatus) string {
+	if e.Kind == TimelineKindLLMCall {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true).Render("◇") // blue diamond
+	}
+	if e.Kind == TimelineKindContextEvent {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("⊛") // magenta asterisk
+	}
+	// Tool call
+	switch status {
+	case ToolStatusRunning:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true).Render("●") // yellow
+	case ToolStatusSuccess:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Bold(true).Render("●") // green
+	case ToolStatusError:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true).Render("●") // red
+	case ToolStatusPending:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Bold(true).Render("○") // gray
+	case ToolStatusCanceled:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true).Render("●") // dim gray
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Bold(true).Render("○")
+	}
+}
+
+// formatTimelineDuration formats a duration for timeline display.
+func formatTimelineDuration(d time.Duration) string {
+	if d == 0 {
+		return ""
+	}
+	if d < time.Millisecond {
+		return fmt.Sprintf("%dµs", d.Microseconds())
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%.1fm", d.Minutes())
+}
+
+// RenderTimeline renders the full tool timeline panel.
+// When expanded is false, only shows the currently running tool (or last completed tool).
+// When expanded is true, shows up to maxTimelineEntries entries.
+func RenderTimeline(entries []*TimelineEntry, expanded bool, width int, anim *Anim) string {
+	const maxTimelineEntries = 20
+	if width < 30 {
+		width = 30
+	}
+
+	// Determine visible entries
+	var visible []*TimelineEntry
+	if len(entries) == 0 {
+		// Idle state
+		line := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("○ idle")
+		return addTimelineTopBorder(line, width)
+	}
+
+	if expanded {
+		// Show up to maxTimelineEntries most recent
+		start := 0
+		if len(entries) > maxTimelineEntries {
+			start = len(entries) - maxTimelineEntries
+		}
+		visible = entries[start:]
+	} else {
+		// 折叠模式：展示最近3条记录（优先包含运行中的工具）
+		const defaultCollapsedCount = 3
+		visible = selectCollapsedEntries(entries, defaultCollapsedCount)
+	}
+
+	// Build timeline lines
+	var lines []string
+	for i, e := range visible {
+		isLast := i == len(visible)-1
+		lines = append(lines, renderTimelineRow(e, width, anim))
+
+		// Vertical connector between entries
+		if !isLast && expanded {
+			connector := timelineLineStyle.Render("│")
+			lines = append(lines, " "+connector)
+		}
+	}
+
+	content := strings.Join(lines, "\n")
+	return addTimelineTopBorder(content, width)
+}
+
+// timeline visual styles
+var (
+	timelineLineStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	timelineBorderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+	timelineNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	timelineDetailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	timelineDurationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	timelineRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("228")) // yellow for running
+)
+
+// addTimelineTopBorder wraps content with a thin top border line.
+func addTimelineTopBorder(content string, width int) string {
+	border := timelineBorderStyle.Render(strings.Repeat("─", width))
+	return border + "\n" + content
+}
+
+// renderTimelineRow renders a single timeline entry row.
+// Format: " ● read_file  /path/to/file          1.2s"
+func renderTimelineRow(e *TimelineEntry, width int, anim *Anim) string {
+	// Use EffectiveStatus() for merged entries
+	effectiveStatus := e.EffectiveStatus()
+	node := timelineNodeForStatus(e, effectiveStatus)
+
+	// Name styling
+	nameStr := e.Name
+	if displayName := DisplayToolName(e.Name); displayName != e.Name {
+		nameStr = displayName
+	}
+
+	// Show merged count for merged entries
+	if e.MergedCount() > 1 {
+		nameStr = fmt.Sprintf("%s ×%d", nameStr, e.MergedCount())
+	}
+
+	nameStyle := timelineNameStyle
+	var name string
+	if effectiveStatus == ToolStatusRunning {
+		name = timelineRunningStyle.Render(nameStr)
+	} else if e.IsError || effectiveStatus == ToolStatusError {
+		name = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Render(nameStr)
+	} else {
+		name = nameStyle.Render(nameStr)
+	}
+
+	// Build animation string (for running tools)
+	var animStr string
+	if effectiveStatus == ToolStatusRunning {
+		if anim != nil {
+			animStr = " " + anim.Render()
+		} else {
+			animStr = " " + timelineRunningStyle.Render("running")
+		}
+	}
+
+	// Build duration string (for completed tools only)
+	var durStr string
+	if e.Duration > 0 {
+		dur := formatTimelineDuration(e.Duration)
+		durStr = " " + timelineDurationStyle.Render(dur)
+	}
+
+	// Build base line: node + name + animation + detail
+	leftPart := fmt.Sprintf(" %s %s", node, name)
+	leftPart += animStr
+	if e.Detail != "" {
+		// Truncate detail to fit
+		detailMax := 40
+		detail := e.Detail
+		if len(detail) > detailMax {
+			detail = detail[:detailMax-1] + "…"
+		}
+		leftPart += " " + timelineDetailStyle.Render("· "+detail)
+	}
+
+	// Right-align duration (rightPart is purely duration, no animation)
+	rightPart := durStr
+	leftWidth := lipgloss.Width(leftPart)
+	rightWidth := lipgloss.Width(rightPart)
+	padding := width - leftWidth - rightWidth - 2 // -2 for safety margin
+	if padding < 1 {
+		padding = 1
+	}
+
+	return leftPart + strings.Repeat(" ", padding) + rightPart
+}
+
+// selectCollapsedEntries 选择折叠模式要显示的条目。
+// 优先包含运行中的工具，然后用最近的非运行条目填满 maxCount。
+func selectCollapsedEntries(entries []*TimelineEntry, maxCount int) []*TimelineEntry {
+	n := len(entries)
+	if n == 0 {
+		return nil
+	}
+	if n <= maxCount {
+		return entries
+	}
+
+	// 从末尾开始收集，优先包含运行中的工具
+	selected := make([]bool, n)
+	count := 0
+
+	// 第一遍：从最近的开始，收集运行中的工具
+	for i := n - 1; i >= 0 && count < maxCount; i-- {
+		if entries[i].Kind == TimelineKindTool && entries[i].Status == ToolStatusRunning && !selected[i] {
+			selected[i] = true
+			count++
+		}
+	}
+
+	// 第二遍：从最近的开始，填充到 maxCount
+	for i := n - 1; i >= 0 && count < maxCount; i-- {
+		if !selected[i] {
+			selected[i] = true
+			count++
+		}
+	}
+
+	// 按原始顺序构建结果
+	result := make([]*TimelineEntry, 0, count)
+	for i := 0; i < n; i++ {
+		if selected[i] {
+			result = append(result, entries[i])
+		}
+	}
+
+	return result
+}
+
+// renderTimelineRowWithCursor 渲染带光标和选中高亮的timeline行。
+// 用于全屏模式的左侧列表，使用与非全屏一致的 dot+name+duration 样式。
+func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCursor bool) string {
+	// Use EffectiveStatus() to get the aggregated status (correct for merged entries)
+	effectiveStatus := e.EffectiveStatus()
+	node := timelineNodeForStatus(e, effectiveStatus)
+
+	// Name styling
+	nameStr := e.Name
+	if displayName := DisplayToolName(e.Name); displayName != e.Name {
+		nameStr = displayName
+	}
+
+	// Show merged count: "read_file ×3"
+	if e.MergedCount() > 1 {
+		nameStr = fmt.Sprintf("%s ×%d", nameStr, e.MergedCount())
+	}
+
+	nameStyle := timelineNameStyle
+	var name string
+	if effectiveStatus == ToolStatusRunning {
+		name = timelineRunningStyle.Render(nameStr)
+	} else if e.IsError || effectiveStatus == ToolStatusError {
+		name = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Render(nameStr)
+	} else {
+		name = nameStyle.Render(nameStr)
+	}
+
+	// Build animation string (for running tools)
+	var animStr string
+	if effectiveStatus == ToolStatusRunning {
+		if anim != nil {
+			animStr = " " + anim.Render()
+		} else {
+			animStr = " " + timelineRunningStyle.Render("running")
+		}
+	}
+
+	// Build duration string (for completed tools only)
+	var durStr string
+	if e.Duration > 0 {
+		dur := formatTimelineDuration(e.Duration)
+		durStr = " " + timelineDurationStyle.Render(dur)
+	}
+
+	// Build base line — fullscreen sidebar no longer shows detail summary
+	leftPart := fmt.Sprintf(" %s %s", node, name)
+	leftPart += animStr
+
+	// Right-align duration
+	rightPart := durStr
+	leftWidth := lipgloss.Width(leftPart)
+	rightWidth := lipgloss.Width(rightPart)
+	padding := width - leftWidth - rightWidth - 4 // -4 for cursor(2) + margin(2)
+	if padding < 1 {
+		padding = 1
+	}
+
+	content := leftPart + strings.Repeat(" ", padding) + rightPart
+
+	// 光标指示符
+	var cursorStr string
+	if isCursor {
+		cursorStr = "▸ "
+	} else {
+		cursorStr = "  "
+	}
+
+	line := cursorStr + content
+
+	// 选中行高亮（暗色背景）
+	if isCursor {
+		line = lipgloss.NewStyle().
+			Background(lipgloss.Color("236")).
+			Foreground(lipgloss.Color("255")).
+			Width(width).
+			Render(line)
+	}
+
+	return line
 }

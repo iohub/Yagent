@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -265,7 +266,7 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	switch {
 	case cmd == ":q!":
 		// Force quit — skip confirmation (vim convention)
-		m.saveRunningTaskMemory()
+		m.saveAndFlushTaskMemory()
 		m.quitting = true
 		m.cleanupDebounceTimer()
 		return tea.Quit
@@ -278,7 +279,9 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		if top != nil && top.ID() == "help_dialog" {
 			m.dialogStack.CloseDialog("help_dialog")
 		} else {
-			m.dialogStack.Push(components.NewHelpDialog(components.Language(m.currentLang)))
+			d := components.NewHelpDialog(components.Language(m.currentLang))
+			d.SetBounds(m.termWidth, m.termHeight)
+			m.dialogStack.Push(d)
 		}
 	case cmd == ":mode":
 		mode := "COMMAND"
@@ -291,6 +294,24 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 			content:   fmt.Sprintf("Current mode: %s | Task running: %v | Buffer: %q", mode, m.taskRunning, m.commandBuffer),
 		})
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+
+	// ═══════════════════════════════════════════════════════════════
+	// :timeline — Toggle tool timeline (compact / full history)
+	// Replaces the old :verbose command. Uses ctrl+v keyboard shortcut.
+	// ═══════════════════════════════════════════════════════════════
+	case cmd == ":timeline":
+		m.timelineExpanded = !m.timelineExpanded
+		m.timelineCacheKey = "" // invalidate cache
+		m.invalidateFooterCache()
+		return nil
+
+	// ═══════════════════════════════════════════════════════════════
+	// :language — 切换语言（原 ctrl+l 快捷键的功能迁移至此）
+	// ═══════════════════════════════════════════════════════════════
+	case cmd == ":language":
+		m.toggleLanguage()
+		return nil
+
 	// ═══════════════════════════════════════════════════════════════
 	// :model — Switch LLM provider (interactive dialog or direct)
 	// 支持设置不同 agent 的模型，不支持设置 tool 的模型
@@ -491,7 +512,7 @@ func (m *model) searchInLog(query string) {
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
 	// taskEventMsg is allowed through so the listenForEvents chain stays alive;
 	// its handler drops the event when dialogs are open but reschedules the chain.
@@ -534,11 +555,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// 全屏 timeline 模式：拦截所有消息，委托给全屏处理器
+	if m.timelineFullscreenMode {
+		return timelineFullscreenUpdate(msg, m)
+	}
+
 	// History mode: intercept all messages and delegate to history handler.
 	// Skip when a dialog is active so dialog confirmations (e.g. delete_history_confirm)
 	// can be processed by the DialogStack key handler below.
 	if m.historyMode && (m.dialogStack == nil || m.dialogStack.Len() == 0) {
-		return historyUpdate(msg, &m)
+		return historyUpdate(msg, m)
 	}
 
 	switch msg := msg.(type) {
@@ -674,7 +700,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				// Ctrl+C: 强制退出
 				if key == "ctrl+c" {
-					m.saveRunningTaskMemory()
+					m.saveAndFlushTaskMemory()
 					m.quitting = true
 					return m, tea.Quit
 				}
@@ -695,7 +721,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					case "enter", "y", "Y":
 						if d.GetConfirmed() {
 							if d.ID() == "quit_confirm" || d.ID() == "quit_confirm_dialog" {
-								m.saveRunningTaskMemory()
+								m.saveAndFlushTaskMemory()
 								m.quitting = true
 								m.cleanupDebounceTimer()
 								return m, tea.Quit
@@ -705,7 +731,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								taskID := m.pendingDeleteTaskID
 								m.pendingDeleteTaskID = ""
 								m.dialogStack.Pop()
-								return m, confirmDeleteHistoryEntryByID(&m, taskID)
+								return m, confirmDeleteHistoryEntryByID(m, taskID)
 							}
 							// Cancel confirmation
 							if m.currentTask != nil && m.currentTask.CancelFunc != nil {
@@ -849,7 +875,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				case *components.HelpDialog:
 					switch key {
-					case "esc", "i", "I":
+					case "esc", "i", "I", "ctrl+h":
 						m.dialogStack.Pop()
 						return m, nil
 					}
@@ -1015,7 +1041,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if top != nil && top.ID() == "help_dialog" {
 						m.dialogStack.CloseDialog("help_dialog")
 					} else {
-						m.dialogStack.Push(components.NewHelpDialog(components.Language(m.currentLang)))
+						d := components.NewHelpDialog(components.Language(m.currentLang))
+						d.SetBounds(m.termWidth, m.termHeight)
+						m.dialogStack.Push(d)
 					}
 				} else {
 					m.commandBuffer += "?"
@@ -1034,13 +1062,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toggleCollapseAll()
 				return m, nil
 
-			// ── Misc ──
-			case "ctrl+l":
-				m.toggleLanguage()
+			// ── Token dashboard collapse toggle ──
+			case "ctrl+t":
+				m.tokenDashboardCollapsed = !m.tokenDashboardCollapsed
+				m.cachedTokenDashboard = m.renderTokenDashboard()
+				m.tokenDashboardValid = true
+				m.invalidateFooterCache()
 				return m, nil
 
-			case "v":
-				m.toggleVerbose()
+			// ── Tool timeline toggle (two-state: collapsed ↔ expanded) ──
+			case "ctrl+v":
+				// 两态切换：collapsed ↔ expanded（不再经过全屏）
+				m.timelineExpanded = !m.timelineExpanded
+				m.timelineCacheKey = ""
+				m.invalidateFooterCache()
+				return m, nil
+
+			// ── Misc ──
+			case "ctrl+l":
+				// 切换全屏时间线模式
+				if !m.timelineFullscreenMode {
+					// 进入全屏模式
+					m.timelineFullscreenMode = true
+					m.timelineExpanded = false
+					m.timelineFullscreenCursor = 0
+					initTimelineDetailViewport(m)
+					m.timelineCacheKey = ""
+					m.invalidateFooterCache()
+				} else {
+					// 退出全屏模式
+					m.ExitTimelineFullscreen()
+					m.timelineExpanded = false
+					m.timelineCacheKey = ""
+					m.invalidateFooterCache()
+				}
 				return m, nil
 
 			default:
@@ -1094,6 +1149,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.invalidateFooterCache()
 			return m, nil
 
+		case "ctrl+h":
+			// Toggle HelpDialog
+			if m.dialogStack != nil {
+				top := m.dialogStack.Top()
+				if top != nil && top.ID() == "help_dialog" {
+					m.dialogStack.Pop()
+					return m, nil
+				}
+			}
+			d := components.NewHelpDialog(components.Language(m.currentLang))
+			d.SetBounds(m.termWidth, m.termHeight)
+			if m.dialogStack == nil {
+				m.dialogStack = components.NewDialogStack()
+			}
+			m.dialogStack.Push(d)
+			return m, nil
+
+		case "ctrl+v":
+			// 两态切换：collapsed ↔ expanded（不再经过全屏）
+			m.timelineExpanded = !m.timelineExpanded
+			m.timelineCacheKey = ""
+			m.invalidateFooterCache()
+			return m, nil
+
 		case "ctrl+s":
 			if m.taskRunning {
 				return m, nil
@@ -1117,11 +1196,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.submitTask()
 
 		case "ctrl+l":
-			m.toggleLanguage()
-			return m, nil
-
-		case "ctrl+v":
-			m.toggleVerbose()
+			// 切换全屏时间线模式
+			if !m.timelineFullscreenMode {
+				// 进入全屏模式
+				m.timelineFullscreenMode = true
+				m.timelineExpanded = false
+				m.timelineFullscreenCursor = 0
+				initTimelineDetailViewport(m)
+				m.timelineCacheKey = ""
+				m.invalidateFooterCache()
+			} else {
+				// 退出全屏模式
+				m.ExitTimelineFullscreen()
+				m.timelineExpanded = false
+				m.timelineCacheKey = ""
+				m.invalidateFooterCache()
+			}
 			return m, nil
 
 		case "ctrl+f":
@@ -1214,7 +1304,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Clear the input field
 					m.input.SetValue("")
-					return m, enterHistoryMode(&m)
+					return m, enterHistoryMode(m)
 				}
 				// If "model" is selected, open model selection dialog with target picker
 				if skillName == "model" {
@@ -1409,6 +1499,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.cacheReadInputTokens += cacheReadVal
 
+					// Track current agent run tokens (reset on agent switch)
+					agentNameForRun := msg.event.From
+					if agentNameForRun == "" {
+						agentNameForRun = "Unknown"
+					}
+					if m.currentAgentRunTokens.AgentName != agentNameForRun {
+						// Agent switched — reset run tokens for new agent
+						m.currentAgentRunTokens = AgentRunTokens{
+							AgentName: agentNameForRun,
+						}
+					}
+					m.currentAgentRunTokens.InputTokens += promptVal
+					m.currentAgentRunTokens.OutputTokens += completionVal
+					m.currentAgentRunTokens.CacheReadInputTokens += cacheReadVal
+					m.currentAgentRunTokens.CacheCreationInputTokens += cacheCreationVal
+
 					// Track current running agent
 					if m.taskRunning {
 						if msg.event.From != "" {
@@ -1476,6 +1582,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			callID := fmt.Sprintf("llm_%s_%d", msg.event.From, msg.event.Timestamp.UnixNano())
 			entry.toolCallID = callID
 
+			// Add timeline entry for LLM call
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        callID,
+				Kind:      TimelineKindLLMCall,
+				Timestamp: msg.event.Timestamp,
+				Status:    ToolStatusRunning,
+				Name:      "llm_call",
+				Detail:    entry.content,
+			})
+			m.timelineCacheKey = "" // invalidate cache
+
 			m.logEntries = append(m.logEntries, entry)
 			m.viewportDirty = true
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -1492,6 +1609,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if idx, ok := m.llmCallActiveEntries[msg.event.From]; ok && idx >= 0 && idx < len(m.logEntries) {
 				delete(m.llmCallActiveEntries, msg.event.From)
 
+				// Update timeline entry for LLM call end
+				for i := len(m.timelineEntries) - 1; i >= 0; i-- {
+					if m.timelineEntries[i].Kind == TimelineKindLLMCall && m.timelineEntries[i].Status == ToolStatusRunning {
+						var duration time.Duration
+						if durationRaw, ok := msg.event.Metadata["duration_seconds"]; ok {
+							if dur, ok := durationRaw.(float64); ok {
+								duration = time.Duration(dur * float64(time.Second))
+							}
+						}
+						m.timelineEntries[i].Status = ToolStatusSuccess
+						m.timelineEntries[i].Duration = duration
+						m.timelineEntries[i].IsError = false
+						if errStr, ok := msg.event.Metadata["error"]; ok && errStr != "" {
+							m.timelineEntries[i].Status = ToolStatusError
+							m.timelineEntries[i].IsError = true
+							m.timelineEntries[i].Detail = fmt.Sprintf("%v", errStr)
+						}
+						break
+					}
+				}
+				m.timelineCacheKey = ""
+
 				// Update the log entry with end information
 				le := &m.logEntries[idx]
 				le.isToolRunning = false
@@ -1507,7 +1646,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 
 					modelName, _ := msg.event.Metadata["model"].(string)
-					agentName, _ := msg.event.Metadata["agent"].(string)
 					if modelName == "" {
 						if m, ok := msg.event.Content.(map[string]interface{}); ok {
 							modelName, _ = m["model"].(string)
@@ -1519,16 +1657,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						hasError = true
 					}
 
-					if m.verboseMode {
-						// Verbose mode: show duration
-						if hasError {
-							le.content = fmt.Sprintf("◂ %s  [%s]  ✗ %.2fs", agentName, modelName, duration)
-						} else {
-							le.content = fmt.Sprintf("◂ %s  [%s]  ✓ %.2fs", agentName, modelName, duration)
-						}
+					if hasError {
+						le.content = fmt.Sprintf("✗ [%s] · %.2fs", modelName, duration)
 					} else {
-						// Non-verbose mode: no duration
-						le.content = fmt.Sprintf("◂ %s  [%s]", agentName, modelName)
+						le.content = fmt.Sprintf("✓ [%s] · %.2fs", modelName, duration)
 					}
 				} else {
 					le.content = "◂ LLM call completed"
@@ -1565,6 +1697,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						from:      msg.event.From,
 						content:   fmt.Sprintf("📦 Loaded %d relevant commit(s) for context", countInt),
 					}
+					// Add timeline entry for commit context loading
+					m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+						ID:        fmt.Sprintf("ctx_%d", msg.event.Timestamp.UnixNano()),
+						Kind:      TimelineKindContextEvent,
+						Timestamp: msg.event.Timestamp,
+						Status:    ToolStatusSuccess,
+						Name:      "commit_context",
+						Detail:    fmt.Sprintf("Loaded %d commits", countInt),
+					})
+					m.timelineCacheKey = ""
 					m.logEntries = append(m.logEntries, entry)
 					m.viewportDirty = true
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -1586,6 +1728,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Content:    resultContent,
 						IsError:    isError,
 					})
+					// Update timeline entry for tool result (search both parent and SubEntries)
+					for i := len(m.timelineEntries) - 1; i >= 0; i-- {
+						entry := m.timelineEntries[i]
+						// Check parent entry
+						if entry.ID == callID && entry.Kind == TimelineKindTool {
+							entry.Status = ToolStatusSuccess
+							entry.Duration = time.Since(entry.Timestamp)
+							entry.IsError = isError
+							if isError {
+								entry.Status = ToolStatusError
+							}
+							entry.Detail = extractToolSummary(toolEntry.Call.Name, toolEntry.Call.Arguments)
+							break
+						}
+						// Check SubEntries for merged tools
+						found := false
+						for j := range entry.SubEntries {
+							if entry.SubEntries[j].ID == callID {
+								entry.SubEntries[j].Status = ToolStatusSuccess
+								entry.SubEntries[j].Duration = time.Since(entry.SubEntries[j].Timestamp)
+								entry.SubEntries[j].IsError = isError
+								if isError {
+									entry.SubEntries[j].Status = ToolStatusError
+								}
+								entry.SubEntries[j].Detail = extractToolSummary(toolEntry.Call.Name, toolEntry.Call.Arguments)
+								found = true
+								break
+							}
+						}
+						if found {
+							break
+						}
+					}
+					m.timelineCacheKey = ""
 					// Update the log entry content and diff for backward compat
 					if idx := findLogEntryByToolCallID(m.logEntries, callID); idx >= 0 {
 						le := &m.logEntries[idx]
@@ -1615,6 +1791,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Content:    resultContent,
 						IsError:    isError,
 					})
+					// Update timeline entry for tool result (search both parent and SubEntries)
+					for i := len(m.timelineEntries) - 1; i >= 0; i-- {
+						entry := m.timelineEntries[i]
+						// Check parent entry
+						if entry.ID == matchedID && entry.Kind == TimelineKindTool {
+							entry.Status = ToolStatusSuccess
+							entry.Duration = time.Since(entry.Timestamp)
+							entry.IsError = isError
+							if isError {
+								entry.Status = ToolStatusError
+							}
+							entry.Detail = extractToolSummary(matchedEntry.Call.Name, matchedEntry.Call.Arguments)
+							break
+						}
+						// Check SubEntries for merged tools
+						found := false
+						for j := range entry.SubEntries {
+							if entry.SubEntries[j].ID == matchedID {
+								entry.SubEntries[j].Status = ToolStatusSuccess
+								entry.SubEntries[j].Duration = time.Since(entry.SubEntries[j].Timestamp)
+								entry.SubEntries[j].IsError = isError
+								if isError {
+									entry.SubEntries[j].Status = ToolStatusError
+								}
+								entry.SubEntries[j].Detail = extractToolSummary(matchedEntry.Call.Name, matchedEntry.Call.Arguments)
+								found = true
+								break
+							}
+						}
+						if found {
+							break
+						}
+					}
+					m.timelineCacheKey = ""
 					if idx := findLogEntryByToolCallID(m.logEntries, matchedID); idx >= 0 {
 						le := &m.logEntries[idx]
 						le.content = resultContent
@@ -1641,6 +1851,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeAnim = true
 		}
 
+		// Route tool_call_start to timeline
+		if entry.eventType == "tool_call_start" && entry.toolCallID != "" && entry.toolEntry != nil {
+			// 检查是否可与最后一个 timeline 条目合并
+			merged := false
+			if len(m.timelineEntries) > 0 {
+				lastEntry := m.timelineEntries[len(m.timelineEntries)-1]
+				if lastEntry.Kind == TimelineKindTool &&
+					lastEntry.Name == entry.toolName &&
+					IsMergeableTool(entry.toolName) {
+					// 合併：將新調用添加為子條目
+					lastEntry.SubEntries = append(lastEntry.SubEntries, &TimelineEntry{
+						ID:        entry.toolCallID,
+						Kind:      TimelineKindTool,
+						Timestamp: entry.timestamp,
+						Status:    ToolStatusRunning,
+						Name:      entry.toolName,
+						Detail:    entry.executionSummary,
+					})
+					// 更新父條目的 Duration 為從第一個到最新一個的時間跨度
+					// 這樣能反映整體合併組的時間範圍
+					merged = true
+				}
+			}
+
+			if !merged {
+				m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+					ID:        entry.toolCallID,
+					Kind:      TimelineKindTool,
+					Timestamp: entry.timestamp,
+					Status:    ToolStatusRunning,
+					Name:      entry.toolName,
+					Detail:    entry.executionSummary,
+				})
+			}
+			m.timelineCacheKey = ""
+		}
+
+		// Route context_compressed events to timeline
+		if entry.eventType == "context_compressed" {
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        fmt.Sprintf("cmp_%d", entry.timestamp.UnixNano()),
+				Kind:      TimelineKindContextEvent,
+				Timestamp: entry.timestamp,
+				Status:    ToolStatusSuccess,
+				Name:      "context_compressed",
+				Detail:    entry.content,
+			})
+			m.timelineCacheKey = ""
+		}
+
 		m.logEntries = append(m.logEntries, entry)
 		m.viewportDirty = true
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -1649,7 +1909,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskCompleteMsg:
 		m.taskRunning = false
 		m.currentAgent = ""
-		m.commandMode = false
 		m.dialogStack.CloseDialog("confirm_dialog") // safety: close any stale dialog
 		m.invalidateFooterCache()
 
@@ -1821,11 +2080,164 @@ func hasSlashAtWordBoundary(text string) bool {
 	return isSlashAtWordBoundary(text, lastSlash)
 }
 
-// saveRunningTaskMemory saves the current task's memory before quitting,
-// ensuring conversation history is not lost when TUI exits mid-execution.
-func (m *model) saveRunningTaskMemory() {
-	if m.currentTask != nil && m.dataManager != nil && m.taskRunning {
-		m.dataManager.SaveTaskMemory(m.currentTask.ID, m.currentTask.Memory)
-		m.dataManager.FlushTaskMemory(m.currentTask.ID)
+// saveAndFlushTaskMemory saves the current task's memory to the pending buffer
+// and immediately flushes it to disk. This is called on TUI exit to ensure
+// no conversation history is lost, regardless of whether the task is still
+// running or has already completed.
+func (m *model) saveAndFlushTaskMemory() {
+	if m.currentTask != nil && m.dataManager != nil {
+		if err := m.dataManager.SaveTaskMemory(m.currentTask.ID, m.currentTask.Memory); err != nil {
+			slog.Error("Failed to save task memory on exit",
+				"taskID", m.currentTask.ID,
+				"error", err)
+		}
+		if err := m.dataManager.FlushTaskMemory(m.currentTask.ID); err != nil {
+			slog.Error("Failed to flush task memory on exit",
+				"taskID", m.currentTask.ID,
+				"error", err)
+		}
+	}
+}
+
+// timelineFullscreenUpdate 处理全屏时间线模式下的所有消息。
+func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		key := msg.String()
+		switch key {
+		// ── 退出全屏 → 回到 expanded ──
+		case "esc":
+			m.timelineExpanded = true
+			m.timelineFullscreenMode = false
+			m.timelineFullscreenCursor = 0
+			m.timelineDetailVP = nil
+			m.timelineCacheKey = ""
+			m.invalidateFooterCache()
+			return m, nil
+
+		// ── q 键退出全屏（与 esc 行为一致）──
+		case "q":
+			m.timelineExpanded = true
+			m.timelineFullscreenMode = false
+			m.timelineFullscreenCursor = 0
+			m.timelineDetailVP = nil
+			m.timelineCacheKey = ""
+			m.invalidateFooterCache()
+			return m, nil
+
+		// ── ctrl+v: 退出到 collapsed ──
+		case "ctrl+v":
+			m.ExitTimelineFullscreen()
+			m.timelineExpanded = false
+			m.timelineCacheKey = ""
+			m.invalidateFooterCache()
+			return m, nil
+
+		// ── ctrl+c: 退出全屏 → 显示退出确认 ──
+		case "ctrl+c":
+			m.timelineExpanded = true
+			m.timelineFullscreenMode = false
+			m.timelineFullscreenCursor = 0
+			m.timelineDetailVP = nil
+			m.timelineCacheKey = ""
+			m.invalidateFooterCache()
+			d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
+			d.SetBounds(m.termWidth, m.termHeight)
+			m.dialogStack.Push(d)
+			return m, nil
+
+		// ── 列表导航 ──
+		case "j", "down":
+			moveTimelineCursor(m, 1)
+			return m, nil
+
+		case "k", "up":
+			moveTimelineCursor(m, -1)
+			return m, nil
+
+		case "g":
+			if len(m.timelineEntries) > 0 {
+				m.timelineFullscreenCursor = 0
+				refreshTimelineDetail(m)
+			}
+			return m, nil
+
+		case "G":
+			if len(m.timelineEntries) > 0 {
+				m.timelineFullscreenCursor = len(m.timelineEntries) - 1
+				refreshTimelineDetail(m)
+			}
+			return m, nil
+
+		// ── 详情 viewport 滚动 ──
+		case "pageup", "ctrl+u":
+			if m.timelineDetailVP != nil {
+				m.timelineDetailVP.ScrollUp(5)
+			}
+			return m, nil
+
+		case "pagedown", " ":
+			if m.timelineDetailVP != nil {
+				m.timelineDetailVP.ScrollDown(5)
+			}
+			return m, nil
+
+		// ── 详情 viewport 滚动（单行）──
+		case "ctrl+y":
+			if m.timelineDetailVP != nil {
+				m.timelineDetailVP.ScrollUp(1)
+			}
+			return m, nil
+
+		case "ctrl+e":
+			if m.timelineDetailVP != nil {
+				m.timelineDetailVP.ScrollDown(1)
+			}
+			return m, nil
+
+		default:
+			return m, nil
+		}
+
+	case tea.WindowSizeMsg:
+		m.termWidth = msg.Width
+		m.termHeight = msg.Height
+		// 如果 viewport 已初始化，更新尺寸并刷新内容
+		if m.timelineDetailVP != nil {
+			leftWidth := int(float64(m.termWidth-3) * 0.35)
+			if leftWidth < 25 {
+				leftWidth = 25
+			}
+			rightWidth := m.termWidth - 3 - leftWidth - 4
+			contentHeight := m.termHeight - 4
+			if contentHeight < 3 {
+				contentHeight = 3
+			}
+			m.timelineDetailVP.SetWidth(rightWidth)
+			m.timelineDetailVP.SetHeight(contentHeight)
+			refreshTimelineDetail(m)
+		}
+		return m, nil
+
+	case tickMsg:
+		// 全屏模式下也处理动画 tick，并保持 tick 循环
+		if m.anim != nil {
+			m.anim.Tick()
+		}
+		if m.taskRunning {
+			return m, tickCmd()
+		}
+		return m, nil
+
+	case taskEventMsg:
+		// 全屏模式下保持事件监听链存活，但事件暂不处理
+		// 退出全屏后事件会被正常消费
+		if m.taskRunning {
+			return m, listenForEvents(m.eventCh)
+		}
+		return m, nil
+
+	default:
+		return m, nil
 	}
 }

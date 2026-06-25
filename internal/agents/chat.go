@@ -24,7 +24,7 @@ type ChatAgent struct {
 func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *ChatAgent {
 	// Build a minimal tool set for ChatAgent: micro_agent for sub-LLM reasoning,
 	// thinking for cognitive reflection, and agent_exit for clean termination.
-	var toolDefs []ToolDefinition
+	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		// Errors parsing tools.json are logged but non-fatal —
 		// ChatAgent falls back to no-tool mode.
@@ -68,16 +68,17 @@ func (a *ChatAgent) Name() string {
 }
 
 func (a *ChatAgent) Run(ctx context.Context, input string) (AgentResult, error) {
-	cfg := ExecutorConfig{
-		SystemPrompt: a.GlobalCtx.FormatPrompt(chatPrompt),
-		UserInput:    input,
-		Adapters:     a.Adapters,
-		LLM:          a.LLM,
-		MaxSteps:     a.maxSteps,
-		Publisher:    a.Publisher,
-		AgentName:    a.Name(),
-		StopOnFinish: true,
-	}
+	cfg := DefaultExecutorConfig()
+	cfg.SystemPrompt = a.GlobalCtx.FormatPrompt(chatPrompt)
+	cfg.UserInput = input
+	cfg.Adapters = a.Adapters
+	cfg.LLM = a.LLM
+	cfg.MaxSteps = a.maxSteps
+	cfg.Publisher = a.Publisher
+	cfg.AgentName = a.Name()
+	cfg.StopOnFinish = true
+	a.BaseAgent.FillCollaborationConfig(&cfg, a.Name())
+	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return AgentResult{}, err

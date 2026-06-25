@@ -21,7 +21,7 @@ type DevOpsAgent struct {
 }
 
 func NewDevOpsAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *DevOpsAgent {
-	var toolDefs []ToolDefinition
+	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		// Non-fatal: agent falls back to no-tool mode.
 	}
@@ -77,16 +77,17 @@ func (a *DevOpsAgent) Name() string {
 }
 
 func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error) {
-	cfg := ExecutorConfig{
-		SystemPrompt: a.GlobalCtx.FormatPrompt(devopsPrompt),
-		UserInput:    input,
-		Adapters:     a.Adapters,
-		LLM:          a.LLM,
-		MaxSteps:     a.maxSteps,
-		Publisher:    a.Publisher,
-		AgentName:    a.Name(),
-		StopOnFinish: true,
-	}
+	cfg := DefaultExecutorConfig()
+	cfg.SystemPrompt = a.GlobalCtx.FormatPrompt(devopsPrompt)
+	cfg.UserInput = input
+	cfg.Adapters = a.Adapters
+	cfg.LLM = a.LLM
+	cfg.MaxSteps = a.maxSteps
+	cfg.Publisher = a.Publisher
+	cfg.AgentName = a.Name()
+	cfg.StopOnFinish = true
+	a.BaseAgent.FillCollaborationConfig(&cfg, a.Name())
+	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return AgentResult{}, err

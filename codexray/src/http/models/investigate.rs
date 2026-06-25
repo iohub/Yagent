@@ -2,6 +2,15 @@ use serde::{Deserialize, Serialize};
 
 use super::{CallRelation, CodeSkeletonResponse};
 
+/// Maximum number of core (high-centrality) functions to return.
+pub const MAX_CORE_FUNCTIONS: usize = 10;
+/// Maximum number of caller edges to return per core function.
+pub const MAX_CALLERS_PER_FUNC: usize = 20;
+/// Maximum number of callee edges to return per core function.
+pub const MAX_CALLEES_PER_FUNC: usize = 20;
+/// Maximum number of file skeletons to return.
+pub const MAX_FILE_SKELETONS: usize = 10;
+
 #[derive(Debug, Deserialize)]
 pub struct InvestigateRepoRequest {}
 

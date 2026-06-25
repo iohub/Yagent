@@ -148,22 +148,44 @@ func TestHelpDialogCreation(t *testing.T) {
 	if d.Type() != DialogModal {
 		t.Errorf("expected DialogModal, got %v", d.Type())
 	}
-	if d.content == "" {
-		t.Error("content should not be empty")
+	if len(d.content.Sections) == 0 {
+		t.Error("content should have sections")
+	}
+	if len(d.content.Title) == 0 {
+		t.Error("content title should not be empty")
 	}
 }
 
 // TestHelpDialogChinese tests HelpDialog with Chinese language.
 func TestHelpDialogChinese(t *testing.T) {
 	d := NewHelpDialog(LanguageZh)
-	if d.content == "" {
-		t.Error("Chinese content should not be empty")
+	if len(d.content.Sections) == 0 {
+		t.Error("Chinese content should have sections")
 	}
 	// Check that content contains Chinese characters (not just ASCII)
 	hasChinese := false
-	for _, r := range d.content {
-		if r > 127 {
-			hasChinese = true
+	for _, section := range d.content.Sections {
+		for _, r := range section.Title {
+			if r > 127 {
+				hasChinese = true
+				break
+			}
+		}
+		if hasChinese {
+			break
+		}
+		for _, item := range section.Items {
+			for _, r := range item.Desc {
+				if r > 127 {
+					hasChinese = true
+					break
+				}
+			}
+			if hasChinese {
+				break
+			}
+		}
+		if hasChinese {
 			break
 		}
 	}

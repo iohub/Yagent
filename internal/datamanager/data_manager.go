@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -55,12 +56,28 @@ func NewDataManager() (*DataManager, error) {
 		return nil, err
 	}
 
-	return &DataManager{
+	dm := &DataManager{
 		dataDir:     dataDir,
 		writers:     make(map[string]*taskWriterState),
 		persistCh:   make(chan struct{}, 1),
 		stopCh:      make(chan struct{}),
-	}, nil
+	}
+
+	// 异步校验索引一致性：修复因之前 bugs 导致的索引不一致
+	// 即使失败也不阻止启动，记录警告日志即可
+	go func() {
+		start := time.Now()
+		if err := dm.reconcileIndex(dm.index); err != nil {
+			slog.Warn("Index reconciliation on startup completed with errors",
+				"error", err,
+				"duration", time.Since(start))
+		} else {
+			slog.Debug("Index reconciliation on startup completed",
+				"duration", time.Since(start))
+		}
+	}()
+
+	return dm, nil
 }
 
 // Start 启动 DataManager 的后台 goroutine（由调用方在初始化后调用）
@@ -192,16 +209,21 @@ func (dm *DataManager) FlushTaskMemory(taskID string) error {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 
-	// 停止定时器
+	// 停止定时器，避免定时器在 flush 后重复触发
 	if ws.timer != nil {
 		ws.timer.Stop()
 		ws.timer = nil
 	}
 
-	// 更新索引（flush 后从文件状态同步）
+	// 先把 pending 数据写入磁盘
+	if err := dm.doFlush(filePath, ws); err != nil {
+		return fmt.Errorf("flush task memory failed (taskID=%s): %w", taskID, err)
+	}
+
+	// 写入完成后再更新索引，确保索引记录的是写入后的最新文件状态
 	dm.updateIndexFromFile(taskID, filePath)
 
-	return dm.doFlush(filePath, ws)
+	return nil
 }
 
 // FlushAll 刷新所有任务的待写入消息

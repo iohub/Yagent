@@ -64,7 +64,7 @@ func StartTUI(taskFilePath string, ca *app.CodeActor, tm *http.TaskManager, dm *
 		os.Exit(1)
 	}
 }
-func (m model) computeFieldWidth() int {
+func (m *model) computeFieldWidth() int {
 	const minField = 38
 	const margin = 4 // small padding from terminal edges
 	if m.termWidth <= 0 {
@@ -79,7 +79,7 @@ func (m model) computeFieldWidth() int {
 
 // computeInputHeight calculates the textarea height based on content lines
 // and available terminal space. Height grows with content but is capped.
-func (m model) computeInputHeight() int {
+func (m *model) computeInputHeight() int {
 	const minHeight = 3
 	const maxHeight = 12
 

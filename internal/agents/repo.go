@@ -55,7 +55,7 @@ type RepoAgent struct {
 }
 
 func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *messaging.MessagePublisher, maxSteps int) *RepoAgent {
-	var toolDefs []ToolDefinition
+	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal tools", "error", err)
 	}
@@ -309,16 +309,17 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 
 	systemPrompt = a.GlobalCtx.FormatPrompt(systemPrompt)
 
-	cfg := ExecutorConfig{
-		SystemPrompt:  systemPrompt,
-		UserInput:     input,
-		Adapters:      a.Adapters,
-		LLM:           a.LLM,
-		MaxSteps:      a.maxSteps,
-		Publisher:     a.Publisher,
-		AgentName:     a.Name(),
-		SystemAsHuman: true, // RepoAgent uses Human role for its prompt
-	}
+	cfg := DefaultExecutorConfig()
+	cfg.SystemPrompt = systemPrompt
+	cfg.UserInput = input
+	cfg.Adapters = a.Adapters
+	cfg.LLM = a.LLM
+	cfg.MaxSteps = a.maxSteps
+	cfg.Publisher = a.Publisher
+	cfg.AgentName = a.Name()
+	cfg.SystemAsHuman = true // RepoAgent uses Human role for its prompt
+	a.BaseAgent.FillCollaborationConfig(&cfg, a.Name())
+	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return AgentResult{}, err

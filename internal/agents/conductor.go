@@ -14,8 +14,11 @@ import (
 	"codeactor/internal/compact"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
+	conductor "codeactor/internal/agents/conductor"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
+	"codeactor/internal/messaging/bus"
+	"codeactor/internal/messaging/peer"
 	"codeactor/internal/tools"
 )
 
@@ -65,10 +68,12 @@ type ConductorAgent struct {
 	Adapters       []*tools.Adapter
 	maxSteps       int
 	metaRetryCount int                       // max retries for Meta-Agent JSON parse failures
-	toolDefMap     map[string]ToolDefinition // tool name → definition from tools.json
+	toolDefMap     map[string]tools.ToolDefinition // tool name → definition from tools.json
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
+	Mesh           *AgentMesh                // P2P 通信网格
 	compactEngine  *compact.Engine           // 上下文压缩引擎
 	compactConfig  *compact.Config           // 压缩配置
+	adapter        *ConductorAdapter         // 新旧整合适配器（Strangler Fig 过渡层）
 	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 
 	// 新增：异步增量压缩字段
@@ -350,13 +355,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		}),
 	}
 
-	var toolDefs []ToolDefinition
+	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal tools", "error", err)
 	}
 
 	// Build a map from tool name to definition for later use by custom agents
-	toolDefMap := make(map[string]ToolDefinition, len(toolDefs))
+	toolDefMap := make(map[string]tools.ToolDefinition, len(toolDefs))
 	for _, def := range toolDefs {
 		toolDefMap[def.Name] = def
 	}
@@ -407,6 +412,116 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
 
+	// ─── 创建 P2P 通信网格 ───
+	agentMesh := NewAgentMesh()
+
+	// 注册 Conductor 自己的 Peer
+	if err := agentMesh.RegisterAgent("conductor", &BaseAgent{LLM: engine, Publisher: globalCtx.Publisher}); err != nil {
+		slog.Warn("Failed to register conductor in agent mesh", "error", err)
+	}
+
+	// 注册 Conductor 为全局 Observer，感知所有 P2P 事件
+	observerHandler := func(ctx context.Context, ev *bus.Event) error {
+		// 1. 转发到 TUI/WebSocket（通过现有 Publisher，非阻塞）
+		if globalCtx.Publisher != nil {
+			metadata := map[string]interface{}{
+				"source":       ev.Source,
+				"target":       ev.Target,
+				"topic":        ev.Topic,
+				"event_type":   fmt.Sprintf("%d", ev.Type),
+				"payload_size": len(ev.Payload),
+				"version":      ev.Version,
+			}
+			_ = globalCtx.Publisher.PublishWithMetadata("p2p_event",
+				fmt.Sprintf("P2P: %s → [%s] → %s", ev.Source, ev.Topic, ev.Target),
+				"conductor", metadata)
+		}
+
+		// 2. 跨域协调：coordination.* topic 需要 Conductor 仲裁
+		if peer.IsConductorTopic(ev.Topic) {
+			slog.Debug("Conductor observed coordination event",
+				"topic", ev.Topic, "source", ev.Source)
+		}
+
+		return nil
+	}
+	if err := agentMesh.RegisterConductorObserver(observerHandler); err != nil {
+		slog.Warn("Failed to register conductor observer", "error", err)
+	}
+
+	// 注册所有子 Agent 到网格
+	agentRegistrations := []struct {
+		id    string
+		agent *BaseAgent
+	}{}
+
+	if repo != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"repo-agent", &repo.BaseAgent})
+	}
+	if coding != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"coding-agent", &coding.BaseAgent})
+	}
+	if chat != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"chat-agent", &chat.BaseAgent})
+	}
+	if meta != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"meta-agent", &meta.BaseAgent})
+	}
+	if devops != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"devops-agent", &devops.BaseAgent})
+	}
+	if browser != nil {
+		agentRegistrations = append(agentRegistrations, struct {
+			id    string
+			agent *BaseAgent
+		}{"browser-agent", &browser.BaseAgent})
+	}
+
+	for _, reg := range agentRegistrations {
+		if err := agentMesh.RegisterAgent(reg.id, reg.agent); err != nil {
+			slog.Warn("Failed to register agent in mesh", "agent", reg.id, "error", err)
+		}
+	}
+
+	// ── Blackboard 初始化 ──
+	var blackboardAccess interface {
+		Post(region string, author string, content map[string]interface{}, tags []string, references []string) (string, error)
+		Read(region string, filter map[string]interface{}) ([]map[string]interface{}, error)
+		Get(entryID string) (map[string]interface{}, bool)
+	}
+	if isBlackboardEnabled() {
+		bb := memory.NewBlackboard()
+		blackboardAccess = memory.NewBlackboardAccessAdapter(bb)
+		slog.Info("Blackboard enabled — agents will have shared state tools (blackboard_read, blackboard_post)")
+	}
+
+	// 注入到所有子 Agent
+	if blackboardAccess != nil {
+		if repo != nil { repo.BaseAgent.BlackboardAccess = blackboardAccess }
+		if coding != nil { coding.BaseAgent.BlackboardAccess = blackboardAccess }
+		if chat != nil { chat.BaseAgent.BlackboardAccess = blackboardAccess }
+		if meta != nil { meta.BaseAgent.BlackboardAccess = blackboardAccess }
+		if devops != nil { devops.BaseAgent.BlackboardAccess = blackboardAccess }
+		if browser != nil { browser.BaseAgent.BlackboardAccess = blackboardAccess }
+	} else {
+		slog.Info("Blackboard disabled (set ENABLE_BLACKBOARD=true to enable shared state between agents)")
+	}
+
 	// 创建 commit 管理器（用于后台自动学习和查询，不再暴露为 Agent 工具）
 	var commitManager *CommitManager
 	if llmClient != nil {
@@ -417,6 +532,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	}
 
 	allAdapters := append(adapters, delegateAdapters...)
+
+	// Strangler Fig: 创建适配器桥接层，开始使用新组件（Metrics + CircuitBreaker）
+	adapterCfg := conductor.DefaultRecoveryConfig()
+	adapterCfg.MaxRetries = maxSteps                  // 使用 maxSteps 作为重试次数
+	adapterCfg.CircuitBreakerThreshold = cfg.LLM.CircuitBreakerThreshold
+	adapterCfg.CircuitBreakerResetTimeout = cfg.LLM.CircuitBreakerResetTimeout
+	conductorAdapter := NewConductorAdapter(true, adapterCfg) // enabled=true 启动 Metrics
 
 	self = &ConductorAgent{
 		BaseAgent:          BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
@@ -432,8 +554,10 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		metaRetryCount:     metaRetryCount,
 		toolDefMap:         toolDefMap,
 		customAgents:       make(map[string]*CustomAgent),
+		Mesh:               agentMesh, // P2P 通信网格
 		compactEngine:      nil, // 将在 Run 方法中根据配置初始化
 		compactConfig:      compactCfg,
+		adapter:            conductorAdapter,
 		summaryEngine:      summaryEngine,
 		commitManager:      commitManager, // 设置 commit 学习器管理器
 		hasDelegated:       false,         // 初始未委派过
@@ -723,16 +847,17 @@ func (a *ConductorAgent) registerCustomAgent(ca *CustomAgent) {
 func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent, adapters []*tools.Adapter, task string) (string, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(ca.SystemPrompt)
 
-	cfg := ExecutorConfig{
-		SystemPrompt: systemPrompt,
-		UserInput:    task,
-		Adapters:     adapters,
-		LLM:          a.LLM,
-		MaxSteps:     15,
-		Publisher:    a.Publisher,
-		AgentName:    ca.DisplayName,
-		StopOnFinish: true,
-	}
+	cfg := DefaultExecutorConfig()
+	cfg.SystemPrompt = systemPrompt
+	cfg.UserInput = task
+	cfg.Adapters = adapters
+	cfg.LLM = a.LLM
+	cfg.MaxSteps = 15
+	cfg.Publisher = a.Publisher
+	cfg.AgentName = ca.DisplayName
+	cfg.StopOnFinish = true
+	a.BaseAgent.FillCollaborationConfig(&cfg, ca.DisplayName)
+	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return "", err
@@ -746,18 +871,36 @@ func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent
 	return result.Text, nil
 }
 
-// injectSubAgentMemory 将 sub-agent 的完整对话历史注入到 Conductor memory 中
+// injectSubAgentMemory 将 sub-agent 的执行结果摘要注入到 Conductor memory 中
+// Phase 1: 只注入摘要，不再注入 sub-agent 的完整对话历史
+// Phase 3+ : Sub-agent 的关键发现通过 SharedMemory 发布/订阅机制共享
 func (a *ConductorAgent) injectSubAgentMemory(result AgentResult, toolCallID string, toolName string) {
-	if a.currentMemory == nil || len(result.Memory) == 0 {
+	if a.currentMemory == nil {
 		return
 	}
-	groupID := fmt.Sprintf("%s_%s_%d", toolName, "sub", time.Now().UnixNano())
-	for i := range result.Memory {
-		result.Memory[i].GroupID = groupID
-		result.Memory[i].ParentID = toolCallID
-		// IsSubAgent 已在 ConvertLLMHistoryToMemory 中设为 true，无需再设
-		a.currentMemory.Messages = append(a.currentMemory.Messages, result.Memory[i])
+
+	// 只注入摘要消息（result.Text），不注入完整历史
+	// sub-agent 的完整对话历史保留在其自身的 LocalMemory 中（Phase 3）
+	if result.Text != "" {
+		summaryMsg := memory.ChatMessage{
+			Type:       memory.MessageTypeAssistant,
+			Content:    fmt.Sprintf("[Sub-Agent Result: %s]\n%s", toolName, result.Text),
+			Timestamp:  time.Now(),
+			GroupID:    fmt.Sprintf("%s_summary_%d", toolName, time.Now().UnixNano()),
+			ParentID:   toolCallID,
+			IsSubAgent: true,
+			Metadata: map[string]interface{}{
+				"type":      "sub_agent_summary",
+				"tool":      toolName,
+				"msg_count": len(result.Memory),
+			},
+		}
+		a.currentMemory.Messages = append(a.currentMemory.Messages, summaryMsg)
 	}
+
+	// 重要：result.Memory（sub-agent 的完整对话历史）不再注入到 Conductor 的 memory 中
+	// 这避免了 Conductor 上下文快速膨胀和 Compact Engine 频繁压缩造成的信息丢失
+	// sub-agent 内部消息保留在 sub-agent 本地，通过 SharedMemory 的 publish/subscribe 机制共享关键信息（Phase 3）
 }
 
 func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
@@ -1027,19 +1170,11 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		}
 		// ═══════════════════════════════════════════════════════════
 
-		// --- 熔断检查 ---
-		if a.circuitBreakerThreshold > 0 && a.consecutiveLLMFailures >= a.circuitBreakerThreshold {
-			if time.Since(a.lastLLMFailureTime) < a.circuitBreakerResetTimeout {
-				slog.Error("Circuit breaker open, too many consecutive LLM failures",
-					"failures", a.consecutiveLLMFailures,
-					"threshold", a.circuitBreakerThreshold,
-					"step", i)
-				return "", fmt.Errorf("circuit breaker open: %d consecutive LLM failures", a.consecutiveLLMFailures)
-			}
-			// 熔断恢复：超时后重置
-			slog.Info("Circuit breaker reset timeout reached, resetting failure count",
+		// --- 熔断检查（通过适配器委托到新组件）---
+		if a.adapter != nil && a.adapter.IsCircuitBreakerOpen() {
+			slog.Error("Circuit breaker open, too many consecutive LLM failures",
 				"step", i)
-			a.consecutiveLLMFailures = 0
+			return "", fmt.Errorf("circuit breaker open: LLM calls blocked")
 		}
 
 		// --- 步骤级重试 ---
@@ -1078,6 +1213,11 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			resp, llmErr = a.LLM.GenerateContent(ctx, messages, toolDefs, nil)
 			llmDuration := time.Since(llmStartTime).Seconds()
 
+			// 记录 LLM 耗时指标
+			if a.adapter != nil {
+				a.adapter.RecordLLMDuration(time.Since(llmStartTime))
+			}
+
 			// Publish llm_call_end event
 			if a.Publisher != nil {
 				metadata := map[string]interface{}{
@@ -1092,8 +1232,15 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			}
 
 			if llmErr == nil {
-				a.consecutiveLLMFailures = 0
+				// 通过适配器记录成功（重置熔断器状态）
+				if a.adapter != nil {
+					a.adapter.RecordLLMSuccess()
+				}
 				break
+			}
+			// 通过适配器记录失败（可能触发熔断）
+			if a.adapter != nil {
+				a.adapter.RecordLLMFailure()
 			}
 			a.consecutiveLLMFailures++
 			a.lastLLMFailureTime = time.Now()
@@ -1407,4 +1554,10 @@ func validateAndRepairToolCallPairs(messages []llm.Message) []llm.Message {
 	}
 
 	return result
+}
+
+// isBlackboardEnabled checks the ENABLE_BLACKBOARD environment variable.
+func isBlackboardEnabled() bool {
+	return strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_BLACKBOARD"))) == "true" ||
+		strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_BLACKBOARD"))) == "1"
 }

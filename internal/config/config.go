@@ -1,15 +1,10 @@
 package config
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
 	"time"
-
-	"codeactor/internal/util"
-
-	"github.com/BurntSushi/toml"
 )
 
 // ProviderConfig contains configuration for a specific LLM provider
@@ -289,20 +284,7 @@ func DetectBedrockProvider(modelID string) string {
 
 // LoadConfig loads configuration from a TOML file
 func LoadConfig(path string) (*Config, error) {
-	config := &Config{}
-	ctx := context.Background()
-
-	// Read and parse the config file
-	if _, err := toml.DecodeFile(path, config); err != nil {
-		return nil, util.WrapError(ctx, err, "LoadConfig::DecodeFile")
-	}
-
-	// Validate configuration
-	if err := config.validate(); err != nil {
-		return nil, util.WrapError(ctx, err, "LoadConfig::validate")
-	}
-
-	return config, nil
+	return LoadFromFile(path)
 }
 
 // resolveEffectiveProviderName returns the effective provider name using the full

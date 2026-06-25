@@ -41,7 +41,7 @@
 
 | 层级 | 现象 | 派生问题 |
 |------|------|----------|
-| 表层症状 | 工具用 `switch-case` 硬编码、配置启动时加载、codexray 强依赖 | 加工具需重新编译、改配置需重启、codexray 宕机全系统瘫痪 |
+| 表层症状 | 工具用 `switch-case` 硬编码、配置启动时加载 | 加工具需重新编译、改配置需重启 |
 | 中层原因 | 没有运行时插件机制、没有降级路径 | 运维成本高、SLA 难以保证 |
 | 根本原因 | **设计假设环境在编译期已知且不变** | 与"可演化 AI 系统"的目标矛盾 |
 
@@ -106,45 +106,6 @@ func (b *EventBus) Publish(e *Event) error {
 - 压测：10000 msg/s 持续 1 分钟，零丢失
 
 **涉及文件**：`internal/messaging/message_dispatcher.go`
-
----
-
-#### 2. codexray 单点依赖 🔴
-
-**问题**：Rust codexray 服务是唯一的代码分析引擎，宕机后 Repo/Coding Agent 完全失能，无降级路径。
-
-**改进方案**：引入 Circuit Breaker + 本地降级解析器
-
-```go
-type CodexrayClient struct {
-    cb        *gobreaker.CircuitBreaker
-    fallback  LocalParser  // 本地降级解析器（基于 tree-sitter）
-    client    *http.Client
-}
-
-func (c *CodexrayClient) Analyze(ctx context.Context, repo string) (*Analysis, error) {
-    result, err := c.cb.Execute(func() (interface{}, error) {
-        return c.client.Analyze(ctx, repo)
-    })
-    if err != nil {
-        // 降级到本地解析器
-        log.Warn("codexray unavailable, falling back to local parser", "err", err)
-        return c.fallback.Analyze(ctx, repo)
-    }
-    return result.(*Analysis), nil
-}
-```
-
-**Circuit Breaker 配置**：
-- 连续失败 5 次熔断
-- 熔断后 30s 半开探测
-- 半开成功则恢复，失败则继续熔断
-
-**验证**：
-- 模拟 codexray 宕机，验证降级路径正常工作
-- 验证熔断后不再无脑重试，保护 codexray 恢复
-
-**涉及文件**：`internal/tools/adapter.go`
 
 ---
 
@@ -333,17 +294,6 @@ codingAgent.peer.Subscribe("repo.symbols.ready", func(e Event) {
 
 ---
 
-#### 12. 可观测性不足 🟢
-
-**问题**：难以追踪 Agent 决策链路、消息延迟、系统瓶颈。
-
-**改进方案**：
-- OpenTelemetry 全链路追踪
-- Agent 决策日志结构化输出
-- 消息总线吞吐量、延迟、丢失率指标导出到 Prometheus
-
----
-
 ## 推荐演进路径：混合 Mesh-Hub 方案
 
 ### 架构示意
@@ -367,9 +317,6 @@ codingAgent.peer.Subscribe("repo.symbols.ready", func(e Event) {
     │     └──────────┘  └────────────────┘
     │
     └──► Tool Registry (插件化)
-         ├─ codexray (with Circuit Breaker)
-         ├─ fallback_local_parser
-         └─ [可插拔新工具]
 ```
 
 ### 选择理由
@@ -387,8 +334,7 @@ codingAgent.peer.Subscribe("repo.symbols.ready", func(e Event) {
 | Step | 改动 | 目标 |
 |------|------|------|
 | 1.1 | 消息总线升级：channel → WAL 持久化 + Backlog + 死信队列 | 消除静默丢事件 |
-| 1.2 | codexray Circuit Breaker + 本地降级解析器 | 消除单点依赖 |
-| 1.3 | Conductor 状态持久化 + Supervisor 进程监控 | 崩溃可恢复 |
+| 1.2 | Conductor 状态持久化 + Supervisor 进程监控 | 崩溃可恢复 |
 
 #### Phase 2：架构解耦 🟡（2-3 周）
 
@@ -412,7 +358,6 @@ codingAgent.peer.Subscribe("repo.symbols.ready", func(e Event) {
 |------|------|------|
 | 4.1 | 配置热加载（fsnotify + Event Bus 广播） | 无需重启改配置 |
 | 4.2 | 持久化任务队列（嵌入式） | 支持优先级、重试、延迟执行 |
-| 4.3 | OpenTelemetry + Prometheus 可观测性 | 全链路可追踪 |
 
 ### 核心原则
 
@@ -440,18 +385,17 @@ codingAgent.peer.Subscribe("repo.symbols.ready", func(e Event) {
 |----------|----------|-----------|
 | 单元测试 | 各新模块（EventBus、CircuitBreaker、ToolRegistry） | Go testing + testify |
 | 集成测试 | Agent 间直接通信、Memory 分层 | Testcontainers + 真实 LLM mock |
-| 混沌测试 | Conductor 崩溃、codexray 宕机、消息洪流 | chaos-mesh 或自研故障注入 |
+| 混沌测试 | Conductor 崩溃、消息洪流 | chaos-mesh 或自研故障注入 |
 | 持久化测试 | 崩溃后恢复、WAL 重放 | kill -9 + 重启验证 |
 | 性能回归 | 消息延迟、吞吐量、内存占用 | pprof + benchstat |
 
 ### 关键测试用例
 
 1. **消息零丢失测试**：在 10000 msg/s 压力下 kill Consumer 进程，重启后验证所有消息被处理
-2. **codexray 降级测试**：断开 codexray 网络，验证系统继续工作（降级模式）
-3. **Conductor 崩溃恢复**：任务执行到一半 kill Conductor，重启后任务从断点继续
-4. **Agent 直连通信**：Repo Agent 完成分析后，Coding Agent 在 10ms 内收到通知（不经过 Conductor）
-5. **Compact Engine 关键信息保留**：构造包含关键工具调用结果的上下文，压缩后验证关键信息未丢失
-6. **配置热加载**：运行时修改配置文件，验证 Agent 在下一个 LLM 调用时使用新配置
+2. **Conductor 崩溃恢复**：任务执行到一半 kill Conductor，重启后任务从断点继续
+3. **Agent 直连通信**：Repo Agent 完成分析后，Coding Agent 在 10ms 内收到通知（不经过 Conductor）
+4. **Compact Engine 关键信息保留**：构造包含关键工具调用结果的上下文，压缩后验证关键信息未丢失
+5. **配置热加载**：运行时修改配置文件，验证 Agent 在下一个 LLM 调用时使用新配置
 
 ---
 
@@ -462,7 +406,7 @@ codingAgent.peer.Subscribe("repo.symbols.ready", func(e Event) {
 | 维度 | 优点 | 缺点 |
 |------|------|------|
 | **设计理念** | Hub-and-Spoke 清晰的职责分离 | 强中央化限制了系统智能上限 |
-| **代码智能** | Rust 驱动、AST 解析、语义搜索独树一帜 | codexray 是单点依赖，无降级路径 |
+| **代码智能** | Rust 驱动、AST 解析、语义搜索独树一帜 | 强依赖外部代码分析引擎 |
 | **自进化能力** | Meta-Agent 设计理念超前 | 实现退化（仅单次 LLM 调用） |
 | **消息机制** | Pub-Sub 解耦 Agent 和 UI | 满队列静默丢事件，可靠性不足 |
 | **上下文管理** | Compact Engine 多级压缩策略 | 信息损失不可知、不可恢复 |
@@ -474,14 +418,14 @@ codingAgent.peer.Subscribe("repo.symbols.ready", func(e Event) {
 高优先级（立即）            中优先级（1个月内）         低优先级（2个月内）
 ─────────────────          ──────────────────         ─────────────────
 消息总线 WAL 持久化         Conductor 模块拆分          配置热加载
-codexray Circuit Breaker    Agent 间 P2P 通信          持久化任务队列
-Conductor 崩溃恢复          Tool Registry 插件化        可观测性增强
+Conductor 崩溃恢复          Agent 间 P2P 通信          持久化任务队列
+                            Tool Registry 插件化
                           分层 Memory 架构
                           Meta-Agent 迭代化
                           Compact Engine 增强
 ```
 
-> **核心结论**：CodeActor 的架构设计理念非常出色（Hub-and-Spoke + Meta-Agent 自进化 + Rust 代码引擎），但当前实现存在三个致命短板——**消息可靠性缺失、Conductor 职责过重、codexray 单点依赖**。修复优先级：消息总线持久化 > Circuit Breaker > Conductor 模块拆分 > Agent 直连通信。建议采用混合 Mesh-Hub 方案，在 1-2 个月内分 4 个阶段渐进式演进。
+> **核心结论**：CodeActor 的架构设计理念非常出色（Hub-and-Spoke + Meta-Agent 自进化 + Rust 代码引擎），但当前实现存在三个致命短板——**消息可靠性缺失、Conductor 职责过重**。修复优先级：消息总线持久化 > Conductor 模块拆分 > Agent 直连通信。建议采用混合 Mesh-Hub 方案，在 1-2 个月内分 4 个阶段渐进式演进。
 
 ---
 

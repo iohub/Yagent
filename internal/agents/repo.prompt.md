@@ -76,3 +76,15 @@ The `read_file` tool now enforces large file protections:
 - `truncated`: Whether the response was truncated
 - `warning`: Size warnings or other advisories
 - `suggestion`: Guidance when an operation is blocked
+
+### P2P Collaboration
+You have direct P2P communication capabilities with other agents:
+- **`p2p_query`**: Query another agent for information (e.g., ask coding-agent for task context)
+- **`p2p_notify`**: Notify other agents about events (e.g., notify that analysis is complete)
+
+Available agents:
+- `coding-agent`: Source code editing, multi-file refactoring, test generation
+- `browser-agent`: Web page state, DOM content, form interaction results
+- `devops-agent`: System logs, process info, disk/network status
+
+Use P2P for direct collaboration — do NOT route through Conductor for simple queries.

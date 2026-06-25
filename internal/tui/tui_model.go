@@ -267,6 +267,12 @@ type logEntry struct {
 
 	// Tool entry for new-style rendering (non-nil for tool events)
 	toolEntry *ToolEntry
+
+	// isVerbose marks entries that contain operational details
+	// (tool calls, LLM calls, internal operations).
+	// These are always hidden from the main view and displayed
+	// in the tool timeline panel instead (toggle with ctrl+v).
+	isVerbose bool
 }
 
 // getCachedRender returns the cached render for the given width.
@@ -342,6 +348,15 @@ type AgentTokenUsage struct {
 	OutputTokens             int64
 	CacheCreationInputTokens int64
 	CacheReadInputTokens     int64
+}
+
+// AgentRunTokens 追踪当前 agent 本次运行的 token 消耗（非历史累计）
+type AgentRunTokens struct {
+	AgentName                string
+	InputTokens              int64
+	OutputTokens             int64
+	CacheReadInputTokens     int64
+	CacheCreationInputTokens int64
 }
 
 // visibleEntryIndices 返回当前视口中可见的logEntry索引范围 [start, end]。
@@ -489,7 +504,6 @@ type model struct {
 	contentCache    *strings.Builder // incremental viewport content cache (pointer avoids copy panic)
 	glamourRenderer *glamour.TermRenderer
 	useDarkStyle    bool
-	verboseMode     bool
 
 	// Task execution state
 	taskRunning   bool
@@ -515,6 +529,12 @@ type model struct {
 	commandMode   bool
 	commandBuffer string // hidden command input buffer in command mode
 	lastKey       string // tracks previous key for multi-key sequences (gg)
+
+	// Timeline entries for the tool timeline panel (replaces verbose mode)
+	timelineEntries  []*TimelineEntry // 有序的时间线条目
+	timelineExpanded bool             // 是否展开显示全部历史
+	timelineCache    string           // 缓存的渲染结果
+	timelineCacheKey string           // 缓存键 (len + expanded + width)
 
 	// Skill autocomplete in edit mode (inline, not popup)
 	skillAutoComplete  bool     // whether autocomplete suggestions are shown
@@ -553,6 +573,12 @@ type model struct {
 
 	// Per-agent token tracking
 	tokenUsagePerAgent map[string]*AgentTokenUsage
+
+	// Token dashboard collapse/expand control
+	tokenDashboardCollapsed bool // 默认 true（折叠），按 ctrl+t 切换
+
+	// Current agent run-specific token tracking (reset on agent switch)
+	currentAgentRunTokens AgentRunTokens
 
 	// Animation state for running tools
 	anim       *Anim
@@ -638,6 +664,11 @@ type model struct {
 	// 长度 = len(contentParts)+1，最后一个元素是总行数。
 	// 由 rebuildLinePrefix / appendLinePrefix 维护。
 	contentPartLinePrefix []int
+
+	// ── Timeline 全屏模式状态 ──
+	timelineFullscreenMode   bool              // 是否处于全屏时间线模式
+	timelineFullscreenCursor int               // 全屏模式下当前选中的条目索引
+	timelineDetailVP         *viewport.Model   // 全屏模式下右侧详情 viewport
 }
 
 // autocompleteCacheKey is a fine-grained cache key for autocomplete results.
@@ -680,7 +711,7 @@ func (m *model) hasDirtyEntries() bool {
 	return m.needFullRebuild || len(m.dirtyEntryIndices) > 0
 }
 
-func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) model {
+func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) *model {
 	ti := textarea.New()
 
 	// ── Editor input styles (harmonized with TUI 256-color palette) ──
@@ -811,7 +842,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	styles := common.NewStyles()
 	com := common.NewCommon(styles, cfg, ca, projectDir, useDarkStyle)
 
-	return model{
+return &model{
 		com: com,
 
 		assistant:          ca,
@@ -831,6 +862,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		toolCallEntries:    make(map[string]*ToolEntry),
 		anim: NewAnim(10),
 		tokenUsagePerAgent: make(map[string]*AgentTokenUsage),
+		tokenDashboardCollapsed: true, // 默认折叠
 
 		// 新组件
 		dialogStack:  ds,
@@ -866,9 +898,13 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		// 补全结果缓存 - 使用细粒度缓存键
 		autocompleteCache: make(map[autocompleteCacheKey]*AutocompleteResult),
 
-		// 性能优化标志
+		// Performance optimization flags
 		tickStarted:   false,
 		viewportDirty: false,
+
+		// Timeline initialization
+		timelineEntries:  make([]*TimelineEntry, 0),
+		timelineExpanded: false,
 
 		// ── Glamour 渲染缓存（LRU） ──
 		glamourCache:    make(map[string]string),
@@ -887,7 +923,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	}
 }
 
-func (m model) Init() tea.Cmd {
+func (m *model) Init() tea.Cmd {
 	return tea.Batch(
 		listenForEvents(m.eventCh),
 		// 延迟启动 tick 循环：初始时不启动 tick，
@@ -912,14 +948,4 @@ func (m *model) toggleLanguage() {
 	}
 	m.input.Placeholder = langManager.GetText("TaskDescPlaceholder")
 	m.infoMsg = langManager.GetText("InfoMessage")
-}
-
-// toggleVerbose 切换 verbose 模式
-func (m *model) toggleVerbose() {
-	m.verboseMode = !m.verboseMode
-	if m.verboseMode {
-		m.infoMsg = "Verbose mode: ON"
-	} else {
-		m.infoMsg = "Verbose mode: OFF"
-	}
 }

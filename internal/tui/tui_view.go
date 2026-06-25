@@ -47,7 +47,7 @@ func makeLeftSep(leftBg, rightBg color.Color) string {
 		Render(powerlineLeftSep)
 }
 
-func (m model) View() tea.View {
+func (m *model) View() tea.View {
 	if m.quitting {
 		return tea.View{AltScreen: true}
 	}
@@ -55,6 +55,11 @@ func (m model) View() tea.View {
 	// 新增：在终端尺寸初始化前返回空视图
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return tea.View{AltScreen: true}
+	}
+
+	// 全屏 timeline 模式：分屏展示时间线条目和详细内容
+	if m.timelineFullscreenMode {
+		return renderTimelineFullscreenView(m)
 	}
 
 	// ====== Dialog overlay: takes priority over history mode ======
@@ -67,7 +72,7 @@ func (m model) View() tea.View {
 
 	// History mode: render fullscreen history browser
 	if m.historyMode {
-		return renderHistoryView(&m)
+		return renderHistoryView(m)
 	}
 
 	var b strings.Builder
@@ -141,6 +146,15 @@ func (m model) View() tea.View {
 		b.WriteString(strings.Join(combinedLines, "\n"))
 	} else {
 		b.WriteString(m.cachedViewportView)
+	}
+
+	// ── Tool Timeline Panel (between viewport and separator) ──
+	if m.taskRunning || len(m.timelineEntries) > 0 {
+		timelineContent := m.renderTimelinePanel(m.termWidth)
+		if timelineContent != "" {
+			b.WriteString("\n")
+			b.WriteString(timelineContent)
+		}
 	}
 
 	// Separator (cached)
@@ -242,9 +256,68 @@ func (m model) View() tea.View {
 	return tea.View{AltScreen: true, Content: b.String()}
 }
 
+// renderTimelinePanel renders the tool timeline panel with caching.
+func (m *model) renderTimelinePanel(width int) string {
+	// 检查是否有正在运行的条目 — 有则跳过缓存以支持动画
+	hasRunning := false
+	for _, e := range m.timelineEntries {
+		if e.Status == ToolStatusRunning {
+			hasRunning = true
+			break
+		}
+	}
+
+	// Build cache key: entries count + last entry ID + expanded state + width
+	var lastID string
+	if len(m.timelineEntries) > 0 {
+		lastID = m.timelineEntries[len(m.timelineEntries)-1].ID
+	}
+	expandedStr := "0"
+	if m.timelineExpanded {
+		expandedStr = "1"
+	}
+	key := fmt.Sprintf("%d|%s|%s|%d", len(m.timelineEntries), lastID, expandedStr, width)
+
+	// 只在没有运行条目时使用缓存（动画帧会变化，不能用缓存）
+	if !hasRunning && key == m.timelineCacheKey && m.timelineCache != "" {
+		return m.timelineCache
+	}
+
+	// 渲染 timeline 内容（传 width-4 给内部 padding 空间）
+	content := RenderTimeline(m.timelineEntries, m.timelineExpanded, width-4, m.anim)
+	if content == "" {
+		return ""
+	}
+
+	// 去掉 addTimelineTopBorder 添加的顶部边框（面板已有 lipgloss border）
+	lines := strings.Split(content, "\n")
+	if len(lines) > 1 {
+		content = strings.Join(lines[1:], "\n")
+	} else {
+		return ""
+	}
+
+	// 构建提示行
+	hint := timelineHintStyle.Render(" ctrl+l " + langManager.GetText("TimelineDetailHint") + " │ ctrl+v " + langManager.GetText("TimelineExpandHint") + " ")
+
+	// 组装面板内容
+	panelContent := content + "\n" + hint
+
+	// 应用面板样式
+	panelWidth := width - 2
+	if panelWidth < 30 {
+		panelWidth = 30
+	}
+	rendered := timelinePanelStyle.Width(panelWidth).Render(panelContent)
+
+	m.timelineCache = rendered
+	m.timelineCacheKey = key
+	return m.timelineCache
+}
+
 // renderAirlineStatusBar renders an nvim airline-style segmented status bar.
 // Layout: [Mode][Filler─────]([RightSeg1][RightSeg2]...)
-func (m model) renderAirlineStatusBar() string {
+func (m *model) renderAirlineStatusBar() string {
 	width := m.termWidth
 	if width <= 0 {
 		width = 80 // fallback before WindowSizeMsg
@@ -276,18 +349,10 @@ func (m model) renderAirlineStatusBar() string {
 		modeBg = airlineColorRunBg
 		tipsText = langManager.GetText("EditModeTips")
 	} else {
-		if m.verboseMode {
-			modeSeg = gradModeStyle.
-				Background(airlineColorNormalBg).
-				Foreground(lipgloss.Color("15")).
-				Render("NORMAL") + " " +
-				lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("220")).Foreground(lipgloss.Color("236")).Render("VERBOSE")
-		} else {
-			modeSeg = gradModeStyle.
-				Background(airlineColorNormalBg).
-				Foreground(lipgloss.Color("15")).
-				Render("NORMAL")
-		}
+		modeSeg = gradModeStyle.
+			Background(airlineColorNormalBg).
+			Foreground(lipgloss.Color("15")).
+			Render("NORMAL")
 		modeBg = airlineColorNormalBg
 		tipsText = langManager.GetText("EditModeTips")
 	}
@@ -387,7 +452,7 @@ func (m model) renderAirlineStatusBar() string {
 // renderWelcomePanel renders the welcome panel.
 // In the initial state (no log entries), it centers the logo on screen.
 // After tasks have run, it falls back to the original left/right layout.
-func (m model) renderWelcomePanel() string {
+func (m *model) renderWelcomePanel() string {
 	if len(m.logEntries) == 0 {
 		// Initial startup state: center logo in the viewport
 		vpHeight := m.termHeight - m.computeFooterHeight()
@@ -406,7 +471,7 @@ func (m model) renderWelcomePanel() string {
 
 // renderCenteredStartupScreen renders the startup screen with logo centered
 // both horizontally and vertically in the available viewport.
-func (m model) renderCenteredStartupScreen(width, height int) string {
+func (m *model) renderCenteredStartupScreen(width, height int) string {
 	banner := renderBanner()
 
 	cwd := m.projectDir
@@ -435,7 +500,7 @@ func (m model) renderCenteredStartupScreen(width, height int) string {
 
 // renderWelcomePanelLayout renders the original left/right panel layout.
 // This is used when there are log entries (tasks have run).
-func (m model) renderWelcomePanelLayout() string {
+func (m *model) renderWelcomePanelLayout() string {
 	// --- 项目路径（将在左+右面板下方占整行显示）---
 	cwd := m.projectDir
 	home, _ := os.UserHomeDir()
@@ -537,7 +602,12 @@ func formatCacheHitRate(cacheTokens, inputTokens int64) string {
 
 // renderTokenDashboard renders a dashboard-style token consumption display.
 // Shows total tokens in a highlighted row, followed by per-agent breakdown sorted by total.
-func (m model) renderTokenDashboard() string {
+func (m *model) renderTokenDashboard() string {
+	// 折叠模式：只显示当前 agent 本次运行的 token 统计
+	if m.tokenDashboardCollapsed {
+		return m.renderCollapsedTokenDashboard()
+	}
+
 	totalTokens := m.inputTokens + m.outputTokens
 	if totalTokens == 0 {
 		// No data: no task submitted yet, don't show useless info
@@ -634,5 +704,58 @@ func (m model) renderTokenDashboard() string {
 	}
 
 	return dashStyle.Render(strings.Join(lines, "\n"))
+}
+
+// renderCollapsedTokenDashboard 渲染折叠状态的 token 仪表盘
+// 只显示当前 agent 本次运行的 token 消耗和 cache 命中率
+func (m *model) renderCollapsedTokenDashboard() string {
+	rt := m.currentAgentRunTokens
+
+	// 如果没有任何 token 数据，返回空字符串
+	if rt.InputTokens == 0 && rt.OutputTokens == 0 {
+		return ""
+	}
+
+	// 处理 agent 名称
+	agentName := rt.AgentName
+	if agentName == "" {
+		agentName = "—"
+	}
+
+	// 计算总输入 token（用于 cache 命中率计算）
+	totalInput := rt.InputTokens + rt.CacheReadInputTokens + rt.CacheCreationInputTokens
+
+	inStr := formatToken(totalInput)
+	outStr := formatToken(rt.OutputTokens)
+
+	// 计算 cache 命中率
+	cacheStr := ""
+	if rt.CacheReadInputTokens > 0 && totalInput > 0 {
+		rate := float64(rt.CacheReadInputTokens) / float64(totalInput) * 100
+		cacheStr = fmt.Sprintf("Cache: %.1f%%(%s)", rate, formatToken(rt.CacheReadInputTokens))
+	}
+
+	// 使用与现有 UI 一致的样式
+	dashStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("237")).
+		Padding(0, 1).
+		Width(m.termWidth - 2)
+
+	style := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240"))
+	inputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
+	outputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114"))
+
+	line := style.Render(fmt.Sprintf("[%s]", agentName)) + " " +
+		inputStyle.Render(fmt.Sprintf("In: %s  ", inStr)) +
+		outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
+
+	if cacheStr != "" {
+		line += inputStyle.Render(cacheStr + "  ")
+	}
+
+	line += style.Render("(ctrl+t: expand)")
+
+	return dashStyle.Render(line)
 }
 

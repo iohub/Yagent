@@ -137,17 +137,18 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 	systemPrompt := a.GlobalCtx.FormatPrompt(browserPrompt)
 
 	// 构建执行配置
-	cfg := ExecutorConfig{
-		SystemPrompt: systemPrompt,
-		UserInput:    input,
-		Adapters:     a.Adapters,
-		LLM:          a.LLM,
-		MaxSteps:     a.maxSteps,
-		Publisher:    a.Publisher,
-		AgentName:    "browser",
-		StopOnFinish: true, // agent_exit 时立即返回
-		RepoContext:  a.GlobalCtx.RepoSummary,
-	}
+	cfg := DefaultExecutorConfig()
+	cfg.SystemPrompt = systemPrompt
+	cfg.UserInput = input
+	cfg.Adapters = a.Adapters
+	cfg.LLM = a.LLM
+	cfg.MaxSteps = a.maxSteps
+	cfg.Publisher = a.Publisher
+	cfg.AgentName = "browser"
+	cfg.StopOnFinish = true // agent_exit 时立即返回
+	cfg.RepoContext = a.GlobalCtx.RepoSummary
+	a.BaseAgent.FillCollaborationConfig(&cfg, "browser")
+	// EnableCollaboration 已默认 true
 
 	// 运行 Agent 循环
 	log.Printf("[BrowserAgent] 开始 LLM 推理循环 (maxSteps=%d)", a.maxSteps)

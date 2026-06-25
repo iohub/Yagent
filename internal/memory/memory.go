@@ -2,7 +2,9 @@ package memory
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"codeactor/internal/llm"
@@ -143,8 +145,9 @@ func (cm *ConversationMemory) GetMessages() []ChatMessage {
 }
 
 // Clear 清空所有消息
-func (cm *ConversationMemory) Clear() {
+func (cm *ConversationMemory) Clear() error {
 	cm.Messages = cm.Messages[:0]
+	return nil
 }
 
 // GetLastMessage 获取最后一条消息
@@ -286,4 +289,54 @@ func (cm *ConversationMemory) repairToolCallPairsAfterTruncation() {
 		}
 		cm.Messages = filtered
 	}
+}
+
+// === 以下为新增内容 ===
+
+// Memory is the base interface for all memory implementations.
+type Memory interface {
+	AddMessage(msg ChatMessage) error
+	GetMessages() []ChatMessage
+	GetContext() string
+	Clear() error
+	Size() int
+}
+
+// Ensure ConversationMemory satisfies Memory interface at compile time.
+var _ Memory = (*ConversationMemory)(nil)
+
+// GetContext returns a formatted context string.
+func (cm *ConversationMemory) GetContext() string {
+	var sb strings.Builder
+	for _, msg := range cm.Messages {
+		sb.WriteString(fmt.Sprintf("[%s] %s\n", string(msg.Type), msg.Content))
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+// AddMessage wrapper for ConversationMemory to match Memory interface.
+func (cm *ConversationMemory) AddMessage(msg ChatMessage) error {
+	switch msg.Type {
+	case MessageTypeSystem:
+		cm.AddSystemMessage(msg.Content)
+	case MessageTypeHuman:
+		cm.AddHumanMessage(msg.Content)
+	case MessageTypeAssistant:
+		cm.AddAssistantMessage(msg.Content, msg.ToolCalls)
+	case MessageTypeTool:
+		if msg.ToolCallID != nil {
+			cm.AddToolMessage(msg.Content, *msg.ToolCallID)
+		}
+	}
+	return nil
+}
+
+// MigrateToLayered converts a ConversationMemory to a LayeredMemory.
+// This provides backward compatibility for existing code.
+func MigrateToLayered(old *ConversationMemory, agentID string, shared *SharedMemory) *LayeredMemory {
+	local := NewLocalMemory(agentID, old.MaxSize)
+	for _, msg := range old.GetMessages() {
+		_ = local.AddMessage(msg)
+	}
+	return NewLayeredMemory(local, shared, DefaultLayeredConfig())
 }

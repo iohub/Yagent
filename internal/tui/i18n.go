@@ -71,6 +71,9 @@ type translations struct {
 	DeleteConfirmMessage string
 	DeleteSuccess        string
 	DeleteFailed         string
+	// Timeline panel hints
+	TimelineDetailHint string
+	TimelineExpandHint string
 }
 
 var langMap = map[Language]translations{
@@ -119,7 +122,7 @@ var langMap = map[Language]translations{
 		TaskCompleteHelp:                 "按 ENTER 或 SPACE 关闭",
 		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  i:编辑  ctrl+e:编辑模式",
 		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  ?:帮助  i:编辑",
-		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  /:技能  ctrl+c:退出",
+		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  ctrl+h:帮助  /:技能  ctrl+c:退出",
 		HelpDialogTitle:                  "Vim 快捷键帮助",
 		HelpDialogContent: "  导航:\n" +
 			"    j / ↓          向下滚动一行\n" +
@@ -137,11 +140,15 @@ var langMap = map[Language]translations{
 			"    /pattern        搜索日志\n" +
 			"  其他:\n" +
 			"    ?               显示此帮助\n" +
-			"    ctrl+c          强制退出",
+			"    ctrl+c          强制退出\n" +
+			"    ctrl+o         全部展开/全部折叠长消息\n" +
+			"    ctrl+t         切换 token 仪表盘（折叠/展开）",
 		DeleteConfirmTitle:   "确认删除",
 		DeleteConfirmMessage: "确定要删除这条历史记录吗？此操作不可恢复。",
 		DeleteSuccess:        "历史记录已删除",
 		DeleteFailed:         "删除失败：",
+		TimelineDetailHint:   "详情",
+		TimelineExpandHint:   "展开/折叠",
 	},
 	LangEnglish: {
 		Title:                            "CodeActor AI Assistant",
@@ -188,7 +195,7 @@ var langMap = map[Language]translations{
 		TaskCompleteHelp:                 "Press ENTER or SPACE to close",
 		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  i:edit  ctrl+e:edit",
 		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ?:help  i:edit",
-		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  /:skill  ctrl+c:quit",
+		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  ctrl+h:help  /:skill  ctrl+c:quit",
 		HelpDialogTitle:                  "Vim Keybindings Help",
 		HelpDialogContent: "  Navigation:\n" +
 			"    j / ↓          scroll down one line\n" +
@@ -206,11 +213,15 @@ var langMap = map[Language]translations{
 			"    /pattern       search log\n" +
 			"  Other:\n" +
 			"    ?              show this help\n" +
-			"    ctrl+c         force quit",
+			"    ctrl+c         force quit\n" +
+			"    ctrl+o         expand/collapse all long messages\n" +
+			"    ctrl+t         toggle token dashboard (collapsed/expanded)",
 		DeleteConfirmTitle:   "Confirm Delete",
 		DeleteConfirmMessage: "Are you sure you want to delete this history entry? This action cannot be undone.",
 		DeleteSuccess:        "History entry deleted",
 		DeleteFailed:         "Delete failed: ",
+		TimelineDetailHint:   "Detail",
+		TimelineExpandHint:   "Expand/Collapse",
 	},
 }
 
@@ -342,6 +353,10 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.DeleteSuccess
 	case "DeleteFailed":
 		return translations.DeleteFailed
+	case "TimelineDetailHint":
+		return translations.TimelineDetailHint
+	case "TimelineExpandHint":
+		return translations.TimelineExpandHint
 	default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}
