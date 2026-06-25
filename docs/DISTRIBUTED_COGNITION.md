@@ -263,6 +263,7 @@ const (
 │   ────► p2p_delegate : 任务委派（仅 executor→executor）              │
 │   ◄────► p2p 双向 : executor 之间可相互委派                          │
 │   (explorer) : 只读探索角色，不接受/不发起 p2p_delegate              │
+│               (Passive) : 不发起任何出站通信（p2p_query/p2p_notify 均无）│
 │   (executor) : 执行角色，可发起/接受 p2p_delegate                    │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -297,8 +298,8 @@ Step 4: delegate_repo(task_1)
    ⚠️ Repo-Agent 角色约束:
       - Repo-Agent 是 **只读探索者（explorer）**，不改变代码环境
       - 它 **不接受** p2p_delegate（其他 Agent 不能委派任务给它）
-      - 它的 prompt 中 **不注入** p2p_delegate 工具（它不能委派其他 Agent）
-      - 它仅响应 p2p_query 提供代码信息，是纯粹的能力提供者
+      - 它的工具集中 **不包含任何出站通信工具**（无 p2p_query、p2p_notify、p2p_delegate、blackboard_* 等）
+      - 它仅响应入站 p2p_query 提供代码信息，是纯粹的能力提供者
       - 当 Coding-Agent 需要 Repo-Agent 的信息时，只能用 p2p_query
       - AgentMesh 的 Role 守卫会拒绝任何指向 explorer 的 p2p_delegate
 
@@ -418,19 +419,21 @@ You are part of a multi-agent system. You can communicate directly with other ag
 const ExplorerSupplementTemplate = `
 ## Collaboration Capabilities
 
-You are a **read-only code explorer**. Other agents may query you for code context.
+You are a **read-only code explorer** in **passive service mode**. Other agents may query you for code context, but you do NOT initiate any outbound communication.
 
-### Available Tools
+### Service Mode (Passive)
+- ✅ You RESPOND to inbound p2p_query requests from other agents
+- ✅ You process delegated analysis tasks from Conductor
+- ❌ You do NOT have p2p_query — you cannot query other agents
+- ❌ You do NOT have p2p_notify — you cannot notify other agents
+- ❌ You do NOT have p2p_delegate — you cannot delegate tasks
+- ❌ You do NOT have blackboard_read/blackboard_post — you cannot use the blackboard
+- ❌ You do NOT have capability_search — you cannot search for other agents
 
-1. **p2p_query** — You will be queried by other agents for code information.
-   Respond with code structure, symbol locations, dependency information, etc.
-   NOTE: You can only RESPOND to queries. You cannot initiate queries to other agents.
-
-### Constraints
-- You do NOT have the p2p_delegate tool — you cannot delegate tasks to anyone.
-- You do NOT accept p2p_delegate — if another agent tries, the runtime rejects it.
-- Your responses are informational only. You do NOT modify code or the environment.
-- Your access to the codebase is **read-only** at all times.
+### Behavior Guidelines
+- Focus on your core domain: repository code analysis
+- If you lack information, state what is missing — do NOT attempt to contact other agents
+- The calling agent or Conductor is responsible for multi-agent orchestration
 `
 ```
 
@@ -490,10 +493,10 @@ func (m *AgentMesh) QueryAgent(agentName string, query string) (string, error) {
 
 #### Role 字段语义
 
-| Role | p2p_query 入站 | p2p_delegate 入站 | p2p_delegate 出站 | 代码写权限 |
-|------|---------------|-------------------|-------------------|-----------|
-| `explorer` | ✅ 接受查询 | ❌ 运行时拒绝 | ❌ 工具未注入 | ❌ 只读 |
-| `executor` | ✅ 接受查询 | ✅ 接受委派 | ✅ 可委派其他 executor | ✅ 按职责 |
+| Role | p2p_query 入站 | p2p_query 出站 | p2p_notify 出站 | p2p_delegate 入站 | p2p_delegate 出站 | blackboard 出站 | 代码写权限 |
+|------|---------------|----------------|-----------------|-------------------|-------------------|-----------------|-----------|
+| `explorer` | ✅ 接受查询 | ❌ 无此工具 | ❌ 无此工具 | ❌ 运行时拒绝 | ❌ 无此工具 | ❌ 无此工具 | ❌ 只读 |
+| `executor` | ✅ 接受查询 | ✅ 可查询其他 Agent | ✅ 可通知其他 Agent | ✅ 接受委派 | ✅ 可委派其他 executor | ✅ 可读写黑板 | ✅ 按职责 |
 
 #### P2P 查询降级逻辑（更新版）
 
@@ -1226,10 +1229,11 @@ Suggestions:
 // 验证: 查询正常执行，Repo-Agent 返回代码信息
 // 验证: Repo-Agent 不改变代码环境
 
-// 场景 11: Repo-Agent 无 delegate 工具
-// 检查 Repo-Agent 的 system prompt
-// 验证: prompt 中不包含 p2p_delegate 工具描述
-// 验证: prompt 中包含 "read-only" 角色声明
+// 场景 11: Repo-Agent 无出站通信工具
+// 检查 Repo-Agent 的 system prompt 和工具列表
+// 验证: prompt 中不包含任何出站通信工具描述（p2p_query, p2p_notify, p2p_delegate, blackboard_*, capability_search）
+// 验证: prompt 中包含 "passive" 和 "cannot" 角色声明
+// 验证: 工具列表中排除所有出站通信工具
 
 // 场景 12: Delegation 候选列表过滤
 // 获取 delegation candidates 列表

@@ -319,7 +319,16 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.AgentName = a.Name()
 	cfg.SystemAsHuman = true // RepoAgent uses Human role for its prompt
 	a.BaseAgent.FillCollaborationConfig(&cfg, a.Name())
-	// EnableCollaboration 已默认 true
+
+	// Repo-Agent 是被动服务模式：
+	//   - 入站通道（AgentPeer + EventBus）已在 FillCollaborationConfig 中建立，独立于 cfg.Peer
+	//   - 设置 cfg.Peer=nil 和 cfg.EnableCollaboration=false 可阻止 RunAgentLoop
+	//     注入出站 P2P 工具（p2p_query, p2p_notify, p2p_delegate 等）和协作工具
+	cfg.Peer = nil
+	cfg.EnableCollaboration = false
+	cfg.P2PSupplementEnabled = false
+
+	
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return AgentResult{}, err
