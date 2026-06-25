@@ -122,7 +122,7 @@ func (l *LayoutEngine) computeRegions() {
 
 	// editor: 输入框区域 (在 main 和 status 之间，约 3 行)
 	// 实际高度由主 model 根据 textarea 内容调整
-	editorY := h - 4
+	editorY := h - 3
 	l.regions[RegionEditor] = Region{
 		X: 0, Y: editorY,
 		Width:  w,
