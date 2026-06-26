@@ -147,7 +147,6 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 	cfg.AgentName = "browser"
 	cfg.StopOnFinish = true // agent_exit 时立即返回
 	cfg.RepoContext = a.GlobalCtx.RepoSummary
-	a.BaseAgent.FillCollaborationConfig(&cfg, "browser")
 	// EnableCollaboration 已默认 true
 
 	// 运行 Agent 循环

@@ -127,6 +127,9 @@ type Config struct {
 	CommitLearner CommitLearnerConfig  `toml:"commit_learner"` // [commit_learner] - commit 学习器配置
 	Keywords      KeywordsConfig       `toml:"keywords"`       // [keywords] - 关键词词典配置
 	TaskTimeout   time.Duration        `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"` // 全局任务超时，0=不启用
+
+	// EnhancedCommander 增强型 Commander 配置
+	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`
 }
 
 // GetProvider returns a provider config by name from the shared provider pool.
@@ -418,6 +421,17 @@ func (c *Config) validate() error {
 		}
 	}
 
+	// ═══════ Enhanced Commander 默认值设置 ═══════
+	if c.EnhancedCommander.CompressionThreshold == 0 {
+		c.EnhancedCommander.CompressionThreshold = 4096
+	}
+	if c.EnhancedCommander.SummaryMaxLength == 0 {
+		c.EnhancedCommander.SummaryMaxLength = 2048
+	}
+	if c.EnhancedCommander.MaxDelegationDepth == 0 {
+		c.EnhancedCommander.MaxDelegationDepth = 3
+	}
+
 	return nil
 }
 
@@ -494,6 +508,29 @@ type BrowserConfig struct {
 	AllowNoSandbox     bool     `toml:"allow_no_sandbox"`     // 允许 --no-sandbox（Docker环境需要），默认 false
 	ExtraArgs          []string `toml:"extra_args"`           // 额外的 Chrome 命令行参数
 	EnableBrowserAgent bool     `toml:"enable_browser_agent"` // 是否启用 Browser-Agent，默认 true
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Enhanced Commander 配置
+// ═══════════════════════════════════════════════════════════════
+
+// EnhancedCommanderConfig 增强型 Commander 配置
+// 所有选项默认关闭，启用时需显式设置，确保零影响现有行为
+type EnhancedCommanderConfig struct {
+	// Enable 总开关，关闭时所有增强功能不生效
+	Enable bool `toml:"enable" json:"enable"`
+
+	// EnableResultCompression 是否启用结果压缩
+	EnableResultCompression bool `toml:"enable_result_compression" json:"enable_result_compression"`
+
+	// CompressionThreshold 结果压缩阈值（字节），默认 4096
+	CompressionThreshold int `toml:"compression_threshold" json:"compression_threshold"`
+
+	// SummaryMaxLength 摘要最大长度（字符），默认 2048
+	SummaryMaxLength int `toml:"summary_max_length" json:"summary_max_length"`
+
+	// MaxDelegationDepth 最大委派深度，默认 3
+	MaxDelegationDepth int `toml:"max_delegation_depth" json:"max_delegation_depth"`
 }
 
 // ═══════════════════════════════════════════════════════════════

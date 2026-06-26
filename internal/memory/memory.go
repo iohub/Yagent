@@ -330,13 +330,3 @@ func (cm *ConversationMemory) AddMessage(msg ChatMessage) error {
 	}
 	return nil
 }
-
-// MigrateToLayered converts a ConversationMemory to a LayeredMemory.
-// This provides backward compatibility for existing code.
-func MigrateToLayered(old *ConversationMemory, agentID string, shared *SharedMemory) *LayeredMemory {
-	local := NewLocalMemory(agentID, old.MaxSize)
-	for _, msg := range old.GetMessages() {
-		_ = local.AddMessage(msg)
-	}
-	return NewLayeredMemory(local, shared, DefaultLayeredConfig())
-}

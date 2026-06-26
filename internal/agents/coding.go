@@ -157,7 +157,6 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
 	cfg.RepoContext = a.GlobalCtx.RepoSummary
-	a.BaseAgent.FillCollaborationConfig(&cfg, a.Name())
 	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {

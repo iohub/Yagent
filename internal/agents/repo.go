@@ -318,8 +318,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.SystemAsHuman = true // RepoAgent uses Human role for its prompt
-	a.BaseAgent.FillCollaborationConfig(&cfg, a.Name())
-	// EnableCollaboration 已默认 true
+
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return AgentResult{}, err

@@ -2,13 +2,10 @@ package agents
 
 import (
 	"context"
-	"errors"
 
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
 	"codeactor/internal/messaging"
-	"codeactor/internal/messaging/bus"
-	"codeactor/internal/messaging/peer"
 )
 
 // AgentResult 封装 sub-agent 的完整执行结果
@@ -25,47 +22,6 @@ type Agent interface {
 
 // BaseAgent holds common dependencies for agents.
 type BaseAgent struct {
-	LLM              llm.Engine
-	Publisher        *messaging.MessagePublisher
-	Peer             peer.AgentPeer        // 新增：P2P 通信能力
-	LayeredMem       *memory.LayeredMemory // 分层记忆（Local + Shared）
-	BlackboardAccess interface{
-		Post(region string, author string, content map[string]interface{}, tags []string, references []string) (string, error)
-		Read(region string, filter map[string]interface{}) ([]map[string]interface{}, error)
-		Get(entryID string) (map[string]interface{}, bool)
-	} // 黑板访问接口（为 nil 表示黑板未启用）
-}
-
-// InitPeer 在共享 EventBus 上初始化 Agent 的 P2P 身份。
-// 必须在 Agent 参与任何 P2P 通信前调用。
-func (b *BaseAgent) InitPeer(id string, eventBus *bus.EventBus) error {
-	if id == "" {
-		return errors.New("baseagent: id must not be empty")
-	}
-	if eventBus == nil {
-		return nil // nil bus = P2P 禁用，静默跳过
-	}
-	p, err := peer.NewAgentPeer(id, eventBus)
-	if err != nil {
-		return err
-	}
-	b.Peer = p
-	return nil
-}
-
-// ClosePeer 释放 Peer 资源
-func (b *BaseAgent) ClosePeer() error {
-	if b.Peer != nil {
-		return b.Peer.Close()
-	}
-	return nil
-}
-
-// FillCollaborationConfig 注入协作相关字段到 ExecutorConfig。
-// 每个子 Agent 的 Run() 方法中应调用此方法。
-func (ba *BaseAgent) FillCollaborationConfig(cfg *ExecutorConfig, agentName string) {
-	cfg.Peer = ba.Peer
-	cfg.AgentID = agentName
-	cfg.BlackboardAccess = ba.BlackboardAccess
-	cfg.EnableCollaboration = ba.Peer != nil
+	LLM       llm.Engine
+	Publisher *messaging.MessagePublisher
 }
