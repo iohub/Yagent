@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"codeactor/internal/compact"
 	"codeactor/internal/memory"
 )
 
@@ -42,9 +43,6 @@ var AllMemorySections = []MemorySection{
 const (
 	// MaxMemoryTokens 是记忆 token 硬限制
 	MaxMemoryTokens = 1500
-
-	// charsPerToken 是字符到 token 的估算系数（保守估计）
-	charsPerToken = 3
 
 	// kvKeyPrefix 是 SharedMemory KV 存储的 key 前缀
 	kvKeyPrefix = "repo_memory:"
@@ -169,26 +167,37 @@ func RenderMemoryForInjection(content string) string {
 // ============================================================================
 
 // EnforceTokenBudget 截断内容使其不超过 MaxMemoryTokens 的 token 预算。
-// 尝试在 Markdown 分区边界处截断以保持结构完整。
+// 使用 tiktoken 精确计数。在 Markdown 分区边界处截断以保持结构完整。
 func EnforceTokenBudget(content string) string {
-	maxChars := MaxMemoryTokens * charsPerToken
-	if len(content) <= maxChars {
+	tokenizer := compact.GetGlobalTokenizer()
+	tokens, err := tokenizer.CountTokens(content)
+	if err != nil || tokens <= MaxMemoryTokens {
 		return content
 	}
 
-	// 尝试在最后一个完整的分区边界处截断
-	truncated := content[:maxChars]
-	lastSection := strings.LastIndex(truncated, "\n## ")
-	if lastSection > maxChars/2 {
-		return truncated[:lastSection]
+	// Over budget - 从末尾逐步移除分区直到 token 数达标
+	for {
+		idx := strings.LastIndex(content, "\n## ")
+		if idx <= 0 {
+			// 找不到更多分区边界，返回空字符串
+			return ""
+		}
+		content = content[:idx]
+		tokens, err = tokenizer.CountTokens(content)
+		if err != nil || tokens <= MaxMemoryTokens {
+			return content
+		}
 	}
-	return truncated
 }
 
-// EstimateTokens 估算字符串的 token 数。
-// 使用保守的 3 字符/token 估算。仅用于预算检查，不用于计费。
+// EstimateTokens 使用 tiktoken 精确计算字符串的 token 数。
 func EstimateTokens(text string) int {
-	return len(text) / charsPerToken
+	tokenizer := compact.GetGlobalTokenizer()
+	tokens, err := tokenizer.CountTokens(text)
+	if err != nil {
+		return 0
+	}
+	return tokens
 }
 
 // ============================================================================

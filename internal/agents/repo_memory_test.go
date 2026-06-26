@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"codeactor/internal/compact"
 	"codeactor/internal/memory"
 )
 
@@ -186,20 +187,23 @@ func TestEnforceTokenBudget_UnderBudget_NoChange(t *testing.T) {
 
 func TestEnforceTokenBudget_OverBudget_Truncated(t *testing.T) {
 	// Create content that exceeds token budget
-	maxChars := MaxMemoryTokens * charsPerToken
-	longContent := "## Architecture\n" + strings.Repeat("- Line of text that is fairly long and repetitive. ", maxChars/10) +
+	longContent := "## Architecture\n" + strings.Repeat("- Line of text that is fairly long and repetitive. ", 500) +
 		"\n## Patterns\n- More content" +
 		"\n## Conventions\n- Even more content to ensure we exceed the budget"
 
 	result := EnforceTokenBudget(longContent)
-	if len(result) > maxChars {
-		t.Errorf("result length %d exceeds max chars %d", len(result), maxChars)
+
+	tokenizer := compact.GetGlobalTokenizer()
+	tokens, err := tokenizer.CountTokens(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens > MaxMemoryTokens {
+		t.Errorf("result has %d tokens, exceeds max %d", tokens, MaxMemoryTokens)
 	}
 }
 
 func TestEnforceTokenBudget_TruncatesAtSectionBoundary(t *testing.T) {
-	maxChars := MaxMemoryTokens * charsPerToken
-	// Build content that exceeds budget but has section boundaries
 	var sb strings.Builder
 	sb.WriteString("## Architecture\n")
 	for i := 0; i < 30; i++ {
@@ -216,11 +220,16 @@ func TestEnforceTokenBudget_TruncatesAtSectionBoundary(t *testing.T) {
 	longContent := sb.String()
 
 	result := EnforceTokenBudget(longContent)
-	if len(result) > maxChars {
-		t.Errorf("result length %d exceeds max chars %d", len(result), maxChars)
+
+	tokenizer := compact.GetGlobalTokenizer()
+	tokens, err := tokenizer.CountTokens(result)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Should end with a section boundary (or at the maxChars boundary if no good section exists)
-	// At minimum should not exceed budget
+	if tokens > MaxMemoryTokens {
+		t.Errorf("result has %d tokens, exceeds max %d", tokens, MaxMemoryTokens)
+	}
+	// Result should end with a section boundary (##) or within budget
 }
 
 // ============================================================================
@@ -232,9 +241,6 @@ func TestEstimateTokens(t *testing.T) {
 	tokens := EstimateTokens(text)
 	if tokens <= 0 {
 		t.Errorf("expected positive token count, got %d", tokens)
-	}
-	if tokens != len(text)/charsPerToken {
-		t.Errorf("expected %d, got %d", len(text)/charsPerToken, tokens)
 	}
 }
 
