@@ -52,6 +52,10 @@ type RepoAgent struct {
 	GlobalCtx *globalctx.GlobalCtx
 	Adapters  []*tools.Adapter
 	maxSteps  int
+
+	// [NEW] 记忆系统（可选，nil 表示禁用）
+	memStore *RepoMemoryStore
+	worker   *ConsolidationWorker
 }
 
 func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *messaging.MessagePublisher, maxSteps int) *RepoAgent {
@@ -104,6 +108,12 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 
 func (a *RepoAgent) Name() string {
 	return "Repo-Agent"
+}
+
+// SetMemory 注入记忆系统依赖。记忆系统可选，不设置时 Run() 行为与改造前一致。
+func (a *RepoAgent) SetMemory(store *RepoMemoryStore, worker *ConsolidationWorker) {
+	a.memStore = store
+	a.worker = worker
 }
 
 func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse, error) {
@@ -309,6 +319,14 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 
 	systemPrompt = a.GlobalCtx.FormatPrompt(systemPrompt)
 
+	// [NEW] Step 1: 从缓存加载记忆并注入 system prompt
+	if a.memStore != nil {
+		memContent := a.memStore.Get()
+		if injection := RenderMemoryForInjection(memContent); injection != "" {
+			systemPrompt += injection
+		}
+	}
+
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
@@ -323,8 +341,18 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	if err != nil {
 		return AgentResult{}, err
 	}
-	return AgentResult{
+
+	agentResult := AgentResult{
 		Text:   result.Text,
 		Memory: ConvertLLMHistoryToMemory(result.History),
-	}, nil
+	}
+
+	// [NEW] Step 2: 异步提交记忆整理任务（非阻塞）
+	if a.worker != nil && agentResult.Text != "" {
+		a.worker.Submit(&ConsolidationTask{
+			NewObservations: agentResult.Text,
+		})
+	}
+
+	return agentResult, nil
 }

@@ -35,7 +35,11 @@ type CodeActor struct {
 	DisabledAgents string // comma-separated list of agent names to disable (e.g. "repo,coding,chat")
 	CodexrayPort   int    // codebase 服务端口，由 main 函数动态分配
 
-	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
+	SkillRegistry      *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
+
+	// [NEW] 记忆系统
+	sharedMemory         *memory.SharedMemory
+	consolidationWorker  *agents.ConsolidationWorker
 }
 
 // NewCodeActor creates a new CodeActor.
@@ -167,6 +171,27 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	}
 
 	repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
+
+	// [NEW] 初始化 RepoAgent 记忆系统
+	{
+		ca.sharedMemory = memory.NewSharedMemory(100)
+		repoID := ca.globalCtx.ProjectPath
+		repoMemStore := agents.NewRepoMemoryStore(repoID, ca.sharedMemory)
+		if err := repoMemStore.Load(context.Background()); err != nil {
+			slog.Warn("RepoAgent memory preload failed, continuing without memory",
+				"error", err,
+			)
+		}
+		// 使用 consolidation 专用的 LLM engine（复用 repoEngine，轻量模型可在配置中独立设置）
+		consolidationWorker := agents.NewConsolidationWorker(repoMemStore, repoEngine)
+		consolidationWorker.Start()
+		ca.consolidationWorker = consolidationWorker
+		repoAgent.SetMemory(repoMemStore, consolidationWorker)
+		slog.Info("RepoAgent memory system initialized",
+			"repo_id", repoID,
+			"has_memory", !repoMemStore.IsEmpty(),
+		)
+	}
 
 	chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps)
 	stepRetries := 0
@@ -372,6 +397,11 @@ func parseDisabledAgents(s string) map[string]bool {
 
 // Close 清理资源
 func (ca *CodeActor) Close() {
+	// 停止 consolidation worker
+	if ca.consolidationWorker != nil {
+		slog.Info("Stopping consolidation worker...")
+		ca.consolidationWorker.Stop()
+	}
 	if ca.globalCtx != nil && ca.globalCtx.BrowserMgr != nil {
 		slog.Info("Closing browser manager...")
 		if err := ca.globalCtx.BrowserMgr.Close(); err != nil {

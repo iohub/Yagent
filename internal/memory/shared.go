@@ -22,6 +22,10 @@ type SharedMemory struct {
 	topicSubscribers map[string][]Subscriber          // topic → subscribers
 	config           MVCCConfig                       // MVCC 配置
 	gcClosed         chan struct{}                    // GC 控制
+
+	// KV store for simple key-value persistence
+	kv   map[string]string
+	kvMu sync.RWMutex
 }
 
 // NewSharedMemory creates a new shared memory.
@@ -438,4 +442,51 @@ func (sm *SharedMemory) SetMVCCConfig(cfg MVCCConfig) {
 	if cfg.GCTriggerInterval > 0 {
 		sm.config.GCTriggerInterval = cfg.GCTriggerInterval
 	}
+}
+
+// SetKey stores a key-value pair. Thread-safe. Overwrites if key exists.
+func (sm *SharedMemory) SetKey(key string, value string) error {
+	sm.kvMu.Lock()
+	defer sm.kvMu.Unlock()
+	if sm.kv == nil {
+		sm.kv = make(map[string]string)
+	}
+	sm.kv[key] = value
+	return nil
+}
+
+// GetKey retrieves a value by key. Thread-safe.
+// Returns error if key is not found.
+func (sm *SharedMemory) GetKey(key string) (string, error) {
+	sm.kvMu.RLock()
+	defer sm.kvMu.RUnlock()
+	if sm.kv == nil {
+		return "", fmt.Errorf("key not found: %s", key)
+	}
+	val, ok := sm.kv[key]
+	if !ok {
+		return "", fmt.Errorf("key not found: %s", key)
+	}
+	return val, nil
+}
+
+// DeleteKey removes a key-value pair. Thread-safe. No-op if key doesn't exist.
+func (sm *SharedMemory) DeleteKey(key string) error {
+	sm.kvMu.Lock()
+	defer sm.kvMu.Unlock()
+	if sm.kv != nil {
+		delete(sm.kv, key)
+	}
+	return nil
+}
+
+// HasKey checks if a key exists. Thread-safe.
+func (sm *SharedMemory) HasKey(key string) bool {
+	sm.kvMu.RLock()
+	defer sm.kvMu.RUnlock()
+	if sm.kv == nil {
+		return false
+	}
+	_, ok := sm.kv[key]
+	return ok
 }
