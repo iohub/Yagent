@@ -337,7 +337,11 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
 		}
 	case TimelineKindContextEvent:
-		if entry.Detail != "" {
+		if entry.Name == "memory_consolidated" && entry.Detail != "" {
+			// 使用 glamour 渲染 markdown
+			rendered := renderMarkdownContent(m, entry.Detail, width-4)
+			sb.WriteString(rendered)
+		} else if entry.Detail != "" {
 			sb.WriteString("  ")
 			sb.WriteString(entry.Detail)
 		} else {
@@ -470,4 +474,26 @@ func (m *model) ExitTimelineFullscreen() {
 	m.timelineFullscreenCursor = 0
 	// 重置 viewport 以便重新渲染正常界面
 	m.timelineDetailVP = nil
+}
+
+// renderMarkdownContent 使用 glamour 渲染 markdown 内容
+func renderMarkdownContent(m *model, content string, width int) string {
+	if content == "" {
+		return ""
+	}
+	if m.glamourRenderer != nil {
+		rendered, err := m.glamourRenderer.Render(content)
+		if err == nil {
+			return rendered
+		}
+	}
+	// fallback: 带缩进的纯文本
+	lines := strings.Split(content, "\n")
+	var sb strings.Builder
+	for _, line := range lines {
+		sb.WriteString("  ")
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }

@@ -665,7 +665,8 @@ func isVerboseEventType(eventType string) bool {
 	case "tool_call_start", "tool_call_result",
 		"llm_call_start", "llm_call_end",
 		"context_compressed", "commit_context_loaded",
-		"model_info", "thinking":
+		"model_info", "thinking",
+		"memory_consolidated":
 		return true
 	}
 	return false
@@ -844,6 +845,21 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
+	case "memory_consolidated":
+		if m, ok := event.Content.(map[string]interface{}); ok {
+			tokens := 0
+			if v, ok := m["tokens_est"].(float64); ok {
+				tokens = int(v)
+			}
+			size := 0
+			if v, ok := m["size"].(float64); ok {
+				size = int(v)
+			}
+			entry.content = fmt.Sprintf("🧠 仓库知识整理完成 (%d tokens, %d bytes)", tokens, size)
+		}
+		if entry.content == "" {
+			entry.content = fmt.Sprintf("%v", event.Content)
+		}
 	case "llm_call_start":
 		if m, ok := event.Content.(map[string]interface{}); ok {
 			modelName, _ := m["model"].(string)
@@ -964,6 +980,9 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 			return renderContextCompressed(entry, maxWidth)
 		}
 		prefix = "🗜️ 上下文压缩"
+		contentStyle = StatusStyle
+	case "memory_consolidated":
+		prefix = "🧠 仓库知识"
 		contentStyle = StatusStyle
 	case "llm_call_start":
 		prefix = ""

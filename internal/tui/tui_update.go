@@ -1901,6 +1901,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.timelineCacheKey = ""
 		}
 
+		// ✅ Route memory_consolidated events to timeline
+		if entry.eventType == "memory_consolidated" {
+			contentStr := ""
+			if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+				if c, ok := contentMap["content"].(string); ok {
+					contentStr = c
+				}
+			}
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        fmt.Sprintf("mem_%d", entry.timestamp.UnixNano()),
+				Kind:      TimelineKindContextEvent,
+				Timestamp: entry.timestamp,
+				Status:    ToolStatusSuccess,
+				Name:      "memory_consolidated",
+				Detail:    contentStr,
+			})
+			m.timelineCacheKey = ""
+		}
+
 		m.logEntries = append(m.logEntries, entry)
 		m.viewportDirty = true
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
