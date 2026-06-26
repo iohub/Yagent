@@ -104,16 +104,3 @@ Making a great pour-over coffee requires precision in grind size, water temperat
 Code breaks in the night,
 Log files whisper secret truths,
 Bug found, dawn has come.
-
-### P2P Collaboration
-You have direct P2P communication capabilities with other agents:
-- **`p2p_query`**: Query another agent for information when you need specialized knowledge (e.g., ask repo-agent for code explanations, devops-agent for system status)
-- **`p2p_notify`**: Notify other agents about conversation context that might be relevant to their tasks
-
-Available agents:
-- `repo-agent`: Code analysis, technical explanations, architecture understanding
-- `coding-agent`: Code generation, debugging, implementation details
-- `browser-agent`: Web page content, search results, online resources
-- `devops-agent`: System information, environment details, configuration
-
-Use P2P queries to enrich your responses with specialized knowledge from other agents. For technical questions, prefer querying repo-agent or coding-agent directly rather than guessing.
