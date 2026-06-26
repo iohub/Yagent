@@ -40,6 +40,10 @@ type DataManager struct {
 	indexLoaded bool
 	persistCh   chan struct{} // 防抖持久化信号通道
 	stopCh      chan struct{} // 关闭信号
+
+	// ── 索引轻量 reconcile ──
+	lastReconcileCheck time.Time
+	reconcileCheckMu   sync.Mutex
 }
 
 // NewDataManager 创建新的数据管理器
@@ -67,6 +71,13 @@ func NewDataManager() (*DataManager, error) {
 	// 即使失败也不阻止启动，记录警告日志即可
 	go func() {
 		start := time.Now()
+		// 先确保索引已加载
+		if err := dm.ensureIndex(); err != nil {
+			slog.Warn("Failed to load index for startup reconciliation",
+				"error", err,
+				"duration", time.Since(start))
+			return
+		}
 		if err := dm.reconcileIndex(dm.index); err != nil {
 			slog.Warn("Index reconciliation on startup completed with errors",
 				"error", err,
@@ -450,6 +461,9 @@ func (dm *DataManager) ListTaskHistoryFast(limit int) ([]TaskHistoryItem, error)
 		return dm.listTaskHistoryFallback(limit)
 	}
 
+	// 轻量校验：异步触发 reconcile 修复不一致
+	dm.scheduleLightReconcile()
+
 	dm.indexMu.RLock()
 	defer dm.indexMu.RUnlock()
 
@@ -522,36 +536,84 @@ func (dm *DataManager) updateIndexFromFile(taskID, filePath string) {
 		return
 	}
 
-	dm.indexMu.RLock()
-	if dm.index == nil {
-		dm.indexMu.RUnlock()
-		return
+	// 使用写锁，因为可能需要加载索引或写入新条目
+	dm.indexMu.Lock()
+	defer dm.indexMu.Unlock()
+
+	// 修复：索引未加载时，在锁内加载而不是静默丢弃
+	if !dm.indexLoaded || dm.index == nil {
+		if err := dm.loadIndexLocked(); err != nil {
+			slog.Warn("Failed to load index for updateIndexFromFile, skipping",
+				"taskID", taskID, "error", err)
+			return
+		}
 	}
+
 	entry, exists := dm.index.Tasks[taskID]
-	dm.indexMu.RUnlock()
 
 	if !exists {
-		// 条目不存在，从文件提取（懒加载）
+		// 条目不存在，从文件提取
 		newEntry, err := dm.extractMetaFromFile(filePath)
 		if err != nil {
 			return
 		}
-		dm.indexMu.Lock()
 		dm.index.Tasks[taskID] = newEntry
-		dm.indexMu.Unlock()
 		dm.schedulePersist()
 		return
 	}
 
-	dm.indexMu.Lock()
 	entry.FileSize = info.Size()
 	entry.Mtime = info.ModTime()
 	dm.index.Tasks[taskID] = entry
-	dm.indexMu.Unlock()
 	dm.schedulePersist()
 }
 
 // GetDataDir 获取数据目录路径
 func (dm *DataManager) GetDataDir() string {
 	return dm.dataDir
+}
+
+// scheduleLightReconcile 轻量级检查索引一致性，必要时异步触发 reconcile
+// 每 30 秒最多检查一次，通过比较文件数量与索引条目数来判断
+func (dm *DataManager) scheduleLightReconcile() {
+	dm.reconcileCheckMu.Lock()
+	if time.Since(dm.lastReconcileCheck) < 30*time.Second {
+		dm.reconcileCheckMu.Unlock()
+		return
+	}
+	dm.lastReconcileCheck = time.Now()
+	dm.reconcileCheckMu.Unlock()
+
+	// 快速扫描目录统计 .jsonl 文件数量（不读文件内容，开销小）
+	entries, err := os.ReadDir(dm.dataDir)
+	if err != nil {
+		return
+	}
+
+	jsonlCount := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {
+			jsonlCount++
+		}
+	}
+
+	dm.indexMu.RLock()
+	indexCount := len(dm.index.Tasks)
+	dm.indexMu.RUnlock()
+
+	if jsonlCount != indexCount {
+		slog.Info("Index inconsistency detected, scheduling async reconciliation",
+			"files_on_disk", jsonlCount,
+			"entries_in_index", indexCount)
+		go func() {
+			dm.indexMu.RLock()
+			idx := dm.index
+			dm.indexMu.RUnlock()
+			if idx != nil {
+				if err := dm.reconcileIndex(idx); err != nil {
+					slog.Warn("Async reconciliation failed", "error", err)
+				}
+			}
+		}()
+	}
 }

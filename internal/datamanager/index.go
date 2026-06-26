@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,10 +58,19 @@ func (dm *DataManager) ensureIndex() error {
 		return nil
 	}
 
+	return dm.loadIndexLocked()
+}
+
+// loadIndexLocked 在调用者已持有 indexMu 写锁的情况下加载索引。
+// 必须在 indexMu 锁内调用，不会尝试获取锁。
+func (dm *DataManager) loadIndexLocked() error {
+	if dm.indexLoaded && dm.index != nil {
+		return nil
+	}
+
 	idx, err := dm.loadIndexFromDisk()
 	if err != nil {
-		// 索引不存在或损坏，尝试重建
-		fmt.Fprintf(os.Stderr, "[history] loading index failed (%v), rebuilding...\n", err)
+		slog.Warn("Failed to load index from disk, rebuilding", "error", err)
 		idx, err = dm.rebuildIndex()
 		if err != nil {
 			return fmt.Errorf("rebuild index: %w", err)
@@ -289,12 +299,31 @@ func (dm *DataManager) reconcileIndex(idx *taskIndex) error {
 		return nil
 	}
 
+	// 第一步：收集磁盘上所有 .jsonl 文件
+	entries, err := os.ReadDir(dm.dataDir)
+	if err != nil {
+		return fmt.Errorf("reconcileIndex: read data dir: %w", err)
+	}
+
+	diskFiles := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		taskID := strings.TrimSuffix(entry.Name(), ".jsonl")
+		diskFiles[taskID] = true
+	}
+
+	// 第二步：处理索引中已有的条目 — 检查文件是否存在/变更
+	updatedCount := 0
+	deletedCount := 0
 	for taskID, entry := range idx.Tasks {
 		path := filepath.Join(dm.dataDir, taskID+".jsonl")
 		info, err := os.Stat(path)
 		if err != nil {
 			// 文件已删除，从索引中移除
 			delete(idx.Tasks, taskID)
+			deletedCount++
 			continue
 		}
 
@@ -303,10 +332,38 @@ func (dm *DataManager) reconcileIndex(idx *taskIndex) error {
 			// 文件已变更，重新提取元数据
 			newEntry, err := dm.extractMetaFromFile(path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "[history] warning: reconcile failed for %s: %v\n", taskID, err)
 				continue
 			}
 			idx.Tasks[taskID] = newEntry
+			updatedCount++
+		}
+	}
+
+	// 第三步：添加磁盘上有但索引中缺失的条目
+	addedCount := 0
+	for taskID := range diskFiles {
+		if _, exists := idx.Tasks[taskID]; !exists {
+			path := filepath.Join(dm.dataDir, taskID+".jsonl")
+			newEntry, err := dm.extractMetaFromFile(path)
+			if err != nil {
+				slog.Warn("reconcileIndex: failed to extract meta for missing entry",
+					"taskID", taskID, "error", err)
+				continue
+			}
+			idx.Tasks[taskID] = newEntry
+			addedCount++
+		}
+	}
+
+	if updatedCount > 0 || deletedCount > 0 || addedCount > 0 {
+		slog.Info("Index reconciliation completed",
+			"added", addedCount,
+			"updated", updatedCount,
+			"deleted", deletedCount,
+			"total", len(idx.Tasks))
+		// 持久化修复后的索引
+		if err := dm.persistIndex(idx); err != nil {
+			slog.Warn("Failed to persist reconciled index", "error", err)
 		}
 	}
 
@@ -319,9 +376,13 @@ func (dm *DataManager) updateIndexEntry(taskID string, title string, createdAt, 
 	dm.indexMu.Lock()
 	defer dm.indexMu.Unlock()
 
-	// 如果索引尚未加载，不更新
+	// 修复：索引未加载时，在锁内加载而不是静默丢弃
 	if !dm.indexLoaded || dm.index == nil {
-		return
+		if err := dm.loadIndexLocked(); err != nil {
+			slog.Warn("Failed to load index for updateIndexEntry, skipping",
+				"taskID", taskID, "error", err)
+			return
+		}
 	}
 
 	entry, exists := dm.index.Tasks[taskID]
