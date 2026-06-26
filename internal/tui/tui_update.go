@@ -1148,7 +1148,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dialogStack.Push(d)
 			return m, nil
 
-		case "ctrl+s":
+		case "alt+s":
 			if m.taskRunning {
 				return m, nil
 			}

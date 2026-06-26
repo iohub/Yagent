@@ -84,7 +84,7 @@ var langMap = map[Language]translations{
 		ProjectDirPlaceholder:            "输入项目目录路径",
 		TaskDescPlaceholder:              "",
 		InfoMessage:                      "按 Tab/Shift+Tab 切换，Enter 确认下一个",
-		SubmitButton:                     "提交 (Ctrl+S)",
+		SubmitButton:                     "提交 (Alt+S)",
 		QuitMessage:                      "\n再见！\n\n",
 		ValidationErrorEmptyProjectDir:   "项目目录不能为空",
 		ValidationErrorInvalidProjectDir: "项目目录不存在或不可访问",
@@ -122,7 +122,7 @@ var langMap = map[Language]translations{
 		TaskCompleteHelp:                 "按 ENTER 或 SPACE 关闭",
 		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  i:编辑  ctrl+e:编辑模式",
 		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  ?:帮助  i:编辑",
-		EditModeTips:                     "ctrl+s:提交  ctrl+e:命令模式  ctrl+h:帮助  /:技能  ctrl+c:退出",
+		EditModeTips:                     "alt+s:提交  ctrl+e:命令模式  ctrl+h:帮助  /:技能  ctrl+c:退出",
 		HelpDialogTitle:                  "Vim 快捷键帮助",
 		HelpDialogContent: "  导航:\n" +
 			"    j / ↓          向下滚动一行\n" +
@@ -157,7 +157,7 @@ var langMap = map[Language]translations{
 		ProjectDirPlaceholder:            "Enter project directory path",
 		TaskDescPlaceholder:              "",
 		InfoMessage:                      "Tab/Shift+Tab to switch, Enter to confirm next",
-		SubmitButton:                     "Submit (Ctrl+S)",
+		SubmitButton:                     "Submit (Alt+S)",
 		QuitMessage:                      "\nGoodbye!\n\n",
 		ValidationErrorEmptyProjectDir:   "Project directory cannot be empty",
 		ValidationErrorInvalidProjectDir: "Project directory does not exist or is inaccessible",
@@ -195,7 +195,7 @@ var langMap = map[Language]translations{
 		TaskCompleteHelp:                 "Press ENTER or SPACE to close",
 		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  i:edit  ctrl+e:edit",
 		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ?:help  i:edit",
-		EditModeTips:                     "ctrl+s:submit  ctrl+e:cmd  ctrl+h:help  /:skill  ctrl+c:quit",
+		EditModeTips:                     "alt+s:submit  ctrl+e:cmd  ctrl+h:help  /:skill  ctrl+c:quit",
 		HelpDialogTitle:                  "Vim Keybindings Help",
 		HelpDialogContent: "  Navigation:\n" +
 			"    j / ↓          scroll down one line\n" +

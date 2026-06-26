@@ -602,7 +602,7 @@ func renderHistoryContent(m *model, width, height int) string {
 			return strings.Join(lines, "\n")
 		}
 		// Empty state
-		centerText := "No history yet. Start a conversation with ctrl+s."
+		centerText := "No history yet. Start a conversation with alt+s."
 		padding := strings.Repeat(" ", (width-len(centerText))/2)
 		lines := make([]string, height)
 		lines[0] = bgStyle.Render(padding + centerText)
