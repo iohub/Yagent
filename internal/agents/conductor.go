@@ -134,7 +134,7 @@ func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
 	return result
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine, cfg config.Config, llmClient *llm.Client, repoKnowledgeMgr *RepoKnowledgeManager) *ConductorAgent {
+func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine, cfg config.Config, llmClient *llm.Client) *ConductorAgent {
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 
@@ -142,9 +142,6 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
-		}
-		if repoKnowledgeMgr != nil {
-			return repoKnowledgeMgr.AnalyseTask(ctx, task)
 		}
 		result, err := repo.Run(ctx, task)
 		// 使用增强型 Commander 处理结果（压缩 + 注册）
