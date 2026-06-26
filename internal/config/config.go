@@ -422,9 +422,6 @@ func (c *Config) validate() error {
 	}
 
 	// ═══════ Enhanced Commander 默认值设置 ═══════
-	if c.EnhancedCommander.AgentTTL == 0 {
-		c.EnhancedCommander.AgentTTL = 300
-	}
 	if c.EnhancedCommander.CompressionThreshold == 0 {
 		c.EnhancedCommander.CompressionThreshold = 4096
 	}
@@ -523,20 +520,8 @@ type EnhancedCommanderConfig struct {
 	// Enable 总开关，关闭时所有增强功能不生效
 	Enable bool `toml:"enable" json:"enable"`
 
-	// EnableP2PSupplement 是否注入 P2P Supplement 到子 Agent
-	EnableP2PSupplement bool `toml:"enable_p2p_supplement" json:"enable_p2p_supplement"`
-
 	// EnableResultCompression 是否启用结果压缩
 	EnableResultCompression bool `toml:"enable_result_compression" json:"enable_result_compression"`
-
-	// EnableObserverFilter 是否启用 Observer 事件过滤
-	EnableObserverFilter bool `toml:"enable_observer_filter" json:"enable_observer_filter"`
-
-	// EnableMeshRegistration 是否在 delegate 时注册 Mesh
-	EnableMeshRegistration bool `toml:"enable_mesh_registration" json:"enable_mesh_registration"`
-
-	// AgentTTL Agent 注册后的生存时间（秒），默认 300（5分钟）
-	AgentTTL int `toml:"agent_ttl" json:"agent_ttl"`
 
 	// CompressionThreshold 结果压缩阈值（字节），默认 4096
 	CompressionThreshold int `toml:"compression_threshold" json:"compression_threshold"`

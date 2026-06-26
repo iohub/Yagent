@@ -17,8 +17,6 @@ import (
 	conductor "codeactor/internal/agents/conductor"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
-	"codeactor/internal/messaging/bus"
-	"codeactor/internal/messaging/peer"
 	"codeactor/internal/tools"
 )
 
@@ -70,10 +68,9 @@ type ConductorAgent struct {
 	metaRetryCount int                       // max retries for Meta-Agent JSON parse failures
 	toolDefMap     map[string]tools.ToolDefinition // tool name → definition from tools.json
 	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
-	Mesh           *AgentMesh                // P2P 通信网格
 	compactEngine  *compact.Engine           // 上下文压缩引擎
 	compactConfig  *compact.Config           // 压缩配置
-	adapter        *ConductorAdapter         // 新旧整合适配器（Strangler Fig 过渡层）
+	adapter        *ConductorAdapter         // 新旧整合适配器
 	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 
 	// 新增：异步增量压缩字段
@@ -100,9 +97,6 @@ type ConductorAgent struct {
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 	// resultCompressor 结果压缩器（nil 表示不启用压缩）
 	resultCompressor *ResultCompressor
-
-	// observerFilter Observer 事件过滤器（防止 P2P 事件注入 LLM context）
-	observerFilter *ObserverFilter
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -144,9 +138,6 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	// self-reference for closures that need the ConductorAgent after construction
 	var self *ConductorAgent
 
-	// 创建 ObserverFilter（默认关闭）
-	observerFilter := NewObserverFilter()
-
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
@@ -156,7 +147,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 			return repoKnowledgeMgr.AnalyseTask(ctx, task)
 		}
 		result, err := repo.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + Mesh 注册）
+		// 使用增强型 Commander 处理结果（压缩 + 注册）
 		return self.applyEnhancedCommander("repo", task, result, err)
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
@@ -175,7 +166,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt,
 		// keeping the user message (task) variable and the system prompt cacheable.
 		result, err := coding.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + Mesh 注册）
+		// 使用增强型 Commander 处理结果（压缩 + 注册）
 		return self.applyEnhancedCommander("coding", task, result, err)
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
@@ -191,7 +182,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 			return nil, fmt.Errorf("task parameter required")
 		}
 		result, err := chat.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + Mesh 注册）
+		// 使用增强型 Commander 处理结果（压缩 + 注册）
 		return self.applyEnhancedCommander("chat", task, result, err)
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
@@ -207,7 +198,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 			return nil, fmt.Errorf("task parameter required")
 		}
 		result, err := devops.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + Mesh 注册）
+		// 使用增强型 Commander 处理结果（压缩 + 注册）
 		return self.applyEnhancedCommander("devops", task, result, err)
 	}).WithSchema(map[string]interface{}{
 		"type": "object",
@@ -227,7 +218,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 			// RepoSummary is no longer injected into the task here — it is now passed
 			// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt.
 			result, err := browser.Run(ctx, task)
-			// 使用增强型 Commander 处理结果（压缩 + Mesh 注册）
+			// 使用增强型 Commander 处理结果（压缩 + 注册）
 			return self.applyEnhancedCommander("browser", task, result, err)
 		}).WithSchema(map[string]interface{}{
 		"type": "object",
@@ -404,130 +395,6 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
 
-	// ─── 创建 P2P 通信网格 ───
-	agentMesh := NewAgentMesh()
-
-	// 注册 Conductor 自己的 Peer
-	if err := agentMesh.RegisterAgent("conductor", &BaseAgent{LLM: engine, Publisher: globalCtx.Publisher}); err != nil {
-		slog.Warn("Failed to register conductor in agent mesh", "error", err)
-	}
-
-	// 注册 Conductor 为全局 Observer，感知所有 P2P 事件
-	observerHandler := func(ctx context.Context, ev *bus.Event) error {
-		// === 新增：Observer 事件过滤 ===
-		// 当增强型 Commander 启用且 ObserverFilter 启用时，过滤 P2P 事件
-		if cfg.EnhancedCommander.Enable && cfg.EnhancedCommander.EnableObserverFilter {
-			if observerFilter.FilterBusEventTopic(ev.Topic) {
-				return nil // P2P 事件被过滤，不注入 Conductor LLM context
-			}
-		}
-
-		// 1. 转发到 TUI/WebSocket（通过现有 Publisher，非阻塞）
-		if globalCtx.Publisher != nil {
-			metadata := map[string]interface{}{
-				"source":       ev.Source,
-				"target":       ev.Target,
-				"topic":        ev.Topic,
-				"event_type":   fmt.Sprintf("%d", ev.Type),
-				"payload_size": len(ev.Payload),
-				"version":      ev.Version,
-			}
-			_ = globalCtx.Publisher.PublishWithMetadata("p2p_event",
-				fmt.Sprintf("P2P: %s → [%s] → %s", ev.Source, ev.Topic, ev.Target),
-				"conductor", metadata)
-		}
-
-		// 2. 跨域协调：coordination.* topic 需要 Conductor 仲裁
-		if peer.IsConductorTopic(ev.Topic) {
-			slog.Debug("Conductor observed coordination event",
-				"topic", ev.Topic, "source", ev.Source)
-		}
-
-		return nil
-	}
-	if err := agentMesh.RegisterConductorObserver(observerHandler); err != nil {
-		slog.Warn("Failed to register conductor observer", "error", err)
-	}
-
-	// 根据配置启用 ObserverFilter
-	if cfg.EnhancedCommander.Enable && cfg.EnhancedCommander.EnableObserverFilter {
-		observerFilter.SetEnabled(true)
-		slog.Info("Observer filter enabled — P2P events will be filtered from Conductor context")
-	}
-
-	// 注册所有子 Agent 到网格
-	agentRegistrations := []struct {
-		id    string
-		agent *BaseAgent
-	}{}
-
-	if repo != nil {
-		agentRegistrations = append(agentRegistrations, struct {
-			id    string
-			agent *BaseAgent
-		}{"repo-agent", &repo.BaseAgent})
-	}
-	if coding != nil {
-		agentRegistrations = append(agentRegistrations, struct {
-			id    string
-			agent *BaseAgent
-		}{"coding-agent", &coding.BaseAgent})
-	}
-	if chat != nil {
-		agentRegistrations = append(agentRegistrations, struct {
-			id    string
-			agent *BaseAgent
-		}{"chat-agent", &chat.BaseAgent})
-	}
-	if meta != nil {
-		agentRegistrations = append(agentRegistrations, struct {
-			id    string
-			agent *BaseAgent
-		}{"meta-agent", &meta.BaseAgent})
-	}
-	if devops != nil {
-		agentRegistrations = append(agentRegistrations, struct {
-			id    string
-			agent *BaseAgent
-		}{"devops-agent", &devops.BaseAgent})
-	}
-	if browser != nil {
-		agentRegistrations = append(agentRegistrations, struct {
-			id    string
-			agent *BaseAgent
-		}{"browser-agent", &browser.BaseAgent})
-	}
-
-	for _, reg := range agentRegistrations {
-		if err := agentMesh.RegisterAgent(reg.id, reg.agent); err != nil {
-			slog.Warn("Failed to register agent in mesh", "agent", reg.id, "error", err)
-		}
-	}
-
-	// ── Blackboard 初始化 ──
-	var blackboardAccess interface {
-		Post(region string, author string, content map[string]interface{}, tags []string, references []string) (string, error)
-		Read(region string, filter map[string]interface{}) ([]map[string]interface{}, error)
-		Get(entryID string) (map[string]interface{}, bool)
-	}
-	if isBlackboardEnabled() {
-		bb := memory.NewBlackboard()
-		blackboardAccess = memory.NewBlackboardAccessAdapter(bb)
-		slog.Info("Blackboard enabled — agents will have shared state tools (blackboard_read, blackboard_post)")
-	}
-
-	// 注入到所有子 Agent
-	if blackboardAccess != nil {
-		if repo != nil { repo.BaseAgent.BlackboardAccess = blackboardAccess }
-		if coding != nil { coding.BaseAgent.BlackboardAccess = blackboardAccess }
-		if chat != nil { chat.BaseAgent.BlackboardAccess = blackboardAccess }
-		if meta != nil { meta.BaseAgent.BlackboardAccess = blackboardAccess }
-		if devops != nil { devops.BaseAgent.BlackboardAccess = blackboardAccess }
-		if browser != nil { browser.BaseAgent.BlackboardAccess = blackboardAccess }
-	} else {
-		slog.Info("Blackboard disabled (set ENABLE_BLACKBOARD=true to enable shared state between agents)")
-	}
-
 	// 创建 commit 管理器（用于后台自动学习和查询，不再暴露为 Agent 工具）
 	var commitManager *CommitManager
 	if llmClient != nil {
@@ -560,7 +427,6 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		metaRetryCount:     metaRetryCount,
 		toolDefMap:         toolDefMap,
 		customAgents:       make(map[string]*CustomAgent),
-		Mesh:               agentMesh, // P2P 通信网格
 		compactEngine:      nil, // 将在 Run 方法中根据配置初始化
 		compactConfig:      compactCfg,
 		adapter:            conductorAdapter,
@@ -581,9 +447,6 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 			cfg.EnhancedCommander.CompressionThreshold,
 			cfg.EnhancedCommander.SummaryMaxLength,
 		),
-
-		// observerFilter Observer 事件过滤器（防止 P2P 事件注入 LLM context）
-		observerFilter: observerFilter,
 	}
 
 	// 计算并记录 Tool Definitions 哈希，用于验证 Prompt Cache 一致性
@@ -872,7 +735,6 @@ func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = ca.DisplayName
 	cfg.StopOnFinish = true
-	a.BaseAgent.FillCollaborationConfig(&cfg, ca.DisplayName)
 	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
@@ -920,7 +782,7 @@ func (a *ConductorAgent) injectSubAgentMemory(result AgentResult, toolCallID str
 }
 
 // applyEnhancedCommander 对子 Agent 执行结果应用增强型 Commander 功能。
-// 包含：结果压缩（如果启用）、Mesh 注册（如果启用）
+// 包含：结果压缩（如果启用）、结果注册（如果启用）
 // agentType: 子 Agent 类型（如 "repo", "coding"）
 // task: 委派的任务描述
 // result: Agent 执行结果
@@ -960,62 +822,7 @@ func (a *ConductorAgent) applyEnhancedCommander(
 		}
 	}
 
-	// Mesh 注册（如果启用）
-	if cfg.EnableMeshRegistration && a.Mesh != nil {
-		role := determineAgentRole(agentType)
-		caps := determineAgentCapabilities(agentType)
-		ttl := time.Duration(cfg.AgentTTL) * time.Second
-
-		enhancedCap := &EnhancedAgentCapability{
-			AgentID:      fmt.Sprintf("%s-%d", agentType, time.Now().UnixNano()),
-			Name:         agentType,
-			Role:         role,
-			Status:       AgentStatusCompleted,
-			Capabilities: caps,
-			RegisteredAt: time.Now(),
-			ExpiresAt:    time.Now().Add(ttl),
-		}
-
-		if regErr := a.Mesh.RegisterEnhanced(enhancedCap); regErr != nil {
-			slog.Warn("Mesh registration failed (non-blocking)", "agent", agentType, "error", regErr)
-		}
-	}
-
 	return text, nil
-}
-
-// determineAgentRole 根据 Agent 类型确定 P2P 角色
-func determineAgentRole(agentType string) AgentRole {
-	switch agentType {
-	case "repo", "browser":
-		return AgentRoleExplorer
-	case "coding", "devops":
-		return AgentRoleExecutor
-	case "chat":
-		return AgentRoleAnalyst
-	default:
-		return AgentRoleExecutor
-	}
-}
-
-// determineAgentCapabilities 根据 Agent 类型确定能力列表
-func determineAgentCapabilities(agentType string) []string {
-	switch agentType {
-	case "repo":
-		return []string{"code_search", "symbol_analysis", "dependency_analysis", "file_read"}
-	case "coding":
-		return []string{"code_generation", "code_modification", "code_review", "test_generation"}
-	case "devops":
-		return []string{"build", "deploy", "ci_cd", "infrastructure"}
-	case "chat":
-		return []string{"analysis", "reasoning", "summarization", "qa"}
-	case "browser":
-		return []string{"web_search", "page_read", "form_submit", "screenshot"}
-	case "meta":
-		return []string{"planning", "task_decomposition", "coordination"}
-	default:
-		return []string{"general"}
-	}
 }
 
 func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
@@ -1669,10 +1476,4 @@ func validateAndRepairToolCallPairs(messages []llm.Message) []llm.Message {
 	}
 
 	return result
-}
-
-// isBlackboardEnabled checks the ENABLE_BLACKBOARD environment variable.
-func isBlackboardEnabled() bool {
-	return strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_BLACKBOARD"))) == "true" ||
-		strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_BLACKBOARD"))) == "1"
 }

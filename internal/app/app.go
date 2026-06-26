@@ -210,23 +210,10 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		browserCfg.BlockedDomains = cfg.BlockedDomains
 		browserCfg.ExtraArgs = cfg.ExtraArgs
 	}
-	// ═══════ 设置 P2P Supplement 标志（增强型 Commander） ═══════
-	if ca.config != nil && ca.config.EnhancedCommander.Enable && ca.config.EnhancedCommander.EnableP2PSupplement {
-		repoAgent.BaseAgent.P2PSupplementEnabled = true
-		chatAgent.BaseAgent.P2PSupplementEnabled = true
-		metaAgent.BaseAgent.P2PSupplementEnabled = true
-		devopsAgent.BaseAgent.P2PSupplementEnabled = true
-	}
-
 	browserMgr := browser.NewManager(browserCfg, browserCfg.AllowedDomains, browserCfg.BlockedDomains)
 	ca.globalCtx.BrowserMgr = browserMgr
 	browserAgent := agents.NewBrowserAgent(ca.globalCtx, browserMgr, browserEngine, browserMaxSteps)
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent)
-	// 设置 browserAgent 和 codingAgent 的 P2P Supplement 标志
-	if ca.config != nil && ca.config.EnhancedCommander.Enable && ca.config.EnhancedCommander.EnableP2PSupplement {
-		browserAgent.BaseAgent.P2PSupplementEnabled = true
-		codingAgent.BaseAgent.P2PSupplementEnabled = true
-	}
 	// 构建 compact config
 	var compactCfg *compact.Config
 	var summaryEngine llm.Engine
