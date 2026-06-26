@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,7 +28,13 @@ type mockConsolidationEngine struct {
 
 func (m *mockConsolidationEngine) GenerateContent(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, opts *llm.CallOptions) (*llm.Response, error) {
 	atomic.AddInt32(&m.callCount, 1)
-	time.Sleep(m.delay) // 模拟延迟
+
+	// 等待 delay 或 context 取消，优先响应取消
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(m.delay):
+	}
 
 	m.mu.Lock()
 	fail := m.shouldFail
@@ -35,9 +42,7 @@ func (m *mockConsolidationEngine) GenerateContent(ctx context.Context, messages 
 	m.mu.Unlock()
 
 	if fail {
-		// 等待 context 超时
-		<-ctx.Done()
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("mock consolidation engine failure")
 	}
 
 	return &llm.Response{
@@ -127,7 +132,7 @@ func TestSubmit_NonBlocking_Success(t *testing.T) {
 func TestSubmit_ChannelFull_Drop(t *testing.T) {
 	shared := memory.NewSharedMemory(100)
 	store := NewRepoMemoryStore("test-repo", shared)
-	engine := &mockConsolidationEngine{delay: time.Hour} // 长时间阻塞确保 channel 满
+	engine := &mockConsolidationEngine{delay: 100 * time.Millisecond} // 足够让 channel 填满且测试快速完成
 
 	worker := NewConsolidationWorker(store, engine)
 	worker.Start()
