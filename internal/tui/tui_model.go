@@ -271,7 +271,7 @@ type logEntry struct {
 	// isVerbose marks entries that contain operational details
 	// (tool calls, LLM calls, internal operations).
 	// These are always hidden from the main view and displayed
-	// in the tool timeline panel instead (toggle with ctrl+v).
+	// in the tool timeline panel instead.
 	isVerbose bool
 }
 

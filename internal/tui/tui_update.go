@@ -296,16 +296,6 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 
 	// ═══════════════════════════════════════════════════════════════
-	// :timeline — Toggle tool timeline (compact / full history)
-	// Replaces the old :verbose command. Uses ctrl+v keyboard shortcut.
-	// ═══════════════════════════════════════════════════════════════
-	case cmd == ":timeline":
-		m.timelineExpanded = !m.timelineExpanded
-		m.timelineCacheKey = "" // invalidate cache
-		m.invalidateFooterCache()
-		return nil
-
-	// ═══════════════════════════════════════════════════════════════
 	// :language — 切换语言（原 ctrl+l 快捷键的功能迁移至此）
 	// ═══════════════════════════════════════════════════════════════
 	case cmd == ":language":
@@ -1070,14 +1060,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.invalidateFooterCache()
 				return m, nil
 
-			// ── Tool timeline toggle (two-state: collapsed ↔ expanded) ──
-			case "ctrl+v":
-				// 两态切换：collapsed ↔ expanded（不再经过全屏）
-				m.timelineExpanded = !m.timelineExpanded
-				m.timelineCacheKey = ""
-				m.invalidateFooterCache()
-				return m, nil
-
 			// ── Misc ──
 			case "ctrl+l":
 				// 切换全屏时间线模式
@@ -1164,13 +1146,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.dialogStack = components.NewDialogStack()
 			}
 			m.dialogStack.Push(d)
-			return m, nil
-
-		case "ctrl+v":
-			// 两态切换：collapsed ↔ expanded（不再经过全屏）
-			m.timelineExpanded = !m.timelineExpanded
-			m.timelineCacheKey = ""
-			m.invalidateFooterCache()
 			return m, nil
 
 		case "ctrl+s":
@@ -2126,7 +2101,7 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		switch key {
 		// ── 退出全屏 → 回到 expanded ──
 		case "esc":
-			m.timelineExpanded = true
+			m.timelineExpanded = false
 			m.timelineFullscreenMode = false
 			m.timelineFullscreenCursor = 0
 			m.timelineDetailVP = nil
@@ -2136,7 +2111,7 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 
 		// ── q 键退出全屏（与 esc 行为一致）──
 		case "q":
-			m.timelineExpanded = true
+			m.timelineExpanded = false
 			m.timelineFullscreenMode = false
 			m.timelineFullscreenCursor = 0
 			m.timelineDetailVP = nil
@@ -2144,17 +2119,9 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.invalidateFooterCache()
 			return m, nil
 
-		// ── ctrl+v: 退出到 collapsed ──
-		case "ctrl+v":
-			m.ExitTimelineFullscreen()
-			m.timelineExpanded = false
-			m.timelineCacheKey = ""
-			m.invalidateFooterCache()
-			return m, nil
-
 		// ── ctrl+c: 退出全屏 → 显示退出确认 ──
 		case "ctrl+c":
-			m.timelineExpanded = true
+			m.timelineExpanded = false
 			m.timelineFullscreenMode = false
 			m.timelineFullscreenCursor = 0
 			m.timelineDetailVP = nil

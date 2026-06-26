@@ -23,17 +23,8 @@ func (m *model) computeFooterHeight() int {
 
 	// Tool timeline panel (when entries exist) — 使用悬浮面板样式
 	if m.taskRunning || len(m.timelineEntries) > 0 {
-		if m.timelineExpanded {
-			n := len(m.timelineEntries)
-			if n > 20 {
-				n = 20
-			}
-			// border-top(1) + n entries + (n-1) connectors + hint(1) + border-bottom(1)
-			height += 2 + n*2
-		} else {
-			// border-top(1) + 3 entries + hint(1) + border-bottom(1)
-			height += 6
-		}
+		// border-top(1) + 3 entries + hint(1) + border-bottom(1)
+		height += 6
 	}
 
 	// Input area (only in edit mode; hidden in command mode)

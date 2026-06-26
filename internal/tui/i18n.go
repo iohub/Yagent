@@ -148,7 +148,7 @@ var langMap = map[Language]translations{
 		DeleteSuccess:        "历史记录已删除",
 		DeleteFailed:         "删除失败：",
 		TimelineDetailHint:   "详情",
-		TimelineExpandHint:   "展开/折叠",
+		TimelineExpandHint:   "全屏详情",
 	},
 	LangEnglish: {
 		Title:                            "CodeActor AI Assistant",
@@ -221,7 +221,7 @@ var langMap = map[Language]translations{
 		DeleteSuccess:        "History entry deleted",
 		DeleteFailed:         "Delete failed: ",
 		TimelineDetailHint:   "Detail",
-		TimelineExpandHint:   "Expand/Collapse",
+		TimelineExpandHint:   "Fullscreen",
 	},
 }
 

@@ -267,16 +267,12 @@ func (m *model) renderTimelinePanel(width int) string {
 		}
 	}
 
-	// Build cache key: entries count + last entry ID + expanded state + width
+	// Build cache key: entries count + last entry ID + width (always collapsed)
 	var lastID string
 	if len(m.timelineEntries) > 0 {
 		lastID = m.timelineEntries[len(m.timelineEntries)-1].ID
 	}
-	expandedStr := "0"
-	if m.timelineExpanded {
-		expandedStr = "1"
-	}
-	key := fmt.Sprintf("%d|%s|%s|%d", len(m.timelineEntries), lastID, expandedStr, width)
+	key := fmt.Sprintf("%d|%s|%d", len(m.timelineEntries), lastID, width)
 
 	// 只在没有运行条目时使用缓存（动画帧会变化，不能用缓存）
 	if !hasRunning && key == m.timelineCacheKey && m.timelineCache != "" {
@@ -284,7 +280,7 @@ func (m *model) renderTimelinePanel(width int) string {
 	}
 
 	// 渲染 timeline 内容（传 width-4 给内部 padding 空间）
-	content := RenderTimeline(m.timelineEntries, m.timelineExpanded, width-4, m.anim)
+	content := RenderTimeline(m.timelineEntries, false, width-4, m.anim)
 	if content == "" {
 		return ""
 	}
@@ -298,7 +294,7 @@ func (m *model) renderTimelinePanel(width int) string {
 	}
 
 	// 构建提示行
-	hint := timelineHintStyle.Render(" ctrl+l " + langManager.GetText("TimelineDetailHint") + " │ ctrl+v " + langManager.GetText("TimelineExpandHint") + " ")
+	hint := timelineHintStyle.Render(" ctrl+l " + langManager.GetText("TimelineDetailHint") + " ")
 
 	// 组装面板内容
 	panelContent := content + "\n" + hint
