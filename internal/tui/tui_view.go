@@ -750,7 +750,7 @@ func (m *model) renderCollapsedTokenDashboard() string {
 		line += inputStyle.Render(cacheStr + "  ")
 	}
 
-	line += style.Render("(ctrl+t: expand)")
+	line += style.Render("(alt+t: expand)")
 
 	return dashStyle.Render(line)
 }

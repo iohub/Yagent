@@ -575,7 +575,7 @@ type model struct {
 	tokenUsagePerAgent map[string]*AgentTokenUsage
 
 	// Token dashboard collapse/expand control
-	tokenDashboardCollapsed bool // 默认 true（折叠），按 ctrl+t 切换
+	tokenDashboardCollapsed bool // 默认 true（折叠），按 alt+t 切换
 
 	// Current agent run-specific token tracking (reset on agent switch)
 	currentAgentRunTokens AgentRunTokens

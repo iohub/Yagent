@@ -1053,7 +1053,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			// ── Token dashboard collapse toggle ──
-			case "ctrl+t":
+			case "alt+t":
 				m.tokenDashboardCollapsed = !m.tokenDashboardCollapsed
 				m.cachedTokenDashboard = m.renderTokenDashboard()
 				m.tokenDashboardValid = true
