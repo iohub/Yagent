@@ -15,12 +15,48 @@ import (
 var toolLogger *slog.Logger
 var toolLogFile *os.File
 
+// ensureToolLogFile checks if the current toolLogFile matches the task-aware path.
+// If not (e.g., taskID changed), closes the old file and opens a new one.
+func ensureToolLogFile() {
+	currentPath := ""
+	if toolLogFile != nil {
+		currentPath = toolLogFile.Name()
+	}
+
+	taskID := logging.GetCurrentTaskID()
+	logDir := logging.GetTaskLogDir(taskID)
+	dateStr := time.Now().Format("2006-01-02")
+	newPath := filepath.Join(logDir, fmt.Sprintf("tool-%s.log", dateStr))
+
+	if currentPath != newPath {
+		if toolLogFile != nil {
+			toolLogFile.Close()
+			toolLogFile = nil
+		}
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			slog.Warn("Failed to create tool log directory", "dir", logDir, "error", err)
+			return
+		}
+		var fileErr error
+		toolLogFile, fileErr = os.OpenFile(newPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if fileErr != nil {
+			slog.Warn("Failed to open tool log file", "file", newPath, "error", fileErr)
+			toolLogFile = nil
+			return
+		}
+		handler := slog.NewTextHandler(toolLogFile, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})
+		toolLogger = slog.New(handler)
+	}
+}
+
 // InitToolLogger initializes the tool logger in TUI mode.
 // Creates the log directory if it doesn't exist.
 // On file open failure, degrades gracefully using logging.GetFallbackWriter()
 // which ensures TUI mode NEVER falls back to os.Stdout.
 func InitToolLogger() error {
-	logDir := logging.GetLogDir()
+	logDir := logging.GetTaskLogDir(logging.GetCurrentTaskID())
 
 	// Ensure log directory exists
 	if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -62,6 +98,7 @@ func InitToolLogger() error {
 // arguments (JSON), result, error message, and duration.
 // Format: [2025-01-15 10:30:45] tool=agent_exit agent=ConductorAgent duration=12ms args={"reason":"task completed"} result="" error=""
 func LogToolCall(toolName, agentName, argsJSON, result, errMsg string, duration time.Duration) {
+	ensureToolLogFile()
 	if toolLogger == nil {
 		return
 	}

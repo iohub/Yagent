@@ -9,6 +9,7 @@ import (
 
 	"codeactor/internal/app"
 	"codeactor/internal/datamanager"
+	"codeactor/internal/logging"
 	messaging "codeactor/internal/messaging"
 	consumers "codeactor/internal/messaging/consumers"
 	"codeactor/internal/protocol"
@@ -111,6 +112,10 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 			}
 		}()
 	}
+
+	// 设置当前 taskID，使日志写入对应 task 目录
+	logging.SetCurrentTaskID(taskID)
+	defer logging.SetCurrentTaskID("")
 
 	result, err = codeActor.ProcessCodingTaskWithCallback(request)
 

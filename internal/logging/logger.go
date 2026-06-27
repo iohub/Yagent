@@ -25,6 +25,9 @@ var (
 	appLogWriter io.Writer
 	initialized  bool
 	mu           sync.Mutex
+	// taskID 管理变量，带 RWMutex 保护
+	currentTaskID string
+	taskMu        sync.RWMutex
 )
 
 // syncedWriter wraps an io.Writer with a mutex for concurrent safety.
@@ -157,6 +160,44 @@ func GetLogDir() string {
 		return logDir
 	}
 	return getLogDir()
+}
+
+// GetTaskLogDir returns the task-specific log directory path.
+// Format: ~/.codeactor/logs/{taskID}/
+// If taskID is empty, returns the global log directory.
+func GetTaskLogDir(taskID string) string {
+	if taskID == "" {
+		return GetLogDir()
+	}
+	return filepath.Join(GetLogDir(), taskID)
+}
+
+// SetCurrentTaskID sets the current taskID for log file routing.
+// If taskID is non-empty, creates the task-specific log directory.
+// If taskID is empty, clears the current taskID (logs go to default directory).
+// Thread-safe via RWMutex.
+func SetCurrentTaskID(taskID string) {
+	taskMu.Lock()
+	defer taskMu.Unlock()
+
+	// If setting a new taskID, ensure the directory exists
+	if taskID != "" {
+		dir := filepath.Join(GetLogDir(), taskID)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			slog.Warn("Failed to create task log directory",
+				"task_id", taskID, "dir", dir, "error", err)
+		}
+	}
+
+	currentTaskID = taskID
+	slog.Debug("Current taskID set", "task_id", taskID)
+}
+
+// GetCurrentTaskID returns the current taskID.
+func GetCurrentTaskID() string {
+	taskMu.RLock()
+	defer taskMu.RUnlock()
+	return currentTaskID
 }
 
 // GetFallbackWriter returns a safe io.Writer for fallback scenarios.

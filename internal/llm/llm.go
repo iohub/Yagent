@@ -25,18 +25,94 @@ var llmLogFile *os.File
 var llmErrorLogger *slog.Logger
 var llmErrorLogFile *os.File
 
-// initLLMLogger initializes the LLM logger
-func initLLMLogger() error {
-	logDir := logging.GetLogDir()
+// getLLMLogFile returns the path for the current LLM log file,
+// routing to the task-specific directory if a taskID is set.
+func getLLMLogFile() string {
+	logDir := logging.GetTaskLogDir(logging.GetCurrentTaskID())
+	dateStr := time.Now().Format("2006-01-02")
+	return filepath.Join(logDir, fmt.Sprintf("llm-%s.log", dateStr))
+}
 
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+// getLLMErrorLogFile returns the path for the current LLM error log file,
+// routing to the task-specific directory if a taskID is set.
+func getLLMErrorLogFile() string {
+	logDir := logging.GetTaskLogDir(logging.GetCurrentTaskID())
+	dateStr := time.Now().Format("2006-01-02")
+	return filepath.Join(logDir, fmt.Sprintf("llm-error-%s.log", dateStr))
+}
+
+// ensureLLMLogFile checks if the current llmLogFile matches getLLMLogFile().
+// If not (e.g., taskID changed), closes the old file and opens a new one.
+func ensureLLMLogFile() {
+	currentPath := ""
+	if llmLogFile != nil {
+		currentPath = llmLogFile.Name()
+	}
+	if newPath := getLLMLogFile(); currentPath != newPath {
+		if llmLogFile != nil {
+			llmLogFile.Close()
+			llmLogFile = nil
+		}
+		logDir := logging.GetTaskLogDir(logging.GetCurrentTaskID())
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			slog.Warn("Failed to create LLM log directory", "dir", logDir, "error", err)
+			return
+		}
+		var err error
+		llmLogFile, err = os.OpenFile(newPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			slog.Error("Failed to open LLM log file", "path", newPath, "error", err)
+			llmLogFile = nil
+			return
+		}
+		// Rebuild the logger with the new file
+		level := slog.LevelInfo
+		if os.Getenv("LLM_DEBUG_LOG") == "1" {
+			level = slog.LevelDebug
+		}
+		handler := slog.NewTextHandler(llmLogFile, &slog.HandlerOptions{Level: level})
+		llmLogger = slog.New(handler)
+	}
+}
+
+// ensureLLMErrorLogFile checks if the current llmErrorLogFile matches getLLMErrorLogFile().
+// If not (e.g., taskID changed), closes the old file and opens a new one.
+func ensureLLMErrorLogFile() {
+	currentPath := ""
+	if llmErrorLogFile != nil {
+		currentPath = llmErrorLogFile.Name()
+	}
+	if newPath := getLLMErrorLogFile(); currentPath != newPath {
+		if llmErrorLogFile != nil {
+			llmErrorLogFile.Close()
+			llmErrorLogFile = nil
+		}
+		logDir := logging.GetTaskLogDir(logging.GetCurrentTaskID())
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			slog.Warn("Failed to create LLM error log directory", "dir", logDir, "error", err)
+			return
+		}
+		var err error
+		llmErrorLogFile, err = os.OpenFile(newPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			slog.Error("Failed to open LLM error log file", "path", newPath, "error", err)
+			llmErrorLogFile = nil
+			return
+		}
+		handler := slog.NewTextHandler(llmErrorLogFile, &slog.HandlerOptions{Level: slog.LevelError})
+		llmErrorLogger = slog.New(handler)
+	}
+}
+
+// initLLMLogger initializes the LLM logger with dynamic task-aware path
+func initLLMLogger() error {
+	if err := os.MkdirAll(logging.GetTaskLogDir(logging.GetCurrentTaskID()), 0755); err != nil {
 		return util.WrapError(context.Background(), err, "failed to create logs directory")
 	}
 
-	dateStr := time.Now().Format("2006-01-02")
-	logFileName := fmt.Sprintf("llm-%s.log", dateStr)
+	logFilePath := getLLMLogFile()
 	var err error
-	llmLogFile, err = os.OpenFile(filepath.Join(logDir, logFileName), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	llmLogFile, err = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		return util.WrapError(context.Background(), err, "failed to open LLM log file")
 	}
@@ -62,16 +138,13 @@ func initLLMLogger() error {
 // initLLMErrorLogger 初始化 LLM 错误专用日志文件 llm-error-YYYY-MM-DD.log。
 // 失败时降级到 llmLogger，保证主流程不受影响。
 func initLLMErrorLogger() error {
-	logDir := logging.GetLogDir()
-
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logging.GetTaskLogDir(logging.GetCurrentTaskID()), 0755); err != nil {
 		return util.WrapError(context.Background(), err, "failed to create logs directory for LLM error")
 	}
 
-	dateStr := time.Now().Format("2006-01-02")
-	logFileName := fmt.Sprintf("llm-error-%s.log", dateStr)
+	logFilePath := getLLMErrorLogFile()
 	var err error
-	llmErrorLogFile, err = os.OpenFile(filepath.Join(logDir, logFileName), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	llmErrorLogFile, err = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		return util.WrapError(context.Background(), err, "failed to open LLM error log file")
 	}
@@ -85,6 +158,7 @@ func initLLMErrorLogger() error {
 
 // LogLLMContent writes a raw string to the LLM log file with a header
 func LogLLMContent(title string, content string) {
+	ensureLLMLogFile()
 	if llmLogFile == nil {
 		return
 	}
@@ -100,6 +174,7 @@ func LogLLMContent(title string, content string) {
 // 若错误日志 logger 未初始化（降级场景），自动回退到 llmLogger。
 // 供 llm 包内部及 agents 包（如 executor.go）调用。
 func LogLLMError(msg string, args ...any) {
+	ensureLLMErrorLogFile()
 	if llmErrorLogger != nil {
 		llmErrorLogger.Error(msg, args...)
 		return
