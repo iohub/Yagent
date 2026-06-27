@@ -1742,6 +1742,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						le := &m.logEntries[idx]
 						le.content = resultContent
 						le.isToolRunning = false
+						// 提取 edit_file 的 diff 内容以便在消息面板中展示
+						le.diffText = extractDiffFromResult(resultContent)
 						le.clearRenderCache()      // invalidate cache
 						m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
 						m.viewportDirty = true
@@ -1804,6 +1806,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						le := &m.logEntries[idx]
 						le.content = resultContent
 						le.isToolRunning = false
+						// 提取 edit_file 的 diff 内容以便在消息面板中展示
+						le.diffText = extractDiffFromResult(resultContent)
 						le.clearRenderCache()
 						m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
 						m.viewportDirty = true

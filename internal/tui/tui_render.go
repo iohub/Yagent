@@ -663,6 +663,12 @@ func isVerboseEventType(eventType string) bool {
 	return false
 }
 
+// isEditFileTool returns true if the tool name corresponds to a file-editing
+// tool whose diff results should be displayed in the main message panel.
+func isEditFileTool(toolName string) bool {
+	return toolName == "search_replace_in_file"
+}
+
 // formatEventAsEntry converts a MessageEvent to a logEntry.
 func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 	entry := logEntry{
@@ -909,6 +915,16 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 
 	// Set verbose flag based on event type
 	entry.isVerbose = isVerboseEventType(string(event.Type))
+
+	// Show edit_file (search_replace_in_file) progress and diffs in the
+	// main message panel. Only the start entry is made visible; the result
+	// entry stays hidden since its data flows into the start entry via the
+	// update paths in tui_update.go.
+	if entry.isVerbose && entry.eventType == "tool_call_start" && entry.toolEntry != nil {
+		if isEditFileTool(entry.toolEntry.Call.Name) {
+			entry.isVerbose = false
+		}
+	}
 
 	return entry
 }
