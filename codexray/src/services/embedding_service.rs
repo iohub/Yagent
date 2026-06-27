@@ -5,6 +5,7 @@ use std::env;
 use lancedb::{connect, Connection};
 use lancedb::query::{QueryBase, ExecutableQuery};
 use lancedb::table::OptimizeAction;
+use lance::dataset::optimize::CompactionOptions;
 use arrow::array::{
     FixedSizeListBuilder, Float32Builder, Int64Builder, RecordBatch, StringBuilder, AsArray
 };
@@ -400,31 +401,41 @@ impl EmbeddingService {
         }
 
         // [Compaction] 物理清理 LanceDB 旧版本数据，回收磁盘空间
-        // 问题：table.delete() 只创建逻辑删除标记，旧数据永远留在磁盘上
-        // 解决方案：先 Compact（合并小文件、清除已删除数据），再 Prune（删除旧版本快照）
+        // 修复内容：
+        // 1. materialize_deletions_threshold: 0.0 — 始终物化删除（不只是 >10%）
+        // 2. delete_unverified: Some(true) — 删除所有孤立数据文件
         info!("Starting LanceDB table optimization (compact + prune) for {}", self.table_name);
         let compact_result = (|| async {
             let table = self.connection.open_table(&self.table_name).execute().await?;
             
             // Step 1: Compact - 合并小文件，物理移除被删除的行
+            let compact_options = CompactionOptions {
+                materialize_deletions: true,
+                materialize_deletions_threshold: 0.0,  // Always materialize deletions
+                ..Default::default()
+            };
             let stats = table.optimize(OptimizeAction::Compact {
-                options: Default::default(),
+                options: compact_options,
                 remap_options: None,
             }).await?;
-            info!("LanceDB compaction completed for {}: {:?}", self.table_name, stats.compaction);
+            let c = stats.compaction.as_ref().unwrap();
+            info!("LanceDB compaction completed for {}: {} fragments removed, {} fragments added, {} files added, {} files removed",
+                self.table_name, c.fragments_removed, c.fragments_added, c.files_added, c.files_removed);
             
-            // Step 2: Prune - 删除旧的版本快照数据（立即清理所有旧版本）
+            // Step 2: Prune - 删除旧的版本快照（立即清理，包含孤立数据文件）
             let stats = table.optimize(OptimizeAction::Prune {
                 older_than: chrono::Duration::seconds(0),
-                delete_unverified: None,
+                delete_unverified: Some(true),  // KEY FIX: 删除孤立数据文件
             }).await?;
-            info!("LanceDB prune completed for {}: {:?}", self.table_name, stats.prune);
+            let p = stats.prune.as_ref().unwrap();
+            info!("LanceDB prune completed for {}: {} bytes removed, {} old versions removed",
+                self.table_name, p.bytes_removed, p.old_versions);
             
             Ok::<_, Box<dyn std::error::Error>>(())
         })();
         
         if let Err(e) = compact_result.await {
-            warn!("LanceDB optimization failed for {}: {}. This is non-fatal.", self.table_name, e);
+            warn!("LanceDB optimization (compact+prune) failed for {}: {}. This is non-fatal, but disk usage may accumulate.", self.table_name, e);
         }
 
         Ok(new_hashes)

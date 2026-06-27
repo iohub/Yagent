@@ -49,6 +49,7 @@ typetag = "0.2"
 
 
 lancedb = "=0.4.15"
+lance = "=0.10.6"
 arrow = "50"
 reqwest = { version = "0.13.1", features = ["json"] }
 futures = "0.3.31"
