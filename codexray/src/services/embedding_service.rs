@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::env;
 use lancedb::{connect, Connection};
 use lancedb::query::{QueryBase, ExecutableQuery};
+use lancedb::table::OptimizeAction;
 use arrow::array::{
     FixedSizeListBuilder, Float32Builder, Int64Builder, RecordBatch, StringBuilder, AsArray
 };
@@ -396,6 +397,34 @@ impl EmbeddingService {
                     }
                 }
             }
+        }
+
+        // [Compaction] 物理清理 LanceDB 旧版本数据，回收磁盘空间
+        // 问题：table.delete() 只创建逻辑删除标记，旧数据永远留在磁盘上
+        // 解决方案：先 Compact（合并小文件、清除已删除数据），再 Prune（删除旧版本快照）
+        info!("Starting LanceDB table optimization (compact + prune) for {}", self.table_name);
+        let compact_result = (|| async {
+            let table = self.connection.open_table(&self.table_name).execute().await?;
+            
+            // Step 1: Compact - 合并小文件，物理移除被删除的行
+            let stats = table.optimize(OptimizeAction::Compact {
+                options: Default::default(),
+                remap_options: None,
+            }).await?;
+            info!("LanceDB compaction completed for {}: {:?}", self.table_name, stats.compaction);
+            
+            // Step 2: Prune - 删除旧的版本快照数据（立即清理所有旧版本）
+            let stats = table.optimize(OptimizeAction::Prune {
+                older_than: chrono::Duration::seconds(0),
+                delete_unverified: None,
+            }).await?;
+            info!("LanceDB prune completed for {}: {:?}", self.table_name, stats.prune);
+            
+            Ok::<_, Box<dyn std::error::Error>>(())
+        })();
+        
+        if let Err(e) = compact_result.await {
+            warn!("LanceDB optimization failed for {}: {}. This is non-fatal.", self.table_name, e);
         }
 
         Ok(new_hashes)
