@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"codeactor/internal/llm"
+	"codeactor/internal/logging"
 )
 
 // ============================================================================
@@ -144,6 +147,52 @@ func (w *ConsolidationWorker) process(task *ConsolidationTask) {
 		"size", len(consolidated),
 		"tokens_est", EstimateTokens(consolidated),
 	)
+
+	// 7. 将记忆整理结果写入独立的日志文件
+	w.writeConsolidationFile(consolidated)
+}
+
+// writeConsolidationFile 将记忆整理结果写入独立的日志文件。
+// 文件路径：~/.codeactor/logs/memory-consolidated-YYYY-MM-DD.log
+// 每次写入包含时间戳分隔线和完整内容，便于查阅和回溯。
+func (w *ConsolidationWorker) writeConsolidationFile(content string) {
+	logDir := logging.GetLogDir()
+	filename := fmt.Sprintf("memory-consolidated-%s.log", time.Now().Format("2006-01-02"))
+	path := filepath.Join(logDir, filename)
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		slog.Warn("ConsolidationWorker: failed to open consolidation log file",
+			"path", path,
+			"error", err,
+		)
+		return
+	}
+	defer f.Close()
+
+	now := time.Now().Format("2006-01-02 15:04:05.000")
+	separator := strings.Repeat("=", 60)
+	header := fmt.Sprintf("\n%s\n[%s] Memory Consolidation Update\n%s\n\n", separator, now, separator)
+
+	if _, err := f.WriteString(header); err != nil {
+		slog.Warn("ConsolidationWorker: failed to write header to consolidation log",
+			"error", err,
+		)
+		return
+	}
+
+	if _, err := f.WriteString(content); err != nil {
+		slog.Warn("ConsolidationWorker: failed to write content to consolidation log",
+			"error", err,
+		)
+		return
+	}
+
+	if _, err := f.WriteString("\n\n"); err != nil {
+		slog.Warn("ConsolidationWorker: failed to write trailing newlines",
+			"error", err,
+		)
+	}
 }
 
 // callConsolidationLLM 调用 LLM 进行记忆合并。
