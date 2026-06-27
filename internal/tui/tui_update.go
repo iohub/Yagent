@@ -162,12 +162,9 @@ func (m *model) doSkillAutocomplete(text string, contentRunes []rune, cursor int
 			}
 		}
 
-		// 添加 "history" 和 "model" 作为内置命令
+		// 添加 "history" 作为内置命令
 		if hasPrefixIgnoreCase("history", query) {
 			matches = append([]string{"history"}, matches...)
-		}
-		if hasPrefixIgnoreCase("model", query) {
-			matches = append([]string{"model"}, matches...)
 		}
 	}
 
@@ -303,164 +300,6 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		return nil
 
 	// ═══════════════════════════════════════════════════════════════
-	// :model — Switch LLM provider (interactive dialog or direct)
-	// 支持设置不同 agent 的模型，不支持设置 tool 的模型
-	// 语法:
-	//   :model                      - 显示状态 + 交互式 agent → provider 选择
-	//   :model <agent>              - 显示指定 agent 的 provider 选择
-	//   :model <agent> <provider>   - 直接设置 agent 的 provider
-	//   :model <provider>           - 设置全局默认 (向后兼容)
-	// ═══════════════════════════════════════════════════════════════
-	case cmd == ":model" || strings.HasPrefix(cmd, ":model "):
-		// Block switching while a task is running
-		if m.taskRunning {
-			m.logEntries = append(m.logEntries, logEntry{
-				timestamp: time.Now(),
-				eventType: "status",
-				content:   "Cannot switch provider while a task is running. Wait for the task to complete first.",
-			})
-			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-			return nil
-		}
-
-		parts := strings.Fields(cmd)
-		validAgents := []string{"conductor", "coding", "repo", "chat", "meta", "devops", "browser"}
-
-		// Helper: check if string is in list
-		isInList := func(s string, list []string) bool {
-			for _, item := range list {
-				if item == s {
-					return true
-				}
-			}
-			return false
-		}
-
-		validProviders := m.assistant.GetClient().Config.GetProviderNames()
-
-		// ── 3 args: :model <agent> <provider> ──
-		if len(parts) >= 3 {
-			agentName := parts[1]
-			providerName := parts[2]
-
-			if !isInList(agentName, validAgents) {
-				m.logEntries = append(m.logEntries, logEntry{
-					timestamp: time.Now(),
-					eventType: "status",
-					content:   fmt.Sprintf("Unknown agent: %s. Valid agents: %s", agentName, strings.Join(validAgents, ", ")),
-				})
-				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-				return nil
-			}
-			if !isInList(providerName, validProviders) {
-				m.logEntries = append(m.logEntries, logEntry{
-					timestamp: time.Now(),
-					eventType: "status",
-					content:   fmt.Sprintf("Unknown provider: %s. Available providers: %s", providerName, strings.Join(validProviders, ", ")),
-				})
-				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-				return nil
-			}
-			if err := m.assistant.SetAgentProvider(agentName, providerName); err != nil {
-				m.logEntries = append(m.logEntries, logEntry{
-					timestamp: time.Now(),
-					eventType: "error",
-					content:   fmt.Sprintf("Failed to set agent provider: %v", err),
-				})
-				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-				return nil
-			}
-			_, modelName := m.assistant.GetAgentProvider(agentName)
-			m.logEntries = append(m.logEntries, logEntry{
-				timestamp: time.Now(),
-				eventType: "status",
-				content:   fmt.Sprintf("Set agent '%s' provider to: %s (model: %s)", agentName, providerName, modelName),
-			})
-			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-			return nil
-		}
-
-		// ── 2 args: :model <agent> or :model <provider> ──
-		if len(parts) == 2 {
-			arg := parts[1]
-
-			// Check if arg is a known agent name
-			if isInList(arg, validAgents) {
-				// :model <agent> — show provider selection for this agent
-				m.pendingModelTarget = arg
-				providers := m.assistant.GetClient().Config.GetProviderNames()
-				providerDescs := make(map[string]string)
-				currentProv, _ := m.assistant.GetAgentProvider(arg)
-				for _, p := range providers {
-					if provCfg, err := m.assistant.GetClient().Config.GetProvider(p); err == nil {
-						providerDescs[p] = components.FormatProviderDesc(p, provCfg.Model)
-					} else {
-						providerDescs[p] = p
-					}
-				}
-				dialog := components.NewModelSelectDialog(providers, providerDescs, currentProv)
-				dialog.SetBounds(m.termWidth, m.termHeight)
-				m.dialogStack.Push(dialog)
-				return nil
-			}
-
-			// Otherwise treat as :model <provider> (global default, backward compat)
-			if !isInList(arg, validProviders) {
-				m.logEntries = append(m.logEntries, logEntry{
-					timestamp: time.Now(),
-					eventType: "status",
-					content:   fmt.Sprintf("Unknown provider: %s. Available providers: %s", arg, strings.Join(validProviders, ", ")),
-				})
-				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-				return nil
-			}
-			if err := m.assistant.SwitchProvider(arg); err != nil {
-				m.logEntries = append(m.logEntries, logEntry{
-					timestamp: time.Now(),
-					eventType: "error",
-					content:   fmt.Sprintf("Failed to switch provider: %v", err),
-				})
-				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-				return nil
-			}
-			_, modelName := m.assistant.GetClient().GetCurrentProviderInfo()
-			m.currentProvider = arg
-			m.currentModel = modelName
-			m.pendingModelTarget = "" // clear any pending agent target
-			m.logEntries = append(m.logEntries, logEntry{
-				timestamp: time.Now(),
-				eventType: "status",
-				content:   fmt.Sprintf("Switched global provider to: %s (model: %s)", arg, modelName),
-			})
-			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-			return nil
-		}
-
-		// ── No args: :model — show interactive target selection dialog ──
-		// Build config entries for global + all agents
-		entries := make([]components.ConfigEntry, 0, len(validAgents)+1)
-		// Global entry
-		entries = append(entries, components.ConfigEntry{
-			Target:      "global",
-			DisplayName: "global",
-			Provider:    m.currentProvider,
-			Model:       m.currentModel,
-		})
-		// Agent entries
-		for _, agent := range validAgents {
-			prov, model := m.assistant.GetAgentProvider(agent)
-			entries = append(entries, components.ConfigEntry{
-				Target:      agent,
-				DisplayName: agent,
-				Provider:    prov,
-				Model:       model,
-			})
-		}
-		dialog := components.NewAgentSelectDialog(entries)
-		dialog.SetBounds(m.termWidth, m.termHeight)
-		m.dialogStack.Push(dialog)
-		return nil
-	// ═══════════════════════════════════════════════════════════════
 	// /pattern — Search in log entries (must come AFTER more specific / commands)
 	// ═══════════════════════════════════════════════════════════════
 	case strings.HasPrefix(cmd, "/"):
@@ -481,6 +320,44 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	default:
 		m.infoMsg = fmt.Sprintf("Unknown command: %s (type :help or ? for available commands)", cmd)
 	}
+	return nil
+}
+
+// showModelSelectionDialog opens an interactive agent → provider selection dialog
+func (m *model) showModelSelectionDialog() tea.Cmd {
+	// Block switching while a task is running
+	if m.taskRunning {
+		m.logEntries = append(m.logEntries, logEntry{
+			timestamp: time.Now(),
+			eventType: "status",
+			content:   "Cannot switch model while a task is running. Wait for the task to complete first.",
+		})
+		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+		return nil
+	}
+
+	validAgents := []string{"conductor", "coding", "repo", "chat", "meta", "devops", "browser"}
+	entries := make([]components.ConfigEntry, 0, len(validAgents)+1)
+	// Global entry
+	entries = append(entries, components.ConfigEntry{
+		Target:      "global",
+		DisplayName: "global",
+		Provider:    m.currentProvider,
+		Model:       m.currentModel,
+	})
+	// Agent entries
+	for _, agent := range validAgents {
+		prov, model := m.assistant.GetAgentProvider(agent)
+		entries = append(entries, components.ConfigEntry{
+			Target:      agent,
+			DisplayName: agent,
+			Provider:    prov,
+			Model:       model,
+		})
+	}
+	dialog := components.NewAgentSelectDialog(entries)
+	dialog.SetBounds(m.termWidth, m.termHeight)
+	m.dialogStack.Push(dialog)
 	return nil
 }
 
@@ -1060,6 +937,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.invalidateFooterCache()
 				return m, nil
 
+			// ── Model selection ──
+			case "alt+m":
+				return m, m.showModelSelectionDialog()
+
 			// ── Misc ──
 			case "ctrl+l":
 				// 切换全屏时间线模式
@@ -1169,6 +1050,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.submitTask()
+
+		case "alt+m":
+			if m.taskRunning {
+				return m, nil
+			}
+			return m, m.showModelSelectionDialog()
 
 		case "ctrl+l":
 			// 切换全屏时间线模式
@@ -1280,43 +1167,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Clear the input field
 					m.input.SetValue("")
 					return m, enterHistoryMode(m)
-				}
-				// If "model" is selected, open model selection dialog with target picker
-				if skillName == "model" {
-					m.skillAutoComplete = false
-					m.skillSuggestions = nil
-					m.skillSuggestionIdx = 0
-					if m.taskRunning {
-						m.infoMsg = "Cannot switch model while a task is running"
-						return m, nil
-					}
-					// Clear the input field
-					m.input.SetValue("")
-
-					// Show interactive target selection dialog (same as :model no-args)
-					validAgents := []string{"conductor", "coding", "repo", "chat", "meta", "devops", "browser"}
-					entries := make([]components.ConfigEntry, 0, len(validAgents)+1)
-					// Global entry
-					entries = append(entries, components.ConfigEntry{
-						Target:      "global",
-						DisplayName: "global",
-						Provider:    m.currentProvider,
-						Model:       m.currentModel,
-					})
-					// Agent entries
-					for _, agent := range validAgents {
-						prov, model := m.assistant.GetAgentProvider(agent)
-						entries = append(entries, components.ConfigEntry{
-							Target:      agent,
-							DisplayName: agent,
-							Provider:    prov,
-							Model:       model,
-						})
-					}
-					dialog := components.NewAgentSelectDialog(entries)
-					dialog.SetBounds(m.termWidth, m.termHeight)
-					m.dialogStack.Push(dialog)
-					return m, nil
 				}
 				if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 					userContext := strings.TrimSpace(m.input.Value())

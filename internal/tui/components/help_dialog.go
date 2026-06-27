@@ -217,7 +217,6 @@ func buildHelpData(lang Language) helpData {
 						{[]string{":q"}, "退出程序"},
 						{[]string{":help"}, "显示命令帮助"},
 						{[]string{"/pattern"}, "搜索日志"},
-						{[]string{":model"}, "切换模型提供商"},
 					},
 				},
 				{
@@ -230,6 +229,7 @@ func buildHelpData(lang Language) helpData {
 					Title: "其他",
 					Items: []keyItem{
 						{[]string{"?"}, "显示此帮助"},
+						{[]string{"Alt+M"}, "切换模型"},
 						{[]string{"Ctrl+C"}, "强制退出"},
 					},
 				},
@@ -264,7 +264,6 @@ func buildHelpData(lang Language) helpData {
 					{[]string{":q"}, "quit"},
 					{[]string{":help"}, "show command help"},
 					{[]string{"/pattern"}, "search log"},
-					{[]string{":model"}, "switch LLM provider"},
 				},
 			},
 			{
@@ -277,6 +276,7 @@ func buildHelpData(lang Language) helpData {
 				Title: "Other",
 				Items: []keyItem{
 					{[]string{"?"}, "show this help"},
+					{[]string{"Alt+M"}, "switch model"},
 					{[]string{"Ctrl+C"}, "force quit"},
 				},
 			},
