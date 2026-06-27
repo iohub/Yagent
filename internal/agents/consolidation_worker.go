@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"codeactor/internal/llm"
-	"codeactor/internal/messaging"
 )
 
 // ============================================================================
@@ -44,22 +43,20 @@ type ConsolidationTask struct {
 // 使用单 goroutine + channel 串行处理 consolidation 请求，
 // 确保对 RepoMemoryStore 的串行写入。
 type ConsolidationWorker struct {
-	store     *RepoMemoryStore
-	engine    llm.Engine
-	ch        chan *ConsolidationTask
-	done      chan struct{}
-	publisher *messaging.MessagePublisher
+	store  *RepoMemoryStore
+	engine llm.Engine
+	ch     chan *ConsolidationTask
+	done   chan struct{}
 }
 
 // NewConsolidationWorker 创建 consolidation 工作器。
 // 需要调用 Start() 启动后台 goroutine。
-func NewConsolidationWorker(store *RepoMemoryStore, engine llm.Engine, publisher *messaging.MessagePublisher) *ConsolidationWorker {
+func NewConsolidationWorker(store *RepoMemoryStore, engine llm.Engine) *ConsolidationWorker {
 	return &ConsolidationWorker{
-		store:     store,
-		engine:    engine,
-		publisher: publisher,
-		ch:        make(chan *ConsolidationTask, channelBufferSize),
-		done:      make(chan struct{}),
+		store:  store,
+		engine: engine,
+		ch:     make(chan *ConsolidationTask, channelBufferSize),
+		done:   make(chan struct{}),
 	}
 }
 
@@ -147,16 +144,6 @@ func (w *ConsolidationWorker) process(task *ConsolidationTask) {
 		"size", len(consolidated),
 		"tokens_est", EstimateTokens(consolidated),
 	)
-
-	// ✅ 发布 memory_consolidated 事件
-	if w.publisher != nil {
-		consolidatedEvent := map[string]interface{}{
-			"content":    consolidated,
-			"size":       len(consolidated),
-			"tokens_est": EstimateTokens(consolidated),
-		}
-		w.publisher.Publish("memory_consolidated", consolidatedEvent, "ConsolidationWorker")
-	}
 }
 
 // callConsolidationLLM 调用 LLM 进行记忆合并。

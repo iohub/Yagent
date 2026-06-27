@@ -96,7 +96,7 @@ func TestNewConsolidationWorker(t *testing.T) {
 	store := NewRepoMemoryStore("test-repo", shared)
 	engine := &mockConsolidationEngine{}
 
-	worker := NewConsolidationWorker(store, engine, nil)
+	worker := NewConsolidationWorker(store, engine)
 	if worker == nil {
 		t.Fatal("expected non-nil worker")
 	}
@@ -117,7 +117,7 @@ func TestSubmit_NonBlocking_Success(t *testing.T) {
 	store := NewRepoMemoryStore("test-repo", shared)
 	engine := &mockConsolidationEngine{}
 
-	worker := NewConsolidationWorker(store, engine, nil)
+	worker := NewConsolidationWorker(store, engine)
 	worker.Start()
 
 	defer worker.Stop()
@@ -134,7 +134,7 @@ func TestSubmit_ChannelFull_Drop(t *testing.T) {
 	store := NewRepoMemoryStore("test-repo", shared)
 	engine := &mockConsolidationEngine{delay: 100 * time.Millisecond} // 足够让 channel 填满且测试快速完成
 
-	worker := NewConsolidationWorker(store, engine, nil)
+	worker := NewConsolidationWorker(store, engine)
 	worker.Start()
 	defer worker.Stop()
 
@@ -168,7 +168,7 @@ func TestConsolidationWorker_Process_UpdatesMemory(t *testing.T) {
 		response: validMemoryContent,
 	}
 
-	worker := NewConsolidationWorker(store, engine, nil)
+	worker := NewConsolidationWorker(store, engine)
 	worker.Start()
 	defer worker.Stop()
 
@@ -216,7 +216,7 @@ func TestConsolidationWorker_Process_LLMFailure_KeepsOldMemory(t *testing.T) {
 		shouldFail: true,
 	}
 
-	worker := NewConsolidationWorker(store, engine, nil)
+	worker := NewConsolidationWorker(store, engine)
 	worker.Start()
 	defer worker.Stop()
 
@@ -245,7 +245,7 @@ func TestConsolidationWorker_Process_EmptyObservation_Skipped(t *testing.T) {
 		response: validMemoryContent,
 	}
 
-	worker := NewConsolidationWorker(store, engine, nil)
+	worker := NewConsolidationWorker(store, engine)
 	worker.Start()
 	defer worker.Stop()
 
@@ -277,7 +277,7 @@ func TestConsolidationWorker_Process_InvalidFormat_KeepsOldMemory(t *testing.T) 
 		response: "This is not valid memory format",
 	}
 
-	worker := NewConsolidationWorker(store, engine, nil)
+	worker := NewConsolidationWorker(store, engine)
 	worker.Start()
 	defer worker.Stop()
 
@@ -307,7 +307,7 @@ func TestConsolidationWorker_Stop_DrainsPending(t *testing.T) {
 		delay:    50 * time.Millisecond,
 	}
 
-	worker := NewConsolidationWorker(store, engine, nil)
+	worker := NewConsolidationWorker(store, engine)
 	worker.Start()
 
 	// 提交几个任务
@@ -339,7 +339,7 @@ func TestConsolidationWorker_Submit_AfterStop_Panics(t *testing.T) {
 	store := NewRepoMemoryStore("test-repo", shared)
 	engine := &mockConsolidationEngine{}
 
-	worker := NewConsolidationWorker(store, engine, nil)
+	worker := NewConsolidationWorker(store, engine)
 	worker.Start()
 	worker.Stop()
 
