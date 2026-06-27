@@ -948,7 +948,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// 进入全屏模式
 					m.timelineFullscreenMode = true
 					m.timelineExpanded = false
-					m.timelineFullscreenCursor = 0
+					if len(m.timelineEntries) > 0 {
+						m.timelineFullscreenCursor = len(m.timelineEntries) - 1
+					} else {
+						m.timelineFullscreenCursor = 0
+					}
 					initTimelineDetailViewport(m)
 					m.timelineCacheKey = ""
 					m.invalidateFooterCache()
@@ -1063,7 +1067,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 进入全屏模式
 				m.timelineFullscreenMode = true
 				m.timelineExpanded = false
-				m.timelineFullscreenCursor = 0
+				if len(m.timelineEntries) > 0 {
+					m.timelineFullscreenCursor = len(m.timelineEntries) - 1
+				} else {
+					m.timelineFullscreenCursor = 0
+				}
 				initTimelineDetailViewport(m)
 				m.timelineCacheKey = ""
 				m.invalidateFooterCache()
