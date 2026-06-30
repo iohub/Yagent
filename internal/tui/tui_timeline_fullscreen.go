@@ -217,12 +217,35 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 
 	// 头部：名称（合并条目显示计数）
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213")) // 粉色
+	modelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))              // 灰色
+	durationStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // 灰色
+
 	kindLabel := timelineKindLabel(entry.Kind)
 	nameDisplay := entry.Name
 	if entry.MergedCount() > 1 {
 		nameDisplay = fmt.Sprintf("%s ×%d", nameDisplay, entry.MergedCount())
 	}
 	sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", kindLabel, nameDisplay)))
+
+	// LLMCall: 在头部行追加模型名称、状态图标、耗时
+	if entry.Kind == TimelineKindLLMCall {
+		if entry.Detail != "" {
+			if modelPart := parseModelFromDetail(entry.Detail); modelPart != "" {
+				sb.WriteString("  ")
+				sb.WriteString(modelStyle.Render(modelPart))
+			}
+		}
+		if icon, color := statusIconFor(entry); icon != "" {
+			iconStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
+			sb.WriteString("  ")
+			sb.WriteString(iconStyle.Render(icon))
+		}
+		if entry.Duration > 0 {
+			sb.WriteString("  ")
+			sb.WriteString(durationStyle.Render(formatTimelineDuration(entry.Duration)))
+		}
+	}
+
 	sb.WriteString("\n")
 
 	// 元数据行
@@ -230,7 +253,8 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 	metaParts := []string{
 		fmt.Sprintf("  Time: %s", entry.Timestamp.Format("15:04:05.000")),
 	}
-	if entry.Duration > 0 {
+	// Duration在LLMCall的头部行已展示，避免重复
+	if entry.Duration > 0 && entry.Kind != TimelineKindLLMCall {
 		metaParts = append(metaParts, fmt.Sprintf("Duration: %s", formatTimelineDuration(entry.Duration)))
 	}
 	statusText := statusTextFor(entry)
@@ -322,12 +346,7 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 			}
 		}
 	case TimelineKindLLMCall:
-		if entry.Detail != "" {
-			sb.WriteString("  ")
-			sb.WriteString(entry.Detail)
-		} else {
-			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
-		}
+		// 模型名称、状态图标、耗时已在头部行展示，此处不再重复
 	case TimelineKindThinking:
 		if entry.Detail != "" {
 			sb.WriteString("  ")
@@ -349,6 +368,34 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 	return sb.String()
 }
 
+
+// parseModelFromDetail 从LLMCall事件的Detail字段中提取模型名称（含方括号）。
+// Detail格式：
+//   - 运行中: "[gpt-4]"
+//   - 完成:   "✓ [gpt-4-o] · 3.42s"
+//   - 错误:   "✗ [gpt-4] · 1.20s"
+func parseModelFromDetail(detail string) string {
+	start := strings.Index(detail, "[")
+	end := strings.Index(detail, "]")
+	if start >= 0 && end > start {
+		return detail[start : end+1] // 返回 "[gpt-4-o]"
+	}
+	return ""
+}
+
+// statusIconFor 返回状态图标及其颜色。
+func statusIconFor(entry *TimelineEntry) (icon string, colorStr string) {
+	switch entry.Status {
+	case ToolStatusSuccess:
+		return "✓", "82" // 绿色
+	case ToolStatusError:
+		return "✗", "196" // 红色
+	case ToolStatusRunning:
+		return "⟳", "220" // 黄色
+	default:
+		return "", "245" // 无图标
+	}
+}
 // findToolEntryByCallID 通过 callID 在 logEntries 中查找关联的 ToolEntry。
 // 从后往前搜索，找到 toolCallID == callID && toolEntry != nil 的条目，返回其 toolEntry。
 func findToolEntryByCallID(m *model, callID string) *ToolEntry {
@@ -523,8 +570,20 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 	if entry.MergedCount() > 1 {
 		nameDisplay = fmt.Sprintf("%s ×%d", nameDisplay, entry.MergedCount())
 	}
-	// 左侧：类型标签 + 名称
-	leftPart := headerStyle.Render(fmt.Sprintf(" %s %s", kindLabel, nameDisplay))
+	// 左侧基础：类型标签 + 名称
+	leftBase := fmt.Sprintf(" %s %s", kindLabel, nameDisplay)
+	
+	// LLMCall: 在名称后追加模型名称
+	if entry.Kind == TimelineKindLLMCall {
+		if entry.Detail != "" {
+			if modelPart := parseModelFromDetail(entry.Detail); modelPart != "" {
+				leftBase = leftBase + " " + modelPart
+			}
+		}
+	}
+	
+	// 左侧：类型标签 + 名称 + 模型名
+	leftPart := headerStyle.Render(leftBase)
 	
 	// 右侧：时间 + 耗时 + 状态
 	var metaParts []string
@@ -632,12 +691,7 @@ func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string 
 			}
 		}
 	case TimelineKindLLMCall:
-		if entry.Detail != "" {
-			sb.WriteString("  ")
-			sb.WriteString(entry.Detail)
-		} else {
-			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
-		}
+		// 模型名称、状态图标、耗时已在头部行展示，此处不再重复
 	case TimelineKindThinking:
 		if entry.Detail != "" {
 			sb.WriteString("  ")

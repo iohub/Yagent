@@ -66,8 +66,6 @@ func DisplayToolName(name string) string {
 	switch name {
 	case "search_replace_in_file":
 		return "edit_file"
-	case "llm_call":
-		return "think"
 	default:
 		return name
 	}
@@ -186,10 +184,10 @@ var inputPanelIdleStyle = lipgloss.NewStyle().
 // ── Context compression styles ──
 var (
 	CompactBadgeStyle = lipgloss.NewStyle().
-		Background(lipgloss.Color("23")).
-		Foreground(lipgloss.Color("15")).
-		Bold(true).
-		Padding(0, 1)
+				Background(lipgloss.Color("23")).
+				Foreground(lipgloss.Color("15")).
+				Bold(true).
+				Padding(0, 1)
 
 	CompactTokenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
 	CompactArrowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
@@ -260,7 +258,7 @@ func AgentColor(name string) string {
 // ── Thinking styles ──
 // Purple icon and warm italic text for agent thinking/reasoning content.
 var (
-	thinkIconStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).SetString("💭 ")
-	thinkTextStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("142")).Italic(true)
-	thinkDimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	thinkIconStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).SetString("💭 ")
+	thinkTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("142")).Italic(true)
+	thinkDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 )
