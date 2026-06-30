@@ -531,27 +531,36 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 	sb.WriteString(anchorStyle.Render(fmt.Sprintf("── Entry #%d ──", index+1)))
 	sb.WriteString("\n")
 
-	// 头部：名称
+	// 头部行：名称 + 元数据（Time/Duration/Status 在同一行，右对齐）
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
+	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	kindLabel := timelineKindLabel(entry.Kind)
 	nameDisplay := entry.Name
 	if entry.MergedCount() > 1 {
 		nameDisplay = fmt.Sprintf("%s ×%d", nameDisplay, entry.MergedCount())
 	}
-	sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", kindLabel, nameDisplay)))
-	sb.WriteString("\n")
-
-	// 元数据行
-	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	metaParts := []string{
-		fmt.Sprintf("  Time: %s", entry.Timestamp.Format("15:04:05.000")),
-	}
+	// 左侧：类型标签 + 名称
+	leftPart := headerStyle.Render(fmt.Sprintf(" %s %s", kindLabel, nameDisplay))
+	
+	// 右侧：时间 + 耗时 + 状态
+	var metaParts []string
+	metaParts = append(metaParts, entry.Timestamp.Format("15:04:05.000"))
 	if entry.Duration > 0 {
-		metaParts = append(metaParts, fmt.Sprintf("Duration: %s", formatTimelineDuration(entry.Duration)))
+		metaParts = append(metaParts, formatTimelineDuration(entry.Duration))
 	}
 	statusText := statusTextFor(entry)
-	metaParts = append(metaParts, fmt.Sprintf("Status: %s", statusText))
-	sb.WriteString(metaStyle.Render(strings.Join(metaParts, "  │  ")))
+	metaParts = append(metaParts, statusText)
+	rightPart := metaStyle.Render(strings.Join(metaParts, " · "))
+	
+	leftWidth := lipgloss.Width(leftPart)
+	rightWidth := lipgloss.Width(rightPart)
+	padding := width - leftWidth - rightWidth - 2
+	if padding < 1 {
+		padding = 1
+	}
+	sb.WriteString(leftPart)
+	sb.WriteString(strings.Repeat(" ", padding))
+	sb.WriteString(rightPart)
 	sb.WriteString("\n")
 
 	// 分隔线
