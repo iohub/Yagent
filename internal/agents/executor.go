@@ -128,6 +128,18 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			// Calculate duration
 			llmDuration := time.Since(llmStartTime).Seconds()
 
+			// Publish thinking event before llm_call_end
+			if err == nil && cfg.Publisher != nil && len(resp.Choices) > 0 {
+				reasoning := resp.Choices[0].Reasoning
+				if reasoning != "" {
+					cfg.Publisher.Publish("thinking", map[string]interface{}{
+						"content": reasoning,
+						"model":   cfg.LLM.Model(),
+						"agent":   cfg.AgentName,
+					}, cfg.AgentName)
+				}
+			}
+
 			// Publish llm_call_end event after LLM invocation (regardless of error)
 			if cfg.Publisher != nil {
 				metadata := map[string]interface{}{

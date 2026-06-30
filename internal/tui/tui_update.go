@@ -1505,6 +1505,65 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, listenForEvents(m.eventCh)
 		}
 
+		// Handle thinking — display agent thinking/reasoning content
+		if msg.event.Type == "thinking" {
+			// 从 event.Content 提取 thinking 文本（支持 string 和 map 两种格式）
+			thinkingText := ""
+			switch content := msg.event.Content.(type) {
+			case string:
+				thinkingText = content
+			case map[string]interface{}:
+				if text, ok := content["content"].(string); ok {
+					thinkingText = text
+				}
+			}
+			if thinkingText == "" {
+				return m, listenForEvents(m.eventCh)
+			}
+
+			// 限制存储长度（防止超大 thinking 撑爆内存）
+			maxThinkingLen := 10000
+			if len(thinkingText) > maxThinkingLen {
+				thinkingText = thinkingText[:maxThinkingLen] + "\n\n[...思考内容已截断...]"
+			}
+
+			// 创建 logEntry
+			entry := logEntry{
+				timestamp: msg.event.Timestamp,
+				eventType: "thinking",
+				from:      msg.event.From,
+				content:   thinkingText,
+				prefix:    "  │ ",
+				isVerbose: false,
+			}
+
+			m.logEntries = append(m.logEntries, entry)
+			m.viewportDirty = true
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+
+			// 在 timeline 中添加条目
+			callID := fmt.Sprintf("thinking_%s_%d", msg.event.From, msg.event.Timestamp.UnixNano())
+
+			// 预览：取前 80 个字符，去掉换行
+			preview := thinkingText
+			preview = strings.ReplaceAll(preview, "\n", " ")
+			if len(preview) > 80 {
+				preview = preview[:80] + "..."
+			}
+
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        callID,
+				Kind:      TimelineKindThinking,
+				Timestamp: msg.event.Timestamp,
+				Status:    ToolStatusSuccess,
+				Name:      "thinking",
+				Detail:    preview,
+			})
+			m.timelineCacheKey = ""
+
+			return m, listenForEvents(m.eventCh)
+		}
+
 		// Intercept user_help_needed to show interactive dialog
 		if msg.event.Type == "user_help_needed" {
 			m.openConfirmDialog(msg.event)

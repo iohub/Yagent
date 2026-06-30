@@ -328,6 +328,13 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 		} else {
 			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
 		}
+	case TimelineKindThinking:
+		if entry.Detail != "" {
+			sb.WriteString("  ")
+			sb.WriteString(entry.Detail)
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
+		}
 	case TimelineKindContextEvent:
 		if entry.Detail != "" {
 			sb.WriteString("  ")
@@ -361,6 +368,8 @@ func timelineKindLabel(kind TimelineKind) string {
 		return "[T]"
 	case TimelineKindLLMCall:
 		return "[L]"
+	case TimelineKindThinking:
+		return "[Tn]"
 	case TimelineKindContextEvent:
 		return "[C]"
 	default:
@@ -623,6 +632,13 @@ func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string 
 			}
 		}
 	case TimelineKindLLMCall:
+		if entry.Detail != "" {
+			sb.WriteString("  ")
+			sb.WriteString(entry.Detail)
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
+		}
+	case TimelineKindThinking:
 		if entry.Detail != "" {
 			sb.WriteString("  ")
 			sb.WriteString(entry.Detail)

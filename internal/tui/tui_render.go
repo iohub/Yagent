@@ -436,6 +436,13 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 		return rendered
 	}
 
+	// Thinking event — use formatted rendering with caching
+	if entry.eventType == "thinking" {
+		rendered := formatLogEntry(*entry, width)
+		entry.setCachedRender(rendered, width)
+		return rendered
+	}
+
 	// Fallback to simple text rendering
 	formatted := formatLogEntry(*entry, width)
 	entry.setCachedRender(formatted, width)
@@ -984,6 +991,20 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 	case "llm_call_end":
 		prefix = ""
 		contentStyle = llmCallEndStyle
+	case "thinking":
+		prefix = thinkIconStyle.String()
+		contentStyle = thinkTextStyle
+		// 截断过长内容（保留前 200 个字符）
+		contentWidth := maxWidth - 8
+		if contentWidth < 20 {
+			contentWidth = 20
+		}
+		runes := []rune(entry.content)
+		if len(runes) > contentWidth {
+			entry.content = string(runes[:contentWidth-3]) + "..."
+		}
+		// 替换换行符为空格，保持单行显示
+		entry.content = strings.ReplaceAll(entry.content, "\n", " ")
 	case "error":
 		prefix = "✖ ERROR"
 		contentStyle = logErrorLogStyle

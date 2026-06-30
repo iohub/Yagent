@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
+	conductor "codeactor/internal/agents/conductor"
 	"codeactor/internal/compact"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
-	conductor "codeactor/internal/agents/conductor"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
 	"codeactor/internal/tools"
@@ -65,13 +65,13 @@ type ConductorAgent struct {
 	GlobalCtx      *globalctx.GlobalCtx
 	Adapters       []*tools.Adapter
 	maxSteps       int
-	metaRetryCount int                       // max retries for Meta-Agent JSON parse failures
+	metaRetryCount int                             // max retries for Meta-Agent JSON parse failures
 	toolDefMap     map[string]tools.ToolDefinition // tool name → definition from tools.json
-	customAgents   map[string]*CustomAgent   // delegate_<name> → agent design
-	compactEngine  *compact.Engine           // 上下文压缩引擎
-	compactConfig  *compact.Config           // 压缩配置
-	adapter        *ConductorAdapter         // 新旧整合适配器
-	summaryEngine  llm.Engine                // 独立的摘要 LLM 引擎（nil 则复用主引擎）
+	customAgents   map[string]*CustomAgent         // delegate_<name> → agent design
+	compactEngine  *compact.Engine                 // 上下文压缩引擎
+	compactConfig  *compact.Config                 // 压缩配置
+	adapter        *ConductorAdapter               // 新旧整合适配器
+	summaryEngine  llm.Engine                      // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 
 	// 新增：异步增量压缩字段
 	asyncCompactor *compact.AsyncCompactor   // 异步压缩管理器
@@ -83,8 +83,8 @@ type ConductorAgent struct {
 	hasDelegated         bool                      // 标记是否已委派过 agent
 	delegationAttempts   int                       // 委派尝试次数统计
 
-	currentMemory            *memory.ConversationMemory // 当前正在使用的 memory（Run 期间设置）
-	pendingSubAgentMemory    *AgentResult               // 最近一次 delegate 调用的完整结果（用于 memory 注入）
+	currentMemory         *memory.ConversationMemory // 当前正在使用的 memory（Run 期间设置）
+	pendingSubAgentMemory *AgentResult               // 最近一次 delegate 调用的完整结果（用于 memory 注入）
 
 	// LLM 兜底机制字段
 	stepRetries                int           // 步骤重试次数（从 config.LLM.StepRetries 读取）
@@ -405,7 +405,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 
 	// Strangler Fig: 创建适配器桥接层，开始使用新组件（Metrics + CircuitBreaker）
 	adapterCfg := conductor.DefaultRecoveryConfig()
-	adapterCfg.MaxRetries = maxSteps                  // 使用 maxSteps 作为重试次数
+	adapterCfg.MaxRetries = maxSteps // 使用 maxSteps 作为重试次数
 	adapterCfg.CircuitBreakerThreshold = cfg.LLM.CircuitBreakerThreshold
 	adapterCfg.CircuitBreakerResetTimeout = cfg.LLM.CircuitBreakerResetTimeout
 	conductorAdapter := NewConductorAdapter(true, adapterCfg) // enabled=true 启动 Metrics
@@ -440,7 +440,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 
 		// EnhancedCommander 配置
 		EnhancedCommanderCfg: cfg.EnhancedCommander,
-		resultCompressor:     NewResultCompressor(
+		resultCompressor: NewResultCompressor(
 			cfg.EnhancedCommander.CompressionThreshold,
 			cfg.EnhancedCommander.SummaryMaxLength,
 		),
@@ -1118,7 +1118,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			// 验证并修复 tool_call/tool_response 配对完整性
 			messages = validateAndRepairToolCallPairs(messages)
 
-		slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
+			slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
 
 			// Publish llm_call_start event
 			if a.Publisher != nil {
@@ -1135,6 +1135,18 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			// 记录 LLM 耗时指标
 			if a.adapter != nil {
 				a.adapter.RecordLLMDuration(time.Since(llmStartTime))
+			}
+
+			// Publish thinking event (reasoning content) before llm_call_end
+			if llmErr == nil && a.Publisher != nil && len(resp.Choices) > 0 {
+				reasoning := resp.Choices[0].Reasoning
+				if reasoning != "" {
+					a.Publisher.Publish("thinking", map[string]interface{}{
+						"content": reasoning,
+						"model":   a.LLM.Model(),
+						"agent":   a.Name(),
+					}, a.Name())
+				}
 			}
 
 			// Publish llm_call_end event

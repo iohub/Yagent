@@ -86,9 +86,10 @@ func (e *ToolEntry) SetRendered(r string) {
 type TimelineKind int
 
 const (
-	TimelineKindTool    TimelineKind = iota // 工具調用
-	TimelineKindLLMCall                     // LLM 調用
-	TimelineKindContextEvent                // 上下文事件（壓縮、commit載等）
+	TimelineKindTool     TimelineKind = iota // 工具調用
+	TimelineKindLLMCall                      // LLM 調用
+	TimelineKindThinking                     // Agent 思考内容
+	TimelineKindContextEvent                 // 上下文事件（壓縮、commit載等）
 )
 
 // TimelineEntry表示時間線面板中的一個執行條目
