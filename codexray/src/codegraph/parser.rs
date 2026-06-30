@@ -78,7 +78,6 @@ impl CodeParser {
                 "inl" | "inc" | "tpp" | "tpl" |
                 "py" | "py3" | "pyx" |
                 "java" |
-                "js" | "jsx" |
                 "rs" |
                 "ts" |
                 "tsx" |
