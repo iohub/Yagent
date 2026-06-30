@@ -25,7 +25,7 @@ type CodeActor struct {
 	engine               llm.Engine  // default engine (backward-compatible)
 	client               *llm.Client // LLM client for per-agent/tool engine resolution
 	config               *config.Config
-	conductor            *agents.ConductorAgent
+	director *agents.DirectorAgent
 	dispatcher           *messaging.MessageDispatcher
 	mu                   sync.Mutex
 	userResponseChannels map[string]chan string
@@ -116,7 +116,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	chatMaxSteps := defaultSteps.Chat
 	devopsMaxSteps := defaultSteps.DevOps
 	browserMaxSteps := defaultSteps.Browser
-	conductorMaxSteps := defaultSteps.Conductor
+	directorMaxSteps := defaultSteps.Director
 
 	if ca.config != nil {
 		if ca.config.Agent.RepoMaxSteps > 0 {
@@ -134,8 +134,8 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		if ca.config.Agent.BrowserMaxSteps > 0 {
 			browserMaxSteps = ca.config.Agent.BrowserMaxSteps
 		}
-		if ca.config.Agent.ConductorMaxSteps > 0 {
-			conductorMaxSteps = ca.config.Agent.ConductorMaxSteps
+		if ca.config.Agent.DirectorMaxSteps > 0 {
+			directorMaxSteps = ca.config.Agent.DirectorMaxSteps
 		}
 	}
 	metaRetryCount := defaultSteps.MetaRetry // default
@@ -153,7 +153,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	}
 
 	// Resolve per-agent engines
-	conductorEngine := engine
+	directorEngine := engine
 	repoEngine := engine
 	codingEngine := engine
 	chatEngine := engine
@@ -161,7 +161,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	devopsEngine := engine
 	browserEngine := engine
 	if ca.client != nil {
-		conductorEngine = ca.client.GetAgentEngine("conductor")
+		directorEngine = ca.client.GetAgentEngine("director")
 		repoEngine = ca.client.GetAgentEngine("repo")
 		codingEngine = ca.client.GetAgentEngine("coding")
 		chatEngine = ca.client.GetAgentEngine("chat")
@@ -265,7 +265,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		}
 	}
 
-	ca.conductor = agents.NewConductorAgent(ca.globalCtx, conductorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, conductorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine, *ca.config, ca.client)
+	ca.director = agents.NewDirectorAgent(ca.globalCtx, directorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, directorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine, *ca.config, ca.client)
 }
 
 func (ca *CodeActor) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
@@ -325,14 +325,14 @@ func (r *TaskRequest) WithUserMessage(msg string) *TaskRequest {
 func (ca *CodeActor) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 
-	return ca.conductor.Run(req.ctx, req.taskDesc, req.memory)
+	return ca.director.Run(req.ctx, req.taskDesc, req.memory)
 }
 
 // ProcessConversation handles chat messages.
 func (ca *CodeActor) ProcessConversation(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 
-	return ca.conductor.Run(req.ctx, req.userMessage, req.memory)
+	return ca.director.Run(req.ctx, req.userMessage, req.memory)
 }
 
 // SwitchProvider dynamically switches the LLM provider for all agents.

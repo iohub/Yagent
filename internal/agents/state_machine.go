@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Phase 定义 Conductor 运行阶段
+// Phase 定义 Director 运行阶段
 type Phase string
 
 const (

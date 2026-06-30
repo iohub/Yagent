@@ -9,7 +9,7 @@ import (
 )
 
 // ResultCompressor 结果压缩器
-// 大结果存入 SharedMemory，返回摘要给 Conductor
+// 大结果存入 SharedMemory，返回摘要给 Director
 // 小结果直接返回，不压缩
 type ResultCompressor struct {
 	sharedMemory  *SharedMemoryStore // 使用 SharedMemory 的 KV 存储能力

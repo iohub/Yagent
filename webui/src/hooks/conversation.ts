@@ -411,12 +411,12 @@ export const useChat = () => {
         return;
       }
       // 处理 agent_exit 消息
-      // 注意：只有 Conductor（主控 agent）发送的 agent_exit 才表示任务真正结束
+      // 注意：只有 Director（主控 agent）发送的 agent_exit 才表示任务真正结束
       // 子 agent（如 Chat-Agent、Coding-Agent 等）的 agent_exit 只是完成子任务
       if (data?.tool_name === 'agent_exit') {
-        // 只有 Conductor 发送的 agent_exit 才表示任务结束
-        if (message.from === 'Conductor') {
-          console.log('🏁 收到 Conductor 的 agent_exit 消息，任务完成');
+        // 只有 Director 发送的 agent_exit 才表示任务结束
+        if (message.from === 'Director') {
+          console.log('🏁 收到 Director 的 agent_exit 消息，任务完成');
           
           // 解析 result 获取完成任务的详细信息
           let exitReason = '任务已完成';

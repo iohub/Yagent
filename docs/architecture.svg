@@ -85,9 +85,9 @@
 
   <line x1="495" y1="238" x2="495" y2="250" stroke="#7c3aed" stroke-width="1.5" marker-end="url(#arrow)"/>
 
-  <!-- ConductorAgent -->
+  <!-- DirectorAgent -->
   <rect x="260" y="253" width="470" height="52" rx="6" fill="#fff" stroke="#c4b5fd" stroke-width="1.5"/>
-  <text x="495" y="273" text-anchor="middle" font-size="14" font-weight="700" fill="#4c1d95">ConductorAgent</text>
+  <text x="495" y="273" text-anchor="middle" font-size="14" font-weight="700" fill="#4c1d95">DirectorAgent</text>
   <text x="495" y="294" text-anchor="middle" font-size="10.5" fill="#6b7280">orchestrate · route · delegate · review · iterate (max 30 steps)</text>
 
   <!-- Six sub-agents (3 columns × 2 rows) -->

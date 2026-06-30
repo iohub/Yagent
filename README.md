@@ -19,7 +19,7 @@ Most AI coding tools share a fundamental flaw: **they treat code as text, not st
 | Traditional Tools | CodeActor |
 |-------------------|-----------|
 | Flat text pattern matching | 🧠 **Structural code understanding** via AST + call graphs + semantic vectors |
-| Single agent, working alone | 🤖 **Hub-and-Spoke multi-agent**: Conductor orchestrates, six specialized agents execute |
+| Single agent, working alone | 🤖 **Hub-and-Spoke multi-agent**: Director orchestrates, six specialized agents execute |
 | Static capabilities | 🧬 **Meta-Agent**: designs & registers new agents at runtime — the system evolves |
 | Keyword-only search | 🔍 Natural-language semantic search — "find where auth logic is implemented" |
 | No project memory | 📚 **Git Commit Learning**: auto-learns commit history, injects relevant context |
@@ -30,7 +30,7 @@ Most AI coding tools share a fundamental flaw: **they treat code as text, not st
 
 | Agent | Role | Core Capability |
 |-------|------|-----------------|
-| 🎼 **Conductor** | Orchestrator | Task decomposition, dynamic planning, delegation, review |
+| 🎼 **Director** | Orchestrator | Task decomposition, dynamic planning, delegation, review |
 | 🔬 **Repo-Agent** | Code Archaeologist | AST parsing, semantic search, call graphs, code skeletons |
 | ✏️ **Coding-Agent** | Staff Engineer | 22+ tools, autonomous coding, self-correction |
 | 🌐 **Browser-Agent** | Web Researcher | Headless Chrome, page navigation, data extraction |
@@ -45,7 +45,7 @@ Most AI coding tools share a fundamental flaw: **they treat code as text, not st
 ```
 User Interface (TUI / HTTP+WebSocket)
             │
-     🎼 Conductor
+     🎼 Director
      Task Decomposition · Dynamic Planning · Review
             │
    ┌────────┼────────┬────────┬────────┬────────┐
@@ -72,7 +72,7 @@ The **Repo-Agent** is backed by a Rust engine with Tree-sitter AST parsing, Lanc
 
 ### 🧬 2. Meta-Agent: Self-Evolving at Runtime
 
-This is CodeActor's most unique capability. When the Conductor encounters a task beyond built-in agents, the **Meta-Agent**:
+This is CodeActor's most unique capability. When the Director encounters a task beyond built-in agents, the **Meta-Agent**:
 
 1. 🎨 **Designs** — auto-generates a new agent's system prompt and toolset
 2. ⚡ **Executes** — immediately runs the new agent to complete the task
@@ -82,7 +82,7 @@ This is CodeActor's most unique capability. When the Conductor encounters a task
 
 ### 🌐 3. Browser-Agent: Autonomous Web Research
 
-Built-in headless Chrome (go-rod) navigates the web autonomously — documentation, GitHub issues, Stack Overflow. When local context is insufficient, the Conductor delegates web research automatically.
+Built-in headless Chrome (go-rod) navigates the web autonomously — documentation, GitHub issues, Stack Overflow. When local context is insufficient, the Director delegates web research automatically.
 
 > *"Find the latest FastAPI middleware docs and summarize CORS setup" — without leaving the terminal.*
 

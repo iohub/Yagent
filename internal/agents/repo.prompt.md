@@ -98,4 +98,4 @@ behavior, or another agent's analysis), **do not attempt to contact another agen
 Instead:
 1. Clearly state what information is missing
 2. Provide what you can based on repository analysis alone
-3. Let the calling agent or Conductor decide how to obtain the missing information
+3. Let the calling agent or Director decide how to obtain the missing information

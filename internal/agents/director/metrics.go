@@ -1,11 +1,11 @@
-package conductor
+package director
 
 import (
 	"sync"
 	"time"
 )
 
-// MetricsCollector 负责收集和聚合 Conductor 的可观测性指标。
+// MetricsCollector 负责收集和聚合 Director 的可观测性指标。
 // 职责包括：任务计数、工具调用统计、错误统计、耗时统计。
 type MetricsCollector struct {
 	mu          sync.Mutex

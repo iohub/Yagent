@@ -15,7 +15,7 @@ type DelegationGraph map[string][]string
 // Coding、DevOps、Browser 可以直接委派 Repo Agent。
 func DefaultDelegationGraph() DelegationGraph {
 	return DelegationGraph{
-		"conductor": {"repo", "coding", "chat", "meta", "devops", "browser"},
+		"director": {"repo", "coding", "chat", "meta", "devops", "browser"},
 		"coding":    {"repo"},
 		"devops":    {"repo"},
 		"browser":   {"repo"},

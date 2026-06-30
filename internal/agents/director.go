@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	conductor "codeactor/internal/agents/conductor"
+	director "codeactor/internal/agents/director"
 	"codeactor/internal/compact"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
@@ -20,8 +20,8 @@ import (
 	"codeactor/internal/tools"
 )
 
-//go:embed conductor.prompt.md
-var conductorPrompt string
+//go:embed director.prompt.md
+var directorPrompt string
 
 // CustomAgent stores a dynamically designed agent created by Meta-Agent.
 // Once registered, it becomes available as a permanent delegate tool.
@@ -54,7 +54,7 @@ type ProjectContextLoadResult struct {
 	Content     string               `json:"content"`
 }
 
-type ConductorAgent struct {
+type DirectorAgent struct {
 	BaseAgent
 	RepoAgent      *RepoAgent
 	CodingAgent    *CodingAgent
@@ -70,7 +70,7 @@ type ConductorAgent struct {
 	customAgents   map[string]*CustomAgent         // delegate_<name> → agent design
 	compactEngine  *compact.Engine                 // 上下文压缩引擎
 	compactConfig  *compact.Config                 // 压缩配置
-	adapter        *ConductorAdapter               // 新旧整合适配器
+	adapter        *DirectorAdapter               // 新旧整合适配器
 	summaryEngine  llm.Engine                      // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 
 	// 新增：异步增量压缩字段
@@ -102,7 +102,7 @@ type ConductorAgent struct {
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
 // 将成功读取的文件内容格式化后组合返回。文件按顺序尝试，不存在或读取失败时忽略。
 // 返回加载的文件列表和组合后的内容。
-func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
+func (a *DirectorAgent) loadProjectContext() *ProjectContextLoadResult {
 	// 如果已经加载过，直接返回缓存（同一 Agent 实例会话内只加载一次）
 	if a.cachedProjectContext != nil {
 		return a.cachedProjectContext
@@ -134,9 +134,9 @@ func (a *ConductorAgent) loadProjectContext() *ProjectContextLoadResult {
 	return result
 }
 
-func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine, cfg config.Config, llmClient *llm.Client) *ConductorAgent {
-	// self-reference for closures that need the ConductorAgent after construction
-	var self *ConductorAgent
+func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
+	// self-reference for closures that need the DirectorAgent after construction
+	var self *DirectorAgent
 
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
@@ -233,7 +233,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		slog.Info("Conductor delegating to Meta-Agent (design)", "task", task)
+		slog.Info("Director delegating to Meta-Agent (design)", "task", task)
 
 		maxRetries := self.metaRetryCount
 		var lastRawOutput string
@@ -286,7 +286,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 				delegateName := "delegate_" + snakeName
 				for _, ad := range self.Adapters {
 					if ad.Name() == delegateName {
-						slog.Info("Conductor executing newly designed agent", "delegate", delegateName, "display_name", execResult.AgentName)
+						slog.Info("Director executing newly designed agent", "delegate", delegateName, "display_name", execResult.AgentName)
 						callResult, callErr := ad.Call(ctx, fmt.Sprintf(`{"task": %q}`, agentTask))
 						if callErr != nil {
 							return nil, fmt.Errorf("new agent %s execution failed: %w", execResult.AgentName, callErr)
@@ -404,13 +404,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	allAdapters := append(adapters, delegateAdapters...)
 
 	// Strangler Fig: 创建适配器桥接层，开始使用新组件（Metrics + CircuitBreaker）
-	adapterCfg := conductor.DefaultRecoveryConfig()
+	adapterCfg := director.DefaultRecoveryConfig()
 	adapterCfg.MaxRetries = maxSteps // 使用 maxSteps 作为重试次数
 	adapterCfg.CircuitBreakerThreshold = cfg.LLM.CircuitBreakerThreshold
 	adapterCfg.CircuitBreakerResetTimeout = cfg.LLM.CircuitBreakerResetTimeout
-	conductorAdapter := NewConductorAdapter(true, adapterCfg) // enabled=true 启动 Metrics
+	directorAdapter := NewDirectorAdapter(true, adapterCfg) // enabled=true 启动 Metrics
 
-	self = &ConductorAgent{
+	self = &DirectorAgent{
 		BaseAgent:          BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
 		RepoAgent:          repo,
 		CodingAgent:        coding,
@@ -426,7 +426,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 		customAgents:       make(map[string]*CustomAgent),
 		compactEngine:      nil, // 将在 Run 方法中根据配置初始化
 		compactConfig:      compactCfg,
-		adapter:            conductorAdapter,
+		adapter:            directorAdapter,
 		summaryEngine:      summaryEngine,
 		commitManager:      commitManager, // 设置 commit 学习器管理器
 		hasDelegated:       false,         // 初始未委派过
@@ -456,7 +456,7 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	for i, td := range toolDefsForHash {
 		names[i] = td.Function.Name
 	}
-	slog.Info("Conductor tool definitions initialized",
+	slog.Info("Director tool definitions initialized",
 		"hash", toolHash,
 		"tool_count", len(toolDefsForHash),
 		"tool_names", names)
@@ -464,13 +464,13 @@ func NewConductorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *
 	return self
 }
 
-func (a *ConductorAgent) Name() string {
-	return "Conductor"
+func (a *DirectorAgent) Name() string {
+	return "Director"
 }
 
 // getToolFunc returns the ToolFunc implementation for a given tool name.
 // This is used when constructing tool adapters for dynamically created agents.
-func (a *ConductorAgent) getToolFunc(name string) tools.ToolFunc {
+func (a *DirectorAgent) getToolFunc(name string) tools.ToolFunc {
 	switch name {
 	case "read_file":
 		return a.GlobalCtx.FileOps.ExecuteReadFile
@@ -525,7 +525,7 @@ func (a *ConductorAgent) getToolFunc(name string) tools.ToolFunc {
 //
 // 返回值:
 //   - string: 格式化的 commit 摘要文本（空字符串表示无可用的 commit 上下文）
-func (a *ConductorAgent) GetCommitContext(ctx context.Context, userInput string) string {
+func (a *DirectorAgent) GetCommitContext(ctx context.Context, userInput string) string {
 	if a.commitManager == nil || !a.commitManager.Enabled() {
 		return ""
 	}
@@ -651,8 +651,8 @@ func toSnakeCase(name string) string {
 }
 
 // registerCustomAgent creates a new delegate_<name> tool for a custom agent designed by Meta-Agent
-// and adds it to the Conductor's Adapters list. The agent becomes permanently available.
-func (a *ConductorAgent) registerCustomAgent(ca *CustomAgent) {
+// and adds it to the Director's Adapters list. The agent becomes permanently available.
+func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 	delegateName := "delegate_" + ca.Name
 
 	// Check if already registered
@@ -720,7 +720,7 @@ func (a *ConductorAgent) registerCustomAgent(ca *CustomAgent) {
 
 // executeCustomAgent runs a custom agent with its designed system prompt and selected tools.
 // Uses the unified AgentExecutor.
-func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent, adapters []*tools.Adapter, task string) (string, error) {
+func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent, adapters []*tools.Adapter, task string) (string, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(ca.SystemPrompt)
 
 	cfg := DefaultExecutorConfig()
@@ -746,10 +746,10 @@ func (a *ConductorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent
 	return result.Text, nil
 }
 
-// injectSubAgentMemory 将 sub-agent 的执行结果摘要注入到 Conductor memory 中
+// injectSubAgentMemory 将 sub-agent 的执行结果摘要注入到 Director memory 中
 // Phase 1: 只注入摘要，不再注入 sub-agent 的完整对话历史
 // Phase 3+ : Sub-agent 的关键发现通过 SharedMemory 发布/订阅机制共享
-func (a *ConductorAgent) injectSubAgentMemory(result AgentResult, toolCallID string, toolName string) {
+func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID string, toolName string) {
 	if a.currentMemory == nil {
 		return
 	}
@@ -773,8 +773,8 @@ func (a *ConductorAgent) injectSubAgentMemory(result AgentResult, toolCallID str
 		a.currentMemory.Messages = append(a.currentMemory.Messages, summaryMsg)
 	}
 
-	// 重要：result.Memory（sub-agent 的完整对话历史）不再注入到 Conductor 的 memory 中
-	// 这避免了 Conductor 上下文快速膨胀和 Compact Engine 频繁压缩造成的信息丢失
+	// 重要：result.Memory（sub-agent 的完整对话历史）不再注入到 Director 的 memory 中
+	// 这避免了 Director 上下文快速膨胀和 Compact Engine 频繁压缩造成的信息丢失
 	// sub-agent 内部消息保留在 sub-agent 本地，通过 SharedMemory 的 publish/subscribe 机制共享关键信息（Phase 3）
 }
 
@@ -785,7 +785,7 @@ func (a *ConductorAgent) injectSubAgentMemory(result AgentResult, toolCallID str
 // result: Agent 执行结果
 // err: Agent 执行错误
 // 返回: 处理后的结果文本和错误
-func (a *ConductorAgent) applyEnhancedCommander(
+func (a *DirectorAgent) applyEnhancedCommander(
 	agentType string,
 	task string,
 	result AgentResult,
@@ -837,7 +837,7 @@ func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
 	return res
 }
 
-func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
+func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
 	// 设置当前 memory（delegate 闭包通过 a.currentMemory 访问）
 	a.currentMemory = mem
 	defer func() { a.currentMemory = nil }()
@@ -893,7 +893,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 	var messages []llm.Message
 
 	// Always start with System Prompt (with any registered custom agents appended)
-	systemPrompt := a.GlobalCtx.FormatPrompt(conductorPrompt)
+	systemPrompt := a.GlobalCtx.FormatPrompt(directorPrompt)
 	var projectContext string
 	// 只在首次对话时加载项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
 	// 同一会话的后续追问无需重复注入，避免浪费 token。
@@ -1107,7 +1107,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 				if wait > 30*time.Second {
 					wait = 30 * time.Second
 				}
-				slog.Warn("ConductorAgent retrying LLM call", "step", i, "attempt", attempt, "wait", wait)
+				slog.Warn("DirectorAgent retrying LLM call", "step", i, "attempt", attempt, "wait", wait)
 				select {
 				case <-ctx.Done():
 					return "", ctx.Err()
@@ -1118,7 +1118,7 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			// 验证并修复 tool_call/tool_response 配对完整性
 			messages = validateAndRepairToolCallPairs(messages)
 
-			slog.Debug("ConductorAgent calling LLM", "step", i, "messages", messages)
+			slog.Debug("DirectorAgent calling LLM", "step", i, "messages", messages)
 
 			// Publish llm_call_start event
 			if a.Publisher != nil {
@@ -1175,19 +1175,19 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 			}
 			a.consecutiveLLMFailures++
 			a.lastLLMFailureTime = time.Now()
-			slog.Warn("ConductorAgent LLM error, will retry",
+			slog.Warn("DirectorAgent LLM error, will retry",
 				"error", llmErr, "step", i, "attempt", attempt,
 				"consecutive_failures", a.consecutiveLLMFailures)
 		}
 
 		if llmErr != nil {
-			slog.Error("ConductorAgent LLM error after all retries",
+			slog.Error("DirectorAgent LLM error after all retries",
 				"error", llmErr, "step", i)
 			return "", llmErr
 		}
 
 		choice := resp.Choices[0]
-		slog.Debug("ConductorAgent LLM response", "step", i, "content", choice.Content, "tool_calls", len(choice.ToolCalls))
+		slog.Debug("DirectorAgent LLM response", "step", i, "content", choice.Content, "tool_calls", len(choice.ToolCalls))
 
 		if choice.Content != "" {
 			if a.Publisher != nil {
@@ -1314,12 +1314,12 @@ func (a *ConductorAgent) Run(ctx context.Context, input string, mem *memory.Conv
 		a.asyncCompactor.Stop()
 	}
 
-	return "", fmt.Errorf("ConductorAgent exceeded max steps")
+	return "", fmt.Errorf("DirectorAgent exceeded max steps")
 }
 
 // createSummaryClient 创建用于上下文摘要的轻量LLM客户端
 // 如果配置了独立的 summaryEngine 则优先使用，否则复用主引擎
-func (a *ConductorAgent) createSummaryClient() compact.SummarizationClient {
+func (a *DirectorAgent) createSummaryClient() compact.SummarizationClient {
 	engine := a.LLM
 	if a.summaryEngine != nil {
 		engine = a.summaryEngine

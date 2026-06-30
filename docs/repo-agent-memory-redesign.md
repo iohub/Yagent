@@ -53,10 +53,10 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 - 返回 `AgentResult{Text, Memory}`，其中 `Memory` 包含完整的 LLM 对话历史
 - **每次调用完全无状态**——没有跨调用的知识记忆
 
-### 2.2 Conductor 委派机制
+### 2.2 Director 委派机制
 
 ```go
-// conductor.go - delegate_repo 适配器
+// director.go - delegate_repo 适配器
 delegateRepo := tools.NewAdapter("delegate_repo", ..., func(ctx context.Context, params) {
     result, err := repo.Run(ctx, task)
     return self.applyEnhancedCommander("repo", task, result, err)
@@ -65,14 +65,14 @@ delegateRepo := tools.NewAdapter("delegate_repo", ..., func(ctx context.Context,
 
 - 结果经过 `applyEnhancedCommander()` 压缩后返回
 - 结果文本存入 `GlobalCtx.RepoSummary`
-- `injectSubAgentMemory()` 注入摘要到 Conductor 的 ConversationMemory
+- `injectSubAgentMemory()` 注入摘要到 Director 的 ConversationMemory
 
 ### 2.3 现有 Memory 系统三层设计
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  ConversationMemory (memory.go)                              │
-│  Conductor 持有，管理完整对话上下文                           │
+│  Director 持有，管理完整对话上下文                           │
 │  支持 sub-agent 分组 (GroupID, ParentID, IsSubAgent)         │
 ├─────────────────────────────────────────────────────────────┤
 │  SharedMemory (shared.go)                                    │
@@ -88,7 +88,7 @@ delegateRepo := tools.NewAdapter("delegate_repo", ..., func(ctx context.Context,
 **问题**：三层设计中，缺少"Agent 级持久化知识层"。
 - `LocalMemory` — 仅单次生命周期内有效，Run() 结束即丢弃
 - `SharedMemory` — 全局 KV 存储，无结构化知识提炼能力
-- `ConversationMemory` — 仅 Conductor 持有，RepoAgent 无法访问
+- `ConversationMemory` — 仅 Director 持有，RepoAgent 无法访问
 
 ### 2.4 根因分析
 
@@ -580,7 +580,7 @@ SharedMemory KV     ──▶      独立记忆服务         ──▶      分
 | `consolidation_worker.go` | 新增 | 低 | 异步后台任务，故障不影响主流程 |
 | `prompts/memory_consolidation.go` | 新增 | 低 | 纯 prompt 定义 |
 | `SharedMemory` | 使用方 | 低 | 仅新增 key，不修改 SharedMemory 本身 |
-| `conductor.go` | 无变更 | 无 | 记忆常驻对 Conductor 完全透明 |
+| `director.go` | 无变更 | 无 | 记忆常驻对 Director 完全透明 |
 | `executor.go` | 无变更 | 无 | — |
 | `LocalMemory` | 无变更 | 无 | — |
 | `ConversationMemory` | 无变更 | 无 | — |

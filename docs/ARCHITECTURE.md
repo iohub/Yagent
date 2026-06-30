@@ -8,7 +8,7 @@
 - [2. 整体架构分层](#2-整体架构分层)
 - [3. Agent 系统](#3-agent-系统)
   - [3.1 Agent 接口与基础](#31-agent-接口与基础)
-  - [3.2 ConductorAgent 编排器](#32-conductoragent-编排器)
+  - [3.2 DirectorAgent 编排器](#32-directoragent-编排器)
   - [3.3 子 Agent 详解](#33-子-agent-详解)
   - [3.4 委派图（DelegationGraph）](#34-委派图delegationgraph)
   - [3.5 状态机（StateMachine）](#35-状态机statemachine)
@@ -108,7 +108,7 @@ graph TB
     subgraph "核心引擎层"
         CA[CodeActor 应用]
         subgraph "Agent 编排"
-            COND[ConductorAgent 编排者]
+            COND[DirectorAgent 编排者]
             subgraph "子 Agent"
                 REPO[RepoAgent]
                 CODE[CodingAgent]
@@ -161,7 +161,7 @@ graph TB
 |------|------|----------|
 | **表示层** | 用户交互界面 | TUI、Web UI、VS Code 扩展 |
 | **通信层** | 进程间通信、事件分发 | HTTP Server、WebSocket、消息总线 |
-| **核心引擎层** | 业务逻辑、AI 推理 | ConductorAgent、子 Agent、工具、LLM、内存 |
+| **核心引擎层** | 业务逻辑、AI 推理 | DirectorAgent、子 Agent、工具、LLM、内存 |
 | **外部服务层** | 外部能力集成 | codexray、LLM API、浏览器 |
 
 ---
@@ -193,21 +193,21 @@ type BaseAgent struct {
 **设计要点**：
 - `Name()` 返回 Agent 的唯一标识（snake_case 格式）
 - `Run()` 接收任务描述字符串，返回文本结果和完整的内部对话历史
-- `AgentResult.Memory` 包含 `IsSubAgent=true` 的完整对话记录，供 Conductor 注入主上下文
+- `AgentResult.Memory` 包含 `IsSubAgent=true` 的完整对话记录，供 Director 注入主上下文
 
-### 3.2 ConductorAgent 编排器
+### 3.2 DirectorAgent 编排器
 
-**ConductorAgent** 是整个系统的"大脑"，位于 `internal/agents/conductor.go`，负责：
+**DirectorAgent** 是整个系统的"大脑"，位于 `internal/agents/director.go`，负责：
 
 1. **任务评估**：分析用户意图，选择合适的子 Agent
 2. **委派调度**：通过工具调用将任务分发给子 Agent
 3. **结果聚合**：收集子 Agent 输出，整合为最终回复
 4. **流程控制**：状态管理、重试、熔断、上下文压缩协调
 
-#### 3.2.1 Conductor 结构
+#### 3.2.1 Director 结构
 
 ```go
-type ConductorAgent struct {
+type DirectorAgent struct {
     BaseAgent
     // 6 个子 Agent 引用
     RepoAgent      *RepoAgent
@@ -240,7 +240,7 @@ type ConductorAgent struct {
 
 #### 3.2.2 委派工具链
 
-Conductor 通过 Adapters 向 LLM 暴露工具，核心是 6 个委派工具：
+Director 通过 Adapters 向 LLM 暴露工具，核心是 6 个委派工具：
 
 | 工具名 | 目标 Agent | 用途 |
 |--------|-----------|------|
@@ -251,13 +251,13 @@ Conductor 通过 Adapters 向 LLM 暴露工具，核心是 6 个委派工具：
 | `delegate_devops` | DevOpsAgent | 系统运维、Shell 命令 |
 | `delegate_browser` | BrowserAgent | 浏览器自动化 |
 
-#### 3.2.3 Conductor Run 流程
+#### 3.2.3 Director Run 流程
 
 ```mermaid
 sequenceDiagram
     participant User as 用户
     participant CA as CodeActor
-    participant COND as ConductorAgent
+    participant COND as DirectorAgent
     participant LLM as LLM API
     participant TOOL as 工具/子Agent
     participant MEM as 内存系统
@@ -366,7 +366,7 @@ RepoOps = NewRepoOperationsTool(codexrayURL, workDir)
 **工作方式**：
 1. 接收自然语言描述
 2. 单次 LLM 调用生成 JSON 设计输出
-3. Conductor 解析 JSON，注册为新 Agent
+3. Director 解析 JSON，注册为新 Agent
 
 **输出格式**：
 ```json
@@ -410,7 +410,7 @@ type DelegationGraph map[string][]string
 // 默认委派关系
 func DefaultDelegationGraph() DelegationGraph {
     return DelegationGraph{
-        "conductor": {"repo", "coding", "chat", "meta", "devops", "browser"},
+        "director": {"repo", "coding", "chat", "meta", "devops", "browser"},
         "coding":    {"repo"},
         "devops":    {"repo"},
         "browser":   {"repo"},
@@ -423,7 +423,7 @@ func DefaultDelegationGraph() DelegationGraph {
 
 ```mermaid
 graph LR
-    COND[Conductor] --> REPO[Repo]
+    COND[Director] --> REPO[Repo]
     COND --> CODE[Coding]
     COND --> CHAT[Chat]
     COND --> META[Meta]
@@ -443,7 +443,7 @@ graph LR
 
 ### 3.5 状态机（StateMachine）
 
-状态机管理 Conductor 的运行阶段，确保流程可控。
+状态机管理 Director 的运行阶段，确保流程可控。
 
 ```mermaid
 stateDiagram-v2
@@ -674,7 +674,7 @@ CodeActor 支持为不同 Agent 和工具配置不同的 LLM 模型：
 
 ```go
 // 引擎解析
-conductorEngine = client.GetAgentEngine("conductor")
+directorEngine = client.GetAgentEngine("director")
 codingEngine    = client.GetAgentEngine("coding")
 microAgentEngine = client.GetToolEngine("micro_agent")
 ```
@@ -704,7 +704,7 @@ type ChatMessage struct {
 
     // 子 Agent 分组元数据
     GroupID    string  // 同一 sub-agent 调用共享
-    ParentID   string  // 指向 Conductor 的 tool_call_id
+    ParentID   string  // 指向 Director 的 tool_call_id
     IsSubAgent bool    // 快速过滤标记
 }
 
@@ -718,7 +718,7 @@ type ConversationMemory struct {
 1. **自动截断**：超过 MaxSize 时移除最旧的非系统消息
 2. **tool_call 配对修复**：截断后自动修复不匹配的 tool_call
 3. **子 Agent 隔离**：`ToMessages()` 自动跳过 IsSubAgent 消息
-4. **Sub-agent 注入**：子 Agent 完成后，Conductor 将完整 Memory 注入主上下文
+4. **Sub-agent 注入**：子 Agent 完成后，Director 将完整 Memory 注入主上下文
 
 ### 6.2 LocalMemory（本地便签内存）
 
@@ -1027,14 +1027,14 @@ type Config struct {
 
 | 模式 | 应用位置 | 说明 |
 |------|---------|------|
-| **Orchestrator** | ConductorAgent | 编排子 Agent 协作 |
+| **Orchestrator** | DirectorAgent | 编排子 Agent 协作 |
 | **Adapter** | tools.Adapter | 统一工具接口 |
 | **Strategy** | 压缩策略、LLM 引擎选择 | 可切换算法 |
 | **State Machine** | StateMachine | 状态流转控制 |
-| **Circuit Breaker** | ConductorAgent | 连续失败时熔断 |
+| **Circuit Breaker** | DirectorAgent | 连续失败时熔断 |
 | **Retry** | 指数退避重试 | 容错机制 |
 | **Publish-Subscribe** | MessageDispatcher | 事件分发 |
-| **Factory** | NewConductorAgent, NewAgent | Agent 创建 |
+| **Factory** | NewDirectorAgent, NewAgent | Agent 创建 |
 | **Decorator** | Adapter.WithSchema | 增强工具定义 |
 | **Singleton** | GlobalCtx | 全局上下文 |
 
@@ -1052,7 +1052,7 @@ flowchart TB
 
     subgraph Core ["核心处理"]
         APP[CodeActor.Init]
-        COND[ConductorAgent]
+        COND[DirectorAgent]
         
         subgraph Agents ["Agent 层"]
             REPO[RepoAgent]
@@ -1109,8 +1109,8 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph ConductorScope [Conductor 上下文]
-        COND[ConductorAgent]
+    subgraph DirectorScope [Director 上下文]
+        COND[DirectorAgent]
         ADAPTERS[Adapters]
     end
     
@@ -1143,7 +1143,7 @@ flowchart LR
 | 术语 | 英文 | 说明 |
 |------|------|------|
 | Agent | Agent | 具有特定能力的 AI 组件 |
-| Conductor | ConductorAgent | 系统的编排者/大脑 |
+| Director | DirectorAgent | 系统的编排者/大脑 |
 | Sub-Agent | Sub-Agent | 被委派任务的专用 Agent |
 | Tool | Tool | Agent 可使用的操作能力 |
 | Adapter | Adapter | 工具适配器，包装函数为 LLM 可用格式 |
@@ -1168,7 +1168,7 @@ flowchart LR
 | 文件路径 | 说明 |
 |---------|------|
 | `internal/agents/types.go` | Agent 接口定义 |
-| `internal/agents/conductor.go` | ConductorAgent 实现 |
+| `internal/agents/director.go` | DirectorAgent 实现 |
 | `internal/agents/delegation.go` | 委派图定义 |
 | `internal/agents/state_machine.go` | 状态机实现 |
 | `internal/agents/builder.go` | Agent 构建器 |

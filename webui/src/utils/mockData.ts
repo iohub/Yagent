@@ -10,7 +10,7 @@ const mockMessages: any[] = [
   {
     "type": "status_update",
     "timestamp": 1768294885048,
-    "data": "ConductorAgent is thinking (step 1/30)..."
+    "data": "DirectorAgent is thinking (step 1/30)..."
   },
   {
     "type": "tool_call_start",

@@ -44,7 +44,7 @@ type ChatMessage struct {
 
 	// Sub-agent 分组元数据
 	GroupID    string `json:"group_id,omitempty"`     // 标识一次 sub-agent 调用，同一调用的消息共享此ID
-	ParentID   string `json:"parent_id,omitempty"`    // 指向触发此调用的 Conductor tool_call_id
+	ParentID   string `json:"parent_id,omitempty"`    // 指向触发此调用的 Director tool_call_id
 	IsSubAgent bool   `json:"is_sub_agent,omitempty"` // 快速过滤标记，true表示此消息属于sub-agent内部
 }
 

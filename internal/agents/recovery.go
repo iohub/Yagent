@@ -241,7 +241,7 @@ func (r *Recovery) HandleTimeout(ctx context.Context, agentID string, taskID str
 }
 
 // RecoverFromCrash 从崩溃中恢复（通过 StateStore）
-func (r *Recovery) RecoverFromCrash(ctx context.Context, sessionID string) (*ConductorState, error) {
+func (r *Recovery) RecoverFromCrash(ctx context.Context, sessionID string) (*DirectorState, error) {
 	if r.stateStore == nil {
 		return nil, fmt.Errorf("state store not available")
 	}

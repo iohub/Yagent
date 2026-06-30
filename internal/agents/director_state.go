@@ -23,8 +23,8 @@ type TaskState struct {
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// ConductorState Conductor 的可持久化状态快照
-type ConductorState struct {
+// DirectorState Director 的可持久化状态快照
+type DirectorState struct {
 	SessionID    string                `json:"session_id"`
 	Phase        Phase                 `json:"phase"`
 	Iteration    int                   `json:"iteration"`
@@ -38,7 +38,7 @@ type ConductorState struct {
 }
 
 // ComputeChecksum 计算状态数据的 SHA256 校验和
-func (s *ConductorState) ComputeChecksum() string {
+func (s *DirectorState) ComputeChecksum() string {
 	// 排除 checksum 和 saved_at 字段
 	data := struct {
 		SessionID    string                `json:"session_id"`
@@ -65,7 +65,7 @@ func (s *ConductorState) ComputeChecksum() string {
 }
 
 // Validate 验证状态数据的完整性
-func (s *ConductorState) Validate() error {
+func (s *DirectorState) Validate() error {
 	if s.SessionID == "" {
 		return fmt.Errorf("session_id is required")
 	}
@@ -79,9 +79,9 @@ func (s *ConductorState) Validate() error {
 	return nil
 }
 
-// Snapshot 从 ConductorAgent 创建状态快照
-func (a *ConductorAgent) Snapshot() *ConductorState {
-	return &ConductorState{
+// Snapshot 从 DirectorAgent 创建状态快照
+func (a *DirectorAgent) Snapshot() *DirectorState {
+	return &DirectorState{
 		SessionID:    fmt.Sprintf("session-%d", time.Now().UnixNano()),
 		Phase:        PhaseIdle,
 		Iteration:    0,
@@ -95,8 +95,8 @@ func (a *ConductorAgent) Snapshot() *ConductorState {
 
 // StateStore 状态存储接口
 type StateStore interface {
-	Save(state *ConductorState) error
-	Load(sessionID string) (*ConductorState, error)
+	Save(state *DirectorState) error
+	Load(sessionID string) (*DirectorState, error)
 	List() ([]string, error)
 	Delete(sessionID string) error
 }
@@ -115,7 +115,7 @@ func NewFileStateStore(baseDir string) *FileStateStore {
 }
 
 // Save 保存状态快照到文件（原子写入：先写.tmp再rename）
-func (s *FileStateStore) Save(state *ConductorState) error {
+func (s *FileStateStore) Save(state *DirectorState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -148,7 +148,7 @@ func (s *FileStateStore) Save(state *ConductorState) error {
 }
 
 // Load 加载状态快照
-func (s *FileStateStore) Load(sessionID string) (*ConductorState, error) {
+func (s *FileStateStore) Load(sessionID string) (*DirectorState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -161,7 +161,7 @@ func (s *FileStateStore) Load(sessionID string) (*ConductorState, error) {
 		return nil, fmt.Errorf("read state file: %w", err)
 	}
 
-	var state ConductorState
+	var state DirectorState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("unmarshal state: %w", err)
 	}

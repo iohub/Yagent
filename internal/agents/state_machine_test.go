@@ -225,10 +225,10 @@ func TestStateMachine_MustTransitionPanic(t *testing.T) {
 	sm.MustTransition(PhaseDone, "should panic")
 }
 
-// --- ConductorState tests ---
+// --- DirectorState tests ---
 
-func TestConductorState_ComputeChecksum(t *testing.T) {
-	state := &ConductorState{
+func TestDirectorState_ComputeChecksum(t *testing.T) {
+	state := &DirectorState{
 		SessionID: "test-session",
 		Phase:     PhasePlanning,
 		Iteration: 5,
@@ -247,8 +247,8 @@ func TestConductorState_ComputeChecksum(t *testing.T) {
 	}
 }
 
-func TestConductorState_ComputeChecksum_ExcludesSavedAt(t *testing.T) {
-	state := &ConductorState{
+func TestDirectorState_ComputeChecksum_ExcludesSavedAt(t *testing.T) {
+	state := &DirectorState{
 		SessionID: "test-session",
 		Phase:     PhasePlanning,
 		Version:   1,
@@ -265,9 +265,9 @@ func TestConductorState_ComputeChecksum_ExcludesSavedAt(t *testing.T) {
 	}
 }
 
-func TestConductorState_Validate(t *testing.T) {
+func TestDirectorState_Validate(t *testing.T) {
 	// 缺少 session_id
-	state := &ConductorState{Phase: PhasePlanning, Version: 1}
+	state := &DirectorState{Phase: PhasePlanning, Version: 1}
 	state.Checksum = state.ComputeChecksum()
 	err := state.Validate()
 	if err == nil {
@@ -275,7 +275,7 @@ func TestConductorState_Validate(t *testing.T) {
 	}
 
 	// 缺少 phase
-	state = &ConductorState{SessionID: "test", Version: 1}
+	state = &DirectorState{SessionID: "test", Version: 1}
 	state.Checksum = state.ComputeChecksum()
 	err = state.Validate()
 	if err == nil {
@@ -283,7 +283,7 @@ func TestConductorState_Validate(t *testing.T) {
 	}
 
 	// 校验和不匹配
-	state = &ConductorState{
+	state = &DirectorState{
 		SessionID: "test",
 		Phase:     PhasePlanning,
 		Version:   1,
@@ -295,7 +295,7 @@ func TestConductorState_Validate(t *testing.T) {
 	}
 
 	// 合法状态
-	state = &ConductorState{
+	state = &DirectorState{
 		SessionID: "test",
 		Phase:     PhasePlanning,
 		Version:   1,
@@ -307,8 +307,8 @@ func TestConductorState_Validate(t *testing.T) {
 	}
 }
 
-func TestConductorState_TaskState(t *testing.T) {
-	state := &ConductorState{
+func TestDirectorState_TaskState(t *testing.T) {
+	state := &DirectorState{
 		SessionID:    "test",
 		Phase:        PhaseExecuting,
 		Iteration:    1,
@@ -336,7 +336,7 @@ func TestConductorState_TaskState(t *testing.T) {
 		t.Fatalf("marshal error: %v", err)
 	}
 
-	var restored ConductorState
+	var restored DirectorState
 	if err := json.Unmarshal(data, &restored); err != nil {
 		t.Fatalf("unmarshal error: %v", err)
 	}

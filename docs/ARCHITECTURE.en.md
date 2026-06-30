@@ -8,7 +8,7 @@
 - [2. Overall Architecture Layers](#2-overall-architecture-layers)
 - [3. Agent System](#3-agent-system)
   - [3.1 Agent Interface and Basics](#31-agent-interface-and-basics)
-  - [3.2 ConductorAgent Orchestrator](#32-conductoragent-orchestrator)
+  - [3.2 DirectorAgent Orchestrator](#32-directoragent-orchestrator)
   - [3.3 Sub-Agent Details](#33-sub-agent-details)
   - [3.4 Delegation Graph](#34-delegation-graph)
   - [3.5 State Machine](#35-state-machine)
@@ -108,7 +108,7 @@ graph TB
     subgraph "Core Engine Layer"
         CA[CodeActor Application]
         subgraph "Agent Orchestration"
-            COND[ConductorAgent Orchestrator]
+            COND[DirectorAgent Orchestrator]
             subgraph "Sub-Agents"
                 REPO[RepoAgent]
                 CODE[CodingAgent]
@@ -161,7 +161,7 @@ graph TB
 |-------|----------------|----------------|
 | **Presentation Layer** | User interaction interface | TUI, Web UI, VS Code Extension |
 | **Communication Layer** | Inter-process communication, event distribution | HTTP Server, WebSocket, Message Bus |
-| **Core Engine Layer** | Business logic, AI reasoning | ConductorAgent, Sub-Agents, Tools, LLM, Memory |
+| **Core Engine Layer** | Business logic, AI reasoning | DirectorAgent, Sub-Agents, Tools, LLM, Memory |
 | **External Services Layer** | External capability integration | codexray, LLM API, Browser |
 
 ---
@@ -193,21 +193,21 @@ type BaseAgent struct {
 **Design Highlights**:
 - `Name()` returns the Agent's unique identifier (snake_case format)
 - `Run()` accepts a task description string and returns text results along with the complete internal conversation history
-- `AgentResult.Memory` contains the full conversation records with `IsSubAgent=true`, which the Conductor injects into the main context
+- `AgentResult.Memory` contains the full conversation records with `IsSubAgent=true`, which the Director injects into the main context
 
-### 3.2 ConductorAgent Orchestrator
+### 3.2 DirectorAgent Orchestrator
 
-The **ConductorAgent** is the "brain" of the entire system, located at `internal/agents/conductor.go`, responsible for:
+The **DirectorAgent** is the "brain" of the entire system, located at `internal/agents/director.go`, responsible for:
 
 1. **Task Assessment**: Analyze user intent, select appropriate sub-Agent
 2. **Delegation Scheduling**: Distribute tasks to sub-Agents via tool calls
 3. **Result Aggregation**: Collect sub-Agent outputs, integrate into final response
 4. **Flow Control**: State management, retries, circuit breaking, context compression coordination
 
-#### 3.2.1 Conductor Structure
+#### 3.2.1 Director Structure
 
 ```go
-type ConductorAgent struct {
+type DirectorAgent struct {
     BaseAgent
     // 6 sub-Agent references
     RepoAgent      *RepoAgent
@@ -240,7 +240,7 @@ type ConductorAgent struct {
 
 #### 3.2.2 Delegation Toolchain
 
-Conductor exposes tools to the LLM through Adapters, with the core being 6 delegation tools:
+Director exposes tools to the LLM through Adapters, with the core being 6 delegation tools:
 
 | Tool Name | Target Agent | Purpose |
 |-----------|-------------|---------|
@@ -251,13 +251,13 @@ Conductor exposes tools to the LLM through Adapters, with the core being 6 deleg
 | `delegate_devops` | DevOpsAgent | System operations, Shell commands |
 | `delegate_browser` | BrowserAgent | Browser automation |
 
-#### 3.2.3 Conductor Run Flow
+#### 3.2.3 Director Run Flow
 
 ```mermaid
 sequenceDiagram
     participant User as User
     participant CA as CodeActor
-    participant COND as ConductorAgent
+    participant COND as DirectorAgent
     participant LLM as LLM API
     participant TOOL as Tool/Sub-Agent
     participant MEM as Memory System
@@ -366,7 +366,7 @@ RepoOps = NewRepoOperationsTool(codexrayURL, workDir)
 **Workflow**:
 1. Receive natural language description
 2. Single LLM call generates JSON design output
-3. Conductor parses JSON, registers as new Agent
+3. Director parses JSON, registers as new Agent
 
 **Output Format**:
 ```json
@@ -410,7 +410,7 @@ type DelegationGraph map[string][]string
 // Default delegation relationships
 func DefaultDelegationGraph() DelegationGraph {
     return DelegationGraph{
-        "conductor": {"repo", "coding", "chat", "meta", "devops", "browser"},
+        "director": {"repo", "coding", "chat", "meta", "devops", "browser"},
         "coding":    {"repo"},
         "devops":    {"repo"},
         "browser":   {"repo"},
@@ -423,7 +423,7 @@ func DefaultDelegationGraph() DelegationGraph {
 
 ```mermaid
 graph LR
-    COND[Conductor] --> REPO[Repo]
+    COND[Director] --> REPO[Repo]
     COND --> CODE[Coding]
     COND --> CHAT[Chat]
     COND --> META[Meta]
@@ -443,7 +443,7 @@ graph LR
 
 ### 3.5 State Machine
 
-The State Machine manages the Conductor's execution phases, ensuring controlled flow.
+The State Machine manages the Director's execution phases, ensuring controlled flow.
 
 ```mermaid
 stateDiagram-v2
@@ -675,7 +675,7 @@ Configuration Hierarchy:
 
 ```go
 // Engine resolution
-conductorEngine = client.GetAgentEngine("conductor")
+directorEngine = client.GetAgentEngine("director")
 codingEngine    = client.GetAgentEngine("coding")
 microAgentEngine = client.GetToolEngine("micro_agent")
 ```
@@ -705,7 +705,7 @@ type ChatMessage struct {
 
     // Sub-Agent grouping metadata
     GroupID    string  // Shared by same sub-agent call
-    ParentID   string  // Points to Conductor's tool_call_id
+    ParentID   string  // Points to Director's tool_call_id
     IsSubAgent bool    // Quick filter flag
 }
 
@@ -719,7 +719,7 @@ type ConversationMemory struct {
 1. **Automatic Truncation**: When exceeding MaxSize, removes oldest non-system messages
 2. **tool_call Pairing Repair**: Automatically repairs mismatched tool_calls after truncation
 3. **Sub-Agent Isolation**: `ToMessages()` automatically skips IsSubAgent messages
-4. **Sub-agent Injection**: After sub-Agent completes, Conductor injects full Memory into main context
+4. **Sub-agent Injection**: After sub-Agent completes, Director injects full Memory into main context
 
 ### 6.2 LocalMemory
 
@@ -1028,14 +1028,14 @@ type Config struct {
 
 | Pattern | Location | Description |
 |---------|----------|-------------|
-| **Orchestrator** | ConductorAgent | Orchestrate sub-Agent collaboration |
+| **Orchestrator** | DirectorAgent | Orchestrate sub-Agent collaboration |
 | **Adapter** | tools.Adapter | Unified tool interface |
 | **Strategy** | Compression strategy, LLM engine selection | Swappable algorithms |
 | **State Machine** | StateMachine | State flow control |
-| **Circuit Breaker** | ConductorAgent | Circuit breaking on consecutive failures |
+| **Circuit Breaker** | DirectorAgent | Circuit breaking on consecutive failures |
 | **Retry** | Exponential backoff retry | Fault tolerance mechanism |
 | **Publish-Subscribe** | MessageDispatcher | Event distribution |
-| **Factory** | NewConductorAgent, NewAgent | Agent creation |
+| **Factory** | NewDirectorAgent, NewAgent | Agent creation |
 | **Decorator** | Adapter.WithSchema | Enhanced tool definition |
 | **Singleton** | GlobalCtx | Global context |
 
@@ -1053,7 +1053,7 @@ flowchart TB
 
     subgraph Core ["Core Processing"]
         APP[CodeActor.Init]
-        COND[ConductorAgent]
+        COND[DirectorAgent]
         
         subgraph Agents ["Agent Layer"]
             REPO[RepoAgent]
@@ -1110,8 +1110,8 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph ConductorScope [Conductor Context]
-        COND[ConductorAgent]
+    subgraph DirectorScope [Director Context]
+        COND[DirectorAgent]
         ADAPTERS[Adapters]
     end
     
@@ -1144,7 +1144,7 @@ flowchart LR
 | Term | English | Description |
 |------|---------|-------------|
 | Agent | Agent | AI component with specific capabilities |
-| Conductor | ConductorAgent | The orchestrator/brain of the system |
+| Director | DirectorAgent | The orchestrator/brain of the system |
 | Sub-Agent | Sub-Agent | Dedicated Agent delegated a task |
 | Tool | Tool | Operational capability available to Agents |
 | Adapter | Adapter | Tool adapter that wraps functions into LLM-consumable format |
@@ -1169,7 +1169,7 @@ flowchart LR
 | File Path | Description |
 |-----------|-------------|
 | `internal/agents/types.go` | Agent interface definition |
-| `internal/agents/conductor.go` | ConductorAgent implementation |
+| `internal/agents/director.go` | DirectorAgent implementation |
 | `internal/agents/delegation.go` | Delegation graph definition |
 | `internal/agents/state_machine.go` | State machine implementation |
 | `internal/agents/builder.go` | Agent builder |

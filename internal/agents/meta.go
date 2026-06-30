@@ -16,7 +16,7 @@ var metaPrompt string
 
 // MetaAgent designs specialized agents on-the-fly using prompt engineering best practices.
 // It is a pure designer — it makes a single LLM call (no tools) to produce an agent design
-// JSON. The Conductor then registers and executes the designed agent.
+// JSON. The Director then registers and executes the designed agent.
 type MetaAgent struct {
 	BaseAgent
 	GlobalCtx  *globalctx.GlobalCtx

@@ -4,7 +4,7 @@ package config
 // 来源说明: default_config.toml 中的值作为"推荐值"，此处为"程序保证值"
 // 两者应保持一致。如果用户未在 TOML 中配置，使用此处定义的默认值。
 var DefaultMaxSteps = struct {
-	Conductor int
+	Director int
 	Coding    int
 	Repo      int
 	Chat      int
@@ -13,7 +13,7 @@ var DefaultMaxSteps = struct {
 	Meta      int
 	MetaRetry int
 }{
-	Conductor: 100,
+	Director: 100,
 	Coding:    150,
 	Repo:      50,
 	Chat:      50,

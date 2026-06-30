@@ -843,7 +843,7 @@ const maxAgentTagLen = 12
 
 // RenderAgentTag produces a compact, colored agent name string.
 // Returns empty string if agent is empty.
-// Visual: "Conductor" in agent's unique color, bold, no background.
+// Visual: "Director" in agent's unique color, bold, no background.
 func RenderAgentTag(agent string) string {
 	if agent == "" {
 		return ""
@@ -875,7 +875,7 @@ func RenderAgentBadge(agent string) string {
 
 // RenderAgentSeparator produces a thin separator line with agent name
 // for AI response blocks.
-// Visual: "── Conductor ──────────────────────"
+// Visual: ── Director ──────────────────────"
 // If agent is empty, returns empty string.
 func RenderAgentSeparator(agent string, width int) string {
 	if agent == "" || width <= 0 {

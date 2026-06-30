@@ -33,7 +33,7 @@ type ExecutorConfig struct {
 	// for the system prompt where it benefits from LLM prompt caching.
 	RepoContext string
 	// OnToolResult is an optional callback invoked after each tool executes.
-	// Used by Conductor for special handling (e.g. delegate_repo → RepoSummary).
+	// Used by Director for special handling (e.g. delegate_repo → RepoSummary).
 	OnToolResult func(toolName string, result string)
 }
 
@@ -268,7 +268,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 }
 
 // ConvertLLMHistoryToMemory 将 RunAgentLoop 返回的 llm.Message 历史转换为 memory.ChatMessage 切片
-// 所有消息的 IsSubAgent 设为 true（GroupID 和 ParentID 由 Conductor 后续填充）
+// 所有消息的 IsSubAgent 设为 true（GroupID 和 ParentID 由 Director 后续填充）
 func ConvertLLMHistoryToMemory(history []llm.Message) []memory.ChatMessage {
 	result := make([]memory.ChatMessage, 0, len(history))
 	for _, msg := range history {

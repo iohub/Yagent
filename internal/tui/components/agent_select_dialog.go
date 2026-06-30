@@ -11,7 +11,7 @@ import (
 
 // ConfigEntry represents a target with its current model configuration.
 type ConfigEntry struct {
-	Target      string // "global" or agent name (e.g., "conductor")
+	Target      string // "global" or agent name (e.g., "director")
 	DisplayName string // display name
 	Provider    string // current provider
 	Model       string // current model

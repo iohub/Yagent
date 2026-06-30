@@ -336,7 +336,7 @@ func (m *model) showModelSelectionDialog() tea.Cmd {
 		return nil
 	}
 
-	validAgents := []string{"conductor", "coding", "repo", "chat", "meta", "devops", "browser"}
+	validAgents := []string{"director", "coding", "repo", "chat", "meta", "devops", "browser"}
 	entries := make([]components.ConfigEntry, 0, len(validAgents)+1)
 	// Global entry
 	entries = append(entries, components.ConfigEntry{

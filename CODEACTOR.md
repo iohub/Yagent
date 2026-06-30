@@ -13,13 +13,13 @@
 - [5. 系统架构](#5-系统架构)
 - [6. 开发与构建](#6-开发与构建)
 - [7. 编码规范](#7-编码规范)
-- [8. Conductor 行为准则](#8-conductor-行为准则)
+- [8. Director 行为准则](#8-director-行为准则)
 
 ---
 
 ## 1. 项目概述
 
-**CodeActor Agent** 是一个基于 Go 语言开发的多智能体 AI 编程助手系统，采用 **Hub-and-Spoke（中枢-辐条）** 架构。系统的核心是 **Conductor Agent（指挥家）**，它协调多个专用子智能体完成代码分析、规划、编写、测试和自我修正等复杂任务。
+**CodeActor Agent** 是一个基于 Go 语言开发的多智能体 AI 编程助手系统，采用 **Hub-and-Spoke（中枢-辐条）** 架构。系统的核心是 **Director Agent（指挥家）**，它协调多个专用子智能体完成代码分析、规划、编写、测试和自我修正等复杂任务。
 
 ### 1.1 核心定位
 
@@ -38,7 +38,7 @@
                         │
               CodeActor (任务调度)
                         │
-              ConductorAgent (中枢指挥家)
+              DirectorAgent (中枢指挥家)
               ┌───────────┼───────────┬───────────┐
               │           │           │           │
         delegate_repo delegate_coding delegate_chat delegate_meta
@@ -48,7 +48,7 @@
 
 ### 1.3 设计原则
 
-1. **单一交互点**: Conductor 是唯一与用户直接交互的 Agent
+1. **单一交互点**: Director 是唯一与用户直接交互的 Agent
 2. **职责分离**: 每个子 Agent 有明确的职责边界和权限限制
 3. **强制委派**: 文件操作和代码修改必须通过专用 Agent 完成
 4. **验证优先**: 所有修改必须经过编译/测试验证
@@ -85,7 +85,7 @@
 
 ## 3. Agent 角色定义
 
-### 3.1 Conductor (指挥家)
+### 3.1 Director (指挥家)
 
 **定位**: 项目经理 + 技术主管，**唯一与用户直接交互的 Agent**。
 
@@ -215,7 +215,7 @@
 **动态注册流程**:
 
 ```
-Conductor 调用 delegate_meta(task)
+Director 调用 delegate_meta(task)
   ↓
 MetaAgent.Run(task) - LLM 生成 JSON 输出
   ↓
@@ -432,7 +432,7 @@ type Adapter struct {
                         │
               CodeActor (任务调度)
                         │
-              ConductorAgent (中枢指挥家)
+              DirectorAgent (中枢指挥家)
               ┌───────────┼───────────┬───────────┐
               │           │           │           │
         delegate_repo delegate_coding delegate_chat delegate_meta
@@ -462,8 +462,8 @@ Agent → MessagePublisher → MessageDispatcher → TUIConsumer / WebSocketCons
 1. 用户输入 (TUI 或 HTTP POST /api/start_task)
 2. TaskManager.CreateTask() - 生成 UUID，创建 Memory
 3. ExecuteTask() - 初始化 codexray 索引，启动消息分发
-4. ConductorAgent.Run() - 进入循环
-5. Conductor 循环 (最多 maxSteps 步):
+4. DirectorAgent.Run() - 进入循环
+5. Director 循环 (最多 maxSteps 步):
    ├── 构造 messages: [SystemPrompt, ...Memory.Messages]
    ├── LLM.GenerateContent(messages, WithTools)
    ├── 发布 ai_response 事件
@@ -483,7 +483,7 @@ codeactor-agent/
 ├── main.go                    # 入口
 ├── internal/
 │   ├── agents/                # Agent 实现（扁平文件）
-│   │   ├── conductor.go       # Conductor Agent
+│   │   ├── director.go       # Director Agent
 │   │   ├── coding.go          # Coding Agent
 │   │   ├── repo.go            # Repo Agent
 │   │   ├── chat.go            # Chat Agent
@@ -616,7 +616,7 @@ api_base_url = "https://..."
 api_key = "your-key"
 
 [agent]
-conductor_max_steps = 30
+director_max_steps = 30
 coding_max_steps = 50
 repo_max_steps = 30
 lang = "Chinese"
@@ -631,7 +631,7 @@ use_provider = "siliconflow"
 
 # 第二级: agents.llm (按 Agent 覆盖)
 [agents.llm]
-conductor.use_provider = "aliyun"
+director.use_provider = "aliyun"
 coding.use_provider = "deepseek"
 
 # 第三级: tools.llm (按 Tool 覆盖)
@@ -691,9 +691,9 @@ type Agent interface {
 
 ---
 
-## 8. Conductor 行为准则
+## 8. Director 行为准则
 
-> **以下准则为 Conductor Agent 的强制约束，所有 Agent 在执行任务时必须遵守。**
+> **以下准则为 Director Agent 的强制约束，所有 Agent 在执行任务时必须遵守。**
 
 ### 8.1 核心原则
 

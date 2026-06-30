@@ -17,8 +17,8 @@ type AgentFactory func(deps map[string]interface{}) interface{}
 type BuildResult struct {
 	// Agents 包含所有已构建的 Agent，key 为 Agent 名称。
 	Agents map[string]interface{}
-	// Conductor 是根 Agent（conductor 节点）。
-	Conductor *ConductorAgent
+	// Director 是根 Agent（director 节点）。
+	Director *DirectorAgent
 }
 
 // AgentBuilder 按拓扑序构建 Agent，并根据 DelegationGraph 注入委派工具。
@@ -34,7 +34,7 @@ type AgentBuilder struct {
 // 1. 验证委派图
 // 2. 拓扑排序（叶子节点先构建）
 // 3. 按序构建每个 Agent，传递已构建的依赖
-// 4. 返回包含所有 Agent 和 Conductor 引用的结果
+// 4. 返回包含所有 Agent 和 Director 引用的结果
 func (b *AgentBuilder) Build() (*BuildResult, error) {
 	// 1. 验证委派图
 	if err := b.Graph.Validate(); err != nil {
@@ -66,19 +66,19 @@ func (b *AgentBuilder) Build() (*BuildResult, error) {
 		slog.Debug("AgentBuilder: built agent", "name", name)
 	}
 
-	// 4. 提取 Conductor
-	conductorRaw, ok := agents["conductor"]
+	// 4. 提取 Director
+	directorRaw, ok := agents["director"]
 	if !ok {
-		return nil, fmt.Errorf("agent builder: conductor agent not found in build results")
+		return nil, fmt.Errorf("agent builder: director agent not found in build results")
 	}
-	conductor, ok := conductorRaw.(*ConductorAgent)
+	director, ok := directorRaw.(*DirectorAgent)
 	if !ok {
-		return nil, fmt.Errorf("agent builder: conductor agent is not *ConductorAgent, got %T", conductorRaw)
+		return nil, fmt.Errorf("agent builder: director agent is not *DirectorAgent, got %T", directorRaw)
 	}
 
 	return &BuildResult{
 		Agents:    agents,
-		Conductor: conductor,
+		Director: director,
 	}, nil
 }
 

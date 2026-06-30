@@ -259,7 +259,7 @@ console.log(`支持的事件类型: ${Object.values(EventTypes).join(', ')}`);
     "arguments": "{\"task\": \"...\"}",
     "tool_call_id": "call_123"
   },
-  "from": "Conductor-Agent",
+  "from": "Director-Agent",
   "task_id": "task_456",
   "message": ""
 }
@@ -344,7 +344,7 @@ Agent 后端通过 `MessagePublisher` 发布事件，经 `MessageDispatcher` 分
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Agent 内部（conductor.go / executor.go）                 │
+│  Agent 内部（director.go / executor.go）                 │
 │                                                          │
 │  Publish("event_type", content, from)                    │
 │       │                                                  │
@@ -394,4 +394,4 @@ Agent 后端通过 `MessagePublisher` 发布事件，经 `MessageDispatcher` 分
 | Go 消息分发器 | `internal/messaging/message_dispatcher.go` |
 | TUI 消费者 | `internal/messaging/consumers/tui.go` |
 | WebSocket 消费者 | `internal/http/websocket.go` |
-| Agent 发布调用 | `internal/agents/conductor.go`, `internal/agents/executor.go` |
+| Agent 发布调用 | `internal/agents/director.go`, `internal/agents/executor.go` |

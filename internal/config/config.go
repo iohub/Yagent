@@ -31,7 +31,7 @@ type AppConfig struct {
 
 // AgentConfig contains agent-specific configuration
 type AgentConfig struct {
-	ConductorMaxSteps int    `toml:"conductor_max_steps"`
+	DirectorMaxSteps int    `toml:"director_max_steps"`
 	CodingMaxSteps    int    `toml:"coding_max_steps"`
 	ChatMaxSteps      int    `toml:"chat_max_steps"`
 	RepoMaxSteps      int    `toml:"repo_max_steps"`
@@ -59,7 +59,7 @@ type AgentLLMOverride struct {
 // Priority: per-agent > agents.default > global.
 type AgentsLLMConfig struct {
 	UseProvider string            `toml:"use_provider"` // default for all agents
-	Conductor   *AgentLLMOverride `toml:"conductor,omitempty"`
+	Director   *AgentLLMOverride `toml:"director,omitempty"`
 	Coding      *AgentLLMOverride `toml:"coding,omitempty"`
 	Repo        *AgentLLMOverride `toml:"repo,omitempty"`
 	Chat        *AgentLLMOverride `toml:"chat,omitempty"`
@@ -104,7 +104,7 @@ type LLMConfig struct {
 	// MaxRetries 底层引擎重试次数（默认5，保持原行为）
 	MaxRetries int `toml:"max_retries" json:"max_retries" yaml:"max_retries"`
 
-	// StepRetries 步骤重试次数（executor/conductor/meta），0=不重试
+	// StepRetries 步骤重试次数（executor/director/meta），0=不重试
 	StepRetries int `toml:"step_retries" json:"step_retries" yaml:"step_retries"`
 
 	// CircuitBreakerThreshold 熔断阈值（连续失败次数），0=不启用
@@ -163,8 +163,8 @@ func (c *Config) resolveAgentProvider(agentName string) string {
 
 func (c *Config) getAgentOverride(agentName string) *AgentLLMOverride {
 	switch strings.ToLower(agentName) {
-	case "conductor-agent", "conductor":
-		return c.Agents.LLM.Conductor
+	case "conductor-agent", "director-agent", "director":
+		return c.Agents.LLM.Director
 	case "coding-agent", "coding":
 		return c.Agents.LLM.Coding
 	case "repo-agent", "repo":
@@ -350,8 +350,8 @@ func (c *Config) validate() error {
 	// ═══════ Agent MaxSteps 默认值设置 ═══════
 	// 为各 agent 的最大步数设置默认值（如果未在 TOML 中配置）
 	defaultSteps := DefaultMaxSteps
-	if c.Agent.ConductorMaxSteps == 0 {
-		c.Agent.ConductorMaxSteps = defaultSteps.Conductor
+	if c.Agent.DirectorMaxSteps == 0 {
+		c.Agent.DirectorMaxSteps = defaultSteps.Director
 	}
 	if c.Agent.CodingMaxSteps == 0 {
 		c.Agent.CodingMaxSteps = defaultSteps.Coding

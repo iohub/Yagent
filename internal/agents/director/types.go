@@ -1,7 +1,7 @@
-// Package conductor provides the orchestration engine for the multi-agent system.
+// Package director provides the orchestration engine for the multi-agent system.
 // It is responsible for task decomposition, agent routing, memory management,
 // error recovery, and observability metrics.
-package conductor
+package director
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"codeactor/internal/llm"
 )
 
-// AgentRunner defines the interface for any sub-agent that Conductor can delegate to.
-// This breaks the circular dependency between conductor and agents packages.
+// AgentRunner defines the interface for any sub-agent that Director can delegate to.
+// This breaks the circular dependency between director and agents packages.
 type AgentRunner interface {
 	// Name returns the agent's display name.
 	Name() string
@@ -24,7 +24,7 @@ type AgentRunnerResult struct {
 	Text string
 }
 
-// LLMClient abstracts the LLM interaction for the conductor sub-components.
+// LLMClient abstracts the LLM interaction for the director sub-components.
 type LLMClient interface {
 	GenerateContent(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, opts *llm.CallOptions) (*llm.Response, error)
 	Model() string
@@ -118,7 +118,7 @@ type ChatMessage struct {
 
 // --- Metrics types ---
 
-// MetricsSnapshot is a point-in-time snapshot of conductor metrics.
+// MetricsSnapshot is a point-in-time snapshot of director metrics.
 type MetricsSnapshot struct {
 	TaskCount     int                `json:"task_count"`
 	ToolCallCount int                `json:"tool_call_count"`

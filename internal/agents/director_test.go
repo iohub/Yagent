@@ -50,13 +50,13 @@ func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 	}
 }
 
-// newTestConductorAgent creates a ConductorAgent with real GlobalCtx but nil sub-agents.
+// newTestDirectorAgent creates a DirectorAgent with real GlobalCtx but nil sub-agents.
 // Tests that don't invoke delegate tools can use this safely.
-func newTestConductorAgent(t *testing.T, workDir string) *ConductorAgent {
+func newTestDirectorAgent(t *testing.T, workDir string) *DirectorAgent {
 	t.Helper()
 	gctx := newTestGlobalCtx(workDir)
 	engine := &mockEngine{}
-	return NewConductorAgent(gctx, engine, nil, nil, nil, nil, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	return NewDirectorAgent(gctx, engine, nil, nil, nil, nil, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
 }
 
 // makeMetaOutput builds a valid Meta-Agent JSON output string.
@@ -218,7 +218,7 @@ func TestParseMetaAgentOutput_EmptyAgentName(t *testing.T) {
 
 func TestGetToolFunc_KnownTools(t *testing.T) {
 	workDir := t.TempDir()
-	agent := newTestConductorAgent(t, workDir)
+	agent := newTestDirectorAgent(t, workDir)
 
 	knownTools := []string{
 		"read_file", "search_replace_in_file", "create_file", "run_bash",
@@ -239,7 +239,7 @@ func TestGetToolFunc_KnownTools(t *testing.T) {
 
 func TestGetToolFunc_UnknownTool(t *testing.T) {
 	workDir := t.TempDir()
-	agent := newTestConductorAgent(t, workDir)
+	agent := newTestDirectorAgent(t, workDir)
 
 	fn := agent.getToolFunc("nonexistent_tool_xyz")
 	if fn != nil {
@@ -251,7 +251,7 @@ func TestGetToolFunc_UnknownTool(t *testing.T) {
 
 func TestRegisterCustomAgent_Success(t *testing.T) {
 	workDir := t.TempDir()
-	agent := newTestConductorAgent(t, workDir)
+	agent := newTestDirectorAgent(t, workDir)
 
 	initialAdapterCount := len(agent.Adapters)
 
@@ -293,7 +293,7 @@ func TestRegisterCustomAgent_Success(t *testing.T) {
 
 func TestRegisterCustomAgent_DuplicateRegistration(t *testing.T) {
 	workDir := t.TempDir()
-	agent := newTestConductorAgent(t, workDir)
+	agent := newTestDirectorAgent(t, workDir)
 
 	ca := &CustomAgent{
 		Name:         "test_agent",
@@ -315,7 +315,7 @@ func TestRegisterCustomAgent_DuplicateRegistration(t *testing.T) {
 
 func TestRegisterCustomAgent_UnknownToolsIgnored(t *testing.T) {
 	workDir := t.TempDir()
-	agent := newTestConductorAgent(t, workDir)
+	agent := newTestDirectorAgent(t, workDir)
 
 	ca := &CustomAgent{
 		Name:         "partial_agent",
@@ -351,8 +351,8 @@ func TestCustomAgentDelegateTool_Execution(t *testing.T) {
 		},
 	}
 
-	// Build conductor with mocked LLM
-	conductor := NewConductorAgent(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	// Build director with mocked LLM
+	director := NewDirectorAgent(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
 
 	ca := &CustomAgent{
 		Name:         "test_executor",
@@ -361,11 +361,11 @@ func TestCustomAgentDelegateTool_Execution(t *testing.T) {
 		ToolsUsed:    []string{"read_file", "thinking", "agent_exit"},
 		Description:  "Executes test tasks.",
 	}
-	conductor.registerCustomAgent(ca)
+	director.registerCustomAgent(ca)
 
 	// Find the newly created delegate tool
 	var delegateTool *tools.Adapter
-	for _, ad := range conductor.Adapters {
+	for _, ad := range director.Adapters {
 		if ad.Name() == "delegate_test_executor" {
 			delegateTool = ad
 			break
@@ -415,7 +415,7 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 		},
 	}
 
-	conductor := NewConductorAgent(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
 
 	ca := &CustomAgent{
 		Name:         "finisher",
@@ -424,10 +424,10 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 		ToolsUsed:    []string{"agent_exit"},
 		Description:  "Always exits.",
 	}
-	conductor.registerCustomAgent(ca)
+	director.registerCustomAgent(ca)
 
 	var delegateTool *tools.Adapter
-	for _, ad := range conductor.Adapters {
+	for _, ad := range director.Adapters {
 		if ad.Name() == "delegate_finisher" {
 			delegateTool = ad
 			break
@@ -455,15 +455,15 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 
 func TestSystemPrompt_NoCustomAgents(t *testing.T) {
 	workDir := t.TempDir()
-	agent := newTestConductorAgent(t, workDir)
+	agent := newTestDirectorAgent(t, workDir)
 
 	// Build system prompt like Run() does
-	systemPrompt := agent.GlobalCtx.FormatPrompt(conductorPrompt)
+	systemPrompt := agent.GlobalCtx.FormatPrompt(directorPrompt)
 	if len(agent.customAgents) > 0 {
 		systemPrompt += "\n\n### Custom Agents..."
 	}
 
-	// The conductor prompt references ### Custom Agents in the Meta-Agent section,
+	// The director prompt references ### Custom Agents in the Meta-Agent section,
 	// so we check that the actual markdown block (with agent listings) is NOT present.
 	// The key difference: the listing block starts with "\n\n### Custom Agents\nThe following specialized"
 	if strings.Contains(systemPrompt, "\n\n### Custom Agents\nThe following specialized agents") {
@@ -473,7 +473,7 @@ func TestSystemPrompt_NoCustomAgents(t *testing.T) {
 
 func TestSystemPrompt_WithCustomAgents(t *testing.T) {
 	workDir := t.TempDir()
-	agent := newTestConductorAgent(t, workDir)
+	agent := newTestDirectorAgent(t, workDir)
 
 	// Register two custom agents
 	agent.registerCustomAgent(&CustomAgent{
@@ -492,7 +492,7 @@ func TestSystemPrompt_WithCustomAgents(t *testing.T) {
 	})
 
 	// Build system prompt like Run() does
-	systemPrompt := agent.GlobalCtx.FormatPrompt(conductorPrompt)
+	systemPrompt := agent.GlobalCtx.FormatPrompt(directorPrompt)
 	if len(agent.customAgents) > 0 {
 		systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
 		for _, ca := range agent.customAgents {
@@ -545,20 +545,20 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	// MetaAgent that returns the pre-defined output (single LLM call, no tool calls)
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
 
-	// ConductorAgent
-	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
-	initialAdapterCount := len(conductor.Adapters)
+	// DirectorAgent
+	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	initialAdapterCount := len(director.Adapters)
 
 	// Find and call delegate_meta tool
 	var delegateMeta *tools.Adapter
-	for _, ad := range conductor.Adapters {
+	for _, ad := range director.Adapters {
 		if ad.Name() == "delegate_meta" {
 			delegateMeta = ad
 			break
 		}
 	}
 	if delegateMeta == nil {
-		t.Fatal("delegate_meta tool not found in Conductor Adapters")
+		t.Fatal("delegate_meta tool not found in Director Adapters")
 	}
 
 	result, err := delegateMeta.Call(context.Background(), `{"task": "Perform a security audit of the project"}`)
@@ -567,7 +567,7 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	}
 
 	// Verify custom agent was registered
-	customAgent, ok := conductor.customAgents["delegate_security_auditor"]
+	customAgent, ok := director.customAgents["delegate_security_auditor"]
 	if !ok {
 		t.Fatal("Security Auditor was not registered in customAgents")
 	}
@@ -582,13 +582,13 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	}
 
 	// Verify adapter was added
-	if len(conductor.Adapters) != initialAdapterCount+1 {
-		t.Errorf("adapter count = %d, want %d", len(conductor.Adapters), initialAdapterCount+1)
+	if len(director.Adapters) != initialAdapterCount+1 {
+		t.Errorf("adapter count = %d, want %d", len(director.Adapters), initialAdapterCount+1)
 	}
 
 	// Verify delegate tool exists for the new agent
 	found := false
-	for _, ad := range conductor.Adapters {
+	for _, ad := range director.Adapters {
 		if ad.Name() == "delegate_security_auditor" {
 			found = true
 			break
@@ -622,11 +622,11 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 	)
 
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
-	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
 
 	// Call delegate_meta twice with the same agent design
 	var delegateMeta *tools.Adapter
-	for _, ad := range conductor.Adapters {
+	for _, ad := range director.Adapters {
 		if ad.Name() == "delegate_meta" {
 			delegateMeta = ad
 			break
@@ -638,8 +638,8 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first delegate_meta call failed: %v", err)
 	}
-	countAfterFirst := len(conductor.Adapters)
-	mapCountAfterFirst := len(conductor.customAgents)
+	countAfterFirst := len(director.Adapters)
+	mapCountAfterFirst := len(director.customAgents)
 
 	// Second call: should NOT register duplicate
 	_, err = delegateMeta.Call(context.Background(), `{"task": "Test second"}`)
@@ -647,11 +647,11 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 		t.Fatalf("second delegate_meta call failed: %v", err)
 	}
 
-	if len(conductor.Adapters) != countAfterFirst {
-		t.Errorf("duplicate registration added adapters: %d → %d", countAfterFirst, len(conductor.Adapters))
+	if len(director.Adapters) != countAfterFirst {
+		t.Errorf("duplicate registration added adapters: %d → %d", countAfterFirst, len(director.Adapters))
 	}
-	if len(conductor.customAgents) != mapCountAfterFirst {
-		t.Errorf("duplicate registration added map entries: %d → %d", mapCountAfterFirst, len(conductor.customAgents))
+	if len(director.customAgents) != mapCountAfterFirst {
+		t.Errorf("duplicate registration added map entries: %d → %d", mapCountAfterFirst, len(director.customAgents))
 	}
 }
 
@@ -662,17 +662,17 @@ func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
 	// Meta-Agent returns malformed output (no execution_result block)
 	malformedOutput := "Just some plain text without structured blocks."
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(malformedOutput), 0)
-	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
-	for _, ad := range conductor.Adapters {
+	for _, ad := range director.Adapters {
 		if ad.Name() == "delegate_meta" {
 			delegateMeta = ad
 			break
 		}
 	}
 
-	initialCount := len(conductor.Adapters)
+	initialCount := len(director.Adapters)
 	result, err := delegateMeta.Call(context.Background(), `{"task": "Test"}`)
 	if err != nil {
 		t.Fatalf("delegate_meta call failed: %v", err)
@@ -689,7 +689,7 @@ func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
 		t.Errorf("expected raw output on parse failure, got: %s", actualOutput)
 	}
 	// Should NOT register any agent
-	if len(conductor.Adapters) != initialCount {
+	if len(director.Adapters) != initialCount {
 		t.Errorf("no agent should be registered on parse failure")
 	}
 }
@@ -705,25 +705,25 @@ func TestDelegateMeta_EmptyAgentName_NoRegistration(t *testing.T) {
 		[]string{"read_file"},
 	)
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
-	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
-	for _, ad := range conductor.Adapters {
+	for _, ad := range director.Adapters {
 		if ad.Name() == "delegate_meta" {
 			delegateMeta = ad
 			break
 		}
 	}
 
-	initialCount := len(conductor.Adapters)
+	initialCount := len(director.Adapters)
 	_, err := delegateMeta.Call(context.Background(), `{"task": "Test"}`)
 	if err != nil {
 		t.Fatalf("delegate_meta call failed: %v", err)
 	}
 
 	// No agent should be registered when name is empty
-	if len(conductor.Adapters) != initialCount {
-		t.Errorf("no agent should be registered with empty name, adapters: %d → %d", initialCount, len(conductor.Adapters))
+	if len(director.Adapters) != initialCount {
+		t.Errorf("no agent should be registered with empty name, adapters: %d → %d", initialCount, len(director.Adapters))
 	}
 }
 
@@ -735,25 +735,25 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 	output := `{"thinking": "designing...", "agent_name": "Test Agent", "tools_used": ["read_file"], "result": {"key": "value"}}`
 
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(output), 0)
-	conductor := NewConductorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
-	for _, ad := range conductor.Adapters {
+	for _, ad := range director.Adapters {
 		if ad.Name() == "delegate_meta" {
 			delegateMeta = ad
 			break
 		}
 	}
 
-	initialCount := len(conductor.Adapters)
+	initialCount := len(director.Adapters)
 	_, err := delegateMeta.Call(context.Background(), `{"task": "Test"}`)
 	if err != nil {
 		t.Fatalf("delegate_meta call failed: %v", err)
 	}
 
 	// No agent_design field → parse fails on all retries → no registration
-	if len(conductor.Adapters) != initialCount {
-		t.Errorf("no agent should be registered without agent_design field, adapters: %d → %d", initialCount, len(conductor.Adapters))
+	if len(director.Adapters) != initialCount {
+		t.Errorf("no agent should be registered without agent_design field, adapters: %d → %d", initialCount, len(director.Adapters))
 	}
 }
 
@@ -821,7 +821,7 @@ func TestConvertMemoryMessageToLLMSMessage_AssistantWithToolCalls(t *testing.T) 
 
 func TestToolDefMap_Populated(t *testing.T) {
 	workDir := t.TempDir()
-	agent := newTestConductorAgent(t, workDir)
+	agent := newTestDirectorAgent(t, workDir)
 
 	// toolDefMap should contain all tools from tools.json
 	expectedTools := []string{
@@ -840,9 +840,9 @@ func TestToolDefMap_Populated(t *testing.T) {
 
 // ─── Adapter Count Test ─────────────────────────────────────────────────────
 
-func TestConductorAgent_InitialAdapters(t *testing.T) {
+func TestDirectorAgent_InitialAdapters(t *testing.T) {
 	workDir := t.TempDir()
-	agent := newTestConductorAgent(t, workDir)
+	agent := newTestDirectorAgent(t, workDir)
 
 	// Should have: agent_exit + search_by_regex + list_dir + read_file + print_dir_tree
 	// + delegate_repo + delegate_coding + delegate_chat + delegate_meta

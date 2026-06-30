@@ -32,7 +32,7 @@ api_base_url = "http://127.0.0.1:8000"
 api_key = "dummy-key"
 
 # ── Agent 级 LLM（优先级: agent > agents > global）──
-[agents.llm.conductor]
+[agents.llm.director]
 use_provider = "deepseek_v4_pro"
 
 [agents.llm.coding]
@@ -115,8 +115,8 @@ cache_ttl = "30m"
 cache_max_entries = 100
 enable_fallback = true
 
-# ── Conductor 配置 ──
-[conductor]
+# ── Director 配置 ──
+[director]
 enable_checkpoint = true
 checkpoint_path = ""
 checkpoint_interval = "30s"

@@ -172,7 +172,7 @@ setChatState → 更新 UI
 interface Message {
   id: string;
   text?: string;
-  sender?: 'user' | 'assistant' | 'system' | 'Conductor' | 'Coding-Agent';
+  sender?: 'user' | 'assistant' | 'system' | 'Director' | 'Coding-Agent';
   timestamp: number;
   type?: 'text' | 'result' | 'thinking' | 'tool_call_start' | 'tool_call_result';
   data?: any;

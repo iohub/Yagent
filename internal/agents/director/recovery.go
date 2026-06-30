@@ -1,4 +1,4 @@
-package conductor
+package director
 
 import (
 	"context"
@@ -54,7 +54,7 @@ func (cb *CircuitBreaker) Allow() bool {
 	case "open":
 		if time.Since(cb.lastFailure) > cb.resetTimeout {
 			cb.state = "half-open"
-			slog.Info("[Conductor] Circuit breaker half-open, allowing trial request")
+			slog.Info("[Director] Circuit breaker half-open, allowing trial request")
 			return true
 		}
 		return false
@@ -74,11 +74,11 @@ func (cb *CircuitBreaker) Success() {
 	case "half-open":
 		cb.state = "closed"
 		cb.failures = 0
-		slog.Info("[Conductor] Circuit breaker closed (recovered)")
+		slog.Info("[Director] Circuit breaker closed (recovered)")
 	case "open":
 		cb.state = "closed"
 		cb.failures = 0
-		slog.Info("[Conductor] Circuit breaker closed (recovered from open)")
+		slog.Info("[Director] Circuit breaker closed (recovered from open)")
 	case "closed":
 		cb.failures = 0
 	}
@@ -96,11 +96,11 @@ func (cb *CircuitBreaker) Failure() {
 	case "closed":
 		if cb.failures >= cb.threshold {
 			cb.state = "open"
-			slog.Warn("[Conductor] Circuit breaker opened", "failures", cb.failures, "threshold", cb.threshold)
+			slog.Warn("[Director] Circuit breaker opened", "failures", cb.failures, "threshold", cb.threshold)
 		}
 	case "half-open":
 		cb.state = "open"
-		slog.Warn("[Conductor] Circuit breaker re-opened (half-open trial failed)")
+		slog.Warn("[Director] Circuit breaker re-opened (half-open trial failed)")
 	}
 }
 
@@ -181,7 +181,7 @@ func RetryWithBackoff(ctx context.Context, maxRetries int, fn func(attempt int) 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			wait := ComputeBackoff(attempt - 1)
-			slog.Warn("[Conductor] Retrying operation", "attempt", attempt, "max_retries", maxRetries, "wait", wait)
+			slog.Warn("[Director] Retrying operation", "attempt", attempt, "max_retries", maxRetries, "wait", wait)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -194,7 +194,7 @@ func RetryWithBackoff(ctx context.Context, maxRetries int, fn func(attempt int) 
 			return nil
 		}
 
-		slog.Warn("[Conductor] Operation failed", "attempt", attempt, "error", lastErr)
+		slog.Warn("[Director] Operation failed", "attempt", attempt, "error", lastErr)
 	}
 
 	return fmt.Errorf("operation failed after %d retries: %w", maxRetries, lastErr)

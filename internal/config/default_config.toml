@@ -31,7 +31,7 @@ api_base_url = "http://127.0.0.1:8000"
 api_key = "dummy-key"
 
 # ── Agent 级 LLM（优先级: agent > agents > global）──
-[agents.llm.conductor]
+[agents.llm.director]
 use_provider = "deepseek_v4_pro"
 
 [agents.llm.coding]

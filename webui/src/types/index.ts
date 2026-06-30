@@ -1,7 +1,7 @@
 export interface Message {
   id: string;
   text?: string; // Optional for compatibility
-  sender?: string; // 'user' | 'assistant' | 'system' | 'Conductor' | 'Coding-Agent'
+  sender?: string; // 'user' | 'assistant' | 'system' | 'Director' | 'Coding-Agent'
   timestamp: number;
   type?: string;
   data?: any;

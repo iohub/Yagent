@@ -180,7 +180,7 @@ func (b *EventBus) Publish(ctx context.Context, ev *Event) error {
 	return nil
 }
 
-// AddObserver 注册全局观察者，接收所有 topic 的事件副本（用于 Conductor 态势感知）
+// AddObserver 注册全局观察者，接收所有 topic 的事件副本（用于 Director 态势感知）
 func (b *EventBus) AddObserver(observerID string, handler EventHandler) error {
 	b.observerMu.Lock()
 	defer b.observerMu.Unlock()

@@ -4,7 +4,7 @@
 # 基础词汇
 framework
 codexray
-conductor agent
+director agent
 repo agent
 response
 

@@ -96,7 +96,7 @@ func InitToolLogger() error {
 
 // LogToolCall records a tool call with timestamp, tool name, agent name,
 // arguments (JSON), result, error message, and duration.
-// Format: [2025-01-15 10:30:45] tool=agent_exit agent=ConductorAgent duration=12ms args={"reason":"task completed"} result="" error=""
+// Format: [2025-01-15 10:30:45] tool=agent_exit agent=DirectorAgent duration=12ms args={"reason":"task completed"} result="" error=""
 func LogToolCall(toolName, agentName, argsJSON, result, errMsg string, duration time.Duration) {
 	ensureToolLogFile()
 	if toolLogger == nil {
