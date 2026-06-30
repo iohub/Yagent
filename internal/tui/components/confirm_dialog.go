@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"codeactor/internal/tui/common"
 )
 
 // ConfirmResult represents the user's decision in the authorization confirmation dialog.
@@ -21,9 +22,10 @@ const (
 
 // ConfirmOption represents a single option in the authorization confirmation dialog.
 type ConfirmOption struct {
-	Key   string // 快捷键字母
-	Label string // 显示标签
-	Value ConfirmResult
+	Key      string // shortcut key
+	Label    string // display label
+	Value    ConfirmResult
+	SafetyLv common.SafetyLevel
 }
 
 // ConfirmDialog is the authorization confirmation dialog component.
@@ -37,53 +39,32 @@ type ConfirmDialog struct {
 	options       []ConfirmOption
 	width         int
 	height        int
-	borderStyle   lipgloss.Style
-	titleStyle    lipgloss.Style
-	detailStyle   lipgloss.Style
-	focusedOption lipgloss.Style
-	blurredOption lipgloss.Style
-	helpStyle     lipgloss.Style
+	lang          Language
+	styles        *common.Styles
 }
 
 // NewConfirmDialog creates a new authorization confirmation dialog.
-func NewConfirmDialog(toolName, command, warning, requestID string, lang Language) *ConfirmDialog {
-	// Build options list from i18n translations
+func NewConfirmDialog(styles *common.Styles, toolName, command, warning, requestID string, lang Language) *ConfirmDialog {
+	// Build options list with safety levels
 	options := []ConfirmOption{
-		{Key: "a", Label: getConfirmText("ConfirmOptionAllow", lang), Value: Allow},
-		{Key: "t", Label: getConfirmText("ConfirmOptionAllowTool", lang), Value: AllowTool},
-		{Key: "s", Label: getConfirmText("ConfirmOptionAllowSession", lang), Value: AllowSession},
-		{Key: "p", Label: getConfirmText("ConfirmOptionAllowProject", lang), Value: AllowProject},
-		{Key: "d", Label: getConfirmText("ConfirmOptionDeny", lang), Value: Deny},
+		{Key: "a", Label: getConfirmText("ConfirmOptionAllow", lang), Value: Allow, SafetyLv: common.SafetyLow},
+		{Key: "t", Label: getConfirmText("ConfirmOptionAllowTool", lang), Value: AllowTool, SafetyLv: common.SafetyMedium},
+		{Key: "s", Label: getConfirmText("ConfirmOptionAllowSession", lang), Value: AllowSession, SafetyLv: common.SafetyHigh},
+		{Key: "p", Label: getConfirmText("ConfirmOptionAllowProject", lang), Value: AllowProject, SafetyLv: common.SafetyCritical},
+		{Key: "d", Label: getConfirmText("ConfirmOptionDeny", lang), Value: Deny, SafetyLv: common.SafetySafe},
 	}
 
-	return &ConfirmDialog{
+	d := &ConfirmDialog{
 		requestID:     requestID,
 		toolName:      toolName,
 		command:       command,
 		warning:       warning,
 		selectedIndex: 0, // default: Allow
 		options:       options,
-		// Initialize styles
-		borderStyle: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("240")).
-			Padding(0, 2),
-		titleStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214")).
-			Bold(true),
-		detailStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")),
-		focusedOption: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("0")).
-			Background(lipgloss.Color("214")).
-			Bold(true).
-			Padding(0, 1),
-		blurredOption: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Padding(0, 1),
-		helpStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")),
+		lang:          lang,
+		styles:        styles,
 	}
+	return d
 }
 
 // ID returns the unique identifier for this dialog.
@@ -97,6 +78,9 @@ func (d *ConfirmDialog) Init() tea.Cmd { return nil }
 
 // GetRequestID returns the request ID for matching user confirm requests.
 func (d *ConfirmDialog) GetRequestID() string { return d.requestID }
+
+// GetLang returns the language of this dialog.
+func (d *ConfirmDialog) GetLang() Language { return d.lang }
 
 // Update processes incoming messages and returns the updated component.
 func (d *ConfirmDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
@@ -135,98 +119,112 @@ func (d *ConfirmDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 	return d, nil
 }
 
-// View renders the dialog as a string.
+// View renders the dialog with the new design system.
 func (d *ConfirmDialog) View() string {
-	if d.width < 40 || d.height < 5 {
+	if d.width < 40 || d.height < 8 {
 		return ""
 	}
 
-	const maxDialogWidth = 64
+	// ── Size calculations ──
+	const maxDialogWidth = 70
 	dialogWidth := maxDialogWidth
 	if d.width-4 < dialogWidth {
 		dialogWidth = d.width - 4
 	}
-	innerWidth := dialogWidth - 8
-	if innerWidth < 20 {
-		innerWidth = 20
+	innerWidth := dialogWidth - 6
+	if innerWidth < 24 {
+		innerWidth = 24
 	}
+
+	c := common.DarkModeColors()
+
+	// ── Styles ──
+	borderStyle := common.DialogBorderStyle(c)
+	titleStyle := common.SectionHeaderStyle(c)
+	commandStyle := common.CodeBlockStyle(c, innerWidth)
+	helpStyle := common.HelpTextStyle(c)
+	cursorStyle := common.CursorIndicatorStyle(c)
 
 	// ── Title line ──
-	titlePrefix := getConfirmText("ConfirmAuthTitle", langForDialog)
-	rawTitle := fmt.Sprintf("⚡ %s — %s", titlePrefix, d.toolName)
-	if lipgloss.Width(rawTitle) > innerWidth {
+	titlePrefix := getConfirmText("ConfirmAuthTitle", d.lang)
+	rawTitle := fmt.Sprintf("%s — %s", titlePrefix, d.toolName)
+	if lipgloss.Width(rawTitle) > innerWidth-4 {
 		runes := []rune(rawTitle)
-		if len(runes) > innerWidth-3 {
-			rawTitle = string(runes[:innerWidth-3]) + "..."
+		if len(runes) > innerWidth-6 {
+			rawTitle = string(runes[:innerWidth-6]) + "…"
 		}
 	}
-	toolLine := d.titleStyle.Render(rawTitle)
+	titleLine := titleStyle.Render(rawTitle)
 
-	// ── Body: command + warning ──
-	var bodyContent string
+	// ── Command code block ──
+	var commandLine string
 	if d.command != "" {
-		bodyContent = "命令: " + d.command + "\n\n"
+		commandLine = commandStyle.Render(d.command)
 	}
-	bodyContent += getConfirmText("ConfirmAuthWarning", langForDialog)
-	detail := wrapText(bodyContent, innerWidth)
-	detail = d.detailStyle.Render(detail)
 
-	// ── Option list ──
-	const indicatorOn = "▶"
-	const indicatorOff = "  "
-	const stylePadding = 2
-
-	var optionLines []string
-	for i, opt := range d.options {
-		indicator := indicatorOff
-		if d.selectedIndex == i {
-			indicator = indicatorOn
-		}
-		plainLabel := indicator + " " + opt.Label + " (" + opt.Key + ")"
-
-		shortcutWidth := lipgloss.Width(opt.Key)
-		maxPlainWidth := innerWidth - shortcutWidth - 1 - stylePadding
-		if maxPlainWidth < 10 {
-			maxPlainWidth = 10
-		}
-
-		// Truncate plain text before applying styles
-		truncatedPlain := plainLabel
-		if lipgloss.Width(plainLabel) > maxPlainWidth {
-			runes := []rune(plainLabel)
-			if len(runes) > maxPlainWidth-1 {
-				truncatedPlain = string(runes[:maxPlainWidth-1]) + "…"
-			} else {
-				truncatedPlain = string(runes[:maxPlainWidth])
+	// ── Warning text ──
+	var warningLine string
+	if d.warning != "" {
+		warnText := fmt.Sprintf("⚠ %s", d.warning)
+		if lipgloss.Width(warnText) > innerWidth-2 {
+			runes := []rune(warnText)
+			if len(runes) > innerWidth-4 {
+				warnText = string(runes[:innerWidth-4]) + "…"
 			}
 		}
+		warningLine = lipgloss.NewStyle().
+			Foreground(c.Warning).
+			Render(warnText)
+	}
 
-		var styledLabel string
-		if d.selectedIndex == i {
-			styledLabel = d.focusedOption.Render(truncatedPlain)
+	// ── Option list ──
+	var optionLines []string
+	for i, opt := range d.options {
+		if i == d.selectedIndex {
+			// Focused option: full button style
+			styled := lipgloss.JoinHorizontal(lipgloss.Center,
+				opt.SafetyLv.Icon()+" "+opt.Label,
+			)
+			button := common.FocusedButtonStyle(c, opt.SafetyLv).
+				Width(innerWidth - 2).
+				Render(styled)
+			optionLines = append(optionLines, button)
 		} else {
-			styledLabel = d.blurredOption.Render(truncatedPlain)
+			// Normal option: icon + label + key
+			optText := fmt.Sprintf("  %s %s  (%s)", opt.SafetyLv.Icon(), opt.Label, opt.Key)
+			if lipgloss.Width(optText) > innerWidth-2 {
+				runes := []rune(optText)
+				if len(runes) > innerWidth-4 {
+					optText = string(runes[:innerWidth-4]) + "…"
+				}
+			}
+			optionLines = append(optionLines, cursorStyle.Render("▶ ")+" "+cursorStyle.Render("•")+" "+optText)
 		}
-
-		line := lipgloss.JoinHorizontal(lipgloss.Left, styledLabel, opt.Key)
-		optionLines = append(optionLines, line)
 	}
 	optionsBlock := lipgloss.JoinVertical(lipgloss.Left, optionLines...)
 
 	// ── Help text ──
-	help := d.helpStyle.Render(getConfirmText("ConfirmDialogHelp", langForDialog))
+	help := helpStyle.Render(getConfirmText("ConfirmDialogHelp", d.lang))
 
-	// ── Assemble ──
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		toolLine,
-		"",
-		detail,
-		"",
-		optionsBlock,
-		help,
-	)
+	// ── Assemble content ──
+	var contentParts []string
+	contentParts = append(contentParts, titleLine)
+	contentParts = append(contentParts, "")
+	if commandLine != "" {
+		contentParts = append(contentParts, commandLine)
+		contentParts = append(contentParts, "")
+	}
+	if warningLine != "" {
+		contentParts = append(contentParts, warningLine)
+		contentParts = append(contentParts, "")
+	}
+	contentParts = append(contentParts, optionsBlock)
+	contentParts = append(contentParts, "")
+	contentParts = append(contentParts, help)
 
-	dialog := d.borderStyle.Width(dialogWidth).Render(content)
+	content := lipgloss.JoinVertical(lipgloss.Left, contentParts...)
+
+	dialog := borderStyle.Width(dialogWidth).Render(content)
 
 	return lipgloss.Place(d.width, d.height,
 		lipgloss.Center, lipgloss.Center,
@@ -283,11 +281,7 @@ func (d *ConfirmDialog) GetResponseAction() string {
 
 // ── Helper functions ──
 
-// langForDialog is a placeholder; will be set by the model during dialog creation.
-var langForDialog = LanguageEn
-
 // getConfirmText retrieves a translation string for the confirm dialog.
-// It uses the current langForDialog.
 func getConfirmText(key string, lang Language) string {
 	switch key {
 	case "ConfirmDialogHelp":

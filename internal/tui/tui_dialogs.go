@@ -35,7 +35,7 @@ func (m *model) openConfirmDialog(event *messaging.MessageEvent) {
 		warning = ""
 	}
 
-	d := components.NewConfirmDialog(toolName, command, warning, requestID, components.Language(m.currentLang))
+	d := components.NewConfirmDialog(m.com.Styles, toolName, command, warning, requestID, components.Language(m.currentLang))
 	d.SetBounds(m.termWidth, m.termHeight)
 	m.dialogStack.Push(d)
 }

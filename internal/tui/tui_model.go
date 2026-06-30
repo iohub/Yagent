@@ -105,7 +105,7 @@ var (
 	// Deprecated: use m.com.Styles.WelcomeDim instead.
 	// welcomeRightTitle removed (unused).
 	welcomeTipStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	welcomeDimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	welcomeDimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Bold(true)
 
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
 	// Deprecated: use m.com.Styles.InfoMsg / Footer instead.
@@ -139,7 +139,7 @@ var (
 	// Input panel styles — visually separate the input area from the message body
 	inputPanelStyle = lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("39")).  // blue accent, matches prompt ❯ color
+		BorderForeground(lipgloss.Color("62")).  // soft indigo accent, consistent design system color
 		BorderBackground(lipgloss.Color("236")). // blends with textarea background
 		Padding(0, 1).
 		MarginTop(1)

@@ -17,7 +17,7 @@ func TestCompileTimeInterfaceCheck(t *testing.T) {
 
 // TestConfirmDialogCreation tests ConfirmDialog constructor.
 func TestConfirmDialogCreation(t *testing.T) {
-	d := NewConfirmDialog("run_bash", "ls -la", "Warning message", "", LanguageEn)
+	d := NewConfirmDialog(nil, "run_bash", "ls -la", "Warning message", "", LanguageEn)
 	if d.ID() != "confirm_dialog" {
 		t.Errorf("expected ID 'confirm_dialog', got %q", d.ID())
 	}
@@ -43,7 +43,7 @@ func TestConfirmDialogCreation(t *testing.T) {
 
 // TestConfirmDialogOptions tests ConfirmDialog options.
 func TestConfirmDialogOptions(t *testing.T) {
-	d := NewConfirmDialog("run_bash", "ls -la", "Warning", "", LanguageEn)
+	d := NewConfirmDialog(nil, "run_bash", "ls -la", "Warning", "", LanguageEn)
 	if len(d.options) != 5 {
 		t.Errorf("expected 5 options, got %d", len(d.options))
 	}
@@ -58,7 +58,7 @@ func TestConfirmDialogOptions(t *testing.T) {
 
 // TestConfirmDialogChinese tests ConfirmDialog with Chinese language.
 func TestConfirmDialogChinese(t *testing.T) {
-	d := NewConfirmDialog("run_bash", "ls -la", "警告", "", LanguageZh)
+	d := NewConfirmDialog(nil, "run_bash", "ls -la", "警告", "", LanguageZh)
 	if len(d.options) != 5 {
 		t.Errorf("expected 5 options, got %d", len(d.options))
 	}
@@ -196,7 +196,7 @@ func TestHelpDialogChinese(t *testing.T) {
 
 // TestBounds tests SetBounds and Bounds methods.
 func TestBounds(t *testing.T) {
-	d := NewConfirmDialog("test", "test", "test", "", LanguageEn)
+	d := NewConfirmDialog(nil, "test", "test", "test", "", LanguageEn)
 	w, h := d.Bounds()
 	if w != 0 || h != 0 {
 		t.Errorf("initial bounds should be 0x0, got %dx%d", w, h)
@@ -211,7 +211,7 @@ func TestBounds(t *testing.T) {
 
 // TestVisibility tests IsVisible and SetVisible methods.
 func TestVisibility(t *testing.T) {
-	d := NewConfirmDialog("test", "test", "test", "", LanguageEn)
+	d := NewConfirmDialog(nil, "test", "test", "test", "", LanguageEn)
 	if !d.IsVisible() {
 		t.Error("should be visible by default")
 	}
@@ -237,7 +237,7 @@ func TestQuitDialogVisibility(t *testing.T) {
 func TestFocus(t *testing.T) {
 	// Modal dialogs are always focused when on the stack.
 	// The current implementation returns true for IsFocused().
-	d := NewConfirmDialog("test", "test", "test", "", LanguageEn)
+	d := NewConfirmDialog(nil, "test", "test", "test", "", LanguageEn)
 	if !d.IsFocused() {
 		t.Error("modal ConfirmDialog should be focused by default")
 	}
@@ -264,7 +264,7 @@ func TestDialogStackIntegration(t *testing.T) {
 		t.Error("new stack should be empty")
 	}
 
-	d1 := NewConfirmDialog("test1", "cmd1", "warn1", "", LanguageEn)
+	d1 := NewConfirmDialog(nil, "test1", "cmd1", "warn1", "", LanguageEn)
 	d2 := NewQuitConfirmDialogForQuit(LanguageEn)
 
 	stack.Push(d1)

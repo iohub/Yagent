@@ -6,57 +6,63 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"codeactor/internal/tui/common"
 )
 
 // ModelSelectDialog provides a keyboard-navigable list of LLM providers.
 // The user can arrow up/down and press Enter to select, or Esc to cancel.
 type ModelSelectDialog struct {
 	providers     []string          // provider names (keys from config)
-	providerDescs map[string]string // provider name → "model_name" description
+	providerDescs map[string]string // provider name → formatted description (e.g., "deepseek (model: deepseek-chat)")
 	cursor        int               // currently highlighted index
 	width         int
 	height        int
 	Selected      string // set to the selected provider name on Enter; "" if cancelled
 	CurrentProv   string // currently active provider name (for marking)
-	borderStyle   lipgloss.Style
-	titleStyle    lipgloss.Style
-	itemStyle     lipgloss.Style
-	cursorStyle   lipgloss.Style
-	currentStyle  lipgloss.Style
-	helpStyle     lipgloss.Style
 }
 
 // NewModelSelectDialog creates a new model selection dialog.
+// styles: the shared Styles instance for design system access.
 // providers: list of provider names (from config.GetProviderNames())
-// providerDescs: map of provider name → description (e.g., "aliyun/qwen3-coder-plus")
+// providerDescs: map of provider name → description (e.g., "deepseek (model: deepseek-chat)")
 // currentProv: the currently active provider name
-func NewModelSelectDialog(providers []string, providerDescs map[string]string, currentProv string) *ModelSelectDialog {
+func NewModelSelectDialog(styles *common.Styles, providers []string, providerDescs map[string]string, currentProv string) *ModelSelectDialog {
 	return &ModelSelectDialog{
 		providers:     providers,
 		providerDescs: providerDescs,
 		cursor:        0,
 		Selected:      "",
 		CurrentProv:   currentProv,
-		borderStyle: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("39")).
-			Padding(1, 2),
-		titleStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("39")).
-			Bold(true),
-		itemStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")).
-			PaddingLeft(2),
-		cursorStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("39")).
-			Bold(true).
-			PaddingLeft(2),
-		currentStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("114")).
-			PaddingLeft(2),
-		helpStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")),
 	}
+}
+
+// extractModelName parses the model name from a FormatProviderDesc string.
+// Input: "deepseek (model: deepseek-chat)" → "deepseek-chat"
+// Input: "deepseek" → ""
+func extractModelName(desc string) string {
+	const prefix = "(model: "
+	idx := strings.Index(desc, prefix)
+	if idx == -1 {
+		return ""
+	}
+	start := idx + len(prefix)
+	end := strings.Index(desc[start:], ")")
+	if end == -1 {
+		return ""
+	}
+	return desc[start : start+end]
+}
+
+// extractProviderName extracts the provider name part from a FormatProviderDesc string.
+// Input: "deepseek (model: deepseek-chat)" → "deepseek"
+// Input: "deepseek" → "deepseek"
+func extractProviderName(desc string) string {
+	const prefix = " (model: "
+	idx := strings.Index(desc, prefix)
+	if idx == -1 {
+		return desc
+	}
+	return desc[:idx]
 }
 
 // ID returns the unique identifier for this dialog.
@@ -107,48 +113,100 @@ func (d *ModelSelectDialog) View() string {
 		return ""
 	}
 
+	c := common.DarkModeColors()
+
 	const maxDialogWidth = 55
 	dialogWidth := maxDialogWidth
 	if d.width-4 < dialogWidth {
 		dialogWidth = d.width - 4
 	}
+	innerWidth := dialogWidth - 6
+	if innerWidth < 30 {
+		innerWidth = 30
+	}
+
+	// ── Design system styles ──
+	borderStyle := common.DialogBorderStyle(c)
+	titleStyle := common.SectionHeaderStyle(c)
+	helpStyle := common.HelpTextStyle(c)
+	cursorStyle := common.CursorIndicatorStyle(c)
 
 	// ── Title ──
-	titleLine := d.titleStyle.Render("Select Model Provider")
+	titleLine := titleStyle.Render("Select Model Provider")
 
 	// ── Items ──
-	var items []string
+	var lines []string
 	for i, prov := range d.providers {
 		desc := prov
 		if descStr, ok := d.providerDescs[prov]; ok && descStr != "" {
 			desc = descStr
 		}
 
-		var line string
-		if prov == d.CurrentProv {
-			// Current provider - green with checkmark
-			marker := "✓"
-			if i == d.cursor {
-				line = d.cursorStyle.Render("▶ " + marker + " " + desc + " (active)")
-			} else {
-				line = d.currentStyle.Render("  " + marker + " " + desc + " (active)")
-			}
+		providerName := extractProviderName(desc)
+		modelName := extractModelName(desc)
+
+		// Build display text
+		var displayText string
+		if modelName != "" {
+			displayText = fmt.Sprintf("%s  (model: %s)", providerName, modelName)
 		} else {
-			if i == d.cursor {
-				line = d.cursorStyle.Render("▶ " + desc)
-			} else {
-				line = d.itemStyle.Render("  " + desc)
-			}
+			displayText = providerName
 		}
-		items = append(items, line)
+
+		// Active badge
+		var badge string
+		if prov == d.CurrentProv {
+			badge = common.BadgeStyle(c, c.Success).Render("✓ ACTIVE")
+		}
+
+		// Cursor indicator
+		cursorMarker := "  "
+		var rowStyle lipgloss.Style
+		if i == d.cursor {
+			cursorMarker = "▶ "
+			rowStyle = cursorStyle
+		} else {
+			rowStyle = lipgloss.NewStyle().Foreground(c.TextSecondary).PaddingLeft(4)
+		}
+
+		// Assemble row: cursor + display + badge (right-aligned if present)
+		var row string
+		if badge != "" {
+			// Calculate available space for display text
+			markerWidth := lipgloss.Width(cursorMarker)
+			badgeWidth := lipgloss.Width(badge)
+			maxTextWidth := innerWidth - markerWidth - badgeWidth - 2
+			if maxTextWidth < 10 {
+				maxTextWidth = 10
+			}
+
+			textStyle := lipgloss.NewStyle().Width(maxTextWidth).MaxWidth(maxTextWidth)
+			if i == d.cursor {
+				textStyle = textStyle.Foreground(c.TextPrimary).Bold(true)
+			} else {
+				textStyle = textStyle.Foreground(c.TextSecondary)
+			}
+
+			row = cursorMarker + textStyle.Render(displayText) + " " + badge
+		} else {
+			textStyle := lipgloss.NewStyle().PaddingLeft(2)
+			if i == d.cursor {
+				textStyle = textStyle.Foreground(c.TextPrimary).Bold(true)
+			} else {
+				textStyle = textStyle.Foreground(c.TextSecondary)
+			}
+			row = cursorMarker + textStyle.Render(displayText)
+		}
+
+		lines = append(lines, rowStyle.Render(row))
 	}
 
-	itemsStr := strings.Join(items, "\n")
+	itemsStr := strings.Join(lines, "\n")
 
-	// ── Dismiss hint ──
-	hint := d.helpStyle.Render("↑/↓ navigate · Enter select · Esc cancel")
+	// ── Help hint ──
+	hint := helpStyle.Render("↑/↓ navigate · Enter select · Esc cancel")
 
-	// ── Assemble ──
+	// ── Assemble dialog content ──
 	dialogContent := lipgloss.JoinVertical(lipgloss.Left,
 		titleLine,
 		"",
@@ -157,7 +215,7 @@ func (d *ModelSelectDialog) View() string {
 		hint,
 	)
 
-	dialog := d.borderStyle.Width(dialogWidth).Render(dialogContent)
+	dialog := borderStyle.Width(dialogWidth).Render(dialogContent)
 
 	return lipgloss.Place(d.width, d.height,
 		lipgloss.Center, lipgloss.Center,

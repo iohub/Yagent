@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"codeactor/internal/tui/common"
 )
 
 // ConfigEntry represents a target with its current model configuration.
@@ -20,43 +21,28 @@ type ConfigEntry struct {
 // model configuration, allowing the user to pick one so that a provider
 // selection dialog can be shown next.
 type AgentSelectDialog struct {
-	entries   []ConfigEntry
-	cursor    int
-	width     int
-	height    int
-	Selected  string // set to entries[cursor].Target on confirm; "" if cancelled
+	entries     []ConfigEntry
+	cursor      int
+	width       int
+	height      int
+	Selected    string // set to entries[cursor].Target on confirm; "" if cancelled
+	styles      *common.Styles
 
-	borderStyle  lipgloss.Style
-	titleStyle   lipgloss.Style
-	itemStyle    lipgloss.Style
-	cursorStyle  lipgloss.Style
-	helpStyle    lipgloss.Style
-	valueStyle   lipgloss.Style
+	borderStyle lipgloss.Style
+	titleStyle  lipgloss.Style
+	itemStyle   lipgloss.Style
+	cursorStyle lipgloss.Style
+	helpStyle   lipgloss.Style
+	valueStyle  lipgloss.Style
+	groupStyle  lipgloss.Style
 }
 
-// NewAgentSelectDialog creates a new agent-select dialog.
-func NewAgentSelectDialog(entries []ConfigEntry) *AgentSelectDialog {
+// NewAgentSelectDialog creates a new agent-select dialog with the given styles.
+func NewAgentSelectDialog(styles *common.Styles, entries []ConfigEntry) *AgentSelectDialog {
 	return &AgentSelectDialog{
 		entries: entries,
 		cursor:  0,
-		borderStyle: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("39")).
-			Padding(1, 2),
-		titleStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("39")).
-			Bold(true),
-		itemStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")).
-			PaddingLeft(2),
-		cursorStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("39")).
-			Bold(true).
-			PaddingLeft(2),
-		helpStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")),
-		valueStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("114")),
+		styles:  styles,
 	}
 }
 
@@ -66,10 +52,10 @@ func (d *AgentSelectDialog) ID() string { return "agent_select_dialog" }
 // Type returns the dialog type.
 func (d *AgentSelectDialog) Type() DialogType { return DialogModal }
 
-// Init initializes the component.
+// Init initializes the component. No setup needed.
 func (d *AgentSelectDialog) Init() tea.Cmd { return nil }
 
-// Update processes incoming messages.
+// Update processes incoming messages and returns the updated component.
 func (d *AgentSelectDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -102,61 +88,154 @@ func (d *AgentSelectDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 	return d, nil
 }
 
-// View renders the dialog as a string.
+// View renders the dialog with the new design system.
 func (d *AgentSelectDialog) View() string {
 	if d.width < 40 || d.height < 5 {
 		return ""
 	}
 
-	const maxDialogWidth = 55
+	// ── Color tokens ──
+	var c common.ColorTokens
+	if d.styles != nil {
+		c = common.DarkModeColors()
+	} else {
+		c = common.DarkModeColors()
+	}
+
+	// ── Reusable styles from design system ──
+	borderStyle := common.DialogBorderStyle(c)
+	titleStyle := common.SectionHeaderStyle(c)
+	helpStyle := common.HelpTextStyle(c)
+	cursorIndicator := common.CursorIndicatorStyle(c)
+
+	// ── Size calculations ──
+	const maxDialogWidth = 60
 	dialogWidth := maxDialogWidth
 	if d.width-4 < dialogWidth {
 		dialogWidth = d.width - 4
 	}
-
-	// ── Title ──
-	titleLine := d.titleStyle.Render("Select target to change model")
-
-	// ── Items ──
-	var items []string
-	for i, entry := range d.entries {
-		desc := entry.DisplayName
-		if desc == "" {
-			desc = entry.Target
-		}
-
-		modelStr := entry.Provider
-		if entry.Model != "" {
-			modelStr = fmt.Sprintf("%s/%s", entry.Provider, entry.Model)
-		}
-
-		line := fmt.Sprintf("%s: %s", desc, modelStr)
-
-		if i == d.cursor {
-			// 带 ● 标记的高亮行
-			line = d.cursorStyle.Render("  ● " + line)
-		} else {
-			// 非当前行正常缩进对齐
-			line = d.itemStyle.Render("    " + line)
-		}
-		items = append(items, line)
+	innerWidth := dialogWidth - 6
+	if innerWidth < 24 {
+		innerWidth = 24
 	}
 
-	itemsStr := strings.Join(items, "\n")
+	// ── Title line ──
+	titleLine := titleStyle.Render("Select target to change model")
 
-	// ── Help hint ──
-	hint := d.helpStyle.Render("↑/↓ navigate · Enter select · Esc cancel")
+	// ── Group entries: "global" first, then agents ──
+	// The caller (showModelSelectionDialog) already builds the list with
+	// global first, then agents. We preserve that ordering but detect
+	// group boundaries for rendering.
+	type groupItem struct {
+		label string // group header text
+		start int    // first entry index in this group
+		end   int    // last entry index in this group (inclusive)
+	}
 
-	// ── Assemble ──
-	dialogContent := lipgloss.JoinVertical(lipgloss.Left,
+	groups := make([]groupItem, 0)
+	currentGroup := ""
+	groupStart := -1
+
+	for i := range d.entries {
+		e := d.entries[i]
+		var grp string
+		if e.Target == "global" {
+			grp = "global"
+		} else {
+			grp = "agents"
+		}
+
+		if grp != currentGroup {
+			// Close previous group
+			if currentGroup != "" && groupStart >= 0 {
+				groups = append(groups, groupItem{label: currentGroup, start: groupStart, end: i - 1})
+			}
+			currentGroup = grp
+			groupStart = i
+		}
+	}
+	// Close last group
+	if currentGroup != "" && groupStart >= 0 {
+		groups = append(groups, groupItem{label: currentGroup, start: groupStart, end: len(d.entries) - 1})
+	}
+
+	// ── Render items with group headers ──
+	var renderedItems []string
+	prevWasHeader := false
+
+	for _, g := range groups {
+		// Group header
+		if prevWasHeader {
+			renderedItems = append(renderedItems, "")
+		}
+		headerStyle := common.SectionHeaderStyle(c)
+		renderedItems = append(renderedItems, headerStyle.Render(g.label))
+		prevWasHeader = true
+
+		isSingle := (g.start == g.end)
+
+		for i := g.start; i <= g.end && i < len(d.entries); i++ {
+			entry := d.entries[i]
+			desc := entry.DisplayName
+			if desc == "" {
+				desc = entry.Target
+			}
+
+			modelStr := entry.Provider
+			if entry.Model != "" {
+				modelStr = fmt.Sprintf("%s/%s", entry.Provider, entry.Model)
+			}
+
+			if i == d.cursor {
+				// Focused item: ▶ cursor + bold name + dimmed value
+				valPart := modelStr
+
+				nameSt := lipgloss.NewStyle().Foreground(c.Primary).Bold(true)
+				valSt := lipgloss.NewStyle().Foreground(c.TextSecondary)
+
+				parts := strings.SplitN(valPart, "/", 2)
+				var provPart, modelPart string
+				if len(parts) == 2 {
+					provPart = parts[0]
+					modelPart = parts[1]
+				} else {
+					provPart = parts[0]
+				}
+
+				line := cursorIndicator.Render("▶ ") +
+					nameSt.Render(provPart)
+				if modelPart != "" {
+					line += "/" + valSt.Render(modelPart)
+				}
+
+				renderedItems = append(renderedItems, line)
+			} else {
+				// Normal item
+				indent := "    "
+				if isSingle {
+					indent = ""
+				}
+				itemSt := lipgloss.NewStyle().Foreground(c.TextSecondary)
+				renderedItems = append(renderedItems, indent+itemSt.Render(desc+"  "+modelStr))
+			}
+		}
+	}
+
+	itemsBlock := lipgloss.JoinVertical(lipgloss.Left, renderedItems...)
+
+	// ── Help text ──
+	hint := helpStyle.Render("↑/↓ navigate  ·  Enter select  ·  Esc cancel")
+
+	// ── Assemble content ──
+	content := lipgloss.JoinVertical(lipgloss.Left,
 		titleLine,
 		"",
-		itemsStr,
+		itemsBlock,
 		"",
 		hint,
 	)
 
-	dialog := d.borderStyle.Width(dialogWidth).Render(dialogContent)
+	dialog := borderStyle.Width(dialogWidth).Render(content)
 
 	return lipgloss.Place(d.width, d.height,
 		lipgloss.Center, lipgloss.Center,
@@ -174,10 +253,7 @@ func (d *AgentSelectDialog) Focus() tea.Cmd { return nil }
 func (d *AgentSelectDialog) Blur() {}
 
 // SetBounds sets the component's dimensions.
-func (d *AgentSelectDialog) SetBounds(width, height int) {
-	d.width = width
-	d.height = height
-}
+func (d *AgentSelectDialog) SetBounds(w, h int) { d.width = w; d.height = h }
 
 // Bounds returns the component's current width and height.
 func (d *AgentSelectDialog) Bounds() (int, int) { return d.width, d.height }
@@ -186,4 +262,4 @@ func (d *AgentSelectDialog) Bounds() (int, int) { return d.width, d.height }
 func (d *AgentSelectDialog) IsVisible() bool { return true }
 
 // SetVisible sets the visibility of this component.
-func (d *AgentSelectDialog) SetVisible(v bool) {}
+func (d *AgentSelectDialog) SetVisible(bool) {}

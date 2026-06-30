@@ -16,6 +16,10 @@ const (
 	DialogToast                    // Toast dialog, auto-closes after short display
 )
 
+// Design tokens — overlay background color.
+// Color "234" is a very dark blue-gray (nearly black) used for dialog overlay masks.
+const dialogOverlayBg = "234"
+
 // Dialog is a dialog component interface.
 type Dialog interface {
 	Component
@@ -26,15 +30,15 @@ type Dialog interface {
 // DialogStack manages a stack of dialogs.
 // The last element in the slice is the top of the stack (most recently added).
 type DialogStack struct {
-	dialogs   []Dialog
-	overlayBg string // overlay background color
+	dialogs      []Dialog
+	overlayStyle lipgloss.Style // cached overlay background style
 }
 
-// NewDialogStack creates an empty DialogStack.
+// NewDialogStack creates an empty DialogStack with the default overlay style.
 func NewDialogStack() *DialogStack {
 	return &DialogStack{
-		dialogs:   make([]Dialog, 0),
-		overlayBg: "62", // dim gray by default
+		dialogs:      make([]Dialog, 0),
+		overlayStyle: lipgloss.NewStyle().Background(lipgloss.Color(dialogOverlayBg)),
 	}
 }
 
@@ -90,6 +94,12 @@ func (ds *DialogStack) Clear() {
 	ds.dialogs = ds.dialogs[:0]
 }
 
+// SetOverlayBg dynamically updates the overlay background color.
+// Call this to change the dimming effect (e.g., lighter for toasts, darker for modals).
+func (ds *DialogStack) SetOverlayBg(color string) {
+	ds.overlayStyle = lipgloss.NewStyle().Background(lipgloss.Color(color))
+}
+
 // ReplaceTop replaces the top dialog on the stack with a new one.
 // Returns false if the stack is empty, true otherwise.
 func (ds *DialogStack) ReplaceTop(d Dialog) bool {
@@ -133,6 +143,7 @@ func (ds *DialogStack) Update(msg tea.Msg) (tea.Cmd, Dialog) {
 
 // Overlay renders the overlay (background mask + dialogs stacked by z-index).
 // Uses a dimmed dark background to separate dialog content from the main view.
+// The background color can be customized via SetOverlayBg().
 func (ds *DialogStack) Overlay(maxWidth, maxHeight int) string {
 	if len(ds.dialogs) == 0 {
 		return ""
@@ -157,11 +168,11 @@ func (ds *DialogStack) Overlay(maxWidth, maxHeight int) string {
 	dialogsContent := strings.Join(dialogViews, "\n")
 
 	// Place dialogs centered with dimmed overlay
-	wsStyle := lipgloss.NewStyle().Background(lipgloss.Color("234"))
+	// overlayStyle is the cached lipgloss.Style with the background color
 	result := lipgloss.Place(maxWidth, maxHeight,
 		lipgloss.Center, lipgloss.Center,
 		dialogsContent,
-		lipgloss.WithWhitespaceStyle(wsStyle),
+		lipgloss.WithWhitespaceStyle(ds.overlayStyle),
 	)
 
 	return result

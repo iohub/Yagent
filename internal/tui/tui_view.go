@@ -117,8 +117,9 @@ func (m *model) View() tea.View {
 
 	// Render viewport with optional scrollbar
 	if scrollbarWidth > 0 {
-		sbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-		trackStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+		// Use design system colors - softer indigo (62) for reduced visual fatigue
+		sbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
+		trackStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
 		scrollbar := common.Scrollbar(sbStyle, trackStyle,
 			vpHeight, totalLines, vpHeight, m.viewport.YOffset())
 

@@ -355,7 +355,7 @@ func (m *model) showModelSelectionDialog() tea.Cmd {
 			Model:       model,
 		})
 	}
-	dialog := components.NewAgentSelectDialog(entries)
+	dialog := components.NewAgentSelectDialog(m.com.Styles, entries)
 	dialog.SetBounds(m.termWidth, m.termHeight)
 	m.dialogStack.Push(dialog)
 	return nil
@@ -652,7 +652,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 									providerDescs[p] = p
 								}
 							}
-							providerDialog := components.NewModelSelectDialog(providers, providerDescs, currentProv)
+							providerDialog := components.NewModelSelectDialog(m.com.Styles, providers, providerDescs, currentProv)
 							providerDialog.SetBounds(m.termWidth, m.termHeight)
 							m.dialogStack.Push(providerDialog)
 						} else {
