@@ -948,6 +948,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// 进入全屏模式
 					m.timelineFullscreenMode = true
 					m.timelineExpanded = false
+					m.timelineFullscreenFocus = "list"
 					if len(m.timelineEntries) > 0 {
 						m.timelineFullscreenCursor = len(m.timelineEntries) - 1
 					} else {
@@ -1067,6 +1068,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 进入全屏模式
 				m.timelineFullscreenMode = true
 				m.timelineExpanded = false
+				m.timelineFullscreenFocus = "list"
 				if len(m.timelineEntries) > 0 {
 					m.timelineFullscreenCursor = len(m.timelineEntries) - 1
 				} else {
@@ -1947,6 +1949,8 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.timelineExpanded = false
 			m.timelineFullscreenMode = false
 			m.timelineFullscreenCursor = 0
+			m.timelineFullscreenFocus = "list"
+			m.timelineDetailOffsets = nil
 			m.timelineDetailVP = nil
 			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
@@ -1957,6 +1961,8 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.timelineExpanded = false
 			m.timelineFullscreenMode = false
 			m.timelineFullscreenCursor = 0
+			m.timelineFullscreenFocus = "list"
+			m.timelineDetailOffsets = nil
 			m.timelineDetailVP = nil
 			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
@@ -1967,6 +1973,8 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.timelineExpanded = false
 			m.timelineFullscreenMode = false
 			m.timelineFullscreenCursor = 0
+			m.timelineFullscreenFocus = "list"
+			m.timelineDetailOffsets = nil
 			m.timelineDetailVP = nil
 			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
@@ -1975,30 +1983,74 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.dialogStack.Push(d)
 			return m, nil
 
-		// ── 列表导航 ──
+		// ── 焦点切换 ──
+		case "h":
+			// 将焦点移到左栏（列表）
+			if m.timelineFullscreenFocus == "detail" {
+				m.timelineFullscreenFocus = "list"
+			}
+			// 如果已在左栏，h 无操作（vim 风格）
+			return m, nil
+
+		case "l":
+			// 将焦点移到右栏（详情）
+			if m.timelineFullscreenFocus == "list" {
+				m.timelineFullscreenFocus = "detail"
+			}
+			// 如果已在右栏，l 无操作
+			return m, nil
+
+		// ── 列表导航 / 详情滚动（根据焦点决定）──
 		case "j", "down":
-			moveTimelineCursor(m, 1)
+			if m.timelineFullscreenFocus == "list" {
+				moveTimelineCursor(m, 1)
+			} else {
+				// 焦点在详情：滚动详情 viewport
+				if m.timelineDetailVP != nil {
+					m.timelineDetailVP.ScrollDown(1)
+				}
+			}
 			return m, nil
 
 		case "k", "up":
-			moveTimelineCursor(m, -1)
+			if m.timelineFullscreenFocus == "list" {
+				moveTimelineCursor(m, -1)
+			} else {
+				// 焦点在详情：滚动详情 viewport
+				if m.timelineDetailVP != nil {
+					m.timelineDetailVP.ScrollUp(1)
+				}
+			}
 			return m, nil
 
+		// ── 跳转首/尾（根据焦点决定）──
 		case "g":
-			if len(m.timelineEntries) > 0 {
-				m.timelineFullscreenCursor = 0
-				refreshTimelineDetail(m)
+			if m.timelineFullscreenFocus == "list" {
+				if len(m.timelineEntries) > 0 {
+					m.timelineFullscreenCursor = 0
+					syncDetailToCursor(m)
+				}
+			} else {
+				if m.timelineDetailVP != nil {
+					m.timelineDetailVP.GotoTop()
+				}
 			}
 			return m, nil
 
 		case "G":
-			if len(m.timelineEntries) > 0 {
-				m.timelineFullscreenCursor = len(m.timelineEntries) - 1
-				refreshTimelineDetail(m)
+			if m.timelineFullscreenFocus == "list" {
+				if len(m.timelineEntries) > 0 {
+					m.timelineFullscreenCursor = len(m.timelineEntries) - 1
+					syncDetailToCursor(m)
+				}
+			} else {
+				if m.timelineDetailVP != nil {
+					m.timelineDetailVP.GotoBottom()
+				}
 			}
 			return m, nil
 
-		// ── 详情 viewport 滚动 ──
+		// ── 详情 viewport 滚动（始终可用，不受焦点影响）──
 		case "pageup", "ctrl+u":
 			if m.timelineDetailVP != nil {
 				m.timelineDetailVP.ScrollUp(5)
@@ -2011,7 +2063,7 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			}
 			return m, nil
 
-		// ── 详情 viewport 滚动（单行）──
+		// ── 详情 viewport 滚动（单行，始终可用）──
 		case "ctrl+y":
 			if m.timelineDetailVP != nil {
 				m.timelineDetailVP.ScrollUp(1)
@@ -2037,14 +2089,18 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			if leftWidth < 25 {
 				leftWidth = 25
 			}
-			rightWidth := m.termWidth - 3 - leftWidth - 4
-			contentHeight := m.termHeight - 4
+			rightWidth := m.termWidth - 3 - leftWidth - 4 // viewport content width
+			if rightWidth < 30 {
+				rightWidth = 30
+			}
+			contentHeight := m.termHeight - 4 - 2 // viewport height inside border
 			if contentHeight < 3 {
 				contentHeight = 3
 			}
 			m.timelineDetailVP.SetWidth(rightWidth)
 			m.timelineDetailVP.SetHeight(contentHeight)
-			refreshTimelineDetail(m)
+			buildAllTimelineDetails(m)
+			syncDetailToCursor(m)
 		}
 		return m, nil
 

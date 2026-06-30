@@ -9,6 +9,16 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+var (
+	focusedBorderStyle = lipgloss.NewStyle().
+				BorderStyle(lipgloss.ThickBorder()).
+				BorderForeground(lipgloss.Color("42")) // bright green
+
+	unfocusedBorderStyle = lipgloss.NewStyle().
+				BorderStyle(lipgloss.ThickBorder()).
+				BorderForeground(lipgloss.Color("236")) // dim gray
+)
+
 // renderTimelineFullscreenView 全屏时间线主渲染函数。
 // 分屏布局：左侧 ~35% 为 timeline 条目列表（带光标选择），
 // 右侧 ~65% 为选中条目的详细内容。
@@ -38,23 +48,26 @@ func renderTimelineFullscreenView(m *model) tea.View {
 	titleBar := renderTimelineFullscreenTitleBar(m, m.termWidth)
 	leftList := renderTimelineFullscreenList(m, leftWidth, contentHeight)
 	var rightDetail string
-	if m.timelineFullscreenCursor >= 0 && m.timelineFullscreenCursor < len(m.timelineEntries) {
-		rightDetail = renderTimelineFullscreenDetail(m, m.timelineEntries[m.timelineFullscreenCursor], rightWidth)
+	if m.timelineDetailVP != nil {
+		// 使用 viewport 的 View() 输出作为右侧详情内容
+		// viewport 内容由 buildAllTimelineDetails 设置（全量拼接）
+		rightDetail = m.timelineDetailVP.View()
 	} else {
 		rightDetail = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (select an entry)")
 	}
 	statusBar := renderTimelineFullscreenStatusBar(m, m.termWidth)
 
 	// 组装：左侧 + 分隔线 + 右侧
-	leftBlock := lipgloss.NewStyle().
-		BorderStyle(lipgloss.ThickBorder()).
-		BorderForeground(lipgloss.Color("236")).
-		Render(leftList)
-
-	rightBlock := lipgloss.NewStyle().
-		BorderStyle(lipgloss.ThickBorder()).
-		BorderForeground(lipgloss.Color("236")).
-		Render(rightDetail)
+	var leftStyle, rightStyle lipgloss.Style
+	if m.timelineFullscreenFocus == "detail" {
+		leftStyle = unfocusedBorderStyle
+		rightStyle = focusedBorderStyle
+	} else {
+		leftStyle = focusedBorderStyle
+		rightStyle = unfocusedBorderStyle
+	}
+	leftBlock := leftStyle.Render(leftList)
+	rightBlock := rightStyle.Render(rightDetail)
 
 	contentArea := lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, " ", rightBlock)
 
@@ -83,7 +96,11 @@ func renderTimelineFullscreenTitleBar(m *model, width int) string {
 		Width(width - 2)
 
 	entryCount := len(m.timelineEntries)
-	text := fmt.Sprintf(" Timeline │ %d entries │ j/k Navigate · esc/q Exit ", entryCount)
+	focusHint := "[h]◀List"
+	if m.timelineFullscreenFocus == "detail" {
+		focusHint = "Detail▶[l]"
+	}
+	text := fmt.Sprintf(" Timeline │ %d entries │ %s │ j/k Navigate · h/l Switch · esc/q Exit ", entryCount, focusHint)
 	return titleStyle.Render(text)
 }
 
@@ -407,40 +424,13 @@ func moveTimelineCursor(m *model, delta int) {
 	if m.timelineFullscreenCursor >= n {
 		m.timelineFullscreenCursor = n - 1
 	}
-	refreshTimelineDetail(m)
+	syncDetailToCursor(m)
 }
 
-// refreshTimelineDetail 重新生成右侧详情 viewport 的内容，并重置到顶部。
+// refreshTimelineDetail 重建所有条目详情内容，并滚动到当前光标位置
 func refreshTimelineDetail(m *model) {
-	if m.timelineDetailVP == nil {
-		return
-	}
-	if len(m.timelineEntries) == 0 {
-		m.timelineDetailVP.SetContent("")
-		return
-	}
-
-	cursor := m.timelineFullscreenCursor
-	if cursor < 0 || cursor >= len(m.timelineEntries) {
-		m.timelineDetailVP.SetContent("")
-		return
-	}
-
-	entry := m.timelineEntries[cursor]
-
-	// 计算右侧宽度（减去边框和 padding）
-	leftWidth := int(float64(m.termWidth-3) * 0.35)
-	if leftWidth < 25 {
-		leftWidth = 25
-	}
-	rightWidth := m.termWidth - 3 - leftWidth - 4 // -4 for padding+border
-	if rightWidth < 30 {
-		rightWidth = 30
-	}
-
-	content := renderTimelineFullscreenDetail(m, entry, rightWidth)
-	m.timelineDetailVP.SetContent(content)
-	m.timelineDetailVP.GotoTop()
+	buildAllTimelineDetails(m)
+	syncDetailToCursor(m)
 }
 
 // initTimelineDetailViewport 初始化/重置详情 viewport。
@@ -449,9 +439,14 @@ func initTimelineDetailViewport(m *model) {
 	if leftWidth < 25 {
 		leftWidth = 25
 	}
-	rightWidth := m.termWidth - 3 - leftWidth - 4
+	rightWidth := m.termWidth - 3 - leftWidth - 4 // viewport content width (inside border)
+	if rightWidth < 30 {
+		rightWidth = 30
+	}
 
-	contentHeight := m.termHeight - 4 // title + status + 2 borders
+	// 内容高度 = termHeight - title(1) - status(1) - 上下大边框(2)
+	// viewport 高度需要减去 lipgloss border 的上下各 1 行
+	contentHeight := m.termHeight - 4 - 2 // -2 for lipgloss border (top+bottom)
 	if contentHeight < 3 {
 		contentHeight = 3
 	}
@@ -461,13 +456,224 @@ func initTimelineDetailViewport(m *model) {
 	vp.SetHeight(contentHeight)
 	m.timelineDetailVP = &vp
 
-	refreshTimelineDetail(m)
+	buildAllTimelineDetails(m)
+	syncDetailToCursor(m)
 }
 
 // ExitTimelineFullscreen 退出全屏时间线模式，恢复到正常视图。
 func (m *model) ExitTimelineFullscreen() {
 	m.timelineFullscreenMode = false
 	m.timelineFullscreenCursor = 0
-	// 重置 viewport 以便重新渲染正常界面
+	m.timelineFullscreenFocus = "list"
+	m.timelineDetailOffsets = nil
 	m.timelineDetailVP = nil
+}
+
+// calcRightPaneWidth 计算右侧详情面板的 viewport 内容宽度（减去 lipgloss ThickBorder 左右各 2 字符）
+func calcRightPaneWidth(m *model) int {
+	leftWidth := int(float64(m.termWidth-3) * 0.35)
+	if leftWidth < 25 {
+		leftWidth = 25
+	}
+	rightWidth := m.termWidth - 3 - leftWidth - 4 // -4 for border (2 each side)
+	if rightWidth < 30 {
+		rightWidth = 30
+	}
+	return rightWidth
+}
+
+// buildAllTimelineDetails 将所有 timeline 条目的详情拼接成一个连续页面，
+// 计算每个条目的行偏移量，并设置到 viewport 中。不改变滚动位置。
+func buildAllTimelineDetails(m *model) {
+	entries := m.timelineEntries
+	rightWidth := calcRightPaneWidth(m)
+	
+	var sb strings.Builder
+	offsets := make([]int, len(entries))
+	currentLine := 0
+	
+	// 分隔线样式
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
+
+	for i, entry := range entries {
+		offsets[i] = currentLine
+
+		// 在条目之间添加分隔线（第一个条目不加）
+		if i > 0 {
+			sep := sepStyle.Render(strings.Repeat("─", rightWidth)) + "\n\n"
+			sb.WriteString(sep)
+			currentLine += strings.Count(sep, "\n")
+		}
+
+		// 渲染单个条目的详情（带条目编号锚点）
+		detail := renderTimelineFullscreenDetailWithAnchor(m, entry, rightWidth, i)
+		sb.WriteString(detail)
+		currentLine += strings.Count(detail, "\n")
+	}
+
+	m.timelineDetailOffsets = offsets
+	
+	if m.timelineDetailVP != nil {
+		m.timelineDetailVP.SetContent(sb.String())
+	}
+}
+
+// renderTimelineFullscreenDetailWithAnchor 渲染带锚点编号的单个条目详情
+func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, width int, index int) string {
+	if entry == nil {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (select an entry)")
+	}
+
+	var sb strings.Builder
+
+	// 锚点行（显示条目编号，方便定位）
+	anchorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
+	sb.WriteString(anchorStyle.Render(fmt.Sprintf("── Entry #%d ──", index+1)))
+	sb.WriteString("\n")
+
+	// 头部：名称
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
+	kindLabel := timelineKindLabel(entry.Kind)
+	nameDisplay := entry.Name
+	if entry.MergedCount() > 1 {
+		nameDisplay = fmt.Sprintf("%s ×%d", nameDisplay, entry.MergedCount())
+	}
+	sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", kindLabel, nameDisplay)))
+	sb.WriteString("\n")
+
+	// 元数据行
+	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	metaParts := []string{
+		fmt.Sprintf("  Time: %s", entry.Timestamp.Format("15:04:05.000")),
+	}
+	if entry.Duration > 0 {
+		metaParts = append(metaParts, fmt.Sprintf("Duration: %s", formatTimelineDuration(entry.Duration)))
+	}
+	statusText := statusTextFor(entry)
+	metaParts = append(metaParts, fmt.Sprintf("Status: %s", statusText))
+	sb.WriteString(metaStyle.Render(strings.Join(metaParts, "  │  ")))
+	sb.WriteString("\n")
+
+	// 分隔线
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", width)))
+	sb.WriteString("\n\n")
+
+	// 主体内容 — 复用原有的 renderTimelineFullscreenDetail 逻辑
+	sb.WriteString(renderTimelineDetailBody(m, entry, width))
+
+	return sb.String()
+}
+
+// renderTimelineDetailBody 渲染条目详情的主体内容（不含头部元数据）
+func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string {
+	var sb strings.Builder
+	
+	switch entry.Kind {
+	case TimelineKindTool:
+		if len(entry.SubEntries) > 0 {
+			allEntries := []*TimelineEntry{entry}
+			allEntries = append(allEntries, entry.SubEntries...)
+
+			for idx, sub := range allEntries {
+				numStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("248"))
+				detailStr := sub.Detail
+				if detailStr == "" {
+					detailStr = sub.Name
+				}
+				sb.WriteString(numStyle.Render(fmt.Sprintf("  #%d  %s", idx+1, detailStr)))
+				sb.WriteString("\n")
+
+				toolEntry := findToolEntryByCallID(m, sub.ID)
+				if toolEntry != nil {
+					rendered := RenderToolLine(toolEntry, m.anim, width-4)
+					if rendered != "" {
+						lines := strings.Split(rendered, "\n")
+						for _, line := range lines {
+							sb.WriteString("  ")
+							sb.WriteString(line)
+							sb.WriteString("\n")
+						}
+					}
+
+					if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
+						(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
+						bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-8)
+						if bodyContent != "" {
+							bodyLines := strings.Split(bodyContent, "\n")
+							for _, line := range bodyLines {
+								sb.WriteString("    ")
+								sb.WriteString(line)
+								sb.WriteString("\n")
+							}
+						}
+					}
+				} else {
+					statusIcon := "●"
+					if sub.Status == ToolStatusRunning {
+						statusIcon = "○"
+					}
+					statusStr := statusTextFor(sub)
+					sb.WriteString(fmt.Sprintf("    %s  %s\n", statusIcon, statusStr))
+				}
+
+				if idx < len(allEntries)-1 {
+					sb.WriteString("\n")
+				}
+			}
+		} else {
+			toolEntry := findToolEntryByCallID(m, entry.ID)
+			if toolEntry != nil {
+				rendered := RenderToolLine(toolEntry, m.anim, width)
+				sb.WriteString(rendered)
+
+				if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
+					(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
+					bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-4)
+					if bodyContent != "" {
+						sb.WriteString("\n")
+						sb.WriteString(bodyContent)
+					}
+				}
+			} else {
+				sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (tool data not available)"))
+			}
+		}
+	case TimelineKindLLMCall:
+		if entry.Detail != "" {
+			sb.WriteString("  ")
+			sb.WriteString(entry.Detail)
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
+		}
+	case TimelineKindContextEvent:
+		if entry.Detail != "" {
+			sb.WriteString("  ")
+			sb.WriteString(entry.Detail)
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
+		}
+	default:
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (unknown entry type)"))
+	}
+	
+	return sb.String()
+}
+
+// syncDetailToCursor 将详情 viewport 滚动到当前光标条目对应的位置
+func syncDetailToCursor(m *model) {
+	if m.timelineDetailVP == nil {
+		return
+	}
+	if len(m.timelineDetailOffsets) == 0 {
+		return
+	}
+	cursor := m.timelineFullscreenCursor
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor >= len(m.timelineDetailOffsets) {
+		cursor = len(m.timelineDetailOffsets) - 1
+	}
+	targetOffset := m.timelineDetailOffsets[cursor]
+	m.timelineDetailVP.SetYOffset(targetOffset)
 }

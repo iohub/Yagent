@@ -669,6 +669,8 @@ type model struct {
 	timelineFullscreenMode   bool              // 是否处于全屏时间线模式
 	timelineFullscreenCursor int               // 全屏模式下当前选中的条目索引
 	timelineDetailVP         *viewport.Model   // 全屏模式下右侧详情 viewport
+	timelineFullscreenFocus  string            // 全屏模式焦点: "list" 或 "detail" (默认 "list")
+	timelineDetailOffsets    []int             // 每个条目在拼接详情中的行偏移量
 }
 
 // autocompleteCacheKey is a fine-grained cache key for autocomplete results.
@@ -905,6 +907,8 @@ return &model{
 		// Timeline initialization
 		timelineEntries:  make([]*TimelineEntry, 0),
 		timelineExpanded: false,
+		timelineFullscreenFocus: "list",
+		timelineDetailOffsets:   []int{},
 
 		// ── Glamour 渲染缓存（LRU） ──
 		glamourCache:    make(map[string]string),
