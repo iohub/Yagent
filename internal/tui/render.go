@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
+	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -162,6 +164,12 @@ func RenderResultBody(toolName string, content string, width int) string {
 		bodyWidth = 30
 	}
 
+	// 0. Try to decode JSON-encoded string first (before isJSON check,
+	//    because isJSON only detects {}/[] not JSON strings).
+	if decodedStr := tryDecodeJSONString(content); decodedStr != "" {
+		return RenderResultBody(toolName, decodedStr, bodyWidth)
+	}
+
 	// 1. Try JSON — check for embedded fields first
 	if isJSON(content) {
 		// Detect codexray tool results by JSON structure (not tool name)
@@ -184,6 +192,9 @@ func RenderResultBody(toolName string, content string, width int) string {
 		// Otherwise pretty-print the JSON
 		pretty, err := jsonPrettyPrint(content)
 		if err == nil {
+			if looksLikeMarkdown(pretty) {
+				return renderMarkdownContent(pretty, bodyWidth)
+			}
 			return renderCodeLines(pretty, "result.json", bodyWidth)
 		}
 	}
@@ -195,7 +206,7 @@ func RenderResultBody(toolName string, content string, width int) string {
 
 	// 3. Try markdown detection
 	if looksLikeMarkdown(content) {
-		return renderCodeLines(content, "result.md", bodyWidth)
+		return renderMarkdownContent(content, bodyWidth)
 	}
 
 	// 4. Fallback: plain text
@@ -228,6 +239,21 @@ func extractOutputField(jsonStr string) string {
 	}
 	if output, ok := parsed["output"].(string); ok && output != "" {
 		return output
+	}
+	return ""
+}
+
+// tryDecodeJSONString attempts to decode content as a JSON-encoded string.
+// When tool results are plain strings, the framework json.Marshal wraps them
+// in quotes and escapes special characters. This function reverses that.
+// Returns the decoded string, or empty if content is not a JSON string.
+func tryDecodeJSONString(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if len(trimmed) >= 2 && trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"' {
+		var decoded string
+		if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+			return decoded
+		}
 	}
 	return ""
 }
@@ -497,6 +523,59 @@ func renderCodeLines(content string, filename string, width int) string {
 		rendered = append(rendered, " "+num+"  "+code)
 	}
 	return strings.Join(rendered, "\n")
+}
+
+// ── Markdown Rendering (Glamour) ──
+
+// glamourRendererCache is a thread-safe cache for glamour TermRenderer instances.
+// Cache key is the word-wrap width (int).
+var (
+	glamourRendererCache sync.Map // map[int]*glamour.TermRenderer
+)
+
+// renderMarkdownContent renders markdown content using Glamour with dark style.
+// Uses a thread-safe cache keyed by width. Falls back to renderCodeLines on error.
+func renderMarkdownContent(content string, width int) string {
+	if width <= 0 {
+		width = 80
+	}
+
+	// Try to get cached renderer
+	if cached, ok := glamourRendererCache.Load(width); ok {
+		if r, ok := cached.(*glamour.TermRenderer); ok {
+			rendered, err := r.Render(content)
+			if err == nil {
+				return rendered
+			}
+		}
+	}
+
+	// Create new renderer
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		// Fallback renderer with default width
+		r, _ = glamour.NewTermRenderer(
+			glamour.WithStandardStyle("dark"),
+			glamour.WithWordWrap(80),
+		)
+	}
+	if r == nil {
+		return renderCodeLines(content, "result.md", width)
+	}
+
+	// Cache the renderer
+	glamourRendererCache.Store(width, r)
+
+	// Render
+	rendered, err := r.Render(content)
+	if err != nil {
+		// Fallback to code lines rendering
+		return renderCodeLines(content, "result.md", width)
+	}
+	return rendered
 }
 
 // ── Content Detection ──
