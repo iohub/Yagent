@@ -237,6 +237,130 @@ fn expand_call_chain(
     }
 }
 
+// =============================================================================
+// find_function_callees / find_function_callers
+// =============================================================================
+
+/// Find all callees (functions called by) the specified target function
+pub async fn find_function_callees(
+    State(storage): State<AppState>,
+    Json(request): Json<super::models::FindFunctionRelationsRequest>,
+) -> Result<Json<ApiResponse<super::models::FindFunctionRelationsResponse>>, StatusCode> {
+    let graph = storage.storage.get_graph_clone().ok_or(StatusCode::NOT_FOUND)?;
+
+    let matching_functions = graph.find_functions_by_name(&request.function_name);
+
+    // Filter by filepath if provided
+    let target_function = if let Some(ref fp) = request.filepath {
+        let file_path = std::path::PathBuf::from(fp);
+        matching_functions
+            .into_iter()
+            .find(|f| f.file_path == file_path)
+            .ok_or(StatusCode::NOT_FOUND)?
+    } else {
+        matching_functions
+            .into_iter()
+            .next()
+            .ok_or(StatusCode::NOT_FOUND)?
+    };
+
+    tracing::info!(
+        "find_function_callees: found '{}' (id={}) in '{}'",
+        target_function.name,
+        target_function.id,
+        target_function.file_path.display()
+    );
+
+    let callees = graph.get_callees(&target_function.id);
+
+    let relations: Vec<super::models::FunctionRelation> = callees
+        .iter()
+        .map(|(callee_func, _relation)| super::models::FunctionRelation {
+            function_name: callee_func.name.clone(),
+            file_path: callee_func.file_path.display().to_string(),
+            line_start: callee_func.line_start,
+            line_end: callee_func.line_end,
+            signature: callee_func.signature.clone(),
+        })
+        .collect();
+
+    let response = super::models::FindFunctionRelationsResponse {
+        function: super::models::FunctionRelation {
+            function_name: target_function.name.clone(),
+            file_path: target_function.file_path.display().to_string(),
+            line_start: target_function.line_start,
+            line_end: target_function.line_end,
+            signature: target_function.signature.clone(),
+        },
+        relations,
+    };
+
+    Ok(Json(ApiResponse {
+        success: true,
+        data: response,
+    }))
+}
+
+/// Find all callers (functions that call) the specified target function
+pub async fn find_function_callers(
+    State(storage): State<AppState>,
+    Json(request): Json<super::models::FindFunctionRelationsRequest>,
+) -> Result<Json<ApiResponse<super::models::FindFunctionRelationsResponse>>, StatusCode> {
+    let graph = storage.storage.get_graph_clone().ok_or(StatusCode::NOT_FOUND)?;
+
+    let matching_functions = graph.find_functions_by_name(&request.function_name);
+
+    // Filter by filepath if provided
+    let target_function = if let Some(ref fp) = request.filepath {
+        let file_path = std::path::PathBuf::from(fp);
+        matching_functions
+            .into_iter()
+            .find(|f| f.file_path == file_path)
+            .ok_or(StatusCode::NOT_FOUND)?
+    } else {
+        matching_functions
+            .into_iter()
+            .next()
+            .ok_or(StatusCode::NOT_FOUND)?
+    };
+
+    tracing::info!(
+        "find_function_callers: found '{}' (id={}) in '{}'",
+        target_function.name,
+        target_function.id,
+        target_function.file_path.display()
+    );
+
+    let callers = graph.get_callers(&target_function.id);
+
+    let relations: Vec<super::models::FunctionRelation> = callers
+        .iter()
+        .map(|(caller_func, _relation)| super::models::FunctionRelation {
+            function_name: caller_func.name.clone(),
+            file_path: caller_func.file_path.display().to_string(),
+            line_start: caller_func.line_start,
+            line_end: caller_func.line_end,
+            signature: caller_func.signature.clone(),
+        })
+        .collect();
+
+    let response = super::models::FindFunctionRelationsResponse {
+        function: super::models::FunctionRelation {
+            function_name: target_function.name.clone(),
+            file_path: target_function.file_path.display().to_string(),
+            line_start: target_function.line_start,
+            line_end: target_function.line_end,
+            signature: target_function.signature.clone(),
+        },
+        relations,
+    };
+
+    Ok(Json(ApiResponse {
+        success: true,
+        data: response,
+    }))
+}
+
 /// New handler for hierarchical tree structure output
 pub async fn query_hierarchical_graph(
     State(storage): State<AppState>,

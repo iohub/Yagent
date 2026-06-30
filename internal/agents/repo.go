@@ -52,6 +52,10 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 			fn = globalCtx.RepoOps.ExecuteQueryCodeSkeleton
 		case "query_code_snippet":
 			fn = globalCtx.RepoOps.ExecuteQueryCodeSnippet
+		case "find_function_callee":
+			fn = globalCtx.RepoOps.ExecuteFindFunctionCallees
+		case "find_function_caller":
+			fn = globalCtx.RepoOps.ExecuteFindFunctionCallers
 		case "deepthinking":
 			fn = globalCtx.DeepThinkingTool.Execute
 		default:

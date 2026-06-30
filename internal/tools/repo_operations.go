@@ -179,3 +179,83 @@ func (t *RepoOperationsTool) ExecuteQueryCodeSnippet(ctx context.Context, params
 	}
 	return response, nil
 }
+
+// ── 调用者/被调用者查询 ──
+
+type FindFunctionInfo struct {
+	Name      string `json:"name"`
+	FilePath  string `json:"file_path"`
+	LineStart int    `json:"line_start"`
+	LineEnd   int    `json:"line_end"`
+	Signature string `json:"signature,omitempty"`
+}
+
+type FindFunctionCalleesResponse struct {
+	Success  bool               `json:"success"`
+	Function FindFunctionInfo   `json:"function"`
+	Callees  []FindFunctionInfo `json:"callees"`
+}
+
+type FindFunctionCallersResponse struct {
+	Success  bool               `json:"success"`
+	Function FindFunctionInfo   `json:"function"`
+	Callers  []FindFunctionInfo `json:"callers"`
+}
+
+func (t *RepoOperationsTool) ExecuteFindFunctionCallees(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	functionName, ok := params["function_name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("function_name parameter must be a string")
+	}
+
+	var filepath string
+	if fp, ok := params["filepath"].(string); ok && fp != "" {
+		filepath = fp
+	}
+
+	body, err := t.doCodexrayRequest("/find_function_callees", map[string]interface{}{
+		"function_name": functionName,
+		"filepath":      filepath,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var response FindFunctionCalleesResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return string(body), nil
+	}
+	if !response.Success {
+		return nil, fmt.Errorf("server returned unsuccessful response: %s", string(body))
+	}
+	return response, nil
+}
+
+func (t *RepoOperationsTool) ExecuteFindFunctionCallers(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	functionName, ok := params["function_name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("function_name parameter must be a string")
+	}
+
+	var filepath string
+	if fp, ok := params["filepath"].(string); ok && fp != "" {
+		filepath = fp
+	}
+
+	body, err := t.doCodexrayRequest("/find_function_callers", map[string]interface{}{
+		"function_name": functionName,
+		"filepath":      filepath,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var response FindFunctionCallersResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return string(body), nil
+	}
+	if !response.Success {
+		return nil, fmt.Errorf("server returned unsuccessful response: %s", string(body))
+	}
+	return response, nil
+}

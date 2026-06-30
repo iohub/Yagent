@@ -80,4 +80,27 @@ fn default_max_depth() -> Option<usize> {
     Some(3)
 }
 
+// ---- Models for find_function_callees / find_function_callers ----
+
+#[derive(Debug, Deserialize)]
+pub struct FindFunctionRelationsRequest {
+    pub function_name: String,
+    pub filepath: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FunctionRelation {
+    pub function_name: String,
+    pub file_path: String,
+    pub line_start: usize,
+    pub line_end: usize,
+    pub signature: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FindFunctionRelationsResponse {
+    pub function: FunctionRelation,
+    pub relations: Vec<FunctionRelation>,
+}
+
  

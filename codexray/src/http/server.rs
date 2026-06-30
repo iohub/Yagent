@@ -26,7 +26,8 @@ use super::{
          semantic_search, query_indexing_status,
          perform_analysis, setup_watcher, trigger_embedding_build,
          commit_embed, commit_search, commit_clear,
-         repo_knowledge_embed, repo_knowledge_search},
+         repo_knowledge_embed, repo_knowledge_search,
+         find_function_callees, find_function_callers},
     models::ApiResponse,
 };
 use crate::services::embedding_service::OpenAICompatibleEmbeddingProvider;
@@ -411,6 +412,8 @@ impl CodeXRayServer {
             .route("/health", get(health_check))
             .route("/status", get(get_status))
             .route("/query_call_graph", post(query_call_graph))
+            .route("/find_function_callees", post(find_function_callees))
+            .route("/find_function_callers", post(find_function_callers))
             .route("/query_code_snippet", post(query_code_snippet))
             .route("/query_code_skeleton", post(query_code_skeleton))
             .route("/query_hierarchical_graph", post(query_hierarchical_graph))

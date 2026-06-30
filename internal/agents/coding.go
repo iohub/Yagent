@@ -115,6 +115,10 @@ func lookupToolFunc(name string, gctx *globalctx.GlobalCtx) tools.ToolFunc {
 		return gctx.RepoOps.ExecuteQueryCodeSkeleton
 	case "query_code_snippet":
 		return gctx.RepoOps.ExecuteQueryCodeSnippet
+	case "find_function_callee":
+		return gctx.RepoOps.ExecuteFindFunctionCallees
+	case "find_function_caller":
+		return gctx.RepoOps.ExecuteFindFunctionCallers
 	case "thinking":
 		return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			inputBytes, _ := json.Marshal(params)

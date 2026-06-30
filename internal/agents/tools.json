@@ -395,5 +395,41 @@
       },
       "required": ["task"]
     }
+  },
+  {
+    "name": "find_function_callee",
+    "description": "Find all functions that the specified function calls (its callees). Given a function name, returns a list of functions it invokes, including file paths and line numbers. Useful for understanding what a function does internally.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "function_name": {
+          "type": "string",
+          "description": "The name of the function to find callees for"
+        },
+        "filepath": {
+          "type": "string",
+          "description": "Optional: specific file path to narrow the search (e.g., 'src/main.go')"
+        }
+      },
+      "required": ["function_name"]
+    }
+  },
+  {
+    "name": "find_function_caller",
+    "description": "Find all functions that call the specified function (its callers). Given a function name, returns a list of functions that invoke it, including file paths and line numbers. Useful for understanding who depends on this function.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "function_name": {
+          "type": "string",
+          "description": "The name of the function to find callers for"
+        },
+        "filepath": {
+          "type": "string",
+          "description": "Optional: specific file path to narrow the search (e.g., 'src/main.go')"
+        }
+      },
+      "required": ["function_name"]
+    }
   }
 ]
