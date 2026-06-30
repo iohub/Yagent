@@ -265,6 +265,19 @@ func tryFormatCodebaseResult(content string, width int) string {
 		return ""
 	}
 
+	// Pattern 4: find_function_callee / find_function_caller — top-level function + callees/callers
+	// These results don't have a "data" wrapper, so check before the hasData guard.
+	if funcInfo, ok := parsed["function"].(map[string]interface{}); ok {
+		if _, hasName := funcInfo["name"]; hasName {
+			if callees, ok := parsed["callees"].([]interface{}); ok && len(callees) > 0 {
+				return formatFunctionRelationResults(funcInfo, "callee", callees, width)
+			}
+			if callers, ok := parsed["callers"].([]interface{}); ok && len(callers) > 0 {
+				return formatFunctionRelationResults(funcInfo, "caller", callers, width)
+			}
+		}
+	}
+
 	data, hasData := parsed["data"].(map[string]interface{})
 	if !hasData {
 		return ""
@@ -395,6 +408,95 @@ func formatCodeSnippetResult(filepath, funcName, snippet string, lineStart, line
 	for _, cl := range codeLines {
 		truncated := truncateLine(cl, width-2)
 		lines = append(lines, "  "+codeLineStyle.Render(truncated))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// formatFunctionRelationResults formats find_function_callee / find_function_caller results.
+// relationType is "callee" or "caller".
+func formatFunctionRelationResults(funcInfo map[string]interface{}, relationType string, relations []interface{}, width int) string {
+	fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	funcStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	langStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
+	locStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
+	relStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true) // green for relation
+	arrowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
+
+	var lines []string
+
+	// Header: filepath  funcName  (language)  L{start}-{end}
+	filepath, _ := funcInfo["file_path"].(string)
+	funcName, _ := funcInfo["name"].(string)
+	language, _ := funcInfo["language"].(string)
+	lineStart, _ := funcInfo["line_start"].(float64)
+	lineEnd, _ := funcInfo["line_end"].(float64)
+
+	headerParts := []string{
+		fileStyle.Render(filepath),
+		"  ",
+		funcStyle.Render(funcName),
+	}
+	if language != "" {
+		headerParts = append(headerParts, "  ", langStyle.Render(language))
+	}
+	if int(lineStart) > 0 {
+		lineRange := fmt.Sprintf("L%d-%d", int(lineStart), int(lineEnd))
+		headerParts = append(headerParts, "  ", locStyle.Render(lineRange))
+	}
+	lines = append(lines, strings.Join(headerParts, ""))
+
+	// Arrow symbol based on relation type
+	var arrow string
+	if relationType == "callee" {
+		arrow = "→"
+	} else {
+		arrow = "←"
+	}
+
+	// Relations list
+	for _, rel := range relations {
+		item, ok := rel.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		relFilepath, _ := item["file_path"].(string)
+		relFuncName, _ := item["name"].(string)
+
+		// Format: "  → rel_file:line  funcName()"
+		var relParts []string
+		relParts = append(relParts, "  ", arrowStyle.Render(arrow), " ")
+
+		// Truncate filepath if too long
+		relPath := relFilepath
+		if len(relPath) > 40 {
+			relPath = relPath[len(relPath)-38:]
+		}
+		colonIdx := strings.Index(relPath, ":")
+		if colonIdx > 0 {
+			filePart := relPath[:colonIdx]
+			linePart := relPath[colonIdx+1:]
+			relParts = append(relParts,
+				fileStyle.Render(filePart),
+				arrowStyle.Render(":"+linePart),
+				"  ",
+			)
+		} else {
+			relParts = append(relParts, fileStyle.Render(relPath), "  ")
+		}
+
+		// Function name with optional signature
+		funcDisplay := relFuncName
+		if itemSig, ok := item["signature"].(string); ok && itemSig != "" {
+			funcDisplay = itemSig
+		}
+		if funcDisplay != "" && !strings.Contains(funcDisplay, "(") {
+			funcDisplay += "()"
+		}
+		relParts = append(relParts, relStyle.Render(funcDisplay))
+
+		lines = append(lines, strings.Join(relParts, ""))
 	}
 
 	return strings.Join(lines, "\n")
@@ -692,6 +794,13 @@ func formatToolParams(toolName string, argsJSON string) string {
 	case "file_search":
 		if q, ok := args["query"].(string); ok && q != "" {
 			return q
+		}
+	case "find_function_callee", "find_function_caller":
+		if fn, ok := args["function_name"].(string); ok && fn != "" {
+			if len(fn) > 40 {
+				return fn[:37] + "..."
+			}
+			return fn
 		}
 	}
 	// For delegate tools

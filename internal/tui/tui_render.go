@@ -568,6 +568,10 @@ func extractToolSummary(toolName string, argsJSON string) string {
 		if reason, ok := args["reason"].(string); ok && reason != "" {
 			return reason
 		}
+	case "find_function_callee", "find_function_caller":
+		if fn, ok := args["function_name"].(string); ok && fn != "" {
+			return fn
+		}
 	}
 	// For delegate tools, show task summary
 	if strings.HasPrefix(toolName, "delegate_") {
@@ -625,6 +629,22 @@ func extractResultBrief(toolName string, result string) string {
 	case "search_by_regex", "grep_search":
 		lines := strings.Count(result, "\n")
 		return fmt.Sprintf("%d matches", lines)
+	case "find_function_callee":
+		var r struct {
+			Callees []interface{} `json:"callees"`
+		}
+		if err := json.Unmarshal([]byte(result), &r); err == nil {
+			return fmt.Sprintf("%d callees", len(r.Callees))
+		}
+		return ""
+	case "find_function_caller":
+		var r struct {
+			Callers []interface{} `json:"callers"`
+		}
+		if err := json.Unmarshal([]byte(result), &r); err == nil {
+			return fmt.Sprintf("%d callers", len(r.Callers))
+		}
+		return ""
 	default:
 		if strings.HasPrefix(toolName, "delegate_") {
 			return ""
