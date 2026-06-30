@@ -69,7 +69,6 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 		timestamp: time.Now(),
 		eventType: "user_message",
 		content:   taskDesc,
-		collapsed: strings.Count(taskDesc, "\n") >= DefaultCollapseLines,
 	})
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 
@@ -109,7 +108,6 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 		timestamp: time.Now(),
 		eventType: "user_message",
 		content:   message,
-		collapsed: strings.Count(message, "\n") >= DefaultCollapseLines,
 	})
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 

@@ -924,11 +924,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
-			// ── Collapse toggle ──
-			case "ctrl+o":
-				m.toggleCollapseAll()
-				return m, nil
-
 			// ── Token dashboard collapse toggle ──
 			case "alt+t":
 				m.tokenDashboardCollapsed = !m.tokenDashboardCollapsed

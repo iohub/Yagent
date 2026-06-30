@@ -413,13 +413,6 @@ func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 			entry.content = msg.Content
 		}
 
-		// Pre-collapse long ai_response and user_input entries
-		if entry.eventType == "ai_response" || entry.eventType == "user_input" {
-			if strings.Count(entry.content, "\n") >= DefaultCollapseLines {
-				entry.collapsed = true
-			}
-		}
-
 		m.logEntries = append(m.logEntries, entry)
 	}
 

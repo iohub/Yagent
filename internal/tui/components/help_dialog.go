@@ -220,12 +220,6 @@ func buildHelpData(lang Language) helpData {
 					},
 				},
 				{
-					Title: "消息",
-					Items: []keyItem{
-						{[]string{"Ctrl+O"}, "全部展开 / 全部折叠长消息"},
-					},
-				},
-				{
 					Title: "其他",
 					Items: []keyItem{
 						{[]string{"?"}, "显示此帮助"},
@@ -264,12 +258,6 @@ func buildHelpData(lang Language) helpData {
 					{[]string{":q"}, "quit"},
 					{[]string{":help"}, "show command help"},
 					{[]string{"/pattern"}, "search log"},
-				},
-			},
-			{
-				Title: "Messages",
-				Items: []keyItem{
-					{[]string{"Ctrl+O"}, "expand/collapse all long messages"},
 				},
 			},
 			{

@@ -141,7 +141,6 @@ var langMap = map[Language]translations{
 			"  其他:\n" +
 			"    ?               显示此帮助\n" +
 			"    ctrl+c          强制退出\n" +
-			"    ctrl+o         全部展开/全部折叠长消息\n" +
 			"    alt+t         切换 token 仪表盘（折叠/展开）",
 		DeleteConfirmTitle:   "确认删除",
 		DeleteConfirmMessage: "确定要删除这条历史记录吗？此操作不可恢复。",
@@ -214,7 +213,6 @@ var langMap = map[Language]translations{
 			"  Other:\n" +
 			"    ?              show this help\n" +
 			"    ctrl+c         force quit\n" +
-			"    ctrl+o         expand/collapse all long messages\n" +
 			"    alt+t         toggle token dashboard (collapsed/expanded)",
 		DeleteConfirmTitle:   "Confirm Delete",
 		DeleteConfirmMessage: "Are you sure you want to delete this history entry? This action cannot be undone.",

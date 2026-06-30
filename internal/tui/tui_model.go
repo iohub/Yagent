@@ -261,7 +261,6 @@ type logEntry struct {
 	resultBrief      string // brief result description (e.g., "120 lines", "modified")
 	diffText         string // unified diff content for file edit results
 	renderedCache    map[int]string // width-keyed cache: key=width, value=rendered content
-	collapsed        bool           // true if content is currently folded (>15 lines)
 
 	compactData *CompactData
 
