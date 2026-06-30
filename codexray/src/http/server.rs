@@ -23,7 +23,7 @@ use crate::services::embedding_service::EmbeddingService;
 use super::{
     handlers::{query_call_graph, query_code_snippet, query_code_skeleton,
          query_hierarchical_graph, draw_call_graph, draw_call_graph_home,
-         investigate_repo, semantic_search, query_indexing_status,
+         semantic_search, query_indexing_status,
          perform_analysis, setup_watcher, trigger_embedding_build,
          commit_embed, commit_search, commit_clear,
          repo_knowledge_embed, repo_knowledge_search},
@@ -414,7 +414,6 @@ impl CodeXRayServer {
             .route("/query_code_snippet", post(query_code_snippet))
             .route("/query_code_skeleton", post(query_code_skeleton))
             .route("/query_hierarchical_graph", post(query_hierarchical_graph))
-            .route("/investigate_repo", post(investigate_repo))
             .route("/query_indexing_status", post(query_indexing_status))
             .route("/commit/embed", post(commit_embed))
             .route("/commit/search", post(commit_search))

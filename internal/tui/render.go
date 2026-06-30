@@ -20,14 +20,13 @@ const (
 // skipBodyTools lists tools whose result body is just a status confirmation
 // and should not be rendered — only the header (icon + name + file path) is shown.
 var skipBodyTools = map[string]bool{
-	"read_file":          true,
-	"delete_file":        true,
-	"rename_file":        true,
-	"list_dir":           true,
-	"print_dir_tree":     true,
-	"search_by_regex":    true,
-	"semantic_search":    true,
-	"get_repo_overview":  true,  // 主视口仅显示 header，详情页通过 RenderResultBody 补充
+	"read_file":         true,
+	"delete_file":       true,
+	"rename_file":       true,
+	"list_dir":          true,
+	"print_dir_tree":    true,
+	"search_by_regex":   true,
+	"semantic_search":   true,
 }
 
 // ── Tool Header Rendering ──
@@ -127,7 +126,7 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 	// only show the tool name + file path in the header.
 	// For read_file and search_by_regex, skip borders as well; other tools keep borders.
 	if skipBodyTools[entry.Call.Name] && entry.Status == ToolStatusSuccess {
-		if entry.Call.Name == "read_file" || entry.Call.Name == "search_by_regex" || entry.Call.Name == "semantic_search" || entry.Call.Name == "get_repo_overview" {
+		if entry.Call.Name == "read_file" || entry.Call.Name == "search_by_regex" || entry.Call.Name == "semantic_search" {
 			return header
 		}
 		return addToolCallBorders(header, width)
@@ -657,8 +656,6 @@ func formatToolParams(toolName string, argsJSON string) string {
 			}
 			return cmd
 		}
-	case "get_repo_overview":
-		return "Repo Overview"
 	case "semantic_search":
 		if query, ok := args["query"].(string); ok && query != "" {
 			if len(query) > 40 {

@@ -1,14 +1,5 @@
 [
   {
-    "name": "get_repo_overview",
-    "description": "Get a panoramic overview of the repository. Calls the backend code analysis service and returns the directory tree, core functions with caller/callee relationships, and key file skeletons in a single response. Use this to quickly build a mental map of the codebase without reading files one by one.",
-    "parameters": {
-      "type": "object",
-      "properties": {},
-      "required": []
-    }
-  },
-  {
     "name": "read_file",
     "description": "Read file contents by line range (1-indexed) or entire file. LARGE FILE PROTECTION IS ENFORCED: (1) Files > 500MB are refused entirely — use grep first. (2) Files > 10MB cannot use should_read_entire_file=true — use line ranges instead. (3) Entire file reads are capped at 2000 lines / 200KB content — excess is truncated (truncated=true). (4) Files > 2MB trigger a warning. Response includes: content, lines (returned count), file_size_bytes, total_lines (full file), truncated, warning, read_mode. For range reads also: start_line, end_line, lines_before_range, lines_after_range. ALWAYS check file_size_bytes and total_lines in the response to decide if further reads are needed. Max 250 lines per call for range reads. Use should_read_entire_file=true ONLY for small files (< 2MB, < 500 lines). For large files, always use start_line_one_indexed and end_line_one_indexed_inclusive to paginate. If truncated=true, use line ranges to read remaining content.",
     "parameters": {

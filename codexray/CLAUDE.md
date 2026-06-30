@@ -77,7 +77,7 @@ The process binds to exactly one repository at startup via `--repo-path`. `Stora
 | POST | `/query_code_snippet` | Extract code snippet with line ranges |
 | POST | `/query_code_skeleton` | Batch skeleton extraction from file paths |
 | POST | `/query_hierarchical_graph` | Hierarchical call tree with depth limit |
-| POST | `/investigate_repo` | Top-15 functions by out-degree, directory tree, file skeletons |
+| POST | `/investigate_repo` | ~~已废弃~~ Top-15 functions by out-degree, directory tree, file skeletons (功能已移除) |
 | POST | `/semantic_search` | Vector-based semantic code search (uses bound repo) |
 | POST | `/query_indexing_status` | Embedding indexing status (uses bound repo) |
 | GET | `/` and `/draw_call_graph` | ECharts call graph visualization |

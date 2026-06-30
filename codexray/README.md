@@ -186,7 +186,7 @@ graph TD
 | `POST` | `/query_code_snippet` | Extract code snippet with line numbers |
 | `POST` | `/query_code_skeleton` | Batch-extract file skeletons (function/class signatures) |
 | `POST` | `/query_hierarchical_graph` | Hierarchical call tree (root function + depth) |
-| `POST` | `/investigate_repo` | **Panoramic analysis**: Top 15 core functions + file tree + skeletons |
+| `POST` | `/investigate_repo` | ~~已废弃~~ **Panoramic analysis**: Top 15 core functions + file tree + skeletons (功能已移除) |
 | `POST` | `/semantic_search` | **Semantic search**: natural language code search |
 | `POST` | `/query_indexing_status` | Query embedding index status |
 | `GET` | `/draw_call_graph` | ECharts interactive call graph visualization |
@@ -209,14 +209,6 @@ curl -X POST http://localhost:12800/semantic_search \
 curl -X POST http://localhost:12800/query_call_graph \
   -H "Content-Type: application/json" \
   -d '{"filepath": "src/main.rs", "function_name": "main", "max_depth": 3}'
-```
-
-**📊 Repository Panorama** — One-click global view
-
-```bash
-curl -X POST http://localhost:12800/investigate_repo \
-  -H "Content-Type: application/json" \
-  -d '{}'
 ```
 
 **📂 Hierarchical Call Tree** — Expand from root function

@@ -17,7 +17,7 @@ You have access to the following tools. You must use them to interact with the s
 ### Tool Usage Guidelines
 *   **Context Gathering**:
     *   **Parallel Execution (CRITICAL)**: When exploring or gathering context, you **MUST** use multiple tools simultaneously (in parallel). Batch your requests (e.g., read multiple files at once, or search and read in parallel).
-    *   **High Priority (Use first)**: `get_repo_overview`, `semantic_search`, `query_code_skeleton`, `query_code_snippet`, `print_dir_tree`. These tools provide high-level context and structure efficiently.
+    *   **High Priority (Use first)**: `semantic_search`, `query_code_skeleton`, `query_code_snippet`, `print_dir_tree`. These tools provide high-level context and structure efficiently.
     *   **Low Priority (Fallback)**: `list_dir`, `read_file`, `search_by_regex`. Use these only when necessary for specific low-level details or when high-level tools are insufficient.
     *   *Best Practice*: Read large meaningful chunks of files rather than small snippets to minimize tool calls. Do not make assumptions; verify with tools.
 *   **Code Editing**:

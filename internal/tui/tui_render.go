@@ -568,8 +568,6 @@ func extractToolSummary(toolName string, argsJSON string) string {
 		if reason, ok := args["reason"].(string); ok && reason != "" {
 			return reason
 		}
-	case "get_repo_overview":
-		return "Repo Overview"
 	}
 	// For delegate tools, show task summary
 	if strings.HasPrefix(toolName, "delegate_") {

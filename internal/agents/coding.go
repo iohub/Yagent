@@ -124,12 +124,6 @@ func lookupToolFunc(name string, gctx *globalctx.GlobalCtx) tools.ToolFunc {
 		return gctx.MicroAgentTool.Execute
 	case "deepthinking":
 		return gctx.DeepThinkingTool.Execute
-	case "get_repo_overview":
-		return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			return gctx.RepoOps.ExecuteQueryCodeSkeleton(ctx, map[string]interface{}{
-				"path": gctx.ProjectPath,
-			})
-		}
 	case "agent_exit":
 		return gctx.FlowOps.ExecuteAgentExit
 	case "ask_user_for_help":

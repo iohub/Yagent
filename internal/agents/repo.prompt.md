@@ -29,7 +29,6 @@ When you need to explore or investigate the repository, you MUST follow this pri
 1. **Parallel Execution (CRITICAL)**: When performing exploration or read-only tasks, you **MUST** invoke multiple tools simultaneously (in parallel) to maximize efficiency. Batch all independent requests together in a single turn. Avoid sequential calls unless a later call strictly depends on the result of an earlier one.
 
 2. **Codebase Tools (PRIMARY — Exhaust First)**:
-   - `get_repo_overview` — Get a panoramic view of the repo: directory tree, core functions with caller/callee relationships, and file skeletons in one call. Use when you need a broad structural overview.
    - `semantic_search` — Natural-language semantic code search. Use for conceptual queries like "error handling patterns", "how is authentication implemented", "concurrency control mechanisms".
    - `query_code_skeleton` — Get the structural skeleton (functions, types, imports) of specified files without reading full content. Use for architectural overview.
    - `query_code_snippet` — Get the complete code of a specific function or symbol by name. Use when you need to inspect a known function's implementation.

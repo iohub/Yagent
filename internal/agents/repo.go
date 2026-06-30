@@ -1,15 +1,11 @@
 package agents
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
-	"time"
 
 	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
@@ -20,32 +16,6 @@ import (
 
 //go:embed repo.prompt.md
 var repoPrompt string
-
-type PreInvestigateResponse struct {
-	Success bool `json:"success"`
-	Data    struct {
-		ProjectID      string `json:"project_id"`
-		TotalFunctions int    `json:"total_functions"`
-		CoreFunctions  []struct {
-			Name      string `json:"name"`
-			FilePath  string `json:"file_path"`
-			OutDegree int    `json:"out_degree"`
-			Callers   []struct {
-				FunctionName string `json:"function_name"`
-				FilePath     string `json:"file_path"`
-			} `json:"callers"`
-			Callees []struct {
-				FunctionName string `json:"function_name"`
-				FilePath     string `json:"file_path"`
-			} `json:"callees"`
-		} `json:"core_functions"`
-		FileSkeletons []struct {
-			Filepath     string `json:"filepath"`
-			Language     string `json:"language"`
-			SkeletonText string `json:"skeleton_text"`
-		} `json:"file_skeletons"`
-	} `json:"data"`
-}
 
 type RepoAgent struct {
 	BaseAgent
@@ -84,8 +54,6 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 			fn = globalCtx.RepoOps.ExecuteQueryCodeSnippet
 		case "deepthinking":
 			fn = globalCtx.DeepThinkingTool.Execute
-		case "get_repo_overview":
-			fn = makeGetRepoOverviewFn(globalCtx)
 		default:
 			continue
 		}
@@ -114,200 +82,6 @@ func (a *RepoAgent) Name() string {
 func (a *RepoAgent) SetMemory(store *RepoMemoryStore, worker *ConsolidationWorker) {
 	a.memStore = store
 	a.worker = worker
-}
-
-func (a *RepoAgent) doPreInvestigate(projectDir string) (*PreInvestigateResponse, error) {
-	requestData := map[string]string{
-		"project_dir": projectDir,
-	}
-
-	jsonData, err := json.Marshal(requestData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request data: %v", err)
-	}
-
-	url := fmt.Sprintf("%s/investigate_repo", a.GlobalCtx.CodexrayURL)
-	slog.Info("RepoAgent pre-investigation request", "project_dir", projectDir)
-
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
-		}
-
-		req, err := http.NewRequest("POST", url, bytes.NewReader(jsonData))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %v", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to send request: %v", err)
-			continue
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response body: %v", err)
-			continue
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
-			continue
-		}
-
-		var response PreInvestigateResponse
-		if err := json.Unmarshal(body, &response); err != nil {
-			lastErr = fmt.Errorf("failed to unmarshal response: %v", err)
-			continue
-		}
-
-		if !response.Success {
-			lastErr = fmt.Errorf("server returned unsuccessful response: %s", string(body))
-			continue
-		}
-
-		return &response, nil
-	}
-
-	return nil, fmt.Errorf("investigate_repo failed after 3 retries: %w", lastErr)
-}
-
-// makeGetRepoOverviewFn 创建一个闭包，捕获 globalCtx 用于后续调用
-func makeGetRepoOverviewFn(globalCtx *globalctx.GlobalCtx) tools.ToolFunc {
-	return func(_ context.Context, _ map[string]interface{}) (interface{}, error) {
-		return executeGetRepoOverview(globalCtx)
-	}
-}
-
-// executeGetRepoOverview 是 get_repo_overview 工具的实际实现
-// 它调用 codexray 服务的 /investigate_repo 端点获取仓库全景画像
-func executeGetRepoOverview(globalCtx *globalctx.GlobalCtx) (interface{}, error) {
-	projectDir := globalCtx.ProjectPath
-
-	if projectDir == "" {
-		return "", fmt.Errorf("project_dir is empty")
-	}
-
-	requestData := map[string]string{
-		"project_dir": projectDir,
-	}
-
-	jsonData, err := json.Marshal(requestData)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request data: %v", err)
-	}
-
-	url := fmt.Sprintf("%s/investigate_repo", globalCtx.CodexrayURL)
-	slog.Info("get_repo_overview request", "project_dir", projectDir)
-
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
-		}
-
-		req, err := http.NewRequest("POST", url, bytes.NewReader(jsonData))
-		if err != nil {
-			lastErr = fmt.Errorf("failed to create request: %v", err)
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to send request: %v", err)
-			continue
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response body: %v", err)
-			continue
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("server returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
-			continue
-		}
-
-		var response PreInvestigateResponse
-		if err := json.Unmarshal(body, &response); err != nil {
-			lastErr = fmt.Errorf("failed to unmarshal response: %v", err)
-			continue
-		}
-
-		if !response.Success {
-			lastErr = fmt.Errorf("server returned unsuccessful response: %s", string(body))
-			continue
-		}
-
-		// Format output as readable text
-		var result string
-		result = fmt.Sprintf("=== Repository Overview (Project: %s) ===\n\n", projectDir)
-		result += fmt.Sprintf("Total Functions: %d\n\n", response.Data.TotalFunctions)
-
-		result += "Core Functions (ranked by call relationships):\n"
-		for _, fn := range response.Data.CoreFunctions {
-			result += fmt.Sprintf("  - %s (in %s, out_degree: %d)\n", fn.Name, fn.FilePath, fn.OutDegree)
-			if len(fn.Callers) > 0 {
-				result += "    Callers: "
-				displayCount := len(fn.Callers)
-				const maxDisplayCallers = 20
-				if displayCount > maxDisplayCallers {
-					displayCount = maxDisplayCallers
-				}
-				for i := 0; i < displayCount; i++ {
-					if i > 0 {
-						result += ", "
-					}
-					result += fmt.Sprintf("%s (%s)", fn.Callers[i].FunctionName, fn.Callers[i].FilePath)
-				}
-				if len(fn.Callers) > maxDisplayCallers {
-					result += fmt.Sprintf("\n    ... and %d more callers (use semantic_search or query_code_snippet for details)", len(fn.Callers)-maxDisplayCallers)
-				}
-				result += "\n"
-			}
-			if len(fn.Callees) > 0 {
-				result += "    Callees: "
-				displayCount := len(fn.Callees)
-				const maxDisplayCallees = 20
-				if displayCount > maxDisplayCallees {
-					displayCount = maxDisplayCallees
-				}
-				for i := 0; i < displayCount; i++ {
-					if i > 0 {
-						result += ", "
-					}
-					result += fmt.Sprintf("%s (%s)", fn.Callees[i].FunctionName, fn.Callees[i].FilePath)
-				}
-				if len(fn.Callees) > maxDisplayCallees {
-					result += fmt.Sprintf("\n    ... and %d more callees (use semantic_search or query_code_snippet for details)", len(fn.Callees)-maxDisplayCallees)
-				}
-				result += "\n"
-			}
-		}
-
-		result += "\nFile Skeletons:\n"
-		const maxSkeletonChars = 5000
-		for _, sk := range response.Data.FileSkeletons {
-			skeletonText := sk.SkeletonText
-			if len(skeletonText) > maxSkeletonChars {
-				skeletonText = skeletonText[:maxSkeletonChars] + "\n// ... [skelton truncated due to length, use query_code_skeleton for full content]"
-			}
-			result += fmt.Sprintf("\nFile: %s (%s)\n```%s\n%s\n```\n", sk.Filepath, sk.Language, sk.Language, skeletonText)
-		}
-
-		return result, nil
-	}
-
-	return "", fmt.Errorf("get_repo_overview failed after 3 retries: %w", lastErr)
 }
 
 func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) {

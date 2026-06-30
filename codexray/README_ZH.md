@@ -186,7 +186,7 @@ graph TD
 | `POST` | `/query_code_snippet` | 提取函数代码片段（带行号上下文） |
 | `POST` | `/query_code_skeleton` | 批量提取文件骨架（函数/类签名） |
 | `POST` | `/query_hierarchical_graph` | 层级调用树（指定根函数和深度） |
-| `POST` | `/investigate_repo` | **仓库全景分析**：Top15 核心函数 + 目录树 + 骨架 |
+| `POST` | `/investigate_repo` | ~~已废弃~~ **仓库全景分析**：Top15 核心函数 + 目录树 + 骨架（功能已移除） |
 | `POST` | `/semantic_search` | **语义搜索**：用自然语言搜索代码 |
 | `POST` | `/query_indexing_status` | 嵌入索引进度查询 |
 | `GET` | `/draw_call_graph` | ECharts 交互式调用图谱可视化 |

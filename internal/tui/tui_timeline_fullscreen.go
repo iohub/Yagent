@@ -273,34 +273,19 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 						}
 					}
 
-					// 详情页展示：为 semantic_search 和 get_repo_overview 补充完整结果内容
+					// 详情页展示：为 semantic_search 补充完整结果内容
 					if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
-						(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
-						if toolEntry.Call.Name == "get_repo_overview" {
-							// get_repo_overview: 使用 RenderResultBody 统一处理，支持 JSON output 字段提取
-							bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-8)
-							if bodyContent != "" {
-								bodyLines := strings.Split(bodyContent, "\n")
-								for _, line := range bodyLines {
-									sb.WriteString("    ")
-									sb.WriteString(line)
-									sb.WriteString("\n")
-								}
-							}
-						} else {
-							// semantic_search: 保持原有逻辑
-							bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-8)
-							if bodyContent != "" {
-								bodyLines := strings.Split(bodyContent, "\n")
-								for _, line := range bodyLines {
-									sb.WriteString("    ")
-									sb.WriteString(line)
-									sb.WriteString("\n")
-								}
+						toolEntry.Call.Name == "semantic_search" {
+						bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-8)
+						if bodyContent != "" {
+							bodyLines := strings.Split(bodyContent, "\n")
+							for _, line := range bodyLines {
+								sb.WriteString("    ")
+								sb.WriteString(line)
+								sb.WriteString("\n")
 							}
 						}
 					}
-				} else {
 					// 没有 toolEntry 时显示简要状态
 					statusIcon := "●"
 					if sub.Status == ToolStatusRunning {
@@ -323,23 +308,13 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 				rendered := RenderToolLine(toolEntry, m.anim, width)
 				sb.WriteString(rendered)
 
-				// 详情页展示：为 semantic_search 和 get_repo_overview 补充完整结果内容
+				// 详情页展示：为 semantic_search 补充完整结果内容
 				if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
-					(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
-					if toolEntry.Call.Name == "get_repo_overview" {
-						// get_repo_overview: 使用 RenderResultBody 统一处理，支持 JSON output 字段提取
-						bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-4)
-						if bodyContent != "" {
-							sb.WriteString("\n")
-							sb.WriteString(bodyContent)
-						}
-					} else {
-						// semantic_search: 保持原有逻辑
-						bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-4)
-						if bodyContent != "" {
-							sb.WriteString("\n")
-							sb.WriteString(bodyContent)
-						}
+					toolEntry.Call.Name == "semantic_search" {
+					bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-4)
+					if bodyContent != "" {
+						sb.WriteString("\n")
+						sb.WriteString(bodyContent)
 					}
 				}
 			} else {
@@ -605,7 +580,7 @@ func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string 
 					}
 
 					if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
-						(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
+						toolEntry.Call.Name == "semantic_search" {
 						bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-8)
 						if bodyContent != "" {
 							bodyLines := strings.Split(bodyContent, "\n")
@@ -636,7 +611,7 @@ func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string 
 				sb.WriteString(rendered)
 
 				if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
-					(toolEntry.Call.Name == "semantic_search" || toolEntry.Call.Name == "get_repo_overview") {
+					toolEntry.Call.Name == "semantic_search" {
 					bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-4)
 					if bodyContent != "" {
 						sb.WriteString("\n")

@@ -29,7 +29,6 @@ type pendingToolCall struct {
 
 // Define tool-specific color styles
 var toolStyles = map[string]lipgloss.Style{
-	"investigate_repo":  lipgloss.NewStyle().Foreground(lipgloss.Color("#FFA500")), // orange
 	"planning":          lipgloss.NewStyle().Foreground(lipgloss.Color("#2496ED")), // blue
 	"list_dir":          lipgloss.NewStyle().Foreground(lipgloss.Color("#7B42BC")), // purple
 	"ask_user_for_help": lipgloss.NewStyle().Foreground(lipgloss.Color("#32CD32")), // lime green
