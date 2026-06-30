@@ -917,11 +917,16 @@ pub async fn investigate_repo(
 	use super::models::{MAX_CORE_FUNCTIONS, MAX_CALLERS_PER_FUNC, MAX_CALLEES_PER_FUNC, MAX_FILE_SKELETONS};
 	use super::models::skeleton::MAX_SKELETON_TEXT_CHARS;
 
-	// Compute out-degree for each function and collect top 15
+	// Compute out-degree for each function and collect top 15 (filtering out isolated functions)
 	use std::cmp::Reverse;
 	let mut items: Vec<(usize, uuid::Uuid)> = Vec::new();
 	for (func_id, _node_idx) in graph.function_to_node.iter() {
+		let in_degree = graph.get_callers(func_id).len();
 		let out_degree = graph.get_callees(func_id).len();
+		// 过滤掉入度和出度都为零的孤立函数
+		if in_degree == 0 && out_degree == 0 {
+			continue;
+		}
 		items.push((out_degree, *func_id));
 	}
 	items.sort_by_key(|(deg, _)| Reverse(*deg));
