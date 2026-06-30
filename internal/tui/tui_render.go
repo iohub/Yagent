@@ -366,6 +366,11 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 		return renderToolEntryWithAnim(*entry, width, m.anim)
 	}
 
+	// For running LLM call entries, render with animation (single line)
+	if entry.eventType == "llm_call_start" && entry.isToolRunning {
+		return renderLLMCallWithAnim(*entry, width, m.anim)
+	}
+
 	// Check width-keyed cache
 	if cached, ok := entry.getCachedRender(width); ok {
 		return cached
@@ -455,6 +460,12 @@ func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 	// For running tool entries, never cache (animation changes each frame)
 	if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
 		b.WriteString(renderToolEntryWithAnim(*entry, width, m.anim))
+		return
+	}
+
+	// For running LLM call entries, render with animation (single line)
+	if entry.eventType == "llm_call_start" && entry.isToolRunning {
+		b.WriteString(renderLLMCallWithAnim(*entry, width, m.anim))
 		return
 	}
 
@@ -666,6 +677,7 @@ func extractResultBrief(toolName string, result string) string {
 func isVerboseEventType(eventType string) bool {
 	switch eventType {
 	case "tool_call_start", "tool_call_result",
+		"llm_call_start", "llm_call_end",
 		"context_compressed", "commit_context_loaded",
 		"model_info", "thinking":
 		return true
@@ -852,6 +864,44 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
+	case "llm_call_start":
+		if m, ok := event.Content.(map[string]interface{}); ok {
+			modelName, _ := m["model"].(string)
+			entry.content = fmt.Sprintf("[%s]", modelName)
+		} else {
+			entry.content = fmt.Sprintf("%v", event.Content)
+		}
+	case "llm_call_end":
+		// Extract duration from metadata
+		if durationRaw, ok := event.Metadata["duration_seconds"]; ok {
+			var duration float64
+			switch v := durationRaw.(type) {
+			case float64:
+				duration = v
+			case int:
+				duration = float64(v)
+			}
+
+			modelName, _ := event.Metadata["model"].(string)
+			if modelName == "" {
+				if m, ok := event.Content.(map[string]interface{}); ok {
+					modelName, _ = m["model"].(string)
+				}
+			}
+
+			hasError := false
+			if errStr, ok := event.Metadata["error"]; ok && errStr != "" {
+				hasError = true
+			}
+
+			if hasError {
+				entry.content = fmt.Sprintf("✗ [%s] · %.2fs", modelName, duration)
+			} else {
+				entry.content = fmt.Sprintf("✓ [%s] · %.2fs", modelName, duration)
+			}
+		} else {
+			entry.content = "✓ LLM call completed"
+		}
 	default:
 		if s, ok := event.Content.(string); ok {
 			entry.content = s
@@ -935,6 +985,12 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		}
 		prefix = "🗜️ 上下文压缩"
 		contentStyle = StatusStyle
+	case "llm_call_start":
+		prefix = ""
+		contentStyle = llmCallStyle
+	case "llm_call_end":
+		prefix = ""
+		contentStyle = llmCallEndStyle
 	case "thinking":
 		prefix = thinkIconStyle.String()
 		contentStyle = thinkTextStyle
@@ -1222,4 +1278,22 @@ func decodeIfJSONString(s string) string {
 		}
 	}
 	return s
+}
+
+// renderLLMCallWithAnim renders a running LLM call entry with animation characters.
+func renderLLMCallWithAnim(entry logEntry, maxWidth int, anim *Anim) string {
+	icon := IconPending
+	content := strings.ReplaceAll(entry.content, "\n", " ")
+	// Truncate if too long
+	contentWidth := maxWidth - 20
+	if contentWidth < 20 {
+		contentWidth = 20
+	}
+	if lipgloss.Width(content) > contentWidth {
+		runes := []rune(content)
+		if len(runes) > contentWidth-3 {
+			content = string(runes[:contentWidth-3]) + "..."
+		}
+	}
+	return icon + " " + llmCallStyle.Render(content) + " " + anim.Render()
 }

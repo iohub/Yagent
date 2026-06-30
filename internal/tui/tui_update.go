@@ -472,6 +472,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						entry.clearRenderCache()
 						entry.toolEntry.InvalidateCache()
 						hasVisibleAnim = true
+					} else if entry.eventType == "llm_call_start" && entry.isToolRunning {
+						entry.clearRenderCache()
+						hasVisibleAnim = true
 					}
 				}
 
@@ -480,7 +483,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					width := m.viewport.Width()
 					for i := visStart; i <= visEnd && i < len(m.logEntries); i++ {
 						entry := &m.logEntries[i]
-						if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
+						if (entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning) ||
+							(entry.eventType == "llm_call_start" && entry.isToolRunning) {
 							m.setEntryContent(i, m.renderSingleEntry(entry, width))
 						}
 					}
@@ -1399,13 +1403,105 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, listenForEvents(m.eventCh)
 		}
 
-		// Handle llm_call_start — silently consume (no TUI display)
+		// Handle llm_call_start — create a running entry with animation (single line)
 		if msg.event.Type == "llm_call_start" {
+			entry := formatEventAsEntry(msg.event)
+			entry.isToolRunning = true
+
+			// Generate a unique ID for this LLM call (use agent name + timestamp)
+			callID := fmt.Sprintf("llm_%s_%d", msg.event.From, msg.event.Timestamp.UnixNano())
+			entry.toolCallID = callID
+
+			// Add timeline entry for LLM call
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        callID,
+				Kind:      TimelineKindLLMCall,
+				Timestamp: msg.event.Timestamp,
+				Status:    ToolStatusRunning,
+				Name:      "llm_call",
+				Detail:    entry.content,
+			})
+			m.timelineCacheKey = "" // invalidate cache
+
+			m.logEntries = append(m.logEntries, entry)
+			m.viewportDirty = true
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+
+			// Store the entry index for llm_call_end to update
+			m.llmCallActiveEntries[msg.event.From] = len(m.logEntries) - 1
+			m.activeAnim = true
+
 			return m, listenForEvents(m.eventCh)
 		}
 
-		// Handle llm_call_end — silently consume (no TUI display)
+		// Handle llm_call_end — update the matching start entry (no new entry created)
 		if msg.event.Type == "llm_call_end" {
+			if idx, ok := m.llmCallActiveEntries[msg.event.From]; ok && idx >= 0 && idx < len(m.logEntries) {
+				delete(m.llmCallActiveEntries, msg.event.From)
+
+				// Update timeline entry for LLM call end
+				for i := len(m.timelineEntries) - 1; i >= 0; i-- {
+					if m.timelineEntries[i].Kind == TimelineKindLLMCall && m.timelineEntries[i].Status == ToolStatusRunning {
+						var duration time.Duration
+						if durationRaw, ok := msg.event.Metadata["duration_seconds"]; ok {
+							if dur, ok := durationRaw.(float64); ok {
+								duration = time.Duration(dur * float64(time.Second))
+							}
+						}
+						m.timelineEntries[i].Status = ToolStatusSuccess
+						m.timelineEntries[i].Duration = duration
+						m.timelineEntries[i].IsError = false
+						if errStr, ok := msg.event.Metadata["error"]; ok && errStr != "" {
+							m.timelineEntries[i].Status = ToolStatusError
+							m.timelineEntries[i].IsError = true
+							m.timelineEntries[i].Detail = fmt.Sprintf("%v", errStr)
+						}
+						break
+					}
+				}
+				m.timelineCacheKey = ""
+
+				// Update the log entry with end information
+				le := &m.logEntries[idx]
+				le.isToolRunning = false
+
+				// Format content like current llm_call_end with duration
+				if durationRaw, ok := msg.event.Metadata["duration_seconds"]; ok {
+					var duration float64
+					switch v := durationRaw.(type) {
+					case float64:
+						duration = v
+					case int:
+						duration = float64(v)
+					}
+
+					modelName, _ := msg.event.Metadata["model"].(string)
+					if modelName == "" {
+						if m, ok := msg.event.Content.(map[string]interface{}); ok {
+							modelName, _ = m["model"].(string)
+						}
+					}
+
+					hasError := false
+					if errStr, ok := msg.event.Metadata["error"]; ok && errStr != "" {
+						hasError = true
+					}
+
+					if hasError {
+						le.content = fmt.Sprintf("✗ [%s] · %.2fs", modelName, duration)
+					} else {
+						le.content = fmt.Sprintf("✓ [%s] · %.2fs", modelName, duration)
+					}
+				} else {
+					le.content = "◂ LLM call completed"
+				}
+
+				le.clearRenderCache()      // invalidate cache
+				m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
+				m.updateActiveAnim()
+				m.viewportDirty = true
+				m.rebuildViewportScrollLock()
+			}
 			return m, listenForEvents(m.eventCh)
 		}
 

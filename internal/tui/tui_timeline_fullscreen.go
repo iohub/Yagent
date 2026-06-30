@@ -322,7 +322,12 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 			}
 		}
 	case TimelineKindLLMCall:
-		// LLM call is no longer displayed in TUI
+		if entry.Detail != "" {
+			sb.WriteString("  ")
+			sb.WriteString(entry.Detail)
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
+		}
 	case TimelineKindThinking:
 		if entry.Detail != "" {
 			sb.WriteString("  ")
@@ -627,7 +632,12 @@ func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string 
 			}
 		}
 	case TimelineKindLLMCall:
-		// LLM call is no longer displayed in TUI
+		if entry.Detail != "" {
+			sb.WriteString("  ")
+			sb.WriteString(entry.Detail)
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
+		}
 	case TimelineKindThinking:
 		if entry.Detail != "" {
 			sb.WriteString("  ")

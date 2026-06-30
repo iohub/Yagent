@@ -177,6 +177,11 @@ func (m *model) updateActiveAnim() {
 			return
 		}
 	}
+	// Check running LLM call entries
+	if len(m.llmCallActiveEntries) > 0 {
+		m.activeAnim = true
+		return
+	}
 	m.activeAnim = false
 }
 

@@ -53,6 +53,8 @@ func DisplayToolName(name string) string {
 	switch name {
 	case "search_replace_in_file":
 		return "edit_file"
+	case "llm_call":
+		return "think"
 	default:
 		return name
 	}
@@ -98,6 +100,10 @@ type Styles struct {
 	ToolRunning lipgloss.Style
 	ToolDone    lipgloss.Style
 	ToolError   lipgloss.Style
+
+	// LLM call
+	LLMCall    lipgloss.Style
+	LLMCallEnd lipgloss.Style
 
 	// Command mode
 	CommandPrefix lipgloss.Style
@@ -241,6 +247,9 @@ func newDarkStyles() *Styles {
 		ToolRunning: lipgloss.NewStyle().Foreground(lipgloss.Color("228")),
 		ToolDone:    lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
 		ToolError:   lipgloss.NewStyle().Foreground(lipgloss.Color("167")),
+
+		LLMCall:    lipgloss.NewStyle().Foreground(lipgloss.Color("141")),
+		LLMCallEnd: lipgloss.NewStyle().Foreground(lipgloss.Color("111")),
 
 		CommandPrefix: lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true),
 		CommandBar: lipgloss.NewStyle().
@@ -387,6 +396,9 @@ func newLightStyles() *Styles {
 		ToolRunning: lipgloss.NewStyle().Foreground(lipgloss.Color("178")),
 		ToolDone:    lipgloss.NewStyle().Foreground(lipgloss.Color("28")),
 		ToolError:   lipgloss.NewStyle().Foreground(lipgloss.Color("160")),
+
+		LLMCall:    lipgloss.NewStyle().Foreground(lipgloss.Color("93")),
+		LLMCallEnd: lipgloss.NewStyle().Foreground(lipgloss.Color("26")),
 
 		CommandPrefix: lipgloss.NewStyle().Foreground(lipgloss.Color("172")).Bold(true),
 		CommandBar: lipgloss.NewStyle().

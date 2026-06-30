@@ -162,6 +162,10 @@ var (
 	toolDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — success
 	toolErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")) // red — error
 
+	// LLM call styles
+	llmCallStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // purple — LLM call start
+	llmCallEndStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("111")) // blue — LLM call end
+
 	// Mode-specific styles (vim-like edit / command modes) — harmonized with TUI 256-color palette
 	commandPrefixStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true) // orange ":"
 	commandModeBarStyle = lipgloss.NewStyle().
@@ -546,6 +550,9 @@ type model struct {
 	// Tool call state tracking: tool_call_id → ToolEntry
 	toolCallEntries map[string]*ToolEntry
 
+	// Active LLM calls: agent_name → log entry index for matching start/end
+	llmCallActiveEntries map[string]int
+
 	// Current LLM model being used (extracted from model_info events)
 	currentModel string
 
@@ -848,7 +855,8 @@ return &model{
 		currentLang:        langManager.currentLang,
 		eventCh:            make(chan *messaging.MessageEvent, 1000),
 		logEntries:         make([]logEntry, 0),
-		viewport:           vp,
+			llmCallActiveEntries: make(map[string]int),
+			viewport:           vp,
 		contentCache:       &strings.Builder{},
 		glamourRenderer:    glamourRenderer,
 		useDarkStyle:       useDarkStyle,
