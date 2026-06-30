@@ -15,7 +15,6 @@ func TestIsMergeableTool(t *testing.T) {
 		{"search_by_regex", true, ""},
 		{"semantic_search", true, ""},
 		{"edit_file", false, ""},
-		{"llm_call", false, ""},
 		{"run_bash", false, ""},
 		{"thinking", false, ""},
 	}

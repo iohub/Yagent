@@ -66,8 +66,6 @@ func DisplayToolName(name string) string {
 	switch name {
 	case "search_replace_in_file":
 		return "edit_file"
-	case "llm_call":
-		return "think"
 	default:
 		return name
 	}

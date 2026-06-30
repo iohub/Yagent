@@ -920,9 +920,6 @@ func timelineNodeFor(e *TimelineEntry) string {
 // using an explicitly-provided status. This is needed for merged entries where
 // the effective (aggregated) status may differ from e.Status.
 func timelineNodeForStatus(e *TimelineEntry, status ToolStatus) string {
-	if e.Kind == TimelineKindLLMCall {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true).Render("◇") // blue diamond
-	}
 	if e.Kind == TimelineKindThinking {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("💭") // purple thought
 	}
