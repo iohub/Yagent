@@ -2104,6 +2104,40 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			}
 			return m, nil
 
+		// ── f: 下翻页（基于焦点）──
+		case "f":
+			if m.timelineFullscreenFocus == "list" {
+				// 列表：光标下移一页（页大小 = 内容高度）
+				pageSize := m.termHeight - 4 // 同 renderTimelineFullscreenView 中的 contentHeight
+				if pageSize < 1 {
+					pageSize = 1
+				}
+				moveTimelineCursor(m, pageSize)
+			} else {
+				// 详情：viewport 下翻一页
+				if m.timelineDetailVP != nil {
+					m.timelineDetailVP.PageDown()
+				}
+			}
+			return m, nil
+
+		// ── b: 上翻页（基于焦点）──
+		case "b":
+			if m.timelineFullscreenFocus == "list" {
+				// 列表：光标上移一页
+				pageSize := m.termHeight - 4
+				if pageSize < 1 {
+					pageSize = 1
+				}
+				moveTimelineCursor(m, -pageSize)
+			} else {
+				// 详情：viewport 上翻一页
+				if m.timelineDetailVP != nil {
+					m.timelineDetailVP.PageUp()
+				}
+			}
+			return m, nil
+
 		// ── 详情 viewport 滚动（始终可用，不受焦点影响）──
 		case "pageup", "ctrl+u":
 			if m.timelineDetailVP != nil {
