@@ -1218,74 +1218,91 @@ func (a *DirectorAgent) createSummaryClient() compact.SummarizationClient {
 		MaxTokens:   2000, // 摘要输出限制
 	}
 }
-// 如果发现孤立的 tool_calls（assistant 有 tool_calls 但缺少对应的 tool 响应），自动修复：
-// 1. 将缺少 tool 响应的 assistant 消息降级为纯文本消息（添加说明）
-// 2. 移除孤立的 tool 响应（没有对应 assistant 的消息）
+// validateAndRepairToolCallPairs 验证并修复 tool_call/tool_response 配对完整性
+//
+// 如果发现孤立的 tool_calls（assistant 有 tool_calls 但缺少对应的 tool 响应），
+// 删除整个不完整的 tool_call 组（assistant + 部分找到的 tool 响应），
+// 而不是创建孤立的 tool 消息。
+//
+// 如果发现孤立的 tool 响应（没有对应 assistant 的消息），直接删除。
 func validateAndRepairToolCallPairs(messages []llm.Message) []llm.Message {
 	result := make([]llm.Message, 0, len(messages))
 
 	for i := 0; i < len(messages); i++ {
 		msg := messages[i]
 
+		// Case 1: Assistant message with tool_calls
 		if msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0 {
-			// 收集这个 assistant 消息的所有 tool_call_ids
-			expectedIDs := make(map[string]bool)
+			// Collect all expected tool_call IDs
+			expectedIDs := make(map[string]bool, len(msg.ToolCalls))
 			for _, tc := range msg.ToolCalls {
 				expectedIDs[tc.ID] = true
 			}
 
-			// 向后扫描，找到所有 tool 响应
-			foundIDs := make(map[string]bool)
+			// Collect consecutive tool responses that follow
+			matchedResponses := make(map[string]llm.Message)
+			var unmatchedResponses []llm.Message
 			j := i + 1
-			for j < len(messages) && len(foundIDs) < len(expectedIDs) {
-				if messages[j].Role == llm.RoleTool && messages[j].ToolCallID != "" {
-					if expectedIDs[messages[j].ToolCallID] {
-						foundIDs[messages[j].ToolCallID] = true
+			for j < len(messages) {
+				next := messages[j]
+				if next.Role == llm.RoleTool && next.ToolCallID != "" {
+					if expectedIDs[next.ToolCallID] {
+						matchedResponses[next.ToolCallID] = next
+					} else {
+						unmatchedResponses = append(unmatchedResponses, next)
 					}
-				} else if messages[j].Role == llm.RoleAssistant || messages[j].Role == llm.RoleUser {
-					// 遇到新的 assistant 或 user 消息，停止扫描
+					j++
+				} else if next.Role == llm.RoleAssistant {
+					// Stop at the next assistant message (regardless of tool_calls)
+					break
+				} else {
+					// User, System, or other non-tool messages — stop scanning
 					break
 				}
-				j++
 			}
 
-			// 检查是否所有 tool_calls 都有对应的 tool 响应
-			if len(foundIDs) < len(expectedIDs) {
-				// 有缺失的 tool 响应！修复：将 assistant 降级为纯文本
+			allResponsesPresent := len(matchedResponses) == len(msg.ToolCalls)
+
+			if allResponsesPresent {
+				// Complete, valid tool_call group — keep it
+				result = append(result, msg)
+				// Append responses in the order of tool_calls for determinism
+				for _, tc := range msg.ToolCalls {
+					if resp, ok := matchedResponses[tc.ID]; ok {
+						result = append(result, resp)
+					}
+				}
+			} else {
+				// Incomplete tool_call group — remove ENTIRE group (assistant + partial responses)
+				// Do NOT create a new assistant without tool_calls (old bug)
+				// Do NOT keep partial tool responses (they'd become orphans)
 				missingIDs := make([]string, 0)
-				for id := range expectedIDs {
-					if !foundIDs[id] {
-						missingIDs = append(missingIDs, id)
+				for _, tc := range msg.ToolCalls {
+					if _, ok := matchedResponses[tc.ID]; !ok {
+						missingIDs = append(missingIDs, tc.ID)
 					}
 				}
-
-				repairedContent := msg.Content
-				if repairedContent == "" {
-					repairedContent = "[系统提示：以下工具调用结果因上下文压缩而不可用]"
-				} else {
-					repairedContent += "\n\n[系统提示：以下工具调用结果因上下文压缩而不可用：" + strings.Join(missingIDs, ", ") + "]"
+				slog.Warn("Removing incomplete tool_call group due to context compression",
+					"expected", len(msg.ToolCalls),
+					"found", len(matchedResponses),
+					"missing_ids", missingIDs,
+				)
+				// Preserve assistant text content if available (without tool_calls)
+				if msg.Content != "" {
+					preserved := msg
+					preserved.ToolCalls = nil
+					result = append(result, preserved)
 				}
-
-				result = append(result, llm.Message{
-					Role:    llm.RoleAssistant,
-					Content: repairedContent,
-				})
-
-				// 将已找到的 tool 响应也添加到结果中
-				for k := i + 1; k < j; k++ {
-					if messages[k].Role == llm.RoleTool && messages[k].ToolCallID != "" {
-						if foundIDs[messages[k].ToolCallID] {
-							result = append(result, messages[k])
-						}
-					}
-				}
-
-				i = j - 1 // 跳过已处理的消息
-				continue
 			}
+
+			// Skip to the position after the tool responses (j already points past them)
+			// unmatchedResponses are from different groups — they'll be handled in their
+			// own iteration
+			i = j - 1
+			continue
 		}
 
-		// 检查孤立的 tool 响应（前面没有匹配的 assistant）
+		// Case 2: Orphan tool message (no preceding assistant with matching tool_calls)
 		if msg.Role == llm.RoleTool && msg.ToolCallID != "" {
 			hasMatchingAssistant := false
 			for k := len(result) - 1; k >= 0; k-- {
@@ -1303,11 +1320,15 @@ func validateAndRepairToolCallPairs(messages []llm.Message) []llm.Message {
 				}
 			}
 			if !hasMatchingAssistant {
-				// 孤立的 tool 响应，跳过
+				// Orphan tool response — drop it
+				slog.Warn("Removing orphan tool message (no matching assistant)",
+					"tool_call_id", msg.ToolCallID,
+				)
 				continue
 			}
 		}
 
+		// Case 3: Normal message (system, user, assistant without tool_calls, or matched tool)
 		result = append(result, msg)
 	}
 
