@@ -32,6 +32,23 @@ Extract the following from the provided conversation fragment:
 - Output in **English**.
 - Organize extracted information under the 5 categories listed above.`
 
+// incrementalSummaryPrompt 增量摘要提示词
+// 用于将已有摘要和新消息合并为一个更新后的摘要
+var incrementalSummaryPrompt = `You are a conversation summarizer for an AI coding assistant. 
+
+Your task is to MERGE new conversation messages into an existing summary, producing an updated comprehensive summary.
+
+## Rules
+- PRESERVE all information from the existing summary - do not lose any key facts
+- INCORPORATE new information from the new messages
+- DEDUPLICATE overlapping content
+- Keep identifiers (file names, function names, paths) intact
+- Keep error messages verbatim
+- Be concise but complete
+
+## Output
+Output ONLY the updated summary text. No meta-commentary, no markdown fences.`
+
 // SummaryAdapter 将 llm.Engine 适配为 SummarizationClient
 type SummaryAdapter struct {
 	LLM         llm.Engine

@@ -41,6 +41,7 @@ type ChatMessage struct {
 	ToolCallID *string                `json:"tool_call_id,omitempty"` // 用于 tool message
 	Timestamp  time.Time              `json:"timestamp"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	IsAnchored bool                   `json:"is_anchored,omitempty"`  // 锚定标记，true 表示此消息永不压缩
 
 	// Sub-agent 分组元数据
 	GroupID    string `json:"group_id,omitempty"`     // 标识一次 sub-agent 调用，同一调用的消息共享此ID
@@ -227,6 +228,7 @@ func ConvertMemoryMessageToLLMSMessage(msg ChatMessage) llm.Message {
 		result.Content = msg.Content
 	}
 
+	result.IsAnchored = msg.IsAnchored
 	return result
 }
 

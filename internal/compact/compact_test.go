@@ -372,3 +372,122 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Expected MaxContextTokens=128000 after NewEngine, got %d", engine.config.MaxContextTokens)
 	}
 }
+
+// TestEngine_IncrementalCompression 测试增量压缩
+func TestEngine_IncrementalCompression(t *testing.T) {
+	cfg := &Config{
+		MaxContextTokens:            10,
+		EnableAutoCompact:           true,
+		KeepRecentRounds:            1, // 只保留1轮，让older有消息
+		SummarizationTimeout:        DefaultConfig.SummarizationTimeout,
+		SummarizationMaxInputTokens: DefaultConfig.SummarizationMaxInputTokens,
+	}
+
+	mockClient := &mockSummaryClient{
+		summary: "Merged summary of all messages.",
+	}
+
+	engine, err := NewEngine(cfg, mockClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 第一轮：触发全量压缩
+	msg1 := []llm.Message{
+		{Role: llm.RoleSystem, Content: "System prompt"},
+		{Role: llm.RoleUser, Content: "First message that is long enough to trigger compression and will be compressed"},
+		{Role: llm.RoleAssistant, Content: "First response"},
+		{Role: llm.RoleUser, Content: "Second message that is also long enough to be compressed"},
+		{Role: llm.RoleAssistant, Content: "Second response"},
+	}
+	result1, err := engine.Compress(context.Background(), msg1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 验证：第一轮调用了一次 summarizer
+	if mockClient.called != 1 {
+		t.Errorf("Expected 1 summarizer call, got %d", mockClient.called)
+	}
+
+	// 验证 frozenSummary 已设置
+	if engine.frozenSummary == "" {
+		t.Error("Expected frozenSummary to be set after first compression")
+	}
+
+	// 验证压缩结果包含摘要消息
+	if len(result1.CompressedMessages) < 2 {
+		t.Errorf("Expected at least 2 messages (system + summary), got %d", len(result1.CompressedMessages))
+	}
+	if !strings.Contains(result1.CompressedMessages[1].Content, "[CONTEXT SUMMARY]") {
+		t.Error("Expected second message to contain [CONTEXT SUMMARY]")
+	}
+
+	// 第二轮：更多消息到达，触发增量压缩
+	msg2 := []llm.Message{
+		{Role: llm.RoleSystem, Content: "System prompt"},
+		{Role: llm.RoleSystem, Content: "[CONTEXT SUMMARY]\n" + engine.frozenSummary},
+		{Role: llm.RoleUser, Content: "Third message"},
+		{Role: llm.RoleAssistant, Content: "Third response"},
+		{Role: llm.RoleUser, Content: "Fourth message"},
+		{Role: llm.RoleAssistant, Content: "Fourth response"},
+		{Role: llm.RoleUser, Content: "Fifth message"},
+		{Role: llm.RoleAssistant, Content: "Fifth response"},
+	}
+
+	// 重置 mock 计数
+	beforeCall := mockClient.called
+	result2, err := engine.Compress(context.Background(), msg2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 验证：第二轮调用了 summarizer（增量压缩）
+	if mockClient.called <= beforeCall {
+		t.Error("Expected summarizer to be called for incremental compression")
+	}
+
+	// 验证压缩结果包含摘要消息
+	if len(result2.CompressedMessages) < 2 {
+		t.Errorf("Expected at least 2 messages (system + summary), got %d", len(result2.CompressedMessages))
+	}
+	if !strings.Contains(result2.CompressedMessages[1].Content, "[CONTEXT SUMMARY]") {
+		t.Error("Expected second message to contain [CONTEXT SUMMARY]")
+	}
+}
+
+// TestEngine_AnchoredMessagesProtected 测试锚定消息保护
+func TestEngine_AnchoredMessagesProtected(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "System"},
+		{Role: llm.RoleUser, Content: "Normal message 1", IsAnchored: false},
+		{Role: llm.RoleAssistant, Content: "Normal response 1"},
+		{Role: llm.RoleUser, Content: "IMPORTANT: This message must never be compressed!", IsAnchored: true},
+		{Role: llm.RoleAssistant, Content: "Important response", IsAnchored: true},
+		{Role: llm.RoleUser, Content: "Normal message 2"},
+		{Role: llm.RoleAssistant, Content: "Normal response 2"},
+	}
+
+	// 使用 keepRounds=1 确保只有最后2条消息在 recent 中
+	keepRounds := 1
+	recent, older := extractRecentMessages(messages, keepRounds)
+
+	// 验证锚定消息不在 older 中
+	for _, msg := range older {
+		if msg.IsAnchored {
+			t.Errorf("Anchored message found in older: %s", msg.Content)
+		}
+	}
+
+	// 验证锚定消息在 recent 中
+	anchoredFound := false
+	for _, msg := range recent {
+		if msg.IsAnchored {
+			anchoredFound = true
+			break
+		}
+	}
+	if !anchoredFound {
+		t.Error("Expected anchored messages to be in recent")
+	}
+}

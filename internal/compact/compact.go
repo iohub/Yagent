@@ -55,9 +55,10 @@ type SummarizationClient interface {
 
 // Engine 压缩引擎（全量重新压缩）
 type Engine struct {
-	config     *Config
-	tokenizer  Tokenizer
-	summarizer SummarizationClient
+	config        *Config
+	tokenizer     Tokenizer
+	summarizer    SummarizationClient
+	frozenSummary string // 已冻结的历史摘要，用于增量压缩
 }
 
 // NewEngine 创建压缩引擎
@@ -152,22 +153,49 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 		}, nil
 	}
 
-	// 5. 对 older 做 LLM 摘要
+	// 5. 对 older 做 LLM 摘要（支持增量压缩）
 	ctx, cancel := context.WithTimeout(ctx, e.config.SummarizationTimeout)
 	defer cancel()
 
-	summary, err := e.summarizer.GenerateSummary(ctx, older)
-	if err != nil {
-		slog.Warn("LLM summarization failed, falling back to recent only", "error", err)
-		return &CompressResult{
-			CompressedMessages: recent,
-			OriginalTokens:     originalTokens,
-			CompressedTokens:   e.countMessagesTokens(recent),
-			CompressionRatio:   float64(e.countMessagesTokens(recent)) / float64(originalTokens),
-			CompressionStats:   fmt.Sprintf("Summarization failed: %v", err),
-			SummaryInfo:        "",
-		}, nil
+	// 增量压缩：如果已有 frozenSummary
+	var summary string
+	if e.frozenSummary != "" && len(older) > 0 {
+		s, err := e.incrementalCompress(ctx, older)
+		if err != nil {
+			slog.Warn("Incremental compression failed, falling back to full", "error", err)
+			summary, err = e.summarizer.GenerateSummary(ctx, older)
+			if err != nil {
+				slog.Warn("LLM summarization failed, falling back to recent only", "error", err)
+				return &CompressResult{
+					CompressedMessages: recent,
+					OriginalTokens:     originalTokens,
+					CompressedTokens:   e.countMessagesTokens(recent),
+					CompressionRatio:   float64(e.countMessagesTokens(recent)) / float64(originalTokens),
+					CompressionStats:   fmt.Sprintf("Summarization failed: %v", err),
+					SummaryInfo:        "",
+				}, nil
+			}
+		} else {
+			summary = s
+		}
+	} else {
+		var err error
+		summary, err = e.summarizer.GenerateSummary(ctx, older)
+		if err != nil {
+			slog.Warn("LLM summarization failed, falling back to recent only", "error", err)
+			return &CompressResult{
+				CompressedMessages: recent,
+				OriginalTokens:     originalTokens,
+				CompressedTokens:   e.countMessagesTokens(recent),
+				CompressionRatio:   float64(e.countMessagesTokens(recent)) / float64(originalTokens),
+				CompressionStats:   fmt.Sprintf("Summarization failed: %v", err),
+				SummaryInfo:        "",
+			}, nil
+		}
 	}
+
+	// 保存 frozenSummary
+	e.frozenSummary = summary
 
 	// 6. 构建缓存友好的消息布局：[System] + [Summary] + [Recent]
 	compressed := buildCacheAwareMessages(messages, summary, e.config.KeepRecentRounds)
@@ -278,6 +306,20 @@ func extractRecentMessages(messages []llm.Message, keepRounds int) (recent, olde
 		older = append(older, msg)
 	}
 
+	// 锚定消息保护：将 older 中的锚定消息移到 recent
+	var anchoredMsgs []llm.Message
+	var nonAnchored []llm.Message
+	for _, msg := range older {
+		if msg.IsAnchored {
+			anchoredMsgs = append(anchoredMsgs, msg)
+		} else {
+			nonAnchored = append(nonAnchored, msg)
+		}
+	}
+	older = nonAnchored
+	// 锚定消息插入到 recent 最前面
+	recent = append(anchoredMsgs, recent...)
+
 	return recent, older
 }
 
@@ -385,4 +427,58 @@ func compactWhitespace(text string) string {
 	re = regexp.MustCompile(`[ \t]+$`)
 	text = re.ReplaceAllString(text, "")
 	return text
+}
+
+// incrementalCompress 执行增量压缩
+// 从 older 中提取已有的 [CONTEXT SUMMARY] 作为基准，仅压缩后续的新消息
+func (e *Engine) incrementalCompress(ctx context.Context, older []llm.Message) (string, error) {
+	// 1. 查找已有的 [CONTEXT SUMMARY] 消息
+	existingSummary := ""
+	newStartIdx := 0
+	for i, msg := range older {
+		if msg.Role == llm.RoleSystem && strings.HasPrefix(msg.Content, "[CONTEXT SUMMARY]") {
+			// 提取摘要文本（去掉前缀）
+			raw := msg.Content
+			raw = strings.TrimPrefix(raw, "[CONTEXT SUMMARY]")
+			raw = strings.TrimPrefix(raw, "\n")
+			existingSummary = raw
+			newStartIdx = i + 1
+			break
+		}
+	}
+
+	// 2. 如果没有找到已有摘要（理论上不会发生，因为 frozenSummary != ""）
+	if existingSummary == "" {
+		return e.summarizer.GenerateSummary(ctx, older)
+	}
+
+	// 3. 提取新增消息
+	newMsgs := older[newStartIdx:]
+	if len(newMsgs) == 0 {
+		// 没有新消息，直接返回已有摘要
+		return e.frozenSummary, nil
+	}
+
+	// 4. 构建增量压缩输入
+	var sb strings.Builder
+	sb.WriteString("[EXISTING SUMMARY]\n")
+	sb.WriteString(existingSummary)
+	sb.WriteString("\n\n[NEW MESSAGES TO INCORPORATE]\n")
+	for _, msg := range newMsgs {
+		sb.WriteString(fmt.Sprintf("[%s] %s\n", msg.Role, msg.Content))
+		if len(msg.ToolCalls) > 0 {
+			for _, tc := range msg.ToolCalls {
+				sb.WriteString(fmt.Sprintf("  → ToolCall: %s(%s)\n", tc.Function.Name, tc.Function.Arguments))
+			}
+		}
+	}
+
+	userContent := sb.String()
+
+	// 5. 调用 LLM 做增量摘要（复用现有接口）
+	// 将已有摘要 + 新消息打包成一条 User 消息
+	incMsgs := []llm.Message{
+		{Role: llm.RoleUser, Content: userContent},
+	}
+	return e.summarizer.GenerateSummary(ctx, incMsgs)
 }

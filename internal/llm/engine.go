@@ -22,6 +22,7 @@ type Message struct {
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	ToolName   string     `json:"name,omitempty"`
 	Reasoning  string     `json:"reasoning_content,omitempty"` // thinking/reasoning from models that support it
+	IsAnchored bool       `json:"-"`                           // 锚定标记，true 表示此消息永不压缩
 }
 
 // ToolDef defines a tool available to the LLM.
