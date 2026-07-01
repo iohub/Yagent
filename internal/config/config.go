@@ -469,6 +469,11 @@ func (c *Config) validate() error {
 		}
 	}
 
+	// ═══════ Context Compact 默认值设置（三层防御的第二层） ═══════
+	// 如果 Compact 配置的所有字段都为零值（用户完全未配置 [context] 段），
+	// 则使用完整默认配置。否则逐个字段补充零值。
+	c.applyContextDefaults()
+
 	return nil
 }
 
@@ -484,6 +489,59 @@ func (c *Config) hasKeywordsConfig() bool {
 		return true
 	}
 	return false
+}
+
+// applyContextDefaults 为 ContextCompactConfig 字段应用默认值。
+//
+// 这是三层防御的第二层（配置层）：确保即使 TOML 文件中缺少 [context] 段
+// 或某些字段未配置（零值），也会使用合理的默认值。
+//
+// 逻辑：
+// 1. 如果所有 8 个字段都为零值 → 整体替换为 DefaultCompactConfig()
+// 2. 否则逐个字段检查，零值时填充默认值
+func (c *Config) applyContextDefaults() {
+	defaults := DefaultCompactConfig()
+
+	// 检查是否所有字段都为零值（用户完全未配置 [context] 段）
+	allZero := c.Compact.MaxContextTokens == 0 &&
+		!c.Compact.EnableAutoCompact &&
+		c.Compact.SummarizationModel == "" &&
+		c.Compact.SummarizationProvider == "" &&
+		c.Compact.SummarizationTimeout == 0 &&
+		c.Compact.SummarizationMaxInputTokens == 0 &&
+		c.Compact.SummarizationPrompt == "" &&
+		c.Compact.KeepRecentRounds == 0
+
+	if allZero {
+		// 整体替换为默认配置
+		c.Compact.MaxContextTokens = defaults.MaxContextTokens
+		c.Compact.EnableAutoCompact = defaults.EnableAutoCompact
+		c.Compact.SummarizationModel = defaults.SummarizationModel
+		c.Compact.SummarizationProvider = defaults.SummarizationProvider
+		c.Compact.SummarizationTimeout = defaults.SummarizationTimeout
+		c.Compact.SummarizationMaxInputTokens = defaults.SummarizationMaxInputTokens
+		c.Compact.SummarizationPrompt = defaults.SummarizationPrompt
+		c.Compact.KeepRecentRounds = defaults.KeepRecentRounds
+		return
+	}
+
+	// 部分配置：逐个字段补充零值
+	if c.Compact.MaxContextTokens == 0 {
+		c.Compact.MaxContextTokens = defaults.MaxContextTokens
+	}
+	// EnableAutoCompact: 零值为 false，但如果用户只配置了其他字段而没配这个，
+	// 我们应该保持用户的 false（显式禁用）。所以不在此兜底。
+	if c.Compact.SummarizationTimeout == 0 {
+		c.Compact.SummarizationTimeout = defaults.SummarizationTimeout
+	}
+	if c.Compact.SummarizationMaxInputTokens == 0 {
+		c.Compact.SummarizationMaxInputTokens = defaults.SummarizationMaxInputTokens
+	}
+	if c.Compact.KeepRecentRounds == 0 {
+		c.Compact.KeepRecentRounds = defaults.KeepRecentRounds
+	}
+	// SummarizationModel, SummarizationProvider, SummarizationPrompt 为空字符串
+	// 是合法的（表示使用默认行为），无需兜底
 }
 
 // ContextCompactConfig 上下文压缩配置

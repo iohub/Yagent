@@ -76,9 +76,34 @@ func (c *Config) Validate() error {
 
 // ConfigFrom 从外部配置结构创建 compact.Config
 // 用于打破 config -> compact -> llm -> config 的循环依赖
+//
+// Deprecated: 此函数已标记为废弃。新的代码应使用 ConfigFromFull()，它在内部调用
+// applySafeDefaults() 确保所有异步/增量压缩字段都有安全默认值。ConfigFrom() 内部
+// 也已调用 applySafeDefaults()，因此行为与 ConfigFromFull() 一致。保留此函数仅
+// 为向后兼容现有调用方。
 func ConfigFrom(maxTokens int, enableAuto bool, model string, summarizationProvider string,
 	timeoutSec, summaryMaxInputTokens int, summaryPrompt string, keepRecentRounds int) *Config {
-	return &Config{
+	return ConfigFromFull(maxTokens, enableAuto, model, summarizationProvider,
+		timeoutSec, summaryMaxInputTokens, summaryPrompt, keepRecentRounds)
+}
+
+// ConfigFromFull 从外部配置结构创建 compact.Config（完整参数版）
+// 与 ConfigFrom 参数相同，但内部调用 applySafeDefaults() 确保异步/增量字段非零值。
+//
+// 这是当前推荐的构造函数。所有零值字段都会被安全默认值覆盖：
+//   - AsyncCompactEnabled → true
+//   - CompactTriggerThreshold → 0.8
+//   - MaxConcurrentSummaries → 3
+//   - CompactWorkerInterval → 30s
+//   - CompactionRetryAttempts → 2
+//   - SummaryStackMaxDepth → 5
+//   - SummarizationTimeout → 120s
+//   - SummarizationMaxInputTokens → 120000
+//   - KeepRecentRounds → 2
+//   - MaxContextTokens → 198000
+func ConfigFromFull(maxTokens int, enableAuto bool, model string, summarizationProvider string,
+	timeoutSec, summaryMaxInputTokens int, summaryPrompt string, keepRecentRounds int) *Config {
+	cfg := &Config{
 		MaxContextTokens:            maxTokens,
 		EnableAutoCompact:           enableAuto,
 		SummarizationModel:          model,
@@ -87,16 +112,21 @@ func ConfigFrom(maxTokens int, enableAuto bool, model string, summarizationProvi
 		SummarizationMaxInputTokens: summaryMaxInputTokens,
 		SummarizationPrompt:         summaryPrompt,
 		KeepRecentRounds:            keepRecentRounds,
+		// 异步/增量压缩配置：这些字段在 ConfigFrom 时代码中被遗漏，
+		// 现在由 applySafeDefaults() 兜底填充安全默认值。
 	}
+	cfg.applySafeDefaults()
+	return cfg
 }
 
 // ConfigFromV2 从外部配置结构创建 compact.Config（支持异步/增量压缩参数）
 // 用于打破 config -> compact -> llm -> config 的循环依赖
+// 所有传入参数直接使用，零值仍会由 applySafeDefaults() 兜底
 func ConfigFromV2(maxTokens int, enableAuto bool, model string, summarizationProvider string,
 	timeoutSec, summaryMaxInputTokens int, summaryPrompt string, keepRecentRounds int,
 	asyncEnabled bool, triggerThreshold float64, maxConcurrentSummaries int,
 	retryAttempts int, summaryStackDepth int, workerInterval time.Duration) *Config {
-	return &Config{
+	cfg := &Config{
 		MaxContextTokens:            maxTokens,
 		EnableAutoCompact:           enableAuto,
 		SummarizationModel:          model,
@@ -112,5 +142,75 @@ func ConfigFromV2(maxTokens int, enableAuto bool, model string, summarizationPro
 		CompactionRetryAttempts:   retryAttempts,
 		SummaryStackMaxDepth:      summaryStackDepth,
 		CompactWorkerInterval:     workerInterval,
+	}
+	// 即使传入完整参数，仍调用 applySafeDefaults() 作为最终兜底
+	// 防止传入的零值被直接使用
+	cfg.applySafeDefaults()
+	return cfg
+}
+
+// applySafeDefaults 对运行时零值做兜底填充。
+//
+// 这是三层防御的第三层（最底层）：即使上层配置层（config.go）和应用层（app.go）
+// 都未能正确设置异步/增量压缩字段，本方法也会确保关键参数具有非零安全值。
+//
+// 所有调用者（ConfigFrom, ConfigFromFull, ConfigFromV2）在创建 Config 后
+// 都应调用此方法。
+func (c *Config) applySafeDefaults() {
+	// MaxContextTokens: 0 表示"未设置"，使用默认值
+	if c.MaxContextTokens <= 0 {
+		c.MaxContextTokens = 198000
+	}
+
+	// EnableAutoCompact: 默认必须为 true（压缩机制开启）
+	if !c.EnableAutoCompact {
+		c.EnableAutoCompact = true
+	}
+
+	// SummarizationTimeout: 0 表示"未设置"，使用默认值
+	if c.SummarizationTimeout <= 0 {
+		c.SummarizationTimeout = 120 * time.Second
+	}
+
+	// SummarizationMaxInputTokens: 0 表示"未设置"，使用默认值
+	if c.SummarizationMaxInputTokens <= 0 {
+		c.SummarizationMaxInputTokens = 120000
+	}
+
+	// KeepRecentRounds: 0 表示"未设置"，使用默认值
+	if c.KeepRecentRounds <= 0 {
+		c.KeepRecentRounds = 2
+	}
+
+	// === 异步/增量压缩字段兜底 ===
+
+	// AsyncCompactEnabled: 默认启用异步压缩
+	if !c.AsyncCompactEnabled {
+		c.AsyncCompactEnabled = true
+	}
+
+	// CompactTriggerThreshold: 0 表示"未设置"，使用默认值 0.8 (80%)
+	if c.CompactTriggerThreshold <= 0 {
+		c.CompactTriggerThreshold = 0.8
+	}
+
+	// MaxConcurrentSummaries: 0 表示"未设置"，使用默认值
+	if c.MaxConcurrentSummaries <= 0 {
+		c.MaxConcurrentSummaries = 3
+	}
+
+	// CompactWorkerInterval: 0 表示"未设置"，使用默认值
+	if c.CompactWorkerInterval <= 0 {
+		c.CompactWorkerInterval = 30 * time.Second
+	}
+
+	// CompactionRetryAttempts: 0 表示"未设置"，使用默认值
+	if c.CompactionRetryAttempts <= 0 {
+		c.CompactionRetryAttempts = 2
+	}
+
+	// SummaryStackMaxDepth: 0 表示"未设置"，使用默认值
+	if c.SummaryStackMaxDepth <= 0 {
+		c.SummaryStackMaxDepth = 5
 	}
 }

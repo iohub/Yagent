@@ -111,3 +111,18 @@ checkpoint_tag_prefix = "checkpoint/coding"  # checkpoint 标签前缀
 stash_dirty_worktree = true              # 启动时 stash 未提交的变更
 cleanup_agent_branch = true              # 退出时清理 agent 分支
 cleanup_checkpoint_tags = true           # 退出时清理 checkpoint 标签
+
+# ═══════════════════════════════════════════════════════════════
+# 上下文压缩配置（三层防御的第一层：TOML 配置层）
+# ═══════════════════════════════════════════════════════════════
+# 如果此段完全缺失，应用层（compact_config.go）会通过 applySafeDefaults()
+# 兜底所有字段的默认值。建议显式配置以下字段：
+[context]
+enable_auto_compact = true            # 是否自动触发压缩（默认 true）
+max_context_tokens = 198000           # 最大上下文 token 数
+summarization_model = ""              # 轻量摘要模型（空=复用主引擎）
+summarization_provider = ""           # 独立摘要 provider（空=复用主引擎）
+summarization_timeout = 120           # 摘要超时（秒）
+summarization_max_input_tokens = 120000 # 单批次最大输入 token 数
+summarization_prompt = ""             # 自定义摘要提示词（空=使用默认）
+keep_recent_rounds = 2                # 始终保留的最近对话轮数
