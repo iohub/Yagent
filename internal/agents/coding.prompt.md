@@ -97,3 +97,18 @@ When using `read_file`, the tool now enforces strict protections:
 - **Files > 500MB**: Refused entirely — use grep/search to find relevant content
 - **Files > 10MB with should_read_entire_file=true**: Blocked — must use line ranges
 - **Entire file reads capped**: Max 2000 lines or 200KB content
+
+### Git Checkpoint Mechanism
+
+The agent has a built-in Git Checkpoint system that automatically:
+1. Creates a separate `agent/coding/` branch for each session
+2. Stashes dirty worktree before starting
+3. Automatically creates checkpoints (tags) after each file-modifying step
+4. Performs a squash merge at the end with LLM-generated commit messages
+
+**Manual checkpoint tools** are available for risky operations:
+- `git_checkpoint_list` — List all available checkpoints for rollback
+- `git_checkpoint_rollback` — Roll back to a specific checkpoint (discards later changes)
+- `git_checkpoint_create` — Manually create a checkpoint before risky operations
+
+Use these tools when you need extra safety before attempting complex refactors or experimental changes.

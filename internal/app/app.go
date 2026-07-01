@@ -96,6 +96,9 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		RepoOps:          tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodexrayPort), workDir),
 		UserConfirmMgr:   userConfirmMgr,
 		DeepThinkingTool: tools.NewDeepThinkingTool(deepthinkingEngine),
+
+		// Git Checkpoint config
+		GitCheckpointCfg: &ca.config.GitCheckpoint,
 	}
 	ca.globalCtx = &gctx
 

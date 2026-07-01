@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"codeactor/internal/globalctx"
 	"codeactor/internal/tools"
@@ -155,7 +156,34 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
 	cfg.RepoContext = a.GlobalCtx.RepoSummary
-	// EnableCollaboration 已默认 true
+
+	// === NEW: Git Checkpoint Integration ===
+	var gcm *GitCheckpointManager
+	if a.GlobalCtx.GitCheckpointCfg != nil && a.GlobalCtx.GitCheckpointCfg.Enabled {
+		gitCfg := ConvertConfig(a.GlobalCtx.GitCheckpointCfg)
+		gcm = NewGitCheckpointManager(
+			gitCfg,
+			a.GlobalCtx.ProjectPath,
+			input,
+			a.generateCommitMessage, // LLM commit message generator
+		)
+
+		cfg.OnAgentStart = func(ctx context.Context) error {
+			return gcm.OnAgentStart(ctx)
+		}
+		cfg.OnAgentExit = func(ctx context.Context, agentErr error) error {
+			return gcm.OnAgentExit(ctx, agentErr)
+		}
+		cfg.OnStepEnd = func(ctx context.Context, stepInfo StepInfo) error {
+			return gcm.OnStepEnd(ctx, stepInfo)
+		}
+
+		// Add checkpoint tools to the adapter list
+		checkpointAdapters := createCheckpointToolAdapters(gcm)
+		cfg.Adapters = append(cfg.Adapters, checkpointAdapters...)
+	}
+	// === END NEW ===
+
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return AgentResult{}, err
@@ -169,4 +197,138 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 // Registry 返回工具注册表引用（供外部访问）
 func (a *CodingAgent) Registry() *tools.Registry {
 	return a.registry
+}
+
+// generateCommitMessage uses the LLM to generate a professional commit message
+// based on the diff and task description.
+func (a *CodingAgent) generateCommitMessage(ctx context.Context, diff string, taskSummary string) (string, error) {
+	if a.LLM == nil {
+		return "", fmt.Errorf("LLM engine not available")
+	}
+
+	systemPrompt := `You are a professional software engineer writing a Git commit message.
+
+Based on the code changes and task description, generate a concise, professional commit message following GitHub/Conventional Commits style.
+
+Rules:
+- Use imperative mood (e.g., "add feature" not "added feature")
+- First line: type(scope): summary (max 72 chars)
+- Blank line
+- Body: explain WHAT and WHY, not HOW
+- Do not mention AI — write as if a human engineer made these changes
+- Output ONLY the commit message, no other text`
+
+	task := fmt.Sprintf("Task: %s\n\nDiff:\n%s", taskSummary, diff)
+
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: systemPrompt},
+		{Role: llm.RoleUser, Content: task},
+	}
+
+	resp, err := a.LLM.GenerateContent(ctx, messages, nil, &llm.CallOptions{
+		Temperature: 0.3,
+		MaxTokens:   500,
+	})
+	if err != nil {
+		return "", fmt.Errorf("commit message generation failed: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("commit message generation returned empty response")
+	}
+
+	msg := strings.TrimSpace(resp.Choices[0].Content)
+	// Remove markdown code fences if present
+	msg = strings.TrimPrefix(msg, "```")
+	msg = strings.TrimPrefix(msg, "text")
+	msg = strings.TrimSuffix(msg, "```")
+	msg = strings.TrimSpace(msg)
+
+	if msg == "" {
+		return "", fmt.Errorf("commit message is empty after generation")
+	}
+	return msg, nil
+}
+
+// createCheckpointToolAdapters creates tool adapters for manual git checkpoint operations.
+func createCheckpointToolAdapters(gcm *GitCheckpointManager) []*tools.Adapter {
+	// git_checkpoint_list
+	listAdapter := tools.NewAdapter("git_checkpoint_list",
+		"List all available git checkpoints for the current coding session. Use this to see what rollback points are available. Each checkpoint represents a saved state of the codebase that you can return to if something goes wrong.",
+		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			checkpoints, err := gcm.ListCheckpoints(ctx)
+			if err != nil {
+				return "", err
+			}
+			if len(checkpoints) == 0 {
+				return "No checkpoints available yet. Checkpoints are created automatically after file-modifying steps.", nil
+			}
+			var sb strings.Builder
+			sb.WriteString("Available checkpoints:\n")
+			for i, cp := range checkpoints {
+				sb.WriteString(fmt.Sprintf("%d. [%s] %s — %s\n", i+1, cp.Date, cp.Tag, cp.Message))
+			}
+			sb.WriteString("\nUse git_checkpoint_rollback with the tag name to roll back.")
+			return sb.String(), nil
+		}).WithSchema(map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{},
+		"required": []string{},
+	})
+
+	// git_checkpoint_rollback
+	rollbackAdapter := tools.NewAdapter("git_checkpoint_rollback",
+		"Roll back the working tree to a specific checkpoint. WARNING: This discards all changes made AFTER the checkpoint. Use git_checkpoint_list first to see available checkpoints. The checkpoint_tag parameter should be the full tag name from the list.",
+		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			tagRaw, ok := params["checkpoint_tag"]
+			if !ok {
+				return "", fmt.Errorf("checkpoint_tag is required")
+			}
+			tag, ok := tagRaw.(string)
+			if !ok || tag == "" {
+				return "", fmt.Errorf("checkpoint_tag must be a non-empty string")
+			}
+			if err := gcm.RollbackToCheckpoint(ctx, tag); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Successfully rolled back to checkpoint: %s", tag), nil
+		}).WithSchema(map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"checkpoint_tag": map[string]interface{}{
+				"type":        "string",
+				"description": "The tag name of the checkpoint to roll back to (from git_checkpoint_list)",
+			},
+		},
+		"required": []string{"checkpoint_tag"},
+	})
+
+	// git_checkpoint_create
+	createAdapter := tools.NewAdapter("git_checkpoint_create",
+		"Manually create a git checkpoint at the current state. Use this before attempting risky operations like large refactors, complex merges, or experimental changes. A checkpoint allows you to roll back if something goes wrong.",
+		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			msgRaw, ok := params["message"]
+			if !ok {
+				return "", fmt.Errorf("message is required")
+			}
+			msg, ok := msgRaw.(string)
+			if !ok || msg == "" {
+				return "", fmt.Errorf("message must be a non-empty string")
+			}
+			tag, err := gcm.CreateManualCheckpoint(ctx, msg)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Checkpoint created successfully: %s", tag), nil
+		}).WithSchema(map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"message": map[string]interface{}{
+				"type":        "string",
+				"description": "A brief description of why this checkpoint is being created",
+			},
+		},
+		"required": []string{"message"},
+	})
+
+	return []*tools.Adapter{listAdapter, rollbackAdapter, createAdapter}
 }

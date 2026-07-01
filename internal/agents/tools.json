@@ -431,5 +431,42 @@
       },
       "required": ["function_name"]
     }
+  },
+  {
+    "name": "git_checkpoint_list",
+    "description": "List all available git checkpoints for the current coding session. Use this to see what rollback points are available. Each checkpoint represents a saved state of the codebase that you can return to if something goes wrong.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "git_checkpoint_rollback",
+    "description": "Roll back the working tree to a specific checkpoint. WARNING: This discards all changes made AFTER the checkpoint. Use git_checkpoint_list first to see available checkpoints. The checkpoint_tag parameter should be the full tag name from the list.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "checkpoint_tag": {
+          "type": "string",
+          "description": "The tag name of the checkpoint to roll back to (from git_checkpoint_list)"
+        }
+      },
+      "required": ["checkpoint_tag"]
+    }
+  },
+  {
+    "name": "git_checkpoint_create",
+    "description": "Manually create a git checkpoint at the current state. Use this before attempting risky operations like large refactors, complex merges, or experimental changes. A checkpoint allows you to roll back if something goes wrong.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "A brief description of why this checkpoint is being created"
+        }
+      },
+      "required": ["message"]
+    }
   }
 ]

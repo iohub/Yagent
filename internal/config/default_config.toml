@@ -91,3 +91,18 @@ api_base_url = "https://api.siliconflow.cn"
 # compression_threshold = 4096
 # summary_max_length = 2048
 # max_delegation_depth = 3
+
+# ── Git Checkpoint 机制 ──
+# 在 Agent 执行期间自动创建代码快照，支持回滚和最终 squash merge
+[git_checkpoint]
+enabled = true                           # 是否启用 git checkpoint 机制
+auto_checkpoint = true                   # 自动在步骤后创建 checkpoint
+checkpoint_interval = 1                  # 每 N 步创建一个 checkpoint（默认1）
+max_checkpoints = 50                     # 最大保留的 checkpoint 数量
+squash_on_exit = true                    # Agent 退出时 squash 合并到主分支
+generate_commit_message = true           # 使用 LLM 生成 commit 消息
+agent_branch_prefix = "agent/coding"     # agent 工作分支前缀
+checkpoint_tag_prefix = "checkpoint/coding"  # checkpoint 标签前缀
+stash_dirty_worktree = true              # 启动时 stash 未提交的变更
+cleanup_agent_branch = true              # 退出时清理 agent 分支
+cleanup_checkpoint_tags = true           # 退出时清理 checkpoint 标签

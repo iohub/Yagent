@@ -42,6 +42,21 @@ type AgentConfig struct {
 	SpeakLang         string `toml:"lang"`
 }
 
+// GitCheckpointConfig holds configuration for the git checkpoint mechanism.
+type GitCheckpointConfig struct {
+	Enabled                bool   `toml:"enabled"`
+	AutoCheckpoint         bool   `toml:"auto_checkpoint"`
+	CheckpointInterval     int    `toml:"checkpoint_interval"`
+	MaxCheckpoints         int    `toml:"max_checkpoints"`
+	SquashOnExit           bool   `toml:"squash_on_exit"`
+	GenerateCommitMessage  bool   `toml:"generate_commit_message"`
+	AgentBranchPrefix      string `toml:"agent_branch_prefix"`
+	CheckpointTagPrefix    string `toml:"checkpoint_tag_prefix"`
+	StashDirtyWorktree     bool   `toml:"stash_dirty_worktree"`
+	CleanupAgentBranch     bool   `toml:"cleanup_agent_branch"`
+	CleanupCheckpointTags  bool   `toml:"cleanup_checkpoint_tags"`
+}
+
 // ── Three-tier LLM overrides ──
 
 // GlobalLLMConfig is the global default LLM provider selection.
@@ -127,6 +142,9 @@ type Config struct {
 	CommitLearner CommitLearnerConfig  `toml:"commit_learner"` // [commit_learner] - commit 学习器配置
 	Keywords      KeywordsConfig       `toml:"keywords"`       // [keywords] - 关键词词典配置
 	TaskTimeout   time.Duration        `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"` // 全局任务超时，0=不启用
+
+	// GitCheckpoint git checkpoint 机制配置
+	GitCheckpoint GitCheckpointConfig `toml:"git_checkpoint"`
 
 	// EnhancedCommander 增强型 Commander 配置
 	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`

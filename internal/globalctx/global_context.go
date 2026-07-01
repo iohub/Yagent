@@ -2,6 +2,7 @@ package globalctx
 
 import (
 	"codeactor/internal/browser"
+	"codeactor/internal/config"
 	"codeactor/internal/tools"
 	"codeactor/internal/messaging"
 	"fmt"
@@ -37,6 +38,9 @@ type GlobalCtx struct {
 	DeepThinkingTool *tools.DeepThinkingTool
 	// BrowserMgr 浏览器管理器（单例，管理 Chromium 浏览器实例生命周期）
 	BrowserMgr *browser.Manager
+
+	// GitCheckpointCfg holds the git checkpoint configuration (may be nil if not configured)
+	GitCheckpointCfg *config.GitCheckpointConfig
 }
 
 func (g *GlobalCtx) FormatPrompt(prompt string) string {

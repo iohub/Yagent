@@ -35,6 +35,18 @@ type ExecutorConfig struct {
 	// OnToolResult is an optional callback invoked after each tool executes.
 	// Used by Director for special handling (e.g. delegate_repo → RepoSummary).
 	OnToolResult func(toolName string, result string)
+
+	// OnAgentStart is called once before the agent loop begins.
+	// If it returns an error, the loop is aborted.
+	OnAgentStart func(ctx context.Context) error
+
+	// OnAgentExit is called once after the agent loop ends, regardless of outcome.
+	// Called via defer with panic recovery.
+	OnAgentExit func(ctx context.Context, agentErr error) error
+
+	// OnStepEnd is called after each step's tool calls complete.
+	// Errors from this hook are logged but do not abort the loop.
+	OnStepEnd func(ctx context.Context, stepInfo StepInfo) error
 }
 
 // DefaultExecutorConfig returns an ExecutorConfig with sensible defaults applied.
@@ -90,7 +102,29 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 	opts := &llm.CallOptions{}
 
+	// ─── OnAgentStart hook: run before entering the agent loop ───
+	if cfg.OnAgentStart != nil {
+		if err := cfg.OnAgentStart(ctx); err != nil {
+			return ExecutorResult{}, fmt.Errorf("OnAgentStart hook failed: %w", err)
+		}
+	}
+
+	// ─── OnAgentExit hook: run via defer with panic recovery ───
+	var agentErr error
+	if cfg.OnAgentExit != nil {
+		defer func() {
+			if r := recover(); r != nil {
+				agentErr = fmt.Errorf("agent panic: %v", r)
+			}
+			if exitErr := cfg.OnAgentExit(ctx, agentErr); exitErr != nil {
+				slog.Warn("OnAgentExit hook failed", "agent", cfg.AgentName, "error", exitErr)
+			}
+		}()
+	}
+
+	stepNumber := 0
 	for i := 0; i < cfg.MaxSteps; i++ {
+		stepNumber++
 		slog.Debug("AgentExecutor calling LLM", "agent", cfg.AgentName, "step", i)
 
 		maxRetries := cfg.StepRetries
@@ -259,7 +293,24 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			history = append(history, toolMsg)
 
 			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" {
+				// Don't call OnStepEnd here — OnAgentExit will handle final state
 				return ExecutorResult{Text: toolResult, History: history}, nil
+			}
+		}
+
+		// OnStepEnd hook — only when not exiting via agent_exit
+		if cfg.OnStepEnd != nil && len(choice.ToolCalls) > 0 {
+			toolName := ""
+			if len(choice.ToolCalls) > 0 {
+				toolName = choice.ToolCalls[0].Function.Name
+			}
+			stepInfo := StepInfo{
+				StepNumber: stepNumber,
+				ToolName:   toolName,
+				Success:    true,
+			}
+			if err := cfg.OnStepEnd(ctx, stepInfo); err != nil {
+				slog.Warn("OnStepEnd hook error", "agent", cfg.AgentName, "step", stepNumber, "error", err)
 			}
 		}
 	}
