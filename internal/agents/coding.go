@@ -165,7 +165,100 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 			gitCfg,
 			a.GlobalCtx.ProjectPath,
 			input,
-			a.generateCommitMessage, // LLM commit message generator
+			func(ctx context.Context, diff string, taskSummary string) (string, error) {
+				systemPrompt := `You are an expert software engineer writing a Git commit message following the Conventional Commits specification.
+
+Analyze the code changes below and the task context to generate a comprehensive, professional commit message.
+
+## Format
+
+<type>(<scope>): <summary>
+
+<body>
+
+[BREAKING CHANGE: <details>]
+
+## Rules
+
+1. **Type** (required): Choose the most appropriate:
+   - feat: A new feature for the user
+   - fix: A bug fix
+   - refactor: Code restructuring without changing external behavior
+   - perf: Performance improvement
+   - docs: Documentation only changes
+   - style: Formatting, whitespace, etc. (no code meaning change)
+   - test: Adding or correcting tests
+   - build: Build system or external dependency changes
+   - ci: CI configuration changes
+   - chore: Maintenance tasks, no production code change
+
+2. **Scope** (optional but recommended): The module or package most affected (e.g., auth, api, parser, config)
+
+3. **Summary** (required):
+   - Imperative mood: "add feature" not "added feature"
+   - Lowercase first letter
+   - No period at end
+   - Maximum 72 characters
+   - Be specific, not generic
+
+4. **Body** (required):
+   - Separate from summary with blank line
+   - Explain WHAT changed and WHY, not HOW
+   - If multiple logical changes exist, organize with bullet points
+   - Wrap at 100 characters
+
+5. **Breaking Change** (only if applicable):
+   - Include "BREAKING CHANGE:" in the footer section
+   - Describe what breaks and the migration path
+
+CRITICAL: Do NOT mention AI, agents, automation, or tools. Write as if a human engineer made these changes.
+
+Output ONLY the commit message text. No explanations, no markdown fences, no commentary.`
+
+				task := fmt.Sprintf("Task: %s\n\nDiff:\n%s", taskSummary, diff)
+
+				result, err := a.GlobalCtx.MicroAgentTool.Execute(ctx, map[string]interface{}{
+					"system_prompt": systemPrompt,
+					"task":          task,
+				})
+				if err != nil {
+					return "", fmt.Errorf("micro agent commit message generation failed: %w", err)
+				}
+
+				resultStr, ok := result.(string)
+				if !ok {
+					return "", fmt.Errorf("micro agent returned non-string result")
+				}
+
+				msg := strings.TrimSpace(resultStr)
+
+				// 清理 markdown 代码围栏和常见前缀
+				if strings.HasPrefix(msg, "```") {
+					closeIdx := strings.Index(msg[3:], "```")
+					if closeIdx != -1 {
+						content := msg[closeIdx+6:]
+						if idx := strings.Index(content, "\n"); idx != -1 {
+							content = content[idx+1:]
+						}
+						content = strings.TrimSuffix(content, "```")
+						msg = strings.TrimSpace(content)
+					}
+				} else {
+					msg = strings.TrimSuffix(msg, "```")
+					msg = strings.TrimPrefix(msg, "text")
+				}
+
+				// 移除残留的 markdown 格式
+				msg = strings.ReplaceAll(msg, "**", "")
+				msg = strings.ReplaceAll(msg, "*", "")
+				msg = strings.ReplaceAll(msg, "`", "")
+				msg = strings.TrimSpace(msg)
+
+				if msg == "" {
+					return "", fmt.Errorf("commit message is empty after generation")
+				}
+				return msg, nil
+			},
 		)
 
 		cfg.OnAgentStart = func(ctx context.Context) error {
@@ -200,8 +293,9 @@ func (a *CodingAgent) Registry() *tools.Registry {
 	return a.registry
 }
 
-// generateCommitMessage uses the LLM to generate a professional commit message
-// based on the diff and task description.
+// generateCommitMessage generates a commit message using the LLM.
+// DEPRECATED: Use the MicroAgentTool-based closure passed to NewGitCheckpointManager instead.
+// Kept for backward compatibility in case external callers depend on it.
 func (a *CodingAgent) generateCommitMessage(ctx context.Context, diff string, taskSummary string) (string, error) {
 	if a.LLM == nil {
 		return "", fmt.Errorf("LLM engine not available")
