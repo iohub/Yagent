@@ -1241,15 +1241,12 @@ func validateAndRepairToolCallPairs(messages []llm.Message) []llm.Message {
 
 			// Collect consecutive tool responses that follow
 			matchedResponses := make(map[string]llm.Message)
-			var unmatchedResponses []llm.Message
 			j := i + 1
 			for j < len(messages) {
 				next := messages[j]
 				if next.Role == llm.RoleTool && next.ToolCallID != "" {
 					if expectedIDs[next.ToolCallID] {
 						matchedResponses[next.ToolCallID] = next
-					} else {
-						unmatchedResponses = append(unmatchedResponses, next)
 					}
 					j++
 				} else if next.Role == llm.RoleAssistant {
@@ -1296,8 +1293,7 @@ func validateAndRepairToolCallPairs(messages []llm.Message) []llm.Message {
 			}
 
 			// Skip to the position after the tool responses (j already points past them)
-			// unmatchedResponses are from different groups — they'll be handled in their
-			// own iteration
+			// unmatched tool responses will be handled by Case 2 (orphan detection)
 			i = j - 1
 			continue
 		}
