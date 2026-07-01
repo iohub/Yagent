@@ -183,20 +183,38 @@ func (t *RepoOperationsTool) ExecuteQueryCodeSnippet(ctx context.Context, params
 // ── 调用者/被调用者查询 ──
 
 type FindFunctionInfo struct {
-	Name      string `json:"name"`
-	FilePath  string `json:"file_path"`
-	LineStart int    `json:"line_start"`
-	LineEnd   int    `json:"line_end"`
-	Signature string `json:"signature,omitempty"`
+	FunctionName string `json:"function_name"`
+	FilePath     string `json:"file_path"`
+	LineStart    int    `json:"line_start"`
+	LineEnd      int    `json:"line_end"`
+	Signature    string `json:"signature,omitempty"`
 }
 
 type FindFunctionCalleesResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Function  FindFunctionInfo   `json:"function"`
+		Relations []FindFunctionInfo `json:"relations"`
+	} `json:"data"`
+}
+
+type FindFunctionCallersResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Function  FindFunctionInfo   `json:"function"`
+		Relations []FindFunctionInfo `json:"relations"`
+	} `json:"data"`
+}
+
+// FindFunctionCalleesResult 是 ExecuteFindFunctionCallees 返回给用户的结果
+type FindFunctionCalleesResult struct {
 	Success  bool               `json:"success"`
 	Function FindFunctionInfo   `json:"function"`
 	Callees  []FindFunctionInfo `json:"callees"`
 }
 
-type FindFunctionCallersResponse struct {
+// FindFunctionCallersResult 是 ExecuteFindFunctionCallers 返回给用户的结果
+type FindFunctionCallersResult struct {
 	Success  bool               `json:"success"`
 	Function FindFunctionInfo   `json:"function"`
 	Callers  []FindFunctionInfo `json:"callers"`
@@ -228,7 +246,11 @@ func (t *RepoOperationsTool) ExecuteFindFunctionCallees(ctx context.Context, par
 	if !response.Success {
 		return nil, fmt.Errorf("server returned unsuccessful response: %s", string(body))
 	}
-	return response, nil
+	return FindFunctionCalleesResult{
+		Success:  response.Success,
+		Function: response.Data.Function,
+		Callees:  response.Data.Relations,
+	}, nil
 }
 
 func (t *RepoOperationsTool) ExecuteFindFunctionCallers(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -257,5 +279,9 @@ func (t *RepoOperationsTool) ExecuteFindFunctionCallers(ctx context.Context, par
 	if !response.Success {
 		return nil, fmt.Errorf("server returned unsuccessful response: %s", string(body))
 	}
-	return response, nil
+	return FindFunctionCallersResult{
+		Success:  response.Success,
+		Function: response.Data.Function,
+		Callers:  response.Data.Relations,
+	}, nil
 }
