@@ -268,7 +268,7 @@ func tryFormatCodebaseResult(content string, width int) string {
 	// Pattern 4: find_function_callee / find_function_caller — top-level function + callees/callers
 	// These results don't have a "data" wrapper, so check before the hasData guard.
 	if funcInfo, ok := parsed["function"].(map[string]interface{}); ok {
-		if _, hasName := funcInfo["name"]; hasName {
+		if _, hasName := funcInfo["function_name"]; hasName {
 			if callees, ok := parsed["callees"].([]interface{}); ok && len(callees) > 0 {
 				return formatFunctionRelationResults(funcInfo, "callee", callees, width)
 			}
@@ -427,7 +427,7 @@ func formatFunctionRelationResults(funcInfo map[string]interface{}, relationType
 
 	// Header: filepath  funcName  (language)  L{start}-{end}
 	filepath, _ := funcInfo["file_path"].(string)
-	funcName, _ := funcInfo["name"].(string)
+	funcName, _ := funcInfo["function_name"].(string)
 	language, _ := funcInfo["language"].(string)
 	lineStart, _ := funcInfo["line_start"].(float64)
 	lineEnd, _ := funcInfo["line_end"].(float64)
@@ -462,7 +462,7 @@ func formatFunctionRelationResults(funcInfo map[string]interface{}, relationType
 		}
 
 		relFilepath, _ := item["file_path"].(string)
-		relFuncName, _ := item["name"].(string)
+		relFuncName, _ := item["function_name"].(string)
 
 		// Format: "  → rel_file:line  funcName()"
 		var relParts []string
