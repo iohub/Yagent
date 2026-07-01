@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"codeactor/internal/agents"
 	"codeactor/internal/browser"
@@ -247,16 +248,13 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	var summaryEngine llm.Engine
 	if ca.config != nil {
 		c := &ca.config.Compact
-		compactCfg = compact.ConfigFrom(
-			c.MaxContextTokens,
-			c.EnableAutoCompact,
-			c.SummarizationModel,
-			c.SummarizationProvider,
-			c.SummarizationTimeout,
-			c.SummarizationMaxInputTokens,
-			c.SummarizationPrompt,
-			c.KeepRecentRounds,
-		)
+		compactCfg = &compact.Config{
+			MaxContextTokens:            c.MaxContextTokens,
+			EnableAutoCompact:           c.EnableAutoCompact,
+			KeepRecentRounds:            c.KeepRecentRounds,
+			SummarizationTimeout:        time.Duration(c.SummarizationTimeout) * time.Second,
+			SummarizationMaxInputTokens: c.SummarizationMaxInputTokens,
+		}
 
 		// 为 compact 摘要创建独立的 LLM 引擎（如果配置了 summarization_provider）
 		if c.SummarizationProvider != "" {

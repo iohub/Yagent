@@ -55,8 +55,8 @@ type SummarizationClient interface {
 
 // Engine 压缩引擎（全量重新压缩）
 type Engine struct {
-	config    *Config
-	tokenizer Tokenizer
+	config     *Config
+	tokenizer  Tokenizer
 	summarizer SummarizationClient
 }
 
@@ -79,8 +79,8 @@ func NewEngine(config *Config, summarizer SummarizationClient) (*Engine, error) 
 	}
 
 	return &Engine{
-		config:   config,
-		tokenizer: GetGlobalTokenizer(),
+		config:     config,
+		tokenizer:  GetGlobalTokenizer(),
 		summarizer: summarizer,
 	}, nil
 }
@@ -333,16 +333,8 @@ func CleanSummaryOutput(raw string) string {
 
 	cleaned := raw
 
-	// 1. 移除 markdown 代码块包装
 	cleaned = removeMarkdownFence(cleaned)
-
-	// 2. 移除常见的开头客套话
-	cleaned = removeCourtesyPrefix(cleaned)
-
-	// 3. 移除连续重复行
 	cleaned = removeDuplicateLines(cleaned)
-
-	// 4. 压缩连续空白
 	cleaned = compactWhitespace(cleaned)
 
 	return strings.TrimSpace(cleaned)
@@ -358,27 +350,6 @@ func removeMarkdownFence(text string) string {
 		text = text[first:last]
 	}
 	return strings.TrimSpace(text)
-}
-
-func removeCourtesyPrefix(text string) string {
-	prefixes := []string{
-		"Sure", "Sure,", "Here", "Here's", "Here is", "Here are",
-		"Certainly", "Of course", "I'll", "I will", "I can",
-		"好的", "好的，", "好的:", "当然", "当然，", "当然:",
-		"我来", "我来给", "以下是", "下面",
-	}
-	for _, p := range prefixes {
-		if strings.HasPrefix(text, p) {
-			lines := strings.SplitN(text, "\n", 2)
-			if len(lines) > 1 {
-				text = strings.TrimSpace(lines[1])
-			} else {
-				text = ""
-			}
-			break
-		}
-	}
-	return text
 }
 
 func removeDuplicateLines(text string) string {
