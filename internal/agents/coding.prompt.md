@@ -99,16 +99,41 @@ When using `read_file`, the tool now enforces strict protections:
 - **Entire file reads capped**: Max 2000 lines or 200KB content
 
 ### Git Checkpoint Mechanism
+The agent has a built-in Git Checkpoint system that:
+1. Creates a separate `agent/coding/` branch for each session at start
+2. Stashes dirty worktree before starting (restored on the agent branch)
+3. **You decide when to create checkpoints** using `git_checkpoint_create`
+4. Performs a squash merge at the end with a professional Conventional Commits message
 
-The agent has a built-in Git Checkpoint system that automatically:
-1. Creates a separate `agent/coding/` branch for each session
-2. Stashes dirty worktree before starting
-3. Automatically creates checkpoints (tags) after each file-modifying step
-4. Performs a squash merge at the end with LLM-generated commit messages
+#### When to Create Checkpoints
+You are responsible for deciding when checkpoints are needed. **Be strategic — create checkpoints at meaningful moments, not after every step.**
 
-**Manual checkpoint tools** are available for risky operations:
-- `git_checkpoint_list` — List all available checkpoints for rollback
-- `git_checkpoint_rollback` — Roll back to a specific checkpoint (discards later changes)
-- `git_checkpoint_create` — Manually create a checkpoint before risky operations
+**Create a checkpoint BEFORE:**
+- Major refactoring (restructuring modules, changing interfaces, renaming widely-used symbols)
+- Risky or destructive operations (deleting files, rewriting large sections, changing build configs)
+- Complex experiments where the approach is uncertain and you might need to backtrack
+- Modifying critical infrastructure (authentication, database schemas, CI pipelines, shared utilities)
 
-Use these tools when you need extra safety before attempting complex refactors or experimental changes.
+**Create a checkpoint AFTER:**
+- Completing a significant feature or module (provides a known-good state to return to)
+- Successfully resolving a tricky bug (preserves the fix before moving on)
+- Any milestone you wouldn't want to redo from scratch
+
+**When NOT to create a checkpoint:**
+- After trivial changes (formatting, typo fixes, minor adjustments)
+- After every single step (creates noise, wastes tag space)
+- When you're confident the change is small and easily reproducible
+
+#### Checkpoint Tools
+- `git_checkpoint_create` — Create a checkpoint at the current state. **Always provide a descriptive `message`** explaining what milestone this represents.
+  Example: `git_checkpoint_create(message="before refactoring auth middleware")`
+- `git_checkpoint_list` — List all available checkpoints (use before rollback to find the right target)
+- `git_checkpoint_rollback` — Roll back to a specific checkpoint if something goes wrong
+
+#### Rollback Workflow
+If a change produces unexpected results:
+1. Use `git_checkpoint_list` to see available checkpoints
+2. Use `git_checkpoint_rollback` with the tag name to return to a known-good state
+3. Attempt a different approach
+
+**Remember:** It is better to create a checkpoint you don't need than to need one you didn't create. When in doubt, checkpoint.

@@ -45,8 +45,12 @@ type AgentConfig struct {
 // GitCheckpointConfig holds configuration for the git checkpoint mechanism.
 type GitCheckpointConfig struct {
 	Enabled                bool   `toml:"enabled"`
-	AutoCheckpoint         bool   `toml:"auto_checkpoint"`
-	CheckpointInterval     int    `toml:"checkpoint_interval"`
+	// Deprecated: Checkpoint creation is now LLM-driven via git_checkpoint_create tool.
+	// This field is ignored but still parsed for backward compatibility.
+	AutoCheckpoint bool `toml:"auto_checkpoint"`
+	// Deprecated: No longer used. Checkpoint timing is determined by the agent via git_checkpoint_create.
+	// This field is ignored but still parsed for backward compatibility.
+	CheckpointInterval int `toml:"checkpoint_interval"`
 	MaxCheckpoints         int    `toml:"max_checkpoints"`
 	SquashOnExit           bool   `toml:"squash_on_exit"`
 	GenerateCommitMessage  bool   `toml:"generate_commit_message"`

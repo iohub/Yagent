@@ -100,12 +100,13 @@ type CheckpointInfo struct {
 
 // GitCheckpointManager manages git checkpoints during agent execution.
 type GitCheckpointManager struct {
-	config   GitCheckpointConfig
-	projectPath string
-	session  SessionState
-	mu       sync.Mutex
-	ended    bool
-	llmCommitMsgFn func(ctx context.Context, diff string, taskSummary string) (string, error)
+	config             GitCheckpointConfig
+	projectPath        string
+	session            SessionState
+	mu                 sync.Mutex
+	ended              bool
+	llmCommitMsgFn     func(ctx context.Context, diff string, taskSummary string) (string, error)
+	checkpointMessages []string
 }
 
 // NewGitCheckpointManager creates a new GitCheckpointManager.
@@ -116,15 +117,16 @@ func NewGitCheckpointManager(
 	llmFn func(ctx context.Context, diff string, taskSummary string) (string, error),
 ) *GitCheckpointManager {
 	return &GitCheckpointManager{
-		config:      cfg,
-		projectPath: projectPath,
+		config:             cfg,
+		projectPath:        projectPath,
 		session: SessionState{
 			SessionID:   fmt.Sprintf("%s-%d", "coding", time.Now().UnixNano()),
 			StartTime:   time.Now(),
 			TaskSummary: taskSummary,
 			Checkpoints: []string{},
 		},
-		llmCommitMsgFn: llmFn,
+		llmCommitMsgFn:     llmFn,
+		checkpointMessages: []string{},
 	}
 }
 
@@ -193,6 +195,9 @@ func (g *GitCheckpointManager) OnAgentStart(ctx context.Context) error {
 
 // OnStepEnd is called after each step's tool calls complete.
 // Errors from this hook are logged but do not abort the loop.
+//
+// Deprecated: Auto-checkpoint creation has been removed. Use CreateManualCheckpoint
+// instead. This method only logs a deprecation warning when AutoCheckpoint is true.
 func (g *GitCheckpointManager) OnStepEnd(ctx context.Context, stepInfo StepInfo) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -201,50 +206,14 @@ func (g *GitCheckpointManager) OnStepEnd(ctx context.Context, stepInfo StepInfo)
 		return nil
 	}
 
-	// Only checkpoint if auto-checkpoint is enabled and step matches interval
-	if !g.config.AutoCheckpoint {
-		return nil
+	if g.config.AutoCheckpoint {
+		slog.Warn(
+			"Git Checkpoint: OnStepEnd auto-checkpoint is deprecated and will be removed. Use CreateManualCheckpoint instead.",
+			"step", stepInfo.StepNumber,
+			"tool", stepInfo.ToolName,
+		)
 	}
 
-	if g.config.CheckpointInterval <= 0 || stepInfo.StepNumber%g.config.CheckpointInterval != 0 {
-		return nil
-	}
-
-	// Check if worktree has changes
-	dirty, err := g.isWorktreeDirty(ctx)
-	if err != nil {
-		slog.Warn("Git Checkpoint: failed to check dirty status", "error", err)
-		return nil
-	}
-	if !dirty {
-		return nil
-	}
-
-	// Update StepCount FIRST so createCheckpoint reads the correct value
-	g.session.StepCount = stepInfo.StepNumber
-
-	// Create checkpoint commit
-	commitMsg := fmt.Sprintf("checkpoint: step %d after %s", stepInfo.StepNumber, stepInfo.ToolName)
-	tag, err := g.createCheckpoint(ctx, commitMsg)
-	if err != nil {
-		slog.Warn("Git Checkpoint: failed to create checkpoint", "step", stepInfo.StepNumber, "error", err)
-		return nil // Don't fail the step
-	}
-
-	// Record checkpoint
-	g.session.Checkpoints = append(g.session.Checkpoints, tag)
-
-	// Enforce max checkpoints
-	if err := g.enforceMaxCheckpoints(ctx); err != nil {
-		slog.Warn("Git Checkpoint: failed to enforce max checkpoints", "error", err)
-	}
-
-	// Persist state
-	if err := g.persistState(); err != nil {
-		slog.Warn("Git Checkpoint: failed to persist state", "error", err)
-	}
-
-	slog.Info("Git Checkpoint: Step checkpoint created", "step", stepInfo.StepNumber, "tag", tag)
 	return nil
 }
 
@@ -300,6 +269,16 @@ func (g *GitCheckpointManager) ListCheckpoints(ctx context.Context) ([]Checkpoin
 	defer g.mu.Unlock()
 
 	return g.getCheckpointInfo(ctx)
+}
+
+// GetCheckpointMessages returns a copy of all recorded checkpoint messages.
+func (g *GitCheckpointManager) GetCheckpointMessages() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	result := make([]string, len(g.checkpointMessages))
+	copy(result, g.checkpointMessages)
+	return result
 }
 
 // RollbackToCheckpoint rolls back the working tree to a specific checkpoint.
@@ -379,6 +358,9 @@ func (g *GitCheckpointManager) CreateManualCheckpoint(ctx context.Context, messa
 
 	g.session.Checkpoints = append(g.session.Checkpoints, tag)
 
+	// Record checkpoint message
+	g.checkpointMessages = append(g.checkpointMessages, commitMsg)
+
 	if err := g.persistState(); err != nil {
 		slog.Warn("Git Checkpoint: failed to persist state", "error", err)
 	}
@@ -451,6 +433,9 @@ func (g *GitCheckpointManager) createCheckpoint(ctx context.Context, message str
 		return "", err
 	}
 
+	// Record checkpoint message
+	g.checkpointMessages = append(g.checkpointMessages, message)
+
 	return tag, nil
 }
 
@@ -486,6 +471,22 @@ func (g *GitCheckpointManager) getAgentDiff(ctx context.Context) (string, error)
 	return diffStr, nil
 }
 
+func (g *GitCheckpointManager) getDiffNameStatus(ctx context.Context, base, head string) (string, error) {
+	out, err := g.runGitCommand(ctx, "diff", "--name-status", base+"..."+head)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func (g *GitCheckpointManager) getDiffStat(ctx context.Context, base, head string) (string, error) {
+	out, err := g.runGitCommand(ctx, "diff", "--stat", base+"..."+head)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 func (g *GitCheckpointManager) performSquashMerge(ctx context.Context) error {
 	// Get diff
 	diff, err := g.getAgentDiff(ctx)
@@ -494,10 +495,47 @@ func (g *GitCheckpointManager) performSquashMerge(ctx context.Context) error {
 		diff = "[diff unavailable]"
 	}
 
+	// Gather rich context: name-status, diffstat, checkpoint messages
+	var nameStatus, diffStat string
+	nameStatus, err = g.getDiffNameStatus(ctx, g.session.UserBranch, g.session.AgentBranch)
+	if err != nil {
+		slog.Warn("Git Checkpoint: failed to get name-status", "error", err)
+	}
+	diffStat, err = g.getDiffStat(ctx, g.session.UserBranch, g.session.AgentBranch)
+	if err != nil {
+		slog.Warn("Git Checkpoint: failed to get diff-stat", "error", err)
+	}
+
+	// Build enriched diff with additional context
+	var enrichedDiff strings.Builder
+	enrichedDiff.WriteString(diff)
+
+	if nameStatus != "" {
+		enrichedDiff.WriteString("\n\n")
+		enrichedDiff.WriteString("<!-- git diff --name-status (base...head) -->\n")
+		enrichedDiff.WriteString(nameStatus)
+	}
+
+	if diffStat != "" {
+		enrichedDiff.WriteString("\n\n")
+		enrichedDiff.WriteString("<!-- git diff --stat (base...head) -->\n")
+		enrichedDiff.WriteString(diffStat)
+	}
+
+	// Add checkpoint messages if available
+	checkpointMessages := g.GetCheckpointMessages()
+	if len(checkpointMessages) > 0 {
+		enrichedDiff.WriteString("\n\n")
+		enrichedDiff.WriteString("<!-- checkpoint messages -->\n")
+		for i, msg := range checkpointMessages {
+			enrichedDiff.WriteString(fmt.Sprintf("#%d: %s\n", i+1, msg))
+		}
+	}
+
 	// Generate commit message
 	var commitMsg string
 	if g.llmCommitMsgFn != nil && g.config.GenerateCommitMessage {
-		msg, err := g.llmCommitMsgFn(ctx, diff, g.session.TaskSummary)
+		msg, err := g.llmCommitMsgFn(ctx, enrichedDiff.String(), g.session.TaskSummary)
 		if err != nil {
 			slog.Warn("Git Checkpoint: LLM commit message failed, using fallback", "error", err)
 		} else {

@@ -207,17 +207,54 @@ func (a *CodingAgent) generateCommitMessage(ctx context.Context, diff string, ta
 		return "", fmt.Errorf("LLM engine not available")
 	}
 
-	systemPrompt := `You are a professional software engineer writing a Git commit message.
+	systemPrompt := `You are an expert software engineer writing a Git commit message following the Conventional Commits specification.
 
-Based on the code changes and task description, generate a concise, professional commit message following GitHub/Conventional Commits style.
+Analyze the code changes below and the task context to generate a comprehensive, professional commit message.
 
-Rules:
-- Use imperative mood (e.g., "add feature" not "added feature")
-- First line: type(scope): summary (max 72 chars)
-- Blank line
-- Body: explain WHAT and WHY, not HOW
-- Do not mention AI — write as if a human engineer made these changes
-- Output ONLY the commit message, no other text`
+## Format
+
+<type>(<scope>): <summary>
+
+<body>
+
+[BREAKING CHANGE: <details>]
+
+## Rules
+
+1. **Type** (required): Choose the most appropriate:
+   - feat: A new feature for the user
+   - fix: A bug fix
+   - refactor: Code restructuring without changing external behavior
+   - perf: Performance improvement
+   - docs: Documentation only changes
+   - style: Formatting, whitespace, etc. (no code meaning change)
+   - test: Adding or correcting tests
+   - build: Build system or external dependency changes
+   - ci: CI configuration changes
+   - chore: Maintenance tasks, no production code change
+
+2. **Scope** (optional but recommended): The module or package most affected (e.g., auth, api, parser, config)
+
+3. **Summary** (required):
+   - Imperative mood: "add feature" not "added feature"
+   - Lowercase first letter
+   - No period at end
+   - Maximum 72 characters
+   - Be specific, not generic
+
+4. **Body** (required):
+   - Separate from summary with blank line
+   - Explain WHAT changed and WHY, not HOW
+   - If multiple logical changes exist, organize with bullet points
+   - Wrap at 100 characters
+
+5. **Breaking Change** (only if applicable):
+   - Include "BREAKING CHANGE:" in the footer section
+   - Describe what breaks and the migration path
+
+CRITICAL: Do NOT mention AI, agents, automation, or tools. Write as if a human engineer made these changes.
+
+Output ONLY the commit message text. No explanations, no markdown fences, no commentary.`
 
 	task := fmt.Sprintf("Task: %s\n\nDiff:\n%s", taskSummary, diff)
 
@@ -238,10 +275,35 @@ Rules:
 	}
 
 	msg := strings.TrimSpace(resp.Choices[0].Content)
-	// Remove markdown code fences if present
-	msg = strings.TrimPrefix(msg, "```")
-	msg = strings.TrimPrefix(msg, "text")
-	msg = strings.TrimSuffix(msg, "```")
+
+	// Remove markdown code fences and prefixes
+	// Handle ```text ... ``` patterns
+	if strings.HasPrefix(msg, "```") {
+		// Find the closing fence
+		closeIdx := strings.Index(msg, "```")
+		if closeIdx != -1 {
+			// Extract content between opening and closing fences
+			content := msg[closeIdx+3:]
+			// Remove any prefix like "text\n"
+			if idx := strings.Index(content, "\n"); idx != -1 {
+				content = content[idx+1:]
+			}
+			// Trim trailing fence
+			content = strings.TrimSuffix(content, "```")
+			msg = strings.TrimSpace(content)
+		}
+	} else {
+		// No opening fence, just trim suffix and common prefixes
+		msg = strings.TrimSuffix(msg, "```")
+		// Remove "text" prefix if present at the start
+		msg = strings.TrimPrefix(msg, "text")
+	}
+
+	// Remove any remaining markdown formatting that shouldn't be in commit messages
+	// (e.g., bold, italic, code spans)
+	msg = strings.ReplaceAll(msg, "**", "")
+	msg = strings.ReplaceAll(msg, "*", "")
+	msg = strings.ReplaceAll(msg, "`", "")
 	msg = strings.TrimSpace(msg)
 
 	if msg == "" {

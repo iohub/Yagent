@@ -95,9 +95,14 @@ api_base_url = "https://api.siliconflow.cn"
 # ── Git Checkpoint 机制 ──
 # 在 Agent 执行期间自动创建代码快照，支持回滚和最终 squash merge
 [git_checkpoint]
-enabled = true                           # 是否启用 git checkpoint 机制
-auto_checkpoint = true                   # 自动在步骤后创建 checkpoint
-checkpoint_interval = 1                  # 每 N 步创建一个 checkpoint（默认1）
+enabled = true
+# DEPRECATED: auto_checkpoint is no longer used.
+# Checkpoints are now created by the agent via git_checkpoint_create tool
+# when it determines a meaningful milestone has been reached.
+auto_checkpoint = false
+# DEPRECATED: checkpoint_interval is no longer used.
+# The agent decides when to create checkpoints based on task context.
+checkpoint_interval = 0
 max_checkpoints = 50                     # 最大保留的 checkpoint 数量
 squash_on_exit = true                    # Agent 退出时 squash 合并到主分支
 generate_commit_message = true           # 使用 LLM 生成 commit 消息
