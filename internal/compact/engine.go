@@ -321,7 +321,7 @@ func (e *Engine) incrementalCompress(
 		return e.consolidateSummaryStack(state, messages)
 	}
 
-	// 7. 追加新摘要块到摘要栈（使用 SourceRange 而非 StartIndex/EndIndex）
+	// 7. 追加新摘要块到摘要栈
 	block := SummaryBlock{
 		Summary:          summary,
 		TokenCount:       tokenCount,
