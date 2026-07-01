@@ -292,7 +292,9 @@ func extractRecentMessages(messages []llm.Message, keepRounds int) (recent, olde
 	}
 
 	// 保留区：最后 keepRounds 轮的消息
-	recent = make([]llm.Message, keepCount)
+	// Capacity must be len(messages)-recentStart so that copy() does not
+	// silently truncate when atomicity repair moved recentStart backwards.
+	recent = make([]llm.Message, len(messages)-recentStart)
 	copy(recent, messages[recentStart:])
 
 	// 待压缩区：保留区之前且非 System 的消息
@@ -319,6 +321,9 @@ func extractRecentMessages(messages []llm.Message, keepRounds int) (recent, olde
 	older = nonAnchored
 	// 锚定消息插入到 recent 最前面
 	recent = append(anchoredMsgs, recent...)
+
+	// End-boundary atomicity: trim incomplete trailing tool-call groups
+	recent = trimIncompleteEndGroup(recent)
 
 	return recent, older
 }
@@ -481,4 +486,62 @@ func (e *Engine) incrementalCompress(ctx context.Context, older []llm.Message) (
 		{Role: llm.RoleUser, Content: userContent},
 	}
 	return e.summarizer.GenerateSummary(ctx, incMsgs)
+}
+
+// ─────────────────────────────────────────────────────────
+// trimIncompleteEndGroup — 工具调用原子性保障
+// ─────────────────────────────────────────────────────────
+
+// trimIncompleteEndGroup 移除尾部不完整的 tool_call 组。
+// 如果一个 assistant 有 N 个 tool_calls 但后面跟随的 tool 响应少于 N 个，
+// 则认为该组不完整。这可以防止在 recent 切片末尾出现孤立的 tool 消息。
+func trimIncompleteEndGroup(msgs []llm.Message) []llm.Message {
+	if len(msgs) == 0 {
+		return msgs
+	}
+
+	// Walk backward from the end to find the last assistant with tool_calls
+	lastIdx := len(msgs) - 1
+
+	// If the last message is not a tool response, there's no incomplete end group
+	if msgs[lastIdx].Role != llm.RoleTool {
+		return msgs
+	}
+
+	// Find the assistant that initiated the last tool_call group
+	assistantIdx := -1
+	for i := lastIdx; i >= 0; i-- {
+		if msgs[i].Role == llm.RoleAssistant && len(msgs[i].ToolCalls) > 0 {
+			assistantIdx = i
+			break
+		}
+		// If we hit a non-tool, non-assistant message, the trailing
+		// tool messages are orphans — trim them
+		if msgs[i].Role != llm.RoleTool && msgs[i].Role != llm.RoleAssistant {
+			return msgs[:i+1]
+		}
+	}
+
+	if assistantIdx == -1 {
+		// No assistant found — trailing tool messages are orphans
+		return msgs[:0]
+	}
+
+	// Count tool responses after the assistant
+	expectedCount := len(msgs[assistantIdx].ToolCalls)
+	actualCount := 0
+	for i := assistantIdx + 1; i < len(msgs); i++ {
+		if msgs[i].Role == llm.RoleTool {
+			actualCount++
+		} else {
+			break
+		}
+	}
+
+	if actualCount >= expectedCount {
+		return msgs // Complete group — no trimming needed
+	}
+
+	// Incomplete group — trim from the assistant onward
+	return msgs[:assistantIdx]
 }
