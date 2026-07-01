@@ -73,11 +73,6 @@ type DirectorAgent struct {
 	adapter        *DirectorAdapter               // 新旧整合适配器
 	summaryEngine  llm.Engine                      // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 
-	// 新增：异步增量压缩字段
-	asyncCompactor *compact.AsyncCompactor   // 异步压缩管理器
-	compState      *compact.CompressionState // 增量压缩状态
-	pendingCompRes *compact.CompactJobResult // 待应用的压缩结果（异步）
-
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
 	commitManager        *CommitManager            // commit 学习器管理器
 	hasDelegated         bool                      // 标记是否已委派过 agent
@@ -869,18 +864,8 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		} else {
 			a.compactEngine = engine
 			slog.Info("Context compact engine initialized",
-				"max_tokens", a.compactConfig.MaxContextTokens,
-				"summarization_model", a.compactConfig.SummarizationModel)
+				"max_tokens", a.compactConfig.MaxContextTokens)
 		}
-	}
-
-	// ═══════ 初始化异步压缩管理器 ═══════
-	if a.compactEngine != nil && a.compactConfig != nil && a.compactConfig.AsyncCompactEnabled {
-		a.asyncCompactor = compact.NewAsyncCompactor(a.compactEngine, a.compactConfig)
-		a.asyncCompactor.Start(ctx)
-		a.compState = &compact.CompressionState{}
-		slog.Info("Async compactor started",
-			"trigger_threshold", a.compactConfig.CompactTriggerThreshold)
 	}
 
 	// ═══════ 初始化 CommitLearner ═══════
@@ -964,125 +949,33 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 
 	for i := 0; i < a.maxSteps; i++ {
 		// ═══════════════════════════════════════════════════════════
-		// CONTEXT COMPACT GATEWAY（增强版：支持异步增量压缩）
+		// CONTEXT COMPACT GATEWAY（简化版：同步全量压缩）
 		// ═══════════════════════════════════════════════════════════
 		if a.compactEngine != nil && a.compactConfig.EnableAutoCompact {
-			// 1. 检查是否有异步压缩结果待应用
-			if a.pendingCompRes != nil {
-				result := a.pendingCompRes
-				a.pendingCompRes = nil
-
-				if result.Err == nil && len(result.CompressedMessages) > 0 {
-					// 替换消息列表（保留最新的未处理消息）
-					if len(result.CompressedMessages) < len(messages) {
-						messages = result.CompressedMessages
-						if result.NewState != nil {
-							a.compState = result.NewState
-						}
-						slog.Info("Async compression result applied",
-							"stats", result.Stats,
-							"duration", result.Duration)
-
-						if a.Publisher != nil {
-							a.Publisher.Publish("context_compressed", map[string]interface{}{
-								"compressed":   len(result.CompressedMessages),
-								"stats":        result.Stats,
-								"duration_sec": result.Duration.Seconds(),
-							}, a.Name())
-						}
-					}
-				} else if result.Err != nil {
-					slog.Warn("Async compression failed, skipping", "error", result.Err)
-				}
-			}
-
-			// 2. 计算当前 token 数
+			// 1. 计算当前 token 数
 			originalTokens, err := a.compactEngine.CountTokens(messages)
 			if err != nil {
 				slog.Warn("Failed to count tokens", "error", err)
-			} else {
-				// 3. 检查是否超限 — 如果接近硬上限则同步压缩（紧急降级）
-				if originalTokens > a.compactConfig.MaxContextTokens {
-					slog.Warn("Context exceeded hard limit, emergency sync compression",
-						"tokens", originalTokens,
-						"max", a.compactConfig.MaxContextTokens)
+			} else if originalTokens > a.compactConfig.MaxContextTokens {
+				// 2. 超限，触发同步全量压缩
+				slog.Info("Context exceeds limit, triggering sync compression",
+					"original_tokens", originalTokens,
+					"max_tokens", a.compactConfig.MaxContextTokens)
 
-					// 尝试异步（如果有且未触发）
-					if a.asyncCompactor != nil && a.asyncCompactor.IsRunning() && a.pendingCompRes == nil {
-						// 快照当前消息
-						snap := make([]llm.Message, len(messages))
-						copy(snap, messages)
-						stateCopy := a.compState.DeepCopy()
-						job := &compact.CompactJob{
-							MessageSnapshot: snap,
-							State:           stateCopy,
-							ResultCh:        make(chan *compact.CompactJobResult, 1),
-						}
-						a.asyncCompactor.SubmitJob(job)
-						// 等待结果（带超时）
-						select {
-						case res := <-job.ResultCh:
-							if res.Err == nil && len(res.CompressedMessages) > 0 {
-								messages = res.CompressedMessages
-								if res.NewState != nil {
-									a.compState = res.NewState
-								}
-								slog.Info("Emergency async compression applied",
-									"tokens_after", len(res.CompressedMessages))
-							}
-						case <-time.After(10 * time.Second):
-							slog.Warn("Emergency async compression timed out")
-							// 降级：对现有消息做同步全量压缩
-							result, err := a.compactEngine.Compress(ctx, messages)
-							if err == nil {
-								messages = result.CompressedMessages
-							}
-						}
-					} else {
-						// 没有异步管理器，走同步全量压缩（原逻辑）
-						slog.Info("Context exceeds limit, triggering sync compression",
-							"original_tokens", originalTokens,
-							"max_tokens", a.compactConfig.MaxContextTokens)
-						result, err := a.compactEngine.Compress(ctx, messages)
-						if err != nil {
-							slog.Warn("Context compression failed", "error", err)
-						} else {
-							messages = result.CompressedMessages
-							slog.Info("Context compressed",
-								"compressed_tokens", result.CompressedTokens,
-								"ratio", fmt.Sprintf("%.2f%%", result.CompressionRatio*100))
-							if a.Publisher != nil {
-								a.Publisher.Publish("context_compressed", map[string]interface{}{
-									"original_tokens":   result.OriginalTokens,
-									"compressed_tokens": result.CompressedTokens,
-									"ratio":             fmt.Sprintf("%.2f%%", result.CompressionRatio*100),
-								}, a.Name())
-							}
-						}
-					}
-				} else if a.asyncCompactor != nil && a.asyncCompactor.IsRunning() && a.pendingCompRes == nil {
-					// 4. 未超限，但超过阈值时提前触发异步压缩（预压缩）
-					threshold := int(float64(a.compactConfig.MaxContextTokens) * a.compactConfig.CompactTriggerThreshold)
-					if originalTokens > threshold {
-						slog.Debug("Triggering async pre-compression",
-							"tokens", originalTokens,
-							"threshold", threshold)
-
-						snap := make([]llm.Message, len(messages))
-						copy(snap, messages)
-						stateCopy := a.compState.DeepCopy()
-						job := &compact.CompactJob{
-							MessageSnapshot: snap,
-							State:           stateCopy,
-							ResultCh:        make(chan *compact.CompactJobResult, 1),
-						}
-						if a.asyncCompactor.SubmitJob(job) {
-							// 启动一个 goroutine 等待结果
-							go func(j *compact.CompactJob) {
-								res := <-j.ResultCh
-								a.pendingCompRes = res
-							}(job)
-						}
+				result, err := a.compactEngine.Compress(ctx, messages)
+				if err != nil {
+					slog.Warn("Context compression failed", "error", err)
+				} else {
+					messages = result.CompressedMessages
+					slog.Info("Context compressed",
+						"compressed_tokens", result.CompressedTokens,
+						"ratio", fmt.Sprintf("%.2f%%", result.CompressionRatio*100))
+					if a.Publisher != nil {
+						a.Publisher.Publish("context_compressed", map[string]interface{}{
+							"original_tokens":   result.OriginalTokens,
+							"compressed_tokens": result.CompressedTokens,
+							"ratio":             fmt.Sprintf("%.2f%%", result.CompressionRatio*100),
+						}, a.Name())
 					}
 				}
 			}
@@ -1309,11 +1202,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		}
 	}
 
-	// ═══════ 清理异步压缩资源 ═══════
-	if a.asyncCompactor != nil {
-		a.asyncCompactor.Stop()
-	}
-
 	return "", fmt.Errorf("DirectorAgent exceeded max steps")
 }
 
@@ -1324,73 +1212,12 @@ func (a *DirectorAgent) createSummaryClient() compact.SummarizationClient {
 	if a.summaryEngine != nil {
 		engine = a.summaryEngine
 	}
-	return &summaryClientAdapter{
-		LLM:         engine,
-		Model:       a.compactConfig.SummarizationModel,
-		Temperature: 0.1,  // 摘要使用低温，确保一致性
+	return &compact.SummaryAdapter{
+		LLM:        engine,
+		Temperature: 0.1, // 摘要使用低温，确保一致性
 		MaxTokens:   2000, // 摘要输出限制
 	}
 }
-
-// summaryClientAdapter 将 llm.Engine 适配为 compact.SummarizationClient
-type summaryClientAdapter struct {
-	LLM         llm.Engine
-	Model       string
-	Temperature float64
-	MaxTokens   int
-}
-
-func (s *summaryClientAdapter) GenerateSummary(ctx context.Context, messages []llm.Message) (string, error) {
-	// 构造摘要请求：System prompt + 待摘要消息
-	allMessages := append([]llm.Message{
-		{
-			Role:    llm.RoleSystem,
-			Content: getSummarizationPrompt(),
-		},
-	}, messages...)
-
-	opts := &llm.CallOptions{
-		MaxTokens:   s.MaxTokens,
-		Temperature: s.Temperature,
-	}
-	resp, err := s.LLM.GenerateContent(ctx, allMessages, nil, opts)
-	if err != nil {
-		return "", fmt.Errorf("summarization failed: %w", err)
-	}
-	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("summarization returned empty response")
-	}
-	return resp.Choices[0].Content, nil
-}
-
-// getSummarizationPrompt 返回默认摘要提示词（英文版本）
-func getSummarizationPrompt() string {
-	return `# Role
-You are a **Conversation Summarizer** for an AI-powered coding assistant system. Your task is to compress conversation history without losing any critical context needed for ongoing development work.
-
-# Task
-Extract the following from the provided conversation fragment:
-
-1. **Task Progress**: What tasks have been completed? What is currently in progress?
-2. **Key Decisions**: What important architectural or design decisions were made? Why?
-3. **Code Changes**: Which files were modified? What are the key code patterns introduced?
-4. **Errors & Fixes**: What problems were encountered? How were they resolved?
-5. **Critical Discoveries**: Important facts about the codebase — file structure, dependencies, tech stack, conventions, etc.
-
-# Rules
-- **Preserve Identifiers**: Retain ALL specific identifiers — file names, function names, class names, variable names, paths.
-- **Preserve Error Details**: Keep concrete error messages and their corresponding fix strategies verbatim.
-- **Ignore Redundancy**: Skip duplicated tool output content; keep only the meaningful results.
-- **Be Complete**: Do NOT omit any context that could be useful for continuing the work.
-- **Be Concise**: Summarize efficiently; prefer bullet points over verbose prose.
-
-# Output Format
-- Use clear, structured Markdown.
-- Output in **English**.
-- Organize extracted information under the 5 categories listed above.`
-}
-
-// validateAndRepairToolCallPairs 检查 messages 中的 tool_call/tool_response 配对完整性
 // 如果发现孤立的 tool_calls（assistant 有 tool_calls 但缺少对应的 tool 响应），自动修复：
 // 1. 将缺少 tool 响应的 assistant 消息降级为纯文本消息（添加说明）
 // 2. 移除孤立的 tool 响应（没有对应 assistant 的消息）
