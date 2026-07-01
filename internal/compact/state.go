@@ -13,28 +13,13 @@ import (
 const (
 	// StateVersionCurrent 当前状态版本号
 	StateVersionCurrent = 2
-
-	// StateVersionLegacy 旧版本号（v1 使用 LastCompressedIndex）
-	StateVersionLegacy = 1
 )
 
 // ---- 核心数据结构 ----
 
 // SummaryBlock 摘要块，记录一次压缩生成的摘要信息
-//
-// 版本历史：
-//   v1: 使用 StartIndex/EndIndex 记录覆盖范围（已废弃，保留兼容）
-//   v2: 新增 SourceRange 替代 StartIndex/EndIndex，新增 CreatedAt
 type SummaryBlock struct {
-	// StartIndex 该摘要覆盖的消息起始索引（Deprecated: v1 兼容字段）
-	// 实际使用应改为 SourceRange.StartIndex
-	StartIndex int `json:"start_index,omitempty"`
-
-	// EndIndex 该摘要覆盖的消息结束索引（Deprecated: v1 兼容字段）
-	// 实际使用应改为 SourceRange.EndIndex
-	EndIndex int `json:"end_index,omitempty"`
-
-	// SourceRange 该摘要覆盖的原始消息区间（v2 新增）
+	// SourceRange 该摘要覆盖的原始消息区间
 	SourceRange AnchorRange `json:"source_range,omitempty"`
 
 	// Summary 摘要内容文本（已包含 [CONTEXT SUMMARY] 前缀）
@@ -55,7 +40,6 @@ type SummaryBlock struct {
 // CompressionState 持久化压缩进度状态
 //
 // 版本历史：
-//   v1: 使用 LastCompressedIndex 追踪压缩进度（已废弃）
 //   v2: 使用 AnchorSet 统一坐标系，新增校验和
 //
 // 线程安全：所有公开方法通过 RWMutex 保护
@@ -69,7 +53,7 @@ type CompressionState struct {
 	// SessionID 会话标识（用于调试和追踪）
 	SessionID string `json:"session_id,omitempty"`
 
-	// Anchors 锚点集合（取代 v1 的 LastCompressedIndex）
+	// Anchors 锚点集合，追踪每条消息的摘要状态
 	// 不直接序列化，通过 Snapshot/Restore 处理
 	Anchors *AnchorSet `json:"-"`
 
@@ -184,13 +168,6 @@ func (cs *CompressionState) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("unmarshal compression state version: %w", err)
 	}
 
-	version := versionCheck.Version
-
-	// v1 → v2 迁移
-	if version == StateVersionLegacy || version == 0 {
-		return cs.migrateFromV1(data)
-	}
-
 	// v2 直接解析
 	type Alias CompressionState
 	aux := struct {
@@ -237,57 +214,6 @@ func (cs *CompressionState) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ---- v1 → v2 迁移 ----
-
-// v1State 旧版状态结构
-type v1State struct {
-	LastCompressedIndex int            `json:"last_compressed_index"`
-	SummaryStack        []SummaryBlock `json:"summary_stack"`
-	ConstraintsBlock    string         `json:"constraints_block"`
-}
-
-// migrateFromV1 从 v1 格式迁移到 v2
-func (cs *CompressionState) migrateFromV1(data []byte) error {
-	var old v1State
-	if err := json.Unmarshal(data, &old); err != nil {
-		return fmt.Errorf("unmarshal v1 state: %w", err)
-	}
-
-	cs.version = StateVersionCurrent
-	cs.SessionID = ""
-	cs.CompressionCount = 0
-	cs.CreatedAt = time.Now()
-	cs.UpdatedAt = time.Now()
-
-	// 迁移 SummaryStack
-	if old.SummaryStack != nil {
-		cs.SummaryStack = make([]SummaryBlock, len(old.SummaryStack))
-		for i, block := range old.SummaryStack {
-			cs.SummaryStack[i] = block
-			// v1 没有 SourceRange，尝试从块内容推断
-			if block.SourceRange == (AnchorRange{}) {
-				// 使用 LastCompressedIndex 作为近似值
-				if i == len(old.SummaryStack)-1 {
-					cs.SummaryStack[i].SourceRange = AnchorRange{
-						StartIndex: old.LastCompressedIndex,
-						EndIndex:   old.LastCompressedIndex,
-					}
-				}
-			}
-		}
-	} else {
-		cs.SummaryStack = make([]SummaryBlock, 0)
-	}
-
-	cs.ConstraintsBlock = old.ConstraintsBlock
-
-	// 创建 AnchorSet（从 LastCompressedIndex 推断）
-	// 注意：v1 只有单个索引，无法精确重建，保守地假设所有消息未摘要
-	cs.Anchors = NewAnchorSet(0)
-
-	return nil
-}
-
 // ---- 状态查询 ----
 
 // IsEmpty 检查状态是否为空（从未压缩过）
@@ -298,27 +224,6 @@ func (cs *CompressionState) IsEmpty() bool {
 		return len(cs.SummaryStack) == 0 && cs.CompressionCount == 0
 	}
 	return cs.Anchors.IsEmpty() && len(cs.SummaryStack) == 0 && cs.CompressionCount == 0
-}
-
-// LastCompressedIndex 兼容旧接口：返回已压缩的最大索引（近似值）
-// 实际使用中应迁移到 AnchorSet API
-// Deprecated: 请使用 Anchors.NextUnsummarizedRange() 替代
-func (cs *CompressionState) LastCompressedIndex() int {
-	cs.mu.RLock()
-	defer cs.mu.RUnlock()
-
-	if cs.Anchors == nil || cs.Anchors.IsEmpty() {
-		return 0
-	}
-
-	// 从后往前找第一个未摘要的消息
-	total := cs.Anchors.TotalCount()
-	for i := total - 1; i >= 0; i-- {
-		if !cs.Anchors.IsSummarized(i) {
-			return i
-		}
-	}
-	return total
 }
 
 // SummaryStackTokens 计算摘要栈总 token 数

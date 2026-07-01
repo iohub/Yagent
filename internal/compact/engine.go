@@ -203,8 +203,6 @@ func (e *Engine) CompressIncremental(
 		newState = NewCompressionStateWithMessages("", len(messages))
 		// 构建初始摘要栈
 		newState.AppendSummary(SummaryBlock{
-			StartIndex:       0,
-			EndIndex:         len(messages),
 			Summary:          extractSummaryFromResult(result),
 			TokenCount:       result.CompressedTokens,
 			CompressionLevel: 1,
@@ -433,11 +431,6 @@ func (e *Engine) mergeDeepSummaries(ctx context.Context, state *CompressionState
 	mergedRange := AnchorRange{
 		StartIndex: a.SourceRange.StartIndex,
 		EndIndex:   b.SourceRange.EndIndex,
-	}
-	// 兼容旧版：如果 SourceRange 为空，使用 StartIndex/EndIndex
-	if mergedRange.StartIndex == 0 && mergedRange.EndIndex == 0 {
-		mergedRange.StartIndex = a.StartIndex
-		mergedRange.EndIndex = b.EndIndex
 	}
 
 	newBlock := SummaryBlock{

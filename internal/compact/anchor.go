@@ -8,7 +8,7 @@ import (
 // anchor.go — 统一消息位置坐标系
 //
 // 问题背景：
-// 原有系统使用 CompressionState.LastCompressedIndex（单个整数）追踪压缩进度，
+// CompressionState 使用 AnchorSet 追踪每条消息的摘要状态，
 // 但紧急模式（sync compress）可能产生"压缩空洞"——某些中间消息被摘要而两头保留。
 // 单个整数无法表达这种不连续的已摘要状态。
 //
