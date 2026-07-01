@@ -259,6 +259,6 @@ func AgentColor(name string) string {
 // Purple icon and warm italic text for agent thinking/reasoning content.
 var (
 	thinkIconStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).SetString("💭 ")
-	thinkTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("142")).Italic(true)
+	thinkTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("251")).Italic(true).Faint(true)
 	thinkDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 )
