@@ -513,37 +513,70 @@ func calcRightPaneWidth(m *model) int {
 	return rightWidth
 }
 
-// buildAllTimelineDetails 将所有 timeline 条目的详情拼接成一个连续页面，
-// 计算每个条目的行偏移量，并设置到 viewport 中。不改变滚动位置。
+// buildAllTimelineDetails 将所有 timeline 条目的详情拼接成一个连续页面。
+// LLM Call 条目和紧随其后的 Thinking 条目会被合并展示为一个整体。
 func buildAllTimelineDetails(m *model) {
 	entries := m.timelineEntries
 	rightWidth := calcRightPaneWidth(m)
-	
+
 	var sb strings.Builder
 	offsets := make([]int, len(entries))
 	currentLine := 0
-	
-	// 分隔线样式
+
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
+
+	// 预扫描：标记被合并的 thinking 条目（紧跟在 llm_call 后面的 thinking）
+	mergedThinkings := make(map[int]bool)    // thinking index → merged
+	mergedContent := make(map[int]string)    // llm_call index → thinking content
+
+	for i, entry := range entries {
+		if i > 0 && entry.Kind == TimelineKindThinking && entries[i-1].Kind == TimelineKindLLMCall {
+			mergedThinkings[i] = true
+			content := findFullThinkingContent(m, entry)
+			if content != "" {
+				mergedContent[i-1] = content
+			}
+		}
+	}
 
 	for i, entry := range entries {
 		offsets[i] = currentLine
 
-		// 在条目之间添加分隔线（第一个条目不加）
-		if i > 0 {
-			sep := sepStyle.Render(strings.Repeat("─", rightWidth)) + "\n\n"
-			sb.WriteString(sep)
-			currentLine += strings.Count(sep, "\n")
+		// 检查是否被合并的 thinking
+		if mergedThinkings[i] {
+			// 仅渲染很淡的锚点行，无 header/separator/body
+			anchorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
+			sb.WriteString(anchorStyle.Render(fmt.Sprintf("── Entry #%d ──", i+1)))
+			sb.WriteString("\n")
+			currentLine++
+			continue
 		}
 
-		// 渲染单个条目的详情（带条目编号锚点）
+		// 条目之间的分隔线（跳过被合并的 thinking 前后的分隔）
+		if i > 0 {
+			isPrevMerged := mergedThinkings[i-1]
+			if !isPrevMerged {
+				sep := sepStyle.Render(strings.Repeat("─", rightWidth)) + "\n\n"
+				sb.WriteString(sep)
+				currentLine += strings.Count(sep, "\n")
+			}
+		}
+
+		// 正常渲染条目详情
 		detail := renderTimelineFullscreenDetailWithAnchor(m, entry, rightWidth, i)
 		sb.WriteString(detail)
 		currentLine += strings.Count(detail, "\n")
+
+		// 如果是 LLM Call 且有合并的 thinking 内容，追加内联 thinking
+		if content, ok := mergedContent[i]; ok {
+			inlineContent := renderThinkingInline(content, rightWidth)
+			sb.WriteString(inlineContent)
+			currentLine += strings.Count(inlineContent, "\n")
+		}
 	}
 
 	m.timelineDetailOffsets = offsets
-	
+
 	if m.timelineDetailVP != nil {
 		m.timelineDetailVP.SetContent(sb.String())
 	}
@@ -730,4 +763,67 @@ func syncDetailToCursor(m *model) {
 	}
 	targetOffset := m.timelineDetailOffsets[cursor]
 	m.timelineDetailVP.SetYOffset(targetOffset)
+}
+
+// findFullThinkingContent 从 logEntries 中查找指定 thinking 条目的完整内容。
+// 通过匹配 eventType="thinking" 和时间戳来精确关联。
+func findFullThinkingContent(m *model, thinkingEntry *TimelineEntry) string {
+	ts := thinkingEntry.Timestamp
+	for i := len(m.logEntries) - 1; i >= 0; i-- {
+		le := &m.logEntries[i]
+		if le.eventType == "thinking" && le.timestamp.Equal(ts) {
+			return le.content
+		}
+	}
+	// fallback: 返回 Detail 中的预览文本
+	return thinkingEntry.Detail
+}
+
+
+// renderThinkingInline 将 thinking 内容以优雅的内联方式嵌入 llm_call 详情中。
+// 使用 💭 紫色图标 + 黄色斜体文本 + 缩进，无边框、无多余装饰。
+func renderThinkingInline(thinkingContent string, width int) string {
+	var sb strings.Builder
+
+	contentWidth := width - 6 // 缩进空间
+	if contentWidth < 30 {
+		contentWidth = 30
+	}
+
+	lines := strings.Split(thinkingContent, "\n")
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			sb.WriteString("\n")
+			continue
+		}
+
+		// 截断超长行
+		displayLine := trimmed
+		runes := []rune(displayLine)
+		if len(runes) > contentWidth {
+			displayLine = string(runes[:contentWidth-3]) + "..."
+		}
+
+		if i == 0 {
+			// 首行：💭 紫色图标 + 黄色斜体内容
+			sb.WriteString("  ")
+			sb.WriteString(thinkIconStyle.String())
+			sb.WriteString(thinkTextStyle.Render(displayLine))
+			sb.WriteString("\n")
+		} else {
+			// 续行：4空格缩进 + 黄色斜体内容（与首行文字对齐）
+			padding := 4
+			if strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "\t") {
+				// 保留原始缩进感
+				padding = 4
+			}
+			sb.WriteString(strings.Repeat(" ", padding))
+			sb.WriteString(thinkTextStyle.Render(displayLine))
+			sb.WriteString("\n")
+		}
+	}
+
+	return sb.String()
 }
