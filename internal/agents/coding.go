@@ -180,6 +180,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 
 		// Add checkpoint tools to the adapter list
 		checkpointAdapters := createCheckpointToolAdapters(gcm)
+		tools.SetGuardOnAdapters(checkpointAdapters, a.GlobalCtx.Guard)
 		cfg.Adapters = append(cfg.Adapters, checkpointAdapters...)
 	}
 	// === END NEW ===

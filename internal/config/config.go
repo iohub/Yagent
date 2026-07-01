@@ -450,6 +450,21 @@ func (c *Config) validate() error {
 		c.EnhancedCommander.MaxDelegationDepth = 3
 	}
 
+	// ═══════ Git Checkpoint 默认值设置 ═══════
+	gitCfgDefaults := DefaultGitCheckpointConfig()
+	if c.GitCheckpoint.AgentBranchPrefix == "" {
+		// [git_checkpoint] 段完全缺失 → 应用完整默认值
+		c.GitCheckpoint = gitCfgDefaults
+	} else {
+		// 段存在，按需补充零值字段
+		if c.GitCheckpoint.CheckpointInterval == 0 {
+			c.GitCheckpoint.CheckpointInterval = gitCfgDefaults.CheckpointInterval
+		}
+		if c.GitCheckpoint.MaxCheckpoints == 0 {
+			c.GitCheckpoint.MaxCheckpoints = gitCfgDefaults.MaxCheckpoints
+		}
+	}
+
 	return nil
 }
 

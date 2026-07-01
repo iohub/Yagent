@@ -220,6 +220,9 @@ func (g *GitCheckpointManager) OnStepEnd(ctx context.Context, stepInfo StepInfo)
 		return nil
 	}
 
+	// Update StepCount FIRST so createCheckpoint reads the correct value
+	g.session.StepCount = stepInfo.StepNumber
+
 	// Create checkpoint commit
 	commitMsg := fmt.Sprintf("checkpoint: step %d after %s", stepInfo.StepNumber, stepInfo.ToolName)
 	tag, err := g.createCheckpoint(ctx, commitMsg)
@@ -230,7 +233,6 @@ func (g *GitCheckpointManager) OnStepEnd(ctx context.Context, stepInfo StepInfo)
 
 	// Record checkpoint
 	g.session.Checkpoints = append(g.session.Checkpoints, tag)
-	g.session.StepCount = stepInfo.StepNumber
 
 	// Enforce max checkpoints
 	if err := g.enforceMaxCheckpoints(ctx); err != nil {

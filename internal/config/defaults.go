@@ -94,3 +94,20 @@ func DefaultKeywordsConfig() *KeywordsConfig {
 		Dicts:             nil,
 	}
 }
+
+// DefaultGitCheckpointConfig 返回默认的 git checkpoint 配置
+func DefaultGitCheckpointConfig() GitCheckpointConfig {
+	return GitCheckpointConfig{
+		Enabled:                true,
+		AutoCheckpoint:         true,
+		CheckpointInterval:     1,
+		MaxCheckpoints:         50,
+		SquashOnExit:           true,
+		GenerateCommitMessage:  true,
+		AgentBranchPrefix:      "agent/coding",
+		CheckpointTagPrefix:    "checkpoint/coding",
+		StashDirtyWorktree:     true,
+		CleanupAgentBranch:     true,
+		CleanupCheckpointTags:  true,
+	}
+}
