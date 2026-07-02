@@ -266,69 +266,33 @@ impl CodeXRayServer {
                             || lower.contains("file not found");
 
                         if is_corruption {
-                            // Backup corrupted directory
-                            let db_path = {
-                                let config = match storage.get_config() {
-                                    Some(c) => c,
-                                    None => {
-                                        tracing::error!("[LANCE_DB_HEALTH] Config not available, cannot backup");
-                                        continue;
-                                    }
-                                };
-                                config.embedding_dir().to_string_lossy().to_string()
-                            };
+                            tracing::warn!("[LANCE_DB_REPAIR] LanceDB corruption detected, attempting self-heal...");
 
-                            let timestamp = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs();
-                            let backup_path = format!("{}.corrupted.{}", db_path, timestamp);
-
-                            tracing::warn!(
-                                "[LANCE_DB_REPAIR] Backing up corrupted LanceDB to '{}'",
-                                backup_path
-                            );
-
-                            if std::path::Path::new(&db_path).exists() {
-                                if let Err(e) = std::fs::rename(&db_path, &backup_path) {
-                                    tracing::error!(
-                                        "[LANCE_DB_REPAIR] Failed to backup corrupted LanceDB: {}",
-                                        e
-                                    );
-                                } else {
-                                    tracing::info!(
-                                        "[LANCE_DB_REPAIR] Backup successful: {} -> {}",
-                                        db_path,
-                                        backup_path
-                                    );
+                            // Step 1: Repair the connection (backup corrupted DB + reconnect + recreate collection)
+                            match hybrid.try_repair().await {
+                                Ok(()) => {
+                                    tracing::info!("[LANCE_DB_REPAIR] Connection repaired successfully, triggering data rebuild...");
+                                    
+                                    // Step 2: Trigger rebuild to populate the fresh collection
+                                    let storage_for_rebuild = storage.clone();
+                                    let repo_for_rebuild = repo_path_for_monitor.clone();
+                                    tokio::spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                        if let Err(e) = trigger_embedding_build(
+                                            storage_for_rebuild,
+                                            repo_for_rebuild,
+                                            None,
+                                        ).await {
+                                            tracing::warn!("[LANCE_DB_REPAIR] Rebuild triggered but returned: {}", e);
+                                        } else {
+                                            tracing::info!("[LANCE_DB_REPAIR] Rebuild completed successfully.");
+                                        }
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::error!("[LANCE_DB_REPAIR] Self-heal failed: {}", e);
                                 }
                             }
-
-                            // Mark the hybrid service as needing rebuild by setting flag on EmbeddingService
-                            // The actual rebuild will be triggered by trigger_embedding_build
-                            tracing::info!(
-                                "[LANCE_DB_REPAIR] Corrupted LanceDB backed up. \
-                                 Triggering rebuild to create fresh index."
-                            );
-                            // Reset repaired flag so future issues can trigger another repair
-                            hybrid.reset_repaired_flag();
-
-                            // Trigger rebuild to create fresh embeddings
-                            let storage_for_rebuild = storage.clone();
-                            let repo_for_rebuild = repo_path_for_monitor.clone();
-                            tokio::spawn(async move {
-                                // Wait a moment to let the backup complete
-                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                                if let Err(e) = trigger_embedding_build(
-                                    storage_for_rebuild,
-                                    repo_for_rebuild,
-                                    None,
-                                ).await {
-                                    tracing::warn!("[LANCE_DB_REPAIR] Rebuild triggered but returned: {}", e);
-                                } else {
-                                    tracing::info!("[LANCE_DB_REPAIR] Rebuild completed successfully.");
-                                }
-                            });
                         }
                     }
                 }
