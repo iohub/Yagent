@@ -183,7 +183,7 @@ impl EmbeddingProvider for OpenAICompatibleEmbeddingProvider {
 }
 
 pub struct EmbeddingService {
-    connection: Connection, 
+    connection: tokio::sync::Mutex<Connection>,
     /// The original db_path used to create this service (for self-healing).
     db_path: String,
     pub table_name: String,
@@ -253,7 +253,7 @@ impl EmbeddingService {
         let concurrency = cpu_count * 2;
         
         Ok(Self {
-            connection,
+            connection: tokio::sync::Mutex::new(connection),
             db_path: db_path.to_string(),
             table_name,
             embedding_provider: Arc::new(provider),
@@ -287,7 +287,7 @@ impl EmbeddingService {
         let concurrency = cpu_count * 2;
 
         Ok(Self {
-            connection,
+            connection: tokio::sync::Mutex::new(connection),
             db_path: db_path.to_string(),
             table_name,
             embedding_provider: provider,
@@ -302,7 +302,8 @@ impl EmbeddingService {
 
     /// Create or get the collection (table)
     pub async fn ensure_collection(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let table_names = self.connection.table_names().execute().await?;
+        let conn = self.connection.lock().await;
+        let table_names = conn.table_names().execute().await?;
         if !table_names.contains(&self.table_name) {
             info!("Creating table: {}", self.table_name);
             
@@ -324,7 +325,7 @@ impl EmbeddingService {
                 Field::new("code_block", DataType::Utf8, false),
             ]));
             
-            self.connection.create_empty_table(&self.table_name, schema).execute().await?;
+            conn.create_empty_table(&self.table_name, schema).execute().await?;
             info!("Table {} created successfully", self.table_name);
         } else {
             info!("Table {} already exists", self.table_name);
@@ -414,7 +415,8 @@ impl EmbeddingService {
         // 2. delete_unverified: Some(true) — 删除所有孤立数据文件
         info!("Starting LanceDB table optimization (compact + prune) for {}", self.table_name);
         let compact_result = (|| async {
-            let table = self.connection.open_table(&self.table_name).execute().await?;
+            let conn = self.connection.lock().await;
+            let table = conn.open_table(&self.table_name).execute().await?;
             
             // Step 1: Compact - 合并小文件，物理移除被删除的行
             let compact_options = CompactionOptions {
@@ -451,7 +453,8 @@ impl EmbeddingService {
 
     /// Delete existing embeddings for a file
     async fn delete_file_embeddings(&self, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let table = self.connection.open_table(&self.table_name).execute().await?;
+        let conn = self.connection.lock().await;
+        let table = conn.open_table(&self.table_name).execute().await?;
         // Delete rows where file_path matches
         let predicate = format!("file_path = '{}'", file_path.replace("'", "''"));
         table.delete(&predicate).await?;
@@ -734,7 +737,8 @@ impl EmbeddingService {
             Arc::new(code_block_builder.finish()),
         ])?;
         
-        let table = self.connection.open_table(&self.table_name).execute().await?;
+        let conn = self.connection.lock().await;
+        let table = conn.open_table(&self.table_name).execute().await?;
         
         let batches = vec![Ok(batch)];
         let batch_iter = RecordBatchIterator::new(batches, schema.clone());
@@ -780,7 +784,8 @@ impl EmbeddingService {
 
     /// Internal search implementation (separated for corruption detection).
     async fn do_search(&self, query_vector: &[f32], limit: usize) -> Result<Vec<SearchResult>, anyhow::Error> {
-        let table = self.connection.open_table(&self.table_name).execute().await?;
+        let conn = self.connection.lock().await;
+        let table = conn.open_table(&self.table_name).execute().await?;
         
         let mut results_stream = table.query()
             .nearest_to(query_vector)?
@@ -859,7 +864,8 @@ impl EmbeddingService {
     /// Probe LanceDB health by executing a minimal query.
     /// Returns Ok(()) if the database is healthy, Err if it's corrupted.
     pub async fn probe_health(&self) -> Result<(), String> {
-        let table = self.connection.open_table(&self.table_name)
+        let conn = self.connection.lock().await;
+        let table = conn.open_table(&self.table_name)
             .execute()
             .await
             .map_err(|e| format!("Failed to execute table query: {}", e))?;
@@ -914,10 +920,11 @@ impl EmbeddingService {
         }
 
         // 2. Reconnect (creates a fresh LanceDB connection)
-        self.connection = connect(&self.db_path)
+        let new_connection = connect(&self.db_path)
             .execute()
             .await
             .map_err(|e| format!("Failed to reconnect LanceDB: {}", e))?;
+        *self.connection.lock().await = new_connection;
         info!("LanceDB reconnected at: {}", self.db_path);
 
         // 3. Recreate the collection (empty table)
