@@ -43,6 +43,8 @@ pub struct StorageManager {
     /// 共享的 BM25 全文搜索索引（Tantivy）
     /// 用于在 server 启动、background embedding task 和文件 watcher 之间共享同一实例
     pub bm25_index: Arc<parking_lot::RwLock<Option<Arc<dyn TextSearchProvider>>>>,
+    /// 混合搜索服务，使用 Mutex 支持内部可变性，允许后台任务重建服务
+    pub hybrid_search_service: parking_lot::Mutex<Option<Arc<crate::services::hybrid_search::HybridSearchService>>>,
 }
 
 impl StorageManager {
@@ -67,6 +69,7 @@ impl StorageManager {
             commit_embedding_service: parking_lot::Mutex::new(None),
             repo_knowledge_service: parking_lot::Mutex::new(None),
             bm25_index: Arc::new(parking_lot::RwLock::new(None)),
+            hybrid_search_service: parking_lot::Mutex::new(None),
         }
     }
 
@@ -85,6 +88,7 @@ impl StorageManager {
             commit_embedding_service: parking_lot::Mutex::new(None),
             repo_knowledge_service: parking_lot::Mutex::new(None),
             bm25_index: Arc::new(parking_lot::RwLock::new(None)),
+            hybrid_search_service: parking_lot::Mutex::new(None),
         }
     }
 

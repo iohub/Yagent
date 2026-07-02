@@ -11,6 +11,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
+/// Check if an error message indicates LanceDB corruption.
+fn is_lancedb_corruption_error(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("not found")
+        || lower.contains("no such file")
+        || lower.contains("object at location")
+        || lower.contains("file not found")
+        || lower.contains(".arrow") && lower.contains("delet")
+}
+
 /// Configuration for hybrid search behavior.
 #[derive(Debug, Clone)]
 pub struct HybridSearchConfig {
@@ -162,6 +172,17 @@ impl HybridSearchService {
         };
 
         // Dense results are required — if they fail, the whole search fails
+        // Check for LanceDB corruption and log a special marker
+        if let Err(ref e) = dense_res {
+            let err_msg = e.to_string();
+            if is_lancedb_corruption_error(&err_msg) {
+                warn!(
+                    "[LANCE_DB_CORRUPTION] Hybrid search detected LanceDB corruption: {}. \
+                     This indicates the vector index needs repair.",
+                    err_msg
+                );
+            }
+        }
         let dense_raw = dense_res.map_err(|e| {
             anyhow!("Dense (vector) search failed: {}", e)
         })?;
@@ -316,6 +337,23 @@ impl HybridSearchService {
     /// Get the current config.
     pub fn config(&self) -> &HybridSearchConfig {
         &self.config
+    }
+
+    // ========================= Self-Healing Proxy Methods =========================
+
+    /// Probe LanceDB health via the dense service.
+    pub async fn probe_health(&self) -> Result<(), String> {
+        self.dense.probe_health().await
+    }
+
+    /// Reset the repaired flag to allow future repair cycles.
+    pub fn reset_repaired_flag(&self) {
+        self.dense.reset_repaired_flag();
+    }
+
+    /// Check if a repair has been triggered since last reset.
+    pub fn is_repaired(&self) -> bool {
+        self.dense.is_repaired()
     }
 
     /// 对 RRF 融合结果执行 Cross-Encoder 重排

@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::fs;
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
 use std::env;
 use lancedb::{connect, Connection};
 use lancedb::query::{QueryBase, ExecutableQuery};
@@ -184,6 +184,8 @@ impl EmbeddingProvider for OpenAICompatibleEmbeddingProvider {
 
 pub struct EmbeddingService {
     connection: Connection, 
+    /// The original db_path used to create this service (for self-healing).
+    db_path: String,
     pub table_name: String,
     embedding_provider: Arc<dyn EmbeddingProvider + Send + Sync>,
     pub dimensions: i32,
@@ -195,6 +197,8 @@ pub struct EmbeddingService {
     min_code_block_length: usize,
     /// Concurrency limit for embedding API calls (default: 2x CPU cores).
     concurrency: usize,
+    /// Marked true when a LanceDB corruption was detected and repair was triggered.
+    repaired: Arc<AtomicBool>,
 }
 
 impl EmbeddingService {
@@ -250,6 +254,7 @@ impl EmbeddingService {
         
         Ok(Self {
             connection,
+            db_path: db_path.to_string(),
             table_name,
             embedding_provider: Arc::new(provider),
             dimensions,
@@ -257,6 +262,7 @@ impl EmbeddingService {
             bm25_index,
             min_code_block_length,
             concurrency,
+            repaired: Arc::new(AtomicBool::new(false)),
         })
     }
     
@@ -282,6 +288,7 @@ impl EmbeddingService {
 
         Ok(Self {
             connection,
+            db_path: db_path.to_string(),
             table_name,
             embedding_provider: provider,
             dimensions: 2560,
@@ -289,6 +296,7 @@ impl EmbeddingService {
             bm25_index: None,
             min_code_block_length: 16,
             concurrency,
+            repaired: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -735,12 +743,43 @@ impl EmbeddingService {
         Ok(())
     }
 
-    /// Search for code blocks using semantic search
+    /// Search for code blocks using semantic search.
+    /// Detects LanceDB corruption (missing deletion files) and signals for repair.
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, anyhow::Error> {
         // 1. Generate embedding for the query
         let query_vector = self.embedding_provider.get_embedding(query).await.map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        // 2. Search in LanceDB
+        // 2. Search in LanceDB with corruption detection
+        let result = self.do_search(&query_vector, limit).await;
+        
+        // Check for LanceDB corruption patterns in error message
+        if let Err(ref e) = result {
+            let err_msg = e.to_string();
+            if Self::is_lancedb_corruption_error(&err_msg) {
+                warn!(
+                    "[LANCE_DB_CORRUPTION] Detected LanceDB corruption during search: {}. \
+                     Triggering repair signal.",
+                    err_msg
+                );
+                self.repaired.store(true, Ordering::SeqCst);
+            }
+        }
+        
+        result
+    }
+
+    /// Check if an error message indicates LanceDB corruption.
+    fn is_lancedb_corruption_error(msg: &str) -> bool {
+        let lower = msg.to_lowercase();
+        lower.contains("not found")
+            || lower.contains("no such file")
+            || lower.contains("object at location")
+            || lower.contains("file not found")
+            || lower.contains(".arrow") && lower.contains("delet")
+    }
+
+    /// Internal search implementation (separated for corruption detection).
+    async fn do_search(&self, query_vector: &[f32], limit: usize) -> Result<Vec<SearchResult>, anyhow::Error> {
         let table = self.connection.open_table(&self.table_name).execute().await?;
         
         let mut results_stream = table.query()
@@ -813,6 +852,95 @@ impl EmbeddingService {
         }
         
         Ok(search_results)
+    }
+
+    // ========================= Self-Healing Methods =========================
+
+    /// Probe LanceDB health by executing a minimal query.
+    /// Returns Ok(()) if the database is healthy, Err if it's corrupted.
+    pub async fn probe_health(&self) -> Result<(), String> {
+        let table = self.connection.open_table(&self.table_name)
+            .execute()
+            .await
+            .map_err(|e| format!("Failed to execute table query: {}", e))?;
+
+        // Execute a minimal query (limit 0) to verify the dataset is accessible
+        let query_result = table.query()
+            .nearest_to(vec![0.0; self.dimensions as usize]);
+        let mut results_stream = match query_result {
+            Ok(q) => q
+                .limit(0)
+                .execute()
+                .await
+                .map_err(|e| format!("LanceDB query failed (corruption likely): {}", e))?,
+            Err(e) => return Err(format!("LanceDB query creation failed (corruption likely): {}", e)),
+        };
+
+        // Consume at least one batch to trigger any hidden errors
+        while let Some(_batch) = results_stream.try_next().await
+            .map_err(|e| format!("Failed to read batch: {}", e))? {}
+
+        info!("LanceDB health check passed");
+        Ok(())
+    }
+
+    /// Self-heal a corrupted LanceDB database.
+    /// 1. Backs up the corrupted directory with a timestamp
+    /// 2. Reconnects to LanceDB (creates fresh connection)
+    /// 3. Recreates the collection (empty table)
+    pub async fn try_repair(&mut self) -> Result<(), String> {
+        // Avoid duplicate repairs
+        if self.repaired.load(Ordering::SeqCst) {
+            warn!("LanceDB already marked as repaired, skipping");
+            return Ok(());
+        }
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let backup_path = format!("{}.corrupted.{}", self.db_path, timestamp);
+
+        info!(
+            "Attempting LanceDB self-heal: backing up '{}' to '{}'",
+            self.db_path, backup_path
+        );
+
+        // 1. Backup corrupted directory
+        if std::path::Path::new(&self.db_path).exists() {
+            std::fs::rename(&self.db_path, &backup_path)
+                .map_err(|e| format!("Failed to backup corrupted directory to '{}': {}", backup_path, e))?;
+            info!("LanceDB backed up to: {}", backup_path);
+        }
+
+        // 2. Reconnect (creates a fresh LanceDB connection)
+        self.connection = connect(&self.db_path)
+            .execute()
+            .await
+            .map_err(|e| format!("Failed to reconnect LanceDB: {}", e))?;
+        info!("LanceDB reconnected at: {}", self.db_path);
+
+        // 3. Recreate the collection (empty table)
+        self.ensure_collection()
+            .await
+            .map_err(|e| format!("Failed to recreate collection '{}': {}", self.table_name, e))?;
+
+        // Mark the repaired flag for future repair cycles
+        self.repaired.store(true, Ordering::SeqCst);
+        info!("LanceDB repair completed: fresh collection '{}' created at {}", self.table_name, self.db_path);
+
+        Ok(())
+    }
+
+    /// Reset the repaired flag to allow future repair cycles.
+    /// Called after a successful rebuild (e.g., after trigger_embedding_build).
+    pub fn reset_repaired_flag(&self) {
+        self.repaired.store(false, Ordering::SeqCst);
+    }
+
+    /// Check if a repair has been triggered since last reset.
+    pub fn is_repaired(&self) -> bool {
+        self.repaired.load(Ordering::SeqCst)
     }
 }
 
