@@ -894,7 +894,7 @@ impl EmbeddingService {
     /// 1. Backs up the corrupted directory with a timestamp
     /// 2. Reconnects to LanceDB (creates fresh connection)
     /// 3. Recreates the collection (empty table)
-    pub async fn try_repair(&mut self) -> Result<(), String> {
+    pub async fn try_repair(&self) -> Result<(), String> {
         // Avoid duplicate repairs
         if self.repaired.load(Ordering::SeqCst) {
             warn!("LanceDB already marked as repaired, skipping");

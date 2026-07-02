@@ -356,6 +356,11 @@ impl HybridSearchService {
         self.dense.is_repaired()
     }
 
+    /// Attempt to repair a corrupted LanceDB database.
+    pub async fn try_repair(&self) -> Result<(), String> {
+        self.dense.try_repair().await
+    }
+
     /// 对 RRF 融合结果执行 Cross-Encoder 重排
     async fn apply_rerank(
         &self,
