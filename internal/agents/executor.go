@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"codeactor/internal/compact"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
 	"codeactor/internal/messaging"
@@ -25,6 +26,10 @@ type ExecutorConfig struct {
 	StopOnFinish bool // if true, return immediately when agent_exit tool is called
 	// StepRetries 步骤重试次数，0=不重试（默认）
 	StepRetries int
+	// CompactEngine is an optional context compression engine.
+	// When non-nil, messages are compressed before each LLM call if they exceed
+	// the configured token limit. This prevents context overflow in long-running loops.
+	CompactEngine *compact.Engine
 	// SystemAsHuman places the system prompt in a Human role message instead of System.
 	// Used by RepoAgent which prefers this pattern.
 	SystemAsHuman bool
@@ -130,6 +135,30 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		maxRetries := cfg.StepRetries
 		var resp *llm.Response
 		var err error
+
+		// ─── Context Compression Gateway ───
+		// Before each LLM call, attempt to compress the message history if
+		// a compact engine is configured. This is best-effort: on failure,
+		// we log a warning and proceed with the original messages.
+		if cfg.CompactEngine != nil {
+			// Check for context cancellation before compression
+			if ctx.Err() != nil {
+				return ExecutorResult{}, ctx.Err()
+			}
+			compressResult, compressErr := cfg.CompactEngine.Compress(ctx, messages)
+			if compressErr != nil {
+				slog.Warn("Context compression failed, using original messages",
+					"agent", cfg.AgentName, "step", i, "error", compressErr)
+			} else if compressResult != nil && len(compressResult.CompressedMessages) > 0 {
+				// Only replace messages if compression actually produced output
+				messages = compressResult.CompressedMessages
+				slog.Debug("Context compressed successfully",
+					"agent", cfg.AgentName, "step", i,
+					"original_tokens", compressResult.OriginalTokens,
+					"compressed_tokens", compressResult.CompressedTokens,
+					"ratio", fmt.Sprintf("%.2f%%", compressResult.CompressionRatio*100))
+			}
+		}
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			if attempt > 0 {
