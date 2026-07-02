@@ -199,6 +199,8 @@ pub struct EmbeddingService {
     concurrency: usize,
     /// Marked true when a LanceDB corruption was detected and repair was triggered.
     repaired: Arc<AtomicBool>,
+    /// Shutdown coordinator reference for tracking compaction operations
+    shutdown: Option<Arc<crate::shutdown::ShutdownCoordinator>>,
 }
 
 impl EmbeddingService {
@@ -263,6 +265,7 @@ impl EmbeddingService {
             min_code_block_length,
             concurrency,
             repaired: Arc::new(AtomicBool::new(false)),
+            shutdown: None,
         })
     }
     
@@ -297,7 +300,13 @@ impl EmbeddingService {
             min_code_block_length: 16,
             concurrency,
             repaired: Arc::new(AtomicBool::new(false)),
+            shutdown: None,
         })
+    }
+
+    /// Set the shutdown coordinator for compaction tracking
+    pub fn set_shutdown_coordinator(&mut self, shutdown: Arc<crate::shutdown::ShutdownCoordinator>) {
+        self.shutdown = Some(shutdown);
     }
 
     /// Create or get the collection (table)
@@ -410,9 +419,8 @@ impl EmbeddingService {
         }
 
         // [Compaction] 物理清理 LanceDB 旧版本数据，回收磁盘空间
-        // 修复内容：
-        // 1. materialize_deletions_threshold: 0.0 — 始终物化删除（不只是 >10%）
-        // 2. delete_unverified: Some(true) — 删除所有孤立数据文件
+        // 使用 CompactionGuard 确保 shutdown 时等待 compaction 完成
+        let _compaction_guard = self.shutdown.as_ref().map(|s| s.start_compaction());
         info!("Starting LanceDB table optimization (compact + prune) for {}", self.table_name);
         let compact_result = (|| async {
             let conn = self.connection.lock().await;
@@ -447,6 +455,7 @@ impl EmbeddingService {
         if let Err(e) = compact_result.await {
             warn!("LanceDB optimization (compact+prune) failed for {}: {}. This is non-fatal, but disk usage may accumulate.", self.table_name, e);
         }
+        // _compaction_guard 在此 drop，compaction 计数器减 1
 
         Ok(new_hashes)
     }

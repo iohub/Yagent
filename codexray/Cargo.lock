@@ -1217,6 +1217,7 @@ dependencies = [
  "tantivy",
  "tempfile",
  "tokio",
+ "tokio-util",
  "toml",
  "tower 0.4.13",
  "tower-http 0.5.2",
@@ -5630,6 +5631,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

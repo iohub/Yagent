@@ -19,6 +19,7 @@ use crate::services::hybrid_search::{HybridSearchService, HybridSearchConfig};
 use crate::services::reranker_service::RerankerService;
 use crate::storage::traits_bm25::TextSearchProvider;
 use crate::services::embedding_service::EmbeddingService;
+use crate::shutdown::ShutdownCoordinator;
 
 use super::{
     handlers::{query_call_graph, query_code_snippet, query_code_skeleton,
@@ -47,6 +48,10 @@ pub struct CodeXRayServer {
     /// Hybrid search service for semantic search endpoint.
     /// Initialized in `start()` using Tantivy BM25 index + EmbeddingService.
     hybrid_search_service: Option<Arc<HybridSearchService>>,
+    /// Shutdown coordinator for graceful shutdown
+    shutdown: Arc<ShutdownCoordinator>,
+    /// Cancellation token for axum graceful shutdown (stored to ensure 'static lifetime)
+    cancel_token: tokio_util::sync::CancellationToken,
 }
 
 #[derive(serde::Serialize)]
@@ -60,11 +65,14 @@ struct StatusResponse {
 }
 
 impl CodeXRayServer {
-    pub fn new(storage: Arc<StorageManager>, repo_path: String) -> Self {
+    pub fn new(storage: Arc<StorageManager>, repo_path: String, shutdown: Arc<ShutdownCoordinator>) -> Self {
+        let cancel_token = shutdown.cancel_token().clone();
         Self {
             storage,
             repo_path,
             hybrid_search_service: None,
+            shutdown,
+            cancel_token,
         }
     }
 
@@ -183,7 +191,10 @@ impl CodeXRayServer {
                 
                 // 创建 EmbeddingService
                 let embedding_service = match EmbeddingService::new(&db_path_str, collection.clone(), Some(&config), None).await {
-                    Ok(s) => Some(Arc::new(s)),
+                    Ok(mut s) => {
+                        s.set_shutdown_coordinator(self.shutdown.clone());
+                        Some(Arc::new(s))
+                    },
                     Err(e) => {
                         tracing::warn!("Failed to create EmbeddingService for hybrid search: {}", e);
                         None
@@ -238,61 +249,69 @@ impl CodeXRayServer {
         if let Some(ref hybrid) = self.hybrid_search_service {
             let hybrid = hybrid.clone();
             let storage = self.storage.clone();
+            let cancel = self.shutdown.cancel_token();
 
             tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            // Check if repair has been triggered
+                            if hybrid.is_repaired() {
+                                debug!("LanceDB health monitor: repair already triggered, skipping check");
+                                continue;
+                            }
 
-                    // Check if repair has been triggered
-                    if hybrid.is_repaired() {
-                        debug!("LanceDB health monitor: repair already triggered, skipping check");
-                        continue;
-                    }
+                            // Probe health
+                            if let Err(e) = hybrid.probe_health().await {
+                                let err_msg = e.to_string();
+                                tracing::error!(
+                                    "[LANCE_DB_HEALTH] Health check failed: {}. \
+                                     Triggering self-heal.",
+                                    err_msg
+                                );
 
-                    // Probe health
-                    if let Err(e) = hybrid.probe_health().await {
-                        let err_msg = e.to_string();
-                        tracing::error!(
-                            "[LANCE_DB_HEALTH] Health check failed: {}. \
-                             Triggering self-heal.",
-                            err_msg
-                        );
+                                // Check if it's a corruption error
+                                let lower = err_msg.to_lowercase();
+                                let is_corruption = lower.contains("not found")
+                                    || lower.contains("no such file")
+                                    || lower.contains("object at location")
+                                    || lower.contains("file not found");
 
-                        // Check if it's a corruption error
-                        let lower = err_msg.to_lowercase();
-                        let is_corruption = lower.contains("not found")
-                            || lower.contains("no such file")
-                            || lower.contains("object at location")
-                            || lower.contains("file not found");
+                                if is_corruption {
+                                    tracing::warn!("[LANCE_DB_REPAIR] LanceDB corruption detected, attempting self-heal...");
 
-                        if is_corruption {
-                            tracing::warn!("[LANCE_DB_REPAIR] LanceDB corruption detected, attempting self-heal...");
-
-                            // Step 1: Repair the connection (backup corrupted DB + reconnect + recreate collection)
-                            match hybrid.try_repair().await {
-                                Ok(()) => {
-                                    tracing::info!("[LANCE_DB_REPAIR] Connection repaired successfully, triggering data rebuild...");
-                                    
-                                    // Step 2: Trigger rebuild to populate the fresh collection
-                                    let storage_for_rebuild = storage.clone();
-                                    let repo_for_rebuild = repo_path_for_monitor.clone();
-                                    tokio::spawn(async move {
-                                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                                        if let Err(e) = trigger_embedding_build(
-                                            storage_for_rebuild,
-                                            repo_for_rebuild,
-                                            None,
-                                        ).await {
-                                            tracing::warn!("[LANCE_DB_REPAIR] Rebuild triggered but returned: {}", e);
-                                        } else {
-                                            tracing::info!("[LANCE_DB_REPAIR] Rebuild completed successfully.");
+                                    // Step 1: Repair the connection (backup corrupted DB + reconnect + recreate collection)
+                                    match hybrid.try_repair().await {
+                                        Ok(()) => {
+                                            tracing::info!("[LANCE_DB_REPAIR] Connection repaired successfully, triggering data rebuild...");
+                                            
+                                            // Step 2: Trigger rebuild to populate the fresh collection
+                                            let storage_for_rebuild = storage.clone();
+                                            let repo_for_rebuild = repo_path_for_monitor.clone();
+                                            tokio::spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                                if let Err(e) = trigger_embedding_build(
+                                                    storage_for_rebuild,
+                                                    repo_for_rebuild,
+                                                    None,
+                                                ).await {
+                                                    tracing::warn!("[LANCE_DB_REPAIR] Rebuild triggered but returned: {}", e);
+                                                } else {
+                                                    tracing::info!("[LANCE_DB_REPAIR] Rebuild completed successfully.");
+                                                }
+                                            });
                                         }
-                                    });
-                                }
-                                Err(e) => {
-                                    tracing::error!("[LANCE_DB_REPAIR] Self-heal failed: {}", e);
+                                        Err(e) => {
+                                            tracing::error!("[LANCE_DB_REPAIR] Self-heal failed: {}", e);
+                                        }
+                                    }
                                 }
                             }
+                        }
+                        _ = cancel.cancelled() => {
+                            tracing::info!("LanceDB health monitor shutting down gracefully");
+                            break;
                         }
                     }
                 }
@@ -306,7 +325,15 @@ impl CodeXRayServer {
         let listener = TcpListener::bind(addr).await?;
         println!("CodeGraph HTTP server starting on {}, repo: {}", addr, repo_path);
 
-        axum::serve(listener, app).await?;
+        // Use graceful shutdown — axum will stop accepting new connections
+        // and drain in-flight requests when the cancel token is triggered.
+        // We use an async block to create a 'static Future that captures the token.
+        let cancel_token = self.cancel_token.clone();
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                cancel_token.cancelled().await;
+            })
+            .await?;
         Ok(())
     }
 

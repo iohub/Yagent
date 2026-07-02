@@ -1,6 +1,7 @@
 use tracing::info;
 use crate::config::Config;
 use crate::http::server::CodeXRayServer;
+use crate::shutdown::ShutdownCoordinator;
 use crate::storage::StorageManager;
 use std::sync::Arc;
 
@@ -19,6 +20,9 @@ impl CodeXRayRunner {
             Commands::Server { address, storage_mode, repo_path } => {
                 info!("Starting server mode, repo: {}", repo_path);
 
+                // Create shutdown coordinator for graceful shutdown
+                let shutdown = ShutdownCoordinator::new();
+
                 let mode = storage_mode.unwrap_or_else(|| cli.storage_mode.clone());
                 let storage = match config {
                     Some(cfg) => Arc::new(StorageManager::with_config(mode, cfg)),
@@ -26,7 +30,7 @@ impl CodeXRayRunner {
                 };
 
                 let addr = address.unwrap_or_else(|| "127.0.0.1:3000".to_string());
-                let mut server = CodeXRayServer::new(storage, repo_path);
+                let mut server = CodeXRayServer::new(storage, repo_path, shutdown.clone());
                 server.start(&addr).await?;
             }
             Commands::Vectorize { path, collection, db_uri } => {
