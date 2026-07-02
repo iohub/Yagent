@@ -242,8 +242,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	browserMgr := browser.NewManager(browserCfg, browserCfg.AllowedDomains, browserCfg.BlockedDomains)
 	ca.globalCtx.BrowserMgr = browserMgr
 	browserAgent := agents.NewBrowserAgent(ca.globalCtx, browserMgr, browserEngine, browserMaxSteps)
-	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent)
-	// 构建 compact config
+	// 构建 compact config（需要在创建 CodingAgent 之前）
 	var compactCfg *compact.Config
 	var summaryEngine llm.Engine
 	if ca.config != nil {
@@ -265,6 +264,8 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			}
 		}
 	}
+
+	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent, compactCfg)
 
 	ca.director = agents.NewDirectorAgent(ca.globalCtx, directorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, directorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine, *ca.config, ca.client)
 }

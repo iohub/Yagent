@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"codeactor/internal/compact"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/tools"
 
@@ -24,9 +25,14 @@ type CodingAgent struct {
 	BrowserAgent *BrowserAgent
 	maxSteps     int
 	registry     *tools.Registry // 工具注册表引用
+
+	// compactConfig 上下文压缩配置（nil=不启用压缩）
+	compactConfig *compact.Config
+	// compactEngine 懒加载创建的压缩引擎实例
+	compactEngine *compact.Engine
 }
 
-func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, browser *BrowserAgent) *CodingAgent {
+func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, browser *BrowserAgent, compactCfg *compact.Config) *CodingAgent {
 	// 从 tools.json 加载工具定义
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
@@ -85,6 +91,7 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 		BrowserAgent: browser,
 		GlobalCtx:    globalCtx,
 		registry:     registry,
+		compactConfig: compactCfg,
 	}
 }
 
@@ -146,6 +153,22 @@ func (a *CodingAgent) Name() string {
 func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(codingPrompt)
 
+	// ─── 懒加载初始化上下文压缩引擎（仅首次 Run 时创建，后续复用）───
+	if a.compactConfig != nil && a.compactConfig.EnableAutoCompact && a.compactEngine == nil && a.LLM != nil {
+		engine, err := compact.NewEngine(a.compactConfig, &compact.SummaryAdapter{
+			LLM:         a.LLM,
+			Temperature: 0.1,
+			MaxTokens:   2000,
+		})
+		if err != nil {
+			slog.Warn("Failed to create compact engine for CodingAgent", "error", err)
+		} else {
+			a.compactEngine = engine
+			slog.Info("Context compact engine initialized for CodingAgent",
+				"max_tokens", a.compactConfig.MaxContextTokens)
+		}
+	}
+
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
@@ -155,6 +178,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
+	cfg.CompactEngine = a.compactEngine
 	cfg.RepoContext = a.GlobalCtx.RepoSummary
 
 	// === NEW: Git Checkpoint Integration ===
