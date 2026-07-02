@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"codeactor/internal/compact"
 	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/messaging"
@@ -26,9 +27,14 @@ type RepoAgent struct {
 	// [NEW] 记忆系统（可选，nil 表示禁用）
 	memStore *RepoMemoryStore
 	worker   *ConsolidationWorker
+
+	// compactConfig 上下文压缩配置（nil=不启用压缩）
+	compactConfig *compact.Config
+	// compactEngine 懒加载创建的压缩引擎实例（仅在首次 Run 时创建）
+	compactEngine *compact.Engine
 }
 
-func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *messaging.MessagePublisher, maxSteps int) *RepoAgent {
+func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *messaging.MessagePublisher, maxSteps int, compactCfg *compact.Config) *RepoAgent {
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal tools", "error", err)
@@ -72,9 +78,10 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 			LLM:       llm,
 			Publisher: publisher,
 		},
-		GlobalCtx: globalCtx,
-		Adapters:  adapters,
-		maxSteps:  maxSteps,
+		GlobalCtx:     globalCtx,
+		Adapters:      adapters,
+		maxSteps:      maxSteps,
+		compactConfig: compactCfg,
 	}
 }
 
@@ -105,6 +112,22 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		}
 	}
 
+	// ─── 懒加载初始化上下文压缩引擎（仅首次 Run 时创建，后续复用）───
+	if a.compactConfig != nil && a.compactConfig.EnableAutoCompact && a.compactEngine == nil && a.LLM != nil {
+		engine, err := compact.NewEngine(a.compactConfig, &compact.SummaryAdapter{
+			LLM:         a.LLM,
+			Temperature: 0.1,
+			MaxTokens:   2000,
+		})
+		if err != nil {
+			slog.Warn("Failed to create compact engine for RepoAgent", "error", err)
+		} else {
+			a.compactEngine = engine
+			slog.Info("Context compact engine initialized for RepoAgent",
+				"max_tokens", a.compactConfig.MaxContextTokens)
+		}
+	}
+
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
@@ -114,6 +137,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.SystemAsHuman = true // RepoAgent uses Human role for its prompt
+	cfg.CompactEngine = a.compactEngine
 
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {

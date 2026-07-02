@@ -174,7 +174,30 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		browserEngine = ca.client.GetAgentEngine("browser")
 	}
 
-	repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
+	// 构建 compact config（需要在创建 RepoAgent 和 CodingAgent 之前）
+	var compactCfg *compact.Config
+	var summaryEngine llm.Engine
+	if ca.config != nil {
+		c := &ca.config.Compact
+		compactCfg = &compact.Config{
+			MaxContextTokens:            c.MaxContextTokens,
+			EnableAutoCompact:           c.EnableAutoCompact,
+			KeepRecentRounds:            c.KeepRecentRounds,
+			SummarizationTimeout:        time.Duration(c.SummarizationTimeout) * time.Second,
+			SummarizationMaxInputTokens: c.SummarizationMaxInputTokens,
+		}
+
+		// 为 compact 摘要创建独立的 LLM 引擎（如果配置了 summarization_provider）
+		if c.SummarizationProvider != "" {
+			provider, err := ca.config.GetProvider(c.SummarizationProvider)
+			if err == nil {
+				summaryEngine = llm.NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, ca.config.LLM, provider.ReasoningEffort)
+				summaryEngine = llm.NewLoggingEngine(summaryEngine)
+			}
+		}
+	}
+
+	repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps, compactCfg)
 
 	// [NEW] 初始化 RepoAgent 记忆系统
 	{
@@ -242,28 +265,6 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	browserMgr := browser.NewManager(browserCfg, browserCfg.AllowedDomains, browserCfg.BlockedDomains)
 	ca.globalCtx.BrowserMgr = browserMgr
 	browserAgent := agents.NewBrowserAgent(ca.globalCtx, browserMgr, browserEngine, browserMaxSteps)
-	// 构建 compact config（需要在创建 CodingAgent 之前）
-	var compactCfg *compact.Config
-	var summaryEngine llm.Engine
-	if ca.config != nil {
-		c := &ca.config.Compact
-		compactCfg = &compact.Config{
-			MaxContextTokens:            c.MaxContextTokens,
-			EnableAutoCompact:           c.EnableAutoCompact,
-			KeepRecentRounds:            c.KeepRecentRounds,
-			SummarizationTimeout:        time.Duration(c.SummarizationTimeout) * time.Second,
-			SummarizationMaxInputTokens: c.SummarizationMaxInputTokens,
-		}
-
-		// 为 compact 摘要创建独立的 LLM 引擎（如果配置了 summarization_provider）
-		if c.SummarizationProvider != "" {
-			provider, err := ca.config.GetProvider(c.SummarizationProvider)
-			if err == nil {
-				summaryEngine = llm.NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, ca.config.LLM, provider.ReasoningEffort)
-				summaryEngine = llm.NewLoggingEngine(summaryEngine)
-			}
-		}
-	}
 
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent, compactCfg)
 
