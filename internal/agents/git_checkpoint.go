@@ -42,7 +42,7 @@ func DefaultGitCheckpointConfig() GitCheckpointConfig {
 		MaxCheckpoints:         50,
 		SquashOnExit:           true,
 		GenerateCommitMessage:  true,
-		AgentBranchPrefix:      "agent/coding",
+		AgentBranchPrefix:      "agent",
 		CheckpointTagPrefix:    "checkpoint/coding",
 		StashDirtyWorktree:     true,
 		CleanupAgentBranch:     true,
@@ -123,7 +123,7 @@ func NewGitCheckpointManager(
 		config:             cfg,
 		projectPath:        projectPath,
 		session: SessionState{
-			SessionID:   fmt.Sprintf("%s-%d", "coding", time.Now().UnixNano()),
+			SessionID:   fmt.Sprintf("coding-%s", time.Now().Format("20060102150405")),
 			StartTime:   time.Now(),
 			TaskSummary: taskSummary,
 			Checkpoints: []string{},

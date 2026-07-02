@@ -104,7 +104,7 @@ func DefaultGitCheckpointConfig() GitCheckpointConfig {
 		MaxCheckpoints:         50,
 		SquashOnExit:           true,
 		GenerateCommitMessage:  true,
-		AgentBranchPrefix:      "agent/coding",
+		AgentBranchPrefix:      "agent",
 		CheckpointTagPrefix:    "checkpoint/coding",
 		StashDirtyWorktree:     true,
 		CleanupAgentBranch:     true,

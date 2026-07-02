@@ -100,7 +100,7 @@ When using `read_file`, the tool now enforces strict protections:
 
 ### Git Checkpoint Mechanism
 The agent has a built-in Git Checkpoint system that:
-1. Creates a separate `agent/coding/` branch for each session at start
+1. Creates a separate `agent/` branch for isolated coding work
 2. Stashes dirty worktree before starting (restored on the agent branch)
 3. **You decide when to create checkpoints** using `git_checkpoint_create`
 4. Performs a squash merge at the end with a professional Conventional Commits message
