@@ -153,6 +153,63 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 		}, nil
 	}
 
+	// ─── 4.5 类型感知的工具结果截断（优先于LLM摘要）───
+	// 先尝试截断 verbose 工具结果来释放 token。
+	// 如果截断后总量在预算内，跳过昂贵的 LLM 摘要。
+	truncationStats := ""
+	olderTokens := e.countMessagesTokens(older)
+	recentTokens := e.countMessagesTokens(recent)
+
+	if olderTokens > 0 {
+		truncatedOlder, freedBytes := TruncateToolResults(older, ForceTruncateAll, DefaultTruncationConfig)
+
+		if freedBytes > 0 {
+			// 重新计算截断后的 token 数
+			truncatedOlderTokens := e.countMessagesTokens(truncatedOlder)
+			totalBudget := e.config.MaxContextTokens
+
+			// 减去 system 消息占用的 token
+			if sysMsg := extractSystemMessage(messages); sysMsg != nil {
+				sysTokens, _ := e.tokenizer.CountMessagesTokens([]llm.Message{*sysMsg})
+				totalBudget -= sysTokens
+			}
+
+			totalAfterTruncation := truncatedOlderTokens + recentTokens
+			if totalAfterTruncation <= totalBudget {
+				// ✅ 截断已足够，跳过 LLM 摘要
+				slog.Info("Tool-result truncation sufficient, skipping LLM summarization",
+					"freed_bytes", freedBytes,
+					"older_tokens_before", olderTokens,
+					"older_tokens_after", truncatedOlderTokens,
+				)
+
+				compressed := buildTruncatedMessages(messages, truncatedOlder, recent, e.config.KeepRecentRounds)
+				compressedTokens := e.countMessagesTokens(compressed)
+
+				stats := fmt.Sprintf("Tool-result truncation | Original: %d tokens | Compressed: %d tokens | Freed: %d bytes | Recent rounds: %d",
+					originalTokens, compressedTokens, freedBytes, e.config.KeepRecentRounds)
+				return &CompressResult{
+					CompressedMessages: compressed,
+					OriginalTokens:     originalTokens,
+					CompressedTokens:   compressedTokens,
+					CompressionRatio:   float64(compressedTokens) / float64(originalTokens),
+					CompressionStats:   stats,
+					SummaryInfo:        fmt.Sprintf("[Tool results truncated: %d bytes freed from %d messages]", freedBytes, len(truncatedOlder)),
+				}, nil
+			}
+
+			// 截断不完全，但已部分释放 — 使用截断后的 older 继续 LLM 摘要
+			older = truncatedOlder
+			truncationStats = fmt.Sprintf(" | truncation freed %d bytes, %d older tokens remaining (budget: %d)",
+				freedBytes, truncatedOlderTokens, totalBudget-recentTokens)
+			slog.Debug("Tool-result truncation partial, falling back to LLM summarization",
+				"freed_bytes", freedBytes,
+				"older_tokens_after", truncatedOlderTokens,
+			)
+		}
+	}
+	// ─── 结束 4.5 ───
+
 	// 5. 对 older 做 LLM 摘要（支持增量压缩）
 	ctx, cancel := context.WithTimeout(ctx, e.config.SummarizationTimeout)
 	defer cancel()
@@ -204,8 +261,8 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 	compressedTokens := e.countMessagesTokens(compressed)
 	compressionRatio := float64(compressedTokens) / float64(originalTokens)
 
-	stats := fmt.Sprintf("Full re-compress | Original: %d tokens | Compressed: %d tokens | Ratio: %.2f | Recent rounds: %d",
-		originalTokens, compressedTokens, compressionRatio, e.config.KeepRecentRounds)
+	stats := fmt.Sprintf("Full re-compress | Original: %d tokens | Compressed: %d tokens | Ratio: %.2f | Recent rounds: %d%s",
+		originalTokens, compressedTokens, compressionRatio, e.config.KeepRecentRounds, truncationStats)
 
 	return &CompressResult{
 		CompressedMessages: compressed,
@@ -353,6 +410,27 @@ func buildCacheAwareMessages(messages []llm.Message, summary string, keepRounds 
 
 	// 3. 保留区消息（recent）
 	recent, _ := extractRecentMessages(messages, keepRounds)
+	result = append(result, recent...)
+
+	return result
+}
+
+// buildTruncatedMessages 构建截断后的消息布局
+// 布局顺序：[System] + [Truncated Older] + [Recent]
+// 当截断释放了足够的 token 时使用，跳过 LLM 摘要
+func buildTruncatedMessages(originalMessages []llm.Message, truncatedOlder, recent []llm.Message, keepRounds int) []llm.Message {
+	result := make([]llm.Message, 0, 2+len(truncatedOlder)+len(recent))
+
+	// 1. 原始 System 消息（绝对稳定前缀）
+	systemMsg := extractSystemMessage(originalMessages)
+	if systemMsg != nil {
+		result = append(result, *systemMsg)
+	}
+
+	// 2. 已截断的历史消息
+	result = append(result, truncatedOlder...)
+
+	// 3. 保留区消息（recent）
 	result = append(result, recent...)
 
 	return result
