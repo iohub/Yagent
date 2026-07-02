@@ -111,6 +111,11 @@ checkpoint_tag_prefix = "checkpoint/coding"  # checkpoint 标签前缀
 stash_dirty_worktree = true              # 启动时 stash 未提交的变更
 cleanup_agent_branch = true              # 退出时清理 agent 分支
 cleanup_checkpoint_tags = true           # 退出时清理 checkpoint 标签
+# Whether to automatically squash-merge the agent branch into the user
+# branch when the agent exits. When false (default), the agent branch is
+# preserved with all commits squashed into one, allowing the user to
+# review and merge manually.
+auto_merge_on_exit = false
 
 # ═══════════════════════════════════════════════════════════════
 # 上下文压缩配置（三层防御的第一层：TOML 配置层）

@@ -30,6 +30,7 @@ type GitCheckpointConfig struct {
 	StashDirtyWorktree     bool
 	CleanupAgentBranch     bool
 	CleanupCheckpointTags  bool
+	AutoMergeOnExit        bool
 }
 
 // DefaultGitCheckpointConfig returns a GitCheckpointConfig with sensible defaults.
@@ -46,6 +47,7 @@ func DefaultGitCheckpointConfig() GitCheckpointConfig {
 		StashDirtyWorktree:     true,
 		CleanupAgentBranch:     true,
 		CleanupCheckpointTags:  true,
+		AutoMergeOnExit:        false,
 	}
 }
 
@@ -66,6 +68,7 @@ func ConvertConfig(c *config.GitCheckpointConfig) GitCheckpointConfig {
 		StashDirtyWorktree:     c.StashDirtyWorktree,
 		CleanupAgentBranch:     c.CleanupAgentBranch,
 		CleanupCheckpointTags:  c.CleanupCheckpointTags,
+		AutoMergeOnExit:        c.AutoMergeOnExit,
 	}
 }
 
@@ -229,7 +232,10 @@ func (g *GitCheckpointManager) OnAgentExit(ctx context.Context, agentErr error) 
 	g.session.Completed = true
 	g.mu.Unlock()
 
-	slog.Info("Git Checkpoint: Agent exit — performing squash merge and cleanup", "session", g.session.SessionID)
+	slog.Info("Git Checkpoint: Agent exit — processing finalization",
+		"session", g.session.SessionID,
+		"auto_merge_on_exit", g.config.AutoMergeOnExit,
+	)
 
 	// 1. Commit any remaining uncommitted changes
 	dirty, _ := g.isWorktreeDirty(ctx)
@@ -238,25 +244,43 @@ func (g *GitCheckpointManager) OnAgentExit(ctx context.Context, agentErr error) 
 		_, _ = g.runGitCommand(ctx, "commit", "-m", "checkpoint: uncommitted changes before exit")
 	}
 
-	// 2. Perform squash merge
+	// 2. Perform squash operation
 	if g.config.SquashOnExit && g.session.UserBranch != "" && g.session.AgentBranch != "" {
-		if err := g.performSquashMerge(ctx); err != nil {
-			slog.Error("Git Checkpoint: squash merge failed", "error", err)
-			return fmt.Errorf("git_checkpoint: squash merge failed: %w", err)
+		if g.config.AutoMergeOnExit {
+			// Legacy behavior: squash-merge into user branch
+			if err := g.performSquashMerge(ctx); err != nil {
+				slog.Error("Git Checkpoint: squash merge failed", "error", err)
+				return fmt.Errorf("git_checkpoint: squash merge failed: %w", err)
+			}
+
+			// Cleanup agent branch (legacy behavior for auto-merge)
+			if g.config.CleanupAgentBranch {
+				_, _ = g.runGitCommand(ctx, "branch", "-D", g.session.AgentBranch)
+			}
+
+			slog.Info("Git Checkpoint: Agent work merged into user branch",
+				"user_branch", g.session.UserBranch)
+		} else {
+			// New default behavior: squash on agent branch, preserve it
+			if err := g.squashAgentBranch(ctx); err != nil {
+				slog.Error("Git Checkpoint: squash on agent branch failed", "error", err)
+				return fmt.Errorf("git_checkpoint: squash on agent branch failed: %w", err)
+			}
+
+			slog.Info("Git Checkpoint: Agent branch preserved with squashed commit",
+				"agent_branch", g.session.AgentBranch,
+				"user_branch", g.session.UserBranch,
+				"hint", fmt.Sprintf("To merge: git checkout %s && git merge --squash %s",
+					g.session.UserBranch, g.session.AgentBranch))
 		}
 	}
 
-	// 3. Cleanup agent branch
-	if g.config.CleanupAgentBranch {
-		_, _ = g.runGitCommand(ctx, "branch", "-D", g.session.AgentBranch)
-	}
-
-	// 4. Cleanup checkpoint tags
+	// 3. Cleanup checkpoint tags (always clean up regardless of path)
 	if g.config.CleanupCheckpointTags {
 		_ = g.cleanupCheckpointTags(ctx)
 	}
 
-	// 5. Clear state file
+	// 4. Clear state file
 	_, _ = g.clearState()
 
 	slog.Info("Git Checkpoint: Agent exit cleanup complete", "session", g.session.SessionID)
@@ -487,7 +511,32 @@ func (g *GitCheckpointManager) getDiffStat(ctx context.Context, base, head strin
 	return strings.TrimSpace(out), nil
 }
 
-func (g *GitCheckpointManager) performSquashMerge(ctx context.Context) error {
+func (g *GitCheckpointManager) getMergeBase(ctx context.Context) (string, error) {
+	out, err := g.runGitCommand(ctx, "merge-base", "HEAD", g.session.UserBranch)
+	if err != nil {
+		return "", fmt.Errorf("failed to find merge-base between HEAD and %s: %w", g.session.UserBranch, err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func (g *GitCheckpointManager) hasCommitsToSquash(ctx context.Context) (bool, error) {
+	mergeBase, err := g.getMergeBase(ctx)
+	if err != nil {
+		return false, err
+	}
+	out, err := g.runGitCommand(ctx, "rev-parse", "HEAD")
+	if err != nil {
+		return false, fmt.Errorf("failed to get HEAD: %w", err)
+	}
+	head := strings.TrimSpace(out)
+	return head != mergeBase, nil
+}
+
+// generateSquashCommitMessage builds an enriched diff and uses the LLM to
+// generate a Conventional Commits–style commit message.  This logic is shared
+// by both performSquashMerge and squashAgentBranch so that the message
+// generation is never duplicated.
+func (g *GitCheckpointManager) generateSquashCommitMessage(ctx context.Context) (string, error) {
 	// Get diff
 	diff, err := g.getAgentDiff(ctx)
 	if err != nil {
@@ -547,6 +596,16 @@ func (g *GitCheckpointManager) performSquashMerge(ctx context.Context) error {
 		commitMsg = g.fallbackCommitMessage(diff)
 	}
 
+	return commitMsg, nil
+}
+
+func (g *GitCheckpointManager) performSquashMerge(ctx context.Context) error {
+	// Generate commit message using shared logic
+	commitMsg, err := g.generateSquashCommitMessage(ctx)
+	if err != nil {
+		return fmt.Errorf("performSquashMerge: failed to generate commit message: %w", err)
+	}
+
 	// Switch to user branch
 	if err := g.switchBranch(ctx, g.session.UserBranch); err != nil {
 		return fmt.Errorf("failed to switch to user branch: %w", err)
@@ -567,6 +626,51 @@ func (g *GitCheckpointManager) performSquashMerge(ctx context.Context) error {
 	}
 
 	slog.Info("Git Checkpoint: Squash merge completed", "session", g.session.SessionID)
+	return nil
+}
+
+// squashAgentBranch squashes all commits on the agent branch into a single
+// professional commit.  It generates the commit message BEFORE the soft reset
+// so that git log is still available for the LLM to read.
+func (g *GitCheckpointManager) squashAgentBranch(ctx context.Context) error {
+	// Guard: check if there are commits to squash
+	hasChanges, err := g.hasCommitsToSquash(ctx)
+	if err != nil {
+		return fmt.Errorf("squashAgentBranch: failed to check for changes: %w", err)
+	}
+	if !hasChanges {
+		slog.Info("Git Checkpoint: No agent commits to squash; branch unchanged")
+		return nil
+	}
+
+	// Generate commit message BEFORE reset (reads git history)
+	commitMsg, err := g.generateSquashCommitMessage(ctx)
+	if err != nil {
+		return fmt.Errorf("squashAgentBranch: failed to generate commit message: %w", err)
+	}
+
+	// Find the merge base (fork point from user branch)
+	mergeBase, err := g.getMergeBase(ctx)
+	if err != nil {
+		return fmt.Errorf("squashAgentBranch: failed to find merge base: %w", err)
+	}
+
+	// Soft reset to merge base: collapses all commits, keeps changes staged
+	_, err = g.runGitCommand(ctx, "reset", "--soft", mergeBase)
+	if err != nil {
+		return fmt.Errorf("squashAgentBranch: git reset --soft failed: %w", err)
+	}
+
+	// Commit all staged changes with generated message
+	_, err = g.runGitCommand(ctx, "commit", "-m", commitMsg)
+	if err != nil {
+		return fmt.Errorf("squashAgentBranch: git commit failed: %w", err)
+	}
+
+	slog.Info("Git Checkpoint: Agent branch squashed successfully",
+		"branch", g.session.AgentBranch,
+		"merge_base", mergeBase,
+	)
 	return nil
 }
 

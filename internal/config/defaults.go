@@ -109,5 +109,6 @@ func DefaultGitCheckpointConfig() GitCheckpointConfig {
 		StashDirtyWorktree:     true,
 		CleanupAgentBranch:     true,
 		CleanupCheckpointTags:  true,
+		AutoMergeOnExit:        false,
 	}
 }

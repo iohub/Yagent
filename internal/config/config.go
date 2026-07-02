@@ -59,6 +59,12 @@ type GitCheckpointConfig struct {
 	StashDirtyWorktree     bool   `toml:"stash_dirty_worktree"`
 	CleanupAgentBranch     bool   `toml:"cleanup_agent_branch"`
 	CleanupCheckpointTags  bool   `toml:"cleanup_checkpoint_tags"`
+	// AutoMergeOnExit controls whether OnAgentExit automatically
+	// squash-merges the agent branch into the user branch.
+	// When false (default), the agent branch is preserved with all
+	// commits squashed into a single commit, and the user decides
+	// when/how to merge manually.
+	AutoMergeOnExit bool `toml:"auto_merge_on_exit"`
 }
 
 // ── Three-tier LLM overrides ──
