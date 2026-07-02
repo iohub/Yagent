@@ -35,7 +35,7 @@ func renderTimelineFullscreenView(m *model) tea.View {
 		contentHeight = 3
 	}
 
-	leftWidth := int(float64(m.termWidth-3) * 0.35)
+	leftWidth := int(float64(m.termWidth-3) * 0.2333)
 	if leftWidth < 25 {
 		leftWidth = 25
 	}
@@ -466,7 +466,7 @@ func refreshTimelineDetail(m *model) {
 
 // initTimelineDetailViewport 初始化/重置详情 viewport。
 func initTimelineDetailViewport(m *model) {
-	leftWidth := int(float64(m.termWidth-3) * 0.35)
+	leftWidth := int(float64(m.termWidth-3) * 0.2333)
 	if leftWidth < 25 {
 		leftWidth = 25
 	}
@@ -502,7 +502,7 @@ func (m *model) ExitTimelineFullscreen() {
 
 // calcRightPaneWidth 计算右侧详情面板的 viewport 内容宽度（减去 lipgloss ThickBorder 左右各 2 字符）
 func calcRightPaneWidth(m *model) int {
-	leftWidth := int(float64(m.termWidth-3) * 0.35)
+	leftWidth := int(float64(m.termWidth-3) * 0.2333)
 	if leftWidth < 25 {
 		leftWidth = 25
 	}
