@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"codeactor/internal/messaging"
+	"codeactor/internal/util"
 
 	"charm.land/lipgloss/v2"
 )
@@ -238,8 +239,8 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 		prefixRendered = statusPrefixStyle.Render("🗜️ 上下文压缩")
 		contentMap, ok := event.Content.(map[string]interface{})
 		if ok {
-			origTokens, _ := contentMap["original_tokens"].(float64)
-			compTokens, _ := contentMap["compressed_tokens"].(float64)
+			origTokens := util.MustGetNumericFloat(contentMap["original_tokens"], 0)
+			compTokens := util.MustGetNumericFloat(contentMap["compressed_tokens"], 0)
 			ratio, _ := contentMap["ratio"].(string)
 
 			var ratioColor string

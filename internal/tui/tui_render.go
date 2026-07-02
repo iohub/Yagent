@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"codeactor/internal/messaging"
+	"codeactor/internal/util"
 
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
@@ -829,14 +830,8 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		}
 	case "context_compressed":
 		if m, ok := event.Content.(map[string]interface{}); ok {
-			origTokens := 0
-			if v, ok := m["original_tokens"].(float64); ok {
-				origTokens = int(v)
-			}
-			compTokens := 0
-			if v, ok := m["compressed_tokens"].(float64); ok {
-				compTokens = int(v)
-			}
+			origTokens := int(util.MustGetNumericFloat(m["original_tokens"], 0))
+			compTokens := int(util.MustGetNumericFloat(m["compressed_tokens"], 0))
 			ratioStr := ""
 			if v, ok := m["ratio"].(string); ok {
 				ratioStr = v
