@@ -21,8 +21,9 @@ type Message struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	ToolName   string     `json:"name,omitempty"`
-	Reasoning  string     `json:"reasoning_content,omitempty"` // thinking/reasoning from models that support it
-	IsAnchored bool       `json:"-"`                           // 锚定标记，true 表示此消息永不压缩
+	Reasoning  string          `json:"reasoning_content,omitempty"` // thinking/reasoning from models that support it
+	IsAnchored bool            `json:"-"`                           // 锚定标记，true 表示此消息永不压缩
+	TruncationMarker *TruncationMarker `json:"-"` // 截断标记，记录工具结果被截断的信息
 }
 
 // ToolDef defines a tool available to the LLM.
@@ -98,4 +99,12 @@ type Engine interface {
 
 	// Model returns the model name this engine is configured to use.
 	Model() string
+}
+
+// TruncationMarker 记录工具结果被截断的信息
+type TruncationMarker struct {
+	ToolName       string // 工具名称，如 "run_bash", "read_file"
+	OriginalLen    int    // 原始内容长度（字节）
+	OmittedLen     int    // 被省略的字节数
+	TruncationPass int    // 截断次数（0=首次截断, 1+=再次截断）
 }
