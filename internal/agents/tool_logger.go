@@ -94,115 +94,42 @@ func InitToolLogger() error {
 	return nil
 }
 
-// delegateLogFile and delegateLogger are separate from the tool logger
-// They write exclusively to delegate-{date}.log for sub-agent delegation tracing.
-var delegateLogFile *os.File
-var delegateLogger *slog.Logger
-
-// ensureDelegateLogFile checks if the current delegateLogFile matches the task-aware path.
-// If not (e.g., taskID changed), closes the old file and opens a new one.
-func ensureDelegateLogFile() {
-	currentPath := ""
-	if delegateLogFile != nil {
-		currentPath = delegateLogFile.Name()
-	}
-
+// LogDelegateCall records a delegate tool call with timestamp, tool name, agent name,
+// and full arguments. Designed for sub-agent delegation tracing.
+// Each call opens the file, writes, syncs, and closes - making it fully self-contained
+// and immune to global state issues.
+func LogDelegateCall(toolName, agentName, argsJSON string) {
 	taskID := logging.GetCurrentTaskID()
 	logDir := logging.GetTaskLogDir(taskID)
 	dateStr := time.Now().Format("2006-01-02")
-	newPath := filepath.Join(logDir, fmt.Sprintf("delegate-%s.log", dateStr))
+	logFilePath := filepath.Join(logDir, fmt.Sprintf("delegate-%s.log", dateStr))
 
-	if currentPath != newPath {
-		if delegateLogFile != nil {
-			delegateLogFile.Close()
-			delegateLogFile = nil
-		}
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			slog.Warn("Failed to create delegate log directory", "dir", logDir, "error", err)
-			return
-		}
-		var fileErr error
-		delegateLogFile, fileErr = os.OpenFile(newPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-		if fileErr != nil {
-			slog.Warn("Failed to open delegate log file", "file", newPath, "error", fileErr)
-			delegateLogFile = nil
-			return
-		}
-		handler := slog.NewTextHandler(delegateLogFile, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})
-		delegateLogger = slog.New(handler)
-	}
-}
-
-// InitDelegateLogger initializes the delegate logger in TUI mode.
-// Creates the log directory if it doesn't exist.
-// On file open failure, degrades gracefully using logging.GetFallbackWriter()
-// which ensures TUI mode NEVER falls back to os.Stdout.
-func InitDelegateLogger() error {
-	logDir := logging.GetTaskLogDir(logging.GetCurrentTaskID())
-
-	// Ensure log directory exists
+	// Ensure directory exists
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		slog.Warn("Failed to create delegate log directory, using fallback writer",
-			"dir", logDir, "error", err)
-		handler := slog.NewTextHandler(logging.GetFallbackWriter(), &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})
-		delegateLogger = slog.New(handler)
-		return nil
-	}
-
-	dateStr := time.Now().Format("2006-01-02")
-	logFileName := fmt.Sprintf("delegate-%s.log", dateStr)
-	logFilePath := filepath.Join(logDir, logFileName)
-
-	var fileErr error
-	delegateLogFile, fileErr = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if fileErr != nil {
-		slog.Warn("Failed to open delegate log file, using fallback writer",
-			"file", logFilePath, "error", fileErr)
-		// CRITICAL: Never fall back to os.Stdout in TUI mode.
-		// Use logging.GetFallbackWriter() which returns discard or app log file in TUI mode.
-		handler := slog.NewTextHandler(logging.GetFallbackWriter(), &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})
-		delegateLogger = slog.New(handler)
-		return nil
-	}
-
-	handler := slog.NewTextHandler(delegateLogFile, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})
-	delegateLogger = slog.New(handler)
-	return nil
-}
-
-// LogDelegateCall records a delegate tool call with timestamp, tool name, agent name,
-// and full arguments. Designed for sub-agent delegation tracing.
-// Format: [2025-01-15 10:30:45] tool=delegate_repo agent=repo args={"task":"分析项目结构"}
-func LogDelegateCall(toolName, agentName, argsJSON string) {
-	ensureDelegateLogFile()
-	if delegateLogger == nil {
+		slog.Warn("Failed to create delegate log directory", "dir", logDir, "error", err)
 		return
 	}
 
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	// Open file (create if not exists, append mode)
+	f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		slog.Warn("Failed to open delegate log file", "file", logFilePath, "error", err)
+		return
+	}
+	defer f.Close()
 
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	logEntry := fmt.Sprintf("[%s] tool=%s agent=%s args=%s\n",
 		timestamp, toolName, agentName, argsJSON)
 
-	if _, err := delegateLogFile.WriteString(logEntry); err != nil {
+	if _, err := f.WriteString(logEntry); err != nil {
 		slog.Error("Failed to write to delegate log file", "error", err)
+		return
 	}
-}
 
-// CloseDelegateLogger closes the delegate log file and cleans up resources.
-func CloseDelegateLogger() {
-	if delegateLogFile != nil {
-		delegateLogFile.Close()
-		delegateLogFile = nil
-		delegateLogger = nil
+	// Sync to ensure data is flushed to disk immediately
+	if err := f.Sync(); err != nil {
+		slog.Error("Failed to sync delegate log file", "error", err)
 	}
 }
 

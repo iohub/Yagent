@@ -78,9 +78,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}, cfg.AgentName)
 	}
 
-	// Initialize delegate logger at the start to ensure delegate-{date}.log
-	// exists before any delegate tool calls occur.
-	_ = InitDelegateLogger()
+	// Initialize tool logger at the start to ensure tool-{date}.log
+	// exists before any tool calls occur.
+	_ = InitToolLogger()
 
 	systemRole := llm.RoleSystem
 	if cfg.SystemAsHuman {
@@ -404,9 +404,8 @@ func logToolCall(toolName, agentName, args string, result string, err error, sta
 		argsJSON = string(data)
 	}
 
-	// Ensure tool logger and delegate logger are initialized (idempotent)
+	// Ensure tool logger is initialized (idempotent)
 	_ = InitToolLogger()
-	_ = InitDelegateLogger()
 
 	// Calculate duration
 	duration := time.Since(startTime)
