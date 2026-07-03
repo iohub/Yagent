@@ -9,6 +9,7 @@ import (
 	"codeactor/internal/compact"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
+	"codeactor/internal/logging"
 	"codeactor/internal/memory"
 	"codeactor/internal/messaging"
 
@@ -169,6 +170,10 @@ func executeTaskCmd(
 		defer close(stopPeriodicSave)
 		defer ticker.Stop()
 
+		// 设置当前 task ID，使日志路由到 task 专属目录
+		logging.SetCurrentTaskID(task.ID)
+		defer logging.SetCurrentTaskID("")
+
 		result, err := ca.ProcessCodingTaskWithCallback(request)
 
 		if dm != nil {
@@ -234,6 +239,10 @@ func executeFollowUpCmd(
 		}()
 		defer close(stopPeriodicSave)
 		defer ticker.Stop()
+
+		// 设置当前 task ID，使日志路由到 task 专属目录
+		logging.SetCurrentTaskID(task.ID)
+		defer logging.SetCurrentTaskID("")
 
 		result, err := ca.ProcessConversation(request)
 
