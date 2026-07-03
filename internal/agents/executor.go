@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"codeactor/internal/compact"
@@ -283,6 +284,13 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				if t.Name() == tc.Function.Name {
 					found = true
 					startTime := time.Now()
+
+					// Log delegate tool calls with full arguments to dedicated delegate log
+					if strings.HasPrefix(tc.Function.Name, "delegate_") {
+						agentName := strings.TrimPrefix(tc.Function.Name, "delegate_")
+						LogDelegateCall(tc.Function.Name, agentName, tc.Function.Arguments)
+					}
+
 					toolResult, callErr = t.Call(ctx, tc.Function.Arguments)
 					if callErr != nil {
 						toolResult = fmt.Sprintf("Error: %v", callErr)
