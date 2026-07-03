@@ -8,9 +8,9 @@ import (
 	"log/slog"
 
 	"codeactor/internal/compact"
-	"codeactor/internal/tools"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/messaging"
+	"codeactor/internal/tools"
 
 	"codeactor/internal/llm"
 )
@@ -117,7 +117,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		engine, err := compact.NewEngine(a.compactConfig, &compact.SummaryAdapter{
 			LLM:         a.LLM,
 			Temperature: 0.1,
-			MaxTokens:   2000,
+			MaxTokens:   12000,
 		})
 		if err != nil {
 			slog.Warn("Failed to create compact engine for RepoAgent", "error", err)

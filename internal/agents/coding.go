@@ -86,11 +86,11 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 			LLM:       llm,
 			Publisher: globalCtx.Publisher,
 		},
-		Adapters:     adapters,
-		maxSteps:     maxSteps,
-		BrowserAgent: browser,
-		GlobalCtx:    globalCtx,
-		registry:     registry,
+		Adapters:      adapters,
+		maxSteps:      maxSteps,
+		BrowserAgent:  browser,
+		GlobalCtx:     globalCtx,
+		registry:      registry,
 		compactConfig: compactCfg,
 	}
 }
@@ -158,7 +158,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 		engine, err := compact.NewEngine(a.compactConfig, &compact.SummaryAdapter{
 			LLM:         a.LLM,
 			Temperature: 0.1,
-			MaxTokens:   2000,
+			MaxTokens:   12000,
 		})
 		if err != nil {
 			slog.Warn("Failed to create compact engine for CodingAgent", "error", err)
@@ -451,9 +451,9 @@ func createCheckpointToolAdapters(gcm *GitCheckpointManager) []*tools.Adapter {
 			sb.WriteString("\nUse git_checkpoint_rollback with the tag name to roll back.")
 			return sb.String(), nil
 		}).WithSchema(map[string]interface{}{
-		"type": "object",
+		"type":       "object",
 		"properties": map[string]interface{}{},
-		"required": []string{},
+		"required":   []string{},
 	})
 
 	// git_checkpoint_rollback
