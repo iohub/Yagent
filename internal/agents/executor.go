@@ -400,8 +400,9 @@ func logToolCall(toolName, agentName, args string, result string, err error, sta
 		argsJSON = string(data)
 	}
 
-	// Ensure tool logger is initialized (idempotent)
+	// Ensure tool logger and delegate logger are initialized (idempotent)
 	_ = InitToolLogger()
+	_ = InitDelegateLogger()
 
 	// Calculate duration
 	duration := time.Since(startTime)
