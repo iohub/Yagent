@@ -1137,6 +1137,13 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			for _, t := range a.Adapters {
 				if t.Name() == tc.Function.Name {
 					found = true
+
+					// Log delegate tool calls with full arguments to dedicated delegate log
+					if strings.HasPrefix(t.Name(), "delegate_") {
+						agentName := strings.TrimPrefix(t.Name(), "delegate_")
+						LogDelegateCall(t.Name(), agentName, tc.Function.Arguments)
+					}
+
 					toolResult, err = t.Call(ctx, tc.Function.Arguments)
 
 					// 注入 sub-agent memory（delegate 闭包中设置了 pendingSubAgentMemory）
