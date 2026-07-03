@@ -78,6 +78,10 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}, cfg.AgentName)
 	}
 
+	// Initialize delegate logger at the start to ensure delegate-{date}.log
+	// exists before any delegate tool calls occur.
+	_ = InitDelegateLogger()
+
 	systemRole := llm.RoleSystem
 	if cfg.SystemAsHuman {
 		systemRole = llm.RoleUser
