@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"codeactor/internal/llm"
@@ -39,6 +40,35 @@ type Config struct {
 
 	// MicroCompressTools 需要微压缩的工具列表（白名单）
 	MicroCompressTools []string `toml:"micro_compress_tools"`
+
+	// ── Layer 1: 工具结果预算控制 ──
+	// MaxToolOutputTokens > 0 时启用
+
+	// ── Layer 4: 上下文折叠 ──
+
+	// FoldEnabled 是否启用上下文折叠（Layer 4）
+	FoldEnabled bool `toml:"fold_enabled"`
+
+	// ── Layer 6: 状态补偿 ──
+
+	// CompensateEnabled 是否启用状态补偿（Layer 6）
+	CompensateEnabled bool `toml:"compensate_enabled"`
+
+	// ── Layer 1: 外部存储 ──
+
+	// OffloadEnabled 是否启用外部存储（用于超限工具输出）
+	OffloadEnabled bool `toml:"offload_enabled"`
+
+	// OffloadPath 外部存储根路径
+	OffloadPath string `toml:"offload_path"`
+
+	// ── 动态阈值 ──
+
+	// CompressionDirection 压缩方向策略："auto" | "recent" | "old"
+	CompressionDirection string `toml:"compression_direction"`
+
+	// MinPrunableAge 消息最小年龄（轮数），小于此值的消息不参与修剪
+	MinPrunableAge int `toml:"min_prunable_age"`
 
 	// ── Emergency / 应急配置 ──
 
@@ -80,17 +110,32 @@ type SummarizationClient interface {
 	GenerateSummary(ctx context.Context, messages []llm.Message) (string, error)
 }
 
-// Engine 压缩引擎（全量重新压缩）
+// Engine 压缩引擎（7层漏斗式管道编排）
 type Engine struct {
-	config        *Config
-	tokenizer     Tokenizer
-	summarizer    SummarizationClient
-	frozenSummary string          // 已冻结的历史摘要，用于增量压缩
-	offload       *OffloadStorage // 外部存储，用于超限工具输出
+	config       *Config
+	tokenizer    Tokenizer
+	summarizer   SummarizationClient
+	frozenSummary string        // 已冻结的历史摘要，用于增量压缩
+	offload      *OffloadStorage // 外部存储，用于超限工具输出
 
-	// ── Emergency ──
+	// ── Layer 7: Emergency ──
 	emergencyConfig *EmergencyConfig // 应急配置（懒初始化）
 	cb              *CircuitBreaker  // 熔断器
+
+	// ── Layer 4: Fold ──
+	foldManager *FoldManager // 折叠管理器
+
+	// ── Layer 6: Compensate ──
+	extractor *StateExtractor // 状态提取器
+
+	// ── Dynamic Threshold ──
+	dynamicEngine *DynamicEngine // 动态阈值引擎
+	dynamicConfig *DynamicConfig // 动态阈值配置
+
+	// ── 统计 ──
+	statsLock         sync.Mutex
+	totalCompressions int
+	layerStats        map[string]int // 各层触发次数
 }
 
 // SetOffloadStorage 设置外部存储（用于超限工具输出外存）
@@ -98,7 +143,7 @@ func (e *Engine) SetOffloadStorage(storage *OffloadStorage) {
 	e.offload = storage
 }
 
-// NewEngine 创建压缩引擎
+// NewEngine 创建压缩引擎（初始化 7 层管道组件）
 func NewEngine(config *Config, summarizer SummarizationClient) (*Engine, error) {
 	if config == nil {
 		config = &DefaultConfig
@@ -129,23 +174,61 @@ func NewEngine(config *Config, summarizer SummarizationClient) (*Engine, error) 
 		config.EmergencyCBResetDuration = 30 * time.Second
 	}
 
+	tokenizer := GetGlobalTokenizer()
+
+	// ── Layer 1: 外部存储 ──
+	var offload *OffloadStorage
+	if config.MaxToolOutputTokens > 0 && config.OffloadEnabled && config.OffloadPath != "" {
+		var offloadErr error
+		offload, offloadErr = NewOffloadStorage(config.OffloadPath, "default", 100*1024*1024)
+		if offloadErr != nil {
+			slog.Warn("Offload storage init failed, continuing without it", "error", offloadErr)
+		}
+	}
+
+	// ── Layer 7: 熔断器 ──
+	cb := NewCircuitBreaker(config.EmergencyCBThreshold, config.EmergencyCBResetDuration)
+
+	// ── Dynamic Threshold ──
+	dynamicCfg := &DynamicConfig{
+		CompressionDirection:    "auto",
+		SummaryReservedFraction: 0.165,
+		BufferBandTokens:        13000,
+		AutoOldRatioThreshold:   0.4,
+		AutoLookbackPercent:     0.3,
+	}
+	if config.CompressionDirection != "" {
+		dynamicCfg.CompressionDirection = config.CompressionDirection
+	}
+	dynamicEngine := NewDynamicEngine(config, tokenizer)
+	dynamicEngine.SetConfig(dynamicCfg)
+
 	return &Engine{
-		config:            config,
-		tokenizer:         GetGlobalTokenizer(),
-		summarizer:        summarizer,
-		emergencyConfig:   &EmergencyConfig{},
+		config:        config,
+		tokenizer:     tokenizer,
+		summarizer:    summarizer,
+		offload:       offload,
+		cb:            cb,
+		foldManager:   NewFoldManager(100, 50),
+		extractor:     NewStateExtractor(),
+		dynamicEngine: dynamicEngine,
+		dynamicConfig: dynamicCfg,
+		layerStats:    make(map[string]int),
 	}, nil
 }
 
-// Compress 执行全量重新压缩
-// 核心逻辑：
-// 1. 计算 token
-// 2. 如果未超限，直接返回
-// 3. 如果没有 summarizer，返回原始消息
-// 4. 分区：用 extractRecentMessages 将消息分为 older 和 recent（含 Tool-Call Atomicity）
-// 5. 对 older 调用 summarizer.Summarize()
-// 6. 用 buildCacheAwareMessages 构建 [System] + [Summary] + [Recent] 布局
-// 7. 返回 CompressResult
+// Compress 执行 7 层漏斗式管道压缩
+//
+// 管道架构（从低成本到高成本）：
+//   Layer 1: 工具结果预算控制 — 截断/外存/替换 verbose 工具输出
+//   Layer 2: 老消息剪裁       — 基于原子组的旧消息修剪
+//   Layer 3: 微压缩           — 语义占位符替换
+//   Layer 4: 上下文折叠       — LLM 生成折叠摘要
+//   Layer 5: 自动压缩（兜底）  — 原有 LLM 摘要逻辑
+//   Layer 6: 状态补偿          — 重新注入关键状态
+//   Layer 7: 应急压缩          — 熔断器保护的极限压缩
+//
+// 每层执行后检查预算，提前退出避免不必要的高成本操作。
 func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*CompressResult, error) {
 	if len(messages) == 0 {
 		return &CompressResult{
@@ -155,14 +238,20 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 		}, nil
 	}
 
-	// 1. 计算原始 token 数
+	// ── 步骤 1: 计算原始 token 数 ──
 	originalTokens, err := e.CountTokens(messages)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count tokens: %w", err)
 	}
 
-	// 2. 未超限直接返回
-	if originalTokens <= e.config.MaxContextTokens {
+	// ── 步骤 2: 计算动态阈值 ──
+	threshold := e.dynamicEngine.CalculateDynamicThreshold(messages)
+
+	// ── 步骤 3: 如果未超限，直接返回 ──
+	// 双重检查：先硬阈值（向后兼容），再动态阈值（优化）
+	isOverHardLimit := originalTokens > e.config.MaxContextTokens
+	isOverThreshold := threshold.IsOverThreshold(originalTokens)
+	if !isOverHardLimit && !isOverThreshold {
 		return &CompressResult{
 			CompressedMessages: messages,
 			OriginalTokens:     originalTokens,
@@ -172,157 +261,211 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 		}, nil
 	}
 
-	// 3. 如果没有摘要器，降级为仅返回 recent 消息
-	if e.summarizer == nil {
-		slog.Warn("Context compression triggered but no summarizer available")
-		recent, _ := extractRecentMessages(messages, e.config.KeepRecentRounds)
-		return &CompressResult{
-			CompressedMessages: recent,
-			OriginalTokens:     originalTokens,
-			CompressedTokens:   originalTokens,
-			CompressionRatio:   1.0,
-			CompressionStats:   "No summarizer available, returning recent messages only",
-			SummaryInfo:        "",
-		}, nil
-	}
-
-	slog.Info("Context compression triggered (full re-compress)",
+	slog.Info("Context compression triggered (pipeline)",
 		"original_tokens", originalTokens,
-		"max_tokens", e.config.MaxContextTokens)
+		"threshold", threshold.TriggerThreshold,
+		"effective_window", threshold.EffectiveWindow)
 
-	// 4. 分区：recent（保留） + older（待压缩）
-	recent, older := extractRecentMessages(messages, e.config.KeepRecentRounds)
-
-	// 如果 older 为空，说明不需要压缩
-	if len(older) == 0 {
-		return &CompressResult{
-			CompressedMessages: messages,
-			OriginalTokens:     originalTokens,
-			CompressedTokens:   originalTokens,
-			CompressionRatio:   1.0,
-			CompressionStats:   "No compressible messages",
-		}, nil
+	// ── 步骤 4: 初始化压缩上下文 ──
+	cc := &CompressionContext{
+		Messages:       append([]llm.Message{}, messages...), // 深拷贝
+		OriginalTokens: originalTokens,
+		CurrentTokens:  originalTokens,
+		Threshold:      threshold,
+		HardLimit:      e.config.MaxContextTokens, // 硬阈值，用于管道层判断
 	}
 
-	// ─── 4.5 类型感知的工具结果截断（优先于LLM摘要）───
-	// 先尝试截断 verbose 工具结果来释放 token。
-	// 如果截断后总量在预算内，跳过昂贵的 LLM 摘要。
-	truncationStats := ""
-	olderTokens := e.countMessagesTokens(older)
-	recentTokens := e.countMessagesTokens(recent)
+	// 压缩前提取状态（用于 Layer 6 补偿）
+	if e.extractor != nil && e.config.CompensateEnabled {
+		cc.ExtractedState = e.extractor.ExtractState(messages)
+	}
 
-	if olderTokens > 0 {
-		truncatedOlder, freedBytes := TruncateToolResults(older, ForceTruncateAll, DefaultTruncationConfig)
+	// ───────────────────────────────────────────
+	// ── Layer 1: 工具结果预算控制 ──
+	// ───────────────────────────────────────────
+	if cc.CurrentTokens > cc.HardLimit && e.config.MaxToolOutputTokens > 0 {
+		result, newMsgs, err := e.applyToolBudget(cc.Messages)
+		if err == nil && result.TokensSaved > 0 {
+			cc.Messages = newMsgs
+			cc.CurrentTokens = e.countMessagesTokens(cc.Messages)
+			cc.LayersApplied = append(cc.LayersApplied, "budget")
+			e.recordLayerStat("budget")
+			slog.Debug("Layer 1 (budget) applied", "tokens_saved", result.TokensSaved)
+		}
+	}
 
-		if freedBytes > 0 {
-			// 重新计算截断后的 token 数
+	// ───────────────────────────────────────────
+	// ── Layer 2: 老消息剪裁 ──
+	// ───────────────────────────────────────────
+	if cc.CurrentTokens > cc.HardLimit && e.config.KeepRecentRounds > 0 {
+		prunerCC := &CompressionContext{
+			Threshold:      cc.Threshold,
+			CurrentTokens:  cc.CurrentTokens,
+			TargetTokens:   threshold.TriggerThreshold,
+			MinPrunableAge: e.config.MinPrunableAge,
+		}
+		result := e.pruneOldMessages(cc.Messages, prunerCC)
+		if result.PrunedCount > 0 {
+			// pruneOldMessages 返回 PruneResult，但不会修改输入切片
+			// 需要从头部裁剪 pruned 条消息
+			cc.Messages = cc.Messages[result.PrunedCount:]
+			cc.CurrentTokens = e.countMessagesTokens(cc.Messages)
+			cc.LayersApplied = append(cc.LayersApplied, "prune")
+			e.recordLayerStat("prune")
+			slog.Debug("Layer 2 (prune) applied", "pruned", result.PrunedCount)
+		}
+	}
+
+	// ───────────────────────────────────────────
+	// ── Layer 3: 微压缩 ──
+	// ───────────────────────────────────────────
+	if cc.CurrentTokens > cc.HardLimit && e.config.MicroCompressEnabled {
+		keepBoundary := e.findKeepBoundary(cc.Messages)
+		result, newMsgs := e.microCompress(cc.Messages, keepBoundary)
+		if result.CompressedCount > 0 {
+			cc.Messages = newMsgs
+			cc.CurrentTokens = e.countMessagesTokens(cc.Messages)
+			cc.LayersApplied = append(cc.LayersApplied, "micro")
+			e.recordLayerStat("micro")
+			slog.Debug("Layer 3 (micro) applied", "compressed", result.CompressedCount, "tokens_saved", result.TokensSaved)
+		}
+	}
+
+	// ───────────────────────────────────────────
+	// ── Layer 4: 上下文折叠 ──
+	// ───────────────────────────────────────────
+	if cc.CurrentTokens > cc.HardLimit && e.config.FoldEnabled && e.summarizer != nil {
+		foldCfg := FoldContextConfig(
+			WithKeepRecentRounds(e.config.KeepRecentRounds),
+			WithMinFoldTokens(500),
+			WithFoldManager(e.foldManager),
+		)
+		entry, err := e.foldContext(ctx, cc.Messages, foldCfg)
+		if err != nil {
+			slog.Warn("Layer 4 (fold) failed, skipping", "error", err)
+		} else if entry != nil && entry.Phase == FoldPhaseCommitted && entry.SummaryMsg != nil {
+			// foldContext 返回 FoldEntry，需要手动应用折叠到消息列表
+			newMsgs := make([]llm.Message, 0, len(cc.Messages)-len(entry.SourceMsgs)+1)
+			newMsgs = append(newMsgs, cc.Messages[:entry.SourceStart]...)
+			newMsgs = append(newMsgs, *entry.SummaryMsg)
+			newMsgs = append(newMsgs, cc.Messages[entry.SourceEnd:]...)
+			cc.Messages = newMsgs
+			cc.CurrentTokens = e.countMessagesTokens(cc.Messages)
+			cc.LayersApplied = append(cc.LayersApplied, "fold")
+			e.recordLayerStat("fold")
+			slog.Debug("Layer 4 (fold) applied", "tokens_saved", entry.TokensSaved)
+		}
+	}
+
+	// ───────────────────────────────────────────
+	// ── Layer 5: 自动压缩（兜底 — 原有 LLM 摘要逻辑） ──
+	// ───────────────────────────────────────────
+	if cc.CurrentTokens > cc.HardLimit && e.summarizer != nil {
+		// 使用原有的分区逻辑
+		recent, older := extractRecentMessages(cc.Messages, e.config.KeepRecentRounds)
+		if len(older) > 0 {
+			// 先尝试工具结果截断
+			recentTokens := e.countMessagesTokens(recent)
+
+			truncatedOlder, freedBytes := TruncateToolResults(older, ForceTruncateAll, DefaultTruncationConfig)
 			truncatedOlderTokens := e.countMessagesTokens(truncatedOlder)
-			totalBudget := e.config.MaxContextTokens
 
-			// 减去 system 消息占用的 token
+			totalBudget := threshold.TriggerThreshold
 			if sysMsg := extractSystemMessage(messages); sysMsg != nil {
 				sysTokens, _ := e.tokenizer.CountMessagesTokens([]llm.Message{*sysMsg})
 				totalBudget -= sysTokens
 			}
 
-			totalAfterTruncation := truncatedOlderTokens + recentTokens
-			if totalAfterTruncation <= totalBudget {
-				// ✅ 截断已足够，跳过 LLM 摘要
-				slog.Info("Tool-result truncation sufficient, skipping LLM summarization",
-					"freed_bytes", freedBytes,
-					"older_tokens_before", olderTokens,
-					"older_tokens_after", truncatedOlderTokens,
-				)
+			if freedBytes > 0 && truncatedOlderTokens+recentTokens <= totalBudget {
+				// 截断已足够，跳过 LLM 摘要
+				cc.Messages = buildTruncatedMessages(messages, truncatedOlder, recent, e.config.KeepRecentRounds)
+				cc.LayersApplied = append(cc.LayersApplied, "truncate_only")
+				e.recordLayerStat("truncate_only")
+				slog.Info("Layer 5 (truncate_only) sufficient", "freed_bytes", freedBytes)
+			} else if freedBytes > 0 {
+				// 截断释放了部分 token，使用截断后的 older 继续 LLM 摘要
+				// (freedBytes == 0 时直接使用原始 older)
+				older = truncatedOlder
+			} else {
+				// 需要 LLM 摘要
+				ctxTimeout, cancel := context.WithTimeout(ctx, e.config.SummarizationTimeout)
 
-				compressed := buildTruncatedMessages(messages, truncatedOlder, recent, e.config.KeepRecentRounds)
-				compressedTokens := e.countMessagesTokens(compressed)
+				var summary string
+				var sumErr error
+				if e.frozenSummary != "" && len(truncatedOlder) > 0 {
+					summary, sumErr = e.incrementalCompress(ctxTimeout, truncatedOlder)
+				} else {
+					summary, sumErr = e.summarizer.GenerateSummary(ctxTimeout, truncatedOlder)
+				}
+				cancel()
 
-				stats := fmt.Sprintf("Tool-result truncation | Original: %d tokens | Compressed: %d tokens | Freed: %d bytes | Recent rounds: %d",
-					originalTokens, compressedTokens, freedBytes, e.config.KeepRecentRounds)
-				return &CompressResult{
-					CompressedMessages: compressed,
-					OriginalTokens:     originalTokens,
-					CompressedTokens:   compressedTokens,
-					CompressionRatio:   float64(compressedTokens) / float64(originalTokens),
-					CompressionStats:   stats,
-					SummaryInfo:        fmt.Sprintf("[Tool results truncated: %d bytes freed from %d messages]", freedBytes, len(truncatedOlder)),
-				}, nil
+				if sumErr != nil {
+					slog.Warn("Layer 5 auto-compress failed", "error", sumErr)
+					// 降级：仅保留 recent
+					cc.Messages = recent
+				} else {
+					e.frozenSummary = summary
+					cc.Messages = buildCacheAwareMessages(messages, summary, e.config.KeepRecentRounds)
+				}
+				cc.LayersApplied = append(cc.LayersApplied, "auto_compress")
+				e.recordLayerStat("auto_compress")
 			}
 
-			// 截断不完全，但已部分释放 — 使用截断后的 older 继续 LLM 摘要
-			older = truncatedOlder
-			truncationStats = fmt.Sprintf(" | truncation freed %d bytes, %d older tokens remaining (budget: %d)",
-				freedBytes, truncatedOlderTokens, totalBudget-recentTokens)
-			slog.Debug("Tool-result truncation partial, falling back to LLM summarization",
-				"freed_bytes", freedBytes,
-				"older_tokens_after", truncatedOlderTokens,
-			)
-		}
-	}
-	// ─── 结束 4.5 ───
-
-	// 5. 对 older 做 LLM 摘要（支持增量压缩）
-	ctx, cancel := context.WithTimeout(ctx, e.config.SummarizationTimeout)
-	defer cancel()
-
-	// 增量压缩：如果已有 frozenSummary
-	var summary string
-	if e.frozenSummary != "" && len(older) > 0 {
-		s, err := e.incrementalCompress(ctx, older)
-		if err != nil {
-			slog.Warn("Incremental compression failed, falling back to full", "error", err)
-			summary, err = e.summarizer.GenerateSummary(ctx, older)
-			if err != nil {
-				slog.Warn("LLM summarization failed, falling back to recent only", "error", err)
-				return &CompressResult{
-					CompressedMessages: recent,
-					OriginalTokens:     originalTokens,
-					CompressedTokens:   e.countMessagesTokens(recent),
-					CompressionRatio:   float64(e.countMessagesTokens(recent)) / float64(originalTokens),
-					CompressionStats:   fmt.Sprintf("Summarization failed: %v", err),
-					SummaryInfo:        "",
-				}, nil
-			}
-		} else {
-			summary = s
-		}
-	} else {
-		var err error
-		summary, err = e.summarizer.GenerateSummary(ctx, older)
-		if err != nil {
-			slog.Warn("LLM summarization failed, falling back to recent only", "error", err)
-			return &CompressResult{
-				CompressedMessages: recent,
-				OriginalTokens:     originalTokens,
-				CompressedTokens:   e.countMessagesTokens(recent),
-				CompressionRatio:   float64(e.countMessagesTokens(recent)) / float64(originalTokens),
-				CompressionStats:   fmt.Sprintf("Summarization failed: %v", err),
-				SummaryInfo:        "",
-			}, nil
+			cc.CurrentTokens = e.countMessagesTokens(cc.Messages)
 		}
 	}
 
-	// 保存 frozenSummary
-	e.frozenSummary = summary
+	// ───────────────────────────────────────────
+	// ── Layer 6: 状态补偿 ──
+	// ───────────────────────────────────────────
+	if cc.ExtractedState != nil && e.config.CompensateEnabled {
+		compResult := e.extractor.compensateState(
+			&CompressionContext{
+				Threshold:     cc.Threshold,
+				CurrentTokens: cc.CurrentTokens,
+				TargetTokens:  threshold.TriggerThreshold,
+			},
+			cc.Messages,
+			cc.ExtractedState,
+			e,
+		)
+		if compResult.Injected {
+			cc.LayersApplied = append(cc.LayersApplied, "compensate")
+			e.recordLayerStat("compensate")
+			slog.Debug("Layer 6 (compensate) applied", "files", compResult.FilesReinjected,
+				"plan", compResult.PlanReinjected, "skills", compResult.SkillsReinjected)
+		}
+	}
 
-	// 6. 构建缓存友好的消息布局：[System] + [Summary] + [Recent]
-	compressed := buildCacheAwareMessages(messages, summary, e.config.KeepRecentRounds)
-
-	// 7. 计算压缩后 token 数和比率
-	compressedTokens := e.countMessagesTokens(compressed)
+	// ── 步骤 5: 计算最终统计 ──
+	compressedTokens := e.countMessagesTokens(cc.Messages)
 	compressionRatio := float64(compressedTokens) / float64(originalTokens)
 
-	stats := fmt.Sprintf("Full re-compress | Original: %d tokens | Compressed: %d tokens | Ratio: %.2f | Recent rounds: %d%s",
-		originalTokens, compressedTokens, compressionRatio, e.config.KeepRecentRounds, truncationStats)
+	stats := fmt.Sprintf("Pipeline: %s | Original: %d tokens | Compressed: %d tokens | Ratio: %.2f",
+		strings.Join(cc.LayersApplied, " → "),
+		originalTokens, compressedTokens, compressionRatio)
+
+	// ── 步骤 6: 更新统计 ──
+	e.totalCompressions++
+	if e.totalCompressions%10 == 0 {
+		slog.Info("Compression stats", "total", e.totalCompressions, "layer_stats", e.layerStats)
+	}
 
 	return &CompressResult{
-		CompressedMessages: compressed,
+		CompressedMessages: cc.Messages,
 		OriginalTokens:     originalTokens,
 		CompressedTokens:   compressedTokens,
 		CompressionRatio:   compressionRatio,
 		CompressionStats:   stats,
-		SummaryInfo:        summary,
+		SummaryInfo:        e.frozenSummary,
 	}, nil
+}
+
+// recordLayerStat 记录某层被触发的次数（线程安全）
+func (e *Engine) recordLayerStat(layer string) {
+	e.statsLock.Lock()
+	defer e.statsLock.Unlock()
+	e.layerStats[layer]++
 }
 
 // CountTokens 计算 messages 的总 token 数

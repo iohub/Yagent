@@ -6,8 +6,27 @@ import (
 	"log/slog"
 )
 
-// CompressionContext 剪裁操作的上下文信息
+// CompressionContext 压缩管道的上下文信息（逐层共享状态）
 type CompressionContext struct {
+	// ── 管道级字段 ──
+
+	// Messages 当前消息列表（逐层修改）
+	Messages []llm.Message
+
+	// OriginalTokens 原始 token 数（管道入口时计算）
+	OriginalTokens int
+
+	// ExtractedState 压缩前提取的状态（用于 Layer 6 状态补偿）
+	ExtractedState *ExtractedState
+
+	// LayersApplied 已应用的层名称列表
+	LayersApplied []string
+
+	// HardLimit 硬阈值（MaxContextTokens），用于管道层判断
+	HardLimit int
+
+	// ── 剪裁专用字段 ──
+
 	// Threshold 动态阈值计算结果（来自 DynamicEngine）
 	Threshold *ThresholdResult
 
