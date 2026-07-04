@@ -39,6 +39,17 @@ type Config struct {
 
 	// MicroCompressTools 需要微压缩的工具列表（白名单）
 	MicroCompressTools []string `toml:"micro_compress_tools"`
+
+	// ── Emergency / 应急配置 ──
+
+	// EmergencyMaxTokens 应急压缩的最大 token 预算，0 表示使用 MaxContextTokens
+	EmergencyMaxTokens int `toml:"emergency_max_tokens"`
+
+	// EmergencyCBThreshold 熔断器连续失败阈值，0 表示使用默认值 3
+	EmergencyCBThreshold int `toml:"emergency_cb_threshold"`
+
+	// EmergencyCBResetDuration 熔断器重置持续时间（Open → HalfOpen），0 表示使用默认值 30s
+	EmergencyCBResetDuration time.Duration `toml:"emergency_cb_reset_duration"`
 }
 
 // DefaultConfig 默认配置
@@ -76,6 +87,10 @@ type Engine struct {
 	summarizer    SummarizationClient
 	frozenSummary string          // 已冻结的历史摘要，用于增量压缩
 	offload       *OffloadStorage // 外部存储，用于超限工具输出
+
+	// ── Emergency ──
+	emergencyConfig *EmergencyConfig // 应急配置（懒初始化）
+	cb              *CircuitBreaker  // 熔断器
 }
 
 // SetOffloadStorage 设置外部存储（用于超限工具输出外存）
@@ -106,11 +121,19 @@ func NewEngine(config *Config, summarizer SummarizationClient) (*Engine, error) 
 	if config.ToolPreviewTokens <= 0 {
 		config.ToolPreviewTokens = DefaultConfig.ToolPreviewTokens
 	}
+	// Emergency defaults
+	if config.EmergencyCBThreshold <= 0 {
+		config.EmergencyCBThreshold = 3
+	}
+	if config.EmergencyCBResetDuration <= 0 {
+		config.EmergencyCBResetDuration = 30 * time.Second
+	}
 
 	return &Engine{
-		config:     config,
-		tokenizer:  GetGlobalTokenizer(),
-		summarizer: summarizer,
+		config:            config,
+		tokenizer:         GetGlobalTokenizer(),
+		summarizer:        summarizer,
+		emergencyConfig:   &EmergencyConfig{},
 	}, nil
 }
 
