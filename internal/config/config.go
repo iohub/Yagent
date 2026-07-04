@@ -516,7 +516,31 @@ func (c *Config) applyContextDefaults() {
 		c.Compact.SummarizationTimeout == 0 &&
 		c.Compact.SummarizationMaxInputTokens == 0 &&
 		c.Compact.SummarizationPrompt == "" &&
-		c.Compact.KeepRecentRounds == 0
+		c.Compact.KeepRecentRounds == 0 &&
+		// Layer 1
+		c.Compact.MaxToolOutputTokens == 0 &&
+		c.Compact.ToolPreviewTokens == 0 &&
+		!c.Compact.OffloadEnabled &&
+		c.Compact.OffloadPath == "" &&
+		// Layer 2
+		c.Compact.MinPrunableAge == 0 &&
+		// Layer 3
+		!c.Compact.MicroCompressEnabled &&
+		len(c.Compact.MicroCompressTools) == 0 &&
+		// Layer 4
+		!c.Compact.FoldEnabled &&
+		c.Compact.FoldBatchSize == 0 &&
+		c.Compact.FoldStageTimeout == 0 &&
+		// Layer 5
+		c.Compact.SummaryReservedTokens == 0 &&
+		c.Compact.BufferBandTokens == 0 &&
+		c.Compact.CompressionDirection == "" &&
+		// Layer 6
+		!c.Compact.CompensateEnabled &&
+		// Layer 7
+		c.Compact.EmergencyMaxRetries == 0 &&
+		c.Compact.CircuitBreakerThreshold == 0 &&
+		c.Compact.CircuitBreakerResetDuration == 0
 
 	if allZero {
 		// 整体替换为默认配置
@@ -528,6 +552,30 @@ func (c *Config) applyContextDefaults() {
 		c.Compact.SummarizationMaxInputTokens = defaults.SummarizationMaxInputTokens
 		c.Compact.SummarizationPrompt = defaults.SummarizationPrompt
 		c.Compact.KeepRecentRounds = defaults.KeepRecentRounds
+		// Layer 1
+		c.Compact.MaxToolOutputTokens = defaults.MaxToolOutputTokens
+		c.Compact.ToolPreviewTokens = defaults.ToolPreviewTokens
+		c.Compact.OffloadEnabled = defaults.OffloadEnabled
+		c.Compact.OffloadPath = defaults.OffloadPath
+		// Layer 2
+		c.Compact.MinPrunableAge = defaults.MinPrunableAge
+		// Layer 3
+		c.Compact.MicroCompressEnabled = defaults.MicroCompressEnabled
+		c.Compact.MicroCompressTools = defaults.MicroCompressTools
+		// Layer 4
+		c.Compact.FoldEnabled = defaults.FoldEnabled
+		c.Compact.FoldBatchSize = defaults.FoldBatchSize
+		c.Compact.FoldStageTimeout = defaults.FoldStageTimeout
+		// Layer 5
+		c.Compact.SummaryReservedTokens = defaults.SummaryReservedTokens
+		c.Compact.BufferBandTokens = defaults.BufferBandTokens
+		c.Compact.CompressionDirection = defaults.CompressionDirection
+		// Layer 6
+		c.Compact.CompensateEnabled = defaults.CompensateEnabled
+		// Layer 7
+		c.Compact.EmergencyMaxRetries = defaults.EmergencyMaxRetries
+		c.Compact.CircuitBreakerThreshold = defaults.CircuitBreakerThreshold
+		c.Compact.CircuitBreakerResetDuration = defaults.CircuitBreakerResetDuration
 		return
 	}
 
@@ -546,13 +594,73 @@ func (c *Config) applyContextDefaults() {
 	if c.Compact.KeepRecentRounds == 0 {
 		c.Compact.KeepRecentRounds = defaults.KeepRecentRounds
 	}
+	// Layer 1
+	if c.Compact.MaxToolOutputTokens == 0 {
+		c.Compact.MaxToolOutputTokens = defaults.MaxToolOutputTokens
+	}
+	if c.Compact.ToolPreviewTokens == 0 {
+		c.Compact.ToolPreviewTokens = defaults.ToolPreviewTokens
+	}
+	if c.Compact.OffloadEnabled {
+		c.Compact.OffloadEnabled = defaults.OffloadEnabled
+	}
+	if c.Compact.OffloadPath == "" {
+		c.Compact.OffloadPath = defaults.OffloadPath
+	}
+	// Layer 2
+	if c.Compact.MinPrunableAge == 0 {
+		c.Compact.MinPrunableAge = defaults.MinPrunableAge
+	}
+	// Layer 3
+	if c.Compact.MicroCompressEnabled {
+		c.Compact.MicroCompressEnabled = defaults.MicroCompressEnabled
+	}
+	if len(c.Compact.MicroCompressTools) == 0 {
+		c.Compact.MicroCompressTools = defaults.MicroCompressTools
+	}
+	// Layer 4
+	if c.Compact.FoldEnabled {
+		c.Compact.FoldEnabled = defaults.FoldEnabled
+	}
+	if c.Compact.FoldBatchSize == 0 {
+		c.Compact.FoldBatchSize = defaults.FoldBatchSize
+	}
+	if c.Compact.FoldStageTimeout == 0 {
+		c.Compact.FoldStageTimeout = defaults.FoldStageTimeout
+	}
+	// Layer 5
+	if c.Compact.SummaryReservedTokens == 0 {
+		c.Compact.SummaryReservedTokens = defaults.SummaryReservedTokens
+	}
+	if c.Compact.BufferBandTokens == 0 {
+		c.Compact.BufferBandTokens = defaults.BufferBandTokens
+	}
+	if c.Compact.CompressionDirection == "" {
+		c.Compact.CompressionDirection = defaults.CompressionDirection
+	}
+	// Layer 6
+	if c.Compact.CompensateEnabled {
+		c.Compact.CompensateEnabled = defaults.CompensateEnabled
+	}
+	// Layer 7
+	if c.Compact.EmergencyMaxRetries == 0 {
+		c.Compact.EmergencyMaxRetries = defaults.EmergencyMaxRetries
+	}
+	if c.Compact.CircuitBreakerThreshold == 0 {
+		c.Compact.CircuitBreakerThreshold = defaults.CircuitBreakerThreshold
+	}
+	if c.Compact.CircuitBreakerResetDuration == 0 {
+		c.Compact.CircuitBreakerResetDuration = defaults.CircuitBreakerResetDuration
+	}
 	// SummarizationModel, SummarizationProvider, SummarizationPrompt 为空字符串
 	// 是合法的（表示使用默认行为），无需兜底
 }
 
-// ContextCompactConfig 上下文压缩配置
+// ContextCompactConfig 上下文压缩配置（7层压缩体系）
 // 用于TOML解析，通过 compact.ConfigFrom() 转换为 compact.Config
 type ContextCompactConfig struct {
+	// === 基础配置 ===
+
 	// MaxContextTokens 最大上下文token数，默认198000
 	MaxContextTokens int `toml:"max_context_tokens"`
 
@@ -577,6 +685,89 @@ type ContextCompactConfig struct {
 
 	// KeepRecentRounds 始终保留的最近对话轮数（用于优先级计算）
 	KeepRecentRounds int `toml:"keep_recent_rounds"`
+
+	// === Layer 1: Tool Result Budget Control ===
+
+	// MaxToolOutputTokens 单个工具输出的最大token数（超过则截断或卸载）
+	// default: 8192
+	MaxToolOutputTokens int `toml:"max_tool_output_tokens"`
+
+	// ToolPreviewTokens 工具输出预览保留的token数（截断后保留的头部）
+	// default: 512
+	ToolPreviewTokens int `toml:"tool_preview_tokens"`
+
+	// OffloadEnabled 是否启用工具结果卸载（保存到磁盘）
+	// default: true
+	OffloadEnabled bool `toml:"offload_enabled"`
+
+	// OffloadPath 工具结果卸载目录
+	// default: ".compact-offload"
+	OffloadPath string `toml:"offload_path"`
+
+	// === Layer 2: Old Message Pruning ===
+
+	// MinPrunableAge 消息最小年龄（轮数），小于此值的消息不参与修剪
+	// default: 5
+	MinPrunableAge int `toml:"min_prunable_age"`
+
+	// === Layer 3: Micro-compression ===
+
+	// MicroCompressEnabled 是否启用微压缩（对已摘要但过长的消息进一步压缩）
+	// default: true
+	MicroCompressEnabled bool `toml:"micro_compress_enabled"`
+
+	// MicroCompressTools 需要微压缩的工具列表
+	// default: [run_bash, read_file, list_files, grep, search]
+	MicroCompressTools []string `toml:"micro_compress_tools"`
+
+	// === Layer 4: Context Folding ===
+
+	// FoldEnabled 是否启用上下文折叠（将连续相似消息合并）
+	// default: true
+	FoldEnabled bool `toml:"fold_enabled"`
+
+	// FoldBatchSize 折叠批次大小
+	// default: 10
+	FoldBatchSize int `toml:"fold_batch_size"`
+
+	// FoldStageTimeout 折叠阶段超时时间（秒）
+	// default: 30
+	FoldStageTimeout int `toml:"fold_stage_timeout"`
+
+	// === Layer 5: Dynamic Threshold ===
+
+	// SummaryReservedTokens 为摘要保留的最小token预算
+	// default: 20000
+	SummaryReservedTokens int `toml:"summary_reserved_tokens"`
+
+	// BufferBandTokens 动态压缩缓冲带token数
+	// default: 13000
+	BufferBandTokens int `toml:"buffer_band_tokens"`
+
+	// CompressionDirection 压缩方向策略
+	// 可选: "auto"（自动）, "aggressive"（激进）, "conservative"（保守）
+	// default: "auto"
+	CompressionDirection string `toml:"compression_direction"`
+
+	// === Layer 6: State Compensation ===
+
+	// CompensateEnabled 是否启用状态补偿（压缩后注入关键状态信息）
+	// default: true
+	CompensateEnabled bool `toml:"compensate_enabled"`
+
+	// === Layer 7: Emergency ===
+
+	// EmergencyMaxRetries 紧急压缩失败时的最大重试次数
+	// default: 2
+	EmergencyMaxRetries int `toml:"emergency_max_retries"`
+
+	// CircuitBreakerThreshold 熔断器触发阈值（连续失败次数）
+	// default: 3
+	CircuitBreakerThreshold int `toml:"circuit_breaker_threshold"`
+
+	// CircuitBreakerResetDuration 熔断器重置持续时间（秒）
+	// default: 300 (5分钟)
+	CircuitBreakerResetDuration int `toml:"circuit_breaker_reset_duration"`
 }
 
 // CommitLearnerConfig commit 学习器配置

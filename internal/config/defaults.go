@@ -35,6 +35,37 @@ func DefaultCompactConfig() *ContextCompactConfig {
 		SummarizationMaxInputTokens: 8000,
 		SummarizationPrompt:         "",
 		KeepRecentRounds:            3,
+
+		// Layer 1: Tool Result Budget Control
+		MaxToolOutputTokens: 8192,
+		ToolPreviewTokens:   512,
+		OffloadEnabled:      true,
+		OffloadPath:         ".compact-offload",
+
+		// Layer 2: Old Message Pruning
+		MinPrunableAge: 5,
+
+		// Layer 3: Micro-compression
+		MicroCompressEnabled: true,
+		MicroCompressTools:   []string{"run_bash", "read_file", "list_files", "grep", "search"},
+
+		// Layer 4: Context Folding
+		FoldEnabled:      true,
+		FoldBatchSize:    10,
+		FoldStageTimeout: 30,
+
+		// Layer 5: Dynamic Threshold
+		SummaryReservedTokens: 20000,
+		BufferBandTokens:      13000,
+		CompressionDirection:  "auto",
+
+		// Layer 6: State Compensation
+		CompensateEnabled: true,
+
+		// Layer 7: Emergency
+		EmergencyMaxRetries:         2,
+		CircuitBreakerThreshold:     3,
+		CircuitBreakerResetDuration: 300,
 	}
 }
 
