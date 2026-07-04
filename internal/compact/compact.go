@@ -27,6 +27,12 @@ type Config struct {
 
 	// SummarizationMaxInputTokens 摘要时单批次最大输入token数（默认 100000）
 	SummarizationMaxInputTokens int `toml:"summarization_max_input_tokens"`
+
+	// MaxToolOutputTokens 单条工具输出 token 上限，0 表示不限制
+	MaxToolOutputTokens int `toml:"max_tool_output_tokens"`
+
+	// ToolPreviewTokens 工具输出预览 token 数（默认 128）
+	ToolPreviewTokens int `toml:"tool_preview_tokens"`
 }
 
 // DefaultConfig 默认配置
@@ -36,6 +42,8 @@ var DefaultConfig = Config{
 	KeepRecentRounds:            3,
 	SummarizationTimeout:        60 * time.Second,
 	SummarizationMaxInputTokens: 100000,
+	MaxToolOutputTokens:         0,    // 0 = 不限制
+	ToolPreviewTokens:           128,
 }
 
 // CompressResult 压缩结果
@@ -58,7 +66,13 @@ type Engine struct {
 	config        *Config
 	tokenizer     Tokenizer
 	summarizer    SummarizationClient
-	frozenSummary string // 已冻结的历史摘要，用于增量压缩
+	frozenSummary string          // 已冻结的历史摘要，用于增量压缩
+	offload       *OffloadStorage // 外部存储，用于超限工具输出
+}
+
+// SetOffloadStorage 设置外部存储（用于超限工具输出外存）
+func (e *Engine) SetOffloadStorage(storage *OffloadStorage) {
+	e.offload = storage
 }
 
 // NewEngine 创建压缩引擎
@@ -77,6 +91,12 @@ func NewEngine(config *Config, summarizer SummarizationClient) (*Engine, error) 
 	}
 	if config.SummarizationMaxInputTokens <= 0 {
 		config.SummarizationMaxInputTokens = DefaultConfig.SummarizationMaxInputTokens
+	}
+	if config.MaxToolOutputTokens < 0 {
+		config.MaxToolOutputTokens = 0
+	}
+	if config.ToolPreviewTokens <= 0 {
+		config.ToolPreviewTokens = DefaultConfig.ToolPreviewTokens
 	}
 
 	return &Engine{
