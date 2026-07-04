@@ -231,11 +231,47 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}
 
 		if err != nil {
-			slog.Error("AgentExecutor LLM error after all retries", "agent", cfg.AgentName, "error", err, "step", i)
-			llm.LogLLMError("AgentExecutor LLM error after all retries",
-				"agent", cfg.AgentName, "error", err, "step", i,
-			)
-			return ExecutorResult{}, err
+			// ─── 应急反应层：尝试上下文长度错误的应急压缩 ───
+			if isContextLengthError(err) && cfg.CompactEngine != nil {
+				slog.Warn("Context length error detected, attempting emergency compression",
+					"agent", cfg.AgentName, "step", i, "error", err)
+
+				emergencyMsgs, emergencyResult, emergencyErr := cfg.CompactEngine.EmergencyCompress(
+					ctx, messages, 0) // 0 = use default max tokens
+
+				if emergencyErr != nil {
+					slog.Error("Emergency compression failed",
+						"agent", cfg.AgentName, "error", emergencyErr)
+					return ExecutorResult{}, fmt.Errorf("LLM call failed after emergency compression: %w (original: %v)", emergencyErr, err)
+				}
+
+				slog.Warn("Emergency compression applied",
+					"agent", cfg.AgentName,
+					"method", emergencyResult.Method,
+					"layers_stripped", emergencyResult.LayersStripped,
+					"tokens_recovered", emergencyResult.TokensRecovered,
+					"messages_kept", emergencyResult.MessagesKept)
+
+				// 使用应急压缩后的消息重试一次
+				messages = emergencyMsgs
+
+				// 再次尝试 LLM 调用（仅一次）
+				resp, err = cfg.LLM.GenerateContent(ctx, messages, toolDefs, opts)
+				if err != nil {
+					slog.Error("LLM call still failed after emergency compression",
+						"agent", cfg.AgentName, "error", err)
+					return ExecutorResult{}, fmt.Errorf("LLM call failed after emergency compression: %w", err)
+				}
+				// 重置 err，继续正常流程
+			}
+
+			if err != nil {
+				slog.Error("AgentExecutor LLM error after all retries", "agent", cfg.AgentName, "error", err, "step", i)
+				llm.LogLLMError("AgentExecutor LLM error after all retries",
+					"agent", cfg.AgentName, "error", err, "step", i,
+				)
+				return ExecutorResult{}, err
+			}
 		}
 
 		choice := resp.Choices[0]
@@ -416,4 +452,20 @@ func logToolCall(toolName, agentName, args string, result string, err error, sta
 		errMsg = err.Error()
 	}
 	LogToolCall(toolName, agentName, argsJSON, result, errMsg, duration)
+}
+
+// isContextLengthError 检查错误是否为上下文长度超限
+func isContextLengthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// 常见 LLM API 上下文长度超限错误
+	return strings.Contains(msg, "context_length_exceeded") ||
+		strings.Contains(msg, "max_tokens") ||
+		strings.Contains(msg, "too many tokens") ||
+		strings.Contains(msg, "request too large") ||
+		strings.Contains(msg, "token limit") ||
+		strings.Contains(msg, "maximum context length") ||
+		strings.Contains(msg, "Prompt too long")
 }
