@@ -970,11 +970,39 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 					slog.Info("Context compressed",
 						"compressed_tokens", result.CompressedTokens,
 						"ratio", fmt.Sprintf("%.2f%%", result.CompressionRatio*100))
+
+					// 解析 CompressionStats 提取各层应用情况
+					var layers []string
+					stats := result.CompressionStats
+					if strings.HasPrefix(stats, "Pipeline: ") {
+						rest := stats[len("Pipeline: "):]
+						if idx := strings.Index(rest, " | "); idx != -1 {
+							layersStr := rest[:idx]
+							for _, layer := range strings.Split(layersStr, " → ") {
+								layers = append(layers, strings.TrimSpace(layer))
+							}
+						}
+					}
+
+					// 计算节省的 token 数
+					tokensSaved := result.OriginalTokens - result.CompressedTokens
+
+					// 提取压缩方法（第一层）
+					compressMethod := "unknown"
+					if len(layers) > 0 {
+						compressMethod = layers[0]
+					}
+
 					if a.Publisher != nil {
 						a.Publisher.Publish("context_compressed", map[string]interface{}{
 							"original_tokens":   result.OriginalTokens,
 							"compressed_tokens": result.CompressedTokens,
+							"tokens_saved":      tokensSaved,
 							"ratio":             fmt.Sprintf("%.2f%%", result.CompressionRatio*100),
+							"layers":            layers,
+							"method":            compressMethod,
+							"has_summary":       result.SummaryInfo != "",
+							"stats":             stats,
 						}, a.Name())
 					}
 				}
