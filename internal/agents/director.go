@@ -70,7 +70,7 @@ type DirectorAgent struct {
 	customAgents   map[string]*CustomAgent         // delegate_<name> → agent design
 	compactEngine  *compact.Engine                 // 上下文压缩引擎
 	compactConfig  *compact.Config                 // 压缩配置
-	adapter        *DirectorAdapter               // 新旧整合适配器
+	adapter        *DirectorAdapter                // 新旧整合适配器
 	summaryEngine  llm.Engine                      // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
@@ -477,20 +477,10 @@ func (a *DirectorAgent) getToolFunc(name string) tools.ToolFunc {
 		return a.GlobalCtx.SysOps.ExecuteRunBash
 	case "search_by_regex":
 		return a.GlobalCtx.SearchOps.ExecuteGrepSearch
-	case "delete_file":
-		return a.GlobalCtx.FileOps.ExecuteDeleteFile
-	case "rename_file":
-		return a.GlobalCtx.FileOps.ExecuteRenameFile
 	case "list_dir":
 		return a.GlobalCtx.FileOps.ExecuteListDir
 	case "print_dir_tree":
 		return a.GlobalCtx.FileOps.ExecutePrintDirTree
-	case "semantic_search":
-		return a.GlobalCtx.RepoOps.ExecuteSemanticSearch
-	case "query_code_skeleton":
-		return a.GlobalCtx.RepoOps.ExecuteQueryCodeSkeleton
-	case "query_code_snippet":
-		return a.GlobalCtx.RepoOps.ExecuteQueryCodeSnippet
 	case "thinking":
 		return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			inputBytes, _ := json.Marshal(params)
@@ -1248,11 +1238,12 @@ func (a *DirectorAgent) createSummaryClient() compact.SummarizationClient {
 		engine = a.summaryEngine
 	}
 	return &compact.SummaryAdapter{
-		LLM:        engine,
-		Temperature: 0.1, // 摘要使用低温，确保一致性
+		LLM:         engine,
+		Temperature: 0.1,  // 摘要使用低温，确保一致性
 		MaxTokens:   2000, // 摘要输出限制
 	}
 }
+
 // validateAndRepairToolCallPairs 验证并修复 tool_call/tool_response 配对完整性
 //
 // 如果发现孤立的 tool_calls（assistant 有 tool_calls 但缺少对应的 tool 响应），
