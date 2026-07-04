@@ -17,6 +17,10 @@ type Config struct {
 	// MaxContextTokens 最大上下文token数，默认 128000
 	MaxContextTokens int `toml:"max_context_tokens"`
 
+	// CompactLogDir 压缩独立日志目录，为空字符串表示不启用独立日志
+	// 启用后会在该目录下创建 compact-YYYY-MM-DD.log 文件
+	CompactLogDir string `toml:"compact_log_dir"`
+
 	// EnableAutoCompact 是否自动触发压缩
 	EnableAutoCompact bool `toml:"enable_auto_compact"`
 
@@ -136,6 +140,9 @@ type Engine struct {
 	statsLock         sync.Mutex
 	totalCompressions int
 	layerStats        map[string]int // 各层触发次数
+
+	// ── 压缩日志 ──
+	compactLogWriter CompactLogWriter
 }
 
 // SetOffloadStorage 设置外部存储（用于超限工具输出外存）
@@ -203,6 +210,12 @@ func NewEngine(config *Config, summarizer SummarizationClient) (*Engine, error) 
 	dynamicEngine := NewDynamicEngine(config, tokenizer)
 	dynamicEngine.SetConfig(dynamicCfg)
 
+	// 初始化压缩日志写入器
+	var logWriter CompactLogWriter = &NoOpCompactLogWriter{}
+	if config.CompactLogDir != "" {
+		logWriter = NewCompactLogger(config.CompactLogDir)
+	}
+
 	return &Engine{
 		config:        config,
 		tokenizer:     tokenizer,
@@ -214,6 +227,7 @@ func NewEngine(config *Config, summarizer SummarizationClient) (*Engine, error) 
 		dynamicEngine: dynamicEngine,
 		dynamicConfig: dynamicCfg,
 		layerStats:    make(map[string]int),
+		compactLogWriter: logWriter,
 	}, nil
 }
 
@@ -243,6 +257,17 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 	if err != nil {
 		return nil, fmt.Errorf("failed to count tokens: %w", err)
 	}
+
+	// ── 创建压缩日志会话 ──
+	session := NewCompactSession(originalTokens)
+	defer func() {
+		if err != nil {
+			session.FinalizeWithError(err)
+		} else {
+			session.Finalize()
+		}
+		e.compactLogWriter.LogSession(session)
+	}()
 
 	// ── 步骤 2: 计算动态阈值 ──
 	threshold := e.dynamicEngine.CalculateDynamicThreshold(messages)
@@ -284,12 +309,21 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 	// ── Layer 1: 工具结果预算控制 ──
 	// ───────────────────────────────────────────
 	if cc.CurrentTokens > cc.HardLimit && e.config.MaxToolOutputTokens > 0 {
+		tokensBefore := cc.CurrentTokens
+		start := time.Now()
 		result, newMsgs, err := e.applyToolBudget(cc.Messages)
+		duration := time.Since(start).Milliseconds()
 		if err == nil && result.TokensSaved > 0 {
 			cc.Messages = newMsgs
 			cc.CurrentTokens = e.countMessagesTokens(cc.Messages)
 			cc.LayersApplied = append(cc.LayersApplied, "budget")
 			e.recordLayerStat("budget")
+			session.AddLayerResult("budget", 0, tokensBefore, cc.CurrentTokens, duration, map[string]any{
+				"tokens_saved": result.TokensSaved,
+				"capped_count": result.CappedCount,
+				"offloaded":    result.Offloaded,
+				"truncated":    result.Truncated,
+			})
 			slog.Debug("Layer 1 (budget) applied", "tokens_saved", result.TokensSaved)
 		}
 	}
@@ -298,6 +332,8 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 	// ── Layer 2: 老消息剪裁 ──
 	// ───────────────────────────────────────────
 	if cc.CurrentTokens > cc.HardLimit && e.config.KeepRecentRounds > 0 {
+		tokensBefore := cc.CurrentTokens
+		start := time.Now()
 		prunerCC := &CompressionContext{
 			Threshold:      cc.Threshold,
 			CurrentTokens:  cc.CurrentTokens,
@@ -305,6 +341,7 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 			MinPrunableAge: e.config.MinPrunableAge,
 		}
 		result := e.pruneOldMessages(cc.Messages, prunerCC)
+		duration := time.Since(start).Milliseconds()
 		if result.PrunedCount > 0 {
 			// pruneOldMessages 返回 PruneResult，但不会修改输入切片
 			// 需要从头部裁剪 pruned 条消息
@@ -312,6 +349,10 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 			cc.CurrentTokens = e.countMessagesTokens(cc.Messages)
 			cc.LayersApplied = append(cc.LayersApplied, "prune")
 			e.recordLayerStat("prune")
+			session.AddLayerResult("prune", 1, tokensBefore, cc.CurrentTokens, duration, map[string]any{
+				"pruned_count":  result.PrunedCount,
+				"pruned_tokens": result.PrunedTokens,
+			})
 			slog.Debug("Layer 2 (prune) applied", "pruned", result.PrunedCount)
 		}
 	}
@@ -320,13 +361,20 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 	// ── Layer 3: 微压缩 ──
 	// ───────────────────────────────────────────
 	if cc.CurrentTokens > cc.HardLimit && e.config.MicroCompressEnabled {
+		tokensBefore := cc.CurrentTokens
+		start := time.Now()
 		keepBoundary := e.findKeepBoundary(cc.Messages)
 		result, newMsgs := e.microCompress(cc.Messages, keepBoundary)
+		duration := time.Since(start).Milliseconds()
 		if result.CompressedCount > 0 {
 			cc.Messages = newMsgs
 			cc.CurrentTokens = e.countMessagesTokens(cc.Messages)
 			cc.LayersApplied = append(cc.LayersApplied, "micro")
 			e.recordLayerStat("micro")
+			session.AddLayerResult("micro", 2, tokensBefore, cc.CurrentTokens, duration, map[string]any{
+				"compressed_count": result.CompressedCount,
+				"tokens_saved":     result.TokensSaved,
+			})
 			slog.Debug("Layer 3 (micro) applied", "compressed", result.CompressedCount, "tokens_saved", result.TokensSaved)
 		}
 	}
@@ -335,12 +383,15 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 	// ── Layer 4: 上下文折叠 ──
 	// ───────────────────────────────────────────
 	if cc.CurrentTokens > cc.HardLimit && e.config.FoldEnabled && e.summarizer != nil {
+		tokensBefore := cc.CurrentTokens
+		start := time.Now()
 		foldCfg := FoldContextConfig(
 			WithKeepRecentRounds(e.config.KeepRecentRounds),
 			WithMinFoldTokens(500),
 			WithFoldManager(e.foldManager),
 		)
 		entry, err := e.foldContext(ctx, cc.Messages, foldCfg)
+		duration := time.Since(start).Milliseconds()
 		if err != nil {
 			slog.Warn("Layer 4 (fold) failed, skipping", "error", err)
 		} else if entry != nil && entry.Phase == FoldPhaseCommitted && entry.SummaryMsg != nil {
@@ -353,6 +404,11 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 			cc.CurrentTokens = e.countMessagesTokens(cc.Messages)
 			cc.LayersApplied = append(cc.LayersApplied, "fold")
 			e.recordLayerStat("fold")
+			session.AddLayerResult("fold", 3, tokensBefore, cc.CurrentTokens, duration, map[string]any{
+				"tokens_saved":   entry.TokensSaved,
+				"source_tokens":  entry.SourceTokens,
+				"summary_tokens": entry.SummaryTokens,
+			})
 			slog.Debug("Layer 4 (fold) applied", "tokens_saved", entry.TokensSaved)
 		}
 	}
@@ -361,6 +417,9 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 	// ── Layer 5: 自动压缩（兜底 — 原有 LLM 摘要逻辑） ──
 	// ───────────────────────────────────────────
 	if cc.CurrentTokens > cc.HardLimit && e.summarizer != nil {
+		tokensBefore := cc.CurrentTokens
+		start := time.Now()
+
 		// 使用原有的分区逻辑
 		recent, older := extractRecentMessages(cc.Messages, e.config.KeepRecentRounds)
 		if len(older) > 0 {
@@ -381,6 +440,10 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 				cc.Messages = buildTruncatedMessages(messages, truncatedOlder, recent, e.config.KeepRecentRounds)
 				cc.LayersApplied = append(cc.LayersApplied, "truncate_only")
 				e.recordLayerStat("truncate_only")
+				duration := time.Since(start).Milliseconds()
+				session.AddLayerResult("truncate_only", 4, tokensBefore, cc.CurrentTokens, duration, map[string]any{
+					"freed_bytes": freedBytes,
+				})
 				slog.Info("Layer 5 (truncate_only) sufficient", "freed_bytes", freedBytes)
 			} else if freedBytes > 0 {
 				// 截断释放了部分 token，使用截断后的 older 继续 LLM 摘要
@@ -409,6 +472,11 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 				}
 				cc.LayersApplied = append(cc.LayersApplied, "auto_compress")
 				e.recordLayerStat("auto_compress")
+				duration := time.Since(start).Milliseconds()
+				session.AddLayerResult("auto_compress", 4, tokensBefore, cc.CurrentTokens, duration, map[string]any{
+					"summary_produced": summary != "",
+					"incremental":      e.frozenSummary != "",
+				})
 			}
 
 			cc.CurrentTokens = e.countMessagesTokens(cc.Messages)
@@ -419,6 +487,8 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 	// ── Layer 6: 状态补偿 ──
 	// ───────────────────────────────────────────
 	if cc.ExtractedState != nil && e.config.CompensateEnabled {
+		tokensBefore := cc.CurrentTokens
+		start := time.Now()
 		compResult := e.extractor.compensateState(
 			&CompressionContext{
 				Threshold:     cc.Threshold,
@@ -429,9 +499,15 @@ func (e *Engine) Compress(ctx context.Context, messages []llm.Message) (*Compres
 			cc.ExtractedState,
 			e,
 		)
+		duration := time.Since(start).Milliseconds()
 		if compResult.Injected {
 			cc.LayersApplied = append(cc.LayersApplied, "compensate")
 			e.recordLayerStat("compensate")
+			session.AddLayerResult("compensate", 5, tokensBefore, cc.CurrentTokens, duration, map[string]any{
+				"files_reinjected":  compResult.FilesReinjected,
+				"plan_reinjected":   compResult.PlanReinjected,
+				"skills_reinjected": compResult.SkillsReinjected,
+			})
 			slog.Debug("Layer 6 (compensate) applied", "files", compResult.FilesReinjected,
 				"plan", compResult.PlanReinjected, "skills", compResult.SkillsReinjected)
 		}
@@ -466,6 +542,14 @@ func (e *Engine) recordLayerStat(layer string) {
 	e.statsLock.Lock()
 	defer e.statsLock.Unlock()
 	e.layerStats[layer]++
+}
+
+// Close 关闭压缩日志文件
+func (e *Engine) Close() error {
+	if e.compactLogWriter != nil {
+		return e.compactLogWriter.Close()
+	}
+	return nil
 }
 
 // CountTokens 计算 messages 的总 token 数

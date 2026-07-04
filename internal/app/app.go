@@ -15,6 +15,7 @@ import (
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
+	"codeactor/internal/logging"
 	"codeactor/internal/memory"
 	"codeactor/internal/skills"
 	"codeactor/internal/tools"
@@ -185,6 +186,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			KeepRecentRounds:            c.KeepRecentRounds,
 			SummarizationTimeout:        time.Duration(c.SummarizationTimeout) * time.Second,
 			SummarizationMaxInputTokens: c.SummarizationMaxInputTokens,
+			CompactLogDir:               logging.GetLogDir(),
 		}
 
 		// 为 compact 摘要创建独立的 LLM 引擎（如果配置了 summarization_provider）
