@@ -653,6 +653,7 @@ func CleanSummaryOutput(raw string) string {
 	cleaned := raw
 
 	cleaned = removeMarkdownFence(cleaned)
+	cleaned = removeCourtesyPrefix(cleaned)
 	cleaned = removeDuplicateLines(cleaned)
 	cleaned = compactWhitespace(cleaned)
 
@@ -703,6 +704,33 @@ func compactWhitespace(text string) string {
 	text = re.ReplaceAllString(text, "\n\n")
 	re = regexp.MustCompile(`[ \t]+$`)
 	text = re.ReplaceAllString(text, "")
+	return text
+}
+
+func removeCourtesyPrefix(text string) string {
+	// 常见的礼貌前缀列表
+	prefixes := []string{
+		"Sure, here is the summary.",
+		"Here is the summary.",
+		"Certainly! Here is the summary.",
+		"Certainly, here is the summary.",
+		"Here's a summary of the conversation",
+		"Here's the summary",
+		"Here is a summary",
+		"Of course. Here is the summary",
+		"Of course, here is the summary",
+	}
+
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(strings.TrimSpace(text), prefix) {
+			after := strings.TrimPrefix(strings.TrimSpace(text), prefix)
+			after = strings.TrimSpace(after)
+			if after != "" {
+				return after
+			}
+		}
+	}
+
 	return text
 }
 
