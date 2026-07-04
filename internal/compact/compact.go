@@ -33,6 +33,12 @@ type Config struct {
 
 	// ToolPreviewTokens 工具输出预览 token 数（默认 128）
 	ToolPreviewTokens int `toml:"tool_preview_tokens"`
+
+	// MicroCompressEnabled 是否启用微压缩（Layer 3：语义占位符替换）
+	MicroCompressEnabled bool `toml:"micro_compress_enabled"`
+
+	// MicroCompressTools 需要微压缩的工具列表（白名单）
+	MicroCompressTools []string `toml:"micro_compress_tools"`
 }
 
 // DefaultConfig 默认配置
@@ -44,6 +50,8 @@ var DefaultConfig = Config{
 	SummarizationMaxInputTokens: 100000,
 	MaxToolOutputTokens:         0,    // 0 = 不限制
 	ToolPreviewTokens:           128,
+	MicroCompressEnabled:        true, // Layer 3: 微压缩默认启用
+	MicroCompressTools:          []string{"run_bash", "read_file", "list_files", "grep", "search"},
 }
 
 // CompressResult 压缩结果
