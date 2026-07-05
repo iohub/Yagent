@@ -6,6 +6,7 @@ package protocol
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ===== 事件类型常量 =====
@@ -37,6 +38,20 @@ type EventType string
 
 // String 返回事件类型的字符串表示
 func (e EventType) String() string { return string(e) }
+
+// ===== 交互模式类型 =====
+
+// InteractionType 定义用户帮助的交互模式
+type InteractionType string
+
+const (
+	InteractionConfirm InteractionType = "confirm"  // 二元确认（是/否）
+	InteractionSelect  InteractionType = "select"   // 多选一
+	InteractionInput   InteractionType = "input"    // 自由文本输入
+)
+
+// String 返回交互类型的字符串表示
+func (it InteractionType) String() string { return string(it) }
 
 // ===== 事件数据类型 =====
 
@@ -126,14 +141,24 @@ type AiStreamEndData struct {
 
 // UserHelpNeededData 需要用户帮助/确认
 type UserHelpNeededData struct {
-	Question string `json:"question"`          // 向用户提出的问题
-	Context  string `json:"context,omitempty"` // 附加上下文信息
+	Question        string          `json:"question"`                    // 问题文本
+	Context         string          `json:"context,omitempty"`           // 附加上下文
+	InteractionType InteractionType `json:"interaction_type,omitempty"`  // 交互模式（为空时自动推断）
+	Options         []string        `json:"options,omitempty"`           // 选项列表
+	DefaultValue    string          `json:"default_value,omitempty"`     // 默认值/预填文本
+	Placeholder     string          `json:"placeholder,omitempty"`       // 输入框占位提示
+	AllowCustom     bool            `json:"allow_custom,omitempty"`      // 允许自定义输入（Select模式）
+	RequestID       string          `json:"request_id,omitempty"`        // 请求唯一ID
 }
 
 // UserHelpResponseData 用户回复了帮助请求
 type UserHelpResponseData struct {
-	Response string `json:"response"`           // 用户的回复内容
-	Approved bool   `json:"approved,omitempty"` // 是否批准
+	Response        string          `json:"response"`                    // 用户的回答文本
+	Approved        bool            `json:"approved,omitempty"`          // 是否批准（兼容旧字段）
+	InteractionType InteractionType `json:"interaction_type,omitempty"`  // 回传交互类型
+	IsCustom        bool            `json:"is_custom,omitempty"`         // 是否为自定义输入
+	Cancelled       bool            `json:"cancelled,omitempty"`         // 是否取消
+	RequestID       string          `json:"request_id,omitempty"`        // 匹配请求ID
 }
 
 // ConversationErrorData 对话处理错误
@@ -252,8 +277,8 @@ var EventRenderHints = map[EventType]RenderHint{
 		Component: "StreamingText",
 	},
 	EventTypeUserHelpNeeded: {
-		Component: "UserConfirmCard",
-		Heading:   "需要确认",
+		Component: "UserHelpCard",
+		Heading:   "需要帮助",
 	},
 	EventTypeUserHelpResponse: {
 		Component: "StatusPill",
@@ -317,4 +342,55 @@ func ParseAgentEvent(envelope AgentEventEnvelope) (interface{}, error) {
 		}
 		return target, nil
 	}
+}
+
+// InferInteractionType 根据选项列表自动推断交互类型
+// 规则:
+//   - 0 或 1 个选项 → Input
+//   - 2 个选项且为布尔语义对 → Confirm
+//   - 否则 → Select
+func InferInteractionType(options []string) InteractionType {
+	switch len(options) {
+	case 0, 1:
+		return InteractionInput
+	case 2:
+		if isBooleanPair(options) {
+			return InteractionConfirm
+		}
+		return InteractionSelect
+	default:
+		return InteractionSelect
+	}
+}
+
+// isBooleanPair 检查两个选项是否为布尔语义对
+// 如: yes/no, y/n, true/false, allow/deny, approve/reject, ok/cancel, 1/0
+func isBooleanPair(options []string) bool {
+	if len(options) != 2 {
+		return false
+	}
+
+	// 标准化布尔值集合
+	booleanValues := map[string]bool{
+		"yes":    true,
+		"no":     true,
+		"y":      true,
+		"n":      true,
+		"true":   true,
+		"false":  true,
+		"allow":  true,
+		"deny":   true,
+		"approve": true,
+		"reject": true,
+		"ok":     true,
+		"cancel": true,
+		"confirm": true,
+		"1":      true,
+		"0":      true,
+	}
+
+	a := strings.ToLower(strings.TrimSpace(options[0]))
+	b := strings.ToLower(strings.TrimSpace(options[1]))
+
+	return booleanValues[a] && booleanValues[b]
 }
