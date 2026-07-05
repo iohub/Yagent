@@ -583,6 +583,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return m, nil
 
+				case *components.UserHelpDialog:
+					// Let the dialog handle the key internally via its Update
+					updated, cmd := d.Update(msg)
+					_ = updated // dialog state mutated in-place via pointer
+
+					// Check if dialog is closed (user submitted or cancelled)
+					if d.IsClosed() {
+						m.dialogStack.Pop()
+						m.respondToUserHelp(d.Result())
+					}
+
+					if cmd != nil {
+						return m, cmd
+					}
+					return m, nil
+
 				case *components.QuitConfirmDialog:
 					switch key {
 					case "enter", "y", "Y":
@@ -1566,7 +1582,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Intercept user_help_needed to show interactive dialog
 		if msg.event.Type == "user_help_needed" {
-			m.openConfirmDialog(msg.event)
+			// Check if event has interaction_type → new format → UserHelpDialog
+			// Otherwise → old format → ConfirmDialog (backward compat)
+			if content, ok := msg.event.Content.(map[string]interface{}); ok {
+				if _, hasInteractionType := content["interaction_type"]; hasInteractionType {
+					m.openUserHelpDialog(msg.event)
+				} else {
+					m.openConfirmDialog(msg.event)
+				}
+			} else {
+				m.openConfirmDialog(msg.event)
+			}
 			// Still log the event so it appears in the background
 			entry := formatEventAsEntry(msg.event)
 			m.logEntries = append(m.logEntries, entry)
