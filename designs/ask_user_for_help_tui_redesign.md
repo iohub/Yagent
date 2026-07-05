@@ -678,3 +678,41 @@ func (c *CLIConsumer) cliInput(data) {
 1. **最小回滚**：TUIConsumer 路由切回 `openConfirmDialog`（1 行改动）
 2. **协议回滚**：新字段均有 `omitempty`，旧代码无需修改即可兼容
 3. **完全回滚**：移除 UserHelpDialog 注册，恢复原有路由路径
+
+---
+
+## 十四、实现完成报告
+
+> 实现日期: 2025-07-17
+> 实施人: Director → Sub-agents
+> 状态: ✅ 全部完成
+
+### 实现清单
+
+| # | 文件 | 操作 | 实际工作量 | 状态 |
+|---|------|------|-----------|------|
+| 1 | `internal/protocol/agent_events.go` | 新增 InteractionType 类型、扩展 UserHelpNeededData/UserHelpResponseData、添加 InferInteractionType + isBooleanPair | ~90 行 | ✅ |
+| 2 | `internal/tui/components/user_help_dialog.go` | **新建**：UserHelpDialog 组件（完整状态机 + 三种模式渲染 + 键盘事件处理 + 提交/取消逻辑） | ~420 行 | ✅ |
+| 3 | `internal/tools/flow_control.go` | 增强 ExecuteAskUserForHelp：支持选项数组、交互类型推断、新参数解析 | ~60 行 | ✅ |
+| 4 | `internal/tools/user_confirm.go` | 新增 pendingHelp map、RequestUserHelp、requestUserHelpInternal、getHelpTimeout、扩展 Consume | ~80 行 | ✅ |
+| 5 | `internal/tui/tui_dialogs.go` | 新增 openUserHelpDialog + respondToUserHelp | ~90 行 | ✅ |
+| 6 | `internal/tui/tui_update.go` | 修改 user_help_needed 路由（检查 interaction_type）、新增 UserHelpDialog case | ~20 行 | ✅ |
+| 7 | `internal/agents/tools.json` | 更新 ask_user_for_help 工具 schema（新参数） | ~15 行 | ✅ |
+| **合计** | 7 个文件（1 新 6 改） | | **~775 行** | **✅ 全部完成** |
+
+### 设计偏差说明
+
+| 设计点 | 原方案 | 实际实现 | 原因 |
+|--------|--------|----------|------|
+| `ConfirmDialog` 共存 | 建议新增 ClosableDialog 接口 | 使用 Go 类型断言 `switch d := top.(type)` 直接匹配 `*UserHelpDialog`，无需额外接口 | `tui_update.go` 已经有 switch type 模式，零成本接入 |
+| `suggested_options` 向后兼容 | 建议走 UnmarshalJSON 兼容 | 在 `flow_control.go` 的 `ExecuteAskUserForHelp` 中同时处理 `[]interface{}` 和 `string` 格式 | 更直观、不影响原始 JSON schema 兼容 |
+| CLI 消费者文件 | 预期 `internal/messaging/consumers/cli.go` | 文件不存在；CLI 交互由 `consumers/tui.go` 的 `TUIConsumer.showUserInputDialog` 处理（已存在，未改动） | 项目实际架构如此 |
+
+### 验证结果
+
+| 验证项 | 结果 |
+|--------|------|
+| `go build ./...` | ✅ 编译通过 |
+| `go vet ./...` | ✅ 静态分析通过 |
+| `user_help_needed` 双重处理 | ✅ 无双重处理（TUI 模式 vs HTTP/WebSocket 模式各自有独立的 MessageDispatcher 和 Consumer） |
+| 向后兼容 | ✅ 旧 Agent 调用（string 格式的 suggested_options、无 interaction_type）自动降级为原有路径 |
