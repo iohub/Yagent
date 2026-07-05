@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"codeactor/internal/messaging"
+	"codeactor/internal/protocol"
 	"codeactor/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
@@ -63,6 +64,91 @@ func (m *model) respondToAuth(response string) {
 		timestamp: time.Now(),
 		eventType: "status",
 		content:   fmt.Sprintf("Auth response: %s", response),
+	})
+	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+}
+
+// openUserHelpDialog 解析 user_help_needed 事件并打开 UserHelpDialog
+func (m *model) openUserHelpDialog(event *messaging.MessageEvent) {
+	content, ok := event.Content.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	// 解析字段
+	question, _ := content["question"].(string)
+	if question == "" {
+		return
+	}
+
+	contextStr, _ := content["context"].(string)
+	requestID, _ := content["request_id"].(string)
+
+	// 解析交互类型（可选，为空时 UserHelpDialog 会自动推断）
+	var interactionType protocol.InteractionType
+	if it, ok := content["interaction_type"].(string); ok {
+		interactionType = protocol.InteractionType(it)
+	}
+
+	// 解析选项列表
+	var options []string
+	if opts, ok := content["options"].([]interface{}); ok {
+		for _, opt := range opts {
+			if s, ok := opt.(string); ok {
+				options = append(options, s)
+			}
+		}
+	}
+
+	// 解析可选字段
+	defaultValue, _ := content["default_value"].(string)
+	placeholder, _ := content["placeholder"].(string)
+	allowCustom := true
+	if ac, ok := content["allow_custom"].(bool); ok {
+		allowCustom = ac
+	}
+
+	// 构造 UserHelpNeededData
+	data := protocol.UserHelpNeededData{
+		Question:        question,
+		Context:         contextStr,
+		InteractionType: interactionType,
+		Options:         options,
+		DefaultValue:    defaultValue,
+		Placeholder:     placeholder,
+		AllowCustom:     allowCustom,
+		RequestID:       requestID,
+	}
+
+	// 创建并推入对话框
+	d := components.NewUserHelpDialog(data)
+	m.dialogStack.Push(d)
+}
+
+// respondToUserHelp 发布用户帮助响应并关闭对话框
+func (m *model) respondToUserHelp(result *protocol.UserHelpResponseData) {
+	if m.publisher == nil {
+		return
+	}
+
+	// 发布响应事件
+	m.publisher.Publish("user_help_response", map[string]interface{}{
+		"response":         result.Response,
+		"interaction_type": string(result.InteractionType),
+		"is_custom":        result.IsCustom,
+		"cancelled":        result.Cancelled,
+		"request_id":       result.RequestID,
+	}, "User")
+
+	// 记录日志
+	statusStr := "responded"
+	if result.Cancelled {
+		statusStr = "cancelled"
+	}
+	m.logEntries = append(m.logEntries, logEntry{
+		timestamp: time.Now(),
+		eventType: "status",
+		content:   fmt.Sprintf("User help response (%s): %s", statusStr, result.Response),
 	})
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 }
