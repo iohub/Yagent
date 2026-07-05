@@ -348,7 +348,7 @@
   },
   {
     "name": "ask_user_for_help",
-    "description": "When you encounter an issue that requires user authorization, confirmation, or input, use this tool to ask the user for help. The tool will pause execution and wait for the user's response. Use this when you need: 1) Authorization to proceed with a potentially risky operation, 2) Clarification on ambiguous requirements, 3) Confirmation before making a significant change. The user's response will be returned directly.",
+    "description": "When you encounter an issue that requires user input, confirmation, or selection, use this tool to ask the user for help. The tool will pause execution and wait for the user's response. Supports three interaction modes: confirm (yes/no), select (choose from options), input (free text). The interaction mode is automatically inferred from suggested_options, or can be explicitly set via interaction_type.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -361,8 +361,28 @@
           "description": "A specific, concise question to ask the user. This will be shown to the user directly."
         },
         "suggested_options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional. Suggested answer options for the user. Controls the interaction mode: empty → input mode (free text), two boolean-like options (e.g., ['yes', 'no']) → confirm mode (yes/no buttons), 2+ non-boolean options → select mode (option list)."
+        },
+        "interaction_type": {
           "type": "string",
-          "description": "Optional. Suggested answer options for the user, e.g., 'Approve / Reject / More Info'."
+          "enum": ["confirm", "select", "input"],
+          "description": "Optional. Explicitly set the interaction mode. Overrides automatic inference from suggested_options. 'confirm' → yes/no buttons, 'select' → option list, 'input' → free text input."
+        },
+        "default_value": {
+          "type": "string",
+          "description": "Optional. Default selected option (for confirm/select mode) or pre-filled text (for input mode)."
+        },
+        "placeholder": {
+          "type": "string",
+          "description": "Optional. Placeholder text shown in the input field (input mode only)."
+        },
+        "allow_custom": {
+          "type": "boolean",
+          "description": "Optional. Whether to allow custom input in select mode. Default: true. Set to false to restrict selection to suggested options only."
         }
       },
       "required": ["reason", "specific_question"]
