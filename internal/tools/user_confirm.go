@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"codeactor/internal/messaging"
+	"codeactor/internal/protocol"
 
 	"github.com/google/uuid"
 )
@@ -17,15 +18,17 @@ import (
 // user_help_needed events and waiting for user_help_response events.
 // Multiple agents share one manager instance registered as a MessageConsumer.
 type UserConfirmManager struct {
-	mu        sync.Mutex
-	pending   map[string]chan string
-	publisher *messaging.MessagePublisher
+	mu          sync.Mutex
+	pending     map[string]chan string
+	pendingHelp map[string]chan *protocol.UserHelpResponseData
+	publisher   *messaging.MessagePublisher
 }
 
 // NewUserConfirmManager creates a new UserConfirmManager.
 func NewUserConfirmManager() *UserConfirmManager {
 	return &UserConfirmManager{
-		pending: make(map[string]chan string),
+		pending:     make(map[string]chan string),
+		pendingHelp: make(map[string]chan *protocol.UserHelpResponseData),
 	}
 }
 
@@ -82,6 +85,80 @@ func (m *UserConfirmManager) RequestConfirmation(ctx context.Context, question s
 	}
 }
 
+// RequestUserHelp 发布一个扩展的用户帮助请求并阻塞等待用户响应。
+// 与 RequestConfirmation 不同，它使用 protocol.UserHelpNeededData 作为参数，
+// 支持三种交互模式（confirm/select/input）。
+func (m *UserConfirmManager) RequestUserHelp(ctx context.Context, data *protocol.UserHelpNeededData) (*protocol.UserHelpResponseData, error) {
+	if m.publisher == nil {
+		return nil, fmt.Errorf("UserConfirmManager: publisher not set")
+	}
+	if data.RequestID == "" {
+		data.RequestID = uuid.New().String()
+	}
+	ch := make(chan *protocol.UserHelpResponseData, 1)
+	return m.requestUserHelpInternal(ctx, data, ch)
+}
+
+// getHelpTimeout 根据交互模式返回超时时间
+func getHelpTimeout(it protocol.InteractionType) time.Duration {
+	switch it {
+	case protocol.InteractionConfirm:
+		return 5 * time.Minute
+	case protocol.InteractionSelect:
+		return 10 * time.Minute
+	case protocol.InteractionInput:
+		return 30 * time.Minute
+	default:
+		return 10 * time.Minute
+	}
+}
+
+// requestUserHelpInternal 内部实现，发布扩展的帮助请求并等待响应
+func (m *UserConfirmManager) requestUserHelpInternal(ctx context.Context, data *protocol.UserHelpNeededData, ch chan *protocol.UserHelpResponseData) (*protocol.UserHelpResponseData, error) {
+	m.mu.Lock()
+	m.pendingHelp[data.RequestID] = ch
+	m.mu.Unlock()
+
+	defer func() {
+		m.mu.Lock()
+		delete(m.pendingHelp, data.RequestID)
+		m.mu.Unlock()
+	}()
+
+	// 发布事件
+	content := map[string]interface{}{
+		"question":          data.Question,
+		"context":           data.Context,
+		"interaction_type":  string(data.InteractionType),
+		"options":           data.Options,
+		"default_value":     data.DefaultValue,
+		"placeholder":       data.Placeholder,
+		"allow_custom":      data.AllowCustom,
+		"request_id":        data.RequestID,
+	}
+
+	m.publisher.Publish("user_help_needed", content, "Agent")
+
+	slog.Info("UserConfirmManager waiting for user help response",
+		"request_id", data.RequestID,
+		"interaction_type", data.InteractionType,
+		"question", data.Question,
+	)
+
+	// 超时时间根据交互模式调整
+	timeout := getHelpTimeout(data.InteractionType)
+
+	select {
+	case response := <-ch:
+		slog.Info("UserConfirmManager received help response", "request_id", data.RequestID)
+		return response, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("user help cancelled: %w", ctx.Err())
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("user help timed out after %v", timeout)
+	}
+}
+
 // OnUserResponse delivers a user response to the waiting request channel.
 func (m *UserConfirmManager) OnUserResponse(requestID, response string) {
 	m.mu.Lock()
@@ -129,6 +206,35 @@ func (m *UserConfirmManager) Consume(event *messaging.MessageEvent) error {
 	}
 
 	if requestID != "" {
+		// 先尝试匹配新的 pendingHelp 请求
+		if ch, ok := m.pendingHelp[requestID]; ok {
+			respData := &protocol.UserHelpResponseData{
+				Response:        response,
+				RequestID:       requestID,
+			}
+
+			// 尝试从 content 中提取更多字段
+			if content, ok := event.Content.(map[string]interface{}); ok {
+				if it, ok := content["interaction_type"].(string); ok {
+					respData.InteractionType = protocol.InteractionType(it)
+				}
+				if isCustom, ok := content["is_custom"].(bool); ok {
+					respData.IsCustom = isCustom
+				}
+				if cancelled, ok := content["cancelled"].(bool); ok {
+					respData.Cancelled = cancelled
+				}
+			}
+
+			select {
+			case ch <- respData:
+			default:
+				slog.Warn("UserConfirmManager pendingHelp channel full", "request_id", requestID)
+			}
+			return nil
+		}
+
+		// 旧流程：用原有的 pending 匹配逻辑
 		m.OnUserResponse(requestID, response)
 	}
 
