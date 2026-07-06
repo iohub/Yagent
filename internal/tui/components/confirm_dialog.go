@@ -143,7 +143,6 @@ func (d *ConfirmDialog) View() string {
 	titleStyle := common.SectionHeaderStyle(c)
 	commandStyle := common.CodeBlockStyle(c, innerWidth)
 	helpStyle := common.HelpTextStyle(c)
-	cursorStyle := common.CursorIndicatorStyle(c)
 
 	// ── Title line ──
 	titlePrefix := getConfirmText("ConfirmAuthTitle", d.lang)
@@ -180,25 +179,54 @@ func (d *ConfirmDialog) View() string {
 	// ── Option list ──
 	var optionLines []string
 	for i, opt := range d.options {
-		if i == d.selectedIndex {
-			// Focused option: full button style
-			styled := lipgloss.JoinHorizontal(lipgloss.Center,
-				opt.SafetyLv.Icon()+" "+opt.Label,
-			)
-			button := common.FocusedButtonStyle(c, opt.SafetyLv).
-				Width(innerWidth - 2).
-				Render(styled)
-			optionLines = append(optionLines, button)
-		} else {
-			// Normal option: icon + label + key
-			optText := fmt.Sprintf("  %s %s  (%s)", opt.SafetyLv.Icon(), opt.Label, opt.Key)
-			if lipgloss.Width(optText) > innerWidth-2 {
-				runes := []rune(optText)
-				if len(runes) > innerWidth-4 {
-					optText = string(runes[:innerWidth-4]) + "…"
-				}
+		iconAndLabel := fmt.Sprintf("%s %s", opt.SafetyLv.Icon(), opt.Label)
+
+		// Calculate maximum label width to fit key hints right-aligned
+		// Prefix: focused uses "┃ " (2), unfocused uses "  " (2)
+		// Suffix: " " + key (2 chars reserved for space + single key)
+		const prefixReserve = 2
+		const keyReserve = 2
+		maxLabelWidth := innerWidth - prefixReserve - keyReserve
+		if maxLabelWidth < 4 {
+			maxLabelWidth = 4
+		}
+
+		// Truncate label if it exceeds maxLabelWidth
+		labelText := iconAndLabel
+		if lipgloss.Width(labelText) > maxLabelWidth {
+			runes := []rune(labelText)
+			for len(runes) > 0 && lipgloss.Width(string(runes)+"…") > maxLabelWidth {
+				runes = runes[:len(runes)-1]
 			}
-			optionLines = append(optionLines, cursorStyle.Render("▶ ")+" "+cursorStyle.Render("•")+" "+optText)
+			labelText = string(runes) + "…"
+		}
+
+		if i == d.selectedIndex {
+			// Focused option: ┃ icon label                key
+			bar := common.FocusBarStyle(c, opt.SafetyLv).Render("┃")
+			label := common.FocusedOptionTextStyle(c).Render(labelText)
+			key := common.FocusedKeyHintStyle(c, opt.SafetyLv).Render(opt.Key)
+
+			lineWidth := lipgloss.Width(bar) + 1 + lipgloss.Width(label) + 1 + lipgloss.Width(key)
+			padding := innerWidth - lineWidth
+			if padding < 0 {
+				padding = 0
+			}
+
+			optionLines = append(optionLines, bar+" "+label+strings.Repeat(" ", padding)+" "+key)
+		} else {
+			// Non-focused option:   icon label                key
+			indent := "  "
+			label := common.UnfocusedOptionTextStyle(c).Render(labelText)
+			key := common.UnfocusedKeyHintStyle(c).Render(opt.Key)
+
+			lineWidth := lipgloss.Width(indent) + lipgloss.Width(label) + 1 + lipgloss.Width(key)
+			padding := innerWidth - lineWidth
+			if padding < 0 {
+				padding = 0
+			}
+
+			optionLines = append(optionLines, indent+label+strings.Repeat(" ", padding)+" "+key)
 		}
 	}
 	optionsBlock := lipgloss.JoinVertical(lipgloss.Left, optionLines...)

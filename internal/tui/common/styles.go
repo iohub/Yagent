@@ -628,6 +628,24 @@ func (s SafetyLevel) Icon() string {
 	}
 }
 
+// AccentColor returns the primary color representing this safety level.
+func (s SafetyLevel) AccentColor(c ColorTokens) color.Color {
+	switch s {
+	case SafetySafe:
+		return c.Success
+	case SafetyLow:
+		return c.Warning
+	case SafetyMedium:
+		return c.Accent
+	case SafetyHigh:
+		return c.DangerDim
+	case SafetyCritical:
+		return c.Danger
+	default:
+		return c.TextPrimary
+	}
+}
+
 // ── Reusable Style Primitives ──
 
 // SectionHeaderStyle returns a styled section title for grouping elements.
@@ -697,6 +715,38 @@ func CursorIndicatorStyle(c ColorTokens) lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(c.Primary).
 		Bold(true)
+}
+
+// FocusBarStyle returns a style for the focused option's left indicator bar (┃).
+func FocusBarStyle(c ColorTokens, level SafetyLevel) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(level.AccentColor(c)).
+		Bold(true)
+}
+
+// FocusedOptionTextStyle returns a style for the focused option's label text.
+func FocusedOptionTextStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(c.TextPrimary).
+		Bold(true)
+}
+
+// UnfocusedOptionTextStyle returns a style for the unfocused option's label text.
+func UnfocusedOptionTextStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(c.TextMuted)
+}
+
+// FocusedKeyHintStyle returns a style for the focused option's key hint letter.
+func FocusedKeyHintStyle(c ColorTokens, level SafetyLevel) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(level.AccentColor(c))
+}
+
+// UnfocusedKeyHintStyle returns a style for the unfocused option's key hint letter.
+func UnfocusedKeyHintStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(c.Border)
 }
 
 // DialogOverlayStyle returns a style that creates a dimmed overlay covering the screen.
