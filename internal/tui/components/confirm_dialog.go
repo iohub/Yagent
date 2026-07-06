@@ -164,7 +164,7 @@ func (d *ConfirmDialog) View() string {
 	// ── Warning text ──
 	var warningLine string
 	if d.warning != "" {
-		warnText := fmt.Sprintf("⚠ %s", d.warning)
+		warnText := d.warning
 		if lipgloss.Width(warnText) > innerWidth-2 {
 			runes := []rune(warnText)
 			if len(runes) > innerWidth-4 {
@@ -179,11 +179,8 @@ func (d *ConfirmDialog) View() string {
 	// ── Option list ──
 	var optionLines []string
 	for i, opt := range d.options {
-		iconAndLabel := fmt.Sprintf("%s %s", opt.SafetyLv.Icon(), opt.Label)
-
-		// Calculate maximum label width to fit key hints right-aligned
-		// Prefix: focused uses "┃ " (2), unfocused uses "  " (2)
-		// Suffix: " " + key (2 chars reserved for space + single key)
+		// Radio btn: "◉ " or "○ " = 2 cells
+		// Key: " " + key = 2 cells
 		const prefixReserve = 2
 		const keyReserve = 2
 		maxLabelWidth := innerWidth - prefixReserve - keyReserve
@@ -191,8 +188,8 @@ func (d *ConfirmDialog) View() string {
 			maxLabelWidth = 4
 		}
 
-		// Truncate label if it exceeds maxLabelWidth
-		labelText := iconAndLabel
+		// Truncate label if necessary
+		labelText := opt.Label
 		if lipgloss.Width(labelText) > maxLabelWidth {
 			runes := []rune(labelText)
 			for len(runes) > 0 && lipgloss.Width(string(runes)+"…") > maxLabelWidth {
@@ -202,31 +199,31 @@ func (d *ConfirmDialog) View() string {
 		}
 
 		if i == d.selectedIndex {
-			// Focused option: ┃ icon label                key
-			bar := common.FocusBarStyle(c, opt.SafetyLv).Render("┃")
-			label := common.FocusedOptionTextStyle(c).Render(labelText)
-			key := common.FocusedKeyHintStyle(c, opt.SafetyLv).Render(opt.Key)
+			// Focused option: ◉ label                          key
+			radio := common.RadioFocusedStyle(c, opt.SafetyLv).Render("◉")
+			label := common.OptionLabelFocusedStyle(c).Render(labelText)
+			key := common.OptionKeyFocusedStyle(c, opt.SafetyLv).Render(opt.Key)
 
-			lineWidth := lipgloss.Width(bar) + 1 + lipgloss.Width(label) + 1 + lipgloss.Width(key)
+			lineWidth := lipgloss.Width(radio) + 1 + lipgloss.Width(label) + 1 + lipgloss.Width(key)
 			padding := innerWidth - lineWidth
 			if padding < 0 {
 				padding = 0
 			}
 
-			optionLines = append(optionLines, bar+" "+label+strings.Repeat(" ", padding)+" "+key)
+			optionLines = append(optionLines, radio+" "+label+strings.Repeat(" ", padding)+" "+key)
 		} else {
-			// Non-focused option:   icon label                key
-			indent := "  "
-			label := common.UnfocusedOptionTextStyle(c).Render(labelText)
-			key := common.UnfocusedKeyHintStyle(c).Render(opt.Key)
+			// Unfocused option: ○ label                          key
+			radio := common.RadioUnfocusedStyle(c).Render("○")
+			label := common.OptionLabelUnfocusedStyle(c).Render(labelText)
+			key := common.OptionKeyUnfocusedStyle(c).Render(opt.Key)
 
-			lineWidth := lipgloss.Width(indent) + lipgloss.Width(label) + 1 + lipgloss.Width(key)
+			lineWidth := lipgloss.Width(radio) + 1 + lipgloss.Width(label) + 1 + lipgloss.Width(key)
 			padding := innerWidth - lineWidth
 			if padding < 0 {
 				padding = 0
 			}
 
-			optionLines = append(optionLines, indent+label+strings.Repeat(" ", padding)+" "+key)
+			optionLines = append(optionLines, radio+" "+label+strings.Repeat(" ", padding)+" "+key)
 		}
 	}
 	optionsBlock := lipgloss.JoinVertical(lipgloss.Left, optionLines...)
@@ -319,9 +316,9 @@ func getConfirmText(key string, lang Language) string {
 		return "↑↓ navigate  ·  Enter confirm  ·  letter shortcuts"
 	case "ConfirmAuthTitle":
 		if lang == LanguageZh {
-			return "⚠️ 授权请求"
+			return "授权请求"
 		}
-		return "⚠️ Authorization Request"
+		return "Authorization Required"
 	case "ConfirmAuthWarning":
 		if lang == LanguageZh {
 			return "此操作可能影响工作空间外的文件或系统环境。是否允许执行？"

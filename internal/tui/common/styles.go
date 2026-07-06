@@ -737,6 +737,44 @@ func UnfocusedOptionTextStyle(c ColorTokens) lipgloss.Style {
 		Foreground(c.TextMuted)
 }
 
+// RadioFocusedStyle returns a style for the focused radio button indicator (◉).
+func RadioFocusedStyle(c ColorTokens, level SafetyLevel) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(level.AccentColor(c)).
+		Bold(true)
+}
+
+// RadioUnfocusedStyle returns a style for the unfocused radio button indicator (○).
+func RadioUnfocusedStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(c.TextMuted)
+}
+
+// OptionLabelFocusedStyle returns a style for the focused option's label text.
+func OptionLabelFocusedStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(c.TextPrimary).
+		Bold(true)
+}
+
+// OptionLabelUnfocusedStyle returns a style for the unfocused option's label text.
+func OptionLabelUnfocusedStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(c.TextMuted)
+}
+
+// OptionKeyFocusedStyle returns a style for the focused option's shortcut key.
+func OptionKeyFocusedStyle(c ColorTokens, level SafetyLevel) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(level.AccentColor(c))
+}
+
+// OptionKeyUnfocusedStyle returns a style for the unfocused option's shortcut key.
+func OptionKeyUnfocusedStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(c.Border)
+}
+
 // FocusedKeyHintStyle returns a style for the focused option's key hint letter.
 func FocusedKeyHintStyle(c ColorTokens, level SafetyLevel) lipgloss.Style {
 	return lipgloss.NewStyle().

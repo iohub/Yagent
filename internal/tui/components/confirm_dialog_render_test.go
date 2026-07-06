@@ -1,7 +1,7 @@
 package components
 
 import (
-	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -116,7 +116,7 @@ func TestConfirmDialogShortcuts(t *testing.T) {
 	}
 }
 
-// TestConfirmDialogAllOptionsRendered verifies that all 5 option icons appear in the rendered output.
+// TestConfirmDialogAllOptionsRendered verifies that all 5 options appear in the rendered output.
 func TestConfirmDialogAllOptionsRendered(t *testing.T) {
 	styles := common.NewStyles(common.ThemeDark)
 	d := NewConfirmDialog(styles, "SystemCommand", "rm -rf /tmp/test_cache",
@@ -129,39 +129,21 @@ func TestConfirmDialogAllOptionsRendered(t *testing.T) {
 		t.Fatal("rendered output is empty")
 	}
 
-	// Check all emoji icons are present
-	expectedIcons := []string{"⚡", "⚠", "🔥", "⛔", "🛡"}
-	foundIcons := make(map[string]bool)
-
-	for _, icon := range expectedIcons {
-		if containsUnicode(rendered, icon) {
-			foundIcons[icon] = true
-		} else {
-			t.Errorf("expected icon %q not found in rendered output", icon)
+	// Check all labels are present
+	expectedLabels := []string{"允许 (本次)", "允许 (本工具)", "允许 (本次会话全部)", "允许 (本项目全部)", "拒绝"}
+	for _, label := range expectedLabels {
+		if !strings.Contains(rendered, label) {
+			t.Errorf("expected label %q not found in rendered output", label)
 		}
 	}
 
-	// All 5 icons should be found
-	if len(foundIcons) != len(expectedIcons) {
-		t.Errorf("found %d/%d icons: %v", len(foundIcons), len(expectedIcons), foundIcons)
+	// Check radio button symbols are present
+	if !strings.Contains(rendered, "◉") {
+		t.Error("expected focused radio button ◉ not found")
+	}
+	if !strings.Contains(rendered, "○") {
+		t.Error("expected unfocused radio button ○ not found")
 	}
 
-	t.Logf("\n━━━ 所有选项图标渲染测试 ━━━\n%s\n", rendered)
+	t.Logf("\n━━━ 所有选项渲染测试 ━━━\n%s\n", rendered)
 }
-
-// containsUnicode checks if the string contains the given unicode substring.
-func containsUnicode(s, substr string) bool {
-	return len(s) >= len(substr) && findSubstring(s, substr)
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
-// _ensureFmtUsed prevents unused import error
-var _ = fmt.Sprintf
