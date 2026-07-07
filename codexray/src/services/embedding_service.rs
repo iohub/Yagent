@@ -23,6 +23,7 @@ use rusqlite::{params, Connection as SqliteConnection};
 use anyhow::anyhow;
 
 use crate::codegraph::treesitter::TreeSitterParser;
+use crate::codegraph::js_detector::{JsDetector, DetectionResult};
 use crate::config::JsIndexConfig;
 use crate::codegraph::parser::CodeParser;
 use crate::config::Config;
@@ -371,6 +372,20 @@ impl EmbeddingService {
             let file_key = file_path.to_string_lossy().to_string();
             
             new_hashes.insert(file_key.clone(), hash.clone());
+
+            // ── JavaScript 混淆检测过滤 ──
+            if let Some(ext) = file_path.extension().and_then(|e| e.to_str()) {
+                if matches!(ext.to_lowercase().as_str(), "js" | "jsx" | "mjs" | "cjs") {
+                    let detector = JsDetector::default_detector();
+                    match detector.detect(&content) {
+                        DetectionResult::CompiledCode | DetectionResult::Empty => {
+                            info!("JS 混淆过滤器：跳过编译/混淆文件: {}", file_path.display());
+                            continue;
+                        }
+                        DetectionResult::SourceCode => {}
+                    }
+                }
+            }
 
             // Check if modified
             if let Some(hashes) = existing_hashes {

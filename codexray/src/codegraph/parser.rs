@@ -110,6 +110,13 @@ impl CodeParser {
             return Ok(());
         }
 
+        // ── JavaScript 混淆检测过滤 ──
+        if self._should_skip_js_file(file_path, None)? {
+            // 如果文件之前被索引过，清理旧实体
+            self._remove_file_entities(file_path, entity_graph, call_graph);
+            return Ok(());
+        }
+
         // 解析文件，提取新的实体和函数
         let (classes, functions) = self._extract_entities_from_file(file_path)?;
 
@@ -312,6 +319,47 @@ impl CodeParser {
         }
     }
 
+    /// 检查 JS/JSX 文件是否应被跳过（混淆检测过滤）
+    /// - file_content: 可选的文件内容，提供则可避免重复读取
+    fn _should_skip_js_file(&self, file_path: &Path, file_content: Option<&str>) -> Result<bool, String> {
+        let language = self._detect_language(file_path);
+        if language != "javascript" {
+            return Ok(false);
+        }
+
+        // 检查配置：是否启用 JS 索引
+        if !self.js_config.enabled {
+            info!("JS 索引已禁用，跳过文件: {}", file_path.display());
+            return Ok(true);
+        }
+
+        // 检查配置：是否启用混淆过滤
+        if self.js_config.obfuscation_filter {
+            let content = match file_content {
+                Some(c) => c.to_string(),
+                None => fs::read_to_string(file_path)
+                    .map_err(|e| format!("Failed to read file {}: {}", file_path.display(), e))?,
+            };
+
+            let detector = JsDetector::default_detector();
+            match detector.detect(&content) {
+                DetectionResult::CompiledCode => {
+                    info!("JS 混淆过滤器：跳过编译/混淆文件: {}", file_path.display());
+                    return Ok(true);
+                }
+                DetectionResult::Empty => {
+                    debug!("JS 混淆过滤器：跳过空文件: {}", file_path.display());
+                    return Ok(true);
+                }
+                DetectionResult::SourceCode => {
+                    debug!("JS 混淆过滤器：接受源码文件: {}", file_path.display());
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
     /// 移除文件相关的所有实体
     fn _remove_file_entities(
         &mut self,
@@ -434,39 +482,12 @@ impl CodeParser {
         let file_content = fs::read_to_string(file_path)
             .map_err(|e| format!("Failed to read file {}: {}", file_path.display(), e))?;
 
-        let language = self._detect_language(file_path);
-
         // ── JavaScript 混淆检测过滤 ──
-        if language == "javascript" {
-            // 检查配置：是否启用 JS 索引
-            if !self.js_config.enabled {
-                info!("JS 索引已禁用，跳过文件: {}", file_path.display());
-                return Ok(());
-            }
-
-            // 检查配置：是否启用混淆过滤
-            if self.js_config.obfuscation_filter {
-                let detector = JsDetector::default_detector();
-                match detector.detect(&file_content) {
-                    DetectionResult::CompiledCode => {
-                        info!(
-                            "JS 混淆过滤器：跳过编译/混淆文件: {}",
-                            file_path.display()
-                        );
-                        return Ok(());
-                    }
-                    DetectionResult::Empty => {
-                        debug!("JS 混淆过滤器：跳过空文件: {}", file_path.display());
-                        return Ok(());
-                    }
-                    DetectionResult::SourceCode => {
-                        debug!("JS 混淆过滤器：接受源码文件: {}", file_path.display());
-                        // 继续正常解析
-                    }
-                }
-            }
+        if self._should_skip_js_file(file_path, Some(&file_content))? {
+            return Ok(());
         }
 
+        let language = self._detect_language(file_path);
         let namespace = self._extract_namespace_from_content(&file_content, file_path);
         
         let mut functions = Vec::new();
