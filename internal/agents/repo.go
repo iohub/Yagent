@@ -104,7 +104,9 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 
 	systemPrompt = a.GlobalCtx.FormatPrompt(systemPrompt)
 
-	// [NEW] Step 1: 从缓存加载记忆并注入 system prompt
+	// Inject shared memory (4 dimensions: user, feedback, project, reference)
+	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
+
 	if a.memStore != nil {
 		memContent := a.memStore.Get()
 		if injection := RenderMemoryForInjection(memContent); injection != "" {
