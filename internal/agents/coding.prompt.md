@@ -96,7 +96,7 @@ When using `read_file`, the tool now enforces strict protections:
 ### What's Blocked
 - **Files > 500MB**: Refused entirely — use grep/search to find relevant content
 - **Files > 10MB with should_read_entire_file=true**: Blocked — must use line ranges
-- **Entire file reads capped**: Max 2000 lines or 200KB content
+- **Entire file reads capped**: Max 500 lines or 10KB content
 
 ### Git Checkpoint Mechanism
 The agent has a built-in Git Checkpoint system that:

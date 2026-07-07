@@ -64,7 +64,7 @@ The `read_file` tool now enforces large file protections:
 ### Safety Limits Enforced
 - **500MB hard limit**: Files above this are refused — use grep to find relevant sections
 - **10MB entire-read limit**: Files > 10MB must use line ranges
-- **2000 lines / 200KB cap**: Entire file reads are truncated beyond this
+- **500 lines / 10KB cap**: Entire file reads are truncated beyond this
 - **2MB soft limit**: Triggers a warning in the response
 - **Max 250 lines per range read**: Always paginate large files
 
