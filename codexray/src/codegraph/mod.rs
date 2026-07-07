@@ -4,6 +4,7 @@ pub mod types;
 pub mod treesitter;
 pub mod repository;
 pub mod chunker;
+pub mod js_detector;
 
 pub use graph::CodeGraph;
 pub use types::{

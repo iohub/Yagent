@@ -81,7 +81,8 @@ impl CodeParser {
                 "rs" |
                 "ts" |
                 "tsx" |
-                "go"
+                "go" |
+                "js" | "jsx"
             )
         } else {
             false
