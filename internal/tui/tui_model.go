@@ -852,6 +852,62 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	styles := common.NewStyles()
 	com := common.NewCommon(styles, cfg, ca, projectDir, useDarkStyle)
 
+	// 创建快捷键映射表：将用户配置的按键映射为内部标准键名
+	editKeyMap := make(map[string]string)
+	cmdKeyMap := make(map[string]string)
+	if cfg != nil && cfg.TUI.Keybindings.Edit.SubmitTask != "" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.SubmitTask] = "alt+s"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.CommandMode != "" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.CommandMode] = "ctrl+e"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleHelp != "" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.ToggleHelp] = "ctrl+h"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleTimeline != "" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.ToggleTimeline] = "ctrl+l"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.PageDown != "" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.PageDown] = "ctrl+f"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.PageUp != "" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.PageUp] = "ctrl+b"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.Quit != "" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.Quit] = "ctrl+c"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.SwitchModel != "" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.SwitchModel] = "alt+m"
+	}
+
+	if cfg != nil && cfg.TUI.Keybindings.Command.ScrollDown != "" {
+		cmdKeyMap[cfg.TUI.Keybindings.Command.ScrollDown] = "j"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Command.ScrollUp != "" {
+		cmdKeyMap[cfg.TUI.Keybindings.Command.ScrollUp] = "k"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Command.PageDown != "" {
+		cmdKeyMap[cfg.TUI.Keybindings.Command.PageDown] = "f"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Command.PageUp != "" {
+		cmdKeyMap[cfg.TUI.Keybindings.Command.PageUp] = "b"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Command.EditMode != "" {
+		cmdKeyMap[cfg.TUI.Keybindings.Command.EditMode] = "i"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Command.CmdToggleHelp != "" {
+		cmdKeyMap[cfg.TUI.Keybindings.Command.CmdToggleHelp] = "?"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Command.ToggleTokenPanel != "" {
+		cmdKeyMap[cfg.TUI.Keybindings.Command.ToggleTokenPanel] = "alt+t"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Command.SwitchModel != "" {
+		cmdKeyMap[cfg.TUI.Keybindings.Command.SwitchModel] = "alt+m"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Command.Quit != "" {
+		cmdKeyMap[cfg.TUI.Keybindings.Command.Quit] = "ctrl+c"
+	}
+
 return &model{
 		com: com,
 
@@ -932,6 +988,10 @@ return &model{
 		// 使用传入的终端尺寸初始化
 		termWidth:   termWidth,
 		termHeight:  termHeight,
+
+		// ── 快捷键映射表 ──
+		editKeyMap: editKeyMap,
+		cmdKeyMap:  cmdKeyMap,
 	}
 }
 
