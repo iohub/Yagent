@@ -158,6 +158,9 @@ type Config struct {
 
 	// EnhancedCommander 增强型 Commander 配置
 	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`
+
+	// TUI TUI 界面配置（快捷键等）
+	TUI TUIConfig `toml:"tui"`
 }
 
 // GetProvider returns a provider config by name from the shared provider pool.
@@ -479,6 +482,60 @@ func (c *Config) validate() error {
 	// 如果 Compact 配置的所有字段都为零值（用户完全未配置 [context] 段），
 	// 则使用完整默认配置。否则逐个字段补充零值。
 	c.applyContextDefaults()
+
+	// ═══════ TUI Keybindings 默认值设置 ═══════
+	if c.TUI.Keybindings.Edit.SubmitTask == "" {
+		c.TUI.Keybindings.Edit.SubmitTask = "alt+s"
+	}
+	if c.TUI.Keybindings.Edit.CommandMode == "" {
+		c.TUI.Keybindings.Edit.CommandMode = "ctrl+e"
+	}
+	if c.TUI.Keybindings.Edit.ToggleHelp == "" {
+		c.TUI.Keybindings.Edit.ToggleHelp = "ctrl+h"
+	}
+	if c.TUI.Keybindings.Edit.ToggleTimeline == "" {
+		c.TUI.Keybindings.Edit.ToggleTimeline = "ctrl+l"
+	}
+	if c.TUI.Keybindings.Edit.PageDown == "" {
+		c.TUI.Keybindings.Edit.PageDown = "ctrl+f"
+	}
+	if c.TUI.Keybindings.Edit.PageUp == "" {
+		c.TUI.Keybindings.Edit.PageUp = "ctrl+b"
+	}
+	if c.TUI.Keybindings.Edit.Quit == "" {
+		c.TUI.Keybindings.Edit.Quit = "ctrl+c"
+	}
+	if c.TUI.Keybindings.Edit.SwitchModel == "" {
+		c.TUI.Keybindings.Edit.SwitchModel = "alt+m"
+	}
+
+	if c.TUI.Keybindings.Command.ScrollDown == "" {
+		c.TUI.Keybindings.Command.ScrollDown = "j"
+	}
+	if c.TUI.Keybindings.Command.ScrollUp == "" {
+		c.TUI.Keybindings.Command.ScrollUp = "k"
+	}
+	if c.TUI.Keybindings.Command.PageDown == "" {
+		c.TUI.Keybindings.Command.PageDown = "f"
+	}
+	if c.TUI.Keybindings.Command.PageUp == "" {
+		c.TUI.Keybindings.Command.PageUp = "b"
+	}
+	if c.TUI.Keybindings.Command.EditMode == "" {
+		c.TUI.Keybindings.Command.EditMode = "i"
+	}
+	if c.TUI.Keybindings.Command.CmdToggleHelp == "" {
+		c.TUI.Keybindings.Command.CmdToggleHelp = "?"
+	}
+	if c.TUI.Keybindings.Command.ToggleTokenPanel == "" {
+		c.TUI.Keybindings.Command.ToggleTokenPanel = "alt+t"
+	}
+	if c.TUI.Keybindings.Command.SwitchModel == "" {
+		c.TUI.Keybindings.Command.SwitchModel = "alt+m"
+	}
+	if c.TUI.Keybindings.Command.Quit == "" {
+		c.TUI.Keybindings.Command.Quit = "ctrl+c"
+	}
 
 	return nil
 }
@@ -849,4 +906,44 @@ type KeywordsConfig struct {
 	HotReload         bool         `toml:"hot_reload"`         // 是否启用热重载
 	DisableCompletion bool         `toml:"disable_completion"` // 禁用关键词自动补全（默认 false 表示启用，保持向后兼容）
 	Dicts             []DictConfig `toml:"dict"`               // 词典列表
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TUI 界面配置
+// ═══════════════════════════════════════════════════════════════
+
+// TUIConfig 包含 TUI 相关的配置
+type TUIConfig struct {
+	Keybindings KeybindingsConfig `toml:"keybindings"`
+}
+
+// KeybindingsConfig 定义 TUI 快捷键配置
+type KeybindingsConfig struct {
+	Edit    EditKeybindings    `toml:"edit"`
+	Command CommandKeybindings `toml:"command"`
+}
+
+// EditKeybindings 编辑模式快捷键配置
+type EditKeybindings struct {
+	SubmitTask     string `toml:"submit_task"`      // 默认: "alt+s"
+	CommandMode    string `toml:"command_mode"`     // 默认: "ctrl+e"
+	ToggleHelp     string `toml:"toggle_help"`      // 默认: "ctrl+h"
+	ToggleTimeline string `toml:"toggle_timeline"`  // 默认: "ctrl+l"
+	PageDown       string `toml:"page_down"`        // 默认: "ctrl+f"
+	PageUp         string `toml:"page_up"`          // 默认: "ctrl+b"
+	Quit           string `toml:"quit"`             // 默认: "ctrl+c"
+	SwitchModel    string `toml:"switch_model"`     // 默认: "alt+m"
+}
+
+// CommandKeybindings 命令模式快捷键配置
+type CommandKeybindings struct {
+	ScrollDown       string `toml:"scroll_down"`         // 默认: "j"
+	ScrollUp         string `toml:"scroll_up"`           // 默认: "k"
+	PageDown         string `toml:"page_down"`           // 默认: "f"
+	PageUp           string `toml:"page_up"`             // 默认: "b"
+	EditMode         string `toml:"edit_mode"`           // 默认: "i"
+	CmdToggleHelp    string `toml:"toggle_help"`         // 默认: "?"
+	ToggleTokenPanel string `toml:"toggle_token_panel"`  // 默认: "alt+t"
+	SwitchModel      string `toml:"switch_model"`        // 默认: "alt+m"
+	Quit             string `toml:"quit"`                // 默认: "ctrl+c"
 }
