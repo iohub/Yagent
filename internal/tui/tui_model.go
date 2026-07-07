@@ -852,59 +852,59 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	styles := common.NewStyles()
 	com := common.NewCommon(styles, cfg, ca, projectDir, useDarkStyle)
 
-	// 创建快捷键映射表：将用户配置的按键映射为内部标准键名
+	// 创建快捷键映射表：仅当用户配置与默认值不同时才加入映射（避免默认值覆盖用户配置）
 	editKeyMap := make(map[string]string)
 	cmdKeyMap := make(map[string]string)
-	if cfg != nil && cfg.TUI.Keybindings.Edit.SubmitTask != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Edit.SubmitTask != "alt+s" {
 		editKeyMap[cfg.TUI.Keybindings.Edit.SubmitTask] = "alt+s"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.CommandMode != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Edit.CommandMode != "ctrl+e" {
 		editKeyMap[cfg.TUI.Keybindings.Edit.CommandMode] = "ctrl+e"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleHelp != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleHelp != "ctrl+h" {
 		editKeyMap[cfg.TUI.Keybindings.Edit.ToggleHelp] = "ctrl+h"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleTimeline != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleTimeline != "ctrl+l" {
 		editKeyMap[cfg.TUI.Keybindings.Edit.ToggleTimeline] = "ctrl+l"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.PageDown != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Edit.PageDown != "ctrl+f" {
 		editKeyMap[cfg.TUI.Keybindings.Edit.PageDown] = "ctrl+f"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.PageUp != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Edit.PageUp != "ctrl+b" {
 		editKeyMap[cfg.TUI.Keybindings.Edit.PageUp] = "ctrl+b"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.Quit != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Edit.Quit != "ctrl+c" {
 		editKeyMap[cfg.TUI.Keybindings.Edit.Quit] = "ctrl+c"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.SwitchModel != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Edit.SwitchModel != "alt+m" {
 		editKeyMap[cfg.TUI.Keybindings.Edit.SwitchModel] = "alt+m"
 	}
 
-	if cfg != nil && cfg.TUI.Keybindings.Command.ScrollDown != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Command.ScrollDown != "j" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.ScrollDown] = "j"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.ScrollUp != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Command.ScrollUp != "k" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.ScrollUp] = "k"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.PageDown != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Command.PageDown != "f" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.PageDown] = "f"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.PageUp != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Command.PageUp != "b" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.PageUp] = "b"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.EditMode != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Command.EditMode != "i" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.EditMode] = "i"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.CmdToggleHelp != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Command.CmdToggleHelp != "?" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.CmdToggleHelp] = "?"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.ToggleTokenPanel != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Command.ToggleTokenPanel != "alt+t" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.ToggleTokenPanel] = "alt+t"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.SwitchModel != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Command.SwitchModel != "alt+m" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.SwitchModel] = "alt+m"
 	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.Quit != "" {
+	if cfg != nil && cfg.TUI.Keybindings.Command.Quit != "ctrl+c" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.Quit] = "ctrl+c"
 	}
 
