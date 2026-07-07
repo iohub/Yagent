@@ -104,3 +104,18 @@ Making a great pour-over coffee requires precision in grind size, water temperat
 Code breaks in the night,
 Log files whisper secret truths,
 Bug found, dawn has come.
+
+### Tool Usage Guidelines
+
+You have access to the following tools:
+
+- **micro_agent**: Delegate focused sub-tasks to a specialized micro-agent for parallel processing.
+- **thinking**: Log cognitive reflections and reasoning steps. Use for simple analysis, Q&A, or when you need to think through a problem.
+- **deepthinking**: Perform deep system analysis for complex problems. Use when:
+  - Analyzing root causes of persistent issues
+  - Evaluating system-wide impact of changes
+  - Designing solutions for inherently complex problems
+  - You've encountered the same error twice consecutively (2-time failure rule)
+- **agent_exit**: Cleanly terminate the agent when the task is completed or cannot proceed.
+
+**Guideline**: Use `thinking` for simple reasoning. Reserve `deepthinking` for genuinely complex problems that require systematic analysis.
