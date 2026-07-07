@@ -670,6 +670,15 @@ type model struct {
 	timelineDetailVP         *viewport.Model   // 全屏模式下右侧详情 viewport
 	timelineFullscreenFocus  string            // 全屏模式焦点: "list" 或 "detail" (默认 "list")
 	timelineDetailOffsets    []int             // 每个条目在拼接详情中的行偏移量
+
+	// ── 可配置快捷键映射表 ──
+	// editKeyMap 将用户配置的编辑模式快捷键映射为内部标准键名
+	// key: 用户配置的按键, value: 内部标准键名
+	editKeyMap map[string]string
+
+	// cmdKeyMap 将用户配置的命令模式快捷键映射为内部标准键名
+	// key: 用户配置的按键, value: 内部标准键名
+	cmdKeyMap map[string]string
 }
 
 // autocompleteCacheKey is a fine-grained cache key for autocomplete results.
