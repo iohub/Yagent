@@ -57,6 +57,8 @@ type HelpDialog struct {
 	langCache    Language
 	content      helpData
 	outerPadding lipgloss.Style
+	// altKeybindings 可配置快捷键覆盖：原始显示键名 → 自定义键名
+	altKeybindings map[string]string
 }
 
 // NewHelpDialog creates a new help dialog with the given language.
@@ -107,6 +109,19 @@ func (d *HelpDialog) View() string {
 		d.content = buildHelpData(d.lang)
 		d.cachedView = ""
 		d.langCache = d.lang
+	}
+
+	// Apply configurable keybinding overrides.
+	if d.altKeybindings != nil && len(d.altKeybindings) > 0 {
+		for si, section := range d.content.Sections {
+			for ii, item := range section.Items {
+				for ki, key := range item.Keys {
+					if altKey, ok := d.altKeybindings[key]; ok {
+						d.content.Sections[si].Items[ii].Keys[ki] = altKey
+					}
+				}
+			}
+		}
 	}
 
 	// Return cached view if available.
@@ -353,4 +368,12 @@ func renderSections(sections []keySection, dialogWidth int) string {
 		blocks = append(blocks, renderSection(s, dialogWidth))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, blocks...)
+}
+
+// SetAltKeybindings sets display overrides for configurable keybindings.
+// key is the default key displayed in the help page (e.g., "j", "Ctrl+E"),
+// value is the user-configured key display string (e.g., "Ctrl+J", "Ctrl+Space").
+func (d *HelpDialog) SetAltKeybindings(kb map[string]string) {
+	d.altKeybindings = kb
+	d.cachedView = "" // invalidate cache so View() rebuilds
 }
