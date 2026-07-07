@@ -277,6 +277,12 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 			m.dialogStack.CloseDialog("help_dialog")
 		} else {
 			d := components.NewHelpDialog(components.Language(m.currentLang))
+			if m.com != nil && m.com.Config != nil {
+				overrides := buildHelpKeyOverrides(&m.com.Config.TUI.Keybindings)
+				if len(overrides) > 0 {
+					d.SetAltKeybindings(overrides)
+				}
+			}
 			d.SetBounds(m.termWidth, m.termHeight)
 			m.dialogStack.Push(d)
 		}
@@ -931,6 +937,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.dialogStack.CloseDialog("help_dialog")
 					} else {
 						d := components.NewHelpDialog(components.Language(m.currentLang))
+						if m.com != nil && m.com.Config != nil {
+							overrides := buildHelpKeyOverrides(&m.com.Config.TUI.Keybindings)
+							if len(overrides) > 0 {
+								d.SetAltKeybindings(overrides)
+							}
+						}
 						d.SetBounds(m.termWidth, m.termHeight)
 						m.dialogStack.Push(d)
 					}
@@ -1052,6 +1064,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			d := components.NewHelpDialog(components.Language(m.currentLang))
+			if m.com != nil && m.com.Config != nil {
+				overrides := buildHelpKeyOverrides(&m.com.Config.TUI.Keybindings)
+				if len(overrides) > 0 {
+					d.SetAltKeybindings(overrides)
+				}
+			}
 			d.SetBounds(m.termWidth, m.termHeight)
 			if m.dialogStack == nil {
 				m.dialogStack = components.NewDialogStack()

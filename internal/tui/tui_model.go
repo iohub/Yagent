@@ -1021,3 +1021,85 @@ func (m *model) toggleLanguage() {
 	m.input.Placeholder = langManager.GetText("TaskDescPlaceholder")
 	m.infoMsg = langManager.GetText("InfoMessage")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 帮助对话框快捷键覆盖映射构建
+// ─────────────────────────────────────────────────────────────────────────────
+
+// formatKeyDisplayName 将 Bubble Tea 小写格式按键名转为人类可读格式
+// "ctrl+e" → "Ctrl+E", "alt+s" → "Alt+S", "j" → "j"
+func formatKeyDisplayName(key string) string {
+	if key == "" {
+		return ""
+	}
+	parts := strings.Split(key, "+")
+	if len(parts) == 1 {
+		return key
+	}
+	for i, p := range parts {
+		if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return strings.Join(parts, "+")
+}
+
+// buildHelpKeyOverrides 从配置构建帮助对话框的快捷键显示覆盖映射
+// key: 帮助页面中默认显示的键名, value: 用户配置的键名（格式化后）
+func buildHelpKeyOverrides(kb *config.KeybindingsConfig) map[string]string {
+	overrides := make(map[string]string)
+
+	// 编辑模式快捷键
+	if kb.Edit.CommandMode != "ctrl+e" {
+		overrides["Ctrl+E"] = formatKeyDisplayName(kb.Edit.CommandMode)
+	}
+	if kb.Edit.ToggleHelp != "ctrl+h" {
+		overrides["Ctrl+H"] = formatKeyDisplayName(kb.Edit.ToggleHelp)
+	}
+	if kb.Edit.ToggleTimeline != "ctrl+l" {
+		overrides["Ctrl+L"] = formatKeyDisplayName(kb.Edit.ToggleTimeline)
+	}
+	if kb.Edit.PageDown != "ctrl+f" {
+		overrides["Ctrl+F"] = formatKeyDisplayName(kb.Edit.PageDown)
+	}
+	if kb.Edit.PageUp != "ctrl+b" {
+		overrides["Ctrl+B"] = formatKeyDisplayName(kb.Edit.PageUp)
+	}
+	if kb.Edit.Quit != "ctrl+c" {
+		overrides["Ctrl+C"] = formatKeyDisplayName(kb.Edit.Quit)
+	}
+	if kb.Edit.SubmitTask != "alt+s" {
+		overrides["Alt+S"] = formatKeyDisplayName(kb.Edit.SubmitTask)
+	}
+	if kb.Edit.SwitchModel != "alt+m" {
+		overrides["Alt+M"] = formatKeyDisplayName(kb.Edit.SwitchModel)
+	}
+
+	// 命令模式快捷键
+	if kb.Command.ScrollDown != "j" {
+		overrides["j"] = formatKeyDisplayName(kb.Command.ScrollDown)
+	}
+	if kb.Command.ScrollUp != "k" {
+		overrides["k"] = formatKeyDisplayName(kb.Command.ScrollUp)
+	}
+	if kb.Command.PageDown != "f" {
+		overrides["f"] = formatKeyDisplayName(kb.Command.PageDown)
+	}
+	if kb.Command.PageUp != "b" {
+		overrides["b"] = formatKeyDisplayName(kb.Command.PageUp)
+	}
+	if kb.Command.EditMode != "i" {
+		overrides["i"] = formatKeyDisplayName(kb.Command.EditMode)
+	}
+	if kb.Command.CmdToggleHelp != "?" {
+		overrides["?"] = formatKeyDisplayName(kb.Command.CmdToggleHelp)
+	}
+	if kb.Command.ToggleTokenPanel != "alt+t" {
+		overrides["Alt+T"] = formatKeyDisplayName(kb.Command.ToggleTokenPanel)
+	}
+	if kb.Command.SwitchModel != "alt+m" {
+		overrides["Alt+M"] = formatKeyDisplayName(kb.Command.SwitchModel)
+	}
+
+	return overrides
+}
