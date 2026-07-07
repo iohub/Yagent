@@ -869,6 +869,8 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 
 	// Always start with System Prompt (with any registered custom agents appended)
 	systemPrompt := a.GlobalCtx.FormatPrompt(directorPrompt)
+	// Inject shared memory (4 dimensions: user, feedback, project, reference)
+	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
 	var projectContext string
 	// 只在首次对话时加载项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
 	// 同一会话的后续追问无需重复注入，避免浪费 token。
