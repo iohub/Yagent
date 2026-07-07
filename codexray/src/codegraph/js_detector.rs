@@ -259,4 +259,19 @@ function handleClick(event) {
         let code = "var a=1;\n" .repeat(20) + "//# sourceMappingURL=bundle.js.map";
         assert_eq!(detector.detect(&code), DetectionResult::CompiledCode);
     }
+
+    #[test]
+    fn test_detect_obfuscated_file() {
+        let detector = JsDetector::default_detector();
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let file_path = manifest_dir.join("tests/main.9d1c33d4.js");
+        assert!(file_path.exists(), "Test file not found: {:?}", file_path);
+        let result = detector.detect_file(&file_path).expect("Failed to read file");
+        assert_eq!(
+            result,
+            DetectionResult::CompiledCode,
+            "main.9d1c33d4.js should be detected as compiled/obfuscated code, got: {}",
+            result
+        );
+    }
 }
