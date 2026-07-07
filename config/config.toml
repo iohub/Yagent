@@ -144,3 +144,36 @@ summarization_timeout = 120           # 摘要超时（秒）
 summarization_max_input_tokens = 120000 # 单批次最大输入 token 数
 summarization_prompt = ""             # 自定义摘要提示词（空=使用默认）
 keep_recent_rounds = 2                # 始终保留的最近对话轮数
+
+# ═══════════════════════════════════════════════════════════════
+# TUI Keybindings Configuration
+# ── 可配置 TUI 快捷键 ──
+# 未配置的项使用 Go 代码中的默认值。
+# 格式：使用 Bubble Tea 按键事件格式（小写）：
+#   - 修饰键: "ctrl+e", "alt+s", "alt+enter"
+#   - 单键:   "j", "k", "f", "b", "i", "?"
+#   - 特殊键: "enter", "esc", "tab", "space"
+
+[tui]
+  [tui.keybindings]
+    
+    [tui.keybindings.edit]
+    submit_task     = "alt+s"      # 提交任务
+    command_mode    = "ctrl+e"     # 进入命令模式
+    toggle_help     = "ctrl+h"     # 切换帮助
+    toggle_timeline = "ctrl+l"     # 切换全屏时间线
+    page_down       = "ctrl+f"     # 向下翻页
+    page_up         = "ctrl+b"     # 向上翻页
+    quit            = "ctrl+c"     # 退出
+    switch_model    = "alt+m"      # 切换模型
+    
+    [tui.keybindings.command]
+    scroll_down       = "j"        # 向下滚动一行
+    scroll_up         = "k"        # 向上滚动一行
+    page_down         = "f"        # 向下翻页
+    page_up           = "b"        # 向上翻页
+    edit_mode         = "i"        # 进入编辑模式
+    toggle_help       = "?"        # 显示帮助
+    toggle_token_panel = "alt+t"   # 切换 Token 面板
+    switch_model      = "alt+m"    # 切换模型
+    quit              = "ctrl+c"   # 退出
