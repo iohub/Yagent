@@ -40,8 +40,9 @@ type CodeActor struct {
 	SkillRegistry      *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
 
 	// [NEW] 记忆系统
-	sharedMemory         *memory.SharedMemory
-	consolidationWorker  *agents.ConsolidationWorker
+	sharedMemory                *memory.SharedMemory
+	consolidationWorker         *agents.ConsolidationWorker
+	sharedConsolidationRunner   *agents.SharedMemoryConsolidationRunner
 }
 
 // NewCodeActor creates a new CodeActor.
@@ -436,6 +437,23 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		ca.director.Adapters = append(ca.director.Adapters, directorMemAdapter)
 		slog.Info("DirectorAgent update_shared_memory tool registered")
 	}
+
+	// [NEW] Start shared memory consolidation runner (periodic LLM deep consolidation)
+	{
+		sharedDimStore := memory.NewSharedDimensionStore(ca.sharedMemory)
+		consolidationRunner := agents.NewSharedMemoryConsolidationRunner(
+			sharedDimStore,
+			repoEngine, // 复用 repoEngine 进行整合
+			30*time.Minute,
+			"default",
+			ca.globalCtx.ProjectPath,
+		)
+		consolidationRunner.Start()
+		ca.sharedConsolidationRunner = consolidationRunner
+		slog.Info("Shared memory consolidation runner started",
+			"interval", "30m",
+		)
+	}
 }
 
 func (ca *CodeActor) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
@@ -571,6 +589,11 @@ func (ca *CodeActor) Close() {
 	if ca.consolidationWorker != nil {
 		slog.Info("Stopping consolidation worker...")
 		ca.consolidationWorker.Stop()
+	}
+	// 停止共享记忆整合运行器
+	if ca.sharedConsolidationRunner != nil {
+		slog.Info("Stopping shared memory consolidation runner...")
+		ca.sharedConsolidationRunner.Stop()
 	}
 	if ca.globalCtx != nil && ca.globalCtx.BrowserMgr != nil {
 		slog.Info("Closing browser manager...")
