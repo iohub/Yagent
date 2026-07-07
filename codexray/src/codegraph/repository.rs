@@ -7,6 +7,7 @@ use crate::codegraph::types::{
     EntityGraph, PetCodeGraph, SnippetIndex, FunctionInfo
 };
 use crate::codegraph::parser::CodeParser;
+use crate::config::JsIndexConfig;
 use crate::services::SnippetService;
 use crate::storage::IncrementalManager;
 
@@ -36,7 +37,7 @@ impl RepositoryManager {
         Self {
             entity_graph,
             call_graph,
-            parser: CodeParser::new(),
+            parser: CodeParser::new(JsIndexConfig::default()),
             incremental_manager: IncrementalManager::new(),
             snippet_service,
             repository_path,

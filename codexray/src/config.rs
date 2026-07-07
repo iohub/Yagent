@@ -8,6 +8,25 @@ pub struct Config {
     pub codexray: CodeXRayConfig,
 }
 
+/// JavaScript/JSX 索引配置
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct JsIndexConfig {
+    /// 是否启用 JS/JSX 文件索引。默认 true
+    pub enabled: bool,
+    /// 是否启用混淆/编译代码过滤。当为 true 时，被检测为编译/打包/混淆的 JS 文件将被跳过。默认 true
+    pub obfuscation_filter: bool,
+}
+
+impl Default for JsIndexConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            obfuscation_filter: true,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct CodeXRayConfig {
     #[serde(default)]
@@ -17,6 +36,9 @@ pub struct CodeXRayConfig {
     pub repo_knowledge: RepoKnowledgeConfig,
     #[serde(default)]
     pub retrieval_pipeline: RetrievalPipelineConfig,
+    /// JavaScript/JSX 索引配置
+    #[serde(default)]
+    pub js: JsIndexConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]

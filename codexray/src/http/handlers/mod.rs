@@ -6,6 +6,7 @@ use axum::{
 use std::sync::Arc;
 use crate::storage::StorageManager;
 use crate::services::CodeAnalyzer;
+use crate::config::JsIndexConfig;
 use super::models::*;
 use super::server::AppState;
 use uuid;
@@ -870,7 +871,7 @@ pub(crate) async fn perform_analysis(
     let project_id_clone = project_id.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        let mut analyzer = CodeAnalyzer::new();
+        let mut analyzer = CodeAnalyzer::new(JsIndexConfig::default());
         match analyzer.analyze_directory(&project_dir_clone) {
             Ok(cg) => {
                 let stats = cg.get_stats();

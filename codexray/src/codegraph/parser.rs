@@ -10,6 +10,8 @@ use crate::codegraph::types::{
 };
 use crate::codegraph::graph::CodeGraph;
 use crate::codegraph::treesitter::TreeSitterParser;
+use crate::codegraph::js_detector::{JsDetector, DetectionResult};
+use crate::config::JsIndexConfig;
 
 /// 代码解析器，负责解析源代码文件并提取函数调用关系
 pub struct CodeParser {
@@ -23,16 +25,19 @@ pub struct CodeParser {
     file_index: FileIndex,
     /// 代码片段索引
     snippet_index: SnippetIndex,
+    /// JS/JSX 索引配置
+    js_config: JsIndexConfig,
 }
 
 impl CodeParser {
-    pub fn new() -> Self {
+    pub fn new(js_config: JsIndexConfig) -> Self {
         Self {
             file_functions: HashMap::new(),
             function_registry: HashMap::new(),
             ts_parser: TreeSitterParser::new(),
             file_index: FileIndex::default(),
             snippet_index: SnippetIndex::default(),
+            js_config,
         }
     }
 
@@ -430,6 +435,38 @@ impl CodeParser {
             .map_err(|e| format!("Failed to read file {}: {}", file_path.display(), e))?;
 
         let language = self._detect_language(file_path);
+
+        // ── JavaScript 混淆检测过滤 ──
+        if language == "javascript" {
+            // 检查配置：是否启用 JS 索引
+            if !self.js_config.enabled {
+                info!("JS 索引已禁用，跳过文件: {}", file_path.display());
+                return Ok(());
+            }
+
+            // 检查配置：是否启用混淆过滤
+            if self.js_config.obfuscation_filter {
+                let detector = JsDetector::default_detector();
+                match detector.detect(&file_content) {
+                    DetectionResult::CompiledCode => {
+                        info!(
+                            "JS 混淆过滤器：跳过编译/混淆文件: {}",
+                            file_path.display()
+                        );
+                        return Ok(());
+                    }
+                    DetectionResult::Empty => {
+                        debug!("JS 混淆过滤器：跳过空文件: {}", file_path.display());
+                        return Ok(());
+                    }
+                    DetectionResult::SourceCode => {
+                        debug!("JS 混淆过滤器：接受源码文件: {}", file_path.display());
+                        // 继续正常解析
+                    }
+                }
+            }
+        }
+
         let namespace = self._extract_namespace_from_content(&file_content, file_path);
         
         let mut functions = Vec::new();
@@ -1514,7 +1551,7 @@ struct CallAnalysisStats {
 
 impl Default for CodeParser {
     fn default() -> Self {
-        Self::new()
+        Self::new(JsIndexConfig::default())
     }
 }
 
@@ -1528,7 +1565,7 @@ mod tests {
 
     #[test]
     fn test_parse_file_with_real_rust_code() {
-        let mut parser = CodeParser::new();
+        let mut parser = CodeParser::new(JsIndexConfig::default());
         
         // Create a temporary directory and Rust file
         let temp_dir = tempdir().unwrap();
@@ -1596,7 +1633,7 @@ pub fn main() {
 
     #[test]
     fn test_parse_file_with_python_code() {
-        let mut parser = CodeParser::new();
+        let mut parser = CodeParser::new(JsIndexConfig::default());
         
         // Create a temporary directory and Python file
         let temp_dir = tempdir().unwrap();
@@ -1650,7 +1687,7 @@ if __name__ == "__main__":
 
     #[test]
     fn test_analyze_petgraph_call_relations() {
-        let mut parser = CodeParser::new();
+        let mut parser = CodeParser::new(JsIndexConfig::default());
         let mut code_graph = PetCodeGraph::new();
         
         // 创建一些测试函数
@@ -1703,7 +1740,7 @@ if __name__ == "__main__":
     
     #[test]
     fn test_resolve_qualified_function_name() {
-        let mut parser = CodeParser::new();
+        let mut parser = CodeParser::new(JsIndexConfig::default());
         let mut code_graph = PetCodeGraph::new();
         
         // 创建一个类方法
@@ -1750,7 +1787,7 @@ pub fn greet(name: &str) {
         fs::write(&test_file, content).unwrap();
 
         // 创建解析器
-        let mut parser = CodeParser::new();
+        let mut parser = CodeParser::new(JsIndexConfig::default());
 
         // 第一次构建
         let graph1 = parser.build_petgraph_code_graph(&project_dir).unwrap();

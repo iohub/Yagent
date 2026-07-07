@@ -6,6 +6,7 @@ use tracing::info;
 use crate::codegraph::graph::CodeGraph;
 use crate::codegraph::types::{FunctionInfo, CodeGraphStats};
 use crate::codegraph::parser::CodeParser;
+use crate::config::JsIndexConfig;
 
 /// 代码图分析器，提供高级分析功能
 pub struct CodeAnalyzer {
@@ -14,9 +15,9 @@ pub struct CodeAnalyzer {
 }
 
 impl CodeAnalyzer {
-    pub fn new() -> Self {
+    pub fn new(js_config: JsIndexConfig) -> Self {
         Self {
-            parser: CodeParser::new(),
+            parser: CodeParser::new(js_config),
             code_graph: None,
         }
     }
@@ -299,6 +300,6 @@ impl CodeAnalyzer {
 
 impl Default for CodeAnalyzer {
     fn default() -> Self {
-        Self::new()
+        Self::new(JsIndexConfig::default())
     }
 } 

@@ -23,6 +23,7 @@ use rusqlite::{params, Connection as SqliteConnection};
 use anyhow::anyhow;
 
 use crate::codegraph::treesitter::TreeSitterParser;
+use crate::config::JsIndexConfig;
 use crate::codegraph::parser::CodeParser;
 use crate::config::Config;
 use crate::storage::traits_bm25::{TextSearchProvider, CodeChunk};
@@ -347,7 +348,7 @@ impl EmbeddingService {
     pub async fn vectorize_directory(&self, dir_path: &str, existing_hashes: Option<&std::collections::HashMap<String, String>>) -> Result<std::collections::HashMap<String, String>, Box<dyn std::error::Error>> {
         info!("Starting vectorization of directory: {}", dir_path);
         
-        let mut parser = CodeParser::new();
+        let mut parser = CodeParser::new(JsIndexConfig::default());
         let mut ts_parser = TreeSitterParser::new();
         
         let path = Path::new(dir_path);
