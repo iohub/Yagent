@@ -152,6 +152,8 @@ func (a *CodingAgent) Name() string {
 
 func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(codingPrompt)
+	// Inject shared memory (4 dimensions: user, feedback, project, reference)
+	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
 
 	// ─── 懒加载初始化上下文压缩引擎（仅首次 Run 时创建，后续复用）───
 	if a.compactConfig != nil && a.compactConfig.EnableAutoCompact && a.compactEngine == nil && a.LLM != nil {
