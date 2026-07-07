@@ -122,7 +122,7 @@ const MaxEntireFileContentBytes = 10 * 1024 // 10 KB
 const MaxLineLength = 1024 * 1024 // 1 MB per line
 
 // MaxLineRangeSize 是行范围读取的最大行数。
-const MaxLineRangeSize = 250
+const MaxLineRangeSize = 500
 
 // treeEntry represents a single item in the directory tree output.
 type treeEntry struct {

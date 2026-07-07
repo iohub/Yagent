@@ -1,7 +1,7 @@
 [
   {
     "name": "read_file",
-    "description": "Read file contents by line range (1-indexed) or entire file. LARGE FILE PROTECTION IS ENFORCED: (1) Files > 500MB are refused entirely — use grep first. (2) Files > 10MB cannot use should_read_entire_file=true — use line ranges instead. (3) Entire file reads are capped at 500 lines / 10KB content — excess is truncated (truncated=true). (4) Files > 2MB trigger a warning. Response includes: content, lines (returned count), file_size_bytes, total_lines (full file), truncated, warning, read_mode. For range reads also: start_line, end_line, lines_before_range, lines_after_range. ALWAYS check file_size_bytes and total_lines in the response to decide if further reads are needed. Max 250 lines per call for range reads. Use should_read_entire_file=true ONLY for small files (< 2MB, < 500 lines). For large files, always use start_line_one_indexed and end_line_one_indexed_inclusive to paginate. If truncated=true, use line ranges to read remaining content.",
+    "description": "Read file contents by line range (1-indexed) or entire file. LARGE FILE PROTECTION IS ENFORCED: (1) Files > 500MB are refused entirely — use grep first. (2) Files > 10MB cannot use should_read_entire_file=true — use line ranges instead. (3) Entire file reads are capped at 500 lines / 10KB content — excess is truncated (truncated=true). (4) Files > 2MB trigger a warning. Response includes: content, lines (returned count), file_size_bytes, total_lines (full file), truncated, warning, read_mode. For range reads also: start_line, end_line, lines_before_range, lines_after_range. ALWAYS check file_size_bytes and total_lines in the response to decide if further reads are needed. Max 500 lines per call for range reads. Use should_read_entire_file=true ONLY for small files (< 2MB, < 500 lines). For large files, always use start_line_one_indexed and end_line_one_indexed_inclusive to paginate. If truncated=true, use line ranges to read remaining content.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -15,7 +15,7 @@
         },
         "end_line_one_indexed_inclusive": {
           "type": "integer",
-          "description": "The one-indexed line number to end reading at (inclusive). Max 250 lines from start_line. Required when should_read_entire_file=false. Default: start_line + 249."
+          "description": "The one-indexed line number to end reading at (inclusive). Max 500 lines from start_line. Required when should_read_entire_file=false. Default: start_line + 499."
         },
         "should_read_entire_file": {
           "type": "boolean",
