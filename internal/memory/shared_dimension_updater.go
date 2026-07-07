@@ -44,6 +44,7 @@ func DefaultRestraintPolicy() RestraintPolicy {
 type SharedDimensionUpdater struct {
 	store  *SharedDimensionStore
 	policy RestraintPolicy
+	Logger *SharedMemoryLogger // 可选的操作日志记录器，nil表示不记录
 }
 
 // NewSharedDimensionUpdater 创建更新处理器
@@ -63,22 +64,42 @@ type UpdateResult struct {
 func (u *SharedDimensionUpdater) ApplyUpdate(proposal *MemoryUpdateProposal) UpdateResult {
 	// Layer 1: 基本的proposal验证
 	if err := u.validateProposal(proposal); err != nil {
-		return UpdateResult{Accepted: false, Reason: fmt.Sprintf("❌ Validation failed: %v", err)}
+		result := UpdateResult{Accepted: false, Reason: fmt.Sprintf("❌ Validation failed: %v", err)}
+		u.tryLog(proposal, result, "", "")
+		return result
+	}
+
+	// 捕获更新前的状态（用于日志）
+	var beforeJSON string
+	if u.Logger != nil {
+		beforeJSON = u.captureBeforeState(proposal)
 	}
 
 	// Layer 2: 按维度应用具体更新逻辑
+	var result UpdateResult
 	switch proposal.Dimension {
 	case DimUser:
-		return u.applyUserUpdate(proposal)
+		result = u.applyUserUpdate(proposal)
 	case DimFeedback:
-		return u.applyFeedbackUpdate(proposal)
+		result = u.applyFeedbackUpdate(proposal)
 	case DimProject:
-		return u.applyProjectUpdate(proposal)
+		result = u.applyProjectUpdate(proposal)
 	case DimReference:
-		return u.applyReferenceUpdate(proposal)
+		result = u.applyReferenceUpdate(proposal)
 	default:
-		return UpdateResult{Accepted: false, Reason: fmt.Sprintf("❌ Unknown dimension: %s", proposal.Dimension)}
+		result = UpdateResult{Accepted: false, Reason: fmt.Sprintf("❌ Unknown dimension: %s", proposal.Dimension)}
 	}
+
+	// 记录日志（仅Accepted时捕获after状态）
+	if u.Logger != nil {
+		var afterJSON string
+		if result.Accepted {
+			afterJSON = u.captureAfterState(proposal)
+		}
+		u.tryLog(proposal, result, beforeJSON, afterJSON)
+	}
+
+	return result
 }
 
 // validateProposal Layer 1: 基本合法性验证
@@ -552,4 +573,69 @@ type MemoryUpdateProposal struct {
 	Reason     string                 `json:"reason"`
 	ProposedBy string                 `json:"proposed_by"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"` // 携带user_id/project_id等上下文
+}
+
+// tryLog 尝试记录更新日志（Logger为nil时跳过）
+func (u *SharedDimensionUpdater) tryLog(proposal *MemoryUpdateProposal, result UpdateResult, beforeJSON, afterJSON string) {
+	if u.Logger != nil {
+		u.Logger.LogUpdate(proposal, result, beforeJSON, afterJSON)
+	}
+}
+
+// captureBeforeState 捕获更新前的记忆状态（JSON格式）
+func (u *SharedDimensionUpdater) captureBeforeState(proposal *MemoryUpdateProposal) string {
+	userID := u.extractStringMeta(proposal, "user_id")
+	projectID := u.extractStringMeta(proposal, "project_id")
+	if userID == "" && projectID == "" {
+		return ""
+	}
+
+	switch proposal.Dimension {
+	case DimUser:
+		if mem, err := u.store.GetUserMemory(userID); err == nil {
+			return mustMarshalJSON(mem)
+		}
+	case DimFeedback:
+		if mem, err := u.store.GetFeedbackMemory(userID); err == nil {
+			return mustMarshalJSON(mem)
+		}
+	case DimProject:
+		if mem, err := u.store.GetProjectMemory(projectID); err == nil {
+			return mustMarshalJSON(mem)
+		}
+	case DimReference:
+		if mem, err := u.store.GetReferenceMemory(projectID); err == nil {
+			return mustMarshalJSON(mem)
+		}
+	}
+	return ""
+}
+
+// captureAfterState 捕获更新后的记忆状态（JSON格式）
+func (u *SharedDimensionUpdater) captureAfterState(proposal *MemoryUpdateProposal) string {
+	userID := u.extractStringMeta(proposal, "user_id")
+	projectID := u.extractStringMeta(proposal, "project_id")
+	if userID == "" && projectID == "" {
+		return ""
+	}
+
+	switch proposal.Dimension {
+	case DimUser:
+		if mem, err := u.store.GetUserMemory(userID); err == nil {
+			return mustMarshalJSON(mem)
+		}
+	case DimFeedback:
+		if mem, err := u.store.GetFeedbackMemory(userID); err == nil {
+			return mustMarshalJSON(mem)
+		}
+	case DimProject:
+		if mem, err := u.store.GetProjectMemory(projectID); err == nil {
+			return mustMarshalJSON(mem)
+		}
+	case DimReference:
+		if mem, err := u.store.GetReferenceMemory(projectID); err == nil {
+			return mustMarshalJSON(mem)
+		}
+	}
+	return ""
 }
