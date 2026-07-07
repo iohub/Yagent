@@ -276,6 +276,8 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		sharedDimStore := memory.NewSharedDimensionStore(ca.sharedMemory)
 		sharedDimInjector := memory.NewSharedMemoryInjector(sharedDimStore)
 		sharedDimUpdater := memory.NewSharedDimensionUpdater(sharedDimStore, memory.DefaultRestraintPolicy())
+		// 添加操作日志记录器
+		sharedDimUpdater.Logger = memory.NewSharedMemoryLogger()
 		projectPath := ca.globalCtx.ProjectPath
 
 		// Set injector and updater on all agents via BaseAgent
@@ -371,6 +373,8 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		memory.NewSharedDimensionStore(ca.sharedMemory),
 		memory.DefaultRestraintPolicy(),
 	)
+	// 添加操作日志记录器
+	ca.director.BaseAgent.MemoryUpdater.Logger = memory.NewSharedMemoryLogger()
 
 	// Register update_shared_memory tool on DirectorAgent
 	{
