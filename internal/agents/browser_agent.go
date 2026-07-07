@@ -135,6 +135,7 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 
 	// 构建环境上下文的系统提示词
 	systemPrompt := a.GlobalCtx.FormatPrompt(browserPrompt)
+	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
 
 	// 构建执行配置
 	cfg := DefaultExecutorConfig()
