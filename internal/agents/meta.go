@@ -42,6 +42,7 @@ func (a *MetaAgent) Name() string {
 // It returns the raw JSON design output from the LLM.
 func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(metaPrompt)
+	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
 
 	messages := []llm.Message{
 		{
