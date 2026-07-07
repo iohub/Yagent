@@ -151,7 +151,10 @@
           "description": "The task description, question, or content to process."
         }
       },
-      "required": ["system_prompt", "task"]
+      "required": [
+        "system_prompt",
+        "task"
+      ]
     }
   },
   {
@@ -169,7 +172,10 @@
           "description": "The specific objective to achieve. What should the deep analysis produce? A solution design, a debugging strategy, an architectural decision, or a comprehensive plan."
         }
       },
-      "required": ["context", "goal"]
+      "required": [
+        "context",
+        "goal"
+      ]
     }
   },
   {
@@ -369,7 +375,11 @@
         },
         "interaction_type": {
           "type": "string",
-          "enum": ["confirm", "select", "input"],
+          "enum": [
+            "confirm",
+            "select",
+            "input"
+          ],
           "description": "Optional. Explicitly set the interaction mode. Overrides automatic inference from suggested_options. 'confirm' → yes/no buttons, 'select' → option list, 'input' → free text input."
         },
         "default_value": {
@@ -385,7 +395,10 @@
           "description": "Optional. Whether to allow custom input in select mode. Default: true. Set to false to restrict selection to suggested options only."
         }
       },
-      "required": ["reason", "specific_question"]
+      "required": [
+        "reason",
+        "specific_question"
+      ]
     }
   },
   {
@@ -399,7 +412,9 @@
           "description": "The reason the agent is exiting, e.g., task completed, cannot proceed, blocked by missing information, or must terminate."
         }
       },
-      "required": ["reason"]
+      "required": [
+        "reason"
+      ]
     }
   },
   {
@@ -413,7 +428,9 @@
           "description": "A clear, self-contained research task for the browser agent, e.g., 'Search for the latest documentation on Python's asyncio.run function' or 'Find common solutions for Go error: undefined: sql.NullString'."
         }
       },
-      "required": ["task"]
+      "required": [
+        "task"
+      ]
     }
   },
   {
@@ -431,7 +448,9 @@
           "description": "Optional: specific file path to narrow the search (e.g., 'src/main.go')"
         }
       },
-      "required": ["function_name"]
+      "required": [
+        "function_name"
+      ]
     }
   },
   {
@@ -449,7 +468,9 @@
           "description": "Optional: specific file path to narrow the search (e.g., 'src/main.go')"
         }
       },
-      "required": ["function_name"]
+      "required": [
+        "function_name"
+      ]
     }
   },
   {
@@ -472,7 +493,9 @@
           "description": "The tag name of the checkpoint to roll back to (from git_checkpoint_list)"
         }
       },
-      "required": ["checkpoint_tag"]
+      "required": [
+        "checkpoint_tag"
+      ]
     }
   },
   {
@@ -486,7 +509,51 @@
           "description": "A brief description of why this checkpoint is being created"
         }
       },
-      "required": ["message"]
+      "required": [
+        "message"
+      ]
+    }
+  },
+  {
+    "name": "update_shared_memory",
+    "description": "Update the shared cross-agent memory system. Use ONLY when you detect genuinely important information that should persist across conversations. This includes: user explicitly states preferences/role/expertise (user dimension), user corrects your mistake or explicitly endorses an approach (feedback dimension), user shares project context like objectives/team/deadlines (project dimension), user provides resource locations like URLs/dashboards/docs (reference dimension). DO NOT use this for trivial or uncertain information. Each update requires a specific reason.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "dimension": {
+          "type": "string",
+          "enum": [
+            "user",
+            "feedback",
+            "project",
+            "reference"
+          ],
+          "description": "Which memory dimension to update: user (profile/expertise/preferences), feedback (corrections/endorsements), project (objectives/team/deadlines), reference (URLs/resources)"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "update",
+            "remove"
+          ],
+          "description": "Type of update operation"
+        },
+        "payload": {
+          "type": "object",
+          "description": "Dimension-specific data. For 'user': {profile:{name,role,team,seniority}, expertise:[], preferences:{language,detail_level,code_style,response_format}}. For 'feedback': {correction:{topic,wrong,correct,context}, endorsement:{topic,approach}}. For 'project': {objective:{description,priority,status}, member:{name,role,responsibility}, deadline:{description,date,priority}, status:'...'}. For 'reference': {resource:{name,category,location,description,tags:[]}, remove_by_id:'...'}. "
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why this update is important and should be persisted (minimum 10 characters, be specific about the context)"
+        }
+      },
+      "required": [
+        "dimension",
+        "action",
+        "payload",
+        "reason"
+      ]
     }
   }
 ]
