@@ -111,11 +111,12 @@ const MaxFileSizeForEntireRead = 10 * 1024 * 1024 // 10 MB
 const SoftFileSizeLimit = 2 * 1024 * 1024 // 2 MB
 
 // MaxEntireFileLines 是 entire file 模式下返回的最大行数，超出部分截断。
-const MaxEntireFileLines = 2000
+// 最多返回 500 行。
+const MaxEntireFileLines = 500
 
 // MaxEntireFileContentBytes 是 entire file 模式下返回内容的最大字节数。
 // 与 MaxEntireFileLines 双重保护：先触发的限制生效。
-const MaxEntireFileContentBytes = 200 * 1024 // 200 KB
+const MaxEntireFileContentBytes = 10 * 1024 // 10 KB
 
 // MaxLineLength 是 bufio.Scanner 的单行缓冲区大小，用于处理 minified 文件中的超长行。
 const MaxLineLength = 1024 * 1024 // 1 MB per line
