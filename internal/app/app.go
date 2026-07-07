@@ -359,7 +359,83 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		)
 	}
 
+	// Create DirectorAgent
 	ca.director = agents.NewDirectorAgent(ca.globalCtx, directorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, directorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine, *ca.config, ca.client)
+
+	// Set shared memory on DirectorAgent (created after shared memory block, so we set it here)
+	ca.director.BaseAgent.MemoryInjector = memory.NewSharedMemoryInjector(
+		memory.NewSharedDimensionStore(ca.sharedMemory),
+	)
+	ca.director.BaseAgent.MemoryUpdater = memory.NewSharedDimensionUpdater(
+		memory.NewSharedDimensionStore(ca.sharedMemory),
+		memory.DefaultRestraintPolicy(),
+	)
+
+	// Register update_shared_memory tool on DirectorAgent
+	{
+		updateMemFn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			dimStr, _ := params["dimension"].(string)
+			actionStr, _ := params["action"].(string)
+			reason, _ := params["reason"].(string)
+			payload := params["payload"]
+
+			if dimStr == "" || actionStr == "" || reason == "" || payload == nil {
+				return "Missing required parameters: dimension, action, payload, and reason.", nil
+			}
+
+			// Use Director's MemoryUpdater from BaseAgent
+			updater := ca.director.BaseAgent.MemoryUpdater
+			if updater == nil {
+				return "Memory updater not available.", nil
+			}
+
+			proposal := &memory.MemoryUpdateProposal{
+				Dimension:  memory.Dimension(dimStr),
+				Action:     memory.UpdateAction(actionStr),
+				Payload:    payload,
+				Reason:     reason,
+				ProposedBy: "director",
+				Metadata: map[string]interface{}{
+					"user_id":    "default",
+					"project_id": ca.globalCtx.ProjectPath,
+				},
+			}
+
+			result := updater.ApplyUpdate(proposal)
+			return result.Reason, nil
+		}
+
+		directorMemAdapter := tools.NewAdapter("update_shared_memory",
+			"Update the shared cross-agent memory system. Use this to persist important user information, feedback, project context, or reference resources across all agents and conversations.",
+			updateMemFn,
+		).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"dimension": map[string]interface{}{
+					"type":    "string",
+					"enum":    []string{"user", "feedback", "project", "reference"},
+					"description": "Which memory dimension to update",
+				},
+				"action": map[string]interface{}{
+					"type":    "string",
+					"enum":    []string{"add", "update", "remove"},
+					"description": "Type of update operation",
+				},
+				"payload": map[string]interface{}{
+					"type":        "object",
+					"description": "Dimension-specific data",
+				},
+				"reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Why this update matters",
+				},
+			},
+			"required": []string{"dimension", "action", "payload", "reason"},
+		})
+
+		ca.director.Adapters = append(ca.director.Adapters, directorMemAdapter)
+		slog.Info("DirectorAgent update_shared_memory tool registered")
+	}
 }
 
 func (ca *CodeActor) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
