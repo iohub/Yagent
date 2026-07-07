@@ -270,6 +270,95 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent, compactCfg)
 
+	// [NEW] Initialize Shared Memory System (4 dimensions: user, feedback, project, reference)
+	{
+		sharedDimStore := memory.NewSharedDimensionStore(ca.sharedMemory)
+		sharedDimInjector := memory.NewSharedMemoryInjector(sharedDimStore)
+		sharedDimUpdater := memory.NewSharedDimensionUpdater(sharedDimStore, memory.DefaultRestraintPolicy())
+		projectPath := ca.globalCtx.ProjectPath
+
+		// Set injector and updater on all agents via BaseAgent
+		repoAgent.BaseAgent.MemoryInjector = sharedDimInjector
+		repoAgent.BaseAgent.MemoryUpdater = sharedDimUpdater
+		chatAgent.BaseAgent.MemoryInjector = sharedDimInjector
+		chatAgent.BaseAgent.MemoryUpdater = sharedDimUpdater
+		metaAgent.BaseAgent.MemoryInjector = sharedDimInjector
+		metaAgent.BaseAgent.MemoryUpdater = sharedDimUpdater
+		devopsAgent.BaseAgent.MemoryInjector = sharedDimInjector
+		devopsAgent.BaseAgent.MemoryUpdater = sharedDimUpdater
+		browserAgent.BaseAgent.MemoryInjector = sharedDimInjector
+		browserAgent.BaseAgent.MemoryUpdater = sharedDimUpdater
+		codingAgent.BaseAgent.MemoryInjector = sharedDimInjector
+		codingAgent.BaseAgent.MemoryUpdater = sharedDimUpdater
+
+		// Create update_shared_memory tool function
+		updateMemFn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			dimStr, _ := params["dimension"].(string)
+			actionStr, _ := params["action"].(string)
+			reason, _ := params["reason"].(string)
+			payload := params["payload"]
+
+			if dimStr == "" || actionStr == "" || reason == "" || payload == nil {
+				return "Missing required parameters: dimension, action, payload, and reason.", nil
+			}
+
+			proposal := &memory.MemoryUpdateProposal{
+				Dimension:  memory.Dimension(dimStr),
+				Action:     memory.UpdateAction(actionStr),
+				Payload:    payload,
+				Reason:     reason,
+				ProposedBy: "agent",
+				Metadata: map[string]interface{}{
+					"user_id":    "default",
+					"project_id": projectPath,
+				},
+			}
+
+			result := sharedDimUpdater.ApplyUpdate(proposal)
+			return result.Reason, nil
+		}
+
+		// Build adapter with schema
+		updateMemAdapter := tools.NewAdapter("update_shared_memory",
+			"Update the shared cross-agent memory system. Use this to persist important user information (user dimension), feedback (feedback dimension), project context (project dimension), or reference resources (reference dimension) across all agents and conversations.",
+			updateMemFn,
+		).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"dimension": map[string]interface{}{
+					"type": "string",
+					"enum": []string{"user", "feedback", "project", "reference"},
+					"description": "Which memory dimension to update",
+				},
+				"action": map[string]interface{}{
+					"type": "string",
+					"enum": []string{"add", "update", "remove"},
+					"description": "Type of update operation",
+				},
+				"payload": map[string]interface{}{
+					"type":        "object",
+					"description": "Dimension-specific data. For user: {profile, expertise, preferences}. For feedback: {correction, endorsement}. For project: {objective, member, deadline, status}. For reference: {resource}.",
+				},
+				"reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Why this update matters (min 10 chars, be specific)",
+				},
+			},
+			"required": []string{"dimension", "action", "payload", "reason"},
+		})
+
+		// Register tool on all agents that use Adapters
+		codingAgent.Adapters = append(codingAgent.Adapters, updateMemAdapter)
+		chatAgent.Adapters = append(chatAgent.Adapters, updateMemAdapter)
+		devopsAgent.Adapters = append(devopsAgent.Adapters, updateMemAdapter)
+		repoAgent.Adapters = append(repoAgent.Adapters, updateMemAdapter)
+		browserAgent.Adapters = append(browserAgent.Adapters, updateMemAdapter)
+
+		slog.Info("Shared memory system initialized",
+			"dimensions", []string{"user", "feedback", "project", "reference"},
+		)
+	}
+
 	ca.director = agents.NewDirectorAgent(ca.globalCtx, directorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, directorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine, *ca.config, ca.client)
 }
 
