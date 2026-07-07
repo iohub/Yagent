@@ -779,6 +779,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.commandMode {
 			// Resolve multi-key sequences: check if lastKey + current key forms a valid combo
 			key := msg.String()
+			// ── 可配置快捷键重映射 ──
+			if m.cmdKeyMap != nil {
+				if mapped, ok := m.cmdKeyMap[key]; ok {
+					key = mapped
+				}
+			}
 			if m.lastKey != "" {
 				combo := m.lastKey + key
 				m.lastKey = ""
@@ -991,7 +997,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// ── Edit mode key handling ──
-		switch msg.String() {
+		// ── 可配置快捷键重映射 ──
+		editKeyStr := msg.String()
+		if m.editKeyMap != nil {
+			if mapped, ok := m.editKeyMap[editKeyStr]; ok {
+				editKeyStr = mapped
+			}
+		}
+		// ── 编辑模式功能键处理 ──
+		switch editKeyStr {
 		case "ctrl+c":
 			d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
 			d.SetBounds(m.termWidth, m.termHeight)
