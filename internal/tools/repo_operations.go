@@ -31,9 +31,9 @@ type SearchHit struct {
 	FilePath     string  `json:"file_path"`
 	LineStart    int     `json:"line_start"`
 	LineEnd      int     `json:"line_end"`
-	Score        float64 `json:"score"`
-	Snippet      string  `json:"snippet"`
-	FunctionName string  `json:"function_name,omitempty"`
+	Score        float64 `json:"final_score"`
+	Snippet      string  `json:"code_block"`
+	FunctionName string  `json:"symbol_name,omitempty"`
 }
 
 // CallSite 表示调用者或被调用者引用

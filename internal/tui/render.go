@@ -355,7 +355,7 @@ func formatSemanticSearchResults(results []interface{}, width int) string {
 		filePart := fileStyle.Render(filePath)
 		headerParts = append(headerParts, num, " ", filePart)
 
-		if score, ok := item["score"].(float64); ok {
+		if score, ok := item["final_score"].(float64); ok {
 			headerParts = append(headerParts, "  ", scoreStyle.Render(fmt.Sprintf("(score: %.3f)", score)))
 		}
 
