@@ -74,28 +74,31 @@ type IndexStatus struct {
 	FileCount   int    `json:"file_count,omitempty"`
 }
 
-// QueryCodeSkeletonResponse 表示骨架查询响应（保留原有功能）
+// QueryCodeSkeletonResponse 表示骨架查询响应
 type QueryCodeSkeletonResponse struct {
 	Success bool `json:"success"`
-	Data    struct {
+	Data    *struct {
 		Skeletons []struct {
 			Filepath     string `json:"filepath"`
 			Language     string `json:"language"`
 			SkeletonText string `json:"skeleton_text"`
 		} `json:"skeletons"`
-	} `json:"data"`
+	} `json:"data,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
+// QueryCodeSnippetResponse 表示代码片段查询响应
 type QueryCodeSnippetResponse struct {
 	Success bool `json:"success"`
-	Data    struct {
+	Data    *struct {
 		Filepath     string `json:"filepath"`
 		FunctionName string `json:"function_name"`
 		CodeSnippet  string `json:"code_snippet"`
 		LineStart    int    `json:"line_start"`
 		LineEnd      int    `json:"line_end"`
 		Language     string `json:"language"`
-	} `json:"data"`
+	} `json:"data,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 // ExecuteSemanticSearch 通过 CodeSeek MCP 执行语义代码搜索
@@ -274,7 +277,6 @@ func parseCallGraphResult(jsonText string) (*CallGraphResult, error) {
 
 // ExecuteQueryCodeSkeleton 通过 CodeSeek MCP 查询代码骨架
 func (t *RepoOperationsTool) ExecuteQueryCodeSkeleton(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-	// TODO: [Codexray] /query_code_skeleton call removed. Return mock data. Re-add when codexray is re-integrated.
 	filepathsInterface, ok := params["filepaths"].([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("filepaths parameter must be an array")
@@ -288,16 +290,26 @@ func (t *RepoOperationsTool) ExecuteQueryCodeSkeleton(ctx context.Context, param
 		filepaths[i] = s
 	}
 
-	// Return mock data for the first filepath (or empty array if none)
-	filepath := ""
-	if len(filepaths) > 0 {
-		filepath = filepaths[0]
+	raw, err := t.callMCPTool(ctx, "codeseek_skeleton", map[string]interface{}{
+		"file_paths": filepaths,
+	})
+	if err != nil {
+		// Graceful degradation: return empty result, not error
+		return QueryCodeSkeletonResponse{
+			Success: false,
+			Error:   fmt.Sprintf("MCP skeleton 查询失败: %v", err),
+		}, nil
 	}
-	return fmt.Sprintf("{\"success\":true,\"data\":{\"filepath\":\"%s\",\"skeletons\":[]}}", filepath), nil
+
+	var response QueryCodeSkeletonResponse
+	if err := json.Unmarshal([]byte(raw), &response); err != nil {
+		return nil, fmt.Errorf("解析 skeleton 结果失败: %w", err)
+	}
+
+	return response, nil
 }
 
 func (t *RepoOperationsTool) ExecuteQueryCodeSnippet(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-	// TODO: [Codexray] /query_code_snippet call removed. Return mock data. Re-add when codexray is re-integrated.
 	filepath, ok := params["filepath"].(string)
 	if !ok {
 		return nil, fmt.Errorf("filepath parameter must be a string")
@@ -307,7 +319,28 @@ func (t *RepoOperationsTool) ExecuteQueryCodeSnippet(ctx context.Context, params
 		return nil, fmt.Errorf("function_name parameter must be a string")
 	}
 
-	return fmt.Sprintf("{\"success\":true,\"data\":{\"filepath\":\"%s\",\"function_name\":\"%s\",\"code_snippet\":\"// code snippet unavailable (codexray disabled)\"}}", filepath, functionName), nil
+	args := map[string]interface{}{
+		"function_name": functionName,
+	}
+	if filepath != "" {
+		args["file_path"] = filepath
+	}
+
+	raw, err := t.callMCPTool(ctx, "codeseek_snippet", args)
+	if err != nil {
+		// Graceful degradation: return empty result, not error
+		return QueryCodeSnippetResponse{
+			Success: false,
+			Error:   fmt.Sprintf("MCP snippet 查询失败: %v", err),
+		}, nil
+	}
+
+	var response QueryCodeSnippetResponse
+	if err := json.Unmarshal([]byte(raw), &response); err != nil {
+		return nil, fmt.Errorf("解析 snippet 结果失败: %w", err)
+	}
+
+	return response, nil
 }
 
 // ── 调用者/被调用者查询（完全迁移到 CodeSeek MCP） ──
