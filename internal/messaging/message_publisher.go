@@ -16,6 +16,11 @@ func NewMessagePublisher(dispatcher *MessageDispatcher) *MessagePublisher {
 	}
 }
 
+// SetDispatcher 更新内部 dispatcher 引用，用于在 Publisher 创建后切换 dispatcher
+func (p *MessagePublisher) SetDispatcher(dispatcher *MessageDispatcher) {
+	p.dispatcher = dispatcher
+}
+
 // Publish 发布消息（新接口，返回 error）
 func (p *MessagePublisher) Publish(eventType string, content interface{}, from string) error {
 	if p.dispatcher == nil {

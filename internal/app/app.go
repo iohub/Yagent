@@ -540,6 +540,10 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 
 func (ca *CodeActor) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
 	ca.dispatcher = dispatcher
+	// 同步更新 publisher 的 dispatcher 引用，确保已创建的 Publisher 能正确路由事件
+	if ca.globalCtx != nil && ca.globalCtx.Publisher != nil {
+		ca.globalCtx.Publisher.SetDispatcher(dispatcher)
+	}
 }
 
 // TaskRequest encapsulates the request context.

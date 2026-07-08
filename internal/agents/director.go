@@ -970,7 +970,10 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			}
 
 			llmStartTime := time.Now()
-			resp, llmErr = a.LLM.GenerateContent(ctx, messages, toolDefs, nil)
+			// 为每个 LLM 调用添加 3 分钟超时保护，防止远程服务无响应时永久阻塞
+			llmCtx, llmCancel := context.WithTimeout(ctx, 3*time.Minute)
+			resp, llmErr = a.LLM.GenerateContent(llmCtx, messages, toolDefs, nil)
+			llmCancel()
 			llmDuration := time.Since(llmStartTime).Seconds()
 
 			// 记录 LLM 耗时指标

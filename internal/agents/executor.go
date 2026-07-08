@@ -191,7 +191,10 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			// Record start time
 			llmStartTime := time.Now()
 
-			resp, err = cfg.LLM.GenerateContent(ctx, messages, toolDefs, opts)
+			// 为每个 LLM 调用添加 3 分钟超时保护，防止远程服务无响应时永久阻塞
+			llmCtx, llmCancel := context.WithTimeout(ctx, 3*time.Minute)
+			resp, err = cfg.LLM.GenerateContent(llmCtx, messages, toolDefs, opts)
+			llmCancel()
 
 			// Calculate duration
 			llmDuration := time.Since(llmStartTime).Seconds()
@@ -256,7 +259,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				messages = emergencyMsgs
 
 				// 再次尝试 LLM 调用（仅一次）
-				resp, err = cfg.LLM.GenerateContent(ctx, messages, toolDefs, opts)
+				emCtx, emCancel := context.WithTimeout(ctx, 3*time.Minute)
+				resp, err = cfg.LLM.GenerateContent(emCtx, messages, toolDefs, opts)
+				emCancel()
 				if err != nil {
 					slog.Error("LLM call still failed after emergency compression",
 						"agent", cfg.AgentName, "error", err)
