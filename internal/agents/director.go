@@ -74,7 +74,6 @@ type DirectorAgent struct {
 	summaryEngine  llm.Engine                      // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
-	commitManager        *CommitManager            // commit 学习器管理器
 	hasDelegated         bool                      // 标记是否已委派过 agent
 	delegationAttempts   int                       // 委派尝试次数统计
 
@@ -387,15 +386,6 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
 
-	// 创建 commit 管理器（用于后台自动学习和查询，不再暴露为 Agent 工具）
-	var commitManager *CommitManager
-	if llmClient != nil {
-		commitManager = NewCommitManager(cfg, engine, llmClient, globalCtx)
-	} else {
-		// fallback to no dedicated engine
-		commitManager = NewCommitManager(cfg, engine, nil, globalCtx)
-	}
-
 	allAdapters := append(adapters, delegateAdapters...)
 
 	// Strangler Fig: 创建适配器桥接层，开始使用新组件（Metrics + CircuitBreaker）
@@ -423,8 +413,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		compactConfig:      compactCfg,
 		adapter:            directorAdapter,
 		summaryEngine:      summaryEngine,
-		commitManager:      commitManager, // 设置 commit 学习器管理器
-		hasDelegated:       false,         // 初始未委派过
+		hasDelegated:       false, // 初始未委派过
 		delegationAttempts: 0,             // 委派尝试次数初始为0
 
 		// LLM 兜底机制配置
@@ -497,51 +486,6 @@ func (a *DirectorAgent) getToolFunc(name string) tools.ToolFunc {
 	default:
 		return nil
 	}
-}
-
-// GetCommitContext 获取与用户输入最匹配的 commit 上下文
-//
-// 该方法用于在系统提示中注入相关的历史 commit 信息，帮助 LLM
-// 了解相似的历史变更，从而提高代码生成的准确性。
-//
-// 参数:
-//   - ctx: 上下文
-//   - userInput: 用户输入文本
-//
-// 返回值:
-//   - string: 格式化的 commit 摘要文本（空字符串表示无可用的 commit 上下文）
-func (a *DirectorAgent) GetCommitContext(ctx context.Context, userInput string) string {
-	if a.commitManager == nil || !a.commitManager.Enabled() {
-		return ""
-	}
-
-	learner, err := a.commitManager.GetLearner()
-	if err != nil || learner == nil {
-		return ""
-	}
-
-	summaries, err := learner.SearchSimilar(ctx, userInput, learner.Config().TopK)
-	if err != nil {
-		slog.Warn("[CommitLearner] Search error", "error", err)
-		return ""
-	}
-
-	if len(summaries) == 0 {
-		return ""
-	}
-
-	result := FormatSummaryAsText(summaries)
-
-	// 发布 commit 知识加载事件到 TUI
-	if a.Publisher != nil {
-		commitEvent := map[string]interface{}{
-			"count":     len(summaries),
-			"summaries": summaries,
-		}
-		a.Publisher.Publish("commit_context_loaded", commitEvent, a.Name())
-	}
-
-	return result
 }
 
 // parseMetaAgentOutput extracts and validates the JSON object from Meta-Agent's raw output.
@@ -827,15 +771,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 	a.currentMemory = mem
 	defer func() { a.currentMemory = nil }()
 
-	// 将 commit 上下文移出 system prompt，前置到用户输入中，
-	// 确保 system prompt 完全静态，提高 LLM Prompt Cache 命中率。
-	if input != "" {
-		if commitCtx := a.GetCommitContext(ctx, input); commitCtx != "" {
-			input = fmt.Sprintf("### Recent Relevant Commits\n%s\n\n### Current Task\n%s", commitCtx, input)
-			slog.Debug("Commit context prepended to user input")
-		}
-	}
-
 	if mem != nil {
 		// Check if the last message is the same as input to avoid duplication
 		// because handleChatMessage might have already added it.
@@ -855,13 +790,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			a.compactEngine = engine
 			slog.Info("Context compact engine initialized",
 				"max_tokens", a.compactConfig.MaxContextTokens)
-		}
-	}
-
-	// ═══════ 初始化 CommitLearner ═══════
-	if a.commitManager != nil {
-		if err := a.commitManager.Initialize(ctx, a.GlobalCtx.ProjectPath); err != nil {
-			slog.Warn("CommitLearner initialization failed", "error", err)
 		}
 	}
 

@@ -69,20 +69,6 @@ func DefaultCompactConfig() *ContextCompactConfig {
 	}
 }
 
-// DefaultCommitLearnerConfig 返回默认的 commit 学习器配置
-func DefaultCommitLearnerConfig() *CommitLearnerConfig {
-	return &CommitLearnerConfig{
-		Enabled:               true,
-		MaxCommits:            50,
-		SimilarityThreshold:   0.75,
-		TopK:                  3,
-		Trigger:               "both",
-		CacheTTL:              3600,
-		SummarizationProvider: "",
-		LLMSystemPrompt:       "",
-	}
-}
-
 // DefaultBrowserConfig 返回默认的浏览器配置（TOML 层）
 // 注意：此处的默认值与 internal/browser/config.go 中的 DefaultBrowserConfig() 应保持一致
 func DefaultBrowserConfig() *BrowserConfig {

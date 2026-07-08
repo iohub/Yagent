@@ -4,6 +4,7 @@ import (
 	"codeactor/internal/browser"
 	"codeactor/internal/config"
 	"codeactor/internal/tools"
+	"codeactor/internal/mcp"
 	"codeactor/internal/messaging"
 	"fmt"
 	"strings"
@@ -18,8 +19,7 @@ type GlobalCtx struct {
 	RepoSummary     string
 	// Global utility
 	Publisher *messaging.MessagePublisher
-	// Codexray baseurl
-	CodexrayURL string
+	// TODO: [Codexray] CodexrayURL field removed — re-add when codexray is re-integrated
 
 	// MaxContextTokens 最大上下文token数
 	MaxContextTokens int
@@ -38,6 +38,9 @@ type GlobalCtx struct {
 	DeepThinkingTool *tools.DeepThinkingTool
 	// BrowserMgr 浏览器管理器（单例，管理 Chromium 浏览器实例生命周期）
 	BrowserMgr *browser.Manager
+
+	// CodeSeekMCP MCP 客户端（用于代码分析，nil=未启用）
+	CodeSeekMCP *mcp.MCPClient
 
 	// GitCheckpointCfg holds the git checkpoint configuration (may be nil if not configured)
 	GitCheckpointCfg *config.GitCheckpointConfig
@@ -95,6 +98,4 @@ func (g *GlobalCtx) SetCustomizePrompt(prompt string) {
 	g.CustomizePrompt = prompt
 }
 
-func (g *GlobalCtx) SetCodexrayURL(url string) {
-	g.CodexrayURL = url
-}
+// TODO: [Codexray] SetCodexrayURL method removed — re-add when codexray is re-integrated

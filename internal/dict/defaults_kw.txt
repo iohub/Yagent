@@ -3,7 +3,6 @@
 
 # 基础词汇
 framework
-codexray
 director agent
 repo agent
 response

@@ -84,6 +84,15 @@ api_token = "your-key"
 model = "Qwen/Qwen3-Reranker-4B"
 api_base_url = "https://api.siliconflow.cn/v1/rerank"
 
+# ── CodeSeek MCP 代码分析引擎配置 ──
+[codeseek]
+# codeseek 二进制文件路径（空=不启用 MCP，使用 HTTP codexray 作为后备）
+binary_path = ""
+# MCP 启动参数
+mcp_args = ["serve", "--mcp"]
+# 请求超时秒数
+request_timeout = 30
+
 # ═══════════════════════════════════════════════════════════════
 # Phase 1 Stage 1.0: 新增配置段落
 # ═══════════════════════════════════════════════════════════════

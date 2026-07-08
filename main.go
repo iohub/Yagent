@@ -5,18 +5,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
-	nethttp "net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"time"
 
 	"codeactor/internal/app"
 	"codeactor/internal/agents"
 	"codeactor/internal/config"
 	"codeactor/internal/datamanager"
-	"codeactor/internal/embedbin"
 	"codeactor/internal/http"
 	"codeactor/internal/llm"
 	"codeactor/internal/logging"
@@ -93,24 +88,14 @@ func main() {
 }
 
 // initApp 执行 TUI 和 HTTP 模式共用的初始化逻辑
-// 返回: repoPath, codexrayPort, codexrayCmd (用于清理), error
-func initApp() (string, int, *exec.Cmd, error) {
+// 返回: repoPath, error
+// TODO: [Codexray] codexray server initialization removed (port allocation, binary extraction, server start, health check). Re-add when codexray is re-integrated.
+func initApp() (string, error) {
 	repoPath, err := os.Getwd()
 	if err != nil {
-		return "", 0, nil, fmt.Errorf("failed to get current working directory: %w", err)
+		return "", fmt.Errorf("failed to get current working directory: %w", err)
 	}
-
-	codexrayPort, err := findAvailablePort(12800)
-	if err != nil {
-		return "", 0, nil, fmt.Errorf("failed to find available port for codexray: %w", err)
-	}
-
-	if _, err := embedbin.ExtractBinaries(distBinFS, "dist/bin"); err != nil {
-		slog.Warn("Failed to extract embedded binaries", "error", err)
-	}
-
-	codexrayCmd := startCodexrayServer(codexrayPort, repoPath)
-	return repoPath, codexrayPort, codexrayCmd, nil
+	return repoPath, nil
 }
 
 // runTUI 启动终端 UI 模式
@@ -121,22 +106,13 @@ func runTUI(taskFile, disableAgents string) {
 	}
 	defer logging.Close()
 
-	repoPath, codexrayPort, codexrayCmd, err := initApp()
+	repoPath, err := initApp()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	if codexrayCmd != nil {
-		defer func() {
-			if err := codexrayCmd.Process.Kill(); err != nil {
-				slog.Warn("Failed to kill codexray process", "error", err)
-			} else {
-				slog.Info("Codebase process killed on exit", "pid", codexrayCmd.Process.Pid)
-			}
-		}()
-	} else {
-		fmt.Fprintf(os.Stderr, "WARNING: codeactor-codexray server failed to start. Semantic search and code analysis features will be unavailable.\n")
-	}
+	// TODO: [Codexray] CodexrayPort assignment removed — was codeActor.CodexrayPort = codexrayPort. Re-add when codexray is re-integrated.
+	// TODO: [Codexray] codexrayCmd cleanup deferred — was killing subprocess on exit. Re-add when codexray is re-integrated.
 
 	// TUI mode init — matches original switch "tui" case exactly
 	ctx := context.Background()
@@ -160,13 +136,14 @@ func runTUI(taskFile, disableAgents string) {
 		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
 		os.Exit(1)
 	}
+	codeActor.SetEmbeddedBinaries(distBinFS)
 
 	if err := agents.InitToolLogger(); err != nil {
 		slog.Warn("Failed to initialize tool logger", "error", err)
 	}
 
 	codeActor.DisabledAgents = disableAgents
-	codeActor.CodexrayPort = codexrayPort
+	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
 
 	defer codeActor.Close()
 
@@ -211,20 +188,13 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	}
 	defer logging.Close()
 
-	_, codexrayPort, codexrayCmd, err := initApp()
+	_, err := initApp()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	if codexrayCmd != nil {
-		defer func() {
-			if err := codexrayCmd.Process.Kill(); err != nil {
-				slog.Warn("Failed to kill codexray process", "error", err)
-			} else {
-				slog.Info("Codebase process killed on exit", "pid", codexrayCmd.Process.Pid)
-			}
-		}()
-	}
+	// TODO: [Codexray] CodexrayPort assignment removed — was codeActor.CodexrayPort = codexrayPort. Re-add when codexray is re-integrated.
+	// TODO: [Codexray] codexrayCmd cleanup deferred — was killing subprocess on exit. Re-add when codexray is re-integrated.
 
 	// HTTP mode init — matches original switch "http" case exactly
 	ctx := context.Background()
@@ -266,8 +236,9 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
 		os.Exit(1)
 	}
+	codeActor.SetEmbeddedBinaries(distBinFS)
 	codeActor.DisabledAgents = disableAgents
-	codeActor.CodexrayPort = codexrayPort
+	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
 
 	defer codeActor.Close()
 
@@ -276,14 +247,7 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 
 	server := http.NewServer(codeActor)
 
-	if httpPort == 0 {
-		port, err := findAvailablePort(9800)
-		if err != nil {
-			slog.Error("Failed to find available port for HTTP server", "error", err)
-			os.Exit(1)
-		}
-		httpPort = port
-	}
+	// TODO: [Codexray] findAvailablePort call removed — was finding port starting from 9800. Re-add when codexray is re-integrated.
 	slog.Info("Starting HTTP server", "port", httpPort)
 
 	if err := server.Run(httpPort); err != nil {
@@ -316,99 +280,9 @@ func getConfigPath() string {
 	return configPath
 }
 
-// findAvailablePort 从 startPort 开始递增查找第一个可用的 TCP 端口
-func findAvailablePort(startPort int) (int, error) {
-	for port := startPort; port < startPort+100; port++ {
-		addr := fmt.Sprintf("127.0.0.1:%d", port)
-		listener, err := net.Listen("tcp", addr)
-		if err == nil {
-			listener.Close()
-			return port, nil
-		}
-	}
-	return 0, fmt.Errorf("no available port found starting from %d", startPort)
-}
 
-// startCodexrayServer starts the codeactor-codexray server as a background process.
-// Returns the *exec.Cmd so the caller can kill the process on exit.
-func startCodexrayServer(port int, repoPath string) *exec.Cmd {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		slog.Error("Failed to get user home directory", "error", err)
-		return nil
-	}
+// TODO: [Codexray] findAvailablePort removed — was finding available TCP port starting from 12800. Re-add when codexray is re-integrated.
 
-	binPath, err := embedbin.BinPath("codeactor-codexray")
-	if err != nil {
-		slog.Error("Failed to get codeactor-codexray bin path", "error", err)
-		return nil
-	}
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		slog.Error("codeactor-codexray binary not found, skipping startup", "path", binPath)
-		return nil
-	}
+// TODO: [Codexray] startCodexrayServer removed — was launching codeactor-codexray subprocess. Re-add when codexray is re-integrated.
 
-	logDir := filepath.Join(homeDir, ".codeactor/logs/codeactor-codexray")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		slog.Error("Failed to create log directory", "error", err)
-		return nil
-	}
-
-	now := time.Now()
-	logFileName := fmt.Sprintf("%s.log", now.Format("2006-01-02"))
-	logPath := filepath.Join(logDir, logFileName)
-
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		slog.Error("Failed to create log file", "error", err)
-		return nil
-	}
-
-	address := fmt.Sprintf("127.0.0.1:%d", port)
-	cmd := exec.Command(binPath, "-v", "server", "--repo-path", repoPath, "--address", address)
-	cmd.Env = append(os.Environ(), "RUST_LOG=info")
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	if err := cmd.Start(); err != nil {
-		slog.Error("Failed to start codeactor-codexray", "error", err)
-		return nil
-	}
-
-	slog.Info("Started codeactor-codexray server", "pid", cmd.Process.Pid, "address", address, "repo", repoPath, "log", logPath)
-
-	go func() {
-		if err := waitForCodexray(address, 60*time.Second); err != nil {
-			slog.Error("Codebase server failed to become healthy", "error", err)
-			cmd.Process.Kill()
-		}
-	}()
-
-	return cmd
-}
-
-// waitForCodexray polls the /health endpoint until the service responds or timeout.
-func waitForCodexray(address string, timeout time.Duration) error {
-	healthURL := fmt.Sprintf("http://%s/health", address)
-	deadline := time.Now().Add(timeout)
-	client := &nethttp.Client{Timeout: 2 * time.Second}
-
-	var lastErr error
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(healthURL)
-		if err != nil {
-			lastErr = err
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-		resp.Body.Close()
-		if resp.StatusCode == nethttp.StatusOK {
-			slog.Info("Codebase server is healthy", "address", address)
-			return nil
-		}
-		lastErr = fmt.Errorf("health check returned status %d", resp.StatusCode)
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	return fmt.Errorf("codexray server at %s not healthy after %v: %w", address, timeout, lastErr)
-}
+// TODO: [Codexray] waitForCodexray removed — was polling /health endpoint with 60s timeout. Re-add when codexray is re-integrated.

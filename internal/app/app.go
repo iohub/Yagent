@@ -2,8 +2,11 @@ package app
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -13,10 +16,12 @@ import (
 	"codeactor/internal/browser"
 	"codeactor/internal/compact"
 	"codeactor/internal/config"
+	"codeactor/internal/embedbin"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
 	"codeactor/internal/logging"
 	"codeactor/internal/memory"
+	"codeactor/internal/mcp"
 	"codeactor/internal/skills"
 	"codeactor/internal/tools"
 	"codeactor/internal/messaging"
@@ -35,7 +40,7 @@ type CodeActor struct {
 
 	globalCtx      *globalctx.GlobalCtx
 	DisabledAgents string // comma-separated list of agent names to disable (e.g. "repo,coding,chat")
-	CodexrayPort   int    // codebase 服务端口，由 main 函数动态分配
+	// TODO: [Codexray] CodexrayPort field removed — re-add when codexray is re-integrated
 
 	SkillRegistry      *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
 
@@ -43,6 +48,9 @@ type CodeActor struct {
 	sharedMemory                *memory.SharedMemory
 	consolidationWorker         *agents.ConsolidationWorker
 	sharedConsolidationRunner   *agents.SharedMemoryConsolidationRunner
+
+	// embeddedBinFS 嵌入的二进制文件系统（用于自动提取 codeseek 等工具）
+	embeddedBinFS embed.FS
 }
 
 // NewCodeActor creates a new CodeActor.
@@ -55,6 +63,11 @@ func NewCodeActor(client *llm.Client) (*CodeActor, error) {
 		config:               client.Config,
 	}
 	return ca, nil
+}
+
+// SetEmbeddedBinaries 设置嵌入的二进制文件系统，用于自动提取 codeseek 等工具
+func (ca *CodeActor) SetEmbeddedBinaries(fs embed.FS) {
+	ca.embeddedBinFS = fs
 }
 
 // Init initializes the assistant with Engine and creates agents.
@@ -79,6 +92,58 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		deepthinkingEngine = ca.client.GetToolEngine("deepthinking")
 	}
 
+	// ── 确定 codeseek 二进制路径并启动 MCP 客户端 ──
+	codeseekBinaryPath := ""
+
+	// 优先级1：配置中显式指定的路径（用户手动设置）
+	if ca.config != nil && ca.config.CodeSeek.BinaryPath != "" {
+		codeseekBinaryPath = ca.config.CodeSeek.BinaryPath
+		slog.Info("Using configured CodeSeek binary path", "path", codeseekBinaryPath)
+	} else if ca.config != nil {
+		// 优先级2：从嵌入的二进制中自动解压
+		binDir, err := embedbin.ExtractBinaries(ca.embeddedBinFS, "dist/bin")
+		if err != nil {
+			slog.Debug("No embedded binaries to extract, CodeSeek MCP will not be available", "error", err)
+		} else {
+			candidatePath := filepath.Join(binDir, "codeseek")
+			if _, statErr := os.Stat(candidatePath); statErr == nil {
+				codeseekBinaryPath = candidatePath
+				slog.Info("Auto-extracted embedded CodeSeek binary", "path", codeseekBinaryPath)
+			} else {
+				slog.Debug("Embedded codeseek binary not found in extracted files, CodeSeek MCP will not be available")
+			}
+		}
+	}
+
+	// ── 启动 CodeSeek MCP 客户端 ──
+	var codeSeekMCP *mcp.MCPClient
+	if codeseekBinaryPath != "" {
+		// 解析 MCP 参数，默认使用 ["serve", "--mcp"]
+		mcpArgs := []string{"serve", "--mcp"}
+		requestTimeout := 30
+		if ca.config != nil {
+			if len(ca.config.CodeSeek.MCPArgs) > 0 {
+				mcpArgs = ca.config.CodeSeek.MCPArgs
+			}
+			if ca.config.CodeSeek.RequestTimeout > 0 {
+				requestTimeout = ca.config.CodeSeek.RequestTimeout
+			}
+		}
+
+		codeSeekMCP = mcp.NewMCPClient(mcp.MCPClientConfig{
+			BinaryPath:     codeseekBinaryPath,
+			Args:           mcpArgs,
+			WorkingDir:     workDir,
+			RequestTimeout: time.Duration(requestTimeout) * time.Second,
+		})
+		if err := codeSeekMCP.Start(context.Background()); err != nil {
+			slog.Warn("Failed to start CodeSeek MCP client, repo exploration tools will be unavailable", "error", err)
+			codeSeekMCP = nil
+		} else {
+			slog.Info("CodeSeek MCP client started successfully")
+		}
+	}
+
 	gctx := globalctx.GlobalCtx{
 		SpeakLang:   ca.config.Agent.SpeakLang,
 		ProjectPath: workDir,
@@ -86,7 +151,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		Arch:        runtime.GOARCH,
 		// Global utility
 		Publisher:   publisher,
-		CodexrayURL: fmt.Sprintf("http://127.0.0.1:%d", ca.CodexrayPort),
+		// TODO: [Codexray] CodexrayURL field removed — re-add when codexray is re-integrated
 
 		// Tools
 		FileOps:          tools.NewFileOperationsTool(workDir),
@@ -96,9 +161,15 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		ThinkingTool:     tools.NewThinkingTool(),
 		MicroAgentTool:   tools.NewMicroAgentTool(microAgentEngine),
 		FlowOps:          tools.NewFlowControlTool(workDir),
-		RepoOps:          tools.NewRepoOperationsTool(fmt.Sprintf("http://127.0.0.1:%d", ca.CodexrayPort), workDir),
+		RepoOps:          tools.NewRepoOperationsTool(codeSeekMCP, workDir, 0),
 		UserConfirmMgr:   userConfirmMgr,
 		DeepThinkingTool: tools.NewDeepThinkingTool(deepthinkingEngine),
+
+		// BrowserMgr 浏览器管理器（单例，管理 Chromium 浏览器实例生命周期）
+		BrowserMgr: nil,
+
+		// CodeSeekMCP MCP 客户端（用于代码分析，nil=未启用）
+		CodeSeekMCP: codeSeekMCP,
 
 		// Git Checkpoint config
 		GitCheckpointCfg: &ca.config.GitCheckpoint,
@@ -598,6 +669,11 @@ func (ca *CodeActor) Close() {
 	if ca.sharedConsolidationRunner != nil {
 		slog.Info("Stopping shared memory consolidation runner...")
 		ca.sharedConsolidationRunner.Stop()
+	}
+	// 关闭 CodeSeek MCP 客户端
+	if ca.globalCtx != nil && ca.globalCtx.CodeSeekMCP != nil {
+		slog.Info("Shutting down CodeSeek MCP client...")
+		ca.globalCtx.CodeSeekMCP.Shutdown()
 	}
 	if ca.globalCtx != nil && ca.globalCtx.BrowserMgr != nil {
 		slog.Info("Closing browser manager...")

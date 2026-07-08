@@ -294,9 +294,6 @@ func diffConfigs(old, new *Config) []string {
 	if !compareDeep(old.Browser, new.Browser) {
 		changed = append(changed, "browser")
 	}
-	if !compareDeep(old.CommitLearner, new.CommitLearner) {
-		changed = append(changed, "commit_learner")
-	}
 	if !compareDeep(old.Keywords, new.Keywords) {
 		changed = append(changed, "keywords")
 	}

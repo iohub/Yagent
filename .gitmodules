@@ -1,0 +1,4 @@
+[submodule "codeseek"]
+	path = codeseek
+	url = https://github.com/iohub/codeseek.git
+	branch = main

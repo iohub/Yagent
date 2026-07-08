@@ -14,6 +14,7 @@ vscode/*.vsix
 *.exe
 *.exe~
 *.dll
+codeseek
 *.so
 *.dylib
 refs

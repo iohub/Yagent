@@ -260,6 +260,10 @@ func tryDecodeJSONString(content string) string {
 // tryFormatCodebaseResult detects codexray tool result JSON by structure and formats it.
 // Returns empty string if the JSON doesn't match any known codexray result pattern.
 func tryFormatCodebaseResult(content string, width int) string {
+	// TODO: [Codexray] This function parses codexray-specific JSON response formats.
+	// Currently, the underlying codexray API methods return mock data,
+	// so this function may receive mock JSON that matches the expected schema.
+	// Review and update when codexray is re-integrated.
 	var parsed map[string]interface{}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
 		return ""

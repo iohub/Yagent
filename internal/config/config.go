@@ -147,14 +147,16 @@ type Config struct {
 	App           AppConfig            `toml:"app"`
 	Agent         AgentConfig          `toml:"agent"`
 	LLM           LLMConfig            `toml:"llm" json:"llm" yaml:"llm"`    // [llm] - LLM 推理兜底配置
-	Compact       ContextCompactConfig `toml:"context"`        // [context] - 上下文压缩配置
-	Browser       BrowserConfig        `toml:"browser"`        // [browser] - 浏览器配置
-	CommitLearner CommitLearnerConfig  `toml:"commit_learner"` // [commit_learner] - commit 学习器配置
-	Keywords      KeywordsConfig       `toml:"keywords"`       // [keywords] - 关键词词典配置
+	Compact       ContextCompactConfig `toml:"context"`  // [context] - 上下文压缩配置
+	Browser       BrowserConfig        `toml:"browser"`  // [browser] - 浏览器配置
+	Keywords      KeywordsConfig       `toml:"keywords"` // [keywords] - 关键词词典配置
 	TaskTimeout   time.Duration        `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"` // 全局任务超时，0=不启用
 
 	// GitCheckpoint git checkpoint 机制配置
 	GitCheckpoint GitCheckpointConfig `toml:"git_checkpoint"`
+
+	// CodeSeek CodeSeek 代码分析引擎 MCP 客户端配置
+	CodeSeek CodeSeekConfig `toml:"codeseek"`
 
 	// EnhancedCommander 增强型 Commander 配置
 	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`
@@ -415,26 +417,6 @@ func (c *Config) validate() error {
 	if c.LLM.CircuitBreakerResetTimeout == 0 && c.LLM.CircuitBreakerThreshold > 0 {
 		c.LLM.CircuitBreakerResetTimeout = 60 * time.Second
 	}
-
-	// ═══════ CommitLearner 默认值设置 ═══════
-	commitDefaults := DefaultCommitLearnerConfig()
-	if c.CommitLearner.MaxCommits == 0 {
-		c.CommitLearner.MaxCommits = commitDefaults.MaxCommits
-	}
-	if c.CommitLearner.SimilarityThreshold == 0 {
-		c.CommitLearner.SimilarityThreshold = commitDefaults.SimilarityThreshold
-	}
-	if c.CommitLearner.TopK == 0 {
-		c.CommitLearner.TopK = commitDefaults.TopK
-	}
-	if c.CommitLearner.Trigger == "" {
-		c.CommitLearner.Trigger = commitDefaults.Trigger
-	}
-	if c.CommitLearner.CacheTTL == 0 {
-		c.CommitLearner.CacheTTL = commitDefaults.CacheTTL
-	}
-	// Enabled 默认为 true（零值为 true 时无需设置）
-	// LLMSystemPrompt 为空时在 agents 包中使用默认值
 
 	// ═══════ Keywords 默认值设置（向后兼容） ═══════
 	// 如果 config.toml 中不存在 [keywords] 段，则创建默认配置
@@ -827,19 +809,6 @@ type ContextCompactConfig struct {
 	CircuitBreakerResetDuration int `toml:"circuit_breaker_reset_duration"`
 }
 
-// CommitLearnerConfig commit 学习器配置
-// 用于 TOML 解析，在 agents 包中转换为 CommitLearnConfig
-type CommitLearnerConfig struct {
-	Enabled               bool    `toml:"enabled"`                // 是否启用 commit 学习功能
-	MaxCommits            int     `toml:"max_commits"`            // 最大获取 commit 数量
-	SimilarityThreshold   float64 `toml:"similarity_threshold"`   // 相似度阈值（0.0-1.0）
-	TopK                  int     `toml:"top_k"`                  // 搜索结果数量
-	Trigger               string  `toml:"trigger"`                // 触发方式："on_demand", "on_session_start", "both"
-	CacheTTL              int     `toml:"cache_ttl"`              // 缓存有效期（秒）
-	LLMSystemPrompt       string  `toml:"llm_system_prompt"`      // LLM 系统提示词（空时使用默认值）
-	SummarizationProvider string  `toml:"summarization_provider"` // 专用的 LLM provider 名称，空时使用全局默认
-}
-
 // BrowserConfig 浏览器配置
 type BrowserConfig struct {
 	Headless           bool     `toml:"headless"`             // 无头模式，默认 true
@@ -880,6 +849,20 @@ type EnhancedCommanderConfig struct {
 
 	// MaxDelegationDepth 最大委派深度，默认 3
 	MaxDelegationDepth int `toml:"max_delegation_depth" json:"max_delegation_depth"`
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CodeSeek MCP 代码分析引擎配置
+// ═══════════════════════════════════════════════════════════════
+
+// CodeSeekConfig 配置 codeseek MCP 客户端
+type CodeSeekConfig struct {
+	// BinaryPath codeseek 二进制文件路径（空=不启用 MCP 客户端）
+	BinaryPath string `toml:"binary_path"`
+	// MCPArgs 传递给 codeseek 的参数（如 ["serve", "--mcp"]）
+	MCPArgs []string `toml:"mcp_args"`
+	// RequestTimeout MCP 请求超时秒数（默认 30）
+	RequestTimeout int `toml:"request_timeout"`
 }
 
 // ═══════════════════════════════════════════════════════════════

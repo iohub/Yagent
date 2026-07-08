@@ -25,11 +25,12 @@ set -euo pipefail
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly DIST_DIR="${SCRIPT_DIR}/dist/bin"
-readonly RUST_PROJECT_DIR="${SCRIPT_DIR}/codexray"
+readonly CODESEEK_DIR="${SCRIPT_DIR}/codeseek/rust-core"
 readonly GO_PROJECT_DIR="${SCRIPT_DIR}"
 
 # 产物名称
-readonly RUST_BIN="codeactor-codexray"
+readonly CODESEEK_BIN="codeseek"
+readonly RUST_BIN="codeseek"
 readonly GO_BIN="codeactor"
 
 # 保留的文件模式（不清理的文件）
@@ -222,7 +223,7 @@ build_rust() {
     cd "$RUST_PROJECT_DIR"
     start_time=$(date +%s%N)
     
-    local cargo_flags="-p codeactor-codexray"
+    local cargo_flags="-p codeseek"
     cargo_flags+=" --manifest-path ${RUST_PROJECT_DIR}/Cargo.toml"
     if [[ "${BUILD_TYPE}" == "release" ]]; then
         cargo_flags+=" --release"
@@ -260,6 +261,61 @@ build_rust() {
         cp "$bin_source" "$bin_dest"
         chmod +x "$bin_dest"
         log_success "✅ Rust 构建完成 (${elapsed}s) -> ${bin_dest}"
+    else
+        log_error "构建产物未找到: ${bin_source}"
+        return 1
+    fi
+}
+
+# =============================================================================
+# Codeseek Rust 构建函数
+# =============================================================================
+build_codeseek() {
+    local start_time end_time elapsed
+    
+    log_info "📦 构建 Rust codeseek (${CODESEEK_DIR}/${CODESEEK_BIN})..."
+    
+    cd "$CODESEEK_DIR"
+    start_time=$(date +%s%N)
+    
+    local cargo_flags=""
+    cargo_flags+=" --manifest-path ${CODESEEK_DIR}/Cargo.toml"
+    if [[ "${BUILD_TYPE}" == "release" ]]; then
+        cargo_flags+=" --release"
+    fi
+    
+    if [[ -n "$PARALLEL_JOBS" ]]; then
+        cargo_flags+=" -j ${PARALLEL_JOBS}"
+    fi
+    
+    # 添加额外的 RUSTFLAGS
+    if [[ -n "${RUSTFLAGS:-}" ]]; then
+        export RUSTFLAGS="${RUSTFLAGS}"
+        log_debug "  RUSTFLAGS: ${RUSTFLAGS}"
+    fi
+    
+    if ! cargo build ${cargo_flags} 2>&1; then
+        log_error "Codeseek Rust 构建失败"
+        return 1
+    fi
+    
+    end_time=$(date +%s%N)
+    elapsed=$(awk "BEGIN {printf \"%.1f\", ($end_time - $start_time) / 1000000000}")
+    
+    # 复制产物到 dist/bin
+    local bin_source bin_dest
+    if [[ "${BUILD_TYPE}" == "debug" ]]; then
+        bin_source="${CODESEEK_DIR}/target/debug/${CODESEEK_BIN}"
+    else
+        bin_source="${CODESEEK_DIR}/target/release/${CODESEEK_BIN}"
+    fi
+    
+    bin_dest="${DIST_DIR}/${CODESEEK_BIN}"
+    
+    if [[ -f "$bin_source" ]]; then
+        cp "$bin_source" "$bin_dest"
+        chmod +x "$bin_dest"
+        log_success "✅ Codeseek 构建完成 (${elapsed}s) -> ${bin_dest}"
     else
         log_error "构建产物未找到: ${bin_source}"
         return 1
@@ -326,6 +382,13 @@ show_artifacts() {
         local rust_size
         rust_size=$(get_file_size_human "${DIST_DIR}/${RUST_BIN}")
         printf "  ${GREEN}%-35s${RESET} %s\n" "${DIST_DIR}/${RUST_BIN}" "${rust_size}"
+        has_artifacts=true
+    fi
+    
+    if [[ -f "${DIST_DIR}/${CODESEEK_BIN}" ]]; then
+        local codeseek_size
+        codeseek_size=$(get_file_size_human "${DIST_DIR}/${CODESEEK_BIN}")
+        printf "  ${GREEN}%-35s${RESET} %s\n" "${DIST_DIR}/${CODESEEK_BIN}" "${codeseek_size}"
         has_artifacts=true
     fi
     
@@ -400,7 +463,7 @@ ${BOLD}示例:${RESET}
   DEBUG=1 ${SCRIPT_NAME}            # 显示调试信息
 
 ${BOLD}产物:${RESET}
-  dist/bin/codeactor-codexray    # Rust 子项目产物
+  dist/bin/codeseek              # Rust codeseek 子项目产物
   ./codeactor                    # Go 主项目产物
 
 EOF
@@ -419,6 +482,13 @@ cmd_clean() {
         log_success "  Rust target 已清理"
     fi
     
+    # 清理 Codeseek Rust 构建产物
+    if [[ -d "${CODESEEK_DIR}/target" ]]; then
+        log_info "  清理 Codeseek target 目录..."
+        rm -rf "${CODESEEK_DIR}/target"
+        log_success "  Codeseek target 已清理"
+    fi
+    
     # 清理 Go 构建缓存
     if command_exists go; then
         log_info "  清理 Go 构建缓存..."
@@ -435,7 +505,7 @@ cmd_clean() {
             basename=$(basename "$file")
             
             # 只清理 Rust 产物（Go 产物 codeactor 已在项目根目录）
-            if [[ "$basename" == "${RUST_BIN}"* ]]; then
+            if [[ "$basename" == "${RUST_BIN}"* ]] || [[ "$basename" == "${CODESEEK_BIN}" ]]; then
                 rm -f "$file"
             fi
         done
@@ -485,8 +555,8 @@ cmd_build() {
     # 先构建 Rust（除非跳过）
     if [[ "${SKIP_RUST}" != "true" ]]; then
         # 只在构建 Rust 前清理
-        log_info "building codexray"
-        build_rust || exit 1
+        log_info "building codeseek"
+        build_codeseek || exit 1
     else
         log_warning "⊘ 跳过 Rust 构建 (SKIP_RUST=true)"
         log_info "  将使用 dist/bin 中现有的文件嵌入 Go 二进制"

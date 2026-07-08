@@ -39,14 +39,14 @@ func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 		OS:           "linux",
 		Arch:         "amd64",
 		SpeakLang:    "Chinese",
-		CodexrayURL:  "http://127.0.0.1:12800",
+		// TODO: [Codexray] CodexrayURL field removed — re-add when codexray is re-integrated
 		FileOps:      tools.NewFileOperationsTool(workDir),
 		SearchOps:    tools.NewSearchOperationsTool(workDir),
 		SysOps:       tools.NewSystemOperationsTool(workDir),
 		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
 		ThinkingTool: tools.NewThinkingTool(),
 		FlowOps:      tools.NewFlowControlTool(workDir),
-		RepoOps:      tools.NewRepoOperationsTool("http://127.0.0.1:12800", workDir),
+		RepoOps:      tools.NewRepoOperationsTool(nil, workDir, 0),
 	}
 }
 
