@@ -51,6 +51,9 @@ type CodeActor struct {
 
 	// embeddedBinFS 嵌入的二进制文件系统（用于自动提取 codeseek 等工具）
 	embeddedBinFS embed.FS
+
+	// initOnce 保证 Init() 只执行一次，防止重复初始化导致资源泄漏
+	initOnce sync.Once
 }
 
 // NewCodeActor creates a new CodeActor.
@@ -73,10 +76,13 @@ func (ca *CodeActor) SetEmbeddedBinaries(fs embed.FS) {
 // Init initializes the assistant with Engine and creates agents.
 // Uses per-agent and per-tool engine resolution from the LLM client.
 func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
+	// 始终更新 engine（后续调用也需要更新 engine）
 	ca.engine = engine
 
-	// Initialize agents
-	publisher := messaging.NewMessagePublisher(ca.dispatcher)
+	// initOnce 保证只执行一次完整初始化（创建 Agents、启动 MCP 客户端等）
+	ca.initOnce.Do(func() {
+		// Initialize agents
+		publisher := messaging.NewMessagePublisher(ca.dispatcher)
 
 	userConfirmMgr := tools.NewUserConfirmManager()
 
@@ -529,6 +535,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			"interval", "30m",
 		)
 	}
+})
 }
 
 func (ca *CodeActor) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {

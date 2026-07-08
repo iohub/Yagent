@@ -145,6 +145,9 @@ func runTUI(taskFile, disableAgents string) {
 	codeActor.DisabledAgents = disableAgents
 	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
 
+	// 主动初始化：启动 codeseek MCP 等核心服务
+	codeActor.Init(client.Engine, repoPath)
+
 	defer codeActor.Close()
 
 	// 加载 skills
@@ -188,7 +191,7 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	}
 	defer logging.Close()
 
-	_, err := initApp()
+	repoPath, err := initApp()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -239,6 +242,9 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	codeActor.SetEmbeddedBinaries(distBinFS)
 	codeActor.DisabledAgents = disableAgents
 	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
+
+	// 主动初始化：启动 codeseek MCP 等核心服务
+	codeActor.Init(client.Engine, repoPath)
 
 	defer codeActor.Close()
 
