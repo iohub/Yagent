@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -282,9 +284,12 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	// [NEW] 初始化 RepoAgent 记忆系统
 	{
 		ca.sharedMemory = memory.NewSharedMemory(100)
-		// 启用文件持久化，保存共享记忆
-		sharedMemPath := filepath.Join(ca.globalCtx.ProjectPath, ".shared_memory.json")
-		if err := ca.sharedMemory.EnablePersistence(5*time.Second, sharedMemPath); err != nil {
+		// 启用文件持久化，保存到 $HOME/.codeactor/data/shared_memory/{projectid}/
+		sharedMemPath := ca.getSharedMemoryPath()
+		sharedMemDir := filepath.Dir(sharedMemPath)
+		if err := os.MkdirAll(sharedMemDir, 0700); err != nil {
+			slog.Warn("Failed to create shared memory directory", "path", sharedMemDir, "error", err)
+		} else if err := ca.sharedMemory.EnablePersistence(5*time.Second, sharedMemPath); err != nil {
 			slog.Warn("Shared memory persistence not available (first run?)", "path", sharedMemPath, "error", err)
 		} else {
 			slog.Info("Shared memory persistence enabled", "path", sharedMemPath, "interval", "5s")
@@ -854,4 +859,50 @@ func (ca *CodeActor) Close() {
 			slog.Warn("Failed to close browser manager", "error", err)
 		}
 	}
+}
+
+// getProjectID generates a filesystem-safe, unique project identifier
+// from the project path. Format: {sanitized_basename}_{short_hash}
+// Example: "/home/user/my-app" → "my_app_a1b2c3d4e5f6"
+func getProjectID(projectPath string) string {
+	// Use the last path component as the human-readable prefix
+	base := filepath.Base(projectPath)
+	if base == "." || base == "/" {
+		base = "root"
+	}
+
+	// Sanitize: keep only alphanumeric characters, replace others with underscore
+	sanitized := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, base)
+
+	// Truncate to leave room for "_" + 12-char hash (filesystem limit: 255 bytes per component)
+	const maxBaseLen = 242
+	if len(sanitized) > maxBaseLen {
+		sanitized = sanitized[:maxBaseLen]
+	}
+
+	// Generate short hash for global uniqueness
+	h := sha256.Sum256([]byte(projectPath))
+	shortHash := hex.EncodeToString(h[:])[:12]
+
+	return sanitized + "_" + shortHash
+}
+
+// getSharedMemoryPath returns the shared memory file path.
+// Preferred: $HOME/.codeactor/data/shared_memory/{projectID}/shared_memory.json
+// Fallback:  {ProjectPath}/.shared_memory.json (if home dir is unavailable)
+func (ca *CodeActor) getSharedMemoryPath() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		// Fallback to project-local path (preserves old behavior)
+		slog.Warn("Cannot determine home directory, falling back to project-local shared memory", "error", err)
+		return filepath.Join(ca.globalCtx.ProjectPath, ".shared_memory.json")
+	}
+
+	projectID := getProjectID(ca.globalCtx.ProjectPath)
+	return filepath.Join(homeDir, ".codeactor", "data", "shared_memory", projectID, "shared_memory.json")
 }
