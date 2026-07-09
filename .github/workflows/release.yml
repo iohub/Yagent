@@ -146,7 +146,7 @@ jobs:
       - name: Install musl tools and build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools perl make pkg-config
+          sudo apt-get install -y musl-tools perl make pkg-config libssl-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -177,6 +177,9 @@ jobs:
           export CC_x86_64_unknown_linux_musl=musl-gcc
           export CXX_x86_64_unknown_linux_musl=musl-g++
           cargo build --release --target x86_64-unknown-linux-musl
+        env:
+          OPENSSL_STATIC: "1"
+          PKG_CONFIG_ALLOW_CROSS: "1"
 
       - name: Prepare embedded binaries
         run: |
