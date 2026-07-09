@@ -7,10 +7,3 @@ director agent
 repo agent
 response
 
-# 常用关键词
-agent
-api
-async
-auth
-build
-cache

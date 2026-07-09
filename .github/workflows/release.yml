@@ -55,14 +55,8 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "codexray"
+          workspaces: "codeseek/rust-core"
           key: ${{ matrix.target }}
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "25.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -70,8 +64,8 @@ jobs:
           go-version-file: "go.mod"
           cache: true
 
-      - name: Build Rust codexray (${{ matrix.target }})
-        working-directory: codexray
+      - name: Build Rust codeseek (${{ matrix.target }})
+        working-directory: codeseek/rust-core
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CC_x86_64_apple_darwin: clang -arch x86_64
@@ -83,8 +77,8 @@ jobs:
 
           mkdir -p dist/bin
 
-          # Copy codeactor-codexray built from Rust
-          cp codexray/target/${{ matrix.target }}/release/codeactor-codexray dist/bin/
+          # Copy codeseek built from Rust
+          cp codeseek/rust-core/target/${{ matrix.target }}/release/codeseek dist/bin/
           
           # Download and extract fzf
           echo "Downloading fzf from ${{ matrix.fzf_url }}"
@@ -102,15 +96,16 @@ jobs:
           rm -rf /tmp/rg_extract /tmp/rg.tar.gz
 
           # Set executable permissions
-          chmod +x dist/bin/codeactor-codexray dist/bin/fzf dist/bin/rg
+          chmod +x dist/bin/codeseek dist/bin/fzf dist/bin/rg
 
           # Verify
           ls -la dist/bin/
+          echo "✓ Embedded binaries ready: codeseek, fzf, rg"
 
       - name: Build Go codeactor (${{ matrix.suffix }})
         run: |
           go build \
-            -ldflags="-s -w" \
+            -ldflags="-s -w -X 'codeactor/internal/globalctx.Version=${{ github.ref_name }}' -X 'codeactor/internal/globalctx.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'codeactor/internal/globalctx.GitCommit=${{ github.sha }}'" \
             -o codeactor \
             .
         env:
@@ -151,14 +146,8 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "codexray"
+          workspaces: "codeseek/rust-core"
           key: musl
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "25.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -166,8 +155,8 @@ jobs:
           go-version-file: "go.mod"
           cache: true
 
-      - name: Build Rust codexray (static musl)
-        working-directory: codexray
+      - name: Build Rust codeseek (static musl)
+        working-directory: codeseek/rust-core
         run: |
           export CC_x86_64_unknown_linux_musl=musl-gcc
           export CXX_x86_64_unknown_linux_musl=musl-g++
@@ -178,8 +167,8 @@ jobs:
           set -euo pipefail
           mkdir -p dist/bin
 
-          # Copy codeactor-codexray (musl static)
-          cp codexray/target/x86_64-unknown-linux-musl/release/codeactor-codexray dist/bin/
+          # Copy codeseek (musl static)
+          cp codeseek/rust-core/target/x86_64-unknown-linux-musl/release/codeseek dist/bin/
 
           # Download fzf
           echo "Downloading fzf..."
@@ -196,13 +185,14 @@ jobs:
           find /tmp/rg_extract -name rg -type f -exec mv {} dist/bin/rg \;
           rm -rf /tmp/rg_extract /tmp/rg.tar.gz
 
-          chmod +x dist/bin/codeactor-codexray dist/bin/fzf dist/bin/rg
+          chmod +x dist/bin/codeseek dist/bin/fzf dist/bin/rg
           ls -la dist/bin/
+          echo "✓ Embedded binaries ready: codeseek, fzf, rg"
 
       - name: Build Go codeactor (linux-x64-musl)
         run: |
           go build \
-            -ldflags="-s -w" \
+            -ldflags="-s -w -X 'codeactor/internal/globalctx.Version=${{ github.ref_name }}' -X 'codeactor/internal/globalctx.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'codeactor/internal/globalctx.GitCommit=${{ github.sha }}'" \
             -o codeactor \
             .
         env:
@@ -213,14 +203,14 @@ jobs:
       - name: Verify static linking
         run: |
           echo "=== Verifying static linking ==="
-          file dist/bin/codeactor-codexray
+          file dist/bin/codeseek
           echo ""
           echo "=== Checking for dynamic symbols ==="
           if command -v readelf &> /dev/null; then
-            readelf -d dist/bin/codeactor-codexray 2>&1 | head -20 || echo "(no dynamic section = fully static)"
+            readelf -d dist/bin/codeseek 2>&1 | head -20 || echo "(no dynamic section = fully static)"
           fi
           if command -v ldd &> /dev/null; then
-            ldd dist/bin/codeactor-codexray 2>&1 | head -10 || true
+            ldd dist/bin/codeseek 2>&1 | head -10 || true
           fi
 
       - name: Verify artifact
