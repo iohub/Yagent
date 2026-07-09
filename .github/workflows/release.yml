@@ -180,6 +180,7 @@ jobs:
         env:
           OPENSSL_STATIC: "1"
           PKG_CONFIG_ALLOW_CROSS: "1"
+          OPENSSL_NO_PKG_CONFIG: "1"
 
       - name: Prepare embedded binaries
         run: |
