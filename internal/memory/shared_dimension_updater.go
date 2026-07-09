@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -114,17 +115,10 @@ func (u *SharedDimensionUpdater) validateProposal(p *MemoryUpdateProposal) error
 		return fmt.Errorf("reason is required — explain why this update matters")
 	}
 	reason := strings.TrimSpace(p.Reason)
-	if len(reason) < u.policy.MinReasonLength {
-		return fmt.Errorf("reason too brief (%d chars, min %d) — be specific about why this is important", len(reason), u.policy.MinReasonLength)
+	if len(reason) < 3 {
+		return fmt.Errorf("reason too brief (%d chars, min 3) — briefly describe why this update is useful, e.g. 'user prefers concise responses'", len(reason))
 	}
-	// 检查是否是通用的、无意义的理由
-	genericReasons := map[string]bool{
-		"update memory": true, "new info": true, "remember this": true,
-		"important": true, "good to know": true, "for reference": true,
-	}
-	if genericReasons[strings.ToLower(reason)] {
-		return fmt.Errorf("reason is too generic — explain the specific context")
-	}
+	// 注意：不再有通用词黑名单，agent 的任何合理理由都应被接受
 	return nil
 }
 
@@ -138,8 +132,10 @@ func (u *SharedDimensionUpdater) applyUserUpdate(proposal *MemoryUpdateProposal)
 	}
 
 	payload := new(UserMemoryUpdatePayload)
-	if !u.parsePayload(proposal.Payload, payload) {
-		return UpdateResult{Accepted: false, Reason: "❌ Invalid payload format for user dimension"}
+	validFields := ValidFieldsForDimension(DimUser)
+	if result := u.parsePayloadStrict(proposal.Payload, payload, validFields); !result.Success {
+		msg := u.buildPayloadErrorMsg("user", result)
+		return UpdateResult{Accepted: false, Reason: msg}
 	}
 
 	current, err := u.store.GetUserMemory(userID)
@@ -244,8 +240,10 @@ func (u *SharedDimensionUpdater) applyFeedbackUpdate(proposal *MemoryUpdatePropo
 	}
 
 	payload := new(FeedbackMemoryUpdatePayload)
-	if !u.parsePayload(proposal.Payload, payload) {
-		return UpdateResult{Accepted: false, Reason: "❌ Invalid payload format for feedback dimension"}
+	validFields := ValidFieldsForDimension(DimFeedback)
+	if result := u.parsePayloadStrict(proposal.Payload, payload, validFields); !result.Success {
+		msg := u.buildPayloadErrorMsg("feedback", result)
+		return UpdateResult{Accepted: false, Reason: msg}
 	}
 
 	current, err := u.store.GetFeedbackMemory(userID)
@@ -356,8 +354,10 @@ func (u *SharedDimensionUpdater) applyProjectUpdate(proposal *MemoryUpdatePropos
 	}
 
 	payload := new(ProjectMemoryUpdatePayload)
-	if !u.parsePayload(proposal.Payload, payload) {
-		return UpdateResult{Accepted: false, Reason: "❌ Invalid payload format for project dimension"}
+	validFields := ValidFieldsForDimension(DimProject)
+	if result := u.parsePayloadStrict(proposal.Payload, payload, validFields); !result.Success {
+		msg := u.buildPayloadErrorMsg("project", result)
+		return UpdateResult{Accepted: false, Reason: msg}
 	}
 
 	current, err := u.store.GetProjectMemory(projectID)
@@ -458,8 +458,10 @@ func (u *SharedDimensionUpdater) applyReferenceUpdate(proposal *MemoryUpdateProp
 	}
 
 	payload := new(ReferenceMemoryUpdatePayload)
-	if !u.parsePayload(proposal.Payload, payload) {
-		return UpdateResult{Accepted: false, Reason: "❌ Invalid payload format for reference dimension"}
+	validFields := ValidFieldsForDimension(DimReference)
+	if result := u.parsePayloadStrict(proposal.Payload, payload, validFields); !result.Success {
+		msg := u.buildPayloadErrorMsg("reference", result)
+		return UpdateResult{Accepted: false, Reason: msg}
 	}
 
 	current, err := u.store.GetReferenceMemory(projectID)
@@ -528,7 +530,78 @@ func (u *SharedDimensionUpdater) extractStringMeta(proposal *MemoryUpdateProposa
 	return ""
 }
 
-// parsePayload 将payload从interface{}解析为具体类型
+// ParsePayloadResult 解析结果
+type ParsePayloadResult struct {
+	Success       bool
+	UnknownFields []string
+	ValidFields   []string
+	TypeErrors    []string
+	Err           error
+}
+
+// parsePayloadStrict 严格解析 payload，检测未知字段和类型错误
+// validFields 为合法字段列表，传 nil 则不检查未知字段
+func (u *SharedDimensionUpdater) parsePayloadStrict(payload interface{}, target interface{}, validFields []string) *ParsePayloadResult {
+	result := &ParsePayloadResult{Success: false}
+
+	// 情况1：已经是目标类型
+	if reflect.TypeOf(payload).AssignableTo(reflect.TypeOf(target)) {
+		reflect.ValueOf(target).Elem().Set(reflect.ValueOf(payload))
+		result.Success = true
+		return result
+	}
+
+	// 情况2：是 map（来自LLM工具调用）
+	dataMap, ok := payload.(map[string]interface{})
+	if !ok {
+		result.Err = fmt.Errorf("payload must be a JSON object")
+		return result
+	}
+
+	// 检测未知字段
+	if len(validFields) > 0 {
+		validSet := make(map[string]bool, len(validFields))
+		for _, f := range validFields {
+			validSet[f] = true
+		}
+		for k := range dataMap {
+			if !validSet[k] {
+				result.UnknownFields = append(result.UnknownFields, k)
+			}
+		}
+	}
+
+	// 使用 DisallowUnknownFields 严格反序列化
+	data, err := json.Marshal(payload)
+	if err != nil {
+		result.Err = fmt.Errorf("failed to marshal payload: %w", err)
+		return result
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		// 提取更友好的错误信息
+		errStr := err.Error()
+		if strings.Contains(errStr, "unknown field") {
+			// 从错误中提取字段名
+			parts := strings.Split(errStr, "\"")
+			if len(parts) >= 2 {
+				unknownField := parts[1]
+				result.UnknownFields = append(result.UnknownFields, unknownField)
+			}
+		} else if strings.Contains(errStr, "cannot unmarshal") {
+			result.TypeErrors = append(result.TypeErrors, errStr)
+		}
+		result.Err = err
+		return result
+	}
+
+	result.Success = true
+	return result
+}
+
+// parsePayload 将payload从interface{}解析为具体类型（保留旧方法用于向后兼容）
 // 兼容两种情况：已经是类型化的struct / 来自JSON反序列化的map
 // 注意：由于Go泛型方法限制，使用反射+JSON marshal/unmarshal实现
 func (u *SharedDimensionUpdater) parsePayload(payload interface{}, target interface{}) bool {
@@ -550,6 +623,55 @@ func (u *SharedDimensionUpdater) parsePayload(payload interface{}, target interf
 		return true
 	}
 	return false
+}
+
+// ValidFieldsForDimension 返回指定维度的合法字段列表
+// 用于 parsePayloadStrict 的 validFields 参数
+func ValidFieldsForDimension(dim Dimension) []string {
+	switch dim {
+	case DimUser:
+		return []string{"profile", "expertise", "preferences"}
+	case DimFeedback:
+		return []string{"correction", "endorsement"}
+	case DimProject:
+		return []string{"objective", "member", "deadline", "status"}
+	case DimReference:
+		return []string{"resource", "remove_by_id"}
+	default:
+		return nil
+	}
+}
+
+// buildPayloadErrorMsg 从 ParsePayloadResult 生成友好的错误信息
+// 帮助 agent 理解 payload 格式错误并自行修正
+func (u *SharedDimensionUpdater) buildPayloadErrorMsg(dimName string, result *ParsePayloadResult) string {
+	var parts []string
+	parts = append(parts, fmt.Sprintf("❌ Invalid payload format for %s dimension.", dimName))
+
+	if len(result.UnknownFields) > 0 {
+		parts = append(parts, fmt.Sprintf("Unknown field(s): %s.", strings.Join(result.UnknownFields, ", ")))
+		validFields := ValidFieldsForDimension(Dimension(dimName))
+		if len(validFields) > 0 {
+			parts = append(parts, fmt.Sprintf("Available fields for %s: %s.", dimName, strings.Join(validFields, ", ")))
+		}
+	}
+
+	if len(result.TypeErrors) > 0 {
+		for _, te := range result.TypeErrors {
+			// 简化类型错误信息
+			simplified := strings.ReplaceAll(te, "json: cannot unmarshal", "wrong type")
+			simplified = strings.ReplaceAll(simplified, "into Go struct field", "for field")
+			parts = append(parts, simplified)
+		}
+		parts = append(parts, "Check field types in memory_query_schema or the tool description.")
+	}
+
+	if result.Err != nil && len(result.UnknownFields) == 0 && len(result.TypeErrors) == 0 {
+		parts = append(parts, fmt.Sprintf("Error: %s", result.Err))
+	}
+
+	parts = append(parts, "Tip: Use proper field names and types. Each field expects specific data (string, array, or object).")
+	return strings.Join(parts, " ")
 }
 
 // toSet 将字符串切片转为去重集合
