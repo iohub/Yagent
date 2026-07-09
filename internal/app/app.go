@@ -282,6 +282,13 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	// [NEW] 初始化 RepoAgent 记忆系统
 	{
 		ca.sharedMemory = memory.NewSharedMemory(100)
+		// 启用文件持久化，保存共享记忆
+		sharedMemPath := filepath.Join(ca.globalCtx.ProjectPath, ".shared_memory.json")
+		if err := ca.sharedMemory.EnablePersistence(5*time.Second, sharedMemPath); err != nil {
+			slog.Warn("Shared memory persistence not available (first run?)", "path", sharedMemPath, "error", err)
+		} else {
+			slog.Info("Shared memory persistence enabled", "path", sharedMemPath, "interval", "5s")
+		}
 		repoID := ca.globalCtx.ProjectPath
 		repoMemStore := agents.NewRepoMemoryStore(repoID, ca.sharedMemory)
 		if err := repoMemStore.Load(context.Background()); err != nil {
