@@ -552,11 +552,58 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 				},
 				"payload": map[string]interface{}{
 					"type":        "object",
-					"description": "Dimension-specific data",
+					"description": "DATA TO STORE — USE CORRECT FIELDS BASED ON THE DIMENSION.\n\nFor 'user' dimension use: profile {name,role,team,seniority}, expertise [string], preferences {language,detail_level,code_style,response_format,other{}}\n\nFor 'feedback' dimension use: correction {topic,wrong,correct,context}, endorsement {topic,approach}\n\nFor 'project' dimension use: status (string), objective {description,priority,status}, member {name,role,responsibility}, deadline {description,date,priority}\n\nFor 'reference' dimension use: resource {name,category,location,description,tags[]}, remove_by_id (string)",
+					"properties": map[string]interface{}{
+						"profile": map[string]interface{}{
+							"type": "object",
+							"description": "[user] Profile: {name, role, team, seniority}",
+						},
+						"expertise": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "[user] Expertise list, e.g. [\"Go\", \"Kubernetes\"]",
+						},
+						"preferences": map[string]interface{}{
+							"type":        "object",
+							"description": "[user] Preferences: {language, detail_level, code_style, response_format, other{}}",
+						},
+						"correction": map[string]interface{}{
+							"type":        "object",
+							"description": "[feedback] Correction: {topic, wrong, correct, context}",
+						},
+						"endorsement": map[string]interface{}{
+							"type":        "object",
+							"description": "[feedback] Endorsement: {topic, approach}",
+						},
+						"status": map[string]interface{}{
+							"type":        "string",
+							"description": "[project] Current status, e.g. 'Implementing auth'",
+						},
+						"objective": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Objective: {description, priority(critical/high/medium/low), status(active/completed/dropped)}",
+						},
+						"member": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Team member: {name, role, responsibility}",
+						},
+						"deadline": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Deadline: {description, date(ISO 8601), priority}",
+						},
+						"resource": map[string]interface{}{
+							"type":        "object",
+							"description": "[reference] Resource: {name, category, location(URL), description, tags[]}",
+						},
+						"remove_by_id": map[string]interface{}{
+							"type":        "string",
+							"description": "[reference] Resource ID to remove (when action=remove)",
+						},
+					},
 				},
 				"reason": map[string]interface{}{
 					"type":        "string",
-					"description": "Why this update matters",
+					"description": "Why this update matters (min 3 chars). Be specific, e.g. 'user prefers Go' or 'important note about architecture'",
 				},
 			},
 			"required": []string{"dimension", "action", "payload", "reason"},
@@ -564,6 +611,67 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 
 		ca.director.Adapters = append(ca.director.Adapters, directorMemAdapter)
 		slog.Info("DirectorAgent update_shared_memory tool registered")
+	}
+
+	// ============================================================
+	// memory_query_schema 工具 — 查询 payload 字段结构
+	// ============================================================
+	{
+		querySchemaFn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			dimStr, _ := params["dimension"].(string)
+
+			schemas := map[string]string{
+				"user":      `PROFILE (object): {name, role, team, seniority}
+EXPERTISE (array of strings): max 10 items
+PREFERENCES (object): {language, detail_level, code_style, response_format, other{}}`,
+				"feedback":  `CORRECTION (object): {topic, wrong, correct, context}
+ENDORSEMENT (object): {topic, approach}`,
+				"project":   `STATUS (string): one-line status
+OBJECTIVE (object): {description, priority, status}
+MEMBER (object): {name, role, responsibility}
+DEADLINE (object): {description, date(ISO 8601), priority}`,
+				"reference": `RESOURCE (object): {name, category, location(URL), description, tags[]}
+REMOVE_BY_ID (string): remove resource by ID`,
+			}
+
+			if dimStr != "" {
+				if schema, ok := schemas[dimStr]; ok {
+					return fmt.Sprintf("📋 Payload schema for '%s' dimension:\n\n%s\n\nTip: Only use fields relevant to this dimension when calling update_shared_memory.", dimStr, schema), nil
+				}
+				return fmt.Sprintf("Unknown dimension: %s. Available: user, feedback, project, reference", dimStr), nil
+			}
+
+			var result string
+			for dim, schema := range schemas {
+				result += fmt.Sprintf("=== %s ===\n%s\n\n", dim, schema)
+			}
+			result += "Pass 'dimension' parameter to get schema for a specific dimension."
+			return result, nil
+		}
+
+		querySchemaAdapter := tools.NewAdapter("memory_query_schema",
+			"Query the payload schema for any memory dimension. Use this to check valid field names and types before calling update_shared_memory.",
+			querySchemaFn,
+		).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"dimension": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"user", "feedback", "project", "reference"},
+					"description": "Dimension to query. Empty returns all schemas.",
+				},
+			},
+		})
+
+		// Register to all agents
+		codingAgent.Adapters = append(codingAgent.Adapters, querySchemaAdapter)
+		chatAgent.Adapters = append(chatAgent.Adapters, querySchemaAdapter)
+		devopsAgent.Adapters = append(devopsAgent.Adapters, querySchemaAdapter)
+		repoAgent.Adapters = append(repoAgent.Adapters, querySchemaAdapter)
+		browserAgent.Adapters = append(browserAgent.Adapters, querySchemaAdapter)
+		ca.director.Adapters = append(ca.director.Adapters, querySchemaAdapter)
+
+		slog.Info("memory_query_schema tool registered for all agents")
 	}
 
 	// [NEW] Start shared memory consolidation runner (periodic LLM deep consolidation)
