@@ -378,8 +378,8 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			reason, _ := params["reason"].(string)
 			payload := params["payload"]
 
-			if dimStr == "" || actionStr == "" || reason == "" || payload == nil {
-				return "Missing required parameters: dimension, action, payload, and reason.", nil
+			if dimStr == "" || reason == "" || payload == nil {
+				return "Missing required parameters: dimension, payload, and reason.", nil
 			}
 
 			proposal := &memory.MemoryUpdateProposal{
@@ -417,14 +417,61 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 				},
 				"payload": map[string]interface{}{
 					"type":        "object",
-					"description": "Dimension-specific data. For user: {profile, expertise, preferences}. For feedback: {correction, endorsement}. For project: {objective, member, deadline, status}. For reference: {resource}.",
+					"description": "DATA TO STORE — USE CORRECT FIELDS BASED ON THE DIMENSION.\n\nFor 'user' dimension use: profile {name,role,team,seniority}, expertise [string], preferences {language,detail_level,code_style,response_format,other{}}\n\nFor 'feedback' dimension use: correction {topic,wrong,correct,context}, endorsement {topic,approach}\n\nFor 'project' dimension use: status (string), objective {description,priority,status}, member {name,role,responsibility}, deadline {description,date,priority}\n\nFor 'reference' dimension use: resource {name,category,location,description,tags[]}, remove_by_id (string)",
+					"properties": map[string]interface{}{
+						"profile": map[string]interface{}{
+							"type":        "object",
+							"description": "[user] Profile: {name, role, team, seniority}",
+						},
+						"expertise": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "[user] Expertise list, e.g. [\"Go\", \"Kubernetes\"]",
+						},
+						"preferences": map[string]interface{}{
+							"type":        "object",
+							"description": "[user] Preferences: {language, detail_level, code_style, response_format, other{}}",
+						},
+						"correction": map[string]interface{}{
+							"type":        "object",
+							"description": "[feedback] Correction: {topic, wrong, correct, context}",
+						},
+						"endorsement": map[string]interface{}{
+							"type":        "object",
+							"description": "[feedback] Endorsement: {topic, approach}",
+						},
+						"status": map[string]interface{}{
+							"type":        "string",
+							"description": "[project] Current status, e.g. 'Implementing auth'",
+						},
+						"objective": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Objective: {description, priority(critical/high/medium/low), status(active/completed/dropped)}",
+						},
+						"member": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Team member: {name, role, responsibility}",
+						},
+						"deadline": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Deadline: {description, date(ISO 8601), priority}",
+						},
+						"resource": map[string]interface{}{
+							"type":        "object",
+							"description": "[reference] Resource: {name, category, location(URL), description, tags[]}",
+						},
+						"remove_by_id": map[string]interface{}{
+							"type":        "string",
+							"description": "[reference] Resource ID to remove (when action=remove)",
+						},
+					},
 				},
 				"reason": map[string]interface{}{
 					"type":        "string",
-					"description": "Why this update matters (min 10 chars, be specific)",
+					"description": "Why this update matters (min 3 chars). Be specific, e.g. 'user prefers Go' or 'important note about architecture'",
 				},
 			},
-			"required": []string{"dimension", "action", "payload", "reason"},
+			"required": []string{"dimension", "payload", "reason"},
 		})
 
 		// Register tool on all agents that use Adapters
