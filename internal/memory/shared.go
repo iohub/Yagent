@@ -1,8 +1,10 @@
 package memory
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,13 @@ type SharedMemory struct {
 	// KV store for simple key-value persistence
 	kv   map[string]string
 	kvMu sync.RWMutex
+
+	// ---- Persistent storage ----
+	persistPath string        // file path for persistence, empty = no persistence
+	persistTick *time.Ticker  // periodic save ticker
+	persistDone chan struct{} // signal to stop ticker
+	persistWg   sync.WaitGroup
+	dirty       bool          // whether there's unsaved data
 }
 
 // NewSharedMemory creates a new shared memory.
@@ -452,6 +461,7 @@ func (sm *SharedMemory) SetKey(key string, value string) error {
 		sm.kv = make(map[string]string)
 	}
 	sm.kv[key] = value
+	sm.dirty = true
 	return nil
 }
 
@@ -477,6 +487,7 @@ func (sm *SharedMemory) DeleteKey(key string) error {
 	if sm.kv != nil {
 		delete(sm.kv, key)
 	}
+	sm.dirty = true
 	return nil
 }
 
@@ -489,4 +500,169 @@ func (sm *SharedMemory) HasKey(key string) bool {
 	}
 	_, ok := sm.kv[key]
 	return ok
+}
+
+// ============================================================================
+// Persistence Support
+// ============================================================================
+
+// SharedMemorySnapshot represents a serializable snapshot of the KV store for persistence.
+type SharedMemorySnapshot struct {
+	Version   uint64            `json:"version"`
+	Timestamp time.Time         `json:"timestamp"`
+	KV        map[string]string `json:"kv"`
+}
+
+// EnablePersistence enables file-based persistence of KV data.
+// It loads any existing data from the file and starts a background goroutine
+// that periodically flushes dirty data.
+//
+// saveInterval: how often to auto-save (e.g., 5 * time.Second)
+// filePath:     where to save the JSON file
+func (sm *SharedMemory) EnablePersistence(saveInterval time.Duration, filePath string) error {
+	sm.kvMu.Lock()
+	defer sm.kvMu.Unlock()
+
+	sm.persistPath = filePath
+	sm.persistDone = make(chan struct{})
+
+	// Load existing data from file (if exists)
+	if err := sm.loadFromFileLocked(); err != nil {
+		// File doesn't exist is fine (first run)
+		slog.Warn("Failed to load shared memory from file (may not exist yet)", "path", filePath, "error", err)
+	}
+
+	// Start periodic save
+	sm.persistTick = time.NewTicker(saveInterval)
+	sm.persistWg.Add(1)
+	go sm.persistLoop()
+
+	return nil
+}
+
+// persistLoop runs periodically to flush dirty data to file.
+func (sm *SharedMemory) persistLoop() {
+	defer sm.persistWg.Done()
+
+	for {
+		select {
+		case <-sm.persistTick.C:
+			sm.flushToFile()
+		case <-sm.persistDone:
+			sm.flushToFile() // final save before exit
+			return
+		}
+	}
+}
+
+// flushToFile writes dirty data to the persistence file.
+// Safe to call concurrently; acquires kvMu internally.
+func (sm *SharedMemory) flushToFile() {
+	sm.kvMu.Lock()
+	defer sm.kvMu.Unlock()
+
+	if !sm.dirty || sm.persistPath == "" {
+		return
+	}
+
+	if err := sm.saveToFileLocked(); err != nil {
+		slog.Warn("Failed to persist shared memory", "path", sm.persistPath, "error", err)
+		return // don't reset dirty; retry next tick
+	}
+	sm.dirty = false
+}
+
+// saveToFileLocked performs the actual file write.
+// Caller must hold sm.kvMu.
+func (sm *SharedMemory) saveToFileLocked() error {
+	// Collect all KV data
+	data := make(map[string]string, len(sm.kv))
+	for k, v := range sm.kv {
+		data[k] = v
+	}
+
+	// Build snapshot
+	snapshot := SharedMemorySnapshot{
+		Version:   sm.version,
+		Timestamp: time.Now(),
+		KV:        data,
+	}
+
+	payload, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal snapshot: %w", err)
+	}
+
+	// Atomic write: write to temp file, then rename
+	tmpFile := sm.persistPath + ".tmp"
+	if err := os.WriteFile(tmpFile, payload, 0644); err != nil {
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := os.Rename(tmpFile, sm.persistPath); err != nil {
+		return fmt.Errorf("rename temp to target: %w", err)
+	}
+
+	return nil
+}
+
+// loadFromFileLocked loads KV data from the persistence file.
+// Caller must hold sm.kvMu. Returns nil if the file does not exist (first run).
+func (sm *SharedMemory) loadFromFileLocked() error {
+	data, err := os.ReadFile(sm.persistPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // first run, no file is normal
+		}
+		return fmt.Errorf("read file: %w", err)
+	}
+
+	var snapshot SharedMemorySnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return fmt.Errorf("unmarshal snapshot: %w", err)
+	}
+
+	// Restore KV data
+	if sm.kv == nil {
+		sm.kv = make(map[string]string)
+	}
+	for k, v := range snapshot.KV {
+		sm.kv[k] = v
+	}
+	sm.version = snapshot.Version
+
+	slog.Info("Shared memory restored from file",
+		"path", sm.persistPath,
+		"kv_entries", len(snapshot.KV),
+		"version", snapshot.Version,
+	)
+	return nil
+}
+
+// MarkDirty marks the KV store as needing persistence on the next flush.
+// This is called automatically by SetKey/DeleteKey when persistence is enabled.
+func (sm *SharedMemory) MarkDirty() {
+	sm.kvMu.Lock()
+	defer sm.kvMu.Unlock()
+	sm.dirty = true
+}
+
+// Close shuts down the SharedMemory persistence goroutine and performs a final flush.
+// Safe to call multiple times or when persistence is not enabled.
+func (sm *SharedMemory) Close() error {
+	sm.kvMu.Lock()
+	if sm.persistDone == nil {
+		sm.kvMu.Unlock()
+		return nil
+	}
+	done := sm.persistDone
+	sm.persistDone = nil
+	sm.persistTick = nil
+	sm.kvMu.Unlock()
+
+	close(done)
+	if sm.persistTick != nil {
+		sm.persistTick.Stop()
+	}
+	sm.persistWg.Wait()
+	return nil
 }

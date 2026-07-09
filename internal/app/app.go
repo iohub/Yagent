@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -282,6 +284,16 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	// [NEW] 初始化 RepoAgent 记忆系统
 	{
 		ca.sharedMemory = memory.NewSharedMemory(100)
+		// 启用文件持久化，保存到 $HOME/.codeactor/data/shared_memory/{projectid}/
+		sharedMemPath := ca.getSharedMemoryPath()
+		sharedMemDir := filepath.Dir(sharedMemPath)
+		if err := os.MkdirAll(sharedMemDir, 0700); err != nil {
+			slog.Warn("Failed to create shared memory directory", "path", sharedMemDir, "error", err)
+		} else if err := ca.sharedMemory.EnablePersistence(5*time.Second, sharedMemPath); err != nil {
+			slog.Warn("Shared memory persistence not available (first run?)", "path", sharedMemPath, "error", err)
+		} else {
+			slog.Info("Shared memory persistence enabled", "path", sharedMemPath, "interval", "5s")
+		}
 		repoID := ca.globalCtx.ProjectPath
 		repoMemStore := agents.NewRepoMemoryStore(repoID, ca.sharedMemory)
 		if err := repoMemStore.Load(context.Background()); err != nil {
@@ -378,8 +390,8 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			reason, _ := params["reason"].(string)
 			payload := params["payload"]
 
-			if dimStr == "" || actionStr == "" || reason == "" || payload == nil {
-				return "Missing required parameters: dimension, action, payload, and reason.", nil
+			if dimStr == "" || reason == "" || payload == nil {
+				return "Missing required parameters: dimension, payload, and reason.", nil
 			}
 
 			proposal := &memory.MemoryUpdateProposal{
@@ -417,14 +429,61 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 				},
 				"payload": map[string]interface{}{
 					"type":        "object",
-					"description": "Dimension-specific data. For user: {profile, expertise, preferences}. For feedback: {correction, endorsement}. For project: {objective, member, deadline, status}. For reference: {resource}.",
+					"description": "DATA TO STORE — USE CORRECT FIELDS BASED ON THE DIMENSION.\n\nFor 'user' dimension use: profile {name,role,team,seniority}, expertise [string], preferences {language,detail_level,code_style,response_format,other{}}\n\nFor 'feedback' dimension use: correction {topic,wrong,correct,context}, endorsement {topic,approach}\n\nFor 'project' dimension use: status (string), objective {description,priority,status}, member {name,role,responsibility}, deadline {description,date,priority}\n\nFor 'reference' dimension use: resource {name,category,location,description,tags[]}, remove_by_id (string)",
+					"properties": map[string]interface{}{
+						"profile": map[string]interface{}{
+							"type":        "object",
+							"description": "[user] Profile: {name, role, team, seniority}",
+						},
+						"expertise": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "[user] Expertise list, e.g. [\"Go\", \"Kubernetes\"]",
+						},
+						"preferences": map[string]interface{}{
+							"type":        "object",
+							"description": "[user] Preferences: {language, detail_level, code_style, response_format, other{}}",
+						},
+						"correction": map[string]interface{}{
+							"type":        "object",
+							"description": "[feedback] Correction: {topic, wrong, correct, context}",
+						},
+						"endorsement": map[string]interface{}{
+							"type":        "object",
+							"description": "[feedback] Endorsement: {topic, approach}",
+						},
+						"status": map[string]interface{}{
+							"type":        "string",
+							"description": "[project] Current status, e.g. 'Implementing auth'",
+						},
+						"objective": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Objective: {description, priority(critical/high/medium/low), status(active/completed/dropped)}",
+						},
+						"member": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Team member: {name, role, responsibility}",
+						},
+						"deadline": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Deadline: {description, date(ISO 8601), priority}",
+						},
+						"resource": map[string]interface{}{
+							"type":        "object",
+							"description": "[reference] Resource: {name, category, location(URL), description, tags[]}",
+						},
+						"remove_by_id": map[string]interface{}{
+							"type":        "string",
+							"description": "[reference] Resource ID to remove (when action=remove)",
+						},
+					},
 				},
 				"reason": map[string]interface{}{
 					"type":        "string",
-					"description": "Why this update matters (min 10 chars, be specific)",
+					"description": "Why this update matters (min 3 chars). Be specific, e.g. 'user prefers Go' or 'important note about architecture'",
 				},
 			},
-			"required": []string{"dimension", "action", "payload", "reason"},
+			"required": []string{"dimension", "payload", "reason"},
 		})
 
 		// Register tool on all agents that use Adapters
@@ -505,11 +564,58 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 				},
 				"payload": map[string]interface{}{
 					"type":        "object",
-					"description": "Dimension-specific data",
+					"description": "DATA TO STORE — USE CORRECT FIELDS BASED ON THE DIMENSION.\n\nFor 'user' dimension use: profile {name,role,team,seniority}, expertise [string], preferences {language,detail_level,code_style,response_format,other{}}\n\nFor 'feedback' dimension use: correction {topic,wrong,correct,context}, endorsement {topic,approach}\n\nFor 'project' dimension use: status (string), objective {description,priority,status}, member {name,role,responsibility}, deadline {description,date,priority}\n\nFor 'reference' dimension use: resource {name,category,location,description,tags[]}, remove_by_id (string)",
+					"properties": map[string]interface{}{
+						"profile": map[string]interface{}{
+							"type": "object",
+							"description": "[user] Profile: {name, role, team, seniority}",
+						},
+						"expertise": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "[user] Expertise list, e.g. [\"Go\", \"Kubernetes\"]",
+						},
+						"preferences": map[string]interface{}{
+							"type":        "object",
+							"description": "[user] Preferences: {language, detail_level, code_style, response_format, other{}}",
+						},
+						"correction": map[string]interface{}{
+							"type":        "object",
+							"description": "[feedback] Correction: {topic, wrong, correct, context}",
+						},
+						"endorsement": map[string]interface{}{
+							"type":        "object",
+							"description": "[feedback] Endorsement: {topic, approach}",
+						},
+						"status": map[string]interface{}{
+							"type":        "string",
+							"description": "[project] Current status, e.g. 'Implementing auth'",
+						},
+						"objective": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Objective: {description, priority(critical/high/medium/low), status(active/completed/dropped)}",
+						},
+						"member": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Team member: {name, role, responsibility}",
+						},
+						"deadline": map[string]interface{}{
+							"type":        "object",
+							"description": "[project] Deadline: {description, date(ISO 8601), priority}",
+						},
+						"resource": map[string]interface{}{
+							"type":        "object",
+							"description": "[reference] Resource: {name, category, location(URL), description, tags[]}",
+						},
+						"remove_by_id": map[string]interface{}{
+							"type":        "string",
+							"description": "[reference] Resource ID to remove (when action=remove)",
+						},
+					},
 				},
 				"reason": map[string]interface{}{
 					"type":        "string",
-					"description": "Why this update matters",
+					"description": "Why this update matters (min 3 chars). Be specific, e.g. 'user prefers Go' or 'important note about architecture'",
 				},
 			},
 			"required": []string{"dimension", "action", "payload", "reason"},
@@ -517,6 +623,67 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 
 		ca.director.Adapters = append(ca.director.Adapters, directorMemAdapter)
 		slog.Info("DirectorAgent update_shared_memory tool registered")
+	}
+
+	// ============================================================
+	// memory_query_schema 工具 — 查询 payload 字段结构
+	// ============================================================
+	{
+		querySchemaFn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			dimStr, _ := params["dimension"].(string)
+
+			schemas := map[string]string{
+				"user":      `PROFILE (object): {name, role, team, seniority}
+EXPERTISE (array of strings): max 10 items
+PREFERENCES (object): {language, detail_level, code_style, response_format, other{}}`,
+				"feedback":  `CORRECTION (object): {topic, wrong, correct, context}
+ENDORSEMENT (object): {topic, approach}`,
+				"project":   `STATUS (string): one-line status
+OBJECTIVE (object): {description, priority, status}
+MEMBER (object): {name, role, responsibility}
+DEADLINE (object): {description, date(ISO 8601), priority}`,
+				"reference": `RESOURCE (object): {name, category, location(URL), description, tags[]}
+REMOVE_BY_ID (string): remove resource by ID`,
+			}
+
+			if dimStr != "" {
+				if schema, ok := schemas[dimStr]; ok {
+					return fmt.Sprintf("📋 Payload schema for '%s' dimension:\n\n%s\n\nTip: Only use fields relevant to this dimension when calling update_shared_memory.", dimStr, schema), nil
+				}
+				return fmt.Sprintf("Unknown dimension: %s. Available: user, feedback, project, reference", dimStr), nil
+			}
+
+			var result string
+			for dim, schema := range schemas {
+				result += fmt.Sprintf("=== %s ===\n%s\n\n", dim, schema)
+			}
+			result += "Pass 'dimension' parameter to get schema for a specific dimension."
+			return result, nil
+		}
+
+		querySchemaAdapter := tools.NewAdapter("memory_query_schema",
+			"Query the payload schema for any memory dimension. Use this to check valid field names and types before calling update_shared_memory.",
+			querySchemaFn,
+		).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"dimension": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"user", "feedback", "project", "reference"},
+					"description": "Dimension to query. Empty returns all schemas.",
+				},
+			},
+		})
+
+		// Register to all agents
+		codingAgent.Adapters = append(codingAgent.Adapters, querySchemaAdapter)
+		chatAgent.Adapters = append(chatAgent.Adapters, querySchemaAdapter)
+		devopsAgent.Adapters = append(devopsAgent.Adapters, querySchemaAdapter)
+		repoAgent.Adapters = append(repoAgent.Adapters, querySchemaAdapter)
+		browserAgent.Adapters = append(browserAgent.Adapters, querySchemaAdapter)
+		ca.director.Adapters = append(ca.director.Adapters, querySchemaAdapter)
+
+		slog.Info("memory_query_schema tool registered for all agents")
 	}
 
 	// [NEW] Start shared memory consolidation runner (periodic LLM deep consolidation)
@@ -692,4 +859,50 @@ func (ca *CodeActor) Close() {
 			slog.Warn("Failed to close browser manager", "error", err)
 		}
 	}
+}
+
+// getProjectID generates a filesystem-safe, unique project identifier
+// from the project path. Format: {sanitized_basename}_{short_hash}
+// Example: "/home/user/my-app" → "my_app_a1b2c3d4e5f6"
+func getProjectID(projectPath string) string {
+	// Use the last path component as the human-readable prefix
+	base := filepath.Base(projectPath)
+	if base == "." || base == "/" {
+		base = "root"
+	}
+
+	// Sanitize: keep only alphanumeric characters, replace others with underscore
+	sanitized := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, base)
+
+	// Truncate to leave room for "_" + 12-char hash (filesystem limit: 255 bytes per component)
+	const maxBaseLen = 242
+	if len(sanitized) > maxBaseLen {
+		sanitized = sanitized[:maxBaseLen]
+	}
+
+	// Generate short hash for global uniqueness
+	h := sha256.Sum256([]byte(projectPath))
+	shortHash := hex.EncodeToString(h[:])[:12]
+
+	return sanitized + "_" + shortHash
+}
+
+// getSharedMemoryPath returns the shared memory file path.
+// Preferred: $HOME/.codeactor/data/shared_memory/{projectID}/shared_memory.json
+// Fallback:  {ProjectPath}/.shared_memory.json (if home dir is unavailable)
+func (ca *CodeActor) getSharedMemoryPath() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		// Fallback to project-local path (preserves old behavior)
+		slog.Warn("Cannot determine home directory, falling back to project-local shared memory", "error", err)
+		return filepath.Join(ca.globalCtx.ProjectPath, ".shared_memory.json")
+	}
+
+	projectID := getProjectID(ca.globalCtx.ProjectPath)
+	return filepath.Join(homeDir, ".codeactor", "data", "shared_memory", projectID, "shared_memory.json")
 }
