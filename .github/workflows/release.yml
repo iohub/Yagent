@@ -64,6 +64,12 @@ jobs:
           go-version-file: "go.mod"
           cache: true
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build Rust codeseek (${{ matrix.target }})
         working-directory: codeseek/rust-core
         run: cargo build --release --target ${{ matrix.target }}
@@ -154,6 +160,12 @@ jobs:
         with:
           go-version-file: "go.mod"
           cache: true
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Rust codeseek (static musl)
         working-directory: codeseek/rust-core
