@@ -171,6 +171,10 @@ jobs:
           version: "25.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Apply vendored OpenSSL patch for musl build
+        working-directory: codeseek
+        run: git apply --verbose ../patches/codeseek-vendored-openssl.patch
+
       - name: Build Rust codeseek (static musl)
         working-directory: codeseek/rust-core
         run: |
