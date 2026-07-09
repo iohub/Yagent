@@ -176,6 +176,7 @@ jobs:
         run: |
           export CC_x86_64_unknown_linux_musl=musl-gcc
           export CXX_x86_64_unknown_linux_musl=musl-g++
+          cargo update -p openssl-sys
           cargo build --release --target x86_64-unknown-linux-musl
         env:
           OPENSSL_STATIC: "1"
