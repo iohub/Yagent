@@ -1,12 +1,10 @@
 diff --git a/codeseek/rust-core/Cargo.toml b/codeseek/rust-core/Cargo.toml
-index 756a926..2dae961 100644
 --- a/codeseek/rust-core/Cargo.toml
 +++ b/codeseek/rust-core/Cargo.toml
-@@ -54,6 +54,8 @@ futures = "0.3.31"
+@@ -54,4 +54,6 @@ futures = "0.3.31"
  toml = "0.8"
  dirs = "5.0"
  rusqlite = { version = "0.38.0", features = ["bundled"] }
 +openssl-sys = { version = "0.9", features = ["vendored"] }
 +openssl = { version = "0.10", features = ["vendored"] }
  anyhow = "1"
- 
