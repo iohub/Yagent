@@ -18,6 +18,51 @@ import (
 //go:embed coding.prompt.md
 var codingPrompt string
 
+// backtick 是反引号字符，用于在 Go 字符串中嵌入代码标记
+const backtick = "`"
+
+// gitCheckpointPromptSection 是 Git Checkpoint 章节的提示词内容
+// 仅在项目是 git 仓库且配置启用时才会追加到 system prompt 中
+const gitCheckpointPromptSection = "### Git Checkpoint Mechanism\n" +
+	"The agent has a built-in Git Checkpoint system that:\n" +
+	"1. Creates a separate " + backtick + "agent/" + backtick + " branch for isolated coding work\n" +
+	"2. Stashes dirty worktree before starting (restored on the agent branch)\n" +
+	"3. **You decide when to create checkpoints** using " + backtick + "git_checkpoint_create" + backtick + "\n" +
+	"4. Performs a squash merge at the end with a professional Conventional Commits message\n" +
+	"\n" +
+	"#### When to Create Checkpoints\n" +
+	"You are responsible for deciding when checkpoints are needed. **Be strategic — create checkpoints at meaningful moments, not after every step.**\n" +
+	"\n" +
+	"**Create a checkpoint BEFORE:**\n" +
+	"- Major refactoring (restructuring modules, changing interfaces, renaming widely-used symbols)\n" +
+	"- Risky or destructive operations (deleting files, rewriting large sections, changing build configs)\n" +
+	"- Complex experiments where the approach is uncertain and you might need to backtrack\n" +
+	"- Modifying critical infrastructure (authentication, database schemas, CI pipelines, shared utilities)\n" +
+	"\n" +
+	"**Create a checkpoint AFTER:**\n" +
+	"- Completing a significant feature or module (provides a known-good state to return to)\n" +
+	"- Successfully resolving a tricky bug (preserves the fix before moving on)\n" +
+	"- Any milestone you wouldn't want to redo from scratch\n" +
+	"\n" +
+	"**When NOT to create a checkpoint:**\n" +
+	"- After trivial changes (formatting, typo fixes, minor adjustments)\n" +
+	"- After every single step (creates noise, wastes tag space)\n" +
+	"- When you're confident the change is small and easily reproducible\n" +
+	"\n" +
+	"#### Checkpoint Tools\n" +
+	"- " + backtick + "git_checkpoint_create" + backtick + " — Create a checkpoint at the current state. **Always provide a descriptive " + backtick + "message" + backtick + "** explaining what milestone this represents.\n" +
+	"  Example: " + backtick + "git_checkpoint_create(message=\"before refactoring auth middleware\")" + backtick + "\n" +
+	"- " + backtick + "git_checkpoint_list" + backtick + " — List all available checkpoints (use before rollback to find the right target)\n" +
+	"- " + backtick + "git_checkpoint_rollback" + backtick + " — Roll back to a specific checkpoint if something goes wrong\n" +
+	"\n" +
+	"#### Rollback Workflow\n" +
+	"If a change produces unexpected results:\n" +
+	"1. Use " + backtick + "git_checkpoint_list" + backtick + " to see available checkpoints\n" +
+	"2. Use " + backtick + "git_checkpoint_rollback" + backtick + " with the tag name to return to a known-good state\n" +
+	"3. Attempt a different approach\n" +
+	"\n" +
+	"**Remember:** It is better to create a checkpoint you don't need than to need one you didn't create. When in doubt, checkpoint."
+
 type CodingAgent struct {
 	BaseAgent
 	GlobalCtx    *globalctx.GlobalCtx
@@ -151,50 +196,14 @@ func (a *CodingAgent) Name() string {
 }
 
 func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error) {
-	systemPrompt := a.GlobalCtx.FormatPrompt(codingPrompt)
-	// Inject shared memory (4 dimensions: user, feedback, project, reference)
-	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
+	// === Git Checkpoint Integration ===
 
-	// ─── 懒加载初始化上下文压缩引擎（仅首次 Run 时创建，后续复用）───
-	if a.compactConfig != nil && a.compactConfig.EnableAutoCompact && a.compactEngine == nil && a.LLM != nil {
-		engine, err := compact.NewEngine(a.compactConfig, &compact.SummaryAdapter{
-			LLM:         a.LLM,
-			Temperature: 0.1,
-			MaxTokens:   12000,
-		})
-		if err != nil {
-			slog.Warn("Failed to create compact engine for CodingAgent", "error", err)
-		} else {
-			a.compactEngine = engine
-			slog.Info("Context compact engine initialized for CodingAgent",
-				"max_tokens", a.compactConfig.MaxContextTokens)
-		}
-	}
-
-	cfg := DefaultExecutorConfig()
-	cfg.SystemPrompt = systemPrompt
-	cfg.UserInput = input
-	cfg.Adapters = a.Adapters
-	cfg.LLM = a.LLM
-	cfg.MaxSteps = a.maxSteps
-	cfg.Publisher = a.Publisher
-	cfg.AgentName = a.Name()
-	cfg.StopOnFinish = true
-	cfg.CompactEngine = a.compactEngine
-	cfg.RepoContext = a.GlobalCtx.RepoSummary
-
-	// === NEW: Git Checkpoint Integration ===
-
-	// 检查项目是否是 git 仓库（兜底机制）
+	// 先检查项目是否是 git 仓库
 	isGitRepo := IsGitRepository(a.GlobalCtx.ProjectPath)
-
-	// 如果 git checkpoint 不可用（非 git 仓库或未启用），从提示词中移除相关章节
-	if !isGitRepo || a.GlobalCtx.GitCheckpointCfg == nil || !a.GlobalCtx.GitCheckpointCfg.Enabled {
-		systemPrompt = removeGitCheckpointSection(systemPrompt)
-	}
+	gitCheckpointEnabled := isGitRepo && a.GlobalCtx.GitCheckpointCfg != nil && a.GlobalCtx.GitCheckpointCfg.Enabled
 
 	var gcm *GitCheckpointManager
-	if isGitRepo && a.GlobalCtx.GitCheckpointCfg != nil && a.GlobalCtx.GitCheckpointCfg.Enabled {
+	if gitCheckpointEnabled {
 		gitCfg := ConvertConfig(a.GlobalCtx.GitCheckpointCfg)
 		gcm = NewGitCheckpointManager(
 			gitCfg,
@@ -295,7 +304,49 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 				return msg, nil
 			},
 		)
+	}
+	// === END ===
 
+	systemPrompt := a.GlobalCtx.FormatPrompt(codingPrompt)
+
+	// 如果是 git 仓库且 checkpoint 启用，追加 Git Checkpoint 章节到提示词
+	if gitCheckpointEnabled {
+		systemPrompt += "\n" + gitCheckpointPromptSection
+	}
+
+	// Inject shared memory (4 dimensions: user, feedback, project, reference)
+	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
+
+	// ─── 懒加载初始化上下文压缩引擎（仅首次 Run 时创建，后续复用）───
+	if a.compactConfig != nil && a.compactConfig.EnableAutoCompact && a.compactEngine == nil && a.LLM != nil {
+		engine, err := compact.NewEngine(a.compactConfig, &compact.SummaryAdapter{
+			LLM:         a.LLM,
+			Temperature: 0.1,
+			MaxTokens:   12000,
+		})
+		if err != nil {
+			slog.Warn("Failed to create compact engine for CodingAgent", "error", err)
+		} else {
+			a.compactEngine = engine
+			slog.Info("Context compact engine initialized for CodingAgent",
+				"max_tokens", a.compactConfig.MaxContextTokens)
+		}
+	}
+
+	cfg := DefaultExecutorConfig()
+	cfg.SystemPrompt = systemPrompt
+	cfg.UserInput = input
+	cfg.Adapters = a.Adapters
+	cfg.LLM = a.LLM
+	cfg.MaxSteps = a.maxSteps
+	cfg.Publisher = a.Publisher
+	cfg.AgentName = a.Name()
+	cfg.StopOnFinish = true
+	cfg.CompactEngine = a.compactEngine
+	cfg.RepoContext = a.GlobalCtx.RepoSummary
+
+	// 如果是 git 仓库且 checkpoint 启用，设置回调和添加工具
+	if gitCheckpointEnabled {
 		cfg.OnAgentStart = func(ctx context.Context) error {
 			return gcm.OnAgentStart(ctx)
 		}
@@ -311,7 +362,6 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		tools.SetGuardOnAdapters(checkpointAdapters, a.GlobalCtx.Guard)
 		cfg.Adapters = append(cfg.Adapters, checkpointAdapters...)
 	}
-	// === END NEW ===
 
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
@@ -523,22 +573,4 @@ func createCheckpointToolAdapters(gcm *GitCheckpointManager) []*tools.Adapter {
 	})
 
 	return []*tools.Adapter{listAdapter, rollbackAdapter, createAdapter}
-}
-
-// removeGitCheckpointSection 从系统提示词中移除 Git Checkpoint 相关章节
-// 当 git checkpoint 功能不可用时（非 git 仓库），防止 LLM 看到不存在的工具
-func removeGitCheckpointSection(prompt string) string {
-	const marker = "### Git Checkpoint Mechanism"
-	start := strings.Index(prompt, marker)
-	if start == -1 {
-		return prompt
-	}
-	// 查找下一个 "###" 章节标记
-	next := strings.Index(prompt[start+1:], "\n### ")
-	if next == -1 {
-		// 没有更多章节了，从标记位置删除到末尾
-		return strings.TrimRight(prompt[:start], "\n")
-	}
-	// 从标记开始删除到下一个章节之前
-	return prompt[:start] + prompt[start+1+next:]
 }
