@@ -80,8 +80,8 @@ func (m *UserConfirmManager) RequestConfirmation(ctx context.Context, question s
 		return response, nil
 	case <-ctx.Done():
 		return "", fmt.Errorf("user confirmation cancelled: %w", ctx.Err())
-	case <-time.After(5 * time.Minute):
-		return "", fmt.Errorf("user confirmation timed out after 5 minutes")
+	case <-time.After(30 * time.Second):
+		return "", fmt.Errorf("user confirmation timed out after 30 seconds")
 	}
 }
 
@@ -103,13 +103,13 @@ func (m *UserConfirmManager) RequestUserHelp(ctx context.Context, data *protocol
 func getHelpTimeout(it protocol.InteractionType) time.Duration {
 	switch it {
 	case protocol.InteractionConfirm:
-		return 5 * time.Minute
+		return 30 * time.Second
 	case protocol.InteractionSelect:
-		return 10 * time.Minute
+		return 2 * time.Minute
 	case protocol.InteractionInput:
-		return 30 * time.Minute
+		return 5 * time.Minute
 	default:
-		return 10 * time.Minute
+		return 2 * time.Minute
 	}
 }
 
