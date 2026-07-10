@@ -216,13 +216,46 @@ func (g *WorkspaceGuard) isInWorkspace(resolvedPath string) bool {
 // that fall outside the workspace. Used as a defense-in-depth check when the
 // LLM sets is_dangerous=false.
 func (g *WorkspaceGuard) referencesOutsideWorkspace(command string) bool {
+	// 安全系统路径白名单：这些路径下的引用是只读系统工具/库，不构成危险
+	safeSystemPaths := []string{
+		"/usr/bin",
+		"/usr/local/bin",
+		"/bin",
+		"/sbin",
+		"/usr/sbin",
+		"/usr/lib",
+		"/usr/lib64",
+		"/usr/libexec",
+		"/usr/share",
+		"/etc",
+		"/dev/null",
+		"/dev/zero",
+		"/dev/random",
+		"/dev/urandom",
+		"/tmp",
+		"/var/tmp",
+		"/proc",
+		"/sys",
+	}
+
 	fields := strings.Fields(command)
 	for _, field := range fields {
 		field = strings.Trim(field, `'"`)
 		if strings.HasPrefix(field, "/") {
 			cleaned := filepath.Clean(field)
 			if cleaned == "/" {
-				return true
+				return true // 根目录始终危险
+			}
+			// 检查是否在白名单路径内
+			isSafe := false
+			for _, safePath := range safeSystemPaths {
+				if cleaned == safePath || strings.HasPrefix(cleaned, safePath+"/") {
+					isSafe = true
+					break
+				}
+			}
+			if isSafe {
+				continue // 在白名单内，跳过此token
 			}
 			if !g.isInWorkspace(cleaned) {
 				return true
