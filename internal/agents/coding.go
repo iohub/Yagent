@@ -184,8 +184,17 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.RepoContext = a.GlobalCtx.RepoSummary
 
 	// === NEW: Git Checkpoint Integration ===
+
+	// 检查项目是否是 git 仓库（兜底机制）
+	isGitRepo := IsGitRepository(a.GlobalCtx.ProjectPath)
+
+	// 如果 git checkpoint 不可用（非 git 仓库或未启用），从提示词中移除相关章节
+	if !isGitRepo || a.GlobalCtx.GitCheckpointCfg == nil || !a.GlobalCtx.GitCheckpointCfg.Enabled {
+		systemPrompt = removeGitCheckpointSection(systemPrompt)
+	}
+
 	var gcm *GitCheckpointManager
-	if a.GlobalCtx.GitCheckpointCfg != nil && a.GlobalCtx.GitCheckpointCfg.Enabled {
+	if isGitRepo && a.GlobalCtx.GitCheckpointCfg != nil && a.GlobalCtx.GitCheckpointCfg.Enabled {
 		gitCfg := ConvertConfig(a.GlobalCtx.GitCheckpointCfg)
 		gcm = NewGitCheckpointManager(
 			gitCfg,
@@ -514,4 +523,22 @@ func createCheckpointToolAdapters(gcm *GitCheckpointManager) []*tools.Adapter {
 	})
 
 	return []*tools.Adapter{listAdapter, rollbackAdapter, createAdapter}
+}
+
+// removeGitCheckpointSection 从系统提示词中移除 Git Checkpoint 相关章节
+// 当 git checkpoint 功能不可用时（非 git 仓库），防止 LLM 看到不存在的工具
+func removeGitCheckpointSection(prompt string) string {
+	const marker = "### Git Checkpoint Mechanism"
+	start := strings.Index(prompt, marker)
+	if start == -1 {
+		return prompt
+	}
+	// 查找下一个 "###" 章节标记
+	next := strings.Index(prompt[start+1:], "\n### ")
+	if next == -1 {
+		// 没有更多章节了，从标记位置删除到末尾
+		return strings.TrimRight(prompt[:start], "\n")
+	}
+	// 从标记开始删除到下一个章节之前
+	return prompt[:start] + prompt[start+1+next:]
 }

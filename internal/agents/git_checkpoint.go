@@ -773,3 +773,14 @@ func (g *GitCheckpointManager) runGitCommand(ctx context.Context, args ...string
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
+
+// IsGitRepository 检查指定路径是否在 git 仓库中
+// 使用 git rev-parse --git-dir 检测，支持子模块、worktree 等场景
+func IsGitRepository(path string) bool {
+	if path == "" {
+		return false
+	}
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = path
+	return cmd.Run() == nil
+}
