@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -336,9 +337,16 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 						LogDelegateCall(tc.Function.Name, agentName, tc.Function.Arguments)
 					}
 
-					toolResult, callErr = t.Call(ctx, tc.Function.Arguments)
+					// 为工具调用创建独立超时 context，防止工具卡死（如用户确认无限等待）
+					toolCtx, toolCancel := context.WithTimeout(ctx, 60*time.Second)
+					toolResult, callErr = t.Call(toolCtx, tc.Function.Arguments)
+					toolCancel()
 					if callErr != nil {
-						toolResult = fmt.Sprintf("Error: %v", callErr)
+						if errors.Is(callErr, context.DeadlineExceeded) {
+							toolResult = fmt.Sprintf("Error: tool execution timed out after 60 seconds")
+						} else {
+							toolResult = fmt.Sprintf("Error: %v", callErr)
+						}
 					}
 					logToolCall(tc.Function.Name, cfg.AgentName, tc.Function.Arguments, toolResult, callErr, startTime)
 					break
