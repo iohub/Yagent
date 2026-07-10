@@ -1,6 +1,6 @@
-diff --git a/codeseek/rust-core/Cargo.toml b/codeseek/rust-core/Cargo.toml
---- a/codeseek/rust-core/Cargo.toml
-+++ b/codeseek/rust-core/Cargo.toml
+diff --git a/rust-core/Cargo.toml b/rust-core/Cargo.toml
+--- a/rust-core/Cargo.toml
++++ b/rust-core/Cargo.toml
 @@ -54,4 +54,6 @@ futures = "0.3.31"
  toml = "0.8"
  dirs = "5.0"
