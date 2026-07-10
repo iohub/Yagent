@@ -72,6 +72,10 @@ jobs:
           version: "25.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Apply recursion limit patch for lance
+        working-directory: codeseek
+        run: git apply --verbose ../patches/codeseek-recursion-limit.patch
+
       - name: Build Rust codeseek (${{ matrix.target }})
         working-directory: codeseek/rust-core
         run: cargo build --release --target ${{ matrix.target }}
@@ -174,6 +178,10 @@ jobs:
       - name: Apply vendored OpenSSL patch for musl build
         working-directory: codeseek
         run: git apply --verbose ../patches/codeseek-vendored-openssl.patch
+
+      - name: Apply recursion limit patch for lance
+        working-directory: codeseek
+        run: git apply --verbose ../patches/codeseek-recursion-limit.patch
 
       - name: Build Rust codeseek (static musl)
         working-directory: codeseek/rust-core
