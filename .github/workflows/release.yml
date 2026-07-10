@@ -50,7 +50,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.95
         with:
           targets: ${{ matrix.target }}
 
@@ -149,7 +149,7 @@ jobs:
           sudo apt-get install -y musl-tools perl make pkg-config
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.95
         with:
           targets: x86_64-unknown-linux-musl
 
