@@ -138,40 +138,6 @@ func (r *DimensionFieldRegistry) registerAll() {
 		},
 	}
 
-	// ============ Project 维度 ============
-	r.dimensions["project"] = &DimensionSchema{
-		Dimension: "project",
-		Fields: map[string]*FieldSchema{
-			"status": {
-				Type: FieldTypeScalar, ItemType: "string",
-				ValidActions: []string{"set"},
-				Description:  "Project current status",
-				Example:      "Implementing auth module",
-			},
-			"objectives": {
-				Type: FieldTypeArray, ItemType: "object",
-				ValidActions: []string{"add", "remove", "set"},
-				Description:  "Project objectives — add a single objective or set full list",
-				Example:      `{"description":"Finish API","priority":"high","status":"active"}`,
-				LegacyNames:  []string{"objective"},
-			},
-			"team": {
-				Type: FieldTypeArray, ItemType: "object",
-				ValidActions: []string{"add", "remove", "set"},
-				Description:  "Project team members — add a single member or set full list",
-				Example:      `{"name":"Alice","role":"Engineer","responsibility":"Backend"}`,
-				LegacyNames:  []string{"member"},
-			},
-			"deadlines": {
-				Type: FieldTypeArray, ItemType: "object",
-				ValidActions: []string{"add", "remove", "set"},
-				Description:  "Project deadlines — add a single deadline or set full list",
-				Example:      `{"description":"Beta release","date":"2025-06-01","priority":"high"}`,
-				LegacyNames:  []string{"deadline"},
-			},
-		},
-	}
-
 	// ============ Reference 维度 ============
 	r.dimensions["reference"] = &DimensionSchema{
 		Dimension: "reference",

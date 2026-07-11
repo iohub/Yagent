@@ -8,11 +8,11 @@ func TestNewDimensionFieldRegistry(t *testing.T) {
 	registry := NewDimensionFieldRegistry()
 
 	dims := registry.GetAllDimensions()
-	if len(dims) != 4 {
-		t.Errorf("Expected 4 dimensions, got %d", len(dims))
+	if len(dims) != 3 {
+		t.Errorf("Expected 3 dimensions, got %d", len(dims))
 	}
 
-	expectedDims := map[string]bool{"user": false, "feedback": false, "project": false, "reference": false}
+	expectedDims := map[string]bool{"user": false, "feedback": false, "reference": false}
 	for _, d := range dims {
 		if _, ok := expectedDims[d]; ok {
 			expectedDims[d] = true
@@ -99,9 +99,6 @@ func TestValidate_LegacyFieldAutoCorrect(t *testing.T) {
 	}{
 		{"feedback", "correction", "corrections"},
 		{"feedback", "endorsement", "endorsements"},
-		{"project", "objective", "objectives"},
-		{"project", "member", "team"},
-		{"project", "deadline", "deadlines"},
 		{"reference", "resource", "resources"},
 	}
 
@@ -279,34 +276,5 @@ func TestFieldSchema_LegacyNames(t *testing.T) {
 	endorsementsField := schema.Fields["endorsements"]
 	if len(endorsementsField.LegacyNames) == 0 {
 		t.Error("Expected endorsements field to have legacy names")
-	}
-}
-
-func TestValidate_CorrectedResultStructure(t *testing.T) {
-	registry := NewDimensionFieldRegistry()
-
-	result := registry.Validate("project", "objective", "add",
-		map[string]interface{}{
-			"description": "Test objective",
-			"priority":    "high",
-		},
-		"",
-	)
-
-	if !result.Valid {
-		t.Fatalf("Expected valid result, got errors: %v", result.Errors)
-	}
-	if !result.Corrected {
-		t.Error("Expected auto-correction flag to be true")
-	}
-	if len(result.Corrections) == 0 {
-		t.Error("Expected at least one correction")
-	}
-	corr := result.Corrections[0]
-	if corr.Original != "objective" {
-		t.Errorf("Expected corrected from 'objective', got %q", corr.Original)
-	}
-	if corr.Corrected != "objectives" {
-		t.Errorf("Expected corrected to 'objectives', got %q", corr.Corrected)
 	}
 }

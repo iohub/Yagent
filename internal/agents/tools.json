@@ -548,7 +548,6 @@
           "enum": [
             "user",
             "feedback",
-            "project",
             "reference"
           ],
           "description": "Which memory dimension to update: user (profile/expertise/preferences), feedback (corrections/endorsements), reference (URLs/resources)"
