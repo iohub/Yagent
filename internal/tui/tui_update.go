@@ -629,6 +629,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.taskRunning = false  // 立即更新 UI 状态，不等 taskCompleteMsg
 								m.currentAgent = ""    // 清除当前 agent 显示
 								m.currentTask.CancelFunc()
+								// 主动清理 LLM HTTP 连接池，加速 context 取消传播
+								if m.assistant != nil {
+									m.assistant.CloseIdleConnections()
+								}
 								m.logEntries = append(m.logEntries, logEntry{
 									timestamp: time.Now(),
 									eventType: "status",

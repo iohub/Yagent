@@ -1095,7 +1095,15 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 						LogDelegateCall(t.Name(), agentName, tc.Function.Arguments)
 					}
 
-					toolResult, err = t.Call(ctx, tc.Function.Arguments)
+					// 工具调用前检查 context
+					if ctx.Err() != nil {
+						return "", ctx.Err()
+					}
+
+					// 为工具调用添加超时保护（防止工具无限阻塞）
+					toolCtx, toolCancel := context.WithTimeout(ctx, 60*time.Second)
+					toolResult, err = t.Call(toolCtx, tc.Function.Arguments)
+					toolCancel()
 
 					// 注入 sub-agent memory（delegate 闭包中设置了 pendingSubAgentMemory）
 					if a.pendingSubAgentMemory != nil {

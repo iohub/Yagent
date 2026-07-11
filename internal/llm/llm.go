@@ -198,6 +198,13 @@ func NewLoggingEngine(inner Engine) *LoggingEngine {
 	return &LoggingEngine{inner: inner}
 }
 
+// CloseIdleConnections delegates to the wrapped inner engine.
+func (l *LoggingEngine) CloseIdleConnections() {
+	if l.inner != nil {
+		l.inner.CloseIdleConnections()
+	}
+}
+
 func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
 	if msgsJSON, err := json.MarshalIndent(messages, "", "  "); err == nil {
 		LogLLMContent("LLM Input (messages)", string(msgsJSON))

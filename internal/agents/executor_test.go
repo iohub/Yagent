@@ -31,6 +31,10 @@ func (m *mockLLM) Model() string {
 	return "mock-model"
 }
 
+func (m *mockLLM) CloseIdleConnections() {
+	// no-op for mock
+}
+
 // ─── Test Helpers ────────────────────────────────────────────────────────────
 
 // newBlockingAdapter 创建一个会阻塞直到 context 超时的适配器

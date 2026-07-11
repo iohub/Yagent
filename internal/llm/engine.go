@@ -99,6 +99,10 @@ type Engine interface {
 
 	// Model returns the model name this engine is configured to use.
 	Model() string
+
+	// CloseIdleConnections closes idle HTTP connections in the underlying transport.
+	// Useful for accelerating connection release during task cancellation.
+	CloseIdleConnections()
 }
 
 // TruncationMarker 记录工具结果被截断的信息

@@ -56,6 +56,10 @@ func (m *mockConsolidationEngine) Model() string {
 	return "mock-model"
 }
 
+func (m *mockConsolidationEngine) CloseIdleConnections() {
+	// no-op for mock
+}
+
 func (m *mockConsolidationEngine) CallCount() int {
 	return int(atomic.LoadInt32(&m.callCount))
 }

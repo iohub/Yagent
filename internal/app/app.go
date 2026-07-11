@@ -75,6 +75,14 @@ func (ca *CodeActor) SetEmbeddedBinaries(fs embed.FS) {
 	ca.embeddedBinFS = fs
 }
 
+// CloseIdleConnections 关闭 LLM engine 的 HTTP 空闲连接。
+// 在任务取消时调用，加速底层连接释放和 context 取消传播。
+func (ca *CodeActor) CloseIdleConnections() {
+	if ca.engine != nil {
+		ca.engine.CloseIdleConnections()
+	}
+}
+
 // Init initializes the assistant with Engine and creates agents.
 // Uses per-agent and per-tool engine resolution from the LLM client.
 func (ca *CodeActor) Init(engine llm.Engine, workDir string) {

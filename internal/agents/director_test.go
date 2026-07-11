@@ -31,6 +31,10 @@ func (m *mockEngine) Model() string {
 	return "mock-model"
 }
 
+func (m *mockEngine) CloseIdleConnections() {
+	// no-op for mock
+}
+
 // ─── Test Helpers ────────────────────────────────────────────────────────────
 
 func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
