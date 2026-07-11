@@ -626,6 +626,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// Cancel confirmation
 							if m.currentTask != nil && m.currentTask.CancelFunc != nil {
 								m.taskCancelled = true
+								m.taskRunning = false  // 立即更新 UI 状态，不等 taskCompleteMsg
+								m.currentAgent = ""    // 清除当前 agent 显示
 								m.currentTask.CancelFunc()
 								m.logEntries = append(m.logEntries, logEntry{
 									timestamp: time.Now(),
@@ -633,6 +635,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 									content:   "Task cancelled by user",
 								})
 								m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+								m.invalidateFooterCache()  // 立即刷新状态栏
+								m.cachedStatusBar = m.renderAirlineStatusBar()  // 重新渲染状态栏
 							}
 						}
 						m.dialogStack.Pop()

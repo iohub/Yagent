@@ -334,6 +334,17 @@ func (m *model) renderAirlineStatusBar() string {
 			Render("COMMAND")
 		modeBg = airlineColorCmdBg
 		tipsText = langManager.GetText("CommandModeIdleTips")
+	} else if m.taskCancelled {
+		// 任务已取消状态
+		modeText := lipgloss.NewStyle().
+			Background(airlineColorCancelBg).
+			Foreground(airlineColorCancelFg).
+			Bold(true).
+			Padding(0, 1).
+			Render("● CANCELLED")
+		modeSeg = modeText
+		modeBg = airlineColorCancelBg
+		tipsText = langManager.GetText("EditModeTips")
 	} else if m.taskRunning {
 		// Gradient mode indicator for running state
 		modeText := common.ApplyBoldForegroundGrad(

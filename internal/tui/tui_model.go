@@ -197,6 +197,10 @@ var (
 	// Accent/highlight segment colors
 	airlineColorAccentBg = compat.AdaptiveColor{Light: lipgloss.Color("166"), Dark: lipgloss.Color("166")} // Orange accent
 	airlineColorAccentFg = compat.AdaptiveColor{Light: lipgloss.Color("15"), Dark: lipgloss.Color("15")}   // White
+
+	// Cancel/abort segment colors (yellow/amber for warning state)
+	airlineColorCancelBg = compat.AdaptiveColor{Light: lipgloss.Color("214"), Dark: lipgloss.Color("208")} // Orange-yellow
+	airlineColorCancelFg = compat.AdaptiveColor{Light: lipgloss.Color("0"), Dark: lipgloss.Color("0")}     // Black
 )
 
 // Pre-defined segment styles
@@ -232,6 +236,12 @@ var (
 	airlineAccentStyle = lipgloss.NewStyle().
 				Background(airlineColorAccentBg).
 				Foreground(airlineColorAccentFg).
+				Padding(0, 1)
+
+	airlineCancelModeStyle = lipgloss.NewStyle().
+				Background(airlineColorCancelBg).
+				Foreground(airlineColorCancelFg).
+				Bold(true).
 				Padding(0, 1)
 
 	airlineFillerStyle = lipgloss.NewStyle().
