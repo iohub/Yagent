@@ -12,13 +12,12 @@ type Dimension string
 const (
 	DimUser      Dimension = "user"
 	DimFeedback  Dimension = "feedback"
-	DimProject   Dimension = "project"
 	DimReference Dimension = "reference"
 )
 
 // AllDimensions 返回所有维度列表
 func AllDimensions() []Dimension {
-	return []Dimension{DimUser, DimFeedback, DimProject, DimReference}
+	return []Dimension{DimUser, DimFeedback, DimReference}
 }
 
 // ============================================================
@@ -114,47 +113,8 @@ func (m *FeedbackMemory) IsEmpty() bool {
 }
 
 // ============================================================
-// Dimension 3: Project Memory — 项目上下文
+// Dimension 3（已移除）: Project Memory — 项目上下文
 // ============================================================
-
-// ProjectMemory 存储当前项目上下文，帮助Agent理解工作重心
-type ProjectMemory struct {
-	ProjectID  string       `json:"project_id"`
-	Status     string       `json:"status"`      // one-line current status
-	Objectives []Objective  `json:"objectives"`  // max 5 active
-	Team       []TeamMember `json:"team"`        // max 10
-	Deadlines  []Deadline   `json:"deadlines"`   // max 5
-	Version    int64        `json:"version"`
-	UpdatedAt  time.Time    `json:"updated_at"`
-	UpdatedBy  string       `json:"updated_by"`
-}
-
-// Objective 项目目标
-type Objective struct {
-	ID          string `json:"id"`
-	Description string `json:"description"`
-	Priority    string `json:"priority"` // critical/high/medium/low
-	Status      string `json:"status"`   // active/completed/dropped
-}
-
-// TeamMember 团队成员
-type TeamMember struct {
-	Name           string `json:"name"`
-	Role           string `json:"role"`
-	Responsibility string `json:"responsibility"`
-}
-
-// Deadline 截止日期
-type Deadline struct {
-	Description string `json:"description"`
-	Date        string `json:"date"`     // ISO 8601
-	Priority    string `json:"priority"`
-}
-
-// IsEmpty 检查ProjectMemory是否为空
-func (m *ProjectMemory) IsEmpty() bool {
-	return m.Status == "" && len(m.Objectives) == 0 && len(m.Team) == 0 && len(m.Deadlines) == 0
-}
 
 // ============================================================
 // Dimension 4: Reference Memory — 参考资源
@@ -218,14 +178,6 @@ type UserMemoryUpdatePayload struct {
 type FeedbackMemoryUpdatePayload struct {
 	Corrections  *Correction   `json:"corrections,omitempty"`  // 单数→复数
 	Endorsements *Endorsement  `json:"endorsements,omitempty"` // 单数→复数
-}
-
-// ProjectMemoryUpdatePayload 项目维度更新载荷
-type ProjectMemoryUpdatePayload struct {
-	Status     *string     `json:"status,omitempty"`
-	Objectives *Objective  `json:"objectives,omitempty"` // 原 objective
-	Team       *TeamMember `json:"team,omitempty"`       // 原 member
-	Deadlines  *Deadline   `json:"deadlines,omitempty"`  // 原 deadline
 }
 
 // ReferenceMemoryUpdatePayload 参考维度更新载荷

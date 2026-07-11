@@ -9,7 +9,6 @@ import (
 const (
 	kvKeyPrefixUser      = "shared_dim:user:%s"
 	kvKeyPrefixFeedback  = "shared_dim:feedback:%s"
-	kvKeyPrefixProject   = "shared_dim:project:%s"
 	kvKeyPrefixReference = "shared_dim:reference:%s"
 )
 
@@ -82,35 +81,6 @@ func (s *SharedDimensionStore) SetFeedbackMemory(m *FeedbackMemory) error {
 	return s.kv.SetKey(key, string(data))
 }
 
-// ---- Project Memory ----
-
-// GetProjectMemory 获取项目记忆
-func (s *SharedDimensionStore) GetProjectMemory(projectID string) (*ProjectMemory, error) {
-	key := fmt.Sprintf(kvKeyPrefixProject, projectID)
-	data, err := s.kv.GetKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("get project memory: %w", err)
-	}
-	if data == "" {
-		return &ProjectMemory{ProjectID: projectID}, nil
-	}
-	var m ProjectMemory
-	if err := json.Unmarshal([]byte(data), &m); err != nil {
-		return nil, fmt.Errorf("unmarshal project memory: %w", err)
-	}
-	return &m, nil
-}
-
-// SetProjectMemory 保存项目记忆
-func (s *SharedDimensionStore) SetProjectMemory(m *ProjectMemory) error {
-	key := fmt.Sprintf(kvKeyPrefixProject, m.ProjectID)
-	data, err := json.Marshal(m)
-	if err != nil {
-		return fmt.Errorf("marshal project memory: %w", err)
-	}
-	return s.kv.SetKey(key, string(data))
-}
-
 // ---- Reference Memory ----
 
 // GetReferenceMemory 获取参考记忆
@@ -143,24 +113,20 @@ func (s *SharedDimensionStore) SetReferenceMemory(m *ReferenceMemory) error {
 // ---- Bulk Operations ----
 
 // GetAllForUser 获取指定用户的所有共享记忆
-func (s *SharedDimensionStore) GetAllForUser(userID, projectID string) (*UserMemory, *FeedbackMemory, *ProjectMemory, *ReferenceMemory, error) {
+func (s *SharedDimensionStore) GetAllForUser(userID, projectID string) (*UserMemory, *FeedbackMemory, *ReferenceMemory, error) {
 	userMem, err := s.GetUserMemory(userID)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("get user memory: %w", err)
+		return nil, nil, nil, fmt.Errorf("get user memory: %w", err)
 	}
 	fbMem, err := s.GetFeedbackMemory(userID)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("get feedback memory: %w", err)
-	}
-	projMem, err := s.GetProjectMemory(projectID)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("get project memory: %w", err)
+		return nil, nil, nil, fmt.Errorf("get feedback memory: %w", err)
 	}
 	refMem, err := s.GetReferenceMemory(projectID)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("get reference memory: %w", err)
+		return nil, nil, nil, fmt.Errorf("get reference memory: %w", err)
 	}
-	return userMem, fbMem, projMem, refMem, nil
+	return userMem, fbMem, refMem, nil
 }
 
 // ClearDimension 清除指定维度的记忆
@@ -171,8 +137,6 @@ func (s *SharedDimensionStore) ClearDimension(dim Dimension, id string) error {
 		key = fmt.Sprintf(kvKeyPrefixUser, id)
 	case DimFeedback:
 		key = fmt.Sprintf(kvKeyPrefixFeedback, id)
-	case DimProject:
-		key = fmt.Sprintf(kvKeyPrefixProject, id)
 	case DimReference:
 		key = fmt.Sprintf(kvKeyPrefixReference, id)
 	default:

@@ -63,23 +63,6 @@ Current Feedback Memory:
 Provide a consolidated version. Focus on patterns over individual instances.`, mustMarshalJSON(current))
 }
 
-// BuildProjectConsolidationPrompt 构建项目记忆整合提示
-func (b *ConsolidationPromptBuilder) BuildProjectConsolidationPrompt(current *ProjectMemory) string {
-	return fmt.Sprintf(`You are a memory consolidation engine. Your job is to refine and compact project context memory.
-
-Rules:
-- Archive (set status="completed") objectives that seem done
-- Remove stale team members (no updates in 30+ days)
-- Keep at most 5 active objectives and 5 deadlines
-- Ensure status is concise and current
-- Output ONLY valid JSON matching the ProjectMemory structure
-
-Current Project Memory:
-%s
-
-Provide a consolidated version. Keep only current, actionable information.`, mustMarshalJSON(current))
-}
-
 // BuildReferenceConsolidationPrompt 构建参考记忆整合提示
 func (b *ConsolidationPromptBuilder) BuildReferenceConsolidationPrompt(current *ReferenceMemory) string {
 	return fmt.Sprintf(`You are a memory consolidation engine. Your job is to refine and compact reference resource memory.
@@ -199,43 +182,6 @@ func (c *SharedDimensionConsolidator) ConsolidateFeedback(userID string) error {
 	return c.store.SetFeedbackMemory(&consolidated)
 }
 
-// ConsolidateProject 整合项目记忆
-func (c *SharedDimensionConsolidator) ConsolidateProject(projectID string) error {
-	current, err := c.store.GetProjectMemory(projectID)
-	if err != nil {
-		return fmt.Errorf("get project memory: %w", err)
-	}
-	if current.IsEmpty() {
-		return nil
-	}
-
-	prompt := c.prompts.BuildProjectConsolidationPrompt(current)
-
-	response, err := c.llm.Complete(
-		"You are a memory consolidation engine. Output ONLY valid JSON, no explanation.",
-		prompt,
-	)
-	if err != nil {
-		return fmt.Errorf("LLM call failed: %w", err)
-	}
-
-	response = extractJSON(response)
-	if response == "" {
-		return fmt.Errorf("no valid JSON in LLM response")
-	}
-
-	var consolidated ProjectMemory
-	if err := json.Unmarshal([]byte(response), &consolidated); err != nil {
-		return fmt.Errorf("unmarshal consolidated: %w", err)
-	}
-
-	consolidated.ProjectID = projectID
-	consolidated.Version = current.Version + 1
-	consolidated.UpdatedAt = time.Now()
-
-	return c.store.SetProjectMemory(&consolidated)
-}
-
 // ConsolidateReference 整合参考记忆
 func (c *SharedDimensionConsolidator) ConsolidateReference(projectID string) error {
 	current, err := c.store.GetReferenceMemory(projectID)
@@ -273,7 +219,7 @@ func (c *SharedDimensionConsolidator) ConsolidateReference(projectID string) err
 	return c.store.SetReferenceMemory(&consolidated)
 }
 
-// ConsolidateAll 整合指定用户/项目的所有维度
+// ConsolidateAll 整合指定用户的所有维度
 func (c *SharedDimensionConsolidator) ConsolidateAll(userID, projectID string) []error {
 	var errs []error
 
@@ -282,9 +228,6 @@ func (c *SharedDimensionConsolidator) ConsolidateAll(userID, projectID string) [
 	}
 	if err := c.ConsolidateFeedback(userID); err != nil {
 		errs = append(errs, fmt.Errorf("feedback: %w", err))
-	}
-	if err := c.ConsolidateProject(projectID); err != nil {
-		errs = append(errs, fmt.Errorf("project: %w", err))
 	}
 	if err := c.ConsolidateReference(projectID); err != nil {
 		errs = append(errs, fmt.Errorf("reference: %w", err))
