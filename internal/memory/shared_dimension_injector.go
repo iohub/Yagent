@@ -18,7 +18,7 @@ func NewSharedMemoryInjector(store *SharedDimensionStore) *SharedMemoryInjector 
 // InjectContext 构建共享记忆的Markdown文本，用于注入Agent system prompt
 // 只包含非空的记忆维度
 func (i *SharedMemoryInjector) InjectContext(userID, projectID string) string {
-	userMem, fbMem, projMem, refMem, err := i.store.GetAllForUser(userID, projectID)
+	userMem, fbMem, refMem, err := i.store.GetAllForUser(userID, projectID)
 	if err != nil {
 		return ""
 	}
@@ -30,9 +30,6 @@ func (i *SharedMemoryInjector) InjectContext(userID, projectID string) string {
 	}
 	if !fbMem.IsEmpty() {
 		sections = append(sections, i.formatFeedbackMemory(fbMem))
-	}
-	if !projMem.IsEmpty() {
-		sections = append(sections, i.formatProjectMemory(projMem))
 	}
 	if !refMem.IsEmpty() {
 		sections = append(sections, i.formatReferenceMemory(refMem))
@@ -138,40 +135,6 @@ func (i *SharedMemoryInjector) formatFeedbackMemory(m *FeedbackMemory) string {
 	return sb.String()
 }
 
-// formatProjectMemory 格式化项目维度的记忆
-func (i *SharedMemoryInjector) formatProjectMemory(m *ProjectMemory) string {
-	var sb strings.Builder
-	sb.WriteString("### 📋 Project Context\n")
-
-	if m.Status != "" {
-		sb.WriteString(fmt.Sprintf("- Status: %s\n", m.Status))
-	}
-
-	activeObjectives := filterActiveObjectives(m.Objectives)
-	if len(activeObjectives) > 0 {
-		sb.WriteString("- Active Objectives:\n")
-		for _, o := range activeObjectives {
-			sb.WriteString(fmt.Sprintf("  - [%s] %s\n", o.Priority, o.Description))
-		}
-	}
-
-	if len(m.Deadlines) > 0 {
-		sb.WriteString("- Deadlines:\n")
-		for _, d := range m.Deadlines {
-			sb.WriteString(fmt.Sprintf("  - %s by %s (%s)\n", d.Description, d.Date, d.Priority))
-		}
-	}
-
-	if len(m.Team) > 0 {
-		sb.WriteString("- Team:\n")
-		for _, t := range m.Team {
-			sb.WriteString(fmt.Sprintf("  - %s (%s): %s\n", t.Name, t.Role, t.Responsibility))
-		}
-	}
-
-	return sb.String()
-}
-
 // formatReferenceMemory 格式化参考维度的记忆
 func (i *SharedMemoryInjector) formatReferenceMemory(m *ReferenceMemory) string {
 	var sb strings.Builder
@@ -195,15 +158,4 @@ func (i *SharedMemoryInjector) formatReferenceMemory(m *ReferenceMemory) string 
 	}
 
 	return sb.String()
-}
-
-// filterActiveObjectives 过滤出活跃状态的目标
-func filterActiveObjectives(objectives []Objective) []Objective {
-	var active []Objective
-	for _, o := range objectives {
-		if o.Status == "active" || o.Status == "" {
-			active = append(active, o)
-		}
-	}
-	return active
 }
