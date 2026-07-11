@@ -145,24 +145,22 @@ func (u *SharedDimensionUpdater) applyUserUpdate(proposal *MemoryUpdateProposal)
 
 	changed := false
 
-	// 合并Profile
-	if payload.Profile != nil {
-		if payload.Profile.Name != "" && current.Profile.Name != payload.Profile.Name {
-			current.Profile.Name = payload.Profile.Name
-			changed = true
-		}
-		if payload.Profile.Role != "" && current.Profile.Role != payload.Profile.Role {
-			current.Profile.Role = payload.Profile.Role
-			changed = true
-		}
-		if payload.Profile.Team != "" && current.Profile.Team != payload.Profile.Team {
-			current.Profile.Team = payload.Profile.Team
-			changed = true
-		}
-		if payload.Profile.Seniority != "" && current.Profile.Seniority != payload.Profile.Seniority {
-			current.Profile.Seniority = payload.Profile.Seniority
-			changed = true
-		}
+	// 合并Profile字段
+	if payload.Name != nil && *payload.Name != "" && current.Name != *payload.Name {
+		current.Name = *payload.Name
+		changed = true
+	}
+	if payload.Role != nil && *payload.Role != "" && current.Role != *payload.Role {
+		current.Role = *payload.Role
+		changed = true
+	}
+	if payload.Team != nil && *payload.Team != "" && current.Team != *payload.Team {
+		current.Team = *payload.Team
+		changed = true
+	}
+	if payload.Seniority != nil && *payload.Seniority != "" && current.Seniority != *payload.Seniority {
+		current.Seniority = *payload.Seniority
+		changed = true
 	}
 
 	// 合并Expertise，去重
@@ -181,37 +179,35 @@ func (u *SharedDimensionUpdater) applyUserUpdate(proposal *MemoryUpdateProposal)
 		}
 	}
 
-	// 合并Preferences
-	if payload.Prefs != nil {
-		if payload.Prefs.Language != "" && current.Prefs.Language != payload.Prefs.Language {
-			current.Prefs.Language = payload.Prefs.Language
-			changed = true
+	// 合并Preferences字段
+	if payload.Language != nil && *payload.Language != "" && current.Language != *payload.Language {
+		current.Language = *payload.Language
+		changed = true
+	}
+	if payload.DetailLevel != nil && *payload.DetailLevel != "" && current.DetailLevel != *payload.DetailLevel {
+		current.DetailLevel = *payload.DetailLevel
+		changed = true
+	}
+	if payload.CodeStyle != nil && *payload.CodeStyle != "" && current.CodeStyle != *payload.CodeStyle {
+		current.CodeStyle = *payload.CodeStyle
+		changed = true
+	}
+	if payload.ResponseFormat != nil && *payload.ResponseFormat != "" && current.ResponseFormat != *payload.ResponseFormat {
+		current.ResponseFormat = *payload.ResponseFormat
+		changed = true
+	}
+	if len(payload.Metadata) > 0 {
+		if current.Metadata == nil {
+			current.Metadata = make(map[string]string)
 		}
-		if payload.Prefs.DetailLevel != "" && current.Prefs.DetailLevel != payload.Prefs.DetailLevel {
-			current.Prefs.DetailLevel = payload.Prefs.DetailLevel
-			changed = true
-		}
-		if payload.Prefs.CodeStyle != "" && current.Prefs.CodeStyle != payload.Prefs.CodeStyle {
-			current.Prefs.CodeStyle = payload.Prefs.CodeStyle
-			changed = true
-		}
-		if payload.Prefs.ResponseFormat != "" && current.Prefs.ResponseFormat != payload.Prefs.ResponseFormat {
-			current.Prefs.ResponseFormat = payload.Prefs.ResponseFormat
-			changed = true
-		}
-		if len(payload.Prefs.Other) > 0 {
-			if current.Prefs.Other == nil {
-				current.Prefs.Other = make(map[string]string)
-			}
-			for k, v := range payload.Prefs.Other {
-				if current.Prefs.Other[k] != v {
-					if len(current.Prefs.Other) >= u.policy.MaxUserPrefsOther {
-						return UpdateResult{Accepted: false,
-							Reason: fmt.Sprintf("❌ Custom preferences limit (%d) reached.", u.policy.MaxUserPrefsOther)}
-					}
-					current.Prefs.Other[k] = v
-					changed = true
+		for k, v := range payload.Metadata {
+			if current.Metadata[k] != v {
+				if len(current.Metadata) >= u.policy.MaxUserPrefsOther {
+					return UpdateResult{Accepted: false,
+						Reason: fmt.Sprintf("❌ Custom preferences limit (%d) reached.", u.policy.MaxUserPrefsOther)}
 				}
+				current.Metadata[k] = v
+				changed = true
 			}
 		}
 	}
@@ -254,30 +250,30 @@ func (u *SharedDimensionUpdater) applyFeedbackUpdate(proposal *MemoryUpdatePropo
 	changed := false
 
 	// 添加Correction
-	if payload.Correction != nil {
-		if u.isDuplicateCorrection(current.Corrections, payload.Correction) {
+	if payload.Corrections != nil {
+		if u.isDuplicateCorrection(current.Corrections, payload.Corrections) {
 			return UpdateResult{Accepted: false, Reason: "⏭️ Similar correction already exists — avoid duplication"}
 		}
 		if len(current.Corrections) >= u.policy.MaxCorrections {
 			current.Corrections = current.Corrections[1:] // FIFO淘汰
 		}
-		payload.Correction.ID = fmt.Sprintf("corr_%d", time.Now().UnixNano())
-		payload.Correction.Timestamp = time.Now()
-		current.Corrections = append(current.Corrections, *payload.Correction)
+		payload.Corrections.ID = fmt.Sprintf("corr_%d", time.Now().UnixNano())
+		payload.Corrections.Timestamp = time.Now()
+		current.Corrections = append(current.Corrections, *payload.Corrections)
 		changed = true
 
 		// 检查是否能提炼为模式
-		u.updateFeedbackPatterns(current, payload.Correction.Topic, payload.Correction.Wrong, payload.Correction.Correct)
+		u.updateFeedbackPatterns(current, payload.Corrections.Topic, payload.Corrections.Wrong, payload.Corrections.Correct)
 	}
 
 	// 添加Endorsement
-	if payload.Endorsement != nil {
+	if payload.Endorsements != nil {
 		if len(current.Endorsements) >= u.policy.MaxEndorsements {
 			current.Endorsements = current.Endorsements[1:] // FIFO淘汰
 		}
-		payload.Endorsement.ID = fmt.Sprintf("endo_%d", time.Now().UnixNano())
-		payload.Endorsement.Timestamp = time.Now()
-		current.Endorsements = append(current.Endorsements, *payload.Endorsement)
+		payload.Endorsements.ID = fmt.Sprintf("endo_%d", time.Now().UnixNano())
+		payload.Endorsements.Timestamp = time.Now()
+		current.Endorsements = append(current.Endorsements, *payload.Endorsements)
 		changed = true
 	}
 
@@ -374,14 +370,14 @@ func (u *SharedDimensionUpdater) applyProjectUpdate(proposal *MemoryUpdatePropos
 	}
 
 	// 添加/更新Objective
-	if payload.Objective != nil {
-		if payload.Objective.ID == "" {
-			payload.Objective.ID = fmt.Sprintf("obj_%d", time.Now().UnixNano())
+	if payload.Objectives != nil {
+		if payload.Objectives.ID == "" {
+			payload.Objectives.ID = fmt.Sprintf("obj_%d", time.Now().UnixNano())
 		}
 		found := false
 		for i, o := range current.Objectives {
-			if o.ID == payload.Objective.ID {
-				current.Objectives[i] = *payload.Objective
+			if o.ID == payload.Objectives.ID {
+				current.Objectives[i] = *payload.Objectives
 				found = true
 				changed = true
 				break
@@ -399,17 +395,17 @@ func (u *SharedDimensionUpdater) applyProjectUpdate(proposal *MemoryUpdatePropos
 				return UpdateResult{Accepted: false,
 					Reason: fmt.Sprintf("❌ Active objectives limit (%d) reached. Complete or drop existing ones first.", u.policy.MaxActiveObjectives)}
 			}
-			current.Objectives = append(current.Objectives, *payload.Objective)
+			current.Objectives = append(current.Objectives, *payload.Objectives)
 			changed = true
 		}
 	}
 
 	// 添加/更新Team Member
-	if payload.Member != nil {
+	if payload.Team != nil {
 		found := false
 		for i, m := range current.Team {
-			if m.Name == payload.Member.Name {
-				current.Team[i] = *payload.Member
+			if m.Name == payload.Team.Name {
+				current.Team[i] = *payload.Team
 				found = true
 				changed = true
 				break
@@ -420,17 +416,17 @@ func (u *SharedDimensionUpdater) applyProjectUpdate(proposal *MemoryUpdatePropos
 				return UpdateResult{Accepted: false,
 					Reason: fmt.Sprintf("❌ Team members limit (%d) reached.", u.policy.MaxTeamMembers)}
 			}
-			current.Team = append(current.Team, *payload.Member)
+			current.Team = append(current.Team, *payload.Team)
 			changed = true
 		}
 	}
 
 	// 添加Deadline
-	if payload.Deadline != nil {
+	if payload.Deadlines != nil {
 		if len(current.Deadlines) >= u.policy.MaxDeadlines {
 			current.Deadlines = current.Deadlines[1:] // FIFO淘汰
 		}
-		current.Deadlines = append(current.Deadlines, *payload.Deadline)
+		current.Deadlines = append(current.Deadlines, *payload.Deadlines)
 		changed = true
 	}
 
@@ -471,22 +467,11 @@ func (u *SharedDimensionUpdater) applyReferenceUpdate(proposal *MemoryUpdateProp
 
 	changed := false
 
-	// 删除资源
-	if payload.RemoveByID != "" {
-		for i, r := range current.Resources {
-			if r.ID == payload.RemoveByID {
-				current.Resources = append(current.Resources[:i], current.Resources[i+1:]...)
-				changed = true
-				break
-			}
-		}
-	}
-
 	// 添加资源
-	if payload.Resource != nil {
+	if payload.Resources != nil {
 		// 检查是否已存在同Location的资源
 		for _, r := range current.Resources {
-			if r.Location == payload.Resource.Location {
+			if r.Location == payload.Resources.Location {
 				return UpdateResult{Accepted: false, Reason: "⏭️ Resource with same location already exists"}
 			}
 		}
@@ -494,8 +479,8 @@ func (u *SharedDimensionUpdater) applyReferenceUpdate(proposal *MemoryUpdateProp
 			return UpdateResult{Accepted: false,
 				Reason: fmt.Sprintf("❌ Resources limit (%d) reached. Remove unused ones first.", u.policy.MaxResources)}
 		}
-		payload.Resource.ID = fmt.Sprintf("res_%d", time.Now().UnixNano())
-		current.Resources = append(current.Resources, *payload.Resource)
+		payload.Resources.ID = fmt.Sprintf("res_%d", time.Now().UnixNano())
+		current.Resources = append(current.Resources, *payload.Resources)
 		changed = true
 	}
 

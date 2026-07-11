@@ -403,20 +403,46 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		codingAgent.BaseAgent.MemoryInjector = sharedDimInjector
 		codingAgent.BaseAgent.MemoryUpdater = sharedDimUpdater
 
-		// Create update_shared_memory tool function
+		// Create update_shared_memory tool function (field-targeted API)
 		updateMemFn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			dimStr, _ := params["dimension"].(string)
 			actionStr, _ := params["action"].(string)
+			fieldStr, _ := params["field"].(string)
 			reason, _ := params["reason"].(string)
-			payload := params["payload"]
+			value := params["value"] // 可为 nil
+			itemID, _ := params["item_id"].(string)
 
-			if dimStr == "" || reason == "" || payload == nil {
-				return "Missing required parameters: dimension, payload, and reason.", nil
+			if dimStr == "" || actionStr == "" || fieldStr == "" || reason == "" {
+				return "Missing required parameters: dimension, field, action, and reason.", nil
+			}
+
+			// Use field registry to validate
+			registry := memory.NewDimensionFieldRegistry()
+			result := registry.Validate(dimStr, fieldStr, actionStr, value, itemID)
+			if !result.Valid {
+				if len(result.Errors) > 0 {
+					return fmt.Sprintf("❌ Validation error: %s\nHint: %s", result.Errors[0].Message, result.Errors[0].Hint), nil
+				}
+				return "❌ Validation failed", nil
+			}
+
+			resolved := result.Resolved
+
+			// Build legacy-style payload for backward compatibility with existing updater
+			payload := make(map[string]interface{})
+			switch resolved.Action {
+			case "set":
+				payload[resolved.Field] = resolved.Value
+			case "add":
+				payload[resolved.Field] = resolved.Value
+			case "remove":
+				payload[resolved.Field] = resolved.Value
+				payload["_remove_item_id"] = resolved.ItemID
 			}
 
 			proposal := &memory.MemoryUpdateProposal{
-				Dimension:  memory.Dimension(dimStr),
-				Action:     memory.UpdateAction(actionStr),
+				Dimension:  memory.Dimension(resolved.Dimension),
+				Action:     memory.UpdateAction(resolved.Action),
 				Payload:    payload,
 				Reason:     reason,
 				ProposedBy: "agent",
@@ -426,11 +452,19 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 				},
 			}
 
-			result := sharedDimUpdater.ApplyUpdate(proposal)
-			return result.Reason, nil
+			updateResult := sharedDimUpdater.ApplyUpdate(proposal)
+
+			// If auto-corrected, append a note to the result
+			if result.Corrected {
+				corr := result.Corrections[0]
+				return fmt.Sprintf("%s\n⚠️ Note: '%s' was auto-corrected to '%s'. Please use '%s' in future calls.",
+					updateResult.Reason, corr.Original, corr.Corrected, corr.Corrected), nil
+			}
+
+			return updateResult.Reason, nil
 		}
 
-		// Build adapter with schema
+		// Build adapter with field-targeted schema
 		updateMemAdapter := tools.NewAdapter("update_shared_memory",
 			"Update the shared cross-agent memory system. Use this to persist important user information (user dimension), feedback (feedback dimension), project context (project dimension), or reference resources (reference dimension) across all agents and conversations.",
 			updateMemFn,
@@ -438,72 +472,32 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"dimension": map[string]interface{}{
-					"type": "string",
-					"enum": []string{"user", "feedback", "project", "reference"},
+					"type":        "string",
+					"enum":        []string{"user", "feedback", "project", "reference"},
 					"description": "Which memory dimension to update",
 				},
-				"action": map[string]interface{}{
-					"type": "string",
-					"enum": []string{"add", "update", "remove"},
-					"description": "Type of update operation",
+				"field": map[string]interface{}{
+					"type":        "string",
+					"description": "Target field name for the dimension. Use memory_query_schema to see valid fields. Examples: user: name/role/team/seniority/expertise/language/detail_level/code_style/response_format/metadata; feedback: corrections/endorsements; project: status/objectives/team/deadlines; reference: resources",
 				},
-				"payload": map[string]interface{}{
-					"type":        "object",
-					"description": "DATA TO STORE — USE CORRECT FIELDS BASED ON THE DIMENSION.\n\nFor 'user' dimension use: profile {name,role,team,seniority}, expertise [string], preferences {language,detail_level,code_style,response_format,other{}}\n\nFor 'feedback' dimension use: correction {topic,wrong,correct,context}, endorsement {topic,approach}\n\nFor 'project' dimension use: status (string), objective {description,priority,status}, member {name,role,responsibility}, deadline {description,date,priority}\n\nFor 'reference' dimension use: resource {name,category,location,description,tags[]}, remove_by_id (string)",
-					"properties": map[string]interface{}{
-						"profile": map[string]interface{}{
-							"type":        "object",
-							"description": "[user] Profile: {name, role, team, seniority}",
-						},
-						"expertise": map[string]interface{}{
-							"type":        "array",
-							"items":       map[string]interface{}{"type": "string"},
-							"description": "[user] Expertise list, e.g. [\"Go\", \"Kubernetes\"]",
-						},
-						"preferences": map[string]interface{}{
-							"type":        "object",
-							"description": "[user] Preferences: {language, detail_level, code_style, response_format, other{}}",
-						},
-						"correction": map[string]interface{}{
-							"type":        "object",
-							"description": "[feedback] Correction: {topic, wrong, correct, context}",
-						},
-						"endorsement": map[string]interface{}{
-							"type":        "object",
-							"description": "[feedback] Endorsement: {topic, approach}",
-						},
-						"status": map[string]interface{}{
-							"type":        "string",
-							"description": "[project] Current status, e.g. 'Implementing auth'",
-						},
-						"objective": map[string]interface{}{
-							"type":        "object",
-							"description": "[project] Objective: {description, priority(critical/high/medium/low), status(active/completed/dropped)}",
-						},
-						"member": map[string]interface{}{
-							"type":        "object",
-							"description": "[project] Team member: {name, role, responsibility}",
-						},
-						"deadline": map[string]interface{}{
-							"type":        "object",
-							"description": "[project] Deadline: {description, date(ISO 8601), priority}",
-						},
-						"resource": map[string]interface{}{
-							"type":        "object",
-							"description": "[reference] Resource: {name, category, location(URL), description, tags[]}",
-						},
-						"remove_by_id": map[string]interface{}{
-							"type":        "string",
-							"description": "[reference] Resource ID to remove (when action=remove)",
-						},
-					},
+				"action": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"set", "add", "remove"},
+					"description": "Operation type: set=replace scalar or set full array, add=append single item to array, remove=remove array item by item_id",
+				},
+				"value": map[string]interface{}{
+					"description": "Value to set or add. For scalar fields (name/role/team/status etc.): a string. For array fields (expertise/corrections/objectives etc.): a single item object or string. Omit for action=remove.",
+				},
+				"item_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the array item to remove. Only used when action=remove. Get item IDs from memory query output.",
 				},
 				"reason": map[string]interface{}{
 					"type":        "string",
-					"description": "Why this update matters (min 3 chars). Be specific, e.g. 'user prefers Go' or 'important note about architecture'",
+					"description": "Why this update matters (min 3 chars). Be specific, e.g. 'user prefers concise responses' or 'added new team member'",
 				},
 			},
-			"required": []string{"dimension", "payload", "reason"},
+			"required": []string{"dimension", "field", "action", "reason"},
 		})
 
 		// Register tool on all agents that use Adapters
@@ -532,16 +526,42 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	// 添加操作日志记录器
 	ca.director.BaseAgent.MemoryUpdater.Logger = memory.NewSharedMemoryLogger()
 
-	// Register update_shared_memory tool on DirectorAgent
+	// Register update_shared_memory tool on DirectorAgent (field-targeted API)
 	{
 		updateMemFn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			dimStr, _ := params["dimension"].(string)
 			actionStr, _ := params["action"].(string)
+			fieldStr, _ := params["field"].(string)
 			reason, _ := params["reason"].(string)
-			payload := params["payload"]
+			value := params["value"] // 可为 nil
+			itemID, _ := params["item_id"].(string)
 
-			if dimStr == "" || actionStr == "" || reason == "" || payload == nil {
-				return "Missing required parameters: dimension, action, payload, and reason.", nil
+			if dimStr == "" || actionStr == "" || fieldStr == "" || reason == "" {
+				return "Missing required parameters: dimension, field, action, and reason.", nil
+			}
+
+			// Use field registry to validate
+			registry := memory.NewDimensionFieldRegistry()
+			result := registry.Validate(dimStr, fieldStr, actionStr, value, itemID)
+			if !result.Valid {
+				if len(result.Errors) > 0 {
+					return fmt.Sprintf("❌ Validation error: %s\nHint: %s", result.Errors[0].Message, result.Errors[0].Hint), nil
+				}
+				return "❌ Validation failed", nil
+			}
+
+			resolved := result.Resolved
+
+			// Build legacy-style payload for backward compatibility with existing updater
+			payload := make(map[string]interface{})
+			switch resolved.Action {
+			case "set":
+				payload[resolved.Field] = resolved.Value
+			case "add":
+				payload[resolved.Field] = resolved.Value
+			case "remove":
+				payload[resolved.Field] = resolved.Value
+				payload["_remove_item_id"] = resolved.ItemID
 			}
 
 			// Use Director's MemoryUpdater from BaseAgent
@@ -551,8 +571,8 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			}
 
 			proposal := &memory.MemoryUpdateProposal{
-				Dimension:  memory.Dimension(dimStr),
-				Action:     memory.UpdateAction(actionStr),
+				Dimension:  memory.Dimension(resolved.Dimension),
+				Action:     memory.UpdateAction(resolved.Action),
 				Payload:    payload,
 				Reason:     reason,
 				ProposedBy: "director",
@@ -562,8 +582,16 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 				},
 			}
 
-			result := updater.ApplyUpdate(proposal)
-			return result.Reason, nil
+			updateResult := updater.ApplyUpdate(proposal)
+
+			// If auto-corrected, append a note to the result
+			if result.Corrected {
+				corr := result.Corrections[0]
+				return fmt.Sprintf("%s\n⚠️ Note: '%s' was auto-corrected to '%s'. Please use '%s' in future calls.",
+					updateResult.Reason, corr.Original, corr.Corrected, corr.Corrected), nil
+			}
+
+			return updateResult.Reason, nil
 		}
 
 		directorMemAdapter := tools.NewAdapter("update_shared_memory",
@@ -573,72 +601,32 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"dimension": map[string]interface{}{
-					"type":    "string",
-					"enum":    []string{"user", "feedback", "project", "reference"},
+					"type":        "string",
+					"enum":        []string{"user", "feedback", "project", "reference"},
 					"description": "Which memory dimension to update",
 				},
-				"action": map[string]interface{}{
-					"type":    "string",
-					"enum":    []string{"add", "update", "remove"},
-					"description": "Type of update operation",
+				"field": map[string]interface{}{
+					"type":        "string",
+					"description": "Target field name for the dimension. Use memory_query_schema to see valid fields. Examples: user: name/role/team/seniority/expertise/language/detail_level/code_style/response_format/metadata; feedback: corrections/endorsements; project: status/objectives/team/deadlines; reference: resources",
 				},
-				"payload": map[string]interface{}{
-					"type":        "object",
-					"description": "DATA TO STORE — USE CORRECT FIELDS BASED ON THE DIMENSION.\n\nFor 'user' dimension use: profile {name,role,team,seniority}, expertise [string], preferences {language,detail_level,code_style,response_format,other{}}\n\nFor 'feedback' dimension use: correction {topic,wrong,correct,context}, endorsement {topic,approach}\n\nFor 'project' dimension use: status (string), objective {description,priority,status}, member {name,role,responsibility}, deadline {description,date,priority}\n\nFor 'reference' dimension use: resource {name,category,location,description,tags[]}, remove_by_id (string)",
-					"properties": map[string]interface{}{
-						"profile": map[string]interface{}{
-							"type": "object",
-							"description": "[user] Profile: {name, role, team, seniority}",
-						},
-						"expertise": map[string]interface{}{
-							"type":        "array",
-							"items":       map[string]interface{}{"type": "string"},
-							"description": "[user] Expertise list, e.g. [\"Go\", \"Kubernetes\"]",
-						},
-						"preferences": map[string]interface{}{
-							"type":        "object",
-							"description": "[user] Preferences: {language, detail_level, code_style, response_format, other{}}",
-						},
-						"correction": map[string]interface{}{
-							"type":        "object",
-							"description": "[feedback] Correction: {topic, wrong, correct, context}",
-						},
-						"endorsement": map[string]interface{}{
-							"type":        "object",
-							"description": "[feedback] Endorsement: {topic, approach}",
-						},
-						"status": map[string]interface{}{
-							"type":        "string",
-							"description": "[project] Current status, e.g. 'Implementing auth'",
-						},
-						"objective": map[string]interface{}{
-							"type":        "object",
-							"description": "[project] Objective: {description, priority(critical/high/medium/low), status(active/completed/dropped)}",
-						},
-						"member": map[string]interface{}{
-							"type":        "object",
-							"description": "[project] Team member: {name, role, responsibility}",
-						},
-						"deadline": map[string]interface{}{
-							"type":        "object",
-							"description": "[project] Deadline: {description, date(ISO 8601), priority}",
-						},
-						"resource": map[string]interface{}{
-							"type":        "object",
-							"description": "[reference] Resource: {name, category, location(URL), description, tags[]}",
-						},
-						"remove_by_id": map[string]interface{}{
-							"type":        "string",
-							"description": "[reference] Resource ID to remove (when action=remove)",
-						},
-					},
+				"action": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"set", "add", "remove"},
+					"description": "Operation type: set=replace scalar or set full array, add=append single item to array, remove=remove array item by item_id",
+				},
+				"value": map[string]interface{}{
+					"description": "Value to set or add. For scalar fields (name/role/team/status etc.): a string. For array fields (expertise/corrections/objectives etc.): a single item object or string. Omit for action=remove.",
+				},
+				"item_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the array item to remove. Only used when action=remove. Get item IDs from memory query output.",
 				},
 				"reason": map[string]interface{}{
 					"type":        "string",
 					"description": "Why this update matters (min 3 chars). Be specific, e.g. 'user prefers Go' or 'important note about architecture'",
 				},
 			},
-			"required": []string{"dimension", "action", "payload", "reason"},
+			"required": []string{"dimension", "field", "action", "reason"},
 		})
 
 		ca.director.Adapters = append(ca.director.Adapters, directorMemAdapter)
@@ -646,38 +634,32 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	}
 
 	// ============================================================
-	// memory_query_schema 工具 — 查询 payload 字段结构
+	// memory_query_schema 工具 — 查询 payload 字段结构 (registry-backed)
 	// ============================================================
 	{
 		querySchemaFn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			dimStr, _ := params["dimension"].(string)
-
-			schemas := map[string]string{
-				"user":      `PROFILE (object): {name, role, team, seniority}
-EXPERTISE (array of strings): max 10 items
-PREFERENCES (object): {language, detail_level, code_style, response_format, other{}}`,
-				"feedback":  `CORRECTION (object): {topic, wrong, correct, context}
-ENDORSEMENT (object): {topic, approach}`,
-				"project":   `STATUS (string): one-line status
-OBJECTIVE (object): {description, priority, status}
-MEMBER (object): {name, role, responsibility}
-DEADLINE (object): {description, date(ISO 8601), priority}`,
-				"reference": `RESOURCE (object): {name, category, location(URL), description, tags[]}
-REMOVE_BY_ID (string): remove resource by ID`,
-			}
+			registry := memory.NewDimensionFieldRegistry()
 
 			if dimStr != "" {
-				if schema, ok := schemas[dimStr]; ok {
-					return fmt.Sprintf("📋 Payload schema for '%s' dimension:\n\n%s\n\nTip: Only use fields relevant to this dimension when calling update_shared_memory.", dimStr, schema), nil
+				schemaJSON := registry.FormatSchemaAsJSON(dimStr)
+				if schemaJSON == "" {
+					return fmt.Sprintf("Unknown dimension: %s. Available: user, feedback, project, reference", dimStr), nil
 				}
-				return fmt.Sprintf("Unknown dimension: %s. Available: user, feedback, project, reference", dimStr), nil
+				return fmt.Sprintf("📋 Schema for '%s' dimension:\n\n%s\n\nTip: Use 'field' parameter with one of the valid fields above when calling update_shared_memory.", dimStr, schemaJSON), nil
 			}
 
+			// Return summary of all dimensions
 			var result string
-			for dim, schema := range schemas {
-				result += fmt.Sprintf("=== %s ===\n%s\n\n", dim, schema)
+			for _, dim := range registry.GetAllDimensions() {
+				schema := registry.GetDimensionSchema(dim)
+				fields := make([]string, 0, len(schema.Fields))
+				for name, f := range schema.Fields {
+					fields = append(fields, fmt.Sprintf("  - %s (%s): %s", name, f.Type, f.Description))
+				}
+				result += fmt.Sprintf("=== %s ===\n%s\n\n", dim, strings.Join(fields, "\n"))
 			}
-			result += "Pass 'dimension' parameter to get schema for a specific dimension."
+			result += "Pass 'dimension' parameter to get detailed JSON schema for a specific dimension."
 			return result, nil
 		}
 

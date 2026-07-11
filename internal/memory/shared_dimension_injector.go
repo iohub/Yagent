@@ -57,17 +57,17 @@ func (i *SharedMemoryInjector) formatUserMemory(m *UserMemory) string {
 	sb.WriteString("### 👤 User Profile\n")
 
 	var profileParts []string
-	if m.Profile.Name != "" {
-		profileParts = append(profileParts, fmt.Sprintf("Name: %s", m.Profile.Name))
+	if m.Name != "" {
+		profileParts = append(profileParts, fmt.Sprintf("Name: %s", m.Name))
 	}
-	if m.Profile.Role != "" {
-		profileParts = append(profileParts, fmt.Sprintf("Role: %s", m.Profile.Role))
+	if m.Role != "" {
+		profileParts = append(profileParts, fmt.Sprintf("Role: %s", m.Role))
 	}
-	if m.Profile.Team != "" {
-		profileParts = append(profileParts, fmt.Sprintf("Team: %s", m.Profile.Team))
+	if m.Team != "" {
+		profileParts = append(profileParts, fmt.Sprintf("Team: %s", m.Team))
 	}
-	if m.Profile.Seniority != "" {
-		profileParts = append(profileParts, fmt.Sprintf("Level: %s", m.Profile.Seniority))
+	if m.Seniority != "" {
+		profileParts = append(profileParts, fmt.Sprintf("Level: %s", m.Seniority))
 	}
 	if len(profileParts) > 0 {
 		sb.WriteString(fmt.Sprintf("- Profile: %s\n", strings.Join(profileParts, " | ")))
@@ -78,23 +78,23 @@ func (i *SharedMemoryInjector) formatUserMemory(m *UserMemory) string {
 	}
 
 	var prefParts []string
-	if m.Prefs.Language != "" {
-		prefParts = append(prefParts, fmt.Sprintf("Language: %s", m.Prefs.Language))
+	if m.Language != "" {
+		prefParts = append(prefParts, fmt.Sprintf("Language: %s", m.Language))
 	}
-	if m.Prefs.DetailLevel != "" {
-		prefParts = append(prefParts, fmt.Sprintf("Detail: %s", m.Prefs.DetailLevel))
+	if m.DetailLevel != "" {
+		prefParts = append(prefParts, fmt.Sprintf("Detail: %s", m.DetailLevel))
 	}
-	if m.Prefs.CodeStyle != "" {
-		prefParts = append(prefParts, fmt.Sprintf("Code style: %s", m.Prefs.CodeStyle))
+	if m.CodeStyle != "" {
+		prefParts = append(prefParts, fmt.Sprintf("Code style: %s", m.CodeStyle))
 	}
-	if m.Prefs.ResponseFormat != "" {
-		prefParts = append(prefParts, fmt.Sprintf("Format: %s", m.Prefs.ResponseFormat))
+	if m.ResponseFormat != "" {
+		prefParts = append(prefParts, fmt.Sprintf("Format: %s", m.ResponseFormat))
 	}
 	if len(prefParts) > 0 {
 		sb.WriteString(fmt.Sprintf("- Preferences: %s\n", strings.Join(prefParts, " | ")))
 	}
 
-	for k, v := range m.Prefs.Other {
+	for k, v := range m.Metadata {
 		sb.WriteString(fmt.Sprintf("- %s: %s\n", k, v))
 	}
 

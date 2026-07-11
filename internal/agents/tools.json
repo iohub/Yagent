@@ -553,28 +553,35 @@
           ],
           "description": "Which memory dimension to update: user (profile/expertise/preferences), feedback (corrections/endorsements), project (objectives/team/deadlines), reference (URLs/resources)"
         },
+        "field": {
+          "type": "string",
+          "description": "Target field name for the dimension. For 'user': name/role/team/seniority/expertise/language/detail_level/code_style/response_format/metadata. For 'feedback': corrections/endorsements. For 'project': status/objectives/team/deadlines. For 'reference': resources."
+        },
         "action": {
           "type": "string",
           "enum": [
+            "set",
             "add",
-            "update",
             "remove"
           ],
-          "description": "Type of update operation"
+          "description": "Operation type: set=replace scalar value or set full array, add=append single item to array, remove=remove array item by item_id"
         },
-        "payload": {
-          "type": "object",
-          "description": "Dimension-specific data. For 'user': {profile:{name,role,team,seniority}, expertise:[], preferences:{language,detail_level,code_style,response_format}}. For 'feedback': {correction:{topic,wrong,correct,context}, endorsement:{topic,approach}}. For 'project': {objective:{description,priority,status}, member:{name,role,responsibility}, deadline:{description,date,priority}, status:'...'}. For 'reference': {resource:{name,category,location,description,tags:[]}, remove_by_id:'...'}. "
+        "value": {
+          "description": "Value to set or add. For scalar fields (name/role/team/status): a string. For array fields (expertise/corrections/objectives): a single item (string or object). Omit for action=remove."
+        },
+        "item_id": {
+          "type": "string",
+          "description": "ID of the array item to remove. Only used when action=remove. Get item IDs from memory query output."
         },
         "reason": {
           "type": "string",
-          "description": "Why this update is important and should be persisted (minimum 10 characters, be specific about the context)"
+          "description": "Why this update is important and should be persisted (minimum 3 characters, be specific about the context)"
         }
       },
       "required": [
         "dimension",
+        "field",
         "action",
-        "payload",
         "reason"
       ]
     }

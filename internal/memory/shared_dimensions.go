@@ -25,18 +25,25 @@ func AllDimensions() []Dimension {
 // Dimension 1: User Memory — 用户画像
 // ============================================================
 
-// UserMemory 存储用户画像信息，帮助Agent个性化交互
+// UserMemory 存储用户画像信息，帮助 Agent 个性化交互
 type UserMemory struct {
-	UserID    string          `json:"user_id"`
-	Profile   UserProfile     `json:"profile"`
-	Expertise []string        `json:"expertise"` // max 10
-	Prefs     UserPreferences `json:"preferences"`
-	Version   int64           `json:"version"`
-	UpdatedAt time.Time       `json:"updated_at"`
-	UpdatedBy string          `json:"updated_by"` // agent name
+	UserID    string              `json:"user_id"`
+	Name      string              `json:"name,omitempty"`         // 从 profile.name 提升
+	Role      string              `json:"role,omitempty"`         // 从 profile.role 提升
+	Team      string              `json:"team,omitempty"`         // 从 profile.team 提升
+	Seniority string              `json:"seniority,omitempty"`    // 从 profile.seniority 提升
+	Expertise []string            `json:"expertise,omitempty"`
+	Language       string            `json:"language,omitempty"`         // 从 preferences.language 提升
+	DetailLevel    string            `json:"detail_level,omitempty"`     // 从 preferences.detail_level 提升
+	CodeStyle      string            `json:"code_style,omitempty"`       // 从 preferences.code_style 提升
+	ResponseFormat string            `json:"response_format,omitempty"`  // 从 preferences.response_format 提升
+	Metadata       map[string]string `json:"metadata,omitempty"`         // 从 preferences.other 提升
+	Version     int64             `json:"version"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+	UpdatedBy   string            `json:"updated_by"` // agent name
 }
 
-// UserProfile 用户基本档案
+// Deprecated: 已扁平化到 UserMemory 顶层。仅用于向后兼容数据读取。
 type UserProfile struct {
 	Name      string `json:"name,omitempty"`
 	Role      string `json:"role,omitempty"`      // e.g., "Senior Engineer"
@@ -44,7 +51,7 @@ type UserProfile struct {
 	Seniority string `json:"seniority,omitempty"` // junior/mid/senior/staff
 }
 
-// UserPreferences 用户交互偏好
+// Deprecated: 已扁平化到 UserMemory 顶层。仅用于向后兼容数据读取。
 type UserPreferences struct {
 	Language       string            `json:"language,omitempty"`         // zh/en
 	DetailLevel    string            `json:"detail_level,omitempty"`    // brief/moderate/detailed
@@ -53,15 +60,12 @@ type UserPreferences struct {
 	Other          map[string]string `json:"other,omitempty"`           // extensible
 }
 
-// IsEmpty 检查UserMemory是否为空
+// IsEmpty 检查 UserMemory 是否为空
 func (m *UserMemory) IsEmpty() bool {
-	return m.Profile == (UserProfile{}) &&
+	return m.Name == "" && m.Role == "" && m.Team == "" && m.Seniority == "" &&
 		len(m.Expertise) == 0 &&
-		m.Prefs.Language == "" &&
-		m.Prefs.DetailLevel == "" &&
-		m.Prefs.CodeStyle == "" &&
-		m.Prefs.ResponseFormat == "" &&
-		len(m.Prefs.Other) == 0
+		m.Language == "" && m.DetailLevel == "" && m.CodeStyle == "" && m.ResponseFormat == "" &&
+		len(m.Metadata) == 0
 }
 
 // ============================================================
@@ -193,32 +197,39 @@ const (
 )
 
 // ============================================================
-// Dimension-specific update payloads
+// Dimension-specific update payloads (field-targeted)
 // ============================================================
 
-// UserMemoryUpdatePayload 用户维度更新载荷
+// UserMemoryUpdatePayload 用户维度更新载荷（新 field-targeted 模式）
 type UserMemoryUpdatePayload struct {
-	Profile   *UserProfile     `json:"profile,omitempty"`
-	Expertise []string         `json:"expertise,omitempty"`
-	Prefs     *UserPreferences `json:"preferences,omitempty"`
+	Name           *string           `json:"name,omitempty"`
+	Role           *string           `json:"role,omitempty"`
+	Team           *string           `json:"team,omitempty"`
+	Seniority      *string           `json:"seniority,omitempty"`
+	Expertise      []string          `json:"expertise,omitempty"`
+	Language       *string           `json:"language,omitempty"`
+	DetailLevel    *string           `json:"detail_level,omitempty"`
+	CodeStyle      *string           `json:"code_style,omitempty"`
+	ResponseFormat *string           `json:"response_format,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
 }
 
 // FeedbackMemoryUpdatePayload 反馈维度更新载荷
 type FeedbackMemoryUpdatePayload struct {
-	Correction  *Correction   `json:"correction,omitempty"`
-	Endorsement *Endorsement  `json:"endorsement,omitempty"`
+	Corrections  *Correction   `json:"corrections,omitempty"`  // 单数→复数
+	Endorsements *Endorsement  `json:"endorsements,omitempty"` // 单数→复数
 }
 
 // ProjectMemoryUpdatePayload 项目维度更新载荷
 type ProjectMemoryUpdatePayload struct {
-	Objective *Objective  `json:"objective,omitempty"`
-	Member    *TeamMember `json:"member,omitempty"`
-	Deadline  *Deadline   `json:"deadline,omitempty"`
-	Status    *string     `json:"status,omitempty"`
+	Status     *string     `json:"status,omitempty"`
+	Objectives *Objective  `json:"objectives,omitempty"` // 原 objective
+	Team       *TeamMember `json:"team,omitempty"`       // 原 member
+	Deadlines  *Deadline   `json:"deadlines,omitempty"`  // 原 deadline
 }
 
 // ReferenceMemoryUpdatePayload 参考维度更新载荷
 type ReferenceMemoryUpdatePayload struct {
-	Resource   *Resource `json:"resource,omitempty"`
-	RemoveByID string    `json:"remove_by_id,omitempty"`
+	Resources *Resource `json:"resources,omitempty"` // 原 resource
+	// remove_by_id 被移除，改用 item_id 参数
 }
