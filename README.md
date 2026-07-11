@@ -22,7 +22,6 @@ Most AI coding tools share a fundamental flaw: **they treat code as text, not st
 | Single agent, working alone | 🤖 **Hub-and-Spoke multi-agent**: Director orchestrates, six specialized agents execute |
 | Static capabilities | 🧬 **Meta-Agent**: designs & registers new agents at runtime — the system evolves |
 | Keyword-only search | 🔍 Natural-language semantic search — "find where auth logic is implemented" |
-| No project memory | — |
 
 ---
 
