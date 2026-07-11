@@ -314,7 +314,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		systemPrompt += "\n" + gitCheckpointPromptSection
 	}
 
-	// Inject shared memory (4 dimensions: user, feedback, project, reference)
+	// Inject shared memory (3 dimensions: user, feedback, reference)
 	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
 
 	// ─── 懒加载初始化上下文压缩引擎（仅首次 Run 时创建，后续复用）───
