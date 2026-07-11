@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 // OpenAIEngine implements Engine using the official OpenAI Go SDK.
 type OpenAIEngine struct {
 	client          *openai.Client
+	transport       *http.Transport // 保持引用以便清理
 	model           string
 	cfg             config.LLMConfig
 	reasoningEffort string // provider-level default reasoning effort
@@ -28,19 +30,56 @@ type OpenAIEngine struct {
 // NewOpenAIEngine creates a new OpenAIEngine.
 // baseURL is optional - if empty, uses OpenAI's default API endpoint.
 func NewOpenAIEngine(baseURL, apiKey, model string, cfg config.LLMConfig, reasoningEffort string) *OpenAIEngine {
+	// Custom HTTP Transport with reasonable timeout parameters
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+		// No ResponseHeaderTimeout — controlled by context.WithTimeout
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConns:          10,
+		MaxIdleConnsPerHost:   5,
+		IdleConnTimeout:       90 * time.Second,
+		DisableKeepAlives:     false,
+	}
+
+	httpClient := &http.Client{
+		Transport: transport,
+		// No Timeout — controlled by context.WithTimeout in GenerateContent
+	}
+
 	opts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(httpClient), // inject custom client
+		option.WithMaxRetries(0),          // disable SDK internal retries (we have our own in retryChatCompletion)
 	}
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 	client := openai.NewClient(opts...)
-	return &OpenAIEngine{client: &client, model: model, cfg: cfg, reasoningEffort: reasoningEffort}
+
+	return &OpenAIEngine{
+		client:          &client,
+		transport:       transport,
+		model:           model,
+		cfg:             cfg,
+		reasoningEffort: reasoningEffort,
+	}
 }
 
 // Model returns the model name this engine is configured to use.
 func (e *OpenAIEngine) Model() string {
 	return e.model
+}
+
+// CloseIdleConnections 关闭传输层的空闲连接。
+// 在任务取消时调用，加速底层连接释放。
+func (e *OpenAIEngine) CloseIdleConnections() {
+	if e.transport != nil {
+		e.transport.CloseIdleConnections()
+	}
 }
 
 // GenerateContent implements Engine.
@@ -412,14 +451,21 @@ func (e *OpenAIEngine) retryChatCompletion(ctx context.Context, params openai.Ch
 
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Check context before each attempt
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("retry aborted: context cancelled before attempt %d: %w", attempt, ctx.Err())
+		}
+
 		// On retry attempts, wait with exponential backoff before making the request
 		if attempt > 0 {
 			delay := baseDelay * (1 << (attempt - 1)) // 2^(attempt-1) * 10s: 10, 20, 40, 80, 160
+
+			// Backoff wait that can be interrupted by context cancellation
 			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return nil, fmt.Errorf("retry aborted: context cancelled during backoff: %w", ctx.Err())
+				return nil, fmt.Errorf("retry aborted: context cancelled during backoff (attempt %d): %w", attempt, ctx.Err())
 			case <-timer.C:
 			}
 		}
@@ -427,6 +473,11 @@ func (e *OpenAIEngine) retryChatCompletion(ctx context.Context, params openai.Ch
 		completion, err := e.client.Chat.Completions.New(ctx, params)
 		if err == nil {
 			return completion, nil
+		}
+
+		// Check for context cancellation/deadline to stop retrying immediately
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("llm call cancelled (attempt %d): %w", attempt, err)
 		}
 
 		if !isRetriableError(err) {
