@@ -548,11 +548,6 @@ func buildAllTimelineDetails(m *model) {
 
 		// 检查是否被合并的 thinking
 		if mergedThinkings[i] {
-			// 仅渲染很淡的锚点行，无 header/separator/body
-			anchorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
-			sb.WriteString(anchorStyle.Render(fmt.Sprintf("── Entry #%d ──", i+1)))
-			sb.WriteString("\n")
-			currentLine++
 			continue
 		}
 
@@ -593,11 +588,6 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 	}
 
 	var sb strings.Builder
-
-	// 锚点行（显示条目编号，方便定位）
-	anchorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
-	sb.WriteString(anchorStyle.Render(fmt.Sprintf("── Entry #%d ──", index+1)))
-	sb.WriteString("\n")
 
 	// 头部行：名称 + 元数据（Time/Duration/Status 在同一行，右对齐）
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
