@@ -144,11 +144,23 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			WorkingDir:     workDir,
 			RequestTimeout: time.Duration(requestTimeout) * time.Second,
 		})
+		// 异步启动 MCP 客户端，不阻塞等待 codeseek init 完成
+		// 子进程启动成功后立即返回，初始化在后台 goroutine 中执行
 		if err := codeSeekMCP.Start(context.Background()); err != nil {
 			slog.Warn("Failed to start CodeSeek MCP client, repo exploration tools will be unavailable", "error", err)
 			codeSeekMCP = nil
 		} else {
-			slog.Info("CodeSeek MCP client started successfully")
+			slog.Info("CodeSeek MCP client starting in background (codeseek init runs async)")
+			// 后台监控初始化结果（仅用于日志记录）
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+				defer cancel()
+				if err := codeSeekMCP.WaitForReady(ctx); err != nil {
+					slog.Warn("CodeSeek MCP client initialization failed", "error", err)
+				} else {
+					slog.Info("CodeSeek MCP client initialized and ready for code analysis")
+				}
+			}()
 		}
 	}
 
