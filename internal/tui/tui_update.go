@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -1866,7 +1867,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 如果是用户主动取消，不显示错误弹窗或完成弹窗
 		if m.taskCancelled {
 			m.taskCancelled = false
-			m.currentTask = nil
+			// 保留 currentTask 和其 Memory，以便用户取消后可以继续对话
+			if m.currentTask != nil {
+				// 重置 Context（因为旧的已被取消），以便后续 follow-up 使用
+				newCtx, newCancel := context.WithCancel(context.Background())
+				m.currentTask.Context = newCtx
+				m.currentTask.CancelFunc = newCancel
+				m.currentTask.Status = "finished" // 标记为已完成
+			}
 			return m, nil
 		}
 		m.taskCancelled = false
