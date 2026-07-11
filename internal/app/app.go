@@ -380,7 +380,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 
 	codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent, compactCfg)
 
-	// [NEW] Initialize Shared Memory System (4 dimensions: user, feedback, project, reference)
+	// [NEW] Initialize Shared Memory System (3 dimensions: user, feedback, reference)
 	{
 		sharedDimStore := memory.NewSharedDimensionStore(ca.sharedMemory)
 		sharedDimInjector := memory.NewSharedMemoryInjector(sharedDimStore)
@@ -466,19 +466,19 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 
 		// Build adapter with field-targeted schema
 		updateMemAdapter := tools.NewAdapter("update_shared_memory",
-			"Update the shared cross-agent memory system. Use this to persist important user information (user dimension), feedback (feedback dimension), project context (project dimension), or reference resources (reference dimension) across all agents and conversations.",
+			"Update the shared cross-agent memory system. Use this to persist important user information (user dimension), feedback (feedback dimension), or reference resources (reference dimension) across all agents and conversations.",
 			updateMemFn,
 		).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"dimension": map[string]interface{}{
 					"type":        "string",
-					"enum":        []string{"user", "feedback", "project", "reference"},
+					"enum":        []string{"user", "feedback", "reference"},
 					"description": "Which memory dimension to update",
 				},
 				"field": map[string]interface{}{
 					"type":        "string",
-					"description": "Target field name for the dimension. Use memory_query_schema to see valid fields. Examples: user: name/role/team/seniority/expertise/language/detail_level/code_style/response_format/metadata; feedback: corrections/endorsements; project: status/objectives/team/deadlines; reference: resources",
+					"description": "Target field name for the dimension. Use memory_query_schema to see valid fields. Examples: user: name/role/team/seniority/expertise/language/detail_level/code_style/response_format/metadata; feedback: corrections/endorsements; reference: resources",
 				},
 				"action": map[string]interface{}{
 					"type":        "string",
@@ -508,7 +508,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		browserAgent.Adapters = append(browserAgent.Adapters, updateMemAdapter)
 
 		slog.Info("Shared memory system initialized",
-			"dimensions", []string{"user", "feedback", "project", "reference"},
+			"dimensions", []string{"user", "feedback", "reference"},
 		)
 	}
 
@@ -595,19 +595,19 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		}
 
 		directorMemAdapter := tools.NewAdapter("update_shared_memory",
-			"Update the shared cross-agent memory system. Use this to persist important user information, feedback, project context, or reference resources across all agents and conversations.",
+			"Update the shared cross-agent memory system. Use this to persist important user information, feedback, or reference resources across all agents and conversations.",
 			updateMemFn,
 		).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"dimension": map[string]interface{}{
 					"type":        "string",
-					"enum":        []string{"user", "feedback", "project", "reference"},
+					"enum":        []string{"user", "feedback", "reference"},
 					"description": "Which memory dimension to update",
 				},
 				"field": map[string]interface{}{
 					"type":        "string",
-					"description": "Target field name for the dimension. Use memory_query_schema to see valid fields. Examples: user: name/role/team/seniority/expertise/language/detail_level/code_style/response_format/metadata; feedback: corrections/endorsements; project: status/objectives/team/deadlines; reference: resources",
+					"description": "Target field name for the dimension. Use memory_query_schema to see valid fields. Examples: user: name/role/team/seniority/expertise/language/detail_level/code_style/response_format/metadata; feedback: corrections/endorsements; reference: resources",
 				},
 				"action": map[string]interface{}{
 					"type":        "string",
@@ -644,7 +644,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			if dimStr != "" {
 				schemaJSON := registry.FormatSchemaAsJSON(dimStr)
 				if schemaJSON == "" {
-					return fmt.Sprintf("Unknown dimension: %s. Available: user, feedback, project, reference", dimStr), nil
+					return fmt.Sprintf("Unknown dimension: %s. Available: user, feedback, reference", dimStr), nil
 				}
 				return fmt.Sprintf("📋 Schema for '%s' dimension:\n\n%s\n\nTip: Use 'field' parameter with one of the valid fields above when calling update_shared_memory.", dimStr, schemaJSON), nil
 			}
@@ -671,7 +671,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			"properties": map[string]interface{}{
 				"dimension": map[string]interface{}{
 					"type":        "string",
-					"enum":        []string{"user", "feedback", "project", "reference"},
+					"enum":        []string{"user", "feedback", "reference"},
 					"description": "Dimension to query. Empty returns all schemas.",
 				},
 			},
