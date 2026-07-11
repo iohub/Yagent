@@ -220,12 +220,16 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 	modelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))              // 灰色
 	durationStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // 灰色
 
-	kindLabel := timelineKindLabel(entry.Kind)
 	nameDisplay := entry.Name
 	if entry.MergedCount() > 1 {
 		nameDisplay = fmt.Sprintf("%s ×%d", nameDisplay, entry.MergedCount())
 	}
-	sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", kindLabel, nameDisplay)))
+	// 仅 LLMCall 类型展示类型标签
+	if entry.Kind == TimelineKindLLMCall {
+		sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", timelineKindLabel(entry.Kind), nameDisplay)))
+	} else {
+		sb.WriteString(headerStyle.Render(nameDisplay))
+	}
 
 	// LLMCall: 在头部行追加模型名称、状态图标、耗时
 	if entry.Kind == TimelineKindLLMCall {
@@ -598,13 +602,17 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 	// 头部行：名称 + 元数据（Time/Duration/Status 在同一行，右对齐）
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
 	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	kindLabel := timelineKindLabel(entry.Kind)
 	nameDisplay := entry.Name
 	if entry.MergedCount() > 1 {
 		nameDisplay = fmt.Sprintf("%s ×%d", nameDisplay, entry.MergedCount())
 	}
-	// 左侧基础：类型标签 + 名称
-	leftBase := fmt.Sprintf(" %s %s", kindLabel, nameDisplay)
+	// 仅 LLMCall 类型展示类型标签
+	var leftBase string
+	if entry.Kind == TimelineKindLLMCall {
+		leftBase = fmt.Sprintf(" %s %s", timelineKindLabel(entry.Kind), nameDisplay)
+	} else {
+		leftBase = fmt.Sprintf(" %s", nameDisplay)
+	}
 	
 	// LLMCall: 在名称后追加模型名称
 	if entry.Kind == TimelineKindLLMCall {
