@@ -53,9 +53,15 @@ type MCPClient struct {
 	requests  map[int]chan *JSONRPCResponse
 	nextID    atomic.Int64
 
-	alive     atomic.Bool
-	initialized atomic.Bool
-	stopped   atomic.Bool
+	alive        atomic.Bool
+	initialized  atomic.Bool
+	stopped      atomic.Bool
+
+	// 异步初始化支持
+	readyCh    chan struct{}      // 关闭信号：初始化完成（成功或失败）
+	initErr    error              // 初始化失败原因（在 readyCh 关闭前设置，之后只读）
+	closeReady sync.Once          // 保证 readyCh 只关闭一次
+	cancelInit context.CancelFunc // 取消初始化 goroutine 的 context
 }
 
 // NewMCPClient creates a new MCP client with the given configuration.
@@ -73,25 +79,30 @@ func NewMCPClient(cfg MCPClientConfig) *MCPClient {
 	}
 
 	return &MCPClient{
-		cfg:    cfg,
-		logger: slog.Default().With("component", "mcp"),
+		cfg:     cfg,
+		logger:  slog.Default().With("component", "mcp"),
 		requests: make(map[int]chan *JSONRPCResponse),
+		readyCh: make(chan struct{}),
 	}
 }
 
-// Start launches the MCP server subprocess and performs the initialization handshake.
-// The initialization sequence is:
+// Start launches the MCP server subprocess and begins asynchronous initialization.
+// The initialization sequence runs in the background:
 //
 //	1. Launch the subprocess with stdio pipes connected.
 //	2. Send an "initialize" JSON-RPC request with client capabilities and info.
 //	3. Receive the server's initialization result.
 //	4. Send a "notifications/initialized" notification to complete setup.
 //
+// Start() returns immediately without waiting for initialization to complete.
+// Use WaitForReady() or IsReady() to check initialization status.
+//
 // Parameters:
-//   - ctx: Context for controlling the initialization timeout and cancellation.
+//   - ctx: Context for controlling the subprocess lifecycle during startup.
 //
 // Returns:
-//   - error: Non-nil if the subprocess cannot be started or initialization fails.
+//   - error: Non-nil if the subprocess cannot be started. Initialization errors
+//     are returned via WaitForReady() or InitError().
 func (c *MCPClient) Start(ctx context.Context) error {
 	// Build the command for the MCP server binary.
 	cmdArgs := append([]string{}, c.cfg.Args...)
@@ -130,14 +141,22 @@ func (c *MCPClient) Start(ctx context.Context) error {
 	// Launch the response reader goroutine.
 	go c.readLoop()
 
-	// Perform the initialization handshake.
-	if err := c.performInitialize(ctx); err != nil {
-		c.Shutdown()
-		return fmt.Errorf("initialization failed: %w", err)
-	}
+	// ── 异步初始化：不阻塞等待 codeseek init 完成 ──
+	// 使用独立的 background context，避免调用者的 context 生命周期过短
+	initCtx, cancel := context.WithCancel(context.Background())
+	c.cancelInit = cancel
 
-	c.initialized.Store(true)
-	c.logger.Info("MCP client initialized", "binary", c.cfg.BinaryPath, "args", c.cfg.Args)
+	go func() {
+		defer cancel()
+		c.logger.Info("MCP client initialization started in background")
+
+		if err := c.performInitialize(initCtx); err != nil {
+			c.markReady(fmt.Errorf("initialization failed: %w", err))
+		} else {
+			c.markReady(nil)
+		}
+	}()
+
 	return nil
 }
 
@@ -187,6 +206,23 @@ func (c *MCPClient) performInitialize(ctx context.Context) error {
 	return nil
 }
 
+// markReady 标记初始化完成（成功或失败）。
+// 使用 sync.Once 保证 readyCh 只关闭一次，避免 panic。
+// 并发安全：可从 init goroutine 和 Shutdown() 安全调用。
+// err == nil 表示成功，err != nil 表示失败。
+func (c *MCPClient) markReady(err error) {
+	c.closeReady.Do(func() {
+		if err != nil {
+			c.initErr = err
+			c.logger.Warn("MCP client initialization failed", "error", err)
+		} else {
+			c.initialized.Store(true)
+			c.logger.Info("MCP client initialized", "binary", c.cfg.BinaryPath, "args", c.cfg.Args)
+		}
+		close(c.readyCh)
+	})
+}
+
 // CallTool invokes an MCP tool by name with the given arguments.
 //
 // Parameters:
@@ -201,10 +237,21 @@ func (c *MCPClient) CallTool(ctx context.Context, toolName string, arguments map
 	if !c.IsAlive() {
 		return nil, errors.New("MCP client is not alive")
 	}
+
+	// 等待初始化完成（如果尚未就绪）
 	if !c.initialized.Load() {
-		return nil, errors.New("MCP client is not initialized")
+		select {
+		case <-c.readyCh:
+			if c.initErr != nil {
+				return nil, fmt.Errorf("MCP client initialization failed: %w", c.initErr)
+			}
+			// initErr == nil 意味着 initialized == true
+		case <-ctx.Done():
+			return nil, fmt.Errorf("MCP client is still initializing: %w", ctx.Err())
+		}
 	}
 
+	// 以下为原有逻辑，保持不变
 	params := ToolCallParams{
 		Name:      toolName,
 		Arguments: arguments,
@@ -254,6 +301,15 @@ func (c *MCPClient) Shutdown() {
 		return // already shut down
 	}
 
+	// 取消正在进行的初始化
+	if c.cancelInit != nil {
+		c.cancelInit()
+	}
+
+	// 解除所有等待者的阻塞（如果尚未就绪）
+	c.markReady(errors.New("MCP client shut down before initialization completed"))
+
+	// 原有的清理逻辑
 	c.alive.Store(false)
 
 	// Send a best-effort shutdown request.
@@ -278,6 +334,35 @@ func (c *MCPClient) Shutdown() {
 	}
 
 	c.logger.Info("MCP client shut down")
+}
+
+// WaitForReady 阻塞等待 MCP 客户端初始化完成。
+// 返回 nil 表示初始化成功，非 nil 表示初始化失败或 context 取消。
+// 可安全并发调用；在初始化完成后调用会立即返回。
+func (c *MCPClient) WaitForReady(ctx context.Context) error {
+	select {
+	case <-c.readyCh:
+		return c.initErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// IsReady 返回 MCP 客户端是否已完成初始化且可用。
+// 非阻塞检查，适用于状态探针。
+func (c *MCPClient) IsReady() bool {
+	return c.initialized.Load()
+}
+
+// InitError 返回初始化失败的错误信息。
+// 如果初始化成功或尚未完成，返回 nil。
+func (c *MCPClient) InitError() error {
+	select {
+	case <-c.readyCh:
+		return c.initErr
+	default:
+		return nil
+	}
 }
 
 // ============================================================================
