@@ -346,16 +346,12 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 					}
 
 					// 为工具调用创建独立超时 context，防止工具卡死（如用户确认无限等待）
-					toolTimeout := 60 * time.Second
-					if tc.Function.Name == "deepthinking" {
-						toolTimeout = 120 * time.Second
-					}
-					toolCtx, toolCancel := context.WithTimeout(ctx, toolTimeout)
+					toolCtx, toolCancel := context.WithTimeout(ctx, 120*time.Second)
 					toolResult, callErr = t.Call(toolCtx, tc.Function.Arguments)
 					toolCancel()
 					if callErr != nil {
 						if errors.Is(callErr, context.DeadlineExceeded) {
-							toolResult = fmt.Sprintf("Error: tool execution timed out after 60 seconds")
+							toolResult = fmt.Sprintf("Error: tool execution timed out after 120 seconds")
 						} else {
 							toolResult = fmt.Sprintf("Error: %v", callErr)
 						}
