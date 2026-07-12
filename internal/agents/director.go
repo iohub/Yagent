@@ -72,6 +72,7 @@ type DirectorAgent struct {
 	compactConfig  *compact.Config                 // 压缩配置
 	adapter        *DirectorAdapter                // 新旧整合适配器
 	summaryEngine  llm.Engine                      // 独立的摘要 LLM 引擎（nil 则复用主引擎）
+	llmClient      *llm.Client                     // LLM客户端引用，用于运行时动态重新解析引擎
 
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
 	hasDelegated         bool                      // 标记是否已委派过 agent
@@ -413,6 +414,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		compactConfig:      compactCfg,
 		adapter:            directorAdapter,
 		summaryEngine:      summaryEngine,
+		llmClient:          llmClient,
 		hasDelegated:       false, // 初始未委派过
 		delegationAttempts: 0,             // 委派尝试次数初始为0
 
@@ -769,6 +771,14 @@ func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
 func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
 	// 设置当前 memory（delegate 闭包通过 a.currentMemory 访问）
 	a.currentMemory = mem
+
+	// 从 llmClient 刷新引擎，确保 TUI 中切换模型后立即生效
+	if a.llmClient != nil {
+		newEngine := a.llmClient.GetAgentEngine("director")
+		if newEngine != nil {
+			a.LLM = newEngine
+		}
+	}
 	defer func() { a.currentMemory = nil }()
 
 	if mem != nil {
