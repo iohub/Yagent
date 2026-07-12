@@ -63,7 +63,7 @@ func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interf
 	// 脱离父级 deadline（executor 中硬编码的 60s 工具超时）但保留取消信号
 	// deepthinking 是长时间运行的深度分析，需要更长的超时
 	llmCtx := context.WithoutCancel(ctx)
-	llmCtx, llmCancel := context.WithTimeout(llmCtx, 5*time.Minute)
+	llmCtx, llmCancel := context.WithTimeout(llmCtx, 120*time.Second)
 	defer llmCancel()
 
 	resp, err := t.LLM.GenerateContent(llmCtx, messages, nil, nil)
