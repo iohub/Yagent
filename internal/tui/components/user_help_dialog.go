@@ -230,10 +230,6 @@ func (d *UserHelpDialog) View() string {
 		body = d.renderInput(innerWidth, c)
 	}
 
-	// ── 帮助提示 ──
-	helpStyle := common.HelpTextStyle(c)
-	helpLine := helpStyle.Render(getHelpHint(d.interaction, d.state))
-
 	// ── 组装 ──
 	var parts []string
 	parts = append(parts, titleLine)
@@ -245,8 +241,6 @@ func (d *UserHelpDialog) View() string {
 	}
 	parts = append(parts, "")
 	parts = append(parts, body)
-	parts = append(parts, "")
-	parts = append(parts, helpLine)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	borderStyle := common.DialogBorderStyle(c)
@@ -520,6 +514,12 @@ func (d *UserHelpDialog) renderConfirm(innerWidth int, c common.ColorTokens) str
 
 	var buttons []string
 	for i, label := range options {
+		// 按钮添加快捷键前缀
+		prefix := "[Y] "
+		if i == 1 {
+			prefix = "[N] "
+		}
+
 		style := lipgloss.NewStyle().
 			Foreground(c.TextSecondary).
 			Background(c.Surface).
@@ -531,15 +531,26 @@ func (d *UserHelpDialog) renderConfirm(innerWidth int, c common.ColorTokens) str
 			style = common.FocusedButtonStyle(c, common.SafetyLow).
 				Padding(0, 3)
 		}
-		buttons = append(buttons, style.Render(label))
+		buttons = append(buttons, style.Render(prefix+label))
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Center, buttons...)
+	// 底部添加帮助提示行
+	helpStyle := common.HelpTextStyle(c)
+	helpLine := helpStyle.Render(getHelpHint(d.interaction, d.state))
+
+	body := lipgloss.JoinHorizontal(lipgloss.Center, buttons...)
+	return lipgloss.JoinVertical(lipgloss.Left, body, "", helpLine)
 }
 
 func (d *UserHelpDialog) renderSelect(innerWidth int, c common.ColorTokens) string {
 	var items []string
 	for i, opt := range d.options {
+		// 序号前缀：1-9 用 "X. "，10+ 用 "   " 对齐
+		numPrefix := "   "
+		if i < 9 {
+			numPrefix = fmt.Sprintf("%d. ", i+1)
+		}
+
 		cursor := "  "
 		labelStyle := lipgloss.NewStyle().Foreground(c.TextPrimary)
 
@@ -550,16 +561,15 @@ func (d *UserHelpDialog) renderSelect(innerWidth int, c common.ColorTokens) stri
 				Bold(true)
 		}
 
-		label := opt.Label
+		// 对 Custom 选项，使用 style composition 叠加样式（不预渲染）
 		if opt.IsCustom {
-			label = lipgloss.NewStyle().
-				Foreground(c.Accent).
-				Italic(true).
-				Render(opt.Label)
+			labelStyle = labelStyle.Foreground(c.Accent).Italic(true)
 		}
 
+		// 组合完整文本：序号 + 光标 + 选项标签
+		fullText := numPrefix + cursor + opt.Label
+
 		// 截断过长选项
-		fullText := cursor + label
 		if lipgloss.Width(fullText) > innerWidth-2 {
 			runes := []rune(fullText)
 			if len(runes) > innerWidth-4 {
@@ -567,6 +577,7 @@ func (d *UserHelpDialog) renderSelect(innerWidth int, c common.ColorTokens) stri
 			}
 		}
 
+		// 一次性渲染（无 ANSI 嵌套）
 		itemLine := labelStyle.Render(fullText)
 
 		// 如果在自定义输入状态且当前项是 Custom，渲染输入框
@@ -583,7 +594,12 @@ func (d *UserHelpDialog) renderSelect(innerWidth int, c common.ColorTokens) stri
 		items = append(items, itemLine)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, items...)
+	// 底部添加帮助提示行
+	helpStyle := common.HelpTextStyle(c)
+	helpLine := helpStyle.Render(getHelpHint(d.interaction, d.state))
+
+	body := lipgloss.JoinVertical(lipgloss.Left, items...)
+	return lipgloss.JoinVertical(lipgloss.Left, body, "", helpLine)
 }
 
 func (d *UserHelpDialog) renderInput(innerWidth int, c common.ColorTokens) string {
