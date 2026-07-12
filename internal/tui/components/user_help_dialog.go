@@ -650,7 +650,12 @@ func (d *UserHelpDialog) renderInput(innerWidth int, c common.ColorTokens) strin
 	buttons = append(buttons, cancelStyle.Render(" Cancel "))
 	parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Center, buttons...))
 
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	// 底部添加帮助提示行
+	helpStyle := common.HelpTextStyle(c)
+	helpLine := helpStyle.Render(getHelpHint(d.interaction, d.state))
+
+	body := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return lipgloss.JoinVertical(lipgloss.Left, body, "", helpLine)
 }
 
 // ── 辅助函数 ──
