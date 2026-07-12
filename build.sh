@@ -378,13 +378,6 @@ show_artifacts() {
     
     local has_artifacts=false
     
-    if [[ -f "${DIST_DIR}/${RUST_BIN}" ]]; then
-        local rust_size
-        rust_size=$(get_file_size_human "${DIST_DIR}/${RUST_BIN}")
-        printf "  ${GREEN}%-35s${RESET} %s\n" "${DIST_DIR}/${RUST_BIN}" "${rust_size}"
-        has_artifacts=true
-    fi
-    
     if [[ -f "${DIST_DIR}/${CODESEEK_BIN}" ]]; then
         local codeseek_size
         codeseek_size=$(get_file_size_human "${DIST_DIR}/${CODESEEK_BIN}")
@@ -570,8 +563,6 @@ cmd_build() {
         log_warning "⊘ 跳过 Go 构建 (SKIP_GO=true)"
     fi
     
-    # 显示产物信息
-    show_artifacts
 }
 
 # =============================================================================
