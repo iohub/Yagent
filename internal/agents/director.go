@@ -83,6 +83,7 @@ type DirectorAgent struct {
 
 	// LLM 兜底机制字段
 	stepRetries                int           // 步骤重试次数（从 config.LLM.StepRetries 读取）
+	llmTimeout                 time.Duration // LLM调用超时，从配置读取，默认3分钟
 	circuitBreakerThreshold    int           // 熔断阈值（连续失败次数），0=不启用
 	circuitBreakerResetTimeout time.Duration // 熔断恢复时间
 	consecutiveLLMFailures     int           // 连续 LLM 调用失败计数
@@ -420,6 +421,12 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 
 		// LLM 兜底机制配置
 		stepRetries:                cfg.LLM.StepRetries,
+		llmTimeout: func() time.Duration {
+			if cfg.LLM.Timeout > 0 {
+				return cfg.LLM.Timeout
+			}
+			return 3 * time.Minute
+		}(),
 		circuitBreakerThreshold:    cfg.LLM.CircuitBreakerThreshold,
 		circuitBreakerResetTimeout: cfg.LLM.CircuitBreakerResetTimeout,
 		// consecutiveLLMFailures 和 lastLLMFailureTime 保持零值即可
@@ -663,6 +670,7 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = ca.DisplayName
 	cfg.StopOnFinish = true
+	cfg.LLMTimeout = a.llmTimeout
 	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
@@ -980,8 +988,8 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			}
 
 			llmStartTime := time.Now()
-			// 为每个 LLM 调用添加 3 分钟超时保护，防止远程服务无响应时永久阻塞
-			llmCtx, llmCancel := context.WithTimeout(ctx, 3*time.Minute)
+			// 使用可配置的 LLM 超时保护，防止远程服务无响应时永久阻塞
+			llmCtx, llmCancel := context.WithTimeout(ctx, a.llmTimeout)
 			resp, llmErr = a.LLM.GenerateContent(llmCtx, messages, toolDefs, nil)
 			llmCancel()
 			llmDuration := time.Since(llmStartTime).Seconds()
