@@ -268,7 +268,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				messages = emergencyMsgs
 
 				// 再次尝试 LLM 调用（仅一次）
-				emCtx, emCancel := context.WithTimeout(ctx, 3*time.Minute)
+				emCtx, emCancel := context.WithTimeout(ctx, llmTimeout)
 				resp, err = cfg.LLM.GenerateContent(emCtx, messages, toolDefs, opts)
 				emCancel()
 				if err != nil {
