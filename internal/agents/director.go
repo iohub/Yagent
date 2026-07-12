@@ -1119,7 +1119,11 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 					}
 
 					// 为工具调用添加超时保护（防止工具无限阻塞）
-					toolCtx, toolCancel := context.WithTimeout(ctx, 60*time.Second)
+					toolTimeout := 60 * time.Second
+					if tc.Function.Name == "deepthinking" {
+						toolTimeout = 120 * time.Second
+					}
+					toolCtx, toolCancel := context.WithTimeout(ctx, toolTimeout)
 					toolResult, err = t.Call(toolCtx, tc.Function.Arguments)
 					toolCancel()
 
