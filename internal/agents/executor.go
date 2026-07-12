@@ -26,6 +26,8 @@ type ExecutorConfig struct {
 	Publisher    *messaging.MessagePublisher
 	AgentName    string
 	StopOnFinish bool // if true, return immediately when agent_exit tool is called
+	// LLMTimeout 单次LLM调用的超时时间，0=使用默认值3分钟
+	LLMTimeout time.Duration
 	// StepRetries 步骤重试次数，0=不重试（默认）
 	StepRetries int
 	// CompactEngine is an optional context compression engine.
@@ -104,6 +106,12 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	messages := []llm.Message{systemMsg, userMsg}
 	history := make([]llm.Message, 0)
 	history = append(history, systemMsg, userMsg)
+
+	// 计算 LLM 调用超时时间
+	llmTimeout := cfg.LLMTimeout
+	if llmTimeout <= 0 {
+		llmTimeout = 3 * time.Minute
+	}
 
 	toolDefs := make([]llm.ToolDef, len(cfg.Adapters))
 	for i, ad := range cfg.Adapters {
@@ -192,8 +200,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			// Record start time
 			llmStartTime := time.Now()
 
-			// 为每个 LLM 调用添加 3 分钟超时保护，防止远程服务无响应时永久阻塞
-			llmCtx, llmCancel := context.WithTimeout(ctx, 3*time.Minute)
+			// 为每个 LLM 调用添加超时保护，防止远程服务无响应时永久阻塞
+			llmCtx, llmCancel := context.WithTimeout(ctx, llmTimeout)
 			resp, err = cfg.LLM.GenerateContent(llmCtx, messages, toolDefs, opts)
 			llmCancel()
 

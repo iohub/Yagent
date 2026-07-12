@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 // DefaultMaxSteps 定义各 agent 的默认最大步数
 // 来源说明: default_config.toml 中的值作为"推荐值"，此处为"程序保证值"
 // 两者应保持一致。如果用户未在 TOML 中配置，使用此处定义的默认值。
@@ -94,7 +96,7 @@ func DefaultBrowserConfig() *BrowserConfig {
 // DefaultLLMConfig 返回默认的 LLM 推理兜底配置
 func DefaultLLMConfig() *LLMConfig {
 	return &LLMConfig{
-		Timeout:                 0,
+		Timeout:                 3 * time.Minute,
 		MaxRetries:              5,
 		StepRetries:             0,
 		CircuitBreakerThreshold:           0,
