@@ -425,7 +425,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 			if cfg.LLM.Timeout > 0 {
 				return cfg.LLM.Timeout
 			}
-			return 3 * time.Minute
+			return 5 * time.Minute
 		}(),
 		circuitBreakerThreshold:    cfg.LLM.CircuitBreakerThreshold,
 		circuitBreakerResetTimeout: cfg.LLM.CircuitBreakerResetTimeout,

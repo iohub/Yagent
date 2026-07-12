@@ -96,7 +96,7 @@ func DefaultBrowserConfig() *BrowserConfig {
 // DefaultLLMConfig 返回默认的 LLM 推理兜底配置
 func DefaultLLMConfig() *LLMConfig {
 	return &LLMConfig{
-		Timeout:                 3 * time.Minute,
+		Timeout:                 5 * time.Minute,
 		MaxRetries:              5,
 		StepRetries:             0,
 		CircuitBreakerThreshold:           0,

@@ -110,7 +110,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	// 计算 LLM 调用超时时间
 	llmTimeout := cfg.LLMTimeout
 	if llmTimeout <= 0 {
-		llmTimeout = 3 * time.Minute
+		llmTimeout = 5 * time.Minute
 	}
 
 	toolDefs := make([]llm.ToolDef, len(cfg.Adapters))
