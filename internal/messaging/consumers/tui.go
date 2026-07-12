@@ -426,82 +426,150 @@ func extractToolSummary(toolName string, argsJSON string) string {
 	return ""
 }
 
-// showUserInputDialog displays a styled input dialog similar to the image reference
+// showUserInputDialog displays a user input dialog and dispatches based on interaction_type
 func (t *TUIConsumer) showUserInputDialog(event *messaging.MessageEvent) {
-	w := terminalWidth()
-
-	// Parse content to get help details
-	contentStr := fmt.Sprintf("%v", event.Content)
-
-	askStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFA500")).
-		Bold(true).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#FFA500")).
-		Padding(0, 1).
-		Width(w - 4)
-
-	askMsg := askStyle.Render("✨ Agent ask your help")
-
-	// Create help message
-	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF")).
-		MarginTop(1).
-		MarginBottom(1)
-
-	helpMsg := helpStyle.Render("● " + contentStr)
-
-	// Display the styled interface
-	fmt.Fprintln(t.writer, "")
-	fmt.Fprintln(t.writer, askMsg)
-	fmt.Fprintln(t.writer, helpMsg)
-
-	// Wait for user input
-	fmt.Fprint(t.writer, "\n> ")
-	userInput, err := t.reader.ReadString('\n')
-	if err != nil {
-		fmt.Fprintf(t.writer, "Error reading input: %v\n", err)
+	content, ok := event.Content.(map[string]interface{})
+	if !ok {
 		return
 	}
 
-	userInput = strings.TrimSpace(userInput)
-
-	if strings.ToLower(userInput) == "cancel" {
-		fmt.Fprintf(t.writer, "已取消用户帮助请求。\n")
-		return
+	question, _ := content["question"].(string)
+	if question == "" {
+		// fallback: use old format
+		contentStr := fmt.Sprintf("%v", event.Content)
+		question = contentStr
 	}
 
-	// Publish user response
+	requestID, _ := content["request_id"].(string)
+	interactionType, _ := content["interaction_type"].(string)
+
+	// Parse options
+	var options []string
+	if opts, ok := content["options"].([]interface{}); ok {
+		for _, opt := range opts {
+			if s, ok := opt.(string); ok {
+				options = append(options, s)
+			}
+		}
+	}
+
+	defaultValue, _ := content["default_value"].(string)
+
+	switch interactionType {
+	case "confirm":
+		t.showCLIConfirm(question, options, requestID)
+	case "select":
+		t.showCLISelect(question, options, requestID)
+	default:
+		t.showCLIInput(question, defaultValue, requestID)
+	}
+}
+
+// publishHelpResponse publishes a user response to the help response topic
+func (t *TUIConsumer) publishHelpResponse(response string, requestID string) {
 	if t.publisher != nil {
-		var taskID interface{}
-		var requestID interface{}
-		if event.Metadata != nil {
-			taskID = event.Metadata["task_id"]
-			requestID = event.Metadata["request_id"]
+		content := map[string]interface{}{
+			"response":   response,
+			"request_id": requestID,
 		}
-		// Fallback: try to fetch from content map if provided there
-		if m, ok := event.Content.(map[string]interface{}); ok {
-			if taskID == nil {
-				taskID = m["task_id"]
-			}
-			if requestID == nil {
-				requestID = m["request_id"]
-			}
-		}
+		t.publisher.Publish("user_help_response", content, "User")
+		fmt.Fprintf(t.writer, "已发送回复，等待任务继续...\n")
+	}
+}
 
-		responseContent := map[string]interface{}{
-			"response": userInput,
-		}
-		if taskIDStr, ok := taskID.(string); ok && taskIDStr != "" {
-			responseContent["task_id"] = taskIDStr
-		}
-		if requestIDStr, ok := requestID.(string); ok && requestIDStr != "" {
-			responseContent["request_id"] = requestIDStr
-		}
-		t.publisher.Publish("user_help_response", responseContent, "User")
+// showCLIInput handles free-form text input with optional default value
+func (t *TUIConsumer) showCLIInput(question string, defaultValue string, requestID string) {
+	fmt.Fprintf(t.writer, "\n🔔 %s\n", question)
+	if defaultValue != "" {
+		fmt.Fprintf(t.writer, "(默认: %s)\n", defaultValue)
+	}
+	fmt.Fprint(t.writer, "\n请输入: ")
+
+	input, err := t.reader.ReadString('\n')
+	if err != nil {
+		return
+	}
+	input = strings.TrimSpace(input)
+	if input == "" && defaultValue != "" {
+		input = defaultValue
 	}
 
-	fmt.Fprintf(t.writer, "已发送回复，等待任务继续...\n")
+	t.publishHelpResponse(input, requestID)
+}
+
+// showCLIConfirm handles Yes/No confirmation prompts
+func (t *TUIConsumer) showCLIConfirm(question string, options []string, requestID string) {
+	yesLabel := "Yes"
+	noLabel := "No"
+	if len(options) >= 2 {
+		yesLabel = options[0]
+		noLabel = options[1]
+	}
+
+	for {
+		fmt.Fprintf(t.writer, "\n🔔 %s\n\n", question)
+		fmt.Fprintf(t.writer, "  [Y] %s\n", yesLabel)
+		fmt.Fprintf(t.writer, "  [N] %s\n\n", noLabel)
+		fmt.Fprint(t.writer, "请选择 (Y/N): ")
+
+		input, err := t.reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+		input = strings.TrimSpace(strings.ToLower(input))
+
+		switch input {
+		case "y", "yes":
+			t.publishHelpResponse(yesLabel, requestID)
+			return
+		case "n", "no":
+			t.publishHelpResponse(noLabel, requestID)
+			return
+		default:
+			fmt.Fprintf(t.writer, "无效输入，请输入 Y 或 N\n")
+		}
+	}
+}
+
+// showCLISelect handles selection from a list of options with custom input support
+func (t *TUIConsumer) showCLISelect(question string, options []string, requestID string) {
+	for {
+		fmt.Fprintf(t.writer, "\n🔔 %s\n\n", question)
+		for i, opt := range options {
+			fmt.Fprintf(t.writer, "  %d. %s\n", i+1, opt)
+		}
+		customIdx := len(options) + 1
+		fmt.Fprintf(t.writer, "  %d. Custom input...\n\n", customIdx)
+		fmt.Fprintf(t.writer, "请输入序号 (1-%d): ", customIdx)
+
+		input, err := t.reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+		input = strings.TrimSpace(input)
+
+		num, err := strconv.Atoi(input)
+		if err != nil || num < 1 || num > customIdx {
+			fmt.Fprintf(t.writer, "无效序号，请重新输入\n")
+			continue
+		}
+
+		if num == customIdx {
+			fmt.Fprint(t.writer, "请输入自定义内容: ")
+			custom, err := t.reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			custom = strings.TrimSpace(custom)
+			if custom != "" {
+				t.publishHelpResponse(custom, requestID)
+				return
+			}
+		} else {
+			t.publishHelpResponse(options[num-1], requestID)
+			return
+		}
+	}
 }
 
 // extractDiffContent extracts the "diff" field from a tool_call_result event content.
