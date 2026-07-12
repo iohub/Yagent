@@ -713,6 +713,10 @@ func (ca *CodeActor) IntegrateMessaging(dispatcher *messaging.MessageDispatcher)
 	if ca.globalCtx != nil && ca.globalCtx.Publisher != nil {
 		ca.globalCtx.Publisher.SetDispatcher(dispatcher)
 	}
+	// 注册 UserConfirmManager 到新的 dispatcher 上，使其能收到 user_help_response 事件
+	if ca.globalCtx != nil && ca.globalCtx.UserConfirmMgr != nil {
+		dispatcher.RegisterConsumer(ca.globalCtx.UserConfirmMgr)
+	}
 }
 
 // TaskRequest encapsulates the request context.
