@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"time"
 
 	"codeactor/internal/messaging"
 	"codeactor/internal/protocol"
@@ -80,8 +79,6 @@ func (m *UserConfirmManager) RequestConfirmation(ctx context.Context, question s
 		return response, nil
 	case <-ctx.Done():
 		return "", fmt.Errorf("user confirmation cancelled: %w", ctx.Err())
-	case <-time.After(30 * time.Second):
-		return "", fmt.Errorf("user confirmation timed out after 30 seconds")
 	}
 }
 
@@ -97,20 +94,6 @@ func (m *UserConfirmManager) RequestUserHelp(ctx context.Context, data *protocol
 	}
 	ch := make(chan *protocol.UserHelpResponseData, 1)
 	return m.requestUserHelpInternal(ctx, data, ch)
-}
-
-// getHelpTimeout 根据交互模式返回超时时间
-func getHelpTimeout(it protocol.InteractionType) time.Duration {
-	switch it {
-	case protocol.InteractionConfirm:
-		return 30 * time.Second
-	case protocol.InteractionSelect:
-		return 2 * time.Minute
-	case protocol.InteractionInput:
-		return 5 * time.Minute
-	default:
-		return 2 * time.Minute
-	}
 }
 
 // requestUserHelpInternal 内部实现，发布扩展的帮助请求并等待响应
@@ -145,17 +128,12 @@ func (m *UserConfirmManager) requestUserHelpInternal(ctx context.Context, data *
 		"question", data.Question,
 	)
 
-	// 超时时间根据交互模式调整
-	timeout := getHelpTimeout(data.InteractionType)
-
 	select {
 	case response := <-ch:
 		slog.Info("UserConfirmManager received help response", "request_id", data.RequestID)
 		return response, nil
 	case <-ctx.Done():
 		return nil, fmt.Errorf("user help cancelled: %w", ctx.Err())
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("user help timed out after %v", timeout)
 	}
 }
 
