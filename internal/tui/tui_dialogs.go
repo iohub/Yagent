@@ -137,6 +137,7 @@ func (m *model) openUserHelpDialog(event *messaging.MessageEvent) {
 
 	// 创建并推入对话框
 	d := components.NewUserHelpDialog(data)
+	d.SetBounds(m.termWidth, m.termHeight)
 	m.dialogStack.Push(d)
 }
 
