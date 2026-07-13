@@ -62,42 +62,42 @@ func NewBrowserAgent(
 
 	// Add ask_user_for_help tool for scenarios requiring user confirmation or authorization
 	askUserAdapter := tools.NewAdapter("ask_user_for_help",
-		"当你在执行浏览器任务时遇到不确定的情况、需要用户确认或授权时，使用此工具向用户请求帮助。支持确认、选择、输入三种交互模式。",
+		"When you encounter uncertainty, need user confirmation or authorization during browser task execution, use this tool to request help from the user. Supports three interaction modes: confirm, select, and input.",
 		globalCtx.FlowOps.ExecuteAskUserForHelp,
 	).WithSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"reason": map[string]interface{}{
 				"type":        "string",
-				"description": "清晰的解释说明为什么需要用户帮助或授权",
+				"description": "A clear explanation of why user help or authorization is needed",
 			},
 			"specific_question": map[string]interface{}{
 				"type":        "string",
-				"description": "向用户提出的具体问题",
+				"description": "The specific question to ask the user",
 			},
 			"suggested_options": map[string]interface{}{
 				"type": "array",
 				"items": map[string]interface{}{
 					"type": "string",
 				},
-				"description": "可选的建议选项列表。控制交互模式：空=输入模式，['yes','no']=确认模式，2+选项=选择模式",
+				"description": "Optional suggested answer options. Controls the interaction mode: empty=input mode, ['yes','no']=confirm mode, 2+ options=select mode",
 			},
 			"interaction_type": map[string]interface{}{
 				"type": "string",
 				"enum": []interface{}{"confirm", "select", "input"},
-				"description": "可选。显式设置交互模式，覆盖自动推断",
+				"description": "Optional. Explicitly set the interaction mode, overriding automatic inference",
 			},
 			"default_value": map[string]interface{}{
 				"type":        "string",
-				"description": "可选。默认选项或预填文本",
+				"description": "Optional. Default option or pre-filled text",
 			},
 			"placeholder": map[string]interface{}{
 				"type":        "string",
-				"description": "可选。输入框占位符文本（输入模式）",
+				"description": "Optional. Placeholder text for the input field (input mode only)",
 			},
 			"allow_custom": map[string]interface{}{
 				"type":        "boolean",
-				"description": "可选。在选择模式下是否允许自定义输入。默认：true",
+				"description": "Optional. Whether to allow custom input in select mode. Default: true",
 			},
 		},
 		"required": []string{"reason", "specific_question"},
