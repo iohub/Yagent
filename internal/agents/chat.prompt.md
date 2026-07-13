@@ -117,6 +117,6 @@ You have access to the following tools:
   - Designing solutions for inherently complex problems
   - You've encountered the same error twice consecutively (2-time failure rule)
 - **agent_exit**: Cleanly terminate the agent when the task is completed or cannot proceed.
-- **ask_user_for_help**: 当需要用户提供额外信息、澄清模糊问题或做出决策时，使用此工具向用户请求帮助。
+- **ask_user_for_help**: Use this tool to request help from the user when you need additional information, clarification on ambiguous questions, or a decision from the user.
 
 **Guideline**: Use `thinking` for simple reasoning. Reserve `deepthinking` for genuinely complex problems that require systematic analysis.
