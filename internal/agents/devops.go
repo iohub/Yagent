@@ -52,6 +52,8 @@ func NewDevOpsAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 			fn = globalCtx.MicroAgentTool.Execute
 		case "agent_exit":
 			fn = globalCtx.FlowOps.ExecuteAgentExit
+		case "ask_user_for_help":
+			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
 		default:
 			continue
 		}

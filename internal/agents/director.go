@@ -355,6 +355,8 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 			fn = globalCtx.FileOps.ExecutePrintDirTree
 		case "deepthinking":
 			fn = globalCtx.DeepThinkingTool.Execute
+		case "ask_user_for_help":
+			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
 		default:
 			continue
 		}

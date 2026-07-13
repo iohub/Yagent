@@ -60,19 +60,47 @@ func NewBrowserAgent(
 		"required": []string{"reason"},
 	})
 
-	// 添加 ask_user_for_help 工具（用于 evaluate_js 等高风险操作的确认）
+	// 添加 ask_user_for_help 工具（用于需要用户确认或授权的场景）
 	askUserAdapter := tools.NewAdapter("ask_user_for_help",
-		"请求用户帮助或确认。用于高风险操作（如 evaluate_js）需要用户明确批准时。",
+		"当你在执行浏览器任务时遇到不确定的情况、需要用户确认或授权时，使用此工具向用户请求帮助。支持确认、选择、输入三种交互模式。",
 		globalCtx.FlowOps.ExecuteAskUserForHelp,
 	).WithSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"question": map[string]interface{}{
+			"reason": map[string]interface{}{
 				"type":        "string",
-				"description": "需要用户确认的问题",
+				"description": "清晰的解释说明为什么需要用户帮助或授权",
+			},
+			"specific_question": map[string]interface{}{
+				"type":        "string",
+				"description": "向用户提出的具体问题",
+			},
+			"suggested_options": map[string]interface{}{
+				"type": "array",
+				"items": map[string]interface{}{
+					"type": "string",
+				},
+				"description": "可选的建议选项列表。控制交互模式：空=输入模式，['yes','no']=确认模式，2+选项=选择模式",
+			},
+			"interaction_type": map[string]interface{}{
+				"type": "string",
+				"enum": []interface{}{"confirm", "select", "input"},
+				"description": "可选。显式设置交互模式，覆盖自动推断",
+			},
+			"default_value": map[string]interface{}{
+				"type":        "string",
+				"description": "可选。默认选项或预填文本",
+			},
+			"placeholder": map[string]interface{}{
+				"type":        "string",
+				"description": "可选。输入框占位符文本（输入模式）",
+			},
+			"allow_custom": map[string]interface{}{
+				"type":        "boolean",
+				"description": "可选。在选择模式下是否允许自定义输入。默认：true",
 			},
 		},
-		"required": []string{"question"},
+		"required": []string{"reason", "specific_question"},
 	})
 
 	// 合并所有 adapters

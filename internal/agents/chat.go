@@ -45,6 +45,8 @@ func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) 
 			fn = globalCtx.FlowOps.ExecuteAgentExit
 		case "deepthinking":
 			fn = globalCtx.DeepThinkingTool.Execute
+		case "ask_user_for_help":
+			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
 		default:
 			continue
 		}
