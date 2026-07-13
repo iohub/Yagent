@@ -674,6 +674,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 
 				case *components.AgentSelectDialog:
+					// Let the dialog handle keys internally for cursor movement
+					_, cmd := d.Update(msg)
+					if cmd != nil {
+						return m, cmd
+					}
 					switch key {
 					case "enter", " ":
 						if d.Selected != "" {
@@ -718,6 +723,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 
 				case *components.ModelSelectDialog:
+					// Let the dialog handle keys internally for cursor movement
+					_, cmd := d.Update(msg)
+					if cmd != nil {
+						return m, cmd
+					}
 					switch key {
 					case "enter", " ":
 						if d.Selected != "" {
