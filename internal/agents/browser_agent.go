@@ -60,7 +60,7 @@ func NewBrowserAgent(
 		"required": []string{"reason"},
 	})
 
-	// 添加 ask_user_for_help 工具（用于需要用户确认或授权的场景）
+	// Add ask_user_for_help tool for scenarios requiring user confirmation or authorization
 	askUserAdapter := tools.NewAdapter("ask_user_for_help",
 		"当你在执行浏览器任务时遇到不确定的情况、需要用户确认或授权时，使用此工具向用户请求帮助。支持确认、选择、输入三种交互模式。",
 		globalCtx.FlowOps.ExecuteAskUserForHelp,
