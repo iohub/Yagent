@@ -422,12 +422,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Skip KeyMsg — key handling is delegated to the type switch
 			// in the fifth-level KeyMsg branch to avoid double Update calls.
 			if _, isKeyMsg := msg.(tea.KeyMsg); !isKeyMsg {
-				newComp, cmd := topDialog.Update(msg)
-				if newComp != nil {
-					m.dialogStack.ReplaceTop(newComp.(components.Dialog))
-				}
-				if cmd != nil {
-					return m, cmd
+				// taskEventMsg must pass through to the handler below to keep the
+				// listenForEvents chain alive and allow new dialogs to be opened.
+				if _, isTaskEvent := msg.(taskEventMsg); !isTaskEvent {
+					newComp, cmd := topDialog.Update(msg)
+					if newComp != nil {
+						m.dialogStack.ReplaceTop(newComp.(components.Dialog))
+					}
+					if cmd != nil {
+						// Always keep the event chain alive alongside dialog cmd
+						return m, tea.Batch(cmd, listenForEvents(m.eventCh))
+					}
 				}
 			}
 		}

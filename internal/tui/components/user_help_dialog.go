@@ -159,16 +159,18 @@ func (d *UserHelpDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 		d.width = msg.Width
 		d.height = msg.Height
 		return d, nil
+	default:
+		// Only forward specific message types to textInput
+		if d.state == stateInputText || d.state == stateSelectCustom {
+			switch msg.(type) {
+			case tea.MouseMsg, tea.FocusMsg, tea.BlurMsg:
+				var cmd tea.Cmd
+				d.textInput, cmd = d.textInput.Update(msg)
+				return d, cmd
+			}
+		}
+		return d, nil
 	}
-
-	// 透传消息给子组件（textarea）
-	if d.state == stateInputText || d.state == stateSelectCustom {
-		var cmd tea.Cmd
-		d.textInput, cmd = d.textInput.Update(msg)
-		return d, cmd
-	}
-
-	return d, nil
 }
 
 func (d *UserHelpDialog) View() string {

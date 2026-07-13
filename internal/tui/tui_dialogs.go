@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -72,13 +73,27 @@ func (m *model) respondToAuth(response string) {
 func (m *model) openUserHelpDialog(event *messaging.MessageEvent) {
 	content, ok := event.Content.(map[string]interface{})
 	if !ok {
+		slog.Error("openUserHelpDialog: content type assertion failed",
+			"actual_type", fmt.Sprintf("%T", event.Content))
+		// Fallback: try to use the event content as a string for question
+		question := fmt.Sprintf("%v", event.Content)
+		contextStr := ""
+		requestID := ""
+		m.openConfirmDialogFallback(question, contextStr, requestID)
 		return
 	}
 
 	// 解析字段
 	question, _ := content["question"].(string)
 	if question == "" {
-		return
+		slog.Error("openUserHelpDialog: question field is empty",
+			"content_keys", getMapKeys(content))
+		// Fallback: use context as question if available, otherwise use a default
+		if ctx, ok := content["context"].(string); ok && ctx != "" {
+			question = ctx
+		} else {
+			question = "User help requested"
+		}
 	}
 
 	contextStr, _ := content["context"].(string)
@@ -204,4 +219,26 @@ func parseConfirmQuestion(question string) (toolName, body string) {
 		body = q
 	}
 	return toolName, body
+}
+
+// getMapKeys returns the keys of a map for logging purposes
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// openConfirmDialogFallback is a fallback when UserHelpDialog cannot be opened normally
+func (m *model) openConfirmDialogFallback(question, contextStr, requestID string) {
+	d := components.NewUserHelpDialog(protocol.UserHelpNeededData{
+		Question:        question,
+		Context:         contextStr,
+		InteractionType: protocol.InteractionConfirm,
+		Options:         []string{"Yes", "No"},
+		AllowCustom:     true,
+		RequestID:       requestID,
+	})
+	m.dialogStack.Push(d)
 }
