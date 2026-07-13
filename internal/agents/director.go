@@ -1082,15 +1082,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			ToolCalls: choice.ToolCalls,
 		})
 
-		if len(choice.ToolCalls) == 0 {
-			// LLM 没有调用任何委派工具，强制它调用工具
-			messages = append(messages, llm.Message{
-				Role:    llm.RoleUser,
-				Content: "You must use a delegate tool (like delegate_repo, delegate_coding, agent_exit etc.) to proceed. Please do not just return text.",
-			})
-			continue // 进入下一次循环，让 LLM 重新生成包含工具调用的响应
-		}
-
 		for _, tc := range choice.ToolCalls {
 			var toolResult string
 			var err error
