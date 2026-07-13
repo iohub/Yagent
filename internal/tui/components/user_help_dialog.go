@@ -33,7 +33,7 @@ type helpOptionItem struct {
 
 // ── UserHelpDialog ──
 
-// UserHelpDialog 是 ask_user_for_help 工具的交互对话框。
+// UserHelpDialog is the interactive dialog for the ask_user_for_help tool.
 // 它支持三种交互模式，由内部状态机统一管理。
 type UserHelpDialog struct {
 	// 元数据

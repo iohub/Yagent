@@ -33,7 +33,7 @@ func (t *FlowControlTool) ExecuteAgentExit(ctx context.Context, params map[strin
 	}, nil
 }
 
-// ExecuteAskUserForHelp 实现ask_user_for_help工具
+// ExecuteAskUserForHelp implements the ask_user_for_help tool
 // 支持三种交互模式：confirm（确认）、select（选择）、input（输入）
 // 交互模式可通过 interaction_type 参数显式指定，或根据 suggested_options 自动推断
 func (t *FlowControlTool) ExecuteAskUserForHelp(ctx context.Context, params map[string]interface{}) (interface{}, error) {
