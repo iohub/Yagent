@@ -419,12 +419,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
 		topDialog := m.dialogStack.Top()
 		if topDialog != nil {
-			newComp, cmd := topDialog.Update(msg)
-			if newComp != nil {
-				m.dialogStack.ReplaceTop(newComp.(components.Dialog))
-			}
-			if cmd != nil {
-				return m, cmd
+			// Skip KeyMsg — key handling is delegated to the type switch
+			// in the fifth-level KeyMsg branch to avoid double Update calls.
+			if _, isKeyMsg := msg.(tea.KeyMsg); !isKeyMsg {
+				newComp, cmd := topDialog.Update(msg)
+				if newComp != nil {
+					m.dialogStack.ReplaceTop(newComp.(components.Dialog))
+				}
+				if cmd != nil {
+					return m, cmd
+				}
 			}
 		}
 	}
@@ -599,6 +603,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if d.IsClosed() {
 						m.dialogStack.Pop()
 						m.respondToUserHelp(d.Result())
+						// Re-establish event chain to receive agent's subsequent events
+						if m.taskRunning {
+							return m, listenForEvents(m.eventCh)
+						}
+						return m, nil
 					}
 
 					if cmd != nil {
