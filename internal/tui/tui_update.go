@@ -621,6 +621,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 
 				case *components.QuitConfirmDialog:
+					// Let the dialog handle keys internally to update Confirmed/SelectedIndex
+					_, cmd := d.Update(msg)
+					if cmd != nil {
+						return m, cmd
+					}
+
 					switch key {
 					case "enter", "y", "Y":
 						if d.GetConfirmed() {
