@@ -161,7 +161,6 @@ This block is your "Inner Monologue" to reason about the current state and updat
 
 After the `Thought Process` block, you MUST issue exactly **ONE** Tool Call (`delegate_repo`, `delegate_coding`, `delegate_chat`, `delegate_meta`, `delegate_{name}` for custom agents, `agent_exit`).
 
-
 # Final Instruction
 - Think deeply inside `Thought Process` block before acting.
 - Ensure every step is verified.
