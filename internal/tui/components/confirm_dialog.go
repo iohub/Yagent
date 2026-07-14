@@ -101,6 +101,7 @@ func (d *ConfirmDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 	case "ctrl+c":
 		return d, tea.Quit
 	case "a", "A":
+		d.selectedIndex = 0
 		return d, nil // respondToAuth will be handled by model
 	case "t", "T":
 		d.selectedIndex = 1

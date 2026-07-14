@@ -591,11 +591,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 根据弹窗类型处理确认操作
 				switch d := top.(type) {
 				case *components.ConfirmDialog:
-					switch key {
-					case "enter":
+					// Let the dialog handle navigation keys via its Update
+					updated, cmd := d.Update(msg)
+					_ = updated // dialog state mutated in-place via pointer
+
+					if key == "enter" {
 						action := d.GetResponseAction()
 						m.respondToAuth(action)
 						return m, nil
+					}
+					if cmd != nil {
+						return m, cmd
 					}
 					return m, nil
 
