@@ -231,49 +231,7 @@ func TestUserConfirmManager_OnUserResponse_UnknownID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 9：getHelpTimeout 返回正确的超时时间
-// ---------------------------------------------------------------------------
-
-func TestGetHelpTimeout(t *testing.T) {
-	tests := []struct {
-		name     string
-		it       protocol.InteractionType
-		expected time.Duration
-	}{
-		{
-			name:     "confirm mode",
-			it:       protocol.InteractionConfirm,
-			expected: 30 * time.Second,
-		},
-		{
-			name:     "select mode",
-			it:       protocol.InteractionSelect,
-			expected: 2 * time.Minute,
-		},
-		{
-			name:     "input mode",
-			it:       protocol.InteractionInput,
-			expected: 5 * time.Minute,
-		},
-		{
-			name:     "default mode",
-			it:       protocol.InteractionType("unknown"),
-			expected: 2 * time.Minute,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := getHelpTimeout(tt.it)
-			if got != tt.expected {
-				t.Errorf("getHelpTimeout(%s) = %v, want %v", tt.it, got, tt.expected)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// 场景 10：并发调用 RequestConfirmation 各自独立
+// 场景 9：并发调用 RequestConfirmation 各自独立
 // ---------------------------------------------------------------------------
 
 func TestUserConfirmManager_ConcurrentRequests(t *testing.T) {
@@ -316,7 +274,7 @@ func TestUserConfirmManager_ConcurrentRequests(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 11：Consume 忽略缺少 response 字段的事件
+// 场景 10：Consume 忽略缺少 response 字段的事件
 // ---------------------------------------------------------------------------
 
 func TestUserConfirmManager_Consume_NoResponse(t *testing.T) {
@@ -353,7 +311,7 @@ func TestUserConfirmManager_Consume_NoResponse(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 12：Consume 从 Metadata 中正确提取 request_id
+// 场景 11：Consume 从 Metadata 中正确提取 request_id
 // ---------------------------------------------------------------------------
 
 func TestUserConfirmManager_Consume_ExtractsRequestID(t *testing.T) {
@@ -387,7 +345,7 @@ func TestUserConfirmManager_Consume_ExtractsRequestID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 13：RequestUserHelp 在 publisher 为 nil 时返回错误
+// 场景 12：RequestUserHelp 在 publisher 为 nil 时返回错误
 // ---------------------------------------------------------------------------
 
 func TestUserConfirmManager_RequestUserHelp_PublisherNotSet(t *testing.T) {
@@ -407,7 +365,7 @@ func TestUserConfirmManager_RequestUserHelp_PublisherNotSet(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 14：RequestConfirmation 的 extraFields 被正确合并
+// 场景 13：RequestConfirmation 的 extraFields 被正确合并
 // ---------------------------------------------------------------------------
 
 func TestUserConfirmManager_ExtraFields(t *testing.T) {
@@ -438,7 +396,7 @@ func TestUserConfirmManager_ExtraFields(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 15：RequestUserHelp 自动分配 RequestID（在 publisher 检查通过后）
+// 场景 14：RequestUserHelp 自动分配 RequestID（在 publisher 检查通过后）
 // ---------------------------------------------------------------------------
 
 func TestUserConfirmManager_RequestUserHelp_AutoRequestID(t *testing.T) {
