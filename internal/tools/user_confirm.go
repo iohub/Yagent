@@ -166,11 +166,13 @@ func (m *UserConfirmManager) Consume(event *messaging.MessageEvent) error {
 		return nil
 	}
 
+	// 提取所有字段（response 可能为空，取消时 response="" 但 cancelled=true）
 	response, _ := content["response"].(string)
-	if response == "" {
-		return nil
-	}
+	cancelled, _ := content["cancelled"].(bool)
+	isCustom, _ := content["is_custom"].(bool)
+	interactionType, _ := content["interaction_type"].(string)
 
+	// 提取 requestID
 	requestID := ""
 	if event.Metadata != nil {
 		if id, ok := event.Metadata["request_id"].(string); ok {
@@ -183,38 +185,33 @@ func (m *UserConfirmManager) Consume(event *messaging.MessageEvent) error {
 		}
 	}
 
-	if requestID != "" {
-		// 先尝试匹配新的 pendingHelp 请求
-		if ch, ok := m.pendingHelp[requestID]; ok {
-			respData := &protocol.UserHelpResponseData{
-				Response:        response,
-				RequestID:       requestID,
-			}
-
-			// 尝试从 content 中提取更多字段
-			if content, ok := event.Content.(map[string]interface{}); ok {
-				if it, ok := content["interaction_type"].(string); ok {
-					respData.InteractionType = protocol.InteractionType(it)
-				}
-				if isCustom, ok := content["is_custom"].(bool); ok {
-					respData.IsCustom = isCustom
-				}
-				if cancelled, ok := content["cancelled"].(bool); ok {
-					respData.Cancelled = cancelled
-				}
-			}
-
-			select {
-			case ch <- respData:
-			default:
-				slog.Warn("UserConfirmManager pendingHelp channel full", "request_id", requestID)
-			}
-			return nil
-		}
-
-		// 旧流程：用原有的 pending 匹配逻辑
-		m.OnUserResponse(requestID, response)
+	if requestID == "" {
+		return nil
 	}
 
+	// Bug 1 修复：加锁保护 m.pendingHelp 的读写
+	m.mu.Lock()
+	ch, ok := m.pendingHelp[requestID]
+	m.mu.Unlock()
+
+	if ok {
+		respData := &protocol.UserHelpResponseData{
+			Response:        response,
+			InteractionType: protocol.InteractionType(interactionType),
+			IsCustom:        isCustom,
+			Cancelled:       cancelled,
+			RequestID:       requestID,
+		}
+
+		select {
+		case ch <- respData:
+		default:
+			slog.Warn("UserConfirmManager pendingHelp channel full", "request_id", requestID)
+		}
+		return nil
+	}
+
+	// 旧流程：用原有的 pending 匹配逻辑
+	m.OnUserResponse(requestID, response)
 	return nil
 }
