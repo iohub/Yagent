@@ -22,6 +22,17 @@ type ProviderConfig struct {
 	// ReasoningEffort controls DeepSeek thinking mode intensity ("high" or "max").
 	// Empty string means thinking mode is disabled (default, backward-compatible).
 	ReasoningEffort string `toml:"reasoning_effort,omitempty"`
+
+	// ApiFormat specifies the API format for this provider.
+	// "openai" (default, backward-compatible) or "anthropic".
+	// Controls which engine implementation is used.
+	ApiFormat string `toml:"api_format,omitempty"`
+}
+
+// IsAnthropic checks if this provider uses the Anthropic API format.
+// Returns false for empty or "openai" ApiFormat (default, backward-compatible).
+func (p *ProviderConfig) IsAnthropic() bool {
+	return strings.EqualFold(p.ApiFormat, "anthropic")
 }
 
 // AppConfig contains application-level configuration
