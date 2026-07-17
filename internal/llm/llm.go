@@ -285,6 +285,15 @@ func LoadConfig(configPath string) (*config.Config, error) {
 	return config, nil
 }
 
+// NewEngine 根据 provider 的 API 格式创建合适的引擎实现。
+// 支持 "openai"（默认）和 "anthropic" 两种格式。
+func NewEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) Engine {
+	if provider.IsAnthropic() {
+		return NewAnthropicEngine(provider.APIBaseURL, provider.APIKey, provider.Model, llmCfg, provider.ReasoningEffort)
+	}
+	return NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, llmCfg, provider.ReasoningEffort)
+}
+
 // NewClient creates a new LLM client from config.
 // The default engine is resolved using the full priority chain.
 func NewClient(config *config.Config) (*Client, error) {
@@ -311,7 +320,7 @@ func NewClient(config *config.Config) (*Client, error) {
 		"model", defaultProvider.Model,
 		"api_base_url", defaultProvider.APIBaseURL)
 
-	engine := NewOpenAIEngine(defaultProvider.APIBaseURL, defaultProvider.APIKey, defaultProvider.Model, config.LLM, defaultProvider.ReasoningEffort)
+	engine := NewEngine(defaultProvider, config.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
 
 	return &Client{
@@ -355,7 +364,7 @@ func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName
 	}
 
 	slog.Info("Creating engine for provider", "provider", providerName, "model", provider.Model)
-	engine := NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, c.Config.LLM, provider.ReasoningEffort)
+	engine := NewEngine(provider, c.Config.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
 	c.engines[providerName] = loggingEngine
 	return loggingEngine
@@ -632,7 +641,7 @@ func (c *Client) SwitchProvider(providerName string) error {
 		"model", provider.Model,
 		"api_base_url", provider.APIBaseURL)
 
-	engine := NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, c.Config.LLM, provider.ReasoningEffort)
+	engine := NewEngine(provider, c.Config.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
 
 	// Clear all cached engines so they'll be recreated on next GetAgentEngine/GetToolEngine call
