@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"codeactor/internal/agents"
 	"codeactor/internal/app"
@@ -15,6 +16,7 @@ import (
 	"codeactor/internal/http"
 	"codeactor/internal/llm"
 	"codeactor/internal/logging"
+	tuiMsg "codeactor/internal/messaging/consumers"
 	messaging "codeactor/internal/messaging"
 	"codeactor/internal/skills"
 	"codeactor/internal/tui"
@@ -26,6 +28,7 @@ import (
 // 全局 Cobra flag 绑定变量
 var (
 	taskFile      string
+	taskPrompt    string
 	disableAgents string
 	httpPort      int
 	yoloMode     bool
@@ -39,7 +42,11 @@ var rootCmd = &cobra.Command{
 	Long: `CodeActor is an AI-powered coding assistant that can run in
 terminal UI mode or HTTP server mode.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		runTUI(taskFile, disableAgents)
+		if taskPrompt != "" {
+			runPrompt(taskPrompt, disableAgents)
+		} else {
+			runTUI(taskFile, disableAgents)
+		}
 	},
 	SilenceUsage: true,
 }
@@ -73,9 +80,10 @@ func init() {
 	// --- Cobra 命令配置 ---
 	// 持久 flags（所有子命令可用）
 	rootCmd.PersistentFlags().StringVarP(&taskFile, "taskfile", "f", "", "Load task from file")
+	rootCmd.PersistentFlags().StringVarP(&taskPrompt, "prompt", "p", "", "Execute a task prompt directly (non-interactive mode)")
 	rootCmd.PersistentFlags().StringVarP(&disableAgents, "disable-agents", "d", "", "Disable specified agents (comma-separated)")
 	// http 子命令专属 flags
-	httpCmd.Flags().IntVarP(&httpPort, "port", "p", 0, "HTTP server port (0 = auto-detect from 9800)")
+	httpCmd.Flags().IntVar(&httpPort, "port", 0, "HTTP server port (0 = auto-detect from 9800)")
 	// YOLO 模式：跳过所有授权检查
 	rootCmd.PersistentFlags().BoolVarP(&yoloMode, "yolo", "y", false, "YOLO mode: auto-approve all dangerous operations without user confirmation")
 	rootCmd.PersistentFlags().BoolVarP(&fullYoloMode, "full-yolo", "Y", false, "FULL-YOLO mode: autonomous mode (implies --yolo), removes ask_user_for_help from all agents, agents make decisions independently")
@@ -268,6 +276,102 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	if err := server.Run(httpPort); err != nil {
 		slog.Error("Failed to start HTTP server", "error", util.WrapError(ctx, err, "main::ServerRun"))
 		os.Exit(1)
+	}
+}
+
+// runPrompt 直接执行任务提示（非交互模式），将过程输出到 stdout
+func runPrompt(taskPromptStr, disableAgentsStr string) {
+	// Initialize mode-aware logging: file only, never stdout/stderr
+	if err := logging.Init(logging.ModeTUI); err != nil {
+		slog.Error("Failed to initialize logging", "error", err)
+	}
+	defer logging.Close()
+
+	repoPath, err := initApp()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+
+	configPath := getConfigPath()
+	slog.Info("Loading configuration", "config_path", configPath)
+	config, err := llm.LoadConfig(configPath)
+	if err != nil {
+		slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
+		os.Exit(1)
+	}
+
+	client, err := llm.NewClient(config)
+	if err != nil {
+		slog.Error("Failed to create client", "error", util.WrapError(ctx, err, "main::NewClient"))
+		os.Exit(1)
+	}
+
+	codeActor, err := app.NewCodeActor(client)
+	if err != nil {
+		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
+		os.Exit(1)
+	}
+	codeActor.SetEmbeddedBinaries(distBinFS)
+
+	if err := agents.InitToolLogger(); err != nil {
+		slog.Warn("Failed to initialize tool logger", "error", err)
+	}
+
+	codeActor.DisabledAgents = disableAgentsStr
+	codeActor.YoloMode = yoloMode
+	codeActor.FullYoloMode = fullYoloMode
+
+	codeActor.Init(client.Engine, repoPath)
+	defer codeActor.Close()
+
+	// 加载 skills
+	homeDir, _ := os.UserHomeDir()
+	projectSkillsDir := filepath.Join(repoPath, ".codeactor", "skills")
+	homeSkillsDir := filepath.Join(homeDir, ".codeactor", "skills")
+
+	var skillRegistry *skills.SkillRegistry
+	skillRegistry, err = skills.LoadSkills(projectSkillsDir)
+	if err != nil {
+		slog.Warn("Failed to load project skills", "path", projectSkillsDir, "error", err)
+	}
+	if skillRegistry.Count() == 0 {
+		skillRegistry, err = skills.LoadSkills(homeSkillsDir)
+		if err != nil {
+			slog.Warn("Failed to load home skills", "path", homeSkillsDir, "error", err)
+		}
+	}
+	codeActor.SkillRegistry = skillRegistry
+	slog.Info("Skill registry loaded", "count", skillRegistry.Count())
+
+	// 设置消息总线 - 使用 TUIConsumer 输出到 stdout
+	dispatcher := messaging.NewMessageDispatcher(100)
+	defer dispatcher.Shutdown()
+
+	publisher := messaging.NewMessagePublisher(dispatcher)
+	tuiConsumer := tuiMsg.NewTUIConsumer(os.Stdout, publisher)
+	dispatcher.RegisterConsumer(tuiConsumer)
+
+	codeActor.IntegrateMessaging(dispatcher)
+
+	// 构建并执行任务
+	taskID := fmt.Sprintf("prompt-%d", time.Now().UnixMilli())
+	request := app.NewTaskRequest(ctx, taskID).
+		WithProjectDir(repoPath).
+		WithTaskDesc(taskPromptStr).
+		WithMessagePublisher(publisher)
+
+	result, err := codeActor.ProcessCodingTaskWithCallback(request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n❌ Task failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 打印最终结果（仅在 TUIConsumer 未显示的情况下）
+	if result != "" {
+		fmt.Printf("\n📋 Task result:\n%s\n", result)
 	}
 }
 
