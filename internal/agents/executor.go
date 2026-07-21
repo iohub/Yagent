@@ -142,6 +142,21 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	}
 
 	stepNumber := 0
+
+	// writeJSONL 实时写入消息到 JSONL 文件（如果 context 中配置了 writer）
+	writeJSONL := func(msg llm.Message) {
+		writer := memory.GetJSONLWriter(ctx)
+		if writer == nil {
+			return
+		}
+		if err := writer.WriteMessage(msg); err != nil {
+			slog.Warn("JSONL: failed to write message",
+				"agent", cfg.AgentName,
+				"error", err,
+			)
+		}
+	}
+
 	for i := 0; i < cfg.MaxSteps; i++ {
 		stepNumber++
 		slog.Debug("AgentExecutor calling LLM", "agent", cfg.AgentName, "step", i)
@@ -317,6 +332,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		messages = append(messages, assistantMsg)
 		history = append(history, assistantMsg)
 
+		// 写入 assistant 消息到 JSONL
+		writeJSONL(assistantMsg)
+
 		if len(choice.ToolCalls) == 0 {
 			return ExecutorResult{Text: choice.Content, History: history}, nil
 		}
@@ -389,6 +407,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				ToolName:   tc.Function.Name,
 			}
 			history = append(history, toolMsg)
+
+			// 写入 tool 消息到 JSONL
+			writeJSONL(toolMsg)
 
 			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" {
 				// Don't call OnStepEnd here — OnAgentExit will handle final state
