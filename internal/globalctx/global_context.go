@@ -83,10 +83,10 @@ func (g *GlobalCtx) FormatPrompt(prompt string) string {
 	// Full-YOLO mode: autonomous decision-making instructions
 	if g.FullYoloMode {
 		sb.WriteString("\n### Autonomous Mode\n")
-		sb.WriteString("你当前处于完全自主模式（FULL-YOLO）。\n")
-		sb.WriteString("禁止使用 ask_user_for_help 工具向用户寻求帮助。\n")
-		sb.WriteString("遇到模糊、不确定或缺乏关键信息的情况时，必须基于你的最佳判断自主决策并继续执行。\n")
-		sb.WriteString("不要暂停等待用户输入，不要询问澄清问题，直接采取你认为最合理的行动。\n")
+		sb.WriteString("You are currently in FULL-YOLO autonomous mode.\n")
+		sb.WriteString("You MUST NOT use the ask_user_for_help tool to seek user assistance.\n")
+		sb.WriteString("When encountering ambiguity, uncertainty, or missing critical information, you MUST make the best independent decision based on your judgment and continue executing.\n")
+		sb.WriteString("Do NOT pause for user input, do NOT ask clarifying questions — directly take what you consider the most reasonable course of action.\n")
 	}
 
 	return sb.String()
