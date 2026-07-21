@@ -28,7 +28,8 @@ var (
 	taskFile      string
 	disableAgents string
 	httpPort      int
-	yoloMode      bool
+	yoloMode     bool
+	fullYoloMode bool
 )
 
 // rootCmd 根命令 — 无子命令时默认启动 TUI
@@ -77,6 +78,7 @@ func init() {
 	httpCmd.Flags().IntVarP(&httpPort, "port", "p", 0, "HTTP server port (0 = auto-detect from 9800)")
 	// YOLO 模式：跳过所有授权检查
 	rootCmd.PersistentFlags().BoolVarP(&yoloMode, "yolo", "y", false, "YOLO mode: auto-approve all dangerous operations without user confirmation")
+	rootCmd.PersistentFlags().BoolVarP(&fullYoloMode, "full-yolo", "Y", false, "FULL-YOLO mode: autonomous mode (implies --yolo), removes ask_user_for_help from all agents, agents make decisions independently")
 	// 注册子命令
 	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(httpCmd)
@@ -147,6 +149,7 @@ func runTUI(taskFile, disableAgents string) {
 
 	codeActor.DisabledAgents = disableAgents
 	codeActor.YoloMode = yoloMode
+	codeActor.FullYoloMode = fullYoloMode
 	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
 
 	// 主动初始化：启动 codeseek MCP 等核心服务
@@ -246,6 +249,7 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	codeActor.SetEmbeddedBinaries(distBinFS)
 	codeActor.DisabledAgents = disableAgents
 	codeActor.YoloMode = yoloMode
+	codeActor.FullYoloMode = fullYoloMode
 	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
 
 	// 主动初始化：启动 codeseek MCP 等核心服务

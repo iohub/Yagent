@@ -60,51 +60,54 @@ func NewBrowserAgent(
 		"required": []string{"reason"},
 	})
 
-	// Add ask_user_for_help tool for scenarios requiring user confirmation or authorization
-	askUserAdapter := tools.NewAdapter("ask_user_for_help",
-		"When you encounter uncertainty, need user confirmation or authorization during browser task execution, use this tool to request help from the user. Supports three interaction modes: confirm, select, and input.",
-		globalCtx.FlowOps.ExecuteAskUserForHelp,
-	).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"reason": map[string]interface{}{
-				"type":        "string",
-				"description": "A clear explanation of why user help or authorization is needed",
-			},
-			"specific_question": map[string]interface{}{
-				"type":        "string",
-				"description": "The specific question to ask the user",
-			},
-			"suggested_options": map[string]interface{}{
-				"type": "array",
-				"items": map[string]interface{}{
-					"type": "string",
-				},
-				"description": "Optional suggested answer options. Controls the interaction mode: empty=input mode, ['yes','no']=confirm mode, 2+ options=select mode",
-			},
-			"interaction_type": map[string]interface{}{
-				"type": "string",
-				"enum": []interface{}{"confirm", "select", "input"},
-				"description": "Optional. Explicitly set the interaction mode, overriding automatic inference",
-			},
-			"default_value": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional. Default option or pre-filled text",
-			},
-			"placeholder": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional. Placeholder text for the input field (input mode only)",
-			},
-			"allow_custom": map[string]interface{}{
-				"type":        "boolean",
-				"description": "Optional. Whether to allow custom input in select mode. Default: true",
-			},
-		},
-		"required": []string{"reason", "specific_question"},
-	})
-
 	// 合并所有 adapters
-	allAdapters := append(browserAdapters, agentExitAdapter, askUserAdapter)
+	allAdapters := append(browserAdapters, agentExitAdapter)
+
+	// Add ask_user_for_help tool (skipped in full-yolo mode)
+	if !globalCtx.FullYoloMode {
+		askUserAdapter := tools.NewAdapter("ask_user_for_help",
+			"When you encounter uncertainty, need user confirmation or authorization during browser task execution, use this tool to request help from the user. Supports three interaction modes: confirm, select, and input.",
+			globalCtx.FlowOps.ExecuteAskUserForHelp,
+		).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"reason": map[string]interface{}{
+					"type":        "string",
+					"description": "A clear explanation of why user help or authorization is needed",
+				},
+				"specific_question": map[string]interface{}{
+					"type":        "string",
+					"description": "The specific question to ask the user",
+				},
+				"suggested_options": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+					"description": "Optional suggested answer options. Controls the interaction mode: empty=input mode, ['yes','no']=confirm mode, 2+ options=select mode",
+				},
+				"interaction_type": map[string]interface{}{
+					"type": "string",
+					"enum": []interface{}{"confirm", "select", "input"},
+					"description": "Optional. Explicitly set the interaction mode, overriding automatic inference",
+				},
+				"default_value": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional. Default option or pre-filled text",
+				},
+				"placeholder": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional. Placeholder text for the input field (input mode only)",
+				},
+				"allow_custom": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional. Whether to allow custom input in select mode. Default: true",
+				},
+			},
+			"required": []string{"reason", "specific_question"},
+		})
+		allAdapters = append(allAdapters, askUserAdapter)
+	}
 
 	// 设置工作区守卫
 	tools.SetGuardOnAdapters(allAdapters, globalCtx.Guard)

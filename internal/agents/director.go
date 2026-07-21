@@ -356,6 +356,9 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		case "deepthinking":
 			fn = globalCtx.DeepThinkingTool.Execute
 		case "ask_user_for_help":
+			if globalCtx.FullYoloMode {
+				continue
+			}
 			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
 		default:
 			continue
@@ -493,6 +496,9 @@ func (a *DirectorAgent) getToolFunc(name string) tools.ToolFunc {
 	case "agent_exit":
 		return a.GlobalCtx.FlowOps.ExecuteAgentExit
 	case "ask_user_for_help":
+		if a.GlobalCtx.FullYoloMode {
+			return nil
+		}
 		return a.GlobalCtx.FlowOps.ExecuteAskUserForHelp
 	default:
 		return nil

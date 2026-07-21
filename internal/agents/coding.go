@@ -184,6 +184,9 @@ func lookupToolFunc(name string, gctx *globalctx.GlobalCtx) tools.ToolFunc {
 	case "agent_exit":
 		return gctx.FlowOps.ExecuteAgentExit
 	case "ask_user_for_help":
+		if gctx.FullYoloMode {
+			return nil
+		}
 		return gctx.FlowOps.ExecuteAskUserForHelp
 	// delegate_browser 需要 browser agent 引用，返回 nil 由调用方特殊处理
 	default:

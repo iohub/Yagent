@@ -43,6 +43,7 @@ type CodeActor struct {
 	globalCtx      *globalctx.GlobalCtx
 	DisabledAgents string // comma-separated list of agent names to disable (e.g. "repo,coding,chat")
 	YoloMode       bool   // YOLO模式：所有agent授权自动通过
+	FullYoloMode   bool   // FULL-YOLO模式：隐含YoloMode + 移除ask_user_for_help + 自主决策
 	// TODO: [Codexray] CodexrayPort field removed — re-add when codexray is re-integrated
 
 	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
@@ -216,10 +217,20 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			ca.dispatcher.RegisterConsumer(userConfirmMgr)
 		}
 
-		// Apply YOLO mode: check CLI flag first, then config file
-		if ca.YoloMode || (ca.config != nil && ca.config.Agent.YoloMode) {
+		// Determine FullYoloMode and apply to GlobalCtx
+		isFullYolo := ca.FullYoloMode || (ca.config != nil && ca.config.Agent.FullYoloMode)
+		gctx.FullYoloMode = isFullYolo
+
+		// FullYolo implies Yolo
+		isYolo := ca.YoloMode || (ca.config != nil && ca.config.Agent.YoloMode) || isFullYolo
+
+		// Apply YOLO mode
+		if isYolo {
 			guard.SetYoloMode(true)
 			slog.Info("🚀 YOLO mode enabled — all authorization checks bypassed")
+		}
+		if isFullYolo {
+			slog.Info("🔥 FULL-YOLO mode enabled — autonomous decision-making, ask_user_for_help removed")
 		}
 		// Get max steps from config, default to DefaultMaxSteps if not set
 		defaultSteps := config.DefaultMaxSteps

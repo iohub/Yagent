@@ -43,6 +43,7 @@ type AppConfig struct {
 // AgentConfig contains agent-specific configuration
 type AgentConfig struct {
 	YoloMode         bool   `toml:"yolo_mode"`
+	FullYoloMode     bool   `toml:"full_yolo_mode"`
 	DirectorMaxSteps int    `toml:"director_max_steps"`
 	CodingMaxSteps   int    `toml:"coding_max_steps"`
 	ChatMaxSteps     int    `toml:"chat_max_steps"`
