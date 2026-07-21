@@ -35,6 +35,7 @@ type JSONLWriter struct {
 	file      *os.File
 	encoder   *json.Encoder
 	enabled   bool
+	closed    bool
 	agentName string
 	task      string
 	taskHash  string
@@ -181,9 +182,10 @@ func (w *JSONLWriter) WriteMessage(msg interface{}) error {
 
 // Close 关闭文件
 func (w *JSONLWriter) Close() error {
-	if w.file == nil {
+	if w.file == nil || w.closed {
 		return nil
 	}
+	w.closed = true
 	return w.file.Close()
 }
 
