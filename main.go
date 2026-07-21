@@ -8,17 +8,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeactor/internal/app"
 	"codeactor/internal/agents"
+	"codeactor/internal/app"
 	"codeactor/internal/config"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
 	"codeactor/internal/llm"
 	"codeactor/internal/logging"
+	messaging "codeactor/internal/messaging"
 	"codeactor/internal/skills"
 	"codeactor/internal/tui"
 	"codeactor/internal/util"
-	messaging "codeactor/internal/messaging"
 
 	"github.com/spf13/cobra"
 )
@@ -28,6 +28,7 @@ var (
 	taskFile      string
 	disableAgents string
 	httpPort      int
+	yoloMode      bool
 )
 
 // rootCmd 根命令 — 无子命令时默认启动 TUI
@@ -74,6 +75,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&disableAgents, "disable-agents", "d", "", "Disable specified agents (comma-separated)")
 	// http 子命令专属 flags
 	httpCmd.Flags().IntVarP(&httpPort, "port", "p", 0, "HTTP server port (0 = auto-detect from 9800)")
+	// YOLO 模式：跳过所有授权检查
+	rootCmd.PersistentFlags().BoolVarP(&yoloMode, "yolo", "y", false, "YOLO mode: auto-approve all dangerous operations without user confirmation")
 	// 注册子命令
 	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(httpCmd)
@@ -143,6 +146,7 @@ func runTUI(taskFile, disableAgents string) {
 	}
 
 	codeActor.DisabledAgents = disableAgents
+	codeActor.YoloMode = yoloMode
 	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
 
 	// 主动初始化：启动 codeseek MCP 等核心服务
@@ -241,6 +245,7 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	}
 	codeActor.SetEmbeddedBinaries(distBinFS)
 	codeActor.DisabledAgents = disableAgents
+	codeActor.YoloMode = yoloMode
 	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
 
 	// 主动初始化：启动 codeseek MCP 等核心服务
@@ -285,7 +290,6 @@ func getConfigPath() string {
 
 	return configPath
 }
-
 
 // TODO: [Codexray] findAvailablePort removed — was finding available TCP port starting from 12800. Re-add when codexray is re-integrated.
 

@@ -42,34 +42,35 @@ type AppConfig struct {
 
 // AgentConfig contains agent-specific configuration
 type AgentConfig struct {
+	YoloMode         bool   `toml:"yolo_mode"`
 	DirectorMaxSteps int    `toml:"director_max_steps"`
-	CodingMaxSteps    int    `toml:"coding_max_steps"`
-	ChatMaxSteps      int    `toml:"chat_max_steps"`
-	RepoMaxSteps      int    `toml:"repo_max_steps"`
-	DevOpsMaxSteps    int    `toml:"devops_max_steps"`
-	BrowserMaxSteps   int    `toml:"browser_max_steps"`
-	MetaMaxSteps      int    `toml:"meta_max_steps"`
-	MetaRetryCount    int    `toml:"meta_retry_count"`
-	SpeakLang         string `toml:"lang"`
+	CodingMaxSteps   int    `toml:"coding_max_steps"`
+	ChatMaxSteps     int    `toml:"chat_max_steps"`
+	RepoMaxSteps     int    `toml:"repo_max_steps"`
+	DevOpsMaxSteps   int    `toml:"devops_max_steps"`
+	BrowserMaxSteps  int    `toml:"browser_max_steps"`
+	MetaMaxSteps     int    `toml:"meta_max_steps"`
+	MetaRetryCount   int    `toml:"meta_retry_count"`
+	SpeakLang        string `toml:"lang"`
 }
 
 // GitCheckpointConfig holds configuration for the git checkpoint mechanism.
 type GitCheckpointConfig struct {
-	Enabled                bool   `toml:"enabled"`
+	Enabled bool `toml:"enabled"`
 	// Deprecated: Checkpoint creation is now LLM-driven via git_checkpoint_create tool.
 	// This field is ignored but still parsed for backward compatibility.
 	AutoCheckpoint bool `toml:"auto_checkpoint"`
 	// Deprecated: No longer used. Checkpoint timing is determined by the agent via git_checkpoint_create.
 	// This field is ignored but still parsed for backward compatibility.
-	CheckpointInterval int `toml:"checkpoint_interval"`
-	MaxCheckpoints         int    `toml:"max_checkpoints"`
-	SquashOnExit           bool   `toml:"squash_on_exit"`
-	GenerateCommitMessage  bool   `toml:"generate_commit_message"`
-	AgentBranchPrefix      string `toml:"agent_branch_prefix"`
-	CheckpointTagPrefix    string `toml:"checkpoint_tag_prefix"`
-	StashDirtyWorktree     bool   `toml:"stash_dirty_worktree"`
-	CleanupAgentBranch     bool   `toml:"cleanup_agent_branch"`
-	CleanupCheckpointTags  bool   `toml:"cleanup_checkpoint_tags"`
+	CheckpointInterval    int    `toml:"checkpoint_interval"`
+	MaxCheckpoints        int    `toml:"max_checkpoints"`
+	SquashOnExit          bool   `toml:"squash_on_exit"`
+	GenerateCommitMessage bool   `toml:"generate_commit_message"`
+	AgentBranchPrefix     string `toml:"agent_branch_prefix"`
+	CheckpointTagPrefix   string `toml:"checkpoint_tag_prefix"`
+	StashDirtyWorktree    bool   `toml:"stash_dirty_worktree"`
+	CleanupAgentBranch    bool   `toml:"cleanup_agent_branch"`
+	CleanupCheckpointTags bool   `toml:"cleanup_checkpoint_tags"`
 	// AutoMergeOnExit controls whether OnAgentExit automatically
 	// squash-merges the agent branch into the user branch.
 	// When false (default), the agent branch is preserved with all
@@ -95,7 +96,7 @@ type AgentLLMOverride struct {
 // Priority: per-agent > agents.default > global.
 type AgentsLLMConfig struct {
 	UseProvider string            `toml:"use_provider"` // default for all agents
-	Director   *AgentLLMOverride `toml:"director,omitempty"`
+	Director    *AgentLLMOverride `toml:"director,omitempty"`
 	Coding      *AgentLLMOverride `toml:"coding,omitempty"`
 	Repo        *AgentLLMOverride `toml:"repo,omitempty"`
 	Chat        *AgentLLMOverride `toml:"chat,omitempty"`
@@ -152,16 +153,16 @@ type LLMConfig struct {
 
 // Config is the root configuration structure
 type Config struct {
-	Global        TopLevelConfig       `toml:"global"` // [global.llm]
-	Agents        AgentsConfig         `toml:"agents"` // [agents.llm] + per-agent overrides
-	Tools         ToolsConfig          `toml:"tools"`  // [tools.llm] + per-tool overrides
-	App           AppConfig            `toml:"app"`
-	Agent         AgentConfig          `toml:"agent"`
-	LLM           LLMConfig            `toml:"llm" json:"llm" yaml:"llm"`    // [llm] - LLM 推理兜底配置
-	Compact       ContextCompactConfig `toml:"context"`  // [context] - 上下文压缩配置
-	Browser       BrowserConfig        `toml:"browser"`  // [browser] - 浏览器配置
-	Keywords      KeywordsConfig       `toml:"keywords"` // [keywords] - 关键词词典配置
-	TaskTimeout   time.Duration        `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"` // 全局任务超时，0=不启用
+	Global      TopLevelConfig       `toml:"global"` // [global.llm]
+	Agents      AgentsConfig         `toml:"agents"` // [agents.llm] + per-agent overrides
+	Tools       ToolsConfig          `toml:"tools"`  // [tools.llm] + per-tool overrides
+	App         AppConfig            `toml:"app"`
+	Agent       AgentConfig          `toml:"agent"`
+	LLM         LLMConfig            `toml:"llm" json:"llm" yaml:"llm"`                            // [llm] - LLM 推理兜底配置
+	Compact     ContextCompactConfig `toml:"context"`                                              // [context] - 上下文压缩配置
+	Browser     BrowserConfig        `toml:"browser"`                                              // [browser] - 浏览器配置
+	Keywords    KeywordsConfig       `toml:"keywords"`                                             // [keywords] - 关键词词典配置
+	TaskTimeout time.Duration        `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"` // 全局任务超时，0=不启用
 
 	// GitCheckpoint git checkpoint 机制配置
 	GitCheckpoint GitCheckpointConfig `toml:"git_checkpoint"`
@@ -919,25 +920,25 @@ type KeybindingsConfig struct {
 
 // EditKeybindings 编辑模式快捷键配置
 type EditKeybindings struct {
-	SubmitTask     string `toml:"submit_task"`      // 默认: "alt+s"
-	CommandMode    string `toml:"command_mode"`     // 默认: "ctrl+e"
-	ToggleHelp     string `toml:"toggle_help"`      // 默认: "ctrl+h"
-	ToggleTimeline string `toml:"toggle_timeline"`  // 默认: "ctrl+l"
-	PageDown       string `toml:"page_down"`        // 默认: "ctrl+f"
-	PageUp         string `toml:"page_up"`          // 默认: "ctrl+b"
-	Quit           string `toml:"quit"`             // 默认: "ctrl+c"
-	SwitchModel    string `toml:"switch_model"`     // 默认: "alt+m"
+	SubmitTask     string `toml:"submit_task"`     // 默认: "alt+s"
+	CommandMode    string `toml:"command_mode"`    // 默认: "ctrl+e"
+	ToggleHelp     string `toml:"toggle_help"`     // 默认: "ctrl+h"
+	ToggleTimeline string `toml:"toggle_timeline"` // 默认: "ctrl+l"
+	PageDown       string `toml:"page_down"`       // 默认: "ctrl+f"
+	PageUp         string `toml:"page_up"`         // 默认: "ctrl+b"
+	Quit           string `toml:"quit"`            // 默认: "ctrl+c"
+	SwitchModel    string `toml:"switch_model"`    // 默认: "alt+m"
 }
 
 // CommandKeybindings 命令模式快捷键配置
 type CommandKeybindings struct {
-	ScrollDown       string `toml:"scroll_down"`         // 默认: "j"
-	ScrollUp         string `toml:"scroll_up"`           // 默认: "k"
-	PageDown         string `toml:"page_down"`           // 默认: "f"
-	PageUp           string `toml:"page_up"`             // 默认: "b"
-	EditMode         string `toml:"edit_mode"`           // 默认: "i"
-	CmdToggleHelp    string `toml:"toggle_help"`         // 默认: "?"
-	ToggleTokenPanel string `toml:"toggle_token_panel"`  // 默认: "alt+t"
-	SwitchModel      string `toml:"switch_model"`        // 默认: "alt+m"
-	Quit             string `toml:"quit"`                // 默认: "ctrl+c"
+	ScrollDown       string `toml:"scroll_down"`        // 默认: "j"
+	ScrollUp         string `toml:"scroll_up"`          // 默认: "k"
+	PageDown         string `toml:"page_down"`          // 默认: "f"
+	PageUp           string `toml:"page_up"`            // 默认: "b"
+	EditMode         string `toml:"edit_mode"`          // 默认: "i"
+	CmdToggleHelp    string `toml:"toggle_help"`        // 默认: "?"
+	ToggleTokenPanel string `toml:"toggle_token_panel"` // 默认: "alt+t"
+	SwitchModel      string `toml:"switch_model"`       // 默认: "alt+m"
+	Quit             string `toml:"quit"`               // 默认: "ctrl+c"
 }

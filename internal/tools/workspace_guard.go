@@ -13,11 +13,12 @@ import (
 // (modifications outside the workspace, system-changing commands) and
 // requests user authorization before allowing them to proceed.
 type WorkspaceGuard struct {
-	workspacePath    string
-	confirmMgr       *UserConfirmManager
-	sessionAllowed   map[string]bool // tools granted session-wide authorization
-	sessionAllAllowed bool  // 会话内所有工具全部授权
-	projectAuthorized bool  // 项目永久授权（从 settings.json 加载）
+	workspacePath     string
+	confirmMgr        *UserConfirmManager
+	sessionAllowed    map[string]bool // tools granted session-wide authorization
+	sessionAllAllowed bool            // 会话内所有工具全部授权
+	projectAuthorized bool            // 项目永久授权（从 settings.json 加载）
+	yoloMode          bool            // YOLO模式：跳过所有授权检查
 }
 
 // NewWorkspaceGuard creates a new WorkspaceGuard.
@@ -29,6 +30,12 @@ func NewWorkspaceGuard(workspacePath string, confirmMgr *UserConfirmManager) *Wo
 	}
 	g.loadProjectAuth()
 	return g
+}
+
+// SetYoloMode enables or disables YOLO mode. When enabled, all authorization
+// checks are automatically bypassed — equivalent to auto-approving every operation.
+func (g *WorkspaceGuard) SetYoloMode(enabled bool) {
+	g.yoloMode = enabled
 }
 
 // dangerousTools lists tool names that can modify files or system state.
@@ -52,6 +59,11 @@ var pathParamNames = map[string][]string{
 // Returns (needsAuth, reason).
 func (g *WorkspaceGuard) Check(toolName string, params map[string]interface{}) (bool, string) {
 	if g == nil || g.confirmMgr == nil {
+		return false, ""
+	}
+
+	// YOLO mode: skip all authorization checks
+	if g.yoloMode {
 		return false, ""
 	}
 
@@ -92,6 +104,11 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 		return nil
 	}
 
+	// YOLO mode: auto-approve all authorization requests
+	if g.yoloMode {
+		return nil
+	}
+
 	// 向后兼容：保留 question 字段（旧版 TUI 仍可解析）
 	question := fmt.Sprintf(
 		"⚠️ **授权请求** — 工具 `%s`\n\n%s",
@@ -100,8 +117,8 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 
 	// 结构化数据供 TUI 渲染（避免中英双语混合）
 	extraFields := map[string]interface{}{
-		"tool_name":  toolName,
-		"reason":     reason,
+		"tool_name": toolName,
+		"reason":    reason,
 	}
 
 	options := "allow / deny"
