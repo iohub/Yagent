@@ -31,8 +31,11 @@ var (
 	taskPrompt    string
 	disableAgents string
 	httpPort      int
-	yoloMode     bool
-	fullYoloMode bool
+	yoloMode      bool
+	fullYoloMode  bool
+	// Memory JSONL 实时持久化
+	memoryJSONLEnable bool
+	memoryJSONLDir    string
 )
 
 // rootCmd 根命令 — 无子命令时默认启动 TUI
@@ -87,6 +90,9 @@ func init() {
 	// YOLO 模式：跳过所有授权检查
 	rootCmd.PersistentFlags().BoolVarP(&yoloMode, "yolo", "y", false, "YOLO mode: auto-approve all dangerous operations without user confirmation")
 	rootCmd.PersistentFlags().BoolVarP(&fullYoloMode, "full-yolo", "Y", false, "FULL-YOLO mode: autonomous mode (implies --yolo), removes ask_user_for_help from all agents, agents make decisions independently")
+	// Memory JSONL 实时写入
+	rootCmd.Flags().BoolVar(&memoryJSONLEnable, "memory-jsonl", false, "Enable real-time memory JSONL persistence per agent delegate task")
+	rootCmd.Flags().StringVar(&memoryJSONLDir, "memory-jsonl-dir", "", "Custom output directory for memory JSONL files (default: ~/.codeactor/data/memory_jsonl/{projectID}/)")
 	// 注册子命令
 	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(httpCmd)
@@ -158,6 +164,13 @@ func runTUI(taskFile, disableAgents string) {
 	codeActor.DisabledAgents = disableAgents
 	codeActor.YoloMode = yoloMode
 	codeActor.FullYoloMode = fullYoloMode
+	// Memory JSONL 配置（CLI flag 覆盖配置文件）
+	if memoryJSONLEnable {
+		config.MemoryJSONL.Enable = true
+	}
+	if memoryJSONLDir != "" {
+		config.MemoryJSONL.OutputDir = memoryJSONLDir
+	}
 	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
 
 	// 主动初始化：启动 codeseek MCP 等核心服务
@@ -258,6 +271,13 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	codeActor.DisabledAgents = disableAgents
 	codeActor.YoloMode = yoloMode
 	codeActor.FullYoloMode = fullYoloMode
+	// Memory JSONL 配置（CLI flag 覆盖配置文件）
+	if memoryJSONLEnable {
+		config.MemoryJSONL.Enable = true
+	}
+	if memoryJSONLDir != "" {
+		config.MemoryJSONL.OutputDir = memoryJSONLDir
+	}
 	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
 
 	// 主动初始化：启动 codeseek MCP 等核心服务
@@ -323,6 +343,13 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	codeActor.DisabledAgents = disableAgentsStr
 	codeActor.YoloMode = yoloMode
 	codeActor.FullYoloMode = fullYoloMode
+	// Memory JSONL 配置（CLI flag 覆盖配置文件）
+	if memoryJSONLEnable {
+		config.MemoryJSONL.Enable = true
+	}
+	if memoryJSONLDir != "" {
+		config.MemoryJSONL.OutputDir = memoryJSONLDir
+	}
 
 	codeActor.Init(client.Engine, repoPath)
 	defer codeActor.Close()
