@@ -3,6 +3,8 @@ package agents
 import (
 	"context"
 	_ "embed"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -93,6 +95,8 @@ type DirectorAgent struct {
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 	// resultCompressor 结果压缩器（nil 表示不启用压缩）
 	resultCompressor *ResultCompressor
+	// MemoryJSONL 配置
+	memoryJSONLCfg config.MemoryJSONLConfig
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -139,6 +143,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
+		// 创建 JSONL Writer 并注入到 context
+		if writer := self.createJSONLWriter("repo", task); writer != nil {
+			defer writer.Close()
+			ctx = memory.WithJSONLWriter(ctx, writer)
+		}
 		result, err := repo.Run(ctx, task)
 		// 使用增强型 Commander 处理结果（压缩 + 注册）
 		return self.applyEnhancedCommander("repo", task, result, err)
@@ -154,6 +163,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
+		}
+		// 创建 JSONL Writer 并注入到 context
+		if writer := self.createJSONLWriter("coding", task); writer != nil {
+			defer writer.Close()
+			ctx = memory.WithJSONLWriter(ctx, writer)
 		}
 		// RepoSummary is no longer injected into the task here — it is now passed
 		// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt,
@@ -174,6 +188,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
+		// 创建 JSONL Writer 并注入到 context
+		if writer := self.createJSONLWriter("chat", task); writer != nil {
+			defer writer.Close()
+			ctx = memory.WithJSONLWriter(ctx, writer)
+		}
 		result, err := chat.Run(ctx, task)
 		// 使用增强型 Commander 处理结果（压缩 + 注册）
 		return self.applyEnhancedCommander("chat", task, result, err)
@@ -189,6 +208,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
+		}
+		// 创建 JSONL Writer 并注入到 context
+		if writer := self.createJSONLWriter("devops", task); writer != nil {
+			defer writer.Close()
+			ctx = memory.WithJSONLWriter(ctx, writer)
 		}
 		result, err := devops.Run(ctx, task)
 		// 使用增强型 Commander 处理结果（压缩 + 注册）
@@ -207,6 +231,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 			task, ok := params["task"].(string)
 			if !ok {
 				return nil, fmt.Errorf("task parameter required")
+			}
+			// 创建 JSONL Writer 并注入到 context
+			if writer := self.createJSONLWriter("browser", task); writer != nil {
+				defer writer.Close()
+				ctx = memory.WithJSONLWriter(ctx, writer)
 			}
 			// RepoSummary is no longer injected into the task here — it is now passed
 			// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt.
@@ -228,6 +257,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
+		}
+		// 创建 JSONL Writer 并注入到 context（只在最外层注入）
+		if writer := self.createJSONLWriter("meta", task); writer != nil {
+			defer writer.Close()
+			ctx = memory.WithJSONLWriter(ctx, writer)
 		}
 		slog.Info("Director delegating to Meta-Agent (design)", "task", task)
 
@@ -723,6 +757,71 @@ func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID stri
 	// 重要：result.Memory（sub-agent 的完整对话历史）不再注入到 Director 的 memory 中
 	// 这避免了 Director 上下文快速膨胀和 Compact Engine 频繁压缩造成的信息丢失
 	// sub-agent 内部消息保留在 sub-agent 本地，通过 SharedMemory 的 publish/subscribe 机制共享关键信息（Phase 3）
+}
+
+// SetMemoryJSONLConfig 设置 MemoryJSONL 配置（由 app.go 在初始化后调用）
+func (a *DirectorAgent) SetMemoryJSONLConfig(cfg config.MemoryJSONLConfig) {
+	a.memoryJSONLCfg = cfg
+}
+
+// createJSONLWriter 为 delegate 创建 JSONL 写入器（如果启用）
+// 返回 nil 表示未启用或创建失败（失败时仅警告，不阻断执行）
+func (a *DirectorAgent) createJSONLWriter(agentName, task string) *memory.JSONLWriter {
+	if !a.memoryJSONLCfg.Enable {
+		return nil
+	}
+
+	// 计算 projectID
+	projectID := a.computeProjectID()
+
+	// 将 config.MemoryJSONLConfig 转换为 memory.MemoryJSONLConfig
+	memoryCfg := memory.MemoryJSONLConfig{
+		Enable:    a.memoryJSONLCfg.Enable,
+		OutputDir: a.memoryJSONLCfg.OutputDir,
+	}
+
+	writer, err := memory.NewJSONLWriter(memoryCfg, projectID, agentName, task)
+	if err != nil {
+		slog.Warn("JSONL: failed to create writer, continuing without jsonl logging",
+			"agent", agentName,
+			"error", err,
+		)
+		return nil
+	}
+
+	slog.Debug("JSONL: writer created for delegate agent",
+		"agent", agentName,
+		"file", writer.FilePath(),
+	)
+
+	return writer
+}
+
+// computeProjectID 从项目路径计算文件系统安全的 projectID
+func (a *DirectorAgent) computeProjectID() string {
+	projectPath := a.GlobalCtx.ProjectPath
+	if projectPath == "" {
+		return "default"
+	}
+	base := filepath.Base(projectPath)
+	if base == "." || base == "/" {
+		base = "root"
+	}
+	// 保留字母数字，其余替换为下划线
+	sanitized := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, base)
+	// 限制长度
+	if len(sanitized) > 100 {
+		sanitized = sanitized[:100]
+	}
+	// 添加短哈希
+	h := sha256.Sum256([]byte(projectPath))
+	shortHash := hex.EncodeToString(h[:])[:8]
+	return sanitized + "_" + shortHash
 }
 
 // applyEnhancedCommander 对子 Agent 执行结果应用增强型 Commander 功能。
