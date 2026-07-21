@@ -152,6 +152,12 @@ type LLMConfig struct {
 	CircuitBreakerResetTimeout time.Duration `toml:"circuit_breaker_reset_timeout" json:"circuit_breaker_reset_timeout" yaml:"circuit_breaker_reset_timeout"`
 }
 
+// MemoryJSONLConfig 配置 memory JSONL 实时写入
+type MemoryJSONLConfig struct {
+	Enable    bool   `toml:"enable" json:"enable"`
+	OutputDir string `toml:"output_dir" json:"output_dir"`
+}
+
 // Config is the root configuration structure
 type Config struct {
 	Global      TopLevelConfig       `toml:"global"` // [global.llm]
@@ -176,6 +182,9 @@ type Config struct {
 
 	// TUI TUI 界面配置（快捷键等）
 	TUI TUIConfig `toml:"tui"`
+
+	// MemoryJSONL 控制是否在 agent 执行时实时写入 memory JSONL 文件（按 delegate 任务维度）
+	MemoryJSONL MemoryJSONLConfig `toml:"memory_jsonl"`
 }
 
 // GetProvider returns a provider config by name from the shared provider pool.
