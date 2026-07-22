@@ -992,6 +992,29 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		}, a.Name())
 	}
 
+	// ═══════ 初始化 Director JSONL Writer ═══════
+	var directorWriter *memory.JSONLWriter
+	if w := a.createJSONLWriter("director", input); w != nil {
+		directorWriter = w
+		defer func() {
+			if directorWriter != nil {
+				directorWriter.Close()
+			}
+		}()
+	}
+
+	writeDirectorJSONL := func(msg llm.Message) {
+		if directorWriter == nil {
+			return
+		}
+		if err := directorWriter.WriteMessage(msg); err != nil {
+			slog.Warn("JSONL: failed to write director message",
+				"error", err,
+			)
+		}
+	}
+	// ═══════ END Director JSONL Writer ═══════
+
 	for i := 0; i < a.maxSteps; i++ {
 		// ═══════════════════════════════════════════════════════════
 		// CONTEXT COMPACT GATEWAY（简化版：同步全量压缩）
@@ -1189,6 +1212,14 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			ToolCalls: choice.ToolCalls,
 		})
 
+		// 写入 assistant 消息到 Director JSONL
+		writeDirectorJSONL(llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   choice.Content,
+			Reasoning: choice.Reasoning,
+			ToolCalls: choice.ToolCalls,
+		})
+
 		for _, tc := range choice.ToolCalls {
 			var toolResult string
 			var err error
@@ -1277,6 +1308,15 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
 			})
+
+			// 写入 tool 消息到 Director JSONL
+			writeDirectorJSONL(llm.Message{
+				Role:       llm.RoleTool,
+				Content:    toolResult,
+				ToolCallID: tc.ID,
+				ToolName:   tc.Function.Name,
+			})
+
 			if tc.Function.Name == "agent_exit" {
 				return "Task completed successfully", nil
 			}
