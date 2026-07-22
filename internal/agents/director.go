@@ -1015,6 +1015,12 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 	}
 	// ═══════ END Director JSONL Writer ═══════
 
+	// ═══════ 写入初始消息（system prompt + user input）到 Director JSONL ═══════
+	initialMsgCount := len(messages)
+	for i := 0; i < initialMsgCount; i++ {
+		writeDirectorJSONL(messages[i])
+	}
+
 	for i := 0; i < a.maxSteps; i++ {
 		// ═══════════════════════════════════════════════════════════
 		// CONTEXT COMPACT GATEWAY（简化版：同步全量压缩）

@@ -157,6 +157,10 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}
 	}
 
+	// ═══════ 写入初始 system 和 user 消息到 JSONL ═══════
+	writeJSONL(systemMsg)
+	writeJSONL(userMsg)
+
 	for i := 0; i < cfg.MaxSteps; i++ {
 		stepNumber++
 		slog.Debug("AgentExecutor calling LLM", "agent", cfg.AgentName, "step", i)
