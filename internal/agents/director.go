@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -1254,8 +1255,17 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 					}
 
 					// 为工具调用添加超时保护（防止工具无限阻塞）
-					toolCtx, toolCancel := context.WithTimeout(ctx, 120*time.Second)
+					// delegate_* 工具涉及子 agent 完整执行（多轮 LLM + 工具调用），需要更长的超时时间
+					// 使用 WithCancel 剥离父 context 的 deadline，再 WithTimeout 添加独立超时
+					// 这确保工具获得完整的超时时间，不受父 context 剩余时间限制
+					toolTimeout := 120 * time.Second
+					if strings.HasPrefix(tc.Function.Name, "delegate_") {
+						toolTimeout = 10 * time.Minute // 子 agent 需要更多时间完成多轮交互
+					}
+					cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
+					toolCtx, toolCancel := context.WithTimeout(cancelCtx, toolTimeout)
 					toolResult, err = t.Call(toolCtx, tc.Function.Arguments)
+					cancelCtxCancel()
 					toolCancel()
 
 					// 注入 sub-agent memory（delegate 闭包中设置了 pendingSubAgentMemory）
@@ -1278,7 +1288,13 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 						if len(errMsg) > 1000 {
 							errMsg = errMsg[:1000] + "... [truncated]"
 						}
-						toolResult = fmt.Sprintf("Error: %s", errMsg)
+						// 对超时错误给出明确的超时时间提示
+						if errors.Is(err, context.DeadlineExceeded) {
+							timeoutMinutes := int(toolTimeout.Minutes())
+							toolResult = fmt.Sprintf("Error: tool execution timed out after %d seconds", timeoutMinutes*60)
+						} else {
+							toolResult = fmt.Sprintf("Error: %s", errMsg)
+						}
 					} else if t.Name() == "delegate_repo" {
 						// toolResult is a JSON string (e.g. "\"summary...\""), so we need to unmarshal it
 						// to get the actual text content
