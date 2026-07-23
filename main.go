@@ -36,6 +36,8 @@ var (
 	// Memory JSONL 实时持久化
 	memoryJSONLEnable bool
 	memoryJSONLDir    string
+	// Config path override
+	configPathFlag string
 )
 
 // rootCmd 根命令 — 无子命令时默认启动 TUI
@@ -85,6 +87,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&taskFile, "taskfile", "f", "", "Load task from file")
 	rootCmd.PersistentFlags().StringVarP(&taskPrompt, "prompt", "p", "", "Execute a task prompt directly (non-interactive mode)")
 	rootCmd.PersistentFlags().StringVarP(&disableAgents, "disable-agents", "d", "", "Disable specified agents (comma-separated)")
+	// Config path override
+	rootCmd.PersistentFlags().StringVarP(&configPathFlag, "config", "c", "", "Path to config.toml file (overrides default config path)")
 	// http 子命令专属 flags
 	httpCmd.Flags().IntVar(&httpPort, "port", 0, "HTTP server port (0 = auto-detect from 9800)")
 	// YOLO 模式：跳过所有授权检查
@@ -404,7 +408,14 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 
 // getConfigPath 返回配置文件的路径，优先使用 $HOME/.codeactor/config/config.toml
 // 如果配置文件不存在，则自动生成默认配置模板
+// 如果命令行通过 --config/-c 指定了路径，则直接使用该路径（不自动创建）
 func getConfigPath() string {
+	// 如果命令行指定了 --config，直接使用（不自动创建配置文件）
+	if configPathFlag != "" {
+		return configPathFlag
+	}
+
+	// 原有逻辑...
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		localPath := "config/config.toml"
