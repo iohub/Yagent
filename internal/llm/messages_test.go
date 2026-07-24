@@ -40,11 +40,11 @@ func msgsEqual(a, b []Message) bool {
 }
 
 func TestNormalizeMessages_NormalFlow(t *testing.T) {
-	// 1. 正常流程不受影响：[system, user, assistant, tool, assistant] → 原样返回
+	// 1. 正常流程不受影响：[system, user, assistant(TC), tool, assistant] → 原样返回
 	tc1 := []Message{
 		systemMsg("you are helpful"),
 		userMsg("hello"),
-		assistantMsg("hi there"),
+		assistantMsg("let me check", ToolCall{ID: "tc1", Type: "function"}),
 		toolMsg("tc1", "result"),
 		assistantMsg("done"),
 	}
