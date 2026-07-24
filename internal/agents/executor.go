@@ -219,6 +219,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			// Record start time
 			llmStartTime := time.Now()
 
+			// Normalize messages before LLM call to merge consecutive assistants
+			messages = llm.NormalizeMessages(messages)
+
 			// 为每个 LLM 调用添加超时保护，防止远程服务无响应时永久阻塞
 			llmCtx, llmCancel := context.WithTimeout(ctx, llmTimeout)
 			resp, err = cfg.LLM.GenerateContent(llmCtx, messages, toolDefs, opts)
@@ -285,6 +288,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 				// 使用应急压缩后的消息重试一次
 				messages = emergencyMsgs
+
+				// Normalize messages before LLM call to merge consecutive assistants
+				messages = llm.NormalizeMessages(messages)
 
 				// 再次尝试 LLM 调用（仅一次）
 				emCtx, emCancel := context.WithTimeout(ctx, llmTimeout)

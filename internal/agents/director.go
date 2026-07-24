@@ -1473,5 +1473,8 @@ func validateAndRepairToolCallPairs(messages []llm.Message) []llm.Message {
 		result = append(result, msg)
 	}
 
+	// Merge consecutive assistant messages into single messages
+	result = llm.MergeConsecutiveAssistants(result)
+
 	return result
 }
