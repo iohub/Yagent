@@ -62,3 +62,9 @@ func (a *Anim) Render() string {
 	}
 	return a.prog.ViewAs(a.pct)
 }
+
+// Reset resets the animation to its initial state (0% progress).
+func (a *Anim) Reset() {
+	a.pct = 0.0
+	a.lastRender = ""
+}

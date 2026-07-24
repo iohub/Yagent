@@ -1904,6 +1904,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskCompleteMsg:
 		m.taskRunning = false
+		m.updateActiveAnim()
+		if m.anim != nil {
+			m.anim.Reset()
+		}
 		m.currentAgent = ""
 		m.dialogStack.CloseDialog("confirm_dialog") // safety: close any stale dialog
 		m.invalidateFooterCache()
