@@ -91,6 +91,8 @@ func (e *OpenAIEngine) GenerateContent(ctx context.Context, messages []Message, 
 		defer cancel()
 	}
 
+	messages = NormalizeMessages(messages)
+
 	params := e.buildParams(messages, tools, opts)
 
 	if opts != nil && opts.StreamHandler != nil {

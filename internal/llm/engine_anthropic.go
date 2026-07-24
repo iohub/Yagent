@@ -155,6 +155,8 @@ func (e *AnthropicEngine) GenerateContent(ctx context.Context, messages []Messag
 		defer cancel()
 	}
 
+	messages = NormalizeMessages(messages)
+
 	req := e.buildRequestBody(messages, tools, opts)
 
 	if opts != nil && opts.StreamHandler != nil {
