@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"codeactor/internal/app"
-	"codeactor/internal/compact"
 	"codeactor/internal/datamanager"
 	"codeactor/internal/http"
 	"codeactor/internal/logging"
@@ -29,15 +28,6 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 	if valid, errMsg := validateInputs(m.projectDir, taskDesc); !valid {
 		m.errMsg = errMsg
 		return nil
-	}
-
-	// Count input tokens
-	if taskDesc != "" {
-		if tok := compact.GetGlobalTokenizer(); tok != nil {
-			if count, err := tok.CountTokens(taskDesc); err == nil && count > 0 {
-				m.inputTokens += int64(count)
-			}
-		}
 	}
 
 	m.taskRunning = true
@@ -84,14 +74,6 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 
 // submitFollowUp sends a follow-up message to an existing task.
 func (m *model) submitFollowUp(message string) tea.Cmd {
-	// Count input tokens
-	if message != "" {
-		if tok := compact.GetGlobalTokenizer(); tok != nil {
-			if count, err := tok.CountTokens(message); err == nil && count > 0 {
-				m.inputTokens += int64(count)
-			}
-		}
-	}
 
 	m.input.SetValue("")
 	m.taskRunning = true

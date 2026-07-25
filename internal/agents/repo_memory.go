@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 
-	"codeactor/internal/compact"
 	"codeactor/internal/memory"
 )
 
@@ -166,12 +165,13 @@ func RenderMemoryForInjection(content string) string {
 // Token Budget Enforcement
 // ============================================================================
 
-// EnforceTokenBudget 截断内容使其不超过 MaxMemoryTokens 的 token 预算。
-// 使用 tiktoken 精确计数。在 Markdown 分区边界处截断以保持结构完整。
+// EnforceTokenBudget 截断内容使其不超过 MaxMemoryTokens 的字符预算。
+// 使用简单字符串长度估算 token 数（每 ~4 个字符约等于 1 个 token）。
+// 在 Markdown 分区边界处截断以保持结构完整。
 func EnforceTokenBudget(content string) string {
-	tokenizer := compact.GetGlobalTokenizer()
-	tokens, err := tokenizer.CountTokens(content)
-	if err != nil || tokens <= MaxMemoryTokens {
+	// 使用字符长度估算 token 数 (1 token ≈ 4 字符)
+	estimatedTokens := len(content) / 4
+	if estimatedTokens <= MaxMemoryTokens {
 		return content
 	}
 
@@ -183,21 +183,17 @@ func EnforceTokenBudget(content string) string {
 			return ""
 		}
 		content = content[:idx]
-		tokens, err = tokenizer.CountTokens(content)
-		if err != nil || tokens <= MaxMemoryTokens {
+		estimatedTokens = len(content) / 4
+		if estimatedTokens <= MaxMemoryTokens {
 			return content
 		}
 	}
 }
 
-// EstimateTokens 使用 tiktoken 精确计算字符串的 token 数。
+// EstimateTokens 使用简单字符串长度估算 token 数（每 ~4 个字符约等于 1 个 token）。
 func EstimateTokens(text string) int {
-	tokenizer := compact.GetGlobalTokenizer()
-	tokens, err := tokenizer.CountTokens(text)
-	if err != nil {
-		return 0
-	}
-	return tokens
+	// 粗略估算：1 token ≈ 4 字符（英文）
+	return len(text) / 4
 }
 
 // ============================================================================

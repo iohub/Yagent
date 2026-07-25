@@ -15,7 +15,6 @@ import (
 	"time"
 
 	director "codeactor/internal/agents/director"
-	"codeactor/internal/compact"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
@@ -71,10 +70,7 @@ type DirectorAgent struct {
 	metaRetryCount int                             // max retries for Meta-Agent JSON parse failures
 	toolDefMap     map[string]tools.ToolDefinition // tool name → definition from tools.json
 	customAgents   map[string]*CustomAgent         // delegate_<name> → agent design
-	compactEngine  *compact.Engine                 // 上下文压缩引擎
-	compactConfig  *compact.Config                 // 压缩配置
 	adapter        *DirectorAdapter                // 新旧整合适配器
-	summaryEngine  llm.Engine                      // 独立的摘要 LLM 引擎（nil 则复用主引擎）
 	llmClient      *llm.Client                     // LLM客户端引用，用于运行时动态重新解析引擎
 
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
@@ -135,7 +131,7 @@ func (a *DirectorAgent) loadProjectContext() *ProjectContextLoadResult {
 	return result
 }
 
-func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, compactCfg *compact.Config, summaryEngine llm.Engine, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
+func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
 	// self-reference for closures that need the DirectorAgent after construction
 	var self *DirectorAgent
 
@@ -451,10 +447,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		metaRetryCount:     metaRetryCount,
 		toolDefMap:         toolDefMap,
 		customAgents:       make(map[string]*CustomAgent),
-		compactEngine:      nil, // 将在 Run 方法中根据配置初始化
-		compactConfig:      compactCfg,
 		adapter:            directorAdapter,
-		summaryEngine:      summaryEngine,
 		llmClient:          llmClient,
 		hasDelegated:       false, // 初始未委派过
 		delegationAttempts: 0,             // 委派尝试次数初始为0
@@ -906,19 +899,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		}
 	}
 
-	// ═══════ 初始化上下文压缩引擎 ═══════
-	if a.compactEngine == nil && a.compactConfig != nil && a.compactConfig.EnableAutoCompact {
-		summaryClient := a.createSummaryClient()
-		engine, err := compact.NewEngine(a.compactConfig, summaryClient)
-		if err != nil {
-			slog.Warn("Failed to create compact engine", "error", err)
-		} else {
-			a.compactEngine = engine
-			slog.Info("Context compact engine initialized",
-				"max_tokens", a.compactConfig.MaxContextTokens)
-		}
-	}
-
 	var messages []llm.Message
 
 	// Always start with System Prompt (with any registered custom agents appended)
@@ -1023,68 +1003,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 	}
 
 	for i := 0; i < a.maxSteps; i++ {
-		// ═══════════════════════════════════════════════════════════
-		// CONTEXT COMPACT GATEWAY（简化版：同步全量压缩）
-		// ═══════════════════════════════════════════════════════════
-		if a.compactEngine != nil && a.compactConfig.EnableAutoCompact {
-			// 1. 计算当前 token 数
-			originalTokens, err := a.compactEngine.CountTokens(messages)
-			if err != nil {
-				slog.Warn("Failed to count tokens", "error", err)
-			} else if originalTokens > a.compactConfig.MaxContextTokens {
-				// 2. 超限，触发同步全量压缩
-				slog.Info("Context exceeds limit, triggering sync compression",
-					"original_tokens", originalTokens,
-					"max_tokens", a.compactConfig.MaxContextTokens)
-
-				result, err := a.compactEngine.Compress(ctx, messages)
-				if err != nil {
-					slog.Warn("Context compression failed", "error", err)
-				} else {
-					messages = result.CompressedMessages
-					slog.Info("Context compressed",
-						"compressed_tokens", result.CompressedTokens,
-						"ratio", fmt.Sprintf("%.2f%%", result.CompressionRatio*100))
-
-					// 解析 CompressionStats 提取各层应用情况
-					var layers []string
-					stats := result.CompressionStats
-					if strings.HasPrefix(stats, "Pipeline: ") {
-						rest := stats[len("Pipeline: "):]
-						if idx := strings.Index(rest, " | "); idx != -1 {
-							layersStr := rest[:idx]
-							for _, layer := range strings.Split(layersStr, " → ") {
-								layers = append(layers, strings.TrimSpace(layer))
-							}
-						}
-					}
-
-					// 计算节省的 token 数
-					tokensSaved := result.OriginalTokens - result.CompressedTokens
-
-					// 提取压缩方法（第一层）
-					compressMethod := "unknown"
-					if len(layers) > 0 {
-						compressMethod = layers[0]
-					}
-
-					if a.Publisher != nil {
-						a.Publisher.Publish("context_compressed", map[string]interface{}{
-							"original_tokens":   result.OriginalTokens,
-							"compressed_tokens": result.CompressedTokens,
-							"tokens_saved":      tokensSaved,
-							"ratio":             fmt.Sprintf("%.2f%%", result.CompressionRatio*100),
-							"layers":            layers,
-							"method":            compressMethod,
-							"has_summary":       result.SummaryInfo != "",
-							"stats":             stats,
-						}, a.Name())
-					}
-				}
-			}
-		}
-		// ═══════════════════════════════════════════════════════════
-
 		// --- 熔断检查（通过适配器委托到新组件）---
 		if a.adapter != nil && a.adapter.IsCircuitBreakerOpen() {
 			slog.Error("Circuit breaker open, too many consecutive LLM failures",
@@ -1348,21 +1266,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 
 	return "", fmt.Errorf("DirectorAgent exceeded max steps")
 }
-
-// createSummaryClient 创建用于上下文摘要的轻量LLM客户端
-// 如果配置了独立的 summaryEngine 则优先使用，否则复用主引擎
-func (a *DirectorAgent) createSummaryClient() compact.SummarizationClient {
-	engine := a.LLM
-	if a.summaryEngine != nil {
-		engine = a.summaryEngine
-	}
-	return &compact.SummaryAdapter{
-		LLM:         engine,
-		Temperature: 0.1,  // 摘要使用低温，确保一致性
-		MaxTokens:   2000, // 摘要输出限制
-	}
-}
-
 // validateAndRepairToolCallPairs 验证并修复 tool_call/tool_response 配对完整性
 //
 // 如果发现孤立的 tool_calls（assistant 有 tool_calls 但缺少对应的 tool 响应），

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/compact"
 	"codeactor/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
@@ -652,8 +651,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// Cancel confirmation
 							if m.currentTask != nil && m.currentTask.CancelFunc != nil {
 								m.taskCancelled = true
-								m.taskRunning = false  // 立即更新 UI 状态，不等 taskCompleteMsg
-								m.currentAgent = ""    // 清除当前 agent 显示
+								m.taskRunning = false // 立即更新 UI 状态，不等 taskCompleteMsg
+								m.currentAgent = ""   // 清除当前 agent 显示
 								m.currentTask.CancelFunc()
 								// 主动清理 LLM HTTP 连接池，加速 context 取消传播
 								if m.assistant != nil {
@@ -665,8 +664,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 									content:   "Task cancelled by user",
 								})
 								m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-								m.invalidateFooterCache()  // 立即刷新状态栏
-								m.cachedStatusBar = m.renderAirlineStatusBar()  // 重新渲染状态栏
+								m.invalidateFooterCache()                      // 立即刷新状态栏
+								m.cachedStatusBar = m.renderAirlineStatusBar() // 重新渲染状态栏
 							}
 						}
 						m.dialogStack.Pop()
@@ -1331,7 +1330,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 补全状态变化时刷新 footer 缓存以正确计算 viewport 高度
 		m.invalidateFooterCache()
 
-
 		// 存入缓存 - 使用细粒度缓存键（基于单词和是否有/）
 		contentRunes := []rune(m.snapshotText)
 		column := m.input.Column()
@@ -1464,15 +1462,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cachedTokenDashboard = m.renderTokenDashboard()
 				m.tokenDashboardValid = true
 				m.invalidateFooterCache()
-			} else {
-				// Fallback: estimate tokens from content string
-				if content, ok := msg.event.Content.(string); ok && content != "" {
-					if tok := compact.GetGlobalTokenizer(); tok != nil {
-						if count, err := tok.CountTokens(content); err == nil && count > 0 {
-							m.outputTokens += int64(count)
-						}
-					}
-				}
 			}
 		}
 
@@ -1589,8 +1578,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					le.content = "◂ LLM call completed"
 				}
 
-				le.clearRenderCache()      // invalidate cache
-				m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
+				le.clearRenderCache() // invalidate cache
+				m.markEntryDirty(idx) // 细粒度：仅标记此条目脏
 				m.updateActiveAnim()
 				m.viewportDirty = true
 				m.rebuildViewportScrollLock()
@@ -1761,8 +1750,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						le.isToolRunning = false
 						// 提取 edit_file 的 diff 内容以便在消息面板中展示
 						le.diffText = extractDiffFromResult(resultContent)
-						le.clearRenderCache()      // invalidate cache
-						m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
+						le.clearRenderCache() // invalidate cache
+						m.markEntryDirty(idx) // 细粒度：仅标记此条目脏
 						m.viewportDirty = true
 					}
 					delete(m.toolCallEntries, callID)
@@ -1826,7 +1815,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// 提取 edit_file 的 diff 内容以便在消息面板中展示
 						le.diffText = extractDiffFromResult(resultContent)
 						le.clearRenderCache()
-						m.markEntryDirty(idx)      // 细粒度：仅标记此条目脏
+						m.markEntryDirty(idx) // 细粒度：仅标记此条目脏
 						m.viewportDirty = true
 					}
 					delete(m.toolCallEntries, matchedID)
@@ -1936,16 +1925,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			// Show error dialog via DialogStack
-		d := components.NewTaskCompleteDialog(false, "❌ Task Failed\n\n"+msg.err.Error(), components.Language(m.currentLang))
-		d.SetBounds(m.termWidth, m.termHeight)
-		m.dialogStack.Push(d)
-	} else {
-		// 保留 currentTask 以支持任务完成后继续对话
-		// m.currentTask = nil  // 不再清除
-		d := components.NewTaskCompleteDialog(true, "All tasks have been finished.", components.Language(m.currentLang))
-		d.SetBounds(m.termWidth, m.termHeight)
-		m.dialogStack.Push(d)
-	}
+			d := components.NewTaskCompleteDialog(false, "❌ Task Failed\n\n"+msg.err.Error(), components.Language(m.currentLang))
+			d.SetBounds(m.termWidth, m.termHeight)
+			m.dialogStack.Push(d)
+		} else {
+			// 保留 currentTask 以支持任务完成后继续对话
+			// m.currentTask = nil  // 不再清除
+			d := components.NewTaskCompleteDialog(true, "All tasks have been finished.", components.Language(m.currentLang))
+			d.SetBounds(m.termWidth, m.termHeight)
+			m.dialogStack.Push(d)
+		}
 
 		// 清空编辑器输入框
 		m.input.SetValue("")

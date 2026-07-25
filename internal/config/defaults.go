@@ -25,52 +25,6 @@ var DefaultMaxSteps = struct {
 	MetaRetry: 5,
 }
 
-// DefaultCompactConfig 返回默认的上下文压缩配置
-// 作为 validate() 中设置默认值的来源，消除死代码 compact.DefaultConfig
-func DefaultCompactConfig() *ContextCompactConfig {
-	return &ContextCompactConfig{
-		MaxContextTokens:            198000,
-		EnableAutoCompact:           true,
-		SummarizationModel:          "",
-		SummarizationProvider:       "",
-		SummarizationTimeout:        15,
-		SummarizationMaxInputTokens: 8000,
-		SummarizationPrompt:         "",
-		KeepRecentRounds:            3,
-
-		// Layer 1: Tool Result Budget Control
-		MaxToolOutputTokens: 8192,
-		ToolPreviewTokens:   512,
-		OffloadEnabled:      true,
-		OffloadPath:         ".compact-offload",
-
-		// Layer 2: Old Message Pruning
-		MinPrunableAge: 5,
-
-		// Layer 3: Micro-compression
-		MicroCompressEnabled: true,
-		MicroCompressTools:   []string{"run_bash", "read_file", "list_files", "grep", "search"},
-
-		// Layer 4: Context Folding
-		FoldEnabled:      true,
-		FoldBatchSize:    10,
-		FoldStageTimeout: 30,
-
-		// Layer 5: Dynamic Threshold
-		SummaryReservedTokens: 20000,
-		BufferBandTokens:      13000,
-		CompressionDirection:  "auto",
-
-		// Layer 6: State Compensation
-		CompensateEnabled: true,
-
-		// Layer 7: Emergency
-		EmergencyMaxRetries:         2,
-		CircuitBreakerThreshold:     3,
-		CircuitBreakerResetDuration: 300,
-	}
-}
-
 // DefaultBrowserConfig 返回默认的浏览器配置（TOML 层）
 // 注意：此处的默认值与 internal/browser/config.go 中的 DefaultBrowserConfig() 应保持一致
 func DefaultBrowserConfig() *BrowserConfig {

@@ -314,22 +314,6 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	// Inject shared memory (3 dimensions: user, feedback, reference)
 	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
 
-	// ─── 懒加载初始化上下文压缩引擎（仅首次 Run 时创建，后续复用）───
-	if a.compactConfig != nil && a.compactConfig.EnableAutoCompact && a.compactEngine == nil && a.LLM != nil {
-		engine, err := compact.NewEngine(a.compactConfig, &compact.SummaryAdapter{
-			LLM:         a.LLM,
-			Temperature: 0.1,
-			MaxTokens:   12000,
-		})
-		if err != nil {
-			slog.Warn("Failed to create compact engine for CodingAgent", "error", err)
-		} else {
-			a.compactEngine = engine
-			slog.Info("Context compact engine initialized for CodingAgent",
-				"max_tokens", a.compactConfig.MaxContextTokens)
-		}
-	}
-
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
@@ -339,7 +323,6 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
-	cfg.CompactEngine = a.compactEngine
 	cfg.RepoContext = a.GlobalCtx.RepoSummary
 
 	// 如果是 git 仓库且 checkpoint 启用，设置回调和添加工具

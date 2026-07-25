@@ -288,9 +288,6 @@ func diffConfigs(old, new *Config) []string {
 	if !compareDeep(old.LLM, new.LLM) {
 		changed = append(changed, "llm")
 	}
-	if !compareDeep(old.Compact, new.Compact) {
-		changed = append(changed, "context")
-	}
 	if !compareDeep(old.Browser, new.Browser) {
 		changed = append(changed, "browser")
 	}

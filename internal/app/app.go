@@ -16,12 +16,10 @@ import (
 
 	"codeactor/internal/agents"
 	"codeactor/internal/browser"
-	"codeactor/internal/compact"
 	"codeactor/internal/config"
 	"codeactor/internal/embedbin"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
-	"codeactor/internal/logging"
 	"codeactor/internal/mcp"
 	"codeactor/internal/memory"
 	"codeactor/internal/messaging"
@@ -293,31 +291,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			browserEngine = ca.client.GetAgentEngine("browser")
 		}
 
-		// 构建 compact config（需要在创建 RepoAgent 和 CodingAgent 之前）
-		var compactCfg *compact.Config
-		var summaryEngine llm.Engine
-		if ca.config != nil {
-			c := &ca.config.Compact
-			compactCfg = &compact.Config{
-				MaxContextTokens:            c.MaxContextTokens,
-				EnableAutoCompact:           c.EnableAutoCompact,
-				KeepRecentRounds:            c.KeepRecentRounds,
-				SummarizationTimeout:        time.Duration(c.SummarizationTimeout) * time.Second,
-				SummarizationMaxInputTokens: c.SummarizationMaxInputTokens,
-				CompactLogDir:               logging.GetLogDir(),
-			}
-
-			// 为 compact 摘要创建独立的 LLM 引擎（如果配置了 summarization_provider）
-			if c.SummarizationProvider != "" {
-				provider, err := ca.config.GetProvider(c.SummarizationProvider)
-				if err == nil {
-					summaryEngine = llm.NewEngine(provider, ca.config.LLM)
-					summaryEngine = llm.NewLoggingEngine(summaryEngine)
-				}
-			}
-		}
-
-		repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps, compactCfg)
+		repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
 
 		// [NEW] 初始化 RepoAgent 记忆系统
 		{
@@ -396,7 +370,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		ca.globalCtx.BrowserMgr = browserMgr
 		browserAgent := agents.NewBrowserAgent(ca.globalCtx, browserMgr, browserEngine, browserMaxSteps)
 
-		codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent, compactCfg)
+		codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent)
 
 		// [NEW] Initialize Shared Memory System (3 dimensions: user, feedback, reference)
 		{
@@ -531,7 +505,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		}
 
 		// Create DirectorAgent
-		ca.director = agents.NewDirectorAgent(ca.globalCtx, directorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, directorMaxSteps, disabledAgents, metaRetryCount, compactCfg, summaryEngine, *ca.config, ca.client)
+		ca.director = agents.NewDirectorAgent(ca.globalCtx, directorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, directorMaxSteps, disabledAgents, metaRetryCount, *ca.config, ca.client)
 
 		// 传递 MemoryJSONL 配置到 DirectorAgent
 		ca.director.SetMemoryJSONLConfig(ca.config.MemoryJSONL)

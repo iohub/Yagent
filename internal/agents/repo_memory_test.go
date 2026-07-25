@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"codeactor/internal/compact"
 	"codeactor/internal/memory"
 )
 
@@ -193,13 +192,10 @@ func TestEnforceTokenBudget_OverBudget_Truncated(t *testing.T) {
 
 	result := EnforceTokenBudget(longContent)
 
-	tokenizer := compact.GetGlobalTokenizer()
-	tokens, err := tokenizer.CountTokens(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tokens > MaxMemoryTokens {
-		t.Errorf("result has %d tokens, exceeds max %d", tokens, MaxMemoryTokens)
+	// Verify result is within budget using character-based estimation
+	estimatedTokens := EstimateTokens(result)
+	if estimatedTokens > MaxMemoryTokens {
+		t.Errorf("result has ~%d tokens (estimated), exceeds max %d", estimatedTokens, MaxMemoryTokens)
 	}
 }
 
@@ -221,13 +217,10 @@ func TestEnforceTokenBudget_TruncatesAtSectionBoundary(t *testing.T) {
 
 	result := EnforceTokenBudget(longContent)
 
-	tokenizer := compact.GetGlobalTokenizer()
-	tokens, err := tokenizer.CountTokens(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tokens > MaxMemoryTokens {
-		t.Errorf("result has %d tokens, exceeds max %d", tokens, MaxMemoryTokens)
+	// Verify result is within budget using character-based estimation
+	estimatedTokens := EstimateTokens(result)
+	if estimatedTokens > MaxMemoryTokens {
+		t.Errorf("result has ~%d tokens (estimated), exceeds max %d", estimatedTokens, MaxMemoryTokens)
 	}
 	// Result should end with a section boundary (##) or within budget
 }
