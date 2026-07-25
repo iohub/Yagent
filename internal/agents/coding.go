@@ -311,9 +311,6 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		systemPrompt += "\n" + gitCheckpointPromptSection
 	}
 
-	// Inject shared memory (3 dimensions: user, feedback, reference)
-	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
-
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input

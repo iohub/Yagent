@@ -84,8 +84,6 @@ func (a *DevOpsAgent) Name() string {
 func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	cfg := DefaultExecutorConfig()
 	systemPrompt := a.GlobalCtx.FormatPrompt(devopsPrompt)
-	// Inject shared memory
-	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
 	cfg.Adapters = a.Adapters

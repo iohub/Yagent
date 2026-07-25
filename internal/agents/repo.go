@@ -104,9 +104,6 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 
 	systemPrompt = a.GlobalCtx.FormatPrompt(systemPrompt)
 
-	// Inject shared memory (3 dimensions: user, feedback, reference)
-	systemPrompt = a.InjectSharedMemory(systemPrompt, "default", a.GlobalCtx.ProjectPath)
-
 	if a.memStore != nil {
 		memContent := a.memStore.Get()
 		if injection := RenderMemoryForInjection(memContent); injection != "" {

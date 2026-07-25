@@ -24,21 +24,4 @@ type Agent interface {
 type BaseAgent struct {
 	LLM       llm.Engine
 	Publisher *messaging.MessagePublisher
-
-	// Shared Memory System (optional, nil if not configured)
-	MemoryInjector *memory.SharedMemoryInjector
-	MemoryUpdater  *memory.SharedDimensionUpdater
-}
-
-// InjectSharedMemory 将共享记忆注入到system prompt中
-// 如果MemoryInjector未配置，返回原始prompt
-func (a *BaseAgent) InjectSharedMemory(systemPrompt, userID, projectID string) string {
-	if a.MemoryInjector == nil {
-		return systemPrompt
-	}
-	ctx := a.MemoryInjector.InjectContext(userID, projectID)
-	if ctx == "" {
-		return systemPrompt
-	}
-	return systemPrompt + "\n" + ctx
 }
