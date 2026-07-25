@@ -23,8 +23,6 @@ type MemoryJSONLConfig struct {
 type MemoryRecord struct {
 	Timestamp  time.Time       `json:"timestamp"`
 	AgentName  string          `json:"agent_name"`
-	Task       string          `json:"task"`
-	TaskHash   string          `json:"task_hash"`
 	MessageIdx int             `json:"message_idx"`
 	Message    json.RawMessage `json:"message"`
 }
@@ -161,8 +159,6 @@ func (w *JSONLWriter) WriteMessage(msg interface{}) error {
 	record := MemoryRecord{
 		Timestamp:  time.Now(),
 		AgentName:  w.agentName,
-		Task:       w.task,
-		TaskHash:   w.taskHash,
 		MessageIdx: w.msgIdx,
 		Message:    msgBytes,
 	}

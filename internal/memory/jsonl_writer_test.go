@@ -155,14 +155,6 @@ func TestWriteMessage(t *testing.T) {
 			t.Errorf("line %d: expected agentName 'coding', got %s", i, record.AgentName)
 		}
 
-		if record.Task != "test task" {
-			t.Errorf("line %d: expected task 'test task', got %s", i, record.Task)
-		}
-
-		if record.TaskHash != hashTask("test task") {
-			t.Errorf("line %d: unexpected taskHash", i)
-		}
-
 		// 验证 messageIdx
 		if record.MessageIdx != i {
 			t.Errorf("line %d: expected messageIdx %d, got %d", i, i, record.MessageIdx)
