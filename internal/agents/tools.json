@@ -536,53 +536,5 @@
         "message"
       ]
     }
-  },
-  {
-    "name": "update_shared_memory",
-    "description": "Update the shared cross-agent memory system. Use ONLY when you detect genuinely important information that should persist across conversations. This includes: user explicitly states preferences/role/expertise (user dimension), user corrects your mistake or explicitly endorses an approach (feedback dimension), user provides resource locations like URLs/dashboards/docs (reference dimension). DO NOT use this for trivial or uncertain information. Each update requires a specific reason.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "dimension": {
-          "type": "string",
-          "enum": [
-            "user",
-            "feedback",
-            "reference"
-          ],
-          "description": "Which memory dimension to update: user (profile/expertise/preferences), feedback (corrections/endorsements), reference (URLs/resources)"
-        },
-        "field": {
-          "type": "string",
-          "description": "Target field name for the dimension. For 'user': name/role/team/seniority/expertise/language/detail_level/code_style/response_format/metadata. For 'feedback': corrections/endorsements. For 'reference': resources."
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "set",
-            "add",
-            "remove"
-          ],
-          "description": "Operation type: set=replace scalar value or set full array, add=append single item to array, remove=remove array item by item_id"
-        },
-        "value": {
-          "description": "Value to set or add. For scalar fields (name/role/team/status): a string. For array fields (expertise/corrections/objectives): a single item (string or object). Omit for action=remove."
-        },
-        "item_id": {
-          "type": "string",
-          "description": "ID of the array item to remove. Only used when action=remove. Get item IDs from memory query output."
-        },
-        "reason": {
-          "type": "string",
-          "description": "Why this update is important and should be persisted (minimum 3 characters, be specific about the context)"
-        }
-      },
-      "required": [
-        "dimension",
-        "field",
-        "action",
-        "reason"
-      ]
-    }
   }
 ]
