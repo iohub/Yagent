@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"codeactor/internal/recovery"
 )
 
 // FailureRecord 失败记录
@@ -36,93 +38,6 @@ func DefaultRecoveryConfig() RecoveryConfig {
 	}
 }
 
-// CircuitBreaker 熔断器
-type CircuitBreaker struct {
-	state        string // "closed", "open", "half-open"
-	failures     int
-	threshold    int
-	resetTimeout time.Duration
-	lastFailure  time.Time
-	mu           sync.Mutex
-}
-
-// NewCircuitBreaker 创建熔断器
-func NewCircuitBreaker(threshold int, resetTimeout time.Duration) *CircuitBreaker {
-	return &CircuitBreaker{
-		state:        "closed",
-		threshold:    threshold,
-		resetTimeout: resetTimeout,
-	}
-}
-
-// Allow 检查是否允许执行
-func (cb *CircuitBreaker) Allow() bool {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	switch cb.state {
-	case "closed":
-		return true
-	case "open":
-		if time.Since(cb.lastFailure) > cb.resetTimeout {
-			cb.state = "half-open"
-			slog.Info("Circuit breaker half-open, allowing trial request")
-			return true
-		}
-		return false
-	case "half-open":
-		return true
-	default:
-		return true
-	}
-}
-
-// Success 记录成功
-func (cb *CircuitBreaker) Success() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	switch cb.state {
-	case "half-open":
-		cb.state = "closed"
-		cb.failures = 0
-		slog.Info("Circuit breaker closed (recovered)")
-	case "open":
-		cb.state = "closed"
-		cb.failures = 0
-		slog.Info("Circuit breaker closed (recovered from open)")
-	case "closed":
-		cb.failures = 0
-	}
-}
-
-// Failure 记录失败
-func (cb *CircuitBreaker) Failure() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	cb.failures++
-	cb.lastFailure = time.Now()
-
-	switch cb.state {
-	case "closed":
-		if cb.failures >= cb.threshold {
-			cb.state = "open"
-			slog.Warn("Circuit breaker opened", "failures", cb.failures, "threshold", cb.threshold)
-		}
-	case "half-open":
-		cb.state = "open"
-		slog.Warn("Circuit breaker re-opened (half-open trial failed)")
-	}
-}
-
-// State 返回当前状态
-func (cb *CircuitBreaker) State() string {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	return cb.state
-}
-
 // RecoveryAction 恢复动作
 type RecoveryAction struct {
 	Type   string        // "retry", "reassign", "skip", "abort"
@@ -135,7 +50,7 @@ type RecoveryAction struct {
 type Recovery struct {
 	config     RecoveryConfig
 	failures   map[string]*FailureRecord
-	breakers   map[string]*CircuitBreaker // agent ID → 熔断器
+	breakers   map[string]*recovery.CircuitBreaker // agent ID → 熔断器
 	stateStore StateStore
 	mu         sync.Mutex
 }
@@ -145,7 +60,7 @@ func NewRecovery(config RecoveryConfig, stateStore StateStore) *Recovery {
 	return &Recovery{
 		config:     config,
 		failures:   make(map[string]*FailureRecord),
-		breakers:   make(map[string]*CircuitBreaker),
+		breakers:   make(map[string]*recovery.CircuitBreaker),
 		stateStore: stateStore,
 	}
 }
@@ -158,7 +73,7 @@ func (r *Recovery) HandleAgentFailure(ctx context.Context, agentID string, taskI
 	// 获取或创建熔断器
 	breaker, ok := r.breakers[agentID]
 	if !ok {
-		breaker = NewCircuitBreaker(r.config.CircuitBreakerThreshold, r.config.CircuitBreakerResetTimeout)
+		breaker = recovery.NewCircuitBreaker(r.config.CircuitBreakerThreshold, r.config.CircuitBreakerResetTimeout)
 		r.breakers[agentID] = breaker
 	}
 	breaker.Failure()
@@ -191,7 +106,7 @@ func (r *Recovery) HandleAgentFailure(ctx context.Context, agentID string, taskI
 }
 
 // decide 决定恢复策略
-func (r *Recovery) decide(record *FailureRecord, breaker *CircuitBreaker) *RecoveryAction {
+func (r *Recovery) decide(record *FailureRecord, breaker *recovery.CircuitBreaker) *RecoveryAction {
 	// 1. 检查熔断
 	if breaker.State() == "open" {
 		return &RecoveryAction{

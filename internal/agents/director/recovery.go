@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"codeactor/internal/recovery"
 )
 
 // RecoveryConfig 恢复配置。
@@ -24,114 +26,19 @@ func DefaultRecoveryConfig() RecoveryConfig {
 	}
 }
 
-// CircuitBreaker 熔断器，防止连续失败耗尽资源。
-type CircuitBreaker struct {
-	state        string
-	failures     int
-	threshold    int
-	resetTimeout time.Duration
-	lastFailure  time.Time
-	mu           sync.Mutex
-}
-
-// NewCircuitBreaker 创建熔断器。
-func NewCircuitBreaker(threshold int, resetTimeout time.Duration) *CircuitBreaker {
-	return &CircuitBreaker{
-		state:        "closed",
-		threshold:    threshold,
-		resetTimeout: resetTimeout,
-	}
-}
-
-// Allow 检查是否允许执行请求。
-func (cb *CircuitBreaker) Allow() bool {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	switch cb.state {
-	case "closed":
-		return true
-	case "open":
-		if time.Since(cb.lastFailure) > cb.resetTimeout {
-			cb.state = "half-open"
-			slog.Info("[Director] Circuit breaker half-open, allowing trial request")
-			return true
-		}
-		return false
-	case "half-open":
-		return true
-	default:
-		return true
-	}
-}
-
-// Success 记录成功，关闭熔断器。
-func (cb *CircuitBreaker) Success() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	switch cb.state {
-	case "half-open":
-		cb.state = "closed"
-		cb.failures = 0
-		slog.Info("[Director] Circuit breaker closed (recovered)")
-	case "open":
-		cb.state = "closed"
-		cb.failures = 0
-		slog.Info("[Director] Circuit breaker closed (recovered from open)")
-	case "closed":
-		cb.failures = 0
-	}
-}
-
-// Failure 记录失败，可能打开熔断器。
-func (cb *CircuitBreaker) Failure() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	cb.failures++
-	cb.lastFailure = time.Now()
-
-	switch cb.state {
-	case "closed":
-		if cb.failures >= cb.threshold {
-			cb.state = "open"
-			slog.Warn("[Director] Circuit breaker opened", "failures", cb.failures, "threshold", cb.threshold)
-		}
-	case "half-open":
-		cb.state = "open"
-		slog.Warn("[Director] Circuit breaker re-opened (half-open trial failed)")
-	}
-}
-
-// State 返回当前状态。
-func (cb *CircuitBreaker) State() string {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	return cb.state
-}
-
-// Reset 重置熔断器到初始状态。
-func (cb *CircuitBreaker) Reset() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	cb.state = "closed"
-	cb.failures = 0
-}
-
 // RecoveryHandler 管理错误恢复与重试策略。
 type RecoveryHandler struct {
 	config       RecoveryConfig
-	breaker      *CircuitBreaker
+	breaker      *recovery.CircuitBreaker
 	stepFailures map[string]int // stepID → failure count
 	mu           sync.Mutex
 }
 
 // NewRecoveryHandler 创建恢复管理器。
 func NewRecoveryHandler(cfg RecoveryConfig) *RecoveryHandler {
-	var breaker *CircuitBreaker
+	var breaker *recovery.CircuitBreaker
 	if cfg.CircuitBreakerThreshold > 0 {
-		breaker = NewCircuitBreaker(cfg.CircuitBreakerThreshold, cfg.CircuitBreakerResetTimeout)
+		breaker = recovery.NewCircuitBreaker(cfg.CircuitBreakerThreshold, cfg.CircuitBreakerResetTimeout)
 	}
 
 	return &RecoveryHandler{

@@ -5,10 +5,12 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"codeactor/internal/recovery"
 )
 
 func TestCircuitBreaker_InitialState(t *testing.T) {
-	cb := NewCircuitBreaker(5, 30*time.Second)
+	cb := recovery.NewCircuitBreaker(5, 30*time.Second)
 	if !cb.Allow() {
 		t.Error("new circuit breaker should allow requests")
 	}
@@ -18,7 +20,7 @@ func TestCircuitBreaker_InitialState(t *testing.T) {
 }
 
 func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
-	cb := NewCircuitBreaker(3, 30*time.Second)
+	cb := recovery.NewCircuitBreaker(3, 30*time.Second)
 
 	// Fail 2 times - should still be closed
 	cb.Failure()
@@ -40,7 +42,7 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 }
 
 func TestCircuitBreaker_ResetsAfterTimeout(t *testing.T) {
-	cb := NewCircuitBreaker(1, 50*time.Millisecond)
+	cb := recovery.NewCircuitBreaker(1, 50*time.Millisecond)
 
 	cb.Failure()
 	if cb.State() != "open" {
@@ -59,7 +61,7 @@ func TestCircuitBreaker_ResetsAfterTimeout(t *testing.T) {
 }
 
 func TestCircuitBreaker_ClosesOnSuccess(t *testing.T) {
-	cb := NewCircuitBreaker(1, 30*time.Second)
+	cb := recovery.NewCircuitBreaker(1, 30*time.Second)
 
 	cb.Failure()
 	if cb.State() != "open" {
@@ -67,7 +69,7 @@ func TestCircuitBreaker_ClosesOnSuccess(t *testing.T) {
 	}
 
 	// Force half-open
-	cb.lastFailure = time.Now().Add(-60 * time.Second)
+	cb.SetLastFailure(time.Now().Add(-60 * time.Second))
 	cb.Allow() // transitions to half-open
 	if cb.State() != "half-open" {
 		t.Errorf("state = %q, want 'half-open'", cb.State())
@@ -80,11 +82,11 @@ func TestCircuitBreaker_ClosesOnSuccess(t *testing.T) {
 }
 
 func TestCircuitBreaker_ReOpensOnHalfOpenFailure(t *testing.T) {
-	cb := NewCircuitBreaker(1, 30*time.Second)
+	cb := recovery.NewCircuitBreaker(1, 30*time.Second)
 
 	cb.Failure()
 	// Force half-open
-	cb.lastFailure = time.Now().Add(-60 * time.Second)
+	cb.SetLastFailure(time.Now().Add(-60 * time.Second))
 	cb.Allow() // transitions to half-open
 	if cb.State() != "half-open" {
 		t.Errorf("state = %q, want 'half-open'", cb.State())
