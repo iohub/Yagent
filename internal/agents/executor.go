@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/compact"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
 	"codeactor/internal/messaging"
@@ -30,10 +29,6 @@ type ExecutorConfig struct {
 	LLMTimeout time.Duration
 	// StepRetries 步骤重试次数，0=不重试（默认）
 	StepRetries int
-	// CompactEngine is an optional context compression engine.
-	// When non-nil, messages are compressed before each LLM call if they exceed
-	// the configured token limit. This prevents context overflow in long-running loops.
-	CompactEngine *compact.Engine
 	// SystemAsHuman places the system prompt in a Human role message instead of System.
 	// Used by RepoAgent which prefers this pattern.
 	SystemAsHuman bool
@@ -169,30 +164,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		var resp *llm.Response
 		var err error
 
-		// ─── Context Compression Gateway ───
-		// Before each LLM call, attempt to compress the message history if
-		// a compact engine is configured. This is best-effort: on failure,
-		// we log a warning and proceed with the original messages.
-		if cfg.CompactEngine != nil {
-			// Check for context cancellation before compression
-			if ctx.Err() != nil {
-				return ExecutorResult{}, ctx.Err()
-			}
-			compressResult, compressErr := cfg.CompactEngine.Compress(ctx, messages)
-			if compressErr != nil {
-				slog.Warn("Context compression failed, using original messages",
-					"agent", cfg.AgentName, "step", i, "error", compressErr)
-			} else if compressResult != nil && len(compressResult.CompressedMessages) > 0 {
-				// Only replace messages if compression actually produced output
-				messages = compressResult.CompressedMessages
-				slog.Debug("Context compressed successfully",
-					"agent", cfg.AgentName, "step", i,
-					"original_tokens", compressResult.OriginalTokens,
-					"compressed_tokens", compressResult.CompressedTokens,
-					"ratio", fmt.Sprintf("%.2f%%", compressResult.CompressionRatio*100))
-			}
-		}
-
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			if attempt > 0 {
 				// 指数退避，上限30s
@@ -265,52 +236,11 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}
 
 		if err != nil {
-			// ─── 应急反应层：尝试上下文长度错误的应急压缩 ───
-			if isContextLengthError(err) && cfg.CompactEngine != nil {
-				slog.Warn("Context length error detected, attempting emergency compression",
-					"agent", cfg.AgentName, "step", i, "error", err)
-
-				emergencyMsgs, emergencyResult, emergencyErr := cfg.CompactEngine.EmergencyCompress(
-					ctx, messages, 0) // 0 = use default max tokens
-
-				if emergencyErr != nil {
-					slog.Error("Emergency compression failed",
-						"agent", cfg.AgentName, "error", emergencyErr)
-					return ExecutorResult{}, fmt.Errorf("LLM call failed after emergency compression: %w (original: %v)", emergencyErr, err)
-				}
-
-				slog.Warn("Emergency compression applied",
-					"agent", cfg.AgentName,
-					"method", emergencyResult.Method,
-					"layers_stripped", emergencyResult.LayersStripped,
-					"tokens_recovered", emergencyResult.TokensRecovered,
-					"messages_kept", emergencyResult.MessagesKept)
-
-				// 使用应急压缩后的消息重试一次
-				messages = emergencyMsgs
-
-				// Normalize messages before LLM call to merge consecutive assistants
-				messages = llm.NormalizeMessages(messages)
-
-				// 再次尝试 LLM 调用（仅一次）
-				emCtx, emCancel := context.WithTimeout(ctx, llmTimeout)
-				resp, err = cfg.LLM.GenerateContent(emCtx, messages, toolDefs, opts)
-				emCancel()
-				if err != nil {
-					slog.Error("LLM call still failed after emergency compression",
-						"agent", cfg.AgentName, "error", err)
-					return ExecutorResult{}, fmt.Errorf("LLM call failed after emergency compression: %w", err)
-				}
-				// 重置 err，继续正常流程
-			}
-
-			if err != nil {
-				slog.Error("AgentExecutor LLM error after all retries", "agent", cfg.AgentName, "error", err, "step", i)
-				llm.LogLLMError("AgentExecutor LLM error after all retries",
-					"agent", cfg.AgentName, "error", err, "step", i,
-				)
-				return ExecutorResult{}, err
-			}
+			slog.Error("AgentExecutor LLM error after all retries", "agent", cfg.AgentName, "error", err, "step", i)
+			llm.LogLLMError("AgentExecutor LLM error after all retries",
+				"agent", cfg.AgentName, "error", err, "step", i,
+			)
+			return ExecutorResult{}, err
 		}
 
 		choice := resp.Choices[0]
@@ -511,18 +441,4 @@ func logToolCall(toolName, agentName, args string, result string, err error, sta
 	LogToolCall(toolName, agentName, argsJSON, result, errMsg, duration)
 }
 
-// isContextLengthError 检查错误是否为上下文长度超限
-func isContextLengthError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	// 常见 LLM API 上下文长度超限错误
-	return strings.Contains(msg, "context_length_exceeded") ||
-		strings.Contains(msg, "max_tokens") ||
-		strings.Contains(msg, "too many tokens") ||
-		strings.Contains(msg, "request too large") ||
-		strings.Contains(msg, "token limit") ||
-		strings.Contains(msg, "maximum context length") ||
-		strings.Contains(msg, "Prompt too long")
-}
+

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"codeactor/internal/compact"
 	"codeactor/internal/globalctx"
 	"codeactor/internal/tools"
 
@@ -71,13 +70,9 @@ type CodingAgent struct {
 	maxSteps     int
 	registry     *tools.Registry // 工具注册表引用
 
-	// compactConfig 上下文压缩配置（nil=不启用压缩）
-	compactConfig *compact.Config
-	// compactEngine 懒加载创建的压缩引擎实例
-	compactEngine *compact.Engine
 }
 
-func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, browser *BrowserAgent, compactCfg *compact.Config) *CodingAgent {
+func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, browser *BrowserAgent) *CodingAgent {
 	// 从 tools.json 加载工具定义
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
@@ -136,7 +131,6 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 		BrowserAgent:  browser,
 		GlobalCtx:     globalCtx,
 		registry:      registry,
-		compactConfig: compactCfg,
 	}
 }
 
