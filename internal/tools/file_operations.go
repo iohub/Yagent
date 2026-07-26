@@ -653,11 +653,8 @@ func (t *FileOperationsTool) walkDirTree(
 		}
 	}
 
-	// --- Sort: directories first, then alphabetically within each group ---
+	// --- Sort: pure alphabetical order, ignoring file/directory type ---
 	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].isDir != items[j].isDir {
-			return items[i].isDir // directories first
-		}
 		return items[i].name < items[j].name
 	})
 
