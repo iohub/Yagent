@@ -508,20 +508,10 @@ func (a *DirectorAgent) getToolFunc(name string) tools.ToolFunc {
 		return a.GlobalCtx.SysOps.ExecuteRunBash
 	case "search_by_regex":
 		return a.GlobalCtx.SearchOps.ExecuteGrepSearch
-	case "semantic_search":
-		return a.GlobalCtx.RepoOps.ExecuteSemanticSearch
-	case "query_code_skeleton":
-		return a.GlobalCtx.RepoOps.ExecuteQueryCodeSkeleton
-	case "query_code_snippet":
-		return a.GlobalCtx.RepoOps.ExecuteQueryCodeSnippet
 	case "list_dir":
 		return a.GlobalCtx.FileOps.ExecuteListDir
 	case "print_dir_tree":
 		return a.GlobalCtx.FileOps.ExecutePrintDirTree
-	case "delete_file":
-		return a.GlobalCtx.FileOps.ExecuteDeleteFile
-	case "rename_file":
-		return a.GlobalCtx.FileOps.ExecuteRenameFile
 	case "thinking":
 		return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			inputBytes, _ := json.Marshal(params)

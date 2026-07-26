@@ -226,9 +226,9 @@ func TestGetToolFunc_KnownTools(t *testing.T) {
 
 	knownTools := []string{
 		"read_file", "search_replace_in_file", "create_file", "run_bash",
-		"search_by_regex", "delete_file", "rename_file", "list_dir",
-		"print_dir_tree", "semantic_search", "query_code_skeleton",
-		"query_code_snippet", "thinking", "micro_agent", "agent_exit",
+		"search_by_regex", "list_dir", "print_dir_tree",
+		"thinking", "micro_agent", "deepthinking",
+		"agent_exit", "ask_user_for_help",
 	}
 
 	for _, name := range knownTools {
