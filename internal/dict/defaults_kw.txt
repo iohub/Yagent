@@ -245,6 +245,7 @@ datetime
 
 # === 工具 & 平台 ===
 git
+build
 linux
 macos
 windows
