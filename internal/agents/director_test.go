@@ -60,7 +60,7 @@ func newTestDirectorAgent(t *testing.T, workDir string) *DirectorAgent {
 	t.Helper()
 	gctx := newTestGlobalCtx(workDir)
 	engine := &mockEngine{}
-	return NewDirectorAgent(gctx, engine, nil, nil, nil, nil, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	return NewDirectorAgent(gctx, engine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
 }
 
 // makeMetaOutput builds a valid Meta-Agent JSON output string.
@@ -356,7 +356,7 @@ func TestCustomAgentDelegateTool_Execution(t *testing.T) {
 	}
 
 	// Build director with mocked LLM
-	director := NewDirectorAgent(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	ca := &CustomAgent{
 		Name:         "test_executor",
@@ -419,7 +419,7 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 		},
 	}
 
-	director := NewDirectorAgent(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	ca := &CustomAgent{
 		Name:         "finisher",
@@ -550,7 +550,7 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
 
 	// DirectorAgent
-	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 	initialAdapterCount := len(director.Adapters)
 
 	// Find and call delegate_meta tool
@@ -626,7 +626,7 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 	)
 
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
-	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	// Call delegate_meta twice with the same agent design
 	var delegateMeta *tools.Adapter
@@ -666,7 +666,7 @@ func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
 	// Meta-Agent returns malformed output (no execution_result block)
 	malformedOutput := "Just some plain text without structured blocks."
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(malformedOutput), 0)
-	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range director.Adapters {
@@ -709,7 +709,7 @@ func TestDelegateMeta_EmptyAgentName_NoRegistration(t *testing.T) {
 		[]string{"read_file"},
 	)
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
-	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range director.Adapters {
@@ -739,7 +739,7 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 	output := `{"thinking": "designing...", "agent_name": "Test Agent", "tools_used": ["read_file"], "result": {"key": "value"}}`
 
 	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(output), 0)
-	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, nil, nil, config.Config{}, nil)
+	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range director.Adapters {
