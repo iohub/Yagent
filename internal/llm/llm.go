@@ -206,11 +206,12 @@ func (l *LoggingEngine) CloseIdleConnections() {
 }
 
 func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
-	if msgsJSON, err := json.MarshalIndent(messages, "", "  "); err == nil {
-		LogLLMContent("LLM Input (messages)", string(msgsJSON))
-	}
-	if toolsJSON, err := json.MarshalIndent(tools, "", "  "); err == nil {
-		LogLLMContent("LLM Input (tools)", string(toolsJSON))
+	// 增量输出：只记录最后一条消息，不重复记录全部历史
+	if len(messages) > 0 {
+		lastMsg := messages[len(messages)-1]
+		if lastMsgJSON, err := json.MarshalIndent(lastMsg, "", "  "); err == nil {
+			LogLLMContent("LLM Input (last message)", string(lastMsgJSON))
+		}
 	}
 
 	resp, err := l.inner.GenerateContent(ctx, messages, tools, opts)
