@@ -366,8 +366,22 @@ func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName
 	slog.Info("Creating engine for provider", "provider", providerName, "model", provider.Model)
 	engine := NewEngine(provider, c.Config.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
-	c.engines[providerName] = loggingEngine
-	return loggingEngine
+
+	// 检查是否需要包裹FallbackEngine
+	var finalEngine Engine = loggingEngine
+	if c.Config.LLM.EnableFallback && len(provider.FallbackProviders) > 0 {
+		slog.Info("Fallback enabled, creating FallbackEngine", "provider", providerName)
+		finalEngine = NewFallbackEngine(
+			loggingEngine,
+			providerName,
+			provider.FallbackProviders,
+			c.Config.Global.LLM.Providers,
+			c.Config.LLM,
+		)
+	}
+
+	c.engines[providerName] = finalEngine
+	return finalEngine
 }
 
 // GetEngine returns the default (global) engine.

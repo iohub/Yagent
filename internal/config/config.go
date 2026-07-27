@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -27,12 +28,43 @@ type ProviderConfig struct {
 	// "openai" (default, backward-compatible) or "anthropic".
 	// Controls which engine implementation is used.
 	ApiFormat string `toml:"api_format,omitempty"`
+
+	// FallbackProviders 故障转移备选provider列表，按Weight降序排列
+	FallbackProviders []FallbackProvider `toml:"fallback_providers,omitempty"`
 }
 
 // IsAnthropic checks if this provider uses the Anthropic API format.
 // Returns false for empty or "openai" ApiFormat (default, backward-compatible).
 func (p *ProviderConfig) IsAnthropic() bool {
 	return strings.EqualFold(p.ApiFormat, "anthropic")
+}
+
+// GetSortedFallbackProviders 返回按Weight降序排列的fallback provider列表
+// 同时过滤掉与自身同名的provider（防止循环引用）和名称不存在的provider
+func (p *ProviderConfig) GetSortedFallbackProviders(allProviders map[string]ProviderConfig) []FallbackProvider {
+	if len(p.FallbackProviders) == 0 {
+		return nil
+	}
+	// 复制并排序
+	sorted := make([]FallbackProvider, 0, len(p.FallbackProviders))
+	for _, fp := range p.FallbackProviders {
+		// 跳过不存在的provider
+		if _, exists := allProviders[fp.Provider]; !exists {
+			continue
+		}
+		sorted = append(sorted, fp)
+	}
+	// 按 weight 降序排列
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Weight > sorted[j].Weight
+	})
+	return sorted
+}
+
+// FallbackProvider 定义故障转移备选provider
+type FallbackProvider struct {
+	Provider string `toml:"provider"` // 引用 global.llm.providers 中的 provider 名称
+	Weight   int    `toml:"weight"`   // 权重，越高越优先尝试
 }
 
 // AppConfig contains application-level configuration
@@ -150,6 +182,12 @@ type LLMConfig struct {
 
 	// CircuitBreakerResetTimeout 熔断恢复时间（仅当阈值>0时有效）
 	CircuitBreakerResetTimeout time.Duration `toml:"circuit_breaker_reset_timeout" json:"circuit_breaker_reset_timeout" yaml:"circuit_breaker_reset_timeout"`
+
+	// EnableFallback 是否启用provider级故障转移，默认false
+	EnableFallback bool `toml:"enable_fallback" json:"enable_fallback" yaml:"enable_fallback"`
+
+	// FallbackMaxRetries 故障转移时每个fallback provider的内部重试次数，0=使用MaxRetries
+	FallbackMaxRetries int `toml:"fallback_max_retries" json:"fallback_max_retries" yaml:"fallback_max_retries"`
 }
 
 // MemoryJSONLConfig 配置 memory JSONL 实时写入
@@ -437,6 +475,10 @@ func (c *Config) validate() error {
 	// 如果 CircuitBreakerResetTimeout == 0 且 CircuitBreakerThreshold > 0，设置为 60s
 	if c.LLM.CircuitBreakerResetTimeout == 0 && c.LLM.CircuitBreakerThreshold > 0 {
 		c.LLM.CircuitBreakerResetTimeout = 60 * time.Second
+	}
+	// FallbackMaxRetries 默认值：如果未配置，使用 MaxRetries 的值
+	if c.LLM.FallbackMaxRetries == 0 {
+		c.LLM.FallbackMaxRetries = c.LLM.MaxRetries
 	}
 
 	// ═══════ Keywords 默认值设置（向后兼容） ═══════

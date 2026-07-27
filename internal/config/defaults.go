@@ -55,6 +55,8 @@ func DefaultLLMConfig() *LLMConfig {
 		StepRetries:             0,
 		CircuitBreakerThreshold:           0,
 		CircuitBreakerResetTimeout: 0,
+		EnableFallback:         false,
+		FallbackMaxRetries:     2,
 	}
 }
 

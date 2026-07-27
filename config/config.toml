@@ -16,6 +16,12 @@ max_tokens = 28000
 api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 api_key = "your-key"
 
+# 故障转移配置示例（取消注释以启用）:
+# fallback_providers = [
+#     { provider = "deepseek_v4_pro", weight = 10 },
+#     { provider = "local", weight = 5 },
+# ]
+
 [global.llm.providers.deepseek_v4_pro]
 model = "deepseek-v4-pro"
 temperature = 0.0
@@ -186,3 +192,8 @@ keep_recent_rounds = 2                # 始终保留的最近对话轮数
     toggle_token_panel = "alt+t"   # 切换 Token 面板
     switch_model      = "alt+m"    # 切换模型
     quit              = "ctrl+c"   # 退出
+
+# ── LLM 故障转移配置 ──
+[llm]
+# enable_fallback = true       # 启用provider级故障转移
+# fallback_max_retries = 2     # fallback provider的内部重试次数
