@@ -41,23 +41,31 @@ func (p *ProviderConfig) IsAnthropic() bool {
 
 // GetSortedFallbackProviders 返回按Weight降序排列的fallback provider列表
 // 同时过滤掉与自身同名的provider（防止循环引用）和名称不存在的provider
+// GetSortedFallbackProviders 返回按Weight降序排列的fallback provider列表。
+// 当所有 weight 为 0 或未设置时，保持原始声明顺序。
+// 仅过滤名称不存在的 provider，不过滤自引用。
 func (p *ProviderConfig) GetSortedFallbackProviders(allProviders map[string]ProviderConfig) []FallbackProvider {
 	if len(p.FallbackProviders) == 0 {
 		return nil
 	}
-	// 复制并排序
 	sorted := make([]FallbackProvider, 0, len(p.FallbackProviders))
+	hasWeight := false
 	for _, fp := range p.FallbackProviders {
 		// 跳过不存在的provider
 		if _, exists := allProviders[fp.Provider]; !exists {
 			continue
 		}
+		if fp.Weight != 0 {
+			hasWeight = true
+		}
 		sorted = append(sorted, fp)
 	}
-	// 按 weight 降序排列
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Weight > sorted[j].Weight
-	})
+	// 仅当存在非零权重时才排序，否则保持原始声明顺序
+	if hasWeight {
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].Weight > sorted[j].Weight
+		})
+	}
 	return sorted
 }
 

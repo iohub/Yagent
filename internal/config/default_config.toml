@@ -17,8 +17,8 @@ api_key = "your-key"
 
 # 故障转移配置示例（取消注释以启用）:
 # fallback_providers = [
-#     { provider = "deepseek_v4_pro", weight = 10 },
-#     { provider = "local", weight = 5 },
+#     { provider = "deepseek_v4_pro" },  # weight 可选，默认按书写顺序
+#     { provider = "local" },
 # ]
 
 [global.llm.providers.deepseek_v4_pro]
