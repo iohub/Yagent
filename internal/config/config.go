@@ -62,7 +62,7 @@ func (p *ProviderConfig) GetSortedFallbackProviders(allProviders map[string]Prov
 	}
 	// 仅当存在非零权重时才排序，否则保持原始声明顺序
 	if hasWeight {
-		sort.Slice(sorted, func(i, j int) bool {
+		sort.SliceStable(sorted, func(i, j int) bool {
 			return sorted[i].Weight > sorted[j].Weight
 		})
 	}
@@ -73,6 +73,19 @@ func (p *ProviderConfig) GetSortedFallbackProviders(allProviders map[string]Prov
 type FallbackProvider struct {
 	Provider string `toml:"provider"` // 引用 global.llm.providers 中的 provider 名称
 	Weight   int    `toml:"weight"`   // 权重，越高越优先尝试
+}
+
+// UnmarshalText 实现 encoding.TextUnmarshaler，支持纯字符串简写格式：
+//
+//	fallback_providers = ["deepseek_v4_pro", "local"]
+//
+// 等价于：
+//
+//	fallback_providers = [{ provider = "deepseek_v4_pro", weight = 0 }, { provider = "local", weight = 0 }]
+func (fp *FallbackProvider) UnmarshalText(text []byte) error {
+	fp.Provider = string(text)
+	fp.Weight = 0
+	return nil
 }
 
 // AppConfig contains application-level configuration

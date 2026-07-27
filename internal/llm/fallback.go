@@ -54,7 +54,7 @@ func NewFallbackEngine(primary Engine, primaryName string, fallbackCfgs []config
 		sorted = append(sorted, fp)
 		_ = providerCfg // 用于后续创建engine
 	}
-	sort.Slice(sorted, func(i, j int) bool {
+	sort.SliceStable(sorted, func(i, j int) bool {
 		return sorted[i].Weight > sorted[j].Weight
 	})
 
