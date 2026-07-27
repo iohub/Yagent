@@ -336,6 +336,43 @@ func (c *MCPClient) Shutdown() {
 	c.logger.Info("MCP client shut down")
 }
 
+// ForceShutdown forcefully terminates the MCP client and its subprocess
+// without waiting for graceful shutdown. It kills the subprocess immediately.
+// Use this when force quit is enabled and you don't want to wait for codeseek.
+func (c *MCPClient) ForceShutdown() {
+	if c.stopped.Swap(true) {
+		return // already shut down
+	}
+
+	// 取消正在进行的初始化
+	if c.cancelInit != nil {
+		c.cancelInit()
+	}
+
+	// 解除所有等待者的阻塞
+	c.markReady(errors.New("MCP client force shut down"))
+
+	c.alive.Store(false)
+
+	// Close the stdin pipe.
+	if c.stdin != nil {
+		c.stdin.Close()
+	}
+
+	// Force kill the subprocess immediately.
+	if c.cmd != nil && c.cmd.Process != nil {
+		if err := c.cmd.Process.Kill(); err != nil {
+			c.logger.Warn("Failed to kill MCP subprocess", "error", err)
+		} else {
+			c.logger.Info("MCP subprocess forcefully killed")
+		}
+		// Wait for the process to be reaped (don't wait long, just clean up)
+		_ = c.cmd.Wait()
+	}
+
+	c.logger.Info("MCP client force shut down")
+}
+
 // WaitForReady 阻塞等待 MCP 客户端初始化完成。
 // 返回 nil 表示初始化成功，非 nil 表示初始化失败或 context 取消。
 // 可安全并发调用；在初始化完成后调用会立即返回。
