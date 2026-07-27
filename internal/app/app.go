@@ -42,6 +42,7 @@ type CodeActor struct {
 	DisabledAgents string // comma-separated list of agent names to disable (e.g. "repo,coding,chat")
 	YoloMode       bool   // YOLO模式：所有agent授权自动通过
 	FullYoloMode   bool   // FULL-YOLO模式：隐含YoloMode + 移除ask_user_for_help + 自主决策
+	ForceQuit      bool   // ForceQuit：强制退出模式，agent_exit 时直接退出，不等待 codeseek 进程安全退出
 	// TODO: [Codexray] CodexrayPort field removed — re-add when codexray is re-integrated
 
 	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
@@ -523,8 +524,13 @@ func (ca *CodeActor) Close() {
 	}
 	// 关闭 CodeSeek MCP 客户端
 	if ca.globalCtx != nil && ca.globalCtx.CodeSeekMCP != nil {
-		slog.Info("Shutting down CodeSeek MCP client...")
-		ca.globalCtx.CodeSeekMCP.Shutdown()
+		if ca.ForceQuit {
+			slog.Info("Force quitting CodeSeek MCP client...")
+			ca.globalCtx.CodeSeekMCP.ForceShutdown()
+		} else {
+			slog.Info("Shutting down CodeSeek MCP client...")
+			ca.globalCtx.CodeSeekMCP.Shutdown()
+		}
 	}
 	if ca.globalCtx != nil && ca.globalCtx.BrowserMgr != nil {
 		slog.Info("Closing browser manager...")
