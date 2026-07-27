@@ -246,8 +246,8 @@
         },
         "max_depth": {
           "type": "integer",
-          "default": 3,
-          "description": "Maximum depth to traverse (default: 3). Depth 0 shows only the root directory name."
+          "default": 2,
+          "description": "Maximum depth to traverse (default: 2). Depth 0 shows only the root directory name."
         },
         "show_files": {
           "type": "boolean",
