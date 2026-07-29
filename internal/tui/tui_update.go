@@ -1485,6 +1485,145 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, listenForEvents(m.eventCh)
 		}
 
+		// ═══════════════════════════════════════════════
+		// AI 流式事件处理：流式累积 + ai_response 定稿
+		// ═══════════════════════════════════════════════
+
+		// Handle ai_stream_start — 创建占位条目
+		if msg.event.Type == "ai_stream_start" {
+			agentName := msg.event.From
+			if agentName == "" {
+				agentName = "default"
+			}
+
+			// 创建占位条目
+			entry := logEntry{
+				timestamp:     msg.event.Timestamp,
+				eventType:     "ai_stream",
+				from:          agentName,
+				agentName:     agentName,
+				streamContent: "",
+				streaming:     true,
+				isVerbose:     false,
+			}
+			m.logEntries = append(m.logEntries, entry)
+			idx := len(m.logEntries) - 1
+			m.aiStreamActiveEntries[agentName] = idx
+			m.markEntryDirty(idx)
+			m.viewportDirty = true
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+			return m, listenForEvents(m.eventCh)
+		}
+
+		// Handle ai_chunk — 原地追加内容
+		if msg.event.Type == "ai_chunk" {
+			agentName := msg.event.From
+			if agentName == "" {
+				agentName = "default"
+			}
+
+			// 从 Content 中提取 content 字段
+			var content string
+			if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+				if c, ok := contentMap["content"].(string); ok {
+					content = c
+				}
+			}
+
+			if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
+				// 原地追加内容
+				m.logEntries[idx].streamContent += content
+				m.logEntries[idx].content = m.logEntries[idx].streamContent // 同步到 content 字段
+				m.markEntryDirty(idx)
+				// 不设置 viewportDirty — 让 tick 节流处理
+				return m, listenForEvents(m.eventCh)
+			}
+
+			// Fallback: 没有活跃流，创建一个（防御性处理）
+			entry := logEntry{
+				timestamp:     msg.event.Timestamp,
+				eventType:     "ai_stream",
+				from:          agentName,
+				agentName:     agentName,
+				streamContent: content,
+				content:       content,
+				streaming:     true,
+				isVerbose:     false,
+			}
+			m.logEntries = append(m.logEntries, entry)
+			idx := len(m.logEntries) - 1
+			m.aiStreamActiveEntries[agentName] = idx
+			m.markEntryDirty(idx)
+			m.viewportDirty = true
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+			return m, listenForEvents(m.eventCh)
+		}
+
+		// Handle ai_stream_end — 标记流式完成
+		if msg.event.Type == "ai_stream_end" {
+			agentName := msg.event.From
+			if agentName == "" {
+				agentName = "default"
+			}
+
+			if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
+				m.logEntries[idx].streaming = false
+				m.aiStreamCompletedEntries[agentName] = idx
+				delete(m.aiStreamActiveEntries, agentName)
+				m.markEntryDirty(idx)
+			}
+			return m, listenForEvents(m.eventCh)
+		}
+
+		// Handle ai_response — 定稿：用完整内容替换流式缓冲
+		if msg.event.Type == "ai_response" {
+			agentName := msg.event.From
+			if agentName == "" {
+				agentName = "default"
+			}
+
+			// 从 Content 中提取文本内容
+			content := ""
+			if s, ok := msg.event.Content.(string); ok {
+				content = s
+			} else {
+				content = fmt.Sprintf("%v", msg.event.Content)
+			}
+
+			// 优先匹配已完成的流式条目
+			if idx, ok := m.aiStreamCompletedEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
+				le := &m.logEntries[idx]
+				le.streamContent = content
+				le.content = content
+				le.eventType = "ai_response" // 切换为 ai_response 类型，走 Glamour 渲染
+				le.finalized = true
+				le.streaming = false
+				le.from = agentName
+				le.clearRenderCache()
+				m.markEntryDirty(idx)
+				delete(m.aiStreamCompletedEntries, agentName)
+				return m, listenForEvents(m.eventCh)
+			}
+
+			// Fallback: 也检查 active map（ai_stream_end 丢失的情况）
+			if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
+				le := &m.logEntries[idx]
+				le.streamContent = content
+				le.content = content
+				le.eventType = "ai_response"
+				le.finalized = true
+				le.streaming = false
+				le.from = agentName
+				le.clearRenderCache()
+				m.markEntryDirty(idx)
+				delete(m.aiStreamActiveEntries, agentName)
+				return m, listenForEvents(m.eventCh)
+			}
+
+			// 无对应流式条目 → 落入通用处理（创建新条目）
+			// 不 return，继续走下方逻辑
+		}
+
 		// Handle llm_call_start — create a running entry with animation (single line)
 		if msg.event.Type == "llm_call_start" {
 			entry := formatEventAsEntry(msg.event)

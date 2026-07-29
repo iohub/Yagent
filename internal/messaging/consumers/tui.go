@@ -181,14 +181,35 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 		prefixRendered = statusPrefixStyle.Render("ℹ️  Status")
 		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
 	case "ai_stream_start":
-		prefixRendered = aiPrefixStyle.Render("🚀 AI Stream Started")
-		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
+		// 流式开始：输出 agent 名称，不换行
+		agentName := ""
+		if contentMap, ok := event.Content.(map[string]interface{}); ok {
+			if a, ok := contentMap["agent"].(string); ok {
+				agentName = a
+			}
+		}
+		if agentName != "" {
+			fmt.Fprintf(t.writer, "\n%s ", aiPrefixStyle.Render("● "+agentName))
+		} else {
+			fmt.Fprint(t.writer, "\n● ")
+		}
+		return nil
 	case "ai_chunk":
-		prefixRendered = chunkPrefixStyle.Render("💬 AI Chunk")
-		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
+		// 流式内容：直接输出，不换行
+		contentStr := ""
+		if contentMap, ok := event.Content.(map[string]interface{}); ok {
+			if c, ok := contentMap["content"].(string); ok {
+				contentStr = c
+			}
+		}
+		if contentStr != "" {
+			fmt.Fprint(t.writer, contentStr)
+		}
+		return nil
 	case "ai_stream_end":
-		prefixRendered = aiPrefixStyle.Render("🏁 AI Stream Ended")
-		wrappedContent = contentStyle.Copy().Width(w - 6).Render(contentStr)
+		// 流式结束：换行
+		fmt.Fprintln(t.writer)
+		return nil
 	case "tool_call":
 		toolName = getToolNameFromContent(event.Content)
 		prefixRendered = toolPrefixStyle.Render("🛠️  Tool") + " " + buildToolBadge(toolName)

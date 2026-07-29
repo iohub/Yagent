@@ -372,6 +372,24 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 		return renderLLMCallWithAnim(*entry, width, m.anim)
 	}
 
+	// AI 流式渲染（纯文本，无 Glamour，保证性能）
+	if entry.eventType == "ai_stream" {
+		var prefix string
+		if entry.streaming {
+			prefix = "● " // 流式中
+		} else {
+			prefix = "● " // 流式完成
+		}
+
+		content := entry.streamContent
+		// 如果正在流式且有内容，显示光标
+		// 注意：由于每100ms tick重建，光标会自然闪烁
+		if entry.streaming && content != "" {
+			content += "▌"
+		}
+		return prefix + content
+	}
+
 	// Check width-keyed cache
 	if cached, ok := entry.getCachedRender(width); ok {
 		return cached
@@ -698,6 +716,13 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		timestamp: event.Timestamp,
 		eventType: string(event.Type),
 		from:      event.From,
+	}
+
+	// 流式事件已由 taskEventMsg handler 处理，不应到达此处
+	// 但为防御性编程，直接返回空条目（这些事件不应该走通用路径）
+	switch event.Type {
+	case "ai_stream_start", "ai_chunk", "ai_stream_end":
+		return entry
 	}
 
 	switch event.Type {

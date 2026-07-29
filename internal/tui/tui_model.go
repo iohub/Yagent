@@ -282,6 +282,12 @@ type logEntry struct {
 	// These are always hidden from the main view and displayed
 	// in the tool timeline panel instead.
 	isVerbose bool
+
+	// 流式渲染字段
+	streamContent string // 流式累积内容缓冲
+	streaming     bool   // 是否正在流式中
+	finalized     bool   // 是否已由 ai_response 定稿
+	agentName     string // 关联的 agent 名称
 }
 
 // getCachedRender returns the cached render for the given width.
@@ -562,6 +568,10 @@ type model struct {
 
 	// Active LLM calls: agent_name → log entry index for matching start/end
 	llmCallActiveEntries map[string]int
+
+	// AI 流式条目追踪
+	aiStreamActiveEntries    map[string]int // agent → logEntries index (流式中)
+	aiStreamCompletedEntries map[string]int // agent → logEntries index (等待 ai_response)
 
 	// Current LLM model being used (extracted from model_info events)
 	currentModel string
@@ -932,6 +942,8 @@ return &model{
 		logEntries:         make([]logEntry, 0),
 			llmCallActiveEntries: make(map[string]int),
 			viewport:           vp,
+		aiStreamActiveEntries:    make(map[string]int),
+		aiStreamCompletedEntries: make(map[string]int),
 		contentCache:       &strings.Builder{},
 		glamourRenderer:    glamourRenderer,
 		useDarkStyle:       useDarkStyle,
