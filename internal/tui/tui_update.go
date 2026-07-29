@@ -511,9 +511,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			// Non-animation dirty rebuild
+			// Non-animation dirty rebuild — use scroll lock so new content
+			// auto-scrolls to bottom only if the user was already at the bottom.
 			if m.viewportDirty && !m.activeAnim {
-				m.rebuildViewportPreservingScroll()
+				m.rebuildViewportScrollLock()
 				m.viewportDirty = false
 			}
 
