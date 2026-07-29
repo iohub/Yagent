@@ -1157,6 +1157,12 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			ToolCalls: choice.ToolCalls,
 		})
 
+		// 如果 LLM 没有调用任何工具，返回纯文本内容作为最终结果
+		// 这是防止死循环的关键：避免在无 tool_calls 时继续循环，导致 LLM 重复输出相同内容
+		if len(choice.ToolCalls) == 0 {
+			return choice.Content, nil
+		}
+
 		for _, tc := range choice.ToolCalls {
 			var toolResult string
 			var err error
