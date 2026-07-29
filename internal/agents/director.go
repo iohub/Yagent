@@ -1032,7 +1032,21 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 
 			slog.Debug("DirectorAgent calling LLM", "step", i, "messages", messages)
 
-			// Publish llm_call_start event
+			// Create opts with streaming handler for real-time output
+		opts := &llm.CallOptions{}
+		if a.Publisher != nil {
+			opts.StreamHandler = func(ctx context.Context, chunk []byte) error {
+				if len(chunk) > 0 {
+					a.Publisher.Publish("ai_chunk", map[string]interface{}{
+						"content": string(chunk),
+						"agent":   a.Name(),
+					}, a.Name())
+				}
+				return nil
+			}
+		}
+
+		// Publish llm_call_start event
 			if a.Publisher != nil {
 				a.Publisher.Publish("llm_call_start", map[string]interface{}{
 					"model": a.LLM.Model(),
@@ -1043,7 +1057,7 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			llmStartTime := time.Now()
 			// 使用可配置的 LLM 超时保护，防止远程服务无响应时永久阻塞
 			llmCtx, llmCancel := context.WithTimeout(ctx, a.llmTimeout)
-			resp, llmErr = a.LLM.GenerateContent(llmCtx, messages, toolDefs, nil)
+			resp, llmErr = a.LLM.GenerateContent(llmCtx, messages, toolDefs, opts)
 			llmCancel()
 			llmDuration := time.Since(llmStartTime).Seconds()
 

@@ -75,6 +75,20 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 
 	slog.Debug("MetaAgent calling LLM (design-only, no tools)", "input", input)
 
+	// Create opts with streaming handler for real-time output
+	opts := &llm.CallOptions{}
+	if a.Publisher != nil {
+		opts.StreamHandler = func(ctx context.Context, chunk []byte) error {
+			if len(chunk) > 0 {
+				a.Publisher.Publish("ai_chunk", map[string]interface{}{
+					"content": string(chunk),
+					"agent":   a.Name(),
+				}, a.Name())
+			}
+			return nil
+		}
+	}
+
 	maxRetries := a.StepRetries
 	var resp *llm.Response
 	var err error
@@ -94,7 +108,7 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 			}
 		}
 
-		resp, err = a.LLM.GenerateContent(ctx, messages, nil, nil)
+		resp, err = a.LLM.GenerateContent(ctx, messages, nil, opts)
 		if err == nil {
 			break
 		}
