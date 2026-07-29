@@ -116,6 +116,19 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 	opts := &llm.CallOptions{}
 
+	// Setup streaming handler for real-time output via ai_chunk events
+	if cfg.Publisher != nil {
+		opts.StreamHandler = func(ctx context.Context, chunk []byte) error {
+			if len(chunk) > 0 {
+				cfg.Publisher.Publish("ai_chunk", map[string]interface{}{
+					"content": string(chunk),
+					"agent":   cfg.AgentName,
+				}, cfg.AgentName)
+			}
+			return nil
+		}
+	}
+
 	// ─── OnAgentStart hook: run before entering the agent loop ───
 	if cfg.OnAgentStart != nil {
 		if err := cfg.OnAgentStart(ctx); err != nil {
@@ -193,10 +206,32 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			// Normalize messages before LLM call to merge consecutive assistants
 			messages = llm.NormalizeMessages(messages)
 
+			// Publish ai_stream_start before LLM call
+			if cfg.Publisher != nil {
+				cfg.Publisher.Publish("ai_stream_start", map[string]interface{}{
+					"agent": cfg.AgentName,
+				}, cfg.AgentName)
+			}
+
 			// 为每个 LLM 调用添加超时保护，防止远程服务无响应时永久阻塞
 			llmCtx, llmCancel := context.WithTimeout(ctx, llmTimeout)
 			resp, err = cfg.LLM.GenerateContent(llmCtx, messages, toolDefs, opts)
 			llmCancel()
+
+			// Publish ai_stream_end after LLM call
+			if cfg.Publisher != nil {
+				metadata := map[string]interface{}{
+					"agent": cfg.AgentName,
+				}
+				if err == nil && resp != nil && resp.Usage != nil {
+					metadata["usage"] = map[string]interface{}{
+						"prompt_tokens":     resp.Usage.PromptTokens,
+						"completion_tokens": resp.Usage.CompletionTokens,
+						"total_tokens":      resp.Usage.TotalTokens,
+					}
+				}
+				cfg.Publisher.PublishWithMetadata("ai_stream_end", "", cfg.AgentName, metadata)
+			}
 
 			// Calculate duration
 			llmDuration := time.Since(llmStartTime).Seconds()
