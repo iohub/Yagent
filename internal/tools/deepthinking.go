@@ -13,7 +13,8 @@ import (
 // structured analysis of complex problems. This tool is EXPENSIVE and should
 // only be used after conventional methods have been exhausted.
 type DeepThinkingTool struct {
-	LLM llm.Engine
+	LLM           llm.Engine
+	StreamHandler llm.StreamHandler // 可选的流式处理器，如果设置则使用流式推理
 }
 
 // NewDeepThinkingTool creates a new DeepThinkingTool with the given LLM client.
@@ -66,7 +67,13 @@ func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interf
 	llmCtx, llmCancel := context.WithTimeout(llmCtx, 5*time.Minute)
 	defer llmCancel()
 
-	resp, err := t.LLM.GenerateContent(llmCtx, messages, nil, nil)
+	// 如果设置了 StreamHandler，则使用流式推理
+	opts := &llm.CallOptions{}
+	if t.StreamHandler != nil {
+		opts.StreamHandler = t.StreamHandler
+	}
+
+	resp, err := t.LLM.GenerateContent(llmCtx, messages, nil, opts)
 	if err != nil {
 		return nil, fmt.Errorf("deepthinking LLM call failed: %w", err)
 	}

@@ -191,7 +191,21 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			FlowOps:          tools.NewFlowControlTool(workDir),
 			RepoOps:          tools.NewRepoOperationsTool(codeSeekMCP, workDir, 0),
 			UserConfirmMgr:   userConfirmMgr,
-			DeepThinkingTool: tools.NewDeepThinkingTool(deepthinkingEngine),
+			DeepThinkingTool: func() *tools.DeepThinkingTool {
+				dt := tools.NewDeepThinkingTool(deepthinkingEngine)
+				if publisher != nil {
+					dt.StreamHandler = func(ctx context.Context, chunk []byte) error {
+						if len(chunk) > 0 {
+							publisher.Publish("ai_chunk", map[string]interface{}{
+								"content": string(chunk),
+								"agent":   "deepthinking",
+							}, "deepthinking")
+						}
+						return nil
+					}
+				}
+				return dt
+			}(),
 
 			// BrowserMgr 浏览器管理器（单例，管理 Chromium 浏览器实例生命周期）
 			BrowserMgr: nil,
