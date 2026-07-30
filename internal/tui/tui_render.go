@@ -226,10 +226,11 @@ func (m *model) rebuildViewportScrollLock() {
 
 // rebuildContentCache 增量重建viewport内容缓存。
 // 仅在以下情况重建：
-//   1. 宽度变化 → 完全重建（所有条目重新渲染）
-//   2. needFullRebuild → 完全重建
-//   3. dirtyEntryIndices 非空 → 仅重新渲染脏条目
-//   4. 新条目到达 (len(contentParts) < len(logEntries)) → 追加渲染
+//  1. 宽度变化 → 完全重建（所有条目重新渲染）
+//  2. needFullRebuild → 完全重建
+//  3. dirtyEntryIndices 非空 → 仅重新渲染脏条目
+//  4. 新条目到达 (len(contentParts) < len(logEntries)) → 追加渲染
+//
 // 其他情况跳过，避免不必要的计算。
 func (m *model) rebuildContentCache() {
 	if m.termWidth <= 0 || m.termHeight <= 0 {
@@ -331,7 +332,7 @@ func (m *model) assembleViewportContent() {
 		for i, part := range m.contentParts {
 			entry := &m.logEntries[i]
 
-			// Verbose entries (tool calls, LLM calls, context events) are now 
+			// Verbose entries (tool calls, LLM calls, context events) are now
 			// displayed in the tool timeline panel instead of the main view.
 			if entry.isVerbose {
 				continue
@@ -376,20 +377,13 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 
 	// AI 流式渲染（纯文本，无 Glamour，保证性能）
 	if entry.eventType == "ai_stream" {
-		var prefix string
-		if entry.streaming {
-			prefix = "● " // 流式中
-		} else {
-			prefix = "● " // 流式完成
-		}
-
 		content := entry.streamContent
 		// 如果正在流式且有内容，显示光标
 		// 注意：由于每100ms tick重建，光标会自然闪烁
 		if entry.streaming && content != "" {
 			content += "▌"
 		}
-		return prefix + content
+		return content
 	}
 
 	// Check width-keyed cache
@@ -435,7 +429,7 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 		return rendered
 	}
 
-		if entry.eventType == "ai_response" && m.glamourRenderer != nil {
+	if entry.eventType == "ai_response" && m.glamourRenderer != nil {
 		// 先查 Glamour 缓存
 		if cached, ok := m.getGlamourCached(entry.content); ok {
 			entry.setCachedRender(cached, width)
@@ -1146,6 +1140,7 @@ func renderUserMessageBox(content string, maxWidth int) string {
 	// Assemble
 	return topLine + "\n" + strings.Join(interior, "\n") + "\n" + bottomLine
 }
+
 // wrapText word-wraps text to fit within maxWidth columns.
 // Preserves existing newlines and wraps long lines at word boundaries.
 func wrapText(text string, maxWidth int) string {
