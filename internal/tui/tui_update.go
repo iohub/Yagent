@@ -458,7 +458,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Stop tick early when idle: avoids unnecessary View() calls that cause flicker
-		if !m.activeAnim && !m.taskRunning {
+		if !m.activeAnim && !m.taskRunning && !m.viewportDirty {
 			m.tickStarted = false
 			return m, nil
 		}
@@ -1602,6 +1602,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				le.from = agentName
 				le.clearRenderCache()
 				m.markEntryDirty(idx)
+				m.viewportDirty = true // 新增：触发视图更新
 				delete(m.aiStreamCompletedEntries, agentName)
 				return m, listenForEvents(m.eventCh)
 			}
@@ -1617,6 +1618,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				le.from = agentName
 				le.clearRenderCache()
 				m.markEntryDirty(idx)
+				m.viewportDirty = true // 新增：触发视图更新
 				delete(m.aiStreamActiveEntries, agentName)
 				return m, listenForEvents(m.eventCh)
 			}
@@ -2033,6 +2035,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskCompleteMsg:
 		m.taskRunning = false
+		m.viewportDirty = true // 新增：确保最后一次内容更新被渲染
 		m.updateActiveAnim()
 		if m.anim != nil {
 			m.anim.Reset()

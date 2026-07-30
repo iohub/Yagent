@@ -217,7 +217,7 @@ func (m *model) rebuildViewportScrollLock() {
 	}
 	wasAtBottom := m.viewport.AtBottom()
 	m.rebuildContentCache()
-	m.viewport.SetContent(m.contentCache.String())
+	// 已移除：m.viewport.SetContent(m.contentCache.String())  — 现在由 rebuildContentCache 内部处理
 	if wasAtBottom {
 		m.viewport.GotoBottom()
 	}
@@ -307,6 +307,8 @@ func (m *model) rebuildContentCache() {
 
 	if contentChanged {
 		m.assembleViewportContent()
+		// 确保 viewport 内容与缓存同步 — 修复：最后一条消息未渲染的问题
+		m.viewport.SetContent(m.contentCache.String())
 	}
 }
 
