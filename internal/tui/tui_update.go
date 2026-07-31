@@ -1356,10 +1356,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Don't process task events while any popup/dialog is showing.
 		// Keep the event chain alive so the TUI resumes after dialog dismissal.
 		if m.dialogStack != nil && m.dialogStack.Len() > 0 {
-			if m.taskRunning {
+			// ai_stream_end / ai_response 是"定稿"类事件：仅更新已有流式条目的
+			// 状态与内容，不创建 UI 元素、不依赖用户输入，可以安全穿透 dialog 守卫。
+			// 若不穿透，任务完成弹窗（TaskCompleteDialog）抢先弹出后，最后一条
+			// ai_response 会被丢弃，导致最后一条 agent 消息停留在 ai_stream
+			// 纯文本状态、无法渲染为 markdown。
+			if msg.event.Type == "ai_stream_end" || msg.event.Type == "ai_response" {
+				// 穿透，继续向下处理
+			} else if m.taskRunning {
 				return m, listenForEvents(m.eventCh)
+			} else {
+				return m, nil
 			}
-			return m, nil
 		}
 
 		// Count tokens for AI response events
