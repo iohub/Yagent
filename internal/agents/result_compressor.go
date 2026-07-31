@@ -165,7 +165,7 @@ func (s *SharedMemoryStore) Store(key string, value string) error {
 		},
 	}
 
-	return s.sm.Publish(msg, "kvstore")
+	return s.sm.Publish(msg)
 }
 
 // Retrieve 从 SharedMemory 检索键值对
