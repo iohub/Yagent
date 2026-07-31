@@ -510,14 +510,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-
-			// Non-animation dirty rebuild — use scroll lock so new content
-			// auto-scrolls to bottom only if the user was already at the bottom.
-			if m.viewportDirty && !m.activeAnim {
-				m.rebuildViewportScrollLock()
-				m.viewportDirty = false
-			}
-
 		}
 		// 修复：任何状态下都处理 viewportDirty（不再依赖 activeAnim/taskRunning），
 		// 确保任务结束（taskRunning=false）后最后一次内容更新也能触发 rebuildViewportScrollLock
