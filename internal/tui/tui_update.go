@@ -519,6 +519,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		}
+		// 修复：任何状态下都处理 viewportDirty（不再依赖 activeAnim/taskRunning），
+		// 确保任务结束（taskRunning=false）后最后一次内容更新也能触发 rebuildViewportScrollLock
+		// 自动滚动到底部，避免最后一条 agent 消息尾部在视口之外（渲染不全）。
+		if m.viewportDirty && !m.activeAnim {
+			m.rebuildViewportScrollLock()
+			m.viewportDirty = false
+		}
+
 		return m, tickCmd()
 
 	case tea.WindowSizeMsg:

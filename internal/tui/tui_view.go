@@ -103,7 +103,13 @@ func (m *model) View() tea.View {
 		if m.viewport.Width() != contentWidth {
 			m.viewport.SetWidth(contentWidth)
 		}
+		// 记录重建前用户是否在底部，重建后若仍在底部则跟随滚动，
+		// 确保最后一条消息（ai_response 定稿后内容变长）的尾部可见，不再渲染不全。
+		wasAtBottom := m.viewport.AtBottom()
 		m.rebuildContentCache()
+		if wasAtBottom {
+			m.viewport.GotoBottom()
+		}
 		m.viewportViewValid = false
 	}
 
