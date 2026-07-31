@@ -63,9 +63,6 @@ Use cases:
 ### Example Tasks
 - "Check disk usage on the server"
 - "Find all log files modified in the last 24 hours"
-- "Restart the nginx service"
 - "Check if port 8080 is in use"
 - "List all running Docker containers"
 - "Find large files (>100MB) in the project directory"
-- "Run system diagnostics and generate a report"
-- "Install the `jq` package for JSON processing"
