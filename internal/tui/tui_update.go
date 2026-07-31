@@ -1759,21 +1759,37 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				thinkingText = thinkingText[:maxThinkingLen] + "\n\n[...思考内容已截断...]"
 			}
 
-			// 创建 logEntry
-			entry := logEntry{
-				timestamp: msg.event.Timestamp,
-				eventType: "thinking",
-				from:      msg.event.From,
-				content:   thinkingText,
-				prefix:    "  │ ",
-				isVerbose: false,
+			// 合并逻辑：连续 thinking 事件合并到同一个 logEntry 中
+			merged := false
+			if n := len(m.logEntries); n > 0 && m.logEntries[n-1].eventType == "thinking" {
+				lastIdx := n - 1
+				last := &m.logEntries[lastIdx]
+				if len(last.content)+len(thinkingText) <= 2*maxThinkingLen {
+					last.content += "\n" + thinkingText
+					last.timestamp = msg.event.Timestamp
+					last.clearRenderCache()
+					m.markEntryDirty(lastIdx)
+					m.viewportDirty = true
+					merged = true
+				}
+			}
+			if !merged {
+				// 创建 logEntry
+				entry := logEntry{
+					timestamp: msg.event.Timestamp,
+					eventType: "thinking",
+					from:      msg.event.From,
+					content:   thinkingText,
+					prefix:    "  │ ",
+					isVerbose: false,
+				}
+
+				m.logEntries = append(m.logEntries, entry)
+				m.viewportDirty = true
+				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			}
 
-			m.logEntries = append(m.logEntries, entry)
-			m.viewportDirty = true
-			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-
-			// 在 timeline 中添加条目
+			// 在 timeline 中添加条目（无论合并与否，timeline 保留每个思考事件语义）
 			callID := fmt.Sprintf("thinking_%s_%d", msg.event.From, msg.event.Timestamp.UnixNano())
 
 			// 预览：取前 80 个字符，去掉换行
