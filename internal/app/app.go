@@ -19,6 +19,7 @@ import (
 	"codeactor/internal/config"
 	"codeactor/internal/embedbin"
 	"codeactor/internal/globalctx"
+	"codeactor/internal/knowledge"
 	"codeactor/internal/llm"
 	"codeactor/internal/mcp"
 	"codeactor/internal/memory"
@@ -217,6 +218,12 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			GitCheckpointCfg: &ca.config.GitCheckpoint,
 		}
 		ca.globalCtx = &gctx
+
+		// [知识管理] 创建 KnowledgeInjector（依赖 CodeSeekMCP，在 MCP 客户端就绪后生效）
+		if ca.config != nil && ca.config.CodeSeek.Knowledge.Enabled && ca.globalCtx.CodeSeekMCP != nil {
+			ca.globalCtx.KnowledgeInjector = knowledge.NewKnowledgeInjector(ca.globalCtx.CodeSeekMCP, ca.config.CodeSeek.Knowledge)
+			slog.Info("KnowledgeInjector initialized", "enabled", true)
+		}
 
 		// Wire up UserConfirmManager: register as consumer and set publisher
 		userConfirmMgr.SetPublisher(publisher)

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"codeactor/internal/globalctx"
+	"codeactor/internal/knowledge"
 	"codeactor/internal/tools"
 
 	"codeactor/internal/llm"
@@ -316,6 +317,17 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	// 如果是 git 仓库且 checkpoint 启用，追加 Git Checkpoint 章节到提示词
 	if gitCheckpointEnabled {
 		systemPrompt += "\n" + gitCheckpointPromptSection
+	}
+
+	// [知识管理] 对话前动态知识检索注入（TargetFiles 留 nil，由 Injector 从 UserMessage 中提取）
+	if a.GlobalCtx.KnowledgeInjector != nil {
+		injCtx := knowledge.InjectionContext{
+			UserMessage: input,
+			TargetFiles: nil,
+		}
+		if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
+			systemPrompt += knowledgeBlock
+		}
 	}
 
 	cfg := DefaultExecutorConfig()

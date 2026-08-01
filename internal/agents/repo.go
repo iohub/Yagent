@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"codeactor/internal/globalctx"
+	"codeactor/internal/knowledge"
 	"codeactor/internal/messaging"
 	"codeactor/internal/tools"
 
@@ -110,6 +111,18 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 			systemPrompt += injection
 		}
 	}
+
+	// [知识管理] 对话前动态知识检索注入
+	if a.GlobalCtx.KnowledgeInjector != nil {
+		injCtx := knowledge.InjectionContext{
+			UserMessage: input,
+			TargetFiles: nil,
+		}
+		if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
+			systemPrompt += knowledgeBlock
+		}
+	}
+
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input

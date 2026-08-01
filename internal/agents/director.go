@@ -17,6 +17,7 @@ import (
 	director "codeactor/internal/agents/director"
 	"codeactor/internal/config"
 	"codeactor/internal/globalctx"
+	"codeactor/internal/knowledge"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
 	"codeactor/internal/tools"
@@ -931,6 +932,17 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 	// 追加项目上下文（放在所有静态内容之后，确保缓存命中率）
 	if projectContext != "" {
 		systemPrompt += projectContext
+	}
+
+	// [知识管理] Director 自身 systemPrompt 动态知识检索注入
+	if a.GlobalCtx.KnowledgeInjector != nil {
+		injCtx := knowledge.InjectionContext{
+			UserMessage: input,
+			TargetFiles: nil,
+		}
+		if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
+			systemPrompt += knowledgeBlock
+		}
 	}
 
 	messages = append(messages, llm.Message{
