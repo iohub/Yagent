@@ -13,7 +13,7 @@ import (
 )
 
 // aiChunkFlushThreshold 流式渲染 flush 阈值：积累多少个字符/token 才渲染一次
-const aiChunkFlushThreshold = 5
+const aiChunkFlushThreshold = 3
 
 // ─────────────────────────────────────────────────────────────────────────────
 // handleTaskEventMsg — 原 Update case taskEventMsg 提取
