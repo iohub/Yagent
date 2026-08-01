@@ -115,6 +115,13 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 
+	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP，不来自 tools.json 自动加载）
+	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, llm)
+	if len(knowledgeAdapters) > 0 {
+		tools.SetGuardOnAdapters(knowledgeAdapters, globalCtx.Guard)
+		adapters = append(adapters, knowledgeAdapters...)
+	}
+
 	// 创建 Registry 并注册所有工具
 	registry := tools.NewRegistry()
 	for _, adapter := range adapters {
@@ -466,6 +473,99 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		return "", fmt.Errorf("commit message is empty after generation")
 	}
 	return msg, nil
+}
+
+// createKnowledgeToolAdapters creates tool adapters for knowledge management operations.
+func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine) []*tools.Adapter {
+	consolidateTool := tools.NewConsolidateKnowledgeTool(globalCtx.CodeSeekMCP, llm)
+	pruneTool := tools.NewPruneHistoryTool(globalCtx.CodeSeekMCP, llm)
+
+	consolidateSchema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"type": map[string]interface{}{
+				"type":        "string",
+				"enum":        []string{"repo_retrieval", "coding_modification"},
+				"description": "知识来源类型：repo_retrieval=代码库分析知识，coding_modification=代码修改相关决策",
+			},
+			"title": map[string]interface{}{
+				"type":        "string",
+				"description": "知识条目标题（≤30字）",
+				"maxLength":   30,
+			},
+			"content": map[string]interface{}{
+				"type":        "string",
+				"description": "知识内容（≤500字符），需保留所有文件路径、函数名、符号名",
+				"maxLength":   500,
+			},
+			"tags": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"minItems":    1,
+				"description": "知识标签列表，至少 1 个",
+			},
+			"related_files": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "相关文件路径列表（可选）",
+			},
+			"source_agent": map[string]interface{}{
+				"type":        "string",
+				"enum":        []string{"repo_agent", "coding_agent"},
+				"description": "来源 Agent",
+			},
+			"task_id": map[string]interface{}{
+				"type":        "string",
+				"description": "关联的任务 ID（可选）",
+			},
+			"confidence": map[string]interface{}{
+				"type":        "number",
+				"description": "置信度 0-1，默认 1.0",
+				"default":     1.0,
+			},
+		},
+		"required": []string{"type", "title", "content", "tags"},
+	}
+
+	pruneSchema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"action": map[string]interface{}{
+				"type":        "string",
+				"enum":        []string{"list", "merge", "delete"},
+				"description": "操作类型：list=列出条目，merge=合并相似条目，delete=按 ID 删除",
+			},
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "list/merge 时最多读取的条目数，默认 50",
+				"default":     50,
+			},
+			"type": map[string]interface{}{
+				"type":        "string",
+				"description": "按知识类型过滤（可选，空=全部）",
+			},
+			"tag": map[string]interface{}{
+				"type":        "string",
+				"description": "按标签过滤（可选）",
+			},
+			"ids": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "delete 时必填：要删除的条目 ID 列表",
+			},
+			"similarity_threshold": map[string]interface{}{
+				"type":        "number",
+				"description": "merge 时相似度阈值，默认 0.80",
+				"default":     0.80,
+			},
+		},
+		"required": []string{"action"},
+	}
+
+	return []*tools.Adapter{
+		tools.NewAdapter("consolidate_knowledge", "将当前任务的关键知识整理并写入知识库。适用于：(1) 完成代码分析后沉淀领域知识；(2) 完成代码修改后记录关键变更决策；(3) 发现重要架构模式或设计规律时。执行前请确保内容已提炼（≤500字符），tags 至少 1 个。", consolidateTool.Execute).WithSchema(consolidateSchema),
+		tools.NewAdapter("prune_history", "维护知识库健康：列出当前条目、合并相似条目、或按 ID 删除过期条目。建议定期执行 merge 以去重。", pruneTool.Execute).WithSchema(pruneSchema),
+	}
 }
 
 // createCheckpointToolAdapters creates tool adapters for manual git checkpoint operations.
