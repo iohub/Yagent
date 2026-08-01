@@ -189,7 +189,7 @@ func TestDefaultKeywords(t *testing.T) {
 	}
 
 	// 验证常见关键词存在
-	expectedKeywords := []string{"agent", "api", "async", "auth", "build", "cache"}
+	expectedKeywords := []string{"python", "javascript", "webpack", "middleware", "database", "redis"}
 	for _, kw := range expectedKeywords {
 		found := false
 		for _, k := range keywords {
