@@ -335,7 +335,11 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 				)
 			}
 			// 使用 consolidation 专用的 LLM engine（复用 repoEngine，轻量模型可在配置中独立设置）
-			consolidationWorker := agents.NewConsolidationWorker(repoMemStore, repoEngine)
+			knowledgeCfg := config.KnowledgeConfig{}
+			if ca.config != nil {
+				knowledgeCfg = ca.config.CodeSeek.Knowledge
+			}
+			consolidationWorker := agents.NewConsolidationWorker(repoMemStore, repoEngine, ca.globalCtx.CodeSeekMCP, knowledgeCfg)
 			consolidationWorker.Start()
 			ca.consolidationWorker = consolidationWorker
 			repoAgent.SetMemory(repoMemStore, consolidationWorker)
