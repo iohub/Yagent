@@ -1,0 +1,455 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"codeactor/internal/llm"
+	"codeactor/internal/mcp"
+)
+
+// ============================================================================
+// ConsolidateKnowledgeTool
+// ============================================================================
+
+// ConsolidateKnowledgeTool 知识整理工具，用于向知识图谱添加/合并知识条目。
+type ConsolidateKnowledgeTool struct {
+	mcp    *mcp.MCPClient
+	engine llm.Engine
+}
+
+// NewConsolidateKnowledgeTool 创建知识整理工具。
+func NewConsolidateKnowledgeTool(mcpClient *mcp.MCPClient, engine llm.Engine) *ConsolidateKnowledgeTool {
+	return &ConsolidateKnowledgeTool{mcp: mcpClient, engine: engine}
+}
+
+// Execute 执行知识整理：校验 → 蒸馏 → 去重 → 合并 → add/delete。
+func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	// ── 1. 参数解析 ───────────────────────────────────────────────────────────
+	rawType, _ := params["type"].(string)
+	title, _ := params["title"].(string)
+	content, _ := params["content"].(string)
+
+	if rawType == "" {
+		return nil, fmt.Errorf("type parameter is required")
+	}
+	if title == "" {
+		return nil, fmt.Errorf("title parameter is required")
+	}
+	if content == "" {
+		return nil, fmt.Errorf("content parameter is required")
+	}
+
+	validTypes := map[string]bool{"repo_retrieval": true, "coding_modification": true}
+	if !validTypes[rawType] {
+		return nil, fmt.Errorf("invalid type: %q (allowed: repo_retrieval, coding_modification)", rawType)
+	}
+
+	// title 超 30 字截断
+	if len(title) > 30 {
+		title = title[:30]
+	}
+
+	// tags（至少 1 个）
+	var tags []string
+	if rawTags, ok := params["tags"].([]interface{}); ok {
+		for _, v := range rawTags {
+			if s, ok := v.(string); ok && s != "" {
+				tags = append(tags, s)
+			}
+		}
+	}
+	if len(tags) == 0 {
+		return nil, fmt.Errorf("tags parameter is required and must contain at least 1 non-empty string")
+	}
+
+	// related_files（可选）
+	var relatedFiles []string
+	if rawFiles, ok := params["related_files"].([]interface{}); ok {
+		for _, v := range rawFiles {
+			if s, ok := v.(string); ok {
+				relatedFiles = append(relatedFiles, s)
+			}
+		}
+	}
+
+	sourceAgent, _ := params["source_agent"].(string)
+	taskID, _ := params["task_id"].(string)
+	confidence := 1.0
+	if rawConf, ok := params["confidence"].(float64); ok {
+		confidence = rawConf
+	}
+
+	// ── 2. LLM 蒸馏（content > 500 字时）──────────────────────────────────────
+	if t.engine != nil && len(content) > 500 {
+		distilled, err := distillContent(t.engine, ctx, title, content)
+		if err != nil {
+			// 降级：硬截断
+			content = content[:500] + "..."
+		} else {
+			content = distilled
+		}
+	} else if len(content) > 500 {
+		content = content[:500] + "..."
+	}
+
+	// ── 3. 去重检测 ──────────────────────────────────────────────────────────
+	var dupResult *mcp.KnowledgeSearchResult
+	if t.mcp != nil {
+		results, err := t.mcp.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
+			Query:  title,
+			Limit:  5,
+			Rerank: true,
+		})
+		if err == nil {
+			for i := range results {
+				if results[i].RerankScore != nil && *results[i].RerankScore > 0.85 {
+					dupResult = &results[i]
+					break
+				}
+			}
+		}
+	}
+
+	// ── 4/5. 重复处理（合并）──────────────────────────────────────────────────
+	if dupResult != nil && t.engine != nil {
+		newTitle, newContent, newTags, err := mergeKnowledgeLLM(t.engine, ctx,
+			title, content, tags, *dupResult)
+		if err == nil {
+			// 先 add 新，再 delete 旧
+			newReq := mcp.KnowledgeAddRequest{
+				Type:         rawType,
+				Title:        newTitle,
+				Content:      newContent,
+				Tags:         newTags,
+				RelatedFiles: relatedFiles,
+				SourceAgent:  sourceAgent,
+				TaskID:       taskID,
+				Confidence:   confidence,
+			}
+			newRecord, err := t.mcp.KnowledgeAdd(ctx, newReq)
+			if err == nil {
+				_ = t.mcp.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{ID: dupResult.ID})
+				return map[string]interface{}{
+					"status":      "merged",
+					"id":          newRecord.ID,
+					"parent_ids":  []string{dupResult.ID},
+				}, nil
+			}
+			// add 失败则降级为直接 add 新条目
+		}
+	}
+
+	// ── 6. 普通添加 ──────────────────────────────────────────────────────────
+	if t.mcp == nil {
+		return map[string]interface{}{"status": "skipped", "reason": "codeseek not available"}, nil
+	}
+
+	addReq := mcp.KnowledgeAddRequest{
+		Type:         rawType,
+		Title:        title,
+		Content:      content,
+		Tags:         tags,
+		RelatedFiles: relatedFiles,
+		SourceAgent:  sourceAgent,
+		TaskID:       taskID,
+		Confidence:   confidence,
+	}
+	record, err := t.mcp.KnowledgeAdd(ctx, addReq)
+	if err != nil {
+		return nil, fmt.Errorf("knowledge_add failed: %w", err)
+	}
+	return map[string]interface{}{"status": "added", "id": record.ID}, nil
+}
+
+// ============================================================================
+// PruneHistoryTool
+// ============================================================================
+
+// PruneHistoryTool 知识维护工具，支持 list/merge/delete 三种操作。
+type PruneHistoryTool struct {
+	mcp    *mcp.MCPClient
+	engine llm.Engine
+}
+
+// NewPruneHistoryTool 创建知识维护工具。
+func NewPruneHistoryTool(mcpClient *mcp.MCPClient, engine llm.Engine) *PruneHistoryTool {
+	return &PruneHistoryTool{mcp: mcpClient, engine: engine}
+}
+
+// Execute 执行知识维护操作。
+func (t *PruneHistoryTool) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	action, _ := params["action"].(string)
+	switch action {
+	case "list":
+		return t.executeList(ctx, params)
+	case "delete":
+		return t.executeDelete(ctx, params)
+	case "merge":
+		return t.executeMerge(ctx, params)
+	default:
+		return nil, fmt.Errorf("action must be one of: list, delete, merge")
+	}
+}
+
+// ── list ─────────────────────────────────────────────────────────────────────
+func (t *PruneHistoryTool) executeList(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if t.mcp == nil {
+		return map[string]interface{}{"status": "skipped", "reason": "codeseek not available"}, nil
+	}
+	limit := 50
+	if f, ok := params["limit"].(float64); ok {
+		limit = int(f)
+	}
+	typ, _ := params["type"].(string)
+	tag, _ := params["tag"].(string)
+
+	records, err := t.mcp.KnowledgeList(ctx, mcp.KnowledgeListRequest{Limit: limit, Type: typ, Tag: tag})
+	if err != nil {
+		return nil, fmt.Errorf("knowledge_list failed: %w", err)
+	}
+	return map[string]interface{}{
+		"total":   len(records),
+		"entries": records,
+	}, nil
+}
+
+// ── delete ───────────────────────────────────────────────────────────────────
+func (t *PruneHistoryTool) executeDelete(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if t.mcp == nil {
+		return map[string]interface{}{"status": "skipped", "reason": "codeseek not available"}, nil
+	}
+	var ids []string
+	if rawIDs, ok := params["ids"].([]interface{}); ok {
+		for _, v := range rawIDs {
+			if s, ok := v.(string); ok {
+				ids = append(ids, s)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("ids parameter is required for delete action")
+	}
+
+	var deletedCount int
+	var failedIDs []string
+	for _, id := range ids {
+		if err := t.mcp.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{ID: id}); err != nil {
+			failedIDs = append(failedIDs, id)
+		} else {
+			deletedCount++
+		}
+	}
+	if len(failedIDs) == len(ids) {
+		return nil, fmt.Errorf("all delete operations failed: %v", failedIDs)
+	}
+	return map[string]interface{}{
+		"status":     "deleted",
+		"count":      deletedCount,
+		"failed_ids": failedIDs,
+	}, nil
+}
+
+// ── merge ────────────────────────────────────────────────────────────────────
+func (t *PruneHistoryTool) executeMerge(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if t.mcp == nil {
+		return map[string]interface{}{"status": "skipped", "reason": "codeseek not available"}, nil
+	}
+	if t.engine == nil {
+		return map[string]interface{}{"status": "no_merge_needed", "reason": "LLM engine not available"}, nil
+	}
+
+	limit := 200
+	if f, ok := params["limit"].(float64); ok {
+		limit = int(f)
+	}
+	typ, _ := params["type"].(string)
+	threshold := 0.80
+	if f, ok := params["similarity_threshold"].(float64); ok && f > 0 {
+		threshold = f
+	}
+
+	candidates, err := t.mcp.KnowledgeList(ctx, mcp.KnowledgeListRequest{Limit: limit, Type: typ})
+	if err != nil {
+		return nil, fmt.Errorf("knowledge_list failed: %w", err)
+	}
+
+	type mergeGroup struct {
+		newID      string
+		parentIDs  []string
+	}
+	var groups []mergeGroup
+	mergedIDs := make(map[string]bool) // 已被合并的条目 ID
+
+	for i, a := range candidates {
+		if mergedIDs[a.ID] {
+			continue
+		}
+		// 以 A.Content 为 query 检索，看是否有 B 与 A 高度相似
+		results, err := t.mcp.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
+			Query:  a.Content,
+			Limit:  5,
+			Rerank: true,
+		})
+		if err != nil {
+			continue
+		}
+		for j := range results {
+			r := &results[j]
+			if r.ID == a.ID || mergedIDs[r.ID] {
+				continue
+			}
+			if r.RerankScore != nil && *r.RerankScore > threshold {
+				// 发现重复，合并这一组
+				newTitle, newContent, newTags, merr := mergeKnowledgeLLM(t.engine, ctx,
+					a.Title, a.Content, a.Tags, *r)
+				if merr != nil {
+					continue
+				}
+				addReq := mcp.KnowledgeAddRequest{
+					Type:         a.Type,
+					Title:        newTitle,
+					Content:      newContent,
+					Tags:         newTags,
+					RelatedFiles: mergeStrings(a.RelatedFiles, r.RelatedFiles),
+					Confidence:   a.Confidence,
+				}
+				newRecord, aerr := t.mcp.KnowledgeAdd(ctx, addReq)
+				if aerr != nil {
+					continue
+				}
+				_ = t.mcp.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{ID: a.ID})
+				_ = t.mcp.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{ID: r.ID})
+				mergedIDs[a.ID] = true
+				mergedIDs[r.ID] = true
+				groups = append(groups, mergeGroup{
+					newID:     newRecord.ID,
+					parentIDs: []string{a.ID, r.ID},
+				})
+				break // 只合并第一对
+			}
+		}
+		_ = i // suppress unused variable
+	}
+
+	if len(groups) == 0 {
+		return map[string]interface{}{"status": "no_merge_needed"}, nil
+	}
+	return map[string]interface{}{
+		"status":         "merged",
+		"merged_count":   len(groups),
+		"merged_groups":  groups,
+	}, nil
+}
+
+// ============================================================================
+// LLM 辅助函数
+// ============================================================================
+
+func distillContent(engine llm.Engine, ctx context.Context, title, content string) (string, error) {
+	prompt := `You are a knowledge distillation assistant. Given a title and content, extract the core要点 (key points) in Chinese.
+Rules:
+1. Output must be ≤500 characters (Chinese characters count as 1).
+2. Preserve all file paths, function names, and symbol names exactly as written.
+3. Keep the technical accuracy — do not lose critical details.
+4. Output ONLY the distilled content, no explanation, no markdown.`
+	resp, err := engine.GenerateContent(ctx, []llm.Message{
+		{Role: llm.RoleSystem, Content: prompt},
+		{Role: llm.RoleUser, Content: fmt.Sprintf("Title: %s\n\nContent:\n%s", title, content)},
+	}, nil, &llm.CallOptions{Temperature: 0.3, MaxTokens: 2048})
+	if err != nil {
+		return "", err
+	}
+	result := strings.TrimSpace(resp.Choices[0].Content)
+	if len(result) > 500 {
+		result = result[:500]
+	}
+	return result, nil
+}
+
+type mergeOutput struct {
+	Title   string   `json:"title"`
+	Content string   `json:"content"`
+	Tags    []string `json:"tags"`
+}
+
+func mergeKnowledgeLLM(engine llm.Engine, ctx context.Context,
+	newTitle, newContent string, newTags []string,
+	old mcp.KnowledgeSearchResult,
+) (title, content string, tags []string, err error) {
+	prompt := `You are a knowledge consolidation assistant. Given a new knowledge entry and an existing similar entry,
+merge them into a single, unified entry.
+Output ONLY a valid JSON object with these fields (no markdown fence, no explanation):
+{"title":"...","content":"...","tags":["..."]}
+Rules:
+1. Title should be a clear, concise summary (≤30 chars).
+2. Content should preserve all unique facts from both entries, keeping file paths and function names exact.
+3. Tags: union of both entries' tags, deduplicated.
+4. Output must be valid JSON.`
+
+	userContent := fmt.Sprintf("New entry:\nTitle: %s\nContent: %s\nTags: %v\n\nExisting entry:\nTitle: %s\nContent: %s\nTags: %v\nType: %s",
+		newTitle, newContent, newTags,
+		old.Title, old.Content, old.Tags, old.Type)
+
+	resp, err := engine.GenerateContent(ctx, []llm.Message{
+		{Role: llm.RoleSystem, Content: prompt},
+		{Role: llm.RoleUser, Content: userContent},
+	}, nil, &llm.CallOptions{Temperature: 0.3, MaxTokens: 2048})
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	rawJSON := extractJSON(resp.Choices[0].Content)
+	var out mergeOutput
+	if err := json.Unmarshal([]byte(rawJSON), &out); err != nil {
+		return "", "", nil, fmt.Errorf("failed to parse merge output JSON: %w", err)
+	}
+	if out.Title == "" {
+		out.Title = newTitle
+	}
+	if out.Content == "" {
+		out.Content = newContent
+	}
+	// 去重合并 tags
+	tagSet := make(map[string]bool)
+	for _, tag := range newTags {
+		tagSet[tag] = true
+	}
+	for _, tag := range old.Tags {
+		tagSet[tag] = true
+	}
+	for tag := range tagSet {
+		tags = append(tags, tag)
+	}
+	return out.Title, out.Content, tags, nil
+}
+
+// extractJSON 从文本中提取 JSON 块：去除 ```json fence，取第一个 '{' 到最后一个 '}'。
+func extractJSON(text string) string {
+	text = strings.TrimSpace(text)
+	// 去除 markdown fence
+	text = strings.TrimPrefix(text, "```json")
+	text = strings.TrimPrefix(text, "```")
+	text = strings.TrimSuffix(text, "```")
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start == -1 || end == -1 || end <= start {
+		return text
+	}
+	return text[start : end+1]
+}
+
+// mergeStrings 合并两个字符串切片并去重（保持顺序）。
+func mergeStrings(a, b []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, s := range append(a, b...) {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
