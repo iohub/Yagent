@@ -89,13 +89,13 @@
 
 | 能力 | 关键文件/函数 | 说明 |
 |------|---------------|------|
-| **ConversationMemory 截断** | `internal/memory/memory.go` L180-200 | 超过 `MaxSize` 时自动截断最旧的非系统消息 |
-| **tool_call 配对修复** | `internal/memory/memory.go` L220-280 | `repairToolCallPairsAfterTruncation()` |
+| **ConversationMemory 截断** | `internal/memory/memory.go` L116-139（约） | 超过 `MaxSize` 时自动截断最旧的非系统消息 |
+| **tool_call 配对修复** | `internal/memory/memory.go` L116-139 附近（约，addMessage 内调用） | `repairToolCallPairsAfterTruncation()` |
 | **ConsolidationWorker 异步整理** | `internal/agents/consolidation_worker.go` | 单 goroutine + channel 串行处理，LLM 蒸馏 + 格式校验 |
 | **RepoMemoryStore 静态注入** | `internal/agents/repo_memory.go` L152-162 | `RenderMemoryForInjection()` 将记忆注入 system prompt |
 | **codeseek LanceDB 向量索引** | `codeseek/rust-core/src/services/embedding_service.rs` | Qwen3-Embedding-4B，2560 维，LanceDB 存储 |
 | **Hybrid Search（RRF 融合）** | `codeseek/rust-core/src/services/hybrid_search.rs` | Dense(vector) + Sparse(BM25) 双路召回 |
-| **Cross-Encoder Reranker** | `codeseek/rust-core/src/services/reranker_service.rs` | BAAI/bge-reranker-v2-m3，可选启用 |
+| **Cross-Encoder Reranker** | `codeseek/rust-core/src/services/reranker_service.rs` | Qwen/Qwen3-Reranker-4B，可选启用 |
 | **MCP 集成（stdio JSON-RPC 2.0）** | `internal/mcp/client.go` | `MCPClient.CallTool()` 封装 JSON-RPC 调用 |
 | **工具注册机制** | `internal/tools/registry.go` + `tools.json` | Registry 线程安全注册表，Adapter 模式 |
 | **ResultCompressor 大结果压缩** | `internal/agents/result_compressor.go` | 阈值 4096 字节，摘要 2048 字符，存入 SharedMemory |
@@ -243,11 +243,11 @@ graph TB
 │  ConsolidationWorker.Submit(task)                                            │
 │      ↓                                                                     │
 │                                                                              │
-│  【整理】consolidate_knowledge() 工具执行                                     │
+│  【整理】consolidate_knowledge() 工具执行（LLM 主动调用工具；ConsolidationWorker 自动提取见 5.7）│
 │  ┌──────────────────────────────────────────────────────────────────┐       │
 │  │  ① 格式校验：type/title/content 必填，tags 非空                   │       │
 │  │  ② 超长 LLM 蒸馏：>500 字内容通过 LLM 压缩至核心要点               │       │
-│  │  ③ 去重检测：以 title 为 query 搜 top_k=5，rerank_score>0.85 判重复 │       │
+│  │  ③ 去重检测：以 title 为 query 搜 top_k=5，rerank_score>0.85 判重复（未启用精排时以 hybrid score 降级判定） │       │
 │  │  ④ 高相似 → LLM 合并 → delete 旧 + add 新（记录 parent_ids）       │       │
 │  │  ⑤ 无重复 → 直接 knowledge_add                                   │       │
 │  └──────────────────────────────────────────────────────────────────┘       │
@@ -834,7 +834,7 @@ pub async fn handle_knowledge_add(
     let related_files: Vec<String> = serde_json::from_value(params["related_files"].clone())?;
     let source_agent = params["source_agent"].as_str().unwrap_or("");
     let task_id = params["task_id"].as_str().unwrap_or("");
-    let confidence = params["confidence"].as_float().unwrap_or(1.0);
+    let confidence = params["confidence"].as_f64().unwrap_or(1.0) as f32;
     
     // 2. 生成 ID：kn_{timestamp}_{seq}
     let timestamp = Utc::now().timestamp_millis();
@@ -900,16 +900,53 @@ pub async fn handle_knowledge_search(
         candidates.truncate(top_k);
     }
     
-    // 4. 更新 access_count / last_accessed
-    for candidate in &candidates {
-        db.knowledge_table.increment_access(&candidate.id).await?;
-    }
-    
-    // 5. 返回结果
+    // 5. 返回结果（rerank_score：精排启用时为 Cross-Encoder 得分，否则等于 Score）
     Ok(json!({
-        "results": candidates,
+        "results": candidates.iter().map(|c| {
+            json!({
+                "id": c.id,
+                "type": c.type_,
+                "title": c.title,
+                "content": c.content,
+                "tags": c.tags,
+                "score": c.score,
+                "rerank_score": c.rerank_score,
+                "confidence": c.confidence,
+                "related_files": c.related_files,
+                "created_at": c.created_at.to_rfc3339(),
+            })
+        }).collect::<Vec<_>>(),
         "total": candidates.len(),
         "query": query
+    }))
+}
+
+/// knowledge_list handler：列出知识库中的知识条目
+pub async fn handle_knowledge_list(
+    params: &serde_json::Value,
+    db: &Database,
+) -> Result<serde_json::Value, McpError> {
+    let type_filter = params["type"].as_str().unwrap_or("");
+    let limit = params["limit"].as_u64().unwrap_or(50) as usize;
+    let offset = params["offset"].as_u64().unwrap_or(0) as usize;
+    let order_by = params["order_by"].as_str().unwrap_or("created_at");
+    let max_age_days = params["max_age_days"].as_u64();
+    let min_confidence = params["min_confidence"].as_f64().unwrap_or(0.0);
+
+    // 从知识表查询条目
+    let entries = db.knowledge_table.list(
+        type_filter,
+        limit,
+        offset,
+        order_by,
+        max_age_days,
+        min_confidence as f32,
+    ).await?;
+
+    // 返回结果，字段与 KnowledgeSearchResult 对齐
+    Ok(json!({
+        "entries": entries,
+        "total": entries.len(),
     }))
 }
 ```
@@ -1009,14 +1046,18 @@ type KnowledgeDeleteRequest struct {
 
 // KnowledgeSearchResult 知识检索结果
 type KnowledgeSearchResult struct {
-    ID           string  `json:"id"`
-    Type         string  `json:"type"`
-    Title        string  `json:"title"`
-    Content      string  `json:"content"`
+    ID           string   `json:"id"`
+    Type         string   `json:"type"`
+    Title        string   `json:"title"`
+    Content      string   `json:"content"`
     Tags         []string `json:"tags"`
-    Score        float64 `json:"score"`
-    Confidence   float64 `json:"confidence"`
+    Score        float64  `json:"score"`
+    // RerankScore 为精排后得分；若 codeseek 未启用精排，其值等于 Score（hybrid 得分）
+    RerankScore  float64  `json:"rerank_score,omitempty"`
+    Confidence   float64  `json:"confidence"`
     RelatedFiles []string `json:"related_files"`
+    // CreatedAt 知识条目创建时间，用于 prune list 展示年龄
+    CreatedAt    time.Time `json:"created_at,omitempty"`
 }
 
 // KnowledgeAdd 添加知识条目
@@ -1066,11 +1107,11 @@ func (c *MCPClient) KnowledgeSearch(ctx context.Context, req KnowledgeSearchRequ
 // KnowledgeList 列出知识条目
 func (c *MCPClient) KnowledgeList(ctx context.Context, req KnowledgeListRequest) ([]KnowledgeSearchResult, error) {
     result, err := c.CallTool(ctx, "knowledge_list", map[string]interface{}{
-        "type":          req.Type,
-        "limit":         req.Limit,
-        "offset":        req.Offset,
-        "order_by":      req.OrderBy,
-        "max_age_days":  req.MaxAgeDays,
+        "type":           req.Type,
+        "limit":          req.Limit,
+        "offset":         req.Offset,
+        "order_by":       req.OrderBy,
+        "max_age_days":   req.MaxAgeDays,
         "min_confidence": req.MinConfidence,
     })
     if err != nil {
@@ -1078,9 +1119,10 @@ func (c *MCPClient) KnowledgeList(ctx context.Context, req KnowledgeListRequest)
     }
     var resp map[string]interface{}
     json.Unmarshal([]byte(result), &resp)
-    resultsJSON, _ := json.Marshal(resp["results"])
+    // 统一使用 entries 字段（与 Rust handler 响应一致）
+    entriesJSON, _ := json.Marshal(resp["entries"])
     var results []KnowledgeSearchResult
-    json.Unmarshal(resultsJSON, &results)
+    json.Unmarshal(entriesJSON, &results)
     return results, nil
 }
 
@@ -1204,6 +1246,7 @@ func ConsolidateKnowledge(ctx context.Context, globalCtx *globalctx.GlobalCtx, l
     }
     
     // ③ 去重检测：以 title 为 query 搜 top_k=5
+    // 注：未启用精排时以 hybrid score (RerankScore == Score) 降级判定
     var results []mcp.KnowledgeSearchResult
     if globalCtx.CodeSeekMCP != nil {
         searchResults, err := globalCtx.CodeSeekMCP.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
@@ -1215,40 +1258,55 @@ func ConsolidateKnowledge(ctx context.Context, globalCtx *globalctx.GlobalCtx, l
             results = searchResults
         }
     }
-    
+
     // ④ 高相似 → LLM 合并
     for _, existing := range results {
-        if existing.Score > 0.85 {
+        // RerankScore 为精排后得分；若 codeseek 未启用精排，其值等于 Score（hybrid 得分）
+        if existing.RerankScore > 0.85 {
             merged, err := mergeWithExisting(ctx, llmEngine, existing, title, content, typ)
             if err != nil {
                 slog.Warn("Knowledge merge failed", "error", err)
                 continue
             }
-            // delete 旧 + add 新
-            if globalCtx.CodeSeekMCP != nil {
-                globalCtx.CodeSeekMCP.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{
-                    IDs: []string{existing.ID},
-                })
+            // 先 add 新条目，成功后再 delete 旧条目（避免旧条目丢失）
+            addResult, addErr := addKnowledge(ctx, globalCtx, merged.Title, merged.Content, typ, tags)
+            if addErr != nil {
+                slog.Warn("Failed to add merged knowledge, preserving old entry", "error", addErr)
+                return nil, fmt.Errorf("merge add failed: %w", addErr)
             }
-            return addKnowledge(ctx, globalCtx, merged, typ, tags)
+            if globalCtx.CodeSeekMCP != nil {
+                if delErr := globalCtx.CodeSeekMCP.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{
+                    IDs: []string{existing.ID},
+                }); delErr != nil {
+                    slog.Warn("Failed to delete old knowledge after merge", "error", delErr)
+                    // delete 失败不阻断，已 add 成功
+                }
+            }
+            return addResult, nil
         }
     }
-    
+
     // ⑤ 无重复 → 直接 add
-    return addKnowledge(ctx, globalCtx, content, typ, tags)
+    return addKnowledge(ctx, globalCtx, title, content, typ, tags)
 }
 
 // addKnowledge 调用 MCP 添加知识
-func addKnowledge(ctx context.Context, globalCtx *globalctx.GlobalCtx, content, typ string, tags []string) (interface{}, error) {
+func addKnowledge(ctx context.Context, globalCtx *globalctx.GlobalCtx, title, content, typ string, tags []string) (interface{}, error) {
     if globalCtx.CodeSeekMCP == nil {
         return map[string]string{"status": "skipped", "reason": "codeseek not available"}, nil
     }
-    
+
+    // title 为空时使用内容首行作为兜底
+    effectiveTitle := title
+    if effectiveTitle == "" {
+        effectiveTitle = getTitleFromContent(content)
+    }
+
     id, err := globalCtx.CodeSeekMCP.KnowledgeAdd(ctx, mcp.KnowledgeAddRequest{
-        Type:      typ,
-        Title:     getTitleFromContent(content),
-        Content:   content,
-        Tags:      tags,
+        Type:        typ,
+        Title:       effectiveTitle,
+        Content:     content,
+        Tags:        tags,
         SourceAgent: getSourceAgent(typ),
     })
     
@@ -1328,7 +1386,7 @@ func distillContent(ctx context.Context, llmEngine llm.Engine, title, content st
       },
       "query": {
         "type": "string",
-        "description": "检索查询（merge 用，用于查找相似条目）"
+        "description": "可选，用于缩小候选范围（merge 时若不传则按 type 全量扫描）"
       },
       "ids": {
         "type": "array",
@@ -1385,7 +1443,7 @@ func listKnowledge(ctx context.Context, globalCtx *globalctx.GlobalCtx, params m
     if globalCtx.CodeSeekMCP == nil {
         return map[string]string{"status": "skipped", "reason": "codeseek not available"}, nil
     }
-    
+
     req := mcp.KnowledgeListRequest{
         Limit:         50,
         Offset:        0,
@@ -1393,15 +1451,15 @@ func listKnowledge(ctx context.Context, globalCtx *globalctx.GlobalCtx, params m
         MaxAgeDays:    getIntParam(params, "max_age_days", 30),
         MinConfidence: getFloatParam(params, "min_confidence", 0.5),
     }
-    
+
     results, err := globalCtx.CodeSeekMCP.KnowledgeList(ctx, req)
     if err != nil {
         return nil, fmt.Errorf("failed to list knowledge: %w", err)
     }
-    
+
     return map[string]interface{}{
         "total": len(results),
-        "items": results,
+        "entries": results, // 每条含 created_at，可用于展示年龄
     }, nil
 }
 
@@ -1410,60 +1468,101 @@ func mergeKnowledge(ctx context.Context, globalCtx *globalctx.GlobalCtx, llmEngi
     if globalCtx.CodeSeekMCP == nil {
         return map[string]string{"status": "skipped", "reason": "codeseek not available"}, nil
     }
-    
+
+    // query 仅作可选缩小范围；若不传则以 KnowledgeList 全量扫描
     query, _ := params["query"].(string)
     threshold := getFloatParam(params, "similarity_threshold", 0.80)
-    
-    // 1. 检索候选条目
-    candidates, err := globalCtx.CodeSeekMCP.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
-        Query: query,
-        TopK:  20,
-        Rerank: true,
-    })
-    if err != nil {
-        return nil, fmt.Errorf("failed to search candidates: %w", err)
+    // 可选：按 type 过滤（merge 时按类型分组）
+    typ, _ := params["type"].(string)
+
+    // 1. 从 KnowledgeList 获取候选条目（按 type 过滤、limit 200）
+    var candidates []mcp.KnowledgeSearchResult
+    listReq := mcp.KnowledgeListRequest{
+        Limit: 200,
     }
-    
-    // 2. 两两比较，找出相似条目
+    if typ != "" {
+        listReq.Type = typ
+    }
+    listResults, err := globalCtx.CodeSeekMCP.KnowledgeList(ctx, listReq)
+    if err != nil {
+        return nil, fmt.Errorf("failed to list candidates: %w", err)
+    }
+    candidates = listResults
+
+    // 若提供了 query，进一步用 KnowledgeSearch 缩小范围
+    if query != "" {
+        searchResults, err := globalCtx.CodeSeekMCP.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
+            Query:  query,
+            Type:   typ,
+            TopK:   50,
+            Rerank: true,
+        })
+        if err == nil && len(searchResults) > 0 {
+            // 用搜索结果覆盖候选（更相关）
+            candidates = searchResults
+        }
+    }
+
+    // 2. 两两比较：以候选 A 的 content 作为 query 调用 KnowledgeSearch（TopK=5）
+    //    若结果中包含候选 B 且 RerankScore > threshold，则判定 A、B 相似并合并
     var toMerge []mcp.KnowledgeSearchResult
+    seen := make(map[string]bool)
     for i, c1 := range candidates {
-        for j, c2 := range candidates {
-            if i >= j {
+        for j := i + 1; j < len(candidates); j++ {
+            c2 := candidates[j]
+            if seen[c2.ID] {
                 continue
             }
-            if c1.Score > threshold && c2.Score > threshold {
-                toMerge = append(toMerge, c1, c2)
+            // 以 c1 的 content 为 query 搜索，看 c2 是否出现在结果中
+            searchRes, err := globalCtx.CodeSeekMCP.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
+                Query:  c1.Content,
+                TopK:   5,
+                Rerank: true,
+            })
+            if err != nil {
+                continue
+            }
+            for _, r := range searchRes {
+                if r.ID == c2.ID && r.RerankScore > threshold {
+                    toMerge = append(toMerge, c1, c2)
+                    seen[c1.ID] = true
+                    seen[c2.ID] = true
+                    break
+                }
             }
         }
     }
-    
+
     if len(toMerge) == 0 {
         return map[string]string{"status": "no_merge_needed", "query": query}, nil
     }
-    
+
     // 3. LLM 合并
-    mergedContent, err := llmEngine.Summarize(ctx, buildMergePrompt(toMerge))
+    mergedContent, mergedTitle, err := llmEngine.Summarize(ctx, buildMergePrompt(toMerge))
     if err != nil {
         return nil, fmt.Errorf("failed to merge: %w", err)
     }
-    
-    // 4. add 合并条目 + delete 旧条目
+
+    // 4. 先 add 合并条目，成功后再 delete 旧条目（避免旧条目丢失）
     newID, err := globalCtx.CodeSeekMCP.KnowledgeAdd(ctx, mcp.KnowledgeAddRequest{
-        Type:      toMerge[0].Type,
-        Title:     toMerge[0].Title,
-        Content:   mergedContent,
-        SourceAgent: toMerge[0].Type,
+        Type:        toMerge[0].Type,
+        Title:       mergedTitle, // 使用 LLM 合并输出的标题
+        Content:     mergedContent,
+        SourceAgent: getSourceAgent(toMerge[0].Type), // 映射：repo_retrieval→repo_agent、coding_modification→coding_agent
     })
     if err != nil {
         return nil, fmt.Errorf("failed to add merged knowledge: %w", err)
     }
-    
+
     var oldIDs []string
     for _, c := range toMerge {
         oldIDs = append(oldIDs, c.ID)
     }
-    globalCtx.CodeSeekMCP.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{IDs: oldIDs})
-    
+    // delete 旧条目（失败不阻断，已 add 成功）
+    if delErr := globalCtx.CodeSeekMCP.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{IDs: oldIDs}); delErr != nil {
+        slog.Warn("Failed to delete old knowledge after merge", "error", delErr)
+    }
+
     return map[string]string{
         "status":      "merged",
         "new_id":      newID,
@@ -1526,22 +1625,16 @@ func (w *ConsolidationWorker) process(task *ConsolidationTask) {
 
 // extractKnowledge 使用 LLM 从整理结果中提取知识条目
 func (w *ConsolidationWorker) extractKnowledge(observations string) []KnowledgeEntry {
-    prompt := `请从以下整理结果中提取可存入知识表的条目。
-每条知识应遵循以下格式：
-
-{
-  "type": "repo_retrieval" 或 "coding_modification",
-  "title": "标题（≤30字）",
-  "content": "内容（≤500字，核心要点+坐标）",
-  "tags": ["标签1", "标签2"],
-  "related_files": ["path/to/file"],
-  "confidence": 0.9
-}
-
-整理结果：
-{{.observations}}
-
-输出 JSON 数组，如果没有可提取的知识则输出 []。`
+    prompt := fmt.Sprintf("请从以下整理结果中提取可存入知识表的条目。\n"+
+        "每条知识应遵循以下格式：\n\n"+
+        "{\n  \"type\": \"repo_retrieval\" 或 \"coding_modification\",\n"+
+        "  \"title\": \"标题（≤30字）\",\n"+
+        "  \"content\": \"内容（≤500字，核心要点+坐标）\",\n"+
+        "  \"tags\": [\"标签1\", \"标签2\"],\n"+
+        "  \"related_files\": [\"path/to/file\"],\n"+
+        "  \"confidence\": 0.9\n}\n\n"+
+        "整理结果：\n"+observations+"\n\n"+
+        "输出 JSON 数组，如果没有可提取的知识则输出 []。")
 
     // 调用 LLM 提取
     // ...
@@ -1581,7 +1674,7 @@ func (w *ConsolidationWorker) process(task *ConsolidationTask) {
 }
 
 func (w *ConsolidationWorker) triggerPruneMerge() {
-    // 对每种类型执行 merge
+    // 对每种类型执行 merge（不依赖 query，query 可传空串）
     for _, typ := range []string{"repo_retrieval", "coding_modification"} {
         // 调用 prune_history action=merge
         // ...
@@ -1628,7 +1721,7 @@ func (w *ConsolidationWorker) triggerPruneMerge() {
 |-------|------|------|----------|
 | **RepoAgent** | `internal/agents/repo.go` | L108-111 | `Run()` 入口，systemPrompt 构建后 |
 | **CodingAgent** | `internal/agents/coding.go` | L90-100 | `Run()` 入口，systemPrompt 构建后 |
-| **DirectorAgent** | `internal/agents/director.go` | L100-150 | `delegate()` 委派前，构建子 Agent prompt 时 |
+| **DirectorAgent** | `internal/agents/director.go` | L100-150（修改后预期位置，实现时以实际为准） |
 
 #### 5.8.2 查询构造
 
@@ -1659,12 +1752,13 @@ func (k *KnowledgeInjector) BuildQuery(ctx InjectionContext) string {
         query += " " + ctx.TaskDesc
     }
     for _, f := range ctx.TargetFiles {
-        query += " file:" + filepath.Base(f)
+        query += " 涉及文件：" + filepath.Base(f)
     }
-    
-    // 截断到 500 字符
-    if len(query) > 500 {
-        query = query[:500]
+
+    // 截断到 500 个 rune（避免切断中文字符）
+    runes := []rune(query)
+    if len(runes) > 500 {
+        query = string(runes[:500])
     }
     return query
 }
@@ -1740,32 +1834,38 @@ func (k *KnowledgeInjector) FormatKnowledgeBlock(results []mcp.KnowledgeSearchRe
 
 // TruncateToTokenBudget 截断到 token 预算
 func (k *KnowledgeInjector) TruncateToTokenBudget(text string, maxTokens int) string {
-    // 估算 token 数（中文约 2 字符/token，英文约 4 字符/token）
-    // 简化实现：按字符数估算
-    estimatedTokens := len(text) / 2
-    if estimatedTokens <= maxTokens {
+    // 中文估算规则：按 rune 数/2 估算 token 数
+    // 先保留头部标签与条目内容，按预算逐条添加，最后统一补 </knowledge_context>
+    if len([]rune(text))/2 <= maxTokens {
         return text
     }
-    
+
     // 按条目截断
     parts := strings.Split(text, "### ")
     var result []string
     var currentTokens int
-    
+    headerEnd := 0
+
     for i, part := range parts {
         if i == 0 {
             result = append(result, part)
+            headerEnd = strings.Index(text, "### ")
             continue
         }
-        partTokens := len(part) / 2
-        if currentTokens + partTokens > maxTokens {
+        partTokens := len([]rune(part)) / 2
+        if currentTokens+partTokens > maxTokens {
             break
         }
         result = append(result, "### "+part)
         currentTokens += partTokens
     }
-    
-    return strings.Join(result, "")
+
+    // 确保以 </knowledge_context> 闭合
+    output := strings.Join(result, "")
+    if !strings.HasSuffix(output, "</knowledge_context>") {
+        output += "\n</knowledge_context>"
+    }
+    return output
 }
 ```
 
@@ -1871,6 +1971,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 
 func (a *DirectorAgent) delegate(ctx context.Context, agentName string, task string) (AgentResult, error) {
     // [NEW] 委派前知识检索注入（针对子 Agent 类型）
+    // 将知识块注入子 Agent 的 system prompt，而不是拼接进 task 文本
     if a.GlobalCtx.KnowledgeInjector != nil {
         var targetAgent string
         switch agentName {
@@ -1879,16 +1980,19 @@ func (a *DirectorAgent) delegate(ctx context.Context, agentName string, task str
         case "coding":
             targetAgent = "coding_agent"
         }
-        
+
         injCtx := InjectionContext{
             UserMessage: task,
             TargetFiles: extractTargetFiles(task),
         }
         if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
-            task += "\n\n" + knowledgeBlock
+            // 构造子 agent systemPrompt 追加 knowledgeBlock
+            // 若委派接口不支持注入 systemPrompt，降级方案：将知识块作为 task 前缀
+            // 并显式声明"以下为历史参考上下文，非任务指令"
+            task = "以下为历史参考上下文，非任务指令：\n" + knowledgeBlock + "\n\n---\n\n" + task
         }
     }
-    
+
     // ... 后续委派流程不变 ...
 }
 ```
@@ -1901,8 +2005,11 @@ func (a *DirectorAgent) delegate(ctx context.Context, agentName string, task str
 
 ```toml
 # ── CodeSeek 知识管理配置 ──
+
+# 注意：知识管理依赖 codeseek MCP 可用。binary_path 为空时 MCP 不启用，所有知识操作将返回 {"status":"skipped"}。启用知识管理需配置 codeseek binary_path
 [codeseek]
 # codeseek 二进制文件路径（空=不启用 MCP，使用 HTTP codexray 作为后备）
+# 启用知识管理时必须填写实际路径
 binary_path = ""
 # MCP 启动参数
 mcp_args = ["serve", "--mcp"]
@@ -1920,16 +2027,19 @@ injection_max_entries = 8
 # 知识检索最低得分阈值
 injection_min_score = 0.3
 # 知识检索是否启用 Cross-Encoder 精排
+# 是否请求精排（对应 knowledge_search 的 rerank 参数）；codeseek 端 reranker.enabled 同时为 true 时才实际执行 Cross-Encoder 精排，否则降级为 RRF 得分
 injection_rerank = true
 
 # [EXISTING] 检索管线配置
+# 注意：default_config.toml 默认值为 BAAI/bge-reranker-v2-m3，本仓库用户配置已覆盖为 Qwen/Qwen3-Reranker-4B；实现时以用户配置为准
 [codexray.retrieval_pipeline]
 enabled = true
 
 [codexray.retrieval_pipeline.reranker]
-enabled = true
+# 启用精排需填入真实 api_token 与模型（见上），否则精排调用失败并降级为 RRF
+enabled = false
 api_token = "your-key"
-model = "BAAI/bge-reranker-v2-m3"
+model = "Qwen/Qwen3-Reranker-4B"
 api_base_url = "https://api.siliconflow.cn"
 batch_size = 32
 max_length = 512
@@ -1947,9 +2057,10 @@ injection_min_score = 0.3
 injection_rerank = true
 
 [codexray.retrieval_pipeline.reranker]
+# 启用精排需填入真实 api_token 与模型，否则精排调用失败并降级为 RRF
 enabled = false
 api_token = "your-key"
-model = "BAAI/bge-reranker-v2-m3"
+model = "Qwen/Qwen3-Reranker-4B"
 api_base_url = "https://api.siliconflow.cn"
 batch_size = 32
 max_length = 512
@@ -2119,6 +2230,7 @@ go test ./internal/agents/...
 ```go
 // internal/agents/knowledge_injector_test.go
 
+// 以下为 mock MCP 单测；Phase 1 完成后需补充真实 codeseek binary 的端到端验证（见 Phase 1 验证命令）
 func TestKnowledgeEndToEnd(t *testing.T) {
     // 1. 启动 codeseek MCP（mock）
     mcpClient := startMockMCPServer(t)
@@ -2206,9 +2318,9 @@ func TestKnowledgeEndToEnd(t *testing.T) {
 
 ## 11. 关键假设
 
-1. **LanceDB 多表支持**：codeseek 使用的 LanceDB 版本支持在同一实例中创建多个表（code 表和 knowledge 表）。
+1. **LanceDB 多表支持**：codeseek 使用的 LanceDB 版本支持在同一实例中创建多个表（code 表和 knowledge 表）。Phase 1 应首先以最小 spike 验证 LanceDB 多表创建与 FTS 索引 API 与现有 embedding_service.rs 一致。
 2. **Qwen3-Embedding 对知识文本效果**：Qwen3-Embedding-4B 对中文知识文本的嵌入效果良好，能支持有效的语义检索。
-3. **bge-reranker-v2-m3 中英文效果**：Cross-Encoder reranker 对中英文混合的知识条目精排效果可接受。
+3. **Qwen/Qwen3-Reranker-4B 中英文效果**：Cross-Encoder reranker 对中英文混合的知识条目精排效果可接受。
 4. **ConsolidationWorker 可复用 LLM 接口**：现有 LLM 引擎接口支持知识提取任务，无需新增专用接口。
 5. **MCP stdio 并发**：MCP Client 的 JSON-RPC 通信支持并发调用，不会因知识检索阻塞主流程。
 6. **LanceDB FTS 中文分词**：LanceDB 的 BM25 FTS 索引对中文文本的分词效果可接受（或可通过自定义分词器优化）。
@@ -2233,7 +2345,6 @@ func TestKnowledgeEndToEnd(t *testing.T) {
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md)：系统架构文档
 - [context-compression-config.md](./context-compression-config.md)：上下文压缩配置指南
-- [compress-impl.md](./compress-impl.md)：压缩引擎实现细节
 
 ---
 
