@@ -297,10 +297,10 @@ graph TB
 | 维度 | 评估 |
 |------|------|
 | **工作量** | 中（Rust ~400 行 + Go ~800 行） |
-| **风险** | 中（需改 Rust 子模块，维护 patch） |
+| **风险** | 中（需直接修改 Rust 子模块源码） |
 | **检索质量** | ★★★★★（复用 embedding+hybrid+reranker 全链路） |
 | **架构清晰度** | ★★★★☆（与现有 MCP 模式一致，知识表独立） |
-| **Rust 改动** | 需改 codeseek/rust-core，维护 patches 目录 |
+| **Rust 改动** | 直接修改 codeseek/rust-core 源码 |
 | **Go 改动** | 新增 MCP 方法 + tools/knowledge.go + injector |
 | **可维护性** | ★★★★☆（Rust 集中存储逻辑，Go 仅封装调用） |
 | **Metadata 支持** | ★★★★★（完整 metadata：type/tags/source_agent/task_id 等） |
@@ -313,8 +313,8 @@ graph TB
 - LanceDB 多表支持：可在同一 LanceDB 实例中创建 knowledge 表
 
 **缺点**：
-- 需修改 Rust 子模块，需要维护 patch 文件
-- 升级 codeseek 时需 rebase patch
+- 需直接修改 codeseek 子模块源码（非 patch 方式）
+- 升级 codeseek 时需重新合入改动（源码随子模块演进，合并冲突需手动解决）
 - 知识条目与代码条目共享 LanceDB 实例，需注意隔离
 
 #### 方案 B：Go 层自建 SQLite + 调 codeseek embedding
@@ -332,7 +332,7 @@ graph TB
 | **复用基础设施** | ★★☆☆☆（embedding 调用可复用，但检索/融合需自建） |
 
 **优点**：
-- Rust 无改动，无需 patch 维护
+- Rust 无改动
 - Go 层完全控制，灵活性高
 
 **缺点**：
@@ -389,7 +389,7 @@ graph TB
 3. **Metadata 完整性**：知识条目需要 type、tags、source_agent 等元数据，方案 A 支持完整 metadata。
 4. **长期可维护性**：Rust 层集中管理存储和检索，Go 层保持简洁。
 
-**代价**：需维护 patch 文件，升级时需 rebase。建议在 `patches/codeseek-knowledge-table.patch` 中记录所有改动，并提供 rebase 指南。
+**代价**：需直接修改 codeseek 子模块源码，改动随子模块一并提交；升级 codeseek 时需注意改动与新版本的兼容性。建议改动保持最小化、模块化，便于后续合入 codeseek 上游。
 
 ---
 
@@ -641,7 +641,7 @@ pub async fn create_knowledge_table(connection: &Connection, db_path: &str) -> R
 
 ---
 
-### 5.3 codeseek Rust 层扩展（patch 机制）
+### 5.3 codeseek Rust 层扩展（直接修改源码）
 
 #### 5.3.1 改动清单
 
@@ -914,9 +914,9 @@ pub async fn handle_knowledge_search(
 }
 ```
 
-#### 5.3.4 Patch 文件说明
+#### 5.3.4 代码改动示意
 
-patch 文件位于 `patches/codeseek-knowledge-table.patch`，结构如下：
+直接修改 codeseek 子模块源码，改动点如下（diff 示意，实际以子模块内提交为准）：
 
 ```diff
 diff --git a/codeseek/rust-core/src/db/mod.rs b/codeseek/rust-core/src/db/mod.rs
@@ -1992,7 +1992,6 @@ type CodeSeekConfig struct {
 - [ ] `codeseek/rust-core/src/mcp/server.rs`：注册 4 个新知识工具
 - [ ] `codeseek/rust-core/src/mcp/handlers/knowledge.rs`：新建，4 个 handler
 - [ ] `codeseek/rust-core/src/search/hybrid.rs`：新增 `search_knowledge()`
-- [ ] `patches/codeseek-knowledge-table.patch`：记录所有改动
 
 **验证命令**：
 ```bash
@@ -2005,7 +2004,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"knowledge_
 ```
 
 **交付物**：
-- `patches/codeseek-knowledge-table.patch`
+- `codeseek/rust-core` 源码改动（直接合入子模块并随子模块提交）
 - 编译后的 codeseek binary（含 knowledge 支持）
 
 ---
@@ -2182,7 +2181,7 @@ func TestKnowledgeEndToEnd(t *testing.T) {
 
 | 风险 | 概率 | 影响 | 缓解措施 |
 |------|------|------|----------|
-| **Rust patch 与升级冲突** | 中 | 中 | 维护 patch 文件；提供 rebase 指南；考虑将改动合入 codeseek 上游 |
+| **codeseek 升级冲突** | 中 | 中 | 直接修改源码、改动保持最小化；升级时 git 合并冲突需手动解决；优先将改动合入 codeseek 上游 |
 | **Reranker 延迟 >500ms** | 中 | 中 | 异步调用 reranker；设置超时 500ms；降级为纯 RRF 融合 |
 | **知识条目膨胀** | 低 | 低 | 周期 prune；设置最大条目数限制；低置信度条目自动过期 |
 | **MCP stdio 阻塞** | 低 | 高 | 设置请求超时；异步调用；失败时降级（不注入知识） |
@@ -2195,7 +2194,7 @@ func TestKnowledgeEndToEnd(t *testing.T) {
 
 | Phase | 回滚方式 | 影响评估 |
 |-------|----------|----------|
-| **Phase 1** | 移除 patch，使用原始 codeseek binary | 知识表不存在，后续 Phase 降级处理 |
+| **Phase 1** | git revert 恢复 codeseek 子模块源码改动，使用原始 codeseek binary | 知识表不存在，后续 Phase 降级处理 |
 | **Phase 2** | 回退 MCP Client 代码 | Knowledge 方法不存在，调用时 panic（需捕获） |
 | **Phase 3** | 从 tools.json 移除工具定义 | 工具不可用，Agent 不调用 |
 | **Phase 4** | 移除 KnowledgeInjector 调用 | 不注入动态知识，仅保留静态记忆 |
