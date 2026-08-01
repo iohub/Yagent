@@ -102,6 +102,18 @@ mcp_args = ["serve", "--mcp"]
 # 请求超时秒数
 request_timeout = 30
 
+[codeseek.knowledge]
+# 是否启用知识管理功能
+enabled = true
+# 知识注入最大 token 数
+injection_max_tokens = 1000
+# 知识注入最大条目数
+injection_max_entries = 8
+# 知识检索最低得分阈值
+injection_min_score = 0.3
+# 是否请求 Cross-Encoder 精排（codeseek 端 reranker 未启用时自动降级）
+injection_rerank = true
+
 # ═══════════════════════════════════════════════════════════════
 # Phase 1 Stage 1.0: 新增配置段落
 # ═══════════════════════════════════════════════════════════════

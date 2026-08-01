@@ -598,6 +598,24 @@ func (c *Config) validate() error {
 		c.TUI.Keybindings.Command.Quit = "ctrl+c"
 	}
 
+	// ═══════ CodeSeek Knowledge 默认值设置 ═══════
+	klDefaults := DefaultKnowledgeConfig()
+	if !c.CodeSeek.Knowledge.Enabled && klDefaults.Enabled {
+		c.CodeSeek.Knowledge.Enabled = klDefaults.Enabled
+	}
+	if c.CodeSeek.Knowledge.InjectionMaxTokens == 0 {
+		c.CodeSeek.Knowledge.InjectionMaxTokens = klDefaults.InjectionMaxTokens
+	}
+	if c.CodeSeek.Knowledge.InjectionMaxEntries == 0 {
+		c.CodeSeek.Knowledge.InjectionMaxEntries = klDefaults.InjectionMaxEntries
+	}
+	if c.CodeSeek.Knowledge.InjectionMinScore == 0 {
+		c.CodeSeek.Knowledge.InjectionMinScore = klDefaults.InjectionMinScore
+	}
+	if !c.CodeSeek.Knowledge.InjectionRerank && klDefaults.InjectionRerank {
+		c.CodeSeek.Knowledge.InjectionRerank = klDefaults.InjectionRerank
+	}
+
 	return nil
 }
 
@@ -669,6 +687,22 @@ type CodeSeekConfig struct {
 	MCPArgs []string `toml:"mcp_args"`
 	// RequestTimeout MCP 请求超时秒数（默认 30）
 	RequestTimeout int `toml:"request_timeout"`
+	// Knowledge 知识管理配置
+	Knowledge KnowledgeConfig `toml:"knowledge"`
+}
+
+// KnowledgeConfig 知识管理配置
+type KnowledgeConfig struct {
+	// Enabled 是否启用知识管理功能
+	Enabled bool `toml:"enabled"`
+	// InjectionMaxTokens 知识注入最大 token 数
+	InjectionMaxTokens int `toml:"injection_max_tokens"`
+	// InjectionMaxEntries 知识注入最大条目数
+	InjectionMaxEntries int `toml:"injection_max_entries"`
+	// InjectionMinScore 知识检索最低得分阈值
+	InjectionMinScore float64 `toml:"injection_min_score"`
+	// InjectionRerank 是否请求 Cross-Encoder 精排（codeseek 端 reranker 未启用时自动降级）
+	InjectionRerank bool `toml:"injection_rerank"`
 }
 
 // ═══════════════════════════════════════════════════════════════
