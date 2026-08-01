@@ -448,7 +448,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 
 		// 合并逻辑：连续 thinking 事件合并到同一个 logEntry 中
 		merged := false
-		if n := len(m.logEntries); n > 0 && m.logEntries[n-1].eventType == "thinking" {
+		if n := len(m.logEntries); n > 0 && m.logEntries[n-1].eventType == "thinking" && m.logEntries[n-1].from == msg.event.From {
 			lastIdx := n - 1
 			last := &m.logEntries[lastIdx]
 			if len(last.content)+len(thinkingText) <= 2*maxThinkingLen {

@@ -339,6 +339,12 @@ func (m *model) assembleViewportContent() {
 				continue
 			}
 
+			// 跳过渲染为空的条目（如 ai_stream 占位条目 streamContent="" 时渲染为空），
+			// 避免产生空行，且不重置 thinking 合并状态。
+			if part == "" {
+				continue
+			}
+
 			agentChanged := false
 			// 统一Agent上下文管理：所有条目类型都追踪Agent切换
 			if entry.from != "" && entry.from != lastAgent {
