@@ -258,6 +258,7 @@ func (m *model) rebuildContentCache() {
 		}
 		m.rebuildLinePrefix()
 		m.assembleViewportContent()
+		m.viewport.SetContent(m.contentCache.String())
 		return
 	}
 
