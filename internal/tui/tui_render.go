@@ -328,6 +328,7 @@ func (m *model) assembleViewportContent() {
 
 		var parts []string
 		lastAgent := ""
+		lastPartIsThinking := false
 
 		for i, part := range m.contentParts {
 			entry := &m.logEntries[i]
@@ -338,6 +339,7 @@ func (m *model) assembleViewportContent() {
 				continue
 			}
 
+			agentChanged := false
 			// 统一Agent上下文管理：所有条目类型都追踪Agent切换
 			if entry.from != "" && entry.from != lastAgent {
 				if entry.eventType == "ai_response" {
@@ -354,7 +356,16 @@ func (m *model) assembleViewportContent() {
 					}
 				}
 				lastAgent = entry.from
+				agentChanged = true
 			}
+
+			// 合并连续的thinking条目：仅第一个显示💭图标，后续渲染为缩进续行
+			isThinking := entry.eventType == "thinking"
+			mergeAsContinuation := isThinking && lastPartIsThinking && !agentChanged
+			if mergeAsContinuation {
+				part = renderThinkingContinuation(*entry, m.viewport.Width())
+			}
+			lastPartIsThinking = isThinking
 
 			parts = append(parts, part)
 		}
@@ -1061,6 +1072,26 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 	}
 
 	return prefix + " " + contentStyle.Render(displayContent)
+}
+
+// renderThinkingContinuation 渲染thinking条目的续行（无💭图标，缩进对齐到首行内容位置）。
+// 用于主视图中将连续thinking条目合并为一个思考块，消除重复💭图标的冗余效果。
+func renderThinkingContinuation(entry logEntry, maxWidth int) string {
+	content := strings.ReplaceAll(entry.content, "\n", " ")
+	// 与 formatLogEntry 中thinking分支一致的截断逻辑
+	contentWidth := maxWidth - 10
+	if contentWidth < 20 {
+		contentWidth = 20
+	}
+	if lipgloss.Width(content) > contentWidth {
+		runes := []rune(content)
+		if len(runes) > contentWidth-3 {
+			content = string(runes[:contentWidth-3]) + "..."
+		}
+	}
+	// 6空格 + "│ " 对齐到首行 💭(2列)+4空格+"│ " 之后的内容起始位置
+	indent := "      │ "
+	return indent + thinkTextStyle.Render(content)
 }
 
 // renderUserMessageBox renders a user message as a simple read-only textbox
