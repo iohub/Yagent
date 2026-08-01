@@ -75,6 +75,13 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 	}
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 
+	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP）
+	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, llm)
+	if len(knowledgeAdapters) > 0 {
+		tools.SetGuardOnAdapters(knowledgeAdapters, globalCtx.Guard)
+		adapters = append(adapters, knowledgeAdapters...)
+	}
+
 	return &RepoAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,

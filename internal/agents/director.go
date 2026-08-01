@@ -425,7 +425,16 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
 
-	allAdapters := append(adapters, delegateAdapters...)
+	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP）
+	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, engine)
+	var allAdapters []*tools.Adapter
+	if len(knowledgeAdapters) > 0 {
+		tools.SetGuardOnAdapters(knowledgeAdapters, globalCtx.Guard)
+		allAdapters = append(adapters, delegateAdapters...)
+		allAdapters = append(allAdapters, knowledgeAdapters...)
+	} else {
+		allAdapters = append(adapters, delegateAdapters...)
+	}
 
 	// Strangler Fig: 创建适配器桥接层，开始使用新组件（Metrics + CircuitBreaker）
 	adapterCfg := director.DefaultRecoveryConfig()
