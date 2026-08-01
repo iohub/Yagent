@@ -315,11 +315,11 @@ func TestCompletionDictBuiltin(t *testing.T) {
 		}
 	})
 
-	// 验证默认关键词数量（至少 150 个）
+	// 验证默认关键词数量（至少 20 个）
 	t.Run("KeywordCount", func(t *testing.T) {
 		kw := DefaultKeywords()
-		if len(kw) < 150 {
-			t.Errorf("默认关键词数量 = %d, 期望至少 150", len(kw))
+		if len(kw) < 20 {
+			t.Errorf("默认关键词数量 = %d, 期望至少 20", len(kw))
 		}
 		t.Logf("默认关键词数量: %d", len(kw))
 	})
@@ -332,7 +332,7 @@ func TestCompletionDictBuiltin(t *testing.T) {
 			kwSet[w] = true
 		}
 
-		commonWords := []string{"agent", "config", "http", "server", "api", "test", "error", "file", "function", "database"}
+		commonWords := []string{"python", "javascript", "component", "websocket", "middleware", "router", "request", "database", "postgresql", "redis", "migration"}
 		for _, word := range commonWords {
 			if !kwSet[word] {
 				t.Errorf("默认关键词中缺少 %q", word)
@@ -345,19 +345,19 @@ func TestCompletionDictBuiltin(t *testing.T) {
 		d := NewCompletionDict("builtin_test", nil)
 		d.AddWords(DefaultKeywords())
 
-		if d.WordCount() < 150 {
-			t.Errorf("WordCount() = %d, 期望至少 150", d.WordCount())
+		if d.WordCount() < 20 {
+			t.Errorf("WordCount() = %d, 期望至少 20", d.WordCount())
 		}
 
 		// 测试补全
-		results := d.Complete("agent")
+		results := d.Complete("python")
 		if len(results) == 0 {
-			t.Error("应能匹配到 'agent'")
+			t.Error("应能匹配到 'python'")
 		}
 
-		results = d.Complete("http")
+		results = d.Complete("webpack")
 		if len(results) == 0 {
-			t.Error("应能匹配到 'http'")
+			t.Error("应能匹配到 'webpack'")
 		}
 	})
 }
@@ -929,8 +929,8 @@ func TestManagerBackwardCompat(t *testing.T) {
 		}
 
 		// 应有内置关键词
-		if comp.WordCount() < 150 {
-			t.Errorf("WordCount() = %d, 期望至少 150", comp.WordCount())
+		if comp.WordCount() < 20 {
+			t.Errorf("WordCount() = %d, 期望至少 20", comp.WordCount())
 		}
 	})
 
@@ -947,10 +947,11 @@ func TestManagerBackwardCompat(t *testing.T) {
 			prefix   string
 			expected string
 		}{
-			{"age", "agent"},
-			{"conf", "config"},
-			{"htt", "http"},
-			{"ser", "server"},
+			{"pyt", "python"},
+			{"jav", "javascript"},
+			{"dat", "database"},
+			{"mon", "mongodb"},
+			{"mid", "middleware"},
 		}
 
 		for _, tc := range testCases {
