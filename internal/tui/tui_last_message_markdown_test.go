@@ -38,6 +38,7 @@ func newTestModel() *model {
 		dirtyEntryIndices:        make(map[int]struct{}),
 		aiStreamActiveEntries:    make(map[string]int),
 		aiStreamCompletedEntries: make(map[string]int),
+		aiStreamBuffer:           make(map[string]string),
 
 		glamourCache:    make(map[string]string),
 		glamourLRU:      make([]string, 0, 32),
@@ -56,6 +57,12 @@ func feedEvent(m *model, evt *messaging.MessageEvent) *model {
 
 // buildEvent is a convenience for constructing a MessageEvent
 func buildEvent(typ, from string, content interface{}) *messaging.MessageEvent {
+	// ai_chunk 事件的 Content 实际为 map[string]interface{}{"content": "..."}
+	if typ == "ai_chunk" {
+		if s, ok := content.(string); ok {
+			content = map[string]interface{}{"content": s}
+		}
+	}
 	return &messaging.MessageEvent{
 		Type:      messaging.EventType(typ),
 		From:      from,
@@ -196,5 +203,83 @@ func TestScenarioA_AIStreamEndThroughDialog(t *testing.T) {
 	lastIdx := m.aiStreamCompletedEntries["agent"]
 	if m.logEntries[lastIdx].streaming {
 		t.Error("expected streaming=false after ai_stream_end")
+	}
+}
+
+// ── Buffer flush threshold: accumulate 5 runes before rendering ──
+
+func TestScenarioD_BufferFlushThreshold(t *testing.T) {
+	m := newTestModel()
+
+	// Start a stream
+	m = feedEvent(m, buildEvent("ai_stream_start", "agent", ""))
+	idx := 0 // the stream entry index
+
+	// Send chunks of 2 runes each: "a", "b", "c", "d", "e"
+	// First 4 chunks (total 8 runes) should trigger flush at the 3rd chunk (5 runes)
+	m = feedEvent(m, buildEvent("ai_chunk", "agent", "ab"))
+	// Buffer: "ab" (2 runes) — not enough, no flush yet
+	if m.aiStreamBuffer["agent"] != "ab" {
+		t.Fatalf("expected buffer 'ab', got %q", m.aiStreamBuffer["agent"])
+	}
+	if m.logEntries[idx].streamContent != "" {
+		t.Fatal("expected streamContent empty before flush")
+	}
+
+	m = feedEvent(m, buildEvent("ai_chunk", "agent", "cd"))
+	// Buffer: "abcd" (4 runes) — still not enough
+	if m.aiStreamBuffer["agent"] != "abcd" {
+		t.Fatalf("expected buffer 'abcd', got %q", m.aiStreamBuffer["agent"])
+	}
+	if m.logEntries[idx].streamContent != "" {
+		t.Fatal("expected streamContent empty before flush")
+	}
+
+	m = feedEvent(m, buildEvent("ai_chunk", "agent", "e"))
+	// Buffer: "abcde" (5 runes) — threshold reached, should flush
+	if m.aiStreamBuffer["agent"] != "" {
+		t.Fatalf("expected empty buffer after flush, got %q", m.aiStreamBuffer["agent"])
+	}
+	if m.logEntries[idx].streamContent != "abcde" {
+		t.Fatalf("expected streamContent 'abcde', got %q", m.logEntries[idx].streamContent)
+	}
+
+	// End the stream — nothing left to flush
+	m = feedEvent(m, buildEvent("ai_stream_end", "agent", nil))
+	if len(m.aiStreamCompletedEntries) != 1 {
+		t.Fatalf("expected 1 completed stream entry, got %d", len(m.aiStreamCompletedEntries))
+	}
+	if m.logEntries[idx].streamContent != "abcde" {
+		t.Fatalf("expected streamContent 'abcde', got %q", m.logEntries[idx].streamContent)
+	}
+}
+
+// ── Buffer flush at stream end: leftover < 5 runes must still be flushed ──
+
+func TestScenarioE_FlushLeftoverAtStreamEnd(t *testing.T) {
+	m := newTestModel()
+
+	// Start a stream
+	m = feedEvent(m, buildEvent("ai_stream_start", "agent", ""))
+	idx := 0
+
+	// Send chunks that accumulate to only 3 runes total (< threshold)
+	m = feedEvent(m, buildEvent("ai_chunk", "agent", "ab"))
+	m = feedEvent(m, buildEvent("ai_chunk", "agent", "c"))
+	// Buffer: "abc" (3 runes) — below threshold, no flush yet
+	if m.aiStreamBuffer["agent"] != "abc" {
+		t.Fatalf("expected buffer 'abc', got %q", m.aiStreamBuffer["agent"])
+	}
+	if m.logEntries[idx].streamContent != "" {
+		t.Fatal("expected streamContent empty before stream end flush")
+	}
+
+	// End stream — leftover should be flushed
+	m = feedEvent(m, buildEvent("ai_stream_end", "agent", nil))
+	if m.logEntries[idx].streamContent != "abc" {
+		t.Fatalf("expected streamContent 'abc' after stream-end flush, got %q", m.logEntries[idx].streamContent)
+	}
+	if len(m.aiStreamCompletedEntries) != 1 {
+		t.Fatalf("expected 1 completed stream entry, got %d", len(m.aiStreamCompletedEntries))
 	}
 }
