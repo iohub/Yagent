@@ -85,7 +85,7 @@ func (m *model) renderDashboard(width, height int) string {
 
 	// ── Timeline section ──
 	if len(m.timelineEntries) > 0 {
-		content := RenderTimeline(m.timelineEntries, false, width-4, m.anim)
+		content := RenderTimeline(m.timelineEntries, false, false, width-4, m.anim)
 		if content != "" {
 			tlLines := strings.Split(content, "\n")
 			if len(tlLines) > 1 {

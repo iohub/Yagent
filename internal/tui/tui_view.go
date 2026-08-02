@@ -342,7 +342,7 @@ func (m *model) renderTimelinePanel(width int) string {
 	}
 
 	// 渲染 timeline 内容（传 width-4 给内部 padding 空间）
-	content := RenderTimeline(m.timelineEntries, false, width-4, m.anim)
+	content := RenderTimeline(m.timelineEntries, false, true, width-4, m.anim)
 	if content == "" {
 		return ""
 	}

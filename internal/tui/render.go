@@ -966,7 +966,7 @@ func formatTimelineDuration(d time.Duration) string {
 // RenderTimeline renders the full tool timeline panel.
 // When expanded is false, only shows the currently running tool (or last completed tool).
 // When expanded is true, shows up to maxTimelineEntries entries.
-func RenderTimeline(entries []*TimelineEntry, expanded bool, width int, anim *Anim) string {
+func RenderTimeline(entries []*TimelineEntry, expanded bool, showDetail bool, width int, anim *Anim) string {
 	const maxTimelineEntries = 20
 	if width < 30 {
 		width = 30
@@ -997,7 +997,7 @@ func RenderTimeline(entries []*TimelineEntry, expanded bool, width int, anim *An
 	var lines []string
 	for i, e := range visible {
 		isLast := i == len(visible)-1
-		lines = append(lines, renderTimelineRow(e, width, anim))
+		lines = append(lines, renderTimelineRow(e, width, showDetail, anim))
 
 		// Vertical connector between entries
 		if !isLast && expanded {
@@ -1028,7 +1028,7 @@ func addTimelineTopBorder(content string, width int) string {
 
 // renderTimelineRow renders a single timeline entry row.
 // Format: " ● read_file  /path/to/file          1.2s"
-func renderTimelineRow(e *TimelineEntry, width int, anim *Anim) string {
+func renderTimelineRow(e *TimelineEntry, width int, showDetail bool, anim *Anim) string {
 	// Use EffectiveStatus() for merged entries
 	effectiveStatus := e.EffectiveStatus()
 	node := timelineNodeForStatus(e, effectiveStatus)
@@ -1074,7 +1074,7 @@ func renderTimelineRow(e *TimelineEntry, width int, anim *Anim) string {
 	// Build base line: node + name + animation + detail
 	leftPart := fmt.Sprintf(" %s %s", node, name)
 	leftPart += animStr
-	if e.Detail != "" {
+	if showDetail && e.Detail != "" {
 		// Truncate detail to fit
 		detailMax := 40
 		detail := e.Detail
