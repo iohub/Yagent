@@ -357,10 +357,10 @@ pub struct KnowledgeRecord {
     /// 知识类型：repo_retrieval | coding_modification
     pub type_: String,
     
-    /// 标题：≤30 字
+    /// 标题：≤200 字
     pub title: String,
     
-    /// 内容：≤500 字，核心要点
+    /// 内容：≤1500 字，核心要点
     pub content: String,
     
     /// 标签：检索用关键词
@@ -567,8 +567,8 @@ pub async fn create_knowledge_table(connection: &Connection, db_path: &str) -> R
 
 | 规则 | 限制 | 说明 |
 |------|------|------|
-| **标题长度** | ≤30 字 | 简洁可检索 |
-| **内容长度** | ≤500 字 | 核心要点，不冗余 |
+| **标题长度** | ≤200 字 | 简洁可检索 |
+| **内容长度** | ≤1500 字 | 核心要点，不冗余 |
 | **原子性** | 一题一条 | 避免合并多个独立发现 |
 | **具体性** | 必含文件路径或函数名 | 便于定位 |
 | **去冗余** | 不复述代码本身 | 只记结论和坐标 |
@@ -610,13 +610,13 @@ pub async fn create_knowledge_table(connection: &Connection, db_path: &str) -> R
       },
       "title": {
         "type": "string",
-        "maxLength": 30,
-        "description": "知识标题（≤30 字）"
+        "maxLength": 200,
+        "description": "知识标题（≤200 字）"
       },
       "content": {
         "type": "string",
-        "maxLength": 500,
-        "description": "知识内容（≤500 字）"
+        "maxLength": 1500,
+        "description": "知识内容（≤1500 字）"
       },
       "tags": {
         "type": "array",
@@ -1093,13 +1093,13 @@ func (c *MCPClient) KnowledgeDelete(ctx context.Context, req KnowledgeDeleteRequ
       },
       "title": {
         "type": "string",
-        "maxLength": 30,
-        "description": "知识标题，≤30 字，简洁概括核心内容"
+        "maxLength": 200,
+        "description": "知识标题，≤200 字，简洁概括核心内容"
       },
       "content": {
         "type": "string",
-        "maxLength": 500,
-        "description": "知识内容，≤500 字，核心要点，带文件路径或函数名坐标"
+        "maxLength": 1500,
+        "description": "知识内容，≤1500 字，核心要点，带文件路径或函数名坐标"
       },
       "tags": {
         "type": "array",
@@ -1259,7 +1259,7 @@ func addKnowledge(ctx context.Context, globalCtx *globalctx.GlobalCtx, title, co
 
 // distillContent 使用 LLM 蒸馏长内容
 func distillContent(ctx context.Context, llmEngine llm.Engine, title, content string) (string, error) {
-    prompt := fmt.Sprintf(`将以下内容压缩为 ≤500 字的核心要点，保留关键发现和坐标（文件路径/函数名）。
+    prompt := fmt.Sprintf(`将以下内容压缩为 ≤1500 字的核心要点，保留关键发现和坐标（文件路径/函数名）。
 
 标题：%s
 原文：%s
@@ -1565,8 +1565,8 @@ func (w *ConsolidationWorker) extractKnowledge(observations string) []KnowledgeE
     prompt := fmt.Sprintf("请从以下整理结果中提取可存入知识表的条目。\n"+
         "每条知识应遵循以下格式：\n\n"+
         "{\n  \"type\": \"repo_retrieval\" 或 \"coding_modification\",\n"+
-        "  \"title\": \"标题（≤30字）\",\n"+
-        "  \"content\": \"内容（≤500字，核心要点+坐标）\",\n"+
+        "  \"title\": \"标题（≤200字）\",\n"+
+        "  \"content\": \"内容（≤1500字，核心要点+坐标）\",\n"+
         "  \"tags\": [\"标签1\", \"标签2\"],\n"+
         "  \"related_files\": [\"path/to/file\"],\n"+
         "  \"confidence\": 0.9\n}\n\n"+
@@ -1634,8 +1634,8 @@ func (w *ConsolidationWorker) triggerPruneMerge() {
 [
   {
     "type": "repo_retrieval",
-    "title": "标题（≤30字）",
-    "content": "内容（≤500字）",
+    "title": "标题（≤200字）",
+    "content": "内容（≤1500字）",
     "tags": ["标签1", "标签2"],
     "related_files": ["path/to/file"],
     "confidence": 0.9
