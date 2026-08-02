@@ -653,20 +653,25 @@ func formatToken(n int64) string {
 	}
 }
 
-// formatCacheHitRate 计算并格式化缓存命中率
-// 返回格式: "命中率: XX.X%(cache)"，例如 "命中率: 50.0%(0.5k)"
-// 当 inputTokens 为 0 时返回空字符串
-func formatCacheHitRate(cacheTokens, inputTokens int64) string {
-	if inputTokens == 0 {
+// formatCacheInfo 计算并格式化缓存信息（读命中 + 写缓存）
+// 返回格式:
+//   - 只有读缓存: "Cache: 30.0%(1.2k)"
+//   - 只有写缓存: "CacheW: 0.8k"
+//   - 两者都有:   "Cache: 30.0%(1.2k) CacheW: 0.8k"
+// 没有任何缓存活动时返回空字符串
+func formatCacheInfo(cacheRead, cacheCreation, totalInput int64) string {
+	if totalInput <= 0 {
 		return ""
 	}
-	// 仅在 cacheTokens > 0 时有意义
-	if cacheTokens <= 0 {
-		return ""
+	var parts []string
+	if cacheRead > 0 {
+		rate := float64(cacheRead) / float64(totalInput) * 100
+		parts = append(parts, fmt.Sprintf("Cache: %.1f%%(%s)", rate, formatToken(cacheRead)))
 	}
-	rate := float64(cacheTokens) / float64(inputTokens) * 100
-	cacheStr := formatToken(cacheTokens)
-	return fmt.Sprintf("Cache: %.1f%%(%s)", rate, cacheStr)
+	if cacheCreation > 0 {
+		parts = append(parts, fmt.Sprintf("CacheW: %s", formatToken(cacheCreation)))
+	}
+	return strings.Join(parts, " ")
 }
 
 // renderTokenDashboard renders a dashboard-style token consumption display.
@@ -702,6 +707,7 @@ func (m *model) renderTokenDashboard() string {
 	inStr := formatToken(m.inputTokens)
 	outStr := formatToken(m.outputTokens)
 	sumStr := formatToken(totalTokens)
+	totalInput := m.inputTokens + m.cacheReadInputTokens + m.cacheCreationInputTokens
 
 	// Total line — highlighted
 	inputStyle := lipgloss.NewStyle().
@@ -718,11 +724,8 @@ func (m *model) renderTokenDashboard() string {
 	header = headerStyle.Render(fmt.Sprintf("%-*s", maxAgentNameWidth, "Total")) + " " +
 		inputStyle.Render(fmt.Sprintf("In: %s  ", inStr)) +
 		outputStyle.Render(fmt.Sprintf("Out: %s  ", outStr))
-	if m.cacheReadInputTokens > 0 {
-		hitRate := formatCacheHitRate(m.cacheReadInputTokens, m.inputTokens)
-		if hitRate != "" {
-			header += inputStyle.Render(hitRate + "  ")
-		}
+	if cacheInfo := formatCacheInfo(m.cacheReadInputTokens, m.cacheCreationInputTokens, totalInput); cacheInfo != "" {
+		header += inputStyle.Render(cacheInfo + "  ")
 	}
 	header += sumStyle.Render(fmt.Sprintf("Σ %s", sumStr))
 
@@ -765,11 +768,9 @@ func (m *model) renderTokenDashboard() string {
 		agentLine := nameStyle.Render(paddedName)
 		agentLine += " " + agentInStyle.Render(fmt.Sprintf("In: %s  ", agentIn))
 		agentLine += agentOutStyle.Render(fmt.Sprintf("Out: %s", agentOut))
-		if au.CacheReadInputTokens > 0 {
-			hitRate := formatCacheHitRate(au.CacheReadInputTokens, au.InputTokens)
-			if hitRate != "" {
-				agentLine += "  " + agentInStyle.Render(hitRate)
-			}
+		auTotalInput := au.InputTokens + au.CacheReadInputTokens + au.CacheCreationInputTokens
+		if cacheInfo := formatCacheInfo(au.CacheReadInputTokens, au.CacheCreationInputTokens, auTotalInput); cacheInfo != "" {
+			agentLine += "  " + agentInStyle.Render(cacheInfo)
 		}
 		lines = append(lines, agentLine)
 	}
@@ -799,12 +800,8 @@ func (m *model) renderCollapsedTokenDashboard() string {
 	inStr := formatToken(totalInput)
 	outStr := formatToken(rt.OutputTokens)
 
-	// 计算 cache 命中率
-	cacheStr := ""
-	if rt.CacheReadInputTokens > 0 && totalInput > 0 {
-		rate := float64(rt.CacheReadInputTokens) / float64(totalInput) * 100
-		cacheStr = fmt.Sprintf("Cache: %.1f%%(%s)", rate, formatToken(rt.CacheReadInputTokens))
-	}
+	// 计算 cache 信息
+	cacheStr := formatCacheInfo(rt.CacheReadInputTokens, rt.CacheCreationInputTokens, totalInput)
 
 	// 使用与现有 UI 一致的样式
 	dashStyle := lipgloss.NewStyle().

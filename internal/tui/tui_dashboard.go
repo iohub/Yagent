@@ -27,6 +27,27 @@ func (m *model) dashboardWidth() int {
 	return dashboardPanelWidth
 }
 
+// formatCacheShort 格式化缓存信息短格式（用于右上角 dashboard 紧凑展示）
+// 返回格式:
+//   - 只有读缓存: "⊕30%"
+//   - 只有写缓存: "W:0.8k"
+//   - 两者都有:   "⊕30% W:0.8k"
+// 没有任何缓存活动时返回空字符串
+func formatCacheShort(cacheRead, cacheCreation, totalInput int64) string {
+	if totalInput <= 0 {
+		return ""
+	}
+	var parts []string
+	if cacheRead > 0 {
+		rate := float64(cacheRead) / float64(totalInput) * 100
+		parts = append(parts, fmt.Sprintf("⊕%.0f%%", rate))
+	}
+	if cacheCreation > 0 {
+		parts = append(parts, fmt.Sprintf("W:%s", formatToken(cacheCreation)))
+	}
+	return strings.Join(parts, " ")
+}
+
 // renderDashboard 渲染右上角 dashboard（token 优先，timeline 次之）
 // width / height 为面板可用尺寸，返回恰好 height 行的字符串。
 func (m *model) renderDashboard(width, height int) string {
@@ -114,9 +135,8 @@ func (m *model) renderDashboard(width, height int) string {
 
 		totalLine := nameRendered + " " + inputStyle.Render("In: "+inStr+"  ") +
 			outputStyle.Render("Out: "+outStr)
-		if m.cacheReadInputTokens > 0 && totalInput > 0 {
-			rate := float64(m.cacheReadInputTokens) / float64(totalInput) * 100
-			totalLine += "  " + cacheRateStyle.Render(fmt.Sprintf("⊕%.0f%%", rate))
+		if cacheInfo := formatCacheShort(m.cacheReadInputTokens, m.cacheCreationInputTokens, totalInput); cacheInfo != "" {
+			totalLine += "  " + cacheRateStyle.Render(cacheInfo)
 		}
 		lines = append(lines, totalLine)
 
@@ -171,9 +191,8 @@ func (m *model) renderDashboard(width, height int) string {
 			line := nameRendered + " " +
 				inputStyle.Render("In: "+auInStr+"  ") +
 				outputStyle.Render("Out: "+auOutStr)
-			if au.CacheReadInputTokens > 0 && auTotalInput > 0 {
-				rate := float64(au.CacheReadInputTokens) / float64(auTotalInput) * 100
-				line += "  " + cacheRateStyle.Render(fmt.Sprintf("⊕%.0f%%", rate))
+			if cacheInfo := formatCacheShort(au.CacheReadInputTokens, au.CacheCreationInputTokens, auTotalInput); cacheInfo != "" {
+				line += "  " + cacheRateStyle.Render(cacheInfo)
 			}
 			lines = append(lines, line)
 		}

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -275,5 +276,73 @@ func TestTokenCounting_NoUsageMetadataFallback(t *testing.T) {
 	// input 无法估算，应为 0
 	if agentUsage.InputTokens != 0 {
 		t.Errorf("Repo-Agent InputTokens 期望0，实际 %d", agentUsage.InputTokens)
+	}
+}
+
+// TestFormatCacheInfo 验证 formatCacheInfo 长格式输出
+func TestFormatCacheInfo(t *testing.T) {
+	cases := []struct {
+		name          string
+		cacheRead     int64
+		cacheCreation int64
+		totalInput    int64
+		wantContains  []string
+		wantEmpty     bool
+	}{
+		{"both read and creation", 300, 200, 1500, []string{"Cache:", "CacheW:"}, false},
+		{"only read", 300, 0, 1500, []string{"Cache:"}, false},
+		{"only creation", 0, 200, 1500, []string{"CacheW: 200"}, false},
+		{"none", 0, 0, 1500, nil, true},
+		{"zero total", 300, 200, 0, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatCacheInfo(tc.cacheRead, tc.cacheCreation, tc.totalInput)
+			if tc.wantEmpty {
+				if got != "" {
+					t.Errorf("期望空字符串，实际 %q", got)
+				}
+				return
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("输出 %q 应包含 %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestFormatCacheShort 验证 formatCacheShort 短格式输出
+func TestFormatCacheShort(t *testing.T) {
+	cases := []struct {
+		name          string
+		cacheRead     int64
+		cacheCreation int64
+		totalInput    int64
+		wantContains  []string
+		wantEmpty     bool
+	}{
+		{"both read and creation", 300, 200, 1500, []string{"⊕", "W:"}, false},
+		{"only read", 300, 0, 1500, []string{"⊕20%"}, false},
+		{"only creation", 0, 200, 1500, []string{"W:200"}, false},
+		{"none", 0, 0, 1500, nil, true},
+		{"zero total", 300, 200, 0, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatCacheShort(tc.cacheRead, tc.cacheCreation, tc.totalInput)
+			if tc.wantEmpty {
+				if got != "" {
+					t.Errorf("期望空字符串，实际 %q", got)
+				}
+				return
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("输出 %q 应包含 %q", got, want)
+				}
+			}
+		})
 	}
 }
