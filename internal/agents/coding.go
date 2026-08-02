@@ -500,29 +500,29 @@ var pruneSchema = map[string]interface{}{
 		"action": map[string]interface{}{
 			"type":        "string",
 			"enum":        []string{"list", "merge", "delete"},
-			"description": "操作类型：list=列出条目，merge=合并相似条目，delete=按 ID 删除",
+			"description": "Operation type: list=List entries, merge=Merge similar entries, delete=Delete by ID",
 		},
 		"limit": map[string]interface{}{
 			"type":        "integer",
-			"description": "list/merge 时最多读取的条目数，默认 50",
+			"description": "Max entries to read for list/merge, default 50",
 			"default":     50,
 		},
 		"type": map[string]interface{}{
 			"type":        "string",
-			"description": "按知识类型过滤（可选，空=全部）",
+			"description": "Filter by knowledge type (optional, empty=all)",
 		},
 		"tag": map[string]interface{}{
 			"type":        "string",
-			"description": "按标签过滤（可选）",
+			"description": "Filter by tag (optional)",
 		},
 		"ids": map[string]interface{}{
 			"type":        "array",
 			"items":       map[string]interface{}{"type": "string"},
-			"description": "delete 时必填：要删除的条目 ID 列表",
+			"description": "Required for delete: list of entry IDs to delete",
 		},
 		"similarity_threshold": map[string]interface{}{
 			"type":        "number",
-			"description": "merge 时相似度阈值，默认 0.80",
+			"description": "Similarity threshold for merge, default 0.80",
 			"default":     0.80,
 		},
 	},
@@ -535,7 +535,7 @@ func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine,
 	pruneTool := tools.NewPruneHistoryTool(globalCtx.CodeSeekMCP, llm)
 
 	adapters := []*tools.Adapter{
-		tools.NewAdapter("prune_history", "维护知识库健康：列出当前条目、合并相似条目、或按 ID 删除过期条目。建议定期执行 merge 以去重。", pruneTool.Execute).WithSchema(pruneSchema),
+		tools.NewAdapter("prune_history", "Maintain knowledge base health: list current entries, merge similar entries, or delete stale entries by ID. Run merge periodically to deduplicate.", pruneTool.Execute).WithSchema(pruneSchema),
 	}
 
 	// sourceAgent/knowledgeType 为空时不注册 consolidate_knowledge（如 Director）
@@ -550,32 +550,32 @@ func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine,
 		"properties": map[string]interface{}{
 			"title": map[string]interface{}{
 				"type":        "string",
-				"description": "知识条目标题（≤30字）",
+				"description": "Knowledge entry title (≤30 characters)",
 				"maxLength":   30,
 			},
 			"content": map[string]interface{}{
 				"type":        "string",
-				"description": "知识内容（≤500字符），需保留所有文件路径、函数名、符号名",
+				"description": "Knowledge content (≤500 characters). Keep file paths, function names, and symbol names.",
 				"maxLength":   500,
 			},
 			"tags": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
 				"minItems":    1,
-				"description": "知识标签列表，至少 1 个",
+				"description": "Knowledge tag list, at least 1 tag",
 			},
 			"related_files": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "相关文件路径列表（可选）",
+				"description": "Related file paths (optional)",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "关联的任务 ID（可选）",
+				"description": "Associated task ID (optional)",
 			},
 			"confidence": map[string]interface{}{
 				"type":        "number",
-				"description": "置信度 0-1，默认 1.0",
+				"description": "Confidence 0-1, default 1.0",
 				"default":     1.0,
 			},
 		},
@@ -583,7 +583,7 @@ func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine,
 	}
 
 	adapters = append(adapters,
-		tools.NewAdapter("consolidate_knowledge", "将当前任务的关键知识整理并写入知识库。类型与来源由系统自动标记，无需填写。适用于：(1) 完成代码分析后沉淀领域知识；(2) 完成代码修改后记录关键变更决策；(3) 发现重要架构模式或设计规律时。执行前请确保内容已提炼（≤500字符），tags 至少 1 个。", consolidateTool.Execute).WithSchema(consolidateSchema),
+		tools.NewAdapter("consolidate_knowledge", "Consolidate key knowledge from the current task and write it into the knowledge base. Type and source are automatically tagged by the system — no need to provide them. Suitable for: (1) distilling domain knowledge after code analysis; (2) recording key change decisions after code modifications; (3) capturing important architecture patterns or design rules. Condense content to ≤500 characters and provide at least 1 tag before execution.", consolidateTool.Execute).WithSchema(consolidateSchema),
 	)
 
 	return adapters
