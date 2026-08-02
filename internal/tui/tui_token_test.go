@@ -237,3 +237,43 @@ func TestTokenCounting_EmptyContentNotOverwriteStream(t *testing.T) {
 		t.Errorf("outputTokens 期望0，实际%d", m.outputTokens)
 	}
 }
+
+// TestTokenCounting_NoUsageMetadataFallback 验证 ai_response 事件不带 usage metadata 时，
+// TUI 按 content 长度估算 output tokens 并计入 tokenUsagePerAgent
+func TestTokenCounting_NoUsageMetadataFallback(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	// 发送不带 usage metadata 的 ai_response（模拟本地模型场景）
+	noUsageEvent := &messaging.MessageEvent{
+		Type:      "ai_response",
+		From:      "Repo-Agent",
+		Content:   "这是一段测试回复内容，包含多个字符用于估算 token",
+		Timestamp: time.Now(),
+		Metadata:  map[string]interface{}{}, // 无 usage key
+	}
+	m = feedEvent(m, noUsageEvent)
+
+	// 全局 outputTokens 应按 content 长度估算（len/4）
+	contentStr := noUsageEvent.Content.(string)
+	expectedOutput := int64(len(contentStr) / 4)
+	if m.outputTokens != expectedOutput {
+		t.Errorf("outputTokens 期望 %d（%d/4），实际 %d", expectedOutput, len(contentStr), m.outputTokens)
+	}
+
+	// tokenUsagePerAgent 应出现对应 agent
+	if len(m.tokenUsagePerAgent) != 1 {
+		t.Fatalf("期望1个agent，实际 %d", len(m.tokenUsagePerAgent))
+	}
+	agentUsage, ok := m.tokenUsagePerAgent["Repo-Agent"]
+	if !ok {
+		t.Fatal("缺少 Repo-Agent agent统计")
+	}
+	if agentUsage.OutputTokens != expectedOutput {
+		t.Errorf("Repo-Agent OutputTokens 期望 %d，实际 %d", expectedOutput, agentUsage.OutputTokens)
+	}
+	// input 无法估算，应为 0
+	if agentUsage.InputTokens != 0 {
+		t.Errorf("Repo-Agent InputTokens 期望0，实际 %d", agentUsage.InputTokens)
+	}
+}

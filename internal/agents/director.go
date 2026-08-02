@@ -1150,12 +1150,21 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 					"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
 					"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
 				}
-			}
-			if len(metadata) > 0 {
-				a.Publisher.PublishWithMetadata("ai_response", choice.Content, a.Name(), metadata)
 			} else {
-				a.Publisher.Publish("ai_response", choice.Content, a.Name())
+				// Local models may not return usage — estimate from message content
+				promptTokens := 0
+				for _, msg := range messages {
+					promptTokens += EstimateTokens(msg.Content)
+				}
+				completionTokens := EstimateTokens(choice.Content)
+				metadata["usage"] = map[string]interface{}{
+					"prompt_tokens":     promptTokens,
+					"completion_tokens": completionTokens,
+					"total_tokens":      promptTokens + completionTokens,
+					"estimated":         true,
+				}
 			}
+			a.Publisher.PublishWithMetadata("ai_response", choice.Content, a.Name(), metadata)
 		}
 
 		if mem != nil {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"codeactor/internal/llm"
+	"codeactor/internal/messaging"
 	"codeactor/internal/tools"
 )
 
@@ -483,4 +484,124 @@ func TestRunAgentLoop_MaxStepsExceeded(t *testing.T) {
 	if !strings.Contains(err.Error(), "max steps") {
 		t.Errorf("Expected error to mention 'max steps', got: %v", err)
 	}
+}
+
+// TestRunAgentLoop_NilUsageEstimatesTokens 测试当 LLM 返回 Usage==nil 时，
+// ai_response 事件仍发布带估算 usage 的 metadata（确保 dashboard 能统计子 agent token）
+func TestRunAgentLoop_NilUsageEstimatesTokens(t *testing.T) {
+	ctx := context.Background()
+
+	// Mock LLM 返回 Usage==nil（模拟本地模型不返回 usage）
+	mock := &mockLLM{
+		responses: []*llm.Response{
+			{
+				Choices: []llm.Choice{
+					{
+						Content: "这是一条测试回复内容",
+					},
+				},
+				// Usage 为 nil，模拟本地模型
+			},
+		},
+	}
+
+	// 使用 MessageDispatcher + legacy consumer 捕获事件
+	dispatcher := messaging.NewMessageDispatcher(10000)
+	var capturedEvents []*messaging.MessageEvent
+	dispatcher.RegisterConsumer(&eventCapturingConsumer{events: &capturedEvents})
+	publisher := messaging.NewMessagePublisher(dispatcher)
+	defer dispatcher.Shutdown()
+
+	cfg := ExecutorConfig{
+		SystemPrompt: "You are a test agent.",
+		UserInput:    "Say hello.",
+		Adapters:     []*tools.Adapter{},
+		LLM:          mock,
+		MaxSteps:     3,
+		StopOnFinish: true,
+		AgentName:    "test-agent",
+		Publisher:    publisher,
+	}
+
+	_, err := RunAgentLoop(ctx, cfg)
+	if err != nil {
+		t.Fatalf("RunAgentLoop returned error: %v", err)
+	}
+
+	// Give the dispatcher consumer goroutine time to process events
+	time.Sleep(50 * time.Millisecond)
+
+	// 验证发布了 ai_response 事件且带 usage metadata
+	found := false
+	for _, ev := range capturedEvents {
+		if ev.Type == "ai_response" {
+			found = true
+			if ev.Metadata == nil {
+				t.Fatal("ai_response event should have non-nil metadata")
+			}
+			usageData, ok := ev.Metadata["usage"]
+			if !ok {
+				t.Fatal("ai_response event metadata should contain 'usage' key")
+			}
+			usageMap, ok := usageData.(map[string]interface{})
+			if !ok {
+				t.Fatalf("usage should be a map, got %T", usageData)
+			}
+			// 验证估算值 > 0
+			promptTokens, ok := usageMap["prompt_tokens"]
+			if !ok {
+				t.Fatal("usage should contain 'prompt_tokens'")
+			}
+			var promptFloat float64
+			switch v := promptTokens.(type) {
+			case float64:
+				promptFloat = v
+			case int:
+				promptFloat = float64(v)
+			default:
+				t.Fatalf("prompt_tokens should be float64 or int, got %T", promptTokens)
+			}
+			if promptFloat <= 0 {
+				t.Errorf("prompt_tokens should be > 0, got %v", promptTokens)
+			}
+			completionTokens, ok := usageMap["completion_tokens"]
+			if !ok {
+				t.Fatal("usage should contain 'completion_tokens'")
+			}
+			var completionFloat float64
+			switch v := completionTokens.(type) {
+			case float64:
+				completionFloat = v
+			case int:
+				completionFloat = float64(v)
+			default:
+				t.Fatalf("completion_tokens should be float64 or int, got %T", completionTokens)
+			}
+			if completionFloat <= 0 {
+				t.Errorf("completion_tokens should be > 0, got %v", completionTokens)
+			}
+			// 验证 estimated 标记
+			estimated, ok := usageMap["estimated"]
+			if !ok {
+				t.Fatal("usage should contain 'estimated' key")
+			}
+			if estimatedBool, ok := estimated.(bool); !ok || !estimatedBool {
+				t.Errorf("estimated should be true, got %v", estimated)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("Expected ai_response event to be published with usage metadata")
+	}
+}
+
+// eventCapturingConsumer 捕获所有事件，用于测试
+type eventCapturingConsumer struct {
+	events *[]*messaging.MessageEvent
+}
+
+func (c *eventCapturingConsumer) Consume(event *messaging.MessageEvent) error {
+	*c.events = append(*c.events, event)
+	return nil
 }

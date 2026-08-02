@@ -128,6 +128,25 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				agentUsage.CacheCreationInputTokens += cacheCreationVal
 				agentUsage.CacheReadInputTokens += cacheReadVal
 			}
+		} else {
+			// Fallback: no usage metadata — estimate output tokens from content
+			contentStr := fmt.Sprintf("%v", msg.event.Content)
+			estimatedOutput := int64(len(contentStr) / 4)
+			if estimatedOutput > 0 && m.tokenUsagePerAgent != nil {
+				m.outputTokens += estimatedOutput
+
+				// Per-agent token tracking (input unknown, use 0)
+				agentName := msg.event.From
+				if agentName == "" {
+					agentName = "Unknown"
+				}
+				agentUsage, exists := m.tokenUsagePerAgent[agentName]
+				if !exists {
+					agentUsage = &AgentTokenUsage{AgentName: agentName}
+					m.tokenUsagePerAgent[agentName] = agentUsage
+				}
+				agentUsage.OutputTokens += estimatedOutput
+			}
 		}
 		// Token counts changed — update cached token dashboard render
 		m.cachedTokenDashboard = m.renderTokenDashboard()

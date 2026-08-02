@@ -146,12 +146,18 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 				"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
 				"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
 			}
-		}
-		if len(metadata) > 0 {
-			a.Publisher.PublishWithMetadata("ai_response", content, a.Name(), metadata)
 		} else {
-			a.Publisher.Publish("ai_response", content, a.Name())
+			// Local models may not return usage — estimate from message content
+			promptTokens := EstimateTokens(systemPrompt) + EstimateTokens(input)
+			completionTokens := EstimateTokens(content)
+			metadata["usage"] = map[string]interface{}{
+				"prompt_tokens":     promptTokens,
+				"completion_tokens": completionTokens,
+				"total_tokens":      promptTokens + completionTokens,
+				"estimated":         true,
+			}
 		}
+		a.Publisher.PublishWithMetadata("ai_response", content, a.Name(), metadata)
 	}
 
 	// Build memory from the single-round conversation
