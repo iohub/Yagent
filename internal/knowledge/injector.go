@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"codeactor/internal/config"
+	"codeactor/internal/logging"
 	"codeactor/internal/mcp"
 
 	"log/slog"
@@ -18,6 +19,8 @@ type InjectionContext struct {
 	UserMessage string
 	// TargetFiles 目标文件路径（可选）
 	TargetFiles []string
+	// AgentName 触发注入的 agent 名称（可选，用于日志关联）
+	AgentName string
 }
 
 // KnowledgeInjector 对话前知识检索注入器
@@ -52,7 +55,11 @@ func (k *KnowledgeInjector) BuildQuery(injCtx InjectionContext) string {
 
 // Inject 执行知识检索和格式化注入块；失败或无关时返回空字符串（fail-safe，不阻塞主流程）
 func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext) (string, error) {
+	kl := logging.KnowledgeLogger()
+	agent := injCtx.AgentName
+
 	if k.mcpClient == nil || !k.cfg.Enabled {
+		kl.Debug("knowledge inject skipped", "event", "inject_skipped", "agent", agent, "reason", "disabled_or_no_mcp")
 		return "", nil
 	}
 	query := k.BuildQuery(injCtx)
@@ -64,6 +71,8 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 	if limit <= 0 {
 		limit = 8
 	}
+	kl.Info("knowledge injection start", "event", "inject_start", "agent", agent, "query", truncateByRune(query, 120), "query_len", runeCount(query), "limit", limit, "rerank", k.cfg.InjectionRerank)
+
 	results, err := k.mcpClient.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
 		Query:  query,
 		Limit:  limit,
@@ -71,8 +80,10 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 	})
 	if err != nil {
 		slog.Warn("知识检索失败，跳过注入", "error", err)
+		kl.Warn("knowledge search failed, skip injection", "event", "inject_search_error", "agent", agent, "error", err)
 		return "", nil
 	}
+	kl.Info("knowledge search done", "event", "inject_search_done", "agent", agent, "hits", len(results))
 
 	// 过滤低于阈值的条目
 	minScore := k.cfg.InjectionMinScore
@@ -85,12 +96,15 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 		if r.RerankScore != nil {
 			score = *r.RerankScore
 		}
-		if score >= minScore {
+		passed := score >= minScore
+		kl.Debug("knowledge result filter", "event", "inject_filter_item", "agent", agent, "title", r.Title, "score", score, "passed", passed)
+		if passed {
 			filtered = append(filtered, r)
 		}
 	}
 
 	if len(filtered) == 0 {
+		kl.Info("no relevant knowledge after filter", "event", "inject_filtered_empty", "agent", agent, "raw_hits", len(results), "min_score", minScore)
 		return "", nil
 	}
 
@@ -101,6 +115,7 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 		budget = 950
 	}
 	block = k.TruncateToTokenBudget(block, budget)
+	kl.Info("knowledge block injected", "event", "inject_done", "agent", agent, "entries", len(filtered), "block_len", runeCount(block), "max_tokens", k.cfg.InjectionMaxTokens)
 	return block, nil
 }
 

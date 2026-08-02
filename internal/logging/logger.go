@@ -23,6 +23,8 @@ var (
 	logDir       string
 	appLogFile   *os.File
 	appLogWriter io.Writer
+	knowledgeLogFile *os.File
+	knowledgeLogger *slog.Logger
 	initialized  bool
 	mu           sync.Mutex
 	// taskID 管理变量，带 RWMutex 保护
@@ -86,6 +88,14 @@ func Init(mode Mode) error {
 
 	initialized = true
 	slog.Info("logging initialized", "mode", mode, "log_dir", logDir)
+
+	// 初始化独立知识日志
+	if err := initKnowledgeLoggerLocked(level); err != nil {
+		slog.Warn("knowledge logger init failed", "error", err)
+	} else {
+		knowledgeLogger.Info("knowledge logger initialized", "log_dir", logDir)
+	}
+
 	return nil
 }
 
@@ -148,6 +158,11 @@ func Close() {
 		appLogFile.Close()
 		appLogFile = nil
 		appLogWriter = nil
+	}
+	if knowledgeLogFile != nil {
+		knowledgeLogFile.Close()
+		knowledgeLogFile = nil
+		knowledgeLogger = nil
 	}
 }
 
@@ -221,4 +236,26 @@ func GetFallbackWriter() io.Writer {
 		}
 		return io.Discard
 	}
+}
+
+// initKnowledgeLoggerLocked initializes the independent knowledge log file and logger.
+// Must be called while holding mu.
+func initKnowledgeLoggerLocked(level slog.Level) error {
+	logFile, err := openLogFile(logDir, "knowledge")
+	if err != nil {
+		return err
+	}
+	knowledgeLogFile = logFile
+	knowledgeLogger = slog.New(slog.NewTextHandler(&syncedWriter{w: logFile}, &slog.HandlerOptions{Level: level}))
+	return nil
+}
+
+// KnowledgeLogger 返回独立知识日志；未初始化时 fallback 到全局默认 logger（保证永不 nil、永不 panic）。
+func KnowledgeLogger() *slog.Logger {
+	mu.Lock()
+	defer mu.Unlock()
+	if knowledgeLogger != nil {
+		return knowledgeLogger
+	}
+	return slog.Default()
 }

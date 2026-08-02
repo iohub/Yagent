@@ -324,6 +324,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		injCtx := knowledge.InjectionContext{
 			UserMessage: input,
 			TargetFiles: nil,
+			AgentName:   a.Name(),
 		}
 		if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
 			systemPrompt += knowledgeBlock

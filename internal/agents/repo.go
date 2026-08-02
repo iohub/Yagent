@@ -124,6 +124,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		injCtx := knowledge.InjectionContext{
 			UserMessage: input,
 			TargetFiles: nil,
+			AgentName:   a.Name(),
 		}
 		if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
 			systemPrompt += knowledgeBlock

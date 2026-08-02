@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"codeactor/internal/llm"
+	"codeactor/internal/logging"
 	"codeactor/internal/mcp"
 )
 
@@ -27,23 +28,29 @@ func NewConsolidateKnowledgeTool(mcpClient *mcp.MCPClient, engine llm.Engine) *C
 
 // Execute 执行知识整理：校验 → 蒸馏 → 去重 → 合并 → add/delete。
 func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	kl := logging.KnowledgeLogger()
+
 	// ── 1. 参数解析 ───────────────────────────────────────────────────────────
 	rawType, _ := params["type"].(string)
 	title, _ := params["title"].(string)
 	content, _ := params["content"].(string)
 
 	if rawType == "" {
+		kl.Warn("consolidate param invalid", "event", "consolidate_param_error", "reason", "type is empty")
 		return nil, fmt.Errorf("type parameter is required")
 	}
 	if title == "" {
+		kl.Warn("consolidate param invalid", "event", "consolidate_param_error", "reason", "title is empty")
 		return nil, fmt.Errorf("title parameter is required")
 	}
 	if content == "" {
+		kl.Warn("consolidate param invalid", "event", "consolidate_param_error", "reason", "content is empty")
 		return nil, fmt.Errorf("content parameter is required")
 	}
 
 	validTypes := map[string]bool{"repo_retrieval": true, "coding_modification": true}
 	if !validTypes[rawType] {
+		kl.Warn("consolidate param invalid", "event", "consolidate_param_error", "reason", fmt.Sprintf("invalid type: %q", rawType))
 		return nil, fmt.Errorf("invalid type: %q (allowed: repo_retrieval, coding_modification)", rawType)
 	}
 
@@ -82,16 +89,22 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 		confidence = rawConf
 	}
 
+	kl.Info("consolidate start", "event", "consolidate_start", "type", rawType, "title", title, "tags", tags, "source_agent", sourceAgent, "task_id", taskID)
+
 	// ── 2. LLM 蒸馏（content > 500 字时）──────────────────────────────────────
+	origContentLen := len(content)
 	if t.engine != nil && len(content) > 500 {
 		distilled, err := distillContent(t.engine, ctx, title, content)
 		if err != nil {
 			// 降级：硬截断
+			kl.Warn("consolidate distill fallback", "event", "consolidate_distill_fallback", "title", title, "error", err)
 			content = content[:500] + "..."
 		} else {
 			content = distilled
+			kl.Info("consolidate distill", "event", "consolidate_distill", "title", title, "before_len", origContentLen, "after_len", len(distilled), "mode", "llm")
 		}
 	} else if len(content) > 500 {
+		kl.Info("consolidate distill", "event", "consolidate_distill", "title", title, "before_len", len(content), "after_len", 503, "mode", "hard_truncate")
 		content = content[:500] + "..."
 	}
 
@@ -107,9 +120,15 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 			for i := range results {
 				if results[i].RerankScore != nil && *results[i].RerankScore > 0.85 {
 					dupResult = &results[i]
+					kl.Info("duplicate detected", "event", "consolidate_dup_found", "title", title, "dup_id", dupResult.ID, "dup_title", dupResult.Title, "dup_score", *dupResult.RerankScore)
 					break
 				}
 			}
+			if dupResult == nil {
+				kl.Debug("no duplicate found", "event", "consolidate_dup_none", "title", title)
+			}
+		} else {
+			kl.Debug("dup check search error", "event", "consolidate_dup_check_error", "title", title, "error", err)
 		}
 	}
 
@@ -132,6 +151,7 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 			newRecord, err := t.mcp.KnowledgeAdd(ctx, newReq)
 			if err == nil {
 				_ = t.mcp.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{ID: dupResult.ID})
+				kl.Info("merged with duplicate", "event", "consolidate_merged", "title", newTitle, "new_id", newRecord.ID, "parent_ids", []string{dupResult.ID})
 				return map[string]interface{}{
 					"status":      "merged",
 					"id":          newRecord.ID,
@@ -139,11 +159,13 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 				}, nil
 			}
 			// add 失败则降级为直接 add 新条目
+			kl.Warn("merge add failed, fallback to direct add", "event", "consolidate_merge_add_error", "title", title, "error", err)
 		}
 	}
 
 	// ── 6. 普通添加 ──────────────────────────────────────────────────────────
 	if t.mcp == nil {
+		kl.Info("consolidate skipped", "event", "consolidate_skipped", "reason", "codeseek not available")
 		return map[string]interface{}{"status": "skipped", "reason": "codeseek not available"}, nil
 	}
 
@@ -159,8 +181,10 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 	}
 	record, err := t.mcp.KnowledgeAdd(ctx, addReq)
 	if err != nil {
+		kl.Warn("knowledge add failed", "event", "consolidate_add_error", "title", title, "error", err)
 		return nil, fmt.Errorf("knowledge_add failed: %w", err)
 	}
+	kl.Info("knowledge added", "event", "consolidate_added", "title", title, "id", record.ID, "status", "added")
 	return map[string]interface{}{"status": "added", "id": record.ID}, nil
 }
 
@@ -254,6 +278,7 @@ func (t *PruneHistoryTool) executeDelete(ctx context.Context, params map[string]
 
 // ── merge ────────────────────────────────────────────────────────────────────
 func (t *PruneHistoryTool) executeMerge(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	kl := logging.KnowledgeLogger()
 	if t.mcp == nil {
 		return map[string]interface{}{"status": "skipped", "reason": "codeseek not available"}, nil
 	}
@@ -303,6 +328,7 @@ func (t *PruneHistoryTool) executeMerge(ctx context.Context, params map[string]i
 			}
 			if r.RerankScore != nil && *r.RerankScore > threshold {
 				// 发现重复，合并这一组
+				kl.Info("prune merge group found", "event", "prune_merge_group", "a_id", a.ID, "b_id", r.ID, "score", *r.RerankScore)
 				newTitle, newContent, newTags, merr := mergeKnowledgeLLM(t.engine, ctx,
 					a.Title, a.Content, a.Tags, *r)
 				if merr != nil {
@@ -324,6 +350,7 @@ func (t *PruneHistoryTool) executeMerge(ctx context.Context, params map[string]i
 				_ = t.mcp.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{ID: r.ID})
 				mergedIDs[a.ID] = true
 				mergedIDs[r.ID] = true
+				kl.Info("prune merge done", "event", "prune_merge_done", "new_id", newRecord.ID, "parent_ids", []string{a.ID, r.ID})
 				groups = append(groups, mergeGroup{
 					newID:     newRecord.ID,
 					parentIDs: []string{a.ID, r.ID},

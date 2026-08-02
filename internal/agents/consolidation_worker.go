@@ -264,6 +264,7 @@ func (w *ConsolidationWorker) extractKnowledge(consolidated string) {
 		return
 	}
 
+	kl := logging.KnowledgeLogger()
 	agentTypeMap := map[string]string{
 		"repo_retrieval":      "repo_agent",
 		"coding_modification": "coding_agent",
@@ -281,6 +282,7 @@ func (w *ConsolidationWorker) extractKnowledge(consolidated string) {
 			"task_id":      "",
 			"confidence":   entry.Confidence,
 		}
+		kl.Debug("consolidation worker submit entry", "event", "worker_submit_entry", "title", entry.Title, "type", entry.Type)
 		if _, err := extractTool.Execute(ctx, params); err != nil {
 			slog.Warn("ConsolidationWorker: knowledge extract failed for entry",
 				"type", entry.Type, "title", entry.Title, "error", err,
@@ -288,10 +290,13 @@ func (w *ConsolidationWorker) extractKnowledge(consolidated string) {
 		}
 	}
 	slog.Info("ConsolidationWorker: knowledge extraction completed", "entries", len(entries))
+	kl.Info("consolidation worker extracted", "event", "worker_extract_done", "count", len(entries))
 }
 
 // triggerPruneMerge 触发知识库条目合并去重。
 func (w *ConsolidationWorker) triggerPruneMerge() {
+	kl := logging.KnowledgeLogger()
+	kl.Info("consolidation worker trigger prune merge", "event", "worker_prune_trigger", "interval", 10)
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeExtractTimeout)
 	defer cancel()
 

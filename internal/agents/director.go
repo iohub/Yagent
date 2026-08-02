@@ -948,6 +948,7 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		injCtx := knowledge.InjectionContext{
 			UserMessage: input,
 			TargetFiles: nil,
+			AgentName:   a.Name(),
 		}
 		if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
 			systemPrompt += knowledgeBlock
