@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"codeactor/internal/messaging"
-	"codeactor/internal/util"
 
 	"charm.land/lipgloss/v2"
 )
@@ -256,34 +255,6 @@ func (t *TUIConsumer) Consume(event *messaging.MessageEvent) error {
 				wrappedContent = contentStyle.Copy().Width(w - 6).Render("⚠️ 未找到项目上下文文件")
 			}
 		}
-	case "context_compressed":
-		prefixRendered = statusPrefixStyle.Render("🗜️ 上下文压缩")
-		contentMap, ok := event.Content.(map[string]interface{})
-		if ok {
-			origTokens := util.MustGetNumericFloat(contentMap["original_tokens"], 0)
-			compTokens := util.MustGetNumericFloat(contentMap["compressed_tokens"], 0)
-			ratio, _ := contentMap["ratio"].(string)
-
-			var ratioColor string
-			ratioVal := 1.0
-			if compTokens > 0 && origTokens > 0 {
-				ratioVal = compTokens / origTokens
-			}
-			if ratioVal < 0.3 {
-				ratioColor = "114" // green
-			} else if ratioVal < 0.6 {
-				ratioColor = "228" // gold
-			} else {
-				ratioColor = "167" // red
-			}
-			ratioStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ratioColor)).Bold(true)
-
-			// 精简显示: 📊 原tokens → 压缩后tokens (彩色压缩比)
-			line := fmt.Sprintf("📊 %d → %d %s",
-				int(origTokens), int(compTokens), ratioStyle.Render(ratio))
-			prefixRendered += " " + toolSummaryStyle.Render(line)
-		}
-		wrappedContent = "" // 单行显示，不显示内容面板
 	case "tool_call_result":
 		toolName = getToolNameFromContent(event.Content)
 		callID := getToolCallIDFromContent(event.Content)

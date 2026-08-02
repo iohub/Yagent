@@ -799,7 +799,6 @@ Protocols are defined in `internal/protocol/agent_events.go`:
 | `tool_call_result` | Tool call result | Progress display |
 | `tool_call_error` | Tool call error | Error handling |
 | `context_loaded` | Context loaded | Progress display |
-| `context_compressed` | Context compressed | Status display |
 | `ai_stream_start` | Streaming response start | Streaming UI |
 | `ai_chunk` | Streaming data chunk | Streaming UI |
 | `ai_stream_end` | Streaming response end | Streaming UI |

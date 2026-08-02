@@ -680,14 +680,6 @@ export class ServerAPI {
         return null;
       }
 
-      case 'context_compressed': {
-        this.broadcastStatus('context_compressed', {
-          task_id: taskId,
-          detail: content,
-        });
-        return null;
-      }
-
       // ---- LLM 调用状态 ----
       case 'llm_call_start': {
         this.broadcastStatus('llm_call_start', {

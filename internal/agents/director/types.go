@@ -54,17 +54,6 @@ type LLMCallEvent struct {
 	Usage           map[string]interface{} `json:"usage,omitempty"`
 }
 
-// --- Config types ---
-
-// CompactConfig groups context compression settings for cleaner passing.
-type CompactConfig struct {
-	EnableAutoCompact       bool
-	MaxContextTokens        int
-	AsyncCompactEnabled     bool
-	CompactTriggerThreshold float64
-	SummarizationModel      string
-}
-
 // --- Custom Agent types ---
 
 // CustomAgent stores a dynamically designed agent created by Meta-Agent.

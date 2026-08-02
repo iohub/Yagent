@@ -44,11 +44,6 @@
       "heading": "上下文"
     },
     {
-      "event": "context_compressed",
-      "component": "StatusPill",
-      "heading": "压缩"
-    },
-    {
       "event": "commit_context_loaded",
       "component": "StatusPill",
       "heading": "Commit"

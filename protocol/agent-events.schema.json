@@ -168,40 +168,6 @@
         "heading": "Commit"
       }
     },
-    "ContextCompressedEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "compressed_tokens": {
-          "description": "压缩后的 token 数",
-          "type": "number"
-        },
-        "event": {
-          "description": "上下文压缩完成",
-          "enum": [
-            "context_compressed"
-          ],
-          "type": "string"
-        },
-        "original_tokens": {
-          "description": "压缩前的 token 数",
-          "type": "number"
-        },
-        "ratio": {
-          "description": "压缩比",
-          "type": "number"
-        }
-      },
-      "required": [
-        "event",
-        "original_tokens",
-        "compressed_tokens"
-      ],
-      "type": "object",
-      "x-render-hint": {
-        "component": "StatusPill",
-        "heading": "压缩"
-      }
-    },
     "ContextLoadedEvent": {
       "additionalProperties": false,
       "properties": {
@@ -742,7 +708,7 @@
       "$ref": "#/definitions/ContextLoadedEvent"
     },
     {
-      "$ref": "#/definitions/ContextCompressedEvent"
+      "$ref": "#/definitions/ContextLoadedEvent"
     },
     {
       "$ref": "#/definitions/CommitContextLoadedEvent"

@@ -798,7 +798,6 @@ type MessageDispatcher struct {
 | `tool_call_result` | 工具调用结果 | 进度展示 |
 | `tool_call_error` | 工具调用错误 | 错误处理 |
 | `context_loaded` | 上下文加载 | 进度展示 |
-| `context_compressed` | 上下文压缩 | 状态展示 |
 | `ai_stream_start` | 流式响应开始 | 流式 UI |
 | `ai_chunk` | 流式数据块 | 流式 UI |
 | `ai_stream_end` | 流式响应结束 | 流式 UI |

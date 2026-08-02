@@ -181,32 +181,6 @@ var inputPanelIdleStyle = lipgloss.NewStyle().
 	Padding(0, 1).
 	MarginTop(1)
 
-// ── Context compression styles ──
-var (
-	CompactBadgeStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("23")).
-				Foreground(lipgloss.Color("15")).
-				Bold(true).
-				Padding(0, 1)
-
-	CompactTokenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
-	CompactArrowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-)
-
-// CompactRatioStyle returns a style with color based on compression ratio.
-func CompactRatioStyle(ratio float64) lipgloss.Style {
-	var color string
-	switch {
-	case ratio < 30:
-		color = "114"
-	case ratio < 60:
-		color = "228"
-	default:
-		color = "167"
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-}
-
 // FormatTokenCount formats a token count with comma separators.
 func FormatTokenCount(n int) string {
 	s := fmt.Sprintf("%d", n)

@@ -98,7 +98,7 @@ type TimelineEntry struct {
 	Kind      TimelineKind  // 條目種類
 	Timestamp time.Time     // 事件發生時間
 	Status    ToolStatus    // 工具狀態
-	Name      string        // 名稱，如 \"read_file\", \"llm_call\", \"context_compressed\"
+	Name      string        // 名稱，如 \"read_file\", \"llm_call\"
 	Detail    string        // 仔細消息（檔案路徑、命令摘要等）
 	Duration  time.Duration // 執行耗時（完成後設定）
 	IsError   bool          // 是否出錯

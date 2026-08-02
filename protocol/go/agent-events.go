@@ -18,7 +18,6 @@ const (
   EventTypeToolCallResult EventType = "tool_call_result"
   EventTypeToolCallError EventType = "tool_call_error"
   EventTypeContextLoaded EventType = "context_loaded"
-  EventTypeContextCompressed EventType = "context_compressed"
   EventTypeCommitContextLoaded EventType = "commit_context_loaded"
   EventTypeAiStreamStart EventType = "ai_stream_start"
   EventTypeAiChunk EventType = "ai_chunk"
@@ -93,13 +92,6 @@ type ToolCallErrorData struct {
 type ContextLoadedData struct {
   FileCount float64 `json:"file_count"` // 加载的文件数量
   Files []json.RawMessage `json:"files,omitempty"` // 加载的文件列表
-}
-
-// ContextCompressedData 上下文压缩完成
-type ContextCompressedData struct {
-  OriginalTokens float64 `json:"original_tokens"` // 压缩前的 token 数
-  CompressedTokens float64 `json:"compressed_tokens"` // 压缩后的 token 数
-  Ratio float64 `json:"ratio,omitempty"` // 压缩比
 }
 
 // CommitContextLoadedData Commit 学习器上下文加载
@@ -187,7 +179,6 @@ var EventTypeRegistry = map[EventType]func() interface{}{
   EventTypeToolCallResult: func() interface{} { return &ToolCallResultData{} },
   EventTypeToolCallError: func() interface{} { return &ToolCallErrorData{} },
   EventTypeContextLoaded: func() interface{} { return &ContextLoadedData{} },
-  EventTypeContextCompressed: func() interface{} { return &ContextCompressedData{} },
   EventTypeCommitContextLoaded: func() interface{} { return &CommitContextLoadedData{} },
   EventTypeAiStreamStart: func() interface{} { return &AiStreamStartData{} },
   EventTypeAiChunk: func() interface{} { return &AiChunkData{} },
@@ -233,10 +224,6 @@ var EventRenderHints = map[EventType]RenderHint{
   EventTypeContextLoaded: {
     Component: "StatusPill",
     Heading: "上下文",
-  },
-  EventTypeContextCompressed: {
-    Component: "StatusPill",
-    Heading: "压缩",
   },
   EventTypeCommitContextLoaded: {
     Component: "StatusPill",

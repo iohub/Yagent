@@ -76,7 +76,6 @@ VSCode 插件:
 | 事件名称 | 说明 | 前端组件 |
 |----------|------|----------|
 | `context_loaded` | 项目上下文加载完成 | `StatusPill` |
-| `context_compressed` | 上下文压缩完成 | `StatusPill` |
 | `commit_context_loaded` | Commit 学习器上下文加载 | `StatusPill` |
 
 ### 流式事件

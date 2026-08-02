@@ -242,16 +242,6 @@ export function serverMessageToChatMessage(
         metadata: { taskId },
       };
 
-    case 'context_compressed':
-      return {
-        id: `compress-${taskId}-${timestamp}`,
-        text: `📦 上下文已压缩 (${data?.compressed_tokens || 0} tokens)`,
-        sender: 'system',
-        timestamp,
-        type: 'status_update',
-        metadata: { taskId },
-      };
-
     default:
       // 未知事件类型，降级显示
       if (serverMsg.message) {

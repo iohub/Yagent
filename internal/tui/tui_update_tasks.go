@@ -702,19 +702,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		m.timelineCacheKey = ""
 	}
 
-	// Route context_compressed events to timeline
-	if entry.eventType == "context_compressed" {
-		m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
-			ID:        fmt.Sprintf("cmp_%d", entry.timestamp.UnixNano()),
-			Kind:      TimelineKindContextEvent,
-			Timestamp: entry.timestamp,
-			Status:    ToolStatusSuccess,
-			Name:      "context_compressed",
-			Detail:    entry.content,
-		})
-		m.timelineCacheKey = ""
-	}
-
 	m.logEntries = append(m.logEntries, entry)
 	m.viewportDirty = true
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])

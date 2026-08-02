@@ -14,7 +14,6 @@ export const EventTypes = {
   ToolCallResult: "tool_call_result",
   ToolCallError: "tool_call_error",
   ContextLoaded: "context_loaded",
-  ContextCompressed: "context_compressed",
   CommitContextLoaded: "commit_context_loaded",
   AiStreamStart: "ai_stream_start",
   AiChunk: "ai_chunk",
@@ -92,14 +91,6 @@ export interface ContextLoadedEvent {
   event: "context_loaded";
   file_count: number;
   files?: any[];
-}
-
-export interface ContextCompressedEvent {
-  /** 上下文压缩完成 */
-  event: "context_compressed";
-  original_tokens: number;
-  compressed_tokens: number;
-  ratio?: number;
 }
 
 export interface CommitContextLoadedEvent {
@@ -188,7 +179,6 @@ export type AgentEvent =
   | ToolCallResultEvent
   | ToolCallErrorEvent
   | ContextLoadedEvent
-  | ContextCompressedEvent
   | CommitContextLoadedEvent
   | AiStreamStartEvent
   | AiChunkEvent
@@ -248,10 +238,6 @@ export function isToolCallError(msg: AgentEvent | WebSocketMessage): msg is Tool
 
 export function isContextLoaded(msg: AgentEvent | WebSocketMessage): msg is ContextLoadedEvent {
   return 'event' in msg && msg.event === "context_loaded";
-}
-
-export function isContextCompressed(msg: AgentEvent | WebSocketMessage): msg is ContextCompressedEvent {
-  return 'event' in msg && msg.event === "context_compressed";
 }
 
 export function isCommitContextLoaded(msg: AgentEvent | WebSocketMessage): msg is CommitContextLoadedEvent {

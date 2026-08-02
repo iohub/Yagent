@@ -447,10 +447,6 @@ api_key = "dummy-key"                      # 本地模型通常不需要 API Key
 | `[codexray]` / `[codexray.embedding]` / `[codexray.retrieval_pipeline]` / `[codexray.client]` | Codexray 功能已从代码中移除（含 TODO 注释），由 CodeSeek 替代 |
 | `[director]` | 代码中无对应结构体定义，字段未被读取 |
 | `[tools_registry]` | 占位符配置（"Phase 2 使用"），代码中零引用 |
-| `[agent_comm]` | 占位符配置（"Phase 2 使用"），代码中零引用 |
-| `[context]` | 代码中无对应 Go struct 定义（`CompactConfig` 字段不匹配），配置层完全未实现 |
-
-> **注意**：`[context]` 的相关设计文档 `docs/context-compression-config.md` 仅为设计参考，当前版本代码不读取该配置段。
 
 ---
 

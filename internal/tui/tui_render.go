@@ -3,11 +3,9 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"codeactor/internal/messaging"
-	"codeactor/internal/util"
 
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
@@ -409,13 +407,6 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 		return cached
 	}
 
-	// Context compression rendering
-	if entry.compactData != nil {
-		rendered := renderContextCompressed(*entry, width)
-		entry.setCachedRender(rendered, width)
-		return rendered
-	}
-
 	// Tool entry rendering (non-running) — use new renderer
 	if entry.toolEntry != nil {
 		// Special case: deepthinking output should be rendered as formatted Markdown via Glamour
@@ -711,8 +702,7 @@ func isVerboseEventType(eventType string) bool {
 	switch eventType {
 	case "tool_call_start", "tool_call_result",
 		"llm_call_start", "llm_call_end",
-		"context_compressed", "commit_context_loaded",
-		"model_info", "thinking":
+		"commit_context_loaded", "model_info", "thinking":
 		return true
 	}
 	return false
@@ -867,37 +857,6 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
-	case "context_compressed":
-		if m, ok := event.Content.(map[string]interface{}); ok {
-			origTokens := int(util.MustGetNumericFloat(m["original_tokens"], 0))
-			compTokens := int(util.MustGetNumericFloat(m["compressed_tokens"], 0))
-			ratioStr := ""
-			if v, ok := m["ratio"].(string); ok {
-				ratioStr = v
-			}
-			statsStr := ""
-			if v, ok := m["compression_stats"].(string); ok {
-				statsStr = v
-			}
-			ratioVal := 0.0
-			if ratioStr != "" {
-				s := strings.TrimSuffix(ratioStr, "%")
-				if f, err := strconv.ParseFloat(s, 64); err == nil {
-					ratioVal = f
-				}
-			}
-			entry.compactData = &CompactData{
-				OriginalTokens:   origTokens,
-				CompressedTokens: compTokens,
-				Ratio:            ratioVal,
-				Stats:            statsStr,
-			}
-			entry.content = fmt.Sprintf("上下文压缩 %s → %s (%s)",
-				FormatTokenCount(origTokens), FormatTokenCount(compTokens), ratioStr)
-		}
-		if entry.content == "" {
-			entry.content = fmt.Sprintf("%v", event.Content)
-		}
 	case "llm_call_start":
 		if m, ok := event.Content.(map[string]interface{}); ok {
 			modelName, _ := m["model"].(string)
@@ -1013,12 +972,6 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 			}
 			contentStyle = toolDoneStyle
 		}
-	case "context_compressed":
-		if entry.compactData != nil {
-			return renderContextCompressed(entry, maxWidth)
-		}
-		prefix = "🗜️ 上下文压缩"
-		contentStyle = StatusStyle
 	case "llm_call_start":
 		prefix = ""
 		contentStyle = llmCallStyle
@@ -1261,30 +1214,6 @@ func renderToolEntryWithAnim(entry logEntry, maxWidth int, anim *Anim) string {
 		params = entry.executionSummary
 	}
 	return RenderPending(entry.toolEntry.Call.Name, params, anim)
-}
-
-func renderContextCompressed(entry logEntry, width int) string {
-	data := entry.compactData
-	if data == nil {
-		return formatLogEntry(entry, width)
-	}
-
-	contentWidth := width - 4
-	if contentWidth < 30 {
-		contentWidth = 30
-	}
-
-	icon := IconSuccess
-	badge := CompactBadgeStyle.Render("上下文压缩")
-	original := CompactTokenStyle.Render(FormatTokenCount(data.OriginalTokens))
-	arrow := CompactArrowStyle.Render("→")
-	compressed := CompactTokenStyle.Render(FormatTokenCount(data.CompressedTokens))
-	ratioStr := fmt.Sprintf("%.2f%%", data.Ratio)
-	ratio := CompactRatioStyle(data.Ratio).Render(ratioStr)
-
-	header := fmt.Sprintf("%s %s  %s %s %s  %s", icon, badge, original, arrow, compressed, ratio)
-
-	return addToolCallBorders(header, contentWidth)
 }
 
 // extractDiffFromResult attempts to parse a JSON result string and extract the "diff" field.

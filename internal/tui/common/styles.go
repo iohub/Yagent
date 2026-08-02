@@ -155,11 +155,6 @@ type Styles struct {
 	CollapseHintLine lipgloss.Style
 	CollapseHintText lipgloss.Style
 
-	// Context compression
-	CompactBadge  lipgloss.Style
-	CompactToken  lipgloss.Style
-	CompactArrow  lipgloss.Style
-
 	// Airline status bar
 	AirlineNormalMode  lipgloss.Style
 	AirlineRunMode     lipgloss.Style
@@ -170,7 +165,6 @@ type Styles struct {
 	AirlineFiller      lipgloss.Style
 
 	// Dynamic styles
-	CompactRatio func(ratio float64) lipgloss.Style
 }
 
 // Theme represents the color theme for the TUI.
@@ -294,14 +288,6 @@ func newDarkStyles() *Styles {
 
 		Separator: lipgloss.NewStyle().Foreground(lipgloss.Color("237")),
 
-		CompactBadge: lipgloss.NewStyle().
-			Background(lipgloss.Color("23")).
-			Foreground(lipgloss.Color("15")).
-			Bold(true).
-			Padding(0, 1),
-		CompactToken: lipgloss.NewStyle().Foreground(lipgloss.Color("247")),
-		CompactArrow: lipgloss.NewStyle().Foreground(lipgloss.Color("243")),
-
 		AirlineNormalMode: lipgloss.NewStyle().
 			Background(lipgloss.Color("24")).
 			Foreground(lipgloss.Color("15")).
@@ -329,19 +315,6 @@ func newDarkStyles() *Styles {
 		AirlineFiller: lipgloss.NewStyle().
 			Background(lipgloss.Color("236")).
 			Foreground(lipgloss.Color("250")),
-
-		CompactRatio: func(ratio float64) lipgloss.Style {
-			var c string
-			switch {
-			case ratio < 30:
-				c = "114"
-			case ratio < 60:
-				c = "228"
-			default:
-				c = "167"
-			}
-			return lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Bold(true)
-		},
 	}
 	return s
 }
@@ -442,14 +415,6 @@ func newLightStyles() *Styles {
 
 		Separator: lipgloss.NewStyle().Foreground(lipgloss.Color("250")),
 
-		CompactBadge: lipgloss.NewStyle().
-			Background(lipgloss.Color("30")).
-			Foreground(lipgloss.Color("15")).
-			Bold(true).
-			Padding(0, 1),
-		CompactToken: lipgloss.NewStyle().Foreground(lipgloss.Color("242")),
-		CompactArrow: lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
-
 		AirlineNormalMode: lipgloss.NewStyle().
 			Background(lipgloss.Color("25")).
 			Foreground(lipgloss.Color("15")).
@@ -477,19 +442,6 @@ func newLightStyles() *Styles {
 		AirlineFiller: lipgloss.NewStyle().
 			Background(lipgloss.Color("253")).
 			Foreground(lipgloss.Color("235")),
-
-		CompactRatio: func(ratio float64) lipgloss.Style {
-			var c string
-			switch {
-			case ratio < 30:
-				c = "28"
-			case ratio < 60:
-				c = "178"
-			default:
-				c = "160"
-			}
-			return lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Bold(true)
-		},
 	}
 	return s
 }

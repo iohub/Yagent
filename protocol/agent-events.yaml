@@ -182,25 +182,6 @@ event_types:
         description: "加载的文件列表"
         required: false
 
-  - name: context_compressed
-    description: "上下文压缩完成"
-    render_hint:
-      component: StatusPill
-      heading: "压缩"
-    fields:
-      - name: original_tokens
-        type: number
-        description: "压缩前的 token 数"
-        required: true
-      - name: compressed_tokens
-        type: number
-        description: "压缩后的 token 数"
-        required: true
-      - name: ratio
-        type: number
-        description: "压缩比"
-        required: false
-
   - name: commit_context_loaded
     description: "Commit 学习器上下文加载"
     render_hint:
