@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"codeactor/internal/llm"
 	"codeactor/internal/logging"
@@ -165,6 +166,16 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 			if err == nil {
 				_ = t.mcp.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{ID: dupResult.ID})
 				kl.Info("merged with duplicate", "event", "consolidate_merged", "title", newTitle, "new_id", newRecord.ID, "parent_ids", []string{dupResult.ID})
+				ts := time.Now().Format("2006-01-02 15:04:05")
+				var rfLine string
+				if len(relatedFiles) > 0 {
+					rfLine = "\nrelated_files: " + strings.Join(relatedFiles, ",")
+				}
+				consolidateEntry := fmt.Sprintf("============================================================\n[%s] knowledge consolidate | event=merged | id=%s | type=%s | source_agent=%s | title=%s\ncontent: %s\ntags: %s%s",
+					ts, newRecord.ID, rawType, sourceAgent, newTitle, newContent, strings.Join(newTags, ","), rfLine)
+				if err := logging.WriteKnowledgeConsolidateLog(consolidateEntry); err != nil {
+					kl.Warn("knowledge consolidate log write failed", "error", err)
+				}
 				return map[string]interface{}{
 					"status":     "merged",
 					"id":         newRecord.ID,
@@ -198,6 +209,16 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 		return nil, fmt.Errorf("knowledge_add failed: %w", err)
 	}
 	kl.Info("knowledge added", "event", "consolidate_added", "title", title, "id", record.ID, "status", "added")
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	var rfLine string
+	if len(relatedFiles) > 0 {
+		rfLine = "\nrelated_files: " + strings.Join(relatedFiles, ",")
+	}
+	consolidateEntry := fmt.Sprintf("============================================================\n[%s] knowledge consolidate | event=added | id=%s | type=%s | source_agent=%s | title=%s\ncontent: %s\ntags: %s%s",
+		ts, record.ID, rawType, sourceAgent, title, content, strings.Join(tags, ","), rfLine)
+	if err := logging.WriteKnowledgeConsolidateLog(consolidateEntry); err != nil {
+		kl.Warn("knowledge consolidate log write failed", "error", err)
+	}
 	return map[string]interface{}{"status": "added", "id": record.ID}, nil
 }
 

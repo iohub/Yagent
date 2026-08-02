@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"codeactor/internal/config"
 	"codeactor/internal/logging"
@@ -119,6 +120,14 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 	}
 	block = k.TruncateToTokenBudget(block, budget)
 	kl.Info("knowledge block injected", "event", "inject_done", "agent", agent, "entries", len(filtered), "block_len", runeCount(block), "max_tokens", k.cfg.InjectionMaxTokens)
+	if block != "" {
+		ts := time.Now().Format("2006-01-02 15:04:05")
+		entry := fmt.Sprintf("============================================================\n[%s] knowledge inject | agent=%s | query=%s | entries=%d | tokens=%d\n%s",
+			ts, agent, query, len(filtered), budget, block)
+		if err := logging.WriteKnowledgeInjectLog(entry); err != nil {
+			kl.Warn("knowledge inject log write failed", "error", err)
+		}
+	}
 	return block, nil
 }
 

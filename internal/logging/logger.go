@@ -30,6 +30,12 @@ var (
 	// taskID 管理变量，带 RWMutex 保护
 	currentTaskID string
 	taskMu        sync.RWMutex
+	// 知识审计日志（lazy open，独立 mutex）
+	knowledgeInjectLogFile       *os.File
+	knowledgeInjectLogPath       string
+	knowledgeConsolidateLogFile  *os.File
+	knowledgeConsolidateLogPath  string
+	knowledgeAuditMu             sync.Mutex
 )
 
 // syncedWriter wraps an io.Writer with a mutex for concurrent safety.
@@ -164,6 +170,14 @@ func Close() {
 		knowledgeLogFile = nil
 		knowledgeLogger = nil
 	}
+	if knowledgeInjectLogFile != nil {
+		knowledgeInjectLogFile.Close()
+		knowledgeInjectLogFile = nil
+	}
+	if knowledgeConsolidateLogFile != nil {
+		knowledgeConsolidateLogFile.Close()
+		knowledgeConsolidateLogFile = nil
+	}
 }
 
 // GetLogDir returns the current log directory path.
@@ -258,4 +272,43 @@ func KnowledgeLogger() *slog.Logger {
 		return knowledgeLogger
 	}
 	return slog.Default()
+}
+
+// appendKnowledgeAuditLog 将审计条目追加写入知识审计日志文件（lazy open，跨天自动重新打开）。
+// file 和 path 为指针，用于在调用方持有文件句柄和当前路径。
+func appendKnowledgeAuditLog(file **os.File, path *string, prefix, entry string) error {
+	knowledgeAuditMu.Lock()
+	defer knowledgeAuditMu.Unlock()
+
+	today := time.Now().Format("2006-01-02")
+	expectedPath := filepath.Join(GetLogDir(), fmt.Sprintf("%s-%s.log", prefix, today))
+
+	if *file == nil || *path != expectedPath {
+		if *file != nil {
+			(*file).Close()
+			*file = nil
+		}
+		var err error
+		*file, err = openLogFile(GetLogDir(), prefix)
+		if err != nil {
+			return err
+		}
+		*path = expectedPath
+	}
+
+	_, err := (*file).Write([]byte(entry + "\n"))
+	return err
+}
+
+// WriteKnowledgeInjectLog 将一次"注入的知识"审计条目追加写入独立日志文件
+// 文件：{GetLogDir()}/knowledge-inject-YYYY-MM-DD.log
+// 线程安全；未初始化/失败时静默返回 error（调用方按 fail-safe 处理）
+func WriteKnowledgeInjectLog(entry string) error {
+	return appendKnowledgeAuditLog(&knowledgeInjectLogFile, &knowledgeInjectLogPath, "knowledge-inject", entry)
+}
+
+// WriteKnowledgeConsolidateLog 将一次"整理的知识"审计条目追加写入独立日志文件
+// 文件：{GetLogDir()}/knowledge-consolidate-YYYY-MM-DD.log
+func WriteKnowledgeConsolidateLog(entry string) error {
+	return appendKnowledgeAuditLog(&knowledgeConsolidateLogFile, &knowledgeConsolidateLogPath, "knowledge-consolidate", entry)
 }
