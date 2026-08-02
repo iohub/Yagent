@@ -3,9 +3,7 @@ package agents
 import (
 	"context"
 	"log/slog"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"codeactor/internal/globalctx"
 	"codeactor/internal/tools"
@@ -26,17 +24,17 @@ func autoConsolidateSubtask(gctx *globalctx.GlobalCtx, sourceAgent, knowledgeTyp
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		// title 取 taskInput 前 30 个 rune
+		// title 取 taskInput 前 200 个 rune
 		title := taskInput
-		if r := []rune(title); len(r) > 30 {
-			title = string(r[:30])
+		if r := []rune(title); len(r) > 200 {
+			title = string(r[:200])
 		}
 		if title == "" {
 			title = sourceAgent + " 子任务总结"
 		}
 
-		// content 字节安全截断到 500 字节（rune 边界，避免中文乱码）
-		content := truncateContentByBytes(resultText, 500)
+		// content 截断到 1500 字（rune 边界，避免中文乱码）
+		content := truncateContentByRunes(resultText, 1500)
 
 		tags := []interface{}{sourceAgent, "auto", "子任务总结"}
 
@@ -52,17 +50,11 @@ func autoConsolidateSubtask(gctx *globalctx.GlobalCtx, sourceAgent, knowledgeTyp
 	}()
 }
 
-// truncateContentByBytes 按字节安全截断（rune 边界，避免中文乱码），保证 len(result) <= maxBytes
-func truncateContentByBytes(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
+// truncateContentByRunes 按 rune 安全截断（rune 边界，避免中文乱码），保证 rune 数 <= maxRunes
+func truncateContentByRunes(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) <= maxRunes {
 		return s
 	}
-	var sb strings.Builder
-	for _, r := range s {
-		if sb.Len()+utf8.RuneLen(r) > maxBytes {
-			break
-		}
-		sb.WriteRune(r)
-	}
-	return sb.String()
+	return string(r[:maxRunes])
 }
