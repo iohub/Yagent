@@ -175,7 +175,7 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
 	cfg.Publisher = a.Publisher
-	cfg.AgentName = "browser"
+	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true // agent_exit 时立即返回
 	cfg.RepoContext = a.GlobalCtx.RepoSummary
 	// EnableCollaboration 已默认 true

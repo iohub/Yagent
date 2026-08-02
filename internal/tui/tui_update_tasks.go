@@ -31,9 +31,9 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Count tokens for AI response events
+	// Count tokens for AI response events only (ai_stream_end no longer carries usage)
 	// Prefer real token usage from API metadata, fallback to estimation
-	if msg.event.Type == "ai_response" || msg.event.Type == "ai_stream_end" {
+	if msg.event.Type == "ai_response" {
 		if usageData, ok := msg.event.Metadata["usage"]; ok {
 			if usageMap, ok := usageData.(map[string]interface{}); ok {
 				var completionVal int64
@@ -265,8 +265,10 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		// 优先匹配已完成的流式条目
 		if idx, ok := m.aiStreamCompletedEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
-			le.streamContent = content
-			le.content = content
+			if content != "" {
+				le.streamContent = content
+				le.content = content
+			}
 			le.eventType = "ai_response" // 切换为 ai_response 类型，走 Glamour 渲染
 			le.finalized = true
 			le.streaming = false
@@ -281,8 +283,10 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		// Fallback: 也检查 active map（ai_stream_end 丢失的情况）
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
-			le.streamContent = content
-			le.content = content
+			if content != "" {
+				le.streamContent = content
+				le.content = content
+			}
 			le.eventType = "ai_response"
 			le.finalized = true
 			le.streaming = false

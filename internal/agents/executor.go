@@ -225,9 +225,11 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				}
 				if err == nil && resp != nil && resp.Usage != nil {
 					metadata["usage"] = map[string]interface{}{
-						"prompt_tokens":     resp.Usage.PromptTokens,
-						"completion_tokens": resp.Usage.CompletionTokens,
-						"total_tokens":      resp.Usage.TotalTokens,
+						"prompt_tokens":               resp.Usage.PromptTokens,
+						"completion_tokens":           resp.Usage.CompletionTokens,
+						"total_tokens":                resp.Usage.TotalTokens,
+						"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
+						"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
 					}
 				}
 				cfg.Publisher.PublishWithMetadata("ai_stream_end", "", cfg.AgentName, metadata)
@@ -279,7 +281,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}
 
 		choice := resp.Choices[0]
-		if choice.Content != "" && cfg.Publisher != nil {
+		if cfg.Publisher != nil {
 			metadata := map[string]interface{}{}
 			if resp.Usage != nil {
 				metadata["usage"] = map[string]interface{}{

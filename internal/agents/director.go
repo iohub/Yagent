@@ -1140,23 +1140,21 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		choice := resp.Choices[0]
 		slog.Debug("DirectorAgent LLM response", "step", i, "content", choice.Content, "tool_calls", len(choice.ToolCalls))
 
-		if choice.Content != "" {
-			if a.Publisher != nil {
-				metadata := map[string]interface{}{}
-				if resp.Usage != nil {
-					metadata["usage"] = map[string]interface{}{
-						"prompt_tokens":               resp.Usage.PromptTokens,
-						"completion_tokens":           resp.Usage.CompletionTokens,
-						"total_tokens":                resp.Usage.TotalTokens,
-						"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
-						"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
-					}
+		if a.Publisher != nil {
+			metadata := map[string]interface{}{}
+			if resp.Usage != nil {
+				metadata["usage"] = map[string]interface{}{
+					"prompt_tokens":               resp.Usage.PromptTokens,
+					"completion_tokens":           resp.Usage.CompletionTokens,
+					"total_tokens":                resp.Usage.TotalTokens,
+					"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
+					"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
 				}
-				if len(metadata) > 0 {
-					a.Publisher.PublishWithMetadata("ai_response", choice.Content, a.Name(), metadata)
-				} else {
-					a.Publisher.Publish("ai_response", choice.Content, a.Name())
-				}
+			}
+			if len(metadata) > 0 {
+				a.Publisher.PublishWithMetadata("ai_response", choice.Content, a.Name(), metadata)
+			} else {
+				a.Publisher.Publish("ai_response", choice.Content, a.Name())
 			}
 		}
 

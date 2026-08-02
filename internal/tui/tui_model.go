@@ -944,7 +944,7 @@ return &model{
 		toolCallEntries:    make(map[string]*ToolEntry),
 		anim: NewAnim(10),
 		tokenUsagePerAgent: make(map[string]*AgentTokenUsage),
-		tokenDashboardCollapsed: true, // 默认折叠
+		tokenDashboardCollapsed: false, // 默认展开，显示所有agent的token统计
 
 		// 新组件
 		dialogStack:  ds,
