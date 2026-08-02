@@ -383,7 +383,7 @@ const knowledgeExtractionPrompt = `请从以下整理结果中提取可存入知
 
 输出 JSON 数组格式（不要输出其他内容）：
 [
-  {"type": "repo_retrieval", "title": "标题（≤30字）", "content": "内容（≤500字）", "tags": ["标签1"], "confidence": 0.9}
+  {"type": "repo_retrieval", "title": "标题（≤200字）", "content": "内容（≤1500字）", "tags": ["标签1"], "confidence": 0.9}
 ]
 
 如果没有可提取的知识，输出 []。
