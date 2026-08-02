@@ -21,7 +21,8 @@ func (m *model) computeFooterHeight() int {
 	height := 1 // separator line
 
 	// Tool timeline panel (when entries exist) — 使用悬浮面板样式
-	if m.taskRunning || len(m.timelineEntries) > 0 {
+	// 宽屏时 dashboard 在右上角显示，底部不再显示 timeline panel
+	if !m.dashboardVisible() && (m.taskRunning || len(m.timelineEntries) > 0) {
 		// border-top(1) + 3 entries + hint(1) + border-bottom(1)
 		height += 6
 	}
@@ -49,7 +50,7 @@ func (m *model) computeFooterHeight() int {
 
 	// Token dashboard
 	totalTokens := m.inputTokens + m.outputTokens
-	if totalTokens > 0 {
+	if !m.dashboardVisible() && totalTokens > 0 {
 		height += 4 // 2 borders + 1 header + 1 separator
 		if m.commandMode && m.taskRunning {
 			height++
@@ -95,6 +96,9 @@ func (m *model) invalidateFooterCache() {
 	// Token dashboard too
 	m.cachedTokenDashboard = ""
 	m.tokenDashboardValid = false
+	// Dashboard cache too
+	m.dashboardCache = ""
+	m.dashboardCacheKey = ""
 }
 
 // getGlamourRenderer returns a cached glamour renderer for the given width.
@@ -136,7 +140,7 @@ func (m *model) resizeViewport() {
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
-	m.viewport.SetWidth(m.termWidth)
+	m.viewport.SetWidth(m.termWidth - m.dashboardWidth())
 	m.viewport.SetHeight(vpHeight)
 
 	// Update glamour renderer reference for backward compat

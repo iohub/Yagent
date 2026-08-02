@@ -94,7 +94,8 @@ func (m *model) View() tea.View {
 	if totalLines > vpHeight {
 		scrollbarWidth = 2
 	}
-	contentWidth := m.termWidth - scrollbarWidth
+	dashW := m.dashboardWidth()
+	contentWidth := m.termWidth - scrollbarWidth - dashW
 
 	// 仅在以下情况重建内容：脏标记、宽度变化或新条目到达
 	if m.hasDirtyEntries() || contentWidth != m.prevViewportWidth ||
@@ -121,7 +122,12 @@ func (m *model) View() tea.View {
 		m.prevViewportHeight = m.viewport.Height()
 	}
 
-	// Render viewport with optional scrollbar
+	// Render dashboard if visible (must be done before rendering)
+	if dashW > 0 {
+		_ = m.renderDashboard(dashW, vpHeight)
+	}
+
+	// Render viewport with optional scrollbar and optional dashboard
 	if scrollbarWidth > 0 {
 		// Use design system colors - softer indigo (62) for reduced visual fatigue
 		sbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
@@ -137,26 +143,72 @@ func (m *model) View() tea.View {
 		if len(sbLines) > maxLines {
 			maxLines = len(sbLines)
 		}
+		if dashW > 0 {
+			dashLines := strings.Split(m.dashboardCache, "\n")
+			if len(dashLines) > maxLines {
+				maxLines = len(dashLines)
+			}
+			for i := 0; i < maxLines; i++ {
+				vpLine := ""
+				sbLine := ""
+				dashLine := ""
+				if i < len(vpLines) {
+					vpLine = vpLines[i]
+				}
+				if i < len(sbLines) {
+					sbLine = sbLines[i]
+				}
+				if i < len(dashLines) {
+					dashLine = dashLines[i]
+				}
+				vpPadded := lipgloss.NewStyle().Width(contentWidth).Render(vpLine)
+				combinedLines = append(combinedLines, vpPadded+sbLine+dashLine)
+			}
+		} else {
+			for i := 0; i < maxLines; i++ {
+				vpLine := ""
+				sbLine := ""
+				if i < len(vpLines) {
+					vpLine = vpLines[i]
+				}
+				if i < len(sbLines) {
+					sbLine = sbLines[i]
+				}
+				vpPadded := lipgloss.NewStyle().Width(contentWidth).Render(vpLine)
+				combinedLines = append(combinedLines, vpPadded+sbLine)
+			}
+		}
+		b.WriteString(strings.Join(combinedLines, "\n"))
+	} else if dashW > 0 {
+		// No scrollbar but dashboard visible: line-by-line拼接
+		dashLines := strings.Split(m.dashboardCache, "\n")
+		vpLines := strings.Split(m.cachedViewportView, "\n")
+		maxLines := len(vpLines)
+		if len(dashLines) > maxLines {
+			maxLines = len(dashLines)
+		}
 		for i := 0; i < maxLines; i++ {
 			vpLine := ""
-			sbLine := ""
+			dashLine := ""
 			if i < len(vpLines) {
 				vpLine = vpLines[i]
 			}
-			if i < len(sbLines) {
-				sbLine = sbLines[i]
+			if i < len(dashLines) {
+				dashLine = dashLines[i]
 			}
-			// Pad vpLine to contentWidth then add scrollbar
 			vpPadded := lipgloss.NewStyle().Width(contentWidth).Render(vpLine)
-			combinedLines = append(combinedLines, vpPadded+sbLine)
+			b.WriteString(vpPadded + dashLine)
+			if i < maxLines-1 {
+				b.WriteString("\n")
+			}
 		}
-		b.WriteString(strings.Join(combinedLines, "\n"))
 	} else {
 		b.WriteString(m.cachedViewportView)
 	}
 
 	// ── Tool Timeline Panel (between viewport and separator) ──
-	if m.taskRunning || len(m.timelineEntries) > 0 {
+	// 宽屏时 dashboard 在右上角显示，底部不再显示 timeline panel
+	if !m.dashboardVisible() && (m.taskRunning || len(m.timelineEntries) > 0) {
 		timelineContent := m.renderTimelinePanel(m.termWidth)
 		if timelineContent != "" {
 			b.WriteString("\n")
@@ -239,11 +291,14 @@ func (m *model) View() tea.View {
 
 	// Token consumption display (use cached render to skip expensive computation)
 	// The cache is maintained in Update() when token counts change.
-	tokenDash := m.cachedTokenDashboard
-	if !m.tokenDashboardValid {
-		tokenDash = m.renderTokenDashboard()
+	// 宽屏时 dashboard 在右上角显示，底部不再显示 token dashboard
+	if !m.dashboardVisible() {
+		tokenDash := m.cachedTokenDashboard
+		if !m.tokenDashboardValid {
+			tokenDash = m.renderTokenDashboard()
+		}
+		footer.WriteString(tokenDash)
 	}
-	footer.WriteString(tokenDash)
 
 	// Status line: nvim airline-style segmented bar
 	// The cache is maintained in Update() on each tick.

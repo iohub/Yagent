@@ -636,6 +636,10 @@ type model struct {
 	cachedStatusBar      string // 缓存的状态栏渲染结果
 	statusBarValid       bool   // statusBar 缓存是否有效
 
+	// ── Dashboard 渲染缓存（右上角面板）──
+	dashboardCache     string // 缓存的 dashboard 渲染结果
+	dashboardCacheKey  string // dashboard 缓存键
+
 	// ── 性能优化标志 ──
 	tickStarted   bool // tick 循环是否已启动
 	viewportDirty bool // 标记 viewport 内容是否需要重建
