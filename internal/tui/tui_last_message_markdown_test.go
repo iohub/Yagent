@@ -38,7 +38,6 @@ func newTestModel() *model {
 		dirtyEntryIndices:        make(map[int]struct{}),
 		aiStreamActiveEntries:    make(map[string]int),
 		aiStreamCompletedEntries: make(map[string]int),
-		aiStreamBuffer:           make(map[string]string),
 
 		glamourCache:    make(map[string]string),
 		glamourLRU:      make([]string, 0, 32),
@@ -215,46 +214,33 @@ func TestScenarioD_BufferFlushThreshold(t *testing.T) {
 	m = feedEvent(m, buildEvent("ai_stream_start", "agent", ""))
 	idx := 0 // the stream entry index
 
-	// Send chunks of 2 runes each: "a", "b", "c", "d", "e"
-	// First 4 chunks (total 8 runes) should trigger flush at the 3rd chunk (5 runes)
+	// 实时更新：每个 chunk 到达后 streamContent 立即包含全部内容
 	m = feedEvent(m, buildEvent("ai_chunk", "agent", "ab"))
-	// Buffer: "ab" (2 runes) — not enough, no flush yet
-	if m.aiStreamBuffer["agent"] != "ab" {
-		t.Fatalf("expected buffer 'ab', got %q", m.aiStreamBuffer["agent"])
-	}
-	if m.logEntries[idx].streamContent != "" {
-		t.Fatal("expected streamContent empty before flush")
+	if m.logEntries[idx].streamContent != "ab" {
+		t.Fatalf("expected streamContent 'ab' after first chunk, got %q", m.logEntries[idx].streamContent)
 	}
 
 	m = feedEvent(m, buildEvent("ai_chunk", "agent", "cd"))
-	// Buffer: "abcd" (4 runes) — still not enough
-	if m.aiStreamBuffer["agent"] != "abcd" {
-		t.Fatalf("expected buffer 'abcd', got %q", m.aiStreamBuffer["agent"])
-	}
-	if m.logEntries[idx].streamContent != "" {
-		t.Fatal("expected streamContent empty before flush")
+	if m.logEntries[idx].streamContent != "abcd" {
+		t.Fatalf("expected streamContent 'abcd' after second chunk, got %q", m.logEntries[idx].streamContent)
 	}
 
 	m = feedEvent(m, buildEvent("ai_chunk", "agent", "e"))
-	// Buffer: "abcde" (5 runes) — threshold reached, should flush
-	if m.aiStreamBuffer["agent"] != "" {
-		t.Fatalf("expected empty buffer after flush, got %q", m.aiStreamBuffer["agent"])
-	}
 	if m.logEntries[idx].streamContent != "abcde" {
-		t.Fatalf("expected streamContent 'abcde', got %q", m.logEntries[idx].streamContent)
+		t.Fatalf("expected streamContent 'abcde' after third chunk, got %q", m.logEntries[idx].streamContent)
 	}
 
-	// End the stream — nothing left to flush
+	// End the stream — 内容不变
 	m = feedEvent(m, buildEvent("ai_stream_end", "agent", nil))
 	if len(m.aiStreamCompletedEntries) != 1 {
 		t.Fatalf("expected 1 completed stream entry, got %d", len(m.aiStreamCompletedEntries))
 	}
 	if m.logEntries[idx].streamContent != "abcde" {
-		t.Fatalf("expected streamContent 'abcde', got %q", m.logEntries[idx].streamContent)
+		t.Fatalf("expected streamContent 'abcde' after stream end, got %q", m.logEntries[idx].streamContent)
 	}
 }
 
-// ── Buffer flush at stream end: leftover < 5 runes must still be flushed ──
+// ── Realtime update at stream end: leftover content already rendered ──
 
 func TestScenarioE_FlushLeftoverAtStreamEnd(t *testing.T) {
 	m := newTestModel()
@@ -263,21 +249,21 @@ func TestScenarioE_FlushLeftoverAtStreamEnd(t *testing.T) {
 	m = feedEvent(m, buildEvent("ai_stream_start", "agent", ""))
 	idx := 0
 
-	// Send chunks that accumulate to only 3 runes total (< threshold)
+	// 实时更新：每个 chunk 到达后立即渲染
 	m = feedEvent(m, buildEvent("ai_chunk", "agent", "ab"))
-	m = feedEvent(m, buildEvent("ai_chunk", "agent", "c"))
-	// Buffer: "abc" (3 runes) — below threshold, no flush yet
-	if m.aiStreamBuffer["agent"] != "abc" {
-		t.Fatalf("expected buffer 'abc', got %q", m.aiStreamBuffer["agent"])
-	}
-	if m.logEntries[idx].streamContent != "" {
-		t.Fatal("expected streamContent empty before stream end flush")
+	if m.logEntries[idx].streamContent != "ab" {
+		t.Fatalf("expected streamContent 'ab' after first chunk, got %q", m.logEntries[idx].streamContent)
 	}
 
-	// End stream — leftover should be flushed
+	m = feedEvent(m, buildEvent("ai_chunk", "agent", "c"))
+	if m.logEntries[idx].streamContent != "abc" {
+		t.Fatalf("expected streamContent 'abc' after second chunk, got %q", m.logEntries[idx].streamContent)
+	}
+
+	// End stream — 内容已实时更新，无需额外 flush
 	m = feedEvent(m, buildEvent("ai_stream_end", "agent", nil))
 	if m.logEntries[idx].streamContent != "abc" {
-		t.Fatalf("expected streamContent 'abc' after stream-end flush, got %q", m.logEntries[idx].streamContent)
+		t.Fatalf("expected streamContent 'abc' after stream end, got %q", m.logEntries[idx].streamContent)
 	}
 	if len(m.aiStreamCompletedEntries) != 1 {
 		t.Fatalf("expected 1 completed stream entry, got %d", len(m.aiStreamCompletedEntries))

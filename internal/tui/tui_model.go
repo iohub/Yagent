@@ -572,7 +572,6 @@ type model struct {
 	// AI 流式条目追踪
 	aiStreamActiveEntries    map[string]int // agent → logEntries index (流式中)
 	aiStreamCompletedEntries map[string]int // agent → logEntries index (等待 ai_response)
-	aiStreamBuffer           map[string]string // agent → 待 flush 的流式累积内容（攒够阈值才渲染）
 
 	// Current LLM model being used (extracted from model_info events)
 	currentModel string
@@ -945,7 +944,6 @@ return &model{
 			viewport:           vp,
 		aiStreamActiveEntries:    make(map[string]int),
 		aiStreamCompletedEntries: make(map[string]int),
-		aiStreamBuffer:           make(map[string]string),
 		contentCache:       &strings.Builder{},
 		glamourRenderer:    glamourRenderer,
 		useDarkStyle:       useDarkStyle,

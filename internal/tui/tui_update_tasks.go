@@ -5,34 +5,13 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"codeactor/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
 )
 
-// aiChunkFlushThreshold 流式渲染 flush 阈值：积累多少个字符/token 才渲染一次
-const aiChunkFlushThreshold = 5
 
-// ─────────────────────────────────────────────────────────────────────────────
-// handleTaskEventMsg — 原 Update case taskEventMsg 提取
-// ─────────────────────────────────────────────────────────────────────────────
-
-func (m *model) flushStreamBuffer(agentName string) {
-	pending := m.aiStreamBuffer[agentName]
-	if pending == "" {
-		return
-	}
-	idx, ok := m.aiStreamActiveEntries[agentName]
-	if !ok || idx < 0 || idx >= len(m.logEntries) {
-		return
-	}
-	m.logEntries[idx].streamContent += pending
-	m.logEntries[idx].content = m.logEntries[idx].streamContent // 同步到 content 字段
-	m.aiStreamBuffer[agentName] = ""
-	m.markEntryDirty(idx)
-}
 
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	// Don't process task events while any popup/dialog is showing.
@@ -222,12 +201,13 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
-			// 先累积到 buffer，攒够阈值再 flush 渲染（降低渲染频率、省性能）
-			m.aiStreamBuffer[agentName] += content
-			if utf8.RuneCountInString(m.aiStreamBuffer[agentName]) >= aiChunkFlushThreshold {
-				m.flushStreamBuffer(agentName)
-			}
-			// 不设置 viewportDirty — 让 tick 节流处理
+			// 实时更新：每个 chunk 直接追加到条目并立即渲染，不做累积缓冲
+			le := &m.logEntries[idx]
+			le.streamContent += content
+			le.content = le.streamContent // 同步到 content 字段
+			le.clearRenderCache()         // 失效渲染缓存，确保内容变化生效
+			m.markEntryDirty(idx)
+			m.viewportDirty = true        // 实时更新：立即触发视图重绘
 			return m, listenForEvents(m.eventCh)
 		}
 
@@ -259,8 +239,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
-			// 流结束：flush 剩余不足阈值的累积内容，确保内容完整显示
-			m.flushStreamBuffer(agentName)
 			m.logEntries[idx].streaming = false
 			m.aiStreamCompletedEntries[agentName] = idx
 			delete(m.aiStreamActiveEntries, agentName)
@@ -297,7 +275,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.markEntryDirty(idx)
 			m.viewportDirty = true // 新增：触发视图更新
 			delete(m.aiStreamCompletedEntries, agentName)
-			delete(m.aiStreamBuffer, agentName)
 			return m, listenForEvents(m.eventCh)
 		}
 
@@ -314,7 +291,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.markEntryDirty(idx)
 			m.viewportDirty = true // 新增：触发视图更新
 			delete(m.aiStreamActiveEntries, agentName)
-			delete(m.aiStreamBuffer, agentName)
 			return m, listenForEvents(m.eventCh)
 		}
 
