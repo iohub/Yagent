@@ -63,7 +63,7 @@
 | 类别 | 技术 | 版本 | 用途 |
 |------|------|------|------|
 | **主程序** | Go | 1.24+ | 核心实现语言，模块名 `codeactor` |
-| **代码引擎** | Rust | 1.70+ (Tokio) | `codeactor-codexray` 服务，运行在 `127.0.0.1:12800` |
+| **代码引擎** | Rust | 1.70+ (Tokio) | `codeseek` MCP 服务（stdio） |
 | **LLM 抽象层** | `github.com/openai/openai-go/v3` | - | 多 LLM 提供商的统一接口 (OpenAI-compatible) |
 | **HTTP 框架** | `gin-gonic/gin` | - | REST API 服务器 |
 | **WebSocket** | `olahol/melody` | - | WebSocket 连接管理 |
@@ -73,7 +73,7 @@
 
 | 依赖 | 用途 |
 |------|------|
-| `codeactor-codexray` (Rust) | 代码分析服务（语义搜索、骨架提取、依赖分析） |
+| `codeseek` (Rust) | 代码分析服务（语义搜索、骨架提取、依赖分析） |
 | `ripgrep` (rg) | 全文正则搜索 |
 | `fzf` | 模糊文件搜索 |
 
@@ -138,7 +138,7 @@
 | `print_dir_tree` | 文件 | 打印目录树 |
 | `search_replace_in_file` | 编辑 | 精准代码块替换 |
 | `search_by_regex` | 搜索 | ripgrep 全文正则搜索 |
-| `semantic_search` | 仓库 | 语义搜索（调用 codexray 服务） |
+| `semantic_search` | 仓库 | 语义搜索（调用 codeseek 服务） |
 | `query_code_skeleton` | 仓库 | 查询代码骨架 |
 | `query_code_snippet` | 仓库 | 查询函数实现 |
 | `run_bash` | 系统 | 执行 Shell 命令 |
@@ -166,7 +166,7 @@
 | `search_by_regex` | 搜索 | ripgrep 全文正则搜索 |
 | `list_dir` | 文件 | 列出目录内容 |
 | `print_dir_tree` | 文件 | 打印目录树 |
-| `semantic_search` | 仓库 | 语义搜索（调用 codexray 服务） |
+| `semantic_search` | 仓库 | 语义搜索（调用 codeseek 服务） |
 | `query_code_skeleton` | 仓库 | 查询代码骨架 |
 | `query_code_snippet` | 仓库 | 查询函数实现 |
 
@@ -268,7 +268,7 @@ type ExecutorConfig struct {
 | `print_dir_tree` | 文件 | R | 打印目录树 |
 | `search_replace_in_file` | 编辑 | E | 精准代码块替换 |
 | `search_by_regex` | 搜索 | R | ripgrep 全文正则搜索 |
-| `semantic_search` | 仓库 | R | 语义搜索（调用 codexray 服务） |
+| `semantic_search` | 仓库 | 语义搜索（调用 codeseek 服务） |
 | `query_code_skeleton` | 仓库 | R | 查询代码骨架 |
 | `query_code_snippet` | 仓库 | R | 查询函数实现 |
 | `run_bash` | 系统 | S | 执行 Shell 命令 |
@@ -331,7 +331,7 @@ search_by_regex(
 #### semantic_search
 
 ```go
-// 调用 codexray Rust 服务进行语义搜索
+// 调用 codeseek Rust 服务进行语义搜索
 semantic_search(
     query: string,         // 自然语言或代码片段
     limit: int             // 返回结果数量上限
@@ -461,7 +461,7 @@ Agent → MessagePublisher → MessageDispatcher → TUIConsumer / WebSocketCons
 ```
 1. 用户输入 (TUI 或 HTTP POST /api/start_task)
 2. TaskManager.CreateTask() - 生成 UUID，创建 Memory
-3. ExecuteTask() - 初始化 codexray 索引，启动消息分发
+3. ExecuteTask() - 初始化 codeseek 索引，启动消息分发
 4. DirectorAgent.Run() - 进入循环
 5. Director 循环 (最多 maxSteps 步):
    ├── 构造 messages: [SystemPrompt, ...Memory.Messages]
@@ -505,7 +505,7 @@ codeactor-agent/
 │   ├── config/                # 配置加载
 │   ├── datamanager/           # 数据存储
 │   ├── diff/                  # 差异计算 (unified diff)
-│   ├── embedbin/              # 嵌入二进制 (Rust codexray 服务)
+│   ├── embedbin/              # 嵌入二进制 (Rust codeseek 服务)
 │   ├── globalctx/             # 全局上下文
 │   ├── http/                  # HTTP API
 │   ├── llm/                   # LLM 抽象层
@@ -528,7 +528,7 @@ codeactor-agent/
 │   ├── tui/                   # 终端界面
 │   └── util/                  # 工具函数
 ├── pkg/messaging/             # 消息总线
-├── codexray/                  # Rust 代码引擎 (独立二进制)
+├── codeseek/                  # Rust 代码引擎 (独立二进制)
 │   ├── src/
 │   │   ├── codegraph/         # AST 解析 + 调用图 (tree-sitter, petgraph)
 │   │   ├── http/              # Axum HTTP 服务
@@ -553,8 +553,8 @@ codeactor-agent/
 # 构建主程序
 go build -o codeactor .
 
-# 构建 Rust codexray 服务
-cd codexray && cargo build --release
+# 构建 Rust codeseek 服务
+cd codeseek/rust-core && cargo build --release
 ```
 
 ### 6.2 运行模式
@@ -646,7 +646,7 @@ thinking.use_provider = "xiaomi"
 |------|------|
 | 任务 Memory | `~/.codeactor/tasks/{taskID}.json` |
 | LLM 日志 | `~/.codeactor/logs/llm-{date}.log` |
-| Codexray 日志 | `~/.codeactor/logs/codeactor-codexray/{date}.log` |
+| Codeseek MCP 日志 | `~/.codeactor/logs/` 目录 | MCP 客户端输出 |
 
 ---
 
@@ -759,7 +759,7 @@ Thought Process:
 | `internal/tools/` | 工具适配器 |
 | `internal/memory/` | 任务记忆管理 |
 | `pkg/messaging/` | Pub-Sub 消息总线 |
-| `codexray/` | Rust 代码引擎 |
+| `codeseek/` | Rust 代码引擎 |
 | `clients/nodejs-cli/` | Node.js CLI 客户端 |
 | `config/config.toml` | 示例配置文件 |
 | `docs/` | 补充文档 |
@@ -772,7 +772,7 @@ go build -o codeactor .          # 构建
 ./codeactor tui                  # TUI 模式
 ./codeactor http                 # HTTP 模式
 go test ./internal/... -v -count=1  # 测试
-cd codexray && cargo build       # Rust 构建
+cd codeseek/rust-core && cargo build       # Rust 构建
 ```
 
 ### C. 安全机制

@@ -16,8 +16,8 @@ import (
 	"codeactor/internal/http"
 	"codeactor/internal/llm"
 	"codeactor/internal/logging"
-	tuiMsg "codeactor/internal/messaging/consumers"
 	messaging "codeactor/internal/messaging"
+	tuiMsg "codeactor/internal/messaging/consumers"
 	"codeactor/internal/skills"
 	"codeactor/internal/tui"
 	"codeactor/internal/util"
@@ -113,9 +113,6 @@ func main() {
 	}
 }
 
-// initApp 执行 TUI 和 HTTP 模式共用的初始化逻辑
-// 返回: repoPath, error
-// TODO: [Codexray] codexray server initialization removed (port allocation, binary extraction, server start, health check). Re-add when codexray is re-integrated.
 func initApp() (string, error) {
 	repoPath, err := os.Getwd()
 	if err != nil {
@@ -137,8 +134,6 @@ func runTUI(taskFile, disableAgents string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	// TODO: [Codexray] CodexrayPort assignment removed — was codeActor.CodexrayPort = codexrayPort. Re-add when codexray is re-integrated.
-	// TODO: [Codexray] codexrayCmd cleanup deferred — was killing subprocess on exit. Re-add when codexray is re-integrated.
 
 	// TUI mode init — matches original switch "tui" case exactly
 	ctx := context.Background()
@@ -179,7 +174,6 @@ func runTUI(taskFile, disableAgents string) {
 	if memoryJSONLDir != "" {
 		config.MemoryJSONL.OutputDir = memoryJSONLDir
 	}
-	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
 
 	// 主动初始化：启动 codeseek MCP 等核心服务
 	codeActor.Init(client.Engine, repoPath)
@@ -232,8 +226,6 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	// TODO: [Codexray] CodexrayPort assignment removed — was codeActor.CodexrayPort = codexrayPort. Re-add when codexray is re-integrated.
-	// TODO: [Codexray] codexrayCmd cleanup deferred — was killing subprocess on exit. Re-add when codexray is re-integrated.
 
 	// HTTP mode init — matches original switch "http" case exactly
 	ctx := context.Background()
@@ -287,8 +279,6 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	if memoryJSONLDir != "" {
 		config.MemoryJSONL.OutputDir = memoryJSONLDir
 	}
-	// TODO: [Codexray] CodexrayPort field assignment removed. Re-add when codexray is re-integrated.
-
 	// 主动初始化：启动 codeseek MCP 等核心服务
 	codeActor.Init(client.Engine, repoPath)
 
@@ -299,7 +289,6 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 
 	server := http.NewServer(codeActor)
 
-	// TODO: [Codexray] findAvailablePort call removed — was finding port starting from 9800. Re-add when codexray is re-integrated.
 	slog.Info("Starting HTTP server", "port", httpPort)
 
 	if err := server.Run(httpPort); err != nil {
@@ -442,9 +431,3 @@ func getConfigPath() string {
 
 	return configPath
 }
-
-// TODO: [Codexray] findAvailablePort removed — was finding available TCP port starting from 12800. Re-add when codexray is re-integrated.
-
-// TODO: [Codexray] startCodexrayServer removed — was launching codeactor-codexray subprocess. Re-add when codexray is re-integrated.
-
-// TODO: [Codexray] waitForCodexray removed — was polling /health endpoint with 60s timeout. Re-add when codexray is re-integrated.

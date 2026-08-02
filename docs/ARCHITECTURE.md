@@ -34,7 +34,7 @@
   - [8.2 异步增量压缩](#82-异步增量压缩)
   - [8.3 优先级计算](#83-优先级计算)
 - [9. 外部服务集成](#9-外部服务集成)
-  - [9.1 Codexray 代码分析引擎](#91-codexray-代码分析引擎)
+  - [9.1 Codeseek 代码分析引擎](#91-codeseek-代码分析引擎)
   - [9.2 浏览器自动化](#92-浏览器自动化)
 - [10. 表示层](#10-表示层)
   - [10.1 TUI（终端 UI）](#101-tui终端-ui)
@@ -78,7 +78,7 @@ codeactor-agent/
 │   ├── http/          # HTTP/WebSocket 服务
 │   ├── protocol/      # 协议定义
 │   └── ...
-├── codexray/          # Rust 代码分析引擎
+├── codeseek/          # Rust 代码分析引擎
 ├── vscode/            # VS Code 扩展
 ├── webui/             # Web 前端
 ├── protocol/          # 协议 Schema
@@ -128,7 +128,7 @@ graph TB
     end
 
     subgraph "外部服务层"
-        CR[codexray - Rust 引擎]
+        CR[codeseek - Rust 引擎]
         LLM_API[LLM 提供商 API]
         CHROME[无头 Chrome]
     end
@@ -162,7 +162,7 @@ graph TB
 | **表示层** | 用户交互界面 | TUI、Web UI、VS Code 扩展 |
 | **通信层** | 进程间通信、事件分发 | HTTP Server、WebSocket、消息总线 |
 | **核心引擎层** | 业务逻辑、AI 推理 | DirectorAgent、子 Agent、工具、LLM、内存 |
-| **外部服务层** | 外部能力集成 | codexray、LLM API、浏览器 |
+| **外部服务层** | 外部能力集成 | codeseek、LLM API、浏览器 |
 
 ---
 
@@ -331,11 +331,11 @@ if a.consecutiveLLMFailures >= a.circuitBreakerThreshold {
 - `read_file`：文件读取
 - `search_by_regex`：正则搜索
 
-**外部依赖**：通过 HTTP 调用 codexray 服务（Rust 引擎）
+**外部依赖**：通过 MCP 调用 codeseek 服务（Rust 引擎）
 
 ```go
 // RepoAgent 工具链
-RepoOps = NewRepoOperationsTool(codexrayURL, workDir)
+RepoOps = NewRepoOperationsTool(codeSeekMCP, workDir, 0)
 ```
 
 #### 3.3.2 CodingAgent（编码 Agent）
@@ -598,7 +598,7 @@ func NewDelegateAdapter(name, description string, target AgentRunner) *Adapter {
 | | `delete_file` | 删除文件 |
 | | `rename_file` | 重命名文件 |
 | **搜索** | `search_by_regex` | 正则表达式搜索 |
-| | `semantic_search` | 语义代码搜索（调用 codexray） |
+| | `semantic_search` | 语义代码搜索（调用 codeseek） |
 | | `query_code_skeleton` | 获取代码骨架 |
 | | `query_code_snippet` | 获取代码片段 |
 | **系统** | `run_bash` | 执行 Shell 命令 |
@@ -916,19 +916,19 @@ type PriorityWeights struct {
 
 ## 9. 外部服务集成
 
-### 9.1 Codexray 代码分析引擎
+### 9.1 Codeseek 代码分析引擎
 
-Codexray 是一个用 Rust 编写的代码分析引擎，通过 HTTP API 提供语义代码搜索能力：
+Codeseek 是一个用 Rust 编写的代码分析引擎，通过 MCP（stdio JSON-RPC）提供语义代码搜索能力：
 
 ```
 ┌──────────────┐         HTTP/gRPC         ┌──────────────┐
-│  CodeActor   │ ──────────────────────▶  │  Codexray    │
+│  CodeActor   │ ──────────────────────▶  │  Codeseek    │
 │  (Go)        │ ◀──────────────────────  │  (Rust)      │
 └──────────────┘                          └──────────────┘
 ```
 
 **集成方式**：
-- RepoAgent 通过 HTTP 调用 codexray 服务
+- RepoAgent 通过 MCP 调用 codeseek 服务
 - 端口由 main 函数动态分配
 
 **提供的能力**：
@@ -1066,7 +1066,7 @@ flowchart TB
             FILEOPS[文件操作]
             SEARCH[搜索工具]
             BASH[Shell 执行]
-            CODEXRAY[codexray]
+            CODEXRAY[codeseek]
         end
     end
 
@@ -1152,7 +1152,7 @@ flowchart LR
 | WAL | Write-Ahead Log | 预写日志，用于持久化 |
 | DLQ | Dead Letter Queue | 死信队列，存放处理失败的消息 |
 | TUI | Text User Interface | 终端用户界面 |
-| Codexray | Codexray | Rust 编写的代码分析引擎 |
+| Codeseek | Codeseek | Rust 编写的代码分析引擎 |
 | Context Compression | Context Compression | 上下文压缩，减少 token 占用 |
 | Circuit Breaker | Circuit Breaker | 熔断器，连续失败时暂停 |
 | State Machine | State Machine | 状态机，管理流程状态 |

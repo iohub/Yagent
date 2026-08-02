@@ -34,7 +34,7 @@
 | **HTTP 框架** | Gin + Melody WebSocket |
 | **运行模式** | TUI（终端交互）/ HTTP（Web API） |
 | **前端** | React WebUI（`webui/build` 已构建但未服务） |
-| **端口分配** | HTTP Server（从 9800 自动分配）+ Codexray 引擎（从 12800 自动分配） |
+| **端口分配** | HTTP Server（从 9800 自动分配）+ CodeSeek MCP（stdio） |
 | **已有 VS Code 集成** | `vscode/` 扩展，通过 WebView 嵌入 WebUI |
 | **缺失能力** | ❌ 浏览器中浏览/编辑代码 ❌ 文件树/语法高亮 ❌ IDE ↔ Agent 协作 |
 

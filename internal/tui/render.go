@@ -20,13 +20,13 @@ const (
 // skipBodyTools lists tools whose result body is just a status confirmation
 // and should not be rendered — only the header (icon + name + file path) is shown.
 var skipBodyTools = map[string]bool{
-	"read_file":         true,
-	"delete_file":       true,
-	"rename_file":       true,
-	"list_dir":          true,
-	"print_dir_tree":    true,
-	"search_by_regex":   true,
-	"semantic_search":   true,
+	"read_file":       true,
+	"delete_file":     true,
+	"rename_file":     true,
+	"list_dir":        true,
+	"print_dir_tree":  true,
+	"search_by_regex": true,
+	"semantic_search": true,
 }
 
 // ── Tool Header Rendering ──
@@ -171,7 +171,7 @@ func RenderResultBody(toolName string, content string, width int) string {
 
 	// 1. Try JSON — check for embedded fields first
 	if isJSON(content) {
-		// Detect codexray tool results by JSON structure (not tool name)
+		// Detect codebase tool results by JSON structure (not tool name)
 		if formatted := tryFormatCodebaseResult(content, bodyWidth); formatted != "" {
 			return formatted
 		}
@@ -257,13 +257,9 @@ func tryDecodeJSONString(content string) string {
 	return ""
 }
 
-// tryFormatCodebaseResult detects codexray tool result JSON by structure and formats it.
-// Returns empty string if the JSON doesn't match any known codexray result pattern.
+// tryFormatCodebaseResult detects codebase tool result JSON by structure and formats it.
+// Returns empty string if the JSON doesn't match any known codebase result pattern.
 func tryFormatCodebaseResult(content string, width int) string {
-	// TODO: [Codexray] This function parses codexray-specific JSON response formats.
-	// Currently, the underlying codexray API methods return mock data,
-	// so this function may receive mock JSON that matches the expected schema.
-	// Review and update when codexray is re-integrated.
 	var parsed map[string]interface{}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
 		return ""

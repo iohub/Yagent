@@ -39,15 +39,15 @@ unzip /tmp/protoc.zip -d /usr/local
 rm -f /tmp/protoc.zip
 protoc --version
 
-echo "=== Step 6: Build Rust codexray ==="
+echo "=== Step 6: Build Rust codeseek ==="
 source /opt/rh/devtoolset-9/enable
-cd codexray
+cd codeseek/rust-core
 cargo build --release
 
 echo "=== Step 7: Prepare embedded binaries ==="
 cd ..
 mkdir -p dist/bin
-cp codexray/target/release/codeactor-codexray dist/bin/
+cp codeseek/rust-core/target/release/codeseek dist/bin/
 
 # Download fzf
 curl -fLo /tmp/fzf.tar.gz "https://github.com/junegunn/fzf/releases/download/v0.73.1/fzf-0.73.1-linux_amd64.tar.gz"
@@ -62,7 +62,7 @@ tar -xzf /tmp/rg.tar.gz -C /tmp/rg_extract
 find /tmp/rg_extract -name rg -type f -exec mv {} dist/bin/rg \;
 rm -rf /tmp/rg_extract /tmp/rg.tar.gz
 
-chmod +x dist/bin/codeactor-codexray dist/bin/fzf dist/bin/rg
+chmod +x dist/bin/codeseek dist/bin/fzf dist/bin/rg
 
 echo "=== Step 8: Build Go codeactor ==="
 export PATH="/usr/local/go/bin:$PATH"

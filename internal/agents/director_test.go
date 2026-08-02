@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"codeactor/internal/llm"
-	"codeactor/internal/tools"
-	"codeactor/internal/globalctx"
-	"codeactor/internal/memory"
 	"codeactor/internal/config"
+	"codeactor/internal/globalctx"
+	"codeactor/internal/llm"
+	"codeactor/internal/memory"
+	"codeactor/internal/tools"
 )
 
 // ─── Mock Engine ──────────────────────────────────────────────────────────────
@@ -43,7 +43,6 @@ func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 		OS:           "linux",
 		Arch:         "amd64",
 		SpeakLang:    "Chinese",
-		// TODO: [Codexray] CodexrayURL field removed — re-add when codexray is re-integrated
 		FileOps:      tools.NewFileOperationsTool(workDir),
 		SearchOps:    tools.NewSearchOperationsTool(workDir),
 		SysOps:       tools.NewSystemOperationsTool(workDir),
@@ -66,11 +65,11 @@ func newTestDirectorAgent(t *testing.T, workDir string) *DirectorAgent {
 // makeMetaOutput builds a valid Meta-Agent JSON output string.
 func makeMetaOutput(agentName, systemPrompt string, toolsUsed []string) string {
 	obj := map[string]interface{}{
-		"thinking":     "Designing agent for the task.",
-		"agent_name":   agentName,
-		"agent_design": systemPrompt,
-		"tools_used":   toolsUsed,
-			"task_for_agent": "Clean task for the agent to execute.",
+		"thinking":       "Designing agent for the task.",
+		"agent_name":     agentName,
+		"agent_design":   systemPrompt,
+		"tools_used":     toolsUsed,
+		"task_for_agent": "Clean task for the agent to execute.",
 	}
 	b, _ := json.MarshalIndent(obj, "", "  ")
 	return string(b)
@@ -120,7 +119,7 @@ func TestExtractJSONObject_NoBraces(t *testing.T) {
 }
 
 func TestExtractJSONObject_MetaOutput(t *testing.T) {
-output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file"})
+	output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file"})
 	got := extractJSONObject(output)
 	if got == "" {
 		t.Fatal("extractJSONObject returned empty for valid Meta-Agent output")
@@ -218,6 +217,7 @@ func TestParseMetaAgentOutput_EmptyAgentName(t *testing.T) {
 		t.Fatal("expected error when agent_name is empty")
 	}
 }
+
 // ─── getToolFunc Tests ──────────────────────────────────────────────────────
 
 func TestGetToolFunc_KnownTools(t *testing.T) {

@@ -1945,7 +1945,7 @@ func (a *DirectorAgent) delegate(ctx context.Context, agentName string, task str
 
 # 注意：知识管理依赖 codeseek MCP 可用。binary_path 为空时 MCP 不启用，所有知识操作将返回 {"status":"skipped"}。启用知识管理需配置 codeseek binary_path
 [codeseek]
-# codeseek 二进制文件路径（空=不启用 MCP，使用 HTTP codexray 作为后备）
+# codeseek 二进制文件路径（空=不启用 MCP）
 # 启用知识管理时必须填写实际路径
 binary_path = ""
 # MCP 启动参数
@@ -1967,19 +1967,7 @@ injection_min_score = 0.3
 # 是否请求精排（对应 knowledge_search 的 rerank 参数）；codeseek 端 reranker.enabled 同时为 true 时才实际执行 Cross-Encoder 精排，否则降级为 RRF 得分
 injection_rerank = true
 
-# [EXISTING] 检索管线配置
-# 注意：default_config.toml 默认值为 BAAI/bge-reranker-v2-m3，本仓库用户配置已覆盖为 Qwen/Qwen3-Reranker-4B；实现时以用户配置为准
-[codexray.retrieval_pipeline]
-enabled = true
-
-[codexray.retrieval_pipeline.reranker]
-# 启用精排需填入真实 api_token 与模型（见上），否则精排调用失败并降级为 RRF
-enabled = false
-api_token = "your-key"
-model = "Qwen/Qwen3-Reranker-4B"
-api_base_url = "https://api.siliconflow.cn"
-batch_size = 32
-max_length = 512
+# 检索管线配置已合并到 codeseek 引擎，无需单独配置
 ```
 
 ### 6.2 internal/config/default_config.toml 追加
@@ -1993,14 +1981,7 @@ injection_max_entries = 8
 injection_min_score = 0.3
 injection_rerank = true
 
-[codexray.retrieval_pipeline.reranker]
-# 启用精排需填入真实 api_token 与模型，否则精排调用失败并降级为 RRF
-enabled = false
-api_token = "your-key"
-model = "Qwen/Qwen3-Reranker-4B"
-api_base_url = "https://api.siliconflow.cn"
-batch_size = 32
-max_length = 512
+# 检索管线配置已合并到 codeseek 引擎，无需单独配置
 ```
 
 ### 6.3 internal/config/config.go 新增结构体

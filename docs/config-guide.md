@@ -444,7 +444,7 @@ api_key = "dummy-key"                      # 本地模型通常不需要 API Key
 | 配置段 | 原因 |
 |--------|------|
 | `[messaging]` | 消息总线使用硬编码默认值创建（`BufferSize=1000` 等），配置项未映射 |
-| `[codexray]` / `[codexray.embedding]` / `[codexray.retrieval_pipeline]` / `[codexray.client]` | Codexray 功能已从代码中移除（含 TODO 注释），由 CodeSeek 替代 |
+| `[codexray]`（及子段） | 已删除，代码分析由 `[codeseek]` 提供 |
 | `[director]` | 代码中无对应结构体定义，字段未被读取 |
 | `[tools_registry]` | 占位符配置（"Phase 2 使用"），代码中零引用 |
 

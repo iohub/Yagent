@@ -34,7 +34,7 @@
   - [8.2 Async Incremental Compression](#82-async-incremental-compression)
   - [8.3 Priority Calculation](#83-priority-calculation)
 - [9. External Service Integration](#9-external-service-integration)
-  - [9.1 Codexray Code Analysis Engine](#91-codexray-code-analysis-engine)
+  - [9.1 Codeseek Code Analysis Engine](#91-codeseek-code-analysis-engine)
   - [9.2 Browser Automation](#92-browser-automation)
 - [10. Presentation Layer](#10-presentation-layer)
   - [10.1 TUI (Terminal UI)](#101-tui-terminal-ui)
@@ -78,7 +78,7 @@ codeactor-agent/
 │   ├── http/          # HTTP/WebSocket service
 │   ├── protocol/      # Protocol definitions
 │   └── ...
-├── codexray/          # Rust code analysis engine
+├── codeseek/          # Rust code analysis engine
 ├── vscode/            # VS Code extension
 ├── webui/             # Web frontend
 ├── protocol/          # Protocol Schema
@@ -128,7 +128,7 @@ graph TB
     end
 
     subgraph "External Services Layer"
-        CR[codexray - Rust Engine]
+        CR[codeseek - Rust Engine]
         LLM_API[LLM Provider API]
         CHROME[Headless Chrome]
     end
@@ -162,7 +162,7 @@ graph TB
 | **Presentation Layer** | User interaction interface | TUI, Web UI, VS Code Extension |
 | **Communication Layer** | Inter-process communication, event distribution | HTTP Server, WebSocket, Message Bus |
 | **Core Engine Layer** | Business logic, AI reasoning | DirectorAgent, Sub-Agents, Tools, LLM, Memory |
-| **External Services Layer** | External capability integration | codexray, LLM API, Browser |
+| **External Services Layer** | External capability integration | codeseek, LLM API, Browser |
 
 ---
 
@@ -331,11 +331,11 @@ if a.consecutiveLLMFailures >= a.circuitBreakerThreshold {
 - `read_file`: File reading
 - `search_by_regex`: Regex search
 
-**External Dependency**: Calls codexray service (Rust engine) via HTTP
+**External Dependency**: Calls codeseek service (Rust engine) via MCP
 
 ```go
 // RepoAgent toolchain
-RepoOps = NewRepoOperationsTool(codexrayURL, workDir)
+RepoOps = NewRepoOperationsTool(codeSeekMCP, workDir, 0)
 ```
 
 #### 3.3.2 CodingAgent (Coding Agent)
@@ -599,7 +599,7 @@ func NewDelegateAdapter(name, description string, target AgentRunner) *Adapter {
 | | `delete_file` | Delete file |
 | | `rename_file` | Rename file |
 | **Search** | `search_by_regex` | Regular expression search |
-| | `semantic_search` | Semantic code search (calls codexray) |
+| | `semantic_search` | Semantic code search (calls codeseek) |
 | | `query_code_skeleton` | Get code skeleton |
 | | `query_code_snippet` | Get code snippet |
 | **System** | `run_bash` | Execute Shell commands |
@@ -917,19 +917,19 @@ Messages with **higher priority** are more likely to be retained during compress
 
 ## 9. External Service Integration
 
-### 9.1 Codexray Code Analysis Engine
+### 9.1 Codeseek Code Analysis Engine
 
-Codexray is a code analysis engine written in Rust, providing semantic code search capabilities via HTTP API:
+Codeseek is a code analysis engine written in Rust, providing semantic code search capabilities via MCP (stdio JSON-RPC):
 
 ```
 ┌──────────────┐         HTTP/gRPC         ┌──────────────┐
-│  CodeActor   │ ──────────────────────▶  │  Codexray    │
+│  CodeActor   │ ──────────────────────▶  │  Codeseek    │
 │  (Go)        │ ◀──────────────────────  │  (Rust)      │
 └──────────────┘                          └──────────────┘
 ```
 
 **Integration Method**:
-- RepoAgent calls codexray service via HTTP
+- RepoAgent calls codeseek service via MCP
 - Port dynamically allocated by main function
 
 **Capabilities Provided**:
@@ -1067,7 +1067,7 @@ flowchart TB
             FILEOPS[File Operations]
             SEARCH[Search Tools]
             BASH[Shell Execution]
-            CODEXRAY[codexray]
+            CODEXRAY[codeseek]
         end
     end
 
@@ -1153,7 +1153,7 @@ flowchart LR
 | WAL | Write-Ahead Log | Write-ahead log for persistence |
 | DLQ | Dead Letter Queue | Dead letter queue for messages that failed processing |
 | TUI | Text User Interface | Terminal user interface |
-| Codexray | Codexray | Rust-written code analysis engine |
+| Codeseek | Codeseek | Rust-written code analysis engine |
 | Context Compression | Context Compression | Context compression to reduce token usage |
 | Circuit Breaker | Circuit Breaker | Circuit breaker, pauses on consecutive failures |
 | State Machine | State Machine | State machine for managing flow state |

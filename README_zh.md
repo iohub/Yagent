@@ -134,7 +134,7 @@
 
 ### 下载预编译包（推荐）
 
-从 [GitHub Releases 页面](https://github.com/iohub/codeactor-agent/releases) 下载最新的 all-in-one 二进制包。包内已集成 **codexray 代码智能引擎**（Rust）、**fzf**（模糊搜索）和 **ripgrep**（正则搜索）——所有依赖一应俱全。解压后直接运行 `./codeactor`，零依赖、零配置，开箱即用。
+从 [GitHub Releases 页面](https://github.com/iohub/codeactor-agent/releases) 下载最新的 all-in-one 二进制包。包内已集成 **codeseek 代码智能引擎**（Rust）、**fzf**（模糊搜索）和 **ripgrep**（正则搜索）——所有依赖一应俱全。解压后直接运行 `./codeactor`，零依赖、零配置，开箱即用。
 
 ### 前置要求（从源码编译）
 - Go 1.24+

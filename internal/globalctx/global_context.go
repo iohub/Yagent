@@ -4,9 +4,9 @@ import (
 	"codeactor/internal/browser"
 	"codeactor/internal/config"
 	"codeactor/internal/knowledge"
-	"codeactor/internal/tools"
 	"codeactor/internal/mcp"
 	"codeactor/internal/messaging"
+	"codeactor/internal/tools"
 	"fmt"
 	"strings"
 )
@@ -21,7 +21,6 @@ type GlobalCtx struct {
 	RepoSummary     string
 	// Global utility
 	Publisher *messaging.MessagePublisher
-	// TODO: [Codexray] CodexrayURL field removed — re-add when codexray is re-integrated
 
 	// MaxContextTokens 最大上下文token数
 	MaxContextTokens int
@@ -111,5 +110,3 @@ func (g *GlobalCtx) SetSpeakLang(lang string) {
 func (g *GlobalCtx) SetCustomizePrompt(prompt string) {
 	g.CustomizePrompt = prompt
 }
-
-// TODO: [Codexray] SetCodexrayURL method removed — re-add when codexray is re-integrated

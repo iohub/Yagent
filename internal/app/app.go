@@ -44,13 +44,12 @@ type CodeActor struct {
 	YoloMode       bool   // YOLO模式：所有agent授权自动通过
 	FullYoloMode   bool   // FULL-YOLO模式：隐含YoloMode + 移除ask_user_for_help + 自主决策
 	ForceQuit      bool   // ForceQuit：强制退出模式，agent_exit 时直接退出，不等待 codeseek 进程安全退出
-	// TODO: [Codexray] CodexrayPort field removed — re-add when codexray is re-integrated
 
 	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
 
 	// [NEW] 记忆系统
-	sharedMemory          *memory.SharedMemory
-	consolidationWorker   *agents.ConsolidationWorker
+	sharedMemory        *memory.SharedMemory
+	consolidationWorker *agents.ConsolidationWorker
 
 	// embeddedBinFS 嵌入的二进制文件系统（用于自动提取 codeseek 等工具）
 	embeddedBinFS embed.FS
@@ -180,18 +179,17 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 			Arch:        runtime.GOARCH,
 			// Global utility
 			Publisher: publisher,
-			// TODO: [Codexray] CodexrayURL field removed — re-add when codexray is re-integrated
 
 			// Tools
-			FileOps:          tools.NewFileOperationsTool(workDir),
-			SearchOps:        tools.NewSearchOperationsTool(workDir),
-			SysOps:           tools.NewSystemOperationsTool(workDir),
-			ReplaceTool:      tools.NewReplaceBlockTool(workDir),
-			ThinkingTool:     tools.NewThinkingTool(),
-			MicroAgentTool:   tools.NewMicroAgentTool(microAgentEngine),
-			FlowOps:          tools.NewFlowControlTool(workDir),
-			RepoOps:          tools.NewRepoOperationsTool(codeSeekMCP, workDir, 0),
-			UserConfirmMgr:   userConfirmMgr,
+			FileOps:        tools.NewFileOperationsTool(workDir),
+			SearchOps:      tools.NewSearchOperationsTool(workDir),
+			SysOps:         tools.NewSystemOperationsTool(workDir),
+			ReplaceTool:    tools.NewReplaceBlockTool(workDir),
+			ThinkingTool:   tools.NewThinkingTool(),
+			MicroAgentTool: tools.NewMicroAgentTool(microAgentEngine),
+			FlowOps:        tools.NewFlowControlTool(workDir),
+			RepoOps:        tools.NewRepoOperationsTool(codeSeekMCP, workDir, 0),
+			UserConfirmMgr: userConfirmMgr,
 			DeepThinkingTool: func() *tools.DeepThinkingTool {
 				dt := tools.NewDeepThinkingTool(deepthinkingEngine)
 				if publisher != nil {

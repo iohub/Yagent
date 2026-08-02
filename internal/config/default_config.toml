@@ -72,29 +72,9 @@ use_provider = "deepseek_v4_pro"
 [app]
 enable_streaming = true
 
-# ── 代码库（语义搜索）──
-[codexray]
-enable_embedding = true
-
-[codexray.embedding]
-model = "Qwen/Qwen3-Embedding-4B"
-api_token = "your-key"
-api_base_url = "https://api.siliconflow.cn/v1"
-dimensions = 2560
-
-# ── 检索管线（多阶段级联检索，默认启用）──
-[codexray.retrieval_pipeline]
-enabled = true
-
-[codexray.retrieval_pipeline.reranker]
-enabled = false
-api_token = "your-key"
-model = "BAAI/bge-reranker-v2-m3"
-api_base_url = "https://api.siliconflow.cn"
-
 # ── CodeSeek MCP 代码分析引擎配置 ──
 [codeseek]
-# codeseek 二进制文件路径（空=不启用 MCP，使用 HTTP codexray 作为后备）
+# codeseek 二进制文件路径（空=不启用 MCP）
 binary_path = ""
 # MCP 启动参数
 mcp_args = ["serve", "--mcp"]

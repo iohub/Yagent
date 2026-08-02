@@ -133,7 +133,7 @@ User Query
 
 ### Download Pre-built Binary (Recommended)
 
-Download the latest all-in-one release for your platform from the [GitHub Releases page](https://github.com/iohub/codeactor-agent/releases). The binary bundles the **codexray intelligence engine** (Rust), **fzf** (fuzzy finder), and **ripgrep** (regex search) — everything you need is included. Just extract and run `./codeactor` — zero dependencies, zero configuration.
+Download the latest all-in-one release for your platform from the [GitHub Releases page](https://github.com/iohub/codeactor-agent/releases). The binary bundles the **codeseek intelligence engine** (Rust), **fzf** (fuzzy finder), and **ripgrep** (regex search) — everything you need is included. Just extract and run `./codeactor` — zero dependencies, zero configuration.
 
 ### Prerequisites (for building from source)
 - Go 1.24+
