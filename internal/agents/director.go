@@ -426,7 +426,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
 
 	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP）
-	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, engine)
+	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, engine, "", "")
 	var allAdapters []*tools.Adapter
 	if len(knowledgeAdapters) > 0 {
 		tools.SetGuardOnAdapters(knowledgeAdapters, globalCtx.Guard)

@@ -74,12 +74,14 @@ func TestExtractJSON_MissingClosingBrace(t *testing.T) {
 // ============================================================================
 
 func TestConsolidateKnowledgeTool_Execute_InvalidType(t *testing.T) {
-	tool := NewConsolidateKnowledgeTool(nil, nil)
+	// 未绑定时，params type 非法应报错
+	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
 	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":    "invalid_type",
-		"title":   "test",
-		"content": "content",
-		"tags":    []interface{}{"tag1"},
+		"type":         "invalid_type",
+		"title":        "test",
+		"content":      "content",
+		"tags":         []interface{}{"tag1"},
+		"source_agent": "repo_agent",
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid type, got nil")
@@ -90,11 +92,12 @@ func TestConsolidateKnowledgeTool_Execute_InvalidType(t *testing.T) {
 }
 
 func TestConsolidateKnowledgeTool_Execute_MissingTitle(t *testing.T) {
-	tool := NewConsolidateKnowledgeTool(nil, nil)
+	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
 	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":    "repo_retrieval",
-		"content": "content",
-		"tags":    []interface{}{"tag1"},
+		"type":         "repo_retrieval",
+		"content":      "content",
+		"tags":         []interface{}{"tag1"},
+		"source_agent": "repo_agent",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing title, got nil")
@@ -105,11 +108,12 @@ func TestConsolidateKnowledgeTool_Execute_MissingTitle(t *testing.T) {
 }
 
 func TestConsolidateKnowledgeTool_Execute_MissingContent(t *testing.T) {
-	tool := NewConsolidateKnowledgeTool(nil, nil)
+	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
 	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":  "repo_retrieval",
-		"title": "test",
-		"tags":  []interface{}{"tag1"},
+		"type":         "repo_retrieval",
+		"title":        "test",
+		"tags":         []interface{}{"tag1"},
+		"source_agent": "repo_agent",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing content, got nil")
@@ -117,11 +121,12 @@ func TestConsolidateKnowledgeTool_Execute_MissingContent(t *testing.T) {
 }
 
 func TestConsolidateKnowledgeTool_Execute_MissingTags(t *testing.T) {
-	tool := NewConsolidateKnowledgeTool(nil, nil)
+	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
 	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":    "repo_retrieval",
-		"title":   "test",
-		"content": "content",
+		"type":         "repo_retrieval",
+		"title":        "test",
+		"content":      "content",
+		"source_agent": "repo_agent",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing tags, got nil")
@@ -129,12 +134,13 @@ func TestConsolidateKnowledgeTool_Execute_MissingTags(t *testing.T) {
 }
 
 func TestConsolidateKnowledgeTool_Execute_EmptyTags(t *testing.T) {
-	tool := NewConsolidateKnowledgeTool(nil, nil)
+	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
 	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":    "repo_retrieval",
-		"title":   "test",
-		"content": "content",
-		"tags":    []interface{}{},
+		"type":         "repo_retrieval",
+		"title":        "test",
+		"content":      "content",
+		"tags":         []interface{}{},
+		"source_agent": "repo_agent",
 	})
 	if err == nil {
 		t.Fatal("expected error for empty tags, got nil")
@@ -143,12 +149,15 @@ func TestConsolidateKnowledgeTool_Execute_EmptyTags(t *testing.T) {
 
 func TestConsolidateKnowledgeTool_Execute_ValidWithNilMCP(t *testing.T) {
 	// 有效参数 + nil MCP → 应返回 skipped
-	tool := NewConsolidateKnowledgeTool(nil, nil)
+	// 使用绑定模式：LLM 无法篡改 type 和 source_agent
+	tool := NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval")
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":    "repo_retrieval",
-		"title":   "test title",
-		"content": "test content here",
-		"tags":    []interface{}{"tag1"},
+		// 即使 params 传非法 type 和空 source_agent，绑定值应生效
+		"type":         "invalid_type",
+		"source_agent": "",
+		"title":        "test title",
+		"content":      "test content here",
+		"tags":         []interface{}{"tag1"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -164,11 +173,10 @@ func TestConsolidateKnowledgeTool_Execute_ValidWithNilMCP(t *testing.T) {
 
 func TestConsolidateKnowledgeTool_Execute_TitleTruncation(t *testing.T) {
 	// 标题超过 30 字符应被截断（不会报错，只是截断后传给 MCP）
-	tool := NewConsolidateKnowledgeTool(nil, nil)
+	tool := NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval")
 	// 因为 MCP 为 nil，会返回 skipped，但截断逻辑在 distill 之前执行
 	// 我们验证不会报错即可
 	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":    "repo_retrieval",
 		"title":   "这是一段非常非常长的标题超过了三十个字符的限制",
 		"content": "content",
 		"tags":    []interface{}{"tag1"},
@@ -180,9 +188,8 @@ func TestConsolidateKnowledgeTool_Execute_TitleTruncation(t *testing.T) {
 
 func TestConsolidateKnowledgeTool_Execute_ChineseTitleTruncation(t *testing.T) {
 	// 35 个中文字符的标题应被截断为恰好 30 个字符且保持有效 UTF-8
-	tool := NewConsolidateKnowledgeTool(nil, nil)
+	tool := NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval")
 	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":    "repo_retrieval",
 		"title":   "这是一个非常长的中文标题测试用于验证rune截断正确性的功能点测试用例", // 35 个中文字
 		"content": "content",
 		"tags":    []interface{}{"tag1"},
@@ -215,9 +222,8 @@ func TestConsolidateKnowledgeTool_Execute_LongContentNilEngine(t *testing.T) {
 	for i := 0; i < 600; i++ {
 		longContent += "x"
 	}
-	tool := NewConsolidateKnowledgeTool(nil, nil)
+	tool := NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval")
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":    "repo_retrieval",
 		"title":   "test",
 		"content": longContent,
 		"tags":    []interface{}{"tag1"},
@@ -231,6 +237,50 @@ func TestConsolidateKnowledgeTool_Execute_LongContentNilEngine(t *testing.T) {
 	}
 	if resMap["status"] != "skipped" {
 		t.Errorf("expected status 'skipped', got %v", resMap["status"])
+	}
+}
+
+// TestConsolidateKnowledgeTool_Execute_BoundSourceOverridesParams 验证绑定值覆盖 params 中的非法值
+func TestConsolidateKnowledgeTool_Execute_BoundSourceOverridesParams(t *testing.T) {
+	// 绑定 ("repo_agent", "repo_retrieval") 时，即使 params 传非法 type/空 source_agent，工具内部也应使用绑定值
+	tool := NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval")
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		// params 中传入非法值和空 source_agent
+		"type":         "invalid_type",
+		"source_agent": "",
+		"title":        "test title",
+		"content":      "test content",
+		"tags":         []interface{}{"tag1"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error when bound values override invalid params, got: %v", err)
+	}
+	resMap, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map result, got %T", result)
+	}
+	if resMap["status"] != "skipped" {
+		t.Errorf("expected status 'skipped', got %v", resMap["status"])
+	}
+}
+
+// TestConsolidateKnowledgeTool_Execute_MissingSourceAgent 验证未绑定且 params 缺 source_agent 时报错
+func TestConsolidateKnowledgeTool_Execute_MissingSourceAgent(t *testing.T) {
+	// 未绑定时，params 缺 source_agent 应报错
+	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
+	_, err := tool.Execute(context.Background(), map[string]interface{}{
+		"type":    "repo_retrieval",
+		"title":   "test",
+		"content": "content",
+		"tags":    []interface{}{"tag1"},
+		// 未传 source_agent
+	})
+	if err == nil {
+		t.Fatal("expected error for missing source_agent, got nil")
+	}
+	expected := "source_agent is required"
+	if err.Error() != expected {
+		t.Errorf("expected error %q, got %q", expected, err.Error())
 	}
 }
 

@@ -76,7 +76,7 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 
 	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP）
-	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, llm)
+	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, llm, "repo_agent", "repo_retrieval")
 	if len(knowledgeAdapters) > 0 {
 		tools.SetGuardOnAdapters(knowledgeAdapters, globalCtx.Guard)
 		adapters = append(adapters, knowledgeAdapters...)
@@ -156,6 +156,11 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		a.worker.Submit(&ConsolidationTask{
 			NewObservations: agentResult.Text,
 		})
+	}
+
+	// [知识管理] 子任务完成后自动沉淀到知识库（非阻塞）
+	if a.GlobalCtx.KnowledgeInjector != nil {
+		autoConsolidateSubtask(a.GlobalCtx, a.LLM, "repo_agent", "repo_retrieval", input, agentResult.Text)
 	}
 
 	return agentResult, nil

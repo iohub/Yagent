@@ -265,22 +265,21 @@ func (w *ConsolidationWorker) extractKnowledge(consolidated string) {
 	}
 
 	kl := logging.KnowledgeLogger()
-	agentTypeMap := map[string]string{
-		"repo_retrieval":      "repo_agent",
-		"coding_modification": "coding_agent",
-	}
 
-	extractTool := tools.NewConsolidateKnowledgeTool(w.mcpClient, w.engine)
+	validTypes := map[string]bool{"repo_retrieval": true, "coding_modification": true}
+
+	extractTool := tools.NewConsolidateKnowledgeTool(w.mcpClient, w.engine, "repo_agent", "repo_retrieval")
 	for _, entry := range entries {
-		sourceAgent, _ := agentTypeMap[entry.Type]
+		if !validTypes[entry.Type] {
+			slog.Warn("ConsolidationWorker: skipping entry with invalid type", "type", entry.Type, "title", entry.Title)
+			continue
+		}
 		params := map[string]interface{}{
-			"type":         entry.Type,
-			"title":        entry.Title,
-			"content":      entry.Content,
-			"tags":         entry.Tags,
-			"source_agent": sourceAgent,
-			"task_id":      "",
-			"confidence":   entry.Confidence,
+			"title":      entry.Title,
+			"content":    entry.Content,
+			"tags":       entry.Tags,
+			"task_id":    "",
+			"confidence": entry.Confidence,
 		}
 		kl.Debug("consolidation worker submit entry", "event", "worker_submit_entry", "title", entry.Title, "type", entry.Type)
 		if _, err := extractTool.Execute(ctx, params); err != nil {

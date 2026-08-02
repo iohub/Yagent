@@ -17,13 +17,15 @@ import (
 
 // ConsolidateKnowledgeTool 知识整理工具，用于向知识图谱添加/合并知识条目。
 type ConsolidateKnowledgeTool struct {
-	mcp    *mcp.MCPClient
-	engine llm.Engine
+	mcp           *mcp.MCPClient
+	engine        llm.Engine
+	sourceAgent   string // 确定性来源 Agent（由代码 hook 注入，非空时覆盖 params 中的 source_agent）
+	knowledgeType string // 确定性知识类型（由代码 hook 注入，非空时覆盖 params 中的 type）
 }
 
-// NewConsolidateKnowledgeTool 创建知识整理工具。
-func NewConsolidateKnowledgeTool(mcpClient *mcp.MCPClient, engine llm.Engine) *ConsolidateKnowledgeTool {
-	return &ConsolidateKnowledgeTool{mcp: mcpClient, engine: engine}
+// NewConsolidateKnowledgeTool 创建知识整理工具，sourceAgent/knowledgeType 由代码层确定性注入。
+func NewConsolidateKnowledgeTool(mcpClient *mcp.MCPClient, engine llm.Engine, sourceAgent, knowledgeType string) *ConsolidateKnowledgeTool {
+	return &ConsolidateKnowledgeTool{mcp: mcpClient, engine: engine, sourceAgent: sourceAgent, knowledgeType: knowledgeType}
 }
 
 // Execute 执行知识整理：校验 → 蒸馏 → 去重 → 合并 → add/delete。
@@ -31,7 +33,11 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 	kl := logging.KnowledgeLogger()
 
 	// ── 1. 参数解析 ───────────────────────────────────────────────────────────
-	rawType, _ := params["type"].(string)
+	// type 优先使用代码层绑定的 knowledgeType（LLM 无法篡改）
+	rawType := t.knowledgeType
+	if rawType == "" {
+		rawType, _ = params["type"].(string)
+	}
 	title, _ := params["title"].(string)
 	content, _ := params["content"].(string)
 
@@ -82,7 +88,14 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 		}
 	}
 
-	sourceAgent, _ := params["source_agent"].(string)
+	sourceAgent := t.sourceAgent
+	if sourceAgent == "" {
+		sourceAgent, _ = params["source_agent"].(string)
+	}
+	if sourceAgent == "" {
+		kl.Warn("consolidate param invalid", "event", "consolidate_param_error", "reason", "source_agent is empty")
+		return nil, fmt.Errorf("source_agent is required")
+	}
 	taskID, _ := params["task_id"].(string)
 	confidence := 1.0
 	if rawConf, ok := params["confidence"].(float64); ok {

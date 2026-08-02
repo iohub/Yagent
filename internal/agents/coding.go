@@ -117,7 +117,7 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 
 	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP，不来自 tools.json 自动加载）
-	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, llm)
+	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, llm, "coding_agent", "coding_modification")
 	if len(knowledgeAdapters) > 0 {
 		tools.SetGuardOnAdapters(knowledgeAdapters, globalCtx.Guard)
 		adapters = append(adapters, knowledgeAdapters...)
@@ -364,10 +364,15 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	if err != nil {
 		return AgentResult{}, err
 	}
-	return AgentResult{
+	agentResult := AgentResult{
 		Text:   result.Text,
 		Memory: ConvertLLMHistoryToMemory(result.History),
-	}, nil
+	}
+	// [知识管理] 子任务完成后自动沉淀到知识库（非阻塞）
+	if a.GlobalCtx.KnowledgeInjector != nil {
+		autoConsolidateSubtask(a.GlobalCtx, a.LLM, "coding_agent", "coding_modification", input, agentResult.Text)
+	}
+	return agentResult, nil
 }
 
 // Registry 返回工具注册表引用（供外部访问）
@@ -488,19 +493,61 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	return msg, nil
 }
 
+// pruneSchema 是 prune_history 工具的 JSON Schema，提取为包级变量供多处复用。
+var pruneSchema = map[string]interface{}{
+	"type": "object",
+	"properties": map[string]interface{}{
+		"action": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"list", "merge", "delete"},
+			"description": "操作类型：list=列出条目，merge=合并相似条目，delete=按 ID 删除",
+		},
+		"limit": map[string]interface{}{
+			"type":        "integer",
+			"description": "list/merge 时最多读取的条目数，默认 50",
+			"default":     50,
+		},
+		"type": map[string]interface{}{
+			"type":        "string",
+			"description": "按知识类型过滤（可选，空=全部）",
+		},
+		"tag": map[string]interface{}{
+			"type":        "string",
+			"description": "按标签过滤（可选）",
+		},
+		"ids": map[string]interface{}{
+			"type":        "array",
+			"items":       map[string]interface{}{"type": "string"},
+			"description": "delete 时必填：要删除的条目 ID 列表",
+		},
+		"similarity_threshold": map[string]interface{}{
+			"type":        "number",
+			"description": "merge 时相似度阈值，默认 0.80",
+			"default":     0.80,
+		},
+	},
+	"required": []string{"action"},
+}
+
 // createKnowledgeToolAdapters creates tool adapters for knowledge management operations.
-func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine) []*tools.Adapter {
-	consolidateTool := tools.NewConsolidateKnowledgeTool(globalCtx.CodeSeekMCP, llm)
+// sourceAgent/knowledgeType 非空时注册 consolidate_knowledge，为空时仅注册 prune_history（用于 Director）。
+func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine, sourceAgent, knowledgeType string) []*tools.Adapter {
 	pruneTool := tools.NewPruneHistoryTool(globalCtx.CodeSeekMCP, llm)
+
+	adapters := []*tools.Adapter{
+		tools.NewAdapter("prune_history", "维护知识库健康：列出当前条目、合并相似条目、或按 ID 删除过期条目。建议定期执行 merge 以去重。", pruneTool.Execute).WithSchema(pruneSchema),
+	}
+
+	// sourceAgent/knowledgeType 为空时不注册 consolidate_knowledge（如 Director）
+	if sourceAgent == "" || knowledgeType == "" {
+		return adapters
+	}
+
+	consolidateTool := tools.NewConsolidateKnowledgeTool(globalCtx.CodeSeekMCP, llm, sourceAgent, knowledgeType)
 
 	consolidateSchema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"type": map[string]interface{}{
-				"type":        "string",
-				"enum":        []string{"repo_retrieval", "coding_modification"},
-				"description": "知识来源类型：repo_retrieval=代码库分析知识，coding_modification=代码修改相关决策",
-			},
 			"title": map[string]interface{}{
 				"type":        "string",
 				"description": "知识条目标题（≤30字）",
@@ -522,11 +569,6 @@ func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine)
 				"items":       map[string]interface{}{"type": "string"},
 				"description": "相关文件路径列表（可选）",
 			},
-			"source_agent": map[string]interface{}{
-				"type":        "string",
-				"enum":        []string{"repo_agent", "coding_agent"},
-				"description": "来源 Agent",
-			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
 				"description": "关联的任务 ID（可选）",
@@ -537,48 +579,14 @@ func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine)
 				"default":     1.0,
 			},
 		},
-		"required": []string{"type", "title", "content", "tags"},
+		"required": []string{"title", "content", "tags"},
 	}
 
-	pruneSchema := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"action": map[string]interface{}{
-				"type":        "string",
-				"enum":        []string{"list", "merge", "delete"},
-				"description": "操作类型：list=列出条目，merge=合并相似条目，delete=按 ID 删除",
-			},
-			"limit": map[string]interface{}{
-				"type":        "integer",
-				"description": "list/merge 时最多读取的条目数，默认 50",
-				"default":     50,
-			},
-			"type": map[string]interface{}{
-				"type":        "string",
-				"description": "按知识类型过滤（可选，空=全部）",
-			},
-			"tag": map[string]interface{}{
-				"type":        "string",
-				"description": "按标签过滤（可选）",
-			},
-			"ids": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "delete 时必填：要删除的条目 ID 列表",
-			},
-			"similarity_threshold": map[string]interface{}{
-				"type":        "number",
-				"description": "merge 时相似度阈值，默认 0.80",
-				"default":     0.80,
-			},
-		},
-		"required": []string{"action"},
-	}
+	adapters = append(adapters,
+		tools.NewAdapter("consolidate_knowledge", "将当前任务的关键知识整理并写入知识库。类型与来源由系统自动标记，无需填写。适用于：(1) 完成代码分析后沉淀领域知识；(2) 完成代码修改后记录关键变更决策；(3) 发现重要架构模式或设计规律时。执行前请确保内容已提炼（≤500字符），tags 至少 1 个。", consolidateTool.Execute).WithSchema(consolidateSchema),
+	)
 
-	return []*tools.Adapter{
-		tools.NewAdapter("consolidate_knowledge", "将当前任务的关键知识整理并写入知识库。适用于：(1) 完成代码分析后沉淀领域知识；(2) 完成代码修改后记录关键变更决策；(3) 发现重要架构模式或设计规律时。执行前请确保内容已提炼（≤500字符），tags 至少 1 个。", consolidateTool.Execute).WithSchema(consolidateSchema),
-		tools.NewAdapter("prune_history", "维护知识库健康：列出当前条目、合并相似条目、或按 ID 删除过期条目。建议定期执行 merge 以去重。", pruneTool.Execute).WithSchema(pruneSchema),
-	}
+	return adapters
 }
 
 // createCheckpointToolAdapters creates tool adapters for manual git checkpoint operations.
