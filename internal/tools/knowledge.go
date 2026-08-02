@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -526,28 +525,45 @@ func mergeStrings(a, b []string) []string {
 	return out
 }
 
-// replaceProjectAbsPath 将 title 中出现的项目绝对路径前缀替换为相对路径，
+// replaceProjectAbsPath 将 title 中出现的所有项目绝对路径替换为相对路径，
 // 以减少 title 中的字符占用。若 projectDir 为空或 title 不含 projectDir，
 // 则原样返回 title，永不返回错误。
 func replaceProjectAbsPath(title, projectDir string) string {
 	if title == "" || projectDir == "" {
 		return title
 	}
-	sep := string(filepath.Separator)
 	// 精确匹配：title 恰好等于 projectDir
 	if title == projectDir {
 		return "."
 	}
-	// 精确前缀匹配：projectDir + separator，避免误替换（如 projectDir="/a" 不应匹配 "/abc"）
-	prefix := projectDir + sep
-	if !strings.HasPrefix(title, prefix) {
-		return title
+	// Step 1：替换所有出现的 projectDir/ 和 projectDir\ 路径前缀片段（兼容跨平台）
+	result := strings.ReplaceAll(title, projectDir+"/", "")
+	result = strings.ReplaceAll(result, projectDir+"\\", "")
+	// Step 2：处理单独出现的 projectDir（如 "参考 /path 文档"）
+	// 条件：前面是路径分隔符，后面是非路径分隔符或字符串结尾
+	var sb strings.Builder
+	i := 0
+	for i <= len(result)-len(projectDir) {
+		if result[i:i+len(projectDir)] == projectDir {
+			afterPos := i + len(projectDir)
+			afterIsAlnum := afterPos < len(result) && (result[afterPos] >= '0' && result[afterPos] <= '9' || result[afterPos] >= 'A' && result[afterPos] <= 'Z' || result[afterPos] >= 'a' && result[afterPos] <= 'z')
+			if !afterIsAlnum {
+				sb.WriteString(".")
+				i = afterPos
+				continue
+			}
+		}
+		sb.WriteByte(result[i])
+		i++
 	}
-	rel := title[len(prefix):]
-	// 清理结果路径（去除首尾多余的斜杠等）
-	rel = filepath.Clean(rel)
-	if rel == "" {
-		return "."
+	sb.WriteString(result[i:])
+	result = sb.String()
+	// Step 3：仅在有实际替换时才清理首尾斜杠，避免误伤未修改的原始路径前缀
+	if result != title {
+		result = strings.Trim(result, "/\\")
+		if result == "" {
+			return "."
+		}
 	}
-	return rel
+	return result
 }

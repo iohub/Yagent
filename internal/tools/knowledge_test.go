@@ -474,3 +474,36 @@ func TestReplaceProjectAbsPath_OnlyRelPathPart(t *testing.T) {
 		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
 	}
 }
+
+func TestReplaceProjectAbsPath_PathInMiddle(t *testing.T) {
+	// 绝对路径出现在 title 中间
+	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	title := "修复 /home/do/ssd/iohub/dev/codeactor-agent/foo/bar.go 中的 bug"
+	got := replaceProjectAbsPath(title, projectDir)
+	expected := "修复 foo/bar.go 中的 bug"
+	if got != expected {
+		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
+	}
+}
+
+func TestReplaceProjectAbsPath_MultiplePaths(t *testing.T) {
+	// title 包含多个绝对路径片段，全部被替换
+	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	title := "参考 /home/do/ssd/iohub/dev/codeactor-agent/a/x.go 和 /home/do/ssd/iohub/dev/codeactor-agent/b/y.go 的改动"
+	got := replaceProjectAbsPath(title, projectDir)
+	expected := "参考 a/x.go 和 b/y.go 的改动"
+	if got != expected {
+		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
+	}
+}
+
+func TestReplaceProjectAbsPath_ProjectDirAlone(t *testing.T) {
+	// title 中包含单独出现的 projectDir（后面没有分隔符）
+	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	title := "参考 /home/do/ssd/iohub/dev/codeactor-agent 文档"
+	got := replaceProjectAbsPath(title, projectDir)
+	expected := "参考 . 文档"
+	if got != expected {
+		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
+	}
+}
