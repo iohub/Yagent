@@ -1,14 +1,17 @@
 # ═══════════════════════════════════════════════════════════════
 # CodeActor 配置文件
 # 使用方式：复制到 ~/.codeactor/config/config.toml 后修改
-# 完整配置说明：https://github.com/codeactor/codeactor
+# 完整配置说明见 docs/config-guide.md
 # ═══════════════════════════════════════════════════════════════
+
+# ── 全局任务超时（根级字段）──
+# task_timeout = "0s"    # 0 = 不启用，正数表示超时时间（如 "30m"）
 
 # ── 全局 LLM ──
 [global.llm]
 use_provider = "aliyun"
 
-# ── LLM 提供商（仅 3 个必要示例）──
+# ── LLM 提供商 ──
 [global.llm.providers.aliyun]
 model = "qwen3-coder-plus"
 temperature = 0.0
@@ -34,13 +37,13 @@ api_key = "your-key"
 reasoning_effort = "max"
 
 [global.llm.providers.local]
-model = "qwen3-30b-a3b"
+model = "Qwen3-30B-A3B"
 temperature = 0.0
 max_tokens = 3000
 api_base_url = "http://127.0.0.1:8000"
 api_key = "dummy-key"
 
-# ── Agent 级 LLM（优先级: agent > agents > global）──
+# ── Agent 级 LLM 覆盖（优先级: tool > tools > agent > agents > global）──
 [agents.llm.director]
 use_provider = "deepseek_v4_pro"
 
@@ -62,7 +65,7 @@ use_provider = "local"
 [agents.llm.devops]
 use_provider = "local"
 
-# ── 工具级 LLM（优先级: tool > tools > agent > global）──
+# ── 工具级 LLM 覆盖（优先级: tool > tools > agent > agents > global）──
 [tools.llm.thinking]
 use_provider = "deepseek_v4_pro"
 
@@ -73,120 +76,105 @@ use_provider = "deepseek_v4_pro"
 [app]
 enable_streaming = true
 
-# ── 代码库（语义搜索）──
-[codexray]
-enable_embedding = true
+# ── Agent 行为配置 ──
+[agent]
+yolo_mode = false             # YOLO 模式：自动批准所有危险操作
+full_yolo_mode = false        # 完全自治模式
+director_max_steps = 100      # Director 最大步数
+coding_max_steps = 150        # Coding Agent 最大步数
+repo_max_steps = 50           # Repo Agent 最大步数
+chat_max_steps = 50           # Chat Agent 最大步数
+devops_max_steps = 50         # DevOps Agent 最大步数
+browser_max_steps = 200       # Browser Agent 最大步数
+meta_max_steps = 50           # Meta Agent 最大步数
+meta_retry_count = 5          # Meta Agent 重试次数
+lang = ""                     # 对话语言（空=默认）
 
-[codexray.embedding]
-model = "Qwen/Qwen3-Embedding-4B"
-api_token = "your-key"
-api_base_url = "https://api.siliconflow.cn/v1"
-dimensions = 2560
-
-# ── 检索管线（多阶段级联检索，默认启用）──
-[codexray.retrieval_pipeline]
-enabled = true
-
-[codexray.retrieval_pipeline.reranker]
-enabled = false
-api_token = "your-key"
-model = "Qwen/Qwen3-Reranker-4B"
-api_base_url = "https://api.siliconflow.cn/v1/rerank"
+# ── LLM 推理兜底配置 ──
+[llm]
+timeout = "5m"                       # 单次 LLM 调用超时
+max_retries = 5                      # 底层引擎重试次数
+step_retries = 0                     # 步骤重试次数
+circuit_breaker_threshold = 0        # 熔断阈值（0=不启用）
+circuit_breaker_reset_timeout = "0s" # 熔断恢复时间
+enable_fallback = false              # 启用 provider 级故障转移
+fallback_max_retries = 2             # fallback provider 内部重试次数
 
 # ── CodeSeek MCP 代码分析引擎配置 ──
 [codeseek]
-# codeseek 二进制文件路径（空=不启用 MCP，使用 HTTP codexray 作为后备）
-binary_path = ""
-# MCP 启动参数
-mcp_args = ["serve", "--mcp"]
-# 请求超时秒数
-request_timeout = 30
+binary_path = ""                     # codeseek 二进制路径（空=不启用 MCP）
+mcp_args = ["serve", "--mcp"]        # MCP 启动参数
+request_timeout = 30                 # 请求超时秒数
 
 [codeseek.knowledge]
-# 是否启用知识管理功能
-enabled = true
-# 知识注入最大 token 数
-injection_max_tokens = 1000
-# 知识注入最大条目数
-injection_max_entries = 8
-# 知识检索最低得分阈值
-injection_min_score = 0.3
-# 是否请求 Cross-Encoder 精排（codeseek 端 reranker 未启用时自动降级）
-injection_rerank = true
+enabled = true                       # 是否启用知识管理功能
+injection_max_tokens = 1000          # 知识注入最大 token 数
+injection_max_entries = 8            # 知识注入最大条目数
+injection_min_score = 0.3            # 知识检索最低得分阈值
+injection_rerank = true              # 是否请求 Cross-Encoder 精排（codeseek 端 reranker 未启用时自动降级）
 
-# ═══════════════════════════════════════════════════════════════
-# Phase 1 Stage 1.0: 新增配置段落
-# ═══════════════════════════════════════════════════════════════
+# ── 浏览器配置 ──
+[browser]
+headless = true                      # 无头模式
+browser_path = ""                    # 浏览器可执行文件路径（空=自动查找）
+user_data_dir = ""                   # 用户数据目录（空=临时目录）
+viewport_width = 1280                # 视口宽度
+viewport_height = 720                # 视口高度
+timeout_seconds = 120                # 单页操作超时（秒）
+task_timeout_seconds = 300           # 单个浏览器任务超时（秒）
+max_concurrent_pages = 4             # 最大并发页面数
+auto_launch = true                   # 是否自动启动浏览器
+idle_timeout = "5m"                  # 空闲超时
+allow_no_sandbox = false             # 允许 --no-sandbox 启动（容器环境可能需要）
+enable_browser_agent = true          # 总开关：禁用后 Browser-Agent 不可用
+# allowed_domains = []               # 允许访问的域名白名单（空=不限制）
+# blocked_domains = []               # 禁止访问的域名黑名单
+# extra_args = []                    # 附加浏览器启动参数
 
-# ── 消息总线配置 ──
-[messaging]
-enabled = true
-queue_size = 256
-publish_timeout = "5s"
-dispatch_timeout = "3s"
-max_retries = 3
-enable_dlq = true
-dlq_size = 1000
-enable_metrics = true
-backpressure_mode = "block"  # "block" = 新行为（阻塞+重试+DLQ）, "drop" = 向后兼容旧行为（静默丢弃）
+# ── 关键词词典配置 ──
+[keywords]
+default_path = "~/.codeactor/keywords.txt"  # 默认关键词文件路径
+hot_reload = false                   # 是否启用热重载
+disable_completion = false           # 禁用关键词自动补全
+# [[keywords.dict]]
+# name = "custom"                    # 词典名称
+# files = ["/path/to/keywords.txt"]  # 关键词文件路径列表
+# type = "prefix"                    # 词典类型: "prefix" 或 "exact"
+# builtin_type = "default"           # 内置类型: "default" 或 "none"
 
-# ── codexray 分析引擎配置 ──
-[codexray.client]
-enabled = true
-base_url = ""
-timeout = "30s"
-max_retries = 3
-retry_interval = "500ms"
-enable_circuit_breaker = true
-cb_failure_threshold = 5
-cb_reset_timeout = "30s"
-enable_cache = true
-cache_ttl = "30m"
-cache_max_entries = 100
-enable_fallback = true
+# ── Git Checkpoint 机制 ──
+[git_checkpoint]
+enabled = true                       # 总开关
+# DEPRECATED: auto_checkpoint / checkpoint_interval 已废弃，
+# checkpoint 现在由 agent 通过 git_checkpoint_create 工具在任务里程碑时创建。
+auto_checkpoint = false
+checkpoint_interval = 0
+max_checkpoints = 50                 # 最大保留的 checkpoint 数量
+squash_on_exit = true                # Agent 退出时 squash 合并到主分支
+generate_commit_message = true       # 使用 LLM 生成 commit 消息
+agent_branch_prefix = "agent"        # agent 工作分支前缀
+checkpoint_tag_prefix = "checkpoint/coding"  # checkpoint 标签前缀
+stash_dirty_worktree = true          # 启动时 stash 未提交的变更
+cleanup_agent_branch = true          # 退出时清理 agent 分支
+cleanup_checkpoint_tags = true       # 退出时清理 checkpoint 标签
+auto_merge_on_exit = false           # 退出时自动 squash-merge（false 则保留分支供人工审查合并）
 
-# ── Director 配置 ──
-[director]
-enable_checkpoint = true
-checkpoint_path = ""
-checkpoint_interval = "30s"
-sync_on_critical = true
+# ── 增强型 Commander（分布式认知架构）──
+[enhanced_commander]
+enable = false                       # 总开关
+enable_result_compression = false    # 启用结果压缩
+compression_threshold = 4096         # 压缩阈值（字节）
+summary_max_length = 2048            # 摘要最大长度（字符）
+max_delegation_depth = 3             # 最大委派深度
 
-# ── 工具注册配置（Phase 2 使用）──
-[tools_registry]
-enable_registry = false
+# ── Memory JSONL 实时写入 ──
+[memory_jsonl]
+enable = false                       # 是否在 agent 执行时实时写入 memory JSONL 文件
+output_dir = ""                      # 输出目录（空=默认 ~/.codeactor/data/memory_jsonl/{projectID}/）
 
-# ── Agent 直接通信配置（Phase 2 使用）──
-[agent_comm]
-enable_direct = false
-
-# ═══════════════════════════════════════════════════════════════
-# 上下文压缩配置（三层防御的第一层：TOML 配置层）
-# ═══════════════════════════════════════════════════════════════
-# 如果此段完全缺失，应用层（compact_config.go）会通过 applySafeDefaults()
-# 兜底所有字段的默认值。建议显式配置以下字段：
-[context]
-enable_auto_compact = true            # 是否自动触发压缩（默认 true）
-max_context_tokens = 198000           # 最大上下文 token 数
-summarization_model = ""              # 轻量摘要模型（空=复用主引擎）
-summarization_provider = ""           # 独立摘要 provider（空=复用主引擎）
-summarization_timeout = 120           # 摘要超时（秒）
-summarization_max_input_tokens = 120000 # 单批次最大输入 token 数
-summarization_prompt = ""             # 自定义摘要提示词（空=使用默认）
-keep_recent_rounds = 2                # 始终保留的最近对话轮数
-
-# ═══════════════════════════════════════════════════════════════
-# TUI Keybindings Configuration
-# ── 可配置 TUI 快捷键 ──
-# 未配置的项使用 Go 代码中的默认值。
-# 格式：使用 Bubble Tea 按键事件格式（小写）：
-#   - 修饰键: "ctrl+e", "alt+s", "alt+enter"
-#   - 单键:   "j", "k", "f", "b", "i", "?"
-#   - 特殊键: "enter", "esc", "tab", "space"
-
+# ── TUI Keybindings Configuration ──
 [tui]
   [tui.keybindings]
-    
     [tui.keybindings.edit]
     submit_task     = "alt+s"      # 提交任务
     command_mode    = "ctrl+e"     # 进入命令模式
@@ -207,8 +195,3 @@ keep_recent_rounds = 2                # 始终保留的最近对话轮数
     toggle_token_panel = "alt+t"   # 切换 Token 面板
     switch_model      = "alt+m"    # 切换模型
     quit              = "ctrl+c"   # 退出
-
-# ── LLM 故障转移配置 ──
-[llm]
-# enable_fallback = true       # 启用provider级故障转移
-# fallback_max_retries = 2     # fallback provider的内部重试次数
