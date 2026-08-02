@@ -61,9 +61,9 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 		return nil, fmt.Errorf("invalid type: %q (allowed: repo_retrieval, coding_modification)", rawType)
 	}
 
-	// title 超 30 字截断（按 rune 截断，避免中文等多字节字符截断乱码）
-	if r := []rune(title); len(r) > 30 {
-		title = string(r[:30])
+	// title 超 200 字截断（按 rune 截断，避免中文等多字节字符截断乱码）
+	if r := []rune(title); len(r) > 200 {
+		title = string(r[:200])
 	}
 
 	// tags（至少 1 个）
@@ -105,21 +105,25 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 
 	kl.Info("consolidate start", "event", "consolidate_start", "type", rawType, "title", title, "tags", tags, "source_agent", sourceAgent, "task_id", taskID)
 
-	// ── 2. LLM 蒸馏（content > 500 字时）──────────────────────────────────────
+	// ── 2. LLM 蒸馏（content > 1500 字时）──────────────────────────────────────
 	origContentLen := len(content)
-	if t.engine != nil && len(content) > 500 {
+	if t.engine != nil && len(content) > 1500 {
 		distilled, err := distillContent(t.engine, ctx, title, content)
 		if err != nil {
 			// 降级：硬截断
 			kl.Warn("consolidate distill fallback", "event", "consolidate_distill_fallback", "title", title, "error", err)
-			content = content[:500] + "..."
+			if r := []rune(content); len(r) > 1500 {
+				content = string(r[:1500]) + "..."
+			}
 		} else {
 			content = distilled
 			kl.Info("consolidate distill", "event", "consolidate_distill", "title", title, "before_len", origContentLen, "after_len", len(distilled), "mode", "llm")
 		}
-	} else if len(content) > 500 {
-		kl.Info("consolidate distill", "event", "consolidate_distill", "title", title, "before_len", len(content), "after_len", 503, "mode", "hard_truncate")
-		content = content[:500] + "..."
+	} else if len(content) > 1500 {
+		kl.Info("consolidate distill", "event", "consolidate_distill", "title", title, "before_len", len(content), "after_len", 1503, "mode", "hard_truncate")
+		if r := []rune(content); len(r) > 1500 {
+			content = string(r[:1500]) + "..."
+		}
 	}
 
 	// ── 3. 去重检测 ──────────────────────────────────────────────────────────
@@ -412,7 +416,7 @@ func (t *PruneHistoryTool) executeMerge(ctx context.Context, params map[string]i
 func distillContent(engine llm.Engine, ctx context.Context, title, content string) (string, error) {
 	prompt := `You are a knowledge distillation assistant. Given a title and content, extract the core要点 (key points) in Chinese.
 Rules:
-1. Output must be ≤500 characters (Chinese characters count as 1).
+1. Output must be ≤1500 characters (Chinese characters count as 1).
 2. Preserve all file paths, function names, and symbol names exactly as written.
 3. Keep the technical accuracy — do not lose critical details.
 4. Output ONLY the distilled content, no explanation, no markdown.`
@@ -424,8 +428,8 @@ Rules:
 		return "", err
 	}
 	result := strings.TrimSpace(resp.Choices[0].Content)
-	if len(result) > 500 {
-		result = result[:500]
+	if r := []rune(result); len(r) > 1500 {
+		result = string(r[:1500])
 	}
 	return result, nil
 }
@@ -445,7 +449,7 @@ merge them into a single, unified entry.
 Output ONLY a valid JSON object with these fields (no markdown fence, no explanation):
 {"title":"...","content":"...","tags":["..."]}
 Rules:
-1. Title should be a clear, concise summary (≤30 chars).
+1. Title should be a clear, concise summary (≤200 chars).
 2. Content should preserve all unique facts from both entries, keeping file paths and function names exact.
 3. Tags: union of both entries' tags, deduplicated.
 4. Output must be valid JSON.`

@@ -550,13 +550,13 @@ func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine,
 		"properties": map[string]interface{}{
 			"title": map[string]interface{}{
 				"type":        "string",
-				"description": "Knowledge entry title (≤30 characters)",
-				"maxLength":   30,
+				"description": "Knowledge entry title (≤200 characters)",
+				"maxLength":   200,
 			},
 			"content": map[string]interface{}{
 				"type":        "string",
-				"description": "Knowledge content (≤500 characters). Keep file paths, function names, and symbol names.",
-				"maxLength":   500,
+				"description": "Knowledge content (≤1500 characters). Keep file paths, function names, and symbol names.",
+				"maxLength":   1500,
 			},
 			"tags": map[string]interface{}{
 				"type":        "array",
@@ -583,7 +583,7 @@ func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine,
 	}
 
 	adapters = append(adapters,
-		tools.NewAdapter("consolidate_knowledge", "Consolidate key knowledge from the current task and write it into the knowledge base. Type and source are automatically tagged by the system — no need to provide them. Suitable for: (1) distilling domain knowledge after code analysis; (2) recording key change decisions after code modifications; (3) capturing important architecture patterns or design rules. Condense content to ≤500 characters and provide at least 1 tag before execution.", consolidateTool.Execute).WithSchema(consolidateSchema),
+		tools.NewAdapter("consolidate_knowledge", "Consolidate key knowledge from the current task and write it into the knowledge base. Type and source are automatically tagged by the system — no need to provide them. Suitable for: (1) distilling domain knowledge after code analysis; (2) recording key change decisions after code modifications; (3) capturing important architecture patterns or design rules. Condense content to ≤1500 characters and provide at least 1 tag before execution.", consolidateTool.Execute).WithSchema(consolidateSchema),
 	)
 
 	return adapters
