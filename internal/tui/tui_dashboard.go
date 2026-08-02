@@ -110,23 +110,29 @@ func (m *model) renderDashboard(width, height int) string {
 
 	var lines []string
 
-	// ── Collapse hint (top) ──
-	lines = append(lines, timelineHintStyle.Render(" alt+d "+langManager.GetText("DashboardCollapseHint")+" "))
-
-	// ── Token section (top) ──
+	// ── Token section (top): 标题左对齐 + 收缩提示右对齐（右上角） ──
+	innerWidth := width - 4 // border(2) + padding(2)
 	tokenTitle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
 		Italic(true).
 		Render("Tokens")
-	lines = append(lines, tokenTitle)
+	collapseHint := timelineHintStyle.Render(" alt+d "+langManager.GetText("DashboardCollapseHint")+" ")
+	// 用宽度填充实现右对齐；若空间不足则直接拼接不填充
+	hintWidth := lipgloss.Width(collapseHint)
+	fillWidth := innerWidth - hintWidth
+	if fillWidth < lipgloss.Width(tokenTitle) {
+		fillWidth = lipgloss.Width(tokenTitle)
+	}
+	titleLine := lipgloss.NewStyle().Width(fillWidth).Render(tokenTitle) + collapseHint
+	lines = append(lines, titleLine)
 
 	if len(agents) > 0 {
 		// Space allocation
 		timelineReserve := 0
 		if len(m.timelineEntries) > 0 {
-			timelineReserve = 2 // 1 entry + hint
+			timelineReserve = 1 // 1 entry (hint merged into title line)
 		}
-		maxTokenRows := height - timelineReserve - 1
+		maxTokenRows := height - timelineReserve
 		if maxTokenRows < 3 {
 			maxTokenRows = 3
 		}
