@@ -84,7 +84,7 @@ func (m *model) renderDashboard(width, height int) string {
 	tokenTitle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
 		Italic(true).
-		Render("⚡ Tokens")
+		Render("Tokens")
 	lines = append(lines, tokenTitle)
 
 	if len(agents) > 0 {
@@ -99,25 +99,21 @@ func (m *model) renderDashboard(width, height int) string {
 		}
 
 		// Total row
-		totalLabelStyle := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("240")).
-			Width(10).
-			Align(lipgloss.Right)
 		inputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
 		outputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114"))
-		sumStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("243"))
 		cacheRateStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
 
 		totalInput := m.inputTokens + m.cacheReadInputTokens + m.cacheCreationInputTokens
 		inStr := formatToken(totalInput)
 		outStr := formatToken(m.outputTokens)
-		sumStr := formatToken(totalInput + m.outputTokens)
+		nameStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(AgentColor("Total"))).
+			Width(10)
+		nameRendered := nameStyle.Render("Total")
 
-		totalLine := totalLabelStyle.Render("Total") + " " +
-			inputStyle.Render("In: "+inStr+"  ") +
-			outputStyle.Render("Out: "+outStr+"  ") +
-			sumStyle.Render("Σ "+sumStr)
+		totalLine := nameRendered + " " + inputStyle.Render("In: "+inStr+"  ") +
+			outputStyle.Render("Out: "+outStr)
 		if m.cacheReadInputTokens > 0 && totalInput > 0 {
 			rate := float64(m.cacheReadInputTokens) / float64(totalInput) * 100
 			totalLine += "  " + cacheRateStyle.Render(fmt.Sprintf("⊕%.0f%%", rate))
