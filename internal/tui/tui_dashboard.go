@@ -100,10 +100,16 @@ func (m *model) renderDashboard(width, height int) string {
 			if maxTL < 0 {
 				maxTL = 0
 			}
-			if len(tlInnerLines) > maxTL {
-				tlInnerLines = tlInnerLines[:maxTL]
+			if maxTL > 0 {
+				if len(tlInnerLines) > maxTL-1 {
+					tlInnerLines = tlInnerLines[:maxTL-1]
+				}
+				hint := timelineHintStyle.Render(" ctrl+l " + langManager.GetText("TimelineDetailHint") + " ")
+				lines = append(lines, tlInnerLines...)
+				lines = append(lines, hint)
+			} else {
+				lines = append(lines, tlInnerLines...)
 			}
-			lines = append(lines, tlInnerLines...)
 		}
 	}
 
