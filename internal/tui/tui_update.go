@@ -108,5 +108,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle text input
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.invalidateFooterCache()
 	return m, cmd
 }

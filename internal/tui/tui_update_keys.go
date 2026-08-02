@@ -708,6 +708,7 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			newContent = append(newContent, contentRunes[byteOffset:]...)
 
 			m.input.SetValue(string(newContent))
+			m.invalidateFooterCache()
 
 			// Reset autocomplete state
 			m.keywordAutoComplete = false
@@ -729,6 +730,7 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				// Clear the input field
 				m.input.SetValue("")
+				m.invalidateFooterCache()
 				return m, enterHistoryMode(m)
 			}
 			if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
@@ -745,6 +747,7 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Otherwise, insert newline into textarea
 		var inputCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)
+		m.invalidateFooterCache()
 		// 启动或重置补全防抖
 		return m, tea.Batch(inputCmd, m.scheduleAutocomplete())
 
@@ -768,6 +771,7 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Input has content: pass to textarea for line navigation
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
+		m.invalidateFooterCache()
 		return m, cmd
 
 	default:
@@ -775,6 +779,7 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// are handled in dedicated case branches above.
 		var inputCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)
+		m.invalidateFooterCache()
 		// 启动或重置补全防抖
 		return m, tea.Batch(inputCmd, m.scheduleAutocomplete())
 	}
