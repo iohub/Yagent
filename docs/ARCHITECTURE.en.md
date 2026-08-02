@@ -1067,7 +1067,7 @@ flowchart TB
             FILEOPS[File Operations]
             SEARCH[Search Tools]
             BASH[Shell Execution]
-            CODEXRAY[codeseek]
+            CODESEEK[codeseek]
         end
     end
 
@@ -1095,7 +1095,7 @@ flowchart TB
     MEM --> COND
     LOCALM --> Agents
     
-    Tools --> CODEXRAY
+    Tools --> CODESEEK
     FILEOPS --> MEM
     SEARCH --> MEM
     BASH --> MEM

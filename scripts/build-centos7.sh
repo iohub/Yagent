@@ -45,7 +45,7 @@ cd codeseek/rust-core
 cargo build --release
 
 echo "=== Step 7: Prepare embedded binaries ==="
-cd ..
+cd ../..
 mkdir -p dist/bin
 cp codeseek/rust-core/target/release/codeseek dist/bin/
 
