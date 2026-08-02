@@ -19,14 +19,14 @@ const (
 )
 
 var (
-	currentMode  Mode
-	logDir       string
-	appLogFile   *os.File
-	appLogWriter io.Writer
+	currentMode      Mode
+	logDir           string
+	appLogFile       *os.File
+	appLogWriter     io.Writer
 	knowledgeLogFile *os.File
-	knowledgeLogger *slog.Logger
-	initialized  bool
-	mu           sync.Mutex
+	knowledgeLogger  *slog.Logger
+	initialized      bool
+	mu               sync.Mutex
 	// taskID 管理变量，带 RWMutex 保护
 	currentTaskID string
 	taskMu        sync.RWMutex

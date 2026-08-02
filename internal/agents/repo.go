@@ -87,9 +87,9 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 			LLM:       llm,
 			Publisher: publisher,
 		},
-		GlobalCtx:     globalCtx,
-		Adapters:      adapters,
-		maxSteps:      maxSteps,
+		GlobalCtx: globalCtx,
+		Adapters:  adapters,
+		maxSteps:  maxSteps,
 	}
 }
 

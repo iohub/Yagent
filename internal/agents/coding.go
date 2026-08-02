@@ -134,11 +134,11 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 			LLM:       llm,
 			Publisher: globalCtx.Publisher,
 		},
-		Adapters:      adapters,
-		maxSteps:      maxSteps,
-		BrowserAgent:  browser,
-		GlobalCtx:     globalCtx,
-		registry:      registry,
+		Adapters:     adapters,
+		maxSteps:     maxSteps,
+		BrowserAgent: browser,
+		GlobalCtx:    globalCtx,
+		registry:     registry,
 	}
 }
 

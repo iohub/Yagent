@@ -57,6 +57,9 @@ func (k *KnowledgeInjector) BuildQuery(injCtx InjectionContext) string {
 func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext) (string, error) {
 	kl := logging.KnowledgeLogger()
 	agent := injCtx.AgentName
+	if agent == "" {
+		agent = "unknown"
+	}
 
 	if k.mcpClient == nil || !k.cfg.Enabled {
 		kl.Debug("knowledge inject skipped", "event", "inject_skipped", "agent", agent, "reason", "disabled_or_no_mcp")

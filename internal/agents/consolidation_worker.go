@@ -61,21 +61,21 @@ type ConsolidationWorker struct {
 	ch     chan *ConsolidationTask
 	done   chan struct{}
 	// [知识管理]
-	mcpClient            *mcp.MCPClient
-	knowledgeCfg         config.KnowledgeConfig
-	consolidationCount   int
+	mcpClient          *mcp.MCPClient
+	knowledgeCfg       config.KnowledgeConfig
+	consolidationCount int
 }
 
 // NewConsolidationWorker 创建 consolidation 工作器。
 // 需要调用 Start() 启动后台 goroutine。
 func NewConsolidationWorker(store *RepoMemoryStore, engine llm.Engine, mcpClient *mcp.MCPClient, knowledgeCfg config.KnowledgeConfig) *ConsolidationWorker {
 	return &ConsolidationWorker{
-		store:          store,
-		engine:         engine,
-		ch:             make(chan *ConsolidationTask, channelBufferSize),
-		done:           make(chan struct{}),
-		mcpClient:      mcpClient,
-		knowledgeCfg:   knowledgeCfg,
+		store:        store,
+		engine:       engine,
+		ch:           make(chan *ConsolidationTask, channelBufferSize),
+		done:         make(chan struct{}),
+		mcpClient:    mcpClient,
+		knowledgeCfg: knowledgeCfg,
 	}
 }
 
@@ -302,9 +302,9 @@ func (w *ConsolidationWorker) triggerPruneMerge() {
 
 	pruneTool := tools.NewPruneHistoryTool(w.mcpClient, w.engine)
 	if _, err := pruneTool.Execute(ctx, map[string]interface{}{
-		"action":                 "merge",
-		"limit":                  200,
-		"similarity_threshold":   0.80,
+		"action":               "merge",
+		"limit":                200,
+		"similarity_threshold": 0.80,
 	}); err != nil {
 		slog.Warn("ConsolidationWorker: prune merge failed", "error", err)
 	} else {

@@ -153,9 +153,9 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 				_ = t.mcp.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{ID: dupResult.ID})
 				kl.Info("merged with duplicate", "event", "consolidate_merged", "title", newTitle, "new_id", newRecord.ID, "parent_ids", []string{dupResult.ID})
 				return map[string]interface{}{
-					"status":      "merged",
-					"id":          newRecord.ID,
-					"parent_ids":  []string{dupResult.ID},
+					"status":     "merged",
+					"id":         newRecord.ID,
+					"parent_ids": []string{dupResult.ID},
 				}, nil
 			}
 			// add 失败则降级为直接 add 新条目
@@ -302,8 +302,8 @@ func (t *PruneHistoryTool) executeMerge(ctx context.Context, params map[string]i
 	}
 
 	type mergeGroup struct {
-		newID      string
-		parentIDs  []string
+		newID     string
+		parentIDs []string
 	}
 	var groups []mergeGroup
 	mergedIDs := make(map[string]bool) // 已被合并的条目 ID
@@ -365,9 +365,9 @@ func (t *PruneHistoryTool) executeMerge(ctx context.Context, params map[string]i
 		return map[string]interface{}{"status": "no_merge_needed"}, nil
 	}
 	return map[string]interface{}{
-		"status":         "merged",
-		"merged_count":   len(groups),
-		"merged_groups":  groups,
+		"status":        "merged",
+		"merged_count":  len(groups),
+		"merged_groups": groups,
 	}, nil
 }
 

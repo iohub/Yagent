@@ -2,8 +2,8 @@ package agents
 
 import (
 	"context"
-	_ "embed"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -460,10 +460,10 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		adapter:            directorAdapter,
 		llmClient:          llmClient,
 		hasDelegated:       false, // 初始未委派过
-		delegationAttempts: 0,             // 委派尝试次数初始为0
+		delegationAttempts: 0,     // 委派尝试次数初始为0
 
 		// LLM 兜底机制配置
-		stepRetries:                cfg.LLM.StepRetries,
+		stepRetries: cfg.LLM.StepRetries,
 		llmTimeout: func() time.Duration {
 			if cfg.LLM.Timeout > 0 {
 				return cfg.LLM.Timeout
@@ -1055,20 +1055,20 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			slog.Debug("DirectorAgent calling LLM", "step", i, "messages", messages)
 
 			// Create opts with streaming handler for real-time output
-		opts := &llm.CallOptions{}
-		if a.Publisher != nil {
-			opts.StreamHandler = func(ctx context.Context, chunk []byte) error {
-				if len(chunk) > 0 {
-					a.Publisher.Publish("ai_chunk", map[string]interface{}{
-						"content": string(chunk),
-						"agent":   a.Name(),
-					}, a.Name())
+			opts := &llm.CallOptions{}
+			if a.Publisher != nil {
+				opts.StreamHandler = func(ctx context.Context, chunk []byte) error {
+					if len(chunk) > 0 {
+						a.Publisher.Publish("ai_chunk", map[string]interface{}{
+							"content": string(chunk),
+							"agent":   a.Name(),
+						}, a.Name())
+					}
+					return nil
 				}
-				return nil
 			}
-		}
 
-		// Publish llm_call_start event
+			// Publish llm_call_start event
 			if a.Publisher != nil {
 				a.Publisher.Publish("llm_call_start", map[string]interface{}{
 					"model": a.LLM.Model(),
@@ -1306,6 +1306,7 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 
 	return "", fmt.Errorf("DirectorAgent exceeded max steps")
 }
+
 // validateAndRepairToolCallPairs 验证并修复 tool_call/tool_response 配对完整性
 //
 // 如果发现孤立的 tool_calls（assistant 有 tool_calls 但缺少对应的 tool 响应），
