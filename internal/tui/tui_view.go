@@ -88,11 +88,12 @@ func (m *model) View() tea.View {
 		m.viewportViewValid = false
 	}
 
-	// Scrollbar: reserve 2 columns if content exceeds viewport
+	// Scrollbar: reserve 1 column if content exceeds viewport
+	// (common.Scrollbar renders a single │/┃ character per line)
 	scrollbarWidth := 0
 	totalLines := m.viewport.TotalLineCount()
 	if totalLines > vpHeight {
-		scrollbarWidth = 2
+		scrollbarWidth = 1
 	}
 	dashW := m.dashboardWidth()
 	contentWidth := m.termWidth - scrollbarWidth - dashW

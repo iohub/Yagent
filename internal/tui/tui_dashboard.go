@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -55,6 +56,14 @@ func formatCacheShort(cacheRead, cacheCreation, totalInput int64) string {
 		parts = append(parts, fmt.Sprintf("W:%s", formatToken(cacheCreation)))
 	}
 	return strings.Join(parts, " ")
+}
+
+var borderANSIRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// stripANSIForBorder strips ANSI escape sequences from a rendered line so that
+// border character checks (HasPrefix "┌" etc.) work correctly.
+func stripANSIForBorder(s string) string {
+	return borderANSIRe.ReplaceAllString(s, "")
 }
 
 // renderDashboard 渲染右上角 dashboard（token 优先，timeline 次之）
@@ -261,12 +270,22 @@ func (m *model) renderDashboard(width, height int) string {
 		}
 	}
 
-	// Apply border style
+	// Trim any lines that exceed innerWidth before applying border.
+	// lipgloss v2 MaxWidth preserves ANSI styles and truncates by display width.
+	for i, line := range lines {
+		if lipgloss.Width(line) > innerWidth {
+			lines[i] = lipgloss.NewStyle().MaxWidth(innerWidth).Render(line)
+		}
+	}
+
+	// Apply border style — Height ensures lipgloss auto-pads short content
+	// with bordered empty lines; we still truncate manually when content is too long.
 	borderStyle := lipgloss.NewStyle().
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("62")).
 		Padding(0, 1).
-		Width(width)
+		Width(width).
+		Height(height)
 
 	content := strings.Join(lines, "\n")
 	rendered := borderStyle.Render(content)
@@ -276,8 +295,19 @@ func (m *model) renderDashboard(width, height int) string {
 	if len(renderedLines) > height {
 		renderedLines = renderedLines[:height]
 	}
-	for len(renderedLines) < height {
-		renderedLines = append(renderedLines, strings.Repeat(" ", width))
+	// If truncation removed the bottom border, restore it with correct color
+	if len(renderedLines) == height {
+		last := stripANSIForBorder(renderedLines[height-1])
+		if !strings.HasPrefix(last, "└") {
+			renderedLines[height-1] = lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Render("└" + strings.Repeat("─", width-2) + "┘")
+		}
+	}
+	// Defensive width fixup: use lipgloss Width (preserves ANSI) rather than
+	// plain string拼接 which would strip colors.
+	for i := range renderedLines {
+		if w := lipgloss.Width(renderedLines[i]); w != width {
+			renderedLines[i] = lipgloss.NewStyle().Width(width).Render(renderedLines[i])
+		}
 	}
 
 	result := strings.Join(renderedLines, "\n")
