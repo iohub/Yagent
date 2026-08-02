@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -47,18 +48,31 @@ func (m *model) renderDashboard(width, height int) string {
 	if len(m.timelineEntries) > 0 {
 		lastID = m.timelineEntries[len(m.timelineEntries)-1].ID
 	}
-	rt := m.currentAgentRunTokens
-	key := fmt.Sprintf("%d|%s|%d|%d|%v|%d|%d|%d|%s|%d|%d|%d|%d",
+
+	// Collect and sort agents for token section (also drives the cache signature)
+	agents := make([]*AgentTokenUsage, 0, len(m.tokenUsagePerAgent))
+	for _, au := range m.tokenUsagePerAgent {
+		if au.InputTokens+au.OutputTokens > 0 {
+			agents = append(agents, au)
+		}
+	}
+	sort.Slice(agents, func(i, j int) bool {
+		return (agents[i].InputTokens + agents[i].OutputTokens) > (agents[j].InputTokens + agents[j].OutputTokens)
+	})
+
+	// Build token signature for cache key
+	var tokenSig strings.Builder
+	for _, au := range agents {
+		fmt.Fprintf(&tokenSig, "%s:%d:%d:%d:%d;", au.AgentName, au.InputTokens, au.OutputTokens, au.CacheReadInputTokens, au.CacheCreationInputTokens)
+	}
+
+	key := fmt.Sprintf("%d|%s|%d|%d|%v|%d|%d|%d|%s",
 		len(m.timelineEntries), lastID, width, height,
 		m.tokenDashboardCollapsed,
 		m.inputTokens+m.outputTokens,
 		m.cacheReadInputTokens,
 		m.cacheCreationInputTokens,
-		rt.AgentName,
-		rt.InputTokens,
-		rt.OutputTokens,
-		rt.CacheReadInputTokens,
-		rt.CacheCreationInputTokens)
+		tokenSig.String())
 
 	if !hasRunning && key == m.dashboardCacheKey && m.dashboardCache != "" {
 		return m.dashboardCache
@@ -74,13 +88,18 @@ func (m *model) renderDashboard(width, height int) string {
 	lines = append(lines, title)
 
 	// Compute token section row count for timeline reservation
+	// maxAgentRows: reserve at least 1 row for timeline; at least 1 agent row if possible
+	maxAgentRows := height - 4
+	if maxAgentRows < 1 {
+		maxAgentRows = 1
+	}
 	tokenSectionRows := 0
-	if rt.InputTokens > 0 || rt.OutputTokens > 0 {
-		tokenSectionRows = 5 // separator + title + agent + In + Out
-		totalInput := rt.InputTokens + rt.CacheReadInputTokens + rt.CacheCreationInputTokens
-		if rt.CacheReadInputTokens > 0 && totalInput > 0 {
-			tokenSectionRows = 6
+	if len(agents) > 0 {
+		agentRows := len(agents)
+		if agentRows > maxAgentRows {
+			agentRows = maxAgentRows
 		}
+		tokenSectionRows = 2 + agentRows // separator + title + agent rows
 	}
 
 	// ── Timeline section ──
@@ -114,7 +133,14 @@ func (m *model) renderDashboard(width, height int) string {
 	}
 
 	// ── Token section ──
-	if rt.InputTokens > 0 || rt.OutputTokens > 0 {
+	if len(agents) > 0 {
+		// Truncate agents list if needed (already sorted descending by total)
+		agentRows := len(agents)
+		if agentRows > maxAgentRows {
+			agentRows = maxAgentRows
+		}
+		displayAgents := agents[:agentRows]
+
 		// Separator between timeline and token section
 		lines = append(lines, lipgloss.NewStyle().
 			Foreground(lipgloss.Color("237")).
@@ -127,38 +153,35 @@ func (m *model) renderDashboard(width, height int) string {
 			Render("⚡ Tokens")
 		lines = append(lines, tokenTitle)
 
-		// Agent name
-		agentName := rt.AgentName
-		if agentName == "" {
-			agentName = "—"
-		}
-		agentLine := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color(AgentColor(rt.AgentName))).
-			Render("[" + agentName + "]")
-		lines = append(lines, agentLine)
-
-		// Token fields
-		totalInput := rt.InputTokens + rt.CacheReadInputTokens + rt.CacheCreationInputTokens
-		inStr := formatToken(totalInput)
-		outStr := formatToken(rt.OutputTokens)
-
+		// Per-agent rows
 		inputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
 		outputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114"))
 		grayStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("243"))
 
-		lines = append(lines,
-			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("In    ") + inputStyle.Render(inStr),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Out   ") + outputStyle.Render(outStr),
-		)
+		for _, au := range displayAgents {
+			name := au.AgentName
+			if name == "" {
+				name = "—"
+			}
+			if len(name) > 10 {
+				name = name[:9] + "…"
+			}
+			line := lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color(AgentColor(au.AgentName))).
+				Render("[" + name + "]")
 
-		// Cache hit rate (optional)
-		if rt.CacheReadInputTokens > 0 && totalInput > 0 {
-			rate := float64(rt.CacheReadInputTokens) / float64(totalInput) * 100
-			cacheStr := fmt.Sprintf("%.1f%% (%s)", rate, formatToken(rt.CacheReadInputTokens))
-			lines = append(lines,
-				lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Cache ") + grayStyle.Render(cacheStr),
-			)
+			totalInput := au.InputTokens + au.CacheReadInputTokens + au.CacheCreationInputTokens
+			inStr := formatToken(totalInput)
+			outStr := formatToken(au.OutputTokens)
+			line += " " + inputStyle.Render("In: " + inStr + "  ") + outputStyle.Render("Out: " + outStr)
+
+			if au.CacheReadInputTokens > 0 && totalInput > 0 {
+				rate := float64(au.CacheReadInputTokens) / float64(totalInput) * 100
+				cacheStr := fmt.Sprintf("%.1f%% (%s)", rate, formatToken(au.CacheReadInputTokens))
+				line += " " + grayStyle.Render("Cache: " + cacheStr)
+			}
+			lines = append(lines, line)
 		}
 	}
 
