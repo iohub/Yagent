@@ -138,8 +138,16 @@ func (m *model) renderDashboard(width, height int) string {
 			if maxAgentRows < 0 {
 				maxAgentRows = 0
 			}
+			// "+N more" 提示行需要额外 1 行，从 agent 行预算中扣除
+			if maxAgentRows > 0 {
+				maxAgentRows--
+			}
 			displayAgents = agents[:maxAgentRows]
 			moreCount = len(agents) - maxAgentRows
+			// 没有空间显示任何 agent 时，也放弃 more 提示（仅保留 标题+Total+分隔线）
+			if maxAgentRows == 0 && moreCount > 0 {
+				moreCount = 0
+			}
 			tokenRows = maxTokenRows
 		} else {
 			displayAgents = agents
