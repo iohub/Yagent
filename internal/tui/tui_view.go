@@ -755,12 +755,14 @@ func (m *model) renderTokenDashboard() string {
 		agentIn := formatToken(au.InputTokens)
 		agentOut := formatToken(au.OutputTokens)
 
-		// Dimmer style for agent rows
-		agentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+		// Agent name with agent-specific color (bold)
+		nameStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(AgentColor(au.AgentName)))
 		agentInStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 		agentOutStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-		agentLine := agentStyle.Render(paddedName)
+		agentLine := nameStyle.Render(paddedName)
 		agentLine += " " + agentInStyle.Render(fmt.Sprintf("In: %s  ", agentIn))
 		agentLine += agentOutStyle.Render(fmt.Sprintf("Out: %s", agentOut))
 		if au.CacheReadInputTokens > 0 {
@@ -827,4 +829,3 @@ func (m *model) renderCollapsedTokenDashboard() string {
 
 	return dashStyle.Render(line)
 }
-

@@ -27,7 +27,7 @@ func (m *model) dashboardWidth() int {
 	return dashboardPanelWidth
 }
 
-// renderDashboard 渲染右上角 dashboard（timeline + token 紧凑形式）
+// renderDashboard 渲染右上角 dashboard（token 优先，timeline 次之）
 // width / height 为面板可用尺寸，返回恰好 height 行的字符串。
 func (m *model) renderDashboard(width, height int) string {
 	if width <= 0 || height <= 0 {
@@ -80,30 +80,121 @@ func (m *model) renderDashboard(width, height int) string {
 
 	var lines []string
 
-	// ── Title ──
-	title := lipgloss.NewStyle().
+	// ── Token section (top) ──
+	tokenTitle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
 		Italic(true).
-		Render("⚙ Activity")
-	lines = append(lines, title)
+		Render("⚡ Tokens")
+	lines = append(lines, tokenTitle)
 
-	// Compute token section row count for timeline reservation
-	// maxAgentRows: reserve at least 1 row for timeline; at least 1 agent row if possible
-	maxAgentRows := height - 4
-	if maxAgentRows < 1 {
-		maxAgentRows = 1
-	}
-	tokenSectionRows := 0
 	if len(agents) > 0 {
-		agentRows := len(agents)
-		if agentRows > maxAgentRows {
-			agentRows = maxAgentRows
+		// Space allocation
+		timelineReserve := 0
+		if len(m.timelineEntries) > 0 {
+			timelineReserve = 2 // 1 entry + hint
 		}
-		tokenSectionRows = 2 + agentRows // separator + title + agent rows
+		maxTokenRows := height - timelineReserve
+		if maxTokenRows < 3 {
+			maxTokenRows = 3
+		}
+
+		// Total row
+		totalLabelStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("240")).
+			Width(10).
+			Align(lipgloss.Right)
+		inputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
+		outputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114"))
+		sumStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("243"))
+		cacheRateStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
+
+		totalInput := m.inputTokens + m.cacheReadInputTokens + m.cacheCreationInputTokens
+		inStr := formatToken(totalInput)
+		outStr := formatToken(m.outputTokens)
+		sumStr := formatToken(totalInput + m.outputTokens)
+
+		totalLine := totalLabelStyle.Render("Total") + " " +
+			inputStyle.Render("In: "+inStr+"  ") +
+			outputStyle.Render("Out: "+outStr+"  ") +
+			sumStyle.Render("Σ "+sumStr)
+		if m.cacheReadInputTokens > 0 && totalInput > 0 {
+			rate := float64(m.cacheReadInputTokens) / float64(totalInput) * 100
+			totalLine += "  " + cacheRateStyle.Render(fmt.Sprintf("⊕%.0f%%", rate))
+		}
+		lines = append(lines, totalLine)
+
+		// Separator
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(lipgloss.Color("237")).
+			Render(strings.Repeat("─", width-4)))
+
+		// Determine display agents (truncate if needed)
+		tokenRows := 3 + len(agents) // title + Total + separator + agent rows
+		var displayAgents []*AgentTokenUsage
+		moreCount := 0
+		if tokenRows > maxTokenRows {
+			maxAgentRows := maxTokenRows - 3
+			if maxAgentRows < 0 {
+				maxAgentRows = 0
+			}
+			displayAgents = agents[:maxAgentRows]
+			moreCount = len(agents) - maxAgentRows
+			tokenRows = maxTokenRows
+		} else {
+			displayAgents = agents
+		}
+
+		// Agent rows
+		for _, au := range displayAgents {
+			name := au.AgentName
+			if name == "" {
+				name = "—"
+			}
+			if len(name) > 10 {
+				name = name[:9] + "…"
+			}
+			nameStyle := lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color(AgentColor(au.AgentName))).
+				Width(10)
+			nameRendered := nameStyle.Render(name)
+
+			auTotalInput := au.InputTokens + au.CacheReadInputTokens + au.CacheCreationInputTokens
+			auInStr := formatToken(auTotalInput)
+			auOutStr := formatToken(au.OutputTokens)
+
+			line := nameRendered + " " +
+				inputStyle.Render("In: "+auInStr+"  ") +
+				outputStyle.Render("Out: "+auOutStr)
+			if au.CacheReadInputTokens > 0 && auTotalInput > 0 {
+				rate := float64(au.CacheReadInputTokens) / float64(auTotalInput) * 100
+				line += "  " + cacheRateStyle.Render(fmt.Sprintf("⊕%.0f%%", rate))
+			}
+			lines = append(lines, line)
+		}
+
+		if moreCount > 0 {
+			lines = append(lines, lipgloss.NewStyle().
+				Foreground(lipgloss.Color("241")).
+				Italic(true).
+				Render(fmt.Sprintf("+%d more", moreCount)))
+		}
 	}
 
-	// ── Timeline section ──
-	if len(m.timelineEntries) > 0 {
+	// ── Timeline section (bottom) ──
+	tlAvailable := height - len(lines)
+	if len(m.timelineEntries) > 0 && tlAvailable > 2 {
+		// Separator + title (2 rows)
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(lipgloss.Color("237")).
+			Render(strings.Repeat("─", width-4)))
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241")).
+			Italic(true).
+			Render("⚙ Activity"))
+
+		// Timeline content
 		content := RenderTimeline(m.timelineEntries, false, false, width-4, m.anim)
 		if content != "" {
 			tlLines := strings.Split(content, "\n")
@@ -115,73 +206,17 @@ func (m *model) renderDashboard(width, height int) string {
 		}
 		if content != "" {
 			tlInnerLines := strings.Split(content, "\n")
-			maxTL := height - 1 - tokenSectionRows
+			// Reserve 1 row for hint (separator+title+hint = 3 rows consumed from tlAvailable)
+			maxTL := tlAvailable - 3
 			if maxTL < 0 {
 				maxTL = 0
 			}
-			if maxTL > 0 {
-				if len(tlInnerLines) > maxTL-1 {
-					tlInnerLines = tlInnerLines[:maxTL-1]
-				}
-				hint := timelineHintStyle.Render(" ctrl+l " + langManager.GetText("TimelineDetailHint") + " ")
-				lines = append(lines, tlInnerLines...)
-				lines = append(lines, hint)
-			} else {
-				lines = append(lines, tlInnerLines...)
+			if len(tlInnerLines) > maxTL {
+				tlInnerLines = tlInnerLines[:maxTL]
 			}
-		}
-	}
-
-	// ── Token section ──
-	if len(agents) > 0 {
-		// Truncate agents list if needed (already sorted descending by total)
-		agentRows := len(agents)
-		if agentRows > maxAgentRows {
-			agentRows = maxAgentRows
-		}
-		displayAgents := agents[:agentRows]
-
-		// Separator between timeline and token section
-		lines = append(lines, lipgloss.NewStyle().
-			Foreground(lipgloss.Color("237")).
-			Render(strings.Repeat("─", width-4)))
-
-		// Token section title
-		tokenTitle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")).
-			Italic(true).
-			Render("⚡ Tokens")
-		lines = append(lines, tokenTitle)
-
-		// Per-agent rows
-		inputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
-		outputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114"))
-		grayStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("243"))
-
-		for _, au := range displayAgents {
-			name := au.AgentName
-			if name == "" {
-				name = "—"
-			}
-			if len(name) > 10 {
-				name = name[:9] + "…"
-			}
-			line := lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color(AgentColor(au.AgentName))).
-				Render("[" + name + "]")
-
-			totalInput := au.InputTokens + au.CacheReadInputTokens + au.CacheCreationInputTokens
-			inStr := formatToken(totalInput)
-			outStr := formatToken(au.OutputTokens)
-			line += " " + inputStyle.Render("In: " + inStr + "  ") + outputStyle.Render("Out: " + outStr)
-
-			if au.CacheReadInputTokens > 0 && totalInput > 0 {
-				rate := float64(au.CacheReadInputTokens) / float64(totalInput) * 100
-				cacheStr := fmt.Sprintf("%.1f%% (%s)", rate, formatToken(au.CacheReadInputTokens))
-				line += " " + grayStyle.Render("Cache: " + cacheStr)
-			}
-			lines = append(lines, line)
+			hint := timelineHintStyle.Render(" ctrl+l " + langManager.GetText("TimelineDetailHint") + " ")
+			lines = append(lines, tlInnerLines...)
+			lines = append(lines, hint)
 		}
 	}
 
