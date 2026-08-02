@@ -88,6 +88,18 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 		return "", nil
 	}
 	kl.Info("knowledge search done", "event", "inject_search_done", "agent", agent, "hits", len(results))
+	for i, r := range results {
+		var rerankScore interface{}
+		if r.RerankScore != nil {
+			rerankScore = *r.RerankScore
+		} else {
+			rerankScore = nil
+		}
+		kl.Info("inject raw hit", "event", "inject_raw_hit", "agent", agent, "idx", i, "title", r.Title, "final_score", r.FinalScore, "rerank_score", rerankScore, "confidence", r.Confidence, "type", r.Type, "content", truncateByRune(r.Content, 200))
+		if len(r.RelatedFiles) > 0 {
+			kl.Info("inject raw hit", "event", "inject_raw_hit_related_files", "agent", agent, "idx", i, "related_files", r.RelatedFiles)
+		}
+	}
 
 	// 过滤低于阈值的条目
 	minScore := k.cfg.InjectionMinScore
