@@ -54,9 +54,9 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 		return nil, fmt.Errorf("invalid type: %q (allowed: repo_retrieval, coding_modification)", rawType)
 	}
 
-	// title 超 30 字截断
-	if len(title) > 30 {
-		title = title[:30]
+	// title 超 30 字截断（按 rune 截断，避免中文等多字节字符截断乱码）
+	if r := []rune(title); len(r) > 30 {
+		title = string(r[:30])
 	}
 
 	// tags（至少 1 个）

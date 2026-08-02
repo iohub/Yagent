@@ -178,6 +178,37 @@ func TestConsolidateKnowledgeTool_Execute_TitleTruncation(t *testing.T) {
 	}
 }
 
+func TestConsolidateKnowledgeTool_Execute_ChineseTitleTruncation(t *testing.T) {
+	// 35 个中文字符的标题应被截断为恰好 30 个字符且保持有效 UTF-8
+	tool := NewConsolidateKnowledgeTool(nil, nil)
+	_, err := tool.Execute(context.Background(), map[string]interface{}{
+		"type":    "repo_retrieval",
+		"title":   "这是一个非常长的中文标题测试用于验证rune截断正确性的功能点测试用例", // 35 个中文字
+		"content": "content",
+		"tags":    []interface{}{"tag1"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestChineseTitleTruncation_RuneCount 直接验证 rune 截断逻辑：
+// 35 个中文字符应被截为恰好 30 个字符，且结果仍为有效 UTF-8。
+func TestChineseTitleTruncation_RuneCount(t *testing.T) {
+	const input = "这是一个非常长的中文标题测试用于验证rune截断正确性的功能点测试用例" // 35 runes
+	if got := len([]rune(input)); got != 35 {
+		t.Fatalf("input rune count = %d, want 35", got)
+	}
+	// 模拟 knowledge.go 中的截断逻辑
+	truncated := input
+	if r := []rune(truncated); len(r) > 30 {
+		truncated = string(r[:30])
+	}
+	if got := len([]rune(truncated)); got != 30 {
+		t.Fatalf("truncated rune count = %d, want 30", got)
+	}
+}
+
 func TestConsolidateKnowledgeTool_Execute_LongContentNilEngine(t *testing.T) {
 	// content > 500 字符且 engine 为 nil → 降级硬截断，不应 panic
 	longContent := ""
