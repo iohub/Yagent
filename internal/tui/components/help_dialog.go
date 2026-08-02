@@ -239,6 +239,7 @@ func buildHelpData(lang Language) helpData {
 					Items: []keyItem{
 						{[]string{"?"}, "显示此帮助"},
 						{[]string{"Alt+M"}, "切换模型"},
+						{[]string{"Alt+D"}, "收缩/展开仪表盘"},
 						{[]string{"Ctrl+C"}, "强制退出"},
 					},
 				},
@@ -280,6 +281,7 @@ func buildHelpData(lang Language) helpData {
 				Items: []keyItem{
 					{[]string{"?"}, "show this help"},
 					{[]string{"Alt+M"}, "switch model"},
+					{[]string{"Alt+D"}, "collapse/expand dashboard"},
 					{[]string{"Ctrl+C"}, "force quit"},
 				},
 			},

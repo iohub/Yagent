@@ -12,7 +12,16 @@ const dashboardPanelWidth = 46
 
 // dashboardVisible 判断宽屏模式下是否显示右上角 dashboard
 func (m *model) dashboardVisible() bool {
+	if m.dashboardCollapsed {
+		return false
+	}
 	return m.termWidth >= 120 && (m.taskRunning || len(m.timelineEntries) > 0 || m.inputTokens+m.outputTokens > 0)
+}
+
+// toggleDashboard 切换右上角 dashboard 收缩/展开（alt+d）
+func (m *model) toggleDashboard() {
+	m.dashboardCollapsed = !m.dashboardCollapsed
+	m.invalidateFooterCache()
 }
 
 // dashboardWidth 返回 dashboard 占用宽度（不可见时返回 0）
@@ -101,6 +110,9 @@ func (m *model) renderDashboard(width, height int) string {
 
 	var lines []string
 
+	// ── Collapse hint (top) ──
+	lines = append(lines, timelineHintStyle.Render(" alt+d "+langManager.GetText("DashboardCollapseHint")+" "))
+
 	// ── Token section (top) ──
 	tokenTitle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
@@ -114,7 +126,7 @@ func (m *model) renderDashboard(width, height int) string {
 		if len(m.timelineEntries) > 0 {
 			timelineReserve = 2 // 1 entry + hint
 		}
-		maxTokenRows := height - timelineReserve
+		maxTokenRows := height - timelineReserve - 1
 		if maxTokenRows < 3 {
 			maxTokenRows = 3
 		}

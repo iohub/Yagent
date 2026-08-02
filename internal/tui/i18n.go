@@ -74,6 +74,9 @@ type translations struct {
 	// Timeline panel hints
 	TimelineDetailHint string
 	TimelineExpandHint string
+	// Dashboard hints
+	DashboardCollapseHint string
+	DashboardExpandHint   string
 }
 
 var langMap = map[Language]translations{
@@ -148,6 +151,8 @@ var langMap = map[Language]translations{
 		DeleteFailed:         "删除失败：",
 		TimelineDetailHint:   "详情",
 		TimelineExpandHint:   "全屏详情",
+		DashboardCollapseHint: "收缩",
+		DashboardExpandHint:   "展开",
 	},
 	LangEnglish: {
 		Title:                            "CodeActor AI Assistant",
@@ -220,6 +225,8 @@ var langMap = map[Language]translations{
 		DeleteFailed:         "Delete failed: ",
 		TimelineDetailHint:   "Detail",
 		TimelineExpandHint:   "Fullscreen",
+		DashboardCollapseHint: "collapse",
+		DashboardExpandHint:   "expand",
 	},
 }
 
@@ -355,6 +362,10 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.TimelineDetailHint
 	case "TimelineExpandHint":
 		return translations.TimelineExpandHint
+	case "DashboardCollapseHint":
+		return translations.DashboardCollapseHint
+	case "DashboardExpandHint":
+		return translations.DashboardExpandHint
 	default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}

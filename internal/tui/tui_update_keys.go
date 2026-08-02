@@ -472,6 +472,11 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.invalidateFooterCache()
 		return m, nil
 
+	// ── Dashboard collapse toggle ──
+	case "alt+d":
+		m.toggleDashboard()
+		return m, nil
+
 	// ── Model selection ──
 	case "alt+m":
 		return m, m.showModelSelectionDialog()
@@ -614,6 +619,10 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.showModelSelectionDialog()
+
+	case "alt+d":
+		m.toggleDashboard()
+		return m, nil
 
 	case "ctrl+l":
 		// 切换全屏时间线模式

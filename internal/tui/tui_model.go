@@ -586,6 +586,9 @@ type model struct {
 	// Token dashboard collapse/expand control
 	tokenDashboardCollapsed bool // 默认 true（折叠），按 alt+t 切换
 
+	// Dashboard collapse/expand control (右上角面板)
+	dashboardCollapsed bool // 默认 false（展开），按 alt+d 切换
+
 	// Current agent run-specific token tracking (reset on agent switch)
 	currentAgentRunTokens AgentRunTokens
 
@@ -893,6 +896,9 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	if cfg != nil && cfg.TUI.Keybindings.Edit.SwitchModel != "alt+m" {
 		editKeyMap[cfg.TUI.Keybindings.Edit.SwitchModel] = "alt+m"
 	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleDashboard != "alt+d" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.ToggleDashboard] = "alt+d"
+	}
 
 	if cfg != nil && cfg.TUI.Keybindings.Command.ScrollDown != "j" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.ScrollDown] = "j"
@@ -917,6 +923,9 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	}
 	if cfg != nil && cfg.TUI.Keybindings.Command.SwitchModel != "alt+m" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.SwitchModel] = "alt+m"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Command.ToggleDashboard != "alt+d" {
+		cmdKeyMap[cfg.TUI.Keybindings.Command.ToggleDashboard] = "alt+d"
 	}
 	if cfg != nil && cfg.TUI.Keybindings.Command.Quit != "ctrl+c" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.Quit] = "ctrl+c"
@@ -1090,6 +1099,9 @@ func buildHelpKeyOverrides(kb *config.KeybindingsConfig) map[string]string {
 	if kb.Edit.SwitchModel != "alt+m" {
 		overrides["Alt+M"] = formatKeyDisplayName(kb.Edit.SwitchModel)
 	}
+	if kb.Edit.ToggleDashboard != "alt+d" {
+		overrides["Alt+D"] = formatKeyDisplayName(kb.Edit.ToggleDashboard)
+	}
 
 	// 命令模式快捷键
 	if kb.Command.ScrollDown != "j" {
@@ -1115,6 +1127,9 @@ func buildHelpKeyOverrides(kb *config.KeybindingsConfig) map[string]string {
 	}
 	if kb.Command.SwitchModel != "alt+m" {
 		overrides["Alt+M"] = formatKeyDisplayName(kb.Command.SwitchModel)
+	}
+	if kb.Command.ToggleDashboard != "alt+d" {
+		overrides["Alt+D"] = formatKeyDisplayName(kb.Command.ToggleDashboard)
 	}
 
 	return overrides

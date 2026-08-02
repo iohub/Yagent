@@ -569,6 +569,9 @@ func (c *Config) validate() error {
 	if c.TUI.Keybindings.Edit.SwitchModel == "" {
 		c.TUI.Keybindings.Edit.SwitchModel = "alt+m"
 	}
+	if c.TUI.Keybindings.Edit.ToggleDashboard == "" {
+		c.TUI.Keybindings.Edit.ToggleDashboard = "alt+d"
+	}
 
 	if c.TUI.Keybindings.Command.ScrollDown == "" {
 		c.TUI.Keybindings.Command.ScrollDown = "j"
@@ -593,6 +596,9 @@ func (c *Config) validate() error {
 	}
 	if c.TUI.Keybindings.Command.SwitchModel == "" {
 		c.TUI.Keybindings.Command.SwitchModel = "alt+m"
+	}
+	if c.TUI.Keybindings.Command.ToggleDashboard == "" {
+		c.TUI.Keybindings.Command.ToggleDashboard = "alt+d"
 	}
 	if c.TUI.Keybindings.Command.Quit == "" {
 		c.TUI.Keybindings.Command.Quit = "ctrl+c"
@@ -748,25 +754,27 @@ type KeybindingsConfig struct {
 
 // EditKeybindings 编辑模式快捷键配置
 type EditKeybindings struct {
-	SubmitTask     string `toml:"submit_task"`     // 默认: "alt+s"
-	CommandMode    string `toml:"command_mode"`    // 默认: "ctrl+e"
-	ToggleHelp     string `toml:"toggle_help"`     // 默认: "ctrl+h"
-	ToggleTimeline string `toml:"toggle_timeline"` // 默认: "ctrl+l"
-	PageDown       string `toml:"page_down"`       // 默认: "ctrl+f"
-	PageUp         string `toml:"page_up"`         // 默认: "ctrl+b"
-	Quit           string `toml:"quit"`            // 默认: "ctrl+c"
-	SwitchModel    string `toml:"switch_model"`    // 默认: "alt+m"
+	SubmitTask      string `toml:"submit_task"`      // 默认: "alt+s"
+	CommandMode     string `toml:"command_mode"`     // 默认: "ctrl+e"
+	ToggleHelp      string `toml:"toggle_help"`      // 默认: "ctrl+h"
+	ToggleTimeline  string `toml:"toggle_timeline"`  // 默认: "ctrl+l"
+	PageDown        string `toml:"page_down"`        // 默认: "ctrl+f"
+	PageUp          string `toml:"page_up"`          // 默认: "ctrl+b"
+	Quit            string `toml:"quit"`             // 默认: "ctrl+c"
+	SwitchModel     string `toml:"switch_model"`     // 默认: "alt+m"
+	ToggleDashboard string `toml:"toggle_dashboard"` // 默认: "alt+d"
 }
 
 // CommandKeybindings 命令模式快捷键配置
 type CommandKeybindings struct {
-	ScrollDown       string `toml:"scroll_down"`        // 默认: "j"
-	ScrollUp         string `toml:"scroll_up"`          // 默认: "k"
-	PageDown         string `toml:"page_down"`          // 默认: "f"
-	PageUp           string `toml:"page_up"`            // 默认: "b"
-	EditMode         string `toml:"edit_mode"`          // 默认: "i"
-	CmdToggleHelp    string `toml:"toggle_help"`        // 默认: "?"
-	ToggleTokenPanel string `toml:"toggle_token_panel"` // 默认: "alt+t"
-	SwitchModel      string `toml:"switch_model"`       // 默认: "alt+m"
-	Quit             string `toml:"quit"`               // 默认: "ctrl+c"
+	ScrollDown        string `toml:"scroll_down"`        // 默认: "j"
+	ScrollUp          string `toml:"scroll_up"`          // 默认: "k"
+	PageDown          string `toml:"page_down"`          // 默认: "f"
+	PageUp            string `toml:"page_up"`            // 默认: "b"
+	EditMode          string `toml:"edit_mode"`          // 默认: "i"
+	CmdToggleHelp     string `toml:"toggle_help"`        // 默认: "?"
+	ToggleTokenPanel  string `toml:"toggle_token_panel"` // 默认: "alt+t"
+	SwitchModel       string `toml:"switch_model"`       // 默认: "alt+m"
+	ToggleDashboard   string `toml:"toggle_dashboard"`   // 默认: "alt+d"
+	Quit              string `toml:"quit"`               // 默认: "ctrl+c"
 }

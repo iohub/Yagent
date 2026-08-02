@@ -427,6 +427,9 @@ func (m *model) renderAirlineStatusBar() string {
 	}
 
 	// ── Build left part: mode +  transition to filler ─────────────────
+	if m.dashboardCollapsed && m.termWidth >= 120 {
+		tipsText += "  alt+d " + langManager.GetText("DashboardExpandHint")
+	}
 	leftPart := modeSeg + makeRightSep(modeBg, airlineColorInfoBg)
 
 	// ── Build right segments (only in running state) ────────────────────

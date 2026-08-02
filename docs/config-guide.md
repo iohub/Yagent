@@ -334,6 +334,7 @@ fallback_providers = [
 | `page_up` | string | `"ctrl+b"` | 向上翻页 |
 | `quit` | string | `"ctrl+c"` | 退出 |
 | `switch_model` | string | `"alt+m"` | 切换模型 |
+| `toggle_dashboard` | string | `"alt+d"` | 收缩/展开右上角仪表盘 |
 
 **命令模式快捷键：**
 
@@ -347,6 +348,7 @@ fallback_providers = [
 | `toggle_help` | string | `"?"` | 显示帮助 |
 | `toggle_token_panel` | string | `"alt+t"` | 切换 Token 面板 |
 | `switch_model` | string | `"alt+m"` | 切换模型 |
+| `toggle_dashboard` | string | `"alt+d"` | 收缩/展开右上角仪表盘 |
 | `quit` | string | `"ctrl+c"` | 退出 |
 
 ### 5.11 `task_timeout` — 根级字段
