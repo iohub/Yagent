@@ -341,6 +341,7 @@ func TestThinkingMerge_NonBlankPartBetweenThinking(t *testing.T) {
 }
 
 // TestThinkingMerge_DirectBlankPart 直接用direct构造验证assembleViewportContent对空白part的处理。
+// 修复后：纯空白 part（如"\n\n"、" "）应被跳过，thinking 条目正常合并。
 func TestThinkingMerge_DirectBlankPart(t *testing.T) {
 	m := newTestModel()
 	// 直接构造：thinking → ai_stream(空白"\n\n") → thinking
@@ -363,18 +364,50 @@ func TestThinkingMerge_DirectBlankPart(t *testing.T) {
 	output := m.contentCache.String()
 	t.Logf("=== 完整输出 ===\n%s\n=== 结束 ===", output)
 
+	// 断言：💭只出现1次
 	emojiCount := strings.Count(output, "💭")
 	t.Logf("💭出现次数: %d", emojiCount)
 	if emojiCount != 1 {
-		t.Logf("⚠ BUG复现：💭出现%d次（期望1次），空白part破坏了合并", emojiCount)
+		t.Fatalf("期望💭出现1次，实际出现%d次", emojiCount)
 	}
 
+	// 断言：输出中不含连续空行（\n\n）
 	if strings.Contains(output, "\n\n") {
-		t.Log("⚠ BUG复现：输出含连续空行（\\n\\n）")
+		t.Fatalf("期望输出中无空行（\\n\\n），但找到空行")
 	}
 
+	// 断言：包含缩进续行
 	if !strings.Contains(output, "      │ ") {
-		t.Log("⚠ BUG复现：无缩进续行")
+		t.Fatalf("期望输出中包含缩进续行（以\"      │ \"开头），但未找到")
+	}
+}
+
+// TestThinkingMerge_DirectSingleSpaceBlank 验证单个空格作为ai_stream part也被跳过。
+func TestThinkingMerge_DirectSingleSpaceBlank(t *testing.T) {
+	m := newTestModel()
+	m.logEntries = []logEntry{
+		{eventType: "thinking", from: "director", content: "思考A", prefix: "  │ ", isVerbose: false},
+		{eventType: "ai_stream", from: "director", streamContent: " ", streaming: false, isVerbose: false},
+		{eventType: "thinking", from: "director", content: "思考B", prefix: "  │ ", isVerbose: false},
+	}
+	m.contentParts = make([]string, len(m.logEntries))
+	for i := range m.logEntries {
+		m.contentParts[i] = m.renderSingleEntry(&m.logEntries[i], m.viewport.Width())
+	}
+	m.assembleViewportContent()
+
+	output := m.contentCache.String()
+	t.Logf("=== TestThinkingMerge_DirectSingleSpaceBlank 完整输出 ===\n%s\n=== 结束 ===", output)
+
+	emojiCount := strings.Count(output, "💭")
+	if emojiCount != 1 {
+		t.Fatalf("期望💭出现1次，实际出现%d次", emojiCount)
+	}
+	if strings.Contains(output, "\n\n") {
+		t.Fatalf("期望输出中无空行（\\n\\n），但找到空行")
+	}
+	if !strings.Contains(output, "      │ ") {
+		t.Fatalf("期望输出中包含缩进续行，但未找到")
 	}
 }
 

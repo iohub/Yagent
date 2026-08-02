@@ -343,8 +343,9 @@ func (m *model) assembleViewportContent() {
 			}
 
 			// 跳过渲染为空的条目（如 ai_stream 占位条目 streamContent="" 时渲染为空），
+			// 以及纯空白 part（如流式输出的空白 chunk "\n\n"、" " 等）。
 			// 避免产生空行，且不重置 thinking 合并状态。
-			if part == "" {
+			if part == "" || strings.TrimSpace(part) == "" {
 				continue
 			}
 
