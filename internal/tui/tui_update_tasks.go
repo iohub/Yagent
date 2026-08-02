@@ -549,27 +549,43 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	// Handle knowledge consolidation complete event — log summary and show details in timeline
 	if msg.event.Type == "knowledge_consolidation_complete" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
-			// 读取 count
-			countFloat, _ := contentMap["count"].(float64)
-			countInt := int(countFloat)
-			// 读取 entries
-			entriesRaw, _ := contentMap["entries"].([]interface{})
+			// 读取 count：兼容原始 Go int 和 JSON 反序列化后的 float64
+			countInt := 0
+			switch v := contentMap["count"].(type) {
+			case float64:
+				countInt = int(v)
+			case int:
+				countInt = v
+			}
+			// 读取 entries：兼容原始 Go []map[string]interface{} 和 JSON 反序列化后的 []interface{}
+			var entriesMapList []map[string]interface{}
+			if raw, ok := contentMap["entries"].([]map[string]interface{}); ok {
+				entriesMapList = raw
+			} else if raw, ok := contentMap["entries"].([]interface{}); ok {
+				for _, eRaw := range raw {
+					if eMap, ok := eRaw.(map[string]interface{}); ok {
+						entriesMapList = append(entriesMapList, eMap)
+					}
+				}
+			}
 			var detailParts []string
-			for _, eRaw := range entriesRaw {
-				if eMap, ok := eRaw.(map[string]interface{}); ok {
-					title, _ := eMap["title"].(string)
-					etype, _ := eMap["type"].(string)
-					confidence, _ := eMap["confidence"].(float64)
-					content, _ := eMap["content"].(string)
-					tagsRaw, _ := eMap["tags"].([]interface{})
-					var tags []string
+			for _, eMap := range entriesMapList {
+				title, _ := eMap["title"].(string)
+				etype, _ := eMap["type"].(string)
+				confFloat, _ := eMap["confidence"].(float64)
+				content, _ := eMap["content"].(string)
+				// 读取 tags：兼容原始 Go []string 和 JSON 反序列化后的 []interface{}
+				var tags []string
+				if tagsStr, ok := eMap["tags"].([]string); ok {
+					tags = tagsStr
+				} else if tagsRaw, ok := eMap["tags"].([]interface{}); ok {
 					for _, t := range tagsRaw {
 						if ts, ok := t.(string); ok {
 							tags = append(tags, ts)
 						}
 					}
-					detailParts = append(detailParts, fmt.Sprintf("▸ [%s] %s (conf=%.2f)\n  标签: %s\n  内容: %s", etype, title, confidence, strings.Join(tags, ", "), content))
 				}
+				detailParts = append(detailParts, fmt.Sprintf("▸ [%s] %s (conf=%.2f)\n  标签: %s\n  内容: %s", etype, title, confFloat, strings.Join(tags, ", "), content))
 			}
 			detailStr := strings.Join(detailParts, "\n\n")
 			entry := logEntry{
