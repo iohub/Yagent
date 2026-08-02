@@ -7,7 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-const dashboardPanelWidth = 34
+const dashboardPanelWidth = 46
 
 // dashboardVisible 判断宽屏模式下是否显示右上角 dashboard
 func (m *model) dashboardVisible() bool {
@@ -47,12 +47,18 @@ func (m *model) renderDashboard(width, height int) string {
 	if len(m.timelineEntries) > 0 {
 		lastID = m.timelineEntries[len(m.timelineEntries)-1].ID
 	}
-	key := fmt.Sprintf("%d|%s|%d|%d|%v|%d|%d|%d",
+	rt := m.currentAgentRunTokens
+	key := fmt.Sprintf("%d|%s|%d|%d|%v|%d|%d|%d|%s|%d|%d|%d|%d",
 		len(m.timelineEntries), lastID, width, height,
 		m.tokenDashboardCollapsed,
 		m.inputTokens+m.outputTokens,
 		m.cacheReadInputTokens,
-		m.cacheCreationInputTokens)
+		m.cacheCreationInputTokens,
+		rt.AgentName,
+		rt.InputTokens,
+		rt.OutputTokens,
+		rt.CacheReadInputTokens,
+		rt.CacheCreationInputTokens)
 
 	if !hasRunning && key == m.dashboardCacheKey && m.dashboardCache != "" {
 		return m.dashboardCache
@@ -67,6 +73,16 @@ func (m *model) renderDashboard(width, height int) string {
 		Render("⚙ Activity")
 	lines = append(lines, title)
 
+	// Compute token section row count for timeline reservation
+	tokenSectionRows := 0
+	if rt.InputTokens > 0 || rt.OutputTokens > 0 {
+		tokenSectionRows = 5 // separator + title + agent + In + Out
+		totalInput := rt.InputTokens + rt.CacheReadInputTokens + rt.CacheCreationInputTokens
+		if rt.CacheReadInputTokens > 0 && totalInput > 0 {
+			tokenSectionRows = 6
+		}
+	}
+
 	// ── Timeline section ──
 	if len(m.timelineEntries) > 0 {
 		content := RenderTimeline(m.timelineEntries, false, width-4, m.anim)
@@ -80,8 +96,7 @@ func (m *model) renderDashboard(width, height int) string {
 		}
 		if content != "" {
 			tlInnerLines := strings.Split(content, "\n")
-			// Reserve 1 line for token section
-			maxTL := height - 2 - 1
+			maxTL := height - 1 - tokenSectionRows
 			if maxTL < 0 {
 				maxTL = 0
 			}
@@ -93,31 +108,52 @@ func (m *model) renderDashboard(width, height int) string {
 	}
 
 	// ── Token section ──
-	rt := m.currentAgentRunTokens
 	if rt.InputTokens > 0 || rt.OutputTokens > 0 {
+		// Separator between timeline and token section
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(lipgloss.Color("237")).
+			Render(strings.Repeat("─", width-4)))
+
+		// Token section title
+		tokenTitle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241")).
+			Italic(true).
+			Render("⚡ Tokens")
+		lines = append(lines, tokenTitle)
+
+		// Agent name
 		agentName := rt.AgentName
 		if agentName == "" {
 			agentName = "—"
 		}
+		agentLine := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(AgentColor(rt.AgentName))).
+			Render("[" + agentName + "]")
+		lines = append(lines, agentLine)
+
+		// Token fields
 		totalInput := rt.InputTokens + rt.CacheReadInputTokens + rt.CacheCreationInputTokens
 		inStr := formatToken(totalInput)
 		outStr := formatToken(rt.OutputTokens)
 
-		dimStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240"))
 		inputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
 		outputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114"))
+		grayStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("243"))
 
-		line := dimStyle.Render(fmt.Sprintf("[%s]", agentName)) + " " +
-			inputStyle.Render(fmt.Sprintf("In: %s  ", inStr)) +
-			outputStyle.Render(fmt.Sprintf("Out: %s", outStr))
+		lines = append(lines,
+			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("In    ") + inputStyle.Render(inStr),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Out   ") + outputStyle.Render(outStr),
+		)
 
-		// Cache hit rate
+		// Cache hit rate (optional)
 		if rt.CacheReadInputTokens > 0 && totalInput > 0 {
 			rate := float64(rt.CacheReadInputTokens) / float64(totalInput) * 100
-			cacheStr := fmt.Sprintf("Cache: %.1f%%(%s)", rate, formatToken(rt.CacheReadInputTokens))
-			line += inputStyle.Render("  " + cacheStr)
+			cacheStr := fmt.Sprintf("%.1f%% (%s)", rate, formatToken(rt.CacheReadInputTokens))
+			lines = append(lines,
+				lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Cache ") + grayStyle.Render(cacheStr),
+			)
 		}
-		lines = append(lines, line)
 	}
 
 	// Apply border style
