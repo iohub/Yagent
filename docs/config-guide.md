@@ -219,7 +219,7 @@ fallback_providers = [
 | `max_retries` | int | `5` | 底层引擎重试次数 |
 | `step_retries` | int | `0` | 步骤重试次数（executor/director/meta），`0` = 不重试 |
 | `circuit_breaker_threshold` | int | `0` | 熔断阈值（连续失败次数），`0` = 不启用 |
-| `circuit_breaker_reset_timeout` | duration | `"0s"` | 熔断恢复时间（阈值>0 时有效，默认 60s） |
+| `circuit_breaker_reset_timeout` | duration | `"0s"` | 熔断恢复时间（默认 `"0s"`；仅在 `circuit_breaker_threshold > 0` 时生效，此时自动填充为 `60s`） |
 | `enable_fallback` | bool | `false` | 启用 Provider 级故障转移 |
 | `fallback_max_retries` | int | 使用 `max_retries` 的值 | 每个备选 Provider 的内部重试次数 |
 
