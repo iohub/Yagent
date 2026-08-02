@@ -3,7 +3,9 @@ package agents
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"codeactor/internal/globalctx"
 	"codeactor/internal/tools"
@@ -11,7 +13,7 @@ import (
 
 // autoConsolidateSubtask 非阻塞地将子任务结果沉淀到知识库。
 // 仅在 gctx.CodeSeekMCP 可用时执行，失败仅 Warn 不 panic。
-func autoConsolidateSubtask(gctx *globalctx.GlobalCtx, llm interface{}, sourceAgent, knowledgeType, taskInput, resultText string) {
+func autoConsolidateSubtask(gctx *globalctx.GlobalCtx, sourceAgent, knowledgeType, taskInput, resultText string) {
 	if gctx == nil || gctx.CodeSeekMCP == nil {
 		return
 	}
@@ -33,11 +35,8 @@ func autoConsolidateSubtask(gctx *globalctx.GlobalCtx, llm interface{}, sourceAg
 			title = sourceAgent + " 子任务总结"
 		}
 
-		// content 截断到 500 字符
-		content := resultText
-		if len(content) > 500 {
-			content = content[:500] + "..."
-		}
+		// content 字节安全截断到 500 字节（rune 边界，避免中文乱码）
+		content := truncateContentByBytes(resultText, 500)
 
 		tags := []interface{}{sourceAgent, "auto", "子任务总结"}
 
@@ -51,4 +50,19 @@ func autoConsolidateSubtask(gctx *globalctx.GlobalCtx, llm interface{}, sourceAg
 			slog.Warn("autoConsolidateSubtask failed", "source_agent", sourceAgent, "knowledge_type", knowledgeType, "error", err)
 		}
 	}()
+}
+
+// truncateContentByBytes 按字节安全截断（rune 边界，避免中文乱码），保证 len(result) <= maxBytes
+func truncateContentByBytes(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	var sb strings.Builder
+	for _, r := range s {
+		if sb.Len()+utf8.RuneLen(r) > maxBytes {
+			break
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
 }

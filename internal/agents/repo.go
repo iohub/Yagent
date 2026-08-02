@@ -160,7 +160,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 
 	// [知识管理] 子任务完成后自动沉淀到知识库（非阻塞）
 	if a.GlobalCtx.KnowledgeInjector != nil {
-		autoConsolidateSubtask(a.GlobalCtx, a.LLM, "repo_agent", "repo_retrieval", input, agentResult.Text)
+		autoConsolidateSubtask(a.GlobalCtx, "repo_agent", "repo_retrieval", input, agentResult.Text)
 	}
 
 	return agentResult, nil
