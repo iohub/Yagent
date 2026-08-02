@@ -403,3 +403,74 @@ func TestMergeStrings_Empty(t *testing.T) {
 		t.Errorf("mergeStrings(nil, nil) = %v, want empty", got)
 	}
 }
+
+// ============================================================================
+// replaceProjectAbsPath 测试
+// ============================================================================
+
+func TestReplaceProjectAbsPath_AbsolutePrefix(t *testing.T) {
+	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	title := "/home/do/ssd/iohub/dev/codeactor-agent/foo/bar.go 相关设计"
+	got := replaceProjectAbsPath(title, projectDir)
+	expected := "foo/bar.go 相关设计"
+	if got != expected {
+		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
+	}
+}
+
+func TestReplaceProjectAbsPath_NoAbsolutePath(t *testing.T) {
+	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	title := "foo/bar.go 相关设计"
+	got := replaceProjectAbsPath(title, projectDir)
+	if got != title {
+		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want original %q", title, projectDir, got, title)
+	}
+}
+
+func TestReplaceProjectAbsPath_ExactMatch(t *testing.T) {
+	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	title := "/home/do/ssd/iohub/dev/codeactor-agent"
+	got := replaceProjectAbsPath(title, projectDir)
+	expected := "."
+	if got != expected {
+		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
+	}
+}
+
+func TestReplaceProjectAbsPath_EmptyProjectDir(t *testing.T) {
+	title := "/home/do/ssd/iohub/dev/codeactor-agent/foo/bar.go"
+	got := replaceProjectAbsPath(title, "")
+	if got != title {
+		t.Errorf("replaceProjectAbsPath(%q, \"\") = %q, want original %q", title, got, title)
+	}
+}
+
+func TestReplaceProjectAbsPath_EmptyTitle(t *testing.T) {
+	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	got := replaceProjectAbsPath("", projectDir)
+	if got != "" {
+		t.Errorf("replaceProjectAbsPath(\"\", %q) = %q, want \"\"", projectDir, got)
+	}
+}
+
+func TestReplaceProjectAbsPath_NoFalsePrefix(t *testing.T) {
+	// projectDir 是 "/home/do/ssd/iohub/dev/codeactor-agent"，
+	// 不应误替换 "/home/do/ssd/iohub/dev/codeactor-agentXxx"（缺少分隔符）
+	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	title := "/home/do/ssd/iohub/dev/codeactor-agentXxx/foo/bar.go"
+	got := replaceProjectAbsPath(title, projectDir)
+	if got != title {
+		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want original %q (no false prefix match)", title, projectDir, got, title)
+	}
+}
+
+func TestReplaceProjectAbsPath_OnlyRelPathPart(t *testing.T) {
+	// title 恰好是 projectDir + "/"，清理后应为 "."
+	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	title := "/home/do/ssd/iohub/dev/codeactor-agent/"
+	got := replaceProjectAbsPath(title, projectDir)
+	expected := "."
+	if got != expected {
+		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
+	}
+}

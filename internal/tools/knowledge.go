@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -59,6 +61,11 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 	if !validTypes[rawType] {
 		kl.Warn("consolidate param invalid", "event", "consolidate_param_error", "reason", fmt.Sprintf("invalid type: %q", rawType))
 		return nil, fmt.Errorf("invalid type: %q (allowed: repo_retrieval, coding_modification)", rawType)
+	}
+
+	// 将 title 中的项目绝对路径替换为相对路径，减少字符占用
+	if projectDir, err := os.Getwd(); err == nil {
+		title = replaceProjectAbsPath(title, projectDir)
 	}
 
 	// title 超 200 字截断（按 rune 截断，避免中文等多字节字符截断乱码）
@@ -517,4 +524,30 @@ func mergeStrings(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+// replaceProjectAbsPath 将 title 中出现的项目绝对路径前缀替换为相对路径，
+// 以减少 title 中的字符占用。若 projectDir 为空或 title 不含 projectDir，
+// 则原样返回 title，永不返回错误。
+func replaceProjectAbsPath(title, projectDir string) string {
+	if title == "" || projectDir == "" {
+		return title
+	}
+	sep := string(filepath.Separator)
+	// 精确匹配：title 恰好等于 projectDir
+	if title == projectDir {
+		return "."
+	}
+	// 精确前缀匹配：projectDir + separator，避免误替换（如 projectDir="/a" 不应匹配 "/abc"）
+	prefix := projectDir + sep
+	if !strings.HasPrefix(title, prefix) {
+		return title
+	}
+	rel := title[len(prefix):]
+	// 清理结果路径（去除首尾多余的斜杠等）
+	rel = filepath.Clean(rel)
+	if rel == "" {
+		return "."
+	}
+	return rel
 }
