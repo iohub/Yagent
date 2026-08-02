@@ -11,8 +11,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-
-
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	// Don't process task events while any popup/dialog is showing.
 	// Keep the event chain alive so the TUI resumes after dialog dismissal.
@@ -226,7 +224,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			le.content = le.streamContent // 同步到 content 字段
 			le.clearRenderCache()         // 失效渲染缓存，确保内容变化生效
 			m.markEntryDirty(idx)
-			m.viewportDirty = true        // 实时更新：立即触发视图重绘
+			m.viewportDirty = true // 实时更新：立即触发视图重绘
 			return m, listenForEvents(m.eventCh)
 		}
 
@@ -544,6 +542,55 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				m.viewportDirty = true
 				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			}
+		}
+		return m, listenForEvents(m.eventCh)
+	}
+
+	// Handle knowledge consolidation complete event — log summary and show details in timeline
+	if msg.event.Type == "knowledge_consolidation_complete" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			// 读取 count
+			countFloat, _ := contentMap["count"].(float64)
+			countInt := int(countFloat)
+			// 读取 entries
+			entriesRaw, _ := contentMap["entries"].([]interface{})
+			var detailParts []string
+			for _, eRaw := range entriesRaw {
+				if eMap, ok := eRaw.(map[string]interface{}); ok {
+					title, _ := eMap["title"].(string)
+					etype, _ := eMap["type"].(string)
+					confidence, _ := eMap["confidence"].(float64)
+					content, _ := eMap["content"].(string)
+					tagsRaw, _ := eMap["tags"].([]interface{})
+					var tags []string
+					for _, t := range tagsRaw {
+						if ts, ok := t.(string); ok {
+							tags = append(tags, ts)
+						}
+					}
+					detailParts = append(detailParts, fmt.Sprintf("▸ [%s] %s (conf=%.2f)\n  标签: %s\n  内容: %s", etype, title, confidence, strings.Join(tags, ", "), content))
+				}
+			}
+			detailStr := strings.Join(detailParts, "\n\n")
+			entry := logEntry{
+				timestamp: msg.event.Timestamp,
+				eventType: "knowledge_consolidation",
+				from:      msg.event.From,
+				content:   fmt.Sprintf("📚 知识整理完成，提取 %d 条知识", countInt),
+			}
+			// 添加 timeline 条目（详情面板展示具体知识条目列表）
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        fmt.Sprintf("kc_%d", msg.event.Timestamp.UnixNano()),
+				Kind:      TimelineKindContextEvent,
+				Timestamp: msg.event.Timestamp,
+				Status:    ToolStatusSuccess,
+				Name:      "knowledge_consolidation",
+				Detail:    detailStr,
+			})
+			m.timelineCacheKey = ""
+			m.logEntries = append(m.logEntries, entry)
+			m.viewportDirty = true
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 		}
 		return m, listenForEvents(m.eventCh)
 	}

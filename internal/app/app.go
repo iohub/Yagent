@@ -338,6 +338,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 				knowledgeCfg = ca.config.CodeSeek.Knowledge
 			}
 			consolidationWorker := agents.NewConsolidationWorker(repoMemStore, repoEngine, ca.globalCtx.CodeSeekMCP, knowledgeCfg)
+			consolidationWorker.SetPublisher(ca.globalCtx.Publisher)
 			consolidationWorker.Start()
 			ca.consolidationWorker = consolidationWorker
 			repoAgent.SetMemory(repoMemStore, consolidationWorker)

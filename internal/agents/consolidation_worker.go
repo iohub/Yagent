@@ -14,6 +14,7 @@ import (
 	"codeactor/internal/llm"
 	"codeactor/internal/logging"
 	"codeactor/internal/mcp"
+	"codeactor/internal/messaging"
 	"codeactor/internal/tools"
 )
 
@@ -64,6 +65,8 @@ type ConsolidationWorker struct {
 	mcpClient          *mcp.MCPClient
 	knowledgeCfg       config.KnowledgeConfig
 	consolidationCount int
+	// publisher 用于向 TUI 发送知识整理完成通知
+	publisher *messaging.MessagePublisher
 }
 
 // NewConsolidationWorker 创建 consolidation 工作器。
@@ -82,6 +85,11 @@ func NewConsolidationWorker(store *RepoMemoryStore, engine llm.Engine, mcpClient
 // Start 启动后台 goroutine 开始处理 consolidation 请求。
 func (w *ConsolidationWorker) Start() {
 	go w.run()
+}
+
+// SetPublisher 设置消息发布者，用于向 TUI 发送通知。
+func (w *ConsolidationWorker) SetPublisher(p *messaging.MessagePublisher) {
+	w.publisher = p
 }
 
 // Stop 优雅停止工作器。等待所有排队的任务处理完成。
@@ -290,6 +298,31 @@ func (w *ConsolidationWorker) extractKnowledge(consolidated string) {
 	}
 	slog.Info("ConsolidationWorker: knowledge extraction completed", "entries", len(entries))
 	kl.Info("consolidation worker extracted", "event", "worker_extract_done", "count", len(entries))
+
+	// 向 TUI 发送知识整理完成通知
+	if w.publisher != nil {
+		entriesList := make([]map[string]interface{}, 0, len(entries))
+		for _, e := range entries {
+			content := e.Content
+			if len(content) > 200 {
+				// rune 截断到 200 字符以内
+				runes := []rune(content)
+				content = string(runes[:200]) + "..."
+			}
+			entriesList = append(entriesList, map[string]interface{}{
+				"title":      e.Title,
+				"type":       e.Type,
+				"tags":       e.Tags,
+				"confidence": e.Confidence,
+				"content":    content,
+			})
+		}
+		_ = w.publisher.Publish("knowledge_consolidation_complete", map[string]interface{}{
+			"count":   len(entries),
+			"agent":   "repo_agent",
+			"entries": entriesList,
+		}, "ConsolidationWorker")
+	}
 }
 
 // triggerPruneMerge 触发知识库条目合并去重。
