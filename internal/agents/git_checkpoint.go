@@ -427,44 +427,8 @@ func (g *GitCheckpointManager) createAndSwitchBranch(ctx context.Context, branch
 	return err
 }
 
-func (g *GitCheckpointManager) stashCreate(ctx context.Context, ref string) error {
-	_, err := g.runGitCommand(ctx, "stash", "push", "-m", ref, "--include-untracked")
-	return err
-}
-
 func (g *GitCheckpointManager) stashPop(ctx context.Context) error {
 	_, err := g.runGitCommand(ctx, "stash", "pop")
-	return err
-}
-
-func (g *GitCheckpointManager) createCheckpoint(ctx context.Context, message string) (string, error) {
-	// Stage all changes
-	_, err := g.runGitCommand(ctx, "add", "-A")
-	if err != nil {
-		return "", err
-	}
-
-	// Commit
-	_, err = g.runGitCommand(ctx, "commit", "-m", message)
-	if err != nil {
-		return "", err
-	}
-
-	// Create tag
-	tag := fmt.Sprintf("%s/%s-step-%d", g.config.CheckpointTagPrefix, g.session.SessionID, g.session.StepCount)
-	_, err = g.runGitCommand(ctx, "tag", tag)
-	if err != nil {
-		return "", err
-	}
-
-	// Record checkpoint message
-	g.checkpointMessages = append(g.checkpointMessages, message)
-
-	return tag, nil
-}
-
-func (g *GitCheckpointManager) deleteBranch(ctx context.Context, branch string) error {
-	_, err := g.runGitCommand(ctx, "branch", "-D", branch)
 	return err
 }
 
@@ -678,25 +642,6 @@ func (g *GitCheckpointManager) fallbackCommitMessage(diff string) string {
 	return fmt.Sprintf("coding-agent: apply task changes (diff: %d chars)", len(diff))
 }
 
-func (g *GitCheckpointManager) enforceMaxCheckpoints(ctx context.Context) error {
-	max := g.config.MaxCheckpoints
-	if max <= 0 {
-		return nil
-	}
-
-	if len(g.session.Checkpoints) <= max {
-		return nil
-	}
-
-	// Remove oldest checkpoints
-	excess := g.session.Checkpoints[:len(g.session.Checkpoints)-max]
-	for _, tag := range excess {
-		_, _ = g.runGitCommand(ctx, "tag", "-d", tag)
-	}
-	g.session.Checkpoints = g.session.Checkpoints[len(g.session.Checkpoints)-max:]
-	return nil
-}
-
 func (g *GitCheckpointManager) getCheckpointInfo(ctx context.Context) ([]CheckpointInfo, error) {
 	var results []CheckpointInfo
 
@@ -768,10 +713,6 @@ func (g *GitCheckpointManager) runGitCommand(ctx context.Context, args ...string
 		return "", fmt.Errorf("git %s: %w\nstderr: %s", strings.Join(args, " "), err, stderr.String())
 	}
 	return stdout.String(), nil
-}
-
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // IsGitRepository 检查指定路径是否在 git 仓库中
