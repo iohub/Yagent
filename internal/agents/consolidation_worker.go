@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,11 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/config"
 	"codeactor/internal/llm"
 	"codeactor/internal/logging"
 	"codeactor/internal/mcp"
-	"codeactor/internal/messaging"
 	"codeactor/internal/tools"
 )
 
@@ -63,33 +60,24 @@ type ConsolidationWorker struct {
 	done   chan struct{}
 	// [知识管理]
 	mcpClient          *mcp.MCPClient
-	knowledgeCfg       config.KnowledgeConfig
 	consolidationCount int
-	// publisher 用于向 TUI 发送知识整理完成通知
-	publisher *messaging.MessagePublisher
 }
 
 // NewConsolidationWorker 创建 consolidation 工作器。
 // 需要调用 Start() 启动后台 goroutine。
-func NewConsolidationWorker(store *RepoMemoryStore, engine llm.Engine, mcpClient *mcp.MCPClient, knowledgeCfg config.KnowledgeConfig) *ConsolidationWorker {
+func NewConsolidationWorker(store *RepoMemoryStore, engine llm.Engine, mcpClient *mcp.MCPClient) *ConsolidationWorker {
 	return &ConsolidationWorker{
-		store:        store,
-		engine:       engine,
-		ch:           make(chan *ConsolidationTask, channelBufferSize),
-		done:         make(chan struct{}),
-		mcpClient:    mcpClient,
-		knowledgeCfg: knowledgeCfg,
+		store:  store,
+		engine: engine,
+		ch:     make(chan *ConsolidationTask, channelBufferSize),
+		done:   make(chan struct{}),
+		mcpClient: mcpClient,
 	}
 }
 
 // Start 启动后台 goroutine 开始处理 consolidation 请求。
 func (w *ConsolidationWorker) Start() {
 	go w.run()
-}
-
-// SetPublisher 设置消息发布者，用于向 TUI 发送通知。
-func (w *ConsolidationWorker) SetPublisher(p *messaging.MessagePublisher) {
-	w.publisher = p
 }
 
 // Stop 优雅停止工作器。等待所有排队的任务处理完成。
@@ -175,12 +163,8 @@ func (w *ConsolidationWorker) process(task *ConsolidationTask) {
 	// 7. 将记忆整理结果写入独立的日志文件
 	w.writeConsolidationFile(consolidated)
 
-	// 8. [知识管理] 知识提取阶段
+	// 8. [知识管理] 周期 prune
 	w.consolidationCount++
-	if w.mcpClient != nil && w.knowledgeCfg.Enabled {
-		w.extractKnowledge(consolidated)
-	}
-	// 9. [知识管理] 周期 prune
 	if w.consolidationCount%pruneTriggerInterval == 0 {
 		w.triggerPruneMerge()
 	}
@@ -226,100 +210,6 @@ func (w *ConsolidationWorker) writeConsolidationFile(content string) {
 		slog.Warn("ConsolidationWorker: failed to write trailing newlines",
 			"error", err,
 		)
-	}
-}
-
-// extractKnowledge 从整理后的记忆文本中提取知识条目，写入知识库。
-func (w *ConsolidationWorker) extractKnowledge(consolidated string) {
-	ctx, cancel := context.WithTimeout(context.Background(), knowledgeExtractTimeout)
-	defer cancel()
-
-	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: "你是一个知识提取助手。请严格按照要求输出 JSON 格式，不要输出任何其他内容。"},
-		{Role: llm.RoleUser, Content: fmt.Sprintf(knowledgeExtractionPrompt, consolidated)},
-	}
-
-	resp, err := w.engine.GenerateContent(ctx, messages, nil, &llm.CallOptions{
-		Temperature: 0.1,
-		MaxTokens:   2048,
-	})
-	if err != nil {
-		slog.Warn("ConsolidationWorker: knowledge extraction LLM call failed", "error", err)
-		return
-	}
-	if len(resp.Choices) == 0 {
-		return
-	}
-
-	raw := strings.TrimSpace(resp.Choices[0].Content)
-	// 去除可能的 markdown 围栏
-	raw = strings.TrimPrefix(raw, "```json")
-	raw = strings.TrimSuffix(raw, "```")
-	raw = strings.TrimSpace(raw)
-
-	var entries []struct {
-		Type       string   `json:"type"`
-		Title      string   `json:"title"`
-		Content    string   `json:"content"`
-		Tags       []string `json:"tags"`
-		Confidence float64  `json:"confidence"`
-	}
-	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
-		slog.Warn("ConsolidationWorker: failed to parse knowledge extraction JSON", "error", err)
-		return
-	}
-	if len(entries) == 0 {
-		return
-	}
-
-	kl := logging.KnowledgeLogger()
-
-	validTypes := map[string]bool{"repo_retrieval": true, "coding_modification": true}
-
-	extractTool := tools.NewConsolidateKnowledgeTool(w.mcpClient, w.engine, "repo_agent", "repo_retrieval")
-	for _, entry := range entries {
-		if !validTypes[entry.Type] {
-			slog.Warn("ConsolidationWorker: skipping entry with invalid type", "type", entry.Type, "title", entry.Title)
-			continue
-		}
-		params := map[string]interface{}{
-			"title":      entry.Title,
-			"content":    entry.Content,
-			"tags":       entry.Tags,
-			"task_id":    "",
-			"confidence": entry.Confidence,
-		}
-		kl.Debug("consolidation worker submit entry", "event", "worker_submit_entry", "title", entry.Title, "type", entry.Type)
-		if _, err := extractTool.Execute(ctx, params); err != nil {
-			slog.Warn("ConsolidationWorker: knowledge extract failed for entry",
-				"type", entry.Type, "title", entry.Title, "error", err,
-			)
-		}
-	}
-	slog.Info("ConsolidationWorker: knowledge extraction completed", "entries", len(entries))
-	kl.Info("consolidation worker extracted", "event", "worker_extract_done", "count", len(entries))
-
-	// 向 TUI 发送知识整理完成通知
-	if w.publisher != nil {
-		entriesList := make([]map[string]interface{}, 0, len(entries))
-		for _, e := range entries {
-			content := e.Content
-			if len(content) > 200 {
-				content = truncateRunes(content, 200)
-			}
-			entriesList = append(entriesList, map[string]interface{}{
-				"title":      e.Title,
-				"type":       e.Type,
-				"tags":       e.Tags,
-				"confidence": e.Confidence,
-				"content":    content,
-			})
-		}
-		_ = w.publisher.Publish("knowledge_consolidation_complete", map[string]interface{}{
-			"count":   len(entries),
-			"agent":   "repo_agent",
-			"entries": entriesList,
-		}, "ConsolidationWorker")
 	}
 }
 
@@ -409,28 +299,6 @@ func truncatePreview(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
-
-// ============================================================================
-// Knowledge Extraction Prompt
-// ============================================================================
-
-const knowledgeExtractionPrompt = `请从以下整理结果中提取可存入知识库的条目。
-要求：
-1. 每条知识只记录一个独立发现或经验
-2. 内容必须包含文件路径、函数名或调用链坐标
-3. 语言简洁，只记核心，不记过程
-4. tags 至少 1 个，用于语义检索
-5. type 取值 repo_retrieval（检索发现）或 coding_modification（编码修改）
-
-输出 JSON 数组格式（不要输出其他内容）：
-[
-  {"type": "repo_retrieval", "title": "标题（≤200字）", "content": "内容（≤1500字）", "tags": ["标签1"], "confidence": 0.9}
-]
-
-如果没有可提取的知识，输出 []。
-
-整理结果：
-%s`
 
 // ============================================================================
 // Consolidation System Prompt

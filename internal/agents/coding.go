@@ -371,7 +371,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	}
 	// [知识管理] 子任务完成后自动沉淀到知识库（非阻塞）
 	if a.GlobalCtx.KnowledgeInjector != nil {
-		autoConsolidateSubtask(a.GlobalCtx, "coding_agent", "coding_modification", input, agentResult.Text)
+		autoConsolidateSubtask(a.GlobalCtx, a.LLM, "coding_agent", "coding_modification", input, agentResult.Text)
 	}
 	return agentResult, nil
 }

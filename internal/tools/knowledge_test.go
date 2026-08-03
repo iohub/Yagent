@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"strings"
 	"testing"
 )
 
@@ -172,57 +171,8 @@ func TestConsolidateKnowledgeTool_Execute_ValidWithNilMCP(t *testing.T) {
 	}
 }
 
-func TestConsolidateKnowledgeTool_Execute_TitleTruncation(t *testing.T) {
-	// 标题超过 200 字符应被截断（不会报错，只是截断后传给 MCP）
-	tool := NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval")
-	// 因为 MCP 为 nil，会返回 skipped，但截断逻辑在 distill 之前执行
-	// 我们验证不会报错即可
-	longTitle := strings.Repeat("a", 250) // 250 个字符，超过 200 字截断阈值
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"title":   longTitle,
-		"content": "content",
-		"tags":    []interface{}{"tag1"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestConsolidateKnowledgeTool_Execute_ChineseTitleTruncation(t *testing.T) {
-	// 205 个中文字符的标题应被截断为恰好 200 个字符且保持有效 UTF-8
-	tool := NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval")
-	longChineseTitle := strings.Repeat("这是一个非常长的中文标题测试用", 14) // 15×14=210 个中文字，超过 200 字截断阈值
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"title":   longChineseTitle,
-		"content": "content",
-		"tags":    []interface{}{"tag1"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// TestChineseTitleTruncation_RuneCount 直接验证 rune 截断逻辑：
-// 205 个中文字符应被截为恰好 200 个字符，且结果仍为有效 UTF-8。
-func TestChineseTitleTruncation_RuneCount(t *testing.T) {
-	// 205 个相同中文字符，确保精确控制 rune 数量
-	const base = "这是一个非常长的中文标题测试用这是一个非常长的中文标题测试用这是一个非常长的中文标题测试用这是一个非常长的中文标题测试用这是一个非常长的中文标题测试用这是一个非常长的中文标题测试用这是一个非常长的中文标题测试用" // 105 runes
-	input := base + base // 210 runes
-	if got := len([]rune(input)); got != 210 {
-		t.Fatalf("input rune count = %d, want 210", got)
-	}
-	// 模拟 knowledge.go 中的截断逻辑
-	truncated := input
-	if r := []rune(truncated); len(r) > 200 {
-		truncated = string(r[:200])
-	}
-	if got := len([]rune(truncated)); got != 200 {
-		t.Fatalf("truncated rune count = %d, want 200", got)
-	}
-}
-
 func TestConsolidateKnowledgeTool_Execute_LongContentNilEngine(t *testing.T) {
-	// content > 1500 字符且 engine 为 nil → 降级硬截断，不应 panic
+	// content > 1500 字符且 engine 为 nil → 直接入库（无截断），MCP nil 时返回 skipped
 	longContent := ""
 	for i := 0; i < 1600; i++ {
 		longContent += "x"

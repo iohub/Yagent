@@ -42,7 +42,7 @@ func NewConsolidateKnowledgeTool(mcpClient *mcp.MCPClient, engine llm.Engine, so
 	return &ConsolidateKnowledgeTool{mcp: mcpClient, engine: engine, sourceAgent: sourceAgent, knowledgeType: knowledgeType}
 }
 
-// Execute 执行知识整理：校验 → 蒸馏 → 去重 → 合并 → add/delete。
+// Execute 执行知识整理：校验 → 路径替换 → 直接入库。
 func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	kl := logging.KnowledgeLogger()
 
@@ -77,11 +77,6 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 	// 将 title 中的项目绝对路径替换为相对路径，减少字符占用
 	if projectDir, err := os.Getwd(); err == nil {
 		title = replaceProjectAbsPath(title, projectDir)
-	}
-
-	// title 超 200 字截断（按 rune 截断，避免中文等多字节字符截断乱码）
-	if r := []rune(title); len(r) > 200 {
-		title = string(r[:200])
 	}
 
 	// tags（至少 1 个）
@@ -123,94 +118,7 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 
 	kl.Info("consolidate start", "event", "consolidate_start", "type", rawType, "title", title, "tags", tags, "source_agent", sourceAgent, "task_id", taskID)
 
-	// ── 2. LLM 蒸馏（content > 1500 字时）──────────────────────────────────────
-	origContentLen := len(content)
-	if t.engine != nil && len(content) > 1500 {
-		distilled, err := distillContent(t.engine, ctx, title, content)
-		if err != nil {
-			// 降级：硬截断
-			kl.Warn("consolidate distill fallback", "event", "consolidate_distill_fallback", "title", title, "error", err)
-			if r := []rune(content); len(r) > 1500 {
-				content = string(r[:1500]) + "..."
-			}
-		} else {
-			content = distilled
-			kl.Info("consolidate distill", "event", "consolidate_distill", "title", title, "before_len", origContentLen, "after_len", len(distilled), "mode", "llm")
-		}
-	} else if len(content) > 1500 {
-		kl.Info("consolidate distill", "event", "consolidate_distill", "title", title, "before_len", len(content), "after_len", 1503, "mode", "hard_truncate")
-		if r := []rune(content); len(r) > 1500 {
-			content = string(r[:1500]) + "..."
-		}
-	}
-
-	// ── 3. 去重检测 ──────────────────────────────────────────────────────────
-	var dupResult *mcp.KnowledgeSearchResult
-	if t.mcp != nil {
-		results, err := t.mcp.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
-			Query:   title,
-			Limit:   5,
-			Rerank:  true,
-			Domains: knowledgeDomainsForAgent(t.sourceAgent),
-		})
-		if err == nil {
-			for i := range results {
-				if results[i].RerankScore != nil && *results[i].RerankScore > 0.85 {
-					dupResult = &results[i]
-					kl.Info("duplicate detected", "event", "consolidate_dup_found", "title", title, "dup_id", dupResult.ID, "dup_title", dupResult.Title, "dup_score", *dupResult.RerankScore)
-					break
-				}
-			}
-			if dupResult == nil {
-				kl.Debug("no duplicate found", "event", "consolidate_dup_none", "title", title)
-			}
-		} else {
-			kl.Debug("dup check search error", "event", "consolidate_dup_check_error", "title", title, "error", err)
-		}
-	}
-
-	// ── 4/5. 重复处理（合并）──────────────────────────────────────────────────
-	if dupResult != nil && t.engine != nil {
-		newTitle, newContent, newTags, err := mergeKnowledgeLLM(t.engine, ctx,
-			title, content, tags, *dupResult)
-		if err == nil {
-			// 先 add 新，再 delete 旧
-			newReq := mcp.KnowledgeAddRequest{
-				Type:         rawType,
-				Title:        newTitle,
-				Content:      newContent,
-				Tags:         newTags,
-				RelatedFiles: relatedFiles,
-				SourceAgent:  sourceAgent,
-				TaskID:       taskID,
-				Confidence:   confidence,
-			}
-			newRecord, err := t.mcp.KnowledgeAdd(ctx, newReq)
-			if err == nil {
-				_ = t.mcp.KnowledgeDelete(ctx, mcp.KnowledgeDeleteRequest{ID: dupResult.ID})
-				kl.Info("merged with duplicate", "event", "consolidate_merged", "title", newTitle, "new_id", newRecord.ID, "parent_ids", []string{dupResult.ID})
-				ts := time.Now().Format("2006-01-02 15:04:05")
-				var rfLine string
-				if len(relatedFiles) > 0 {
-					rfLine = "\nrelated_files: " + strings.Join(relatedFiles, ",")
-				}
-				consolidateEntry := fmt.Sprintf("============================================================\n[%s] knowledge consolidate | event=merged | id=%s | type=%s | source_agent=%s | title=%s\ncontent: %s\ntags: %s%s",
-					ts, newRecord.ID, rawType, sourceAgent, newTitle, newContent, strings.Join(newTags, ","), rfLine)
-				if err := logging.WriteKnowledgeConsolidateLog(consolidateEntry); err != nil {
-					kl.Warn("knowledge consolidate log write failed", "error", err)
-				}
-				return map[string]interface{}{
-					"status":     "merged",
-					"id":         newRecord.ID,
-					"parent_ids": []string{dupResult.ID},
-				}, nil
-			}
-			// add 失败则降级为直接 add 新条目
-			kl.Warn("merge add failed, fallback to direct add", "event", "consolidate_merge_add_error", "title", title, "error", err)
-		}
-	}
-
-	// ── 6. 普通添加 ──────────────────────────────────────────────────────────
+	// ── 直接入库 ─────────────────────────────────────────────────────────────
 	if t.mcp == nil {
 		kl.Info("consolidate skipped", "event", "consolidate_skipped", "reason", "codeseek not available")
 		return map[string]interface{}{"status": "skipped", "reason": "codeseek not available"}, nil
@@ -429,29 +337,8 @@ func (t *PruneHistoryTool) executeMerge(ctx context.Context, params map[string]i
 }
 
 // ============================================================================
-// LLM 辅助函数
+// LLM 辅助函数（PruneHistoryTool 使用）
 // ============================================================================
-
-func distillContent(engine llm.Engine, ctx context.Context, title, content string) (string, error) {
-	prompt := `You are a knowledge distillation assistant. Given a title and content, extract the core要点 (key points) in Chinese.
-Rules:
-1. Output must be ≤1500 characters (Chinese characters count as 1).
-2. Preserve all file paths, function names, and symbol names exactly as written.
-3. Keep the technical accuracy — do not lose critical details.
-4. Output ONLY the distilled content, no explanation, no markdown.`
-	resp, err := engine.GenerateContent(ctx, []llm.Message{
-		{Role: llm.RoleSystem, Content: prompt},
-		{Role: llm.RoleUser, Content: fmt.Sprintf("Title: %s\n\nContent:\n%s", title, content)},
-	}, nil, &llm.CallOptions{Temperature: 0.3, MaxTokens: 2048})
-	if err != nil {
-		return "", err
-	}
-	result := strings.TrimSpace(resp.Choices[0].Content)
-	if r := []rune(result); len(r) > 1500 {
-		result = string(r[:1500])
-	}
-	return result, nil
-}
 
 type mergeOutput struct {
 	Title   string   `json:"title"`
