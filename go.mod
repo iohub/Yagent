@@ -16,6 +16,7 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.3.0
 	github.com/olahol/melody v1.3.0
 	github.com/openai/openai-go/v3 v3.49.0
+	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/rivo/uniseg v0.4.7
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.9.0

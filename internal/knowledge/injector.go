@@ -10,6 +10,7 @@ import (
 	"codeactor/internal/config"
 	"codeactor/internal/logging"
 	"codeactor/internal/mcp"
+	"codeactor/internal/tokenutil"
 
 	"log/slog"
 )
@@ -171,9 +172,11 @@ func (k *KnowledgeInjector) FormatKnowledgeBlock(results []mcp.KnowledgeSearchRe
 	return sb.String()
 }
 
-// TruncateToTokenBudget 按 token 预算截断（中文按 rune/2 估算）
+// TruncateToTokenBudget 按 token 预算截断。
+// 使用 tiktoken-go cl100k_base 精确估算 token 数。
+// 按 "### " 分隔条目逐条保留，直到 token 预算耗尽。
 func (k *KnowledgeInjector) TruncateToTokenBudget(text string, maxTokens int) string {
-	estimatedTokens := runeCount(text) / 2
+	estimatedTokens := tokenutil.EstimateTokens(text)
 	if estimatedTokens <= maxTokens {
 		return text
 	}
@@ -181,8 +184,8 @@ func (k *KnowledgeInjector) TruncateToTokenBudget(text string, maxTokens int) st
 	// 按 "### " 分隔条目，保留头部说明
 	headerEnd := strings.Index(text, "### ")
 	if headerEnd == -1 {
-		// 没有条目，直接截断
-		return truncateByRune(text, maxTokens*2)
+		// 没有条目，逐步截断直到满足预算
+		return truncateToTokenBudgetFallback(text, maxTokens)
 	}
 
 	header := text[:headerEnd]
@@ -193,7 +196,7 @@ func (k *KnowledgeInjector) TruncateToTokenBudget(text string, maxTokens int) st
 	sb.WriteString(header)
 	sb.WriteString("### ")
 
-	remainingTokens := maxTokens - (runeCount(header+"### ") / 2)
+	remainingTokens := maxTokens - tokenutil.EstimateTokens(header+"### ")
 	if remainingTokens <= 0 {
 		sb.WriteString("\n</knowledge_context>\n")
 		return sb.String()
@@ -201,7 +204,7 @@ func (k *KnowledgeInjector) TruncateToTokenBudget(text string, maxTokens int) st
 
 	for _, entry := range entries[1:] {
 		entryWithPrefix := "### " + entry
-		entryTokens := runeCount(entryWithPrefix) / 2
+		entryTokens := tokenutil.EstimateTokens(entryWithPrefix)
 		if entryTokens > remainingTokens {
 			break
 		}
@@ -211,6 +214,27 @@ func (k *KnowledgeInjector) TruncateToTokenBudget(text string, maxTokens int) st
 
 	sb.WriteString("\n</knowledge_context>\n")
 	return sb.String()
+}
+
+// truncateToTokenBudgetFallback 当文本没有条目分隔符时，逐步截断 rune 直到满足 token 预算。
+func truncateToTokenBudgetFallback(text string, maxTokens int) string {
+	if len(text) == 0 {
+		return text
+	}
+	// 每次移除约 1/10 的 rune（至少 1 个），直到满足预算
+	runes := []rune(text)
+	for len(runes) > 0 {
+		if tokenutil.EstimateTokens(string(runes)) <= maxTokens {
+			break
+		}
+		// 移除约 1/10
+		remove := len(runes) / 10
+		if remove < 1 {
+			remove = 1
+		}
+		runes = runes[:len(runes)-remove]
+	}
+	return string(runes)
 }
 
 // runeCount 返回字符串的 rune 数量
