@@ -230,6 +230,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 						"total_tokens":                resp.Usage.TotalTokens,
 						"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
 						"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
+						"total_input_tokens":          resp.Usage.TotalInputTokens,
 					}
 				}
 				cfg.Publisher.PublishWithMetadata("ai_stream_end", "", cfg.AgentName, metadata)

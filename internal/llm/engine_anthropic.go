@@ -452,6 +452,8 @@ func (e *AnthropicEngine) convertResponse(ar *anthropicResponse) *Response {
 			TotalTokens:              int64(ar.Usage.InputTokens + ar.Usage.OutputTokens),
 			CacheCreationInputTokens: int64(ar.Usage.CacheCreationInputTokens),
 			CacheReadInputTokens:     int64(ar.Usage.CacheReadInputTokens),
+			// Anthropic 的 input_tokens 不含 cache，TotalInputTokens = 三者之和
+			TotalInputTokens: int64(ar.Usage.InputTokens + ar.Usage.CacheReadInputTokens + ar.Usage.CacheCreationInputTokens),
 		},
 	}
 
@@ -633,6 +635,8 @@ func (e *AnthropicEngine) parseStreamResponse(ctx context.Context, body io.Reade
 					if evt.Usage.CacheCreationInputTokens > 0 {
 						finalUsage.CacheCreationInputTokens = int64(evt.Usage.CacheCreationInputTokens)
 					}
+					// Anthropic 的 input_tokens 不含 cache，TotalInputTokens = 三者之和
+					finalUsage.TotalInputTokens = promptTokens + finalUsage.CacheReadInputTokens + finalUsage.CacheCreationInputTokens
 				}
 
 			case "content_block_stop", "message_stop":

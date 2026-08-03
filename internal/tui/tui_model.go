@@ -362,6 +362,7 @@ type AgentTokenUsage struct {
 	OutputTokens             int64
 	CacheCreationInputTokens int64
 	CacheReadInputTokens     int64
+	TotalInputTokens         int64 // provider 口径下的输入 token 总数（含缓存）
 }
 
 // AgentRunTokens 追踪当前 agent 本次运行的 token 消耗（非历史累计）
@@ -371,6 +372,7 @@ type AgentRunTokens struct {
 	OutputTokens             int64
 	CacheReadInputTokens     int64
 	CacheCreationInputTokens int64
+	TotalInputTokens         int64 // provider 口径下的输入 token 总数（含缓存）
 }
 
 // visibleEntryIndices 返回当前视口中可见的logEntry索引范围 [start, end]。
@@ -591,6 +593,7 @@ type model struct {
 	outputTokens             int64 // accumulated output tokens
 	cacheCreationInputTokens int64 // accumulated cache creation input tokens
 	cacheReadInputTokens     int64 // accumulated cache read (hit) tokens
+	totalInputTokens         int64 // provider 口径下的输入 token 总数（含缓存），用于正确计算 cache 命中率
 
 	// Per-agent token tracking
 	tokenUsagePerAgent map[string]*AgentTokenUsage

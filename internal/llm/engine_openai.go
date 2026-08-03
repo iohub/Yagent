@@ -221,6 +221,9 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 			TotalTokens:      acc.Usage.TotalTokens,
 		}
 
+		// OpenAI 的 prompt_tokens 已包含 cached_tokens，直接作为 TotalInputTokens
+		usage.TotalInputTokens = acc.Usage.PromptTokens
+
 		// Extract cache-related tokens from prompt_tokens_details.cached_tokens (OpenAI format)
 		if acc.Usage.PromptTokensDetails.CachedTokens > 0 {
 			usage.CacheReadInputTokens = acc.Usage.PromptTokensDetails.CachedTokens
@@ -380,6 +383,9 @@ func (e *OpenAIEngine) toResponse(completion *openai.ChatCompletion) *Response {
 			CompletionTokens: completion.Usage.CompletionTokens,
 			TotalTokens:      completion.Usage.TotalTokens,
 		}
+
+		// OpenAI 的 prompt_tokens 已包含 cached_tokens，直接作为 TotalInputTokens
+		resp.Usage.TotalInputTokens = completion.Usage.PromptTokens
 
 		// Extract cache-related tokens from prompt_tokens_details.cached_tokens (OpenAI format)
 		if completion.Usage.PromptTokensDetails.CachedTokens > 0 {

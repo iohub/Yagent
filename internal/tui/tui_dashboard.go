@@ -151,7 +151,11 @@ func (m *model) renderDashboard(width, height int) string {
 		outputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114"))
 		cacheRateStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
 
-		totalInput := m.inputTokens + m.cacheReadInputTokens + m.cacheCreationInputTokens
+		// 使用 totalInputTokens（provider 口径）作为分母，避免 OpenAI 路径重复计算 cached tokens
+		totalInput := m.totalInputTokens
+		if totalInput == 0 {
+			totalInput = m.inputTokens + m.cacheReadInputTokens + m.cacheCreationInputTokens
+		}
 		inStr := formatToken(totalInput)
 		outStr := formatToken(m.outputTokens)
 		nameStyle := lipgloss.NewStyle().
@@ -211,7 +215,10 @@ func (m *model) renderDashboard(width, height int) string {
 				Width(10)
 			nameRendered := nameStyle.Render(name)
 
-			auTotalInput := au.InputTokens + au.CacheReadInputTokens + au.CacheCreationInputTokens
+			auTotalInput := au.TotalInputTokens
+			if auTotalInput == 0 {
+				auTotalInput = au.InputTokens + au.CacheReadInputTokens + au.CacheCreationInputTokens
+			}
 			auInStr := formatToken(auTotalInput)
 			auOutStr := formatToken(au.OutputTokens)
 

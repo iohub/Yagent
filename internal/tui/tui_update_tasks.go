@@ -97,6 +97,24 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				}
 				m.cacheReadInputTokens += cacheReadVal
 
+				// Parse total_input_tokens (provider 口径，含缓存部分)
+				// 若事件中没有该字段，则回退到旧公式计算
+				var totalInputVal int64
+				if totalInputTokens, ok := usageMap["total_input_tokens"]; ok {
+					switch v := totalInputTokens.(type) {
+					case float64:
+						totalInputVal = int64(v)
+					case int64:
+						totalInputVal = v
+					case int:
+						totalInputVal = int64(v)
+					}
+				} else {
+					// 向后兼容：使用旧公式 totalInput = promptVal + cacheReadVal + cacheCreationVal
+					totalInputVal = promptVal + cacheReadVal + cacheCreationVal
+				}
+				m.totalInputTokens += totalInputVal
+
 				// Track current agent run tokens (reset on agent switch)
 				agentNameForRun := msg.event.From
 				if agentNameForRun == "" {
@@ -112,6 +130,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				m.currentAgentRunTokens.OutputTokens += completionVal
 				m.currentAgentRunTokens.CacheReadInputTokens += cacheReadVal
 				m.currentAgentRunTokens.CacheCreationInputTokens += cacheCreationVal
+				m.currentAgentRunTokens.TotalInputTokens += totalInputVal
 
 				// Track current running agent
 				if m.taskRunning {
@@ -134,6 +153,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				agentUsage.OutputTokens += completionVal
 				agentUsage.CacheCreationInputTokens += cacheCreationVal
 				agentUsage.CacheReadInputTokens += cacheReadVal
+				agentUsage.TotalInputTokens += totalInputVal
 			}
 		} else {
 			// Fallback: no usage metadata — estimate output tokens from content

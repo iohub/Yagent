@@ -711,7 +711,11 @@ func (m *model) renderTokenDashboard() string {
 	inStr := formatToken(m.inputTokens)
 	outStr := formatToken(m.outputTokens)
 	sumStr := formatToken(totalTokens)
-	totalInput := m.inputTokens + m.cacheReadInputTokens + m.cacheCreationInputTokens
+	// 使用 totalInputTokens（provider 口径）作为分母，避免 OpenAI 路径重复计算 cached tokens
+	totalInput := m.totalInputTokens
+	if totalInput == 0 {
+		totalInput = m.inputTokens + m.cacheReadInputTokens + m.cacheCreationInputTokens
+	}
 
 	// Total line — highlighted
 	inputStyle := lipgloss.NewStyle().
@@ -772,7 +776,10 @@ func (m *model) renderTokenDashboard() string {
 		agentLine := nameStyle.Render(paddedName)
 		agentLine += " " + agentInStyle.Render(fmt.Sprintf("In: %s  ", agentIn))
 		agentLine += agentOutStyle.Render(fmt.Sprintf("Out: %s", agentOut))
-		auTotalInput := au.InputTokens + au.CacheReadInputTokens + au.CacheCreationInputTokens
+		auTotalInput := au.TotalInputTokens
+		if auTotalInput == 0 {
+			auTotalInput = au.InputTokens + au.CacheReadInputTokens + au.CacheCreationInputTokens
+		}
 		if cacheInfo := formatCacheInfo(au.CacheReadInputTokens, au.CacheCreationInputTokens, auTotalInput); cacheInfo != "" {
 			agentLine += "  " + agentInStyle.Render(cacheInfo)
 		}
@@ -799,7 +806,11 @@ func (m *model) renderCollapsedTokenDashboard() string {
 	}
 
 	// 计算总输入 token（用于 cache 命中率计算）
-	totalInput := rt.InputTokens + rt.CacheReadInputTokens + rt.CacheCreationInputTokens
+	// 使用 TotalInputTokens（provider 口径），避免 OpenAI 路径重复计算 cached tokens
+	totalInput := rt.TotalInputTokens
+	if totalInput == 0 {
+		totalInput = rt.InputTokens + rt.CacheReadInputTokens + rt.CacheCreationInputTokens
+	}
 
 	inStr := formatToken(totalInput)
 	outStr := formatToken(rt.OutputTokens)

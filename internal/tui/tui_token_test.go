@@ -346,3 +346,181 @@ func TestFormatCacheShort(t *testing.T) {
 		})
 	}
 }
+
+// TestTotalInputTokens_OpenAICompatibility 验证 OpenAI 兼容 API 路径下 totalInputTokens 正确累计
+// 场景：prompt_tokens=1000 已包含 cache，其中 cache_read=300, cache_creation=200
+// 正确的 totalInputTokens 应为 1000（不是 1000+300+200=1500）
+// 命中率应为 300/1000 = 30%（不是 300/1500 = 20%）
+func TestTotalInputTokens_OpenAICompatibility(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	// 模拟 OpenAI 兼容 API 返回（prompt_tokens 已包含 cached_tokens）
+	event := &messaging.MessageEvent{
+		Type:      "ai_response",
+		From:      "Director",
+		Content:   "测试内容",
+		Timestamp: time.Now(),
+		Metadata: map[string]interface{}{
+			"usage": map[string]interface{}{
+				"prompt_tokens":               1000, // 已包含 cache
+				"completion_tokens":           500,
+				"total_tokens":                1500,
+				"cache_creation_input_tokens": 200,
+				"cache_read_input_tokens":     300,
+				"total_input_tokens":          1000, // provider 口径的总输入
+			},
+		},
+	}
+	m = feedEvent(m, event)
+
+	// 验证 totalInputTokens 正确累计（1000 而非 1500）
+	if m.totalInputTokens != 1000 {
+		t.Errorf("totalInputTokens 期望1000（provider 口径），实际%d", m.totalInputTokens)
+	}
+	if m.inputTokens != 1000 {
+		t.Errorf("inputTokens 期望1000，实际%d", m.inputTokens)
+	}
+	if m.cacheReadInputTokens != 300 {
+		t.Errorf("cacheReadInputTokens 期望300，实际%d", m.cacheReadInputTokens)
+	}
+	if m.cacheCreationInputTokens != 200 {
+		t.Errorf("cacheCreationInputTokens 期望200，实际%d", m.cacheCreationInputTokens)
+	}
+
+	// 验证 per-agent 统计
+	agentUsage, ok := m.tokenUsagePerAgent["Director"]
+	if !ok {
+		t.Fatal("缺少 Director agent 统计")
+	}
+	if agentUsage.TotalInputTokens != 1000 {
+		t.Errorf("Director TotalInputTokens 期望1000，实际%d", agentUsage.TotalInputTokens)
+	}
+
+	// 验证 currentAgentRunTokens 统计
+	if m.currentAgentRunTokens.TotalInputTokens != 1000 {
+		t.Errorf("currentAgentRunTokens.TotalInputTokens 期望1000，实际%d", m.currentAgentRunTokens.TotalInputTokens)
+	}
+}
+
+// TestTotalInputTokens_BackwardCompatibility 验证向后兼容：无 total_input_tokens 时回退旧公式
+func TestTotalInputTokens_BackwardCompatibility(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	// 模拟旧版 API（不含 total_input_tokens 字段）
+	event := &messaging.MessageEvent{
+		Type:      "ai_response",
+		From:      "Repo-Agent",
+		Content:   "测试内容",
+		Timestamp: time.Now(),
+		Metadata: map[string]interface{}{
+			"usage": map[string]interface{}{
+				"prompt_tokens":               2000,
+				"completion_tokens":           800,
+				"total_tokens":                2800,
+				"cache_creation_input_tokens": 200,
+				"cache_read_input_tokens":     300,
+				// 注意：没有 total_input_tokens 字段
+			},
+		},
+	}
+	m = feedEvent(m, event)
+
+	// 回退到旧公式：totalInput = prompt + cacheRead + cacheCreation = 2500
+	if m.totalInputTokens != 2500 {
+		t.Errorf("totalInputTokens 期望2500（旧公式回退），实际%d", m.totalInputTokens)
+	}
+	if m.inputTokens != 2000 {
+		t.Errorf("inputTokens 期望2000，实际%d", m.inputTokens)
+	}
+}
+
+// TestTotalInputTokens_ZeroFallback 验证 totalInputTokens=0 时回退旧公式
+func TestTotalInputTokens_ZeroFallback(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	// 第一个事件设置 totalInputTokens=0（模拟未初始化场景）
+	event1 := &messaging.MessageEvent{
+		Type:      "ai_response",
+		From:      "Director",
+		Content:   "内容1",
+		Timestamp: time.Now(),
+		Metadata: map[string]interface{}{
+			"usage": map[string]interface{}{
+				"prompt_tokens":     100,
+				"completion_tokens": 50,
+				"total_tokens":      150,
+				"total_input_tokens": 0, // 模拟未设置
+			},
+		},
+	}
+	m = feedEvent(m, event1)
+
+	// totalInputTokens 应为0，因为事件中没有设置
+	if m.totalInputTokens != 0 {
+		t.Errorf("totalInputTokens 期望0（事件无 total_input_tokens），实际%d", m.totalInputTokens)
+	}
+
+	// 第二个事件有 total_input_tokens
+	event2 := &messaging.MessageEvent{
+		Type:      "ai_response",
+		From:      "Director",
+		Content:   "内容2",
+		Timestamp: time.Now(),
+		Metadata: map[string]interface{}{
+			"usage": map[string]interface{}{
+				"prompt_tokens":     200,
+				"completion_tokens": 100,
+				"total_tokens":      300,
+				"total_input_tokens": 200,
+			},
+		},
+	}
+	m = feedEvent(m, event2)
+
+	// 累计：0 + 200 = 200
+	if m.totalInputTokens != 200 {
+		t.Errorf("totalInputTokens 期望200，实际%d", m.totalInputTokens)
+	}
+}
+
+// TestCacheHitRate_OpenAIPath 验证 OpenAI 路径下命中率计算正确（100% 命中不封顶 50%）
+func TestCacheHitRate_OpenAIPath(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	// 模拟 100% cache 命中场景：prompt_tokens=1000 全部是 cached_tokens
+	event := &messaging.MessageEvent{
+		Type:      "ai_response",
+		From:      "Director",
+		Content:   "测试内容",
+		Timestamp: time.Now(),
+		Metadata: map[string]interface{}{
+			"usage": map[string]interface{}{
+				"prompt_tokens":               1000,
+				"completion_tokens":           500,
+				"total_tokens":                1500,
+				"cache_creation_input_tokens": 0,
+				"cache_read_input_tokens":     1000,
+				"total_input_tokens":          1000,
+			},
+		},
+	}
+	m = feedEvent(m, event)
+
+	// 验证 totalInputTokens 正确
+	if m.totalInputTokens != 1000 {
+		t.Errorf("totalInputTokens 期望1000，实际%d", m.totalInputTokens)
+	}
+
+	// 验证命中率计算：formatCacheInfo 应该显示 100%
+	cacheInfo := formatCacheInfo(m.cacheReadInputTokens, m.cacheCreationInputTokens, m.totalInputTokens)
+	if cacheInfo == "" {
+		t.Fatal("cacheInfo 不应为空")
+	}
+	if !strings.Contains(cacheInfo, "100.0%") {
+		t.Errorf("cacheInfo 应包含 100.0%%，实际 %q", cacheInfo)
+	}
+}

@@ -64,6 +64,10 @@ type TokenUsage struct {
 	TotalTokens              int64 `json:"total_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens,omitempty"`
+	// TotalInputTokens 是 provider 口径下的输入 token 总数（含缓存命中部分）。
+	// 用于正确计算 cache 命中率：OpenAI 的 prompt_tokens 已包含 cached_tokens，
+	// 而 Anthropic 的 input_tokens 不含 cache，需要手动累加。
+	TotalInputTokens int64 `json:"total_input_tokens,omitempty"`
 }
 
 // Response represents the LLM's response to a GenerateContent call.
