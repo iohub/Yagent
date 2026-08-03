@@ -24,7 +24,7 @@ const mockMessages: any[] = [
   {
     "type": "ai_response",
     "timestamp": 1768294897444,
-    "data": "## Thought Process\n---\n1.  **State Analysis**:\n    *   **Current Goal**: 将 `crud.py` 文件中的注释从英文（或其他语言）修改为中文。\n    *   **Current Step Status**: 任务刚开始，尚未获取任何关于项目结构或文件内容的信息。\n    *   **Reasoning**: 根据工作流策略，我必须首先使用 `Repo-Agent` 来分析仓库结构，以确认 `crud.py` 的存在及其位置。这是获取“心智地图”的强制性步骤。\n---\n2.  **Plan Update**:\n    *   [x] 1. 分析仓库结构，定位 `crud.py` 文件。\n    *   [ ] 2. 读取 `crud.py` 的内容，分析现有的注释风格和内容。\n    *   [ ] 3. 将注释翻译/修改为中文。\n    *   [ ] 4. 验证修改后的代码语法是否正确。\n\n我将首先调用 `delegate_repo` 来查找文件。"
+    "data": "## Throught & Plan\n### Thought Process\n* **Current Goal**: 将 `crud.py` 文件中的注释从英文（或其他语言）修改为中文。\n* **Current Step**: 任务刚开始，尚未获取任何关于项目结构或文件内容的信息。\n* **Reasoning**: 根据工作流策略，我必须首先使用 `Repo-Agent` 来分析仓库结构，以确认 `crud.py` 的存在及其位置。这是获取「心智地图」的强制性步骤。\n---\n### Plan Update\n* [>] 1. 分析仓库结构，定位 `crud.py` 文件。\n* [ ] 2. 读取 `crud.py` 的内容，分析现有的注释风格和内容。\n* [ ] 3. 将注释翻译/修改为中文。\n* [ ] 4. 验证修改后的代码语法是否正确。\n\n我将首先调用 `delegate_repo` 来查找文件。"
   },
   {
     "type": "memory_change",

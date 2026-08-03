@@ -703,7 +703,7 @@ type Agent interface {
 | **编码分离** | 不直接输出代码块，必须委派给 Coding-Agent |
 | **逐步执行** | 一次只委派一个子任务，验证后再继续 |
 | **强制委派** | 仓库探索必须通过 `delegate_repo`，不可直接操作文件 |
-| **思考先于行动** | 必须在 `Thought Process` 块中分析后再执行工具调用 |
+| **思考先于行动** | 必须在 `Throught & Plan` 块中分析后再执行工具调用 |
 
 ### 8.2 行为约束
 
@@ -732,18 +732,24 @@ type Agent interface {
    - 独立任务可同时委派（如多个只读分析）
 
 6. **思考先于行动**
-   - 在每次工具调用前包含 `Thought Process` 块
+   - 在每次工具调用前包含 `Throught & Plan` 块
    - 分析问题根因再选择工具
    - 记录决策理由和预期结果
 
-### 8.3 Thought Process 模板
+### 8.3 Thought & Plan 模板
 
 ```
-Thought Process:
-1. 当前状态: [描述当前任务进度和上下文]
-2. 问题分析: [分析用户请求或当前遇到的问题]
-3. 决策理由: [为什么选择这个 Agent 或工具]
-4. 预期结果: [期望得到什么输出]
+## Throught & Plan
+### Thought Process
+* **Current Goal**: [当前高层目标]
+* **Current Step**: [上一步及结果]
+* **Reasoning**: [为什么执行下一步]
+---
+### Plan Update
+* [x] 1. [已完成]
+* [>] 2. [当前 — 即将委派]
+* [ ] 3. [待处理]
+* [ ] 4. [待处理]
 ```
 
 ---
