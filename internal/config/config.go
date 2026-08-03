@@ -528,6 +528,12 @@ func (c *Config) validate() error {
 	if c.EnhancedCommander.MaxDelegationDepth == 0 {
 		c.EnhancedCommander.MaxDelegationDepth = 3
 	}
+	if c.EnhancedCommander.ContextCompressionThreshold == 0 {
+		c.EnhancedCommander.ContextCompressionThreshold = 120000
+	}
+	if c.EnhancedCommander.ToolResultKeepTokens == 0 {
+		c.EnhancedCommander.ToolResultKeepTokens = 200
+	}
 
 	// ═══════ Git Checkpoint 默认值设置 ═══════
 	gitCfgDefaults := DefaultGitCheckpointConfig()
@@ -679,6 +685,15 @@ type EnhancedCommanderConfig struct {
 
 	// MaxDelegationDepth 最大委派深度，默认 3
 	MaxDelegationDepth int `toml:"max_delegation_depth" json:"max_delegation_depth"`
+
+	// EnableContextCompression 是否启用上下文压缩（超阈值时截断 tool 执行结果）
+	EnableContextCompression bool `toml:"enable_context_compression" json:"enable_context_compression"`
+
+	// ContextCompressionThreshold 触发上下文压缩的 token 阈值，默认 120000
+	ContextCompressionThreshold int `toml:"context_compression_threshold" json:"context_compression_threshold"`
+
+	// ToolResultKeepTokens 截断后每条 tool 结果保留的 token 数，默认 200
+	ToolResultKeepTokens int `toml:"tool_result_keep_tokens" json:"tool_result_keep_tokens"`
 }
 
 // ═══════════════════════════════════════════════════════════════

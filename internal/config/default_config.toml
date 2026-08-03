@@ -101,6 +101,9 @@ injection_rerank = true
 # compression_threshold = 4096
 # summary_max_length = 2048
 # max_delegation_depth = 3
+# enable_context_compression = false
+# context_compression_threshold = 120000
+# tool_result_keep_tokens = 200
 
 # ── Git Checkpoint 机制 ──
 # 在 Agent 执行期间自动创建代码快照，支持回滚和最终 squash merge

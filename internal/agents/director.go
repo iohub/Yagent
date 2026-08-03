@@ -1053,6 +1053,19 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			// 验证并修复 tool_call/tool_response 配对完整性
 			messages = validateAndRepairToolCallPairs(messages)
 
+			// 上下文压缩:token 超阈值时按优先级截断 tool 执行结果
+			if a.EnhancedCommanderCfg.Enable && a.EnhancedCommanderCfg.EnableContextCompression {
+				threshold := a.EnhancedCommanderCfg.ContextCompressionThreshold
+				if threshold <= 0 {
+					threshold = DefaultContextCompressionThreshold
+				}
+				keepTokens := a.EnhancedCommanderCfg.ToolResultKeepTokens
+				if keepTokens <= 0 {
+					keepTokens = DefaultToolResultKeepTokens
+				}
+				messages = TruncateToolResultsToBudget(messages, threshold, keepTokens)
+			}
+
 			slog.Debug("DirectorAgent calling LLM", "step", i, "messages", messages)
 
 			// Create opts with streaming handler for real-time output
