@@ -159,12 +159,6 @@ func (sm *SharedMemory) FilterByAgent(agentID string) []ChatMessage {
 	return filtered
 }
 
-// Compact summarizes old messages (placeholder for future enhancement).
-func (sm *SharedMemory) Compact() error {
-	// Future: use LLM to summarize older messages
-	return nil
-}
-
 // SetKey stores a key-value pair. Thread-safe. Overwrites if key exists.
 func (sm *SharedMemory) SetKey(key string, value string) error {
 	sm.kvMu.Lock()
