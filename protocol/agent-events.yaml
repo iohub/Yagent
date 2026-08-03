@@ -90,6 +90,10 @@ event_types:
           - name: total_tokens
             type: number
             required: false
+          - name: total_input_tokens
+            type: number
+            description: "provider 口径的输入 token 总数（含缓存命中部分）"
+            required: false
           - name: cache_creation_input_tokens
             type: number
             required: false
@@ -240,6 +244,16 @@ event_types:
             type: number
             required: false
           - name: completion_tokens
+            type: number
+            required: false
+          - name: total_input_tokens
+            type: number
+            description: "provider 口径的输入 token 总数（含缓存命中部分）"
+            required: false
+          - name: cache_creation_input_tokens
+            type: number
+            required: false
+          - name: cache_read_input_tokens
             type: number
             required: false
 

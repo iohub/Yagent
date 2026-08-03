@@ -63,6 +63,10 @@
               "description": "",
               "type": "number"
             },
+            "total_input_tokens": {
+              "description": "provider 口径的输入 token 总数（含缓存命中部分）",
+              "type": "number"
+            },
             "total_tokens": {
               "description": "",
               "type": "number"
@@ -98,12 +102,24 @@
         "usage": {
           "description": "Token 使用统计（可选）",
           "properties": {
+            "cache_creation_input_tokens": {
+              "description": "",
+              "type": "number"
+            },
+            "cache_read_input_tokens": {
+              "description": "",
+              "type": "number"
+            },
             "completion_tokens": {
               "description": "",
               "type": "number"
             },
             "prompt_tokens": {
               "description": "",
+              "type": "number"
+            },
+            "total_input_tokens": {
+              "description": "provider 口径的输入 token 总数（含缓存命中部分）",
               "type": "number"
             }
           },
@@ -703,9 +719,6 @@
     },
     {
       "$ref": "#/definitions/ToolCallErrorEvent"
-    },
-    {
-      "$ref": "#/definitions/ContextLoadedEvent"
     },
     {
       "$ref": "#/definitions/ContextLoadedEvent"
