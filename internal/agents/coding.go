@@ -325,6 +325,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 			UserMessage: input,
 			TargetFiles: nil,
 			AgentName:   a.Name(),
+			Domains:     []string{"repo", "coding"}, // Coding-Agent 检索 repo + coding domain 知识
 		}
 		if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
 			systemPrompt += knowledgeBlock

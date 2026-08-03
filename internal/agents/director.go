@@ -949,6 +949,7 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			UserMessage: input,
 			TargetFiles: nil,
 			AgentName:   a.Name(),
+			// Domains 为空 = 检索全部 domain（Director 不限定）
 		}
 		if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
 			systemPrompt += knowledgeBlock

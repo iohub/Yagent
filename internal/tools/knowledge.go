@@ -13,6 +13,18 @@ import (
 	"codeactor/internal/mcp"
 )
 
+// knowledgeDomainsForAgent 根据知识来源 agent 返回可检索的 domain 列表
+// repo_agent → 仅 repo；coding_agent → repo + coding；其他 → 全部（nil）
+func knowledgeDomainsForAgent(sourceAgent string) []string {
+	switch sourceAgent {
+	case "repo_agent":
+		return []string{"repo"}
+	case "coding_agent":
+		return []string{"repo", "coding"}
+	}
+	return nil
+}
+
 // ============================================================================
 // ConsolidateKnowledgeTool
 // ============================================================================
@@ -136,9 +148,10 @@ func (t *ConsolidateKnowledgeTool) Execute(ctx context.Context, params map[strin
 	var dupResult *mcp.KnowledgeSearchResult
 	if t.mcp != nil {
 		results, err := t.mcp.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
-			Query:  title,
-			Limit:  5,
-			Rerank: true,
+			Query:   title,
+			Limit:   5,
+			Rerank:  true,
+			Domains: knowledgeDomainsForAgent(t.sourceAgent),
 		})
 		if err == nil {
 			for i := range results {

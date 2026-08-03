@@ -125,6 +125,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 			UserMessage: input,
 			TargetFiles: nil,
 			AgentName:   a.Name(),
+			Domains:     []string{"repo"}, // Repo-Agent 只检索 repo domain 知识
 		}
 		if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
 			systemPrompt += knowledgeBlock

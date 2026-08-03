@@ -47,9 +47,10 @@ type KnowledgeAddRequest struct {
 
 // KnowledgeSearchRequest
 type KnowledgeSearchRequest struct {
-	Query  string `json:"query"`
-	Limit  int    `json:"limit,omitempty"`
-	Rerank bool   `json:"rerank,omitempty"`
+	Query   string   `json:"query"`
+	Limit   int      `json:"limit,omitempty"`
+	Rerank  bool     `json:"rerank,omitempty"`
+	Domains []string `json:"domains,omitempty"` // 检索域: repo / coding; 空 = 全部
 }
 
 // KnowledgeListRequest
@@ -122,6 +123,9 @@ func (c *MCPClient) KnowledgeSearch(ctx context.Context, req KnowledgeSearchRequ
 	}
 	if req.Limit == 0 {
 		args["limit"] = 8
+	}
+	if len(req.Domains) > 0 {
+		args["domains"] = req.Domains
 	}
 	result, err := c.CallTool(ctx, "knowledge_search", args)
 	if err != nil {

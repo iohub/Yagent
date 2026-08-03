@@ -22,6 +22,8 @@ type InjectionContext struct {
 	TargetFiles []string
 	// AgentName 触发注入的 agent 名称（可选，用于日志关联）
 	AgentName string
+	// Domains 限定检索的知识域（repo / coding）；空 = 检索全部
+	Domains []string
 }
 
 // KnowledgeInjector 对话前知识检索注入器
@@ -75,12 +77,13 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 	if limit <= 0 {
 		limit = 8
 	}
-	kl.Info("knowledge injection start", "event", "inject_start", "agent", agent, "query", truncateByRune(query, 120), "query_len", runeCount(query), "limit", limit, "rerank", k.cfg.InjectionRerank)
+	kl.Info("knowledge injection start", "event", "inject_start", "agent", agent, "query", truncateByRune(query, 120), "query_len", runeCount(query), "limit", limit, "rerank", k.cfg.InjectionRerank, "domains", injCtx.Domains)
 
 	results, err := k.mcpClient.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
-		Query:  query,
-		Limit:  limit,
-		Rerank: k.cfg.InjectionRerank,
+		Query:   query,
+		Limit:   limit,
+		Rerank:  k.cfg.InjectionRerank,
+		Domains: injCtx.Domains,
 	})
 	if err != nil {
 		slog.Warn("知识检索失败，跳过注入", "error", err)
