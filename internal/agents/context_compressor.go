@@ -2,7 +2,6 @@ package agents
 
 import (
 	"fmt"
-	"strings"
 
 	"codeactor/internal/llm"
 	"codeactor/internal/tokenutil"
@@ -149,9 +148,3 @@ func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens i
 	}
 	return messages
 }
-
-// truncateToTokenBudget 兼容旧签名（保留，内部实现已在上方）。
-// 注意：本包内调用统一使用上方已定义的版本。
-
-// ensure 保证代码编译通过（此处仅为占位，实际逻辑在上方）。
-var _ = strings.Contains
