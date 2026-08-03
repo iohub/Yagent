@@ -142,7 +142,14 @@ func (e *OpenAIEngine) buildParams(messages []Message, tools []ToolDef, opts *Ca
 }
 
 func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.ChatCompletionNewParams, handler StreamHandler) (*Response, error) {
-	stream := e.client.Chat.Completions.NewStreaming(ctx, params)
+	// Request token usage (incl. cached_tokens) in the final stream chunk.
+	// Use a copy so the non-streaming fallback keeps the original params
+	// (stream_options is only valid for streaming requests).
+	streamParams := params
+	streamParams.StreamOptions = openai.ChatCompletionStreamOptionsParam{
+		IncludeUsage: openai.Bool(true),
+	}
+	stream := e.client.Chat.Completions.NewStreaming(ctx, streamParams)
 	defer stream.Close()
 
 	var content string
