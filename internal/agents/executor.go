@@ -291,6 +291,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 					"total_tokens":                resp.Usage.TotalTokens,
 					"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
 					"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
+					"total_input_tokens":          resp.Usage.TotalInputTokens,
 				}
 			} else {
 				// Local models may not return usage — estimate from message content
