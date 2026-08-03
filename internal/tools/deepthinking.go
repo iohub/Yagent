@@ -123,7 +123,6 @@ You MUST structure your response using the following framework:
 - Select the best solution and justify the choice
 - Provide a step-by-step implementation plan
 - For each step: what to do, which files/components to modify, what to verify
-- Include specific code patterns, architectural diagrams (in text), or pseudocode where helpful
 - Describe each step in precise natural language — what to do, which files/components to modify, what to verify. DO NOT include code skeletons, actual code snippets, or pseudocode (they consume excessive tokens and are not needed for the plan).
 
 ## 6. Verification Strategy
