@@ -793,3 +793,20 @@ cd codeseek/rust-core && cargo build       # Rust 构建
 ---
 
 *本文档由 CodeActor Agent 系统自动生成并维护，最后更新: 2025*
+
+<!-- CODESEEK_INJECTION -->
+# Code exploration: use CodeSeek MCP tools first
+
+Before any Grep/Glob/Bash for code search, try CodeSeek tools first.
+They give you AST-verified definitions with signatures and line numbers.
+
+Tool priority (use in this order):
+1. codeseek_search("query")      — FIRST for finding code by name or behavior
+2. codeseek_callers("fn")        — REQUIRED before modifying any function
+3. codeseek_callees("fn")        — to understand internal dependencies
+4. codeseek_callgraph("fn", 2)   — to explore full calling context with depth
+5. codeseek_skeleton("filepaths") — to explore file structure before reading full files
+6. codeseek_snippet("fn", "filepath") — to read exact function implementation
+7. Grep — ONLY for exact strings (error messages, UUIDs, log formats)
+8. Glob — ONLY when you already know the exact filename pattern
+<!-- /CODESEEK_INJECTION -->
