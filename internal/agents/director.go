@@ -1063,7 +1063,8 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				if keepTokens <= 0 {
 					keepTokens = DefaultToolResultKeepTokens
 				}
-				_, compStats := TruncateToolResultsToBudget(messages, threshold, keepTokens)
+			var compStats *ContextCompressionStats
+				messages, compStats = TruncateToolResultsToBudget(messages, threshold, keepTokens)
 				if compStats != nil && compStats.TruncatedCount > 0 && a.Publisher != nil {
 					truncatedTools := make([]map[string]interface{}, len(compStats.TruncatedTools))
 					for ti, tool := range compStats.TruncatedTools {
