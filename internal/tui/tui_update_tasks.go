@@ -11,6 +11,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+const (
+	// 流式渲染节流阈值：累积 5 个 chunk（每个 chunk 约等于 1 个 token）才渲染一次
+	aiChunkRenderThreshold = 5
+	// 单次累积内容超过 64 字节立即渲染（防止单个超大 chunk 长时间不显示）
+	aiChunkFlushMaxBytes = 64
+	// 慢流兜底：距上次渲染超过 300ms 且有未渲染内容时立即渲染（保证交互反馈）
+	aiChunkFlushInterval = 300 * time.Millisecond
+)
+
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	// Don't process task events while any popup/dialog is showing.
 	// Keep the event chain alive so the TUI resumes after dialog dismissal.
@@ -218,13 +227,33 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
-			// 实时更新：每个 chunk 直接追加到条目并立即渲染，不做累积缓冲
-			le := &m.logEntries[idx]
-			le.streamContent += content
-			le.content = le.streamContent // 同步到 content 字段
-			le.clearRenderCache()         // 失效渲染缓存，确保内容变化生效
-			m.markEntryDirty(idx)
-			m.viewportDirty = true // 实时更新：立即触发视图重绘
+			// 累积缓冲：chunk 先进入 buffer，达到阈值才写入条目并触发渲染（降低 CPU）
+			if m.aiChunkBuffers == nil {
+				m.aiChunkBuffers = make(map[string]*aiChunkBuffer)
+			}
+			buf := m.aiChunkBuffers[agentName]
+			if buf == nil {
+				buf = &aiChunkBuffer{lastFlush: time.Now()}
+				m.aiChunkBuffers[agentName] = buf
+			}
+			buf.content += content
+			buf.count++
+
+			// 满足任一条件即 flush：累积达 5 个 chunk（≈5 tokens）/ 内容超 64 字节 / 慢流超时 300ms
+			shouldFlush := buf.count >= aiChunkRenderThreshold ||
+				len(buf.content) >= aiChunkFlushMaxBytes ||
+				(buf.count > 0 && time.Since(buf.lastFlush) >= aiChunkFlushInterval)
+			if shouldFlush {
+				le := &m.logEntries[idx]
+				le.streamContent += buf.content
+				le.content = le.streamContent // 同步到 content 字段
+				le.clearRenderCache()         // 失效渲染缓存，确保内容变化生效
+				m.markEntryDirty(idx)
+				m.viewportDirty = true // 触发视图重绘（节流后）
+				buf.content = ""
+				buf.count = 0
+				buf.lastFlush = time.Now()
+			}
 			return m, listenForEvents(m.eventCh)
 		}
 
@@ -256,11 +285,23 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
+			// 流结束：强制 flush 剩余累积内容，保证最终内容完整显示
+			if buf := m.aiChunkBuffers[agentName]; buf != nil && buf.content != "" {
+				le := &m.logEntries[idx]
+				le.streamContent += buf.content
+				le.content = le.streamContent
+				le.clearRenderCache()
+				m.markEntryDirty(idx)
+				m.viewportDirty = true
+				buf.content = ""
+				buf.count = 0
+			}
 			m.logEntries[idx].streaming = false
 			m.aiStreamCompletedEntries[agentName] = idx
 			delete(m.aiStreamActiveEntries, agentName)
 			m.markEntryDirty(idx)
 		}
+		delete(m.aiChunkBuffers, agentName) // 清理缓冲
 		return m, listenForEvents(m.eventCh)
 	}
 
@@ -294,6 +335,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.markEntryDirty(idx)
 			m.viewportDirty = true // 新增：触发视图更新
 			delete(m.aiStreamCompletedEntries, agentName)
+			delete(m.aiChunkBuffers, agentName) // 防御性清理残留缓冲
 			return m, listenForEvents(m.eventCh)
 		}
 
@@ -312,6 +354,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.markEntryDirty(idx)
 			m.viewportDirty = true // 新增：触发视图更新
 			delete(m.aiStreamActiveEntries, agentName)
+			delete(m.aiChunkBuffers, agentName) // 防御性清理残留缓冲
 			return m, listenForEvents(m.eventCh)
 		}
 

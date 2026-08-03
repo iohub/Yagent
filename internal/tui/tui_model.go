@@ -249,6 +249,15 @@ var (
 				Foreground(airlineColorInfoFg)
 )
 
+// aiChunkBuffer 累积 ai_chunk 事件内容，达到阈值后才写入 logEntry 并触发渲染。
+// 每个 ai_chunk 事件约等于一个 token 增量；累积 5 个（≈5 tokens）才渲染一次，
+// 显著降低流式输出时的 TUI 重绘频率与 CPU 消耗。
+type aiChunkBuffer struct {
+	content   string    // 已累积、尚未渲染的内容
+	count     int       // 已累积的 chunk 事件数（≈ token 数）
+	lastFlush time.Time // 上次 flush 时间（慢流超时兜底，保证交互反馈）
+}
+
 // logEntry represents a single message in the TUI log area.
 type logEntry struct {
 	timestamp        time.Time
@@ -562,6 +571,9 @@ type model struct {
 	// AI 流式条目追踪
 	aiStreamActiveEntries    map[string]int // agent → logEntries index (流式中)
 	aiStreamCompletedEntries map[string]int // agent → logEntries index (等待 ai_response)
+
+	// AI 流式渲染节流缓冲：累积多个 chunk（≈token）后才触发一次渲染，降低 CPU 消耗
+	aiChunkBuffers map[string]*aiChunkBuffer // agent → 累积缓冲
 
 	// Current LLM model being used (extracted from model_info events)
 	currentModel string
@@ -947,6 +959,7 @@ return &model{
 			viewport:           vp,
 		aiStreamActiveEntries:    make(map[string]int),
 		aiStreamCompletedEntries: make(map[string]int),
+		aiChunkBuffers:          make(map[string]*aiChunkBuffer),
 		contentCache:       &strings.Builder{},
 		glamourRenderer:    glamourRenderer,
 		useDarkStyle:       useDarkStyle,

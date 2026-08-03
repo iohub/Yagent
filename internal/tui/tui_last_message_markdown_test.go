@@ -38,6 +38,7 @@ func newTestModel() *model {
 		dirtyEntryIndices:        make(map[int]struct{}),
 		aiStreamActiveEntries:    make(map[string]int),
 		aiStreamCompletedEntries: make(map[string]int),
+		aiChunkBuffers:          make(map[string]*aiChunkBuffer),
 
 		glamourCache:    make(map[string]string),
 		glamourLRU:      make([]string, 0, 32),
