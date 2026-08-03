@@ -305,9 +305,7 @@ func (w *ConsolidationWorker) extractKnowledge(consolidated string) {
 		for _, e := range entries {
 			content := e.Content
 			if len(content) > 200 {
-				// rune 截断到 200 字符以内
-				runes := []rune(content)
-				content = string(runes[:200]) + "..."
+				content = truncateRunes(content, 200)
 			}
 			entriesList = append(entriesList, map[string]interface{}{
 				"title":      e.Title,
@@ -392,6 +390,16 @@ func (w *ConsolidationWorker) callConsolidationLLM(currentMem string, observatio
 	}
 
 	return "", fmt.Errorf("LLM consolidation failed after %d retries: %w", maxConsolidationRetries+1, lastErr)
+}
+
+// truncateRunes 按 rune 数截断字符串，超过 max 时在末尾追加 "..."。
+// 使用 rune 计数而非字节长度，避免多字节字符（如中文）触发 slice bounds panic。
+func truncateRunes(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "..."
 }
 
 // truncatePreview 截断字符串用于日志预览。

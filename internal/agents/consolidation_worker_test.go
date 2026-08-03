@@ -386,3 +386,62 @@ var validMemoryContent = `# Repository Memory
 
 // 确保 mock 实现了 llm.Engine 接口
 var _ llm.Engine = (*mockConsolidationEngine)(nil)
+
+// ============================================================================
+// Test truncateRunes
+// ============================================================================
+
+func TestTruncateRunes_ShortContent_NoTruncate(t *testing.T) {
+	// 短内容（字节数和 rune 数都 < 200），不应截断
+	input := "Hello, 世界！这是简短内容。"
+	result := truncateRunes(input, 200)
+	if result != input {
+		t.Errorf("expected no truncation for short content, got: %q", result)
+	}
+}
+
+func TestTruncateRunes_ChineseOver200Bytes_Under200Runes_NoPanic(t *testing.T) {
+	// 中文每个字符 3 字节：80 个中文字 = 240 字节，但只有 80 个 rune
+	// 字节数 > 200 但 rune 数 < 200，之前会 panic，修复后应完整保留
+	chineseContent := strings.Repeat("中文字符测试", 20) // 120 个中文字 = 360 字节, 120 个 rune
+	if len(chineseContent) <= 200 {
+		t.Skip("test requires content > 200 bytes, adjust string count")
+	}
+	result := truncateRunes(chineseContent, 200)
+	// rune 数 80 < 200，不应截断，不应有 "..." 后缀
+	if strings.HasSuffix(result, "...") {
+		t.Errorf("expected no truncation for Chinese content under 200 runes, got: %q", result)
+	}
+	if result != chineseContent {
+		t.Errorf("expected full content preserved, got: %q", result)
+	}
+}
+
+func TestTruncateRunes_LongASCII_TruncatedWithEllipsis(t *testing.T) {
+	// 300 个 ASCII 字符：rune 数 > 200，应截断到 200 + "..."
+	longContent := strings.Repeat("A", 300)
+	result := truncateRunes(longContent, 200)
+	expected := strings.Repeat("A", 200) + "..."
+	if result != expected {
+		t.Errorf("expected truncated result, got: %q (len=%d)", result, len(result))
+	}
+}
+
+func TestTruncateRunes_ExactBoundary(t *testing.T) {
+	// 恰好 200 个 ASCII 字符，不应截断
+	exact := strings.Repeat("B", 200)
+	result := truncateRunes(exact, 200)
+	if result != exact {
+		t.Errorf("expected no truncation at exact boundary, got: %q", result)
+	}
+}
+
+func TestTruncateRunes_201stCharTrigger(t *testing.T) {
+	// 201 个 ASCII 字符，应截断到 200 + "..."
+	slightlyLong := strings.Repeat("C", 201)
+	result := truncateRunes(slightlyLong, 200)
+	expected := strings.Repeat("C", 200) + "..."
+	if result != expected {
+		t.Errorf("expected truncation at 201st char, got: %q", result)
+	}
+}
