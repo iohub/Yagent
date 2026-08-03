@@ -41,7 +41,7 @@ func NewKnowledgeInjector(mcpClient *mcp.MCPClient, cfg config.KnowledgeConfig) 
 	}
 }
 
-// BuildQuery 构造检索查询（≤500 字符，按 rune 截断避免切断中文）
+// BuildQuery 构造检索查询（使用完整原始输入，不做截断）
 func (k *KnowledgeInjector) BuildQuery(injCtx InjectionContext) string {
 	var parts []string
 	parts = append(parts, injCtx.UserMessage)
@@ -49,11 +49,6 @@ func (k *KnowledgeInjector) BuildQuery(injCtx InjectionContext) string {
 		parts = append(parts, filepath.Base(f))
 	}
 	query := strings.Join(parts, " 涉及文件：")
-	// 按 rune 截断到 500
-	if runeCount(query) > 500 {
-		runes := []rune(query)
-		query = string(runes[:500])
-	}
 	return strings.TrimSpace(query)
 }
 

@@ -45,7 +45,7 @@ func TestBuildQuery_EmptyInput(t *testing.T) {
 	}
 }
 
-func TestBuildQuery_Truncation(t *testing.T) {
+func TestBuildQuery_NoTruncation(t *testing.T) {
 	k := &KnowledgeInjector{}
 	// 构造超过 500 rune 的输入
 	longMsg := ""
@@ -56,12 +56,12 @@ func TestBuildQuery_Truncation(t *testing.T) {
 		UserMessage: longMsg,
 	}
 	query := k.BuildQuery(injCtx)
-	// 应截断到 500 rune
-	if len([]rune(query)) > 500 {
-		t.Errorf("BuildQuery truncation failed: got %d runes, want ≤500", len([]rune(query)))
+	// 不应截断，应返回完整原始输入
+	if len([]rune(query)) != 600 {
+		t.Errorf("BuildQuery: got %d runes, want exactly 600 (no truncation)", len([]rune(query)))
 	}
-	if len([]rune(query)) != 500 {
-		t.Errorf("BuildQuery truncation: got %d runes, want exactly 500", len([]rune(query)))
+	if query != longMsg {
+		t.Errorf("BuildQuery: mismatch with original input")
 	}
 }
 
