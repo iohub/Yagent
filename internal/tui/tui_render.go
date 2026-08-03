@@ -707,7 +707,7 @@ func isVerboseEventType(eventType string) bool {
 	switch eventType {
 	case "tool_call_start", "tool_call_result",
 		"llm_call_start", "llm_call_end",
-		"commit_context_loaded", "model_info", "thinking":
+		"commit_context_loaded", "context_compressed", "model_info", "thinking":
 		return true
 	}
 	return false
@@ -858,6 +858,29 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 					entry.content = fmt.Sprintf("📦 Loaded %d relevant commit(s)", int(count))
 				}
 			}
+		}
+		if entry.content == "" {
+			entry.content = fmt.Sprintf("%v", event.Content)
+		}
+	case "context_compressed":
+		if m, ok := event.Content.(map[string]interface{}); ok {
+			origTokens := 0
+			if v, ok := m["original_tokens"].(int); ok {
+				origTokens = v
+			} else if v, ok := m["original_tokens"].(float64); ok {
+				origTokens = int(v)
+			}
+			compTokens := 0
+			if v, ok := m["compressed_tokens"].(int); ok {
+				compTokens = v
+			} else if v, ok := m["compressed_tokens"].(float64); ok {
+				compTokens = int(v)
+			}
+			savedPercent := 0.0
+			if v, ok := m["saved_percent"].(float64); ok {
+				savedPercent = v
+			}
+			entry.content = fmt.Sprintf("🧠 Context compressed: %d → %d tokens (%.1f%%)", origTokens, compTokens, savedPercent)
 		}
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)

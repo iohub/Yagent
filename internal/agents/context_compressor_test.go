@@ -59,9 +59,12 @@ func TestTruncateToolResultsToBudget_NotOverThreshold(t *testing.T) {
 		{Role: llm.RoleTool, ToolName: "read_file", Content: "small result"},
 	}
 	// 阈值设很大，不会触发
-	result := TruncateToolResultsToBudget(messages, 999999, 200)
+	result, stats := TruncateToolResultsToBudget(messages, 999999, 200)
 	if len(result) != len(messages) {
 		t.Fatalf("expected %d messages, got %d", len(messages), len(result))
+	}
+	if stats != nil {
+		t.Error("expected stats to be nil when not over threshold")
 	}
 	for i, msg := range result {
 		if msg.Content != messages[i].Content {
@@ -96,7 +99,7 @@ func TestTruncateToolResultsToBudget_Priority(t *testing.T) {
 	// 设阈值为 base + 200 + 12000，确保截断 read_file 后达标，但截断前不达标
 	threshold := baseTokens + 200 + 12000
 
-	result := TruncateToolResultsToBudget(messages, threshold, 200)
+	result, _ := TruncateToolResultsToBudget(messages, threshold, 200)
 
 	// read_file (prio 0) 应被截断
 	readFileMsg := result[3]
@@ -131,7 +134,7 @@ func TestTruncateToolResultsToBudget_DeepThinkingProtected(t *testing.T) {
 	})
 	threshold := baseTokens + 300
 
-	result := TruncateToolResultsToBudget(messages, threshold, 200)
+	result, _ := TruncateToolResultsToBudget(messages, threshold, 200)
 
 	// deepthinking 不应被截断
 	dtMsg := result[3]
@@ -158,7 +161,7 @@ func TestTruncateToolResultsToBudget_Idempotent(t *testing.T) {
 	keepTokens := 50
 
 	// 第一次截断
-	result1 := TruncateToolResultsToBudget(messages, threshold, keepTokens)
+	result1, _ := TruncateToolResultsToBudget(messages, threshold, keepTokens)
 	dtMsg := result1[3]
 	if dtMsg.TruncationMarker == nil {
 		t.Fatal("expected first pass to truncate")
@@ -167,7 +170,7 @@ func TestTruncateToolResultsToBudget_Idempotent(t *testing.T) {
 	markerAfterFirst := dtMsg.TruncationMarker.TruncationPass
 
 	// 第二次截断（幂等）
-	result2 := TruncateToolResultsToBudget(result1, threshold, keepTokens)
+	result2, _ := TruncateToolResultsToBudget(result1, threshold, keepTokens)
 	dtMsg2 := result2[3]
 	// 已截断的消息应被跳过，内容和 marker 不应再变化
 	if dtMsg2.Content != contentAfterFirst {
@@ -191,7 +194,7 @@ func TestTruncateToolResultsToBudget_AllCut(t *testing.T) {
 	threshold := 100 // 极低阈值
 	keepTokens := 50
 
-	result := TruncateToolResultsToBudget(messages, threshold, keepTokens)
+	result, _ := TruncateToolResultsToBudget(messages, threshold, keepTokens)
 
 	// 所有可截断的工具结果都应被截断
 	for i, msg := range result {
@@ -209,6 +212,53 @@ func TestTruncateToolResultsToBudget_AllCut(t *testing.T) {
 		}
 		if !strings.Contains(msg.Content, "[truncated:") {
 			t.Errorf("message %d (%s) missing truncation marker", i, msg.ToolName)
+		}
+	}
+}
+
+// TestTruncateToolResultsToBudget_Stats 验证压缩统计信息正确性
+func TestTruncateToolResultsToBudget_Stats(t *testing.T) {
+	largeContent := strings.Repeat("x", 50000)
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: strings.Repeat("s", 10000)},
+		{Role: llm.RoleAssistant, Content: "assistant"},
+		{Role: llm.RoleTool, ToolName: "read_file", Content: largeContent},
+		{Role: llm.RoleTool, ToolName: "run_bash", Content: largeContent},
+	}
+	threshold := 500 // 很低，肯定触发
+	keepTokens := 50
+
+	_, stats := TruncateToolResultsToBudget(messages, threshold, keepTokens)
+	if stats == nil {
+		t.Fatal("expected non-nil stats")
+	}
+	if stats.TruncatedCount == 0 {
+		t.Error("expected TruncatedCount > 0")
+	}
+	if stats.SavedTokens <= 0 {
+		t.Errorf("expected SavedTokens > 0, got %d", stats.SavedTokens)
+	}
+	if stats.SavedPercent <= 0 || stats.SavedPercent >= 100 {
+		t.Errorf("expected SavedPercent in (0, 100), got %f", stats.SavedPercent)
+	}
+	if stats.OriginalTokens <= stats.CompressedTokens {
+		t.Errorf("expected OriginalTokens (%d) > CompressedTokens (%d)", stats.OriginalTokens, stats.CompressedTokens)
+	}
+	if len(stats.TruncatedTools) != stats.TruncatedCount {
+		t.Errorf("expected TruncatedTools len (%d) == TruncatedCount (%d)", len(stats.TruncatedTools), stats.TruncatedCount)
+	}
+	for _, tool := range stats.TruncatedTools {
+		if tool.OriginalTokens <= 0 {
+			t.Errorf("expected OriginalTokens > 0 for tool %s", tool.ToolName)
+		}
+		if tool.KeptTokens <= 0 {
+			t.Errorf("expected KeptTokens > 0 for tool %s", tool.ToolName)
+		}
+		if tool.OmittedTokens < 0 {
+			t.Errorf("expected OmittedTokens >= 0 for tool %s", tool.ToolName)
+		}
+		if tool.OriginalTokens < tool.KeptTokens {
+			t.Errorf("expected OriginalTokens (%d) >= KeptTokens (%d) for tool %s", tool.OriginalTokens, tool.KeptTokens, tool.ToolName)
 		}
 	}
 }

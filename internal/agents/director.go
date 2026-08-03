@@ -1063,7 +1063,32 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				if keepTokens <= 0 {
 					keepTokens = DefaultToolResultKeepTokens
 				}
-				messages = TruncateToolResultsToBudget(messages, threshold, keepTokens)
+				_, compStats := TruncateToolResultsToBudget(messages, threshold, keepTokens)
+				if compStats != nil && compStats.TruncatedCount > 0 && a.Publisher != nil {
+					truncatedTools := make([]map[string]interface{}, len(compStats.TruncatedTools))
+					for ti, tool := range compStats.TruncatedTools {
+						truncatedTools[ti] = map[string]interface{}{
+							"tool_name":      tool.ToolName,
+							"original_tokens": tool.OriginalTokens,
+							"kept_tokens":    tool.KeptTokens,
+							"omitted_tokens": tool.OmittedTokens,
+						}
+					}
+					a.Publisher.Publish("context_compressed", map[string]interface{}{
+						"original_tokens":   compStats.OriginalTokens,
+						"compressed_tokens": compStats.CompressedTokens,
+						"saved_tokens":      compStats.SavedTokens,
+						"saved_percent":     compStats.SavedPercent,
+						"truncated_count":   compStats.TruncatedCount,
+						"truncated_tools":   truncatedTools,
+					}, a.Name())
+					slog.Debug("context compression applied",
+						"original_tokens", compStats.OriginalTokens,
+						"compressed_tokens", compStats.CompressedTokens,
+						"saved_tokens", compStats.SavedTokens,
+						"saved_percent", compStats.SavedPercent,
+						"truncated_count", compStats.TruncatedCount)
+				}
 			}
 
 			slog.Debug("DirectorAgent calling LLM", "step", i, "messages", messages)

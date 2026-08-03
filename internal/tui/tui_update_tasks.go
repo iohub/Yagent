@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -19,6 +20,23 @@ const (
 	// 慢流兜底：距上次渲染超过 300ms 且有未渲染内容时立即渲染（保证交互反馈）
 	aiChunkFlushInterval = 300 * time.Millisecond
 )
+
+// parseEventInt 从 event content map 中安全地解析整数，兼容 int/float64/json.Number。
+func parseEventInt(v interface{}, fallback int) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case int64:
+		return int(val)
+	case float64:
+		return int(val)
+	case json.Number:
+		if i, err := val.Int64(); err == nil {
+			return int(i)
+		}
+	}
+	return fallback
+}
 
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	// Don't process task events while any popup/dialog is showing.
@@ -605,6 +623,57 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				m.viewportDirty = true
 				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 			}
+		}
+		return m, listenForEvents(m.eventCh)
+	}
+
+	// Handle context_compressed event — log it in the TUI timeline
+	if msg.event.Type == "context_compressed" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			origTokens := parseEventInt(contentMap["original_tokens"], 0)
+			compTokens := parseEventInt(contentMap["compressed_tokens"], 0)
+			savedTokens := parseEventInt(contentMap["saved_tokens"], 0)
+			savedPercent := 0.0
+			if sp, ok := contentMap["saved_percent"].(float64); ok {
+				savedPercent = sp
+			}
+			truncCount := parseEventInt(contentMap["truncated_count"], 0)
+			var detailLines []string
+			detailLines = append(detailLines, fmt.Sprintf("Context compressed: %d → %d tokens (saved %d tokens, %.1f%%)", origTokens, compTokens, savedTokens, savedPercent))
+			detailLines = append(detailLines, fmt.Sprintf("Truncated %d tool result(s):", truncCount))
+			if tools, ok := contentMap["truncated_tools"].([]interface{}); ok {
+				for _, ti := range tools {
+					if tm, ok := ti.(map[string]interface{}); ok {
+						toolName := ""
+						if tn, ok := tm["tool_name"].(string); ok {
+							toolName = tn
+						}
+						oTokens := parseEventInt(tm["original_tokens"], 0)
+						kTokens := parseEventInt(tm["kept_tokens"], 0)
+						sTokens := parseEventInt(tm["omitted_tokens"], 0)
+						detailLines = append(detailLines, fmt.Sprintf("  %s: %d → %d tokens (saved %d)", toolName, oTokens, kTokens, sTokens))
+					}
+				}
+			}
+			detail := strings.Join(detailLines, "\n")
+			entry := logEntry{
+				timestamp: msg.event.Timestamp,
+				eventType: "context_compressed",
+				from:      msg.event.From,
+				content:   fmt.Sprintf("🧠 Context compressed: %d → %d tokens (%.1f%%)", origTokens, compTokens, savedPercent),
+			}
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        fmt.Sprintf("ctx_comp_%d", msg.event.Timestamp.UnixNano()),
+				Kind:      TimelineKindContextEvent,
+				Timestamp: msg.event.Timestamp,
+				Status:    ToolStatusSuccess,
+				Name:      "context_compressed",
+				Detail:    detail,
+			})
+			m.timelineCacheKey = ""
+			m.logEntries = append(m.logEntries, entry)
+			m.viewportDirty = true
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 		}
 		return m, listenForEvents(m.eventCh)
 	}
