@@ -271,7 +271,7 @@ graph TB
 │  【注入】KnowledgeInjector 格式化                                            │
 │    过滤 minScore ≥ 0.3                                                       │
 │    格式化 <knowledge_context> 块                                             │
-│    Token 预算截断：≤1000 tokens（留 50 token 余量）                            │
+│    Token 预算截断：≤2000 tokens（留 50 token 余量）                            │
 │    注入到 system prompt 的 <repository_knowledge> 之后                        │
 │      ↓                                                                     │
 │                                                                              │
@@ -1676,7 +1676,7 @@ type InjectionContext struct {
 type KnowledgeInjector struct {
     mcpClient     *mcp.MCPClient
     llmEngine     llm.Engine
-    maxTokens     int      // 默认 1000
+    maxTokens     int      // 默认 2000
     maxEntries    int      // 默认 8
     minScore      float64  // 默认 0.3
 }
@@ -1958,7 +1958,7 @@ request_timeout = "30s"
 # 是否启用知识管理功能
 enabled = true
 # 知识注入最大 token 数
-injection_max_tokens = 1000
+injection_max_tokens = 2000
 # 知识注入最大条目数
 injection_max_entries = 8
 # 知识检索最低得分阈值
@@ -1976,7 +1976,7 @@ injection_rerank = true
 # ── CodeSeek 知识管理配置（默认值）──
 [codeseek.knowledge]
 enabled = true
-injection_max_tokens = 1000
+injection_max_tokens = 2000
 injection_max_entries = 8
 injection_min_score = 0.3
 injection_rerank = true
@@ -2175,7 +2175,7 @@ func TestKnowledgeEndToEnd(t *testing.T) {
     // 4. 注入
     injector := &KnowledgeInjector{
         MCPClient:    mcpClient,
-        MaxTokens:    1000,
+        MaxTokens:    2000,
         MaxEntries:   8,
         MinScore:     0.3,
     }
@@ -2189,7 +2189,7 @@ func TestKnowledgeEndToEnd(t *testing.T) {
     
     // 5. Token 预算验证
     tokenCount := estimateTokens(block)
-    assert.Less(t, tokenCount, 1050)  // ≤1000 + 50 余量
+    assert.Less(t, tokenCount, 2050)  // ≤2000 + 50 余量
 }
 ```
 
@@ -2199,7 +2199,7 @@ func TestKnowledgeEndToEnd(t *testing.T) {
 |------|------|----------|
 | **知识写入→检索→注入** | 1. 调用 consolidate_knowledge 写入条目<br>2. 启动新对话<br>3. 检查 system prompt | system prompt 包含 `<knowledge_context>` 块，内容相关 |
 | **去重合并** | 1. 写入相似知识 A 和 B<br>2. 调用 consolidate_knowledge 写入 C（与 A/B 相似） | A 和 B 被合并为 C，parent_ids 记录来源 |
-| **Token 预算控制** | 1. 写入大量知识条目<br>2. 注入时检查 token 数 | 注入内容 ≤1000 tokens |
+| **Token 预算控制** | 1. 写入大量知识条目<br>2. 注入时检查 token 数 | 注入内容 ≤2000 tokens |
 | **prune merge** | 1. 写入多条相似知识<br>2. 触发周期 prune | 相似条目被合并，old_ids 记录删除 |
 | **codeseek 不可用降级** | 1. 禁用 codeseek<br>2. 调用 consolidate_knowledge | 返回 `{"status": "skipped"}`，不影响主流程 |
 | **reranker 禁用降级** | 1. 设置 reranker.enabled=false<br>2. 执行知识检索 | 仅使用 RRF 融合，无 Cross-Encoder 精排 |

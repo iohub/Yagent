@@ -85,7 +85,7 @@ request_timeout = 30
 # 是否启用知识管理功能
 enabled = true
 # 知识注入最大 token 数
-injection_max_tokens = 1000
+injection_max_tokens = 2000
 # 知识注入最大条目数
 injection_max_entries = 8
 # 知识检索最低得分阈值

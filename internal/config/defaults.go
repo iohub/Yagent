@@ -92,7 +92,7 @@ func DefaultGitCheckpointConfig() GitCheckpointConfig {
 func DefaultKnowledgeConfig() KnowledgeConfig {
 	return KnowledgeConfig{
 		Enabled:             true,
-		InjectionMaxTokens:  1000,
+		InjectionMaxTokens:  2000,
 		InjectionMaxEntries: 8,
 		InjectionMinScore:   0.3,
 		InjectionRerank:     true,

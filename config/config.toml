@@ -108,7 +108,7 @@ request_timeout = 30                 # 请求超时秒数
 
 [codeseek.knowledge]
 enabled = true                       # 是否启用知识管理功能
-injection_max_tokens = 1000          # 知识注入最大 token 数
+injection_max_tokens = 2000          # 知识注入最大 token 数
 injection_max_entries = 8            # 知识注入最大条目数
 injection_min_score = 0.3            # 知识检索最低得分阈值
 injection_rerank = true              # 是否请求 Cross-Encoder 精排（codeseek 端 reranker 未启用时自动降级）

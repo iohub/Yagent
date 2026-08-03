@@ -244,7 +244,7 @@ fallback_providers = [
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `enabled` | bool | `true` | 是否启用知识管理功能 |
-| `injection_max_tokens` | int | `1000` | 知识注入最大 token 数 |
+| `injection_max_tokens` | int | `2000` | 知识注入最大 token 数 |
 | `injection_max_entries` | int | `8` | 知识注入最大条目数 |
 | `injection_min_score` | float | `0.3` | 知识检索最低得分阈值 |
 | `injection_rerank` | bool | `true` | 是否请求 Cross-Encoder 精排 |
