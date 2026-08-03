@@ -33,11 +33,6 @@ func NewResultCompressor(threshold, summaryMaxLen int) *ResultCompressor {
 	}
 }
 
-// SetSharedMemory 设置 SharedMemory 引用（延迟注入）
-func (rc *ResultCompressor) SetSharedMemory(sm *memory.SharedMemory) {
-	rc.sharedMemory = &SharedMemoryStore{sm: sm}
-}
-
 // CompressionResult 压缩结果
 type CompressionResult struct {
 	Compressed     bool   `json:"compressed"`      // 是否被压缩
@@ -130,14 +125,6 @@ func (rc *ResultCompressor) generateSummary(result string) string {
 	}
 
 	return summary
-}
-
-// RetrieveFullResult 从 SharedMemory 获取完整结果
-func (rc *ResultCompressor) RetrieveFullResult(key string) (string, error) {
-	if rc.sharedMemory == nil {
-		return "", fmt.Errorf("shared memory not available")
-	}
-	return rc.sharedMemory.Retrieve(key)
 }
 
 // ────────────────────────────────────────────────────────────────

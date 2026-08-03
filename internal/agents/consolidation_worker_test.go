@@ -64,20 +64,6 @@ func (m *mockConsolidationEngine) CallCount() int {
 	return int(atomic.LoadInt32(&m.callCount))
 }
 
-// setResponse 线程安全地设置 mock 响应
-func (m *mockConsolidationEngine) setResponse(resp string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.response = resp
-}
-
-// setFail 线程安全地设置失败模式
-func (m *mockConsolidationEngine) setFail(fail bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.shouldFail = fail
-}
-
 // ============================================================================
 // Test ConsolidationTask
 // ============================================================================

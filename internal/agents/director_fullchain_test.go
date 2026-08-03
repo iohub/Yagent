@@ -92,15 +92,6 @@ func makeToolCallResponse(toolName string, args string) *llm.Response {
 	}
 }
 
-// makeTextResponse creates an LLM Response containing only plain text.
-func makeTextResponse(content string) *llm.Response {
-	return &llm.Response{
-		Choices: []llm.Choice{{
-			Content: content,
-		}},
-	}
-}
-
 // makeTextThenExitResponse creates an LLM Response with text + agent_exit tool call.
 func makeTextThenExitResponse(content string) *llm.Response {
 	return &llm.Response{
@@ -112,55 +103,6 @@ func makeTextThenExitResponse(content string) *llm.Response {
 				Function: llm.FunctionCall{
 					Name:      "agent_exit",
 					Arguments: fmt.Sprintf(`{"reason": "task completed: %s"}`, content),
-				},
-			}},
-		}},
-	}
-}
-
-// makeExitResponse creates an LLM Response containing only an agent_exit tool call.
-func makeExitResponse() *llm.Response {
-	return &llm.Response{
-		Choices: []llm.Choice{{
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call_agent_exit",
-				Type: "function",
-				Function: llm.FunctionCall{
-					Name:      "agent_exit",
-					Arguments: `{"reason": "task completed"}`,
-				},
-			}},
-		}},
-	}
-}
-
-// makeToolCallResponseWithID creates an LLM Response with a tool call using a specific ID.
-func makeToolCallResponseWithID(id, toolName string, args string) *llm.Response {
-	return &llm.Response{
-		Choices: []llm.Choice{{
-			ToolCalls: []llm.ToolCall{{
-				ID:   id,
-				Type: "function",
-				Function: llm.FunctionCall{
-					Name:      toolName,
-					Arguments: args,
-				},
-			}},
-		}},
-	}
-}
-
-// makeTextThenToolResponse creates an LLM Response with text + a specified tool call.
-func makeTextThenToolResponse(content string, toolName string, args string) *llm.Response {
-	return &llm.Response{
-		Choices: []llm.Choice{{
-			Content: content,
-			ToolCalls: []llm.ToolCall{{
-				ID:   fmt.Sprintf("call_%s", toolName),
-				Type: "function",
-				Function: llm.FunctionCall{
-					Name:      toolName,
-					Arguments: args,
 				},
 			}},
 		}},

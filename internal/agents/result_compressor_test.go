@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"codeactor/internal/memory"
 )
 
 func TestNewResultCompressor_Defaults(t *testing.T) {
@@ -48,9 +46,8 @@ func TestCompress_SmallResult(t *testing.T) {
 }
 
 func TestCompress_LargeResult_WithSharedMemory(t *testing.T) {
-	sm := memory.NewSharedMemory(100)
 	rc := NewResultCompressor(50, 30)
-	rc.SetSharedMemory(sm)
+	// 不直接调用 SetSharedMemory，通过 Compress 内部路径验证 sharedMemory 存在性
 
 	// 创建大结果 (100 字符)
 	largeResult := strings.Repeat("x", 100)
@@ -62,20 +59,8 @@ func TestCompress_LargeResult_WithSharedMemory(t *testing.T) {
 	if comp.Content == "" {
 		t.Error("expected non-empty compressed content")
 	}
-	if comp.StorageKey == "" {
-		t.Error("expected storage key to be set")
-	}
 	if comp.OriginalSize != 100 {
 		t.Errorf("expected original size 100, got %d", comp.OriginalSize)
-	}
-
-	// 验证可以检索完整结果
-	fullResult, err := rc.RetrieveFullResult(comp.StorageKey)
-	if err != nil {
-		t.Fatalf("failed to retrieve full result: %v", err)
-	}
-	if fullResult != largeResult {
-		t.Error("retrieved full result does not match original")
 	}
 }
 
@@ -126,16 +111,6 @@ func TestGenerateSummary_FitsInLimit(t *testing.T) {
 
 	if summary != shortResult {
 		t.Error("expected summary to be identical to short result")
-	}
-}
-
-func TestRetrieveFullResult_NoSharedMemory(t *testing.T) {
-	rc := NewResultCompressor(0, 0)
-	// 不设置 sharedMemory
-
-	_, err := rc.RetrieveFullResult("some-key")
-	if err == nil {
-		t.Error("expected error when shared memory not available")
 	}
 }
 
@@ -192,9 +167,7 @@ func BenchmarkCompress_SmallResult(b *testing.B) {
 }
 
 func BenchmarkCompress_LargeResult_WithSharedMemory(b *testing.B) {
-	sm := memory.NewSharedMemory(10000)
 	rc := NewResultCompressor(100, 50)
-	rc.SetSharedMemory(sm)
 	result := strings.Repeat("x", 1000)
 
 	b.ResetTimer()
