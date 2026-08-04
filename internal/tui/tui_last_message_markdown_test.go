@@ -271,3 +271,48 @@ func TestScenarioE_FlushLeftoverAtStreamEnd(t *testing.T) {
 		t.Fatalf("expected 1 completed stream entry, got %d", len(m.aiStreamCompletedEntries))
 	}
 }
+
+// TestAIResponse_FlushesBufferedChunks 验证：消息不足渲染阈值（<5 chunk / <64 字节 / <300ms）
+// 且无 ai_stream_end（Director 事件流）时，ai_response 定稿 Content 为空不会丢弃缓冲内容。
+func TestAIResponse_FlushesBufferedChunks(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	// 2 个 chunk，不足阈值，且无 ai_stream_end
+	m = feedEvent(m, buildEvent("ai_stream_start", "Director", ""))
+	m = feedEvent(m, buildEvent("ai_chunk", "Director", "流式内容"))
+	m = feedEvent(m, buildEvent("ai_chunk", "Director", "继续"))
+
+	// 缓冲未 flush：条目内容仍为空
+	if m.logEntries[0].streamContent != "" {
+		t.Fatalf("expected empty streamContent before flush, got %q", m.logEntries[0].streamContent)
+	}
+
+	// ai_response Content 为空（纯工具调用轮次）
+	m = feedEvent(m, buildEvent("ai_response", "Director", ""))
+
+	// 缓冲残留内容应被 flush 保留
+	if m.logEntries[0].content != "流式内容继续" {
+		t.Fatalf("expected buffered content '流式内容继续', got %q", m.logEntries[0].content)
+	}
+	if m.logEntries[0].eventType != "ai_response" {
+		t.Fatalf("expected eventType='ai_response', got %q", m.logEntries[0].eventType)
+	}
+}
+
+// TestAIResponse_NonEmptyContentStillReplaces 验证：Content 非空时仍以完整内容替换（语义不变）
+func TestAIResponse_NonEmptyContentStillReplaces(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	m = feedEvent(m, buildEvent("ai_stream_start", "Director", ""))
+	m = feedEvent(m, buildEvent("ai_chunk", "Director", "部分内容"))
+	m = feedEvent(m, buildEvent("ai_response", "Director", "完整回复"))
+
+	if m.logEntries[0].content != "完整回复" {
+		t.Fatalf("expected content replaced by full response, got %q", m.logEntries[0].content)
+	}
+	if m.logEntries[0].eventType != "ai_response" {
+		t.Fatalf("expected eventType='ai_response', got %q", m.logEntries[0].eventType)
+	}
+}

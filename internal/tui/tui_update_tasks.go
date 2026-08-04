@@ -324,16 +324,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
 			// 流结束：强制 flush 剩余累积内容，保证最终内容完整显示
-			if buf := m.aiChunkBuffers[agentName]; buf != nil && buf.content != "" {
-				le := &m.logEntries[idx]
-				le.streamContent += buf.content
-				le.content = le.streamContent
-				le.clearRenderCache()
-				m.markEntryDirty(idx)
-				m.viewportDirty = true
-				buf.content = ""
-				buf.count = 0
-			}
+			m.flushAIChunkBuffer(agentName, idx)
 			m.logEntries[idx].streaming = false
 			m.aiStreamCompletedEntries[agentName] = idx
 			delete(m.aiStreamActiveEntries, agentName)
@@ -361,6 +352,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		// 优先匹配已完成的流式条目
 		if idx, ok := m.aiStreamCompletedEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
+			m.flushAIChunkBuffer(agentName, idx)
 			if content != "" {
 				le.streamContent = content
 				le.content = content
@@ -380,6 +372,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		// Fallback: 也检查 active map（ai_stream_end 丢失的情况）
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
+			m.flushAIChunkBuffer(agentName, idx)
 			if content != "" {
 				le.streamContent = content
 				le.content = content
@@ -859,6 +852,27 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	m.viewportDirty = true
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 	return m, listenForEvents(m.eventCh)
+}
+
+// flushAIChunkBuffer 将 agent 残留的累积 chunk 内容写入指定条目并清空缓冲。
+// 用于 ai_stream_end / ai_response 定稿时兜底：确保不足渲染阈值（<5 chunk、
+// <64 字节、<300ms）的短消息内容不会因缓冲清理而丢失。
+func (m *model) flushAIChunkBuffer(agentName string, idx int) {
+	if idx < 0 || idx >= len(m.logEntries) {
+		return
+	}
+	buf := m.aiChunkBuffers[agentName]
+	if buf == nil || buf.content == "" {
+		return
+	}
+	le := &m.logEntries[idx]
+	le.streamContent += buf.content
+	le.content = le.streamContent
+	le.clearRenderCache()
+	m.markEntryDirty(idx)
+	m.viewportDirty = true
+	buf.content = ""
+	buf.count = 0
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
