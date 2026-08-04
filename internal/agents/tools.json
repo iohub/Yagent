@@ -236,7 +236,7 @@
   },
   {
     "name": "print_dir_tree",
-    "description": "Print a directory tree structure. Automatically ignores common build artifacts, cache directories, dependency folders, and compiled files. Use show_files=false for a concise directory-only overview (includes file counts per directory). Output is truncated per-directory when exceeding max_items.",
+    "description": "Print a directory tree structure. Automatically ignores common build artifacts, cache directories, dependency folders, and compiled files. Use show_files=false for a concise directory-only overview (includes file counts per directory). Output is truncated per-directory when exceeding max_items. The tree depth is hard-capped at 2 levels.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -247,7 +247,7 @@
         "max_depth": {
           "type": "integer",
           "default": 2,
-          "description": "Maximum depth to traverse (default: 2). Depth 0 shows only the root directory name."
+          "description": "Maximum depth to traverse. Hard-capped at 2: values greater than 2 are clamped to 2. Depth 0 shows only the root directory name. Default: 2"
         },
         "show_files": {
           "type": "boolean",

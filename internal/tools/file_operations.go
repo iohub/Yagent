@@ -539,10 +539,13 @@ func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map
 		return nil, util.WrapError(ctx, fmt.Errorf("dir_path parameter must be a valid string"), "executePrintDirTree")
 	}
 
-	// --- Parse optional: max_depth (default 2) ---
+	// --- Parse optional: max_depth (default 2, hard cap at 2) ---
 	maxDepth := 2
 	if d, ok := params["max_depth"].(float64); ok {
 		maxDepth = int(d)
+		if maxDepth > 2 {
+			maxDepth = 2
+		}
 	}
 
 	// --- Parse optional: show_files (default true) ---
