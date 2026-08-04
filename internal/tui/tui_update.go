@@ -16,13 +16,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Suspend
 	}
 
-	// ResumeMsg: the program was resumed from a suspended state (after Ctrl+Z
-	// + `fg`). Redraw the whole screen since the framework does not repaint
-	// automatically on resume.
-	if _, ok := msg.(tea.ResumeMsg); ok {
-		return m, tea.ClearScreen
-	}
-
 	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
 	// taskEventMsg is allowed through so the listenForEvents chain stays alive;
 	// its handler drops the event when dialogs are open but reschedules the chain.
@@ -97,6 +90,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouseMsg(msg)
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
+	case tea.ResumeMsg:
+		return m, nil
 	case autocompleteMsg:
 		return m.handleAutocompleteMsg(msg)
 	case taskEventMsg:
