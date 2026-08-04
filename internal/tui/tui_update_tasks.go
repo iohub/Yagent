@@ -657,17 +657,18 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			}
 			detail := strings.Join(detailLines, "\n")
 			entry := logEntry{
-				timestamp: msg.event.Timestamp,
-				eventType: "context_compressed",
-				from:      msg.event.From,
-				content:   fmt.Sprintf("🧠 Context compressed: %d → %d tokens (%.1f%%)", origTokens, compTokens, savedPercent),
+				timestamp:   msg.event.Timestamp,
+				eventType:   "context_compressed",
+				from:        msg.event.From,
+				content:     fmt.Sprintf("🧠 Context compressed: %d → %d tokens (%.1f%%)", origTokens, compTokens, savedPercent),
+				isVerbose:   true,
 			}
 			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
 				ID:        fmt.Sprintf("ctx_comp_%d", msg.event.Timestamp.UnixNano()),
 				Kind:      TimelineKindContextEvent,
 				Timestamp: msg.event.Timestamp,
 				Status:    ToolStatusSuccess,
-				Name:      "context_compressed",
+				Name:      "Context Compressed",
 				Detail:    detail,
 			})
 			m.timelineCacheKey = ""

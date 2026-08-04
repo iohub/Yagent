@@ -1026,6 +1026,9 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 	case "user_help_needed":
 		prefix = "? HELP"
 		contentStyle = logToolStyle
+	case "context_compressed":
+		prefix = ""
+		contentStyle = logStatusStyle
 	default:
 		prefix = "● " + entry.eventType
 		contentStyle = logStatusStyle
