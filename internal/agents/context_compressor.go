@@ -85,7 +85,9 @@ func estimateMessagesTokens(messages []llm.Message) int {
 }
 
 // toolTruncationPriority 返回工具名称的截断优先级：
-//   - 0 = 高优先级（最先被截断）：create_file / search_replace_in_file / read_file / run_bash 类工具
+//   - 0 = 高优先级（最先被截断）：文件读写类（create_file / search_replace_in_file / read_file / run_bash）
+//     以及 Repo-Agent 高开销查询类（semantic_search / query_code_skeleton / query_code_snippet /
+//     print_dir_tree / search_by_regex / query_call_graph / find_function_callee / find_function_caller）
 //   - 1 = 普通可截断：其他工具
 //   - -1 = 保护（永不截断）：deepthinking
 func toolTruncationPriority(toolName string) int {
