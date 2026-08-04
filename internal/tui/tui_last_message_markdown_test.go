@@ -272,13 +272,14 @@ func TestScenarioE_FlushLeftoverAtStreamEnd(t *testing.T) {
 	}
 }
 
-// TestAIResponse_FlushesBufferedChunks 验证：消息不足渲染阈值（<5 chunk / <64 字节 / <300ms）
-// 且无 ai_stream_end（Director 事件流）时，ai_response 定稿 Content 为空不会丢弃缓冲内容。
-func TestAIResponse_FlushesBufferedChunks(t *testing.T) {
+// TestAIResponse_ShortStreamFlushedOnEnd 验证：完整事件流（ai_stream_start → ai_chunk×2
+// → ai_stream_end → ai_response("")）下，不足渲染阈值（<5 chunk / <64 字节 / <300ms）的
+// 短消息在 ai_stream_end 时被 flush，ai_response 空 Content 不覆盖流式内容。
+func TestAIResponse_ShortStreamFlushedOnEnd(t *testing.T) {
 	m := newTestModel()
 	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
-	// 2 个 chunk，不足阈值，且无 ai_stream_end
+	// 完整协议事件流
 	m = feedEvent(m, buildEvent("ai_stream_start", "Director", ""))
 	m = feedEvent(m, buildEvent("ai_chunk", "Director", "流式内容"))
 	m = feedEvent(m, buildEvent("ai_chunk", "Director", "继续"))
@@ -288,25 +289,31 @@ func TestAIResponse_FlushesBufferedChunks(t *testing.T) {
 		t.Fatalf("expected empty streamContent before flush, got %q", m.logEntries[0].streamContent)
 	}
 
-	// ai_response Content 为空（纯工具调用轮次）
-	m = feedEvent(m, buildEvent("ai_response", "Director", ""))
+	// ai_stream_end：强制 flush 缓冲残留
+	m = feedEvent(m, buildEvent("ai_stream_end", "Director", ""))
+	if m.logEntries[0].streamContent != "流式内容继续" {
+		t.Fatalf("expected flushed content '流式内容继续', got %q", m.logEntries[0].streamContent)
+	}
 
-	// 缓冲残留内容应被 flush 保留
+	// ai_response Content 为空（纯工具调用轮次）：不覆盖已 flush 的流式内容
+	m = feedEvent(m, buildEvent("ai_response", "Director", ""))
 	if m.logEntries[0].content != "流式内容继续" {
-		t.Fatalf("expected buffered content '流式内容继续', got %q", m.logEntries[0].content)
+		t.Fatalf("expected content preserved '流式内容继续', got %q", m.logEntries[0].content)
 	}
 	if m.logEntries[0].eventType != "ai_response" {
 		t.Fatalf("expected eventType='ai_response', got %q", m.logEntries[0].eventType)
 	}
 }
 
-// TestAIResponse_NonEmptyContentStillReplaces 验证：Content 非空时仍以完整内容替换（语义不变）
+// TestAIResponse_NonEmptyContentStillReplaces 验证：完整事件流下 ai_response 非空 Content
+// 仍以完整内容替换（语义不变）
 func TestAIResponse_NonEmptyContentStillReplaces(t *testing.T) {
 	m := newTestModel()
 	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, buildEvent("ai_stream_start", "Director", ""))
 	m = feedEvent(m, buildEvent("ai_chunk", "Director", "部分内容"))
+	m = feedEvent(m, buildEvent("ai_stream_end", "Director", ""))
 	m = feedEvent(m, buildEvent("ai_response", "Director", "完整回复"))
 
 	if m.logEntries[0].content != "完整回复" {

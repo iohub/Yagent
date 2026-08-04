@@ -1116,12 +1116,37 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				}, a.Name())
 			}
 
+			// Publish ai_stream_start before LLM call
+			if a.Publisher != nil {
+				a.Publisher.Publish("ai_stream_start", map[string]interface{}{
+					"agent": a.Name(),
+				}, a.Name())
+			}
+
 			llmStartTime := time.Now()
 			// 使用可配置的 LLM 超时保护，防止远程服务无响应时永久阻塞
 			llmCtx, llmCancel := context.WithTimeout(ctx, a.llmTimeout)
 			resp, llmErr = a.LLM.GenerateContent(llmCtx, messages, toolDefs, opts)
 			llmCancel()
 			llmDuration := time.Since(llmStartTime).Seconds()
+
+			// Publish ai_stream_end after LLM call
+			if a.Publisher != nil {
+				metadata := map[string]interface{}{
+					"agent": a.Name(),
+				}
+				if llmErr == nil && resp != nil && resp.Usage != nil {
+					metadata["usage"] = map[string]interface{}{
+						"prompt_tokens":               resp.Usage.PromptTokens,
+						"completion_tokens":           resp.Usage.CompletionTokens,
+						"total_tokens":                resp.Usage.TotalTokens,
+						"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
+						"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
+						"total_input_tokens":          resp.Usage.TotalInputTokens,
+					}
+				}
+				a.Publisher.PublishWithMetadata("ai_stream_end", "", a.Name(), metadata)
+			}
 
 			// 记录 LLM 耗时指标
 			if a.adapter != nil {

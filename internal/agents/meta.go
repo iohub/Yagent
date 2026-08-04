@@ -108,7 +108,33 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 			}
 		}
 
+		// Publish ai_stream_start before LLM call
+		if a.Publisher != nil {
+			a.Publisher.Publish("ai_stream_start", map[string]interface{}{
+				"agent": a.Name(),
+			}, a.Name())
+		}
+
 		resp, err = a.LLM.GenerateContent(ctx, messages, nil, opts)
+
+		// Publish ai_stream_end after LLM call (regardless of error)
+		if a.Publisher != nil {
+			metadata := map[string]interface{}{
+				"agent": a.Name(),
+			}
+			if err == nil && resp != nil && resp.Usage != nil {
+				metadata["usage"] = map[string]interface{}{
+					"prompt_tokens":               resp.Usage.PromptTokens,
+					"completion_tokens":           resp.Usage.CompletionTokens,
+					"total_tokens":                resp.Usage.TotalTokens,
+					"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
+					"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
+					"total_input_tokens":          resp.Usage.TotalInputTokens,
+				}
+			}
+			a.Publisher.PublishWithMetadata("ai_stream_end", "", a.Name(), metadata)
+		}
+
 		if err == nil {
 			break
 		}
