@@ -426,11 +426,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 					}
 
 					// 为工具调用创建独立超时 context，防止工具卡死（如用户确认无限等待）
-					// 使用 WithCancel 剥离父 context 的 deadline，再 WithTimeout 添加全新的 120 秒超时
-					// 这确保每个工具调用获得完整的 120 秒超时，不受父 context 剩余时间限制
 					// 同时 WithCancel 保证了父 context 取消时工具调用也会被取消
 					cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
-					toolCtx, toolCancel := context.WithTimeout(cancelCtx, 120*time.Second)
+					toolCtx, toolCancel := context.WithTimeout(cancelCtx, 180*time.Second)
 					toolResult, callErr = t.Call(toolCtx, tc.Function.Arguments)
 					cancelCtxCancel()
 					toolCancel()
