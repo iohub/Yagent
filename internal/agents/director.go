@@ -26,6 +26,11 @@ import (
 //go:embed director.prompt.md
 var directorPrompt string
 
+// maxNonDelegationPrompts 限制"未委派强制提醒"的最大次数。
+// 当 director 未委派任何 agent 就打算以纯文本结束时，以用户角色注入强制消息；
+// 若 LLM 持续拒绝委派，达到此上限后放行原内容，防止无限循环。
+const maxNonDelegationPrompts = 3
+
 // CustomAgent stores a dynamically designed agent created by Meta-Agent.
 // Once registered, it becomes available as a permanent delegate tool.
 type CustomAgent struct {
@@ -76,6 +81,7 @@ type DirectorAgent struct {
 
 	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
 	hasDelegated         bool                      // 标记是否已委派过 agent
+	nonDelegationPrompts int                       // 本次任务中"未委派强制提醒"已注入次数（执行检测机制）
 	delegationAttempts   int                       // 委派尝试次数统计
 
 	currentMemory         *memory.ConversationMemory // 当前正在使用的 memory（Run 期间设置）
@@ -891,6 +897,10 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 	// 设置当前 memory（delegate 闭包通过 a.currentMemory 访问）
 	a.currentMemory = mem
 
+	// 执行检测机制：每次任务开始时重置委派状态，使检测基于"本次任务是否委派"
+	a.hasDelegated = false
+	a.nonDelegationPrompts = 0
+
 	// 从 llmClient 刷新引擎，确保 TUI 中切换模型后立即生效
 	if a.llmClient != nil {
 		newEngine := a.llmClient.GetAgentEngine("director")
@@ -1252,9 +1262,27 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			ToolCalls: choice.ToolCalls,
 		})
 
-		// 如果 LLM 没有调用任何工具，返回纯文本内容作为最终结果
-		// 这是防止死循环的关键：避免在无 tool_calls 时继续循环，导致 LLM 重复输出相同内容
+		// 执行检测机制：若 director 未委派任何 agent 就打算以纯文本结束任务，
+		// 以用户角色注入简练英文消息，强制要求其必须 delegate 一个 agent 完成任务。
+		// 达到 maxNonDelegationPrompts 上限后放行（防死循环，循环本身还有 maxSteps 兜底）。
 		if len(choice.ToolCalls) == 0 {
+			if !a.hasDelegated && a.nonDelegationPrompts < maxNonDelegationPrompts {
+				a.nonDelegationPrompts++
+				var forceMsg string
+				if a.nonDelegationPrompts == 1 {
+					forceMsg = "You must delegate an agent to complete the task. Do not reply with plain text — call a delegate_* tool now."
+				} else {
+					forceMsg = "You still have not delegated any agent. You MUST call a delegate_* tool to complete the task before responding."
+				}
+				userMsg := llm.Message{Role: llm.RoleUser, Content: forceMsg}
+				messages = append(messages, userMsg)
+				// 写入 director JSONL 日志，保持本次运行记录完整
+				writeDirectorJSONL(userMsg)
+				slog.Debug("DirectorAgent force delegation via user message", "step", i, "prompt_count", a.nonDelegationPrompts)
+				// 注意：不写入 ConversationMemory（mem），该消息是系统模拟的用户指令，
+				// 不应污染会话历史；下一轮 LLM 调用会看到该 user 消息并应调用 delegate 工具。
+				continue
+			}
 			return choice.Content, nil
 		}
 

@@ -418,3 +418,212 @@ func sortedAdapterNames(adapters []*tools.Adapter) []string {
 	}
 	return names
 }
+
+// ─── Test: Force Delegation - Inject User Message ─────────────────────────────
+
+// TestDirector_ForceDelegation_InjectUserMessage verifies that when the director
+// returns plain text without delegating, the system injects a user-role message
+// forcing delegation on the next LLM call.
+func TestDirector_ForceDelegation_InjectUserMessage(t *testing.T) {
+	t.Parallel()
+
+	// 1. Create temp working directory
+	workDir := t.TempDir()
+
+	// 2. Mock response queue:
+	//    Call 1: plain text (no tool calls) → should trigger force delegation
+	//    Call 2: agent_exit tool call → should succeed after force message
+	mock := &fullChainMockLLM{
+		responses: []*llm.Response{
+			{Choices: []llm.Choice{{Content: "I'll just return text without delegating."}}},
+			makeTextThenExitResponse("task completed via delegation"),
+		},
+	}
+
+	// 3. Create DirectorAgent
+	director := newFullChainDirector(t, workDir, mock)
+
+	// 4. Execute
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := director.Run(ctx, "complete the task", nil)
+	if err != nil {
+		t.Fatalf("director.Run() returned error: %v", err)
+	}
+
+	// 5. Assert: result should come from second call (agent_exit), not first plain text
+	if result == "I'll just return text without delegating." {
+		t.Error("expected result after force delegation, but got original plain text")
+	}
+	if result == "" {
+		t.Error("expected non-empty result")
+	}
+
+	// 6. Assert: LLM should be called exactly 2 times
+	if mock.CallCount() != 2 {
+		t.Errorf("expected 2 LLM calls, got %d", mock.CallCount())
+	}
+
+	// 7. Assert: second call messages should contain the force delegation user message
+	if len(mock.callLog) < 2 {
+		t.Fatalf("expected at least 2 call logs, got %d", len(mock.callLog))
+	}
+	secondCallMessages := mock.callLog[1].Messages
+	foundForceMsg := false
+	for _, msg := range secondCallMessages {
+		if msg.Role == llm.RoleUser && msg.Content != "" &&
+			msg.Content == "You must delegate an agent to complete the task. Do not reply with plain text — call a delegate_* tool now." {
+			foundForceMsg = true
+			break
+		}
+	}
+	if !foundForceMsg {
+		t.Errorf("expected force delegation user message in second call, got messages: %+v",
+			func() []string {
+				msgs := make([]string, len(secondCallMessages))
+				for i, m := range secondCallMessages {
+					msgs[i] = fmt.Sprintf("%s:%s", m.Role, m.Content)
+				}
+				return msgs
+			}())
+	}
+}
+
+// ─── Test: Force Delegation - Max Prompts Then Return ─────────────────────────
+
+// TestDirector_ForceDelegation_MaxPromptsThenReturn verifies that when the director
+// persistently refuses to delegate, the system stops injecting force messages after
+// maxNonDelegationPrompts and returns the original content.
+func TestDirector_ForceDelegation_MaxPromptsThenReturn(t *testing.T) {
+	t.Parallel()
+
+	// 1. Create temp working directory
+	workDir := t.TempDir()
+
+	// 2. Mock always returns plain text (no tool calls)
+	// Pre-fill maxNonDelegationPrompts + 2 responses to ensure we hit the limit
+	plainTextResponses := make([]*llm.Response, maxNonDelegationPrompts+2)
+	for i := range plainTextResponses {
+		plainTextResponses[i] = &llm.Response{Choices: []llm.Choice{{Content: fmt.Sprintf("plain text response %d", i)}}}
+	}
+	mock := &fullChainMockLLM{
+		responses: plainTextResponses,
+	}
+
+	// 3. Create DirectorAgent with maxSteps = 10
+	director := newFullChainDirector(t, workDir, mock)
+
+	// 4. Execute
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := director.Run(ctx, "complete the task", nil)
+	if err != nil {
+		t.Fatalf("director.Run() returned error: %v", err)
+	}
+
+	// 5. Assert: result should be the last plain text (not error, no deadlock)
+	if result == "" {
+		t.Error("expected non-empty result")
+	}
+
+	// 6. Assert: LLM should be called more than 1 time (force messages were injected)
+	// and no more than maxSteps (10)
+	callCount := mock.CallCount()
+	if callCount <= 1 {
+		t.Errorf("expected more than 1 LLM call due to force delegation, got %d", callCount)
+	}
+	if callCount > director.maxSteps {
+		t.Errorf("expected at most %d LLM calls, got %d", director.maxSteps, callCount)
+	}
+
+	// 7. Assert: force messages should be injected exactly maxNonDelegationPrompts times
+	// Count injections by comparing consecutive call logs.
+	// Each injection adds exactly 1 new force user message to the messages array.
+	injectionCount := 0
+	var prevForceCount int
+	for idx, log := range mock.callLog {
+		forceCount := 0
+		for _, msg := range log.Messages {
+			if msg.Role == llm.RoleUser &&
+				(msg.Content == "You must delegate an agent to complete the task. Do not reply with plain text — call a delegate_* tool now." ||
+					msg.Content == "You still have not delegated any agent. You MUST call a delegate_* tool to complete the task before responding.") {
+				forceCount++
+			}
+		}
+		if idx > 0 && forceCount > prevForceCount {
+			injectionCount++
+		}
+		prevForceCount = forceCount
+	}
+	if injectionCount != maxNonDelegationPrompts {
+		t.Errorf("expected %d force message injections, got %d (total calls: %d)", maxNonDelegationPrompts, injectionCount, mock.CallCount())
+	}
+}
+
+// ─── Test: No Force After Delegation ──────────────────────────────────────────
+
+// TestDirector_NoForceAfterDelegation verifies that after a successful delegation
+// tool call, no force delegation message is injected on subsequent plain-text returns.
+func TestDirector_NoForceAfterDelegation(t *testing.T) {
+	t.Parallel()
+
+	// 1. Create temp working directory
+	workDir := t.TempDir()
+
+	// 2. Mock response queue:
+	//    Call 1 (Director): delegate_repo tool call → sets hasDelegated = true
+	//    Call 2 (RepoAgent): list_dir tool call
+	//    Call 3 (RepoAgent): text + agent_exit
+	//    Call 4 (Director): plain text (no tool calls) → should NOT trigger force delegation
+	//    Call 5+ (fallback): safe response for any additional internal calls
+	mock := &fullChainMockLLM{
+		responses: []*llm.Response{
+			makeToolCallResponse("delegate_repo", `{"task": "analyze project"}`),
+			makeToolCallResponse("list_dir", `{"dir_path": ".", "max_depth": 2}`),
+			makeTextThenExitResponse("project analysis done"),
+			{Choices: []llm.Choice{{Content: "task completed after delegation"}}},
+		},
+		// Provide safe fallback for any additional internal LLM calls
+		defaultOnExhaust: &llm.Response{Choices: []llm.Choice{{Content: "task completed after delegation"}}},
+	}
+
+	// 3. Create DirectorAgent
+	director := newFullChainDirector(t, workDir, mock)
+
+	// 4. Execute
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := director.Run(ctx, "complete the task", nil)
+	if err != nil {
+		t.Fatalf("director.Run() returned error: %v", err)
+	}
+
+	// 5. Assert: result should be the plain text from second call
+	// (Note: due to internal LLM calls during delegate execution, we check that
+	// the result does NOT contain error and contains expected content)
+	if result == "" {
+		t.Error("expected non-empty result")
+	}
+	if result != "task completed after delegation" && result != "fallback" {
+		t.Logf("result: %q (expected 'task completed after delegation' or 'fallback')", result)
+	}
+
+	// 6. Assert: LLM should be called at least 2 times
+	if mock.CallCount() < 2 {
+		t.Errorf("expected at least 2 LLM calls, got %d", mock.CallCount())
+	}
+
+	// 7. Assert: no force delegation user message in any call log
+	for _, log := range mock.callLog {
+		for _, msg := range log.Messages {
+			if msg.Role == llm.RoleUser &&
+				(msg.Content == "You must delegate an agent to complete the task. Do not reply with plain text — call a delegate_* tool now." ||
+					msg.Content == "You still have not delegated any agent. You MUST call a delegate_* tool to complete the task before responding.") {
+				t.Error("unexpected force delegation user message after successful delegation")
+			}
+		}
+	}
+}
