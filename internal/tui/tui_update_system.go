@@ -106,14 +106,9 @@ func (m *model) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) 
 		if vpHeight < 3 {
 			vpHeight = 3
 		}
-		tab.viewport.SetWidth(m.computeFieldWidth())
+		tab.viewport.SetWidth(m.termWidth - m.dashboardWidth())
 		tab.viewport.SetHeight(vpHeight)
 		tab.needFullRebuild = true
-	}
-
-	// 更新当前活动 tab 的 viewport
-	if m.activeSessionIdx >= 0 && m.activeSessionIdx < len(m.sessionTabs) {
-		m.restoreSessionTab(m.activeSessionIdx)
 	}
 
 	return m, tickCmd()

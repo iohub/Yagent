@@ -218,7 +218,7 @@ func (m *model) restoreSessionTab(idx int) {
 	// 恢复 viewport
 	m.viewport = tab.viewport
 	// 按当前终端尺寸修正 viewport
-	m.viewport.SetWidth(m.computeFieldWidth())
+	m.viewport.SetWidth(m.termWidth - m.dashboardWidth())
 	vpHeight := m.termHeight - m.computeFooterHeight() - tabBarHeight
 	if vpHeight < 3 {
 		vpHeight = 3
@@ -404,28 +404,35 @@ func (m *model) renderTabBar() string {
 		return ""
 	}
 
-	// 计算可用宽度
-	availableWidth := m.termWidth - 1 // 减去右侧 padding
+	// 计算可用宽度（减去右侧 padding）
+	availableWidth := m.termWidth - 1
 
-	// 渲染每个 tab
-	var tabStrings []string
+	// 构建 (label, styled) 对，并记录每个 tab 的显示宽度
+	type tabItem struct {
+		label string
+		styled string
+		width int
+	}
+	var items []tabItem
+
 	for i, tab := range m.sessionTabs {
-		// 格式: "N:title"
 		label := fmt.Sprintf("%d:%s", i+1, tab.title)
+		var styled string
 		if i == m.activeSessionIdx {
 			// 活动 tab: 高亮背景
-			style := lipgloss.NewStyle().
+			styled = lipgloss.NewStyle().
 				Background(lipgloss.Color("39")).
 				Foreground(lipgloss.Color("0")).
-				Bold(true)
-			tabStrings = append(tabStrings, style.Render(label))
+				Bold(true).
+				Render(label)
 		} else {
 			// 非活动 tab: 暗色背景
-			style := lipgloss.NewStyle().
+			styled = lipgloss.NewStyle().
 				Background(lipgloss.Color("236")).
-				Foreground(lipgloss.Color("245"))
-			tabStrings = append(tabStrings, style.Render(label))
+				Foreground(lipgloss.Color("245")).
+				Render(label)
 		}
+		items = append(items, tabItem{label: label, styled: styled, width: lipgloss.Width(styled)})
 	}
 
 	// 添加"新建"按钮（如果未达到上限）
@@ -434,39 +441,61 @@ func (m *model) renderTabBar() string {
 			Background(lipgloss.Color("237")).
 			Foreground(lipgloss.Color("245")).
 			Render(" +")
-		tabStrings = append(tabStrings, newBtn)
+		items = append(items, tabItem{label: "+", styled: newBtn, width: lipgloss.Width(newBtn)})
 	}
 
-	// 拼接并截断到可用宽度
-	result := strings.Join(tabStrings, "")
-	if len(result) > availableWidth {
-		// 简单截断：保留活动 tab 可见
-		// 计算活动 tab 的位置
-		var currentLen int
-		for i, ts := range tabStrings {
-			if i == m.activeSessionIdx {
-				// 找到活动 tab 开始的位置
-				start := currentLen
-				// 截取活动 tab 及其后面的内容
-				remaining := result[start:]
-				if len(remaining) > availableWidth {
-					result = remaining[:availableWidth]
-				} else {
-					result = remaining
+	// 贪心追加 tab，保证活动 tab 始终可见
+	var resultItems []tabItem
+	totalWidth := 0
+	activeIdx := m.activeSessionIdx
+
+	// 尝试按顺序追加
+	for _, item := range items {
+		if totalWidth+item.width <= availableWidth {
+			resultItems = append(resultItems, item)
+			totalWidth += item.width
+		} else {
+			// 检查活动 tab 是否在当前结果集中
+			foundActive := false
+			for j := range resultItems {
+				if j == activeIdx {
+					foundActive = true
+					break
 				}
-				break
 			}
-			currentLen += len(ts)
+			if !foundActive {
+				// 活动 tab 不在结果集中，需要重新构建：只显示活动 tab 及之后的内容
+				resultItems = nil
+				totalWidth = 0
+				for k, item := range items {
+					if k < activeIdx {
+						continue
+					}
+					if totalWidth+item.width <= availableWidth {
+						resultItems = append(resultItems, item)
+						totalWidth += item.width
+					}
+				}
+			}
+			break
 		}
-		// 如果截断后不完整，补上省略号
-		if strings.HasSuffix(result, "+") && len(result) < availableWidth-1 {
-			result = result + strings.Repeat(" ", availableWidth-len(result))
-		} else if len(result) < availableWidth {
-			result = result + strings.Repeat(" ", availableWidth-len(result))
-		}
-	} else if len(result) < availableWidth {
-		// 填充空格
-		result = result + strings.Repeat(" ", availableWidth-len(result))
+	}
+
+	// 拼接渲染后的字符串
+	var tabStrings []string
+	for _, item := range resultItems {
+		tabStrings = append(tabStrings, item.styled)
+	}
+	result := strings.Join(tabStrings, "")
+
+	// 计算实际显示宽度（用于填充空格）
+	var totalRenderedWidth int
+	for _, item := range resultItems {
+		totalRenderedWidth += item.width
+	}
+
+	if totalRenderedWidth < availableWidth {
+		result = result + strings.Repeat(" ", availableWidth-totalRenderedWidth)
 	}
 
 	return result
