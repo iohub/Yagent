@@ -98,6 +98,60 @@ Final plan here.`,
 			wantLen:  1,
 			wantSubs: []string{"## Thought & Plan"},
 		},
+		{
+			name:     "no whitespace variant",
+			content:  "## Thought&Plan\nStep A",
+			wantLen:  1,
+			wantSubs: []string{"## Thought&Plan"},
+		},
+		{
+			name:     "multiple spaces",
+			content:  "## THOUGHT   &   PLAN\nStep B",
+			wantLen:  1,
+			wantSubs: []string{"## THOUGHT   &   PLAN"},
+		},
+		{
+			name:     "newlines in separator",
+			content:  "## Thought\n&\nPlan\nStep C",
+			wantLen:  1,
+			wantSubs: []string{"## Thought\n&\nPlan"},
+		},
+		{
+			name:     "fullwidth ampersand",
+			content:  "## Thought＆Plan\nStep D",
+			wantLen:  1,
+			wantSubs: []string{"## Thought＆Plan"},
+		},
+		{
+			name:     "html entity amp",
+			content:  "## Thought &amp; Plan\nStep E",
+			wantLen:  1,
+			wantSubs: []string{"## Thought &amp; Plan"},
+		},
+		{
+			name:     "and variant",
+			content:  "## Thought and Plan\nStep F",
+			wantLen:  1,
+			wantSubs: []string{"## Thought and Plan"},
+		},
+		{
+			name: "mixed variant multiple blocks",
+			content: `## THOUGHT&PLAN
+Step 1
+
+## thought  &  plan
+Step 2
+
+## Thought and Plan
+Step 3`,
+			wantLen:  3,
+			wantSubs: []string{"## THOUGHT&PLAN", "## thought  &  plan", "## Thought and Plan"},
+		},
+		{
+			name:    "no separator should not match",
+			content: "## Thought Plan\nStep X",
+			wantLen: 0,
+		},
 	}
 
 	for _, tt := range tests {

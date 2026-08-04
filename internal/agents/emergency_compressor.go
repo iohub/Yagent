@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,6 +20,11 @@ const (
 	emergencySummaryInputTokens = 20000
 )
 
+// thoughtAndPlanPattern 匹配 "Thought & Plan" 标题关键字，忽略大小写与空白差异，最大化兼容各种变体：
+// 如 "Thought & Plan"、"THOUGHT&PLAN"、"Thought  &  Plan"、"Thought\n&\nPlan"、
+// "Thought＆Plan"（全角 &）、"Thought &amp; Plan"（HTML 实体）、"Thought and Plan" 等。
+var thoughtAndPlanPattern = regexp.MustCompile(`(?i)thought\s*(?:&amp;|&|＆|and)\s*plan`)
+
 // EmergencyCompressionStats 记录紧急上下文压缩的整体统计信息。
 type EmergencyCompressionStats struct {
 	OriginalTokens   int    `json:"original_tokens"`
@@ -34,7 +40,7 @@ type EmergencyCompressionStats struct {
 // ─── extractThoughtAndPlanBlocks ─────────────────────────────────────────────
 
 // extractThoughtAndPlanBlocks 从 assistant 消息的 Content 中提取所有 Thought & Plan 块。
-// 关键字匹配大小写不敏感，兼容 "Thought & Plan"
+// 关键字通过正则匹配：忽略大小写、忽略空白差异，兼容多种变体（全角 ＆、HTML 实体 &amp;、and 写法）。
 // 若内容中无关键字，返回 nil。
 func extractThoughtAndPlanBlocks(content string) []string {
 	if content == "" {
@@ -62,23 +68,13 @@ func extractThoughtAndPlanBlocks(content string) []string {
 	return blocks
 }
 
-// findNextBlockStart 在 content[offset:] 中查找下一个 "thought & plan"
+// findNextBlockStart 在 content[offset:] 中查找下一个 "Thought & Plan"（正则匹配，忽略大小写与空白差异）
 func findNextBlockStart(content string, offset int) int {
-	lower := strings.ToLower(content[offset:])
-	idxTP := strings.Index(lower, "thought & plan")
-	if idxTP >= 0 && idxTH >= 0 {
-		if idxTP <= idxTH {
-			return offset + idxTP
-		}
-		return offset + idxTH
+	loc := thoughtAndPlanPattern.FindStringIndex(content[offset:])
+	if loc == nil {
+		return -1
 	}
-	if idxTP >= 0 {
-		return offset + idxTP
-	}
-	if idxTH >= 0 {
-		return offset + idxTH
-	}
-	return -1
+	return offset + loc[0]
 }
 
 // ─── summarizeBlocksWithLLM ──────────────────────────────────────────────────
