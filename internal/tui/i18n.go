@@ -77,6 +77,15 @@ type translations struct {
 	// Dashboard hints
 	DashboardCollapseHint string
 	DashboardExpandHint   string
+	// Session tab hints
+	SessionTitlePrefix   string
+	TabNewHint           string
+	TabMaxReached        string
+	TabCannotWhileRunning string
+	TabCloseLastBlocked  string
+	TabCleared           string
+	TabClosed            string
+	TabNewCreated        string
 }
 
 var langMap = map[Language]translations{
@@ -227,6 +236,14 @@ var langMap = map[Language]translations{
 		TimelineExpandHint:   "Fullscreen",
 		DashboardCollapseHint: "collapse",
 		DashboardExpandHint:   "expand",
+		SessionTitlePrefix:   "Session",
+		TabNewHint:           "New",
+		TabMaxReached:        "Maximum sessions reached (10)",
+		TabCannotWhileRunning: "Cannot switch/new/clear session while a task is running",
+		TabCloseLastBlocked:  "Cannot close the last session",
+		TabCleared:           "Session cleared",
+		TabClosed:            "Session closed",
+		TabNewCreated:        "New session created",
 	},
 }
 
@@ -366,6 +383,22 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.DashboardCollapseHint
 	case "DashboardExpandHint":
 		return translations.DashboardExpandHint
+	case "SessionTitlePrefix":
+		return translations.SessionTitlePrefix
+	case "TabNewHint":
+		return translations.TabNewHint
+	case "TabMaxReached":
+		return translations.TabMaxReached
+	case "TabCannotWhileRunning":
+		return translations.TabCannotWhileRunning
+	case "TabCloseLastBlocked":
+		return translations.TabCloseLastBlocked
+	case "TabCleared":
+		return translations.TabCleared
+	case "TabClosed":
+		return translations.TabClosed
+	case "TabNewCreated":
+		return translations.TabNewCreated
 	default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}

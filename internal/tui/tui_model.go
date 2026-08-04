@@ -3,6 +3,7 @@ package tui
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -711,6 +712,12 @@ type model struct {
 	// cmdKeyMap 将用户配置的命令模式快捷键映射为内部标准键名
 	// key: 用户配置的按键, value: 内部标准键名
 	cmdKeyMap map[string]string
+
+	// ── 多会话 Tab ──
+	sessionTabs      []*sessionTab // 所有会话页面快照
+	activeSessionIdx int           // 当前活动会话索引
+	nextTabID        int           // 会话 ID 自增
+	maxTabs          int           // 最大会话数（默认 10）
 }
 
 // autocompleteCacheKey is a fine-grained cache key for autocomplete results.
@@ -914,6 +921,50 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleDashboard != "alt+d" {
 		editKeyMap[cfg.TUI.Keybindings.Edit.ToggleDashboard] = "alt+d"
 	}
+	// Tab 相关快捷键
+	if cfg != nil && cfg.TUI.Keybindings.Edit.NewTab != "ctrl+t" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.NewTab] = "ctrl+t"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.PrevTab != "alt+[" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.PrevTab] = "alt+["
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.NextTab != "alt+]" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.NextTab] = "alt+]"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.ClearSession != "alt+c" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.ClearSession] = "alt+c"
+	}
+	if cfg != nil && cfg.TUI.Keybindings.Edit.CloseTab != "alt+w" {
+		editKeyMap[cfg.TUI.Keybindings.Edit.CloseTab] = "alt+w"
+	}
+	// alt+1..9 直达 tab
+	for i := 1; i <= 9; i++ {
+		def := fmt.Sprintf("alt+%d", i)
+		var cfgVal string
+		switch i {
+		case 1:
+			cfgVal = cfg.TUI.Keybindings.Edit.Tab1
+		case 2:
+			cfgVal = cfg.TUI.Keybindings.Edit.Tab2
+		case 3:
+			cfgVal = cfg.TUI.Keybindings.Edit.Tab3
+		case 4:
+			cfgVal = cfg.TUI.Keybindings.Edit.Tab4
+		case 5:
+			cfgVal = cfg.TUI.Keybindings.Edit.Tab5
+		case 6:
+			cfgVal = cfg.TUI.Keybindings.Edit.Tab6
+		case 7:
+			cfgVal = cfg.TUI.Keybindings.Edit.Tab7
+		case 8:
+			cfgVal = cfg.TUI.Keybindings.Edit.Tab8
+		case 9:
+			cfgVal = cfg.TUI.Keybindings.Edit.Tab9
+		}
+		if cfg != nil && cfgVal != def {
+			editKeyMap[cfgVal] = def
+		}
+	}
 
 	if cfg != nil && cfg.TUI.Keybindings.Command.ScrollDown != "j" {
 		cmdKeyMap[cfg.TUI.Keybindings.Command.ScrollDown] = "j"
@@ -946,7 +997,7 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		cmdKeyMap[cfg.TUI.Keybindings.Command.Quit] = "ctrl+c"
 	}
 
-return &model{
+	m := &model{
 		com: com,
 
 		assistant:          ca,
@@ -1033,7 +1084,12 @@ return &model{
 		// ── 快捷键映射表 ──
 		editKeyMap: editKeyMap,
 		cmdKeyMap:  cmdKeyMap,
+
+		// ── 多会话 Tab ──
+		maxTabs: 10,
 	}
+	m.initSessionTabs()
+	return m
 }
 
 func (m *model) Init() tea.Cmd {
@@ -1146,6 +1202,50 @@ func buildHelpKeyOverrides(kb *config.KeybindingsConfig) map[string]string {
 	}
 	if kb.Command.ToggleDashboard != "alt+d" {
 		overrides["Alt+D"] = formatKeyDisplayName(kb.Command.ToggleDashboard)
+	}
+
+	// Tab 相关快捷键
+	if kb.Edit.NewTab != "ctrl+t" {
+		overrides["Ctrl+T"] = formatKeyDisplayName(kb.Edit.NewTab)
+	}
+	if kb.Edit.PrevTab != "alt+[" {
+		overrides["Alt+["] = formatKeyDisplayName(kb.Edit.PrevTab)
+	}
+	if kb.Edit.NextTab != "alt+]" {
+		overrides["Alt+]"] = formatKeyDisplayName(kb.Edit.NextTab)
+	}
+	if kb.Edit.ClearSession != "alt+c" {
+		overrides["Alt+C"] = formatKeyDisplayName(kb.Edit.ClearSession)
+	}
+	if kb.Edit.CloseTab != "alt+w" {
+		overrides["Alt+W"] = formatKeyDisplayName(kb.Edit.CloseTab)
+	}
+	for i := 1; i <= 9; i++ {
+		key := fmt.Sprintf("Alt+%d", i)
+		var cfgVal string
+		switch i {
+		case 1:
+			cfgVal = kb.Edit.Tab1
+		case 2:
+			cfgVal = kb.Edit.Tab2
+		case 3:
+			cfgVal = kb.Edit.Tab3
+		case 4:
+			cfgVal = kb.Edit.Tab4
+		case 5:
+			cfgVal = kb.Edit.Tab5
+		case 6:
+			cfgVal = kb.Edit.Tab6
+		case 7:
+			cfgVal = kb.Edit.Tab7
+		case 8:
+			cfgVal = kb.Edit.Tab8
+		case 9:
+			cfgVal = kb.Edit.Tab9
+		}
+		if cfgVal != fmt.Sprintf("alt+%d", i) {
+			overrides[key] = formatKeyDisplayName(cfgVal)
+		}
 	}
 
 	return overrides

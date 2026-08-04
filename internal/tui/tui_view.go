@@ -78,8 +78,9 @@ func (m *model) View() tea.View {
 	var b strings.Builder
 
 	// Main content area: scrollable viewport
+	// 减去 tab 栏高度
 	footerHeight := m.computeFooterHeight()
-	vpHeight := m.termHeight - footerHeight
+	vpHeight := m.termHeight - footerHeight - tabBarHeight
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
@@ -129,6 +130,9 @@ func (m *model) View() tea.View {
 	}
 
 	// Render viewport with optional scrollbar and optional dashboard
+	// 先渲染 tab 栏
+	b.WriteString(m.renderTabBar() + "\n")
+
 	if scrollbarWidth > 0 {
 		// Use design system colors - softer indigo (62) for reduced visual fatigue
 		sbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("62"))

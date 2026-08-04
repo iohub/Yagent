@@ -578,6 +578,48 @@ func (c *Config) validate() error {
 	if c.TUI.Keybindings.Edit.ToggleDashboard == "" {
 		c.TUI.Keybindings.Edit.ToggleDashboard = "alt+d"
 	}
+	// Tab 相关快捷键
+	if c.TUI.Keybindings.Edit.NewTab == "" {
+		c.TUI.Keybindings.Edit.NewTab = "ctrl+t"
+	}
+	if c.TUI.Keybindings.Edit.PrevTab == "" {
+		c.TUI.Keybindings.Edit.PrevTab = "alt+["
+	}
+	if c.TUI.Keybindings.Edit.NextTab == "" {
+		c.TUI.Keybindings.Edit.NextTab = "alt+]"
+	}
+	if c.TUI.Keybindings.Edit.ClearSession == "" {
+		c.TUI.Keybindings.Edit.ClearSession = "alt+c"
+	}
+	if c.TUI.Keybindings.Edit.CloseTab == "" {
+		c.TUI.Keybindings.Edit.CloseTab = "alt+w"
+	}
+	for i := 1; i <= 9; i++ {
+		var ptr *string
+		switch i {
+		case 1:
+			ptr = &c.TUI.Keybindings.Edit.Tab1
+		case 2:
+			ptr = &c.TUI.Keybindings.Edit.Tab2
+		case 3:
+			ptr = &c.TUI.Keybindings.Edit.Tab3
+		case 4:
+			ptr = &c.TUI.Keybindings.Edit.Tab4
+		case 5:
+			ptr = &c.TUI.Keybindings.Edit.Tab5
+		case 6:
+			ptr = &c.TUI.Keybindings.Edit.Tab6
+		case 7:
+			ptr = &c.TUI.Keybindings.Edit.Tab7
+		case 8:
+			ptr = &c.TUI.Keybindings.Edit.Tab8
+		case 9:
+			ptr = &c.TUI.Keybindings.Edit.Tab9
+		}
+		if *ptr == "" {
+			*ptr = fmt.Sprintf("alt+%d", i)
+		}
+	}
 
 	if c.TUI.Keybindings.Command.ScrollDown == "" {
 		c.TUI.Keybindings.Command.ScrollDown = "j"
@@ -778,6 +820,21 @@ type EditKeybindings struct {
 	Quit            string `toml:"quit"`             // 默认: "ctrl+c"
 	SwitchModel     string `toml:"switch_model"`     // 默认: "alt+m"
 	ToggleDashboard string `toml:"toggle_dashboard"` // 默认: "alt+d"
+	// Tab 相关快捷键
+	NewTab       string `toml:"new_tab"`       // 默认: "ctrl+t"
+	PrevTab      string `toml:"prev_tab"`      // 默认: "alt+["
+	NextTab      string `toml:"next_tab"`      // 默认: "alt+]"
+	ClearSession string `toml:"clear_session"` // 默认: "alt+c"
+	CloseTab     string `toml:"close_tab"`     // 默认: "alt+w"
+	Tab1 string `toml:"tab_1"` // 默认: "alt+1"
+	Tab2 string `toml:"tab_2"` // 默认: "alt+2"
+	Tab3 string `toml:"tab_3"` // 默认: "alt+3"
+	Tab4 string `toml:"tab_4"` // 默认: "alt+4"
+	Tab5 string `toml:"tab_5"` // 默认: "alt+5"
+	Tab6 string `toml:"tab_6"` // 默认: "alt+6"
+	Tab7 string `toml:"tab_7"` // 默认: "alt+7"
+	Tab8 string `toml:"tab_8"` // 默认: "alt+8"
+	Tab9 string `toml:"tab_9"` // 默认: "alt+9"
 }
 
 // CommandKeybindings 命令模式快捷键配置

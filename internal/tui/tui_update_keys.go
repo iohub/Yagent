@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -624,6 +625,59 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleDashboard()
 		return m, nil
 
+	case "ctrl+t": // 新建会话 tab
+		if m.taskRunning {
+			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+			return m, nil
+		}
+		if len(m.sessionTabs) >= m.maxTabs {
+			m.infoMsg = langManager.GetText("TabMaxReached")
+			return m, nil
+		}
+		return m, m.newSessionTabAction()
+
+	case "alt+[": // 上一个 tab
+		if m.taskRunning {
+			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+			return m, nil
+		}
+		if m.activeSessionIdx <= 0 {
+			return m, nil
+		}
+		m.switchSessionTab(m.activeSessionIdx - 1)
+		return m, nil
+
+	case "alt+]": // 下一个 tab
+		if m.taskRunning {
+			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+			return m, nil
+		}
+		if m.activeSessionIdx >= len(m.sessionTabs)-1 {
+			return m, nil
+		}
+		m.switchSessionTab(m.activeSessionIdx + 1)
+		return m, nil
+
+	case "alt+c": // 清空当前会话
+		if m.taskRunning {
+			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+			return m, nil
+		}
+		m.clearCurrentSession()
+		return m, nil
+
+	case "alt+w": // 关闭当前 tab
+		if m.taskRunning {
+			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+			return m, nil
+		}
+		if len(m.sessionTabs) <= 1 {
+			m.infoMsg = langManager.GetText("TabCloseLastBlocked")
+			return m, nil
+		}
+		m.closeCurrentSessionTab()
+		return m, nil
+
 	case "ctrl+l":
 		// 切换全屏时间线模式
 		if !m.timelineFullscreenMode {
@@ -784,6 +838,20 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	default:
+		// 处理 alt+1..9 直达 tab
+		if strings.HasPrefix(editKeyStr, "alt+") {
+			numStr := strings.TrimPrefix(editKeyStr, "alt+")
+			if n, err := strconv.Atoi(numStr); err == nil && n >= 1 && n <= 9 {
+				if !m.taskRunning {
+					idx := n - 1
+					if idx < len(m.sessionTabs) {
+						m.switchSessionTab(idx)
+						return m, nil
+					}
+				}
+			}
+		}
+
 		// Only update input — viewport scrolling keys (ctrl+f, ctrl+b)
 		// are handled in dedicated case branches above.
 		var inputCmd tea.Cmd

@@ -55,6 +55,9 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 	m.taskManager.AddTask(task)
 	m.currentTask = task
 
+	// 更新 tab 标题（如果仍是默认标题）
+	m.updateActiveTabTitle(taskDesc)
+
 	// Add submission entry
 	m.logEntries = append(m.logEntries, logEntry{
 		timestamp: time.Now(),
@@ -93,6 +96,9 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 		content:   message,
 	})
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+
+	// 更新 tab 标题（如果仍是默认标题）
+	m.updateActiveTabTitle(message)
 
 	m.publisherCh = make(chan *messaging.MessagePublisher, 1)
 	return tea.Batch(

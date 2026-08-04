@@ -99,6 +99,23 @@ func (m *model) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) 
 	if m.layoutEngine != nil {
 		m.layoutEngine.Resize(msg.Width, msg.Height)
 	}
+
+	// 更新所有 sessionTab 的 viewport 尺寸
+	for _, tab := range m.sessionTabs {
+		vpHeight := m.termHeight - m.computeFooterHeight() - tabBarHeight
+		if vpHeight < 3 {
+			vpHeight = 3
+		}
+		tab.viewport.SetWidth(m.computeFieldWidth())
+		tab.viewport.SetHeight(vpHeight)
+		tab.needFullRebuild = true
+	}
+
+	// 更新当前活动 tab 的 viewport
+	if m.activeSessionIdx >= 0 && m.activeSessionIdx < len(m.sessionTabs) {
+		m.restoreSessionTab(m.activeSessionIdx)
+	}
+
 	return m, tickCmd()
 }
 

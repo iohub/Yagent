@@ -187,7 +187,23 @@ output_dir = ""                      # 输出目录（空=默认 ~/.codeactor/da
     page_up         = "ctrl+b"     # 向上翻页
     quit            = "ctrl+c"     # 退出
     switch_model    = "alt+m"      # 切换模型
-    
+    # ── 多会话 Tab 快捷键 ──
+    new_tab         = "ctrl+t"     # 新建会话 tab
+    prev_tab        = "alt+["      # 上一个 tab
+    next_tab        = "alt+]"      # 下一个 tab
+    clear_session   = "alt+c"      # 清空当前会话
+    close_tab       = "alt+w"      # 关闭当前 tab
+    # alt+1..9 直达第 N 个 tab
+    # tab_1 = "alt+1"
+    # tab_2 = "alt+2"
+    # tab_3 = "alt+3"
+    # tab_4 = "alt+4"
+    # tab_5 = "alt+5"
+    # tab_6 = "alt+6"
+    # tab_7 = "alt+7"
+    # tab_8 = "alt+8"
+    # tab_9 = "alt+9"
+
     [tui.keybindings.command]
     scroll_down       = "j"        # 向下滚动一行
     scroll_up         = "k"        # 向上滚动一行
