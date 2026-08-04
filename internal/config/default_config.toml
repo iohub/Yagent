@@ -95,6 +95,8 @@ injection_rerank = true
 
 # ── 增强型 Commander（分布式认知架构）──
 # 所有选项默认关闭，启用时需显式设置
+# 注意：enable_result_compression 压缩子 Agent 返回结果（Director 后处理）；
+#       enable_context_compression 压缩 tool 执行结果，适用于 Director / Repo / Coding / DevOps
 # [enhanced_commander]
 # enable = false
 # enable_result_compression = false

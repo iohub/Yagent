@@ -308,10 +308,13 @@ fallback_providers = [
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `enable` | bool | `false` | 总开关 |
-| `enable_result_compression` | bool | `false` | 启用结果压缩 |
-| `compression_threshold` | int | `4096` | 压缩阈值（字节） |
+| `enable_result_compression` | bool | `false` | 启用子 Agent 返回结果压缩（Director 对 delegate 结果的后处理） |
+| `compression_threshold` | int | `4096` | 结果压缩阈值（字节） |
 | `summary_max_length` | int | `2048` | 摘要最大长度（字符） |
 | `max_delegation_depth` | int | `3` | 最大委派深度 |
+| `enable_context_compression` | bool | `false` | 启用上下文压缩（超阈值截断 tool 执行结果），适用于 Director、Repo-Agent、Coding-Agent、DevOps-Agent |
+| `context_compression_threshold` | int | `120000` | 触发上下文压缩的 token 阈值 |
+| `tool_result_keep_tokens` | int | `200` | 截断后每条 tool 结果保留的 token 数 |
 
 ### 5.9 `[memory_jsonl]` — Memory JSONL 实时写入
 

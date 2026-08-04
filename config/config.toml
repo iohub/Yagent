@@ -162,11 +162,11 @@ auto_merge_on_exit = false           # 退出时自动 squash-merge（false 则�
 # ── 增强型 Commander（分布式认知架构）──
 [enhanced_commander]
 enable = false                       # 总开关
-enable_result_compression = false    # 启用结果压缩
-compression_threshold = 4096         # 压缩阈值（字节）
+enable_result_compression = false    # 启用子 Agent 返回结果压缩（Director 对 delegate 结果后处理）
+compression_threshold = 4096         # 结果压缩阈值（字节）
 summary_max_length = 2048            # 摘要最大长度（字符）
 max_delegation_depth = 3             # 最大委派深度
-enable_context_compression = false   # 是否启用上下文压缩（超阈值截断 tool 结果）
+enable_context_compression = false   # 启用上下文压缩（超阈值截断 tool 结果；适用于 Director / Repo / Coding / DevOps）
 # context_compression_threshold = 120000  # 触发阈值（token）
 # tool_result_keep_tokens = 200        # 截断后保留 token 数
 
