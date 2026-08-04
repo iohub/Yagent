@@ -92,6 +92,11 @@ func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
+	// 上下文压缩配置（tool 结果截断）
+	ec := a.GlobalCtx.EnhancedCommander
+	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
+	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
+	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
 	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
