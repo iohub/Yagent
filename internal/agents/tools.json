@@ -1,29 +1,29 @@
 [
   {
     "name": "read_file",
-    "description": "Read file contents by line range (1-indexed) or entire file. LARGE FILE PROTECTION IS ENFORCED: (1) Files > 500MB are refused entirely — use grep first. (2) Files > 10MB cannot use should_read_entire_file=true — use line ranges instead. (3) Entire file reads are capped at 500 lines / 10KB content — excess is truncated (truncated=true). (4) Files > 2MB trigger a warning. Response includes: content, lines (returned count), file_size_bytes, total_lines (full file), truncated, warning, read_mode. For range reads also: start_line, end_line, lines_before_range, lines_after_range. ALWAYS check file_size_bytes and total_lines in the response to decide if further reads are needed. Max 500 lines per call for range reads. Use should_read_entire_file=true ONLY for small files (< 2MB, < 500 lines). For large files, always use start_line_one_indexed and end_line_one_indexed_inclusive to paginate. If truncated=true, use line ranges to read remaining content.",
+    "description": "Read file by line range (1-indexed) or entire file. LARGE FILE PROTECTION: (1) Files > 500MB — refused, use grep first. (2) Files > 10MB — should_read_entire_file=true blocked, use line ranges. (3) Entire reads capped at 500 lines / 10KB (excess truncated, truncated=true). (4) Files > 2MB trigger warning. Response: content, lines, file_size_bytes, total_lines, truncated, warning, read_mode; range reads also add start_line, end_line, lines_before_range, lines_after_range. ALWAYS check file_size_bytes and total_lines before further reads. Max 500 lines/call for range reads. should_read_entire_file=true only for files < 2MB, < 500 lines. For large files, use start_line_one_indexed + end_line_one_indexed_inclusive to paginate. If truncated=true, read remaining with line ranges.",
     "parameters": {
       "type": "object",
       "properties": {
         "target_file": {
           "type": "string",
-          "description": "The path of the file to read. Use either a relative path in the workspace or an absolute path."
+          "description": "File path to read (relative or absolute)."
         },
         "start_line_one_indexed": {
           "type": "integer",
-          "description": "The one-indexed line number to start reading from (inclusive). Required when should_read_entire_file=false. Default: 1."
+          "description": "1-indexed start line (inclusive). Required when should_read_entire_file=false. Default: 1."
         },
         "end_line_one_indexed_inclusive": {
           "type": "integer",
-          "description": "The one-indexed line number to end reading at (inclusive). Max 500 lines from start_line. Required when should_read_entire_file=false. Default: start_line + 499."
+          "description": "1-indexed end line (inclusive). Max 500 lines from start_line. Required when should_read_entire_file=false. Default: start_line + 499."
         },
         "should_read_entire_file": {
           "type": "boolean",
-          "description": "Read entire file. BLOCKED for files > 10MB. Capped at 500 lines / 10KB content. Use ONLY for small files (< 2MB, < 500 lines). Default: false."
+          "description": "Read entire file. BLOCKED for > 10MB files. Capped at 500 lines / 10KB. Only for < 2MB, < 500 line files. Default: false."
         },
         "explanation": {
           "type": "string",
-          "description": "One sentence explanation as to why this tool is being used, and how it contributes to the goal."
+          "description": "Why this tool is used and how it contributes to the goal."
         }
       },
       "required": [
@@ -36,21 +36,21 @@
   },
   {
     "name": "search_replace_in_file",
-    "description": "Replace text in a file. Provide file_path (absolute path), old_string (exact text to replace), and new_string (replacement text). For moves/renames, use run_bash with mv instead.\n\nCRITICAL: old_string must be unique within the file — include 3-5 lines of surrounding context to disambiguate. The tool replaces exactly ONE occurrence per call; make multiple calls for multiple replacements. To create a new file, use an empty old_string with the full content as new_string.\n\nVerify with read_file before editing. Use absolute paths only.",
+    "description": "Replace text in a file. Provide file_path (absolute), old_string (exact match), and new_string. For moves/renames, use run_bash with mv.\n\nCRITICAL: old_string must be unique — include 3-5 lines of context. One replacement per call; use multiple calls for multiple changes. To create a new file, use empty old_string with full content as new_string.\n\nVerify with read_file before editing. Absolute paths only.",
     "parameters": {
       "type": "object",
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "The absolute path to the file to modify (must be absolute, not relative)"
+          "description": "Absolute file path to modify."
         },
         "old_string": {
           "type": "string",
-          "description": "The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)"
+          "description": "Exact text to replace (must be unique in file and match contents exactly, including whitespace and indentation)."
         },
         "new_string": {
           "type": "string",
-          "description": "The edited text to replace the old_string"
+          "description": "Replacement text."
         }
       },
       "required": [
@@ -61,16 +61,16 @@
     }
   },
   {
-    "description": "Create a new file at the specified path with the given content. Fails if the file already exists.",
+    "description": "Create a new file at the specified path with given content. Fails if the file already exists.",
     "name": "create_file",
     "parameters": {
       "properties": {
         "target_file": {
-          "description": "The path of the file to create. You can use either a relative path in the workspace or an absolute path. If an absolute path is provided, it will be preserved as is.",
+          "description": "File path to create (relative or absolute; absolute paths are preserved as-is.",
           "type": "string"
         },
         "content": {
-          "description": "The content to write to the new file.",
+          "description": "Content to write to the new file.",
           "type": "string"
         }
       },
@@ -83,25 +83,25 @@
   },
   {
     "name": "run_bash",
-    "description": "Execute a bash command. Use is_dangerous=true if the command affects anything beyond the project workspace (system packages, services, network, user config, or requires sudo). Use is_dangerous=false only for workspace-scoped operations (build, lint, test, git). Use is_background=true for long-running commands.\n\nGuidelines: use absolute paths, chain with && for sequential execution, avoid newlines in the command, append | cat if output might use a pager. Dangerous commands will require user authorization.",
+    "description": "Execute a bash command. Use is_dangerous=true for commands affecting anything beyond the workspace (system packages, services, network, sudo). Use is_dangerous=false only for workspace operations (build, lint, test, git). Use is_background=true for long-running commands.\n\nGuidelines: use absolute paths, chain with && for sequential execution, avoid newlines, append | cat for paged output. Dangerous commands require user authorization.",
     "parameters": {
       "type": "object",
       "properties": {
         "command": {
           "type": "string",
-          "description": "The bash command to execute"
+          "description": "Bash command to execute."
         },
         "explanation": {
           "type": "string",
-          "description": "One sentence explanation as to why this command needs to be run and how it contributes to the goal."
+          "description": "Why this command is needed and how it contributes to the goal."
         },
         "is_background": {
           "type": "boolean",
-          "description": "Whether the command should be run in the background"
+          "description": "Run the command in the background."
         },
         "is_dangerous": {
           "type": "boolean",
-          "description": "Whether this command affects anything beyond the project workspace boundary — including files outside the project, system configuration, running processes, installed packages, network settings, or user-level dotfiles/shell config. When in doubt, set to true."
+          "description": "Whether the command affects anything beyond the project workspace (files outside project, system config, running processes, installed packages, network settings, dotfiles/shell config). When in doubt, set to true."
         }
       },
       "required": [
@@ -113,17 +113,17 @@
   },
   {
     "name": "thinking",
-    "description": "A cognitive tool for self-correction and deep analysis. Use this IMMEDIATELY when an action fails, an error occurs, or you are unsure how to proceed. Do NOT use this tool to execute actions (like writing files or running commands). Instead, use it to generate a 'Chain of Thought' log to: 1. Analyze the root cause of the error or unexpected result. 2. Brainstorm 2-3 potential solutions with their pros and cons. 3. Select the best solution to proceed. This helps avoid blind retries and infinite loops.",
+    "description": "Cognitive tool for self-correction and deep analysis. Use IMMEDIATELY when an action fails, an error occurs, or you're unsure. Do NOT use to execute actions (write files, run commands). Instead, generate a 'Chain of Thought' log: 1. Analyze root cause. 2. Brainstorm 2-3 solutions with pros/cons. 3. Select best solution. Avoids blind retries and infinite loops.",
     "parameters": {
       "type": "object",
       "properties": {
         "problem_description": {
           "type": "string",
-          "description": "The error message, failure description, or the problem to be solved."
+          "description": "Error message, failure description, or problem to solve."
         },
         "current_action": {
           "type": "string",
-          "description": "The action that was attempted and failed, or the current context."
+          "description": "Action attempted and failed, or current context."
         },
         "observation": {
           "type": "string",
@@ -138,17 +138,17 @@
   },
   {
     "name": "micro_agent",
-    "description": "Make an isolated LLM inference call with a custom system prompt. Use for reasoning, analysis, or generation that benefits from a fresh context separate from the current conversation. Typical uses: deep code/error analysis, structured output generation (JSON, summaries, translations), self-reflection. Returns raw text from the model.",
+    "description": "Isolated LLM inference call with a custom system prompt. Use for reasoning, analysis, or generation that benefits from a fresh context. Typical uses: deep code/error analysis, structured output (JSON, summaries, translations), self-reflection. Returns raw text.",
     "parameters": {
       "type": "object",
       "properties": {
         "system_prompt": {
           "type": "string",
-          "description": "The system prompt that defines the role, rules, and output format for this isolated LLM inference."
+          "description": "System prompt defining role, rules, and output format for this LLM inference."
         },
         "task": {
           "type": "string",
-          "description": "The task description, question, or content to process."
+          "description": "Task description, question, or content to process."
         }
       },
       "required": [
@@ -159,17 +159,17 @@
   },
   {
     "name": "deepthinking",
-    "description": "A deep system analysis tool for complex problems. Performs multi-dimensional analysis (root cause, system impact, constraints, solution architecture) via an isolated, expensive LLM call. Use ONLY when: 1) conventional methods (thinking, micro_agent, repo analysis, sub-agent delegation) have failed, 2) the problem is inherently complex and requires systematic design, or 3) multiple failed attempts indicate a fundamental misunderstanding. Skip for simple issues. Input: context (full problem context, errors, constraints, what has been tried) and goal (specific objective).",
+    "description": "Deep system analysis for complex problems. Multi-dimensional analysis (root cause, system impact, constraints, solution architecture) via isolated LLM call. Use ONLY when: 1) conventional methods (thinking, micro_agent, repo analysis, sub-agent delegation) have failed, 2) the problem requires systematic design, or 3) multiple failures indicate fundamental misunderstanding. Skip for simple issues. Input: context (problem context, errors, constraints, what was tried) and goal (specific objective).",
     "parameters": {
       "type": "object",
       "properties": {
         "context": {
           "type": "string",
-          "description": "The complete problem context including: execution environment feedback, key errors encountered, problem background, constraints, what has been tried and failed, and any other relevant information needed for deep analysis."
+          "description": "Complete problem context: execution feedback, key errors, problem background, constraints, what was tried and failed, and any other relevant info for deep analysis."
         },
         "goal": {
           "type": "string",
-          "description": "The specific objective to achieve. What should the deep analysis produce? A solution design, a debugging strategy, an architectural decision, or a comprehensive plan."
+          "description": "Specific objective. What should the deep analysis produce? A solution design, debugging strategy, architectural decision, or comprehensive plan."
         }
       },
       "required": [
@@ -180,7 +180,7 @@
   },
   {
     "name": "delete_file",
-    "description": "You can use this tool to delete files, you can delete multi files in one toolcall, and you MUST make sure the files is exist before deleting.",
+    "description": "Delete files (multiple in one call). Must ensure files exist before deleting.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -198,7 +198,7 @@
   },
   {
     "name": "rename_file",
-    "description": "You can use this tool to move or rename an existing file.",
+    "description": "Move or rename an existing file.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -217,7 +217,7 @@
   },
   {
     "name": "list_dir",
-    "description": "You can use this tool to view files of the specified directory.",
+    "description": "View files in the specified directory.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -236,28 +236,28 @@
   },
   {
     "name": "print_dir_tree",
-    "description": "Print a directory tree structure. Automatically ignores common build artifacts, cache directories, dependency folders, and compiled files. Use show_files=false for a concise directory-only overview (includes file counts per directory). Output is truncated per-directory when exceeding max_items. The tree depth is hard-capped at 2 levels.",
+    "description": "Print directory tree. Auto-ignores common build artifacts, cache dirs, dependency folders, compiled files. show_files=false for directory-only overview (with file counts). Output truncated per-directory when exceeding max_items. Depth hard-capped at 2 levels.",
     "parameters": {
       "type": "object",
       "properties": {
         "dir_path": {
           "type": "string",
-          "description": "The directory path to print the tree for"
+          "description": "Directory path to print tree for."
         },
         "max_depth": {
           "type": "integer",
           "default": 2,
-          "description": "Maximum depth to traverse. Hard-capped at 2: values greater than 2 are clamped to 2. Depth 0 shows only the root directory name. Default: 2"
+          "description": "Max depth to traverse. Hard-capped at 2 (values > 2 clamped). Depth 0 shows only root name. Default: 2"
         },
         "show_files": {
           "type": "boolean",
           "default": true,
-          "description": "Whether to show individual files (true) or only directories (false). When false, file counts are shown per directory. Default: true"
+          "description": "Show individual files (true) or only directories (false). When false, file counts shown per directory. Default: true"
         },
         "max_items": {
           "type": "integer",
           "default": 50,
-          "description": "Maximum number of items to display per directory. Additional items are truncated with a count. Default: 50"
+          "description": "Max items to display per directory. Extra items truncated with a count. Default: 50"
         },
         "ignore_extra": {
           "type": "array",
@@ -265,7 +265,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Additional directory names to ignore (merged with built-in defaults). Useful for project-specific noise directories."
+          "description": "Additional dirs to ignore (merged with built-in defaults). Useful for project-specific noise."
         }
       },
       "required": [
@@ -275,7 +275,7 @@
   },
   {
     "name": "search_by_regex",
-    "description": "A high-performance search tool powered by ripgrep (rg) designed for large codebases. It supports PCRE2 regular expressions and automatically respects .gitignore rules. Use this tool to precisely locate function definitions, variable references, error messages, or complex code patterns across multiple files. ",
+    "description": "High-performance search via ripgrep (rg) for large codebases. Supports PCRE2 regex and respects .gitignore. Locate function definitions, variable references, error messages, or complex code patterns across files.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -293,17 +293,17 @@
   },
   {
     "name": "semantic_search",
-    "description": "Perform semantic search on the repository to find relevant code snippets based on natural language query or code snippet. Returns a list of matches including file paths, symbol names, and code blocks. Use this tool when you need to find specific functionality or implementation details but don't know the exact file or function name.",
+    "description": "Semantic search for relevant code snippets via natural language query or code snippet. Returns matches with file paths, symbol names, and code blocks. Use when you need specific functionality/implementation details but don't know the exact file or function name.",
     "parameters": {
       "type": "object",
       "properties": {
         "query": {
           "type": "string",
-          "description": "The natural language query or code snippet to search for."
+          "description": "Natural language query or code snippet to search for."
         },
         "limit": {
           "type": "integer",
-          "description": "The maximum number of results to return. Default is 5.",
+          "description": "Max results to return. Default: 5.",
           "default": 5
         }
       },
@@ -314,7 +314,7 @@
   },
   {
     "name": "query_code_skeleton",
-    "description": "Get the skeleton (definitions of functions/classes without implementation) of specific files. Use this when you need to understand the structure of specific files without reading their full content.",
+    "description": "Get skeleton (function/class definitions without implementation) of specific files. Use to understand structure without reading full content.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -323,7 +323,7 @@
           "items": {
             "type": "string"
           },
-          "description": "List of absolute file paths to query skeletons for."
+          "description": "Absolute file paths to query skeletons for."
         }
       },
       "required": [
@@ -333,17 +333,17 @@
   },
   {
     "name": "query_code_snippet",
-    "description": "Get the code snippet of a specific function in a file. Use this when you need to read the implementation of a specific function.",
+    "description": "Get code snippet of a specific function in a file. Use when you need to read the function's implementation.",
     "parameters": {
       "type": "object",
       "properties": {
         "filepath": {
           "type": "string",
-          "description": "The absolute path to the file."
+          "description": "Absolute path to the file."
         },
         "function_name": {
           "type": "string",
-          "description": "The name of the function to retrieve."
+          "description": "Function name to retrieve."
         }
       },
       "required": [
@@ -354,24 +354,24 @@
   },
   {
     "name": "ask_user_for_help",
-    "description": "When you encounter an issue that requires user input, confirmation, or selection, use this tool to ask the user for help. The tool will pause execution and wait for the user's response. Supports three interaction modes: confirm (yes/no), select (choose from options), input (free text). The interaction mode is automatically inferred from suggested_options, or can be explicitly set via interaction_type.",
+    "description": "Use when you need user input, confirmation, or selection. Pauses execution until user responds. Three modes: confirm (yes/no), select (choose from options), input (free text). Mode auto-inferred from suggested_options or set via interaction_type.",
     "parameters": {
       "type": "object",
       "properties": {
         "reason": {
           "type": "string",
-          "description": "A clear explanation of why you are stuck and need the user's help or authorization."
+          "description": "Why you're stuck and need user help/authorization."
         },
         "specific_question": {
           "type": "string",
-          "description": "A specific, concise question to ask the user. This will be shown to the user directly."
+          "description": "Specific question to ask the user (shown directly to user."
         },
         "suggested_options": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Optional. Suggested answer options for the user. Controls the interaction mode: empty → input mode (free text), two boolean-like options (e.g., ['yes', 'no']) → confirm mode (yes/no buttons), 2+ non-boolean options → select mode (option list)."
+          "description": "Optional answer options for the user. Controls interaction mode: empty → input (free text), two boolean-like options (e.g., ['yes', 'no']) → confirm (yes/no), 2+ non-boolean options → select (option list)."
         },
         "interaction_type": {
           "type": "string",
@@ -380,19 +380,19 @@
             "select",
             "input"
           ],
-          "description": "Optional. Explicitly set the interaction mode. Overrides automatic inference from suggested_options. 'confirm' → yes/no buttons, 'select' → option list, 'input' → free text input."
+          "description": "Explicitly set interaction mode (overrides auto-inference from suggested_options). 'confirm' → yes/no buttons, 'select' → option list, 'input' → free text."
         },
         "default_value": {
           "type": "string",
-          "description": "Optional. Default selected option (for confirm/select mode) or pre-filled text (for input mode)."
+          "description": "Optional default option (confirm/select) or pre-filled text (input)."
         },
         "placeholder": {
           "type": "string",
-          "description": "Optional. Placeholder text shown in the input field (input mode only)."
+          "description": "Placeholder text in input field (input mode only)."
         },
         "allow_custom": {
           "type": "boolean",
-          "description": "Optional. Whether to allow custom input in select mode. Default: true. Set to false to restrict selection to suggested options only."
+          "description": "Allow custom input in select mode. Default: true. Set false to restrict to suggested options only."
         }
       },
       "required": [
@@ -403,13 +403,13 @@
   },
   {
     "name": "agent_exit",
-    "description": "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.",
+    "description": "Exit the agent with a reason. Use when done — task completed, failed, needs clarification, or must terminate. Reason must explain WHY.",
     "parameters": {
       "type": "object",
       "properties": {
         "reason": {
           "type": "string",
-          "description": "The reason the agent is exiting, e.g., task completed, cannot proceed, blocked by missing information, or must terminate."
+          "description": "Reason for exiting, e.g., task completed, cannot proceed, blocked by missing info, or must terminate."
         }
       },
       "required": [
@@ -419,13 +419,13 @@
   },
   {
     "name": "delegate_browser",
-    "description": "Delegate a web research task to the Browser-Agent. Use this tool ONLY when the required information CANNOT be obtained from local documentation sources (go docs, python docs, help, man pages, --help, etc.). The Browser-Agent will navigate the web and return findings. Provide a clear, self-contained task description.",
+    "description": "Delegate web research to Browser-Agent. Use ONLY when info CANNOT be obtained from local docs (go docs, python docs, help, man, --help). Browser-Agent navigates the web and returns findings. Provide a clear, self-contained task description.",
     "parameters": {
       "type": "object",
       "properties": {
         "task": {
           "type": "string",
-          "description": "A clear, self-contained research task for the browser agent, e.g., 'Search for the latest documentation on Python's asyncio.run function' or 'Find common solutions for Go error: undefined: sql.NullString'."
+          "description": "Clear, self-contained research task, e.g., 'Search for the latest docs on Python's asyncio.run' or 'Find solutions for Go error: undefined: sql.NullString'."
         }
       },
       "required": [
@@ -435,17 +435,17 @@
   },
   {
     "name": "find_function_callee",
-    "description": "Find all functions that the specified function calls (its callees). Given a function name, returns a list of functions it invokes, including file paths and line numbers. Useful for understanding what a function does internally.",
+    "description": "Find all functions a specified function calls (its callees). Returns invoked functions with file paths and line numbers. Understands what a function does internally.",
     "parameters": {
       "type": "object",
       "properties": {
         "function_name": {
           "type": "string",
-          "description": "The name of the function to find callees for"
+          "description": "Function name to find callees for."
         },
         "filepath": {
           "type": "string",
-          "description": "Optional: specific file path to narrow the search (e.g., 'src/main.go')"
+          "description": "Optional file path to narrow search (e.g., 'src/main.go')."
         }
       },
       "required": [
@@ -455,17 +455,17 @@
   },
   {
     "name": "find_function_caller",
-    "description": "Find all functions that call the specified function (its callers). Given a function name, returns a list of functions that invoke it, including file paths and line numbers. Useful for understanding who depends on this function.",
+    "description": "Find all functions that call a specified function (its callers). Returns invoking functions with file paths and line numbers. Understands who depends on this function.",
     "parameters": {
       "type": "object",
       "properties": {
         "function_name": {
           "type": "string",
-          "description": "The name of the function to find callers for"
+          "description": "Function name to find callers for."
         },
         "filepath": {
           "type": "string",
-          "description": "Optional: specific file path to narrow the search (e.g., 'src/main.go')"
+          "description": "Optional file path to narrow search (e.g., 'src/main.go')."
         }
       },
       "required": [
@@ -475,17 +475,17 @@
   },
   {
     "name": "query_call_graph",
-    "description": "Query function call graph with configurable depth. Shows both callers (upstream) and callees (downstream) around a center function. Depth controls how many layers of callers/callees to include (max 3). Use this to understand the full calling context of a function.",
+    "description": "Query function call graph with configurable depth. Shows callers (upstream) and callees (downstream) around a center function. Depth = layers of callers/callees (max 3). Understands the full calling context.",
     "parameters": {
       "type": "object",
       "properties": {
         "function_name": {
           "type": "string",
-          "description": "Name of the function to query as the center of the call graph"
+          "description": "Function name to query as the center of the call graph."
         },
         "depth": {
           "type": "integer",
-          "description": "Query depth — layers of callers and callees to include (1-3, default: 1)",
+          "description": "Layers of callers/callees to include (1-3, default: 1).",
           "default": 1,
           "minimum": 1,
           "maximum": 3
@@ -498,7 +498,7 @@
   },
   {
     "name": "git_checkpoint_list",
-    "description": "List all available git checkpoints for the current coding session. Use this to see what rollback points are available. Each checkpoint represents a saved state of the codebase that you can return to if something goes wrong.",
+    "description": "List all git checkpoints for the current session. See available rollback points. Each represents a saved codebase state to return to if something goes wrong.",
     "parameters": {
       "type": "object",
       "properties": {},
@@ -507,13 +507,13 @@
   },
   {
     "name": "git_checkpoint_rollback",
-    "description": "Roll back the working tree to a specific checkpoint. WARNING: This discards all changes made AFTER the checkpoint. Use git_checkpoint_list first to see available checkpoints. The checkpoint_tag parameter should be the full tag name from the list.",
+    "description": "Roll back working tree to a specific checkpoint. WARNING: discards all changes AFTER the checkpoint. Use git_checkpoint_list first. checkpoint_tag must be the full tag name from the list.",
     "parameters": {
       "type": "object",
       "properties": {
         "checkpoint_tag": {
           "type": "string",
-          "description": "The tag name of the checkpoint to roll back to (from git_checkpoint_list)"
+          "description": "Tag name of checkpoint to roll back to (from git_checkpoint_list)."
         }
       },
       "required": [
@@ -523,13 +523,13 @@
   },
   {
     "name": "git_checkpoint_create",
-    "description": "Manually create a git checkpoint at the current state. Use this before attempting risky operations like large refactors, complex merges, or experimental changes. A checkpoint allows you to roll back if something goes wrong.",
+    "description": "Manually create a git checkpoint at the current state. Use before risky operations (large refactors, complex merges, experimental changes). Allows rollback if something goes wrong.",
     "parameters": {
       "type": "object",
       "properties": {
         "message": {
           "type": "string",
-          "description": "A brief description of why this checkpoint is being created"
+          "description": "Why this checkpoint is being created."
         }
       },
       "required": [
@@ -539,18 +539,18 @@
   },
   {
     "name": "consolidate_knowledge",
-    "description": "Consolidate key knowledge from the current task and write it into the knowledge base. Type and source are automatically tagged by the system — no need to provide them. Suitable for: (1) distilling domain knowledge after code analysis; (2) recording key change decisions after code modifications; (3) capturing important architecture patterns or design rules. Condense content to ≤1500 characters and provide at least 1 tag before execution.",
+    "description": "Consolidate key knowledge from the current task into the knowledge base. Type and source auto-tagged by the system. Suitable for: (1) distilling domain knowledge after code analysis; (2) recording key change decisions after modifications; (3) capturing architecture patterns or design rules. Content ≤1500 chars, at least 1 tag required.",
     "parameters": {
       "type": "object",
       "properties": {
         "title": {
           "type": "string",
-          "description": "Knowledge entry title (≤200 characters)",
+          "description": "Knowledge entry title (≤200 chars).",
           "maxLength": 200
         },
         "content": {
           "type": "string",
-          "description": "Knowledge content (≤1500 characters). Keep file paths, function names, and symbol names.",
+          "description": "Knowledge content (≤1500 chars). Keep file paths, function names, and symbol names.",
           "maxLength": 1500
         },
         "tags": {
@@ -559,22 +559,22 @@
             "type": "string"
           },
           "minItems": 1,
-          "description": "Knowledge tag list, at least 1 tag"
+          "description": "Knowledge tag list (≥1 tag)."
         },
         "related_files": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Related file paths (optional)"
+          "description": "Related file paths (optional)."
         },
         "task_id": {
           "type": "string",
-          "description": "Associated task ID (optional)"
+          "description": "Associated task ID (optional)."
         },
         "confidence": {
           "type": "number",
-          "description": "Confidence 0-1, default 1.0",
+          "description": "Confidence 0-1 (default 1.0).",
           "default": 1.0
         }
       },
@@ -587,7 +587,7 @@
   },
   {
     "name": "prune_history",
-    "description": "Maintain knowledge base health: list current entries, merge similar entries, or delete stale entries by ID. Run merge periodically to deduplicate.",
+    "description": "Maintain knowledge base health: list entries, merge similar entries, or delete stale entries by ID. Run merge periodically to deduplicate.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -602,27 +602,27 @@
         },
         "limit": {
           "type": "integer",
-          "description": "Max entries to read for list/merge, default 50",
+          "description": "Max entries to read for list/merge (default: 50).",
           "default": 50
         },
         "type": {
           "type": "string",
-          "description": "Filter by knowledge type (optional, empty=all)"
+          "description": "Filter by knowledge type (optional, empty=all)."
         },
         "tag": {
           "type": "string",
-          "description": "Filter by tag (optional)"
+          "description": "Filter by tag (optional)."
         },
         "ids": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Required for delete: list of entry IDs to delete"
+          "description": "List of entry IDs to delete (required for delete)."
         },
         "similarity_threshold": {
           "type": "number",
-          "description": "Similarity threshold for merge, default 0.80",
+          "description": "Similarity threshold for merge (default: 0.80).",
           "default": 0.8
         }
       },
