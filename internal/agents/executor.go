@@ -2,8 +2,8 @@ package agents
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -250,6 +250,33 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 						"saved_tokens", compStats.SavedTokens,
 						"saved_percent", compStats.SavedPercent,
 						"truncated_count", compStats.TruncatedCount)
+				}
+
+				// 紧急压缩:tool 结果已全部截断后仍超限 → 启动紧急模式, 极致压缩上下文继续任务
+				if estimateMessagesTokens(messages) > threshold {
+					newMessages, emergencyStats := EmergencyCompressMessages(ctx, messages, cfg.UserInput, threshold, cfg.LLM, cfg.AgentName, DefaultEmergencyCompressKeepLastN)
+					messages = newMessages
+					// 同步 history, 避免调用方 ConvertLLMHistoryToMemory 拿到未压缩的旧历史
+					history = make([]llm.Message, len(messages))
+					copy(history, messages)
+					if emergencyStats != nil && cfg.Publisher != nil {
+						cfg.Publisher.Publish("context_emergency_compressed", map[string]interface{}{
+							"original_tokens":   emergencyStats.OriginalTokens,
+							"compressed_tokens": emergencyStats.CompressedTokens,
+							"saved_tokens":      emergencyStats.SavedTokens,
+							"extracted_blocks":  emergencyStats.ExtractedBlocks,
+							"summarized_blocks": emergencyStats.SummarizedBlocks,
+							"kept_blocks":       emergencyStats.KeptBlocks,
+							"summarized_by_llm": emergencyStats.SummarizedByLLM,
+						}, cfg.AgentName)
+					}
+					slog.Warn("emergency context compression applied",
+						"agent", cfg.AgentName,
+						"original_tokens", emergencyStats.OriginalTokens,
+						"compressed_tokens", emergencyStats.CompressedTokens,
+						"extracted_blocks", emergencyStats.ExtractedBlocks,
+						"kept_blocks", emergencyStats.KeptBlocks,
+						"summarized_by_llm", emergencyStats.SummarizedByLLM)
 				}
 			}
 
@@ -535,5 +562,3 @@ func logToolCall(toolName, agentName, args string, result string, err error, sta
 	}
 	LogToolCall(toolName, agentName, argsJSON, result, errMsg, duration)
 }
-
-

@@ -1073,16 +1073,16 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				if keepTokens <= 0 {
 					keepTokens = DefaultToolResultKeepTokens
 				}
-			var compStats *ContextCompressionStats
+				var compStats *ContextCompressionStats
 				messages, compStats = TruncateToolResultsToBudget(messages, threshold, keepTokens)
 				if compStats != nil && compStats.TruncatedCount > 0 && a.Publisher != nil {
 					truncatedTools := make([]map[string]interface{}, len(compStats.TruncatedTools))
 					for ti, tool := range compStats.TruncatedTools {
 						truncatedTools[ti] = map[string]interface{}{
-							"tool_name":      tool.ToolName,
+							"tool_name":       tool.ToolName,
 							"original_tokens": tool.OriginalTokens,
-							"kept_tokens":    tool.KeptTokens,
-							"omitted_tokens": tool.OmittedTokens,
+							"kept_tokens":     tool.KeptTokens,
+							"omitted_tokens":  tool.OmittedTokens,
 						}
 					}
 					a.Publisher.Publish("context_compressed", map[string]interface{}{
@@ -1099,6 +1099,29 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 						"saved_tokens", compStats.SavedTokens,
 						"saved_percent", compStats.SavedPercent,
 						"truncated_count", compStats.TruncatedCount)
+				}
+
+				// 紧急压缩:tool 结果已全部截断后仍超限 → 启动紧急模式, 极致压缩 memory 继续任务
+				if estimateMessagesTokens(messages) > threshold {
+					newMessages, emergencyStats := a.applyEmergencyCompression(ctx, messages, threshold)
+					messages = newMessages
+					if emergencyStats != nil && a.Publisher != nil {
+						a.Publisher.Publish("context_emergency_compressed", map[string]interface{}{
+							"original_tokens":   emergencyStats.OriginalTokens,
+							"compressed_tokens": emergencyStats.CompressedTokens,
+							"saved_tokens":      emergencyStats.SavedTokens,
+							"extracted_blocks":  emergencyStats.ExtractedBlocks,
+							"summarized_blocks": emergencyStats.SummarizedBlocks,
+							"kept_blocks":       emergencyStats.KeptBlocks,
+							"summarized_by_llm": emergencyStats.SummarizedByLLM,
+						}, a.Name())
+					}
+					slog.Warn("emergency context compression applied",
+						"original_tokens", emergencyStats.OriginalTokens,
+						"compressed_tokens", emergencyStats.CompressedTokens,
+						"extracted_blocks", emergencyStats.ExtractedBlocks,
+						"kept_blocks", emergencyStats.KeptBlocks,
+						"summarized_by_llm", emergencyStats.SummarizedByLLM)
 				}
 			}
 
@@ -1406,6 +1429,32 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 	}
 
 	return "", fmt.Errorf("DirectorAgent exceeded max steps")
+}
+
+// applyEmergencyCompression 执行紧急压缩：提取用户原始任务 + 总结/保留 Thought & Plan 历史，
+// 覆盖 memory 为单条输入消息后返回压缩后的 messages。
+func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages []llm.Message, threshold int) ([]llm.Message, *EmergencyCompressionStats) {
+	originalInput := ""
+	if a.currentMemory != nil {
+		for _, m := range a.currentMemory.GetMessages() {
+			if m.Type == memory.MessageTypeHuman {
+				originalInput = m.Content
+				break
+			}
+		}
+	}
+	newMessages, stats := EmergencyCompressMessages(ctx, messages, originalInput, threshold, a.LLM, a.Name(), DefaultEmergencyCompressKeepLastN)
+	// 强行覆盖 memory：只保留一条输入（原始任务 + 总结 + 最后 N 个 Thought & Plan）
+	if a.currentMemory != nil {
+		if err := a.currentMemory.Clear(); err != nil {
+			slog.Warn("emergency compression: failed to clear memory", "error", err)
+		}
+		last := newMessages[len(newMessages)-1]
+		if last.Role == llm.RoleUser {
+			a.currentMemory.AddHumanMessage(last.Content)
+		}
+	}
+	return newMessages, stats
 }
 
 // validateAndRepairToolCallPairs 验证并修复 tool_call/tool_response 配对完整性
