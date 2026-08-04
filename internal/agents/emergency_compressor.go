@@ -34,7 +34,7 @@ type EmergencyCompressionStats struct {
 // ─── extractThoughtAndPlanBlocks ─────────────────────────────────────────────
 
 // extractThoughtAndPlanBlocks 从 assistant 消息的 Content 中提取所有 Thought & Plan 块。
-// 关键字匹配大小写不敏感，兼容 "Thought & Plan" 和 "Throught & Plan"（拼写错误）。
+// 关键字匹配大小写不敏感，兼容 "Thought & Plan"
 // 若内容中无关键字，返回 nil。
 func extractThoughtAndPlanBlocks(content string) []string {
 	if content == "" {
@@ -62,11 +62,10 @@ func extractThoughtAndPlanBlocks(content string) []string {
 	return blocks
 }
 
-// findNextBlockStart 在 content[offset:] 中查找下一个 "thought & plan" 或 "throught & plan"（大小写不敏感）的字节偏移。
+// findNextBlockStart 在 content[offset:] 中查找下一个 "thought & plan"
 func findNextBlockStart(content string, offset int) int {
 	lower := strings.ToLower(content[offset:])
 	idxTP := strings.Index(lower, "thought & plan")
-	idxTH := strings.Index(lower, "throught & plan")
 	if idxTP >= 0 && idxTH >= 0 {
 		if idxTP <= idxTH {
 			return offset + idxTP

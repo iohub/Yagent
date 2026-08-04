@@ -109,9 +109,9 @@ Output-producing agents: **Coding-Agent**, **Chat-Agent**, **DevOps-Agent**, and
 8. **Large File Safety for Sub-Agents**: when delegating large-file reads, remind agents to check `file_size_bytes`/`total_lines`/`truncated`; use paginated reads (250-line chunks) or grep first; files >500MB are refused entirely.
 
 ### Output Format
-Before each tool call, structure your response with a `Thought Process` and `Planning` in `Throught & Plan` block (your "inner monologue"):
+Before each tool call, structure your response with a `Thought Process` and `Planning` in `Thought & Plan` block (your "inner monologue"):
 
-## Throught & Plan
+## Thought & Plan
 ### Thought Process
 * **Current Goal**: [high-level objective]
 * **Current Step**: [last step & result]

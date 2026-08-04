@@ -61,15 +61,15 @@ Then I'll write the code.`,
 			wantSubs: []string{"## Thought & Plan"},
 		},
 		{
-			name: "single Throught & Plan block (typo variant)",
+			name: "single Thought & Plan block (typo variant)",
 			content: `Here is my thinking:
 
-## Throught & Plan
+## Thought & Plan
 I will read the file first.
 
 Then I'll write the code.`,
 			wantLen:  1,
-			wantSubs: []string{"## Throught & Plan"},
+			wantSubs: []string{"## Thought & Plan"},
 		},
 		{
 			name: "multiple blocks mixed case",
@@ -79,10 +79,10 @@ Step 1: read file
 ## Thought & Plan
 Step 2: write code
 
-## throught & plan
+## thought & plan
 Step 3: test`,
 			wantLen:  3,
-			wantSubs: []string{"## THOUGHT & PLAN", "## Thought & Plan", "## throught & plan"},
+			wantSubs: []string{"## THOUGHT & PLAN", "## Thought & Plan", "## thought & plan"},
 		},
 		{
 			name:    "empty content",
