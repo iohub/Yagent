@@ -361,15 +361,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		// 优先匹配已完成的流式条目
 		if idx, ok := m.aiStreamCompletedEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
-			if buf := m.aiChunkBuffers[agentName]; buf != nil && buf.content != "" {
-				le.streamContent += buf.content
-				le.content = le.streamContent
-				le.clearRenderCache()
-				m.markEntryDirty(idx)
-				m.viewportDirty = true
-				buf.content = ""
-				buf.count = 0
-			}
 			if content != "" {
 				le.streamContent = content
 				le.content = content
@@ -389,15 +380,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		// Fallback: 也检查 active map（ai_stream_end 丢失的情况）
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
-			if buf := m.aiChunkBuffers[agentName]; buf != nil && buf.content != "" {
-				le.streamContent += buf.content
-				le.content = le.streamContent
-				le.clearRenderCache()
-				m.markEntryDirty(idx)
-				m.viewportDirty = true
-				buf.content = ""
-				buf.count = 0
-			}
 			if content != "" {
 				le.streamContent = content
 				le.content = content
