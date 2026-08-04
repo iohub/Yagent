@@ -9,6 +9,20 @@ import (
 )
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Ctrl+Z: suspend the program (SIGTSTP) and return to the shell.
+	// Intercepted globally — before all mode guards (dialog/timeline/history) —
+	// so suspension works from any UI state.
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "ctrl+z" {
+		return m, tea.Suspend
+	}
+
+	// ResumeMsg: the program was resumed from a suspended state (after Ctrl+Z
+	// + `fg`). Redraw the whole screen since the framework does not repaint
+	// automatically on resume.
+	if _, ok := msg.(tea.ResumeMsg); ok {
+		return m, tea.ClearScreen
+	}
+
 	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
 	// taskEventMsg is allowed through so the listenForEvents chain stays alive;
 	// its handler drops the event when dialogs are open but reschedules the chain.
