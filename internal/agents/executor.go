@@ -51,6 +51,13 @@ type ExecutorConfig struct {
 	// OnStepEnd is called after each step's tool calls complete.
 	// Errors from this hook are logged but do not abort the loop.
 	OnStepEnd func(ctx context.Context, stepInfo StepInfo) error
+
+	// 上下文压缩（tool 结果截断）配置，默认零值=关闭，仅调用方显式开启时生效
+	EnableContextCompression bool
+	// ContextCompressionThreshold 触发上下文压缩的 token 阈值，<=0 时使用默认值 DefaultContextCompressionThreshold
+	ContextCompressionThreshold int
+	// ToolResultKeepTokens 截断后每条 tool 结果保留的 token 数，<=0 时使用默认值 DefaultToolResultKeepTokens
+	ToolResultKeepTokens int
 }
 
 // DefaultExecutorConfig returns an ExecutorConfig with sensible defaults applied.
@@ -205,6 +212,46 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 			// Normalize messages before LLM call to merge consecutive assistants
 			messages = llm.NormalizeMessages(messages)
+
+			// 上下文压缩: token 超阈值时按优先级截断 tool 执行结果
+			if cfg.EnableContextCompression {
+				threshold := cfg.ContextCompressionThreshold
+				if threshold <= 0 {
+					threshold = DefaultContextCompressionThreshold
+				}
+				keepTokens := cfg.ToolResultKeepTokens
+				if keepTokens <= 0 {
+					keepTokens = DefaultToolResultKeepTokens
+				}
+				var compStats *ContextCompressionStats
+				messages, compStats = TruncateToolResultsToBudget(messages, threshold, keepTokens)
+				if compStats != nil && compStats.TruncatedCount > 0 && cfg.Publisher != nil {
+					truncatedTools := make([]map[string]interface{}, len(compStats.TruncatedTools))
+					for ti, tool := range compStats.TruncatedTools {
+						truncatedTools[ti] = map[string]interface{}{
+							"tool_name":       tool.ToolName,
+							"original_tokens": tool.OriginalTokens,
+							"kept_tokens":     tool.KeptTokens,
+							"omitted_tokens":  tool.OmittedTokens,
+						}
+					}
+					cfg.Publisher.Publish("context_compressed", map[string]interface{}{
+						"original_tokens":   compStats.OriginalTokens,
+						"compressed_tokens": compStats.CompressedTokens,
+						"saved_tokens":      compStats.SavedTokens,
+						"saved_percent":     compStats.SavedPercent,
+						"truncated_count":   compStats.TruncatedCount,
+						"truncated_tools":   truncatedTools,
+					}, cfg.AgentName)
+					slog.Debug("context compression applied",
+						"agent", cfg.AgentName,
+						"original_tokens", compStats.OriginalTokens,
+						"compressed_tokens", compStats.CompressedTokens,
+						"saved_tokens", compStats.SavedTokens,
+						"saved_percent", compStats.SavedPercent,
+						"truncated_count", compStats.TruncatedCount)
+				}
+			}
 
 			// Publish ai_stream_start before LLM call
 			if cfg.Publisher != nil {

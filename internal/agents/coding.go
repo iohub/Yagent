@@ -343,6 +343,12 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	cfg.StopOnFinish = true
 	cfg.RepoContext = a.GlobalCtx.RepoSummary
 
+	// 上下文压缩配置（tool 结果截断）
+	ec := a.GlobalCtx.EnhancedCommander
+	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
+	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
+	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
+
 	// 如果是 git 仓库且 checkpoint 启用，设置回调和添加工具
 	if gitCheckpointEnabled {
 		cfg.OnAgentStart = func(ctx context.Context) error {

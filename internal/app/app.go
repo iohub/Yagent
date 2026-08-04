@@ -214,6 +214,9 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 
 			// Git Checkpoint config
 			GitCheckpointCfg: &ca.config.GitCheckpoint,
+
+			// EnhancedCommander 配置
+			EnhancedCommander: ca.config.EnhancedCommander,
 		}
 		ca.globalCtx = &gctx
 

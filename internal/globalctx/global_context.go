@@ -48,6 +48,9 @@ type GlobalCtx struct {
 
 	// GitCheckpointCfg holds the git checkpoint configuration (may be nil if not configured)
 	GitCheckpointCfg *config.GitCheckpointConfig
+
+	// EnhancedCommander 增强型 Commander 配置（含上下文压缩开关，零值=全部关闭）
+	EnhancedCommander config.EnhancedCommanderConfig
 }
 
 func (g *GlobalCtx) FormatPrompt(prompt string) string {

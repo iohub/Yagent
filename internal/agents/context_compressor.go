@@ -90,7 +90,10 @@ func estimateMessagesTokens(messages []llm.Message) int {
 //   - -1 = 保护（永不截断）：deepthinking
 func toolTruncationPriority(toolName string) int {
 	switch toolName {
-	case "create_file", "search_replace_in_file", "read_file", "run_bash":
+	case "create_file", "search_replace_in_file", "read_file", "run_bash",
+		"semantic_search", "query_code_skeleton", "query_code_snippet",
+		"print_dir_tree", "search_by_regex", "query_call_graph",
+		"find_function_callee", "find_function_caller":
 		return 0
 	case "deepthinking":
 		return -1
