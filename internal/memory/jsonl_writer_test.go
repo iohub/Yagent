@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// TestNewJSONLWriter 测试创建 writer 时文件被正确创建，文件名格式符合 {timestamp}_{agent_name}_{task_hash}.jsonl
+// TestNewJSONLWriter 测试创建 writer 时文件被正确创建，文件名格式符合 {timestamp}_{task_id}_{agent_name}_{task_hash}.jsonl
 func TestNewJSONLWriter(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -21,7 +21,7 @@ func TestNewJSONLWriter(t *testing.T) {
 		OutputDir: tmpDir,
 	}
 
-	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task description")
+	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task description", "test-task-id")
 	if err != nil {
 		t.Fatalf("NewJSONLWriter failed: %v", err)
 	}
@@ -43,10 +43,20 @@ func TestNewJSONLWriter(t *testing.T) {
 		t.Fatalf("expected file to exist at %s", filePath)
 	}
 
-	// 验证文件名格式: {timestamp}_{agent_name}_{task_hash}.jsonl
+	// 验证 trace_id 非空
+	if writer.TraceID() == "" {
+		t.Error("expected non-empty trace_id")
+	}
+
+	// 验证文件名格式: {timestamp}_{task_id}_{agent_name}_{task_hash}.jsonl
 	filename := filepath.Base(filePath)
 	if !strings.HasSuffix(filename, ".jsonl") {
 		t.Errorf("expected filename to end with .jsonl, got %s", filename)
+	}
+
+	// 验证文件名包含 task_id
+	if !strings.Contains(filename, "test-task-id") {
+		t.Errorf("expected filename to contain task_id 'test-task-id', got %s", filename)
 	}
 
 	// 验证文件名包含 agent_name
@@ -55,15 +65,14 @@ func TestNewJSONLWriter(t *testing.T) {
 	}
 
 	// 验证文件名包含 task_hash (8位hex)
-	// 文件名格式: YYYYMMDD_HHMMSS_agentName_taskHash.jsonl
-	// 使用正则直接提取 taskHash
-	filenamePattern := regexp.MustCompile(`^(\d{8}_\d{6})_(.+)_(\w{8})\.jsonl$`)
+	// 文件名格式: YYYYMMDD_HHMMSS_taskID_agentName_taskHash.jsonl
+	filenamePattern := regexp.MustCompile(`^(\d{8}_\d{6})_(.+?)_(.+?)_(\w{8})\.jsonl$`)
 	matches := filenamePattern.FindStringSubmatch(filename)
 	if matches == nil {
 		t.Errorf("filename does not match expected format: %s", filename)
 	} else {
 		// matches[3] is the task_hash
-		taskHash := matches[3]
+		taskHash := matches[4]
 		if len(taskHash) != 8 {
 			t.Errorf("expected task hash to be 8 characters, got %d: %s", len(taskHash), taskHash)
 		}
@@ -84,7 +93,7 @@ func TestNewJSONLWriter(t *testing.T) {
 		Enable:    true,
 		OutputDir: tmpDir,
 	}
-	writer2, err := NewJSONLWriter(cfg2, "test-project", "coding", "test task description 2")
+	writer2, err := NewJSONLWriter(cfg2, "test-project", "coding", "test task description 2", "test-task-id")
 	if err != nil {
 		t.Fatalf("NewJSONLWriter (second) failed: %v", err)
 	}
@@ -105,7 +114,7 @@ func TestWriteMessage(t *testing.T) {
 		OutputDir: tmpDir,
 	}
 
-	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task")
+	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task", "test-task-id")
 	if err != nil {
 		t.Fatalf("NewJSONLWriter failed: %v", err)
 	}
@@ -164,6 +173,16 @@ func TestWriteMessage(t *testing.T) {
 		if record.Timestamp.IsZero() {
 			t.Errorf("line %d: expected non-zero timestamp", i)
 		}
+
+		// 验证 trace_id 非空
+		if record.TraceID == "" {
+			t.Errorf("line %d: expected non-empty trace_id", i)
+		}
+
+		// 验证 task_id 等于传入值
+		if record.TaskID != "test-task-id" {
+			t.Errorf("line %d: expected task_id 'test-task-id', got %s", i, record.TaskID)
+		}
 	}
 }
 
@@ -176,7 +195,7 @@ func TestWriteMessage_Disabled(t *testing.T) {
 		OutputDir: tmpDir,
 	}
 
-	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task")
+	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task", "test-task-id")
 	if err != nil {
 		t.Fatalf("NewJSONLWriter failed: %v", err)
 	}
@@ -218,7 +237,7 @@ func TestWriteMessage_InvalidDir(t *testing.T) {
 	}
 
 	// 这应该返回一个 disabled writer 而不是 panic
-	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task")
+	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task", "test-task-id")
 	if err == nil {
 		t.Fatal("expected error for invalid directory")
 	}
@@ -253,7 +272,7 @@ func TestClose(t *testing.T) {
 		OutputDir: tmpDir,
 	}
 
-	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task")
+	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task", "test-task-id")
 	if err != nil {
 		t.Fatalf("NewJSONLWriter failed: %v", err)
 	}
@@ -309,7 +328,7 @@ func TestWithJSONLWriter_Context(t *testing.T) {
 		OutputDir: tmpDir,
 	}
 
-	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task")
+	writer, err := NewJSONLWriter(cfg, "test-project", "coding", "test task", "test-task-id")
 	if err != nil {
 		t.Fatalf("NewJSONLWriter failed: %v", err)
 	}

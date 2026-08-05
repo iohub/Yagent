@@ -99,6 +99,8 @@ type DirectorAgent struct {
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 	// MemoryJSONL 配置
 	memoryJSONLCfg config.MemoryJSONLConfig
+	// taskID 当前任务的 taskID，用于 JSONL 导出文件名关联多个 agent
+	taskID string
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -768,6 +770,11 @@ func (a *DirectorAgent) SetMemoryJSONLConfig(cfg config.MemoryJSONLConfig) {
 	a.memoryJSONLCfg = cfg
 }
 
+// SetTaskID 设置当前任务的 taskID，用于 JSONL 导出文件名关联多个 agent
+func (a *DirectorAgent) SetTaskID(taskID string) {
+	a.taskID = taskID
+}
+
 // createJSONLWriter 为 delegate 创建 JSONL 写入器（如果启用）
 // 返回 nil 表示未启用或创建失败（失败时仅警告，不阻断执行）
 func (a *DirectorAgent) createJSONLWriter(agentName, task string) *memory.JSONLWriter {
@@ -784,7 +791,7 @@ func (a *DirectorAgent) createJSONLWriter(agentName, task string) *memory.JSONLW
 		OutputDir: a.memoryJSONLCfg.OutputDir,
 	}
 
-	writer, err := memory.NewJSONLWriter(memoryCfg, projectID, agentName, task)
+	writer, err := memory.NewJSONLWriter(memoryCfg, projectID, agentName, task, a.taskID)
 	if err != nil {
 		slog.Warn("JSONL: failed to create writer, continuing without jsonl logging",
 			"agent", agentName,

@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"crypto/md5"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -25,6 +26,8 @@ type MemoryRecord struct {
 	AgentName  string          `json:"agent_name"`
 	MessageIdx int             `json:"message_idx"`
 	Message    json.RawMessage `json:"message"`
+	TraceID    string          `json:"trace_id"`
+	TaskID     string          `json:"task_id"`
 }
 
 // JSONLWriter 内存记录JSONL实时写入器
@@ -39,6 +42,8 @@ type JSONLWriter struct {
 	taskHash  string
 	msgIdx    int
 	filePath  string
+	traceID   string
+	taskID    string
 }
 
 // jsonlWriterCtxKey 私有context key类型
@@ -66,8 +71,25 @@ func hashTask(task string) string {
 	return hex.EncodeToString(hash[:])[:8]
 }
 
+// generateTraceID 生成16位小写hex trace ID（8字节随机数）
+func generateTraceID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// 回退到全零（不会在实际环境中发生）
+		return "0000000000000000"
+	}
+	return hex.EncodeToString(b)
+}
+
+// TraceID 返回此 writer 的 trace ID
+func (w *JSONLWriter) TraceID() string {
+	return w.traceID
+}
+
 // NewJSONLWriter 创建JSONL写入器
-func NewJSONLWriter(cfg MemoryJSONLConfig, projectID, agentName, task string) (*JSONLWriter, error) {
+func NewJSONLWriter(cfg MemoryJSONLConfig, projectID, agentName, task, taskID string) (*JSONLWriter, error) {
+	traceID := generateTraceID()
+
 	// 如果未启用，返回disabled writer
 	if !cfg.Enable {
 		return &JSONLWriter{
@@ -75,6 +97,8 @@ func NewJSONLWriter(cfg MemoryJSONLConfig, projectID, agentName, task string) (*
 			agentName: agentName,
 			task:      task,
 			taskHash:  hashTask(task),
+			traceID:   traceID,
+			taskID:    taskID,
 		}, nil
 	}
 
@@ -103,12 +127,21 @@ func NewJSONLWriter(cfg MemoryJSONLConfig, projectID, agentName, task string) (*
 			agentName: agentName,
 			task:      task,
 			taskHash:  hashTask(task),
+			traceID:   traceID,
+			taskID:    taskID,
 		}, fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// 生成文件名: {YYYYMMDD_HHMMSS}_{agent_name}_{task_hash_8}.jsonl
+	// 生成文件名: {YYYYMMDD_HHMMSS}_{taskID}_{agent_name}_{task_hash_8}.jsonl
+	// 若 taskID 为空，回退为原格式 {YYYYMMDD_HHMMSS}_{agent_name}_{task_hash_8}.jsonl
 	timestamp := time.Now().Format("20060102_150405")
-	filename := fmt.Sprintf("%s_%s_%s.jsonl", timestamp, agentName, hashTask(task))
+	taskHash := hashTask(task)
+	var filename string
+	if taskID != "" {
+		filename = fmt.Sprintf("%s_%s_%s_%s.jsonl", timestamp, taskID, agentName, taskHash)
+	} else {
+		filename = fmt.Sprintf("%s_%s_%s.jsonl", timestamp, agentName, taskHash)
+	}
 	filePath := filepath.Join(outputDir, filename)
 
 	// 打开文件
@@ -122,7 +155,9 @@ func NewJSONLWriter(cfg MemoryJSONLConfig, projectID, agentName, task string) (*
 			enabled:   false,
 			agentName: agentName,
 			task:      task,
-			taskHash:  hashTask(task),
+			taskHash:  taskHash,
+			traceID:   traceID,
+			taskID:    taskID,
 		}, fmt.Errorf("failed to open output file: %w", err)
 	}
 
@@ -132,8 +167,10 @@ func NewJSONLWriter(cfg MemoryJSONLConfig, projectID, agentName, task string) (*
 		enabled:   true,
 		agentName: agentName,
 		task:      task,
-		taskHash:  hashTask(task),
+		taskHash:  taskHash,
 		filePath:  filePath,
+		traceID:   traceID,
+		taskID:    taskID,
 	}, nil
 }
 
@@ -161,6 +198,8 @@ func (w *JSONLWriter) WriteMessage(msg interface{}) error {
 		AgentName:  w.agentName,
 		MessageIdx: w.msgIdx,
 		Message:    msgBytes,
+		TraceID:    w.traceID,
+		TaskID:     w.taskID,
 	}
 
 	w.msgIdx++

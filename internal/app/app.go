@@ -465,14 +465,14 @@ func (r *TaskRequest) WithUserMessage(msg string) *TaskRequest {
 // ProcessCodingTaskWithCallback executes the task using the agent system.
 func (ca *CodeActor) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
-
+	ca.director.SetTaskID(req.taskID)
 	return ca.director.Run(req.ctx, req.taskDesc, req.memory)
 }
 
 // ProcessConversation handles chat messages.
 func (ca *CodeActor) ProcessConversation(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
-
+	ca.director.SetTaskID(req.taskID)
 	return ca.director.Run(req.ctx, req.userMessage, req.memory)
 }
 
