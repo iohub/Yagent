@@ -828,8 +828,8 @@ func (a *DirectorAgent) computeProjectID() string {
 	return sanitized + "_" + shortHash
 }
 
-// applyEnhancedCommander 对子 Agent 执行结果应用增强型 Commander 功能。
-// 包含：结果压缩（如果启用）、结果注册（如果启用）
+// applyEnhancedCommander 处理子 Agent 执行结果。
+// 当前仅存储 sub-agent memory，并原样返回结果文本（不做压缩/截断）。
 // agentType: 子 Agent 类型（如 "repo", "coding"）
 // task: 委派的任务描述
 // result: Agent 执行结果
