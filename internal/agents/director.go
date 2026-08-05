@@ -97,8 +97,6 @@ type DirectorAgent struct {
 
 	// EnhancedCommander 增强型配置
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
-	// resultCompressor 结果压缩器（nil 表示不启用压缩）
-	resultCompressor *ResultCompressor
 	// MemoryJSONL 配置
 	memoryJSONLCfg config.MemoryJSONLConfig
 }
@@ -482,10 +480,6 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 
 		// EnhancedCommander 配置
 		EnhancedCommanderCfg: cfg.EnhancedCommander,
-		resultCompressor: NewResultCompressor(
-			cfg.EnhancedCommander.CompressionThreshold,
-			cfg.EnhancedCommander.SummaryMaxLength,
-		),
 	}
 
 	// 计算并记录 Tool Definitions 哈希，用于验证 Prompt Cache 一致性
@@ -854,28 +848,7 @@ func (a *DirectorAgent) applyEnhancedCommander(
 		return "", err
 	}
 
-	cfg := a.EnhancedCommanderCfg
-	if !cfg.Enable {
-		return result.Text, nil
-	}
-
-	text := result.Text
-
-	// 结果压缩（如果启用）
-	if cfg.EnableResultCompression && a.resultCompressor != nil {
-		compResult := a.resultCompressor.Compress(agentType, task, text)
-		if compResult.Compressed {
-			text = compResult.Content
-			slog.Debug("Result compressed",
-				"agent", agentType,
-				"original_size", compResult.OriginalSize,
-				"compressed_size", compResult.CompressedSize,
-				"storage_key", compResult.StorageKey,
-			)
-		}
-	}
-
-	return text, nil
+	return result.Text, nil
 }
 
 func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {

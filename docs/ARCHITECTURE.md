@@ -232,9 +232,6 @@ type DirectorAgent struct {
     
     // 动态 Agent 注册
     customAgents map[string]*CustomAgent
-    
-    // 结果压缩
-    resultCompressor *ResultCompressor
 }
 ```
 

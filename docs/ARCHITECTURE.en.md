@@ -232,9 +232,6 @@ type DirectorAgent struct {
     
     // Dynamic Agent registration
     customAgents map[string]*CustomAgent
-    
-    // Result compression
-    resultCompressor *ResultCompressor
 }
 ```
 

@@ -519,12 +519,6 @@ func (c *Config) validate() error {
 	}
 
 	// ═══════ Enhanced Commander 默认值设置 ═══════
-	if c.EnhancedCommander.CompressionThreshold == 0 {
-		c.EnhancedCommander.CompressionThreshold = 4096
-	}
-	if c.EnhancedCommander.SummaryMaxLength == 0 {
-		c.EnhancedCommander.SummaryMaxLength = 2048
-	}
 	if c.EnhancedCommander.MaxDelegationDepth == 0 {
 		c.EnhancedCommander.MaxDelegationDepth = 3
 	}
@@ -715,15 +709,6 @@ type BrowserConfig struct {
 type EnhancedCommanderConfig struct {
 	// Enable 总开关，关闭时所有增强功能不生效
 	Enable bool `toml:"enable" json:"enable"`
-
-	// EnableResultCompression 是否启用结果压缩
-	EnableResultCompression bool `toml:"enable_result_compression" json:"enable_result_compression"`
-
-	// CompressionThreshold 结果压缩阈值（字节），默认 4096
-	CompressionThreshold int `toml:"compression_threshold" json:"compression_threshold"`
-
-	// SummaryMaxLength 摘要最大长度（字符），默认 2048
-	SummaryMaxLength int `toml:"summary_max_length" json:"summary_max_length"`
 
 	// MaxDelegationDepth 最大委派深度，默认 3
 	MaxDelegationDepth int `toml:"max_delegation_depth" json:"max_delegation_depth"`
