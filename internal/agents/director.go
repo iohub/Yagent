@@ -750,6 +750,13 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	cfg.StopOnFinish = true
 	cfg.LLMTimeout = a.llmTimeout
 	// EnableCollaboration 已默认 true
+
+	// 创建 Rollout Writer 并注入到 context
+	if rolloutWriter := a.createRolloutWriter(ca.DisplayName, task); rolloutWriter != nil {
+		defer rolloutWriter.Close()
+		ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
+	}
+
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {
 		return "", err
@@ -1048,6 +1055,17 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		}()
 	}
 
+	// ═══════ 初始化 Director Rollout Writer ═══════
+	var directorRolloutWriter *memory.RolloutWriter
+	if rw := a.createRolloutWriter("director", input); rw != nil {
+		directorRolloutWriter = rw
+		defer func() {
+			if directorRolloutWriter != nil {
+				directorRolloutWriter.Close()
+			}
+		}()
+	}
+
 	writeDirectorJSONL := func(msg llm.Message) {
 		if directorWriter == nil {
 			return
@@ -1058,12 +1076,50 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			)
 		}
 	}
+
+	writeDirectorRollout := func(msg llm.Message) {
+		if directorRolloutWriter == nil || !directorRolloutWriter.Enabled() {
+			return
+		}
+		// 首次写入时记录 session_meta 和 turn_context
+		if !directorRolloutWriter.SessionMetaWritten() {
+			cwd, _ := os.Getwd()
+			directorRolloutWriter.WriteSessionMeta(memory.SessionMeta{
+				ID:          directorRolloutWriter.SessionID(),
+				SessionID:   directorRolloutWriter.SessionID(),
+				Cwd:         cwd,
+				Originator:  "codeactor",
+				Source:      "cli",
+				HistoryMode: "standard",
+			})
+			turnID := directorRolloutWriter.NextTurn()
+			directorRolloutWriter.WriteTurnContext(memory.TurnContext{
+				TurnID:            turnID,
+				Cwd:               cwd,
+				Effort:            "medium",
+				CollaborationMode: "director",
+			})
+			directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+				Type: "task_started",
+			})
+		}
+		msgID := directorRolloutWriter.NextMessageID()
+		items := memory.LLMMessageToResponseItems(msg, msgID)
+		for _, item := range items {
+			if err := directorRolloutWriter.WriteResponseItem(item); err != nil {
+				slog.Warn("Rollout: failed to write director message",
+					"error", err,
+				)
+			}
+		}
+	}
 	// ═══════ END Director JSONL Writer ═══════
 
 	// ═══════ 写入初始消息（system prompt + user input）到 Director JSONL ═══════
 	initialMsgCount := len(messages)
 	for i := 0; i < initialMsgCount; i++ {
 		writeDirectorJSONL(messages[i])
+		writeDirectorRollout(messages[i])
 	}
 
 	for i := 0; i < a.maxSteps; i++ {
@@ -1071,6 +1127,13 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		if a.adapter != nil && a.adapter.IsCircuitBreakerOpen() {
 			slog.Error("Circuit breaker open, too many consecutive LLM failures",
 				"step", i)
+			// Rollout: 写入任务中止事件
+			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+				directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+					Type:   "turn_aborted",
+					Reason: "circuit breaker open",
+				})
+			}
 			return "", fmt.Errorf("circuit breaker open: LLM calls blocked")
 		}
 
@@ -1088,6 +1151,13 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				slog.Warn("DirectorAgent retrying LLM call", "step", i, "attempt", attempt, "wait", wait)
 				select {
 				case <-ctx.Done():
+					// Rollout: 写入任务中止事件
+					if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+						directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+							Type:   "turn_aborted",
+							Reason: ctx.Err().Error(),
+						})
+					}
 					return "", ctx.Err()
 				case <-time.After(wait):
 				}
@@ -1265,6 +1335,13 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		if llmErr != nil {
 			slog.Error("DirectorAgent LLM error after all retries",
 				"error", llmErr, "step", i)
+			// Rollout: 写入任务中止事件
+			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+				directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+					Type:   "turn_aborted",
+					Reason: llmErr.Error(),
+				})
+			}
 			return "", llmErr
 		}
 
@@ -1317,6 +1394,12 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			Reasoning: choice.Reasoning,
 			ToolCalls: choice.ToolCalls,
 		})
+		writeDirectorRollout(llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   choice.Content,
+			Reasoning: choice.Reasoning,
+			ToolCalls: choice.ToolCalls,
+		})
 
 		// 执行检测机制：若 director 未委派任何 agent 就打算以纯文本结束任务，
 		// 以用户角色注入简练英文消息，强制要求其必须 delegate 一个 agent 完成任务。
@@ -1334,10 +1417,17 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				messages = append(messages, userMsg)
 				// 写入 director JSONL 日志，保持本次运行记录完整
 				writeDirectorJSONL(userMsg)
+				writeDirectorRollout(userMsg)
 				slog.Debug("DirectorAgent force delegation via user message", "step", i, "prompt_count", a.nonDelegationPrompts)
 				// 注意：不写入 ConversationMemory（mem），该消息是系统模拟的用户指令，
 				// 不应污染会话历史；下一轮 LLM 调用会看到该 user 消息并应调用 delegate 工具。
 				continue
+			}
+			// Rollout: 写入任务完成事件
+			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+				directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+					Type: "task_complete",
+				})
 			}
 			return choice.Content, nil
 		}
@@ -1366,6 +1456,13 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 
 					// 工具调用前检查 context
 					if ctx.Err() != nil {
+						// Rollout: 写入任务中止事件
+						if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+							directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+								Type:   "turn_aborted",
+								Reason: ctx.Err().Error(),
+							})
+						}
 						return "", ctx.Err()
 					}
 
@@ -1453,14 +1550,33 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
 			})
+			writeDirectorRollout(llm.Message{
+				Role:       llm.RoleTool,
+				Content:    toolResult,
+				ToolCallID: tc.ID,
+				ToolName:   tc.Function.Name,
+			})
 
 			if tc.Function.Name == "agent_exit" {
+				// Rollout: 写入任务完成事件
+				if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+					directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+						Type: "task_complete",
+					})
+				}
 				return "Task completed successfully", nil
 			}
 
 		}
 	}
 
+	// Rollout: 写入任务中止事件
+	if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+		directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+			Type:   "turn_aborted",
+			Reason: "DirectorAgent exceeded max steps",
+		})
+	}
 	return "", fmt.Errorf("DirectorAgent exceeded max steps")
 }
 
