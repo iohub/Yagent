@@ -1345,38 +1345,52 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			return "", llmErr
 		}
 
+		choice := resp.Choices[0]
+		slog.Debug("DirectorAgent LLM response", "step", i, "content", choice.Content, "tool_calls", len(choice.ToolCalls))
+
+		// 计算 token usage（实际值或估算值）
+		var promptTokens, completionTokens, totalTokens, cacheCreationTokens, cacheReadTokens int64
+		if resp.Usage != nil {
+			promptTokens = resp.Usage.PromptTokens
+			completionTokens = resp.Usage.CompletionTokens
+			totalTokens = resp.Usage.TotalTokens
+			cacheCreationTokens = resp.Usage.CacheCreationInputTokens
+			cacheReadTokens = resp.Usage.CacheReadInputTokens
+		} else {
+			// 本地模型可能不返回 usage，按内容估算
+			estPrompt := 0
+			for _, msg := range messages {
+				estPrompt += EstimateTokens(msg.Content)
+			}
+			estCompletion := EstimateTokens(choice.Content)
+			promptTokens = int64(estPrompt)
+			completionTokens = int64(estCompletion)
+			totalTokens = promptTokens + completionTokens
+		}
+
 		// Rollout: 写入 token_count 事件
-		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() && resp.Usage != nil {
-			if writeErr := directorRolloutWriter.WriteTokenCount(resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.TotalTokens, resp.Usage.CacheCreationInputTokens, resp.Usage.CacheReadInputTokens); writeErr != nil {
+		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+			if writeErr := directorRolloutWriter.WriteTokenCount(promptTokens, completionTokens, totalTokens, cacheCreationTokens, cacheReadTokens); writeErr != nil {
 				slog.Warn("Rollout: failed to write director token_count", "error", writeErr)
 			}
 		}
-
-		choice := resp.Choices[0]
-		slog.Debug("DirectorAgent LLM response", "step", i, "content", choice.Content, "tool_calls", len(choice.ToolCalls))
 
 		if a.Publisher != nil {
 			metadata := map[string]interface{}{}
 			if resp.Usage != nil {
 				metadata["usage"] = map[string]interface{}{
-					"prompt_tokens":               resp.Usage.PromptTokens,
-					"completion_tokens":           resp.Usage.CompletionTokens,
-					"total_tokens":                resp.Usage.TotalTokens,
-					"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
-					"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
-					"total_input_tokens":          resp.Usage.TotalInputTokens,
+					"prompt_tokens":               int(resp.Usage.PromptTokens),
+					"completion_tokens":           int(resp.Usage.CompletionTokens),
+					"total_tokens":                int(resp.Usage.TotalTokens),
+					"cache_creation_input_tokens": int(resp.Usage.CacheCreationInputTokens),
+					"cache_read_input_tokens":     int(resp.Usage.CacheReadInputTokens),
+					"total_input_tokens":          int(resp.Usage.TotalInputTokens),
 				}
 			} else {
-				// Local models may not return usage — estimate from message content
-				promptTokens := 0
-				for _, msg := range messages {
-					promptTokens += EstimateTokens(msg.Content)
-				}
-				completionTokens := EstimateTokens(choice.Content)
 				metadata["usage"] = map[string]interface{}{
-					"prompt_tokens":     promptTokens,
-					"completion_tokens": completionTokens,
-					"total_tokens":      promptTokens + completionTokens,
+					"prompt_tokens":     int(promptTokens),
+					"completion_tokens": int(completionTokens),
+					"total_tokens":      int(totalTokens),
 					"estimated":         true,
 				}
 			}
