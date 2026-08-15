@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -143,6 +145,35 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}
 	}
 
+	// ─── Rollout: 写入 session_meta 和 turn_context ───
+	if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
+		if !rw.SessionMetaWritten() {
+			cwd, _ := os.Getwd()
+			rw.WriteSessionMeta(memory.SessionMeta{
+				ID:            rw.SessionID(),
+				SessionID:     rw.SessionID(),
+				Cwd:           cwd,
+				Originator:    "codeactor",
+				Source:        "cli",
+				HistoryMode:   "standard",
+			})
+		}
+
+		turnID := rw.NextTurn()
+		cwd, _ := os.Getwd()
+		rw.WriteTurnContext(memory.TurnContext{
+			TurnID:            turnID,
+			Cwd:               cwd,
+			Effort:            "medium",
+			CollaborationMode: "single",
+		})
+
+		// 写入 task_started 事件
+		rw.WriteEventMsg(memory.EventMsg{
+			Type: "task_started",
+		})
+	}
+
 	// ─── OnAgentExit hook: run via defer with panic recovery ───
 	var agentErr error
 	if cfg.OnAgentExit != nil {
@@ -152,6 +183,19 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			}
 			if exitErr := cfg.OnAgentExit(ctx, agentErr); exitErr != nil {
 				slog.Warn("OnAgentExit hook failed", "agent", cfg.AgentName, "error", exitErr)
+			}
+			// Rollout: 写入任务结束事件
+			if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
+				if agentErr != nil {
+					rw.WriteEventMsg(memory.EventMsg{
+						Type:   "turn_aborted",
+						Reason: agentErr.Error(),
+					})
+				} else {
+					rw.WriteEventMsg(memory.EventMsg{
+						Type: "task_complete",
+					})
+				}
 			}
 		}()
 	}
@@ -172,9 +216,26 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}
 	}
 
+	// writeRollout 实时写入消息到 Rollout 文件（如果 context 中配置了 writer）
+	writeRollout := func(msg llm.Message) {
+		writer := memory.GetRolloutWriter(ctx)
+		if writer == nil || !writer.Enabled() {
+			return
+		}
+		msgID := writer.NextMessageID()
+		items := memory.LLMMessageToResponseItems(msg, msgID)
+		for _, item := range items {
+			if err := writer.WriteResponseItem(item); err != nil {
+				log.Printf("rollout write error: %v", err)
+			}
+		}
+	}
+
 	// ═══════ 写入初始 system 和 user 消息到 JSONL ═══════
 	writeJSONL(systemMsg)
+	writeRollout(systemMsg)
 	writeJSONL(userMsg)
+	writeRollout(userMsg)
 
 	for i := 0; i < cfg.MaxSteps; i++ {
 		stepNumber++
@@ -396,6 +457,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 		// 写入 assistant 消息到 JSONL
 		writeJSONL(assistantMsg)
+		writeRollout(assistantMsg)
 
 		if len(choice.ToolCalls) == 0 {
 			return ExecutorResult{Text: choice.Content, History: history}, nil
@@ -475,6 +537,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 			// 写入 tool 消息到 JSONL
 			writeJSONL(toolMsg)
+			writeRollout(toolMsg)
 
 			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" {
 				// Don't call OnStepEnd here — OnAgentExit will handle final state
@@ -495,6 +558,11 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			}
 			if err := cfg.OnStepEnd(ctx, stepInfo); err != nil {
 				slog.Warn("OnStepEnd hook error", "agent", cfg.AgentName, "step", stepNumber, "error", err)
+			}
+			// Rollout: 写入 sub_agent_activity 事件
+			if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
+				event := memory.StepInfoToEventMsg(stepNumber, toolName, nil, true)
+				rw.WriteEventMsg(event)
 			}
 		}
 	}

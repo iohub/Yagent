@@ -152,6 +152,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 			defer writer.Close()
 			ctx = memory.WithJSONLWriter(ctx, writer)
 		}
+		// 创建 Rollout Writer 并注入到 context
+		if rolloutWriter := self.createRolloutWriter("repo", task); rolloutWriter != nil {
+			defer rolloutWriter.Close()
+			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
+		}
 		result, err := repo.Run(ctx, task)
 		// 使用增强型 Commander 处理结果（压缩 + 注册）
 		return self.applyEnhancedCommander("repo", task, result, err)
@@ -172,6 +177,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		if writer := self.createJSONLWriter("coding", task); writer != nil {
 			defer writer.Close()
 			ctx = memory.WithJSONLWriter(ctx, writer)
+		}
+		// 创建 Rollout Writer 并注入到 context
+		if rolloutWriter := self.createRolloutWriter("coding", task); rolloutWriter != nil {
+			defer rolloutWriter.Close()
+			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
 		// RepoSummary is no longer injected into the task here — it is now passed
 		// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt,
@@ -197,6 +207,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 			defer writer.Close()
 			ctx = memory.WithJSONLWriter(ctx, writer)
 		}
+		// 创建 Rollout Writer 并注入到 context
+		if rolloutWriter := self.createRolloutWriter("chat", task); rolloutWriter != nil {
+			defer rolloutWriter.Close()
+			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
+		}
 		result, err := chat.Run(ctx, task)
 		// 使用增强型 Commander 处理结果（压缩 + 注册）
 		return self.applyEnhancedCommander("chat", task, result, err)
@@ -217,6 +232,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		if writer := self.createJSONLWriter("devops", task); writer != nil {
 			defer writer.Close()
 			ctx = memory.WithJSONLWriter(ctx, writer)
+		}
+		// 创建 Rollout Writer 并注入到 context
+		if rolloutWriter := self.createRolloutWriter("devops", task); rolloutWriter != nil {
+			defer rolloutWriter.Close()
+			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
 		result, err := devops.Run(ctx, task)
 		// 使用增强型 Commander 处理结果（压缩 + 注册）
@@ -240,6 +260,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 			if writer := self.createJSONLWriter("browser", task); writer != nil {
 				defer writer.Close()
 				ctx = memory.WithJSONLWriter(ctx, writer)
+			}
+			// 创建 Rollout Writer 并注入到 context
+			if rolloutWriter := self.createRolloutWriter("browser", task); rolloutWriter != nil {
+				defer rolloutWriter.Close()
+				ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 			}
 			// RepoSummary is no longer injected into the task here — it is now passed
 			// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt.
@@ -266,6 +291,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		if writer := self.createJSONLWriter("meta", task); writer != nil {
 			defer writer.Close()
 			ctx = memory.WithJSONLWriter(ctx, writer)
+		}
+		// 创建 Rollout Writer 并注入到 context
+		if rolloutWriter := self.createRolloutWriter("meta", task); rolloutWriter != nil {
+			defer rolloutWriter.Close()
+			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
 		slog.Info("Director delegating to Meta-Agent (design)", "task", task)
 
@@ -801,6 +831,29 @@ func (a *DirectorAgent) createJSONLWriter(agentName, task string) *memory.JSONLW
 	}
 
 	slog.Debug("JSONL: writer created for delegate agent",
+		"agent", agentName,
+		"file", writer.FilePath(),
+	)
+
+	return writer
+}
+
+// createRolloutWriter 为 delegate 创建 Rollout 写入器
+// 返回 nil 表示创建失败（失败时仅警告，不阻断执行）
+func (a *DirectorAgent) createRolloutWriter(agentName, task string) *memory.RolloutWriter {
+	// 计算 projectID
+	projectID := a.computeProjectID()
+
+	writer, err := memory.NewRolloutWriter(agentName, a.taskID, projectID)
+	if err != nil {
+		slog.Warn("Rollout: failed to create writer, continuing without rollout logging",
+			"agent", agentName,
+			"error", err,
+		)
+		return nil
+	}
+
+	slog.Debug("Rollout: writer created for delegate agent",
 		"agent", agentName,
 		"file", writer.FilePath(),
 	)
