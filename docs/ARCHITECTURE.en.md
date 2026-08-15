@@ -33,17 +33,19 @@
   - [8.1 Core Compression Algorithm](#81-core-compression-algorithm)
   - [8.2 Async Incremental Compression](#82-async-incremental-compression)
   - [8.3 Priority Calculation](#83-priority-calculation)
-- [9. External Service Integration](#9-external-service-integration)
-  - [9.1 Codeseek Code Analysis Engine](#91-codeseek-code-analysis-engine)
-  - [9.2 Browser Automation](#92-browser-automation)
-- [10. Presentation Layer](#10-presentation-layer)
-  - [10.1 TUI (Terminal UI)](#101-tui-terminal-ui)
-  - [10.2 Web UI](#102-web-ui)
-  - [10.3 VS Code Extension](#103-vs-code-extension)
-- [11. Configuration System](#11-configuration-system)
-- [12. Key Design Patterns](#12-key-design-patterns)
-- [13. Data Flow Diagrams](#13-data-flow-diagrams)
-- [14. Glossary](#14-glossary)
+- [10. External Service Integration](#10-external-service-integration)
+  - [10.1 Codeseek Code Analysis Engine](#101-codeseek-code-analysis-engine)
+  - [10.2 Browser Automation](#102-browser-automation)
+- [11. Presentation Layer](#11-presentation-layer)
+  - [11.1 TUI (Terminal UI)](#111-tui-terminal-ui)
+  - [11.2 Web UI](#112-web-ui)
+  - [11.3 VS Code Extension](#113-vs-code-extension)
+- [12. Configuration System](#12-configuration-system)
+- [13. Key Design Patterns](#13-key-design-patterns)
+- [14. Data Flow Diagrams](#14-data-flow-diagrams)
+  - [14.1 Complete Task Processing Data Flow](#141-complete-task-processing-data-flow)
+  - [14.2 Inter-Agent Communication Data Flow](#142-inter-agent-communication-data-flow)
+- [15. Glossary](#15-glossary)
 
 ---
 
@@ -54,10 +56,11 @@ CodeActor is an **AI-driven autonomous coding system** built in Go. It employs a
 ### Core Features
 
 - **Multi-Agent Collaboration**: 6 specialized sub-Agents + 1 orchestrator, each with distinct responsibilities
-- **Rich Tooling**: 20+ built-in tools covering file operations, code search, system commands, and more
+- **Rich Tooling**: 26 built-in tools covering file operations, code search, system commands, and more
 - **Memory Management**: Conversation memory + local sticky notes, automatic tool_call pairing repair
 - **Context Compression**: Async incremental compression, intelligent summarization, hot-reload configuration support
 - **Safety Guards**: Workspace permission checks + user confirmation mechanism
+- **Knowledge Management**: Pre-conversation knowledge retrieval, async memory consolidation, repo memory cache
 - **Multiple Presentation Layers**: TUI, Web UI, VS Code extension, unified protocol
 
 ### Project Structure
@@ -65,19 +68,41 @@ CodeActor is an **AI-driven autonomous coding system** built in Go. It employs a
 ```
 codeactor-agent/
 ├── internal/
-│   ├── agents/        # Agent system core
-│   ├── tools/         # Tool system
-│   ├── llm/           # LLM engine abstraction
-│   ├── memory/        # Memory system
-│   ├── messaging/     # Message system
-│   ├── compact/       # Context compression engine
+│   ├── agents/        # Agent system core (with director/ subpackage)
+│   │   ├── director/  # Director types, metrics, recovery logic
+│   │   ├── context_compressor.go  # Context compression (TruncateToolResultsToBudget)
+│   │   ├── emergency_compressor.go # Emergency compression
+│   │   ├── consolidation_worker.go # Async memory consolidation
+│   │   ├── repo_memory.go         # Repo memory cache
+│   │   ├── knowledge_hook.go      # Knowledge extraction hook
+│   │   └── git_checkpoint.go      # Git checkpoint mechanism
+│   ├── tools/         # Tool system (with browser/ subpackage)
+│   │   └── browser/   # 11 browser tools (navigate, click, scroll, etc.)
+│   ├── llm/           # LLM engine abstraction (engine_openai, engine_anthropic, fallback, messages)
+│   ├── memory/        # Memory system (ConversationMemory, LocalMemory)
+│   ├── messaging/     # Message system (with bus/, consumers/, peer/ subpackages)
+│   │   ├── bus/       # Channel-based event distribution
+│   │   ├── consumers/ # TUIConsumer, WebSocketConsumer
+│   │   └── peer/      # Peer-to-peer messaging
 │   ├── browser/       # Browser automation
-│   ├── config/        # Configuration system
+│   ├── config/        # Configuration system (with CodeSeek, Knowledge, MemoryJSONL)
+│   ├── datamanager/   # Task data persistence (DataManager, JSONL read/write/index)
+│   ├── knowledge/     # Knowledge injector (KnowledgeInjector, pre-conversation retrieval)
+│   ├── mcp/           # MCP client (MCPClient, stdio JSON-RPC)
+│   ├── recovery/      # Circuit breaker (CircuitBreaker, closed/open/half-open)
+│   ├── registry/      # Capability registry (CapabilityRegistry)
+│   ├── skills/        # Skill system (SkillRegistry, loads .md skill files)
+│   ├── dict/          # Dictionary/autocomplete engine (DictEngine)
+│   ├── diff/          # Diff comparison utilities
+│   ├── embedbin/      # Embedded binaries
+│   ├── globalctx/     # Global context singleton (GlobalCtx)
+│   ├── logging/       # Task-scoped log directory management
+│   ├── tokenutil/     # Token counting utilities
+│   ├── util/          # Common utilities (crash, error_utils, numeric)
 │   ├── app/           # Application entry
 │   ├── tui/           # Terminal UI
 │   ├── http/          # HTTP/WebSocket service
-│   ├── protocol/      # Protocol definitions
-│   └── ...
+│   └── protocol/      # Protocol definitions
 ├── codeseek/          # Rust code analysis engine
 ├── vscode/            # VS Code extension
 ├── webui/             # Web frontend
@@ -220,9 +245,7 @@ type DirectorAgent struct {
     // Tool adapter list
     Adapters       []*tools.Adapter
     
-    // Context compression
-    compactEngine  *compact.Engine
-    asyncCompactor *compact.AsyncCompactor
+    // Context compression (inlined in Director, no standalone Engine/AsyncCompactor types)
     
     // Fault tolerance mechanisms
     stepRetries          int
@@ -399,6 +422,8 @@ RepoOps = NewRepoOperationsTool(codeSeekMCP, workDir, 0)
 
 ### 3.4 Delegation Graph
 
+> **Note**: The delegation graph definition and execution state control are inlined in `director.go` and `executor.go`; there is no standalone `delegation.go` file.
+
 The Delegation Graph is a **static DAG (Directed Acyclic Graph)** that defines delegation permissions between Agents, preventing circular calls.
 
 ```go
@@ -439,6 +464,8 @@ graph LR
 **Topological Sort**: Kahn's algorithm, sorting from leaves to root
 
 ### 3.5 State Machine
+
+> **Note**: The state machine is a design plan; the equivalent flow control is currently implemented via the executor loop in `executor.go`. There is no independent `StateMachine` type or `state_machine.go` file.
 
 The State Machine manages the Director's execution phases, ensuring controlled flow.
 
@@ -588,6 +615,8 @@ func NewDelegateAdapter(name, description string, target AgentRunner) *Adapter {
 
 ### 4.5 Core Tool List
 
+Tool definitions are in `internal/agents/tools.json`, totaling 26 tools.
+
 | Category | Tool | Description |
 |----------|------|-------------|
 | **File Operations** | `read_file` | Read file content |
@@ -595,20 +624,33 @@ func NewDelegateAdapter(name, description string, target AgentRunner) *Adapter {
 | | `search_replace_in_file` | Search and replace text block |
 | | `delete_file` | Delete file |
 | | `rename_file` | Rename file |
+| **Directory Browsing** | `list_dir` | View directory contents |
+| | `print_dir_tree` | Print directory tree |
 | **Search** | `search_by_regex` | Regular expression search |
 | | `semantic_search` | Semantic code search (calls codeseek) |
 | | `query_code_skeleton` | Get code skeleton |
 | | `query_code_snippet` | Get code snippet |
+| | `find_function_callee` | Find functions called by a function |
+| | `find_function_caller` | Find functions that call a function |
+| | `query_call_graph` | Query call graph |
 | **System** | `run_bash` | Execute Shell commands |
 | **Cognitive** | `thinking` | Thinking tool |
 | | `micro_agent` | Create sub-task |
 | | `deepthinking` | Deep analysis |
+| **Interaction** | `ask_user_for_help` | Request user help |
+| | `agent_exit` | Exit Agent |
+| **Git** | `git_checkpoint_list` | List checkpoints |
+| | `git_checkpoint_rollback` | Roll back to checkpoint |
+| | `git_checkpoint_create` | Create checkpoint |
+| **Knowledge** | `consolidate_knowledge` | Consolidate knowledge |
+| | `prune_history` | Prune historical knowledge |
 | **Delegation** | `delegate_repo` | Delegate code analysis |
 | | `delegate_coding` | Delegate coding task |
 | | `delegate_chat` | Delegate conversation |
 | | `delegate_meta` | Delegate Agent design |
 | | `delegate_devops` | Delegate operations task |
 | | `delegate_browser` | Delegate browser operations |
+| **Browser** (`tools/browser/`, 11 tools) | `navigate`, `click`, `scroll`, `input`, `cookies`, `evaluate`, `extract`, `history`, `pdf`, `wait_element`, `registry` | Headless browser automation |
 
 ---
 
@@ -627,7 +669,9 @@ type Engine interface {
 ```
 
 **Implementations**:
-- `EngineOpenAI`: OpenAI-compatible interface (supports Claude, Gemini, etc.)
+- `EngineOpenAI` (`internal/llm/engine_openai.go`): OpenAI-compatible interface, supports Claude (via OpenAI-compatible endpoint), Gemini, etc.
+- `EngineAnthropic` (`internal/llm/engine_anthropic.go`): Anthropic native interface, supports thinking blocks, cache control
+- `internal/llm/fallback.go`, `internal/llm/messages.go`: Fallback and message/tool definitions
 
 ### 5.2 Message and Tool Definition Format
 
@@ -822,22 +866,27 @@ Protocols are defined in `internal/protocol/agent_events.go`:
 - Configurable retry count (default 3 times)
 - Supports exponential backoff retry
 
+### 7.4 Subpackage Structure
+
+The messaging system includes the following subpackages:
+
+| Subpackage | Contents | Description |
+|------------|----------|-------------|
+| `internal/messaging/bus/` | `bus.go` | Channel-based event distribution core |
+| `internal/messaging/consumers/` | `tui.go`, `websock.go` | TUI consumer, WebSocket consumer |
+| `internal/messaging/peer/` | `peer.go`, `topics.go`, `options.go` | Peer-to-peer messaging |
+
 ---
 
 ## 8. Context Compression Engine
 
 ### 8.1 Core Compression Algorithm
 
-The context compression engine is located at `internal/compact/`, triggered when conversation token count exceeds limits:
+Context compression logic is located at `internal/agents/context_compressor.go`, triggered when conversation token count exceeds limits:
 
 ```go
-type Engine struct {
-    config       *Config
-    tokenizer    Tokenizer
-    priorityCalc *PriorityCalculator
-    summarizer   *LLMSummarizer
-    state        *CompressionState  // Incremental compression state
-}
+// TruncateToolResultsToBudget truncates tool results to fit token budget
+func TruncateToolResultsToBudget(messages []Message, budget int) []Message
 ```
 
 **Compression Flow**:
@@ -856,45 +905,7 @@ flowchart TD
 - `KeepRecentRounds`: Keep last N rounds of complete conversation
 - `MinSummaryTokens`: Minimum summary token count
 
-### 8.2 Async Incremental Compression
-
-**Dual Compression Strategy**:
-
-```mermaid
-flowchart LR
-    subgraph "Async Compression (Background)"
-        A1[Continuously Monitor Token Usage] --> A2{Exceed Threshold?}
-        A2 -->|Yes| A3[Async Submit Compression Job]
-        A3 --> A4[Worker Processing]
-        A4 --> A5[Wait for Result Application]
-    end
-    
-    subgraph "Sync Compression (Foreground)"
-        B1[Main Flow Detection] --> B2{Close to Limit?}
-        B2 -->|Yes| B3[Suspend Main Flow]
-        B3 --> B4[Force Compression]
-        B4 --> B5[Resume Main Flow]
-    end
-```
-
-**AsyncCompactor Implementation**:
-```go
-type AsyncCompactor struct {
-    engine     *Engine
-    jobQueue   chan *CompactJob      // Job queue
-    dropPolicy DropPolicy            // Queue-full strategy
-    workerID   int
-}
-```
-
-**Drop Policy**:
-| Policy | Description | Default |
-|--------|-------------|---------|
-| `DropPolicyBlock` | Block and wait | - |
-| `DropPolicyDropOldest` | Drop oldest job | ✅ |
-| `DropPolicyDropNewest` | Drop newest job | - |
-
-### 8.3 Priority Calculation
+### 8.2 Priority Calculation
 
 **PriorityCalculator** calculates message priority based on multiple factors:
 
@@ -910,11 +921,53 @@ type PriorityWeights struct {
 
 Messages with **higher priority** are more likely to be retained during compression.
 
+**Emergency Compression** (`internal/agents/emergency_compressor.go`):
+When tokens severely exceed limits, `EmergencyCompressMessages()` performs forced compression, called by Director in the main loop.
+
 ---
 
-## 9. External Service Integration
+## 9. Knowledge Management System
 
-### 9.1 Codeseek Code Analysis Engine
+### 9.1 KnowledgeInjector
+
+**Responsibility**: Retrieve relevant knowledge from the codebase before Agent conversation execution and inject it into the context.
+
+**Location**: `internal/knowledge/injector.go`
+
+**Workflow**:
+1. Receive current conversation context
+2. Retrieve relevant code snippets and knowledge entries via codeseek MCP
+3. Inject retrieval results into the system prompt
+4. Control injected token count (`InjectionMaxTokens`) and entry count (`InjectionMaxEntries`)
+
+### 9.2 ConsolidationWorker
+
+**Responsibility**: Asynchronously consolidate conversation memory generated during Agent execution, extracting reusable knowledge.
+
+**Location**: `internal/agents/consolidation_worker.go`
+
+**Workflow**:
+1. Listen for Agent execution completion signals
+2. Summarize and extract knowledge from conversation history
+3. Write extracted knowledge to long-term storage
+4. Supports hot-reload configuration
+
+### 9.3 RepoMemoryStore
+
+**Responsibility**: Cache repository-level structured memory to avoid re-analyzing the same code areas.
+
+**Location**: `internal/agents/repo_memory.go`
+
+**Workflow**:
+1. Cache code analysis results (structure, dependencies, key functions)
+2. Quickly retrieve existing memory during Agent execution
+3. Works with KnowledgeHook to extract new knowledge points during conversation
+
+---
+
+## 10. External Service Integration
+
+### 10.1 Codeseek Code Analysis Engine
 
 Codeseek is a code analysis engine written in Rust, providing semantic code search capabilities via MCP (stdio JSON-RPC):
 
@@ -935,7 +988,7 @@ Codeseek is a code analysis engine written in Rust, providing semantic code sear
 - Code snippet extraction
 - Code structure analysis
 
-### 9.2 Browser Automation
+### 10.2 Browser Automation
 
 BrowserAgent uses go-rod to drive headless Chrome:
 
@@ -952,9 +1005,9 @@ import "github.com/go-rod/rod"
 
 ---
 
-## 10. Presentation Layer
+## 11. Presentation Layer
 
-### 10.1 TUI (Terminal UI)
+### 11.1 TUI (Terminal UI)
 
 Terminal interface based on Bubble Tea framework:
 
@@ -969,7 +1022,7 @@ import "github.com/charmbracelet/bubbletea"
 - `tui_completion.go`: Auto-completion
 - `components/`: Reusable UI components
 
-### 10.2 Web UI
+### 11.2 Web UI
 
 Web interface built with React + TypeScript:
 
@@ -982,7 +1035,7 @@ webui/
 
 **Communication Protocol**: WebSocket, using unified Agent Events protocol.
 
-### 10.3 VS Code Extension
+### 11.3 VS Code Extension
 
 VS Code extension communicates with CodeActor via WebSocket:
 
@@ -1000,16 +1053,26 @@ VS Code extension communicates with CodeActor via WebSocket:
 
 ---
 
-## 11. Configuration System
+## 12. Configuration System
 
-The configuration system supports hot-reload, located at `internal/config/`:
+The configuration system supports hot-reload, located at `internal/config/config.go`:
 
 ```go
 type Config struct {
-    LLM     LLMConfig
-    Agent   AgentConfig
-    Browser BrowserConfig
-    // ...
+    Global      TopLevelConfig              // [global.llm] - Global LLM config
+    Agents      AgentsConfig                // [agents.llm] - Per-agent LLM overrides
+    Tools       ToolsConfig                 // [tools.llm] - Per-tool LLM overrides
+    App         AppConfig                   // [app] - App-level config
+    Agent       AgentConfig                 // [agent] - Agent behavior config
+    LLM         LLMConfig                   // [llm] - LLM inference fallback (timeout, retries, circuit breaker)
+    Browser     BrowserConfig               // [browser] - Browser config
+    Keywords    KeywordsConfig              // [keywords] - Keyword dictionary config
+    TaskTimeout time.Duration               // Global task timeout
+    GitCheckpoint GitCheckpointConfig       // [git_checkpoint] - Git checkpoint mechanism
+    CodeSeek    CodeSeekConfig              // [codeseek] - MCP code analysis engine config
+    EnhancedCommander EnhancedCommanderConfig // [enhanced_commander] - Enhanced Commander
+    TUI         TUIConfig                   // [tui] - TUI interface config (keybindings, etc.)
+    MemoryJSONL MemoryJSONLConfig           // [memory_jsonl] - JSONL real-time write config
 }
 ```
 
@@ -1017,18 +1080,22 @@ type Config struct {
 - TOML format configuration file
 - Runtime hot-reload
 - Default configuration + user configuration override
+- Three-tier LLM overrides: per-tool > per-agent > global
+- Supports Bedrock, Anthropic native API, OpenAI-compatible API
 
 ---
 
-## 12. Key Design Patterns
+## 13. Key Design Patterns
 
 | Pattern | Location | Description |
 |---------|----------|-------------|
 | **Orchestrator** | DirectorAgent | Orchestrate sub-Agent collaboration |
 | **Adapter** | tools.Adapter | Unified tool interface |
 | **Strategy** | Compression strategy, LLM engine selection | Swappable algorithms |
-| **State Machine** | StateMachine | State flow control |
-| **Circuit Breaker** | DirectorAgent | Circuit breaking on consecutive failures |
+| **State Machine** | executor loop (design plan) | State flow control |
+| **Circuit Breaker** | DirectorAgent / recovery/ | Circuit breaking on consecutive failures |
+| **Repository** | RepoMemoryStore | Repo memory cache |
+| **Hook** | knowledge_hook.go | Knowledge extraction hook |
 | **Retry** | Exponential backoff retry | Fault tolerance mechanism |
 | **Publish-Subscribe** | MessageDispatcher | Event distribution |
 | **Factory** | NewDirectorAgent, NewAgent | Agent creation |
@@ -1037,9 +1104,9 @@ type Config struct {
 
 ---
 
-## 13. Data Flow Diagrams
+## 14. Data Flow Diagrams
 
-### 13.1 Complete Task Processing Data Flow
+### 14.1 Complete Task Processing Data Flow
 
 ```mermaid
 flowchart TB
@@ -1102,7 +1169,7 @@ flowchart TB
     COND --> VSIX
 ```
 
-### 13.2 Inter-Agent Communication Data Flow
+### 14.2 Inter-Agent Communication Data Flow
 
 ```mermaid
 flowchart LR
@@ -1135,7 +1202,7 @@ flowchart LR
 
 ---
 
-## 14. Glossary
+## 15. Glossary
 
 | Term | English | Description |
 |------|---------|-------------|
@@ -1153,8 +1220,10 @@ flowchart LR
 | Codeseek | Codeseek | Rust-written code analysis engine |
 | Context Compression | Context Compression | Context compression to reduce token usage |
 | Circuit Breaker | Circuit Breaker | Circuit breaker, pauses on consecutive failures |
-| State Machine | State Machine | State machine for managing flow state |
+| State Machine | State Machine | State machine (design plan), currently implemented by executor loop |
 | DAG | Directed Acyclic Graph | Directed Acyclic Graph |
+| Knowledge Injection | Knowledge Injection | Pre-conversation knowledge retrieval from codebase into context |
+| MCP | Model Context Protocol | stdio JSON-RPC protocol for integrating external services |
 
 ---
 
@@ -1165,45 +1234,116 @@ flowchart LR
 | File Path | Description |
 |-----------|-------------|
 | `internal/agents/types.go` | Agent interface definition |
-| `internal/agents/director.go` | DirectorAgent implementation |
-| `internal/agents/delegation.go` | Delegation graph definition |
-| `internal/agents/state_machine.go` | State machine implementation |
-| `internal/agents/builder.go` | Agent builder |
+| `internal/agents/director.go` | DirectorAgent implementation (includes delegation graph) |
+| `internal/agents/director/types.go` | Director-specific types |
+| `internal/agents/director/metrics.go` | Director metrics collection |
+| `internal/agents/director/recovery.go` | Director recovery/retry logic |
+| `internal/agents/context_compressor.go` | Context compression (TruncateToolResultsToBudget) |
+| `internal/agents/emergency_compressor.go` | Emergency compression (EmergencyCompressMessages) |
+| `internal/agents/consolidation_worker.go` | Async memory consolidation |
+| `internal/agents/repo_memory.go` | Repo memory cache |
+| `internal/agents/knowledge_hook.go` | Knowledge extraction hook |
+| `internal/agents/git_checkpoint.go` | Git checkpoint mechanism |
+| `internal/agents/tools.json` | 26 tool definitions |
 | `internal/tools/adapter.go` | Tool adapter |
 | `internal/tools/registry.go` | Tool registry |
 | `internal/tools/workspace_guard.go` | Workspace guard |
 | `internal/tools/delegate.go` | Delegate adapter |
+| `internal/tools/browser/` | 11 browser tools |
 | `internal/llm/engine.go` | LLM engine interface |
 | `internal/llm/engine_openai.go` | OpenAI-compatible implementation |
+| `internal/llm/engine_anthropic.go` | Anthropic native implementation |
+| `internal/llm/fallback.go` | Fallback logic |
+| `internal/llm/messages.go` | Message and tool definitions |
 | `internal/memory/memory.go` | Conversation memory |
 | `internal/memory/local.go` | Local sticky note memory |
 | `internal/messaging/message_publisher.go` | Message publisher |
 | `internal/messaging/message_dispatcher.go` | Message dispatcher |
+| `internal/messaging/bus/bus.go` | Channel-based event distribution |
+| `internal/messaging/consumers/tui.go` | TUI consumer |
+| `internal/messaging/consumers/websock.go` | WebSocket consumer |
+| `internal/messaging/peer/peer.go` | Peer-to-peer messaging |
 | `internal/messaging/wal.go` | WAL persistence |
-| `internal/compact/engine.go` | Compression engine |
-| `internal/compact/engine_async.go` | Async compression |
+| `internal/knowledge/injector.go` | Knowledge injector |
+| `internal/mcp/client.go` | MCP client |
+| `internal/recovery/circuit_breaker.go` | Circuit breaker |
+| `internal/registry/capability_registry.go` | Capability registry |
+| `internal/skills/skills.go` | Skill system |
+| `internal/datamanager/data_manager.go` | Task data persistence |
+| `internal/config/config.go` | Configuration system |
 | `internal/protocol/agent_events.go` | Event type definitions |
 | `internal/app/app.go` | CodeActor application entry |
-| `internal/config/config.go` | Configuration system |
 
 ### B. Configuration Example
 
 ```toml
 # config/config.toml
 
-[llm]
-max_steps = 50
-step_retries = 3
+[global.llm]
+use_provider = "deepseek"
+
+[global.llm.providers.deepseek]
+model = "deepseek-chat"
+api_base_url = "https://api.deepseek.com"
+api_key = "sk-..."
+
+[agents.llm]
+use_provider = "deepseek"
 
 [agent]
-repo_max_steps = 20
-coding_max_steps = 30
+yolo_mode = false
+director_max_steps = 30
+coding_max_steps = 20
 chat_max_steps = 10
+repo_max_steps = 15
+devops_max_steps = 15
+browser_max_steps = 10
+meta_max_steps = 5
 meta_retry_count = 3
 
+[llm]
+timeout = "30s"
+max_retries = 5
+step_retries = 3
+circuit_breaker_threshold = 5
+circuit_breaker_reset_timeout = "60s"
+enable_fallback = true
+
 [browser]
-enable_browser_agent = false
+headless = true
 viewport_width = 1280
 viewport_height = 720
 timeout_seconds = 30
+enable_browser_agent = true
+
+[codeseek]
+binary_path = ""
+request_timeout = 30
+
+[codeseek.knowledge]
+enabled = true
+injection_max_tokens = 2000
+injection_max_entries = 10
+injection_min_score = 0.5
+
+[git_checkpoint]
+enabled = true
+max_checkpoints = 10
+squash_on_exit = true
+auto_merge_on_exit = false
+
+[enhanced_commander]
+enable = false
+max_delegation_depth = 3
+enable_context_compression = true
+context_compression_threshold = 120000
+tool_result_keep_tokens = 200
+
+[memory_jsonl]
+enable = false
+output_dir = "~/.codeactor/tasks"
+
+[tui.keybindings.edit]
+submit_task = "alt+s"
+command_mode = "ctrl+e"
 ```

@@ -29,21 +29,27 @@
   - [7.1 发布-订阅架构](#71-发布-订阅架构)
   - [7.2 事件类型](#72-事件类型)
   - [7.3 WAL 持久化与死信队列](#73-wal-持久化与死信队列)
+  - [7.4 子包结构](#74-子包结构)
 - [8. 上下文压缩引擎](#8-上下文压缩引擎)
   - [8.1 核心压缩算法](#81-核心压缩算法)
-  - [8.2 异步增量压缩](#82-异步增量压缩)
-  - [8.3 优先级计算](#83-优先级计算)
-- [9. 外部服务集成](#9-外部服务集成)
-  - [9.1 Codeseek 代码分析引擎](#91-codeseek-代码分析引擎)
-  - [9.2 浏览器自动化](#92-浏览器自动化)
-- [10. 表示层](#10-表示层)
-  - [10.1 TUI（终端 UI）](#101-tui终端-ui)
-  - [10.2 Web UI](#102-web-ui)
-  - [10.3 VS Code 扩展](#103-vs-code-扩展)
-- [11. 配置系统](#11-配置系统)
-- [12. 关键设计模式](#12-关键设计模式)
-- [13. 数据流图](#13-数据流图)
-- [14. 术语表](#14-术语表)
+  - [8.2 优先级计算](#82-优先级计算)
+- [9. 知识管理系统](#9-知识管理系统)
+  - [9.1 KnowledgeInjector（知识注入）](#91-knowledgeinjector知识注入)
+  - [9.2 ConsolidationWorker（记忆整理）](#92-consolidationworker记忆整理)
+  - [9.3 RepoMemoryStore（仓库记忆）](#93-repomemorystore仓库记忆)
+- [10. 外部服务集成](#10-外部服务集成)
+  - [10.1 Codeseek 代码分析引擎](#101-codeseek-代码分析引擎)
+  - [10.2 浏览器自动化](#102-浏览器自动化)
+- [11. 表示层](#11-表示层)
+  - [11.1 TUI（终端 UI）](#111-tui终端-ui)
+  - [11.2 Web UI](#112-web-ui)
+  - [11.3 VS Code 扩展](#113-vs-code-扩展)
+- [12. 配置系统](#12-配置系统)
+- [13. 关键设计模式](#13-关键设计模式)
+- [14. 数据流图](#14-数据流图)
+  - [14.1 任务处理完整数据流](#141-任务处理完整数据流)
+  - [14.2 Agent 间通信数据流](#142-agent-间通信数据流)
+- [15. 术语表](#15-术语表)
 
 ---
 
@@ -54,10 +60,11 @@ CodeActor 是一个用 Go 语言构建的 **AI 驱动自主编码系统**。它�
 ### 核心特性
 
 - **多 Agent 协作**：6 个专业子 Agent + 1 个编排者，各司其职
-- **工具丰富**：20+ 种内置工具，覆盖文件操作、代码搜索、系统命令等
+- **工具丰富**：26 种内置工具，覆盖文件操作、代码搜索、系统命令等
 - **内存管理**：对话记忆 + 本地便签，自动修复 tool_call 配对
 - **上下文压缩**：异步增量压缩，智能摘要，支持热重载配置
 - **安全守卫**：工作区权限检查 + 用户确认机制
+- **知识管理**：对话前知识检索注入、异步记忆整理、仓库记忆缓存
 - **多表示层**：TUI、Web UI、VS Code 扩展，统一协议
 
 ### 项目结构
@@ -65,19 +72,41 @@ CodeActor 是一个用 Go 语言构建的 **AI 驱动自主编码系统**。它�
 ```
 codeactor-agent/
 ├── internal/
-│   ├── agents/        # Agent 系统核心
-│   ├── tools/         # 工具系统
-│   ├── llm/           # LLM 引擎抽象
-│   ├── memory/        # 内存系统
-│   ├── messaging/     # 消息系统
-│   ├── compact/       # 上下文压缩引擎
+│   ├── agents/        # Agent 系统核心（含 director/ 子包）
+│   │   ├── director/  # Director 专用类型、指标、恢复逻辑
+│   │   ├── context_compressor.go  # 上下文压缩（TruncateToolResultsToBudget）
+│   │   ├── emergency_compressor.go # 紧急压缩
+│   │   ├── consolidation_worker.go # 异步记忆整理
+│   │   ├── repo_memory.go         # 仓库记忆缓存
+│   │   ├── knowledge_hook.go      # 知识提取 hook
+│   │   └── git_checkpoint.go      # Git checkpoint 机制
+│   ├── tools/         # 工具系统（含 browser/ 子包）
+│   │   └── browser/   # 11 个浏览器工具（navigate、click、scroll 等）
+│   ├── llm/           # LLM 引擎抽象（engine_openai、engine_anthropic、fallback、messages）
+│   ├── memory/        # 内存系统（ConversationMemory、LocalMemory）
+│   ├── messaging/     # 消息系统（含 bus/、consumers/、peer/ 子包）
+│   │   ├── bus/       # 基于 channel 的事件分发
+│   │   ├── consumers/ # TUIConsumer、WebSocketConsumer
+│   │   └── peer/      # 点对点消息通信
 │   ├── browser/       # 浏览器自动化
-│   ├── config/        # 配置系统
+│   ├── config/        # 配置系统（含 CodeSeek、Knowledge、MemoryJSONL 等）
+│   ├── datamanager/   # 任务数据持久化（DataManager，JSONL 读/写/索引）
+│   ├── knowledge/     # 知识注入器（KnowledgeInjector，对话前知识检索）
+│   ├── mcp/           # MCP 客户端（MCPClient，stdio JSON-RPC）
+│   ├── recovery/      # 熔断器（CircuitBreaker，closed/open/half-open）
+│   ├── registry/      # 能力注册表（CapabilityRegistry）
+│   ├── skills/        # 技能系统（SkillRegistry，加载 .md 技能文件）
+│   ├── dict/          # 字典/补全引擎（DictEngine，关键词补全）
+│   ├── diff/          # 差异比较工具
+│   ├── embedbin/      # 嵌入二进制
+│   ├── globalctx/     # 全局上下文单例（GlobalCtx）
+│   ├── logging/       # 任务级日志目录管理
+│   ├── tokenutil/     # Token 计数工具
+│   ├── util/          # 通用工具（crash、error_utils、numeric）
 │   ├── app/           # 应用入口
 │   ├── tui/           # 终端 UI
 │   ├── http/          # HTTP/WebSocket 服务
-│   ├── protocol/      # 协议定义
-│   └── ...
+│   └── protocol/      # 协议定义
 ├── codeseek/          # Rust 代码分析引擎
 ├── vscode/            # VS Code 扩展
 ├── webui/             # Web 前端
@@ -220,9 +249,7 @@ type DirectorAgent struct {
     // 工具适配器列表
     Adapters       []*tools.Adapter
     
-    // 上下文压缩
-    compactEngine  *compact.Engine
-    asyncCompactor *compact.AsyncCompactor
+    // 上下文压缩（内联到 Director，无独立 Engine/AsyncCompactor 类型）
     
     // 容错机制
     stepRetries          int
@@ -399,6 +426,8 @@ RepoOps = NewRepoOperationsTool(codeSeekMCP, workDir, 0)
 
 ### 3.4 委派图（DelegationGraph）
 
+> **注**：委派图定义与执行状态控制内联于 `director.go` 和 `executor.go`，无独立 `delegation.go` 文件。
+
 委派图是一个 **静态 DAG（有向无环图）**，定义 Agent 间的委派权限，防止循环调用。
 
 ```go
@@ -439,6 +468,8 @@ graph LR
 **拓扑排序**：Kahn 算法，从叶子到根排序
 
 ### 3.5 状态机（StateMachine）
+
+> **注**：状态机为设计规划，当前通过 `executor.go` 中的循环实现等效流程控制，无独立的 `StateMachine` 类型或 `state_machine.go` 文件。
 
 状态机管理 Director 的运行阶段，确保流程可控。
 
@@ -587,6 +618,8 @@ func NewDelegateAdapter(name, description string, target AgentRunner) *Adapter {
 
 ### 4.5 核心工具列表
 
+工具定义位于 `internal/agents/tools.json`，共 26 个工具。
+
 | 类别 | 工具 | 说明 |
 |------|------|------|
 | **文件操作** | `read_file` | 读取文件内容 |
@@ -594,20 +627,33 @@ func NewDelegateAdapter(name, description string, target AgentRunner) *Adapter {
 | | `search_replace_in_file` | 搜索并替换文本块 |
 | | `delete_file` | 删除文件 |
 | | `rename_file` | 重命名文件 |
+| **目录浏览** | `list_dir` | 查看目录内容 |
+| | `print_dir_tree` | 打印目录树 |
 | **搜索** | `search_by_regex` | 正则表达式搜索 |
 | | `semantic_search` | 语义代码搜索（调用 codeseek） |
 | | `query_code_skeleton` | 获取代码骨架 |
 | | `query_code_snippet` | 获取代码片段 |
+| | `find_function_callee` | 查找函数调用方 |
+| | `find_function_caller` | 查找被调用函数 |
+| | `query_call_graph` | 查询调用图 |
 | **系统** | `run_bash` | 执行 Shell 命令 |
 | **认知** | `thinking` | 思考工具 |
 | | `micro_agent` | 创建子任务 |
 | | `deepthinking` | 深度分析 |
+| **交互** | `ask_user_for_help` | 请求用户帮助 |
+| | `agent_exit` | 退出 Agent |
+| **Git** | `git_checkpoint_list` | 列出 checkpoint |
+| | `git_checkpoint_rollback` | 回滚到 checkpoint |
+| | `git_checkpoint_create` | 创建 checkpoint |
+| **知识** | `consolidate_knowledge` | 整理知识 |
+| | `prune_history` | 清理历史知识 |
 | **委派** | `delegate_repo` | 委派代码分析 |
 | | `delegate_coding` | 委派编码任务 |
 | | `delegate_chat` | 委派对话 |
 | | `delegate_meta` | 委派 Agent 设计 |
 | | `delegate_devops` | 委派运维任务 |
 | | `delegate_browser` | 委派浏览器操作 |
+| **浏览器**（`tools/browser/`，11 个） | `navigate`、`click`、`scroll`、`input`、`cookies`、`evaluate`、`extract`、`history`、`pdf`、`wait_element`、`registry` | 无头浏览器自动化 |
 
 ---
 
@@ -626,7 +672,9 @@ type Engine interface {
 ```
 
 **实现**：
-- `EngineOpenAI`：OpenAI 兼容接口（支持 Claude、Gemini 等）
+- `EngineOpenAI`（`internal/llm/engine_openai.go`）：OpenAI 兼容接口，支持 Claude（通过 OpenAI 兼容端点）、Gemini 等
+- `EngineAnthropic`（`internal/llm/engine_anthropic.go`）：Anthropic 原生接口，支持 thinking blocks、cache control
+- `internal/llm/fallback.go`、`internal/llm/messages.go`：故障转移与消息工具定义
 
 ### 5.2 消息与工具定义格式
 
@@ -821,22 +869,27 @@ type MessageDispatcher struct {
 - 可配置重试次数（默认 3 次）
 - 支持指数退避重试
 
+### 7.4 子包结构
+
+消息系统包含以下子包：
+
+| 子包 | 内容 | 说明 |
+|------|------|------|
+| `internal/messaging/bus/` | `bus.go` | 基于 channel 的事件分发核心 |
+| `internal/messaging/consumers/` | `tui.go`、`websock.go` | TUI 消费者、WebSocket 消费者 |
+| `internal/messaging/peer/` | `peer.go`、`topics.go`、`options.go` | 点对点消息通信 |
+
 ---
 
 ## 8. 上下文压缩引擎
 
 ### 8.1 核心压缩算法
 
-上下文压缩引擎位于 `internal/compact/`，当对话 token 数超过限制时触发：
+上下文压缩逻辑位于 `internal/agents/context_compressor.go`，当对话 token 数超过限制时触发：
 
 ```go
-type Engine struct {
-    config       *Config
-    tokenizer    Tokenizer
-    priorityCalc *PriorityCalculator
-    summarizer   *LLMSummarizer
-    state        *CompressionState  // 增量压缩状态
-}
+// TruncateToolResultsToBudget 截断工具结果以适配 token 预算
+func TruncateToolResultsToBudget(messages []Message, budget int) []Message
 ```
 
 **压缩流程**：
@@ -855,45 +908,7 @@ flowchart TD
 - `KeepRecentRounds`：保留最近 N 轮完整对话
 - `MinSummaryTokens`：摘要最小 token 数
 
-### 8.2 异步增量压缩
-
-**双重压缩策略**：
-
-```mermaid
-flowchart LR
-    subgraph "异步压缩（后台）"
-        A1[持续监听 token 用量] --> A2{超过阈值?}
-        A2 -->|是| A3[异步提交压缩任务]
-        A3 --> A4[Worker 处理]
-        A4 --> A5[结果等待应用]
-    end
-    
-    subgraph "同步压缩（前台）"
-        B1[主流程检测] --> B2{接近上限?}
-        B2 -->|是| B3[暂停主流程]
-        B3 --> B4[强制压缩]
-        B4 --> B5[恢复主流程]
-    end
-```
-
-**AsyncCompactor** 实现：
-```go
-type AsyncCompactor struct {
-    engine     *Engine
-    jobQueue   chan *CompactJob      // 任务队列
-    dropPolicy DropPolicy            // 队列满策略
-    workerID   int
-}
-```
-
-**丢弃策略**：
-| 策略 | 说明 | 默认值 |
-|------|------|--------|
-| `DropPolicyBlock` | 阻塞等待 | - |
-| `DropPolicyDropOldest` | 丢弃最旧任务 | ✅ |
-| `DropPolicyDropNewest` | 丢弃新任务 | - |
-
-### 8.3 优先级计算
+### 8.2 优先级计算
 
 **PriorityCalculator** 根据多种因素计算消息优先级：
 
@@ -909,11 +924,53 @@ type PriorityWeights struct {
 
 **优先级越高**的消息越可能在压缩时被保留。
 
+**紧急压缩**（`internal/agents/emergency_compressor.go`）：
+当 token 严重超限时，`EmergencyCompressMessages()` 执行强制压缩，Director 在主循环中调用。
+
 ---
 
-## 9. 外部服务集成
+## 9. 知识管理系统
 
-### 9.1 Codeseek 代码分析引擎
+### 9.1 KnowledgeInjector（知识注入）
+
+**职责**：在 Agent 执行对话前，从代码库中检索相关知识并注入到上下文中。
+
+**位置**：`internal/knowledge/injector.go`
+
+**工作方式**：
+1. 接收当前对话上下文
+2. 通过 codeseek MCP 检索相关代码片段和知识条目
+3. 将检索结果注入到系统提示中
+4. 控制注入 token 数量（`InjectionMaxTokens`）和条目数（`InjectionMaxEntries`）
+
+### 9.2 ConsolidationWorker（记忆整理）
+
+**职责**：异步整理 Agent 执行过程中产生的对话记忆，提取可复用知识。
+
+**位置**：`internal/agents/consolidation_worker.go`
+
+**工作方式**：
+1. 监听 Agent 执行完成的信号
+2. 对对话历史进行摘要和知识提取
+3. 将提取的知识写入长期存储
+4. 支持热重载配置
+
+### 9.3 RepoMemoryStore（仓库记忆）
+
+**职责**：缓存仓库级别的结构化记忆，避免重复分析相同代码区域。
+
+**位置**：`internal/agents/repo_memory.go`
+
+**工作方式**：
+1. 缓存代码分析结果（结构、依赖、关键函数）
+2. 在 Agent 执行期间快速检索已有记忆
+3. 配合 KnowledgeHook 在对话中提取新知识点
+
+---
+
+## 10. 外部服务集成
+
+### 10.1 Codeseek 代码分析引擎
 
 Codeseek 是一个用 Rust 编写的代码分析引擎，通过 MCP（stdio JSON-RPC）提供语义代码搜索能力：
 
@@ -934,7 +991,7 @@ Codeseek 是一个用 Rust 编写的代码分析引擎，通过 MCP（stdio JSON
 - 代码片段提取
 - 代码结构分析
 
-### 9.2 浏览器自动化
+### 10.2 浏览器自动化
 
 BrowserAgent 使用 go-rod 驱动无头 Chrome：
 
@@ -951,9 +1008,9 @@ import "github.com/go-rod/rod"
 
 ---
 
-## 10. 表示层
+## 11. 表示层
 
-### 10.1 TUI（终端 UI）
+### 11.1 TUI（终端 UI）
 
 基于 Bubble Tea 框架的终端界面：
 
@@ -968,7 +1025,7 @@ import "github.com/charmbracelet/bubbletea"
 - `tui_completion.go`：自动补全
 - `components/`：可复用 UI 组件
 
-### 10.2 Web UI
+### 11.2 Web UI
 
 React + TypeScript 构建的 Web 界面：
 
@@ -981,7 +1038,7 @@ webui/
 
 **通信协议**：WebSocket，使用统一的 Agent Events 协议。
 
-### 10.3 VS Code 扩展
+### 11.3 VS Code 扩展
 
 VS Code 扩展通过 WebSocket 与 CodeActor 通信：
 
@@ -999,16 +1056,26 @@ VS Code 扩展通过 WebSocket 与 CodeActor 通信：
 
 ---
 
-## 11. 配置系统
+## 12. 配置系统
 
-配置系统支持热重载，位于 `internal/config/`：
+配置系统支持热重载，位于 `internal/config/config.go`：
 
 ```go
 type Config struct {
-    LLM     LLMConfig
-    Agent   AgentConfig
-    Browser BrowserConfig
-    // ...
+    Global      TopLevelConfig       // [global.llm] - 全局 LLM 配置
+    Agents      AgentsConfig         // [agents.llm] - 按 Agent 的 LLM 覆盖
+    Tools       ToolsConfig          // [tools.llm] - 按工具的 LLM 覆盖
+    App         AppConfig            // [app] - 应用级配置
+    Agent       AgentConfig          // [agent] - Agent 行为配置
+    LLM         LLMConfig            // [llm] - LLM 推理兜底配置（超时、重试、熔断）
+    Browser     BrowserConfig        // [browser] - 浏览器配置
+    Keywords    KeywordsConfig       // [keywords] - 关键词词典配置
+    TaskTimeout time.Duration        // 全局任务超时
+    GitCheckpoint GitCheckpointConfig // [git_checkpoint] - Git checkpoint 机制
+    CodeSeek    CodeSeekConfig       // [codeseek] - MCP 代码分析引擎配置
+    EnhancedCommander EnhancedCommanderConfig // [enhanced_commander] - 增强型 Commander
+    TUI         TUIConfig            // [tui] - TUI 界面配置（快捷键等）
+    MemoryJSONL MemoryJSONLConfig    // [memory_jsonl] - JSONL 实时写入配置
 }
 ```
 
@@ -1016,29 +1083,33 @@ type Config struct {
 - TOML 格式配置文件
 - 运行时热重载
 - 默认配置 + 用户配置覆盖
+- 三层 LLM 覆盖：per-tool > per-agent > global
+- 支持 Bedrock、Anthropic 原生 API、OpenAI 兼容 API
 
 ---
 
-## 12. 关键设计模式
+## 13. 关键设计模式
 
 | 模式 | 应用位置 | 说明 |
 |------|---------|------|
 | **Orchestrator** | DirectorAgent | 编排子 Agent 协作 |
 | **Adapter** | tools.Adapter | 统一工具接口 |
 | **Strategy** | 压缩策略、LLM 引擎选择 | 可切换算法 |
-| **State Machine** | StateMachine | 状态流转控制 |
-| **Circuit Breaker** | DirectorAgent | 连续失败时熔断 |
+| **State Machine** | executor 循环（设计规划） | 状态流转控制 |
+| **Circuit Breaker** | DirectorAgent / recovery/ | 连续失败时熔断 |
 | **Retry** | 指数退避重试 | 容错机制 |
 | **Publish-Subscribe** | MessageDispatcher | 事件分发 |
 | **Factory** | NewDirectorAgent, NewAgent | Agent 创建 |
 | **Decorator** | Adapter.WithSchema | 增强工具定义 |
 | **Singleton** | GlobalCtx | 全局上下文 |
+| **Repository** | RepoMemoryStore | 仓库记忆缓存 |
+| **Hook** | knowledge_hook.go | 知识提取钩子 |
 
 ---
 
-## 13. 数据流图
+## 14. 数据流图
 
-### 13.1 任务处理完整数据流
+### 14.1 任务处理完整数据流
 
 ```mermaid
 flowchart TB
@@ -1070,7 +1141,8 @@ flowchart TB
     subgraph State ["状态管理"]
         MEM[ConversationMemory]
         LOCALM[LocalMemory]
-        SM[StateMachine]
+        SM[Executor Loop
+(设计: StateMachine)]
         COMPACT[Context Compression]
     end
 
@@ -1101,7 +1173,7 @@ flowchart TB
     COND --> VSIX
 ```
 
-### 13.2 Agent 间通信数据流
+### 14.2 Agent 间通信数据流
 
 ```mermaid
 flowchart LR
@@ -1134,7 +1206,7 @@ flowchart LR
 
 ---
 
-## 14. 术语表
+## 15. 术语表
 
 | 术语 | 英文 | 说明 |
 |------|------|------|
@@ -1152,8 +1224,10 @@ flowchart LR
 | Codeseek | Codeseek | Rust 编写的代码分析引擎 |
 | Context Compression | Context Compression | 上下文压缩，减少 token 占用 |
 | Circuit Breaker | Circuit Breaker | 熔断器，连续失败时暂停 |
-| State Machine | State Machine | 状态机，管理流程状态 |
+| State Machine | State Machine | 状态机（设计规划），当前由 executor 循环实现 |
 | DAG | Directed Acyclic Graph | 有向无环图 |
+| Knowledge Injection | Knowledge Injection | 对话前从代码库检索相关知识注入上下文 |
+| MCP | Model Context Protocol | stdio JSON-RPC 协议，用于集成外部服务 |
 
 ---
 
@@ -1164,45 +1238,116 @@ flowchart LR
 | 文件路径 | 说明 |
 |---------|------|
 | `internal/agents/types.go` | Agent 接口定义 |
-| `internal/agents/director.go` | DirectorAgent 实现 |
-| `internal/agents/delegation.go` | 委派图定义 |
-| `internal/agents/state_machine.go` | 状态机实现 |
-| `internal/agents/builder.go` | Agent 构建器 |
+| `internal/agents/director.go` | DirectorAgent 实现（含委派图定义） |
+| `internal/agents/director/types.go` | Director 专用类型 |
+| `internal/agents/director/metrics.go` | Director 指标采集 |
+| `internal/agents/director/recovery.go` | Director 恢复/重试逻辑 |
+| `internal/agents/context_compressor.go` | 上下文压缩（TruncateToolResultsToBudget） |
+| `internal/agents/emergency_compressor.go` | 紧急压缩（EmergencyCompressMessages） |
+| `internal/agents/consolidation_worker.go` | 异步记忆整理 |
+| `internal/agents/repo_memory.go` | 仓库记忆缓存 |
+| `internal/agents/knowledge_hook.go` | 知识提取 hook |
+| `internal/agents/git_checkpoint.go` | Git checkpoint 机制 |
+| `internal/agents/tools.json` | 26 个工具定义 |
 | `internal/tools/adapter.go` | 工具适配器 |
 | `internal/tools/registry.go` | 工具注册表 |
 | `internal/tools/workspace_guard.go` | 工作区守卫 |
 | `internal/tools/delegate.go` | 委派适配器 |
+| `internal/tools/browser/` | 11 个浏览器工具 |
 | `internal/llm/engine.go` | LLM 引擎接口 |
 | `internal/llm/engine_openai.go` | OpenAI 兼容实现 |
+| `internal/llm/engine_anthropic.go` | Anthropic 原生实现 |
+| `internal/llm/fallback.go` | 故障转移 |
+| `internal/llm/messages.go` | 消息与工具定义 |
 | `internal/memory/memory.go` | 对话内存 |
 | `internal/memory/local.go` | 本地便签内存 |
 | `internal/messaging/message_publisher.go` | 消息发布者 |
 | `internal/messaging/message_dispatcher.go` | 消息调度器 |
+| `internal/messaging/bus/bus.go` | 基于 channel 的事件分发 |
+| `internal/messaging/consumers/tui.go` | TUI 消费者 |
+| `internal/messaging/consumers/websock.go` | WebSocket 消费者 |
+| `internal/messaging/peer/peer.go` | 点对点消息通信 |
 | `internal/messaging/wal.go` | WAL 持久化 |
-| `internal/compact/engine.go` | 压缩引擎 |
-| `internal/compact/engine_async.go` | 异步压缩 |
+| `internal/knowledge/injector.go` | 知识注入器 |
+| `internal/mcp/client.go` | MCP 客户端 |
+| `internal/recovery/circuit_breaker.go` | 熔断器 |
+| `internal/registry/capability_registry.go` | 能力注册表 |
+| `internal/skills/skills.go` | 技能系统 |
+| `internal/datamanager/data_manager.go` | 任务数据持久化 |
+| `internal/config/config.go` | 配置系统 |
 | `internal/protocol/agent_events.go` | 事件类型定义 |
 | `internal/app/app.go` | CodeActor 应用入口 |
-| `internal/config/config.go` | 配置系统 |
 
 ### B. 配置示例
 
 ```toml
 # config/config.toml
 
-[llm]
-max_steps = 50
-step_retries = 3
+[global.llm]
+use_provider = "deepseek"
+
+[global.llm.providers.deepseek]
+model = "deepseek-chat"
+api_base_url = "https://api.deepseek.com"
+api_key = "sk-..."
+
+[agents.llm]
+use_provider = "deepseek"
 
 [agent]
-repo_max_steps = 20
-coding_max_steps = 30
+yolo_mode = false
+director_max_steps = 30
+coding_max_steps = 20
 chat_max_steps = 10
+repo_max_steps = 15
+devops_max_steps = 15
+browser_max_steps = 10
+meta_max_steps = 5
 meta_retry_count = 3
 
+[llm]
+timeout = "30s"
+max_retries = 5
+step_retries = 3
+circuit_breaker_threshold = 5
+circuit_breaker_reset_timeout = "60s"
+enable_fallback = true
+
 [browser]
-enable_browser_agent = false
+headless = true
 viewport_width = 1280
 viewport_height = 720
 timeout_seconds = 30
+enable_browser_agent = true
+
+[codeseek]
+binary_path = ""
+request_timeout = 30
+
+[codeseek.knowledge]
+enabled = true
+injection_max_tokens = 2000
+injection_max_entries = 10
+injection_min_score = 0.5
+
+[git_checkpoint]
+enabled = true
+max_checkpoints = 10
+squash_on_exit = true
+auto_merge_on_exit = false
+
+[enhanced_commander]
+enable = false
+max_delegation_depth = 3
+enable_context_compression = true
+context_compression_threshold = 120000
+tool_result_keep_tokens = 200
+
+[memory_jsonl]
+enable = false
+output_dir = "~/.codeactor/tasks"
+
+[tui.keybindings.edit]
+submit_task = "alt+s"
+command_mode = "ctrl+e"
 ```
