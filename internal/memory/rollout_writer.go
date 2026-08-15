@@ -50,6 +50,12 @@ type RolloutWriter struct {
 	msgCounter        int32
 	startTime         time.Time
 	sessionMetaWritten bool
+
+	// token 累计字段
+	totalInputTokens    int64
+	totalOutputTokens   int64
+	totalCachedTokens   int64
+	totalTokens         int64
 }
 
 // generateSessionID 生成会话 ID（时间戳 + 随机数）
@@ -200,6 +206,42 @@ func (w *RolloutWriter) WriteWorldState(payload WorldStatePayload) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.writeEnvelope("world_state", payload)
+}
+
+// WriteTokenCount 写入 token_count 事件，自动累计 total 用量
+func (w *RolloutWriter) WriteTokenCount(promptTokens, completionTokens, totalTokens, cacheCreationTokens, cacheReadTokens int64) error {
+	if !w.enabled || w.closed || promptTokens <= 0 && completionTokens <= 0 {
+		return nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// 累计总量
+	w.totalInputTokens += promptTokens
+	w.totalOutputTokens += completionTokens
+	w.totalCachedTokens += cacheReadTokens
+	w.totalTokens += totalTokens
+
+	// 构造 info 结构，符合 rollout.md 规范
+	info := map[string]interface{}{
+		"total_token_usage": map[string]interface{}{
+			"input_tokens":        w.totalInputTokens,
+			"cached_input_tokens": w.totalCachedTokens,
+			"output_tokens":       w.totalOutputTokens,
+			"total_tokens":        w.totalTokens,
+		},
+		"last_token_usage": map[string]interface{}{
+			"input_tokens":        promptTokens,
+			"cached_input_tokens": cacheReadTokens,
+			"output_tokens":       completionTokens,
+			"total_tokens":        totalTokens,
+		},
+	}
+
+	return w.writeEnvelope("event_msg", EventMsg{
+		Type: "token_count",
+		Info: info,
+	})
 }
 
 // NextTurn 递增 turnCounter，生成 turnID 并返回

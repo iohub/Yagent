@@ -1345,6 +1345,13 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			return "", llmErr
 		}
 
+		// Rollout: 写入 token_count 事件
+		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() && resp.Usage != nil {
+			if writeErr := directorRolloutWriter.WriteTokenCount(resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.TotalTokens, resp.Usage.CacheCreationInputTokens, resp.Usage.CacheReadInputTokens); writeErr != nil {
+				slog.Warn("Rollout: failed to write director token_count", "error", writeErr)
+			}
+		}
+
 		choice := resp.Choices[0]
 		slog.Debug("DirectorAgent LLM response", "step", i, "content", choice.Content, "tool_calls", len(choice.ToolCalls))
 

@@ -416,6 +416,13 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			return ExecutorResult{}, err
 		}
 
+		// Rollout: 写入 token_count 事件
+		if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() && resp.Usage != nil {
+			if writeErr := rw.WriteTokenCount(resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.TotalTokens, resp.Usage.CacheCreationInputTokens, resp.Usage.CacheReadInputTokens); writeErr != nil {
+				slog.Warn("Rollout: failed to write token_count", "error", writeErr)
+			}
+		}
+
 		choice := resp.Choices[0]
 		if cfg.Publisher != nil {
 			metadata := map[string]interface{}{}

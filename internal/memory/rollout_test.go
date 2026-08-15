@@ -993,3 +993,162 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 
 	t.Logf("Envelope format test passed: %d records, first=%s, last=%s", len(lines), first.Type, last.Type)
 }
+
+// ─── TestRolloutWriterTokenCount ───
+
+func TestRolloutWriterTokenCount(t *testing.T) {
+	writer, err := NewRolloutWriter("test-agent", "test-task-token", "test-project")
+	if err != nil {
+		t.Fatalf("NewRolloutWriter error: %v", err)
+	}
+
+	// 第一次 token_count 调用
+	usage1 := &llm.TokenUsage{
+		PromptTokens:             100,
+		CompletionTokens:         50,
+		TotalTokens:              150,
+		CacheCreationInputTokens: 10,
+		CacheReadInputTokens:     30,
+	}
+	if err := writer.WriteTokenCount(usage1.PromptTokens, usage1.CompletionTokens, usage1.TotalTokens, usage1.CacheCreationInputTokens, usage1.CacheReadInputTokens); err != nil {
+		t.Fatalf("WriteTokenCount(1) error: %v", err)
+	}
+
+	// 第二次 token_count 调用
+	usage2 := &llm.TokenUsage{
+		PromptTokens:             200,
+		CompletionTokens:         80,
+		TotalTokens:              280,
+		CacheCreationInputTokens: 20,
+		CacheReadInputTokens:     60,
+	}
+	if err := writer.WriteTokenCount(usage2.PromptTokens, usage2.CompletionTokens, usage2.TotalTokens, usage2.CacheCreationInputTokens, usage2.CacheReadInputTokens); err != nil {
+		t.Fatalf("WriteTokenCount(2) error: %v", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close error: %v", err)
+	}
+
+	// 读取并验证
+	filePath := writer.FilePath()
+	f, err := os.Open(filePath)
+	if err != nil {
+		t.Fatalf("Failed to open file: %v", err)
+	}
+	defer f.Close()
+
+	content, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	// 应有 2 条 token_count 记录
+	var tokenCountLines []string
+	for _, line := range lines {
+		var envelope RolloutEnvelope
+		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			t.Fatalf("invalid JSON: %v\nLine: %s", err, line)
+		}
+		if envelope.Type == "event_msg" {
+			tokenCountLines = append(tokenCountLines, line)
+		}
+	}
+
+	if len(tokenCountLines) != 2 {
+		t.Fatalf("expected 2 token_count event_msg records, got %d", len(tokenCountLines))
+	}
+
+	// 验证第一条
+	var firstEnvelope RolloutEnvelope
+	json.Unmarshal([]byte(tokenCountLines[0]), &firstEnvelope)
+	firstEvent, _ := json.Marshal(firstEnvelope.Payload)
+	var firstTokenEvent EventMsg
+	json.Unmarshal(firstEvent, &firstTokenEvent)
+	if firstTokenEvent.Type != "token_count" {
+		t.Fatalf("expected first event type 'token_count', got %q", firstTokenEvent.Type)
+	}
+	firstInfo, ok := firstTokenEvent.Info.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected first info to be map[string]interface{}")
+	}
+	firstTotalUsage := firstInfo["total_token_usage"].(map[string]interface{})
+	firstLastUsage := firstInfo["last_token_usage"].(map[string]interface{})
+	if int64(firstTotalUsage["input_tokens"].(float64)) != 100 {
+		t.Errorf("first: expected total input_tokens=100, got %v", firstTotalUsage["input_tokens"])
+	}
+	if int64(firstLastUsage["input_tokens"].(float64)) != 100 {
+		t.Errorf("first: expected last input_tokens=100, got %v", firstLastUsage["input_tokens"])
+	}
+	if int64(firstLastUsage["cached_input_tokens"].(float64)) != 30 {
+		t.Errorf("first: expected last cached_input_tokens=30, got %v", firstLastUsage["cached_input_tokens"])
+	}
+
+	// 验证第二条（累计）
+	var secondEnvelope RolloutEnvelope
+	json.Unmarshal([]byte(tokenCountLines[1]), &secondEnvelope)
+	secondEvent, _ := json.Marshal(secondEnvelope.Payload)
+	var secondTokenEvent EventMsg
+	json.Unmarshal(secondEvent, &secondTokenEvent)
+	if secondTokenEvent.Type != "token_count" {
+		t.Fatalf("expected second event type 'token_count', got %q", secondTokenEvent.Type)
+	}
+	secondInfo, ok := secondTokenEvent.Info.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected second info to be map[string]interface{}")
+	}
+	secondTotalUsage := secondInfo["total_token_usage"].(map[string]interface{})
+	secondLastUsage := secondInfo["last_token_usage"].(map[string]interface{})
+	if int64(secondTotalUsage["input_tokens"].(float64)) != 300 {
+		t.Errorf("second: expected total input_tokens=300, got %v", secondTotalUsage["input_tokens"])
+	}
+	if int64(secondLastUsage["input_tokens"].(float64)) != 200 {
+		t.Errorf("second: expected last input_tokens=200, got %v", secondLastUsage["input_tokens"])
+	}
+	if int64(secondTotalUsage["cached_input_tokens"].(float64)) != 90 {
+		t.Errorf("second: expected total cached_input_tokens=90 (30+60), got %v", secondTotalUsage["cached_input_tokens"])
+	}
+	if int64(secondTotalUsage["output_tokens"].(float64)) != 130 {
+		t.Errorf("second: expected total output_tokens=130 (50+80), got %v", secondTotalUsage["output_tokens"])
+	}
+	if int64(secondTotalUsage["total_tokens"].(float64)) != 430 {
+		t.Errorf("second: expected total total_tokens=430 (150+280), got %v", secondTotalUsage["total_tokens"])
+	}
+
+	t.Logf("Token count test passed: %d token_count records, cumulative totals verified", len(tokenCountLines))
+}
+
+// ─── TestRolloutWriterTokenCount_NilUsage ───
+
+func TestRolloutWriterTokenCount_NilUsage(t *testing.T) {
+	writer, err := NewRolloutWriter("test-agent", "test-task-nil", "test-project")
+	if err != nil {
+		t.Fatalf("NewRolloutWriter error: %v", err)
+	}
+	defer writer.Close()
+
+	// 写入零 token（应被静默忽略）
+	if err := writer.WriteTokenCount(0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("WriteTokenCount(0,0,0,0,0) error: %v", err)
+	}
+
+	// 验证文件为空
+	filePath := writer.FilePath()
+	f, err := os.Open(filePath)
+	if err != nil {
+		t.Fatalf("Failed to open file: %v", err)
+	}
+	defer f.Close()
+
+	content, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	if len(strings.TrimSpace(string(content))) != 0 {
+		t.Errorf("expected empty file after nil usage write, got: %s", string(content))
+	}
+
+	t.Log("Nil usage test passed: no records written for zero token usage")
+}
