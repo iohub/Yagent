@@ -100,6 +100,7 @@ func NewRolloutWriter(agentName, taskID, projectID string) (*RolloutWriter, erro
 		file:        file,
 		encoder:     json.NewEncoder(file),
 		enabled:     true,
+		filePath:    filePath,
 		sessionID:   sessionID,
 		agentName:   agentName,
 		taskID:      taskID,
