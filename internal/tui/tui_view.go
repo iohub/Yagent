@@ -85,8 +85,12 @@ func (m *model) View() tea.View {
 		vpHeight = 3
 	}
 	if m.viewport.Height() != vpHeight {
+		heightWasAtBottom := m.viewport.AtBottom()
 		m.viewport.SetHeight(vpHeight)
 		m.viewportViewValid = false
+		if heightWasAtBottom {
+			m.viewport.GotoBottom()
+		}
 	}
 
 	// Scrollbar: reserve 1 column if content exceeds viewport

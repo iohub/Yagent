@@ -68,6 +68,7 @@ func (m *model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
 				if m.viewport.AtBottom() {
 					m.viewport.GotoBottom()
 				}
+				m.viewportViewValid = false
 			}
 		}
 	}
