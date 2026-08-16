@@ -504,6 +504,44 @@ func (a *DirectorAgent) Name() string {
 	return "Director"
 }
 
+// refreshSubAgentEngines 从 llmClient 刷新所有子 Agent 的引擎，
+// 确保 TUI 中切换模型（全局或针对特定 agent）后立即生效。
+func (a *DirectorAgent) refreshSubAgentEngines() {
+	if a.llmClient == nil {
+		return
+	}
+	if a.RepoAgent != nil {
+		if e := a.llmClient.GetAgentEngine("repo"); e != nil {
+			a.RepoAgent.LLM = e
+		}
+	}
+	if a.CodingAgent != nil {
+		if e := a.llmClient.GetAgentEngine("coding"); e != nil {
+			a.CodingAgent.LLM = e
+		}
+	}
+	if a.ChatAgent != nil {
+		if e := a.llmClient.GetAgentEngine("chat"); e != nil {
+			a.ChatAgent.LLM = e
+		}
+	}
+	if a.MetaAgent != nil {
+		if e := a.llmClient.GetAgentEngine("meta"); e != nil {
+			a.MetaAgent.LLM = e
+		}
+	}
+	if a.DevOpsAgent != nil {
+		if e := a.llmClient.GetAgentEngine("devops"); e != nil {
+			a.DevOpsAgent.LLM = e
+		}
+	}
+	if a.BrowserAgent != nil {
+		if e := a.llmClient.GetAgentEngine("browser"); e != nil {
+			a.BrowserAgent.LLM = e
+		}
+	}
+}
+
 // getToolFunc returns the ToolFunc implementation for a given tool name.
 // This is used when constructing tool adapters for dynamically created agents.
 func (a *DirectorAgent) getToolFunc(name string) tools.ToolFunc {
@@ -877,6 +915,8 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		if newEngine != nil {
 			a.LLM = newEngine
 		}
+		// 刷新所有子 Agent 的引擎，确保 TUI 切换模型后子 Agent 也使用新模型
+		a.refreshSubAgentEngines()
 	}
 	defer func() { a.currentMemory = nil }()
 
