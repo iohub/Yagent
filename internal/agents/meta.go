@@ -9,7 +9,6 @@ import (
 
 	"codeactor/internal/globalctx"
 	"codeactor/internal/llm"
-	"codeactor/internal/memory"
 )
 
 //go:embed meta.prompt.md
@@ -20,7 +19,7 @@ var metaPrompt string
 // JSON. The Director then registers and executes the designed agent.
 type MetaAgent struct {
 	BaseAgent
-	GlobalCtx  *globalctx.GlobalCtx
+	GlobalCtx   *globalctx.GlobalCtx
 	StepRetries int // 步骤重试次数，0=不重试
 }
 
@@ -54,24 +53,6 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 			Content: input,
 		},
 	}
-
-	// >>> 新增：MetaAgent JSONL 写入 <<<
-	var metaWriter *memory.JSONLWriter
-	if w := memory.GetJSONLWriter(ctx); w != nil {
-		metaWriter = w
-	}
-	writeMetaJSONL := func(msg llm.Message) {
-		if metaWriter == nil {
-			return
-		}
-		if err := metaWriter.WriteMessage(msg); err != nil {
-			slog.Warn("JSONL: failed to write meta message", "error", err)
-		}
-	}
-	// 写入初始 system 和 user 消息
-	writeMetaJSONL(messages[0]) // system prompt
-	writeMetaJSONL(messages[1]) // user input
-	// <<< 新增结束 >>>
 
 	slog.Debug("MetaAgent calling LLM (design-only, no tools)", "input", input)
 
@@ -154,13 +135,6 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	if content == "" {
 		return AgentResult{}, fmt.Errorf("MetaAgent returned empty content")
 	}
-
-	// >>> 新增：写入 assistant 消息到 JSONL <<<
-	writeMetaJSONL(llm.Message{
-		Role:    llm.RoleAssistant,
-		Content: content,
-	})
-	// <<< 新增结束 <<<
 
 	if a.Publisher != nil {
 		metadata := map[string]interface{}{}

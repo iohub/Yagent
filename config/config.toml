@@ -167,11 +167,6 @@ enable_context_compression = false   # 启用上下文压缩（超阈值截断 t
 # context_compression_threshold = 120000  # 触发阈值（token）
 # tool_result_keep_tokens = 200        # 截断后保留 token 数
 
-# ── Memory JSONL 实时写入 ──
-[memory_jsonl]
-enable = false                       # 是否在 agent 执行时实时写入 memory JSONL 文件
-output_dir = ""                      # 输出目录（空=默认 ~/.codeactor/data/memory_jsonl/{projectID}/）
-
 # ── TUI Keybindings Configuration ──
 [tui]
   [tui.keybindings]

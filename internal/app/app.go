@@ -395,9 +395,6 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 
 		// Create DirectorAgent
 		ca.director = agents.NewDirectorAgent(ca.globalCtx, directorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, directorMaxSteps, disabledAgents, metaRetryCount, *ca.config, ca.client)
-
-		// 传递 MemoryJSONL 配置到 DirectorAgent
-		ca.director.SetMemoryJSONLConfig(ca.config.MemoryJSONL)
 	})
 }
 

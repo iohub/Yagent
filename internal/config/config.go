@@ -211,23 +211,17 @@ type LLMConfig struct {
 	FallbackMaxRetries int `toml:"fallback_max_retries" json:"fallback_max_retries" yaml:"fallback_max_retries"`
 }
 
-// MemoryJSONLConfig 配置 memory JSONL 实时写入
-type MemoryJSONLConfig struct {
-	Enable    bool   `toml:"enable" json:"enable"`
-	OutputDir string `toml:"output_dir" json:"output_dir"`
-}
-
 // Config is the root configuration structure
 type Config struct {
-	Global      TopLevelConfig       `toml:"global"` // [global.llm]
-	Agents      AgentsConfig         `toml:"agents"` // [agents.llm] + per-agent overrides
-	Tools       ToolsConfig          `toml:"tools"`  // [tools.llm] + per-tool overrides
-	App         AppConfig            `toml:"app"`
-	Agent       AgentConfig          `toml:"agent"`
-	LLM         LLMConfig            `toml:"llm" json:"llm" yaml:"llm"`                            // [llm] - LLM 推理兜底配置
-	Browser     BrowserConfig        `toml:"browser"`                                              // [browser] - 浏览器配置
-	Keywords    KeywordsConfig       `toml:"keywords"`                                             // [keywords] - 关键词词典配置
-	TaskTimeout time.Duration        `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"` // 全局任务超时，0=不启用
+	Global      TopLevelConfig `toml:"global"` // [global.llm]
+	Agents      AgentsConfig   `toml:"agents"` // [agents.llm] + per-agent overrides
+	Tools       ToolsConfig    `toml:"tools"`  // [tools.llm] + per-tool overrides
+	App         AppConfig      `toml:"app"`
+	Agent       AgentConfig    `toml:"agent"`
+	LLM         LLMConfig      `toml:"llm" json:"llm" yaml:"llm"`                            // [llm] - LLM 推理兜底配置
+	Browser     BrowserConfig  `toml:"browser"`                                              // [browser] - 浏览器配置
+	Keywords    KeywordsConfig `toml:"keywords"`                                             // [keywords] - 关键词词典配置
+	TaskTimeout time.Duration  `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"` // 全局任务超时，0=不启用
 
 	// GitCheckpoint git checkpoint 机制配置
 	GitCheckpoint GitCheckpointConfig `toml:"git_checkpoint"`
@@ -240,9 +234,6 @@ type Config struct {
 
 	// TUI TUI 界面配置（快捷键等）
 	TUI TUIConfig `toml:"tui"`
-
-	// MemoryJSONL 控制是否在 agent 执行时实时写入 memory JSONL 文件（按 delegate 任务维度）
-	MemoryJSONL MemoryJSONLConfig `toml:"memory_jsonl"`
 }
 
 // GetProvider returns a provider config by name from the shared provider pool.
@@ -811,27 +802,27 @@ type EditKeybindings struct {
 	NextTab      string `toml:"next_tab"`      // 默认: "alt+]"
 	ClearSession string `toml:"clear_session"` // 默认: "alt+c"
 	CloseTab     string `toml:"close_tab"`     // 默认: "alt+w"
-	Tab1 string `toml:"tab_1"` // 默认: "alt+1"
-	Tab2 string `toml:"tab_2"` // 默认: "alt+2"
-	Tab3 string `toml:"tab_3"` // 默认: "alt+3"
-	Tab4 string `toml:"tab_4"` // 默认: "alt+4"
-	Tab5 string `toml:"tab_5"` // 默认: "alt+5"
-	Tab6 string `toml:"tab_6"` // 默认: "alt+6"
-	Tab7 string `toml:"tab_7"` // 默认: "alt+7"
-	Tab8 string `toml:"tab_8"` // 默认: "alt+8"
-	Tab9 string `toml:"tab_9"` // 默认: "alt+9"
+	Tab1         string `toml:"tab_1"`         // 默认: "alt+1"
+	Tab2         string `toml:"tab_2"`         // 默认: "alt+2"
+	Tab3         string `toml:"tab_3"`         // 默认: "alt+3"
+	Tab4         string `toml:"tab_4"`         // 默认: "alt+4"
+	Tab5         string `toml:"tab_5"`         // 默认: "alt+5"
+	Tab6         string `toml:"tab_6"`         // 默认: "alt+6"
+	Tab7         string `toml:"tab_7"`         // 默认: "alt+7"
+	Tab8         string `toml:"tab_8"`         // 默认: "alt+8"
+	Tab9         string `toml:"tab_9"`         // 默认: "alt+9"
 }
 
 // CommandKeybindings 命令模式快捷键配置
 type CommandKeybindings struct {
-	ScrollDown        string `toml:"scroll_down"`        // 默认: "j"
-	ScrollUp          string `toml:"scroll_up"`          // 默认: "k"
-	PageDown          string `toml:"page_down"`          // 默认: "f"
-	PageUp            string `toml:"page_up"`            // 默认: "b"
-	EditMode          string `toml:"edit_mode"`          // 默认: "i"
-	CmdToggleHelp     string `toml:"toggle_help"`        // 默认: "?"
-	ToggleTokenPanel  string `toml:"toggle_token_panel"` // 默认: "alt+t"
-	SwitchModel       string `toml:"switch_model"`       // 默认: "alt+m"
-	ToggleDashboard   string `toml:"toggle_dashboard"`   // 默认: "alt+d"
-	Quit              string `toml:"quit"`               // 默认: "ctrl+c"
+	ScrollDown       string `toml:"scroll_down"`        // 默认: "j"
+	ScrollUp         string `toml:"scroll_up"`          // 默认: "k"
+	PageDown         string `toml:"page_down"`          // 默认: "f"
+	PageUp           string `toml:"page_up"`            // 默认: "b"
+	EditMode         string `toml:"edit_mode"`          // 默认: "i"
+	CmdToggleHelp    string `toml:"toggle_help"`        // 默认: "?"
+	ToggleTokenPanel string `toml:"toggle_token_panel"` // 默认: "alt+t"
+	SwitchModel      string `toml:"switch_model"`       // 默认: "alt+m"
+	ToggleDashboard  string `toml:"toggle_dashboard"`   // 默认: "alt+d"
+	Quit             string `toml:"quit"`               // 默认: "ctrl+c"
 }

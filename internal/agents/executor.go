@@ -150,12 +150,12 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		if !rw.SessionMetaWritten() {
 			cwd, _ := os.Getwd()
 			rw.WriteSessionMeta(memory.SessionMeta{
-				ID:            rw.SessionID(),
-				SessionID:     rw.SessionID(),
-				Cwd:           cwd,
-				Originator:    "codeactor",
-				Source:        "cli",
-				HistoryMode:   "standard",
+				ID:          rw.SessionID(),
+				SessionID:   rw.SessionID(),
+				Cwd:         cwd,
+				Originator:  "codeactor",
+				Source:      "cli",
+				HistoryMode: "standard",
 			})
 		}
 
@@ -202,20 +202,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 	stepNumber := 0
 
-	// writeJSONL 实时写入消息到 JSONL 文件（如果 context 中配置了 writer）
-	writeJSONL := func(msg llm.Message) {
-		writer := memory.GetJSONLWriter(ctx)
-		if writer == nil {
-			return
-		}
-		if err := writer.WriteMessage(msg); err != nil {
-			slog.Warn("JSONL: failed to write message",
-				"agent", cfg.AgentName,
-				"error", err,
-			)
-		}
-	}
-
 	// writeRollout 实时写入消息到 Rollout 文件（如果 context 中配置了 writer）
 	writeRollout := func(msg llm.Message) {
 		writer := memory.GetRolloutWriter(ctx)
@@ -231,10 +217,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}
 	}
 
-	// ═══════ 写入初始 system 和 user 消息到 JSONL ═══════
-	writeJSONL(systemMsg)
+	// ═══════ 写入初始 system 和 user 消息 ═══════
 	writeRollout(systemMsg)
-	writeJSONL(userMsg)
 	writeRollout(userMsg)
 
 	for i := 0; i < cfg.MaxSteps; i++ {
@@ -477,8 +461,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		messages = append(messages, assistantMsg)
 		history = append(history, assistantMsg)
 
-		// 写入 assistant 消息到 JSONL
-		writeJSONL(assistantMsg)
 		writeRollout(assistantMsg)
 
 		if len(choice.ToolCalls) == 0 {
@@ -557,8 +539,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			}
 			history = append(history, toolMsg)
 
-			// 写入 tool 消息到 JSONL
-			writeJSONL(toolMsg)
 			writeRollout(toolMsg)
 
 			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" {

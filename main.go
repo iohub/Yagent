@@ -34,9 +34,6 @@ var (
 	yoloMode      bool
 	fullYoloMode  bool
 	forceQuit     bool // --force-quit: 强制退出模式，agent_exit 时直接退出，不等待 codeseek 进程安全退出
-	// Memory JSONL 实时持久化
-	memoryJSONLEnable bool
-	memoryJSONLDir    string
 	// Config path override
 	configPathFlag string
 )
@@ -97,9 +94,6 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&fullYoloMode, "full-yolo", "Y", false, "FULL-YOLO mode: autonomous mode (implies --yolo), removes ask_user_for_help from all agents, agents make decisions independently")
 	// ForceQuit 模式：agent_exit 时强制退出，不等待 codeseek 进程安全退出
 	rootCmd.PersistentFlags().BoolVarP(&forceQuit, "force-quit", "Q", false, "Force quit: exit immediately without waiting for codeseek process to shut down safely")
-	// Memory JSONL 实时写入
-	rootCmd.Flags().BoolVar(&memoryJSONLEnable, "memory-jsonl", false, "Enable real-time memory JSONL persistence per agent delegate task")
-	rootCmd.Flags().StringVar(&memoryJSONLDir, "memory-jsonl-dir", "", "Custom output directory for memory JSONL files (default: ~/.codeactor/data/memory_jsonl/{projectID}/)")
 	// 注册子命令
 	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(httpCmd)
@@ -167,14 +161,6 @@ func runTUI(taskFile, disableAgents string) {
 	codeActor.YoloMode = yoloMode
 	codeActor.FullYoloMode = fullYoloMode
 	codeActor.ForceQuit = forceQuit
-	// Memory JSONL 配置（CLI flag 覆盖配置文件）
-	if memoryJSONLEnable {
-		config.MemoryJSONL.Enable = true
-	}
-	if memoryJSONLDir != "" {
-		config.MemoryJSONL.OutputDir = memoryJSONLDir
-	}
-
 	// 主动初始化：启动 codeseek MCP 等核心服务
 	codeActor.Init(client.Engine, repoPath)
 
@@ -272,13 +258,6 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	codeActor.YoloMode = yoloMode
 	codeActor.FullYoloMode = fullYoloMode
 	codeActor.ForceQuit = forceQuit
-	// Memory JSONL 配置（CLI flag 覆盖配置文件）
-	if memoryJSONLEnable {
-		config.MemoryJSONL.Enable = true
-	}
-	if memoryJSONLDir != "" {
-		config.MemoryJSONL.OutputDir = memoryJSONLDir
-	}
 	// 主动初始化：启动 codeseek MCP 等核心服务
 	codeActor.Init(client.Engine, repoPath)
 
@@ -342,14 +321,6 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	codeActor.YoloMode = yoloMode
 	codeActor.FullYoloMode = fullYoloMode
 	codeActor.ForceQuit = forceQuit
-	// Memory JSONL 配置（CLI flag 覆盖配置文件）
-	if memoryJSONLEnable {
-		config.MemoryJSONL.Enable = true
-	}
-	if memoryJSONLDir != "" {
-		config.MemoryJSONL.OutputDir = memoryJSONLDir
-	}
-
 	codeActor.Init(client.Engine, repoPath)
 	defer codeActor.Close()
 

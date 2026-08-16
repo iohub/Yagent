@@ -97,9 +97,7 @@ type DirectorAgent struct {
 
 	// EnhancedCommander 增强型配置
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
-	// MemoryJSONL 配置
-	memoryJSONLCfg config.MemoryJSONLConfig
-	// taskID 当前任务的 taskID，用于 JSONL 导出文件名关联多个 agent
+	// taskID 当前任务的 taskID
 	taskID string
 }
 
@@ -147,11 +145,6 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		// 创建 JSONL Writer 并注入到 context
-		if writer := self.createJSONLWriter("repo", task); writer != nil {
-			defer writer.Close()
-			ctx = memory.WithJSONLWriter(ctx, writer)
-		}
 		// 创建 Rollout Writer 并注入到 context
 		if rolloutWriter := self.createRolloutWriter("repo", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
@@ -172,11 +165,6 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
-		}
-		// 创建 JSONL Writer 并注入到 context
-		if writer := self.createJSONLWriter("coding", task); writer != nil {
-			defer writer.Close()
-			ctx = memory.WithJSONLWriter(ctx, writer)
 		}
 		// 创建 Rollout Writer 并注入到 context
 		if rolloutWriter := self.createRolloutWriter("coding", task); rolloutWriter != nil {
@@ -202,11 +190,6 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		// 创建 JSONL Writer 并注入到 context
-		if writer := self.createJSONLWriter("chat", task); writer != nil {
-			defer writer.Close()
-			ctx = memory.WithJSONLWriter(ctx, writer)
-		}
 		// 创建 Rollout Writer 并注入到 context
 		if rolloutWriter := self.createRolloutWriter("chat", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
@@ -227,11 +210,6 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
-		}
-		// 创建 JSONL Writer 并注入到 context
-		if writer := self.createJSONLWriter("devops", task); writer != nil {
-			defer writer.Close()
-			ctx = memory.WithJSONLWriter(ctx, writer)
 		}
 		// 创建 Rollout Writer 并注入到 context
 		if rolloutWriter := self.createRolloutWriter("devops", task); rolloutWriter != nil {
@@ -255,11 +233,6 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 			task, ok := params["task"].(string)
 			if !ok {
 				return nil, fmt.Errorf("task parameter required")
-			}
-			// 创建 JSONL Writer 并注入到 context
-			if writer := self.createJSONLWriter("browser", task); writer != nil {
-				defer writer.Close()
-				ctx = memory.WithJSONLWriter(ctx, writer)
 			}
 			// 创建 Rollout Writer 并注入到 context
 			if rolloutWriter := self.createRolloutWriter("browser", task); rolloutWriter != nil {
@@ -286,11 +259,6 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
-		}
-		// 创建 JSONL Writer 并注入到 context（只在最外层注入）
-		if writer := self.createJSONLWriter("meta", task); writer != nil {
-			defer writer.Close()
-			ctx = memory.WithJSONLWriter(ctx, writer)
 		}
 		// 创建 Rollout Writer 并注入到 context
 		if rolloutWriter := self.createRolloutWriter("meta", task); rolloutWriter != nil {
@@ -802,47 +770,9 @@ func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID stri
 	// sub-agent 内部消息保留在 sub-agent 本地，通过 SharedMemory 的 publish/subscribe 机制共享关键信息（Phase 3）
 }
 
-// SetMemoryJSONLConfig 设置 MemoryJSONL 配置（由 app.go 在初始化后调用）
-func (a *DirectorAgent) SetMemoryJSONLConfig(cfg config.MemoryJSONLConfig) {
-	a.memoryJSONLCfg = cfg
-}
-
-// SetTaskID 设置当前任务的 taskID，用于 JSONL 导出文件名关联多个 agent
+// SetTaskID 设置当前任务的 taskID
 func (a *DirectorAgent) SetTaskID(taskID string) {
 	a.taskID = taskID
-}
-
-// createJSONLWriter 为 delegate 创建 JSONL 写入器（如果启用）
-// 返回 nil 表示未启用或创建失败（失败时仅警告，不阻断执行）
-func (a *DirectorAgent) createJSONLWriter(agentName, task string) *memory.JSONLWriter {
-	if !a.memoryJSONLCfg.Enable {
-		return nil
-	}
-
-	// 计算 projectID
-	projectID := a.computeProjectID()
-
-	// 将 config.MemoryJSONLConfig 转换为 memory.MemoryJSONLConfig
-	memoryCfg := memory.MemoryJSONLConfig{
-		Enable:    a.memoryJSONLCfg.Enable,
-		OutputDir: a.memoryJSONLCfg.OutputDir,
-	}
-
-	writer, err := memory.NewJSONLWriter(memoryCfg, projectID, agentName, task, a.taskID)
-	if err != nil {
-		slog.Warn("JSONL: failed to create writer, continuing without jsonl logging",
-			"agent", agentName,
-			"error", err,
-		)
-		return nil
-	}
-
-	slog.Debug("JSONL: writer created for delegate agent",
-		"agent", agentName,
-		"file", writer.FilePath(),
-	)
-
-	return writer
 }
 
 // createRolloutWriter 为 delegate 创建 Rollout 写入器
@@ -1044,17 +974,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 		}, a.Name())
 	}
 
-	// ═══════ 初始化 Director JSONL Writer ═══════
-	var directorWriter *memory.JSONLWriter
-	if w := a.createJSONLWriter("director", input); w != nil {
-		directorWriter = w
-		defer func() {
-			if directorWriter != nil {
-				directorWriter.Close()
-			}
-		}()
-	}
-
 	// ═══════ 初始化 Director Rollout Writer ═══════
 	var directorRolloutWriter *memory.RolloutWriter
 	if rw := a.createRolloutWriter("director", input); rw != nil {
@@ -1064,17 +983,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				directorRolloutWriter.Close()
 			}
 		}()
-	}
-
-	writeDirectorJSONL := func(msg llm.Message) {
-		if directorWriter == nil {
-			return
-		}
-		if err := directorWriter.WriteMessage(msg); err != nil {
-			slog.Warn("JSONL: failed to write director message",
-				"error", err,
-			)
-		}
 	}
 
 	writeDirectorRollout := func(msg llm.Message) {
@@ -1113,12 +1021,11 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			}
 		}
 	}
-	// ═══════ END Director JSONL Writer ═══════
+	// ═══════ END Director Rollout Writer ═══════
 
-	// ═══════ 写入初始消息（system prompt + user input）到 Director JSONL ═══════
+	// ═══════ 写入初始消息（system prompt + user input） ═══════
 	initialMsgCount := len(messages)
 	for i := 0; i < initialMsgCount; i++ {
-		writeDirectorJSONL(messages[i])
 		writeDirectorRollout(messages[i])
 	}
 
@@ -1408,13 +1315,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			ToolCalls: choice.ToolCalls,
 		})
 
-		// 写入 assistant 消息到 Director JSONL
-		writeDirectorJSONL(llm.Message{
-			Role:      llm.RoleAssistant,
-			Content:   choice.Content,
-			Reasoning: choice.Reasoning,
-			ToolCalls: choice.ToolCalls,
-		})
 		writeDirectorRollout(llm.Message{
 			Role:      llm.RoleAssistant,
 			Content:   choice.Content,
@@ -1436,8 +1336,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				}
 				userMsg := llm.Message{Role: llm.RoleUser, Content: forceMsg}
 				messages = append(messages, userMsg)
-				// 写入 director JSONL 日志，保持本次运行记录完整
-				writeDirectorJSONL(userMsg)
 				writeDirectorRollout(userMsg)
 				slog.Debug("DirectorAgent force delegation via user message", "step", i, "prompt_count", a.nonDelegationPrompts)
 				// 注意：不写入 ConversationMemory（mem），该消息是系统模拟的用户指令，
@@ -1564,13 +1462,6 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				ToolName:   tc.Function.Name,
 			})
 
-			// 写入 tool 消息到 Director JSONL
-			writeDirectorJSONL(llm.Message{
-				Role:       llm.RoleTool,
-				Content:    toolResult,
-				ToolCallID: tc.ID,
-				ToolName:   tc.Function.Name,
-			})
 			writeDirectorRollout(llm.Message{
 				Role:       llm.RoleTool,
 				Content:    toolResult,
