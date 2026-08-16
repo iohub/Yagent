@@ -93,7 +93,6 @@ use_provider = "local"   # 切换到本地模型
 | `[keywords]` | 关键词词典配置 | 否 |
 | `[git_checkpoint]` | Git Checkpoint 机制 | 否 |
 | `[enhanced_commander]` | 增强型 Commander（分布式认知架构） | 否 |
-| `[memory_jsonl]` | Memory JSONL 实时写入 | 否 |
 | `[tui]` | TUI 快捷键配置 | 否 |
 | `task_timeout` | 全局任务超时（根级字段） | 否 |
 
@@ -313,14 +312,7 @@ fallback_providers = [
 | `context_compression_threshold` | int | `120000` | 触发上下文压缩的 token 阈值 |
 | `tool_result_keep_tokens` | int | `200` | 截断后每条 tool 结果保留的 token 数 |
 
-### 5.9 `[memory_jsonl]` — Memory JSONL 实时写入
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enable` | bool | `false` | 是否在 agent 执行时实时写入 memory JSONL 文件 |
-| `output_dir` | string | `""` | 输出目录（空 = 默认 `~/.codeactor/data/memory_jsonl/{projectID}/`） |
-
-### 5.10 `[tui]` — TUI 快捷键配置
+### 5.9 `[tui]` — TUI 快捷键配置
 
 **编辑模式快捷键：**
 

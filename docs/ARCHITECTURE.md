@@ -89,7 +89,7 @@ codeactor-agent/
 │   │   ├── consumers/ # TUIConsumer、WebSocketConsumer
 │   │   └── peer/      # 点对点消息通信
 │   ├── browser/       # 浏览器自动化
-│   ├── config/        # 配置系统（含 CodeSeek、Knowledge、MemoryJSONL 等）
+│   ├── config/        # 配置系统（含 CodeSeek、Knowledge 等）
 │   ├── datamanager/   # 任务数据持久化（DataManager，JSONL 读/写/索引）
 │   ├── knowledge/     # 知识注入器（KnowledgeInjector，对话前知识检索）
 │   ├── mcp/           # MCP 客户端（MCPClient，stdio JSON-RPC）
@@ -1075,7 +1075,6 @@ type Config struct {
     CodeSeek    CodeSeekConfig       // [codeseek] - MCP 代码分析引擎配置
     EnhancedCommander EnhancedCommanderConfig // [enhanced_commander] - 增强型 Commander
     TUI         TUIConfig            // [tui] - TUI 界面配置（快捷键等）
-    MemoryJSONL MemoryJSONLConfig    // [memory_jsonl] - JSONL 实时写入配置
 }
 ```
 
@@ -1342,10 +1341,6 @@ max_delegation_depth = 3
 enable_context_compression = true
 context_compression_threshold = 120000
 tool_result_keep_tokens = 200
-
-[memory_jsonl]
-enable = false
-output_dir = "~/.codeactor/tasks"
 
 [tui.keybindings.edit]
 submit_task = "alt+s"

@@ -85,7 +85,7 @@ codeactor-agent/
 │   │   ├── consumers/ # TUIConsumer, WebSocketConsumer
 │   │   └── peer/      # Peer-to-peer messaging
 │   ├── browser/       # Browser automation
-│   ├── config/        # Configuration system (with CodeSeek, Knowledge, MemoryJSONL)
+│   ├── config/        # Configuration system (with CodeSeek, Knowledge)
 │   ├── datamanager/   # Task data persistence (DataManager, JSONL read/write/index)
 │   ├── knowledge/     # Knowledge injector (KnowledgeInjector, pre-conversation retrieval)
 │   ├── mcp/           # MCP client (MCPClient, stdio JSON-RPC)
@@ -1072,7 +1072,6 @@ type Config struct {
     CodeSeek    CodeSeekConfig              // [codeseek] - MCP code analysis engine config
     EnhancedCommander EnhancedCommanderConfig // [enhanced_commander] - Enhanced Commander
     TUI         TUIConfig                   // [tui] - TUI interface config (keybindings, etc.)
-    MemoryJSONL MemoryJSONLConfig           // [memory_jsonl] - JSONL real-time write config
 }
 ```
 
@@ -1338,10 +1337,6 @@ max_delegation_depth = 3
 enable_context_compression = true
 context_compression_threshold = 120000
 tool_result_keep_tokens = 200
-
-[memory_jsonl]
-enable = false
-output_dir = "~/.codeactor/tasks"
 
 [tui.keybindings.edit]
 submit_task = "alt+s"
