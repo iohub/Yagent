@@ -51,7 +51,8 @@ type UserHelpDialog struct {
 
 	// Input 模式状态
 	textInput   textarea.Model
-	buttonIndex int // 0=Submit, 1=Cancel
+	buttonIndex int    // 0=Submit, 1=Cancel
+	inputError  string // Input模式空值校验错误提示
 
 	// 布局
 	width  int
@@ -193,7 +194,7 @@ func (d *UserHelpDialog) View() string {
 
 	// ── 标题 ──
 	titleStyle := common.SectionHeaderStyle(c)
-	rawTitle := "❓ " + getHelpTitle(d.interaction)
+	rawTitle := getHelpTitle(d.interaction)
 	if lipgloss.Width(rawTitle) > innerWidth-4 {
 		runes := []rune(rawTitle)
 		if len(runes) > innerWidth-6 {
@@ -210,15 +211,17 @@ func (d *UserHelpDialog) View() string {
 	var contextLine string
 	if d.data.Context != "" {
 		ctxStr := d.data.Context
-		if lipgloss.Width(ctxStr) > innerWidth-2 {
+		if lipgloss.Width(ctxStr) > innerWidth-6 {
 			runes := []rune(ctxStr)
-			if len(runes) > innerWidth-4 {
-				ctxStr = string(runes[:innerWidth-4]) + "…"
+			if len(runes) > innerWidth-8 {
+				ctxStr = string(runes[:innerWidth-8]) + "…"
 			}
 		}
-		contextLine = lipgloss.NewStyle().
-			Foreground(c.TextSecondary).
+		// 用 InfoBoxStyle 包裹上下文文本
+		infoBox := common.InfoBoxStyle(c).
+			Width(innerWidth - 4).
 			Render("ℹ " + ctxStr)
+		contextLine = infoBox
 	}
 
 	// ── 交互区域 ──
@@ -415,11 +418,17 @@ func (d *UserHelpDialog) handleInputTextKey(msg tea.KeyMsg) (Component, tea.Cmd)
 		return d, nil
 	case "enter":
 		value := d.textInput.Value()
+		if strings.TrimSpace(value) == "" {
+			d.inputError = "⚠ Input cannot be empty. Type a value or press Esc to cancel."
+			return d, nil
+		}
+		d.inputError = ""
 		d.submitInput(value)
 		return d, nil
 	}
 
-	// 其他按键交给 textarea
+	// 其他按键交给 textarea 处理（清除错误提示）
+	d.inputError = ""
 	var cmd tea.Cmd
 	d.textInput, cmd = d.textInput.Update(msg)
 	return d, cmd
@@ -516,11 +525,9 @@ func (d *UserHelpDialog) renderConfirm(innerWidth int, c common.ColorTokens) str
 
 	var buttons []string
 	for i, label := range options {
-		// 按钮添加快捷键前缀
-		prefix := "[Y] "
-		if i == 1 {
-			prefix = "[N] "
-		}
+		// 单选指示器：选中项用 ◉，未选中项用 ◯
+		indicator := "◯ "
+		buttonText := indicator + label
 
 		style := lipgloss.NewStyle().
 			Foreground(c.TextSecondary).
@@ -532,13 +539,13 @@ func (d *UserHelpDialog) renderConfirm(innerWidth int, c common.ColorTokens) str
 		if i == d.confirmIndex {
 			style = common.FocusedButtonStyle(c, common.SafetyLow).
 				Padding(0, 3)
+			buttonText = "◉ " + label
 		}
-		buttons = append(buttons, style.Render(prefix+label))
+		buttons = append(buttons, style.Render(buttonText))
 	}
 
 	// 底部添加帮助提示行
-	helpStyle := common.HelpTextStyle(c)
-	helpLine := helpStyle.Render(getHelpHint(d.interaction, d.state))
+	helpLine := renderHelpHint(d.interaction, d.state, c)
 
 	body := lipgloss.JoinHorizontal(lipgloss.Center, buttons...)
 	return lipgloss.JoinVertical(lipgloss.Left, body, "", helpLine)
@@ -547,25 +554,12 @@ func (d *UserHelpDialog) renderConfirm(innerWidth int, c common.ColorTokens) str
 func (d *UserHelpDialog) renderSelect(innerWidth int, c common.ColorTokens) string {
 	var items []string
 	for i, opt := range d.options {
-		// 序号前缀：1-9 用 "X. "，10+ 用 "   " 对齐
-		numPrefix := "   "
-		if i < 9 {
-			numPrefix = fmt.Sprintf("%d. ", i+1)
-		}
+		// 序号前缀：1-9 用数字，10-35 用字母 a-z，36+ 用 •
+		numPrefix := formatSelectIndex(i)
 
 		cursor := "  "
-		labelStyle := lipgloss.NewStyle().Foreground(c.TextPrimary)
-
 		if i == d.selectIndex && d.state == stateSelectList {
 			cursor = "▸ "
-			labelStyle = lipgloss.NewStyle().
-				Foreground(c.Primary).
-				Bold(true)
-		}
-
-		// 对 Custom 选项，使用 style composition 叠加样式（不预渲染）
-		if opt.IsCustom {
-			labelStyle = labelStyle.Foreground(c.Accent).Italic(true)
 		}
 
 		// 组合完整文本：序号 + 光标 + 选项标签
@@ -579,8 +573,25 @@ func (d *UserHelpDialog) renderSelect(innerWidth int, c common.ColorTokens) stri
 			}
 		}
 
-		// 一次性渲染（无 ANSI 嵌套）
-		itemLine := labelStyle.Render(fullText)
+		var itemLine string
+		if i == d.selectIndex && d.state == stateSelectList {
+			// 选中项：整行高亮条（背景为 SurfaceHover）
+			highlight := common.HighlightBarStyle(c).Width(innerWidth)
+			if opt.IsCustom {
+				// Custom 项保留 Accent + Italic 文字样式
+				highlight = highlight.Foreground(c.Accent).Italic(true)
+			}
+			itemLine = highlight.Render(fullText)
+		} else {
+			// 未选中项：无背景；Custom 项保留 Accent + Italic
+			baseStyle := lipgloss.NewStyle().Padding(0, 1)
+			if opt.IsCustom {
+				baseStyle = baseStyle.Foreground(c.Accent).Italic(true)
+			} else {
+				baseStyle = baseStyle.Foreground(c.TextSecondary)
+			}
+			itemLine = baseStyle.Render(fullText)
+		}
 
 		// 如果在自定义输入状态且当前项是 Custom，渲染输入框
 		if opt.IsCustom && i == d.selectIndex && d.state == stateSelectCustom {
@@ -597,8 +608,7 @@ func (d *UserHelpDialog) renderSelect(innerWidth int, c common.ColorTokens) stri
 	}
 
 	// 底部添加帮助提示行
-	helpStyle := common.HelpTextStyle(c)
-	helpLine := helpStyle.Render(getHelpHint(d.interaction, d.state))
+	helpLine := renderHelpHint(d.interaction, d.state, c)
 
 	body := lipgloss.JoinVertical(lipgloss.Left, items...)
 	return lipgloss.JoinVertical(lipgloss.Left, body, "", helpLine)
@@ -622,8 +632,16 @@ func (d *UserHelpDialog) renderInput(innerWidth int, c common.ColorTokens) strin
 		Render(d.textInput.View())
 	parts = append(parts, inputBox)
 
+	// 错误提示（空值校验失败时显示）
+	if d.inputError != "" {
+		parts = append(parts, common.ErrorTextStyle(c).Render(d.inputError))
+	}
+
 	// 按钮
 	var buttons []string
+	submitText := "◯ Submit"
+	cancelText := "◯ Cancel"
+
 	submitStyle := lipgloss.NewStyle().
 		Foreground(c.TextSecondary).
 		Background(c.Surface).
@@ -638,23 +656,25 @@ func (d *UserHelpDialog) renderInput(innerWidth int, c common.ColorTokens) strin
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(c.Border)
 
+	// 只有在 stateInputButtons 时才高亮，否则两个按钮均为未选中（◯）
 	if d.state == stateInputButtons {
 		if d.buttonIndex == 0 {
 			submitStyle = common.FocusedButtonStyle(c, common.SafetyLow).
 				Padding(0, 2)
+			submitText = "◉ Submit"
 		} else {
 			cancelStyle = common.FocusedButtonStyle(c, common.SafetySafe).
 				Padding(0, 2)
+			cancelText = "◉ Cancel"
 		}
 	}
 
-	buttons = append(buttons, submitStyle.Render(" Submit "))
-	buttons = append(buttons, cancelStyle.Render(" Cancel "))
+	buttons = append(buttons, submitStyle.Render(submitText))
+	buttons = append(buttons, cancelStyle.Render(cancelText))
 	parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Center, buttons...))
 
 	// 底部添加帮助提示行
-	helpStyle := common.HelpTextStyle(c)
-	helpLine := helpStyle.Render(getHelpHint(d.interaction, d.state))
+	helpLine := renderHelpHint(d.interaction, d.state, c)
 
 	body := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	return lipgloss.JoinVertical(lipgloss.Left, body, "", helpLine)
@@ -665,31 +685,83 @@ func (d *UserHelpDialog) renderInput(innerWidth int, c common.ColorTokens) strin
 func getHelpTitle(it protocol.InteractionType) string {
 	switch it {
 	case protocol.InteractionConfirm:
-		return "Ask for Help"
+		return "✓ Confirm"
 	case protocol.InteractionSelect:
-		return "Ask for Help"
+		return "☰ Choose"
 	case protocol.InteractionInput:
-		return "Ask for Help"
+		return "✎ Input"
 	default:
-		return "Ask for Help"
+		return "❓ Ask"
 	}
 }
 
-func getHelpHint(it protocol.InteractionType, state userHelpState) string {
+// formatSelectIndex 返回选项的序号前缀。
+// 1-9 用数字，10-35 用字母 a-z，36+ 用 •。
+func formatSelectIndex(i int) string {
+	if i < 9 {
+		return fmt.Sprintf("%d. ", i+1)
+	}
+	if i < 35 {
+		return fmt.Sprintf("%c. ", 'a'+i-9) // a-z
+	}
+	return "•  "
+}
+
+// renderHelpHint 使用 KeyHintStyle 渲染键帽提示行。
+func renderHelpHint(it protocol.InteractionType, state userHelpState, c common.ColorTokens) string {
+	hints := getHintParts(it, state)
+	if len(hints) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, h := range hints {
+		keyBadge := common.KeyHintStyle(c).Render(h.Keys)
+		desc := lipgloss.NewStyle().Foreground(c.TextMuted).Render(h.Desc)
+		parts = append(parts, keyBadge+desc)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
+}
+
+// getHintParts 返回各交互模式下的键帽提示分段。
+func getHintParts(it protocol.InteractionType, state userHelpState) []struct{ Keys, Desc string } {
 	switch it {
 	case protocol.InteractionConfirm:
-		return "← → Navigate  ·  Enter Confirm  ·  y/n Quick Select  ·  Esc Cancel"
+		return []struct{ Keys, Desc string }{
+			{" ←→ ", " Navigate "},
+			{" Enter ", " Confirm "},
+			{" y/n ", " Quick Select "},
+			{" Esc ", " Cancel "},
+		}
 	case protocol.InteractionSelect:
 		if state == stateSelectCustom {
-			return "Enter Submit  ·  Esc Back to List  ·  Ctrl+U Clear"
+			return []struct{ Keys, Desc string }{
+				{" Enter ", " Submit "},
+				{" Esc ", " Back to List "},
+				{" Ctrl+U ", " Clear "},
+			}
 		}
-		return "↑ ↓ Navigate  ·  Enter Select  ·  1-9 Quick Select  ·  Esc Cancel"
+		return []struct{ Keys, Desc string }{
+			{" ↑↓ ", " Navigate "},
+			{" Enter ", " Select "},
+			{" 1-9 ", " Quick Select "},
+			{" Esc ", " Cancel "},
+		}
 	case protocol.InteractionInput:
 		if state == stateInputButtons {
-			return "← → Navigate  ·  Enter Confirm  ·  ↑ Back to Input  ·  Esc Cancel"
+			return []struct{ Keys, Desc string }{
+				{" ←→ ", " Navigate "},
+				{" Enter ", " Confirm "},
+				{" ↑ ", " Back to Input "},
+				{" Esc ", " Cancel "},
+			}
 		}
-		return "Enter Submit  ·  Tab to Buttons  ·  Ctrl+U Clear  ·  Esc Cancel"
+		return []struct{ Keys, Desc string }{
+			{" Enter ", " Submit "},
+			{" Tab ", " to Buttons "},
+			{" Ctrl+U ", " Clear "},
+			{" Esc ", " Cancel "},
+		}
 	default:
-		return ""
+		return nil
 	}
 }
