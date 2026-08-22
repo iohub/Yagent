@@ -11,6 +11,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+// isModelTargetTool reports whether the given model-switch target refers to a
+// per-tool LLM override (rather than an agent or the global default).
+// Currently only the deepthinking tool supports runtime provider switching;
+// add more tools here as they gain support.
+func isModelTargetTool(target string) bool {
+	return target == "deepthinking"
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // handleKeyMsg — 分发入口
 // ─────────────────────────────────────────────────────────────────────────────
@@ -216,12 +224,31 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 					m.dialogStack.Pop()
 					return m, nil, true
 				}
-				// 根据 pendingModelTarget 决定是设置 agent 还是全局
-				if m.pendingModelTarget != "" {
+				// 根据 pendingModelTarget 分流: tool 覆盖 / agent 覆盖 / 全局
+				target := m.pendingModelTarget
+				m.pendingModelTarget = ""
+				switch {
+				case isModelTargetTool(target):
+					// 为指定 tool 设置 provider
+					if err := m.assistant.SetToolProvider(target, d.Selected); err != nil {
+						m.logEntries = append(m.logEntries, logEntry{
+							timestamp: time.Now(),
+							eventType: "error",
+							content:   fmt.Sprintf("Failed to set tool provider: %v", err),
+						})
+						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+					} else {
+						_, modelName := m.assistant.GetToolProviderInfo(target)
+						m.logEntries = append(m.logEntries, logEntry{
+							timestamp: time.Now(),
+							eventType: "status",
+							content:   fmt.Sprintf("Set tool '%s' provider to: %s (model: %s)", target, d.Selected, modelName),
+						})
+						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+					}
+				case target != "":
 					// 为指定 agent 设置 provider
-					agentName := m.pendingModelTarget
-					m.pendingModelTarget = ""
-					if err := m.assistant.SetAgentProvider(agentName, d.Selected); err != nil {
+					if err := m.assistant.SetAgentProvider(target, d.Selected); err != nil {
 						m.logEntries = append(m.logEntries, logEntry{
 							timestamp: time.Now(),
 							eventType: "error",
@@ -229,15 +256,15 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 						})
 						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 					} else {
-						_, modelName := m.assistant.GetAgentProvider(agentName)
+						_, modelName := m.assistant.GetAgentProvider(target)
 						m.logEntries = append(m.logEntries, logEntry{
 							timestamp: time.Now(),
 							eventType: "status",
-							content:   fmt.Sprintf("Set agent '%s' provider to: %s (model: %s)", agentName, d.Selected, modelName),
+							content:   fmt.Sprintf("Set agent '%s' provider to: %s (model: %s)", target, d.Selected, modelName),
 						})
 						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 					}
-				} else {
+				default:
 					// 全局设置
 					if err := m.assistant.SwitchProvider(d.Selected); err != nil {
 						m.logEntries = append(m.logEntries, logEntry{
