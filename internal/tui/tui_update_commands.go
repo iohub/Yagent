@@ -96,7 +96,7 @@ func (m *model) showModelSelectionDialog() tea.Cmd {
 	}
 
 	validAgents := []string{"director", "coding", "repo", "chat", "meta", "devops", "browser"}
-	entries := make([]components.ConfigEntry, 0, len(validAgents)+1)
+	entries := make([]components.ConfigEntry, 0, len(validAgents)+2)
 	// Global entry
 	entries = append(entries, components.ConfigEntry{
 		Target:      "global",
@@ -110,6 +110,16 @@ func (m *model) showModelSelectionDialog() tea.Cmd {
 		entries = append(entries, components.ConfigEntry{
 			Target:      agent,
 			DisplayName: agent,
+			Provider:    prov,
+			Model:       model,
+		})
+	}
+	// Tool entries (per-tool provider overrides)
+	if m.assistant.GetClient() != nil {
+		prov, model := m.assistant.GetToolProviderInfo("deepthinking")
+		entries = append(entries, components.ConfigEntry{
+			Target:      "deepthinking",
+			DisplayName: "deepthinking (tool)",
 			Provider:    prov,
 			Model:       model,
 		})

@@ -139,9 +139,12 @@ func (d *AgentSelectDialog) View() string {
 	for i := range d.entries {
 		e := d.entries[i]
 		var grp string
-		if e.Target == "global" {
+		switch e.Target {
+		case "global":
 			grp = "global"
-		} else {
+		case "deepthinking", "micro_agent", "thinking":
+			grp = "tools"
+		default:
 			grp = "agents"
 		}
 

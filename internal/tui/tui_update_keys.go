@@ -160,9 +160,12 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 				providerDescs := make(map[string]string)
 				// Get current provider for the selected target
 				var currentProv string
-				if target == "global" {
+				switch {
+				case target == "global":
 					currentProv = m.currentProvider
-				} else {
+				case isModelTargetTool(target):
+					currentProv, _ = m.assistant.GetToolProviderInfo(target)
+				default:
 					currentProv, _ = m.assistant.GetAgentProvider(target)
 				}
 				for _, p := range providers {

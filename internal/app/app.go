@@ -517,6 +517,42 @@ func (ca *CodeActor) GetAllAgentOverrides() map[string]string {
 	return ca.client.GetAllAgentOverrides()
 }
 
+// SetToolProvider 为指定工具设置运行时 provider 覆盖。
+// 对 "deepthinking" 额外执行热替换：重新解析其 engine 并替换
+// globalCtx.DeepThinkingTool.LLM，保证后续 Execute 立即使用新模型。
+func (ca *CodeActor) SetToolProvider(toolName, providerName string) error {
+	if ca.client == nil {
+		return fmt.Errorf("LLM client not available")
+	}
+	if err := ca.client.SetToolProvider(toolName, providerName); err != nil {
+		return err
+	}
+	if toolName == "deepthinking" && ca.globalCtx != nil && ca.globalCtx.DeepThinkingTool != nil {
+		ca.globalCtx.DeepThinkingTool.LLM = ca.client.GetToolEngine("deepthinking")
+		slog.Info("Hot-swapped deepthinking tool engine",
+			"provider", providerName,
+			"model", ca.globalCtx.DeepThinkingTool.LLM.Model())
+	}
+	return nil
+}
+
+// GetToolProvider 返回指定工具的运行时 provider 覆盖及是否生效
+func (ca *CodeActor) GetToolProvider(toolName string) (string, string, bool) {
+	if ca.client == nil {
+		return "", "", false
+	}
+	return ca.client.GetToolProvider(toolName)
+}
+
+// GetToolProviderInfo 返回指定工具当前生效的 provider 名称和模型名
+// 优先返回运行时覆盖，其次返回配置中的解析结果
+func (ca *CodeActor) GetToolProviderInfo(toolName string) (string, string) {
+	if ca.client == nil {
+		return "", ""
+	}
+	return ca.client.GetToolProviderInfo(toolName)
+}
+
 // parseDisabledAgents converts a comma-separated string of agent names
 // into a map[string]bool for O(1) lookup. Valid agent names: repo, coding, chat, meta, devops, browser.
 func parseDisabledAgents(s string) map[string]bool {

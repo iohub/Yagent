@@ -255,6 +255,9 @@ type Client struct {
 	// agentProviderOverrides 存储运行时 per-agent provider 覆盖
 	// 优先链：runtime_override > agents.<agent> > agents.default > global
 	agentProviderOverrides map[string]string // agentName → providerName
+	// toolProviderOverrides 存储运行时 per-tool provider 覆盖
+	// 优先链：runtime_override > tools.<tool> > tools.default > agent > global
+	toolProviderOverrides map[string]string // toolName → providerName
 }
 
 // LoadConfig loads configuration from a TOML file using the multi-provider structure
@@ -325,10 +328,11 @@ func NewClient(config *config.Config) (*Client, error) {
 	loggingEngine := &LoggingEngine{inner: engine}
 
 	return &Client{
-		Engine:  loggingEngine,
-		Config:  config,
-		engines: make(map[string]Engine),
+		Engine:                 loggingEngine,
+		Config:                 config,
+		engines:                make(map[string]Engine),
 		agentProviderOverrides: make(map[string]string),
+		toolProviderOverrides:  make(map[string]string),
 	}, nil
 }
 
@@ -454,6 +458,75 @@ func (c *Client) GetAgentProvider(agentName string) (providerName string, modelN
 	return "unknown", provider.Model
 }
 
+// SetToolProvider 为指定工具设置运行时 provider 覆盖
+// 该方法设置的覆盖优先于配置文件中的 tools.<tool>.use_provider
+func (c *Client) SetToolProvider(toolName, providerName string) error {
+	// 验证 provider 是否存在
+	if _, err := c.Config.GetProvider(providerName); err != nil {
+		return fmt.Errorf("SetToolProvider: %w", err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.toolProviderOverrides == nil {
+		c.toolProviderOverrides = make(map[string]string)
+	}
+	c.toolProviderOverrides[toolName] = providerName
+	slog.Info("Set runtime tool provider override", "tool", toolName, "provider", providerName)
+	return nil
+}
+
+// GetToolProvider 返回指定工具当前生效的 provider 名称和模型名
+// 优先返回运行时覆盖，其次返回配置中的解析结果
+func (c *Client) GetToolProvider(toolName string) (providerName string, modelName string, hasOverride bool) {
+	// 1. 检查运行时覆盖
+	c.mu.RLock()
+	override, hasOverride := c.toolProviderOverrides[toolName]
+	c.mu.RUnlock()
+
+	if hasOverride {
+		if provider, err := c.Config.GetProvider(override); err == nil {
+			return override, provider.Model, true
+		}
+	}
+
+	// 2. 回退到配置解析
+	return "", "", false
+}
+
+// GetToolProviderInfo 返回指定工具当前生效的 provider 名称和模型名
+// 优先返回运行时覆盖，其次返回配置中的解析结果
+func (c *Client) GetToolProviderInfo(toolName string) (providerName string, modelName string) {
+	// 1. 检查运行时覆盖
+	c.mu.RLock()
+	override, hasOverride := c.toolProviderOverrides[toolName]
+	c.mu.RUnlock()
+
+	if hasOverride {
+		if provider, err := c.Config.GetProvider(override); err == nil {
+			return override, provider.Model
+		}
+	}
+
+	// 2. 回退到配置解析
+	provider, err := c.Config.ResolveProvider("", toolName)
+	if err != nil {
+		return "", ""
+	}
+	for name, p := range c.Config.Global.LLM.Providers {
+		if p.APIBaseURL == provider.APIBaseURL && p.Model == provider.Model {
+			return name, provider.Model
+		}
+	}
+	return "unknown", provider.Model
+}
+
+// ClearToolProvider 清除指定工具的运行时 provider 覆盖
+func (c *Client) ClearToolProvider(toolName string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.toolProviderOverrides, toolName)
+}
+
 // GetAgentEngine resolves and returns the engine for a specific agent.
 // Priority chain (highest first):
 //  1. Runtime per-agent override (set via SetAgentProvider)
@@ -497,8 +570,28 @@ func (c *Client) GetAgentEngine(agentName string) Engine {
 }
 
 // GetToolEngine resolves and returns the engine for a specific tool.
-// Uses the priority chain: tools.<tool> > tools.default > agent > global > legacy.
+// Priority chain (highest first):
+//  1. Runtime per-tool override (set via SetToolProvider)
+//  2. tools.<tool>.use_provider (config)
+//  3. tools.llm.use_provider (config, default for all tools)
+//  4. agents.llm.<agent>.use_provider / agents.llm.use_provider (config)
+//  5. global.llm.use_provider (config)
 func (c *Client) GetToolEngine(toolName string) Engine {
+	// 1. Check runtime per-tool override (highest priority for tools)
+	c.mu.RLock()
+	override, hasOverride := c.toolProviderOverrides[toolName]
+	c.mu.RUnlock()
+
+	if hasOverride {
+		provider, err := c.Config.GetProvider(override)
+		if err == nil {
+			return c.getOrCreateEngine(provider, override)
+		}
+		slog.Warn("Runtime tool override provider not found, falling back to config",
+			"tool", toolName, "provider", override, "error", err)
+	}
+
+	// 2+. Fall back to config-based resolution
 	provider, err := c.Config.ResolveProvider("", toolName)
 	if err != nil {
 		slog.Warn("Failed to resolve tool provider, falling back to default", "tool", toolName, "error", err)
