@@ -330,17 +330,20 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				le.content = le.streamContent
 				le.clearRenderCache()
 				m.markEntryDirty(idx)
-				m.viewportDirty = true
 				buf.content = ""
 				buf.count = 0
 			}
+			// 修复：streaming=false 的状态变化本身就需要重新渲染（影响流式光标显示等），
+			// 不能依赖 buf.content 是否为空。无条件设置 viewportDirty 确保流式结束后
+			// 视口一定被刷新，避免最后一次流式消息渲染不全。
 			m.logEntries[idx].streaming = false
 			m.aiStreamCompletedEntries[agentName] = idx
 			delete(m.aiStreamActiveEntries, agentName)
 			m.markEntryDirty(idx)
+			m.viewportDirty = true
 		}
 		delete(m.aiChunkBuffers, agentName) // 清理缓冲
-		return m, listenForEvents(m.eventCh)
+		return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 	}
 
 	// Handle ai_response — 定稿：用完整内容替换流式缓冲
@@ -361,6 +364,11 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		// 优先匹配已完成的流式条目
 		if idx, ok := m.aiStreamCompletedEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
+			// 修复：如果定稿 content 为空，用已累积的流式内容兜底，
+			// 避免 ai_stream_end flush 未执行时定稿后内容丢失
+			if content == "" && le.streamContent != "" {
+				content = le.streamContent
+			}
 			if content != "" {
 				le.streamContent = content
 				le.content = content
@@ -374,12 +382,17 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.viewportDirty = true // 新增：触发视图更新
 			delete(m.aiStreamCompletedEntries, agentName)
 			delete(m.aiChunkBuffers, agentName) // 防御性清理残留缓冲
-			return m, listenForEvents(m.eventCh)
+			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 		}
 
 		// Fallback: 也检查 active map（ai_stream_end 丢失的情况）
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
+			// 修复：如果定稿 content 为空，用已累积的流式内容兜底，
+			// 避免 ai_stream_end flush 未执行时定稿后内容丢失
+			if content == "" && le.streamContent != "" {
+				content = le.streamContent
+			}
 			if content != "" {
 				le.streamContent = content
 				le.content = content
@@ -393,7 +406,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.viewportDirty = true // 新增：触发视图更新
 			delete(m.aiStreamActiveEntries, agentName)
 			delete(m.aiChunkBuffers, agentName) // 防御性清理残留缓冲
-			return m, listenForEvents(m.eventCh)
+			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 		}
 
 		// 无对应流式条目 → 落入通用处理（创建新条目）
