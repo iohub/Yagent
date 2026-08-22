@@ -524,3 +524,112 @@ cooldown = "..."
 - P2-8 统一 Run 签名为 Run(ctx,input)：会话记忆构造注入或 context 传递；依赖方案 A 完成，否则双份改动。[M]
 - P2-9 MetaAgent 结构化输出：优先用 provider 的 JSON mode/tool-call 结构化输出约束，extractJSONObject 降级为兜底。[M]
 - P2-10 RolloutWriter 复用：Director 创建后按 delegate 复用同一 session writer，仅 turn 元数据区分。[S]
+
+## 5. 实施路线图
+
+综合前述问题清单（P0/P1/P2）与八套方案（A–H），按风险与依赖关系划分为三个 Phase 实施。成本口径：S ≈ 半天内、M ≈ 1–3 天、L ≈ 一周以上。
+
+### 5.1 Phase 1 —— 低风险速赢（可并行开展）
+
+| 编号 | 方案名称 | 解决问题 | 收益 | 成本 | 风险 | 验证方式 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 方案C | C 工具索引化 | P0-3 | 高 | S | 极低 | 现有单测 + 分发基准测试 |
+| 方案D | D 配置化收敛 | P1-5 | 中高 | S-M | 低 | 配置热重载测试 |
+| 方案B | B director.go 纯拆分 | P0-2 | 中（为 A 铺路） | M | 低 | 编译 + 行为等价（Rollout 无 diff） |
+| 方案E | E taskID 显式传播 | P1-4 | 中高 | M | 低 | 并发任务压测 |
+
+**实施建议**：Phase 1 四项相互独立，可并行开发、独立提交、随时上线，任一项回滚均不影响其他项。
+
+### 5.2 Phase 2 —— 结构性重构（有序串行）
+
+| 编号 | 方案名称 | 解决问题 | 收益 | 成本 | 风险 | 验证方式 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 方案A | A 统一双循环 | P0-1 | 极高 | L | 中高 | 事件流录制 diff 对照 |
+| 方案F | F 配对规则单一化 | P1-6 | 高 | M | 低 | 边界单测（截断/乱序/孤儿） |
+| 方案G | G 引擎拉取式刷新 | P1-7 | 中 | S-M | 低 | 运行时切模型集成测试 |
+
+**实施建议**：Phase 2 按 **B → A → F/G** 的顺序串行推进——B 先完成纯拆分为 A 提供可审查的 diff 基线，A 落地后 F 与 G 才能收口到唯一的循环实现上；每项落地前先录制 Rollout 基线，落地后做新旧行为等价性对照。
+
+### 5.3 Phase 3 —— 长期能力演进
+
+| 编号 | 方案名称 | 解决问题 | 收益 | 成本 | 风险 | 验证方式 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 方案H | H 并行工具执行 | 吞吐瓶颈 | 高（吞吐倍增） | L | 中 | 并发正确性专项验证 |
+| P2-8 | 统一 Run 签名 | 接口一致性 | 中 | M | 低 | 全 Agent 回归 |
+| P2-9 | MetaAgent 结构化输出 | 解析鲁棒性 | 中 | M | 低 | 多 provider 兼容测试 |
+
+**实施建议**：Phase 3 依赖前两阶段稳定后启动——H 需要方案 A 的单循环与事件归并基础，P2-8 依赖 A 完成后的唯一改动点，P2-9 相对独立但同样建议在架构收敛后再动。
+
+## 6. 依赖关系与实施顺序
+
+### 6.1 核心依赖说明
+
+各方案之间存在四条核心依赖关系：
+
+1. **B → A**：先拆后改。director.go 纯拆分（B）完成后，主循环代码被隔离到独立函数中，统一双循环（A）的改动才具备可审查的 diff——若不先做 B，A 的 PR 将同时混杂「搬移」与「改写」，几乎无法人工审查。
+2. **A → {P2-8 统一签名, F 配对规则全面收口}**：统一循环后改动点唯一化。只有 Director 与 Executor 共享同一 `RunAgentLoop` 之后，Run 签名统一（P2-8）和配对规则单一化（F）才有唯一的修改位置；在此之前任何收口都要在两处重复实现。
+3. **C / D / E 相互独立**：工具索引化、配置化收敛、taskID 显式传播三者互不依赖，可与任何阶段并行插入，不阻塞主线。
+4. **G / H 相互独立**：引擎拉取式刷新与并行工具执行之间没有先后约束，各自可独立排期。
+
+### 6.2 依赖图
+
+```mermaid
+graph LR
+    B[B: director.go 纯拆分] --> A[A: 统一双循环]
+    A --> F[F: 配对规则单一化]
+    A --> P28[P2-8: 统一 Run 签名]
+    C[C: 工具索引化]
+    D[D: 配置化收敛]
+    E[E: taskID 显式传播]
+    G[G: 引擎拉取式刷新]
+    A -.前置基础.-> H[H: 并行工具执行]
+    P29[P2-9: MetaAgent 结构化输出]
+```
+
+> 说明：实线箭头为强依赖（必须先完成前者）；虚线为弱依赖（H 强烈建议在 A 之后实施，但非硬性阻塞）；C/D/E/G/P29 为自由节点，可随时插入。
+
+### 6.3 上线策略
+
+建议每个阶段独立上线：Phase 1 各项随完成随发；Phase 2 整体串行、逐项灰度；Phase 3 在前两阶段稳定运行一个迭代周期后启动。全程配合 Git Checkpoint 与事件流录制（Rollout）做新旧行为等价性回归——每次重构前后各跑一批相同任务，diff 录制的事件流，确保零行为漂移。
+
+其中 Phase 2 的方案 A 采用**灰度策略**上线：新增配置开关切换新旧双循环，先在小范围任务上启用新循环观察一个完整任务周期（含委派、子 Agent 回填、记忆写入、Rollout 落盘），确认无回归后全量切换并择期删除旧循环代码。
+
+## 7. 附录
+
+### 7.1 关键文件清单
+
+| 文件路径 | 行数 | 职责 |
+| --- | --- | --- |
+| internal/agents/director.go | ~1675 | DirectorAgent 编排+委派+主循环（仓库最大文件） |
+| internal/agents/executor.go | 632 | RunAgentLoop 统一执行循环 |
+| internal/app/app.go | 641 | CodeActor 组装、Init()、TaskRequest 链 |
+| internal/agents/coding.go | ~383+ | CodingAgent + Git Checkpoint |
+| internal/memory/memory.go | ~300+ | ConversationMemory + 转换函数 |
+| internal/messaging/consumers/tui.go | ~500+ | TUI 事件消费 |
+| internal/agents/repo.go | 174 | RepoAgent + JSON 工具映射 + 记忆集成 |
+| internal/agents/meta.go | ~175+ | MetaAgent 动态设计逻辑 |
+| internal/llm/engine.go | 118 | Engine 接口 + Message/ToolDef/Response 定义 |
+| internal/tools/adapter.go | ~140 | Adapter（ToToolDef/Call + guard） |
+| internal/tools/registry.go | ~40 | Registry（map） |
+| internal/agents/types.go | ~60 | Agent 接口、BaseAgent |
+
+### 7.2 术语表
+
+| 术语 | 解释 |
+| --- | --- |
+| RunAgentLoop | executor.go 中的统一执行循环：逐轮调用 LLM → 分发工具调用 → 回填结果 → 判定终止，是本计划方案 A 要在 Director 侧复用的核心循环。 |
+| ExecutorConfig | Executor 的运行时配置结构，承载 YOLO 开关、工作目录、引擎引用等参数，控制子 Agent 循环的行为边界。 |
+| delegate_* | DirectorAgent 用于向下委派任务的一组工具（如 delegate_coding / delegate_repo），子任务通过它们进入对应子 Agent 的独立 Run。 |
+| Rollout（RolloutWriter) | 事件流录制机制：将每次会话的工具调用、LLM 响应等事件顺序落盘为 JSONL，用于回放调试与新旧行为等价性 diff 对照。 |
+| IsSubAgent | BaseAgent 上的布尔标记，标识当前 Agent 是否作为子 Agent 运行；用于抑制嵌套委派、区分顶层/子层的事件与记忆策略。 |
+| YOLO 模式 | 免审批模式：跳过用户对危险工具调用的确认交互，常用于无人值守的自动化流水线场景。 |
+| workspace_guard | 工作区防护机制：Adapter 层对文件读写与系统命令的路径做白名单校验，防止工具越出项目根目录产生副作用。 |
+| ConsolidationWorker | 会话记忆整理后台协程：异步压缩历史消息、提炼知识条目，避免上下文无限膨胀拖垮 token 预算。 |
+| extractJSONObject | 从 LLM 自由文本输出中提取 JSON 对象的兜底解析函数（截取围栏/首尾大括号启发式），P2-9 计划将其降级为 provider 结构化输出的后备路径。 |
+| SharedMemory | 多个 Agent 共享的 ConversationMemory 实例：Director 与子 Agent 通过它交换任务上下文，也是 taskID 串扰风险的载体。 |
+| KnowledgeInjector | 知识注入组件：在构造 LLM 请求时从知识库检索相关条目并拼入系统提示词，为 Agent 提供领域先验。 |
+| MCP（CodeSeek) | 外部工具接入协议（Model Context Protocol）：通过 CodeSeek 服务将 MCP 工具动态注册进 Registry，扩展 Agent 可用工具集。 |
+
+---
+
+— 完 —
