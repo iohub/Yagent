@@ -296,3 +296,66 @@ sequenceDiagram
 4. **ConsolidationWorker 异步整理**：记忆整理任务由独立的 goroutine + channel 异步消费，与主执行链路解耦。
 
 ---
+
+## 3. 问题诊断（分级清单）
+
+基于第 2 章的现状走读，本章将识别出的问题按 **P0（阻断性/高维护风险）/ P1（结构性缺陷）/ P2（一致性与体验）** 三级归类，先给出总表，再对三项 P0 问题逐一展开影响链详述。
+
+### 3.1 问题总表
+
+| 编号 | 问题描述 | 影响 | 级别 |
+|-------|----------|------|------|
+| P0-1 | **双循环重复**：`RunAgentLoop`（executor.go，632 行）与 Director.Run 内联循环（约 600 行）并存，压缩逻辑/事件发布序列/token 估算/重试退避（上限 30s）/Rollout 写入全部双份 | 任何改动需双处同步，是主要维护负担和 bug 来源 | 🔴 P0 |
+| P0-2 | **director.go 过大（1675 行）**：混合了主循环/Meta 解析/Agent 注册/委派执行/压缩/熔断/memory 注入/Rollout | 违反单一职责，改动影响面不可控 | 🔴 P0 |
+| P0-3 | **工具分发 O(n)**：每次分发 `for` 遍历 self.Adapters 线性查找；tools.Registry 本身是 map 但 Director 分发未用索引 | 随工具与动态注册 delegate 增多线性退化 | 🔴 P0 |
+| P1-4 | **taskID 包级全局隐式传播**：经 logging.SetCurrentTaskID/GetCurrentTaskID 传播 | 全局可变状态有并发竞态风险；Director 结构体不持有 taskID，调试困难 | 🟡 P1 |
+| P1-5 | **魔法值散落**：executeCustomAgent 硬编码 maxSteps=15；普通工具超时 120s、delegate 超时 10min；错误消息截断 1000 字符；压缩默认阈值 | 均未配置化，调参必须改代码重新编译 | 🟡 P1 |
+| P1-6 | **配对规则三处实现**：tool_call↔tool 配对/修复规则在 executor、memory（repairToolCallPairsAfterTruncation）、Director（validateAndRepairToolCallPairs）三处分别实现 | convertToolCalls 等转换函数跨文件，易不一致 | 🟡 P1 |
+| P1-7 | **引擎同步窗口**：子 Agent 的 LLM 引擎刷新依赖 refreshSubAgentEngines() 手动推式同步 | 存在 Director 与子 Agent 引擎不同步窗口 | 🟡 P1 |
+| P2-8 | **Run 签名不一致**：Director.Run(ctx, input, mem) 3 参 vs 子 Agent Run(ctx, input) 2 参 | 接口不统一，阻碍进一步抽象 | 🟢 P2 |
+| P2-9 | **MetaAgent 解析鲁棒性**：依赖 extractJSONObject 从 markdown 围栏容错提取 JSON，解析失败才重试 | 鲁棒性受 LLM 输出质量制约 | 🟢 P2 |
+| P2-10 | **RolloutWriter 重复创建**：Director 与每个 delegate 分别创建，session/turn 元数据写入逻辑重复（SessionMetaWritten 守卫） | 写入逻辑重复，session 归属易混乱 | 🟢 P2 |
+
+### 3.2 P0-1 详述：双循环重复
+
+**影响链**：`RunAgentLoop`（executor.go）为子 Agent 提供统一的"思考—调工具—观察"循环，而 Director.Run 内部又维护了一条约 600 行的内联 LLM 循环用于自身编排。两条循环在以下五类关键逻辑上各有一份实现：
+
+| 重复逻辑 | executor.go（RunAgentLoop） | director.go（Director.Run 内联循环） |
+|----------|------------------------------|--------------------------------------|
+| 上下文压缩 | 循环内按 token 预算检查并压缩/截断历史消息 | 内联循环独立实现压缩检查与压缩执行 |
+| 事件发布 | OnAgentStart/OnToolResult/OnStepEnd 等钩子发布事件序列 | 内联循环自行发布同构事件序列，顺序与字段需人工对齐 |
+| token 估算 | 基于 tiktoken 的消息 token 估算 | 内联循环独立估算，阈值判断逻辑重复 |
+| 重试退避 | LLM 调用失败的指数退避重试（上限 30s） | 内联循环独立实现同样的指数退避（上限 30s） |
+| Rollout 写入 | 循环过程写入 Rollout 记录 | 内联循环独立写入 Rollout，格式需人工保持一致 |
+
+由此形成的影响链为：**修改任一关键逻辑（如压缩策略）→ 必须双处同步修改 → 漏改一处 → 子 Agent 与 Director 行为漂移 → 压缩/重试/事件表现不一致 → 难以定位的偶发 bug**。这是全系统最主要的维护负担与 bug 来源，也是执行摘要将其列为第一优先级问题的原因。
+
+### 3.3 P0-2 详述：director.go 过大（1675 行）
+
+`internal/agents/director.go` 是全仓库最大文件，单文件内混合了以下 8 类职责：
+
+| 职责 | 典型内容 |
+|------|----------|
+| 主循环 | Director.Run 内联 LLM 循环与三分支分发 |
+| Meta 解析 | MetaAgent 输出的 JSON 解析（extractJSONObject）与校验 |
+| Agent 注册 | 动态注册/注销子 Agent（Adapters 维护） |
+| 委派执行 | executeCustomAgent：组装任务、调用 RunAgentLoop、收集结果 |
+| 压缩 | 内联循环内的上下文压缩逻辑 |
+| 熔断 | 委派失败的熔断器（失败计数/冷却） |
+| memory 注入 | injectSubAgentMemory 等会话记忆操作 |
+| Rollout | 会话/轮次元数据与过程记录写入 |
+
+**危害**：单一文件承载 8 类职责，任何一类改动都要在 1675 行内定位上下文；代码评审 diff 噪声大，回归测试范围不可控。这是继 P0-1 之后的第二大维护负担，且 P0-1 的修复（统一循环）必须先以本问题的拆分为前提，否则 diff 无法审查。
+
+### 3.4 P0-3 详述：工具分发 O(n)
+
+**现状**：每次工具分发时，Director 以 `for` 循环遍历 `self.Adapters` 逐个匹配工具名。`tools.Registry` 底层本身是 map（O(1) 查找），但 Director 的分发层没有使用任何索引，等于放弃了已有的哈希能力。
+
+**复杂度影响**：
+
+- 单次分发的匹配成本与「Adapters 数量 × 每 Adapter 工具数」成正比；
+- 每个执行步骤中的每个 ToolCall 都触发一次线性查找，成本随步骤数线性叠加。
+
+**动态注册场景的放大效应**：MetaAgent 支持运行时按需注册专属子 Agent，Adapters 列表随会话进行持续增长；每个 delegate 内部又持有自己的工具集，委派链路（Director → delegate → 工具）形成多层线性查找嵌套。在长会话、多 delegate 场景下，分发耗时从常数级退化为可感知的线性开销，而该开销完全可以通过索引化消除。
+
+---
