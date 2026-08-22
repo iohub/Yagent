@@ -1,342 +1,298 @@
-# CodeActor Agent 架构分析与优化方案
-
-| 元数据 | 值 |
-|--------|-----|
-| **版本** | v1.0 |
-| **日期** | 2026 年 |
-| **状态** | 评审稿 |
-| **作者** | Director 编排系统 |
-| **适用仓库** | `codeactor-agent`（module: `codeactor`，go 1.25.8） |
-
 ---
+title: "CodeActor Agent 架构分析与优化技术方案"
+version: "v1.0"
+date: "2026-01"
+status: "评审稿"
+author: "Director 编排系统"
+---
+
+# CodeActor Agent 架构分析与优化技术方案
 
 ## 执行摘要（TL;DR）
 
-> **三个高优先级（P0）问题**：
-> 1. **双循环重复** —— `internal/agents/executor.go`（632 行）的 `RunAgentLoop` 与 `internal/agents/director.go`（1675 行）中 `Run()` 的内联 LLM 循环（约 600 行）几乎完整复制了同一套「压缩 → 事件发布 → LLM 调用 → 重试退避 → 工具分发 → Rollout 写入」逻辑，任何改动都需双处同步，是当前最主要的维护负担与 bug 来源；
-> 2. **`director.go` 单文件过大（1675 行）** —— 循环、Meta 解析、Agent 注册、委派执行、压缩、熔断、记忆注入、Rollout 混杂一处，严重违反单一职责；
-> 3. **工具分发 O(n)** —— 每次分发均 `for` 遍历 `self.Adapters` 线性查找，而 `Registry` 本身已是 `map`，索引能力被浪费。
->
-> **三阶段路线图一句话概括**：Phase 1 先以「纯拆分 + 索引化 + 配置化 + taskID 显式化」完成低风险速赢，Phase 2 通过「扩展 ExecutorConfig 三个 hook 注入点」统一双循环并收口配对规则与引擎刷新，Phase 3 演进「并行工具执行 + 统一 Run 签名 + 结构化输出」，每阶段独立上线、配合 Git Checkpoint 与事件流录制做行为等价性回归。
-
----
-
-## 目录
-
-1. [背景与目标](#1-背景与目标)
-2. [现状架构分析](#2-现状架构分析)
-   - 2.1 技术栈 / 2.2 分层结构与关键组件 / 2.3 核心抽象与两种 Run 签名
-   - 2.4 执行循环机制 / 2.5 Director 特有能力 / 2.6 MetaAgent 动态注册链
-   - 2.7 端到端执行流程 / 2.8 并发模型现状
-3. [问题诊断（分级清单）](#3-问题诊断分级清单)
-4. [重构方案详述](#4-重构方案详述)
-   - 4.1 方案 A 统一双循环 / 4.2 方案 B 纯拆分 / 4.3 方案 C 工具分发索引化
-   - 4.4 方案 D 配置化收敛 / 4.5 方案 E taskID 显式传播 / 4.6 方案 F 配对规则单一化
-   - 4.7 方案 G 引擎拉取式刷新 / 4.8 方案 H 并行工具执行 / 4.9 其余小项
-5. [实施路线图](#5-实施路线图)
-6. [依赖关系与实施顺序](#6-依赖关系与实施顺序)
-7. [附录](#7-附录)
-
----
+CodeActor 当前采用「**Director 编排 + RunAgentLoop 统一执行循环 + MetaAgent 动态注册**」的多 Agent 架构：Director 负责任务编排与子 Agent 委派，`executor.RunAgentLoop` 为子 Agent 提供统一的"思考—调工具—观察"循环，MetaAgent 则支持运行时按需设计并注册专属子 Agent。本次分析识别出 **3 个高优先级问题**：① **双循环重复**——Director 内联 LLM 循环与 `RunAgentLoop` 并存，上下文压缩、指数退避重试、事件发布等关键逻辑重复实现两份，行为漂移风险高；② **director.go 过大**——单文件约 1675 行，为全仓库最大文件，编排/解析/修复/注入等多重职责耦合，维护成本高；③ **工具分发 O(n)**——每次工具调用都线性遍历 Adapters 列表查找匹配项，随 Agent 数量与工具数增长性能劣化。为此提出**三阶段优化路线图**：Phase 1 聚焦低风险速赢（魔法值收敛、局部清理），Phase 2 进行结构性重构（核心是把 Director 内联循环与 `RunAgentLoop` 统一为一套循环），Phase 3 建设并行工具执行等长期能力。
 
 ## 1. 背景与目标
 
-### 1.1 文档目的
+本文档基于对 codeactor-agent 当前 Agent 架构与执行流程的全面分析（覆盖入口层、应用装配层、编排层、执行层、LLM 层、工具层、记忆层与支撑层的源码走读），给出分阶段、可落地的优化技术方案。方案遵循以下四条目标：
 
-本文档基于对 `codeactor-agent` 当前多 Agent 架构与执行流程的全面分析，给出**分阶段、可落地**的架构优化方案。文中所有技术事实（文件路径、行数、函数名、常量值）均以当前仓库源码为准，已逐项核对。
-
-### 1.2 优化目标
-
-| 目标 | 说明 | 对应问题 |
-|------|------|----------|
-| **消除重复逻辑** | 统一 `RunAgentLoop` 与 `Director.Run` 内联循环，压缩/事件/重试/Rollout 单点实现 | P0-1、P1-6 |
-| **降低维护成本** | 拆分超大文件、收敛魔法值为配置、单一化配对规则 | P0-2、P1-5、P1-6 |
-| **提升并发能力** | 工具分发索引化、只读工具并行执行 | P0-3、方案 H |
-| **提升可配置性** | 超时/步数/阈值/熔断参数全部进入 `config.toml` 并支持热重载 | P1-5 |
-| **消除全局可变状态** | taskID 从包级全局变量改为显式传播 | P1-4 |
-
-### 1.3 非目标
-
-- 不改变现有对外行为（TUI/WebSocket 事件语义、委派机制的用户可感知行为）；
-- 不重写 `internal/llm` 的 provider 抽象（OpenAI/Anthropic/fallback 已稳定）；
-- 不触碰内嵌 `codeseek/` 子模块（Rust + TS，独立演进）。
-
----
+1. **消除重复逻辑**——统一 Director 内联循环与 `RunAgentLoop` 两套执行循环，消除压缩、重试、事件发布的重复实现；
+2. **降低维护成本**——对超大文件（`internal/agents/director.go`，约 1675 行）进行职责化拆分；
+3. **提升并发能力**——将当前单线程顺序的工具执行改造为可并行的工具调度；
+4. **增强可配置性**——收敛散落在代码中的魔法值（硬编码步数、次数上限等）为具名常量或配置项。
 
 ## 2. 现状架构分析
 
 ### 2.1 技术栈
 
-| 类别 | 选型 | 说明 |
-|------|------|------|
-| **语言** | Go 1.25（`go.mod` 声明 `go 1.25.8`） | 本机工具链 go1.26.2 可编译 |
-| **Web 框架** | `gin-gonic/gin` + `olasol/melody` | HTTP Server + WebSocket 推送 |
-| **CLI/TUI** | Bubble Tea v2 生态（`charm.land`：bubbles/bubbletea/glamour/lipgloss） | 终端 UI |
-| **CLI 解析** | `spf13/cobra` | `main.go` 提供 `runTUI` / `runHTTP` / `runPrompt` 三种模式 |
-| **LLM 客户端** | `openai/openai-go/v3` + 自研 `internal/llm` 抽象层 | openai / anthropic / fallback 多 provider 兜底 |
-| **浏览器自动化** | `go-rod/rod` | Chromium 驱动 |
-| **配置** | `BurntSushi/toml`（`config/config.toml` + `default_config.toml`） | 支持热重载（`hot_reload.go`） |
-| **Token 计数** | `pkoukk/tiktoken-go` | 上下文压缩预算估算 |
-| **Protocol Buffers** | `google.golang.org/protobuf` | `protocol/` 下 agent-events schema |
-| **MCP 后端** | 内嵌 `codeseek/` 子模块（Rust + TypeScript，含 `package.json`） | 作为 MCP 代码搜索后端，**不属于**主架构 |
+| 类别 | 技术选型 | 用途说明 |
+|------|----------|----------|
+| 语言/运行时 | Go 1.25 | 主架构实现语言 |
+| HTTP/WebSocket | gin + melody | HTTP 服务模式与 WebSocket 实时推送 |
+| 终端 UI | Bubble Tea v2 | TUI 交互模式 |
+| LLM 接入 | 自研 `internal/llm` | openai-go v3、anthropic 官方 SDK；`FallbackEngine` 多 provider 兜底 |
+| 浏览器自动化 | go-rod | BrowserAgent 浏览器操作能力 |
+| 配置管理 | BurntSushi/toml | `config/config.toml` 加载 + hot_reload 热重载 |
+| Token 计数 | tiktoken-go | 上下文压缩的 token 预算估算 |
+| CLI 框架 | cobra | 命令行入口与参数解析 |
+| 事件协议 | protobuf（`protocol/` 目录） | agent-events schema（`protocol/agent-events.schema.json` 等） |
+
+> 另有内嵌子模块 **codeseek**（Rust + TypeScript），作为 MCP 代码搜索后端供 `internal/mcp` 客户端调用；它属于外部工具服务，不属于本文讨论的主架构范围。
 
 ### 2.2 分层结构与关键组件
 
 ```
-┌─────────────────────────── 入口层 ───────────────────────────┐
-│ main.go (404行, cobra: runTUI / runHTTP / runPrompt)          │
-│   └─ internal/app/app.go (641行)                              │
-│      CodeActor.Init(): initOnce 保证单次组装                  │
-│      ├─ CodeSeek MCP 客户端（后台 goroutine 异步初始化）      │
-│      ├─ GlobalCtx（FileOps/SearchOps/SysOps/...）             │
-│      ├─ 子 Agent: repo/coding/chat/meta/devops/browser        │
-│      ├─ DirectorAgent（注入全部子 Agent）                     │
-│      └─ ConsolidationWorker（记忆整理异步 Worker）            │
-├─────────────────────────── 编排层 ───────────────────────────┤
-│ internal/agents/director.go (1675行, 仓库最大文件)            │
-│   主循环 + 委派编排 + Meta 解析 + 记忆注入 + 熔断接入        │
-├─────────────────────────── 执行层 ───────────────────────────┤
-│ internal/agents/                                              │
-│   executor.go (632行)      RunAgentLoop 统一执行循环          │
-│   types.go (27行)          Agent 接口 / AgentResult / BaseAgent│
-│   meta.go (175行)          MetaAgent 动态设计子 Agent          │
-│   repo.go(174) coding.go(568) chat.go(97) devops.go(109)      │
-│   browser_agent.go(209)   各子 Agent                          │
-│   consolidation_worker.go (335行)  记忆整理 Worker             │
-│   context_compressor.go(207) / emergency_compressor.go(244)   │
-│                           两层上下文压缩                       │
-│   tool_logger.go (163行)   工具调用日志 + delegate 日志        │
-│   director_adapter.go (50行) 熔断/度量适配器                   │
-├─────────────────────────── LLM 层 ────────────────────────────┤
-│ internal/llm/                                                 │
-│   Engine 接口: GenerateContent / Model / CloseIdleConnections │
-│   实现: engine_openai / engine_anthropic / fallback(多兜底)   │
-│   llm.Client: 按 Agent/Tool 路由引擎                          │
-│     GetAgentEngine("director") / GetToolEngine("micro_agent") │
-│     支持运行时切换模型                                         │
-├─────────────────────────── 工具层 ────────────────────────────┤
-│ internal/tools/                                               │
-│   Adapter{name, description, schema, fn}                      │
-│     ToToolDef() → OpenAI function calling schema              │
-│     Call() → JSON 反序列化 → workspace_guard 鉴权 → 执行      │
-│   Registry = map[string]*Adapter                              │
-│   工具两类来源:                                                │
-│     ① RepoAgent: tools.json embed 驱动 switch 映射            │
-│     ② ToolFunc 直注: file_edit / system_operations /          │
-│        search_operations / delegate / micro_agent /           │
-│        deepthinking 等                                        │
-│   安全层: WorkspaceGuard + UserConfirmManager                  │
-│     (危险操作需用户确认; YOLO 模式跳过确认)                    │
-├─────────────────────────── 记忆层 ────────────────────────────┤
-│ internal/memory/                                              │
-│   ConversationMemory  单任务会话, max_size 上限               │
-│   SharedMemory        跨会话持久化                             │
-│     ~/.codeactor/data/shared_memory/{projectID}/              │
-│     5s 间隔落盘                                                │
-│   RolloutWriter       结构化事件流                             │
-│     (task_started / task_complete / token_count ...)          │
-├─────────────────────────── 支撑层 ────────────────────────────┤
-│ internal/globalctx   全局上下文, 注入所有 Agent/Tools          │
-│ internal/messaging   Publisher → Dispatcher → Consumers       │
-│     consumers/tui.go(629行) + websock.go + UserConfirmManager │
-│     15+ 事件类型: ai_chunk / llm_call_start / llm_call_end /  │
-│     ai_stream_start/end / thinking / tool_call_start /        │
-│     tool_call_result / ai_response / context_compressed ...   │
-│ internal/knowledge   KnowledgeInjector（依赖 CodeSeekMCP）    │
-│ internal/mcp         CodeSeek MCP 客户端(后台 goroutine 初始化)│
-│ internal/config      toml 加载 + hot_reload 热重载             │
-└───────────────────────────────────────────────────────────────┘
+┌──────────────────────────── 入口层 ────────────────────────────┐
+│ main.go                                                        │
+│   runTUI（Bubble Tea v2）/ runHTTP（gin+melody）/ runPrompt      │
+└───────────────────────────────┬────────────────────────────────┘
+                                ▼
+┌──────────────────────────── 应用层 ────────────────────────────┐
+│ internal/app/app.go                                            │
+│   Init()：initOnce（sync.Once）保证单次初始化                    │
+│   组装 GlobalCtx（FileOps/SearchOps/SysOps/CodeSeekMCP）         │
+│        + 6 个子 Agent + Director + ConsolidationWorker          │
+└───────────────────────────────┬────────────────────────────────┘
+                                ▼
+┌──────────────────────────── 编排层 ────────────────────────────┐
+│ internal/agents/director.go（约 1675 行，仓库最大文件）            │
+│   任务编排 / 委派强制检测 / MetaAgent 注册链 / 内联 LLM 循环        │
+└───────────────────────────────┬────────────────────────────────┘
+                                ▼
+┌──────────────────────────── 执行层 ────────────────────────────┐
+│ internal/agents/                                               │
+│   executor.go（RunAgentLoop 统一循环）  types.go（Agent 接口）     │
+│   meta.go（MetaAgent）                                           │
+│   repo.go / coding.go / chat.go / devops.go / browser_agent.go │
+│   consolidation_worker.go（异步记忆整理）                          │
+│   context_compressor.go / emergency_compressor.go（两层压缩）     │
+│   tool_logger.go  director_adapter.go（熔断适配器）                │
+└──────────┬─────────────────────┬──────────────────┬────────────┘
+           ▼                     ▼                  ▼
+┌─────── LLM 层 ───────┐ ┌──── 工具层 ────┐ ┌──── 记忆层 ────────┐
+│ internal/llm          │ │ internal/tools │ │ internal/memory    │
+│ Engine 接口           │ │ Adapter/Regisry│ │ ConversationMemory │
+│ Client 按 Agent/Tool  │ │ workspace_guard│ │ SharedMemory       │
+│ 路由引擎，运行时可切换   │ │ UserConfirm    │ │ RolloutWriter      │
+│ FallbackEngine 兜底    │ │ Manager        │ │                    │
+└───────────────────────┘ └────────────────┘ └────────────────────┘
+                                ▼
+┌──────────────────────────── 支撑层 ────────────────────────────┐
+│ globalctx / messaging / knowledge / mcp / config / protocol    │
+└────────────────────────────────────────────────────────────────┘
 ```
+
+各层要点：
+
+- **入口层**：`main.go` 提供 `runTUI` / `runHTTP` / `runPrompt` 三种运行模式，均汇聚到应用层任务处理入口。
+- **应用层**：`internal/app/app.go`（约 641 行）。`Init()` 通过 `sync.Once`（`initOnce`）保证只执行一次完整初始化：创建 `GlobalCtx`（挂载 FileOps/SearchOps/SysOps 工具组与 CodeSeekMCP 客户端）、6 个子 Agent（repo/coding/chat/meta/devops/browser）、Director 以及 ConsolidationWorker。
+- **编排层**：`internal/agents/director.go`（约 1675 行，**仓库最大文件**）。承担任务编排、委派检测、自定义 Agent 注册、tool_call 修复、子 Agent 记忆回流等职责，同时内联了一套与执行层重复的 LLM 循环（详见 §2.4 与问题 P1）。
+- **执行层**：`internal/agents/` 下——`executor.go`（632 行，核心函数 `RunAgentLoop`）、`types.go`（`Agent` 接口与 `BaseAgent`）、`meta.go`（MetaAgent，纯设计者角色）、五个内置子 Agent（`repo.go` / `coding.go` / `chat.go` / `devops.go` / `browser_agent.go`）、`consolidation_worker.go`（异步记忆整理 Worker）、`context_compressor.go` 与 `emergency_compressor.go`（两级上下文压缩）、`tool_logger.go`、`director_adapter.go`（熔断适配器）。各 Agent 的 system prompt 以 `*.prompt.md` 文件经 `go:embed` 打进二进制。
+- **LLM 层**：`internal/llm/` 定义 `Engine` 接口 `{ GenerateContent, Model, CloseIdleConnections }`；`llm.Client` 按 Agent/Tool 名称路由引擎（如 `GetAgentEngine("director")`、`GetToolEngine("micro_agent")`），支持运行时切换；`FallbackEngine` 在主引擎失败时按配置切换到 fallback provider 兜底。
+- **工具层**：`internal/tools/` 的 `Adapter{name, description, schema, fn}` 通过 `ToToolDef` 转换为 OpenAI function calling schema；`Call` 流程为：JSON 反序列化 → workspace_guard 鉴权 → 执行 → 结果序列化。`Registry` 本身是一个 map。工具有两类来源：RepoAgent 一类走 `tools.json` embed 驱动的 switch 映射（read_file、search_by_regex 等）；其余 ToolFunc 直接注入（file_edit、system_operations、search_operations、delegate、micro_agent、deepthinking）。安全层由 `WorkspaceGuard` + `UserConfirmManager` 组成，YOLO/FULL-YOLO 模式下可跳过人工确认。
+- **记忆层**：`internal/memory/` 包含三类组件——`ConversationMemory`（单任务对话记忆，带 `max_size` 上限）、`SharedMemory`（跨会话持久化，位于 `~/.codeactor/data/shared_memory/{projectID}/`，约 5 秒落盘一次）、`RolloutWriter`（结构化事件流，写入 task_started / task_complete / token_count 等事件）。
+- **支撑层**：`internal/globalctx`（全局上下文注入）、`internal/messaging`（Publisher → Dispatcher → consumers/tui.go + websock.go + UserConfirmManager，15+ 事件类型：ai_chunk、llm_call_start/end、thinking、tool_call_start、tool_call_result、context_compressed 等）、`internal/knowledge`（KnowledgeInjector，依赖 CodeSeekMCP）、`internal/mcp`（MCP 客户端，后台 goroutine 初始化）、`internal/config`（toml 加载 + hot_reload 热重载）。
 
 ### 2.3 核心抽象与两种 Run 签名
 
-`internal/agents/types.go` 定义了 Agent 抽象：
+`internal/agents/types.go`（全文仅 27 行）定义了系统最核心的两个抽象：
 
 ```go
+// AgentResult 封装 sub-agent 的完整执行结果
+type AgentResult struct {
+    Text   string               // 最终文本输出（给上层作为 tool_result）
+    Memory []memory.ChatMessage // 完整内部对话历史
+}
+
+// Agent defines the interface for all agents in the system.
 type Agent interface {
     Name() string
-    // ... Run 等方法
+    Run(ctx context.Context, input string) (AgentResult, error)
 }
 
+// BaseAgent holds common dependencies for agents.
 type BaseAgent struct {
-    LLM       llm.Engine                  // 每个 Agent 持有独立 LLM 引擎
-    Publisher *messaging.MessagePublisher // 事件发布
+    LLM       llm.Engine
+    Publisher *messaging.MessagePublisher
 }
 ```
 
-**⚠️ 两种 `Run` 签名并存（语义不统一，见 P2-8）**：
+系统中实际并存**两种 Run 签名**：
 
-| 签名 | 持有者 | 记忆模型 |
-|------|--------|----------|
-| `Run(ctx, input, mem)` — 3 参数 | `DirectorAgent` | 自行维护 `ConversationMemory`，跨步骤保留完整会话 |
-| `Run(ctx, input)` — 2 参数 | 子 Agent（Repo/Coding/Chat/DevOps/Browser）及 MetaAgent 动态生成的 CustomAgent | 无内部会话记忆，单次任务即弃 |
+| 签名 | 使用者 | 语义 |
+|------|--------|------|
+| `Run(ctx, input, mem)` —— 3 参数，自持 `ConversationMemory` | `DirectorAgent.Run`（director.go） | Director 自持跨步骤会话记忆，自行管理历史拼接 |
+| `Run(ctx, input)` —— 2 参数，无内部记忆 | 所有子 Agent（`Agent` 接口约定） | 无状态单轮执行，历史由调用方持有 |
 
-这一不一致导致：委派时子 Agent 结果需要靠 Director 侧的 `injectSubAgentMemory()` 回流补记；统一签名方案（P2-8）依赖方案 A 完成后实施。
+两种签名语义不统一：Director 需要"带记忆的长程编排"，子 Agent 是"无状态的单轮执行器"，接口层却没有体现这一差异——这是问题 **P2-8（接口语义不一致）** 的根源，也是 Phase 2 统一抽象时要重点处理的点。
 
-### 2.4 执行循环机制
+### 2.4 执行循环机制（RunAgentLoop）
 
-`internal/agents/executor.go` 的 `RunAgentLoop`（632 行）是**所有子 Agent 共同调用的统一循环**。流程如下：
+`internal/agents/executor.go`（632 行）中的 `RunAgentLoop(ctx, cfg)` 是子 Agent 执行的标准循环：
 
-```text
-                    ┌─────────────────────────────────┐
-                    │  构建 system + user 消息         │
-                    │  (system prompt + 工具 schema)   │
-                    └───────────────┬─────────────────┘
-                                    ▼
-              ┌─────── for i in maxSteps ────────────┐
-              │                                       │
-              │  ① 上下文压缩（两层）                  │
-              │     TruncateToolResultsToBudget       │
-              │       (按 token 预算截断工具结果)      │
-              │     → EmergencyCompressMessages       │
-              │       (截断仍超限 → 紧急摘要)          │
-              │                                       │
-              │  ② 发布 llm_call_start / ai_stream_start │
-              │                                       │
-              │  ③ LLM.GenerateContent                │
-              │     · 带 timeout context              │
-              │     · 失败指数退避重试（上限 30s）      │
-              │                                       │
-              │  ④ 发布 ai_stream_end / thinking /    │
-              │     llm_call_end / ai_response        │
-              │                                       │
-              │  ⑤ 无 ToolCalls ──────────► 返回 Text │
-              │     （循环结束）                       │
-              │                                       │
-              │  ⑥ 有 ToolCalls → 遍历 adapters       │
-              │     线性查找分发执行                   │
-              │     → 回填 Role=Tool 消息              │
-              │                                       │
-              │  ⑦ OnStepEnd hook / Rollout 写入      │
-              │                                       │
-              └──────────────── 循环 ─────────────────┘
+```
+RunAgentLoop(ctx, ExecutorConfig)
+        │
+        ▼
+┌────────────────────────────────────────────────────┐
+│ 构建初始消息：SystemPrompt + UserInput               │
+└────────────────────────┬───────────────────────────┘
+                         ▼
+     ┌───────── for i in [0, MaxSteps) ─────────────┐
+     │                                              │
+     │ ① 上下文压缩                                   │
+     │    TruncateToolResultsToBudget                 │
+     │      （按 token 预算截断 tool 结果）              │
+     │    截断后仍超限 →                               │
+     │    EmergencyCompressMessages                   │
+     │      （LLM 紧急摘要，保留末尾 N 条）               │
+     │                                              │
+     │ ② 发布事件 llm_call_start / ai_stream_start     │
+     │                                              │
+     │ ③ LLM.GenerateContent                          │
+     │    · 带 timeout 的 context 控制单次调用超时        │
+     │    · 失败按指数退避重试，等待上限 30s               │
+     │                                              │
+     │ ④ 发布事件 ai_stream_end / thinking /           │
+     │            llm_call_end / ai_response           │
+     │                                              │
+     │ ⑤ 无 ToolCalls ──────────► 返回 Text，循环结束    │
+     │                                              │
+     │ ⑥ 有 ToolCalls ──► 遍历 Adapters 线性查找        │
+     │    匹配工具并顺序执行（O(n) 分发），               │
+     │    结果以 Role=Tool 消息回填历史                  │
+     │                                              │
+     │ ⑦ OnStepEnd hook / RolloutWriter 写入           │
+     │                                              │
+     └──────────────────继续下一步◄───────────────────┘
 ```
 
-**ExecutorConfig hooks（现有 4 个注入点）**：
+`ExecutorConfig` 提供四个生命周期 hook：
 
-| Hook | 时机 | 作用 |
-|------|------|------|
-| `OnAgentStart` | 循环开始前 | Agent 级初始化 |
-| `OnAgentExit` | defer + recover | 捕获 panic、兜底收尾 |
-| `OnToolResult` | 每个工具执行后 | 结果观测/记录 |
-| `OnStepEnd` | 每步结束后 | 步级收尾、Rollout 写入 |
+| Hook | 触发时机 | 说明 |
+|------|----------|------|
+| `OnAgentStart` | 进入循环前调用一次 | 失败则直接中止启动 |
+| `OnAgentExit` | 循环结束后经 defer + recover 调用一次 | 即使捕获 panic 也保证执行，用于兜底收尾 |
+| `OnToolResult` | 每个工具执行完成后回调 `(toolName, result)` | 用于日志/审计 |
+| `OnStepEnd` | 每步 ToolCalls 执行完毕后触发 | 仅当该步存在 ToolCalls 时调用 |
 
-> 这 4 个 hook 是方案 A（统一双循环）的**雏形**——证明「通过 hook 注入 Director 特有能力」在现有代码中已有先例，扩展成本低。
+> 典型使用方是 `GitCheckpointManager`（internal/agents/git_checkpoint.go）：CodingAgent 在构建 `ExecutorConfig` 时注入 OnAgentStart/OnAgentExit/OnStepEnd 实现 git 检查点生命周期管理。
 
 ### 2.5 Director 特有能力
 
-`DirectorAgent.Run()`（`director.go`，1675 行）在子 Agent 循环之外，额外维护了 5 项独有机制：
+Director 相比普通子 Agent 多出五项特有能力，全部实现在 `internal/agents/director.go`：
 
-| 机制 | 实现 | 说明 |
-|------|------|------|
-| **熔断器** | `DirectorAdapter.IsCircuitBreakerOpen()`（director_adapter.go） | 连续 LLM 失败达到阈值则阻断请求，防止雪崩 |
-| **委派强制检测** | `maxNonDelegationPrompts = 3`（director.go:32） | Director 无工具调用就想结束 → 注入模拟 user 消息强制其调用 `delegate_*`；达到上限后放行（防死循环，循环本身有 maxSteps 兜底） |
-| **tool_call 配对修复** | `validateAndRepairToolCallPairs()`（director.go:1568） | 修复截断后的 tool_call → tool 响应配对 |
-| **Sub-Agent Memory 注入** | `injectSubAgentMemory()`（director.go:782） | 将子 Agent 内部对话写入 memory，标记 `IsSubAgent=true`，**但不发送给 LLM**（仅用于内存记录） |
-| **项目上下文缓存** | `cachedProjectContext`（director.go:82） | 会话内只加载一次项目上下文文件 |
+#### 2.5.1 熔断器
+
+`DirectorAdapter`（director_adapter.go）提供 `IsCircuitBreakerOpen()`：连续 LLM 调用失败达到阈值后熔断被触发，阻断后续请求直接失败返回，避免雪崩式无效重试；配套的恢复逻辑见 `internal/agents/director/recovery.go` 的 CircuitBreaker（失败计数阈值 + 冷却时间窗口，超时 30s 量级）。
+
+#### 2.5.2 委派强制检测
+
+Director 收尾时若模型未通过任何 `delegate_*` 工具委派子 Agent 就想直接结束，会向消息序列注入一条模拟 user 消息强制其委派；该"强制提醒"最多触发 `maxNonDelegationPrompts`（常量 = 3，director.go）次，达到上限后放行，防止死循环（循环本身还有 MaxSteps 兜底）。
+
+#### 2.5.3 tool_call 配对修复
+
+`validateAndRepairToolCallPairs(messages []llm.Message)`（director.go 尾部）在送入 LLM 前校验并修复消息序列中 assistant 的 tool_calls 与 Role=Tool 结果消息的配对关系——主要修复上下文截断/紧急压缩后可能出现的配对断裂，否则部分 provider 会直接拒绝请求。
+
+#### 2.5.4 子 Agent 记忆回流
+
+`injectSubAgentMemory(result, toolCallID, toolName)` 将子 Agent 的执行结果写入 Director 的 `currentMemory`：写入的是结果摘要消息（`result.Text`），并打上 `IsSubAgent=true` 标记与 ParentID 关联；子 Agent 的完整内部对话历史**不会**整体回灌，也不会再发送给 LLM——避免 Director 上下文快速膨胀和 Compact Engine 频繁压缩导致信息丢失。Director 后续组装历史时会过滤 `IsSubAgent=true` 的内部消息。
+
+#### 2.5.5 项目上下文缓存
+
+`cachedProjectContext` 字段使项目上下文文件在同一会话内只加载一次：首次加载后将结果缓存于 Director 实例，之后直接命中缓存返回，避免每个任务重复读取项目上下文带来的延迟与 token 开销。
 
 ### 2.6 MetaAgent 动态注册链（重点）
 
-这是架构中最精巧的部分，实现「**Agent 自我生成 Agent**」：运行时无需改代码即可新增专属子 Agent。
+MetaAgent 是系统的"元能力"：它本身是一个纯设计者（单次 LLM 调用、无工具），根据任务动态设计一个专属子 Agent，由 Director 完成注册与执行。完整时序如下：
 
-```text
- MetaAgent.Run()                          ← Director 调用
-    │  输出 JSON:
-    │  {thinking, agent_name, agent_design(systemPrompt),
-    │   tools_used[], task_for_agent}
-    ▼
- parseMetaAgentOutput()
-    │  extractJSONObject() 容错提取
-    │  (LLM 输出常被 markdown 围栏 ```json 包裹)
-    │  失败 → 带格式修正提示重试
-    │        (metaRetryCount 次, director.go:76/270)
-    ▼
- registerCustomAgent(CustomAgent)
-    │  ① 构造 delegate_<snake_name> 工具
-    │  ② 从 Director 工具集里挑出 ca.ToolsUsed,
-    │     构建专属 adapters
-    │  ③ 追加 agent_exit 工具
-    │  ④ 套 workspace_guard
-    │  ⑤ 注册到 a.customAgents[delegate_name]
-    │     并 append 到 a.Adapters
-    ▼
- Director 立即执行刚创建的 delegate 工具
-    └─ executeCustomAgent()
-        │  新建 ExecutorConfig
-        │  cfg.MaxSteps = 15 (硬编码, director.go:753)
-        │  → RunAgentLoop() (任务级子循环)
-        │  创建该 delegate 的独立 RolloutWriter
-        ▼
- 返回格式化结果给 LLM
- 此后 delegate_<name> 永久可用
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as DirectorAgent
+    participant M as MetaAgent
+    participant P as parseMetaAgentOutput
+    participant R as registerCustomAgent
+    participant E as executeCustomAgent
+    participant L as RunAgentLoop
+
+    D->>M: Run(ctx, 设计任务描述)
+    M->>M: 单次 LLM 调用（纯设计，无工具）
+    M-->>D: JSON{thinking, agent_name, agent_design(systemPrompt), tools_used[], task_for_agent}
+    D->>P: 解析 MetaAgent 原始输出
+    P->>P: extractJSONObject 从 markdown 围栏容错提取 JSON
+    alt 解析失败
+        P-->>D: error
+        D->>D: 追加 [FORMAT CORRECTION] 格式修正提示，重试至多 metaRetryCount 次
+        D->>P: 再次解析
+    else 解析成功
+        P-->>D: systemPrompt + CustomAgent{name/design/tools_used/task}
+    end
+    D->>R: registerCustomAgent(ca)
+    R->>R: 构造 delegate_{snake_name} 工具（闭包捕获 ca 与专属 adapters）
+    R->>R: 从 Director 工具集按 ca.ToolsUsed 挑选，构建专属 adapters
+    R->>R: 追加 agent_exit 工具，并用 SetGuardOnAdapters 套上 workspace_guard
+    R->>R: 注册 customAgents map，并将 delegate 工具 append 到 Director.Adapters
+    D->>E: executeCustomAgent(ctx, ca, adapters, task_for_agent)
+    E->>E: 新建 ExecutorConfig（MaxSteps=15 硬编码，StopOnFinish=true）
+    E->>L: RunAgentLoop（ctx 注入独立 RolloutWriter，defer Close）
+    L-->>E: result.Text + result.History
+    E-->>D: 子 Agent 文本结果（存入 pendingSubAgentMemory 待回流）
+    Note over D: 此后 delegate_{name} 工具对本会话永久可用
 ```
 
-**关键点**：
-- Meta 输出解析依赖 `extractJSONObject`（director.go:610）从杂乱文本中提取最外层 JSON 对象——鲁棒性受 LLM 输出质量制约（P2-9）；
-- `registerCustomAgent` 将新 Adapter **append 到 `a.Adapters` 切片**——后续分发走线性查找（P0-3 的成因之一）；
-- `executeCustomAgent` 硬编码 `MaxSteps = 15`（director.go:753），未走配置（P1-5 的典型样本）。
+关键实现细节：
+
+1. **容错解析**：`extractJSONObject` 能从 markdown 代码围栏等包裹文本中定位最外层 JSON 对象；`parseMetaAgentOutput` 校验必需字段（缺 `agent_design` 即报错）。
+2. **格式修正重试**：解析失败时，Director 会把带 `[FORMAT CORRECTION — Attempt n/N]` 的修正提示追加进消息再次请求 MetaAgent，最多重试 `metaRetryCount`（默认 3）次。
+3. **专属工具集**：自定义 Agent 的 adapters 只从 Director 现有工具集中挑选（`ca.ToolsUsed` 声明），未知工具会被跳过并告警；无论声明与否都会追加 `agent_exit` 工具以便显式退出。
+4. **立即执行**：注册完成后立刻用 `task_for_agent`（剥离了元设计指令的干净任务描述）驱动 `executeCustomAgent`，其中 `MaxSteps=15` 为硬编码值（魔法值，列入 Phase 1 收敛清单）。
 
 ### 2.7 端到端执行流程
 
-以编码任务主线为例（HTTP 模式）：
+从用户输入到最终输出的完整链路：
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant U as 用户
-    participant M as main.go (runHTTP)
-    participant H as internal/http (server/task_executor)
-    participant A as CodeActor (app.go)
-    participant D as DirectorAgent
-    participant L as llm.Client/Engine
-    participant C as CustomAgent delegate
-    participant E as RunAgentLoop
+    participant Main as main.go（模式入口）
+    participant App as app.CodeActor
+    participant Dir as DirectorAgent
+    participant Sub as 自定义子Agent
+    participant Loop as RunAgentLoop
 
-    U->>M: 任务输入
-    M->>H: ProcessCodingTaskWithCallback(TaskRequest)
-    H->>A: Init() [initOnce 单次]
-    Note over A: 组装 GlobalCtx / 子Agent / Director<br/>后台启动 CodeSeek MCP + ConsolidationWorker
-    H->>D: Director.Run(ctx, task, mem)
-    Note over D: systemPrompt = director.prompt<br/>+ 自定义 Agent 描述<br/>+ 项目上下文(缓存) + 知识注入<br/>追加历史消息(过滤 IsSubAgent)
-
-    loop Director 内联 LLM 循环
-        D->>L: GenerateContent(messages, tools)
-        L-->>D: Response
-
-        alt 分支①: 直接文本回答
-            D-->>U: 返回最终文本 ✓
-        else 分支②: 调普通工具 (read_file 等)
-            Note over D: adapter.Call → workspace_guard → 执行<br/>回填 Role=Tool
-        else 分支③: 调 delegate_*
-            D->>C: executeCustomAgent()
-            Note over C: 新建 ExecutorConfig<br/>cfg.MaxSteps = 15 (硬编码)<br/>独立 RolloutWriter
-            C->>E: RunAgentLoop(任务级子循环)
-            loop 子循环 (maxSteps=15)
-                E->>L: GenerateContent
-                L-->>E: ToolCalls / Text
-                E->>E: 压缩 → 事件发布 → 工具分发 → 回填
-            end
-            E-->>C: AgentResult{Text, Memory}
-            C-->>D: 格式化结果
-            Note over D: injectSubAgentMemory()<br/>标记 IsSubAgent=true, 不发 LLM
+    U->>Main: 输入任务（runTUI / runHTTP / runPrompt）
+    Main->>App: ProcessCodingTaskWithCallback(request)
+    App->>App: Init()（initOnce 保证单次初始化）
+    App->>Dir: Run(ctx, input, mem)
+    Dir->>Dir: 组装 systemPrompt = director.prompt + 自定义Agent描述 + 项目上下文 + 知识注入
+    Dir->>Dir: 追加会话历史（过滤 IsSubAgent=true 的内部消息）
+    loop Director 内联 LLM 循环（三分支）
+        Dir->>Dir: 压缩检查 → GenerateContent
+        alt 分支一：直接文本
+            Dir-->>Dir: 准备返回最终文本
+        else 分支二：普通工具
+            Dir->>Dir: Adapters 线性查找分发执行，Role=Tool 回填
+        else 分支三：委派 delegate_*
+            Dir->>Sub: executeCustomAgent(task_for_agent)
+            Sub->>Loop: RunAgentLoop(maxSteps=15)
+            Loop-->>Sub: result.Text
+            Sub-->>Dir: 子 Agent 结果
+            Dir->>Dir: injectSubAgentMemory（标记 IsSubAgent=true）
         end
-
-        Note over D: 委派强制检测:<br/>无工具调用想结束 → 注入模拟 user 消息<br/>强制 delegate (上限 maxNonDelegationPrompts=3)
     end
-
-    D-->>U: 通过委派检测 → 返回最终文本
+    Note over Dir: 未委派即想结束 → 强制提醒（上限 maxNonDelegationPrompts）
+    Dir-->>U: 通过委派检测后返回最终文本
 ```
 
 ### 2.8 并发模型现状
 
-| 维度 | 现状 | 备注 |
-|------|------|------|
-| **工具执行** | **单线程顺序执行，无并行** | 单步多个 ToolCalls 逐个分发 |
-| **MCP 客户端** | 后台 goroutine 初始化 | 与主流程解耦 |
-| **流式输出** | `CallOptions.StreamHandler` 逐 chunk 发布 `ai_chunk` 事件 | TUI/WebSocket 实时渲染 |
-| **记忆整理** | `ConsolidationWorker`（335 行）异步消费 `ConsolidationTask` | goroutine + channel，调 LLM 将新观察整理进长期记忆 |
-| **委派执行** | 同步阻塞（普通工具超时 120s，delegate 超时 10min） | Director 等待子循环完成 |
+当前系统的并发特征可概括为四点：
 
-> 并发能力是当前架构的明显短板：工具串行 + 委派同步阻塞，长任务吞吐受限。方案 H（并行工具执行）为长期能力演进目标。
+1. **工具单线程顺序执行**：无论是 `RunAgentLoop` 还是 Director 内联循环，同一轮的多个 ToolCalls 都是 for 循环逐个分发、串行执行，**没有任何并行**——这是 Phase 3「并行工具」优化的直接动因；
+2. **MCP 客户端后台初始化**：`internal/mcp` 的客户端在 `Init()` 中以后台 goroutine 启动，不阻塞主流程，就绪前相关工具调用会等待/降级；
+3. **流式事件逐 chunk 发布**：LLM 流式输出经 `CallOptions.StreamHandler` 回调逐 chunk 发布 `ai_chunk` 事件，经 messaging 总线推往 TUI/WebSocket 前端；
+4. **ConsolidationWorker 异步整理**：记忆整理任务由独立的 goroutine + channel 异步消费，与主执行链路解耦。
 
 ---
