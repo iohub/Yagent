@@ -755,6 +755,40 @@ func DialogBorderStyle(c ColorTokens) lipgloss.Style {
 		Padding(1, 2)
 }
 
+// HighlightBarStyle returns a style for the highlighted selected row in select mode.
+func HighlightBarStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Background(c.SurfaceHover).
+		Foreground(c.TextPrimary).
+		Bold(true).
+		Padding(0, 1)
+}
+
+// InfoBoxStyle returns a bordered style for structured context information.
+func InfoBoxStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(c.Border).
+		Background(c.Surface).
+		Foreground(c.TextSecondary).
+		Padding(0, 1)
+}
+
+// KeyHintStyle returns a keycap style for shortcut key hints in help lines.
+func KeyHintStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Background(c.SurfaceRaised).
+		Foreground(c.TextPrimary).
+		Padding(0, 1)
+}
+
+// ErrorTextStyle returns an italic error text style for input validation failures.
+func ErrorTextStyle(c ColorTokens) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(c.Danger).
+		Italic(true)
+}
+
 // ── FuzzyMatch ──
 
 // FuzzyMatchResult holds the result of a fuzzy search match.
