@@ -359,3 +359,87 @@ sequenceDiagram
 **动态注册场景的放大效应**：MetaAgent 支持运行时按需注册专属子 Agent，Adapters 列表随会话进行持续增长；每个 delegate 内部又持有自己的工具集，委派链路（Director → delegate → 工具）形成多层线性查找嵌套。在长会话、多 delegate 场景下，分发耗时从常数级退化为可感知的线性开销，而该开销完全可以通过索引化消除。
 
 ---
+
+## 4. 重构方案详述
+
+本章针对第 3 章诊断的问题逐项给出重构方案；每个方案按「目标形态 / 具体设计 / 迁移步骤 / 风险与回滚 / 工作量级」统一结构展开。方案之间存在明确依赖：方案 B 必须先行于方案 A，其余方案彼此独立，可按标注的优先级与工作量级排期实施。
+
+### 4.1 方案A【最高优先级】：统一双循环（解决 P0-1）[L]
+
+**目标形态**：Director 不再内联循环，收敛为「组装 prompt → 注入特有能力到 ExecutorConfig → 复用 RunAgentLoop」，消除约 600 行重复逻辑。Director 与普通子 Agent 共享同一条执行主干，Director 特有能力全部通过 hook 注入点表达，而非复制一份循环实现。
+
+**具体设计**：关键洞察是现有 ExecutorConfig hooks（OnAgentStart/OnAgentExit/OnToolResult/OnStepEnd）已具雏形，扩展 3 个注入点即可承载 Director 特有能力：
+
+- `BeforeLLMCall(messages []Message) ([]Message, error)`——每次 LLM 调用前回调；熔断器检查在此实现（返回 error 即中断循环）；委派强制检测所需的消息注入也在此修改 messages 后返回；
+- `ShouldReturn(response *Response, messages []Message) (bool, []Message)`——循环结束决策点；Director 在「无 ToolCalls 想结束」时返回 false 并附加强制委派提示消息，循环据此继续执行下一轮；普通子 Agent 使用默认实现（恒返回 true），行为不变；
+- `MessageSanitizer(messages []Message) []Message`——每步消息净化钩子；tool_call 配对修复统一挂载于此。
+
+ExecutorConfig 扩展字段示意（含三个新 hook 字段及默认 no-op 实现说明）：
+
+```go
+// executor.go — ExecutorConfig 扩展示意
+type ExecutorConfig struct {
+	// ……既有字段保持不变……
+
+	// ---- 既有 hooks ----
+	OnAgentStart func(ctx context.Context, messages []Message) error
+	OnAgentExit  func(ctx context.Context, messages []Message)
+	OnToolResult func(ctx context.Context, call ToolCall, result string) error
+	OnStepEnd    func(ctx context.Context, step int, messages []Message)
+
+	// ---- 新增注入点（三者均提供默认 no-op 实现）----
+
+	// BeforeLLMCall 在每次 LLM 调用前回调；返回 error 即中断循环。
+	// 熔断器检查在此实现；委派强制检测的消息注入也在此修改 messages。
+	// 默认实现：原样返回入参，error 为 nil。
+	BeforeLLMCall func(messages []Message) ([]Message, error)
+
+	// ShouldReturn 是循环结束决策点：返回 true 则按原逻辑结束本轮循环，
+	// 返回 false 则以第二个返回值替换 messages 继续下一轮。
+	// 默认实现：恒返回 (true, nil)——对现有子 Agent 等价于无此钩子。
+	ShouldReturn func(response *Response, messages []Message) (bool, []Message)
+
+	// MessageSanitizer 每步消息净化钩子，返回净化后的消息序列。
+	// 默认实现：原样返回入参。
+	MessageSanitizer func(messages []Message) []Message
+}
+```
+
+Director 特有能力 → hook 注入点映射表：
+
+| Director 特有能力 | hook 注入点 | 说明 |
+| --- | --- | --- |
+| 熔断器检查 | BeforeLLMCall | 达到阈值时返回 error 中断循环 |
+| 委派强制检测 | ShouldReturn | 「无 ToolCalls 想结束」时返回 false 并附加强制委派提示消息 |
+| tool_call 配对修复 | MessageSanitizer | 每步统一执行配对校验与修复 |
+| Sub-Agent memory 注入 | 既有 OnToolResult 扩展承载 | 复用既有 hook 语义，仅扩展实现内容 |
+| Rollout 写入 | 既有 OnStepEnd 扩展承载 | 同上 |
+
+必须强调：三个新 hook 均提供默认空操作(no-op)，未显式注入实现的调用方行为完全不变，因此对现有子 Agent 零行为变化；Director 仅在自己组装 ExecutorConfig 时注入上述实现。
+
+**迁移步骤**（五步，每步独立提交）：
+
+1. 先做纯拆分（方案 B），使 director.go 具备可审查的最小 diff 粒度；
+2. executor.go 增加 3 个 hook 字段（默认 no-op），现有调用方零改动、编译通过；
+3. Director 内联循环逐段搬运为 hook 实现（熔断器→BeforeLLMCall、委派强制检测→ShouldReturn、tool_call 配对修复→MessageSanitizer、Sub-Agent memory 注入与 Rollout 写入→既有 OnToolResult/OnStepEnd 扩展承载）；
+4. 删除内联循环，Director.Run 改为「组装 prompt + 注入 hooks + 调 RunAgentLoop」的三段式结构；
+5. 行为等价性验证：以事件流录制(Rollout)对照新旧输出，确认语义一致后合入。
+
+**风险与回滚**：主要风险在于事件发布顺序与压缩时机可能存在细微差异，进而改变可观测行为；对策是全程使用 Git Checkpoint 保护每一步状态，并利用事件流录制(Rollout)做新旧 diff 对照；由于迁移五步各自独立提交，任一步出问题均可单独 revert，不影响已完成步骤。
+
+### 4.2 方案B：director.go 纯拆分（解决 P0-2）[M]
+
+**目标形态**：director.go（1675 行）按职责拆分为四个文件，单一职责、边界清晰：
+
+- director_run.go——主流程（Run 入口与编排逻辑）；
+- director_delegate.go——委派执行（delegate 创建、分发与生命周期管理）；
+- director_meta.go——Meta 解析与注册（MetaAgent 动态子 Agent 注册链路）；
+- director_memory.go——记忆注入（injectSubAgentMemory 等会话记忆操作）。
+
+**具体设计**：原则为「先拆不改」——仅移动代码不改任何逻辑，不调整函数签名、不重命名符号、不动包级状态；拆分本身不追求性能或结构优化，其核心价值在于为方案 A 提供可审查的前提：后续「内联循环搬为 hook」的大改动可以按文件聚焦评审，diff 噪声可控。
+
+**迁移步骤**：纯机械移动代码至四个目标文件 → 补齐各文件 import → 编译通过 → 行为等价验证（Rollout 输出无 diff）。
+
+**风险与回滚**：风险极低（不引入任何行为变化）；以单个提交完成整体拆分，若需回退可直接 revert 该提交，无需局部挑选。
+
+**与方案 A 的依赖关系**：B 必须先行于 A——只有先把 1675 行拆散到职责明确的文件中，方案 A 对主流程与委派执行的改造才能获得最小、可审查的 diff 粒度；顺序颠倒会使两个高风险变更混在同一份巨型文件的 diff 里，无法有效评审。
