@@ -443,3 +443,84 @@ Director 特有能力 → hook 注入点映射表：
 **风险与回滚**：风险极低（不引入任何行为变化）；以单个提交完成整体拆分，若需回退可直接 revert 该提交，无需局部挑选。
 
 **与方案 A 的依赖关系**：B 必须先行于 A——只有先把 1675 行拆散到职责明确的文件中，方案 A 对主流程与委派执行的改造才能获得最小、可审查的 diff 粒度；顺序颠倒会使两个高风险变更混在同一份巨型文件的 diff 里，无法有效评审。
+
+### 4.3 方案C：工具分发索引化（解决 P0-3）[S]
+
+**目标形态**：Director 维护 map[string]*Adapter 索引，工具分发从 O(n) 线性遍历降为 O(1)。
+
+**具体设计**：注册/注销自定义 Agent 时同步维护该索引——注册路径收口为单一入口，新增 Adapter 时写入 map，注销时删除对应键；工具分发处由「遍历全部 Adapter 逐一匹配名称」改为一次 map 直接查找，命中即分发。
+
+**说明与既有 tools.Registry 的关系**：Director 侧的 map 只是视图级索引，不替代底层 tools.Registry——Registry 仍是工具定义与生命周期的唯一权威，Director 索引仅服务于高频分发路径；两者的一致性由注册路径单一入口保证：所有增删均经同一入口先落 Registry、再同步索引，杜绝双写漂移。
+
+**风险与回滚**：改动局部（注册、注销、分发三处）、无行为变化，风险极低；如索引出现不一致，可整体 revert 回线性遍历实现。
+
+### 4.4 方案D：配置化收敛（解决 P1-5）[S-M]
+
+**目标形态**：将散落在代码中的硬编码常量收敛进 toml 配置文件，运行参数一处可查、可调：
+
+```toml
+[executor]
+default_max_steps = ...            # 沿用现值
+custom_agent_max_steps = 15        # 原硬编码
+error_truncate_len = 1000
+
+[timeouts]
+tool_timeout = "120s"
+delegate_timeout = "10m"
+llm_retry_max_backoff = "30s"
+
+[compression]
+token_budget = ...                 # 沿用现值
+emergency_threshold = ...
+truncate_keep_bytes = ...
+
+[circuit_breaker]
+failure_threshold = ...
+cooldown = "..."
+```
+
+**具体设计**：各配置结构体定义于 internal/config 并随包加载解析；ExecutorConfig 构建时注入对应字段，执行链路只读结构体、不再引用字面量；全部字段以现值为默认值，保证向后兼容——配置缺失或解析失败时行为与现状一致；配合已有 hot_reload 机制可在运行时调参而无需重启进程。
+
+**风险与回滚**：低风险；默认值兜底，配置缺失时行为不变；如需回退，移除配置项即恢复硬编码语义。
+
+### 4.5 方案E：taskID 显式传播（解决 P1-4）[M]
+
+**目标形态**：消除包级全局 SetCurrentTaskID/GetCurrentTaskID 的隐式传播，任务标识不再经由全局状态流转。
+
+**具体设计**：二选一路径——①改用 context.WithValue 携带 taskID 沿调用链显式传递；②在 TaskRequest→Director 结构体上增加 taskID 字段随请求流转；日志器统一从 context（或请求结构体）取值，不再读取全局变量。
+
+**收益**：消除多任务并发下全局 taskID 相互覆盖的竞态风险；日志追踪链路显式化，每条日志可直接关联发起请求的任务，排查不再依赖「最近一次 Set」的隐含假设。
+
+**迁移注意**：逐一排查所有 GetCurrentTaskID 调用点改造，防漏改——建议迁移期保留全局函数作兼容垫层并在内部打告警日志，确认无调用后再删除。
+
+### 4.6 方案F：配对规则单一化（解决 P1-6）[M]
+
+**目标形态**：tool_call↔tool 配对/修复规则收敛为唯一实现，消除多处各自为政的重复判断。
+
+**具体设计**：新建 internal/agents/msgpair 包（或并入 memory 包），导出唯一的配对验证/修复函数；executor、memory、Director 三处统一改为调用该函数，后续规则调整只改一处。
+
+**配套单测**：覆盖截断（tool_call 有始无尾）、乱序（tool 结果先于 tool_call 到达）、孤儿 tool 结果（无对应 tool_call）三类边界情形，为唯一实现提供回归保障。
+
+### 4.7 方案G：引擎拉取式刷新（解决 P1-7）[S-M]
+
+**目标形态**：子 Agent 不持有 Engine 引用，改为持有 llm.Client，并在每次 Run 开始时拉取当前引擎；删除 refreshSubAgentEngines 手动同步逻辑。
+
+**收益**：引擎切换后子 Agent 下一次 Run 即自动使用新引擎，彻底消除「引擎已切、子 Agent 未刷」的窗口期；同时免去 refreshSubAgentEngines 的全量遍历成本及其遗漏风险。
+
+### 4.8 方案H：并行工具执行（长期能力）[L]
+
+**五步设计**：
+
+1. Adapter 增加副作用标注（readonly/mutating/interactive）；
+2. 单步内多个 ToolCalls 分组：只读组 errgroup 并行，mutating 组串行保序；
+3. 审查 GlobalCtx 的 FileOps/SysOps 共享可变状态，必要时加锁或实例隔离；
+4. 事件携带 tool_call_id，TUI/WebSocket 按 id 归并渲染而非依赖到达顺序；
+5. UserConfirmManager：交互类工具永不并行。
+
+**风险提示**：并发后日志/事件顺序、workspace_guard 竞态、LLM 回填顺序需重点验证。
+
+### 4.9 其余小项
+
+- P2-8 统一 Run 签名为 Run(ctx,input)：会话记忆构造注入或 context 传递；依赖方案 A 完成，否则双份改动。[M]
+- P2-9 MetaAgent 结构化输出：优先用 provider 的 JSON mode/tool-call 结构化输出约束，extractJSONObject 降级为兜底。[M]
+- P2-10 RolloutWriter 复用：Director 创建后按 delegate 复用同一 session writer，仅 turn 元数据区分。[S]
