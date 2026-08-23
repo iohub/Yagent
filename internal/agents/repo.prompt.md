@@ -43,6 +43,9 @@ When you need to explore or investigate the repository, you MUST follow this pri
    
    **Rule**: Use these **ONLY** when a codebase tool categorically cannot satisfy the requirement. For example: reading a file's raw bytes, performing complex regex matching, listing files in a directory, or when codebase tools return no relevant results. Do NOT use file tools for any task that `semantic_search`, `query_code_skeleton`, or `query_code_snippet` can handle.
 
+**Fallback When Index Building**:
+If any repo search tool returns a "索引构建中" (index building) message, it means codeseek is still building its index in the background. In this case, **immediately switch to standard file tools** (`read_file`, `list_dir`, `search_by_regex`, `print_dir_tree`) to continue the task. Do **not** repeatedly retry repo tools — they will auto-recover once the index is ready.
+
 Output a clear, structured summary that gives a developer a solid "mental map" of the codebase.
 
 **Language Compliance**:

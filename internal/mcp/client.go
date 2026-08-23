@@ -15,6 +15,19 @@ import (
 )
 
 // ============================================================================
+// Index Building Fallback
+// ============================================================================
+
+// ErrIndexBuilding 是一个 sentinel error，表示 codeseek 索引仍在后台构建中。
+// 此时所有 repo 检索工具不可用，调用方应据此让 agent 切换到标准文件工具 fallback，
+// 而非阻塞等待索引完成。
+var ErrIndexBuilding = errors.New("codeseek index is still building")
+
+// IndexBuildingMessage 是索引构建中时返回给 agent 的 fallback 提示文本。
+// 列出所有受影响的 repo 工具及可用的标准文件工具，引导 agent 立即切换而非反复重试。
+const IndexBuildingMessage = "索引构建中，所有 repo 检索工具（semantic_search/query_code_skeleton/query_code_snippet/find_function_caller/find_function_callee/query_call_graph）暂不可用。请改用标准文件工具：read_file（读取文件内容）、list_dir（列出目录）、search_by_regex（正则搜索文件内容）、print_dir_tree（查看目录结构）继续工作。索引完成后 repo 工具将自动恢复可用，无需反复重试。"
+
+// ============================================================================
 // MCPClient Configuration
 // ============================================================================
 
@@ -42,20 +55,20 @@ type MCPClientConfig struct {
 // MCPClient manages communication with a codeseek MCP server via stdio JSON-RPC 2.0.
 // It handles subprocess lifecycle, request/response matching, and concurrent access.
 type MCPClient struct {
-	cfg     MCPClientConfig
-	logger  *slog.Logger
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	out     *bufio.Reader
+	cfg    MCPClientConfig
+	logger *slog.Logger
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	out    *bufio.Reader
 
 	// requestMap maps request IDs to channels for response matching.
-	mu        sync.Mutex
-	requests  map[int]chan *JSONRPCResponse
-	nextID    atomic.Int64
+	mu       sync.Mutex
+	requests map[int]chan *JSONRPCResponse
+	nextID   atomic.Int64
 
-	alive        atomic.Bool
-	initialized  atomic.Bool
-	stopped      atomic.Bool
+	alive       atomic.Bool
+	initialized atomic.Bool
+	stopped     atomic.Bool
 
 	// 异步初始化支持
 	readyCh    chan struct{}      // 关闭信号：初始化完成（成功或失败）
@@ -79,20 +92,20 @@ func NewMCPClient(cfg MCPClientConfig) *MCPClient {
 	}
 
 	return &MCPClient{
-		cfg:     cfg,
-		logger:  slog.Default().With("component", "mcp"),
+		cfg:      cfg,
+		logger:   slog.Default().With("component", "mcp"),
 		requests: make(map[int]chan *JSONRPCResponse),
-		readyCh: make(chan struct{}),
+		readyCh:  make(chan struct{}),
 	}
 }
 
 // Start launches the MCP server subprocess and begins asynchronous initialization.
 // The initialization sequence runs in the background:
 //
-//	1. Launch the subprocess with stdio pipes connected.
-//	2. Send an "initialize" JSON-RPC request with client capabilities and info.
-//	3. Receive the server's initialization result.
-//	4. Send a "notifications/initialized" notification to complete setup.
+//  1. Launch the subprocess with stdio pipes connected.
+//  2. Send an "initialize" JSON-RPC request with client capabilities and info.
+//  3. Receive the server's initialization result.
+//  4. Send a "notifications/initialized" notification to complete setup.
 //
 // Start() returns immediately without waiting for initialization to complete.
 // Use WaitForReady() or IsReady() to check initialization status.
@@ -238,20 +251,13 @@ func (c *MCPClient) CallTool(ctx context.Context, toolName string, arguments map
 		return nil, errors.New("MCP client is not alive")
 	}
 
-	// 等待初始化完成（如果尚未就绪）
+	// 索引仍在构建中：不阻塞等待 readyCh，立即返回 sentinel error，
+	// 让上层 (callMCPTool) 捕获后返回 fallback 提示，使 agent 切换到标准文件工具。
+	// 关键：!initialized 精确等价于"init 仍在构建中"（握手被 init 阻塞，initialized
+	// 只有在 init 完成后才会变 true），因此此处无需额外就绪检查。
 	if !c.initialized.Load() {
-		select {
-		case <-c.readyCh:
-			if c.initErr != nil {
-				return nil, fmt.Errorf("MCP client initialization failed: %w", c.initErr)
-			}
-			// initErr == nil 意味着 initialized == true
-		case <-ctx.Done():
-			return nil, fmt.Errorf("MCP client is still initializing: %w", ctx.Err())
-		}
+		return nil, fmt.Errorf("%w: %s", ErrIndexBuilding, IndexBuildingMessage)
 	}
-
-	// 以下为原有逻辑，保持不变
 	params := ToolCallParams{
 		Name:      toolName,
 		Arguments: arguments,

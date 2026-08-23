@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -158,6 +159,11 @@ func (t *RepoOperationsTool) callMCPTool(ctx context.Context, toolName string, a
 
 	result, err := t.mcpClient.CallTool(ctx, toolName, arguments)
 	if err != nil {
+		// 索引构建中：返回 fallback 提示文本（不返回 error），让 agent 切换到标准文件工具。
+		// 这样所有 repo 工具行为统一，不会抛 Go error 或走 skeleton/snippet 的降级路径。
+		if errors.Is(err, mcp.ErrIndexBuilding) {
+			return mcp.IndexBuildingMessage, nil
+		}
 		return "", fmt.Errorf("MCP 工具 %q 调用失败: %w", toolName, err)
 	}
 
