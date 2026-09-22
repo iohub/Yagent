@@ -1,7 +1,7 @@
 [
   {
     "name": "read_file",
-    "description": "Read file by line range (1-indexed) or entire file. LARGE FILE PROTECTION: (1) Files > 500MB — refused, use grep first. (2) Files > 10MB — should_read_entire_file=true blocked, use line ranges. (3) Entire reads capped at 500 lines / 10KB (excess truncated, truncated=true). (4) Files > 2MB trigger warning. Response: content, lines, file_size_bytes, total_lines, truncated, warning, read_mode; range reads also add start_line, end_line, lines_before_range, lines_after_range. ALWAYS check file_size_bytes and total_lines before further reads. Max 500 lines/call for range reads. should_read_entire_file=true only for files < 2MB, < 500 lines. For large files, use start_line_one_indexed + end_line_one_indexed_inclusive to paginate. If truncated=true, read remaining with line ranges.",
+    "description": "Read file by line range (1-indexed) or entire file. LARGE FILE PROTECTION: (1) Files > 500MB — refused, use grep first. (2) Files > 10MB — should_read_entire_file=true blocked, use line ranges. (3) Entire reads capped at 1000 lines / 10KB (excess truncated, truncated=true). (4) Files > 2MB trigger warning. Response: content, lines, file_size_bytes, total_lines, truncated, warning, read_mode; range reads also add start_line, end_line, lines_before_range, lines_after_range. ALWAYS check file_size_bytes and total_lines before further reads. Max 1000 lines/call for range reads. should_read_entire_file=true only for files < 2MB, < 1000 lines. For large files, use start_line_one_indexed + end_line_one_indexed_inclusive to paginate. If truncated=true, read remaining with line ranges.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -15,11 +15,11 @@
         },
         "end_line_one_indexed_inclusive": {
           "type": "integer",
-          "description": "1-indexed end line (inclusive). Max 500 lines from start_line. Required when should_read_entire_file=false. Default: start_line + 499."
+          "description": "1-indexed end line (inclusive). Max 1000 lines from start_line. Required when should_read_entire_file=false. Default: start_line + 999."
         },
         "should_read_entire_file": {
           "type": "boolean",
-          "description": "Read entire file. BLOCKED for > 10MB files. Capped at 500 lines / 10KB. Only for < 2MB, < 500 line files. Default: false."
+          "description": "Read entire file. BLOCKED for > 10MB files. Capped at 1000 lines / 10KB. Only for < 2MB, < 1000 line files. Default: false."
         },
         "explanation": {
           "type": "string",
