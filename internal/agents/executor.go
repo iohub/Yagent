@@ -491,16 +491,24 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 						LogDelegateCall(tc.Function.Name, agentName, tc.Function.Arguments)
 					}
 
-					// 为工具调用创建独立超时 context，防止工具卡死（如用户确认无限等待）
+					// 为工具调用创建独立超时 context，防止非交互工具卡死
 					// 同时 WithCancel 保证了父 context 取消时工具调用也会被取消
+					const defaultToolTimeout = 180 * time.Second
 					cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
-					toolCtx, toolCancel := context.WithTimeout(cancelCtx, 180*time.Second)
+					// 交互式等待用户输入的工具（ask_user_for_help）需要无限等待用户响应，
+					// 不能加 deadline，否则用户尚未响应调用就会被 context.DeadlineExceeded
+					// 自动取消；仅保留 WithCancel，任务中止时仍可经父 context 取消打断等待。
+					toolCtx := cancelCtx
+					toolCancel := cancelCtxCancel
+					if !isInteractiveUserTool(tc.Function.Name) {
+						toolCtx, toolCancel = context.WithTimeout(cancelCtx, defaultToolTimeout)
+					}
 					toolResult, callErr = t.Call(toolCtx, tc.Function.Arguments)
 					cancelCtxCancel()
 					toolCancel()
 					if callErr != nil {
 						if errors.Is(callErr, context.DeadlineExceeded) {
-							toolResult = fmt.Sprintf("Error: tool execution timed out after 120 seconds")
+							toolResult = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(defaultToolTimeout/time.Second))
 						} else {
 							toolResult = fmt.Sprintf("Error: %v", callErr)
 						}

@@ -1425,7 +1425,7 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 						return "", ctx.Err()
 					}
 
-					// 为工具调用添加超时保护（防止工具无限阻塞）
+					// 为工具调用添加超时保护（防止非交互工具无限阻塞）
 					// delegate_* 工具涉及子 agent 完整执行（多轮 LLM + 工具调用），需要更长的超时时间
 					// 使用 WithCancel 剥离父 context 的 deadline，再 WithTimeout 添加独立超时
 					// 这确保工具获得完整的超时时间，不受父 context 剩余时间限制
@@ -1434,7 +1434,14 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 						toolTimeout = 10 * time.Minute // 子 agent 需要更多时间完成多轮交互
 					}
 					cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
-					toolCtx, toolCancel := context.WithTimeout(cancelCtx, toolTimeout)
+					// 交互式等待用户输入的工具（ask_user_for_help）需要无限等待用户响应，
+					// 不能加 deadline，否则用户尚未响应调用就会被 context.DeadlineExceeded
+					// 自动取消；仅保留 WithCancel，任务中止时仍可经父 context 取消打断等待。
+					toolCtx := cancelCtx
+					toolCancel := cancelCtxCancel
+					if !isInteractiveUserTool(tc.Function.Name) {
+						toolCtx, toolCancel = context.WithTimeout(cancelCtx, toolTimeout)
+					}
 					toolResult, err = t.Call(toolCtx, tc.Function.Arguments)
 					cancelCtxCancel()
 					toolCancel()
@@ -1461,8 +1468,7 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 						}
 						// 对超时错误给出明确的超时时间提示
 						if errors.Is(err, context.DeadlineExceeded) {
-							timeoutMinutes := int(toolTimeout.Minutes())
-							toolResult = fmt.Sprintf("Error: tool execution timed out after %d seconds", timeoutMinutes*60)
+							toolResult = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(toolTimeout.Seconds()))
 						} else {
 							toolResult = fmt.Sprintf("Error: %s", errMsg)
 						}
