@@ -77,7 +77,7 @@ Use `create_file`, `search_replace_in_file`, `rename_file`, `delete_file`.
 
 ### Reading Strategy
 - **Range reads by default**: `should_read_entire_file=false` + `start_line_one_indexed` + `end_line_one_indexed_inclusive`.
-- **250 lines max per call**; paginate (e.g., [1,250], [251,500]).
+- **250 lines max per call**; paginate (e.g., [1,250], [251,500], [501,750], [751,1000]).
 - **Check `lines_after_range`** to plan further reads.
 - If `should_read_entire_file` errors (file >10MB), switch to line ranges immediately.
 
@@ -89,4 +89,4 @@ Use `create_file`, `search_replace_in_file`, `rename_file`, `delete_file`.
 ### Blocked
 - **>500MB**: Refused entirely — use grep/search.
 - **>10MB with `should_read_entire_file=true`**: Blocked — use line ranges.
-- **Entire read cap**: Max 500 lines / 10KB content.
+- **Entire read cap**: Max 1000 lines / 10KB content.

@@ -111,8 +111,8 @@ const MaxFileSizeForEntireRead = 10 * 1024 * 1024 // 10 MB
 const SoftFileSizeLimit = 2 * 1024 * 1024 // 2 MB
 
 // MaxEntireFileLines 是 entire file 模式下返回的最大行数，超出部分截断。
-// 最多返回 500 行。
-const MaxEntireFileLines = 500
+// 最多返回 1000 行。
+const MaxEntireFileLines = 1000
 
 // MaxEntireFileContentBytes 是 entire file 模式下返回内容的最大字节数。
 // 与 MaxEntireFileLines 双重保护：先触发的限制生效。
@@ -122,7 +122,7 @@ const MaxEntireFileContentBytes = 10 * 1024 // 10 KB
 const MaxLineLength = 1024 * 1024 // 1 MB per line
 
 // MaxLineRangeSize 是行范围读取的最大行数。
-const MaxLineRangeSize = 500
+const MaxLineRangeSize = 1000
 
 // treeEntry represents a single item in the directory tree output.
 type treeEntry struct {
