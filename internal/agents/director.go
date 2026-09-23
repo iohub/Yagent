@@ -22,6 +22,7 @@ import (
 	"codeactor/internal/memory"
 	"codeactor/internal/protocol"
 	"codeactor/internal/timeline"
+	"codeactor/internal/tokenutil"
 	"codeactor/internal/tools"
 )
 
@@ -105,6 +106,9 @@ type DirectorAgent struct {
 	// timeline 任务时间线记录器（7a：仅记录，不参与压缩/截断逻辑）。
 	// nil 表示创建失败已降级，所有记录路径必须先判空。
 	timeline *timeline.Recorder
+
+	// ultimateCompressionCount 本次 Run 内终极压缩触发次数（防死循环护栏）
+	ultimateCompressionCount int
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -865,6 +869,68 @@ func truncateTimelinePreview(s string, maxChars int) string {
 	return string(runes[:maxChars])
 }
 
+// applyUltimateCompression 上下文超限的最终手段: 从时间线重建全新输入。
+func (a *DirectorAgent) applyUltimateCompression(messages *[]llm.Message, threshold int) {
+	if a.ultimateCompressionCount >= 3 {
+		slog.Error("ultimate compression skipped: triggered too many times", "count", a.ultimateCompressionCount)
+		return
+	}
+	entries := a.timeline.Snapshot()
+	hasUserInput := false
+	timelineEntryCount := 0
+	for _, e := range entries {
+		if e.Kind == timeline.KindUserInput {
+			hasUserInput = true
+		}
+		if e.Kind == timeline.KindThoughtPlan {
+			timelineEntryCount++
+		}
+	}
+	if !hasUserInput {
+		slog.Warn("ultimate compression skipped: no user input in timeline")
+		return
+	}
+	// 预算 = threshold - 前导 system 消息 tokens - 安全余量, 下限 1000
+	systemTokens := 0
+	systemCount := 0
+	for _, m := range *messages {
+		if m.Role != llm.RoleSystem {
+			break
+		}
+		systemTokens += tokenutil.EstimateTokens(m.Content)
+		systemCount++
+	}
+	budget := threshold - systemTokens - 2000
+	if budget < 1000 {
+		budget = 1000
+	}
+	originalTokens := estimateMessagesTokens(*messages)
+	freshInput := a.timeline.BuildFreshInput(budget)
+	newMessages := make([]llm.Message, 0, systemCount+1)
+	newMessages = append(newMessages, (*messages)[:systemCount]...)
+	newMessages = append(newMessages, llm.Message{Role: llm.RoleUser, Content: freshInput})
+	dropped := len(*messages) - systemCount
+	*messages = newMessages
+	a.ultimateCompressionCount++
+	newTokens := estimateMessagesTokens(*messages)
+	if a.Publisher != nil {
+		a.Publisher.Publish("context_ultimate_compressed", map[string]interface{}{
+			"task_id":          a.taskID,
+			"dropped_messages": dropped,
+			"original_tokens":  originalTokens,
+			"new_tokens":       newTokens,
+			"timeline_entries": timelineEntryCount,
+			"input_preview":    truncateTimelinePreview(freshInput, timelinePreviewMaxChars),
+		}, a.Name())
+	}
+	slog.Warn("ultimate context compression applied: history rebuilt from timeline",
+		"dropped_messages", dropped, "original_tokens", originalTokens,
+		"new_tokens", newTokens, "timeline_entries", timelineEntryCount)
+	if newTokens > threshold {
+		slog.Warn("messages still over threshold after ultimate compression", "tokens", newTokens, "threshold", threshold)
+	}
+}
+
 // createRolloutWriter 为 delegate 创建 Rollout 写入器
 // 返回 nil 表示创建失败（失败时仅警告，不阻断执行）
 func (a *DirectorAgent) createRolloutWriter(agentName, task string) *memory.RolloutWriter {
@@ -1249,6 +1315,11 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 						"extracted_blocks", emergencyStats.ExtractedBlocks,
 						"kept_blocks", emergencyStats.KeptBlocks,
 						"summarized_by_llm", emergencyStats.SummarizedByLLM)
+				}
+
+				// 终极压缩: 紧急压缩后仍超限 → 丢弃全部历史, 用时间线(用户原始输入+思考计划)重建全新输入继续任务
+				if estimateMessagesTokens(messages) > threshold && a.timeline != nil {
+					a.applyUltimateCompression(&messages, threshold)
 				}
 			}
 
