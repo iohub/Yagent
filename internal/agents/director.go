@@ -20,6 +20,8 @@ import (
 	"codeactor/internal/knowledge"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
+	"codeactor/internal/protocol"
+	"codeactor/internal/timeline"
 	"codeactor/internal/tools"
 )
 
@@ -99,6 +101,10 @@ type DirectorAgent struct {
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 	// taskID 当前任务的 taskID
 	taskID string
+
+	// timeline 任务时间线记录器（7a：仅记录，不参与压缩/截断逻辑）。
+	// nil 表示创建失败已降级，所有记录路径必须先判空。
+	timeline *timeline.Recorder
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
@@ -813,6 +819,52 @@ func (a *DirectorAgent) SetTaskID(taskID string) {
 	a.taskID = taskID
 }
 
+// timelinePreviewMaxChars 时间线事件 Preview 字段的最大字符数（按 rune 计）
+const timelinePreviewMaxChars = 300
+
+// recordThoughtPlan 将 assistant 响应文本中的 Thought & Plan 块逐条写入任务时间线，
+// 并发布 director_timeline_recorded 事件。仅做记录（7a），不改变任何压缩/截断逻辑。
+// timeline 记录器未初始化（创建失败已降级）时直接返回，不阻断主流程。
+func (a *DirectorAgent) recordThoughtPlan(content string) {
+	if a.timeline == nil || content == "" {
+		return
+	}
+	for _, block := range extractThoughtAndPlanBlocks(content) {
+		entry, err := a.timeline.Record(timeline.KindThoughtPlan, block)
+		if err != nil {
+			slog.Warn("timeline: failed to record thought/plan block", "error", err)
+			continue
+		}
+		a.publishTimelineRecorded(timeline.KindThoughtPlan, entry)
+	}
+}
+
+// publishTimelineRecorded 发布 director_timeline_recorded 事件（照现有 Publisher 范例形态）。
+// data 组装遵循 protocol.DirectorTimelineRecordedData 字段；调用方须保证 a.timeline 非 nil。
+func (a *DirectorAgent) publishTimelineRecorded(kind timeline.Kind, entry timeline.Entry) {
+	if a.Publisher == nil || a.timeline == nil {
+		return
+	}
+	a.Publisher.Publish("director_timeline_recorded", protocol.DirectorTimelineRecordedData{
+		TaskID:    a.taskID,
+		Kind:      string(kind),
+		Seq:       entry.Seq,
+		Timestamp: entry.Timestamp,
+		Preview:   truncateTimelinePreview(entry.Content, timelinePreviewMaxChars),
+		Path:      a.timeline.Path(),
+	}, a.Name())
+}
+
+// truncateTimelinePreview 按字符数（rune）截断文本用于时间线事件内容预览，超长部分直接丢弃。
+// 注意：与 consolidation_worker.go 中按字节截断的 truncatePreview 语义不同，二者不可混用。
+func truncateTimelinePreview(s string, maxChars int) string {
+	runes := []rune(s)
+	if len(runes) <= maxChars {
+		return s
+	}
+	return string(runes[:maxChars])
+}
+
 // createRolloutWriter 为 delegate 创建 Rollout 写入器
 // 返回 nil 表示创建失败（失败时仅警告，不阻断执行）
 func (a *DirectorAgent) createRolloutWriter(agentName, task string) *memory.RolloutWriter {
@@ -908,6 +960,31 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 	// 执行检测机制：每次任务开始时重置委派状态，使检测基于"本次任务是否委派"
 	a.hasDelegated = false
 	a.nonDelegationPrompts = 0
+
+	// ═══════ [7a] 任务时间线记录：惰性创建 recorder（taskID 已由 SetTaskID 在 Run 前确定） ═══════
+	// 创建失败仅告警并置 nil 降级，不阻断主流程；Run 退出时统一 Close。
+	if a.timeline != nil {
+		// 防御：上一轮 Run 未清理的 recorder 先关闭（Close 幂等）
+		_ = a.timeline.Close()
+		a.timeline = nil
+	}
+	if rec, recErr := timeline.NewRecorder(a.taskID); recErr != nil {
+		slog.Warn("timeline: failed to create recorder, timeline recording disabled",
+			"task_id", a.taskID, "error", recErr)
+	} else {
+		a.timeline = rec
+		defer func() {
+			if closeErr := a.timeline.Close(); closeErr != nil {
+				slog.Warn("timeline: failed to close recorder", "error", closeErr)
+			}
+			a.timeline = nil
+		}()
+		if entry, recErr := a.timeline.Record(timeline.KindUserInput, input); recErr != nil {
+			slog.Warn("timeline: failed to record user input", "error", recErr)
+		} else {
+			a.publishTimelineRecorded(timeline.KindUserInput, entry)
+		}
+	}
 
 	// 从 llmClient 刷新引擎，确保 TUI 中切换模型后立即生效
 	if a.llmClient != nil {
@@ -1361,6 +1438,9 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 			Reasoning: choice.Reasoning,
 			ToolCalls: choice.ToolCalls,
 		})
+
+		// [7a] 时间线：记录 assistant 响应中的 Thought & Plan 块（仅记录，不影响压缩/截断）
+		a.recordThoughtPlan(choice.Content)
 
 		// 执行检测机制：若 director 未委派任何 agent 就打算以纯文本结束任务，
 		// 以用户角色注入简练英文消息，强制要求其必须 delegate 一个 agent 完成任务。
