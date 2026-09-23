@@ -377,6 +377,63 @@ event_types:
         description: "任务摘要"
         required: false
 
+  # ---- Director 时间线与上下文压缩事件 ----
+  - name: director_timeline_recorded
+    description: "Director 时间线新增一条记录"
+    fields:
+      - name: task_id
+        type: string
+        description: "任务 ID"
+        required: true
+      - name: kind
+        type: string
+        description: "时间线条目种类（如工具调用、步骤）"
+        required: true
+      - name: seq
+        type: number
+        description: "时间线序号（单调递增，Go 侧为 int64）"
+        required: true
+      - name: timestamp
+        type: string
+        description: "事件发生时间（RFC3339，Go 侧为 time.Time）"
+        required: true
+      - name: preview
+        type: string
+        description: "内容截断预览（建议不超过 300 字符）"
+        required: true
+      - name: path
+        type: string
+        description: "关联路径（文件或目录）"
+        required: true
+
+  - name: context_ultimate_compressed
+    description: "触发终极压缩、消息历史被时间线重建"
+    fields:
+      - name: task_id
+        type: string
+        description: "任务 ID"
+        required: true
+      - name: dropped_messages
+        type: number
+        description: "被丢弃的消息数量"
+        required: true
+      - name: original_tokens
+        type: number
+        description: "压缩前的消息 token 估算值"
+        required: true
+      - name: new_tokens
+        type: number
+        description: "重建后的消息 token 估算值"
+        required: true
+      - name: timeline_entries
+        type: number
+        description: "参与重建的时间线条目数"
+        required: true
+      - name: input_preview
+        type: string
+        description: "原始用户输入内容预览"
+        required: true
+
 # ==============================================================================
 # WebSocket 消息包装（传输层协议）
 # ==============================================================================

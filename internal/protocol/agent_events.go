@@ -7,29 +7,32 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ===== 事件类型常量 =====
 const (
-	EventTypeModelInfo           EventType = "model_info"
-	EventTypeLlmCallStart        EventType = "llm_call_start"
-	EventTypeLlmCallEnd          EventType = "llm_call_end"
-	EventTypeAiResponse          EventType = "ai_response"
-	EventTypeToolCallStart       EventType = "tool_call_start"
-	EventTypeToolCallResult      EventType = "tool_call_result"
-	EventTypeToolCallError       EventType = "tool_call_error"
-	EventTypeContextLoaded       EventType = "context_loaded"
-	EventTypeCommitContextLoaded EventType = "commit_context_loaded"
-	EventTypeAiStreamStart       EventType = "ai_stream_start"
-	EventTypeAiChunk             EventType = "ai_chunk"
-	EventTypeAiStreamEnd         EventType = "ai_stream_end"
-	EventTypeUserHelpNeeded      EventType = "user_help_needed"
-	EventTypeUserHelpResponse    EventType = "user_help_response"
-	EventTypeConversationError   EventType = "conversation_error"
-	EventTypeConversationResult  EventType = "conversation_result"
-	EventTypeStatusUpdate        EventType = "status_update"
-	EventTypeThinking            EventType = "thinking"
-	EventTypeTaskComplete        EventType = "task_complete"
+	EventTypeModelInfo                 EventType = "model_info"
+	EventTypeLlmCallStart              EventType = "llm_call_start"
+	EventTypeLlmCallEnd                EventType = "llm_call_end"
+	EventTypeAiResponse                EventType = "ai_response"
+	EventTypeToolCallStart             EventType = "tool_call_start"
+	EventTypeToolCallResult            EventType = "tool_call_result"
+	EventTypeToolCallError             EventType = "tool_call_error"
+	EventTypeContextLoaded             EventType = "context_loaded"
+	EventTypeCommitContextLoaded       EventType = "commit_context_loaded"
+	EventTypeAiStreamStart             EventType = "ai_stream_start"
+	EventTypeAiChunk                   EventType = "ai_chunk"
+	EventTypeAiStreamEnd               EventType = "ai_stream_end"
+	EventTypeUserHelpNeeded            EventType = "user_help_needed"
+	EventTypeUserHelpResponse          EventType = "user_help_response"
+	EventTypeConversationError         EventType = "conversation_error"
+	EventTypeConversationResult        EventType = "conversation_result"
+	EventTypeStatusUpdate              EventType = "status_update"
+	EventTypeThinking                  EventType = "thinking"
+	EventTypeTaskComplete              EventType = "task_complete"
+	EventTypeDirectorTimelineRecorded  EventType = "director_timeline_recorded"
+	EventTypeContextUltimateCompressed EventType = "context_ultimate_compressed"
 )
 
 // EventType 是事件类型的字符串枚举
@@ -44,9 +47,9 @@ func (e EventType) String() string { return string(e) }
 type InteractionType string
 
 const (
-	InteractionConfirm InteractionType = "confirm"  // 二元确认（是/否）
-	InteractionSelect  InteractionType = "select"   // 多选一
-	InteractionInput   InteractionType = "input"    // 自由文本输入
+	InteractionConfirm InteractionType = "confirm" // 二元确认（是/否）
+	InteractionSelect  InteractionType = "select"  // 多选一
+	InteractionInput   InteractionType = "input"   // 自由文本输入
 )
 
 // String 返回交互类型的字符串表示
@@ -133,24 +136,24 @@ type AiStreamEndData struct {
 
 // UserHelpNeededData 需要用户帮助/确认
 type UserHelpNeededData struct {
-	Question        string          `json:"question"`                    // 问题文本
-	Context         string          `json:"context,omitempty"`           // 附加上下文
-	InteractionType InteractionType `json:"interaction_type,omitempty"`  // 交互模式（为空时自动推断）
-	Options         []string        `json:"options,omitempty"`           // 选项列表
-	DefaultValue    string          `json:"default_value,omitempty"`     // 默认值/预填文本
-	Placeholder     string          `json:"placeholder,omitempty"`       // 输入框占位提示
-	AllowCustom     bool            `json:"allow_custom,omitempty"`      // 允许自定义输入（Select模式）
-	RequestID       string          `json:"request_id,omitempty"`        // 请求唯一ID
+	Question        string          `json:"question"`                   // 问题文本
+	Context         string          `json:"context,omitempty"`          // 附加上下文
+	InteractionType InteractionType `json:"interaction_type,omitempty"` // 交互模式（为空时自动推断）
+	Options         []string        `json:"options,omitempty"`          // 选项列表
+	DefaultValue    string          `json:"default_value,omitempty"`    // 默认值/预填文本
+	Placeholder     string          `json:"placeholder,omitempty"`      // 输入框占位提示
+	AllowCustom     bool            `json:"allow_custom,omitempty"`     // 允许自定义输入（Select模式）
+	RequestID       string          `json:"request_id,omitempty"`       // 请求唯一ID
 }
 
 // UserHelpResponseData 用户回复了帮助请求
 type UserHelpResponseData struct {
-	Response        string          `json:"response"`                    // 用户的回答文本
-	Approved        bool            `json:"approved,omitempty"`          // 是否批准（兼容旧字段）
-	InteractionType InteractionType `json:"interaction_type,omitempty"`  // 回传交互类型
-	IsCustom        bool            `json:"is_custom,omitempty"`         // 是否为自定义输入
-	Cancelled       bool            `json:"cancelled,omitempty"`         // 是否取消
-	RequestID       string          `json:"request_id,omitempty"`        // 匹配请求ID
+	Response        string          `json:"response"`                   // 用户的回答文本
+	Approved        bool            `json:"approved,omitempty"`         // 是否批准（兼容旧字段）
+	InteractionType InteractionType `json:"interaction_type,omitempty"` // 回传交互类型
+	IsCustom        bool            `json:"is_custom,omitempty"`        // 是否为自定义输入
+	Cancelled       bool            `json:"cancelled,omitempty"`        // 是否取消
+	RequestID       string          `json:"request_id,omitempty"`       // 匹配请求ID
 }
 
 // ConversationErrorData 对话处理错误
@@ -184,6 +187,26 @@ type TaskCompleteData struct {
 	Summary string `json:"summary,omitempty"` // 任务摘要
 }
 
+// DirectorTimelineRecordedData Director 时间线新增一条记录
+type DirectorTimelineRecordedData struct {
+	TaskID    string    `json:"task_id"`   // 任务 ID
+	Kind      string    `json:"kind"`      // 时间线条目种类（如工具调用、步骤）
+	Seq       int64     `json:"seq"`       // 时间线序号（单调递增）
+	Timestamp time.Time `json:"timestamp"` // 事件发生时间
+	Preview   string    `json:"preview"`   // 内容截断预览（建议不超过 300 字符）
+	Path      string    `json:"path"`      // 关联路径（文件或目录）
+}
+
+// ContextUltimateCompressedData 触发终极压缩、消息历史被时间线重建
+type ContextUltimateCompressedData struct {
+	TaskID          string `json:"task_id"`          // 任务 ID
+	DroppedMessages int    `json:"dropped_messages"` // 被丢弃的消息数量
+	OriginalTokens  int    `json:"original_tokens"`  // 压缩前的消息 token 估算值
+	NewTokens       int    `json:"new_tokens"`       // 重建后的消息 token 估算值
+	TimelineEntries int    `json:"timeline_entries"` // 参与重建的时间线条目数
+	InputPreview    string `json:"input_preview"`    // 原始用户输入内容预览
+}
+
 // AgentEventEnvelope 是 WebSocket 传输的统一消息包裹
 type AgentEventEnvelope struct {
 	Type    string      `json:"type"`
@@ -196,25 +219,27 @@ type AgentEventEnvelope struct {
 
 // EventTypeRegistry 事件类型到其结构的映射
 var EventTypeRegistry = map[EventType]func() interface{}{
-	EventTypeModelInfo:           func() interface{} { return &ModelInfoData{} },
-	EventTypeLlmCallStart:        func() interface{} { return &LlmCallStartData{} },
-	EventTypeLlmCallEnd:          func() interface{} { return &LlmCallEndData{} },
-	EventTypeAiResponse:          func() interface{} { return &AiResponseData{} },
-	EventTypeToolCallStart:       func() interface{} { return &ToolCallStartData{} },
-	EventTypeToolCallResult:      func() interface{} { return &ToolCallResultData{} },
-	EventTypeToolCallError:       func() interface{} { return &ToolCallErrorData{} },
-	EventTypeContextLoaded:       func() interface{} { return &ContextLoadedData{} },
-	EventTypeCommitContextLoaded: func() interface{} { return &CommitContextLoadedData{} },
-	EventTypeAiStreamStart:       func() interface{} { return &AiStreamStartData{} },
-	EventTypeAiChunk:             func() interface{} { return &AiChunkData{} },
-	EventTypeAiStreamEnd:         func() interface{} { return &AiStreamEndData{} },
-	EventTypeUserHelpNeeded:      func() interface{} { return &UserHelpNeededData{} },
-	EventTypeUserHelpResponse:    func() interface{} { return &UserHelpResponseData{} },
-	EventTypeConversationError:   func() interface{} { return &ConversationErrorData{} },
-	EventTypeConversationResult:  func() interface{} { return &ConversationResultData{} },
-	EventTypeStatusUpdate:        func() interface{} { return &StatusUpdateData{} },
-	EventTypeThinking:            func() interface{} { return &ThinkingData{} },
-	EventTypeTaskComplete:        func() interface{} { return &TaskCompleteData{} },
+	EventTypeModelInfo:                 func() interface{} { return &ModelInfoData{} },
+	EventTypeLlmCallStart:              func() interface{} { return &LlmCallStartData{} },
+	EventTypeLlmCallEnd:                func() interface{} { return &LlmCallEndData{} },
+	EventTypeAiResponse:                func() interface{} { return &AiResponseData{} },
+	EventTypeToolCallStart:             func() interface{} { return &ToolCallStartData{} },
+	EventTypeToolCallResult:            func() interface{} { return &ToolCallResultData{} },
+	EventTypeToolCallError:             func() interface{} { return &ToolCallErrorData{} },
+	EventTypeContextLoaded:             func() interface{} { return &ContextLoadedData{} },
+	EventTypeCommitContextLoaded:       func() interface{} { return &CommitContextLoadedData{} },
+	EventTypeAiStreamStart:             func() interface{} { return &AiStreamStartData{} },
+	EventTypeAiChunk:                   func() interface{} { return &AiChunkData{} },
+	EventTypeAiStreamEnd:               func() interface{} { return &AiStreamEndData{} },
+	EventTypeUserHelpNeeded:            func() interface{} { return &UserHelpNeededData{} },
+	EventTypeUserHelpResponse:          func() interface{} { return &UserHelpResponseData{} },
+	EventTypeConversationError:         func() interface{} { return &ConversationErrorData{} },
+	EventTypeConversationResult:        func() interface{} { return &ConversationResultData{} },
+	EventTypeStatusUpdate:              func() interface{} { return &StatusUpdateData{} },
+	EventTypeThinking:                  func() interface{} { return &ThinkingData{} },
+	EventTypeTaskComplete:              func() interface{} { return &TaskCompleteData{} },
+	EventTypeDirectorTimelineRecorded:  func() interface{} { return &DirectorTimelineRecordedData{} },
+	EventTypeContextUltimateCompressed: func() interface{} { return &ContextUltimateCompressedData{} },
 }
 
 // RenderHint 包含前端渲染提示
@@ -359,21 +384,21 @@ func isBooleanPair(options []string) bool {
 
 	// 标准化布尔值集合
 	booleanValues := map[string]bool{
-		"yes":    true,
-		"no":     true,
-		"y":      true,
-		"n":      true,
-		"true":   true,
-		"false":  true,
-		"allow":  true,
-		"deny":   true,
+		"yes":     true,
+		"no":      true,
+		"y":       true,
+		"n":       true,
+		"true":    true,
+		"false":   true,
+		"allow":   true,
+		"deny":    true,
 		"approve": true,
-		"reject": true,
-		"ok":     true,
-		"cancel": true,
+		"reject":  true,
+		"ok":      true,
+		"cancel":  true,
 		"confirm": true,
-		"1":      true,
-		"0":      true,
+		"1":       true,
+		"0":       true,
 	}
 
 	a := strings.ToLower(strings.TrimSpace(options[0]))
