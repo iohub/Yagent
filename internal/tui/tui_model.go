@@ -704,6 +704,10 @@ type model struct {
 	timelineFullscreenFocus  string            // 全屏模式焦点: "list" 或 "detail" (默认 "list")
 	timelineDetailOffsets    []int             // 每个条目在拼接详情中的行偏移量
 
+	// ── Director 时间线（历史补载）──
+	directorTimelinePath   string // Director 时间线 JSONL 文件路径（由 director_timeline_recorded 事件携带）
+	directorTimelineLoaded bool   // 是否已尝试过补载 Director 历史时间线（无论成败仅尝试一次）
+
 	// ── 可配置快捷键映射表 ──
 	// editKeyMap 将用户配置的编辑模式快捷键映射为内部标准键名
 	// key: 用户配置的按键, value: 内部标准键名

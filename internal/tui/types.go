@@ -90,6 +90,10 @@ const (
 	TimelineKindLLMCall                      // LLM 調用
 	TimelineKindThinking                     // Agent 思考内容
 	TimelineKindContextEvent                 // 上下文事件（壓縮、commit載等）
+
+	// Director 持久化時間線回放條目（來自 director_timeline_recorded 事件或歷史補載）
+	TimelineKindDirectorUserInput  // 用戶原始輸入
+	TimelineKindDirectorThoughtPlan // Thought & Plan 塊
 )
 
 // TimelineEntry表示時間線面板中的一個執行條目

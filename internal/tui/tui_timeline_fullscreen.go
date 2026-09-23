@@ -365,6 +365,13 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 		} else {
 			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
 		}
+	case TimelineKindDirectorUserInput, TimelineKindDirectorThoughtPlan:
+		if entry.Detail != "" {
+			sb.WriteString("  ")
+			sb.WriteString(entry.Detail)
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
+		}
 	default:
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (unknown entry type)"))
 	}
@@ -423,6 +430,10 @@ func timelineKindLabel(kind TimelineKind) string {
 		return "[Tn]"
 	case TimelineKindContextEvent:
 		return "[C]"
+	case TimelineKindDirectorUserInput:
+		return "[U]"
+	case TimelineKindDirectorThoughtPlan:
+		return "[TP]"
 	default:
 		return "[?]"
 	}
@@ -737,10 +748,17 @@ func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string 
 		} else {
 			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
 		}
+	case TimelineKindDirectorUserInput, TimelineKindDirectorThoughtPlan:
+		if entry.Detail != "" {
+			sb.WriteString("  ")
+			sb.WriteString(entry.Detail)
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no details available)"))
+		}
 	default:
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (unknown entry type)"))
 	}
-	
+
 	return sb.String()
 }
 

@@ -2,10 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"codeactor/internal/timeline"
 	"codeactor/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
@@ -596,6 +599,8 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.timelineFullscreenMode = true
 			m.timelineExpanded = false
 			m.timelineFullscreenFocus = "list"
+			// 首次进入时补载 Director 持久化时间线中的历史条目
+			m.loadDirectorTimelineIfNeeded()
 			if len(m.timelineEntries) > 0 {
 				m.timelineFullscreenCursor = len(m.timelineEntries) - 1
 			} else {
@@ -742,6 +747,8 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.timelineFullscreenMode = true
 			m.timelineExpanded = false
 			m.timelineFullscreenFocus = "list"
+			// 首次进入时补载 Director 持久化时间线中的历史条目
+			m.loadDirectorTimelineIfNeeded()
 			if len(m.timelineEntries) > 0 {
 				m.timelineFullscreenCursor = len(m.timelineEntries) - 1
 			} else {
@@ -902,5 +909,60 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.invalidateFooterCache()
 		// 启动或重置补全防抖
 		return m, tea.Batch(inputCmd, m.scheduleAutocomplete())
+	}
+}
+
+// loadDirectorTimelineIfNeeded 首次进入全屏时间线时，补载 Director 持久化时间线
+// （director_timeline_recorded 事件携带的 JSONL 路径）中尚未出现在 m.timelineEntries
+// 的历史条目。条目 ID 遵循事件处理时的 "director-tl-<Seq>" 前缀约定，去重后按
+// 时间序归位（SliceStable，保持既有排序约定）。无论成败仅尝试一次；失败仅记
+// WARN 并忽略，不影响既有时间线渲染。
+func (m *model) loadDirectorTimelineIfNeeded() {
+	if m.directorTimelineLoaded || m.directorTimelinePath == "" {
+		return
+	}
+	m.directorTimelineLoaded = true
+
+	entries, err := timeline.LoadEntries(m.directorTimelinePath)
+	if err != nil {
+		slog.Warn("加载 Director 时间线失败", "component", "tui", "path", m.directorTimelinePath, "error", err)
+		return
+	}
+
+	// 已有条目 ID 集合，用于去重（比对 "director-tl-%d" 前缀 ID）
+	existing := make(map[string]struct{}, len(m.timelineEntries))
+	for _, e := range m.timelineEntries {
+		existing[e.ID] = struct{}{}
+	}
+
+	added := false
+	for _, e := range entries {
+		id := fmt.Sprintf("director-tl-%d", e.Seq)
+		if _, ok := existing[id]; ok {
+			continue
+		}
+		kind := TimelineKindDirectorThoughtPlan
+		name := "Thought & Plan"
+		if e.Kind == timeline.KindUserInput {
+			kind = TimelineKindDirectorUserInput
+			name = "用户原始输入"
+		}
+		m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+			ID:        id,
+			Kind:      kind,
+			Timestamp: e.Timestamp,
+			Status:    ToolStatusSuccess,
+			Name:      name,
+			Detail:    e.Content,
+		})
+		added = true
+	}
+
+	if added {
+		// 补载的历史条目时间戳较早，整体按时间序归位，保持时间线有序
+		sort.SliceStable(m.timelineEntries, func(i, j int) bool {
+			return m.timelineEntries[i].Timestamp.Before(m.timelineEntries[j].Timestamp)
+		})
+		m.timelineCacheKey = ""
 	}
 }

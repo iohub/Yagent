@@ -929,6 +929,13 @@ func timelineNodeForStatus(e *TimelineEntry, status ToolStatus) string {
 	if e.Kind == TimelineKindContextEvent {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("⊛") // magenta asterisk
 	}
+	// Director 持久化时间线回放条目：用户输入用输入类图标，Thought & Plan 用思考类图标
+	if e.Kind == TimelineKindDirectorUserInput {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true).Render("⌨") // blue keyboard (user input)
+	}
+	if e.Kind == TimelineKindDirectorThoughtPlan {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("🧠") // purple brain (thought)
+	}
 	// Tool call
 	switch status {
 	case ToolStatusRunning:

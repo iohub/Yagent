@@ -45,6 +45,10 @@ type sessionTab struct {
 	timelineCache    string
 	timelineCacheKey string
 
+	// Director 时间线（历史补载状态，与会话一一对应）
+	directorTimelinePath   string
+	directorTimelineLoaded bool
+
 	// 工具/AI 流式追踪
 	toolCallEntries          map[string]*ToolEntry
 	llmCallActiveEntries     map[string]int

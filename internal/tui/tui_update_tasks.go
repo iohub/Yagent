@@ -47,7 +47,12 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		// 若不穿透，任务完成弹窗（TaskCompleteDialog）抢先弹出后，最后一条
 		// ai_response 会被丢弃，导致最后一条 agent 消息停留在 ai_stream
 		// 纯文本状态、无法渲染为 markdown。
-		if msg.event.Type == "ai_stream_end" || msg.event.Type == "ai_response" {
+		// director_timeline_recorded / context_ultimate_compressed 同理是
+		// "纯记录"类事件：只向 timelineEntries 追加条目/更新路径字段，不弹窗；
+		// 若被丢弃，director_timeline_recorded 携带的 Path 会丢失，导致全屏
+		// 时间线的历史补载永远无法触发。
+		if msg.event.Type == "ai_stream_end" || msg.event.Type == "ai_response" ||
+			msg.event.Type == "director_timeline_recorded" || msg.event.Type == "context_ultimate_compressed" {
 			// 穿透，继续向下处理
 		} else if m.taskRunning {
 			return m, listenForEvents(m.eventCh)
@@ -686,6 +691,87 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			})
 			m.timelineCacheKey = ""
 			m.logEntries = append(m.logEntries, entry)
+			m.viewportDirty = true
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+		}
+		return m, listenForEvents(m.eventCh)
+	}
+
+	// Handle director_timeline_recorded — Director 持久化时间线新增记录
+	// （用户原始输入 / Thought & Plan 块），追加为全屏时间线可视条目。
+	if msg.event.Type == "director_timeline_recorded" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			seq := parseEventInt(contentMap["seq"], 0)
+			kind, _ := contentMap["kind"].(string)
+			preview, _ := contentMap["preview"].(string)
+			path, _ := contentMap["path"].(string)
+
+			// 记录最近一次的时间线文件路径，供全屏时间线的历史补载使用
+			if path != "" {
+				m.directorTimelinePath = path
+			}
+
+			// 时间戳经 JSON 序列化后为 RFC3339 字符串，解析失败回退到事件自身时间戳
+			ts := msg.event.Timestamp
+			if tsStr, ok := contentMap["timestamp"].(string); ok {
+				if parsed, err := time.Parse(time.RFC3339, tsStr); err == nil {
+					ts = parsed
+				}
+			}
+
+			entryKind := TimelineKindDirectorThoughtPlan
+			entryName := "Thought & Plan"
+			if kind == "user_input" {
+				entryKind = TimelineKindDirectorUserInput
+				entryName = "用户原始输入"
+			}
+
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        fmt.Sprintf("director-tl-%d", seq),
+				Kind:      entryKind,
+				Timestamp: ts,
+				Status:    ToolStatusSuccess,
+				Name:      entryName,
+				Detail:    preview,
+			})
+			m.timelineCacheKey = ""
+		}
+		return m, listenForEvents(m.eventCh)
+	}
+
+	// Handle context_ultimate_compressed — 终极上下文压缩（消息历史被时间线重建）。
+	// 复用 TimelineKindContextEvent：语义即"上下文事件"，与 context_compressed/
+	// commit_context_loaded 一致，图标/标签/详情渲染链路已完整支持。
+	// 同时仿照 context_compressed 惯例写一条 verbose 日志，便于在主视图留痕。
+	if msg.event.Type == "context_ultimate_compressed" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			dropped := parseEventInt(contentMap["dropped_messages"], 0)
+			origTokens := parseEventInt(contentMap["original_tokens"], 0)
+			newTokens := parseEventInt(contentMap["new_tokens"], 0)
+			tlEntries := parseEventInt(contentMap["timeline_entries"], 0)
+			inputPreview, _ := contentMap["input_preview"].(string)
+
+			detail := fmt.Sprintf("已丢弃 %d 条消息，按 %d 条时间线记录重建输入（%d→%d tokens）", dropped, tlEntries, origTokens, newTokens)
+			if inputPreview != "" {
+				detail += "\n" + inputPreview
+			}
+
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        fmt.Sprintf("ctx_ultimate_%d", msg.event.Timestamp.UnixNano()),
+				Kind:      TimelineKindContextEvent,
+				Timestamp: msg.event.Timestamp,
+				Status:    ToolStatusSuccess,
+				Name:      "终极上下文压缩",
+				Detail:    detail,
+			})
+			m.timelineCacheKey = ""
+			m.logEntries = append(m.logEntries, logEntry{
+				timestamp: msg.event.Timestamp,
+				eventType: "context_ultimate_compressed",
+				from:      msg.event.From,
+				content:   fmt.Sprintf("🗜️ 终极上下文压缩: 丢弃 %d 条消息，按 %d 条时间线记录重建（%d→%d tokens）", dropped, tlEntries, origTokens, newTokens),
+				isVerbose: true,
+			})
 			m.viewportDirty = true
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 		}
