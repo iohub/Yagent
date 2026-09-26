@@ -20,6 +20,7 @@ import (
 	"codeactor/internal/knowledge"
 	"codeactor/internal/llm"
 	"codeactor/internal/memory"
+	"codeactor/internal/thinklink"
 	"codeactor/internal/tools"
 )
 
@@ -97,6 +98,9 @@ type DirectorAgent struct {
 
 	// EnhancedCommander 增强型配置
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
+	// thinkLink 终极压缩支撑存储：实时记录用户原始输入与 Director 的 Thought & Plan 块，
+	// 两级常规压缩不足时用于重建上下文（与 DirectorAgent 同生命周期，跨任务累积）
+	thinkLink *thinklink.Store
 	// taskID 当前任务的 taskID
 	taskID string
 }
@@ -480,6 +484,9 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 
 		// EnhancedCommander 配置
 		EnhancedCommanderCfg: cfg.EnhancedCommander,
+
+		// thinklink 存储：容量上限 0 = 使用包默认值（200 条）
+		thinkLink: thinklink.NewStore(0),
 	}
 
 	// 计算并记录 Tool Definitions 哈希，用于验证 Prompt Cache 一致性
@@ -920,6 +927,14 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 	}
 	defer func() { a.currentMemory = nil }()
 
+	// thinklink: 记录用户原始输入（供终极压缩重建上下文；任务开始时步数为 0，
+	// 重复提交相同内容会被自动去重）
+	if a.thinkLink != nil {
+		if entry, added := a.thinkLink.AddUserInput(input, 0); added {
+			a.publishThinkLinkEntry(entry)
+		}
+	}
+
 	if mem != nil {
 		// Check if the last message is the same as input to avoid duplication
 		// because handleChatMessage might have already added it.
@@ -1173,6 +1188,28 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 						"kept_blocks", emergencyStats.KeptBlocks,
 						"summarized_by_llm", emergencyStats.SummarizedByLLM)
 				}
+
+				// 终极压缩（第三级）：两级常规压缩处理后仍超限（含紧急压缩出错/未生效、
+				// 或 system 消息本身过大导致强制截断失效的情况）时，
+				// 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文，
+				// 将 messages 重置为 [system..., 单条 user 重建消息]。
+				// 压缩发生在当前步骤内部，不额外消耗 maxSteps。
+				if a.EnhancedCommanderCfg.EnableUltimateCompression && a.thinkLink != nil && estimateMessagesTokens(messages) > threshold {
+					newMessages, ultStats := a.applyUltimateCompression(messages, threshold)
+					messages = newMessages
+					if a.Publisher != nil && ultStats != nil {
+						a.Publisher.Publish("context_ultimate_compressed", map[string]interface{}{
+							"original_tokens":   ultStats.OriginalTokens,
+							"compressed_tokens": ultStats.CompressedTokens,
+							"saved_tokens":      ultStats.SavedTokens,
+							"total_plans":       ultStats.TotalPlans,
+							"kept_plans":        ultStats.KeptPlans,
+							"user_inputs":       ultStats.UserInputs,
+							"truncated":         ultStats.Truncated,
+							"detail":            "终极压缩(ultimate compression)已触发,上下文已重置为用户原始输入 + Thought & Plan 块",
+						}, a.Name())
+					}
+				}
 			}
 
 			slog.Debug("DirectorAgent calling LLM", "step", i, "messages", messages)
@@ -1346,6 +1383,16 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 
 		if mem != nil {
 			mem.AddAssistantMessage(choice.Content, convertToolCalls(choice.ToolCalls))
+		}
+
+		// thinklink: 提取本轮回复中的 Thought & Plan 块并实时保存（供终极压缩重建上下文）。
+		// 复用 emergency_compressor.go 的包级提取函数（thoughtAndPlanPattern 正则），不重复造轮子。
+		if a.thinkLink != nil {
+			for _, block := range extractThoughtAndPlanBlocks(choice.Content) {
+				if entry, added := a.thinkLink.AddThoughtPlan(block, i); added {
+					a.publishThinkLinkEntry(entry)
+				}
+			}
 		}
 
 		messages = append(messages, llm.Message{
@@ -1562,6 +1609,124 @@ func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages 
 		}
 	}
 	return newMessages, stats
+}
+
+// ─── 终极压缩（第三级，thinklink 重建） ──────────────────────────────────────
+
+// UltimateCompressionStats 记录终极压缩的统计信息。
+type UltimateCompressionStats struct {
+	OriginalTokens   int  `json:"original_tokens"`   // 压缩前总 token
+	CompressedTokens int  `json:"compressed_tokens"` // 重建后总 token
+	SavedTokens      int  `json:"saved_tokens"`      // 节省的 token
+	TotalPlans       int  `json:"total_plans"`       // thinklink 中 T&P 块总数
+	KeptPlans        int  `json:"kept_plans"`        // 重建时保留的 T&P 块数
+	UserInputs       int  `json:"user_inputs"`       // 重建时包含的用户输入条数
+	Truncated        bool `json:"truncated"`         // 重建内容是否被硬截断（极端兜底）
+}
+
+// applyUltimateCompression 终极压缩（第三级）：两级常规压缩后仍超限时，
+// 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文。
+//
+//   - messages 重置为 [system..., 单条 user 重建消息]；
+//   - 同步覆盖 currentMemory（保持 memory 与 messages 一致，参照 applyEmergencyCompression）；
+//   - 清理 pendingSubAgentMemory 等可能导致 tool_call/tool_response 配对校验失败的残留；
+//   - 循环保护：若重建后的输入自身仍超预算，逐步减少保留的 T&P 块数量
+//     （保留最近 N-1、N-2……直至只留用户原始输入），仍超限则对重建内容做硬截断，
+//     确保重建后必然低于阈值，绝不进入死循环。
+func (a *DirectorAgent) applyUltimateCompression(messages []llm.Message, threshold int) ([]llm.Message, *UltimateCompressionStats) {
+	originalTokens := estimateMessagesTokens(messages)
+
+	// system（非 user）消息原样保留，不计入 user 内容预算
+	nonUserTokens := 0
+	newMessages := make([]llm.Message, 0, 2)
+	for _, msg := range messages {
+		if msg.Role == llm.RoleSystem {
+			newMessages = append(newMessages, msg)
+			nonUserTokens += estimateMessagesTokens([]llm.Message{msg})
+		}
+	}
+	userBudget := threshold - nonUserTokens
+	if userBudget < 0 {
+		userBudget = 0
+	}
+
+	totalPlans := a.thinkLink.Count(thinklink.KindThoughtPlan)
+	keep := totalPlans
+	// 配置指定保留数量上限时，取配置值与全部数量的较小值（0=全部保留）
+	if cfgKeep := a.EnhancedCommanderCfg.UltimateCompressionKeepPlans; cfgKeep > 0 && cfgKeep < keep {
+		keep = cfgKeep
+	}
+
+	// 循环保护：从 keep 开始逐步递减；keep==0（只留用户原始输入）仍超限时硬截断兜底
+	var prompt string
+	truncated := false
+	for {
+		prompt = a.thinkLink.RebuildPrompt(keep)
+		if EstimateTokens(prompt) <= userBudget {
+			break
+		}
+		if keep <= 0 {
+			prompt = truncateToTokenBudget(prompt, userBudget)
+			truncated = true
+			break
+		}
+		keep--
+	}
+
+	newMessages = append(newMessages, llm.Message{
+		Role:    llm.RoleUser,
+		Content: prompt,
+	})
+
+	// 同步覆盖 memory：对话历史重置为该单条 user 消息，保持 memory 与 messages 一致
+	if a.currentMemory != nil {
+		if err := a.currentMemory.Clear(); err != nil {
+			slog.Warn("ultimate compression: failed to clear memory", "error", err)
+		}
+		a.currentMemory.AddHumanMessage(prompt)
+	}
+	// 清理可能导致配对校验失败的残留
+	a.pendingSubAgentMemory = nil
+
+	stats := &UltimateCompressionStats{
+		OriginalTokens:   originalTokens,
+		CompressedTokens: estimateMessagesTokens(newMessages),
+		TotalPlans:       totalPlans,
+		KeptPlans:        keep,
+		UserInputs:       a.thinkLink.Count(thinklink.KindUserInput),
+		Truncated:        truncated,
+	}
+	stats.SavedTokens = stats.OriginalTokens - stats.CompressedTokens
+	if stats.SavedTokens < 0 {
+		stats.SavedTokens = 0
+	}
+
+	slog.Warn("ultimate context compression applied: context rebuilt from thinklink",
+		"original_tokens", stats.OriginalTokens,
+		"compressed_tokens", stats.CompressedTokens,
+		"saved_tokens", stats.SavedTokens,
+		"threshold", threshold,
+		"total_plans", stats.TotalPlans,
+		"kept_plans", stats.KeptPlans,
+		"user_inputs", stats.UserInputs,
+		"truncated", stats.Truncated)
+
+	return newMessages, stats
+}
+
+// publishThinkLinkEntry 通过 Publisher 发布一条 thinklink 条目事件（"thinklink_entry"），
+// payload 遵循现有事件惯例（扁平 map），供后续 TUI 消费。
+func (a *DirectorAgent) publishThinkLinkEntry(entry thinklink.Entry) {
+	if a.Publisher == nil {
+		return
+	}
+	a.Publisher.Publish("thinklink_entry", map[string]interface{}{
+		"id":        entry.ID,
+		"kind":      string(entry.Kind),
+		"content":   entry.Content,
+		"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
+		"step":      entry.Step,
+	}, a.Name())
 }
 
 // validateAndRepairToolCallPairs 验证并修复 tool_call/tool_response 配对完整性

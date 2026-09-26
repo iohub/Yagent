@@ -519,6 +519,12 @@ func (c *Config) validate() error {
 	if c.EnhancedCommander.ToolResultKeepTokens == 0 {
 		c.EnhancedCommander.ToolResultKeepTokens = 200
 	}
+	// EnableUltimateCompression 默认 true（跟随 Knowledge.Enabled 的默认值处理模式：
+	// 零值与显式 false 无法区分，显式禁用时需知晓此限制）
+	if !c.EnhancedCommander.EnableUltimateCompression {
+		c.EnhancedCommander.EnableUltimateCompression = true
+	}
+	// UltimateCompressionKeepPlans 零值即默认（0=全部保留），无需额外处理
 
 	// ═══════ Git Checkpoint 默认值设置 ═══════
 	gitCfgDefaults := DefaultGitCheckpointConfig()
@@ -712,6 +718,14 @@ type EnhancedCommanderConfig struct {
 
 	// ToolResultKeepTokens 截断后每条 tool 结果保留的 token 数，默认 200
 	ToolResultKeepTokens int `toml:"tool_result_keep_tokens" json:"tool_result_keep_tokens"`
+
+	// EnableUltimateCompression 是否启用终极压缩（thinklink）：两级压缩后仍超限时，
+	// 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文，默认 true
+	EnableUltimateCompression bool `toml:"enable_ultimate_compression" json:"enable_ultimate_compression"`
+
+	// UltimateCompressionKeepPlans 终极压缩重建时保留的 Thought & Plan 块数量上限，
+	// 0=全部保留（可被循环保护进一步裁剪），默认 0
+	UltimateCompressionKeepPlans int `toml:"ultimate_compression_keep_plans" json:"ultimate_compression_keep_plans"`
 }
 
 // ═══════════════════════════════════════════════════════════════
