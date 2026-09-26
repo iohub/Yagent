@@ -1,0 +1,1 @@
+@internal/agents/director.prompt.md @internal/agents/director.go 修改director代码，添加终极的上下文压缩机制，当之前的手段用了以后还超上下文，就提取出用户的原始输入和Throught & Plan块，作为全新的输入继续任务，丢弃已超限的上下文， 注意，我希望有个模块实时保存用户的输入和思考计划块，像timeline一样，压缩时直接读取就行。同时在tui可以查看这个模块的内容。
