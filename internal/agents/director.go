@@ -1722,7 +1722,7 @@ func (a *DirectorAgent) publishThinkLinkEntry(entry thinklink.Entry) {
 	}
 	a.Publisher.Publish("thinklink_entry", map[string]interface{}{
 		"id":        entry.ID,
-		"kind":      string(entry.Kind),
+		"kind":      entry.Kind.String(),
 		"content":   entry.Content,
 		"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
 		"step":      entry.Step,
