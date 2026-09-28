@@ -22,6 +22,18 @@ const (
 	KindThoughtPlan
 )
 
+// String 返回 Kind 的稳定字符串表示（用于事件 payload / 日志等序列化场景）。
+func (k Kind) String() string {
+	switch k {
+	case KindUserInput:
+		return "user_input"
+	case KindThoughtPlan:
+		return "thought_plan"
+	default:
+		return fmt.Sprintf("kind(%d)", int(k))
+	}
+}
+
 // DefaultMaxEntries Store 默认容量上限（条数），超出时按最旧优先淘汰。
 const DefaultMaxEntries = 200
 
@@ -38,43 +50,50 @@ type Entry struct {
 // 容量超限时淘汰最旧条目，但永远不允许丢弃第一条 KindUserInput 条目
 // （它是最初的用户原始输入，是终极压缩重建上下文的底线信息）。
 type Store struct {
-	mu      sync.RWMutex
-	entries []Entry
-	idSeq   uint64
+	mu         sync.RWMutex
+	entries    []Entry
+	idSeq      uint64
+	maxEntries int // 容量上限（条数），超出时按最旧优先淘汰
 }
 
-// NewStore 创建一个容量为 DefaultMaxEntries 的空 Store。
-func NewStore() *Store {
-	return &Store{entries: make([]Entry, 0, DefaultMaxEntries)}
+// NewStore 创建一个空 Store。maxEntries 为容量上限（条数），
+// maxEntries<=0 时使用 DefaultMaxEntries。
+func NewStore(maxEntries int) *Store {
+	if maxEntries <= 0 {
+		maxEntries = DefaultMaxEntries
+	}
+	return &Store{
+		entries:    make([]Entry, 0, maxEntries),
+		maxEntries: maxEntries,
+	}
 }
 
-// AddUserInput 记录一条用户原始输入，成功写入返回 true。
+// AddUserInput 记录一条用户原始输入，返回写入的条目；成功写入时 added 为 true。
 //   - 空白内容不记录；
 //   - 去重：若最后一条同为用户输入且内容完全相同则跳过（防止重复注入同一任务）。
-func (s *Store) AddUserInput(content string, step int) bool {
+func (s *Store) AddUserInput(content string, step int) (Entry, bool) {
 	if strings.TrimSpace(content) == "" {
-		return false
+		return Entry{}, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if n := len(s.entries); n > 0 {
 		if last := s.entries[n-1]; last.Kind == KindUserInput && last.Content == content {
-			return false
+			return Entry{}, false
 		}
 	}
-	s.appendLocked(KindUserInput, content, step)
-	return true
+	return s.appendLocked(KindUserInput, content, step), true
 }
 
-// AddThoughtPlan 记录一条 Thought & Plan 块，成功写入返回 true。空白内容不记录。
-func (s *Store) AddThoughtPlan(content string, step int) bool {
+// AddThoughtPlan 记录一条 Thought & Plan 块，返回写入的条目；
+// 成功写入时 added 为 true。空白内容不记录。
+func (s *Store) AddThoughtPlan(content string, step int) (Entry, bool) {
 	if strings.TrimSpace(content) == "" {
-		return false
+		return Entry{}, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.appendLocked(KindThoughtPlan, content, step)
-	return true
+	return s.appendLocked(KindThoughtPlan, content, step), true
 }
 
 // Snapshot 返回全部条目的深拷贝切片（线程安全，修改副本不影响内部状态）。
@@ -91,6 +110,19 @@ func (s *Store) Len() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.entries)
+}
+
+// Count 返回指定 Kind 的条目数（线程安全）。
+func (s *Store) Count(kind Kind) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n := 0
+	for _, e := range s.entries {
+		if e.Kind == kind {
+			n++
+		}
+	}
+	return n
 }
 
 // RebuildPrompt 生成终极压缩用的新输入文本（英文，将作为 user 消息发给 LLM）：
@@ -149,23 +181,25 @@ func (s *Store) RebuildPrompt(keepPlans int) string {
 	return sb.String()
 }
 
-// appendLocked 追加一条记录并在超出容量时淘汰（调用方须持有写锁）。
-func (s *Store) appendLocked(kind Kind, content string, step int) {
+// appendLocked 追加一条记录并返回写入的条目；超出容量时淘汰（调用方须持有写锁）。
+func (s *Store) appendLocked(kind Kind, content string, step int) Entry {
 	s.idSeq++
-	s.entries = append(s.entries, Entry{
+	entry := Entry{
 		ID:        fmt.Sprintf("tl-%d-%06d", time.Now().UnixNano(), s.idSeq),
 		Kind:      kind,
 		Content:   content,
 		Timestamp: time.Now(),
 		Step:      step,
-	})
+	}
+	s.entries = append(s.entries, entry)
 	s.evictLocked()
+	return entry
 }
 
 // evictLocked 容量淘汰：丢弃最旧条目，但第一条 KindUserInput 条目永久保留。
 // 若最旧条目正是受保护的用户输入，则从其下一条开始淘汰（调用方须持有写锁）。
 func (s *Store) evictLocked() {
-	for len(s.entries) > DefaultMaxEntries {
+	for len(s.entries) > s.maxEntries {
 		start := 0
 		if s.entries[0].Kind == KindUserInput {
 			start = 1
