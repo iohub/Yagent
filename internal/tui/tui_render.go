@@ -707,7 +707,8 @@ func isVerboseEventType(eventType string) bool {
 	switch eventType {
 	case "tool_call_start", "tool_call_result",
 		"llm_call_start", "llm_call_end",
-		"commit_context_loaded", "context_compressed", "model_info", "thinking":
+		"commit_context_loaded", "context_compressed", "context_ultimate_compressed",
+		"model_info", "thinking":
 		return true
 	}
 	return false
@@ -862,7 +863,7 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
-	case "context_compressed":
+	case "context_compressed", "context_ultimate_compressed":
 		if m, ok := event.Content.(map[string]interface{}); ok {
 			origTokens := 0
 			if v, ok := m["original_tokens"].(int); ok {
@@ -880,7 +881,32 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			if v, ok := m["saved_percent"].(float64); ok {
 				savedPercent = v
 			}
-			entry.content = fmt.Sprintf("🧠 Context compressed: %d → %d tokens (%.1f%%)", origTokens, compTokens, savedPercent)
+			if event.Type == "context_ultimate_compressed" {
+				// 终极压缩（thinklink 重建）：无 saved_percent，使用 plans/user_inputs 信息
+				totalPlans := 0
+				if v, ok := m["total_plans"].(int); ok {
+					totalPlans = v
+				} else if v, ok := m["total_plans"].(float64); ok {
+					totalPlans = int(v)
+				}
+				keptPlans := 0
+				if v, ok := m["kept_plans"].(int); ok {
+					keptPlans = v
+				} else if v, ok := m["kept_plans"].(float64); ok {
+					keptPlans = int(v)
+				}
+				userInputs := 0
+				if v, ok := m["user_inputs"].(int); ok {
+					userInputs = v
+				} else if v, ok := m["user_inputs"].(float64); ok {
+					userInputs = int(v)
+				}
+				truncated, _ := m["truncated"].(bool)
+				entry.content = fmt.Sprintf("⚡ Ultimate compression: %d → %d tokens, kept %d/%d plans, user_inputs=%d, truncated=%v",
+					origTokens, compTokens, keptPlans, totalPlans, userInputs, truncated)
+			} else {
+				entry.content = fmt.Sprintf("🧠 Context compressed: %d → %d tokens (%.1f%%)", origTokens, compTokens, savedPercent)
+			}
 		}
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)

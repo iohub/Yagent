@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -36,6 +37,13 @@ func parseEventInt(v interface{}, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// stringFromEventMap 从 event content map 中安全地解析字符串字段，
+// 类型不符时返回空串（调用方据此判定载荷是否可用）。
+func stringFromEventMap(m map[string]interface{}, key string) string {
+	s, _ := m[key].(string)
+	return s
 }
 
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
@@ -688,6 +696,81 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.logEntries = append(m.logEntries, entry)
 			m.viewportDirty = true
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+		}
+		return m, listenForEvents(m.eventCh)
+	}
+
+	// Handle context_ultimate_compressed event — log it in the TUI timeline.
+	// 终极压缩（第三级，thinklink 重建）：两级常规压缩后仍超限时触发。
+	if msg.event.Type == "context_ultimate_compressed" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			origTokens := parseEventInt(contentMap["original_tokens"], 0)
+			compTokens := parseEventInt(contentMap["compressed_tokens"], 0)
+			savedTokens := parseEventInt(contentMap["saved_tokens"], 0)
+			totalPlans := parseEventInt(contentMap["total_plans"], 0)
+			keptPlans := parseEventInt(contentMap["kept_plans"], 0)
+			userInputs := parseEventInt(contentMap["user_inputs"], 0)
+			truncated, _ := contentMap["truncated"].(bool)
+			detailText, _ := contentMap["detail"].(string)
+
+			entry := logEntry{
+				timestamp: msg.event.Timestamp,
+				eventType: "context_ultimate_compressed",
+				from:      msg.event.From,
+				content: fmt.Sprintf("⚡ Ultimate compression: %d → %d tokens, kept %d/%d plans, user_inputs=%d, truncated=%v",
+					origTokens, compTokens, keptPlans, totalPlans, userInputs, truncated),
+				isVerbose: true,
+			}
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        fmt.Sprintf("ctx_ult_%d", msg.event.Timestamp.UnixNano()),
+				Kind:      TimelineKindContextEvent,
+				Timestamp: msg.event.Timestamp,
+				Status:    ToolStatusSuccess,
+				Name:      "Ultimate Compression",
+				Detail: strings.Join([]string{
+					detailText,
+					fmt.Sprintf("Context: %d → %d tokens (saved %d)", origTokens, compTokens, savedTokens),
+					fmt.Sprintf("Plans kept: %d/%d, user inputs: %d, truncated: %v", keptPlans, totalPlans, userInputs, truncated),
+				}, "\n"),
+			})
+			m.timelineCacheKey = ""
+			m.logEntries = append(m.logEntries, entry)
+			m.viewportDirty = true
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+		}
+		return m, listenForEvents(m.eventCh)
+	}
+
+	// Handle thinklink_entry event — collect user inputs & thought/plan blocks
+	// for the thinklink fullscreen view (ctrl+t)。不进入主日志流。
+	if msg.event.Type == "thinklink_entry" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			e := ThinklinkEntry{
+				ID:      stringFromEventMap(contentMap, "id"),
+				Kind:    stringFromEventMap(contentMap, "kind"),
+				Content: stringFromEventMap(contentMap, "content"),
+			}
+			// timestamp: RFC3339Nano 字符串，解析失败回退事件时间
+			if tsStr, ok := contentMap["timestamp"].(string); ok {
+				if parsed, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {
+					e.Timestamp = parsed
+				} else {
+					e.Timestamp = msg.event.Timestamp
+				}
+			} else {
+				e.Timestamp = msg.event.Timestamp
+			}
+			e.Step = parseEventInt(contentMap["step"], 0)
+
+			if e.Content == "" {
+				// 缺少 content 的载荷无法展示，丢弃并记录调试日志
+				slog.Debug("TUI: dropped malformed thinklink_entry event",
+					"id", e.ID, "kind", e.Kind)
+			} else {
+				m.thinklinkEntries = append(m.thinklinkEntries, e)
+			}
+		} else {
+			slog.Debug("TUI: dropped thinklink_entry event with unexpected payload type")
 		}
 		return m, listenForEvents(m.eventCh)
 	}
