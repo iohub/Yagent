@@ -704,6 +704,12 @@ type model struct {
 	timelineFullscreenFocus  string            // 全屏模式焦点: "list" 或 "detail" (默认 "list")
 	timelineDetailOffsets    []int             // 每个条目在拼接详情中的行偏移量
 
+	// ── Thinklink 全屏模式状态 ──
+	thinklinkMode    bool             // 是否处于 thinklink 全屏模式
+	thinklinkEntries []ThinklinkEntry // thinklink 条目列表（用户原始输入 / Thought & Plan 块）
+	thinklinkCursor  int              // 全屏模式下当前选中的条目索引
+	thinklinkVP      *viewport.Model  // 全屏模式下右侧详情 viewport
+
 	// ── 可配置快捷键映射表 ──
 	// editKeyMap 将用户配置的编辑模式快捷键映射为内部标准键名
 	// key: 用户配置的按键, value: 内部标准键名
