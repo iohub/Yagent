@@ -257,6 +257,8 @@ func (m *model) restoreSessionTab(idx int) {
 	m.currentModel = tab.currentModel
 	m.currentAgent = tab.currentAgent
 	m.currentProvider = tab.currentProvider
+	// provider 变化 → 刷新上下文窗口上限（末尾统一 invalidateFooterCache）
+	m.refreshContextWindow()
 
 	// 恢复 Token 统计
 	m.inputTokens = tab.inputTokens
@@ -328,6 +330,8 @@ func (m *model) clearCurrentSession() {
 	m.currentModel = ""
 	m.currentAgent = ""
 	m.currentProvider = ""
+	// provider 清空 → 上下文窗口上限同步置为未知
+	m.contextWindow = 0
 	m.inputTokens = 0
 	m.outputTokens = 0
 	m.cacheCreationInputTokens = 0

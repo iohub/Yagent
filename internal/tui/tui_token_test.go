@@ -712,22 +712,26 @@ func TestCollapsedDashboard_EmptyWhenAllZero(t *testing.T) {
 	}
 }
 
-// TestCollapsedDashboard_ShowsCtx 验证折叠面板仅 ContextTokens>0 时显示 Ctx 段
+// TestCollapsedDashboard_ShowsCtx 验证折叠面板仅 ContextTokens>0 时显示独立 Context 行（新样式）
 func TestCollapsedDashboard_ShowsCtx(t *testing.T) {
 	m := newTestModel()
 	m.currentAgentRunTokens = AgentRunTokens{AgentName: "Director", ContextTokens: 5000}
 
 	out := stripANSI(m.renderCollapsedTokenDashboard())
-	if !strings.Contains(out, "Ctx:") {
-		t.Errorf("折叠面板应包含 Ctx: 段，实际 %q", out)
+	if strings.Contains(out, "Ctx:") {
+		t.Errorf("折叠面板不应再包含旧样式 Ctx: 段，实际 %q", out)
+	}
+	if !strings.Contains(out, "⛁") || !strings.Contains(out, "Context") {
+		t.Errorf("折叠面板应包含独立 Context 行（⛁/Context 字样），实际 %q", out)
 	}
 	if !strings.Contains(out, "5.0k") {
-		t.Errorf("Ctx 值应经 formatToken 格式化为 5.0k，实际 %q", out)
+		t.Errorf("Context 值应经 formatToken 格式化为 5.0k，实际 %q", out)
 	}
 }
 
-// TestTokenDashboard_TotalLineShowsCtx 验证展开面板 Total 行的 Ctx 展示与零值守卫
-func TestTokenDashboard_TotalLineShowsCtx(t *testing.T) {
+// TestTokenDashboard_IndependentContextLine 验证展开面板 Total 行不再拼接旧样式 Ctx:，
+// Context 以独立行（新样式）展示，且 ContextTokens==0 时不显示
+func TestTokenDashboard_IndependentContextLine(t *testing.T) {
 	m := newTestModel()
 	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 	m.inputTokens = 100
@@ -740,15 +744,18 @@ func TestTokenDashboard_TotalLineShowsCtx(t *testing.T) {
 	}
 
 	out := stripANSI(m.renderTokenDashboard())
-	if !strings.Contains(out, "Ctx:") {
-		t.Errorf("ContextTokens>0 时展开面板 Total 行应包含 Ctx:，实际 %q", out)
+	if strings.Contains(out, "Ctx:") {
+		t.Errorf("展开面板不应再包含旧样式 Ctx: 拼接，实际 %q", out)
+	}
+	if !strings.Contains(out, "⛁") || !strings.Contains(out, "Context") {
+		t.Errorf("ContextTokens>0 时展开面板应包含独立 Context 行（⛁/Context 字样），实际 %q", out)
 	}
 
-	// ContextTokens 归零后不再显示
+	// ContextTokens 归零后不再显示 Context 行
 	m.currentAgentRunTokens.ContextTokens = 0
 	out = stripANSI(m.renderTokenDashboard())
-	if strings.Contains(out, "Ctx:") {
-		t.Errorf("ContextTokens==0 时展开面板不应显示 Ctx:，实际 %q", out)
+	if strings.Contains(out, "⛁") {
+		t.Errorf("ContextTokens==0 时展开面板不应显示 Context 行，实际 %q", out)
 	}
 }
 
@@ -778,8 +785,8 @@ func TestDashboardCacheKey_IncludesContextTokens(t *testing.T) {
 	if first == second {
 		t.Error("ContextTokens 变化后 dashboard 应重新渲染（缓存 key 需纳入 ctx 值）")
 	}
-	if !strings.Contains(stripANSI(second), "Ctx: 5.0k") {
-		t.Errorf("第二次渲染应显示更新后的 Ctx: 5.0k，实际 %q", stripANSI(second))
+	if secondCtx := stripANSI(second); !strings.Contains(secondCtx, "⛁") || !strings.Contains(secondCtx, "5.0k") {
+		t.Errorf("第二次渲染应显示更新后的 Context · 5.0k tokens，实际 %q", secondCtx)
 	}
 }
 
@@ -815,7 +822,48 @@ func TestDashboardCtx_DoesNotExceedPanelWidth(t *testing.T) {
 			t.Errorf("line %d: 期望宽度 %d，实际 %d（content=%q）", i, w, lw, stripANSI(line))
 		}
 	}
-	if !strings.Contains(stripANSI(result), "Ctx:") {
-		t.Error("Total 行应包含 Ctx 段")
+	if resultCtx := stripANSI(result); !strings.Contains(resultCtx, "⛁") || !strings.Contains(resultCtx, "Context") {
+		t.Error("面板应包含独立 Context 行")
+	}
+}
+
+// TestRenderContextLine_BarStyle 有窗口上限且宽度足够时输出进度条样式
+func TestRenderContextLine_BarStyle(t *testing.T) {
+	out := stripANSI(renderContextLine(45000, 200000, 80))
+	if !strings.Contains(out, "▰") || !strings.Contains(out, "▱") {
+		t.Errorf("有窗口上限时应输出进度条样式，实际 %q", out)
+	}
+	if !strings.Contains(out, "%") {
+		t.Errorf("进度条样式应包含百分比，实际 %q", out)
+	}
+	if !strings.Contains(out, "45.0k") || !strings.Contains(out, "200.0k") {
+		t.Errorf("进度条样式应包含当前值与窗口上限，实际 %q", out)
+	}
+}
+
+// TestRenderContextLine_Degraded 窗口未知（<=0）时退化为无进度条简约样式
+func TestRenderContextLine_Degraded(t *testing.T) {
+	out := stripANSI(renderContextLine(45000, 0, 80))
+	if strings.Contains(out, "▰") || strings.Contains(out, "%") {
+		t.Errorf("窗口为 0 时不应输出进度条与百分比，实际 %q", out)
+	}
+	if !strings.Contains(out, "Context") || !strings.Contains(out, "tokens") {
+		t.Errorf("退化样式应包含 Context 与 tokens 字样，实际 %q", out)
+	}
+
+	// 宽度不足同样退化
+	out = stripANSI(renderContextLine(45000, 200000, contextBarThresholdWidth-1))
+	if strings.Contains(out, "▰") {
+		t.Errorf("宽度低于阈值时应退化为简约样式，实际 %q", out)
+	}
+}
+
+// TestRenderContextLine_Empty tokens<=0 时返回空串（调用方跳过该行）
+func TestRenderContextLine_Empty(t *testing.T) {
+	if out := renderContextLine(0, 200000, 80); out != "" {
+		t.Errorf("tokens=0 应返回空串，实际 %q", out)
+	}
+	if out := renderContextLine(-1, 200000, 80); out != "" {
+		t.Errorf("tokens<0 应返回空串，实际 %q", out)
 	}
 }

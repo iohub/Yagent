@@ -50,14 +50,23 @@ func (m *model) computeFooterHeight() int {
 
 	// Token dashboard
 	totalTokens := m.inputTokens + m.outputTokens
-	if !m.dashboardVisible() && totalTokens > 0 {
-		height += 4 // 2 borders + 1 header + 1 separator
-		if m.commandMode && m.taskRunning {
-			height++
-		}
-		for _, au := range m.tokenUsagePerAgent {
-			if au.InputTokens+au.OutputTokens > 0 {
+	if !m.dashboardVisible() {
+		if m.tokenDashboardCollapsed {
+			// 折叠状态：按实际渲染行数计算（内容 1-2 行 + 2 边框）。
+			// 不依赖 totalTokens 判断——压缩场景下 ContextTokens>0 而 In/Out==0
+			// 时折叠面板仍会渲染，固定高度假设会少算行数导致布局溢出。
+			if dash := m.renderTokenDashboard(); dash != "" {
+				height += lipgloss.Height(dash)
+			}
+		} else if totalTokens > 0 {
+			height += 4 // 2 borders + 1 header + 1 separator
+			if m.commandMode && m.taskRunning {
 				height++
+			}
+			for _, au := range m.tokenUsagePerAgent {
+				if au.InputTokens+au.OutputTokens > 0 {
+					height++
+				}
 			}
 		}
 	}

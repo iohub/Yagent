@@ -588,6 +588,8 @@ type model struct {
 
 	// Current provider name for status bar display
 	currentProvider string
+	// contextWindow 当前 provider 的模型上下文窗口上限（0=未知，TUI 不显示进度条）
+	contextWindow int
 	// pendingModelTarget 记录 :model 命令当前正在配置的目标 agent（空=全局默认）
 	pendingModelTarget string
 
@@ -767,6 +769,33 @@ func (m *model) markAllEntriesDirty() {
 // hasDirtyEntries 返回是否有待处理的脏标记。
 func (m *model) hasDirtyEntries() bool {
 	return m.needFullRebuild || len(m.dirtyEntryIndices) > 0
+}
+
+// contextWindowFromCfg 从配置中读取指定 provider 的模型上下文窗口上限；
+// 未配置（0）或 provider 不存在时返回 0，调用方据此不显示进度条。
+func contextWindowFromCfg(cfg *config.Config, providerName string) int {
+	if cfg == nil || providerName == "" {
+		return 0
+	}
+	if pc, ok := cfg.Global.LLM.Providers[providerName]; ok {
+		return pc.ContextWindow
+	}
+	return 0
+}
+
+// refreshContextWindow 根据当前 provider 刷新 m.contextWindow。
+// 在 provider 变化处调用（alt+m 切换确认、model_info 事件、tab 恢复），
+// 调用方需自行 invalidateFooterCache 以刷新受影响的渲染缓存。
+func (m *model) refreshContextWindow() {
+	m.contextWindow = 0
+	if m.assistant == nil {
+		return
+	}
+	client := m.assistant.GetClient()
+	if client == nil {
+		return
+	}
+	m.contextWindow = contextWindowFromCfg(client.Config, m.currentProvider)
 }
 
 func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) *model {
@@ -1042,6 +1071,8 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		// will be populated on first task via model_info event
 		currentProvider:    initProvider,
 		currentModel:       initModel,
+		// 初始 provider 的模型上下文窗口上限（0=未配置，不显示进度条）
+		contextWindow:      contextWindowFromCfg(cfg, initProvider),
 
 		// 预创建的渲染样式（避免循环内重复创建）
 		skillSuggestionStyle: lipgloss.NewStyle().

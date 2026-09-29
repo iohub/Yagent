@@ -12,6 +12,8 @@ use_provider = "deepseek_v4_pro"
 model = "qwen3-coder-plus"
 temperature = 0.0
 max_tokens = 28000
+# 模型上下文窗口大小（如 200000），用于 TUI 上下文用量展示，0/未配置则不显示进度条
+# context_window = 1000000
 api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 api_key = "your-key"
 
