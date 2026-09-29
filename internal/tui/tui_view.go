@@ -749,10 +749,6 @@ func (m *model) renderTokenDashboard() string {
 		header += inputStyle.Render(cacheInfo + "  ")
 	}
 	header += sumStyle.Render(fmt.Sprintf("Σ %s", sumStr))
-	// 当前 agent 上下文瞬时值（覆盖式）：压缩后显示压缩后的真实大小
-	if ctxTokens := m.currentAgentRunTokens.ContextTokens; ctxTokens > 0 {
-		header += "  " + sumStyle.Render(fmt.Sprintf("Ctx: %s", formatToken(ctxTokens)))
-	}
 
 	// Separator
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
@@ -801,6 +797,13 @@ func (m *model) renderTokenDashboard() string {
 			agentLine += "  " + agentInStyle.Render(cacheInfo)
 		}
 		lines = append(lines, agentLine)
+	}
+
+	// Context 独立成行：复用 renderContextLine（有窗口上限时带用量进度条）。
+	// 覆盖式瞬时值：压缩后显示压缩后的真实大小。
+	// 可用宽度 = 面板宽度 - 2(border) - 2(padding)，与折叠面板保持一致。
+	if ctxLine := renderContextLine(m.currentAgentRunTokens.ContextTokens, m.contextWindow, m.termWidth-6); ctxLine != "" {
+		lines = append(lines, ctxLine)
 	}
 
 	return dashStyle.Render(strings.Join(lines, "\n"))
@@ -855,12 +858,14 @@ func (m *model) renderCollapsedTokenDashboard() string {
 		line += inputStyle.Render(cacheStr + "  ")
 	}
 
-	// 当前上下文瞬时值（覆盖式）：压缩后显示压缩后的真实大小
-	if rt.ContextTokens > 0 {
-		line += outputStyle.Render(fmt.Sprintf("Ctx: %s  ", formatToken(rt.ContextTokens)))
-	}
-
 	line += style.Render("(alt+t: expand)")
 
-	return dashStyle.Render(line)
+	// Context 独立成行：复用 renderContextLine（有窗口上限时带用量进度条）。
+	// 可用宽度 = 面板宽度 - 2(border) - 2(padding)。
+	lines := []string{line}
+	if ctxLine := renderContextLine(rt.ContextTokens, m.contextWindow, m.termWidth-6); ctxLine != "" {
+		lines = append(lines, ctxLine)
+	}
+
+	return dashStyle.Render(strings.Join(lines, "\n"))
 }

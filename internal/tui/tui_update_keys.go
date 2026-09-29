@@ -277,6 +277,9 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 						_, modelName := m.assistant.GetClient().GetCurrentProviderInfo()
 						m.currentProvider = d.Selected
 						m.currentModel = modelName
+						// provider 变化 → 刷新上下文窗口上限并失效渲染缓存
+						m.refreshContextWindow()
+						m.invalidateFooterCache()
 						m.logEntries = append(m.logEntries, logEntry{
 							timestamp: time.Now(),
 							eventType: "status",

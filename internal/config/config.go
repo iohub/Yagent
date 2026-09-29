@@ -13,8 +13,11 @@ type ProviderConfig struct {
 	Model       string  `toml:"model"`
 	Temperature float64 `toml:"temperature"`
 	MaxTokens   int     `toml:"max_tokens"`
-	APIBaseURL  string  `toml:"api_base_url"`
-	APIKey      string  `toml:"api_key"`
+	// ContextWindow 模型上下文窗口上限（如 200000），供 TUI 展示上下文用量进度条。
+	// 与 MaxTokens（单次输出上限）含义不同；0 或未配置则 TUI 不显示进度条。
+	ContextWindow int     `toml:"context_window"`
+	APIBaseURL    string  `toml:"api_base_url"`
+	APIKey        string  `toml:"api_key"`
 	// Bedrock-specific fields
 	AWSRegion     string `toml:"aws_region,omitempty"`
 	AWSProfile    string `toml:"aws_profile,omitempty"`

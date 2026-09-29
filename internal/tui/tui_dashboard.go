@@ -174,11 +174,14 @@ func (m *model) renderDashboard(width, height int) string {
 		if cacheInfo := formatCacheShort(m.cacheReadInputTokens, m.cacheCreationInputTokens, totalInput); cacheInfo != "" {
 			totalLine += "  " + cacheRateStyle.Render(cacheInfo)
 		}
-		// 当前 agent 上下文瞬时值（覆盖式）：压缩后显示压缩后的真实大小
-		if ctxTokens := m.currentAgentRunTokens.ContextTokens; ctxTokens > 0 {
-			totalLine += "  " + cacheRateStyle.Render("Ctx: "+formatToken(ctxTokens))
-		}
 		lines = append(lines, totalLine)
+
+		// Context 独立成行（Total 之后、分隔线之前）：复用折叠面板的渲染逻辑，
+		// 有窗口上限时带用量进度条；ctxTokens<=0 时跳过。
+		ctxLine := renderContextLine(m.currentAgentRunTokens.ContextTokens, m.contextWindow, innerWidth)
+		if ctxLine != "" {
+			lines = append(lines, ctxLine)
+		}
 
 		// Separator
 		lines = append(lines, lipgloss.NewStyle().
@@ -187,6 +190,9 @@ func (m *model) renderDashboard(width, height int) string {
 
 		// Determine display agents (truncate if needed)
 		tokenRows := 3 + len(agents) // title + Total + separator + agent rows
+		if ctxLine != "" {
+			tokenRows++ // Context 独立行占 1 行预算
+		}
 		var displayAgents []*AgentTokenUsage
 		moreCount := 0
 		if tokenRows > maxTokenRows {

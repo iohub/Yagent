@@ -245,6 +245,8 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			// Capture provider name if available
 			if providerName, ok := contentMap["provider"].(string); ok && providerName != "" {
 				m.currentProvider = providerName
+				// provider 变化 → 刷新上下文窗口上限（本分支末尾已统一 invalidateFooterCache）
+				m.refreshContextWindow()
 			}
 		}
 		// Model info changed — update status bar cache
