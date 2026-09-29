@@ -400,18 +400,14 @@ func TestPublishInjectedSummary_PublishesOnHits(t *testing.T) {
 	}
 }
 
-func TestPublishInjectedSummary_PublishesOnZeroHits(t *testing.T) {
+func TestPublishInjectedSummary_SkipsOnZeroHits(t *testing.T) {
 	pub := &fakeEventPublisher{}
 	k := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, pub)
-	// 命中为 0（或全部被过滤）时也要发布一次，让用户感知检索发生过
+	// 任务约束：仅当命中>0 时发布概要事件；无命中保持静默（不发布）
 	k.publishInjectedSummary("repo", "no match query", nil)
 
-	if len(pub.events) != 1 {
-		t.Fatalf("published %d event(s), want 1 (zero-hit must still publish)", len(pub.events))
-	}
-	contentMap := pub.events[0].content.(map[string]interface{})
-	if hits, ok := contentMap["hits"].(int); !ok || hits != 0 {
-		t.Errorf("content hits = %v (%T), want int 0", contentMap["hits"], contentMap["hits"])
+	if len(pub.events) != 0 {
+		t.Fatalf("published %d event(s) on zero hits, want 0 (must stay silent when nothing matches)", len(pub.events))
 	}
 }
 

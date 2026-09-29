@@ -128,13 +128,13 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 		}
 	}
 
-	// 发布知识注入概要事件（含命中 0 的情况，让用户感知检索发生过；fail-safe，不影响主流程）
-	k.publishInjectedSummary(agent, query, filtered)
-
 	if len(filtered) == 0 {
 		kl.Info("no relevant knowledge after filter", "event", "inject_filtered_empty", "agent", agent, "raw_hits", len(results), "min_score", minScore)
 		return "", nil
 	}
+
+	// 发布知识注入概要事件(仅命中>0 时;无命中保持静默;fail-safe,不影响主流程)
+	k.publishInjectedSummary(agent, query, filtered)
 
 	block := k.FormatKnowledgeBlock(filtered)
 	// 预留 </knowledge_context> 标签的 token 开销
@@ -279,10 +279,15 @@ func buildInjectedSummary(agent, query string, results []mcp.KnowledgeSearchResu
 }
 
 // publishInjectedSummary 发布知识注入概要事件（事件类型 knowledge_injected，source 为 knowledge）。
+// 仅当命中数 > 0 时发布；无命中保持静默（与既有行为一致）。
 // fail-safe 铁律：publisher 为 nil 时跳过；任何 panic 均恢复；发布错误仅吞掉；
 // 任何情况下不得影响 Inject 主流程的返回值。
 func (k *KnowledgeInjector) publishInjectedSummary(agent, query string, results []mcp.KnowledgeSearchResult) {
 	if k == nil || k.publisher == nil {
+		return
+	}
+	// 仅命中>0 时发布；无命中保持静默
+	if len(results) == 0 {
 		return
 	}
 	defer func() {
