@@ -31,8 +31,14 @@
   - [7.3 WAL 持久化与死信队列](#73-wal-持久化与死信队列)
   - [7.4 子包结构](#74-子包结构)
 - [8. 上下文压缩引擎](#8-上下文压缩引擎)
-  - [8.1 核心压缩算法](#81-核心压缩算法)
-  - [8.2 优先级计算](#82-优先级计算)
+  - [8.1 设计目标与三级架构](#81-设计目标与三级架构)
+  - [8.2 第一级：工具结果截断（context_compressor.go）](#82-第一级工具结果截断context_compressorgo)
+  - [8.3 第二级：紧急压缩（emergency_compressor.go）](#83-第二级紧急压缩emergency_compressorgo)
+  - [8.4 第三级：终极压缩（上下文重建）](#84-第三级终极压缩上下文重建)
+  - [8.5 thinklink 存储（internal/thinklink/thinklink.go）](#85-thinklink-存储internalthinklinkthinklinkgo)
+  - [8.6 Token 估算（internal/tokenutil）](#86-token-估算internaltokenutil)
+  - [8.7 配置参数](#87-配置参数)
+  - [8.8 关键设计亮点](#88-关键设计亮点)
 - [9. 知识管理系统](#9-知识管理系统)
   - [9.1 KnowledgeInjector（知识注入）](#91-knowledgeinjector知识注入)
   - [9.2 ConsolidationWorker（记忆整理）](#92-consolidationworker记忆整理)
@@ -883,49 +889,282 @@ type MessageDispatcher struct {
 
 ## 8. 上下文压缩引擎
 
-### 8.1 核心压缩算法
+自主编码任务往往伴随大量工具调用：`read_file`、`run_bash`、`semantic_search` 等工具的原始输出动辄数千 token，对话历史随任务推进持续膨胀，最终逼近模型上下文上限。上下文压缩引擎在 **每次调用 LLM 之前**（`internal/agents/director.go` 主循环的步骤级重试内）检测上下文体积，超过阈值时按"**渐进式降级**"策略逐级压缩。
 
-上下文压缩逻辑位于 `internal/agents/context_compressor.go`，当对话 token 数超过限制时触发：
+核心思想是 **最小创伤原则**：先牺牲**可再生信息**（工具原始输出——重新调用工具即可恢复），再**摘要化历史**（完整对话 → 单条结构化消息），最后才**整体重置**（仅凭长期记录的任务主线重建上下文）。级别越低创伤越小，且每级压缩后立即重新估算，达标即停。
 
-```go
-// TruncateToolResultsToBudget 截断工具结果以适配 token 预算
-func TruncateToolResultsToBudget(messages []Message, budget int) []Message
-```
+| 实现 | 文件 | 职责 |
+|------|------|------|
+| 第一级：工具结果截断 | `internal/agents/context_compressor.go` | 按优先级截断过大的工具输出 |
+| 第二级：紧急压缩 | `internal/agents/emergency_compressor.go` | LLM 摘要历史，覆盖为单条 user 消息 |
+| 第三级：终极压缩 | `internal/agents/director.go` + `internal/thinklink/` | 基于 thinklink 记录整体重建上下文 |
+| Token 估算 | `internal/tokenutil/tokenutil.go` | 全部超限判断的估算基础 |
 
-**压缩流程**：
+### 8.1 设计目标与三级架构
+
+**三级总览**：
+
+| 级别 | 触发条件 | 实现文件 | 核心函数 | 保留内容 | 丢弃内容 |
+|------|----------|----------|----------|----------|----------|
+| 一：工具结果截断 | token 估算 > 阈值（默认 120000） | `context_compressor.go` | `TruncateToolResultsToBudget` | 每条工具结果末尾约 `ToolResultKeepTokens`（默认 200）token | 被截断工具输出的中间正文 |
+| 二：紧急压缩 | 一级处理后仍超限 | `emergency_compressor.go` | `EmergencyCompressMessages` | 原始任务、最近 3 个 Thought & Plan 块原文、LLM 执行过程摘要 | 更早轮次的全部对话历史 |
+| 三：终极压缩（上下文重建） | 二级处理后仍超限且 `enable_ultimate_compression = true` | `director.go` + `internal/thinklink/` | `applyUltimateCompression` → `thinklink.RebuildPrompt` | 全部用户原始输入（第一条永不淘汰）+ T&P 块 | 除 thinklink 记录外的全部上下文 |
+
+**总流程**：
+
 ```mermaid
 flowchart TD
-    A[检测 Token 数] --> B{是否超限?}
-    B -->|否| C[无需压缩]
-    B -->|是| D[计算优先级]
-    D --> E[LLM 摘要压缩]
-    E --> F[合并摘要栈]
-    F --> G[返回压缩结果]
+    A[LLM 调用前估算总 token<br/>tokenutil.EstimateTokens] --> B{超过阈值?<br/>默认 120000}
+    B -->|否| Z[直接调用 LLM]
+    B -->|是| C[第一级<br/>TruncateToolResultsToBudget<br/>按优先级逐条截断工具结果]
+    C --> D{重新估算仍超限?}
+    D -->|否| Z
+    D -->|是| E["第二级<br/>EmergencyCompressMessages<br/>LLM 摘要 + 保留最近 T&amp;P 块<br/>覆盖为单条 user 消息"]
+    E --> F{仍超限?}
+    F -->|否| Z
+    F -->|是| G[第三级<br/>applyUltimateCompression<br/>thinklink.RebuildPrompt 重建<br/>keepPlans 递减 → 硬截断兜底]
+    G --> H[上下文重置为 system + 单条 user 重建消息]
+    H --> Z
 ```
 
-**关键参数**：
-- `MaxContextTokens`：上下文 token 上限
-- `KeepRecentRounds`：保留最近 N 轮完整对话
-- `MinSummaryTokens`：摘要最小 token 数
+**Director 主循环中的三级调用链**（每级独立发布事件，全程可观测）：
 
-### 8.2 优先级计算
+```mermaid
+sequenceDiagram
+    participant D as DirectorAgent 主循环
+    participant R as validateAndRepairToolCallPairs
+    participant L1 as context_compressor
+    participant L2 as emergency_compressor
+    participant TK as thinklink.Store
+    participant LLM as LLM Engine
 
-**PriorityCalculator** 根据多种因素计算消息优先级：
+    D->>R: 修复 tool_call 配对（director.go）
+    D->>L1: TruncateToolResultsToBudget
+    L1-->>D: 压缩后消息 + 事件 context_compressed
+    alt 仍超限
+        D->>L2: applyEmergencyCompression
+        L2->>LLM: summarizeBlocksWithLLM（失败降级为文本截断）
+        L2-->>D: 单条 user 消息 + 事件 context_emergency_compressed
+        alt 仍超限且终极压缩已启用
+            D->>TK: RebuildPrompt keepPlans 递减重试
+            TK-->>D: 重建 prompt
+            D-->>D: messages = system + user + 事件 context_ultimate_compressed
+        end
+    end
+    D->>LLM: GenerateContent
+```
+
+三级压缩共享同一套 token 预算参数（见 [8.7 配置参数](#87-配置参数)）；压缩发生在当前步骤内部，不额外消耗 `max_steps`。
+
+### 8.2 第一级：工具结果截断（context_compressor.go）
+
+第一级是**预防性**压缩：绝大多数超限由个别巨型工具输出引起，只修剪"最可再生"的部分即可恢复，无需触碰对话结构。
+
+**入口与零开销判断**：总 token 未超阈值时原样返回（stats 为 nil），无任何开销：
 
 ```go
-type PriorityWeights struct {
-    SystemMessageWeight    float64  // 系统消息权重
-    RecentMessageWeight    float64  // 近期消息权重
-    ToolCallWeight         float64  // 工具调用权重
-    UserMessageWeight      float64  // 用户消息权重
-    CriticalMessageWeight  float64  // 关键消息权重
+// internal/agents/context_compressor.go
+func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens int) ([]llm.Message, *ContextCompressionStats)
+func truncateToTokenBudget(content string, keepTokens int) string // 精确截断到 token 预算
+func estimateMessagesTokens(messages []llm.Message) int           // 消息列表 token 估算
+func toolTruncationPriority(toolName string) int                  // 截断优先级 0 / 1 / -1
+```
+
+**工具优先级**：`toolTruncationPriority` 将工具分为三档：
+
+| 优先级 | 含义 | 工具 |
+|--------|------|------|
+| `0`（最先截断） | 文件读写类与高开销代码查询类——输出体量大且重新调用即可恢复 | `create_file`、`search_replace_in_file`、`read_file`、`run_bash`、`semantic_search`、`query_code_skeleton`、`query_code_snippet`、`print_dir_tree`、`search_by_regex`、`query_call_graph`、`find_function_callee`、`find_function_caller` |
+| `1`（兜底截断） | 其他工具 | 未列入 0 / -1 的全部工具 |
+| `-1`（永不截断） | 深度思考类——信息密度高、不可再生 | `deepthinking` |
+
+**渐进式截断流程**：
+
+1. 收集全部可截断的 tool 消息（Role 为 tool、有 `ToolName` 且有内容），按优先级 `0 → 1` 排序；
+2. 逐条调用 `truncateToTokenBudget` 截到 `keepTokens`（默认 200）token，并在正文追加截断说明 `[truncated: 内容已截断, 原始 N tokens, 保留 M tokens]`；
+3. **每截断一条立即重新估算总 token，达标即返回**——确保实际截断量最小；
+4. 全部截断后仍超限则返回统计信息，交由第二级处理。
+
+`truncateToTokenBudget` 的精确截断算法：先用 `keepTokens * 4` 字符做粗裁上界，再**二分查找最大前缀**使其 token 数恰好 ≤ 预算；极端情况下（预算内一个 token 都放不下）保留少量字符并标记。`estimateMessagesTokens` 除消息正文外，还会累加 assistant 消息中 `ToolCalls[].Function.Arguments` 的 token，保证估算不遗漏工具调用参数。
+
+**幂等性**：每条被截断的消息都会写入 `llm.TruncationMarker` 标记，已标记的消息在后续轮次中跳过，避免重复截断：
+
+```go
+// internal/llm/engine.go
+type TruncationMarker struct {
+    ToolName       string // 工具名称
+    OriginalLen    int    // 原始内容长度（字节）
+    OmittedLen     int    // 被省略的字节数
+    TruncationPass int    // 截断次数（0=首次截断, 1+=再次截断）
 }
 ```
 
-**优先级越高**的消息越可能在压缩时被保留。
+**API 安全性**：截断只改写 tool 消息的 `Content`，不改动 `ToolCallID` 与消息顺序；主循环在压缩前还会调用 `validateAndRepairToolCallPairs`（定义于 `director.go`）修复配对——移除不完整的 tool_call 组（保留 assistant 纯文本、剥离 tool_calls）、丢弃孤儿 tool 消息、合并连续 assistant 消息，保证压缩后的消息序列仍符合 API 的 tool_call/response 配对要求。
 
-**紧急压缩**（`internal/agents/emergency_compressor.go`）：
-当 token 严重超限时，`EmergencyCompressMessages()` 执行强制压缩，Director 在主循环中调用。
+**统计与可观测性**：压缩产出 `ContextCompressionStats`（原始 / 压缩后 / 节省 token、节省百分比、截断条数及每条工具明细），并通过 Publisher 发布 `context_compressed` 事件供 TUI 与日志追踪。
+
+### 8.3 第二级：紧急压缩（emergency_compressor.go）
+
+当第一级把所有可截断的工具结果都截断后**仍然超限**，说明膨胀已不止来自工具输出，而来自历史轮次本身。紧急压缩不再"修剪"，而是把**整个历史覆盖为一条结构化 user 消息**。
+
+```go
+// internal/agents/emergency_compressor.go
+func EmergencyCompressMessages(ctx context.Context, messages []llm.Message, originalInput string,
+    maxTokens int, engine llm.Engine, agentName string, keepLastN int) ([]llm.Message, *EmergencyCompressionStats)
+
+func extractThoughtAndPlanBlocks(content string) []string // 正则提取 T&P 块
+func findNextBlockStart(content string, offset int) int   // 查找下一个块起始位置
+func summarizeBlocksWithLLM(ctx context.Context, engine llm.Engine,
+    blocks []string, agentName string) (string, bool)     // LLM 摘要，失败返回 false
+```
+
+**Thought & Plan 块提取**：`extractThoughtAndPlanBlocks` 用正则 `(?i)thought\s*(?:&amp;|&|＆|and)\s*plan` 匹配块标题——忽略大小写与空白差异，兼容全角 `＆`、HTML 实体 `&amp;`、`and` 写法等变体；每个块回退到行首以保留 `## ` 前缀。若某条 assistant 消息中不含关键字，则**整条内容作为一个过程块保底**，确保信息不丢。
+
+**分级处理策略**：
+
+| 内容 | 处理方式 |
+|------|----------|
+| 原始任务（`originalInput`，缺省取消息列表首条非空 user 消息） | 原文保留 |
+| 较早的 T&P 块（超出保留数量的前段） | `summarizeBlocksWithLLM` 生成摘要：输入上限 20000 tokens（超出先截断）、输出上限 2000 tokens、90 秒超时、要求 500 字以内纯文本 |
+| 最近 `keepLastN`（默认 3）个 T&P 块 | **原文保留**，不经过 LLM |
+| LLM 摘要失败 | 降级为 `truncateToTokenBudget` 对块拼接文本直接截断兜底 |
+| 压缩结果仍超限（极端） | 强制截断 user 消息内容（扣除 system 等非 user 消息的预算），并在 `stats.Reason` 标记 |
+
+**压缩结果结构**——整个历史被覆盖为单条 user 消息（新 messages = `[system, user]`）：
+
+```text
+[紧急上下文压缩：历史上下文因超出 token 上限被极致压缩，请基于以下信息继续任务]
+
+### 原始任务
+<用户原始任务输入>
+
+### 执行过程总结（LLM 生成，压缩前历史）
+<LLM 摘要，或降级截断文本>
+
+### 最近思考与计划（保留的原始 Thought & Plan）
+<最近 3 个 T&P 块原文>
+```
+
+Director 侧的 `applyEmergencyCompression`（`director.go`）在压缩完成后**同步覆盖 `currentMemory`**（Clear 后仅 AddHumanMessage 该条压缩消息），保持 memory 与 messages 一致；随后发布 `context_emergency_compressed` 事件。
+
+### 8.4 第三级：终极压缩（上下文重建）
+
+实现位于 `director.go`（`applyUltimateCompression`）+ `internal/thinklink`。当第二级压缩后**仍超限**时（含紧急压缩 LLM 调用失败/未生效、system 消息本身过大导致强制截断失效的情况），说明对话历史已无法在现有形态下压进阈值——第三级放弃修补旧历史，转而用 thinklink 中长期记录的**任务主线**从零重建上下文。
+
+**触发条件**：`EnableUltimateCompression = true`（默认开启）且 `thinkLink` 存在，且前两级处理后 token 估算仍超阈值。
+
+**执行流程**：
+
+1. **保留 system 消息**：全部 system 消息原样保留，并计算 user 消息可用预算 `userBudget = threshold - 非user消息token`；
+2. **确定保留数量**：T&P 块总数 `totalPlans` 来自 `thinkLink.Count(KindThoughtPlan)`；若配置了 `UltimateCompressionKeepPlans > 0` 则取两者较小值（0 = 全部保留）；
+3. **生成重建 prompt**：调用 `thinkLink.RebuildPrompt(keep)`（结构见 [8.5](#85-thinklink-存储internalthinklinkthinklinkgo)），prompt 明确告知模型"上下文已因超出 token 限制被重置，须无缝继续任务：不要向用户提问、不要道歉、不要重复已完成的工作"；
+4. **循环保护（确保收敛）**：重建内容自身若仍超预算，`keep` 逐步递减（保留最近 N-1、N-2……直至 0，即只留用户原始输入）；`keep == 0` 仍超限则对重建 prompt 做 `truncateToTokenBudget` **硬截断**，保证重建后必然低于阈值，绝不进入死循环；
+5. **重置上下文**：messages 重置为 `[system..., 单条 user 重建消息]`，同步 Clear 并重建 `currentMemory`；
+6. **清理残留**：将 `pendingSubAgentMemory` 置 nil，防止残留的子 Agent memory 注入导致 tool_call/tool_response 配对校验失败。
+
+循环保护的核心代码：
+
+```go
+// internal/agents/director.go — applyUltimateCompression
+for {
+    prompt = a.thinkLink.RebuildPrompt(keep)
+    if EstimateTokens(prompt) <= userBudget {
+        break
+    }
+    if keep <= 0 {
+        prompt = truncateToTokenBudget(prompt, userBudget)
+        truncated = true // 极端兜底：硬截断
+        break
+    }
+    keep--
+}
+```
+
+压缩完成后发布 `context_ultimate_compressed` 事件，payload 中包含 `kept_plans`（保留的 T&P 块数）、`user_inputs`（用户输入条数）、`truncated`（是否触发硬截断）等统计信息。
+
+### 8.5 thinklink 存储（internal/thinklink/thinklink.go）
+
+thinklink 是 Director 的"任务主线黑匣子"：以追加方式**实时**记录任务过程中的关键信息，独立于会话 memory，因此能在上下文被整体重置后幸存——它既是第三级压缩的数据来源，也是**跨上下文重置后唯一存活的任务主线记忆**。
+
+**两种条目**：
+
+| Kind | 写入函数 | 写入时机 | 去重 / 约束 |
+|------|----------|----------|-------------|
+| `KindUserInput`（用户原始输入） | `AddUserInput(input, step)` | `DirectorAgent.Run` 任务开始时（step=0） | 空白不记录；与最后一条用户输入完全相同则跳过（防止重复注入同一任务） |
+| `KindThoughtPlan`（T&P 块） | `AddThoughtPlan(block, step)` | 每轮 LLM 回复后，用 `extractThoughtAndPlanBlocks` 从回复中提取（step=当前步数） | 空白不记录；复用 emergency_compressor 的提取正则 |
+
+**容量保护 `evictLocked`**：Store 默认上限 `DefaultMaxEntries = 200` 条，超限按**最旧优先**淘汰；但**第一条 `KindUserInput` 条目永不淘汰**——它承载最初的任务需求，是终极压缩重建的底线信息。内部用 `sync.RWMutex` 保证线程安全，`Snapshot` 返回深拷贝。
+
+**`RebuildPrompt(keepPlans)` 生成的重建 prompt**（英文，面向 LLM）结构如下：
+
+| 区块 | 内容 | keepPlans 的影响 |
+|------|------|------------------|
+| 顶部说明 | 上下文已因超限被重置 + 无缝续接指令（不提问 / 不道歉 / 不重复已完成工作） | 无 |
+| `=== Original user input(s) ===` | 全部用户输入按时间顺序列出，带时间戳与步数，**最后一条标注 `[CURRENT TASK]`** | 无——**任何 keepPlans 取值下全部保留** |
+| `=== Thought & Plan blocks ===` | T&P 块按时间顺序列出，带**全局序号 `[TP-n]`**、时间戳与步数 | `keepPlans > 0` 时仅保留最近 keepPlans 个；`<= 0` 表示全部保留 |
+
+### 8.6 Token 估算（internal/tokenutil）
+
+三级压缩的所有超限判断都建立在 `tokenutil.EstimateTokens` 之上：
+
+- **精确路径**：基于 tiktoken-go 的 `cl100k_base` 编码（GPT-4 / GPT-3.5 系模型词表），编码器实例通过包级 `sync.Once` 只加载一次；
+- **降级路径**：BPE 词表加载失败（离线环境等）时自动降级为 `len(text) / 4` 估算——仅在首次降级时打印一条 `slog.Warn`，保证**不 panic、不阻塞主流程**。
+
+```go
+// internal/tokenutil/tokenutil.go（核心逻辑）
+tokens := encoder.Encode(text, nil, nil)
+if tokens == nil {
+    return len(text) / 4 // 降级估算
+}
+return len(tokens)
+```
+
+`internal/agents` 包（`repo_memory.go`）中的 `EstimateTokens` 是对它的薄委托（`applyUltimateCompression` 即使用该委托）；`estimateMessagesTokens` 则在其之上累加整个消息列表（含 ToolCalls 参数）。
+
+### 8.7 配置参数
+
+三级压缩的全部配置位于 `[enhanced_commander]` 段（定义：`internal/config/config.go` 的 `EnhancedCommanderConfig`）。**总开关 `enable` 与 `enable_context_compression` 均需显式开启**，压缩才会生效：
+
+| 配置项 | TOML 键 | 默认值 | 说明 |
+|--------|---------|--------|------|
+| EnableContextCompression | `enable_context_compression` | `false`（需显式启用） | 上下文压缩总开关（一、二级及第三级的前置判断） |
+| ContextCompressionThreshold | `context_compression_threshold` | `120000` | 触发压缩的 token 阈值；配置 ≤ 0 时代码回退默认值 |
+| ToolResultKeepTokens | `tool_result_keep_tokens` | `200` | 一级截断后每条工具结果保留的 token 数；≤ 0 时代码回退默认值 |
+| EnableUltimateCompression | `enable_ultimate_compression` | `true` | 第三级终极压缩开关 |
+| UltimateCompressionKeepPlans | `ultimate_compression_keep_plans` | `0`（全部保留） | 重建时保留的 T&P 块数量上限；可被循环保护进一步递减 |
+
+涉及的代码常量：
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `DefaultContextCompressionThreshold` | 120000 | 默认压缩阈值（context_compressor.go） |
+| `DefaultToolResultKeepTokens` | 200 | 默认每条工具结果保留 token（context_compressor.go） |
+| `DefaultEmergencyCompressKeepLastN` | 3 | 紧急压缩保留的最近 T&P 块数（emergency_compressor.go） |
+| `emergencySummaryInputTokens` | 20000 | LLM 摘要的输入 token 上限（超出先截断） |
+| `emergencySummaryMaxTokens` | 2000 | LLM 摘要的输出 token 上限 |
+| `thinklink.DefaultMaxEntries` | 200 | thinklink 条目容量上限（条数） |
+
+最小配置示例：
+
+```toml
+[enhanced_commander]
+enable = true
+enable_context_compression = true
+context_compression_threshold = 120000
+tool_result_keep_tokens = 200
+enable_ultimate_compression = true      # 默认 true，可省略
+ultimate_compression_keep_plans = 0     # 0=全部保留，可省略
+```
+
+配置项的完整说明与场景示例详见 [docs/config-guide.md](./config-guide.md) 5.8 节。
+
+### 8.8 关键设计亮点
+
+- **信息价值分级**：信息越难再生、密度越高，被牺牲得越晚——`deepthinking` 结果永不截断（优先级 -1）；用户原始输入在 thinklink 中永不淘汰；最近 3 个 T&P 块在紧急压缩中保原文；而工具原始输出（可重新调用恢复）最先被截断。
+- **处处降级兜底**：token 估算失败 → `len/4` 降级；LLM 摘要失败 → 文本截断；终极压缩超预算 → `keepPlans` 递减 → 硬截断；紧急压缩后仍超限 → 强制截断 user 消息。任何一环失效都有下一环接住，保证主循环永不因上下文超限而中断。
+- **API 安全性**：`TruncationMarker` 幂等标记避免重复截断；`validateAndRepairToolCallPairs` 在每次 LLM 调用前修复配对（不完整组整组移除、孤儿 tool 消息丢弃、合并连续 assistant 消息），压缩后的消息序列始终是合法的工具调用协议格式。
+- **可观测性**：三级压缩分别发布 `context_compressed`、`context_emergency_compressed`、`context_ultimate_compressed` 事件，携带 token 节省、截断工具明细、保留块数等统计，TUI 与日志可完整追踪每次压缩。
+- **子 Agent 复用**：子 Agent 经 `internal/agents/executor.go` 复用同一套第一级截断与第二级紧急压缩（相同函数、相同事件、相同配置语义）；第三级因依赖 Director 持有的 `thinklink.Store`，仅在 `DirectorAgent` 上生效。
 
 ---
 
