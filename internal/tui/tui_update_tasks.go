@@ -673,6 +673,65 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
+	// Handle knowledge_injected event — 展示对话前知识检索注入概要
+	// Content 字段（由 injector.publishInjectedSummary 构建，进程内传递无序列化）：
+	// agent(string) / query(string,已截断) / hits(int) / max_score(float64) / titles([]string,前5条)
+	if msg.event.Type == "knowledge_injected" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			agent := ""
+			if a, ok := contentMap["agent"].(string); ok {
+				agent = a
+			}
+			query := ""
+			if q, ok := contentMap["query"].(string); ok {
+				query = q
+			}
+			hits := parseEventInt(contentMap["hits"], 0)
+			maxScore := 0.0
+			if ms, ok := contentMap["max_score"].(float64); ok {
+				maxScore = ms
+			}
+			var titles []string
+			if ts, ok := contentMap["titles"].([]interface{}); ok {
+				for _, ti := range ts {
+					if s, ok := ti.(string); ok {
+						titles = append(titles, s)
+					}
+				}
+			}
+			entry := logEntry{
+				timestamp: msg.event.Timestamp,
+				eventType: "knowledge_injected",
+				from:      msg.event.From,
+			}
+			if hits > 0 {
+				content := fmt.Sprintf("📚 知识注入[%s]：%d 条命中 | 最高分 %.2f", agent, hits, maxScore)
+				if len(titles) > 0 {
+					content += " | " + strings.Join(titles, "、")
+				}
+				entry.content = content
+			} else {
+				// 无命中时低调展示：标记 verbose，默认隐藏，减少噪音
+				entry.isVerbose = true
+				entry.content = fmt.Sprintf("🔍 知识检索无命中[%s] | query=%s", agent, query)
+			}
+			// Add timeline entry for knowledge injection
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        fmt.Sprintf("knowledge_%d", msg.event.Timestamp.UnixNano()),
+				Kind:      TimelineKindContextEvent,
+				Timestamp: msg.event.Timestamp,
+				Status:    ToolStatusSuccess,
+				Name:      "knowledge_injected",
+				Detail:    entry.content,
+			})
+			m.timelineCacheKey = ""
+			m.logEntries = append(m.logEntries, entry)
+			m.viewportDirty = true
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+		}
+		return m, listenForEvents(m.eventCh)
+	}
+
 	// ── Context token 瞬时值追踪（守卫式 hook）──
 	// 三种压缩事件均在 LLM 调用前发布，Content 含 compressed_tokens（压缩后上下文估算，
 	// 来自 estimateMessagesTokens(messages)）。在进入各事件的 timeline 处理分支之前，

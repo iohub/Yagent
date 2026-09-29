@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"codeactor/internal/config"
@@ -266,6 +267,199 @@ func TestInject_EmptyUserMessage(t *testing.T) {
 	}
 	if block != "" {
 		t.Errorf("Inject(empty) = %q, want empty", block)
+	}
+}
+
+// ============================================================================
+// 知识注入概要事件测试（buildInjectedSummary / publishInjectedSummary）
+// ============================================================================
+
+// fakeEventPublisher 记录发布事件的 stub publisher（实现 EventPublisher 最小接口）
+type fakeEventPublisher struct {
+	events  []fakePublishedEvent
+	failErr error // 非 nil 时 Publish 返回该错误
+}
+
+type fakePublishedEvent struct {
+	eventType string
+	content   interface{}
+	from      string
+}
+
+func (f *fakeEventPublisher) Publish(eventType string, content interface{}, from string) error {
+	f.events = append(f.events, fakePublishedEvent{eventType: eventType, content: content, from: from})
+	return f.failErr
+}
+
+func TestBuildInjectedSummary_WithHits(t *testing.T) {
+	hi := 0.92
+	results := []mcp.KnowledgeSearchResult{
+		{KnowledgeRecord: mcp.KnowledgeRecord{Title: "Auth Flow"}, FinalScore: 0.95, RerankScore: &hi},
+		{KnowledgeRecord: mcp.KnowledgeRecord{Title: "Session Mgmt"}, FinalScore: 0.88},
+		{KnowledgeRecord: mcp.KnowledgeRecord{Title: "Token Refresh"}, FinalScore: 0.72},
+	}
+	summary := buildInjectedSummary("coding", "fix login bug", results)
+
+	if summary["agent"] != "coding" {
+		t.Errorf("agent = %v, want coding", summary["agent"])
+	}
+	if summary["query"] != "fix login bug" {
+		t.Errorf("query = %v, want fix login bug", summary["query"])
+	}
+	if hits, ok := summary["hits"].(int); !ok || hits != 3 {
+		t.Errorf("hits = %v (%T), want int 3", summary["hits"], summary["hits"])
+	}
+	// max_score 取 RerankScore 优先（0.92），而非 FinalScore 的最大值 0.95
+	if ms, ok := summary["max_score"].(float64); !ok || ms != 0.92 {
+		t.Errorf("max_score = %v (%T), want 0.92 (rerank priority)", summary["max_score"], summary["max_score"])
+	}
+	titles, ok := summary["titles"].([]string)
+	if !ok || len(titles) != 3 {
+		t.Fatalf("titles = %v (%T), want []string len 3", summary["titles"], summary["titles"])
+	}
+	if titles[0] != "Auth Flow" || titles[1] != "Session Mgmt" || titles[2] != "Token Refresh" {
+		t.Errorf("titles = %v, want [Auth Flow Session Mgmt Token Refresh]", titles)
+	}
+}
+
+func TestBuildInjectedSummary_TitlesLimitAndTruncation(t *testing.T) {
+	// 7 个结果只取前 5 条标题
+	var results []mcp.KnowledgeSearchResult
+	for i := 0; i < 7; i++ {
+		results = append(results, mcp.KnowledgeSearchResult{
+			KnowledgeRecord: mcp.KnowledgeRecord{Title: fmt.Sprintf("Title-%d", i)},
+			FinalScore:      0.5,
+		})
+	}
+	summary := buildInjectedSummary("repo", "query", results)
+	titles, ok := summary["titles"].([]string)
+	if !ok || len(titles) != 5 {
+		t.Fatalf("titles len = %d (%T), want 5", len(titles), summary["titles"])
+	}
+	if titles[0] != "Title-0" || titles[4] != "Title-4" {
+		t.Errorf("titles = %v, want first 5 (Title-0..Title-4)", titles)
+	}
+
+	// 超长标题截断到 60 rune
+	long := ""
+	for i := 0; i < 100; i++ {
+		long += "标"
+	}
+	summary2 := buildInjectedSummary("repo", "", []mcp.KnowledgeSearchResult{
+		{KnowledgeRecord: mcp.KnowledgeRecord{Title: long}},
+	})
+	titles2 := summary2["titles"].([]string)
+	if len(titles2) != 1 || len([]rune(titles2[0])) != 60 {
+		t.Errorf("long title not truncated to 60 runes: got %d runes", len([]rune(titles2[0])))
+	}
+	// 空 agent 回退为 unknown
+	summary3 := buildInjectedSummary("", "query", nil)
+	if summary3["agent"] != "unknown" {
+		t.Errorf("agent = %v, want unknown", summary3["agent"])
+	}
+}
+
+func TestBuildInjectedSummary_Empty(t *testing.T) {
+	summary := buildInjectedSummary("director", "some query", nil)
+	if hits, ok := summary["hits"].(int); !ok || hits != 0 {
+		t.Errorf("hits = %v (%T), want int 0", summary["hits"], summary["hits"])
+	}
+	if ms, ok := summary["max_score"].(float64); !ok || ms != 0 {
+		t.Errorf("max_score = %v, want 0", summary["max_score"])
+	}
+	titles, ok := summary["titles"].([]string)
+	if !ok || len(titles) != 0 {
+		t.Errorf("titles = %v (%T), want empty []string", summary["titles"], summary["titles"])
+	}
+}
+
+func TestPublishInjectedSummary_PublishesOnHits(t *testing.T) {
+	pub := &fakeEventPublisher{}
+	k := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, pub)
+	results := []mcp.KnowledgeSearchResult{
+		{KnowledgeRecord: mcp.KnowledgeRecord{Title: "Auth Flow"}, FinalScore: 0.95},
+	}
+	k.publishInjectedSummary("coding", "fix login bug", results)
+
+	if len(pub.events) != 1 {
+		t.Fatalf("published %d event(s), want 1", len(pub.events))
+	}
+	ev := pub.events[0]
+	if ev.eventType != "knowledge_injected" {
+		t.Errorf("eventType = %q, want knowledge_injected", ev.eventType)
+	}
+	if ev.from != "knowledge" {
+		t.Errorf("from = %q, want knowledge", ev.from)
+	}
+	contentMap, ok := ev.content.(map[string]interface{})
+	if !ok {
+		t.Fatalf("content type = %T, want map[string]interface{}", ev.content)
+	}
+	if hits, ok := contentMap["hits"].(int); !ok || hits != 1 {
+		t.Errorf("content hits = %v (%T), want int 1", contentMap["hits"], contentMap["hits"])
+	}
+}
+
+func TestPublishInjectedSummary_PublishesOnZeroHits(t *testing.T) {
+	pub := &fakeEventPublisher{}
+	k := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, pub)
+	// 命中为 0（或全部被过滤）时也要发布一次，让用户感知检索发生过
+	k.publishInjectedSummary("repo", "no match query", nil)
+
+	if len(pub.events) != 1 {
+		t.Fatalf("published %d event(s), want 1 (zero-hit must still publish)", len(pub.events))
+	}
+	contentMap := pub.events[0].content.(map[string]interface{})
+	if hits, ok := contentMap["hits"].(int); !ok || hits != 0 {
+		t.Errorf("content hits = %v (%T), want int 0", contentMap["hits"], contentMap["hits"])
+	}
+}
+
+func TestPublishInjectedSummary_NilPublisherNoPanic(t *testing.T) {
+	k := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, nil)
+	// publisher 为 nil 时应静默跳过，不得 panic
+	k.publishInjectedSummary("coding", "query", []mcp.KnowledgeSearchResult{
+		{KnowledgeRecord: mcp.KnowledgeRecord{Title: "T"}, FinalScore: 0.9},
+	})
+	// 零值接收者同样安全（publisher 字段为 nil）
+	zero := &KnowledgeInjector{}
+	zero.publishInjectedSummary("coding", "query", nil)
+}
+
+func TestPublishInjectedSummary_PublishErrorSwallowed(t *testing.T) {
+	pub := &fakeEventPublisher{failErr: fmt.Errorf("simulated publish failure")}
+	k := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, pub)
+	// 发布返回错误时仅吞掉，不得 panic
+	k.publishInjectedSummary("coding", "query", []mcp.KnowledgeSearchResult{
+		{KnowledgeRecord: mcp.KnowledgeRecord{Title: "T"}, FinalScore: 0.9},
+	})
+	if len(pub.events) != 1 {
+		t.Errorf("event should still be recorded despite returned error")
+	}
+}
+
+// TestInject_SkipPath_NoEventPublished 验证跳过路径（未启用 / mcpClient 为 nil）不发布事件
+func TestInject_SkipPath_NoEventPublished(t *testing.T) {
+	// 未启用
+	pubDisabled := &fakeEventPublisher{}
+	k1 := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: false}, pubDisabled)
+	block, err := k1.Inject(context.Background(), InjectionContext{UserMessage: "test"})
+	if err != nil || block != "" {
+		t.Fatalf("Inject(disabled) = (%q, %v), want (\"\", nil)", block, err)
+	}
+	if len(pubDisabled.events) != 0 {
+		t.Errorf("disabled path published %d event(s), want 0", len(pubDisabled.events))
+	}
+
+	// mcpClient 为 nil（Enabled=true）
+	pubNoClient := &fakeEventPublisher{}
+	k2 := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, pubNoClient)
+	block2, err2 := k2.Inject(context.Background(), InjectionContext{UserMessage: "test"})
+	if err2 != nil || block2 != "" {
+		t.Fatalf("Inject(nil client) = (%q, %v), want (\"\", nil)", block2, err2)
+	}
+	if len(pubNoClient.events) != 0 {
+		t.Errorf("skip path published %d event(s), want 0", len(pubNoClient.events))
 	}
 }
 
