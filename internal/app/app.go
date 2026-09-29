@@ -353,6 +353,8 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		}
 		metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine, stepRetries)
 		devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)
+		// 注入 DevOps-Agent，使 Repo-Agent 的 delegate_devops 工具可用
+		repoAgent.SetDevOpsAgent(devopsAgent)
 		// 合并浏览器配置：从 config 读取，未设置的使用默认值
 		browserCfg := browser.DefaultBrowserConfig()
 		if ca.config != nil {
