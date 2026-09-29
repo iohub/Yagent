@@ -183,6 +183,33 @@ func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 		syncThinklinkDetail(m)
 		m.invalidateFooterCache()
 		return m, nil
+	case taskEventMsg:
+		// 全屏模式必须维持任务事件链：透传给 handler（handler 内部有防御检查
+		// 且自行续链 listenForEvents），若在此丢弃事件，listenForEvents 链断裂，
+		// 退出全屏后主界面永久失去刷新（agent 输出不显示）。
+		// 对齐主 Update 的 dialog 弹窗分支策略。
+		return m.handleTaskEventMsg(msg)
+	case taskCompleteMsg:
+		// 任务完成消息若在全屏期间被丢弃，m.taskRunning 会永久卡在 true。
+		// 先自动退出全屏回主界面，确保 handler 可能弹出的完成/错误对话框可见、
+		// 按键不被全屏吞掉，再透传给 handler 做收尾（重置 taskRunning、动画等）。
+		exitThinklinkMode(m)
+		return m.handleTaskCompleteMsg(msg)
+	case tickMsg:
+		// 全屏模式必须维持 tick 链：只续 tick 循环但绝不调用 handleTickMsg
+		//（它会直接操作被全屏隐藏的主界面 viewport，造成 UI 错乱）。
+		// 对齐主 Update 的 dialog 弹窗分支策略。
+		if m.taskRunning {
+			return m, tickCmd()
+		}
+		return m, nil
+	}
+	// 其余未知消息（如 MouseMsg、未匹配任何 case 的消息，以及 KeyMsg 中
+	// 未匹配已知按键的情况）：与主 Update 的 dialog 弹窗分支 default 策略
+	// 一致——任务运行时同时续上事件链与 tick 链，否则退出全屏后主界面
+	// 永久失去刷新（TUI 冻结）。
+	if m.taskRunning {
+		return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 	}
 	return m, nil
 }
