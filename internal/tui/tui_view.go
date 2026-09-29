@@ -749,6 +749,10 @@ func (m *model) renderTokenDashboard() string {
 		header += inputStyle.Render(cacheInfo + "  ")
 	}
 	header += sumStyle.Render(fmt.Sprintf("Σ %s", sumStr))
+	// 当前 agent 上下文瞬时值（覆盖式）：压缩后显示压缩后的真实大小
+	if ctxTokens := m.currentAgentRunTokens.ContextTokens; ctxTokens > 0 {
+		header += "  " + sumStyle.Render(fmt.Sprintf("Ctx: %s", formatToken(ctxTokens)))
+	}
 
 	// Separator
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
@@ -808,7 +812,8 @@ func (m *model) renderCollapsedTokenDashboard() string {
 	rt := m.currentAgentRunTokens
 
 	// 如果没有任何 token 数据，返回空字符串
-	if rt.InputTokens == 0 && rt.OutputTokens == 0 {
+	// ContextTokens 也参与判断：压缩事件可能在首次 ai_response 之前就写入 Ctx 值
+	if rt.InputTokens == 0 && rt.OutputTokens == 0 && rt.ContextTokens == 0 {
 		return ""
 	}
 
@@ -848,6 +853,11 @@ func (m *model) renderCollapsedTokenDashboard() string {
 
 	if cacheStr != "" {
 		line += inputStyle.Render(cacheStr + "  ")
+	}
+
+	// 当前上下文瞬时值（覆盖式）：压缩后显示压缩后的真实大小
+	if rt.ContextTokens > 0 {
+		line += outputStyle.Render(fmt.Sprintf("Ctx: %s  ", formatToken(rt.ContextTokens)))
 	}
 
 	line += style.Render("(alt+t: expand)")
