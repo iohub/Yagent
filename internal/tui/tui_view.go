@@ -62,6 +62,11 @@ func (m *model) View() tea.View {
 		return renderTimelineFullscreenView(m)
 	}
 
+	// Thinklink 全屏:用户输入与 Thought & Plan 块
+	if m.thinklinkMode {
+		return renderThinklinkFullscreenView(m)
+	}
+
 	// ====== Dialog overlay: takes priority over history mode ======
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
 		overlay := m.dialogStack.Overlay(m.termWidth, m.termHeight)

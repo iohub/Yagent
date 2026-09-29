@@ -709,6 +709,7 @@ type model struct {
 	thinklinkEntries []ThinklinkEntry // thinklink 条目列表（用户原始输入 / Thought & Plan 块）
 	thinklinkCursor  int              // 全屏模式下当前选中的条目索引
 	thinklinkVP      *viewport.Model  // 全屏模式下右侧详情 viewport
+	thinklinkDetailActive bool        // 详情滚动模式（enter 切换：列表导航 ↔ 详情滚动）
 
 	// ── 可配置快捷键映射表 ──
 	// editKeyMap 将用户配置的编辑模式快捷键映射为内部标准键名
