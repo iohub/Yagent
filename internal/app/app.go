@@ -221,8 +221,9 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		ca.globalCtx = &gctx
 
 		// [知识管理] 创建 KnowledgeInjector（依赖 CodeSeekMCP，在 MCP 客户端就绪后生效）
+		// publisher 用于向 TUI 发布 knowledge_injected 概要事件（injector 内部 fail-safe）
 		if ca.config != nil && ca.config.CodeSeek.Knowledge.Enabled && ca.globalCtx.CodeSeekMCP != nil {
-			ca.globalCtx.KnowledgeInjector = knowledge.NewKnowledgeInjector(ca.globalCtx.CodeSeekMCP, ca.config.CodeSeek.Knowledge)
+			ca.globalCtx.KnowledgeInjector = knowledge.NewKnowledgeInjector(ca.globalCtx.CodeSeekMCP, ca.config.CodeSeek.Knowledge, publisher)
 			slog.Info("KnowledgeInjector initialized", "enabled", true)
 		}
 

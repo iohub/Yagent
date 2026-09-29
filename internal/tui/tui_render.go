@@ -695,6 +695,8 @@ func extractResultBrief(toolName string, result string) string {
 //   - LLM API calls (request/response details)
 //   - Context compression notifications
 //   - Commit knowledge loading notifications
+//   - Knowledge injection summaries (handled with dedicated branch;
+//     registering here is defensive so the generic fallback stays hidden)
 //
 // Non-verbose events (always shown):
 //   - User messages
@@ -708,6 +710,7 @@ func isVerboseEventType(eventType string) bool {
 	case "tool_call_start", "tool_call_result",
 		"llm_call_start", "llm_call_end",
 		"commit_context_loaded", "context_compressed", "context_ultimate_compressed",
+		"knowledge_injected",
 		"model_info", "thinking":
 		return true
 	}
