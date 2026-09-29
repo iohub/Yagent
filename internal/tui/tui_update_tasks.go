@@ -46,6 +46,24 @@ func stringFromEventMap(m map[string]interface{}, key string) string {
 	return s
 }
 
+// updateAgentContextTokens 更新当前 agent run 的上下文 token 瞬时值（覆盖式，非累计）。
+// 这是 ContextTokens 的唯一写入口。
+// agentName 为空时归一化为 "Unknown"（与 ai_response 现有 fallback 一致）；
+// 若与当前 run 的 agent 不同，则整体重置 run tokens（复制 ai_response 现有的 agent 切换语义）。
+func (m *model) updateAgentContextTokens(agentName string, contextTokens int64) {
+	if agentName == "" {
+		agentName = "Unknown"
+	}
+	if m.currentAgentRunTokens.AgentName != agentName {
+		// Agent switched — reset run tokens for new agent
+		m.currentAgentRunTokens = AgentRunTokens{
+			AgentName: agentName,
+		}
+	}
+	m.currentAgentRunTokens.ContextTokens = contextTokens
+	m.invalidateFooterCache()
+}
+
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	// Don't process task events while any popup/dialog is showing.
 	// Keep the event chain alive so the TUI resumes after dialog dismissal.
@@ -157,6 +175,13 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				m.currentAgentRunTokens.CacheReadInputTokens += cacheReadVal
 				m.currentAgentRunTokens.CacheCreationInputTokens += cacheCreationVal
 				m.currentAgentRunTokens.TotalInputTokens += totalInputVal
+
+				// 更新当前 agent 上下文 token 瞬时值（覆盖式）：
+				// provider 口径总输入 ≈ 本次 LLM 调用时的真实上下文大小。
+				// >0 守卫：provider 上报全零 usage 时不清零面板显示。
+				if totalInputVal > 0 {
+					m.updateAgentContextTokens(agentNameForRun, totalInputVal)
+				}
 
 				// Track current running agent
 				if m.taskRunning {
@@ -648,6 +673,20 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
+	// ── Context token 瞬时值追踪（守卫式 hook）──
+	// 三种压缩事件均在 LLM 调用前发布，Content 含 compressed_tokens（压缩后上下文估算，
+	// 来自 estimateMessagesTokens(messages)）。在进入各事件的 timeline 处理分支之前，
+	// 先行覆盖式更新 currentAgentRunTokens.ContextTokens，与各分支的 return 语义完全解耦。
+	if msg.event.Type == "context_compressed" ||
+		msg.event.Type == "context_emergency_compressed" ||
+		msg.event.Type == "context_ultimate_compressed" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			if compTokens := parseEventInt(contentMap["compressed_tokens"], 0); compTokens > 0 {
+				m.updateAgentContextTokens(msg.event.From, int64(compTokens))
+			}
+		}
+	}
+
 	// Handle context_compressed event — log it in the TUI timeline
 	if msg.event.Type == "context_compressed" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
@@ -691,6 +730,37 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				Status:    ToolStatusSuccess,
 				Name:      "Context Compressed",
 				Detail:    detail,
+			})
+			m.timelineCacheKey = ""
+			m.logEntries = append(m.logEntries, entry)
+			m.viewportDirty = true
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+		}
+		return m, listenForEvents(m.eventCh)
+	}
+
+	// Handle context_emergency_compressed event — log it in the TUI timeline.
+	// 紧急压缩（第二级）：常规 tool 结果截断后仍超限时触发，极致压缩上下文继续任务。
+	if msg.event.Type == "context_emergency_compressed" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			origTokens := parseEventInt(contentMap["original_tokens"], 0)
+			compTokens := parseEventInt(contentMap["compressed_tokens"], 0)
+			savedTokens := parseEventInt(contentMap["saved_tokens"], 0)
+			entry := logEntry{
+				timestamp: msg.event.Timestamp,
+				eventType: "context_emergency_compressed",
+				from:      msg.event.From,
+				content:   fmt.Sprintf("⚡ Emergency compression: %d → %d tokens (saved %d)", origTokens, compTokens, savedTokens),
+				isVerbose: true,
+			}
+			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+				ID:        fmt.Sprintf("ctx_emg_%d", msg.event.Timestamp.UnixNano()),
+				Kind:      TimelineKindContextEvent,
+				Timestamp: msg.event.Timestamp,
+				Status:    ToolStatusSuccess,
+				Name:      "Emergency Compression",
+				Detail: fmt.Sprintf("Context: %d → %d tokens (saved %d)",
+					origTokens, compTokens, savedTokens),
 			})
 			m.timelineCacheKey = ""
 			m.logEntries = append(m.logEntries, entry)

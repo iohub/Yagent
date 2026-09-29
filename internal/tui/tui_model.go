@@ -374,6 +374,8 @@ type AgentRunTokens struct {
 	CacheReadInputTokens     int64
 	CacheCreationInputTokens int64
 	TotalInputTokens         int64 // provider 口径下的输入 token 总数（含缓存）
+	ContextTokens            int64 // 当前 agent 本次 run 最近一次已知的上下文大小（覆盖式，非累计）；
+	// 来源优先级：最近一次 LLM 调用的 provider 口径总输入 > 最近一次压缩事件的 compressed_tokens 估算
 }
 
 // visibleEntryIndices 返回当前视口中可见的logEntry索引范围 [start, end]。

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -112,6 +113,10 @@ func (m *model) renderDashboard(width, height int) string {
 		m.cacheReadInputTokens,
 		m.cacheCreationInputTokens,
 		tokenSig.String())
+	// 尾部追加 ContextTokens（不触碰上方 fmt.Sprintf 的既有 verb 与参数位置）：
+	// 压缩事件（尤其 emergency）可能不改变 timeline 与任何累计计数器，而 ContextTokens
+	// 只反映在 Total 行 —— 若不纳入 key，面板将永远命中旧缓存、无法刷新。
+	key += "|ctx:" + strconv.FormatInt(m.currentAgentRunTokens.ContextTokens, 10)
 
 	if !hasRunning && key == m.dashboardCacheKey && m.dashboardCache != "" {
 		return m.dashboardCache
@@ -168,6 +173,10 @@ func (m *model) renderDashboard(width, height int) string {
 			outputStyle.Render("Out: "+outStr)
 		if cacheInfo := formatCacheShort(m.cacheReadInputTokens, m.cacheCreationInputTokens, totalInput); cacheInfo != "" {
 			totalLine += "  " + cacheRateStyle.Render(cacheInfo)
+		}
+		// 当前 agent 上下文瞬时值（覆盖式）：压缩后显示压缩后的真实大小
+		if ctxTokens := m.currentAgentRunTokens.ContextTokens; ctxTokens > 0 {
+			totalLine += "  " + cacheRateStyle.Render("Ctx: "+formatToken(ctxTokens))
 		}
 		lines = append(lines, totalLine)
 

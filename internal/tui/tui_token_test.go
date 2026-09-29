@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"codeactor/internal/messaging"
 )
 
@@ -522,5 +523,299 @@ func TestCacheHitRate_OpenAIPath(t *testing.T) {
 	}
 	if !strings.Contains(cacheInfo, "100.0%") {
 		t.Errorf("cacheInfo 应包含 100.0%%，实际 %q", cacheInfo)
+	}
+}
+
+// ── 实时 context token（ContextTokens）测试 ──
+// 覆盖：覆盖式非累计更新、压缩事件→ai_response 收敛链、agent 切换重置、
+// emergency 事件可达性、From 归一化、全零 usage 守卫，以及三处渲染出口。
+
+// ctxTestAiResponse 构造带 total_input_tokens 的 ai_response 事件（测试 ContextTokens 用）
+func ctxTestAiResponse(from string, totalInput int64) *messaging.MessageEvent {
+	return &messaging.MessageEvent{
+		Type:      "ai_response",
+		From:      from,
+		Content:   "测试内容",
+		Timestamp: time.Now(),
+		Metadata: map[string]interface{}{
+			"usage": map[string]interface{}{
+				"prompt_tokens":      totalInput,
+				"completion_tokens":  10,
+				"total_tokens":       totalInput + 10,
+				"total_input_tokens": totalInput,
+			},
+		},
+	}
+}
+
+// ctxTestCompression 构造带 compressed_tokens 的上下文压缩事件（三级压缩共用载荷结构）
+func ctxTestCompression(eventType, from string, compressed int64) *messaging.MessageEvent {
+	return &messaging.MessageEvent{
+		Type:      messaging.EventType(eventType),
+		From:      from,
+		Content: map[string]interface{}{
+			"original_tokens":   compressed * 4,
+			"compressed_tokens": compressed,
+			"saved_tokens":      compressed * 3,
+			"saved_percent":     75.0,
+		},
+		Timestamp: time.Now(),
+	}
+}
+
+// TestContextTokens_OverwriteNotAccumulate 验证 ContextTokens 覆盖式更新（非累计）
+func TestContextTokens_OverwriteNotAccumulate(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	m = feedEvent(m, ctxTestAiResponse("Director", 1000))
+	if m.currentAgentRunTokens.ContextTokens != 1000 {
+		t.Errorf("首次 ai_response 后 ContextTokens 期望1000，实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+
+	m = feedEvent(m, ctxTestAiResponse("Director", 800))
+	if m.currentAgentRunTokens.ContextTokens != 800 {
+		t.Errorf("第二次 ai_response 后 ContextTokens 期望800（覆盖式，非1800累计），实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+}
+
+// TestContextTokens_CompressThenCallSequence 验证压缩事件→下一次 ai_response 的收敛链：
+// 压缩后立即显示压缩估算值，下一次 LLM 调用的 total_input 覆盖为精确值
+func TestContextTokens_CompressThenCallSequence(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	m = feedEvent(m, ctxTestAiResponse("Director", 1000))
+	if m.currentAgentRunTokens.ContextTokens != 1000 {
+		t.Fatalf("ai_response 后 ContextTokens 期望1000，实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+
+	// 压缩事件：面板立即反映压缩后的真实值
+	m = feedEvent(m, ctxTestCompression("context_compressed", "Director", 300))
+	if m.currentAgentRunTokens.ContextTokens != 300 {
+		t.Errorf("压缩事件后 ContextTokens 期望300，实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+
+	// 下一次 ai_response：覆盖为精确值
+	m = feedEvent(m, ctxTestAiResponse("Director", 310))
+	if m.currentAgentRunTokens.ContextTokens != 310 {
+		t.Errorf("压缩后 ai_response ContextTokens 期望310（精确值覆盖估算），实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+}
+
+// TestContextTokens_AgentSwitchResetsRun 验证压缩事件的 From 与当前 agent 不同时重置 run tokens
+func TestContextTokens_AgentSwitchResetsRun(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	m = feedEvent(m, ctxTestAiResponse("Director", 500))
+	if m.currentAgentRunTokens.AgentName != "Director" {
+		t.Fatalf("初始 agent 期望 Director，实际 %s", m.currentAgentRunTokens.AgentName)
+	}
+
+	// Repo-Agent 的压缩事件：视为 agent 切换，整体重置
+	m = feedEvent(m, ctxTestCompression("context_compressed", "Repo-Agent", 200))
+
+	if m.currentAgentRunTokens.AgentName != "Repo-Agent" {
+		t.Errorf("agent 切换后 AgentName 期望 Repo-Agent，实际 %s", m.currentAgentRunTokens.AgentName)
+	}
+	if m.currentAgentRunTokens.ContextTokens != 200 {
+		t.Errorf("agent 切换后 ContextTokens 期望200，实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+	if m.currentAgentRunTokens.InputTokens != 0 {
+		t.Errorf("agent 切换应重置 InputTokens 期望0，实际%d", m.currentAgentRunTokens.InputTokens)
+	}
+}
+
+// TestContextTokens_EmergencyCompressedReachable 验证 context_emergency_compressed 事件
+// 可到达 TUI 事件处理：ContextTokens 更新、渲染缓存失效，且事件循环仍存活
+func TestContextTokens_EmergencyCompressedReachable(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	m = feedEvent(m, ctxTestCompression("context_emergency_compressed", "Director", 250))
+
+	if m.currentAgentRunTokens.ContextTokens != 250 {
+		t.Errorf("emergency 压缩后 ContextTokens 期望250，实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+	if m.tokenDashboardValid {
+		t.Error("写入 ContextTokens 应失效渲染缓存（tokenDashboardValid 期望 false）")
+	}
+	if len(m.timelineEntries) == 0 {
+		t.Error("emergency 压缩应产生 timeline 条目")
+	}
+
+	// 随后再发一条 ai_response，确认事件循环未被 emergency 分支的 return 打断
+	m = feedEvent(m, ctxTestAiResponse("Director", 400))
+	if m.currentAgentRunTokens.ContextTokens != 400 {
+		t.Errorf("emergency 后 ai_response ContextTokens 期望400，实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+	if m.totalInputTokens != 400 {
+		t.Errorf("emergency 后事件循环应存活：totalInputTokens 期望400，实际%d", m.totalInputTokens)
+	}
+}
+
+// TestContextTokens_EmptyFromNormalized 验证压缩事件 From 为空时归一化为 "Unknown"
+func TestContextTokens_EmptyFromNormalized(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	m = feedEvent(m, ctxTestCompression("context_compressed", "", 300))
+
+	if m.currentAgentRunTokens.AgentName != "Unknown" {
+		t.Errorf("空 From 应归一化为 Unknown，实际 %s", m.currentAgentRunTokens.AgentName)
+	}
+	if m.currentAgentRunTokens.ContextTokens != 300 {
+		t.Errorf("ContextTokens 期望300，实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+}
+
+// TestContextTokens_ZeroUsageGuard 验证全零 usage 的 ai_response 不会清零 ContextTokens
+func TestContextTokens_ZeroUsageGuard(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+
+	m = feedEvent(m, ctxTestAiResponse("Director", 500))
+	if m.currentAgentRunTokens.ContextTokens != 500 {
+		t.Fatalf("前置 ai_response 后 ContextTokens 期望500，实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+
+	// provider 错误路径：全零 usage（无 total_input_tokens 字段，回退公式也为 0）
+	zeroEvent := &messaging.MessageEvent{
+		Type:      "ai_response",
+		From:      "Director",
+		Content:   "x",
+		Timestamp: time.Now(),
+		Metadata: map[string]interface{}{
+			"usage": map[string]interface{}{
+				"prompt_tokens":      0,
+				"completion_tokens":  0,
+				"total_tokens":       0,
+				"total_input_tokens": 0,
+			},
+		},
+	}
+	m = feedEvent(m, zeroEvent)
+
+	if m.currentAgentRunTokens.ContextTokens != 500 {
+		t.Errorf("全零 usage 不应清零面板：ContextTokens 期望仍为500，实际%d", m.currentAgentRunTokens.ContextTokens)
+	}
+}
+
+// TestCollapsedDashboard_EmptyWhenAllZero 验证折叠面板三零时返回空串
+func TestCollapsedDashboard_EmptyWhenAllZero(t *testing.T) {
+	m := newTestModel()
+	m.currentAgentRunTokens = AgentRunTokens{AgentName: "Director"}
+
+	if out := m.renderCollapsedTokenDashboard(); out != "" {
+		t.Errorf("三零时折叠面板应返回空串，实际 %q", out)
+	}
+}
+
+// TestCollapsedDashboard_ShowsCtx 验证折叠面板仅 ContextTokens>0 时显示 Ctx 段
+func TestCollapsedDashboard_ShowsCtx(t *testing.T) {
+	m := newTestModel()
+	m.currentAgentRunTokens = AgentRunTokens{AgentName: "Director", ContextTokens: 5000}
+
+	out := stripANSI(m.renderCollapsedTokenDashboard())
+	if !strings.Contains(out, "Ctx:") {
+		t.Errorf("折叠面板应包含 Ctx: 段，实际 %q", out)
+	}
+	if !strings.Contains(out, "5.0k") {
+		t.Errorf("Ctx 值应经 formatToken 格式化为 5.0k，实际 %q", out)
+	}
+}
+
+// TestTokenDashboard_TotalLineShowsCtx 验证展开面板 Total 行的 Ctx 展示与零值守卫
+func TestTokenDashboard_TotalLineShowsCtx(t *testing.T) {
+	m := newTestModel()
+	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+	m.inputTokens = 100
+	m.outputTokens = 50
+	m.currentAgentRunTokens = AgentRunTokens{
+		AgentName:      "Director",
+		InputTokens:    100,
+		OutputTokens:   50,
+		ContextTokens:  500,
+	}
+
+	out := stripANSI(m.renderTokenDashboard())
+	if !strings.Contains(out, "Ctx:") {
+		t.Errorf("ContextTokens>0 时展开面板 Total 行应包含 Ctx:，实际 %q", out)
+	}
+
+	// ContextTokens 归零后不再显示
+	m.currentAgentRunTokens.ContextTokens = 0
+	out = stripANSI(m.renderTokenDashboard())
+	if strings.Contains(out, "Ctx:") {
+		t.Errorf("ContextTokens==0 时展开面板不应显示 Ctx:，实际 %q", out)
+	}
+}
+
+// TestDashboardCacheKey_IncludesContextTokens 验证 dashboard 缓存 key 纳入 ContextTokens：
+// 仅修改 ContextTokens（不走 invalidateFooterCache）时面板必须重新渲染
+func TestDashboardCacheKey_IncludesContextTokens(t *testing.T) {
+	initLangManager()
+	m := newTestModel()
+	m.tokenUsagePerAgent = map[string]*AgentTokenUsage{
+		"Director": {AgentName: "Director", InputTokens: 1000, OutputTokens: 200},
+	}
+	m.currentAgentRunTokens = AgentRunTokens{
+		AgentName:     "Director",
+		InputTokens:   1000,
+		OutputTokens:  200,
+		ContextTokens: 1000,
+	}
+
+	const w, h = dashboardPanelWidth, 30
+	first := m.renderDashboard(w, h)
+
+	// 仅修改 ContextTokens，不调用 invalidateFooterCache ——
+	// 若 key 未纳入 ctx 值，第二次渲染将命中旧缓存并返回与 first 相同的结果
+	m.currentAgentRunTokens.ContextTokens = 5000
+	second := m.renderDashboard(w, h)
+
+	if first == second {
+		t.Error("ContextTokens 变化后 dashboard 应重新渲染（缓存 key 需纳入 ctx 值）")
+	}
+	if !strings.Contains(stripANSI(second), "Ctx: 5.0k") {
+		t.Errorf("第二次渲染应显示更新后的 Ctx: 5.0k，实际 %q", stripANSI(second))
+	}
+}
+
+// TestDashboardCtx_DoesNotExceedPanelWidth 验证极大 ContextTokens 下 dashboard
+// 所有行可见宽度恰好等于面板宽度（Total 行超宽内容应被截断，不得撑破边框）
+func TestDashboardCtx_DoesNotExceedPanelWidth(t *testing.T) {
+	initLangManager()
+	m := newTestModel()
+	m.tokenUsagePerAgent = map[string]*AgentTokenUsage{
+		"Director": {
+			AgentName:                "Director",
+			InputTokens:              5000000,
+			OutputTokens:             100000,
+			CacheReadInputTokens:     100000,
+			CacheCreationInputTokens: 50000,
+		},
+	}
+	m.currentAgentRunTokens = AgentRunTokens{
+		AgentName:     "Director",
+		InputTokens:   5000000,
+		OutputTokens:  100000,
+		ContextTokens: 9999999,
+	}
+
+	const w, h = dashboardPanelWidth, 30
+	result := m.renderDashboard(w, h)
+	lines := strings.Split(result, "\n")
+	if len(lines) != h {
+		t.Fatalf("期望 %d 行，实际 %d 行", h, len(lines))
+	}
+	for i, line := range lines {
+		if lw := lipgloss.Width(line); lw != w {
+			t.Errorf("line %d: 期望宽度 %d，实际 %d（content=%q）", i, w, lw, stripANSI(line))
+		}
+	}
+	if !strings.Contains(stripANSI(result), "Ctx:") {
+		t.Error("Total 行应包含 Ctx 段")
 	}
 }
