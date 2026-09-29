@@ -450,6 +450,11 @@ func isRetriableError(err error) bool {
 		return true
 	}
 
+	// 瞬时网络/传输错误（connection reset/refused、EOF、HTTP/2 GOAWAY 等）
+	if isTransientNetworkError(err) {
+		return true
+	}
+
 	return false
 }
 
@@ -474,6 +479,17 @@ func (e *OpenAIEngine) retryChatCompletion(ctx context.Context, params openai.Ch
 		// On retry attempts, wait with exponential backoff before making the request
 		if attempt > 0 {
 			delay := baseDelay * (1 << (attempt - 1)) // 2^(attempt-1) * 10s: 10, 20, 40, 80, 160
+
+			// 钳制退避时间：不超过 ctx 剩余预算，避免最后一次重试被 sleep 吞掉
+			if deadline, ok := ctx.Deadline(); ok {
+				if remain := time.Until(deadline); remain < delay {
+					delay = remain
+				}
+			}
+			if delay <= 0 {
+				// 预算已耗尽，交给循环顶部的 ctx 检查终止重试
+				continue
+			}
 
 			// Backoff wait that can be interrupted by context cancellation
 			timer := time.NewTimer(delay)

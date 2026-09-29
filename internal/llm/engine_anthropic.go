@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -377,6 +376,18 @@ func (e *AnthropicEngine) retryRequest(ctx context.Context, req *anthropicReques
 
 		if attempt > 0 {
 			delay := baseDelay * (1 << (attempt - 1))
+
+			// 钳制退避时间：不超过 ctx 剩余预算，避免最后一次重试被 sleep 吞掉
+			if deadline, ok := ctx.Deadline(); ok {
+				if remain := time.Until(deadline); remain < delay {
+					delay = remain
+				}
+			}
+			if delay <= 0 {
+				// 预算已耗尽，交给循环顶部的 ctx 检查终止重试
+				continue
+			}
+
 			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
@@ -707,16 +718,7 @@ func isRetriableHTTPStatus(statusCode int) bool {
 }
 
 // isHTTPRetriableError checks if the error is retriable (timeout, network, etc.)
+// 复用统一的瞬时网络错误分类（connection reset/refused、EOF、GOAWAY 等）。
 func isHTTPRetriableError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return true
-	}
-	return false
+	return isTransientNetworkError(err)
 }
