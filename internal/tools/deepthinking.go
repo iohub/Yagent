@@ -64,7 +64,7 @@ func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interf
 	// 脱离父级 deadline 但保留取消信号
 	// deepthinking 是长时间运行的深度分析，需要更长的超时
 	llmCtx := context.WithoutCancel(ctx)
-	llmCtx, llmCancel := context.WithTimeout(llmCtx, 5*time.Minute)
+	llmCtx, llmCancel := context.WithTimeout(llmCtx, 10*time.Minute)
 	defer llmCancel()
 
 	// 如果设置了 StreamHandler，则使用流式推理
