@@ -24,12 +24,19 @@ type RepoAgent struct {
 	Adapters  []*tools.Adapter
 	maxSteps  int
 
+	// DevOps-Agent（可选，nil 表示未注入，delegate_devops 将返回友好提示）
+	devops *DevOpsAgent
+
 	// [NEW] 记忆系统（可选，nil 表示禁用）
 	memStore *RepoMemoryStore
 	worker   *ConsolidationWorker
 }
 
 func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *messaging.MessagePublisher, maxSteps int) *RepoAgent {
+	// self-reference for the delegate closure that needs the RepoAgent after
+	// construction (same pattern as NewDirectorAgent).
+	var self *RepoAgent
+
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal tools", "error", err)
@@ -73,6 +80,29 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
 		adapters = append(adapters, adapter)
 	}
+	// delegate_devops：将运维类任务委托给 DevOps-Agent（与 Director 中同名工具保持一致的名称与参数 schema）
+	delegateDevOps := tools.NewAdapter("delegate_devops", "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		task, ok := params["task"].(string)
+		if !ok {
+			return nil, fmt.Errorf("task parameter required")
+		}
+		if self == nil || self.devops == nil {
+			return "[DevOps-Agent unavailable] DevOps-Agent has not been wired to Repo-Agent. Complete the analysis with the information you have and note that the operational task could not be delegated.", nil
+		}
+		result, err := self.devops.Run(ctx, task)
+		if err != nil {
+			// 友好地把错误信息返回给 LLM，而不是中断执行循环
+			return fmt.Sprintf("[DevOps-Agent execution failed] task: %q, error: %v. You may retry with a clearer task description, or note the failure in your analysis result.", task, err), nil
+		}
+		return result.Text, nil
+	}).WithSchema(map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"task": map[string]interface{}{"type": "string", "description": "The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."},
+		},
+		"required": []string{"task"},
+	})
+	adapters = append(adapters, delegateDevOps)
 	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
 
 	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP）
@@ -82,7 +112,7 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 		adapters = append(adapters, knowledgeAdapters...)
 	}
 
-	return &RepoAgent{
+	self = &RepoAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
 			Publisher: publisher,
@@ -91,6 +121,7 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 		Adapters:  adapters,
 		maxSteps:  maxSteps,
 	}
+	return self
 }
 
 func (a *RepoAgent) Name() string {
@@ -101,6 +132,12 @@ func (a *RepoAgent) Name() string {
 func (a *RepoAgent) SetMemory(store *RepoMemoryStore, worker *ConsolidationWorker) {
 	a.memStore = store
 	a.worker = worker
+}
+
+// SetDevOpsAgent 注入 DevOps-Agent 依赖，使 delegate_devops 工具可用。
+// DevOps-Agent 可选，不设置时 delegate_devops 调用会返回友好提示。
+func (a *RepoAgent) SetDevOpsAgent(devops *DevOpsAgent) {
+	a.devops = devops
 }
 
 func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) {
