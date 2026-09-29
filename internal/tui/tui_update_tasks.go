@@ -742,7 +742,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle thinklink_entry event — collect user inputs & thought/plan blocks
-	// for the thinklink fullscreen view (ctrl+t)。不进入主日志流。
+	// for the thinklink fullscreen view (ctrl+g)。不进入主日志流。
 	if msg.event.Type == "thinklink_entry" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 			e := ThinklinkEntry{

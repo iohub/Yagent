@@ -613,6 +613,14 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "ctrl+g":
+		// 切换 thinklink 全屏:查看用户输入与 Thought & Plan 块
+		if !m.thinklinkMode {
+			return m, enterThinklinkMode(m)
+		}
+		exitThinklinkMode(m)
+		return m, nil
+
 	default:
 		// Append printable characters to command buffer (hidden input)
 		if len(msg.Key().Text) > 0 {

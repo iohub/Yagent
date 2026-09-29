@@ -72,6 +72,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return timelineFullscreenUpdate(msg, m)
 	}
 
+	// Thinklink 全屏模式：拦截所有消息
+	if m.thinklinkMode {
+		return thinklinkFullscreenUpdate(msg, m)
+	}
+
 	// History mode: intercept all messages and delegate to history handler.
 	// Skip when a dialog is active so dialog confirmations (e.g. delete_history_confirm)
 	// can be processed by the DialogStack key handler below.
