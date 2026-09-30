@@ -13,6 +13,7 @@ import (
 // RecoveryConfig 恢复配置。
 type RecoveryConfig struct {
 	MaxRetries                 int           // 步骤重试次数
+	LLMRetries                 int           // LLM 调用步骤级重试次数（收编自 DirectorAgent.stepRetries，源自 config.LLM.StepRetries）
 	CircuitBreakerThreshold    int           // 熔断阈值，0=不启用
 	CircuitBreakerResetTimeout time.Duration // 熔断恢复时间
 }
@@ -31,7 +32,13 @@ type RecoveryHandler struct {
 	config       RecoveryConfig
 	breaker      *recovery.CircuitBreaker
 	stepFailures map[string]int // stepID → failure count
-	mu           sync.Mutex
+
+	// LLM 兜底机制状态（P0-1 Phase 2b：收编自 DirectorAgent 内联字段，lift-and-shift）
+	llmRetries             int       // LLM 调用步骤级重试次数（源自 config.LLM.StepRetries）
+	consecutiveLLMFailures int       // 连续 LLM 调用失败计数（成功时不重置，保持原语义）
+	lastLLMFailureTime     time.Time // 最近一次 LLM 失败时间
+
+	mu sync.Mutex
 }
 
 // NewRecoveryHandler 创建恢复管理器。
@@ -45,6 +52,7 @@ func NewRecoveryHandler(cfg RecoveryConfig) *RecoveryHandler {
 		config:       cfg,
 		breaker:      breaker,
 		stepFailures: make(map[string]int),
+		llmRetries:   cfg.LLMRetries,
 	}
 }
 
@@ -68,6 +76,37 @@ func (r *RecoveryHandler) IsCircuitBreakerOpen() bool {
 		return false
 	}
 	return !r.breaker.Allow()
+}
+
+// LLMRetries 返回 LLM 调用步骤级重试次数。
+func (r *RecoveryHandler) LLMRetries() int {
+	return r.llmRetries
+}
+
+// RecordLLMFailureStats 记录 LLM 失败统计：递增连续失败计数并更新最近失败时间。
+// lift-and-shift 自 DirectorAgent 内联语句（consecutiveLLMFailures++ /
+// lastLLMFailureTime = time.Now()），语义逐字保持：
+// 成功路径（RecordLLMSuccess）不重置该计数——原实现中它在 DirectorAgent
+// 生命周期内单调递增，仅用于日志展示。
+func (r *RecoveryHandler) RecordLLMFailureStats() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.consecutiveLLMFailures++
+	r.lastLLMFailureTime = time.Now()
+}
+
+// ConsecutiveLLMFailures 返回连续 LLM 调用失败计数。
+func (r *RecoveryHandler) ConsecutiveLLMFailures() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.consecutiveLLMFailures
+}
+
+// LastLLMFailureTime 返回最近一次 LLM 失败时间。
+func (r *RecoveryHandler) LastLLMFailureTime() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastLLMFailureTime
 }
 
 // ComputeBackoff 计算指数退避延迟。

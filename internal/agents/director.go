@@ -77,12 +77,10 @@ type DirectorAgent struct {
 	pendingSubAgentMemory *AgentResult               // 最近一次 delegate 调用的完整结果（用于 memory 注入）
 
 	// LLM 兜底机制字段
-	stepRetries                int           // 步骤重试次数（从 config.LLM.StepRetries 读取）
-	llmTimeout                 time.Duration // LLM调用超时，从配置读取，默认3分钟
-	circuitBreakerThreshold    int           // 熔断阈值（连续失败次数），0=不启用
-	circuitBreakerResetTimeout time.Duration // 熔断恢复时间
-	consecutiveLLMFailures     int           // 连续 LLM 调用失败计数
-	lastLLMFailureTime         time.Time     // 最近一次 LLM 失败时间
+	// P0-1 Phase 2b：步骤级重试次数、连续 LLM 失败计数、最近失败时间及
+	// 熔断阈值/恢复时间配置副本已收编至 director.RecoveryHandler（经 a.adapter 访问），
+	// 消除 DirectorAgent 上的残留失败计数状态；仅保留活跃使用的 llmTimeout。
+	llmTimeout time.Duration // LLM调用超时，从配置读取，默认3分钟
 
 	// EnhancedCommander 增强型配置
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
@@ -411,6 +409,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	adapterCfg.MaxRetries = maxSteps // 使用 maxSteps 作为重试次数
 	adapterCfg.CircuitBreakerThreshold = cfg.LLM.CircuitBreakerThreshold
 	adapterCfg.CircuitBreakerResetTimeout = cfg.LLM.CircuitBreakerResetTimeout
+	adapterCfg.LLMRetries = cfg.LLM.StepRetries // P0-1 Phase 2b 收编：LLM 步骤级重试次数入 handler（单一实例承载全部失败计数/熔断状态）
 	directorAdapter := NewDirectorAdapter(true, adapterCfg) // enabled=true 启动 Metrics
 
 	self = &DirectorAgent{
@@ -435,17 +434,13 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		hasDelegated:       false, // 初始未委派过
 		delegationAttempts: 0,     // 委派尝试次数初始为0
 
-		// LLM 兜底机制配置
-		stepRetries: cfg.LLM.StepRetries,
+		// LLM 兜底机制配置（步骤重试/熔断阈值/失败计数已收编至 RecoveryHandler，见上方 adapterCfg 接线）
 		llmTimeout: func() time.Duration {
 			if cfg.LLM.Timeout > 0 {
 				return cfg.LLM.Timeout
 			}
 			return 5 * time.Minute
 		}(),
-		circuitBreakerThreshold:    cfg.LLM.CircuitBreakerThreshold,
-		circuitBreakerResetTimeout: cfg.LLM.CircuitBreakerResetTimeout,
-		// consecutiveLLMFailures 和 lastLLMFailureTime 保持零值即可
 
 		// EnhancedCommander 配置
 		EnhancedCommanderCfg: cfg.EnhancedCommander,
@@ -1064,7 +1059,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		}
 
 		// --- 步骤级重试 ---
-		maxRetries := a.stepRetries
+		maxRetries := a.adapter.LLMRetries()
 		var resp *llm.Response
 		var llmErr error
 		for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -1273,11 +1268,10 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 			if a.adapter != nil {
 				a.adapter.RecordLLMFailure()
 			}
-			a.consecutiveLLMFailures++
-			a.lastLLMFailureTime = time.Now()
+			a.adapter.RecordLLMFailureStats()
 			slog.Warn("DirectorAgent LLM error, will retry",
 				"error", llmErr, "step", i, "attempt", attempt,
-				"consecutive_failures", a.consecutiveLLMFailures)
+				"consecutive_failures", a.adapter.ConsecutiveLLMFailures())
 		}
 
 		if llmErr != nil {

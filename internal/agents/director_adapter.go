@@ -48,3 +48,19 @@ func (a *DirectorAdapter) RecordLLMFailure() {
 func (a *DirectorAdapter) IsCircuitBreakerOpen() bool {
 	return a.recovery.IsCircuitBreakerOpen()
 }
+
+// LLMRetries 返回 LLM 调用步骤级重试次数（P0-1 Phase 2b 收编自 DirectorAgent.stepRetries）
+func (a *DirectorAdapter) LLMRetries() int {
+	return a.recovery.LLMRetries()
+}
+
+// RecordLLMFailureStats 记录 LLM 失败统计：递增连续失败计数并更新最近失败时间
+// （lift-and-shift 自 DirectorAgent 内联的 consecutiveLLMFailures++ / lastLLMFailureTime = time.Now()）
+func (a *DirectorAdapter) RecordLLMFailureStats() {
+	a.recovery.RecordLLMFailureStats()
+}
+
+// ConsecutiveLLMFailures 返回连续 LLM 调用失败计数
+func (a *DirectorAdapter) ConsecutiveLLMFailures() int {
+	return a.recovery.ConsecutiveLLMFailures()
+}
