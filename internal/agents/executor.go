@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/llm"
-	"codeactor/internal/memory"
-	"codeactor/internal/messaging"
-	"codeactor/internal/tools"
+	"yagent/internal/llm"
+	"yagent/internal/memory"
+	"yagent/internal/messaging"
+	"yagent/internal/tools"
 )
 
 // ExecutorConfig holds the configuration for running an LLM-tool agent loop.
@@ -153,7 +153,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				ID:          rw.SessionID(),
 				SessionID:   rw.SessionID(),
 				Cwd:         cwd,
-				Originator:  "codeactor",
+				Originator:  "yagent",
 				Source:      "cli",
 				HistoryMode: "standard",
 			})

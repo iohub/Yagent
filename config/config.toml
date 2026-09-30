@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
-# CodeActor 配置文件
-# 使用方式：复制到 ~/.codeactor/config/config.toml 后修改
+# Yagent 配置文件
+# 使用方式：复制到 ~/.yagent/config/config.toml 后修改
 # 完整配置说明见 docs/config-guide.md
 # ═══════════════════════════════════════════════════════════════
 
@@ -133,7 +133,7 @@ enable_browser_agent = true          # 总开关：禁用后 Browser-Agent 不�
 
 # ── 关键词词典配置 ──
 [keywords]
-default_path = "~/.codeactor/keywords.txt"  # 默认关键词文件路径
+default_path = "~/.yagent/keywords.txt"  # 默认关键词文件路径
 hot_reload = false                   # 是否启用热重载
 disable_completion = false           # 禁用关键词自动补全
 # [[keywords.dict]]

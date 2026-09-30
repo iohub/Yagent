@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"codeactor/internal/messaging"
+	"yagent/internal/messaging"
 )
 
 // thinklink 全屏模式消息处理测试。

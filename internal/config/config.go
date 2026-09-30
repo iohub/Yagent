@@ -500,7 +500,7 @@ func (c *Config) validate() error {
 	// 如果 config.toml 中不存在 [keywords] 段，则创建默认配置
 	if !c.hasKeywordsConfig() {
 		homeDir, _ := os.UserHomeDir()
-		c.Keywords.DefaultPath = homeDir + "/.codeactor/keywords.txt"
+		c.Keywords.DefaultPath = homeDir + "/.yagent/keywords.txt"
 		c.Keywords.HotReload = false
 		c.Keywords.Dicts = []DictConfig{
 			{

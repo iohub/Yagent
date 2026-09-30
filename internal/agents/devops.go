@@ -5,9 +5,9 @@ import (
 	_ "embed"
 	"encoding/json"
 
-	"codeactor/internal/globalctx"
-	"codeactor/internal/llm"
-	"codeactor/internal/tools"
+	"yagent/internal/globalctx"
+	"yagent/internal/llm"
+	"yagent/internal/tools"
 )
 
 //go:embed devops.prompt.md

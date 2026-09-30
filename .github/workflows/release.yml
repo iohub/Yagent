@@ -110,11 +110,11 @@ jobs:
           ls -la dist/bin/
           echo "✓ Embedded binaries ready: codeseek, fzf, rg"
 
-      - name: Build Go codeactor (${{ matrix.suffix }})
+      - name: Build Go yagent (${{ matrix.suffix }})
         run: |
           go build \
-            -ldflags="-s -w -X 'codeactor/internal/globalctx.Version=${{ github.ref_name }}' -X 'codeactor/internal/globalctx.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'codeactor/internal/globalctx.GitCommit=${{ github.sha }}'" \
-            -o codeactor \
+            -ldflags="-s -w -X 'yagent/internal/globalctx.Version=${{ github.ref_name }}' -X 'yagent/internal/globalctx.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'yagent/internal/globalctx.GitCommit=${{ github.sha }}'" \
+            -o yagent \
             .
         env:
           GOOS: ${{ matrix.goos }}
@@ -123,15 +123,15 @@ jobs:
 
       - name: Verify artifact
         run: |
-          file codeactor
+          file yagent
           echo "---"
-          ls -lh codeactor
+          ls -lh yagent
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codeactor-${{ matrix.suffix }}
-          path: codeactor
+          name: yagent-${{ matrix.suffix }}
+          path: yagent
           if-no-files-found: error
 
   centos7-build:
@@ -217,11 +217,11 @@ jobs:
           ls -la dist/bin/
           echo "✓ Embedded binaries ready: codeseek, fzf, rg"
 
-      - name: Build Go codeactor (linux-x64-musl)
+      - name: Build Go yagent (linux-x64-musl)
         run: |
           go build \
-            -ldflags="-s -w -X 'codeactor/internal/globalctx.Version=${{ github.ref_name }}' -X 'codeactor/internal/globalctx.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'codeactor/internal/globalctx.GitCommit=${{ github.sha }}'" \
-            -o codeactor \
+            -ldflags="-s -w -X 'yagent/internal/globalctx.Version=${{ github.ref_name }}' -X 'yagent/internal/globalctx.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'yagent/internal/globalctx.GitCommit=${{ github.sha }}'" \
+            -o yagent \
             .
         env:
           GOOS: linux
@@ -243,15 +243,15 @@ jobs:
 
       - name: Verify artifact
         run: |
-          file codeactor
+          file yagent
           echo "---"
-          ls -lh codeactor
+          ls -lh yagent
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codeactor-linux-x64-musl
-          path: codeactor
+          name: yagent-linux-x64-musl
+          path: yagent
           if-no-files-found: error
 
   create-release:
@@ -275,8 +275,8 @@ jobs:
           for dir in artifacts/*/; do
             name="$(basename "$dir")"
             cd "artifacts/$name"
-            chmod +x codeactor
-            tar -czf "${name}.tar.gz" codeactor
+            chmod +x yagent
+            tar -czf "${name}.tar.gz" yagent
             cd ../..
             echo "Created artifacts/${name}/${name}.tar.gz"
           done
@@ -288,9 +288,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/codeactor-darwin-x64/codeactor-darwin-x64.tar.gz
-            artifacts/codeactor-darwin-arm64/codeactor-darwin-arm64.tar.gz
-            artifacts/codeactor-linux-x64/codeactor-linux-x64.tar.gz
-            artifacts/codeactor-linux-x64-musl/codeactor-linux-x64-musl.tar.gz
+            artifacts/yagent-darwin-x64/yagent-darwin-x64.tar.gz
+            artifacts/yagent-darwin-arm64/yagent-darwin-arm64.tar.gz
+            artifacts/yagent-linux-x64/yagent-linux-x64.tar.gz
+            artifacts/yagent-linux-x64-musl/yagent-linux-x64-musl.tar.gz
           generate_release_notes: true
           fail_on_unmatched_files: true

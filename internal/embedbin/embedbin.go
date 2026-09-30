@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 )
 
-// ExtractBinaries extracts embedded binaries from the given embed.FS to ~/.codeactor/bin/
+// ExtractBinaries extracts embedded binaries from the given embed.FS to ~/.yagent/bin/
 // subDir is the path within the FS where the binary files are located (e.g. "dist/bin").
 func ExtractBinaries(binFS embed.FS, subDir string) (string, error) {
 	homeDir, err := os.UserHomeDir()
@@ -20,7 +20,7 @@ func ExtractBinaries(binFS embed.FS, subDir string) (string, error) {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	binDir := filepath.Join(homeDir, ".codeactor", "bin")
+	binDir := filepath.Join(homeDir, ".yagent", "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create bin directory: %w", err)
 	}
@@ -160,11 +160,11 @@ func isExecutableName(name string) bool {
 	return true
 }
 
-// BinPath returns the full path to an extracted binary in ~/.codeactor/bin/
+// BinPath returns the full path to an extracted binary in ~/.yagent/bin/
 func BinPath(name string) (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
-	return filepath.Join(homeDir, ".codeactor", "bin", name), nil
+	return filepath.Join(homeDir, ".yagent", "bin", name), nil
 }

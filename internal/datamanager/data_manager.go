@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"codeactor/internal/memory"
+	"yagent/internal/memory"
 )
 
 const (
-	DataDirName = ".codeactor" // 隐藏数据目录名称
+	DataDirName = ".yagent" // 隐藏数据目录名称
 )
 
 // taskWriterState 管理单个任务的写入状态

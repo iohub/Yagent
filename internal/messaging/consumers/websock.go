@@ -2,7 +2,7 @@ package messaging
 
 import (
 	"encoding/json"
-	"codeactor/internal/messaging"
+	"yagent/internal/messaging"
 )
 
 type WebSocketConsumer struct {

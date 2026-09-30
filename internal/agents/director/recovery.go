@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"codeactor/internal/recovery"
+	"yagent/internal/recovery"
 )
 
 // RecoveryConfig 恢复配置。

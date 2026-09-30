@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"codeactor/internal/tui/common"
+	"yagent/internal/tui/common"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"

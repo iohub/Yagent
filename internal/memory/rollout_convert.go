@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 // LLMMessageToResponseItems 将 llm.Message 转换为 ResponseItem 列表

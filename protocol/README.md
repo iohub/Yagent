@@ -1,9 +1,9 @@
-# CodeActor Agent 事件协议
+# Yagent Agent 事件协议
 
 ## 概述
 
-本目录定义了 CodeActor Agent 系统与 WebUI 之间通过 WebSocket 传输的所有事件消息的完整协议。
-协议以 `agent-events.yaml` 作为**单一真相源（Single Source of Truth）**，通过 `protoc-gen-codeactor` 代码生成器自动生成 Go 类型、TypeScript 类型、JSON Schema 和渲染映射表。
+本目录定义了 Yagent Agent 系统与 WebUI 之间通过 WebSocket 传输的所有事件消息的完整协议。
+协议以 `agent-events.yaml` 作为**单一真相源（Single Source of Truth）**，通过 `protoc-gen-yagent` 代码生成器自动生成 Go 类型、TypeScript 类型、JSON Schema 和渲染映射表。
 
 ## 架构
 
@@ -14,10 +14,10 @@
                     └──────────┬───────────────┘
                                │
                     ┌──────────▼───────────────┐
-                    │  protoc-gen-codeactor     │ ◄── 代码生成器
+                    │  protoc-gen-yagent     │ ◄── 代码生成器
                     │  (Go 程序)               │
                     │  scripts/protoc-gen-     │
-                    │  codeactor/main.go       │
+                    │  yagent/main.go       │
                     └──────┬──────┬──────┬─────┘
                            │      │      │
               ┌────────────┘      │      └────────────┐
@@ -53,7 +53,7 @@ VSCode 插件:
 | `ts/agent-events.ts` | 生成的 TypeScript 类型定义 + 类型守卫 |
 | `ts/render-mapping.ts` | 生成的渲染映射表（JSON 格式），指导前端渲染 |
 | `agent-events.schema.json` | 生成的 JSON Schema（含 `x-render-hint` 扩展） |
-| `protoc-gen-codeactor` | 编译好的 codegen 可执行文件（Go 二进制） |
+| `protoc-gen-yagent` | 编译好的 codegen 可执行文件（Go 二进制） |
 
 ## 事件类型列表
 
@@ -116,7 +116,7 @@ VSCode 插件:
 
 ```bash
 # 从项目根目录执行
-./protocol/protoc-gen-codeactor \
+./protocol/protoc-gen-yagent \
   -input protocol/agent-events.yaml \
   -output protocol
 ```
@@ -124,13 +124,13 @@ VSCode 插件:
 或使用 Go generate 方式：
 
 ```bash
-go generate ./scripts/protoc-gen-codeactor/...
+go generate ./scripts/protoc-gen-yagent/...
 ```
 
 ### 2. 在 Go 后端中使用
 
 ```go
-import "codeactor/protocol/go" // 导入生成的协议包
+import "yagent/protocol/go" // 导入生成的协议包
 
 // 发送事件时使用生成的数据类型
 func sendToolCallResult(session *melody.Session, taskID string) {
@@ -215,7 +215,7 @@ function getRenderComponent(eventType: string) {
   "contributes": {
     "jsonValidation": [
       {
-        "fileMatch": "**/codeactor-protocol.json",
+        "fileMatch": "**/yagent-protocol.json",
         "url": "./protocol/agent-events.schema.json"
       }
     ]
@@ -229,7 +229,7 @@ function getRenderComponent(eventType: string) {
 {
   "json.schemas": [
     {
-      "fileMatch": ["**/codeactor-websocket-message.json"],
+      "fileMatch": ["**/yagent-websocket-message.json"],
       "url": "./protocol/agent-events.schema.json"
     }
   ]
@@ -383,8 +383,8 @@ Agent 后端通过 `MessagePublisher` 发布事件，经 `MessageDispatcher` 分
 | 组件 | 位置 |
 |------|------|
 | 协议定义 (YAML) | `protocol/agent-events.yaml` |
-| Codegen 源码 | `scripts/protoc-gen-codeactor/` |
-| Codegen 二进制 | `protocol/protoc-gen-codeactor` |
+| Codegen 源码 | `scripts/protoc-gen-yagent/` |
+| Codegen 二进制 | `protocol/protoc-gen-yagent` |
 | Go 生成类型 | `protocol/go/agent-events.go` |
 | TS 生成类型 | `protocol/ts/agent-events.ts` |
 | 渲染映射表 | `protocol/ts/render-mapping.ts` |

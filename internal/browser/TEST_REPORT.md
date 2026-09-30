@@ -1,6 +1,6 @@
 # 🧪 Browser 包集成测试报告
 
-> **项目**: codeactor  
+> **项目**: yagent  
 > **测试包**: `internal/browser`  
 > **构建标签**: `integration`  
 > **Chrome 模式**: Headless  
@@ -254,4 +254,4 @@
 
 ---
 
-*本报告由 codeactor 测试系统自动生成*
+*本报告由 yagent 测试系统自动生成*

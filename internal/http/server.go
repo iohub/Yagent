@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"codeactor/internal/app"
-	"codeactor/internal/datamanager"
-	"codeactor/internal/memory"
+	"yagent/internal/app"
+	"yagent/internal/datamanager"
+	"yagent/internal/memory"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -18,22 +18,22 @@ import (
 // Server HTTP服务器结构
 type Server struct {
 	taskManager     *TaskManager
-	codeActor *app.CodeActor
+	yagent *app.Yagent
 	dataManager     *datamanager.DataManager
 	melody          *melody.Melody
 	router          *gin.Engine
 }
 
 // NewServer 创建新的HTTP服务器
-func NewServer(codeActor *app.CodeActor) *Server {
+func NewServer(yagent *app.Yagent) *Server {
 	// 创建 WebSocket 管理器
 	m := melody.New()
 	m.Config.MessageBufferSize = 256
 
 	// 从配置中获取全局任务超时
 	taskTimeout := time.Duration(0)
-	if codeActor.GetClient() != nil && codeActor.GetClient().Config != nil {
-		taskTimeout = codeActor.GetClient().Config.TaskTimeout
+	if yagent.GetClient() != nil && yagent.GetClient().Config != nil {
+		taskTimeout = yagent.GetClient().Config.TaskTimeout
 	}
 
 	// 创建全局任务管理器
@@ -49,7 +49,7 @@ func NewServer(codeActor *app.CodeActor) *Server {
 	}
 
 	// 设置 WebSocket 处理器
-	HandleWebSocket(m, taskManager, codeActor, dataManager)
+	HandleWebSocket(m, taskManager, yagent, dataManager)
 
 	// 使用 gin 创建路由
 	r := gin.New()
@@ -60,7 +60,7 @@ func NewServer(codeActor *app.CodeActor) *Server {
 
 	server := &Server{
 		taskManager:     taskManager,
-		codeActor: codeActor,
+		yagent: yagent,
 		dataManager:     dataManager,
 		melody:          m,
 		router:          r,
@@ -174,8 +174,8 @@ func (s *Server) handleLoadTask(c *gin.Context) {
 
 	// 从配置中获取任务超时
 	taskTimeout := time.Duration(0)
-	if s.codeActor.GetClient() != nil && s.codeActor.GetClient().Config != nil {
-		taskTimeout = s.codeActor.GetClient().Config.TaskTimeout
+	if s.yagent.GetClient() != nil && s.yagent.GetClient().Config != nil {
+		taskTimeout = s.yagent.GetClient().Config.TaskTimeout
 	}
 
 	// 创建可取消的上下文，如果配置了超时则使用 WithTimeout
@@ -221,8 +221,8 @@ func (s *Server) handleStartTask(c *gin.Context) {
 
 	// 从配置中获取任务超时
 	taskTimeout := time.Duration(0)
-	if s.codeActor.GetClient() != nil && s.codeActor.GetClient().Config != nil {
-		taskTimeout = s.codeActor.GetClient().Config.TaskTimeout
+	if s.yagent.GetClient() != nil && s.yagent.GetClient().Config != nil {
+		taskTimeout = s.yagent.GetClient().Config.TaskTimeout
 	}
 
 	// 创建可取消的上下文，如果配置了超时则使用 WithTimeout
@@ -307,7 +307,7 @@ func (s *Server) handleStartTask(c *gin.Context) {
 	}
 
 	// 后台执行任务
-	go ExecuteTask(task.ID, req.ProjectDir, req.TaskDesc, s.taskManager, s.codeActor, s.dataManager)
+	go ExecuteTask(task.ID, req.ProjectDir, req.TaskDesc, s.taskManager, s.yagent, s.dataManager)
 
 	c.JSON(200, CodingTaskResponse{TaskID: task.ID})
 }

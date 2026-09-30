@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"codeactor/internal/llm"
-	"codeactor/internal/messaging"
-	"codeactor/internal/tools"
+	"yagent/internal/llm"
+	"yagent/internal/messaging"
+	"yagent/internal/tools"
 )
 
 // ─── Mock Engine ──────────────────────────────────────────────────────────────

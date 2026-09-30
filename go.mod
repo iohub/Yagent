@@ -1,4 +1,4 @@
-module codeactor
+module yagent
 
 go 1.25.8
 

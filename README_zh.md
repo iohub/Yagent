@@ -1,4 +1,4 @@
-# 🎻 CodeActor — 自进化的多智能体 AI 编程引擎
+# 🎻 Yagent — 自进化的多智能体 AI 编程引擎
 
 > **不是 Copilot，而是一支能理解、导航、演进你代码库的自主智能体团队。**
 
@@ -12,11 +12,11 @@
 
 ---
 
-## 💡 为什么是 CodeActor？
+## 💡 为什么是 Yagent？
 
 现有 AI 编程工具共享一个根本缺陷：**它们把代码当作文本，而非结构**。
 
-| 传统工具 | CodeActor |
+| 传统工具 | Yagent |
 |----------|-----------|
 | 基于文本模式匹配 | 🧠 基于 AST + 调用图 + 语义向量的**结构化代码理解** |
 | 单智能体，单打独斗 | 🤖 **中枢-辐条多智能体**：Director 统一指挥，六大脑各司其职 |
@@ -63,7 +63,7 @@
 
 ### 🧠 1. Rust 驱动的深度代码智能
 
-不是简单的正则搜索。CodeActor 的 **Repo-Agent** 由 Rust 引擎驱动，集成 Tree-sitter AST 解析、LanceDB 向量嵌入和 Petgraph 调用图分析。它能像资深工程师一样理解代码——跨文件影响分析、环路检测、语义搜索。
+不是简单的正则搜索。Yagent 的 **Repo-Agent** 由 Rust 引擎驱动，集成 Tree-sitter AST 解析、LanceDB 向量嵌入和 Petgraph 调用图分析。它能像资深工程师一样理解代码——跨文件影响分析、环路检测、语义搜索。
 
 - **7 种语言 AST**：Rust · Python · JavaScript · TypeScript · Java · C++ · Go
 - **语义搜索**：按代码*含义*搜索，而非关键词
@@ -72,7 +72,7 @@
 
 ### 🧬 2. Meta-Agent：运行时的自我进化
 
-这是 CodeActor 最独特的能力。当 Director 遇到内置 Agent 无法胜任的任务时，**Meta-Agent** 会：
+这是 Yagent 最独特的能力。当 Director 遇到内置 Agent 无法胜任的任务时，**Meta-Agent** 会：
 
 1. 🎨 **设计**——自动生成新 Agent 的系统提示词和工具组合
 2. ⚡ **执行**——立即运行新 Agent 完成任务
@@ -94,7 +94,7 @@
 
 ### 🔬 5. 混合检索 + 代码图扩展：从"搜到"到"理解上下文"
 
-> **传统代码搜索只告诉你「哪里匹配了关键词」。CodeActor 不仅找到代码，还自动分析它周围的结构世界。**
+> **传统代码搜索只告诉你「哪里匹配了关键词」。Yagent 不仅找到代码，还自动分析它周围的结构世界。**
 
 #### 🎯 三阶段级联检索 Pipeline
 
@@ -118,9 +118,9 @@
 
 **传统向量搜索的局限**：纯向量搜索把代码块当孤岛，只计算语义相似度，却不理解它和谁一起工作、被谁调用、调用了什么。
 
-**CodeActor 的突破**：混合检索 + 代码图扩展 = **从「搜到」到「理解」的质变**。
+**Yagent 的突破**：混合检索 + 代码图扩展 = **从「搜到」到「理解」的质变**。
 
-| 维度 | 纯向量搜索 | CodeActor 混合检索 + 图扩展 |
+| 维度 | 纯向量搜索 | Yagent 混合检索 + 图扩展 |
 |------|-----------|--------------------------|
 | 查全率 | ❌ 语义近但关键词不同 → 可能漏掉 | ✅ BM25 + Vector 双通道互补，覆盖语义 + 精确匹配 |
 | 精确度 | ❌ 短文本/噪音常误中 | ✅ RRF 融合 + 短文本惩罚 + Cross-Encoder 精排三重过滤 |
@@ -134,7 +134,7 @@
 
 ### 下载预编译包（推荐）
 
-从 [GitHub Releases 页面](https://github.com/iohub/codeactor-agent/releases) 下载最新的 all-in-one 二进制包。包内已集成 **codeseek 代码智能引擎**（Rust）、**fzf**（模糊搜索）和 **ripgrep**（正则搜索）——所有依赖一应俱全。解压后直接运行 `./codeactor`，零依赖、零配置，开箱即用。
+从 [GitHub Releases 页面](https://github.com/iohub/yagent/releases) 下载最新的 all-in-one 二进制包。包内已集成 **codeseek 代码智能引擎**（Rust）、**fzf**（模糊搜索）和 **ripgrep**（正则搜索）——所有依赖一应俱全。解压后直接运行 `./yagent`，零依赖、零配置，开箱即用。
 
 ### 前置要求（从源码编译）
 - Go 1.24+
@@ -143,14 +143,14 @@
 ### 从源码编译
 
 ```bash
-git clone https://github.com/iohub/codeactor-agent.git
-cd codeactor-agent
-go build -o codeactor .
+git clone https://github.com/iohub/yagent.git
+cd yagent
+go build -o yagent .
 ```
 
 ### 配置
 
-创建 `~/.codeactor/config/config.toml`：
+创建 `~/.yagent/config/config.toml`：
 
 ```toml
 [global.llm]
@@ -168,13 +168,13 @@ max_tokens = 23000
 
 ```bash
 # TUI 模式
-./codeactor tui
+./yagent tui
 
 # 指定任务文件
-./codeactor tui --taskfile TASK.md
+./yagent tui --taskfile TASK.md
 
 # HTTP 服务器模式（默认 :9080）
-./codeactor http
+./yagent http
 ```
 
 ---
@@ -194,9 +194,9 @@ max_tokens = 23000
 
 我们欢迎任何形式的贡献——Bug 报告、功能建议、文档完善、代码贡献。
 
-- 🐛 [提交 Issue](https://github.com/iohub/codeactor-agent/issues)
-- 🔀 [提交 Pull Request](https://github.com/iohub/codeactor-agent/pulls)
-- 💬 [参与讨论](https://github.com/iohub/codeactor-agent/discussions)
+- 🐛 [提交 Issue](https://github.com/iohub/yagent/issues)
+- 🔀 [提交 Pull Request](https://github.com/iohub/yagent/pulls)
+- 💬 [参与讨论](https://github.com/iohub/yagent/discussions)
 
 ---
 

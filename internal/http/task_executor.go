@@ -7,19 +7,19 @@ import (
 	"os"
 	"time"
 
-	"codeactor/internal/app"
-	"codeactor/internal/datamanager"
-	"codeactor/internal/logging"
-	messaging "codeactor/internal/messaging"
-	consumers "codeactor/internal/messaging/consumers"
-	"codeactor/internal/protocol"
-	"codeactor/internal/util"
+	"yagent/internal/app"
+	"yagent/internal/datamanager"
+	"yagent/internal/logging"
+	messaging "yagent/internal/messaging"
+	consumers "yagent/internal/messaging/consumers"
+	"yagent/internal/protocol"
+	"yagent/internal/util"
 
 	"github.com/gin-gonic/gin"
 )
 
 // ExecuteTask 执行任务的通用函数
-func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, codeActor *app.CodeActor, dataManager *datamanager.DataManager) {
+func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, yagent *app.Yagent, dataManager *datamanager.DataManager) {
 	task, ok := taskManager.GetTask(taskID)
 	if !ok {
 		slog.Error("Task not found", "task_id", taskID)
@@ -71,7 +71,7 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	dispatcher.RegisterConsumer(taskManagerWSConsumer)
 
 	// Integrate messaging with coding assistant
-	codeActor.IntegrateMessaging(dispatcher)
+	yagent.IntegrateMessaging(dispatcher)
 
 	var result string
 	var err error
@@ -117,7 +117,7 @@ func ExecuteTask(taskID, projectDir, taskDesc string, taskManager *TaskManager, 
 	logging.SetCurrentTaskID(taskID)
 	defer logging.SetCurrentTaskID("")
 
-	result, err = codeActor.ProcessCodingTaskWithCallback(request)
+	result, err = yagent.ProcessCodingTaskWithCallback(request)
 
 	if err != nil {
 		slog.Error("Task failed", "error", err, "task_id", taskID)

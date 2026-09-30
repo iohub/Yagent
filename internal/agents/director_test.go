@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"codeactor/internal/config"
-	"codeactor/internal/globalctx"
-	"codeactor/internal/llm"
-	"codeactor/internal/memory"
-	"codeactor/internal/tools"
+	"yagent/internal/config"
+	"yagent/internal/globalctx"
+	"yagent/internal/llm"
+	"yagent/internal/memory"
+	"yagent/internal/tools"
 )
 
 // ─── Mock Engine ──────────────────────────────────────────────────────────────

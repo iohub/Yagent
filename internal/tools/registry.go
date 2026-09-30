@@ -10,7 +10,7 @@ import (
 	"sort"
 	"sync"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 // ToolDefinition 工具定义（从 tools.json 加载的 JSON 结构）

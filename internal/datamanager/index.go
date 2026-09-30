@@ -36,7 +36,7 @@ type taskIndex struct {
 
 // indexPath 返回索引文件路径
 func (dm *DataManager) indexPath() string {
-	// 索引文件放在 .codeactor 目录（dataDir 的父目录）
+	// 索引文件放在 .yagent 目录（dataDir 的父目录）
 	return filepath.Join(filepath.Dir(dm.dataDir), indexFileName)
 }
 

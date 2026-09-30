@@ -1,6 +1,6 @@
 # Anthropic API 配置指南
 
-> CodeActor 支持使用 **Anthropic Messages API 原生格式** 进行推理，包括 Claude 模型的 Extended Thinking（扩展思考）功能。本文档说明如何配置 Anthropic 作为 LLM 提供商。
+> Yagent 支持使用 **Anthropic Messages API 原生格式** 进行推理，包括 Claude 模型的 Extended Thinking（扩展思考）功能。本文档说明如何配置 Anthropic 作为 LLM 提供商。
 
 ---
 
@@ -22,7 +22,7 @@
 
 ## 基本配置
 
-在 CodeActor 的 `config.toml` 文件中，按以下格式配置 Anthropic 提供商：
+在 Yagent 的 `config.toml` 文件中，按以下格式配置 Anthropic 提供商：
 
 ```toml
 [global.llm.providers.anthropic]
@@ -193,7 +193,7 @@ use_provider = "anthropic_sonnet"
 
 ### 配置检查
 
-修改配置后，启动 CodeActor 时系统会自动验证配置。如果配置正确，启动日志会显示：
+修改配置后，启动 Yagent 时系统会自动验证配置。如果配置正确，启动日志会显示：
 
 ```
 Creating new LLM client model=claude-sonnet-4-20250514 api_base_url=https://api.anthropic.com/v1
@@ -221,7 +221,7 @@ api_key = "sk-ant-${ANTHROPIC_API_KEY}"  # 从环境变量读取
 
 ## 工作原理（实现说明）
 
-CodeActor 的 Anthropic 支持通过以下机制实现：
+Yagent 的 Anthropic 支持通过以下机制实现：
 
 1. **引擎选择**：通过 `ProviderConfig.ApiFormat = "anthropic"` 触发 `NewAnthropicEngine()` 的创建
 2. **请求格式转换**：将内部的 `Message`（OpenAI 兼容格式）转换为 Anthropic Messages API 格式（content blocks、system 顶层字段、tool_use/tool_result 结构）

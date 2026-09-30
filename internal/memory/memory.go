@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 // MessageType 定义消息类型

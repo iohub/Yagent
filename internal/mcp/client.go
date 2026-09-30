@@ -184,7 +184,7 @@ func (c *MCPClient) performInitialize(ctx context.Context) error {
 			ProtocolVersion: "2024-11-05",
 			Capabilities:    ClientCapabilities{},
 			ClientInfo: ClientInfo{
-				Name:    "codeactor",
+				Name:    "yagent",
 				Version: "0.1.0",
 			},
 		}),

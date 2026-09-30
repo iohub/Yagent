@@ -14,22 +14,22 @@ import (
 	"sync"
 	"time"
 
-	"codeactor/internal/agents"
-	"codeactor/internal/browser"
-	"codeactor/internal/config"
-	"codeactor/internal/embedbin"
-	"codeactor/internal/globalctx"
-	"codeactor/internal/knowledge"
-	"codeactor/internal/llm"
-	"codeactor/internal/mcp"
-	"codeactor/internal/memory"
-	"codeactor/internal/messaging"
-	"codeactor/internal/skills"
-	"codeactor/internal/tools"
+	"yagent/internal/agents"
+	"yagent/internal/browser"
+	"yagent/internal/config"
+	"yagent/internal/embedbin"
+	"yagent/internal/globalctx"
+	"yagent/internal/knowledge"
+	"yagent/internal/llm"
+	"yagent/internal/mcp"
+	"yagent/internal/memory"
+	"yagent/internal/messaging"
+	"yagent/internal/skills"
+	"yagent/internal/tools"
 )
 
-// CodeActor is the main entry point for the agent system.
-type CodeActor struct {
+// Yagent is the main entry point for the agent system.
+type Yagent struct {
 	engine               llm.Engine  // default engine (backward-compatible)
 	client               *llm.Client // LLM client for per-agent/tool engine resolution
 	config               *config.Config
@@ -45,7 +45,7 @@ type CodeActor struct {
 	FullYoloMode   bool   // FULL-YOLO模式：隐含YoloMode + 移除ask_user_for_help + 自主决策
 	ForceQuit      bool   // ForceQuit：强制退出模式，agent_exit 时直接退出，不等待 codeseek 进程安全退出
 
-	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .codeactor/skills/ 下的 .md 文件
+	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .yagent/skills/ 下的 .md 文件
 
 	// [NEW] 记忆系统
 	sharedMemory        *memory.SharedMemory
@@ -58,9 +58,9 @@ type CodeActor struct {
 	initOnce sync.Once
 }
 
-// NewCodeActor creates a new CodeActor.
-func NewCodeActor(client *llm.Client) (*CodeActor, error) {
-	ca := &CodeActor{
+// NewYagent creates a new Yagent.
+func NewYagent(client *llm.Client) (*Yagent, error) {
+	ca := &Yagent{
 		userResponseChannels: make(map[string]chan string),
 		logger:               slog.Default().With("component", "coding_assistant"),
 		engine:               client.Engine,
@@ -71,13 +71,13 @@ func NewCodeActor(client *llm.Client) (*CodeActor, error) {
 }
 
 // SetEmbeddedBinaries 设置嵌入的二进制文件系统，用于自动提取 codeseek 等工具
-func (ca *CodeActor) SetEmbeddedBinaries(fs embed.FS) {
+func (ca *Yagent) SetEmbeddedBinaries(fs embed.FS) {
 	ca.embeddedBinFS = fs
 }
 
 // CloseIdleConnections 关闭 LLM engine 的 HTTP 空闲连接。
 // 在任务取消时调用，加速底层连接释放和 context 取消传播。
-func (ca *CodeActor) CloseIdleConnections() {
+func (ca *Yagent) CloseIdleConnections() {
 	if ca.engine != nil {
 		ca.engine.CloseIdleConnections()
 	}
@@ -85,7 +85,7 @@ func (ca *CodeActor) CloseIdleConnections() {
 
 // Init initializes the assistant with Engine and creates agents.
 // Uses per-agent and per-tool engine resolution from the LLM client.
-func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
+func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 	// 始终更新 engine（后续调用也需要更新 engine）
 	ca.engine = engine
 
@@ -319,7 +319,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 		// [NEW] 初始化 RepoAgent 记忆系统
 		{
 			ca.sharedMemory = memory.NewSharedMemory(100)
-			// 启用文件持久化，保存到 $HOME/.codeactor/data/shared_memory/{projectid}/
+			// 启用文件持久化，保存到 $HOME/.yagent/data/shared_memory/{projectid}/
 			sharedMemPath := ca.getSharedMemoryPath()
 			sharedMemDir := filepath.Dir(sharedMemPath)
 			if err := os.MkdirAll(sharedMemDir, 0700); err != nil {
@@ -401,7 +401,7 @@ func (ca *CodeActor) Init(engine llm.Engine, workDir string) {
 	})
 }
 
-func (ca *CodeActor) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
+func (ca *Yagent) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
 	ca.dispatcher = dispatcher
 	// 同步更新 publisher 的 dispatcher 引用，确保已创建的 Publisher 能正确路由事件
 	if ca.globalCtx != nil && ca.globalCtx.Publisher != nil {
@@ -463,14 +463,14 @@ func (r *TaskRequest) WithUserMessage(msg string) *TaskRequest {
 }
 
 // ProcessCodingTaskWithCallback executes the task using the agent system.
-func (ca *CodeActor) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
+func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 	ca.director.SetTaskID(req.taskID)
 	return ca.director.Run(req.ctx, req.taskDesc, req.memory)
 }
 
 // ProcessConversation handles chat messages.
-func (ca *CodeActor) ProcessConversation(req *TaskRequest) (string, error) {
+func (ca *Yagent) ProcessConversation(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 	ca.director.SetTaskID(req.taskID)
 	return ca.director.Run(req.ctx, req.userMessage, req.memory)
@@ -479,7 +479,7 @@ func (ca *CodeActor) ProcessConversation(req *TaskRequest) (string, error) {
 // SwitchProvider dynamically switches the LLM provider for all agents.
 // The change takes effect on the next task execution (since Init() is called
 // at the start of ProcessCodingTaskWithCallback / ProcessConversation).
-func (ca *CodeActor) SwitchProvider(providerName string) error {
+func (ca *Yagent) SwitchProvider(providerName string) error {
 	if ca.client == nil {
 		return fmt.Errorf("LLM client not available")
 	}
@@ -492,12 +492,12 @@ func (ca *CodeActor) SwitchProvider(providerName string) error {
 }
 
 // GetClient returns the underlying LLM client.
-func (ca *CodeActor) GetClient() *llm.Client {
+func (ca *Yagent) GetClient() *llm.Client {
 	return ca.client
 }
 
 // SetAgentProvider 为指定 agent 设置运行时 provider 覆盖（通过 LLM Client）
-func (ca *CodeActor) SetAgentProvider(agentName, providerName string) error {
+func (ca *Yagent) SetAgentProvider(agentName, providerName string) error {
 	if ca.client == nil {
 		return fmt.Errorf("LLM client not available")
 	}
@@ -505,7 +505,7 @@ func (ca *CodeActor) SetAgentProvider(agentName, providerName string) error {
 }
 
 // GetAgentProvider 返回指定 agent 当前生效的 provider 名称和模型名
-func (ca *CodeActor) GetAgentProvider(agentName string) (string, string) {
+func (ca *Yagent) GetAgentProvider(agentName string) (string, string) {
 	if ca.client == nil {
 		return "", ""
 	}
@@ -513,7 +513,7 @@ func (ca *CodeActor) GetAgentProvider(agentName string) (string, string) {
 }
 
 // GetAllAgentOverrides 返回所有运行时 agent provider 覆盖的副本
-func (ca *CodeActor) GetAllAgentOverrides() map[string]string {
+func (ca *Yagent) GetAllAgentOverrides() map[string]string {
 	if ca.client == nil {
 		return nil
 	}
@@ -523,7 +523,7 @@ func (ca *CodeActor) GetAllAgentOverrides() map[string]string {
 // SetToolProvider 为指定工具设置运行时 provider 覆盖。
 // 对 "deepthinking" 额外执行热替换：重新解析其 engine 并替换
 // globalCtx.DeepThinkingTool.LLM，保证后续 Execute 立即使用新模型。
-func (ca *CodeActor) SetToolProvider(toolName, providerName string) error {
+func (ca *Yagent) SetToolProvider(toolName, providerName string) error {
 	if ca.client == nil {
 		return fmt.Errorf("LLM client not available")
 	}
@@ -540,7 +540,7 @@ func (ca *CodeActor) SetToolProvider(toolName, providerName string) error {
 }
 
 // GetToolProvider 返回指定工具的运行时 provider 覆盖及是否生效
-func (ca *CodeActor) GetToolProvider(toolName string) (string, string, bool) {
+func (ca *Yagent) GetToolProvider(toolName string) (string, string, bool) {
 	if ca.client == nil {
 		return "", "", false
 	}
@@ -549,7 +549,7 @@ func (ca *CodeActor) GetToolProvider(toolName string) (string, string, bool) {
 
 // GetToolProviderInfo 返回指定工具当前生效的 provider 名称和模型名
 // 优先返回运行时覆盖，其次返回配置中的解析结果
-func (ca *CodeActor) GetToolProviderInfo(toolName string) (string, string) {
+func (ca *Yagent) GetToolProviderInfo(toolName string) (string, string) {
 	if ca.client == nil {
 		return "", ""
 	}
@@ -573,7 +573,7 @@ func parseDisabledAgents(s string) map[string]bool {
 }
 
 // Close 清理资源
-func (ca *CodeActor) Close() {
+func (ca *Yagent) Close() {
 	// 停止 consolidation worker
 	if ca.consolidationWorker != nil {
 		slog.Info("Stopping consolidation worker...")
@@ -629,9 +629,9 @@ func getProjectID(projectPath string) string {
 }
 
 // getSharedMemoryPath returns the shared memory file path.
-// Preferred: $HOME/.codeactor/data/shared_memory/{projectID}/shared_memory.json
+// Preferred: $HOME/.yagent/data/shared_memory/{projectID}/shared_memory.json
 // Fallback:  {ProjectPath}/.shared_memory.json (if home dir is unavailable)
-func (ca *CodeActor) getSharedMemoryPath() string {
+func (ca *Yagent) getSharedMemoryPath() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		// Fallback to project-local path (preserves old behavior)
@@ -640,5 +640,5 @@ func (ca *CodeActor) getSharedMemoryPath() string {
 	}
 
 	projectID := getProjectID(ca.globalCtx.ProjectPath)
-	return filepath.Join(homeDir, ".codeactor", "data", "shared_memory", projectID, "shared_memory.json")
+	return filepath.Join(homeDir, ".yagent", "data", "shared_memory", projectID, "shared_memory.json")
 }

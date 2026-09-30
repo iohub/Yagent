@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"codeactor/internal/globalctx"
-	"codeactor/internal/knowledge"
-	"codeactor/internal/messaging"
-	"codeactor/internal/tools"
+	"yagent/internal/globalctx"
+	"yagent/internal/knowledge"
+	"yagent/internal/messaging"
+	"yagent/internal/tools"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 //go:embed repo.prompt.md

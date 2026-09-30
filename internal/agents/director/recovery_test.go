@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"codeactor/internal/recovery"
+	"yagent/internal/recovery"
 )
 
 func TestCircuitBreaker_InitialState(t *testing.T) {

@@ -3,7 +3,7 @@ package browser
 import (
 	"context"
 
-	"codeactor/internal/tools"
+	"yagent/internal/tools"
 )
 
 // BrowserTools 返回所有浏览器工具的 Adapter 列表

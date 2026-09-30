@@ -1,12 +1,12 @@
 package globalctx
 
 import (
-	"codeactor/internal/browser"
-	"codeactor/internal/config"
-	"codeactor/internal/knowledge"
-	"codeactor/internal/mcp"
-	"codeactor/internal/messaging"
-	"codeactor/internal/tools"
+	"yagent/internal/browser"
+	"yagent/internal/config"
+	"yagent/internal/knowledge"
+	"yagent/internal/mcp"
+	"yagent/internal/messaging"
+	"yagent/internal/tools"
 	"fmt"
 	"strings"
 )

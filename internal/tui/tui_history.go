@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"codeactor/internal/datamanager"
-	"codeactor/internal/http"
-	"codeactor/internal/memory"
-	"codeactor/internal/tui/components"
+	"yagent/internal/datamanager"
+	"yagent/internal/http"
+	"yagent/internal/memory"
+	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"

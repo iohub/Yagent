@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 // MicroAgentTool enables agents to make raw LLM inference calls as a tool.

@@ -1,8 +1,8 @@
 package common
 
 import (
-	"codeactor/internal/app"
-	"codeactor/internal/config"
+	"yagent/internal/app"
+	"yagent/internal/config"
 )
 
 // Common holds shared state and configuration for all UI components.
@@ -15,8 +15,8 @@ type Common struct {
 	// Config is the application configuration.
 	Config *config.Config
 
-	// Assistant is the CodeActor instance for agent operations.
-	Assistant *app.CodeActor
+	// Assistant is the Yagent instance for agent operations.
+	Assistant *app.Yagent
 
 	// ProjectDir is the current working directory.
 	ProjectDir string
@@ -26,7 +26,7 @@ type Common struct {
 }
 
 // NewCommon creates a Common with all fields initialized.
-func NewCommon(styles *Styles, cfg *config.Config, assistant *app.CodeActor, projectDir string, useDarkStyle bool) *Common {
+func NewCommon(styles *Styles, cfg *config.Config, assistant *app.Yagent, projectDir string, useDarkStyle bool) *Common {
 	return &Common{
 		Styles:       styles,
 		Config:       cfg,

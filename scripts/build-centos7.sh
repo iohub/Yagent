@@ -64,9 +64,9 @@ rm -rf /tmp/rg_extract /tmp/rg.tar.gz
 
 chmod +x dist/bin/codeseek dist/bin/fzf dist/bin/rg
 
-echo "=== Step 8: Build Go codeactor ==="
+echo "=== Step 8: Build Go yagent ==="
 export PATH="/usr/local/go/bin:$PATH"
-go build -ldflags="-s -w" -o codeactor .
+go build -ldflags="-s -w" -o yagent .
 
 echo "=== Build completed ==="
-ls -lh codeactor dist/bin/
+ls -lh yagent dist/bin/

@@ -1,4 +1,4 @@
-# CodeActor-Agent 知识管理系统优化分析报告
+# Yagent 知识管理系统优化分析报告
 
 > **文档信息**
 
@@ -31,7 +31,7 @@
 
 ### 1.1 分析目标
 
-对 CodeActor-Agent 系统中"Agent 知识整理"的完整逻辑进行实证分析，识别现有实现的缺陷与深层机制问题，并从**机制/架构层面**（而非仅修 bug）提出可落地的优化方案，提升知识整理的效果：知识质量、去重效率、检索注入质量、闭环有效性、成本与延迟。
+对 Yagent 系统中"Agent 知识整理"的完整逻辑进行实证分析，识别现有实现的缺陷与深层机制问题，并从**机制/架构层面**（而非仅修 bug）提出可落地的优化方案，提升知识整理的效果：知识质量、去重效率、检索注入质量、闭环有效性、成本与延迟。
 
 ### 1.2 分析结论摘要
 
@@ -132,7 +132,7 @@ process(task):
   4. consolidated := EnforceTokenBudget(consolidated)  // 1500 char token budget
   5. ValidateMemoryFormat(consolidated)  // 检查 6 个分区标题
   6. store.Save(ctx, consolidated)  // 写入 SharedMemory KV
-  7. writeConsolidationFile(consolidated)  // 写入 ~/.codeactor/logs/memory-consolidated-YYYY-MM-DD.log
+  7. writeConsolidationFile(consolidated)  // 写入 ~/.yagent/logs/memory-consolidated-YYYY-MM-DD.log
   8. extractKnowledge(consolidated)  // LLM 提取知识条目 → MCP KnowledgeAdd
   9. if consolidationCount % 10 == 0: triggerPruneMerge()
 ```
@@ -188,7 +188,7 @@ process(task):
 │       EnforceTokenBudget() ──→ ≤1500 字符                   │
 │       ValidateMemoryFormat() ──→ 检查 6 个分区               │
 │   RepoMemoryStore.Save() ──→ SharedMemory.SetKey(...)       │
-│       writeConsolidationFile() ──→ ~/.codeactor/logs/*.log  │
+│       writeConsolidationFile() ──→ ~/.yagent/logs/*.log  │
 │   extractKnowledge() ──→ LLM 提取 JSON 条目                 │
 │       → ConsolidateKnowledgeTool.Execute()                  │
 │           → MCP KnowledgeAdd（写入 codeseek 知识库）         │
@@ -1837,4 +1837,4 @@ func (o *KnowledgeObserver) Snapshot() KnowledgeMetrics {
 
 ---
 
-（本文档由 CodeActor-Agent 系统分析生成，内容基于代码实证分析，代码示例为优化设计草案，落地时需结合实际情况调整。）
+（本文档由 Yagent 系统分析生成，内容基于代码实证分析，代码示例为优化设计草案，落地时需结合实际情况调整。）

@@ -1,4 +1,4 @@
-# CodeActor 配置指南
+# Yagent 配置指南
 
 > **定位说明**：本文档是面向用户的**完整配置参考手册**，涵盖所有配置段、优先级机制、故障转移、场景示例等。专项主题请参考：
 > - [Anthropic API 配置](./anthropic-config.md) — Claude 模型接入与 Extended Thinking
@@ -11,11 +11,11 @@
 
 ### 1.1 三层配置架构
 
-CodeActor 支持**三层覆盖**的配置文件加载机制，优先级从高到低：
+Yagent 支持**三层覆盖**的配置文件加载机制，优先级从高到低：
 
 | 优先级 | 路径 | 用途 |
 |:------:|------|------|
-| **高** | `~/.codeactor/config/config.toml` | 用户级配置，覆盖全局默认值 |
+| **高** | `~/.yagent/config/config.toml` | 用户级配置，覆盖全局默认值 |
 | **中** | `config/config.toml` | 项目级配置，适用于当前工作空间 |
 | **低** | `internal/config/default_config.toml` | 内置默认配置，应用层兜底 |
 
@@ -23,18 +23,18 @@ CodeActor 支持**三层覆盖**的配置文件加载机制，优先级从高到
 
 ### 1.2 配置文件路径解析
 
-启动时，CodeActor 按以下顺序确定配置文件路径：
+启动时，Yagent 按以下顺序确定配置文件路径：
 
 1. **命令行 `--config` / `-c`**：优先使用指定路径（不自动创建文件）
    ```bash
-   codeactor --config /path/to/my-config.toml
+   yagent --config /path/to/my-config.toml
    ```
-2. **用户级默认**：`$HOME/.codeactor/config/config.toml`（不存在时自动生成）
+2. **用户级默认**：`$HOME/.yagent/config/config.toml`（不存在时自动生成）
 3. **项目级兜底**：`config/config.toml`（不存在时自动生成）
 
 ### 1.3 首次运行自动生成
 
-如果配置文件不存在，CodeActor 会自动调用 `EnsureConfigExists()` 从内置模板（`internal/config/default_config.toml`）生成默认配置文件，采用原子写入方式（先写 `.tmp` 再 rename）避免损坏。
+如果配置文件不存在，Yagent 会自动调用 `EnsureConfigExists()` 从内置模板（`internal/config/default_config.toml`）生成默认配置文件，采用原子写入方式（先写 `.tmp` 再 rename）避免损坏。
 
 ### 1.4 热重载支持
 
@@ -64,7 +64,7 @@ api_base_url = "https://api.deepseek.com/v1"
 api_key = "sk-your-key"
 ```
 
-保存文件后启动 CodeActor 即可。
+保存文件后启动 Yagent 即可。
 
 ### 2.2 切换默认 Provider
 
@@ -272,7 +272,7 @@ fallback_providers = [
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `default_path` | string | `~/.codeactor/keywords.txt` | 默认关键词文件路径 |
+| `default_path` | string | `~/.yagent/keywords.txt` | 默认关键词文件路径 |
 | `hot_reload` | bool | `false` | 是否启用热重载 |
 | `disable_completion` | bool | `false` | 禁用关键词自动补全 |
 
@@ -448,8 +448,8 @@ api_key = "dummy-key"                      # 本地模型通常不需要 API Key
 
 ### Q: 配置不生效怎么办？
 
-1. **检查加载路径**：运行 `codeactor --config /path/to/config.toml` 确认使用了正确的配置文件
-2. **检查优先级**：用户级（`~/.codeactor/config/config.toml`）覆盖项目级（`config/config.toml`），确认修改的是正确的文件
+1. **检查加载路径**：运行 `yagent --config /path/to/config.toml` 确认使用了正确的配置文件
+2. **检查优先级**：用户级（`~/.yagent/config/config.toml`）覆盖项目级（`config/config.toml`），确认修改的是正确的文件
 3. **检查语法**：确保 TOML 格式正确，可使用 `python3 -c "import tomllib; tomllib.load(open('config.toml','rb'))"` 验证
 4. **查看日志**：启动时打印 `Loading configuration` 日志确认加载路径
 
@@ -467,11 +467,11 @@ api_key = "dummy-key"                      # 本地模型通常不需要 API Key
 
 ### Q: 配置文件损坏时的恢复？
 
-删除配置文件后重新启动 CodeActor，系统会自动从内置模板生成默认配置：
+删除配置文件后重新启动 Yagent，系统会自动从内置模板生成默认配置：
 
 ```bash
-rm ~/.codeactor/config/config.toml
-codeactor
+rm ~/.yagent/config/config.toml
+yagent
 ```
 
 ### Q: 如何禁用某个 Agent？
@@ -479,12 +479,12 @@ codeactor
 启动时通过 `--disable-agents` 参数：
 
 ```bash
-codeactor --disable-agents browser,devops
+yagent --disable-agents browser,devops
 ```
 
 ### Q: 热重载不生效？
 
 检查：
-1. 配置文件路径是否为 `~/.codeactor/config/config.toml` 或项目级 `config/config.toml`
+1. 配置文件路径是否为 `~/.yagent/config/config.toml` 或项目级 `config/config.toml`
 2. 使用 `--config` 指定的自定义路径不支持热重载
 3. 编辑器可能使用 swap-and-replace 模式，确保文件确实发生了写入事件

@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"codeactor/internal/config"
-	"codeactor/internal/logging"
-	"codeactor/internal/util"
+	"yagent/internal/config"
+	"yagent/internal/logging"
+	"yagent/internal/util"
 
 	"log/slog"
 )

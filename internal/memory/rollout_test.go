@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 // ─── TestResponseItemMarshal ───
@@ -535,9 +535,9 @@ func TestRolloutWriter(t *testing.T) {
 		SessionID:     "sess-001",
 		Cwd:           "/tmp/test",
 		CliVersion:    "0.118.0",
-		Originator:    "codeactor-agent",
+		Originator:    "yagent",
 		ModelProvider: "openai",
-		Source:        "codeactor-cli",
+		Source:        "yagent-cli",
 		BaseInstructions: "You are a helpful agent.",
 		ContextWindow: 200000,
 		HistoryMode:   "full",
@@ -834,9 +834,9 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 		SessionID:     "sess-abc",
 		Cwd:           "/tmp/test",
 		CliVersion:    "0.118.0",
-		Originator:    "codeactor-agent",
+		Originator:    "yagent",
 		ModelProvider: "openai",
-		Source:        "codeactor-cli",
+		Source:        "yagent-cli",
 		BaseInstructions: "Be helpful.",
 		ContextWindow: 200000,
 		HistoryMode:   "full",

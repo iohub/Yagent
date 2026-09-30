@@ -385,7 +385,7 @@ curl http://127.0.0.1:8080/  # 需要先启动测试服务器
 
 PASS
 coverage: 85.3% of statements
-ok      codeactor-agent/internal/browser    12.345s  37 tests passed
+ok      yagent/internal/browser    12.345s  37 tests passed
 ```
 
 ---

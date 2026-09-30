@@ -122,10 +122,10 @@ func setupFallbackHandler(mode Mode, cause error) {
 	slog.Error("logging fallback activated", "mode", mode, "cause", cause.Error())
 }
 
-// parseLogLevel reads CODEACTOR_LOG_LEVEL env var.
+// parseLogLevel reads YAGENT_LOG_LEVEL env var.
 // Defaults to slog.LevelInfo for more verbose logging.
 func parseLogLevel() slog.Level {
-	envLevel := os.Getenv("CODEACTOR_LOG_LEVEL")
+	envLevel := os.Getenv("YAGENT_LOG_LEVEL")
 	switch envLevel {
 	case "DEBUG":
 		return slog.LevelDebug
@@ -144,9 +144,9 @@ func parseLogLevel() slog.Level {
 func getLogDir() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(os.TempDir(), "codeactor", "logs")
+		return filepath.Join(os.TempDir(), "yagent", "logs")
 	}
-	return filepath.Join(homeDir, ".codeactor", "logs")
+	return filepath.Join(homeDir, ".yagent", "logs")
 }
 
 // openLogFile opens or creates a date-stamped log file.
@@ -192,7 +192,7 @@ func GetLogDir() string {
 }
 
 // GetTaskLogDir returns the task-specific log directory path.
-// Format: ~/.codeactor/logs/{taskID}/
+// Format: ~/.yagent/logs/{taskID}/
 // If taskID is empty, returns the global log directory.
 func GetTaskLogDir(taskID string) string {
 	if taskID == "" {

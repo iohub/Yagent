@@ -7,12 +7,12 @@ import (
 	"log"
 	"time"
 
-	"codeactor/internal/browser"
-	browsertools "codeactor/internal/tools/browser"
-	"codeactor/internal/tools"
-	"codeactor/internal/globalctx"
+	"yagent/internal/browser"
+	browsertools "yagent/internal/tools/browser"
+	"yagent/internal/tools"
+	"yagent/internal/globalctx"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 //go:embed browser.prompt.md

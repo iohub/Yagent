@@ -282,13 +282,13 @@ func (g *WorkspaceGuard) referencesOutsideWorkspace(command string) bool {
 	return false
 }
 
-// loadProjectAuth 从 ~/.codeactor/settings.json 加载项目授权状态
+// loadProjectAuth 从 ~/.yagent/settings.json 加载项目授权状态
 func (g *WorkspaceGuard) loadProjectAuth() {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return
 	}
-	settingsPath := filepath.Join(homeDir, ".codeactor", "settings.json")
+	settingsPath := filepath.Join(homeDir, ".yagent", "settings.json")
 
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
@@ -307,13 +307,13 @@ func (g *WorkspaceGuard) loadProjectAuth() {
 	}
 }
 
-// saveProjectAuth 将当前项目路径保存到 ~/.codeactor/settings.json
+// saveProjectAuth 将当前项目路径保存到 ~/.yagent/settings.json
 func (g *WorkspaceGuard) saveProjectAuth() {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return
 	}
-	settingsPath := filepath.Join(homeDir, ".codeactor", "settings.json")
+	settingsPath := filepath.Join(homeDir, ".yagent", "settings.json")
 
 	// 确保目录存在
 	settingsDir := filepath.Dir(settingsPath)

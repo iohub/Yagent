@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/mcp"
+	"yagent/internal/mcp"
 )
 
 type RepoOperationsTool struct {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 // ─── Mock Engine ─────────────────────────────────────────────────────────────

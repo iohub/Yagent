@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/messaging"
-	"codeactor/internal/protocol"
-	"codeactor/internal/tui/components"
+	"yagent/internal/messaging"
+	"yagent/internal/protocol"
+	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
 )

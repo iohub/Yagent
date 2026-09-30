@@ -3,7 +3,7 @@ package agents
 import (
 	"time"
 
-	director "codeactor/internal/agents/director"
+	director "yagent/internal/agents/director"
 )
 
 // DirectorAdapter 桥接旧 facade (director.go) 与新模块化组件 (director/ 子目录)

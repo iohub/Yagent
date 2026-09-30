@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"codeactor/internal/memory"
-	"codeactor/internal/tokenutil"
+	"yagent/internal/memory"
+	"yagent/internal/tokenutil"
 )
 
 // ============================================================================

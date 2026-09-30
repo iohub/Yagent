@@ -8,11 +8,11 @@ import (
 	"log/slog"
 	"strings"
 
-	"codeactor/internal/globalctx"
-	"codeactor/internal/knowledge"
-	"codeactor/internal/tools"
+	"yagent/internal/globalctx"
+	"yagent/internal/knowledge"
+	"yagent/internal/tools"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 //go:embed coding.prompt.md

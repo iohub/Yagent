@@ -3,9 +3,9 @@ package agents
 import (
 	"context"
 
-	"codeactor/internal/llm"
-	"codeactor/internal/memory"
-	"codeactor/internal/messaging"
+	"yagent/internal/llm"
+	"yagent/internal/memory"
+	"yagent/internal/messaging"
 )
 
 // AgentResult 封装 sub-agent 的完整执行结果

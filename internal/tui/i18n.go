@@ -90,7 +90,7 @@ type translations struct {
 
 var langMap = map[Language]translations{
 	LangChinese: {
-		Title:                            "CodeActor AI 助手",
+		Title:                            "Yagent AI 助手",
 		ProjectDirLabel:                  "项目目录",
 		TaskDescLabel:                    "任务描述",
 		ProjectDirPlaceholder:            "输入项目目录路径",
@@ -172,7 +172,7 @@ var langMap = map[Language]translations{
 		TabNewCreated:        "已创建新会话",
 	},
 	LangEnglish: {
-		Title:                            "CodeActor AI Assistant",
+		Title:                            "Yagent AI Assistant",
 		ProjectDirLabel:                  "Project Directory",
 		TaskDescLabel:                    "Task Description",
 		ProjectDirPlaceholder:            "Enter project directory path",

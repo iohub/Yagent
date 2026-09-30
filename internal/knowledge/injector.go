@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/config"
-	"codeactor/internal/logging"
-	"codeactor/internal/mcp"
-	"codeactor/internal/tokenutil"
+	"yagent/internal/config"
+	"yagent/internal/logging"
+	"yagent/internal/mcp"
+	"yagent/internal/tokenutil"
 
 	"log/slog"
 )

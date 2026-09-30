@@ -1,4 +1,4 @@
-# 🎻 CodeActor — A Self-Evolving AI Coding Engine
+# 🎻 Yagent — A Self-Evolving AI Coding Engine
 
 > **Not a copilot. A crew of autonomous agents that understand, navigate, and evolve your codebase — together.**
 
@@ -12,11 +12,11 @@
 
 ---
 
-## 💡 Why CodeActor?
+## 💡 Why Yagent?
 
 Most AI coding tools share a fundamental flaw: **they treat code as text, not structure**.
 
-| Traditional Tools | CodeActor |
+| Traditional Tools | Yagent |
 |-------------------|-----------|
 | Flat text pattern matching | 🧠 **Structural code understanding** via AST + call graphs + semantic vectors |
 | Single agent, working alone | 🤖 **Hub-and-Spoke multi-agent**: Director orchestrates, six specialized agents execute |
@@ -71,7 +71,7 @@ The **Repo-Agent** is backed by a Rust engine with Tree-sitter AST parsing, Lanc
 
 ### 🧬 2. Meta-Agent: Self-Evolving at Runtime
 
-This is CodeActor's most unique capability. When the Director encounters a task beyond built-in agents, the **Meta-Agent**:
+This is Yagent's most unique capability. When the Director encounters a task beyond built-in agents, the **Meta-Agent**:
 
 1. 🎨 **Designs** — auto-generates a new agent's system prompt and toolset
 2. ⚡ **Executes** — immediately runs the new agent to complete the task
@@ -93,7 +93,7 @@ Automatically fetches recent commits → LLM generates structured summaries → 
 
 ### 🔬 5. Hybrid Retrieval + Code Graph Expansion: From "Found" to "Understood"
 
-> **Traditional code search tells you *where* keywords match. CodeActor finds the code, then automatically analyzes the structural world around it.**
+> **Traditional code search tells you *where* keywords match. Yagent finds the code, then automatically analyzes the structural world around it.**
 
 #### 🎯 Three-Stage Cascading Retrieval Pipeline
 
@@ -117,9 +117,9 @@ User Query
 
 **Pure vector search treats code blocks as isolated islands** — it computes semantic similarity but has no idea what the function calls, who calls it, or what module it belongs to.
 
-**CodeActor's breakthrough**: Hybrid retrieval + code graph expansion = **a leap from "found" to "understood"**.
+**Yagent's breakthrough**: Hybrid retrieval + code graph expansion = **a leap from "found" to "understood"**.
 
-| Aspect | Pure Vector Search | CodeActor Hybrid + Graph Expansion |
+| Aspect | Pure Vector Search | Yagent Hybrid + Graph Expansion |
 |--------|-------------------|-------------------------------------|
 | Recall | ❌ Semantic matches with different keywords → missed | ✅ BM25 + Vector dual-channel covers both semantics and exact match |
 | Precision | ❌ Short text / noise often ranks high | ✅ RRF fusion + short-code penalty + Cross-Encoder triple filtering |
@@ -133,7 +133,7 @@ User Query
 
 ### Download Pre-built Binary (Recommended)
 
-Download the latest all-in-one release for your platform from the [GitHub Releases page](https://github.com/iohub/codeactor-agent/releases). The binary bundles the **codeseek intelligence engine** (Rust), **fzf** (fuzzy finder), and **ripgrep** (regex search) — everything you need is included. Just extract and run `./codeactor` — zero dependencies, zero configuration.
+Download the latest all-in-one release for your platform from the [GitHub Releases page](https://github.com/iohub/yagent/releases). The binary bundles the **codeseek intelligence engine** (Rust), **fzf** (fuzzy finder), and **ripgrep** (regex search) — everything you need is included. Just extract and run `./yagent` — zero dependencies, zero configuration.
 
 ### Prerequisites (for building from source)
 - Go 1.24+
@@ -142,14 +142,14 @@ Download the latest all-in-one release for your platform from the [GitHub Releas
 ### Build from Source
 
 ```bash
-git clone https://github.com/iohub/codeactor-agent.git
-cd codeactor-agent
-go build -o codeactor .
+git clone https://github.com/iohub/yagent.git
+cd yagent
+go build -o yagent .
 ```
 
 ### Configure
 
-Create `~/.codeactor/config/config.toml`:
+Create `~/.yagent/config/config.toml`:
 
 ```toml
 [global.llm]
@@ -167,13 +167,13 @@ max_tokens = 23000
 
 ```bash
 # TUI mode
-./codeactor tui
+./yagent tui
 
 # With a task file
-./codeactor tui --taskfile TASK.md
+./yagent tui --taskfile TASK.md
 
 # HTTP server mode (default :9080)
-./codeactor http
+./yagent http
 ```
 
 ---
@@ -193,9 +193,9 @@ max_tokens = 23000
 
 We welcome all contributions — bug reports, feature requests, docs, and code.
 
-- 🐛 [Open an Issue](https://github.com/iohub/codeactor-agent/issues)
-- 🔀 [Submit a PR](https://github.com/iohub/codeactor-agent/pulls)
-- 💬 [Join the Discussion](https://github.com/iohub/codeactor-agent/discussions)
+- 🐛 [Open an Issue](https://github.com/iohub/yagent/issues)
+- 🔀 [Submit a PR](https://github.com/iohub/yagent/pulls)
+- 💬 [Join the Discussion](https://github.com/iohub/yagent/discussions)
 
 ---
 

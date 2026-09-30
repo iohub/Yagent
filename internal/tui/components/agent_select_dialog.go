@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"codeactor/internal/tui/common"
+	"yagent/internal/tui/common"
 )
 
 // ConfigEntry represents a target with its current model configuration.

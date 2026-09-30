@@ -6,12 +6,12 @@ WEBUI_DIR="$ROOT_DIR/webui"
 VSCODE_DIR="$ROOT_DIR/vscode"
 
 echo "============================================"
-echo "  CodeActor VSCode Extension Build Script"
+echo "  Yagent VSCode Extension Build Script"
 echo "============================================"
 echo ""
 
-# Step 0: Build CodeActor binary for the current platform
-echo "=== Step 0/4: Building CodeActor binary ==="
+# Step 0: Build Yagent binary for the current platform
+echo "=== Step 0/4: Building Yagent binary ==="
 cd "$ROOT_DIR"
 
 # 确定目标平台和架构
@@ -29,11 +29,11 @@ esac
 EXT=""
 if [ "$OS" = "windows" ]; then EXT=".exe"; fi
 
-BINARY_NAME="codeactor-${OS}-${FILE_ARCH}${EXT}"
+BINARY_NAME="yagent-${OS}-${FILE_ARCH}${EXT}"
 BINARY_DIR="$VSCODE_DIR/bin"
 mkdir -p "$BINARY_DIR"
 
-echo "[0/4] Building CodeActor binary for ${OS}/${GO_BUILD_ARCH}..."
+echo "[0/4] Building Yagent binary for ${OS}/${GO_BUILD_ARCH}..."
 
 # 构建 Go 二进制，使用 -s -w 减小体积
 # 注意：GOARCH 必须使用 Go 原生架构名（如 amd64），不能使用 x64
@@ -41,9 +41,9 @@ GOOS="$OS" GOARCH="$GO_BUILD_ARCH" go build -ldflags="-s -w" -o "${BINARY_DIR}/$
 
 if [ -f "${BINARY_DIR}/${BINARY_NAME}" ]; then
     chmod +x "${BINARY_DIR}/${BINARY_NAME}"
-    echo "[0/4] CodeActor binary built: ${BINARY_DIR}/${BINARY_NAME}"
+    echo "[0/4] Yagent binary built: ${BINARY_DIR}/${BINARY_NAME}"
 else
-    echo "[0/4] ERROR: Failed to build CodeActor binary!"
+    echo "[0/4] ERROR: Failed to build Yagent binary!"
     exit 1
 fi
 

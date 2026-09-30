@@ -73,7 +73,7 @@ func NewRolloutWriter(agentName, taskID, projectID string) (*RolloutWriter, erro
 	sessionID := generateSessionID()
 
 	// 确定输出目录
-	outputDir := filepath.Join(homeDirOrFallback(), ".codeactor", "data", "rollout")
+	outputDir := filepath.Join(homeDirOrFallback(), ".yagent", "data", "rollout")
 	if projectID == "" {
 		projectID = "default"
 	}
