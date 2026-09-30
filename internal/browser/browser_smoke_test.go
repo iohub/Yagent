@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"codeactor/internal/config"
+	"yagent/internal/config"
 )
 
 // TestBrowserSmoke 浏览器冒烟测试
@@ -159,12 +159,12 @@ func loadConfig(t *testing.T) (*config.Config, error) {
 		return nil, err
 	}
 
-	configPath := filepath.Join(homeDir, ".codeactor", "config", "config.toml")
+	configPath := filepath.Join(homeDir, ".yagent", "config", "config.toml")
 
 	// 检查配置文件是否存在
 	if _, err := os.Stat(configPath); err != nil {
 		if os.IsNotExist(err) {
-			t.Skipf("[配置] 配置文件不存在，跳过测试: %s\n提示: 请先运行 codeactor init 或手动创建配置文件", configPath)
+			t.Skipf("[配置] 配置文件不存在，跳过测试: %s\n提示: 请先运行 yagent init 或手动创建配置文件", configPath)
 		}
 		t.Skipf("[配置] 无法访问配置文件: %v", err)
 		return nil, err

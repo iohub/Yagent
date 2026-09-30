@@ -1,14 +1,14 @@
 # ==============================================================================
-# CodeActor Agent 事件协议定义（单一真相源）
+# Yagent Agent 事件协议定义（单一真相源）
 # ==============================================================================
 # 此文件是系统中所有 Agent 事件消息的权威定义。
-# 修改此文件后，请运行 `go generate ./scripts/protoc-gen-codeactor/...` 
+# 修改此文件后，请运行 `go generate ./scripts/protoc-gen-yagent/...` 
 # 重新生成 Go 类型、TypeScript 类型、JSON Schema 和渲染映射表。
 # ==============================================================================
 
 # 协议元信息
 protocol:
-  name: "CodeActor Agent Events"
+  name: "Yagent Agent Events"
   version: "1.0.0"
   description: "定义 Agent 系统与 WebUI 之间通过 WebSocket 传输的所有事件消息"
 

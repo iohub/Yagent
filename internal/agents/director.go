@@ -14,14 +14,14 @@ import (
 	"strings"
 	"time"
 
-	director "codeactor/internal/agents/director"
-	"codeactor/internal/config"
-	"codeactor/internal/globalctx"
-	"codeactor/internal/knowledge"
-	"codeactor/internal/llm"
-	"codeactor/internal/memory"
-	"codeactor/internal/thinklink"
-	"codeactor/internal/tools"
+	director "yagent/internal/agents/director"
+	"yagent/internal/config"
+	"yagent/internal/globalctx"
+	"yagent/internal/knowledge"
+	"yagent/internal/llm"
+	"yagent/internal/memory"
+	"yagent/internal/thinklink"
+	"yagent/internal/tools"
 )
 
 //go:embed director.prompt.md
@@ -105,7 +105,7 @@ type DirectorAgent struct {
 	taskID string
 }
 
-// loadProjectContext 读取工作区目录下的项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
+// loadProjectContext 读取工作区目录下的项目上下文文件（YAGENT.md、CLAUDE.md、AGENTS.md），
 // 将成功读取的文件内容格式化后组合返回。文件按顺序尝试，不存在或读取失败时忽略。
 // 返回加载的文件列表和组合后的内容。
 func (a *DirectorAgent) loadProjectContext() *ProjectContextLoadResult {
@@ -117,7 +117,7 @@ func (a *DirectorAgent) loadProjectContext() *ProjectContextLoadResult {
 		LoadedFiles: []ProjectContextFile{},
 	}
 	var sb strings.Builder
-	contextFiles := []string{"CODEACTOR.md", "CLAUDE.md", "AGENTS.md"}
+	contextFiles := []string{"YAGENT.md", "CLAUDE.md", "AGENTS.md"}
 
 	for _, fname := range contextFiles {
 		fullPath := filepath.Join(a.GlobalCtx.ProjectPath, fname)
@@ -949,7 +949,7 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 	// Always start with System Prompt (with any registered custom agents appended)
 	systemPrompt := a.GlobalCtx.FormatPrompt(directorPrompt)
 	var projectContext string
-	// 只在首次对话时加载项目上下文文件（CODEACTOR.md、CLAUDE.md、AGENTS.md），
+	// 只在首次对话时加载项目上下文文件（YAGENT.md、CLAUDE.md、AGENTS.md），
 	// 同一会话的后续追问无需重复注入，避免浪费 token。
 	// memory 中不存储 system 消息，因此 len(mem.GetMessages()) == 0 即可判断是否为首次对话。
 	if mem == nil || len(mem.GetMessages()) == 0 {
@@ -1051,7 +1051,7 @@ func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.Conve
 				ID:          directorRolloutWriter.SessionID(),
 				SessionID:   directorRolloutWriter.SessionID(),
 				Cwd:         cwd,
-				Originator:  "codeactor",
+				Originator:  "yagent",
 				Source:      "cli",
 				HistoryMode: "standard",
 			})

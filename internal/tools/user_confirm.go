@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"codeactor/internal/messaging"
-	"codeactor/internal/protocol"
+	"yagent/internal/messaging"
+	"yagent/internal/protocol"
 
 	"github.com/google/uuid"
 )

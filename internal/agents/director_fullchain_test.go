@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"codeactor/internal/config"
-	"codeactor/internal/llm"
-	"codeactor/internal/messaging"
-	"codeactor/internal/tools"
+	"yagent/internal/config"
+	"yagent/internal/llm"
+	"yagent/internal/messaging"
+	"yagent/internal/tools"
 )
 
 // ─── Full-Chain Mock LLM Engine ──────────────────────────────────────────────

@@ -359,8 +359,8 @@ func TestMergeStrings_Empty(t *testing.T) {
 // ============================================================================
 
 func TestReplaceProjectAbsPath_AbsolutePrefix(t *testing.T) {
-	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
-	title := "/home/do/ssd/iohub/dev/codeactor-agent/foo/bar.go 相关设计"
+	projectDir := "/home/do/ssd/iohub/dev/yagent"
+	title := "/home/do/ssd/iohub/dev/yagent/foo/bar.go 相关设计"
 	got := replaceProjectAbsPath(title, projectDir)
 	expected := "foo/bar.go 相关设计"
 	if got != expected {
@@ -369,7 +369,7 @@ func TestReplaceProjectAbsPath_AbsolutePrefix(t *testing.T) {
 }
 
 func TestReplaceProjectAbsPath_NoAbsolutePath(t *testing.T) {
-	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	projectDir := "/home/do/ssd/iohub/dev/yagent"
 	title := "foo/bar.go 相关设计"
 	got := replaceProjectAbsPath(title, projectDir)
 	if got != title {
@@ -378,8 +378,8 @@ func TestReplaceProjectAbsPath_NoAbsolutePath(t *testing.T) {
 }
 
 func TestReplaceProjectAbsPath_ExactMatch(t *testing.T) {
-	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
-	title := "/home/do/ssd/iohub/dev/codeactor-agent"
+	projectDir := "/home/do/ssd/iohub/dev/yagent"
+	title := "/home/do/ssd/iohub/dev/yagent"
 	got := replaceProjectAbsPath(title, projectDir)
 	expected := "."
 	if got != expected {
@@ -388,7 +388,7 @@ func TestReplaceProjectAbsPath_ExactMatch(t *testing.T) {
 }
 
 func TestReplaceProjectAbsPath_EmptyProjectDir(t *testing.T) {
-	title := "/home/do/ssd/iohub/dev/codeactor-agent/foo/bar.go"
+	title := "/home/do/ssd/iohub/dev/yagent/foo/bar.go"
 	got := replaceProjectAbsPath(title, "")
 	if got != title {
 		t.Errorf("replaceProjectAbsPath(%q, \"\") = %q, want original %q", title, got, title)
@@ -396,7 +396,7 @@ func TestReplaceProjectAbsPath_EmptyProjectDir(t *testing.T) {
 }
 
 func TestReplaceProjectAbsPath_EmptyTitle(t *testing.T) {
-	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
+	projectDir := "/home/do/ssd/iohub/dev/yagent"
 	got := replaceProjectAbsPath("", projectDir)
 	if got != "" {
 		t.Errorf("replaceProjectAbsPath(\"\", %q) = %q, want \"\"", projectDir, got)
@@ -404,10 +404,10 @@ func TestReplaceProjectAbsPath_EmptyTitle(t *testing.T) {
 }
 
 func TestReplaceProjectAbsPath_NoFalsePrefix(t *testing.T) {
-	// projectDir 是 "/home/do/ssd/iohub/dev/codeactor-agent"，
-	// 不应误替换 "/home/do/ssd/iohub/dev/codeactor-agentXxx"（缺少分隔符）
-	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
-	title := "/home/do/ssd/iohub/dev/codeactor-agentXxx/foo/bar.go"
+	// projectDir 是 "/home/do/ssd/iohub/dev/yagent"，
+	// 不应误替换 "/home/do/ssd/iohub/dev/yagentXxx"（缺少分隔符）
+	projectDir := "/home/do/ssd/iohub/dev/yagent"
+	title := "/home/do/ssd/iohub/dev/yagentXxx/foo/bar.go"
 	got := replaceProjectAbsPath(title, projectDir)
 	if got != title {
 		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want original %q (no false prefix match)", title, projectDir, got, title)
@@ -416,8 +416,8 @@ func TestReplaceProjectAbsPath_NoFalsePrefix(t *testing.T) {
 
 func TestReplaceProjectAbsPath_OnlyRelPathPart(t *testing.T) {
 	// title 恰好是 projectDir + "/"，清理后应为 "."
-	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
-	title := "/home/do/ssd/iohub/dev/codeactor-agent/"
+	projectDir := "/home/do/ssd/iohub/dev/yagent"
+	title := "/home/do/ssd/iohub/dev/yagent/"
 	got := replaceProjectAbsPath(title, projectDir)
 	expected := "."
 	if got != expected {
@@ -427,8 +427,8 @@ func TestReplaceProjectAbsPath_OnlyRelPathPart(t *testing.T) {
 
 func TestReplaceProjectAbsPath_PathInMiddle(t *testing.T) {
 	// 绝对路径出现在 title 中间
-	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
-	title := "修复 /home/do/ssd/iohub/dev/codeactor-agent/foo/bar.go 中的 bug"
+	projectDir := "/home/do/ssd/iohub/dev/yagent"
+	title := "修复 /home/do/ssd/iohub/dev/yagent/foo/bar.go 中的 bug"
 	got := replaceProjectAbsPath(title, projectDir)
 	expected := "修复 foo/bar.go 中的 bug"
 	if got != expected {
@@ -438,8 +438,8 @@ func TestReplaceProjectAbsPath_PathInMiddle(t *testing.T) {
 
 func TestReplaceProjectAbsPath_MultiplePaths(t *testing.T) {
 	// title 包含多个绝对路径片段，全部被替换
-	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
-	title := "参考 /home/do/ssd/iohub/dev/codeactor-agent/a/x.go 和 /home/do/ssd/iohub/dev/codeactor-agent/b/y.go 的改动"
+	projectDir := "/home/do/ssd/iohub/dev/yagent"
+	title := "参考 /home/do/ssd/iohub/dev/yagent/a/x.go 和 /home/do/ssd/iohub/dev/yagent/b/y.go 的改动"
 	got := replaceProjectAbsPath(title, projectDir)
 	expected := "参考 a/x.go 和 b/y.go 的改动"
 	if got != expected {
@@ -449,8 +449,8 @@ func TestReplaceProjectAbsPath_MultiplePaths(t *testing.T) {
 
 func TestReplaceProjectAbsPath_ProjectDirAlone(t *testing.T) {
 	// title 中包含单独出现的 projectDir（后面没有分隔符）
-	projectDir := "/home/do/ssd/iohub/dev/codeactor-agent"
-	title := "参考 /home/do/ssd/iohub/dev/codeactor-agent 文档"
+	projectDir := "/home/do/ssd/iohub/dev/yagent"
+	title := "参考 /home/do/ssd/iohub/dev/yagent 文档"
 	got := replaceProjectAbsPath(title, projectDir)
 	expected := "参考 . 文档"
 	if got != expected {

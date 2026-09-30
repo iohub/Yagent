@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"testing"
 
-	"codeactor/internal/protocol"
+	"yagent/internal/protocol"
 )
 
 func TestUserHelpDialog_OutputForReview(t *testing.T) {

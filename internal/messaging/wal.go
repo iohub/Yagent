@@ -38,7 +38,7 @@ type WAL interface {
 
 // WALOptions WAL 配置选项
 type WALOptions struct {
-	FilePath    string // WAL 文件路径（默认: .codeactor/wal/wal.log）
+	FilePath    string // WAL 文件路径（默认: .yagent/wal/wal.log）
 	SyncOnWrite bool   // 每次写入后是否 fsync（默认 true）
 	MaxFileSize int64  // 最大文件字节数，超过后轮转（0=不轮转，默认 64MB）
 }
@@ -71,7 +71,7 @@ type FileWAL struct {
 func NewFileWAL(opts WALOptions) (*FileWAL, error) {
 	// 应用默认值
 	if opts.FilePath == "" {
-		opts.FilePath = filepath.Join(".codeactor", "wal", "wal.log")
+		opts.FilePath = filepath.Join(".yagent", "wal", "wal.log")
 	}
 	if opts.MaxFileSize == 0 {
 		opts.MaxFileSize = 64 * 1024 * 1024 // 64MB

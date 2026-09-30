@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"codeactor/internal/memory"
+	"yagent/internal/memory"
 
 	"github.com/google/uuid"
 	"github.com/olahol/melody"

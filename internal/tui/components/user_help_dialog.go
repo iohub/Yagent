@@ -7,8 +7,8 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"codeactor/internal/protocol"
-	"codeactor/internal/tui/common"
+	"yagent/internal/protocol"
+	"yagent/internal/tui/common"
 )
 
 // ── 内部状态 ──

@@ -262,7 +262,7 @@ func compactHeader(width int, provider, model string, s *Styles) string {
 	info := formatModelInfo(provider, model)
 
 	// Use gradient brand text for "CODE ACTOR"
-	brandText := ApplyGrad("CODEACTOR")
+	brandText := ApplyGrad("YAGENT")
 
 	if info == "" {
 		return " " + brandText + " "

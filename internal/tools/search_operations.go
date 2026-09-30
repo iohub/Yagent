@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeactor/internal/embedbin"
-	"codeactor/internal/util"
+	"yagent/internal/embedbin"
+	"yagent/internal/util"
 )
 
 // fzfPath returns the path to the fzf binary, preferring the embedded one

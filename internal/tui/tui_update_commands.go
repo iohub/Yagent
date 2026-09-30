@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/tui/components"
+	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
 )

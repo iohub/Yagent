@@ -13,16 +13,16 @@ import (
 
 	"sync"
 
-	"codeactor/internal/app"
-	"codeactor/internal/config"
-	"codeactor/internal/datamanager"
-	"codeactor/internal/dict"
-	"codeactor/internal/http"
-	"codeactor/internal/messaging"
-	"codeactor/internal/tui/anim"
-	"codeactor/internal/tui/common"
-	"codeactor/internal/tui/components"
-	"codeactor/internal/tui/layout"
+	"yagent/internal/app"
+	"yagent/internal/config"
+	"yagent/internal/datamanager"
+	"yagent/internal/dict"
+	"yagent/internal/http"
+	"yagent/internal/messaging"
+	"yagent/internal/tui/anim"
+	"yagent/internal/tui/common"
+	"yagent/internal/tui/components"
+	"yagent/internal/tui/layout"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -510,7 +510,7 @@ type model struct {
 	com *common.Common // 共享样式、配置、助手引用
 
 	// External dependencies
-	assistant   *app.CodeActor
+	assistant   *app.Yagent
 	taskManager *http.TaskManager
 	dataManager *datamanager.DataManager
 
@@ -798,7 +798,7 @@ func (m *model) refreshContextWindow() {
 	m.contextWindow = contextWindowFromCfg(client.Config, m.currentProvider)
 }
 
-func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) *model {
+func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) *model {
 	ti := textarea.New()
 
 	// ── Editor input styles (harmonized with TUI 256-color palette) ──
@@ -906,8 +906,8 @@ func initialModel(preloadedTaskContent string, ca *app.CodeActor, tm *http.TaskM
 		// 默认启用补全，创建词典
 		completionEnabled = true
 		homeDir, _ := os.UserHomeDir()
-		userDictPath := filepath.Join(homeDir, ".codeactor", "keywords.txt")
-		projectDictPath := filepath.Join(projectDir, ".codeactor", "keywords.txt")
+		userDictPath := filepath.Join(homeDir, ".yagent", "keywords.txt")
+		projectDictPath := filepath.Join(projectDir, ".yagent", "keywords.txt")
 
 		// Create dict with sources (will auto-load existing files)
 		keywordDict = dict.NewCompletionDict("autocomplete", []string{userDictPath, projectDictPath})

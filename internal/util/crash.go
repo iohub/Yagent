@@ -10,13 +10,13 @@ import (
 )
 
 // crashLogDir is the directory where crash logs are stored.
-// Defaults to ~/.codeactor/logs/crash/ .
+// Defaults to ~/.yagent/logs/crash/ .
 func crashLogDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".codeactor", "logs", "crash"), nil
+	return filepath.Join(home, ".yagent", "logs", "crash"), nil
 }
 
 // RecoverPanic should be called as the first deferred function in main().

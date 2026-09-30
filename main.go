@@ -9,18 +9,18 @@ import (
 	"path/filepath"
 	"time"
 
-	"codeactor/internal/agents"
-	"codeactor/internal/app"
-	"codeactor/internal/config"
-	"codeactor/internal/datamanager"
-	"codeactor/internal/http"
-	"codeactor/internal/llm"
-	"codeactor/internal/logging"
-	messaging "codeactor/internal/messaging"
-	tuiMsg "codeactor/internal/messaging/consumers"
-	"codeactor/internal/skills"
-	"codeactor/internal/tui"
-	"codeactor/internal/util"
+	"yagent/internal/agents"
+	"yagent/internal/app"
+	"yagent/internal/config"
+	"yagent/internal/datamanager"
+	"yagent/internal/http"
+	"yagent/internal/llm"
+	"yagent/internal/logging"
+	messaging "yagent/internal/messaging"
+	tuiMsg "yagent/internal/messaging/consumers"
+	"yagent/internal/skills"
+	"yagent/internal/tui"
+	"yagent/internal/util"
 
 	"github.com/spf13/cobra"
 )
@@ -40,9 +40,9 @@ var (
 
 // rootCmd 根命令 — 无子命令时默认启动 TUI
 var rootCmd = &cobra.Command{
-	Use:   "codeactor",
-	Short: "CodeActor - AI-powered coding assistant",
-	Long: `CodeActor is an AI-powered coding assistant that can run in
+	Use:   "yagent",
+	Short: "Yagent - AI-powered coding assistant",
+	Long: `Yagent is an AI-powered coding assistant that can run in
 terminal UI mode or HTTP server mode.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if taskPrompt != "" {
@@ -146,30 +146,30 @@ func runTUI(taskFile, disableAgents string) {
 		os.Exit(1)
 	}
 
-	codeActor, err := app.NewCodeActor(client)
+	yagent, err := app.NewYagent(client)
 	if err != nil {
-		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
+		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewYagent"))
 		os.Exit(1)
 	}
-	codeActor.SetEmbeddedBinaries(distBinFS)
+	yagent.SetEmbeddedBinaries(distBinFS)
 
 	if err := agents.InitToolLogger(); err != nil {
 		slog.Warn("Failed to initialize tool logger", "error", err)
 	}
 
-	codeActor.DisabledAgents = disableAgents
-	codeActor.YoloMode = yoloMode
-	codeActor.FullYoloMode = fullYoloMode
-	codeActor.ForceQuit = forceQuit
+	yagent.DisabledAgents = disableAgents
+	yagent.YoloMode = yoloMode
+	yagent.FullYoloMode = fullYoloMode
+	yagent.ForceQuit = forceQuit
 	// 主动初始化：启动 codeseek MCP 等核心服务
-	codeActor.Init(client.Engine, repoPath)
+	yagent.Init(client.Engine, repoPath)
 
-	defer codeActor.Close()
+	defer yagent.Close()
 
 	// 加载 skills
 	homeDir, _ := os.UserHomeDir()
-	projectSkillsDir := filepath.Join(repoPath, ".codeactor", "skills")
-	homeSkillsDir := filepath.Join(homeDir, ".codeactor", "skills")
+	projectSkillsDir := filepath.Join(repoPath, ".yagent", "skills")
+	homeSkillsDir := filepath.Join(homeDir, ".yagent", "skills")
 
 	var skillRegistry *skills.SkillRegistry
 	skillRegistry, err = skills.LoadSkills(projectSkillsDir)
@@ -182,7 +182,7 @@ func runTUI(taskFile, disableAgents string) {
 			slog.Warn("Failed to load home skills", "path", homeSkillsDir, "error", err)
 		}
 	}
-	codeActor.SkillRegistry = skillRegistry
+	yagent.SkillRegistry = skillRegistry
 	slog.Info("Skill registry loaded", "count", skillRegistry.Count())
 
 	taskManager := http.NewTaskManager(nil, config.TaskTimeout)
@@ -194,7 +194,7 @@ func runTUI(taskFile, disableAgents string) {
 		dataManager.Start()
 	}
 
-	tui.StartTUI(taskFile, codeActor, taskManager, dataManager, config)
+	tui.StartTUI(taskFile, yagent, taskManager, dataManager, config)
 	dataManager.FlushAll()
 	dataManager.Stop()
 }
@@ -248,25 +248,25 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 		os.Exit(1)
 	}
 
-	codeActor, err := app.NewCodeActor(client)
+	yagent, err := app.NewYagent(client)
 	if err != nil {
-		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
+		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewYagent"))
 		os.Exit(1)
 	}
-	codeActor.SetEmbeddedBinaries(distBinFS)
-	codeActor.DisabledAgents = disableAgents
-	codeActor.YoloMode = yoloMode
-	codeActor.FullYoloMode = fullYoloMode
-	codeActor.ForceQuit = forceQuit
+	yagent.SetEmbeddedBinaries(distBinFS)
+	yagent.DisabledAgents = disableAgents
+	yagent.YoloMode = yoloMode
+	yagent.FullYoloMode = fullYoloMode
+	yagent.ForceQuit = forceQuit
 	// 主动初始化：启动 codeseek MCP 等核心服务
-	codeActor.Init(client.Engine, repoPath)
+	yagent.Init(client.Engine, repoPath)
 
-	defer codeActor.Close()
+	defer yagent.Close()
 
 	messageDispatcher := messaging.NewMessageDispatcher(100)
-	codeActor.IntegrateMessaging(messageDispatcher)
+	yagent.IntegrateMessaging(messageDispatcher)
 
-	server := http.NewServer(codeActor)
+	server := http.NewServer(yagent)
 
 	slog.Info("Starting HTTP server", "port", httpPort)
 
@@ -306,28 +306,28 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 		os.Exit(1)
 	}
 
-	codeActor, err := app.NewCodeActor(client)
+	yagent, err := app.NewYagent(client)
 	if err != nil {
-		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewCodeActor"))
+		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewYagent"))
 		os.Exit(1)
 	}
-	codeActor.SetEmbeddedBinaries(distBinFS)
+	yagent.SetEmbeddedBinaries(distBinFS)
 
 	if err := agents.InitToolLogger(); err != nil {
 		slog.Warn("Failed to initialize tool logger", "error", err)
 	}
 
-	codeActor.DisabledAgents = disableAgentsStr
-	codeActor.YoloMode = yoloMode
-	codeActor.FullYoloMode = fullYoloMode
-	codeActor.ForceQuit = forceQuit
-	codeActor.Init(client.Engine, repoPath)
-	defer codeActor.Close()
+	yagent.DisabledAgents = disableAgentsStr
+	yagent.YoloMode = yoloMode
+	yagent.FullYoloMode = fullYoloMode
+	yagent.ForceQuit = forceQuit
+	yagent.Init(client.Engine, repoPath)
+	defer yagent.Close()
 
 	// 加载 skills
 	homeDir, _ := os.UserHomeDir()
-	projectSkillsDir := filepath.Join(repoPath, ".codeactor", "skills")
-	homeSkillsDir := filepath.Join(homeDir, ".codeactor", "skills")
+	projectSkillsDir := filepath.Join(repoPath, ".yagent", "skills")
+	homeSkillsDir := filepath.Join(homeDir, ".yagent", "skills")
 
 	var skillRegistry *skills.SkillRegistry
 	skillRegistry, err = skills.LoadSkills(projectSkillsDir)
@@ -340,7 +340,7 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 			slog.Warn("Failed to load home skills", "path", homeSkillsDir, "error", err)
 		}
 	}
-	codeActor.SkillRegistry = skillRegistry
+	yagent.SkillRegistry = skillRegistry
 	slog.Info("Skill registry loaded", "count", skillRegistry.Count())
 
 	// 设置消息总线 - 使用 TUIConsumer 输出到 stdout
@@ -351,7 +351,7 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	tuiConsumer := tuiMsg.NewTUIConsumer(os.Stdout, publisher)
 	dispatcher.RegisterConsumer(tuiConsumer)
 
-	codeActor.IntegrateMessaging(dispatcher)
+	yagent.IntegrateMessaging(dispatcher)
 
 	// 构建并执行任务
 	taskID := fmt.Sprintf("prompt-%d", time.Now().UnixMilli())
@@ -360,7 +360,7 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 		WithTaskDesc(taskPromptStr).
 		WithMessagePublisher(publisher)
 
-	result, err := codeActor.ProcessCodingTaskWithCallback(request)
+	result, err := yagent.ProcessCodingTaskWithCallback(request)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n❌ Task failed: %v\n", err)
 		os.Exit(1)
@@ -372,7 +372,7 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	}
 }
 
-// getConfigPath 返回配置文件的路径，优先使用 $HOME/.codeactor/config/config.toml
+// getConfigPath 返回配置文件的路径，优先使用 $HOME/.yagent/config/config.toml
 // 如果配置文件不存在，则自动生成默认配置模板
 // 如果命令行通过 --config/-c 指定了路径，则直接使用该路径（不自动创建）
 func getConfigPath() string {
@@ -393,7 +393,7 @@ func getConfigPath() string {
 		return localPath
 	}
 
-	configDir := filepath.Join(homeDir, ".codeactor", "config")
+	configDir := filepath.Join(homeDir, ".yagent", "config")
 	configPath := filepath.Join(configDir, "config.toml")
 
 	if err := config.EnsureConfigExists(configPath); err != nil {

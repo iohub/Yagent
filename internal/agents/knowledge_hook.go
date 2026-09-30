@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/llm"
-	"codeactor/internal/globalctx"
-	"codeactor/internal/tools"
+	"yagent/internal/llm"
+	"yagent/internal/globalctx"
+	"yagent/internal/tools"
 )
 
 type multiDimEntry struct {

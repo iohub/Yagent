@@ -8,8 +8,8 @@
 | **版本** | v0.1（草案） |
 | **日期** | 2025-07-15 |
 | **状态** | 待评审 |
-| **适用范围** | CodeActor Agent 系统 — 知识检索、注入、整理子系统 |
-| **作者** | codeactor-agent 技术团队 |
+| **适用范围** | Yagent Agent 系统 — 知识检索、注入、整理子系统 |
+| **作者** | yagent 技术团队 |
 | **相关文档** | [ARCHITECTURE.md](./ARCHITECTURE.md)、[context-compression-config.md](./context-compression-config.md) |
 
 ---
@@ -34,7 +34,7 @@
 
 ### 1.1 目标
 
-为 CodeActor Agent 系统提供一套**专门的知识管理工具链**，解决当前上下文中知识碎片化、重复检索、知识丢失等问题。核心目标：
+为 Yagent Agent 系统提供一套**专门的知识管理工具链**，解决当前上下文中知识碎片化、重复检索、知识丢失等问题。核心目标：
 
 1. **知识持久化**：将 Agent 在 Repo-Agent 检索任务和 Coding-Agent 编码/修改文件任务中积累的知识，通过向量索引持久化到 codeseek 向量数据库。
 2. **语义检索注入**：每次对话启动前，使用 Cross-Encoder 从知识库中检索与当前任务最相关的历史记忆，注入到系统提示词中。
@@ -1145,9 +1145,9 @@ import (
     "fmt"
     "log/slog"
     
-    "codeactor/internal/globalctx"
-    "codeactor/internal/mcp"
-    "codeactor/internal/llm"
+    "yagent/internal/globalctx"
+    "yagent/internal/mcp"
+    "yagent/internal/llm"
 )
 
 // ConsolidateKnowledge 执行知识整理逻辑

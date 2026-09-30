@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"codeactor/internal/messaging/bus"
+	"yagent/internal/messaging/bus"
 )
 
 // AgentPeer 赋予每个 Agent P2P 通信能力。

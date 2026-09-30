@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"codeactor/internal/messaging"
-	"codeactor/internal/tui/components"
+	"yagent/internal/messaging"
+	"yagent/internal/tui/components"
 
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/glamour/v2"

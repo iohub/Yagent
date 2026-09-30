@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 // DeepThinkingTool provides system-level analysis and design capabilities.

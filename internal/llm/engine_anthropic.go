@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/config"
+	"yagent/internal/config"
 )
 
 // ─── Anthropic Messages API Types ────────────────────────────────────────────

@@ -1,4 +1,4 @@
-# CodeActor System Architecture Document
+# Yagent System Architecture Document
 
 > Version: v1.0.0 | Last Updated: 2025
 
@@ -51,7 +51,7 @@
 
 ## 1. Overview
 
-CodeActor is an **AI-driven autonomous coding system** built in Go. It employs a multi-Agent collaborative architecture, driven by LLMs (Large Language Models), capable of autonomously completing complex tasks such as code analysis, writing, debugging, and operations.
+Yagent is an **AI-driven autonomous coding system** built in Go. It employs a multi-Agent collaborative architecture, driven by LLMs (Large Language Models), capable of autonomously completing complex tasks such as code analysis, writing, debugging, and operations.
 
 ### Core Features
 
@@ -66,7 +66,7 @@ CodeActor is an **AI-driven autonomous coding system** built in Go. It employs a
 ### Project Structure
 
 ```
-codeactor-agent/
+yagent/
 ├── internal/
 │   ├── agents/        # Agent system core (with director/ subpackage)
 │   │   ├── director/  # Director types, metrics, recovery logic
@@ -114,7 +114,7 @@ codeactor-agent/
 
 ## 2. Overall Architecture Layers
 
-CodeActor adopts a classic four-layer architecture design, from top to bottom:
+Yagent adopts a classic four-layer architecture design, from top to bottom:
 
 ```mermaid
 graph TB
@@ -131,7 +131,7 @@ graph TB
     end
 
     subgraph "Core Engine Layer"
-        CA[CodeActor Application]
+        CA[Yagent Application]
         subgraph "Agent Orchestration"
             COND[DirectorAgent Orchestrator]
             subgraph "Sub-Agents"
@@ -276,7 +276,7 @@ Director exposes tools to the LLM through Adapters, with the core being 6 delega
 ```mermaid
 sequenceDiagram
     participant User as User
-    participant CA as CodeActor
+    participant CA as Yagent
     participant COND as DirectorAgent
     participant LLM as LLM API
     participant TOOL as Tool/Sub-Agent
@@ -705,7 +705,7 @@ type FunctionDef struct {
 
 ### 5.3 Multi-Model Support
 
-CodeActor supports configuring different LLM models for different Agents and tools:
+Yagent supports configuring different LLM models for different Agents and tools:
 
 ```
 Configuration Hierarchy:
@@ -973,7 +973,7 @@ Codeseek is a code analysis engine written in Rust, providing semantic code sear
 
 ```
 ┌──────────────┐         HTTP/gRPC         ┌──────────────┐
-│  CodeActor   │ ──────────────────────▶  │  Codeseek    │
+│  Yagent   │ ──────────────────────▶  │  Codeseek    │
 │  (Go)        │ ◀──────────────────────  │  (Rust)      │
 └──────────────┘                          └──────────────┘
 ```
@@ -1037,11 +1037,11 @@ webui/
 
 ### 11.3 VS Code Extension
 
-VS Code extension communicates with CodeActor via WebSocket:
+VS Code extension communicates with Yagent via WebSocket:
 
 ```
 ┌──────────────┐  WebSocket   ┌──────────────┐
-│ VS Code      │ ◀─────────▶ │ CodeActor    │
+│ VS Code      │ ◀─────────▶ │ Yagent    │
 │ Extension    │              │ HTTP Server  │
 └──────────────┘              └──────────────┘
 ```
@@ -1114,7 +1114,7 @@ flowchart TB
     end
 
     subgraph Core ["Core Processing"]
-        APP[CodeActor.Init]
+        APP[Yagent.Init]
         COND[DirectorAgent]
         
         subgraph Agents ["Agent Layer"]
@@ -1271,7 +1271,7 @@ flowchart LR
 | `internal/datamanager/data_manager.go` | Task data persistence |
 | `internal/config/config.go` | Configuration system |
 | `internal/protocol/agent_events.go` | Event type definitions |
-| `internal/app/app.go` | CodeActor application entry |
+| `internal/app/app.go` | Yagent application entry |
 
 ### B. Configuration Example
 

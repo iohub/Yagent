@@ -75,7 +75,7 @@ type BrowserCfg struct {
 
 // GetTempUserDataDir 创建临时用户数据目录
 func GetTempUserDataDir() (string, error) {
-	tmpDir, err := os.MkdirTemp("", "codeactor-browser-*")
+	tmpDir, err := os.MkdirTemp("", "yagent-browser-*")
 	if err != nil {
 		return "", fmt.Errorf("创建临时用户数据目录失败: %w", err)
 	}

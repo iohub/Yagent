@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/llm"
-	"codeactor/internal/logging"
-	"codeactor/internal/mcp"
-	"codeactor/internal/tools"
+	"yagent/internal/llm"
+	"yagent/internal/logging"
+	"yagent/internal/mcp"
+	"yagent/internal/tools"
 )
 
 // ============================================================================
@@ -171,7 +171,7 @@ func (w *ConsolidationWorker) process(task *ConsolidationTask) {
 }
 
 // writeConsolidationFile 将记忆整理结果写入独立的日志文件。
-// 文件路径：~/.codeactor/logs/memory-consolidated-YYYY-MM-DD.log
+// 文件路径：~/.yagent/logs/memory-consolidated-YYYY-MM-DD.log
 // 每次写入包含时间戳分隔线和完整内容，便于查阅和回溯。
 func (w *ConsolidationWorker) writeConsolidationFile(content string) {
 	logDir := logging.GetLogDir()

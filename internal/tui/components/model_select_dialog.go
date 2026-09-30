@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"codeactor/internal/tui/common"
+	"yagent/internal/tui/common"
 )
 
 // ModelSelectDialog provides a keyboard-navigable list of LLM providers.

@@ -1,5 +1,5 @@
 {
-  "$id": "https://codeactor.dev/schemas/agent-events.json",
+  "$id": "https://yagent.dev/schemas/agent-events.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
     "AiChunkEvent": {
@@ -757,7 +757,7 @@
       "$ref": "#/definitions/TaskCompleteEvent"
     }
   ],
-  "title": "CodeActor Agent Events",
+  "title": "Yagent Agent Events",
   "type": "object",
   "version": "1.0.0"
 }

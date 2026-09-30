@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"codeactor/internal/logging"
+	"yagent/internal/logging"
 
 	"log/slog"
 )

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"codeactor/internal/protocol"
-	"codeactor/internal/util"
+	"yagent/internal/protocol"
+	"yagent/internal/util"
 )
 
 // FlowControlTool 实现流程控制相关工具

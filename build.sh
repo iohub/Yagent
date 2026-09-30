@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# codeactor-build
+# yagent-build
 # 项目构建脚本 - 并行构建 Rust 和 Go 子项目
 # =============================================================================
 # 用法: ./build.sh [选项] [命令]
@@ -31,7 +31,7 @@ readonly GO_PROJECT_DIR="${SCRIPT_DIR}"
 # 产物名称
 readonly CODESEEK_BIN="codeseek"
 readonly RUST_BIN="codeseek"
-readonly GO_BIN="codeactor"
+readonly GO_BIN="yagent"
 
 # 保留的文件模式（不清理的文件）
 readonly PRESERVE_PATTERNS=(
@@ -87,24 +87,24 @@ VERSION_INFO=""
 
 # 打印带时间戳的消息
 log_info() {
-    echo -e "${BLUE}[codeactor-build]${RESET} ${CYAN}$*${RESET}"
+    echo -e "${BLUE}[yagent-build]${RESET} ${CYAN}$*${RESET}"
 }
 
 log_success() {
-    echo -e "${BLUE}[codeactor-build]${RESET} ${GREEN}$*${RESET}"
+    echo -e "${BLUE}[yagent-build]${RESET} ${GREEN}$*${RESET}"
 }
 
 log_warning() {
-    echo -e "${BLUE}[codeactor-build]${RESET} ${YELLOW}⚠ $*${RESET}"
+    echo -e "${BLUE}[yagent-build]${RESET} ${YELLOW}⚠ $*${RESET}"
 }
 
 log_error() {
-    echo -e "${BLUE}[codeactor-build]${RESET} ${RED}✗ $*${RESET}" >&2
+    echo -e "${BLUE}[yagent-build]${RESET} ${RED}✗ $*${RESET}" >&2
 }
 
 log_debug() {
     if [[ "${DEBUG:-0}" == "1" ]]; then
-        echo -e "${BLUE}[codeactor-build]${RESET} ${DIM}[DEBUG] $*${RESET}"
+        echo -e "${BLUE}[yagent-build]${RESET} ${DIM}[DEBUG] $*${RESET}"
     fi
 }
 
@@ -161,9 +161,9 @@ build_ldflags() {
     
     # 构建 Go ldflags
     local ldflags="-s -w"
-    ldflags+=" -X 'codeactor/internal/globalctx.Version=${tag:-dev}-${commit_hash}'"
-    ldflags+=" -X 'codeactor/internal/globalctx.BuildTime=${build_time}'"
-    ldflags+=" -X 'codeactor/internal/globalctx.GitCommit=${commit_hash}'"
+    ldflags+=" -X 'yagent/internal/globalctx.Version=${tag:-dev}-${commit_hash}'"
+    ldflags+=" -X 'yagent/internal/globalctx.BuildTime=${build_time}'"
+    ldflags+=" -X 'yagent/internal/globalctx.GitCommit=${commit_hash}'"
     
     echo "${ldflags}"
 }
@@ -423,7 +423,7 @@ show_version_info() {
 # =============================================================================
 show_help() {
     cat <<EOF
-${BOLD}[codeactor-build]${RESET} - codeactor 项目构建脚本
+${BOLD}[yagent-build]${RESET} - yagent 项目构建脚本
 
 ${BOLD}用法:${RESET}
   ${SCRIPT_NAME} [选项] [命令]
@@ -457,7 +457,7 @@ ${BOLD}示例:${RESET}
 
 ${BOLD}产物:${RESET}
   dist/bin/codeseek              # Rust codeseek 子项目产物
-  ./codeactor                    # Go 主项目产物
+  ./yagent                    # Go 主项目产物
 
 EOF
 }
@@ -497,7 +497,7 @@ cmd_clean() {
             local basename
             basename=$(basename "$file")
             
-            # 只清理 Rust 产物（Go 产物 codeactor 已在项目根目录）
+            # 只清理 Rust 产物（Go 产物 yagent 已在项目根目录）
             if [[ "$basename" == "${RUST_BIN}"* ]] || [[ "$basename" == "${CODESEEK_BIN}" ]]; then
                 rm -f "$file"
             fi
@@ -557,7 +557,7 @@ cmd_build() {
     
     # 再构建 Go
     if [[ "${SKIP_GO}" != "true" ]]; then
-        log_info "building codeactor"
+        log_info "building yagent"
         build_go || exit 1
     else
         log_warning "⊘ 跳过 Go 构建 (SKIP_GO=true)"
@@ -600,7 +600,7 @@ main() {
     # 记录开始时间
     BUILD_START_TIME=$(date +%s)
     
-    log_info "🏗️  codeactor 构建开始"
+    log_info "🏗️  yagent 构建开始"
     log_info "   命令: ${COMMAND}"
     log_info "   类型: ${BUILD_TYPE}"
     log_info "   Rust: $( [[ "${SKIP_RUST}" == "true" ]] && echo "跳过" || echo "构建" )"

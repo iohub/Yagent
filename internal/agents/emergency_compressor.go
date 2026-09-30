@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/llm"
-	"codeactor/internal/tokenutil"
+	"yagent/internal/llm"
+	"yagent/internal/tokenutil"
 )
 
 const (

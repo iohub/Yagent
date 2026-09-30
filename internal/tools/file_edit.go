@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeactor/internal/diff"
-	"codeactor/internal/util"
+	"yagent/internal/diff"
+	"yagent/internal/util"
 )
 
 // ReplaceBlockTool implements the search_replace tool for file editing.

@@ -1,4 +1,4 @@
-# 在 CodeActor Agent 系统中内嵌 VS Code Server 技术方案
+# 在 Yagent Agent 系统中内嵌 VS Code Server 技术方案
 
 > 版本：v1.0 | 更新日期：2025-07-17
 
@@ -65,9 +65,9 @@ POST /api/load_task    → 加载历史任务
 
 ```
 main.go
-├── TUI 模式 (codeactor tui)
+├── TUI 模式 (yagent tui)
 │   └── Bubbletea 终端交互界面
-└── HTTP 模式 (codeactor http)
+└── HTTP 模式 (yagent http)
     └── Gin HTTP Server
         ├── REST API（任务控制、记忆管理）
         └── WebSocket（实时通信）
@@ -119,7 +119,7 @@ main.go
 
 1. **需求匹配度**：用户明确要求"VS Code Server 提供 Web IDE"，方案 A 直接命中需求
 2. **资产复用**：已投入的 VS Code 扩展可直接升级，避免重复建设编辑器 UI
-3. **生态优势**：code-server 的插件生态允许未来集成更多开发工具（Linter、Debugger、Git），而无需修改 CodeActor 核心
+3. **生态优势**：code-server 的插件生态允许未来集成更多开发工具（Linter、Debugger、Git），而无需修改 Yagent 核心
 4. **用户体验**：提供熟悉的 VS Code 界面，降低用户接受门槛，终端/Git/调试开箱即用
 5. **可隔离性**：通过 `ide.enabled = false` 配置开关完全关闭，不影响现有 Chat 模式
 
@@ -196,12 +196,12 @@ Agent System                    VS Code Extension
 ┌──────────────────── Port 9801 (code-server sidecar) ───────────────────────────┐
 │                                                                                  │
 │  code-server --bind-addr 127.0.0.1:9801 --auth password                         │
-│             --user-data-dir ./.codeactor/user-data                               │
-│             --extensions-dir ./.codeactor/extensions                             │
+│             --user-data-dir ./.yagent/user-data                               │
+│             --extensions-dir ./.yagent/extensions                             │
 │             --disable-telemetry --disable-update-check                           │
 │                                                                                  │
 │  ┌──────────── VS Code Extension Host ──────────────────────────────────┐       │
-│  │  CodeActor 扩展 (增强版)                                              │       │
+│  │  Yagent 扩展 (增强版)                                              │       │
 │  │  • 建立独立 WebSocket → ws://localhost:9800/ws?client=editor         │       │
 │  │  • 监听 agent_editor_command → 执行 VS Code API                      │       │
 │  │  • 发送 user_edit 事件 → Agent 感知用户修改                          │       │
@@ -245,15 +245,15 @@ workspace = "."
 password = ""
 
 # 扩展安装目录
-extensions_dir = "./.codeactor/extensions"
+extensions_dir = "./.yagent/extensions"
 
 # 用户数据目录
-user_data_dir = "./.codeactor/user-data"
+user_data_dir = "./.yagent/user-data"
 
 # code-server 可执行文件路径（空 = 从 PATH 查找）
 code_server_path = ""
 
-# 是否自动安装 CodeActor VS Code 扩展
+# 是否自动安装 Yagent VS Code 扩展
 auto_install_ext = true
 ```
 
@@ -336,9 +336,9 @@ func (s *Server) setupRoutes() {
     s.router.StaticFS("/", http.Dir("webui/build"))
 
     // 4) IDE 反向代理（仅在配置启用时注册）
-    if s.codeActor.GetClient().Config.IDE.Enabled {
+    if s.yagent.GetClient().Config.IDE.Enabled {
         proxyHandler := createCodeServerProxy(
-            fmt.Sprintf("127.0.0.1:%d", s.codeActor.GetClient().Config.IDE.Port))
+            fmt.Sprintf("127.0.0.1:%d", s.yagent.GetClient().Config.IDE.Port))
 
         // 捕获 /vscode/* 路径并代理到 code-server
         s.router.Any("/vscode/*proxy", proxyHandler)
@@ -371,7 +371,7 @@ import (
     "syscall"
     "time"
 
-    "codeactor/internal/config"
+    "yagent/internal/config"
 )
 
 // Instance 表示一个 IDE 服务器实例
@@ -439,7 +439,7 @@ func Start(ctx context.Context, cfg *config.IDEConfig, agentPort int) (*Instance
 
     cmd := exec.CommandContext(ctx, csPath, args...)
     cmd.Env = append(os.Environ(),
-        fmt.Sprintf("CODEACTOR_AGENT_PORT=%d", agentPort),
+        fmt.Sprintf("YAGENT_AGENT_PORT=%d", agentPort),
     )
     cmd.Stdout = os.Stdout
     cmd.Stderr = os.Stderr
@@ -475,7 +475,7 @@ func Start(ctx context.Context, cfg *config.IDEConfig, agentPort int) (*Instance
     // 9. 自动安装扩展
     if cfg.AutoInstallExt {
         if err := inst.installExtension(ctx, agentPort); err != nil {
-            slog.Warn("Failed to auto-install CodeActor extension", "error", err)
+            slog.Warn("Failed to auto-install Yagent extension", "error", err)
         }
     }
 
@@ -543,13 +543,13 @@ func (inst *Instance) waitForReady(ctx context.Context, timeout time.Duration) e
     return fmt.Errorf("timeout waiting for code-server to become ready")
 }
 
-// installExtension 安装 CodeActor VS Code 扩展
+// installExtension 安装 Yagent VS Code 扩展
 func (inst *Instance) installExtension(ctx context.Context, agentPort int) error {
     // 方法1：通过 code-server CLI 安装（如果安装了）
-    // code-server --install-extension /path/to/codeactor.vsix
+    // code-server --install-extension /path/to/yagent.vsix
 
     // 方法2：直接复制到 extensions-dir 并解压
-    // 需要确保 extensionsDir 中存在 codeactor 扩展目录
+    // 需要确保 extensionsDir 中存在 yagent 扩展目录
 
     return nil // 待实施
 }
@@ -698,7 +698,7 @@ let agentSocket: WebSocket | null = null;
 
 export function activate(context: vscode.ExtensionContext) {
     // ===== 1. 建立与 Agent 后端的独立 WebSocket 连接 =====
-    const agentPort = process.env.CODEACTOR_AGENT_PORT || '9800';
+    const agentPort = process.env.YAGENT_AGENT_PORT || '9800';
     const wsUrl = `ws://127.0.0.1:${agentPort}/ws`;
 
     connectToAgent(wsUrl);
@@ -735,14 +735,14 @@ function connectToAgent(url: string) {
         const socket = new WebSocket(url);
 
         socket.onopen = () => {
-            console.log('[CodeActor] Connected to agent backend');
+            console.log('[Yagent] Connected to agent backend');
             agentSocket = socket;
 
             // 注册为 editor 客户端
             socket.send(JSON.stringify({
                 type: 'register',
                 client: 'editor',
-                name: 'CodeActor Extension',
+                name: 'Yagent Extension',
             }));
         };
 
@@ -753,19 +753,19 @@ function connectToAgent(url: string) {
                     handleEditorCommand(msg.payload);
                 }
             } catch (e) {
-                console.error('[CodeActor] Failed to parse message', e);
+                console.error('[Yagent] Failed to parse message', e);
             }
         };
 
         socket.onclose = () => {
-            console.log('[CodeActor] Disconnected from agent, retrying...');
+            console.log('[Yagent] Disconnected from agent, retrying...');
             agentSocket = null;
             // 指数退避重连
             setTimeout(connect, 5000);
         };
 
         socket.onerror = (err) => {
-            console.error('[CodeActor] WebSocket error', err);
+            console.error('[Yagent] WebSocket error', err);
             socket.close();
         };
     }
@@ -930,7 +930,7 @@ func (s *Server) startEditorCommandListener() {
     // 当收到此类消息时，广播给所有 editor 客户端
     go func() {
         // 简化的监听循环（实际应使用 dispatcher 的订阅机制）
-        for msg := range s.codeActor.GetPublisher().Subscribe("agent_editor_command") {
+        for msg := range s.yagent.GetPublisher().Subscribe("agent_editor_command") {
             s.BroadcastEditorCommand(msg.Data.(protocol.EditorCommand))
         }
     }()
@@ -979,7 +979,7 @@ func resolveWorkspacePath(workspace, filePath string) string {
 | 1.6 | 构建配置 | `build.sh` | code-server 依赖检查或嵌入 |
 
 **验证标准**：
-- `codeactor http` 启动后，日志打印 IDE 密码和端口
+- `yagent http` 启动后，日志打印 IDE 密码和端口
 - 访问 `http://localhost:9800/` 显示 WebUI
 - 访问 `http://localhost:9800/vscode/` 显示 code-server 登录页，输入密码进入工作区
 
@@ -996,7 +996,7 @@ func resolveWorkspacePath(workspace, filePath string) string {
 | 2.7 | 扩展自动安装 | `internal/ide/manager.go` | `installExtension()` 实现 |
 
 **验证标准**：
-- 扩展激活后建立 WebSocket 连接，日志显示 `[CodeActor] Connected`
+- 扩展激活后建立 WebSocket 连接，日志显示 `[Yagent] Connected`
 - Agent 调用 `OpenFileInIDE()` 后，IDE 自动打开文件并跳转到指定行
 - Agent 调用 `InsertTextInIDE()` 后，IDE 中文件内容实时更新
 
@@ -1063,9 +1063,9 @@ func resolveWorkspacePath(workspace, filePath string) string {
 ```
 主进程启动时：
 1. 分配 IDE 端口（从 9801 开始查找可用端口）
-2. 设置环境变量 CODEACTOR_AGENT_PORT=9800
+2. 设置环境变量 YAGENT_AGENT_PORT=9800
 3. 启动 code-server 进程
-4. code-server 内的扩展通过 process.env.CODEACTOR_AGENT_PORT 获知后端地址
+4. code-server 内的扩展通过 process.env.YAGENT_AGENT_PORT 获知后端地址
 ```
 
 ### 7.4 多客户端支持策略
@@ -1097,7 +1097,7 @@ func resolveWorkspacePath(workspace, filePath string) string {
 
 ```
 桌面 VS Code:
-  扩展激活 → 启动 codeactor 后端进程 → 建立 WebSocket → 嵌入 WebView
+  扩展激活 → 启动 yagent 后端进程 → 建立 WebSocket → 嵌入 WebView
 
 code-server:
   扩展激活 → 连接已有后端 (通过 env 发现端口) → 建立 WebSocket → 注册为 editor 客户端
@@ -1111,12 +1111,12 @@ code-server:
 # 构建 VS Code 扩展 .vsix 包
 if command -v vsce &> /dev/null; then
     cd vscode
-    vsce package --out ../dist/codeactor.vsix
+    vsce package --out ../dist/yagent.vsix
     cd ..
 fi
 ```
 
-生成的 `dist/codeactor.vsix` 将由 IDE Manager 自动安装到 code-server 中。
+生成的 `dist/yagent.vsix` 将由 IDE Manager 自动安装到 code-server 中。
 
 ---
 
@@ -1153,7 +1153,7 @@ if !config.IDE.Enabled {
 
 ## 10. 总结
 
-本方案通过三层架构集成，在 CodeActor Agent 系统中内嵌了完整的 Web IDE：
+本方案通过三层架构集成，在 Yagent Agent 系统中内嵌了完整的 Web IDE：
 
 ### 三层集成架构
 
@@ -1182,4 +1182,4 @@ if !config.IDE.Enabled {
 
 ---
 
-*本文档是 CodeActor 项目的技术设计文档，随着实施进展持续更新。*
+*本文档是 Yagent 项目的技术设计文档，随着实施进展持续更新。*

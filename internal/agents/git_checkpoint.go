@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"codeactor/internal/config"
+	"yagent/internal/config"
 )
 
 // GitCheckpointConfig holds configuration for the git checkpoint mechanism.
@@ -72,7 +72,7 @@ func ConvertConfig(c *config.GitCheckpointConfig) GitCheckpointConfig {
 	}
 }
 
-// SessionState is persisted to .git/codeactor_session.json across the agent lifecycle.
+// SessionState is persisted to .git/yagent_session.json across the agent lifecycle.
 type SessionState struct {
 	SessionID    string    `json:"session_id"`
 	UserBranch   string    `json:"user_branch"`
@@ -157,7 +157,7 @@ func (g *GitCheckpointManager) OnAgentStart(ctx context.Context) error {
 	}
 
 	if dirty && g.config.StashDirtyWorktree {
-		stashRef := fmt.Sprintf("codeactor-stash-%s", g.session.SessionID)
+		stashRef := fmt.Sprintf("yagent-stash-%s", g.session.SessionID)
 		slog.Info("Git Checkpoint: Stashing dirty worktree", "stash", stashRef)
 		_, err := g.runGitCommand(ctx, "stash", "push", "-m", stashRef, "--include-untracked")
 		if err != nil {
@@ -680,7 +680,7 @@ func (g *GitCheckpointManager) getCheckpointInfo(ctx context.Context) ([]Checkpo
 }
 
 func (g *GitCheckpointManager) persistState() error {
-	statePath := filepath.Join(g.projectPath, ".git", "codeactor_session.json")
+	statePath := filepath.Join(g.projectPath, ".git", "yagent_session.json")
 
 	data, err := json.MarshalIndent(g.session, "", "  ")
 	if err != nil {
@@ -696,7 +696,7 @@ func (g *GitCheckpointManager) persistState() error {
 }
 
 func (g *GitCheckpointManager) clearState() (string, error) {
-	statePath := filepath.Join(g.projectPath, ".git", "codeactor_session.json")
+	statePath := filepath.Join(g.projectPath, ".git", "yagent_session.json")
 	if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("remove session state: %w", err)
 	}

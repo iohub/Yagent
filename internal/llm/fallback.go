@@ -7,7 +7,7 @@ import (
 	"sort"
 	"sync"
 
-	"codeactor/internal/config"
+	"yagent/internal/config"
 )
 
 // fallbackEntry 封装一个fallback engine及其元数据

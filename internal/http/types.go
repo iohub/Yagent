@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"codeactor/internal/memory"
-	"codeactor/internal/protocol"
+	"yagent/internal/memory"
+	"yagent/internal/protocol"
 
 	"github.com/olahol/melody"
 )

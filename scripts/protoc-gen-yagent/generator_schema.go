@@ -9,7 +9,7 @@ import (
 func generateJSONSchema(doc ProtocolDocument, outputPath string) {
 	schema := map[string]interface{}{
 		"$schema":     "http://json-schema.org/draft-07/schema#",
-		"$id":         "https://codeactor.dev/schemas/agent-events.json",
+		"$id":         "https://yagent.dev/schemas/agent-events.json",
 		"title":       doc.Protocol.Name,
 		"version":     doc.Protocol.Version,
 		"description": doc.Protocol.Description,

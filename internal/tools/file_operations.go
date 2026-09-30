@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"codeactor/internal/diff"
-	"codeactor/internal/util"
+	"yagent/internal/diff"
+	"yagent/internal/util"
 )
 
 // FileOperationsTool 实现文件操作相关工具

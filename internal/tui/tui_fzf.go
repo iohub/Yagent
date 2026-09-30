@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeactor/internal/embedbin"
+	"yagent/internal/embedbin"
 
 	tea "charm.land/bubbletea/v2"
 )

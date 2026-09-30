@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"codeactor/internal/llm"
-	"codeactor/internal/memory"
+	"yagent/internal/llm"
+	"yagent/internal/memory"
 )
 
 // ============================================================================

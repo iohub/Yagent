@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"codeactor/internal/tui/common"
+	"yagent/internal/tui/common"
 )
 
 // TestConfirmDialogVisualRender_Chinese tests the ConfirmDialog rendering with Chinese language.

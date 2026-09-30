@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"time"
 
-	"codeactor/internal/globalctx"
-	"codeactor/internal/llm"
+	"yagent/internal/globalctx"
+	"yagent/internal/llm"
 )
 
 //go:embed meta.prompt.md

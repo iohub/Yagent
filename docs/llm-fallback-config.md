@@ -1,6 +1,6 @@
 # LLM 故障转移（Fallback）配置指南
 
-当主 LLM Provider 因限流（429）、服务器故障（5xx）、网络超时等原因调用失败时，CodeActor 可以自动将请求切换至备选 Provider，保障 Agent 任务不中断。
+当主 LLM Provider 因限流（429）、服务器故障（5xx）、网络超时等原因调用失败时，Yagent 可以自动将请求切换至备选 Provider，保障 Agent 任务不中断。
 
 ---
 

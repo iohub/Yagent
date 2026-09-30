@@ -102,7 +102,7 @@ Consequences for you:
 3. **Step-by-Step**: don't stack multiple execution commands in one delegation; Execute → Check → Execute Next.
 4. **No Long-Running Processes**: never instruct agents to start dev servers/applications (e.g., `npm run dev`); verify via unit tests, syntax checks, or compilation.
 5. **Read Strategy (Three Rules)**:
-   - Rule 1 — Direct Read (`read_file`/`list_dir`) ONLY when ALL: path is known from a trusted source (Repo-Agent or standard files like `go.mod`, `config.toml`, `package.json`, `CODEACTOR.md`); file is small (<200 lines, <10KB); you're fetching data, not analyzing semantics.
+   - Rule 1 — Direct Read (`read_file`/`list_dir`) ONLY when ALL: path is known from a trusted source (Repo-Agent or standard files like `go.mod`, `config.toml`, `package.json`, `YAGENT.md`); file is small (<200 lines, <10KB); you're fetching data, not analyzing semantics.
    - Rule 2 — The 3-Read Limit: after 3 direct reads of different code files, STOP and delegate to Repo-Agent; needing 3+ files means it's exploratory.
    - Rule 3 — Delegate for Decisions: before any design decision affecting 2+ modules, delegate semantic analysis to Repo-Agent even if you've self-read the files.
    - Everything else (semantic search, unknown paths, large files, cross-module analysis, call-graph exploration) → Repo-Agent.

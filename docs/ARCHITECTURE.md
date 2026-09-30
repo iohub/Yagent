@@ -1,4 +1,4 @@
-# CodeActor 系统架构文档
+# Yagent 系统架构文档
 
 > 版本：v1.0.0 | 最后更新：2025年
 
@@ -61,7 +61,7 @@
 
 ## 1. 概述
 
-CodeActor 是一个用 Go 语言构建的 **AI 驱动自主编码系统**。它采用多 Agent 协作架构，通过 LLM（大语言模型）驱动，能够自主完成代码分析、编写、调试和运维等复杂任务。
+Yagent 是一个用 Go 语言构建的 **AI 驱动自主编码系统**。它采用多 Agent 协作架构，通过 LLM（大语言模型）驱动，能够自主完成代码分析、编写、调试和运维等复杂任务。
 
 ### 核心特性
 
@@ -76,7 +76,7 @@ CodeActor 是一个用 Go 语言构建的 **AI 驱动自主编码系统**。它�
 ### 项目结构
 
 ```
-codeactor-agent/
+yagent/
 ├── internal/
 │   ├── agents/        # Agent 系统核心（含 director/ 子包）
 │   │   ├── director/  # Director 专用类型、指标、恢复逻辑
@@ -124,7 +124,7 @@ codeactor-agent/
 
 ## 2. 整体架构分层
 
-CodeActor 采用经典的四层架构设计，从上到下依次为：
+Yagent 采用经典的四层架构设计，从上到下依次为：
 
 ```mermaid
 graph TB
@@ -141,7 +141,7 @@ graph TB
     end
 
     subgraph "核心引擎层"
-        CA[CodeActor 应用]
+        CA[Yagent 应用]
         subgraph "Agent 编排"
             COND[DirectorAgent 编排者]
             subgraph "子 Agent"
@@ -286,7 +286,7 @@ Director 通过 Adapters 向 LLM 暴露工具，核心是 6 个委派工具：
 ```mermaid
 sequenceDiagram
     participant User as 用户
-    participant CA as CodeActor
+    participant CA as Yagent
     participant COND as DirectorAgent
     participant LLM as LLM API
     participant TOOL as 工具/子Agent
@@ -714,7 +714,7 @@ type FunctionDef struct {
 
 ### 5.3 多模型支持
 
-CodeActor 支持为不同 Agent 和工具配置不同的 LLM 模型：
+Yagent 支持为不同 Agent 和工具配置不同的 LLM 模型：
 
 ```
 配置层级：
@@ -1215,7 +1215,7 @@ Codeseek 是一个用 Rust 编写的代码分析引擎，通过 MCP（stdio JSON
 
 ```
 ┌──────────────┐         HTTP/gRPC         ┌──────────────┐
-│  CodeActor   │ ──────────────────────▶  │  Codeseek    │
+│  Yagent   │ ──────────────────────▶  │  Codeseek    │
 │  (Go)        │ ◀──────────────────────  │  (Rust)      │
 └──────────────┘                          └──────────────┘
 ```
@@ -1279,11 +1279,11 @@ webui/
 
 ### 11.3 VS Code 扩展
 
-VS Code 扩展通过 WebSocket 与 CodeActor 通信：
+VS Code 扩展通过 WebSocket 与 Yagent 通信：
 
 ```
 ┌──────────────┐  WebSocket   ┌──────────────┐
-│ VS Code      │ ◀─────────▶ │ CodeActor    │
+│ VS Code      │ ◀─────────▶ │ Yagent    │
 │ Extension    │              │ HTTP Server  │
 └──────────────┘              └──────────────┘
 ```
@@ -1356,7 +1356,7 @@ flowchart TB
     end
 
     subgraph Core ["核心处理"]
-        APP[CodeActor.Init]
+        APP[Yagent.Init]
         COND[DirectorAgent]
         
         subgraph Agents ["Agent 层"]
@@ -1514,7 +1514,7 @@ flowchart LR
 | `internal/datamanager/data_manager.go` | 任务数据持久化 |
 | `internal/config/config.go` | 配置系统 |
 | `internal/protocol/agent_events.go` | 事件类型定义 |
-| `internal/app/app.go` | CodeActor 应用入口 |
+| `internal/app/app.go` | Yagent 应用入口 |
 
 ### B. 配置示例
 

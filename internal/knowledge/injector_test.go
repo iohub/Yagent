@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"codeactor/internal/config"
-	"codeactor/internal/mcp"
+	"yagent/internal/config"
+	"yagent/internal/mcp"
 )
 
 // ============================================================================

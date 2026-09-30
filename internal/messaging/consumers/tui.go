@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"codeactor/internal/messaging"
+	"yagent/internal/messaging"
 
 	"charm.land/lipgloss/v2"
 )

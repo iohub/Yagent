@@ -5,12 +5,12 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/app"
-	"codeactor/internal/datamanager"
-	"codeactor/internal/http"
-	"codeactor/internal/logging"
-	"codeactor/internal/memory"
-	"codeactor/internal/messaging"
+	"yagent/internal/app"
+	"yagent/internal/datamanager"
+	"yagent/internal/http"
+	"yagent/internal/logging"
+	"yagent/internal/memory"
+	"yagent/internal/messaging"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
@@ -112,7 +112,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 func executeTaskCmd(
 	taskDesc string,
 	task *http.Task,
-	ca *app.CodeActor,
+	ca *app.Yagent,
 	tm *http.TaskManager,
 	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
@@ -183,7 +183,7 @@ func executeTaskCmd(
 func executeFollowUpCmd(
 	message string,
 	task *http.Task,
-	ca *app.CodeActor,
+	ca *app.Yagent,
 	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
 	publisherCh chan *messaging.MessagePublisher,

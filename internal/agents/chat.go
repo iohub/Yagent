@@ -5,10 +5,10 @@ import (
 	_ "embed"
 	"encoding/json"
 
-	"codeactor/internal/tools"
-	"codeactor/internal/globalctx"
+	"yagent/internal/tools"
+	"yagent/internal/globalctx"
 
-	"codeactor/internal/llm"
+	"yagent/internal/llm"
 )
 
 //go:embed chat.prompt.md

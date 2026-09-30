@@ -1,4 +1,4 @@
-# CodeActor Agent 开发知识库
+# Yagent Agent 开发知识库
 
 > **本文件是 Agent 理解仓库和进行开发的标准指南。** 所有 Agent 在操作此仓库前必须先阅读本文件。
 
@@ -19,7 +19,7 @@
 
 ## 1. 项目概述
 
-**CodeActor Agent** 是一个基于 Go 语言开发的多智能体 AI 编程助手系统，采用 **Hub-and-Spoke（中枢-辐条）** 架构。系统的核心是 **Director Agent（指挥家）**，它协调多个专用子智能体完成代码分析、规划、编写、测试和自我修正等复杂任务。
+**Yagent Agent** 是一个基于 Go 语言开发的多智能体 AI 编程助手系统，采用 **Hub-and-Spoke（中枢-辐条）** 架构。系统的核心是 **Director Agent（指挥家）**，它协调多个专用子智能体完成代码分析、规划、编写、测试和自我修正等复杂任务。
 
 ### 1.1 核心定位
 
@@ -36,7 +36,7 @@
                     用户交互层
                 TUI / HTTP / WebSocket
                         │
-              CodeActor (任务调度)
+              Yagent (任务调度)
                         │
               DirectorAgent (中枢指挥家)
               ┌───────────┼───────────┬───────────┐
@@ -62,7 +62,7 @@
 
 | 类别 | 技术 | 版本 | 用途 |
 |------|------|------|------|
-| **主程序** | Go | 1.24+ | 核心实现语言，模块名 `codeactor` |
+| **主程序** | Go | 1.24+ | 核心实现语言，模块名 `yagent` |
 | **代码引擎** | Rust | 1.70+ (Tokio) | `codeseek` MCP 服务（stdio） |
 | **LLM 抽象层** | `github.com/openai/openai-go/v3` | - | 多 LLM 提供商的统一接口 (OpenAI-compatible) |
 | **HTTP 框架** | `gin-gonic/gin` | - | REST API 服务器 |
@@ -430,7 +430,7 @@ type Adapter struct {
                     用户交互层
                 TUI / HTTP / WebSocket
                         │
-              CodeActor (任务调度)
+              Yagent (任务调度)
                         │
               DirectorAgent (中枢指挥家)
               ┌───────────┼───────────┬───────────┐
@@ -479,7 +479,7 @@ Agent → MessagePublisher → MessageDispatcher → TUIConsumer / WebSocketCons
 ### 5.4 模块结构
 
 ```
-codeactor-agent/
+yagent/
 ├── main.go                    # 入口
 ├── internal/
 │   ├── agents/                # Agent 实现（扁平文件）
@@ -494,7 +494,7 @@ codeactor-agent/
 │   │   ├── types.go           # 类型定义
 │   │   └── *.prompt.md        # 各 Agent 的 System Prompt
 │   ├── app/                   # 应用入口
-│   │   └── app.go             # CodeActor 编排
+│   │   └── app.go             # Yagent 编排
 │   ├── compact/               # 上下文压缩引擎
 │   │   ├── engine.go          # 压缩引擎
 │   │   ├── compressor.go      # 规则压缩器
@@ -551,7 +551,7 @@ codeactor-agent/
 
 ```bash
 # 构建主程序
-go build -o codeactor .
+go build -o yagent .
 
 # 构建 Rust codeseek 服务
 cd codeseek/rust-core && cargo build --release
@@ -561,10 +561,10 @@ cd codeseek/rust-core && cargo build --release
 
 ```bash
 # TUI 模式
-./codeactor tui [--taskfile TASK.md] [--disable-agents=repo,coding,chat,meta]
+./yagent tui [--taskfile TASK.md] [--disable-agents=repo,coding,chat,meta]
 
 # HTTP 服务器模式
-./codeactor http [--disable-agents=repo,coding,chat,meta]
+./yagent http [--disable-agents=repo,coding,chat,meta]
 ```
 
 ### 6.3 CLI 客户端（Node.js）
@@ -597,7 +597,7 @@ go test ./internal/agents/... -v -run TestDelegateMeta_DynamicRegistration
 
 ### 6.5 配置系统
 
-**配置文件路径**: `$HOME/.codeactor/config/config.toml` → `config/config.toml`（降级）
+**配置文件路径**: `$HOME/.yagent/config/config.toml` → `config/config.toml`（降级）
 
 **配置结构**:
 
@@ -644,9 +644,9 @@ thinking.use_provider = "xiaomi"
 
 | 类型 | 路径 |
 |------|------|
-| 任务 Memory | `~/.codeactor/tasks/{taskID}.json` |
-| LLM 日志 | `~/.codeactor/logs/llm-{date}.log` |
-| Codeseek MCP 日志 | `~/.codeactor/logs/` 目录 | MCP 客户端输出 |
+| 任务 Memory | `~/.yagent/tasks/{taskID}.json` |
+| LLM 日志 | `~/.yagent/logs/llm-{date}.log` |
+| Codeseek MCP 日志 | `~/.yagent/logs/` 目录 | MCP 客户端输出 |
 
 ---
 
@@ -656,8 +656,8 @@ thinking.use_provider = "xiaomi"
 
 ```go
 import (
-    "codeactor/internal/..."
-    "codeactor/pkg/..."
+    "yagent/internal/..."
+    "yagent/pkg/..."
 )
 ```
 
@@ -774,9 +774,9 @@ type Agent interface {
 
 ```bash
 # 常用命令速查
-go build -o codeactor .          # 构建
-./codeactor tui                  # TUI 模式
-./codeactor http                 # HTTP 模式
+go build -o yagent .          # 构建
+./yagent tui                  # TUI 模式
+./yagent http                 # HTTP 模式
 go test ./internal/... -v -count=1  # 测试
 cd codeseek/rust-core && cargo build       # Rust 构建
 ```
@@ -792,7 +792,7 @@ cd codeseek/rust-core && cargo build       # Rust 构建
 
 ---
 
-*本文档由 CodeActor Agent 系统自动生成并维护，最后更新: 2025*
+*本文档由 Yagent Agent 系统自动生成并维护，最后更新: 2025*
 
 <!-- CODESEEK_INJECTION -->
 # Code exploration: use CodeSeek MCP tools first

@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"codeactor/internal/config"
+	"yagent/internal/config"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"

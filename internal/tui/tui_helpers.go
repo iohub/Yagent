@@ -8,11 +8,11 @@ import (
 	"syscall"
 	"unsafe"
 
-	"codeactor/internal/app"
-	"codeactor/internal/config"
-	"codeactor/internal/datamanager"
-	"codeactor/internal/http"
-	"codeactor/internal/messaging"
+	"yagent/internal/app"
+	"yagent/internal/config"
+	"yagent/internal/datamanager"
+	"yagent/internal/http"
+	"yagent/internal/messaging"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -36,7 +36,7 @@ func validateInputs(projectDir, taskDesc string) (bool, string) {
 }
 
 // StartTUI starts the Bubble Tea TUI with the given dependencies.
-func StartTUI(taskFilePath string, ca *app.CodeActor, tm *http.TaskManager, dm *datamanager.DataManager, cfg *config.Config) {
+func StartTUI(taskFilePath string, ca *app.Yagent, tm *http.TaskManager, dm *datamanager.DataManager, cfg *config.Config) {
 	langManager = NewLanguageManager()
 
 	taskContent := ""

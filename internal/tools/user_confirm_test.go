@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"codeactor/internal/messaging"
-	"codeactor/internal/protocol"
+	"yagent/internal/messaging"
+	"yagent/internal/protocol"
 )
 
 // ---------------------------------------------------------------------------

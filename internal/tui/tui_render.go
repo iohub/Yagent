@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"codeactor/internal/messaging"
+	"yagent/internal/messaging"
 
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"

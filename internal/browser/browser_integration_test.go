@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"codeactor/internal/browser/testhelpers"
-	browsertools "codeactor/internal/tools/browser"
+	"yagent/internal/browser/testhelpers"
+	browsertools "yagent/internal/tools/browser"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 
 	// Create workspace directory for outputs
 	var err error
-	testWorkspaceDir, err = os.MkdirTemp("", "codeactor-integration-test-*")
+	testWorkspaceDir, err = os.MkdirTemp("", "yagent-integration-test-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[TestMain] Failed to create workspace dir: %v\n", err)
 		os.Exit(1)

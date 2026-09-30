@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"codeactor/internal/llm"
-	"codeactor/internal/logging"
-	"codeactor/internal/mcp"
+	"yagent/internal/llm"
+	"yagent/internal/logging"
+	"yagent/internal/mcp"
 )
 
 // knowledgeDomainsForAgent 根据知识来源 agent 返回可检索的 domain 列表

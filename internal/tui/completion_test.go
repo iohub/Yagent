@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"codeactor/internal/dict"
+	"yagent/internal/dict"
 )
 
 func TestNewCompletionDict(t *testing.T) {
