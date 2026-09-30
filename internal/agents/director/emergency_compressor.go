@@ -1,4 +1,4 @@
-package agents
+package director
 
 import (
 	"context"
@@ -37,12 +37,12 @@ type EmergencyCompressionStats struct {
 	Reason           string `json:"reason,omitempty"`
 }
 
-// ─── extractThoughtAndPlanBlocks ─────────────────────────────────────────────
+// ─── ExtractThoughtAndPlanBlocks ─────────────────────────────────────────────
 
-// extractThoughtAndPlanBlocks 从 assistant 消息的 Content 中提取所有 Thought & Plan 块。
+// ExtractThoughtAndPlanBlocks 从 assistant 消息的 Content 中提取所有 Thought & Plan 块。
 // 关键字通过正则匹配：忽略大小写、忽略空白差异，兼容多种变体（全角 ＆、HTML 实体 &amp;、and 写法）。
 // 若内容中无关键字，返回 nil。
-func extractThoughtAndPlanBlocks(content string) []string {
+func ExtractThoughtAndPlanBlocks(content string) []string {
 	if content == "" {
 		return nil
 	}
@@ -85,7 +85,7 @@ func summarizeBlocksWithLLM(ctx context.Context, engine llm.Engine, blocks []str
 	blocksText := strings.Join(blocks, "\n---\n")
 	// 若 token 超 budget 先截断
 	if tokenutil.EstimateTokens(blocksText) > emergencySummaryInputTokens {
-		blocksText = truncateToTokenBudget(blocksText, emergencySummaryInputTokens)
+		blocksText = TruncateToTokenBudget(blocksText, emergencySummaryInputTokens)
 	}
 
 	summaryCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -120,7 +120,7 @@ func summarizeBlocksWithLLM(ctx context.Context, engine llm.Engine, blocks []str
 // EmergencyCompressMessages 当 tool 结果已全部截断后仍超限，启动紧急模式：
 // 提取用户原始任务 + 总结/保留 Thought & Plan 历史，覆盖为单条 user 消息。
 func EmergencyCompressMessages(ctx context.Context, messages []llm.Message, originalInput string, maxTokens int, engine llm.Engine, agentName string, keepLastN int) ([]llm.Message, *EmergencyCompressionStats) {
-	originalTokens := estimateMessagesTokens(messages)
+	originalTokens := EstimateMessagesTokens(messages)
 
 	stats := &EmergencyCompressionStats{
 		OriginalTokens: originalTokens,
@@ -132,7 +132,7 @@ func EmergencyCompressMessages(ctx context.Context, messages []llm.Message, orig
 		if msg.Role != llm.RoleAssistant || msg.Content == "" {
 			continue
 		}
-		blocks := extractThoughtAndPlanBlocks(msg.Content)
+		blocks := ExtractThoughtAndPlanBlocks(msg.Content)
 		if len(blocks) > 0 {
 			allBlocks = append(allBlocks, blocks...)
 			stats.ExtractedBlocks += len(blocks)
@@ -158,9 +158,9 @@ func EmergencyCompressMessages(ctx context.Context, messages []llm.Message, orig
 		// 3. 调用 LLM 总结 beforeBlocks
 		summary, stats.SummarizedByLLM = summarizeBlocksWithLLM(ctx, engine, beforeBlocks, agentName)
 		if !stats.SummarizedByLLM {
-			// 降级：用 truncateToTokenBudget 截断拼接
+			// 降级：用 TruncateToTokenBudget 截断拼接
 			joined := strings.Join(beforeBlocks, "\n---\n")
-			summary = truncateToTokenBudget(joined, emergencySummaryMaxTokens)
+			summary = TruncateToTokenBudget(joined, emergencySummaryMaxTokens)
 			slog.Warn("emergency compression: LLM summarize failed, using truncation fallback")
 		}
 	}
@@ -211,7 +211,7 @@ func EmergencyCompressMessages(ctx context.Context, messages []llm.Message, orig
 
 	// 7. 若压缩后仍超限（极端情况），强制截断 user 消息内容
 	// 仅当原始消息已超阈值时才触发强制截断，避免对 Already-under-budget 的消息二次截断
-	compressedTokens := estimateMessagesTokens(newMessages)
+	compressedTokens := EstimateMessagesTokens(newMessages)
 	stats.CompressedTokens = compressedTokens
 	stats.SavedTokens = stats.OriginalTokens - stats.CompressedTokens
 	if stats.SavedTokens < 0 {
@@ -225,15 +225,15 @@ func EmergencyCompressMessages(ctx context.Context, messages []llm.Message, orig
 			if i == len(newMessages)-1 {
 				break // 跳过 user 消息
 			}
-			nonUserTokens += estimateMessagesTokens([]llm.Message{msg})
+			nonUserTokens += EstimateMessagesTokens([]llm.Message{msg})
 		}
 		userBudget := maxTokens - nonUserTokens
 		if userBudget < 0 {
 			userBudget = 0
 		}
-		finalUserContent = truncateToTokenBudget(finalUserContent, userBudget)
+		finalUserContent = TruncateToTokenBudget(finalUserContent, userBudget)
 		newMessages[len(newMessages)-1].Content = finalUserContent
-		stats.CompressedTokens = estimateMessagesTokens(newMessages)
+		stats.CompressedTokens = EstimateMessagesTokens(newMessages)
 		stats.SavedTokens = stats.OriginalTokens - stats.CompressedTokens
 		if stats.SavedTokens < 0 {
 			stats.SavedTokens = 0
