@@ -1,3 +1,13 @@
+// Package messaging —— MessageDispatcher 消息分发器。全局约定：
+//   - 并发只读：同一条 *Event（及转换出的 *MessageEvent）可能并发分发给多个消费者，消费者必须只读，禁止修改字段。
+//   - 普通事件满载即丢：非阻塞发送，队列满则丢弃并累计计数（丢弃日志限频 ≤1 条/秒）。
+//   - 关键事件（用户交互回路 user_help_needed / user_help_response）永不丢：走独立旁路（mutex+slice FIFO，
+//     防御上限 4096，超限 drop-oldest 并记 error 日志），发布方零阻塞。
+//   - 顺序：同一消费者、同一类别（普通 or 关键）内 FIFO 保序；跨类别、跨消费者不承诺顺序。
+//
+// 与旧实现差异：bufferSize 现为每消费者独立队列容量（旧版为共享主 channel）；WAL/Backlog/DLQ/重试已随
+// 对应类型移除。生命周期上绝不 close 事件 channel（并发 send 会 panic），只 close stop + 原子标志，收尾时
+// 由消费 goroutine 排空残留事件。
 package messaging
 
 import (
@@ -5,20 +15,40 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// DispatcherOptions 调度器配置
+const (
+	// criticalBypassLimit 每消费者关键旁路防御上限，超限 drop-oldest。
+	criticalBypassLimit = 4096
+	// dropWarnInterval 普通事件丢弃 warn 日志限频间隔（每消费者 ≤1 条/秒）。
+	dropWarnInterval = time.Second
+)
+
+// criticalEventTypes 关键事件类型（用户交互回路），走旁路永不丢弃。
+var criticalEventTypes = map[EventType]struct{}{
+	EventType("user_help_needed"):   {},
+	EventType("user_help_response"): {},
+}
+
+func isCriticalEvent(t EventType) bool {
+	_, ok := criticalEventTypes[t]
+	return ok
+}
+
+// DispatcherOptions 调度器配置（保留旧结构保证 API 兼容）。
+// BacklogSize/DLQSize/WALPath/EnableWAL/RetryDelay/ConsumerBufSize/DrainBacklogInterval 已废弃不生效。
 type DispatcherOptions struct {
-	BufferSize           int           // 主 channel 缓冲大小（默认 1000）
-	ConsumerBufSize      int           // 每个 consumer channel 缓冲大小（默认 1000）
-	BacklogSize          int           // Backlog 最大容量（0=无限制，默认 10000）
-	DLQSize              int           // 死信队列大小（0=无限制，默认 1000）
-	WALPath              string        // WAL 文件路径（空=不启用 WAL）
-	EnableWAL            bool          // 是否启用 WAL
-	RetryDelay           time.Duration // 重试基础间隔（默认 100ms）
-	MaxRetries           int           // 默认最大重试次数（默认 3）
-	DrainBacklogInterval time.Duration // backlog 排空检查间隔（默认 50ms）
+	BufferSize           int           // 每个消费者独立事件队列容量（默认 1000）
+	ConsumerBufSize      int           // 已废弃
+	BacklogSize          int           // 已废弃
+	DLQSize              int           // 已废弃
+	WALPath              string        // 已废弃
+	EnableWAL            bool          // 已废弃
+	RetryDelay           time.Duration // 已废弃
+	MaxRetries           int           // Publish 填充 event.MaxRetries 的默认值（默认 3）
+	DrainBacklogInterval time.Duration // 已废弃
 }
 
 // DefaultDispatcherOptions 返回默认配置
@@ -34,177 +64,115 @@ func DefaultDispatcherOptions() DispatcherOptions {
 	}
 }
 
-// legacyConsumerInfo 包装旧的 MessageConsumer
-type legacyConsumerInfo struct {
-	consumer MessageConsumer
-	ch       chan *MessageEvent
+// dispatcherEntry 单个消费者的分发单元：过滤集合 + 独立事件队列 + 关键旁路。
+type dispatcherEntry struct {
+	id string
+
+	// 二选一：新式 Consumer 或旧式 MessageConsumer（经 toMessageEvent 适配）。
+	consumer Consumer
+	legacy   MessageConsumer
+
+	types map[EventType]struct{} // nil/空 = 订阅所有事件类型
+
+	ch     chan *Event // 普通事件队列（容量 = bufferSize，满则丢弃）
+	critMu sync.Mutex
+	crit   []*Event      // 关键事件旁路（FIFO，永不丢）
+	wake   chan struct{} // cap=1，旁路唤醒信号
+
+	stop     chan struct{}
+	dropped  atomic.Int64 // 普通事件累计丢弃数
+	lastWarn atomic.Int64 // 上次丢弃 warn 的 UnixNano（限频用）
 }
 
-// MessageDispatcher 消息调度器 - 核心类
-// 内部集成了 WAL + Backlog + DLQ + 重试机制
+func (e *dispatcherEntry) match(t EventType) bool {
+	if len(e.types) == 0 { // Types() 为 nil/空 = 订阅所有事件
+		return true
+	}
+	_, ok := e.types[t]
+	return ok
+}
+
+// push 投递事件：关键事件走旁路（锁内 append + 非阻塞 wake，永不丢），普通事件
+// 非阻塞发送（满则丢弃 + 原子计数 + 限频 warn）。任何路径不阻塞，重入安全。
+func (e *dispatcherEntry) push(event *Event) {
+	if isCriticalEvent(event.Type) {
+		e.critMu.Lock()
+		if len(e.crit) >= criticalBypassLimit {
+			oldest := e.crit[0]
+			copy(e.crit, e.crit[1:])
+			e.crit[len(e.crit)-1] = nil
+			e.crit = e.crit[:len(e.crit)-1]
+			slog.Error("MessageDispatcher: critical bypass overflow, drop-oldest",
+				"consumer", e.id, "dropped_event_id", oldest.ID, "limit", criticalBypassLimit)
+		}
+		e.crit = append(e.crit, event)
+		e.critMu.Unlock()
+		select { // 非阻塞唤醒；信号可合并，drain 以 crit 内容为准
+		case e.wake <- struct{}{}:
+		default:
+		}
+		return
+	}
+	select {
+	case e.ch <- event:
+	default:
+		total := e.dropped.Add(1)
+		now := time.Now().UnixNano()
+		for { // CAS 限频：每消费者丢弃 warn ≤1 条/秒
+			last := e.lastWarn.Load()
+			if now-last < int64(dropWarnInterval) {
+				break
+			}
+			if e.lastWarn.CompareAndSwap(last, now) {
+				slog.Warn("MessageDispatcher: consumer queue full, event dropped",
+					"consumer", e.id, "event_type", string(event.Type), "dropped_total", total)
+				break
+			}
+		}
+	}
+}
+
+// MessageDispatcher 消息分发器 - 核心类。
 type MessageDispatcher struct {
-	// 主队列（使用 Event 而非 MessageEvent）
-	mainCh chan *Event
+	mu      sync.RWMutex
+	entries []*dispatcherEntry
 
-	// consumers 按 EventType 索引
-	consumers map[EventType][]Consumer
+	stopped           atomic.Bool // Shutdown 标志；置位后 Publish 丢弃、注册被拒
+	perConsumerBuf    int         // 每消费者独立队列容量（= bufferSize）
+	defaultMaxRetries int
 
-	// 兼容旧接口的 consumers（用类型名索引）
-	legacyConsumers []*legacyConsumerInfo
-
-	// WAL 持久化
-	wal WAL
-
-	// Backlog（channel 满时溢出）
-	backlog *Backlog
-
-	// 死信队列
-	dlq *DeadLetterQueue
-
-	// 配置
-	opts DispatcherOptions
-
-	mu         sync.RWMutex
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-	wg         sync.WaitGroup
+	shutdownOnce sync.Once
+	wg           sync.WaitGroup
 }
 
-// NewMessageDispatcher 创建带默认配置的调度器（向后兼容的旧接口）
-// bufferSize 用于主 channel，其他使用默认值
+// NewMessageDispatcher 创建带默认配置的调度器（向后兼容的旧接口）。
+// bufferSize = 每个消费者独立的事件队列容量（与旧版共享主 channel 语义不同）。
 func NewMessageDispatcher(bufferSize int) *MessageDispatcher {
 	opts := DefaultDispatcherOptions()
 	opts.BufferSize = bufferSize
 	return NewDispatcher(opts)
 }
 
-// NewDispatcher 创建带完整配置的调度器（新接口）
+// NewDispatcher 创建带完整配置的调度器（新接口；WAL/Backlog/DLQ 相关字段已废弃）。
 func NewDispatcher(opts DispatcherOptions) *MessageDispatcher {
 	if opts.BufferSize <= 0 {
 		opts.BufferSize = 1000
 	}
-	if opts.ConsumerBufSize <= 0 {
-		opts.ConsumerBufSize = 1000
-	}
-	if opts.BacklogSize <= 0 {
-		opts.BacklogSize = 10000
-	}
-	if opts.DLQSize <= 0 {
-		opts.DLQSize = 1000
-	}
-	if opts.RetryDelay <= 0 {
-		opts.RetryDelay = 100 * time.Millisecond
-	}
 	if opts.MaxRetries <= 0 {
 		opts.MaxRetries = 3
 	}
-	if opts.DrainBacklogInterval <= 0 {
-		opts.DrainBacklogInterval = 50 * time.Millisecond
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	d := &MessageDispatcher{
-		mainCh:          make(chan *Event, opts.BufferSize),
-		consumers:       make(map[EventType][]Consumer),
-		legacyConsumers: make([]*legacyConsumerInfo, 0),
-		backlog:         NewBacklog(opts.BacklogSize),
-		dlq:             NewDeadLetterQueue(opts.DLQSize),
-		opts:            opts,
-		ctx:             ctx,
-		cancelFunc:      cancel,
-	}
-
-	// 初始化 WAL（如果启用）
-	if opts.EnableWAL && opts.WALPath != "" {
-		wal, err := NewFileWAL(WALOptions{
-			FilePath: opts.WALPath,
-		})
-		if err != nil {
-			slog.Warn("Failed to initialize WAL, continuing without it", "path", opts.WALPath, "err", err)
-			d.wal = &NoopWAL{}
-		} else {
-			d.wal = wal
-			// 启动时回放未确认事件
-			go d.replayUnacked()
-		}
-	} else {
-		d.wal = &NoopWAL{}
-	}
-
-	// 启动主循环
-	d.wg.Add(1)
-	go d.mainLoop()
-
-	// 启动 backlog 排空协程
-	d.wg.Add(1)
-	go d.drainBacklogLoop()
-
-	return d
-}
-
-// mainLoop 主循环：从 mainCh 读取事件并分发
-func (d *MessageDispatcher) mainLoop() {
-	defer d.wg.Done()
-	for {
-		select {
-		case event := <-d.mainCh:
-			d.dispatchToConsumers(event)
-		case <-d.ctx.Done():
-			// 优雅关闭前排空
-			for {
-				select {
-				case event := <-d.mainCh:
-					d.dispatchToConsumers(event)
-				default:
-					return
-				}
-			}
-		}
+	return &MessageDispatcher{
+		perConsumerBuf:    opts.BufferSize,
+		defaultMaxRetries: opts.MaxRetries,
 	}
 }
 
-// drainBacklogLoop 定期从 backlog 取事件重试分发
-func (d *MessageDispatcher) drainBacklogLoop() {
-	defer d.wg.Done()
-	ticker := time.NewTicker(d.opts.DrainBacklogInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-d.ctx.Done():
-			return
-		case <-d.backlog.NotifyChan():
-			d.drainBacklog()
-		case <-ticker.C:
-			if d.backlog.Len() > 0 {
-				d.drainBacklog()
-			}
-		}
-	}
-}
-
-func (d *MessageDispatcher) drainBacklog() {
-	for {
-		event, ok := d.backlog.Pop()
-		if !ok {
-			return
-		}
-		if !d.tryDispatch(event) {
-			// 还是满，放回 backlog
-			d.backlog.Push(event)
-			return
-		}
-	}
-}
-
-// Publish 发布事件（新接口，返回 error）
+// Publish 发布事件。任何路径不阻塞；Shutdown 后丢弃并 warn、返回 nil 不 panic。
+// 正常路径恒返回 nil（错误仅在 event 为 nil 时发生）。
 func (d *MessageDispatcher) Publish(event *Event) error {
 	if event == nil {
 		return fmt.Errorf("cannot publish nil event")
 	}
-
-	// 填充默认字段
 	if event.ID == "" {
 		event.ID = fmt.Sprintf("evt-%d", time.Now().UnixNano())
 	}
@@ -215,284 +183,181 @@ func (d *MessageDispatcher) Publish(event *Event) error {
 		event.Priority = PriorityNormal
 	}
 	if event.MaxRetries <= 0 {
-		event.MaxRetries = d.opts.MaxRetries
+		event.MaxRetries = d.defaultMaxRetries
 	}
-
-	// 1. 先写 WAL（如果启用）
-	if d.wal != nil {
-		if err := d.wal.Append(event); err != nil {
-			slog.Warn("WAL append failed, publishing without persistence", "event_id", event.ID, "err", err)
+	if d.stopped.Load() {
+		slog.Warn("MessageDispatcher: publish after shutdown, event dropped",
+			"event_id", event.ID, "event_type", string(event.Type))
+		return nil
+	}
+	d.mu.RLock() // 快照后立刻放锁：Consume 内重入 Publish 不会死锁
+	entries := make([]*dispatcherEntry, len(d.entries))
+	copy(entries, d.entries)
+	d.mu.RUnlock()
+	for _, e := range entries {
+		if e.match(event.Type) {
+			e.push(event)
 		}
 	}
-
-	// 2. 尝试直接投递到 mainCh
-	select {
-	case d.mainCh <- event:
-		return nil
-	default:
-		// mainCh 满，入 backlog
-	}
-
-	// 3. 入 backlog
-	if err := d.backlog.Push(event); err != nil {
-		// 4. backlog 也满，入死信队列
-		d.dlq.Push(event, fmt.Errorf("backlog full: %w", err))
-		return fmt.Errorf("event %s moved to DLQ: backlog full", event.ID)
-	}
-
 	return nil
 }
 
-// tryDispatch 尝试直接分发事件到 consumers
-// 返回 true = 成功分发，false = channel 满
-func (d *MessageDispatcher) tryDispatch(event *Event) bool {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	// 1. 按 EventType 分发给新 Consumer
-	if consumers, ok := d.consumers[event.Type]; ok {
-		for _, consumer := range consumers {
-			// 获取 consumer 的 inbox
-			if ep, ok := consumer.(interface{ Inbox() chan *Event }); ok {
-				select {
-				case ep.Inbox() <- event:
-				default:
-					return false // channel 满
-				}
-			}
-		}
-	}
-
-	// 2. 分发给旧版 legacy consumers（广播给所有）
-	for _, li := range d.legacyConsumers {
-		// 构造兼容的 MessageEvent
-		msgEvent := &MessageEvent{
-			Type:      event.Type,
-			From:      event.Source,
-			Content:   event.Content,
-			Timestamp: event.Timestamp,
-			Metadata:  event.Metadata,
-		}
-		select {
-		case li.ch <- msgEvent:
-		default:
-			return false
-		}
-	}
-
-	return true
-}
-
-// dispatchToConsumers 分发事件（从 mainCh 收到后调用）
-func (d *MessageDispatcher) dispatchToConsumers(event *Event) {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	// 1. 分发给新 Consumer
-	if consumers, ok := d.consumers[event.Type]; ok {
-		for _, consumer := range consumers {
-			d.wg.Add(1)
-			go d.consumeWithRetry(consumer, event)
-		}
-	}
-
-	// 如果没有任何 Consumer 订阅此类型且无 legacy consumer，视为已处理
-	if len(d.consumers) == 0 && len(d.legacyConsumers) == 0 {
-		return
-	}
-
-	// 2. 分发给旧版 legacy consumers（广播所有事件）
-	for _, li := range d.legacyConsumers {
-		msgEvent := &MessageEvent{
-			Type:      event.Type,
-			From:      event.Source,
-			Content:   event.Content,
-			Timestamp: event.Timestamp,
-			Metadata:  event.Metadata,
-		}
-		select {
-		case li.ch <- msgEvent:
-		default:
-			// 旧版在 channel 满时静默 drop（保持原有行为）
-		}
-	}
-}
-
-// consumeWithRetry 带重试的消费
-func (d *MessageDispatcher) consumeWithRetry(consumer Consumer, event *Event) {
-	defer d.wg.Done()
-
-	var lastErr error
-	maxRetries := event.MaxRetries
-	if maxRetries <= 0 {
-		maxRetries = d.opts.MaxRetries
-	}
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// 检查是否过期
-		if event.Deadline != nil && time.Now().After(*event.Deadline) {
-			slog.Warn("Event expired before processing", "event_id", event.ID)
-			return
-		}
-
-		// 设置超时 context
-		ctx, cancel := context.WithTimeout(d.ctx, 30*time.Second)
-		err := consumer.Consume(ctx, event)
-		cancel()
-
-		if err == nil {
-			return // 成功
-		}
-
-		lastErr = err
-		event.RetryCount = attempt + 1
-
-		// 指数退避
-		if attempt < maxRetries {
-			delay := d.opts.RetryDelay * time.Duration(1<<uint(attempt))
-			slog.Warn("Consumer failed, will retry",
-				"consumer", consumer.ID(),
-				"event_id", event.ID,
-				"attempt", attempt+1,
-				"max_retries", maxRetries,
-				"delay", delay,
-				"err", err,
-			)
-			select {
-			case <-d.ctx.Done():
-				return
-			case <-time.After(delay):
-			}
-		}
-	}
-
-	// 超过最大重试次数，入死信队列
-	d.dlq.Push(event, fmt.Errorf("max retries exceeded: %w", lastErr))
-}
-
-// RegisterConsumer 注册消费者（旧接口，向后兼容）
+// RegisterConsumer 注册消费者（旧接口，向后兼容）：广播接收全部事件类型。
 func (d *MessageDispatcher) RegisterConsumer(consumer MessageConsumer) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-
-	ch := make(chan *MessageEvent, d.opts.ConsumerBufSize)
-	li := &legacyConsumerInfo{
-		consumer: consumer,
-		ch:       ch,
+	if d.stopped.Load() {
+		slog.Warn("MessageDispatcher: RegisterConsumer after shutdown, ignored",
+			"consumer", fmt.Sprintf("%T", consumer))
+		return
 	}
-	d.legacyConsumers = append(d.legacyConsumers, li)
-
-	// 启动旧式 consumer worker
+	e := &dispatcherEntry{
+		id:     fmt.Sprintf("legacy:%T", consumer),
+		legacy: consumer,
+		ch:     make(chan *Event, d.perConsumerBuf),
+		wake:   make(chan struct{}, 1),
+		stop:   make(chan struct{}),
+	}
+	d.entries = append(d.entries, e)
 	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		for {
-			select {
-			case event := <-ch:
-				if err := consumer.Consume(event); err != nil {
-					slog.Warn("Legacy consumer error", "err", err)
-				}
-			case <-d.ctx.Done():
-				return
-			}
-		}
-	}()
+	go d.entryLoop(e)
 }
 
-// Subscribe 注册新式 Consumer（带事件类型过滤）
+// Subscribe 注册新式 Consumer（Types() 为 nil/空 = 订阅所有事件类型）。
 func (d *MessageDispatcher) Subscribe(consumer Consumer) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-
-	types := consumer.Types()
-	if len(types) == 0 {
-		// 订阅所有类型
-		for eventType := range d.consumers {
-			d.consumers[eventType] = append(d.consumers[eventType], consumer)
-		}
-		// 为未来注册的类型也添加
-		if d.consumers == nil {
-			d.consumers = make(map[EventType][]Consumer)
-		}
-		// 记录全局消费者（用空类型标记）
-		// 这里简化：监听所有类型
-		for _, et := range allEventTypes() {
-			d.consumers[et] = append(d.consumers[et], consumer)
-		}
+	if d.stopped.Load() {
+		slog.Warn("MessageDispatcher: Subscribe after shutdown, ignored", "consumer", consumer.ID())
 		return
 	}
-
-	for _, t := range types {
-		d.consumers[t] = append(d.consumers[t], consumer)
+	var types map[EventType]struct{}
+	if ts := consumer.Types(); len(ts) > 0 {
+		types = make(map[EventType]struct{}, len(ts))
+		for _, t := range ts {
+			types[t] = struct{}{}
+		}
 	}
+	e := &dispatcherEntry{
+		id:       consumer.ID(),
+		consumer: consumer,
+		types:    types,
+		ch:       make(chan *Event, d.perConsumerBuf),
+		wake:     make(chan struct{}, 1),
+		stop:     make(chan struct{}),
+	}
+	d.entries = append(d.entries, e)
+	d.wg.Add(1)
+	go d.entryLoop(e)
 }
 
-// PublishCompat 兼容旧接口（void 返回）
-// 内部调用 Publish 并忽略返回值
+// PublishCompat 兼容旧接口（void 返回），内部调用 Publish 并忽略返回值。
 func (d *MessageDispatcher) PublishCompat(event *Event) {
 	_ = d.Publish(event)
 }
 
-// Shutdown 优雅关闭
+// Shutdown 优雅关闭（幂等）：置标志 → close 所有 stop → 等待 goroutine 排空剩余事件退出。
 func (d *MessageDispatcher) Shutdown() {
-	d.cancelFunc()
-	d.wg.Wait()
+	d.shutdownOnce.Do(func() {
+		d.mu.Lock()
+		d.stopped.Store(true)
+		for _, e := range d.entries {
+			close(e.stop) // 绝不 close 事件 channel（并发 send 会 panic）
+		}
+		d.mu.Unlock()
+		d.wg.Wait()
+	})
+}
 
-	if d.wal != nil {
-		if err := d.wal.Close(); err != nil {
-			slog.Warn("Error closing WAL", "err", err)
+// entryLoop 每消费者独立消费 goroutine：优先 drain 关键旁路，再 select 等待。
+func (d *MessageDispatcher) entryLoop(e *dispatcherEntry) {
+	defer d.wg.Done()
+	for {
+		d.drainCritical(e) // 优先处理关键事件（wake 可能残留信号，drain 幂等）
+		select {
+		case event := <-e.ch:
+			d.deliver(e, event)
+		case <-e.wake: // 关键事件已到达，回循环顶部 drain 旁路
+		case <-e.stop:
+			d.drainRemaining(e)
+			return
 		}
 	}
 }
 
-// WAL 返回 WAL 实例（用于管理和监控）
-func (d *MessageDispatcher) WAL() WAL {
-	return d.wal
+// drainCritical 批量摘取旁路后于锁外逐条交付（避免与重入 Publish 死锁）。
+func (d *MessageDispatcher) drainCritical(e *dispatcherEntry) {
+	for {
+		batch := d.takeCriticalBatch(e)
+		if len(batch) == 0 {
+			return
+		}
+		for _, event := range batch {
+			d.deliver(e, event)
+		}
+	}
 }
 
-// DLQ 返回死信队列（用于管理和监控）
-func (d *MessageDispatcher) DLQ() *DeadLetterQueue {
-	return d.dlq
+func (d *MessageDispatcher) takeCriticalBatch(e *dispatcherEntry) []*Event {
+	e.critMu.Lock()
+	batch := e.crit
+	e.crit = nil
+	e.critMu.Unlock()
+	return batch
 }
 
-// Backlog 返回 backlog（用于管理和监控）
-func (d *MessageDispatcher) Backlog() *Backlog {
-	return d.backlog
+// drainRemaining 关闭后收尾：排空普通队列与关键旁路中剩余事件后返回。stop 关闭
+// 瞬间仍在途的 push 存在极小遗留窗口，属可接受的关闭期语义，不 panic 不阻塞。
+func (d *MessageDispatcher) drainRemaining(e *dispatcherEntry) {
+	for {
+		for {
+			select {
+			case event := <-e.ch:
+				d.deliver(e, event)
+				continue
+			default:
+			}
+			break
+		}
+		batch := d.takeCriticalBatch(e)
+		for _, event := range batch {
+			d.deliver(e, event)
+		}
+		if len(batch) == 0 {
+			return
+		}
+	}
 }
 
-// replayUnacked 启动时回放 WAL 中未确认的事件
-func (d *MessageDispatcher) replayUnacked() {
-	if d.wal == nil {
+// deliver 同步交付事件；recover 防止单次 panic 杀死 goroutine 导致消费者永久静默。
+// 不做重试（重试/DLQ 已随旧类型移除），超时由消费者自行控制。
+func (d *MessageDispatcher) deliver(e *dispatcherEntry, event *Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("MessageDispatcher: consumer panic recovered",
+				"consumer", e.id, "event_id", event.ID, "event_type", string(event.Type), "panic", r)
+		}
+	}()
+	if e.legacy != nil {
+		if err := e.legacy.Consume(toMessageEvent(event)); err != nil {
+			slog.Warn("MessageDispatcher: legacy consumer error",
+				"consumer", e.id, "event_id", event.ID, "err", err)
+		}
 		return
 	}
-	// 从序列号 1 开始回放所有事件
-	err := d.wal.Replay(d.ctx, 1, func(event *Event) error {
-		// 重新发布事件（WAL 中已有的事件会再次进入分发流程）
-		select {
-		case d.mainCh <- event:
-		default:
-			// mainCh 满，入 backlog
-			d.backlog.Push(event)
-		}
-		return nil
-	})
-	if err != nil {
-		slog.Warn("WAL replay failed", "err", err)
+	if err := e.consumer.Consume(context.Background(), event); err != nil {
+		slog.Warn("MessageDispatcher: consumer error",
+			"consumer", e.id, "event_id", event.ID, "err", err)
 	}
 }
 
-// allEventTypes 返回所有已知事件类型（用于全局消费者注册）
-func allEventTypes() []EventType {
-	return []EventType{
-		"model_info",
-		"agent_start",
-		"agent_finish",
-		"tool_call",
-		"tool_result",
-		"error",
-		"user_help_request",
-		"user_help_response",
-		"session_start",
-		"session_end",
+// toMessageEvent 将 *Event 适配为旧接口的 *MessageEvent（字段映射照抄旧版）。
+func toMessageEvent(event *Event) *MessageEvent {
+	return &MessageEvent{
+		Type:      event.Type,
+		From:      event.Source,
+		Content:   event.Content,
+		Timestamp: event.Timestamp,
+		Metadata:  event.Metadata,
 	}
 }
