@@ -2,15 +2,12 @@ package agents
 
 import (
 	"context"
-	"crypto/sha256"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -51,17 +48,8 @@ type metaAgentResult struct {
 	TaskForAgent string   `json:"task_for_agent"`
 }
 
-// ProjectContextFile represents a successfully loaded project context file
-type ProjectContextFile struct {
-	FileName string `json:"file_name"`
-	Content  string `json:"content"`
-}
-
-// ProjectContextLoadResult represents the result of loading project context files
-type ProjectContextLoadResult struct {
-	LoadedFiles []ProjectContextFile `json:"loaded_files"`
-	Content     string               `json:"content"`
-}
+// ProjectContextFile / ProjectContextLoadResult 已迁移至 director 子包 types.go
+// （P0-1 Phase 2a 去重：删除 agents 侧重复定义，统一使用 director 包类型）。
 
 type DirectorAgent struct {
 	BaseAgent
@@ -80,10 +68,10 @@ type DirectorAgent struct {
 	adapter        *DirectorAdapter                // 新旧整合适配器
 	llmClient      *llm.Client                     // LLM客户端引用，用于运行时动态重新解析引擎
 
-	cachedProjectContext *ProjectContextLoadResult // 缓存项目上下文文件（同一会话只加载一次）
-	hasDelegated         bool                      // 标记是否已委派过 agent
-	nonDelegationPrompts int                       // 本次任务中"未委派强制提醒"已注入次数（执行检测机制）
-	delegationAttempts   int                       // 委派尝试次数统计
+	projectCtxLoader     *director.ProjectContextLoader // 项目上下文加载器（Phase 2a 抽取，缓存语义在 loader 内）
+	hasDelegated         bool                           // 标记是否已委派过 agent
+	nonDelegationPrompts int                            // 本次任务中"未委派强制提醒"已注入次数（执行检测机制）
+	delegationAttempts   int                            // 委派尝试次数统计
 
 	currentMemory         *memory.ConversationMemory // 当前正在使用的 memory（Run 期间设置）
 	pendingSubAgentMemory *AgentResult               // 最近一次 delegate 调用的完整结果（用于 memory 注入）
@@ -108,36 +96,10 @@ type DirectorAgent struct {
 // loadProjectContext 读取工作区目录下的项目上下文文件（YAGENT.md、CLAUDE.md、AGENTS.md），
 // 将成功读取的文件内容格式化后组合返回。文件按顺序尝试，不存在或读取失败时忽略。
 // 返回加载的文件列表和组合后的内容。
-func (a *DirectorAgent) loadProjectContext() *ProjectContextLoadResult {
-	// 如果已经加载过，直接返回缓存（同一 Agent 实例会话内只加载一次）
-	if a.cachedProjectContext != nil {
-		return a.cachedProjectContext
-	}
-	result := &ProjectContextLoadResult{
-		LoadedFiles: []ProjectContextFile{},
-	}
-	var sb strings.Builder
-	contextFiles := []string{"YAGENT.md", "CLAUDE.md", "AGENTS.md"}
-
-	for _, fname := range contextFiles {
-		fullPath := filepath.Join(a.GlobalCtx.ProjectPath, fname)
-		data, err := os.ReadFile(fullPath)
-		if err != nil {
-			// 文件不存在或读取失败，忽略并继续尝试下一个
-			continue
-		}
-		if len(data) > 0 {
-			result.LoadedFiles = append(result.LoadedFiles, ProjectContextFile{
-				FileName: fname,
-				Content:  string(data),
-			})
-			sb.WriteString(fmt.Sprintf("\n### %s\n```\n%s\n```\n", fname, string(data)))
-		}
-	}
-	result.Content = sb.String()
-	// 缓存加载结果，避免后续调用重复读取文件
-	a.cachedProjectContext = result
-	return result
+// Phase 2a：加载与缓存逻辑已抽取至 director.ProjectContextLoader，此处仅薄委托，
+// 保持原签名与缓存语义（同一实例会话内只加载一次），使 run() 等调用点零改动。
+func (a *DirectorAgent) loadProjectContext() *director.ProjectContextLoadResult {
+	return a.projectCtxLoader.Load()
 }
 
 func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
@@ -452,21 +414,24 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	directorAdapter := NewDirectorAdapter(true, adapterCfg) // enabled=true 启动 Metrics
 
 	self = &DirectorAgent{
-		BaseAgent:          BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
-		RepoAgent:          repo,
-		CodingAgent:        coding,
-		ChatAgent:          chat,
-		MetaAgent:          meta,
-		DevOpsAgent:        devops,
-		BrowserAgent:       browser,
-		GlobalCtx:          globalCtx,
-		Adapters:           allAdapters,
-		maxSteps:           maxSteps,
-		metaRetryCount:     metaRetryCount,
-		toolDefMap:         toolDefMap,
-		customAgents:       make(map[string]*CustomAgent),
-		adapter:            directorAdapter,
-		llmClient:          llmClient,
+		BaseAgent:      BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
+		RepoAgent:      repo,
+		CodingAgent:    coding,
+		ChatAgent:      chat,
+		MetaAgent:      meta,
+		DevOpsAgent:    devops,
+		BrowserAgent:   browser,
+		GlobalCtx:      globalCtx,
+		Adapters:       allAdapters,
+		maxSteps:       maxSteps,
+		metaRetryCount: metaRetryCount,
+		toolDefMap:     toolDefMap,
+		customAgents:   make(map[string]*CustomAgent),
+		adapter:        directorAdapter,
+		llmClient:      llmClient,
+		// Phase 2a：项目上下文加载器；projectPathFn 每次加载时动态求值，
+		// 保持原实现读取 a.GlobalCtx.ProjectPath 的动态语义（运行时可通过 SetProjectPath 变更）
+		projectCtxLoader:   director.NewProjectContextLoader(func() string { return globalCtx.ProjectPath }),
 		hasDelegated:       false, // 初始未委派过
 		delegationAttempts: 0,     // 委派尝试次数初始为0
 
@@ -844,30 +809,9 @@ func (a *DirectorAgent) createRolloutWriter(agentName, task string) *memory.Roll
 }
 
 // computeProjectID 从项目路径计算文件系统安全的 projectID
+// Phase 2a：计算逻辑已抽取至 director.ComputeProjectID，此处仅薄委托。
 func (a *DirectorAgent) computeProjectID() string {
-	projectPath := a.GlobalCtx.ProjectPath
-	if projectPath == "" {
-		return "default"
-	}
-	base := filepath.Base(projectPath)
-	if base == "." || base == "/" {
-		base = "root"
-	}
-	// 保留字母数字，其余替换为下划线
-	sanitized := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			return r
-		}
-		return '_'
-	}, base)
-	// 限制长度
-	if len(sanitized) > 100 {
-		sanitized = sanitized[:100]
-	}
-	// 添加短哈希
-	h := sha256.Sum256([]byte(projectPath))
-	shortHash := hex.EncodeToString(h[:])[:8]
-	return sanitized + "_" + shortHash
+	return director.ComputeProjectID(a.GlobalCtx.ProjectPath)
 }
 
 // applyEnhancedCommander 处理子 Agent 执行结果。
