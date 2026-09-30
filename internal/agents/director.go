@@ -31,22 +31,12 @@ const maxNonDelegationPrompts = 3
 
 // CustomAgent stores a dynamically designed agent created by Meta-Agent.
 // Once registered, it becomes available as a permanent delegate tool.
-type CustomAgent struct {
-	Name         string   // snake_case identifier used for the delegate tool name
-	DisplayName  string   // human-readable agent name
-	SystemPrompt string   // the full system prompt designed by Meta-Agent
-	ToolsUsed    []string // tool names this agent was designed to use
-	Description  string   // short description for the LLM
-}
+// Phase 2d：改为 director.CustomAgent 的类型别名（去重：删除 agents 侧重复结构定义，
+// 注册表/解析统一使用 director 子包类型；别名保持门面层既有引用与测试构造零改动）。
+type CustomAgent = director.CustomAgent
 
-// metaAgentResult parses the JSON output from Meta-Agent.
-type metaAgentResult struct {
-	Thinking     string   `json:"thinking"`
-	AgentName    string   `json:"agent_name"`
-	AgentDesign  string   `json:"agent_design"`
-	ToolsUsed    []string `json:"tools_used"`
-	TaskForAgent string   `json:"task_for_agent"`
-}
+// metaAgentResult 已迁移至 director 子包 types.go（P0-1 Phase 2d 去重：
+// 删除 agents 侧重复定义，统一使用 director.MetaAgentResult）。
 
 // ProjectContextFile / ProjectContextLoadResult 已迁移至 director 子包 types.go
 // （P0-1 Phase 2a 去重：删除 agents 侧重复定义，统一使用 director 包类型）。
@@ -64,7 +54,7 @@ type DirectorAgent struct {
 	maxSteps       int
 	metaRetryCount int                             // max retries for Meta-Agent JSON parse failures
 	toolDefMap     map[string]tools.ToolDefinition // tool name → definition from tools.json
-	customAgents   map[string]*CustomAgent         // delegate_<name> → agent design
+	metaHandler    *director.MetaAgentHandler      // Meta-Agent 动态设计的自定义 agent 注册表（Phase 2d 收敛至 director 子包）
 	adapter        *DirectorAdapter                // 新旧整合适配器
 	llmClient      *llm.Client                     // LLM客户端引用，用于运行时动态重新解析引擎
 
@@ -251,7 +241,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 			self.pendingSubAgentMemory = &metaResult
 			lastRawOutput = metaResult.Text
 
-			systemPrompt, execResult, parseErr := parseMetaAgentOutput(metaResult.Text)
+			systemPrompt, execResult, parseErr := director.ParseMetaAgentOutput(metaResult.Text)
 			if parseErr != nil {
 				slog.Warn("Meta-Agent JSON parse failed, retrying", "attempt", attempt+1, "maxRetries", maxRetries, "error", parseErr)
 				continue
@@ -425,7 +415,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		maxSteps:       maxSteps,
 		metaRetryCount: metaRetryCount,
 		toolDefMap:     toolDefMap,
-		customAgents:   make(map[string]*CustomAgent),
+		metaHandler:    director.NewMetaAgentHandler(),
 		adapter:        directorAdapter,
 		llmClient:      llmClient,
 		// Phase 2a：项目上下文加载器；projectPathFn 每次加载时动态求值，
@@ -548,68 +538,9 @@ func (a *DirectorAgent) getToolFunc(name string) tools.ToolFunc {
 	}
 }
 
-// parseMetaAgentOutput extracts and validates the JSON object from Meta-Agent's raw output.
-// It strips markdown code fences and surrounding text to find the JSON.
-func parseMetaAgentOutput(output string) (systemPrompt string, execResult *metaAgentResult, err error) {
-	jsonStr := extractJSONObject(output)
-	if jsonStr == "" {
-		return "", nil, fmt.Errorf("no JSON object found in Meta-Agent output")
-	}
-
-	execResult = &metaAgentResult{}
-	if err := json.Unmarshal([]byte(jsonStr), execResult); err != nil {
-		return "", nil, fmt.Errorf("failed to parse Meta-Agent JSON: %w", err)
-	}
-
-	// Validate required fields
-	if execResult.AgentName == "" {
-		return "", nil, fmt.Errorf("agent_name is empty in Meta-Agent JSON")
-	}
-	if execResult.AgentDesign == "" {
-		return "", nil, fmt.Errorf("agent_design is empty in Meta-Agent JSON")
-	}
-
-	return execResult.AgentDesign, execResult, nil
-}
-
-// extractJSONObject finds the outermost JSON object in a string.
-// It strips markdown code fences and handles surrounding text.
-func extractJSONObject(s string) string {
-	raw := s
-
-	// Strip markdown code fences: ```json ... ``` or ``` ... ```
-	if idx := strings.Index(raw, "```"); idx != -1 {
-		endFence := strings.Index(raw[idx+3:], "```")
-		if endFence != -1 {
-			inner := raw[idx+3 : idx+3+endFence]
-			// Skip optional language tag after opening ```
-			if newline := strings.Index(inner, "\n"); newline != -1 {
-				inner = inner[newline+1:]
-			}
-			raw = inner
-		}
-	}
-
-	// Find the outermost { ... }
-	start := strings.Index(raw, "{")
-	if start == -1 {
-		return ""
-	}
-	// Walk braces to find the matching close brace
-	depth := 0
-	for i := start; i < len(raw); i++ {
-		switch raw[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return raw[start : i+1]
-			}
-		}
-	}
-	return ""
-}
+// parseMetaAgentOutput / extractJSONObject 已迁移至 director 子包 meta_handler.go
+// （P0-1 Phase 2d：控制流/错误文案逐字不变，统一返回 director.MetaAgentResult；
+// 门面层调用 director.ParseMetaAgentOutput / director.ExtractJSONObject）。
 
 // toSnakeCase converts a display name like "Security Auditor" to "security_auditor".
 func toSnakeCase(name string) string {
@@ -644,8 +575,9 @@ func toSnakeCase(name string) string {
 func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 	delegateName := "delegate_" + ca.Name
 
-	// Check if already registered
-	if _, exists := a.customAgents[delegateName]; exists {
+	// Check if already registered（Phase 2d：防重复检查+写入收敛至 director.MetaAgentHandler.Register，
+	// 重复时返回 ErrAlreadyRegistered 且原条目不覆盖，与原检查语义一致；日志文案与跳过接线行为不变）
+	if err := a.metaHandler.Register(ca); err != nil {
 		slog.Info("Custom agent already registered", "name", delegateName)
 		return
 	}
@@ -702,7 +634,6 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 	})
 
 	a.Adapters = append(a.Adapters, delegateAdapter)
-	a.customAgents[delegateName] = ca
 
 	slog.Info("Custom agent registered", "delegate_name", delegateName, "display_name", ca.DisplayName, "tools", ca.ToolsUsed)
 }
@@ -923,10 +854,11 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		}
 	}
 
-	// 自定义 Agent 描述
-	if len(a.customAgents) > 0 {
+	// 自定义 Agent 描述（Phase 2d：改用 director.MetaAgentHandler.List()，按注册序
+	// 确定性返回——原 map 遍历随机序变为稳定序，利于 LLM Prompt Cache 复用）
+	if customAgents := a.metaHandler.List(); len(customAgents) > 0 {
 		systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
-		for _, ca := range a.customAgents {
+		for _, ca := range customAgents {
 			systemPrompt += fmt.Sprintf("- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, ca.Description)
 		}
 		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n"
