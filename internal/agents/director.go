@@ -1091,14 +1091,14 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 			if a.EnhancedCommanderCfg.Enable && a.EnhancedCommanderCfg.EnableContextCompression {
 				threshold := a.EnhancedCommanderCfg.ContextCompressionThreshold
 				if threshold <= 0 {
-					threshold = DefaultContextCompressionThreshold
+					threshold = director.DefaultContextCompressionThreshold
 				}
 				keepTokens := a.EnhancedCommanderCfg.ToolResultKeepTokens
 				if keepTokens <= 0 {
-					keepTokens = DefaultToolResultKeepTokens
+					keepTokens = director.DefaultToolResultKeepTokens
 				}
-				var compStats *ContextCompressionStats
-				messages, compStats = TruncateToolResultsToBudget(messages, threshold, keepTokens)
+				var compStats *director.ContextCompressionStats
+				messages, compStats = director.TruncateToolResultsToBudget(messages, threshold, keepTokens)
 				if compStats != nil && compStats.TruncatedCount > 0 && a.Publisher != nil {
 					truncatedTools := make([]map[string]interface{}, len(compStats.TruncatedTools))
 					for ti, tool := range compStats.TruncatedTools {
@@ -1126,7 +1126,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 				}
 
 				// 紧急压缩:tool 结果已全部截断后仍超限 → 启动紧急模式, 极致压缩 memory 继续任务
-				if estimateMessagesTokens(messages) > threshold {
+				if director.EstimateMessagesTokens(messages) > threshold {
 					newMessages, emergencyStats := a.applyEmergencyCompression(ctx, messages, threshold)
 					messages = newMessages
 					if emergencyStats != nil && a.Publisher != nil {
@@ -1153,7 +1153,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 				// 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文，
 				// 将 messages 重置为 [system..., 单条 user 重建消息]。
 				// 压缩发生在当前步骤内部，不额外消耗 maxSteps。
-				if a.EnhancedCommanderCfg.EnableUltimateCompression && a.thinkLink != nil && estimateMessagesTokens(messages) > threshold {
+				if a.EnhancedCommanderCfg.EnableUltimateCompression && a.thinkLink != nil && director.EstimateMessagesTokens(messages) > threshold {
 					newMessages, ultStats := a.applyUltimateCompression(messages, threshold)
 					messages = newMessages
 					if a.Publisher != nil && ultStats != nil {
@@ -1344,9 +1344,9 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		}
 
 		// thinklink: 提取本轮回复中的 Thought & Plan 块并实时保存（供终极压缩重建上下文）。
-		// 复用 emergency_compressor.go 的包级提取函数（thoughtAndPlanPattern 正则），不重复造轮子。
+		// 复用 director 子包 emergency_compressor.go 的包级提取函数（thoughtAndPlanPattern 正则），不重复造轮子。
 		if a.thinkLink != nil {
-			for _, block := range extractThoughtAndPlanBlocks(choice.Content) {
+			for _, block := range director.ExtractThoughtAndPlanBlocks(choice.Content) {
 				if entry, added := a.thinkLink.AddThoughtPlan(block, i); added {
 					a.publishThinkLinkEntry(entry)
 				}
@@ -1545,7 +1545,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 
 // applyEmergencyCompression 执行紧急压缩：提取用户原始任务 + 总结/保留 Thought & Plan 历史，
 // 覆盖 memory 为单条输入消息后返回压缩后的 messages。
-func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages []llm.Message, threshold int) ([]llm.Message, *EmergencyCompressionStats) {
+func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages []llm.Message, threshold int) ([]llm.Message, *director.EmergencyCompressionStats) {
 	originalInput := ""
 	if a.currentMemory != nil {
 		for _, m := range a.currentMemory.GetMessages() {
@@ -1555,7 +1555,7 @@ func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages 
 			}
 		}
 	}
-	newMessages, stats := EmergencyCompressMessages(ctx, messages, originalInput, threshold, a.LLM, a.Name(), DefaultEmergencyCompressKeepLastN)
+	newMessages, stats := director.EmergencyCompressMessages(ctx, messages, originalInput, threshold, a.LLM, a.Name(), director.DefaultEmergencyCompressKeepLastN)
 	// 强行覆盖 memory：只保留一条输入（原始任务 + 总结 + 最后 N 个 Thought & Plan）
 	if a.currentMemory != nil {
 		if err := a.currentMemory.Clear(); err != nil {
@@ -1592,7 +1592,7 @@ type UltimateCompressionStats struct {
 //     （保留最近 N-1、N-2……直至只留用户原始输入），仍超限则对重建内容做硬截断，
 //     确保重建后必然低于阈值，绝不进入死循环。
 func (a *DirectorAgent) applyUltimateCompression(messages []llm.Message, threshold int) ([]llm.Message, *UltimateCompressionStats) {
-	originalTokens := estimateMessagesTokens(messages)
+	originalTokens := director.EstimateMessagesTokens(messages)
 
 	// system（非 user）消息原样保留，不计入 user 内容预算
 	nonUserTokens := 0
@@ -1600,7 +1600,7 @@ func (a *DirectorAgent) applyUltimateCompression(messages []llm.Message, thresho
 	for _, msg := range messages {
 		if msg.Role == llm.RoleSystem {
 			newMessages = append(newMessages, msg)
-			nonUserTokens += estimateMessagesTokens([]llm.Message{msg})
+			nonUserTokens += director.EstimateMessagesTokens([]llm.Message{msg})
 		}
 	}
 	userBudget := threshold - nonUserTokens
@@ -1624,7 +1624,7 @@ func (a *DirectorAgent) applyUltimateCompression(messages []llm.Message, thresho
 			break
 		}
 		if keep <= 0 {
-			prompt = truncateToTokenBudget(prompt, userBudget)
+			prompt = director.TruncateToTokenBudget(prompt, userBudget)
 			truncated = true
 			break
 		}
@@ -1648,7 +1648,7 @@ func (a *DirectorAgent) applyUltimateCompression(messages []llm.Message, thresho
 
 	stats := &UltimateCompressionStats{
 		OriginalTokens:   originalTokens,
-		CompressedTokens: estimateMessagesTokens(newMessages),
+		CompressedTokens: director.EstimateMessagesTokens(newMessages),
 		TotalPlans:       totalPlans,
 		KeptPlans:        keep,
 		UserInputs:       a.thinkLink.Count(thinklink.KindUserInput),

@@ -1,4 +1,4 @@
-package agents
+package director
 
 import (
 	"fmt"
@@ -32,10 +32,10 @@ type ContextCompressionStats struct {
 	TruncatedTools  []TruncatedToolInfo    `json:"truncated_tools"`
 }
 
-// truncateToTokenBudget 将文本内容截断至不超过 keepTokens 个 token。
+// TruncateToTokenBudget 将文本内容截断至不超过 keepTokens 个 token。
 // 实现策略：先用粗粒度估算（keepTokens*4 字符）裁剪，再用二分/递减微调至精确满足 token 预算。
 // 保证不 panic：长度处理均有边界检查。
-func truncateToTokenBudget(content string, keepTokens int) string {
+func TruncateToTokenBudget(content string, keepTokens int) string {
 	if keepTokens <= 0 {
 		return "[truncated: 内容已截断]"
 	}
@@ -69,9 +69,9 @@ func truncateToTokenBudget(content string, keepTokens int) string {
 	return content[:lo]
 }
 
-// estimateMessagesTokens 遍历消息列表，累加各消息的 token 估算值。
+// EstimateMessagesTokens 遍历消息列表，累加各消息的 token 估算值。
 // 对 assistant 消息，除 Content 外还将 ToolCalls[].Function.Arguments 文本计入。
-func estimateMessagesTokens(messages []llm.Message) int {
+func EstimateMessagesTokens(messages []llm.Message) int {
 	total := 0
 	for _, msg := range messages {
 		total += tokenutil.EstimateTokens(msg.Content)
@@ -112,7 +112,7 @@ func toolTruncationPriority(toolName string) int {
 //   - 每截断一条后重新估算总 token，若达标立即返回；
 //   - 若发生截断，返回 (messages, stats) 其中 stats 包含压缩统计信息。
 func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens int) ([]llm.Message, *ContextCompressionStats) {
-	originalTotal := estimateMessagesTokens(messages)
+	originalTotal := EstimateMessagesTokens(messages)
 	if originalTotal <= maxTokens {
 		return messages, nil
 	}
@@ -158,7 +158,7 @@ func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens i
 		msg := entry.msg
 		originalContent := msg.Content
 		originalTokens := tokenutil.EstimateTokens(originalContent)
-		truncated := truncateToTokenBudget(originalContent, keepTokens)
+		truncated := TruncateToTokenBudget(originalContent, keepTokens)
 		keptTokens := tokenutil.EstimateTokens(truncated)
 		omittedTokens := originalTokens - keptTokens
 		if omittedTokens < 0 {
@@ -182,8 +182,8 @@ func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens i
 			KeptTokens:     keptTokens,
 			OmittedTokens:  omittedTokens,
 		})
-		if estimateMessagesTokens(messages) <= maxTokens {
-			stats.CompressedTokens = estimateMessagesTokens(messages)
+		if EstimateMessagesTokens(messages) <= maxTokens {
+			stats.CompressedTokens = EstimateMessagesTokens(messages)
 			stats.SavedTokens = stats.OriginalTokens - stats.CompressedTokens
 			if stats.SavedTokens < 0 {
 				stats.SavedTokens = 0
@@ -195,7 +195,7 @@ func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens i
 		}
 	}
 	// 所有可截断消息均已截断，仍未达标
-	stats.CompressedTokens = estimateMessagesTokens(messages)
+	stats.CompressedTokens = EstimateMessagesTokens(messages)
 	stats.SavedTokens = stats.OriginalTokens - stats.CompressedTokens
 	if stats.SavedTokens < 0 {
 		stats.SavedTokens = 0

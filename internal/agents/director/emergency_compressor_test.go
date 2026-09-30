@@ -1,4 +1,4 @@
-package agents
+package director
 
 import (
 	"context"
@@ -156,7 +156,7 @@ Step 3`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blocks := extractThoughtAndPlanBlocks(tt.content)
+			blocks := ExtractThoughtAndPlanBlocks(tt.content)
 			if len(blocks) != tt.wantLen {
 				t.Fatalf("expected %d blocks, got %d", tt.wantLen, len(blocks))
 			}
@@ -354,7 +354,7 @@ func TestEmergencyCompressMessages_OverBudget(t *testing.T) {
 	newMessages, stats := EmergencyCompressMessages(context.Background(), messages, "task", threshold, mock, "mock-agent", 3)
 
 	// 压缩后 token 应 <= threshold
-	compressedTokens := estimateMessagesTokens(newMessages)
+	compressedTokens := EstimateMessagesTokens(newMessages)
 	if compressedTokens > threshold {
 		t.Errorf("expected compressedTokens (%d) <= threshold (%d), got %d", compressedTokens, threshold, compressedTokens)
 	}

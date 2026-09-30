@@ -1,4 +1,4 @@
-package agents
+package director
 
 import (
 	"strings"
@@ -19,7 +19,7 @@ func TestEstimateMessagesTokens(t *testing.T) {
 		},
 		{Role: llm.RoleTool, ToolName: "read_file", Content: "file content here"},
 	}
-	total := estimateMessagesTokens(messages)
+	total := EstimateMessagesTokens(messages)
 	if total <= 0 {
 		t.Fatalf("expected positive token count, got %d", total)
 	}
@@ -97,7 +97,7 @@ func TestTruncateToolResultsToBudget_Priority(t *testing.T) {
 		{Role: llm.RoleTool, ToolName: "list_dir", Content: largeContent},
 	}
 	// 计算基础 token 数（不含大结果），阈值设在"截断 read_file 后"与"截断前"之间
-	baseTokens := estimateMessagesTokens([]llm.Message{
+	baseTokens := EstimateMessagesTokens([]llm.Message{
 		{Role: llm.RoleSystem, Content: strings.Repeat("s", 10000)},
 		{Role: llm.RoleUser, Content: strings.Repeat("u", 10000)},
 		{Role: llm.RoleAssistant, Content: "assistant response"},
@@ -134,7 +134,7 @@ func TestTruncateToolResultsToBudget_DeepThinkingProtected(t *testing.T) {
 		{Role: llm.RoleTool, ToolName: "deepthinking", Content: largeContent},
 		{Role: llm.RoleTool, ToolName: "list_dir", Content: largeContent},
 	}
-	baseTokens := estimateMessagesTokens([]llm.Message{
+	baseTokens := EstimateMessagesTokens([]llm.Message{
 		{Role: llm.RoleSystem, Content: strings.Repeat("s", 10000)},
 		{Role: llm.RoleUser, Content: strings.Repeat("u", 10000)},
 		{Role: llm.RoleAssistant, Content: "assistant response"},
