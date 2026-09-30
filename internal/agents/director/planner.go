@@ -26,7 +26,6 @@ package director
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"yagent/internal/llm"
@@ -105,6 +104,39 @@ type PlannerConfig struct {
 	Compressor *ContextCompressor    // 上下文压缩编排组件（Phase 3-0 已抽取，同包直接注入）
 	MaxSteps   int                   // 主循环最大步数
 	LLMTimeout time.Duration         // LLM 调用超时（原 a.llmTimeout，默认 5 分钟）
+
+	// ── Phase 3-2a-1 扩展（Planner.Run 搬迁 run() 主循环所需；除压缩配置外均
+	// nil 容忍/零值安全，与门面 nil 语义一致）──
+	// Recovery：熔断检查与步骤级重试（原 a.adapter 的
+	// IsCircuitBreakerOpen/LLMRetries/RecordLLMSuccess/RecordLLMFailure/
+	// RecordLLMFailureStats/ConsecutiveLLMFailures——run() 主循环内联逻辑，
+	// RecoveryHandler 为同包类型（recovery.go）故直接注入而非闭包）。
+	Recovery *RecoveryHandler
+	// Metrics：LLM 耗时指标记录（原 a.adapter.RecordLLMDuration，MetricsCollector
+	// 为同包类型（metrics.go）；nil 跳过记录）。
+	Metrics *MetricsCollector
+	// NormalizeMessages：tool_call/tool_response 配对修复闭包（原 agents 包包级
+	// validateAndRepairToolCallPairs；director 禁止 import agents，经门面闭包注入，
+	// nil 时跳过修复）。
+	NormalizeMessages func([]llm.Message) []llm.Message
+	// EstimateTokensFn：单条文本 token 估算闭包（原 agents 包 EstimateTokens，仅
+	// usage 缺失时估算用；director 禁止 import agents，经门面闭包注入，nil 时计 0）。
+	EstimateTokensFn func(string) int
+	// ConvertToolCallsFn：LLM ToolCall → memory.ToolCallData 转换闭包（原 agents
+	// 包包级 convertToolCalls；director 禁止 import agents，经门面闭包注入，
+	// fn 为 nil 时传 nil ToolCallData）。
+	ConvertToolCallsFn func([]llm.ToolCall) []memory.ToolCallData
+	// 上下文压缩开关与预算（原 a.EnhancedCommanderCfg 为 config 包配置，门面提取
+	// 注入；threshold/keepTokens ≤0 时 Planner 内回退默认值，行为与 run() 一致）。
+	CompressEnable            bool // 原 Enable && EnableContextCompression
+	CompressThreshold         int  // 原 ContextCompressionThreshold
+	CompressKeepTokens        int  // 原 ToolResultKeepTokens
+	UltimateCompressEnable    bool // 原 EnableUltimateCompression
+	UltimateCompressKeepPlans int  // 原 UltimateCompressionKeepPlans
+	// ToolTimeout：普通工具调用超时（原 120s；超时保护本身由门面 Tools.Call 包装
+	// 执行，Planner 仅用其做 DeadlineExceeded 错误提示的秒数格式化；delegate_*
+	// 专用 10min 超时由门面感知，Planner 不感知）。
+	ToolTimeout time.Duration
 }
 
 // PlanInput Planner 单次任务输入。
@@ -134,10 +166,7 @@ func NewPlanner(cfg PlannerConfig, state *RunState) *Planner {
 }
 
 // Run 执行任务规划主循环。
-// Phase 3-1 桩实现：Phase 3-2 从 DirectorAgent.run 逐字搬迁控制流后切换调用点。
-func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
-	return PlanResult{}, errors.New("planner: not implemented")
-}
+// Phase 3-2a-1 完整实现见 planner_run.go（lift-and-shift 自 DirectorAgent.run）。
 
 // 编译期断言：*thinklink.Store 满足 Planner 所需的完整窄接口（含 compressor 只读部分）。
 var _ ThinklinkStore = (*thinklink.Store)(nil)
