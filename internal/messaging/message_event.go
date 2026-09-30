@@ -66,22 +66,22 @@ const (
 //   - SeqNum: 由 WAL（Write-Ahead Log）分配的单调递增序列号，保证持久化顺序
 type Event struct {
 	// 基础字段
-	ID        string                 `json:"id"`           // 全局唯一 ID（UUID/雪花算法格式）
-	Type      EventType              `json:"type"`         // 事件类型
-	Source    string                 `json:"source"`       // 发送者标识
-	Target    string                 `json:"target"`       // 接收者标识（空=广播）
-	Content   interface{}            `json:"content"`      // 消息内容
-	Priority  Priority               `json:"priority"`     // 优先级
-	Timestamp time.Time              `json:"timestamp"`    // 创建时间
+	ID        string      `json:"id"`        // 全局唯一 ID（UUID/雪花算法格式）
+	Type      EventType   `json:"type"`      // 事件类型
+	Source    string      `json:"source"`    // 发送者标识
+	Target    string      `json:"target"`    // 接收者标识（空=广播）
+	Content   interface{} `json:"content"`   // 消息内容
+	Priority  Priority    `json:"priority"`  // 优先级
+	Timestamp time.Time   `json:"timestamp"` // 创建时间
 
 	// 可靠传递相关
-	RetryCount int                  `json:"retry_count"`  // 已重试次数
-	MaxRetries int                  `json:"max_retries"`  // 最大重试次数（默认3）
-	Deadline   *time.Time           `json:"deadline,omitempty"` // 超时时间（nil=永不过期）
+	RetryCount int        `json:"retry_count"`        // 已重试次数
+	MaxRetries int        `json:"max_retries"`        // 最大重试次数（默认3）
+	Deadline   *time.Time `json:"deadline,omitempty"` // 超时时间（nil=永不过期）
 
 	// 追踪与排序
-	TraceID string                 `json:"trace_id"`     // 链路追踪 ID
-	SeqNum  uint64                 `json:"seq_num"`      // 序列号（由 WAL 分配）
+	TraceID string `json:"trace_id"` // 链路追踪 ID
+	SeqNum  uint64 `json:"seq_num"`  // 序列号（由 WAL 分配）
 
 	// 扩展元数据
 	Metadata map[string]interface{} `json:"metadata,omitempty"` // 自定义元数据
@@ -144,12 +144,12 @@ func NewMessageEvent(eventType string, content interface{}, from string) *Event 
 // Validate 验证 Event 的合法性
 //
 // 检查项:
-//   1. ID 不能为空
-//   2. Type 不能为空
-//   3. Source 不能为空
-//   4. 如果设置了 Deadline，必须晚于 Timestamp
-//   5. MaxRetries 必须 >= 0
-//   6. RetryCount 不能超过 MaxRetries
+//  1. ID 不能为空
+//  2. Type 不能为空
+//  3. Source 不能为空
+//  4. 如果设置了 Deadline，必须晚于 Timestamp
+//  5. MaxRetries 必须 >= 0
+//  6. RetryCount 不能超过 MaxRetries
 //
 // 返回值:
 //   - error: 如果验证失败，返回具体的错误信息
