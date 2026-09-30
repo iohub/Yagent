@@ -466,14 +466,16 @@ func (r *TaskRequest) WithUserMessage(msg string) *TaskRequest {
 func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 	ca.director.SetTaskID(req.taskID)
-	return ca.director.Run(req.ctx, req.taskDesc, req.memory)
+	res, err := ca.director.Run(memory.WithConversationMemory(req.ctx, req.memory), req.taskDesc)
+	return res.Text, err
 }
 
 // ProcessConversation handles chat messages.
 func (ca *Yagent) ProcessConversation(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 	ca.director.SetTaskID(req.taskID)
-	return ca.director.Run(req.ctx, req.userMessage, req.memory)
+	res, err := ca.director.Run(memory.WithConversationMemory(req.ctx, req.memory), req.userMessage)
+	return res.Text, err
 }
 
 // SwitchProvider dynamically switches the LLM provider for all agents.

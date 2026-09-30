@@ -179,10 +179,11 @@ func TestFullChain_DirectToolCall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := director.Run(ctx, "列出项目根目录的文件", nil)
+	agentResult, err := director.Run(ctx, "列出项目根目录的文件")
 	if err != nil {
 		t.Fatalf("director.Run() returned error: %v", err)
 	}
+	result := agentResult.Text
 
 	// 5. Assert
 	t.Logf("Director returned result: %s", result)
@@ -235,10 +236,11 @@ func TestFullChain_DelegateToRepoAgent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := director.Run(ctx, "请分析项目结构", nil)
+	agentResult, err := director.Run(ctx, "请分析项目结构")
 	if err != nil {
 		t.Fatalf("director.Run() returned error: %v", err)
 	}
+	result := agentResult.Text
 
 	// 5. Assert
 	t.Logf("Director returned result: %s", result)
@@ -303,10 +305,11 @@ func TestFullChain_FullYoloMode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := director.Run(ctx, "YOLO mode test", nil)
+	agentResult, err := director.Run(ctx, "YOLO mode test")
 	if err != nil {
 		t.Fatalf("director.Run() in FullYoloMode returned error: %v", err)
 	}
+	result := agentResult.Text
 
 	t.Logf("FullYoloMode test result: %s", result)
 
@@ -375,10 +378,11 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := director.Run(ctx, "全面检查项目", nil)
+	agentResult, err := director.Run(ctx, "全面检查项目")
 	if err != nil {
 		t.Fatalf("director.Run() returned error: %v", err)
 	}
+	result := agentResult.Text
 
 	// 5. Assert
 	t.Logf("Director returned result: %s", result)
@@ -447,10 +451,11 @@ func TestDirector_ForceDelegation_InjectUserMessage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := director.Run(ctx, "complete the task", nil)
+	agentResult, err := director.Run(ctx, "complete the task")
 	if err != nil {
 		t.Fatalf("director.Run() returned error: %v", err)
 	}
+	result := agentResult.Text
 
 	// 5. Assert: result should come from second call (agent_exit), not first plain text
 	if result == "I'll just return text without delegating." {
@@ -518,10 +523,11 @@ func TestDirector_ForceDelegation_MaxPromptsThenReturn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := director.Run(ctx, "complete the task", nil)
+	agentResult, err := director.Run(ctx, "complete the task")
 	if err != nil {
 		t.Fatalf("director.Run() returned error: %v", err)
 	}
+	result := agentResult.Text
 
 	// 5. Assert: result should be the last plain text (not error, no deadlock)
 	if result == "" {
@@ -596,10 +602,11 @@ func TestDirector_NoForceAfterDelegation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := director.Run(ctx, "complete the task", nil)
+	agentResult, err := director.Run(ctx, "complete the task")
 	if err != nil {
 		t.Fatalf("director.Run() returned error: %v", err)
 	}
+	result := agentResult.Text
 
 	// 5. Assert: result should be the plain text from second call
 	// (Note: due to internal LLM calls during delegate execution, we check that

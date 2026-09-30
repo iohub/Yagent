@@ -908,7 +908,27 @@ func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
 	return res
 }
 
-func (a *DirectorAgent) Run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
+// 编译期断言：DirectorAgent 实现标准 Agent 接口（types.go）
+var _ Agent = (*DirectorAgent)(nil)
+
+// Run 实现标准 Agent 接口。会话 memory 通过 context 注入
+// （memory.WithConversationMemory，与 WithRolloutWriter 同模式）；
+// 未注入时 mem 为 nil，沿用旧 Run 对 mem==nil 的既有语义：视为新会话（不新建 ConversationMemory）。
+// 错误路径与旧 Run 逐字一致：run 的所有错误分支均返回 ("", err)，
+// 因此 AgentResult.Text 为空串，err 原样上抛。
+func (a *DirectorAgent) Run(ctx context.Context, input string) (AgentResult, error) {
+	mem, _ := memory.GetConversationMemory(ctx)
+
+	text, err := a.run(ctx, input, mem)
+
+	var memHistory []memory.ChatMessage
+	if mem != nil {
+		memHistory = mem.GetMessages()
+	}
+	return AgentResult{Text: text, Memory: memHistory}, err
+}
+
+func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
 	// 设置当前 memory（delegate 闭包通过 a.currentMemory 访问）
 	a.currentMemory = mem
 
