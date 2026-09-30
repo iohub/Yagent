@@ -65,6 +65,7 @@ type DirectorAgent struct {
 
 	currentMemory         *memory.ConversationMemory // 当前正在使用的 memory（Run 期间设置）
 	pendingSubAgentMemory *AgentResult               // 最近一次 delegate 调用的完整结果（用于 memory 注入）
+	compressor            *director.ContextCompressor // 上下文压缩编排组件（Phase 3-0 抽取）
 
 	// LLM 兜底机制字段
 	// P0-1 Phase 2b：步骤级重试次数、连续 LLM 失败计数、最近失败时间及
@@ -439,6 +440,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		thinkLink: thinklink.NewStore(0),
 	}
 
+	// Phase 3-0：上下文压缩编排组件；thinkLink 窄接口与 pendingSubAgentMemory
+	// 清理回调注入。thinkLink 须与 a.thinkLink 同一实例（跨任务累积的条目必须
+	// 被压缩重建看到）；agents 类型（AgentResult）经回调由门面适配清理。
+	self.compressor = director.NewContextCompressor(engine, self.Name(), self.thinkLink, func() { self.pendingSubAgentMemory = nil })
+
 	// 计算并记录 Tool Definitions 哈希，用于验证 Prompt Cache 一致性
 	toolDefsForHash := make([]llm.ToolDef, len(allAdapters))
 	for i, ad := range allAdapters {
@@ -780,6 +786,10 @@ func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
 
 // 编译期断言：DirectorAgent 实现标准 Agent 接口（types.go）
 var _ Agent = (*DirectorAgent)(nil)
+
+// 编译期引用：P0-1 Phase 3-1 Planner 脚手架（director 子包），确保组件类型
+// 进入编译覆盖（Phase 3-2 填充实现并切换 run() 调用点后此引用移除）。
+var _ = director.NewPlanner
 
 // Run 实现标准 Agent 接口。会话 memory 通过 context 注入
 // （memory.WithConversationMemory，与 WithRolloutWriter 同模式）；
@@ -1477,42 +1487,17 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 
 // applyEmergencyCompression 执行紧急压缩：提取用户原始任务 + 总结/保留 Thought & Plan 历史，
 // 覆盖 memory 为单条输入消息后返回压缩后的 messages。
+// Phase 3-0：编排逻辑已抽取至 director.ContextCompressor，此处仅薄委托，
+// 保持原签名与压缩行为不变（characterization 测试零改动）；memory 依赖以参数传入。
 func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages []llm.Message, threshold int) ([]llm.Message, *director.EmergencyCompressionStats) {
-	originalInput := ""
-	if a.currentMemory != nil {
-		for _, m := range a.currentMemory.GetMessages() {
-			if m.Type == memory.MessageTypeHuman {
-				originalInput = m.Content
-				break
-			}
-		}
-	}
-	newMessages, stats := director.EmergencyCompressMessages(ctx, messages, originalInput, threshold, a.LLM, a.Name(), director.DefaultEmergencyCompressKeepLastN)
-	// 强行覆盖 memory：只保留一条输入（原始任务 + 总结 + 最后 N 个 Thought & Plan）
-	if a.currentMemory != nil {
-		if err := a.currentMemory.Clear(); err != nil {
-			slog.Warn("emergency compression: failed to clear memory", "error", err)
-		}
-		last := newMessages[len(newMessages)-1]
-		if last.Role == llm.RoleUser {
-			a.currentMemory.AddHumanMessage(last.Content)
-		}
-	}
-	return newMessages, stats
+	return a.compressor.ApplyEmergency(ctx, messages, threshold, a.currentMemory)
 }
 
 // ─── 终极压缩（第三级，thinklink 重建） ──────────────────────────────────────
 
-// UltimateCompressionStats 记录终极压缩的统计信息。
-type UltimateCompressionStats struct {
-	OriginalTokens   int  `json:"original_tokens"`   // 压缩前总 token
-	CompressedTokens int  `json:"compressed_tokens"` // 重建后总 token
-	SavedTokens      int  `json:"saved_tokens"`      // 节省的 token
-	TotalPlans       int  `json:"total_plans"`       // thinklink 中 T&P 块总数
-	KeptPlans        int  `json:"kept_plans"`        // 重建时保留的 T&P 块数
-	UserInputs       int  `json:"user_inputs"`       // 重建时包含的用户输入条数
-	Truncated        bool `json:"truncated"`         // 重建内容是否被硬截断（极端兜底）
-}
+// UltimateCompressionStats 记录终极压缩的统计信息（P0-1 Phase 3-0 定义迁移至
+// director 包 compressor.go，此处保留类型别名，使 run() 等调用点零改动）。
+type UltimateCompressionStats = director.UltimateCompressionStats
 
 // applyUltimateCompression 终极压缩（第三级）：两级常规压缩后仍超限时，
 // 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文。
@@ -1523,85 +1508,13 @@ type UltimateCompressionStats struct {
 //   - 循环保护：若重建后的输入自身仍超预算，逐步减少保留的 T&P 块数量
 //     （保留最近 N-1、N-2……直至只留用户原始输入），仍超限则对重建内容做硬截断，
 //     确保重建后必然低于阈值，绝不进入死循环。
+//
+// Phase 3-0：编排逻辑已抽取至 director.ContextCompressor，此处仅薄委托，
+// 保持原签名与压缩行为不变（characterization 测试零改动）；memory 与配置
+// （UltimateCompressionKeepPlans）以参数传入，pendingSubAgentMemory 清理经回调在
+// 组件内执行（构造时注入，签名上不引入 agents 类型）。
 func (a *DirectorAgent) applyUltimateCompression(messages []llm.Message, threshold int) ([]llm.Message, *UltimateCompressionStats) {
-	originalTokens := director.EstimateMessagesTokens(messages)
-
-	// system（非 user）消息原样保留，不计入 user 内容预算
-	nonUserTokens := 0
-	newMessages := make([]llm.Message, 0, 2)
-	for _, msg := range messages {
-		if msg.Role == llm.RoleSystem {
-			newMessages = append(newMessages, msg)
-			nonUserTokens += director.EstimateMessagesTokens([]llm.Message{msg})
-		}
-	}
-	userBudget := threshold - nonUserTokens
-	if userBudget < 0 {
-		userBudget = 0
-	}
-
-	totalPlans := a.thinkLink.Count(thinklink.KindThoughtPlan)
-	keep := totalPlans
-	// 配置指定保留数量上限时，取配置值与全部数量的较小值（0=全部保留）
-	if cfgKeep := a.EnhancedCommanderCfg.UltimateCompressionKeepPlans; cfgKeep > 0 && cfgKeep < keep {
-		keep = cfgKeep
-	}
-
-	// 循环保护：从 keep 开始逐步递减；keep==0（只留用户原始输入）仍超限时硬截断兜底
-	var prompt string
-	truncated := false
-	for {
-		prompt = a.thinkLink.RebuildPrompt(keep)
-		if EstimateTokens(prompt) <= userBudget {
-			break
-		}
-		if keep <= 0 {
-			prompt = director.TruncateToTokenBudget(prompt, userBudget)
-			truncated = true
-			break
-		}
-		keep--
-	}
-
-	newMessages = append(newMessages, llm.Message{
-		Role:    llm.RoleUser,
-		Content: prompt,
-	})
-
-	// 同步覆盖 memory：对话历史重置为该单条 user 消息，保持 memory 与 messages 一致
-	if a.currentMemory != nil {
-		if err := a.currentMemory.Clear(); err != nil {
-			slog.Warn("ultimate compression: failed to clear memory", "error", err)
-		}
-		a.currentMemory.AddHumanMessage(prompt)
-	}
-	// 清理可能导致配对校验失败的残留
-	a.pendingSubAgentMemory = nil
-
-	stats := &UltimateCompressionStats{
-		OriginalTokens:   originalTokens,
-		CompressedTokens: director.EstimateMessagesTokens(newMessages),
-		TotalPlans:       totalPlans,
-		KeptPlans:        keep,
-		UserInputs:       a.thinkLink.Count(thinklink.KindUserInput),
-		Truncated:        truncated,
-	}
-	stats.SavedTokens = stats.OriginalTokens - stats.CompressedTokens
-	if stats.SavedTokens < 0 {
-		stats.SavedTokens = 0
-	}
-
-	slog.Warn("ultimate context compression applied: context rebuilt from thinklink",
-		"original_tokens", stats.OriginalTokens,
-		"compressed_tokens", stats.CompressedTokens,
-		"saved_tokens", stats.SavedTokens,
-		"threshold", threshold,
-		"total_plans", stats.TotalPlans,
-		"kept_plans", stats.KeptPlans,
-		"user_inputs", stats.UserInputs,
-		"truncated", stats.Truncated)
-
-	return newMessages, stats
+	return a.compressor.ApplyUltimate(messages, threshold, a.currentMemory, a.EnhancedCommanderCfg.UltimateCompressionKeepPlans)
 }
 
 // publishThinkLinkEntry 通过 Publisher 发布一条 thinklink 条目事件（"thinklink_entry"），
