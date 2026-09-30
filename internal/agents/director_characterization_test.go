@@ -595,7 +595,7 @@ func TestCharacterizationParseMetaAgentOutput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prompt, execResult, err := parseMetaAgentOutput(tt.input)
+			prompt, execResult, err := director.ParseMetaAgentOutput(tt.input)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil (prompt=%q)", prompt)

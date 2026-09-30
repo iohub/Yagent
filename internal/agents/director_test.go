@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	directorpkg "yagent/internal/agents/director"
 	"yagent/internal/config"
 	"yagent/internal/globalctx"
 	"yagent/internal/llm"
@@ -79,7 +80,7 @@ func makeMetaOutput(agentName, systemPrompt string, toolsUsed []string) string {
 
 func TestExtractJSONObject_PureJSON(t *testing.T) {
 	input := `{"thinking": "test", "agent_name": "Test"}`
-	got := extractJSONObject(input)
+	got := directorpkg.ExtractJSONObject(input)
 	if got != input {
 		t.Errorf("extractJSONObject = %q, want %q", got, input)
 	}
@@ -88,7 +89,7 @@ func TestExtractJSONObject_PureJSON(t *testing.T) {
 func TestExtractJSONObject_MarkdownFence(t *testing.T) {
 	input := "```json\n{\"key\": \"value\"}\n```"
 	expected := `{"key": "value"}`
-	got := extractJSONObject(input)
+	got := directorpkg.ExtractJSONObject(input)
 	if got != expected {
 		t.Errorf("extractJSONObject = %q, want %q", got, expected)
 	}
@@ -97,7 +98,7 @@ func TestExtractJSONObject_MarkdownFence(t *testing.T) {
 func TestExtractJSONObject_SurroundingText(t *testing.T) {
 	input := `Here's the output: {"key": "value"} with some trailing text.`
 	expected := `{"key": "value"}`
-	got := extractJSONObject(input)
+	got := directorpkg.ExtractJSONObject(input)
 	if got != expected {
 		t.Errorf("extractJSONObject = %q, want %q", got, expected)
 	}
@@ -105,14 +106,14 @@ func TestExtractJSONObject_SurroundingText(t *testing.T) {
 
 func TestExtractJSONObject_NestedBraces(t *testing.T) {
 	input := `{"key": {"nested": true}, "list": [1,2,3]}`
-	got := extractJSONObject(input)
+	got := directorpkg.ExtractJSONObject(input)
 	if got != input {
 		t.Errorf("extractJSONObject = %q, want %q", got, input)
 	}
 }
 
 func TestExtractJSONObject_NoBraces(t *testing.T) {
-	got := extractJSONObject("Just plain text without any braces.")
+	got := directorpkg.ExtractJSONObject("Just plain text without any braces.")
 	if got != "" {
 		t.Errorf("expected empty string, got %q", got)
 	}
@@ -120,11 +121,11 @@ func TestExtractJSONObject_NoBraces(t *testing.T) {
 
 func TestExtractJSONObject_MetaOutput(t *testing.T) {
 	output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file"})
-	got := extractJSONObject(output)
+	got := directorpkg.ExtractJSONObject(output)
 	if got == "" {
 		t.Fatal("extractJSONObject returned empty for valid Meta-Agent output")
 	}
-	var result metaAgentResult
+	var result directorpkg.MetaAgentResult
 	if err := json.Unmarshal([]byte(got), &result); err != nil {
 		t.Fatalf("extracted JSON is not valid: %v\nraw: %s", err, got)
 	}
@@ -169,7 +170,7 @@ func TestToSnakeCase(t *testing.T) {
 func TestParseMetaAgentOutput_Valid(t *testing.T) {
 	output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file", "search_by_regex"})
 
-	sysPrompt, result, err := parseMetaAgentOutput(output)
+	sysPrompt, result, err := directorpkg.ParseMetaAgentOutput(output)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -186,7 +187,7 @@ func TestParseMetaAgentOutput_Valid(t *testing.T) {
 }
 func TestParseMetaAgentOutput_MissingJSON(t *testing.T) {
 	output := "Just some plain text without JSON."
-	_, _, err := parseMetaAgentOutput(output)
+	_, _, err := directorpkg.ParseMetaAgentOutput(output)
 	if err == nil {
 		t.Fatal("expected error for missing JSON object")
 	}
@@ -194,7 +195,7 @@ func TestParseMetaAgentOutput_MissingJSON(t *testing.T) {
 
 func TestParseMetaAgentOutput_InvalidJSON(t *testing.T) {
 	output := `{"thinking": "test", "agent_name": "Test", "agent_design": "prompt", "tools_used": ["read_file"], "result": {not valid json}}`
-	_, _, err := parseMetaAgentOutput(output)
+	_, _, err := directorpkg.ParseMetaAgentOutput(output)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -203,7 +204,7 @@ func TestParseMetaAgentOutput_InvalidJSON(t *testing.T) {
 func TestParseMetaAgentOutput_NoAgentDesign(t *testing.T) {
 	// agent_design is now required — missing it should cause an error
 	output := `{"thinking": "designing...", "agent_name": "Test", "tools_used": ["read_file"], "result": {"key": "value"}}`
-	_, _, err := parseMetaAgentOutput(output)
+	_, _, err := directorpkg.ParseMetaAgentOutput(output)
 	if err == nil {
 		t.Fatal("expected error when agent_design is missing")
 	}
@@ -212,7 +213,7 @@ func TestParseMetaAgentOutput_NoAgentDesign(t *testing.T) {
 func TestParseMetaAgentOutput_EmptyAgentName(t *testing.T) {
 	// agent_name is now required — empty should cause an error
 	output := `{"thinking": "test", "agent_name": "", "agent_design": "Some prompt", "tools_used": [], "result": {}}`
-	_, _, err := parseMetaAgentOutput(output)
+	_, _, err := directorpkg.ParseMetaAgentOutput(output)
 	if err == nil {
 		t.Fatal("expected error when agent_name is empty")
 	}
@@ -269,7 +270,7 @@ func TestRegisterCustomAgent_Success(t *testing.T) {
 	agent.registerCustomAgent(ca)
 
 	// Verify map entry
-	stored, ok := agent.customAgents["delegate_security_auditor"]
+	stored, ok := agent.metaHandler.Get("delegate_security_auditor")
 	if !ok {
 		t.Fatal("custom agent not found in map")
 	}
@@ -332,7 +333,7 @@ func TestRegisterCustomAgent_UnknownToolsIgnored(t *testing.T) {
 	// Should not panic; unknown tools are skipped
 	agent.registerCustomAgent(ca)
 
-	stored := agent.customAgents["delegate_partial_agent"]
+	stored, _ := agent.metaHandler.Get("delegate_partial_agent")
 	if stored == nil {
 		t.Fatal("agent should be registered even with unknown tools")
 	}
@@ -463,7 +464,7 @@ func TestSystemPrompt_NoCustomAgents(t *testing.T) {
 
 	// Build system prompt like Run() does
 	systemPrompt := agent.GlobalCtx.FormatPrompt(directorPrompt)
-	if len(agent.customAgents) > 0 {
+	if agent.metaHandler.Len() > 0 {
 		systemPrompt += "\n\n### Custom Agents..."
 	}
 
@@ -497,9 +498,9 @@ func TestSystemPrompt_WithCustomAgents(t *testing.T) {
 
 	// Build system prompt like Run() does
 	systemPrompt := agent.GlobalCtx.FormatPrompt(directorPrompt)
-	if len(agent.customAgents) > 0 {
+	if agent.metaHandler.Len() > 0 {
 		systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
-		for _, ca := range agent.customAgents {
+		for _, ca := range agent.metaHandler.List() {
 			systemPrompt += fmt.Sprintf("- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, ca.Description)
 		}
 		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n\n"
@@ -571,7 +572,7 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	}
 
 	// Verify custom agent was registered
-	customAgent, ok := director.customAgents["delegate_security_auditor"]
+	customAgent, ok := director.metaHandler.Get("delegate_security_auditor")
 	if !ok {
 		t.Fatal("Security Auditor was not registered in customAgents")
 	}
@@ -643,7 +644,7 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 		t.Fatalf("first delegate_meta call failed: %v", err)
 	}
 	countAfterFirst := len(director.Adapters)
-	mapCountAfterFirst := len(director.customAgents)
+	mapCountAfterFirst := director.metaHandler.Len()
 
 	// Second call: should NOT register duplicate
 	_, err = delegateMeta.Call(context.Background(), `{"task": "Test second"}`)
@@ -654,8 +655,8 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 	if len(director.Adapters) != countAfterFirst {
 		t.Errorf("duplicate registration added adapters: %d → %d", countAfterFirst, len(director.Adapters))
 	}
-	if len(director.customAgents) != mapCountAfterFirst {
-		t.Errorf("duplicate registration added map entries: %d → %d", mapCountAfterFirst, len(director.customAgents))
+	if director.metaHandler.Len() != mapCountAfterFirst {
+		t.Errorf("duplicate registration added map entries: %d → %d", mapCountAfterFirst, director.metaHandler.Len())
 	}
 }
 
