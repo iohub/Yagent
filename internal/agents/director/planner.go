@@ -160,6 +160,17 @@ type PlannerConfig struct {
 	OnStepEnd func(ctx context.Context, step int, runErr error) error
 	// OnToolResult：每次工具返回后、结果入历史前调用；nil 跳过。
 	OnToolResult func(ctx context.Context, toolName string, result string, callErr error)
+
+	// ── P0-Step 3a 扩展（AgentName 动态化：子 Agent 迁移前置条件）──
+	// AgentName：事件的 agent/source 字段与日志 agent 字段（等价基准
+	// executor.go RunAgentLoop 的 cfg.AgentName——子 Agent 各自的名字）；
+	// 零值/空串时 Planner 内回退 "director"（保持 Director 路径行为不变）。
+	AgentName string
+	// RolloutCollabMode：Rollout TurnContext.CollaborationMode 字段值
+	// （子 Agent 迁移时传 "single"，等价基准 executor.go WriteTurnContext 中
+	// CollaborationMode: "single"）；零值/空串时回退 "director"（原 run()
+	// 硬编码值，保持 Director 路径行为不变）。
+	RolloutCollabMode string
 }
 
 // PlanInput Planner 单次任务输入。

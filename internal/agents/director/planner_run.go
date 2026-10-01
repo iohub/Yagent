@@ -40,6 +40,27 @@ import (
 // 循环本身还有 maxSteps 兜底）。
 const maxNonDelegationPrompts = 3
 
+// agentName 事件的 agent/source 字段与日志 agent 字段（取 cfg.AgentName；
+// 零值/空串时回退 "director"——lift-and-shift 前的硬编码值，Director 路径
+// 行为不变；子 Agent 迁移时传各自名字，等价基准 executor.go 的 cfg.AgentName）。
+func (p *Planner) agentName() string {
+	if p.cfg.AgentName == "" {
+		return "director"
+	}
+	return p.cfg.AgentName
+}
+
+// collabMode Rollout TurnContext.CollaborationMode 字段值（取 cfg.RolloutCollabMode；
+// 零值/空串时回退 "director"——原 run() 硬编码值，Director 路径行为不变；
+// 子 Agent 迁移时传 "single"，等价基准 executor.go WriteTurnContext 中
+// CollaborationMode: "single"）。
+func (p *Planner) collabMode() string {
+	if p.cfg.RolloutCollabMode == "" {
+		return "director"
+	}
+	return p.cfg.RolloutCollabMode
+}
+
 // Run 执行任务规划主循环（lift-and-shift 自 DirectorAgent.run，控制流逐字搬迁）。
 // 退出路径与原 run() 一致：circuit_breaker_open / context cancel / agent_exit /
 // plain_text / max_steps；StopReason 对应各退出路径，Steps 为实际执行步数。
@@ -62,7 +83,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					"content":   entry.Content,
 					"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
 					"step":      entry.Step,
-				}, "director")
+				}, p.agentName())
 			}
 		}
 	}
@@ -145,8 +166,8 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 	if p.cfg.Publisher != nil {
 		_ = p.cfg.Publisher.Publish("model_info", map[string]interface{}{
 			"model": p.cfg.LLM.Model(),
-			"agent": "director",
-		}, "director")
+			"agent": p.agentName(),
+		}, p.agentName())
 	}
 
 	// ═══════ 初始化 Director Rollout Writer（原 run() 内经 createRolloutWriter
@@ -182,7 +203,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				TurnID:            turnID,
 				Cwd:               cwd,
 				Effort:            "medium",
-				CollaborationMode: "director",
+				CollaborationMode: p.collabMode(),
 			})
 			directorRolloutWriter.WriteEventMsg(memory.EventMsg{
 				Type: "task_started",
@@ -219,7 +240,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				runErr = fmt.Errorf("agent panic: %v", r)
 			}
 			if exitErr := p.cfg.OnAgentExit(ctx, runErr); exitErr != nil {
-				slog.Warn("OnAgentExit hook failed", "agent", "director", "error", exitErr)
+				slog.Warn("OnAgentExit hook failed", "agent", p.agentName(), "error", exitErr)
 			}
 			if rw := p.cfg.Rollout; rw != nil && rw.Enabled() {
 				if runErr != nil {
@@ -341,7 +362,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 						"saved_percent":     compStats.SavedPercent,
 						"truncated_count":   compStats.TruncatedCount,
 						"truncated_tools":   truncatedTools,
-					}, "director")
+					}, p.agentName())
 					slog.Debug("context compression applied",
 						"original_tokens", compStats.OriginalTokens,
 						"compressed_tokens", compStats.CompressedTokens,
@@ -367,7 +388,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 							"summarized_blocks": emergencyStats.SummarizedBlocks,
 							"kept_blocks":       emergencyStats.KeptBlocks,
 							"summarized_by_llm": emergencyStats.SummarizedByLLM,
-						}, "director")
+						}, p.agentName())
 					}
 					slog.Warn("emergency context compression applied",
 						"original_tokens", emergencyStats.OriginalTokens,
@@ -400,7 +421,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 							"user_inputs":       ultStats.UserInputs,
 							"truncated":         ultStats.Truncated,
 							"detail":            "终极压缩(ultimate compression)已触发,上下文已重置为用户原始输入 + Thought & Plan 块",
-						}, "director")
+						}, p.agentName())
 					}
 				}
 			}
@@ -414,8 +435,8 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					if len(chunk) > 0 {
 						_ = p.cfg.Publisher.Publish("ai_chunk", map[string]interface{}{
 							"content": string(chunk),
-							"agent":   "director",
-						}, "director")
+							"agent":   p.agentName(),
+						}, p.agentName())
 					}
 					return nil
 				}
@@ -425,15 +446,15 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			if p.cfg.Publisher != nil {
 				_ = p.cfg.Publisher.Publish("llm_call_start", map[string]interface{}{
 					"model": p.cfg.LLM.Model(),
-					"agent": "director",
-				}, "director")
+					"agent": p.agentName(),
+				}, p.agentName())
 			}
 
 			// Publish ai_stream_start before LLM call
 			if p.cfg.Publisher != nil {
 				_ = p.cfg.Publisher.Publish("ai_stream_start", map[string]interface{}{
-					"agent": "director",
-				}, "director")
+					"agent": p.agentName(),
+				}, p.agentName())
 			}
 
 			llmStartTime := time.Now()
@@ -446,7 +467,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			// Publish ai_stream_end after LLM call
 			if p.cfg.Publisher != nil {
 				metadata := map[string]interface{}{
-					"agent": "director",
+					"agent": p.agentName(),
 				}
 				if llmErr == nil && resp != nil && resp.Usage != nil {
 					metadata["usage"] = map[string]interface{}{
@@ -458,7 +479,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 						"total_input_tokens":          resp.Usage.TotalInputTokens,
 					}
 				}
-				_ = p.cfg.Publisher.PublishWithMetadata("ai_stream_end", "", "director", metadata)
+				_ = p.cfg.Publisher.PublishWithMetadata("ai_stream_end", "", p.agentName(), metadata)
 			}
 
 			// 记录 LLM 耗时指标（原 a.adapter.RecordLLMDuration，经 cfg.Metrics 注入）
@@ -473,8 +494,8 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					_ = p.cfg.Publisher.Publish("thinking", map[string]interface{}{
 						"content": reasoning,
 						"model":   p.cfg.LLM.Model(),
-						"agent":   "director",
-					}, "director")
+						"agent":   p.agentName(),
+					}, p.agentName())
 				}
 			}
 
@@ -482,13 +503,13 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			if p.cfg.Publisher != nil {
 				metadata := map[string]interface{}{
 					"model":            p.cfg.LLM.Model(),
-					"agent":            "director",
+					"agent":            p.agentName(),
 					"duration_seconds": llmDuration,
 				}
 				if llmErr != nil {
 					metadata["error"] = llmErr.Error()
 				}
-				_ = p.cfg.Publisher.PublishWithMetadata("llm_call_end", "", "director", metadata)
+				_ = p.cfg.Publisher.PublishWithMetadata("llm_call_end", "", p.agentName(), metadata)
 			}
 
 			if llmErr == nil {
@@ -583,7 +604,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					"estimated":         true,
 				}
 			}
-			_ = p.cfg.Publisher.PublishWithMetadata("ai_response", choice.Content, "director", metadata)
+			_ = p.cfg.Publisher.PublishWithMetadata("ai_response", choice.Content, p.agentName(), metadata)
 		}
 
 		if in.Mem != nil {
@@ -609,7 +630,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 							"content":   entry.Content,
 							"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
 							"step":      entry.Step,
-						}, "director")
+						}, p.agentName())
 					}
 				}
 			}
@@ -670,7 +691,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					"tool_name":    tc.Function.Name,
 					"arguments":    tc.Function.Arguments,
 					"tool_call_id": tc.ID,
-				}, "director")
+				}, p.agentName())
 			}
 			// 原按名查找 a.Adapters（t.Name() == tc.Function.Name）→ 门面 Specs() 结果
 			// 按名查找 + ToolRunner.Call；delegate_* 专用超时（10min）/交互式工具无限
@@ -736,7 +757,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					"tool_name":    tc.Function.Name,
 					"result":       toolResult,
 					"tool_call_id": tc.ID,
-				}, "director")
+				}, p.agentName())
 			}
 
 			if in.Mem != nil {
@@ -782,7 +803,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		// 事件（对齐 executor.go hook 块内写入））。
 		if p.cfg.OnStepEnd != nil && len(choice.ToolCalls) > 0 {
 			if stepErr := p.cfg.OnStepEnd(ctx, p.state.Step, nil); stepErr != nil {
-				slog.Warn("OnStepEnd hook error", "agent", "director", "step", p.state.Step, "error", stepErr)
+				slog.Warn("OnStepEnd hook error", "agent", p.agentName(), "step", p.state.Step, "error", stepErr)
 			}
 			// Rollout: 写入 sub_agent_activity 事件（等价基准 executor.go hook 块内）
 			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
