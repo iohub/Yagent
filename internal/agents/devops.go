@@ -82,28 +82,31 @@ func (a *DevOpsAgent) Name() string {
 }
 
 func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error) {
-	cfg := DefaultExecutorConfig()
+	// P0 Step 5：迁移至 runSubAgentLoop（统一内核 director.Planner）。
+	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
+	// ToolTimeout=0 → 180s，与 RunAgentLoop 现状一致；StopOnFinish=true 保持现状；
+	// RolloutCollabMode="single" 由 runSubAgentLoop 内置（EnableCollaboration 等价）。
 	systemPrompt := a.GlobalCtx.FormatPrompt(devopsPrompt)
-	cfg.SystemPrompt = systemPrompt
-	cfg.UserInput = input
-	cfg.Adapters = a.Adapters
-	cfg.LLM = a.LLM
-	cfg.MaxSteps = a.maxSteps
-	cfg.Publisher = a.Publisher
-	cfg.AgentName = a.Name()
-	cfg.StopOnFinish = true
 	// 上下文压缩配置（tool 结果截断）
 	ec := a.GlobalCtx.EnhancedCommander
-	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
-	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
-	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
-	// EnableCollaboration 已默认 true
-	result, err := RunAgentLoop(ctx, cfg)
+	outcome, err := runSubAgentLoop(ctx, SubAgentLoopConfig{
+		SystemPrompt:       systemPrompt,
+		UserInput:          input,
+		Adapters:           a.Adapters,
+		LLM:                a.LLM,
+		MaxSteps:           a.maxSteps,
+		Publisher:          a.Publisher,
+		AgentName:          a.Name(),
+		StopOnFinish:       true,
+		CompressEnable:     ec.Enable && ec.EnableContextCompression,
+		CompressThreshold:  ec.ContextCompressionThreshold,
+		CompressKeepTokens: ec.ToolResultKeepTokens,
+	})
 	if err != nil {
 		return AgentResult{}, err
 	}
 	return AgentResult{
-		Text:   result.Text,
-		Memory: ConvertLLMHistoryToMemory(result.History),
+		Text:   outcome.Text,
+		Memory: ConvertLLMHistoryToMemory(outcome.History),
 	}, nil
 }

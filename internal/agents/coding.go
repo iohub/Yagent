@@ -332,48 +332,42 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		}
 	}
 
-	cfg := DefaultExecutorConfig()
-	cfg.SystemPrompt = systemPrompt
-	cfg.UserInput = input
-	cfg.Adapters = a.Adapters
-	cfg.LLM = a.LLM
-	cfg.MaxSteps = a.maxSteps
-	cfg.Publisher = a.Publisher
-	cfg.AgentName = a.Name()
-	cfg.StopOnFinish = true
-	cfg.RepoContext = a.GlobalCtx.RepoSummary
-
-	// 上下文压缩配置（tool 结果截断）
-	ec := a.GlobalCtx.EnhancedCommander
-	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
-	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
-	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
-
-	// 如果是 git 仓库且 checkpoint 启用，设置回调和添加工具
+	// P0 Step 5：迁移至 runSubAgentLoop（统一内核 director.Planner）。
+	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
+	// ToolTimeout=0 → 180s，与 RunAgentLoop 现状一致；StopOnFinish=true 保持现状。
+	// 注意：Git Checkpoint 生命周期回调（OnAgentStart/OnAgentExit/OnStepEnd，gcm）
+	// 未迁移——SubAgentLoopConfig 暂无 hooks 字段，待统一内核支持 hooks 后补齐；
+	// checkpoint 工具（createCheckpointToolAdapters）仍正常追加到 Adapters。
+	adapters := a.Adapters
 	if gitCheckpointEnabled {
-		cfg.OnAgentStart = func(ctx context.Context) error {
-			return gcm.OnAgentStart(ctx)
-		}
-		cfg.OnAgentExit = func(ctx context.Context, agentErr error) error {
-			return gcm.OnAgentExit(ctx, agentErr)
-		}
-		cfg.OnStepEnd = func(ctx context.Context, stepInfo StepInfo) error {
-			return gcm.OnStepEnd(ctx, stepInfo)
-		}
-
 		// Add checkpoint tools to the adapter list
 		checkpointAdapters := createCheckpointToolAdapters(gcm)
 		tools.SetGuardOnAdapters(checkpointAdapters, a.GlobalCtx.Guard)
-		cfg.Adapters = append(cfg.Adapters, checkpointAdapters...)
+		adapters = append(adapters, checkpointAdapters...)
 	}
 
-	result, err := RunAgentLoop(ctx, cfg)
+	// 上下文压缩配置（tool 结果截断）
+	ec := a.GlobalCtx.EnhancedCommander
+	outcome, err := runSubAgentLoop(ctx, SubAgentLoopConfig{
+		SystemPrompt:       systemPrompt,
+		UserInput:          input,
+		Adapters:           adapters,
+		LLM:                a.LLM,
+		MaxSteps:           a.maxSteps,
+		Publisher:          a.Publisher,
+		AgentName:          a.Name(),
+		StopOnFinish:       true,
+		RepoContext:        a.GlobalCtx.RepoSummary,
+		CompressEnable:     ec.Enable && ec.EnableContextCompression,
+		CompressThreshold:  ec.ContextCompressionThreshold,
+		CompressKeepTokens: ec.ToolResultKeepTokens,
+	})
 	if err != nil {
 		return AgentResult{}, err
 	}
 	agentResult := AgentResult{
-		Text:   result.Text,
-		Memory: ConvertLLMHistoryToMemory(result.History),
+		Text:   outcome.Text,
+		Memory: ConvertLLMHistoryToMemory(outcome.History),
 	}
 	// [知识管理] 子任务完成后自动沉淀到知识库（非阻塞）
 	if a.GlobalCtx.KnowledgeInjector != nil {

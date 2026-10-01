@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"yagent/internal/browser"
-	browsertools "yagent/internal/tools/browser"
-	"yagent/internal/tools"
 	"yagent/internal/globalctx"
+	"yagent/internal/tools"
+	browsertools "yagent/internal/tools/browser"
 
 	"yagent/internal/llm"
 )
@@ -22,10 +22,10 @@ var browserPrompt string
 // 使用 go-rod 控制无头 Chrome 浏览器执行网页任务
 type BrowserAgent struct {
 	BaseAgent
-	GlobalCtx      *globalctx.GlobalCtx
-	Adapters       []*tools.Adapter
-	maxSteps       int
-	browserMgr     *browser.Manager
+	GlobalCtx  *globalctx.GlobalCtx
+	Adapters   []*tools.Adapter
+	maxSteps   int
+	browserMgr *browser.Manager
 }
 
 // NewBrowserAgent 创建 Browser-Agent
@@ -87,8 +87,8 @@ func NewBrowserAgent(
 					"description": "Optional suggested answer options. Controls the interaction mode: empty=input mode, ['yes','no']=confirm mode, 2+ options=select mode",
 				},
 				"interaction_type": map[string]interface{}{
-					"type": "string",
-					"enum": []interface{}{"confirm", "select", "input"},
+					"type":        "string",
+					"enum":        []interface{}{"confirm", "select", "input"},
 					"description": "Optional. Explicitly set the interaction mode, overriding automatic inference",
 				},
 				"default_value": map[string]interface{}{
@@ -117,10 +117,10 @@ func NewBrowserAgent(
 			LLM:       llm,
 			Publisher: globalCtx.Publisher,
 		},
-		GlobalCtx:      globalCtx,
-		Adapters:       allAdapters,
-		maxSteps:       maxSteps,
-		browserMgr:     browserMgr,
+		GlobalCtx:  globalCtx,
+		Adapters:   allAdapters,
+		maxSteps:   maxSteps,
+		browserMgr: browserMgr,
 	}
 }
 
@@ -167,22 +167,23 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 	// 构建环境上下文的系统提示词
 	systemPrompt := a.GlobalCtx.FormatPrompt(browserPrompt)
 
-	// 构建执行配置
-	cfg := DefaultExecutorConfig()
-	cfg.SystemPrompt = systemPrompt
-	cfg.UserInput = input
-	cfg.Adapters = a.Adapters
-	cfg.LLM = a.LLM
-	cfg.MaxSteps = a.maxSteps
-	cfg.Publisher = a.Publisher
-	cfg.AgentName = a.Name()
-	cfg.StopOnFinish = true // agent_exit 时立即返回
-	cfg.RepoContext = a.GlobalCtx.RepoSummary
-	// EnableCollaboration 已默认 true
-
-	// 运行 Agent 循环
+	// P0 Step 5：迁移至 runSubAgentLoop（统一内核 director.Planner）。
+	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
+	// ToolTimeout=0 → 180s，与 RunAgentLoop 现状一致；ctx 透传 pageCtx
+	// （浏览器 page context，供浏览器工具经 GetPage() 获取）不变；
+	// RolloutCollabMode="single" 由 runSubAgentLoop 内置（EnableCollaboration 等价）。
 	log.Printf("[BrowserAgent] 开始 LLM 推理循环 (maxSteps=%d)", a.maxSteps)
-	result, err := RunAgentLoop(pageCtx, cfg)
+	outcome, err := runSubAgentLoop(pageCtx, SubAgentLoopConfig{
+		SystemPrompt: systemPrompt,
+		UserInput:    input,
+		Adapters:     a.Adapters,
+		LLM:          a.LLM,
+		MaxSteps:     a.maxSteps,
+		Publisher:    a.Publisher,
+		AgentName:    a.Name(),
+		StopOnFinish: true, // agent_exit 时立即返回
+		RepoContext:  a.GlobalCtx.RepoSummary,
+	})
 	if err != nil {
 		log.Printf("[BrowserAgent] 执行失败: %v", err)
 		return AgentResult{}, fmt.Errorf("Browser-Agent 执行失败: %w", err)
@@ -190,8 +191,8 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 
 	log.Printf("[BrowserAgent] 任务完成")
 	return AgentResult{
-		Text:   result.Text,
-		Memory: ConvertLLMHistoryToMemory(result.History),
+		Text:   outcome.Text,
+		Memory: ConvertLLMHistoryToMemory(outcome.History),
 	}, nil
 }
 
