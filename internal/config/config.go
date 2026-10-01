@@ -226,6 +226,10 @@ type Config struct {
 	Keywords    KeywordsConfig `toml:"keywords"`                                             // [keywords] - 关键词词典配置
 	TaskTimeout time.Duration  `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"` // 全局任务超时，0=不启用
 
+	// Timeouts 统一超时配置（P0 Step 1 新增：单一默认来源，暂无消费方，零行为变化）
+	// [timeouts] - 零值字段在 validate() 中回退 DefaultTimeouts() 默认值
+	Timeouts TimeoutsConfig `toml:"timeouts" json:"timeouts" yaml:"timeouts"`
+
 	// GitCheckpoint git checkpoint 机制配置
 	GitCheckpoint GitCheckpointConfig `toml:"git_checkpoint"`
 
@@ -495,6 +499,10 @@ func (c *Config) validate() error {
 	if c.LLM.FallbackMaxRetries == 0 {
 		c.LLM.FallbackMaxRetries = c.LLM.MaxRetries
 	}
+
+	// ═══════ Timeouts 统一超时默认值设置（P0 Step 1） ═══════
+	// 零值字段回退默认值：[timeouts] 段或单个 key 缺失时行为与现状硬编码一致
+	c.Timeouts = c.Timeouts.Normalize()
 
 	// ═══════ Keywords 默认值设置（向后兼容） ═══════
 	// 如果 config.toml 中不存在 [keywords] 段，则创建默认配置

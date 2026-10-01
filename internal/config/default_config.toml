@@ -182,3 +182,15 @@ keep_recent_rounds = 2                # 始终保留的最近对话轮数
 [llm]
 # enable_fallback = true       # 启用provider级故障转移
 # fallback_max_retries = 2     # fallback provider的内部重试次数
+
+# ═══════════════════════════════════════════════════════════════
+# 统一超时配置（可选段）
+# ── 集中管理各类超时，缺省即默认值（零行为变化）──
+# 未配置的 key（或整个 [timeouts] 段缺失）使用 Go 代码中的默认值
+#（internal/config/timeouts.go 的 DefaultTimeouts()），行为与不配置完全一致。
+# 格式：Go duration 字符串（如 "5m", "180s", "10m"）。
+# [timeouts]
+# llm            = "5m"    # 单次 LLM 调用超时（默认 5m）
+# sub_agent_tool = "180s"  # 子 Agent 普通工具调用超时（默认 180s）
+# planner_tool   = "120s"  # Director/Planner 普通工具调用超时（默认 120s）
+# delegate       = "10m"   # delegate_* 工具调用超时（默认 10m）

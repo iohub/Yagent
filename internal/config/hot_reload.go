@@ -297,6 +297,9 @@ func diffConfigs(old, new *Config) []string {
 	if old.TaskTimeout != new.TaskTimeout {
 		changed = append(changed, "task_timeout")
 	}
+	if !compareDeep(old.Timeouts, new.Timeouts) {
+		changed = append(changed, "timeouts")
+	}
 
 	return changed
 }
