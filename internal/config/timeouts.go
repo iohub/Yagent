@@ -10,9 +10,10 @@ import "time"
 // 消费方从 config 读取。本步骤仅新增配置层（纯加法），不改动任何
 // 消费方，零行为变化。
 //
-// 默认值与现状硬编码值一一对应（行为等价基准）：
-//   - LLM          = 5m   ← internal/agents/executor.go:118（RunAgentLoop 默认 LLM 调用超时）
-//   - SubAgentTool = 180s ← internal/agents/executor.go:497（defaultToolTimeout）
+// 默认值与现状硬编码值一一对应（行为等价基准；旧执行内核 RunAgentLoop /
+// executor.go 已于 P0-Step 7 删除，行号引用为历史溯源）：
+//   - LLM          = 5m   ← 旧 RunAgentLoop 默认 LLM 调用超时（原 executor.go:118）
+//   - SubAgentTool = 180s ← 旧 RunAgentLoop 的 defaultToolTimeout（原 executor.go:497）
 //   - PlannerTool  = 120s ← internal/agents/director.go:867（directorToolRunner 普通工具超时）
 //   - Delegate     = 10m  ← internal/agents/director.go:869（delegate_* 专用超时）
 //
@@ -20,7 +21,7 @@ import "time"
 // 速度，调用侧必须无限等待（不加 deadline），见
 // internal/agents/tool_timeout.go 的 isInteractiveUserTool。
 type TimeoutsConfig struct {
-	// LLM 单次 LLM 调用超时（RunAgentLoop / Planner 的 LLM 生成调用），默认 5m。
+	// LLM 单次 LLM 调用超时（统一执行内核 Planner 的 LLM 生成调用），默认 5m。
 	// 与 LLMConfig.Timeout（[llm].timeout，LLM 引擎兜底配置）语义对齐，
 	// 后续步骤统一时以本字段为准。
 	LLM time.Duration `toml:"llm" json:"llm" yaml:"llm"`

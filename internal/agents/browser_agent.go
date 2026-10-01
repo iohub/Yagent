@@ -169,7 +169,7 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 
 	// P0 Step 5：迁移至 runSubAgentLoop（统一内核 director.Planner）。
 	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
-	// ToolTimeout=0 → 180s，与 RunAgentLoop 现状一致；ctx 透传 pageCtx
+	// ToolTimeout=0 → 180s，与统一内核现状一致；ctx 透传 pageCtx
 	// （浏览器 page context，供浏览器工具经 GetPage() 获取）不变；
 	// RolloutCollabMode="single" 由 runSubAgentLoop 内置（EnableCollaboration 等价）。
 	log.Printf("[BrowserAgent] 开始 LLM 推理循环 (maxSteps=%d)", a.maxSteps)

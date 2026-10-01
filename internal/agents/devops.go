@@ -84,7 +84,7 @@ func (a *DevOpsAgent) Name() string {
 func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	// P0 Step 5：迁移至 runSubAgentLoop（统一内核 director.Planner）。
 	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
-	// ToolTimeout=0 → 180s，与 RunAgentLoop 现状一致；StopOnFinish=true 保持现状；
+	// ToolTimeout=0 → 180s，与统一内核现状一致；StopOnFinish=true 保持现状；
 	// RolloutCollabMode="single" 由 runSubAgentLoop 内置（EnableCollaboration 等价）。
 	systemPrompt := a.GlobalCtx.FormatPrompt(devopsPrompt)
 	// 上下文压缩配置（tool 结果截断）

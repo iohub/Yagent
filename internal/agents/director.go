@@ -124,7 +124,8 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
 		// RepoSummary is no longer injected into the task here — it is now passed
-		// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt,
+		// via the RepoContext field (SubAgentLoopConfig → Planner) and appended to
+		// the sub-agent's system prompt,
 		// keeping the user message (task) variable and the system prompt cacheable.
 		result, err := coding.Run(ctx, task)
 		// 使用增强型 Commander 处理结果（压缩 + 注册）
@@ -192,7 +193,8 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 				ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 			}
 			// RepoSummary is no longer injected into the task here — it is now passed
-			// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt.
+			// via the RepoContext field (SubAgentLoopConfig → Planner) and appended
+			// to the sub-agent's system prompt.
 			result, err := browser.Run(ctx, task)
 			// 使用增强型 Commander 处理结果（压缩 + 注册）
 			return self.applyEnhancedCommander("browser", task, result, err)

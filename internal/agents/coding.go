@@ -334,7 +334,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 
 	// P0 Step 5：迁移至 runSubAgentLoop（统一内核 director.Planner）。
 	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
-	// ToolTimeout=0 → 180s，与 RunAgentLoop 现状一致；StopOnFinish=true 保持现状。
+	// ToolTimeout=0 → 180s，与统一内核现状一致；StopOnFinish=true 保持现状。
 	// P0 补遗：已恢复 Git Checkpoint 生命周期 hooks（OnAgentStart/OnAgentExit/
 	// OnStepEnd，gcm 方法值直传，见 loopCfg 构造处）；checkpoint 工具
 	//（createCheckpointToolAdapters）仍正常追加到 Adapters。

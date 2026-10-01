@@ -171,7 +171,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 
 	// P0 Step 4：迁移至 runSubAgentLoop（统一内核 director.Planner）。
 	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
-	// StopOnFinish=false、ToolTimeout=0 → 180s，与 RunAgentLoop 现状一致。
+	// StopOnFinish=false、ToolTimeout=0 → 180s，与统一内核现状一致。
 	ec := a.GlobalCtx.EnhancedCommander
 	outcome, err := runSubAgentLoop(ctx, SubAgentLoopConfig{
 		SystemPrompt:       systemPrompt,
