@@ -808,7 +808,288 @@ func (a *DirectorAgent) Run(ctx context.Context, input string) (AgentResult, err
 	return AgentResult{Text: text, Memory: memHistory}, err
 }
 
+// ─── P0-1 Phase 3-2b：门面 ToolRunner 适配 + run() 主循环接线 Planner ─────────
+
+// toSubAgentMemory 将 agents.AgentResult 转换为 director.SubAgentMemory。
+// director 包禁止 import agents（AgentResult 不进入子包），类型转换在门面完成；
+// Phase 3-2b Tools 适配闭包调用（解析结果填 per-run 共享 state）。
+func toSubAgentMemory(result *AgentResult) *director.SubAgentMemory {
+	if result == nil {
+		return nil
+	}
+	sm := &director.SubAgentMemory{Text: result.Text}
+	for _, m := range result.Memory {
+		sm.Memory = append(sm.Memory, director.ChatMessage{
+			Type:       string(m.Type),
+			Content:    m.Content,
+			GroupID:    m.GroupID,
+			ParentID:   m.ParentID,
+			IsSubAgent: m.IsSubAgent,
+		})
+	}
+	return sm
+}
+
+// directorToolRunner 门面 ToolRunner 适配器（实现 director.ToolRunner）。
+// 包装原 run() 工具分发段：a.Adapters 按名查找、delegate_* 专用超时（10min）/
+// 交互式工具无限等待/LogDelegateCall 委派日志、delegate_repo 结果 JSON 解包
+// （RepoSummary 更新）、delegate 检测统计与子 Agent 记忆注入（更新共享 *RunState）。
+// tool_call_start/tool_call_result 事件与 not-found 兜底由 Planner 侧负责。
+type directorToolRunner struct {
+	agent *DirectorAgent
+	state *director.RunState
+}
+
+// Specs 返回全部工具定义（原 a.Adapters 逐个 ToToolDef；排序由 Planner 统一执行，
+// 与原 run() 的 tools.SortToolDefs 时点一致，确保 LLM tools 参数确定性）。
+func (r *directorToolRunner) Specs() []llm.ToolDef {
+	defs := make([]llm.ToolDef, len(r.agent.Adapters))
+	for i, ad := range r.agent.Adapters {
+		defs[i] = ad.ToToolDef()
+	}
+	return defs
+}
+
+// Call 按工具名调用工具（原 run() 工具分发段整段搬迁，控制流逐字等价）。
+// ctx 已由 Planner 在调用前检查（ctx.Err() 非空时 Planner 直接终止并写 turn_aborted）。
+func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON string) (string, error) {
+	a := r.agent
+
+	for _, t := range a.Adapters {
+		if t.Name() != name {
+			continue
+		}
+
+		// Log delegate tool calls with full arguments to dedicated delegate log
+		if strings.HasPrefix(t.Name(), "delegate_") {
+			agentName := strings.TrimPrefix(t.Name(), "delegate_")
+			LogDelegateCall(t.Name(), agentName, argsJSON)
+		}
+
+		// 为工具调用添加超时保护（防止非交互工具无限阻塞）
+		// delegate_* 工具涉及子 agent 完整执行（多轮 LLM + 工具调用），需要更长的超时时间
+		// 使用 WithCancel 剥离父 context 的 deadline，再 WithTimeout 添加独立超时
+		// 这确保工具获得完整的超时时间，不受父 context 剩余时间限制
+		toolTimeout := 120 * time.Second
+		if strings.HasPrefix(name, "delegate_") {
+			toolTimeout = 10 * time.Minute // 子 agent 需要更多时间完成多轮交互
+		}
+		cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
+		// 交互式等待用户输入的工具（ask_user_for_help）需要无限等待用户响应，
+		// 不能加 deadline，否则用户尚未响应调用就会被 context.DeadlineExceeded
+		// 自动取消；仅保留 WithCancel，任务中止时仍可经父 context 取消打断等待。
+		toolCtx := cancelCtx
+		toolCancel := cancelCtxCancel
+		if !isInteractiveUserTool(name) {
+			toolCtx, toolCancel = context.WithTimeout(cancelCtx, toolTimeout)
+		}
+		toolResult, err := t.Call(toolCtx, argsJSON)
+		cancelCtxCancel()
+		toolCancel()
+
+		// 注入 sub-agent memory（delegate 闭包中设置了 pendingSubAgentMemory）。
+		// 原 run() 以 LLM 返回的 tool_call_id 作 ParentID；ToolRunner.Call 签名
+		// （ctx, name, argsJSON）不含 toolCallID，此处传空串（ParentID 为记录性
+		// 字段且无消费逻辑；IsSubAgent 消息不进入 LLM 上下文，差异详见阶段报告）。
+		if a.pendingSubAgentMemory != nil {
+			a.injectSubAgentMemory(*a.pendingSubAgentMemory, "", name)
+			// 解析结果填 per-run 共享 state（门面负责 AgentResult → SubAgentMemory 转换）
+			r.state.PendingSubAgentMemory = toSubAgentMemory(a.pendingSubAgentMemory)
+			a.pendingSubAgentMemory = nil
+		}
+
+		// 检测是否是 delegate 工具，无论成功失败都记录尝试次数（更新共享 state）
+		if strings.HasPrefix(t.Name(), "delegate_") {
+			r.state.DelegationAttempts++
+			if err == nil {
+				r.state.HasDelegated = true
+			}
+		}
+
+		if err != nil {
+			// 对超时错误转换为已格式化的普通错误：Planner 收到后走 "Error: %s"
+			// 分支输出与本方法 toolTimeout 一致的秒数（delegate_* 为 600s；若原样
+			// 返回 DeadlineExceeded，Planner 会按 cfg.ToolTimeout=120s 格式化，
+			// 与原 run() 的 per-tool 超时提示不一致）。非超时错误原样上抛，
+			// 由 Planner 做 1000 字符截断与 "Error: " 前缀包装（与原行为一致）。
+			if errors.Is(err, context.DeadlineExceeded) {
+				return "", fmt.Errorf("tool execution timed out after %d seconds", int(toolTimeout.Seconds()))
+			}
+			return "", err
+		} else if t.Name() == "delegate_repo" {
+			// toolResult is a JSON string (e.g. "\"summary...\""), so we need to unmarshal it
+			// to get the actual text content
+			var summary string
+			if uerr := json.Unmarshal([]byte(toolResult), &summary); uerr == nil {
+				a.GlobalCtx.RepoSummary = summary
+			} else {
+				a.GlobalCtx.RepoSummary = toolResult
+			}
+		}
+		return toolResult, nil
+	}
+	// 防御性兜底（Planner 侧按 Specs() 名单做 not-found 处理，正常不会到达）
+	return fmt.Sprintf("Tool %s not found", name), nil
+}
+
+// run 执行 Director 主任务循环。P0-1 Phase 3-2b：主循环（LLM 对话循环：系统提示
+// 构建 → 多步 LLM 调用 → 工具执行 → 上下文压缩 → 收尾）已搬迁至 director.Planner.Run
+// （planner_run.go，lift-and-shift 自旧实现），本门面方法职责收窄为依赖装配与
+// 门面专属职责：
+//   - currentMemory 设置/清理（delegate 闭包与 injectSubAgentMemory 依赖）；
+//   - llmClient 引擎刷新（TUI 切换模型后 director 与子 Agent 引擎立即生效）；
+//   - per-run RunState 创建（与 ToolRunner 适配器共享指针）；
+//   - Prompts 闭包（系统提示构建段包装）与 directorToolRunner 适配；
+//   - rollout writer 创建（Planner 经 cfg.Rollout 接管 session_meta/turn_context/
+//     消息/事件写入与 Close）。
+// 对外行为等价：返回值、事件序列、memory/thinklink 写入、rollout 输出与旧实现
+// 一致（characterization/fullchain 测试为验收线）。
 func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
+	// 设置当前 memory（delegate 闭包通过 a.currentMemory 访问）
+	a.currentMemory = mem
+	defer func() { a.currentMemory = nil }()
+
+	// 从 llmClient 刷新引擎，确保 TUI 中切换模型后立即生效
+	if a.llmClient != nil {
+		newEngine := a.llmClient.GetAgentEngine("director")
+		if newEngine != nil {
+			a.LLM = newEngine
+		}
+		// 刷新所有子 Agent 的引擎，确保 TUI 切换模型后子 Agent 也使用新模型
+		a.refreshSubAgentEngines()
+	}
+
+	// per-run 规划状态（Planner 与 Tools 适配闭包共享指针；HasDelegated/
+	// NonDelegationPrompts 在 Planner.Run 开头重置，delegationAttempts 由 state
+	// 承载 per-task 语义）
+	state := &director.RunState{
+		MaxSteps:              a.maxSteps,
+		HasDelegated:          false,
+		NonDelegationPrompts:  0,
+		DelegationAttempts:    0,
+		PendingSubAgentMemory: nil,
+	}
+
+	// Prompts 闭包：包装原系统提示构建段（GlobalCtx.FormatPrompt + 仅首次对话
+	// loadProjectContext + metaHandler.List() 自定义 Agent 列举 + KnowledgeInjector.Inject
+	// + context_loaded 事件 + projectContext 延迟追加）。注入失败忽略错误继续
+	// （与原行为一致：Inject 失败不追加 block）；FirstConversation 判定由 Planner
+	// 按 mem == nil || len(mem.GetMessages()) == 0 计算传入，与原逻辑一致。
+	prompts := func(ctx context.Context, in director.PromptInput) (string, error) {
+		// Always start with System Prompt (with any registered custom agents appended)
+		systemPrompt := a.GlobalCtx.FormatPrompt(directorPrompt)
+		var projectContext string
+		// 只在首次对话时加载项目上下文文件（YAGENT.md、CLAUDE.md、AGENTS.md），
+		// 同一会话的后续追问无需重复注入，避免浪费 token。
+		// memory 中不存储 system 消息，因此 len(mem.GetMessages()) == 0 即可判断是否为首次对话。
+		if in.FirstConversation {
+			if loadResult := a.loadProjectContext(); loadResult != nil && loadResult.Content != "" {
+				// 发送上下文加载完成消息到消息通道
+				if a.Publisher != nil {
+					a.Publisher.Publish("context_loaded", loadResult, a.Name())
+				}
+				// 延迟追加：先构建完整的 system prompt（静态前缀 + 环境信息 + 自定义 Agent），
+				// 最后才追加项目上下文，确保静态前缀可被 LLM Prompt Cache 复用
+				projectContext = fmt.Sprintf("\n\n### Project Workspace Context\n%s\n", loadResult.Content)
+			}
+		}
+
+		// 自定义 Agent 描述（Phase 2d：director.MetaAgentHandler.List()，按注册序
+		// 确定性返回，利于 LLM Prompt Cache 复用）
+		if customAgents := a.metaHandler.List(); len(customAgents) > 0 {
+			systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
+			for _, ca := range customAgents {
+				systemPrompt += fmt.Sprintf("- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, ca.Description)
+			}
+			systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n"
+		}
+
+		// 追加项目上下文（放在所有静态内容之后，确保缓存命中率）
+		if projectContext != "" {
+			systemPrompt += projectContext
+		}
+
+		// [知识管理] Director 自身 systemPrompt 动态知识检索注入
+		if a.GlobalCtx.KnowledgeInjector != nil {
+			injCtx := knowledge.InjectionContext{
+				UserMessage: in.Input,
+				TargetFiles: nil,
+				AgentName:   a.Name(),
+				// Domains 为空 = 检索全部 domain（Director 不限定）
+			}
+			if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
+				systemPrompt += knowledgeBlock
+			}
+		}
+		return systemPrompt, nil
+	}
+
+	// ═══════ 初始化 Director Rollout Writer（创建留在门面，写入由 Planner 接管） ═══════
+	var directorRolloutWriter *memory.RolloutWriter
+	if rw := a.createRolloutWriter("director", input); rw != nil {
+		directorRolloutWriter = rw
+		defer func() {
+			if directorRolloutWriter != nil {
+				directorRolloutWriter.Close()
+			}
+		}()
+	}
+
+	// ToolRunner 适配：包装 a.Adapters 查找/超时/委派统计/子 Agent 记忆注入（共享 state）
+	toolRunner := &directorToolRunner{agent: a, state: state}
+
+	// Recovery/Metrics 经 DirectorAdapter 提取（构造时恒非 nil；防御 nil 时 Planner
+	// 侧按"无熔断/0 次重试/跳过指标"处理，与原 if a.adapter != nil 语义一致）
+	var recovery *director.RecoveryHandler
+	var metrics *director.MetricsCollector
+	if a.adapter != nil {
+		recovery = a.adapter.recovery
+		metrics = a.adapter.metrics
+	}
+
+	cfg := director.PlannerConfig{
+		// llmClient 刷新后的引擎（llm.Engine 方法集包含 GenerateContent/Model，
+		// 天然满足 director.LLMClient；与原 run() 使用刷新后 a.LLM 的行为一致）
+		LLM:                       a.LLM,
+		Publisher:                 a.Publisher,
+		Journal:                   a.thinkLink,
+		Rollout:                   directorRolloutWriter,
+		Tools:                     toolRunner,
+		Prompts:                   prompts,
+		Compressor:                a.compressor,
+		MaxSteps:                  a.maxSteps,
+		LLMTimeout:                a.llmTimeout,
+		Recovery:                  recovery,
+		Metrics:                   metrics,
+		NormalizeMessages:         validateAndRepairToolCallPairs,
+		EstimateTokensFn:          EstimateTokens,
+		ConvertToolCallsFn:        convertToolCalls,
+		CompressEnable:            a.EnhancedCommanderCfg.Enable && a.EnhancedCommanderCfg.EnableContextCompression,
+		CompressThreshold:         a.EnhancedCommanderCfg.ContextCompressionThreshold,
+		CompressKeepTokens:        a.EnhancedCommanderCfg.ToolResultKeepTokens,
+		UltimateCompressEnable:    a.EnhancedCommanderCfg.EnableUltimateCompression,
+		UltimateCompressKeepPlans: a.EnhancedCommanderCfg.UltimateCompressionKeepPlans,
+		// 普通工具调用超时（120s）；超时保护由 directorToolRunner 执行，Planner 仅
+		// 用其做 DeadlineExceeded 错误提示的秒数格式化兜底（delegate_* 的 600s 超时
+		// 错误已在 directorToolRunner 内转换为带正确秒数的普通错误）
+		ToolTimeout: 120 * time.Second,
+	}
+
+	planner := director.NewPlanner(cfg, state)
+	result, err := planner.Run(ctx, director.PlanInput{
+		Input:  input,
+		Mem:    mem,
+		TaskID: a.taskID,
+	})
+	// 错误路径等价：Planner 所有错误分支的 PlanResult.Text 均为空串，与旧 run()
+	// 各错误分支返回 ("", err) 一致；成功路径 Text 即最终回复文本
+	// （plain_text → LLM 文本；agent_exit → "Task completed successfully"）。
+	return result.Text, err
+}
+
+// runLegacy P0-1 Phase 3-2 前的旧主循环实现（已被上方 run() 的 Planner 接线取代，
+// 保留至旧码删除步骤；仅作搬迁对照，不再被任何调用点引用）。
+func (a *DirectorAgent) runLegacy(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
 	// 设置当前 memory（delegate 闭包通过 a.currentMemory 访问）
 	a.currentMemory = mem
 
