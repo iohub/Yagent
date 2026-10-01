@@ -36,8 +36,9 @@ import (
 // 字段与 executor.go 的 ExecutorConfig 一一对应，差异仅两处：
 //   - ToolTimeout 替代 ExecutorConfig 中硬编码的 defaultToolTimeout（180s），
 //     0=默认（config.DefaultTimeouts().SubAgentTool，180s）；
-//   - 无 hooks 字段（OnAgentStart/OnAgentExit/OnStepEnd/OnToolResult）——
-//     子 Agent 现状（executor.go 调用点）不注入任何 hooks，迁移后保持一致。
+//   - hooks 字段（OnAgentStart/OnAgentExit/OnStepEnd）可选注入（P0 补遗：
+//     coding.go Git Checkpoint 生命周期恢复使用，等价 executor.go 旧签名）；
+//     其余子 Agent 保持 nil。OnToolResult 无对应需求，不提供。
 type SubAgentLoopConfig struct {
 	SystemPrompt string
 	UserInput    string
@@ -70,6 +71,26 @@ type SubAgentLoopConfig struct {
 	Mem *memory.ConversationMemory
 	// TaskID 当前任务 ID（Planner 日志用，PlanInput.TaskID）。
 	TaskID string
+
+	// ─── 生命周期 hooks（P0 补遗：Git Checkpoint 生命周期恢复）───
+	// 以下 3 个 hook 采用 executor.go ExecutorConfig 的旧签名，由
+	// runSubAgentLoop 适配/透传到 PlannerConfig（nil 时不注入）。
+
+	// OnAgentStart 主循环开始前调用，返回 error 即终止（等价 executor.go
+	// ExecutorConfig.OnAgentStart）。与 PlannerConfig.OnAgentStart 签名一致，
+	// 直接透传；nil 时 Planner 内跳过，等价"不注入"。
+	OnAgentStart func(ctx context.Context) error
+	// OnAgentExit Run 结束（含 panic 路径）时调用一次；返回 error 仅记日志
+	//（等价 executor.go 旧签名）。与 PlannerConfig.OnAgentExit 签名一致
+	//（func(ctx, error) error），直接透传——Planner defer 内已对返回 error
+	// Warn 并统一写入 rollout 结束事件，等价 executor.go 的 defer 内 Warn 行为。
+	OnAgentExit func(ctx context.Context, agentErr error) error
+	// OnStepEnd 每个执行了工具的步骤结束后调用；错误仅记日志（等价
+	// executor.go 旧签名 StepInfo 形式）。PlannerConfig.OnStepEnd 签名为
+	// (ctx, step int, runErr error)，由 runSubAgentLoop 内适配闭包重建
+	// StepInfo；ToolName 无法填充——Planner 签名无 toolName，gcm.OnStepEnd
+	// 已 deprecated 仅日志用途，影响可忽略。
+	OnStepEnd func(ctx context.Context, stepInfo StepInfo) error
 }
 
 // LoopOutcome 子 Agent 循环结果（等价 ExecutorResult）。
@@ -192,11 +213,13 @@ func (r *adapterToolRunner) Call(ctx context.Context, name string, argsJSON stri
 //   - Recovery/Metrics: nil——子 Agent 无熔断/指标；
 //   - NormalizeMessages/EstimateTokensFn/ConvertToolCallsFn：agents 包级函数
 //     闭包注入（director 禁止 import agents，经 cfg 传递）；
-//   - hooks（OnAgentStart/OnAgentExit/OnStepEnd/OnToolResult）全部不注入（nil）——
-//     子 Agent 现状（executor.go 调用点）不注入任何 hooks。OnAgentExit==nil 时
-//     Planner 的散布 rollout 结束事件写入会生效（与 executor.go 不写结束事件
-//     存在日志级差异：迁移后子 Agent rollout 会多出 task_complete/turn_aborted
-//     事件，属改善）；panic 语义等价（两边 OnAgentExit==nil 时 panic 均直接上抛）。
+//   - hooks（P0 补遗）：OnAgentStart/OnAgentExit 与 PlannerConfig 签名一致
+//     直接透传，OnStepEnd 经适配闭包重建 StepInfo（见各字段注释）；cfg 中为
+//     nil 时 Planner 内跳过，等价"不注入"。OnAgentExit 注入时 Planner 的
+//     散布 rollout 结束事件写入跳过、由 defer 统一写入（与 executor.go 一致），
+//     OnAgentExit==nil 时散布写入生效（现状，属改善）；panic 语义：hook 注入
+//     时 Planner defer recover 后调 OnAgentExit（等价 executor.go），未注入时
+//     panic 直接上抛。
 func runSubAgentLoop(ctx context.Context, cfg SubAgentLoopConfig) (LoopOutcome, error) {
 	// 等价 executor.go:91：初始化工具日志器（TUI 模式）。
 	_ = InitToolLogger()
@@ -210,6 +233,18 @@ func runSubAgentLoop(ctx context.Context, cfg SubAgentLoopConfig) (LoopOutcome, 
 	toolTimeout := cfg.ToolTimeout
 	if toolTimeout <= 0 {
 		toolTimeout = config.DefaultTimeouts().SubAgentTool
+	}
+
+	// hooks 适配（P0 补遗）：OnStepEnd 需闭包重建 StepInfo（Planner 签名为
+	// (ctx, step int, runErr error)，Planner 调用时 runErr 恒为 nil →
+	// Success=true，等价 executor.go 旧行为——OnStepEnd 仅成功路径调用且
+	// Success 恒 true）；OnAgentStart/OnAgentExit 签名一致，字面量内直接
+	// 透传。nil 时保持不注入（Planner 内跳过）。
+	var stepEndHook func(ctx context.Context, step int, runErr error) error
+	if cfg.OnStepEnd != nil {
+		stepEndHook = func(ctx context.Context, step int, runErr error) error {
+			return cfg.OnStepEnd(ctx, StepInfo{StepNumber: step, Success: runErr == nil})
+		}
 	}
 
 	planner := director.NewPlanner(director.PlannerConfig{
@@ -253,11 +288,13 @@ func runSubAgentLoop(ctx context.Context, cfg SubAgentLoopConfig) (LoopOutcome, 
 		StopOnFinish:  cfg.StopOnFinish,
 		SystemAsHuman: cfg.SystemAsHuman,
 		RepoContext:   cfg.RepoContext,
-		// hooks（OnAgentStart/OnAgentExit/OnStepEnd/OnToolResult）全部不注入
-		// （nil）——子 Agent 现状（executor.go 调用点）不注入任何 hooks；
-		// OnAgentExit==nil 时 Planner 的散布 rollout 结束事件写入会生效（迁移后
-		// 子 Agent rollout 会多出 task_complete/turn_aborted 事件，属改善）；
-		// panic 语义等价（两边 OnAgentExit==nil 时 panic 均直接上抛）。
+		// hooks 透传（P0 补遗）：OnAgentStart/OnAgentExit 与 PlannerConfig
+		// 签名一致直接赋值（nil 时 Planner 内跳过，等价"不注入"；OnAgentExit
+		// 返回 error 由 Planner defer 内 Warn，等价 executor.go 行为）；
+		// OnStepEnd 经 stepEndHook 适配闭包重建 StepInfo（见上方声明）。
+		OnAgentStart: cfg.OnAgentStart,
+		OnAgentExit:  cfg.OnAgentExit,
+		OnStepEnd:    stepEndHook,
 
 		AgentName:         cfg.AgentName,
 		RolloutCollabMode: "single", // 等价 executor.go WriteTurnContext 中 CollaborationMode: "single"

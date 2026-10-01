@@ -335,9 +335,9 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	// P0 Step 5：迁移至 runSubAgentLoop（统一内核 director.Planner）。
 	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
 	// ToolTimeout=0 → 180s，与 RunAgentLoop 现状一致；StopOnFinish=true 保持现状。
-	// 注意：Git Checkpoint 生命周期回调（OnAgentStart/OnAgentExit/OnStepEnd，gcm）
-	// 未迁移——SubAgentLoopConfig 暂无 hooks 字段，待统一内核支持 hooks 后补齐；
-	// checkpoint 工具（createCheckpointToolAdapters）仍正常追加到 Adapters。
+	// P0 补遗：已恢复 Git Checkpoint 生命周期 hooks（OnAgentStart/OnAgentExit/
+	// OnStepEnd，gcm 方法值直传，见 loopCfg 构造处）；checkpoint 工具
+	//（createCheckpointToolAdapters）仍正常追加到 Adapters。
 	adapters := a.Adapters
 	if gitCheckpointEnabled {
 		// Add checkpoint tools to the adapter list
@@ -348,7 +348,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 
 	// 上下文压缩配置（tool 结果截断）
 	ec := a.GlobalCtx.EnhancedCommander
-	outcome, err := runSubAgentLoop(ctx, SubAgentLoopConfig{
+	loopCfg := SubAgentLoopConfig{
 		SystemPrompt:       systemPrompt,
 		UserInput:          input,
 		Adapters:           adapters,
@@ -361,7 +361,19 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		CompressEnable:     ec.Enable && ec.EnableContextCompression,
 		CompressThreshold:  ec.ContextCompressionThreshold,
 		CompressKeepTokens: ec.ToolResultKeepTokens,
-	})
+	}
+	if gitCheckpointEnabled {
+		// Git Checkpoint 生命周期 hooks（P0 补遗：恢复迁移前语义，方法值直传）。
+		// OnAgentStart 创建 agent 分支；OnAgentExit squash merge/cleanup/final
+		// commit（hook 错误由 Planner defer 内 Warn）；OnStepEnd 已 deprecated，
+		// 仅 AutoCheckpoint=true 时打 Deprecation warning（runSubAgentLoop 内
+		// 适配为 StepInfo{StepNumber: step}）。非 checkpoint 模式 hooks 保持
+		// nil（等价其他子 Agent 现状）。
+		loopCfg.OnAgentStart = gcm.OnAgentStart
+		loopCfg.OnAgentExit = gcm.OnAgentExit
+		loopCfg.OnStepEnd = gcm.OnStepEnd
+	}
+	outcome, err := runSubAgentLoop(ctx, loopCfg)
 	if err != nil {
 		return AgentResult{}, err
 	}
