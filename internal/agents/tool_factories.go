@@ -3,8 +3,10 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"yagent/internal/globalctx"
+	"yagent/internal/memory"
 	"yagent/internal/tools"
 )
 
@@ -59,5 +61,45 @@ func registerToolFactories(reg *tools.Registry, gctx *globalctx.GlobalCtx) {
 			return nil, nil // 禁用：Build 跳过（等价旧 continue），BuildFromFactory 返回 (nil, nil)
 		}
 		return tools.NewAdapter(def.Name, def.Description, gctx.FlowOps.ExecuteAskUserForHelp).WithSchema(def.Parameters), nil
+	})
+}
+
+// delegateSpec 统一模式 delegate 工具的规格（5 个标准子 Agent 共用）。
+type delegateSpec struct {
+	toolName    string // 工具名 "delegate_repo"
+	agentName   string // 短名 "repo"（createRolloutWriter/applyEnhancedCommander 用）
+	disabledKey string // disabledAgents 的 key（"repo"）
+	description string // 工具 description（从原闭包逐字提取）
+	taskDesc    string // task 参数的 description（从原闭包逐字提取）
+	agent       Agent  // types.go Agent 接口
+}
+
+// newDelegateAdapter 统一 delegate 工厂：解析 task → createRolloutWriter →
+// WithRolloutWriter → agent.Run → applyEnhancedCommander（等价原 5 个闭包的统一模式）。
+// selfFn 延迟获取 DirectorAgent：构造函数在 self 赋值前创建 adapter，
+// 闭包调用时 self 已就绪（等价原闭包变量捕获语义——直接传 *DirectorAgent
+// 会固化 nil 指针导致 panic）。
+func newDelegateAdapter(spec delegateSpec, selfFn func() *DirectorAgent) *tools.Adapter {
+	return tools.NewAdapter(spec.toolName, spec.description,
+		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			self := selfFn()
+			task, ok := params["task"].(string)
+			if !ok {
+				return nil, fmt.Errorf("task parameter required")
+			}
+			// 创建 Rollout Writer 并注入到 context
+			if rolloutWriter := self.createRolloutWriter(spec.agentName, task); rolloutWriter != nil {
+				defer rolloutWriter.Close()
+				ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
+			}
+			result, err := spec.agent.Run(ctx, task)
+			// 使用增强型 Commander 处理结果（压缩 + 注册）
+			return self.applyEnhancedCommander(spec.agentName, task, result, err)
+		}).WithSchema(map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"task": map[string]interface{}{"type": "string", "description": spec.taskDesc},
+		},
+		"required": []string{"task"},
 	})
 }

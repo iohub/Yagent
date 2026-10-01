@@ -93,122 +93,34 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	// self-reference for closures that need the DirectorAgent after construction
 	var self *DirectorAgent
 
-	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		task, ok := params["task"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task parameter required")
+	// P0 Step 9b：5 个统一模式 delegate 闭包工厂化（delegateSpec + 循环，原
+	// 5 段 NewAdapter 闭包删除）。description/taskDesc 逐字保留（LLM 可见
+	// schema 不变）；selfFn 延迟获取 self——构造函数在 self 赋值前创建 adapter，
+	// 等价原闭包变量捕获语义（直接传 *DirectorAgent 会固化 nil 指针）。
+	selfFn := func() *DirectorAgent { return self }
+	delegateSpecs := []delegateSpec{
+		{toolName: "delegate_repo", agentName: "repo", disabledKey: "repo", agent: repo,
+			description: "Delegate analysis task to Repo-Agent",
+			taskDesc:    "The task description for Repo-Agent"},
+		{toolName: "delegate_coding", agentName: "coding", disabledKey: "coding", agent: coding,
+			description: "Delegate coding task to Coding-Agent",
+			taskDesc:    "The task description for Coding-Agent"},
+		{toolName: "delegate_chat", agentName: "chat", disabledKey: "chat", agent: chat,
+			description: "Delegate general conversation, explanation, or non-coding tasks to Chat-Agent",
+			taskDesc:    "The message or question for Chat-Agent"},
+		{toolName: "delegate_devops", agentName: "devops", disabledKey: "devops", agent: devops,
+			description: "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.",
+			taskDesc:    "The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."},
+		{toolName: "delegate_browser", agentName: "browser", disabledKey: "browser", agent: browser,
+			description: "Delegate browser automation tasks to Browser-Agent. Browser-Agent controls a headless Chrome browser using go-rod to navigate websites, click elements, fill forms, extract data, take screenshots, generate PDFs, execute JavaScript (with user confirmation), and manage cookies. Use this for tasks like: 'screenshot https://example.com', 'extract text from https://example.com/article', 'fill and submit the login form at https://example.com/login', 'check if website is reachable', 'get the current URL after navigation'. The agent handles all browser lifecycle and page management internally.",
+			taskDesc:    "The browser automation task for Browser-Agent, e.g., 'screenshot https://example.com homepage', 'extract article text from https://example.com/blog/post-1', 'fill the login form and submit', 'navigate to https://example.com and return the page title'."},
+	}
+	var delegateAdapters []*tools.Adapter
+	for _, spec := range delegateSpecs {
+		if !disabledAgents[spec.disabledKey] {
+			delegateAdapters = append(delegateAdapters, newDelegateAdapter(spec, selfFn))
 		}
-		// 创建 Rollout Writer 并注入到 context
-		if rolloutWriter := self.createRolloutWriter("repo", task); rolloutWriter != nil {
-			defer rolloutWriter.Close()
-			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-		}
-		result, err := repo.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + 注册）
-		return self.applyEnhancedCommander("repo", task, result, err)
-	}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "The task description for Repo-Agent"},
-		},
-		"required": []string{"task"},
-	})
-
-	delegateCoding := tools.NewAdapter("delegate_coding", "Delegate coding task to Coding-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		task, ok := params["task"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task parameter required")
-		}
-		// 创建 Rollout Writer 并注入到 context
-		if rolloutWriter := self.createRolloutWriter("coding", task); rolloutWriter != nil {
-			defer rolloutWriter.Close()
-			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-		}
-		// RepoSummary is no longer injected into the task here — it is now passed
-		// via the RepoContext field (SubAgentLoopConfig → Planner) and appended to
-		// the sub-agent's system prompt,
-		// keeping the user message (task) variable and the system prompt cacheable.
-		result, err := coding.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + 注册）
-		return self.applyEnhancedCommander("coding", task, result, err)
-	}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "The task description for Coding-Agent"},
-		},
-		"required": []string{"task"},
-	})
-
-	delegateChat := tools.NewAdapter("delegate_chat", "Delegate general conversation, explanation, or non-coding tasks to Chat-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		task, ok := params["task"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task parameter required")
-		}
-		// 创建 Rollout Writer 并注入到 context
-		if rolloutWriter := self.createRolloutWriter("chat", task); rolloutWriter != nil {
-			defer rolloutWriter.Close()
-			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-		}
-		result, err := chat.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + 注册）
-		return self.applyEnhancedCommander("chat", task, result, err)
-	}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "The message or question for Chat-Agent"},
-		},
-		"required": []string{"task"},
-	})
-
-	delegateDevOps := tools.NewAdapter("delegate_devops", "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		task, ok := params["task"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task parameter required")
-		}
-		// 创建 Rollout Writer 并注入到 context
-		if rolloutWriter := self.createRolloutWriter("devops", task); rolloutWriter != nil {
-			defer rolloutWriter.Close()
-			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-		}
-		result, err := devops.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + 注册）
-		return self.applyEnhancedCommander("devops", task, result, err)
-	}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."},
-		},
-		"required": []string{"task"},
-	})
-
-	delegateBrowser := tools.NewAdapter("delegate_browser",
-		"Delegate browser automation tasks to Browser-Agent. Browser-Agent controls a headless Chrome browser using go-rod to navigate websites, click elements, fill forms, extract data, take screenshots, generate PDFs, execute JavaScript (with user confirmation), and manage cookies. Use this for tasks like: 'screenshot https://example.com', 'extract text from https://example.com/article', 'fill and submit the login form at https://example.com/login', 'check if website is reachable', 'get the current URL after navigation'. The agent handles all browser lifecycle and page management internally.",
-		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			task, ok := params["task"].(string)
-			if !ok {
-				return nil, fmt.Errorf("task parameter required")
-			}
-			// 创建 Rollout Writer 并注入到 context
-			if rolloutWriter := self.createRolloutWriter("browser", task); rolloutWriter != nil {
-				defer rolloutWriter.Close()
-				ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-			}
-			// RepoSummary is no longer injected into the task here — it is now passed
-			// via the RepoContext field (SubAgentLoopConfig → Planner) and appended
-			// to the sub-agent's system prompt.
-			result, err := browser.Run(ctx, task)
-			// 使用增强型 Commander 处理结果（压缩 + 注册）
-			return self.applyEnhancedCommander("browser", task, result, err)
-		}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{
-				"type":        "string",
-				"description": "The browser automation task for Browser-Agent, e.g., 'screenshot https://example.com homepage', 'extract article text from https://example.com/blog/post-1', 'fill the login form and submit', 'navigate to https://example.com and return the page title'.",
-			},
-		},
-		"required": []string{"task"},
-	})
+	}
 
 	delegateMeta := tools.NewAdapter("delegate_meta", "Delegate to Meta-Agent to DESIGN a custom specialized agent. Meta-Agent will craft a tailored system prompt using prompt engineering best practices and select appropriate tools. The designed agent is automatically registered and immediately executed to complete the task. After this, the new agent becomes a permanent delegate tool for future use.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
@@ -340,24 +252,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	adapters := built
 
 	// Conditionally register delegate tools based on disabledAgents
-	var delegateAdapters []*tools.Adapter
-	if !disabledAgents["repo"] {
-		delegateAdapters = append(delegateAdapters, delegateRepo)
-	}
-	if !disabledAgents["coding"] {
-		delegateAdapters = append(delegateAdapters, delegateCoding)
-	}
-	if !disabledAgents["chat"] {
-		delegateAdapters = append(delegateAdapters, delegateChat)
-	}
+	// P0 Step 9b：5 个统一 delegate 的 disabledAgents 判断已并入上方 specs 循环；
+	// delegateMeta 闭包保持原样（重试循环 + ParseMetaAgentOutput + registerCustomAgent），
+	// 单独判断注册（与原 if !disabledAgents["meta"] 等价）。
 	if !disabledAgents["meta"] {
 		delegateAdapters = append(delegateAdapters, delegateMeta)
-	}
-	if !disabledAgents["devops"] {
-		delegateAdapters = append(delegateAdapters, delegateDevOps)
-	}
-	if !disabledAgents["browser"] {
-		delegateAdapters = append(delegateAdapters, delegateBrowser)
 	}
 
 	// Set workspace guard on all adapters (delegate adapters are not dangerous tools)
