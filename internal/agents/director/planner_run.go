@@ -91,8 +91,19 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		return PlanResult{}, err
 	}
 
+	// P0-Step 2b：RepoContext 非空时以 "\n\n" 追加到 system prompt 尾部
+	// （等价基准 executor.go:98-101，在系统消息文本装配处追加）；SystemAsHuman
+	// 时系统消息角色由 System 转为 User（等价基准 executor.go:92-96，在系统
+	// 消息构建处定角色）。零值/空串/nil 时行为与原 run() 完全一致。
+	if p.cfg.RepoContext != "" {
+		systemPrompt += "\n\n" + p.cfg.RepoContext
+	}
+	systemRole := llm.RoleSystem
+	if p.cfg.SystemAsHuman {
+		systemRole = llm.RoleUser
+	}
 	messages = append(messages, llm.Message{
-		Role:    llm.RoleSystem,
+		Role:    systemRole,
 		Content: systemPrompt,
 	})
 
@@ -114,6 +125,13 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			Content: in.Input,
 		})
 	}
+
+	// P0-Step 2b：独立 history 切片（等价基准 executor.go：history 与 messages
+	// 初始内容相同、此后同步追加 assistant/tool/force-user 消息，但不受
+	// NormalizeMessages/常规压缩截断影响——executor.go 中 NormalizeMessages 仅
+	// 重赋值 messages；紧急/终极压缩时同步 history，见下方接线点）。
+	// 初始 = 当前 messages 全量副本（system + Mem 历史或 system + user）。
+	history := append([]llm.Message(nil), messages...)
 
 	// 工具定义（原 a.Adapters 逐个 ToToolDef 由门面 Specs() 包装；仍按原 run()
 	// 行为排序，确保 LLM tools 参数确定性、利于 Prompt Cache 复用）
@@ -182,6 +200,54 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 	}
 	// ═══════ END Director Rollout Writer ═══════
 
+	// ─── P0-Step 2b：OnAgentExit hook（Run 最外层 defer，仅注入时注册） ───
+	// 等价基准 executor.go:178-197：defer 内先 recover（panic → runErr 包装
+	// "agent panic: %v"），再调 hook（hook 错误仅 slog.Warn，不影响返回值），
+	// 最后写 rollout 结束事件（runErr != nil → turn_aborted，否则 task_complete，
+	// 对齐 executor.go defer 内写入）。
+	// rollout 结束事件去重决策：OnAgentExit != nil 时，Run 内散布的
+	// turn_aborted/task_complete 写入（熔断/retry-cancel/llm_error/max_steps/
+	// plain_text/agent_exit/tool-cancel 共 7 处）全部跳过，结束事件由本 defer
+	// 统一写入——与 executor.go 的 defer 内写入模式一致，避免未来子 Agent 路径
+	// hook 与 Planner 内部写入重复；OnAgentExit == nil（Director 路径）时散布
+	// 写入保持原样、零变化。
+	// 注册位置在 rollout Close defer 之后（LIFO 保证结束事件写入先于文件关闭）。
+	var runErr error
+	if p.cfg.OnAgentExit != nil {
+		defer func() {
+			if r := recover(); r != nil {
+				runErr = fmt.Errorf("agent panic: %v", r)
+			}
+			if exitErr := p.cfg.OnAgentExit(ctx, runErr); exitErr != nil {
+				slog.Warn("OnAgentExit hook failed", "agent", "director", "error", exitErr)
+			}
+			if rw := p.cfg.Rollout; rw != nil && rw.Enabled() {
+				if runErr != nil {
+					rw.WriteEventMsg(memory.EventMsg{
+						Type:   "turn_aborted",
+						Reason: runErr.Error(),
+					})
+				} else {
+					rw.WriteEventMsg(memory.EventMsg{
+						Type: "task_complete",
+					})
+				}
+			}
+		}()
+	}
+
+	// ─── P0-Step 2b：OnAgentStart hook（主循环开始前调用，位于初始 rollout
+	// 写入之前，对齐 executor.go 中 OnAgentStart → rollout session_meta 顺序） ───
+	// 等价基准 executor.go:146-150：失败即终止整个 Run，错误包装
+	// "OnAgentStart hook failed: %w"；终止路径仍走 Run 的 defer/OnAgentExit
+	// （defer 已先行注册，故 OnAgentExit 被调，runErr 传 nil——对齐 executor.go
+	// 中 agentErr 仅 panic 赋值的语义）；返回已积累 history。
+	if p.cfg.OnAgentStart != nil {
+		if err := p.cfg.OnAgentStart(ctx); err != nil {
+			return PlanResult{History: history}, fmt.Errorf("OnAgentStart hook failed: %w", err)
+		}
+	}
+
 	// ═══════ 写入初始消息（system prompt + user input） ═══════
 	initialMsgCount := len(messages)
 	for i := 0; i < initialMsgCount; i++ {
@@ -197,14 +263,15 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		if p.cfg.Recovery != nil && p.cfg.Recovery.IsCircuitBreakerOpen() {
 			slog.Error("Circuit breaker open, too many consecutive LLM failures",
 				"step", i)
-			// Rollout: 写入任务中止事件
-			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+			// Rollout: 写入任务中止事件（P0-Step 2b：OnAgentExit != nil 时由 Run
+			// 最外层 defer 统一写结束事件，此处跳过避免重复）
+			if p.cfg.OnAgentExit == nil && directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
 				directorRolloutWriter.WriteEventMsg(memory.EventMsg{
 					Type:   "turn_aborted",
 					Reason: "circuit breaker open",
 				})
 			}
-			return PlanResult{Steps: p.state.Step, StopReason: "circuit_breaker_open"},
+			return PlanResult{Steps: p.state.Step, StopReason: "circuit_breaker_open", History: history},
 				fmt.Errorf("circuit breaker open: LLM calls blocked")
 		}
 
@@ -225,14 +292,15 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				slog.Warn("DirectorAgent retrying LLM call", "step", i, "attempt", attempt, "wait", wait)
 				select {
 				case <-ctx.Done():
-					// Rollout: 写入任务中止事件
-					if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+					// Rollout: 写入任务中止事件（P0-Step 2b：OnAgentExit != nil 时
+					// 由 Run 最外层 defer 统一写结束事件，此处跳过避免重复）
+					if p.cfg.OnAgentExit == nil && directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
 						directorRolloutWriter.WriteEventMsg(memory.EventMsg{
 							Type:   "turn_aborted",
 							Reason: ctx.Err().Error(),
 						})
 					}
-					return PlanResult{Steps: p.state.Step, StopReason: "cancelled"}, ctx.Err()
+					return PlanResult{Steps: p.state.Step, StopReason: "cancelled", History: history}, ctx.Err()
 				case <-time.After(wait):
 				}
 			}
@@ -286,6 +354,10 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				if EstimateMessagesTokens(messages) > threshold {
 					newMessages, emergencyStats := p.cfg.Compressor.ApplyEmergency(ctx, messages, threshold, in.Mem)
 					messages = newMessages
+					// P0-Step 2b：同步 history（等价基准 executor.go 紧急压缩段：
+					// 同步 history，避免调用方拿到未压缩的旧历史）
+					history = make([]llm.Message, len(messages))
+					copy(history, messages)
 					if emergencyStats != nil && p.cfg.Publisher != nil {
 						_ = p.cfg.Publisher.Publish("context_emergency_compressed", map[string]interface{}{
 							"original_tokens":   emergencyStats.OriginalTokens,
@@ -313,6 +385,11 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				if p.cfg.UltimateCompressEnable && p.cfg.Journal != nil && EstimateMessagesTokens(messages) > threshold {
 					newMessages, ultStats := p.cfg.Compressor.ApplyUltimate(messages, threshold, in.Mem, p.cfg.UltimateCompressKeepPlans)
 					messages = newMessages
+					// P0-Step 2b：同步 history（executor.go 无终极压缩对应物；与
+					// 紧急压缩同步同理——History 供后续构造 Memory 用，避免携带
+					// 已被压缩掉的巨型内容）
+					history = make([]llm.Message, len(messages))
+					copy(history, messages)
 					if p.cfg.Publisher != nil && ultStats != nil {
 						_ = p.cfg.Publisher.Publish("context_ultimate_compressed", map[string]interface{}{
 							"original_tokens":   ultStats.OriginalTokens,
@@ -439,14 +516,15 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		if llmErr != nil {
 			slog.Error("DirectorAgent LLM error after all retries",
 				"error", llmErr, "step", i)
-			// Rollout: 写入任务中止事件
-			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+			// Rollout: 写入任务中止事件（P0-Step 2b：OnAgentExit != nil 时由 Run
+			// 最外层 defer 统一写结束事件，此处跳过避免重复）
+			if p.cfg.OnAgentExit == nil && directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
 				directorRolloutWriter.WriteEventMsg(memory.EventMsg{
 					Type:   "turn_aborted",
 					Reason: llmErr.Error(),
 				})
 			}
-			return PlanResult{Steps: p.state.Step, StopReason: "llm_error"}, llmErr
+			return PlanResult{Steps: p.state.Step, StopReason: "llm_error", History: history}, llmErr
 		}
 
 		choice := resp.Choices[0]
@@ -537,19 +615,18 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			}
 		}
 
-		messages = append(messages, llm.Message{
+		assistantMsg := llm.Message{
 			Role:      llm.RoleAssistant,
 			Content:   choice.Content,
 			Reasoning: choice.Reasoning,
 			ToolCalls: choice.ToolCalls,
-		})
+		}
+		messages = append(messages, assistantMsg)
+		// P0-Step 2b：同步追加到 history（等价基准 executor.go：assistantMsg
+		// 同时追加到 messages 与 history）
+		history = append(history, assistantMsg)
 
-		writeDirectorRollout(llm.Message{
-			Role:      llm.RoleAssistant,
-			Content:   choice.Content,
-			Reasoning: choice.Reasoning,
-			ToolCalls: choice.ToolCalls,
-		})
+		writeDirectorRollout(assistantMsg)
 		// 执行检测机制：若 director 未委派任何 agent 就打算以纯文本结束任务，
 		// 以用户角色注入简练英文消息，强制要求其必须 delegate 一个 agent 完成任务。
 		// 达到 maxNonDelegationPrompts 上限后放行（防死循环，循环本身还有 maxSteps 兜底）。
@@ -564,19 +641,23 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				}
 				userMsg := llm.Message{Role: llm.RoleUser, Content: forceMsg}
 				messages = append(messages, userMsg)
+				// P0-Step 2b：同步追加到 history（发给 LLM 的 user 消息，
+				// "完整内部消息历史"全量语义）
+				history = append(history, userMsg)
 				writeDirectorRollout(userMsg)
 				slog.Debug("DirectorAgent force delegation via user message", "step", i, "prompt_count", p.state.NonDelegationPrompts)
 				// 注意：不写入 ConversationMemory（mem），该消息是系统模拟的用户指令，
 				// 不应污染会话历史；下一轮 LLM 调用会看到该 user 消息并应调用 delegate 工具。
 				continue
 			}
-			// Rollout: 写入任务完成事件
-			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+			// Rollout: 写入任务完成事件（P0-Step 2b：OnAgentExit != nil 时由 Run
+			// 最外层 defer 统一写结束事件，此处跳过避免重复）
+			if p.cfg.OnAgentExit == nil && directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
 				directorRolloutWriter.WriteEventMsg(memory.EventMsg{
 					Type: "task_complete",
 				})
 			}
-			return PlanResult{Text: choice.Content, Steps: p.state.Step, StopReason: "plain_text"}, nil
+			return PlanResult{Text: choice.Content, Steps: p.state.Step, StopReason: "plain_text", History: history}, nil
 		}
 
 		for _, tc := range choice.ToolCalls {
@@ -603,14 +684,15 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 
 					// 工具调用前检查 context
 					if ctx.Err() != nil {
-						// Rollout: 写入任务中止事件
-						if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+						// Rollout: 写入任务中止事件（P0-Step 2b：OnAgentExit != nil
+						// 时由 Run 最外层 defer 统一写结束事件，此处跳过避免重复）
+						if p.cfg.OnAgentExit == nil && directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
 							directorRolloutWriter.WriteEventMsg(memory.EventMsg{
 								Type:   "turn_aborted",
 								Reason: ctx.Err().Error(),
 							})
 						}
-						return PlanResult{Steps: p.state.Step, StopReason: "cancelled"}, ctx.Err()
+						return PlanResult{Steps: p.state.Step, StopReason: "cancelled", History: history}, ctx.Err()
 					}
 
 					// 原为工具调用添加超时保护（120s 普通工具 / 10min delegate_* /
@@ -641,6 +723,14 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				toolResult = fmt.Sprintf("Tool %s not found", tc.Function.Name)
 			}
 
+			// P0-Step 2b：OnToolResult hook（每次工具返回后、结果入历史前调用；
+			// 等价基准 executor.go:530-532 的 hook 位置——!found 处理后、
+			// tool_call_result 发布前。result 为入历史的转换后结果（错误已格式化），
+			// callErr 为 Tools.Call 原始错误；nil 跳过）。
+			if p.cfg.OnToolResult != nil {
+				p.cfg.OnToolResult(ctx, tc.Function.Name, toolResult, err)
+			}
+
 			if p.cfg.Publisher != nil {
 				_ = p.cfg.Publisher.Publish("tool_call_result", map[string]interface{}{
 					"tool_name":    tc.Function.Name,
@@ -653,39 +743,61 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				in.Mem.AddToolMessage(toolResult, tc.ID)
 			}
 
-			messages = append(messages, llm.Message{
+			toolMsg := llm.Message{
 				Role:       llm.RoleTool,
 				Content:    toolResult,
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
-			})
+			}
+			messages = append(messages, toolMsg)
+			// P0-Step 2b：同步追加到 history（等价基准 executor.go：toolMsg
+			// 同时追加到 messages 与 history）
+			history = append(history, toolMsg)
 
-			writeDirectorRollout(llm.Message{
-				Role:       llm.RoleTool,
-				Content:    toolResult,
-				ToolCallID: tc.ID,
-				ToolName:   tc.Function.Name,
-			})
+			writeDirectorRollout(toolMsg)
 
 			if tc.Function.Name == "agent_exit" {
-				// Rollout: 写入任务完成事件
-				if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+				// Rollout: 写入任务完成事件（P0-Step 2b：OnAgentExit != nil 时由
+				// Run 最外层 defer 统一写结束事件，此处跳过避免重复）
+				if p.cfg.OnAgentExit == nil && directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
 					directorRolloutWriter.WriteEventMsg(memory.EventMsg{
 						Type: "task_complete",
 					})
 				}
-				return PlanResult{Text: "Task completed successfully", Steps: p.state.Step, StopReason: "agent_exit"}, nil
+				// P0-Step 2b：StopOnFinish 时立即返回（等价基准 executor.go:553-556：
+				// Text=toolResult、该步不调 OnStepEnd，由 OnAgentExit defer 收尾）
+				if p.cfg.StopOnFinish {
+					return PlanResult{Text: toolResult, Steps: p.state.Step, StopReason: "agent_exit", History: history}, nil
+				}
+				return PlanResult{Text: "Task completed successfully", Steps: p.state.Step, StopReason: "agent_exit", History: history}, nil
 			}
 
 		}
+
+		// P0-Step 2b：OnStepEnd hook（每步工具执行后调用，错误仅日志不终止；
+		// 等价基准 executor.go:559-584——仅执行了工具的步骤调用（ToolCalls>0，
+		// 纯文本路径不调用），StopOnFinish 提前返回的那步不执行到此处。
+		// step 为 p.state.Step（1-based，对齐 executor.go StepInfo.StepNumber），
+		// runErr 恒 nil（本步工具已全部执行完毕）；同时写入 sub_agent_activity
+		// 事件（对齐 executor.go hook 块内写入））。
+		if p.cfg.OnStepEnd != nil && len(choice.ToolCalls) > 0 {
+			if stepErr := p.cfg.OnStepEnd(ctx, p.state.Step, nil); stepErr != nil {
+				slog.Warn("OnStepEnd hook error", "agent", "director", "step", p.state.Step, "error", stepErr)
+			}
+			// Rollout: 写入 sub_agent_activity 事件（等价基准 executor.go hook 块内）
+			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+				directorRolloutWriter.WriteEventMsg(memory.StepInfoToEventMsg(p.state.Step, choice.ToolCalls[0].Function.Name, nil, true))
+			}
+		}
 	}
 
-	// Rollout: 写入任务中止事件
-	if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+	// Rollout: 写入任务中止事件（P0-Step 2b：OnAgentExit != nil 时由 Run 最外层
+	// defer 统一写结束事件，此处跳过避免重复）
+	if p.cfg.OnAgentExit == nil && directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
 		directorRolloutWriter.WriteEventMsg(memory.EventMsg{
 			Type:   "turn_aborted",
 			Reason: "DirectorAgent exceeded max steps",
 		})
 	}
-	return PlanResult{Steps: p.state.Step, StopReason: "max_steps"}, fmt.Errorf("DirectorAgent exceeded max steps")
+	return PlanResult{Steps: p.state.Step, StopReason: "max_steps", History: history}, fmt.Errorf("DirectorAgent exceeded max steps")
 }

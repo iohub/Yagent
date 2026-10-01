@@ -152,11 +152,12 @@ type PlannerConfig struct {
 	// （失败包装 "OnAgentStart hook failed: %w"）；nil 跳过。
 	OnAgentStart func(ctx context.Context) error
 	// OnAgentExit：Run 最外层 defer 调用一次（含 panic 路径，panic → runErr
-	// 包装后传入）；nil 跳过。
-	OnAgentExit func(ctx context.Context, runErr error)
-	// OnStepEnd：每步结束调用，错误仅日志不终止；StopOnFinish 提前返回的
-	// 那一步不调用；nil 跳过。
-	OnStepEnd func(ctx context.Context, step int, runErr error)
+	// 包装后传入；hook 返回的 error 仅 slog.Warn、不影响 Run 返回值——
+	// 等价基准 executor.go:178-197）；nil 跳过。
+	OnAgentExit func(ctx context.Context, runErr error) error
+	// OnStepEnd：每步结束调用（hook 返回的 error 仅日志、不终止——等价基准
+	// executor.go:559-584）；StopOnFinish 提前返回的那一步不调用；nil 跳过。
+	OnStepEnd func(ctx context.Context, step int, runErr error) error
 	// OnToolResult：每次工具返回后、结果入历史前调用；nil 跳过。
 	OnToolResult func(ctx context.Context, toolName string, result string, callErr error)
 }
