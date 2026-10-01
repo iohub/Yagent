@@ -169,30 +169,30 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		}
 	}
 
-	cfg := DefaultExecutorConfig()
-	cfg.SystemPrompt = systemPrompt
-	cfg.UserInput = input
-	cfg.Adapters = a.Adapters
-	cfg.LLM = a.LLM
-	cfg.MaxSteps = a.maxSteps
-	cfg.Publisher = a.Publisher
-	cfg.AgentName = a.Name()
-	cfg.SystemAsHuman = true // RepoAgent uses Human role for its prompt
-
-	// 上下文压缩配置（tool 结果截断）
+	// P0 Step 4：迁移至 runSubAgentLoop（统一内核 director.Planner）。
+	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
+	// StopOnFinish=false、ToolTimeout=0 → 180s，与 RunAgentLoop 现状一致。
 	ec := a.GlobalCtx.EnhancedCommander
-	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
-	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
-	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
-
-	result, err := RunAgentLoop(ctx, cfg)
+	outcome, err := runSubAgentLoop(ctx, SubAgentLoopConfig{
+		SystemPrompt:       systemPrompt,
+		UserInput:          input,
+		Adapters:           a.Adapters,
+		LLM:                a.LLM,
+		MaxSteps:           a.maxSteps,
+		Publisher:          a.Publisher,
+		AgentName:          a.Name(),
+		SystemAsHuman:      true, // RepoAgent uses Human role for its prompt
+		CompressEnable:     ec.Enable && ec.EnableContextCompression,
+		CompressThreshold:  ec.ContextCompressionThreshold,
+		CompressKeepTokens: ec.ToolResultKeepTokens,
+	})
 	if err != nil {
 		return AgentResult{}, err
 	}
 
 	agentResult := AgentResult{
-		Text:   result.Text,
-		Memory: ConvertLLMHistoryToMemory(result.History),
+		Text:   outcome.Text,
+		Memory: ConvertLLMHistoryToMemory(outcome.History),
 	}
 
 	// [NEW] Step 2: 异步提交记忆整理任务（非阻塞）
