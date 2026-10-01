@@ -219,9 +219,12 @@ func TestParseMetaAgentOutput_EmptyAgentName(t *testing.T) {
 	}
 }
 
-// ─── getToolFunc Tests ──────────────────────────────────────────────────────
+// ─── Tool Factories Tests ───────────────────────────────────────────────────
 
-func TestGetToolFunc_KnownTools(t *testing.T) {
+// TestToolFactories_KnownTools：构造 DirectorAgent 后经 a.toolReg.BuildFromFactory
+// 断言已知工具的工厂可用（adapter 非 nil），保持原执行绑定测试断言意图
+// （旧方法返回非 nil ≡ 工厂注册 + 构建出非 nil adapter）。
+func TestToolFactories_KnownTools(t *testing.T) {
 	workDir := t.TempDir()
 	agent := newTestDirectorAgent(t, workDir)
 
@@ -234,21 +237,64 @@ func TestGetToolFunc_KnownTools(t *testing.T) {
 
 	for _, name := range knownTools {
 		t.Run(name, func(t *testing.T) {
-			fn := agent.getToolFunc(name)
-			if fn == nil {
-				t.Errorf("getToolFunc(%q) returned nil for known tool", name)
+			def, ok := agent.toolDefMap[name]
+			if !ok {
+				t.Fatalf("toolDefMap missing expected tool %q", name)
+			}
+			adapter, err := agent.toolReg.BuildFromFactory(name, def)
+			if err != nil {
+				t.Errorf("BuildFromFactory(%q) returned error for known tool: %v", name, err)
+			}
+			if adapter == nil {
+				t.Errorf("BuildFromFactory(%q) returned nil adapter for known tool", name)
 			}
 		})
 	}
 }
 
-func TestGetToolFunc_UnknownTool(t *testing.T) {
+// TestToolFactories_UnknownTool：未知工具工厂缺失 → BuildFromFactory 报错，
+// 保持原未知工具测试断言意图（旧方法返回 nil ≡ adapter==nil + err!=nil）。
+func TestToolFactories_UnknownTool(t *testing.T) {
 	workDir := t.TempDir()
 	agent := newTestDirectorAgent(t, workDir)
 
-	fn := agent.getToolFunc("nonexistent_tool_xyz")
-	if fn != nil {
-		t.Error("getToolFunc should return nil for unknown tool")
+	def := tools.ToolDefinition{Name: "nonexistent_tool_xyz"}
+	adapter, err := agent.toolReg.BuildFromFactory("nonexistent_tool_xyz", def)
+	if err == nil {
+		t.Error("BuildFromFactory should return error for unknown tool")
+	}
+	if adapter != nil {
+		t.Error("BuildFromFactory should return nil adapter for unknown tool")
+	}
+}
+
+// TestToolFactories_FullYoloDisablesAskUserForHelp：FullYoloMode 下 ask_user_for_help
+// 工厂返回 (nil, nil)（禁用，Build/BuildFromFactory 调用方跳过），
+// 等价旧构造函数 switch 的 continue 与旧执行绑定方法返回 nil。
+func TestToolFactories_FullYoloDisablesAskUserForHelp(t *testing.T) {
+	workDir := t.TempDir()
+	gctx := newTestGlobalCtx(workDir)
+	gctx.FullYoloMode = true
+	engine := &mockEngine{}
+	agent := NewDirectorAgent(gctx, engine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
+
+	def, ok := agent.toolDefMap["ask_user_for_help"]
+	if !ok {
+		t.Fatal("toolDefMap missing ask_user_for_help")
+	}
+	adapter, err := agent.toolReg.BuildFromFactory("ask_user_for_help", def)
+	if err != nil {
+		t.Errorf("BuildFromFactory(ask_user_for_help) should not error in FullYolo mode: %v", err)
+	}
+	if adapter != nil {
+		t.Error("ask_user_for_help should be disabled (nil adapter) in FullYolo mode")
+	}
+
+	// 初始 Adapters 中不应包含 ask_user_for_help（等价旧 continue 跳过）
+	for _, ad := range agent.Adapters {
+		if ad.Name() == "ask_user_for_help" {
+			t.Error("ask_user_for_help should not be in Director adapters in FullYolo mode")
+		}
 	}
 }
 

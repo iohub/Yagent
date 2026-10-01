@@ -54,6 +54,7 @@ type DirectorAgent struct {
 	maxSteps       int
 	metaRetryCount int                             // max retries for Meta-Agent JSON parse failures
 	toolDefMap     map[string]tools.ToolDefinition // tool name → definition from tools.json
+	toolReg        *tools.Registry                 // 内置工具工厂注册表（registerCustomAgent 装配用，P0 Step 9a）
 	metaHandler    *director.MetaAgentHandler      // Meta-Agent 动态设计的自定义 agent 注册表（Phase 2d 收敛至 director 子包）
 	adapter        *DirectorAdapter                // 新旧整合适配器
 	llmClient      *llm.Client                     // LLM客户端引用，用于运行时动态重新解析引擎
@@ -311,15 +312,13 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		"required": []string{"task"},
 	})
 
-	adapters := []*tools.Adapter{
-		tools.NewAdapter("agent_exit", "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.", globalCtx.FlowOps.ExecuteAgentExit).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"reason": map[string]interface{}{"type": "string", "description": "The reason the agent is exiting, e.g., task completed, cannot proceed, blocked by missing information, or must terminate."},
-			},
-			"required": []string{"reason"},
-		}),
-	}
+	// P0 Step 9a：工具装配改为工厂注册表（消灭旧执行绑定 switch 与构造函数的手工 switch）。
+	// reg 注册内置工具工厂（闭包绑定 GlobalCtx），Build 按 tools.json 顺序生成 Adapter；
+	// 旧实现 agent_exit adapter 手工创建在最前 + switch 逐工具组装，现统一由工厂覆盖
+	// （tools.json 含 agent_exit 定义）。顺序变化不影响 LLM 可见顺序：ToolDefs 最终
+	// 由 SortToolDefs 排序（Planner/adapterToolRunner 使用），a.Adapters 顺序无 LLM 语义。
+	reg := tools.NewRegistry()
+	registerToolFactories(reg, globalCtx)
 
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
@@ -332,31 +331,13 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		toolDefMap[def.Name] = def
 	}
 
-	for _, def := range toolDefs {
-		var fn tools.ToolFunc
-		switch def.Name {
-		case "search_by_regex":
-			fn = globalCtx.SearchOps.ExecuteGrepSearch
-		case "list_dir":
-			fn = globalCtx.FileOps.ExecuteListDir
-		case "read_file":
-			fn = globalCtx.FileOps.ExecuteReadFile
-		case "print_dir_tree":
-			fn = globalCtx.FileOps.ExecutePrintDirTree
-		case "deepthinking":
-			fn = globalCtx.DeepThinkingTool.Execute
-		case "ask_user_for_help":
-			if globalCtx.FullYoloMode {
-				continue
-			}
-			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
-		default:
-			continue
-		}
-
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
-		adapters = append(adapters, adapter)
+	// Build 按 defs 顺序装配：工厂缺失跳过（等价旧 default: continue）；
+	// FullYoloMode 下 ask_user_for_help 工厂返回 (nil, nil) → 跳过（等价旧 continue）。
+	built, buildErr := reg.Build(toolDefs)
+	if buildErr != nil {
+		slog.Warn("tool registry build errors", "error", buildErr)
 	}
+	adapters := built
 
 	// Conditionally register delegate tools based on disabledAgents
 	var delegateAdapters []*tools.Adapter
@@ -415,6 +396,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		maxSteps:       maxSteps,
 		metaRetryCount: metaRetryCount,
 		toolDefMap:     toolDefMap,
+		toolReg:        reg,
 		metaHandler:    director.NewMetaAgentHandler(),
 		adapter:        directorAdapter,
 		llmClient:      llmClient,
@@ -502,44 +484,9 @@ func (a *DirectorAgent) refreshSubAgentEngines() {
 	}
 }
 
-// getToolFunc returns the ToolFunc implementation for a given tool name.
-// This is used when constructing tool adapters for dynamically created agents.
-func (a *DirectorAgent) getToolFunc(name string) tools.ToolFunc {
-	switch name {
-	case "read_file":
-		return a.GlobalCtx.FileOps.ExecuteReadFile
-	case "search_replace_in_file":
-		return a.GlobalCtx.ReplaceTool.ExecuteReplaceBlock
-	case "create_file":
-		return a.GlobalCtx.FileOps.ExecuteCreateFile
-	case "run_bash":
-		return a.GlobalCtx.SysOps.ExecuteRunBash
-	case "search_by_regex":
-		return a.GlobalCtx.SearchOps.ExecuteGrepSearch
-	case "list_dir":
-		return a.GlobalCtx.FileOps.ExecuteListDir
-	case "print_dir_tree":
-		return a.GlobalCtx.FileOps.ExecutePrintDirTree
-	case "thinking":
-		return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			inputBytes, _ := json.Marshal(params)
-			return a.GlobalCtx.ThinkingTool.Call(ctx, string(inputBytes))
-		}
-	case "micro_agent":
-		return a.GlobalCtx.MicroAgentTool.Execute
-	case "deepthinking":
-		return a.GlobalCtx.DeepThinkingTool.Execute
-	case "agent_exit":
-		return a.GlobalCtx.FlowOps.ExecuteAgentExit
-	case "ask_user_for_help":
-		if a.GlobalCtx.FullYoloMode {
-			return nil
-		}
-		return a.GlobalCtx.FlowOps.ExecuteAskUserForHelp
-	default:
-		return nil
-	}
-}
+// 旧执行绑定方法已删除（P0 Step 9a）：执行绑定由 internal/agents/tool_factories.go 的
+// registerToolFactories 注册为工厂（name → FactoryFunc），动态创建 agent 的工具装配
+// 经 a.toolReg.BuildFromFactory 走工厂路径（见 registerCustomAgent）。
 
 // parseMetaAgentOutput / extractJSONObject 已迁移至 director 子包 meta_handler.go
 // （P0-1 Phase 2d：控制流/错误文案逐字不变，统一返回 director.MetaAgentResult；
@@ -586,28 +533,34 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 	}
 
 	// Build tool adapters for the custom agent's selected tools
+	// P0 Step 9a：旧执行绑定方法已由工厂注册表取代（a.toolReg.BuildFromFactory）；
+	// 工厂缺失（err != nil）→ 等价旧 fn==nil 跳过；FullYolo 下 ask_user_for_help
+	// 工厂返回 (nil, nil) → adapter==nil && ferr==nil → 跳过（等价旧跳过）。
 	customAdapters := make([]*tools.Adapter, 0, len(ca.ToolsUsed))
 	for _, toolName := range ca.ToolsUsed {
-		fn := a.getToolFunc(toolName)
-		if fn == nil {
-			slog.Warn("Custom agent references unknown tool", "agent", ca.Name, "tool", toolName)
-			continue
-		}
 		def, ok := a.toolDefMap[toolName]
 		if !ok {
 			slog.Warn("Tool definition not found in toolDefMap", "tool", toolName)
 			continue
 		}
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		adapter, ferr := a.toolReg.BuildFromFactory(toolName, def)
+		if ferr != nil {
+			slog.Warn("Custom agent references unknown tool", "agent", ca.Name, "tool", toolName)
+			continue
+		}
+		if adapter == nil {
+			slog.Warn("Custom agent tool disabled", "agent", ca.Name, "tool", toolName)
+			continue
+		}
 		customAdapters = append(customAdapters, adapter)
 	}
 
 	// Add agent_exit tool so the custom agent can signal exit
 	finishDef, ok := a.toolDefMap["agent_exit"]
 	if ok {
-		fn := a.getToolFunc("agent_exit")
-		adapter := tools.NewAdapter("agent_exit", finishDef.Description, fn).WithSchema(finishDef.Parameters)
-		customAdapters = append(customAdapters, adapter)
+		if adapter, ferr := a.toolReg.BuildFromFactory("agent_exit", finishDef); ferr == nil && adapter != nil {
+			customAdapters = append(customAdapters, adapter)
+		}
 	}
 
 	// Set workspace guard on the custom agent's adapters
