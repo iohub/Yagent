@@ -16,6 +16,7 @@ import (
 	"yagent/internal/knowledge"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
+	"yagent/internal/messaging"
 	"yagent/internal/thinklink"
 	"yagent/internal/tools"
 )
@@ -639,39 +640,50 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 }
 
 // executeCustomAgent runs a custom agent with its designed system prompt and selected tools.
-// Uses the unified AgentExecutor.
+// P0 Step 6：迁移至 runSubAgentLoop（统一内核 director.Planner）。
+// RolloutCollabMode="single" 由 runSubAgentLoop 内置（EnableCollaboration 等价）。
 func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent, adapters []*tools.Adapter, task string) (string, error) {
 	systemPrompt := a.GlobalCtx.FormatPrompt(ca.SystemPrompt)
 
-	cfg := DefaultExecutorConfig()
-	cfg.SystemPrompt = systemPrompt
-	cfg.UserInput = task
-	cfg.Adapters = adapters
-	cfg.LLM = a.LLM
-	cfg.MaxSteps = 15
-	cfg.Publisher = a.Publisher
-	cfg.AgentName = ca.DisplayName
-	cfg.StopOnFinish = true
-	cfg.LLMTimeout = a.llmTimeout
-	// EnableCollaboration 已默认 true
-
-	// 创建 Rollout Writer 并注入到 context
+	// 创建 Rollout Writer 并注入到 context（保持原位：runSubAgentLoop 内部
+	// 用 memory.GetRolloutWriter(ctx) 获取，兼容）
 	if rolloutWriter := a.createRolloutWriter(ca.DisplayName, task); rolloutWriter != nil {
 		defer rolloutWriter.Close()
 		ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 	}
 
-	result, err := RunAgentLoop(ctx, cfg)
+	// P0 Step 6：迁移至 runSubAgentLoop（统一内核 director.Planner）。
+	// MaxSteps=15 保持现状硬编码（后续步骤统一收敛）。
+	// Publisher 兜底：a.Publisher 为 nil 时传 NewMessagePublisher(nil)——避免
+	// nil 具体指针经 SubAgentLoopConfig→PlannerConfig.Publisher（EventPublisher
+	// 接口）赋值后成为 typed-nil，令 Planner.Run 的 != nil 检查失效导致
+	// Publish 空指针崩溃（等价 RunAgentLoop 旧路径的具体指针 nil 检查）；
+	// dispatcher==nil 时 MessagePublisher.Publish 为安全 no-op，行为等价"跳过发布"。
+	publisher := a.Publisher
+	if publisher == nil {
+		publisher = messaging.NewMessagePublisher(nil)
+	}
+	outcome, err := runSubAgentLoop(ctx, SubAgentLoopConfig{
+		SystemPrompt: systemPrompt,
+		UserInput:    task,
+		Adapters:     adapters,
+		LLM:          a.LLM,
+		MaxSteps:     15,
+		Publisher:    publisher,
+		AgentName:    ca.DisplayName,
+		StopOnFinish: true,
+		LLMTimeout:   a.llmTimeout,
+	})
 	if err != nil {
 		return "", err
 	}
 	// 存储自定义 agent memory 供 Run 方法注入
 	agentResult := AgentResult{
-		Text:   result.Text,
-		Memory: ConvertLLMHistoryToMemory(result.History),
+		Text:   outcome.Text,
+		Memory: ConvertLLMHistoryToMemory(outcome.History),
 	}
 	a.pendingSubAgentMemory = &agentResult
-	return result.Text, nil
+	return outcome.Text, nil
 }
 
 // injectSubAgentMemory 将 sub-agent 的执行结果摘要注入到 Director memory 中
