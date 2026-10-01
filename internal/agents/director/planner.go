@@ -137,6 +137,28 @@ type PlannerConfig struct {
 	// 执行，Planner 仅用其做 DeadlineExceeded 错误提示的秒数格式化；delegate_*
 	// 专用 10min 超时由门面感知，Planner 不感知）。
 	ToolTimeout time.Duration
+
+	// ── P0-Step 2a 扩展（等价基准 executor.go RunAgentLoop；纯加法未接线，
+	// 零值/nil=旧行为，后续步骤接线消费）──
+	// StopOnFinish：true 且当前工具为 agent_exit 时立即结束循环返回
+	// （等价基准 executor.go:553-556，该步不调 OnStepEnd，由 OnAgentExit 收尾）。
+	StopOnFinish bool
+	// SystemAsHuman：系统消息角色由 System 转为 User（等价基准 executor.go:92-96）。
+	SystemAsHuman bool
+	// RepoContext：非空时以 "\n\n" 追加到 system prompt 尾部
+	// （等价基准 executor.go:98-101）。
+	RepoContext string
+	// OnAgentStart：主循环开始前调用，返回 error 即终止整个 Run
+	// （失败包装 "OnAgentStart hook failed: %w"）；nil 跳过。
+	OnAgentStart func(ctx context.Context) error
+	// OnAgentExit：Run 最外层 defer 调用一次（含 panic 路径，panic → runErr
+	// 包装后传入）；nil 跳过。
+	OnAgentExit func(ctx context.Context, runErr error)
+	// OnStepEnd：每步结束调用，错误仅日志不终止；StopOnFinish 提前返回的
+	// 那一步不调用；nil 跳过。
+	OnStepEnd func(ctx context.Context, step int, runErr error)
+	// OnToolResult：每次工具返回后、结果入历史前调用；nil 跳过。
+	OnToolResult func(ctx context.Context, toolName string, result string, callErr error)
 }
 
 // PlanInput Planner 单次任务输入。
@@ -151,6 +173,10 @@ type PlanResult struct {
 	Text       string // 最终回复文本（原 run() 返回值）
 	Steps      int    // 实际执行步数
 	StopReason string // 停止原因（"agent_exit"/"plain_text"/"max_steps" 等）
+	// History 完整内部消息历史（system/user/assistant/tool 全量，循环结束时
+	// 赋值，等价基准 executor.go 的 history 切片；供后续子 Agent 迁移时
+	// 构造 Memory 用；本步未接线，循环结束前为零值 nil）。
+	History []llm.Message
 }
 
 // Planner 任务规划器：P0-1 Phase 3-1 脚手架，Phase 3-2 填充主循环实现。
