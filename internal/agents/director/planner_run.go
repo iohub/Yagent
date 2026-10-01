@@ -372,7 +372,10 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				}
 
 				// 紧急压缩:tool 结果已全部截断后仍超限 → 启动紧急模式, 极致压缩 memory 继续任务
-				if EstimateMessagesTokens(messages) > threshold {
+				// P0 Step 3b：Compressor nil 防御为子 Agent 迁移准备（loop.go 装配路径
+				// Compressor 为 nil 时跳过紧急压缩，等价 executor.go 只有常规截断的
+				// 行为）；Director 路径 Compressor 恒非 nil，行为零变化。
+				if p.cfg.Compressor != nil && EstimateMessagesTokens(messages) > threshold {
 					newMessages, emergencyStats := p.cfg.Compressor.ApplyEmergency(ctx, messages, threshold, in.Mem)
 					messages = newMessages
 					// P0-Step 2b：同步 history（等价基准 executor.go 紧急压缩段：
@@ -403,7 +406,10 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				// 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文，
 				// 将 messages 重置为 [system..., 单条 user 重建消息]。
 				// 压缩发生在当前步骤内部，不额外消耗 maxSteps。
-				if p.cfg.UltimateCompressEnable && p.cfg.Journal != nil && EstimateMessagesTokens(messages) > threshold {
+				// P0 Step 3b：补 Compressor != nil 防御为子 Agent 迁移准备（子 Agent
+				// 路径 Compressor 为 nil 时跳过终极压缩）；Director 路径 Compressor
+				// 恒非 nil，行为零变化。
+				if p.cfg.UltimateCompressEnable && p.cfg.Compressor != nil && p.cfg.Journal != nil && EstimateMessagesTokens(messages) > threshold {
 					newMessages, ultStats := p.cfg.Compressor.ApplyUltimate(messages, threshold, in.Mem, p.cfg.UltimateCompressKeepPlans)
 					messages = newMessages
 					// P0-Step 2b：同步 history（executor.go 无终极压缩对应物；与
