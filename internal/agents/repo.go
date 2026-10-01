@@ -12,6 +12,7 @@ import (
 	"yagent/internal/messaging"
 	"yagent/internal/tools"
 
+	"yagent/internal/config"
 	"yagent/internal/llm"
 )
 
@@ -30,9 +31,12 @@ type RepoAgent struct {
 	// [NEW] 记忆系统（可选，nil 表示禁用）
 	memStore *RepoMemoryStore
 	worker   *ConsolidationWorker
+
+	// timeouts 统一超时配置（P0 Step 10：构造时 Normalize，ToolTimeout 接线用）
+	timeouts config.TimeoutsConfig
 }
 
-func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *messaging.MessagePublisher, maxSteps int) *RepoAgent {
+func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *messaging.MessagePublisher, maxSteps int, timeouts config.TimeoutsConfig) *RepoAgent {
 	// self-reference for the delegate closure that needs the RepoAgent after
 	// construction (same pattern as NewDirectorAgent).
 	var self *RepoAgent
@@ -120,6 +124,7 @@ func NewRepoAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, publisher *mes
 		GlobalCtx: globalCtx,
 		Adapters:  adapters,
 		maxSteps:  maxSteps,
+		timeouts:  timeouts.Normalize(), // P0 Step 10：零值回退统一默认值（幂等）
 	}
 	return self
 }
@@ -170,8 +175,9 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	}
 
 	// P0 Step 4：迁移至 runSubAgentLoop（统一内核 director.Planner）。
-	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
-	// StopOnFinish=false、ToolTimeout=0 → 180s，与统一内核现状一致。
+	// LLMTimeout 零值透传：→ runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
+	// P0 Step 10：ToolTimeout 接入统一配置 a.timeouts.SubAgentTool（构造时
+	// Normalize 非零）；StopOnFinish=false 保持现状。
 	ec := a.GlobalCtx.EnhancedCommander
 	outcome, err := runSubAgentLoop(ctx, SubAgentLoopConfig{
 		SystemPrompt:       systemPrompt,
@@ -182,6 +188,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		Publisher:          a.Publisher,
 		AgentName:          a.Name(),
 		SystemAsHuman:      true, // RepoAgent uses Human role for its prompt
+		ToolTimeout:        a.timeouts.SubAgentTool,
 		CompressEnable:     ec.Enable && ec.EnableContextCompression,
 		CompressThreshold:  ec.ContextCompressionThreshold,
 		CompressKeepTokens: ec.ToolResultKeepTokens,

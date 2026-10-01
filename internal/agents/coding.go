@@ -12,6 +12,7 @@ import (
 	"yagent/internal/knowledge"
 	"yagent/internal/tools"
 
+	"yagent/internal/config"
 	"yagent/internal/llm"
 )
 
@@ -71,9 +72,11 @@ type CodingAgent struct {
 	maxSteps     int
 	registry     *tools.Registry // 工具注册表引用
 
+	// timeouts 统一超时配置（P0 Step 10：构造时 Normalize，ToolTimeout 接线用）
+	timeouts config.TimeoutsConfig
 }
 
-func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, browser *BrowserAgent) *CodingAgent {
+func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, browser *BrowserAgent, timeouts config.TimeoutsConfig) *CodingAgent {
 	// 从 tools.json 加载工具定义
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
@@ -139,6 +142,7 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 		BrowserAgent: browser,
 		GlobalCtx:    globalCtx,
 		registry:     registry,
+		timeouts:     timeouts.Normalize(), // P0 Step 10：零值回退统一默认值（幂等）
 	}
 }
 
@@ -333,8 +337,9 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	}
 
 	// P0 Step 5：迁移至 runSubAgentLoop（统一内核 director.Planner）。
-	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
-	// ToolTimeout=0 → 180s，与统一内核现状一致；StopOnFinish=true 保持现状。
+	// LLMTimeout 零值透传：→ runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
+	// P0 Step 10：ToolTimeout 接入统一配置 a.timeouts.SubAgentTool（构造时
+	// Normalize 非零）；StopOnFinish=true 保持现状。
 	// P0 补遗：已恢复 Git Checkpoint 生命周期 hooks（OnAgentStart/OnAgentExit/
 	// OnStepEnd，gcm 方法值直传，见 loopCfg 构造处）；checkpoint 工具
 	//（createCheckpointToolAdapters）仍正常追加到 Adapters。
@@ -358,6 +363,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		AgentName:          a.Name(),
 		StopOnFinish:       true,
 		RepoContext:        a.GlobalCtx.RepoSummary,
+		ToolTimeout:        a.timeouts.SubAgentTool,
 		CompressEnable:     ec.Enable && ec.EnableContextCompression,
 		CompressThreshold:  ec.ContextCompressionThreshold,
 		CompressKeepTokens: ec.ToolResultKeepTokens,

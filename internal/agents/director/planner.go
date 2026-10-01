@@ -133,9 +133,11 @@ type PlannerConfig struct {
 	CompressKeepTokens        int  // 原 ToolResultKeepTokens
 	UltimateCompressEnable    bool // 原 EnableUltimateCompression
 	UltimateCompressKeepPlans int  // 原 UltimateCompressionKeepPlans
-	// ToolTimeout：普通工具调用超时（原 120s；超时保护本身由门面 Tools.Call 包装
-	// 执行，Planner 仅用其做 DeadlineExceeded 错误提示的秒数格式化；delegate_*
-	// 专用 10min 超时由门面感知，Planner 不感知）。
+	// ToolTimeout：普通工具调用超时（原 120s，统一来源 config.DefaultTimeouts().PlannerTool；
+	// P0 Step 10 门面已接线 a.cfg.Timeouts.PlannerTool。超时保护本身由门面
+	// Tools.Call 包装执行，Planner 仅用其做 DeadlineExceeded 错误提示的秒数
+	// 格式化；delegate_* 专用超时（config.Timeouts.Delegate，默认 10min）由
+	// 门面感知，Planner 不感知）。
 	ToolTimeout time.Duration
 
 	// ── P0-Step 2a 扩展（等价基准 executor.go RunAgentLoop；纯加法未接线，

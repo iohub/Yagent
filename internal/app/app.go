@@ -314,7 +314,14 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			browserEngine = ca.client.GetAgentEngine("browser")
 		}
 
-		repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
+		// P0 Step 10：统一超时配置接线（config.Timeouts 零值 Normalize 回退默认值，
+		// config 缺失时与现状硬编码一致）
+		timeouts := config.DefaultTimeouts()
+		if ca.config != nil {
+			timeouts = ca.config.Timeouts.Normalize()
+		}
+
+		repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps, timeouts)
 
 		// [NEW] 初始化 RepoAgent 记忆系统
 		{
@@ -346,13 +353,13 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			)
 		}
 
-		chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps)
+		chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps, timeouts)
 		stepRetries := 0
 		if ca.config != nil {
 			stepRetries = ca.config.LLM.StepRetries
 		}
 		metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine, stepRetries)
-		devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)
+		devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps, timeouts)
 		// 注入 DevOps-Agent，使 Repo-Agent 的 delegate_devops 工具可用
 		repoAgent.SetDevOpsAgent(devopsAgent)
 		// 合并浏览器配置：从 config 读取，未设置的使用默认值
@@ -394,7 +401,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		ca.globalCtx.BrowserMgr = browserMgr
 		browserAgent := agents.NewBrowserAgent(ca.globalCtx, browserMgr, browserEngine, browserMaxSteps)
 
-		codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent)
+		codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent, timeouts)
 
 		// Create DirectorAgent
 		ca.director = agents.NewDirectorAgent(ca.globalCtx, directorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, directorMaxSteps, disabledAgents, metaRetryCount, *ca.config, ca.client)

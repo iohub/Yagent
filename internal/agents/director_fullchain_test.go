@@ -120,11 +120,11 @@ func newFullChainDirector(t *testing.T, workDir string, mock *fullChainMockLLM) 
 	publisher := messaging.NewMessagePublisher(nil)
 	gctx.Publisher = publisher
 
-	repoAgent := NewRepoAgent(gctx, mock, publisher, 10)
-	codingAgent := NewCodingAgent(gctx, mock, 10, nil)
-	chatAgent := NewChatAgent(gctx, mock, 10)
+	repoAgent := NewRepoAgent(gctx, mock, publisher, 10, config.DefaultTimeouts())
+	codingAgent := NewCodingAgent(gctx, mock, 10, nil, config.DefaultTimeouts())
+	chatAgent := NewChatAgent(gctx, mock, 10, config.DefaultTimeouts())
 	metaAgent := NewMetaAgent(gctx, mock, 3)
-	devopsAgent := NewDevOpsAgent(gctx, mock, 10)
+	devopsAgent := NewDevOpsAgent(gctx, mock, 10, config.DefaultTimeouts())
 
 	director := NewDirectorAgent(
 		gctx,

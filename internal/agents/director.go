@@ -71,6 +71,10 @@ type DirectorAgent struct {
 	// 消除 DirectorAgent 上的残留失败计数状态；仅保留活跃使用的 llmTimeout。
 	llmTimeout time.Duration // LLM调用超时，从配置读取，默认3分钟
 
+	// cfg 全量配置副本（P0 Step 10：超时接线统一来源；构造时已对 Timeouts
+	// Normalize，保证 directorToolRunner / PlannerConfig 读取的值非零）
+	cfg config.Config
+
 	// EnhancedCommander 增强型配置
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 	// thinkLink 终极压缩支撑存储：实时记录用户原始输入与 Director 的 Thought & Plan 块，
@@ -277,6 +281,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	// Strangler Fig: 创建适配器桥接层，开始使用新组件（Metrics + CircuitBreaker）
 	adapterCfg := director.DefaultRecoveryConfig()
 	adapterCfg.MaxRetries = maxSteps // 使用 maxSteps 作为重试次数
+
+	// P0 Step 10：cfg.Timeouts 零值字段回退统一默认值后存入（幂等），
+	// 保证 a.cfg.Timeouts.* 读取非零；config 缺失时与现状硬编码一致。
+	cfg.Timeouts = cfg.Timeouts.Normalize()
+
 	adapterCfg.CircuitBreakerThreshold = cfg.LLM.CircuitBreakerThreshold
 	adapterCfg.CircuitBreakerResetTimeout = cfg.LLM.CircuitBreakerResetTimeout
 	adapterCfg.LLMRetries = cfg.LLM.StepRetries // P0-1 Phase 2b 收编：LLM 步骤级重试次数入 handler（单一实例承载全部失败计数/熔断状态）
@@ -308,8 +317,11 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 			if cfg.LLM.Timeout > 0 {
 				return cfg.LLM.Timeout
 			}
-			return 5 * time.Minute
+			return config.DefaultTimeouts().LLM
 		}(),
+
+		// P0 Step 10：全量配置副本（Timeouts 已在上方 Normalize）
+		cfg: cfg,
 
 		// EnhancedCommander 配置
 		EnhancedCommanderCfg: cfg.EnhancedCommander,
@@ -730,9 +742,9 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 		// delegate_* 工具涉及子 agent 完整执行（多轮 LLM + 工具调用），需要更长的超时时间
 		// 使用 WithCancel 剥离父 context 的 deadline，再 WithTimeout 添加独立超时
 		// 这确保工具获得完整的超时时间，不受父 context 剩余时间限制
-		toolTimeout := 120 * time.Second
+		toolTimeout := a.cfg.Timeouts.PlannerTool
 		if strings.HasPrefix(name, "delegate_") {
-			toolTimeout = 10 * time.Minute // 子 agent 需要更多时间完成多轮交互
+			toolTimeout = a.cfg.Timeouts.Delegate // 子 agent 需要更多时间完成多轮交互
 		}
 		cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
 		// 交互式等待用户输入的工具（ask_user_for_help）需要无限等待用户响应，
@@ -768,9 +780,10 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 
 		if err != nil {
 			// 对超时错误转换为已格式化的普通错误：Planner 收到后走 "Error: %s"
-			// 分支输出与本方法 toolTimeout 一致的秒数（delegate_* 为 600s；若原样
-			// 返回 DeadlineExceeded，Planner 会按 cfg.ToolTimeout=120s 格式化，
-			// 与原 run() 的 per-tool 超时提示不一致）。非超时错误原样上抛，
+			// 分支输出与本方法 toolTimeout 一致的秒数（delegate_* 为
+			// cfg.Timeouts.Delegate，默认 600s；若原样返回 DeadlineExceeded，
+			// Planner 会按 cfg.ToolTimeout（PlannerTool）格式化，与原 run() 的
+			// per-tool 超时提示不一致）。非超时错误原样上抛，
 			// 由 Planner 做 1000 字符截断与 "Error: " 前缀包装（与原行为一致）。
 			if errors.Is(err, context.DeadlineExceeded) {
 				return "", fmt.Errorf("tool execution timed out after %d seconds", int(toolTimeout.Seconds()))
@@ -929,10 +942,11 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		CompressKeepTokens:        a.EnhancedCommanderCfg.ToolResultKeepTokens,
 		UltimateCompressEnable:    a.EnhancedCommanderCfg.EnableUltimateCompression,
 		UltimateCompressKeepPlans: a.EnhancedCommanderCfg.UltimateCompressionKeepPlans,
-		// 普通工具调用超时（120s）；超时保护由 directorToolRunner 执行，Planner 仅
-		// 用其做 DeadlineExceeded 错误提示的秒数格式化兜底（delegate_* 的 600s 超时
-		// 错误已在 directorToolRunner 内转换为带正确秒数的普通错误）
-		ToolTimeout: 120 * time.Second,
+		// 普通工具调用超时（config.Timeouts.PlannerTool，默认 120s）；超时保护由
+		// directorToolRunner 执行，Planner 仅用其做 DeadlineExceeded 错误提示的
+		// 秒数格式化兜底（delegate_* 的 Delegate 超时错误已在 directorToolRunner
+		// 内转换为带正确秒数的普通错误）
+		ToolTimeout: a.cfg.Timeouts.PlannerTool,
 	}
 
 	planner := director.NewPlanner(cfg, state)

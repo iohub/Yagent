@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 
+	"yagent/internal/config"
 	"yagent/internal/globalctx"
 	"yagent/internal/llm"
 	"yagent/internal/tools"
@@ -18,9 +19,12 @@ type DevOpsAgent struct {
 	GlobalCtx *globalctx.GlobalCtx
 	Adapters  []*tools.Adapter
 	maxSteps  int
+
+	// timeouts 统一超时配置（P0 Step 10：构造时 Normalize，ToolTimeout 接线用）
+	timeouts config.TimeoutsConfig
 }
 
-func NewDevOpsAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *DevOpsAgent {
+func NewDevOpsAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, timeouts config.TimeoutsConfig) *DevOpsAgent {
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		// Non-fatal: agent falls back to no-tool mode.
@@ -74,6 +78,7 @@ func NewDevOpsAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 		GlobalCtx: globalCtx,
 		Adapters:  adapters,
 		maxSteps:  maxSteps,
+		timeouts:  timeouts.Normalize(), // P0 Step 10：零值回退统一默认值（幂等）
 	}
 }
 
@@ -83,8 +88,9 @@ func (a *DevOpsAgent) Name() string {
 
 func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	// P0 Step 5：迁移至 runSubAgentLoop（统一内核 director.Planner）。
-	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
-	// ToolTimeout=0 → 180s，与统一内核现状一致；StopOnFinish=true 保持现状；
+	// LLMTimeout 零值透传：→ runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
+	// P0 Step 10：ToolTimeout 接入统一配置 a.timeouts.SubAgentTool（构造时
+	// Normalize 非零）；StopOnFinish=true 保持现状；
 	// RolloutCollabMode="single" 由 runSubAgentLoop 内置（EnableCollaboration 等价）。
 	systemPrompt := a.GlobalCtx.FormatPrompt(devopsPrompt)
 	// 上下文压缩配置（tool 结果截断）
@@ -98,6 +104,7 @@ func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error
 		Publisher:          a.Publisher,
 		AgentName:          a.Name(),
 		StopOnFinish:       true,
+		ToolTimeout:        a.timeouts.SubAgentTool,
 		CompressEnable:     ec.Enable && ec.EnableContextCompression,
 		CompressThreshold:  ec.ContextCompressionThreshold,
 		CompressKeepTokens: ec.ToolResultKeepTokens,

@@ -8,6 +8,7 @@ import (
 	"yagent/internal/globalctx"
 	"yagent/internal/tools"
 
+	"yagent/internal/config"
 	"yagent/internal/llm"
 )
 
@@ -19,9 +20,12 @@ type ChatAgent struct {
 	GlobalCtx *globalctx.GlobalCtx
 	Adapters  []*tools.Adapter
 	maxSteps  int
+
+	// timeouts 统一超时配置（P0 Step 10：构造时 Normalize，ToolTimeout 接线用）
+	timeouts config.TimeoutsConfig
 }
 
-func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *ChatAgent {
+func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, timeouts config.TimeoutsConfig) *ChatAgent {
 	// Build a minimal tool set for ChatAgent: micro_agent for sub-LLM reasoning,
 	// thinking for cognitive reflection, and agent_exit for clean termination.
 	var toolDefs []tools.ToolDefinition
@@ -67,6 +71,7 @@ func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) 
 		GlobalCtx: globalCtx,
 		Adapters:  adapters,
 		maxSteps:  maxSteps,
+		timeouts:  timeouts.Normalize(), // P0 Step 10：零值回退统一默认值（幂等）
 	}
 }
 
@@ -76,8 +81,9 @@ func (a *ChatAgent) Name() string {
 
 func (a *ChatAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	// P0 Step 5：迁移至 runSubAgentLoop（统一内核 director.Planner）。
-	// 零值透传：LLMTimeout=0 → runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
-	// ToolTimeout=0 → 180s，与统一内核现状一致；StopOnFinish=true 保持现状；
+	// LLMTimeout 零值透传：→ runSubAgentLoop 内兜底 5min（等价 executor.go:118）；
+	// P0 Step 10：ToolTimeout 接入统一配置 a.timeouts.SubAgentTool（构造时
+	// Normalize 非零）；StopOnFinish=true 保持现状；
 	// RolloutCollabMode="single" 由 runSubAgentLoop 内置（EnableCollaboration 等价）。
 	systemPrompt := a.GlobalCtx.FormatPrompt(chatPrompt)
 	outcome, err := runSubAgentLoop(ctx, SubAgentLoopConfig{
@@ -89,6 +95,7 @@ func (a *ChatAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		Publisher:    a.Publisher,
 		AgentName:    a.Name(),
 		StopOnFinish: true,
+		ToolTimeout:  a.timeouts.SubAgentTool,
 	})
 	if err != nil {
 		return AgentResult{}, err
