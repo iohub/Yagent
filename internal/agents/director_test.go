@@ -11,6 +11,7 @@ import (
 	"yagent/internal/config"
 	"yagent/internal/globalctx"
 	"yagent/internal/llm"
+	"yagent/internal/messaging"
 	"yagent/internal/memory"
 	"yagent/internal/tools"
 )
@@ -40,18 +41,54 @@ func (m *mockEngine) CloseIdleConnections() {
 
 func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 	return &globalctx.GlobalCtx{
-		ProjectPath:  workDir,
-		OS:           "linux",
-		Arch:         "amd64",
-		SpeakLang:    "Chinese",
+		ProjectPath: workDir,
+		OS:          "linux",
+		Arch:        "amd64",
+		SpeakLang:   "Chinese",
+		// Publisher 必须为非 nil 实例:*MessagePublisher(nil 字段)装入 EventBus
+		// 接口会产生 typed-nil,逃过 cfg.Publisher != nil 检查导致 Publish panic;
+		// dispatcher 为 nil 时 Publish 直接返回(与 fullchain 测试同模式)。
+		Publisher:    messaging.NewMessagePublisher(nil),
 		FileOps:      tools.NewFileOperationsTool(workDir),
 		SearchOps:    tools.NewSearchOperationsTool(workDir),
 		SysOps:       tools.NewSystemOperationsTool(workDir),
 		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
 		ThinkingTool: tools.NewThinkingTool(),
-		FlowOps:      tools.NewFlowControlTool(workDir),
+		// micro_agent/deepthinking 工具在 agent 构造期做方法值求值(接口不可为 nil),
+		// 与旧测试 GlobalCtx 提供真实工具实例的语义一致;LLM 为 nil(测试不触发调用)。
+		DeepThinkingTool: tools.NewDeepThinkingTool(nil),
+		MicroAgentTool:   tools.NewMicroAgentTool(nil),
+		FlowOps:          tools.NewFlowControlTool(workDir),
 		RepoOps:      tools.NewRepoOperationsTool(nil, workDir, 0),
 	}
+}
+
+// newDirectorAgentForTest 用与生产语义一致的窄依赖构造 DirectorAgent：
+// formatter/publisher/env/各工具集取自 gctx（具体类型天然实现各窄接口），
+// 测试未用到的 microAgent/deepThinker/repoCtx/knowledge/mcpClient 传 nil
+// （与旧测试 GlobalCtx 不设置这些字段的行为一致）。
+// 参数顺序沿用旧签名（gctx, engine, 六个子代理, maxSteps, disabledAgents,
+// metaRetryCount, cfg, llmClient），使各测试调用点零改动。
+func newDirectorAgentForTest(gctx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
+	return NewDirectorAgent(
+		gctx,                       // PromptFormatter: *GlobalCtx 天然实现
+		gctx.Publisher,             // EventBus
+		globalctx.NewEnvView(gctx), // Env
+		gctx.FileOps,               // FileToolSet
+		gctx.SearchOps,             // SearchToolSet
+		gctx.SysOps,                // SysToolSet
+		gctx.ReplaceTool,           // EditToolSet
+		gctx.FlowOps,               // FlowToolSet
+		gctx.ThinkingTool,          // Thinker
+		gctx.MicroAgentTool,        // MicroAgentRunner
+		gctx.DeepThinkingTool,      // DeepThinker
+		gctx.Guard,                 // *tools.WorkspaceGuard: 测试中为 nil,与旧语义一致
+		nil,                        // RepoContextStore: 测试未触发 delegate_repo
+		nil,                        // KnowledgeProvider: 测试未用
+		nil,                        // *mcp.MCPClient: 测试未用
+		engine, repo, coding, chat, meta, devops, browser,
+		maxSteps, disabledAgents, metaRetryCount, cfg, llmClient,
+	)
 }
 
 // newTestDirectorAgent creates a DirectorAgent with real GlobalCtx but nil sub-agents.
@@ -60,7 +97,7 @@ func newTestDirectorAgent(t *testing.T, workDir string) *DirectorAgent {
 	t.Helper()
 	gctx := newTestGlobalCtx(workDir)
 	engine := &mockEngine{}
-	return NewDirectorAgent(gctx, engine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
+	return newDirectorAgentForTest(gctx, engine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
 }
 
 // makeMetaOutput builds a valid Meta-Agent JSON output string.
@@ -357,7 +394,7 @@ func TestCustomAgentDelegateTool_Execution(t *testing.T) {
 	}
 
 	// Build director with mocked LLM
-	director := NewDirectorAgent(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
+	director := newDirectorAgentForTest(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	ca := &CustomAgent{
 		Name:         "test_executor",
@@ -420,7 +457,7 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 		},
 	}
 
-	director := NewDirectorAgent(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
+	director := newDirectorAgentForTest(gctx, customEngine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	ca := &CustomAgent{
 		Name:         "finisher",
@@ -463,7 +500,7 @@ func TestSystemPrompt_NoCustomAgents(t *testing.T) {
 	agent := newTestDirectorAgent(t, workDir)
 
 	// Build system prompt like Run() does
-	systemPrompt := agent.GlobalCtx.FormatPrompt(directorPrompt)
+	systemPrompt := agent.promptFmt.FormatPrompt(directorPrompt)
 	if agent.metaHandler.Len() > 0 {
 		systemPrompt += "\n\n### Custom Agents..."
 	}
@@ -497,7 +534,7 @@ func TestSystemPrompt_WithCustomAgents(t *testing.T) {
 	})
 
 	// Build system prompt like Run() does
-	systemPrompt := agent.GlobalCtx.FormatPrompt(directorPrompt)
+	systemPrompt := agent.promptFmt.FormatPrompt(directorPrompt)
 	if agent.metaHandler.Len() > 0 {
 		systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
 		for _, ca := range agent.metaHandler.List() {
@@ -548,10 +585,10 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	)
 
 	// MetaAgent that returns the pre-defined output (single LLM call, no tool calls)
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
+	metaAgent := NewMetaAgent(gctx, gctx.Publisher, metaAgentMockLLM(metaOutput), 0)
 
 	// DirectorAgent
-	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
+	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 	initialAdapterCount := len(director.Adapters)
 
 	// Find and call delegate_meta tool
@@ -626,8 +663,8 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 		[]string{"read_file"},
 	)
 
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
-	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
+	metaAgent := NewMetaAgent(gctx, gctx.Publisher, metaAgentMockLLM(metaOutput), 0)
+	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	// Call delegate_meta twice with the same agent design
 	var delegateMeta *tools.Adapter
@@ -666,8 +703,8 @@ func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
 
 	// Meta-Agent returns malformed output (no execution_result block)
 	malformedOutput := "Just some plain text without structured blocks."
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(malformedOutput), 0)
-	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
+	metaAgent := NewMetaAgent(gctx, gctx.Publisher, metaAgentMockLLM(malformedOutput), 0)
+	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range director.Adapters {
@@ -709,8 +746,8 @@ func TestDelegateMeta_EmptyAgentName_NoRegistration(t *testing.T) {
 		"Some system prompt",
 		[]string{"read_file"},
 	)
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(metaOutput), 0)
-	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
+	metaAgent := NewMetaAgent(gctx, gctx.Publisher, metaAgentMockLLM(metaOutput), 0)
+	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range director.Adapters {
@@ -739,8 +776,8 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 	// Meta-Agent output with missing agent_design field (all retries return same malformed output)
 	output := `{"thinking": "designing...", "agent_name": "Test Agent", "tools_used": ["read_file"], "result": {"key": "value"}}`
 
-	metaAgent := NewMetaAgent(gctx, metaAgentMockLLM(output), 0)
-	director := NewDirectorAgent(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
+	metaAgent := NewMetaAgent(gctx, gctx.Publisher, metaAgentMockLLM(output), 0)
+	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
 	for _, ad := range director.Adapters {

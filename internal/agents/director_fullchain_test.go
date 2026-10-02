@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"yagent/internal/config"
+	"yagent/internal/globalctx"
 	"yagent/internal/llm"
 	"yagent/internal/messaging"
 	"yagent/internal/tools"
@@ -120,15 +121,33 @@ func newFullChainDirector(t *testing.T, workDir string, mock *fullChainMockLLM) 
 	publisher := messaging.NewMessagePublisher(nil)
 	gctx.Publisher = publisher
 
-	repoAgent := NewRepoAgent(gctx, mock, publisher, 10)
-	codingAgent := NewCodingAgent(gctx, mock, 10, nil)
-	chatAgent := NewChatAgent(gctx, mock, 10)
-	metaAgent := NewMetaAgent(gctx, mock, 3)
-	devopsAgent := NewDevOpsAgent(gctx, mock, 10)
+	// 窄依赖:与生产 app 装配语义一致(env 动态视图、Director/Coding 共享 RepoContextStore)
+	env := globalctx.NewEnvView(gctx)
+	repoCtx := globalctx.NewRepoContextStore()
+
+	repoAgent := NewRepoAgent(gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.RepoOps, gctx.FlowOps, gctx.DeepThinkingTool, gctx.Guard, nil, nil, config.EnhancedCommanderConfig{}, mock, 10)
+	codingAgent := NewCodingAgent(gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.SysOps, gctx.ReplaceTool, gctx.RepoOps, gctx.FlowOps, gctx.ThinkingTool, gctx.DeepThinkingTool, gctx.MicroAgentTool, gctx.Guard, repoCtx, nil, nil, nil, config.EnhancedCommanderConfig{}, mock, 10, nil)
+	chatAgent := NewChatAgent(gctx, publisher, env, gctx.FlowOps, gctx.ThinkingTool, gctx.DeepThinkingTool, gctx.MicroAgentTool, gctx.Guard, mock, 10)
+	metaAgent := NewMetaAgent(gctx, publisher, mock, 3)
+	devopsAgent := NewDevOpsAgent(gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.SysOps, gctx.FlowOps, gctx.ThinkingTool, gctx.MicroAgentTool, gctx.Guard, config.EnhancedCommanderConfig{}, mock, 10)
 
 	director := NewDirectorAgent(
-		gctx,
-		mock,
+		gctx,              // PromptFormatter
+		publisher,         // EventBus
+		env,               // Env
+		gctx.FileOps,      // FileToolSet
+		gctx.SearchOps,    // SearchToolSet
+		gctx.SysOps,       // SysToolSet
+		gctx.ReplaceTool,  // EditToolSet
+		gctx.FlowOps,      // FlowToolSet
+		gctx.ThinkingTool, // Thinker
+		gctx.MicroAgentTool,
+		gctx.DeepThinkingTool,
+		gctx.Guard,        // *tools.WorkspaceGuard
+		repoCtx,           // RepoContextStore: delegate_repo 结果写入
+		nil,               // KnowledgeProvider: 测试未用
+		nil,               // *mcp.MCPClient: 测试未用
+		mock,              // engine
 		repoAgent,
 		codingAgent,
 		chatAgent,

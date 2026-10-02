@@ -33,7 +33,7 @@ import (
 func newCharDirectorAgent(t *testing.T, engine llm.Engine, workDir string) *DirectorAgent {
 	t.Helper()
 	gctx := newTestGlobalCtx(workDir)
-	return NewDirectorAgent(gctx, engine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
+	return newDirectorAgentForTest(gctx, engine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
 }
 
 // charAssistantMessages 构造 n 条 assistant 文本消息（无 Thought & Plan 关键字，
