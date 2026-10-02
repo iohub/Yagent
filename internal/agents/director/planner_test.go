@@ -109,7 +109,7 @@ func (t *fakePlannerTools) Call(_ context.Context, name, argsJSON string) (strin
 	if t.state != nil && strings.HasPrefix(name, "delegate_") {
 		t.state.HasDelegated = true
 		t.state.DelegationAttempts++
-		t.state.PendingSubAgentMemory = &SubAgentMemory{Text: "SUB_AGENT_RESULT"}
+		t.state.PendingSubAgentMemory = &memory.SubAgentMemory{Text: "SUB_AGENT_RESULT"}
 	}
 	if t.err != nil {
 		return "", t.err

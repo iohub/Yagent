@@ -81,7 +81,7 @@ type PromptBuilder func(ctx context.Context, in PromptInput) (string, error)
 // RunState per-run 规划状态（门面每次任务创建、闭包共享指针）。
 // 字段收编自 DirectorAgent 的本次任务状态：执行检测机制字段
 // （hasDelegated/nonDelegationPrompts/delegationAttempts）与主循环步数；
-// PendingSubAgentMemory 复用 types.go 的 SubAgentMemory（原 *AgentResult
+// PendingSubAgentMemory 复用 memory.SubAgentMemory（原 *AgentResult
 // 的等价载体，Phase 3-2 迁移时门面负责转换）。
 type RunState struct {
 	Step                  int             // 当前主循环步数
@@ -89,7 +89,7 @@ type RunState struct {
 	HasDelegated          bool            // 本次任务是否已委派过 agent（执行检测机制）
 	NonDelegationPrompts  int             // "未委派强制提醒"已注入次数（上限 maxNonDelegationPrompts=3）
 	DelegationAttempts    int             // 委派尝试次数统计（成功失败均计）
-	PendingSubAgentMemory *SubAgentMemory // 最近一次 delegate 调用的完整结果（nil=无）
+	PendingSubAgentMemory *memory.SubAgentMemory // 最近一次 delegate 调用的完整结果（nil=无）
 }
 
 // PlannerConfig Planner 配置（首版允许略胖：主循环依赖一次注入，Phase 3-2 起逐步收窄）。
