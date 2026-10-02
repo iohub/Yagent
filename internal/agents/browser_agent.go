@@ -10,7 +10,6 @@ import (
 	"yagent/internal/browser"
 	browsertools "yagent/internal/tools/browser"
 	"yagent/internal/tools"
-	"yagent/internal/globalctx"
 
 	"yagent/internal/llm"
 )
@@ -22,15 +21,23 @@ var browserPrompt string
 // 使用 go-rod 控制无头 Chrome 浏览器执行网页任务
 type BrowserAgent struct {
 	BaseAgent
-	GlobalCtx      *globalctx.GlobalCtx
-	Adapters       []*tools.Adapter
-	maxSteps       int
-	browserMgr     *browser.Manager
+	promptFmt  PromptFormatter
+	repoCtx    RepoContextStore
+	Adapters   []*tools.Adapter
+	maxSteps   int
+	browserMgr *browser.Manager
 }
 
-// NewBrowserAgent 创建 Browser-Agent
+// NewBrowserAgent 创建 Browser-Agent，仅声明其所需窄依赖：
+// prompt 格式化、事件总线、环境视图（ProjectPath/FullYoloMode）、
+// 流程控制、工作区守护、仓库上下文存储（读取）与浏览器管理器。
 func NewBrowserAgent(
-	globalCtx *globalctx.GlobalCtx,
+	formatter PromptFormatter,
+	publisher EventBus,
+	env Env,
+	flow FlowToolSet,
+	guard *tools.WorkspaceGuard,
+	repoCtx RepoContextStore,
 	browserMgr *browser.Manager,
 	llm llm.Engine,
 	maxSteps int,
@@ -39,8 +46,8 @@ func NewBrowserAgent(
 		maxSteps = 15 // 浏览器任务通常需要较多步骤
 	}
 
-	// 获取工作区目录
-	workspaceDir := globalCtx.ProjectPath
+	// 获取工作区目录（构造期读取，与原 GlobalCtx.ProjectPath 语义一致）
+	workspaceDir := env.ProjectPath()
 
 	// 从 browser 工具包获取所有浏览器工具
 	browserAdapters := browsertools.BrowserTools(workspaceDir)
@@ -48,7 +55,7 @@ func NewBrowserAgent(
 	// 添加 agent_exit 工具以允许 Agent 正常退出
 	agentExitAdapter := tools.NewAdapter("agent_exit",
 		"退出 Browser-Agent 并返回最终结果。在任务完成或无法继续时调用此工具。",
-		globalCtx.FlowOps.ExecuteAgentExit,
+		flow.ExecuteAgentExit,
 	).WithSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -64,10 +71,10 @@ func NewBrowserAgent(
 	allAdapters := append(browserAdapters, agentExitAdapter)
 
 	// Add ask_user_for_help tool (skipped in full-yolo mode)
-	if !globalCtx.FullYoloMode {
+	if !env.FullYoloMode() {
 		askUserAdapter := tools.NewAdapter("ask_user_for_help",
 			"When you encounter uncertainty, need user confirmation or authorization during browser task execution, use this tool to request help from the user. Supports three interaction modes: confirm, select, and input.",
-			globalCtx.FlowOps.ExecuteAskUserForHelp,
+			flow.ExecuteAskUserForHelp,
 		).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -110,17 +117,18 @@ func NewBrowserAgent(
 	}
 
 	// 设置工作区守卫
-	tools.SetGuardOnAdapters(allAdapters, globalCtx.Guard)
+	tools.SetGuardOnAdapters(allAdapters, guard)
 
 	return &BrowserAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
-			Publisher: globalCtx.Publisher,
+			Publisher: publisher,
 		},
-		GlobalCtx:      globalCtx,
-		Adapters:       allAdapters,
-		maxSteps:       maxSteps,
-		browserMgr:     browserMgr,
+		promptFmt:  formatter,
+		repoCtx:    repoCtx,
+		Adapters:   allAdapters,
+		maxSteps:   maxSteps,
+		browserMgr: browserMgr,
 	}
 }
 
@@ -165,7 +173,7 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 	pageCtx := context.WithValue(taskCtx, browsertools.PageCtxKey, page)
 
 	// 构建环境上下文的系统提示词
-	systemPrompt := a.GlobalCtx.FormatPrompt(browserPrompt)
+	systemPrompt := a.promptFmt.FormatPrompt(browserPrompt)
 
 	// 构建执行配置
 	cfg := DefaultExecutorConfig()
@@ -177,7 +185,7 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true // agent_exit 时立即返回
-	cfg.RepoContext = a.GlobalCtx.RepoSummary
+	cfg.RepoContext = a.repoCtx.Get()
 	// EnableCollaboration 已默认 true
 
 	// 运行 Agent 循环

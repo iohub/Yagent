@@ -5,7 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 
-	"yagent/internal/globalctx"
+	"yagent/internal/config"
 	"yagent/internal/llm"
 	"yagent/internal/tools"
 )
@@ -15,12 +15,16 @@ var devopsPrompt string
 
 type DevOpsAgent struct {
 	BaseAgent
-	GlobalCtx *globalctx.GlobalCtx
+	promptFmt PromptFormatter
 	Adapters  []*tools.Adapter
 	maxSteps  int
+	ecCfg     config.EnhancedCommanderConfig
 }
 
-func NewDevOpsAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *DevOpsAgent {
+// NewDevOpsAgent 构造 DevOpsAgent，仅声明其所需窄依赖：
+// prompt 格式化、事件总线、环境视图（FullYoloMode）、文件/搜索/系统工具集、
+// 流程控制、认知思考、微代理工具、工作区守护与上下文压缩配置。
+func NewDevOpsAgent(formatter PromptFormatter, publisher EventBus, env Env, files FileToolSet, search SearchToolSet, sys SysToolSet, flow FlowToolSet, thinker Thinker, microAgent MicroAgentRunner, guard *tools.WorkspaceGuard, ecCfg config.EnhancedCommanderConfig, llm llm.Engine, maxSteps int) *DevOpsAgent {
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		// Non-fatal: agent falls back to no-tool mode.
@@ -34,29 +38,29 @@ func NewDevOpsAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 		var fn tools.ToolFunc
 		switch def.Name {
 		case "run_bash":
-			fn = globalCtx.SysOps.ExecuteRunBash
+			fn = sys.ExecuteRunBash
 		case "read_file":
-			fn = globalCtx.FileOps.ExecuteReadFile
+			fn = files.ExecuteReadFile
 		case "list_dir":
-			fn = globalCtx.FileOps.ExecuteListDir
+			fn = files.ExecuteListDir
 		case "print_dir_tree":
-			fn = globalCtx.FileOps.ExecutePrintDirTree
+			fn = files.ExecutePrintDirTree
 		case "search_by_regex":
-			fn = globalCtx.SearchOps.ExecuteGrepSearch
+			fn = search.ExecuteGrepSearch
 		case "thinking":
 			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				inputBytes, _ := json.Marshal(params)
-				return globalCtx.ThinkingTool.Call(ctx, string(inputBytes))
+				return thinker.Call(ctx, string(inputBytes))
 			}
 		case "micro_agent":
-			fn = globalCtx.MicroAgentTool.Execute
+			fn = microAgent.Execute
 		case "agent_exit":
-			fn = globalCtx.FlowOps.ExecuteAgentExit
+			fn = flow.ExecuteAgentExit
 		case "ask_user_for_help":
-			if globalCtx.FullYoloMode {
+			if env.FullYoloMode() {
 				continue
 			}
-			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
+			fn = flow.ExecuteAskUserForHelp
 		default:
 			continue
 		}
@@ -64,16 +68,17 @@ func NewDevOpsAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
 		adapters = append(adapters, adapter)
 	}
-	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
+	tools.SetGuardOnAdapters(adapters, guard)
 
 	return &DevOpsAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
-			Publisher: globalCtx.Publisher,
+			Publisher: publisher,
 		},
-		GlobalCtx: globalCtx,
+		promptFmt: formatter,
 		Adapters:  adapters,
 		maxSteps:  maxSteps,
+		ecCfg:     ecCfg,
 	}
 }
 
@@ -83,7 +88,7 @@ func (a *DevOpsAgent) Name() string {
 
 func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	cfg := DefaultExecutorConfig()
-	systemPrompt := a.GlobalCtx.FormatPrompt(devopsPrompt)
+	systemPrompt := a.promptFmt.FormatPrompt(devopsPrompt)
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
 	cfg.Adapters = a.Adapters
@@ -93,7 +98,7 @@ func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
 	// 上下文压缩配置（tool 结果截断）
-	ec := a.GlobalCtx.EnhancedCommander
+	ec := a.ecCfg
 	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
 	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
 	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens

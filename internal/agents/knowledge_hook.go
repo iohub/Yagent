@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"yagent/internal/llm"
-	"yagent/internal/globalctx"
+	"yagent/internal/mcp"
 	"yagent/internal/tools"
 )
 
@@ -23,9 +23,9 @@ type multiDimEntry struct {
 // autoConsolidateSubtask 非阻塞地实现复合知识整理：
 //   A（原始知识）：将 taskInput 作为 title、resultText 作为 content 直接入库
 //   B（LLM 多维度提取）：若 engine 非 nil，从原始知识中提取多维度条目后逐个入库
-// 仅在 gctx.CodeSeekMCP 可用时执行，失败仅 Warn 不 panic。
-func autoConsolidateSubtask(gctx *globalctx.GlobalCtx, engine llm.Engine, sourceAgent, knowledgeType, taskInput, resultText string) {
-	if gctx == nil || gctx.CodeSeekMCP == nil {
+// 仅在 mcpClient（CodeSeekMCP）可用时执行，失败仅 Warn 不 panic。
+func autoConsolidateSubtask(mcpClient *mcp.MCPClient, engine llm.Engine, sourceAgent, knowledgeType, taskInput, resultText string) {
+	if mcpClient == nil {
 		return
 	}
 	if resultText == "" {
@@ -45,7 +45,7 @@ func autoConsolidateSubtask(gctx *globalctx.GlobalCtx, engine llm.Engine, source
 		content := resultText
 		tags := []string{sourceAgent, "auto", "子任务总结"}
 
-		tool := tools.NewConsolidateKnowledgeTool(gctx.CodeSeekMCP, engine, sourceAgent, knowledgeType)
+		tool := tools.NewConsolidateKnowledgeTool(mcpClient, engine, sourceAgent, knowledgeType)
 		_, err := tool.Execute(ctx, map[string]interface{}{
 			"title":   title,
 			"content": content,

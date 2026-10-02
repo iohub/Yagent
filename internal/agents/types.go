@@ -5,7 +5,6 @@ import (
 
 	"yagent/internal/llm"
 	"yagent/internal/memory"
-	"yagent/internal/messaging"
 )
 
 // AgentResult 封装 sub-agent 的完整执行结果
@@ -23,5 +22,5 @@ type Agent interface {
 // BaseAgent holds common dependencies for agents.
 type BaseAgent struct {
 	LLM       llm.Engine
-	Publisher *messaging.MessagePublisher
+	Publisher EventBus
 }
