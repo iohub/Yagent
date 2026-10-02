@@ -49,6 +49,15 @@ type ChatMessage struct {
 	IsSubAgent bool   `json:"is_sub_agent,omitempty"` // 快速过滤标记，true表示此消息属于sub-agent内部
 }
 
+// SubAgentMemory 保存子 Agent 的执行结果与内部对话历史，供 Director 记忆注入使用。
+// Memory 直接复用本包 ChatMessage（字段为原 director 包精简版 ChatMessage 的超集，
+// 额外字段零值语义一致）；替代原 internal/agents/director/types.go 中的重复定义
+//（类型下沉去重，依赖方向固定为 memory ← agents/director ← app）。
+type SubAgentMemory struct {
+	Text   string        // 子 Agent 返回的文本结果摘要
+	Memory []ChatMessage // 子 Agent 的内部对话历史
+}
+
 // ConversationMemory 管理完整的对话上下文
 type ConversationMemory struct {
 	Messages []ChatMessage `json:"messages"`

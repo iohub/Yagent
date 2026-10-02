@@ -804,24 +804,16 @@ func (a *DirectorAgent) Run(ctx context.Context, input string) (AgentResult, err
 
 // ─── P0-1 Phase 3-2b：门面 ToolRunner 适配 + run() 主循环接线 Planner ─────────
 
-// toSubAgentMemory 将 agents.AgentResult 转换为 director.SubAgentMemory。
+// toSubAgentMemory 将 agents.AgentResult 转换为 memory.SubAgentMemory。
 // director 包禁止 import agents（AgentResult 不进入子包），类型转换在门面完成；
 // Phase 3-2b Tools 适配闭包调用（解析结果填 per-run 共享 state）。
-func toSubAgentMemory(result *AgentResult) *director.SubAgentMemory {
+func toSubAgentMemory(result *AgentResult) *memory.SubAgentMemory {
 	if result == nil {
 		return nil
 	}
-	sm := &director.SubAgentMemory{Text: result.Text}
-	for _, m := range result.Memory {
-		sm.Memory = append(sm.Memory, director.ChatMessage{
-			Type:       string(m.Type),
-			Content:    m.Content,
-			GroupID:    m.GroupID,
-			ParentID:   m.ParentID,
-			IsSubAgent: m.IsSubAgent,
-		})
-	}
-	return sm
+	// result.Memory 已是 []memory.ChatMessage（原 director.ChatMessage 为其
+	// 字段子集，类型下沉后删除重复定义），直接复用，不再逐条转换。
+	return &memory.SubAgentMemory{Text: result.Text, Memory: result.Memory}
 }
 
 // directorToolRunner 门面 ToolRunner 适配器（实现 director.ToolRunner）。

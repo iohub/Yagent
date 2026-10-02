@@ -88,23 +88,6 @@ type ProjectContextLoadResult struct {
 	Content     string               `json:"content"`
 }
 
-// --- Memory types ---
-
-// SubAgentMemory holds the result and history of a sub-agent execution for memory injection.
-type SubAgentMemory struct {
-	Text   string
-	Memory []ChatMessage
-}
-
-// ChatMessage is a simplified version for memory injection.
-type ChatMessage struct {
-	Type       string
-	Content    string
-	GroupID    string
-	ParentID   string
-	IsSubAgent bool
-}
-
 // --- Metrics types ---
 
 // MetricsSnapshot is a point-in-time snapshot of director metrics.
