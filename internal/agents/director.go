@@ -70,10 +70,10 @@ type DirectorAgent struct {
 	adapter        *DirectorAdapter                // 新旧整合适配器
 	llmClient      *llm.Client                     // LLM客户端引用，用于运行时动态重新解析引擎
 
-	projectCtxLoader     *director.ProjectContextLoader // 项目上下文加载器（Phase 2a 抽取，缓存语义在 loader 内）
+	projectCtxLoader *director.ProjectContextLoader // 项目上下文加载器（Phase 2a 抽取，缓存语义在 loader 内）
 
-	currentMemory         *memory.ConversationMemory // 当前正在使用的 memory（Run 期间设置）
-	pendingSubAgentMemory *AgentResult               // 最近一次 delegate 调用的完整结果（用于 memory 注入）
+	currentMemory         *memory.ConversationMemory  // 当前正在使用的 memory（Run 期间设置）
+	pendingSubAgentMemory *AgentResult                // 最近一次 delegate 调用的完整结果（用于 memory 注入）
 	compressor            *director.ContextCompressor // 上下文压缩编排组件（Phase 3-0 抽取）
 
 	// LLM 兜底机制字段
@@ -335,6 +335,10 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 			},
 			"required": []string{"reason"},
 		}),
+		// 委派返回物分级（第三批次）：read_artifact——按 ID 分页回读委派返回的
+		// 完整 artifact 内容；id 来自 [Sub-Agent Result] 头部的 artifact: 字段，
+		// 用于查看被截断结果的全文。只读工具，不触碰 workspace。
+		newReadArtifactAdapter(),
 	}
 
 	var toolDefs []tools.ToolDefinition
@@ -415,7 +419,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 	adapterCfg.MaxRetries = maxSteps // 使用 maxSteps 作为重试次数
 	adapterCfg.CircuitBreakerThreshold = cfg.LLM.CircuitBreakerThreshold
 	adapterCfg.CircuitBreakerResetTimeout = cfg.LLM.CircuitBreakerResetTimeout
-	adapterCfg.LLMRetries = cfg.LLM.StepRetries // P0-1 Phase 2b 收编：LLM 步骤级重试次数入 handler（单一实例承载全部失败计数/熔断状态）
+	adapterCfg.LLMRetries = cfg.LLM.StepRetries             // P0-1 Phase 2b 收编：LLM 步骤级重试次数入 handler（单一实例承载全部失败计数/熔断状态）
 	directorAdapter := NewDirectorAdapter(true, adapterCfg) // enabled=true 启动 Metrics
 
 	self = &DirectorAgent{
@@ -449,7 +453,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		llmClient:      llmClient,
 		// Phase 2a：项目上下文加载器；projectPathFn 每次加载时动态求值，
 		// 保持原实现读取 a.GlobalCtx.ProjectPath 的动态语义（运行时可通过 SetProjectPath 变更）
-		projectCtxLoader:   director.NewProjectContextLoader(func() string { return env.ProjectPath() }),
+		projectCtxLoader: director.NewProjectContextLoader(func() string { return env.ProjectPath() }),
 
 		// LLM 兜底机制配置（步骤重试/熔断阈值/失败计数已收编至 RecoveryHandler，见上方 adapterCfg 接线）
 		llmTimeout: func() time.Duration {
@@ -470,6 +474,12 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 	// 清理回调注入。thinkLink 须与 a.thinkLink 同一实例（跨任务累积的条目必须
 	// 被压缩重建看到）；agents 类型（AgentResult）经回调由门面适配清理。
 	self.compressor = director.NewContextCompressor(engine, self.Name(), self.thinkLink, func() { self.pendingSubAgentMemory = nil })
+
+	// 委派返回物分级（第二批次接线）：注入项目路径提供者，FinalizeResult
+	// 落盘 artifact 的 projectID 由此计算；进程级一次性注入（DirectorAgent 单例）。
+	if self.env != nil {
+		SetProjectPathProvider(self.env.ProjectPath)
+	}
 
 	// 计算并记录 Tool Definitions 哈希，用于验证 Prompt Cache 一致性
 	toolDefsForHash := make([]llm.ToolDef, len(allAdapters))
@@ -714,21 +724,27 @@ func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID stri
 		return
 	}
 
-	// 只注入摘要消息（result.Text），不注入完整历史
+	// 只注入摘要消息（FormatForDirector 统一格式：无 ArtifactRef 时与旧格式
+	// "[Sub-Agent Result: {toolName}]\n{Text}" 等价；有 ArtifactRef 时为分级
+	// 摘要 + artifact 元信息 + read_artifact 取回指令），不注入完整历史。
 	// sub-agent 的完整对话历史保留在其自身的 LocalMemory 中（Phase 3）
 	if result.Text != "" {
+		metadata := map[string]interface{}{
+			"type":      "sub_agent_summary",
+			"tool":      toolName,
+			"msg_count": len(result.Memory),
+		}
+		if result.ArtifactRef != nil {
+			metadata["artifact_id"] = result.ArtifactRef.ID
+		}
 		summaryMsg := memory.ChatMessage{
 			Type:       memory.MessageTypeAssistant,
-			Content:    fmt.Sprintf("[Sub-Agent Result: %s]\n%s", toolName, result.Text),
+			Content:    FormatForDirector(toolName, result),
 			Timestamp:  time.Now(),
 			GroupID:    fmt.Sprintf("%s_summary_%d", toolName, time.Now().UnixNano()),
 			ParentID:   toolCallID,
 			IsSubAgent: true,
-			Metadata: map[string]interface{}{
-				"type":      "sub_agent_summary",
-				"tool":      toolName,
-				"msg_count": len(result.Memory),
-			},
+			Metadata:   metadata,
 		}
 		a.currentMemory.Messages = append(a.currentMemory.Messages, summaryMsg)
 	}
@@ -773,7 +789,8 @@ func (a *DirectorAgent) computeProjectID() string {
 }
 
 // applyEnhancedCommander 处理子 Agent 执行结果。
-// 当前仅存储 sub-agent memory，并原样返回结果文本（不做压缩/截断）。
+// 存储 sub-agent memory，并返回 FormatForDirector 统一格式文本（第二批次接线：
+// LLM 上下文消费点走分级摘要 + artifact 取回指令，不再原样返回完整结果文本）。
 // agentType: 子 Agent 类型（如 "repo", "coding"）
 // task: 委派的任务描述
 // result: Agent 执行结果
@@ -792,7 +809,9 @@ func (a *DirectorAgent) applyEnhancedCommander(
 		return "", err
 	}
 
-	return result.Text, nil
+	// LLM 上下文消费点：统一走 FormatForDirector（无 ArtifactRef 时与旧格式
+	// "[Sub-Agent Result: {agentType}]\n{Text}" 等价）。
+	return FormatForDirector(agentType, result), nil
 }
 
 func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
@@ -935,13 +954,21 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 			}
 			return "", err
 		} else if t.Name() == "delegate_repo" {
-			// toolResult is a JSON string (e.g. "\"summary...\""), so we need to unmarshal it
-			// to get the actual text content
-			var summary string
-			if uerr := json.Unmarshal([]byte(toolResult), &summary); uerr == nil {
-				a.repoCtx.Set(summary)
+			// 第二批次接线：toolResult 现为 FormatForDirector 包装文本（分级摘要 +
+			// artifact 取回指令）的 JSON 编码，不再是裸的 repo 输出。RepoSummary
+			//（注入 coding/browser agent 系统提示的程序化消费）应拿完整输出而非
+			// 包装文本，故改从 state.PendingSubAgentMemory（上方注入段刚存储的
+			// 本次 delegate 完整结果，repo 用 FinalizeResultFull，Text 恒为完整
+			// 输出）取 .Text；nil 时回退旧的 toolResult JSON 解包逻辑（防御保留）。
+			if psm := r.state.PendingSubAgentMemory; psm != nil {
+				a.repoCtx.Set(psm.Text)
 			} else {
-				a.repoCtx.Set(toolResult)
+				var summary string
+				if uerr := json.Unmarshal([]byte(toolResult), &summary); uerr == nil {
+					a.repoCtx.Set(summary)
+				} else {
+					a.repoCtx.Set(toolResult)
+				}
 			}
 		}
 		return toolResult, nil
@@ -960,6 +987,7 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 //   - Prompts 闭包（系统提示构建段包装）与 directorToolRunner 适配；
 //   - rollout writer 创建（Planner 经 cfg.Rollout 接管 session_meta/turn_context/
 //     消息/事件写入与 Close）。
+//
 // 对外行为等价：返回值、事件序列、memory/thinklink 写入、rollout 输出与旧实现
 // 一致（characterization/fullchain 测试为验收线）。
 func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {

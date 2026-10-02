@@ -393,10 +393,9 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	if err != nil {
 		return AgentResult{}, err
 	}
-	agentResult := AgentResult{
-		Text:   result.Text,
-		Memory: ConvertLLMHistoryToMemory(result.History),
-	}
+	// Full 变体：Text 被程序化消费（下方 consolidation 提交依赖完整输出）；
+	// LLM 上下文由 Director 层 FormatForDirector 走分级摘要。
+	agentResult := FinalizeResultFull(a.Name(), input, result)
 	// [知识管理] 子任务完成后自动沉淀到知识库（非阻塞）
 	if a.knowledge != nil {
 		autoConsolidateSubtask(a.mcpClient, a.LLM, "coding_agent", "coding_modification", input, agentResult.Text)

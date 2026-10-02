@@ -9,12 +9,14 @@ import (
 	"yagent/internal/artifact"
 )
 
-// 本文件实现"委派返回物分级"基础设施（Phase：第一批次，纯加法）：
-//   - FinalizeResult：统一构造函数，完整结果落盘为 artifact，生成分级摘要；
+// 本文件实现"委派返回物分级"基础设施（第二批次接线完成）：
+//   - FinalizeResult / FinalizeResultFull：统一构造函数，完整结果落盘为 artifact，
+//     生成分级摘要；
 //   - FormatForDirector：注入 Director 上下文的统一格式文本（格式单源）。
 //
-// 旧 AgentResult.Text 字段本批次仍在：FinalizeResult 同时设置 Text = Summary，
-// 保证现有消费点行为不变；下一批次（原子切换）删除 Text 后自动收敛。
+// Text 字段语义（第二批次定案）：完整文本输出，供程序化消费（输出解析、
+// consolidation、错误消息）；LLM 上下文一律走 FormatForDirector（读
+// Summary/ArtifactRef），不依赖 Text。
 
 // projectPathProvider 返回当前项目路径（由 DirectorAgent.env.ProjectPath 提供）。
 // computeProjectID() 是 DirectorAgent 私有方法（director.go），包级函数无法访问，
@@ -26,7 +28,7 @@ var (
 )
 
 // SetProjectPathProvider 注入项目路径提供者（并发安全；nil 忽略）。
-// 供下一批次接线：SetProjectPathProvider(directorAgent.env.ProjectPath)。
+// 由 DirectorAgent 构造函数调用：SetProjectPathProvider(directorAgent.env.ProjectPath)。
 func SetProjectPathProvider(fn func() string) {
 	projectPathMu.Lock()
 	defer projectPathMu.Unlock()
@@ -85,11 +87,20 @@ func FinalizeResult(agentName, task string, exec ExecutorResult) AgentResult {
 	_ = store.UpdateSummary(projectID, ref.ID, summary)
 
 	return AgentResult{
-		Text:        summary, // 临时兼容字段（= Summary），下一批次删除后自动收敛
+		Text:        summary,
 		Summary:     summary,
 		ArtifactRef: &ref,
 		Memory:      mem,
 	}
+}
+
+// FinalizeResultFull 是 FinalizeResult 的 Full 变体：Text 恒为 exec.Text 完整输出，
+// 供依赖完整输出的程序化消费链路（consolidation、输出解析、RepoSummary 等）；
+// Summary/ArtifactRef 分级逻辑与 FinalizeResult 完全相同（LLM 上下文仍走分级摘要）。
+func FinalizeResultFull(agentName, task string, exec ExecutorResult) AgentResult {
+	r := FinalizeResult(agentName, task, exec)
+	r.Text = exec.Text
+	return r
 }
 
 // FormatForDirector 生成注入 Director 上下文的统一格式文本（两处消费点共用，格式单源）。

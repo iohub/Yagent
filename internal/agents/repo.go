@@ -202,10 +202,10 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		return AgentResult{}, err
 	}
 
-	agentResult := AgentResult{
-		Text:   result.Text,
-		Memory: ConvertLLMHistoryToMemory(result.History),
-	}
+	// Full 变体：Text 被程序化消费（下方 consolidation 提交 + Director 层
+	// delegate_repo 结果 → RepoSummary 注入 coding/browser 系统提示），
+	// 需恒为完整输出；LLM 上下文由 Director 层 FormatForDirector 走分级摘要。
+	agentResult := FinalizeResultFull(a.Name(), input, result)
 
 	// [NEW] Step 2: 异步提交记忆整理任务（非阻塞）
 	if a.worker != nil && agentResult.Text != "" {

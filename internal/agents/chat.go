@@ -92,8 +92,7 @@ func (a *ChatAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	if err != nil {
 		return AgentResult{}, err
 	}
-	return AgentResult{
-		Text:   result.Text,
-		Memory: ConvertLLMHistoryToMemory(result.History),
-	}, nil
+	// 普通版：Text 无程序化消费点（delegate_chat 返回值由 Director 层
+	// FormatForDirector 接管）。
+	return FinalizeResult(a.Name(), input, result), nil
 }
