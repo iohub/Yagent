@@ -18,10 +18,15 @@ func newTestExecutor(text string) ExecutorResult {
 }
 
 // setArtifactRoot 测试环境：YAGENT_ARTIFACT_ROOT 指向 t.TempDir()。
+// 同时清理 projectPathProvider：第二批次接线后 NewDirectorAgent 构造时会进程级
+// 注入 mock env 的路径，导致同包内后续测试的落盘 projectID 非 "default"；
+// 每个测试从干净 provider 状态开始（保留"无 provider 注入"的原测试意图）。
 func setArtifactRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("YAGENT_ARTIFACT_ROOT", root)
+	t.Cleanup(func() { SetProjectPathProvider(nil) })
+	SetProjectPathProvider(nil)
 	return root
 }
 

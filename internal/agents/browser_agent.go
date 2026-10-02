@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"yagent/internal/browser"
-	browsertools "yagent/internal/tools/browser"
 	"yagent/internal/tools"
+	browsertools "yagent/internal/tools/browser"
 
 	"yagent/internal/llm"
 )
@@ -94,8 +94,8 @@ func NewBrowserAgent(
 					"description": "Optional suggested answer options. Controls the interaction mode: empty=input mode, ['yes','no']=confirm mode, 2+ options=select mode",
 				},
 				"interaction_type": map[string]interface{}{
-					"type": "string",
-					"enum": []interface{}{"confirm", "select", "input"},
+					"type":        "string",
+					"enum":        []interface{}{"confirm", "select", "input"},
 					"description": "Optional. Explicitly set the interaction mode, overriding automatic inference",
 				},
 				"default_value": map[string]interface{}{
@@ -197,10 +197,9 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 	}
 
 	log.Printf("[BrowserAgent] 任务完成")
-	return AgentResult{
-		Text:   result.Text,
-		Memory: ConvertLLMHistoryToMemory(result.History),
-	}, nil
+	// 普通版：Text 无程序化消费点（delegate_browser 返回值由 Director 层
+	// FormatForDirector 接管；coding 内部嵌套委派仅作 LLM tool_result）。
+	return FinalizeResult(a.Name(), input, result), nil
 }
 
 // GetBrowserManager 获取浏览器管理器（供外部使用）

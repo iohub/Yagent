@@ -167,8 +167,11 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		{Role: llm.RoleAssistant, Content: content},
 	}
 
-	return AgentResult{
-		Text:   content,
-		Memory: ConvertLLMHistoryToMemory(history),
-	}, nil
+	// Full 变体：Text 被 Director 层 ParseMetaAgentOutput 程序化 JSON 解析
+	//（依赖完整输出）；LLM 上下文由 Director 层 FormatForDirector 走分级摘要。
+	// Meta 不走 RunAgentLoop，直接以单轮对话构造 ExecutorResult 复用统一设施。
+	return FinalizeResultFull(a.Name(), input, ExecutorResult{
+		Text:    content,
+		History: history,
+	}), nil
 }
