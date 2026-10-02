@@ -314,7 +314,13 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			browserEngine = ca.client.GetAgentEngine("browser")
 		}
 
-		repoAgent := agents.NewRepoAgent(ca.globalCtx, repoEngine, publisher, repoMaxSteps)
+		// 创建 RepoContextStore（带锁仓库上下文存储：Director 写入 delegate_repo 结果，
+		// coding/browser agent 读取）与 EnvView（运行时环境字段动态读取视图）。
+		// 替代原 GlobalCtx.RepoSummary 共享可变字段，消除数据竞争。
+		repoCtx := globalctx.NewRepoContextStore()
+		env := globalctx.NewEnvView(&gctx)
+
+		repoAgent := agents.NewRepoAgent(&gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.RepoOps, gctx.FlowOps, gctx.DeepThinkingTool, guard, gctx.KnowledgeInjector, gctx.CodeSeekMCP, ca.config.EnhancedCommander, repoEngine, repoMaxSteps)
 
 		// [NEW] 初始化 RepoAgent 记忆系统
 		{
@@ -346,13 +352,13 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			)
 		}
 
-		chatAgent := agents.NewChatAgent(ca.globalCtx, chatEngine, chatMaxSteps)
+		chatAgent := agents.NewChatAgent(&gctx, publisher, env, gctx.FlowOps, gctx.ThinkingTool, gctx.DeepThinkingTool, gctx.MicroAgentTool, guard, chatEngine, chatMaxSteps)
 		stepRetries := 0
 		if ca.config != nil {
 			stepRetries = ca.config.LLM.StepRetries
 		}
-		metaAgent := agents.NewMetaAgent(ca.globalCtx, metaEngine, stepRetries)
-		devopsAgent := agents.NewDevOpsAgent(ca.globalCtx, devopsEngine, devopsMaxSteps)
+		metaAgent := agents.NewMetaAgent(&gctx, publisher, metaEngine, stepRetries)
+		devopsAgent := agents.NewDevOpsAgent(&gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.SysOps, gctx.FlowOps, gctx.ThinkingTool, gctx.MicroAgentTool, guard, ca.config.EnhancedCommander, devopsEngine, devopsMaxSteps)
 		// 注入 DevOps-Agent，使 Repo-Agent 的 delegate_devops 工具可用
 		repoAgent.SetDevOpsAgent(devopsAgent)
 		// 合并浏览器配置：从 config 读取，未设置的使用默认值
@@ -392,12 +398,12 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		}
 		browserMgr := browser.NewManager(browserCfg, browserCfg.AllowedDomains, browserCfg.BlockedDomains)
 		ca.globalCtx.BrowserMgr = browserMgr
-		browserAgent := agents.NewBrowserAgent(ca.globalCtx, browserMgr, browserEngine, browserMaxSteps)
+		browserAgent := agents.NewBrowserAgent(&gctx, publisher, env, gctx.FlowOps, guard, repoCtx, browserMgr, browserEngine, browserMaxSteps)
 
-		codingAgent := agents.NewCodingAgent(ca.globalCtx, codingEngine, codingMaxSteps, browserAgent)
+		codingAgent := agents.NewCodingAgent(&gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.SysOps, gctx.ReplaceTool, gctx.RepoOps, gctx.FlowOps, gctx.ThinkingTool, gctx.DeepThinkingTool, gctx.MicroAgentTool, guard, repoCtx, gctx.KnowledgeInjector, gctx.CodeSeekMCP, &ca.config.GitCheckpoint, ca.config.EnhancedCommander, codingEngine, codingMaxSteps, browserAgent)
 
 		// Create DirectorAgent
-		ca.director = agents.NewDirectorAgent(ca.globalCtx, directorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, directorMaxSteps, disabledAgents, metaRetryCount, *ca.config, ca.client)
+		ca.director = agents.NewDirectorAgent(&gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.SysOps, gctx.ReplaceTool, gctx.FlowOps, gctx.ThinkingTool, gctx.MicroAgentTool, gctx.DeepThinkingTool, guard, repoCtx, gctx.KnowledgeInjector, gctx.CodeSeekMCP, directorEngine, repoAgent, codingAgent, chatAgent, metaAgent, devopsAgent, browserAgent, directorMaxSteps, disabledAgents, metaRetryCount, *ca.config, ca.client)
 	})
 }
 

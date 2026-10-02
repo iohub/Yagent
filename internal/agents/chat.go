@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 
 	"yagent/internal/tools"
-	"yagent/internal/globalctx"
 
 	"yagent/internal/llm"
 )
@@ -16,12 +15,15 @@ var chatPrompt string
 
 type ChatAgent struct {
 	BaseAgent
-	GlobalCtx *globalctx.GlobalCtx
+	promptFmt PromptFormatter
 	Adapters  []*tools.Adapter
 	maxSteps  int
 }
 
-func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) *ChatAgent {
+// NewChatAgent 构造 ChatAgent，仅声明其所需窄依赖：
+// prompt 格式化、事件总线、环境视图（FullYoloMode）、流程控制、
+// 认知/深度思考、微代理工具与工作区守护。
+func NewChatAgent(formatter PromptFormatter, publisher EventBus, env Env, flow FlowToolSet, thinker Thinker, deepThinker DeepThinker, microAgent MicroAgentRunner, guard *tools.WorkspaceGuard, llm llm.Engine, maxSteps int) *ChatAgent {
 	// Build a minimal tool set for ChatAgent: micro_agent for sub-LLM reasoning,
 	// thinking for cognitive reflection, and agent_exit for clean termination.
 	var toolDefs []tools.ToolDefinition
@@ -35,21 +37,21 @@ func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) 
 		var fn tools.ToolFunc
 		switch def.Name {
 		case "micro_agent":
-			fn = globalCtx.MicroAgentTool.Execute
+			fn = microAgent.Execute
 		case "thinking":
 			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				inputBytes, _ := json.Marshal(params)
-				return globalCtx.ThinkingTool.Call(ctx, string(inputBytes))
+				return thinker.Call(ctx, string(inputBytes))
 			}
 		case "agent_exit":
-			fn = globalCtx.FlowOps.ExecuteAgentExit
+			fn = flow.ExecuteAgentExit
 		case "deepthinking":
-			fn = globalCtx.DeepThinkingTool.Execute
+			fn = deepThinker.Execute
 		case "ask_user_for_help":
-			if globalCtx.FullYoloMode {
+			if env.FullYoloMode() {
 				continue
 			}
-			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
+			fn = flow.ExecuteAskUserForHelp
 		default:
 			continue
 		}
@@ -57,14 +59,14 @@ func NewChatAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int) 
 		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
 		adapters = append(adapters, adapter)
 	}
-	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
+	tools.SetGuardOnAdapters(adapters, guard)
 
 	return &ChatAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
-			Publisher: globalCtx.Publisher,
+			Publisher: publisher,
 		},
-		GlobalCtx: globalCtx,
+		promptFmt: formatter,
 		Adapters:  adapters,
 		maxSteps:  maxSteps,
 	}
@@ -76,7 +78,7 @@ func (a *ChatAgent) Name() string {
 
 func (a *ChatAgent) Run(ctx context.Context, input string) (AgentResult, error) {
 	cfg := DefaultExecutorConfig()
-	systemPrompt := a.GlobalCtx.FormatPrompt(chatPrompt)
+	systemPrompt := a.promptFmt.FormatPrompt(chatPrompt)
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
 	cfg.Adapters = a.Adapters

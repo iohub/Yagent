@@ -8,8 +8,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"yagent/internal/globalctx"
+	"yagent/internal/config"
 	"yagent/internal/knowledge"
+	"yagent/internal/mcp"
 	"yagent/internal/tools"
 
 	"yagent/internal/llm"
@@ -65,15 +66,28 @@ const gitCheckpointPromptSection = "### Git Checkpoint Mechanism\n" +
 
 type CodingAgent struct {
 	BaseAgent
-	GlobalCtx    *globalctx.GlobalCtx
-	Adapters     []*tools.Adapter
-	BrowserAgent *BrowserAgent
-	maxSteps     int
-	registry     *tools.Registry // 工具注册表引用
+	promptFmt        PromptFormatter
+	env              Env
+	microAgent       MicroAgentRunner
+	repoCtx          RepoContextStore
+	knowledge        KnowledgeProvider
+	mcpClient        *mcp.MCPClient
+	gitCheckpointCfg *config.GitCheckpointConfig
+	ecCfg            config.EnhancedCommanderConfig
+	guard            *tools.WorkspaceGuard
+	Adapters         []*tools.Adapter
+	BrowserAgent     *BrowserAgent
+	maxSteps         int
+	registry         *tools.Registry // 工具注册表引用
 
 }
 
-func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int, browser *BrowserAgent) *CodingAgent {
+// NewCodingAgent 构造 CodingAgent，仅声明其所需窄依赖：
+// prompt 格式化、事件总线、环境视图（ProjectPath/FullYoloMode）、
+// 完整工具集（文件/编辑/搜索/系统/仓库理解/流程/思考/深度思考/微代理）、
+// 工作区守护、仓库上下文存储（读取）、知识注入器、MCP 客户端、
+// Git Checkpoint 配置与上下文压缩配置。
+func NewCodingAgent(formatter PromptFormatter, publisher EventBus, env Env, files FileToolSet, search SearchToolSet, sys SysToolSet, edit EditToolSet, repoOps RepoToolSet, flow FlowToolSet, thinker Thinker, deepThinker DeepThinker, microAgent MicroAgentRunner, guard *tools.WorkspaceGuard, repoCtx RepoContextStore, knowledge KnowledgeProvider, mcpClient *mcp.MCPClient, gitCheckpointCfg *config.GitCheckpointConfig, ecCfg config.EnhancedCommanderConfig, llm llm.Engine, maxSteps int, browser *BrowserAgent) *CodingAgent {
 	// 从 tools.json 加载工具定义
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
@@ -83,7 +97,7 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 	// 创建适配器（工具名 → 执行函数的映射）
 	adapters := make([]*tools.Adapter, 0, len(toolDefs))
 	for _, def := range toolDefs {
-		fn := lookupToolFunc(def.Name, globalCtx)
+		fn := lookupToolFunc(def.Name, env, files, search, sys, edit, repoOps, flow, thinker, deepThinker, microAgent)
 		if fn == nil {
 			// delegate_browser 需要特殊处理，跳过
 			continue
@@ -114,12 +128,12 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 		}
 	}
 
-	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
+	tools.SetGuardOnAdapters(adapters, guard)
 
 	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP，不来自 tools.json 自动加载）
-	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, llm, "coding_agent", "coding_modification")
+	knowledgeAdapters := createKnowledgeToolAdapters(mcpClient, llm, "coding_agent", "coding_modification")
 	if len(knowledgeAdapters) > 0 {
-		tools.SetGuardOnAdapters(knowledgeAdapters, globalCtx.Guard)
+		tools.SetGuardOnAdapters(knowledgeAdapters, guard)
 		adapters = append(adapters, knowledgeAdapters...)
 	}
 
@@ -132,64 +146,72 @@ func NewCodingAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, maxSteps int
 	return &CodingAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
-			Publisher: globalCtx.Publisher,
+			Publisher: publisher,
 		},
-		Adapters:     adapters,
-		maxSteps:     maxSteps,
-		BrowserAgent: browser,
-		GlobalCtx:    globalCtx,
-		registry:     registry,
+		promptFmt:        formatter,
+		env:              env,
+		microAgent:       microAgent,
+		repoCtx:          repoCtx,
+		knowledge:        knowledge,
+		mcpClient:        mcpClient,
+		gitCheckpointCfg: gitCheckpointCfg,
+		ecCfg:            ecCfg,
+		guard:            guard,
+		Adapters:         adapters,
+		maxSteps:         maxSteps,
+		BrowserAgent:     browser,
+		registry:         registry,
 	}
 }
 
 // lookupToolFunc 根据工具名查找执行函数（替代外部 switch-case 硬编码）
 // 返回 nil 表示该工具需要特殊处理（如 delegate_browser）
-func lookupToolFunc(name string, gctx *globalctx.GlobalCtx) tools.ToolFunc {
+func lookupToolFunc(name string, env Env, files FileToolSet, search SearchToolSet, sys SysToolSet, edit EditToolSet, repoOps RepoToolSet, flow FlowToolSet, thinker Thinker, deepThinker DeepThinker, microAgent MicroAgentRunner) tools.ToolFunc {
 	switch name {
 	case "read_file":
-		return gctx.FileOps.ExecuteReadFile
+		return files.ExecuteReadFile
 	case "search_replace_in_file":
-		return gctx.ReplaceTool.ExecuteReplaceBlock
+		return edit.ExecuteReplaceBlock
 	case "create_file":
-		return gctx.FileOps.ExecuteCreateFile
+		return files.ExecuteCreateFile
 	case "run_bash":
-		return gctx.SysOps.ExecuteRunBash
+		return sys.ExecuteRunBash
 	case "search_by_regex":
-		return gctx.SearchOps.ExecuteGrepSearch
+		return search.ExecuteGrepSearch
 	case "delete_file":
-		return gctx.FileOps.ExecuteDeleteFile
+		return files.ExecuteDeleteFile
 	case "rename_file":
-		return gctx.FileOps.ExecuteRenameFile
+		return files.ExecuteRenameFile
 	case "list_dir":
-		return gctx.FileOps.ExecuteListDir
+		return files.ExecuteListDir
 	case "print_dir_tree":
-		return gctx.FileOps.ExecutePrintDirTree
+		return files.ExecutePrintDirTree
 	case "semantic_search":
-		return gctx.RepoOps.ExecuteSemanticSearch
+		return repoOps.ExecuteSemanticSearch
 	case "query_code_skeleton":
-		return gctx.RepoOps.ExecuteQueryCodeSkeleton
+		return repoOps.ExecuteQueryCodeSkeleton
 	case "query_code_snippet":
-		return gctx.RepoOps.ExecuteQueryCodeSnippet
+		return repoOps.ExecuteQueryCodeSnippet
 	case "find_function_callee":
-		return gctx.RepoOps.ExecuteFindFunctionCallees
+		return repoOps.ExecuteFindFunctionCallees
 	case "find_function_caller":
-		return gctx.RepoOps.ExecuteFindFunctionCallers
+		return repoOps.ExecuteFindFunctionCallers
 	case "thinking":
 		return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			inputBytes, _ := json.Marshal(params)
-			return gctx.ThinkingTool.Call(ctx, string(inputBytes))
+			return thinker.Call(ctx, string(inputBytes))
 		}
 	case "micro_agent":
-		return gctx.MicroAgentTool.Execute
+		return microAgent.Execute
 	case "deepthinking":
-		return gctx.DeepThinkingTool.Execute
+		return deepThinker.Execute
 	case "agent_exit":
-		return gctx.FlowOps.ExecuteAgentExit
+		return flow.ExecuteAgentExit
 	case "ask_user_for_help":
-		if gctx.FullYoloMode {
+		if env.FullYoloMode() {
 			return nil
 		}
-		return gctx.FlowOps.ExecuteAskUserForHelp
+		return flow.ExecuteAskUserForHelp
 	// delegate_browser 需要 browser agent 引用，返回 nil 由调用方特殊处理
 	default:
 		return nil
@@ -204,15 +226,15 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 	// === Git Checkpoint Integration ===
 
 	// 先检查项目是否是 git 仓库
-	isGitRepo := IsGitRepository(a.GlobalCtx.ProjectPath)
-	gitCheckpointEnabled := isGitRepo && a.GlobalCtx.GitCheckpointCfg != nil && a.GlobalCtx.GitCheckpointCfg.Enabled
+	isGitRepo := IsGitRepository(a.env.ProjectPath())
+	gitCheckpointEnabled := isGitRepo && a.gitCheckpointCfg != nil && a.gitCheckpointCfg.Enabled
 
 	var gcm *GitCheckpointManager
 	if gitCheckpointEnabled {
-		gitCfg := ConvertConfig(a.GlobalCtx.GitCheckpointCfg)
+		gitCfg := ConvertConfig(a.gitCheckpointCfg)
 		gcm = NewGitCheckpointManager(
 			gitCfg,
-			a.GlobalCtx.ProjectPath,
+			a.env.ProjectPath(),
 			input,
 			func(ctx context.Context, diff string, taskSummary string) (string, error) {
 				systemPrompt := `You are an expert software engineer writing a Git commit message following the Conventional Commits specification.
@@ -266,7 +288,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 
 				task := fmt.Sprintf("Task: %s\n\nDiff:\n%s", taskSummary, diff)
 
-				result, err := a.GlobalCtx.MicroAgentTool.Execute(ctx, map[string]interface{}{
+				result, err := a.microAgent.Execute(ctx, map[string]interface{}{
 					"system_prompt": systemPrompt,
 					"task":          task,
 				})
@@ -312,7 +334,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	}
 	// === END ===
 
-	systemPrompt := a.GlobalCtx.FormatPrompt(codingPrompt)
+	systemPrompt := a.promptFmt.FormatPrompt(codingPrompt)
 
 	// 如果是 git 仓库且 checkpoint 启用，追加 Git Checkpoint 章节到提示词
 	if gitCheckpointEnabled {
@@ -320,14 +342,14 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	}
 
 	// [知识管理] 对话前动态知识检索注入（TargetFiles 留 nil，由 Injector 从 UserMessage 中提取）
-	if a.GlobalCtx.KnowledgeInjector != nil {
+	if a.knowledge != nil {
 		injCtx := knowledge.InjectionContext{
 			UserMessage: input,
 			TargetFiles: nil,
 			AgentName:   a.Name(),
 			Domains:     []string{"repo", "coding"}, // Coding-Agent 检索 repo + coding domain 知识
 		}
-		if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
+		if knowledgeBlock, err := a.knowledge.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
 			systemPrompt += knowledgeBlock
 		}
 	}
@@ -341,10 +363,10 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
-	cfg.RepoContext = a.GlobalCtx.RepoSummary
+	cfg.RepoContext = a.repoCtx.Get()
 
 	// 上下文压缩配置（tool 结果截断）
-	ec := a.GlobalCtx.EnhancedCommander
+	ec := a.ecCfg
 	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
 	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
 	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
@@ -363,7 +385,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 
 		// Add checkpoint tools to the adapter list
 		checkpointAdapters := createCheckpointToolAdapters(gcm)
-		tools.SetGuardOnAdapters(checkpointAdapters, a.GlobalCtx.Guard)
+		tools.SetGuardOnAdapters(checkpointAdapters, a.guard)
 		cfg.Adapters = append(cfg.Adapters, checkpointAdapters...)
 	}
 
@@ -376,8 +398,8 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		Memory: ConvertLLMHistoryToMemory(result.History),
 	}
 	// [知识管理] 子任务完成后自动沉淀到知识库（非阻塞）
-	if a.GlobalCtx.KnowledgeInjector != nil {
-		autoConsolidateSubtask(a.GlobalCtx, a.LLM, "coding_agent", "coding_modification", input, agentResult.Text)
+	if a.knowledge != nil {
+		autoConsolidateSubtask(a.mcpClient, a.LLM, "coding_agent", "coding_modification", input, agentResult.Text)
 	}
 	return agentResult, nil
 }
@@ -425,8 +447,8 @@ var pruneSchema = map[string]interface{}{
 
 // createKnowledgeToolAdapters creates tool adapters for knowledge management operations.
 // sourceAgent/knowledgeType 非空时注册 consolidate_knowledge，为空时仅注册 prune_history（用于 Director）。
-func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine, sourceAgent, knowledgeType string) []*tools.Adapter {
-	pruneTool := tools.NewPruneHistoryTool(globalCtx.CodeSeekMCP, llm)
+func createKnowledgeToolAdapters(mcpClient *mcp.MCPClient, llm llm.Engine, sourceAgent, knowledgeType string) []*tools.Adapter {
+	pruneTool := tools.NewPruneHistoryTool(mcpClient, llm)
 
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("prune_history", "Maintain knowledge base health: list current entries, merge similar entries, or delete stale entries by ID. Run merge periodically to deduplicate.", pruneTool.Execute).WithSchema(pruneSchema),
@@ -437,7 +459,7 @@ func createKnowledgeToolAdapters(globalCtx *globalctx.GlobalCtx, llm llm.Engine,
 		return adapters
 	}
 
-	consolidateTool := tools.NewConsolidateKnowledgeTool(globalCtx.CodeSeekMCP, llm, sourceAgent, knowledgeType)
+	consolidateTool := tools.NewConsolidateKnowledgeTool(mcpClient, llm, sourceAgent, knowledgeType)
 
 	consolidateSchema := map[string]interface{}{
 		"type": "object",

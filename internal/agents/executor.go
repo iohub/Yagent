@@ -14,7 +14,6 @@ import (
 	director "yagent/internal/agents/director"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
-	"yagent/internal/messaging"
 	"yagent/internal/tools"
 )
 
@@ -25,7 +24,7 @@ type ExecutorConfig struct {
 	Adapters     []*tools.Adapter
 	LLM          llm.Engine
 	MaxSteps     int
-	Publisher    *messaging.MessagePublisher
+	Publisher    EventBus
 	AgentName    string
 	StopOnFinish bool // if true, return immediately when agent_exit tool is called
 	// LLMTimeout 单次LLM调用的超时时间，0=使用默认值3分钟

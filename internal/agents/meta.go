@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	"yagent/internal/globalctx"
 	"yagent/internal/llm"
 )
 
@@ -19,17 +18,17 @@ var metaPrompt string
 // JSON. The Director then registers and executes the designed agent.
 type MetaAgent struct {
 	BaseAgent
-	GlobalCtx   *globalctx.GlobalCtx
+	promptFmt   PromptFormatter
 	StepRetries int // 步骤重试次数，0=不重试
 }
 
-func NewMetaAgent(globalCtx *globalctx.GlobalCtx, llm llm.Engine, stepRetries int) *MetaAgent {
+func NewMetaAgent(formatter PromptFormatter, publisher EventBus, llm llm.Engine, stepRetries int) *MetaAgent {
 	return &MetaAgent{
 		BaseAgent: BaseAgent{
 			LLM:       llm,
-			Publisher: globalCtx.Publisher,
+			Publisher: publisher,
 		},
-		GlobalCtx:   globalCtx,
+		promptFmt:   formatter,
 		StepRetries: stepRetries,
 	}
 }
@@ -41,7 +40,7 @@ func (a *MetaAgent) Name() string {
 // Run makes a single LLM call (no tools) to design a specialized agent.
 // It returns the raw JSON design output from the LLM.
 func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) {
-	systemPrompt := a.GlobalCtx.FormatPrompt(metaPrompt)
+	systemPrompt := a.promptFmt.FormatPrompt(metaPrompt)
 
 	messages := []llm.Message{
 		{

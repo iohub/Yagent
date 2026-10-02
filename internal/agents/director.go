@@ -12,9 +12,9 @@ import (
 
 	director "yagent/internal/agents/director"
 	"yagent/internal/config"
-	"yagent/internal/globalctx"
 	"yagent/internal/knowledge"
 	"yagent/internal/llm"
+	"yagent/internal/mcp"
 	"yagent/internal/memory"
 	"yagent/internal/thinklink"
 	"yagent/internal/tools"
@@ -48,7 +48,20 @@ type DirectorAgent struct {
 	MetaAgent      *MetaAgent
 	DevOpsAgent    *DevOpsAgent
 	BrowserAgent   *BrowserAgent
-	GlobalCtx      *globalctx.GlobalCtx
+	promptFmt      PromptFormatter
+	env            Env
+	files          FileToolSet
+	search         SearchToolSet
+	sys            SysToolSet
+	edit           EditToolSet
+	flow           FlowToolSet
+	thinker        Thinker
+	microAgent     MicroAgentRunner
+	deepThinker    DeepThinker
+	guard          *tools.WorkspaceGuard
+	repoCtx        RepoContextStore
+	knowledge      KnowledgeProvider
+	mcpClient      *mcp.MCPClient
 	Adapters       []*tools.Adapter
 	maxSteps       int
 	metaRetryCount int                             // max retries for Meta-Agent JSON parse failures
@@ -87,7 +100,13 @@ func (a *DirectorAgent) loadProjectContext() *director.ProjectContextLoadResult 
 	return a.projectCtxLoader.Load()
 }
 
-func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
+// NewDirectorAgent 构造 DirectorAgent，仅声明其所需窄依赖：
+// prompt 格式化、事件总线、环境视图（ProjectPath/FullYoloMode）、
+// 文件/搜索/系统/编辑/流程工具集、认知/微代理/深度思考、
+// 工作区守护、仓库上下文存储（写入）、知识注入器与 MCP 客户端；
+// 保留既有 engine、六个子代理、maxSteps、disabledAgents、metaRetryCount、
+// cfg config.Config 与 llmClient 参数。
+func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, files FileToolSet, search SearchToolSet, sys SysToolSet, edit EditToolSet, flow FlowToolSet, thinker Thinker, microAgent MicroAgentRunner, deepThinker DeepThinker, guard *tools.WorkspaceGuard, repoCtx RepoContextStore, knowledge KnowledgeProvider, mcpClient *mcp.MCPClient, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
 	// self-reference for closures that need the DirectorAgent after construction
 	var self *DirectorAgent
 
@@ -309,7 +328,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	})
 
 	adapters := []*tools.Adapter{
-		tools.NewAdapter("agent_exit", "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.", globalCtx.FlowOps.ExecuteAgentExit).WithSchema(map[string]interface{}{
+		tools.NewAdapter("agent_exit", "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.", flow.ExecuteAgentExit).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"reason": map[string]interface{}{"type": "string", "description": "The reason the agent is exiting, e.g., task completed, cannot proceed, blocked by missing information, or must terminate."},
@@ -333,20 +352,20 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		var fn tools.ToolFunc
 		switch def.Name {
 		case "search_by_regex":
-			fn = globalCtx.SearchOps.ExecuteGrepSearch
+			fn = search.ExecuteGrepSearch
 		case "list_dir":
-			fn = globalCtx.FileOps.ExecuteListDir
+			fn = files.ExecuteListDir
 		case "read_file":
-			fn = globalCtx.FileOps.ExecuteReadFile
+			fn = files.ExecuteReadFile
 		case "print_dir_tree":
-			fn = globalCtx.FileOps.ExecutePrintDirTree
+			fn = files.ExecutePrintDirTree
 		case "deepthinking":
-			fn = globalCtx.DeepThinkingTool.Execute
+			fn = deepThinker.Execute
 		case "ask_user_for_help":
-			if globalCtx.FullYoloMode {
+			if env.FullYoloMode() {
 				continue
 			}
-			fn = globalCtx.FlowOps.ExecuteAskUserForHelp
+			fn = flow.ExecuteAskUserForHelp
 		default:
 			continue
 		}
@@ -377,14 +396,14 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	}
 
 	// Set workspace guard on all adapters (delegate adapters are not dangerous tools)
-	tools.SetGuardOnAdapters(adapters, globalCtx.Guard)
-	tools.SetGuardOnAdapters(delegateAdapters, globalCtx.Guard)
+	tools.SetGuardOnAdapters(adapters, guard)
+	tools.SetGuardOnAdapters(delegateAdapters, guard)
 
 	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP）
-	knowledgeAdapters := createKnowledgeToolAdapters(globalCtx, engine, "", "")
+	knowledgeAdapters := createKnowledgeToolAdapters(mcpClient, engine, "", "")
 	var allAdapters []*tools.Adapter
 	if len(knowledgeAdapters) > 0 {
-		tools.SetGuardOnAdapters(knowledgeAdapters, globalCtx.Guard)
+		tools.SetGuardOnAdapters(knowledgeAdapters, guard)
 		allAdapters = append(adapters, delegateAdapters...)
 		allAdapters = append(allAdapters, knowledgeAdapters...)
 	} else {
@@ -400,14 +419,27 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 	directorAdapter := NewDirectorAdapter(true, adapterCfg) // enabled=true 启动 Metrics
 
 	self = &DirectorAgent{
-		BaseAgent:      BaseAgent{LLM: engine, Publisher: globalCtx.Publisher},
+		BaseAgent:      BaseAgent{LLM: engine, Publisher: publisher},
 		RepoAgent:      repo,
 		CodingAgent:    coding,
 		ChatAgent:      chat,
 		MetaAgent:      meta,
 		DevOpsAgent:    devops,
 		BrowserAgent:   browser,
-		GlobalCtx:      globalCtx,
+		promptFmt:      formatter,
+		env:            env,
+		files:          files,
+		search:         search,
+		sys:            sys,
+		edit:           edit,
+		flow:           flow,
+		thinker:        thinker,
+		microAgent:     microAgent,
+		deepThinker:    deepThinker,
+		guard:          guard,
+		repoCtx:        repoCtx,
+		knowledge:      knowledge,
+		mcpClient:      mcpClient,
 		Adapters:       allAdapters,
 		maxSteps:       maxSteps,
 		metaRetryCount: metaRetryCount,
@@ -417,7 +449,7 @@ func NewDirectorAgent(globalCtx *globalctx.GlobalCtx, engine llm.Engine, repo *R
 		llmClient:      llmClient,
 		// Phase 2a：项目上下文加载器；projectPathFn 每次加载时动态求值，
 		// 保持原实现读取 a.GlobalCtx.ProjectPath 的动态语义（运行时可通过 SetProjectPath 变更）
-		projectCtxLoader:   director.NewProjectContextLoader(func() string { return globalCtx.ProjectPath }),
+		projectCtxLoader:   director.NewProjectContextLoader(func() string { return env.ProjectPath() }),
 
 		// LLM 兜底机制配置（步骤重试/熔断阈值/失败计数已收编至 RecoveryHandler，见上方 adapterCfg 接线）
 		llmTimeout: func() time.Duration {
@@ -504,35 +536,35 @@ func (a *DirectorAgent) refreshSubAgentEngines() {
 func (a *DirectorAgent) getToolFunc(name string) tools.ToolFunc {
 	switch name {
 	case "read_file":
-		return a.GlobalCtx.FileOps.ExecuteReadFile
+		return a.files.ExecuteReadFile
 	case "search_replace_in_file":
-		return a.GlobalCtx.ReplaceTool.ExecuteReplaceBlock
+		return a.edit.ExecuteReplaceBlock
 	case "create_file":
-		return a.GlobalCtx.FileOps.ExecuteCreateFile
+		return a.files.ExecuteCreateFile
 	case "run_bash":
-		return a.GlobalCtx.SysOps.ExecuteRunBash
+		return a.sys.ExecuteRunBash
 	case "search_by_regex":
-		return a.GlobalCtx.SearchOps.ExecuteGrepSearch
+		return a.search.ExecuteGrepSearch
 	case "list_dir":
-		return a.GlobalCtx.FileOps.ExecuteListDir
+		return a.files.ExecuteListDir
 	case "print_dir_tree":
-		return a.GlobalCtx.FileOps.ExecutePrintDirTree
+		return a.files.ExecutePrintDirTree
 	case "thinking":
 		return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			inputBytes, _ := json.Marshal(params)
-			return a.GlobalCtx.ThinkingTool.Call(ctx, string(inputBytes))
+			return a.thinker.Call(ctx, string(inputBytes))
 		}
 	case "micro_agent":
-		return a.GlobalCtx.MicroAgentTool.Execute
+		return a.microAgent.Execute
 	case "deepthinking":
-		return a.GlobalCtx.DeepThinkingTool.Execute
+		return a.deepThinker.Execute
 	case "agent_exit":
-		return a.GlobalCtx.FlowOps.ExecuteAgentExit
+		return a.flow.ExecuteAgentExit
 	case "ask_user_for_help":
-		if a.GlobalCtx.FullYoloMode {
+		if a.env.FullYoloMode() {
 			return nil
 		}
-		return a.GlobalCtx.FlowOps.ExecuteAskUserForHelp
+		return a.flow.ExecuteAskUserForHelp
 	default:
 		return nil
 	}
@@ -608,7 +640,7 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 	}
 
 	// Set workspace guard on the custom agent's adapters
-	tools.SetGuardOnAdapters(customAdapters, a.GlobalCtx.Guard)
+	tools.SetGuardOnAdapters(customAdapters, a.guard)
 
 	// Create the delegate tool that executes the custom agent
 	// Capture ca and customAdapters in closure
@@ -641,7 +673,7 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 // executeCustomAgent runs a custom agent with its designed system prompt and selected tools.
 // Uses the unified AgentExecutor.
 func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent, adapters []*tools.Adapter, task string) (string, error) {
-	systemPrompt := a.GlobalCtx.FormatPrompt(ca.SystemPrompt)
+	systemPrompt := a.promptFmt.FormatPrompt(ca.SystemPrompt)
 
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
@@ -737,7 +769,7 @@ func (a *DirectorAgent) createRolloutWriter(agentName, task string) *memory.Roll
 // computeProjectID 从项目路径计算文件系统安全的 projectID
 // Phase 2a：计算逻辑已抽取至 director.ComputeProjectID，此处仅薄委托。
 func (a *DirectorAgent) computeProjectID() string {
-	return director.ComputeProjectID(a.GlobalCtx.ProjectPath)
+	return director.ComputeProjectID(a.env.ProjectPath())
 }
 
 // applyEnhancedCommander 处理子 Agent 执行结果。
@@ -907,9 +939,9 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 			// to get the actual text content
 			var summary string
 			if uerr := json.Unmarshal([]byte(toolResult), &summary); uerr == nil {
-				a.GlobalCtx.RepoSummary = summary
+				a.repoCtx.Set(summary)
 			} else {
-				a.GlobalCtx.RepoSummary = toolResult
+				a.repoCtx.Set(toolResult)
 			}
 		}
 		return toolResult, nil
@@ -963,7 +995,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 	// 按 mem == nil || len(mem.GetMessages()) == 0 计算传入，与原逻辑一致。
 	prompts := func(ctx context.Context, in director.PromptInput) (string, error) {
 		// Always start with System Prompt (with any registered custom agents appended)
-		systemPrompt := a.GlobalCtx.FormatPrompt(directorPrompt)
+		systemPrompt := a.promptFmt.FormatPrompt(directorPrompt)
 		var projectContext string
 		// 只在首次对话时加载项目上下文文件（YAGENT.md、CLAUDE.md、AGENTS.md），
 		// 同一会话的后续追问无需重复注入，避免浪费 token。
@@ -996,14 +1028,14 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		}
 
 		// [知识管理] Director 自身 systemPrompt 动态知识检索注入
-		if a.GlobalCtx.KnowledgeInjector != nil {
+		if a.knowledge != nil {
 			injCtx := knowledge.InjectionContext{
 				UserMessage: in.Input,
 				TargetFiles: nil,
 				AgentName:   a.Name(),
 				// Domains 为空 = 检索全部 domain（Director 不限定）
 			}
-			if knowledgeBlock, err := a.GlobalCtx.KnowledgeInjector.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
+			if knowledgeBlock, err := a.knowledge.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
 				systemPrompt += knowledgeBlock
 			}
 		}
