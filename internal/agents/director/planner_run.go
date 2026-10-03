@@ -520,9 +520,9 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		}
 
 		// thinklink: 提取本轮回复中的 Thought & Plan 块并实时保存（供终极压缩重建上下文）。
-		// 复用 director 子包 emergency_compressor.go 的包级提取函数（thoughtAndPlanPattern 正则），不重复造轮子。
+		// 复用 compression 包的包级提取函数（thoughtAndPlanPattern 正则），不重复造轮子。
 		if p.cfg.Journal != nil {
-			for _, block := range ExtractThoughtAndPlanBlocks(choice.Content) {
+			for _, block := range compression.ExtractThoughtAndPlanBlocks(choice.Content) {
 				if entry, added := p.cfg.Journal.AddThoughtPlan(block, i); added {
 					// 原 a.publishThinkLinkEntry(entry) 内联
 					if p.cfg.Publisher != nil {
