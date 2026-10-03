@@ -199,11 +199,6 @@ func lookupToolFunc(name string, env Env, files FileToolSet, search SearchToolSe
 		return repoOps.ExecuteFindFunctionCallees
 	case "find_function_caller":
 		return repoOps.ExecuteFindFunctionCallers
-	case "thinking":
-		return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			inputBytes, _ := json.Marshal(params)
-			return thinker.Call(ctx, string(inputBytes))
-		}
 	case "micro_agent":
 		return microAgent.Execute
 	case "deepthinking":
