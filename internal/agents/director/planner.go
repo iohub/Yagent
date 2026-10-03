@@ -28,6 +28,7 @@ import (
 	"context"
 	"time"
 
+	"yagent/internal/compression"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
 	"yagent/internal/thinklink"
@@ -44,11 +45,11 @@ type EventPublisher interface {
 }
 
 // ThinklinkStore Planner 所需的 thinklink 完整窄接口（*thinklink.Store 天然实现）。
-// 内嵌 compressor.go 的只读 ThinkLinkStore（终极压缩重建上下文：Count/RebuildPrompt），
+// 内嵌 compression 包的只读 ThinkLinkStore（终极压缩重建上下文：Count/RebuildPrompt），
 // 补充 run() 主循环的实时写入用法（AddUserInput/AddThoughtPlan），
 // 返回的 bool 表示去重后是否新增条目。
 type ThinklinkStore interface {
-	ThinkLinkStore
+	compression.ThinkLinkStore
 	AddUserInput(content string, step int) (thinklink.Entry, bool)
 	AddThoughtPlan(content string, step int) (thinklink.Entry, bool)
 }
@@ -100,9 +101,9 @@ type PlannerConfig struct {
 	Journal    ThinklinkStore        // thinklink 存储（nil 容忍）
 	Rollout    *memory.RolloutWriter // Rollout 写入器（nil 容忍，门面 run() 内创建）
 	Tools      ToolRunner            // 工具执行器
-	Prompts    PromptBuilder         // 系统提示构建闭包
-	Compressor *ContextCompressor    // 上下文压缩编排组件（Phase 3-0 已抽取，同包直接注入）
-	MaxSteps   int                   // 主循环最大步数
+	Prompts    PromptBuilder                // 系统提示构建闭包
+	Compressor *compression.ContextCompressor // 上下文压缩编排组件（Phase 3-0 已抽取，同包直接注入）
+	MaxSteps   int                          // 主循环最大步数
 	LLMTimeout time.Duration         // LLM 调用超时（原 a.llmTimeout，默认 5 分钟）
 
 	// ── Phase 3-2a-1 扩展（Planner.Run 搬迁 run() 主循环所需；除压缩配置外均
