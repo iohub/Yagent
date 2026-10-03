@@ -28,6 +28,15 @@ type ThinkLinkStore interface {
 	RebuildPrompt(keepPlans int) string
 }
 
+// ThinkLinkJournal 终极压缩的 thinklink 读写窄接口 (*thinklink.Store 天然实现):
+// 只读部分 (Count/RebuildPrompt) 供 ApplyUltimate 重建上下文;
+// 写入部分 (AddUserInput/AddThoughtPlan) 供 Agent 主循环实时记录。
+type ThinkLinkJournal interface {
+	ThinkLinkStore
+	AddUserInput(content string, step int) (thinklink.Entry, bool)
+	AddThoughtPlan(content string, step int) (thinklink.Entry, bool)
+}
+
 // UltimateCompressionStats 记录终极压缩的统计信息。
 type UltimateCompressionStats struct {
 	OriginalTokens   int  `json:"original_tokens"`   // 压缩前总 token
