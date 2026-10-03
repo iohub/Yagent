@@ -60,8 +60,10 @@ type ExecutorConfig struct {
 	ContextCompressionThreshold int
 	// ToolResultKeepTokens 截断后每条 tool 结果保留的 token 数，<=0 时使用默认值 compression.DefaultToolResultKeepTokens
 	ToolResultKeepTokens int
-	// UltimateThinkLink 三级终极压缩的重建源 (thinklink 只读窄接口，*thinklink.Store 天然实现);nil=禁用终极压缩
-	UltimateThinkLink compression.ThinkLinkStore
+	// UltimateThinkLink 三级终极压缩的重建源 (thinklink 读写窄接口，*thinklink.Store 天然实现);
+	// 只读部分供 UltimateCompression 重建上下文，写入部分供 Agent 主循环实时记录;
+	// nil=禁用终极压缩
+	UltimateThinkLink compression.ThinkLinkJournal
 	// UltimateKeepPlans 终极压缩保留 Thought & Plan 块数量上限，0=全部保留
 	UltimateKeepPlans int
 }
@@ -494,6 +496,23 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}
 		messages = append(messages, assistantMsg)
 		history = append(history, assistantMsg)
+
+		// thinklink: 提取本轮回复中的 Thought & Plan 块并实时保存（供终极压缩重建上下文）
+		if cfg.UltimateThinkLink != nil {
+			for i, block := range compression.ExtractThoughtAndPlanBlocks(assistantMsg.Content) {
+				if entry, added := cfg.UltimateThinkLink.AddThoughtPlan(block, i); added {
+					if cfg.Publisher != nil {
+						_ = cfg.Publisher.Publish("thinklink_entry", map[string]interface{}{
+							"id":        entry.ID,
+							"kind":      entry.Kind.String(),
+							"content":   entry.Content,
+							"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
+							"step":      entry.Step,
+						}, cfg.AgentName)
+					}
+				}
+			}
+		}
 
 		writeRollout(assistantMsg)
 
