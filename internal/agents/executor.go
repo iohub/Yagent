@@ -499,7 +499,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 		// thinklink: 提取本轮回复中的 Thought & Plan 块并实时保存（供终极压缩重建上下文）
 		if cfg.UltimateThinkLink != nil {
-			for i, block := range compression.ExtractThoughtAndPlanBlocks(assistantMsg.Content) {
+			for _, block := range compression.ExtractThoughtAndPlanBlocks(assistantMsg.Content) {
 				if entry, added := cfg.UltimateThinkLink.AddThoughtPlan(block, i); added {
 					if cfg.Publisher != nil {
 						_ = cfg.Publisher.Publish("thinklink_entry", map[string]interface{}{
