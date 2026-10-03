@@ -11,6 +11,7 @@ import (
 	"yagent/internal/config"
 	"yagent/internal/knowledge"
 	"yagent/internal/mcp"
+	"yagent/internal/thinklink"
 	"yagent/internal/tools"
 
 	"yagent/internal/llm"
@@ -79,6 +80,7 @@ type CodingAgent struct {
 	BrowserAgent     *BrowserAgent
 	maxSteps         int
 	registry         *tools.Registry // 工具注册表引用
+	thinkLink        *thinklink.Store // 终极压缩支撑存储，实时记录用户原始输入，与 Director 模式一致，与 agent 同生命周期
 
 }
 
@@ -161,6 +163,7 @@ func NewCodingAgent(formatter PromptFormatter, publisher EventBus, env Env, file
 		maxSteps:         maxSteps,
 		BrowserAgent:     browser,
 		registry:         registry,
+		thinkLink:        thinklink.NewStore(0), // 容量 0=全量，与 Director 一致
 	}
 }
 
@@ -334,6 +337,9 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	}
 	// === END ===
 
+	// === thinklink 终极压缩记录 ===
+	a.thinkLink.AddUserInput(input, 0) // 记录用户原始输入（自带去重）
+
 	systemPrompt := a.promptFmt.FormatPrompt(codingPrompt)
 
 	// 如果是 git 仓库且 checkpoint 启用，追加 Git Checkpoint 章节到提示词
@@ -370,6 +376,10 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
 	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
 	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
+
+	// 三级终极压缩配置
+	cfg.UltimateThinkLink = a.thinkLink // 三级终极压缩重建源（thinklink 只读窄接口）
+	cfg.UltimateKeepPlans = 0 // 0=全部保留
 
 	// 如果是 git 仓库且 checkpoint 启用，设置回调和添加工具
 	if gitCheckpointEnabled {
