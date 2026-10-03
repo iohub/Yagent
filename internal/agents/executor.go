@@ -60,6 +60,10 @@ type ExecutorConfig struct {
 	ContextCompressionThreshold int
 	// ToolResultKeepTokens 截断后每条 tool 结果保留的 token 数，<=0 时使用默认值 compression.DefaultToolResultKeepTokens
 	ToolResultKeepTokens int
+	// UltimateThinkLink 三级终极压缩的重建源 (thinklink 只读窄接口，*thinklink.Store 天然实现);nil=禁用终极压缩
+	UltimateThinkLink compression.ThinkLinkStore
+	// UltimateKeepPlans 终极压缩保留 Thought & Plan 块数量上限，0=全部保留
+	UltimateKeepPlans int
 }
 
 // DefaultExecutorConfig returns an ExecutorConfig with sensible defaults applied.
@@ -322,6 +326,36 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 						"extracted_blocks", emergencyStats.ExtractedBlocks,
 						"kept_blocks", emergencyStats.KeptBlocks,
 						"summarized_by_llm", emergencyStats.SummarizedByLLM)
+					// 终极压缩 (第三级):两级常规压缩后仍超限，用 thinklink 重建上下文继续任务
+					if compression.EstimateMessagesTokens(messages) > threshold && cfg.UltimateThinkLink != nil {
+						ultCompressor := compression.NewContextCompressor(cfg.LLM, cfg.AgentName, cfg.UltimateThinkLink, nil)
+						newMessages, ultStats := ultCompressor.ApplyUltimate(messages, threshold, nil, cfg.UltimateKeepPlans)
+						messages = newMessages
+						// 同步 history，避免调用方 ConvertLLMHistoryToMemory 拿到未压缩的旧历史
+						history = make([]llm.Message, len(messages))
+						copy(history, messages)
+						if ultStats != nil && cfg.Publisher != nil {
+							cfg.Publisher.Publish("context_ultimate_compressed", map[string]interface{}{
+								"original_tokens":   ultStats.OriginalTokens,
+								"compressed_tokens": ultStats.CompressedTokens,
+								"saved_tokens":      ultStats.SavedTokens,
+								"total_plans":       ultStats.TotalPlans,
+								"kept_plans":        ultStats.KeptPlans,
+								"user_inputs":       ultStats.UserInputs,
+								"truncated":         ultStats.Truncated,
+							}, cfg.AgentName)
+						}
+						slog.Warn("ultimate context compression applied",
+							"agent", cfg.AgentName,
+							"original_tokens", ultStats.OriginalTokens,
+							"compressed_tokens", ultStats.CompressedTokens,
+							"saved_tokens", ultStats.SavedTokens,
+							"threshold", threshold,
+							"total_plans", ultStats.TotalPlans,
+							"kept_plans", ultStats.KeptPlans,
+							"user_inputs", ultStats.UserInputs,
+							"truncated", ultStats.Truncated)
+					}
 				}
 			}
 
