@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"yagent/internal/compression"
 	director "yagent/internal/agents/director"
 	"yagent/internal/config"
 	"yagent/internal/knowledge"
@@ -74,7 +75,7 @@ type DirectorAgent struct {
 
 	currentMemory         *memory.ConversationMemory  // 当前正在使用的 memory（Run 期间设置）
 	pendingSubAgentMemory *AgentResult                // 最近一次 delegate 调用的完整结果（用于 memory 注入）
-	compressor            *director.ContextCompressor // 上下文压缩编排组件（Phase 3-0 抽取）
+	compressor            *compression.ContextCompressor // 上下文压缩编排组件（Phase 3-0 抽取）
 
 	// LLM 兜底机制字段
 	// P0-1 Phase 2b：步骤级重试次数、连续 LLM 失败计数、最近失败时间及
@@ -473,7 +474,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 	// Phase 3-0：上下文压缩编排组件；thinkLink 窄接口与 pendingSubAgentMemory
 	// 清理回调注入。thinkLink 须与 a.thinkLink 同一实例（跨任务累积的条目必须
 	// 被压缩重建看到）；agents 类型（AgentResult）经回调由门面适配清理。
-	self.compressor = director.NewContextCompressor(engine, self.Name(), self.thinkLink, func() { self.pendingSubAgentMemory = nil })
+	self.compressor = compression.NewContextCompressor(engine, self.Name(), self.thinkLink, func() { self.pendingSubAgentMemory = nil })
 
 	// 委派返回物分级（第二批次接线）：注入项目路径提供者，FinalizeResult
 	// 落盘 artifact 的 projectID 由此计算；进程级一次性注入（DirectorAgent 单例）。
@@ -1137,7 +1138,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 // 覆盖 memory 为单条输入消息后返回压缩后的 messages。
 // Phase 3-0：编排逻辑已抽取至 director.ContextCompressor，此处仅薄委托，
 // 保持原签名与压缩行为不变（characterization 测试零改动）；memory 依赖以参数传入。
-func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages []llm.Message, threshold int) ([]llm.Message, *director.EmergencyCompressionStats) {
+func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages []llm.Message, threshold int) ([]llm.Message, *compression.EmergencyCompressionStats) {
 	return a.compressor.ApplyEmergency(ctx, messages, threshold, a.currentMemory)
 }
 
@@ -1145,7 +1146,7 @@ func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages 
 
 // UltimateCompressionStats 记录终极压缩的统计信息（P0-1 Phase 3-0 定义迁移至
 // director 包 compressor.go，此处保留类型别名，使 run() 等调用点零改动）。
-type UltimateCompressionStats = director.UltimateCompressionStats
+type UltimateCompressionStats = compression.UltimateCompressionStats
 
 // applyUltimateCompression 终极压缩（第三级）：两级常规压缩后仍超限时，
 // 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文。

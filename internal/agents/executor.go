@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	director "yagent/internal/agents/director"
+	"yagent/internal/compression"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
 	"yagent/internal/tools"
@@ -56,9 +56,9 @@ type ExecutorConfig struct {
 
 	// 上下文压缩（tool 结果截断）配置，默认零值=关闭，仅调用方显式开启时生效
 	EnableContextCompression bool
-	// ContextCompressionThreshold 触发上下文压缩的 token 阈值，<=0 时使用默认值 director.DefaultContextCompressionThreshold
+	// ContextCompressionThreshold 触发上下文压缩的 token 阈值，<=0 时使用默认值 compression.DefaultContextCompressionThreshold
 	ContextCompressionThreshold int
-	// ToolResultKeepTokens 截断后每条 tool 结果保留的 token 数，<=0 时使用默认值 director.DefaultToolResultKeepTokens
+	// ToolResultKeepTokens 截断后每条 tool 结果保留的 token 数，<=0 时使用默认值 compression.DefaultToolResultKeepTokens
 	ToolResultKeepTokens int
 }
 
@@ -262,14 +262,14 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			if cfg.EnableContextCompression {
 				threshold := cfg.ContextCompressionThreshold
 				if threshold <= 0 {
-					threshold = director.DefaultContextCompressionThreshold
+					threshold = compression.DefaultContextCompressionThreshold
 				}
 				keepTokens := cfg.ToolResultKeepTokens
 				if keepTokens <= 0 {
-					keepTokens = director.DefaultToolResultKeepTokens
+					keepTokens = compression.DefaultToolResultKeepTokens
 				}
-				var compStats *director.ContextCompressionStats
-				messages, compStats = director.TruncateToolResultsToBudget(messages, threshold, keepTokens)
+				var compStats *compression.ContextCompressionStats
+				messages, compStats = compression.TruncateToolResultsToBudget(messages, threshold, keepTokens)
 				if compStats != nil && compStats.TruncatedCount > 0 && cfg.Publisher != nil {
 					truncatedTools := make([]map[string]interface{}, len(compStats.TruncatedTools))
 					for ti, tool := range compStats.TruncatedTools {
@@ -298,8 +298,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				}
 
 				// 紧急压缩:tool 结果已全部截断后仍超限 → 启动紧急模式, 极致压缩上下文继续任务
-				if director.EstimateMessagesTokens(messages) > threshold {
-					newMessages, emergencyStats := director.EmergencyCompressMessages(ctx, messages, cfg.UserInput, threshold, cfg.LLM, cfg.AgentName, director.DefaultEmergencyCompressKeepLastN)
+				if compression.EstimateMessagesTokens(messages) > threshold {
+					newMessages, emergencyStats := compression.EmergencyCompressMessages(ctx, messages, cfg.UserInput, threshold, cfg.LLM, cfg.AgentName, compression.DefaultEmergencyCompressKeepLastN)
 					messages = newMessages
 					// 同步 history, 避免调用方 ConvertLLMHistoryToMemory 拿到未压缩的旧历史
 					history = make([]llm.Message, len(messages))

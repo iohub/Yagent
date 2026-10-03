@@ -30,6 +30,7 @@ import (
 	"os"
 	"time"
 
+	"yagent/internal/compression"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
 	"yagent/internal/tools"
@@ -248,14 +249,14 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			if p.cfg.CompressEnable {
 				threshold := p.cfg.CompressThreshold
 				if threshold <= 0 {
-					threshold = DefaultContextCompressionThreshold
+					threshold = compression.DefaultContextCompressionThreshold
 				}
 				keepTokens := p.cfg.CompressKeepTokens
 				if keepTokens <= 0 {
-					keepTokens = DefaultToolResultKeepTokens
+					keepTokens = compression.DefaultToolResultKeepTokens
 				}
-				var compStats *ContextCompressionStats
-				messages, compStats = TruncateToolResultsToBudget(messages, threshold, keepTokens)
+				var compStats *compression.ContextCompressionStats
+				messages, compStats = compression.TruncateToolResultsToBudget(messages, threshold, keepTokens)
 				if compStats != nil && compStats.TruncatedCount > 0 && p.cfg.Publisher != nil {
 					truncatedTools := make([]map[string]interface{}, len(compStats.TruncatedTools))
 					for ti, tool := range compStats.TruncatedTools {
@@ -283,7 +284,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				}
 
 				// 紧急压缩:tool 结果已全部截断后仍超限 → 启动紧急模式, 极致压缩 memory 继续任务
-				if EstimateMessagesTokens(messages) > threshold {
+				if compression.EstimateMessagesTokens(messages) > threshold {
 					newMessages, emergencyStats := p.cfg.Compressor.ApplyEmergency(ctx, messages, threshold, in.Mem)
 					messages = newMessages
 					if emergencyStats != nil && p.cfg.Publisher != nil {
@@ -310,7 +311,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				// 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文，
 				// 将 messages 重置为 [system..., 单条 user 重建消息]。
 				// 压缩发生在当前步骤内部，不额外消耗 maxSteps。
-				if p.cfg.UltimateCompressEnable && p.cfg.Journal != nil && EstimateMessagesTokens(messages) > threshold {
+				if p.cfg.UltimateCompressEnable && p.cfg.Journal != nil && compression.EstimateMessagesTokens(messages) > threshold {
 					newMessages, ultStats := p.cfg.Compressor.ApplyUltimate(messages, threshold, in.Mem, p.cfg.UltimateCompressKeepPlans)
 					messages = newMessages
 					if p.cfg.Publisher != nil && ultStats != nil {
