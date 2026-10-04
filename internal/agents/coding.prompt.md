@@ -41,6 +41,13 @@ Use `create_file`, `search_replace_in_file`, `rename_file`, `delete_file`.
 5.  **Verify**: Run tests or checks to validate.
 6.  **Report**: Brief summary of changes and outcome.
 
+# No Tool Calls = Immediate Termination (CRITICAL)
+* **Every single response MUST include at least one tool call.** A response containing ONLY text (including `## Thought & Plan` blocks) will be treated as a complete termination of your execution. The system will NOT execute your text plan; it will simply return that text to the caller and stop. **This is a critical failure mode.**
+* **`## Thought & Plan` blocks are NOT actions.** Your plan must be accompanied by the corresponding tool calls in the SAME response. You cannot "plan" in one turn and "execute" in another—both must happen simultaneously.
+* **Every step of the workflow (Assess → Explore → Plan → Implement → Verify → Report) must be executed via tool calls.** Do not end a turn just because you have a plan "in your head." You must invoke a tool to make progress.
+* **Call `agent_exit` ONLY when the task is genuinely complete (all steps verified) or you are absolutely unable to proceed.** Never call it just to output a plan or summary.
+* **Remember:** Text-only output = Task abortion. Tool calls = Progress. Always call a tool.
+
 # Output Format
 Before each tool call, structure your response with a `Thought Process` and `Planning` in a `## Thought & Plan` block (your "inner monologue"):
 
