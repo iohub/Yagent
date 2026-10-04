@@ -54,6 +54,12 @@ type ExecutorConfig struct {
 	// Errors from this hook are logged but do not abort the loop.
 	OnStepEnd func(ctx context.Context, stepInfo StepInfo) error
 
+	// NoActionRetryLimit 允许 LLM 无工具调用纯文本输出的最大次数。
+	// 0=禁用（保持旧行为：无工具调用的纯文本输出立即返回，不影响 Director 等现有调用方）；
+	// >0 时，LLM 输出无工具调用的纯文本不立即返回，而是追加一条 user 角色提醒消息后继续循环，
+	// 累计无工具调用纯文本输出次数达到上限后返回最后的文本（防止死循环）。
+	NoActionRetryLimit int
+
 	// 上下文压缩（tool 结果截断）配置，默认零值=关闭，仅调用方显式开启时生效
 	EnableContextCompression bool
 	// ContextCompressionThreshold 触发上下文压缩的 token 阈值，<=0 时使用默认值 compression.DefaultContextCompressionThreshold
@@ -207,6 +213,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	}
 
 	stepNumber := 0
+	noActionCount := 0 // 累计无工具调用纯文本输出次数
 
 	// writeRollout 实时写入消息到 Rollout 文件（如果 context 中配置了 writer）
 	writeRollout := func(msg llm.Message) {
@@ -517,6 +524,24 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		writeRollout(assistantMsg)
 
 		if len(choice.ToolCalls) == 0 {
+			if cfg.NoActionRetryLimit > 0 && noActionCount < cfg.NoActionRetryLimit {
+				noActionCount++
+				slog.Warn("LLM returned text-only response, retrying", "agent", cfg.AgentName, "step", i, "no_action_count", noActionCount)
+
+				reminderContent := "SYSTEM REMINDER: You just ended your response without calling any tools, which immediately terminates your run and leaves the task unexecuted. This is unacceptable.\n\n" +
+					"You must immediately invoke a tool to execute the next step of your plan (explore/edit/run/verify); a `## Thought & Plan` block alone does not constitute action.\n\n" +
+					"Only call `agent_exit` when the task is truly complete or you are genuinely unable to proceed.\n\n" +
+					"Do not repeat your plan; take immediate action."
+
+				reminderMsg := llm.Message{
+					Role:    llm.RoleUser,
+					Content: reminderContent,
+				}
+				messages = append(messages, reminderMsg)
+				history = append(history, reminderMsg)
+				writeRollout(reminderMsg)
+				continue
+			}
 			return ExecutorResult{Text: choice.Content, History: history}, nil
 		}
 

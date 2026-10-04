@@ -364,6 +364,8 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
+	// NoActionRetryLimit: Allow up to 2 retries when LLM outputs text-only without tool calls to prevent premature termination on plan-only responses
+	cfg.NoActionRetryLimit = 2
 	cfg.RepoContext = a.repoCtx.Get()
 
 	// 上下文压缩配置（tool 结果截断）
