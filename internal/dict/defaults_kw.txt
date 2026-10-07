@@ -9,28 +9,3 @@ component
 webpack
 esbuild
 tailwind
-
-# === Web 后端 ===
-websocket
-protobuf
-fastapi
-express
-laravel
-symfony
-middleware
-router
-gateway
-endpoint
-request
-response
-
-# === 数据库 ===
-database
-postgresql
-sqlite
-mongodb
-redis
-elasticsearch
-migration
-transaction
-replication
