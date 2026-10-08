@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"yagent/internal/agents/activity"
 	"yagent/internal/compression"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
@@ -236,6 +237,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 	for i := 0; i < cfg.MaxSteps; i++ {
 		stepNumber++
+		// 活动心跳:步骤开始,向 activity 监视链上报(无监视器时为静默 no-op)
+		activity.Heartbeat(ctx, fmt.Sprintf("step:%d", stepNumber))
 		slog.Debug("AgentExecutor calling LLM", "agent", cfg.AgentName, "step", i)
 
 		maxRetries := cfg.StepRetries
@@ -255,6 +258,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 					return ExecutorResult{}, ctx.Err()
 				case <-time.After(wait):
 				}
+				// 活动心跳:重试退避结束,续期监视器(退避可能长达数十秒)
+				activity.Heartbeat(ctx, fmt.Sprintf("llm:retry:%d", attempt))
 			}
 
 			// Publish llm_call_start event before LLM invocation
@@ -375,10 +380,16 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				}, cfg.AgentName)
 			}
 
+			// 活动心跳:LLM 调用发起(用外层循环 ctx,不受 llmTimeout 影响)
+			activity.Heartbeat(ctx, "llm:start")
+
 			// 为每个 LLM 调用添加超时保护，防止远程服务无响应时永久阻塞
 			llmCtx, llmCancel := context.WithTimeout(ctx, llmTimeout)
 			resp, err = cfg.LLM.GenerateContent(llmCtx, messages, toolDefs, opts)
 			llmCancel()
+
+			// 活动心跳:LLM 调用返回(成功/失败公共汇合点,覆盖重试判断前的所有路径)
+			activity.Heartbeat(ctx, "llm:done")
 
 			// Publish ai_stream_end after LLM call
 			if cfg.Publisher != nil {
@@ -550,6 +561,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			var callErr error
 			found := false
 
+			// 活动心跳:工具调用发起(detail 在错误消息中可读化为 tool 'NAME' started)
+			activity.Heartbeat(ctx, "tool:start:"+tc.Function.Name)
+
 			if cfg.Publisher != nil {
 				cfg.Publisher.Publish("tool_call_start", map[string]interface{}{
 					"tool_name":    tc.Function.Name,
@@ -592,6 +606,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 						}
 					}
 					logToolCall(tc.Function.Name, cfg.AgentName, tc.Function.Arguments, toolResult, callErr, startTime)
+					// 活动心跳:工具调用返回(含错误结果路径,用外层循环 ctx 而非已取消的 toolCtx)
+					activity.Heartbeat(ctx, "tool:done:"+tc.Function.Name)
 					break
 				}
 			}
