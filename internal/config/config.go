@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -15,9 +16,9 @@ type ProviderConfig struct {
 	MaxTokens   int     `toml:"max_tokens"`
 	// ContextWindow 模型上下文窗口上限（如 200000），供 TUI 展示上下文用量进度条。
 	// 与 MaxTokens（单次输出上限）含义不同；0 或未配置则 TUI 不显示进度条。
-	ContextWindow int     `toml:"context_window"`
-	APIBaseURL    string  `toml:"api_base_url"`
-	APIKey        string  `toml:"api_key"`
+	ContextWindow int    `toml:"context_window"`
+	APIBaseURL    string `toml:"api_base_url"`
+	APIKey        string `toml:"api_key"`
 	// Bedrock-specific fields
 	AWSRegion     string `toml:"aws_region,omitempty"`
 	AWSProfile    string `toml:"aws_profile,omitempty"`
@@ -98,17 +99,27 @@ type AppConfig struct {
 
 // AgentConfig contains agent-specific configuration
 type AgentConfig struct {
-	YoloMode         bool   `toml:"yolo_mode"`
-	FullYoloMode     bool   `toml:"full_yolo_mode"`
-	DirectorMaxSteps int    `toml:"director_max_steps"`
-	CodingMaxSteps   int    `toml:"coding_max_steps"`
-	ChatMaxSteps     int    `toml:"chat_max_steps"`
-	RepoMaxSteps     int    `toml:"repo_max_steps"`
-	DevOpsMaxSteps   int    `toml:"devops_max_steps"`
-	BrowserMaxSteps  int    `toml:"browser_max_steps"`
-	MetaMaxSteps     int    `toml:"meta_max_steps"`
-	MetaRetryCount   int    `toml:"meta_retry_count"`
-	SpeakLang        string `toml:"lang"`
+	YoloMode         bool `toml:"yolo_mode"`
+	FullYoloMode     bool `toml:"full_yolo_mode"`
+	DirectorMaxSteps int  `toml:"director_max_steps"`
+	CodingMaxSteps   int  `toml:"coding_max_steps"`
+	ChatMaxSteps     int  `toml:"chat_max_steps"`
+	RepoMaxSteps     int  `toml:"repo_max_steps"`
+	DevOpsMaxSteps   int  `toml:"devops_max_steps"`
+	BrowserMaxSteps  int  `toml:"browser_max_steps"`
+	MetaMaxSteps     int  `toml:"meta_max_steps"`
+	MetaRetryCount   int  `toml:"meta_retry_count"`
+
+	// DelegateIdleTimeout delegate 子代理空闲超时（活动感知）：持续无动作超过
+	// 此值才取消 delegate；0=派生默认（见 DeriveDelegateIdleTimeout）。
+	// 正常 LLM 长推理期间由心跳续期，不会被误杀。
+	DelegateIdleTimeout time.Duration `toml:"delegate_idle_timeout" json:"delegate_idle_timeout" yaml:"delegate_idle_timeout"`
+
+	// DelegateTotalTimeout delegate 子代理总时长上限：0=不限制（默认，
+	// delegate 不再硬编码固定总超时）。
+	DelegateTotalTimeout time.Duration `toml:"delegate_total_timeout" json:"delegate_total_timeout" yaml:"delegate_total_timeout"`
+
+	SpeakLang string `toml:"lang"`
 }
 
 // GitCheckpointConfig holds configuration for the git checkpoint mechanism.
@@ -480,6 +491,37 @@ func (c *Config) validate() error {
 	}
 	if c.Agent.MetaRetryCount == 0 {
 		c.Agent.MetaRetryCount = defaultSteps.MetaRetry
+	}
+
+	// ═══════ Delegate 超时配置（负值防御 + 校验告警）═══════
+	// 语义保持 0=派生默认（idle，见 DeriveDelegateIdleTimeout）/ 0=不限制（total），
+	// 此处仅做负值防御，不填充默认值（activity 监视器接线在第二批次）。
+	if c.Agent.DelegateIdleTimeout < 0 {
+		c.Agent.DelegateIdleTimeout = 0
+	}
+	if c.Agent.DelegateTotalTimeout < 0 {
+		c.Agent.DelegateTotalTimeout = 0
+	}
+	// 校验告警：配置值存在误杀/顺序倒挂风险时提示（不阻断加载）。
+	if c.Agent.DelegateIdleTimeout > 0 && c.LLM.Timeout > 0 && c.Agent.DelegateIdleTimeout <= c.LLM.Timeout {
+		slog.Warn("delegate_idle_timeout 不大于 LLM 调用超时，存在正常长推理被误杀的风险，建议 ≥ max(10m, llm_timeout+5m)",
+			"delegate_idle_timeout", c.Agent.DelegateIdleTimeout,
+			"llm_timeout", c.LLM.Timeout,
+		)
+	}
+	if c.Agent.DelegateTotalTimeout > 0 {
+		idleThreshold := c.Agent.DelegateIdleTimeout
+		if idleThreshold == 0 {
+			// 未显式配置 idle 时按派生默认值参与比较（即运行时实际生效的阈值），
+			// 否则"未配 idle + 配了过小 total"的倒挂不会被告警。
+			idleThreshold = DeriveDelegateIdleTimeout(c.LLM.Timeout)
+		}
+		if c.Agent.DelegateTotalTimeout < idleThreshold {
+			slog.Warn("delegate_total_timeout 小于 delegate_idle_timeout，总上限将先于空闲阈值触发",
+				"delegate_total_timeout", c.Agent.DelegateTotalTimeout,
+				"delegate_idle_timeout", c.Agent.DelegateIdleTimeout,
+			)
+		}
 	}
 
 	// ═══════ LLM 推理兜底默认值设置 ═══════
