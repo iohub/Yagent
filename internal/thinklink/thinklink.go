@@ -20,6 +20,10 @@ const (
 	KindUserInput Kind = iota
 	// KindThoughtPlan Director 输出的 Thought & Plan 块。
 	KindThoughtPlan
+	// KindTodoSnapshot TodoWrite 工具写入的任务清单快照（Content 为
+	// TodoSnapshot 的 JSON 序列化）。最新一条此类条目是当前任务清单的
+	// 权威快照，永不淘汰（钉住）；旧快照在容量压力下优先淘汰。
+	KindTodoSnapshot
 )
 
 // String 返回 Kind 的稳定字符串表示（用于事件 payload / 日志等序列化场景）。
@@ -29,6 +33,8 @@ func (k Kind) String() string {
 		return "user_input"
 	case KindThoughtPlan:
 		return "thought_plan"
+	case KindTodoSnapshot:
+		return "todo_snapshot"
 	default:
 		return fmt.Sprintf("kind(%d)", int(k))
 	}
@@ -54,6 +60,9 @@ type Store struct {
 	entries    []Entry
 	idSeq      uint64
 	maxEntries int // 容量上限（条数），超出时按最旧优先淘汰
+
+	todoRevision    int                    // 任务清单修订号：每次 SetTodos（含相同快照刷新）递增
+	completedLedger []CompletedLedgerEntry // 完成台账：显式迁移追加，FIFO 有界（见 todo_state.go）
 }
 
 // NewStore 创建一个空 Store。maxEntries 为容量上限（条数），
@@ -196,18 +205,51 @@ func (s *Store) appendLocked(kind Kind, content string, step int) Entry {
 	return entry
 }
 
-// evictLocked 容量淘汰：丢弃最旧条目，但第一条 KindUserInput 条目永久保留。
-// 若最旧条目正是受保护的用户输入，则从其下一条开始淘汰（调用方须持有写锁）。
+// evictLocked 容量淘汰：统一 200 上限下按优先级丢弃（调用方须持有写锁）。
+// 淘汰优先级 = 旧快照条目（KindTodoSnapshot 中非最新的）→ 其余最旧条目。
+// 不变量：
+//   - 第一条 KindUserInput 永不淘汰（最初任务需求，终极压缩重建的底线信息）；
+//   - 最新一条 KindTodoSnapshot 永不淘汰（当前任务清单的权威快照，显式钉住）。
+//
+// 若全部剩余条目均受保护，则容忍暂时超限（保护不变量优先于容量上限）。
+// 无快照场景下（仅 KindUserInput/KindThoughtPlan）行为与旧版一致：
+// 丢弃最旧条目，仅第一条用户输入受保护。
 func (s *Store) evictLocked() {
 	for len(s.entries) > s.maxEntries {
-		start := 0
-		if s.entries[0].Kind == KindUserInput {
-			start = 1
-		}
-		if start >= len(s.entries) {
-			// 只剩受保护的第一条，无法继续淘汰
+		idx := s.pickEvictIndexLocked()
+		if idx < 0 {
+			// 全部受保护，无法继续淘汰
 			return
 		}
-		s.entries = append(s.entries[:start], s.entries[start+1:]...)
+		s.entries = append(s.entries[:idx], s.entries[idx+1:]...)
 	}
+}
+
+// pickEvictIndexLocked 选择下一条被淘汰条目的索引；全部受保护时返回 -1。
+func (s *Store) pickEvictIndexLocked() int {
+	// 最新一条 KindTodoSnapshot 的索引（钉住目标）
+	latestSnapIdx := -1
+	for i := len(s.entries) - 1; i >= 0; i-- {
+		if s.entries[i].Kind == KindTodoSnapshot {
+			latestSnapIdx = i
+			break
+		}
+	}
+	// 优先级 1：非最新的旧快照条目（最旧的先淘汰）
+	for i := 0; i < len(s.entries); i++ {
+		if s.entries[i].Kind == KindTodoSnapshot && i != latestSnapIdx {
+			return i
+		}
+	}
+	// 优先级 2：其余最旧条目（跳过受保护的第一条用户输入与钉住的最新快照）
+	for i := 0; i < len(s.entries); i++ {
+		if i == 0 && s.entries[i].Kind == KindUserInput {
+			continue
+		}
+		if i == latestSnapIdx {
+			continue
+		}
+		return i
+	}
+	return -1
 }

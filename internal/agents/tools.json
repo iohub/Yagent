@@ -630,5 +630,48 @@
         "action"
       ]
     }
+  },
+  {
+    "name": "TodoWrite",
+    "description": "Write and manage the structured task list. FULL REPLACEMENT semantics: every call must provide the complete list; items not listed are treated as deleted; an empty array clears the list. When to call: when a multi-step task starts (plan the steps), when a single step completes (mark completed, promote the next), or when new work is discovered (add items). Each item requires: content (the task description in imperative form), active_form (the present continuous form shown while the item is in_progress, e.g. 'Running tests'), and status (pending | in_progress | completed). Constraints: at most one item can be in_progress; at most 25 items; content/active_form must be non-empty. Keep content self-describing so progress remains recoverable after context resets.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "todos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "description": "The task description in imperative form (required)."
+              },
+              "active_form": {
+                "type": "string",
+                "description": "The present continuous form shown while the item is in_progress (required)."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "completed"
+                ],
+                "description": "Task status (required)."
+              }
+            },
+            "required": [
+              "content",
+              "active_form",
+              "status"
+            ]
+          },
+          "description": "The FULL replacement task list. Provide the complete list on every call; items not listed are treated as deleted; an empty array clears the list."
+        }
+      },
+      "required": [
+        "todos"
+      ]
+    }
   }
 ]

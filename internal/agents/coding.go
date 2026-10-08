@@ -96,10 +96,15 @@ func NewCodingAgent(formatter PromptFormatter, publisher EventBus, env Env, file
 		slog.Error("Failed to unmarshal coding tools", "error", err)
 	}
 
+	// thinklink 存储提前创建：TodoWrite 工具注册需要引用（闭包持有 store 与
+	// 事件发布器）；与 return 值为同一实例（跨任务累积的条目必须被
+	// 终极压缩重建看到），与 Agent 同生命周期。
+	codingThinkLink := thinklink.NewStore(0)
+
 	// 创建适配器（工具名 → 执行函数的映射）
 	adapters := make([]*tools.Adapter, 0, len(toolDefs))
 	for _, def := range toolDefs {
-		fn := lookupToolFunc(def.Name, env, files, search, sys, edit, repoOps, flow, thinker, deepThinker, microAgent)
+		fn := lookupToolFunc(def.Name, env, files, search, sys, edit, repoOps, flow, thinker, deepThinker, microAgent, codingThinkLink, publisher)
 		if fn == nil {
 			// delegate_browser 需要特殊处理，跳过
 			continue
@@ -163,13 +168,13 @@ func NewCodingAgent(formatter PromptFormatter, publisher EventBus, env Env, file
 		maxSteps:         maxSteps,
 		BrowserAgent:     browser,
 		registry:         registry,
-		thinkLink:        thinklink.NewStore(0), // 容量 0=全量，与 Director 一致
+		thinkLink:        codingThinkLink, // 容量上限 0 = 使用包默认值（200 条），与 Director 一致
 	}
 }
 
 // lookupToolFunc 根据工具名查找执行函数（替代外部 switch-case 硬编码）
 // 返回 nil 表示该工具需要特殊处理（如 delegate_browser）
-func lookupToolFunc(name string, env Env, files FileToolSet, search SearchToolSet, sys SysToolSet, edit EditToolSet, repoOps RepoToolSet, flow FlowToolSet, thinker Thinker, deepThinker DeepThinker, microAgent MicroAgentRunner) tools.ToolFunc {
+func lookupToolFunc(name string, env Env, files FileToolSet, search SearchToolSet, sys SysToolSet, edit EditToolSet, repoOps RepoToolSet, flow FlowToolSet, thinker Thinker, deepThinker DeepThinker, microAgent MicroAgentRunner, todoStore *thinklink.Store, publisher EventBus) tools.ToolFunc {
 	switch name {
 	case "read_file":
 		return files.ExecuteReadFile
@@ -210,6 +215,10 @@ func lookupToolFunc(name string, env Env, files FileToolSet, search SearchToolSe
 			return nil
 		}
 		return flow.ExecuteAskUserForHelp
+	case "TodoWrite":
+		// TodoWrite 任务清单工具：闭包持有 thinklink 存储与事件发布器
+		//（schema 由调用方从 tools.json 统一提供，见 NewCodingAgent 注册循环）
+		return TodoWriteToolFunc(todoStore, publisher)
 	// delegate_browser 需要 browser agent 引用，返回 nil 由调用方特殊处理
 	default:
 		return nil

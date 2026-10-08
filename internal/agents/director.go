@@ -333,6 +333,11 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		"required": []string{"task"},
 	})
 
+	// thinklink 存储提前创建：TodoWrite 工具注册需要引用（闭包持有 store 与
+	// 事件发布器）；与 self.thinkLink 为同一实例（跨任务累积的条目必须被
+	// 终极压缩重建看到），与 Agent 同生命周期。
+	directorThinkLink := thinklink.NewStore(0)
+
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("agent_exit", "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.", flow.ExecuteAgentExit).WithSchema(map[string]interface{}{
 			"type": "object",
@@ -345,6 +350,10 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		// 完整 artifact 内容；id 来自 [Sub-Agent Result] 头部的 artifact: 字段，
 		// 用于查看被截断结果的全文。只读工具，不触碰 workspace。
 		newReadArtifactAdapter(),
+		// TodoWrite 任务清单工具（方案C·批次1）：闭包持有 directorThinkLink 与
+		// 事件发布器，description/schema 从 tools.json 统一加载；Director 侧
+		// 直接以结构化 tool call 记录任务计划/进度（替代自由文本 + 正则回读）。
+		NewTodoWriteAdapter(directorThinkLink, publisher),
 	}
 
 	var toolDefs []tools.ToolDefinition
@@ -482,8 +491,9 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		// EnhancedCommander 配置
 		EnhancedCommanderCfg: cfg.EnhancedCommander,
 
-		// thinklink 存储：容量上限 0 = 使用包默认值（200 条）
-		thinkLink: thinklink.NewStore(0),
+		// thinklink 存储：与 directorThinkLink 同一实例（TodoWrite 注册与
+		// 终极压缩重建共享），容量上限 0 = 使用包默认值（200 条）
+		thinkLink: directorThinkLink,
 	}
 
 	// Phase 3-0：上下文压缩编排组件；thinkLink 窄接口与 pendingSubAgentMemory
