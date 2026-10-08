@@ -515,23 +515,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		messages = append(messages, assistantMsg)
 		history = append(history, assistantMsg)
 
-		// thinklink: 提取本轮回复中的 Thought & Plan 块并实时保存（供终极压缩重建上下文）
-		if cfg.UltimateThinkLink != nil {
-			for _, block := range compression.ExtractThoughtAndPlanBlocks(assistantMsg.Content) {
-				if entry, added := cfg.UltimateThinkLink.AddThoughtPlan(block, i); added {
-					if cfg.Publisher != nil {
-						_ = cfg.Publisher.Publish("thinklink_entry", map[string]interface{}{
-							"id":        entry.ID,
-							"kind":      entry.Kind.String(),
-							"content":   entry.Content,
-							"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
-							"step":      entry.Step,
-						}, cfg.AgentName)
-					}
-				}
-			}
-		}
-
 		writeRollout(assistantMsg)
 
 		if len(choice.ToolCalls) == 0 {
@@ -540,7 +523,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				slog.Warn("LLM returned text-only response, retrying", "agent", cfg.AgentName, "step", i, "no_action_count", noActionCount)
 
 				reminderContent := "SYSTEM REMINDER: You just ended your response without calling any tools, which immediately terminates your run and leaves the task unexecuted. This is unacceptable.\n\n" +
-					"You must immediately invoke a tool to execute the next step of your plan (explore/edit/run/verify); a `## Thought & Plan` block alone does not constitute action.\n\n" +
+					"You must immediately invoke a tool to execute the next step of your plan (explore/edit/run/verify); a `TodoWrite` call alone does not constitute task progress.\n\n" +
 					"Only call `agent_exit` when the task is truly complete or you are genuinely unable to proceed.\n\n" +
 					"Do not repeat your plan; take immediate action."
 
@@ -669,9 +652,57 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 				rw.WriteEventMsg(event)
 			}
 		}
+
+		// NoActionRetry 进展判定（方案C·批次2）：
+		// - 仅调用 TodoWrite（无其他工具调用）的轮次视为无任务进展：不重置
+		//   noActionCount（与旧 "T&P block alone does not constitute action"
+		//   行为对齐，防止背靠背 TodoWrite 空转），注入提醒后继续循环。
+		//   TodoWrite 本身已执行（任务清单副作用生效）；达到上限后放行
+		//   （不再提醒，MaxSteps 兜底）。
+		// - 真实工具调用（含 TodoWrite+其他工具混合）视为有进展：重置计数。
+		if len(choice.ToolCalls) > 0 {
+			if onlyTodoWriteCalls(choice.ToolCalls) {
+				if cfg.NoActionRetryLimit > 0 && noActionCount < cfg.NoActionRetryLimit {
+					noActionCount++
+					slog.Warn("LLM returned TodoWrite-only response, retrying", "agent", cfg.AgentName, "step", i, "no_action_count", noActionCount)
+
+					reminderContent := "SYSTEM REMINDER: Your last response only called `TodoWrite` without any other tool calls; a `TodoWrite` call alone does not constitute task progress.\n\n" +
+						"You must immediately invoke a real tool to execute the next step of your plan (explore/edit/run/verify).\n\n" +
+						"Only call `agent_exit` when the task is truly complete or you are genuinely unable to proceed.\n\n" +
+						"Do not just update the todo list; take immediate action."
+
+					reminderMsg := llm.Message{
+						Role:    llm.RoleUser,
+						Content: reminderContent,
+					}
+					messages = append(messages, reminderMsg)
+					history = append(history, reminderMsg)
+					writeRollout(reminderMsg)
+					continue
+				}
+			} else {
+				// 真实工具调用（含 TodoWrite+其他混合）：有进展，重置计数
+				noActionCount = 0
+			}
+		}
 	}
 
 	return ExecutorResult{}, fmt.Errorf("%s exceeded max steps (%d)", cfg.AgentName, cfg.MaxSteps)
+}
+
+// onlyTodoWriteCalls 判断本轮工具调用是否仅包含 TodoWrite（且至少有一个调用）。
+// 空切片返回 false（纯文本路径由 len(choice.ToolCalls)==0 分支单独处理）。
+// 用于 NoActionRetry 进展判定：仅 TodoWrite 的轮次不构成任务进展（方案C·批次2）。
+func onlyTodoWriteCalls(tcs []llm.ToolCall) bool {
+	if len(tcs) == 0 {
+		return false
+	}
+	for _, tc := range tcs {
+		if tc.Function.Name != TodoWriteToolName {
+			return false
+		}
+	}
+	return true
 }
 
 // ConvertLLMHistoryToMemory 将 RunAgentLoop 返回的 llm.Message 历史转换为 memory.ChatMessage 切片
