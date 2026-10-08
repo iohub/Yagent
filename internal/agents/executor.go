@@ -71,8 +71,9 @@ type ExecutorConfig struct {
 	// 只读部分供 UltimateCompression 重建上下文，写入部分供 Agent 主循环实时记录;
 	// nil=禁用终极压缩
 	UltimateThinkLink compression.ThinkLinkJournal
-	// UltimateKeepPlans 终极压缩保留 Thought & Plan 块数量上限，0=全部保留
-	UltimateKeepPlans int
+	// UltimateRebuildOpts 终极压缩重建选项（完成台账保留上限/历史快照轨迹条数/
+	// legacy 静默兜底开关），每次调用传入 ApplyUltimate，保持配置动态语义
+	UltimateRebuildOpts compression.UltimateRebuildOptions
 }
 
 // DefaultExecutorConfig returns an ExecutorConfig with sensible defaults applied.
@@ -343,7 +344,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 					// 终极压缩 (第三级):两级常规压缩后仍超限，用 thinklink 重建上下文继续任务
 					if compression.EstimateMessagesTokens(messages) > threshold && cfg.UltimateThinkLink != nil {
 						ultCompressor := compression.NewContextCompressor(cfg.LLM, cfg.AgentName, cfg.UltimateThinkLink, nil)
-						newMessages, ultStats := ultCompressor.ApplyUltimate(messages, threshold, nil, cfg.UltimateKeepPlans)
+						newMessages, ultStats := ultCompressor.ApplyUltimate(messages, threshold, nil, cfg.UltimateRebuildOpts)
 						messages = newMessages
 						// 同步 history，避免调用方 ConvertLLMHistoryToMemory 拿到未压缩的旧历史
 						history = make([]llm.Message, len(messages))
@@ -353,8 +354,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 								"original_tokens":   ultStats.OriginalTokens,
 								"compressed_tokens": ultStats.CompressedTokens,
 								"saved_tokens":      ultStats.SavedTokens,
-								"total_plans":       ultStats.TotalPlans,
-								"kept_plans":        ultStats.KeptPlans,
+								"total_todos":       ultStats.TotalTodos,
+								"kept_ledger":       ultStats.KeptLedger,
 								"user_inputs":       ultStats.UserInputs,
 								"truncated":         ultStats.Truncated,
 							}, cfg.AgentName)
@@ -365,8 +366,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 							"compressed_tokens", ultStats.CompressedTokens,
 							"saved_tokens", ultStats.SavedTokens,
 							"threshold", threshold,
-							"total_plans", ultStats.TotalPlans,
-							"kept_plans", ultStats.KeptPlans,
+							"total_todos", ultStats.TotalTodos,
+							"kept_ledger", ultStats.KeptLedger,
 							"user_inputs", ultStats.UserInputs,
 							"truncated", ultStats.Truncated)
 					}

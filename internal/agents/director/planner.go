@@ -85,26 +85,26 @@ type PromptBuilder func(ctx context.Context, in PromptInput) (string, error)
 // PendingSubAgentMemory 复用 memory.SubAgentMemory（原 *AgentResult
 // 的等价载体，Phase 3-2 迁移时门面负责转换）。
 type RunState struct {
-	Step                  int             // 当前主循环步数
-	MaxSteps              int             // 最大步数（原 a.maxSteps）
-	HasDelegated          bool            // 本次任务是否已委派过 agent（执行检测机制）
-	NonDelegationPrompts  int             // "未委派强制提醒"已注入次数（上限 maxNonDelegationPrompts=3）
-	DelegationAttempts    int             // 委派尝试次数统计（成功失败均计）
+	Step                  int                    // 当前主循环步数
+	MaxSteps              int                    // 最大步数（原 a.maxSteps）
+	HasDelegated          bool                   // 本次任务是否已委派过 agent（执行检测机制）
+	NonDelegationPrompts  int                    // "未委派强制提醒"已注入次数（上限 maxNonDelegationPrompts=3）
+	DelegationAttempts    int                    // 委派尝试次数统计（成功失败均计）
 	PendingSubAgentMemory *memory.SubAgentMemory // 最近一次 delegate 调用的完整结果（nil=无）
 }
 
 // PlannerConfig Planner 配置（首版允许略胖：主循环依赖一次注入，Phase 3-2 起逐步收窄）。
 // Publisher/Journal/Rollout 均 nil 容忍（调用点判空，行为与门面 nil 语义一致）。
 type PlannerConfig struct {
-	LLM        LLMClient             // LLM 客户端（复用 types.go 接口）
-	Publisher  EventPublisher        // 事件发布（nil 容忍）
-	Journal    ThinklinkStore        // thinklink 存储（nil 容忍）
-	Rollout    *memory.RolloutWriter // Rollout 写入器（nil 容忍，门面 run() 内创建）
-	Tools      ToolRunner            // 工具执行器
-	Prompts    PromptBuilder                // 系统提示构建闭包
+	LLM        LLMClient                      // LLM 客户端（复用 types.go 接口）
+	Publisher  EventPublisher                 // 事件发布（nil 容忍）
+	Journal    ThinklinkStore                 // thinklink 存储（nil 容忍）
+	Rollout    *memory.RolloutWriter          // Rollout 写入器（nil 容忍，门面 run() 内创建）
+	Tools      ToolRunner                     // 工具执行器
+	Prompts    PromptBuilder                  // 系统提示构建闭包
 	Compressor *compression.ContextCompressor // 上下文压缩编排组件（Phase 3-0 已抽取，同包直接注入）
-	MaxSteps   int                          // 主循环最大步数
-	LLMTimeout time.Duration         // LLM 调用超时（原 a.llmTimeout，默认 5 分钟）
+	MaxSteps   int                            // 主循环最大步数
+	LLMTimeout time.Duration                  // LLM 调用超时（原 a.llmTimeout，默认 5 分钟）
 
 	// ── Phase 3-2a-1 扩展（Planner.Run 搬迁 run() 主循环所需；除压缩配置外均
 	// nil 容忍/零值安全，与门面 nil 语义一致）──
@@ -129,11 +129,14 @@ type PlannerConfig struct {
 	ConvertToolCallsFn func([]llm.ToolCall) []memory.ToolCallData
 	// 上下文压缩开关与预算（原 a.EnhancedCommanderCfg 为 config 包配置，门面提取
 	// 注入；threshold/keepTokens ≤0 时 Planner 内回退默认值，行为与 run() 一致）。
-	CompressEnable            bool // 原 Enable && EnableContextCompression
-	CompressThreshold         int  // 原 ContextCompressionThreshold
-	CompressKeepTokens        int  // 原 ToolResultKeepTokens
-	UltimateCompressEnable    bool // 原 EnableUltimateCompression
-	UltimateCompressKeepPlans int  // 原 UltimateCompressionKeepPlans
+	CompressEnable     bool // 原 Enable && EnableContextCompression
+	CompressThreshold  int  // 原 ContextCompressionThreshold
+	CompressKeepTokens int  // 原 ToolResultKeepTokens
+	// UltimateCompressEnable 终极压缩开关（原 EnableUltimateCompression）
+	UltimateCompressEnable bool
+	// UltimateRebuildOpts 终极压缩重建选项（完成台账保留上限/历史快照轨迹条数/
+	// legacy 静默兜底开关，原 UltimateCompressionKeepPlans 语义并入）
+	UltimateRebuildOpts compression.UltimateRebuildOptions
 	// ToolTimeout：普通工具调用超时（原 120s；超时保护本身由门面 Tools.Call 包装
 	// 执行，Planner 仅用其做 DeadlineExceeded 错误提示的秒数格式化；delegate_*
 	// 专用 10min 超时由门面感知，Planner 不感知）。

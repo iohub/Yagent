@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"yagent/internal/compression"
 	"yagent/internal/config"
 	"yagent/internal/knowledge"
 	"yagent/internal/mcp"
@@ -79,7 +80,7 @@ type CodingAgent struct {
 	Adapters         []*tools.Adapter
 	BrowserAgent     *BrowserAgent
 	maxSteps         int
-	registry         *tools.Registry // 工具注册表引用
+	registry         *tools.Registry  // 工具注册表引用
 	thinkLink        *thinklink.Store // 终极压缩支撑存储，实时记录用户原始输入，与 Director 模式一致，与 agent 同生命周期
 
 }
@@ -383,9 +384,13 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
 	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
 
-	// 三级终极压缩配置
+	// 三级终极压缩配置（方案C：完成台账保留上限/历史快照轨迹/legacy 静默兜底）
 	cfg.UltimateThinkLink = a.thinkLink // 三级终极压缩重建源（thinklink 只读窄接口）
-	cfg.UltimateKeepPlans = 0 // 0=全部保留
+	cfg.UltimateRebuildOpts = compression.UltimateRebuildOptions{
+		KeepTodoLedgerLimit:             ec.KeepTodoLedgerLimit,             // 0=全部保留
+		KeepRecentTodoSnapshots:         ec.KeepRecentTodoSnapshots,         // 0=不渲染历史快照轨迹
+		EnableLegacyThoughtPlanFallback: ec.EnableLegacyThoughtPlanFallback, // 兼容期静默兜底
+	}
 
 	// 如果是 git 仓库且 checkpoint 启用，设置回调和添加工具
 	if gitCheckpointEnabled {

@@ -25,6 +25,7 @@ import (
 	"yagent/internal/config"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
+	"yagent/internal/thinklink"
 )
 
 // ─── 局部 helper ─────────────────────────────────────────────────────────────
@@ -226,10 +227,11 @@ func TestCharacterizationApplyEmergencyCompression(t *testing.T) {
 // ─── 组 1b：终极压缩 applyUltimateCompression ────────────────────────────────
 
 // TestCharacterizationApplyUltimateCompression 固化终极压缩行为（不依赖 LLM，
-// 由 thinklink Store 重建上下文）：
+// 由 thinklink Store 重建上下文；方案C 批次3 起重建格式为 golden 基线）：
 //   - system 消息原样保留，其余消息重置为单条 user 重建消息；
-//   - 预算充足时保留全部 T&P 块（keep == totalPlans），含原始任务与 [CURRENT TASK] 标记；
-//   - 预算极小时循环递减保留数量直至硬截断兜底（truncated=true，keep=0）；
+//   - 重建内容含全部用户输入（[CURRENT TASK] 标记）+ Current task list
+//     （in_progress 置顶渲染 activeForm）+ Completed tasks（台账 + 完成时间/step）；
+//   - 预算极小时逐级裁剪（台账 → 占位行）直至硬截断兜底（truncated=true）；
 //   - 清理 pendingSubAgentMemory 残留；覆盖 currentMemory 为单条 human 消息。
 func TestCharacterizationApplyUltimateCompression(t *testing.T) {
 	const (
@@ -240,13 +242,19 @@ func TestCharacterizationApplyUltimateCompression(t *testing.T) {
 	buildAgent := func(t *testing.T) *DirectorAgent {
 		t.Helper()
 		agent := newCharDirectorAgent(t, &mockEngine{}, t.TempDir())
-		agent.EnhancedCommanderCfg.UltimateCompressionKeepPlans = 0 // 0 = 不限制保留数量
+		agent.EnhancedCommanderCfg.KeepTodoLedgerLimit = 0 // 0 = 台账全部保留
 		agent.pendingSubAgentMemory = &AgentResult{Text: "stale sub-agent result"}
 		agent.currentMemory = memory.NewConversationMemory(10)
 		agent.currentMemory.AddHumanMessage("old stale history")
 		agent.thinkLink.AddUserInput(userTask, 1)
-		agent.thinkLink.AddThoughtPlan("PLAN_ONE", 2)
-		agent.thinkLink.AddThoughtPlan("PLAN_TWO", 3)
+		// 方案C：任务状态改用 TodoWrite 快照构造（台账由 pending → completed 迁移产生）
+		agent.thinkLink.SetTodos([]thinklink.TodoItem{
+			{Content: "PLAN_ONE", ActiveForm: "working on plan one", Status: thinklink.StatusPending},
+		}, 2)
+		agent.thinkLink.SetTodos([]thinklink.TodoItem{
+			{Content: "PLAN_ONE", ActiveForm: "working on plan one", Status: thinklink.StatusCompleted},
+			{Content: "PLAN_TWO", ActiveForm: "working on plan two", Status: thinklink.StatusInProgress},
+		}, 3)
 		return agent
 	}
 
@@ -257,30 +265,33 @@ func TestCharacterizationApplyUltimateCompression(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		threshold     int
-		wantTruncated bool
-		wantKeptPlans int
-		wantContains  []string
+		name           string
+		threshold      int
+		wantTruncated  bool
+		wantKeptLedger int
+		wantContains   []string
 	}{
 		{
-			name:          "under budget keeps all plans",
-			threshold:     100000,
-			wantTruncated: false,
-			wantKeptPlans: 2,
+			name:           "under budget keeps task list and ledger",
+			threshold:      100000,
+			wantTruncated:  false,
+			wantKeptLedger: 1,
 			wantContains: []string{
 				"=== Original user input(s) ===",
 				"[CURRENT TASK]",
 				userTask,
-				"PLAN_ONE",
-				"PLAN_TWO",
+				"=== Current task list ===",
+				"[IN PROGRESS] working on plan two",
+				"[x] working on plan one",
+				"=== Completed tasks ===",
+				"[x] PLAN_ONE (completed at step 3, ",
 			},
 		},
 		{
-			name:          "tiny budget decrements plans and hard-truncates",
-			threshold:     10, // 远小于重建提示的固有体积 → 递减到 0 后硬截断兜底
-			wantTruncated: true,
-			wantKeptPlans: 0,
+			name:           "tiny budget trims ledger and hard-truncates",
+			threshold:      10, // 远小于重建提示的固有体积 → 逐级裁剪到 0 后硬截断兜底
+			wantTruncated:  true,
+			wantKeptLedger: 0,
 		},
 	}
 
@@ -314,11 +325,11 @@ func TestCharacterizationApplyUltimateCompression(t *testing.T) {
 			if stats.Truncated != tt.wantTruncated {
 				t.Errorf("stats.Truncated = %v, want %v", stats.Truncated, tt.wantTruncated)
 			}
-			if stats.KeptPlans != tt.wantKeptPlans {
-				t.Errorf("stats.KeptPlans = %d, want %d", stats.KeptPlans, tt.wantKeptPlans)
+			if stats.KeptLedger != tt.wantKeptLedger {
+				t.Errorf("stats.KeptLedger = %d, want %d", stats.KeptLedger, tt.wantKeptLedger)
 			}
-			if stats.TotalPlans != 2 {
-				t.Errorf("stats.TotalPlans = %d, want 2", stats.TotalPlans)
+			if stats.TotalTodos != 2 {
+				t.Errorf("stats.TotalTodos = %d, want 2", stats.TotalTodos)
 			}
 			if stats.UserInputs != 1 {
 				t.Errorf("stats.UserInputs = %d, want 1", stats.UserInputs)

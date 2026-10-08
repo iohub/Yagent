@@ -308,22 +308,23 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 
 				// 终极压缩（第三级）：两级常规压缩处理后仍超限（含紧急压缩出错/未生效、
 				// 或 system 消息本身过大导致强制截断失效的情况）时，
-				// 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文，
+				// 用 thinklink 中保存的用户原始输入 + TodoWrite 任务清单状态
+				// （当前快照 + 完成台账）重建上下文，
 				// 将 messages 重置为 [system..., 单条 user 重建消息]。
 				// 压缩发生在当前步骤内部，不额外消耗 maxSteps。
 				if p.cfg.UltimateCompressEnable && p.cfg.Journal != nil && compression.EstimateMessagesTokens(messages) > threshold {
-					newMessages, ultStats := p.cfg.Compressor.ApplyUltimate(messages, threshold, in.Mem, p.cfg.UltimateCompressKeepPlans)
+					newMessages, ultStats := p.cfg.Compressor.ApplyUltimate(messages, threshold, in.Mem, p.cfg.UltimateRebuildOpts)
 					messages = newMessages
 					if p.cfg.Publisher != nil && ultStats != nil {
 						_ = p.cfg.Publisher.Publish("context_ultimate_compressed", map[string]interface{}{
 							"original_tokens":   ultStats.OriginalTokens,
 							"compressed_tokens": ultStats.CompressedTokens,
 							"saved_tokens":      ultStats.SavedTokens,
-							"total_plans":       ultStats.TotalPlans,
-							"kept_plans":        ultStats.KeptPlans,
+							"total_todos":       ultStats.TotalTodos,
+							"kept_ledger":       ultStats.KeptLedger,
 							"user_inputs":       ultStats.UserInputs,
 							"truncated":         ultStats.Truncated,
-							"detail":            "终极压缩(ultimate compression)已触发,上下文已重置为用户原始输入 + Thought & Plan 块",
+							"detail":            "终极压缩(ultimate compression)已触发,上下文已重置为用户原始输入 + 任务清单状态",
 						}, "director")
 					}
 				}

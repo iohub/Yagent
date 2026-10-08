@@ -569,7 +569,19 @@ func (c *Config) validate() error {
 	if !c.EnhancedCommander.EnableUltimateCompression {
 		c.EnhancedCommander.EnableUltimateCompression = true
 	}
-	// UltimateCompressionKeepPlans 零值即默认（0=全部保留），无需额外处理
+	// UltimateCompressionKeepPlans → KeepTodoLedgerLimit 过渡映射（deprecated）：
+	// 新字段未显式配置（0）且旧字段有值时采用旧值，保证既有配置文件的
+	// ultimate_compression_keep_plans 静默升级为台账保留上限；下一 minor 版本随
+	// 旧字段一并删除
+	if c.EnhancedCommander.KeepTodoLedgerLimit == 0 && c.EnhancedCommander.UltimateCompressionKeepPlans > 0 {
+		c.EnhancedCommander.KeepTodoLedgerLimit = c.EnhancedCommander.UltimateCompressionKeepPlans
+	}
+	// EnableLegacyThoughtPlanFallback 默认 true（零值与显式 false 无法区分，
+	// 显式禁用时需知晓此限制，同 EnableUltimateCompression 模式）
+	if !c.EnhancedCommander.EnableLegacyThoughtPlanFallback {
+		c.EnhancedCommander.EnableLegacyThoughtPlanFallback = true
+	}
+	// KeepRecentTodoSnapshots 零值即默认（0=不渲染历史快照段），无需额外处理
 
 	// ═══════ Git Checkpoint 默认值设置 ═══════
 	gitCfgDefaults := DefaultGitCheckpointConfig()
@@ -765,12 +777,27 @@ type EnhancedCommanderConfig struct {
 	ToolResultKeepTokens int `toml:"tool_result_keep_tokens" json:"tool_result_keep_tokens"`
 
 	// EnableUltimateCompression 是否启用终极压缩（thinklink）：两级压缩后仍超限时，
-	// 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文，默认 true
+	// 用 thinklink 中保存的用户原始输入 + 任务清单状态（当前快照/完成台账）重建上下文，默认 true
 	EnableUltimateCompression bool `toml:"enable_ultimate_compression" json:"enable_ultimate_compression"`
 
-	// UltimateCompressionKeepPlans 终极压缩重建时保留的 Thought & Plan 块数量上限，
-	// 0=全部保留（可被循环保护进一步裁剪），默认 0
+	// KeepTodoLedgerLimit 终极压缩重建中完成台账保留的条数上限，
+	// 0=全部保留（可被预算降级链进一步裁剪），默认 0
+	KeepTodoLedgerLimit int `toml:"keep_todo_ledger_limit" json:"keep_todo_ledger_limit"`
+
+	// Deprecated: 旧字段（终极压缩重建时保留的 Thought & Plan 块数量上限）。
+	// 仅作过渡映射保留一个版本：KeepTodoLedgerLimit 未显式配置（0）且本字段有值时
+	// 采用旧值（见 applyDefaults）；下一 minor 版本删除。删除后旧配置文件中的
+	// ultimate_compression_keep_plans 键将被 toml 解析静默忽略（非 strict 模式）。
 	UltimateCompressionKeepPlans int `toml:"ultimate_compression_keep_plans" json:"ultimate_compression_keep_plans"`
+
+	// EnableLegacyThoughtPlanFallback 兼容期静默兜底（5.10-f）：终极压缩重建时扫描
+	// 消息历史中残留的旧格式 Thought & Plan 块，追加为可选段落（不提示、不依赖），
+	// 默认 true；一个 minor 版本后随 legacy 渲染分支一并删除
+	EnableLegacyThoughtPlanFallback bool `toml:"enable_legacy_thought_plan_fallback" json:"enable_legacy_thought_plan_fallback"`
+
+	// KeepRecentTodoSnapshots 终极压缩重建中可选历史快照段渲染的最近 N 条
+	// 任务清单快照进度轨迹，0=不渲染，默认 0
+	KeepRecentTodoSnapshots int `toml:"keep_recent_todo_snapshots" json:"keep_recent_todo_snapshots"`
 }
 
 // ═══════════════════════════════════════════════════════════════

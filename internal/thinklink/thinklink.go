@@ -140,6 +140,10 @@ func (s *Store) Count(kind Kind) int {
 //     最后一条前标注 [CURRENT TASK]；无论 keepPlans 取值，此区始终全部保留；
 //   - "Thought & Plan blocks" 区：按时间顺序列出，带 [TP-n] 全局序号与时间戳；
 //   - keepPlans>0 时仅保留最近 keepPlans 个 T&P 块；keepPlans<=0 表示全部保留。
+//
+// Deprecated: 方案C 批次3 后终极压缩重建不再经由本方法——compressor.ApplyUltimate
+// 已改为自行渲染「全部用户输入 + 当前任务清单快照 + 完成台账」（新重建格式，
+// 含预算降级链），本方法仅存量兼容保留（无生产调用方），批次5 清理时删除。
 func (s *Store) RebuildPrompt(keepPlans int) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

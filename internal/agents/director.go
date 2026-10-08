@@ -1146,25 +1146,29 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 	cfg := director.PlannerConfig{
 		// llmClient 刷新后的引擎（llm.Engine 方法集包含 GenerateContent/Model，
 		// 天然满足 director.LLMClient；与原 run() 使用刷新后 a.LLM 的行为一致）
-		LLM:                       a.LLM,
-		Publisher:                 a.Publisher,
-		Journal:                   a.thinkLink,
-		Rollout:                   directorRolloutWriter,
-		Tools:                     toolRunner,
-		Prompts:                   prompts,
-		Compressor:                a.compressor,
-		MaxSteps:                  a.maxSteps,
-		LLMTimeout:                a.llmTimeout,
-		Recovery:                  recovery,
-		Metrics:                   metrics,
-		NormalizeMessages:         validateAndRepairToolCallPairs,
-		EstimateTokensFn:          EstimateTokens,
-		ConvertToolCallsFn:        convertToolCalls,
-		CompressEnable:            a.EnhancedCommanderCfg.Enable && a.EnhancedCommanderCfg.EnableContextCompression,
-		CompressThreshold:         a.EnhancedCommanderCfg.ContextCompressionThreshold,
-		CompressKeepTokens:        a.EnhancedCommanderCfg.ToolResultKeepTokens,
-		UltimateCompressEnable:    a.EnhancedCommanderCfg.EnableUltimateCompression,
-		UltimateCompressKeepPlans: a.EnhancedCommanderCfg.UltimateCompressionKeepPlans,
+		LLM:                    a.LLM,
+		Publisher:              a.Publisher,
+		Journal:                a.thinkLink,
+		Rollout:                directorRolloutWriter,
+		Tools:                  toolRunner,
+		Prompts:                prompts,
+		Compressor:             a.compressor,
+		MaxSteps:               a.maxSteps,
+		LLMTimeout:             a.llmTimeout,
+		Recovery:               recovery,
+		Metrics:                metrics,
+		NormalizeMessages:      validateAndRepairToolCallPairs,
+		EstimateTokensFn:       EstimateTokens,
+		ConvertToolCallsFn:     convertToolCalls,
+		CompressEnable:         a.EnhancedCommanderCfg.Enable && a.EnhancedCommanderCfg.EnableContextCompression,
+		CompressThreshold:      a.EnhancedCommanderCfg.ContextCompressionThreshold,
+		CompressKeepTokens:     a.EnhancedCommanderCfg.ToolResultKeepTokens,
+		UltimateCompressEnable: a.EnhancedCommanderCfg.EnableUltimateCompression,
+		UltimateRebuildOpts: compression.UltimateRebuildOptions{
+			KeepTodoLedgerLimit:             a.EnhancedCommanderCfg.KeepTodoLedgerLimit,
+			KeepRecentTodoSnapshots:         a.EnhancedCommanderCfg.KeepRecentTodoSnapshots,
+			EnableLegacyThoughtPlanFallback: a.EnhancedCommanderCfg.EnableLegacyThoughtPlanFallback,
+		},
 		// 普通工具调用超时（120s）；超时保护由 directorToolRunner 执行，Planner 仅
 		// 用其做 DeadlineExceeded 错误提示的秒数格式化兜底（delegate_* 的空闲/总时长
 		// 超时错误已转换为带原因的格式化错误）
@@ -1198,21 +1202,24 @@ func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages 
 type UltimateCompressionStats = compression.UltimateCompressionStats
 
 // applyUltimateCompression 终极压缩（第三级）：两级常规压缩后仍超限时，
-// 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文。
+// 用 thinklink 中保存的用户原始输入 + TodoWrite 任务清单状态
+// （当前快照 + 完成台账）重建上下文。
 //
 //   - messages 重置为 [system..., 单条 user 重建消息]；
 //   - 同步覆盖 currentMemory（保持 memory 与 messages 一致，参照 applyEmergencyCompression）；
 //   - 清理 pendingSubAgentMemory 等可能导致 tool_call/tool_response 配对校验失败的残留；
-//   - 循环保护：若重建后的输入自身仍超预算，逐步减少保留的 T&P 块数量
-//     （保留最近 N-1、N-2……直至只留用户原始输入），仍超限则对重建内容做硬截断，
-//     确保重建后必然低于阈值，绝不进入死循环。
+//   - 预算降级链：可选段落（历史快照轨迹 + legacy T&P 残留段）→ 完成台账逐条递减 →
+//     硬截断兜底，确保重建后必然低于阈值。
 //
-// Phase 3-0：编排逻辑已抽取至 director.ContextCompressor，此处仅薄委托，
-// 保持原签名与压缩行为不变（characterization 测试零改动）；memory 与配置
-// （UltimateCompressionKeepPlans）以参数传入，pendingSubAgentMemory 清理经回调在
-// 组件内执行（构造时注入，签名上不引入 agents 类型）。
+// 方案C 批次3：编排逻辑抽取至 director.ContextCompressor，此处仅薄委托；
+// memory 与重建配置（台账保留上限/历史快照条数/legacy 兜底开关）以参数传入，
+// pendingSubAgentMemory 清理经回调在组件内执行（构造时注入，签名上不引入 agents 类型）。
 func (a *DirectorAgent) applyUltimateCompression(messages []llm.Message, threshold int) ([]llm.Message, *UltimateCompressionStats) {
-	return a.compressor.ApplyUltimate(messages, threshold, a.currentMemory, a.EnhancedCommanderCfg.UltimateCompressionKeepPlans)
+	return a.compressor.ApplyUltimate(messages, threshold, a.currentMemory, compression.UltimateRebuildOptions{
+		KeepTodoLedgerLimit:             a.EnhancedCommanderCfg.KeepTodoLedgerLimit,
+		KeepRecentTodoSnapshots:         a.EnhancedCommanderCfg.KeepRecentTodoSnapshots,
+		EnableLegacyThoughtPlanFallback: a.EnhancedCommanderCfg.EnableLegacyThoughtPlanFallback,
+	})
 }
 
 // validateAndRepairToolCallPairs 验证并修复 tool_call/tool_response 配对完整性

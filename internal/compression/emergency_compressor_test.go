@@ -156,7 +156,7 @@ Step 3`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blocks := ExtractThoughtAndPlanBlocks(tt.content)
+			blocks := extractThoughtAndPlanBlocks(tt.content)
 			if len(blocks) != tt.wantLen {
 				t.Fatalf("expected %d blocks, got %d", tt.wantLen, len(blocks))
 			}
@@ -169,6 +169,103 @@ Step 3`,
 				}
 			}
 		})
+	}
+}
+
+// ─── TestEmergencyCompressMessages_TodoWritePinning（方案C 5.6）───────────────
+
+// makeTodoWritePair 构造一个 TodoWrite 调用对（assistant tool_call + 紧随 tool result）。
+func makeTodoWritePair(callID, result string) []llm.Message {
+	return []llm.Message{
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{
+				{ID: callID, Type: "function", Function: llm.FunctionCall{Name: "TodoWrite", Arguments: `{"todos":[]}`}},
+			},
+		},
+		{Role: llm.RoleTool, ToolCallID: callID, ToolName: "TodoWrite", Content: result},
+	}
+}
+
+// TestEmergencyCompressMessages_TodoWritePinning 最新 TodoWrite 调用对被钉住
+// 原样保留（assistant tool_call + tool result 消息形态不变）；更早的 TodoWrite
+// 对被整体替换为紧凑注记；非 TodoWrite 的 assistant 内容按现有压缩规则收集为块。
+func TestEmergencyCompressMessages_TodoWritePinning(t *testing.T) {
+	oldPair := makeTodoWritePair("old-1", strings.Repeat("old", 2000)) // 旧对（大 tool result）
+	latestPair := makeTodoWritePair("new-1", "current todo result")    // 最新对（钉住目标）
+
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "system"},
+		{Role: llm.RoleUser, Content: "task"},
+		oldPair[0], oldPair[1],
+		{Role: llm.RoleAssistant, Content: "process note one"},
+		latestPair[0], latestPair[1],
+	}
+
+	mock := &mockEmergencyLLM{}
+	threshold := 100000 // 预算充足，不触发强制截断
+	newMessages, stats := EmergencyCompressMessages(context.Background(), messages, "task", threshold, mock, "mock-agent", 3)
+
+	// 结构：system + [注记(旧对)] + [最新对原样] + user 重建消息 = 5 条
+	if len(newMessages) != 5 {
+		t.Fatalf("len(newMessages) = %d, want 5 [system, note, assistant, tool, user], got %v", len(newMessages), newMessages)
+	}
+	if newMessages[0].Role != llm.RoleSystem {
+		t.Errorf("newMessages[0] should be system, got %q", newMessages[0].Role)
+	}
+	// 旧对被替换为紧凑注记（assistant 文本消息）
+	if newMessages[1].Role != llm.RoleAssistant || newMessages[1].Content != legacyTodoWriteNote {
+		t.Errorf("old TodoWrite pair should be replaced with compact note, got role=%q content=%q", newMessages[1].Role, newMessages[1].Content)
+	}
+	// 最新对原样钉住保留（assistant tool_call + tool result 形态与内容不变）
+	pinnedAssistant := newMessages[2]
+	pinnedTool := newMessages[3]
+	if pinnedAssistant.Role != llm.RoleAssistant || len(pinnedAssistant.ToolCalls) != 1 || pinnedAssistant.ToolCalls[0].ID != "new-1" {
+		t.Errorf("latest TodoWrite assistant tool_call should be pinned as-is, got %+v", pinnedAssistant)
+	}
+	if pinnedTool.Role != llm.RoleTool || pinnedTool.Content != "current todo result" || pinnedTool.ToolCallID != "new-1" {
+		t.Errorf("latest TodoWrite tool result should be pinned as-is, got role=%q content=%q callID=%q", pinnedTool.Role, pinnedTool.Content, pinnedTool.ToolCallID)
+	}
+	// user 重建消息在末尾
+	if newMessages[4].Role != llm.RoleUser {
+		t.Errorf("rebuilt user message should be last, got %q", newMessages[4].Role)
+	}
+	// 非 TodoWrite 的 assistant 内容进入块收集与重建消息
+	if !strings.Contains(newMessages[4].Content, "process note one") {
+		t.Errorf("non-TodoWrite assistant content should be kept in rebuilt user message")
+	}
+	// 旧对的 tool result 大内容不应出现（被注记替换）
+	if strings.Contains(newMessages[4].Content, "oldoldold") {
+		t.Errorf("old TodoWrite pair tool result should NOT appear in rebuilt content")
+	}
+	// stats：钉住 1 对、替换 1 对
+	if stats.PinnedTodoPairs != 1 || stats.ReplacedTodoPairs != 1 {
+		t.Errorf("stats invalid: pinned=%d replaced=%d, want 1/1", stats.PinnedTodoPairs, stats.ReplacedTodoPairs)
+	}
+}
+
+// TestEmergencyCompressMessages_NoTodoWrite 无 TodoWrite 调用对时输出结构
+// 与既有行为一致（[system, user 重建消息]）。
+func TestEmergencyCompressMessages_NoTodoWrite(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "system"},
+		{Role: llm.RoleUser, Content: "task"},
+		{Role: llm.RoleAssistant, Content: "normal assistant content"},
+	}
+	mock := &mockEmergencyLLM{}
+	newMessages, stats := EmergencyCompressMessages(context.Background(), messages, "task", 100000, mock, "mock-agent", 3)
+
+	if len(newMessages) != 2 {
+		t.Fatalf("len(newMessages) = %d, want 2 [system, user]", len(newMessages))
+	}
+	if newMessages[1].Role != llm.RoleUser {
+		t.Errorf("rebuilt message should be user, got %q", newMessages[1].Role)
+	}
+	if stats.PinnedTodoPairs != 0 || stats.ReplacedTodoPairs != 0 {
+		t.Errorf("stats invalid: pinned=%d replaced=%d, want 0/0", stats.PinnedTodoPairs, stats.ReplacedTodoPairs)
+	}
+	if !strings.Contains(newMessages[1].Content, "normal assistant content") {
+		t.Errorf("non-TodoWrite assistant content should be kept in rebuilt user message")
 	}
 }
 

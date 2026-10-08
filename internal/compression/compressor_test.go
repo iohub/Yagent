@@ -1,16 +1,19 @@
-// Package compression — compressor_test.go — P0-1 Phase 3-0: ContextCompressor 组件单测。
+// Package compression — compressor_test.go — ContextCompressor 组件单测（方案C 批次3 golden 基线）。
 
-// 独立可测（注入 fake thinklink 窄接口与可控 LLM 引擎），不依赖 DirectorAgent。
-// 以 director_characterization_test.go 的断言为参照但独立编写，覆盖：
-//  1. 紧急压缩：少块保留/多块 LLM 总结/LLM 失败降级截断/nil memory；
-//  2. 终极压缩：重建上下文/thinklink 交互（RebuildPrompt 调用序列）/回调清理/nil memory；
-//  3. 阈值边界：ShouldCompress 严格大于语义、userBudget 下限钳位。
+// 终极压缩重建（ApplyUltimate）使用真实 *thinklink.Store 构造任务状态
+// （用户输入 + TodoWrite 快照 + 完成台账），覆盖设计文档 6.1 compression 层：
+//  1. 终极重建 golden：全部用户输入 + Current task list（in_progress 置顶/排序/
+//     activeForm 渲染）+ Completed tasks；无快照占位渲染；
+//  2. 预算降级顺序：① 可选段落（历史快照轨迹 + legacy T&P 残留）→ ② 完成台账
+//     逐条递减（KeepTodoLedgerLimit 截断/裁光占位）→ ③ 硬截断兜底；
+//  3. legacy 静默兜底 flag 开（含残留段）/关（不含）；
+//  4. 紧急压缩：少块保留/多块 LLM 总结/LLM 失败降级截断/nil memory；
+//  5. 阈值边界：ShouldCompress 严格大于语义、userBudget 下限钳位。
 package compression
 
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -19,7 +22,7 @@ import (
 	"yagent/internal/thinklink"
 )
 
-// ─── fake 实现 ───────────────────────────────────────────────────────────────
+// ─── 可控 LLM 引擎 ───────────────────────────────────────────────────────────
 
 // compressorTestEngine 可控 LLM 引擎（实现 llm.Engine，记录调用次数）。
 type compressorTestEngine struct {
@@ -35,65 +38,18 @@ func (e *compressorTestEngine) GenerateContent(_ context.Context, _ []llm.Messag
 	}
 	return &llm.Response{Choices: []llm.Choice{{Content: e.responseContent}}}, nil
 }
+
 func (e *compressorTestEngine) Model() string         { return "fake-model" }
 func (e *compressorTestEngine) CloseIdleConnections() {}
-
-// fakeThinkLink 记录 Count/RebuildPrompt 调用的 thinklink 窄接口 fake。
-// RebuildPrompt 语义贴近真实 Store:keepPlans>0 保留最近 N 个 T&P 块，
-// keepPlans<=0 全部保留；用户输入区始终全部保留（最后一条标 [CURRENT TASK]）。
-type fakeThinkLink struct {
-	planCount    int
-	inputCount   int
-	plans        []string // T&P 块内容（按时间序）
-	userInputs   []string // 用户输入内容（按时间序）
-	rebuildCalls []int    // 每次 RebuildPrompt 的 keepPlans 参数
-}
-
-func (f *fakeThinkLink) Count(kind thinklink.Kind) int {
-	if kind == thinklink.KindThoughtPlan {
-		return f.planCount
-	}
-	return f.inputCount
-}
-
-func (f *fakeThinkLink) RebuildPrompt(keepPlans int) string {
-	f.rebuildCalls = append(f.rebuildCalls, keepPlans)
-	var sb strings.Builder
-	sb.WriteString("Your previous conversation context has been RESET.\n")
-	sb.WriteString("\n=== Original user input(s) ===\n")
-	if len(f.userInputs) == 0 {
-		sb.WriteString("(no user input recorded)\n")
-	}
-	for i, ui := range f.userInputs {
-		marker := ""
-		if i == len(f.userInputs)-1 {
-			marker = "[CURRENT TASK] "
-		}
-		sb.WriteString("\n" + marker + "[USER INPUT " + strconv.Itoa(i+1) + "]\n" + ui + "\n")
-	}
-	sb.WriteString("\n=== Thought & Plan blocks ===\n")
-	plans := f.plans
-	offset := 0
-	if keepPlans > 0 && len(plans) > keepPlans {
-		offset = len(plans) - keepPlans
-		plans = plans[offset:]
-	}
-	if len(plans) == 0 {
-		sb.WriteString("(no Thought & Plan blocks recorded)\n")
-	}
-	for i, p := range plans {
-		sb.WriteString("\n[TP-" + strconv.Itoa(offset+i+1) + "]\n" + p + "\n")
-	}
-	return sb.String()
-}
 
 // newCompressorTestEngine 构造可控引擎，responseContent 默认为可识别的总结文本。
 func newCompressorTestEngine() *compressorTestEngine {
 	return &compressorTestEngine{responseContent: "COMPRESSOR_TEST_SUMMARY"}
 }
 
-// newCompressor 构造带计数回调的 ContextCompressor。
-func newCompressor(engine llm.Engine, store ThinkLinkStore, callbackCalls *int) *ContextCompressor {
+// newCompressor 构造带计数回调的 ContextCompressor（store 用真实 *thinklink.Store，
+// 覆盖快照序列化/反序列化真实路径）。
+func newCompressor(engine llm.Engine, store *thinklink.Store, callbackCalls *int) *ContextCompressor {
 	return NewContextCompressor(engine, "Director", store, func() {
 		if callbackCalls != nil {
 			*callbackCalls++
@@ -101,7 +57,7 @@ func newCompressor(engine llm.Engine, store ThinkLinkStore, callbackCalls *int) 
 	})
 }
 
-// assistantMessages 构造 n 条 assistant 文本消息（无 T&P 关键字，紧急压缩时每条整体作为一个块）。
+// assistantMessages 构造 n 条 assistant 文本消息（紧急压缩时每条整体作为一个块）。
 func assistantMessages(n int, prefix string) []llm.Message {
 	msgs := make([]llm.Message, 0, n)
 	for i := 0; i < n; i++ {
@@ -124,7 +80,7 @@ func TestCompressorApplyEmergencyFewBlocksKeepsAll(t *testing.T) {
 	)
 	engine := newCompressorTestEngine()
 	callbackCalls := 0
-	c := newCompressor(engine, &fakeThinkLink{}, &callbackCalls)
+	c := newCompressor(engine, thinklink.NewStore(200), &callbackCalls)
 	mem := memory.NewConversationMemory(10)
 	mem.AddHumanMessage(originalTask)
 
@@ -176,7 +132,7 @@ func TestCompressorApplyEmergencyLLMSummary(t *testing.T) {
 	engine := newCompressorTestEngine()
 	engine.responseContent = summaryText
 	callbackCalls := 0
-	c := newCompressor(engine, &fakeThinkLink{}, &callbackCalls)
+	c := newCompressor(engine, thinklink.NewStore(200), &callbackCalls)
 	mem := memory.NewConversationMemory(10)
 	mem.AddHumanMessage(originalTask)
 
@@ -214,7 +170,7 @@ func TestCompressorApplyEmergencyLLMFailureFallback(t *testing.T) {
 	engine := newCompressorTestEngine()
 	engine.err = errors.New("forced llm failure for compressor test")
 	callbackCalls := 0
-	c := newCompressor(engine, &fakeThinkLink{}, &callbackCalls)
+	c := newCompressor(engine, thinklink.NewStore(200), &callbackCalls)
 	mem := memory.NewConversationMemory(10)
 	mem.AddHumanMessage(originalTask)
 
@@ -242,7 +198,7 @@ func TestCompressorApplyEmergencyLLMFailureFallback(t *testing.T) {
 func TestCompressorApplyEmergencyNilMemory(t *testing.T) {
 	const inlineUserMsg = "USER_TASK_FROM_MESSAGES"
 	engine := newCompressorTestEngine()
-	c := newCompressor(engine, &fakeThinkLink{}, nil)
+	c := newCompressor(engine, thinklink.NewStore(200), nil)
 
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "SYSTEM_KEEP"},
@@ -263,18 +219,39 @@ func TestCompressorApplyEmergencyNilMemory(t *testing.T) {
 	}
 }
 
-// ─── 组 2:ApplyUltimate ─────────────────────────────────────────────────────
+// ─── 组 2:ApplyUltimate（方案C golden 基线）──────────────────────────────────
 
-// newUltimateFixtures 构造带 fake thinklink（2 plans + 1 user input）的压缩组件与 memory。
-func newUltimateFixtures(t *testing.T, keepPlansLimit int, callbackCalls *int) (*ContextCompressor, *fakeThinkLink, *memory.ConversationMemory, []llm.Message) {
+// newUltimateStore 构造填充了用户输入/任务清单快照/完成台账的真实 Store：
+//   - 1 条用户输入（"original task"）；
+//   - 完成台账含 TASK_A（由 pending → completed 迁移产生，CompletedAtStep=3）；
+//   - 当前清单 = TASK_B in_progress + TASK_C pending。
+func newUltimateStore(t *testing.T) *thinklink.Store {
+	t.Helper()
+	store := thinklink.NewStore(200)
+	if _, ok := store.AddUserInput("original task", 1); !ok {
+		t.Fatalf("AddUserInput should succeed")
+	}
+	if _, err := store.SetTodos([]thinklink.TodoItem{
+		{Content: "TASK_A", ActiveForm: "working on task A", Status: thinklink.StatusPending},
+	}, 2); err != nil {
+		t.Fatalf("SetTodos failed: %v", err)
+	}
+	if _, err := store.SetTodos([]thinklink.TodoItem{
+		{Content: "TASK_A", ActiveForm: "working on task A", Status: thinklink.StatusCompleted},
+		{Content: "TASK_B", ActiveForm: "working on task B", Status: thinklink.StatusInProgress},
+		{Content: "TASK_C", ActiveForm: "working on task C", Status: thinklink.StatusPending},
+	}, 3); err != nil {
+		t.Fatalf("SetTodos failed: %v", err)
+	}
+	return store
+}
+
+// newUltimateFixtures 构造带真实 Store（newUltimateStore）的压缩组件与
+// memory/messages（含 system/user/assistant 旧历史）。
+func newUltimateFixtures(t *testing.T, callbackCalls *int) (*ContextCompressor, *thinklink.Store, *memory.ConversationMemory, []llm.Message) {
 	t.Helper()
 	engine := newCompressorTestEngine()
-	store := &fakeThinkLink{
-		planCount:  2,
-		inputCount: 1,
-		plans:      []string{"PLAN_ONE", "PLAN_TWO"},
-		userInputs: []string{"原始任务 U"},
-	}
+	store := newUltimateStore(t)
 	c := newCompressor(engine, store, callbackCalls)
 	mem := memory.NewConversationMemory(10)
 	mem.AddHumanMessage("old stale history")
@@ -286,14 +263,17 @@ func newUltimateFixtures(t *testing.T, keepPlansLimit int, callbackCalls *int) (
 	return c, store, mem, msgs
 }
 
-// TestCompressorApplyUltimateRebuildContext 预算充足时保留全部 T&P 块
-// （keep == totalPlans），重建消息含原始任务与 [CURRENT TASK] 标记；
-// thinklink 交互正确（Count 查询 T&P 与用户输入）；回调执行一次；memory 覆盖。
-func TestCompressorApplyUltimateRebuildContext(t *testing.T) {
+// TestCompressorApplyUltimateRebuildGolden 预算充足时的 golden 重建基线：
+// 重置横幅（含任务清单权威指令）+ 全部用户输入（[CURRENT TASK]）+
+// Current task list（in_progress 置顶渲染 activeForm、pending 渲染 content、
+// completed 渲染 activeForm 带完成标记，顺序正确）+ Completed tasks
+// （台账 content + 完成时间/step）；默认不渲染可选段落；回调执行一次；
+// memory 覆盖为单条 human 消息。
+func TestCompressorApplyUltimateRebuildGolden(t *testing.T) {
 	callbackCalls := 0
-	c, store, mem, msgs := newUltimateFixtures(t, 0, &callbackCalls)
+	c, _, mem, msgs := newUltimateFixtures(t, &callbackCalls)
 
-	out, stats := c.ApplyUltimate(msgs, 100000, mem, 0)
+	out, stats := c.ApplyUltimate(msgs, 100000, mem, UltimateRebuildOptions{})
 
 	if len(out) != 2 {
 		t.Fatalf("len(out) = %d, want 2", len(out))
@@ -304,27 +284,69 @@ func TestCompressorApplyUltimateRebuildContext(t *testing.T) {
 	if out[1].Role != llm.RoleUser {
 		t.Errorf("out[1].Role = %q, want %q", out[1].Role, llm.RoleUser)
 	}
-	for _, sub := range []string{"=== Original user input(s) ===", "[CURRENT TASK]", "原始任务 U", "PLAN_ONE", "PLAN_TWO"} {
-		if !strings.Contains(out[1].Content, sub) {
-			t.Errorf("rebuilt user content should contain %q", sub)
+	content := out[1].Content
+
+	// 重置横幅：上下文已重置说明 + 任务清单权威指令（缺失细节需用工具重新核实）
+	for _, sub := range []string{
+		"Your previous conversation context has been RESET",
+		"authoritative source of task state",
+		"re-verify them with tools instead of guessing",
+	} {
+		if !strings.Contains(content, sub) {
+			t.Errorf("rebuilt content should contain banner %q", sub)
 		}
 	}
+	// 全部用户输入（时间戳/step 格式 + [CURRENT TASK] 标记）
+	for _, sub := range []string{"=== Original user input(s) ===", "[CURRENT TASK]", "original task", "[USER INPUT 1]", ", step 1)"} {
+		if !strings.Contains(content, sub) {
+			t.Errorf("rebuilt content should contain user input %q", sub)
+		}
+	}
+	// Current task list：in_progress 置顶渲染 activeForm、pending 渲染 content、
+	// completed 渲染 activeForm
+	for _, sub := range []string{
+		"=== Current task list ===",
+		"[IN PROGRESS] working on task B",
+		"[ ] TASK_C",
+		"[x] working on task A",
+	} {
+		if !strings.Contains(content, sub) {
+			t.Errorf("rebuilt content should contain task list entry %q", sub)
+		}
+	}
+	// 渲染顺序：in_progress → pending → completed → Completed tasks 区
+	idxInProgress := strings.Index(content, "[IN PROGRESS] working on task B")
+	idxPending := strings.Index(content, "[ ] TASK_C")
+	idxCompleted := strings.Index(content, "[x] working on task A")
+	idxLedger := strings.Index(content, "=== Completed tasks ===")
+	if idxInProgress < 0 || idxPending < 0 || idxCompleted < 0 || idxLedger < 0 {
+		t.Fatalf("golden sections missing: inProgress=%d pending=%d completed=%d ledger=%d",
+			idxInProgress, idxPending, idxCompleted, idxLedger)
+	}
+	if !(idxInProgress < idxPending && idxPending < idxCompleted && idxCompleted < idxLedger) {
+		t.Errorf("render order invalid: in_progress(%d) < pending(%d) < completed(%d) < ledger(%d)",
+			idxInProgress, idxPending, idxCompleted, idxLedger)
+	}
+	// Completed tasks：台账 content + 完成时间/step
+	if !strings.Contains(content, "[x] TASK_A (completed at step 3, ") {
+		t.Errorf("rebuilt content should contain ledger entry with completed step, got:\n%s", content)
+	}
+	// 默认（KeepRecentTodoSnapshots=0 / legacy flag=false）不渲染可选段落
+	if strings.Contains(content, "=== Todo history") || strings.Contains(content, "=== Legacy Thought & Plan fragments ===") {
+		t.Errorf("rebuilt content should NOT contain optional sections by default")
+	}
+	// stats
 	if stats.Truncated {
 		t.Errorf("stats.Truncated = true, want false (under budget)")
 	}
-	if stats.TotalPlans != 2 || stats.KeptPlans != 2 || stats.UserInputs != 1 {
-		t.Errorf("stats invalid: total=%d kept=%d inputs=%d, want 2/2/1",
-			stats.TotalPlans, stats.KeptPlans, stats.UserInputs)
+	if stats.TotalTodos != 3 || stats.KeptLedger != 1 || stats.UserInputs != 1 {
+		t.Errorf("stats invalid: todos=%d ledger=%d inputs=%d, want 3/1/1",
+			stats.TotalTodos, stats.KeptLedger, stats.UserInputs)
 	}
-	// thinklink 交互：预算充足时 RebuildPrompt 只调用一次（keep=totalPlans）
-	if len(store.rebuildCalls) != 1 || store.rebuildCalls[0] != 2 {
-		t.Errorf("RebuildPrompt calls = %v, want [2]", store.rebuildCalls)
-	}
-	// 回调清理：pendingSubAgentMemory 清理回调执行一次
+	// 回调执行一次；memory 覆盖为单条 human 消息且与重建内容一致
 	if callbackCalls != 1 {
 		t.Errorf("clearPendingSubAgent callback calls = %d, want 1", callbackCalls)
 	}
-	// memory 覆盖：清空后只剩一条 human 消息，内容与输出末条 user 一致
 	if len(mem.Messages) != 1 || mem.Messages[0].Type != memory.MessageTypeHuman || mem.Messages[0].Content != out[1].Content {
 		t.Errorf("memory should be overwritten to single human message equal to out[1].Content")
 	}
@@ -334,54 +356,248 @@ func TestCompressorApplyUltimateRebuildContext(t *testing.T) {
 	}
 }
 
-// TestCompressorApplyUltimateTinyBudgetHardTruncates 预算极小时循环递减保留数量
-// （RebuildPrompt 调用序列 keep, keep-1, ..., 0）直至硬截断兜底（truncated=true，keep=0），
-// 重建内容非空。
-func TestCompressorApplyUltimateTinyBudgetHardTruncates(t *testing.T) {
+// TestCompressorApplyUltimateNoTaskList 无 TodoWrite 历史（无快照）时渲染
+// "(no task list)"占位行，空台账渲染"(no completed tasks recorded)"。
+func TestCompressorApplyUltimateNoTaskList(t *testing.T) {
 	callbackCalls := 0
-	// threshold=1:远小于重建提示的固有体积 → 递减到 0 后硬截断兜底
-	c, store, mem, msgs := newUltimateFixtures(t, 0, &callbackCalls)
+	engine := newCompressorTestEngine()
+	store := thinklink.NewStore(200)
+	if _, ok := store.AddUserInput("only task", 1); !ok {
+		t.Fatalf("AddUserInput should succeed")
+	}
+	c := newCompressor(engine, store, &callbackCalls)
+	mem := memory.NewConversationMemory(10)
+	msgs := []llm.Message{{Role: llm.RoleSystem, Content: "SYSTEM_KEEP"}}
 
-	out, stats := c.ApplyUltimate(msgs, 1, mem, 0)
+	out, stats := c.ApplyUltimate(msgs, 100000, mem, UltimateRebuildOptions{})
 
-	if stats.Truncated != true {
-		t.Errorf("stats.Truncated = %v, want true (tiny budget hard-truncates)", stats.Truncated)
+	content := out[1].Content
+	if !strings.Contains(content, "(no task list)") {
+		t.Errorf("no-snapshot rebuild should contain '(no task list)' placeholder, got:\n%s", content)
 	}
-	if stats.KeptPlans != 0 {
-		t.Errorf("stats.KeptPlans = %d, want 0", stats.KeptPlans)
+	if !strings.Contains(content, "(no completed tasks recorded)") {
+		t.Errorf("empty ledger should render '(no completed tasks recorded)' placeholder")
 	}
-	// 循环保护：RebuildPrompt 递减调用序列 [2, 1, 0]
-	if len(store.rebuildCalls) != 3 || store.rebuildCalls[0] != 2 || store.rebuildCalls[1] != 1 || store.rebuildCalls[2] != 0 {
-		t.Errorf("RebuildPrompt calls = %v, want [2 1 0]", store.rebuildCalls)
+	if !strings.Contains(content, "only task") {
+		t.Errorf("rebuilt content should contain the only user input")
 	}
-	if strings.TrimSpace(out[1].Content) == "" {
-		t.Errorf("rebuilt user content should not be empty (truncated=%v)", stats.Truncated)
-	}
-	if callbackCalls != 1 {
-		t.Errorf("clearPendingSubAgent callback calls = %d, want 1", callbackCalls)
+	if stats.TotalTodos != 0 || stats.KeptLedger != 0 || stats.UserInputs != 1 {
+		t.Errorf("stats invalid: todos=%d ledger=%d inputs=%d, want 0/0/1",
+			stats.TotalTodos, stats.KeptLedger, stats.UserInputs)
 	}
 }
 
-// TestCompressorApplyUltimateKeepPlansLimit 配置指定保留数量上限（0=全部保留）时，
-// 取配置值与全部数量的较小值。
-func TestCompressorApplyUltimateKeepPlansLimit(t *testing.T) {
+// newLedgerTestStore 构造台账 3 条（按序迁移产生，content 为给定文本）+
+// 当前清单 TASK_Z in_progress 的 Store。
+func newLedgerTestStore(t *testing.T, contents []string) *thinklink.Store {
+	t.Helper()
+	store := thinklink.NewStore(200)
+	if _, ok := store.AddUserInput("original task", 1); !ok {
+		t.Fatalf("AddUserInput should succeed")
+	}
+	pending := make([]thinklink.TodoItem, 0, len(contents))
+	for _, c := range contents {
+		pending = append(pending, thinklink.TodoItem{Content: c, ActiveForm: "working on " + c, Status: thinklink.StatusPending})
+	}
+	if _, err := store.SetTodos(pending, 2); err != nil {
+		t.Fatalf("SetTodos failed: %v", err)
+	}
+	completed := make([]thinklink.TodoItem, 0, len(contents)+1)
+	for _, c := range contents {
+		completed = append(completed, thinklink.TodoItem{Content: c, ActiveForm: "working on " + c, Status: thinklink.StatusCompleted})
+	}
+	completed = append(completed, thinklink.TodoItem{Content: "TASK_Z", ActiveForm: "working on TASK_Z", Status: thinklink.StatusInProgress})
+	if _, err := store.SetTodos(completed, 3); err != nil {
+		t.Fatalf("SetTodos failed: %v", err)
+	}
+	return store
+}
+
+// TestCompressorApplyUltimateLedgerLimit KeepTodoLedgerLimit 截断生效：
+// 台账 3 条仅保留最近 1 条（配置上限），更早的不出现；0=全部保留。
+func TestCompressorApplyUltimateLedgerLimit(t *testing.T) {
 	callbackCalls := 0
-	c, store, mem, msgs := newUltimateFixtures(t, 1, &callbackCalls)
+	engine := newCompressorTestEngine()
+	store := newLedgerTestStore(t, []string{"LEDGER_ONE", "LEDGER_TWO", "LEDGER_THREE"})
+	c := newCompressor(engine, store, &callbackCalls)
+	mem := memory.NewConversationMemory(10)
+	msgs := []llm.Message{{Role: llm.RoleSystem, Content: "SYSTEM_KEEP"}}
 
-	out, stats := c.ApplyUltimate(msgs, 100000, mem, 1)
+	out, stats := c.ApplyUltimate(msgs, 100000, mem, UltimateRebuildOptions{KeepTodoLedgerLimit: 1})
 
+	content := out[1].Content
+	if !strings.Contains(content, "[x] LEDGER_THREE (completed at step") {
+		t.Errorf("ledger limit=1 should keep the most recent entry LEDGER_THREE, got:\n%s", content)
+	}
+	// 台账截断只影响 Completed tasks 区（台账条目带 "(completed at step" 后缀）；
+	// 当前任务清单中 completed 条目仍渲染 activeForm（"working on LEDGER_x"），
+	// 此处断言 Completed tasks 区不含更早台账条目
+	if strings.Contains(content, "[x] LEDGER_ONE (completed at step") || strings.Contains(content, "[x] LEDGER_TWO (completed at step") {
+		t.Errorf("ledger limit=1 should NOT contain earlier ledger entries in Completed tasks section, got:\n%s", content)
+	}
+	if stats.KeptLedger != 1 {
+		t.Errorf("stats.KeptLedger = %d, want 1 (capped by KeepTodoLedgerLimit)", stats.KeptLedger)
+	}
 	if stats.Truncated {
 		t.Errorf("stats.Truncated = true, want false (budget sufficient)")
 	}
-	if stats.KeptPlans != 1 {
-		t.Errorf("stats.KeptPlans = %d, want 1 (capped by keepPlansLimit)", stats.KeptPlans)
+}
+
+// newDegradationStore 构造台账 3 条大 ASCII 记录（每条约 150 token，
+// 触发预算降级链）+ 2 条快照（TodoHistory 可用）的 Store。
+func newDegradationStore(t *testing.T) *thinklink.Store {
+	t.Helper()
+	contents := []string{
+		"L1 " + strings.Repeat("t", 598),
+		"L2 " + strings.Repeat("t", 598),
+		"L3 " + strings.Repeat("t", 598),
 	}
-	if len(store.rebuildCalls) != 1 || store.rebuildCalls[0] != 1 {
-		t.Errorf("RebuildPrompt calls = %v, want [1]", store.rebuildCalls)
+	return newLedgerTestStore(t, contents)
+}
+
+// TestCompressorApplyUltimateBudgetDegradation 预算不足时的降级顺序（5.5 golden）：
+//
+//	① 超预算先裁可选段落（历史快照轨迹 + legacy T&P 残留），台账全部保留；
+//	② 仍超预算逐条递减台账（部分保留/裁光占位行）；
+//	③ 极端兜底硬截断（truncated=true）。
+func TestCompressorApplyUltimateBudgetDegradation(t *testing.T) {
+	// 构造：1 用户输入 + 台账 3 条大记录 + 当前清单 + 历史快照 + legacy T&P 残留
+	store := newDegradationStore(t)
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "SYS"},
+		{Role: llm.RoleAssistant, Content: "## Thought & Plan\n" + strings.Repeat("L", 4000)},
 	}
-	// 上限生效时只保留最近的块（PLAN_TWO），最早的 PLAN_ONE 不出现
-	if !strings.Contains(out[1].Content, "PLAN_TWO") || strings.Contains(out[1].Content, "PLAN_ONE") {
-		t.Errorf("rebuilt content should keep only the most recent plan (PLAN_TWO), got: %q", out[1].Content)
+
+	t.Run("step1 optional sections trimmed first, ledger untouched", func(t *testing.T) {
+		callbackCalls := 0
+		c := newCompressor(newCompressorTestEngine(), store, &callbackCalls)
+		// 校准值：base(3 ledger)≈2070 token，legacy 段≈1022，history 段≈970，
+		// 完整构建≈4062。threshold=2500：完整构建超预算，移除可选段后（≈2070）
+		// 台账 3 条可容纳 → 台账全部保留
+		out, stats := c.ApplyUltimate(msgs, 2500, nil, UltimateRebuildOptions{
+			KeepRecentTodoSnapshots:         1,
+			EnableLegacyThoughtPlanFallback: true,
+		})
+		content := out[1].Content
+		if strings.Contains(content, "=== Legacy Thought & Plan fragments ===") || strings.Contains(content, "=== Todo history") {
+			t.Errorf("optional sections should be trimmed before ledger, got:\n%s", content)
+		}
+		for _, sub := range []string{"[x] L1", "[x] L2", "[x] L3"} {
+			if !strings.Contains(content, sub) {
+				t.Errorf("all ledger entries should be kept after optional trimming, missing %q", sub)
+			}
+		}
+		if stats.Truncated || stats.KeptLedger != 3 {
+			t.Errorf("stats invalid: truncated=%v keptLedger=%d, want false/3", stats.Truncated, stats.KeptLedger)
+		}
+	})
+
+	t.Run("step2 ledger decremented, still under budget", func(t *testing.T) {
+		callbackCalls := 0
+		c := newCompressor(newCompressorTestEngine(), store, &callbackCalls)
+		// 校准值：threshold=1600：移除可选段后（2070）仍超预算 → 台账逐条递减
+		// （3→2→1，1 条≈1465 可容纳）→ 部分保留，未裁光
+		out, stats := c.ApplyUltimate(msgs, 1600, nil, UltimateRebuildOptions{
+			KeepRecentTodoSnapshots:         1,
+			EnableLegacyThoughtPlanFallback: true,
+		})
+		content := out[1].Content
+		if stats.Truncated {
+			t.Errorf("truncated=%v, want false (ledger decrement should fit first)", stats.Truncated)
+		}
+		if stats.KeptLedger >= 3 {
+			t.Errorf("keptLedger=%d, want <3 (ledger should be decremented)", stats.KeptLedger)
+		}
+		if !strings.Contains(content, "[x] L3") {
+			t.Errorf("decrement should keep the most recent entries, L3 missing")
+		}
+	})
+
+	t.Run("step2b ledger emptied renders placeholder", func(t *testing.T) {
+		callbackCalls := 0
+		c := newCompressor(newCompressorTestEngine(), store, &callbackCalls)
+		// 校准值：threshold=1200：台账递减到 0（占位行）后 ≈1088 可容纳 →
+		// 不触发硬截断
+		out, stats := c.ApplyUltimate(msgs, 1200, nil, UltimateRebuildOptions{
+			KeepRecentTodoSnapshots:         1,
+			EnableLegacyThoughtPlanFallback: true,
+		})
+		content := out[1].Content
+		if stats.Truncated {
+			t.Errorf("truncated=%v, want false (ledger omission should fit before hard truncation)", stats.Truncated)
+		}
+		if stats.KeptLedger != 0 {
+			t.Errorf("keptLedger=%d, want 0 (ledger emptied by decrement)", stats.KeptLedger)
+		}
+		if !strings.Contains(content, "(completed tasks omitted)") {
+			t.Errorf("emptied ledger should render '(completed tasks omitted)' placeholder, got:\n%s", content)
+		}
+	})
+
+	t.Run("step3 hard truncation fallback", func(t *testing.T) {
+		callbackCalls := 0
+		c := newCompressor(newCompressorTestEngine(), store, &callbackCalls)
+		// 校准值：threshold=800：可选段落裁光 + 台账裁光后（≈1088）仍超预算 →
+		// 硬截断兜底
+		out, stats := c.ApplyUltimate(msgs, 800, nil, UltimateRebuildOptions{
+			KeepRecentTodoSnapshots:         1,
+			EnableLegacyThoughtPlanFallback: true,
+		})
+		if stats.Truncated != true {
+			t.Errorf("truncated=%v, want true (all fallbacks exhausted, hard truncate)", stats.Truncated)
+		}
+		if strings.TrimSpace(out[1].Content) == "" {
+			t.Errorf("truncated rebuilt content should not be empty")
+		}
+	})
+}
+
+// TestCompressorApplyUltimateLegacyFallback legacy 静默兜底（5.10-f）：
+// flag=true 时重建中追加消息历史残留的旧格式 T&P 块为可选段落（不提示、不依赖）；
+// flag=false 时完全忽略。
+func TestCompressorApplyUltimateLegacyFallback(t *testing.T) {
+	callbackCalls := 0
+	c, _, mem, msgs := newUltimateFixtures(t, &callbackCalls)
+	msgs = append(msgs, llm.Message{Role: llm.RoleAssistant, Content: "## Thought & Plan\nlegacy plan fragment"})
+
+	// flag 开：含残留段
+	out, _ := c.ApplyUltimate(msgs, 100000, mem, UltimateRebuildOptions{EnableLegacyThoughtPlanFallback: true})
+	if !strings.Contains(out[1].Content, "=== Legacy Thought & Plan fragments ===") {
+		t.Errorf("legacy fallback enabled should contain legacy fragments section, got:\n%s", out[1].Content)
+	}
+	if !strings.Contains(out[1].Content, "legacy plan fragment") {
+		t.Errorf("legacy fallback enabled should contain the residual block")
+	}
+
+	// flag 关：完全忽略
+	mem2 := memory.NewConversationMemory(10)
+	out2, _ := c.ApplyUltimate(msgs, 100000, mem2, UltimateRebuildOptions{})
+	if strings.Contains(out2[1].Content, "=== Legacy Thought & Plan fragments ===") {
+		t.Errorf("legacy fallback disabled should NOT contain legacy fragments section")
+	}
+	if strings.Contains(out2[1].Content, "legacy plan fragment") {
+		t.Errorf("legacy fallback disabled should ignore the residual block")
+	}
+}
+
+// TestCompressorApplyUltimateTodoHistorySection KeepRecentTodoSnapshots 控制
+// 可选历史快照段：>0 时渲染最近 N 条快照进度轨迹；0（默认）不渲染。
+func TestCompressorApplyUltimateTodoHistorySection(t *testing.T) {
+	callbackCalls := 0
+	c, _, mem, msgs := newUltimateFixtures(t, &callbackCalls) // store 已有 2 条快照
+
+	out, _ := c.ApplyUltimate(msgs, 100000, mem, UltimateRebuildOptions{KeepRecentTodoSnapshots: 1})
+	if !strings.Contains(out[1].Content, "=== Todo history (recent progress snapshots) ===") {
+		t.Errorf("KeepRecentTodoSnapshots>0 should render todo history section, got:\n%s", out[1].Content)
+	}
+	if !strings.Contains(out[1].Content, "[IN PROGRESS] working on task B") {
+		t.Errorf("todo history section should contain the latest snapshot items")
+	}
+
+	mem2 := memory.NewConversationMemory(10)
+	out2, _ := c.ApplyUltimate(msgs, 100000, mem2, UltimateRebuildOptions{})
+	if strings.Contains(out2[1].Content, "=== Todo history") {
+		t.Errorf("default (KeepRecentTodoSnapshots=0) should NOT render todo history section")
 	}
 }
 
@@ -389,9 +605,9 @@ func TestCompressorApplyUltimateKeepPlansLimit(t *testing.T) {
 // 回调仍执行。
 func TestCompressorApplyUltimateNilMemory(t *testing.T) {
 	callbackCalls := 0
-	c, _, _, msgs := newUltimateFixtures(t, 0, &callbackCalls)
+	c, _, _, msgs := newUltimateFixtures(t, &callbackCalls)
 
-	out, stats := c.ApplyUltimate(msgs, 100000, nil, 0)
+	out, stats := c.ApplyUltimate(msgs, 100000, nil, UltimateRebuildOptions{})
 
 	if out == nil || len(out) != 2 {
 		t.Fatalf("len(out) = %d, want 2 (nil memory should not panic)", len(out))
@@ -404,30 +620,23 @@ func TestCompressorApplyUltimateNilMemory(t *testing.T) {
 	}
 }
 
-// TestCompressorApplyUltimateZeroTotalPlans thinklink 无 T&P 块时仍可重建
-// （只留用户原始输入区），不 panic。
-func TestCompressorApplyUltimateZeroTotalPlans(t *testing.T) {
+// TestCompressorApplyUltimateNegativeBudgetClamped threshold 小于 system 消息
+// 自身 token 时 userBudget 钳位为 0（不产生负预算），硬截断兜底。
+func TestCompressorApplyUltimateNegativeBudgetClamped(t *testing.T) {
 	callbackCalls := 0
-	engine := newCompressorTestEngine()
-	store := &fakeThinkLink{
-		planCount:  0,
-		inputCount: 1,
-		userInputs: []string{"只有任务没有计划"},
-	}
-	c := newCompressor(engine, store, &callbackCalls)
-	mem := memory.NewConversationMemory(10)
-	msgs := []llm.Message{{Role: llm.RoleSystem, Content: "SYSTEM_KEEP"}}
+	c, _, mem, msgs := newUltimateFixtures(t, &callbackCalls)
 
-	out, stats := c.ApplyUltimate(msgs, 100000, mem, 0)
+	// threshold=1 而 system 消息 token 已 > 1 → userBudget = 0（钳位）
+	out, stats := c.ApplyUltimate(msgs, 1, mem, UltimateRebuildOptions{})
 
-	if stats.TotalPlans != 0 || stats.KeptPlans != 0 {
-		t.Errorf("stats = total %d kept %d, want 0/0", stats.TotalPlans, stats.KeptPlans)
+	if stats.Truncated != true {
+		t.Errorf("stats.Truncated = %v, want true (negative budget clamped to 0, hard truncate)", stats.Truncated)
 	}
-	if !strings.Contains(out[1].Content, "只有任务没有计划") {
-		t.Errorf("rebuilt content should contain the only user input")
+	if strings.TrimSpace(out[1].Content) == "" {
+		t.Errorf("truncated rebuilt content should not be empty")
 	}
-	if stats.Truncated {
-		t.Errorf("stats.Truncated = true, want false")
+	if len(mem.Messages) != 1 || mem.Messages[0].Type != memory.MessageTypeHuman {
+		t.Errorf("memory should be overwritten to single human message")
 	}
 }
 
@@ -435,7 +644,7 @@ func TestCompressorApplyUltimateZeroTotalPlans(t *testing.T) {
 
 // TestCompressorShouldCompress 触发判断辅助：严格大于语义（等于阈值不触发）。
 func TestCompressorShouldCompress(t *testing.T) {
-	c := NewContextCompressor(nil, "Director", &fakeThinkLink{}, nil)
+	c := NewContextCompressor(nil, "Director", thinklink.NewStore(200), nil)
 
 	// 空消息 0 token:等于阈值不触发（严格大于语义）
 	if c.ShouldCompress(nil, 0) {
@@ -450,25 +659,5 @@ func TestCompressorShouldCompress(t *testing.T) {
 	long := []llm.Message{{Role: llm.RoleUser, Content: strings.Repeat("word ", 50)}}
 	if !c.ShouldCompress(long, 1) {
 		t.Errorf("messages above tiny threshold should trigger")
-	}
-}
-
-// TestCompressorApplyUltimateNegativeBudgetClamped threshold 小于 system 消息
-// 自身 token 时 userBudget 钳位为 0（不产生负预算），硬截断兜底。
-func TestCompressorApplyUltimateNegativeBudgetClamped(t *testing.T) {
-	callbackCalls := 0
-	c, _, mem, msgs := newUltimateFixtures(t, 0, &callbackCalls)
-
-	// threshold=1 而 system 消息 token 已 > 1 → userBudget = 0（钳位）
-	out, stats := c.ApplyUltimate(msgs, 1, mem, 0)
-
-	if stats.Truncated != true {
-		t.Errorf("stats.Truncated = %v, want true (negative budget clamped to 0, hard truncate)", stats.Truncated)
-	}
-	if strings.TrimSpace(out[1].Content) == "" {
-		t.Errorf("truncated rebuilt content should not be empty")
-	}
-	if len(mem.Messages) != 1 || mem.Messages[0].Type != memory.MessageTypeHuman {
-		t.Errorf("memory should be overwritten to single human message")
 	}
 }
