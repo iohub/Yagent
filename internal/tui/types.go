@@ -165,3 +165,10 @@ type ThinklinkEntry struct {
 	Timestamp time.Time // 记录时间
 	Step      int       // 记录发生时 Director 的步数（无则为 0）
 }
+
+// TodoItemView 表示任务清单中的单个条目（TUI 展示层）。
+type TodoItemView struct {
+	Content    string // 任务描述（祈使句）
+	ActiveForm string // 进行时描述（in_progress 状态时展示）
+	Status     string // 状态："pending" | "in_progress" | "completed"
+}

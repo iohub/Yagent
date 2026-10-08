@@ -25,6 +25,7 @@ export const EventTypes = {
   StatusUpdate: "status_update",
   Thinking: "thinking",
   TaskComplete: "task_complete",
+  TodoUpdate: "todo_update",
 } as const;
 
 export type EventType = typeof EventTypes[keyof typeof EventTypes];
@@ -169,6 +170,22 @@ export interface TaskCompleteEvent {
   summary?: string;
 }
 
+export interface TodoUpdateEvent {
+  /** 任务清单更新（方案 C·批次 4）- 全量替换语义 */
+  event: "todo_update";
+  /** 当前任务清单快照（完整列表，非增量） */
+  items: {
+    /** 任务描述（祈使句） */
+    content: string;
+    /** 进行时描述（in_progress 状态时展示） */
+    active_form: string;
+    /** 任务状态 */
+    status: "pending" | "in_progress" | "completed";
+  }[];
+  /** 快照版本号（全量快照语义，TUI 无需 diff） */
+  revision: number;
+}
+
 // ===== 事件联合类型 =====
 export type AgentEvent =
   | ModelInfoEvent
@@ -189,7 +206,8 @@ export type AgentEvent =
   | ConversationResultEvent
   | StatusUpdateEvent
   | ThinkingEvent
-  | TaskCompleteEvent;
+  | TaskCompleteEvent
+  | TodoUpdateEvent;
 
 // ===== WebSocket 消息包装 =====
 export interface WebSocketMessage {
@@ -282,5 +300,9 @@ export function isThinking(msg: AgentEvent | WebSocketMessage): msg is ThinkingE
 
 export function isTaskComplete(msg: AgentEvent | WebSocketMessage): msg is TaskCompleteEvent {
   return 'event' in msg && msg.event === "task_complete";
+}
+
+export function isTodoUpdate(msg: AgentEvent | WebSocketMessage): msg is TodoUpdateEvent {
+  return 'event' in msg && msg.event === "todo_update";
 }
 

@@ -16,6 +16,12 @@ var (
 	thinklinkPlanStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")) // THOUGHT PLAN 徽标
 	thinklinkCursorStyle = lipgloss.NewStyle().Reverse(true)                                // 选中行整行反色
 	thinklinkDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))            // 次要信息灰
+
+	// Tasks 分区样式（方案 C·批次 4）
+	tasksTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+	taskInProgress  = lipgloss.NewStyle().Foreground(lipgloss.Color("226")) // 黄色标记
+	taskPending     = lipgloss.NewStyle().Foreground(lipgloss.Color("37"))  // 灰色标记
+	taskCompleted   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))  // 绿色标记
 )
 
 // enterThinklinkMode 进入 thinklink 全屏模式：查看用户输入与 Thought & Plan 块。
@@ -126,6 +132,45 @@ func truncateThinklinkRunes(s string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
+// sortTodoItems 按状态排序任务条目：in_progress → pending → completed。
+// 返回新的切片，不修改原始数据。
+func sortTodoItems(items []TodoItemView) []TodoItemView {
+	sorted := make([]TodoItemView, len(items))
+	copy(sorted, items)
+
+	inProgress, pending, completed := 0, 0, 0
+	for _, item := range sorted {
+		switch item.Status {
+		case "in_progress":
+			inProgress++
+		case "pending":
+			pending++
+		case "completed":
+			completed++
+		}
+	}
+
+	idx := 0
+	for _, item := range sorted {
+		if item.Status == "in_progress" {
+			sorted[idx] = item
+			idx++
+		}
+	}
+	for idx < inProgress+pending {
+		for i := idx; i < len(sorted); i++ {
+			if sorted[i].Status == "pending" {
+				sorted[idx] = sorted[i]
+				idx++
+				break
+			}
+		}
+	}
+	// completed 条目已在剩余位置，无需额外移动
+
+	return sorted
+}
+
 // firstThinklinkLine 返回内容中第一个非空行（去空白），用于列表行预览。
 func firstThinklinkLine(s string) string {
 	for _, line := range strings.Split(s, "\n") {
@@ -216,36 +261,84 @@ func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 
 // renderThinklinkFullscreenView 渲染 thinklink 全屏视图：
 // 标题栏 + 条目列表（窗口切片） + 详情分隔标签 + 详情区 + 底部提示。
+// 方案 C·批次 4：新增 "Current Tasks" 分区显示 todoItems 快照。
 func renderThinklinkFullscreenView(m *model) tea.View {
 	width, height := m.termWidth, m.termHeight
 	var b strings.Builder
 
+	// 标题：保留"Thinklink"但可选改为"Tasks"
 	b.WriteString(thinklinkTitleStyle.Render(
 		fmt.Sprintf(" Thinklink — User Inputs & Thought & Plan Blocks (%d entries) ",
 			len(m.thinklinkEntries))) + "\n")
 
-	// 空态：标题 + 居中提示 + 底部提示
+	// ── 新增：Tasks 分区（方案 C·批次 4）──
+	if len(m.todoItems) > 0 {
+		// Tasks 分区标题
+		b.WriteString(tasksTitleStyle.Render(" ── Current Tasks \n"))
+
+		// 按状态排序：in_progress → pending → completed
+		sorted := sortTodoItems(m.todoItems)
+		taskIdx := 0
+
+		for _, item := range sorted {
+			var statusMark string
+			var displayText string
+			var style lipgloss.Style
+
+			switch item.Status {
+			case "in_progress":
+				statusMark = "[●]"
+				displayText = item.ActiveForm // in_progress 时显示 activeForm
+				style = taskInProgress
+			case "pending":
+				statusMark = "[○]"
+				displayText = item.Content
+				style = taskPending
+			case "completed":
+				statusMark = "[✓]"
+				displayText = item.Content
+				style = taskCompleted
+			default:
+				statusMark = "[?]"
+				displayText = item.Content
+				style = thinklinkDimStyle
+			}
+
+			// 格式：[idx] statusMark displayText
+			line := fmt.Sprintf("  %02d %s %s", taskIdx+1, statusMark, displayText)
+			if actualLen := len([]rune(line)); actualLen > width {
+				runeLine := []rune(line)
+				line = string(runeLine[:width-1]) + "…"
+			}
+			b.WriteString(style.Render(line) + "\n")
+			taskIdx++
+
+			// 如果达到可用高度，停止渲染 Tasks 分区（留出空间给用户输入列表）
+			// 简单估算：每行平均 40 字符算 1 行，超过高度 -8 就停止
+			if b.Len()/40 >= height-8 {
+				break
+			}
+		}
+
+		b.WriteString("\n")
+	} else {
+		// 无任务清单时显示占位
+		b.WriteString(tasksTitleStyle.Render(" ── Current Tasks ──\n"))
+		b.WriteString(thinklinkDimStyle.Render("  (无任务清单)\n\n"))
+	}
+
+	// ── 原有：用户输入 / T&P 块列表 ──
+	// 空态检查
 	if len(m.thinklinkEntries) == 0 {
-		emptyMsg := thinklinkDimStyle.Render("No thinklink entries yet.")
-		pad := (width - lipgloss.Width(emptyMsg)) / 2
-		if pad < 0 {
-			pad = 0
+		// 如果 Tasks 分区已占满大部分空间，这里仅显示底部提示
+		if height >= 3 {
+			for i := 0; i < height-3; i++ {
+				b.WriteString("\n")
+			}
+			b.WriteString(thinklinkDimStyle.Render(
+				" ↑/↓ select (Thinklink entries) • enter scroll detail • g top • esc/q close "))
+			return tea.View{AltScreen: true, Content: b.String()}
 		}
-		midRows := height - 2
-		top := midRows / 2
-		if top < 0 {
-			top = 0
-		}
-		for i := 0; i < top; i++ {
-			b.WriteString("\n")
-		}
-		b.WriteString(strings.Repeat(" ", pad) + emptyMsg + "\n")
-		for i := top + 1; i < midRows; i++ {
-			b.WriteString("\n")
-		}
-		b.WriteString(thinklinkDimStyle.Render(
-			" ↑/↓ select • enter scroll detail • g top • esc/q close "))
-		return tea.View{AltScreen: true, Content: b.String()}
 	}
 
 	clampThinklinkCursor(m)
@@ -324,7 +417,7 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 
 	// ── 底部提示 ──
 	b.WriteString(thinklinkDimStyle.Render(
-		" ↑/↓ select • enter scroll detail • g top • esc/q close "))
+		" ↑/↓ select (Thinklink entries) • enter scroll detail • g top • esc/q close • Tasks shown above"))
 
 	return tea.View{AltScreen: true, Content: b.String()}
 }

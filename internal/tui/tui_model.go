@@ -715,6 +715,11 @@ type model struct {
 	thinklinkVP      *viewport.Model  // 全屏模式下右侧详情 viewport
 	thinklinkDetailActive bool        // 详情滚动模式（enter 切换：列表导航 ↔ 详情滚动）
 
+	// ── Todo 任务清单状态（方案 C·批次 4）──
+	// 接收 "todo_update" 事件的全量快照，TUI 无需 diff 逻辑。
+	todoItems     []TodoItemView // 当前任务清单快照（内容/activeForm/status）
+	todoRevision  int            // 当前快照版本号（revision）
+
 	// ── 可配置快捷键映射表 ──
 	// editKeyMap 将用户配置的编辑模式快捷键映射为内部标准键名
 	// key: 用户配置的按键, value: 内部标准键名

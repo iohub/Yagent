@@ -906,6 +906,47 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
+	// ── todo_update: 更新任务清单快照（方案 C·批次 4）──
+	// Payload: {items: [{content, active_form, status}, ...], revision: number}
+	// 全量替换语义，TUI 无需 diff 逻辑。
+	if msg.event.Type == "todo_update" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			// 解析 revision（容错：缺失/类型错误时保持旧值）
+			revision := parseEventInt(contentMap["revision"], m.todoRevision)
+
+			// 解析 items 数组
+			if rawItems, ok := contentMap["items"]; ok {
+				if itemsArray, ok := rawItems.([]interface{}); ok {
+					items := make([]TodoItemView, 0, len(itemsArray))
+					for _, r := range itemsArray {
+						if itemMap, ok := r.(map[string]interface{}); ok {
+							tiv := TodoItemView{
+								Content:    stringFromEventMap(itemMap, "content"),
+								ActiveForm: stringFromEventMap(itemMap, "active_form"),
+								Status:     stringFromEventMap(itemMap, "status"),
+							}
+							// 字段缺失时跳过该条目（容错策略：不中断整体更新）
+							if tiv.Content != "" || tiv.Status != "" {
+								items = append(items, tiv)
+							}
+						}
+					}
+					m.todoItems = items
+					m.todoRevision = revision
+				} else {
+					slog.Debug("TUI: dropped todo_update event with non-array items field")
+				}
+			} else {
+				// items 缺失：清空清单（与全量替换语义一致）
+				m.todoItems = []TodoItemView{}
+				m.todoRevision = revision
+			}
+		} else {
+			slog.Debug("TUI: dropped todo_update event with unexpected payload type")
+		}
+		return m, listenForEvents(m.eventCh)
+	}
+
 	// ── Tool call result: update the matching running entry ──
 	if msg.event.Type == "tool_call_result" {
 		callID := getToolCallIDFromEventContent(msg.event.Content)
