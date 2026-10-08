@@ -40,14 +40,10 @@ type ThinkLinkStore interface {
 
 // ThinkLinkJournal 终极压缩的 thinklink 读写窄接口 (*thinklink.Store 天然实现):
 // 只读部分 (Snapshot/CurrentTodos/TodoHistory/CompletedLedger) 供 ApplyUltimate
-// 重建上下文; 写入部分 (AddUserInput/AddThoughtPlan) 供 Agent 主循环实时记录。
-//
-// Deprecated: AddThoughtPlan/KindThoughtPlan 记录链路已随方案C 批次2 从 Agent
-// 主循环移除，本接口的写入部分仅存量兼容保留，批次5 清理时收窄为只读。
+// 重建上下文；AddUserInput 供 Agent 主循环实时记录。
 type ThinkLinkJournal interface {
 	ThinkLinkStore
 	AddUserInput(content string, step int) (thinklink.Entry, bool)
-	AddThoughtPlan(content string, step int) (thinklink.Entry, bool)
 }
 
 // UltimateRebuildOptions 终极压缩重建选项（每次调用传入，保持配置的动态语义）。

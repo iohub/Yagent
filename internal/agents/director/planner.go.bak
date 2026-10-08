@@ -10,7 +10,7 @@
 //     方法形态（messaging 零 yagent 内部依赖、直连可行，仍按依赖倒置取窄接口，
 //     与 compressor.go 的 ThinkLinkStore 同策略）；
 //   - ThinklinkStore：内嵌 compressor.go 的只读 ThinkLinkStore，
-//     补充门面 run() 主循环的实时写入用法 AddUserInput
+//     补充门面 run() 主循环的实时写入用法 AddUserInput/AddThoughtPlan
 //     （*thinklink.Store 天然实现，签名与门面 director.go 中 a.thinkLink 用法一致）；
 //   - ToolRunner：门面按名查找 a.Adapters 并调用的形态（tools.Adapter 的
 //     Name/Call(ctx, input)/ToToolDef），门面负责包装查找、超时与 JSON 解包；

@@ -1,7 +1,7 @@
 // Package thinklink 提供 Director "终极上下文压缩"（Ultimate Context Compression）的数据支撑：
-// 以追加方式实时记录 (1) 用户原始输入与 (2) TodoWrite 工具的任务清单快照。
+// 以追加方式实时记录 (1) 用户原始输入与 (2) Director 输出的 Thought & Plan 块。
 // 当两级常规压缩（tool 结果截断 / 紧急压缩）仍无法控制上下文体积时，
-// 可通过压缩机用这些记录重建一份极简 user 消息，
+// 可通过 RebuildPrompt 用这些记录重建一份极简 user 消息，
 // 使任务在上下文被重置后无需用户介入即可无缝续接。
 package thinklink
 
@@ -29,6 +29,8 @@ func (k Kind) String() string {
 	switch k {
 	case KindUserInput:
 		return "user_input"
+	case KindThoughtPlan:
+		return "thought_plan"
 	case KindTodoSnapshot:
 		return "todo_snapshot"
 	default:
@@ -121,6 +123,65 @@ func (s *Store) Count(kind Kind) int {
 	return n
 }
 
+// RebuildPrompt 生成终极压缩用的新输入文本（英文，将作为 user 消息发给 LLM）：
+//   - 顶部说明段：告知模型上下文因超出 token 限制已被重置，须无缝继续任务；
+//   - "Original user input(s)" 区：全部用户原始输入按时间顺序列出，
+//     最后一条前标注 [CURRENT TASK]；无论 keepPlans 取值，此区始终全部保留；
+//   - "Thought & Plan blocks" 区：按时间顺序列出，带 [TP-n] 全局序号与时间戳；
+//   - keepPlans>0 时仅保留最近 keepPlans 个 T&P 块；keepPlans<=0 表示全部保留。
+//
+// Deprecated: 方案C 批次3 后终极压缩重建不再经由本方法——compressor.ApplyUltimate
+// 已改为自行渲染「全部用户输入 + 当前任务清单快照 + 完成台账」（新重建格式，
+// 含预算降级链），本方法仅存量兼容保留（无生产调用方），批次5 清理时删除。
+func (s *Store) RebuildPrompt(keepPlans int) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var userInputs, plans []Entry
+	for _, e := range s.entries {
+		if e.Kind == KindUserInput {
+			userInputs = append(userInputs, e)
+		} else {
+			plans = append(plans, e)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Your previous conversation context has been RESET because it exceeded the token limit. ")
+	sb.WriteString("Below are the original requirements of the task and all Thought & Plan progress recorded so far. ")
+	sb.WriteString("Seamlessly continue the task from where it left off: do NOT ask the user any questions, do NOT apologize, and do NOT repeat work that has already been completed.\n")
+
+	// ── Original user input(s)：无论 keepPlans 取值，全部保留 ──
+	sb.WriteString("\n=== Original user input(s) ===\n")
+	if len(userInputs) == 0 {
+		sb.WriteString("(no user input recorded)\n")
+	}
+	for i, e := range userInputs {
+		marker := ""
+		if i == len(userInputs)-1 {
+			marker = "[CURRENT TASK] "
+		}
+		fmt.Fprintf(&sb, "\n%s[USER INPUT %d] (%s, step %d)\n%s\n",
+			marker, i+1, e.Timestamp.Format(time.RFC3339), e.Step, e.Content)
+	}
+
+	// ── Thought & Plan blocks：keepPlans>0 时仅保留最近 keepPlans 个 ──
+	offset := 0
+	if keepPlans > 0 && len(plans) > keepPlans {
+		offset = len(plans) - keepPlans
+		plans = plans[offset:]
+	}
+	sb.WriteString("\n=== Thought & Plan blocks ===\n")
+	if len(plans) == 0 {
+		sb.WriteString("(no Thought & Plan blocks recorded)\n")
+	}
+	for i, e := range plans {
+		fmt.Fprintf(&sb, "\n[TP-%d] (%s, step %d)\n%s\n",
+			offset+i+1, e.Timestamp.Format(time.RFC3339), e.Step, e.Content)
+	}
+
+	return sb.String()
+}
 
 // appendLocked 追加一条记录并返回写入的条目；超出容量时淘汰（调用方须持有写锁）。
 func (s *Store) appendLocked(kind Kind, content string, step int) Entry {
@@ -144,7 +205,7 @@ func (s *Store) appendLocked(kind Kind, content string, step int) Entry {
 //   - 最新一条 KindTodoSnapshot 永不淘汰（当前任务清单的权威快照，显式钉住）。
 //
 // 若全部剩余条目均受保护，则容忍暂时超限（保护不变量优先于容量上限）。
-// 无快照场景下（仅 KindUserInput）行为：无输入时不记录任何条目。
+// 无快照场景下（仅 KindUserInput/KindThoughtPlan）行为与旧版一致：
 // 丢弃最旧条目，仅第一条用户输入受保护。
 func (s *Store) evictLocked() {
 	for len(s.entries) > s.maxEntries {

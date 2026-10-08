@@ -5,7 +5,7 @@
 //   - 淘汰策略调整见 Store.evictLocked（旧快照优先淘汰，首条用户输入与最新快照永不淘汰）。
 //
 // 快照以 JSON 序列化存入 KindTodoSnapshot 条目的 Content 字段，与既有追加流
-// （KindUserInput / KindThoughtPlan）共存于同一容量池；本文件只做纯内存状态管理，
+// （KindUserInput / KindTodoSnapshot）共存于同一容量池；本文件只做纯内存状态管理，
 // 不含事件发布与工具适配（见 internal/agents/todo_tool.go）。
 package thinklink
 
