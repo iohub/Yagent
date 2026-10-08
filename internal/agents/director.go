@@ -10,8 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"yagent/internal/compression"
+	"yagent/internal/agents/activity"
 	director "yagent/internal/agents/director"
+	"yagent/internal/compression"
 	"yagent/internal/config"
 	"yagent/internal/knowledge"
 	"yagent/internal/llm"
@@ -73,8 +74,8 @@ type DirectorAgent struct {
 
 	projectCtxLoader *director.ProjectContextLoader // 项目上下文加载器（Phase 2a 抽取，缓存语义在 loader 内）
 
-	currentMemory         *memory.ConversationMemory  // 当前正在使用的 memory（Run 期间设置）
-	pendingSubAgentMemory *AgentResult                // 最近一次 delegate 调用的完整结果（用于 memory 注入）
+	currentMemory         *memory.ConversationMemory     // 当前正在使用的 memory（Run 期间设置）
+	pendingSubAgentMemory *AgentResult                   // 最近一次 delegate 调用的完整结果（用于 memory 注入）
 	compressor            *compression.ContextCompressor // 上下文压缩编排组件（Phase 3-0 抽取）
 
 	// LLM 兜底机制字段
@@ -82,6 +83,10 @@ type DirectorAgent struct {
 	// 熔断阈值/恢复时间配置副本已收编至 director.RecoveryHandler（经 a.adapter 访问），
 	// 消除 DirectorAgent 上的残留失败计数状态；仅保留活跃使用的 llmTimeout。
 	llmTimeout time.Duration // LLM调用超时，从配置读取，默认3分钟
+
+	// delegate 子代理超时（活动感知空闲超时机制）
+	delegateIdleTimeout  time.Duration // delegate 空闲超时（活动感知），0 已在构造时解析为派生值
+	delegateTotalTimeout time.Duration // delegate 总时长上限，0=不限制
 
 	// EnhancedCommander 增强型配置
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
@@ -463,6 +468,16 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 			}
 			return 5 * time.Minute
 		}(),
+
+		// delegate 子代理超时（活动感知空闲超时机制）：idle 优先取显式配置，
+		// 否则按 LLM 超时派生（max(10m, llmTimeout+5m)）；total 0=不限制
+		delegateIdleTimeout: func() time.Duration {
+			if cfg.Agent.DelegateIdleTimeout > 0 {
+				return cfg.Agent.DelegateIdleTimeout
+			}
+			return config.DeriveDelegateIdleTimeout(cfg.LLM.Timeout)
+		}(),
+		delegateTotalTimeout: cfg.Agent.DelegateTotalTimeout, // 0=不限制
 
 		// EnhancedCommander 配置
 		EnhancedCommanderCfg: cfg.EnhancedCommander,
@@ -869,7 +884,7 @@ func toSubAgentMemory(result *AgentResult) *memory.SubAgentMemory {
 }
 
 // directorToolRunner 门面 ToolRunner 适配器（实现 director.ToolRunner）。
-// 包装原 run() 工具分发段：a.Adapters 按名查找、delegate_* 专用超时（10min）/
+// 包装原 run() 工具分发段：a.Adapters 按名查找、delegate_* 活动感知空闲超时 /
 // 交互式工具无限等待/LogDelegateCall 委派日志、delegate_repo 结果 JSON 解包
 // （RepoSummary 更新）、delegate 检测统计与子 Agent 记忆注入（更新共享 *RunState）。
 // tool_call_start/tool_call_result 事件与 not-found 兜底由 Planner 侧负责。
@@ -904,21 +919,32 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 			LogDelegateCall(t.Name(), agentName, argsJSON)
 		}
 
-		// 为工具调用添加超时保护（防止非交互工具无限阻塞）
-		// delegate_* 工具涉及子 agent 完整执行（多轮 LLM + 工具调用），需要更长的超时时间
-		// 使用 WithCancel 剥离父 context 的 deadline，再 WithTimeout 添加独立超时
-		// 这确保工具获得完整的超时时间，不受父 context 剩余时间限制
+		// 为工具调用添加超时保护（防止非交互工具无限阻塞），按工具类型分派：
+		// ask_user_for_help 无限等待（仅 WithCancel）/ delegate_* 活动感知空闲
+		// 超时 / 普通工具 120s 固定超时（详见下方 switch 分支说明）。
 		toolTimeout := 120 * time.Second
-		if strings.HasPrefix(name, "delegate_") {
-			toolTimeout = 10 * time.Minute // 子 agent 需要更多时间完成多轮交互
-		}
+		isDelegate := strings.HasPrefix(name, "delegate_")
 		cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
-		// 交互式等待用户输入的工具（ask_user_for_help）需要无限等待用户响应，
-		// 不能加 deadline，否则用户尚未响应调用就会被 context.DeadlineExceeded
-		// 自动取消；仅保留 WithCancel，任务中止时仍可经父 context 取消打断等待。
 		toolCtx := cancelCtx
 		toolCancel := cancelCtxCancel
-		if !isInteractiveUserTool(name) {
+		switch {
+		case isInteractiveUserTool(name):
+			// ask_user_for_help：无限等待用户响应，仅保留 WithCancel（不变）。
+			// 不能加 deadline，否则用户尚未响应调用就会被 context.DeadlineExceeded
+			// 自动取消；任务中止时仍可经父 context 取消打断等待。
+		case isDelegate:
+			// delegate_*：活动感知空闲超时——子代理有动作（LLM 推理、工具执行，
+			// 经 executor.go 心跳埋点上报）就重置计时器，持续无动作超过 idle 阈值
+			// 才取消；可选总上限兜底（0=不限制）。废除原硬编码 600s 总时长上限
+			// （长任务必然被误杀）。嵌套 delegate 时内层心跳沿 parent 链上抛续期外层。
+			// 经 WithCancel 剥离父 context 的 deadline，确保 idle 计时不受父
+			// context 剩余时间限制。
+			toolCtx, toolCancel = activity.WithIdleTimeout(cancelCtx, activity.Options{
+				IdleTimeout:  a.delegateIdleTimeout,
+				TotalTimeout: a.delegateTotalTimeout,
+			})
+		default:
+			// 普通工具：保持 120s 固定超时（不变，内部无心跳源）
 			toolCtx, toolCancel = context.WithTimeout(cancelCtx, toolTimeout)
 		}
 		toolResult, err := t.Call(toolCtx, argsJSON)
@@ -945,12 +971,25 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 		}
 
 		if err != nil {
-			// 对超时错误转换为已格式化的普通错误：Planner 收到后走 "Error: %s"
-			// 分支输出与本方法 toolTimeout 一致的秒数（delegate_* 为 600s；若原样
-			// 返回 DeadlineExceeded，Planner 会按 cfg.ToolTimeout=120s 格式化，
-			// 与原 run() 的 per-tool 超时提示不一致）。非超时错误原样上抛，
-			// 由 Planner 做 1000 字符截断与 "Error: " 前缀包装（与原行为一致）。
-			if errors.Is(err, context.DeadlineExceeded) {
+			// 超时判定以 toolCtx 的 cause 为权威来源（context.Cause，不依赖子代理
+			// 错误包装链）：delegate_* 的活动感知空闲/总时长超时转换为带原因的
+			// 格式化错误（Planner 收到后走 "Error: %s" 分支）；普通工具保持 120s
+			// 固定超时原行为（DeadlineExceeded → 带秒数提示，Planner 不会以
+			// cfg.ToolTimeout 格式化，与原 run() 的 per-tool 超时提示一致）。
+			// 非超时错误原样上抛，由 Planner 做 1000 字符截断与 "Error: " 前缀
+			// 包装（与原行为一致）。
+			cause := context.Cause(toolCtx)
+			var idleErr *activity.IdleTimeoutError
+			var totalErr *activity.TotalTimeoutError
+			switch {
+			case errors.As(cause, &idleErr):
+				// 活动感知空闲超时：子代理持续无动作（最后动作见消息）
+				return "", fmt.Errorf("tool execution timed out (idle): %w", idleErr)
+			case errors.As(cause, &totalErr):
+				// 总时长上限兜底触发
+				return "", fmt.Errorf("tool execution timed out (total): %w", totalErr)
+			case errors.Is(err, context.DeadlineExceeded):
+				// 普通工具 120s 固定超时路径（保持原行为）
 				return "", fmt.Errorf("tool execution timed out after %d seconds", int(toolTimeout.Seconds()))
 			}
 			return "", err
@@ -1117,8 +1156,8 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		UltimateCompressEnable:    a.EnhancedCommanderCfg.EnableUltimateCompression,
 		UltimateCompressKeepPlans: a.EnhancedCommanderCfg.UltimateCompressionKeepPlans,
 		// 普通工具调用超时（120s）；超时保护由 directorToolRunner 执行，Planner 仅
-		// 用其做 DeadlineExceeded 错误提示的秒数格式化兜底（delegate_* 的 600s 超时
-		// 错误已在 directorToolRunner 内转换为带正确秒数的普通错误）
+		// 用其做 DeadlineExceeded 错误提示的秒数格式化兜底（delegate_* 的空闲/总时长
+		// 超时错误已转换为带原因的格式化错误）
 		ToolTimeout: 120 * time.Second,
 	}
 
