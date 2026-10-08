@@ -65,17 +65,17 @@ func manyValidTodoParams(n int) []map[string]interface{} {
 
 func TestTodoWriteValidCalls(t *testing.T) {
 	cases := []struct {
-		name           string
-		params         map[string]interface{}
-		wantSummary    string
-		wantItems      int
-		wantStatuses   map[string]int // status → 计数
+		name         string
+		params       map[string]interface{}
+		wantSummary  string
+		wantItems    int
+		wantStatuses map[string]int // status → 计数
 	}{
 		{
-			name:        "single pending",
-			params:      todoParams(todoItemParam("task A", "doing A", "pending")),
-			wantSummary: "Todo list updated: 0 in_progress, 1 pending, 0 completed",
-			wantItems:   1,
+			name:         "single pending",
+			params:       todoParams(todoItemParam("task A", "doing A", "pending")),
+			wantSummary:  "Todo list updated: 0 in_progress, 1 pending, 0 completed",
+			wantItems:    1,
 			wantStatuses: map[string]int{"pending": 1},
 		},
 		{
@@ -91,10 +91,10 @@ func TestTodoWriteValidCalls(t *testing.T) {
 			wantStatuses: map[string]int{"completed": 1, "in_progress": 1, "pending": 2},
 		},
 		{
-			name:        "empty array clears",
-			params:      todoParams(),
-			wantSummary: "Todo list cleared",
-			wantItems:   0,
+			name:         "empty array clears",
+			params:       todoParams(),
+			wantSummary:  "Todo list cleared",
+			wantItems:    0,
 			wantStatuses: map[string]int{},
 		},
 	}
@@ -237,7 +237,7 @@ func TestTodoWriteInvalidCalls(t *testing.T) {
 		},
 		{
 			name:            "too many items",
-			params:          todoParams(manyValidTodoParams(thinklink.MaxTodoItems+1)...),
+			params:          todoParams(manyValidTodoParams(thinklink.MaxTodoItems + 1)...),
 			wantErrContains: fmt.Sprintf("at most %d items", thinklink.MaxTodoItems),
 		},
 	}
