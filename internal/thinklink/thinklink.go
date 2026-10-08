@@ -90,8 +90,6 @@ func (s *Store) AddUserInput(content string, step int) (Entry, bool) {
 	return s.appendLocked(KindUserInput, content, step), true
 }
 
-
-
 // Snapshot 返回全部条目的深拷贝切片（线程安全，修改副本不影响内部状态）。
 func (s *Store) Snapshot() []Entry {
 	s.mu.RLock()
@@ -120,7 +118,6 @@ func (s *Store) Count(kind Kind) int {
 	}
 	return n
 }
-
 
 // appendLocked 追加一条记录并返回写入的条目；超出容量时淘汰（调用方须持有写锁）。
 func (s *Store) appendLocked(kind Kind, content string, step int) Entry {

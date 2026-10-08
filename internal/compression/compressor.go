@@ -295,7 +295,7 @@ func filterUserInputs(entries []thinklink.Entry) []thinklink.Entry {
 }
 
 // renderUserInputs 渲染"Original user input(s)"区：全部用户原始输入按时间顺序
-// 列出，最后一条前标注 [CURRENT TASK]（格式与旧 RebuildPrompt 保持一致）。
+// 列出，最后一条前标注 [CURRENT TASK]（格式与终极压缩重建渲染保持一致）。
 func renderUserInputs(sb *strings.Builder, userInputs []thinklink.Entry) {
 	sb.WriteString("\n=== Original user input(s) ===\n")
 	if len(userInputs) == 0 {

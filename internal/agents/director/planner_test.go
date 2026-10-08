@@ -81,7 +81,7 @@ func toolCallResp(id, name, args string) *llm.Response {
 
 // fakePlannerTools 可控工具执行器（实现 ToolRunner）：记录 Call 参数，
 // 按工具名返回预设结果。Specs 含 echo_tool（普通工具）、delegate_sub_agent
-//（委派工具）与 agent_exit（退出工具）。state 非 nil 时模拟门面 Tools 包装
+// （委派工具）与 agent_exit（退出工具）。state 非 nil 时模拟门面 Tools 包装
 // 闭包的委派检测语义（planner_run.go 只读 state 驱动提醒控制流）：delegate_*
 // 调用更新 HasDelegated/DelegationAttempts/PendingSubAgentMemory。
 type fakePlannerTools struct {
@@ -147,9 +147,9 @@ func newState(hasDelegated bool) *RunState {
 }
 
 // newTestPlanner 统一构造：真实 thinklink.Store 作 Journal（CompressEnable=false
-// 时仅 AddUserInput/AddThoughtPlan 路径被触达），Prompts 返回固定 system prompt。
+// 时仅 AddUserInput 路径被触达），Prompts 返回固定 system prompt。
 // pub/journal 参数取接口类型：传 nil 字面量时接口为真 nil，cfg 判空生效
-//（具体类型指针会产生 typed-nil，使 p.cfg.Publisher != nil 误判为 true）。
+// （具体类型指针会产生 typed-nil，使 p.cfg.Publisher != nil 误判为 true）。
 func newTestPlanner(maxSteps int, state *RunState, eng *fakePlannerLLM, tools *fakePlannerTools, pub EventPublisher, journal ThinklinkStore) *Planner {
 	return NewPlanner(PlannerConfig{
 		LLM:        eng,

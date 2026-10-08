@@ -250,7 +250,7 @@ func TestRunAgentLoop_TodoWritePlusRealToolResetsNoActionCount(t *testing.T) {
 
 // TestRunAgentLoop_NoThoughtPlanExtraction characterization：executor 不再调用
 // compression.ExtractThoughtAndPlanBlocks——回复文本中的旧格式 T&P 块不再被
-// 正则提取写入 thinklink（行为断言：store 中无 KindThoughtPlan 条目）。
+// 正则提取写入 thinklink（行为断言：store 中无 KindTodoSnapshot 条目）。
 func TestRunAgentLoop_NoThoughtPlanExtraction(t *testing.T) {
 	ctx := context.Background()
 	store := thinklink.NewStore(0)
@@ -281,7 +281,10 @@ func TestRunAgentLoop_NoThoughtPlanExtraction(t *testing.T) {
 		t.Fatalf("RunAgentLoop returned error: %v", err)
 	}
 
-	if got := store.Count(thinklink.KindThoughtPlan); got != 0 {
-		t.Errorf("thinklink KindThoughtPlan count = %d, want 0 (T&P extraction removed)", got)
+	// 正则提取写入 thinklink（行为断言：纯文本场景下 store 中无 TodoSnapshot 条目）
+	for _, e := range store.Snapshot() {
+		if e.Kind == thinklink.KindTodoSnapshot {
+			t.Errorf("store should not contain KindTodoSnapshot entries, got %+v", e)
+		}
 	}
 }

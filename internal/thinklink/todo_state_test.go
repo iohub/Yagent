@@ -81,9 +81,9 @@ func TestSetTodosSameSnapshotNoAppend(t *testing.T) {
 	if _, err := s.SetTodos(items, 1); err != nil {
 		t.Fatalf("SetTodos failed: %v", err)
 	}
-	// 中间隔一条 T&P，确认 same 判断针对快照条目而非最后一条
-	if _, ok := s.AddThoughtPlan("## Thought & Plan", 1); !ok {
-		t.Fatal("AddThoughtPlan should succeed")
+	// 中间隔一条用户输入，确认 same 判断针对快照条目而非最后一条
+	if _, ok := s.AddUserInput("user input", 1); !ok {
+		t.Fatal("AddUserInput should succeed")
 	}
 
 	changed, err := s.SetTodos(items, 2)
@@ -125,8 +125,9 @@ func TestSetTodosPressureNeverEvictProtected(t *testing.T) {
 		t.Fatal("AddUserInput should succeed")
 	}
 	for i := 0; i < 250; i++ {
-		if _, got := s.AddThoughtPlan(fmt.Sprintf("plan for step %d", i), i+1); !got {
-			t.Fatalf("AddThoughtPlan(%d) should succeed", i)
+		// 使用不同内容和不同 step 的 AddUserInput 来填充
+		if _, got := s.AddUserInput(fmt.Sprintf("input for step %d", i), i+1); !got {
+			t.Fatalf("AddUserInput(%d) should succeed", i)
 		}
 		items := []TodoItem{
 			{Content: fmt.Sprintf("task-%d", i), ActiveForm: fmt.Sprintf("doing %d", i), Status: StatusInProgress},
