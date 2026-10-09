@@ -99,7 +99,8 @@ var (
 	// promptFocusedStyle / promptBlurredStyle removed (unused).
 
 	welcomePanelStyle = lipgloss.NewStyle().Padding(1, 2)
-	welcomeLeftStyle  = lipgloss.NewStyle().Width(38)
+	// welcomeLeftStyle 已移除:固定 Width(38) 会把约 43 列宽的 banner 强制折行,导致 logo 变形;
+	// 左面板宽度统一在 renderWelcomePanelLayout 中动态设置(leftWidth)
 	// Deprecated: use m.com.Styles.WelcomeTitle instead.
 	// welcomeTitleStyle removed (unused).
 	welcomeSubStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
