@@ -104,7 +104,7 @@ func NewCodingAgent(formatter PromptFormatter, publisher EventBus, env Env, file
 			// delegate_browser 需要特殊处理，跳过
 			continue
 		}
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
 		adapters = append(adapters, adapter)
 	}
 

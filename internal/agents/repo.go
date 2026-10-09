@@ -85,7 +85,7 @@ func NewRepoAgent(formatter PromptFormatter, publisher EventBus, env Env, files 
 			continue
 		}
 
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
 		adapters = append(adapters, adapter)
 	}
 	// delegate_devops：将运维类任务委托给 DevOps-Agent（与 Director 中同名工具保持一致的名称与参数 schema）

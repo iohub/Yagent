@@ -21,6 +21,10 @@ type Adapter struct {
 	fn          ToolFunc
 	schema      map[string]interface{}
 	guard       *WorkspaceGuard
+	// readOnly 只读/无副作用元数据：声明该工具不修改任何共享状态（文件、进程、
+	// 网络、注册表等），可以安全地与其他只读工具并发执行。零值 false（fail-safe：
+	// 未显式声明的工具一律视为可能存在副作用，不可参与并发）。
+	readOnly bool
 }
 
 func NewAdapter(name, description string, fn ToolFunc) *Adapter {
@@ -49,6 +53,45 @@ func NewAdapter(name, description string, fn ToolFunc) *Adapter {
 func (a *Adapter) WithSchema(schema map[string]interface{}) *Adapter {
 	a.schema = schema
 	return a
+}
+
+// WithReadOnly 显式设置只读/无副作用元数据（链式选项，风格对齐 WithSchema；零值 false）。
+// readOnly=true 表示该工具无副作用、可安全并发；错误标记具有副作用的工具会导致
+// 并发执行的竞态，标记前必须逐个确认其实现语义。
+func (a *Adapter) WithReadOnly(enabled bool) *Adapter {
+	a.readOnly = enabled
+	return a
+}
+
+// knownReadOnlyTools 公共共享只读工具白名单（按名自动标记；第一阶段集合，
+// 后续阶段可扩展 delegate_*/其他无副作用工具）。
+var knownReadOnlyTools = map[string]bool{
+	"read_file":           true,
+	"list_dir":            true,
+	"print_dir_tree":      true,
+	"search_by_regex":     true,
+	"semantic_search":     true,
+	"query_code_skeleton": true,
+	"query_code_snippet":  true,
+}
+
+// IsKnownReadOnlyTool 报告给定工具名是否属于已知公共只读工具白名单。
+func IsKnownReadOnlyTool(name string) bool {
+	return knownReadOnlyTools[name]
+}
+
+// WithReadOnlyIfKnown 按工具名自动标记已知只读工具（供 tools.json 批量注册点
+// 统一调用：名字命中白名单 → WithReadOnly(true)，否则保持默认 false）。
+func (a *Adapter) WithReadOnlyIfKnown() *Adapter {
+	if knownReadOnlyTools[a.name] {
+		a.readOnly = true
+	}
+	return a
+}
+
+// IsReadOnly 返回只读/无副作用元数据。false=不可并行（未声明或显式声明有副作用）。
+func (a *Adapter) IsReadOnly() bool {
+	return a.readOnly
 }
 
 func (a *Adapter) Name() string {

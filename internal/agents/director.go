@@ -88,6 +88,10 @@ type DirectorAgent struct {
 	delegateIdleTimeout  time.Duration // delegate 空闲超时（活动感知），0 已在构造时解析为派生值
 	delegateTotalTimeout time.Duration // delegate 总时长上限，0=不限制
 
+	// maxParallelReadOnlyTools 只读工具游程组最大并行数（构造时已归一化），
+	// 用于 custom agent 的 ExecutorConfig（executeCustomAgent）。
+	maxParallelReadOnlyTools int
+
 	// EnhancedCommander 增强型配置
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 	// thinkLink 终极压缩支撑存储：实时记录用户原始输入与 Director 的 Thought & Plan 块，
@@ -380,7 +384,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 			continue
 		}
 
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
 		adapters = append(adapters, adapter)
 	}
 
@@ -478,6 +482,9 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 			return config.DeriveDelegateIdleTimeout(cfg.LLM.Timeout)
 		}(),
 		delegateTotalTimeout: cfg.Agent.DelegateTotalTimeout, // 0=不限制
+
+		// 只读工具游程组最大并行数：0/负=默认 4，>8 clamp 8，1=串行 kill-switch
+		maxParallelReadOnlyTools: NormalizeMaxParallelReadOnlyTools(cfg.Agent.MaxParallelReadOnlyTools),
 
 		// EnhancedCommander 配置
 		EnhancedCommanderCfg: cfg.EnhancedCommander,
@@ -653,7 +660,7 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 			slog.Warn("Tool definition not found in toolDefMap", "tool", toolName)
 			continue
 		}
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
 		customAdapters = append(customAdapters, adapter)
 	}
 
@@ -702,6 +709,7 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	systemPrompt := a.promptFmt.FormatPrompt(ca.SystemPrompt)
 
 	cfg := DefaultExecutorConfig()
+	cfg.MaxParallelReadOnlyTools = a.maxParallelReadOnlyTools
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = task
 	cfg.Adapters = adapters

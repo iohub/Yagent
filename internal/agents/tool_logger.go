@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"yagent/internal/logging"
@@ -15,8 +16,17 @@ import (
 var toolLogger *slog.Logger
 var toolLogFile *os.File
 
+// toolLoggerMu 保护 toolLogger / toolLogFile 全局变量与 ensureToolLogFile 的
+// 重开逻辑。只读工具并发执行（toolbatch 游程组）后，多个 goroutine 会同时
+// 调用 LogToolCall → ensureToolLogFile（读写全局变量，无锁时为数据竞争；
+// 且"重开文件时 Close 旧句柄"与并发 WriteString 共享同一 *os.File 指针，
+// 无锁时存在 close-while-write 逻辑竞态）。slog.TextHandler 本身并发安全，
+// 锁只需覆盖全局变量检查/替换与文件写入路径。
+var toolLoggerMu sync.Mutex
+
 // ensureToolLogFile checks if the current toolLogFile matches the task-aware path.
 // If not (e.g., taskID changed), closes the old file and opens a new one.
+// 调用方必须持有 toolLoggerMu。
 func ensureToolLogFile() {
 	currentPath := ""
 	if toolLogFile != nil {
@@ -56,6 +66,9 @@ func ensureToolLogFile() {
 // On file open failure, degrades gracefully using logging.GetFallbackWriter()
 // which ensures TUI mode NEVER falls back to os.Stdout.
 func InitToolLogger() error {
+	toolLoggerMu.Lock()
+	defer toolLoggerMu.Unlock()
+
 	logDir := logging.GetTaskLogDir(logging.GetCurrentTaskID())
 
 	// Ensure log directory exists
@@ -137,6 +150,9 @@ func LogDelegateCall(toolName, agentName, argsJSON string) {
 // arguments (JSON), result, error message, and duration.
 // Format: [2025-01-15 10:30:45] tool=agent_exit agent=DirectorAgent duration=12ms args={"reason":"task completed"} result="" error=""
 func LogToolCall(toolName, agentName, argsJSON, result, errMsg string, duration time.Duration) {
+	toolLoggerMu.Lock()
+	defer toolLoggerMu.Unlock()
+
 	ensureToolLogFile()
 	if toolLogger == nil {
 		return
