@@ -596,11 +596,12 @@ func (m *model) renderWelcomePanelLayout() string {
 	cwdLine := welcomeSubStyle.Render(cwd)
 
 	// Build left panel: logo ONLY (cwd removed)
+	banner := renderBanner()
 	var left strings.Builder
-	left.WriteString(renderBanner())
+	left.WriteString(banner)
 	left.WriteString("\n\n")
 
-	leftContent := welcomeLeftStyle.Render(left.String())
+	leftContent := left.String()
 
 	// Build right panel: recent activity
 	var right strings.Builder
@@ -611,8 +612,13 @@ func (m *model) renderWelcomePanelLayout() string {
 	// Compute responsive widths
 	panelWidth := m.computeFieldWidth() + 4
 	innerWidth := panelWidth - 4 // 4 padding
-	leftWidth := 38
-	if innerWidth < 65 {
+	// 左面板宽度需容纳 banner(约 43 列,logo 最长行 41 列 + bannerPadStyle 左右 padding 各 1 列),
+	// 否则 lipgloss 的 Width 会把超宽行强制折行,导致 logo 变形;最窄保持原有的 38 列
+	leftWidth := max(lipgloss.Width(banner), 38)
+	// 窄屏阈值同步为 max(65, leftWidth+23):保证宽屏横排分支中
+	// rightWidth = innerWidth - leftWidth - 3 >= 20
+	narrowThreshold := max(65, leftWidth+23)
+	if innerWidth < narrowThreshold {
 		// Narrow terminal: stack vertically
 		boxInner := leftContent + "\n\n" + welcomeDimStyle.Render(strings.Repeat("─", 38)) + "\n\n" + right.String()
 		// 在下方添加占整行的项目路径
