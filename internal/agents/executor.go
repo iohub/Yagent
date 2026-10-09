@@ -8,10 +8,12 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"yagent/internal/agents/activity"
+	"yagent/internal/agents/toolbatch"
 	"yagent/internal/compression"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
@@ -73,19 +75,127 @@ type ExecutorConfig struct {
 	UltimateThinkLink compression.ThinkLinkJournal
 	// UltimateKeepPlans 终极压缩保留 Thought & Plan 块数量上限，0=全部保留
 	UltimateKeepPlans int
+
+	// MaxParallelReadOnlyTools 单步内"连续只读工具游程组"的最大并行数:
+	//   0/负 → 默认 4(DefaultMaxParallelReadOnlyTools,执行器内兜底);
+	//   1 → 严格串行(kill-switch,行为与并发改造前完全一致);
+	//   >8 → clamp 到 8(MaxMaxParallelReadOnlyTools)。
+	// 只影响被 Adapter.IsReadOnly() 标记且不在 deny-list 的工具;
+	// 写类/交互/deny-list 工具永远原位串行。
+	MaxParallelReadOnlyTools int
 }
 
 // DefaultExecutorConfig returns an ExecutorConfig with sensible defaults applied.
 // Always prefer this constructor over bare ExecutorConfig{} literals to ensure
 // new defaults are automatically picked up.
 func DefaultExecutorConfig() ExecutorConfig {
-	return ExecutorConfig{}
+	return ExecutorConfig{
+		MaxParallelReadOnlyTools: DefaultMaxParallelReadOnlyTools,
+	}
 }
 
 // ExecutorResult 封装 RunAgentLoop 的完整执行结果
 type ExecutorResult struct {
 	Text    string        // 最终文本输出（agent 的最后一条消息内容或 agent_exit 的返回值）
 	History []llm.Message // 完整的内部消息历史，包括 system prompt、user input、所有 assistant/tool 交互
+}
+
+// ─── 只读工具并发参数 ─────────────────────────────────────────────────────────
+
+// DefaultMaxParallelReadOnlyTools 连续只读工具游程组的默认最大并行数。
+const DefaultMaxParallelReadOnlyTools = 4
+
+// MaxMaxParallelReadOnlyTools 最大并行数硬上限（配置 >8 一律 clamp），防资源失控。
+const MaxMaxParallelReadOnlyTools = 8
+
+// defaultToolTimeout 非交互工具单次调用的超时上限。
+// 包级变量作为可注入 seam（仅测试替换为短超时；生产代码不得修改，保持默认 180s）。
+var defaultToolTimeout = 180 * time.Second
+
+// nonParallelToolNames 硬编码不可并行的工具 deny-list（设计定稿）：
+//   - agent_exit: 停止语义 —— 其之前的游程组必须先 flush 落账，其执行后立即
+//     return（之后的 tool_calls 不执行不落账）；
+//   - delegate_meta: 内部有 registerCustomAgent 注册表副作用，必须原位串行。
+var nonParallelToolNames = map[string]bool{
+	"agent_exit":    true,
+	"delegate_meta": true,
+}
+
+// NormalizeMaxParallelReadOnlyTools 归一化配置值：
+// 0/负 → 默认 4；1 → 1（严格串行 kill-switch）；>8 → clamp 8；其余原样。
+func NormalizeMaxParallelReadOnlyTools(n int) int {
+	switch {
+	case n == 1:
+		return 1
+	case n <= 0:
+		return DefaultMaxParallelReadOnlyTools
+	case n > MaxMaxParallelReadOnlyTools:
+		return MaxMaxParallelReadOnlyTools
+	default:
+		return n
+	}
+}
+
+// runToolCall 承载单个 tool_call 的完整执行链（与改造前串行循环逐字一致）：
+//
+//	Heartbeat(start) → Publish(tool_call_start) → 查找 adapter →
+//	delegate_ 前缀 LogDelegateCall → WithCancel（非交互再包 WithTimeout
+//	defaultToolTimeout，交互工具 ask_user_for_help 豁免 deadline）→
+//	Call → 双 cancel → 错误格式化 → logToolCall → Heartbeat(done)
+//
+// 返回 found=false 表示未注册适配器（调用方按原语义补写 "Tool %s not found"，
+// 并跳过 Heartbeat(done) —— 与改造前行为一致）。
+// 串行元素与并发组元素两条路径复用本函数，保证行为一致。
+func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (string, bool) {
+	// 活动心跳:工具调用发起(detail 在错误消息中可读化为 tool 'NAME' started)
+	activity.Heartbeat(ctx, "tool:start:"+tc.Function.Name)
+
+	if cfg.Publisher != nil {
+		cfg.Publisher.Publish("tool_call_start", map[string]interface{}{
+			"tool_name":    tc.Function.Name,
+			"arguments":    tc.Function.Arguments,
+			"tool_call_id": tc.ID,
+		}, cfg.AgentName)
+	}
+
+	for _, t := range cfg.Adapters {
+		if t.Name() == tc.Function.Name {
+			startTime := time.Now()
+
+			// Log delegate tool calls with full arguments to dedicated delegate log
+			if strings.HasPrefix(tc.Function.Name, "delegate_") {
+				agentName := strings.TrimPrefix(tc.Function.Name, "delegate_")
+				LogDelegateCall(tc.Function.Name, agentName, tc.Function.Arguments)
+			}
+
+			// 为工具调用创建独立超时 context，防止非交互工具卡死
+			// 同时 WithCancel 保证了父 context 取消时工具调用也会被取消
+			cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
+			// 交互式等待用户输入的工具（ask_user_for_help）需要无限等待用户响应，
+			// 不能加 deadline，否则用户尚未响应调用就会被 context.DeadlineExceeded
+			// 自动取消；仅保留 WithCancel，任务中止时仍可经父 context 取消打断等待。
+			toolCtx := cancelCtx
+			toolCancel := cancelCtxCancel
+			if !isInteractiveUserTool(tc.Function.Name) {
+				toolCtx, toolCancel = context.WithTimeout(cancelCtx, defaultToolTimeout)
+			}
+			toolResult, callErr := t.Call(toolCtx, tc.Function.Arguments)
+			cancelCtxCancel()
+			toolCancel()
+			if callErr != nil {
+				if errors.Is(callErr, context.DeadlineExceeded) {
+					toolResult = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(defaultToolTimeout/time.Second))
+				} else {
+					toolResult = fmt.Sprintf("Error: %v", callErr)
+				}
+			}
+			logToolCall(tc.Function.Name, cfg.AgentName, tc.Function.Arguments, toolResult, callErr, startTime)
+			// 活动心跳:工具调用返回(含错误结果路径,用外层循环 ctx 而非已取消的 toolCtx)
+			activity.Heartbeat(ctx, "tool:done:"+tc.Function.Name)
+			return toolResult, true
+		}
+	}
+	return "", false
 }
 
 // RunAgentLoop runs the standard LLM-tool interaction loop.
@@ -234,6 +344,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	// ═══════ 写入初始 system 和 user 消息 ═══════
 	writeRollout(systemMsg)
 	writeRollout(userMsg)
+
+	// 只读工具游程组的最大并行数(配置值归一化;kill-switch=1)
+	maxParallel := NormalizeMaxParallelReadOnlyTools(cfg.MaxParallelReadOnlyTools)
 
 	for i := 0; i < cfg.MaxSteps; i++ {
 		stepNumber++
@@ -556,70 +669,39 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			return ExecutorResult{Text: choice.Content, History: history}, nil
 		}
 
-		for _, tc := range choice.ToolCalls {
-			var toolResult string
-			var callErr error
-			found := false
-
-			// 活动心跳:工具调用发起(detail 在错误消息中可读化为 tool 'NAME' started)
-			activity.Heartbeat(ctx, "tool:start:"+tc.Function.Name)
-
-			if cfg.Publisher != nil {
-				cfg.Publisher.Publish("tool_call_start", map[string]interface{}{
-					"tool_name":    tc.Function.Name,
-					"arguments":    tc.Function.Arguments,
-					"tool_call_id": tc.ID,
-				}, cfg.AgentName)
+		// ═══ 工具调用调度：顺序保持的分段并发 ═══
+		// 把单步 tool_calls 按"连续只读游程"切分为调度段（toolbatch.Plan）：
+		//   并行段 = 连续的可并行工具（适配器存在 && IsReadOnly &&
+		//            非交互 && 不在 deny-list），组内并发执行、join 后按原序 commit；
+		//   串行段 = 非并行元素，原位串行执行（与改造前逐元素串行零差异）。
+		// fail-safe：适配器不存在或无法判定只读性一律视为不可并行。
+		toolCalls := choice.ToolCalls
+		isParallelizable := func(i int) bool {
+			name := toolCalls[i].Function.Name
+			if isInteractiveUserTool(name) || nonParallelToolNames[name] {
+				return false
 			}
-
 			for _, t := range cfg.Adapters {
-				if t.Name() == tc.Function.Name {
-					found = true
-					startTime := time.Now()
-
-					// Log delegate tool calls with full arguments to dedicated delegate log
-					if strings.HasPrefix(tc.Function.Name, "delegate_") {
-						agentName := strings.TrimPrefix(tc.Function.Name, "delegate_")
-						LogDelegateCall(tc.Function.Name, agentName, tc.Function.Arguments)
-					}
-
-					// 为工具调用创建独立超时 context，防止非交互工具卡死
-					// 同时 WithCancel 保证了父 context 取消时工具调用也会被取消
-					const defaultToolTimeout = 180 * time.Second
-					cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
-					// 交互式等待用户输入的工具（ask_user_for_help）需要无限等待用户响应，
-					// 不能加 deadline，否则用户尚未响应调用就会被 context.DeadlineExceeded
-					// 自动取消；仅保留 WithCancel，任务中止时仍可经父 context 取消打断等待。
-					toolCtx := cancelCtx
-					toolCancel := cancelCtxCancel
-					if !isInteractiveUserTool(tc.Function.Name) {
-						toolCtx, toolCancel = context.WithTimeout(cancelCtx, defaultToolTimeout)
-					}
-					toolResult, callErr = t.Call(toolCtx, tc.Function.Arguments)
-					cancelCtxCancel()
-					toolCancel()
-					if callErr != nil {
-						if errors.Is(callErr, context.DeadlineExceeded) {
-							toolResult = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(defaultToolTimeout/time.Second))
-						} else {
-							toolResult = fmt.Sprintf("Error: %v", callErr)
-						}
-					}
-					logToolCall(tc.Function.Name, cfg.AgentName, tc.Function.Arguments, toolResult, callErr, startTime)
-					// 活动心跳:工具调用返回(含错误结果路径,用外层循环 ctx 而非已取消的 toolCtx)
-					activity.Heartbeat(ctx, "tool:done:"+tc.Function.Name)
-					break
+				if t.Name() == name {
+					return t.IsReadOnly()
 				}
 			}
-			if !found {
-				toolResult = fmt.Sprintf("Tool %s not found", tc.Function.Name)
-			}
+			return false
+		}
+		plan := toolbatch.Plan(len(toolCalls), isParallelizable)
 
+		// commitToolCall 单线程落账（可观察时序语义：OnToolResult 回调、
+		// messages/history append、rollout 写入严格按 tool_calls 原序执行）。
+		// publishResultEvent=true 时在此处发出 tool_call_result 事件
+		// （串行元素路径，时机与改造前完全一致——OnToolResult 之后）；
+		// =false 用于并发组元素：事件已在组内 goroutine 完成时按真实时间
+		// 发出，commit 阶段不重发，其余落账语义不变。
+		commitToolCall := func(tc llm.ToolCall, toolResult string, publishResultEvent bool) {
 			if cfg.OnToolResult != nil {
 				cfg.OnToolResult(tc.Function.Name, toolResult)
 			}
 
-			if cfg.Publisher != nil {
+			if publishResultEvent && cfg.Publisher != nil {
 				cfg.Publisher.Publish("tool_call_result", map[string]interface{}{
 					"tool_name":    tc.Function.Name,
 					"result":       toolResult,
@@ -642,11 +724,82 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			history = append(history, toolMsg)
 
 			writeRollout(toolMsg)
+		}
+
+		// execOneToolCall 原位串行执行单个 tool_call：完整保留改造前循环体
+		// 的副作用链与顺序（runToolCall → "Tool %s not found" 兜底 →
+		// OnToolResult → Publish(result) → append → writeRollout → 退出判定）。
+		// 返回非 nil 表示 agent_exit 触发提前终止（StopOnFinish）。
+		execOneToolCall := func(idx int) *ExecutorResult {
+			tc := toolCalls[idx]
+			toolResult, found := runToolCall(ctx, &cfg, tc)
+			if !found {
+				toolResult = fmt.Sprintf("Tool %s not found", tc.Function.Name)
+			}
+
+			commitToolCall(tc, toolResult, true)
 
 			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" {
 				// Don't call OnStepEnd here — OnAgentExit will handle final state
-				return ExecutorResult{Text: toolResult, History: history}, nil
+				return &ExecutorResult{Text: toolResult, History: history}
 			}
+			return nil
+		}
+
+		for _, seg := range plan {
+			if !seg.Parallel {
+				// 非并行元素：原位串行（与改造前逐元素执行零差异）。
+				// agent_exit：其之前的游程组已 flush 落账，执行后立即 return，
+				// 之后的 tool_calls 不执行不落账，无需取消任何并发组。
+				if res := execOneToolCall(seg.Indices[0]); res != nil {
+					return *res, nil
+				}
+				continue
+			}
+
+			// 并发只读游程组：
+			//   组内 goroutine：获取信号量 → Heartbeat(start) →
+			//     Publish(tool_call_start) → delegate_ 前缀 LogDelegateCall →
+			//     WithCancel(+WithTimeout，交互豁免) → Call → cancel →
+			//     错误格式化（与串行逐字一致）→ logToolCall → Heartbeat(done) →
+			//     Publish(tool_call_result)
+			//   panic 防守（相对串行行为的有意变化）：exec 内具名返回值 recover，
+			//     panic 转化为 "Error: panic: %v" 结果并 slog 记录堆栈，
+			//     兄弟工具不受影响（串行时代单 panic 会终止整个进程）。
+			//   失败传播：组内单个工具失败只影响自身消息，不取消兄弟
+			//     （不共享 cancelCtx）；父 ctx 取消经 ctx 链传播到所有在飞工具，
+			//     信号量排队未启动的调用也照常启动并落错误消息（toolbatch 负责）。
+			//   group 之外：OnToolResult → messages/history → writeRollout
+			//     由 commitToolCall 在父线程按原索引序执行。
+			toolbatch.Run(ctx, seg, maxParallel,
+				func(callCtx context.Context, i int) (toolResult string) {
+					tc := toolCalls[i]
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("tool call panicked in parallel read-only batch",
+								"agent", cfg.AgentName, "tool", tc.Function.Name,
+								"tool_call_id", tc.ID, "panic", r,
+								"stack", string(debug.Stack()))
+							toolResult = fmt.Sprintf("Error: panic: %v", r)
+						}
+					}()
+					res, found := runToolCall(callCtx, &cfg, tc)
+					if !found {
+						res = fmt.Sprintf("Tool %s not found", tc.Function.Name)
+					}
+					if cfg.Publisher != nil {
+						cfg.Publisher.Publish("tool_call_result", map[string]interface{}{
+							"tool_name":    tc.Function.Name,
+							"result":       res,
+							"tool_call_id": tc.ID,
+						}, cfg.AgentName)
+					}
+					return res
+				},
+				func(i int, res string) {
+					commitToolCall(toolCalls[i], res, false)
+				},
+			)
 		}
 
 		// OnStepEnd hook — only when not exiting via agent_exit

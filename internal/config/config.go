@@ -119,6 +119,11 @@ type AgentConfig struct {
 	// delegate 不再硬编码固定总超时）。
 	DelegateTotalTimeout time.Duration `toml:"delegate_total_timeout" json:"delegate_total_timeout" yaml:"delegate_total_timeout"`
 
+	// MaxParallelReadOnlyTools 单步内"连续只读工具游程组"的最大并行数：
+	// 0/负=默认 4；>8 clamp 到 8；=1 严格串行（kill-switch，关闭并发，
+	// 行为与并发改造前完全一致）。
+	MaxParallelReadOnlyTools int `toml:"max_parallel_readonly_tools" json:"max_parallel_readonly_tools" yaml:"max_parallel_readonly_tools"`
+
 	SpeakLang string `toml:"lang"`
 }
 

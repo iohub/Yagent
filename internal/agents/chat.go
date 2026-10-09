@@ -56,7 +56,7 @@ func NewChatAgent(formatter PromptFormatter, publisher EventBus, env Env, flow F
 			continue
 		}
 
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
 		adapters = append(adapters, adapter)
 	}
 	tools.SetGuardOnAdapters(adapters, guard)

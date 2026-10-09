@@ -65,7 +65,7 @@ func NewDevOpsAgent(formatter PromptFormatter, publisher EventBus, env Env, file
 			continue
 		}
 
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
 		adapters = append(adapters, adapter)
 	}
 	tools.SetGuardOnAdapters(adapters, guard)

@@ -88,6 +88,7 @@ devops_max_steps = 50         # DevOps Agent 最大步数
 browser_max_steps = 200       # Browser Agent 最大步数
 meta_max_steps = 50           # Meta Agent 最大步数
 meta_retry_count = 5          # Meta Agent 重试次数
+max_parallel_readonly_tools = 4 # 连续只读工具游程组最大并行数：0=默认4，>8截断到8，1=严格串行(关闭并发)
 lang = ""                     # 对话语言（空=默认）
 
 # ── LLM 推理兜底配置 ──
