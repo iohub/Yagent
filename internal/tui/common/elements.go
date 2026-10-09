@@ -182,10 +182,10 @@ func ButtonGroup(buttons []ButtonOpts, spacing string) string {
 
 // StatusOpts defines options for rendering a status line.
 type StatusOpts struct {
-	Icon             string
-	Title            string
-	Description      string
-	ExtraContent     string // appended after description
+	Icon         string
+	Title        string
+	Description  string
+	ExtraContent string // appended after description
 }
 
 // StatusLine renders a status line with icon, title, description.
@@ -297,12 +297,12 @@ func formatModelInfo(provider, model string) string {
 	}
 }
 
-// renderASCIILogo renders the "CODE ACTOR" ASCII art logo with gradient text.
 func renderASCIILogo() string {
 	asciiLogo := []string{
-		"╔═╗┌─┐┌┬┐┌─┐  ╔═╗┌─┐┌┬┐┌─┐┬─┐  ╔═╗╦",
-		"║  │ │ ││├┤   ╠═╣│   │ │ │├┬┘  ╠═╣║",
-		"╚═╝└─┘─┴┘└─┘  ╩ ╩└─┘ ┴ └─┘┴└─  ╩ ╩╩",
+
+		"██  ██   ▄████▄  ▄▄▄▄ ▄▄▄▄▄ ▄▄  ▄▄ ▄▄▄▄▄▄",
+		" ▀██▀    ██▄▄██ ██ ▄▄ ██▄▄  ███▄██   ██",
+		"  ██     ██  ██ ▀███▀ ██▄▄▄ ██ ▀██   ██",
 	}
 
 	// Use gradient colors: blue → cyan → green
@@ -327,10 +327,10 @@ func renderASCIILogo() string {
 
 // StatusSegment represents a single colored segment in the status bar.
 type StatusSegment struct {
-	Text  string
-	Bg    string // lipgloss color string (e.g., "24")
-	Fg    string
-	Bold  bool
+	Text string
+	Bg   string // lipgloss color string (e.g., "24")
+	Fg   string
+	Bold bool
 }
 
 // StatusBar renders an airline-style status bar from left and right segments.

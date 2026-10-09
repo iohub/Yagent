@@ -636,9 +636,9 @@ func (m *model) renderWelcomePanelLayout() string {
 }
 func renderBanner() string {
 	asciiLogo := []string{
-		"╔═╗┌─┐┌┬┐┌─┐  ╔═╗┌─┐┌┬┐┌─┐┬─┐  ╔═╗╦",
-		"║  │ │ ││├┤   ╠═╣│   │ │ │├┬┘  ╠═╣║",
-		"╚═╝└─┘─┴┘└─┘  ╩ ╩└─┘ ┴ └─┘┴└─  ╩ ╩╩",
+		"██  ██   ▄████▄  ▄▄▄▄ ▄▄▄▄▄ ▄▄  ▄▄ ▄▄▄▄▄▄",
+		" ▀██▀    ██▄▄██ ██ ▄▄ ██▄▄  ███▄██   ██",
+		"  ██     ██  ██ ▀███▀ ██▄▄▄ ██ ▀██   ██",
 	}
 
 	// Use gradient text (blue → cyan) instead of fixed rainbow colors
@@ -675,6 +675,7 @@ func formatToken(n int64) string {
 //   - 只有读缓存: "Cache: 30.0%(1.2k)"
 //   - 只有写缓存: "CacheW: 0.8k"
 //   - 两者都有:   "Cache: 30.0%(1.2k) CacheW: 0.8k"
+//
 // 没有任何缓存活动时返回空字符串
 func formatCacheInfo(cacheRead, cacheCreation, totalInput int64) string {
 	if totalInput <= 0 {
