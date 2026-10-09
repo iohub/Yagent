@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"yagent/internal/agents/activity"
@@ -74,9 +75,23 @@ type DirectorAgent struct {
 
 	projectCtxLoader *director.ProjectContextLoader // 项目上下文加载器（Phase 2a 抽取，缓存语义在 loader 内）
 
-	currentMemory         *memory.ConversationMemory     // 当前正在使用的 memory（Run 期间设置）
-	pendingSubAgentMemory *AgentResult                   // 最近一次 delegate 调用的完整结果（用于 memory 注入）
-	compressor            *compression.ContextCompressor // 上下文压缩编排组件（Phase 3-0 抽取）
+	currentMemory         *memory.ConversationMemory // 当前正在使用的 memory（Run 期间设置）
+	pendingSubAgentMemory *AgentResult               // 最近一次 delegate 调用的完整结果（用于 memory 注入）
+	// pendingSubAgentMu 保护 pendingSubAgentMemory 的并发读写：只读工具并发执行
+	// （toolbatch 游程组）放开 delegate_* 并发后，多个 delegate 闭包会在各自
+	// goroutine 内同时写入该字段（applyEnhancedCommander / executeCustomAgent /
+	// delegate_meta）——无锁时为数据竞争。语义保持"最近一次写入胜出"（与串行
+	// 时代一致；落账序仍由调用方按 tool_calls 原序保证）。
+	pendingSubAgentMu sync.Mutex
+	compressor        *compression.ContextCompressor // 上下文压缩编排组件（Phase 3-0 抽取）
+
+	// injectSubAgentMemoryMu 保护 injectSubAgentMemory 对 a.currentMemory 的
+	// append：并发 delegate 元素（toolbatch 只读游程组 goroutine）各自在
+	// ToolRunner.Call 内执行注入，无锁时 slice append 为数据竞争。
+	// 注入顺序 = Call 完成序（并发组内非确定性）——tool 消息/事件/rollout 的
+	// 原序落账仍由 Planner/Executor 的 commit 阶段保证（summary 为 IsSubAgent
+	// 记录性消息，不进入 LLM 上下文，顺序非确定可接受）。
+	injectSubAgentMemoryMu sync.Mutex
 
 	// LLM 兜底机制字段
 	// P0-1 Phase 2b：步骤级重试次数、连续 LLM 失败计数、最近失败时间及
@@ -120,6 +135,16 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 	// self-reference for closures that need the DirectorAgent after construction
 	var self *DirectorAgent
 
+	// 只读标记依据（第二阶段并发 delegate 审计结论）：
+	//   - delegate_repo：Repo-Agent 工具集为无共享写副作用工具（7 个基础只读工具全部
+	//     命中第一阶段 auto 白名单 + 图查询三件套/认知工具等纯读或纯 LLM 推理）；子 agent
+	//     内部循环自带原序调度，对 director 层无共享状态写入（pendingSubAgentMemory
+	//     已经 pendingSubAgentMu 加锁）。
+	//   - delegate_chat：Chat-Agent 工具集为 micro_agent/thinking/deepthinking（纯
+	//     LLM 推理，无包级可变状态）+ agent_exit（flow-control，deny-list 兜底）+
+	//     ask_user_for_help（交互豁免，并发谓词排除）。
+	//   - delegate_coding/devops/browser/meta 不加标记：编码可写文件、devops 可执行
+	//     shell、browser 可提交表单、meta 有自定义 agent 注册表副作用（deny-list 兜底）。
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
@@ -139,7 +164,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 			"task": map[string]interface{}{"type": "string", "description": "The task description for Repo-Agent"},
 		},
 		"required": []string{"task"},
-	})
+	}).WithReadOnly(true)
 
 	delegateCoding := tools.NewAdapter("delegate_coding", "Delegate coding task to Coding-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
@@ -184,7 +209,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 			"task": map[string]interface{}{"type": "string", "description": "The message or question for Chat-Agent"},
 		},
 		"required": []string{"task"},
-	})
+	}).WithReadOnly(true)
 
 	delegateDevOps := tools.NewAdapter("delegate_devops", "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
@@ -264,7 +289,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 				return nil, fmt.Errorf("Meta-Agent design failed: %w", err)
 			}
 			// 存储 meta-agent memory（如果后续执行了自定义 agent，会被覆盖为自定义 agent 的 memory）
-			self.pendingSubAgentMemory = &metaResult
+			self.setPendingSubAgentMemory(&metaResult)
 			lastRawOutput = metaResult.Text
 
 			systemPrompt, execResult, parseErr := director.ParseMetaAgentOutput(metaResult.Text)
@@ -496,7 +521,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 	// Phase 3-0：上下文压缩编排组件；thinkLink 窄接口与 pendingSubAgentMemory
 	// 清理回调注入。thinkLink 须与 a.thinkLink 同一实例（跨任务累积的条目必须
 	// 被压缩重建看到）；agents 类型（AgentResult）经回调由门面适配清理。
-	self.compressor = compression.NewContextCompressor(engine, self.Name(), self.thinkLink, func() { self.pendingSubAgentMemory = nil })
+	self.compressor = compression.NewContextCompressor(engine, self.Name(), self.thinkLink, func() { self.setPendingSubAgentMemory(nil) })
 
 	// 委派返回物分级（第二批次接线）：注入项目路径提供者，FinalizeResult
 	// 落盘 artifact 的 projectID 由此计算；进程级一次性注入（DirectorAgent 单例）。
@@ -736,7 +761,7 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 		Text:   result.Text,
 		Memory: ConvertLLMHistoryToMemory(result.History),
 	}
-	a.pendingSubAgentMemory = &agentResult
+	a.setPendingSubAgentMemory(&agentResult)
 	return result.Text, nil
 }
 
@@ -744,6 +769,11 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 // Phase 1: 只注入摘要，不再注入 sub-agent 的完整对话历史
 // Phase 3+ : Sub-agent 的关键发现通过 SharedMemory 发布/订阅机制共享
 func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID string, toolName string) {
+	// 并发 delegate 注入保护（字段注释详述）：整个函数体（读 a.currentMemory 判空
+	// + summaryMsg append）都在锁内，消费共享 ConversationMemory。
+	a.injectSubAgentMemoryMu.Lock()
+	defer a.injectSubAgentMemoryMu.Unlock()
+
 	if a.currentMemory == nil {
 		return
 	}
@@ -812,6 +842,24 @@ func (a *DirectorAgent) computeProjectID() string {
 	return director.ComputeProjectID(a.env.ProjectPath())
 }
 
+// setPendingSubAgentMemory 锁保护写入 pendingSubAgentMemory（并发 delegate 闭包
+// 各自 goroutine 内调用；语义与串行时代一致：最近一次写入胜出）。
+func (a *DirectorAgent) setPendingSubAgentMemory(r *AgentResult) {
+	a.pendingSubAgentMu.Lock()
+	defer a.pendingSubAgentMu.Unlock()
+	a.pendingSubAgentMemory = r
+}
+
+// takePendingSubAgentMemory 锁保护取出并清空 pendingSubAgentMemory（原
+// "读取 → 注入 → 置 nil"三步的原子复合操作，防止与并发写入交叠）。
+func (a *DirectorAgent) takePendingSubAgentMemory() *AgentResult {
+	a.pendingSubAgentMu.Lock()
+	defer a.pendingSubAgentMu.Unlock()
+	r := a.pendingSubAgentMemory
+	a.pendingSubAgentMemory = nil
+	return r
+}
+
 // applyEnhancedCommander 处理子 Agent 执行结果。
 // 存储 sub-agent memory，并返回 FormatForDirector 统一格式文本（第二批次接线：
 // LLM 上下文消费点走分级摘要 + artifact 取回指令，不再原样返回完整结果文本）。
@@ -826,8 +874,8 @@ func (a *DirectorAgent) applyEnhancedCommander(
 	result AgentResult,
 	err error,
 ) (string, error) {
-	// 始终存储 sub-agent memory（保持现有行为）
-	a.pendingSubAgentMemory = &result
+	// 始终存储 sub-agent memory（保持现有行为；并发 delegate 闭包路径经锁保护）
+	a.setPendingSubAgentMemory(&result)
 
 	if err != nil {
 		return "", err
@@ -963,19 +1011,18 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 		// 原 run() 以 LLM 返回的 tool_call_id 作 ParentID；ToolRunner.Call 签名
 		// （ctx, name, argsJSON）不含 toolCallID，此处传空串（ParentID 为记录性
 		// 字段且无消费逻辑；IsSubAgent 消息不进入 LLM 上下文，差异详见阶段报告）。
-		if a.pendingSubAgentMemory != nil {
-			a.injectSubAgentMemory(*a.pendingSubAgentMemory, "", name)
+		// take(读+清) 原子复合：并发 delegate 闭包写同一字段经锁保护。
+		if psm := a.takePendingSubAgentMemory(); psm != nil {
+			a.injectSubAgentMemory(*psm, "", name)
 			// 解析结果填 per-run 共享 state（门面负责 AgentResult → SubAgentMemory 转换）
-			r.state.PendingSubAgentMemory = toSubAgentMemory(a.pendingSubAgentMemory)
-			a.pendingSubAgentMemory = nil
+			// 并发 delegate 元素在各自 goroutine 内 Call，state 写点经 RunState 内部锁保护
+			r.state.SetPendingSubAgentMemory(toSubAgentMemory(psm))
 		}
 
 		// 检测是否是 delegate 工具，无论成功失败都记录尝试次数（更新共享 state）
+		// 并发 delegate 元素（toolbatch 只读游程组 goroutine）并发计数 → 锁保护
 		if strings.HasPrefix(t.Name(), "delegate_") {
-			r.state.DelegationAttempts++
-			if err == nil {
-				r.state.HasDelegated = true
-			}
+			r.state.RecordDelegation(err == nil)
 		}
 
 		if err != nil {
@@ -1167,6 +1214,13 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		// 用其做 DeadlineExceeded 错误提示的秒数格式化兜底（delegate_* 的空闲/总时长
 		// 超时错误已转换为带原因的格式化错误）
 		ToolTimeout: 120 * time.Second,
+
+		// ── 只读工具并发调度（第二阶段：与 agents.RunAgentLoop 同一 toolbatch 调度）──
+		// 归一化已在构造时完成（a.maxParallelReadOnlyTools），直接透传。
+		MaxParallelReadOnlyTools: a.maxParallelReadOnlyTools,
+		// IsParallelizableTool 并行性谓词：见 isToolParallelizable（与
+		// executor.go 的 isParallelizable 闭包语义一致，方法化便于链路测试复用）。
+		IsParallelizableTool: a.isToolParallelizable,
 	}
 
 	planner := director.NewPlanner(cfg, state)
@@ -1179,6 +1233,23 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 	// 各错误分支返回 ("", err) 一致；成功路径 Text 即最终回复文本
 	// （plain_text → LLM 文本；agent_exit → "Task completed successfully"）。
 	return result.Text, err
+}
+
+// isToolParallelizable 单步 tool_calls 的并行性谓词（与 executor.go 的
+// isParallelizable 闭包语义一致）：交互工具（ask_user_for_help）与 deny-list
+// （agent_exit/delegate_meta）原位串行，其余按 Adapters.IsReadOnly 判定；
+// 适配器不存在 fail-safe 串行。delegate_meta 的 registerCustomAgent 注册表
+// 副作用由 deny-list 兜底（原位串行）。
+func (a *DirectorAgent) isToolParallelizable(name string) bool {
+	if isInteractiveUserTool(name) || nonParallelToolNames[name] {
+		return false
+	}
+	for _, t := range a.Adapters {
+		if t.Name() == name {
+			return t.IsReadOnly()
+		}
+	}
+	return false
 }
 
 // applyEmergencyCompression 执行紧急压缩：提取用户原始任务 + 总结/保留 Thought & Plan 历史，

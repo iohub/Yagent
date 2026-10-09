@@ -6,14 +6,24 @@ import (
 	"strings"
 	"testing"
 
+	"yagent/internal/agents/director"
 	"yagent/internal/artifact"
 )
 
 // saveTestArtifact 测试辅助：隔离 artifact 根目录并落盘 fullText，返回引用。
+//
+// projectID 与 executeReadArtifact 读取时完全同源（均为
+// ComputeProjectID(currentProjectPath())，即 FinalizeResult 的生产落盘路径），
+// 不对包级 projectPathProvider 做"未注入"假设：director 系测试构造
+// DirectorAgent 时经 SetProjectPathProvider 进程级注入非空 ProjectPath 且不清理，
+// 同包内 Go 测试按文件名字典序执行（d* 先于 r*），到本测试运行时
+// currentProjectPath() 可能已被注入——若 Save 硬编码 "default" 而 Load 用注入值，
+// 两者目录不一致导致 "artifact not found"。同源计算使 Save/Load 天然一致，
+// 消除对全局状态与测试执行顺序的隐式耦合。
 func saveTestArtifact(t *testing.T, fullText string) artifact.Ref {
 	t.Helper()
 	t.Setenv("YAGENT_ARTIFACT_ROOT", t.TempDir())
-	ref, err := artifact.DefaultStore().Save("default", "coding", "test task", "", fullText)
+	ref, err := artifact.DefaultStore().Save(director.ComputeProjectID(currentProjectPath()), "coding", "test task", "", fullText)
 	if err != nil {
 		t.Fatalf("artifact Save failed: %v", err)
 	}

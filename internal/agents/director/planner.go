@@ -26,6 +26,7 @@ package director
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"yagent/internal/compression"
@@ -84,27 +85,55 @@ type PromptBuilder func(ctx context.Context, in PromptInput) (string, error)
 // （hasDelegated/nonDelegationPrompts/delegationAttempts）与主循环步数；
 // PendingSubAgentMemory 复用 memory.SubAgentMemory（原 *AgentResult
 // 的等价载体，Phase 3-2 迁移时门面负责转换）。
+//
+// 并发（第二阶段）：只读 delegating 工具（delegate_repo/delegate_chat 标记
+// readOnly 后）在 toolbatch 只读游程组 goroutine 内经 ToolRunner.Call 并发
+// 更新统计字段——DelegationAttempts/HasDelegated/PendingSubAgentMemory 的
+// 写点走 mu 保护方法（RecordDelegation/SetPendingSubAgentMemory）；主线程
+// 的读取均发生在段 join（join 先于 happens-before）之后的串行路径，无竞争。
 type RunState struct {
-	Step                  int             // 当前主循环步数
-	MaxSteps              int             // 最大步数（原 a.maxSteps）
-	HasDelegated          bool            // 本次任务是否已委派过 agent（执行检测机制）
-	NonDelegationPrompts  int             // "未委派强制提醒"已注入次数（上限 maxNonDelegationPrompts=3）
-	DelegationAttempts    int             // 委派尝试次数统计（成功失败均计）
+	Step                  int                    // 当前主循环步数
+	MaxSteps              int                    // 最大步数（原 a.maxSteps）
+	HasDelegated          bool                   // 本次任务是否已委派过 agent（执行检测机制）
+	NonDelegationPrompts  int                    // "未委派强制提醒"已注入次数（上限 maxNonDelegationPrompts=3）
+	DelegationAttempts    int                    // 委派尝试次数统计（成功失败均计）
 	PendingSubAgentMemory *memory.SubAgentMemory // 最近一次 delegate 调用的完整结果（nil=无）
+
+	// mu 保护上述统计字段在并发 ToolRunner.Call 路径的写点；
+	// 取值逻辑收编在方法内，字段保留导出供门面/planner 直读（读均串行）。
+	mu sync.Mutex
+}
+
+// RecordDelegation 记录一次委派尝试（成功失败均计数；err==nil 时置 HasDelegated）。
+// 并发安全：delegate_* 元素在 toolbatch 只读游程组 goroutine 内并发调用。
+func (s *RunState) RecordDelegation(ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.DelegationAttempts++
+	if ok {
+		s.HasDelegated = true
+	}
+}
+
+// SetPendingSubAgentMemory 并发安全写入 pending sub-agent memory。
+func (s *RunState) SetPendingSubAgentMemory(m *memory.SubAgentMemory) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.PendingSubAgentMemory = m
 }
 
 // PlannerConfig Planner 配置（首版允许略胖：主循环依赖一次注入，Phase 3-2 起逐步收窄）。
 // Publisher/Journal/Rollout 均 nil 容忍（调用点判空，行为与门面 nil 语义一致）。
 type PlannerConfig struct {
-	LLM        LLMClient             // LLM 客户端（复用 types.go 接口）
-	Publisher  EventPublisher        // 事件发布（nil 容忍）
-	Journal    ThinklinkStore        // thinklink 存储（nil 容忍）
-	Rollout    *memory.RolloutWriter // Rollout 写入器（nil 容忍，门面 run() 内创建）
-	Tools      ToolRunner            // 工具执行器
-	Prompts    PromptBuilder                // 系统提示构建闭包
+	LLM        LLMClient                      // LLM 客户端（复用 types.go 接口）
+	Publisher  EventPublisher                 // 事件发布（nil 容忍）
+	Journal    ThinklinkStore                 // thinklink 存储（nil 容忍）
+	Rollout    *memory.RolloutWriter          // Rollout 写入器（nil 容忍，门面 run() 内创建）
+	Tools      ToolRunner                     // 工具执行器
+	Prompts    PromptBuilder                  // 系统提示构建闭包
 	Compressor *compression.ContextCompressor // 上下文压缩编排组件（Phase 3-0 已抽取，同包直接注入）
-	MaxSteps   int                          // 主循环最大步数
-	LLMTimeout time.Duration         // LLM 调用超时（原 a.llmTimeout，默认 5 分钟）
+	MaxSteps   int                            // 主循环最大步数
+	LLMTimeout time.Duration                  // LLM 调用超时（原 a.llmTimeout，默认 5 分钟）
 
 	// ── Phase 3-2a-1 扩展（Planner.Run 搬迁 run() 主循环所需；除压缩配置外均
 	// nil 容忍/零值安全，与门面 nil 语义一致）──
@@ -138,6 +167,19 @@ type PlannerConfig struct {
 	// 执行，Planner 仅用其做 DeadlineExceeded 错误提示的秒数格式化；delegate_*
 	// 专用 10min 超时由门面感知，Planner 不感知）。
 	ToolTimeout time.Duration
+
+	// ── 只读工具并发调度（第二阶段：与 agents.RunAgentLoop 同一 toolbatch 调度）──
+	// MaxParallelReadOnlyTools 单步内"连续只读工具游程组"的最大并行数（门面已按
+	// agents.NormalizeMaxParallelReadOnlyTools 归一化后注入；≤1 → 严格串行快路径，
+	// 与逐元素串行行为完全一致）。Planner 不感知归一化规则（director 禁止 import
+	// agents，agents 常量不进入本包）。
+	MaxParallelReadOnlyTools int
+	// IsParallelizableTool 并行性谓词（门面注入）：返回 true 表示名为 name 的工具
+	// 可参与连续只读游程组并发执行（适配器存在 && IsReadOnly && 非交互 && 不在
+	// deny-list）。nil 时所有元素视为不可并行（fail-safe，行为与逐元素串行一致）。
+	// deny-list（agent_exit / delegate_meta）的站点语义（退出判定/注册表副作用）
+	// 由门面谓词保证原位串行。
+	IsParallelizableTool func(name string) bool
 }
 
 // PlanInput Planner 单次任务输入。

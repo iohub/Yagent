@@ -30,6 +30,7 @@ import (
 	"os"
 	"time"
 
+	"yagent/internal/agents/toolbatch"
 	"yagent/internal/compression"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
@@ -580,10 +581,52 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			return PlanResult{Text: choice.Content, Steps: p.state.Step, StopReason: "plain_text"}, nil
 		}
 
-		for _, tc := range choice.ToolCalls {
-			var toolResult string
-			var err error
-			found := false
+		// ═══ 工具调用调度：顺序保持的分段并发（第二阶段，与 agents.RunAgentLoop
+		// ═══ 同一 toolbatch 调度，消除两处副本的工具循环行为分叉）═══
+		// 把单步 tool_calls 按"连续只读游程"切分为调度段（toolbatch.Plan）：
+		//   并行段 = 连续的可并行工具（门面注入的 IsParallelizableTool 谓词判定：
+		//            适配器存在 && IsReadOnly && 非交互 && 不在 deny-list），
+		//            组内并发执行，join 后按原索引序 commit；
+		//   串行段 = 非并行元素，原位串行执行（与 lift-and-shift 原实现的
+		//            逐元素串行循环零差异）。
+		// 站点差异逐项保留（对照 agents/executor.go 的同一调度）：
+		//   - tool_call_start 事件在本站点由 Planner 于执行前发出（原行为），
+		//     tool_call_result 事件在 commit 阶段发出（原行为——本站点无
+		//     "并发组内提前发 result 事件"的变体，串行与并发路径事件时机一致）；
+		//   - per-tool ctx 预检（原循环体内的 ctx.Err() 检查 + turn_aborted）保留：
+		//     元素级 exec 中预检失败时标记 cancelled 该元素不落账，站点循环
+		//     统一写 turn_aborted（Reason=ctx.Err().Error()）并以 "cancelled" 终止；
+		//   - 超时分派（delegate_* 活动感知空闲超时 / 交互式工具无限等待 /
+		//     普通工具 120s）在门面 directorToolRunner.Call 内（ToolRunner 实现），
+		//     本次不改动该单工具调用层；
+		//   - 错误→结果格式化（1000 字符截断 / DeadlineExceeded 超时提示）逐字保留；
+		//   - not-found 兜底逐字保留（exec 内）；
+		//   - commit 落账（result 事件 → Mem.AddToolMessage → messages append →
+		//     writeDirectorRollout → agent_exit 退出判定 task_complete）按原序进行。
+		maxParallel := p.cfg.MaxParallelReadOnlyTools
+		toolCalls := choice.ToolCalls
+		// 谓词适配：toolbatch.Plan 用索引谓词，门面 IsParallelizableTool 用工具名。
+		// 谓词 nil → 全不可并行（fail-safe，与逐元素串行一致）。
+		plan := toolbatch.Plan(len(toolCalls), func(i int) bool {
+			if p.cfg.IsParallelizableTool == nil {
+				return false
+			}
+			return p.cfg.IsParallelizableTool(toolCalls[i].Function.Name)
+		})
+
+		// 单元素调度结果（exec 产出、commit 消费）。
+		type plannerToolOutcome struct {
+			result    string
+			cancelled bool // ctx 预检失败：元素不落账，整体以 "cancelled" 终止
+		}
+
+		// execPlannerToolCall 单元素执行（串行快路径原线程；并发组 goroutine 内）：
+		// start 事件 → toolDefs 按名查找 → ctx 预检 → Tools.Call（门面包装：超时
+		// 分派/委派统计/子 Agent 记忆注入，3-2b 接线不变）→ 错误→结果格式化 →
+		// not-found 兜底。只产出 outcome，不做任何落账。
+		execPlannerToolCall := func(callCtx context.Context, i int) plannerToolOutcome {
+			tc := toolCalls[i]
+			var out plannerToolOutcome
 
 			if p.cfg.Publisher != nil {
 				_ = p.cfg.Publisher.Publish("tool_call_start", map[string]interface{}{
@@ -598,25 +641,20 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			// 更新）、delegate 检测统计（delegationAttempts/hasDelegated）与子 Agent
 			// 记忆注入（pendingSubAgentMemory），均由门面 Tools.Call 包装闭包负责
 			// （3-2b 接线，Planner 不感知，只读 state 驱动强制委派提醒控制流）。
+			found := false
 			for _, def := range toolDefs {
 				if def.Function.Name == tc.Function.Name {
 					found = true
 
-					// 工具调用前检查 context
-					if ctx.Err() != nil {
-						// Rollout: 写入任务中止事件
-						if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-							directorRolloutWriter.WriteEventMsg(memory.EventMsg{
-								Type:   "turn_aborted",
-								Reason: ctx.Err().Error(),
-							})
-						}
-						return PlanResult{Steps: p.state.Step, StopReason: "cancelled"}, ctx.Err()
+					// 工具调用前检查 context（原站点语义：不调用、不落账、整体 cancelled）
+					if callCtx.Err() != nil {
+						out.cancelled = true
+						return out
 					}
 
 					// 原为工具调用添加超时保护（120s 普通工具 / 10min delegate_* /
 					// 交互式工具无限等待），由门面 Tools.Call 包装闭包负责（3-2b 接线）。
-					toolResult, err = p.cfg.Tools.Call(ctx, tc.Function.Name, tc.Function.Arguments)
+					toolResult, err := p.cfg.Tools.Call(callCtx, tc.Function.Name, tc.Function.Arguments)
 
 					if err != nil {
 						// 截断过长的错误消息，避免污染上下文
@@ -628,10 +666,12 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 						// 感知；cfg.ToolTimeout 为普通工具超时值，delegate_* 的 10min
 						// 超时提示由 3-2b 门面包装精化）
 						if errors.Is(err, context.DeadlineExceeded) {
-							toolResult = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(p.cfg.ToolTimeout.Seconds()))
+							out.result = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(p.cfg.ToolTimeout.Seconds()))
 						} else {
-							toolResult = fmt.Sprintf("Error: %s", errMsg)
+							out.result = fmt.Sprintf("Error: %s", errMsg)
 						}
+					} else {
+						out.result = toolResult
 					}
 					// 原 else if t.Name() == "delegate_repo"（结果 JSON 解包更新
 					// a.GlobalCtx.RepoSummary）由门面 Tools.Call 包装闭包负责（3-2b 接线）
@@ -639,31 +679,41 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				}
 			}
 			if !found {
-				toolResult = fmt.Sprintf("Tool %s not found", tc.Function.Name)
+				out.result = fmt.Sprintf("Tool %s not found", tc.Function.Name)
+			}
+			return out
+		}
+
+		// commitPlannerToolCall 单线程落账（join 后按 original index 序回调）。
+		// 返回非空 stop 信号表示站点循环需终止（“cancelled”/“agent_exit”）。
+		commitPlannerToolCall := func(i int, out plannerToolOutcome) string {
+			tc := toolCalls[i]
+			if out.cancelled {
+				return "cancelled"
 			}
 
 			if p.cfg.Publisher != nil {
 				_ = p.cfg.Publisher.Publish("tool_call_result", map[string]interface{}{
 					"tool_name":    tc.Function.Name,
-					"result":       toolResult,
+					"result":       out.result,
 					"tool_call_id": tc.ID,
 				}, "director")
 			}
 
 			if in.Mem != nil {
-				in.Mem.AddToolMessage(toolResult, tc.ID)
+				in.Mem.AddToolMessage(out.result, tc.ID)
 			}
 
 			messages = append(messages, llm.Message{
 				Role:       llm.RoleTool,
-				Content:    toolResult,
+				Content:    out.result,
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
 			})
 
 			writeDirectorRollout(llm.Message{
 				Role:       llm.RoleTool,
-				Content:    toolResult,
+				Content:    out.result,
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
 			})
@@ -675,9 +725,38 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 						Type: "task_complete",
 					})
 				}
+				return "agent_exit"
+			}
+			return ""
+		}
+
+		for _, seg := range plan {
+			stop := ""
+			toolbatch.Run(ctx, seg, maxParallel, execPlannerToolCall,
+				func(i int, out plannerToolOutcome) {
+					if stop != "" {
+						// 防御：join 后本回调本就按原序单线程执行；此分支仅在
+						// "cancelled/agent_exit 之后的兄弟元素"路径出现（cancelled
+						// 元素 commit 即终止），跳过重复落账。
+						return
+					}
+					stop = commitPlannerToolCall(i, out)
+				})
+			if stop == "cancelled" {
+				// Rollout: 写入任务中止事件（原站点语义：Reason=ctx.Err().Error()）
+				if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+					directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+						Type:   "turn_aborted",
+						Reason: ctx.Err().Error(),
+					})
+				}
+				return PlanResult{Steps: p.state.Step, StopReason: "cancelled"}, ctx.Err()
+			}
+			if stop == "agent_exit" {
+				// 原站点语义：退出判定在 commit（落账）之后，其后的工具段不执行不落账
+				// （退出判定/任务完成事件均在 commitPlannerToolCall 内完成，无重发）
 				return PlanResult{Text: "Task completed successfully", Steps: p.state.Step, StopReason: "agent_exit"}, nil
 			}
-
 		}
 	}
 
