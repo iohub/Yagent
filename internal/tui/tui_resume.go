@@ -1,6 +1,6 @@
 package tui
 
-// tui_resume.go — :resume / :rs 全屏会话恢复模式（范式对齐 tui_history.go）。
+// tui_resume.go — /resume（别名 /rs，兼容 :resume/:rs）全屏会话恢复模式（范式对齐 tui_history.go）。
 //
 // 职责：
 //   - 列举 rollout 会话文件（memory.ListRolloutSessions，mtime 倒序）并全屏展示；

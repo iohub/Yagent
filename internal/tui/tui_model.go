@@ -628,7 +628,7 @@ type model struct {
 	historyLoading  bool
 	historyStyles   *historyStyles // 预计算的历史列表样式
 
-	// Resume mode（:resume / :rs — 从 rollout JSONL 恢复会话，范式对齐 history）
+	// Resume mode（/resume — 别名 /rs，兼容 :resume/:rs — 从 rollout JSONL 恢复会话，范式对齐 history）
 	resumeMode     bool
 	resumeItems    []memory.RolloutSessionInfo
 	resumeCursor   int // 页内条目游标，0-indexed

@@ -231,7 +231,7 @@ func buildHelpData(lang Language) helpData {
 					Items: []keyItem{
 						{[]string{":q"}, "退出程序"},
 						{[]string{":help"}, "显示命令帮助"},
-						{[]string{":resume"}, "从 rollout 日志恢复会话（别名 :rs）"},
+						{[]string{"/resume"}, "从 rollout 日志恢复会话（别名 /rs，兼容 :resume）"},
 						{[]string{"/pattern"}, "搜索日志"},
 					},
 				},
@@ -275,7 +275,7 @@ func buildHelpData(lang Language) helpData {
 				Items: []keyItem{
 					{[]string{":q"}, "quit"},
 					{[]string{":help"}, "show command help"},
-					{[]string{":resume"}, "resume a session from rollout log (alias :rs)"},
+					{[]string{"/resume"}, "resume a session from rollout log (alias /rs, also :resume)"},
 					{[]string{"/pattern"}, "search log"},
 				},
 			},
