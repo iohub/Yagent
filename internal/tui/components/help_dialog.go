@@ -23,9 +23,9 @@ type keySection struct {
 
 // helpData holds the full help dialog data for a given language.
 type helpData struct {
-	Title   string
+	Title    string
 	Sections []keySection
-	Dismiss string
+	Dismiss  string
 }
 
 // ── Constants ──
