@@ -162,9 +162,15 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				HistoryMode: "standard",
 			})
 			turnID := directorRolloutWriter.NextTurn()
+			// 运行时真实模型名（llm.Engine.Model()），用于 rollout 恢复侧识别模型
+			directorModel := ""
+			if p.cfg.LLM != nil {
+				directorModel = p.cfg.LLM.Model()
+			}
 			directorRolloutWriter.WriteTurnContext(memory.TurnContext{
 				TurnID:            turnID,
 				Cwd:               cwd,
+				Model:             directorModel,
 				Effort:            "medium",
 				CollaborationMode: "director",
 			})

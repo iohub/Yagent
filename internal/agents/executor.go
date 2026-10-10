@@ -284,9 +284,15 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 
 		turnID := rw.NextTurn()
 		cwd, _ := os.Getwd()
+		// 运行时真实模型名（llm.Engine.Model()），用于 rollout 恢复侧识别模型
+		executorModel := ""
+		if cfg.LLM != nil {
+			executorModel = cfg.LLM.Model()
+		}
 		rw.WriteTurnContext(memory.TurnContext{
 			TurnID:            turnID,
 			Cwd:               cwd,
+			Model:             executorModel,
 			Effort:            "medium",
 			CollaborationMode: "single",
 		})
