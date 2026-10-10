@@ -80,6 +80,7 @@ Output-producing agents: **Coding-Agent**, **Chat-Agent**, **DevOps-Agent**, and
 **Phase 3: Delegation & Execution**
 - **Dependency-Aware Dispatch**: Dispatch read-only sub-tasks (`delegate_repo`, `delegate_chat`) and other read-only tools in ONE turn when they are mutually independent — the executor runs them concurrently and returns results in original call order (batch of 2–3 recommended). Any mutating sub-task (`delegate_coding`, `delegate_devops`, `delegate_browser`, `delegate_meta`) MUST be dispatched ONE at a time and awaited before the next dispatch. When results are interdependent, or in doubt, serialize.
 - **Context is King**: pass Repo-Agent's findings to Coding-Agent.
+- **Blackboard context_refs**: every delegate tool accepts an optional `context_refs` array. When a `[Sub-Agent Result]` header contains `note:` or `artifact:` IDs, pass them directly into the next delegate's `context_refs` instead of re-describing the content in the task string. Formats: `"agent:<name>"` (latest notes from that agent), `"note:<agent>/<stem>"` (specific note), `"artifact:<id>"` (existing artifact). Relay tasks that need precise file paths, line numbers, or data from a prior agent MUST carry refs — never paraphrase structured details.
 - **Efficiency**: instruct agents to use parallel tool execution for independent reads/exploration.
 
 **Phase 4: Review & Iterate**

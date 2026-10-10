@@ -7,12 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"yagent/internal/agents/activity"
 	director "yagent/internal/agents/director"
+	"yagent/internal/artifact"
+	"yagent/internal/blackboard"
 	"yagent/internal/compression"
 	"yagent/internal/config"
 	"yagent/internal/knowledge"
@@ -114,6 +117,8 @@ type DirectorAgent struct {
 	thinkLink *thinklink.Store
 	// taskID 当前任务的 taskID
 	taskID string
+	// boardID 黑板隔离域 ID（= taskID，由 SetTaskID 设置；构造时兜底生成 adhoc ID）
+	boardID string
 }
 
 // loadProjectContext 读取工作区目录下的项目上下文文件（YAGENT.md、CLAUDE.md、AGENTS.md），
@@ -150,87 +155,64 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		// 创建 Rollout Writer 并注入到 context
+		packedTask, unresolved := self.resolveDelegateRefs(ctx, task, params)
+		ctx = blackboard.WithBoardID(ctx, self.boardID)
 		if rolloutWriter := self.createRolloutWriter("repo", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
-		result, err := repo.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + 注册）
-		return self.applyEnhancedCommander("repo", task, result, err)
-	}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "The task description for Repo-Agent"},
-		},
-		"required": []string{"task"},
-	}).WithReadOnly(true)
+		result, err := repo.Run(ctx, packedTask)
+		noteRef := self.writeDelegateNote("repo_agent", "delegate_repo", task, result, err)
+		return self.applyEnhancedCommander("repo", task, result, err, noteRef, unresolved)
+	}).WithSchema(buildDelegateSchema("The task description for Repo-Agent")).WithReadOnly(true)
 
 	delegateCoding := tools.NewAdapter("delegate_coding", "Delegate coding task to Coding-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		// 创建 Rollout Writer 并注入到 context
+		packedTask, unresolved := self.resolveDelegateRefs(ctx, task, params)
+		ctx = blackboard.WithBoardID(ctx, self.boardID)
 		if rolloutWriter := self.createRolloutWriter("coding", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
-		// RepoSummary is no longer injected into the task here — it is now passed
-		// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt,
-		// keeping the user message (task) variable and the system prompt cacheable.
-		result, err := coding.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + 注册）
-		return self.applyEnhancedCommander("coding", task, result, err)
-	}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "The task description for Coding-Agent"},
-		},
-		"required": []string{"task"},
-	})
+		result, err := coding.Run(ctx, packedTask)
+		noteRef := self.writeDelegateNote("coding_agent", "delegate_coding", task, result, err)
+		return self.applyEnhancedCommander("coding", task, result, err, noteRef, unresolved)
+	}).WithSchema(buildDelegateSchema("The task description for Coding-Agent"))
 
 	delegateChat := tools.NewAdapter("delegate_chat", "Delegate general conversation, explanation, or non-coding tasks to Chat-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		// 创建 Rollout Writer 并注入到 context
+		packedTask, unresolved := self.resolveDelegateRefs(ctx, task, params)
+		ctx = blackboard.WithBoardID(ctx, self.boardID)
 		if rolloutWriter := self.createRolloutWriter("chat", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
-		result, err := chat.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + 注册）
-		return self.applyEnhancedCommander("chat", task, result, err)
-	}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "The message or question for Chat-Agent"},
-		},
-		"required": []string{"task"},
-	}).WithReadOnly(true)
+		result, err := chat.Run(ctx, packedTask)
+		noteRef := self.writeDelegateNote("chat_agent", "delegate_chat", task, result, err)
+		return self.applyEnhancedCommander("chat", task, result, err, noteRef, unresolved)
+	}).WithSchema(buildDelegateSchema("The message or question for Chat-Agent")).WithReadOnly(true)
 
 	delegateDevOps := tools.NewAdapter("delegate_devops", "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		// 创建 Rollout Writer 并注入到 context
+		packedTask, unresolved := self.resolveDelegateRefs(ctx, task, params)
+		ctx = blackboard.WithBoardID(ctx, self.boardID)
 		if rolloutWriter := self.createRolloutWriter("devops", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
-		result, err := devops.Run(ctx, task)
-		// 使用增强型 Commander 处理结果（压缩 + 注册）
-		return self.applyEnhancedCommander("devops", task, result, err)
-	}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."},
-		},
-		"required": []string{"task"},
-	})
+		result, err := devops.Run(ctx, packedTask)
+		noteRef := self.writeDelegateNote("devops_agent", "delegate_devops", task, result, err)
+		return self.applyEnhancedCommander("devops", task, result, err, noteRef, unresolved)
+	}).WithSchema(buildDelegateSchema("The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."))
 
 	delegateBrowser := tools.NewAdapter("delegate_browser",
 		"Delegate browser automation tasks to Browser-Agent. Browser-Agent controls a headless Chrome browser using go-rod to navigate websites, click elements, fill forms, extract data, take screenshots, generate PDFs, execute JavaScript (with user confirmation), and manage cookies. Use this for tasks like: 'screenshot https://example.com', 'extract text from https://example.com/article', 'fill and submit the login form at https://example.com/login', 'check if website is reachable', 'get the current URL after navigation'. The agent handles all browser lifecycle and page management internally.",
@@ -239,33 +221,23 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 			if !ok {
 				return nil, fmt.Errorf("task parameter required")
 			}
-			// 创建 Rollout Writer 并注入到 context
+			packedTask, unresolved := self.resolveDelegateRefs(ctx, task, params)
+			ctx = blackboard.WithBoardID(ctx, self.boardID)
 			if rolloutWriter := self.createRolloutWriter("browser", task); rolloutWriter != nil {
 				defer rolloutWriter.Close()
 				ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 			}
-			// RepoSummary is no longer injected into the task here — it is now passed
-			// via ExecutorConfig.RepoContext and appended to the sub-agent's system prompt.
-			result, err := browser.Run(ctx, task)
-			// 使用增强型 Commander 处理结果（压缩 + 注册）
-			return self.applyEnhancedCommander("browser", task, result, err)
-		}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{
-				"type":        "string",
-				"description": "The browser automation task for Browser-Agent, e.g., 'screenshot https://example.com homepage', 'extract article text from https://example.com/blog/post-1', 'fill the login form and submit', 'navigate to https://example.com and return the page title'.",
-			},
-		},
-		"required": []string{"task"},
-	})
+			result, err := browser.Run(ctx, packedTask)
+			noteRef := self.writeDelegateNote("browser_agent", "delegate_browser", task, result, err)
+			return self.applyEnhancedCommander("browser", task, result, err, noteRef, unresolved)
+		}).WithSchema(buildDelegateSchema("The browser automation task for Browser-Agent, e.g., 'screenshot https://example.com homepage', 'extract article text from https://example.com/blog/post-1', 'fill the login form and submit', 'navigate to https://example.com and return the page title'."))
 
 	delegateMeta := tools.NewAdapter("delegate_meta", "Delegate to Meta-Agent to DESIGN a custom specialized agent. Meta-Agent will craft a tailored system prompt using prompt engineering best practices and select appropriate tools. The designed agent is automatically registered and immediately executed to complete the task. After this, the new agent becomes a permanent delegate tool for future use.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		// 创建 Rollout Writer 并注入到 context
+		ctx = blackboard.WithBoardID(ctx, self.boardID)
 		if rolloutWriter := self.createRolloutWriter("meta", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
@@ -288,7 +260,6 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 			if err != nil {
 				return nil, fmt.Errorf("Meta-Agent design failed: %w", err)
 			}
-			// 存储 meta-agent memory（如果后续执行了自定义 agent，会被覆盖为自定义 agent 的 memory）
 			self.setPendingSubAgentMemory(&metaResult)
 			lastRawOutput = metaResult.Text
 
@@ -299,7 +270,6 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 			}
 
 			// ── Parse succeeded ──
-			// Register the newly designed agent if it has a valid name and prompt
 			if execResult.AgentName != "" && systemPrompt != "" {
 				snakeName := toSnakeCase(execResult.AgentName)
 				customAgent := &CustomAgent{
@@ -311,15 +281,11 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 				}
 				self.registerCustomAgent(customAgent)
 
-				// Use task_for_agent (clean task without meta-design instructions) if available;
-				// otherwise fall back to the original task.
 				agentTask := execResult.TaskForAgent
 				if agentTask == "" {
 					agentTask = task
 				}
 
-				// ── Immediately execute the newly registered agent ──
-				// Find the just-created delegate tool and call it
 				delegateName := "delegate_" + snakeName
 				for _, ad := range self.Adapters {
 					if ad.Name() == delegateName {
@@ -328,7 +294,6 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 						if callErr != nil {
 							return nil, fmt.Errorf("new agent %s execution failed: %w", execResult.AgentName, callErr)
 						}
-						// ad.Call returns JSON-encoded string, unmarshal to get the raw result
 						var rawResult string
 						if err := json.Unmarshal([]byte(callResult), &rawResult); err != nil {
 							rawResult = callResult
@@ -347,20 +312,12 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 				return nil, fmt.Errorf("newly registered agent %s not found in adapters", delegateName)
 			}
 
-			// Parse succeeded but no agent to register
 			return fmt.Sprintf("[Meta-Agent Design Result]\nAgent could not be registered (missing name or design). Raw output: %s", metaResult.Text), nil
 		}
 
-		// All retries exhausted
 		slog.Warn("Meta-Agent JSON parse failed after all retries, returning raw output")
 		return lastRawOutput, nil
-	}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "Detailed task description for Meta-Agent. Include: what needs to be accomplished, why existing agents are insufficient, and what the expected output format should be."},
-		},
-		"required": []string{"task"},
-	})
+	}).WithSchema(buildDelegateSchema("Detailed task description for Meta-Agent. Include: what needs to be accomplished, why existing agents are insufficient, and what the expected output format should be."))
 
 	adapters := []*tools.Adapter{
 		tools.NewAdapter("agent_exit", "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.", flow.ExecuteAgentExit).WithSchema(map[string]interface{}{
@@ -374,6 +331,9 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		// 完整 artifact 内容；id 来自 [Sub-Agent Result] 头部的 artifact: 字段，
 		// 用于查看被截断结果的全文。只读工具，不触碰 workspace。
 		newReadArtifactAdapter(),
+		// 黑板 note 回读：按 noteRef 分页读取被裁剪的 note 全文。
+		// 仅 Director 可见（与 read_artifact 对齐，不变式 I8）。
+		newReadNoteAdapter(func() string { return self.boardID }),
 	}
 
 	var toolDefs []tools.ToolDefinition
@@ -516,6 +476,12 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 
 		// thinklink 存储：容量上限 0 = 使用包默认值（200 条）
 		thinkLink: thinklink.NewStore(0),
+	}
+
+	// blackboard: adhoc 兜底——SetTaskID 未被调用时（理论上不应发生），
+	// 生成一次性 boardID，保证 note 写入永远有合法目录。
+	if self.boardID == "" {
+		self.boardID = blackboard.GenerateAdhocID()
 	}
 
 	// Phase 3-0：上下文压缩编排组件；thinkLink 窄接口与 pendingSubAgentMemory
@@ -714,14 +680,20 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 			if !ok {
 				return nil, fmt.Errorf("task parameter required")
 			}
-			return a.executeCustomAgent(ctx, agentRef, adaptersRef, task)
-		}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "The task description for " + ca.DisplayName},
-		},
-		"required": []string{"task"},
-	})
+			packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
+			ctx = blackboard.WithBoardID(ctx, a.boardID)
+			resultStr, err := a.executeCustomAgent(ctx, agentRef, adaptersRef, packedTask)
+			// executeCustomAgent 内部已调用 setPendingSubAgentMemory；取出以写 note 和统一格式化
+			agentResult := a.takePendingSubAgentMemory()
+			if agentResult == nil {
+				agentResult = &AgentResult{Text: resultStr, Summary: resultStr}
+			}
+			noteRef := a.writeDelegateNote(agentRef.Name+"_agent", delegateName, task, *agentResult, err)
+			if err != nil {
+				return "", err
+			}
+			return FormatForDirector(agentRef.Name, *agentResult, noteRef, unresolved), nil
+		}).WithSchema(buildDelegateSchema("The task description for " + ca.DisplayName))
 
 	a.Adapters = append(a.Adapters, delegateAdapter)
 
@@ -793,7 +765,7 @@ func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID stri
 		}
 		summaryMsg := memory.ChatMessage{
 			Type:       memory.MessageTypeAssistant,
-			Content:    FormatForDirector(toolName, result),
+			Content:    FormatForDirector(toolName, result, "", 0),
 			Timestamp:  time.Now(),
 			GroupID:    fmt.Sprintf("%s_summary_%d", toolName, time.Now().UnixNano()),
 			ParentID:   toolCallID,
@@ -808,9 +780,10 @@ func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID stri
 	// sub-agent 内部消息保留在 sub-agent 本地，通过 SharedMemory 的 publish/subscribe 机制共享关键信息（Phase 3）
 }
 
-// SetTaskID 设置当前任务的 taskID
+// SetTaskID 设置当前任务的 taskID，同时派生 boardID（黑板隔离域）。
 func (a *DirectorAgent) SetTaskID(taskID string) {
 	a.taskID = taskID
+	a.boardID = blackboard.SanitizeBoardID(taskID)
 }
 
 // createRolloutWriter 为 delegate 创建 Rollout 写入器
@@ -867,12 +840,16 @@ func (a *DirectorAgent) takePendingSubAgentMemory() *AgentResult {
 // task: 委派的任务描述
 // result: Agent 执行结果
 // err: Agent 执行错误
+// noteRef: 黑板 note 引用（空=无 note，输出与旧格式一致）
+// unresolvedCount: context_refs 中未能解析的引用数
 // 返回: 处理后的结果文本和错误
 func (a *DirectorAgent) applyEnhancedCommander(
 	agentType string,
 	task string,
 	result AgentResult,
 	err error,
+	noteRef string,
+	unresolvedCount int,
 ) (string, error) {
 	// 始终存储 sub-agent memory（保持现有行为；并发 delegate 闭包路径经锁保护）
 	a.setPendingSubAgentMemory(&result)
@@ -883,7 +860,109 @@ func (a *DirectorAgent) applyEnhancedCommander(
 
 	// LLM 上下文消费点：统一走 FormatForDirector（无 ArtifactRef 时与旧格式
 	// "[Sub-Agent Result: {agentType}]\n{Text}" 等价）。
-	return FormatForDirector(agentType, result), nil
+	return FormatForDirector(agentType, result, noteRef, unresolvedCount), nil
+}
+
+// ── blackboard helpers ──────────────────────────────────────────────────────
+
+// blackboardEnabled 返回黑板功能是否启用（kill-switch：YAGENT_BLACKBOARD=0 禁用）。
+func blackboardEnabled() bool {
+	return os.Getenv("YAGENT_BLACKBOARD") != "0"
+}
+
+// parseContextRefs 从 delegate params 中提取 context_refs 字符串数组。
+func parseContextRefs(raw interface{}) []string {
+	arr, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	refs := make([]string, 0, len(arr))
+	for _, v := range arr {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			refs = append(refs, s)
+		}
+	}
+	return refs
+}
+
+// buildDelegateSchema 构建 delegate 工具的 JSON Schema（含可选 context_refs）。
+// 所有 delegate（标准 + 自定义）共用，保证 schema 一致性。
+func buildDelegateSchema(taskDesc string) map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"task": map[string]interface{}{"type": "string", "description": taskDesc},
+			"context_refs": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Optional references to prior blackboard notes or artifacts. Formats: 'agent:<name>' (latest notes from agent), 'note:<agent>/<stem>' (specific note), 'artifact:<id>' (existing artifact).",
+			},
+		},
+		"required": []string{"task"},
+	}
+}
+
+// writeDelegateNote 将 delegate 执行结果写入黑板 note，返回 noteRef。
+// 写入失败仅 slog.Warn，不阻断主流程（不变式 I5）。
+func (a *DirectorAgent) writeDelegateNote(agentName, toolName, task string, result AgentResult, runErr error) string {
+	if !blackboardEnabled() || a.boardID == "" {
+		return ""
+	}
+	status := "ok"
+	if runErr != nil {
+		status = "error"
+	}
+	var artifactIDs []string
+	if result.ArtifactRef != nil {
+		artifactIDs = []string{result.ArtifactRef.ID}
+	}
+	// body 规则：有 artifact → 摘要（不复制全文）；无 artifact → 完整文本
+	body := result.Text
+	if result.ArtifactRef != nil {
+		body = result.Summary
+	}
+	noteRef, err := blackboard.WriteNote(blackboard.NoteInput{
+		BoardID:     a.boardID,
+		Agent:       agentName,
+		Tool:        toolName,
+		Task:        task,
+		Summary:     result.Summary,
+		Body:        body,
+		ArtifactIDs: artifactIDs,
+		Status:      status,
+	})
+	if err != nil {
+		slog.Warn("blackboard: failed to write note", "agent", agentName, "error", err)
+		return ""
+	}
+	slog.Debug("blackboard: note written", "agent", agentName, "noteRef", noteRef, "boardID", a.boardID)
+	return noteRef
+}
+
+// resolveDelegateRefs 解析 context_refs 并组装 Context Pack，返回拼接后的 task 和未解析数。
+func (a *DirectorAgent) resolveDelegateRefs(ctx context.Context, task string, params map[string]interface{}) (packedTask string, unresolvedCount int) {
+	if !blackboardEnabled() {
+		return task, 0
+	}
+	refs := parseContextRefs(params["context_refs"])
+	if len(refs) == 0 {
+		return task, 0
+	}
+	pack := blackboard.ResolveRefs(a.boardID, refs, a.artifactExists)
+	unresolvedCount = len(pack.Unresolved)
+	packText := pack.Text()
+	if packText == "" {
+		return task, unresolvedCount
+	}
+	slog.Debug("blackboard: context pack assembled", "refs", len(refs), "entries", len(pack.Entries), "unresolved", unresolvedCount, "packChars", len(packText))
+	return packText + "\n---\n" + task, unresolvedCount
+}
+
+// artifactExists 检查 artifact 是否存在（供 blackboard.ResolveRefs 回调）。
+func (a *DirectorAgent) artifactExists(id string) bool {
+	projectID := a.computeProjectID()
+	_, err := artifact.DefaultStore().Load(projectID, id)
+	return err == nil
 }
 
 func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {

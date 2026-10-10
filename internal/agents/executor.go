@@ -14,6 +14,7 @@ import (
 
 	"yagent/internal/agents/activity"
 	"yagent/internal/agents/toolbatch"
+	"yagent/internal/blackboard"
 	"yagent/internal/compression"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
@@ -238,6 +239,28 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	llmTimeout := cfg.LLMTimeout
 	if llmTimeout <= 0 {
 		llmTimeout = 5 * time.Minute
+	}
+
+	// Blackboard auto-injection: when ctx carries a boardID (set by delegate handler),
+	// append read_note + read_artifact so sub-agents can self-serve truncated context
+	// without round-tripping through the Director.
+	if bid := blackboard.BoardIDFrom(ctx); bid != "" && blackboardEnabled() {
+		hasReadNote := false
+		hasReadArtifact := false
+		for _, ad := range cfg.Adapters {
+			switch ad.Name() {
+			case "read_note":
+				hasReadNote = true
+			case "read_artifact":
+				hasReadArtifact = true
+			}
+		}
+		if !hasReadNote {
+			cfg.Adapters = append(cfg.Adapters, newReadNoteAdapter(func() string { return bid }))
+		}
+		if !hasReadArtifact {
+			cfg.Adapters = append(cfg.Adapters, newReadArtifactAdapter())
+		}
 	}
 
 	toolDefs := make([]llm.ToolDef, len(cfg.Adapters))

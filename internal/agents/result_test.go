@@ -187,7 +187,7 @@ func TestFinalizeResultSaveFailure(t *testing.T) {
 // TestFormatForDirectorNoRef 无 ArtifactRef：旧格式（与 injectSubAgentMemory 一致）。
 func TestFormatForDirectorNoRef(t *testing.T) {
 	r := AgentResult{Summary: "hello world"}
-	got := FormatForDirector("delegate_repo", r)
+	got := FormatForDirector("delegate_repo", r, "", 0)
 	want := "[Sub-Agent Result: delegate_repo]\nhello world"
 	if got != want {
 		t.Errorf("FormatForDirector = %q, want %q", got, want)
@@ -201,7 +201,7 @@ func TestFormatForDirectorWithRef(t *testing.T) {
 		Summary:     "kept summary text\n\n[Truncated: showing first 100 of 2000 chars. Full result stored as artifact " + id + ".]\n",
 		ArtifactRef: &artifact.Ref{ID: id, CharCount: 2000},
 	}
-	got := FormatForDirector("delegate_coding", r)
+	got := FormatForDirector("delegate_coding", r, "", 0)
 
 	lines := strings.Split(got, "\n")
 	wantLines := []string{
