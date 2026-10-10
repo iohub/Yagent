@@ -145,47 +145,6 @@ func (cd *ClickDetector) handleMotion(x, y int) (MouseAction, int, int) {
 	return MouseNone, x, y
 }
 
-// DetectPress processes a mouse press (down) event.
-func (cd *ClickDetector) DetectPress(msg interface{}) (MouseAction, int, int) {
-	switch mm := msg.(type) {
-	case tea.MouseClickMsg:
-		m := tea.Mouse(mm)
-		if m.Button == tea.MouseLeft {
-			cd.lastClickX = m.X
-			cd.lastClickY = m.Y
-			cd.lastClickTime = time.Now()
-			return MouseDragStart, m.X, m.Y
-		}
-		return MouseNone, m.X, m.Y
-	case tea.MouseMotionMsg:
-		m := tea.Mouse(mm)
-		if m.Button == tea.MouseLeft {
-			cd.lastClickX = m.X
-			cd.lastClickY = m.Y
-			cd.lastClickTime = time.Now()
-			return MouseDragStart, m.X, m.Y
-		}
-		return MouseNone, m.X, m.Y
-	}
-	return MouseNone, 0, 0
-}
-
-// GetPendingAction returns the pending mouse action (for debounced single-click).
-func (cd *ClickDetector) GetPendingAction() (MouseAction, int, int) {
-	return cd.pendingAction, cd.pendingCoordX, cd.pendingCoordY
-}
-
-// Reset clears the click detector state.
-func (cd *ClickDetector) Reset() {
-	cd.clickCount = 0
-	cd.lastClickTime = time.Time{}
-	cd.lastClickX = 0
-	cd.lastClickY = 0
-	cd.pendingAction = MouseNone
-	cd.pendingCoordX = 0
-	cd.pendingCoordY = 0
-}
-
 // absInt returns the absolute value of an integer.
 func absInt(x int) int {
 	if x < 0 {

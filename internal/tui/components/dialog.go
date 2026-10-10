@@ -89,17 +89,6 @@ func (ds *DialogStack) CloseDialog(id string) bool {
 	return false
 }
 
-// Clear removes all dialogs from the stack.
-func (ds *DialogStack) Clear() {
-	ds.dialogs = ds.dialogs[:0]
-}
-
-// SetOverlayBg dynamically updates the overlay background color.
-// Call this to change the dimming effect (e.g., lighter for toasts, darker for modals).
-func (ds *DialogStack) SetOverlayBg(color string) {
-	ds.overlayStyle = lipgloss.NewStyle().Background(lipgloss.Color(color))
-}
-
 // ReplaceTop replaces the top dialog on the stack with a new one.
 // Returns false if the stack is empty, true otherwise.
 func (ds *DialogStack) ReplaceTop(d Dialog) bool {
@@ -108,13 +97,6 @@ func (ds *DialogStack) ReplaceTop(d Dialog) bool {
 	}
 	ds.dialogs[len(ds.dialogs)-1] = d
 	return true
-}
-
-// All returns a copy of all dialogs in the stack.
-func (ds *DialogStack) All() []Dialog {
-	result := make([]Dialog, len(ds.dialogs))
-	copy(result, ds.dialogs)
-	return result
 }
 
 // Update routes the message to the top dialog.
@@ -143,7 +125,6 @@ func (ds *DialogStack) Update(msg tea.Msg) (tea.Cmd, Dialog) {
 
 // Overlay renders the overlay (background mask + dialogs stacked by z-index).
 // Uses a dimmed dark background to separate dialog content from the main view.
-// The background color can be customized via SetOverlayBg().
 func (ds *DialogStack) Overlay(maxWidth, maxHeight int) string {
 	if len(ds.dialogs) == 0 {
 		return ""
