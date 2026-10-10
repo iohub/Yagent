@@ -112,35 +112,47 @@ func (m *model) showModelSelectionDialog() tea.Cmd {
 	}
 
 	validAgents := []string{"director", "coding", "repo", "chat", "meta", "devops", "browser"}
+	client := m.assistant.GetClient()
+	// 每个目标当前生效 provider 的上下文窗口，与模型选择器同一套解析（配置优先，目录兜底）
+	ctxWindow := func(prov string) int {
+		if client == nil {
+			return 0
+		}
+		return contextWindowFromCfg(client.Config, prov)
+	}
+
 	entries := make([]components.ConfigEntry, 0, len(validAgents)+2)
 	// Global entry
 	entries = append(entries, components.ConfigEntry{
-		Target:      "global",
-		DisplayName: "global",
-		Provider:    m.currentProvider,
-		Model:       m.currentModel,
+		Target:   "global",
+		Group:    components.TargetGroupGlobal,
+		Provider: m.currentProvider,
+		Model:    m.currentModel,
+		Context:  ctxWindow(m.currentProvider),
 	})
 	// Agent entries
 	for _, agent := range validAgents {
-		prov, model := m.assistant.GetAgentProvider(agent)
+		prov, modelName := m.assistant.GetAgentProvider(agent)
 		entries = append(entries, components.ConfigEntry{
-			Target:      agent,
-			DisplayName: agent,
-			Provider:    prov,
-			Model:       model,
+			Target:   agent,
+			Group:    components.TargetGroupAgents,
+			Provider: prov,
+			Model:    modelName,
+			Context:  ctxWindow(prov),
 		})
 	}
 	// Tool entries (per-tool provider overrides)
-	if m.assistant.GetClient() != nil {
-		prov, model := m.assistant.GetToolProviderInfo("deepthinking")
+	if client != nil {
+		prov, modelName := m.assistant.GetToolProviderInfo("deepthinking")
 		entries = append(entries, components.ConfigEntry{
-			Target:      "deepthinking",
-			DisplayName: "deepthinking (tool)",
-			Provider:    prov,
-			Model:       model,
+			Target:   "deepthinking",
+			Group:    components.TargetGroupTools,
+			Provider: prov,
+			Model:    modelName,
+			Context:  ctxWindow(prov),
 		})
 	}
-	dialog := components.NewAgentSelectDialog(m.com.Styles, entries)
+	dialog := components.NewAgentSelectDialog(entries)
 	dialog.SetBounds(m.termWidth, m.termHeight)
 	m.dialogStack.Push(dialog)
 	return nil
