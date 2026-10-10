@@ -79,9 +79,6 @@ func (d *ConfirmDialog) Init() tea.Cmd { return nil }
 // GetRequestID returns the request ID for matching user confirm requests.
 func (d *ConfirmDialog) GetRequestID() string { return d.requestID }
 
-// GetLang returns the language of this dialog.
-func (d *ConfirmDialog) GetLang() Language { return d.lang }
-
 // Update processes incoming messages and returns the updated component.
 func (d *ConfirmDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyMsg)

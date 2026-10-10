@@ -2,9 +2,8 @@
 // component architecture. Components can be composed together to build
 // the full user interface.
 //
-// The two core interfaces are:
+// The core interface is:
 //   - Component: a composable UI unit with focus, bounds, and visibility management
-//   - RenderComponent: extends Component with region-aware rendering (reserved for UV)
 package components
 
 import tea "charm.land/bubbletea/v2"
@@ -42,16 +41,4 @@ type Component interface {
 
 	// SetVisible sets the visibility of this component.
 	SetVisible(bool)
-}
-
-// RenderComponent extends Component with region-aware rendering capability.
-// This interface is reserved for Ultraviolet (UV) screen rendering.
-type RenderComponent interface {
-	Component
-
-	// Draw renders the component onto the provided screen within the
-	// specified area. Returns the draw result (reserved for UV).
-	//
-	// Current implementation returns nil as a placeholder.
-	Draw(scr interface{}, area interface{}) interface{}
 }
