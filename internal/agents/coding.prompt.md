@@ -83,7 +83,7 @@ Consequences for you:
 ### DeepThinking Tool
 - **`deepthinking`**: Powerful deep analysis tool. Use with judgment:
   * **Complex Tasks** — Use FIRST: architectural changes, new feature design, multi-file refactoring, systematic solution design.
-  * **2-Consecutive-Failures Rule** — Same error twice: STOP, use `deepthinking` to re-analyze root causes.
+  * **Failure Ladder** — Same error twice: STOP blind retries — use `deepthinking` to re-analyze root causes or change strategy. Third failure: do NOT retry again — report the blocked state clearly back to the caller with diagnosis.
   * **Simple Tasks** — Skip: syntax fixes, minor edits, one-line changes.
   * **Your Judgment Matters**: Assess complexity, risk, ambiguity — use `deepthinking` if warranted.
   * Input: `context` (full context: requirements, constraints, background, errors) and `goal` (specific objective).
