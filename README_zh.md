@@ -32,7 +32,7 @@
 |-------|------|----------|
 | 🎼 **Director** | 指挥家 | 任务分解、动态规划、代理委派、结果评审 |
 | 🔬 **Repo-Agent** | 代码考古学家 | AST 解析、语义搜索、调用图、代码骨架 |
-| ✏️ **Coding-Agent** | 主程工程师 | 22+ 工具、自主编码、自我修正 |
+| ✏️ **Coding-Agent** | 主程工程师 | 编辑/Shell 工具 + 微代理、自主编码、自我修正 |
 | 🌐 **Browser-Agent** | 网络研究员 | 无头 Chrome、网页导航、数据提取 |
 | 🔧 **DevOps-Agent** | 运维工程师 | Shell 执行、环境诊断、进程管理 |
 | 💬 **Chat-Agent** | 技术顾问 | 通用问答、技术解释 |
@@ -52,7 +52,8 @@
    │        │        │        │        │        │
 🔬Repo   ✏️Coding  💬Chat   🔧DevOps 🌐Browser 🧬Meta
 代码智能  代码编辑  通用对话  运维执行  网页调研  自进化
-(Rust)   (22工具)          (Shell)  (无头Chrome) (Agent工厂)
+(Rust)   （编辑·终端·          (Shell)  (无头Chrome) (Agent工厂)
+          微代理）
 ```
 
 > [完整架构文档 →](docs/ARCHITECTURE.md)
@@ -130,6 +131,15 @@
 
 ---
 
+## 🧩 引擎内部亮点
+
+- **三级上下文压缩** — 工具结果截断 → 基于 Thought & Plan 块的 LLM 紧急摘要 → 依托 thinklink 日志的终极重建。长会话永不撑爆 Token 预算。
+- **只读工具并行** — 连续只读工具调用（读文件、搜索、只读委派）自动识别，并以运行组并发执行。
+- **Artifact 卸载** — 子智能体大输出仅在上下文保留摘要，全文落盘、按需分页读回。
+- **Thinklink 日志** — 记录每次用户输入与规划块的滚动日志，上下文重置后可完整恢复。
+
+> 深入了解：[ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
 ## 🚀 快速开始
 
 ### 下载预编译包（推荐）
@@ -184,9 +194,10 @@ max_tokens = 23000
 | 文档 | 说明 |
 |------|------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构、模块设计、数据流 |
-| [Agent_Design.md](docs/Agent_Design.md) | 多智能体设计理念 |
-| [Agent_Reference.md](docs/Agent_Reference.md) | API 参考与配置指南 |
-| [Browser_Agent_Design.md](docs/Browser_Agent_Design.md) | 浏览器智能体架构 |
+| [ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md) | 系统架构（英文） |
+| [config-guide.md](docs/config-guide.md) | 配置指南 |
+| [anthropic-config.md](docs/anthropic-config.md) | Anthropic 供应商配置 |
+| [llm-fallback-config.md](docs/llm-fallback-config.md) | LLM 降级与回退配置 |
 
 ---
 

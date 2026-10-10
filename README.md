@@ -31,7 +31,7 @@ Most AI coding tools share a fundamental flaw: **they treat code as text, not st
 |-------|------|-----------------|
 | 🎼 **Director** | Orchestrator | Task decomposition, dynamic planning, delegation, review |
 | 🔬 **Repo-Agent** | Code Archaeologist | AST parsing, semantic search, call graphs, code skeletons |
-| ✏️ **Coding-Agent** | Staff Engineer | 22+ tools, autonomous coding, self-correction |
+| ✏️ **Coding-Agent** | Staff Engineer | edit/bash tools + micro-agent, autonomous coding, self-correction |
 | 🌐 **Browser-Agent** | Web Researcher | Headless Chrome, page navigation, data extraction |
 | 🔧 **DevOps-Agent** | SRE | Shell execution, environment diagnostics, process management |
 | 💬 **Chat-Agent** | Technical Advisor | General Q&A, technical explanations |
@@ -51,7 +51,8 @@ User Interface (TUI / HTTP+WebSocket)
    │        │        │        │        │        │
 🔬Repo   ✏️Coding  💬Chat   🔧DevOps 🌐Browser 🧬Meta
 Code Intel  Editing  Q&A     Shell    Web     Agent
-(Rust)    (22 tools)         Ops     Research Factory
+(Rust)    (edit · bash ·      Ops     Research Factory
+          micro-agent)
 ```
 
 > [Full architecture docs →](docs/ARCHITECTURE.md)
@@ -129,6 +130,15 @@ User Query
 
 ---
 
+## 🧩 Engine Internals Highlights
+
+- **Three-Tier Context Compression** — Tool-result truncation → LLM emergency summarization of Thought & Plan blocks → ultimate rebuild from the thinklink journal. Long sessions never blow the token budget.
+- **Read-Only Tool Parallelism** — Consecutive read-only tool calls (file reads, searches, read-only delegations) are detected and executed concurrently in run groups.
+- **Artifact Offloading** — Large sub-agent outputs are summarized in-context and offloaded to disk, paged back on demand.
+- **Thinklink Journal** — A rolling journal of every user input and planning block that survives context resets.
+
+> Deep dive: [ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
 ## 🚀 Quick Start
 
 ### Download Pre-built Binary (Recommended)
@@ -183,9 +193,10 @@ max_tokens = 23000
 | Document | Description |
 |----------|-------------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, modules, data flow |
-| [Agent_Design.md](docs/Agent_Design.md) | Multi-agent design rationale |
-| [Agent_Reference.md](docs/Agent_Reference.md) | API reference & configuration |
-| [Browser_Agent_Design.md](docs/Browser_Agent_Design.md) | Browser agent architecture |
+| [ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md) | System architecture (English) |
+| [config-guide.md](docs/config-guide.md) | Configuration guide |
+| [anthropic-config.md](docs/anthropic-config.md) | Anthropic provider configuration |
+| [llm-fallback-config.md](docs/llm-fallback-config.md) | LLM fallback configuration |
 
 ---
 
