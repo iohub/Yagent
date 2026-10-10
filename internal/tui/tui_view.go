@@ -80,6 +80,11 @@ func (m *model) View() tea.View {
 		return renderHistoryView(m)
 	}
 
+	// Resume mode: render fullscreen rollout session browser
+	if m.resumeMode {
+		return renderResumeView(m)
+	}
+
 	var b strings.Builder
 
 	// Main content area: scrollable viewport

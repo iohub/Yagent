@@ -76,6 +76,17 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 			m.commandBuffer = ""
 		}
 		return enterHistoryMode(m)
+	case cmd == ":resume" || cmd == ":rs":
+		if m.taskRunning {
+			m.infoMsg = "Cannot resume sessions while a task is running"
+			return nil
+		}
+		if !m.commandMode {
+			// Switch to command mode first since resume is accessed from there
+			m.commandMode = true
+			m.commandBuffer = ""
+		}
+		return enterResumeMode(m)
 	default:
 		m.infoMsg = fmt.Sprintf("Unknown command: %s (type :help or ? for available commands)", cmd)
 	}

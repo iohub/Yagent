@@ -1,12 +1,10 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
 	"yagent/internal/datamanager"
-	"yagent/internal/http"
 	"yagent/internal/memory"
 	"yagent/internal/tui/components"
 
@@ -334,6 +332,8 @@ func loadMemoryCmd(m *model, taskID string) tea.Cmd {
 // ── Session Restore ──
 
 // restoreSession restores a conversation from loaded memory into the current TUI session.
+// The memory→TUI landing logic lives in applyRestoredMemory (tui_resume.go,
+// shared with the :resume rollout path); behavior is unchanged.
 func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 	// Guard against double-load (e.g., rapid double-press on history item)
 	if m.historyLoading {
@@ -347,112 +347,7 @@ func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 		return
 	}
 
-	// 1. Clear existing log entries
-	m.logEntries = nil
-
-	// 2. Convert each message to a logEntry
-	lastGroupID := "" // track GroupID changes for inserting sub-agent headers
-	for _, msg := range mem.Messages {
-		entry := logEntry{
-			timestamp: msg.Timestamp,
-		}
-
-		// 检测 GroupID 变化，插入分组头部
-		if msg.IsSubAgent && msg.GroupID != "" && msg.GroupID != lastGroupID {
-			headerEntry := logEntry{
-				eventType: "sub_agent_header",
-				from:      "System",
-				content:   "── Sub-Agent ──",
-			}
-			m.logEntries = append(m.logEntries, headerEntry)
-			lastGroupID = msg.GroupID
-		} else if !msg.IsSubAgent {
-			lastGroupID = ""
-		}
-
-		// Sub-agent 消息加上前缀和缩进标记
-		if msg.IsSubAgent {
-			entry.prefix = "  │ "
-			entry.from = "Sub-Agent"
-		}
-
-		switch msg.Type {
-		case memory.MessageTypeSystem:
-			entry.eventType = "system"
-			if !msg.IsSubAgent {
-				entry.from = "System"
-			}
-			entry.content = msg.Content
-
-		case memory.MessageTypeHuman:
-			entry.eventType = "user_input"
-			if !msg.IsSubAgent {
-				entry.from = "You"
-			}
-			entry.content = msg.Content
-
-		case memory.MessageTypeAssistant:
-			entry.eventType = "ai_response"
-			if !msg.IsSubAgent {
-				entry.from = "Assistant"
-			}
-			entry.content = msg.Content
-
-		case memory.MessageTypeTool:
-			entry.eventType = "tool_result"
-			if !msg.IsSubAgent {
-				entry.from = "Tool"
-			}
-			entry.content = msg.Content
-
-		default:
-			entry.eventType = string(msg.Type)
-			if !msg.IsSubAgent {
-				entry.from = "Unknown"
-			}
-			entry.content = msg.Content
-		}
-
-		m.logEntries = append(m.logEntries, entry)
-	}
-
-	// 3. Create a new http.Task with the loaded memory
-	// Extract title from first human message
-	title := taskID
-	for _, msg := range mem.Messages {
-		if msg.Type == memory.MessageTypeHuman {
-			r := []rune(msg.Content)
-			if len(r) > 40 {
-				title = string(r[:40]) + "…"
-			} else {
-				title = msg.Content
-			}
-			break
-		}
-	}
-
-	// 4. Add task to task manager
-	ctx, cancel := context.WithCancel(context.Background())
-	m.taskManager.AddTask(&http.Task{
-		ID:         taskID,
-		Status:     "finished",
-		Result:     fmt.Sprintf("Session restored: %d messages", len(mem.Messages)),
-		ProjectDir: m.projectDir,
-		Memory:     mem,
-		Context:    ctx,
-		CancelFunc: cancel,
-	})
-
-	// 5. Set as current task
-	if task, ok := m.taskManager.GetTask(taskID); ok {
-		m.currentTask = task
-	}
-
-	// 6. Rebuild viewport content
-	m.buildViewportContent()
-
-	// 7. Set info message
-	m.infoMsg = fmt.Sprintf("Loaded session: %s", title)
+	m.infoMsg = applyRestoredMemory(m, mem, taskID, m.projectDir, "Loaded")
 }
 
 // ── History Mode Entry/Exit ──
