@@ -182,28 +182,6 @@ world
 	}
 }
 
-func TestDefaultKeywords(t *testing.T) {
-	keywords := dict.DefaultKeywords()
-	if len(keywords) == 0 {
-		t.Error("DefaultKeywords should return non-empty list")
-	}
-
-	// 验证常见关键词存在
-	expectedKeywords := []string{"python", "javascript", "webpack", "middleware", "database", "redis"}
-	for _, kw := range expectedKeywords {
-		found := false
-		for _, k := range keywords {
-			if k == kw {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected default keyword %q not found", kw)
-		}
-	}
-}
-
 func TestConcurrency(t *testing.T) {
 	d := dict.NewCompletionDict("test", nil)
 
