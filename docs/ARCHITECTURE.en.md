@@ -69,7 +69,7 @@ Yagent is an **AI-driven autonomous coding system** built in Go. It employs a mu
 
 - **Multi-Agent Collaboration**: 6 specialized sub-Agents + 1 orchestrator, each with distinct responsibilities
 - **Planner-Based Orchestration**: The Director's main loop is the `Planner` state machine (`RunState`) in the `director/` subpackage — a concrete, tested implementation, no longer a design plan
-- **Rich Tooling**: 25 tool definitions in `tools.json` (634 lines) plus 5 delegation tools built inline in the Director and 11 browser tools (`browser_*` prefix) in `internal/tools/browser/`
+- **Rich Tooling**: 26 tool definitions in `tools.json` (634 lines, including `delegate_browser`) plus 5 more delegation tools built inline in the Director and 10 browser tools (`browser_*` prefix) in `internal/tools/browser/`
 - **Read-Only Tool Parallelism**: Consecutive read-only tool calls within one step are grouped into run groups and executed concurrently (`toolbatch` package), driven by per-tool read-only metadata
 - **Three-Tier Context Compression**: Tool-result truncation → emergency compression (LLM summarization of Thought & Plan blocks) → ultimate compression (context rebuild from the thinklink journal), implemented in the standalone `internal/compression/` package
 - **Thinklink Journal**: A rolling journal of user inputs and Director Thought & Plan blocks that survives context resets and powers ultimate-compression rebuilds (`internal/thinklink/`)
@@ -100,12 +100,12 @@ yagent/
 │   │   ├── ports.go            # Narrow per-consumer interfaces (ports & adapters)
 │   │   ├── knowledge_hook.go   # Knowledge extraction hook
 │   │   ├── git_checkpoint.go   # Git checkpoint mechanism
-│   │   └── tools.json          # Tool definition manifest (25 tools)
+│   │   └── tools.json          # Tool definition manifest (26 tools)
 │   ├── compression/       # Three-tier context compression (NEW in Phase 3-0)
 │   ├── artifact/          # Sub-agent output offloading store (NEW)
 │   ├── thinklink/         # Ultimate-compression journal (NEW)
 │   ├── tools/             # Tool system (adapter, registry, workspace_guard, delegate helper)
-│   │   └── browser/       # 11 browser tools (browser_* prefix)
+│   │   └── browser/       # 10 browser tools (browser_* prefix)
 │   ├── browser/           # Browser automation (BrowserManager, config, security)
 │   ├── llm/               # LLM engine abstraction (engine_openai, engine_anthropic, fallback, netretry)
 │   ├── memory/            # Memory system (ConversationMemory, LocalMemory, SharedMemory, Rollout)
@@ -742,7 +742,7 @@ Custom agents designed by the MetaAgent are registered by `DirectorAgent.registe
 
 ### 4.5 Core Tool List
 
-**25 tool definitions** live in `internal/agents/tools.json` (634 lines). Five more delegation tools are registered in code (inline in the Director), the `read_artifact` tool in `read_artifact_tool.go`, and 10 browser tools in `internal/tools/browser/`.
+**26 tool definitions** live in `internal/agents/tools.json` (634 lines), including `delegate_browser` (the only delegate defined in the manifest). Five more delegation tools are registered in code (inline in the Director), the `read_artifact` tool in `read_artifact_tool.go`, and 10 browser tools in `internal/tools/browser/`.
 
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -1723,7 +1723,7 @@ flowchart LR
 | `internal/agents/read_artifact_tool.go` | `read_artifact` tool |
 | `internal/agents/knowledge_hook.go` | Knowledge extraction hook |
 | `internal/agents/git_checkpoint.go` | Git checkpoint mechanism |
-| `internal/agents/tools.json` | 25 tool definitions |
+| `internal/agents/tools.json` | 26 tool definitions (incl. delegate_browser) |
 | `internal/compression/compressor.go` | `ContextCompressor` (tier 2/3 orchestration) |
 | `internal/compression/emergency.go` | Tier-2 emergency compression |
 | `internal/compression/truncate_results.go` | Tier-1 tool-result truncation |
