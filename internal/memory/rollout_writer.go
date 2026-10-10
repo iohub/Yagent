@@ -68,12 +68,19 @@ func generateSessionID() string {
 	return fmt.Sprintf("%s_%s", timestamp, hex.EncodeToString(b))
 }
 
+// RolloutRootDir 返回 rollout 根目录 `<home>/.yagent/data/rollout`（读写共用，
+// 读侧 ListRolloutSessions/ReadRolloutMemory 与写侧 NewRolloutWriter 共用此路径，
+// 避免路径构造漂移）。
+func RolloutRootDir() string {
+	return filepath.Join(homeDirOrFallback(), ".yagent", "data", "rollout")
+}
+
 // NewRolloutWriter 创建 Rollout 写入器
 func NewRolloutWriter(agentName, taskID, projectID string) (*RolloutWriter, error) {
 	sessionID := generateSessionID()
 
-	// 确定输出目录
-	outputDir := filepath.Join(homeDirOrFallback(), ".yagent", "data", "rollout")
+	// 确定输出目录（根目录构造统一走 RolloutRootDir，行为与抽取前一致）
+	outputDir := RolloutRootDir()
 	if projectID == "" {
 		projectID = "default"
 	}
