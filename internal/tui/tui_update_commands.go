@@ -59,6 +59,22 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		return nil
 
 	// ═══════════════════════════════════════════════════════════════
+	// /resume — Resume a session from rollout log
+	// (alias /rs; must come BEFORE the /pattern log-search fallback)
+	// ═══════════════════════════════════════════════════════════════
+	case cmd == "/resume" || cmd == "/rs" || cmd == ":resume" || cmd == ":rs":
+		if m.taskRunning {
+			m.infoMsg = "Cannot resume sessions while a task is running"
+			return nil
+		}
+		if !m.commandMode {
+			// Switch to command mode first since resume is accessed from there
+			m.commandMode = true
+			m.commandBuffer = ""
+		}
+		return enterResumeMode(m)
+
+	// ═══════════════════════════════════════════════════════════════
 	// /pattern — Search in log entries (must come AFTER more specific / commands)
 	// ═══════════════════════════════════════════════════════════════
 	case strings.HasPrefix(cmd, "/"):
@@ -76,17 +92,6 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 			m.commandBuffer = ""
 		}
 		return enterHistoryMode(m)
-	case cmd == ":resume" || cmd == ":rs":
-		if m.taskRunning {
-			m.infoMsg = "Cannot resume sessions while a task is running"
-			return nil
-		}
-		if !m.commandMode {
-			// Switch to command mode first since resume is accessed from there
-			m.commandMode = true
-			m.commandBuffer = ""
-		}
-		return enterResumeMode(m)
 	default:
 		m.infoMsg = fmt.Sprintf("Unknown command: %s (type :help or ? for available commands)", cmd)
 	}
