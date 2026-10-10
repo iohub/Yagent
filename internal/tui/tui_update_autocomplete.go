@@ -161,6 +161,14 @@ func (m *model) doSkillAutocomplete(text string, contentRunes []rune, cursor int
 		if hasPrefixIgnoreCase("history", query) {
 			matches = append([]string{"history"}, matches...)
 		}
+
+		// 添加 "resume"/"rs" 作为内置命令（恢复会话）
+		if hasPrefixIgnoreCase("resume", query) {
+			matches = append(matches, "resume")
+		}
+		if hasPrefixIgnoreCase("rs", query) {
+			matches = append(matches, "rs")
+		}
 	}
 
 	if len(matches) > 0 {

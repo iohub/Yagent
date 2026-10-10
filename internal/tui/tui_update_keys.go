@@ -864,6 +864,20 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.invalidateFooterCache()
 				return m, enterHistoryMode(m)
 			}
+			// If "resume"/"rs" is selected, open the resume dialog instead of executing a skill
+			if skillName == "resume" || skillName == "rs" {
+				m.skillAutoComplete = false
+				m.skillSuggestions = nil
+				m.skillSuggestionIdx = 0
+				if m.taskRunning {
+					m.infoMsg = "Cannot resume sessions while a task is running"
+					return m, nil
+				}
+				// Clear the input field
+				m.input.SetValue("")
+				m.invalidateFooterCache()
+				return m, enterResumeMode(m)
+			}
 			if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 				userContext := strings.TrimSpace(m.input.Value())
 				// Combine skill content with user's input as context

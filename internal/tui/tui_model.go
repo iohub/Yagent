@@ -110,30 +110,30 @@ var (
 	welcomeTipStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	welcomeDimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Bold(true)
 
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
+	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
 	// Deprecated: use m.com.Styles.InfoMsg / Footer instead.
 	// infoMsgStyle and footerStyle removed (unused).
 
 	// Message log styles
-	logTimeStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
-	logAIResStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	logTimeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
+	logAIResStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	// User message styles - warm gold accents to visually distinguish from AI messages
 	userPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true) // warm gold for "You" prefix
 	logUserMsgStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("222")).       // warm cream/beige for content
-			BorderLeft(true).                         // thin left border accent
-			BorderForeground(lipgloss.Color("214")).  // border in gold
-			PaddingLeft(1)                            // space after border
+			BorderLeft(true).                        // thin left border accent
+			BorderForeground(lipgloss.Color("214")). // border in gold
+			PaddingLeft(1)                           // space after border
 	// User message textbox styles — simple read-only textbox with "You" label
 	userMsgBoxBorderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")) // subtle grey border to match separator style
+				Foreground(lipgloss.Color("240")) // subtle grey border to match separator style
 	userMsgBoxTextStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("222")) // warm cream, same as logUserMsgStyle foreground
-	logToolStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
-	logResultStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	logStatusStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
-	logErrorLogStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
-	logSeparatorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+				Foreground(lipgloss.Color("222")) // warm cream, same as logUserMsgStyle foreground
+	logToolStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
+	logResultStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	logStatusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
+	logErrorLogStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
+	logSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 	// Collapse/expand hint styles for long messages
 	collapseHintLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -141,11 +141,11 @@ var (
 
 	// Input panel styles — visually separate the input area from the message body
 	inputPanelStyle = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("62")).  // soft indigo accent, consistent design system color
-		BorderBackground(lipgloss.Color("236")). // blends with textarea background
-		Padding(0, 1).
-		MarginTop(1)
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("62")).  // soft indigo accent, consistent design system color
+			BorderBackground(lipgloss.Color("236")). // blends with textarea background
+			Padding(0, 1).
+			MarginTop(1)
 
 	// Deprecated: use m.com.Styles.InputPanelBlurred instead.
 	// inputPanelBlurredStyle removed (unused).
@@ -153,10 +153,10 @@ var (
 	// Separator between message body and input panel — slightly brighter for clarity
 	inputSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
-	diffHunkStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	diffAddStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
-	diffDelStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
-	diffCtxStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	diffHunkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	diffAddStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+	diffDelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
+	diffCtxStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	// Deprecated: use m.com.Styles.DiffNoNewline instead.
 	// diffNoNewlineStyle removed (unused).
 
@@ -269,11 +269,11 @@ type logEntry struct {
 	content          string
 	prefix           string // indentation prefix for sub-agent messages (e.g., "  │ ")
 	toolName         string
-	toolCallID       string // tool_call_id for matching start/result events
-	isToolRunning    bool   // true when awaiting result
-	executionSummary string // short summary extracted from arguments (file path, command, etc.)
-	resultBrief      string // brief result description (e.g., "120 lines", "modified")
-	diffText         string // unified diff content for file edit results
+	toolCallID       string         // tool_call_id for matching start/result events
+	isToolRunning    bool           // true when awaiting result
+	executionSummary string         // short summary extracted from arguments (file path, command, etc.)
+	resultBrief      string         // brief result description (e.g., "120 lines", "modified")
+	diffText         string         // unified diff content for file edit results
 	renderedCache    map[int]string // width-keyed cache: key=width, value=rendered content
 
 	// Tool entry for new-style rendering (non-nil for tool events)
@@ -528,7 +528,7 @@ type model struct {
 
 	// Task execution state
 	taskRunning   bool
-	taskStarted   bool   // 标记用户是否已经提交过任务（用于控制输入面板边框高亮）
+	taskStarted   bool // 标记用户是否已经提交过任务（用于控制输入面板边框高亮）
 	taskCancelled bool // 标记任务是否由用户主动取消
 	currentTask   *http.Task
 	eventCh       chan *messaging.MessageEvent
@@ -563,10 +563,10 @@ type model struct {
 	skillSuggestionIdx int      // currently selected suggestion index
 
 	// Keyword autocomplete in edit mode (triggered by Tab key)
-	keywordAutoComplete  bool                 // whether keyword autocomplete suggestions are shown
-	keywordSuggestions   []string             // matching keyword suggestions based on current word at cursor
-	keywordSuggestionIdx int                  // currently selected suggestion index
-	keywordDict          *dict.CompletionDict // keyword dictionary for autocomplete
+	keywordAutoComplete  bool                    // whether keyword autocomplete suggestions are shown
+	keywordSuggestions   []string                // matching keyword suggestions based on current word at cursor
+	keywordSuggestionIdx int                     // currently selected suggestion index
+	keywordDict          *dict.CompletionDict    // keyword dictionary for autocomplete
 	keywordCompletionCfg keywordCompletionConfig // 关键词补全配置
 
 	// Tool call state tracking: tool_call_id → ToolEntry
@@ -617,7 +617,7 @@ type model struct {
 	// Animation state for running tools
 	anim       *Anim
 	activeAnim bool // true when there are running tool entries
-	animFrame   int           // frame counter for throttled viewport rebuilds
+	animFrame  int  // frame counter for throttled viewport rebuilds
 
 	// History mode
 	historyMode     bool
@@ -673,8 +673,8 @@ type model struct {
 	statusBarValid       bool   // statusBar 缓存是否有效
 
 	// ── Dashboard 渲染缓存（右上角面板）──
-	dashboardCache     string // 缓存的 dashboard 渲染结果
-	dashboardCacheKey  string // dashboard 缓存键
+	dashboardCache    string // 缓存的 dashboard 渲染结果
+	dashboardCacheKey string // dashboard 缓存键
 
 	// ── 性能优化标志 ──
 	tickStarted   bool // tick 循环是否已启动
@@ -703,10 +703,10 @@ type model struct {
 	prevViewportHeight  int
 
 	// ── 增量内容构建相关 ──
-	contentParts      []string            // 每个logEntry的已渲染内容，与logEntries一一对应
-	dirtyEntryIndices map[int]struct{}    // 需要重新渲染的条目索引（细粒度脏标记）
-	needFullRebuild   bool                // 需要完全重建（resize、对话重置）
-	prevViewportWidth int                 // 上次渲染时的viewport宽度，用于检测resize
+	contentParts      []string         // 每个logEntry的已渲染内容，与logEntries一一对应
+	dirtyEntryIndices map[int]struct{} // 需要重新渲染的条目索引（细粒度脏标记）
+	needFullRebuild   bool             // 需要完全重建（resize、对话重置）
+	prevViewportWidth int              // 上次渲染时的viewport宽度，用于检测resize
 
 	// ── 前缀和数组（用于 visibleEntryIndices 二分查找）──
 	// contentPartLinePrefix[i] = 第 i 个 part 的起始行号（从 0 开始）。
@@ -715,18 +715,18 @@ type model struct {
 	contentPartLinePrefix []int
 
 	// ── Timeline 全屏模式状态 ──
-	timelineFullscreenMode   bool              // 是否处于全屏时间线模式
-	timelineFullscreenCursor int               // 全屏模式下当前选中的条目索引
-	timelineDetailVP         *viewport.Model   // 全屏模式下右侧详情 viewport
-	timelineFullscreenFocus  string            // 全屏模式焦点: "list" 或 "detail" (默认 "list")
-	timelineDetailOffsets    []int             // 每个条目在拼接详情中的行偏移量
+	timelineFullscreenMode   bool            // 是否处于全屏时间线模式
+	timelineFullscreenCursor int             // 全屏模式下当前选中的条目索引
+	timelineDetailVP         *viewport.Model // 全屏模式下右侧详情 viewport
+	timelineFullscreenFocus  string          // 全屏模式焦点: "list" 或 "detail" (默认 "list")
+	timelineDetailOffsets    []int           // 每个条目在拼接详情中的行偏移量
 
 	// ── Thinklink 全屏模式状态 ──
-	thinklinkMode    bool             // 是否处于 thinklink 全屏模式
-	thinklinkEntries []ThinklinkEntry // thinklink 条目列表（用户原始输入 / Thought & Plan 块）
-	thinklinkCursor  int              // 全屏模式下当前选中的条目索引
-	thinklinkVP      *viewport.Model  // 全屏模式下右侧详情 viewport
-	thinklinkDetailActive bool        // 详情滚动模式（enter 切换：列表导航 ↔ 详情滚动）
+	thinklinkMode         bool             // 是否处于 thinklink 全屏模式
+	thinklinkEntries      []ThinklinkEntry // thinklink 条目列表（用户原始输入 / Thought & Plan 块）
+	thinklinkCursor       int              // 全屏模式下当前选中的条目索引
+	thinklinkVP           *viewport.Model  // 全屏模式下右侧详情 viewport
+	thinklinkDetailActive bool             // 详情滚动模式（enter 切换：列表导航 ↔ 详情滚动）
 
 	// ── 可配置快捷键映射表 ──
 	// editKeyMap 将用户配置的编辑模式快捷键映射为内部标准键名
@@ -1051,41 +1051,41 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 	m := &model{
 		com: com,
 
-		assistant:          ca,
-		taskManager:        tm,
-		dataManager:        dm,
-		input:              ti,
-		projectDir:         projectDir,
-		infoMsg:            langManager.GetText("InfoMessage"),
-		currentLang:        langManager.currentLang,
-		eventCh:            make(chan *messaging.MessageEvent, 1000),
-		logEntries:         make([]logEntry, 0),
-			llmCallActiveEntries: make(map[string]int),
-			viewport:           vp,
+		assistant:                ca,
+		taskManager:              tm,
+		dataManager:              dm,
+		input:                    ti,
+		projectDir:               projectDir,
+		infoMsg:                  langManager.GetText("InfoMessage"),
+		currentLang:              langManager.currentLang,
+		eventCh:                  make(chan *messaging.MessageEvent, 1000),
+		logEntries:               make([]logEntry, 0),
+		llmCallActiveEntries:     make(map[string]int),
+		viewport:                 vp,
 		aiStreamActiveEntries:    make(map[string]int),
 		aiStreamCompletedEntries: make(map[string]int),
-		aiChunkBuffers:          make(map[string]*aiChunkBuffer),
-		contentCache:       &strings.Builder{},
-		glamourRenderer:    glamourRenderer,
-		useDarkStyle:       useDarkStyle,
-		toolCallEntries:    make(map[string]*ToolEntry),
-		anim: NewAnim(10),
-		tokenUsagePerAgent: make(map[string]*AgentTokenUsage),
-		tokenDashboardCollapsed: false, // 默认展开，显示所有agent的token统计
+		aiChunkBuffers:           make(map[string]*aiChunkBuffer),
+		contentCache:             &strings.Builder{},
+		glamourRenderer:          glamourRenderer,
+		useDarkStyle:             useDarkStyle,
+		toolCallEntries:          make(map[string]*ToolEntry),
+		anim:                     NewAnim(10),
+		tokenUsagePerAgent:       make(map[string]*AgentTokenUsage),
+		tokenDashboardCollapsed:  false, // 默认展开，显示所有agent的token统计
 
 		// 新组件
-		dialogStack:  ds,
-		animManager:  am,
-		layoutEngine: le,
-		mouseHandler: md,
-		keywordDict:  keywordDict,
+		dialogStack:          ds,
+		animManager:          am,
+		layoutEngine:         le,
+		mouseHandler:         md,
+		keywordDict:          keywordDict,
 		keywordCompletionCfg: keywordCompletionConfig{enabled: completionEnabled},
 
 		// will be populated on first task via model_info event
-		currentProvider:    initProvider,
-		currentModel:       initModel,
+		currentProvider: initProvider,
+		currentModel:    initModel,
 		// 初始 provider 的模型上下文窗口上限（0=未配置，不显示进度条）
-		contextWindow:      contextWindowFromCfg(cfg, initProvider),
+		contextWindow: contextWindowFromCfg(cfg, initProvider),
 
 		// 预创建的渲染样式（避免循环内重复创建）
 		skillSuggestionStyle: lipgloss.NewStyle().
@@ -1114,8 +1114,8 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 		viewportDirty: false,
 
 		// Timeline initialization
-		timelineEntries:  make([]*TimelineEntry, 0),
-		timelineExpanded: false,
+		timelineEntries:         make([]*TimelineEntry, 0),
+		timelineExpanded:        false,
 		timelineFullscreenFocus: "list",
 		timelineDetailOffsets:   []int{},
 
@@ -1125,14 +1125,14 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 		glamourCacheCap: 32,
 
 		// ── 增量内容构建相关 (Step 2) ──
-		contentParts:        make([]string, 0),
-		dirtyEntryIndices:   make(map[int]struct{}),
-		needFullRebuild:     true, // 首次构建需要完全重建
-		prevViewportWidth:   0,
+		contentParts:      make([]string, 0),
+		dirtyEntryIndices: make(map[int]struct{}),
+		needFullRebuild:   true, // 首次构建需要完全重建
+		prevViewportWidth: 0,
 
 		// 使用传入的终端尺寸初始化
-		termWidth:   termWidth,
-		termHeight:  termHeight,
+		termWidth:  termWidth,
+		termHeight: termHeight,
 
 		// ── 快捷键映射表 ──
 		editKeyMap: editKeyMap,
