@@ -215,6 +215,12 @@ func (w *ConsolidationWorker) writeConsolidationFile(content string) {
 
 // triggerPruneMerge 触发知识库条目合并去重。
 func (w *ConsolidationWorker) triggerPruneMerge() {
+	// TODO: 临时 hardcode 禁用知识整理（知识合并/去重）功能；恢复时删除下方整个 if 块
+	// （写法说明：用恒真 if 分支提前返回，避免直接裸 return 导致 go vet 报 unreachable code）
+	if disabled := true; disabled {
+		return
+	}
+
 	kl := logging.KnowledgeLogger()
 	kl.Info("consolidation worker trigger prune merge", "event", "worker_prune_trigger", "interval", 10)
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeExtractTimeout)
