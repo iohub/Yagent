@@ -64,6 +64,12 @@ func (k *KnowledgeInjector) BuildQuery(injCtx InjectionContext) string {
 
 // Inject 执行知识检索和格式化注入块；失败或无关时返回空字符串（fail-safe，不阻塞主流程）
 func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext) (string, error) {
+	// TODO: 临时 hardcode 禁用知识加载/注入功能；恢复时删除下方整个 if 块
+	// （写法说明：用恒真 if 分支提前返回，避免直接裸 return 导致 go vet 报 unreachable code）
+	if disabled := true; disabled {
+		return "", nil
+	}
+
 	kl := logging.KnowledgeLogger()
 	agent := injCtx.AgentName
 	if agent == "" {
