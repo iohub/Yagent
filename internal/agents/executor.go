@@ -66,7 +66,8 @@ type ExecutorConfig struct {
 
 	// 上下文压缩（tool 结果截断）配置，默认零值=关闭，仅调用方显式开启时生效
 	EnableContextCompression bool
-	// ContextCompressionThreshold 触发上下文压缩的 token 阈值，<=0 时使用默认值 compression.DefaultContextCompressionThreshold
+	// ContextCompressionThreshold 触发上下文压缩的 token 阈值回退值：
+	// 模型被内嵌目录收录时按窗口 1/3 推导并忽略此值，未收录且 <=0 时用 compression.DefaultContextCompressionThreshold
 	ContextCompressionThreshold int
 	// ToolResultKeepTokens 截断后每条 tool 结果保留的 token 数，<=0 时使用默认值 compression.DefaultToolResultKeepTokens
 	ToolResultKeepTokens int
@@ -419,11 +420,13 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 			messages = llm.NormalizeMessages(messages)
 
 			// 上下文压缩: token 超阈值时按优先级截断 tool 执行结果
+			// 阈值按当前模型上下文窗口的 1/3 推导（见 compression.ResolveThreshold）
 			if cfg.EnableContextCompression {
-				threshold := cfg.ContextCompressionThreshold
-				if threshold <= 0 {
-					threshold = compression.DefaultContextCompressionThreshold
+				var modelName string
+				if cfg.LLM != nil {
+					modelName = cfg.LLM.Model()
 				}
+				threshold := compression.ResolveThreshold(modelName, cfg.ContextCompressionThreshold)
 				keepTokens := cfg.ToolResultKeepTokens
 				if keepTokens <= 0 {
 					keepTokens = compression.DefaultToolResultKeepTokens

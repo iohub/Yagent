@@ -18,6 +18,7 @@ import (
 	"yagent/internal/logging"
 	messaging "yagent/internal/messaging"
 	tuiMsg "yagent/internal/messaging/consumers"
+	"yagent/internal/models"
 	"yagent/internal/skills"
 	"yagent/internal/tui"
 	"yagent/internal/util"
@@ -101,6 +102,12 @@ func init() {
 
 func main() {
 	defer util.RecoverPanic()
+
+	// 加载内嵌模型元数据目录：上下文压缩阈值与 TUI 上下文进度条据此推导窗口上限。
+	// 失败时（理论上不会发生，文件已内嵌）查询返回 0，各处回退到既有默认值。
+	if err := models.Load(distDataFS); err != nil {
+		slog.Warn("Failed to load embedded model catalog", "error", err)
+	}
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

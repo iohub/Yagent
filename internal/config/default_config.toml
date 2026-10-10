@@ -102,6 +102,7 @@ injection_rerank = true
 # enable = false
 # max_delegation_depth = 3
 # enable_context_compression = false
+# 压缩阈值回退值：模型收录于内嵌 models.json 时按「上下文窗口 / 3」自动推导，此项被忽略
 # context_compression_threshold = 120000
 # tool_result_keep_tokens = 200
 

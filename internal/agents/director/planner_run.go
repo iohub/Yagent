@@ -253,11 +253,13 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			}
 
 			// 上下文压缩:token 超阈值时按优先级截断 tool 执行结果
+			// 阈值按当前模型上下文窗口的 1/3 推导（见 compression.ResolveThreshold）
 			if p.cfg.CompressEnable {
-				threshold := p.cfg.CompressThreshold
-				if threshold <= 0 {
-					threshold = compression.DefaultContextCompressionThreshold
+				var modelName string
+				if p.cfg.LLM != nil {
+					modelName = p.cfg.LLM.Model()
 				}
+				threshold := compression.ResolveThreshold(modelName, p.cfg.CompressThreshold)
 				keepTokens := p.cfg.CompressKeepTokens
 				if keepTokens <= 0 {
 					keepTokens = compression.DefaultToolResultKeepTokens

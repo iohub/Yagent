@@ -15,7 +15,8 @@ type ProviderConfig struct {
 	Temperature float64 `toml:"temperature"`
 	MaxTokens   int     `toml:"max_tokens"`
 	// ContextWindow 模型上下文窗口上限（如 200000），供 TUI 展示上下文用量进度条。
-	// 与 MaxTokens（单次输出上限）含义不同；0 或未配置则 TUI 不显示进度条。
+	// 与 MaxTokens（单次输出上限）含义不同；0 或未配置时回退到内嵌模型目录
+	// （dist/data/models.json）按 Model 查询，仍查不到则 TUI 不显示进度条。
 	ContextWindow int    `toml:"context_window"`
 	APIBaseURL    string `toml:"api_base_url"`
 	APIKey        string `toml:"api_key"`
@@ -563,9 +564,6 @@ func (c *Config) validate() error {
 	if c.EnhancedCommander.MaxDelegationDepth == 0 {
 		c.EnhancedCommander.MaxDelegationDepth = 3
 	}
-	if c.EnhancedCommander.ContextCompressionThreshold == 0 {
-		c.EnhancedCommander.ContextCompressionThreshold = 120000
-	}
 	if c.EnhancedCommander.ToolResultKeepTokens == 0 {
 		c.EnhancedCommander.ToolResultKeepTokens = 200
 	}
@@ -763,7 +761,9 @@ type EnhancedCommanderConfig struct {
 	// EnableContextCompression 是否启用上下文压缩（超阈值时截断 tool 执行结果）
 	EnableContextCompression bool `toml:"enable_context_compression" json:"enable_context_compression"`
 
-	// ContextCompressionThreshold 触发上下文压缩的 token 阈值，默认 120000
+	// ContextCompressionThreshold 触发上下文压缩的 token 阈值回退值。
+	// 模型被内嵌目录（dist/data/models.json）收录时，阈值按「上下文窗口 / 3」推导并忽略此项；
+	// 仅在模型未收录时生效，0 = 使用 compression.DefaultContextCompressionThreshold。
 	ContextCompressionThreshold int `toml:"context_compression_threshold" json:"context_compression_threshold"`
 
 	// ToolResultKeepTokens 截断后每条 tool 结果保留的 token 数，默认 200
