@@ -157,9 +157,10 @@ type PlannerConfig struct {
 	// fn 为 nil 时传 nil ToolCallData）。
 	ConvertToolCallsFn func([]llm.ToolCall) []memory.ToolCallData
 	// 上下文压缩开关与预算（原 a.EnhancedCommanderCfg 为 config 包配置，门面提取
-	// 注入；threshold/keepTokens ≤0 时 Planner 内回退默认值，行为与 run() 一致）。
+	// 注入；threshold 由当前模型上下文窗口推导，仅模型未收录时回退 CompressThreshold，
+	// keepTokens ≤0 时 Planner 内回退默认值，行为与 run() 一致）。
 	CompressEnable            bool // 原 Enable && EnableContextCompression
-	CompressThreshold         int  // 原 ContextCompressionThreshold
+	CompressThreshold         int  // 原 ContextCompressionThreshold，模型未收录于内嵌目录时的阈值回退值
 	CompressKeepTokens        int  // 原 ToolResultKeepTokens
 	UltimateCompressEnable    bool // 原 EnableUltimateCompression
 	UltimateCompressKeepPlans int  // 原 UltimateCompressionKeepPlans

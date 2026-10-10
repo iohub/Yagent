@@ -20,6 +20,7 @@ import (
 	"yagent/internal/http"
 	"yagent/internal/memory"
 	"yagent/internal/messaging"
+	"yagent/internal/models"
 	"yagent/internal/tui/anim"
 	"yagent/internal/tui/common"
 	"yagent/internal/tui/components"
@@ -784,16 +785,21 @@ func (m *model) hasDirtyEntries() bool {
 	return m.needFullRebuild || len(m.dirtyEntryIndices) > 0
 }
 
-// contextWindowFromCfg 从配置中读取指定 provider 的模型上下文窗口上限；
-// 未配置（0）或 provider 不存在时返回 0，调用方据此不显示进度条。
+// contextWindowFromCfg 返回指定 provider 的模型上下文窗口上限：
+// 优先使用配置的 context_window，未配置时回退到内嵌模型目录（models.json）；
+// provider 不存在或两处都查不到时返回 0，调用方据此不显示进度条。
 func contextWindowFromCfg(cfg *config.Config, providerName string) int {
 	if cfg == nil || providerName == "" {
 		return 0
 	}
-	if pc, ok := cfg.Global.LLM.Providers[providerName]; ok {
+	pc, ok := cfg.Global.LLM.Providers[providerName]
+	if !ok {
+		return 0
+	}
+	if pc.ContextWindow > 0 {
 		return pc.ContextWindow
 	}
-	return 0
+	return models.ContextWindow(pc.Model)
 }
 
 // refreshContextWindow 根据当前 provider 刷新 m.contextWindow。

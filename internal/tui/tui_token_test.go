@@ -3,10 +3,13 @@ package tui
 import (
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"yagent/internal/config"
 	"yagent/internal/messaging"
+	"yagent/internal/models"
 )
 
 // TestTokenCounting_OnlyAiResponseCounts 验证只有 ai_response 事件统计token，ai_stream_end 不统计
@@ -865,5 +868,51 @@ func TestRenderContextLine_Empty(t *testing.T) {
 	}
 	if out := renderContextLine(-1, 200000, 80); out != "" {
 		t.Errorf("tokens<0 应返回空串，实际 %q", out)
+	}
+}
+
+// TestContextWindowFromCfg_CatalogFallback provider 未配置 context_window 时回退到
+// 内嵌模型目录（models.json）；两处都查不到才返回 0（调用方不渲染进度条）。
+func TestContextWindowFromCfg_CatalogFallback(t *testing.T) {
+	loadCatalog := func(t *testing.T, content string) {
+		t.Helper()
+		fsys := fstest.MapFS{models.CatalogPath: &fstest.MapFile{Data: []byte(content)}}
+		if err := models.Load(fsys); err != nil {
+			t.Fatalf("models.Load() error = %v", err)
+		}
+	}
+	loadCatalog(t, `{"deepseek/deepseek-v3.2": {"limit": {"context": 128000}}}`)
+	// 还原为空目录，避免残留状态影响同包其它测试
+	t.Cleanup(func() { loadCatalog(t, "{}") })
+
+	cfg := &config.Config{Global: config.TopLevelConfig{LLM: &config.GlobalLLMConfig{
+		Providers: map[string]config.ProviderConfig{
+			"catalog_only":  {Model: "deepseek-ai/DeepSeek-V3.2"},
+			"explicit":      {Model: "deepseek-ai/DeepSeek-V3.2", ContextWindow: 500000},
+			"unknown_model": {Model: "acme/private-model"},
+		},
+	}}}
+
+	tests := []struct {
+		name     string
+		provider string
+		want     int
+	}{
+		{"未配置 context_window 时取目录值", "catalog_only", 128000},
+		{"显式 context_window 优先于目录", "explicit", 500000},
+		{"目录未收录的模型返回 0", "unknown_model", 0},
+		{"provider 不存在返回 0", "missing_provider", 0},
+		{"provider 名为空返回 0", "", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := contextWindowFromCfg(cfg, tt.provider); got != tt.want {
+				t.Errorf("contextWindowFromCfg(cfg, %q) = %d, want %d", tt.provider, got, tt.want)
+			}
+		})
+	}
+
+	if got := contextWindowFromCfg(nil, "catalog_only"); got != 0 {
+		t.Errorf("contextWindowFromCfg(nil, ...) = %d, want 0", got)
 	}
 }

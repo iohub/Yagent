@@ -165,7 +165,7 @@ auto_merge_on_exit = false           # 退出时自动 squash-merge（false 则�
 enable = false                       # 总开关
 max_delegation_depth = 3             # 最大委派深度
 enable_context_compression = false   # 启用上下文压缩（超阈值截断 tool 结果；适用于 Director / Repo / Coding / DevOps）
-# context_compression_threshold = 120000  # 触发阈值（token）
+# context_compression_threshold = 120000  # 触发阈值（token）回退值：模型收录于内嵌 models.json 时按「上下文窗口 / 3」自动推导，此项被忽略
 # tool_result_keep_tokens = 200        # 截断后保留 token 数
 
 # ── TUI Keybindings Configuration ──
