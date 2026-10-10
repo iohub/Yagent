@@ -151,47 +151,45 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		if cmd != nil {
 			return m, cmd, true
 		}
-		switch key {
-		case "enter", " ":
-			if d.Selected != "" {
-				target := d.Selected
-				// Set pendingModelTarget: "global" → "" (empty means global), agent name → agent
-				if target == "global" {
-					m.pendingModelTarget = ""
-				} else {
-					m.pendingModelTarget = target
-				}
-				// Pop the agent select dialog
-				m.dialogStack.Pop()
-				// Get current provider for the selected target
-				var currentProv string
-				switch {
-				case target == "global":
-					currentProv = m.currentProvider
-				case isModelTargetTool(target):
-					currentProv, _ = m.assistant.GetToolProviderInfo(target)
-				default:
-					currentProv, _ = m.assistant.GetAgentProvider(target)
-				}
-				// Build provider options (model name + context window) and push ModelSelectDialog
-				clientCfg := m.assistant.GetClient().Config
-				providers := clientCfg.GetProviderNames()
-				options := make([]components.ModelOption, 0, len(providers))
-				for _, p := range providers {
-					opt := components.ModelOption{Provider: p, Context: contextWindowFromCfg(clientCfg, p)}
-					if provCfg, err := clientCfg.GetProvider(p); err == nil {
-						opt.Model = provCfg.Model
-					}
-					options = append(options, opt)
-				}
-				providerDialog := components.NewModelSelectDialog(options, currentProv)
-				providerDialog.SetBounds(m.termWidth, m.termHeight)
-				m.dialogStack.Push(providerDialog)
+		// 数字键直选同样会置位 Selected，故确认分支不再限定 enter/space
+		if d.Selected != "" {
+			target := d.Selected
+			// Set pendingModelTarget: "global" → "" (empty means global), agent name → agent
+			if target == "global" {
+				m.pendingModelTarget = ""
 			} else {
-				m.dialogStack.Pop()
+				m.pendingModelTarget = target
 			}
+			// Pop the agent select dialog
+			m.dialogStack.Pop()
+			// Get current provider for the selected target
+			var currentProv string
+			switch {
+			case target == "global":
+				currentProv = m.currentProvider
+			case isModelTargetTool(target):
+				currentProv, _ = m.assistant.GetToolProviderInfo(target)
+			default:
+				currentProv, _ = m.assistant.GetAgentProvider(target)
+			}
+			// Build provider options (model name + context window) and push ModelSelectDialog
+			clientCfg := m.assistant.GetClient().Config
+			providers := clientCfg.GetProviderNames()
+			options := make([]components.ModelOption, 0, len(providers))
+			for _, p := range providers {
+				opt := components.ModelOption{Provider: p, Context: contextWindowFromCfg(clientCfg, p)}
+				if provCfg, err := clientCfg.GetProvider(p); err == nil {
+					opt.Model = provCfg.Model
+				}
+				options = append(options, opt)
+			}
+			providerDialog := components.NewModelSelectDialog(options, currentProv)
+			providerDialog.SetBounds(m.termWidth, m.termHeight)
+			m.dialogStack.Push(providerDialog)
 			return m, nil, true
-		case "esc", "q", "Q":
+		}
+		switch key {
+		case "enter", " ", "esc", "q", "Q":
 			d.Selected = ""
 			m.dialogStack.Pop()
 			return m, nil, true

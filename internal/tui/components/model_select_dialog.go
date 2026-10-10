@@ -28,22 +28,11 @@ type ModelSelectDialog struct {
 }
 
 const (
-	// modelDialogMaxWidth 对话框最大宽度，窄终端时由 View 收缩。
-	modelDialogMaxWidth = 88
-	// modelDialogMaxRows 列表最多显示的行数，避免长列表占满整屏。
-	modelDialogMaxRows = 15
-	// modelDialogQuickKeys 数字键直选覆盖的条目数（1-9）。
-	modelDialogQuickKeys = 9
-	// modelDialogChrome 除列表外占用的行数：边框 2 + 内边距 2 + 标题上边距 1
-	// + 标题 1 + 空行 2 + 表头 1 + 提示 1。
-	modelDialogChrome = 10
 	// modelDialogBadgeMinWidth 渲染 ACTIVE 徽标列所需的最小内容宽度，
 	// 低于此值时舍弃徽标列，避免 provider/model 名被截断到无法区分。
 	modelDialogBadgeMinWidth = 60
 	// activeBadgeText 当前生效 provider 的标记文本。
 	activeBadgeText = "✓ ACTIVE"
-	// contextHeader 上下文列的表头，同时作为该列的最小宽度。
-	contextHeader = "CONTEXT"
 )
 
 // NewModelSelectDialog 创建选择器，游标初始落在当前生效的 provider 上
@@ -139,7 +128,7 @@ func (d *ModelSelectDialog) selectByDigit(key string) {
 		return
 	}
 	idx := int(key[0] - '1')
-	if idx >= len(d.options) || idx >= modelDialogQuickKeys {
+	if idx >= len(d.options) || idx >= dialogQuickKeys {
 		return
 	}
 	d.cursor = idx
@@ -159,14 +148,7 @@ func (d *ModelSelectDialog) View() string {
 	cursorStyle := common.CursorIndicatorStyle(c)
 	badgeStyle := common.BadgeStyle(c, c.Success)
 
-	dialogWidth := modelDialogMaxWidth
-	if d.width-4 < dialogWidth {
-		dialogWidth = d.width - 4
-	}
-	innerWidth := dialogWidth - 6
-	if innerWidth < 30 {
-		innerWidth = 30
-	}
+	dialogWidth, innerWidth := dialogWidths(d.width)
 
 	rows, showMore := d.listRows()
 	start, end := d.scrollWindow(rows)
@@ -216,16 +198,7 @@ func (d *ModelSelectDialog) View() string {
 
 	// ── 提示 ──
 	// 逐级缩短，确保单行放得下：提示换行会撑破对话框高度预算。
-	hint := "↑/↓ navigate · Enter select · Esc cancel"
-	if len(d.options) > 1 {
-		hint = "↑/↓ navigate · 1-9 jump · Enter select · Esc cancel"
-	}
-	if lipgloss.Width(hint) > innerWidth {
-		hint = "↑/↓ move · Enter select · Esc cancel"
-	}
-	if lipgloss.Width(hint) > innerWidth {
-		hint = "↑/↓ · Enter · Esc"
-	}
+	hint := dialogHint(innerWidth, len(d.options) > 1)
 
 	dialogContent := lipgloss.JoinVertical(lipgloss.Left,
 		titleStyle.Render("Select Model Provider"),
@@ -287,122 +260,14 @@ func (d *ModelSelectDialog) renderRow(
 	return row
 }
 
-// moreLine 渲染 "↑ N more" / "↓ N more" 滚动指示行。
-func moreLine(n int, up bool, innerWidth int, c common.ColorTokens) string {
-	arrow := "↓"
-	if up {
-		arrow = "↑"
-	}
-	text := arrow + " " + strconv.Itoa(n) + " more"
-	style := lipgloss.NewStyle().Foreground(c.TextMuted).Italic(true)
-	pad := (innerWidth - lipgloss.Width(text)) / 2
-	if pad < 0 {
-		pad = 0
-	}
-	return strings.Repeat(" ", pad) + style.Render(text)
-}
-
-// listRows 返回列表可占用的行数，以及是否渲染上下滚动指示行：
-// 终端高度扣除固定行后受 modelDialogMaxRows 限制；列表需要滚动且扣掉指示行后
-// 仍有余量时预留 2 行，否则放弃指示行——保证对话框永远不会高出终端。
+// listRows 返回列表可占用的行数，以及是否渲染上下滚动指示行。
 func (d *ModelSelectDialog) listRows() (int, bool) {
-	rows := d.height - modelDialogChrome
-	if rows > modelDialogMaxRows {
-		rows = modelDialogMaxRows
-	}
-	if rows < 1 {
-		rows = 1
-	}
-	if len(d.options) <= rows {
-		return rows, false
-	}
-	if rows-2 >= 1 {
-		return rows - 2, true
-	}
-	return rows, false
+	return listBudget(d.height, len(d.options))
 }
 
 // scrollWindow 返回可见条目的 [start, end) 区间，游标尽量居中。
 func (d *ModelSelectDialog) scrollWindow(rows int) (int, int) {
-	n := len(d.options)
-	if n <= rows {
-		return 0, n
-	}
-	start := d.cursor - rows/2
-	if start < 0 {
-		start = 0
-	}
-	if start+rows > n {
-		start = n - rows
-	}
-	return start, start + rows
-}
-
-// allocateColumns 在总宽 avail 内分配 provider / model 两列：
-// 自然宽度放得下就原样使用，放不下时按 2:3 分配（model 名通常更长），每列至少 6 格。
-func allocateColumns(avail, provNatural, modelNatural int) (int, int) {
-	if avail < 12 {
-		return max(avail/2, 1), max(avail-avail/2, 1)
-	}
-	if provNatural+modelNatural <= avail {
-		return provNatural, modelNatural
-	}
-	prov := avail * 2 / 5
-	model := avail - prov
-	if prov < 6 {
-		prov = 6
-		model = avail - prov
-	}
-	if model < 6 {
-		model = 6
-		prov = avail - model
-	}
-	return prov, model
-}
-
-// contextLabel 返回上下文窗口的紧凑文本（与 TUI 上下文进度条同一格式），未知时为 "-"。
-func contextLabel(n int) string {
-	if n <= 0 {
-		return "-"
-	}
-	return common.FormatTokenShort(int64(n))
-}
-
-// padLeft 左侧补空格至显示宽度 w（超出则原样返回）。
-func padLeft(s string, w int) string {
-	if pad := w - lipgloss.Width(s); pad > 0 {
-		return strings.Repeat(" ", pad) + s
-	}
-	return s
-}
-
-// ellipsize 按显示宽度截断 s 并右侧补空格，使结果宽度恰为 w。
-// 超长时中间省略（保留首尾），因为同前缀的 provider/model 名靠尾部区分：
-// 窄终端下 "siliconflow_ds4_flash" 与 "siliconflow_dsv32" 若只保留头部会完全一样。
-func ellipsize(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if width := lipgloss.Width(s); width <= w {
-		return s + strings.Repeat(" ", w-width)
-	}
-	runes := []rune(s)
-	if w > 1 && len(runes) >= w {
-		tail := (w - 1) / 2
-		head := w - 1 - tail
-		if middle := string(runes[:head]) + "…" + string(runes[len(runes)-tail:]); lipgloss.Width(middle) == w {
-			return middle
-		}
-	}
-	// 宽字符等导致中间省略对不齐时，退化为尾部省略
-	for len(runes) > 0 {
-		runes = runes[:len(runes)-1]
-		candidate := string(runes) + "…"
-		if width := lipgloss.Width(candidate); width <= w {
-			return candidate + strings.Repeat(" ", w-width)
-		}
-	}
-	return strings.Repeat(" ", w)
+	return windowRange(len(d.options), d.cursor, rows)
 }
 
 // IsFocused reports whether this dialog has keyboard focus.
