@@ -28,8 +28,7 @@
 - [7. 事件/消息系统](#7-事件消息系统)
   - [7.1 发布-订阅架构](#71-发布-订阅架构)
   - [7.2 事件类型](#72-事件类型)
-  - [7.3 WAL 持久化与死信队列](#73-wal-持久化与死信队列)
-  - [7.4 子包结构](#74-子包结构)
+  - [7.3 子包结构](#73-子包结构)
 - [8. 上下文压缩引擎](#8-上下文压缩引擎)
   - [8.1 设计目标与三级架构](#81-设计目标与三级架构)
   - [8.2 第一级：工具结果截断（context_compressor.go）](#82-第一级工具结果截断context_compressorgo)
@@ -820,20 +819,15 @@ func (p *Publisher) Publish(eventType string, content interface{}, from string) 
 
 // MessageDispatcher - 调度器
 type MessageDispatcher struct {
-    mainCh        chan *Event
-    consumers     map[EventType][]Consumer
-    wal           WAL
-    backlog       *Backlog
-    dlq           *DeadLetterQueue
+    entries        []*dispatcherEntry // 每消费者独立分发单元（过滤集合 + 独立事件队列 + 关键旁路）
+    perConsumerBuf int                // 每消费者独立事件队列容量
 }
 ```
 
 **数据流**：
 1. Agent 通过 Publisher 发布事件
-2. Dispatcher 接收事件，写入 WAL（如启用）
-3. Dispatcher 按 EventType 分发给所有注册 Consumer
-4. 如果主 channel 满，事件进入 Backlog
-5. 如果 Consumer 处理失败，事件进入死信队列
+2. Dispatcher 接收事件，按 EventType 分发给所有注册 Consumer（每消费者独立队列）
+3. 普通事件队列满载即丢并累计计数；关键事件（用户交互回路）走独立旁路永不丢弃
 
 ### 7.2 事件类型
 
@@ -858,24 +852,7 @@ type MessageDispatcher struct {
 | `conversation_result` | 对话完成 | 任务完成 |
 | `thinking` | 思考内容 | 思考展示 |
 
-### 7.3 WAL 持久化与死信队列
-
-**WAL（Write-Ahead Log）**：
-- 异步写入磁盘，确保事件不丢失
-- 支持重启后回放未确认事件
-- 通过 `DispatcherOptions.WALPath` 配置
-
-**Backlog（积压队列）**：
-- 主 channel 满时，事件溢出到 Backlog
-- 后台协程定期排空 Backlog
-- 可配置最大容量（默认 10000）
-
-**DeadLetterQueue（死信队列）**：
-- Consumer 处理失败的事件进入 DLQ
-- 可配置重试次数（默认 3 次）
-- 支持指数退避重试
-
-### 7.4 子包结构
+### 7.3 子包结构
 
 消息系统包含以下子包：
 
@@ -1456,8 +1433,6 @@ flowchart LR
 | Delegate | Delegate | 委派，将一个任务交给另一个 Agent |
 | LLM | Large Language Model | 大语言模型 |
 | Tool Call | Tool Call | LLM 请求调用工具的请求 |
-| WAL | Write-Ahead Log | 预写日志，用于持久化 |
-| DLQ | Dead Letter Queue | 死信队列，存放处理失败的消息 |
 | TUI | Text User Interface | 终端用户界面 |
 | Codeseek | Codeseek | Rust 编写的代码分析引擎 |
 | Context Compression | Context Compression | 上下文压缩，减少 token 占用 |
@@ -1505,7 +1480,6 @@ flowchart LR
 | `internal/messaging/consumers/tui.go` | TUI 消费者 |
 | `internal/messaging/consumers/websock.go` | WebSocket 消费者 |
 | `internal/messaging/peer/peer.go` | 点对点消息通信 |
-| `internal/messaging/wal.go` | WAL 持久化 |
 | `internal/knowledge/injector.go` | 知识注入器 |
 | `internal/mcp/client.go` | MCP 客户端 |
 | `internal/recovery/circuit_breaker.go` | 熔断器 |

@@ -63,7 +63,6 @@ const (
 //   - RetryCount/MaxRetries: 重试机制，支持消息投递失败后的自动重试
 //   - Deadline: 消息有效期，过期后自动丢弃（用于超时控制）
 //   - TraceID: 分布式链路追踪 ID，用于跨服务追踪
-//   - SeqNum: 由 WAL（Write-Ahead Log）分配的单调递增序列号，保证持久化顺序
 type Event struct {
 	// 基础字段
 	ID        string      `json:"id"`        // 全局唯一 ID（UUID/雪花算法格式）
@@ -79,9 +78,8 @@ type Event struct {
 	MaxRetries int        `json:"max_retries"`        // 最大重试次数（默认3）
 	Deadline   *time.Time `json:"deadline,omitempty"` // 超时时间（nil=永不过期）
 
-	// 追踪与排序
+	// 追踪
 	TraceID string `json:"trace_id"` // 链路追踪 ID
-	SeqNum  uint64 `json:"seq_num"`  // 序列号（由 WAL 分配）
 
 	// 扩展元数据
 	Metadata map[string]interface{} `json:"metadata,omitempty"` // 自定义元数据
@@ -201,7 +199,6 @@ func (e *Event) Clone() *Event {
 		RetryCount: e.RetryCount,
 		MaxRetries: e.MaxRetries,
 		TraceID:    e.TraceID,
-		SeqNum:     e.SeqNum,
 		Metadata:   make(map[string]interface{}),
 	}
 	if e.Deadline != nil {

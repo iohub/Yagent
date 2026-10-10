@@ -28,7 +28,7 @@
 - [7. Event/Message System](#7-eventmessage-system)
   - [7.1 Publish-Subscribe Architecture](#71-publish-subscribe-architecture)
   - [7.2 Event Types](#72-event-types)
-  - [7.3 WAL Persistence and Dead Letter Queue](#73-wal-persistence-and-dead-letter-queue)
+  - [7.3 Subpackage Structure](#73-subpackage-structure)
 - [8. Context Compression Engine](#8-context-compression-engine)
   - [8.1 Core Compression Algorithm](#81-core-compression-algorithm)
   - [8.2 Async Incremental Compression](#82-async-incremental-compression)
@@ -811,20 +811,15 @@ func (p *Publisher) Publish(eventType string, content interface{}, from string) 
 
 // MessageDispatcher - Dispatcher
 type MessageDispatcher struct {
-    mainCh        chan *Event
-    consumers     map[EventType][]Consumer
-    wal           WAL
-    backlog       *Backlog
-    dlq           *DeadLetterQueue
+    entries        []*dispatcherEntry // Per-consumer dispatch unit (filter set + dedicated event queue + critical bypass)
+    perConsumerBuf int                // Capacity of each consumer’s dedicated event queue
 }
 ```
 
 **Data Flow**:
 1. Agent publishes events via Publisher
-2. Dispatcher receives events, writes to WAL (if enabled)
-3. Dispatcher distributes to all registered Consumers by EventType
-4. If main channel is full, events overflow to Backlog
-5. If Consumer processing fails, events go to Dead Letter Queue
+2. Dispatcher distributes to all registered Consumers by EventType (each consumer has its own dedicated queue)
+3. Regular events are dropped when their queue is full (with drop counters); critical events (user interaction loop) go through a dedicated bypass and are never dropped
 
 ### 7.2 Event Types
 
@@ -849,24 +844,7 @@ Protocols are defined in `internal/protocol/agent_events.go`:
 | `conversation_result` | Conversation completed | Task completion |
 | `thinking` | Thinking content | Thinking display |
 
-### 7.3 WAL Persistence and Dead Letter Queue
-
-**WAL (Write-Ahead Log)**:
-- Async disk writing to ensure events are not lost
-- Supports replaying unconfirmed events after restart
-- Configured via `DispatcherOptions.WALPath`
-
-**Backlog**:
-- When the main channel is full, events overflow to Backlog
-- Background goroutine periodically drains Backlog
-- Configurable maximum capacity (default 10000)
-
-**Dead Letter Queue (DLQ)**:
-- Events that fail Consumer processing go to DLQ
-- Configurable retry count (default 3 times)
-- Supports exponential backoff retry
-
-### 7.4 Subpackage Structure
+### 7.3 Subpackage Structure
 
 The messaging system includes the following subpackages:
 
@@ -1213,8 +1191,6 @@ flowchart LR
 | Delegate | Delegate | Delegation, assigning a task to another Agent |
 | LLM | Large Language Model | Large Language Model |
 | Tool Call | Tool Call | Request from LLM to invoke a tool |
-| WAL | Write-Ahead Log | Write-ahead log for persistence |
-| DLQ | Dead Letter Queue | Dead letter queue for messages that failed processing |
 | TUI | Text User Interface | Terminal user interface |
 | Codeseek | Codeseek | Rust-written code analysis engine |
 | Context Compression | Context Compression | Context compression to reduce token usage |
@@ -1262,7 +1238,6 @@ flowchart LR
 | `internal/messaging/consumers/tui.go` | TUI consumer |
 | `internal/messaging/consumers/websock.go` | WebSocket consumer |
 | `internal/messaging/peer/peer.go` | Peer-to-peer messaging |
-| `internal/messaging/wal.go` | WAL persistence |
 | `internal/knowledge/injector.go` | Knowledge injector |
 | `internal/mcp/client.go` | MCP client |
 | `internal/recovery/circuit_breaker.go` | Circuit breaker |

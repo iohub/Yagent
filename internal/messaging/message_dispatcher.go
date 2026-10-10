@@ -5,9 +5,8 @@
 //     防御上限 4096，超限 drop-oldest 并记 error 日志），发布方零阻塞。
 //   - 顺序：同一消费者、同一类别（普通 or 关键）内 FIFO 保序；跨类别、跨消费者不承诺顺序。
 //
-// 与旧实现差异：bufferSize 现为每消费者独立队列容量（旧版为共享主 channel）；WAL/Backlog/DLQ/重试已随
-// 对应类型移除。生命周期上绝不 close 事件 channel（并发 send 会 panic），只 close stop + 原子标志，收尾时
-// 由消费 goroutine 排空残留事件。
+// 与旧实现差异：bufferSize 现为每消费者独立队列容量（旧版为共享主 channel）。生命周期上绝不 close
+// 事件 channel（并发 send 会 panic），只 close stop + 原子标志，收尾时由消费 goroutine 排空残留事件。
 package messaging
 
 import (
@@ -37,30 +36,17 @@ func isCriticalEvent(t EventType) bool {
 	return ok
 }
 
-// DispatcherOptions 调度器配置（保留旧结构保证 API 兼容）。
-// BacklogSize/DLQSize/WALPath/EnableWAL/RetryDelay/ConsumerBufSize/DrainBacklogInterval 已废弃不生效。
+// DispatcherOptions 调度器配置。
 type DispatcherOptions struct {
-	BufferSize           int           // 每个消费者独立事件队列容量（默认 1000）
-	ConsumerBufSize      int           // 已废弃
-	BacklogSize          int           // 已废弃
-	DLQSize              int           // 已废弃
-	WALPath              string        // 已废弃
-	EnableWAL            bool          // 已废弃
-	RetryDelay           time.Duration // 已废弃
-	MaxRetries           int           // Publish 填充 event.MaxRetries 的默认值（默认 3）
-	DrainBacklogInterval time.Duration // 已废弃
+	BufferSize int // 每个消费者独立事件队列容量（默认 1000）
+	MaxRetries int // Publish 填充 event.MaxRetries 的默认值（默认 3）
 }
 
 // DefaultDispatcherOptions 返回默认配置
 func DefaultDispatcherOptions() DispatcherOptions {
 	return DispatcherOptions{
-		BufferSize:           1000,
-		ConsumerBufSize:      1000,
-		BacklogSize:          10000,
-		DLQSize:              1000,
-		RetryDelay:           100 * time.Millisecond,
-		MaxRetries:           3,
-		DrainBacklogInterval: 50 * time.Millisecond,
+		BufferSize: 1000,
+		MaxRetries: 3,
 	}
 }
 
@@ -153,7 +139,7 @@ func NewMessageDispatcher(bufferSize int) *MessageDispatcher {
 	return NewDispatcher(opts)
 }
 
-// NewDispatcher 创建带完整配置的调度器（新接口；WAL/Backlog/DLQ 相关字段已废弃）。
+// NewDispatcher 创建带完整配置的调度器（新接口）。
 func NewDispatcher(opts DispatcherOptions) *MessageDispatcher {
 	if opts.BufferSize <= 0 {
 		opts.BufferSize = 1000
@@ -330,7 +316,7 @@ func (d *MessageDispatcher) drainRemaining(e *dispatcherEntry) {
 }
 
 // deliver 同步交付事件；recover 防止单次 panic 杀死 goroutine 导致消费者永久静默。
-// 不做重试（重试/DLQ 已随旧类型移除），超时由消费者自行控制。
+// 不做重试，超时由消费者自行控制。
 func (d *MessageDispatcher) deliver(e *dispatcherEntry, event *Event) {
 	defer func() {
 		if r := recover(); r != nil {
