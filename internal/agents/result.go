@@ -104,12 +104,20 @@ func FinalizeResultFull(agentName, task string, exec ExecutorResult) AgentResult
 }
 
 // FormatForDirector 生成注入 Director 上下文的统一格式文本（两处消费点共用，格式单源）。
-//   - 无 ArtifactRef：保持旧格式 "[Sub-Agent Result: {toolName}]\n{Text}"（与
-//     director.go injectSubAgentMemory 现有格式一致）；
+//   - noteRef 为空且 unresolvedCount 为 0 时，输出与旧格式字节级一致；
+//   - noteRef 非空时，header 行追加 "note: {noteRef}"；
+//   - unresolvedCount > 0 时，header 行追加 "| unresolved refs: N"；
 //   - 有 ArtifactRef：头部 + artifact 元信息 + 摘要 + read_artifact 取回提示。
-func FormatForDirector(toolName string, r AgentResult) string {
+func FormatForDirector(toolName string, r AgentResult, noteRef string, unresolvedCount int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "[Sub-Agent Result: %s]\n", toolName)
+	fmt.Fprintf(&b, "[Sub-Agent Result: %s]", toolName)
+	if noteRef != "" {
+		fmt.Fprintf(&b, " note: %s", noteRef)
+	}
+	if unresolvedCount > 0 {
+		fmt.Fprintf(&b, " | unresolved refs: %d", unresolvedCount)
+	}
+	b.WriteByte('\n')
 	if r.ArtifactRef == nil {
 		b.WriteString(r.Summary)
 		return b.String()
