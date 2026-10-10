@@ -18,6 +18,7 @@ import (
 	"yagent/internal/datamanager"
 	"yagent/internal/dict"
 	"yagent/internal/http"
+	"yagent/internal/memory"
 	"yagent/internal/messaging"
 	"yagent/internal/tui/anim"
 	"yagent/internal/tui/common"
@@ -626,6 +627,17 @@ type model struct {
 	historyPageSize int // 每页条数，固定20
 	historyLoading  bool
 	historyStyles   *historyStyles // 预计算的历史列表样式
+
+	// Resume mode（:resume / :rs — 从 rollout JSONL 恢复会话，范式对齐 history）
+	resumeMode     bool
+	resumeItems    []memory.RolloutSessionInfo
+	resumeCursor   int // 页内条目游标，0-indexed
+	resumeOffset   int // 当前页起始绝对索引（page×pageSize 语义）
+	resumePageSize int // 每页条数，固定20（进入模式时初始化）
+	resumeLoading  bool
+	resumeErr      string        // 列表/恢复错误（resume 视图内展示）
+	resumeStyles   *resumeStyles // 预计算的 resume 列表样式
+	resumeRoot     string        // rollout 根目录缓存（空态提示用）
 
 	// pendingDeleteTaskID tracks the task to delete when the delete confirmation
 	// dialog (a QuitConfirmDialog) is on the DialogStack.

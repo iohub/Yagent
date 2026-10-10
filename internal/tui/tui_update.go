@@ -84,6 +84,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return historyUpdate(msg, m)
 	}
 
+	// Resume mode: intercept all messages and delegate to resume handler.
+	// Skip when a dialog is active (same guard as history mode above).
+	if m.resumeMode && (m.dialogStack == nil || m.dialogStack.Len() == 0) {
+		return resumeUpdate(msg, m)
+	}
+
 	switch msg := msg.(type) {
 	case tickMsg:
 		return m.handleTickMsg(msg)
