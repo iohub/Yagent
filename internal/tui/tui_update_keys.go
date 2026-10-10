@@ -163,9 +163,6 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 				}
 				// Pop the agent select dialog
 				m.dialogStack.Pop()
-				// Build provider list and push ModelSelectDialog
-				providers := m.assistant.GetClient().Config.GetProviderNames()
-				providerDescs := make(map[string]string)
 				// Get current provider for the selected target
 				var currentProv string
 				switch {
@@ -176,14 +173,18 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 				default:
 					currentProv, _ = m.assistant.GetAgentProvider(target)
 				}
+				// Build provider options (model name + context window) and push ModelSelectDialog
+				clientCfg := m.assistant.GetClient().Config
+				providers := clientCfg.GetProviderNames()
+				options := make([]components.ModelOption, 0, len(providers))
 				for _, p := range providers {
-					if provCfg, err := m.assistant.GetClient().Config.GetProvider(p); err == nil {
-						providerDescs[p] = components.FormatProviderDesc(p, provCfg.Model)
-					} else {
-						providerDescs[p] = p
+					opt := components.ModelOption{Provider: p, Context: contextWindowFromCfg(clientCfg, p)}
+					if provCfg, err := clientCfg.GetProvider(p); err == nil {
+						opt.Model = provCfg.Model
 					}
+					options = append(options, opt)
 				}
-				providerDialog := components.NewModelSelectDialog(m.com.Styles, providers, providerDescs, currentProv)
+				providerDialog := components.NewModelSelectDialog(options, currentProv)
 				providerDialog.SetBounds(m.termWidth, m.termHeight)
 				m.dialogStack.Push(providerDialog)
 			} else {
@@ -203,95 +204,95 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		if cmd != nil {
 			return m, cmd, true
 		}
-		switch key {
-		case "enter", " ":
-			if d.Selected != "" {
-				providers := m.assistant.GetClient().Config.GetProviderNames()
-				found := false
-				for _, p := range providers {
-					if p == d.Selected {
-						found = true
-						break
-					}
+		// 数字键直选同样会置位 Selected，故确认分支不再限定 enter/space
+		if d.Selected != "" {
+			providers := m.assistant.GetClient().Config.GetProviderNames()
+			found := false
+			for _, p := range providers {
+				if p == d.Selected {
+					found = true
+					break
 				}
-				if !found {
+			}
+			if !found {
+				m.logEntries = append(m.logEntries, logEntry{
+					timestamp: time.Now(),
+					eventType: "status",
+					content:   fmt.Sprintf("Unknown provider: %s", d.Selected),
+				})
+				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				m.dialogStack.Pop()
+				return m, nil, true
+			}
+			// 根据 pendingModelTarget 分流: tool 覆盖 / agent 覆盖 / 全局
+			target := m.pendingModelTarget
+			m.pendingModelTarget = ""
+			switch {
+			case isModelTargetTool(target):
+				// 为指定 tool 设置 provider
+				if err := m.assistant.SetToolProvider(target, d.Selected); err != nil {
+					m.logEntries = append(m.logEntries, logEntry{
+						timestamp: time.Now(),
+						eventType: "error",
+						content:   fmt.Sprintf("Failed to set tool provider: %v", err),
+					})
+					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				} else {
+					_, modelName := m.assistant.GetToolProviderInfo(target)
 					m.logEntries = append(m.logEntries, logEntry{
 						timestamp: time.Now(),
 						eventType: "status",
-						content:   fmt.Sprintf("Unknown provider: %s", d.Selected),
+						content:   fmt.Sprintf("Set tool '%s' provider to: %s (model: %s)", target, d.Selected, modelName),
 					})
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-					m.dialogStack.Pop()
-					return m, nil, true
 				}
-				// 根据 pendingModelTarget 分流: tool 覆盖 / agent 覆盖 / 全局
-				target := m.pendingModelTarget
-				m.pendingModelTarget = ""
-				switch {
-				case isModelTargetTool(target):
-					// 为指定 tool 设置 provider
-					if err := m.assistant.SetToolProvider(target, d.Selected); err != nil {
-						m.logEntries = append(m.logEntries, logEntry{
-							timestamp: time.Now(),
-							eventType: "error",
-							content:   fmt.Sprintf("Failed to set tool provider: %v", err),
-						})
-						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-					} else {
-						_, modelName := m.assistant.GetToolProviderInfo(target)
-						m.logEntries = append(m.logEntries, logEntry{
-							timestamp: time.Now(),
-							eventType: "status",
-							content:   fmt.Sprintf("Set tool '%s' provider to: %s (model: %s)", target, d.Selected, modelName),
-						})
-						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-					}
-				case target != "":
-					// 为指定 agent 设置 provider
-					if err := m.assistant.SetAgentProvider(target, d.Selected); err != nil {
-						m.logEntries = append(m.logEntries, logEntry{
-							timestamp: time.Now(),
-							eventType: "error",
-							content:   fmt.Sprintf("Failed to set agent provider: %v", err),
-						})
-						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-					} else {
-						_, modelName := m.assistant.GetAgentProvider(target)
-						m.logEntries = append(m.logEntries, logEntry{
-							timestamp: time.Now(),
-							eventType: "status",
-							content:   fmt.Sprintf("Set agent '%s' provider to: %s (model: %s)", target, d.Selected, modelName),
-						})
-						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-					}
-				default:
-					// 全局设置
-					if err := m.assistant.SwitchProvider(d.Selected); err != nil {
-						m.logEntries = append(m.logEntries, logEntry{
-							timestamp: time.Now(),
-							eventType: "error",
-							content:   fmt.Sprintf("Failed to switch provider: %v", err),
-						})
-						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-					} else {
-						_, modelName := m.assistant.GetClient().GetCurrentProviderInfo()
-						m.currentProvider = d.Selected
-						m.currentModel = modelName
-						// provider 变化 → 刷新上下文窗口上限并失效渲染缓存
-						m.refreshContextWindow()
-						m.invalidateFooterCache()
-						m.logEntries = append(m.logEntries, logEntry{
-							timestamp: time.Now(),
-							eventType: "status",
-							content:   fmt.Sprintf("Switched global provider to: %s (model: %s)", d.Selected, modelName),
-						})
-						m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-					}
+			case target != "":
+				// 为指定 agent 设置 provider
+				if err := m.assistant.SetAgentProvider(target, d.Selected); err != nil {
+					m.logEntries = append(m.logEntries, logEntry{
+						timestamp: time.Now(),
+						eventType: "error",
+						content:   fmt.Sprintf("Failed to set agent provider: %v", err),
+					})
+					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				} else {
+					_, modelName := m.assistant.GetAgentProvider(target)
+					m.logEntries = append(m.logEntries, logEntry{
+						timestamp: time.Now(),
+						eventType: "status",
+						content:   fmt.Sprintf("Set agent '%s' provider to: %s (model: %s)", target, d.Selected, modelName),
+					})
+					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				}
+			default:
+				// 全局设置
+				if err := m.assistant.SwitchProvider(d.Selected); err != nil {
+					m.logEntries = append(m.logEntries, logEntry{
+						timestamp: time.Now(),
+						eventType: "error",
+						content:   fmt.Sprintf("Failed to switch provider: %v", err),
+					})
+					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				} else {
+					_, modelName := m.assistant.GetClient().GetCurrentProviderInfo()
+					m.currentProvider = d.Selected
+					m.currentModel = modelName
+					// provider 变化 → 刷新上下文窗口上限并失效渲染缓存
+					m.refreshContextWindow()
+					m.invalidateFooterCache()
+					m.logEntries = append(m.logEntries, logEntry{
+						timestamp: time.Now(),
+						eventType: "status",
+						content:   fmt.Sprintf("Switched global provider to: %s (model: %s)", d.Selected, modelName),
+					})
+					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 				}
 			}
 			m.dialogStack.Pop()
 			return m, nil, true
-		case "esc", "q", "Q":
+		}
+		switch key {
+		case "enter", " ", "esc", "q", "Q":
 			d.Selected = ""
 			m.dialogStack.Pop()
 			return m, nil, true

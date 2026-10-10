@@ -364,7 +364,8 @@ func (c *Config) ResolveProvider(agentName, toolName string) (*ProviderConfig, e
 	return nil, fmt.Errorf("no LLM provider configured")
 }
 
-// GetProviderNames returns a list of all available provider names
+// GetProviderNames returns a list of all available provider names, sorted
+// alphabetically so UI listings keep a stable order between renders.
 func (c *Config) GetProviderNames() []string {
 	if c.Global.LLM == nil {
 		return []string{}
@@ -373,6 +374,7 @@ func (c *Config) GetProviderNames() []string {
 	for name := range c.Global.LLM.Providers {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
 }
 
