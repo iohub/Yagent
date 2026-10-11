@@ -21,46 +21,76 @@ type DevOpsAgent struct {
 	ecCfg     config.EnhancedCommanderConfig
 }
 
-// NewDevOpsAgent 构造 DevOpsAgent，仅声明其所需窄依赖：
-// prompt 格式化、事件总线、环境视图（FullYoloMode）、文件/搜索/系统工具集、
-// 流程控制、认知思考、微代理工具、工作区守护与上下文压缩配置。
-func NewDevOpsAgent(formatter PromptFormatter, publisher EventBus, env Env, files FileToolSet, search SearchToolSet, sys SysToolSet, flow FlowToolSet, thinker Thinker, microAgent MicroAgentRunner, guard *tools.WorkspaceGuard, ecCfg config.EnhancedCommanderConfig, llm llm.Engine, maxSteps int) *DevOpsAgent {
+// DevOpsAgentParams 聚合 NewDevOpsAgent 所需的全部依赖。
+// 用具名字段替代原先 13 个位置参数，让调用点自文档化。
+type DevOpsAgentParams struct {
+	Formatter  PromptFormatter
+	Publisher  EventBus
+	Env        Env
+	Files      FileToolSet
+	Search     SearchToolSet
+	Sys        SysToolSet
+	Flow       FlowToolSet
+	Thinker    Thinker
+	MicroAgent MicroAgentRunner
+	Guard      *tools.WorkspaceGuard
+
+	EnhancedCommanderCfg config.EnhancedCommanderConfig
+
+	LLM      llm.Engine
+	MaxSteps int
+}
+
+// NewDevOpsAgent 构造 DevOpsAgent：装配运维工具集后返回。
+func NewDevOpsAgent(p DevOpsAgentParams) *DevOpsAgent {
+	return &DevOpsAgent{
+		BaseAgent: BaseAgent{
+			LLM:       p.LLM,
+			Publisher: p.Publisher,
+		},
+		promptFmt: p.Formatter,
+		Adapters:  buildDevOpsAdapters(p),
+		maxSteps:  p.MaxSteps,
+		ecCfg:     p.EnhancedCommanderCfg,
+	}
+}
+
+// buildDevOpsAdapters 装配 DevOps-Agent 的运维工具集：
+// run_bash（命令执行）、文件工具（巡检）、thinking/micro_agent（分析与自纠错）。
+func buildDevOpsAdapters(p DevOpsAgentParams) []*tools.Adapter {
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		// Non-fatal: agent falls back to no-tool mode.
 	}
 
-	// DevOps agent uses a curated set of tools for operational tasks:
-	// run_bash for command execution, file tools for inspection, and
-	// thinking/micro_agent for analysis and self-correction.
 	adapters := make([]*tools.Adapter, 0, len(toolDefs))
 	for _, def := range toolDefs {
 		var fn tools.ToolFunc
 		switch def.Name {
 		case "run_bash":
-			fn = sys.ExecuteRunBash
+			fn = p.Sys.ExecuteRunBash
 		case "read_file":
-			fn = files.ExecuteReadFile
+			fn = p.Files.ExecuteReadFile
 		case "list_dir":
-			fn = files.ExecuteListDir
+			fn = p.Files.ExecuteListDir
 		case "print_dir_tree":
-			fn = files.ExecutePrintDirTree
+			fn = p.Files.ExecutePrintDirTree
 		case "search_by_regex":
-			fn = search.ExecuteGrepSearch
+			fn = p.Search.ExecuteGrepSearch
 		case "thinking":
 			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				inputBytes, _ := json.Marshal(params)
-				return thinker.Call(ctx, string(inputBytes))
+				return p.Thinker.Call(ctx, string(inputBytes))
 			}
 		case "micro_agent":
-			fn = microAgent.Execute
+			fn = p.MicroAgent.Execute
 		case "agent_exit":
-			fn = flow.ExecuteAgentExit
+			fn = p.Flow.ExecuteAgentExit
 		case "ask_user_for_help":
-			if env.FullYoloMode() {
+			if p.Env.FullYoloMode() {
 				continue
 			}
-			fn = flow.ExecuteAskUserForHelp
+			fn = p.Flow.ExecuteAskUserForHelp
 		default:
 			continue
 		}
@@ -68,18 +98,9 @@ func NewDevOpsAgent(formatter PromptFormatter, publisher EventBus, env Env, file
 		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
 		adapters = append(adapters, adapter)
 	}
-	tools.SetGuardOnAdapters(adapters, guard)
+	tools.SetGuardOnAdapters(adapters, p.Guard)
 
-	return &DevOpsAgent{
-		BaseAgent: BaseAgent{
-			LLM:       llm,
-			Publisher: publisher,
-		},
-		promptFmt: formatter,
-		Adapters:  adapters,
-		maxSteps:  maxSteps,
-		ecCfg:     ecCfg,
-	}
+	return adapters
 }
 
 func (a *DevOpsAgent) Name() string {

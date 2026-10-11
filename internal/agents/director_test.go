@@ -11,8 +11,8 @@ import (
 	"yagent/internal/config"
 	"yagent/internal/globalctx"
 	"yagent/internal/llm"
-	"yagent/internal/messaging"
 	"yagent/internal/memory"
+	"yagent/internal/messaging"
 	"yagent/internal/tools"
 )
 
@@ -59,7 +59,7 @@ func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 		DeepThinkingTool: tools.NewDeepThinkingTool(nil),
 		MicroAgentTool:   tools.NewMicroAgentTool(nil),
 		FlowOps:          tools.NewFlowControlTool(workDir),
-		RepoOps:      tools.NewRepoOperationsTool(nil, workDir, 0),
+		RepoOps:          tools.NewRepoOperationsTool(nil, workDir, 0),
 	}
 }
 
@@ -70,25 +70,33 @@ func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 // 参数顺序沿用旧签名（gctx, engine, 六个子代理, maxSteps, disabledAgents,
 // metaRetryCount, cfg, llmClient），使各测试调用点零改动。
 func newDirectorAgentForTest(gctx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
-	return NewDirectorAgent(
-		gctx,                       // PromptFormatter: *GlobalCtx 天然实现
-		gctx.Publisher,             // EventBus
-		globalctx.NewEnvView(gctx), // Env
-		gctx.FileOps,               // FileToolSet
-		gctx.SearchOps,             // SearchToolSet
-		gctx.SysOps,                // SysToolSet
-		gctx.ReplaceTool,           // EditToolSet
-		gctx.FlowOps,               // FlowToolSet
-		gctx.ThinkingTool,          // Thinker
-		gctx.MicroAgentTool,        // MicroAgentRunner
-		gctx.DeepThinkingTool,      // DeepThinker
-		gctx.Guard,                 // *tools.WorkspaceGuard: 测试中为 nil,与旧语义一致
-		nil,                        // RepoContextStore: 测试未触发 delegate_repo
-		nil,                        // KnowledgeProvider: 测试未用
-		nil,                        // *mcp.MCPClient: 测试未用
-		engine, repo, coding, chat, meta, devops, browser,
-		maxSteps, disabledAgents, metaRetryCount, cfg, llmClient,
-	)
+	return NewDirectorAgent(DirectorAgentParams{
+		Formatter:      gctx,                       // PromptFormatter: *GlobalCtx 天然实现
+		Publisher:      gctx.Publisher,             // EventBus
+		Env:            globalctx.NewEnvView(gctx), // Env
+		Files:          gctx.FileOps,               // FileToolSet
+		Search:         gctx.SearchOps,             // SearchToolSet
+		Sys:            gctx.SysOps,                // SysToolSet
+		Edit:           gctx.ReplaceTool,           // EditToolSet
+		Flow:           gctx.FlowOps,               // FlowToolSet
+		Thinker:        gctx.ThinkingTool,          // Thinker
+		MicroAgent:     gctx.MicroAgentTool,        // MicroAgentRunner
+		DeepThinker:    gctx.DeepThinkingTool,      // DeepThinker
+		Guard:          gctx.Guard,                 // *tools.WorkspaceGuard: 测试中为 nil,与旧语义一致
+		LLM:            engine,
+		RepoAgent:      repo,
+		CodingAgent:    coding,
+		ChatAgent:      chat,
+		MetaAgent:      meta,
+		DevOpsAgent:    devops,
+		BrowserAgent:   browser,
+		MaxSteps:       maxSteps,
+		DisabledAgents: disabledAgents,
+		MetaRetryCount: metaRetryCount,
+		Config:         cfg,
+		LLMClient:      llmClient,
+		// RepoCtx/Knowledge/MCPClient 测试未用，留 nil（与旧语义一致）
+	})
 }
 
 // newTestDirectorAgent creates a DirectorAgent with real GlobalCtx but nil sub-agents.

@@ -36,51 +36,85 @@ type RepoAgent struct {
 	worker   *ConsolidationWorker
 }
 
-// NewRepoAgent 构造 RepoAgent，仅声明其所需窄依赖：
-// prompt 格式化、事件总线、环境视图（ProjectPath/FullYoloMode）、
-// 文件/搜索/仓库理解工具集、流程控制、深度思考、工作区守护、
-// 知识注入器、MCP 客户端与上下文压缩配置。
-func NewRepoAgent(formatter PromptFormatter, publisher EventBus, env Env, files FileToolSet, search SearchToolSet, repoOps RepoToolSet, flow FlowToolSet, deepThinker DeepThinker, guard *tools.WorkspaceGuard, knowledge KnowledgeProvider, mcpClient *mcp.MCPClient, ecCfg config.EnhancedCommanderConfig, llm llm.Engine, maxSteps int) *RepoAgent {
-	// self-reference for the delegate closure that needs the RepoAgent after
-	// construction (same pattern as NewDirectorAgent).
-	var self *RepoAgent
+// RepoAgentParams 聚合 NewRepoAgent 所需的全部依赖。
+// 用具名字段替代原先 14 个位置参数，让调用点自文档化，且增删依赖不再破坏函数签名。
+type RepoAgentParams struct {
+	Formatter   PromptFormatter
+	Publisher   EventBus
+	Env         Env
+	Files       FileToolSet
+	Search      SearchToolSet
+	RepoOps     RepoToolSet
+	Flow        FlowToolSet
+	DeepThinker DeepThinker
+	Guard       *tools.WorkspaceGuard
+	Knowledge   KnowledgeProvider
+	MCPClient   *mcp.MCPClient
 
+	EnhancedCommanderCfg config.EnhancedCommanderConfig
+
+	LLM      llm.Engine
+	MaxSteps int
+}
+
+// NewRepoAgent 构造 RepoAgent：先填充结构体字段，再装配工具适配器
+// （tools.json 常规工具 + delegate_devops + 知识维护工具）。
+func NewRepoAgent(p RepoAgentParams) *RepoAgent {
+	self := &RepoAgent{
+		BaseAgent: BaseAgent{
+			LLM:       p.LLM,
+			Publisher: p.Publisher,
+		},
+		promptFmt: p.Formatter,
+		env:       p.Env,
+		knowledge: p.Knowledge,
+		mcpClient: p.MCPClient,
+		ecCfg:     p.EnhancedCommanderCfg,
+		maxSteps:  p.MaxSteps,
+	}
+	self.Adapters = self.buildAdapters(p)
+	return self
+}
+
+// buildAdapters 装配 Repo-Agent 的工具适配器列表。
+// delegate_devops 闭包在运行时读取 a.devops（由 SetDevOpsAgent 注入，晚于构造）。
+func (a *RepoAgent) buildAdapters(p RepoAgentParams) []*tools.Adapter {
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		slog.Error("Failed to unmarshal tools", "error", err)
 	}
 
-	adapters := make([]*tools.Adapter, 0)
+	adapters := make([]*tools.Adapter, 0, len(toolDefs)+1)
 	for _, def := range toolDefs {
 		var fn tools.ToolFunc
 		switch def.Name {
 		case "read_file":
-			fn = files.ExecuteReadFile
+			fn = p.Files.ExecuteReadFile
 		case "search_by_regex":
-			fn = search.ExecuteGrepSearch
+			fn = p.Search.ExecuteGrepSearch
 		case "list_dir":
-			fn = files.ExecuteListDir
+			fn = p.Files.ExecuteListDir
 		case "print_dir_tree":
-			fn = files.ExecutePrintDirTree
+			fn = p.Files.ExecutePrintDirTree
 		case "semantic_search":
-			fn = repoOps.ExecuteSemanticSearch
+			fn = p.RepoOps.ExecuteSemanticSearch
 		case "query_code_skeleton":
-			fn = repoOps.ExecuteQueryCodeSkeleton
+			fn = p.RepoOps.ExecuteQueryCodeSkeleton
 		case "query_code_snippet":
-			fn = repoOps.ExecuteQueryCodeSnippet
+			fn = p.RepoOps.ExecuteQueryCodeSnippet
 		case "find_function_callee":
-			fn = repoOps.ExecuteFindFunctionCallees
+			fn = p.RepoOps.ExecuteFindFunctionCallees
 		case "find_function_caller":
-			fn = repoOps.ExecuteFindFunctionCallers
+			fn = p.RepoOps.ExecuteFindFunctionCallers
 		case "query_call_graph":
-			fn = repoOps.ExecuteCallGraph
+			fn = p.RepoOps.ExecuteCallGraph
 		case "deepthinking":
-			fn = deepThinker.Execute
+			fn = p.DeepThinker.Execute
 		case "ask_user_for_help":
-			if env.FullYoloMode() {
+			if p.Env.FullYoloMode() {
 				continue
 			}
-			fn = flow.ExecuteAskUserForHelp
+			fn = p.Flow.ExecuteAskUserForHelp
 		default:
 			continue
 		}
@@ -88,16 +122,17 @@ func NewRepoAgent(formatter PromptFormatter, publisher EventBus, env Env, files 
 		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
 		adapters = append(adapters, adapter)
 	}
+
 	// delegate_devops：将运维类任务委托给 DevOps-Agent（与 Director 中同名工具保持一致的名称与参数 schema）
 	delegateDevOps := tools.NewAdapter("delegate_devops", "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		if self == nil || self.devops == nil {
+		if a.devops == nil {
 			return "[DevOps-Agent unavailable] DevOps-Agent has not been wired to Repo-Agent. Complete the analysis with the information you have and note that the operational task could not be delegated.", nil
 		}
-		result, err := self.devops.Run(ctx, task)
+		result, err := a.devops.Run(ctx, task)
 		if err != nil {
 			// 友好地把错误信息返回给 LLM，而不是中断执行循环
 			return fmt.Sprintf("[DevOps-Agent execution failed] task: %q, error: %v. You may retry with a clearer task description, or note the failure in your analysis result.", task, err), nil
@@ -111,29 +146,16 @@ func NewRepoAgent(formatter PromptFormatter, publisher EventBus, env Env, files 
 		"required": []string{"task"},
 	})
 	adapters = append(adapters, delegateDevOps)
-	tools.SetGuardOnAdapters(adapters, guard)
+	tools.SetGuardOnAdapters(adapters, p.Guard)
 
 	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP）
-	knowledgeAdapters := createKnowledgeToolAdapters(mcpClient, llm, "repo_agent", "repo_retrieval")
+	knowledgeAdapters := createKnowledgeToolAdapters(p.MCPClient, p.LLM, "repo_agent", "repo_retrieval")
 	if len(knowledgeAdapters) > 0 {
-		tools.SetGuardOnAdapters(knowledgeAdapters, guard)
+		tools.SetGuardOnAdapters(knowledgeAdapters, p.Guard)
 		adapters = append(adapters, knowledgeAdapters...)
 	}
 
-	self = &RepoAgent{
-		BaseAgent: BaseAgent{
-			LLM:       llm,
-			Publisher: publisher,
-		},
-		promptFmt: formatter,
-		env:       env,
-		knowledge: knowledge,
-		mcpClient: mcpClient,
-		ecCfg:     ecCfg,
-		Adapters:  adapters,
-		maxSteps:  maxSteps,
-	}
-	return self
+	return adapters
 }
 
 func (a *RepoAgent) Name() string {

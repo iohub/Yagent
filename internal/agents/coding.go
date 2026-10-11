@@ -79,67 +79,46 @@ type CodingAgent struct {
 	Adapters         []*tools.Adapter
 	BrowserAgent     *BrowserAgent
 	maxSteps         int
-	registry         *tools.Registry // 工具注册表引用
+	registry         *tools.Registry  // 工具注册表引用
 	thinkLink        *thinklink.Store // 终极压缩支撑存储，实时记录用户原始输入，与 Director 模式一致，与 agent 同生命周期
 
 }
 
-// NewCodingAgent 构造 CodingAgent，仅声明其所需窄依赖：
-// prompt 格式化、事件总线、环境视图（ProjectPath/FullYoloMode）、
-// 完整工具集（文件/编辑/搜索/系统/仓库理解/流程/思考/深度思考/微代理）、
-// 工作区守护、仓库上下文存储（读取）、知识注入器、MCP 客户端、
-// Git Checkpoint 配置与上下文压缩配置。
-func NewCodingAgent(formatter PromptFormatter, publisher EventBus, env Env, files FileToolSet, search SearchToolSet, sys SysToolSet, edit EditToolSet, repoOps RepoToolSet, flow FlowToolSet, thinker Thinker, deepThinker DeepThinker, microAgent MicroAgentRunner, guard *tools.WorkspaceGuard, repoCtx RepoContextStore, knowledge KnowledgeProvider, mcpClient *mcp.MCPClient, gitCheckpointCfg *config.GitCheckpointConfig, ecCfg config.EnhancedCommanderConfig, llm llm.Engine, maxSteps int, browser *BrowserAgent) *CodingAgent {
-	// 从 tools.json 加载工具定义
-	var toolDefs []tools.ToolDefinition
-	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
-		slog.Error("Failed to unmarshal coding tools", "error", err)
-	}
+// CodingAgentParams 聚合 NewCodingAgent 所需的全部依赖。
+// 用具名字段替代原先 21 个位置参数，让调用点自文档化，且后续增删依赖不再破坏函数签名。
+type CodingAgentParams struct {
+	Formatter   PromptFormatter
+	Publisher   EventBus
+	Env         Env
+	Files       FileToolSet
+	Search      SearchToolSet
+	Sys         SysToolSet
+	Edit        EditToolSet
+	RepoOps     RepoToolSet
+	Flow        FlowToolSet
+	Thinker     Thinker
+	DeepThinker DeepThinker
+	MicroAgent  MicroAgentRunner
 
-	// 创建适配器（工具名 → 执行函数的映射）
-	adapters := make([]*tools.Adapter, 0, len(toolDefs))
-	for _, def := range toolDefs {
-		fn := lookupToolFunc(def.Name, env, files, search, sys, edit, repoOps, flow, thinker, deepThinker, microAgent)
-		if fn == nil {
-			// delegate_browser 需要特殊处理，跳过
-			continue
-		}
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
-		adapters = append(adapters, adapter)
-	}
+	Guard   *tools.WorkspaceGuard
+	RepoCtx RepoContextStore
 
-	// 特殊处理 delegate_browser（需要 browser agent 引用）
-	if browser != nil {
-		for _, def := range toolDefs {
-			if def.Name == "delegate_browser" {
-				browserFn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-					task, ok := params["task"].(string)
-					if !ok || task == "" {
-						return nil, fmt.Errorf("delegate_browser requires a non-empty 'task' parameter")
-					}
-					result, err := browser.Run(ctx, task)
-					if err != nil {
-						return nil, err
-					}
-					return result.Text, nil
-				}
-				adapter := tools.NewAdapter(def.Name, def.Description, browserFn).WithSchema(def.Parameters)
-				adapters = append(adapters, adapter)
-				break
-			}
-		}
-	}
+	Knowledge KnowledgeProvider
+	MCPClient *mcp.MCPClient
 
-	tools.SetGuardOnAdapters(adapters, guard)
+	GitCheckpointCfg     *config.GitCheckpointConfig
+	EnhancedCommanderCfg config.EnhancedCommanderConfig
 
-	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP，不来自 tools.json 自动加载）
-	knowledgeAdapters := createKnowledgeToolAdapters(mcpClient, llm, "coding_agent", "coding_modification")
-	if len(knowledgeAdapters) > 0 {
-		tools.SetGuardOnAdapters(knowledgeAdapters, guard)
-		adapters = append(adapters, knowledgeAdapters...)
-	}
+	LLM      llm.Engine
+	MaxSteps int
+	Browser  *BrowserAgent
+}
 
-	// 创建 Registry 并注册所有工具
+// NewCodingAgent 构造 CodingAgent：先按 tools.json 与参数集中的工具集装配适配器，
+// 再注册进工具表。全部依赖通过 CodingAgentParams 传入。
+func NewCodingAgent(p CodingAgentParams) *CodingAgent {
+	adapters := buildCodingAdapters(p)
+
 	registry := tools.NewRegistry()
 	for _, adapter := range adapters {
 		registry.MustRegister(adapter)
@@ -147,70 +126,129 @@ func NewCodingAgent(formatter PromptFormatter, publisher EventBus, env Env, file
 
 	return &CodingAgent{
 		BaseAgent: BaseAgent{
-			LLM:       llm,
-			Publisher: publisher,
+			LLM:       p.LLM,
+			Publisher: p.Publisher,
 		},
-		promptFmt:        formatter,
-		env:              env,
-		microAgent:       microAgent,
-		repoCtx:          repoCtx,
-		knowledge:        knowledge,
-		mcpClient:        mcpClient,
-		gitCheckpointCfg: gitCheckpointCfg,
-		ecCfg:            ecCfg,
-		guard:            guard,
+		promptFmt:        p.Formatter,
+		env:              p.Env,
+		microAgent:       p.MicroAgent,
+		repoCtx:          p.RepoCtx,
+		knowledge:        p.Knowledge,
+		mcpClient:        p.MCPClient,
+		gitCheckpointCfg: p.GitCheckpointCfg,
+		ecCfg:            p.EnhancedCommanderCfg,
+		guard:            p.Guard,
 		Adapters:         adapters,
-		maxSteps:         maxSteps,
-		BrowserAgent:     browser,
+		maxSteps:         p.MaxSteps,
+		BrowserAgent:     p.Browser,
 		registry:         registry,
 		thinkLink:        thinklink.NewStore(0), // 容量 0=全量，与 Director 一致
 	}
 }
 
+// buildCodingAdapters 装配 Coding-Agent 的完整工具适配器列表：
+// tools.json 定义的常规工具 + delegate_browser（依赖 BrowserAgent）+ 知识维护工具。
+// 顺序与历史保持一致：常规工具 → delegate_browser → 知识工具。
+func buildCodingAdapters(p CodingAgentParams) []*tools.Adapter {
+	var toolDefs []tools.ToolDefinition
+	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
+		slog.Error("Failed to unmarshal coding tools", "error", err)
+	}
+
+	adapters := make([]*tools.Adapter, 0, len(toolDefs)+1)
+	for _, def := range toolDefs {
+		fn := lookupToolFunc(def.Name, p)
+		if fn == nil {
+			continue // delegate_browser 等需特殊处理的工具在此跳过
+		}
+		adapters = append(adapters,
+			tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown())
+	}
+
+	if browserAdapter := newBrowserDelegateAdapter(toolDefs, p.Browser); browserAdapter != nil {
+		adapters = append(adapters, browserAdapter)
+	}
+
+	tools.SetGuardOnAdapters(adapters, p.Guard)
+
+	// 知识整理/维护工具（需要 llm engine + CodeSeekMCP，不来自 tools.json 自动加载）
+	knowledgeAdapters := createKnowledgeToolAdapters(p.MCPClient, p.LLM, "coding_agent", "coding_modification")
+	tools.SetGuardOnAdapters(knowledgeAdapters, p.Guard)
+	adapters = append(adapters, knowledgeAdapters...)
+
+	return adapters
+}
+
+// newBrowserDelegateAdapter 将 delegate_browser 绑定到 BrowserAgent。
+// browser 为 nil 或 tools.json 未定义该工具时返回 nil（即不注册）。
+func newBrowserDelegateAdapter(toolDefs []tools.ToolDefinition, browser *BrowserAgent) *tools.Adapter {
+	if browser == nil {
+		return nil
+	}
+	for _, def := range toolDefs {
+		if def.Name != "delegate_browser" {
+			continue
+		}
+		fn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			task, ok := params["task"].(string)
+			if !ok || task == "" {
+				return nil, fmt.Errorf("delegate_browser requires a non-empty 'task' parameter")
+			}
+			result, err := browser.Run(ctx, task)
+			if err != nil {
+				return nil, err
+			}
+			return result.Text, nil
+		}
+		return tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+	}
+	return nil
+}
+
 // lookupToolFunc 根据工具名查找执行函数（替代外部 switch-case 硬编码）
 // 返回 nil 表示该工具需要特殊处理（如 delegate_browser）
-func lookupToolFunc(name string, env Env, files FileToolSet, search SearchToolSet, sys SysToolSet, edit EditToolSet, repoOps RepoToolSet, flow FlowToolSet, thinker Thinker, deepThinker DeepThinker, microAgent MicroAgentRunner) tools.ToolFunc {
+func lookupToolFunc(name string, p CodingAgentParams) tools.ToolFunc {
 	switch name {
 	case "read_file":
-		return files.ExecuteReadFile
+		return p.Files.ExecuteReadFile
 	case "search_replace_in_file":
-		return edit.ExecuteReplaceBlock
+		return p.Edit.ExecuteReplaceBlock
 	case "create_file":
-		return files.ExecuteCreateFile
+		return p.Files.ExecuteCreateFile
 	case "run_bash":
-		return sys.ExecuteRunBash
+		return p.Sys.ExecuteRunBash
 	case "search_by_regex":
-		return search.ExecuteGrepSearch
+		return p.Search.ExecuteGrepSearch
 	case "delete_file":
-		return files.ExecuteDeleteFile
+		return p.Files.ExecuteDeleteFile
 	case "rename_file":
-		return files.ExecuteRenameFile
+		return p.Files.ExecuteRenameFile
 	case "list_dir":
-		return files.ExecuteListDir
+		return p.Files.ExecuteListDir
 	case "print_dir_tree":
-		return files.ExecutePrintDirTree
+		return p.Files.ExecutePrintDirTree
 	case "semantic_search":
-		return repoOps.ExecuteSemanticSearch
+		return p.RepoOps.ExecuteSemanticSearch
 	case "query_code_skeleton":
-		return repoOps.ExecuteQueryCodeSkeleton
+		return p.RepoOps.ExecuteQueryCodeSkeleton
 	case "query_code_snippet":
-		return repoOps.ExecuteQueryCodeSnippet
+		return p.RepoOps.ExecuteQueryCodeSnippet
 	case "find_function_callee":
-		return repoOps.ExecuteFindFunctionCallees
+		return p.RepoOps.ExecuteFindFunctionCallees
 	case "find_function_caller":
-		return repoOps.ExecuteFindFunctionCallers
+		return p.RepoOps.ExecuteFindFunctionCallers
 	case "micro_agent":
-		return microAgent.Execute
+		return p.MicroAgent.Execute
 	case "deepthinking":
-		return deepThinker.Execute
+		return p.DeepThinker.Execute
 	case "agent_exit":
-		return flow.ExecuteAgentExit
+		return p.Flow.ExecuteAgentExit
 	case "ask_user_for_help":
-		if env.FullYoloMode() {
+		if p.Env.FullYoloMode() {
 			return nil
 		}
-		return flow.ExecuteAskUserForHelp
-	// delegate_browser 需要 browser agent 引用，返回 nil 由调用方特殊处理
+		return p.Flow.ExecuteAskUserForHelp
+	// delegate_browser 需要 browser agent 引用，返回 nil 由 buildCodingAdapters 特殊处理
 	default:
 		return nil
 	}
@@ -376,7 +414,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 
 	// 三级终极压缩配置
 	cfg.UltimateThinkLink = a.thinkLink // 三级终极压缩重建源（thinklink 只读窄接口）
-	cfg.UltimateKeepPlans = 0 // 0=全部保留
+	cfg.UltimateKeepPlans = 0           // 0=全部保留
 
 	// 如果是 git 仓库且 checkpoint 启用，设置回调和添加工具
 	if gitCheckpointEnabled {

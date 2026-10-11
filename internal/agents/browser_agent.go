@@ -28,26 +28,45 @@ type BrowserAgent struct {
 	browserMgr *browser.Manager
 }
 
-// NewBrowserAgent 创建 Browser-Agent，仅声明其所需窄依赖：
-// prompt 格式化、事件总线、环境视图（ProjectPath/FullYoloMode）、
-// 流程控制、工作区守护、仓库上下文存储（读取）与浏览器管理器。
-func NewBrowserAgent(
-	formatter PromptFormatter,
-	publisher EventBus,
-	env Env,
-	flow FlowToolSet,
-	guard *tools.WorkspaceGuard,
-	repoCtx RepoContextStore,
-	browserMgr *browser.Manager,
-	llm llm.Engine,
-	maxSteps int,
-) *BrowserAgent {
+// BrowserAgentParams 聚合 NewBrowserAgent 所需的全部依赖。
+// 用具名字段替代原先 9 个位置参数，让调用点自文档化。
+type BrowserAgentParams struct {
+	Formatter  PromptFormatter
+	Publisher  EventBus
+	Env        Env
+	Flow       FlowToolSet
+	Guard      *tools.WorkspaceGuard
+	RepoCtx    RepoContextStore
+	BrowserMgr *browser.Manager
+	LLM        llm.Engine
+	MaxSteps   int
+}
+
+// NewBrowserAgent 创建 Browser-Agent：装配浏览器工具集后返回。
+func NewBrowserAgent(p BrowserAgentParams) *BrowserAgent {
+	maxSteps := p.MaxSteps
 	if maxSteps <= 0 {
 		maxSteps = 15 // 浏览器任务通常需要较多步骤
 	}
 
+	return &BrowserAgent{
+		BaseAgent: BaseAgent{
+			LLM:       p.LLM,
+			Publisher: p.Publisher,
+		},
+		promptFmt:  p.Formatter,
+		repoCtx:    p.RepoCtx,
+		Adapters:   buildBrowserAdapters(p),
+		maxSteps:   maxSteps,
+		browserMgr: p.BrowserMgr,
+	}
+}
+
+// buildBrowserAdapters 装配 Browser-Agent 的工具集：
+// 浏览器工具（来自 browser 工具包）+ agent_exit + ask_user_for_help（full-yolo 模式跳过）。
+func buildBrowserAdapters(p BrowserAgentParams) []*tools.Adapter {
 	// 获取工作区目录（构造期读取，与原 GlobalCtx.ProjectPath 语义一致）
-	workspaceDir := env.ProjectPath()
+	workspaceDir := p.Env.ProjectPath()
 
 	// 从 browser 工具包获取所有浏览器工具
 	browserAdapters := browsertools.BrowserTools(workspaceDir)
@@ -55,7 +74,7 @@ func NewBrowserAgent(
 	// 添加 agent_exit 工具以允许 Agent 正常退出
 	agentExitAdapter := tools.NewAdapter("agent_exit",
 		"退出 Browser-Agent 并返回最终结果。在任务完成或无法继续时调用此工具。",
-		flow.ExecuteAgentExit,
+		p.Flow.ExecuteAgentExit,
 	).WithSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -71,10 +90,10 @@ func NewBrowserAgent(
 	allAdapters := append(browserAdapters, agentExitAdapter)
 
 	// Add ask_user_for_help tool (skipped in full-yolo mode)
-	if !env.FullYoloMode() {
+	if !p.Env.FullYoloMode() {
 		askUserAdapter := tools.NewAdapter("ask_user_for_help",
 			"When you encounter uncertainty, need user confirmation or authorization during browser task execution, use this tool to request help from the user. Supports three interaction modes: confirm, select, and input.",
-			flow.ExecuteAskUserForHelp,
+			p.Flow.ExecuteAskUserForHelp,
 		).WithSchema(map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -117,19 +136,9 @@ func NewBrowserAgent(
 	}
 
 	// 设置工作区守卫
-	tools.SetGuardOnAdapters(allAdapters, guard)
+	tools.SetGuardOnAdapters(allAdapters, p.Guard)
 
-	return &BrowserAgent{
-		BaseAgent: BaseAgent{
-			LLM:       llm,
-			Publisher: publisher,
-		},
-		promptFmt:  formatter,
-		repoCtx:    repoCtx,
-		Adapters:   allAdapters,
-		maxSteps:   maxSteps,
-		browserMgr: browserMgr,
-	}
+	return allAdapters
 }
 
 // Name 返回 Agent 名称

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"yagent/internal/config"
 	"yagent/internal/globalctx"
 	"yagent/internal/llm"
 	"yagent/internal/messaging"
@@ -110,41 +109,88 @@ func newFullChainDirector(t *testing.T, workDir string, mock *fullChainMockLLM) 
 	env := globalctx.NewEnvView(gctx)
 	repoCtx := globalctx.NewRepoContextStore()
 
-	repoAgent := NewRepoAgent(gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.RepoOps, gctx.FlowOps, gctx.DeepThinkingTool, gctx.Guard, nil, nil, config.EnhancedCommanderConfig{}, mock, 10)
-	codingAgent := NewCodingAgent(gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.SysOps, gctx.ReplaceTool, gctx.RepoOps, gctx.FlowOps, gctx.ThinkingTool, gctx.DeepThinkingTool, gctx.MicroAgentTool, gctx.Guard, repoCtx, nil, nil, nil, config.EnhancedCommanderConfig{}, mock, 10, nil)
-	chatAgent := NewChatAgent(gctx, publisher, env, gctx.FlowOps, gctx.ThinkingTool, gctx.DeepThinkingTool, gctx.MicroAgentTool, gctx.Guard, mock, 10)
+	repoAgent := NewRepoAgent(RepoAgentParams{
+		Formatter:   gctx,
+		Publisher:   publisher,
+		Env:         env,
+		Files:       gctx.FileOps,
+		Search:      gctx.SearchOps,
+		RepoOps:     gctx.RepoOps,
+		Flow:        gctx.FlowOps,
+		DeepThinker: gctx.DeepThinkingTool,
+		Guard:       gctx.Guard,
+		LLM:         mock,
+		MaxSteps:    10,
+	})
+	codingAgent := NewCodingAgent(CodingAgentParams{
+		Formatter:   gctx,
+		Publisher:   publisher,
+		Env:         env,
+		Files:       gctx.FileOps,
+		Search:      gctx.SearchOps,
+		Sys:         gctx.SysOps,
+		Edit:        gctx.ReplaceTool,
+		RepoOps:     gctx.RepoOps,
+		Flow:        gctx.FlowOps,
+		Thinker:     gctx.ThinkingTool,
+		DeepThinker: gctx.DeepThinkingTool,
+		MicroAgent:  gctx.MicroAgentTool,
+		Guard:       gctx.Guard,
+		RepoCtx:     repoCtx,
+		LLM:         mock,
+		MaxSteps:    10,
+	})
+	chatAgent := NewChatAgent(ChatAgentParams{
+		Formatter:   gctx,
+		Publisher:   publisher,
+		Env:         env,
+		Flow:        gctx.FlowOps,
+		Thinker:     gctx.ThinkingTool,
+		DeepThinker: gctx.DeepThinkingTool,
+		MicroAgent:  gctx.MicroAgentTool,
+		Guard:       gctx.Guard,
+		LLM:         mock,
+		MaxSteps:    10,
+	})
 	metaAgent := NewMetaAgent(gctx, publisher, mock, 3)
-	devopsAgent := NewDevOpsAgent(gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.SysOps, gctx.FlowOps, gctx.ThinkingTool, gctx.MicroAgentTool, gctx.Guard, config.EnhancedCommanderConfig{}, mock, 10)
+	devopsAgent := NewDevOpsAgent(DevOpsAgentParams{
+		Formatter:  gctx,
+		Publisher:  publisher,
+		Env:        env,
+		Files:      gctx.FileOps,
+		Search:     gctx.SearchOps,
+		Sys:        gctx.SysOps,
+		Flow:       gctx.FlowOps,
+		Thinker:    gctx.ThinkingTool,
+		MicroAgent: gctx.MicroAgentTool,
+		Guard:      gctx.Guard,
+		LLM:        mock,
+		MaxSteps:   10,
+	})
 
-	director := NewDirectorAgent(
-		gctx,
-		publisher,
-		env,
-		gctx.FileOps,
-		gctx.SearchOps,
-		gctx.SysOps,
-		gctx.ReplaceTool,
-		gctx.FlowOps,
-		gctx.ThinkingTool,
-		gctx.MicroAgentTool,
-		gctx.DeepThinkingTool,
-		gctx.Guard,
-		repoCtx,
-		nil,
-		nil,
-		mock,
-		repoAgent,
-		codingAgent,
-		chatAgent,
-		metaAgent,
-		devopsAgent,
-		nil,
-		10,
-		nil,
-		3,
-		config.Config{},
-		nil,
-	)
+	director := NewDirectorAgent(DirectorAgentParams{
+		Formatter:      gctx,
+		Publisher:      publisher,
+		Env:            env,
+		Files:          gctx.FileOps,
+		Search:         gctx.SearchOps,
+		Sys:            gctx.SysOps,
+		Edit:           gctx.ReplaceTool,
+		Flow:           gctx.FlowOps,
+		Thinker:        gctx.ThinkingTool,
+		MicroAgent:     gctx.MicroAgentTool,
+		DeepThinker:    gctx.DeepThinkingTool,
+		Guard:          gctx.Guard,
+		RepoCtx:        repoCtx,
+		LLM:            mock,
+		RepoAgent:      repoAgent,
+		CodingAgent:    codingAgent,
+		ChatAgent:      chatAgent,
+		MetaAgent:      metaAgent,
+		DevOpsAgent:    devopsAgent,
+		MaxSteps:       10,
+		MetaRetryCount: 3,
+	})
 
 	return director
 }
