@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"yagent/internal/compression"
 	"yagent/internal/http"
 	"yagent/internal/memory"
 
@@ -84,6 +86,9 @@ type rolloutRestoreMsg struct {
 	info memory.RolloutInfo
 	err  error
 	path string
+	// agentName 来自会话清单的文件名 agent 段（主会话为空）：rollout 内容里没有
+	// agent 身份，而 token 记账与状态栏都需要它。
+	agentName string
 }
 
 // ── Resume Update ──
@@ -121,7 +126,7 @@ func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		}
 		// 成功：落地为可续聊任务并退出 resume 模式
 		//（顺序对齐 historyUpdate 的 restoreSession + exitHistoryMode）
-		restoreFromRollout(m, msg.mem, msg.info, msg.path)
+		restoreFromRollout(m, msg.mem, msg.info, msg.path, msg.agentName)
 		exitResumeMode(m)
 		return m, nil
 
@@ -314,7 +319,13 @@ func loadRolloutCmd(m *model, info memory.RolloutSessionInfo) tea.Cmd {
 			opts.SubAgent = true
 		}
 		mem, rinfo, err := memory.ReadRolloutMemory(info.Path, opts)
-		return rolloutRestoreMsg{mem: mem, info: rinfo, err: err, path: info.Path}
+		return rolloutRestoreMsg{
+			mem:       mem,
+			info:      rinfo,
+			err:       err,
+			path:      info.Path,
+			agentName: info.AgentName,
+		}
 	}
 }
 
@@ -363,14 +374,16 @@ func exitResumeMode(m *model) {
 // sets m.currentTask, rebuilds the viewport, and produces the info message
 // with rollout restore stats. exitResumeMode is invoked by the caller
 // (resumeUpdate), mirroring the historyUpdate → restoreSession + exitHistoryMode ordering.
-func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.RolloutInfo, path string) {
+func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.RolloutInfo, path, agentName string) {
 	if mem == nil || len(mem.Messages) == 0 {
 		m.resumeErr = "No messages in this session"
 		return
 	}
 
-	// 1. taskID = SessionID（为空回退文件名 stem），与磁盘 rollout 文件对应。
-	taskID := info.SessionID
+	// 1. taskID 优先 session_meta.task_id（写侧落盘的原任务 ID），回退 SessionID，
+	//    再回退文件名 stem。用原任务 ID 才能让续聊写回同一份 tasks/{id}.jsonl 并派生
+	//    同一 blackboard boardID；老文件没有 task_id，只能回退（B1 起新会话不再如此）。
+	taskID := rolloutFirstNonEmptyStr(info.TaskID, info.SessionID)
 	if taskID == "" {
 		taskID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
@@ -384,7 +397,19 @@ func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.Ro
 	// 3-5. Memory→TUI 落地（与 history 恢复共用 applyRestoredMemory）。
 	infoMsg := applyRestoredMemory(m, mem, taskID, projectDir, "Resumed")
 
-	// 6. 追加恢复统计（来自 RolloutInfo）。
+	// 6. rollout 独有的运行态：token 用量、模型、结束状态。
+	applyRolloutRunState(m, info, agentName)
+
+	// 7. 结束状态回写 Task：中断的会话标 failed 并带上原因，续跑确认框（B3）据此判定。
+	if state := info.FinishState(); state == memory.FinishInterrupted {
+		if task, ok := m.taskManager.GetTask(taskID); ok {
+			task.Status = http.TaskStatusFailed
+			task.Result = restoredInterruptSummary(info)
+		}
+		infoMsg += " · " + restoredInterruptSummary(info)
+	}
+
+	// 8. 追加恢复统计（来自 RolloutInfo）。
 	infoMsg += fmt.Sprintf(" (%d messages, %d tool calls)", info.Messages, info.ToolCalls)
 	var notes []string
 	if info.SkippedReasoning > 0 {
@@ -393,7 +418,12 @@ func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.Ro
 	if info.SkippedBadLines > 0 {
 		notes = append(notes, fmt.Sprintf("%d bad lines skipped", info.SkippedBadLines))
 	}
-	if info.SyntheticOutputs > 0 {
+	if info.SkippedSystemMessages > 0 {
+		notes = append(notes, fmt.Sprintf("%d system prompt skipped", info.SkippedSystemMessages))
+	}
+	if len(info.DanglingToolCalls) > 0 {
+		notes = append(notes, fmt.Sprintf("%d dangling tool calls", len(info.DanglingToolCalls)))
+	} else if info.SyntheticOutputs > 0 {
 		notes = append(notes, fmt.Sprintf("%d synthetic tool outputs", info.SyntheticOutputs))
 	}
 	if info.DroppedOrphanOutputs > 0 {
@@ -405,82 +435,177 @@ func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.Ro
 	m.infoMsg = infoMsg
 }
 
+// rolloutFirstNonEmptyStr 返回第一个非空字符串。
+func rolloutFirstNonEmptyStr(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// restoredInterruptSummary 生成中断会话的一句话摘要（Task.Result 与信息栏共用）。
+func restoredInterruptSummary(info memory.RolloutInfo) string {
+	reason := info.AbortReason
+	if reason == "" {
+		reason = "no terminal event recorded"
+	}
+	step := info.MaxStepObserved
+	if step == 0 {
+		step = info.AssistantTurns
+	}
+	return fmt.Sprintf("interrupted at step %d (%s)", step, reason)
+}
+
 // ── Shared Session Restore (history & resume) ──
 
 // applyRestoredMemory lands a fully loaded conversation memory into the current
-// TUI session: rebuilds logEntries, upserts the taskManager task（map 覆盖写，
-// 重复 ID 直接替换）、sets m.currentTask, rebuilds the viewport, and returns
-// the info message. sourceLabel distinguishes the entry point ("Loaded" for
-// history, "Resumed" for rollout). Logic is migrated verbatim from the original
-// restoreSession so history behavior is unchanged.
+// TUI session: rebuilds logEntries **and the execution state those entries imply**
+// (tool timeline, thinklink journal), upserts the taskManager task（map 覆盖写，
+// 重复 ID 直接替换）、sets m.currentTask, rebuilds the viewport, and returns the
+// info message. sourceLabel distinguishes the entry point ("Loaded" for history,
+// "Resumed" for rollout).
+//
+// 条目形状与实时路径逐项对齐（formatEventAsEntry / handleTaskEventMsg），否则恢复出的
+// 会话会落到 formatLogEntry 的 default 分支，渲染成 "● tool_result …" 这样的单行文本，
+// 丢失用户消息框、工具卡片、✅/❌ 状态与 diff。关键约定：
+//   - 一次工具调用只产一条 tool_call_start 条目，其结果就地并入该条目——实时路径的
+//     tool_call_result 分支同样是更新既有条目而非追加新条目；
+//   - 悬空调用（reader 合成了"会话中断前未返回结果"占位）标为 Canceled，这正是断点位置；
+//   - system 消息不进日志：实时路径从不渲染 system 消息，且 reader 默认已将其丢弃。
 func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, projectDir, sourceLabel string) string {
-	// 1. Clear existing log entries
+	// 1. 清空视图与执行态：二次恢复不能叠加在上一个会话的时间线/计划之上。
 	m.logEntries = nil
+	m.timelineEntries = nil
+	m.timelineCache = ""
+	m.timelineCacheKey = ""
+	m.thinklinkEntries = nil
+	if m.toolCallEntries == nil {
+		m.toolCallEntries = make(map[string]*ToolEntry)
+	} else {
+		clear(m.toolCallEntries)
+	}
+	resetTokenState(m)
 
-	// 2. Convert each message to a logEntry
-	lastGroupID := "" // track GroupID changes for inserting sub-agent headers
-	for _, msg := range mem.Messages {
-		entry := logEntry{
-			timestamp: msg.Timestamp,
+	// 2. 按 call_id 索引工具结果，供 assistant 的 ToolCalls 配对。
+	toolResults := make(map[string]*memory.ChatMessage)
+	for i := range mem.Messages {
+		msg := &mem.Messages[i]
+		if msg.Type != memory.MessageTypeTool || msg.ToolCallID == nil {
+			continue
 		}
+		if _, dup := toolResults[*msg.ToolCallID]; !dup {
+			toolResults[*msg.ToolCallID] = msg
+		}
+	}
+	consumed := make(map[string]bool, len(toolResults))
+
+	appendEntry := func(e logEntry) {
+		e.isVerbose = isVerboseEventType(e.eventType)
+		m.logEntries = append(m.logEntries, e)
+	}
+
+	lastGroupID := "" // track GroupID changes for inserting sub-agent headers
+	assistantTurn := 0
+	for i := range mem.Messages {
+		msg := &mem.Messages[i]
 
 		// 检测 GroupID 变化，插入分组头部
 		if msg.IsSubAgent && msg.GroupID != "" && msg.GroupID != lastGroupID {
-			headerEntry := logEntry{
+			appendEntry(logEntry{
 				eventType: "sub_agent_header",
 				from:      "System",
 				content:   "── Sub-Agent ──",
-			}
-			m.logEntries = append(m.logEntries, headerEntry)
+			})
 			lastGroupID = msg.GroupID
 		} else if !msg.IsSubAgent {
 			lastGroupID = ""
 		}
 
 		// Sub-agent 消息加上前缀和缩进标记
+		var prefix, from string
 		if msg.IsSubAgent {
-			entry.prefix = "  │ "
-			entry.from = "Sub-Agent"
+			prefix = "  │ "
+			from = "Sub-Agent"
 		}
 
 		switch msg.Type {
-		case memory.MessageTypeSystem:
-			entry.eventType = "system"
-			if !msg.IsSubAgent {
-				entry.from = "System"
-			}
-			entry.content = msg.Content
-
 		case memory.MessageTypeHuman:
-			entry.eventType = "user_input"
 			if !msg.IsSubAgent {
-				entry.from = "You"
+				from = "You"
 			}
-			entry.content = msg.Content
+			// 实时路径同名 eventType → renderUserMessageBox
+			appendEntry(logEntry{
+				timestamp: msg.Timestamp,
+				eventType: "user_message",
+				from:      from,
+				content:   msg.Content,
+				prefix:    prefix,
+			})
+			m.thinklinkEntries = append(m.thinklinkEntries, ThinklinkEntry{
+				ID:        fmt.Sprintf("restored-input-%d", len(m.thinklinkEntries)),
+				Kind:      "user_input",
+				Content:   msg.Content,
+				Timestamp: msg.Timestamp,
+			})
 
 		case memory.MessageTypeAssistant:
-			entry.eventType = "ai_response"
 			if !msg.IsSubAgent {
-				entry.from = "Assistant"
+				from = "Assistant"
 			}
-			entry.content = msg.Content
+			assistantTurn++
+			if msg.Content != "" {
+				appendEntry(logEntry{
+					timestamp: msg.Timestamp,
+					eventType: "ai_response",
+					from:      from,
+					content:   msg.Content,
+					prefix:    prefix,
+					agentName: from,
+				})
+			}
+			// thinklink：复用后端的抽取函数（compression 包的正则），不自己造解析
+			for _, block := range compression.ExtractThoughtAndPlanBlocks(msg.Content) {
+				m.thinklinkEntries = append(m.thinklinkEntries, ThinklinkEntry{
+					ID:        fmt.Sprintf("restored-plan-%d", len(m.thinklinkEntries)),
+					Kind:      "thought_plan",
+					Content:   block,
+					Timestamp: msg.Timestamp,
+					Step:      assistantTurn,
+				})
+			}
+			for _, tc := range msg.ToolCalls {
+				appendRestoredToolCall(m, appendEntry, tc, msg, toolResults, consumed, prefix, from)
+			}
 
 		case memory.MessageTypeTool:
-			entry.eventType = "tool_result"
-			if !msg.IsSubAgent {
-				entry.from = "Tool"
+			// 已并入对应 tool_call_start 条目的结果不再单独成条
+			if msg.ToolCallID != nil && consumed[*msg.ToolCallID] {
+				continue
 			}
-			entry.content = msg.Content
+			if !msg.IsSubAgent {
+				from = "Tool"
+			}
+			appendRestoredStandaloneResult(m, appendEntry, msg, prefix, from)
+
+		case memory.MessageTypeSystem:
+			// 不进日志：实时路径从不渲染 system 消息。压缩摘要（IsAnchored）的呈现
+			// 留给 B4——彼时摘要经 compacted 事件恢复，而非 role=system 消息。
+			continue
 
 		default:
-			entry.eventType = string(msg.Type)
 			if !msg.IsSubAgent {
-				entry.from = "Unknown"
+				from = "Unknown"
 			}
-			entry.content = msg.Content
+			appendEntry(logEntry{
+				timestamp: msg.Timestamp,
+				eventType: string(msg.Type),
+				from:      from,
+				content:   msg.Content,
+				prefix:    prefix,
+			})
 		}
-
-		m.logEntries = append(m.logEntries, entry)
 	}
 
 	// 3. Extract title from first human message
@@ -519,6 +644,226 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 
 	// 7. Return info message（sourceLabel 区分入口：Loaded / Resumed）
 	return fmt.Sprintf("%s session: %s", sourceLabel, title)
+}
+
+// appendRestoredToolCall 为一次已完成的工具调用构造条目：一条 tool_call_start 日志
+// 条目（结果就地并入，形状对齐实时路径的 start+result 合并语义）+ 一条时间线条目。
+func appendRestoredToolCall(
+	m *model,
+	appendEntry func(logEntry),
+	tc memory.ToolCallData,
+	host *memory.ChatMessage,
+	toolResults map[string]*memory.ChatMessage,
+	consumed map[string]bool,
+	prefix, from string,
+) {
+	args := string(tc.Function.Arguments)
+	summary := extractToolSummary(tc.Function.Name, args)
+
+	entry := logEntry{
+		timestamp:        host.Timestamp,
+		eventType:        "tool_call_start",
+		from:             from,
+		prefix:           prefix,
+		toolName:         tc.Function.Name,
+		toolCallID:       tc.ID,
+		content:          args,
+		executionSummary: summary,
+	}
+
+	te := NewToolEntry(ToolCallInfo{
+		ID:        tc.ID,
+		Name:      tc.Function.Name,
+		Arguments: args,
+		Summary:   summary,
+	})
+	te.Timestamp = host.Timestamp
+
+	status := ToolStatusSuccess
+	isError := false
+	var duration time.Duration
+
+	if res := toolResults[tc.ID]; res != nil {
+		consumed[tc.ID] = true
+		isError = strings.HasPrefix(res.Content, "Error:")
+		entry.timestamp = res.Timestamp
+		entry.content = res.Content
+		entry.resultBrief = extractResultBrief(tc.Function.Name, res.Content)
+		entry.diffText = extractDiffFromResult(res.Content)
+		duration = restoredToolDuration(res.Metadata)
+
+		te.SetResult(ToolResultInfo{
+			ToolCallID: tc.ID,
+			Name:       tc.Function.Name,
+			Content:    res.Content,
+			IsError:    isError,
+		})
+		switch {
+		case isSyntheticToolOutput(res):
+			// reader 为悬空调用合成的占位输出 → 断点位置，标 Canceled 而非 Success
+			te.SetCanceled()
+			status = ToolStatusCanceled
+			isError = false
+		case isError:
+			status = ToolStatusError
+		}
+	} else {
+		// 防御：reader 的配对归一化保证不会出现无输出的调用
+		te.SetCanceled()
+		status = ToolStatusCanceled
+	}
+
+	entry.toolEntry = te
+	appendEntry(entry)
+
+	appendRestoredTimeline(m, tc.ID, tc.Function.Name, summary,
+		entry.timestamp, status, isError, duration)
+}
+
+// appendRestoredStandaloneResult 为无法配对到调用的工具结果构造独立条目
+//（对齐 formatEventAsEntry 的 tool_call_result 分支，含新式 ToolEntry 渲染）。
+func appendRestoredStandaloneResult(m *model, appendEntry func(logEntry), msg *memory.ChatMessage, prefix, from string) {
+	callID := ""
+	if msg.ToolCallID != nil {
+		callID = *msg.ToolCallID
+	}
+	isError := strings.HasPrefix(msg.Content, "Error:")
+	entry := logEntry{
+		timestamp:   msg.Timestamp,
+		eventType:   "tool_call_result",
+		from:        from,
+		prefix:      prefix,
+		toolCallID:  callID,
+		content:     msg.Content,
+		resultBrief: extractResultBrief("", msg.Content),
+		diffText:    extractDiffFromResult(msg.Content),
+	}
+	te := NewToolEntry(ToolCallInfo{ID: callID, Summary: extractToolSummary("", "")})
+	te.Timestamp = msg.Timestamp
+	te.SetResult(ToolResultInfo{
+		ToolCallID: callID,
+		Content:    msg.Content,
+		IsError:    isError,
+	})
+	if isSyntheticToolOutput(msg) {
+		te.SetCanceled()
+	}
+	entry.toolEntry = te
+	appendEntry(entry)
+}
+
+// appendRestoredTimeline 追加工具时间线条目，连续同名可合并工具收进 SubEntries——
+// 合并规则与实时路径一致，否则恢复后 20 次 read_file 会显示 20 行而实时只显示 1 行。
+func appendRestoredTimeline(m *model, id, name, detail string, ts time.Time,
+	status ToolStatus, isError bool, duration time.Duration) {
+	if n := len(m.timelineEntries); n > 0 {
+		last := m.timelineEntries[n-1]
+		if last.Kind == TimelineKindTool && last.Name == name && IsMergeableTool(name) {
+			last.SubEntries = append(last.SubEntries, &TimelineEntry{
+				ID:        id,
+				Kind:      TimelineKindTool,
+				Timestamp: ts,
+				Status:    status,
+				Name:      name,
+				Detail:    detail,
+				Duration:  duration,
+				IsError:   isError,
+			})
+			return
+		}
+	}
+	m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+		ID:        id,
+		Kind:      TimelineKindTool,
+		Timestamp: ts,
+		Status:    status,
+		Name:      name,
+		Detail:    detail,
+		Duration:  duration,
+		IsError:   isError,
+	})
+}
+
+// isSyntheticToolOutput 判断工具消息是否为 reader 为悬空调用合成的占位输出。
+func isSyntheticToolOutput(msg *memory.ChatMessage) bool {
+	if msg == nil || msg.Metadata == nil {
+		return false
+	}
+	synthetic, _ := msg.Metadata["synthetic"].(bool)
+	return synthetic
+}
+
+// restoredToolDuration 从恢复出的 metadata 取工具耗时（写侧目前恒记 0，B1 起记真实值）。
+func restoredToolDuration(md map[string]interface{}) time.Duration {
+	seconds, _ := md["duration_seconds"].(float64)
+	if seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds * float64(time.Second))
+}
+
+// resetTokenState 清空 token 记账，避免上一个会话的用量残留到恢复出的会话里。
+func resetTokenState(m *model) {
+	m.inputTokens = 0
+	m.outputTokens = 0
+	m.cacheReadInputTokens = 0
+	m.cacheCreationInputTokens = 0
+	m.totalInputTokens = 0
+	m.currentAgentRunTokens = AgentRunTokens{}
+	for k := range m.tokenUsagePerAgent {
+		delete(m.tokenUsagePerAgent, k)
+	}
+}
+
+// applyRolloutRunState 落地 rollout 独有的运行态：token 用量、模型、当前 agent。
+// history 路径（datamanager 的 tasks/*.jsonl）没有这些证据，故不共用本函数。
+//
+// 字段口径逐项对齐实时路径 handleTaskEventMsg 的 ai_response 分支；差异见
+// memory.RolloutTokenTotals 的注释（cache_creation 与 total_input 未落盘，按 TUI
+// 既有回退公式近似）。
+func applyRolloutRunState(m *model, info memory.RolloutInfo, agentName string) {
+	if agentName == "" {
+		agentName = "director"
+	}
+
+	m.inputTokens = info.Tokens.Input
+	m.outputTokens = info.Tokens.Output
+	m.cacheReadInputTokens = info.Tokens.CachedInput
+	// provider 口径总输入：缺 total_input_tokens 时的既有回退公式（input+cacheRead+cacheCreation）
+	m.totalInputTokens = info.Tokens.Input + info.Tokens.CachedInput
+
+	usage := AgentTokenUsage{
+		AgentName:            agentName,
+		InputTokens:          info.Tokens.Input,
+		OutputTokens:         info.Tokens.Output,
+		CacheReadInputTokens: info.Tokens.CachedInput,
+		TotalInputTokens:     m.totalInputTokens,
+	}
+	m.currentAgentRunTokens = AgentRunTokens{
+		AgentName:            usage.AgentName,
+		InputTokens:          usage.InputTokens,
+		OutputTokens:         usage.OutputTokens,
+		CacheReadInputTokens: usage.CacheReadInputTokens,
+		TotalInputTokens:     usage.TotalInputTokens,
+		ContextTokens:        info.Tokens.LastContextTokens,
+	}
+	if m.tokenUsagePerAgent == nil {
+		m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+	}
+	m.tokenUsagePerAgent[agentName] = &usage
+
+	m.currentAgent = agentName
+	if info.Model != "" {
+		m.currentModel = info.Model
+		m.refreshContextWindow()
+	}
+	// 恢复出的会话已有产出：taskStarted 决定输入框边框配色与 dashboard 可见性
+	m.taskStarted = true
+
+	// 只失效缓存即可：View 会按需重算 token 仪表盘与状态栏。
+	//（不要先赋值 cachedTokenDashboard 再失效——invalidateFooterCache 会把它清空，
+	// 实时路径里那对赋值/失效语句的前半段其实是无效功。）
+	m.invalidateFooterCache()
 }
 
 // ── Resume View Rendering ──
