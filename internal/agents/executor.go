@@ -609,7 +609,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 				slog.Warn("LLM returned text-only response, retrying", "agent", cfg.AgentName, "step", i, "no_action_count", noActionCount)
 
 				reminderContent := "SYSTEM REMINDER: You just ended your response without calling any tools, which immediately terminates your run and leaves the task unexecuted. This is unacceptable.\n\n" +
-					"You must immediately invoke a tool to execute the next step of your plan (explore/edit/run/verify); a `## Thought & Plan` block alone does not constitute action.\n\n" +
+					"You must immediately invoke a tool to execute the next step of your plan (explore/edit/run/verify); a `<thought>` block alone does not constitute action.\n\n" +
 					"Only call `agent_exit` when the task is truly complete or you are genuinely unable to proceed.\n\n" +
 					"Do not repeat your plan; take immediate action."
 

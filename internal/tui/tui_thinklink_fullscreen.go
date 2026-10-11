@@ -7,12 +7,14 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"yagent/internal/thinklink"
 )
 
 // thinklink 全屏视图调色板 —— 与 dashboard 的设计语言保持一致：
 // 薰衣草强调色 + 靛蓝圆角边框 + dim 标签 / 亮色数值分层。
 var (
-	tlAccent    = lipgloss.Color("141") // ◆ 图标、选中行导轨
+	tlAccent    = lipgloss.Color("141") // ◆ 图标、选中行导轨、字段标签
 	tlBorderFg  = lipgloss.Color("62")  // 详情面板圆角边框
 	tlTitleFg   = lipgloss.Color("250") // 标题近白
 	tlHairFg    = lipgloss.Color("238") // 发丝分隔线
@@ -23,6 +25,14 @@ var (
 	tlChipFg    = lipgloss.Color("16")  // chip 前景（近黑）
 	tlPreviewFg = lipgloss.Color("246") // 未选中行预览
 	tlSelPrevFg = lipgloss.Color("252") // 选中行预览
+
+	// 结构化 thought 详情的语义配色
+	tlGoalFg    = lipgloss.Color("252") // GOAL 值：亮白，最突出
+	tlFieldFg   = lipgloss.Color("246") // STEP/REASON 值
+	tlDoneFg    = lipgloss.Color("114") // 已完成条目 ✓（柔和绿）
+	tlCurrentFg = lipgloss.Color("141") // 进行中条目 ▸（薰衣草强调）
+	tlPendingFg = lipgloss.Color("238") // 待处理条目 ○（暗）
+	tlDoneText  = lipgloss.Color("240") // 已完成条目文字（弱化）
 )
 
 var (
@@ -30,7 +40,21 @@ var (
 	thinklinkDimStyle    = lipgloss.NewStyle().Foreground(tlDimFg)
 	thinklinkHairStyle   = lipgloss.NewStyle().Foreground(tlHairFg)
 	thinklinkBorderStyle = lipgloss.NewStyle().Foreground(tlBorderFg)
+
+	// 结构化 thought 详情样式
+	tlFieldLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(tlAccent)
+	tlGoalValueStyle  = lipgloss.NewStyle().Foreground(tlGoalFg)
+	tlFieldValueStyle = lipgloss.NewStyle().Foreground(tlFieldFg)
+	tlDoneGlyphStyle  = lipgloss.NewStyle().Bold(true).Foreground(tlDoneFg)
+	tlCurGlyphStyle   = lipgloss.NewStyle().Bold(true).Foreground(tlCurrentFg)
+	tlPendGlyphStyle  = lipgloss.NewStyle().Foreground(tlPendingFg)
+	tlDoneTextStyle   = lipgloss.NewStyle().Foreground(tlDoneText)
+	tlCurTextStyle    = lipgloss.NewStyle().Bold(true).Foreground(tlSelPrevFg)
+	tlPendTextStyle   = lipgloss.NewStyle().Foreground(tlPreviewFg)
 )
+
+// thinklinkLabelGutter 结构化详情中字段标签的对齐槽宽（"REASON" 6 + 2 空格）。
+const thinklinkLabelGutter = 8
 
 // thinklinkChip 渲染类型徽标（USER / PLAN），彩底深字 chip。
 func thinklinkChip(kind string, selected bool) string {
@@ -104,17 +128,18 @@ func initThinklinkViewport(m *model) {
 	m.thinklinkVP = &vp
 }
 
-// syncThinklinkDetail 将 cursor 所指条目全文写入详情 viewport 并回到顶部。
+// syncThinklinkDetail 将 cursor 所指条目的结构化渲染结果写入详情 viewport 并回到顶部。
 func syncThinklinkDetail(m *model) {
 	clampThinklinkCursor(m)
 	if m.thinklinkVP == nil {
 		return
 	}
-	content := ""
+	entry := ThinklinkEntry{}
 	if m.thinklinkCursor >= 0 && m.thinklinkCursor < len(m.thinklinkEntries) {
-		content = m.thinklinkEntries[m.thinklinkCursor].Content
+		entry = m.thinklinkEntries[m.thinklinkCursor]
 	}
-	m.thinklinkVP.SetContent(wrapThinklinkContent(content, thinklinkDetailWidth(m)))
+	content := thinklinkDetailContent(entry, thinklinkDetailWidth(m))
+	m.thinklinkVP.SetContent(content)
 	m.thinklinkVP.GotoTop()
 }
 
@@ -127,27 +152,6 @@ func clampThinklinkCursor(m *model) {
 	if m.thinklinkCursor < 0 {
 		m.thinklinkCursor = 0
 	}
-}
-
-// wrapThinklinkContent 将内容按 rune 硬折行到指定宽度（不引入额外依赖）。
-func wrapThinklinkContent(s string, width int) string {
-	if width < 10 {
-		width = 10
-	}
-	var out []string
-	for _, line := range strings.Split(s, "\n") {
-		if line == "" {
-			out = append(out, "")
-			continue
-		}
-		runes := []rune(line)
-		for len(runes) > width {
-			out = append(out, string(runes[:width]))
-			runes = runes[width:]
-		}
-		out = append(out, string(runes))
-	}
-	return strings.Join(out, "\n")
 }
 
 // truncateThinklinkRunes 按 rune 截断字符串，超出部分以 "…" 结尾。
@@ -188,6 +192,210 @@ func firstThinklinkLine(s string) string {
 		return fallback
 	}
 	return "(empty)"
+}
+
+// wrapWords 按词将纯文本折行到 width 列（超长单词硬切）；返回不含样式的行切片。
+// 空串返回单元素空切片，保证调用方至少有一行可渲染。
+func wrapWords(s string, width int) []string {
+	if width < 4 {
+		width = 4
+	}
+	var out []string
+	for _, para := range strings.Split(s, "\n") {
+		words := strings.Fields(para)
+		if len(words) == 0 {
+			out = append(out, "")
+			continue
+		}
+		cur := ""
+		for _, w := range words {
+			for len([]rune(w)) > width { // 超长单词硬切
+				if cur != "" {
+					out = append(out, cur)
+					cur = ""
+				}
+				r := []rune(w)
+				out = append(out, string(r[:width]))
+				w = string(r[width:])
+			}
+			switch {
+			case cur == "":
+				cur = w
+			case len([]rune(cur))+1+len([]rune(w)) <= width:
+				cur += " " + w
+			default:
+				out = append(out, cur)
+				cur = w
+			}
+		}
+		if cur != "" {
+			out = append(out, cur)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{""}
+	}
+	return out
+}
+
+// thinklinkDetailContent 返回条目在详情面板中的完整结构化渲染文本（含样式，按 \n 连接）。
+// 供滚动模式的 viewport 使用。
+func thinklinkDetailContent(entry ThinklinkEntry, innerW int) string {
+	return strings.Join(thinklinkDetailLines(entry, innerW), "\n")
+}
+
+// thinklinkDetailLines 将条目渲染为已样式、每行显示宽度 ≤ innerW 的行切片。
+// 用户输入与非结构化（旧 markdown）内容走原文词折行；结构化 thought 块走字段化渲染。
+func thinklinkDetailLines(entry ThinklinkEntry, innerW int) []string {
+	if innerW < 10 {
+		innerW = 10
+	}
+	if entry.Kind == "user_input" {
+		return renderRawDetailLines(entry.Content, innerW, lipgloss.NewStyle().Foreground(tlSelPrevFg))
+	}
+	tp := thinklink.ParseThoughtPlan(entry.Content)
+	if tp.Empty() {
+		// 旧 markdown / 非结构化：原文按词折行渲染（兜底，不丢内容）。
+		return renderRawDetailLines(entry.Content, innerW, tlFieldValueStyle)
+	}
+	return renderThoughtPlanLines(tp, innerW)
+}
+
+// renderRawDetailLines 将纯文本按词折行并逐行套用 style。
+func renderRawDetailLines(content string, innerW int, style lipgloss.Style) []string {
+	wrapped := wrapWords(strings.TrimSpace(content), innerW)
+	out := make([]string, 0, len(wrapped))
+	for _, l := range wrapped {
+		if l == "" {
+			out = append(out, "")
+			continue
+		}
+		out = append(out, style.Render(l))
+	}
+	return out
+}
+
+// renderThoughtPlanLines 渲染结构化 thought 块：
+// GOAL / STEP / REASON 三个带标签字段 + PLAN 清单（状态图标 + 进度计数）。
+func renderThoughtPlanLines(tp thinklink.ThoughtPlan, innerW int) []string {
+	var out []string
+	out = append(out, renderFieldLines("GOAL", tp.Goal, innerW, tlGoalValueStyle)...)
+	out = append(out, renderFieldLines("STEP", tp.Step, innerW, tlFieldValueStyle)...)
+	out = append(out, renderFieldLines("REASON", tp.Reason, innerW, tlFieldValueStyle)...)
+
+	if len(tp.Plan) > 0 {
+		if len(out) > 0 {
+			out = append(out, "")
+		}
+		out = append(out, renderPlanHeader(tp.Plan, innerW))
+		for _, item := range tp.Plan {
+			out = append(out, renderPlanItemLines(item, innerW)...)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{""}
+	}
+	return out
+}
+
+// renderFieldLines 渲染一个 "标签  值" 字段，值按词折行、续行对齐到标签槽之后。
+// 值为空时返回 nil（不占行）。
+func renderFieldLines(label, value string, innerW int, valStyle lipgloss.Style) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	textW := innerW - thinklinkLabelGutter
+	if textW < 8 {
+		textW = 8
+	}
+	wrapped := wrapWords(value, textW)
+	out := make([]string, 0, len(wrapped))
+	pad := thinklinkLabelGutter - len(label)
+	if pad < 1 {
+		pad = 1
+	}
+	labelPart := tlFieldLabelStyle.Render(label) + strings.Repeat(" ", pad)
+	gutter := strings.Repeat(" ", thinklinkLabelGutter)
+	for i, l := range wrapped {
+		if i == 0 {
+			out = append(out, labelPart+valStyle.Render(l))
+			continue
+		}
+		out = append(out, gutter+valStyle.Render(l))
+	}
+	return out
+}
+
+// renderPlanHeader 渲染 PLAN 段标题：左侧 "PLAN"，右侧右对齐的 "已完成/总数" 计数。
+func renderPlanHeader(items []thinklink.PlanItem, innerW int) string {
+	done := 0
+	for _, it := range items {
+		if it.Status == thinklink.PlanDone {
+			done++
+		}
+	}
+	left := tlFieldLabelStyle.Render("PLAN")
+	right := thinklinkDimStyle.Render(fmt.Sprintf("%d/%d ", done, len(items)))
+	fill := innerW - lipgloss.Width(left) - lipgloss.Width(right)
+	if fill < 1 {
+		fill = 1
+	}
+	return left + strings.Repeat(" ", fill) + right
+}
+
+// renderPlanItemLines 渲染单条计划：状态图标（✓/▸/○）+ 词折行文本，续行缩进对齐。
+func renderPlanItemLines(item thinklink.PlanItem, innerW int) []string {
+	switch item.Status {
+	case thinklink.PlanDone:
+		return renderPlanItem("✓", tlDoneGlyphStyle, item.Text, tlDoneTextStyle, innerW)
+	case thinklink.PlanCurrent:
+		return renderPlanItem("▸", tlCurGlyphStyle, item.Text, tlCurTextStyle, innerW)
+	default:
+		return renderPlanItem("○", tlPendGlyphStyle, item.Text, tlPendTextStyle, innerW)
+	}
+}
+
+// renderPlanItem 计划条目布局：2 空格缩进 + 图标(1) + 空格(1) = 4 列前缀，文本占余宽。
+func renderPlanItem(mark string, glyphStyle lipgloss.Style, text string, textStyle lipgloss.Style, innerW int) []string {
+	const indent = "  "
+	prefix := indent + glyphStyle.Render(mark) + " "
+	contPrefix := indent + "  " + " " // 与文本起点对齐（图标宽 1 + 空格 1）
+	textW := innerW - 4
+	if textW < 8 {
+		textW = 8
+	}
+	wrapped := wrapWords(strings.TrimSpace(text), textW)
+	out := make([]string, 0, len(wrapped))
+	for i, l := range wrapped {
+		if i == 0 {
+			out = append(out, prefix+textStyle.Render(l))
+			continue
+		}
+		out = append(out, contPrefix+textStyle.Render(l))
+	}
+	return out
+}
+
+// thinklinkListPreview 返回列表行预览文本：
+// 用户输入取首个非空行；结构化 thought 优先取进行中条目，其次 GOAL；
+// 非结构化兜底取首个非空行。
+func thinklinkListPreview(entry ThinklinkEntry) string {
+	if entry.Kind == "user_input" {
+		return firstThinklinkLine(entry.Content)
+	}
+	tp := thinklink.ParseThoughtPlan(entry.Content)
+	if !tp.Empty() {
+		for _, it := range tp.Plan {
+			if it.Status == thinklink.PlanCurrent && strings.TrimSpace(it.Text) != "" {
+				return it.Text
+			}
+		}
+		if strings.TrimSpace(tp.Goal) != "" {
+			return tp.Goal
+		}
+	}
+	return firstThinklinkLine(entry.Content)
 }
 
 // thinklinkHintBar 渲染底部 keycap 提示条（与 dashboard 的 dashKeycap 风格一致）。
@@ -407,22 +615,20 @@ func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH i
 	if m.thinklinkDetailActive && m.thinklinkVP != nil {
 		inner = strings.Split(m.thinklinkVP.View(), "\n")
 	} else {
-		wrapped := strings.Split(wrapThinklinkContent(entry.Content, innerW), "\n")
-		truncated := false
-		if len(wrapped) > detailH {
-			wrapped = wrapped[:detailH]
-			truncated = true
-		}
-		if truncated && len(wrapped) > 0 {
-			last := wrapped[len(wrapped)-1]
-			suffix := thinklinkDimStyle.Render(" …more (enter to scroll)")
-			room := innerW - lipgloss.Width(last) - lipgloss.Width(suffix)
-			if room < 0 {
-				last = lipgloss.NewStyle().MaxWidth(innerW - lipgloss.Width(suffix)).Render(last)
+		lines := thinklinkDetailLines(entry, innerW)
+		if len(lines) > detailH {
+			lines = lines[:detailH]
+			if len(lines) > 0 {
+				last := lines[len(lines)-1]
+				suffix := thinklinkDimStyle.Render(" …more (enter to scroll)")
+				room := innerW - lipgloss.Width(last) - lipgloss.Width(suffix)
+				if room < 0 {
+					last = lipgloss.NewStyle().MaxWidth(innerW - lipgloss.Width(suffix)).Render(last)
+				}
+				lines[len(lines)-1] = last + suffix
 			}
-			wrapped[len(wrapped)-1] = last + suffix
 		}
-		inner = wrapped
+		inner = lines
 	}
 	// 截断/补齐到 detailH 行
 	if len(inner) > detailH {
@@ -482,7 +688,7 @@ func renderThinklinkListLine(m *model, idx, width int) string {
 	if avail < 0 {
 		avail = 0
 	}
-	preview := truncateThinklinkRunes(firstThinklinkLine(e.Content), avail)
+	preview := truncateThinklinkRunes(thinklinkListPreview(e), avail)
 	prevStyle := lipgloss.NewStyle().Foreground(tlPreviewFg)
 	if selected {
 		prevStyle = lipgloss.NewStyle().Foreground(tlSelPrevFg)
