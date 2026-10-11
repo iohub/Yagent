@@ -250,6 +250,9 @@ func (l *LoggingEngine) Model() string {
 type Client struct {
 	Engine        Engine // default engine (backward-compatible)
 	Config        *config.Config
+	// ConfigPath 是配置文件（config.toml）的路径，用于把 provider 选择
+	// 持久化写回配置文件；未赋值时持久化请求返回明确错误。
+	ConfigPath  string
 	engines       map[string]Engine // cached engines keyed by provider name
 	mu            sync.RWMutex
 	// agentProviderOverrides 存储运行时 per-agent provider 覆盖
@@ -525,6 +528,40 @@ func (c *Client) ClearToolProvider(toolName string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.toolProviderOverrides, toolName)
+}
+
+// PersistProviderChoice 将 provider 选择持久化写入 config.toml（空格确认为永久切换时调用）。
+// kind: "global"（全局默认，name 为空）| "agent"（name 为 agent 名）| "tool"（name 为工具名）。
+// 仅写文件，不改动内存状态——内存切换由 SwitchProvider/SetAgentProvider/SetToolProvider 负责。
+func (c *Client) PersistProviderChoice(kind, name, provider string) error {
+	if c.ConfigPath == "" {
+		return fmt.Errorf("PersistProviderChoice: config path is empty (set Client.ConfigPath to enable persistence)")
+	}
+
+	var section string
+	switch kind {
+	case "global":
+		section = "global.llm"
+	case "agent":
+		if name == "" {
+			return fmt.Errorf("PersistProviderChoice: agent name is empty")
+		}
+		section = "agents.llm." + name
+	case "tool":
+		if name == "" {
+			return fmt.Errorf("PersistProviderChoice: tool name is empty")
+		}
+		section = "tools.llm." + name
+	default:
+		return fmt.Errorf("PersistProviderChoice: unknown kind %q", kind)
+	}
+
+	if err := config.PersistUseProvider(c.ConfigPath, section, provider); err != nil {
+		return fmt.Errorf("PersistProviderChoice: %w", err)
+	}
+	slog.Info("Persisted provider choice to config file",
+		"kind", kind, "name", name, "provider", provider, "config_path", c.ConfigPath)
+	return nil
 }
 
 // GetAgentEngine resolves and returns the engine for a specific agent.

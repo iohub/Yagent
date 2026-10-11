@@ -152,6 +152,8 @@ func runTUI(taskFile, disableAgents string) {
 		slog.Error("Failed to create client", "error", util.WrapError(ctx, err, "main::NewClient"))
 		os.Exit(1)
 	}
+	// 记录配置文件路径，供 TUI 空格确认时把 provider 选择写回 config.toml
+	client.ConfigPath = configPath
 
 	yagent, err := app.NewYagent(client)
 	if err != nil {
@@ -254,6 +256,8 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 		slog.Error("Failed to create assistant.client", "error", util.WrapError(ctx, err, "main::NewClient"))
 		os.Exit(1)
 	}
+	// 记录配置文件路径，供运行时持久化 provider 选择写回 config.toml
+	client.ConfigPath = configPath
 
 	yagent, err := app.NewYagent(client)
 	if err != nil {
@@ -312,6 +316,8 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 		slog.Error("Failed to create client", "error", util.WrapError(ctx, err, "main::NewClient"))
 		os.Exit(1)
 	}
+	// 记录配置文件路径，供运行时持久化 provider 选择写回 config.toml
+	client.ConfigPath = configPath
 
 	yagent, err := app.NewYagent(client)
 	if err != nil {

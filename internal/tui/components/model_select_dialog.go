@@ -17,13 +17,17 @@ type ModelOption struct {
 }
 
 // ModelSelectDialog 是 provider 选择列表：↑/↓（或 j/k）移动，数字键 1-9 直选，
-// Enter 确认，Esc 取消。条目超出可用高度时按游标滚动并显示被裁剪的条数。
+// Enter 确认（临时切换），空格确认并写入 config.toml（永久切换），Esc 取消。
+// 条目超出可用高度时按游标滚动并显示被裁剪的条数。
 type ModelSelectDialog struct {
 	options     []ModelOption
 	cursor      int
 	width       int
 	height      int
 	Selected    string // 确认后为 provider 名；取消时为 ""
+	// Persist 表示本次确认是否把选择持久化写入 config.toml：
+	// 空格确认为 true（永久切换），Enter 与数字直选为 false（仅临时切换）。
+	Persist     bool
 	CurrentProv string // 当前生效的 provider，用于标记与初始游标位置
 }
 
@@ -81,10 +85,17 @@ func (d *ModelSelectDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 		d.cursor = 0
 	case "end", "G":
 		d.cursor = len(d.options) - 1
-	case "enter", " ":
+	case "enter":
+		// Enter：临时切换，不写配置文件
 		d.confirm()
+		d.Persist = false
+	case " ", "space": // bubbletea v2 中空格键的 String() 为 "space"
+		// 空格：永久切换，TUI 层确认后调用 PersistProviderChoice 写回 config.toml
+		d.confirm()
+		d.Persist = true
 	case "esc", "q", "Q":
 		d.Selected = "" // cancelled
+		d.Persist = false
 	case "ctrl+c":
 		return d, tea.Quit
 	default:
@@ -133,6 +144,24 @@ func (d *ModelSelectDialog) selectByDigit(key string) {
 	}
 	d.cursor = idx
 	d.Selected = d.options[idx].Provider
+	d.Persist = false // 数字直选仅临时切换
+}
+
+// modelDialogHint 返回模型选择对话框的单行按键提示，体现 Space=保存到配置
+// （永久切换）。与共享 dialogHint 相同的逐级缩短降级模式——提示换行会撑破
+// listBudget 的高度预算。共享 dialogHint 供 AgentSelectDialog 等使用，不改动。
+func modelDialogHint(innerWidth int, multi bool) string {
+	hint := "↑/↓ navigate · Enter select · Space save · Esc cancel"
+	if multi {
+		hint = "↑/↓ navigate · 1-9 jump · Enter select · Space save · Esc cancel"
+	}
+	if lipgloss.Width(hint) > innerWidth {
+		hint = "↑/↓ move · Enter select · Space save · Esc"
+	}
+	if lipgloss.Width(hint) > innerWidth {
+		hint = "↑/↓ · Enter · Space · Esc"
+	}
+	return hint
 }
 
 // View renders the dialog as a string.
@@ -198,7 +227,7 @@ func (d *ModelSelectDialog) View() string {
 
 	// ── 提示 ──
 	// 逐级缩短，确保单行放得下：提示换行会撑破对话框高度预算。
-	hint := dialogHint(innerWidth, len(d.options) > 1)
+	hint := modelDialogHint(innerWidth, len(d.options) > 1)
 
 	dialogContent := lipgloss.JoinVertical(lipgloss.Left,
 		titleStyle.Render("Select Model Provider"),
