@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 type ProviderConfig struct {
@@ -309,6 +311,18 @@ func DetectBedrockProvider(modelID string) string {
 
 func LoadConfig(path string) (*Config, error) {
 	return LoadFromFile(path)
+}
+
+// LoadFromFile 从文件加载配置（提取自 LoadConfig，不执行 validate）
+func LoadFromFile(path string) (*Config, error) {
+	cfg := &Config{}
+	if _, err := toml.DecodeFile(path, cfg); err != nil {
+		return nil, fmt.Errorf("failed to decode config file: %w", err)
+	}
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+	return cfg, nil
 }
 
 func (c *Config) resolveEffectiveProviderName() string {

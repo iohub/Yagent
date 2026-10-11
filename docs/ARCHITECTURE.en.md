@@ -112,7 +112,7 @@ yagent/
 │   ├── messaging/         # Message system (publisher, dispatcher)
 │   │   └── consumers/     # TUIConsumer, WebSocketConsumer
 │   ├── protocol/          # Protocol definitions (agent_events.go)
-│   ├── config/            # Configuration system (defaults, hot_reload)
+│   ├── config/            # Configuration system (defaults, etc.)
 │   ├── datamanager/       # Task data persistence (DataManager, JSONL read/write/index)
 │   ├── knowledge/         # Knowledge injector (KnowledgeInjector, pre-conversation retrieval)
 │   ├── mcp/               # MCP client (MCPClient, stdio JSON-RPC)
@@ -1243,7 +1243,7 @@ When both previous tiers are insufficient (or keep failing/flopping), `ApplyUlti
 
 **Wiring** (`ExecutorConfig` / `PlannerConfig`): compression is opt-in per caller — `EnableContextCompression`, `ContextCompressionThreshold`, `ToolResultKeepTokens`, `UltimateThinkLink compression.ThinkLinkJournal` (nil disables tier 3), and `UltimateKeepPlans`. The Director forwards these from `config.EnhancedCommanderConfig`.
 
-**Hot reload** (`internal/config/hot_reload.go`): configuration changes are applied at runtime. `EnhancedCommanderConfig` carries `Enable`, `EnableContextCompression`, `ContextCompressionThreshold`, `ToolResultKeepTokens`, `EnableUltimateCompression` (default **true**), `UltimateCompressionKeepPlans`, and `MaxParallelReadOnlyTools`. Changing the threshold or keep-budget takes effect on the next planner step; structural changes (e.g. engine/provider mapping) trigger engine re-resolution via the Director's `llmClient` / `refreshSubAgentEngines()`.
+**Runtime configuration effect**: `EnhancedCommanderConfig` carries `Enable`, `EnableContextCompression`, `ContextCompressionThreshold`, `ToolResultKeepTokens`, `EnableUltimateCompression` (default **true**), `UltimateCompressionKeepPlans`, and `MaxParallelReadOnlyTools`. Changing the threshold or keep-budget takes effect on the next planner step; structural changes (e.g. engine/provider mapping) trigger engine re-resolution via the Director's `llmClient` / `refreshSubAgentEngines()`.
 
 ---
 
@@ -1510,7 +1510,7 @@ Note that the injector, guard, and shared memory are created **before** the agen
 
 ## 14. Configuration System
 
-The configuration system supports hot-reload, located at `internal/config/` (`config.go`, `defaults.go`, `hot_reload.go`, `default_config.toml`):
+The configuration system is located at `internal/config/` (`config.go`, `defaults.go`, `default_config.toml`):
 
 | Section | Contents |
 |---------|----------|
@@ -1528,7 +1528,6 @@ The configuration system supports hot-reload, located at `internal/config/` (`co
 
 **Features**:
 - TOML format configuration file
-- Runtime hot-reload (`hot_reload.go`)
 - Default configuration + user configuration override (`defaults.go` normalizes zero values: compression threshold 120000, keep tokens 200, ultimate compression on, `InjectionMinScore` 0.3, LLM timeout 5 min)
 - Three-tier LLM overrides: per-tool > per-agent > global
 - Supports Bedrock, Anthropic native API, OpenAI-compatible API, plus `ReasoningEffort` at provider and call level
@@ -1756,7 +1755,6 @@ flowchart LR
 | `internal/skills/skills.go` | Skill system |
 | `internal/datamanager/data_manager.go` | Task data persistence |
 | `internal/config/config.go` | Configuration system |
-| `internal/config/hot_reload.go` | Hot-reload support |
 | `internal/protocol/agent_events.go` | Event type definitions (19 types) |
 | `internal/app/app.go` | Yagent bootstrap |
 | `internal/http/server.go` | HTTP/WebSocket service |
