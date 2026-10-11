@@ -1,10 +1,8 @@
 package dict
 
 import (
-	"embed"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -57,36 +55,6 @@ func (d *CompletionDict) loadFromSources(sources []string) {
 
 	d.words = uniqueAndSorted(allWords)
 	d.source = fmt.Sprintf("sources:%s", strings.Join(sources, ","))
-}
-
-// LoadFromFile 从文件加载关键词（一行一个）
-// 文件格式：每行一个关键词，支持注释（# 开头）和空行
-func (d *CompletionDict) LoadFromFile(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("读取词典文件失败: %w", err)
-	}
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	newWords := parseKeywords(data)
-	d.words = uniqueAndSorted(append(d.words, newWords...))
-	d.source = path
-
-	return nil
-}
-
-// LoadFromData 从字符串数据加载关键词
-func (d *CompletionDict) LoadFromData(data []byte) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	newWords := parseKeywords(data)
-	d.words = uniqueAndSorted(append(d.words, newWords...))
-	d.source = "data"
-
-	return nil
 }
 
 // AddWords 批量添加关键词
@@ -150,71 +118,9 @@ func (d *CompletionDict) Complete(prefix string) []string {
 	return result
 }
 
-// Reload 重新加载词典（从原始源）
-// 由于当前实现不存储原始源路径，此方法返回 nil
-func (d *CompletionDict) Reload() error {
-	// 如果 source 是文件路径，重新加载
-	if d.source != "empty" && d.source != "data" && !strings.HasPrefix(d.source, "sources:") {
-		// 保存源路径（Clear 会重置 source 为 "empty"）
-		sourcePath := d.source
-		d.Clear()
-		return d.LoadFromFile(sourcePath)
-	}
-	return nil
-}
-
-// WordCount 返回关键词数量
-func (d *CompletionDict) WordCount() int {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return len(d.words)
-}
-
 // Name 返回词典名称
 func (d *CompletionDict) Name() string {
 	return d.name
-}
-
-// Clear 清空所有关键词
-func (d *CompletionDict) Clear() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.words = make([]string, 0)
-	d.source = "empty"
-}
-
-// LoadFromEmbedFS 从嵌入的完整文件系统加载词典
-// embedFS: 嵌入的文件系统
-// dirPath: 目录路径，函数会遍历该目录下所有 .txt 文件
-func (d *CompletionDict) LoadFromEmbedFS(embedFS embed.FS, dirPath string) error {
-	entries, err := embedFS.ReadDir(dirPath)
-	if err != nil {
-		return fmt.Errorf("读取嵌入目录失败: %w", err)
-	}
-
-	allWords := make([]string, 0)
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".txt") {
-			continue
-		}
-
-		filePath := filepath.Join(dirPath, entry.Name())
-		data, err := embedFS.ReadFile(filePath)
-		if err != nil {
-			// 单个文件读取失败，跳过并记录
-			continue
-		}
-
-		allWords = append(allWords, parseKeywords(data)...)
-	}
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.words = uniqueAndSorted(allWords)
-	d.source = fmt.Sprintf("embedfs:%s", dirPath)
-
-	return nil
 }
 
 // parseKeywords 解析关键词数据，忽略注释和空行

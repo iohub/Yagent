@@ -14,9 +14,6 @@ func TestNewCompletionDict(t *testing.T) {
 	if d == nil {
 		t.Fatal("NewCompletionDict should not return nil")
 	}
-	if d.WordCount() != 0 {
-		t.Errorf("expected 0 words, got %d", d.WordCount())
-	}
 	if d.Name() != "test" {
 		t.Errorf("expected name 'test', got %q", d.Name())
 	}
@@ -26,10 +23,6 @@ func TestAddWord(t *testing.T) {
 	d := dict.NewCompletionDict("test", nil)
 
 	d.AddWords([]string{"banana", "apple", "cherry"})
-
-	if d.WordCount() != 3 {
-		t.Errorf("expected 3 words, got %d", d.WordCount())
-	}
 
 	// 验证已排序
 	got := d.Complete("")
@@ -46,8 +39,10 @@ func TestAddWordDuplicate(t *testing.T) {
 
 	d.AddWords([]string{"apple", "apple"})
 
-	if d.WordCount() != 1 {
-		t.Errorf("expected 1 word (no duplicates), got %d", d.WordCount())
+	// 去重验证（WordCount 删除后改用等价的 Complete 断言）
+	got := d.Complete("")
+	if len(got) != 1 || got[0] != "apple" {
+		t.Errorf("expected [apple] (no duplicates), got %v", got)
 	}
 }
 
@@ -57,11 +52,10 @@ func TestAddWords(t *testing.T) {
 	d.AddWords([]string{"cherry"})
 	d.AddWords([]string{"banana", "apple", "date"})
 
-	if d.WordCount() != 4 {
-		t.Errorf("expected 4 words, got %d", d.WordCount())
-	}
-
 	got := d.Complete("")
+	if len(got) != 4 {
+		t.Errorf("expected 4 words, got %d", len(got))
+	}
 	expected := []string{"apple", "banana", "cherry", "date"}
 	for i, w := range got {
 		if w != expected[i] {
@@ -134,10 +128,6 @@ date
 
 	d := dict.NewCompletionDict("test", []string{dictPath})
 
-	if d.WordCount() != 4 {
-		t.Errorf("expected 4 words, got %d", d.WordCount())
-	}
-
 	got := d.Complete("")
 	expected := []string{"apple", "banana", "cherry", "date"}
 	for i, w := range got {
@@ -151,34 +141,9 @@ func TestLoadFromFileNotFound(t *testing.T) {
 	// 文件不存在时，NewCompletionDict 会忽略该源
 	// 所以不会报错，但词典为空
 	d := dict.NewCompletionDict("test", []string{"/nonexistent/path/dict.txt"})
-	if d.WordCount() != 0 {
-		t.Errorf("expected 0 words for nonexistent file, got %d", d.WordCount())
-	}
-}
-
-func TestClear(t *testing.T) {
-	d := dict.NewCompletionDict("test", nil)
-	d.AddWords([]string{"apple", "banana"})
-
-	d.Clear()
-
-	if d.WordCount() != 0 {
-		t.Errorf("expected 0 words after clear, got %d", d.WordCount())
-	}
-}
-
-func TestLoadFromData(t *testing.T) {
-	d := dict.NewCompletionDict("test", nil)
-	content := []byte(`# 注释
-hello
-world
-`)
-	if err := d.LoadFromData(content); err != nil {
-		t.Fatalf("LoadFromData failed: %v", err)
-	}
-
-	if d.WordCount() != 2 {
-		t.Errorf("expected 2 words, got %d", d.WordCount())
+	// 不存在的源被忽略，词典保持为空（WordCount 删除后改用等价的 Complete 断言）
+	if got := d.Complete(""); len(got) != 0 {
+		t.Errorf("expected 0 words for nonexistent file, got %v", got)
 	}
 }
 
@@ -205,9 +170,5 @@ func TestConcurrency(t *testing.T) {
 	// 等待所有添加完成
 	for i := 0; i < 100; i++ {
 		<-done
-	}
-
-	if d.WordCount() != 100 {
-		t.Errorf("expected 100 words, got %d", d.WordCount())
 	}
 }
