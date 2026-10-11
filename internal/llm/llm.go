@@ -170,10 +170,6 @@ type LoggingEngine struct {
 	inner Engine
 }
 
-func NewLoggingEngine(inner Engine) *LoggingEngine {
-	return &LoggingEngine{inner: inner}
-}
-
 func (l *LoggingEngine) CloseIdleConnections() {
 	if l.inner != nil {
 		l.inner.CloseIdleConnections()
@@ -297,19 +293,6 @@ func NewClient(config *config.Config) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) ResolveProviderName(agentName, toolName string) string {
-	provider, err := c.Config.ResolveProvider(agentName, toolName)
-	if err != nil {
-		return "unknown"
-	}
-	for name, p := range c.Config.Global.LLM.Providers {
-		if p.Model == provider.Model && p.APIBaseURL == provider.APIBaseURL {
-			return name
-		}
-	}
-	return "unknown"
-}
-
 func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName string) Engine {
 	c.mu.RLock()
 	if eng, ok := c.engines[providerName]; ok {
@@ -344,10 +327,6 @@ func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName
 	return finalEngine
 }
 
-func (c *Client) GetEngine() Engine {
-	return c.Engine
-}
-
 func (c *Client) SetAgentProvider(agentName, providerName string) error {
 	_, err := c.Config.GetProvider(providerName)
 	if err != nil {
@@ -361,12 +340,6 @@ func (c *Client) SetAgentProvider(agentName, providerName string) error {
 	c.agentProviderOverrides[agentName] = providerName
 	slog.Info("Set runtime agent provider override", "agent", agentName, "provider", providerName)
 	return nil
-}
-
-func (c *Client) ClearAgentProvider(agentName string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.agentProviderOverrides, agentName)
 }
 
 func (c *Client) GetAllAgentOverrides() map[string]string {
@@ -452,12 +425,6 @@ func (c *Client) GetToolProviderInfo(toolName string) (providerName string, mode
 		}
 	}
 	return "unknown", provider.Model
-}
-
-func (c *Client) ClearToolProvider(toolName string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.toolProviderOverrides, toolName)
 }
 
 func (c *Client) PersistProviderChoice(kind, name, provider string) error {
@@ -571,103 +538,6 @@ func providersEqual(a, b *config.ProviderConfig) bool {
 		return false
 	}
 	return a.APIBaseURL == b.APIBaseURL && a.APIKey == b.APIKey && a.Model == b.Model
-}
-
-func StreamDebugHandler(ctx context.Context, chunk []byte) error {
-	if len(chunk) > 0 {
-		fmt.Print(string(chunk))
-		os.Stdout.Sync()
-		llmLogger.Info("Stream chunk", "type", "stream_chunk", "content", string(chunk))
-	}
-	return nil
-}
-
-func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []Message, streamHandler func(context.Context, []byte) error) (string, error) {
-	slog.Debug("Starting completion generation with memory",
-		"memory_length", len(memory),
-		"streaming_enabled", c.Config.App.EnableStreaming)
-
-	if memoryJSON, err := json.Marshal(memory); err == nil {
-		llmLogger.Info("LLM input memory",
-			"type", "input_memory",
-			"model", c.Config.Global.LLM.UseProvider,
-			"memory_length", len(memory),
-			"memory", string(memoryJSON))
-	}
-
-	activeProvider, err := c.Config.ResolveProvider("", "")
-	if err != nil {
-		slog.Error("Failed to get active provider configuration", "error", err)
-		return "", util.WrapError(ctx, err, "failed to get active provider")
-	}
-
-	opts := &CallOptions{
-		MaxTokens:   activeProvider.MaxTokens,
-		Temperature: activeProvider.Temperature,
-	}
-
-	if c.Config.App.EnableStreaming && streamHandler != nil {
-		opts.StreamHandler = streamHandler
-		slog.Debug("Streaming enabled for this request (memory)")
-	}
-
-	completion, err := c.Engine.GenerateContent(ctx, memory, nil, opts)
-	if err != nil {
-		httpResponse := extractHTTPResponse(err)
-
-		slog.Error("Failed to GenerateContent",
-			"error", err,
-			"model", c.Config.Global.LLM.UseProvider,
-			"memory_length", len(memory),
-			"http_response", httpResponse)
-
-		LogLLMError("LLM completion error",
-			"type", "completion_error",
-			"model", c.Config.Global.LLM.UseProvider,
-			"memory_length", len(memory),
-			"error", err.Error(),
-			"http_response", httpResponse)
-
-		return "", util.WrapError(ctx, err, "error generating completion (memory)")
-	}
-
-	if len(completion.Choices) > 0 {
-		result := completion.Choices[0].Content
-		slog.Info("Completion generated successfully (memory)",
-			"result_length", len(result),
-			"choices_count", len(completion.Choices))
-
-		if choicesJSON, err := json.Marshal(completion.Choices); err == nil {
-			llmLogger.Info("LLM completion output",
-				"type", "completion_output",
-				"model", c.Config.Global.LLM.UseProvider,
-				"choices_count", len(completion.Choices),
-				"memory_length", len(memory),
-				"response", result,
-				"response.Choices", string(choicesJSON))
-		}
-
-		return result, nil
-	}
-
-	slog.Warn("No completion choices returned from LLM (memory)",
-		"choices_count", len(completion.Choices))
-
-	llmLogger.Warn("LLM returned empty completion (with memory)",
-		"type", "empty_completion_memory",
-		"model", c.Config.Global.LLM.UseProvider,
-		"choices_count", len(completion.Choices),
-		"memory_length", len(memory))
-
-	return "", nil
-}
-
-func extractHTTPResponse(err error) string {
-	if err == nil {
-		return ""
-	}
-
-	return fmt.Sprintf("Error: %s", err.Error())
 }
 
 func (c *Client) SwitchProvider(providerName string) error {
