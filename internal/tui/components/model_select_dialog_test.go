@@ -299,3 +299,71 @@ func TestAllocateColumns(t *testing.T) {
 		t.Errorf("allocateColumns(50,80,80) = %d,%d below the 6-cell floor", p, m)
 	}
 }
+
+// TestModelSelectDialog_PersistFlag 空格确认置位 Persist（永久切换语义，写回
+// config.toml）；Enter / 数字直选 / Esc 取消保持 false（仅临时切换）。
+func TestModelSelectDialog_PersistFlag(t *testing.T) {
+	newDialog := func() *ModelSelectDialog {
+		d := NewModelSelectDialog(testModelOptions(9), "")
+		d.SetBounds(120, 30)
+		return d
+	}
+
+	t.Run("空格确认→Persist=true", func(t *testing.T) {
+		d := newDialog()
+		d.Update(tea.KeyPressMsg{Code: ' '})
+		if d.Selected != "autodl_glm53flash" || !d.Persist {
+			t.Errorf("space: Selected = %q, Persist = %v, want %q / true",
+				d.Selected, d.Persist, "autodl_glm53flash")
+		}
+	})
+
+	t.Run("Enter确认→Persist=false", func(t *testing.T) {
+		d := newDialog()
+		d.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		if d.Selected != "autodl_glm53flash" || d.Persist {
+			t.Errorf("enter: Selected = %q, Persist = %v, want %q / false",
+				d.Selected, d.Persist, "autodl_glm53flash")
+		}
+	})
+
+	t.Run("数字直选→Persist=false", func(t *testing.T) {
+		d := newDialog()
+		d.Update(tea.KeyPressMsg{Code: '5'})
+		if d.Selected != "qn_glm51" || d.Persist {
+			t.Errorf("digit: Selected = %q, Persist = %v, want %q / false",
+				d.Selected, d.Persist, "qn_glm51")
+		}
+	})
+
+	t.Run("Esc取消→Persist=false", func(t *testing.T) {
+		d := newDialog()
+		d.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if d.Selected != "" || d.Persist {
+			t.Errorf("esc: Selected = %q, Persist = %v, want \"\" / false", d.Selected, d.Persist)
+		}
+	})
+}
+
+// TestModelDialogHint 提示文案层级：含 Space save，窄终端逐级缩短。
+func TestModelDialogHint(t *testing.T) {
+	multi := modelDialogHint(100, true)
+	if !strings.Contains(multi, "1-9 jump") || !strings.Contains(multi, "Space save") {
+		t.Errorf("wide multi hint missing parts: %q", multi)
+	}
+	single := modelDialogHint(100, false)
+	if strings.Contains(single, "1-9 jump") {
+		t.Errorf("single hint should not advertise number keys: %q", single)
+	}
+	if !strings.Contains(single, "Space save") {
+		t.Errorf("single hint missing Space save: %q", single)
+	}
+	// 最窄一级仍是单行完整提示
+	narrow := modelDialogHint(12, true)
+	if strings.Contains(narrow, "\n") {
+		t.Errorf("narrow hint should stay single-line: %q", narrow)
+	}
+	if !strings.Contains(narrow, "Space") {
+		t.Errorf("even the narrowest hint should mention Space: %q", narrow)
+	}
+}

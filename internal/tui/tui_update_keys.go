@@ -204,6 +204,8 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		}
 		// 数字键直选同样会置位 Selected，故确认分支不再限定 enter/space
 		if d.Selected != "" {
+			// 空格确认 → 永久切换：内存切换成功后写回 config.toml
+			persist := d.Persist
 			providers := m.assistant.GetClient().Config.GetProviderNames()
 			found := false
 			for _, p := range providers {
@@ -282,6 +284,31 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 						timestamp: time.Now(),
 						eventType: "status",
 						content:   fmt.Sprintf("Switched global provider to: %s (model: %s)", d.Selected, modelName),
+					})
+					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				}
+			}
+			// 永久切换：把选择写入 config.toml 固化（失败不回滚内存切换）
+			if persist {
+				kind, name := "global", ""
+				switch {
+				case isModelTargetTool(target):
+					kind, name = "tool", target
+				case target != "":
+					kind, name = "agent", target
+				}
+				if err := m.assistant.GetClient().PersistProviderChoice(kind, name, d.Selected); err != nil {
+					m.logEntries = append(m.logEntries, logEntry{
+						timestamp: time.Now(),
+						eventType: "error",
+						content:   fmt.Sprintf("Failed to save provider to config file: %v", err),
+					})
+					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+				} else {
+					m.logEntries = append(m.logEntries, logEntry{
+						timestamp: time.Now(),
+						eventType: "status",
+						content:   fmt.Sprintf("Saved provider '%s' to config file", d.Selected),
 					})
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 				}
