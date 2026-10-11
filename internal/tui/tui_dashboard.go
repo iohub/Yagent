@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"regexp"
 	"sort"
 	"strconv"
@@ -10,7 +11,51 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-const dashboardPanelWidth = 46
+const dashboardPanelWidth = 50
+
+// ── Dashboard palette ──
+// A restrained, cohesive accent set shared by the token/activity panels so the
+// dashboard reads as a single modern surface rather than a stack of ad-hoc rows.
+var (
+	dashBorderFg = lipgloss.Color("62")  // soft indigo frame
+	dashAccent   = lipgloss.Color("141") // lavender accent (header diamond, cache)
+	dashTitleFg  = lipgloss.Color("250") // near-white title
+	dashLabelFg  = lipgloss.Color("244") // dimmed metric labels
+	dashInFg     = lipgloss.Color("111") // input value (light blue)
+	dashOutFg    = lipgloss.Color("114") // output value (green)
+	dashSepFg    = lipgloss.Color("238") // hairline separators
+	dashKeyFg    = lipgloss.Color("247") // keycap text
+)
+
+// dashKeycap renders a subtle " alt+d label " hint: bright key + dimmed label.
+func dashKeycap(key, label string) string {
+	keyStyle := lipgloss.NewStyle().Foreground(dashKeyFg).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
+	return keyStyle.Render(" "+key+" ") + labelStyle.Render(label+" ")
+}
+
+// dashMetric renders a dimmed label followed by a bold coloured value ("in 1.2m").
+func dashMetric(label, value string, valueFg color.Color) string {
+	return lipgloss.NewStyle().Foreground(dashLabelFg).Render(label+" ") +
+		lipgloss.NewStyle().Foreground(valueFg).Bold(true).Render(value)
+}
+
+// dashDot renders a coloured agent marker dot.
+func dashDot(name string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(AgentColor(name))).Render("●")
+}
+
+// truncateRunes shortens s to at most width display runes, adding an ellipsis.
+func truncateRunes(s string, width int) string {
+	r := []rune(s)
+	if len(r) <= width {
+		return s
+	}
+	if width <= 1 {
+		return "…"
+	}
+	return string(r[:width-1]) + "…"
+}
 
 // dashboardVisible 判断宽屏模式下是否显示右上角 dashboard
 func (m *model) dashboardVisible() bool {
@@ -43,6 +88,7 @@ func (m *model) dashboardWidth() int {
 //   - 只有读缓存: "⊕30%"
 //   - 只有写缓存: "W:0.8k"
 //   - 两者都有:   "⊕30% W:0.8k"
+//
 // 没有任何缓存活动时返回空字符串
 func formatCacheShort(cacheRead, cacheCreation, totalInput int64) string {
 	if totalInput <= 0 {
@@ -62,7 +108,7 @@ func formatCacheShort(cacheRead, cacheCreation, totalInput int64) string {
 var borderANSIRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // stripANSIForBorder strips ANSI escape sequences from a rendered line so that
-// border character checks (HasPrefix "┌" etc.) work correctly.
+// border character checks (HasPrefix "╰" etc.) work correctly.
 func stripANSIForBorder(s string) string {
 	return borderANSIRe.ReplaceAllString(s, "")
 }
@@ -122,22 +168,22 @@ func (m *model) renderDashboard(width, height int) string {
 		return m.dashboardCache
 	}
 
+	innerWidth := width - 4 // border(2) + padding(2)
+	sep := lipgloss.NewStyle().Foreground(dashSepFg).Render(strings.Repeat("─", innerWidth))
+
 	var lines []string
 
-	// ── Token section (top): 标题左对齐 + 收缩提示右对齐（右上角） ──
-	innerWidth := width - 4 // border(2) + padding(2)
-	tokenTitle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Italic(true).
-		Render("Tokens")
-	collapseHint := timelineHintStyle.Render(" alt+d "+langManager.GetText("DashboardCollapseHint")+" ")
-	// 用宽度填充实现右对齐；若空间不足则直接拼接不填充
+	// ── Header: ◆ Tokens (left) + collapse keycap (right) ──
+	diamond := lipgloss.NewStyle().Foreground(dashAccent).Bold(true).Render("◆ ")
+	tokenTitle := lipgloss.NewStyle().Foreground(dashTitleFg).Bold(true).Render("Tokens")
+	titleLeft := diamond + tokenTitle
+	collapseHint := dashKeycap("alt+d", langManager.GetText("DashboardCollapseHint"))
 	hintWidth := lipgloss.Width(collapseHint)
 	fillWidth := innerWidth - hintWidth
-	if fillWidth < lipgloss.Width(tokenTitle) {
-		fillWidth = lipgloss.Width(tokenTitle)
+	if fillWidth < lipgloss.Width(titleLeft) {
+		fillWidth = lipgloss.Width(titleLeft)
 	}
-	titleLine := lipgloss.NewStyle().Width(fillWidth).Render(tokenTitle) + collapseHint
+	titleLine := lipgloss.NewStyle().Width(fillWidth).Render(titleLeft) + collapseHint
 	lines = append(lines, titleLine)
 
 	if len(agents) > 0 {
@@ -151,11 +197,6 @@ func (m *model) renderDashboard(width, height int) string {
 			maxTokenRows = 3
 		}
 
-		// Total row
-		inputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
-		outputStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114"))
-		cacheRateStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
-
 		// 使用 totalInputTokens（provider 口径）作为分母，避免 OpenAI 路径重复计算 cached tokens
 		totalInput := m.totalInputTokens
 		if totalInput == 0 {
@@ -163,16 +204,19 @@ func (m *model) renderDashboard(width, height int) string {
 		}
 		inStr := formatToken(totalInput)
 		outStr := formatToken(m.outputTokens)
-		nameStyle := lipgloss.NewStyle().
+
+		// Total row — name column width 10 aligns with agent rows below.
+		totalName := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(AgentColor("Total"))).
-			Width(10)
-		nameRendered := nameStyle.Render("Total")
-
-		totalLine := nameRendered + " " + inputStyle.Render("In: "+inStr+"  ") +
-			outputStyle.Render("Out: "+outStr)
+			Width(10).
+			Render("Total")
+		totalLine := totalName + " " +
+			dashMetric("in", inStr, dashInFg) +
+			"  " +
+			dashMetric("out", outStr, dashOutFg)
 		if cacheInfo := formatCacheShort(m.cacheReadInputTokens, m.cacheCreationInputTokens, totalInput); cacheInfo != "" {
-			totalLine += "  " + cacheRateStyle.Render(cacheInfo)
+			totalLine += "  " + lipgloss.NewStyle().Foreground(dashAccent).Render(cacheInfo)
 		}
 		lines = append(lines, totalLine)
 
@@ -184,9 +228,7 @@ func (m *model) renderDashboard(width, height int) string {
 		}
 
 		// Separator
-		lines = append(lines, lipgloss.NewStyle().
-			Foreground(lipgloss.Color("237")).
-			Render(strings.Repeat("─", width-4)))
+		lines = append(lines, sep)
 
 		// Determine display agents (truncate if needed)
 		tokenRows := 3 + len(agents) // title + Total + separator + agent rows
@@ -215,20 +257,18 @@ func (m *model) renderDashboard(width, height int) string {
 			displayAgents = agents
 		}
 
-		// Agent rows
+		// Agent rows — coloured dot + name (aligned to the same 10-col field).
 		for _, au := range displayAgents {
 			name := au.AgentName
 			if name == "" {
 				name = "—"
 			}
-			if len(name) > 10 {
-				name = name[:9] + "…"
-			}
-			nameStyle := lipgloss.NewStyle().
+			nameField := lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color(AgentColor(au.AgentName))).
-				Width(10)
-			nameRendered := nameStyle.Render(name)
+				Width(8).
+				Render(truncateRunes(name, 8))
+			prefix := dashDot(au.AgentName) + " " + nameField // 1 + 1 + 8 = 10 cols
 
 			auTotalInput := au.TotalInputTokens
 			if auTotalInput == 0 {
@@ -237,20 +277,21 @@ func (m *model) renderDashboard(width, height int) string {
 			auInStr := formatToken(auTotalInput)
 			auOutStr := formatToken(au.OutputTokens)
 
-			line := nameRendered + " " +
-				inputStyle.Render("In: "+auInStr+"  ") +
-				outputStyle.Render("Out: "+auOutStr)
+			line := prefix + " " +
+				dashMetric("in", auInStr, dashInFg) +
+				"  " +
+				dashMetric("out", auOutStr, dashOutFg)
 			if cacheInfo := formatCacheShort(au.CacheReadInputTokens, au.CacheCreationInputTokens, auTotalInput); cacheInfo != "" {
-				line += "  " + cacheRateStyle.Render(cacheInfo)
+				line += "  " + lipgloss.NewStyle().Foreground(dashAccent).Render(cacheInfo)
 			}
 			lines = append(lines, line)
 		}
 
 		if moreCount > 0 {
 			lines = append(lines, lipgloss.NewStyle().
-				Foreground(lipgloss.Color("241")).
+				Foreground(lipgloss.Color("243")).
 				Italic(true).
-				Render(fmt.Sprintf("+%d more", moreCount)))
+				Render(fmt.Sprintf("┈ +%d more", moreCount)))
 		}
 	}
 
@@ -258,12 +299,10 @@ func (m *model) renderDashboard(width, height int) string {
 	tlAvailable := height - len(lines)
 	if len(m.timelineEntries) > 0 && tlAvailable > 2 {
 		// Separator + title (2 rows)
+		lines = append(lines, sep)
 		lines = append(lines, lipgloss.NewStyle().
-			Foreground(lipgloss.Color("237")).
-			Render(strings.Repeat("─", width-4)))
-		lines = append(lines, lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")).
-			Italic(true).
+			Foreground(lipgloss.Color("247")).
+			Bold(true).
 			Render("⚙ Activity"))
 
 		// Timeline content
@@ -286,7 +325,7 @@ func (m *model) renderDashboard(width, height int) string {
 			if len(tlInnerLines) > maxTL {
 				tlInnerLines = tlInnerLines[:maxTL]
 			}
-			hint := timelineHintStyle.Render(" ctrl+l " + langManager.GetText("TimelineDetailHint") + " ")
+			hint := dashKeycap("ctrl+l", langManager.GetText("TimelineDetailHint"))
 			lines = append(lines, tlInnerLines...)
 			lines = append(lines, hint)
 		}
@@ -300,11 +339,11 @@ func (m *model) renderDashboard(width, height int) string {
 		}
 	}
 
-	// Apply border style — Height ensures lipgloss auto-pads short content
+	// Apply rounded border — Height ensures lipgloss auto-pads short content
 	// with bordered empty lines; we still truncate manually when content is too long.
 	borderStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("62")).
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(dashBorderFg).
 		Padding(0, 1).
 		Width(width).
 		Height(height)
@@ -320,8 +359,8 @@ func (m *model) renderDashboard(width, height int) string {
 	// If truncation removed the bottom border, restore it with correct color
 	if len(renderedLines) == height {
 		last := stripANSIForBorder(renderedLines[height-1])
-		if !strings.HasPrefix(last, "└") {
-			renderedLines[height-1] = lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Render("└" + strings.Repeat("─", width-2) + "┘")
+		if !strings.HasPrefix(last, "╰") {
+			renderedLines[height-1] = lipgloss.NewStyle().Foreground(dashBorderFg).Render("╰" + strings.Repeat("─", width-2) + "╯")
 		}
 	}
 	// Defensive width fixup: use lipgloss Width (preserves ANSI) rather than

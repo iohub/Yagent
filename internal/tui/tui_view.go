@@ -610,7 +610,7 @@ func (m *model) renderTokenDashboard() string {
 	}
 
 	dashStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("237")).
 		Padding(0, 1).
 		Width(m.termWidth - 2)
@@ -723,7 +723,7 @@ func (m *model) renderCollapsedTokenDashboard() string {
 	cacheStr := formatCacheInfo(rt.CacheReadInputTokens, rt.CacheCreationInputTokens, totalInput)
 
 	dashStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("237")).
 		Padding(0, 1).
 		Width(m.termWidth - 2)

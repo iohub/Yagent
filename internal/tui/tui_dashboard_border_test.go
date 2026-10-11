@@ -22,12 +22,12 @@ func TestDashboardBorder_AllLinesExactWidth(t *testing.T) {
 	initLangManager()
 
 	m := &model{
-		termWidth:            140,
-		termHeight:           40,
-		taskRunning:          true,
-		inputTokens:          1234000,
-		outputTokens:         567000,
-		cacheReadInputTokens: 100000,
+		termWidth:                140,
+		termHeight:               40,
+		taskRunning:              true,
+		inputTokens:              1234000,
+		outputTokens:             567000,
+		cacheReadInputTokens:     100000,
 		cacheCreationInputTokens: 50000,
 		tokenUsagePerAgent: map[string]*AgentTokenUsage{
 			"Director": {
@@ -45,8 +45,8 @@ func TestDashboardBorder_AllLinesExactWidth(t *testing.T) {
 				CacheCreationInputTokens: 10000,
 			},
 		},
-		timelineEntries:        []*TimelineEntry{},
-		dashboardCollapsed:     false,
+		timelineEntries:    []*TimelineEntry{},
+		dashboardCollapsed: false,
 	}
 
 	const width = dashboardPanelWidth // 46
@@ -66,20 +66,20 @@ func TestDashboardBorder_AllLinesExactWidth(t *testing.T) {
 		}
 	}
 
-	// First line must be top border
-	if !strings.HasPrefix(stripANSI(lines[0]), "┌") {
-		t.Errorf("first line should start with '┌', got: %q", lines[0])
+	// First line must be top border (rounded)
+	if !strings.HasPrefix(stripANSI(lines[0]), "╭") {
+		t.Errorf("first line should start with '╭', got: %q", lines[0])
 	}
-	if !strings.HasSuffix(stripANSI(lines[0]), "┐") {
-		t.Errorf("first line should end with '┐', got: %q", lines[0])
+	if !strings.HasSuffix(stripANSI(lines[0]), "╮") {
+		t.Errorf("first line should end with '╮', got: %q", lines[0])
 	}
 
-	// Last line must be bottom border
-	if !strings.HasPrefix(stripANSI(lines[height-1]), "└") {
-		t.Errorf("last line should start with '└', got: %q", lines[height-1])
+	// Last line must be bottom border (rounded)
+	if !strings.HasPrefix(stripANSI(lines[height-1]), "╰") {
+		t.Errorf("last line should start with '╰', got: %q", lines[height-1])
 	}
-	if !strings.HasSuffix(stripANSI(lines[height-1]), "┘") {
-		t.Errorf("last line should end with '┘', got: %q", lines[height-1])
+	if !strings.HasSuffix(stripANSI(lines[height-1]), "╯") {
+		t.Errorf("last line should end with '╯', got: %q", lines[height-1])
 	}
 
 	// Every line must have left border ('│' or corner) and right border
@@ -88,10 +88,10 @@ func TestDashboardBorder_AllLinesExactWidth(t *testing.T) {
 		runes := []rune(s)
 		first := string(runes[0])
 		last := string(runes[len(runes)-1])
-		if first != "│" && first != "┌" && first != "└" {
+		if first != "│" && first != "╭" && first != "╰" {
 			t.Errorf("line %d: expected left border char, got %q", i, first)
 		}
-		if last != "│" && last != "┐" && last != "┘" {
+		if last != "│" && last != "╮" && last != "╯" {
 			t.Errorf("line %d: expected right border char, got %q", i, last)
 		}
 	}
@@ -103,16 +103,16 @@ func TestDashboardBorder_ShortContent(t *testing.T) {
 	initLangManager()
 
 	m := &model{
-		termWidth:            140,
-		termHeight:           40,
-		taskRunning:          false,
-		inputTokens:          100,
-		outputTokens:         50,
-		cacheReadInputTokens: 0,
+		termWidth:                140,
+		termHeight:               40,
+		taskRunning:              false,
+		inputTokens:              100,
+		outputTokens:             50,
+		cacheReadInputTokens:     0,
 		cacheCreationInputTokens: 0,
-		tokenUsagePerAgent:   map[string]*AgentTokenUsage{},
-		timelineEntries:      []*TimelineEntry{},
-		dashboardCollapsed:   false,
+		tokenUsagePerAgent:       map[string]*AgentTokenUsage{},
+		timelineEntries:          []*TimelineEntry{},
+		dashboardCollapsed:       false,
 	}
 
 	const width = dashboardPanelWidth
@@ -137,19 +137,19 @@ func TestDashboardBorder_ShortContent(t *testing.T) {
 		}
 		// Every line should start and end with border chars
 		s := stripANSI(line)
-		if !strings.HasPrefix(s, "│") && !strings.HasPrefix(s, "┌") && !strings.HasPrefix(s, "└") {
+		if !strings.HasPrefix(s, "│") && !strings.HasPrefix(s, "╭") && !strings.HasPrefix(s, "╰") {
 			t.Errorf("line %d: expected border prefix, got: %q", i, stripANSI(line[:min(10, len(line))]))
 		}
-		if !strings.HasSuffix(s, "│") && !strings.HasSuffix(s, "┐") && !strings.HasSuffix(s, "┘") {
+		if !strings.HasSuffix(s, "│") && !strings.HasSuffix(s, "╮") && !strings.HasSuffix(s, "╯") {
 			t.Errorf("line %d: expected border suffix, got: %q", i, stripANSI(line[max(0, len(line)-10):]))
 		}
 	}
 
-	if !strings.HasPrefix(stripANSI(lines[0]), "┌") {
-		t.Errorf("first line should start with '┌', got: %q", lines[0])
+	if !strings.HasPrefix(stripANSI(lines[0]), "╭") {
+		t.Errorf("first line should start with '╭', got: %q", lines[0])
 	}
-	if !strings.HasPrefix(stripANSI(lines[height-1]), "└") {
-		t.Errorf("last line should start with '└', got: %q", lines[height-1])
+	if !strings.HasPrefix(stripANSI(lines[height-1]), "╰") {
+		t.Errorf("last line should start with '╰', got: %q", lines[height-1])
 	}
 }
 
@@ -173,16 +173,16 @@ func TestDashboardBorder_OverflowContent(t *testing.T) {
 	}
 
 	m := &model{
-		termWidth:            140,
-		termHeight:           40,
-		taskRunning:          true,
-		inputTokens:          1234000,
-		outputTokens:         567000,
-		cacheReadInputTokens: 100000,
+		termWidth:                140,
+		termHeight:               40,
+		taskRunning:              true,
+		inputTokens:              1234000,
+		outputTokens:             567000,
+		cacheReadInputTokens:     100000,
 		cacheCreationInputTokens: 50000,
-		tokenUsagePerAgent:   agents,
-		timelineEntries:      []*TimelineEntry{},
-		dashboardCollapsed:   false,
+		tokenUsagePerAgent:       agents,
+		timelineEntries:          []*TimelineEntry{},
+		dashboardCollapsed:       false,
 	}
 
 	const width = dashboardPanelWidth
@@ -196,8 +196,8 @@ func TestDashboardBorder_OverflowContent(t *testing.T) {
 	}
 
 	// Last line must be bottom border even after truncation
-	if !strings.HasPrefix(stripANSI(lines[height-1]), "└") {
-		t.Errorf("last line should start with '└' after truncation, got: %q", lines[height-1])
+	if !strings.HasPrefix(stripANSI(lines[height-1]), "╰") {
+		t.Errorf("last line should start with '╰' after truncation, got: %q", lines[height-1])
 	}
 
 	// All lines must have exact width
@@ -215,12 +215,12 @@ func TestDashboardBorder_LargeTokens(t *testing.T) {
 	initLangManager()
 
 	m := &model{
-		termWidth:            140,
-		termHeight:           40,
-		taskRunning:          true,
-		inputTokens:          1234567,
-		outputTokens:         987654,
-		cacheReadInputTokens: 200000,
+		termWidth:                140,
+		termHeight:               40,
+		taskRunning:              true,
+		inputTokens:              1234567,
+		outputTokens:             987654,
+		cacheReadInputTokens:     200000,
 		cacheCreationInputTokens: 100000,
 		tokenUsagePerAgent: map[string]*AgentTokenUsage{
 			"Director": {
@@ -266,11 +266,11 @@ func TestDashboardBorder_LargeTokens(t *testing.T) {
 		}
 	}
 
-	if !strings.HasPrefix(stripANSI(lines[0]), "┌") {
-		t.Errorf("first line should start with '┌', got: %q", lines[0])
+	if !strings.HasPrefix(stripANSI(lines[0]), "╭") {
+		t.Errorf("first line should start with '╭', got: %q", lines[0])
 	}
-	if !strings.HasPrefix(stripANSI(lines[height-1]), "└") {
-		t.Errorf("last line should start with '└', got: %q", lines[height-1])
+	if !strings.HasPrefix(stripANSI(lines[height-1]), "╰") {
+		t.Errorf("last line should start with '╰', got: %q", lines[height-1])
 	}
 }
 
