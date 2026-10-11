@@ -515,7 +515,19 @@ func TestChatMessageToResponseItems(t *testing.T) {
 
 // ─── TestRolloutWriter ───
 
+// isolateRolloutHome 把 rollout 根目录隔离到 t.TempDir()。
+//
+// NewRolloutWriter 的输出路径由 $HOME 派生（RolloutRootDir → homeDirOrFallback），
+// 不隔离会让测试文件直接写进生产目录 ~/.yagent/data/rollout。该目录实测已积累 2000+
+// 文件、其中 400+ 是测试残留，而 TUI /resume 只按 mtime 倒序取前 200 条展示——
+// 测试垃圾会把真实会话挤出列表。
+func isolateRolloutHome(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+}
+
 func TestRolloutWriter(t *testing.T) {
+	isolateRolloutHome(t)
 	writer, err := NewRolloutWriter("test-agent", "test-task-001", "test-project")
 	if err != nil {
 		t.Fatalf("NewRolloutWriter error: %v", err)
@@ -719,6 +731,7 @@ func TestRolloutWriter(t *testing.T) {
 // ─── TestRolloutWriterThreadSafety ───
 
 func TestRolloutWriterThreadSafety(t *testing.T) {
+	isolateRolloutHome(t)
 	writer, err := NewRolloutWriter("test-agent", "test-task-thread", "test-project")
 	if err != nil {
 		t.Fatalf("NewRolloutWriter error: %v", err)
@@ -784,6 +797,7 @@ func TestRolloutWriterThreadSafety(t *testing.T) {
 // ─── TestRolloutWriterContext ───
 
 func TestRolloutWriterContext(t *testing.T) {
+	isolateRolloutHome(t)
 	writer, err := NewRolloutWriter("test-agent", "test-task-ctx", "test-project")
 	if err != nil {
 		t.Fatalf("NewRolloutWriter error: %v", err)
@@ -822,6 +836,7 @@ func TestRolloutWriterContext(t *testing.T) {
 // ─── TestRolloutEnvelopeFormat ───
 
 func TestRolloutEnvelopeFormat(t *testing.T) {
+	isolateRolloutHome(t)
 	writer, err := NewRolloutWriter("test-agent", "test-task-envelope", "test-project")
 	if err != nil {
 		t.Fatalf("NewRolloutWriter error: %v", err)
@@ -997,6 +1012,7 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 // ─── TestRolloutWriterTokenCount ───
 
 func TestRolloutWriterTokenCount(t *testing.T) {
+	isolateRolloutHome(t)
 	writer, err := NewRolloutWriter("test-agent", "test-task-token", "test-project")
 	if err != nil {
 		t.Fatalf("NewRolloutWriter error: %v", err)
@@ -1122,6 +1138,7 @@ func TestRolloutWriterTokenCount(t *testing.T) {
 // ─── TestRolloutWriterTokenCount_NilUsage ───
 
 func TestRolloutWriterTokenCount_NilUsage(t *testing.T) {
+	isolateRolloutHome(t)
 	writer, err := NewRolloutWriter("test-agent", "test-task-nil", "test-project")
 	if err != nil {
 		t.Fatalf("NewRolloutWriter error: %v", err)
