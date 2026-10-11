@@ -5,11 +5,17 @@ package memory
 // fixture 均写入 t.TempDir()，手动构造 rollout JSONL 行（时间戳合法格式，
 // 行序模拟 executor 的写入顺序）。核心不变式助手 assertRolloutPairingInvariant
 // 遍历 mem.ToMessages() 校验 tool 配对完整性。
+//
+// 覆盖 R1~R16：消息重建与配对归一化（表驱动）、压缩双模式、tail-keep、截断、
+// 时间戳单调、重复 meta、SubAgent 标记，以及 R16 的运行态恢复（token_count 累计、
+// 结束/中断判定、步数与回合数、悬空工具调用、role=system 丢弃）。
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -830,6 +836,295 @@ func TestReadRolloutMemory_DuplicateSessionMeta(t *testing.T) {
 		t.Fatalf("first meta must win: %+v", info)
 	}
 	assertRolloutPairingInvariant(t, mem)
+}
+
+// ─── R16 event_msg 运行态恢复 ───
+
+// rrTokenCount token_count 事件 payload（形状对齐 RolloutWriter.WriteTokenCount：
+// total_token_usage 为累计值，last_token_usage 为本次调用值）。
+func rrTokenCount(in, cached, out, total, lastIn, lastCached int64) string {
+	return `{"type":"token_count","info":{` +
+		`"total_token_usage":{"input_tokens":` + strconv.FormatInt(in, 10) +
+		`,"cached_input_tokens":` + strconv.FormatInt(cached, 10) +
+		`,"output_tokens":` + strconv.FormatInt(out, 10) +
+		`,"total_tokens":` + strconv.FormatInt(total, 10) + `},` +
+		`"last_token_usage":{"input_tokens":` + strconv.FormatInt(lastIn, 10) +
+		`,"cached_input_tokens":` + strconv.FormatInt(lastCached, 10) +
+		`,"output_tokens":0,"total_tokens":0}}}`
+}
+
+// rrSystemItem role=system message payload（写侧落盘的 Director system prompt）。
+func rrSystemItem(id, text string) string {
+	return `{"type":"message","role":"system","id":"` + id + `","content":[{"type":"input_text","text":"` + text + `"}]}`
+}
+
+// TestReadRolloutMemory_TokenCountRestore token_count 恢复为累计用量：
+// total_token_usage 是写侧已累计的值，多条事件必须「后到者胜」而非再次累加。
+func TestReadRolloutMemory_TokenCountRestore(t *testing.T) {
+	lines := []string{
+		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
+		rrLine(rrTs2, "event_msg", rrTokenCount(100, 30, 40, 140, 60, 10)),
+		rrLine(rrTs3, "response_item", rrUserItem("u1", "hi")),
+		rrLine(rrTs4, "event_msg", rrTokenCount(250, 80, 90, 340, 150, 50)),
+		rrLine(rrTs5, "response_item", rrAssistantItem("a1", "hello")),
+		rrLine(rrTs6, "event_msg", `{"type":"task_complete"}`),
+	}
+	path := writeRolloutFixture(t, "tokens.jsonl", lines)
+	mem, info, err := ReadRolloutMemory(path, DefaultRolloutReadOptions())
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	// token_count 不得产生消息（response_item 是消息唯一事实源）
+	if len(mem.Messages) != 2 {
+		t.Fatalf("messages = %d, want 2 (event_msg must not create messages): %+v", len(mem.Messages), mem.Messages)
+	}
+	want := RolloutTokenTotals{Input: 250, CachedInput: 80, Output: 90, Total: 340, LastContextTokens: 200}
+	if info.Tokens != want {
+		t.Fatalf("Tokens = %+v, want %+v", info.Tokens, want)
+	}
+}
+
+// TestReadRolloutMemory_FinishState 结束状态三态判定。
+//
+// 存量文件里终止事件大面积缺失（executor 曾把 task_complete 写入包在
+// cfg.OnAgentExit != nil 条件内），故「无终止事件」不能直接等于「中断」：
+// 还要看有没有悬空工具调用、末条是不是最终答复。
+func TestReadRolloutMemory_FinishState(t *testing.T) {
+	base := []string{
+		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
+		rrLine(rrTs2, "event_msg", `{"type":"task_started"}`),
+		rrLine(rrTs3, "response_item", rrUserItem("u1", "do it")),
+		rrLine(rrTs4, "response_item", rrAssistantItem("a1", "这是最终答复")),
+	}
+	read := func(t *testing.T, name string, lines []string) RolloutInfo {
+		t.Helper()
+		_, info, err := ReadRolloutMemory(writeRolloutFixture(t, name, lines), DefaultRolloutReadOptions())
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		return info
+	}
+
+	t.Run("task_complete", func(t *testing.T) {
+		lines := append(append([]string{}, base...), rrLine(rrTs5, "event_msg", `{"type":"task_complete"}`))
+		info := read(t, "done.jsonl", lines)
+		if !info.Finished || info.Aborted {
+			t.Fatalf("evidence = finished:%v aborted:%v, want finished only", info.Finished, info.Aborted)
+		}
+		if got := info.FinishState(); got != FinishComplete {
+			t.Fatalf("FinishState = %v, want complete", got)
+		}
+	})
+
+	t.Run("turn_aborted", func(t *testing.T) {
+		lines := append(append([]string{}, base...),
+			rrLine(rrTs5, "event_msg", `{"type":"turn_aborted","reason":"context canceled"}`))
+		info := read(t, "aborted.jsonl", lines)
+		if !info.Aborted || info.Finished || info.AbortReason != "context canceled" {
+			t.Fatalf("evidence = %+v, want aborted with reason", info)
+		}
+		// turn_aborted 是强证据：即便末条看起来像最终答复也判中断
+		if got := info.FinishState(); got != FinishInterrupted {
+			t.Fatalf("FinishState = %v, want interrupted", got)
+		}
+	})
+
+	t.Run("no_terminal_event_but_final_answer", func(t *testing.T) {
+		// 存量文件常态：终止事件从未写入，但末条 assistant 已给出最终答复 → 判完成，
+		// 不能误报为中断（否则续跑确认框会在正常会话上弹出）
+		info := read(t, "legacy-complete.jsonl", base)
+		if info.Finished || info.Aborted {
+			t.Fatalf("evidence = %+v, want no terminal event", info)
+		}
+		if !info.EndsWithFinalAnswer {
+			t.Fatal("EndsWithFinalAnswer = false, want true")
+		}
+		if got := info.FinishState(); got != FinishComplete {
+			t.Fatalf("FinishState = %v, want complete", got)
+		}
+	})
+
+	t.Run("no_terminal_event_with_dangling_call", func(t *testing.T) {
+		// 崩在工具执行中：无终止事件 + 悬空 call → 中断
+		lines := []string{
+			rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
+			rrLine(rrTs2, "event_msg", `{"type":"task_started"}`),
+			rrLine(rrTs3, "response_item", rrUserItem("u1", "do it")),
+			rrLine(rrTs4, "response_item", rrAssistantItem("a1", "calling")),
+			rrLine(rrTs5, "response_item", rrCallItem("c1", "run_bash", `{}`)),
+		}
+		info := read(t, "crashed-midtool.jsonl", lines)
+		if info.Finished || info.Aborted {
+			t.Fatalf("evidence = %+v, want no terminal event", info)
+		}
+		if len(info.DanglingToolCalls) != 1 {
+			t.Fatalf("DanglingToolCalls = %+v, want 1", info.DanglingToolCalls)
+		}
+		if got := info.FinishState(); got != FinishInterrupted {
+			t.Fatalf("FinishState = %v, want interrupted", got)
+		}
+	})
+
+	t.Run("no_terminal_event_no_signal", func(t *testing.T) {
+		// 末条是 user（模型还没回）且无悬空 call → 证据不足，老实报 Unknown
+		lines := []string{
+			rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
+			rrLine(rrTs2, "response_item", rrUserItem("u1", "do it")),
+		}
+		info := read(t, "unknown.jsonl", lines)
+		if got := info.FinishState(); got != FinishUnknown {
+			t.Fatalf("FinishState = %v, want unknown", got)
+		}
+		if got := info.FinishState().String(); got != "unknown" {
+			t.Fatalf("String() = %q, want unknown", got)
+		}
+	})
+}
+
+// TestReadRolloutMemory_StepAndTurnCount 步数近似值：Director 文件用 AssistantTurns，
+// sub-agent 文件用 sub_agent_activity 的 MaxStepObserved。
+func TestReadRolloutMemory_StepAndTurnCount(t *testing.T) {
+	lines := []string{
+		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
+		rrLine(rrTs2, "response_item", rrUserItem("u1", "task")),
+		rrLine(rrTs3, "response_item", rrAssistantItem("a1", "step 1")),
+		rrLine(rrTs4, "event_msg", `{"type":"sub_agent_activity","step_number":2,"tool_name":"read_file","success":true}`),
+		rrLine(rrTs5, "response_item", rrCallItem("c1", "read_file", `{}`)),
+		rrLine(rrTs6, "response_item", rrCallOutItem("c1", `"body"`)),
+		// 无正文的 assistant（仅 tool_calls，由 R5 合成）同样代表一次真实回合
+		rrLine(rrTs6, "response_item", rrCallItem("c2", "list_dir", `{}`)),
+		rrLine(rrTs7, "response_item", rrCallOutItem("c2", `"files"`)),
+		rrLine(rrTs7, "event_msg", `{"type":"task_complete"}`),
+	}
+	path := writeRolloutFixture(t, "steps.jsonl", lines)
+	mem, info, err := ReadRolloutMemory(path, DefaultRolloutReadOptions())
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if info.MaxStepObserved != 2 {
+		t.Fatalf("MaxStepObserved = %d, want 2", info.MaxStepObserved)
+	}
+	// a1 + c2 的合成宿主 = 2 条 assistant
+	if info.AssistantTurns != 2 {
+		t.Fatalf("AssistantTurns = %d, want 2: %+v", info.AssistantTurns, mem.Messages)
+	}
+	if info.LastUserInput != "task" {
+		t.Fatalf("LastUserInput = %q, want 'task'", info.LastUserInput)
+	}
+}
+
+// TestReadRolloutMemory_LastUserInputIsLastTurn 写侧每轮重写完整历史，
+// LastUserInput 必须取最后一条 user（= 本轮任务目标），而非首条。
+func TestReadRolloutMemory_LastUserInputIsLastTurn(t *testing.T) {
+	lines := []string{
+		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
+		rrLine(rrTs2, "response_item", rrUserItem("u1", "第一轮目标")),
+		rrLine(rrTs3, "response_item", rrAssistantItem("a1", "done")),
+		rrLine(rrTs4, "response_item", rrUserItem("u2", "第二轮目标")),
+		rrLine(rrTs5, "response_item", rrAssistantItem("a2", "working")),
+	}
+	path := writeRolloutFixture(t, "last-user.jsonl", lines)
+	_, info, err := ReadRolloutMemory(path, DefaultRolloutReadOptions())
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if info.LastUserInput != "第二轮目标" {
+		t.Fatalf("LastUserInput = %q, want 第二轮目标", info.LastUserInput)
+	}
+}
+
+// TestReadRolloutMemory_DanglingToolCalls 悬空 call 除计数外还要留下 id+name，
+// 供 TUI 时间线标记与续跑提示使用。
+func TestReadRolloutMemory_DanglingToolCalls(t *testing.T) {
+	lines := []string{
+		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
+		rrLine(rrTs2, "response_item", rrUserItem("u1", "go")),
+		rrLine(rrTs3, "response_item", rrAssistantItem("a1", "calling two")),
+		rrLine(rrTs4, "response_item", rrCallItem("c1", "read_file", `{}`)),
+		rrLine(rrTs5, "response_item", rrCallItem("c2", "run_bash", `{}`)),
+		rrLine(rrTs6, "response_item", rrCallOutItem("c1", `"ok"`)),
+		// c2 无输出 → 悬空
+	}
+	path := writeRolloutFixture(t, "dangling.jsonl", lines)
+	_, info, err := ReadRolloutMemory(path, DefaultRolloutReadOptions())
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if info.SyntheticOutputs != 1 {
+		t.Fatalf("SyntheticOutputs = %d, want 1", info.SyntheticOutputs)
+	}
+	if len(info.DanglingToolCalls) != 1 {
+		t.Fatalf("DanglingToolCalls = %+v, want exactly 1", info.DanglingToolCalls)
+	}
+	got := info.DanglingToolCalls[0]
+	if got.ID != "c2" || got.Name != "run_bash" {
+		t.Fatalf("dangling call = %+v, want {c2 run_bash}", got)
+	}
+}
+
+// ─── role=system 消息处理（默认丢弃 / 显式保留） ───
+
+func TestReadRolloutMemory_SystemMessageDroppedByDefault(t *testing.T) {
+	lines := []string{
+		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
+		rrLine(rrTs2, "response_item", rrSystemItem("s1", "You are Director... (15k chars)")),
+		rrLine(rrTs3, "response_item", rrUserItem("u1", "hi")),
+		rrLine(rrTs4, "response_item", rrAssistantItem("a1", "hello")),
+	}
+
+	// 默认：system prompt 不进消息（Planner 续跑时本就跳过 MessageTypeSystem）
+	path := writeRolloutFixture(t, "sys-default.jsonl", lines)
+	mem, info, err := ReadRolloutMemory(path, DefaultRolloutReadOptions())
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(mem.Messages) != 2 {
+		t.Fatalf("messages = %d, want 2 (system dropped): %+v", len(mem.Messages), mem.Messages)
+	}
+	for _, m := range mem.Messages {
+		if m.Type == MessageTypeSystem {
+			t.Fatalf("system message must be dropped by default: %+v", m)
+		}
+	}
+	if info.SkippedSystemMessages != 1 {
+		t.Fatalf("SkippedSystemMessages = %d, want 1", info.SkippedSystemMessages)
+	}
+
+	// KeepSystemMessages：对称恢复
+	keepOpts := DefaultRolloutReadOptions()
+	keepOpts.KeepSystemMessages = true
+	path2 := writeRolloutFixture(t, "sys-keep.jsonl", lines)
+	mem2, info2, err2 := ReadRolloutMemory(path2, keepOpts)
+	if err2 != nil {
+		t.Fatalf("keep: %v", err2)
+	}
+	if len(mem2.Messages) != 3 || mem2.Messages[0].Type != MessageTypeSystem {
+		t.Fatalf("keep messages = %+v, want system first", mem2.Messages)
+	}
+	if info2.SkippedSystemMessages != 0 {
+		t.Fatalf("SkippedSystemMessages = %d, want 0 when keeping", info2.SkippedSystemMessages)
+	}
+}
+
+// TestReadRolloutMemory_SystemPromptOnlyFile 仅有 system prompt 的文件在默认选项下
+// 恢复不出消息 → 走既有的零消息错误路径，不 panic。
+func TestReadRolloutMemory_SystemPromptOnlyFile(t *testing.T) {
+	lines := []string{
+		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
+		rrLine(rrTs2, "response_item", rrSystemItem("s1", "prompt only")),
+	}
+	path := writeRolloutFixture(t, "sys-only.jsonl", lines)
+	mem, info, err := ReadRolloutMemory(path, DefaultRolloutReadOptions())
+	if err == nil {
+		t.Fatalf("system-only rollout should error, got %+v", mem)
+	}
+	if !errors.Is(err, errNoRolloutMessages) {
+		t.Fatalf("err = %v, want errNoRolloutMessages wrapped", err)
+	}
+	// 出错也要带回已解析的状态
+	if info.SkippedSystemMessages != 1 || info.Entries != 2 {
+		t.Fatalf("info = %+v", info)
+	}
 }
 
 // ─── R13 SubAgent 文件级标记 ───
