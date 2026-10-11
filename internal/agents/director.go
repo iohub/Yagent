@@ -117,6 +117,10 @@ type DirectorAgent struct {
 	thinkLink *thinklink.Store
 	// taskID 当前任务的 taskID
 	taskID string
+	// resumedTask 一次性标记：本次 Run 是否跑在恢复的历史会话上。由
+	// SetResumedTask 随 SetTaskID 一起设置，run() 读取后即清除——只对续跑后的
+	// 第一轮生效，与 FirstConversation "仅首次注入项目上下文"的语义对齐。
+	resumedTask bool
 	// boardID 黑板隔离域 ID（= taskID，由 SetTaskID 设置；构造时兜底生成 adhoc ID）
 	boardID string
 }
@@ -786,6 +790,11 @@ func (a *DirectorAgent) SetTaskID(taskID string) {
 	a.boardID = blackboard.SanitizeBoardID(taskID)
 }
 
+// SetResumedTask 标记本次 Run 跑在恢复的历史会话上（一次性，run() 读取后清除）。
+func (a *DirectorAgent) SetResumedTask(resumed bool) {
+	a.resumedTask = resumed
+}
+
 // createRolloutWriter 为 delegate 创建 Rollout 写入器
 // 返回 nil 表示创建失败（失败时仅警告，不阻断执行）
 func (a *DirectorAgent) createRolloutWriter(agentName, task string) *memory.RolloutWriter {
@@ -1165,6 +1174,11 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 // 对外行为等价：返回值、事件序列、memory/thinklink 写入、rollout 输出与旧实现
 // 一致（characterization/fullchain 测试为验收线）。
 func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
+	// 一次性消费续跑标记：只影响本次 Run 的系统提示构建，避免泄漏到后续任务
+	//（ProcessConversation 每次都会重设，但 HTTP 等其它入口不经过该路径）。
+	resumedTask := a.resumedTask
+	a.resumedTask = false
+
 	// 设置当前 memory（delegate 闭包通过 a.currentMemory 访问）
 	a.currentMemory = mem
 	defer func() { a.currentMemory = nil }()
@@ -1190,19 +1204,23 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		PendingSubAgentMemory: nil,
 	}
 
-	// Prompts 闭包：包装原系统提示构建段（GlobalCtx.FormatPrompt + 仅首次对话
-	// loadProjectContext + metaHandler.List() 自定义 Agent 列举 + KnowledgeInjector.Inject
+	// Prompts 闭包：包装原系统提示构建段（GlobalCtx.FormatPrompt + 仅首次对话/续跑
+	// 首轮 loadProjectContext + metaHandler.List() 自定义 Agent 列举 + KnowledgeInjector.Inject
 	// + context_loaded 事件 + projectContext 延迟追加）。注入失败忽略错误继续
 	// （与原行为一致：Inject 失败不追加 block）；FirstConversation 判定由 Planner
-	// 按 mem == nil || len(mem.GetMessages()) == 0 计算传入，与原逻辑一致。
+	// 按 mem == nil || len(mem.GetMessages()) == 0 计算传入，与原逻辑一致；
+	// ForceProjectContext 由 PlanInput.Resumed 透传（续跑首轮）。
 	prompts := func(ctx context.Context, in director.PromptInput) (string, error) {
 		// Always start with System Prompt (with any registered custom agents appended)
 		systemPrompt := a.promptFmt.FormatPrompt(directorPrompt)
 		var projectContext string
-		// 只在首次对话时加载项目上下文文件（YAGENT.md、CLAUDE.md、AGENTS.md），
-		// 同一会话的后续追问无需重复注入，避免浪费 token。
+		// 只在首次对话或续跑首轮时加载项目上下文文件（YAGENT.md、CLAUDE.md、
+		// AGENTS.md），同一会话的后续追问无需重复注入，避免浪费 token。
+		// 续跑（/resume、history 加载后的首次追问）必须强制注入：恢复的 memory
+		// 里没有 system 消息（reader 默认丢弃、datamanager 从不存储），仅按
+		// FirstConversation 判定会让 LLM 在缺失项目上下文的状态下接手半截任务。
 		// memory 中不存储 system 消息，因此 len(mem.GetMessages()) == 0 即可判断是否为首次对话。
-		if in.FirstConversation {
+		if in.FirstConversation || in.ForceProjectContext {
 			if loadResult := a.loadProjectContext(); loadResult != nil && loadResult.Content != "" {
 				// 发送上下文加载完成消息到消息通道
 				if a.Publisher != nil {
@@ -1304,9 +1322,10 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 
 	planner := director.NewPlanner(cfg, state)
 	result, err := planner.Run(ctx, director.PlanInput{
-		Input:  input,
-		Mem:    mem,
-		TaskID: a.taskID,
+		Input:   input,
+		Mem:     mem,
+		TaskID:  a.taskID,
+		Resumed: resumedTask,
 	})
 	// 错误路径等价：Planner 所有错误分支的 PlanResult.Text 均为空串，与旧 run()
 	// 各错误分支返回 ("", err) 一致；成功路径 Text 即最终回复文本

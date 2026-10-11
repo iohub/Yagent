@@ -51,6 +51,21 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 	p.state.HasDelegated = false
 	p.state.NonDelegationPrompts = 0
 
+	// ═══════ 初始化 Director Rollout Writer（原 run() 内经 createRolloutWriter
+	// 创建，Planner 侧改用 cfg.Rollout——门面按 in.TaskID/ComputeProjectID 创建
+	// 注入，nil 时跳过，创建失败的 slog.Warn 由门面负责）
+	// 位置在 thinklink 记录之前：B4 起 user_input 条目也要随写 rollout，写点
+	// 依赖本变量已初始化。 ═══════
+	var directorRolloutWriter *memory.RolloutWriter
+	if rw := p.cfg.Rollout; rw != nil {
+		directorRolloutWriter = rw
+		defer func() {
+			if directorRolloutWriter != nil {
+				directorRolloutWriter.Close()
+			}
+		}()
+	}
+
 	// thinklink: 记录用户原始输入（供终极压缩重建上下文；任务开始时步数为 0，
 	// 重复提交相同内容会被自动去重）
 	if p.cfg.Journal != nil {
@@ -65,6 +80,15 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
 					"step":      entry.Step,
 				}, "director")
+			}
+			// B4: 随写 rollout——恢复侧直接重建 journal 视图，无需从消息块重解析
+			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+				_ = directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+					Type:       "thinklink_entry",
+					Kind:       entry.Kind.String(),
+					Text:       entry.Content,
+					StepNumber: entry.Step,
+				})
 			}
 		}
 	}
@@ -85,8 +109,9 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 	// metaHandler.List() 自定义 Agent 列举 + KnowledgeInjector.Inject，
 	// context_loaded 事件发布与 projectContext 延迟追加均在门面闭包内）
 	systemPrompt, err := p.cfg.Prompts(ctx, PromptInput{
-		Input:             in.Input,
-		FirstConversation: in.Mem == nil || len(in.Mem.GetMessages()) == 0,
+		Input:               in.Input,
+		FirstConversation:   in.Mem == nil || len(in.Mem.GetMessages()) == 0,
+		ForceProjectContext: in.Resumed,
 	})
 	if err != nil {
 		// PromptBuilder 契约：门面闭包忽略注入错误继续，err 应恒为 nil；防御性返回
@@ -133,19 +158,6 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		}, "director")
 	}
 
-	// ═══════ 初始化 Director Rollout Writer（原 run() 内经 createRolloutWriter
-	// 创建，Planner 侧改用 cfg.Rollout——门面按 in.TaskID/ComputeProjectID 创建
-	// 注入，nil 时跳过，创建失败的 slog.Warn 由门面负责） ═══════
-	var directorRolloutWriter *memory.RolloutWriter
-	if rw := p.cfg.Rollout; rw != nil {
-		directorRolloutWriter = rw
-		defer func() {
-			if directorRolloutWriter != nil {
-				directorRolloutWriter.Close()
-			}
-		}()
-	}
-
 	writeDirectorRollout := func(msg llm.Message) {
 		if directorRolloutWriter == nil || !directorRolloutWriter.Enabled() {
 			return
@@ -188,7 +200,43 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			}
 		}
 	}
-	// ═══════ END Director Rollout Writer ═══════
+	// ═══════ END Director Rollout Writer（初始化在 Run 开头，B4 上移） ═══════
+
+	// ── 终止事件写入（统一附带断点状态）──
+	// runState 采集当前断点：Step 为主循环步数（p.state.Step 在每步开头置为 i+1），
+	// HasDelegated 由 delegate_* 适配器经 RecordDelegation 写入，此处直读（读均在
+	// toolbatch 段 join 之后的串行路径上，见 RunState 的并发说明）。
+	runState := func(stopReason string) memory.RunState {
+		return memory.RunState{
+			Steps:        p.state.Step,
+			MaxSteps:     p.cfg.MaxSteps,
+			StopReason:   stopReason,
+			HasDelegated: p.state.HasDelegated,
+		}
+	}
+	// writeComplete / writeAborted：writer 为 nil 或未启用时静默跳过（与既有
+	// writeDirectorRollout 的 nil 容忍语义一致）。
+	writeComplete := func(stopReason string) {
+		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+			directorRolloutWriter.WriteRunComplete(runState(stopReason))
+		}
+	}
+	writeAborted := func(reason, stopReason string) {
+		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+			directorRolloutWriter.WriteRunAborted(reason, runState(stopReason))
+		}
+	}
+	// writeCompacted 压缩快照落盘（B4）：summary 是面向人的压缩描述，tokens 供
+	// 恢复侧展示与 CompactionSummaryTail 模式注入锚点。
+	writeCompacted := func(summary string, tokensBefore, tokensAfter int) {
+		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+			_ = directorRolloutWriter.WriteCompacted(memory.CompactedPayload{
+				Summary:      summary,
+				TokensBefore: tokensBefore,
+				TokensAfter:  tokensAfter,
+			})
+		}
+	}
 
 	// ═══════ 写入初始消息（system prompt + user input） ═══════
 	initialMsgCount := len(messages)
@@ -205,13 +253,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		if p.cfg.Recovery != nil && p.cfg.Recovery.IsCircuitBreakerOpen() {
 			slog.Error("Circuit breaker open, too many consecutive LLM failures",
 				"step", i)
-			// Rollout: 写入任务中止事件
-			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-				directorRolloutWriter.WriteEventMsg(memory.EventMsg{
-					Type:   "turn_aborted",
-					Reason: "circuit breaker open",
-				})
-			}
+			writeAborted("circuit breaker open", "circuit_breaker_open")
 			return PlanResult{Steps: p.state.Step, StopReason: "circuit_breaker_open"},
 				fmt.Errorf("circuit breaker open: LLM calls blocked")
 		}
@@ -233,13 +275,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				slog.Warn("DirectorAgent retrying LLM call", "step", i, "attempt", attempt, "wait", wait)
 				select {
 				case <-ctx.Done():
-					// Rollout: 写入任务中止事件
-					if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-						directorRolloutWriter.WriteEventMsg(memory.EventMsg{
-							Type:   "turn_aborted",
-							Reason: ctx.Err().Error(),
-						})
-					}
+					writeAborted(ctx.Err().Error(), "cancelled")
 					return PlanResult{Steps: p.state.Step, StopReason: "cancelled"}, ctx.Err()
 				case <-time.After(wait):
 				}
@@ -290,6 +326,11 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 						"saved_tokens", compStats.SavedTokens,
 						"saved_percent", compStats.SavedPercent,
 						"truncated_count", compStats.TruncatedCount)
+					writeCompacted(fmt.Sprintf(
+						"tool-result truncation: %d results compacted, saved %d tokens (%d → %d)",
+						compStats.TruncatedCount, compStats.SavedTokens,
+						compStats.OriginalTokens, compStats.CompressedTokens),
+						compStats.OriginalTokens, compStats.CompressedTokens)
 				}
 
 				// 紧急压缩:tool 结果已全部截断后仍超限 → 启动紧急模式, 极致压缩 memory 继续任务
@@ -313,6 +354,12 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 						"extracted_blocks", emergencyStats.ExtractedBlocks,
 						"kept_blocks", emergencyStats.KeptBlocks,
 						"summarized_by_llm", emergencyStats.SummarizedByLLM)
+					writeCompacted(fmt.Sprintf(
+						"emergency compression: %d blocks extracted, %d summarized, %d kept, saved %d tokens (%d → %d)",
+						emergencyStats.ExtractedBlocks, emergencyStats.SummarizedBlocks,
+						emergencyStats.KeptBlocks, emergencyStats.SavedTokens,
+						emergencyStats.OriginalTokens, emergencyStats.CompressedTokens),
+						emergencyStats.OriginalTokens, emergencyStats.CompressedTokens)
 				}
 
 				// 终极压缩（第三级）：两级常规压缩处理后仍超限（含紧急压缩出错/未生效、
@@ -334,6 +381,11 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 							"truncated":         ultStats.Truncated,
 							"detail":            "终极压缩(ultimate compression)已触发,上下文已重置为用户原始输入 + Thought & Plan 块",
 						}, "director")
+						writeCompacted(fmt.Sprintf(
+							"ultimate compression: context rebuilt from %d user inputs + %d/%d Thought & Plan blocks, saved %d tokens (%d → %d)",
+							ultStats.UserInputs, ultStats.KeptPlans, ultStats.TotalPlans,
+							ultStats.SavedTokens, ultStats.OriginalTokens, ultStats.CompressedTokens),
+							ultStats.OriginalTokens, ultStats.CompressedTokens)
 					}
 				}
 			}
@@ -449,13 +501,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		if llmErr != nil {
 			slog.Error("DirectorAgent LLM error after all retries",
 				"error", llmErr, "step", i)
-			// Rollout: 写入任务中止事件
-			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-				directorRolloutWriter.WriteEventMsg(memory.EventMsg{
-					Type:   "turn_aborted",
-					Reason: llmErr.Error(),
-				})
-			}
+			writeAborted(llmErr.Error(), "llm_error")
 			return PlanResult{Steps: p.state.Step, StopReason: "llm_error"}, llmErr
 		}
 
@@ -543,6 +589,15 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 							"step":      entry.Step,
 						}, "director")
 					}
+					// B4: 随写 rollout（同 user_input 条目，恢复侧重建 journal 视图）
+					if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
+						_ = directorRolloutWriter.WriteEventMsg(memory.EventMsg{
+							Type:       "thinklink_entry",
+							Kind:       entry.Kind.String(),
+							Text:       entry.Content,
+							StepNumber: entry.Step,
+						})
+					}
 				}
 			}
 		}
@@ -580,12 +635,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				// 不应污染会话历史；下一轮 LLM 调用会看到该 user 消息并应调用 delegate 工具。
 				continue
 			}
-			// Rollout: 写入任务完成事件
-			if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-				directorRolloutWriter.WriteEventMsg(memory.EventMsg{
-					Type: "task_complete",
-				})
-			}
+			writeComplete("plain_text")
 			return PlanResult{Text: choice.Content, Steps: p.state.Step, StopReason: "plain_text"}, nil
 		}
 
@@ -727,12 +777,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			})
 
 			if tc.Function.Name == "agent_exit" {
-				// Rollout: 写入任务完成事件
-				if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-					directorRolloutWriter.WriteEventMsg(memory.EventMsg{
-						Type: "task_complete",
-					})
-				}
+				writeComplete("agent_exit")
 				return "agent_exit"
 			}
 			return ""
@@ -751,13 +796,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					stop = commitPlannerToolCall(i, out)
 				})
 			if stop == "cancelled" {
-				// Rollout: 写入任务中止事件（原站点语义：Reason=ctx.Err().Error()）
-				if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-					directorRolloutWriter.WriteEventMsg(memory.EventMsg{
-						Type:   "turn_aborted",
-						Reason: ctx.Err().Error(),
-					})
-				}
+				writeAborted(ctx.Err().Error(), "cancelled")
 				return PlanResult{Steps: p.state.Step, StopReason: "cancelled"}, ctx.Err()
 			}
 			if stop == "agent_exit" {
@@ -768,12 +807,6 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		}
 	}
 
-	// Rollout: 写入任务中止事件
-	if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-		directorRolloutWriter.WriteEventMsg(memory.EventMsg{
-			Type:   "turn_aborted",
-			Reason: "DirectorAgent exceeded max steps",
-		})
-	}
+	writeAborted("DirectorAgent exceeded max steps", "max_steps")
 	return PlanResult{Steps: p.state.Step, StopReason: "max_steps"}, fmt.Errorf("DirectorAgent exceeded max steps")
 }

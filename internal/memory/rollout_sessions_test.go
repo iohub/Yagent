@@ -159,7 +159,7 @@ func TestListRolloutSessions_FilenameFallback(t *testing.T) {
 	// 畸形文件名（无下划线分隔）
 	writeSessionFixture(t, filepath.Join(root, "projF", "weird-session-name.jsonl"),
 		[]string{rrLine(rrTs3, "response_item", rrUserItem("u1", "weird"))})
-	// 完全无内容的坏 jsonl（身份回退，不 panic）
+	// 完全无内容的坏 jsonl：B5 起 Empty 过滤会把它从清单剔除（恢复必然失败）
 	writeSessionFixture(t, filepath.Join(root, "projF", "20250601_120000_20250601_115511_feedc123.jsonl"),
 		[]string{"not json at all", "{{{", ""})
 
@@ -167,8 +167,13 @@ func TestListRolloutSessions_FilenameFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRolloutSessions: %v", err)
 	}
-	if len(sessions) != 3 {
-		t.Fatalf("sessions = %d, want 3: %+v", len(sessions), sessions)
+	if len(sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2 (corrupt no-message file filtered): %+v", len(sessions), sessions)
+	}
+	for _, s := range sessions {
+		if strings.HasSuffix(s.Path, "feedc123.jsonl") {
+			t.Errorf("corrupt file should be filtered out: %s", s.Path)
+		}
 	}
 	byFile := map[string]RolloutSessionInfo{}
 	for _, s := range sessions {
@@ -183,17 +188,7 @@ func TestListRolloutSessions_FilenameFallback(t *testing.T) {
 	if coder.ProjectID != "projF" {
 		t.Fatalf("fallback projectID = %q", coder.ProjectID)
 	}
-	// 坏文件：身份回退但 Preview 为空；meta 解析失败不致命
-	bad := byFile["20250601_120000_20250601_115511_feedc123.jsonl"]
-	if bad.SessionID != "20250601_115511_feedc123" || bad.AgentName != "" || bad.Preview != "" {
-		t.Fatalf("bad file entry = %+v", bad)
-	}
-	if bad.StartedAt.IsZero() {
-		t.Fatalf("bad file StartedAt should fall back to modTime")
-	}
-	if bad.SizeBytes <= 0 {
-		t.Fatalf("bad file SizeBytes = %d", bad.SizeBytes)
-	}
+	// 坏文件（全坏行、无 message）：B5 起被 Empty 过滤，见上方 feedc123 断言。
 	// 畸形名整段当 sessionID
 	weird := byFile["weird-session-name.jsonl"]
 	if weird.SessionID != "weird-session-name" {

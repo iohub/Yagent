@@ -649,3 +649,59 @@ func TestRunAgentLoop_WritesTerminalEventWithoutOnAgentExit(t *testing.T) {
 		t.Errorf("FinishState = %v, want complete", got)
 	}
 }
+
+// TestRunAgentLoop_RecordsAbortedOnMaxSteps 回归：跑满 max steps 的运行必须记
+// turn_aborted，而不是 task_complete。
+//
+// 终止分类此前只看 agentErr（仅覆盖 panic 与 OnAgentExit hook 失败）；步数耗尽走的是
+// 正常 return + retErr 路径，于是被误记成"完成"。恢复侧 RolloutInfo.FinishState 据此
+// 把中断会话判为 FinishComplete，TUI 因此不再提示断点续跑。
+func TestRunAgentLoop_RecordsAbortedOnMaxSteps(t *testing.T) {
+	w, err := memory.NewRolloutWriter("max-steps-agent", "task-max-steps", "terminal-event-test")
+	if err != nil || !w.Enabled() {
+		t.Skipf("rollout writer unavailable: %v", err)
+	}
+	path := w.FilePath()
+	ctx := memory.WithRolloutWriter(context.Background(), w)
+
+	toolResp := func(id string) *llm.Response {
+		return &llm.Response{Choices: []llm.Choice{{ToolCalls: []llm.ToolCall{{
+			ID:   id,
+			Type: "function",
+			Function: llm.FunctionCall{
+				Name:      "echo_tool",
+				Arguments: `{}`,
+			},
+		}}}}}
+	}
+
+	cfg := ExecutorConfig{
+		SystemPrompt: "You are a test agent.",
+		UserInput:    "keep working",
+		Adapters:     []*tools.Adapter{newFastAdapter("echo_tool", "echo", "OK")},
+		LLM:          &mockLLM{responses: []*llm.Response{toolResp("c1"), toolResp("c2")}},
+		MaxSteps:     2,
+		AgentName:    "max-steps-agent",
+	}
+	_, runErr := RunAgentLoop(ctx, cfg)
+	w.Close()
+
+	if runErr == nil || !strings.Contains(runErr.Error(), "exceeded max steps") {
+		t.Fatalf("RunAgentLoop error = %v, want exceeded max steps", runErr)
+	}
+
+	_, info, err := memory.ReadRolloutMemory(path, memory.DefaultRolloutReadOptions())
+	if err != nil {
+		t.Fatalf("ReadRolloutMemory: %v", err)
+	}
+	if got := info.FinishState(); got != memory.FinishInterrupted {
+		t.Errorf("FinishState = %v, want interrupted (finished=%v aborted=%v)",
+			got, info.Finished, info.Aborted)
+	}
+	if info.Steps != 2 || info.MaxSteps != 2 {
+		t.Errorf("Steps = %d MaxSteps = %d, want 2/2", info.Steps, info.MaxSteps)
+	}
+	if !strings.Contains(info.AbortReason, "exceeded max steps") {
+		t.Errorf("AbortReason = %q, want contains %q", info.AbortReason, "exceeded max steps")
+	}
+}

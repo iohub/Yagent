@@ -145,6 +145,31 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		}
 		return m, nil, true
 
+	case *components.ResumeDialog:
+		// Let the dialog handle keys internally to update Confirmed/SelectedIndex
+		_, cmd := d.Update(msg)
+		if cmd != nil {
+			return m, cmd, true
+		}
+
+		switch key {
+		case "enter", "y", "Y":
+			confirmed := d.GetConfirmed()
+			m.dialogStack.Pop()
+			// 续跑：以 continuation prompt 走普通追问链路（submitFollowUp 内部
+			// 消费 resumedFromRollout 标记，Director 续跑首轮强制注入项目上下文）
+			if confirmed && m.currentTask != nil && !m.taskRunning {
+				return m, m.submitFollowUp(buildResumeContinuationPrompt(d)), true
+			}
+			return m, nil, true
+		case "esc", "n", "N":
+			// 仅浏览：关闭弹窗，保持恢复出的会话视图不动
+			d.SetConfirmed(false)
+			m.dialogStack.Pop()
+			return m, nil, true
+		}
+		return m, nil, true
+
 	case *components.AgentSelectDialog:
 		// Let the dialog handle keys internally for cursor movement
 		_, cmd := d.Update(msg)

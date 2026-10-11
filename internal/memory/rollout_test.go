@@ -1169,3 +1169,358 @@ func TestRolloutWriterTokenCount_NilUsage(t *testing.T) {
 
 	t.Log("Nil usage test passed: no records written for zero token usage")
 }
+
+// ─── 终止事件断点状态 round-trip（写侧 → 读侧）───
+
+// TestRolloutRunStateRoundTrip 校验 B1 的写读契约：task_id 兜底填充、终止事件携带
+// steps/max_steps/stop_reason/has_delegated，且恢复侧能原样读回并据此判定结束状态。
+func TestRolloutRunStateRoundTrip(t *testing.T) {
+	cases := []struct {
+		name       string
+		write      func(w *RolloutWriter) error
+		wantState  RolloutFinishState
+		wantReason string
+		wantSteps  int
+		wantMax    int
+		wantDeleg  bool
+	}{
+		{
+			name: "aborted_max_steps",
+			write: func(w *RolloutWriter) error {
+				return w.WriteRunAborted("DirectorAgent exceeded max steps", RunState{
+					Steps: 30, MaxSteps: 30, StopReason: "max_steps", HasDelegated: true,
+				})
+			},
+			wantState: FinishInterrupted, wantReason: "max_steps",
+			wantSteps: 30, wantMax: 30, wantDeleg: true,
+		},
+		{
+			name: "complete_agent_exit",
+			write: func(w *RolloutWriter) error {
+				return w.WriteRunComplete(RunState{
+					Steps: 7, MaxSteps: 30, StopReason: "agent_exit", HasDelegated: true,
+				})
+			},
+			wantState: FinishComplete, wantReason: "agent_exit",
+			wantSteps: 7, wantMax: 30, wantDeleg: true,
+		},
+		{
+			name: "complete_without_run_state",
+			// sub-agent 侧只带步数、不标注 stop_reason（见 executor.go 的说明）
+			write: func(w *RolloutWriter) error {
+				return w.WriteRunComplete(RunState{Steps: 12, MaxSteps: 50})
+			},
+			wantState: FinishComplete, wantReason: "",
+			wantSteps: 12, wantMax: 50, wantDeleg: false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRolloutHome(t)
+			w, err := NewRolloutWriter("director", "task-uuid-123", "roundtrip-test")
+			if err != nil || !w.Enabled() {
+				t.Skipf("rollout writer unavailable: %v", err)
+			}
+			path := w.FilePath()
+
+			// session_meta 不显式传 task_id → writer 用构造时持有的 taskID 兜底填充
+			if err := w.WriteSessionMeta(SessionMeta{SessionID: w.SessionID(), Cwd: "/repo"}); err != nil {
+				t.Fatalf("WriteSessionMeta: %v", err)
+			}
+			// 至少要有一条消息，否则 ReadRolloutMemory 走零消息错误路径
+			if err := w.WriteResponseItem(ResponseItem{
+				Type: "message", Role: "user", ID: "u1",
+				Content: []MessageContentItem{{Type: "input_text", Text: "do it"}},
+			}); err != nil {
+				t.Fatalf("WriteResponseItem: %v", err)
+			}
+			if err := tc.write(w); err != nil {
+				t.Fatalf("terminal event: %v", err)
+			}
+			w.Close()
+
+			_, info, err := ReadRolloutMemory(path, DefaultRolloutReadOptions())
+			if err != nil {
+				t.Fatalf("ReadRolloutMemory: %v", err)
+			}
+
+			if info.TaskID != "task-uuid-123" {
+				t.Errorf("TaskID = %q, want task-uuid-123（writer 应兜底填充）", info.TaskID)
+			}
+			if got := info.FinishState(); got != tc.wantState {
+				t.Errorf("FinishState = %v, want %v", got, tc.wantState)
+			}
+			if info.StopReason != tc.wantReason {
+				t.Errorf("StopReason = %q, want %q", info.StopReason, tc.wantReason)
+			}
+			if info.Steps != tc.wantSteps || info.MaxSteps != tc.wantMax {
+				t.Errorf("Steps/MaxSteps = %d/%d, want %d/%d",
+					info.Steps, info.MaxSteps, tc.wantSteps, tc.wantMax)
+			}
+			if info.HasDelegated != tc.wantDeleg {
+				t.Errorf("HasDelegated = %v, want %v", info.HasDelegated, tc.wantDeleg)
+			}
+			if got := info.BestStep(); got != tc.wantSteps {
+				t.Errorf("BestStep = %d, want %d（显式步数应优先于回合数近似）", got, tc.wantSteps)
+			}
+
+			// 清单侧也要能拿到 task_id（B5 按 taskID 归并依赖它）
+			sessions, err := ListRolloutSessions(RolloutRootDir(), 0)
+			if err != nil {
+				t.Fatalf("ListRolloutSessions: %v", err)
+			}
+			if len(sessions) != 1 {
+				t.Fatalf("sessions = %d, want 1", len(sessions))
+			}
+			if sessions[0].TaskID != "task-uuid-123" {
+				t.Errorf("session TaskID = %q, want task-uuid-123", sessions[0].TaskID)
+			}
+		})
+	}
+}
+
+// TestRolloutSessionMetaKeepsExplicitTaskID 调用方显式传入 task_id 时不被兜底值覆盖。
+func TestRolloutSessionMetaKeepsExplicitTaskID(t *testing.T) {
+	isolateRolloutHome(t)
+	w, err := NewRolloutWriter("director", "writer-task-id", "explicit-test")
+	if err != nil || !w.Enabled() {
+		t.Skipf("rollout writer unavailable: %v", err)
+	}
+	path := w.FilePath()
+	if err := w.WriteSessionMeta(SessionMeta{
+		SessionID: w.SessionID(),
+		TaskID:    "explicit-task-id",
+	}); err != nil {
+		t.Fatalf("WriteSessionMeta: %v", err)
+	}
+	if err := w.WriteResponseItem(ResponseItem{
+		Type: "message", Role: "user", ID: "u1",
+		Content: []MessageContentItem{{Type: "input_text", Text: "hi"}},
+	}); err != nil {
+		t.Fatalf("WriteResponseItem: %v", err)
+	}
+	w.Close()
+
+	_, info, err := ReadRolloutMemory(path, DefaultRolloutReadOptions())
+	if err != nil {
+		t.Fatalf("ReadRolloutMemory: %v", err)
+	}
+	if info.TaskID != "explicit-task-id" {
+		t.Errorf("TaskID = %q, want explicit-task-id（显式值优先）", info.TaskID)
+	}
+}
+
+// TestRolloutInfoBestStepFallback BestStep 的回退顺序：显式步数 → sub_agent_activity
+// 观测值 → assistant 回合数近似。
+func TestRolloutInfoBestStepFallback(t *testing.T) {
+	cases := []struct {
+		name string
+		info RolloutInfo
+		want int
+	}{
+		{"explicit steps win", RolloutInfo{Steps: 5, MaxStepObserved: 9, AssistantTurns: 12}, 5},
+		{"observed steps next", RolloutInfo{MaxStepObserved: 9, AssistantTurns: 12}, 9},
+		{"turns as approximation", RolloutInfo{AssistantTurns: 12}, 12},
+		{"nothing known", RolloutInfo{}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.info.BestStep(); got != tc.want {
+				t.Errorf("BestStep = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRolloutThinklinkAndCompactedRestore B4 往返：thinklink_entry 事件与 compacted
+// 快照落盘后可被读侧恢复——journal 条目进 RolloutInfo.ThinklinkEntries（不进消息），
+// compacted 在 SummaryTail 模式下注入锚点 System 消息。
+func TestRolloutThinklinkAndCompactedRestore(t *testing.T) {
+	isolateRolloutHome(t)
+	w, err := NewRolloutWriter("director", "task-thinklink", "thinklink-test")
+	if err != nil {
+		t.Fatalf("NewRolloutWriter() error = %v", err)
+	}
+	path := w.FilePath()
+	if err := w.WriteSessionMeta(SessionMeta{SessionID: w.SessionID(), Cwd: "/repo"}); err != nil {
+		t.Fatalf("WriteSessionMeta: %v", err)
+	}
+	// 至少一条消息，避免零消息错误路径
+	if err := w.WriteResponseItem(ResponseItem{
+		Type: "message", Role: "user",
+		Content: []MessageContentItem{{Type: "input_text", Text: "do the thing"}},
+	}); err != nil {
+		t.Fatalf("WriteResponseItem: %v", err)
+	}
+	writeThinklink := func(kind, content string, step int) {
+		t.Helper()
+		if err := w.WriteEventMsg(EventMsg{Type: "thinklink_entry", Kind: kind, Text: content, StepNumber: step}); err != nil {
+			t.Fatalf("WriteEventMsg(thinklink_entry): %v", err)
+		}
+	}
+	writeThinklink("user_input", "do the thing", 0)
+	writeThinklink("thought_plan", "## Thought & Plan\n* [ ] 1. step", 2)
+	if err := w.WriteCompacted(CompactedPayload{
+		Summary: "context truncated: 3 results compacted", TokensBefore: 90000, TokensAfter: 50000,
+	}); err != nil {
+		t.Fatalf("WriteCompacted: %v", err)
+	}
+	if err := w.WriteRunComplete(RunState{Steps: 3, MaxSteps: 30, StopReason: "agent_exit"}); err != nil {
+		t.Fatalf("WriteRunComplete: %v", err)
+	}
+	w.Close()
+
+	t.Run("full_mode_recovers_journal", func(t *testing.T) {
+		_, info, err := ReadRolloutMemory(path, RolloutReadOptions{})
+		if err != nil {
+			t.Fatalf("ReadRolloutMemory: %v", err)
+		}
+		if len(info.ThinklinkEntries) != 2 {
+			t.Fatalf("ThinklinkEntries len = %d, want 2", len(info.ThinklinkEntries))
+		}
+		if info.ThinklinkEntries[0].Kind != "user_input" || info.ThinklinkEntries[0].Content != "do the thing" || info.ThinklinkEntries[0].Step != 0 {
+			t.Errorf("entry[0] = %+v", info.ThinklinkEntries[0])
+		}
+		if info.ThinklinkEntries[1].Kind != "thought_plan" || info.ThinklinkEntries[1].Step != 2 ||
+			!strings.Contains(info.ThinklinkEntries[1].Content, "## Thought & Plan") {
+			t.Errorf("entry[1] = %+v", info.ThinklinkEntries[1])
+		}
+		// journal 条目不产生消息：消息数不因事件变化
+		if info.Messages < 1 {
+			t.Errorf("Messages = %d, want >= 1 (user message)", info.Messages)
+		}
+	})
+
+	t.Run("summary_tail_injects_anchor", func(t *testing.T) {
+		mem, info, err := ReadRolloutMemory(path, RolloutReadOptions{Compaction: CompactionSummaryTail})
+		if err != nil {
+			t.Fatalf("ReadRolloutMemory: %v", err)
+		}
+		if info.FinishState() != FinishComplete {
+			t.Errorf("FinishState = %v, want complete", info.FinishState())
+		}
+		msgs := mem.GetMessages()
+		if len(msgs) == 0 || msgs[0].Type != MessageTypeSystem || !msgs[0].IsAnchored {
+			t.Fatalf("first message = %+v, want anchored system summary", firstOr(msgs))
+		}
+		if !strings.Contains(msgs[0].Content, "context truncated") {
+			t.Errorf("summary content = %q, want truncation description", msgs[0].Content)
+		}
+	})
+}
+
+// firstOr 返回首条消息（空切片返回零值），仅供测试断言可读性。
+func firstOr(msgs []ChatMessage) ChatMessage {
+	if len(msgs) > 0 {
+		return msgs[0]
+	}
+	return ChatMessage{}
+}
+
+// TestListRolloutSessionsGroupsAndFiltering B5：清单按 task_id 归并的前置数据、
+// 空文件过滤与超长 preview 注入块的跳过。
+func TestListRolloutSessionsGroupsAndFiltering(t *testing.T) {
+	isolateRolloutHome(t)
+
+	// 组 T1：主会话 + 子 Agent 文件（同 task_id）
+	wMain, err := NewRolloutWriter("director", "task-grp-1", "grp-test")
+	if err != nil {
+		t.Fatalf("writer: %v", err)
+	}
+	if err := wMain.WriteSessionMeta(SessionMeta{SessionID: wMain.SessionID(), Cwd: "/repo"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wMain.WriteResponseItem(ResponseItem{
+		Type: "message", Role: "user",
+		Content: []MessageContentItem{{Type: "input_text", Text: "build the feature"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wMain.Close()
+
+	wSub, err := NewRolloutWriter("coder", "task-grp-1", "grp-test")
+	if err != nil {
+		t.Fatalf("writer: %v", err)
+	}
+	if err := wSub.WriteSessionMeta(SessionMeta{SessionID: wSub.SessionID(), Cwd: "/repo"}); err != nil {
+		t.Fatal(err)
+	}
+	// 首条 user 消息是超长注入块（>2000 rune），随后才是真实任务描述
+	blob := strings.Repeat("ctx ", 600) + "\nactual task: fix bug"
+	if err := wSub.WriteResponseItem(ResponseItem{
+		Type: "message", Role: "user",
+		Content: []MessageContentItem{{Type: "input_text", Text: blob}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wSub.WriteResponseItem(ResponseItem{
+		Type: "message", Role: "user",
+		Content: []MessageContentItem{{Type: "input_text", Text: "fix bug"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wSub.Close()
+
+	// 独立会话（无 task_id）：各自成组
+	wSolo, err := NewRolloutWriter("director", "", "grp-test")
+	if err != nil {
+		t.Fatalf("writer: %v", err)
+	}
+	if err := wSolo.WriteSessionMeta(SessionMeta{SessionID: wSolo.SessionID(), Cwd: "/repo"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wSolo.WriteResponseItem(ResponseItem{
+		Type: "message", Role: "user",
+		Content: []MessageContentItem{{Type: "input_text", Text: "solo task"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wSolo.Close()
+
+	// 空文件：只有 session_meta + 终止事件，无任何 message → 清单过滤
+	wEmpty, err := NewRolloutWriter("director", "task-empty", "grp-test")
+	if err != nil {
+		t.Fatalf("writer: %v", err)
+	}
+	if err := wEmpty.WriteSessionMeta(SessionMeta{SessionID: wEmpty.SessionID(), Cwd: "/repo"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wEmpty.WriteRunComplete(RunState{Steps: 1}); err != nil {
+		t.Fatal(err)
+	}
+	wEmpty.Close()
+
+	items, err := ListRolloutSessions(RolloutRootDir(), 0)
+	if err != nil {
+		t.Fatalf("ListRolloutSessions: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("items len = %d, want 3 (empty file filtered)", len(items))
+	}
+
+	byPath := make(map[string]RolloutSessionInfo, len(items))
+	for _, it := range items {
+		byPath[it.Path] = it
+	}
+	main := byPath[wMain.FilePath()]
+	if main.TaskID != "task-grp-1" {
+		t.Errorf("main task id = %q, want task-grp-1", main.TaskID)
+	}
+	sub := byPath[wSub.FilePath()]
+	if sub.AgentName != "coder" {
+		t.Errorf("sub agent name = %q, want coder", sub.AgentName)
+	}
+	// 超长注入块不作 preview，取后续真实任务描述
+	if sub.Preview != "fix bug" {
+		t.Errorf("sub preview = %q, want %q (skip injected blob)", sub.Preview, "fix bug")
+	}
+	if sub.HeadMessages != 2 {
+		t.Errorf("sub HeadMessages = %d, want 2", sub.HeadMessages)
+	}
+	solo := byPath[wSolo.FilePath()]
+	if solo.TaskID != "" || solo.Preview != "solo task" {
+		t.Errorf("solo = %+v", solo)
+	}
+}

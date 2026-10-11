@@ -201,7 +201,7 @@ func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (str
 }
 
 // RunAgentLoop runs the standard LLM-tool interaction loop.
-func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, error) {
+func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResult, retErr error) {
 	// Publish model info so the TUI can display it in the status bar.
 	if cfg.Publisher != nil {
 		cfg.Publisher.Publish("model_info", map[string]interface{}{
@@ -328,7 +328,10 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 	}
 
 	// ─── 收尾：OnAgentExit hook + rollout 终止事件（单个 defer，panic 安全）───
+	// stepNumber 必须声明在 defer 之前：Go 的短变量作用域从声明处开始，收尾 defer
+	// 需要读它来落盘已执行步数。
 	var agentErr error
+	stepNumber := 0
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -346,15 +349,22 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		// 可读文件有 89 个（61%）因此缺失 task_complete/turn_aborted，恢复侧无从判断
 		// 会话是正常结束还是被切断，只能保守报 Unknown。
 		if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
-			if agentErr != nil {
-				rw.WriteEventMsg(memory.EventMsg{
-					Type:   "turn_aborted",
-					Reason: agentErr.Error(),
-				})
+			// 终止分类以"这次运行是否带着错误结束"为准：agentErr 只覆盖 panic 与
+			// OnAgentExit hook 失败，步数耗尽 / ctx 取消 / LLM 错误这些正常 return
+			// 路径的错误只在 retErr 里。此前只看 agentErr，导致 sub-agent 跑满
+			// max steps 也被记成 task_complete，恢复侧因此把中断会话误判为已完成。
+			termErr := agentErr
+			if termErr == nil {
+				termErr = retErr
+			}
+			// StopReason 留空：sub-agent 各 return 点的分类（agent_exit / max_steps /
+			// cancelled）需逐点标注，此处不臆测；缺失时恢复侧走 RolloutInfo.FinishState
+			// 的证据推断（终止事件 + 悬空调用 + 末条是否为最终答复）。
+			rs := memory.RunState{Steps: stepNumber, MaxSteps: cfg.MaxSteps}
+			if termErr != nil {
+				rw.WriteRunAborted(termErr.Error(), rs)
 			} else {
-				rw.WriteEventMsg(memory.EventMsg{
-					Type: "task_complete",
-				})
+				rw.WriteRunComplete(rs)
 			}
 		}
 		// 保持既有 panic 语义：挂了 hook 时原实现即把 panic 收敛为 agentErr 后吞掉，
@@ -364,7 +374,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		}
 	}()
 
-	stepNumber := 0
 	noActionCount := 0 // 累计无工具调用纯文本输出次数
 
 	// writeRollout 实时写入消息到 Rollout 文件（如果 context 中配置了 writer）
@@ -469,6 +478,17 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 						"saved_tokens", compStats.SavedTokens,
 						"saved_percent", compStats.SavedPercent,
 						"truncated_count", compStats.TruncatedCount)
+					// B4: 压缩快照随写 rollout（与 planner_run.go 同语义）
+					if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
+						_ = rw.WriteCompacted(memory.CompactedPayload{
+							Summary: fmt.Sprintf(
+								"tool-result truncation: %d results compacted, saved %d tokens (%d → %d)",
+								compStats.TruncatedCount, compStats.SavedTokens,
+								compStats.OriginalTokens, compStats.CompressedTokens),
+							TokensBefore: compStats.OriginalTokens,
+							TokensAfter:  compStats.CompressedTokens,
+						})
+					}
 				}
 
 				// 紧急压缩:tool 结果已全部截断后仍超限 → 启动紧急模式, 极致压缩上下文继续任务
@@ -496,6 +516,18 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 						"extracted_blocks", emergencyStats.ExtractedBlocks,
 						"kept_blocks", emergencyStats.KeptBlocks,
 						"summarized_by_llm", emergencyStats.SummarizedByLLM)
+					// B4: 压缩快照随写 rollout（与 planner_run.go 同语义）
+					if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
+						_ = rw.WriteCompacted(memory.CompactedPayload{
+							Summary: fmt.Sprintf(
+								"emergency compression: %d blocks extracted, %d summarized, %d kept, saved %d tokens (%d → %d)",
+								emergencyStats.ExtractedBlocks, emergencyStats.SummarizedBlocks,
+								emergencyStats.KeptBlocks, emergencyStats.SavedTokens,
+								emergencyStats.OriginalTokens, emergencyStats.CompressedTokens),
+							TokensBefore: emergencyStats.OriginalTokens,
+							TokensAfter:  emergencyStats.CompressedTokens,
+						})
+					}
 					// 终极压缩 (第三级):两级常规压缩后仍超限，用 thinklink 重建上下文继续任务
 					if compression.EstimateMessagesTokens(messages) > threshold && cfg.UltimateThinkLink != nil {
 						ultCompressor := compression.NewContextCompressor(cfg.LLM, cfg.AgentName, cfg.UltimateThinkLink, nil)
@@ -525,6 +557,17 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 							"kept_plans", ultStats.KeptPlans,
 							"user_inputs", ultStats.UserInputs,
 							"truncated", ultStats.Truncated)
+						// B4: 压缩快照随写 rollout（与 planner_run.go 同语义）
+						if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
+							_ = rw.WriteCompacted(memory.CompactedPayload{
+								Summary: fmt.Sprintf(
+									"ultimate compression: context rebuilt from %d user inputs + %d/%d Thought & Plan blocks, saved %d tokens (%d → %d)",
+									ultStats.UserInputs, ultStats.KeptPlans, ultStats.TotalPlans,
+									ultStats.SavedTokens, ultStats.OriginalTokens, ultStats.CompressedTokens),
+								TokensBefore: ultStats.OriginalTokens,
+								TokensAfter:  ultStats.CompressedTokens,
+							})
+						}
 					}
 				}
 			}
