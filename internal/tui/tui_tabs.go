@@ -402,7 +402,44 @@ func (m *model) generateTabTitle(id int) string {
 	return langManager.GetText("SessionTitlePrefix") + " " + strconv.Itoa(id)
 }
 
-// renderTabBar 渲染 1 行 tab 栏
+// ── Tab 栏配色 —— 与 dashboard/thinklink 家族设计语言一致 ──
+var (
+	tabChipActiveBg    = lipgloss.Color("141") // 活动 tab：薰衣草底、近黑粗体字
+	tabChipActiveFg    = lipgloss.Color("16")
+	tabChipIdleBg      = lipgloss.Color("236") // 非活动 tab：暗底灰字
+	tabChipIdleNumFg   = lipgloss.Color("241")
+	tabChipIdleTitleFg = lipgloss.Color("246")
+	tabNewBtnBg        = lipgloss.Color("235") // "+" 新建按钮
+	tabNewBtnFg        = lipgloss.Color("243")
+	tabDotRunActiveFg  = lipgloss.Color("22")  // 活动 chip 内运行指示 ●（深绿）
+	tabDotRunIdleFg    = lipgloss.Color("114") // 非活动 chip 内运行指示 ●（亮绿）
+)
+
+// renderSessionChip 渲染单个会话 tab chip：
+// " N 标题 " 彩底块；tab 有任务运行时追加 ● 指示点。
+func renderSessionChip(num int, tab *sessionTab, active bool) string {
+	bg := tabChipIdleBg
+	numFg, titleFg := tabChipIdleNumFg, tabChipIdleTitleFg
+	if active {
+		bg = tabChipActiveBg
+		numFg, titleFg = tabChipActiveFg, tabChipActiveFg
+	}
+	numStyle := lipgloss.NewStyle().Background(bg).Foreground(numFg).Bold(true)
+	titleStyle := lipgloss.NewStyle().Background(bg).Foreground(titleFg).Bold(active)
+
+	chip := numStyle.Render(fmt.Sprintf(" %d ", num)) + titleStyle.Render(tab.title+" ")
+	if tab.taskRunning {
+		dotFg := tabDotRunIdleFg
+		if active {
+			dotFg = tabDotRunActiveFg
+		}
+		chip += lipgloss.NewStyle().Background(bg).Foreground(dotFg).Bold(true).Render("● ")
+	}
+	return chip
+}
+
+// renderTabBar 渲染 1 行 tab 栏：chip 式 tab + "+" 新建按钮，
+// 空间富余时右对齐 keycap 快捷键提示（ctrl+t 新建 / alt+w 关闭）。
 func (m *model) renderTabBar() string {
 	if len(m.sessionTabs) == 0 {
 		return ""
@@ -413,51 +450,41 @@ func (m *model) renderTabBar() string {
 
 	// 构建 (label, styled) 对，并记录每个 tab 的显示宽度
 	type tabItem struct {
-		label string
+		label  string
 		styled string
-		width int
+		width  int
 	}
 	var items []tabItem
 
 	for i, tab := range m.sessionTabs {
-		label := fmt.Sprintf("%d:%s", i+1, tab.title)
-		var styled string
-		if i == m.activeSessionIdx {
-			// 活动 tab: 高亮背景
-			styled = lipgloss.NewStyle().
-				Background(lipgloss.Color("39")).
-				Foreground(lipgloss.Color("0")).
-				Bold(true).
-				Render(label)
-		} else {
-			// 非活动 tab: 暗色背景
-			styled = lipgloss.NewStyle().
-				Background(lipgloss.Color("236")).
-				Foreground(lipgloss.Color("245")).
-				Render(label)
-		}
-		items = append(items, tabItem{label: label, styled: styled, width: lipgloss.Width(styled)})
+		chip := renderSessionChip(i+1, tab, i == m.activeSessionIdx)
+		items = append(items, tabItem{label: tab.title, styled: chip, width: lipgloss.Width(chip)})
 	}
 
 	// 添加"新建"按钮（如果未达到上限）
 	if len(m.sessionTabs) < m.maxTabs {
 		newBtn := lipgloss.NewStyle().
-			Background(lipgloss.Color("237")).
-			Foreground(lipgloss.Color("245")).
-			Render(" +")
+			Background(tabNewBtnBg).
+			Foreground(tabNewBtnFg).
+			Bold(true).
+			Render(" + ")
 		items = append(items, tabItem{label: "+", styled: newBtn, width: lipgloss.Width(newBtn)})
 	}
 
-	// 贪心追加 tab，保证活动 tab 始终可见
+	// 贪心追加 tab（chip 间以单空格分隔，计入 1 列分隔宽），保证活动 tab 始终可见
 	var resultItems []tabItem
 	totalWidth := 0
 	activeIdx := m.activeSessionIdx
 
 	// 尝试按顺序追加
 	for _, item := range items {
-		if totalWidth+item.width <= availableWidth {
+		cost := item.width
+		if len(resultItems) > 0 {
+			cost++ // chip 之间的空格分隔
+		}
+		if totalWidth+cost <= availableWidth {
 			resultItems = append(resultItems, item)
-			totalWidth += item.width
+			totalWidth += cost
 		} else {
 			// 检查活动 tab 是否在当前结果集中
 			foundActive := false
@@ -475,9 +502,13 @@ func (m *model) renderTabBar() string {
 					if k < activeIdx {
 						continue
 					}
-					if totalWidth+item.width <= availableWidth {
+					cost := item.width
+					if len(resultItems) > 0 {
+						cost++
+					}
+					if totalWidth+cost <= availableWidth {
 						resultItems = append(resultItems, item)
-						totalWidth += item.width
+						totalWidth += cost
 					}
 				}
 			}
@@ -485,21 +516,21 @@ func (m *model) renderTabBar() string {
 		}
 	}
 
-	// 拼接渲染后的字符串
+	// 拼接渲染后的字符串（chip 间单空格分隔）
 	var tabStrings []string
 	for _, item := range resultItems {
 		tabStrings = append(tabStrings, item.styled)
 	}
-	result := strings.Join(tabStrings, "")
+	result := strings.Join(tabStrings, " ")
 
-	// 计算实际显示宽度（用于填充空格）
-	var totalRenderedWidth int
-	for _, item := range resultItems {
-		totalRenderedWidth += item.width
-	}
-
-	if totalRenderedWidth < availableWidth {
-		result = result + strings.Repeat(" ", availableWidth-totalRenderedWidth)
+	// 右侧 keycap 提示：空间富余（chips 与提示之间至少留 2 列）才显示
+	hint := dashKeycap("ctrl+t", langManager.GetText("TabNewHint")) +
+		dashKeycap("alt+w", langManager.GetText("TabCloseHint"))
+	hintWidth := lipgloss.Width(hint)
+	if totalWidth+2+hintWidth <= availableWidth {
+		result += strings.Repeat(" ", availableWidth-totalWidth-hintWidth) + hint
+	} else if totalWidth < availableWidth {
+		result += strings.Repeat(" ", availableWidth-totalWidth)
 	}
 
 	return result

@@ -80,6 +80,7 @@ type translations struct {
 	// Session tab hints
 	SessionTitlePrefix   string
 	TabNewHint           string
+	TabCloseHint         string
 	TabMaxReached        string
 	TabCannotWhileRunning string
 	TabCloseLastBlocked  string
@@ -164,6 +165,7 @@ var langMap = map[Language]translations{
 		DashboardExpandHint:   "展开",
 		SessionTitlePrefix:   "会话",
 		TabNewHint:           "新建",
+		TabCloseHint:         "关闭",
 		TabMaxReached:        "已达到最大会话数 (10)",
 		TabCannotWhileRunning: "任务运行中，无法切换/新建/清空会话",
 		TabCloseLastBlocked:  "无法关闭最后一个会话",
@@ -246,6 +248,7 @@ var langMap = map[Language]translations{
 		DashboardExpandHint:   "expand",
 		SessionTitlePrefix:   "Session",
 		TabNewHint:           "New",
+		TabCloseHint:         "Close",
 		TabMaxReached:        "Maximum sessions reached (10)",
 		TabCannotWhileRunning: "Cannot switch/new/clear session while a task is running",
 		TabCloseLastBlocked:  "Cannot close the last session",
@@ -395,6 +398,8 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.SessionTitlePrefix
 	case "TabNewHint":
 		return translations.TabNewHint
+	case "TabCloseHint":
+		return translations.TabCloseHint
 	case "TabMaxReached":
 		return translations.TabMaxReached
 	case "TabCannotWhileRunning":
