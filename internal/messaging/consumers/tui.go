@@ -457,6 +457,197 @@ func (t *TUIConsumer) showUserInputDialog(event *messaging.MessageEvent) {
 	}
 }
 
+// ── Help interaction design tokens ──
+// Same family style as the TUI dialogs: rounded border (62), lavender
+// accent (141), ◆ title, ○ option rows with right-aligned keycaps.
+
+const helpPanelMaxWidth = 64
+
+var (
+	helpPanelStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62")).Padding(0, 1)
+	helpTitleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
+	helpQuestionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	helpLabelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+	helpCustomStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Italic(true)
+	helpDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	helpKeyStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("247")).Bold(true)
+	helpMarkerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	helpErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Italic(true)
+	helpPromptStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
+	helpOKStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Bold(true)
+	helpSentStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+)
+
+// helpPanelWidth returns the outer panel width for CLI help dialogs.
+func helpPanelWidth() int {
+	w := terminalWidth() - 4
+	if w > helpPanelMaxWidth {
+		w = helpPanelMaxWidth
+	}
+	if w < 36 {
+		w = 36
+	}
+	return w
+}
+
+// helpContentWidth returns the usable text width inside the panel
+// (outer width minus 2 border cols and 2 padding cols).
+func helpContentWidth(panelWidth int) int {
+	w := panelWidth - 4
+	if w < 10 {
+		w = 10
+	}
+	return w
+}
+
+// helpHardWrap wraps text to the given display width. Latin words are kept
+// whole when possible; CJK runes (and over-long words) break per character.
+// Blank lines are preserved.
+func helpHardWrap(s string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	var lines []string
+	for _, para := range strings.Split(s, "\n") {
+		if para == "" {
+			lines = append(lines, "")
+			continue
+		}
+		var line strings.Builder
+		lineW := 0
+		flush := func() {
+			lines = append(lines, strings.TrimRight(line.String(), " "))
+			line.Reset()
+			lineW = 0
+		}
+		for _, tok := range helpWrapTokens(para) {
+			tokW := lipgloss.Width(tok)
+			switch {
+			case strings.Trim(tok, " ") == "":
+				if lineW == 0 {
+					continue // drop leading spaces after a break
+				}
+				if lineW+tokW > width {
+					flush()
+					continue
+				}
+			case tokW > width:
+				// single token wider than the line: break it per rune
+				for _, r := range tok {
+					rw := lipgloss.Width(string(r))
+					if lineW > 0 && lineW+rw > width {
+						flush()
+					}
+					line.WriteRune(r)
+					lineW += rw
+				}
+				continue
+			default:
+				if lineW+tokW > width {
+					flush()
+				}
+			}
+			line.WriteString(tok)
+			lineW += tokW
+		}
+		if line.Len() > 0 {
+			flush()
+		}
+	}
+	return lines
+}
+
+// helpWrapTokens splits a paragraph into wrappable tokens: space runs,
+// single wide (CJK) runes, and runs of narrow non-space runes (latin words).
+func helpWrapTokens(para string) []string {
+	runes := []rune(para)
+	var tokens []string
+	i := 0
+	for i < len(runes) {
+		r := runes[i]
+		switch {
+		case r == ' ':
+			j := i
+			for j < len(runes) && runes[j] == ' ' {
+				j++
+			}
+			tokens = append(tokens, string(runes[i:j]))
+			i = j
+		case lipgloss.Width(string(r)) > 1:
+			tokens = append(tokens, string(r))
+			i++
+		default:
+			j := i
+			for j < len(runes) && runes[j] != ' ' && lipgloss.Width(string(runes[j])) == 1 {
+				j++
+			}
+			tokens = append(tokens, string(runes[i:j]))
+			i = j
+		}
+	}
+	return tokens
+}
+
+// helpPanel renders a rounded-border panel: "◆ title", blank line, body rows.
+// body lines are assumed to be pre-wrapped to helpContentWidth(width).
+// lipgloss v2 Width() is border-box: it includes padding and border.
+func helpPanel(title string, body []string, width int) string {
+	content := helpTitleStyle.Render("◆ " + title)
+	if len(body) > 0 {
+		content += "\n\n" + strings.Join(body, "\n")
+	}
+	return helpPanelStyle.Width(width).Render(content)
+}
+
+// helpQuestionBody hard-wraps and styles the question text.
+func helpQuestionBody(question string, contentW int) []string {
+	wrapped := helpHardWrap(question, contentW)
+	body := make([]string, 0, len(wrapped))
+	for _, line := range wrapped {
+		body = append(body, helpQuestionStyle.Render(line))
+	}
+	return body
+}
+
+// helpOptionRow renders " ○ label …… key" padded to contentW.
+func helpOptionRow(label, key string, contentW int, labelStyle lipgloss.Style) string {
+	maxLabel := contentW - lipgloss.Width(key) - 6
+	if maxLabel < 4 {
+		maxLabel = 4
+	}
+	renderedLabel := labelStyle.Render(helpTruncate(label, maxLabel))
+	marker := helpMarkerStyle.Render("○")
+	left := " " + marker + " " + renderedLabel + " "
+	gap := contentW - lipgloss.Width(left) - lipgloss.Width(key)
+	if gap < 0 {
+		gap = 0
+	}
+	return left + strings.Repeat(" ", gap) + helpKeyStyle.Render(key)
+}
+
+// helpTruncate shortens s to maxW display columns, appending "…" when cut.
+func helpTruncate(s string, maxW int) string {
+	if maxW < 1 || lipgloss.Width(s) <= maxW {
+		return s
+	}
+	var b strings.Builder
+	w := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > maxW-1 {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return b.String() + "…"
+}
+
+// helpPrompt renders the input prompt line below the panel.
+func helpPrompt(label string) string {
+	return "  " + helpPromptStyle.Render("›") + " " + helpDimStyle.Render(label)
+}
+
 // publishHelpResponse publishes a user response to the help response topic
 func (t *TUIConsumer) publishHelpResponse(response string, requestID string) {
 	if t.publisher != nil {
@@ -465,17 +656,21 @@ func (t *TUIConsumer) publishHelpResponse(response string, requestID string) {
 			"request_id": requestID,
 		}
 		t.publisher.Publish("user_help_response", content, "User")
-		fmt.Fprintf(t.writer, "已发送回复，等待任务继续...\n")
+		fmt.Fprintln(t.writer, "  "+helpOKStyle.Render("✓")+" "+helpSentStyle.Render("已发送回复，等待任务继续..."))
 	}
 }
 
 // showCLIInput handles free-form text input with optional default value
 func (t *TUIConsumer) showCLIInput(question string, defaultValue string, requestID string) {
-	fmt.Fprintf(t.writer, "\n🔔 %s\n", question)
+	width := helpPanelWidth()
+	contentW := helpContentWidth(width)
+
+	body := helpQuestionBody(question, contentW)
 	if defaultValue != "" {
-		fmt.Fprintf(t.writer, "(默认: %s)\n", defaultValue)
+		body = append(body, "", helpDimStyle.Render("ℹ 默认: "+defaultValue))
 	}
-	fmt.Fprint(t.writer, "\n请输入: ")
+	fmt.Fprintln(t.writer, "\n"+helpPanel("Input", body, width))
+	fmt.Fprint(t.writer, helpPrompt("请输入: "))
 
 	input, err := t.reader.ReadString('\n')
 	if err != nil {
@@ -498,11 +693,22 @@ func (t *TUIConsumer) showCLIConfirm(question string, options []string, requestI
 		noLabel = options[1]
 	}
 
+	width := helpPanelWidth()
+	contentW := helpContentWidth(width)
+	errMsg := ""
+
 	for {
-		fmt.Fprintf(t.writer, "\n🔔 %s\n\n", question)
-		fmt.Fprintf(t.writer, "  [Y] %s\n", yesLabel)
-		fmt.Fprintf(t.writer, "  [N] %s\n\n", noLabel)
-		fmt.Fprint(t.writer, "请选择 (Y/N): ")
+		body := helpQuestionBody(question, contentW)
+		body = append(body, "",
+			helpOptionRow(yesLabel, "Y", contentW, helpLabelStyle),
+			helpOptionRow(noLabel, "N", contentW, helpLabelStyle),
+		)
+		fmt.Fprintln(t.writer, "\n"+helpPanel("Confirm", body, width))
+		if errMsg != "" {
+			fmt.Fprintln(t.writer, "  "+helpErrorStyle.Render("✗ "+errMsg))
+			errMsg = ""
+		}
+		fmt.Fprint(t.writer, helpPrompt("请选择 (Y/N): "))
 
 		input, err := t.reader.ReadString('\n')
 		if err != nil {
@@ -518,21 +724,31 @@ func (t *TUIConsumer) showCLIConfirm(question string, options []string, requestI
 			t.publishHelpResponse(noLabel, requestID)
 			return
 		default:
-			fmt.Fprintf(t.writer, "无效输入，请输入 Y 或 N\n")
+			errMsg = "无效输入，请输入 Y 或 N"
 		}
 	}
 }
 
 // showCLISelect handles selection from a list of options with custom input support
 func (t *TUIConsumer) showCLISelect(question string, options []string, requestID string) {
+	width := helpPanelWidth()
+	contentW := helpContentWidth(width)
+	customIdx := len(options) + 1
+	errMsg := ""
+
 	for {
-		fmt.Fprintf(t.writer, "\n🔔 %s\n\n", question)
+		body := helpQuestionBody(question, contentW)
+		body = append(body, "")
 		for i, opt := range options {
-			fmt.Fprintf(t.writer, "  %d. %s\n", i+1, opt)
+			body = append(body, helpOptionRow(opt, strconv.Itoa(i+1), contentW, helpLabelStyle))
 		}
-		customIdx := len(options) + 1
-		fmt.Fprintf(t.writer, "  %d. Custom input...\n\n", customIdx)
-		fmt.Fprintf(t.writer, "请输入序号 (1-%d): ", customIdx)
+		body = append(body, helpOptionRow("✎ Custom input…", strconv.Itoa(customIdx), contentW, helpCustomStyle))
+		fmt.Fprintln(t.writer, "\n"+helpPanel("Choose", body, width))
+		if errMsg != "" {
+			fmt.Fprintln(t.writer, "  "+helpErrorStyle.Render("✗ "+errMsg))
+			errMsg = ""
+		}
+		fmt.Fprint(t.writer, helpPrompt(fmt.Sprintf("请输入序号 (1-%d): ", customIdx)))
 
 		input, err := t.reader.ReadString('\n')
 		if err != nil {
@@ -542,12 +758,12 @@ func (t *TUIConsumer) showCLISelect(question string, options []string, requestID
 
 		num, err := strconv.Atoi(input)
 		if err != nil || num < 1 || num > customIdx {
-			fmt.Fprintf(t.writer, "无效序号，请重新输入\n")
+			errMsg = "无效序号，请重新输入"
 			continue
 		}
 
 		if num == customIdx {
-			fmt.Fprint(t.writer, "请输入自定义内容: ")
+			fmt.Fprint(t.writer, helpPrompt("请输入自定义内容: "))
 			custom, err := t.reader.ReadString('\n')
 			if err != nil {
 				return
@@ -557,6 +773,7 @@ func (t *TUIConsumer) showCLISelect(question string, options []string, requestID
 				t.publishHelpResponse(custom, requestID)
 				return
 			}
+			errMsg = "内容为空，请重新输入"
 		} else {
 			t.publishHelpResponse(options[num-1], requestID)
 			return
