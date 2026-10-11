@@ -574,6 +574,11 @@ func extractToolSummary(toolName string, argsJSON string) string {
 	}
 	switch toolName {
 	case "read_file", "edit_file", "search_replace_in_file", "create_file", "delete_file":
+		// target_file 是 read_file/create_file/delete_file 的实际参数名（见
+		// tools/file_operations.go），file_path 是 search_replace_in_file 的；两者都认。
+		if fp, ok := args["target_file"].(string); ok && fp != "" {
+			return fp
+		}
 		if fp, ok := args["file_path"].(string); ok && fp != "" {
 			return fp
 		}
