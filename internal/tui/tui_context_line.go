@@ -9,7 +9,9 @@ import (
 
 // contextBarThresholdWidth 进度条样式的最小可用内容宽度（列）：
 // 低于该宽度时自动退化为无进度条样式，避免溢出或截断。
-const contextBarThresholdWidth = 60
+// 44 = 侧边栏 dashboard 内容宽度（面板 50 − 边框/padding 4 = 46）下，
+// 完整进度条行（"⛁  Context  450.0k / 200.0k  ▰▰▱…  45.0%"）最坏约 46 列，可容纳。
+const contextBarThresholdWidth = 44
 
 // renderContextLine 渲染独立的上下文用量行（折叠面板与右上角 dashboard 共用）。
 //
