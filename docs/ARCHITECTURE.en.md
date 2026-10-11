@@ -1753,7 +1753,6 @@ flowchart LR
 | `internal/knowledge/injector.go` | Knowledge injector (currently hard-disabled) |
 | `internal/mcp/client.go` | MCP client |
 | `internal/recovery/circuit_breaker.go` | Circuit breaker |
-| `internal/registry/capability_registry.go` | Capability registry |
 | `internal/skills/skills.go` | Skill system |
 | `internal/datamanager/data_manager.go` | Task data persistence |
 | `internal/config/config.go` | Configuration system |

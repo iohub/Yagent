@@ -1767,7 +1767,6 @@ flowchart LR
 | `internal/knowledge/injector.go` | 知识注入器（当前硬禁用） |
 | `internal/mcp/client.go` | MCP 客户端 |
 | `internal/recovery/circuit_breaker.go` | 熔断器 |
-| `internal/registry/capability_registry.go` | 能力注册表 |
 | `internal/skills/skills.go` | 技能系统 |
 | `internal/datamanager/data_manager.go` | 任务数据持久化 |
 | `internal/config/config.go` | 配置系统 |
