@@ -327,31 +327,42 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (ExecutorResult, erro
 		})
 	}
 
-	// ─── OnAgentExit hook: run via defer with panic recovery ───
+	// ─── 收尾：OnAgentExit hook + rollout 终止事件（单个 defer，panic 安全）───
 	var agentErr error
-	if cfg.OnAgentExit != nil {
-		defer func() {
-			if r := recover(); r != nil {
-				agentErr = fmt.Errorf("agent panic: %v", r)
-			}
+	defer func() {
+		r := recover()
+		if r != nil {
+			agentErr = fmt.Errorf("agent panic: %v", r)
+		}
+		if cfg.OnAgentExit != nil {
 			if exitErr := cfg.OnAgentExit(ctx, agentErr); exitErr != nil {
 				slog.Warn("OnAgentExit hook failed", "agent", cfg.AgentName, "error", exitErr)
 			}
-			// Rollout: 写入任务结束事件
-			if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
-				if agentErr != nil {
-					rw.WriteEventMsg(memory.EventMsg{
-						Type:   "turn_aborted",
-						Reason: agentErr.Error(),
-					})
-				} else {
-					rw.WriteEventMsg(memory.EventMsg{
-						Type: "task_complete",
-					})
-				}
+		}
+		// Rollout: 写入任务结束事件。
+		//
+		// 必须无条件写：此前整段收尾（含本写入）被包在 `cfg.OnAgentExit != nil` 分支内，
+		// 未挂该 hook 的 sub-agent 运行一条终止事件都不落盘——存量 rollout 里 146 个
+		// 可读文件有 89 个（61%）因此缺失 task_complete/turn_aborted，恢复侧无从判断
+		// 会话是正常结束还是被切断，只能保守报 Unknown。
+		if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
+			if agentErr != nil {
+				rw.WriteEventMsg(memory.EventMsg{
+					Type:   "turn_aborted",
+					Reason: agentErr.Error(),
+				})
+			} else {
+				rw.WriteEventMsg(memory.EventMsg{
+					Type: "task_complete",
+				})
 			}
-		}()
-	}
+		}
+		// 保持既有 panic 语义：挂了 hook 时原实现即把 panic 收敛为 agentErr 后吞掉，
+		// 未挂 hook 时 panic 照常向上传播。
+		if r != nil && cfg.OnAgentExit == nil {
+			panic(r)
+		}
+	}()
 
 	stepNumber := 0
 	noActionCount := 0 // 累计无工具调用纯文本输出次数

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"yagent/internal/llm"
+	"yagent/internal/memory"
 	"yagent/internal/messaging"
 	"yagent/internal/tools"
 )
@@ -604,4 +605,47 @@ type eventCapturingConsumer struct {
 func (c *eventCapturingConsumer) Consume(event *messaging.MessageEvent) error {
 	*c.events = append(*c.events, event)
 	return nil
+}
+
+// ─── Rollout 终止事件 ─────────────────────────────────────────────────────────
+
+// TestRunAgentLoop_WritesTerminalEventWithoutOnAgentExit 回归：终止事件必须无条件落盘。
+//
+// task_complete/turn_aborted 的写入此前被包在 `cfg.OnAgentExit != nil` 分支内，未挂该
+// hook 的运行一条都不写——存量 rollout 里 146 个可读文件有 89 个因此缺失终止事件，
+// 恢复侧无从判断会话是正常结束还是被切断（RolloutInfo.FinishState 只能退报 Unknown）。
+func TestRunAgentLoop_WritesTerminalEventWithoutOnAgentExit(t *testing.T) {
+	w, err := memory.NewRolloutWriter("terminal-event-agent", "task-terminal-event", "terminal-event-test")
+	if err != nil || !w.Enabled() {
+		t.Skipf("rollout writer unavailable: %v", err)
+	}
+	path := w.FilePath()
+	ctx := memory.WithRolloutWriter(context.Background(), w)
+
+	cfg := ExecutorConfig{
+		SystemPrompt: "You are a test agent.",
+		UserInput:    "say something",
+		LLM:          &mockLLM{responses: []*llm.Response{newTextResponse("done")}},
+		MaxSteps:     2,
+		StopOnFinish: true,
+		AgentName:    "terminal-event-agent",
+		// OnAgentExit 故意不设置：这正是此前漏写终止事件的场景
+	}
+	_, runErr := RunAgentLoop(ctx, cfg)
+	w.Close()
+	if runErr != nil {
+		t.Fatalf("RunAgentLoop: %v", runErr)
+	}
+
+	_, info, err := memory.ReadRolloutMemory(path, memory.DefaultRolloutReadOptions())
+	if err != nil {
+		t.Fatalf("ReadRolloutMemory: %v", err)
+	}
+	if !info.Finished {
+		t.Errorf("task_complete 未落盘: finished=%v aborted=%v state=%v",
+			info.Finished, info.Aborted, info.FinishState())
+	}
+	if got := info.FinishState(); got != memory.FinishComplete {
+		t.Errorf("FinishState = %v, want complete", got)
+	}
 }
