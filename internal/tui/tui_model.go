@@ -1030,6 +1030,12 @@ func buildHelpKeyOverrides(kb *config.KeybindingsConfig) map[string]string {
 	if kb.Command.ToggleDashboard != "alt+d" {
 		overrides["Alt+D"] = formatKeyDisplayName(kb.Command.ToggleDashboard)
 	}
+	if kb.Command.Quit != "ctrl+c" {
+		// 仅作为回退：若 Edit.Quit 已自定义，Ctrl+C 的显示以编辑模式键名优先
+		if _, ok := overrides["Ctrl+C"]; !ok {
+			overrides["Ctrl+C"] = formatKeyDisplayName(kb.Command.Quit)
+		}
+	}
 
 	if kb.Edit.NewTab != "ctrl+t" {
 		overrides["Ctrl+T"] = formatKeyDisplayName(kb.Edit.NewTab)
