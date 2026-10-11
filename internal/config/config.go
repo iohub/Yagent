@@ -9,46 +9,28 @@ import (
 	"time"
 )
 
-// ProviderConfig contains configuration for a specific LLM provider
 type ProviderConfig struct {
-	Model       string  `toml:"model"`
-	Temperature float64 `toml:"temperature"`
-	MaxTokens   int     `toml:"max_tokens"`
-	// ContextWindow 模型上下文窗口上限（如 200000），供 TUI 展示上下文用量进度条。
-	// 与 MaxTokens（单次输出上限）含义不同；0 或未配置时回退到内嵌模型目录
-	// （dist/data/models.json）按 Model 查询，仍查不到则 TUI 不显示进度条。
-	ContextWindow int    `toml:"context_window"`
-	APIBaseURL    string `toml:"api_base_url"`
-	APIKey        string `toml:"api_key"`
-	// Bedrock-specific fields
-	AWSRegion     string `toml:"aws_region,omitempty"`
-	AWSProfile    string `toml:"aws_profile,omitempty"`
-	ModelProvider string `toml:"model_provider,omitempty"` // Explicit provider for Bedrock (e.g., "anthropic", "amazon", "meta")
+	Model         string  `toml:"model"`
+	Temperature   float64 `toml:"temperature"`
+	MaxTokens     int     `toml:"max_tokens"`
+	ContextWindow int     `toml:"context_window"`
+	APIBaseURL    string  `toml:"api_base_url"`
+	APIKey        string  `toml:"api_key"`
+	AWSRegion     string  `toml:"aws_region,omitempty"`
+	AWSProfile    string  `toml:"aws_profile,omitempty"`
+	ModelProvider string  `toml:"model_provider,omitempty"`
 
-	// ReasoningEffort controls DeepSeek thinking mode intensity ("high" or "max").
-	// Empty string means thinking mode is disabled (default, backward-compatible).
 	ReasoningEffort string `toml:"reasoning_effort,omitempty"`
 
-	// ApiFormat specifies the API format for this provider.
-	// "openai" (default, backward-compatible) or "anthropic".
-	// Controls which engine implementation is used.
 	ApiFormat string `toml:"api_format,omitempty"`
 
-	// FallbackProviders 故障转移备选provider列表，按Weight降序排列
 	FallbackProviders []FallbackProvider `toml:"fallback_providers,omitempty"`
 }
 
-// IsAnthropic checks if this provider uses the Anthropic API format.
-// Returns false for empty or "openai" ApiFormat (default, backward-compatible).
 func (p *ProviderConfig) IsAnthropic() bool {
 	return strings.EqualFold(p.ApiFormat, "anthropic")
 }
 
-// GetSortedFallbackProviders 返回按Weight降序排列的fallback provider列表
-// 同时过滤掉与自身同名的provider（防止循环引用）和名称不存在的provider
-// GetSortedFallbackProviders 返回按Weight降序排列的fallback provider列表。
-// 当所有 weight 为 0 或未设置时，保持原始声明顺序。
-// 仅过滤名称不存在的 provider，不过滤自引用。
 func (p *ProviderConfig) GetSortedFallbackProviders(allProviders map[string]ProviderConfig) []FallbackProvider {
 	if len(p.FallbackProviders) == 0 {
 		return nil
@@ -56,7 +38,6 @@ func (p *ProviderConfig) GetSortedFallbackProviders(allProviders map[string]Prov
 	sorted := make([]FallbackProvider, 0, len(p.FallbackProviders))
 	hasWeight := false
 	for _, fp := range p.FallbackProviders {
-		// 跳过不存在的provider
 		if _, exists := allProviders[fp.Provider]; !exists {
 			continue
 		}
@@ -65,7 +46,6 @@ func (p *ProviderConfig) GetSortedFallbackProviders(allProviders map[string]Prov
 		}
 		sorted = append(sorted, fp)
 	}
-	// 仅当存在非零权重时才排序，否则保持原始声明顺序
 	if hasWeight {
 		sort.SliceStable(sorted, func(i, j int) bool {
 			return sorted[i].Weight > sorted[j].Weight
@@ -74,31 +54,21 @@ func (p *ProviderConfig) GetSortedFallbackProviders(allProviders map[string]Prov
 	return sorted
 }
 
-// FallbackProvider 定义故障转移备选provider
 type FallbackProvider struct {
-	Provider string `toml:"provider"` // 引用 global.llm.providers 中的 provider 名称
-	Weight   int    `toml:"weight"`   // 权重，越高越优先尝试
+	Provider string `toml:"provider"`
+	Weight   int    `toml:"weight"`
 }
 
-// UnmarshalText 实现 encoding.TextUnmarshaler，支持纯字符串简写格式：
-//
-//	fallback_providers = ["deepseek_v4_pro", "local"]
-//
-// 等价于：
-//
-//	fallback_providers = [{ provider = "deepseek_v4_pro", weight = 0 }, { provider = "local", weight = 0 }]
 func (fp *FallbackProvider) UnmarshalText(text []byte) error {
 	fp.Provider = string(text)
 	fp.Weight = 0
 	return nil
 }
 
-// AppConfig contains application-level configuration
 type AppConfig struct {
 	EnableStreaming bool `toml:"enable_streaming"`
 }
 
-// AgentConfig contains agent-specific configuration
 type AgentConfig struct {
 	YoloMode         bool `toml:"yolo_mode"`
 	FullYoloMode     bool `toml:"full_yolo_mode"`
@@ -111,31 +81,18 @@ type AgentConfig struct {
 	MetaMaxSteps     int  `toml:"meta_max_steps"`
 	MetaRetryCount   int  `toml:"meta_retry_count"`
 
-	// DelegateIdleTimeout delegate 子代理空闲超时（活动感知）：持续无动作超过
-	// 此值才取消 delegate；0=派生默认（见 DeriveDelegateIdleTimeout）。
-	// 正常 LLM 长推理期间由心跳续期，不会被误杀。
 	DelegateIdleTimeout time.Duration `toml:"delegate_idle_timeout" json:"delegate_idle_timeout" yaml:"delegate_idle_timeout"`
 
-	// DelegateTotalTimeout delegate 子代理总时长上限：0=不限制（默认，
-	// delegate 不再硬编码固定总超时）。
 	DelegateTotalTimeout time.Duration `toml:"delegate_total_timeout" json:"delegate_total_timeout" yaml:"delegate_total_timeout"`
 
-	// MaxParallelReadOnlyTools 单步内"连续只读工具游程组"的最大并行数：
-	// 0/负=默认 4；>8 clamp 到 8；=1 严格串行（kill-switch，关闭并发，
-	// 行为与并发改造前完全一致）。
 	MaxParallelReadOnlyTools int `toml:"max_parallel_readonly_tools" json:"max_parallel_readonly_tools" yaml:"max_parallel_readonly_tools"`
 
 	SpeakLang string `toml:"lang"`
 }
 
-// GitCheckpointConfig holds configuration for the git checkpoint mechanism.
 type GitCheckpointConfig struct {
-	Enabled bool `toml:"enabled"`
-	// Deprecated: Checkpoint creation is now LLM-driven via git_checkpoint_create tool.
-	// This field is ignored but still parsed for backward compatibility.
-	AutoCheckpoint bool `toml:"auto_checkpoint"`
-	// Deprecated: No longer used. Checkpoint timing is determined by the agent via git_checkpoint_create.
-	// This field is ignored but still parsed for backward compatibility.
+	Enabled               bool   `toml:"enabled"`
+	AutoCheckpoint        bool   `toml:"auto_checkpoint"`
 	CheckpointInterval    int    `toml:"checkpoint_interval"`
 	MaxCheckpoints        int    `toml:"max_checkpoints"`
 	SquashOnExit          bool   `toml:"squash_on_exit"`
@@ -145,31 +102,20 @@ type GitCheckpointConfig struct {
 	StashDirtyWorktree    bool   `toml:"stash_dirty_worktree"`
 	CleanupAgentBranch    bool   `toml:"cleanup_agent_branch"`
 	CleanupCheckpointTags bool   `toml:"cleanup_checkpoint_tags"`
-	// AutoMergeOnExit controls whether OnAgentExit automatically
-	// squash-merges the agent branch into the user branch.
-	// When false (default), the agent branch is preserved with all
-	// commits squashed into a single commit, and the user decides
-	// when/how to merge manually.
-	AutoMergeOnExit bool `toml:"auto_merge_on_exit"`
+	AutoMergeOnExit       bool   `toml:"auto_merge_on_exit"`
 }
 
-// ── Three-tier LLM overrides ──
-
-// GlobalLLMConfig is the global default LLM provider selection.
 type GlobalLLMConfig struct {
 	UseProvider string                    `toml:"use_provider"`
 	Providers   map[string]ProviderConfig `toml:"providers"`
 }
 
-// AgentLLMOverride selects a provider for a specific agent.
 type AgentLLMOverride struct {
 	UseProvider string `toml:"use_provider"`
 }
 
-// AgentsLLMConfig holds per-agent LLM overrides.
-// Priority: per-agent > agents.default > global.
 type AgentsLLMConfig struct {
-	UseProvider string            `toml:"use_provider"` // default for all agents
+	UseProvider string            `toml:"use_provider"`
 	Director    *AgentLLMOverride `toml:"director,omitempty"`
 	Coding      *AgentLLMOverride `toml:"coding,omitempty"`
 	Repo        *AgentLLMOverride `toml:"repo,omitempty"`
@@ -178,85 +124,65 @@ type AgentsLLMConfig struct {
 	DevOps      *AgentLLMOverride `toml:"devops,omitempty"`
 }
 
-// ToolLLMOverride selects a provider for a specific tool.
 type ToolLLMOverride struct {
 	UseProvider string `toml:"use_provider"`
 }
 
-// ToolsLLMConfig holds per-tool LLM overrides.
-// Priority: per-tool > tools.default > agent > global.
 type ToolsLLMConfig struct {
-	UseProvider  string           `toml:"use_provider"` // default for all tools
+	UseProvider  string           `toml:"use_provider"`
 	MicroAgent   *ToolLLMOverride `toml:"micro_agent,omitempty"`
 	Thinking     *ToolLLMOverride `toml:"thinking,omitempty"`
 	DeepThinking *ToolLLMOverride `toml:"deepthinking,omitempty"`
 }
 
-// TopLevelConfig groups the [global] section.
 type TopLevelConfig struct {
-	LLM *GlobalLLMConfig `toml:"llm"` // [global.llm]
+	LLM *GlobalLLMConfig `toml:"llm"`
 }
 
-// AgentsConfig wraps the agents LLM section: [agents.llm]
 type AgentsConfig struct {
 	LLM AgentsLLMConfig `toml:"llm"`
 }
 
-// ToolsConfig wraps the tools LLM section: [tools.llm]
 type ToolsConfig struct {
 	LLM ToolsLLMConfig `toml:"llm"`
 }
 
-// LLMConfig contains LLM resilience and fallback configuration
 type LLMConfig struct {
-	// Timeout 单次 LLM 调用超时，0=不启用
 	Timeout time.Duration `toml:"timeout" json:"timeout" yaml:"timeout"`
 
-	// MaxRetries 底层引擎重试次数（默认5，保持原行为）
 	MaxRetries int `toml:"max_retries" json:"max_retries" yaml:"max_retries"`
 
-	// StepRetries 步骤重试次数（executor/director/meta），0=不重试
 	StepRetries int `toml:"step_retries" json:"step_retries" yaml:"step_retries"`
 
-	// CircuitBreakerThreshold 熔断阈值（连续失败次数），0=不启用
 	CircuitBreakerThreshold int `toml:"circuit_breaker_threshold" json:"circuit_breaker_threshold" yaml:"circuit_breaker_threshold"`
 
-	// CircuitBreakerResetTimeout 熔断恢复时间（仅当阈值>0时有效）
 	CircuitBreakerResetTimeout time.Duration `toml:"circuit_breaker_reset_timeout" json:"circuit_breaker_reset_timeout" yaml:"circuit_breaker_reset_timeout"`
 
-	// EnableFallback 是否启用provider级故障转移，默认false
 	EnableFallback bool `toml:"enable_fallback" json:"enable_fallback" yaml:"enable_fallback"`
 
-	// FallbackMaxRetries 故障转移时每个fallback provider的内部重试次数，0=使用MaxRetries
 	FallbackMaxRetries int `toml:"fallback_max_retries" json:"fallback_max_retries" yaml:"fallback_max_retries"`
 }
 
-// Config is the root configuration structure
 type Config struct {
-	Global      TopLevelConfig `toml:"global"` // [global.llm]
-	Agents      AgentsConfig   `toml:"agents"` // [agents.llm] + per-agent overrides
-	Tools       ToolsConfig    `toml:"tools"`  // [tools.llm] + per-tool overrides
+	Global      TopLevelConfig `toml:"global"`
+	Agents      AgentsConfig   `toml:"agents"`
+	Tools       ToolsConfig    `toml:"tools"`
 	App         AppConfig      `toml:"app"`
 	Agent       AgentConfig    `toml:"agent"`
-	LLM         LLMConfig      `toml:"llm" json:"llm" yaml:"llm"`                            // [llm] - LLM 推理兜底配置
-	Browser     BrowserConfig  `toml:"browser"`                                              // [browser] - 浏览器配置
-	Keywords    KeywordsConfig `toml:"keywords"`                                             // [keywords] - 关键词词典配置
-	TaskTimeout time.Duration  `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"` // 全局任务超时，0=不启用
+	LLM         LLMConfig      `toml:"llm" json:"llm" yaml:"llm"`
+	Browser     BrowserConfig  `toml:"browser"`
+	Keywords    KeywordsConfig `toml:"keywords"`
+	TaskTimeout time.Duration  `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"`
 
-	// GitCheckpoint git checkpoint 机制配置
 	GitCheckpoint GitCheckpointConfig `toml:"git_checkpoint"`
 
-	// CodeSeek CodeSeek 代码分析引擎 MCP 客户端配置
 	CodeSeek CodeSeekConfig `toml:"codeseek"`
 
-	// EnhancedCommander 增强型 Commander 配置
 	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`
 
-	// TUI TUI 界面配置（快捷键等）
 	TUI TUIConfig `toml:"tui"`
 }
 
-// GetProvider returns a provider config by name from the shared provider pool.
 func (c *Config) GetProvider(name string) (*ProviderConfig, error) {
 	if name == "" {
 		return nil, fmt.Errorf("empty provider name")
@@ -271,14 +197,10 @@ func (c *Config) GetProvider(name string) (*ProviderConfig, error) {
 	return &provider, nil
 }
 
-// resolveAgentProvider returns the provider name for a specific agent.
-// Priority: agents.<agent>.use_provider > agents.llm.use_provider.
 func (c *Config) resolveAgentProvider(agentName string) string {
-	// Per-agent override
 	if override := c.getAgentOverride(agentName); override != nil && override.UseProvider != "" {
 		return override.UseProvider
 	}
-	// Agents default
 	if c.Agents.LLM.UseProvider != "" {
 		return c.Agents.LLM.UseProvider
 	}
@@ -304,14 +226,10 @@ func (c *Config) getAgentOverride(agentName string) *AgentLLMOverride {
 	}
 }
 
-// resolveToolProvider returns the provider name for a specific tool.
-// Priority: tools.<tool>.use_provider > tools.llm.use_provider.
 func (c *Config) resolveToolProvider(toolName string) string {
-	// Per-tool override
 	if override := c.getToolOverride(toolName); override != nil && override.UseProvider != "" {
 		return override.UseProvider
 	}
-	// Tools default
 	if c.Tools.LLM.UseProvider != "" {
 		return c.Tools.LLM.UseProvider
 	}
@@ -331,41 +249,26 @@ func (c *Config) getToolOverride(toolName string) *ToolLLMOverride {
 	}
 }
 
-// ResolveProvider resolves the effective provider for a given context.
-// Priority chain (highest first):
-//  1. tools.llm.<tool>.use_provider
-//  2. tools.llm.use_provider
-//  3. agents.llm.<agent>.use_provider
-//  4. agents.llm.use_provider
-//  5. global.llm.use_provider
-//
-// agentName and toolName can be empty strings when no context is applicable.
 func (c *Config) ResolveProvider(agentName, toolName string) (*ProviderConfig, error) {
-	// 1-2. Tool-level override (highest priority)
 	if toolName != "" {
 		if name := c.resolveToolProvider(toolName); name != "" {
 			return c.GetProvider(name)
 		}
 	}
 
-	// 3-4. Agent-level override
 	if agentName != "" {
 		if name := c.resolveAgentProvider(agentName); name != "" {
 			return c.GetProvider(name)
 		}
 	}
 
-	// 5. Global override
 	if c.Global.LLM != nil && c.Global.LLM.UseProvider != "" {
 		return c.GetProvider(c.Global.LLM.UseProvider)
 	}
 
-	// 6. No provider configured
 	return nil, fmt.Errorf("no LLM provider configured")
 }
 
-// GetProviderNames returns a list of all available provider names, sorted
-// alphabetically so UI listings keep a stable order between renders.
 func (c *Config) GetProviderNames() []string {
 	if c.Global.LLM == nil {
 		return []string{}
@@ -378,64 +281,49 @@ func (c *Config) GetProviderNames() []string {
 	return names
 }
 
-// DetectBedrockProvider detects the provider from Bedrock model ID
 func DetectBedrockProvider(modelID string) string {
 	modelID = strings.ToLower(modelID)
 
-	// Nova models
 	if strings.Contains(modelID, ".nova-") {
 		return "amazon"
 	}
 
-	// Anthropic models
 	if strings.Contains(modelID, "anthropic") {
 		return "anthropic"
 	}
 
-	// Meta models
 	if strings.Contains(modelID, "meta") {
 		return "meta"
 	}
 
-	// Cohere models
 	if strings.Contains(modelID, "cohere") {
 		return "cohere"
 	}
 
-	// AI21 models
 	if strings.Contains(modelID, "ai21") {
 		return "ai21"
 	}
 
-	// Default to Amazon for other models
 	return "amazon"
 }
 
-// LoadConfig loads configuration from a TOML file
 func LoadConfig(path string) (*Config, error) {
 	return LoadFromFile(path)
 }
 
-// resolveEffectiveProviderName returns the effective provider name using the full
-// priority chain. Used during validation to find the fallback provider to validate.
 func (c *Config) resolveEffectiveProviderName() string {
-	// tools default
 	if c.Tools.LLM.UseProvider != "" {
 		return c.Tools.LLM.UseProvider
 	}
-	// agents default
 	if c.Agents.LLM.UseProvider != "" {
 		return c.Agents.LLM.UseProvider
 	}
-	// global
 	if c.Global.LLM != nil && c.Global.LLM.UseProvider != "" {
 		return c.Global.LLM.UseProvider
 	}
-	// No provider configured
 	return ""
 }
 
-// validate validates the configuration
 func (c *Config) validate() error {
 	effectiveProvider := c.resolveEffectiveProviderName()
 	if effectiveProvider == "" {
@@ -451,12 +339,10 @@ func (c *Config) validate() error {
 		return err
 	}
 
-	// Validate active provider configuration
 	if activeProvider.Model == "" {
 		return fmt.Errorf("model must be specified for provider '%s'", effectiveProvider)
 	}
 
-	// Special validation for Bedrock provider
 	if strings.HasPrefix(effectiveProvider, "bedrock") {
 		if activeProvider.AWSRegion == "" {
 			return fmt.Errorf("aws_region must be specified for Bedrock provider")
@@ -464,7 +350,6 @@ func (c *Config) validate() error {
 		return nil
 	}
 
-	// For non-Bedrock providers, require API key and base URL
 	if activeProvider.APIKey == "" {
 		return fmt.Errorf("api_key must be specified for provider '%s'", effectiveProvider)
 	}
@@ -473,8 +358,6 @@ func (c *Config) validate() error {
 		return fmt.Errorf("api_base_url must be specified for provider '%s'", effectiveProvider)
 	}
 
-	// ═══════ Agent MaxSteps 默认值设置 ═══════
-	// 为各 agent 的最大步数设置默认值（如果未在 TOML 中配置）
 	defaultSteps := DefaultMaxSteps
 	if c.Agent.DirectorMaxSteps == 0 {
 		c.Agent.DirectorMaxSteps = defaultSteps.Director
@@ -501,16 +384,12 @@ func (c *Config) validate() error {
 		c.Agent.MetaRetryCount = defaultSteps.MetaRetry
 	}
 
-	// ═══════ Delegate 超时配置（负值防御 + 校验告警）═══════
-	// 语义保持 0=派生默认（idle，见 DeriveDelegateIdleTimeout）/ 0=不限制（total），
-	// 此处仅做负值防御，不填充默认值（activity 监视器接线在第二批次）。
 	if c.Agent.DelegateIdleTimeout < 0 {
 		c.Agent.DelegateIdleTimeout = 0
 	}
 	if c.Agent.DelegateTotalTimeout < 0 {
 		c.Agent.DelegateTotalTimeout = 0
 	}
-	// 校验告警：配置值存在误杀/顺序倒挂风险时提示（不阻断加载）。
 	if c.Agent.DelegateIdleTimeout > 0 && c.LLM.Timeout > 0 && c.Agent.DelegateIdleTimeout <= c.LLM.Timeout {
 		slog.Warn("delegate_idle_timeout 不大于 LLM 调用超时，存在正常长推理被误杀的风险，建议 ≥ max(10m, llm_timeout+5m)",
 			"delegate_idle_timeout", c.Agent.DelegateIdleTimeout,
@@ -520,8 +399,6 @@ func (c *Config) validate() error {
 	if c.Agent.DelegateTotalTimeout > 0 {
 		idleThreshold := c.Agent.DelegateIdleTimeout
 		if idleThreshold == 0 {
-			// 未显式配置 idle 时按派生默认值参与比较（即运行时实际生效的阈值），
-			// 否则"未配 idle + 配了过小 total"的倒挂不会被告警。
 			idleThreshold = DeriveDelegateIdleTimeout(c.LLM.Timeout)
 		}
 		if c.Agent.DelegateTotalTimeout < idleThreshold {
@@ -532,22 +409,17 @@ func (c *Config) validate() error {
 		}
 	}
 
-	// ═══════ LLM 推理兜底默认值设置 ═══════
 	llmDefaults := DefaultLLMConfig()
 	if c.LLM.MaxRetries == 0 {
 		c.LLM.MaxRetries = llmDefaults.MaxRetries
 	}
-	// 如果 CircuitBreakerResetTimeout == 0 且 CircuitBreakerThreshold > 0，设置为 60s
 	if c.LLM.CircuitBreakerResetTimeout == 0 && c.LLM.CircuitBreakerThreshold > 0 {
 		c.LLM.CircuitBreakerResetTimeout = 60 * time.Second
 	}
-	// FallbackMaxRetries 默认值：如果未配置，使用 MaxRetries 的值
 	if c.LLM.FallbackMaxRetries == 0 {
 		c.LLM.FallbackMaxRetries = c.LLM.MaxRetries
 	}
 
-	// ═══════ Keywords 默认值设置（向后兼容） ═══════
-	// 如果 config.toml 中不存在 [keywords] 段，则创建默认配置
 	if !c.hasKeywordsConfig() {
 		homeDir, _ := os.UserHomeDir()
 		c.Keywords.DefaultPath = homeDir + "/.yagent/keywords.txt"
@@ -555,34 +427,27 @@ func (c *Config) validate() error {
 		c.Keywords.Dicts = []DictConfig{
 			{
 				Name:        "autocomplete",
-				Files:       []string{}, // 空表示使用 DefaultPath
+				Files:       []string{},
 				Type:        DictTypePrefix,
 				BuiltinType: "default",
 			},
 		}
 	}
 
-	// ═══════ Enhanced Commander 默认值设置 ═══════
 	if c.EnhancedCommander.MaxDelegationDepth == 0 {
 		c.EnhancedCommander.MaxDelegationDepth = 3
 	}
 	if c.EnhancedCommander.ToolResultKeepTokens == 0 {
 		c.EnhancedCommander.ToolResultKeepTokens = 200
 	}
-	// EnableUltimateCompression 默认 true（跟随 Knowledge.Enabled 的默认值处理模式：
-	// 零值与显式 false 无法区分，显式禁用时需知晓此限制）
 	if !c.EnhancedCommander.EnableUltimateCompression {
 		c.EnhancedCommander.EnableUltimateCompression = true
 	}
-	// UltimateCompressionKeepPlans 零值即默认（0=全部保留），无需额外处理
 
-	// ═══════ Git Checkpoint 默认值设置 ═══════
 	gitCfgDefaults := DefaultGitCheckpointConfig()
 	if c.GitCheckpoint.AgentBranchPrefix == "" {
-		// [git_checkpoint] 段完全缺失 → 应用完整默认值
 		c.GitCheckpoint = gitCfgDefaults
 	} else {
-		// 段存在，按需补充零值字段
 		if c.GitCheckpoint.CheckpointInterval == 0 {
 			c.GitCheckpoint.CheckpointInterval = gitCfgDefaults.CheckpointInterval
 		}
@@ -591,7 +456,6 @@ func (c *Config) validate() error {
 		}
 	}
 
-	// ═══════ TUI Keybindings 默认值设置 ═══════
 	if c.TUI.Keybindings.Edit.SubmitTask == "" {
 		c.TUI.Keybindings.Edit.SubmitTask = "alt+s"
 	}
@@ -619,7 +483,6 @@ func (c *Config) validate() error {
 	if c.TUI.Keybindings.Edit.ToggleDashboard == "" {
 		c.TUI.Keybindings.Edit.ToggleDashboard = "alt+d"
 	}
-	// Tab 相关快捷键
 	if c.TUI.Keybindings.Edit.NewTab == "" {
 		c.TUI.Keybindings.Edit.NewTab = "ctrl+t"
 	}
@@ -693,7 +556,6 @@ func (c *Config) validate() error {
 		c.TUI.Keybindings.Command.Quit = "ctrl+c"
 	}
 
-	// ═══════ CodeSeek Knowledge 默认值设置 ═══════
 	klDefaults := DefaultKnowledgeConfig()
 	if !c.CodeSeek.Knowledge.Enabled && klDefaults.Enabled {
 		c.CodeSeek.Knowledge.Enabled = klDefaults.Enabled
@@ -714,181 +576,128 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// hasKeywordsConfig 检查是否已配置 [keywords] 段
-// 用于向后兼容：如果用户没有显式配置 keywords，则使用默认值
 func (c *Config) hasKeywordsConfig() bool {
-	// 如果 Dicts 非空，说明用户有显式配置
 	if len(c.Keywords.Dicts) > 0 {
 		return true
 	}
-	// 如果 DefaultPath 非空，说明用户有显式配置
 	if c.Keywords.DefaultPath != "" {
 		return true
 	}
 	return false
 }
 
-// BrowserConfig 浏览器配置
 type BrowserConfig struct {
-	Headless           bool     `toml:"headless"`             // 无头模式，默认 true
-	BrowserPath        string   `toml:"browser_path"`         // 浏览器可执行文件路径（空=自动查找/下载）
-	UserDataDir        string   `toml:"user_data_dir"`        // 用户数据目录（空=临时目录）
-	ViewportWidth      int      `toml:"viewport_width"`       // 视口宽度，默认 1280
-	ViewportHeight     int      `toml:"viewport_height"`      // 视口高度，默认 720
-	AllowedDomains     []string `toml:"allowed_domains"`      // 允许访问的域名列表（空=全部允许）
-	BlockedDomains     []string `toml:"blocked_domains"`      // 阻止访问的域名列表
-	TimeoutSeconds     int      `toml:"timeout_seconds"`      // 单个操作超时秒数，默认 30
-	TaskTimeoutSeconds int      `toml:"task_timeout_seconds"` // 单个浏览器任务总超时秒数，默认 300
-	MaxConcurrentPages int      `toml:"max_concurrent_pages"` // 最大并发页面数，默认 4
-	AutoLaunch         bool     `toml:"auto_launch"`          // 首次请求时自动启动浏览器，默认 true
-	IdleTimeout        string   `toml:"idle_timeout"`         // 空闲超时（如 "5m"），空=不自动关闭
-	AllowNoSandbox     bool     `toml:"allow_no_sandbox"`     // 允许 --no-sandbox（Docker环境需要），默认 false
-	ExtraArgs          []string `toml:"extra_args"`           // 额外的 Chrome 命令行参数
-	EnableBrowserAgent bool     `toml:"enable_browser_agent"` // 是否启用 Browser-Agent，默认 true
+	Headless           bool     `toml:"headless"`
+	BrowserPath        string   `toml:"browser_path"`
+	UserDataDir        string   `toml:"user_data_dir"`
+	ViewportWidth      int      `toml:"viewport_width"`
+	ViewportHeight     int      `toml:"viewport_height"`
+	AllowedDomains     []string `toml:"allowed_domains"`
+	BlockedDomains     []string `toml:"blocked_domains"`
+	TimeoutSeconds     int      `toml:"timeout_seconds"`
+	TaskTimeoutSeconds int      `toml:"task_timeout_seconds"`
+	MaxConcurrentPages int      `toml:"max_concurrent_pages"`
+	AutoLaunch         bool     `toml:"auto_launch"`
+	IdleTimeout        string   `toml:"idle_timeout"`
+	AllowNoSandbox     bool     `toml:"allow_no_sandbox"`
+	ExtraArgs          []string `toml:"extra_args"`
+	EnableBrowserAgent bool     `toml:"enable_browser_agent"`
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Enhanced Commander 配置
-// ═══════════════════════════════════════════════════════════════
-
-// EnhancedCommanderConfig 增强型 Commander 配置
-// 所有选项默认关闭，启用时需显式设置，确保零影响现有行为
 type EnhancedCommanderConfig struct {
-	// Enable 总开关，关闭时所有增强功能不生效
 	Enable bool `toml:"enable" json:"enable"`
 
-	// MaxDelegationDepth 最大委派深度，默认 3
 	MaxDelegationDepth int `toml:"max_delegation_depth" json:"max_delegation_depth"`
 
-	// EnableContextCompression 是否启用上下文压缩（超阈值时截断 tool 执行结果）
 	EnableContextCompression bool `toml:"enable_context_compression" json:"enable_context_compression"`
 
-	// ContextCompressionThreshold 触发上下文压缩的 token 阈值回退值。
-	// 模型被内嵌目录（dist/data/models.json）收录时，阈值按「上下文窗口 / 3」推导并忽略此项；
-	// 仅在模型未收录时生效，0 = 使用 compression.DefaultContextCompressionThreshold。
 	ContextCompressionThreshold int `toml:"context_compression_threshold" json:"context_compression_threshold"`
 
-	// ToolResultKeepTokens 截断后每条 tool 结果保留的 token 数，默认 200
 	ToolResultKeepTokens int `toml:"tool_result_keep_tokens" json:"tool_result_keep_tokens"`
 
-	// EnableUltimateCompression 是否启用终极压缩（thinklink）：两级压缩后仍超限时，
-	// 用 thinklink 中保存的用户原始输入 + Thought & Plan 块重建上下文，默认 true
 	EnableUltimateCompression bool `toml:"enable_ultimate_compression" json:"enable_ultimate_compression"`
 
-	// UltimateCompressionKeepPlans 终极压缩重建时保留的 Thought & Plan 块数量上限，
-	// 0=全部保留（可被循环保护进一步裁剪），默认 0
 	UltimateCompressionKeepPlans int `toml:"ultimate_compression_keep_plans" json:"ultimate_compression_keep_plans"`
 }
 
-// ═══════════════════════════════════════════════════════════════
-// CodeSeek MCP 代码分析引擎配置
-// ═══════════════════════════════════════════════════════════════
-
-// CodeSeekConfig 配置 codeseek MCP 客户端
 type CodeSeekConfig struct {
-	// BinaryPath codeseek 二进制文件路径（空=不启用 MCP 客户端）
-	BinaryPath string `toml:"binary_path"`
-	// MCPArgs 传递给 codeseek 的参数（如 ["serve", "--mcp"]）
-	MCPArgs []string `toml:"mcp_args"`
-	// RequestTimeout MCP 请求超时秒数（默认 30）
-	RequestTimeout int `toml:"request_timeout"`
-	// Knowledge 知识管理配置
-	Knowledge KnowledgeConfig `toml:"knowledge"`
+	BinaryPath     string          `toml:"binary_path"`
+	MCPArgs        []string        `toml:"mcp_args"`
+	RequestTimeout int             `toml:"request_timeout"`
+	Knowledge      KnowledgeConfig `toml:"knowledge"`
 }
 
-// KnowledgeConfig 知识管理配置
 type KnowledgeConfig struct {
-	// Enabled 是否启用知识管理功能
-	Enabled bool `toml:"enabled"`
-	// InjectionMaxTokens 知识注入最大 token 数
-	InjectionMaxTokens int `toml:"injection_max_tokens"`
-	// InjectionMaxEntries 知识注入最大条目数
-	InjectionMaxEntries int `toml:"injection_max_entries"`
-	// InjectionMinScore 知识检索最低得分阈值
-	InjectionMinScore float64 `toml:"injection_min_score"`
-	// InjectionRerank 是否请求 Cross-Encoder 精排（codeseek 端 reranker 未启用时自动降级）
-	InjectionRerank bool `toml:"injection_rerank"`
+	Enabled             bool    `toml:"enabled"`
+	InjectionMaxTokens  int     `toml:"injection_max_tokens"`
+	InjectionMaxEntries int     `toml:"injection_max_entries"`
+	InjectionMinScore   float64 `toml:"injection_min_score"`
+	InjectionRerank     bool    `toml:"injection_rerank"`
 }
 
-// ═══════════════════════════════════════════════════════════════
-// 关键词词典配置
-// ═══════════════════════════════════════════════════════════════
-
-// 词典类型: "prefix" (前缀匹配/补全) 或 "exact" (精确匹配/扫描)
 const (
 	DictTypePrefix = "prefix"
 	DictTypeExact  = "exact"
 )
 
-// DictConfig 词典配置项
 type DictConfig struct {
 	Name        string   `toml:"name"`
 	Files       []string `toml:"files"`
-	Type        string   `toml:"type"`         // "prefix" or "exact"
-	BuiltinType string   `toml:"builtin_type"` // "default", "none"
+	Type        string   `toml:"type"`
+	BuiltinType string   `toml:"builtin_type"`
 }
 
-// KeywordsConfig 关键词词典配置
 type KeywordsConfig struct {
-	DefaultPath       string       `toml:"default_path"`       // 用户默认关键词文件路径
-	HotReload         bool         `toml:"hot_reload"`         // 是否启用热重载
-	DisableCompletion bool         `toml:"disable_completion"` // 禁用关键词自动补全（默认 false 表示启用，保持向后兼容）
-	Dicts             []DictConfig `toml:"dict"`               // 词典列表
+	DefaultPath       string       `toml:"default_path"`
+	HotReload         bool         `toml:"hot_reload"`
+	DisableCompletion bool         `toml:"disable_completion"`
+	Dicts             []DictConfig `toml:"dict"`
 }
 
-// ═══════════════════════════════════════════════════════════════
-// TUI 界面配置
-// ═══════════════════════════════════════════════════════════════
-
-// TUIConfig 包含 TUI 相关的配置
 type TUIConfig struct {
 	Keybindings KeybindingsConfig `toml:"keybindings"`
 }
 
-// KeybindingsConfig 定义 TUI 快捷键配置
 type KeybindingsConfig struct {
 	Edit    EditKeybindings    `toml:"edit"`
 	Command CommandKeybindings `toml:"command"`
 }
 
-// EditKeybindings 编辑模式快捷键配置
 type EditKeybindings struct {
-	SubmitTask      string `toml:"submit_task"`      // 默认: "alt+s"
-	CommandMode     string `toml:"command_mode"`     // 默认: "ctrl+e"
-	ToggleHelp      string `toml:"toggle_help"`      // 默认: "ctrl+h"
-	ToggleTimeline  string `toml:"toggle_timeline"`  // 默认: "ctrl+l"
-	PageDown        string `toml:"page_down"`        // 默认: "ctrl+f"
-	PageUp          string `toml:"page_up"`          // 默认: "ctrl+b"
-	Quit            string `toml:"quit"`             // 默认: "ctrl+c"
-	SwitchModel     string `toml:"switch_model"`     // 默认: "alt+m"
-	ToggleDashboard string `toml:"toggle_dashboard"` // 默认: "alt+d"
-	// Tab 相关快捷键
-	NewTab       string `toml:"new_tab"`       // 默认: "ctrl+t"
-	PrevTab      string `toml:"prev_tab"`      // 默认: "alt+["
-	NextTab      string `toml:"next_tab"`      // 默认: "alt+]"
-	ClearSession string `toml:"clear_session"` // 默认: "alt+c"
-	CloseTab     string `toml:"close_tab"`     // 默认: "alt+w"
-	Tab1         string `toml:"tab_1"`         // 默认: "alt+1"
-	Tab2         string `toml:"tab_2"`         // 默认: "alt+2"
-	Tab3         string `toml:"tab_3"`         // 默认: "alt+3"
-	Tab4         string `toml:"tab_4"`         // 默认: "alt+4"
-	Tab5         string `toml:"tab_5"`         // 默认: "alt+5"
-	Tab6         string `toml:"tab_6"`         // 默认: "alt+6"
-	Tab7         string `toml:"tab_7"`         // 默认: "alt+7"
-	Tab8         string `toml:"tab_8"`         // 默认: "alt+8"
-	Tab9         string `toml:"tab_9"`         // 默认: "alt+9"
+	SubmitTask      string `toml:"submit_task"`
+	CommandMode     string `toml:"command_mode"`
+	ToggleHelp      string `toml:"toggle_help"`
+	ToggleTimeline  string `toml:"toggle_timeline"`
+	PageDown        string `toml:"page_down"`
+	PageUp          string `toml:"page_up"`
+	Quit            string `toml:"quit"`
+	SwitchModel     string `toml:"switch_model"`
+	ToggleDashboard string `toml:"toggle_dashboard"`
+	NewTab          string `toml:"new_tab"`
+	PrevTab         string `toml:"prev_tab"`
+	NextTab         string `toml:"next_tab"`
+	ClearSession    string `toml:"clear_session"`
+	CloseTab        string `toml:"close_tab"`
+	Tab1            string `toml:"tab_1"`
+	Tab2            string `toml:"tab_2"`
+	Tab3            string `toml:"tab_3"`
+	Tab4            string `toml:"tab_4"`
+	Tab5            string `toml:"tab_5"`
+	Tab6            string `toml:"tab_6"`
+	Tab7            string `toml:"tab_7"`
+	Tab8            string `toml:"tab_8"`
+	Tab9            string `toml:"tab_9"`
 }
 
-// CommandKeybindings 命令模式快捷键配置
 type CommandKeybindings struct {
-	ScrollDown       string `toml:"scroll_down"`        // 默认: "j"
-	ScrollUp         string `toml:"scroll_up"`          // 默认: "k"
-	PageDown         string `toml:"page_down"`          // 默认: "f"
-	PageUp           string `toml:"page_up"`            // 默认: "b"
-	EditMode         string `toml:"edit_mode"`          // 默认: "i"
-	CmdToggleHelp    string `toml:"toggle_help"`        // 默认: "?"
-	ToggleTokenPanel string `toml:"toggle_token_panel"` // 默认: "alt+t"
-	SwitchModel      string `toml:"switch_model"`       // 默认: "alt+m"
-	ToggleDashboard  string `toml:"toggle_dashboard"`   // 默认: "alt+d"
-	Quit             string `toml:"quit"`               // 默认: "ctrl+c"
+	ScrollDown       string `toml:"scroll_down"`
+	ScrollUp         string `toml:"scroll_up"`
+	PageDown         string `toml:"page_down"`
+	PageUp           string `toml:"page_up"`
+	EditMode         string `toml:"edit_mode"`
+	CmdToggleHelp    string `toml:"toggle_help"`
+	ToggleTokenPanel string `toml:"toggle_token_panel"`
+	SwitchModel      string `toml:"switch_model"`
+	ToggleDashboard  string `toml:"toggle_dashboard"`
+	Quit             string `toml:"quit"`
 }

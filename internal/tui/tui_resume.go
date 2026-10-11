@@ -1,15 +1,5 @@
 package tui
 
-// tui_resume.go — /resume（别名 /rs，兼容 :resume/:rs）全屏会话恢复模式（范式对齐 tui_history.go）。
-//
-// 职责：
-//   - 列举 rollout 会话文件（memory.ListRolloutSessions，mtime 倒序）并全屏展示；
-//   - Enter 异步恢复选中会话（memory.ReadRolloutMemory），落地为可续聊任务
-//     （taskManager upsert + m.currentTask + viewport 重建），复用
-//     submitFollowUp → executeFollowUpCmd(m.currentTask.ID + Memory) 续聊；
-//   - applyRestoredMemory 由 history 与 resume 两条恢复路径共用
-//     （行为等价迁移自原 restoreSession 的 memory→TUI 落地段）。
-
 import (
 	"context"
 	"fmt"
@@ -27,24 +17,20 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// ── Resume 样式缓存 ──
-
-// resumeStyles 预计算的样式集合，避免每帧重建（模式对齐 historyStyles）。
 type resumeStyles struct {
-	badgeBgColor   string         // 选中行背景色 (lipgloss.Color string)
-	indicatorStyle lipgloss.Style // 选中指示器 "● "
-	dateStyle      lipgloss.Style // 日期样式
-	titleStyle     lipgloss.Style // 标题样式
-	spacerStyle    lipgloss.Style // 空白填充
-	normalStyle    lipgloss.Style // 普通状态
-	dimStyle       lipgloss.Style // 弱化文本（详情行等）
-	agentStyle     lipgloss.Style // agent 徽标
+	badgeBgColor   string
+	indicatorStyle lipgloss.Style
+	dateStyle      lipgloss.Style
+	titleStyle     lipgloss.Style
+	spacerStyle    lipgloss.Style
+	normalStyle    lipgloss.Style
+	dimStyle       lipgloss.Style
+	agentStyle     lipgloss.Style
 }
 
-// initResumeStyles 预创建样式对象（在 enterResumeMode 中初始化）。
 func (m *model) initResumeStyles() *resumeStyles {
-	bgColor := lipgloss.Color("36") // 青绿色（与 history 的蓝色 39 区分模式）
-	fgColor := lipgloss.Color("0")  // 黑色
+	bgColor := lipgloss.Color("36")
+	fgColor := lipgloss.Color("0")
 	dimFg := lipgloss.Color("245")
 	normalFg := lipgloss.Color("252")
 	agentFg := lipgloss.Color("80")
@@ -74,45 +60,31 @@ func (m *model) initResumeStyles() *resumeStyles {
 	}
 }
 
-// ── Resume message types ──
-
-// resumeSessionsMsg is sent when async rollout session listing completes.
 type resumeSessionsMsg struct {
 	items []memory.RolloutSessionInfo
 	err   error
 }
 
-// rolloutRestoreMsg is sent when async rollout memory restoring completes.
 type rolloutRestoreMsg struct {
-	mem  *memory.ConversationMemory
-	info memory.RolloutInfo
-	err  error
-	path string
-	// agentName 来自会话清单的文件名 agent 段（主会话为空）：rollout 内容里没有
-	// agent 身份，而 token 记账与状态栏都需要它。
+	mem       *memory.ConversationMemory
+	info      memory.RolloutInfo
+	err       error
+	path      string
 	agentName string
 }
 
-// ── taskID 归并（B5）──
-
-// resumeGroup 按 taskID 归并的会话组：head 是展示/恢复的主行（主会话文件；
-// 无主文件时由最新成员兼任），members 是组内其余文件（多轮主会话 + 子 Agent），
-// mtime 倒序。
 type resumeGroup struct {
 	key     string
 	head    memory.RolloutSessionInfo
 	members []memory.RolloutSessionInfo
 }
 
-// resumeRow 清单页的展平行：分页、游标与渲染都作用在行上。
 type resumeRow struct {
 	groupIdx int
 	isHead   bool
 	item     memory.RolloutSessionInfo
 }
 
-// resumeGroupKey 会话的归并键：有 task_id 用 taskID（B1 起落盘）；存量文件
-// 没有 task_id，无法可靠回连原任务，各自成组（key 用文件路径保证唯一）。
 func resumeGroupKey(item memory.RolloutSessionInfo) string {
 	if item.TaskID != "" {
 		return "task:" + item.TaskID
@@ -120,14 +92,10 @@ func resumeGroupKey(item memory.RolloutSessionInfo) string {
 	return "file:" + item.Path
 }
 
-// isMainRolloutFile 主会话文件判定：文件名无 agent 段，或显式标 director。
 func isMainRolloutFile(item memory.RolloutSessionInfo) bool {
 	return item.AgentName == "" || item.AgentName == "director"
 }
 
-// buildResumeGroups 把清单按归并键分组成行序：组间按 head mtime 倒序，
-// 组内 members mtime 倒序，head 取主会话文件中最新者（无主文件则最新成员）。
-// 输入需已按 mtime 倒序（ListRolloutSessions 的产出序）。
 func buildResumeGroups(items []memory.RolloutSessionInfo) []resumeGroup {
 	groups := make([]resumeGroup, 0, len(items))
 	idxByKey := make(map[string]int, len(items))
@@ -140,7 +108,6 @@ func buildResumeGroups(items []memory.RolloutSessionInfo) []resumeGroup {
 			continue
 		}
 		g := &groups[gi]
-		// head 竞争：主会话文件优先于成员兼任；同为候选时先到者（更新）保留
 		if !isMainRolloutFile(g.head) && isMainRolloutFile(it) {
 			old := g.head
 			g.head = it
@@ -149,7 +116,6 @@ func buildResumeGroups(items []memory.RolloutSessionInfo) []resumeGroup {
 			g.members = append(g.members, it)
 		}
 	}
-	// 组间按 head mtime 倒序（head 可能是后到的主会话文件，不能沿用输入序）
 	sort.Slice(groups, func(i, j int) bool {
 		if groups[i].head.ModTime.Equal(groups[j].head.ModTime) {
 			return groups[i].key < groups[j].key
@@ -159,8 +125,6 @@ func buildResumeGroups(items []memory.RolloutSessionInfo) []resumeGroup {
 	return groups
 }
 
-// rebuildResumeRows 由组列表重建展平行：收起组只出组头行，展开组在组头下
-// 依次出成员行。调用点：清单载入与展开/收起切换。
 func (m *model) rebuildResumeRows() {
 	rows := make([]resumeRow, 0, len(m.resumeGroups))
 	for gi, g := range m.resumeGroups {
@@ -174,9 +138,6 @@ func (m *model) rebuildResumeRows() {
 	m.resumeRows = rows
 }
 
-// ── Resume Update ──
-
-// resumeUpdate processes all messages in resume mode.
 func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -193,7 +154,6 @@ func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		if len(msg.items) == 0 && msg.err == nil {
 			m.infoMsg = "No rollout sessions found"
 		}
-		// B5: 按 taskID 归并（Empty 文件已在清单层过滤），默认收起
 		m.resumeGroups = buildResumeGroups(msg.items)
 		m.resumeExpanded = make(map[string]bool, len(m.resumeGroups))
 		m.rebuildResumeRows()
@@ -206,12 +166,9 @@ func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.mem == nil || len(msg.mem.Messages) == 0 {
-			// 防御（ReadRolloutMemory 契约下理论不可达）：留在列表展示错误
 			m.resumeErr = "No messages in this session"
 			return m, nil
 		}
-		// 成功：落地为可续聊任务并退出 resume 模式
-		//（顺序对齐 historyUpdate 的 restoreSession + exitHistoryMode）
 		restoreFromRollout(m, msg.mem, msg.info, msg.path, msg.agentName)
 		exitResumeMode(m)
 		return m, nil
@@ -226,25 +183,20 @@ func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 	}
 }
 
-// resumeHandleKey processes keyboard input in resume mode.
 func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 	k := key.String()
 
-	// Exit resume mode on escape/q/ctrl+c
 	if k == "esc" || k == "q" || k == "ctrl+c" {
 		exitResumeMode(m)
 		return m, nil
 	}
 
-	// Skip all other keys while loading (esc already handled above)
 	if m.resumeLoading {
 		return m, nil
 	}
 
-	// Navigation
 	switch k {
 	case "j", "down":
-		// Cursor down within current page (no auto-page)
 		_, endIdx := m.resumeVisibleRange()
 		visibleCount := endIdx - m.resumeOffset
 		if visibleCount > 0 && m.resumeCursor < visibleCount-1 {
@@ -253,14 +205,12 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case "k", "up":
-		// Cursor up within current page (no auto-page)
 		if m.resumeCursor > 0 {
 			m.resumeCursor--
 		}
 		return m, nil
 
-	case " ", "space", "l", "right": // bubbletea v2 中空格键的 String() 为 "space"
-		// 展开/收起光标所在组（B5 归并列表）
+	case " ", "space", "l", "right":
 		if row := m.resumeRowAtCursor(); row != nil && row.isHead && len(m.resumeGroups[row.groupIdx].members) > 0 {
 			g := m.resumeGroups[row.groupIdx]
 			m.resumeExpanded[g.key] = !m.resumeExpanded[g.key]
@@ -269,7 +219,6 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case "h", "left":
-		// 收起光标所在组
 		if row := m.resumeRowAtCursor(); row != nil {
 			g := m.resumeGroups[row.groupIdx]
 			if m.resumeExpanded[g.key] {
@@ -280,7 +229,6 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case "pgdown", "pgdn", "pagedown", "ctrl+d":
-		// Next page
 		pageSize := m.resumePageSize
 		if pageSize <= 0 {
 			pageSize = defaultPageSize
@@ -292,7 +240,6 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case "pgup", "pageup", "ctrl+u":
-		// Previous page
 		pageSize := m.resumePageSize
 		if pageSize <= 0 {
 			pageSize = defaultPageSize
@@ -307,7 +254,6 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case "r":
-		// Refresh the session list
 		m.resumeLoading = true
 		m.resumeErr = ""
 		return m, loadResumeListCmd(m)
@@ -320,7 +266,6 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		if row == nil {
 			return m, nil
 		}
-		// 组头行：收起且组内有成员 → 先展开选轮次；已展开或无成员 → 直接恢复
 		g := m.resumeGroups[row.groupIdx]
 		if row.isHead && len(g.members) > 0 && !m.resumeExpanded[g.key] {
 			m.resumeExpanded[g.key] = true
@@ -334,7 +279,6 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 	return m, nil
 }
 
-// resumeRowAtCursor 返回当前页游标指向的展平行；越界返回 nil。
 func (m *model) resumeRowAtCursor() *resumeRow {
 	startIdx, _ := m.resumeVisibleRange()
 	absIdx := startIdx + m.resumeCursor
@@ -344,11 +288,6 @@ func (m *model) resumeRowAtCursor() *resumeRow {
 	return &m.resumeRows[absIdx]
 }
 
-// ── Resume 分页辅助（offset = page×pageSize 语义，对齐 history 分页窗口）──
-
-// resumeVisibleRange returns the start and end indices (exclusive) of visible
-// items on the current page. resumeOffset is the absolute start index of the
-// page（等价于 historyPage*historyPageSize）。
 func (m *model) resumeVisibleRange() (startIdx, endIdx int) {
 	total := len(m.resumeRows)
 	pageSize := m.resumePageSize
@@ -356,7 +295,6 @@ func (m *model) resumeVisibleRange() (startIdx, endIdx int) {
 		pageSize = defaultPageSize
 	}
 
-	// Clamp page-start offset
 	maxOffset := 0
 	if total > 0 {
 		maxOffset = ((total - 1) / pageSize) * pageSize
@@ -376,7 +314,6 @@ func (m *model) resumeVisibleRange() (startIdx, endIdx int) {
 	return startIdx, endIdx
 }
 
-// resumeTotalNumPages calculates the total number of pages for resume items.
 func (m *model) resumeTotalNumPages() int {
 	if len(m.resumeRows) == 0 {
 		return 1
@@ -392,7 +329,6 @@ func (m *model) resumeTotalNumPages() int {
 	return pages
 }
 
-// resumePageNum returns the 1-based page number for the title/status bar.
 func (m *model) resumePageNum() int {
 	pageSize := m.resumePageSize
 	if pageSize <= 0 {
@@ -401,7 +337,6 @@ func (m *model) resumePageNum() int {
 	return m.resumeOffset/pageSize + 1
 }
 
-// resumeClampCursor ensures cursor is within valid range for the current page.
 func (m *model) resumeClampCursor() {
 	_, endIdx := m.resumeVisibleRange()
 	count := endIdx - m.resumeOffset
@@ -417,9 +352,6 @@ func (m *model) resumeClampCursor() {
 	}
 }
 
-// ── Resume Commands ──
-
-// loadResumeListCmd asynchronously loads the rollout session list.
 func loadResumeListCmd(m *model) tea.Cmd {
 	return func() tea.Msg {
 		items, err := memory.ListRolloutSessions(memory.RolloutRootDir(), 0)
@@ -430,11 +362,9 @@ func loadResumeListCmd(m *model) tea.Cmd {
 	}
 }
 
-// loadRolloutCmd asynchronously restores the conversation memory from a rollout file.
 func loadRolloutCmd(m *model, info memory.RolloutSessionInfo) tea.Cmd {
 	return func() tea.Msg {
 		opts := memory.DefaultRolloutReadOptions()
-		// sub-agent 会话做文件级 SubAgent 标记；director rollout 是主会话，不标记。
 		if info.AgentName != "" && info.AgentName != "director" {
 			opts.SubAgent = true
 		}
@@ -449,11 +379,7 @@ func loadRolloutCmd(m *model, info memory.RolloutSessionInfo) tea.Cmd {
 	}
 }
 
-// ── Resume Mode Entry/Exit ──
-
-// enterResumeMode enters rollout session resume mode, loading the list asynchronously.
 func enterResumeMode(m *model) tea.Cmd {
-	// 防御：与其它全屏模式互斥（history/timeline/thinklink）
 	m.historyMode = false
 	m.timelineFullscreenMode = false
 	m.thinklinkMode = false
@@ -470,13 +396,11 @@ func enterResumeMode(m *model) tea.Cmd {
 	m.lastKey = ""
 	m.resumeRoot = memory.RolloutRootDir()
 
-	// 初始化或重置 resume 样式
 	m.resumeStyles = m.initResumeStyles()
 
 	return loadResumeListCmd(m)
 }
 
-// exitResumeMode exits resume mode, resetting all resume-related fields.
 func exitResumeMode(m *model) {
 	m.resumeMode = false
 	m.resumeGroups = nil
@@ -491,41 +415,26 @@ func exitResumeMode(m *model) {
 	m.lastKey = ""
 }
 
-// ── Restore Wiring ──
-
-// restoreFromRollout wires a restored rollout memory into the TUI session as a
-// continuable task: upserts taskManager（AddTask 对重复 ID 是覆盖语义）,
-// sets m.currentTask, rebuilds the viewport, and produces the info message
-// with rollout restore stats. exitResumeMode is invoked by the caller
-// (resumeUpdate), mirroring the historyUpdate → restoreSession + exitHistoryMode ordering.
 func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.RolloutInfo, path, agentName string) {
 	if mem == nil || len(mem.Messages) == 0 {
 		m.resumeErr = "No messages in this session"
 		return
 	}
 
-	// 1. taskID 优先 session_meta.task_id（写侧落盘的原任务 ID），回退 SessionID，
-	//    再回退文件名 stem。用原任务 ID 才能让续聊写回同一份 tasks/{id}.jsonl 并派生
-	//    同一 blackboard boardID；老文件没有 task_id，只能回退（B1 起新会话不再如此）。
 	taskID := rolloutFirstNonEmptyStr(info.TaskID, info.SessionID)
 	if taskID == "" {
 		taskID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
 
-	// 2. projectDir = CWD（为空回退 m.projectDir）。
 	projectDir := info.CWD
 	if projectDir == "" {
 		projectDir = m.projectDir
 	}
 
-	// 3-5. Memory→TUI 落地（与 history 恢复共用 applyRestoredMemory）。
 	infoMsg := applyRestoredMemory(m, mem, taskID, projectDir, "Resumed")
 
-	// 6. rollout 独有的运行态：token 用量、模型、结束状态。
 	applyRolloutRunState(m, info, agentName)
 
-	// 6b. thinklink 优先用落盘条目（B4 起随写 rollout，保留 journal 顺序与步数
-	//     标注）；存量文件没有该事件，保留 applyRestoredMemory 的消息块重解析结果。
 	if len(info.ThinklinkEntries) > 0 {
 		restored := make([]ThinklinkEntry, 0, len(info.ThinklinkEntries))
 		for i, e := range info.ThinklinkEntries {
@@ -539,8 +448,6 @@ func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.Ro
 		m.thinklinkEntries = restored
 	}
 
-	// 7. 结束状态回写 Task：中断的会话标 failed 并带上原因；同时弹出一键续跑
-	//    确认框（Enter 续跑 / Esc 仅浏览），内容取断点状态四要素。
 	if state := info.FinishState(); state == memory.FinishInterrupted {
 		if task, ok := m.taskManager.GetTask(taskID); ok {
 			task.Status = http.TaskStatusFailed
@@ -550,7 +457,6 @@ func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.Ro
 		pushResumeDialog(m, info)
 	}
 
-	// 8. 追加恢复统计（来自 RolloutInfo）。
 	infoMsg += fmt.Sprintf(" (%d messages, %d tool calls)", info.Messages, info.ToolCalls)
 	var notes []string
 	if info.SkippedReasoning > 0 {
@@ -576,7 +482,6 @@ func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.Ro
 	m.infoMsg = infoMsg
 }
 
-// rolloutFirstNonEmptyStr 返回第一个非空字符串。
 func rolloutFirstNonEmptyStr(ss ...string) string {
 	for _, s := range ss {
 		if s != "" {
@@ -586,10 +491,6 @@ func rolloutFirstNonEmptyStr(ss ...string) string {
 	return ""
 }
 
-// ── 一键续跑确认框（B3）──
-
-// pushResumeDialog 弹出断点续跑确认框。仅对中断会话、空闲且无其它弹窗时弹出——
-// 恢复动作本身不该打断进行中的任务，也不该压在已有弹窗之上。
 func pushResumeDialog(m *model, info memory.RolloutInfo) {
 	if info.FinishState() != memory.FinishInterrupted {
 		return
@@ -621,8 +522,6 @@ func pushResumeDialog(m *model, info memory.RolloutInfo) {
 	m.dialogStack.Push(d)
 }
 
-// unfinishedPlanItems 从最后一个 Thought & Plan 块提取未完成项（[ ] 复选框行）。
-// 找不到计划块或全部完成时返回 nil。
 func unfinishedPlanItems(entries []ThinklinkEntry) []string {
 	const (
 		maxItems     = 5
@@ -635,7 +534,6 @@ func unfinishedPlanItems(entries []ThinklinkEntry) []string {
 		var items []string
 		for _, line := range strings.Split(entries[i].Content, "\n") {
 			trimmed := strings.TrimSpace(line)
-			// [ ] 待处理 / [>] 进行中 都算未完成；[x] 已完成跳过
 			if !strings.Contains(trimmed, "[ ]") && !strings.Contains(trimmed, "[>]") {
 				continue
 			}
@@ -653,7 +551,6 @@ func unfinishedPlanItems(entries []ThinklinkEntry) []string {
 	return nil
 }
 
-// danglingToolNames 提取悬空工具调用名（保序去重）。
 func danglingToolNames(calls []memory.DanglingToolCall) []string {
 	seen := make(map[string]bool)
 	var names []string
@@ -667,9 +564,6 @@ func danglingToolNames(calls []memory.DanglingToolCall) []string {
 	return names
 }
 
-// buildResumeContinuationPrompt 构造续跑首轮的用户提示词（英文，与系统提示同语种）。
-// 走既有 submitFollowUp → ProcessConversation 路径，身份（taskID + memory）与普通
-// 追问完全一致，Director 侧再靠 Resumed 标记补注项目上下文。
 func buildResumeContinuationPrompt(d *components.ResumeDialog) string {
 	var b strings.Builder
 	b.WriteString("The conversation above was restored from a breakpoint and interrupted before completion.")
@@ -692,11 +586,6 @@ func buildResumeContinuationPrompt(d *components.ResumeDialog) string {
 	return b.String()
 }
 
-// restoredInterruptSummary 生成中断会话的一句话摘要（Task.Result 与信息栏共用）。
-//
-// 原因优先取写侧落盘的 stop_reason 分类（B1 起），退回 turn_aborted 的 reason 文本；
-// 步数取 BestStep（显式值 → sub_agent_activity → assistant 回合数），三者都缺失时
-// 省略步数而不是显示误导性的 0。
 func restoredInterruptSummary(info memory.RolloutInfo) string {
 	reason := rolloutFirstNonEmptyStr(info.StopReason, info.AbortReason)
 	if reason == "" {
@@ -713,24 +602,7 @@ func restoredInterruptSummary(info memory.RolloutInfo) string {
 	}
 }
 
-// ── Shared Session Restore (history & resume) ──
-
-// applyRestoredMemory lands a fully loaded conversation memory into the current
-// TUI session: rebuilds logEntries **and the execution state those entries imply**
-// (tool timeline, thinklink journal), upserts the taskManager task（map 覆盖写，
-// 重复 ID 直接替换）、sets m.currentTask, rebuilds the viewport, and returns the
-// info message. sourceLabel distinguishes the entry point ("Loaded" for history,
-// "Resumed" for rollout).
-//
-// 条目形状与实时路径逐项对齐（formatEventAsEntry / handleTaskEventMsg），否则恢复出的
-// 会话会落到 formatLogEntry 的 default 分支，渲染成 "● tool_result …" 这样的单行文本，
-// 丢失用户消息框、工具卡片、✅/❌ 状态与 diff。关键约定：
-//   - 一次工具调用只产一条 tool_call_start 条目，其结果就地并入该条目——实时路径的
-//     tool_call_result 分支同样是更新既有条目而非追加新条目；
-//   - 悬空调用（reader 合成了"会话中断前未返回结果"占位）标为 Canceled，这正是断点位置；
-//   - system 消息不进日志：实时路径从不渲染 system 消息，且 reader 默认已将其丢弃。
 func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, projectDir, sourceLabel string) string {
-	// 1. 清空视图与执行态：二次恢复不能叠加在上一个会话的时间线/计划之上。
 	m.logEntries = nil
 	m.timelineEntries = nil
 	m.timelineCache = ""
@@ -743,7 +615,6 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 	}
 	resetTokenState(m)
 
-	// 2. 按 call_id 索引工具结果，供 assistant 的 ToolCalls 配对。
 	toolResults := make(map[string]*memory.ChatMessage)
 	for i := range mem.Messages {
 		msg := &mem.Messages[i]
@@ -761,12 +632,11 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 		m.logEntries = append(m.logEntries, e)
 	}
 
-	lastGroupID := "" // track GroupID changes for inserting sub-agent headers
+	lastGroupID := ""
 	assistantTurn := 0
 	for i := range mem.Messages {
 		msg := &mem.Messages[i]
 
-		// 检测 GroupID 变化，插入分组头部
 		if msg.IsSubAgent && msg.GroupID != "" && msg.GroupID != lastGroupID {
 			appendEntry(logEntry{
 				eventType: "sub_agent_header",
@@ -778,7 +648,6 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 			lastGroupID = ""
 		}
 
-		// Sub-agent 消息加上前缀和缩进标记
 		var prefix, from string
 		if msg.IsSubAgent {
 			prefix = "  │ "
@@ -790,7 +659,6 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 			if !msg.IsSubAgent {
 				from = "You"
 			}
-			// 实时路径同名 eventType → renderUserMessageBox
 			appendEntry(logEntry{
 				timestamp: msg.Timestamp,
 				eventType: "user_message",
@@ -820,7 +688,6 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 					agentName: from,
 				})
 			}
-			// thinklink：复用后端的抽取函数（compression 包的正则），不自己造解析
 			for _, block := range compression.ExtractThoughtAndPlanBlocks(msg.Content) {
 				m.thinklinkEntries = append(m.thinklinkEntries, ThinklinkEntry{
 					ID:        fmt.Sprintf("restored-plan-%d", len(m.thinklinkEntries)),
@@ -835,7 +702,6 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 			}
 
 		case memory.MessageTypeTool:
-			// 已并入对应 tool_call_start 条目的结果不再单独成条
 			if msg.ToolCallID != nil && consumed[*msg.ToolCallID] {
 				continue
 			}
@@ -845,8 +711,6 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 			appendRestoredStandaloneResult(m, appendEntry, msg, prefix, from)
 
 		case memory.MessageTypeSystem:
-			// 不进日志：实时路径从不渲染 system 消息。压缩摘要（IsAnchored）的呈现
-			// 留给 B4——彼时摘要经 compacted 事件恢复，而非 role=system 消息。
 			continue
 
 		default:
@@ -863,7 +727,6 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 		}
 	}
 
-	// 3. Extract title from first human message
 	title := taskID
 	for _, msg := range mem.Messages {
 		if msg.Type == memory.MessageTypeHuman {
@@ -877,7 +740,6 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 		}
 	}
 
-	// 4. Add task to task manager（覆盖写 map：同 ID 直接替换，upsert 语义）
 	ctx, cancel := context.WithCancel(context.Background())
 	m.taskManager.AddTask(&http.Task{
 		ID:         taskID,
@@ -889,25 +751,17 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 		CancelFunc: cancel,
 	})
 
-	// 5. Set as current task
 	if task, ok := m.taskManager.GetTask(taskID); ok {
 		m.currentTask = task
 	}
 
-	// 5b. 标记续跑态：下一次 submitFollowUp 以 Resumed 提交（消费一次），Director
-	// 续跑首轮强制注入项目上下文。恢复的 memory 没有 system 消息，不标记的话
-	// LLM 会在缺失 YAGENT.md/CLAUDE.md/AGENTS.md 的状态下接手半截任务。
 	m.resumedFromRollout = true
 
-	// 6. Rebuild viewport content
 	m.buildViewportContent()
 
-	// 7. Return info message（sourceLabel 区分入口：Loaded / Resumed）
 	return fmt.Sprintf("%s session: %s", sourceLabel, title)
 }
 
-// appendRestoredToolCall 为一次已完成的工具调用构造条目：一条 tool_call_start 日志
-// 条目（结果就地并入，形状对齐实时路径的 start+result 合并语义）+ 一条时间线条目。
 func appendRestoredToolCall(
 	m *model,
 	appendEntry func(logEntry),
@@ -960,7 +814,6 @@ func appendRestoredToolCall(
 		})
 		switch {
 		case isSyntheticToolOutput(res):
-			// reader 为悬空调用合成的占位输出 → 断点位置，标 Canceled 而非 Success
 			te.SetCanceled()
 			status = ToolStatusCanceled
 			isError = false
@@ -968,7 +821,6 @@ func appendRestoredToolCall(
 			status = ToolStatusError
 		}
 	} else {
-		// 防御：reader 的配对归一化保证不会出现无输出的调用
 		te.SetCanceled()
 		status = ToolStatusCanceled
 	}
@@ -980,8 +832,6 @@ func appendRestoredToolCall(
 		entry.timestamp, status, isError, duration)
 }
 
-// appendRestoredStandaloneResult 为无法配对到调用的工具结果构造独立条目
-// （对齐 formatEventAsEntry 的 tool_call_result 分支，含新式 ToolEntry 渲染）。
 func appendRestoredStandaloneResult(m *model, appendEntry func(logEntry), msg *memory.ChatMessage, prefix, from string) {
 	callID := ""
 	if msg.ToolCallID != nil {
@@ -1012,8 +862,6 @@ func appendRestoredStandaloneResult(m *model, appendEntry func(logEntry), msg *m
 	appendEntry(entry)
 }
 
-// appendRestoredTimeline 追加工具时间线条目，连续同名可合并工具收进 SubEntries——
-// 合并规则与实时路径一致，否则恢复后 20 次 read_file 会显示 20 行而实时只显示 1 行。
 func appendRestoredTimeline(m *model, id, name, detail string, ts time.Time,
 	status ToolStatus, isError bool, duration time.Duration) {
 	if n := len(m.timelineEntries); n > 0 {
@@ -1044,7 +892,6 @@ func appendRestoredTimeline(m *model, id, name, detail string, ts time.Time,
 	})
 }
 
-// isSyntheticToolOutput 判断工具消息是否为 reader 为悬空调用合成的占位输出。
 func isSyntheticToolOutput(msg *memory.ChatMessage) bool {
 	if msg == nil || msg.Metadata == nil {
 		return false
@@ -1053,7 +900,6 @@ func isSyntheticToolOutput(msg *memory.ChatMessage) bool {
 	return synthetic
 }
 
-// restoredToolDuration 从恢复出的 metadata 取工具耗时（写侧目前恒记 0，B1 起记真实值）。
 func restoredToolDuration(md map[string]interface{}) time.Duration {
 	seconds, _ := md["duration_seconds"].(float64)
 	if seconds <= 0 {
@@ -1062,7 +908,6 @@ func restoredToolDuration(md map[string]interface{}) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
-// resetTokenState 清空 token 记账，避免上一个会话的用量残留到恢复出的会话里。
 func resetTokenState(m *model) {
 	m.inputTokens = 0
 	m.outputTokens = 0
@@ -1075,12 +920,6 @@ func resetTokenState(m *model) {
 	}
 }
 
-// applyRolloutRunState 落地 rollout 独有的运行态：token 用量、模型、当前 agent。
-// history 路径（datamanager 的 tasks/*.jsonl）没有这些证据，故不共用本函数。
-//
-// 字段口径逐项对齐实时路径 handleTaskEventMsg 的 ai_response 分支；差异见
-// memory.RolloutTokenTotals 的注释（cache_creation 与 total_input 未落盘，按 TUI
-// 既有回退公式近似）。
 func applyRolloutRunState(m *model, info memory.RolloutInfo, agentName string) {
 	if agentName == "" {
 		agentName = "director"
@@ -1089,7 +928,6 @@ func applyRolloutRunState(m *model, info memory.RolloutInfo, agentName string) {
 	m.inputTokens = info.Tokens.Input
 	m.outputTokens = info.Tokens.Output
 	m.cacheReadInputTokens = info.Tokens.CachedInput
-	// provider 口径总输入：缺 total_input_tokens 时的既有回退公式（input+cacheRead+cacheCreation）
 	m.totalInputTokens = info.Tokens.Input + info.Tokens.CachedInput
 
 	usage := AgentTokenUsage{
@@ -1117,19 +955,11 @@ func applyRolloutRunState(m *model, info memory.RolloutInfo, agentName string) {
 		m.currentModel = info.Model
 		m.refreshContextWindow()
 	}
-	// 恢复出的会话已有产出：taskStarted 决定输入框边框配色与 dashboard 可见性
 	m.taskStarted = true
 
-	// 只失效缓存即可：View 会按需重算 token 仪表盘与状态栏。
-	//（不要先赋值 cachedTokenDashboard 再失效——invalidateFooterCache 会把它清空，
-	// 实时路径里那对赋值/失效语句的前半段其实是无效功。）
 	m.invalidateFooterCache()
 }
 
-// ── Resume View Rendering ──
-
-// renderResumeView renders the fullscreen rollout session browser UI
-// (structure aligned with renderHistoryView).
 func renderResumeView(m *model) tea.View {
 	width := m.termWidth
 	height := m.termHeight
@@ -1140,15 +970,11 @@ func renderResumeView(m *model) tea.View {
 		height = 8
 	}
 
-	// ── Height calculation（对齐 history）:
-	//   Top border (1) + Title bar (1) + Content area (?) + Status bar (1) + Bottom border (1) = height
-	//   => contentHeight = height - 4
 	contentHeight := height - 4
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
 
-	// Item lines per page = min(pageSize, contentHeight)（选中条目再占一行详情）
 	effectivePageSize := m.resumePageSize
 	if effectivePageSize > contentHeight {
 		effectivePageSize = contentHeight
@@ -1159,46 +985,38 @@ func renderResumeView(m *model) tea.View {
 
 	var b strings.Builder
 
-	// ── Top border ──
 	topLeft := "┌" + strings.Repeat("─", width-2) + "┐"
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(topLeft))
 	b.WriteString("\n")
 
-	// ── Title bar ──
 	titleBar := renderResumeTitleBar(m, width)
 	b.WriteString(titleBar)
 	b.WriteString("\n")
 
-	// ── Content area ──
 	contentArea := renderResumeContent(m, width, contentHeight, effectivePageSize)
 	b.WriteString(contentArea)
 
-	// ── Status bar ──
 	statusBar := renderResumeStatusBar(m, width)
 	b.WriteString(statusBar)
 	b.WriteString("\n")
 
-	// ── Bottom border ──
 	bottomLeft := "└" + strings.Repeat("─", width-2) + "┘"
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(bottomLeft))
 
 	return tea.NewView(b.String())
 }
 
-// renderResumeTitleBar renders the top title bar of the resume view.
 func renderResumeTitleBar(m *model, width int) string {
-	pageNum := m.resumePageNum() // 1-based for display
+	pageNum := m.resumePageNum()
 	totalPages := m.resumeTotalNumPages()
 	titleText := fmt.Sprintf(" Resume Session     Page %d/%d ", pageNum, totalPages)
 	rightText := "esc: back  enter: resume  r: refresh"
 
-	// Calculate available width for right text
-	contentWidth := width - 2 // account for border
+	contentWidth := width - 2
 	leftWidth := len(titleText)
 	rightWidth := len(rightText)
 	paddingNeeded := contentWidth - leftWidth - rightWidth
 	if paddingNeeded < 1 {
-		// Truncate right text to fit
 		maxRight := contentWidth - leftWidth - 1
 		if maxRight > 3 {
 			rightText = rightText[:maxRight] + "…"
@@ -1220,9 +1038,6 @@ func renderResumeTitleBar(m *model, width int) string {
 	return style.Render(combined)
 }
 
-// renderResumeContent renders the page-based content area. It renders exactly
-// `height` lines: item lines（选中条目下方多一行缩进详情）+ empty fill lines.
-// effectivePageSize caps the item count per page.
 func renderResumeContent(m *model, width, height, effectivePageSize int) string {
 	bgStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("234")).
@@ -1247,12 +1062,10 @@ func renderResumeContent(m *model, width, height, effectivePageSize int) string 
 		return strings.Join(lines, "\n")
 	}
 
-	// Calculate visible range and clamp cursor for this page
 	startIdx, endIdx := m.resumeVisibleRange()
 	m.resumeClampCursor()
 	visibleItems := m.resumeRows[startIdx:endIdx]
 
-	// Build lines: item lines + one extra indented detail line for the selected item
 	lines := make([]string, 0, height)
 	for i, row := range visibleItems {
 		if len(lines) >= height {
@@ -1265,7 +1078,6 @@ func renderResumeContent(m *model, width, height, effectivePageSize int) string 
 		}
 	}
 
-	// Empty fill lines to exact height
 	for len(lines) < height {
 		lines = append(lines, bgStyle.Render(""))
 	}
@@ -1273,15 +1085,12 @@ func renderResumeContent(m *model, width, height, effectivePageSize int) string 
 	return strings.Join(lines, "\n")
 }
 
-// renderResumeRow 渲染一行展平行：组头带展开指示与成员数徽标，成员行缩进
-// "└ " 前缀（B5 归并列表）。
 func renderResumeRow(m *model, row resumeRow, selected bool, width int) string {
 	if row.isHead {
 		g := m.resumeGroups[row.groupIdx]
 		if len(g.members) == 0 {
 			return renderResumeItem(m, row.item, selected, width)
 		}
-		// 展开指示占 2 列，徽标 " +N" 占 3+N 列，压缩 preview 可用宽度
 		arrow := "▸ "
 		if m.resumeExpanded[g.key] {
 			arrow = "▾ "
@@ -1289,7 +1098,6 @@ func renderResumeRow(m *model, row resumeRow, selected bool, width int) string {
 		badge := fmt.Sprintf(" +%d", len(g.members))
 		line := renderResumeItem(m, row.item, selected, width-len(arrow)-lipgloss.Width(badge))
 		if selected {
-			// 选中行整行有背景色：指示与徽标用同底色前景，避免出现色带断裂
 			s := m.resumeStyles
 			if s == nil {
 				s = m.initResumeStyles()
@@ -1300,7 +1108,6 @@ func renderResumeRow(m *model, row resumeRow, selected bool, width int) string {
 		return m.resumeStyles.dimStyle.Render(arrow) + line + m.resumeStyles.dimStyle.Render(badge)
 	}
 
-	// 成员行：固定缩进 "  └ "
 	const memberPrefix = "  └ "
 	line := renderResumeItem(m, row.item, selected, width-lipgloss.Width(memberPrefix))
 	if selected {
@@ -1314,22 +1121,17 @@ func renderResumeRow(m *model, row resumeRow, selected bool, width int) string {
 	return m.resumeStyles.dimStyle.Render(memberPrefix) + line
 }
 
-// renderResumeItem renders a single rollout session item line:
-//
-//	MM-DD HH:MM  [projID]  <agentName 徽标>  <model|->  preview…
 func renderResumeItem(m *model, item memory.RolloutSessionInfo, selected bool, width int) string {
 	dateStr := item.StartedAt.Format("01-02 15:04")
 	if item.StartedAt.IsZero() {
 		dateStr = strings.Repeat("-", 11)
 	}
 
-	// projID（root 直下文件为空则省略方括号段）
 	proj := ""
 	if item.ProjectID != "" {
 		proj = "[" + item.ProjectID + "] "
 	}
 
-	// agent 徽标：主会话（无 agent 段或显式 director）→ "main"；否则 "sub:<agentName>"
 	agent := item.AgentName
 	if isMainRolloutFile(item) {
 		agent = "main"
@@ -1342,7 +1144,6 @@ func renderResumeItem(m *model, item memory.RolloutSessionInfo, selected bool, w
 		modelStr = "-"
 	}
 
-	// 剩余宽度给 preview（前缀段均为 ASCII，len 即显示宽度）
 	fixed := 2 + len(dateStr) + 2 + len(proj) + len(agent) + 1 + len(modelStr) + 2
 	maxPreviewWidth := width - fixed
 	if maxPreviewWidth < 8 {
@@ -1359,7 +1160,6 @@ func renderResumeItem(m *model, item memory.RolloutSessionInfo, selected bool, w
 	return renderResumeNormalItem(m, dateStr, proj, agent, modelStr, preview, width)
 }
 
-// renderResumeSelectedItem renders the highlighted selected item line.
 func renderResumeSelectedItem(m *model, dateStr, proj, agent, modelStr, preview string, width int) string {
 	s := m.resumeStyles
 	if s == nil {
@@ -1385,7 +1185,6 @@ func renderResumeSelectedItem(m *model, dateStr, proj, agent, modelStr, preview 
 		Render(left)
 }
 
-// renderResumeNormalItem renders an unselected item line.
 func renderResumeNormalItem(m *model, dateStr, proj, agent, modelStr, preview string, width int) string {
 	s := m.resumeStyles
 	if s == nil {
@@ -1413,15 +1212,12 @@ func renderResumeNormalItem(m *model, dateStr, proj, agent, modelStr, preview st
 	return left
 }
 
-// renderResumeItemDetail renders the indented second line under the selected
-// item: `sessionID(短) · cwd · git:branch · 大小`.
 func renderResumeItemDetail(m *model, item memory.RolloutSessionInfo, width int) string {
 	s := m.resumeStyles
 	if s == nil {
 		s = m.initResumeStyles()
 	}
 
-	// sessionID(短)：取前 8 rune；缺失时回退文件名 stem
 	sid := item.SessionID
 	if sid == "" {
 		sid = strings.TrimSuffix(filepath.Base(item.Path), filepath.Ext(item.Path))
@@ -1450,7 +1246,6 @@ func renderResumeItemDetail(m *model, item memory.RolloutSessionInfo, width int)
 	return s.dimStyle.Render(detailIndent + content)
 }
 
-// renderResumeStatusBar renders the bottom pagination status bar (hint strip).
 func renderResumeStatusBar(m *model, width int) string {
 	var statusText string
 	var commandHint string
@@ -1480,8 +1275,6 @@ func renderResumeStatusBar(m *model, width int) string {
 
 	var line string
 	if commandHint != "" {
-		// "statusText ── commandHint"
-		// Put status on left, commands on right
 		statusWidth := len(statusText)
 		cmdWidth := len(commandHint)
 		if contentWidth > statusWidth+cmdWidth+4 {
@@ -1502,9 +1295,6 @@ func renderResumeStatusBar(m *model, width int) string {
 	return style.Render(line)
 }
 
-// ── Formatting helpers ──
-
-// shrinkPath keeps the tail of an over-long path (directory names are at the end).
 func shrinkPath(p string, maxRunes int) string {
 	r := []rune(p)
 	if len(r) <= maxRunes {
@@ -1516,7 +1306,6 @@ func shrinkPath(p string, maxRunes int) string {
 	return "…" + string(r[len(r)-maxRunes+1:])
 }
 
-// formatResumeBytes formats a byte size in human-readable units.
 func formatResumeBytes(size int64) string {
 	const unit = 1024
 	if size < unit {
