@@ -134,7 +134,7 @@ var SeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 // ── Timeline panel (floating panel) styles ──
 // timelinePanelStyle 悬浮面板样式（类似 tokenDashboard）
 var timelinePanelStyle = lipgloss.NewStyle().
-	BorderStyle(lipgloss.NormalBorder()).
+	BorderStyle(lipgloss.RoundedBorder()).
 	BorderForeground(lipgloss.Color("62")).
 	Padding(0, 1)
 
