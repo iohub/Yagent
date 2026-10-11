@@ -8,6 +8,7 @@ package tui
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,9 @@ import (
 	"yagent/internal/http"
 	"yagent/internal/memory"
 	"yagent/internal/messaging"
+	"yagent/internal/tui/components"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -526,5 +529,278 @@ func TestApplyRestoredMemory_RenderWidthSweepNoPanic(t *testing.T) {
 		if !strings.Contains(panel, "delegate") && !strings.Contains(panel, "run_bash") {
 			t.Errorf("width=%d timeline missing tool names: %q", width, panel)
 		}
+	}
+}
+
+// ─── B3: 一键续跑确认框 ──────────────────────────────────────────────────────
+
+func TestPushResumeDialog(t *testing.T) {
+	interrupted := memory.RolloutInfo{
+		Aborted:     true,
+		AbortReason: "context cancelled",
+		Steps:       12,
+		MaxSteps:    30,
+		DanglingToolCalls: []memory.DanglingToolCall{
+			{ID: "c1", Name: "delegate_coding"},
+			{ID: "c2", Name: "delegate_coding"},
+			{ID: "c3", Name: "run_bash"},
+		},
+	}
+
+	t.Run("interrupted_pushes_dialog", func(t *testing.T) {
+		m := restoreTestModel(t)
+		pushResumeDialog(m, interrupted)
+		if m.dialogStack.Len() != 1 {
+			t.Fatalf("dialogStack.Len() = %d, want 1", m.dialogStack.Len())
+		}
+		d, ok := m.dialogStack.Top().(*components.ResumeDialog)
+		if !ok {
+			t.Fatalf("top dialog type = %T, want *components.ResumeDialog", m.dialogStack.Top())
+		}
+		if d.Reason != "context cancelled" {
+			t.Errorf("Reason = %q, want abort reason", d.Reason)
+		}
+		if d.StepInfo != "step 12/30" {
+			t.Errorf("StepInfo = %q, want step 12/30", d.StepInfo)
+		}
+		wantTools := []string{"delegate_coding", "run_bash"}
+		if !reflect.DeepEqual(d.DanglingTools, wantTools) {
+			t.Errorf("DanglingTools = %v, want %v (dedup, order preserved)", d.DanglingTools, wantTools)
+		}
+	})
+
+	t.Run("complete_does_not_push", func(t *testing.T) {
+		m := restoreTestModel(t)
+		pushResumeDialog(m, memory.RolloutInfo{Finished: true})
+		if m.dialogStack.Len() != 0 {
+			t.Errorf("dialogStack.Len() = %d, want 0 for finished session", m.dialogStack.Len())
+		}
+	})
+
+	t.Run("skipped_when_task_running", func(t *testing.T) {
+		m := restoreTestModel(t)
+		m.taskRunning = true
+		pushResumeDialog(m, interrupted)
+		if m.dialogStack.Len() != 0 {
+			t.Errorf("dialogStack.Len() = %d, want 0 while task running", m.dialogStack.Len())
+		}
+	})
+
+	t.Run("skipped_when_other_dialog_open", func(t *testing.T) {
+		m := restoreTestModel(t)
+		m.dialogStack.Push(components.NewQuitConfirmDialog("quit_confirm", "t", "m", "y", "n", "167"))
+		pushResumeDialog(m, interrupted)
+		if m.dialogStack.Len() != 1 {
+			t.Errorf("dialogStack.Len() = %d, want 1 (pre-existing dialog untouched)", m.dialogStack.Len())
+		}
+	})
+}
+
+func TestUnfinishedPlanItems(t *testing.T) {
+	plan := strings.Join([]string{
+		"## Thought & Plan",
+		"* [x] 1. [已完成] 读取文件",
+		"* [>] 2. [当前] 修复 bug",
+		"* [ ] 3. [待处理] 跑测试",
+		"* [ ] 4. [待处理] 提交",
+	}, "\n")
+	entries := []ThinklinkEntry{
+		{Kind: "user_input", Content: "fix the bug"},
+		{Kind: "thought_plan", Content: plan},
+	}
+	got := unfinishedPlanItems(entries)
+	want := []string{"[>] 2. [当前] 修复 bug", "[ ] 3. [待处理] 跑测试", "[ ] 4. [待处理] 提交"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("unfinishedPlanItems = %v, want %v", got, want)
+	}
+
+	// 全部完成 → nil
+	donePlan := "* [x] 1. [已完成] 全部做完"
+	if got := unfinishedPlanItems([]ThinklinkEntry{{Kind: "thought_plan", Content: donePlan}}); got != nil {
+		t.Errorf("all-done plan → %v, want nil", got)
+	}
+	// 无计划块 → nil
+	if got := unfinishedPlanItems([]ThinklinkEntry{{Kind: "user_input", Content: "hi"}}); got != nil {
+		t.Errorf("no plan block → %v, want nil", got)
+	}
+}
+
+func TestBuildResumeContinuationPrompt(t *testing.T) {
+	d := components.NewResumeDialog("resume_confirm", "max_steps", "step 30/30",
+		[]string{"[ ] 3. [待处理] 跑测试"}, []string{"delegate_coding"}, components.LanguageEn)
+	prompt := buildResumeContinuationPrompt(d)
+	for _, want := range []string{"max_steps", "step 30/30", "Continue this task", "delegate_coding", "Do not repeat"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("continuation prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// TestRestoreFromRollout_ThinklinkFromEvents B4：rollout 落盘的 thinklink 条目
+// 优先于消息块重解析；无落盘条目的存量文件保持重解析回退。
+func TestRestoreFromRollout_ThinklinkFromEvents(t *testing.T) {
+	newMem := func() *memory.ConversationMemory {
+		mem := memory.NewConversationMemory(10)
+		mem.AddHumanMessage("fix the login bug")
+		mem.AddAssistantMessage("## Thought & Plan\n* [ ] 1. [待处理] 定位问题\nDone.", nil)
+		return mem
+	}
+
+	t.Run("events_take_precedence", func(t *testing.T) {
+		m := restoreTestModel(t)
+		info := memory.RolloutInfo{
+			SessionID: "sess-tl",
+			Finished:  true,
+			ThinklinkEntries: []memory.RolloutThinklinkEntry{
+				{Kind: "user_input", Content: "fix the login bug", Step: 0},
+				{Kind: "thought_plan", Content: "## Thought & Plan\n* [>] 1. 定位问题", Step: 3},
+			},
+		}
+		restoreFromRollout(m, newMem(), info, "/fake/sess-tl.jsonl", "director")
+		if len(m.thinklinkEntries) != 2 {
+			t.Fatalf("thinklinkEntries len = %d, want 2", len(m.thinklinkEntries))
+		}
+		if m.thinklinkEntries[0].Kind != "user_input" || m.thinklinkEntries[0].Step != 0 {
+			t.Errorf("entry[0] = %+v", m.thinklinkEntries[0])
+		}
+		if m.thinklinkEntries[1].Step != 3 || !strings.Contains(m.thinklinkEntries[1].Content, "[>]") {
+			t.Errorf("entry[1] = %+v", m.thinklinkEntries[1])
+		}
+	})
+
+	t.Run("legacy_files_fall_back_to_parsing", func(t *testing.T) {
+		m := restoreTestModel(t)
+		info := memory.RolloutInfo{SessionID: "sess-tl-legacy", Finished: true}
+		restoreFromRollout(m, newMem(), info, "/fake/sess-tl-legacy.jsonl", "director")
+		// 回退路径：human 消息 → user_input，assistant 的 Thought & Plan 块 → thought_plan
+		var kinds []string
+		for _, e := range m.thinklinkEntries {
+			kinds = append(kinds, e.Kind)
+		}
+		if len(kinds) < 2 || kinds[0] != "user_input" || kinds[1] != "thought_plan" {
+			t.Errorf("fallback kinds = %v, want [user_input thought_plan ...]", kinds)
+		}
+	})
+}
+
+// ─── B5: resume 列表按 taskID 归并 ───────────────────────────────────────────
+
+func mkItem(path, taskID, agent string, mod time.Time) memory.RolloutSessionInfo {
+	return memory.RolloutSessionInfo{
+		Path: path, TaskID: taskID, AgentName: agent,
+		ModTime: mod, StartedAt: mod, Preview: "preview:" + path,
+	}
+}
+
+func TestBuildResumeGroups(t *testing.T) {
+	base := time.Now()
+	items := []memory.RolloutSessionInfo{
+		mkItem("/r/new_sub_coder.jsonl", "T1", "coder", base), // 子文件先出现在清单里
+		mkItem("/r/new_director.jsonl", "T1", "director", base.Add(time.Second)),
+		mkItem("/r/legacy.jsonl", "", "", base.Add(2*time.Second)), // 存量：自成组
+	}
+	groups := buildResumeGroups(items)
+	if len(groups) != 2 {
+		t.Fatalf("groups len = %d, want 2", len(groups))
+	}
+	// 组间按 head mtime 倒序：legacy（最新）在前
+	if groups[0].key != "file:/r/legacy.jsonl" {
+		t.Errorf("groups[0].key = %q, want legacy file key first", groups[0].key)
+	}
+	// T1 组：head 应为主会话文件（尽管子文件先到），成员为子文件
+	var g1 resumeGroup
+	for _, g := range groups {
+		if g.key == "task:T1" {
+			g1 = g
+		}
+	}
+	if g1.head.Path != "/r/new_director.jsonl" {
+		t.Errorf("T1 head = %q, want main session file", g1.head.Path)
+	}
+	if len(g1.members) != 1 || g1.members[0].Path != "/r/new_sub_coder.jsonl" {
+		t.Errorf("T1 members = %+v, want coder sub file", g1.members)
+	}
+}
+
+func TestResumeExpandAndRows(t *testing.T) {
+	m := restoreTestModel(t)
+	base := time.Now()
+	m.resumeGroups = buildResumeGroups([]memory.RolloutSessionInfo{
+		mkItem("/r/a_director.jsonl", "T1", "director", base),
+		mkItem("/r/a_sub_coder.jsonl", "T1", "coder", base.Add(time.Second)),
+		mkItem("/r/a_sub_repo.jsonl", "T1", "repo", base.Add(2*time.Second)),
+	})
+	m.resumeExpanded = make(map[string]bool)
+	m.resumePageSize = defaultPageSize
+
+	t.Run("collapsed_shows_head_only", func(t *testing.T) {
+		m.rebuildResumeRows()
+		if len(m.resumeRows) != 1 || !m.resumeRows[0].isHead {
+			t.Fatalf("rows = %+v, want single head row", m.resumeRows)
+		}
+	})
+
+	t.Run("enter_on_head_expands", func(t *testing.T) {
+		m.rebuildResumeRows()
+		m.resumeCursor = 0
+		m.resumeOffset = 0
+		m, _ = resumeHandleKey(tea.KeyPressMsg{Code: tea.KeyEnter}, m)
+		if len(m.resumeRows) != 3 {
+			t.Fatalf("rows after expand = %d, want 3", len(m.resumeRows))
+		}
+		if m.resumeLoading {
+			t.Error("loading should stay false on expand")
+		}
+	})
+
+	t.Run("enter_on_member_loads_file", func(t *testing.T) {
+		m.resumeCursor = 1 // 第一行是组头，第二行是成员
+		m, _ = resumeHandleKey(tea.KeyPressMsg{Code: tea.KeyEnter}, m)
+		if !m.resumeLoading {
+			t.Fatal("enter on member should trigger load (resumeLoading=true)")
+		}
+	})
+
+	t.Run("space_toggles", func(t *testing.T) {
+		m.resumeLoading = false
+		m.resumeCursor = 0
+		m, _ = resumeHandleKey(tea.KeyPressMsg{Code: tea.KeySpace}, m)
+		if len(m.resumeRows) != 1 {
+			t.Fatalf("rows after collapse = %d, want 1", len(m.resumeRows))
+		}
+	})
+}
+
+func TestRenderResumeRows(t *testing.T) {
+	m := restoreTestModel(t)
+	m.resumeStyles = m.initResumeStyles()
+	base := time.Now()
+	m.resumeGroups = buildResumeGroups([]memory.RolloutSessionInfo{
+		mkItem("/r/a_director.jsonl", "T1", "director", base),
+		mkItem("/r/a_sub_coder.jsonl", "T1", "coder", base.Add(time.Second)),
+	})
+	m.resumeExpanded = map[string]bool{"task:T1": true}
+	m.rebuildResumeRows()
+	m.resumePageSize = defaultPageSize
+	m.resumeRoot = "/r"
+
+	for _, width := range []int{60, 80, 100, 160} {
+		m.termWidth, m.termHeight = width, 30
+		view := renderResumeView(m).Content
+		if strings.Contains(view, "%!") {
+			t.Errorf("width %d: view has format errors", width)
+		}
+	}
+	// 展开视图应含成员徽标与缩进前缀
+	m.termWidth, m.termHeight = 120, 30
+	view := renderResumeView(m).Content
+	if !strings.Contains(view, "+1") {
+		t.Error("head row missing member-count badge")
+	}
+	if !strings.Contains(view, "└") {
+		t.Error("member row missing tree prefix")
+	}
+	if !strings.Contains(view, "main") || !strings.Contains(view, "sub:coder") {
+		t.Error("agent badges missing (main / sub:coder)")
 	}
 }

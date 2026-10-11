@@ -177,7 +177,7 @@ type RolloutInfo struct {
 	// DroppedOrphanOutputs 丢弃的孤儿输出（call_id 无对应 call）与重复输出条数。
 	DroppedOrphanOutputs int
 
-	// ── 断点状态（从 event_msg 派生；Phase B1 落盘 stop_reason/steps 后转为精确值）──
+	// ── 断点状态（从 event_msg 派生；写侧自 B1 起在终止事件里落盘 steps/stop_reason）──
 
 	// Finished 是否观测到 task_complete 事件。
 	Finished bool
@@ -185,8 +185,18 @@ type RolloutInfo struct {
 	Aborted bool
 	// AbortReason 最后一条 turn_aborted 的 reason（无则空）。
 	AbortReason string
-	// AssistantTurns 恢复出的 assistant 消息数，即 LLM 回合数——Director rollout
-	// 无步数事件时的步数近似值。
+	// Steps 终止事件里的显式已执行步数；存量文件为 0，见 BestStep。
+	Steps int
+	// MaxSteps 终止事件里的步数上限；存量文件为 0。
+	MaxSteps int
+	// StopReason 终止事件里的结束原因分类（director 侧为 agent_exit/plain_text/
+	// max_steps/cancelled/llm_error/circuit_breaker_open；sub-agent 侧暂不标注）。
+	// 仅作展示与诊断：结束/中断的判定看 Finished/Aborted，不靠匹配本字段，
+	// 避免 memory 包与 director 包耦合字符串常量。
+	StopReason string
+	// HasDelegated 本次运行是否委派过子 Agent（仅 director 终止事件携带）。
+	HasDelegated bool
+	// AssistantTurns 恢复出的 assistant 消息数，即 LLM 回合数——无显式步数时的近似值。
 	AssistantTurns int
 	// MaxStepObserved sub_agent_activity 事件的最大 step_number（仅 sub-agent
 	// rollout 有该事件，Director 文件恒为 0）。
@@ -201,6 +211,32 @@ type RolloutInfo struct {
 
 	// Tokens token_count 事件的累计用量（无该事件时为零值）。
 	Tokens RolloutTokenTotals
+
+	// ThinklinkEntries 从 event_msg(type=thinklink_entry) 恢复的 thinklink 条目
+	// （用户原始输入 / Thought & Plan 块，写侧自 B4 起落盘）。存量文件为 nil，
+	// 消费方应退回消息块重解析。
+	ThinklinkEntries []RolloutThinklinkEntry
+}
+
+// RolloutThinklinkEntry rollout 恢复出的单条 thinklink 条目。
+type RolloutThinklinkEntry struct {
+	Kind    string // "user_input" / "thought_plan"（thinklink.Kind.String()）
+	Content string // 条目正文
+	Step    int    // 记录时 Director 步数（user_input 恒为 0）
+}
+
+// BestStep 返回最可信的「已执行步数」，按证据强度依次回退：
+// 终止事件的显式值 → sub_agent_activity 观测值 → assistant 回合数近似。
+// 三者都缺失时为 0（调用方应据此省略步数展示，而不是显示 0）。
+func (i RolloutInfo) BestStep() int {
+	switch {
+	case i.Steps > 0:
+		return i.Steps
+	case i.MaxStepObserved > 0:
+		return i.MaxStepObserved
+	default:
+		return i.AssistantTurns
+	}
 }
 
 // FinishState 综合判定会话结束状态，强证据优先：
@@ -476,20 +512,51 @@ func (p *rolloutParser) handleEventMsg(em EventMsg) {
 
 	case "task_complete":
 		p.info.Finished = true
+		p.applyRunState(em)
 
 	case "turn_aborted":
 		p.info.Aborted = true
 		if em.Reason != "" {
 			p.info.AbortReason = em.Reason
 		}
+		p.applyRunState(em)
 
 	case "sub_agent_activity":
 		// Director rollout 无步数事件；sub-agent 文件经 StepInfoToEventMsg 落盘
+
 		// step_number，取最大值作为已观测步数。
 		if em.StepNumber > p.info.MaxStepObserved {
 			p.info.MaxStepObserved = em.StepNumber
 		}
+
+	case "thinklink_entry":
+		// thinklink 条目（B4 起落盘）：同样只进 info 不进消息——正文已在
+		// response_item 里（user_input 即 user 消息、thought_plan 是 assistant
+		// 回复的子块），这里只保留「journal 视角」的顺序与步数标注。
+		p.info.ThinklinkEntries = append(p.info.ThinklinkEntries, RolloutThinklinkEntry{
+			Kind:    em.Kind,
+			Content: em.Text,
+			Step:    em.StepNumber,
+		})
 	}
+}
+
+// applyRunState 提取终止事件携带的断点状态。
+//
+// 写侧自 B1 起在 task_complete/turn_aborted 上落盘 steps/max_steps/stop_reason/
+// has_delegated；存量文件没有这些字段，解析结果为零值，FinishState 与 BestStep
+// 会自动退回证据推断，故无需版本判断。
+func (p *rolloutParser) applyRunState(em EventMsg) {
+	if em.StepNumber > 0 {
+		p.info.Steps = em.StepNumber
+	}
+	if em.MaxSteps > 0 {
+		p.info.MaxSteps = em.MaxSteps
+	}
+	if em.StopReason != "" {
+		p.info.StopReason = em.StopReason
+	}
+	p.info.HasDelegated = em.HasDelegated
 }
 
 // applyTokenCount 提取 token_count 事件的用量。

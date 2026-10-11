@@ -69,10 +69,13 @@ type ToolRunner interface {
 // 字段推导自门面 run() 系统提示构建段：
 //   - Input：用户原始输入（KnowledgeInjector.InjectionContext.UserMessage 所需）；
 //   - FirstConversation：是否首次对话（原 mem == nil || len(mem.GetMessages()) == 0，
-//     用于仅首次加载项目上下文文件，避免重复注入浪费 token）。
+//     用于仅首次加载项目上下文文件，避免重复注入浪费 token）；
+//   - ForceProjectContext：续跑首轮（/resume、history 加载后的首次追问）强制加载
+//     项目上下文——恢复的 memory 无 system 消息，仅按 FirstConversation 判定会漏注入。
 type PromptInput struct {
-	Input             string
-	FirstConversation bool
+	Input               string
+	FirstConversation   bool
+	ForceProjectContext bool
 }
 
 // PromptBuilder 系统提示构建函数类型。门面负责包装
@@ -188,6 +191,9 @@ type PlanInput struct {
 	Input  string                     // 用户任务输入
 	Mem    *memory.ConversationMemory // 会话 memory（nil=新会话，沿用门面既有语义）
 	TaskID string                     // 当前任务 taskID（Rollout 日志用）
+	// Resumed 本次 Run 跑在恢复的历史会话上（/resume、history 加载后的首次追问）。
+	// 透传为 PromptBuilder 的 ForceProjectContext：续跑首轮强制注入项目上下文。
+	Resumed bool
 }
 
 // PlanResult Planner 单次任务输出。

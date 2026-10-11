@@ -429,6 +429,11 @@ type TaskRequest struct {
 	wsCallback  func(string, string)
 	publisher   *messaging.MessagePublisher
 	userMessage string
+	// resumed 本次请求是否跑在恢复出来的历史会话上（TUI /resume 或 history 加载后
+	// 的首次追问）。Director 据此在续跑第一轮强制注入项目上下文：恢复的 memory 里
+	// 本就没有 system 消息（reader 默认丢弃、datamanager 从不存储），非首次对话判定
+	// 会漏掉 YAGENT.md/CLAUDE.md/AGENTS.md，LLM 等于蒙着眼睛接手半截任务。
+	resumed bool
 }
 
 func NewTaskRequest(ctx context.Context, taskID string) *TaskRequest {
@@ -468,10 +473,16 @@ func (r *TaskRequest) WithUserMessage(msg string) *TaskRequest {
 	return r
 }
 
+func (r *TaskRequest) WithResumed(resumed bool) *TaskRequest {
+	r.resumed = resumed
+	return r
+}
+
 // ProcessCodingTaskWithCallback executes the task using the agent system.
 func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 	ca.director.SetTaskID(req.taskID)
+	ca.director.SetResumedTask(req.resumed)
 	res, err := ca.director.Run(memory.WithConversationMemory(req.ctx, req.memory), req.taskDesc)
 	return res.Text, err
 }
@@ -480,6 +491,7 @@ func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error
 func (ca *Yagent) ProcessConversation(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 	ca.director.SetTaskID(req.taskID)
+	ca.director.SetResumedTask(req.resumed)
 	res, err := ca.director.Run(memory.WithConversationMemory(req.ctx, req.memory), req.userMessage)
 	return res.Text, err
 }

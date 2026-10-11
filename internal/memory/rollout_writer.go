@@ -139,6 +139,10 @@ func (w *RolloutWriter) writeEnvelope(recordType string, payload interface{}) er
 }
 
 // WriteSessionMeta 写入会话元数据
+//
+// task_id 由 writer 在构造时持有（NewRolloutWriter 的入参），此处兜底填充：两个调用点
+//（planner_run.go 的 director 会话、executor.go 的 sub-agent 会话）都不必各自记得传，
+// 避免漏传导致恢复侧无法把 rollout 回连到原任务（tasks/{id}.jsonl、blackboard boardID）。
 func (w *RolloutWriter) WriteSessionMeta(meta SessionMeta) error {
 	if !w.enabled || w.file == nil {
 		return nil
@@ -146,6 +150,9 @@ func (w *RolloutWriter) WriteSessionMeta(meta SessionMeta) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.sessionMetaWritten = true
+	if meta.TaskID == "" {
+		meta.TaskID = w.taskID
+	}
 	return w.writeEnvelope("session_meta", meta)
 }
 
@@ -183,6 +190,45 @@ func (w *RolloutWriter) WriteEventMsg(event EventMsg) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.writeEnvelope("event_msg", event)
+}
+
+// ─── 终止事件（带断点状态）───
+
+// RunState 一次运行的断点状态，随终止事件落盘。
+//
+// 恢复侧（RolloutInfo.FinishState）优先用 StopReason 判定会话结局；缺失时（存量文件）
+// 才退化为按消息形态推断。StopReason 取值沿用 director.PlanResult.StopReason：
+// agent_exit / plain_text（正常结束），max_steps / cancelled / llm_error /
+// circuit_breaker_open（中断）。
+type RunState struct {
+	Steps        int    // 已执行步数
+	MaxSteps     int    // 步数上限
+	StopReason   string // 结束原因
+	HasDelegated bool   // 本次运行是否委派过子 Agent
+}
+
+// WriteRunComplete 写入 task_complete 终止事件并附带断点状态。
+func (w *RolloutWriter) WriteRunComplete(rs RunState) error {
+	return w.WriteEventMsg(EventMsg{
+		Type:         "task_complete",
+		StepNumber:   rs.Steps,
+		MaxSteps:     rs.MaxSteps,
+		StopReason:   rs.StopReason,
+		HasDelegated: rs.HasDelegated,
+	})
+}
+
+// WriteRunAborted 写入 turn_aborted 终止事件并附带断点状态。
+// reason 是面向人的中止原因（如 ctx.Err()），StopReason 是机器可判定的分类。
+func (w *RolloutWriter) WriteRunAborted(reason string, rs RunState) error {
+	return w.WriteEventMsg(EventMsg{
+		Type:         "turn_aborted",
+		Reason:       reason,
+		StepNumber:   rs.Steps,
+		MaxSteps:     rs.MaxSteps,
+		StopReason:   rs.StopReason,
+		HasDelegated: rs.HasDelegated,
+	})
 }
 
 // WriteInterAgentComm 写入多 Agent 通信元数据

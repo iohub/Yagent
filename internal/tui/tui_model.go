@@ -18,7 +18,6 @@ import (
 	"yagent/internal/datamanager"
 	"yagent/internal/dict"
 	"yagent/internal/http"
-	"yagent/internal/memory"
 	"yagent/internal/messaging"
 	"yagent/internal/models"
 	"yagent/internal/tui/anim"
@@ -532,7 +531,11 @@ type model struct {
 	taskStarted   bool // 标记用户是否已经提交过任务（用于控制输入面板边框高亮）
 	taskCancelled bool // 标记任务是否由用户主动取消
 	currentTask   *http.Task
-	eventCh       chan *messaging.MessageEvent
+	// resumedFromRollout 一次性标记：当前会话由 /resume 或 history 恢复而来，
+	// 下一次 submitFollowUp 以 Resumed 提交（Director 续跑首轮强制注入项目上下文），
+	// 随后清除——与 FirstConversation"仅首次注入"的语义对齐。
+	resumedFromRollout bool
+	eventCh            chan *messaging.MessageEvent
 
 	// Standard state
 	termWidth   int
@@ -631,10 +634,12 @@ type model struct {
 
 	// Resume mode（/resume — 别名 /rs，兼容 :resume/:rs — 从 rollout JSONL 恢复会话，范式对齐 history）
 	resumeMode     bool
-	resumeItems    []memory.RolloutSessionInfo
-	resumeCursor   int // 页内条目游标，0-indexed
-	resumeOffset   int // 当前页起始绝对索引（page×pageSize 语义）
-	resumePageSize int // 每页条数，固定20（进入模式时初始化）
+	resumeGroups   []resumeGroup   // 按 taskID 归并的会话组（B5）
+	resumeRows     []resumeRow     // 展平行列表（组头 + 已展开组成员），分页/游标作用于此
+	resumeExpanded map[string]bool // 组 key → 是否展开（默认收起，只显示组头行）
+	resumeCursor   int             // 页内条目游标，0-indexed
+	resumeOffset   int             // 当前页起始绝对索引（page×pageSize 语义）
+	resumePageSize int             // 每页条数，固定20（进入模式时初始化）
 	resumeLoading  bool
 	resumeErr      string        // 列表/恢复错误（resume 视图内展示）
 	resumeStyles   *resumeStyles // 预计算的 resume 列表样式

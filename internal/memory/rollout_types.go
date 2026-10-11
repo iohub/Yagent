@@ -172,6 +172,17 @@ type EventMsg struct {
 	Success     bool        `json:"success,omitempty"`
 	AgentName   string      `json:"agent_name,omitempty"`
 	Summary     string      `json:"summary,omitempty"`
+
+	// ── 终止事件（task_complete / turn_aborted）携带的断点状态 ──
+	// 恢复侧据此判断会话为何结束、停在第几步，而不是只能靠"有没有终止事件"猜。
+	// StepNumber 复用上面的字段（终止事件里它表示已执行步数）。
+	MaxSteps     int    `json:"max_steps,omitempty"`
+	StopReason   string `json:"stop_reason,omitempty"`
+	HasDelegated bool   `json:"has_delegated,omitempty"`
+
+	// Kind thinklink_entry 事件的条目类别（"user_input" / "thought_plan"），
+	// 与 thinklink.Kind.String() 对齐；条目正文走 Text。
+	Kind string `json:"kind,omitempty"`
 }
 
 // MarshalJSON 根据 Type 字段只输出对应字段
@@ -207,21 +218,57 @@ func (e EventMsg) MarshalJSON() ([]byte, error) {
 		return json.Marshal(tsAlias{Type: e.Type})
 	case "task_complete":
 		type tcmAlias struct {
-			Type string `json:"type"`
+			Type         string `json:"type"`
+			StepNumber   int    `json:"step_number,omitempty"`
+			MaxSteps     int    `json:"max_steps,omitempty"`
+			StopReason   string `json:"stop_reason,omitempty"`
+			HasDelegated bool   `json:"has_delegated,omitempty"`
 		}
-		return json.Marshal(tcmAlias{Type: e.Type})
+		return json.Marshal(tcmAlias{
+			Type:         e.Type,
+			StepNumber:   e.StepNumber,
+			MaxSteps:     e.MaxSteps,
+			StopReason:   e.StopReason,
+			HasDelegated: e.HasDelegated,
+		})
 	case "turn_aborted":
 		type taAlias struct {
-			Type   string `json:"type"`
-			Reason string `json:"reason,omitempty"`
+			Type         string `json:"type"`
+			Reason       string `json:"reason,omitempty"`
+			StepNumber   int    `json:"step_number,omitempty"`
+			MaxSteps     int    `json:"max_steps,omitempty"`
+			StopReason   string `json:"stop_reason,omitempty"`
+			HasDelegated bool   `json:"has_delegated,omitempty"`
 		}
-		return json.Marshal(taAlias{Type: e.Type, Reason: e.Reason})
+		return json.Marshal(taAlias{
+			Type:         e.Type,
+			Reason:       e.Reason,
+			StepNumber:   e.StepNumber,
+			MaxSteps:     e.MaxSteps,
+			StopReason:   e.StopReason,
+			HasDelegated: e.HasDelegated,
+		})
 	case "context_compacted":
 		type ccAlias struct {
 			Type    string `json:"type"`
 			Summary string `json:"summary,omitempty"`
 		}
 		return json.Marshal(ccAlias{Type: e.Type, Summary: e.Summary})
+	case "thinklink_entry":
+		// 正文走 "text" 键：EventMsg 无自定义 UnmarshalJSON，标准反序列化按字段
+		// tag 对齐（Text ↔ "text"），读侧无需为该事件写特例解析。
+		type tleAlias struct {
+			Type       string `json:"type"`
+			Kind       string `json:"kind,omitempty"`
+			Text       string `json:"text,omitempty"`
+			StepNumber int    `json:"step_number,omitempty"`
+		}
+		return json.Marshal(tleAlias{
+			Type:       e.Type,
+			Kind:       e.Kind,
+			Text:       e.Text,
+			StepNumber: e.StepNumber,
+		})
 	case "sub_agent_activity":
 		type saaAlias struct {
 			Type       string      `json:"type"`
@@ -242,17 +289,20 @@ func (e EventMsg) MarshalJSON() ([]byte, error) {
 	default:
 		// 未知类型，输出所有字段
 		return json.Marshal(map[string]interface{}{
-			"type":       e.Type,
-			"text":       e.Text,
-			"message":    e.Message,
-			"reason":     e.Reason,
-			"info":       e.Info,
-			"step_number": e.StepNumber,
-			"tool_name":  e.ToolName,
-			"tool_input": e.ToolInput,
-			"success":    e.Success,
-			"agent_name": e.AgentName,
-			"summary":    e.Summary,
+			"type":          e.Type,
+			"text":          e.Text,
+			"message":       e.Message,
+			"reason":        e.Reason,
+			"info":          e.Info,
+			"step_number":   e.StepNumber,
+			"tool_name":     e.ToolName,
+			"tool_input":    e.ToolInput,
+			"success":       e.Success,
+			"agent_name":    e.AgentName,
+			"summary":       e.Summary,
+			"max_steps":     e.MaxSteps,
+			"stop_reason":   e.StopReason,
+			"has_delegated": e.HasDelegated,
 		})
 	}
 }

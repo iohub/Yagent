@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -37,14 +38,20 @@ type RolloutSessionInfo struct {
 	Path      string // 文件绝对路径（只读，不修改）
 	ProjectID string // 所属 projectID（root 直下文件为空）
 	SessionID string // 优先 meta.session_id，回退文件名解析
+	TaskID    string // meta.task_id（写侧自 B1 起落盘；存量文件为空）
 	AgentName string // 仅文件名带 agent 段时非空（sub-agent 文件）
 	CWD       string // 首个 session_meta.cwd / 首个 turn_context.cwd
 	Model     string // 首个 turn_context.model
 	GitBranch string // 首个 session_meta.git.branch
-	Preview   string // 首条 user 消息文本截 100 rune
+	Preview   string // 首条 user 消息文本截 100 rune（超长消息跳过，见 headScanLine）
 	StartedAt time.Time
 	ModTime   time.Time
 	SizeBytes int64
+	// HeadMessages head-scan 窗口内观测到的 message 类 response_item 条数。
+	HeadMessages int
+	// Empty 整个文件已扫描完（未触发窗口截断）且没有任何 message 条目——
+	// 这类文件恢复必然报 "no messages"，清单直接过滤。
+	Empty bool
 }
 
 // ListRolloutSessions 列举 rollout 会话文件。
@@ -138,6 +145,9 @@ func ListRolloutSessions(root string, limit int) ([]RolloutSessionInfo, error) {
 		if si == nil {
 			continue // 打不开（如已被删除）：跳过
 		}
+		if si.Empty {
+			continue // 整文件可扫描完且无消息条目：恢复必然失败，清单不展示
+		}
 		result = append(result, *si)
 	}
 	return result, nil
@@ -150,12 +160,19 @@ type rolloutHeadScanState struct {
 	metaSeen    bool
 	turnSeen    bool
 	previewDone bool
+	// previewFallback 首条超长 user 消息（如 delegate 注入的角色定义块，实测
+	// 13k+ 字符）——不直接当 preview，留作"后续无短消息"时的兜底素材。
+	previewFallback string
 }
 
 // complete 是否三个提取目标均已拿到（可提前终止扫描）。
 func (s *rolloutHeadScanState) complete() bool {
 	return s.metaSeen && s.turnSeen && s.previewDone
 }
+
+// rolloutPreviewMaxUserRunes 单条 user 消息作 preview 的长度上限：超过视为注入
+// 的上下文块而非真实任务描述（resolveDelegateRefs 会把上下文打包进 delegate 任务）。
+const rolloutPreviewMaxUserRunes = 2000
 
 // headScanRolloutFile 对单个会话文件做 head-scan（只读）。
 // 文件打不开返回 nil；内容坏行容忍：身份回退文件名解析结果。
@@ -179,6 +196,7 @@ func headScanRolloutFile(path, projectID string, modTime time.Time, size int64) 
 
 	reader := bufio.NewReaderSize(f, 64*1024)
 	var scanned int64
+	scanComplete := false
 	var state rolloutHeadScanState
 	for lineNo := 0; lineNo < rolloutHeadScanMaxLines && scanned < rolloutHeadScanMaxBytes; lineNo++ {
 		raw, readErr := reader.ReadBytes('\n')
@@ -187,12 +205,24 @@ func headScanRolloutFile(path, projectID string, modTime time.Time, size int64) 
 			si.headScanLine(raw, &state)
 		}
 		if readErr != nil {
-			break // EOF 或 IO 错误
+			// io.EOF → 整文件扫完，Empty 判定可用；其它 IO 错误不判空
+			scanComplete = readErr == io.EOF
+			break
 		}
 		if state.complete() {
 			break
 		}
 	}
+	if si.Preview == "" && state.previewFallback != "" {
+		// 只有超长注入块时的兜底：任务描述通常在块尾，取尾部作 preview
+		r := []rune(state.previewFallback)
+		if len(r) > rolloutPreviewMaxRunes {
+			r = r[len(r)-rolloutPreviewMaxRunes:]
+		}
+		si.Preview = string(r)
+	}
+	// 整文件可扫描完且窗口内没有任何 message 条目 → 恢复必然报 no messages
+	si.Empty = scanComplete && si.HeadMessages == 0
 	if si.StartedAt.IsZero() {
 		si.StartedAt = modTime
 	}
@@ -228,6 +258,7 @@ func (si *RolloutSessionInfo) headScanLine(raw []byte, state *rolloutHeadScanSta
 		if id := rolloutFirstNonEmpty(meta.SessionID, meta.ID); id != "" {
 			si.SessionID = id
 		}
+		si.TaskID = meta.TaskID
 		if meta.Cwd != "" {
 			si.CWD = meta.Cwd
 		}
@@ -250,17 +281,26 @@ func (si *RolloutSessionInfo) headScanLine(raw []byte, state *rolloutHeadScanSta
 			si.CWD = tc.Cwd
 		}
 	case "response_item":
-		if state.previewDone {
-			return
-		}
 		var item ResponseItem
 		if err := json.Unmarshal(env.Payload, &item); err != nil {
 			return
 		}
-		if item.Type == "message" && item.Role == "user" {
-			state.previewDone = true
-			si.Preview = truncateRunes(rolloutExtractText(item.Content, "input_text"), rolloutPreviewMaxRunes)
+		if item.Type == "message" {
+			si.HeadMessages++
 		}
+		if state.previewDone || item.Type != "message" || item.Role != "user" {
+			return
+		}
+		text := rolloutExtractText(item.Content, "input_text")
+		if utf8.RuneCountInString(text) > rolloutPreviewMaxUserRunes {
+			// 超长消息跳过（多为注入的上下文块），留作兜底继续找真实任务描述
+			if state.previewFallback == "" {
+				state.previewFallback = text
+			}
+			return
+		}
+		state.previewDone = true
+		si.Preview = truncateRunes(text, rolloutPreviewMaxRunes)
 	}
 }
 

@@ -81,7 +81,7 @@ func toolCallResp(id, name, args string) *llm.Response {
 
 // fakePlannerTools 可控工具执行器（实现 ToolRunner）：记录 Call 参数，
 // 按工具名返回预设结果。Specs 含 echo_tool（普通工具）、delegate_sub_agent
-//（委派工具）与 agent_exit（退出工具）。state 非 nil 时模拟门面 Tools 包装
+// （委派工具）与 agent_exit（退出工具）。state 非 nil 时模拟门面 Tools 包装
 // 闭包的委派检测语义（planner_run.go 只读 state 驱动提醒控制流）：delegate_*
 // 调用更新 HasDelegated/DelegationAttempts/PendingSubAgentMemory。
 type fakePlannerTools struct {
@@ -149,7 +149,7 @@ func newState(hasDelegated bool) *RunState {
 // newTestPlanner 统一构造：真实 thinklink.Store 作 Journal（CompressEnable=false
 // 时仅 AddUserInput/AddThoughtPlan 路径被触达），Prompts 返回固定 system prompt。
 // pub/journal 参数取接口类型：传 nil 字面量时接口为真 nil，cfg 判空生效
-//（具体类型指针会产生 typed-nil，使 p.cfg.Publisher != nil 误判为 true）。
+// （具体类型指针会产生 typed-nil，使 p.cfg.Publisher != nil 误判为 true）。
 func newTestPlanner(maxSteps int, state *RunState, eng *fakePlannerLLM, tools *fakePlannerTools, pub EventPublisher, journal ThinklinkStore) *Planner {
 	return NewPlanner(PlannerConfig{
 		LLM:        eng,
@@ -501,5 +501,210 @@ func TestPlannerRunZeroMaxSteps(t *testing.T) {
 	}
 	if len(eng.requests) != 0 {
 		t.Errorf("LLM calls = %d, want 0", len(eng.requests))
+	}
+}
+
+// ─── 终止事件落盘断点状态（B1）───────────────────────────────────────────────
+
+// TestPlannerRunPersistsRunState 两个终止路径（plain_text 完成 / max_steps 中断）
+// 都必须把断点状态写进 rollout：task_id 由 writer 回填、stop_reason/steps/
+// max_steps/has_delegated 随 task_complete / turn_aborted 落盘。
+//
+// 恢复侧 RolloutInfo.FinishState() 以 stop_reason 为主判据，缺字段就会把中断
+// 会话误判为已完成，TUI 因此不再提示断点续跑——这是存量 rollout 恢复不完整的
+// 根因之一，故在此按真实 writer/reader 往返断言，而非只查 PlanResult。
+func TestPlannerRunPersistsRunState(t *testing.T) {
+	tests := []struct {
+		name           string
+		maxSteps       int
+		steps          []fakeLLMStep
+		toolResults    map[string]string
+		wantStopReason string
+		wantFinish     memory.RolloutFinishState
+		wantSteps      int
+		wantDelegated  bool
+		wantRunErr     bool
+	}{
+		{
+			name:     "plain_text_complete",
+			maxSteps: 5,
+			steps: []fakeLLMStep{
+				{resp: toolCallResp("call-1", "delegate_sub_agent", `{"agent":"coder"}`)},
+				{resp: textResp("DONE")},
+			},
+			toolResults:    map[string]string{"delegate_sub_agent": "OK"},
+			wantStopReason: "plain_text",
+			wantFinish:     memory.FinishComplete,
+			wantSteps:      2,
+			wantDelegated:  true,
+		},
+		{
+			name:           "max_steps_interrupted",
+			maxSteps:       3,
+			steps:          []fakeLLMStep{{resp: toolCallResp("call-n", "echo_tool", `{"x":1}`)}},
+			toolResults:    map[string]string{"echo_tool": "OK"},
+			wantStopReason: "max_steps",
+			wantFinish:     memory.FinishInterrupted,
+			wantSteps:      3,
+			wantRunErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			w, err := memory.NewRolloutWriter("director", "task-planner-runstate", "planner-test")
+			if err != nil {
+				t.Fatalf("NewRolloutWriter() error = %v", err)
+			}
+
+			eng := &fakePlannerLLM{steps: tt.steps}
+			tools := &fakePlannerTools{state: newState(false), results: tt.toolResults}
+			p := newTestPlanner(tt.maxSteps, tools.state, eng, tools, nil, nil)
+			p.cfg.Rollout = w
+			path := w.FilePath()
+
+			res, runErr := p.Run(context.Background(), PlanInput{Input: "RUNSTATE_TASK"})
+			if (runErr != nil) != tt.wantRunErr {
+				t.Fatalf("Run() error = %v, wantRunErr = %v", runErr, tt.wantRunErr)
+			}
+			if res.StopReason != tt.wantStopReason {
+				t.Errorf("StopReason = %q, want %q", res.StopReason, tt.wantStopReason)
+			}
+
+			// Run 内的 defer 已 Close；此处直接读回文件。
+			_, info, err := memory.ReadRolloutMemory(path, memory.RolloutReadOptions{})
+			if err != nil {
+				t.Fatalf("ReadRolloutMemory() error = %v", err)
+			}
+			if info.TaskID != "task-planner-runstate" {
+				t.Errorf("TaskID = %q, want writer backfill %q", info.TaskID, "task-planner-runstate")
+			}
+			if got := info.FinishState(); got != tt.wantFinish {
+				t.Errorf("FinishState() = %v, want %v", got, tt.wantFinish)
+			}
+			if info.StopReason != tt.wantStopReason {
+				t.Errorf("restored StopReason = %q, want %q", info.StopReason, tt.wantStopReason)
+			}
+			if info.Steps != tt.wantSteps || info.BestStep() != tt.wantSteps {
+				t.Errorf("Steps = %d BestStep() = %d, want both %d", info.Steps, info.BestStep(), tt.wantSteps)
+			}
+			if info.MaxSteps != tt.maxSteps {
+				t.Errorf("MaxSteps = %d, want %d", info.MaxSteps, tt.maxSteps)
+			}
+			if info.HasDelegated != tt.wantDelegated {
+				t.Errorf("HasDelegated = %v, want %v", info.HasDelegated, tt.wantDelegated)
+			}
+		})
+	}
+}
+
+// TestPlannerRunAbortedPersistsReason llm_error 走 writeAborted：中止原因原样落盘，
+// 恢复侧 AbortReason 用于 TUI 的中断摘要展示。
+func TestPlannerRunAbortedPersistsReason(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	w, err := memory.NewRolloutWriter("director", "task-planner-abort", "planner-test")
+	if err != nil {
+		t.Fatalf("NewRolloutWriter() error = %v", err)
+	}
+	path := w.FilePath()
+
+	eng := &fakePlannerLLM{steps: []fakeLLMStep{{err: errors.New("llm went away")}}}
+	p := newTestPlanner(5, newState(false), eng, &fakePlannerTools{}, nil, nil)
+	p.cfg.Rollout = w
+
+	if _, err := p.Run(context.Background(), PlanInput{Input: "ABORT_TASK"}); err == nil {
+		t.Fatal("Run() error = nil, want llm error")
+	}
+
+	_, info, err := memory.ReadRolloutMemory(path, memory.RolloutReadOptions{})
+	if err != nil {
+		t.Fatalf("ReadRolloutMemory() error = %v", err)
+	}
+	if info.FinishState() != memory.FinishInterrupted {
+		t.Errorf("FinishState() = %v, want %v", info.FinishState(), memory.FinishInterrupted)
+	}
+	if info.StopReason != "llm_error" {
+		t.Errorf("StopReason = %q, want %q", info.StopReason, "llm_error")
+	}
+	if !strings.Contains(info.AbortReason, "llm went away") {
+		t.Errorf("AbortReason = %q, want contains %q", info.AbortReason, "llm went away")
+	}
+	if info.Steps != 1 {
+		t.Errorf("Steps = %d, want 1", info.Steps)
+	}
+}
+
+// TestPlannerRunResumedForcesProjectContext 续跑标记传播：PlanInput.Resumed 必须以
+// PromptInput.ForceProjectContext 到达 PromptBuilder——恢复的 memory 无 system 消息，
+// 仅按 FirstConversation 判定会让续跑首轮漏掉项目上下文注入（B2）。
+func TestPlannerRunResumedForcesProjectContext(t *testing.T) {
+	captured := make(chan PromptInput, 1)
+	eng := &fakePlannerLLM{steps: []fakeLLMStep{{resp: textResp("OK")}}}
+	mem := memory.NewConversationMemory(10)
+	mem.AddHumanMessage("EARLIER") // 非空 memory：FirstConversation 必为 false
+
+	p := NewPlanner(PlannerConfig{
+		LLM:        eng,
+		Tools:      &fakePlannerTools{},
+		Prompts:    func(_ context.Context, in PromptInput) (string, error) { captured <- in; return "SYSTEM_PROMPT", nil },
+		MaxSteps:   5,
+		LLMTimeout: 30 * time.Second,
+	}, newState(false))
+
+	if _, err := p.Run(context.Background(), PlanInput{Input: "RESUMED_TASK", Mem: mem, Resumed: true}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	in := <-captured
+	if in.FirstConversation {
+		t.Error("FirstConversation = true with non-empty memory, want false")
+	}
+	if !in.ForceProjectContext {
+		t.Error("ForceProjectContext = false, want true (PlanInput.Resumed must propagate)")
+	}
+}
+
+// TestPlannerRunWritesThinklinkEntries B4：journal 条目（user_input / thought_plan）
+// 必须随写 rollout，恢复侧据此重建 journal 视图而不必从消息块重解析。
+func TestPlannerRunWritesThinklinkEntries(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	w, err := memory.NewRolloutWriter("director", "task-thinklink", "planner-test")
+	if err != nil {
+		t.Fatalf("NewRolloutWriter() error = %v", err)
+	}
+	path := w.FilePath()
+
+	eng := &fakePlannerLLM{steps: []fakeLLMStep{{resp: textResp(
+		"## Thought & Plan\n* [ ] 1. [待处理] do it\n\nFINAL_ANSWER")}}}
+	journal := thinklink.NewStore(200)
+	p := NewPlanner(PlannerConfig{
+		LLM:        eng,
+		Tools:      &fakePlannerTools{},
+		Prompts:    func(_ context.Context, _ PromptInput) (string, error) { return "SYSTEM_PROMPT", nil },
+		Journal:    journal,
+		MaxSteps:   5,
+		LLMTimeout: 30 * time.Second,
+	}, newState(false))
+	p.cfg.Rollout = w
+
+	if _, err := p.Run(context.Background(), PlanInput{Input: "TL_TASK"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	_, info, err := memory.ReadRolloutMemory(path, memory.RolloutReadOptions{})
+	if err != nil {
+		t.Fatalf("ReadRolloutMemory() error = %v", err)
+	}
+	// 纯文本响应会触发强制委派重试，同一块可能按步记录多次（AddThoughtPlan 无去重，
+	// journal 语义如此），故断言形状而非精确条数。
+	if len(info.ThinklinkEntries) < 2 {
+		t.Fatalf("ThinklinkEntries len = %d, want >= 2 (user_input + thought_plan)", len(info.ThinklinkEntries))
+	}
+	if info.ThinklinkEntries[0].Kind != "user_input" || info.ThinklinkEntries[0].Content != "TL_TASK" {
+		t.Errorf("entry[0] = %+v, want user_input TL_TASK", info.ThinklinkEntries[0])
+	}
+	last := info.ThinklinkEntries[len(info.ThinklinkEntries)-1]
+	if last.Kind != "thought_plan" || !strings.Contains(last.Content, "Thought & Plan") {
+		t.Errorf("last entry = %+v, want thought_plan block", last)
 	}
 }

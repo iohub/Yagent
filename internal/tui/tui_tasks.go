@@ -54,6 +54,7 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 	}
 	m.taskManager.AddTask(task)
 	m.currentTask = task
+	m.resumedFromRollout = false // 全新任务，清除恢复会话遗留的续跑标记
 
 	// 更新 tab 标题（如果仍是默认标题）
 	m.updateActiveTabTitle(taskDesc)
@@ -90,6 +91,12 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 	m.cachedTokenDashboard = m.renderTokenDashboard()
 	m.tokenDashboardValid = true
 
+	// 消费一次性续跑标记：恢复会话（/resume、history 加载）后的首次追问按 Resumed
+	// 提交，Director 续跑首轮强制注入项目上下文；只消费一次，与 FirstConversation
+	// "仅首次注入"的语义对齐。
+	resumed := m.resumedFromRollout
+	m.resumedFromRollout = false
+
 	m.logEntries = append(m.logEntries, logEntry{
 		timestamp: time.Now(),
 		eventType: "user_message",
@@ -102,7 +109,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 
 	m.publisherCh = make(chan *messaging.MessagePublisher, 1)
 	return tea.Batch(
-		executeFollowUpCmd(message, m.currentTask, m.assistant, m.dataManager, m.eventCh, m.publisherCh),
+		executeFollowUpCmd(message, m.currentTask, m.assistant, m.dataManager, m.eventCh, m.publisherCh, resumed),
 		listenForEvents(m.eventCh),
 		listenForPublisher(m.publisherCh),
 	)
@@ -180,6 +187,8 @@ func executeTaskCmd(
 }
 
 // executeFollowUpCmd runs a follow-up message on an existing task.
+// resumed 表示该 task 由会话恢复而来（仅首次追问为 true），Director 续跑首轮
+// 强制注入项目上下文。
 func executeFollowUpCmd(
 	message string,
 	task *http.Task,
@@ -187,6 +196,7 @@ func executeFollowUpCmd(
 	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
 	publisherCh chan *messaging.MessagePublisher,
+	resumed bool,
 ) tea.Cmd {
 	return func() tea.Msg {
 		dispatcher := messaging.NewMessageDispatcher(100)
@@ -208,6 +218,7 @@ func executeFollowUpCmd(
 			WithProjectDir(task.ProjectDir).
 			WithUserMessage(message).
 			WithMemory(task.Memory).
+			WithResumed(resumed).
 			WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
 		// Start periodic save (every 5 seconds)
