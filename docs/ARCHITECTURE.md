@@ -112,7 +112,7 @@ yagent/
 │   ├── messaging/         # 消息系统（publisher、dispatcher）
 │   │   └── consumers/     # TUIConsumer、WebSocketConsumer
 │   ├── protocol/          # 协议定义（agent_events.go）
-│   ├── config/            # 配置系统（defaults、hot_reload）
+│   ├── config/            # 配置系统（defaults 等）
 │   ├── datamanager/       # 任务数据持久化（DataManager、JSONL 读写/索引）
 │   ├── knowledge/         # 知识注入器（KnowledgeInjector、对话前检索）
 │   ├── mcp/               # MCP 客户端（MCPClient、stdio JSON-RPC）
@@ -1253,7 +1253,7 @@ flowchart TD
 
 **接线**（`ExecutorConfig` / `PlannerConfig`）：压缩按调用方选择性开启——`EnableContextCompression`、`ContextCompressionThreshold`、`ToolResultKeepTokens`、`UltimateThinkLink compression.ThinkLinkJournal`（nil 即禁用三级）以及 `UltimateKeepPlans`。Director 从 `config.EnhancedCommanderConfig` 透传这些配置。
 
-**热重载**（`internal/config/hot_reload.go`）：配置变更在运行时生效。`EnhancedCommanderConfig` 载有 `Enable`、`EnableContextCompression`、`ContextCompressionThreshold`、`ToolResultKeepTokens`、`EnableUltimateCompression`（默认 **true**）、`UltimateCompressionKeepPlans` 与 `MaxParallelReadOnlyTools`。阈值或保留预算的变更在下一个 planner 步骤生效；结构性变更（如引擎/提供商映射）经 Director 的 `llmClient` / `refreshSubAgentEngines()` 触发引擎重解析。
+**运行时配置生效**：`EnhancedCommanderConfig` 载有 `Enable`、`EnableContextCompression`、`ContextCompressionThreshold`、`ToolResultKeepTokens`、`EnableUltimateCompression`（默认 **true**）、`UltimateCompressionKeepPlans` 与 `MaxParallelReadOnlyTools`。阈值或保留预算的变更在下一个 planner 步骤生效；结构性变更（如引擎/提供商映射）经 Director 的 `llmClient` / `refreshSubAgentEngines()` 触发引擎重解析。
 
 ---
 
@@ -1523,7 +1523,7 @@ VS Code 扩展经 WebSocket 与 Yagent 通信：
 
 ## 14. 配置系统
 
-配置系统支持热重载，位于 `internal/config/`（`config.go`、`defaults.go`、`hot_reload.go`、`default_config.toml`）：
+配置系统位于 `internal/config/`（`config.go`、`defaults.go`、`default_config.toml`）：
 
 | 配置段 | 内容 |
 |---------|----------|
@@ -1542,7 +1542,6 @@ VS Code 扩展经 WebSocket 与 Yagent 通信：
 **特性**：
 
 - TOML 格式配置文件
-- 运行时热重载（`hot_reload.go`）
 - 默认配置 + 用户配置覆盖（`defaults.go` 归一化零值：压缩阈值 120000、保留 token 200、终极压缩开启、`InjectionMinScore` 0.3、LLM 超时 5 分钟）
 - 三级 LLM 覆盖：按工具 > 按 Agent > 全局
 - 支持 Bedrock、Anthropic 原生 API、OpenAI 兼容 API，以及提供商级与调用级的 `ReasoningEffort`
@@ -1770,7 +1769,6 @@ flowchart LR
 | `internal/skills/skills.go` | 技能系统 |
 | `internal/datamanager/data_manager.go` | 任务数据持久化 |
 | `internal/config/config.go` | 配置系统 |
-| `internal/config/hot_reload.go` | 热重载支持 |
 | `internal/protocol/agent_events.go` | 事件类型定义（19 种） |
 | `internal/app/app.go` | Yagent 启动引导 |
 | `internal/http/server.go` | HTTP/WebSocket 服务 |
