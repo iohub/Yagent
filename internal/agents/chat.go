@@ -20,12 +20,37 @@ type ChatAgent struct {
 	maxSteps  int
 }
 
-// NewChatAgent 构造 ChatAgent，仅声明其所需窄依赖：
-// prompt 格式化、事件总线、环境视图（FullYoloMode）、流程控制、
-// 认知/深度思考、微代理工具与工作区守护。
-func NewChatAgent(formatter PromptFormatter, publisher EventBus, env Env, flow FlowToolSet, thinker Thinker, deepThinker DeepThinker, microAgent MicroAgentRunner, guard *tools.WorkspaceGuard, llm llm.Engine, maxSteps int) *ChatAgent {
-	// Build a minimal tool set for ChatAgent: micro_agent for sub-LLM reasoning,
-	// thinking for cognitive reflection, and agent_exit for clean termination.
+// ChatAgentParams 聚合 NewChatAgent 所需的全部依赖。
+// 用具名字段替代原先 10 个位置参数，让调用点自文档化。
+type ChatAgentParams struct {
+	Formatter   PromptFormatter
+	Publisher   EventBus
+	Env         Env
+	Flow        FlowToolSet
+	Thinker     Thinker
+	DeepThinker DeepThinker
+	MicroAgent  MicroAgentRunner
+	Guard       *tools.WorkspaceGuard
+	LLM         llm.Engine
+	MaxSteps    int
+}
+
+// NewChatAgent 构造 ChatAgent：装配轻量工具集后返回。
+func NewChatAgent(p ChatAgentParams) *ChatAgent {
+	return &ChatAgent{
+		BaseAgent: BaseAgent{
+			LLM:       p.LLM,
+			Publisher: p.Publisher,
+		},
+		promptFmt: p.Formatter,
+		Adapters:  buildChatAdapters(p),
+		maxSteps:  p.MaxSteps,
+	}
+}
+
+// buildChatAdapters 装配 Chat-Agent 的最小工具集：
+// micro_agent（子 LLM 推理）、thinking（认知反思）、agent_exit（退出）、deepthinking。
+func buildChatAdapters(p ChatAgentParams) []*tools.Adapter {
 	var toolDefs []tools.ToolDefinition
 	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
 		// Errors parsing tools.json are logged but non-fatal —
@@ -37,21 +62,21 @@ func NewChatAgent(formatter PromptFormatter, publisher EventBus, env Env, flow F
 		var fn tools.ToolFunc
 		switch def.Name {
 		case "micro_agent":
-			fn = microAgent.Execute
+			fn = p.MicroAgent.Execute
 		case "thinking":
 			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				inputBytes, _ := json.Marshal(params)
-				return thinker.Call(ctx, string(inputBytes))
+				return p.Thinker.Call(ctx, string(inputBytes))
 			}
 		case "agent_exit":
-			fn = flow.ExecuteAgentExit
+			fn = p.Flow.ExecuteAgentExit
 		case "deepthinking":
-			fn = deepThinker.Execute
+			fn = p.DeepThinker.Execute
 		case "ask_user_for_help":
-			if env.FullYoloMode() {
+			if p.Env.FullYoloMode() {
 				continue
 			}
-			fn = flow.ExecuteAskUserForHelp
+			fn = p.Flow.ExecuteAskUserForHelp
 		default:
 			continue
 		}
@@ -59,17 +84,9 @@ func NewChatAgent(formatter PromptFormatter, publisher EventBus, env Env, flow F
 		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
 		adapters = append(adapters, adapter)
 	}
-	tools.SetGuardOnAdapters(adapters, guard)
+	tools.SetGuardOnAdapters(adapters, p.Guard)
 
-	return &ChatAgent{
-		BaseAgent: BaseAgent{
-			LLM:       llm,
-			Publisher: publisher,
-		},
-		promptFmt: formatter,
-		Adapters:  adapters,
-		maxSteps:  maxSteps,
-	}
+	return adapters
 }
 
 func (a *ChatAgent) Name() string {

@@ -90,23 +90,215 @@ func (a *DirectorAgent) loadProjectContext() *director.ProjectContextLoadResult 
 	return a.projectCtxLoader.Load()
 }
 
-func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, files FileToolSet, search SearchToolSet, sys SysToolSet, edit EditToolSet, flow FlowToolSet, thinker Thinker, microAgent MicroAgentRunner, deepThinker DeepThinker, guard *tools.WorkspaceGuard, repoCtx RepoContextStore, knowledge KnowledgeProvider, mcpClient *mcp.MCPClient, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
-	var self *DirectorAgent
+// DirectorAgentParams 聚合 NewDirectorAgent 所需的全部依赖。
+// 用具名字段替代原先 27 个位置参数，让调用点自文档化，且增删依赖不再破坏函数签名。
+type DirectorAgentParams struct {
+	Formatter   PromptFormatter
+	Publisher   EventBus
+	Env         Env
+	Files       FileToolSet
+	Search      SearchToolSet
+	Sys         SysToolSet
+	Edit        EditToolSet
+	Flow        FlowToolSet
+	Thinker     Thinker
+	MicroAgent  MicroAgentRunner
+	DeepThinker DeepThinker
+	Guard       *tools.WorkspaceGuard
+	RepoCtx     RepoContextStore
+	Knowledge   KnowledgeProvider
+	MCPClient   *mcp.MCPClient
+	LLM         llm.Engine
 
+	RepoAgent    *RepoAgent
+	CodingAgent  *CodingAgent
+	ChatAgent    *ChatAgent
+	MetaAgent    *MetaAgent
+	DevOpsAgent  *DevOpsAgent
+	BrowserAgent *BrowserAgent
+
+	MaxSteps       int
+	DisabledAgents map[string]bool
+	MetaRetryCount int
+	Config         config.Config
+	LLMClient      *llm.Client
+}
+
+// NewDirectorAgent 构造 DirectorAgent：先填充结构体字段，再装配工具适配器
+// （基础/JSON 工具 → 委派工具 → 知识工具），最后完成 blackboard、压缩器等后置初始化。
+// 委派闭包在运行时读取接收者字段，因此必须先构造 self 再调用两个 build* 方法。
+func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
+	adapterCfg := director.DefaultRecoveryConfig()
+	adapterCfg.MaxRetries = p.MaxSteps
+	adapterCfg.CircuitBreakerThreshold = p.Config.LLM.CircuitBreakerThreshold
+	adapterCfg.CircuitBreakerResetTimeout = p.Config.LLM.CircuitBreakerResetTimeout
+	adapterCfg.LLMRetries = p.Config.LLM.StepRetries
+
+	self := &DirectorAgent{
+		BaseAgent:        BaseAgent{LLM: p.LLM, Publisher: p.Publisher},
+		RepoAgent:        p.RepoAgent,
+		CodingAgent:      p.CodingAgent,
+		ChatAgent:        p.ChatAgent,
+		MetaAgent:        p.MetaAgent,
+		DevOpsAgent:      p.DevOpsAgent,
+		BrowserAgent:     p.BrowserAgent,
+		promptFmt:        p.Formatter,
+		env:              p.Env,
+		files:            p.Files,
+		search:           p.Search,
+		sys:              p.Sys,
+		edit:             p.Edit,
+		flow:             p.Flow,
+		thinker:          p.Thinker,
+		microAgent:       p.MicroAgent,
+		deepThinker:      p.DeepThinker,
+		guard:            p.Guard,
+		repoCtx:          p.RepoCtx,
+		knowledge:        p.Knowledge,
+		mcpClient:        p.MCPClient,
+		maxSteps:         p.MaxSteps,
+		metaRetryCount:   p.MetaRetryCount,
+		metaHandler:      director.NewMetaAgentHandler(),
+		adapter:          NewDirectorAdapter(true, adapterCfg),
+		llmClient:        p.LLMClient,
+		projectCtxLoader: director.NewProjectContextLoader(func() string { return p.Env.ProjectPath() }),
+
+		llmTimeout: func() time.Duration {
+			if p.Config.LLM.Timeout > 0 {
+				return p.Config.LLM.Timeout
+			}
+			return 5 * time.Minute
+		}(),
+
+		delegateIdleTimeout: func() time.Duration {
+			if p.Config.Agent.DelegateIdleTimeout > 0 {
+				return p.Config.Agent.DelegateIdleTimeout
+			}
+			return config.DeriveDelegateIdleTimeout(p.Config.LLM.Timeout)
+		}(),
+		delegateTotalTimeout: p.Config.Agent.DelegateTotalTimeout,
+
+		maxParallelReadOnlyTools: NormalizeMaxParallelReadOnlyTools(p.Config.Agent.MaxParallelReadOnlyTools),
+
+		EnhancedCommanderCfg: p.Config.EnhancedCommander,
+
+		thinkLink: thinklink.NewStore(0),
+	}
+
+	adapters := self.buildToolAdapters()
+	delegateAdapters := self.buildDelegateAdapters(p.DisabledAgents)
+
+	tools.SetGuardOnAdapters(adapters, p.Guard)
+	tools.SetGuardOnAdapters(delegateAdapters, p.Guard)
+
+	knowledgeAdapters := createKnowledgeToolAdapters(p.MCPClient, p.LLM, "", "")
+	allAdapters := append(adapters, delegateAdapters...)
+	if len(knowledgeAdapters) > 0 {
+		tools.SetGuardOnAdapters(knowledgeAdapters, p.Guard)
+		allAdapters = append(allAdapters, knowledgeAdapters...)
+	}
+	self.Adapters = allAdapters
+
+	if self.boardID == "" {
+		self.boardID = blackboard.GenerateAdhocID()
+	}
+
+	self.compressor = compression.NewContextCompressor(p.LLM, self.Name(), self.thinkLink, func() { self.setPendingSubAgentMemory(nil) })
+
+	if self.env != nil {
+		SetProjectPathProvider(self.env.ProjectPath)
+	}
+
+	toolDefsForHash := make([]llm.ToolDef, len(allAdapters))
+	for i, ad := range allAdapters {
+		toolDefsForHash[i] = ad.ToToolDef()
+	}
+	toolHash := tools.ComputeToolDefsHash(toolDefsForHash)
+	names := make([]string, len(toolDefsForHash))
+	for i, td := range toolDefsForHash {
+		names[i] = td.Function.Name
+	}
+	slog.Info("Director tool definitions initialized",
+		"hash", toolHash,
+		"tool_count", len(toolDefsForHash),
+		"tool_names", names)
+
+	return self
+}
+
+// buildToolAdapters 装配 Director 的基础工具（agent_exit/read_artifact/read_note）
+// 与 tools.json 中声明的只读工具，并顺带填充 a.toolDefMap（供 registerCustomAgent 查询）。
+func (a *DirectorAgent) buildToolAdapters() []*tools.Adapter {
+	adapters := []*tools.Adapter{
+		tools.NewAdapter("agent_exit", "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.", a.flow.ExecuteAgentExit).WithSchema(map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"reason": map[string]interface{}{"type": "string", "description": "The reason the agent is exiting, e.g., task completed, cannot proceed, blocked by missing information, or must terminate."},
+			},
+			"required": []string{"reason"},
+		}),
+		newReadArtifactAdapter(),
+		newReadNoteAdapter(func() string { return a.boardID }),
+	}
+
+	var toolDefs []tools.ToolDefinition
+	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
+		slog.Error("Failed to unmarshal tools", "error", err)
+	}
+
+	toolDefMap := make(map[string]tools.ToolDefinition, len(toolDefs))
+	for _, def := range toolDefs {
+		toolDefMap[def.Name] = def
+	}
+	a.toolDefMap = toolDefMap
+
+	for _, def := range toolDefs {
+		var fn tools.ToolFunc
+		switch def.Name {
+		case "search_by_regex":
+			fn = a.search.ExecuteGrepSearch
+		case "list_dir":
+			fn = a.files.ExecuteListDir
+		case "read_file":
+			fn = a.files.ExecuteReadFile
+		case "print_dir_tree":
+			fn = a.files.ExecutePrintDirTree
+		case "deepthinking":
+			fn = a.deepThinker.Execute
+		case "ask_user_for_help":
+			if a.env.FullYoloMode() {
+				continue
+			}
+			fn = a.flow.ExecuteAskUserForHelp
+		default:
+			continue
+		}
+
+		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
+		adapters = append(adapters, adapter)
+	}
+
+	return adapters
+}
+
+// buildDelegateAdapters 装配六个内建 delegate_<agent> 工具，并按 disabledAgents 过滤。
+// 闭包在运行时读取接收者字段（boardID/Adapters/metaRetryCount 等），故必须在结构体
+// 填充完成后调用。返回顺序固定为：repo, coding, chat, meta, devops, browser。
+func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []*tools.Adapter {
 	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		packedTask, unresolved := self.resolveDelegateRefs(ctx, task, params)
-		ctx = blackboard.WithBoardID(ctx, self.boardID)
-		if rolloutWriter := self.createRolloutWriter("repo", task); rolloutWriter != nil {
+		packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
+		ctx = blackboard.WithBoardID(ctx, a.boardID)
+		if rolloutWriter := a.createRolloutWriter("repo", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
-		result, err := repo.Run(ctx, packedTask)
-		noteRef := self.writeDelegateNote("repo_agent", "delegate_repo", task, result, err)
-		return self.applyEnhancedCommander("repo", task, result, err, noteRef, unresolved)
+		result, err := a.RepoAgent.Run(ctx, packedTask)
+		noteRef := a.writeDelegateNote("repo_agent", "delegate_repo", task, result, err)
+		return a.applyEnhancedCommander("repo", task, result, err, noteRef, unresolved)
 	}).WithSchema(buildDelegateSchema("The task description for Repo-Agent")).WithReadOnly(true)
 
 	delegateCoding := tools.NewAdapter("delegate_coding", "Delegate coding task to Coding-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -114,15 +306,15 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		packedTask, unresolved := self.resolveDelegateRefs(ctx, task, params)
-		ctx = blackboard.WithBoardID(ctx, self.boardID)
-		if rolloutWriter := self.createRolloutWriter("coding", task); rolloutWriter != nil {
+		packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
+		ctx = blackboard.WithBoardID(ctx, a.boardID)
+		if rolloutWriter := a.createRolloutWriter("coding", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
-		result, err := coding.Run(ctx, packedTask)
-		noteRef := self.writeDelegateNote("coding_agent", "delegate_coding", task, result, err)
-		return self.applyEnhancedCommander("coding", task, result, err, noteRef, unresolved)
+		result, err := a.CodingAgent.Run(ctx, packedTask)
+		noteRef := a.writeDelegateNote("coding_agent", "delegate_coding", task, result, err)
+		return a.applyEnhancedCommander("coding", task, result, err, noteRef, unresolved)
 	}).WithSchema(buildDelegateSchema("The task description for Coding-Agent"))
 
 	delegateChat := tools.NewAdapter("delegate_chat", "Delegate general conversation, explanation, or non-coding tasks to Chat-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -130,15 +322,15 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		packedTask, unresolved := self.resolveDelegateRefs(ctx, task, params)
-		ctx = blackboard.WithBoardID(ctx, self.boardID)
-		if rolloutWriter := self.createRolloutWriter("chat", task); rolloutWriter != nil {
+		packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
+		ctx = blackboard.WithBoardID(ctx, a.boardID)
+		if rolloutWriter := a.createRolloutWriter("chat", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
-		result, err := chat.Run(ctx, packedTask)
-		noteRef := self.writeDelegateNote("chat_agent", "delegate_chat", task, result, err)
-		return self.applyEnhancedCommander("chat", task, result, err, noteRef, unresolved)
+		result, err := a.ChatAgent.Run(ctx, packedTask)
+		noteRef := a.writeDelegateNote("chat_agent", "delegate_chat", task, result, err)
+		return a.applyEnhancedCommander("chat", task, result, err, noteRef, unresolved)
 	}).WithSchema(buildDelegateSchema("The message or question for Chat-Agent")).WithReadOnly(true)
 
 	delegateDevOps := tools.NewAdapter("delegate_devops", "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -146,15 +338,15 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		packedTask, unresolved := self.resolveDelegateRefs(ctx, task, params)
-		ctx = blackboard.WithBoardID(ctx, self.boardID)
-		if rolloutWriter := self.createRolloutWriter("devops", task); rolloutWriter != nil {
+		packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
+		ctx = blackboard.WithBoardID(ctx, a.boardID)
+		if rolloutWriter := a.createRolloutWriter("devops", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
-		result, err := devops.Run(ctx, packedTask)
-		noteRef := self.writeDelegateNote("devops_agent", "delegate_devops", task, result, err)
-		return self.applyEnhancedCommander("devops", task, result, err, noteRef, unresolved)
+		result, err := a.DevOpsAgent.Run(ctx, packedTask)
+		noteRef := a.writeDelegateNote("devops_agent", "delegate_devops", task, result, err)
+		return a.applyEnhancedCommander("devops", task, result, err, noteRef, unresolved)
 	}).WithSchema(buildDelegateSchema("The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."))
 
 	delegateBrowser := tools.NewAdapter("delegate_browser",
@@ -164,15 +356,15 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 			if !ok {
 				return nil, fmt.Errorf("task parameter required")
 			}
-			packedTask, unresolved := self.resolveDelegateRefs(ctx, task, params)
-			ctx = blackboard.WithBoardID(ctx, self.boardID)
-			if rolloutWriter := self.createRolloutWriter("browser", task); rolloutWriter != nil {
+			packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
+			ctx = blackboard.WithBoardID(ctx, a.boardID)
+			if rolloutWriter := a.createRolloutWriter("browser", task); rolloutWriter != nil {
 				defer rolloutWriter.Close()
 				ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 			}
-			result, err := browser.Run(ctx, packedTask)
-			noteRef := self.writeDelegateNote("browser_agent", "delegate_browser", task, result, err)
-			return self.applyEnhancedCommander("browser", task, result, err, noteRef, unresolved)
+			result, err := a.BrowserAgent.Run(ctx, packedTask)
+			noteRef := a.writeDelegateNote("browser_agent", "delegate_browser", task, result, err)
+			return a.applyEnhancedCommander("browser", task, result, err, noteRef, unresolved)
 		}).WithSchema(buildDelegateSchema("The browser automation task for Browser-Agent, e.g., 'screenshot https://example.com homepage', 'extract article text from https://example.com/blog/post-1', 'fill the login form and submit', 'navigate to https://example.com and return the page title'."))
 
 	delegateMeta := tools.NewAdapter("delegate_meta", "Delegate to Meta-Agent to DESIGN a custom specialized agent. Meta-Agent will craft a tailored system prompt using prompt engineering best practices and select appropriate tools. The designed agent is automatically registered and immediately executed to complete the task. After this, the new agent becomes a permanent delegate tool for future use.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -180,14 +372,14 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		if !ok {
 			return nil, fmt.Errorf("task parameter required")
 		}
-		ctx = blackboard.WithBoardID(ctx, self.boardID)
-		if rolloutWriter := self.createRolloutWriter("meta", task); rolloutWriter != nil {
+		ctx = blackboard.WithBoardID(ctx, a.boardID)
+		if rolloutWriter := a.createRolloutWriter("meta", task); rolloutWriter != nil {
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
 		slog.Info("Director delegating to Meta-Agent (design)", "task", task)
 
-		maxRetries := self.metaRetryCount
+		maxRetries := a.metaRetryCount
 		var lastRawOutput string
 
 		for attempt := 0; attempt < maxRetries; attempt++ {
@@ -199,11 +391,11 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 				)
 			}
 
-			metaResult, err := meta.Run(ctx, retryTask)
+			metaResult, err := a.MetaAgent.Run(ctx, retryTask)
 			if err != nil {
 				return nil, fmt.Errorf("Meta-Agent design failed: %w", err)
 			}
-			self.setPendingSubAgentMemory(&metaResult)
+			a.setPendingSubAgentMemory(&metaResult)
 			lastRawOutput = metaResult.Text
 
 			systemPrompt, execResult, parseErr := director.ParseMetaAgentOutput(metaResult.Text)
@@ -221,7 +413,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 					ToolsUsed:    execResult.ToolsUsed,
 					Description:  fmt.Sprintf("Custom agent designed for: %s. Uses tools: %s.", execResult.AgentName, strings.Join(execResult.ToolsUsed, ", ")),
 				}
-				self.registerCustomAgent(customAgent)
+				a.registerCustomAgent(customAgent)
 
 				agentTask := execResult.TaskForAgent
 				if agentTask == "" {
@@ -229,7 +421,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 				}
 
 				delegateName := "delegate_" + snakeName
-				for _, ad := range self.Adapters {
+				for _, ad := range a.Adapters {
 					if ad.Name() == delegateName {
 						slog.Info("Director executing newly designed agent", "delegate", delegateName, "display_name", execResult.AgentName)
 						callResult, callErr := ad.Call(ctx, fmt.Sprintf(`{"task": %q}`, agentTask))
@@ -261,54 +453,6 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		return lastRawOutput, nil
 	}).WithSchema(buildDelegateSchema("Detailed task description for Meta-Agent. Include: what needs to be accomplished, why existing agents are insufficient, and what the expected output format should be."))
 
-	adapters := []*tools.Adapter{
-		tools.NewAdapter("agent_exit", "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.", flow.ExecuteAgentExit).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"reason": map[string]interface{}{"type": "string", "description": "The reason the agent is exiting, e.g., task completed, cannot proceed, blocked by missing information, or must terminate."},
-			},
-			"required": []string{"reason"},
-		}),
-		newReadArtifactAdapter(),
-		newReadNoteAdapter(func() string { return self.boardID }),
-	}
-
-	var toolDefs []tools.ToolDefinition
-	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
-		slog.Error("Failed to unmarshal tools", "error", err)
-	}
-
-	toolDefMap := make(map[string]tools.ToolDefinition, len(toolDefs))
-	for _, def := range toolDefs {
-		toolDefMap[def.Name] = def
-	}
-
-	for _, def := range toolDefs {
-		var fn tools.ToolFunc
-		switch def.Name {
-		case "search_by_regex":
-			fn = search.ExecuteGrepSearch
-		case "list_dir":
-			fn = files.ExecuteListDir
-		case "read_file":
-			fn = files.ExecuteReadFile
-		case "print_dir_tree":
-			fn = files.ExecutePrintDirTree
-		case "deepthinking":
-			fn = deepThinker.Execute
-		case "ask_user_for_help":
-			if env.FullYoloMode() {
-				continue
-			}
-			fn = flow.ExecuteAskUserForHelp
-		default:
-			continue
-		}
-
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
-		adapters = append(adapters, adapter)
-	}
-
 	var delegateAdapters []*tools.Adapter
 	if !disabledAgents["repo"] {
 		delegateAdapters = append(delegateAdapters, delegateRepo)
@@ -329,104 +473,7 @@ func NewDirectorAgent(formatter PromptFormatter, publisher EventBus, env Env, fi
 		delegateAdapters = append(delegateAdapters, delegateBrowser)
 	}
 
-	tools.SetGuardOnAdapters(adapters, guard)
-	tools.SetGuardOnAdapters(delegateAdapters, guard)
-
-	knowledgeAdapters := createKnowledgeToolAdapters(mcpClient, engine, "", "")
-	var allAdapters []*tools.Adapter
-	if len(knowledgeAdapters) > 0 {
-		tools.SetGuardOnAdapters(knowledgeAdapters, guard)
-		allAdapters = append(adapters, delegateAdapters...)
-		allAdapters = append(allAdapters, knowledgeAdapters...)
-	} else {
-		allAdapters = append(adapters, delegateAdapters...)
-	}
-
-	adapterCfg := director.DefaultRecoveryConfig()
-	adapterCfg.MaxRetries = maxSteps
-	adapterCfg.CircuitBreakerThreshold = cfg.LLM.CircuitBreakerThreshold
-	adapterCfg.CircuitBreakerResetTimeout = cfg.LLM.CircuitBreakerResetTimeout
-	adapterCfg.LLMRetries = cfg.LLM.StepRetries
-	directorAdapter := NewDirectorAdapter(true, adapterCfg)
-
-	self = &DirectorAgent{
-		BaseAgent:        BaseAgent{LLM: engine, Publisher: publisher},
-		RepoAgent:        repo,
-		CodingAgent:      coding,
-		ChatAgent:        chat,
-		MetaAgent:        meta,
-		DevOpsAgent:      devops,
-		BrowserAgent:     browser,
-		promptFmt:        formatter,
-		env:              env,
-		files:            files,
-		search:           search,
-		sys:              sys,
-		edit:             edit,
-		flow:             flow,
-		thinker:          thinker,
-		microAgent:       microAgent,
-		deepThinker:      deepThinker,
-		guard:            guard,
-		repoCtx:          repoCtx,
-		knowledge:        knowledge,
-		mcpClient:        mcpClient,
-		Adapters:         allAdapters,
-		maxSteps:         maxSteps,
-		metaRetryCount:   metaRetryCount,
-		toolDefMap:       toolDefMap,
-		metaHandler:      director.NewMetaAgentHandler(),
-		adapter:          directorAdapter,
-		llmClient:        llmClient,
-		projectCtxLoader: director.NewProjectContextLoader(func() string { return env.ProjectPath() }),
-
-		llmTimeout: func() time.Duration {
-			if cfg.LLM.Timeout > 0 {
-				return cfg.LLM.Timeout
-			}
-			return 5 * time.Minute
-		}(),
-
-		delegateIdleTimeout: func() time.Duration {
-			if cfg.Agent.DelegateIdleTimeout > 0 {
-				return cfg.Agent.DelegateIdleTimeout
-			}
-			return config.DeriveDelegateIdleTimeout(cfg.LLM.Timeout)
-		}(),
-		delegateTotalTimeout: cfg.Agent.DelegateTotalTimeout,
-
-		maxParallelReadOnlyTools: NormalizeMaxParallelReadOnlyTools(cfg.Agent.MaxParallelReadOnlyTools),
-
-		EnhancedCommanderCfg: cfg.EnhancedCommander,
-
-		thinkLink: thinklink.NewStore(0),
-	}
-
-	if self.boardID == "" {
-		self.boardID = blackboard.GenerateAdhocID()
-	}
-
-	self.compressor = compression.NewContextCompressor(engine, self.Name(), self.thinkLink, func() { self.setPendingSubAgentMemory(nil) })
-
-	if self.env != nil {
-		SetProjectPathProvider(self.env.ProjectPath)
-	}
-
-	toolDefsForHash := make([]llm.ToolDef, len(allAdapters))
-	for i, ad := range allAdapters {
-		toolDefsForHash[i] = ad.ToToolDef()
-	}
-	toolHash := tools.ComputeToolDefsHash(toolDefsForHash)
-	names := make([]string, len(toolDefsForHash))
-	for i, td := range toolDefsForHash {
-		names[i] = td.Function.Name
-	}
-	slog.Info("Director tool definitions initialized",
-		"hash", toolHash,
-		"tool_count", len(toolDefsForHash),
-		"tool_names", names)
-
-	return self
+	return delegateAdapters
 }
 
 func (a *DirectorAgent) Name() string {
