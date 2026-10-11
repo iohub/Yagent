@@ -5,6 +5,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"yagent/internal/tui/common"
 )
 
 // ── Data Structures ──
@@ -31,19 +33,27 @@ type helpData struct {
 // ── Constants ──
 
 const (
-	maxDialogWidth = 50
-	keyColWidth    = 16
+	maxDialogWidth  = 92 // 对话框内容最大宽度（窄终端自动降级为单列）
+	minContentWidth = 40 // 内容最小宽度
+	twoColMinWidth  = 92 // 内容宽度 ≥ 此值时启用双栏排版（=maxDialogWidth，确保最长描述不换行）
+	colGapWidth     = 3  // 双栏间距
+	keyColWidth     = 16
+
+	borderHOffset  = 2 // RoundedBorder 左右各 1 列
+	paddingHOffset = 4 // outerPadding(1,2) 左右各 2 列
 )
 
 // ── Color Palette (ANSI color codes) ──
 
 const (
-	colorKeycapBg     = "236" // dark grey background
-	colorKeycapFg     = "252" // light grey text
-	colorSectionTitle = "39"  // cyan
-	colorDescFg       = "245" // soft grey
-	colorSepLine      = "237" // very light grey (separator)
-	colorDismissFg    = "240" // pale grey
+	colorKeycapBg     = "235" // 键帽背景（深灰，更有质感）
+	colorKeycapFg     = "252" // 键帽前景（浅灰，保持可读）
+	colorSectionTitle = "39"  // 分组标题（青）
+	colorSectionMark  = "75"  // 分组标题色块标记 ▌（亮蓝）
+	colorDescFg       = "250" // 描述文字（提升对比度）
+	colorSepLine      = "237" // 分隔线（极浅灰，细腻）
+	colorDismissFg    = "240" // 关闭提示（弱化灰）
+	colorBorder       = "238" // 对话框外框（低饱和度柔和边框）
 )
 
 // ── HelpDialog ──
@@ -57,6 +67,7 @@ type HelpDialog struct {
 	langCache    Language
 	content      helpData
 	outerPadding lipgloss.Style
+	borderStyle  lipgloss.Style // 柔和 RoundedBorder 外框
 	// altKeybindings 可配置快捷键覆盖：原始显示键名 → 自定义键名
 	altKeybindings map[string]string
 }
@@ -65,10 +76,14 @@ type HelpDialog struct {
 func NewHelpDialog(lang Language) *HelpDialog {
 	content := buildHelpData(lang)
 	outerPadding := lipgloss.NewStyle().Padding(1, 2)
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(colorBorder))
 	return &HelpDialog{
 		lang:         lang,
 		content:      content,
 		outerPadding: outerPadding,
+		borderStyle:  borderStyle,
 	}
 }
 
@@ -100,7 +115,7 @@ func (d *HelpDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 
 // View renders the dialog as a string.
 func (d *HelpDialog) View() string {
-	if d.width < 50 || d.height < 10 {
+	if d.width < 50 || d.height < 12 {
 		return ""
 	}
 
@@ -130,14 +145,14 @@ func (d *HelpDialog) View() string {
 	}
 
 	// ── Dynamic content width ──
-	// outerPadding adds 4 cols (2 left + 2 right), so available content width
-	// = d.width - 4. Cap at maxDialogWidth but keep a minimum of 40.
-	contentWidth := d.width - 4
+	// RoundedBorder 占 2 列、outerPadding(1,2) 占 4 列，
+	// 可用内容宽 = d.width - 6；上限 maxDialogWidth，下限 minContentWidth。
+	contentWidth := d.width - borderHOffset - paddingHOffset
 	if contentWidth > maxDialogWidth {
 		contentWidth = maxDialogWidth
 	}
-	if contentWidth < 40 {
-		contentWidth = 40
+	if contentWidth < minContentWidth {
+		contentWidth = minContentWidth
 	}
 
 	// ── Title (centered) ──
@@ -148,10 +163,24 @@ func (d *HelpDialog) View() string {
 		Align(lipgloss.Center)
 	titleLine := titleStyle.Render(d.content.Title)
 
-	// ── Sections (left-aligned) ──
-	sectionsLine := renderSections(d.content.Sections, contentWidth)
+	// ── Gradient separator under main title ──
+	gradSep := common.ApplyGrad(strings.Repeat("─", contentWidth))
 
-	// ── Dismiss hint (centered) ──
+	// ── Sections (two-column when wide enough, else single column) ──
+	var sectionsBlock string
+	if contentWidth >= twoColMinWidth {
+		leftSecs, rightSecs := splitSectionsBalanced(d.content.Sections)
+		leftW := (contentWidth - colGapWidth) / 2
+		rightW := contentWidth - colGapWidth - leftW
+		leftBlock := renderSections(leftSecs, leftW)
+		rightBlock := renderSections(rightSecs, rightW)
+		gapCol := lipgloss.NewStyle().Width(colGapWidth).Render("")
+		sectionsBlock = lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, gapCol, rightBlock)
+	} else {
+		sectionsBlock = renderSections(d.content.Sections, contentWidth)
+	}
+
+	// ── Dismiss hint (centered, muted) ──
 	hintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(colorDismissFg)).
 		Italic(true).
@@ -162,17 +191,19 @@ func (d *HelpDialog) View() string {
 	// ── Assemble ──
 	body := lipgloss.JoinVertical(lipgloss.Left,
 		titleLine,
+		gradSep,
 		"",
-		sectionsLine,
+		sectionsBlock,
 		"",
 		hintLine,
 	)
 
-	rendered := d.outerPadding.Render(body)
+	padded := d.outerPadding.Render(body)
+	bordered := d.borderStyle.Render(padded)
 
 	d.cachedView = lipgloss.Place(d.width, d.height,
 		lipgloss.Center, lipgloss.Center,
-		rendered,
+		bordered,
 	)
 
 	return d.cachedView
@@ -206,7 +237,7 @@ func buildHelpData(lang Language) helpData {
 	if lang == LanguageZh {
 		return helpData{
 			Title:   "⌨  帮助",
-			Dismiss: "按任意键关闭",
+			Dismiss: "按 Esc 或任意键关闭",
 			Sections: []keySection{
 				{
 					Title: "通用导航",
@@ -285,7 +316,7 @@ func buildHelpData(lang Language) helpData {
 	}
 	return helpData{
 		Title:   "⌨  Help",
-		Dismiss: "Press any key to dismiss",
+		Dismiss: "Press Esc or any key to close",
 		Sections: []keySection{
 			{
 				Title: "Navigation",
@@ -408,42 +439,83 @@ func renderKeyColumn(item keyItem) string {
 	return joined
 }
 
-// renderRow renders one keybinding row: keycaps column + description.
-func renderRow(item keyItem) string {
-	return renderKeyColumn(item) + "  " + lipgloss.NewStyle().
+// renderRow renders one keybinding row: keycaps column + description,
+// padded/wrapped to colWidth so the two-column layout stays aligned.
+func renderRow(item keyItem, colWidth int) string {
+	desc := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(colorDescFg)).
 		Render(item.Desc)
+	row := renderKeyColumn(item) + "  " + desc
+	return lipgloss.NewStyle().Width(colWidth).Render(row)
 }
 
-// renderSection renders one section: title, separator line, and all rows.
-func renderSection(s keySection, dialogWidth int) string {
+// renderSection renders one section: a color-block marker + title, a thin
+// separator line, and all rows. Every line is padded to colWidth so the
+// two-column layout stays perfectly aligned.
+func renderSection(s keySection, colWidth int) string {
 	var lines []string
 
-	titleStyle := lipgloss.NewStyle().
+	// 标题：▌ 色块标记（亮蓝）+ 标题文字（青），层次分明
+	mark := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorSectionMark)).
+		Bold(true).
+		Render("▌")
+	titleText := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(colorSectionTitle)).
 		Bold(true).
-		Width(dialogWidth)
-	lines = append(lines, titleStyle.Render(s.Title))
+		Render(s.Title)
+	titleLine := lipgloss.NewStyle().
+		Width(colWidth).
+		Render(mark + " " + titleText)
+	lines = append(lines, titleLine)
 
+	// 分隔线：细腻，长度与栏宽对齐
 	sepStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(colorSepLine)).
-		Width(dialogWidth)
-	lines = append(lines, sepStyle.Render(strings.Repeat("─", dialogWidth)))
+		Width(colWidth)
+	lines = append(lines, sepStyle.Render(strings.Repeat("─", colWidth)))
 
 	for _, item := range s.Items {
-		lines = append(lines, renderRow(item))
+		lines = append(lines, renderRow(item, colWidth))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 // renderSections renders all sections as a single vertical block.
+// The dialogWidth parameter is the column width each section is padded to.
 func renderSections(sections []keySection, dialogWidth int) string {
 	var blocks []string
 	for _, s := range sections {
 		blocks = append(blocks, renderSection(s, dialogWidth))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, blocks...)
+}
+
+// splitSectionsBalanced 将分组按渲染高度均衡地分为左右两栏（保持相对顺序）。
+// 返回的 left/right 分别对应左栏与右栏的分组切片；分组数 ≤1 时全部归左栏。
+func splitSectionsBalanced(sections []keySection) (left, right []keySection) {
+	n := len(sections)
+	if n <= 1 {
+		return sections, nil
+	}
+	heights := make([]int, n)
+	total := 0
+	for i, s := range sections {
+		heights[i] = 2 + len(s.Items) // 标题 + 分隔线 + 条目
+		total += heights[i]
+	}
+	bestK, bestDiff := 1, total
+	prefix := 0
+	for k := 1; k < n; k++ { // 左右栏各至少保留 1 组
+		prefix += heights[k-1]
+		diff := absInt(2*prefix - total)
+		if diff < bestDiff {
+			bestDiff = diff
+			bestK = k
+		}
+	}
+	return sections[:bestK], sections[bestK:]
 }
 
 // SetAltKeybindings sets display overrides for configurable keybindings.
