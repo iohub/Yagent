@@ -29,10 +29,10 @@ func TestResolveThreshold(t *testing.T) {
 		configured int
 		want       int
 	}{
-		// 目录收录的模型：阈值 = 上下文窗口 / 3，忽略配置值（含线上常见的写死 120000）
-		{"窗口 128000 → 阈值为其 1/3", "deepseek/deepseek-v3.2", 0, 128000 / 3},
-		{"目录优先于配置阈值", "deepseek/deepseek-v3.2", 120000, 128000 / 3},
-		{"裸模型名同样命中", "qwen3-coder-plus", 120000, 1048576 / 3},
+		// 目录收录的模型：阈值 = 上下文窗口 * 0.75，忽略配置值（含线上常见的写死 120000）
+		{"窗口 128000 → 阈值为其 75%", "deepseek/deepseek-v3.2", 0, int(128000 * 0.75)},
+		{"目录优先于配置阈值", "deepseek/deepseek-v3.2", 120000, int(128000 * 0.75)},
+		{"裸模型名同样命中", "qwen3-coder-plus", 120000, int(1048576 * 0.75)},
 		// 未收录 / 无数据：回退配置值，再回退包默认值
 		{"未收录模型回退配置值", "acme/private-model", 50000, 50000},
 		{"未收录模型且无配置回退默认值", "acme/private-model", 0, DefaultContextCompressionThreshold},
