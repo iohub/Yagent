@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"yagent/internal/llm"
+	"yagent/internal/thinklink"
 	"yagent/internal/tokenutil"
 )
 
@@ -40,12 +41,24 @@ type EmergencyCompressionStats struct {
 // ─── ExtractThoughtAndPlanBlocks ─────────────────────────────────────────────
 
 // ExtractThoughtAndPlanBlocks 从 assistant 消息的 Content 中提取所有 Thought & Plan 块。
-// 关键字通过正则匹配：忽略大小写、忽略空白差异，兼容多种变体（全角＆、HTML 实体 &、and 写法）。
-// 若内容中无关键字，返回 nil。
+//
+// 优先解析结构化 `<thought>...</thought>` 块（新格式，确定性边界、可字段级校验，
+// 返回标签内的结构化正文）；当且仅当没有任何结构化块时，退回旧的自由 markdown
+// 启发式提取（"## Thought & Plan" 标题 + 正则猜边界），作为一版静默兜底，
+// 防止模型偶发输出旧格式时丢失计划信息。两种来源都无匹配时返回 nil。
 func ExtractThoughtAndPlanBlocks(content string) []string {
 	if content == "" {
 		return nil
 	}
+	if blocks := thinklink.ExtractThoughtBlocks(content); len(blocks) > 0 {
+		return blocks
+	}
+	return extractLegacyThoughtAndPlanBlocks(content)
+}
+
+// extractLegacyThoughtAndPlanBlocks 旧格式兜底：关键字通过正则匹配（忽略大小写、
+// 忽略空白差异，兼容全角＆、HTML 实体 &、and 写法），从自由文本"猜"块边界。
+func extractLegacyThoughtAndPlanBlocks(content string) []string {
 	var blocks []string
 	searchFrom := 0
 	for {

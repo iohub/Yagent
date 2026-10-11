@@ -703,7 +703,7 @@ type Agent interface {
 | **编码分离** | 不直接输出代码块，必须委派给 Coding-Agent |
 | **逐步执行** | 一次只委派一个子任务，验证后再继续 |
 | **强制委派** | 仓库探索必须通过 `delegate_repo`，不可直接操作文件 |
-| **思考先于行动** | 必须在 `Thought & Plan` 块中分析后再执行工具调用 |
+| **思考先于行动** | 必须在结构化 `<thought>` 块中分析后再执行工具调用 |
 
 ### 8.2 行为约束
 
@@ -732,25 +732,35 @@ type Agent interface {
    - 独立任务可同时委派（如多个只读分析）
 
 6. **思考先于行动**
-   - 在每次工具调用前包含 `Thought & Plan` 块
+   - 在每次工具调用前包含结构化 `<thought>` 块
    - 分析问题根因再选择工具
    - 记录决策理由和预期结果
 
-### 8.3 Thought & Plan 模板
+### 8.3 `<thought>` 块模板
+
+结构化、可解析、可校验的思考块。用显式定界标签 `<thought>...</thought>` 包裹固定的
+`key: value` 行式结构，取代旧的自由 markdown（Go 侧只能靠正则猜边界、无法做字段校验）：
 
 ```
-## Thought & Plan
-### Thought Process
-* **Current Goal**: [当前高层目标]
-* **Current Step**: [上一步及结果]
-* **Reasoning**: [为什么执行下一步]
----
-### Plan Update
-* [x] 1. [已完成]
-* [>] 2. [当前 — 即将委派]
-* [ ] 3. [待处理]
-* [ ] 4. [待处理]
+<thought>
+goal: [当前高层目标]
+step: [上一步及结果]
+reason: [为什么执行下一步]
+plan:
+- [x] [已完成]
+- [>] [当前 — 即将委派]
+- [ ] [待处理]
+- [ ] [待处理]
+</thought>
 ```
+
+**格式契约**（解析时校验，见 `internal/thinklink/thoughtplan.go`）：
+
+- `<thought>` / `</thought>` 为字面定界符，必填；每轮回复恰好一个块，置于工具调用之前。
+- `goal`/`step`/`reason`/`plan` 为固定小写 key，各占一行，形如 `key: value`。
+- `goal`、`reason` 必填（缺失即校验失败）；三个字段均单行、简洁。
+- `plan:` 下每行一条，前缀恰为一个状态标记：`[x]` 已完成、`[>]` 进行中（至多一条）、`[ ]` 待处理。
+- 字段**值**使用 **Language Instructions** 指定语言；key、状态标记与 `<thought>` 标签保持英文原样。
 
 ---
 
