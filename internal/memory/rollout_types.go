@@ -21,6 +21,7 @@ type RolloutEnvelope struct {
 type SessionMeta struct {
 	ID             string     `json:"id,omitempty"`
 	SessionID      string     `json:"session_id,omitempty"`
+	TaskID         string     `json:"task_id,omitempty"`
 	Cwd            string     `json:"cwd,omitempty"`
 	CliVersion     string     `json:"cli_version,omitempty"`
 	Originator     string     `json:"originator,omitempty"`

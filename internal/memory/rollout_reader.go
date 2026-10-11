@@ -4,7 +4,8 @@ package memory
 //
 // 设计约定：
 //   - 只读流式解析，绝不修改/移动/重命名 rollout 文件；
-//   - response_item 是消息的唯一事实源，event_msg 整类忽略（防双通道重复）；
+//   - response_item 是消息的唯一事实源；event_msg 只喂运行态（token 用量、结束/中断
+//     状态、步数），绝不产消息，避免双通道重复；
 //   - 解析 payload 一律复用 rollout_types.go 的类型定义，不复制；
 //   - 行级 JSON 解析失败（含崩溃半行）容忍跳过并计数；
 //   - 收尾统一做 tool 配对归一化（悬空 call 合成占位输出、孤儿输出丢弃）。
@@ -55,6 +56,12 @@ type RolloutReadOptions struct {
 
 	// SubAgent 为 true 时，恢复出的全部消息标记 IsSubAgent=true（文件级 sub-agent 标记）。
 	SubAgent bool
+
+	// KeepSystemMessages 为 true 时保留写侧落盘的 role=system 消息（Director 完整
+	// system prompt，实测约 15k 字符）。默认丢弃：Planner 构造 LLM 消息时本就跳过
+	// MessageTypeSystem（planner_run.go 的 system 过滤分支），保留它只会在 TUI 刷屏
+	// 并白占 memory/磁盘。压缩摘要锚点由 CompactionSummaryTail 另行注入，不经此路径。
+	KeepSystemMessages bool
 }
 
 // DefaultRolloutReadOptions 返回默认读取选项。
@@ -80,11 +87,70 @@ func (o RolloutReadOptions) normalizeOpts() RolloutReadOptions {
 
 // ─── 恢复信息 ───
 
+// RolloutTokenTotals rollout token_count 事件的累计用量（写侧 total_token_usage 口径）。
+//
+// 字段与 TUI 实时路径（ai_response 的 metadata.usage）逐项对齐，便于恢复后直接落地：
+// Input=Σprompt_tokens、CachedInput=Σcache_read_input_tokens、Output=Σcompletion_tokens。
+// cache_creation_input_tokens 与 total_input_tokens 未写入 rollout，无法精确恢复——
+// 前者恒为 0，后者由读侧按 TUI 既有回退公式（input+cached）近似。
+type RolloutTokenTotals struct {
+	Input       int64 // Σ prompt_tokens（不含缓存）
+	CachedInput int64 // Σ cache_read_input_tokens
+	Output      int64 // Σ completion_tokens
+	Total       int64 // Σ total_tokens（prompt+completion）
+
+	// LastContextTokens 最后一次 LLM 调用的输入总量（input+cached_input），
+	// 作为「上下文瞬时大小」的近似值，对应实时路径写入
+	// AgentRunTokens.ContextTokens 的 total_input_tokens。
+	LastContextTokens int64
+}
+
+// DanglingToolCall 悬空工具调用：有 function_call 但无 function_call_output
+//（进程中断/崩溃，或输出被 MaxMessages 截头丢弃）。读侧已为其合成占位输出，
+// 此处保留 id+name 供 TUI 时间线标记与续跑提示使用。
+type DanglingToolCall struct {
+	ID   string
+	Name string
+}
+
+// RolloutFinishState 会话结束状态。
+//
+// 三态而非布尔：终止事件在存量文件里大面积缺失——executor 的 task_complete/turn_aborted
+// 写入曾被 `cfg.OnAgentExit != nil` 条件包住（未挂该 hook 的 sub-agent 运行一条都不写），
+// 实测 146 个可读文件中 89 个无任何终止事件。把「缺终止事件」直接当成「中断」会大量误报，
+// 故对无终止事件的文件再按消息形态推断，形态也不足时老实返回 Unknown。
+type RolloutFinishState int
+
+const (
+	// FinishUnknown 无终止事件，且消息形态不足以推断。
+	FinishUnknown RolloutFinishState = iota
+	// FinishComplete 正常结束：观测到 task_complete，或虽缺终止事件但末条是
+	//「有正文、无待决工具调用」的 assistant（最终答复已产出）。
+	FinishComplete
+	// FinishInterrupted 中断：观测到 turn_aborted，或存在悬空工具调用（在工具执行中被切断）。
+	FinishInterrupted
+)
+
+// String 返回结束状态的可读名（用于日志与 TUI 展示）。
+func (s RolloutFinishState) String() string {
+	switch s {
+	case FinishComplete:
+		return "complete"
+	case FinishInterrupted:
+		return "interrupted"
+	default:
+		return "unknown"
+	}
+}
+
 // RolloutInfo 描述一次 rollout 恢复的元数据与统计。
 type RolloutInfo struct {
-	SessionID  string
-	CWD        string
-	Model      string
+	SessionID string
+	CWD       string
+	Model     string
+	// TaskID 原任务 ID（session_meta.task_id）。写侧自 Phase B1 起落盘；
+	// 老文件为空，调用方需回退 SessionID。
+	TaskID     string
 	Originator string
 	Source     string
 	GitBranch  string
@@ -103,11 +169,59 @@ type RolloutInfo struct {
 	SkippedReasoning int
 	// SkippedBadLines 行级解析失败（含崩溃半行/超限失败）的行数。
 	SkippedBadLines int
+	// SkippedSystemMessages 因 KeepSystemMessages=false 丢弃的 role=system 消息数。
+	SkippedSystemMessages int
 	// SyntheticOutputs R12 归一化为悬空 call 合成的占位 tool 输出条数
 	//（R5 无前导 assistant 时合成的 assistant 消息不计于此）。
 	SyntheticOutputs int
 	// DroppedOrphanOutputs 丢弃的孤儿输出（call_id 无对应 call）与重复输出条数。
 	DroppedOrphanOutputs int
+
+	// ── 断点状态（从 event_msg 派生；Phase B1 落盘 stop_reason/steps 后转为精确值）──
+
+	// Finished 是否观测到 task_complete 事件。
+	Finished bool
+	// Aborted 是否观测到 turn_aborted 事件。
+	Aborted bool
+	// AbortReason 最后一条 turn_aborted 的 reason（无则空）。
+	AbortReason string
+	// AssistantTurns 恢复出的 assistant 消息数，即 LLM 回合数——Director rollout
+	// 无步数事件时的步数近似值。
+	AssistantTurns int
+	// MaxStepObserved sub_agent_activity 事件的最大 step_number（仅 sub-agent
+	// rollout 有该事件，Director 文件恒为 0）。
+	MaxStepObserved int
+	// LastUserInput 最后一条 user 消息文本，即本轮任务目标（续跑提示用）。
+	LastUserInput string
+	// DanglingToolCalls 无输出的工具调用清单（与 SyntheticOutputs 同源）。
+	DanglingToolCalls []DanglingToolCall
+	// EndsWithFinalAnswer 归一化后末条消息是否为「有正文、无待决工具调用」的
+	// assistant，即最终答复已产出。缺终止事件时用它推断会话其实已正常结束。
+	EndsWithFinalAnswer bool
+
+	// Tokens token_count 事件的累计用量（无该事件时为零值）。
+	Tokens RolloutTokenTotals
+}
+
+// FinishState 综合判定会话结束状态，强证据优先：
+//  1. task_complete → 正常结束；
+//  2. turn_aborted → 中断（原因见 AbortReason）；
+//  3. 有悬空工具调用 → 中断（在工具执行中被切断，即使终止事件缺失）；
+//  4. 末条为最终答复 → 视为正常结束（仅缺终止事件的存量文件）；
+//  5. 其余 → Unknown，调用方不应据此断言中断。
+func (i RolloutInfo) FinishState() RolloutFinishState {
+	switch {
+	case i.Finished:
+		return FinishComplete
+	case i.Aborted:
+		return FinishInterrupted
+	case len(i.DanglingToolCalls) > 0:
+		return FinishInterrupted
+	case i.EndsWithFinalAnswer:
+		return FinishComplete
+	default:
+		return FinishUnknown
+	}
 }
 
 // ─── 顶层 API ───
@@ -291,6 +405,7 @@ func (p *rolloutParser) handleEnvelope(line []byte) {
 		if !p.metaSeen {
 			p.metaSeen = true
 			p.info.SessionID = rolloutFirstNonEmpty(meta.SessionID, meta.ID)
+			p.info.TaskID = meta.TaskID
 			p.info.CWD = meta.Cwd
 			p.info.Originator = meta.Originator
 			p.info.Source = meta.Source
@@ -321,6 +436,15 @@ func (p *rolloutParser) handleEnvelope(line []byte) {
 		p.info.Entries++
 		p.handleResponseItem(item, ts)
 
+	case "event_msg": // R16：运行态通道（token 用量/结束状态/步数），不产消息
+		var em EventMsg
+		if err := jsonUnmarshalRollout(env.Payload, &em); err != nil {
+			p.info.SkippedBadLines++
+			return
+		}
+		p.info.Entries++
+		p.handleEventMsg(em)
+
 	case "compacted": // R9
 		var cp CompactedPayload
 		if err := jsonUnmarshalRollout(env.Payload, &cp); err != nil {
@@ -331,10 +455,70 @@ func (p *rolloutParser) handleEnvelope(line []byte) {
 		p.handleCompacted(cp, ts)
 
 	default:
-		// R8/R10：event_msg、inter_agent_communication_metadata、world_state
-		// 及任何未知 type 一律不进消息。
+		// R8/R10：inter_agent_communication_metadata、world_state 及任何未知 type
+		// 一律不进消息。
 		p.info.Entries++
 	}
+}
+
+// ─── event_msg 运行态提取（R16） ───
+
+// handleEventMsg 从 event_msg 提取运行态。
+//
+// 严格只写 p.info 的状态字段，不追加任何消息——response_item 仍是消息的唯一事实源，
+// 否则 agent_message/user_message 等事件会与 response_item 产生双通道重复。
+// 每个 run 独占一个 rollout 文件，故 task_complete/turn_aborted 至多出现一次；
+// 仍按「后到者胜」处理以容忍续写。
+func (p *rolloutParser) handleEventMsg(em EventMsg) {
+	switch em.Type {
+	case "token_count":
+		p.applyTokenCount(em.Info)
+
+	case "task_complete":
+		p.info.Finished = true
+
+	case "turn_aborted":
+		p.info.Aborted = true
+		if em.Reason != "" {
+			p.info.AbortReason = em.Reason
+		}
+
+	case "sub_agent_activity":
+		// Director rollout 无步数事件；sub-agent 文件经 StepInfoToEventMsg 落盘
+		// step_number，取最大值作为已观测步数。
+		if em.StepNumber > p.info.MaxStepObserved {
+			p.info.MaxStepObserved = em.StepNumber
+		}
+	}
+}
+
+// applyTokenCount 提取 token_count 事件的用量。
+//
+// 写侧（RolloutWriter.WriteTokenCount）的 total_token_usage 已是累计值，故直接覆盖
+//（取最后一条即全量），不能再累加；last_token_usage 是本次调用值，用于上下文瞬时大小。
+func (p *rolloutParser) applyTokenCount(info interface{}) {
+	payload, ok := info.(map[string]interface{})
+	if !ok {
+		return
+	}
+	if total, ok := payload["total_token_usage"].(map[string]interface{}); ok {
+		p.info.Tokens.Input = rolloutInt64(total, "input_tokens")
+		p.info.Tokens.CachedInput = rolloutInt64(total, "cached_input_tokens")
+		p.info.Tokens.Output = rolloutInt64(total, "output_tokens")
+		p.info.Tokens.Total = rolloutInt64(total, "total_tokens")
+	}
+	if last, ok := payload["last_token_usage"].(map[string]interface{}); ok {
+		p.info.Tokens.LastContextTokens = rolloutInt64(last, "input_tokens") +
+			rolloutInt64(last, "cached_input_tokens")
+	}
+}
+
+// rolloutInt64 从 JSON 解码后的 map 取整数字段（encoding/json 把数字解为 float64）。
+func rolloutInt64(m map[string]interface{}, key string) int64 {
+	if v, ok := m[key].(float64); ok {
+		return int64(v)
+	}
+	return 0
 }
 
 // jsonUnmarshalRollout roll.out 专用 json.Unmarshal 薄封装（预留统一错误增强点）。
@@ -369,9 +553,14 @@ func (p *rolloutParser) handleResponseItem(item ResponseItem, ts time.Time) {
 func (p *rolloutParser) handleMessageItem(item ResponseItem, ts time.Time) {
 	switch item.Role {
 	case "user": // R3
+		content := rolloutExtractText(item.Content, "input_text")
+		// 写侧每轮把完整历史重写入新文件，故最后一条 user 即本轮任务目标。
+		if content != "" {
+			p.info.LastUserInput = content
+		}
 		p.messages = append(p.messages, ChatMessage{
 			Type:      MessageTypeHuman,
-			Content:   rolloutExtractText(item.Content, "input_text"),
+			Content:   content,
 			Timestamp: ts,
 		})
 	case "assistant": // R4：空内容但紧随 function_call 的 assistant 也保留（挂载点）
@@ -386,8 +575,13 @@ func (p *rolloutParser) handleMessageItem(item ResponseItem, ts time.Time) {
 		}
 		p.messages = append(p.messages, msg)
 	case "system":
-		// 写侧（ChatMessageToResponseItems）会把 system 消息以 role=system 落盘，
-		// 读侧对称恢复，保证对话历史完整。
+		// 写侧（ChatMessageToResponseItems）会把 system 消息以 role=system 落盘。
+		// 默认丢弃：Planner 续跑时本就跳过 MessageTypeSystem，保留只会刷屏 + 白占空间
+		//（Director system prompt 实测约 15k 字符）。KeepSystemMessages 时对称恢复。
+		if !p.opts.KeepSystemMessages {
+			p.info.SkippedSystemMessages++
+			return
+		}
 		p.messages = append(p.messages, ChatMessage{
 			Type:      MessageTypeSystem,
 			Content:   rolloutExtractText(item.Content, "input_text"),
@@ -581,6 +775,22 @@ func (p *rolloutParser) finalize() ([]ChatMessage, error) {
 		}
 	}
 
+	// R16：断点状态收尾。AssistantTurns 统计归一化后的 assistant 消息（含 R5 合成的
+	// 空 assistant，它同样代表一次真实 LLM 回合），作为 Director 文件的步数近似值；
+	// EndsWithFinalAnswer 供 FinishState() 在终止事件缺失时推断会话是否其实已结束。
+	// 结束状态本身不在此处落字段，统一由 RolloutInfo.FinishState() 按证据派生，
+	// 避免出现互相矛盾的存储态。
+	for i := range p.messages {
+		if p.messages[i].Type == MessageTypeAssistant {
+			p.info.AssistantTurns++
+		}
+	}
+	if n := len(p.messages); n > 0 {
+		last := p.messages[n-1]
+		p.info.EndsWithFinalAnswer = last.Type == MessageTypeAssistant &&
+			last.Content != "" && len(last.ToolCalls) == 0
+	}
+
 	// R15：零有效消息 → 明确错误（ReadRolloutMemory 会包装真实文件路径）。
 	if len(p.messages) == 0 {
 		return nil, fmt.Errorf("未恢复出任何有效消息 (entries=%d, bad_lines=%d, skipped_reasoning=%d): %w",
@@ -594,7 +804,8 @@ var errNoRolloutMessages = errors.New("no messages recovered from rollout")
 
 // normalizeToolPairing R12：tool 配对归一化（保真优先）。
 //   - 悬空 call（assistant ToolCall 无匹配输出，含文件尾中断）→ 在其回合结束处
-//     合成 Tool 占位消息"会话中断前未返回结果"，SyntheticOutputs++；
+//     合成 Tool 占位消息"会话中断前未返回结果"，SyntheticOutputs++，
+//     并把 id+name 记入 info.DanglingToolCalls（供 TUI 时间线与续跑提示使用）；
 //   - 孤儿输出（call_id 无对应 call）→ 丢弃，DroppedOrphanOutputs++；
 //   - 同一 call_id 多条输出 → 保留第一条，其余丢弃并计数；
 //   - 连续同角色消息保持原样（不做合并）。
@@ -604,6 +815,7 @@ var errNoRolloutMessages = errors.New("no messages recovered from rollout")
 func normalizeToolPairing(messages []ChatMessage, info *RolloutInfo) []ChatMessage {
 	type openCall struct {
 		id      string
+		name    string
 		hostIdx int // 宿主 assistant 的 index（用于继承时间戳）
 	}
 	var openCalls []openCall
@@ -630,6 +842,10 @@ func normalizeToolPairing(messages []ChatMessage, info *RolloutInfo) []ChatMessa
 					"synthetic_reason":  "missing_tool_output",
 				},
 			})
+			info.DanglingToolCalls = append(info.DanglingToolCalls, DanglingToolCall{
+				ID:   oc.id,
+				Name: oc.name,
+			})
 			info.SyntheticOutputs++
 		}
 		openCalls = nil
@@ -644,7 +860,11 @@ func normalizeToolPairing(messages []ChatMessage, info *RolloutInfo) []ChatMessa
 			out = flushOpen(out)
 			out = append(out, m)
 			for _, tc := range m.ToolCalls {
-				openCalls = append(openCalls, openCall{id: tc.ID, hostIdx: i})
+				openCalls = append(openCalls, openCall{
+					id:      tc.ID,
+					name:    tc.Function.Name,
+					hostIdx: i,
+				})
 				openSet[tc.ID] = len(openCalls) - 1
 			}
 			continue
