@@ -544,9 +544,10 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.event.Type == "user_help_needed" {
+		var focusCmd tea.Cmd
 		if content, ok := msg.event.Content.(map[string]interface{}); ok {
 			if _, hasInteractionType := content["interaction_type"]; hasInteractionType {
-				m.openUserHelpDialog(msg.event)
+				focusCmd = m.openUserHelpDialog(msg.event)
 			} else {
 				m.openConfirmDialog(msg.event)
 			}
@@ -557,7 +558,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		m.logEntries = append(m.logEntries, entry)
 		m.viewportDirty = true
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-		return m, listenForEvents(m.eventCh)
+		return m, tea.Batch(listenForEvents(m.eventCh), focusCmd)
 	}
 
 	if msg.event.Type == "commit_context_loaded" {

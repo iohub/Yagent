@@ -69,8 +69,9 @@ func (m *model) respondToAuth(response string) {
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 }
 
-// openUserHelpDialog 解析 user_help_needed 事件并打开 UserHelpDialog
-func (m *model) openUserHelpDialog(event *messaging.MessageEvent) {
+// openUserHelpDialog 解析 user_help_needed 事件并打开 UserHelpDialog。
+// 返回聚焦 cmd（textarea 光标闪烁），需由调用方并入命令链。
+func (m *model) openUserHelpDialog(event *messaging.MessageEvent) tea.Cmd {
 	content, ok := event.Content.(map[string]interface{})
 	if !ok {
 		slog.Error("openUserHelpDialog: content type assertion failed",
@@ -79,8 +80,7 @@ func (m *model) openUserHelpDialog(event *messaging.MessageEvent) {
 		question := fmt.Sprintf("%v", event.Content)
 		contextStr := ""
 		requestID := ""
-		m.openConfirmDialogFallback(question, contextStr, requestID)
-		return
+		return m.openConfirmDialogFallback(question, contextStr, requestID)
 	}
 
 	// 解析字段
@@ -139,6 +139,9 @@ func (m *model) openUserHelpDialog(event *messaging.MessageEvent) {
 	d := components.NewUserHelpDialog(data)
 	d.SetBounds(m.termWidth, m.termHeight)
 	m.dialogStack.Push(d)
+	// 聚焦内部 textarea：未聚焦时 textarea 会丢弃所有按键/粘贴消息
+	// （Input 模式无法输入、Custom input 无法粘贴的根因）。
+	return d.Focus()
 }
 
 // respondToUserHelp 发布用户帮助响应并关闭对话框
@@ -232,7 +235,7 @@ func getMapKeys(m map[string]interface{}) []string {
 }
 
 // openConfirmDialogFallback is a fallback when UserHelpDialog cannot be opened normally
-func (m *model) openConfirmDialogFallback(question, contextStr, requestID string) {
+func (m *model) openConfirmDialogFallback(question, contextStr, requestID string) tea.Cmd {
 	d := components.NewUserHelpDialog(protocol.UserHelpNeededData{
 		Question:        question,
 		Context:         contextStr,
@@ -241,5 +244,9 @@ func (m *model) openConfirmDialogFallback(question, contextStr, requestID string
 		AllowCustom:     true,
 		RequestID:       requestID,
 	})
+	// 弹窗守卫会吞掉 WindowSizeMsg，对话框收不到尺寸——必须在入栈时设置，
+	// 否则 View() 因 width<40 返回空串，对话框永远不可见。
+	d.SetBounds(m.termWidth, m.termHeight)
 	m.dialogStack.Push(d)
+	return d.Focus()
 }

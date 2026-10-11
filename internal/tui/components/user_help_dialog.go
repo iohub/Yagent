@@ -161,10 +161,11 @@ func (d *UserHelpDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 		d.height = msg.Height
 		return d, nil
 	default:
-		// Only forward specific message types to textInput
+		// Only forward specific message types to textInput.
+		// PasteMsg 是 bracketed-paste 的独立消息类型，必须转发，否则无法粘贴。
 		if d.state == stateInputText || d.state == stateSelectCustom {
 			switch msg.(type) {
-			case tea.MouseMsg, tea.FocusMsg, tea.BlurMsg:
+			case tea.MouseMsg, tea.FocusMsg, tea.BlurMsg, tea.PasteMsg:
 				var cmd tea.Cmd
 				d.textInput, cmd = d.textInput.Update(msg)
 				return d, cmd
@@ -203,24 +204,30 @@ func (d *UserHelpDialog) View() string {
 	}
 	titleLine := titleStyle.Render(rawTitle)
 
-	// ── 问题 ──
+	// ── 问题（按显示宽度折行，长问题不再溢出截断；CJK 友好） ──
 	questionStyle := lipgloss.NewStyle().Foreground(c.TextPrimary).Bold(true)
-	questionLine := questionStyle.Render(d.data.Question)
+	questionLine := questionStyle.Render(
+		strings.Join(hardWrapWidth(d.data.Question, innerWidth), "\n"))
 
-	// ── 上下文 ──
+	// ── 上下文（折行至多 3 行，超出以省略号收尾） ──
 	var contextLine string
 	if d.data.Context != "" {
-		ctxStr := d.data.Context
-		if lipgloss.Width(ctxStr) > innerWidth-6 {
-			runes := []rune(ctxStr)
-			if len(runes) > innerWidth-8 {
-				ctxStr = string(runes[:innerWidth-8]) + "…"
-			}
+		// InfoBox 内容宽 = Width(innerWidth-4) − 边框(2) − padding(2)
+		ctxWrapWidth := innerWidth - 8 - 2 // 预留 "ℹ " 前缀 / 续行缩进
+		if ctxWrapWidth < 10 {
+			ctxWrapWidth = 10
 		}
+		ctxLines := hardWrapWidth(d.data.Context, ctxWrapWidth)
+		const maxCtxLines = 3
+		if len(ctxLines) > maxCtxLines {
+			ctxLines = ctxLines[:maxCtxLines]
+			ctxLines[maxCtxLines-1] = truncateToWidth(ctxLines[maxCtxLines-1], ctxWrapWidth)
+		}
+		ctxStr := "ℹ " + strings.Join(ctxLines, "\n  ")
 		// 用 InfoBoxStyle 包裹上下文文本
 		infoBox := common.InfoBoxStyle(c).
 			Width(innerWidth - 4).
-			Render("ℹ " + ctxStr)
+			Render(ctxStr)
 		contextLine = infoBox
 	}
 
@@ -316,9 +323,9 @@ func (d *UserHelpDialog) handleConfirmKey(msg tea.KeyMsg) (Component, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "left", "h", "shift+tab":
+	case "left", "h", "up", "k", "shift+tab":
 		d.confirmIndex = (d.confirmIndex - 1 + 2) % 2
-	case "right", "l", "tab":
+	case "right", "l", "down", "j", "tab":
 		d.confirmIndex = (d.confirmIndex + 1) % 2
 	case "y", "Y":
 		d.confirmIndex = 0
@@ -523,81 +530,91 @@ func (d *UserHelpDialog) renderConfirm(innerWidth int, c common.ColorTokens) str
 		options = []string{"yes", "no"}
 	}
 
-	var buttons []string
+	// 纵向 radio 行列表，与 ConfirmDialog（授权对话框）同款布局：
+	// ◉ label                             key
+	var optionLines []string
 	for i, label := range options {
-		// 单选指示器：选中项用 ◉，未选中项用 ◯
-		indicator := "◯ "
-		buttonText := indicator + label
-
-		style := lipgloss.NewStyle().
-			Foreground(c.TextSecondary).
-			Background(c.Surface).
-			Padding(0, 3).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(c.Border)
-
-		if i == d.confirmIndex {
-			style = common.FocusedButtonStyle(c, common.SafetyLow).
-				Padding(0, 3)
-			buttonText = "◉ " + label
+		// 首个选项视为"执行"（warning 色），其余视为"拒绝"（success 色）
+		level := common.SafetySafe
+		if i == 0 {
+			level = common.SafetyLow
 		}
-		buttons = append(buttons, style.Render(buttonText))
+		key := fmt.Sprintf("%d", i+1)
+		labelText := truncateToWidth(label, innerWidth-6)
+
+		var radio, labelSeg, keySeg string
+		if i == d.confirmIndex {
+			radio = common.RadioFocusedStyle(c, level).Render("◉")
+			labelSeg = common.OptionLabelFocusedStyle(c).Render(labelText)
+			keySeg = common.OptionKeyFocusedStyle(c, level).Render(key)
+		} else {
+			radio = common.RadioUnfocusedStyle(c).Render("○")
+			labelSeg = common.OptionLabelUnfocusedStyle(c).Render(labelText)
+			keySeg = common.OptionKeyUnfocusedStyle(c).Render(key)
+		}
+
+		lineWidth := lipgloss.Width(radio) + 1 + lipgloss.Width(labelText) + 1 + lipgloss.Width(key)
+		padding := innerWidth - lineWidth
+		if padding < 0 {
+			padding = 0
+		}
+		optionLines = append(optionLines, radio+" "+labelSeg+strings.Repeat(" ", padding)+" "+keySeg)
 	}
+	body := lipgloss.JoinVertical(lipgloss.Left, optionLines...)
 
-	// 底部添加帮助提示行
-	helpLine := renderHelpHint(d.interaction, d.state, c)
-
-	body := lipgloss.JoinHorizontal(lipgloss.Center, buttons...)
+	// 底部添加帮助提示行（MaxWidth 兜底，防止窄对话框下被 lipgloss 折行）
+	helpLine := lipgloss.NewStyle().MaxWidth(innerWidth).
+		Render(renderHelpHint(d.interaction, d.state, c))
 	return lipgloss.JoinVertical(lipgloss.Left, body, "", helpLine)
 }
 
 func (d *UserHelpDialog) renderSelect(innerWidth int, c common.ColorTokens) string {
 	var items []string
 	for i, opt := range d.options {
-		// 序号前缀：1-9 用数字，10-35 用字母 a-z，36+ 用 •
-		numPrefix := formatSelectIndex(i)
+		selected := i == d.selectIndex
+		inListMode := selected && d.state == stateSelectList
+		inCustomMode := selected && d.state == stateSelectCustom
 
-		cursor := "  "
-		if i == d.selectIndex && d.state == stateSelectList {
-			cursor = "▸ "
-		}
+		// 截断过长选项：radio(2) + label + pad + key(2)
+		keyHint := selectKeyHint(i)
+		labelText := truncateToWidth(opt.Label, innerWidth-6)
 
-		// 组合完整文本：序号 + 光标 + 选项标签
-		fullText := numPrefix + cursor + opt.Label
-
-		// 截断过长选项
-		if lipgloss.Width(fullText) > innerWidth-2 {
-			runes := []rune(fullText)
-			if len(runes) > innerWidth-4 {
-				fullText = string(runes[:innerWidth-4]) + "…"
-			}
-		}
-
-		var itemLine string
-		if i == d.selectIndex && d.state == stateSelectList {
-			// 选中项：整行高亮条（背景为 SurfaceHover）
-			highlight := common.HighlightBarStyle(c).Width(innerWidth)
+		level := common.SafetyLow
+		var radio, labelSeg, keySeg string
+		if inListMode || inCustomMode {
+			radio = common.RadioFocusedStyle(c, level).Render("◉")
+			keySeg = common.OptionKeyFocusedStyle(c, level).Render(keyHint)
 			if opt.IsCustom {
-				// Custom 项保留 Accent + Italic 文字样式
-				highlight = highlight.Foreground(c.Accent).Italic(true)
-			}
-			itemLine = highlight.Render(fullText)
-		} else {
-			// 未选中项：无背景；Custom 项保留 Accent + Italic
-			baseStyle := lipgloss.NewStyle().Padding(0, 1)
-			if opt.IsCustom {
-				baseStyle = baseStyle.Foreground(c.Accent).Italic(true)
+				labelSeg = lipgloss.NewStyle().
+					Foreground(c.Accent).Bold(true).Italic(true).
+					Render(labelText)
 			} else {
-				baseStyle = baseStyle.Foreground(c.TextSecondary)
+				labelSeg = common.OptionLabelFocusedStyle(c).Render(labelText)
 			}
-			itemLine = baseStyle.Render(fullText)
+		} else {
+			radio = common.RadioUnfocusedStyle(c).Render("○")
+			keySeg = common.OptionKeyUnfocusedStyle(c).Render(keyHint)
+			if opt.IsCustom {
+				labelSeg = lipgloss.NewStyle().
+					Foreground(c.Accent).Italic(true).
+					Render(labelText)
+			} else {
+				labelSeg = common.OptionLabelUnfocusedStyle(c).Render(labelText)
+			}
 		}
+
+		lineWidth := lipgloss.Width(radio) + 1 + lipgloss.Width(labelText) + 1 + lipgloss.Width(keyHint)
+		padding := innerWidth - lineWidth
+		if padding < 0 {
+			padding = 0
+		}
+		itemLine := radio + " " + labelSeg + strings.Repeat(" ", padding) + " " + keySeg
 
 		// 如果在自定义输入状态且当前项是 Custom，渲染输入框
-		if opt.IsCustom && i == d.selectIndex && d.state == stateSelectCustom {
+		if opt.IsCustom && inCustomMode {
 			inputBox := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(c.Primary).
+				BorderForeground(c.BorderActive).
 				Padding(0, 1).
 				Width(innerWidth - 4).
 				Render(d.textInput.View())
@@ -607,8 +624,9 @@ func (d *UserHelpDialog) renderSelect(innerWidth int, c common.ColorTokens) stri
 		items = append(items, itemLine)
 	}
 
-	// 底部添加帮助提示行
-	helpLine := renderHelpHint(d.interaction, d.state, c)
+	// 底部添加帮助提示行（MaxWidth 兜底，防止窄对话框下被 lipgloss 折行）
+	helpLine := lipgloss.NewStyle().MaxWidth(innerWidth).
+		Render(renderHelpHint(d.interaction, d.state, c))
 
 	body := lipgloss.JoinVertical(lipgloss.Left, items...)
 	return lipgloss.JoinVertical(lipgloss.Left, body, "", helpLine)
@@ -637,10 +655,8 @@ func (d *UserHelpDialog) renderInput(innerWidth int, c common.ColorTokens) strin
 		parts = append(parts, common.ErrorTextStyle(c).Render(d.inputError))
 	}
 
-	// 按钮
+	// 按钮：聚焦态使用家族 FocusedButtonStyle 色块，非聚焦态暗面底
 	var buttons []string
-	submitText := "◯ Submit"
-	cancelText := "◯ Cancel"
 
 	submitStyle := lipgloss.NewStyle().
 		Foreground(c.TextSecondary).
@@ -656,25 +672,23 @@ func (d *UserHelpDialog) renderInput(innerWidth int, c common.ColorTokens) strin
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(c.Border)
 
-	// 只有在 stateInputButtons 时才高亮，否则两个按钮均为未选中（◯）
+	// 只有在 stateInputButtons 时才高亮，否则两个按钮均为未选中态
 	if d.state == stateInputButtons {
 		if d.buttonIndex == 0 {
-			submitStyle = common.FocusedButtonStyle(c, common.SafetyLow).
-				Padding(0, 2)
-			submitText = "◉ Submit"
+			submitStyle = common.FocusedButtonStyle(c, common.SafetyLow)
 		} else {
-			cancelStyle = common.FocusedButtonStyle(c, common.SafetySafe).
-				Padding(0, 2)
-			cancelText = "◉ Cancel"
+			cancelStyle = common.FocusedButtonStyle(c, common.SafetySafe)
 		}
 	}
 
-	buttons = append(buttons, submitStyle.Render(submitText))
-	buttons = append(buttons, cancelStyle.Render(cancelText))
+	buttons = append(buttons, submitStyle.Render("Submit"))
+	buttons = append(buttons, " ")
+	buttons = append(buttons, cancelStyle.Render("Cancel"))
 	parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Center, buttons...))
 
-	// 底部添加帮助提示行
-	helpLine := renderHelpHint(d.interaction, d.state, c)
+	// 底部添加帮助提示行（MaxWidth 兜底，防止窄对话框下被 lipgloss 折行）
+	helpLine := lipgloss.NewStyle().MaxWidth(innerWidth).
+		Render(renderHelpHint(d.interaction, d.state, c))
 
 	body := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	return lipgloss.JoinVertical(lipgloss.Left, body, "", helpLine)
@@ -685,26 +699,70 @@ func (d *UserHelpDialog) renderInput(innerWidth int, c common.ColorTokens) strin
 func getHelpTitle(it protocol.InteractionType) string {
 	switch it {
 	case protocol.InteractionConfirm:
-		return "✓ Confirm"
+		return "◆ Confirm"
 	case protocol.InteractionSelect:
-		return "☰ Choose"
+		return "◆ Choose"
 	case protocol.InteractionInput:
-		return "✎ Input"
+		return "◆ Input"
 	default:
-		return "❓ Ask"
+		return "◆ Ask"
 	}
 }
 
-// formatSelectIndex 返回选项的序号前缀。
-// 1-9 用数字，10-35 用字母 a-z，36+ 用 •。
-func formatSelectIndex(i int) string {
+// selectKeyHint 返回选项右侧对齐的快捷键提示（1-9 数字，10-35 字母 a-z，36+ 为空）。
+func selectKeyHint(i int) string {
 	if i < 9 {
-		return fmt.Sprintf("%d. ", i+1)
+		return fmt.Sprintf("%d", i+1)
 	}
 	if i < 35 {
-		return fmt.Sprintf("%c. ", 'a'+i-9) // a-z
+		return fmt.Sprintf("%c", 'a'+i-9)
 	}
-	return "•  "
+	return ""
+}
+
+// truncateToWidth 按显示宽度截断字符串，超出部分以 "…" 结尾。
+// 与 hardWrapWidth 配套：兜底防止溢出。
+func truncateToWidth(s string, maxW int) string {
+	if maxW <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= maxW {
+		return s
+	}
+	r := []rune(s)
+	for len(r) > 0 && lipgloss.Width(string(r))+1 > maxW {
+		r = r[:len(r)-1]
+	}
+	return string(r) + "…"
+}
+
+// hardWrapWidth 按显示宽度硬折行（CJK 友好：wrapText 按空格分词，
+// 对无空格中文文本无效）。保留原有换行，空行原样输出。
+func hardWrapWidth(s string, width int) []string {
+	if width < 4 {
+		width = 4
+	}
+	var out []string
+	for _, para := range strings.Split(s, "\n") {
+		if para == "" {
+			out = append(out, "")
+			continue
+		}
+		var line strings.Builder
+		lineW := 0
+		for _, r := range para {
+			rw := lipgloss.Width(string(r))
+			if lineW+rw > width && lineW > 0 {
+				out = append(out, line.String())
+				line.Reset()
+				lineW = 0
+			}
+			line.WriteRune(r)
+			lineW += rw
+		}
+		out = append(out, line.String())
+	}
+	return out
 }
 
 // renderHelpHint 使用 KeyHintStyle 渲染键帽提示行。
@@ -723,41 +781,42 @@ func renderHelpHint(it protocol.InteractionType, state userHelpState, c common.C
 }
 
 // getHintParts 返回各交互模式下的键帽提示分段。
+// 文案保持紧凑：提示行总宽必须落在窄对话框的 innerWidth 内，避免 lipgloss 折行。
 func getHintParts(it protocol.InteractionType, state userHelpState) []struct{ Keys, Desc string } {
 	switch it {
 	case protocol.InteractionConfirm:
 		return []struct{ Keys, Desc string }{
-			{" ←→ ", " Navigate "},
+			{" ↑↓ ", " Move "},
 			{" Enter ", " Confirm "},
-			{" y/n ", " Quick Select "},
+			{" y/n ", " Quick "},
 			{" Esc ", " Cancel "},
 		}
 	case protocol.InteractionSelect:
 		if state == stateSelectCustom {
 			return []struct{ Keys, Desc string }{
 				{" Enter ", " Submit "},
-				{" Esc ", " Back to List "},
+				{" Esc ", " Back "},
 				{" Ctrl+U ", " Clear "},
 			}
 		}
 		return []struct{ Keys, Desc string }{
-			{" ↑↓ ", " Navigate "},
+			{" ↑↓ ", " Move "},
 			{" Enter ", " Select "},
-			{" 1-9 ", " Quick Select "},
+			{" 1-9 ", " Quick "},
 			{" Esc ", " Cancel "},
 		}
 	case protocol.InteractionInput:
 		if state == stateInputButtons {
 			return []struct{ Keys, Desc string }{
-				{" ←→ ", " Navigate "},
+				{" ←→ ", " Move "},
 				{" Enter ", " Confirm "},
-				{" ↑ ", " Back to Input "},
+				{" ↑ ", " Input "},
 				{" Esc ", " Cancel "},
 			}
 		}
 		return []struct{ Keys, Desc string }{
 			{" Enter ", " Submit "},
-			{" Tab ", " to Buttons "},
+			{" Tab ", " Buttons "},
 			{" Ctrl+U ", " Clear "},
 			{" Esc ", " Cancel "},
 		}

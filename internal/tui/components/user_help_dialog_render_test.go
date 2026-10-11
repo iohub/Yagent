@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"yagent/internal/protocol"
 )
 
@@ -156,4 +158,63 @@ func TestUserHelpDialog_AutoDetectMode(t *testing.T) {
 		t.Error("Auto-detect input mode returned empty")
 	}
 	t.Logf("Auto-detect input:\n%s", view3)
+}
+
+// TestUserHelpDialog_PasteReachesTextarea 锁定粘贴链路修复：
+// tea.PasteMsg（bracketed-paste 独立消息类型）必须被转发给内部 textarea，
+// 否则 Custom input / Input 模式无法粘贴内容。
+func TestUserHelpDialog_PasteReachesTextarea(t *testing.T) {
+	t.Run("input_mode", func(t *testing.T) {
+		dlg := NewUserHelpDialog(protocol.UserHelpNeededData{
+			Question:        "描述问题",
+			InteractionType: protocol.InteractionInput,
+			RequestID:       "test-paste-001",
+		})
+		dlg.SetBounds(100, 30)
+		// 模拟真实生命周期：入栈时 Init() 聚焦 textarea（textarea 仅聚焦时接收粘贴）
+		dlg.Init()
+
+		comp, _ := dlg.Update(tea.PasteMsg{Content: "粘贴的错误日志"})
+		got := comp.(*UserHelpDialog)
+		if v := got.textInput.Value(); v != "粘贴的错误日志" {
+			t.Errorf("textarea value = %q, want %q", v, "粘贴的错误日志")
+		}
+	})
+
+	t.Run("select_custom_mode", func(t *testing.T) {
+		dlg := NewUserHelpDialog(protocol.UserHelpNeededData{
+			Question:        "选择框架",
+			InteractionType: protocol.InteractionSelect,
+			Options:         []string{"pytest", "unittest"},
+			AllowCustom:     true,
+			RequestID:       "test-paste-002",
+		})
+		dlg.SetBounds(100, 30)
+		// 进入 Custom 输入态（等价于用户在 Custom 项上按 Enter）
+		dlg.selectIndex = 2
+		dlg.state = stateSelectCustom
+		dlg.textInput.Focus()
+
+		comp, _ := dlg.Update(tea.PasteMsg{Content: "my-custom-framework"})
+		got := comp.(*UserHelpDialog)
+		if v := got.textInput.Value(); v != "my-custom-framework" {
+			t.Errorf("textarea value = %q, want %q", v, "my-custom-framework")
+		}
+	})
+
+	t.Run("paste_ignored_in_list_mode", func(t *testing.T) {
+		dlg := NewUserHelpDialog(protocol.UserHelpNeededData{
+			Question:        "选择框架",
+			InteractionType: protocol.InteractionSelect,
+			Options:         []string{"pytest", "unittest"},
+			RequestID:       "test-paste-003",
+		})
+		dlg.SetBounds(100, 30)
+		// 列表导航态（无聚焦输入框）：粘贴不应改变 textarea
+		comp, _ := dlg.Update(tea.PasteMsg{Content: "should-not-appear"})
+		got := comp.(*UserHelpDialog)
+		if v := got.textInput.Value(); v != "" {
+			t.Errorf("textarea should stay empty in list mode, got %q", v)
+		}
+	})
 }
