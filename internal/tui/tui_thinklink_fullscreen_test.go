@@ -111,8 +111,8 @@ func TestThinklinkFullscreen_WindowSizeHandledLocally(t *testing.T) {
 	if got.thinklinkVP == nil {
 		t.Fatalf("thinklinkVP should be re-created on resize, got nil")
 	}
-	if w := got.thinklinkVP.Width(); w != 120 {
-		t.Fatalf("thinklinkVP width = %d, want 120", w)
+	if w := got.thinklinkVP.Width(); w != thinklinkDetailWidth(got) {
+		t.Fatalf("thinklinkVP width = %d, want %d", w, thinklinkDetailWidth(got))
 	}
 	if h := got.thinklinkVP.Height(); h != thinklinkDetailHeight(got) {
 		t.Fatalf("thinklinkVP height = %d, want %d", h, thinklinkDetailHeight(got))

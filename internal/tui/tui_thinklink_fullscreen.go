@@ -9,14 +9,44 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// thinklink 全屏视图样式。
+// thinklink 全屏视图调色板 —— 与 dashboard 的设计语言保持一致：
+// 薰衣草强调色 + 靛蓝圆角边框 + dim 标签 / 亮色数值分层。
 var (
-	thinklinkTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	thinklinkUserStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))  // USER INPUT 徽标
-	thinklinkPlanStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")) // THOUGHT PLAN 徽标
-	thinklinkCursorStyle = lipgloss.NewStyle().Reverse(true)                                // 选中行整行反色
-	thinklinkDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))            // 次要信息灰
+	tlAccent    = lipgloss.Color("141") // ◆ 图标、选中行导轨
+	tlBorderFg  = lipgloss.Color("62")  // 详情面板圆角边框
+	tlTitleFg   = lipgloss.Color("250") // 标题近白
+	tlHairFg    = lipgloss.Color("238") // 发丝分隔线
+	tlDimFg     = lipgloss.Color("241") // 次要信息
+	tlRailFg    = lipgloss.Color("236") // 未选中行导轨
+	tlUserChip  = lipgloss.Color("75")  // USER chip 底色（soft blue）
+	tlPlanChip  = lipgloss.Color("214") // PLAN chip 底色（warm gold）
+	tlChipFg    = lipgloss.Color("16")  // chip 前景（近黑）
+	tlPreviewFg = lipgloss.Color("246") // 未选中行预览
+	tlSelPrevFg = lipgloss.Color("252") // 选中行预览
 )
+
+var (
+	thinklinkTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg)
+	thinklinkDimStyle    = lipgloss.NewStyle().Foreground(tlDimFg)
+	thinklinkHairStyle   = lipgloss.NewStyle().Foreground(tlHairFg)
+	thinklinkBorderStyle = lipgloss.NewStyle().Foreground(tlBorderFg)
+)
+
+// thinklinkChip 渲染类型徽标（USER / PLAN），彩底深字 chip。
+func thinklinkChip(kind string, selected bool) string {
+	label, bg := "PLAN", tlPlanChip
+	if kind == "user_input" {
+		label, bg = "USER", tlUserChip
+	}
+	style := lipgloss.NewStyle().
+		Background(bg).
+		Foreground(tlChipFg).
+		Bold(true)
+	if selected {
+		style = style.Underline(true)
+	}
+	return style.Render(label)
+}
 
 // enterThinklinkMode 进入 thinklink 全屏模式：查看用户输入与 Thought & Plan 块。
 func enterThinklinkMode(m *model) tea.Cmd {
@@ -57,10 +87,19 @@ func thinklinkDetailHeight(m *model) int {
 	return h
 }
 
-// initThinklinkViewport 初始化/重置详情 viewport 尺寸。
+// thinklinkDetailWidth 详情面板内容宽度 = 终端宽 − 边框(2) − 内边距(2)。
+func thinklinkDetailWidth(m *model) int {
+	w := m.termWidth - 4
+	if w < 10 {
+		w = 10
+	}
+	return w
+}
+
+// initThinklinkViewport 初始化/重置详情 viewport 尺寸（适配带边框详情面板）。
 func initThinklinkViewport(m *model) {
 	vp := viewport.New()
-	vp.SetWidth(m.termWidth)
+	vp.SetWidth(thinklinkDetailWidth(m))
 	vp.SetHeight(thinklinkDetailHeight(m))
 	m.thinklinkVP = &vp
 }
@@ -75,7 +114,7 @@ func syncThinklinkDetail(m *model) {
 	if m.thinklinkCursor >= 0 && m.thinklinkCursor < len(m.thinklinkEntries) {
 		content = m.thinklinkEntries[m.thinklinkCursor].Content
 	}
-	m.thinklinkVP.SetContent(wrapThinklinkContent(content, m.termWidth))
+	m.thinklinkVP.SetContent(wrapThinklinkContent(content, thinklinkDetailWidth(m)))
 	m.thinklinkVP.GotoTop()
 }
 
@@ -126,15 +165,60 @@ func truncateThinklinkRunes(s string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
-// firstThinklinkLine 返回内容中第一个非空行（去空白），用于列表行预览。
+// firstThinklinkLine 返回内容中第一个非空行（去空白与 markdown 前缀），用于列表行预览。
+// 跳过 "Thought & Plan" 标题行（每个 plan 块都以它开头，预览价值为零），
+// 全部行都是标题时退回标题本身。
 func firstThinklinkLine(s string) string {
+	fallback := ""
 	for _, line := range strings.Split(s, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			return trimmed
+		if trimmed == "" {
+			continue
 		}
+		clean := strings.TrimLeft(trimmed, "#>*- \t")
+		if strings.EqualFold(clean, "Thought & Plan") {
+			if fallback == "" {
+				fallback = clean
+			}
+			continue
+		}
+		return clean
+	}
+	if fallback != "" {
+		return fallback
 	}
 	return "(empty)"
+}
+
+// thinklinkHintBar 渲染底部 keycap 提示条（与 dashboard 的 dashKeycap 风格一致）。
+func thinklinkHintBar() string {
+	return " " +
+		dashKeycap("↑/↓", "select") +
+		dashKeycap("enter", "scroll detail") +
+		dashKeycap("g", "top") +
+		dashKeycap("esc/q", "close")
+}
+
+// thinklinkHeader 渲染标题行：◆ Thinklink + 副标题（左），条目计数（右对齐）。
+func thinklinkHeader(m *model, width int) string {
+	diamond := lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render("◆ ")
+	title := thinklinkTitleStyle.Render("Thinklink")
+	sub := thinklinkDimStyle.Render("  user inputs & thought plans")
+	left := diamond + title + sub
+
+	count := lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg).
+		Render(fmt.Sprintf("%d", len(m.thinklinkEntries)))
+	right := count + thinklinkDimStyle.Render(" entries ")
+
+	fill := width - lipgloss.Width(right)
+	if fill < lipgloss.Width(left) {
+		fill = lipgloss.Width(left)
+	}
+	line := lipgloss.NewStyle().Width(fill).Render(left) + right
+	if lipgloss.Width(line) > width {
+		line = lipgloss.NewStyle().MaxWidth(width).Render(line)
+	}
+	return line
 }
 
 // thinklinkFullscreenUpdate thinklink 全屏模式下拦截所有消息。
@@ -215,23 +299,23 @@ func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 }
 
 // renderThinklinkFullscreenView 渲染 thinklink 全屏视图：
-// 标题栏 + 条目列表（窗口切片） + 详情分隔标签 + 详情区 + 底部提示。
+// 标题行 + 发丝线 + 条目列表（窗口切片） + 圆角详情面板 + 底部 keycap 提示。
 func renderThinklinkFullscreenView(m *model) tea.View {
 	width, height := m.termWidth, m.termHeight
 	var b strings.Builder
 
-	b.WriteString(thinklinkTitleStyle.Render(
-		fmt.Sprintf(" Thinklink — User Inputs & Thought & Plan Blocks (%d entries) ",
-			len(m.thinklinkEntries))) + "\n")
+	b.WriteString(thinklinkHeader(m, width) + "\n")
+	b.WriteString(thinklinkHairStyle.Render(strings.Repeat("─", width)) + "\n")
 
-	// 空态：标题 + 居中提示 + 底部提示
+	// 空态：标题 + 发丝线 + 居中提示 + 底部提示
 	if len(m.thinklinkEntries) == 0 {
-		emptyMsg := thinklinkDimStyle.Render("No thinklink entries yet.")
+		emptyMsg := lipgloss.NewStyle().Foreground(tlDimFg).Italic(true).
+			Render("◇  No thinklink entries yet")
 		pad := (width - lipgloss.Width(emptyMsg)) / 2
 		if pad < 0 {
 			pad = 0
 		}
-		midRows := height - 2
+		midRows := height - 3 // 标题1 + 发丝线1 + 提示1
 		top := midRows / 2
 		if top < 0 {
 			top = 0
@@ -243,14 +327,14 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 		for i := top + 1; i < midRows; i++ {
 			b.WriteString("\n")
 		}
-		b.WriteString(thinklinkDimStyle.Render(
-			" ↑/↓ select • enter scroll detail • g top • esc/q close "))
+		b.WriteString(thinklinkDimStyle.Render(thinklinkHintBar()))
 		return tea.View{AltScreen: true, Content: b.String()}
 	}
 
 	clampThinklinkCursor(m)
 	detailH := thinklinkDetailHeight(m)
-	listH := height - 3 - detailH // 标题1 + 详情标签1 + 提示1
+	// 标题1 + 发丝线1 + 详情面板(detailH+2) + 提示1
+	listH := height - 5 - detailH
 	if listH < 1 {
 		listH = 1
 	}
@@ -278,8 +362,26 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 		b.WriteString("\n") // 列表不满时补空行，保持详情区位置稳定
 	}
 
-	// ── 详情分隔标签 ──
+	// ── 圆角详情面板 ──
 	entry := m.thinklinkEntries[m.thinklinkCursor]
+	for _, l := range renderThinklinkDetailPanel(m, entry, width, detailH) {
+		b.WriteString(l + "\n")
+	}
+
+	// ── 底部 keycap 提示（最后一行不带换行） ──
+	b.WriteString(thinklinkDimStyle.Render(thinklinkHintBar()))
+
+	return tea.View{AltScreen: true, Content: b.String()}
+}
+
+// renderThinklinkDetailPanel 渲染带标题的圆角详情面板，
+// 返回恰好 detailH+2 行、每行显示宽度为 width 的字符串切片。
+func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH int) []string {
+	innerW := width - 4 // 边框(2) + 内边距(2)
+	if innerW < 1 {
+		innerW = 1
+	}
+
 	detailLabel := fmt.Sprintf("TP-%02d", m.thinklinkCursor+1)
 	if entry.Kind == "user_input" {
 		detailLabel = "USER INPUT"
@@ -288,69 +390,120 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 	if m.thinklinkDetailActive {
 		scrollMode = "scroll"
 	}
-	sepPlain := fmt.Sprintf("── Detail: [%s] (%s · enter toggles scroll) ", detailLabel, scrollMode)
-	if fill := width - lipgloss.Width(sepPlain) - 1; fill > 0 {
-		sepPlain += strings.Repeat("─", fill)
-	}
-	b.WriteString(thinklinkDimStyle.Render(sepPlain) + "\n")
 
-	// ── 详情区 ──
+	// 顶边框：╭─ ◆ DETAIL · TP-02 · static ─────╮
+	label := lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render(" ◆ ") +
+		lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg).Render("DETAIL") +
+		lipgloss.NewStyle().Foreground(tlDimFg).Render(fmt.Sprintf(" · %s · %s ", detailLabel, scrollMode))
+	fill := width - 3 - lipgloss.Width(label)
+	if fill < 0 {
+		fill = 0
+	}
+	top := thinklinkBorderStyle.Render("╭─") + label +
+		thinklinkBorderStyle.Render(strings.Repeat("─", fill)+"╮")
+
+	// 内容行
+	var inner []string
 	if m.thinklinkDetailActive && m.thinklinkVP != nil {
-		b.WriteString(m.thinklinkVP.View())
-		b.WriteString("\n")
+		inner = strings.Split(m.thinklinkVP.View(), "\n")
 	} else {
-		wrapped := strings.Split(wrapThinklinkContent(entry.Content, width), "\n")
+		wrapped := strings.Split(wrapThinklinkContent(entry.Content, innerW), "\n")
 		truncated := false
 		if len(wrapped) > detailH {
 			wrapped = wrapped[:detailH]
 			truncated = true
 		}
-		for i, l := range wrapped {
-			if i == len(wrapped)-1 {
-				// 最后一行不带换行，可能追加截断提示
-				b.WriteString(l)
-				if truncated {
-					b.WriteString(thinklinkDimStyle.Render(" …more (enter to scroll)"))
-				}
-			} else {
-				b.WriteString(l + "\n")
+		if truncated && len(wrapped) > 0 {
+			last := wrapped[len(wrapped)-1]
+			suffix := thinklinkDimStyle.Render(" …more (enter to scroll)")
+			room := innerW - lipgloss.Width(last) - lipgloss.Width(suffix)
+			if room < 0 {
+				last = lipgloss.NewStyle().MaxWidth(innerW - lipgloss.Width(suffix)).Render(last)
 			}
+			wrapped[len(wrapped)-1] = last + suffix
 		}
-		for i := len(wrapped); i < detailH; i++ {
-			b.WriteString("\n") // 不足 detailH 行时补空行
-		}
-		b.WriteString("\n") // 结束详情最后一行，进入提示行
+		inner = wrapped
+	}
+	// 截断/补齐到 detailH 行
+	if len(inner) > detailH {
+		inner = inner[:detailH]
+	}
+	for len(inner) < detailH {
+		inner = append(inner, "")
 	}
 
-	// ── 底部提示 ──
-	b.WriteString(thinklinkDimStyle.Render(
-		" ↑/↓ select • enter scroll detail • g top • esc/q close "))
-
-	return tea.View{AltScreen: true, Content: b.String()}
+	lines := make([]string, 0, detailH+2)
+	lines = append(lines, top)
+	padStyle := lipgloss.NewStyle().Width(innerW)
+	for _, l := range inner {
+		if lipgloss.Width(l) > innerW {
+			l = lipgloss.NewStyle().MaxWidth(innerW).Render(l)
+		}
+		lines = append(lines,
+			thinklinkBorderStyle.Render("│ ")+padStyle.Render(l)+thinklinkBorderStyle.Render(" │"))
+	}
+	lines = append(lines, thinklinkBorderStyle.Render("╰"+strings.Repeat("─", width-2)+"╯"))
+	return lines
 }
 
-// renderThinklinkListLine 渲染单行条目；cursor 行整行反色高亮，其余行徽标着色。
+// renderThinklinkListLine 渲染单行条目：导轨标记 + 序号 + 类型 chip + 时间 + 步数 + 预览。
+// 选中行以亮色 ▌ 导轨与更亮的文字突出，未选中行为暗色 │ 导轨。
 func renderThinklinkListLine(m *model, idx, width int) string {
 	e := m.thinklinkEntries[idx]
-	badge := "THOUGHT PLAN"
-	if e.Kind == "user_input" {
-		badge = "USER INPUT"
+	selected := idx == m.thinklinkCursor
+
+	// 导轨
+	rail := lipgloss.NewStyle().Foreground(tlRailFg).Render("│")
+	if selected {
+		rail = lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render("▌")
 	}
-	prefix := fmt.Sprintf("  %02d [%s] %s (step %d)  ",
-		idx+1, badge, e.Timestamp.Format("15:04:05"), e.Step)
-	avail := width - len([]rune(prefix)) - 1
+
+	// 序号
+	idxStr := fmt.Sprintf("%02d", idx+1)
+	idxStyle := lipgloss.NewStyle().Foreground(tlDimFg)
+	if selected {
+		idxStyle = lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg)
+	}
+
+	// 时间 + 步数（step 固定 7 列宽保证预览起点大体对齐）
+	timeStyle := lipgloss.NewStyle().Foreground(tlDimFg)
+	if selected {
+		timeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	}
+	stepStr := "  —    "
+	if e.Step > 0 {
+		stepStr = fmt.Sprintf("%-7s", fmt.Sprintf("step %d", e.Step))
+	}
+
+	// 纯文本前缀（用于计算预览可用宽度）：
+	// rail(1)+sp(1)+idx(2)+sp(2)+chip(4)+sp(2)+time(8)+sp(2)+step(7)+sp(2)
+	plainPrefixLen := 1 + 1 + 2 + 2 + 4 + 2 + 8 + 2 + 7 + 2
+	avail := width - plainPrefixLen - 1
 	if avail < 0 {
 		avail = 0
 	}
-	line := prefix + truncateThinklinkRunes(firstThinklinkLine(e.Content), avail)
+	preview := truncateThinklinkRunes(firstThinklinkLine(e.Content), avail)
+	prevStyle := lipgloss.NewStyle().Foreground(tlPreviewFg)
+	if selected {
+		prevStyle = lipgloss.NewStyle().Foreground(tlSelPrevFg)
+	}
 
-	if idx == m.thinklinkCursor {
-		return thinklinkCursorStyle.Render(line)
+	var sb strings.Builder
+	sb.WriteString(rail)
+	sb.WriteString(" ")
+	sb.WriteString(idxStyle.Render(idxStr))
+	sb.WriteString("  ")
+	sb.WriteString(thinklinkChip(e.Kind, selected))
+	sb.WriteString("  ")
+	sb.WriteString(timeStyle.Render(e.Timestamp.Format("15:04:05")))
+	sb.WriteString("  ")
+	sb.WriteString(timeStyle.Render(stepStr))
+	sb.WriteString("  ")
+	sb.WriteString(prevStyle.Render(preview))
+
+	line := sb.String()
+	if lipgloss.Width(line) > width {
+		line = lipgloss.NewStyle().MaxWidth(width).Render(line)
 	}
-	// 非 cursor 行：徽标按类型着色
-	badgeStyled := thinklinkPlanStyle.Render(badge)
-	if e.Kind == "user_input" {
-		badgeStyled = thinklinkUserStyle.Render(badge)
-	}
-	return strings.Replace(line, "["+badge+"]", "["+badgeStyled+"]", 1)
+	return line
 }
