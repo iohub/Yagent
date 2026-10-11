@@ -14,15 +14,11 @@ import (
 )
 
 const (
-	// 流式渲染节流阈值：累积 5 个 chunk（每个 chunk 约等于 1 个 token）才渲染一次
 	aiChunkRenderThreshold = 5
-	// 单次累积内容超过 64 字节立即渲染（防止单个超大 chunk 长时间不显示）
-	aiChunkFlushMaxBytes = 64
-	// 慢流兜底：距上次渲染超过 300ms 且有未渲染内容时立即渲染（保证交互反馈）
-	aiChunkFlushInterval = 300 * time.Millisecond
+	aiChunkFlushMaxBytes   = 64
+	aiChunkFlushInterval   = 300 * time.Millisecond
 )
 
-// parseEventInt 从 event content map 中安全地解析整数，兼容 int/float64/json.Number。
 func parseEventInt(v interface{}, fallback int) int {
 	switch val := v.(type) {
 	case int:
@@ -39,23 +35,16 @@ func parseEventInt(v interface{}, fallback int) int {
 	return fallback
 }
 
-// stringFromEventMap 从 event content map 中安全地解析字符串字段，
-// 类型不符时返回空串（调用方据此判定载荷是否可用）。
 func stringFromEventMap(m map[string]interface{}, key string) string {
 	s, _ := m[key].(string)
 	return s
 }
 
-// updateAgentContextTokens 更新当前 agent run 的上下文 token 瞬时值（覆盖式，非累计）。
-// 这是 ContextTokens 的唯一写入口。
-// agentName 为空时归一化为 "Unknown"（与 ai_response 现有 fallback 一致）；
-// 若与当前 run 的 agent 不同，则整体重置 run tokens（复制 ai_response 现有的 agent 切换语义）。
 func (m *model) updateAgentContextTokens(agentName string, contextTokens int64) {
 	if agentName == "" {
 		agentName = "Unknown"
 	}
 	if m.currentAgentRunTokens.AgentName != agentName {
-		// Agent switched — reset run tokens for new agent
 		m.currentAgentRunTokens = AgentRunTokens{
 			AgentName: agentName,
 		}
@@ -65,16 +54,8 @@ func (m *model) updateAgentContextTokens(agentName string, contextTokens int64) 
 }
 
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
-	// Don't process task events while any popup/dialog is showing.
-	// Keep the event chain alive so the TUI resumes after dialog dismissal.
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
-		// ai_stream_end / ai_response 是"定稿"类事件：仅更新已有流式条目的
-		// 状态与内容，不创建 UI 元素、不依赖用户输入，可以安全穿透 dialog 守卫。
-		// 若不穿透，任务完成弹窗（TaskCompleteDialog）抢先弹出后，最后一条
-		// ai_response 会被丢弃，导致最后一条 agent 消息停留在 ai_stream
-		// 纯文本状态、无法渲染为 markdown。
 		if msg.event.Type == "ai_stream_end" || msg.event.Type == "ai_response" {
-			// 穿透，继续向下处理
 		} else if m.taskRunning {
 			return m, listenForEvents(m.eventCh)
 		} else {
@@ -82,8 +63,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Count tokens for AI response events only (ai_stream_end no longer carries usage)
-	// Prefer real token usage from API metadata, fallback to estimation
 	if msg.event.Type == "ai_response" {
 		if usageData, ok := msg.event.Metadata["usage"]; ok {
 			if usageMap, ok := usageData.(map[string]interface{}); ok {
@@ -100,7 +79,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				}
 				m.outputTokens += completionVal
 
-				// Also track input tokens from API (PromptTokens)
 				var promptVal int64
 				if promptTokens, ok := usageMap["prompt_tokens"]; ok {
 					switch v := promptTokens.(type) {
@@ -114,7 +92,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				}
 				m.inputTokens += promptVal
 
-				// Parse cache tokens
 				var cacheCreationVal int64
 				if cacheCreationTokens, ok := usageMap["cache_creation_input_tokens"]; ok {
 					switch v := cacheCreationTokens.(type) {
@@ -141,8 +118,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				}
 				m.cacheReadInputTokens += cacheReadVal
 
-				// Parse total_input_tokens (provider 口径，含缓存部分)
-				// 若事件中没有该字段，则回退到旧公式计算
 				var totalInputVal int64
 				if totalInputTokens, ok := usageMap["total_input_tokens"]; ok {
 					switch v := totalInputTokens.(type) {
@@ -154,18 +129,15 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 						totalInputVal = int64(v)
 					}
 				} else {
-					// 向后兼容：使用旧公式 totalInput = promptVal + cacheReadVal + cacheCreationVal
 					totalInputVal = promptVal + cacheReadVal + cacheCreationVal
 				}
 				m.totalInputTokens += totalInputVal
 
-				// Track current agent run tokens (reset on agent switch)
 				agentNameForRun := msg.event.From
 				if agentNameForRun == "" {
 					agentNameForRun = "Unknown"
 				}
 				if m.currentAgentRunTokens.AgentName != agentNameForRun {
-					// Agent switched — reset run tokens for new agent
 					m.currentAgentRunTokens = AgentRunTokens{
 						AgentName: agentNameForRun,
 					}
@@ -176,21 +148,16 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				m.currentAgentRunTokens.CacheCreationInputTokens += cacheCreationVal
 				m.currentAgentRunTokens.TotalInputTokens += totalInputVal
 
-				// 更新当前 agent 上下文 token 瞬时值（覆盖式）：
-				// provider 口径总输入 ≈ 本次 LLM 调用时的真实上下文大小。
-				// >0 守卫：provider 上报全零 usage 时不清零面板显示。
 				if totalInputVal > 0 {
 					m.updateAgentContextTokens(agentNameForRun, totalInputVal)
 				}
 
-				// Track current running agent
 				if m.taskRunning {
 					if msg.event.From != "" {
 						m.currentAgent = msg.event.From
 					}
 				}
 
-				// Per-agent token tracking
 				agentName := msg.event.From
 				if agentName == "" {
 					agentName = "Unknown"
@@ -207,13 +174,11 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				agentUsage.TotalInputTokens += totalInputVal
 			}
 		} else {
-			// Fallback: no usage metadata — estimate output tokens from content
 			contentStr := fmt.Sprintf("%v", msg.event.Content)
 			estimatedOutput := int64(len(contentStr) / 4)
 			if estimatedOutput > 0 && m.tokenUsagePerAgent != nil {
 				m.outputTokens += estimatedOutput
 
-				// Per-agent token tracking (input unknown, use 0)
 				agentName := msg.event.From
 				if agentName == "" {
 					agentName = "Unknown"
@@ -226,46 +191,34 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				agentUsage.OutputTokens += estimatedOutput
 			}
 		}
-		// Token counts changed — update cached token dashboard render
 		m.cachedTokenDashboard = m.renderTokenDashboard()
 		m.tokenDashboardValid = true
 		m.invalidateFooterCache()
 	}
 
-	// Capture model info for status bar display
 	if msg.event.Type == "model_info" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 			if modelName, ok := contentMap["model"].(string); ok {
 				m.currentModel = modelName
 			}
-			// Also capture agent name from model_info event
 			if agentName, ok := contentMap["agent"].(string); ok && agentName != "" {
 				m.currentAgent = agentName
 			}
-			// Capture provider name if available
 			if providerName, ok := contentMap["provider"].(string); ok && providerName != "" {
 				m.currentProvider = providerName
-				// provider 变化 → 刷新上下文窗口上限（本分支末尾已统一 invalidateFooterCache）
 				m.refreshContextWindow()
 			}
 		}
-		// Model info changed — update status bar cache
 		m.invalidateFooterCache()
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// ═══════════════════════════════════════════════════════════════
-	// AI 流式事件处理：流式累积 + ai_response 定稿
-	// ═══════════════════════════════════════════════════════════════
-
-	// Handle ai_stream_start — 创建占位条目
 	if msg.event.Type == "ai_stream_start" {
 		agentName := msg.event.From
 		if agentName == "" {
 			agentName = "default"
 		}
 
-		// 创建占位条目
 		entry := logEntry{
 			timestamp:     msg.event.Timestamp,
 			eventType:     "ai_stream",
@@ -284,14 +237,12 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// Handle ai_chunk — 原地追加内容
 	if msg.event.Type == "ai_chunk" {
 		agentName := msg.event.From
 		if agentName == "" {
 			agentName = "default"
 		}
 
-		// 从 Content 中提取 content 字段
 		var content string
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 			if c, ok := contentMap["content"].(string); ok {
@@ -300,7 +251,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
-			// 累积缓冲：chunk 先进入 buffer，达到阈值才写入条目并触发渲染（降低 CPU）
 			if m.aiChunkBuffers == nil {
 				m.aiChunkBuffers = make(map[string]*aiChunkBuffer)
 			}
@@ -312,17 +262,16 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			buf.content += content
 			buf.count++
 
-			// 满足任一条件即 flush：累积达 5 个 chunk（≈5 tokens）/ 内容超 64 字节 / 慢流超时 300ms
 			shouldFlush := buf.count >= aiChunkRenderThreshold ||
 				len(buf.content) >= aiChunkFlushMaxBytes ||
 				(buf.count > 0 && time.Since(buf.lastFlush) >= aiChunkFlushInterval)
 			if shouldFlush {
 				le := &m.logEntries[idx]
 				le.streamContent += buf.content
-				le.content = le.streamContent // 同步到 content 字段
-				le.clearRenderCache()         // 失效渲染缓存，确保内容变化生效
+				le.content = le.streamContent
+				le.clearRenderCache()
 				m.markEntryDirty(idx)
-				m.viewportDirty = true // 触发视图重绘（节流后）
+				m.viewportDirty = true
 				buf.content = ""
 				buf.count = 0
 				buf.lastFlush = time.Now()
@@ -330,7 +279,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			return m, listenForEvents(m.eventCh)
 		}
 
-		// Fallback: 没有活跃流，创建一个（防御性处理）
 		entry := logEntry{
 			timestamp:     msg.event.Timestamp,
 			eventType:     "ai_stream",
@@ -350,7 +298,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// Handle ai_stream_end — 标记流式完成
 	if msg.event.Type == "ai_stream_end" {
 		agentName := msg.event.From
 		if agentName == "" {
@@ -358,7 +305,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
-			// 流结束：强制 flush 剩余累积内容，保证最终内容完整显示
 			if buf := m.aiChunkBuffers[agentName]; buf != nil && buf.content != "" {
 				le := &m.logEntries[idx]
 				le.streamContent += buf.content
@@ -368,27 +314,22 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				buf.content = ""
 				buf.count = 0
 			}
-			// 修复：streaming=false 的状态变化本身就需要重新渲染（影响流式光标显示等），
-			// 不能依赖 buf.content 是否为空。无条件设置 viewportDirty 确保流式结束后
-			// 视口一定被刷新，避免最后一次流式消息渲染不全。
 			m.logEntries[idx].streaming = false
 			m.aiStreamCompletedEntries[agentName] = idx
 			delete(m.aiStreamActiveEntries, agentName)
 			m.markEntryDirty(idx)
 			m.viewportDirty = true
 		}
-		delete(m.aiChunkBuffers, agentName) // 清理缓冲
+		delete(m.aiChunkBuffers, agentName)
 		return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 	}
 
-	// Handle ai_response — 定稿：用完整内容替换流式缓冲
 	if msg.event.Type == "ai_response" {
 		agentName := msg.event.From
 		if agentName == "" {
 			agentName = "default"
 		}
 
-		// 从 Content 中提取文本内容
 		content := ""
 		if s, ok := msg.event.Content.(string); ok {
 			content = s
@@ -396,35 +337,8 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			content = fmt.Sprintf("%v", msg.event.Content)
 		}
 
-		// 优先匹配已完成的流式条目
 		if idx, ok := m.aiStreamCompletedEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
-			// 修复：如果定稿 content 为空，用已累积的流式内容兜底，
-			// 避免 ai_stream_end flush 未执行时定稿后内容丢失
-			if content == "" && le.streamContent != "" {
-				content = le.streamContent
-			}
-			if content != "" {
-				le.streamContent = content
-				le.content = content
-			}
-			le.eventType = "ai_response" // 切换为 ai_response 类型，走 Glamour 渲染
-			le.finalized = true
-			le.streaming = false
-			le.from = agentName
-			le.clearRenderCache()
-			m.markEntryDirty(idx)
-			m.viewportDirty = true // 新增：触发视图更新
-			delete(m.aiStreamCompletedEntries, agentName)
-			delete(m.aiChunkBuffers, agentName) // 防御性清理残留缓冲
-			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
-		}
-
-		// Fallback: 也检查 active map（ai_stream_end 丢失的情况）
-		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
-			le := &m.logEntries[idx]
-			// 修复：如果定稿 content 为空，用已累积的流式内容兜底，
-			// 避免 ai_stream_end flush 未执行时定稿后内容丢失
 			if content == "" && le.streamContent != "" {
 				content = le.streamContent
 			}
@@ -438,26 +352,42 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			le.from = agentName
 			le.clearRenderCache()
 			m.markEntryDirty(idx)
-			m.viewportDirty = true // 新增：触发视图更新
-			delete(m.aiStreamActiveEntries, agentName)
-			delete(m.aiChunkBuffers, agentName) // 防御性清理残留缓冲
+			m.viewportDirty = true
+			delete(m.aiStreamCompletedEntries, agentName)
+			delete(m.aiChunkBuffers, agentName)
 			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
 		}
 
-		// 无对应流式条目 → 落入通用处理（创建新条目）
-		// 不 return，继续走下方逻辑
+		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
+			le := &m.logEntries[idx]
+			if content == "" && le.streamContent != "" {
+				content = le.streamContent
+			}
+			if content != "" {
+				le.streamContent = content
+				le.content = content
+			}
+			le.eventType = "ai_response"
+			le.finalized = true
+			le.streaming = false
+			le.from = agentName
+			le.clearRenderCache()
+			m.markEntryDirty(idx)
+			m.viewportDirty = true
+			delete(m.aiStreamActiveEntries, agentName)
+			delete(m.aiChunkBuffers, agentName)
+			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+		}
+
 	}
 
-	// Handle llm_call_start — create a running entry with animation (single line)
 	if msg.event.Type == "llm_call_start" {
 		entry := formatEventAsEntry(msg.event)
 		entry.isToolRunning = true
 
-		// Generate a unique ID for this LLM call (use agent name + timestamp)
 		callID := fmt.Sprintf("llm_%s_%d", msg.event.From, msg.event.Timestamp.UnixNano())
 		entry.toolCallID = callID
 
-		// Add timeline entry for LLM call
 		m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
 			ID:        callID,
 			Kind:      TimelineKindLLMCall,
@@ -466,25 +396,22 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			Name:      "llm_call",
 			Detail:    entry.content,
 		})
-		m.timelineCacheKey = "" // invalidate cache
+		m.timelineCacheKey = ""
 
 		m.logEntries = append(m.logEntries, entry)
 		m.viewportDirty = true
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 
-		// Store the entry index for llm_call_end to update
 		m.llmCallActiveEntries[msg.event.From] = len(m.logEntries) - 1
 		m.activeAnim = true
 
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// Handle llm_call_end — update the matching start entry (no new entry created)
 	if msg.event.Type == "llm_call_end" {
 		if idx, ok := m.llmCallActiveEntries[msg.event.From]; ok && idx >= 0 && idx < len(m.logEntries) {
 			delete(m.llmCallActiveEntries, msg.event.From)
 
-			// Update timeline entry for LLM call end
 			for i := len(m.timelineEntries) - 1; i >= 0; i-- {
 				if m.timelineEntries[i].Kind == TimelineKindLLMCall && m.timelineEntries[i].Status == ToolStatusRunning {
 					var duration time.Duration
@@ -506,11 +433,9 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			}
 			m.timelineCacheKey = ""
 
-			// Update the log entry with end information
 			le := &m.logEntries[idx]
 			le.isToolRunning = false
 
-			// Format content like current llm_call_end with duration
 			if durationRaw, ok := msg.event.Metadata["duration_seconds"]; ok {
 				var duration float64
 				switch v := durationRaw.(type) {
@@ -541,8 +466,8 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				le.content = "◂ LLM call completed"
 			}
 
-			le.clearRenderCache() // invalidate cache
-			m.markEntryDirty(idx) // 细粒度：仅标记此条目脏
+			le.clearRenderCache()
+			m.markEntryDirty(idx)
 			m.updateActiveAnim()
 			m.viewportDirty = true
 			m.rebuildViewportScrollLock()
@@ -550,9 +475,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// Handle thinking — display agent thinking/reasoning content
 	if msg.event.Type == "thinking" {
-		// 从 event.Content 提取 thinking 文本（支持 string 和 map 两种格式）
 		thinkingText := ""
 		switch content := msg.event.Content.(type) {
 		case string:
@@ -566,13 +489,11 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			return m, listenForEvents(m.eventCh)
 		}
 
-		// 限制存储长度（防止超大 thinking 撑爆内存）
 		maxThinkingLen := 10000
 		if len(thinkingText) > maxThinkingLen {
 			thinkingText = thinkingText[:maxThinkingLen] + "\n\n[...思考内容已截断...]"
 		}
 
-		// 合并逻辑：连续 thinking 事件合并到同一个 logEntry 中
 		merged := false
 		if n := len(m.logEntries); n > 0 && m.logEntries[n-1].eventType == "thinking" && m.logEntries[n-1].from == msg.event.From {
 			lastIdx := n - 1
@@ -587,7 +508,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if !merged {
-			// 创建 logEntry
 			entry := logEntry{
 				timestamp: msg.event.Timestamp,
 				eventType: "thinking",
@@ -602,10 +522,8 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 		}
 
-		// 在 timeline 中添加条目（无论合并与否，timeline 保留每个思考事件语义）
 		callID := fmt.Sprintf("thinking_%s_%d", msg.event.From, msg.event.Timestamp.UnixNano())
 
-		// 预览：取前 80 个字符，去掉换行
 		preview := thinkingText
 		preview = strings.ReplaceAll(preview, "\n", " ")
 		if len(preview) > 80 {
@@ -625,10 +543,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// Intercept user_help_needed to show interactive dialog
 	if msg.event.Type == "user_help_needed" {
-		// Check if event has interaction_type → new format → UserHelpDialog
-		// Otherwise → old format → ConfirmDialog (backward compat)
 		if content, ok := msg.event.Content.(map[string]interface{}); ok {
 			if _, hasInteractionType := content["interaction_type"]; hasInteractionType {
 				m.openUserHelpDialog(msg.event)
@@ -638,7 +553,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.openConfirmDialog(msg.event)
 		}
-		// Still log the event so it appears in the background
 		entry := formatEventAsEntry(msg.event)
 		m.logEntries = append(m.logEntries, entry)
 		m.viewportDirty = true
@@ -646,7 +560,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// Handle commit context loaded event — log it in the TUI
 	if msg.event.Type == "commit_context_loaded" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 			if count, ok := contentMap["count"].(float64); ok {
@@ -657,7 +570,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 					from:      msg.event.From,
 					content:   fmt.Sprintf("📦 Loaded %d relevant commit(s) for context", countInt),
 				}
-				// Add timeline entry for commit context loading
 				m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
 					ID:        fmt.Sprintf("ctx_%d", msg.event.Timestamp.UnixNano()),
 					Kind:      TimelineKindContextEvent,
@@ -675,9 +587,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// Handle knowledge_injected event — 展示对话前知识检索注入概要
-	// Content 字段（由 injector.publishInjectedSummary 构建，进程内传递无序列化）：
-	// agent(string) / query(string,已截断) / hits(int) / max_score(float64) / titles([]string,前5条)
 	if msg.event.Type == "knowledge_injected" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 			agent := ""
@@ -713,11 +622,9 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				}
 				entry.content = content
 			} else {
-				// 无命中时低调展示：标记 verbose，默认隐藏，减少噪音
 				entry.isVerbose = true
 				entry.content = fmt.Sprintf("🔍 知识检索无命中[%s] | query=%s", agent, query)
 			}
-			// Add timeline entry for knowledge injection
 			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
 				ID:        fmt.Sprintf("knowledge_%d", msg.event.Timestamp.UnixNano()),
 				Kind:      TimelineKindContextEvent,
@@ -734,10 +641,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// ── Context token 瞬时值追踪（守卫式 hook）──
-	// 三种压缩事件均在 LLM 调用前发布，Content 含 compressed_tokens（压缩后上下文估算，
-	// 来自 estimateMessagesTokens(messages)）。在进入各事件的 timeline 处理分支之前，
-	// 先行覆盖式更新 currentAgentRunTokens.ContextTokens，与各分支的 return 语义完全解耦。
 	if msg.event.Type == "context_compressed" ||
 		msg.event.Type == "context_emergency_compressed" ||
 		msg.event.Type == "context_ultimate_compressed" {
@@ -748,7 +651,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Handle context_compressed event — log it in the TUI timeline
 	if msg.event.Type == "context_compressed" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 			origTokens := parseEventInt(contentMap["original_tokens"], 0)
@@ -778,11 +680,11 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			}
 			detail := strings.Join(detailLines, "\n")
 			entry := logEntry{
-				timestamp:   msg.event.Timestamp,
-				eventType:   "context_compressed",
-				from:        msg.event.From,
-				content:     fmt.Sprintf("🧠 Context compressed: %d → %d tokens (%.1f%%)", origTokens, compTokens, savedPercent),
-				isVerbose:   true,
+				timestamp: msg.event.Timestamp,
+				eventType: "context_compressed",
+				from:      msg.event.From,
+				content:   fmt.Sprintf("🧠 Context compressed: %d → %d tokens (%.1f%%)", origTokens, compTokens, savedPercent),
+				isVerbose: true,
 			}
 			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
 				ID:        fmt.Sprintf("ctx_comp_%d", msg.event.Timestamp.UnixNano()),
@@ -800,8 +702,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// Handle context_emergency_compressed event — log it in the TUI timeline.
-	// 紧急压缩（第二级）：常规 tool 结果截断后仍超限时触发，极致压缩上下文继续任务。
 	if msg.event.Type == "context_emergency_compressed" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 			origTokens := parseEventInt(contentMap["original_tokens"], 0)
@@ -831,8 +731,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// Handle context_ultimate_compressed event — log it in the TUI timeline.
-	// 终极压缩（第三级，thinklink 重建）：两级常规压缩后仍超限时触发。
 	if msg.event.Type == "context_ultimate_compressed" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 			origTokens := parseEventInt(contentMap["original_tokens"], 0)
@@ -872,8 +770,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// Handle thinklink_entry event — collect user inputs & thought/plan blocks
-	// for the thinklink fullscreen view (ctrl+g)。不进入主日志流。
 	if msg.event.Type == "thinklink_entry" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 			e := ThinklinkEntry{
@@ -881,7 +777,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				Kind:    stringFromEventMap(contentMap, "kind"),
 				Content: stringFromEventMap(contentMap, "content"),
 			}
-			// timestamp: RFC3339Nano 字符串，解析失败回退事件时间
 			if tsStr, ok := contentMap["timestamp"].(string); ok {
 				if parsed, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {
 					e.Timestamp = parsed
@@ -894,7 +789,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			e.Step = parseEventInt(contentMap["step"], 0)
 
 			if e.Content == "" {
-				// 缺少 content 的载荷无法展示，丢弃并记录调试日志
 				slog.Debug("TUI: dropped malformed thinklink_entry event",
 					"id", e.ID, "kind", e.Kind)
 			} else {
@@ -906,7 +800,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
-	// ── Tool call result: update the matching running entry ──
 	if msg.event.Type == "tool_call_result" {
 		callID := getToolCallIDFromEventContent(msg.event.Content)
 		if callID != "" {
@@ -919,10 +812,8 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 					Content:    resultContent,
 					IsError:    isError,
 				})
-				// Update timeline entry for tool result (search both parent and SubEntries)
 				for i := len(m.timelineEntries) - 1; i >= 0; i-- {
 					entry := m.timelineEntries[i]
-					// Check parent entry
 					if entry.ID == callID && entry.Kind == TimelineKindTool {
 						entry.Status = ToolStatusSuccess
 						entry.Duration = time.Since(entry.Timestamp)
@@ -933,7 +824,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 						entry.Detail = extractToolSummary(toolEntry.Call.Name, toolEntry.Call.Arguments)
 						break
 					}
-					// Check SubEntries for merged tools
 					found := false
 					for j := range entry.SubEntries {
 						if entry.SubEntries[j].ID == callID {
@@ -953,15 +843,13 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 				m.timelineCacheKey = ""
-				// Update the log entry content and diff for backward compat
 				if idx := findLogEntryByToolCallID(m.logEntries, callID); idx >= 0 {
 					le := &m.logEntries[idx]
 					le.content = resultContent
 					le.isToolRunning = false
-					// 提取 edit_file 的 diff 内容以便在消息面板中展示
 					le.diffText = extractDiffFromResult(resultContent)
-					le.clearRenderCache() // invalidate cache
-					m.markEntryDirty(idx) // 细粒度：仅标记此条目脏
+					le.clearRenderCache()
+					m.markEntryDirty(idx)
 					m.viewportDirty = true
 				}
 				delete(m.toolCallEntries, callID)
@@ -971,8 +859,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				return m, listenForEvents(m.eventCh)
 			}
 		}
-		// No matching start entry by callID — try matching by tool name
-		// as a fallback for the most recent running entry of the same type.
 		toolName := getToolNameFromEventContent(msg.event.Content)
 		if toolName != "" {
 			if matchedID, matchedEntry := findRunningEntryByName(m.toolCallEntries, toolName); matchedEntry != nil {
@@ -984,10 +870,8 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 					Content:    resultContent,
 					IsError:    isError,
 				})
-				// Update timeline entry for tool result (search both parent and SubEntries)
 				for i := len(m.timelineEntries) - 1; i >= 0; i-- {
 					entry := m.timelineEntries[i]
-					// Check parent entry
 					if entry.ID == matchedID && entry.Kind == TimelineKindTool {
 						entry.Status = ToolStatusSuccess
 						entry.Duration = time.Since(entry.Timestamp)
@@ -998,7 +882,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 						entry.Detail = extractToolSummary(matchedEntry.Call.Name, matchedEntry.Call.Arguments)
 						break
 					}
-					// Check SubEntries for merged tools
 					found := false
 					for j := range entry.SubEntries {
 						if entry.SubEntries[j].ID == matchedID {
@@ -1022,10 +905,9 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 					le := &m.logEntries[idx]
 					le.content = resultContent
 					le.isToolRunning = false
-					// 提取 edit_file 的 diff 内容以便在消息面板中展示
 					le.diffText = extractDiffFromResult(resultContent)
 					le.clearRenderCache()
-					m.markEntryDirty(idx) // 细粒度：仅标记此条目脏
+					m.markEntryDirty(idx)
 					m.viewportDirty = true
 				}
 				delete(m.toolCallEntries, matchedID)
@@ -1035,27 +917,22 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				return m, listenForEvents(m.eventCh)
 			}
 		}
-		// No matching start entry — add as standalone
 	}
 
 	entry := formatEventAsEntry(msg.event)
 
-	// Track running tool calls for status transition
 	if entry.eventType == "tool_call_start" && entry.toolCallID != "" {
 		m.toolCallEntries[entry.toolCallID] = entry.toolEntry
 		m.activeAnim = true
 	}
 
-	// Route tool_call_start to timeline
 	if entry.eventType == "tool_call_start" && entry.toolCallID != "" && entry.toolEntry != nil {
-		// 检查是否可与最后一个 timeline 条目合并
 		merged := false
 		if len(m.timelineEntries) > 0 {
 			lastEntry := m.timelineEntries[len(m.timelineEntries)-1]
 			if lastEntry.Kind == TimelineKindTool &&
 				lastEntry.Name == entry.toolName &&
 				IsMergeableTool(entry.toolName) {
-				// 合併：將新調用添加為子條目
 				lastEntry.SubEntries = append(lastEntry.SubEntries, &TimelineEntry{
 					ID:        entry.toolCallID,
 					Kind:      TimelineKindTool,
@@ -1064,8 +941,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 					Name:      entry.toolName,
 					Detail:    entry.executionSummary,
 				})
-				// 更新父條目的 Duration 為從第一個到最新一個的時間跨度
-				// 這樣能反映整體合併組的時間範圍
 				merged = true
 			}
 		}
@@ -1089,31 +964,24 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	return m, listenForEvents(m.eventCh)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// handleTaskCompleteMsg — 原 Update case taskCompleteMsg 提取
-// ─────────────────────────────────────────────────────────────────────────────
-
 func (m *model) handleTaskCompleteMsg(msg taskCompleteMsg) (tea.Model, tea.Cmd) {
 	m.taskRunning = false
-	m.viewportDirty = true // 新增：确保最后一次内容更新被渲染
+	m.viewportDirty = true
 	m.updateActiveAnim()
 	if m.anim != nil {
 		m.anim.Reset()
 	}
 	m.currentAgent = ""
-	m.dialogStack.CloseDialog("confirm_dialog") // safety: close any stale dialog
+	m.dialogStack.CloseDialog("confirm_dialog")
 	m.invalidateFooterCache()
 
-	// 如果是用户主动取消，不显示错误弹窗或完成弹窗
 	if m.taskCancelled {
 		m.taskCancelled = false
-		// 保留 currentTask 和其 Memory，以便用户取消后可以继续对话
 		if m.currentTask != nil {
-			// 重置 Context（因为旧的已被取消），以便后续 follow-up 使用
 			newCtx, newCancel := context.WithCancel(context.Background())
 			m.currentTask.Context = newCtx
 			m.currentTask.CancelFunc = newCancel
-			m.currentTask.Status = "finished" // 标记为已完成
+			m.currentTask.Status = "finished"
 		}
 		return m, nil
 	}
@@ -1127,19 +995,15 @@ func (m *model) handleTaskCompleteMsg(msg taskCompleteMsg) (tea.Model, tea.Cmd) 
 			content:   msg.err.Error(),
 		})
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-		// Show error dialog via DialogStack
 		d := components.NewTaskCompleteDialog(false, "❌ Task Failed\n\n"+msg.err.Error(), components.Language(m.currentLang))
 		d.SetBounds(m.termWidth, m.termHeight)
 		m.dialogStack.Push(d)
 	} else {
-		// 保留 currentTask 以支持任务完成后继续对话
-		// m.currentTask = nil  // 不再清除
 		d := components.NewTaskCompleteDialog(true, "All tasks have been finished.", components.Language(m.currentLang))
 		d.SetBounds(m.termWidth, m.termHeight)
 		m.dialogStack.Push(d)
 	}
 
-	// 清空编辑器输入框
 	m.input.SetValue("")
 	return m, nil
 }

@@ -17,32 +17,24 @@ import (
 	"log/slog"
 )
 
-// llmLogger is a separate logger for LLM responses
 var llmLogger *slog.Logger
 var llmLogFile *os.File
 
-// llmErrorLogger is a separate logger for LLM errors only
 var llmErrorLogger *slog.Logger
 var llmErrorLogFile *os.File
 
-// getLLMLogFile returns the path for the current LLM log file,
-// routing to the task-specific directory if a taskID is set.
 func getLLMLogFile() string {
 	logDir := logging.GetTaskLogDir(logging.GetCurrentTaskID())
 	dateStr := time.Now().Format("2006-01-02")
 	return filepath.Join(logDir, fmt.Sprintf("llm-%s.log", dateStr))
 }
 
-// getLLMErrorLogFile returns the path for the current LLM error log file,
-// routing to the task-specific directory if a taskID is set.
 func getLLMErrorLogFile() string {
 	logDir := logging.GetTaskLogDir(logging.GetCurrentTaskID())
 	dateStr := time.Now().Format("2006-01-02")
 	return filepath.Join(logDir, fmt.Sprintf("llm-error-%s.log", dateStr))
 }
 
-// ensureLLMLogFile checks if the current llmLogFile matches getLLMLogFile().
-// If not (e.g., taskID changed), closes the old file and opens a new one.
 func ensureLLMLogFile() {
 	currentPath := ""
 	if llmLogFile != nil {
@@ -65,7 +57,6 @@ func ensureLLMLogFile() {
 			llmLogFile = nil
 			return
 		}
-		// Rebuild the logger with the new file
 		level := slog.LevelInfo
 		if os.Getenv("LLM_DEBUG_LOG") == "1" {
 			level = slog.LevelDebug
@@ -75,8 +66,6 @@ func ensureLLMLogFile() {
 	}
 }
 
-// ensureLLMErrorLogFile checks if the current llmErrorLogFile matches getLLMErrorLogFile().
-// If not (e.g., taskID changed), closes the old file and opens a new one.
 func ensureLLMErrorLogFile() {
 	currentPath := ""
 	if llmErrorLogFile != nil {
@@ -104,7 +93,6 @@ func ensureLLMErrorLogFile() {
 	}
 }
 
-// initLLMLogger initializes the LLM logger with dynamic task-aware path
 func initLLMLogger() error {
 	if err := os.MkdirAll(logging.GetTaskLogDir(logging.GetCurrentTaskID()), 0755); err != nil {
 		return util.WrapError(context.Background(), err, "failed to create logs directory")
@@ -117,7 +105,6 @@ func initLLMLogger() error {
 		return util.WrapError(context.Background(), err, "failed to open LLM log file")
 	}
 
-	// Default level is INFO; upgrade to DEBUG if LLM_DEBUG_LOG=1 is set
 	level := slog.LevelInfo
 	if os.Getenv("LLM_DEBUG_LOG") == "1" {
 		level = slog.LevelDebug
@@ -128,15 +115,12 @@ func initLLMLogger() error {
 	})
 	llmLogger = slog.New(handler)
 
-	// 初始化 LLM 错误专用日志（失败不影响主流程）
 	if err := initLLMErrorLogger(); err != nil {
 		slog.Warn("Failed to initialize LLM error logger, LLM errors will fallback", "error", err)
 	}
 	return nil
 }
 
-// initLLMErrorLogger 初始化 LLM 错误专用日志文件 llm-error-YYYY-MM-DD.log。
-// 失败时降级到 llmLogger，保证主流程不受影响。
 func initLLMErrorLogger() error {
 	if err := os.MkdirAll(logging.GetTaskLogDir(logging.GetCurrentTaskID()), 0755); err != nil {
 		return util.WrapError(context.Background(), err, "failed to create logs directory for LLM error")
@@ -156,7 +140,6 @@ func initLLMErrorLogger() error {
 	return nil
 }
 
-// LogLLMContent writes a raw string to the LLM log file with a header
 func LogLLMContent(title string, content string) {
 	ensureLLMLogFile()
 	if llmLogFile == nil {
@@ -170,35 +153,27 @@ func LogLLMContent(title string, content string) {
 	}
 }
 
-// LogLLMError 将 LLM 相关错误记录到独立的 llm-error-*.log 文件。
-// 若错误日志 logger 未初始化（降级场景），自动回退到 llmLogger。
-// 供 llm 包内部及 agents 包（如 executor.go）调用。
 func LogLLMError(msg string, args ...any) {
 	ensureLLMErrorLogFile()
 	if llmErrorLogger != nil {
 		llmErrorLogger.Error(msg, args...)
 		return
 	}
-	// 降级路径
 	if llmLogger != nil {
 		llmLogger.Error(msg, args...)
 		return
 	}
-	// 最终兜底
 	slog.Error(msg, args...)
 }
 
-// LoggingEngine wraps an Engine to add logging
 type LoggingEngine struct {
 	inner Engine
 }
 
-// NewLoggingEngine creates a LoggingEngine that wraps the given inner engine
 func NewLoggingEngine(inner Engine) *LoggingEngine {
 	return &LoggingEngine{inner: inner}
 }
 
-// CloseIdleConnections delegates to the wrapped inner engine.
 func (l *LoggingEngine) CloseIdleConnections() {
 	if l.inner != nil {
 		l.inner.CloseIdleConnections()
@@ -206,7 +181,6 @@ func (l *LoggingEngine) CloseIdleConnections() {
 }
 
 func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
-	// 增量输出：只记录最后一条消息，不重复记录全部历史
 	if len(messages) > 0 {
 		lastMsg := messages[len(messages)-1]
 		if lastMsgJSON, err := json.MarshalIndent(lastMsg, "", "  "); err == nil {
@@ -234,36 +208,25 @@ func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message,
 		LogLLMError("LLM GenerateContent error",
 			"error", err,
 		)
-		// 在 llm-*.log中也保留原始错误内容，便于排查请求上下文
 		LogLLMContent("LLM Error", err.Error())
 	}
 	return resp, err
 }
 
-// Model delegates to the inner engine.
 func (l *LoggingEngine) Model() string {
 	return l.inner.Model()
 }
 
-// Client represents an LLM client with support for per-agent and per-tool engines.
-// Engines are lazily created and cached by provider name.
 type Client struct {
-	Engine        Engine // default engine (backward-compatible)
-	Config        *config.Config
-	// ConfigPath 是配置文件（config.toml）的路径，用于把 provider 选择
-	// 持久化写回配置文件；未赋值时持久化请求返回明确错误。
-	ConfigPath  string
-	engines       map[string]Engine // cached engines keyed by provider name
-	mu            sync.RWMutex
-	// agentProviderOverrides 存储运行时 per-agent provider 覆盖
-	// 优先链：runtime_override > agents.<agent> > agents.default > global
-	agentProviderOverrides map[string]string // agentName → providerName
-	// toolProviderOverrides 存储运行时 per-tool provider 覆盖
-	// 优先链：runtime_override > tools.<tool> > tools.default > agent > global
-	toolProviderOverrides map[string]string // toolName → providerName
+	Engine                 Engine
+	Config                 *config.Config
+	ConfigPath             string
+	engines                map[string]Engine
+	mu                     sync.RWMutex
+	agentProviderOverrides map[string]string
+	toolProviderOverrides  map[string]string
 }
 
-// LoadConfig loads configuration from a TOML file using the multi-provider structure
 func LoadConfig(configPath string) (*config.Config, error) {
 	slog.Debug("Decoding TOML configuration file", "config_path", configPath)
 
@@ -292,8 +255,6 @@ func LoadConfig(configPath string) (*config.Config, error) {
 	return config, nil
 }
 
-// NewEngine 根据 provider 的 API 格式创建合适的引擎实现。
-// 支持 "openai"（默认）和 "anthropic" 两种格式。
 func NewEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) Engine {
 	if provider.IsAnthropic() {
 		return NewAnthropicEngine(provider.APIBaseURL, provider.APIKey, provider.Model, llmCfg, provider.ReasoningEffort)
@@ -301,8 +262,6 @@ func NewEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) Engine 
 	return NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, llmCfg, provider.ReasoningEffort)
 }
 
-// NewClient creates a new LLM client from config.
-// The default engine is resolved using the full priority chain.
 func NewClient(config *config.Config) (*Client, error) {
 	ctx := context.Background()
 
@@ -311,7 +270,6 @@ func NewClient(config *config.Config) (*Client, error) {
 		return nil, util.WrapError(ctx, err, "failed to initialize LLM logger")
 	}
 
-	// Resolve the default (global) provider
 	defaultProvider, err := config.ResolveProvider("", "")
 	if err != nil {
 		slog.Error("Failed to resolve default provider", "error", err)
@@ -339,14 +297,11 @@ func NewClient(config *config.Config) (*Client, error) {
 	}, nil
 }
 
-// ResolveProviderName resolves the provider name using the full priority chain.
-// Exported for logging convenience.
 func (c *Client) ResolveProviderName(agentName, toolName string) string {
 	provider, err := c.Config.ResolveProvider(agentName, toolName)
 	if err != nil {
 		return "unknown"
 	}
-	// Find the provider key from the config
 	for name, p := range c.Config.Global.LLM.Providers {
 		if p.Model == provider.Model && p.APIBaseURL == provider.APIBaseURL {
 			return name
@@ -355,7 +310,6 @@ func (c *Client) ResolveProviderName(agentName, toolName string) string {
 	return "unknown"
 }
 
-// getOrCreateEngine returns a cached engine for the given provider, or creates one.
 func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName string) Engine {
 	c.mu.RLock()
 	if eng, ok := c.engines[providerName]; ok {
@@ -366,7 +320,6 @@ func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// Double-check after acquiring write lock
 	if eng, ok := c.engines[providerName]; ok {
 		return eng
 	}
@@ -375,7 +328,6 @@ func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName
 	engine := NewEngine(provider, c.Config.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
 
-	// 检查是否需要包裹FallbackEngine
 	var finalEngine Engine = loggingEngine
 	if c.Config.LLM.EnableFallback && len(provider.FallbackProviders) > 0 {
 		slog.Info("Fallback enabled, creating FallbackEngine", "provider", providerName)
@@ -392,15 +344,11 @@ func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName
 	return finalEngine
 }
 
-// GetEngine returns the default (global) engine.
 func (c *Client) GetEngine() Engine {
 	return c.Engine
 }
 
-// SetAgentProvider 为指定 agent 设置运行时 provider 覆盖
-// 该方法设置的覆盖优先于配置文件中的 agents.<agent>.use_provider
 func (c *Client) SetAgentProvider(agentName, providerName string) error {
-	// 验证 provider 是否存在
 	_, err := c.Config.GetProvider(providerName)
 	if err != nil {
 		return fmt.Errorf("SetAgentProvider: %w", err)
@@ -415,14 +363,12 @@ func (c *Client) SetAgentProvider(agentName, providerName string) error {
 	return nil
 }
 
-// ClearAgentProvider 清除指定 agent 的运行时 provider 覆盖
 func (c *Client) ClearAgentProvider(agentName string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.agentProviderOverrides, agentName)
 }
 
-// GetAllAgentOverrides 返回所有运行时 agent provider 覆盖的副本
 func (c *Client) GetAllAgentOverrides() map[string]string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -433,10 +379,7 @@ func (c *Client) GetAllAgentOverrides() map[string]string {
 	return result
 }
 
-// GetAgentProvider 返回指定 agent 当前生效的 provider 名称和模型名
-// 优先返回运行时覆盖，其次返回配置中的解析结果
 func (c *Client) GetAgentProvider(agentName string) (providerName string, modelName string) {
-	// 1. 检查运行时覆盖
 	c.mu.RLock()
 	override, hasOverride := c.agentProviderOverrides[agentName]
 	c.mu.RUnlock()
@@ -448,7 +391,6 @@ func (c *Client) GetAgentProvider(agentName string) (providerName string, modelN
 		}
 	}
 
-	// 2. 回退到配置解析
 	provider, err := c.Config.ResolveProvider(agentName, "")
 	if err != nil {
 		return "", ""
@@ -461,10 +403,7 @@ func (c *Client) GetAgentProvider(agentName string) (providerName string, modelN
 	return "unknown", provider.Model
 }
 
-// SetToolProvider 为指定工具设置运行时 provider 覆盖
-// 该方法设置的覆盖优先于配置文件中的 tools.<tool>.use_provider
 func (c *Client) SetToolProvider(toolName, providerName string) error {
-	// 验证 provider 是否存在
 	if _, err := c.Config.GetProvider(providerName); err != nil {
 		return fmt.Errorf("SetToolProvider: %w", err)
 	}
@@ -478,10 +417,7 @@ func (c *Client) SetToolProvider(toolName, providerName string) error {
 	return nil
 }
 
-// GetToolProvider 返回指定工具当前生效的 provider 名称和模型名
-// 优先返回运行时覆盖，其次返回配置中的解析结果
 func (c *Client) GetToolProvider(toolName string) (providerName string, modelName string, hasOverride bool) {
-	// 1. 检查运行时覆盖
 	c.mu.RLock()
 	override, hasOverride := c.toolProviderOverrides[toolName]
 	c.mu.RUnlock()
@@ -492,14 +428,10 @@ func (c *Client) GetToolProvider(toolName string) (providerName string, modelNam
 		}
 	}
 
-	// 2. 回退到配置解析
 	return "", "", false
 }
 
-// GetToolProviderInfo 返回指定工具当前生效的 provider 名称和模型名
-// 优先返回运行时覆盖，其次返回配置中的解析结果
 func (c *Client) GetToolProviderInfo(toolName string) (providerName string, modelName string) {
-	// 1. 检查运行时覆盖
 	c.mu.RLock()
 	override, hasOverride := c.toolProviderOverrides[toolName]
 	c.mu.RUnlock()
@@ -510,7 +442,6 @@ func (c *Client) GetToolProviderInfo(toolName string) (providerName string, mode
 		}
 	}
 
-	// 2. 回退到配置解析
 	provider, err := c.Config.ResolveProvider("", toolName)
 	if err != nil {
 		return "", ""
@@ -523,16 +454,12 @@ func (c *Client) GetToolProviderInfo(toolName string) (providerName string, mode
 	return "unknown", provider.Model
 }
 
-// ClearToolProvider 清除指定工具的运行时 provider 覆盖
 func (c *Client) ClearToolProvider(toolName string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.toolProviderOverrides, toolName)
 }
 
-// PersistProviderChoice 将 provider 选择持久化写入 config.toml（空格确认为永久切换时调用）。
-// kind: "global"（全局默认，name 为空）| "agent"（name 为 agent 名）| "tool"（name 为工具名）。
-// 仅写文件，不改动内存状态——内存切换由 SwitchProvider/SetAgentProvider/SetToolProvider 负责。
 func (c *Client) PersistProviderChoice(kind, name, provider string) error {
 	if c.ConfigPath == "" {
 		return fmt.Errorf("PersistProviderChoice: config path is empty (set Client.ConfigPath to enable persistence)")
@@ -564,14 +491,7 @@ func (c *Client) PersistProviderChoice(kind, name, provider string) error {
 	return nil
 }
 
-// GetAgentEngine resolves and returns the engine for a specific agent.
-// Priority chain (highest first):
-//  1. Runtime per-agent override (set via SetAgentProvider)
-//  2. agents.<agent>.use_provider (config)
-//  3. agents.llm.use_provider (config, default for all agents)
-//  4. global.llm.use_provider (config, global default)
 func (c *Client) GetAgentEngine(agentName string) Engine {
-	// 1. Check runtime per-agent override (highest priority for agents)
 	c.mu.RLock()
 	override, hasOverride := c.agentProviderOverrides[agentName]
 	c.mu.RUnlock()
@@ -585,7 +505,6 @@ func (c *Client) GetAgentEngine(agentName string) Engine {
 			"agent", agentName, "provider", override, "error", err)
 	}
 
-	// 2. Fall back to config-based resolution (agents.<agent> > agents.default > global)
 	provider, err := c.Config.ResolveProvider(agentName, "")
 	if err != nil {
 		slog.Warn("Failed to resolve agent provider, falling back to default", "agent", agentName, "error", err)
@@ -597,7 +516,6 @@ func (c *Client) GetAgentEngine(agentName string) Engine {
 		return c.Engine
 	}
 
-	// If resolved provider matches the default engine's provider, reuse default
 	defaultProvider, defaultErr := c.Config.ResolveProvider("", "")
 	if defaultErr == nil && providersEqual(provider, defaultProvider) {
 		return c.Engine
@@ -606,15 +524,7 @@ func (c *Client) GetAgentEngine(agentName string) Engine {
 	return c.getOrCreateEngine(provider, providerName)
 }
 
-// GetToolEngine resolves and returns the engine for a specific tool.
-// Priority chain (highest first):
-//  1. Runtime per-tool override (set via SetToolProvider)
-//  2. tools.<tool>.use_provider (config)
-//  3. tools.llm.use_provider (config, default for all tools)
-//  4. agents.llm.<agent>.use_provider / agents.llm.use_provider (config)
-//  5. global.llm.use_provider (config)
 func (c *Client) GetToolEngine(toolName string) Engine {
-	// 1. Check runtime per-tool override (highest priority for tools)
 	c.mu.RLock()
 	override, hasOverride := c.toolProviderOverrides[toolName]
 	c.mu.RUnlock()
@@ -628,7 +538,6 @@ func (c *Client) GetToolEngine(toolName string) Engine {
 			"tool", toolName, "provider", override, "error", err)
 	}
 
-	// 2+. Fall back to config-based resolution
 	provider, err := c.Config.ResolveProvider("", toolName)
 	if err != nil {
 		slog.Warn("Failed to resolve tool provider, falling back to default", "tool", toolName, "error", err)
@@ -640,7 +549,6 @@ func (c *Client) GetToolEngine(toolName string) Engine {
 		return c.Engine
 	}
 
-	// If resolved provider matches the default engine's provider, reuse default
 	defaultProvider, defaultErr := c.Config.ResolveProvider("", "")
 	if defaultErr == nil && providersEqual(provider, defaultProvider) {
 		return c.Engine
@@ -649,7 +557,6 @@ func (c *Client) GetToolEngine(toolName string) Engine {
 	return c.getOrCreateEngine(provider, providerName)
 }
 
-// resolveProviderName finds the provider key in config for a given ProviderConfig.
 func (c *Client) resolveProviderName(provider *config.ProviderConfig) string {
 	for name, p := range c.Config.Global.LLM.Providers {
 		if p.APIBaseURL == provider.APIBaseURL && p.Model == provider.Model {
@@ -659,7 +566,6 @@ func (c *Client) resolveProviderName(provider *config.ProviderConfig) string {
 	return ""
 }
 
-// providersEqual checks if two provider configs refer to the same provider.
 func providersEqual(a, b *config.ProviderConfig) bool {
 	if a == nil || b == nil {
 		return false
@@ -667,7 +573,6 @@ func providersEqual(a, b *config.ProviderConfig) bool {
 	return a.APIBaseURL == b.APIBaseURL && a.APIKey == b.APIKey && a.Model == b.Model
 }
 
-// StreamDebugHandler prints each stream output text to stdout and logs to LLM log file
 func StreamDebugHandler(ctx context.Context, chunk []byte) error {
 	if len(chunk) > 0 {
 		fmt.Print(string(chunk))
@@ -677,7 +582,6 @@ func StreamDebugHandler(ctx context.Context, chunk []byte) error {
 	return nil
 }
 
-// GenerateCompletionWithMemory generates a completion using the provided memory (conversation history)
 func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []Message, streamHandler func(context.Context, []byte) error) (string, error) {
 	slog.Debug("Starting completion generation with memory",
 		"memory_length", len(memory),
@@ -758,7 +662,6 @@ func (c *Client) GenerateCompletionWithMemory(ctx context.Context, memory []Mess
 	return "", nil
 }
 
-// extractHTTPResponse 尝试从错误中提取HTTP响应内容
 func extractHTTPResponse(err error) string {
 	if err == nil {
 		return ""
@@ -767,10 +670,6 @@ func extractHTTPResponse(err error) string {
 	return fmt.Sprintf("Error: %s", err.Error())
 }
 
-// SwitchProvider dynamically switches the default provider at runtime.
-// It creates a new engine for the given provider name and sets it as the default.
-// It also clears the cached engines map so that GetAgentEngine/GetToolEngine
-// will recreate engines with the new provider on next call.
 func (c *Client) SwitchProvider(providerName string) error {
 	provider, err := c.Config.GetProvider(providerName)
 	if err != nil {
@@ -789,7 +688,6 @@ func (c *Client) SwitchProvider(providerName string) error {
 	engine := NewEngine(provider, c.Config.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
 
-	// Clear all cached engines so they'll be recreated on next GetAgentEngine/GetToolEngine call
 	c.mu.Lock()
 	c.Engine = loggingEngine
 	c.engines = make(map[string]Engine)
@@ -798,13 +696,11 @@ func (c *Client) SwitchProvider(providerName string) error {
 	return nil
 }
 
-// GetCurrentProviderInfo returns the current default provider name and model name.
 func (c *Client) GetCurrentProviderInfo() (providerName string, modelName string) {
 	provider, err := c.Config.ResolveProvider("", "")
 	if err != nil {
 		return "unknown", "unknown"
 	}
-	// Find the provider name that matches this config
 	for name, p := range c.Config.Global.LLM.Providers {
 		if p.APIBaseURL == provider.APIBaseURL && p.Model == provider.Model {
 			return name, provider.Model

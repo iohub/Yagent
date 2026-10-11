@@ -15,21 +15,17 @@ import (
 	"yagent/internal/tools"
 )
 
-// ─── Full-Chain Mock LLM Engine ──────────────────────────────────────────────
-
 type fullChainCallLog struct {
 	Messages []llm.Message
 	Tools    []llm.ToolDef
 }
 
-// fullChainMockLLM is a thread-safe mock LLM engine that returns pre-queued responses
-// in order, recording each call for verification.
 type fullChainMockLLM struct {
-	mu             sync.Mutex
-	responses      []*llm.Response
-	callCount      int
-	callLog        []fullChainCallLog
-	defaultOnExhaust *llm.Response // returned when queue is exhausted (nil=error)
+	mu               sync.Mutex
+	responses        []*llm.Response
+	callCount        int
+	callLog          []fullChainCallLog
+	defaultOnExhaust *llm.Response
 }
 
 func (m *fullChainMockLLM) GenerateContent(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, opts *llm.CallOptions) (*llm.Response, error) {
@@ -46,7 +42,6 @@ func (m *fullChainMockLLM) GenerateContent(ctx context.Context, messages []llm.M
 		return m.responses[m.callCount-1], nil
 	}
 
-	// Queue exhausted
 	if m.defaultOnExhaust != nil {
 		return m.defaultOnExhaust, nil
 	}
@@ -58,26 +53,20 @@ func (m *fullChainMockLLM) Model() string {
 }
 
 func (m *fullChainMockLLM) CloseIdleConnections() {
-	// no-op for mock
 }
 
-// CallCount returns the number of times GenerateContent was called.
 func (m *fullChainMockLLM) CallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.callCount
 }
 
-// SetDefaultOnExhaust sets a response to return when the queue is exhausted.
 func (m *fullChainMockLLM) SetDefaultOnExhaust(resp *llm.Response) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.defaultOnExhaust = resp
 }
 
-// ─── Helper Functions to Build Mock Responses ─────────────────────────────────
-
-// makeToolCallResponse creates an LLM Response containing a single tool call.
 func makeToolCallResponse(toolName string, args string) *llm.Response {
 	return &llm.Response{
 		Choices: []llm.Choice{{
@@ -93,7 +82,6 @@ func makeToolCallResponse(toolName string, args string) *llm.Response {
 	}
 }
 
-// makeTextThenExitResponse creates an LLM Response with text + agent_exit tool call.
 func makeTextThenExitResponse(content string) *llm.Response {
 	return &llm.Response{
 		Choices: []llm.Choice{{
@@ -110,8 +98,6 @@ func makeTextThenExitResponse(content string) *llm.Response {
 	}
 }
 
-// ─── Director Factory ────────────────────────────────────────────────────────
-
 func newFullChainDirector(t *testing.T, workDir string, mock *fullChainMockLLM) *DirectorAgent {
 	t.Helper()
 
@@ -121,7 +107,6 @@ func newFullChainDirector(t *testing.T, workDir string, mock *fullChainMockLLM) 
 	publisher := messaging.NewMessagePublisher(nil)
 	gctx.Publisher = publisher
 
-	// 窄依赖:与生产 app 装配语义一致(env 动态视图、Director/Coding 共享 RepoContextStore)
 	env := globalctx.NewEnvView(gctx)
 	repoCtx := globalctx.NewRepoContextStore()
 
@@ -132,47 +117,43 @@ func newFullChainDirector(t *testing.T, workDir string, mock *fullChainMockLLM) 
 	devopsAgent := NewDevOpsAgent(gctx, publisher, env, gctx.FileOps, gctx.SearchOps, gctx.SysOps, gctx.FlowOps, gctx.ThinkingTool, gctx.MicroAgentTool, gctx.Guard, config.EnhancedCommanderConfig{}, mock, 10)
 
 	director := NewDirectorAgent(
-		gctx,              // PromptFormatter
-		publisher,         // EventBus
-		env,               // Env
-		gctx.FileOps,      // FileToolSet
-		gctx.SearchOps,    // SearchToolSet
-		gctx.SysOps,       // SysToolSet
-		gctx.ReplaceTool,  // EditToolSet
-		gctx.FlowOps,      // FlowToolSet
-		gctx.ThinkingTool, // Thinker
+		gctx,
+		publisher,
+		env,
+		gctx.FileOps,
+		gctx.SearchOps,
+		gctx.SysOps,
+		gctx.ReplaceTool,
+		gctx.FlowOps,
+		gctx.ThinkingTool,
 		gctx.MicroAgentTool,
 		gctx.DeepThinkingTool,
-		gctx.Guard,        // *tools.WorkspaceGuard
-		repoCtx,           // RepoContextStore: delegate_repo 结果写入
-		nil,               // KnowledgeProvider: 测试未用
-		nil,               // *mcp.MCPClient: 测试未用
-		mock,              // engine
+		gctx.Guard,
+		repoCtx,
+		nil,
+		nil,
+		mock,
 		repoAgent,
 		codingAgent,
 		chatAgent,
 		metaAgent,
 		devopsAgent,
-		nil, // browser
-		10,  // maxSteps
-		nil, // disabledAgents
-		3,   // metaRetryCount
+		nil,
+		10,
+		nil,
+		3,
 		config.Config{},
-		nil, // llmClient
+		nil,
 	)
 
 	return director
 }
 
-// safeExitResponse is a generic fallback response used when the mock queue is exhausted.
 var safeExitResponse = makeTextThenExitResponse("重试安全响应")
-
-// ─── Test 1: Direct Tool Call ────────────────────────────────────────────────
 
 func TestFullChain_DirectToolCall(t *testing.T) {
 	t.Parallel()
 
-	// 1. Create temp working directory with test files
 	workDir := t.TempDir()
 	if err := writeFile(t, workDir, "main.go", "package main\n\nfunc main() {}\n"); err != nil {
 		t.Fatalf("failed to create main.go: %v", err)
@@ -181,9 +162,6 @@ func TestFullChain_DirectToolCall(t *testing.T) {
 		t.Fatalf("failed to create README.md: %v", err)
 	}
 
-	// 2. Create mock LLM with response queue:
-	//    Call 1: list_dir tool call
-	//    Call 2: text + agent_exit
 	mock := &fullChainMockLLM{
 		responses: []*llm.Response{
 			makeToolCallResponse("list_dir", `{"dir_path": ".", "max_depth": 3}`),
@@ -191,10 +169,8 @@ func TestFullChain_DirectToolCall(t *testing.T) {
 		},
 	}
 
-	// 3. Create DirectorAgent
 	director := newFullChainDirector(t, workDir, mock)
 
-	// 4. Execute
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -204,7 +180,6 @@ func TestFullChain_DirectToolCall(t *testing.T) {
 	}
 	result := agentResult.Text
 
-	// 5. Assert
 	t.Logf("Director returned result: %s", result)
 
 	if mock.CallCount() != 2 {
@@ -216,42 +191,26 @@ func TestFullChain_DirectToolCall(t *testing.T) {
 	}
 }
 
-// ─── Test 2: Delegate to RepoAgent ───────────────────────────────────────────
-
 func TestFullChain_DelegateToRepoAgent(t *testing.T) {
 	t.Parallel()
 
-	// 1. Create temp working directory
 	workDir := t.TempDir()
 	if err := writeFile(t, workDir, "main.go", "package main\n\nfunc main() {}\n"); err != nil {
 		t.Fatalf("failed to create main.go: %v", err)
 	}
 
-	// 2. Mock response queue:
-	//    Call 1 (Director): delegate_repo
-	//    Call 2 (RepoAgent): list_dir
-	//    Call 3 (RepoAgent): text + agent_exit
-	//    Call 4 (Director): text + agent_exit
-	//    Remaining: safe fallback for retries
 	mock := &fullChainMockLLM{
 		responses: []*llm.Response{
-			// Call 1: Director delegates to Repo-Agent
 			makeToolCallResponse("delegate_repo", `{"task": "分析项目结构"}`),
-			// Call 2: Repo-Agent calls list_dir
 			makeToolCallResponse("list_dir", `{"dir_path": ".", "max_depth": 3}`),
-			// Call 3: Repo-Agent returns result + exit
 			makeTextThenExitResponse("项目结构分析完成"),
-			// Call 4: Director acknowledges and exits
 			makeTextThenExitResponse("已收到分析结果"),
 		},
-		// Safe fallback for retry scenarios
 		defaultOnExhaust: safeExitResponse,
 	}
 
-	// 3. Create DirectorAgent
 	director := newFullChainDirector(t, workDir, mock)
 
-	// 4. Execute
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -261,11 +220,9 @@ func TestFullChain_DelegateToRepoAgent(t *testing.T) {
 	}
 	result := agentResult.Text
 
-	// 5. Assert
 	t.Logf("Director returned result: %s", result)
 	t.Logf("Total LLM calls: %d", mock.CallCount())
 
-	// Expect at least 4 calls (core flow); retries may add more
 	if mock.CallCount() < 4 {
 		t.Errorf("expected at least 4 LLM calls, got %d", mock.CallCount())
 	}
@@ -275,15 +232,11 @@ func TestFullChain_DelegateToRepoAgent(t *testing.T) {
 	}
 }
 
-// ─── Test 3: FullYoloMode ───────────────────────────────────────────────────
-
 func TestFullChain_FullYoloMode(t *testing.T) {
 	t.Parallel()
 
-	// 1. Create temp working directory
 	workDir := t.TempDir()
 
-	// 2. Create mock with 1 simple response
 	mock := &fullChainMockLLM{
 		responses: []*llm.Response{
 			makeTextThenExitResponse("YOLO mode active"),
@@ -291,10 +244,8 @@ func TestFullChain_FullYoloMode(t *testing.T) {
 		defaultOnExhaust: safeExitResponse,
 	}
 
-	// 3. Create DirectorAgent
 	director := newFullChainDirector(t, workDir, mock)
 
-	// 4. Assert adapter list (verification on construction)
 	adapterNames := make(map[string]bool)
 	for _, ad := range director.Adapters {
 		adapterNames[ad.Name()] = true
@@ -302,17 +253,14 @@ func TestFullChain_FullYoloMode(t *testing.T) {
 
 	t.Logf("Director adapters: %v", sortedAdapterNames(director.Adapters))
 
-	// ask_user_for_help should NOT exist in FullYoloMode
 	if adapterNames["ask_user_for_help"] {
 		t.Error("ask_user_for_help should NOT be registered in FullYoloMode")
 	}
 
-	// agent_exit should exist
 	if !adapterNames["agent_exit"] {
 		t.Error("agent_exit should be registered")
 	}
 
-	// delegate tools should exist
 	delegateTools := []string{"delegate_repo", "delegate_coding", "delegate_chat", "delegate_meta"}
 	for _, tool := range delegateTools {
 		if !adapterNames[tool] {
@@ -320,7 +268,6 @@ func TestFullChain_FullYoloMode(t *testing.T) {
 		}
 	}
 
-	// 5. Run to verify flow executes normally
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -341,12 +288,9 @@ func TestFullChain_FullYoloMode(t *testing.T) {
 	}
 }
 
-// ─── Test 4: Multi-Delegation ───────────────────────────────────────────────
-
 func TestFullChain_MultiDelegation(t *testing.T) {
 	t.Parallel()
 
-	// 1. Create temp working directory with a simple main.go
 	workDir := t.TempDir()
 	mainGoContent := `package main
 
@@ -360,40 +304,21 @@ func main() {
 		t.Fatalf("failed to create main.go: %v", err)
 	}
 
-	// 2. Mock response queue:
-	//    Call 1 (Director):  delegate_repo
-	//    Call 2 (RepoAgent): search_by_regex
-	//    Call 3 (RepoAgent): text + agent_exit
-	//    Call 4 (Director):  delegate_coding
-	//    Call 5 (CodingAgent): read_file
-	//    Call 6 (CodingAgent): text + agent_exit
-	//    Call 7 (Director):  text + agent_exit
-	//    Remaining: safe fallback for retries
 	mock := &fullChainMockLLM{
 		responses: []*llm.Response{
-			// Call 1: Director delegates to Repo-Agent
 			makeToolCallResponse("delegate_repo", `{"task": "找出项目中的 Go 文件"}`),
-			// Call 2: Repo-Agent searches for .go files
 			makeToolCallResponse("search_by_regex", `{"query": "\\.go$", "path": "."}`),
-			// Call 3: Repo-Agent returns result + exit
 			makeTextThenExitResponse("找到 main.go"),
-			// Call 4: Director delegates to Coding-Agent
 			makeToolCallResponse("delegate_coding", `{"task": "检查 main.go 的代码质量"}`),
-			// Call 5: Coding-Agent reads main.go
 			makeToolCallResponse("read_file", `{"target_file": "main.go"}`),
-			// Call 6: Coding-Agent returns quality assessment + exit
 			makeTextThenExitResponse("代码质量良好"),
-			// Call 7: Director returns final result + exit
 			makeTextThenExitResponse("所有检查完成"),
 		},
-		// Safe fallback for retry scenarios
 		defaultOnExhaust: safeExitResponse,
 	}
 
-	// 3. Create DirectorAgent
 	director := newFullChainDirector(t, workDir, mock)
 
-	// 4. Execute
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -403,11 +328,9 @@ func main() {
 	}
 	result := agentResult.Text
 
-	// 5. Assert
 	t.Logf("Director returned result: %s", result)
 	t.Logf("Total LLM calls: %d", mock.CallCount())
 
-	// Expect at least 7 calls (core flow); retries may add more
 	if mock.CallCount() < 7 {
 		t.Errorf("expected at least 7 LLM calls, got %d", mock.CallCount())
 	}
@@ -416,8 +339,6 @@ func main() {
 		t.Error("expected non-empty result")
 	}
 }
-
-// ─── Utility Functions ───────────────────────────────────────────────────────
 
 func writeFile(t *testing.T, dir, name, content string) error {
 	t.Helper()
@@ -429,7 +350,7 @@ func writeSafeFile(t *testing.T, dir, name, content string, perm os.FileMode) er
 	path := dir + "/" + name
 	data := []byte(content)
 	if _, err := os.Stat(path); err == nil {
-		return nil // file already exists
+		return nil
 	}
 	return os.WriteFile(path, data, perm)
 }
@@ -442,20 +363,11 @@ func sortedAdapterNames(adapters []*tools.Adapter) []string {
 	return names
 }
 
-// ─── Test: Force Delegation - Inject User Message ─────────────────────────────
-
-// TestDirector_ForceDelegation_InjectUserMessage verifies that when the director
-// returns plain text without delegating, the system injects a user-role message
-// forcing delegation on the next LLM call.
 func TestDirector_ForceDelegation_InjectUserMessage(t *testing.T) {
 	t.Parallel()
 
-	// 1. Create temp working directory
 	workDir := t.TempDir()
 
-	// 2. Mock response queue:
-	//    Call 1: plain text (no tool calls) → should trigger force delegation
-	//    Call 2: agent_exit tool call → should succeed after force message
 	mock := &fullChainMockLLM{
 		responses: []*llm.Response{
 			{Choices: []llm.Choice{{Content: "I'll just return text without delegating."}}},
@@ -463,10 +375,8 @@ func TestDirector_ForceDelegation_InjectUserMessage(t *testing.T) {
 		},
 	}
 
-	// 3. Create DirectorAgent
 	director := newFullChainDirector(t, workDir, mock)
 
-	// 4. Execute
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -476,7 +386,6 @@ func TestDirector_ForceDelegation_InjectUserMessage(t *testing.T) {
 	}
 	result := agentResult.Text
 
-	// 5. Assert: result should come from second call (agent_exit), not first plain text
 	if result == "I'll just return text without delegating." {
 		t.Error("expected result after force delegation, but got original plain text")
 	}
@@ -484,12 +393,10 @@ func TestDirector_ForceDelegation_InjectUserMessage(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	// 6. Assert: LLM should be called exactly 2 times
 	if mock.CallCount() != 2 {
 		t.Errorf("expected 2 LLM calls, got %d", mock.CallCount())
 	}
 
-	// 7. Assert: second call messages should contain the force delegation user message
 	if len(mock.callLog) < 2 {
 		t.Fatalf("expected at least 2 call logs, got %d", len(mock.callLog))
 	}
@@ -514,19 +421,11 @@ func TestDirector_ForceDelegation_InjectUserMessage(t *testing.T) {
 	}
 }
 
-// ─── Test: Force Delegation - Max Prompts Then Return ─────────────────────────
-
-// TestDirector_ForceDelegation_MaxPromptsThenReturn verifies that when the director
-// persistently refuses to delegate, the system stops injecting force messages after
-// maxNonDelegationPrompts and returns the original content.
 func TestDirector_ForceDelegation_MaxPromptsThenReturn(t *testing.T) {
 	t.Parallel()
 
-	// 1. Create temp working directory
 	workDir := t.TempDir()
 
-	// 2. Mock always returns plain text (no tool calls)
-	// Pre-fill maxNonDelegationPrompts + 2 responses to ensure we hit the limit
 	plainTextResponses := make([]*llm.Response, maxNonDelegationPrompts+2)
 	for i := range plainTextResponses {
 		plainTextResponses[i] = &llm.Response{Choices: []llm.Choice{{Content: fmt.Sprintf("plain text response %d", i)}}}
@@ -535,10 +434,8 @@ func TestDirector_ForceDelegation_MaxPromptsThenReturn(t *testing.T) {
 		responses: plainTextResponses,
 	}
 
-	// 3. Create DirectorAgent with maxSteps = 10
 	director := newFullChainDirector(t, workDir, mock)
 
-	// 4. Execute
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -548,13 +445,10 @@ func TestDirector_ForceDelegation_MaxPromptsThenReturn(t *testing.T) {
 	}
 	result := agentResult.Text
 
-	// 5. Assert: result should be the last plain text (not error, no deadlock)
 	if result == "" {
 		t.Error("expected non-empty result")
 	}
 
-	// 6. Assert: LLM should be called more than 1 time (force messages were injected)
-	// and no more than maxSteps (10)
 	callCount := mock.CallCount()
 	if callCount <= 1 {
 		t.Errorf("expected more than 1 LLM call due to force delegation, got %d", callCount)
@@ -563,9 +457,6 @@ func TestDirector_ForceDelegation_MaxPromptsThenReturn(t *testing.T) {
 		t.Errorf("expected at most %d LLM calls, got %d", director.maxSteps, callCount)
 	}
 
-	// 7. Assert: force messages should be injected exactly maxNonDelegationPrompts times
-	// Count injections by comparing consecutive call logs.
-	// Each injection adds exactly 1 new force user message to the messages array.
 	injectionCount := 0
 	var prevForceCount int
 	for idx, log := range mock.callLog {
@@ -587,22 +478,11 @@ func TestDirector_ForceDelegation_MaxPromptsThenReturn(t *testing.T) {
 	}
 }
 
-// ─── Test: No Force After Delegation ──────────────────────────────────────────
-
-// TestDirector_NoForceAfterDelegation verifies that after a successful delegation
-// tool call, no force delegation message is injected on subsequent plain-text returns.
 func TestDirector_NoForceAfterDelegation(t *testing.T) {
 	t.Parallel()
 
-	// 1. Create temp working directory
 	workDir := t.TempDir()
 
-	// 2. Mock response queue:
-	//    Call 1 (Director): delegate_repo tool call → sets hasDelegated = true
-	//    Call 2 (RepoAgent): list_dir tool call
-	//    Call 3 (RepoAgent): text + agent_exit
-	//    Call 4 (Director): plain text (no tool calls) → should NOT trigger force delegation
-	//    Call 5+ (fallback): safe response for any additional internal calls
 	mock := &fullChainMockLLM{
 		responses: []*llm.Response{
 			makeToolCallResponse("delegate_repo", `{"task": "analyze project"}`),
@@ -610,14 +490,11 @@ func TestDirector_NoForceAfterDelegation(t *testing.T) {
 			makeTextThenExitResponse("project analysis done"),
 			{Choices: []llm.Choice{{Content: "task completed after delegation"}}},
 		},
-		// Provide safe fallback for any additional internal LLM calls
 		defaultOnExhaust: &llm.Response{Choices: []llm.Choice{{Content: "task completed after delegation"}}},
 	}
 
-	// 3. Create DirectorAgent
 	director := newFullChainDirector(t, workDir, mock)
 
-	// 4. Execute
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -627,9 +504,6 @@ func TestDirector_NoForceAfterDelegation(t *testing.T) {
 	}
 	result := agentResult.Text
 
-	// 5. Assert: result should be the plain text from second call
-	// (Note: due to internal LLM calls during delegate execution, we check that
-	// the result does NOT contain error and contains expected content)
 	if result == "" {
 		t.Error("expected non-empty result")
 	}
@@ -637,12 +511,10 @@ func TestDirector_NoForceAfterDelegation(t *testing.T) {
 		t.Logf("result: %q (expected 'task completed after delegation' or 'fallback')", result)
 	}
 
-	// 6. Assert: LLM should be called at least 2 times
 	if mock.CallCount() < 2 {
 		t.Errorf("expected at least 2 LLM calls, got %d", mock.CallCount())
 	}
 
-	// 7. Assert: no force delegation user message in any call log
 	for _, log := range mock.callLog {
 		for _, msg := range log.Messages {
 			if msg.Role == llm.RoleUser &&

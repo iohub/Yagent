@@ -11,14 +11,10 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// ── Constants ──
-
 const (
-	MaxContentWidth = 120 // max width for content rendering
+	MaxContentWidth = 120
 )
 
-// skipBodyTools lists tools whose result body is just a status confirmation
-// and should not be rendered — only the header (icon + name + file path) is shown.
 var skipBodyTools = map[string]bool{
 	"read_file":       true,
 	"delete_file":     true,
@@ -29,10 +25,6 @@ var skipBodyTools = map[string]bool{
 	"semantic_search": true,
 }
 
-// ── Tool Header Rendering ──
-
-// RenderPending renders a running tool with animation.
-// Output: "● tool_name · summary ████████~!@...."
 func RenderPending(name string, summary string, anim *Anim) string {
 	icon := IconPending
 	toolName := RenderToolName(DisplayToolName(name))
@@ -49,8 +41,6 @@ func RenderPending(name string, summary string, anim *Anim) string {
 	return strings.Join(parts, "")
 }
 
-// RenderHeader renders the tool header line with icon, name, and params.
-// Output: "✓ tool_name · file_path" or "× tool_name · file_path — error_msg"
 func RenderHeader(status ToolStatus, name string, params string, errBrief string) string {
 	icon := ToolIcon(status, false)
 	toolName := RenderToolName(DisplayToolName(name))
@@ -69,7 +59,6 @@ func RenderHeader(status ToolStatus, name string, params string, errBrief string
 	return strings.Join(parts, "")
 }
 
-// RenderEarlyState renders early termination states (canceled, waiting).
 func RenderEarlyState(status ToolStatus, name string, params string) (string, bool) {
 	switch status {
 	case ToolStatusCanceled:
@@ -95,17 +84,12 @@ func RenderEarlyState(status ToolStatus, name string, params string) (string, bo
 	}
 }
 
-// ── Tool Body Rendering ──
-
-// RenderToolLine renders the complete tool display: header + optional body.
-// This is the main entry point for rendering a tool entry.
 func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 	params := entry.Call.Summary
 	if params == "" {
 		params = formatToolParams(entry.Call.Name, entry.Call.Arguments)
 	}
 
-	// Check for early states first — no borders
 	if early, ok := RenderEarlyState(entry.Status, entry.Call.Name, params); ok {
 		return early
 	}
@@ -117,14 +101,10 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 
 	header := RenderHeader(entry.Status, entry.Call.Name, params, errBrief)
 
-	// If still running, no borders — animation is in progress
 	if entry.Status == ToolStatusRunning {
 		return header
 	}
 
-	// Tools whose result body is just status JSON — skip body rendering,
-	// only show the tool name + file path in the header.
-	// For read_file and search_by_regex, skip borders as well; other tools keep borders.
 	if skipBodyTools[entry.Call.Name] && entry.Status == ToolStatusSuccess {
 		if entry.Call.Name == "read_file" || entry.Call.Name == "search_by_regex" || entry.Call.Name == "semantic_search" {
 			return header
@@ -132,11 +112,9 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 		return addToolCallBorders(header, width)
 	}
 
-	// Render body if we have a result
 	if entry.Result != nil && entry.Result.Content != "" {
 		body := RenderResultBody(entry.Call.Name, entry.Result.Content, width)
 		if body != "" {
-			// Border only wraps header; body goes below the border
 			return addToolCallBorders(header, width) + "\n" + body
 		}
 	}
@@ -144,18 +122,14 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 	return addToolCallBorders(header, width)
 }
 
-// addToolCallBorders wraps header with a thin top and bottom border line.
-// Body content should be appended OUTSIDE the border.
 func addToolCallBorders(header string, width int) string {
 	topBorder := ToolCallBorderTop.Render(makeBorderLine('─', width))
 	bottomBorder := ToolCallBorderBottom.Render(makeBorderLine('─', width))
 	return topBorder + "\n" + header + "\n" + bottomBorder
 }
 
-// RenderResultBody renders the tool result content with smart detection.
 func RenderResultBody(toolName string, content string, width int) string {
-	// Determine content width
-	bodyWidth := width - 4 // account for padding
+	bodyWidth := width - 4
 	if bodyWidth > MaxContentWidth {
 		bodyWidth = MaxContentWidth
 	}
@@ -163,32 +137,23 @@ func RenderResultBody(toolName string, content string, width int) string {
 		bodyWidth = 30
 	}
 
-	// 0. Try to decode JSON-encoded string first (before isJSON check,
-	//    because isJSON only detects {}/[] not JSON strings).
 	if decodedStr := tryDecodeJSONString(content); decodedStr != "" {
 		return RenderResultBody(toolName, decodedStr, bodyWidth)
 	}
 
-	// 1. Try JSON — check for embedded fields first
 	if isJSON(content) {
-		// Detect codebase tool results by JSON structure (not tool name)
 		if formatted := tryFormatCodebaseResult(content, bodyWidth); formatted != "" {
 			return formatted
 		}
-		// Check if JSON contains a "diff" field — extract and render as colored diff
 		if diff := extractDiffField(content); diff != "" {
 			return RenderDiffContent(diff, bodyWidth)
 		}
-		// Check if JSON contains an "output" field — extract and render as plain text
 		if output := extractOutputField(content); output != "" {
 			return renderPlainContent(output, bodyWidth)
 		}
-		// If JSON contains "output" field but it's empty, return empty string
-		// instead of pretty-printing a meaningless JSON
 		if strings.Contains(content, `"output"`) {
 			return ""
 		}
-		// Otherwise pretty-print the JSON
 		pretty, err := jsonPrettyPrint(content)
 		if err == nil {
 			if looksLikeMarkdown(pretty) {
@@ -198,21 +163,17 @@ func RenderResultBody(toolName string, content string, width int) string {
 		}
 	}
 
-	// 2. Try unified diff
 	if isUnifiedDiff(content) {
 		return RenderDiffContent(content, bodyWidth)
 	}
 
-	// 3. Try markdown detection
 	if looksLikeMarkdown(content) {
 		return renderMarkdownContent(content, bodyWidth)
 	}
 
-	// 4. Fallback: plain text
 	return renderPlainContent(content, bodyWidth)
 }
 
-// extractDiffField tries to extract a "diff" field from a JSON result string.
 func extractDiffField(jsonStr string) string {
 	if !strings.Contains(jsonStr, `"diff"`) {
 		return ""
@@ -227,7 +188,6 @@ func extractDiffField(jsonStr string) string {
 	return ""
 }
 
-// extractOutputField tries to extract an "output" field from a JSON result string.
 func extractOutputField(jsonStr string) string {
 	if !strings.Contains(jsonStr, `"output"`) {
 		return ""
@@ -242,10 +202,6 @@ func extractOutputField(jsonStr string) string {
 	return ""
 }
 
-// tryDecodeJSONString attempts to decode content as a JSON-encoded string.
-// When tool results are plain strings, the framework json.Marshal wraps them
-// in quotes and escapes special characters. This function reverses that.
-// Returns the decoded string, or empty if content is not a JSON string.
 func tryDecodeJSONString(content string) string {
 	trimmed := strings.TrimSpace(content)
 	if len(trimmed) >= 2 && trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"' {
@@ -257,16 +213,12 @@ func tryDecodeJSONString(content string) string {
 	return ""
 }
 
-// tryFormatCodebaseResult detects codebase tool result JSON by structure and formats it.
-// Returns empty string if the JSON doesn't match any known codebase result pattern.
 func tryFormatCodebaseResult(content string, width int) string {
 	var parsed map[string]interface{}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
 		return ""
 	}
 
-	// Pattern 4: find_function_callee / find_function_caller — top-level function + callees/callers
-	// These results don't have a "data" wrapper, so check before the hasData guard.
 	if funcInfo, ok := parsed["function"].(map[string]interface{}); ok {
 		if _, hasName := funcInfo["function_name"]; hasName {
 			if callees, ok := parsed["callees"].([]interface{}); ok && len(callees) > 0 {
@@ -283,10 +235,8 @@ func tryFormatCodebaseResult(content string, width int) string {
 		return ""
 	}
 
-	// Pattern 1: semantic_search — data.results array with file_path/score
 	if resultsRaw, ok := data["results"]; ok {
 		if results, ok := resultsRaw.([]interface{}); ok && len(results) > 0 {
-			// Verify it looks like semantic_search (has file_path or score)
 			if first, ok := results[0].(map[string]interface{}); ok {
 				if _, hasPath := first["file_path"]; hasPath {
 					return formatSemanticSearchResults(results, width)
@@ -295,7 +245,6 @@ func tryFormatCodebaseResult(content string, width int) string {
 		}
 	}
 
-	// Pattern 2: query_code_snippet — data.code_snippet with filepath
 	if snippet, ok := data["code_snippet"].(string); ok && snippet != "" {
 		filepath, _ := data["filepath"].(string)
 		funcName, _ := data["function_name"].(string)
@@ -305,7 +254,6 @@ func tryFormatCodebaseResult(content string, width int) string {
 		return formatCodeSnippetResult(filepath, funcName, snippet, int(lineStart), int(lineEnd), language, width)
 	}
 
-	// Pattern 3: query_code_skeleton — data.skeletons array
 	if skelsRaw, ok := data["skeletons"]; ok {
 		if skels, ok := skelsRaw.([]interface{}); ok && len(skels) > 0 {
 			return formatCodeSkeletonResults(skels, width)
@@ -315,7 +263,6 @@ func tryFormatCodebaseResult(content string, width int) string {
 	return ""
 }
 
-// formatSemanticSearchResults formats semantic_search results array in a human-readable way.
 func formatSemanticSearchResults(results []interface{}, width int) string {
 	if len(results) == 0 {
 		return ContentLine.Render("  (no results)")
@@ -378,7 +325,6 @@ func formatSemanticSearchResults(results []interface{}, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// formatCodeSnippetResult formats a query_code_snippet result in a human-readable way.
 func formatCodeSnippetResult(filepath, funcName, snippet string, lineStart, lineEnd int, language string, width int) string {
 	fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	funcStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
@@ -388,7 +334,6 @@ func formatCodeSnippetResult(filepath, funcName, snippet string, lineStart, line
 
 	var lines []string
 
-	// Header: filepath  funcName  (language)  L{start}-{end}
 	headerParts := []string{
 		fileStyle.Render(filepath),
 		"  ",
@@ -403,7 +348,6 @@ func formatCodeSnippetResult(filepath, funcName, snippet string, lineStart, line
 	}
 	lines = append(lines, strings.Join(headerParts, ""))
 
-	// Code content — show each line with prefix
 	codeLines := strings.Split(snippet, "\n")
 	for _, cl := range codeLines {
 		truncated := truncateLine(cl, width-2)
@@ -413,19 +357,16 @@ func formatCodeSnippetResult(filepath, funcName, snippet string, lineStart, line
 	return strings.Join(lines, "\n")
 }
 
-// formatFunctionRelationResults formats find_function_callee / find_function_caller results.
-// relationType is "callee" or "caller".
 func formatFunctionRelationResults(funcInfo map[string]interface{}, relationType string, relations []interface{}, width int) string {
 	fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	funcStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	langStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
 	locStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Faint(true)
-	relStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true) // green for relation
+	relStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	arrowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
 
 	var lines []string
 
-	// Header: filepath  funcName  (language)  L{start}-{end}
 	filepath, _ := funcInfo["file_path"].(string)
 	funcName, _ := funcInfo["function_name"].(string)
 	language, _ := funcInfo["language"].(string)
@@ -446,7 +387,6 @@ func formatFunctionRelationResults(funcInfo map[string]interface{}, relationType
 	}
 	lines = append(lines, strings.Join(headerParts, ""))
 
-	// Arrow symbol based on relation type
 	var arrow string
 	if relationType == "callee" {
 		arrow = "→"
@@ -454,7 +394,6 @@ func formatFunctionRelationResults(funcInfo map[string]interface{}, relationType
 		arrow = "←"
 	}
 
-	// Relations list
 	for _, rel := range relations {
 		item, ok := rel.(map[string]interface{})
 		if !ok {
@@ -464,11 +403,9 @@ func formatFunctionRelationResults(funcInfo map[string]interface{}, relationType
 		relFilepath, _ := item["file_path"].(string)
 		relFuncName, _ := item["function_name"].(string)
 
-		// Format: "  → rel_file:line  funcName()"
 		var relParts []string
 		relParts = append(relParts, "  ", arrowStyle.Render(arrow), " ")
 
-		// Truncate filepath if too long
 		relPath := relFilepath
 		if len(relPath) > 40 {
 			relPath = relPath[len(relPath)-38:]
@@ -486,7 +423,6 @@ func formatFunctionRelationResults(funcInfo map[string]interface{}, relationType
 			relParts = append(relParts, fileStyle.Render(relPath), "  ")
 		}
 
-		// Function name with optional signature
 		funcDisplay := relFuncName
 		if itemSig, ok := item["signature"].(string); ok && itemSig != "" {
 			funcDisplay = itemSig
@@ -502,7 +438,6 @@ func formatFunctionRelationResults(funcInfo map[string]interface{}, relationType
 	return strings.Join(lines, "\n")
 }
 
-// formatCodeSkeletonResults formats query_code_skeleton results array in a human-readable way.
 func formatCodeSkeletonResults(skels []interface{}, width int) string {
 	if len(skels) == 0 {
 		return ContentLine.Render("  (no skeletons)")
@@ -524,7 +459,6 @@ func formatCodeSkeletonResults(skels []interface{}, width int) string {
 		filepath, _ := item["filepath"].(string)
 		language, _ := item["language"].(string)
 
-		// Truncate filepath
 		maxPathLen := width - 20
 		if maxPathLen < 20 {
 			maxPathLen = 20
@@ -539,7 +473,6 @@ func formatCodeSkeletonResults(skels []interface{}, width int) string {
 		}
 		lines = append(lines, strings.Join(headerParts, ""))
 
-		// Skeleton text
 		if st, ok := item["skeleton_text"].(string); ok && st != "" {
 			firstLine := strings.SplitN(st, "\n", 2)[0]
 			firstLine = strings.TrimSpace(firstLine)
@@ -557,7 +490,6 @@ func formatCodeSkeletonResults(skels []interface{}, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// RenderDiffContent renders a unified diff string with ANSI color styling.
 func RenderDiffContent(diffText string, maxWidth int) string {
 	lines := strings.Split(diffText, "\n")
 	var styledLines []string
@@ -572,7 +504,6 @@ func RenderDiffContent(diffText string, maxWidth int) string {
 	return strings.Join(styledLines, "\n")
 }
 
-// styleDiffLine applies color styling to a single diff line.
 func styleDiffLine(line string, maxWidth int) string {
 	truncated := truncateLine(line, maxWidth)
 	switch {
@@ -591,9 +522,6 @@ func styleDiffLine(line string, maxWidth int) string {
 	}
 }
 
-// ── Internal helpers ──
-
-// renderPlainContent renders plain text output with line prefix and truncation.
 func renderPlainContent(content string, width int) string {
 	lines := strings.Split(content, "\n")
 	var rendered []string
@@ -604,7 +532,6 @@ func renderPlainContent(content string, width int) string {
 	return strings.Join(rendered, "\n")
 }
 
-// renderCodeLines renders content as code with optional syntax context.
 func renderCodeLines(content string, filename string, width int) string {
 	lines := strings.Split(content, "\n")
 	numWidth := len(fmt.Sprintf("%d", len(lines)))
@@ -626,22 +553,15 @@ func renderCodeLines(content string, filename string, width int) string {
 	return strings.Join(rendered, "\n")
 }
 
-// ── Markdown Rendering (Glamour) ──
-
-// glamourRendererCache is a thread-safe cache for glamour TermRenderer instances.
-// Cache key is the word-wrap width (int).
 var (
-	glamourRendererCache sync.Map // map[int]*glamour.TermRenderer
+	glamourRendererCache sync.Map
 )
 
-// renderMarkdownContent renders markdown content using Glamour with dark style.
-// Uses a thread-safe cache keyed by width. Falls back to renderCodeLines on error.
 func renderMarkdownContent(content string, width int) string {
 	if width <= 0 {
 		width = 80
 	}
 
-	// Try to get cached renderer
 	if cached, ok := glamourRendererCache.Load(width); ok {
 		if r, ok := cached.(*glamour.TermRenderer); ok {
 			rendered, err := r.Render(content)
@@ -651,13 +571,11 @@ func renderMarkdownContent(content string, width int) string {
 		}
 	}
 
-	// Create new renderer
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle("dark"),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {
-		// Fallback renderer with default width
 		r, _ = glamour.NewTermRenderer(
 			glamour.WithStandardStyle("dark"),
 			glamour.WithWordWrap(80),
@@ -667,21 +585,15 @@ func renderMarkdownContent(content string, width int) string {
 		return renderCodeLines(content, "result.md", width)
 	}
 
-	// Cache the renderer
 	glamourRendererCache.Store(width, r)
 
-	// Render
 	rendered, err := r.Render(content)
 	if err != nil {
-		// Fallback to code lines rendering
 		return renderCodeLines(content, "result.md", width)
 	}
 	return rendered
 }
 
-// ── Content Detection ──
-
-// makeBorderLine generates a compact border line using half-block characters.
 func makeBorderLine(char rune, width int) string {
 	runes := make([]rune, width)
 	for i := range runes {
@@ -702,7 +614,6 @@ func isJSON(s string) bool {
 	return false
 }
 
-// isDiffHeaderLine returns true if the line is a diff file path header ("--- a/" or "+++ b/").
 func isDiffHeaderLine(line string) bool {
 	return strings.HasPrefix(line, "--- a/") || strings.HasPrefix(line, "+++ b/") ||
 		strings.HasPrefix(line, "--- /") || strings.HasPrefix(line, "+++ /")
@@ -723,8 +634,6 @@ func looksLikeMarkdown(s string) bool {
 	}
 	return false
 }
-
-// ── Formatting Helpers ──
 
 func jsonPrettyPrint(jsonStr string) (string, error) {
 	var v interface{}
@@ -803,7 +712,6 @@ func formatToolParams(toolName string, argsJSON string) string {
 			return fn
 		}
 	}
-	// For delegate tools
 	if strings.HasPrefix(toolName, "delegate_") {
 		if task, ok := args["task"].(string); ok && task != "" {
 			if len(task) > 60 {
@@ -812,7 +720,6 @@ func formatToolParams(toolName string, argsJSON string) string {
 			return task
 		}
 	}
-	// For other tools, show first value or empty
 	return ""
 }
 
@@ -836,14 +743,8 @@ func truncateLine(line string, maxWidth int) string {
 	return string(runes[:maxWidth-1]) + "…"
 }
 
-// ── Agent Attribution Functions ──
-
-// maxAgentTagLen limits agent name display length in compact tags.
 const maxAgentTagLen = 12
 
-// RenderAgentTag produces a compact, colored agent name string.
-// Returns empty string if agent is empty.
-// Visual: "Director" in agent's unique color, bold, no background.
 func RenderAgentTag(agent string) string {
 	if agent == "" {
 		return ""
@@ -858,10 +759,6 @@ func RenderAgentTag(agent string) string {
 		Render(name)
 }
 
-// RenderAgentBadge renders a compact agent indicator for non-ai_response entries.
-// Unlike RenderAgentSeparator (full-width line), this is a single-line colored badge
-// for light context signaling when tool entries switch to a new agent.
-// Visual: "  ◈ AgentName"
 func RenderAgentBadge(agent string) string {
 	if agent == "" {
 		return ""
@@ -873,10 +770,6 @@ func RenderAgentBadge(agent string) string {
 		Render("◈ " + agent)
 }
 
-// RenderAgentSeparator produces a thin separator line with agent name
-// for AI response blocks.
-// Visual: ── Director ──────────────────────"
-// If agent is empty, returns empty string.
 func RenderAgentSeparator(agent string, width int) string {
 	if agent == "" || width <= 0 {
 		return ""
@@ -892,7 +785,6 @@ func RenderAgentSeparator(agent string, width int) string {
 		Foreground(color).
 		Faint(true)
 
-	// Layout: "── Agent ──────"
 	prefix := lineStyle.Render("── ")
 	suffix := lineStyle.Render(" ──")
 	nameLen := lipgloss.Width(name)
@@ -908,45 +800,36 @@ func RenderAgentSeparator(agent string, width int) string {
 	return prefix + name + middle + suffix
 }
 
-// ── Timeline Rendering ──
-
-// timelineNodeFor renders the node symbol + color for a TimelineEntry.
-// DEPRECATED: Prefer timelineNodeForStatus for merged entries.
 func timelineNodeFor(e *TimelineEntry) string {
 	return timelineNodeForStatus(e, e.Status)
 }
 
-// timelineNodeForStatus renders the node symbol + color for a TimelineEntry
-// using an explicitly-provided status. This is needed for merged entries where
-// the effective (aggregated) status may differ from e.Status.
 func timelineNodeForStatus(e *TimelineEntry, status ToolStatus) string {
 	if e.Kind == TimelineKindLLMCall {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true).Render("◇") // blue diamond
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true).Render("◇")
 	}
 	if e.Kind == TimelineKindThinking {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("💭") // purple thought
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("💭")
 	}
 	if e.Kind == TimelineKindContextEvent {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("⊛") // magenta asterisk
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("⊛")
 	}
-	// Tool call
 	switch status {
 	case ToolStatusRunning:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true).Render("●") // yellow
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true).Render("●")
 	case ToolStatusSuccess:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Bold(true).Render("●") // green
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Bold(true).Render("●")
 	case ToolStatusError:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true).Render("●") // red
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true).Render("●")
 	case ToolStatusPending:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Bold(true).Render("○") // gray
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Bold(true).Render("○")
 	case ToolStatusCanceled:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true).Render("●") // dim gray
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true).Render("●")
 	default:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Bold(true).Render("○")
 	}
 }
 
-// formatTimelineDuration formats a duration for timeline display.
 func formatTimelineDuration(d time.Duration) string {
 	if d == 0 {
 		return ""
@@ -963,43 +846,34 @@ func formatTimelineDuration(d time.Duration) string {
 	return fmt.Sprintf("%.1fm", d.Minutes())
 }
 
-// RenderTimeline renders the full tool timeline panel.
-// When expanded is false, only shows the currently running tool (or last completed tool).
-// When expanded is true, shows up to maxTimelineEntries entries.
 func RenderTimeline(entries []*TimelineEntry, expanded bool, showDetail bool, width int, anim *Anim) string {
 	const maxTimelineEntries = 20
 	if width < 30 {
 		width = 30
 	}
 
-	// Determine visible entries
 	var visible []*TimelineEntry
 	if len(entries) == 0 {
-		// Idle state
 		line := lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("○ idle")
 		return addTimelineTopBorder(line, width)
 	}
 
 	if expanded {
-		// Show up to maxTimelineEntries most recent
 		start := 0
 		if len(entries) > maxTimelineEntries {
 			start = len(entries) - maxTimelineEntries
 		}
 		visible = entries[start:]
 	} else {
-		// 折叠模式：展示最近3条记录（优先包含运行中的工具）
 		const defaultCollapsedCount = 3
 		visible = selectCollapsedEntries(entries, defaultCollapsedCount)
 	}
 
-	// Build timeline lines
 	var lines []string
 	for i, e := range visible {
 		isLast := i == len(visible)-1
 		lines = append(lines, renderTimelineRow(e, width, showDetail, anim))
 
-		// Vertical connector between entries
 		if !isLast && expanded {
 			connector := timelineLineStyle.Render("│")
 			lines = append(lines, " "+connector)
@@ -1010,36 +884,29 @@ func RenderTimeline(entries []*TimelineEntry, expanded bool, showDetail bool, wi
 	return addTimelineTopBorder(content, width)
 }
 
-// timeline visual styles
 var (
 	timelineLineStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	timelineBorderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 	timelineNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
 	timelineDetailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	timelineDurationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	timelineRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("228")) // yellow for running
+	timelineRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
 )
 
-// addTimelineTopBorder wraps content with a thin top border line.
 func addTimelineTopBorder(content string, width int) string {
 	border := timelineBorderStyle.Render(strings.Repeat("─", width))
 	return border + "\n" + content
 }
 
-// renderTimelineRow renders a single timeline entry row.
-// Format: " ● read_file  /path/to/file          1.2s"
 func renderTimelineRow(e *TimelineEntry, width int, showDetail bool, anim *Anim) string {
-	// Use EffectiveStatus() for merged entries
 	effectiveStatus := e.EffectiveStatus()
 	node := timelineNodeForStatus(e, effectiveStatus)
 
-	// Name styling
 	nameStr := e.Name
 	if displayName := DisplayToolName(e.Name); displayName != e.Name {
 		nameStr = displayName
 	}
 
-	// Show merged count for merged entries
 	if e.MergedCount() > 1 {
 		nameStr = fmt.Sprintf("%s ×%d", nameStr, e.MergedCount())
 	}
@@ -1054,7 +921,6 @@ func renderTimelineRow(e *TimelineEntry, width int, showDetail bool, anim *Anim)
 		name = nameStyle.Render(nameStr)
 	}
 
-	// Build animation string (for running tools)
 	var animStr string
 	if effectiveStatus == ToolStatusRunning {
 		if anim != nil {
@@ -1064,18 +930,15 @@ func renderTimelineRow(e *TimelineEntry, width int, showDetail bool, anim *Anim)
 		}
 	}
 
-	// Build duration string (for completed tools only)
 	var durStr string
 	if e.Duration > 0 {
 		dur := formatTimelineDuration(e.Duration)
 		durStr = " " + timelineDurationStyle.Render(dur)
 	}
 
-	// Build base line: node + name + animation + detail
 	leftPart := fmt.Sprintf(" %s %s", node, name)
 	leftPart += animStr
 	if showDetail && e.Detail != "" {
-		// Truncate detail to fit
 		detailMax := 40
 		detail := e.Detail
 		if len(detail) > detailMax {
@@ -1084,11 +947,10 @@ func renderTimelineRow(e *TimelineEntry, width int, showDetail bool, anim *Anim)
 		leftPart += " " + timelineDetailStyle.Render("· "+detail)
 	}
 
-	// Right-align duration (rightPart is purely duration, no animation)
 	rightPart := durStr
 	leftWidth := lipgloss.Width(leftPart)
 	rightWidth := lipgloss.Width(rightPart)
-	padding := width - leftWidth - rightWidth - 2 // -2 for safety margin
+	padding := width - leftWidth - rightWidth - 2
 	if padding < 1 {
 		padding = 1
 	}
@@ -1096,8 +958,6 @@ func renderTimelineRow(e *TimelineEntry, width int, showDetail bool, anim *Anim)
 	return leftPart + strings.Repeat(" ", padding) + rightPart
 }
 
-// selectCollapsedEntries 选择折叠模式要显示的条目。
-// 优先包含运行中的工具，然后用最近的非运行条目填满 maxCount。
 func selectCollapsedEntries(entries []*TimelineEntry, maxCount int) []*TimelineEntry {
 	n := len(entries)
 	if n == 0 {
@@ -1107,11 +967,9 @@ func selectCollapsedEntries(entries []*TimelineEntry, maxCount int) []*TimelineE
 		return entries
 	}
 
-	// 从末尾开始收集，优先包含运行中的工具
 	selected := make([]bool, n)
 	count := 0
 
-	// 第一遍：从最近的开始，收集运行中的工具
 	for i := n - 1; i >= 0 && count < maxCount; i-- {
 		if entries[i].Kind == TimelineKindTool && entries[i].Status == ToolStatusRunning && !selected[i] {
 			selected[i] = true
@@ -1119,7 +977,6 @@ func selectCollapsedEntries(entries []*TimelineEntry, maxCount int) []*TimelineE
 		}
 	}
 
-	// 第二遍：从最近的开始，填充到 maxCount
 	for i := n - 1; i >= 0 && count < maxCount; i-- {
 		if !selected[i] {
 			selected[i] = true
@@ -1127,7 +984,6 @@ func selectCollapsedEntries(entries []*TimelineEntry, maxCount int) []*TimelineE
 		}
 	}
 
-	// 按原始顺序构建结果
 	result := make([]*TimelineEntry, 0, count)
 	for i := 0; i < n; i++ {
 		if selected[i] {
@@ -1138,20 +994,15 @@ func selectCollapsedEntries(entries []*TimelineEntry, maxCount int) []*TimelineE
 	return result
 }
 
-// renderTimelineRowWithCursor 渲染带光标和选中高亮的timeline行。
-// 用于全屏模式的左侧列表，使用与非全屏一致的 dot+name+duration 样式。
 func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCursor bool) string {
-	// Use EffectiveStatus() to get the aggregated status (correct for merged entries)
 	effectiveStatus := e.EffectiveStatus()
 	node := timelineNodeForStatus(e, effectiveStatus)
 
-	// Name styling
 	nameStr := e.Name
 	if displayName := DisplayToolName(e.Name); displayName != e.Name {
 		nameStr = displayName
 	}
 
-	// Show merged count: "read_file ×3"
 	if e.MergedCount() > 1 {
 		nameStr = fmt.Sprintf("%s ×%d", nameStr, e.MergedCount())
 	}
@@ -1166,7 +1017,6 @@ func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCurs
 		name = nameStyle.Render(nameStr)
 	}
 
-	// Build animation string (for running tools)
 	var animStr string
 	if effectiveStatus == ToolStatusRunning {
 		if anim != nil {
@@ -1176,29 +1026,25 @@ func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCurs
 		}
 	}
 
-	// Build duration string (for completed tools only)
 	var durStr string
 	if e.Duration > 0 {
 		dur := formatTimelineDuration(e.Duration)
 		durStr = " " + timelineDurationStyle.Render(dur)
 	}
 
-	// Build base line — fullscreen sidebar no longer shows detail summary
 	leftPart := fmt.Sprintf(" %s %s", node, name)
 	leftPart += animStr
 
-	// Right-align duration
 	rightPart := durStr
 	leftWidth := lipgloss.Width(leftPart)
 	rightWidth := lipgloss.Width(rightPart)
-	padding := width - leftWidth - rightWidth - 4 // -4 for cursor(2) + margin(2)
+	padding := width - leftWidth - rightWidth - 4
 	if padding < 1 {
 		padding = 1
 	}
 
 	content := leftPart + strings.Repeat(" ", padding) + rightPart
 
-	// 光标指示符
 	var cursorStr string
 	if isCursor {
 		cursorStr = "▸ "
@@ -1208,7 +1054,6 @@ func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCurs
 
 	line := cursorStr + content
 
-	// 选中行高亮（暗色背景）
 	if isCursor {
 		line = lipgloss.NewStyle().
 			Background(lipgloss.Color("236")).

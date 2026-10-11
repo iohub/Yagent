@@ -11,55 +11,40 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// computeFooterHeight calculates the actual footer height based on current state.
-// Uses caching to avoid repeated expensive computation.
 func (m *model) computeFooterHeight() int {
 	if m.footerHeightValid {
 		return m.cachedFooterHeight
 	}
 
-	height := 1 // separator line
+	height := 1
 
-	// Tool timeline panel (when entries exist) — 使用悬浮面板样式
-	// 宽屏时 dashboard 在右上角显示，底部不再显示 timeline panel
 	if !m.dashboardVisible() && (m.taskRunning || len(m.timelineEntries) > 0) {
-		// border-top(1) + 3 entries + hint(1) + border-bottom(1)
 		height += 6
 	}
 
-	// Input area (only in edit mode; hidden in command mode)
 	if !m.commandMode {
-		// inputPanelStyle = Border(top+bottom=2) + MarginTop(1) → 3 extra lines
 		height += 3 + m.computeInputHeight()
-		// Newline after input panel
 		height += 1
-		// Skill autocomplete suggestions
 		if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
-			height += len(m.skillSuggestions) + 1 // suggestion lines + hint line
+			height += len(m.skillSuggestions) + 1
 		}
-		// Keyword autocomplete suggestions
 		if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 {
 			height += 1
 		}
 	}
 
-	// Error message
 	if m.errMsg != "" {
 		height += 1
 	}
 
-	// Token dashboard
 	totalTokens := m.inputTokens + m.outputTokens
 	if !m.dashboardVisible() {
 		if m.tokenDashboardCollapsed {
-			// 折叠状态：按实际渲染行数计算（内容 1-2 行 + 2 边框）。
-			// 不依赖 totalTokens 判断——压缩场景下 ContextTokens>0 而 In/Out==0
-			// 时折叠面板仍会渲染，固定高度假设会少算行数导致布局溢出。
 			if dash := m.renderTokenDashboard(); dash != "" {
 				height += lipgloss.Height(dash)
 			}
 		} else if totalTokens > 0 {
-			height += 4 // 2 borders + 1 header + 1 separator
+			height += 4
 			if m.commandMode && m.taskRunning {
 				height++
 			}
@@ -71,13 +56,12 @@ func (m *model) computeFooterHeight() int {
 		}
 	}
 
-	// Spacing + Status line
 	if m.commandMode {
-		height += 1 // spacing before status
-		height += 1 // status bar
+		height += 1
+		height += 1
 	} else {
-		height += 2 // two newlines before status bar
-		height += 1 // status bar
+		height += 2
+		height += 1
 	}
 
 	m.cachedFooterHeight = height
@@ -85,8 +69,6 @@ func (m *model) computeFooterHeight() int {
 	return height
 }
 
-// updateViewportCache refreshes the cached viewport view.
-// Call this whenever viewport state changes (scroll, resize, content update).
 func (m *model) updateViewportCache() {
 	m.cachedViewportView = m.viewport.View()
 	m.viewportViewValid = true
@@ -94,23 +76,17 @@ func (m *model) updateViewportCache() {
 	m.prevViewportHeight = m.viewport.Height()
 }
 
-// invalidateFooterCache marks the footer cache as stale.
-// Call this whenever state affecting footer height changes.
 func (m *model) invalidateFooterCache() {
 	m.footerHeightValid = false
 	m.cachedSeparator = ""
-	// Status bar also needs recalculation
 	m.cachedStatusBar = ""
 	m.statusBarValid = false
-	// Token dashboard too
 	m.cachedTokenDashboard = ""
 	m.tokenDashboardValid = false
-	// Dashboard cache too
 	m.dashboardCache = ""
 	m.dashboardCacheKey = ""
 }
 
-// getGlamourRenderer returns a cached glamour renderer for the given width.
 func (m *model) getGlamourRenderer(width int) *glamour.TermRenderer {
 	if width <= 0 {
 		width = 80
@@ -130,7 +106,6 @@ func (m *model) getGlamourRenderer(width int) *glamour.TermRenderer {
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {
-		// Return a fallback with safe defaults
 		r, _ = glamour.NewTermRenderer(
 			glamour.WithStandardStyle(glamourStyle),
 			glamour.WithWordWrap(80),
@@ -152,7 +127,6 @@ func (m *model) resizeViewport() {
 	m.viewport.SetWidth(m.termWidth - m.dashboardWidth())
 	m.viewport.SetHeight(vpHeight)
 
-	// Update glamour renderer reference for backward compat
 	if m.termWidth > 0 && m.viewport.Width() > 0 {
 		frameSize := m.viewport.Style.GetHorizontalFrameSize()
 		const glamourGutter = 4
@@ -165,8 +139,6 @@ func (m *model) resizeViewport() {
 	m.updateViewportCache()
 }
 
-// invalidateRenderedCache clears cached rendered output on all log entries.
-// Called on terminal resize since rendering depends on viewport width.
 func (m *model) invalidateRenderedCache() {
 	for i := range m.logEntries {
 		m.logEntries[i].clearRenderCache()
@@ -174,15 +146,11 @@ func (m *model) invalidateRenderedCache() {
 			m.logEntries[i].toolEntry.InvalidateCache()
 		}
 	}
-	// Clear glamour renderer cache on resize
 	m.glamourRenderers = nil
 	m.markAllEntriesDirty()
 }
 
-// buildViewportContent rebuilds the full viewport content from scratch.
-// Used for initial load, terminal resize, or conversation switch.
 func (m *model) buildViewportContent() {
-	// Skip rebuild if dimensions are not initialized
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return
 	}
@@ -192,18 +160,13 @@ func (m *model) buildViewportContent() {
 	m.updateViewportCache()
 }
 
-// rebuildViewportPreservingScroll rebuilds viewport content but preserves
-// the current scroll position. Used for animation tick updates so that
-// scrolling up to read history isn't interrupted by SetContent+GotoBottom.
 func (m *model) rebuildViewportPreservingScroll() {
-	// Skip rebuild if dimensions are not initialized
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return
 	}
 	yOffset := m.viewport.YOffset()
 	m.rebuildContentCache()
 	m.viewport.SetContent(m.contentCache.String())
-	// Restore Y offset, clamped to avoid overscroll
 	totalLines := m.viewport.TotalLineCount()
 	visibleLines := m.viewport.Height()
 	maxOffset := totalLines - visibleLines
@@ -217,32 +180,18 @@ func (m *model) rebuildViewportPreservingScroll() {
 	m.updateViewportCache()
 }
 
-// rebuildViewportScrollLock rebuilds viewport content and scrolls to bottom
-// only if the user was already at the bottom. Used when tool call results
-// arrive — new content should be shown to users who are following along,
-// but shouldn't interrupt users reading history.
 func (m *model) rebuildViewportScrollLock() {
-	// Skip rebuild if dimensions are not initialized
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return
 	}
 	wasAtBottom := m.viewport.AtBottom()
 	m.rebuildContentCache()
-	// 已移除：m.viewport.SetContent(m.contentCache.String())  — 现在由 rebuildContentCache 内部处理
 	if wasAtBottom {
 		m.viewport.GotoBottom()
 	}
 	m.updateViewportCache()
 }
 
-// rebuildContentCache 增量重建viewport内容缓存。
-// 仅在以下情况重建：
-//  1. 宽度变化 → 完全重建（所有条目重新渲染）
-//  2. needFullRebuild → 完全重建
-//  3. dirtyEntryIndices 非空 → 仅重新渲染脏条目
-//  4. 新条目到达 (len(contentParts) < len(logEntries)) → 追加渲染
-//
-// 其他情况跳过，避免不必要的计算。
 func (m *model) rebuildContentCache() {
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return
@@ -251,7 +200,6 @@ func (m *model) rebuildContentCache() {
 	currentWidth := m.viewport.Width()
 	widthChanged := currentWidth != m.prevViewportWidth
 
-	// ── 宽度变化：完全重建 ──
 	if widthChanged {
 		for i := range m.logEntries {
 			m.logEntries[i].clearRenderCache()
@@ -263,7 +211,6 @@ func (m *model) rebuildContentCache() {
 		}
 		m.prevViewportWidth = currentWidth
 		m.needFullRebuild = false
-		// 清除所有脏标记
 		for k := range m.dirtyEntryIndices {
 			delete(m.dirtyEntryIndices, k)
 		}
@@ -275,7 +222,6 @@ func (m *model) rebuildContentCache() {
 
 	contentChanged := false
 
-	// ── needFullRebuild：完全重建（如对话切换）──
 	if m.needFullRebuild {
 		m.contentParts = make([]string, len(m.logEntries))
 		for i := range m.logEntries {
@@ -288,7 +234,6 @@ func (m *model) rebuildContentCache() {
 		}
 		contentChanged = true
 	} else {
-		// ── 细粒度脏标记：仅重新渲染变更的条目 ──
 		if len(m.dirtyEntryIndices) > 0 {
 			for idx := range m.dirtyEntryIndices {
 				if idx >= 0 && idx < len(m.logEntries) {
@@ -298,12 +243,10 @@ func (m *model) rebuildContentCache() {
 				}
 				delete(m.dirtyEntryIndices, idx)
 			}
-			// 增量更新前缀和（比全量 rebuildLinePrefix 更高效）
 			m.rebuildLinePrefix()
 			contentChanged = true
 		}
 
-		// ── 增量追加：新条目到达 ──
 		if len(m.contentParts) < len(m.logEntries) {
 			oldLen := len(m.contentParts)
 			newParts := make([]string, len(m.logEntries))
@@ -320,16 +263,12 @@ func (m *model) rebuildContentCache() {
 
 	if contentChanged {
 		m.assembleViewportContent()
-		// 确保 viewport 内容与缓存同步 — 修复：最后一条消息未渲染的问题
 		m.viewport.SetContent(m.contentCache.String())
 	}
 }
 
-// assembleViewportContent 将contentParts组装为完整viewport内容
-// Uses strings.Join for O(n) single-pass concatenation instead of WriteString loop.
 func (m *model) assembleViewportContent() {
 	m.contentCache.Reset()
-	// Estimate capacity to avoid reallocations
 	estCap := len(m.contentParts)*200 + 1024
 	if estCap > m.contentCache.Cap() {
 		m.contentCache.Grow(estCap)
@@ -345,30 +284,22 @@ func (m *model) assembleViewportContent() {
 		for i, part := range m.contentParts {
 			entry := &m.logEntries[i]
 
-			// Verbose entries (tool calls, LLM calls, context events) are now
-			// displayed in the tool timeline panel instead of the main view.
 			if entry.isVerbose {
 				continue
 			}
 
-			// 跳过渲染为空的条目（如 ai_stream 占位条目 streamContent="" 时渲染为空），
-			// 以及纯空白 part（如流式输出的空白 chunk "\n\n"、" " 等）。
-			// 避免产生空行，且不重置 thinking 合并状态。
 			if part == "" || strings.TrimSpace(part) == "" {
 				continue
 			}
 
 			agentChanged := false
-			// 统一Agent上下文管理：所有条目类型都追踪Agent切换
 			if entry.from != "" && entry.from != lastAgent {
 				if entry.eventType == "ai_response" {
-					// ai_response: 全宽分割线（强视觉信号）
 					sep := RenderAgentSeparator(entry.from, m.viewport.Width())
 					if sep != "" {
 						parts = append(parts, sep)
 					}
 				} else {
-					// 非 ai_response: 紧凑Badge（轻量上下文提示）
 					badge := RenderAgentBadge(entry.from)
 					if badge != "" {
 						parts = append(parts, badge)
@@ -378,7 +309,6 @@ func (m *model) assembleViewportContent() {
 				agentChanged = true
 			}
 
-			// 合并连续的thinking条目：仅第一个显示💭图标，后续渲染为缩进续行
 			isThinking := entry.eventType == "thinking"
 			mergeAsContinuation := isThinking && lastPartIsThinking && !agentChanged
 			if mergeAsContinuation {
@@ -393,49 +323,38 @@ func (m *model) assembleViewportContent() {
 	}
 }
 
-// renderSingleEntry 渲染单个logEntry并返回字符串，使用宽度键控缓存
 func (m *model) renderSingleEntry(entry *logEntry, width int) string {
-	// For running tool entries, never cache (animation changes each frame)
 	if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
 		return renderToolEntryWithAnim(*entry, width, m.anim)
 	}
 
-	// For running LLM call entries, render with animation (single line)
 	if entry.eventType == "llm_call_start" && entry.isToolRunning {
 		return renderLLMCallWithAnim(*entry, width, m.anim)
 	}
 
-	// AI 流式渲染（纯文本，无 Glamour，保证性能）
 	if entry.eventType == "ai_stream" {
 		content := entry.streamContent
-		// 如果正在流式且有内容，显示光标
-		// 注意：由于每100ms tick重建，光标会自然闪烁
 		if entry.streaming && content != "" {
 			content += "▌"
 		}
 		return content
 	}
 
-	// Check width-keyed cache
 	if cached, ok := entry.getCachedRender(width); ok {
 		return cached
 	}
 
-	// Tool entry rendering (non-running) — use new renderer
 	if entry.toolEntry != nil {
-		// Special case: deepthinking output should be rendered as formatted Markdown via Glamour
 		if entry.toolEntry.Call.Name == "deepthinking" &&
 			entry.toolEntry.Status == ToolStatusSuccess &&
 			entry.toolEntry.Result != nil &&
 			entry.toolEntry.Result.Content != "" &&
 			m.glamourRenderer != nil {
-			// 先查 Glamour 缓存
 			if cached, ok := m.getGlamourCached(entry.toolEntry.Result.Content); ok {
 				entry.setCachedRender(cached, width)
 				return cached
 			}
 			rendered := m.renderDeepThinkingEntry(entry)
-			// 写入 Glamour 缓存
 			m.putGlamourCached(entry.toolEntry.Result.Content, rendered)
 			entry.setCachedRender(rendered, width)
 			return rendered
@@ -445,7 +364,6 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 		return rendered
 	}
 
-	// Diff rendering takes priority
 	if entry.diffText != "" {
 		rendered := renderDiff(entry)
 		entry.setCachedRender(rendered, width)
@@ -453,71 +371,56 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	}
 
 	if entry.eventType == "ai_response" && m.glamourRenderer != nil {
-		// 先查 Glamour 缓存
 		if cached, ok := m.getGlamourCached(entry.content); ok {
 			entry.setCachedRender(cached, width)
 			return cached
 		}
 		rendered, err := m.glamourRenderer.Render(entry.content)
 		if err == nil {
-			// 写入 Glamour 缓存
 			m.putGlamourCached(entry.content, rendered)
 			entry.setCachedRender(rendered, width)
 			return rendered
 		}
 	}
 
-	// User message with collapse support
 	if entry.eventType == "user_message" {
 		rendered := renderUserMessageBox(entry.content, width)
 		entry.setCachedRender(rendered, width)
 		return rendered
 	}
 
-	// Thinking event — use formatted rendering with caching
 	if entry.eventType == "thinking" {
 		rendered := formatLogEntry(*entry, width)
 		entry.setCachedRender(rendered, width)
 		return rendered
 	}
 
-	// Fallback to simple text rendering
 	formatted := formatLogEntry(*entry, width)
 	entry.setCachedRender(formatted, width)
 	return formatted
 }
 
-// renderEntryTo renders a single log entry into the builder, caching the result
-// in the entry for reuse. Uses glamour for ai_response, diff styling for diffs,
-// plain formatting otherwise.
-//
-// Deprecated: prefer renderSingleEntry which uses width-keyed cache.
 func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
 	width := m.viewport.Width()
 
-	// For running tool entries, never cache (animation changes each frame)
 	if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
 		b.WriteString(renderToolEntryWithAnim(*entry, width, m.anim))
 		return
 	}
 
-	// For running LLM call entries, render with animation (single line)
 	if entry.eventType == "llm_call_start" && entry.isToolRunning {
 		b.WriteString(renderLLMCallWithAnim(*entry, width, m.anim))
 		return
 	}
 
-	// Use width-keyed cache
 	if cached, ok := entry.getCachedRender(width); ok {
 		b.WriteString(cached)
 		return
 	}
 
-	// Delegate to renderSingleEntry which handles caching
 	b.WriteString(m.renderSingleEntry(entry, width))
 }
 
-// renderDeepThinkingEntry renders a deepthinking tool result with Glamour markdown formatting.
 func (m *model) renderDeepThinkingEntry(entry *logEntry) string {
 	maxWidth := m.viewport.Width()
 
@@ -538,13 +441,10 @@ func (m *model) renderDeepThinkingEntry(entry *logEntry) string {
 	return addToolCallBorders(header, maxWidth) + "\n" + renderedBody
 }
 
-// appendLogEntry renders a single new entry and appends it incrementally to the viewport.
-// Uses scroll lock: only auto-scrolls to bottom if the user was already at the bottom.
 func (m *model) appendLogEntry(entry *logEntry) {
 	m.viewportDirty = true
 	wasAtBottom := m.viewport.AtBottom()
 
-	// Step 2 增量构建：将新条目渲染到 contentParts
 	if m.termWidth > 0 && m.termHeight > 0 {
 		currentWidth := m.viewport.Width()
 		rendered := m.renderSingleEntry(entry, currentWidth)
@@ -553,7 +453,6 @@ func (m *model) appendLogEntry(entry *logEntry) {
 		m.appendLinePrefix(oldLen)
 		m.assembleViewportContent()
 	} else {
-		// Fallback: direct append to contentCache (old behavior)
 		if m.contentCache.Len() > 0 {
 			m.contentCache.WriteString("\n")
 		}
@@ -574,8 +473,6 @@ func extractToolSummary(toolName string, argsJSON string) string {
 	}
 	switch toolName {
 	case "read_file", "edit_file", "search_replace_in_file", "create_file", "delete_file":
-		// target_file 是 read_file/create_file/delete_file 的实际参数名（见
-		// tools/file_operations.go），file_path 是 search_replace_in_file 的；两者都认。
 		if fp, ok := args["target_file"].(string); ok && fp != "" {
 			return fp
 		}
@@ -621,7 +518,6 @@ func extractToolSummary(toolName string, argsJSON string) string {
 			return fn
 		}
 	}
-	// For delegate tools, show task summary
 	if strings.HasPrefix(toolName, "delegate_") {
 		if task, ok := args["task"].(string); ok && task != "" {
 			if len(task) > 60 {
@@ -633,10 +529,8 @@ func extractToolSummary(toolName string, argsJSON string) string {
 	return ""
 }
 
-// extractResultBrief generates a short result summary for the finished line.
 func extractResultBrief(toolName string, result string) string {
 	if strings.HasPrefix(result, "Error:") {
-		// Short error message
 		errMsg := strings.TrimPrefix(result, "Error: ")
 		if len(errMsg) > 50 {
 			return errMsg[:47] + "..."
@@ -653,12 +547,10 @@ func extractResultBrief(toolName string, result string) string {
 	case "list_dir", "print_dir_tree":
 		return ""
 	case "run_bash":
-		// Parse JSON to extract the output field.
 		var r struct {
 			Output string `json:"output"`
 		}
 		if err := json.Unmarshal([]byte(result), &r); err == nil {
-			// Successfully parsed JSON. Show output if non-empty.
 			if r.Output == "" {
 				return ""
 			}
@@ -668,7 +560,6 @@ func extractResultBrief(toolName string, result string) string {
 			}
 			return trimmed
 		}
-		// Fallback for non-JSON (e.g., raw error string).
 		trimmed := strings.TrimSpace(result)
 		if len(trimmed) > 60 {
 			return trimmed[:57] + "..."
@@ -701,24 +592,6 @@ func extractResultBrief(toolName string, result string) string {
 	}
 }
 
-// isVerboseEventType returns true if the event type contains operational
-// details that should be hidden by default (shown only in verbose mode).
-//
-// Verbose events include:
-//   - Tool calls (file operations, command execution, etc.)
-//   - LLM API calls (request/response details)
-//   - Context compression notifications
-//   - Commit knowledge loading notifications
-//   - Knowledge injection summaries (handled with dedicated branch;
-//     registering here is defensive so the generic fallback stays hidden)
-//
-// Non-verbose events (always shown):
-//   - User messages
-//   - Assistant responses
-//   - Error messages
-//   - System status messages
-//   - Agent headers
-//   - Task completion notifications
 func isVerboseEventType(eventType string) bool {
 	switch eventType {
 	case "tool_call_start", "tool_call_result",
@@ -731,13 +604,10 @@ func isVerboseEventType(eventType string) bool {
 	return false
 }
 
-// isEditFileTool returns true if the tool name corresponds to a file-editing
-// tool whose diff results should be displayed in the main message panel.
 func isEditFileTool(toolName string) bool {
 	return toolName == "search_replace_in_file"
 }
 
-// formatEventAsEntry converts a MessageEvent to a logEntry.
 func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 	entry := logEntry{
 		timestamp: event.Timestamp,
@@ -745,8 +615,6 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		from:      event.From,
 	}
 
-	// 流式事件已由 taskEventMsg handler 处理，不应到达此处
-	// 但为防御性编程，直接返回空条目（这些事件不应该走通用路径）
 	switch event.Type {
 	case "ai_stream_start", "ai_chunk", "ai_stream_end":
 		return entry
@@ -770,7 +638,6 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			if args, ok := m["arguments"].(string); ok {
 				entry.content = args
 				entry.executionSummary = extractToolSummary(entry.toolName, args)
-				// Create ToolEntry for new-style rendering
 				entry.toolEntry = NewToolEntry(ToolCallInfo{
 					ID:        entry.toolCallID,
 					Name:      entry.toolName,
@@ -784,7 +651,6 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
 		if entry.toolEntry == nil {
-			// Fallback: create ToolEntry even without parsed args
 			entry.toolEntry = NewToolEntry(ToolCallInfo{
 				ID:   entry.toolCallID,
 				Name: entry.toolName,
@@ -801,7 +667,6 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			if result, ok := m["result"].(string); ok {
 				entry.content = result
 				entry.resultBrief = extractResultBrief(entry.toolName, result)
-				// Try to extract diff from JSON result
 				entry.diffText = extractDiffFromResult(result)
 			}
 		}
@@ -809,9 +674,6 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		if entry.content == "" {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
-		// Create a ToolEntry for standalone results so they use new-style
-		// rendering (✓ read_file · /path/to/file) instead of the legacy
-		// emoji path (✅ read_file).
 		isErr := strings.HasPrefix(entry.content, "Error:")
 		entry.toolEntry = NewToolEntry(ToolCallInfo{
 			ID:      entry.toolCallID,
@@ -899,7 +761,6 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 				savedPercent = v
 			}
 			if event.Type == "context_ultimate_compressed" {
-				// 终极压缩（thinklink 重建）：无 saved_percent，使用 plans/user_inputs 信息
 				totalPlans := 0
 				if v, ok := m["total_plans"].(int); ok {
 					totalPlans = v
@@ -936,7 +797,6 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 			entry.content = fmt.Sprintf("%v", event.Content)
 		}
 	case "llm_call_end":
-		// Extract duration from metadata
 		if durationRaw, ok := event.Metadata["duration_seconds"]; ok {
 			var duration float64
 			switch v := durationRaw.(type) {
@@ -974,13 +834,8 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 		}
 	}
 
-	// Set verbose flag based on event type
 	entry.isVerbose = isVerboseEventType(string(event.Type))
 
-	// Show edit_file (search_replace_in_file) progress and diffs in the
-	// main message panel. Only the start entry is made visible; the result
-	// entry stays hidden since its data flows into the start entry via the
-	// update paths in tui_update.go.
 	if entry.isVerbose && entry.eventType == "tool_call_start" && entry.toolEntry != nil {
 		if isEditFileTool(entry.toolEntry.Call.Name) {
 			entry.isVerbose = false
@@ -990,14 +845,12 @@ func formatEventAsEntry(event *messaging.MessageEvent) logEntry {
 	return entry
 }
 
-// formatLogEntry renders a single log entry as a styled line.
 func formatLogEntry(entry logEntry, maxWidth int) string {
 	var prefix string
 	var contentStyle lipgloss.Style
 
 	switch entry.eventType {
 	case "sub_agent_header":
-		// Render a dim separator line for sub-agent group headers
 		separator := strings.Repeat("─", maxWidth-2)
 		return logSeparatorStyle.Render(" " + separator + " ")
 
@@ -1011,11 +864,9 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 	case "user_message":
 		return renderUserMessageBox(entry.content, maxWidth)
 	case "tool_call_start":
-		// Use new-style rendering if ToolEntry is available
 		if entry.toolEntry != nil {
 			return renderToolEntry(entry, maxWidth)
 		}
-		// Fallback: legacy rendering
 		if entry.toolName != "" {
 			prefix = "🔘 " + RenderToolName(DisplayToolName(entry.toolName))
 		} else {
@@ -1023,8 +874,6 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		}
 		contentStyle = toolRunningStyle
 	case "tool_call_result":
-		// Use new-style rendering if ToolEntry is available (via parent start entry)
-		// standalone entries use legacy rendering
 		if entry.toolEntry != nil {
 			return renderToolEntry(entry, maxWidth)
 		}
@@ -1052,7 +901,6 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 	case "thinking":
 		prefix = thinkIconStyle.String()
 		contentStyle = thinkTextStyle
-		// 截断过长内容（保留前 200 个字符）
 		contentWidth := maxWidth - 8
 		if contentWidth < 20 {
 			contentWidth = 20
@@ -1061,7 +909,6 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		if len(runes) > contentWidth {
 			entry.content = string(runes[:contentWidth-3]) + "..."
 		}
-		// 替换换行符为空格，保持单行显示
 		entry.content = strings.ReplaceAll(entry.content, "\n", " ")
 	case "error":
 		prefix = "✖ ERROR"
@@ -1077,7 +924,6 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		contentStyle = logStatusStyle
 	}
 
-	// Build display content: prefer execution summary + result brief
 	var displayContent string
 	if entry.executionSummary != "" {
 		displayContent = entry.executionSummary
@@ -1088,12 +934,10 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 		displayContent = strings.ReplaceAll(entry.content, "\n", " ")
 	}
 
-	// Prepend prefix (indentation for sub-agent messages) to display content
 	if entry.prefix != "" {
 		displayContent = entry.prefix + displayContent
 	}
 
-	// Truncate long content
 	contentWidth := maxWidth - 10
 	if contentWidth < 20 {
 		contentWidth = 20
@@ -1108,11 +952,8 @@ func formatLogEntry(entry logEntry, maxWidth int) string {
 	return prefix + " " + contentStyle.Render(displayContent)
 }
 
-// renderThinkingContinuation 渲染thinking条目的续行（无💭图标，缩进对齐到首行内容位置）。
-// 用于主视图中将连续thinking条目合并为一个思考块，消除重复💭图标的冗余效果。
 func renderThinkingContinuation(entry logEntry, maxWidth int) string {
 	content := strings.ReplaceAll(entry.content, "\n", " ")
-	// 与 formatLogEntry 中thinking分支一致的截断逻辑
 	contentWidth := maxWidth - 10
 	if contentWidth < 20 {
 		contentWidth = 20
@@ -1123,19 +964,13 @@ func renderThinkingContinuation(entry logEntry, maxWidth int) string {
 			content = string(runes[:contentWidth-3]) + "..."
 		}
 	}
-	// 6空格 + "│ " 对齐到首行 💭(2列)+4空格+"│ " 之后的内容起始位置
 	indent := "      │ "
 	return indent + thinkTextStyle.Render(content)
 }
 
-// renderUserMessageBox renders a user message as a simple read-only textbox
-// with a "You" title label in the top border, supporting multi-line content
-// and automatic word wrapping.
 func renderUserMessageBox(content string, maxWidth int) string {
-	// Available width for the box (accounting for left padding in viewport)
 	boxWidth := maxWidth - 4
 	if boxWidth < 20 {
-		// Very narrow terminal: fallback to simple prefix + wrapped text
 		wrapped := wrapText(content, boxWidth)
 		wrappedLines := strings.Split(wrapped, "\n")
 		var lines []string
@@ -1146,18 +981,16 @@ func renderUserMessageBox(content string, maxWidth int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	// Inner width of the box (between the ││ border pipes)
-	innerWidth := boxWidth - 2 // subtract 2 for the left and right border pipes
+	innerWidth := boxWidth - 2
 	if innerWidth < 4 {
 		innerWidth = 4
 	}
-	textWidth := innerWidth - 2 // subtract 1 space padding on each side
+	textWidth := innerWidth - 2
 
-	// Wrap the message content, preserving explicit newlines
 	var msgLines []string
 	for _, para := range strings.Split(content, "\n") {
 		if para == "" {
-			msgLines = append(msgLines, "") // preserve blank lines
+			msgLines = append(msgLines, "")
 		} else {
 			wrapped := wrapText(para, textWidth)
 			msgLines = append(msgLines, strings.Split(wrapped, "\n")...)
@@ -1167,13 +1000,8 @@ func renderUserMessageBox(content string, maxWidth int) string {
 		msgLines = []string{""}
 	}
 
-	// ---- Build the textbox ----
-
-	// Top border with "You" title label
-	// ┌─ You ───────────────┐
 	label := " You "
 	labelWidth := lipgloss.Width(label)
-	// ┌─ (2) + label + dashes + ┐ (1) = boxWidth
 	dashCount := boxWidth - labelWidth - 3
 	if dashCount < 0 {
 		dashCount = 0
@@ -1182,7 +1010,6 @@ func renderUserMessageBox(content string, maxWidth int) string {
 		userPrefixStyle.Render(label) +
 		userMsgBoxBorderStyle.Render(strings.Repeat("─", dashCount)+"┐")
 
-	// Interior lines: │  content text with padding  │
 	var interior []string
 	for _, line := range msgLines {
 		lineWidth := lipgloss.Width(line)
@@ -1190,24 +1017,17 @@ func renderUserMessageBox(content string, maxWidth int) string {
 		if padding < 0 {
 			padding = 0
 		}
-		// │ + space + text + space-fill + space + │
 		interiorLine := userMsgBoxBorderStyle.Render("│") +
 			userMsgBoxTextStyle.Render(" "+line+strings.Repeat(" ", padding)+" ") +
 			userMsgBoxBorderStyle.Render("│")
 		interior = append(interior, interiorLine)
 	}
 
-	// Bottom border
-	// └────────────────────────┘
-	// └ (1) + dashes + ┘ (1) = boxWidth
 	bottomLine := userMsgBoxBorderStyle.Render("└" + strings.Repeat("─", boxWidth-2) + "┘")
 
-	// Assemble
 	return topLine + "\n" + strings.Join(interior, "\n") + "\n" + bottomLine
 }
 
-// wrapText word-wraps text to fit within maxWidth columns.
-// Preserves existing newlines and wraps long lines at word boundaries.
 func wrapText(text string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return text
@@ -1247,7 +1067,6 @@ func wrapText(text string, maxWidth int) string {
 	return strings.Join(result, "\n")
 }
 
-// renderToolEntry renders a logEntry using the new tool rendering pipeline.
 func renderToolEntry(entry logEntry, maxWidth int) string {
 	if entry.toolEntry == nil {
 		return formatLogEntry(entry, maxWidth)
@@ -1259,8 +1078,6 @@ func renderToolEntry(entry logEntry, maxWidth int) string {
 	}
 	full := RenderToolLine(entry.toolEntry, nil, contentWidth)
 
-	// Split rendered output into header (border+header+border) and body,
-	// then apply collapse only to the body.
 	header, body, hasBody := splitToolRendered(full)
 	if !hasBody {
 		return full
@@ -1268,8 +1085,6 @@ func renderToolEntry(entry logEntry, maxWidth int) string {
 	return header + "\n" + body
 }
 
-// splitToolRendered splits RenderToolLine output into header (topBorder\nheader\nbottomBorder)
-// and body. Format: topBorder\nheader\nbottomBorder\nbody
 func splitToolRendered(full string) (header, body string, hasBody bool) {
 	lines := strings.SplitN(full, "\n", 4)
 	if len(lines) <= 3 {
@@ -1290,9 +1105,7 @@ func renderToolEntryWithAnim(entry logEntry, maxWidth int, anim *Anim) string {
 	return RenderPending(entry.toolEntry.Call.Name, params, anim)
 }
 
-// extractDiffFromResult attempts to parse a JSON result string and extract the "diff" field.
 func extractDiffFromResult(result string) string {
-	// Quick check: does it look like JSON with a "diff" field?
 	if !strings.Contains(result, `"diff"`) {
 		return ""
 	}
@@ -1306,7 +1119,6 @@ func extractDiffFromResult(result string) string {
 	return ""
 }
 
-// renderDiff renders a unified diff string with ANSI color styling.
 func renderDiff(entry *logEntry) string {
 	var prefix string
 	icon := IconSuccess
@@ -1322,11 +1134,6 @@ func renderDiff(entry *logEntry) string {
 	return prefix + "\n" + diffContent
 }
 
-// decodeIfJSONString attempts to decode a JSON-encoded string back to its original value.
-// If s begins and ends with '"' and can be successfully unmarshalled as a JSON string,
-// the decoded value is returned. Otherwise s is returned unchanged.
-// This is needed because Adapter.Call applies json.Marshal to all tool results,
-// which wraps plain strings in quotes and escapes special characters.
 func decodeIfJSONString(s string) string {
 	trimmed := strings.TrimSpace(s)
 	if len(trimmed) >= 2 && trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"' {
@@ -1338,11 +1145,9 @@ func decodeIfJSONString(s string) string {
 	return s
 }
 
-// renderLLMCallWithAnim renders a running LLM call entry with animation characters.
 func renderLLMCallWithAnim(entry logEntry, maxWidth int, anim *Anim) string {
 	icon := IconPending
 	content := strings.ReplaceAll(entry.content, "\n", " ")
-	// Truncate if too long
 	contentWidth := maxWidth - 20
 	if contentWidth < 20 {
 		contentWidth = 20

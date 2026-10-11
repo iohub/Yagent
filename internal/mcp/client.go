@@ -14,46 +14,20 @@ import (
 	"time"
 )
 
-// ============================================================================
-// Index Building Fallback
-// ============================================================================
-
-// ErrIndexBuilding 是一个 sentinel error，表示 codeseek 索引仍在后台构建中。
-// 此时所有 repo 检索工具不可用，调用方应据此让 agent 切换到标准文件工具 fallback，
-// 而非阻塞等待索引完成。
 var ErrIndexBuilding = errors.New("codeseek index is still building")
 
-// IndexBuildingMessage 是索引构建中时返回给 agent 的 fallback 提示文本。
-// 列出所有受影响的 repo 工具及可用的标准文件工具，引导 agent 立即切换而非反复重试。
 const IndexBuildingMessage = "索引构建中，所有 repo 检索工具（semantic_search/query_code_skeleton/query_code_snippet/find_function_caller/find_function_callee/query_call_graph）暂不可用。请改用标准文件工具：read_file（读取文件内容）、list_dir（列出目录）、search_by_regex（正则搜索文件内容）、print_dir_tree（查看目录结构）继续工作。索引完成后 repo 工具将自动恢复可用，无需反复重试。"
 
-// ============================================================================
-// MCPClient Configuration
-// ============================================================================
-
-// MCPClientConfig holds the configuration for creating an MCPClient.
 type MCPClientConfig struct {
-	// BinaryPath is the path to the codeseek MCP server binary.
 	BinaryPath string
 
-	// Args are the command-line arguments passed to the MCP server.
 	Args []string
 
-	// WorkingDir is the working directory for the MCP server process.
-	// If empty, the current directory is used.
 	WorkingDir string
 
-	// RequestTimeout is the maximum duration to wait for a response.
-	// Defaults to 30 seconds if zero.
 	RequestTimeout time.Duration
 }
 
-// ============================================================================
-// MCPClient Implementation
-// ============================================================================
-
-// MCPClient manages communication with a codeseek MCP server via stdio JSON-RPC 2.0.
-// It handles subprocess lifecycle, request/response matching, and concurrent access.
 type MCPClient struct {
 	cfg    MCPClientConfig
 	logger *slog.Logger
@@ -61,7 +35,6 @@ type MCPClient struct {
 	stdin  io.WriteCloser
 	out    *bufio.Reader
 
-	// requestMap maps request IDs to channels for response matching.
 	mu       sync.Mutex
 	requests map[int]chan *JSONRPCResponse
 	nextID   atomic.Int64
@@ -70,21 +43,12 @@ type MCPClient struct {
 	initialized atomic.Bool
 	stopped     atomic.Bool
 
-	// 异步初始化支持
-	readyCh    chan struct{}      // 关闭信号：初始化完成（成功或失败）
-	initErr    error              // 初始化失败原因（在 readyCh 关闭前设置，之后只读）
-	closeReady sync.Once          // 保证 readyCh 只关闭一次
-	cancelInit context.CancelFunc // 取消初始化 goroutine 的 context
+	readyCh    chan struct{}
+	initErr    error
+	closeReady sync.Once
+	cancelInit context.CancelFunc
 }
 
-// NewMCPClient creates a new MCP client with the given configuration.
-// The client is not started until Start() is called.
-//
-// Parameters:
-//   - cfg: Configuration for the MCP client including binary path and timeout settings.
-//
-// Returns:
-//   - *MCPClient: A new MCPClient instance ready to be started.
 func NewMCPClient(cfg MCPClientConfig) *MCPClient {
 	timeout := cfg.RequestTimeout
 	if timeout == 0 {
@@ -99,25 +63,7 @@ func NewMCPClient(cfg MCPClientConfig) *MCPClient {
 	}
 }
 
-// Start launches the MCP server subprocess and begins asynchronous initialization.
-// The initialization sequence runs in the background:
-//
-//  1. Launch the subprocess with stdio pipes connected.
-//  2. Send an "initialize" JSON-RPC request with client capabilities and info.
-//  3. Receive the server's initialization result.
-//  4. Send a "notifications/initialized" notification to complete setup.
-//
-// Start() returns immediately without waiting for initialization to complete.
-// Use WaitForReady() or IsReady() to check initialization status.
-//
-// Parameters:
-//   - ctx: Context for controlling the subprocess lifecycle during startup.
-//
-// Returns:
-//   - error: Non-nil if the subprocess cannot be started. Initialization errors
-//     are returned via WaitForReady() or InitError().
 func (c *MCPClient) Start(ctx context.Context) error {
-	// Build the command for the MCP server binary.
 	cmdArgs := append([]string{}, c.cfg.Args...)
 	cmd := exec.CommandContext(ctx, c.cfg.BinaryPath, cmdArgs...)
 
@@ -125,10 +71,8 @@ func (c *MCPClient) Start(ctx context.Context) error {
 		cmd.Dir = c.cfg.WorkingDir
 	}
 
-	// Capture stderr to help with debugging server issues.
 	cmd.Stderr = &captureWriter{logger: c.logger}
 
-	// Create pipes for JSON-RPC communication.
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("failed to create stdin pipe: %w", err)
@@ -139,23 +83,18 @@ func (c *MCPClient) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
-	// Start the subprocess.
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start MCP server: %w", err)
 	}
 
 	c.cmd = cmd
 	c.stdin = stdinPipe
-	c.out = bufio.NewReaderSize(stdoutPipe, 1024*1024) // 1MB buffer
+	c.out = bufio.NewReaderSize(stdoutPipe, 1024*1024)
 
-	// Mark the client as alive.
 	c.alive.Store(true)
 
-	// Launch the response reader goroutine.
 	go c.readLoop()
 
-	// ── 异步初始化：不阻塞等待 codeseek init 完成 ──
-	// 使用独立的 background context，避免调用者的 context 生命周期过短
 	initCtx, cancel := context.WithCancel(context.Background())
 	c.cancelInit = cancel
 
@@ -173,9 +112,7 @@ func (c *MCPClient) Start(ctx context.Context) error {
 	return nil
 }
 
-// performInitialize executes the MCP initialization handshake sequence.
 func (c *MCPClient) performInitialize(ctx context.Context) error {
-	// Send the initialize request.
 	initReq := JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      int(c.nextID.Add(1)),
@@ -195,7 +132,6 @@ func (c *MCPClient) performInitialize(ctx context.Context) error {
 		return fmt.Errorf("initialize request failed: %w", err)
 	}
 
-	// Parse the server's initialization result.
 	var initResult InitializeResult
 	if err := json.Unmarshal(result.Result, &initResult); err != nil {
 		return fmt.Errorf("failed to unmarshal initialize result: %w", err)
@@ -207,7 +143,6 @@ func (c *MCPClient) performInitialize(ctx context.Context) error {
 		"protocol", initResult.ProtocolVersion,
 	)
 
-	// Send the initialized notification (no response expected).
 	notif := JSONRPCNotification{
 		JSONRPC: "2.0",
 		Method:  "notifications/initialized",
@@ -219,10 +154,6 @@ func (c *MCPClient) performInitialize(ctx context.Context) error {
 	return nil
 }
 
-// markReady 标记初始化完成（成功或失败）。
-// 使用 sync.Once 保证 readyCh 只关闭一次，避免 panic。
-// 并发安全：可从 init goroutine 和 Shutdown() 安全调用。
-// err == nil 表示成功，err != nil 表示失败。
 func (c *MCPClient) markReady(err error) {
 	c.closeReady.Do(func() {
 		if err != nil {
@@ -236,25 +167,11 @@ func (c *MCPClient) markReady(err error) {
 	})
 }
 
-// CallTool invokes an MCP tool by name with the given arguments.
-//
-// Parameters:
-//   - ctx: Context for controlling the call timeout and cancellation.
-//   - toolName: The name of the tool to call (e.g., "code_search").
-//   - arguments: Optional arguments to pass to the tool as a map.
-//
-// Returns:
-//   - *ToolCallResult: The tool's response content, or nil on error.
-//   - error: Non-nil if the tool call fails or times out.
 func (c *MCPClient) CallTool(ctx context.Context, toolName string, arguments map[string]interface{}) (*ToolCallResult, error) {
 	if !c.IsAlive() {
 		return nil, errors.New("MCP client is not alive")
 	}
 
-	// 索引仍在构建中：不阻塞等待 readyCh，立即返回 sentinel error，
-	// 让上层 (callMCPTool) 捕获后返回 fallback 提示，使 agent 切换到标准文件工具。
-	// 关键：!initialized 精确等价于"init 仍在构建中"（握手被 init 阻塞，initialized
-	// 只有在 init 完成后才会变 true），因此此处无需额外就绪检查。
 	if !c.initialized.Load() {
 		return nil, fmt.Errorf("%w: %s", ErrIndexBuilding, IndexBuildingMessage)
 	}
@@ -275,7 +192,6 @@ func (c *MCPClient) CallTool(ctx context.Context, toolName string, arguments map
 		return nil, fmt.Errorf("tool call failed: %w", err)
 	}
 
-	// Parse the tool call result.
 	var toolResult ToolCallResult
 	if err := json.Unmarshal(result.Result, &toolResult); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal tool result: %w", err)
@@ -284,7 +200,6 @@ func (c *MCPClient) CallTool(ctx context.Context, toolName string, arguments map
 	return &toolResult, nil
 }
 
-// IsAlive reports whether the MCP client is currently running and responsive.
 func (c *MCPClient) IsAlive() bool {
 	if c.stopped.Load() {
 		return false
@@ -292,33 +207,25 @@ func (c *MCPClient) IsAlive() bool {
 	if !c.alive.Load() {
 		return false
 	}
-	// Check if the subprocess is still running.
 	if c.cmd != nil {
 		return c.cmd.ProcessState == nil || c.cmd.ProcessState.Exited() == false
 	}
 	return false
 }
 
-// Shutdown gracefully terminates the MCP client and its subprocess.
-// It sends a shutdown request (best effort), waits for the process to exit,
-// and cleans up all resources.
 func (c *MCPClient) Shutdown() {
 	if c.stopped.Swap(true) {
-		return // already shut down
+		return
 	}
 
-	// 取消正在进行的初始化
 	if c.cancelInit != nil {
 		c.cancelInit()
 	}
 
-	// 解除所有等待者的阻塞（如果尚未就绪）
 	c.markReady(errors.New("MCP client shut down before initialization completed"))
 
-	// 原有的清理逻辑
 	c.alive.Store(false)
 
-	// Send a best-effort shutdown request.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -327,14 +234,12 @@ func (c *MCPClient) Shutdown() {
 		ID:      int(c.nextID.Add(1)),
 		Method:  "shutdown",
 	}
-	_, _ = c.doRequest(ctx, shutdownReq) // ignore errors during shutdown
+	_, _ = c.doRequest(ctx, shutdownReq)
 
-	// Close the stdin pipe to signal EOF to the subprocess.
 	if c.stdin != nil {
 		c.stdin.Close()
 	}
 
-	// Wait for the subprocess to exit.
 	if c.cmd != nil && c.cmd.ProcessState == nil {
 		c.cmd.Wait()
 	}
@@ -342,46 +247,35 @@ func (c *MCPClient) Shutdown() {
 	c.logger.Info("MCP client shut down")
 }
 
-// ForceShutdown forcefully terminates the MCP client and its subprocess
-// without waiting for graceful shutdown. It kills the subprocess immediately.
-// Use this when force quit is enabled and you don't want to wait for codeseek.
 func (c *MCPClient) ForceShutdown() {
 	if c.stopped.Swap(true) {
-		return // already shut down
+		return
 	}
 
-	// 取消正在进行的初始化
 	if c.cancelInit != nil {
 		c.cancelInit()
 	}
 
-	// 解除所有等待者的阻塞
 	c.markReady(errors.New("MCP client force shut down"))
 
 	c.alive.Store(false)
 
-	// Close the stdin pipe.
 	if c.stdin != nil {
 		c.stdin.Close()
 	}
 
-	// Force kill the subprocess immediately.
 	if c.cmd != nil && c.cmd.Process != nil {
 		if err := c.cmd.Process.Kill(); err != nil {
 			c.logger.Warn("Failed to kill MCP subprocess", "error", err)
 		} else {
 			c.logger.Info("MCP subprocess forcefully killed")
 		}
-		// Wait for the process to be reaped (don't wait long, just clean up)
 		_ = c.cmd.Wait()
 	}
 
 	c.logger.Info("MCP client force shut down")
 }
 
-// WaitForReady 阻塞等待 MCP 客户端初始化完成。
-// 返回 nil 表示初始化成功，非 nil 表示初始化失败或 context 取消。
-// 可安全并发调用；在初始化完成后调用会立即返回。
 func (c *MCPClient) WaitForReady(ctx context.Context) error {
 	select {
 	case <-c.readyCh:
@@ -391,14 +285,10 @@ func (c *MCPClient) WaitForReady(ctx context.Context) error {
 	}
 }
 
-// IsReady 返回 MCP 客户端是否已完成初始化且可用。
-// 非阻塞检查，适用于状态探针。
 func (c *MCPClient) IsReady() bool {
 	return c.initialized.Load()
 }
 
-// InitError 返回初始化失败的错误信息。
-// 如果初始化成功或尚未完成，返回 nil。
 func (c *MCPClient) InitError() error {
 	select {
 	case <-c.readyCh:
@@ -408,33 +298,23 @@ func (c *MCPClient) InitError() error {
 	}
 }
 
-// ============================================================================
-// Internal Methods
-// ============================================================================
-
-// doRequest sends a JSON-RPC request and waits for the corresponding response.
-// It handles the registration of response channels and timeout management.
 func (c *MCPClient) doRequest(ctx context.Context, req JSONRPCRequest) (*JSONRPCResponse, error) {
-	// Create a response channel for this request.
 	ch := make(chan *JSONRPCResponse, 1)
 
 	c.mu.Lock()
 	c.requests[req.ID] = ch
 	c.mu.Unlock()
 
-	// Clean up the channel on return.
 	defer func() {
 		c.mu.Lock()
 		delete(c.requests, req.ID)
 		c.mu.Unlock()
 	}()
 
-	// Send the request to the subprocess.
 	if err := c.sendJSON(req); err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 
-	// Wait for the response or context cancellation.
 	select {
 	case resp, ok := <-ch:
 		if !ok {
@@ -449,13 +329,10 @@ func (c *MCPClient) doRequest(ctx context.Context, req JSONRPCRequest) (*JSONRPC
 	}
 }
 
-// readLoop continuously reads from the subprocess stdout and dispatches
-// responses to the appropriate request channels or handles notifications.
 func (c *MCPClient) readLoop() {
 	defer func() {
 		c.alive.Store(false)
 		c.mu.Lock()
-		// Notify all pending requests that the connection is closed.
 		for id, ch := range c.requests {
 			close(ch)
 			delete(c.requests, id)
@@ -473,28 +350,23 @@ func (c *MCPClient) readLoop() {
 			return
 		}
 
-		// Parse the JSON message.
 		var msg map[string]interface{}
 		if err := json.Unmarshal(line, &msg); err != nil {
 			c.logger.Warn("MCP invalid JSON", "data", string(line))
 			continue
 		}
 
-		// Determine message type by checking for "method" (notification) or "id" (response).
 		if method, ok := msg["method"].(string); ok {
-			// Handle notification messages (no ID).
 			c.handleNotification(method, msg)
 			continue
 		}
 
-		// Parse as a response.
 		var resp JSONRPCResponse
 		if err := json.Unmarshal(line, &resp); err != nil {
 			c.logger.Warn("MCP invalid response JSON", "data", string(line))
 			continue
 		}
 
-		// Dispatch to the waiting request channel.
 		c.mu.Lock()
 		ch, found := c.requests[resp.ID]
 		c.mu.Unlock()
@@ -503,7 +375,6 @@ func (c *MCPClient) readLoop() {
 			select {
 			case ch <- &resp:
 			default:
-				// Channel full or already consumed; this should not happen.
 			}
 		} else {
 			c.logger.Warn("MCP response for unknown request ID", "id", resp.ID)
@@ -511,7 +382,6 @@ func (c *MCPClient) readLoop() {
 	}
 }
 
-// handleNotification processes incoming MCP server notifications.
 func (c *MCPClient) handleNotification(method string, msg map[string]interface{}) {
 	c.logger.Debug("MCP notification received", "method", method)
 
@@ -523,7 +393,6 @@ func (c *MCPClient) handleNotification(method string, msg map[string]interface{}
 	}
 }
 
-// sendJSON marshals and writes a JSON value to the subprocess stdin.
 func (c *MCPClient) sendJSON(v interface{}) error {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -537,12 +406,6 @@ func (c *MCPClient) sendJSON(v interface{}) error {
 	return nil
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-// mustMarshal is a helper that marshals an interface to json.RawMessage,
-// panicking on error (use only when errors are truly unexpected).
 func mustMarshal(v interface{}) json.RawMessage {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -551,24 +414,17 @@ func mustMarshal(v interface{}) json.RawMessage {
 	return data
 }
 
-// ============================================================================
-// CaptureWriter - Captures subprocess stderr for logging
-// ============================================================================
-
-// captureWriter writes subprocess stderr lines to the MCP client logger.
 type captureWriter struct {
 	logger *slog.Logger
 }
 
 func (w *captureWriter) Write(p []byte) (int, error) {
-	// Log each line from the subprocess stderr.
 	for _, line := range bytesLines(p) {
 		w.logger.Warn("MCP server stderr", "line", string(line))
 	}
 	return len(p), nil
 }
 
-// bytesLines splits a byte slice into lines (splitting on \n).
 func bytesLines(data []byte) [][]byte {
 	var lines [][]byte
 	var current []byte

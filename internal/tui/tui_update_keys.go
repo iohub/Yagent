@@ -11,17 +11,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// isModelTargetTool reports whether the given model-switch target refers to a
-// per-tool LLM override (rather than an agent or the global default).
-// Currently only the deepthinking tool supports runtime provider switching;
-// add more tools here as they gain support.
 func isModelTargetTool(target string) bool {
 	return target == "deepthinking"
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// handleKeyMsg — 分发入口
-// ─────────────────────────────────────────────────────────────────────────────
 
 func (m *model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
@@ -35,10 +27,6 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleEditModeKey(msg)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// handleDialogStackKey — 原 DialogStack 键处理 if 块
-// ─────────────────────────────────────────────────────────────────────────────
-
 func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	top := m.dialogStack.Top()
 	if top == nil {
@@ -47,19 +35,16 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 
 	key := msg.String()
 
-	// Ctrl+C: 强制退出
 	if key == "ctrl+c" {
 		m.saveAndFlushTaskMemory()
 		m.quitting = true
 		return m, tea.Quit, true
 	}
 
-	// 根据弹窗类型处理确认操作
 	switch d := top.(type) {
 	case *components.ConfirmDialog:
-		// Let the dialog handle navigation keys via its Update
 		updated, cmd := d.Update(msg)
-		_ = updated // dialog state mutated in-place via pointer
+		_ = updated
 
 		if key == "enter" {
 			action := d.GetResponseAction()
@@ -72,15 +57,12 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		return m, nil, true
 
 	case *components.UserHelpDialog:
-		// Let the dialog handle the key internally via its Update
 		updated, cmd := d.Update(msg)
-		_ = updated // dialog state mutated in-place via pointer
+		_ = updated
 
-		// Check if dialog is closed (user submitted or cancelled)
 		if d.IsClosed() {
 			m.dialogStack.Pop()
 			m.respondToUserHelp(d.Result())
-			// Re-establish event chain to receive agent's subsequent events
 			if m.taskRunning {
 				return m, listenForEvents(m.eventCh), true
 			}
@@ -93,7 +75,6 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		return m, nil, true
 
 	case *components.QuitConfirmDialog:
-		// Let the dialog handle keys internally to update Confirmed/SelectedIndex
 		_, cmd := d.Update(msg)
 		if cmd != nil {
 			return m, cmd, true
@@ -108,20 +89,17 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 					m.cleanupDebounceTimer()
 					return m, tea.Quit, true
 				}
-				// Delete history confirmation
 				if d.ID() == "delete_history_confirm" {
 					taskID := m.pendingDeleteTaskID
 					m.pendingDeleteTaskID = ""
 					m.dialogStack.Pop()
 					return m, confirmDeleteHistoryEntryByID(m, taskID), true
 				}
-				// Cancel confirmation
 				if m.currentTask != nil && m.currentTask.CancelFunc != nil {
 					m.taskCancelled = true
-					m.taskRunning = false // 立即更新 UI 状态，不等 taskCompleteMsg
-					m.currentAgent = ""   // 清除当前 agent 显示
+					m.taskRunning = false
+					m.currentAgent = ""
 					m.currentTask.CancelFunc()
-					// 主动清理 LLM HTTP 连接池，加速 context 取消传播
 					if m.assistant != nil {
 						m.assistant.CloseIdleConnections()
 					}
@@ -131,8 +109,8 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 						content:   "Task cancelled by user",
 					})
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-					m.invalidateFooterCache()                      // 立即刷新状态栏
-					m.cachedStatusBar = m.renderAirlineStatusBar() // 重新渲染状态栏
+					m.invalidateFooterCache()
+					m.cachedStatusBar = m.renderAirlineStatusBar()
 				}
 			}
 			m.dialogStack.Pop()
@@ -146,7 +124,6 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		return m, nil, true
 
 	case *components.ResumeDialog:
-		// Let the dialog handle keys internally to update Confirmed/SelectedIndex
 		_, cmd := d.Update(msg)
 		if cmd != nil {
 			return m, cmd, true
@@ -156,14 +133,11 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		case "enter", "y", "Y":
 			confirmed := d.GetConfirmed()
 			m.dialogStack.Pop()
-			// 续跑：以 continuation prompt 走普通追问链路（submitFollowUp 内部
-			// 消费 resumedFromRollout 标记，Director 续跑首轮强制注入项目上下文）
 			if confirmed && m.currentTask != nil && !m.taskRunning {
 				return m, m.submitFollowUp(buildResumeContinuationPrompt(d)), true
 			}
 			return m, nil, true
 		case "esc", "n", "N":
-			// 仅浏览：关闭弹窗，保持恢复出的会话视图不动
 			d.SetConfirmed(false)
 			m.dialogStack.Pop()
 			return m, nil, true
@@ -171,23 +145,18 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		return m, nil, true
 
 	case *components.AgentSelectDialog:
-		// Let the dialog handle keys internally for cursor movement
 		_, cmd := d.Update(msg)
 		if cmd != nil {
 			return m, cmd, true
 		}
-		// 数字键直选同样会置位 Selected，故确认分支不再限定 enter/space
 		if d.Selected != "" {
 			target := d.Selected
-			// Set pendingModelTarget: "global" → "" (empty means global), agent name → agent
 			if target == "global" {
 				m.pendingModelTarget = ""
 			} else {
 				m.pendingModelTarget = target
 			}
-			// Pop the agent select dialog
 			m.dialogStack.Pop()
-			// Get current provider for the selected target
 			var currentProv string
 			switch {
 			case target == "global":
@@ -197,7 +166,6 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 			default:
 				currentProv, _ = m.assistant.GetAgentProvider(target)
 			}
-			// Build provider options (model name + context window) and push ModelSelectDialog
 			clientCfg := m.assistant.GetClient().Config
 			providers := clientCfg.GetProviderNames()
 			options := make([]components.ModelOption, 0, len(providers))
@@ -222,14 +190,11 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		return m, nil, true
 
 	case *components.ModelSelectDialog:
-		// Let the dialog handle keys internally for cursor movement
 		_, cmd := d.Update(msg)
 		if cmd != nil {
 			return m, cmd, true
 		}
-		// 数字键直选同样会置位 Selected，故确认分支不再限定 enter/space
 		if d.Selected != "" {
-			// 空格确认 → 永久切换：内存切换成功后写回 config.toml
 			persist := d.Persist
 			providers := m.assistant.GetClient().Config.GetProviderNames()
 			found := false
@@ -249,12 +214,10 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 				m.dialogStack.Pop()
 				return m, nil, true
 			}
-			// 根据 pendingModelTarget 分流: tool 覆盖 / agent 覆盖 / 全局
 			target := m.pendingModelTarget
 			m.pendingModelTarget = ""
 			switch {
 			case isModelTargetTool(target):
-				// 为指定 tool 设置 provider
 				if err := m.assistant.SetToolProvider(target, d.Selected); err != nil {
 					m.logEntries = append(m.logEntries, logEntry{
 						timestamp: time.Now(),
@@ -272,7 +235,6 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 				}
 			case target != "":
-				// 为指定 agent 设置 provider
 				if err := m.assistant.SetAgentProvider(target, d.Selected); err != nil {
 					m.logEntries = append(m.logEntries, logEntry{
 						timestamp: time.Now(),
@@ -290,7 +252,6 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 				}
 			default:
-				// 全局设置
 				if err := m.assistant.SwitchProvider(d.Selected); err != nil {
 					m.logEntries = append(m.logEntries, logEntry{
 						timestamp: time.Now(),
@@ -302,7 +263,6 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 					_, modelName := m.assistant.GetClient().GetCurrentProviderInfo()
 					m.currentProvider = d.Selected
 					m.currentModel = modelName
-					// provider 变化 → 刷新上下文窗口上限并失效渲染缓存
 					m.refreshContextWindow()
 					m.invalidateFooterCache()
 					m.logEntries = append(m.logEntries, logEntry{
@@ -313,7 +273,6 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 				}
 			}
-			// 永久切换：把选择写入 config.toml 固化（失败不回滚内存切换）
 			if persist {
 				kind, name := "global", ""
 				switch {
@@ -369,13 +328,9 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 	return m, nil, false
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// handleTabShortcut — 处理会话 tab 快捷键（编辑/命令模式共用）
-// ─────────────────────────────────────────────────────────────────────────────
-
 func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 	switch key {
-	case "ctrl+t": // 新建会话 tab
+	case "ctrl+t":
 		if m.taskRunning {
 			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
 			return true, nil
@@ -385,7 +340,7 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 			return true, nil
 		}
 		return true, m.newSessionTabAction()
-	case "alt+[": // 上一个 tab
+	case "alt+[":
 		if m.taskRunning {
 			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
 			return true, nil
@@ -394,7 +349,7 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 			m.switchSessionTab(m.activeSessionIdx - 1)
 		}
 		return true, nil
-	case "alt+]": // 下一个 tab
+	case "alt+]":
 		if m.taskRunning {
 			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
 			return true, nil
@@ -403,14 +358,14 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 			m.switchSessionTab(m.activeSessionIdx + 1)
 		}
 		return true, nil
-	case "alt+c": // 清空当前会话
+	case "alt+c":
 		if m.taskRunning {
 			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
 			return true, nil
 		}
 		m.clearCurrentSession()
 		return true, nil
-	case "alt+w": // 关闭当前 tab
+	case "alt+w":
 		if m.taskRunning {
 			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
 			return true, nil
@@ -422,7 +377,6 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 		m.closeCurrentSessionTab()
 		return true, nil
 	}
-	// alt+1..9 直达 tab
 	if strings.HasPrefix(key, "alt+") {
 		numStr := strings.TrimPrefix(key, "alt+")
 		if n, err := strconv.Atoi(numStr); err == nil && n >= 1 && n <= 9 {
@@ -440,14 +394,8 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 	return false, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// handleCommandModeKey — 原 command mode if 块
-// ─────────────────────────────────────────────────────────────────────────────
-
 func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Resolve multi-key sequences: check if lastKey + current key forms a valid combo
 	key := msg.String()
-	// ── 可配置快捷键重映射 ──
 	if m.cmdKeyMap != nil {
 		if mapped, ok := m.cmdKeyMap[key]; ok {
 			key = mapped
@@ -462,12 +410,9 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.updateViewportCache()
 			return m, nil
 		default:
-			// Invalid combo: discard lastKey and fall through to process key normally
 		}
 	}
 
-	// Help dialog is open: let action keys (i/esc/enter/?/ctrl+c) pass through,
-	// dismiss on any other key without processing it.
 	helpOpen := m.dialogStack != nil && func() bool {
 		top := m.dialogStack.Top()
 		return top != nil && top.ID() == "help_dialog"
@@ -477,7 +422,6 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// 会话 tab 快捷键（命令模式也支持）
 	if handled, cmd := m.handleTabShortcut(key); handled {
 		return m, cmd
 	}
@@ -498,7 +442,6 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.commandBuffer != "" {
-			// Clear command buffer, stay in command mode
 			m.commandBuffer = ""
 			return m, nil
 		}
@@ -510,12 +453,10 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "i":
-		// Block switching to edit mode while task is running
 		if m.taskRunning {
 			m.infoMsg = "Task is running, cannot switch to edit mode"
 			return m, nil
 		}
-		// Enter edit mode (vim-like: press i to insert)
 		m.commandMode = false
 		m.commandBuffer = ""
 		m.lastKey = ""
@@ -530,7 +471,6 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// Process command buffer if non-empty, otherwise enter edit mode
 		if m.commandBuffer != "" {
 			cmd := m.processCommand(m.commandBuffer)
 			m.commandBuffer = ""
@@ -538,12 +478,10 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		} else if !m.taskRunning {
-			// Only enter edit mode if task is not running
 			m.commandMode = false
 		}
 		return m, nil
 
-	// ── Scroll navigation ──
 	case "f":
 		m.viewport.PageDown()
 		m.updateViewportCache()
@@ -565,12 +503,10 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "G":
-		// Vim: Shift+G → go to bottom
 		m.viewport.GotoBottom()
 		m.updateViewportCache()
 		return m, nil
 
-	// ── Multi-key prefix: g (for gg) ──
 	case "g":
 		if m.commandBuffer == "" {
 			m.lastKey = key
@@ -579,7 +515,6 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	// ── Command line prefixes ──
 	case ":":
 		if m.commandBuffer == "" {
 			m.commandBuffer = ":"
@@ -596,7 +531,6 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	// ── Help overlay ──
 	case "?":
 		if m.commandBuffer == "" {
 			top := m.dialogStack.Top()
@@ -618,14 +552,12 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	// ── Command buffer editing ──
 	case "backspace":
 		if len(m.commandBuffer) > 0 {
 			m.commandBuffer = m.commandBuffer[:len(m.commandBuffer)-1]
 		}
 		return m, nil
 
-	// ── Token dashboard collapse toggle ──
 	case "alt+t":
 		m.tokenDashboardCollapsed = !m.tokenDashboardCollapsed
 		m.cachedTokenDashboard = m.renderTokenDashboard()
@@ -633,20 +565,15 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.invalidateFooterCache()
 		return m, nil
 
-	// ── Dashboard collapse toggle ──
 	case "alt+d":
 		m.toggleDashboard()
 		return m, nil
 
-	// ── Model selection ──
 	case "alt+m":
 		return m, m.showModelSelectionDialog()
 
-	// ── Misc ──
 	case "ctrl+l":
-		// 切换全屏时间线模式
 		if !m.timelineFullscreenMode {
-			// 进入全屏模式
 			m.timelineFullscreenMode = true
 			m.timelineExpanded = false
 			m.timelineFullscreenFocus = "list"
@@ -659,7 +586,6 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
 		} else {
-			// 退出全屏模式
 			m.ExitTimelineFullscreen()
 			m.timelineExpanded = false
 			m.timelineCacheKey = ""
@@ -668,7 +594,6 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+g":
-		// 切换 thinklink 全屏:查看用户输入与 Thought & Plan 块
 		if !m.thinklinkMode {
 			return m, enterThinklinkMode(m)
 		}
@@ -676,35 +601,26 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	default:
-		// Append printable characters to command buffer (hidden input)
 		if len(msg.Key().Text) > 0 {
 			m.commandBuffer += msg.Key().Text
 			return m, nil
 		}
-		// Pass to viewport for scrolling
 		var vpCmd tea.Cmd
 		m.viewport, vpCmd = m.viewport.Update(msg)
 		return m, vpCmd
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// handleEditModeKey — 原 edit mode 部分
-// ─────────────────────────────────────────────────────────────────────────────
-
 func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// ── 可配置快捷键重映射 ──
 	editKeyStr := msg.String()
 	if m.editKeyMap != nil {
 		if mapped, ok := m.editKeyMap[editKeyStr]; ok {
 			editKeyStr = mapped
 		}
 	}
-	// 会话 tab 快捷键（与命令模式共用）
 	if handled, cmd := m.handleTabShortcut(editKeyStr); handled {
 		return m, cmd
 	}
-	// ── 编辑模式功能键处理 ──
 	switch editKeyStr {
 	case "ctrl+c":
 		d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
@@ -713,21 +629,18 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "esc":
-		// Dismiss keyword autocomplete if active
 		if m.keywordAutoComplete {
 			m.keywordAutoComplete = false
 			m.keywordSuggestions = nil
 			m.keywordSuggestionIdx = 0
 			return m, nil
 		}
-		// Dismiss skill autocomplete if active
 		if m.skillAutoComplete {
 			m.skillAutoComplete = false
 			m.skillSuggestions = nil
 			m.skillSuggestionIdx = 0
 			return m, nil
 		}
-		// Show cancel confirmation dialog if task is running
 		if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
 			d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
 			d.SetBounds(m.termWidth, m.termHeight)
@@ -736,14 +649,12 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+e":
-		// Enter command mode
 		m.commandMode = true
 		m.commandBuffer = ""
 		m.invalidateFooterCache()
 		return m, nil
 
 	case "ctrl+h":
-		// Toggle HelpDialog
 		if m.dialogStack != nil {
 			top := m.dialogStack.Top()
 			if top != nil && top.ID() == "help_dialog" {
@@ -779,10 +690,8 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.currentTask != nil {
 			if !m.taskRunning {
-				// 任务已完成或空闲，允许提交 follow-up
 				return m, m.submitFollowUp(taskDesc)
 			}
-			// 任务正在运行，不处理
 			return m, nil
 		}
 		return m, m.submitTask()
@@ -798,9 +707,7 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+l":
-		// 切换全屏时间线模式
 		if !m.timelineFullscreenMode {
-			// 进入全屏模式
 			m.timelineFullscreenMode = true
 			m.timelineExpanded = false
 			m.timelineFullscreenFocus = "list"
@@ -813,7 +720,6 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
 		} else {
-			// 退出全屏模式
 			m.ExitTimelineFullscreen()
 			m.timelineExpanded = false
 			m.timelineCacheKey = ""
@@ -830,47 +736,38 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "tab":
-		// Cycle through keyword autocomplete suggestions first
 		if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 {
 			m.keywordSuggestionIdx = (m.keywordSuggestionIdx + 1) % len(m.keywordSuggestions)
 			return m, nil
 		}
-		// Cycle through skill autocomplete suggestions
 		if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
 			m.skillSuggestionIdx = (m.skillSuggestionIdx + 1) % len(m.skillSuggestions)
 			return m, nil
 		}
-		// No autocomplete active: pass tab to textarea
 		var inputCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)
 		return m, inputCmd
 
 	case "enter":
-		// If keyword autocomplete is active, insert the selected keyword at cursor
 		if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 && m.keywordSuggestionIdx >= 0 && m.keywordSuggestionIdx < len(m.keywordSuggestions) {
 			keyword := m.keywordSuggestions[m.keywordSuggestionIdx]
 			content := m.input.Value()
 
-			// Calculate byte offset from cursor line and column
 			cursorLine := m.input.Line()
 			cursorCol := m.input.Column()
 
-			// Calculate byte offset: sum of lengths of all previous lines + current column
 			contentRunes := []rune(content)
 			byteOffset := 0
 			if cursorLine > 0 {
-				// Split content into logical lines and sum their lengths (+1 for newline)
 				lines := splitLogicalLines(contentRunes, cursorLine-1)
 				for _, line := range lines {
-					byteOffset += len(line) + 1 // +1 for newline character
+					byteOffset += len(line) + 1
 				}
 			}
-			// Add current column (which is the character offset within the current line)
 			if cursorCol <= len(contentRunes)-byteOffset {
 				byteOffset += cursorCol
 			}
 
-			// Find the word boundary before cursor to replace the current word
 			wordStart := byteOffset
 			for wordStart > 0 {
 				prevRune := contentRunes[wordStart-1]
@@ -883,7 +780,6 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			// Build new content: replace word at cursor with selected keyword
 			var newContent []rune
 			newContent = append(newContent, contentRunes[:wordStart]...)
 			newContent = append(newContent, []rune(keyword)...)
@@ -892,16 +788,13 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.SetValue(string(newContent))
 			m.invalidateFooterCache()
 
-			// Reset autocomplete state
 			m.keywordAutoComplete = false
 			m.keywordSuggestions = nil
 			m.keywordSuggestionIdx = 0
 			return m, nil
 		}
-		// If skill autocomplete is active, expand the selected skill
 		if m.skillAutoComplete && len(m.skillSuggestions) > 0 && m.skillSuggestionIdx >= 0 && m.skillSuggestionIdx < len(m.skillSuggestions) {
 			skillName := m.skillSuggestions[m.skillSuggestionIdx]
-			// If "history" is selected, open history dialog instead of executing a skill
 			if skillName == "history" {
 				m.skillAutoComplete = false
 				m.skillSuggestions = nil
@@ -910,12 +803,10 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.infoMsg = "Cannot browse history while a task is running"
 					return m, nil
 				}
-				// Clear the input field
 				m.input.SetValue("")
 				m.invalidateFooterCache()
 				return m, enterHistoryMode(m)
 			}
-			// If "resume"/"rs" is selected, open the resume dialog instead of executing a skill
 			if skillName == "resume" || skillName == "rs" {
 				m.skillAutoComplete = false
 				m.skillSuggestions = nil
@@ -924,14 +815,12 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.infoMsg = "Cannot resume sessions while a task is running"
 					return m, nil
 				}
-				// Clear the input field
 				m.input.SetValue("")
 				m.invalidateFooterCache()
 				return m, enterResumeMode(m)
 			}
 			if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 				userContext := strings.TrimSpace(m.input.Value())
-				// Combine skill content with user's input as context
 				combinedContent := skill.Content + "\n\n---\n用户上下文: " + userContext
 				m.skillAutoComplete = false
 				m.skillSuggestions = nil
@@ -940,22 +829,17 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.submitTaskWithContent(combinedContent)
 			}
 		}
-		// Otherwise, insert newline into textarea
 		var inputCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)
 		m.invalidateFooterCache()
-		// 启动或重置补全防抖
 		return m, tea.Batch(inputCmd, m.scheduleAutocomplete())
 
 	case "/":
-		// Pass '/' to textarea normally, then check for skill autocomplete
 		var inputCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)
 		return m, tea.Batch(inputCmd, m.scheduleAutocomplete())
 
 	case "@":
-		// Trigger fzf file fuzzy finder
-		// First, let @ be inserted into textarea, then start fzf
 		var inputCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)
 		return m, tea.Batch(
@@ -964,19 +848,15 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		)
 
 	case "up", "down":
-		// Input has content: pass to textarea for line navigation
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		m.invalidateFooterCache()
 		return m, cmd
 
 	default:
-		// Only update input — viewport scrolling keys (ctrl+f, ctrl+b)
-		// are handled in dedicated case branches above.
 		var inputCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)
 		m.invalidateFooterCache()
-		// 启动或重置补全防抖
 		return m, tea.Batch(inputCmd, m.scheduleAutocomplete())
 	}
 }
