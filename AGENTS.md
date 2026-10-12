@@ -54,7 +54,7 @@
 | LLM 抽象 | `openai/openai-go/v3` | OpenAI-compatible 协议；另有自研 Anthropic Messages 引擎 |
 | HTTP | `gin-gonic/gin` + `olahol/melody` | REST + WebSocket |
 | TUI | `charm.land/bubbletea/v2`、`bubbles/v2`、`lipgloss/v2`、`glamour/v2` | 终端界面（注意是 **v2**） |
-| 浏览器 | `go-rod/rod` | Browser-Agent（CDP 驱动 Chrome） |
+| 浏览器 | `go-rod/rod`（go.mod 仍声明，代码已无引用） | Browser-Agent 重构时的候选依赖 |
 | Token | `pkoukk/tiktoken-go` | cl100k_base 计数（`internal/tokenutil`） |
 | 配置 | `BurntSushi/toml` + `fsnotify` | 配置解析、热加载（词典） |
 | Diff | `aymanbagabas/go-udiff` | `search_replace_in_file` 返回 unified diff |
@@ -62,7 +62,7 @@
 
 ### 2.2 外部依赖
 
-`ripgrep`（已内嵌，见 `dist/bin`）、`fzf`（模糊搜索）、Chrome/Chromium（Browser-Agent 需要，可自动发现）、`codeseek` 二进制（默认从 `dist/bin` 解出到 `~/.yagent/bin`）。
+`ripgrep`（已内嵌，见 `dist/bin`）、`fzf`（模糊搜索）、Chrome/Chromium（Browser-Agent 重构后才需要）、`codeseek` 二进制（默认从 `dist/bin` 解出到 `~/.yagent/bin`）。
 
 ### 2.3 LLM 接入
 
@@ -96,7 +96,6 @@ yagent/
 │   ├── app/app.go              # Yagent：一次性装配 MCP/工具引擎/守卫/子 Agent/Director
 │   ├── blackboard/             # 跨 Agent 便签（文件后端，~/.yagent/notes）
 │   ├── artifact/               # 超预算委派结果的落盘存储 + 摘要
-│   ├── browser/                # go-rod Manager（懒启动、页并发信号量、空闲回收）
 │   ├── compression/            # 三档上下文压缩（rule / emergency / ultimate）
 │   ├── config/                 # TOML 加载 + 三级 provider 解析 + 原子写回
 │   ├── datamanager/            # 任务记忆 JSONL（5s 防抖）+ 索引
@@ -118,7 +117,6 @@ yagent/
 │   ├── thinklink/              # 结构化 <thought> 解析 + 思维日志（驱动 ultimate 压缩）
 │   ├── tokenutil/              # tiktoken 封装（EstimateTokens）
 │   ├── tools/                  # 工具 Adapter 实现 + workspace_guard + user_confirm
-│   │   └── browser/            # 17 个浏览器工具
 │   ├── tui/                    # Bubble Tea v2 界面（75 个文件）
 │   │   ├── anim/ common/ components/ layout/
 │   └── util/                   # 崩溃上报等
@@ -146,7 +144,7 @@ yagent/
 | **Repo** | `repo.go` | 架构师/审计员 | 只读 + 可委派 DevOps | 50 |
 | **Chat** | `chat.go` | 通用问答 | 无文件系统访问 | 50 |
 | **DevOps** | `devops.go` | 系统管理员 | 只读 + Shell | 50 |
-| **Browser** | `browser_agent.go` | 网页操作 | 17 个浏览器工具 | 200 |
+| **Browser** | `browser_agent.go` | 网页操作 —— **重构占位**：`Run` 恒返回未实现错误 | 无 | 200 |
 | **Meta** | `meta.go` | 自定义 Agent 设计器 | 无工具，单次 LLM 出 JSON | 50（重试 5） |
 | **Custom** | `director/types.go:60` | Meta 设计后运行时注册 | 由 LLM 选择的子集 | 15 |
 
@@ -208,8 +206,7 @@ type Adapter struct { name, description string; fn ToolFunc
 | `consolidate_knowledge` `prune_history` | K | 长期知识固化与历史裁剪（codeseek knowledge） |
 | `git_checkpoint_create` `git_checkpoint_list` `git_checkpoint_rollback` | G | 编码子任务快照 |
 | `read_note` `read_artifact` | R | 读跨 Agent 便签 / 超预算产物（boardID 存在时自动注入） |
-| `delegate_repo/coding/chat/devops/browser/meta` | 委派 | Director 持有；`delegate_browser` 也在 Coding 上 |
-| 17 个浏览器工具 | B | navigate/click/input/extract_text/screenshot/evaluate_js… |
+| `delegate_repo/coding/chat/devops/browser/meta` | 委派 | Director 持有；`delegate_browser` 也在 Coding 上，但 Browser 目前是占位实现 |
 
 > **不存在** 名为 `flow_control` 的工具（旧文档有误）；流控制由 `agent_exit` 与 `ask_user_for_help` 承担。
 
@@ -367,7 +364,7 @@ WebSocket 用 melody，每个任务一个 Dispatcher + `WebSocketConsumer`，向
 仓库里的 `config/config.toml` 是注释模板；运行时写回（改 provider/超时/路由模式）走 `config/persist.go` 的原子替换。
 
 **顶层表**：`[global.llm]`、`[agents.llm]`、`[tools.llm]`、`[app]`、`[agent]`、`[llm]`、`[routing]`、
-`[browser]`、`[keywords]`、`[git_checkpoint]`、`[codeseek]`（含 `[codeseek.knowledge]`）、`[enhanced_commander]`、`[tui]`，
+`[keywords]`、`[git_checkpoint]`、`[codeseek]`（含 `[codeseek.knowledge]`）、`[enhanced_commander]`、`[tui]`，
 以及顶层 `task_timeout`。
 
 **三级 Provider 覆盖（仍存在）**：`ResolveProvider(agent, tool)` = 工具指定 → `tools.llm.use_provider` →

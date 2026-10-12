@@ -25,28 +25,6 @@ var DefaultMaxSteps = struct {
 	MetaRetry: 5,
 }
 
-// DefaultBrowserConfig 返回默认的浏览器配置（TOML 层）
-// 注意：此处的默认值与 internal/browser/config.go 中的 DefaultBrowserConfig() 应保持一致
-func DefaultBrowserConfig() *BrowserConfig {
-	return &BrowserConfig{
-		Headless:           true,
-		BrowserPath:        "",
-		UserDataDir:        "",
-		ViewportWidth:      1280,
-		ViewportHeight:     720,
-		AllowedDomains:     nil,
-		BlockedDomains:     nil,
-		TimeoutSeconds:     120,
-		TaskTimeoutSeconds: 300,
-		MaxConcurrentPages: 4,
-		AutoLaunch:         true,
-		IdleTimeout:        "5m",
-		AllowNoSandbox:     false,
-		ExtraArgs:          nil,
-		EnableBrowserAgent: true,
-	}
-}
-
 // DefaultLLMCallTimeout 是 LLM API 调用超时的程序保证默认值（用户未配置时的兜底）。
 // 运行期真实值以 GlobalLLMTimeout()（llm_timeout.go）为准：TUI 模型设置面板
 // 可动态修改全局值；无全局值时各调用方回落到本常量。

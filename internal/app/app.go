@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"yagent/internal/agents"
-	"yagent/internal/browser"
 	"yagent/internal/config"
 	"yagent/internal/embedbin"
 	"yagent/internal/globalctx"
@@ -239,9 +238,6 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 				return design
 			}(),
 
-			// BrowserMgr 浏览器管理器（单例，管理 Chromium 浏览器实例生命周期）
-			BrowserMgr: nil,
-
 			// CodeSeekMCP MCP 客户端（用于代码分析，nil=未启用）
 			CodeSeekMCP: codeSeekMCP,
 
@@ -322,12 +318,6 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 
 		// Parse disabled agents from comma-separated string
 		disabledAgents := parseDisabledAgents(ca.DisabledAgents)
-
-		// 检查配置文件中的 enable_browser_agent 设置
-		// 如果配置明确禁用了 browser agent，则加入禁用列表
-		if ca.config != nil && !ca.config.Browser.EnableBrowserAgent {
-			disabledAgents["browser"] = true
-		}
 
 		// Resolve per-agent engines
 		// 自动路由启用时，每个 agent 拿到一个绑定角色基线的 RoutingEngine；
@@ -427,53 +417,10 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		})
 		// 注入 DevOps-Agent，使 Repo-Agent 的 delegate_devops 工具可用
 		repoAgent.SetDevOpsAgent(devopsAgent)
-		// 合并浏览器配置：从 config 读取，未设置的使用默认值
-		browserCfg := browser.DefaultBrowserConfig()
-		if ca.config != nil {
-			cfg := ca.config.Browser
-			if cfg.ViewportWidth > 0 {
-				browserCfg.ViewportWidth = cfg.ViewportWidth
-			}
-			if cfg.ViewportHeight > 0 {
-				browserCfg.ViewportHeight = cfg.ViewportHeight
-			}
-			if cfg.TimeoutSeconds > 0 {
-				browserCfg.TimeoutSeconds = cfg.TimeoutSeconds
-			}
-			if cfg.TaskTimeoutSeconds > 0 {
-				browserCfg.TaskTimeoutSeconds = cfg.TaskTimeoutSeconds
-			}
-			if cfg.MaxConcurrentPages > 0 {
-				browserCfg.MaxConcurrentPages = cfg.MaxConcurrentPages
-			}
-			if cfg.IdleTimeout != "" {
-				browserCfg.IdleTimeout = cfg.IdleTimeout
-			}
-			if cfg.BrowserPath != "" {
-				browserCfg.BrowserPath = cfg.BrowserPath
-			}
-			if cfg.UserDataDir != "" {
-				browserCfg.UserDataDir = cfg.UserDataDir
-			}
-			browserCfg.Headless = cfg.Headless
-			browserCfg.AutoLaunch = cfg.AutoLaunch
-			browserCfg.AllowNoSandbox = cfg.AllowNoSandbox
-			browserCfg.AllowedDomains = cfg.AllowedDomains
-			browserCfg.BlockedDomains = cfg.BlockedDomains
-			browserCfg.ExtraArgs = cfg.ExtraArgs
-		}
-		browserMgr := browser.NewManager(browserCfg, browserCfg.AllowedDomains, browserCfg.BlockedDomains)
-		ca.globalCtx.BrowserMgr = browserMgr
 		browserAgent := agents.NewBrowserAgent(agents.BrowserAgentParams{
-			Formatter:  &gctx,
-			Publisher:  publisher,
-			Env:        env,
-			Flow:       gctx.FlowOps,
-			Guard:      guard,
-			RepoCtx:    repoCtx,
-			BrowserMgr: browserMgr,
-			LLM:        browserEngine,
-			MaxSteps:   browserMaxSteps,
+			Publisher: publisher,
+			LLM:       browserEngine,
+			MaxSteps:  browserMaxSteps,
 		})
 
 		codingAgent := agents.NewCodingAgent(agents.CodingAgentParams{
@@ -774,12 +721,6 @@ func (ca *Yagent) Close() {
 		} else {
 			slog.Info("Shutting down CodeSeek MCP client...")
 			ca.globalCtx.CodeSeekMCP.Shutdown()
-		}
-	}
-	if ca.globalCtx != nil && ca.globalCtx.BrowserMgr != nil {
-		slog.Info("Closing browser manager...")
-		if err := ca.globalCtx.BrowserMgr.Close(); err != nil {
-			slog.Warn("Failed to close browser manager", "error", err)
 		}
 	}
 }

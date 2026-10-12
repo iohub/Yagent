@@ -1,7 +1,6 @@
 package globalctx
 
 import (
-	"yagent/internal/browser"
 	"yagent/internal/config"
 	"yagent/internal/knowledge"
 	"yagent/internal/mcp"
@@ -37,8 +36,6 @@ type GlobalCtx struct {
 	Guard            *tools.WorkspaceGuard
 	DeepThinkingTool *tools.DeepThinkingTool
 	DesignTool       *tools.DesignTool
-	// BrowserMgr 浏览器管理器（单例，管理 Chromium 浏览器实例生命周期）
-	BrowserMgr *browser.Manager
 
 	// CodeSeekMCP MCP 客户端（用于代码分析，nil=未启用）
 	CodeSeekMCP *mcp.MCPClient
