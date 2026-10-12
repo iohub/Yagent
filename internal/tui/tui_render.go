@@ -11,65 +11,81 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// computeFooterHeight 返回 viewport 以下所有区块的总行数。
+// 必须与 View() 中 footer 的实际拼接逐行对应，否则 viewport 高度算错会导致整屏抖动。
 func (m *model) computeFooterHeight() int {
 	if m.footerHeightValid {
 		return m.cachedFooterHeight
 	}
 
-	height := 1
+	height := 0
 
+	// 时间线浮层紧贴视口最后一行之下：View() 里那个 "\n" 只是终止视口的最后一行，
+	// 并不产生空行，所以这里只算面板自身的高度。
 	if !m.dashboardVisible() && (m.taskRunning || len(m.timelineEntries) > 0) {
-		height += 6
-	}
-
-	if !m.commandMode {
-		height += 3 + m.computeInputHeight()
-		height += 1
-		if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
-			height += len(m.skillSuggestions) + 1
-		}
-		if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 {
-			height += 1
+		if tl := m.renderTimelinePanel(m.termWidth); tl != "" {
+			height += lipgloss.Height(tl)
 		}
 	}
 
+	// 日志与输入面板之间的空行
+	height += 1
+	height += m.editorBlockHeight()
+
+	if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 {
+		height++
+	}
 	if m.errMsg != "" {
-		height += 1
+		height++
+	}
+	if m.infoMsg != "" {
+		height++
+	}
+	if dash := m.tokenDashboardBlock(); dash != "" {
+		height += lipgloss.Height(dash)
 	}
 
-	totalTokens := m.inputTokens + m.outputTokens
-	if !m.dashboardVisible() {
-		if m.tokenDashboardCollapsed {
-			if dash := m.renderTokenDashboard(); dash != "" {
-				height += lipgloss.Height(dash)
-			}
-		} else if totalTokens > 0 {
-			height += 4
-			if m.commandMode && m.taskRunning {
-				height++
-			}
-			for _, au := range m.tokenUsagePerAgent {
-				if au.InputTokens+au.OutputTokens > 0 {
-					height++
-				}
-			}
-		}
-	}
-
-	if m.commandMode {
-		height += 1
-		height += 1
-	} else {
-		height += 2
-		height += 1
-	}
+	// 面板与状态栏之间的空行 + 状态栏本身
+	height += 2
 
 	m.cachedFooterHeight = height
 	m.footerHeightValid = true
 	return height
 }
 
+// editorBlockHeight 是输入面板区块的行数（不含前后空行）：
+// 上下两条手绘边框 + 编辑模式的 textarea / 命令行展开时的正文行。
+func (m *model) editorBlockHeight() int {
+	if m.commandMode {
+		return m.cmdlineHeight()
+	}
+	h := 2 + m.computeInputHeight()
+	if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
+		// 每条建议一行 + 末尾一行操作提示
+		h += len(m.skillSuggestions) + 1
+	}
+	return h
+}
+
+// tokenDashboardBlock 返回状态栏上方的 token 面板；dashboard 可见或无用量时为空。
+// 前置一个空行：它和输入面板是上下两个圆角框，直接贴在一起会显得挤压。
+// 缓存分支也要走同一条加空隙的路径，否则命中缓存与否会改变 footer 行数导致抖动。
+func (m *model) tokenDashboardBlock() string {
+	if m.dashboardVisible() {
+		return ""
+	}
+	dash := m.cachedTokenDashboard
+	if !m.tokenDashboardValid {
+		dash = m.renderTokenDashboard()
+	}
+	if dash == "" {
+		return ""
+	}
+	return "\n" + dash
+}
+
 func (m *model) updateViewportCache() {
+	m.syncSearchMatches()
 	m.cachedViewportView = m.viewport.View()
 	m.viewportViewValid = true
 	m.prevViewportYOffset = m.viewport.YOffset()
@@ -78,7 +94,6 @@ func (m *model) updateViewportCache() {
 
 func (m *model) invalidateFooterCache() {
 	m.footerHeightValid = false
-	m.cachedSeparator = ""
 	m.cachedStatusBar = ""
 	m.statusBarValid = false
 	m.cachedTokenDashboard = ""

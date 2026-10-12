@@ -5,26 +5,37 @@ import (
 	"testing"
 )
 
-// TestHelpDialog_Smoke_TwoLanguages 验证中英文帮助数据均非空且含 7 个分组标题。
+// TestHelpDialog_Smoke_TwoLanguages 验证中英文帮助数据均非空，且两套语言
+// 的分组结构一一对应（新增分组时最容易漏掉其中一种语言）。
 func TestHelpDialog_Smoke_TwoLanguages(t *testing.T) {
-	for _, lang := range []Language{LanguageZh, LanguageEn} {
-		data := buildHelpData(lang)
+	zh := buildHelpData(LanguageZh)
+	en := buildHelpData(LanguageEn)
+
+	if len(zh.Sections) < 7 {
+		t.Errorf("分组过少，只剩 %d 组", len(zh.Sections))
+	}
+	if len(zh.Sections) != len(en.Sections) {
+		t.Fatalf("中英文分组数不一致：zh=%d en=%d", len(zh.Sections), len(en.Sections))
+	}
+
+	for _, data := range []helpData{zh, en} {
 		if strings.TrimSpace(data.Title) == "" {
-			t.Errorf("lang=%s: Title 不应为空", lang)
+			t.Errorf("Title 不应为空")
 		}
 		if strings.TrimSpace(data.Dismiss) == "" {
-			t.Errorf("lang=%s: Dismiss 不应为空", lang)
+			t.Errorf("Dismiss 不应为空")
 		}
-		if len(data.Sections) != 7 {
-			t.Errorf("lang=%s: 期望 7 个分组，实际 %d", lang, len(data.Sections))
+	}
+
+	for i := range zh.Sections {
+		if strings.TrimSpace(zh.Sections[i].Title) == "" {
+			t.Errorf("中文第 %d 组标题为空", i)
 		}
-		for i, sec := range data.Sections {
-			if strings.TrimSpace(sec.Title) == "" {
-				t.Errorf("lang=%s: 第 %d 组标题为空", lang, i)
-			}
-			if len(sec.Items) == 0 {
-				t.Errorf("lang=%s: 分组 %q 无条目", lang, sec.Title)
-			}
+		if len(zh.Sections[i].Items) == 0 {
+			t.Errorf("中文分组 %q 无条目", zh.Sections[i].Title)
+		}
+		if len(en.Sections[i].Items) == 0 {
+			t.Errorf("英文第 %d 组无条目", i)
 		}
 	}
 }

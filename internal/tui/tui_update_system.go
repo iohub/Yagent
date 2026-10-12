@@ -136,10 +136,12 @@ func (m *model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			// 滚动向上（viewport 减少行）
 			m.viewport.ScrollUp(3)
 			m.updateViewportCache()
+			m.invalidateFooterCache()
 		case components.MouseScrollDown:
 			// 滚动向下（viewport 增加行）
 			m.viewport.ScrollDown(3)
 			m.updateViewportCache()
+			m.invalidateFooterCache()
 		case components.MouseClick:
 			// 单击：检测是否点击了弹窗按钮
 			m.handleMouseClick(x, y)

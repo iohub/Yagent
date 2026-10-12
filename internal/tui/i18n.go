@@ -16,7 +16,6 @@ type translations struct {
 	TaskDescLabel                    string
 	ProjectDirPlaceholder            string
 	TaskDescPlaceholder              string
-	InfoMessage                      string
 	SubmitButton                     string
 	QuitMessage                      string
 	ValidationErrorEmptyProjectDir   string
@@ -66,6 +65,14 @@ type translations struct {
 	EditModeTips        string
 	HelpDialogTitle     string
 	HelpDialogContent   string
+	// Editor / command-line panel chrome
+	EditorPanelLabel   string
+	EditorHintEdit     string
+	CmdlineHintIdle    string
+	CmdlineHintEx      string
+	CmdlineHintSearch  string
+	CmdlinePlaceholder string
+	SearchNoMatch      string
 	// Delete history confirmation dialog
 	DeleteConfirmTitle   string
 	DeleteConfirmMessage string
@@ -96,7 +103,6 @@ var langMap = map[Language]translations{
 		TaskDescLabel:                    "任务描述",
 		ProjectDirPlaceholder:            "输入项目目录路径",
 		TaskDescPlaceholder:              "",
-		InfoMessage:                      "按 Tab/Shift+Tab 切换，Enter 确认下一个",
 		SubmitButton:                     "提交 (Alt+S)",
 		QuitMessage:                      "\n再见！\n\n",
 		ValidationErrorEmptyProjectDir:   "项目目录不能为空",
@@ -134,8 +140,15 @@ var langMap = map[Language]translations{
 		TaskCompleteOK:                   "确定",
 		TaskCompleteHelp:                 "按 ENTER 或 SPACE 关闭",
 		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  i:编辑  ctrl+e:编辑模式",
-		CommandModeIdleTips:              "gg/G:首/尾  j/k:上下  f/b:翻页  ?:帮助  i:编辑",
-		EditModeTips:                     "alt+s:提交  ctrl+e:命令模式  ctrl+h:帮助  /:技能  ctrl+c:退出",
+		CommandModeIdleTips:              "alt+d:仪表盘  alt+m:模型  alt+t:token  ctrl+l:时间线",
+		EditModeTips:                     "alt+d:仪表盘  alt+m:模型  alt+r:路由  ctrl+t:新标签",
+		EditorPanelLabel:                 "TASK",
+		EditorHintEdit:                   "alt+s 提交 · esc 普通模式 · / 技能 · @ 文件 · ctrl+h 帮助",
+		CmdlineHintIdle:                  "j/k 滚动 · u/d 半页 · gg/G 首尾 · / 搜索 · : 命令 · i 编辑",
+		CmdlineHintEx:                    "enter 执行 · esc 取消 · ↑/↓ 历史",
+		CmdlineHintSearch:                "enter 搜索 · n/N 上下个 · esc 取消 · ↑/↓ 历史",
+		CmdlinePlaceholder:               ": 执行命令    / 搜索日志",
+		SearchNoMatch:                    "无匹配",
 		HelpDialogTitle:                  "Vim 快捷键帮助",
 		HelpDialogContent: "  导航:\n" +
 			"    j / ↓          向下滚动一行\n" +
@@ -179,7 +192,6 @@ var langMap = map[Language]translations{
 		TaskDescLabel:                    "Task Description",
 		ProjectDirPlaceholder:            "Enter project directory path",
 		TaskDescPlaceholder:              "",
-		InfoMessage:                      "Tab/Shift+Tab to switch, Enter to confirm next",
 		SubmitButton:                     "Submit (Alt+S)",
 		QuitMessage:                      "\nGoodbye!\n\n",
 		ValidationErrorEmptyProjectDir:   "Project directory cannot be empty",
@@ -217,8 +229,15 @@ var langMap = map[Language]translations{
 		TaskCompleteOK:                   "OK",
 		TaskCompleteHelp:                 "Press ENTER or SPACE to close",
 		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  i:edit  ctrl+e:edit",
-		CommandModeIdleTips:              "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  ?:help  i:edit",
-		EditModeTips:                     "alt+s:submit  ctrl+e:cmd  ctrl+h:help  /:skill  ctrl+c:quit",
+		CommandModeIdleTips:              "alt+d:dash  alt+m:model  alt+t:token  ctrl+l:timeline",
+		EditModeTips:                     "alt+d:dash  alt+m:model  alt+r:routing  ctrl+t:new tab",
+		EditorPanelLabel:                 "TASK",
+		EditorHintEdit:                   "alt+s submit · esc normal · / skill · @ file · ctrl+h help",
+		CmdlineHintIdle:                  "j/k scroll · u/d half · gg/G ends · / search · : cmd · i edit",
+		CmdlineHintEx:                    "enter run · esc cancel · ↑/↓ history",
+		CmdlineHintSearch:                "enter search · n/N next · esc cancel · ↑/↓ history",
+		CmdlinePlaceholder:               ": run command    / search log",
+		SearchNoMatch:                    "no match",
 		HelpDialogTitle:                  "Vim Keybindings Help",
 		HelpDialogContent: "  Navigation:\n" +
 			"    j / ↓          scroll down one line\n" +
@@ -294,8 +313,6 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.ProjectDirPlaceholder
 	case "TaskDescPlaceholder":
 		return translations.TaskDescPlaceholder
-	case "InfoMessage":
-		return translations.InfoMessage
 	case "SubmitButton":
 		return translations.SubmitButton
 	case "QuitMessage":
@@ -378,6 +395,20 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.HelpDialogTitle
 	case "HelpDialogContent":
 		return translations.HelpDialogContent
+	case "EditorPanelLabel":
+		return translations.EditorPanelLabel
+	case "EditorHintEdit":
+		return translations.EditorHintEdit
+	case "CmdlineHintIdle":
+		return translations.CmdlineHintIdle
+	case "CmdlineHintEx":
+		return translations.CmdlineHintEx
+	case "CmdlineHintSearch":
+		return translations.CmdlineHintSearch
+	case "CmdlinePlaceholder":
+		return translations.CmdlinePlaceholder
+	case "SearchNoMatch":
+		return translations.SearchNoMatch
 	case "DeleteConfirmTitle":
 		return translations.DeleteConfirmTitle
 	case "DeleteConfirmMessage":

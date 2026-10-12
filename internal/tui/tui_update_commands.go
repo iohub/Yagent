@@ -12,39 +12,47 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+// processCommand 执行 ":" 命令行内容，或驱动 "/" 搜索。
+// 参数形如 ":q" / "/pattern"（含前缀）；无前缀的裸文本按命令处理，
+// 这样 ":w" 与 "w" 都能走到同一套解析。
 func (m *model) processCommand(cmd string) tea.Cmd {
 	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return nil
+	}
 
-	switch {
-	case cmd == ":q!":
-		// Force quit — skip confirmation (vim convention)
+	// ── "/" 搜索：真高亮 + 跳转，n/N 在命中之间循环（见 tui_search.go）──
+	if strings.HasPrefix(cmd, "/") {
+		if cmd == "/resume" || cmd == "/rs" {
+			return m.resumeFromCmdline()
+		}
+		m.runSearch(strings.TrimPrefix(cmd, "/"))
+		return nil
+	}
+
+	// 命令行里 ":" 可以省略（"q" 等价 ":q"）
+	name := strings.TrimPrefix(cmd, ":")
+
+	switch name {
+	case "q", "quit":
+		d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
+		d.SetBounds(m.termWidth, m.termHeight)
+		m.dialogStack.Push(d)
+
+	case "q!", "quit!":
+		// 强制退出，跳过确认（vim 约定）
 		m.saveAndFlushTaskMemory()
 		m.quitting = true
 		m.cleanupDebounceTimer()
 		return tea.Quit
-	case cmd == ":q" || cmd == ":quit":
-		d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
-		d.SetBounds(m.termWidth, m.termHeight)
-		m.dialogStack.Push(d)
-	case cmd == ":help" || cmd == ":h":
-		top := m.dialogStack.Top()
-		if top != nil && top.ID() == "help_dialog" {
-			m.dialogStack.CloseDialog("help_dialog")
-		} else {
-			d := components.NewHelpDialog(components.Language(m.currentLang))
-			if m.com != nil && m.com.Config != nil {
-				overrides := buildHelpKeyOverrides(&m.com.Config.TUI.Keybindings)
-				if len(overrides) > 0 {
-					d.SetAltKeybindings(overrides)
-				}
-			}
-			d.SetBounds(m.termWidth, m.termHeight)
-			m.dialogStack.Push(d)
-		}
-	case cmd == ":mode":
-		mode := "COMMAND"
+
+	case "h", "help":
+		return m.toggleHelpDialog()
+
+	case "mode":
+		mode := "NORMAL"
 		if !m.commandMode {
-			mode = "EDIT"
+			mode = "INSERT"
 		}
 		m.logEntries = append(m.logEntries, logEntry{
 			timestamp: time.Now(),
@@ -53,57 +61,58 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		})
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 
-	// ═══════════════════════════════════════════════════════════════
-	// :language — 切换语言（原 ctrl+l 快捷键的功能迁移至此）
-	// ═══════════════════════════════════════════════════════════════
-	case cmd == ":language":
+	case "language":
 		m.toggleLanguage()
-		return nil
 
-	// ═══════════════════════════════════════════════════════════════
-	// :route — 打开模型自动路由对话框（切换 auto/fixed，查看三档模型与分数）
-	// ═══════════════════════════════════════════════════════════════
-	case cmd == ":route" || cmd == ":routing":
+	case "route", "routing":
 		return m.showRoutingDialog()
 
-	// ═══════════════════════════════════════════════════════════════
-	// /resume — Resume a session from rollout log
-	// (alias /rs; must come BEFORE the /pattern log-search fallback)
-	// ═══════════════════════════════════════════════════════════════
-	case cmd == "/resume" || cmd == "/rs" || cmd == ":resume" || cmd == ":rs":
-		if m.taskRunning {
-			m.infoMsg = "Cannot resume sessions while a task is running"
-			return nil
-		}
-		if !m.commandMode {
-			// Switch to command mode first since resume is accessed from there
-			m.commandMode = true
-			m.commandBuffer = ""
-		}
-		return enterResumeMode(m)
+	case "model", "m":
+		return m.showModelSelectionDialog()
 
-	// ═══════════════════════════════════════════════════════════════
-	// /pattern — Search in log entries (must come AFTER more specific / commands)
-	// ═══════════════════════════════════════════════════════════════
-	case strings.HasPrefix(cmd, "/"):
-		// Search in log entries
-		query := strings.TrimPrefix(cmd, "/")
-		m.searchInLog(query)
-	case cmd == ":hist" || cmd == ":history":
-		if m.taskRunning {
-			m.infoMsg = "Cannot browse history while a task is running"
-			return nil
-		}
-		if !m.commandMode {
-			// Switch to command mode first since history is accessed from there
-			m.commandMode = true
-			m.commandBuffer = ""
-		}
-		return enterHistoryMode(m)
+	case "timeout":
+		return m.showTimeoutDialog()
+
+	case "clear":
+		m.clearCurrentSession()
+
+	case "nohl", "noh":
+		m.clearSearch()
+
+	case "hist", "history":
+		return m.historyFromCmdline()
+
+	case "resume", "rs":
+		return m.resumeFromCmdline()
+
 	default:
-		m.infoMsg = fmt.Sprintf("Unknown command: %s (type :help or ? for available commands)", cmd)
+		m.setInfoMsg(fmt.Sprintf("Unknown command: %s（:help 或 ? 查看全部命令）", name))
 	}
 	return nil
+}
+
+// historyFromCmdline 进入历史视图；任务运行中拒绝。
+func (m *model) historyFromCmdline() tea.Cmd {
+	if m.taskRunning {
+		m.setInfoMsg(langManager.GetText("TabCannotWhileRunning"))
+		return nil
+	}
+	if !m.commandMode {
+		m.enterNormalMode()
+	}
+	return enterHistoryMode(m)
+}
+
+// resumeFromCmdline 进入恢复视图；任务运行中拒绝。
+func (m *model) resumeFromCmdline() tea.Cmd {
+	if m.taskRunning {
+		m.setInfoMsg(langManager.GetText("TabCannotWhileRunning"))
+		return nil
+	}
+	if !m.commandMode {
+		m.enterNormalMode()
+	}
+	return enterResumeMode(m)
 }
 
 // timeoutTarget 是模型设置面板中"LLM 调用超时"行的哨兵 Target 值；选中后打开
@@ -184,7 +193,7 @@ func (m *model) showModelSelectionDialog() tea.Cmd {
 // 模式下三档模型（高智商/性价比/快速）及其 ai_score；路由不可用时展示原因。
 func (m *model) showRoutingDialog() tea.Cmd {
 	if m.assistant == nil {
-		m.infoMsg = "Routing unavailable: assistant not initialized"
+		m.setInfoMsg("Routing unavailable: assistant not initialized")
 		return nil
 	}
 	snap := m.assistant.GetRouteSnapshot()
@@ -210,24 +219,6 @@ func (m *model) showRoutingDialog() tea.Cmd {
 	d.SetBounds(m.termWidth, m.termHeight)
 	m.dialogStack.Push(d)
 	return nil
-}
-
-// searchInLog highlights entries containing the query string.
-func (m *model) searchInLog(query string) {
-	queryLower := strings.ToLower(query)
-	found := 0
-	for i := range m.logEntries {
-		if strings.Contains(strings.ToLower(m.logEntries[i].content), queryLower) {
-			found++
-		}
-	}
-	m.logEntries = append(m.logEntries, logEntry{
-		timestamp: time.Now(),
-		eventType: "status",
-		content:   fmt.Sprintf("Search '/%s': %d matches", query, found),
-	})
-	m.viewportDirty = true
-	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 }
 
 // llmTimeoutPresets 是超时对话框的预设选项（全部在 30s ~ 24h 校验范围内）。
@@ -261,7 +252,7 @@ func (m *model) llmEffectiveTimeout() time.Duration {
 // 预设选项 —— Enter 临时应用（仅运行时），Space 应用并持久化，Esc 取消。
 func (m *model) showTimeoutDialog() tea.Cmd {
 	if m.assistant == nil {
-		m.infoMsg = "Timeout settings unavailable: assistant not initialized"
+		m.setInfoMsg("Timeout settings unavailable: assistant not initialized")
 		return nil
 	}
 	current := m.llmEffectiveTimeout()

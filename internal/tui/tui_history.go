@@ -90,7 +90,7 @@ func historyUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		m.historyCursor = 0
 		m.historyLoading = false
 		if len(msg.items) == 0 {
-			m.infoMsg = "No conversation history found"
+			m.setInfoMsg("No conversation history found")
 		}
 		return m, nil
 
@@ -101,7 +101,7 @@ func historyUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case historyErrMsg:
-		m.infoMsg = fmt.Sprintf("History error: %v", msg.err)
+		m.setInfoMsg(fmt.Sprintf("History error: %v", msg.err))
 		m.historyLoading = false
 		return m, nil
 
@@ -343,11 +343,11 @@ func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 	defer func() { m.historyLoading = false }()
 
 	if mem == nil || len(mem.Messages) == 0 {
-		m.infoMsg = "No messages in this session"
+		m.setInfoMsg("No messages in this session")
 		return
 	}
 
-	m.infoMsg = applyRestoredMemory(m, mem, taskID, m.projectDir, "Loaded")
+	m.setInfoMsg(applyRestoredMemory(m, mem, taskID, m.projectDir, "Loaded"))
 }
 
 // ── History Mode Entry/Exit ──
@@ -685,13 +685,13 @@ func renderHistoryStatusBar(m *model, width int) string {
 // It is called after the delete confirmation dialog (via DialogStack) is confirmed.
 func confirmDeleteHistoryEntryByID(m *model, taskID string) tea.Cmd {
 	if taskID == "" || m.dataManager == nil {
-		m.infoMsg = "Cannot delete: data manager not available"
+		m.setInfoMsg("Cannot delete: data manager not available")
 		return nil
 	}
 
 	err := m.dataManager.DeleteTaskMemory(taskID)
 	if err != nil {
-		m.infoMsg = langManager.GetText("DeleteFailed") + err.Error()
+		m.setInfoMsg(langManager.GetText("DeleteFailed") + err.Error())
 		return nil
 	}
 
@@ -724,6 +724,6 @@ func confirmDeleteHistoryEntryByID(m *model, taskID string) tea.Cmd {
 	}
 	m.clampCursor()
 
-	m.infoMsg = langManager.GetText("DeleteSuccess")
+	m.setInfoMsg(langManager.GetText("DeleteSuccess"))
 	return nil
 }

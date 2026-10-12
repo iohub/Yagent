@@ -16,6 +16,13 @@ func isModelTargetTool(target string) bool {
 }
 
 func (m *model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// 提示行是一次性的：任何按键都会把它让位给这次操作自己的结果
+	// （包括新的 setInfoMsg），不需要定时器就能保证它不会赖在底部。
+	if m.infoMsg != "" {
+		m.infoMsg = ""
+		m.invalidateFooterCache()
+	}
+
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
 		if model, cmd, handled := m.handleDialogStackKey(msg); handled {
 			return model, cmd
@@ -408,17 +415,17 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 	switch key {
 	case "ctrl+t":
 		if m.taskRunning {
-			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+			m.setInfoMsg(langManager.GetText("TabCannotWhileRunning"))
 			return true, nil
 		}
 		if len(m.sessionTabs) >= m.maxTabs {
-			m.infoMsg = langManager.GetText("TabMaxReached")
+			m.setInfoMsg(langManager.GetText("TabMaxReached"))
 			return true, nil
 		}
 		return true, m.newSessionTabAction()
 	case "alt+[":
 		if m.taskRunning {
-			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+			m.setInfoMsg(langManager.GetText("TabCannotWhileRunning"))
 			return true, nil
 		}
 		if m.activeSessionIdx > 0 {
@@ -427,7 +434,7 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 		return true, nil
 	case "alt+]":
 		if m.taskRunning {
-			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+			m.setInfoMsg(langManager.GetText("TabCannotWhileRunning"))
 			return true, nil
 		}
 		if m.activeSessionIdx < len(m.sessionTabs)-1 {
@@ -436,18 +443,18 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 		return true, nil
 	case "alt+c":
 		if m.taskRunning {
-			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+			m.setInfoMsg(langManager.GetText("TabCannotWhileRunning"))
 			return true, nil
 		}
 		m.clearCurrentSession()
 		return true, nil
 	case "alt+w":
 		if m.taskRunning {
-			m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+			m.setInfoMsg(langManager.GetText("TabCannotWhileRunning"))
 			return true, nil
 		}
 		if len(m.sessionTabs) <= 1 {
-			m.infoMsg = langManager.GetText("TabCloseLastBlocked")
+			m.setInfoMsg(langManager.GetText("TabCloseLastBlocked"))
 			return true, nil
 		}
 		m.closeCurrentSessionTab()
@@ -457,7 +464,7 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 		numStr := strings.TrimPrefix(key, "alt+")
 		if n, err := strconv.Atoi(numStr); err == nil && n >= 1 && n <= 9 {
 			if m.taskRunning {
-				m.infoMsg = langManager.GetText("TabCannotWhileRunning")
+				m.setInfoMsg(langManager.GetText("TabCannotWhileRunning"))
 			} else {
 				idx := n - 1
 				if idx < len(m.sessionTabs) {
@@ -470,6 +477,8 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 	return false, nil
 }
 
+// handleCommandModeKey 处理 NORMAL（vim 普通模式）按键，分三层依次分派：
+// 命令行输入 → 全局快捷键 → 移动/跳转动作。
 func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if m.cmdKeyMap != nil {
@@ -477,217 +486,340 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			key = mapped
 		}
 	}
-	if m.lastKey != "" {
-		combo := m.lastKey + key
-		m.lastKey = ""
-		switch combo {
-		case "gg":
-			m.viewport.GotoTop()
-			m.updateViewportCache()
-			return m, nil
-		default:
-		}
-	}
 
-	helpOpen := m.dialogStack != nil && func() bool {
-		top := m.dialogStack.Top()
-		return top != nil && top.ID() == "help_dialog"
-	}()
-	if helpOpen && key != "i" && key != "ctrl+e" && key != "enter" && key != "?" && key != "ctrl+c" {
-		m.dialogStack.CloseDialog("help_dialog")
-		return m, nil
+	// 命令行激活时按键优先归命令行。此时 commandBuffer 一定以 ":" 或 "/" 开头
+	// —— 只有这两个前缀才会开启命令行，其它可打印字符不再被悄悄吞进缓冲区
+	// （旧实现里在普通模式下随便打字都会攒进 buffer）。
+	if m.commandBuffer != "" {
+		if model, cmd, handled := m.handleCmdlineKey(key, msg); handled {
+			return model, cmd
+		}
 	}
 
 	if handled, cmd := m.handleTabShortcut(key); handled {
 		return m, cmd
 	}
+	if handled, cmd := m.handleNormalGlobalKey(key); handled {
+		return m, cmd
+	}
 
+	// 数字前缀："10j" 下滚 10 行，"5G" 跳到第 5 行。
+	if len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
+		if key[0] == '0' && m.pendingCount == "" {
+			return m, nil // 前导 0 既不是计数，这里也没有水平滚动语义，直接忽略
+		}
+		m.pendingCount += key
+		return m, nil
+	}
+
+	count := m.takeCount()
+
+	// 双键动作
+	if m.lastKey != "" {
+		combo := m.lastKey + key
+		m.lastKey = ""
+		if combo == "gg" {
+			m.viewport.GotoTop()
+			m.updateViewportCache()
+			m.invalidateFooterCache()
+			return m, nil
+		}
+	}
+
+	switch key {
+	case "j", "down":
+		m.viewport.ScrollDown(count)
+	case "k", "up":
+		m.viewport.ScrollUp(count)
+	case "f", "ctrl+f":
+		m.viewport.PageDown()
+	case "b", "ctrl+b":
+		m.viewport.PageUp()
+	case "u", "ctrl+u":
+		m.viewport.HalfPageUp()
+	case "d", "ctrl+d":
+		m.viewport.HalfPageDown()
+	case "G":
+		if count > 1 {
+			m.viewport.SetYOffset(count - 1)
+		} else {
+			m.viewport.GotoBottom()
+		}
+	case "g":
+		m.lastKey = key
+		return m, nil
+
+	case "n":
+		m.searchStep(1)
+		return m, nil
+	case "N":
+		m.searchStep(-1)
+		return m, nil
+
+	case "i", "a", "ctrl+e":
+		return m, m.enterInsertMode()
+
+	case ":", "/":
+		m.commandBuffer = key
+		m.resetCmdRecall()
+		m.invalidateFooterCache()
+		return m, nil
+
+	case "enter":
+		// 空命令行 + 回车：回编辑模式，相当于 vim 里按回车继续输入。
+		return m, m.enterInsertMode()
+
+	case "esc":
+		return m, m.normalEscape()
+
+	default:
+		var vpCmd tea.Cmd
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		m.invalidateFooterCache()
+		return m, vpCmd
+	}
+
+	m.updateViewportCache()
+	m.invalidateFooterCache()
+	return m, nil
+}
+
+// takeCount 取出并清空数字前缀，无前缀时按 1 计。
+func (m *model) takeCount() int {
+	if m.pendingCount == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(m.pendingCount)
+	m.pendingCount = ""
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
+}
+
+// handleNormalGlobalKey 处理任何 NORMAL 状态下都可用的快捷键。
+func (m *model) handleNormalGlobalKey(key string) (bool, tea.Cmd) {
 	switch key {
 	case "ctrl+c":
 		d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
 		d.SetBounds(m.termWidth, m.termHeight)
 		m.dialogStack.Push(d)
-		return m, nil
-
-	case "esc":
-		if m.dialogStack != nil {
-			top := m.dialogStack.Top()
-			if top != nil && top.ID() == "help_dialog" {
-				m.dialogStack.CloseDialog("help_dialog")
-				return m, nil
-			}
-		}
-		if m.commandBuffer != "" {
-			m.commandBuffer = ""
-			return m, nil
-		}
-		if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
-			d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
-			d.SetBounds(m.termWidth, m.termHeight)
-			m.dialogStack.Push(d)
-		}
-		return m, nil
-
-	case "i":
-		if m.taskRunning {
-			m.infoMsg = "Task is running, cannot switch to edit mode"
-			return m, nil
-		}
-		m.commandMode = false
-		m.commandBuffer = ""
-		m.lastKey = ""
-		m.invalidateFooterCache()
-		return m, nil
-
-	case "enter":
-		if m.dialogStack != nil {
-			top := m.dialogStack.Top()
-			if top != nil && top.ID() == "help_dialog" {
-				m.dialogStack.CloseDialog("help_dialog")
-				return m, nil
-			}
-		}
-		if m.commandBuffer != "" {
-			cmd := m.processCommand(m.commandBuffer)
-			m.commandBuffer = ""
-			if cmd != nil {
-				return m, cmd
-			}
-		} else if !m.taskRunning {
-			m.commandMode = false
-		}
-		return m, nil
-
-	case "f":
-		m.viewport.PageDown()
-		m.updateViewportCache()
-		return m, nil
-
-	case "b":
-		m.viewport.PageUp()
-		m.updateViewportCache()
-		return m, nil
-
-	case "j", "down":
-		m.viewport.ScrollDown(1)
-		m.updateViewportCache()
-		return m, nil
-
-	case "k", "up":
-		m.viewport.ScrollUp(1)
-		m.updateViewportCache()
-		return m, nil
-
-	case "G":
-		m.viewport.GotoBottom()
-		m.updateViewportCache()
-		return m, nil
-
-	case "g":
-		if m.commandBuffer == "" {
-			m.lastKey = key
-		} else {
-			m.commandBuffer += key
-		}
-		return m, nil
-
-	case ":":
-		if m.commandBuffer == "" {
-			m.commandBuffer = ":"
-		} else {
-			m.commandBuffer += ":"
-		}
-		return m, nil
-
-	case "/":
-		if m.commandBuffer == "" {
-			m.commandBuffer = "/"
-		} else {
-			m.commandBuffer += "/"
-		}
-		return m, nil
-
-	case "?":
-		if m.commandBuffer == "" {
-			top := m.dialogStack.Top()
-			if top != nil && top.ID() == "help_dialog" {
-				m.dialogStack.CloseDialog("help_dialog")
-			} else {
-				d := components.NewHelpDialog(components.Language(m.currentLang))
-				if m.com != nil && m.com.Config != nil {
-					overrides := buildHelpKeyOverrides(&m.com.Config.TUI.Keybindings)
-					if len(overrides) > 0 {
-						d.SetAltKeybindings(overrides)
-					}
-				}
-				d.SetBounds(m.termWidth, m.termHeight)
-				m.dialogStack.Push(d)
-			}
-		} else {
-			m.commandBuffer += "?"
-		}
-		return m, nil
-
-	case "backspace":
-		if len(m.commandBuffer) > 0 {
-			m.commandBuffer = m.commandBuffer[:len(m.commandBuffer)-1]
-		}
-		return m, nil
+		return true, nil
 
 	case "alt+t":
 		m.tokenDashboardCollapsed = !m.tokenDashboardCollapsed
 		m.cachedTokenDashboard = m.renderTokenDashboard()
 		m.tokenDashboardValid = true
 		m.invalidateFooterCache()
-		return m, nil
+		return true, nil
 
 	case "alt+d":
 		m.toggleDashboard()
-		return m, nil
+		return true, nil
 
 	case "alt+m":
-		return m, m.showModelSelectionDialog()
+		return true, m.showModelSelectionDialog()
 
 	case "alt+r":
-		return m, m.showRoutingDialog()
+		return true, m.showRoutingDialog()
 
 	case "ctrl+l":
-		if !m.timelineFullscreenMode {
-			m.timelineFullscreenMode = true
-			m.timelineExpanded = false
-			m.timelineFullscreenFocus = "list"
-			if len(m.timelineEntries) > 0 {
-				m.timelineFullscreenCursor = len(m.timelineEntries) - 1
-			} else {
-				m.timelineFullscreenCursor = 0
-			}
-			initTimelineDetailViewport(m)
-			m.timelineCacheKey = ""
-			m.invalidateFooterCache()
-		} else {
-			m.ExitTimelineFullscreen()
-			m.timelineExpanded = false
-			m.timelineCacheKey = ""
-			m.invalidateFooterCache()
-		}
-		return m, nil
+		m.toggleTimelineFullscreen()
+		return true, nil
 
 	case "ctrl+g":
 		if !m.thinklinkMode {
-			return m, enterThinklinkMode(m)
+			return true, enterThinklinkMode(m)
 		}
 		exitThinklinkMode(m)
-		return m, nil
+		return true, nil
 
-	default:
-		if len(msg.Key().Text) > 0 {
-			m.commandBuffer += msg.Key().Text
-			return m, nil
-		}
-		var vpCmd tea.Cmd
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		return m, vpCmd
+	case "?":
+		return true, m.toggleHelpDialog()
 	}
+	return false, nil
+}
+
+// handleCmdlineKey 处理命令行内的按键。光标固定在行尾 —— 这是刻意的最小实现：
+// 命令行只承载短命令与搜索串，多行文本编辑交给编辑面板本身。
+func (m *model) handleCmdlineKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	switch key {
+	case "enter":
+		text := m.commandBuffer
+		m.commandBuffer = ""
+		m.pendingCount = ""
+		m.resetCmdRecall()
+		m.pushCmdHistory(text)
+		m.invalidateFooterCache()
+		return m, m.processCommand(text), true
+
+	case "esc":
+		m.commandBuffer = ""
+		m.pendingCount = ""
+		m.resetCmdRecall()
+		m.invalidateFooterCache()
+		return m, nil, true
+
+	case "backspace", "ctrl+h":
+		// 按 rune 退格：命令里含中文时按字节删会切坏半个字符。
+		r := []rune(m.commandBuffer)
+		if len(r) > 1 {
+			m.commandBuffer = string(r[:len(r)-1])
+		} else {
+			m.commandBuffer = "" // 只剩前缀时再退一次即关闭命令行
+		}
+		m.resetCmdRecall()
+		m.invalidateFooterCache()
+		return m, nil, true
+
+	case "ctrl+u":
+		m.commandBuffer = m.commandBuffer[:1] // 只留 ":" 或 "/"
+		m.resetCmdRecall()
+		m.invalidateFooterCache()
+		return m, nil, true
+
+	case "up", "ctrl+p":
+		m.recallCmdHistory(-1)
+		return m, nil, true
+
+	case "down", "ctrl+n":
+		m.recallCmdHistory(1)
+		return m, nil, true
+	}
+
+	if txt := msg.Key().Text; txt != "" {
+		m.commandBuffer += txt
+		m.resetCmdRecall()
+		m.invalidateFooterCache()
+		return m, nil, true
+	}
+	return m, nil, false
+}
+
+func (m *model) resetCmdRecall() {
+	m.cmdRecalling = false
+	m.cmdRecallIdx = 0
+	m.cmdDraft = ""
+}
+
+// pushCmdHistory 记录已执行的命令行，连续重复只留一条，超出上限丢弃最旧的。
+func (m *model) pushCmdHistory(cmd string) {
+	if cmd == "" || (len(m.cmdHistory) > 0 && m.cmdHistory[len(m.cmdHistory)-1] == cmd) {
+		return
+	}
+	m.cmdHistory = append(m.cmdHistory, cmd)
+	const cmdHistoryMax = 50
+	if len(m.cmdHistory) > cmdHistoryMax {
+		m.cmdHistory = m.cmdHistory[len(m.cmdHistory)-cmdHistoryMax:]
+	}
+}
+
+// recallCmdHistory 在命令行历史中导航，dir=-1 往更早、+1 往更新；
+// 走到最新之后恢复用户开始导航前敲的半截命令。
+func (m *model) recallCmdHistory(dir int) {
+	if len(m.cmdHistory) == 0 {
+		return
+	}
+	if !m.cmdRecalling {
+		m.cmdRecalling = true
+		m.cmdRecallIdx = len(m.cmdHistory) // 下一格就是"最新再往前"
+		m.cmdDraft = m.commandBuffer
+	}
+	m.cmdRecallIdx += dir
+
+	switch {
+	case m.cmdRecallIdx >= len(m.cmdHistory):
+		m.cmdRecallIdx = len(m.cmdHistory)
+		m.commandBuffer = m.cmdDraft
+	case m.cmdRecallIdx < 0:
+		m.cmdRecallIdx = 0
+		m.commandBuffer = m.cmdHistory[0]
+	default:
+		m.commandBuffer = m.cmdHistory[m.cmdRecallIdx]
+	}
+	m.invalidateFooterCache()
+}
+
+// normalEscape 是 NORMAL 模式下 Esc 的分层退出：
+// 先取消数字前缀，再清除搜索高亮，最后才谈任务取消确认。
+func (m *model) normalEscape() tea.Cmd {
+	m.lastKey = ""
+	if m.pendingCount != "" {
+		m.pendingCount = ""
+		m.invalidateFooterCache()
+		return nil
+	}
+	if m.searchPattern != "" {
+		m.clearSearch()
+		return nil
+	}
+	if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
+		d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
+		d.SetBounds(m.termWidth, m.termHeight)
+		m.dialogStack.Push(d)
+	}
+	return nil
+}
+
+// enterInsertMode 回到编辑（INSERT）模式。运行中也允许进入：提交本来就由
+// alt+s 那侧拦截，若在此处一并禁止，Esc 进 NORMAL 后会把自己关在外面。
+func (m *model) enterInsertMode() tea.Cmd {
+	m.commandMode = false
+	m.commandBuffer = ""
+	m.lastKey = ""
+	m.pendingCount = ""
+	m.resetCmdRecall()
+	m.invalidateFooterCache()
+	return nil
+}
+
+// enterNormalMode 从编辑模式回到 NORMAL 模式（编辑模式下的 Esc）。
+func (m *model) enterNormalMode() {
+	m.commandMode = true
+	m.commandBuffer = ""
+	m.lastKey = ""
+	m.pendingCount = ""
+	m.resetCmdRecall()
+	m.invalidateFooterCache()
+}
+
+// toggleTimelineFullscreen 打开/关闭时间线全屏视图。
+func (m *model) toggleTimelineFullscreen() {
+	if m.timelineFullscreenMode {
+		m.ExitTimelineFullscreen()
+	} else {
+		m.timelineFullscreenMode = true
+		m.timelineFullscreenFocus = "list"
+		if len(m.timelineEntries) > 0 {
+			m.timelineFullscreenCursor = len(m.timelineEntries) - 1
+		} else {
+			m.timelineFullscreenCursor = 0
+		}
+		initTimelineDetailViewport(m)
+	}
+	m.timelineExpanded = false
+	m.timelineCacheKey = ""
+	m.invalidateFooterCache()
+}
+
+// toggleHelpDialog 打开帮助对话框；已打开则关闭（"?"、":help"、ctrl+h 共用）。
+func (m *model) toggleHelpDialog() tea.Cmd {
+	if m.dialogStack == nil {
+		m.dialogStack = components.NewDialogStack()
+	}
+	if top := m.dialogStack.Top(); top != nil && top.ID() == "help_dialog" {
+		m.dialogStack.CloseDialog("help_dialog")
+		return nil
+	}
+	d := components.NewHelpDialog(components.Language(m.currentLang))
+	if m.com != nil && m.com.Config != nil {
+		if overrides := buildHelpKeyOverrides(&m.com.Config.TUI.Keybindings); len(overrides) > 0 {
+			d.SetAltKeybindings(overrides)
+		}
+	}
+	d.SetBounds(m.termWidth, m.termHeight)
+	m.dialogStack.Push(d)
+	return nil
 }
 
 func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -720,60 +852,28 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.skillSuggestionIdx = 0
 			return m, nil
 		}
-		if m.taskRunning && m.currentTask != nil && m.currentTask.CancelFunc != nil {
-			d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
-			d.SetBounds(m.termWidth, m.termHeight)
-			m.dialogStack.Push(d)
+		if m.taskRunning {
+			if m.currentTask != nil && m.currentTask.CancelFunc != nil {
+				d := components.NewQuitConfirmDialogForCancel(components.Language(m.currentLang))
+				d.SetBounds(m.termWidth, m.termHeight)
+				m.dialogStack.Push(d)
+			}
+			return m, nil
 		}
+		// 空闲时 Esc 回到 NORMAL 模式，与 vim 一致 —— 这是进入普通模式的
+		// 主路径，之前只有 ctrl+e 一条路，手上是 Esc 的人永远进不去。
+		m.enterNormalMode()
 		return m, nil
 
 	case "ctrl+e":
-		m.commandMode = true
-		m.commandBuffer = ""
-		m.invalidateFooterCache()
+		m.enterNormalMode()
 		return m, nil
 
 	case "ctrl+h":
-		if m.dialogStack != nil {
-			top := m.dialogStack.Top()
-			if top != nil && top.ID() == "help_dialog" {
-				m.dialogStack.Pop()
-				return m, nil
-			}
-		}
-		d := components.NewHelpDialog(components.Language(m.currentLang))
-		if m.com != nil && m.com.Config != nil {
-			overrides := buildHelpKeyOverrides(&m.com.Config.TUI.Keybindings)
-			if len(overrides) > 0 {
-				d.SetAltKeybindings(overrides)
-			}
-		}
-		d.SetBounds(m.termWidth, m.termHeight)
-		if m.dialogStack == nil {
-			m.dialogStack = components.NewDialogStack()
-		}
-		m.dialogStack.Push(d)
-		return m, nil
+		return m, m.toggleHelpDialog()
 
-	case "alt+s":
-		if m.taskRunning {
-			return m, nil
-		}
-		taskDesc := strings.TrimSpace(m.input.Value())
-		if taskDesc == "" {
-			return m, nil
-		}
-		if ok, errStr := validateInputs(m.projectDir, taskDesc); !ok {
-			m.errMsg = errStr
-			return m, nil
-		}
-		if m.currentTask != nil {
-			if !m.taskRunning {
-				return m, m.submitFollowUp(taskDesc)
-			}
-			return m, nil
-		}
-		return m, m.submitTask()
+	case "alt+s", "ctrl+s":
+		return m, m.submitFromEditor()
 
 	case "alt+m":
 		if m.taskRunning {
@@ -792,32 +892,19 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+l":
-		if !m.timelineFullscreenMode {
-			m.timelineFullscreenMode = true
-			m.timelineExpanded = false
-			m.timelineFullscreenFocus = "list"
-			if len(m.timelineEntries) > 0 {
-				m.timelineFullscreenCursor = len(m.timelineEntries) - 1
-			} else {
-				m.timelineFullscreenCursor = 0
-			}
-			initTimelineDetailViewport(m)
-			m.timelineCacheKey = ""
-			m.invalidateFooterCache()
-		} else {
-			m.ExitTimelineFullscreen()
-			m.timelineExpanded = false
-			m.timelineCacheKey = ""
-			m.invalidateFooterCache()
-		}
+		m.toggleTimelineFullscreen()
 		return m, nil
 
 	case "ctrl+f":
 		m.viewport.PageDown()
+		m.updateViewportCache()
+		m.invalidateFooterCache()
 		return m, nil
 
 	case "ctrl+b":
 		m.viewport.PageUp()
+		m.updateViewportCache()
+		m.invalidateFooterCache()
 		return m, nil
 
 	case "tab":
@@ -885,7 +972,7 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.skillSuggestions = nil
 				m.skillSuggestionIdx = 0
 				if m.taskRunning {
-					m.infoMsg = "Cannot browse history while a task is running"
+					m.setInfoMsg("Cannot browse history while a task is running")
 					return m, nil
 				}
 				m.input.SetValue("")
@@ -897,7 +984,7 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.skillSuggestions = nil
 				m.skillSuggestionIdx = 0
 				if m.taskRunning {
-					m.infoMsg = "Cannot resume sessions while a task is running"
+					m.setInfoMsg("Cannot resume sessions while a task is running")
 					return m, nil
 				}
 				m.input.SetValue("")
@@ -910,7 +997,7 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.skillAutoComplete = false
 				m.skillSuggestions = nil
 				m.skillSuggestionIdx = 0
-				m.infoMsg = fmt.Sprintf("正在执行 skill: %s", skill.Name)
+				m.setInfoMsg(fmt.Sprintf("正在执行 skill: %s", skill.Name))
 				return m, m.submitTaskWithContent(combinedContent)
 			}
 		}
