@@ -443,7 +443,7 @@ func renderSessionChip(num int, tab *sessionTab, active bool) string {
 }
 
 // renderTabBar 渲染 1 行 tab 栏：chip 式 tab + "+" 新建按钮，
-// 空间富余时右对齐 keycap 快捷键提示（ctrl+t 新建 / alt+w 关闭）。
+// 右端是全局键帽提示组（见 tabKeycaps）。
 func (m *model) renderTabBar() string {
 	if len(m.sessionTabs) == 0 {
 		return ""
@@ -527,15 +527,47 @@ func (m *model) renderTabBar() string {
 	}
 	result := strings.Join(tabStrings, " ")
 
-	// 右侧 keycap 提示：空间富余（chips 与提示之间至少留 2 列）才显示
-	hint := dashKeycap("ctrl+t", langManager.GetText("TabNewHint")) +
-		dashKeycap("alt+w", langManager.GetText("TabCloseHint"))
-	hintWidth := lipgloss.Width(hint)
-	if totalWidth+2+hintWidth <= availableWidth {
+	// 右侧键帽提示：空间富余（chips 与提示之间至少留 2 列）才显示，
+	// 且按优先级从尾部逐项丢弃而不是整组消失。
+	hint := fitKeycaps(m.tabKeycaps(), availableWidth-totalWidth-2)
+	if hintWidth := lipgloss.Width(hint); hintWidth > 0 {
 		result += strings.Repeat(" ", availableWidth-totalWidth-hintWidth) + hint
 	} else if totalWidth < availableWidth {
 		result += strings.Repeat(" ", availableWidth-totalWidth)
 	}
 
 	return result
+}
+
+// tabKeycaps 是 tab 行右端的全局键帽组，按"越靠前越重要"排序。
+// 模型 / 路由 / 仪表盘的作用域都在上半屏，提示因此挂在同一行，
+// 底部状态栏只保留模式与用量信息。
+func (m *model) tabKeycaps() []string {
+	caps := []string{
+		dashKeycap("ctrl+t", langManager.GetText("TabNewHint")),
+		dashKeycap("alt+w", langManager.GetText("TabCloseHint")),
+		dashKeycap("alt+m", langManager.GetText("TabModelHint")),
+		dashKeycap("alt+r", langManager.GetText("TabRouteHint")),
+	}
+	// dashboard 展开时它自己的标题栏已经写了 alt+d，这里不重复报；
+	// 收起（或还没有用量、压根没画）时才在 tab 行补上入口提示。
+	if !m.dashboardVisible() {
+		caps = append(caps, dashKeycap("alt+d", langManager.GetText("DashboardExpandHint")))
+	}
+	return caps
+}
+
+// fitKeycaps 按给定顺序尽量多地装入 budget 列，放不下的从尾部丢弃。
+func fitKeycaps(caps []string, budget int) string {
+	var b strings.Builder
+	used := 0
+	for _, c := range caps {
+		w := lipgloss.Width(c)
+		if used+w > budget {
+			break
+		}
+		b.WriteString(c)
+		used += w
+	}
+	return b.String()
 }

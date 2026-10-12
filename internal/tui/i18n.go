@@ -62,7 +62,6 @@ type translations struct {
 	// Command mode (vim-like modal editing)
 	CommandModeTips     string
 	CommandModeIdleTips string
-	EditModeTips        string
 	HelpDialogTitle     string
 	HelpDialogContent   string
 	// Editor / command-line panel chrome
@@ -84,10 +83,12 @@ type translations struct {
 	// Dashboard hints
 	DashboardCollapseHint string
 	DashboardExpandHint   string
-	// Session tab hints
+	// Session tab hints —— 右上角 tab 行右侧的键帽组
 	SessionTitlePrefix   string
 	TabNewHint           string
 	TabCloseHint         string
+	TabModelHint         string
+	TabRouteHint         string
 	TabMaxReached        string
 	TabCannotWhileRunning string
 	TabCloseLastBlocked  string
@@ -140,10 +141,9 @@ var langMap = map[Language]translations{
 		TaskCompleteOK:                   "确定",
 		TaskCompleteHelp:                 "按 ENTER 或 SPACE 关闭",
 		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  i:编辑  ctrl+e:编辑模式",
-		CommandModeIdleTips:              "alt+d:仪表盘  alt+m:模型  alt+t:token  ctrl+l:时间线",
-		EditModeTips:                     "alt+d:仪表盘  alt+m:模型  alt+r:路由  ctrl+t:新标签",
+		CommandModeIdleTips:              "alt+t:token  ctrl+l:时间线",
 		EditorPanelLabel:                 "TASK",
-		EditorHintEdit:                   "alt+s 提交 · esc 普通模式 · / 技能 · @ 文件 · ctrl+h 帮助",
+		EditorHintEdit:                   "alt+s 提交 · esc 普通模式 · / 技能 · @ 文件 · ctrl+l 时间线 · ctrl+h 帮助",
 		CmdlineHintIdle:                  "j/k 滚动 · u/d 半页 · gg/G 首尾 · / 搜索 · : 命令 · i 编辑",
 		CmdlineHintEx:                    "enter 执行 · esc 取消 · ↑/↓ 历史",
 		CmdlineHintSearch:                "enter 搜索 · n/N 上下个 · esc 取消 · ↑/↓ 历史",
@@ -179,6 +179,8 @@ var langMap = map[Language]translations{
 		SessionTitlePrefix:   "会话",
 		TabNewHint:           "新建",
 		TabCloseHint:         "关闭",
+		TabModelHint:         "模型",
+		TabRouteHint:         "路由",
 		TabMaxReached:        "已达到最大会话数 (10)",
 		TabCannotWhileRunning: "任务运行中，无法切换/新建/清空会话",
 		TabCloseLastBlocked:  "无法关闭最后一个会话",
@@ -229,10 +231,9 @@ var langMap = map[Language]translations{
 		TaskCompleteOK:                   "OK",
 		TaskCompleteHelp:                 "Press ENTER or SPACE to close",
 		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  i:edit  ctrl+e:edit",
-		CommandModeIdleTips:              "alt+d:dash  alt+m:model  alt+t:token  ctrl+l:timeline",
-		EditModeTips:                     "alt+d:dash  alt+m:model  alt+r:routing  ctrl+t:new tab",
+		CommandModeIdleTips:              "alt+t:token  ctrl+l:timeline",
 		EditorPanelLabel:                 "TASK",
-		EditorHintEdit:                   "alt+s submit · esc normal · / skill · @ file · ctrl+h help",
+		EditorHintEdit:                   "alt+s submit · esc normal · / skill · @ file · ctrl+l timeline · ctrl+h help",
 		CmdlineHintIdle:                  "j/k scroll · u/d half · gg/G ends · / search · : cmd · i edit",
 		CmdlineHintEx:                    "enter run · esc cancel · ↑/↓ history",
 		CmdlineHintSearch:                "enter search · n/N next · esc cancel · ↑/↓ history",
@@ -268,6 +269,8 @@ var langMap = map[Language]translations{
 		SessionTitlePrefix:   "Session",
 		TabNewHint:           "New",
 		TabCloseHint:         "Close",
+		TabModelHint:         "Model",
+		TabRouteHint:         "Route",
 		TabMaxReached:        "Maximum sessions reached (10)",
 		TabCannotWhileRunning: "Cannot switch/new/clear session while a task is running",
 		TabCloseLastBlocked:  "Cannot close the last session",
@@ -389,8 +392,6 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.CommandModeTips
 	case "CommandModeIdleTips":
 		return translations.CommandModeIdleTips
-	case "EditModeTips":
-		return translations.EditModeTips
 	case "HelpDialogTitle":
 		return translations.HelpDialogTitle
 	case "HelpDialogContent":
@@ -431,6 +432,10 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.TabNewHint
 	case "TabCloseHint":
 		return translations.TabCloseHint
+	case "TabModelHint":
+		return translations.TabModelHint
+	case "TabRouteHint":
+		return translations.TabRouteHint
 	case "TabMaxReached":
 		return translations.TabMaxReached
 	case "TabCannotWhileRunning":
