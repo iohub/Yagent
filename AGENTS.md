@@ -1,6 +1,7 @@
 # Yagent Agent 开发知识库
 
 > **本文件是 Agent 理解仓库和进行开发的标准指南。** 所有 Agent 在操作此仓库前必须先阅读本文件。
+> 本文件描述的是当前代码的真实状态（核对时间 2026-10-13）。文件末尾由 codeseek 自动维护的注入区块除外。
 
 ---
 
@@ -8,738 +9,492 @@
 
 - [1. 项目概述](#1-项目概述)
 - [2. 技术栈](#2-技术栈)
-- [3. Agent 角色定义](#3-agent-角色定义)
-- [4. 核心工具](#4-核心工具)
-- [5. 系统架构](#5-系统架构)
-- [6. 开发与构建](#6-开发与构建)
-- [7. 编码规范](#7-编码规范)
-- [8. Director 行为准则](#8-director-行为准则)
+- [3. 模块地图](#3-模块地图)
+- [4. Agent 角色定义](#4-agent-角色定义)
+- [5. 核心工具](#5-核心工具)
+- [6. 系统架构](#6-系统架构)
+- [7. 配置系统](#7-配置系统)
+- [8. 开发与构建](#8-开发与构建)
+- [9. 编码规范与架构不变量](#9-编码规范与架构不变量)
+- [10. Director 行为准则](#10-director-行为准则)
+- [11. 已知坑](#11-已知坑)
 
 ---
 
 ## 1. 项目概述
 
-**Yagent Agent** 是一个基于 Go 语言开发的多智能体 AI 编程助手系统，采用 **Hub-and-Spoke（中枢-辐条）** 架构。系统的核心是 **Director Agent（指挥家）**，它协调多个专用子智能体完成代码分析、规划、编写、测试和自我修正等复杂任务。
-
-### 1.1 核心定位
+**Yagent** 是 Go 语言编写的多智能体 AI 编程助手，采用 **Hub-and-Spoke（中枢-辐条）** 架构：
+**Director Agent** 是唯一与用户交互的 Agent，负责分析、委派、评审；具体读写由专用子 Agent 完成。
 
 | 维度 | 描述 |
 |------|------|
 | **系统类型** | 多智能体 AI 编程助手 |
-| **架构模式** | Hub-and-Spoke（中枢-辐条） |
-| **核心原则** | 职责分离、强制委派、验证优先 |
-| **用户接口** | TUI (Bubble Tea) / HTTP API (WebSocket) / CLI |
+| **架构模式** | Hub-and-Spoke + 三档上下文压缩 + Pub-Sub 事件总线 |
+| **核心原则** | 职责分离、强制委派、验证优先、可恢复 |
+| **用户接口** | TUI (Bubble Tea v2) / HTTP+WebSocket (gin+melody) / 非交互 `--prompt` |
+| **代码引擎** | `codeseek`（Rust，git submodule，经 MCP stdio 调用，二进制随 Go 程序 `go:embed` 分发） |
 
-### 1.2 架构图
+### 设计原则
 
-```
-                    用户交互层
-                TUI / HTTP / WebSocket
-                        │
-              Yagent (任务调度)
-                        │
-              DirectorAgent (中枢指挥家)
-              ┌───────────┼───────────┬───────────┐
-              │           │           │           │
-        delegate_repo delegate_coding delegate_chat delegate_meta
-              │           │           │           │
-         RepoAgent   CodingAgent   ChatAgent   MetaAgent → 注册自定义Agent
-```
-
-### 1.3 设计原则
-
-1. **单一交互点**: Director 是唯一与用户直接交互的 Agent
-2. **职责分离**: 每个子 Agent 有明确的职责边界和权限限制
-3. **强制委派**: 文件操作和代码修改必须通过专用 Agent 完成
-4. **验证优先**: 所有修改必须经过编译/测试验证
-5. **可追溯性**: 所有任务 Memory 持久化存储，支持恢复和审计
+1. **单一交互点** — Director 是唯一直接面向用户的 Agent。
+2. **职责分离** — 每个子 Agent 有明确职责边界与权限（只读 / 可写 / 仅 Shell）。
+3. **强制委派** — 文件与代码修改必须经 Coding-Agent，仓库探索必须经 Repo-Agent。
+4. **验证优先** — 用 `go build` / 测试验证，不启动长驻进程。
+5. **可追溯与可恢复** — 任务记忆（JSONL）+ 同步 rollout 日志双写，支持 `/resume` 断点续跑。
 
 ---
 
 ## 2. 技术栈
 
-### 2.1 主要技术
+### 2.1 主要依赖（`go.mod`，Go **1.25.8**，模块名 `yagent`）
 
-| 类别 | 技术 | 版本 | 用途 |
-|------|------|------|------|
-| **主程序** | Go | 1.24+ | 核心实现语言，模块名 `yagent` |
-| **代码引擎** | Rust | 1.70+ (Tokio) | `codeseek` MCP 服务（stdio） |
-| **LLM 抽象层** | `github.com/openai/openai-go/v3` | - | 多 LLM 提供商的统一接口 (OpenAI-compatible) |
-| **HTTP 框架** | `gin-gonic/gin` | - | REST API 服务器 |
-| **WebSocket** | `olahol/melody` | - | WebSocket 连接管理 |
-| **TUI** | Charmbracelet/Bubble Tea | - | 终端交互界面 |
+| 类别 | 技术 | 用途 |
+|------|------|------|
+| CLI | `spf13/cobra` | 子命令与全局 flag |
+| LLM 抽象 | `openai/openai-go/v3` | OpenAI-compatible 协议；另有自研 Anthropic Messages 引擎 |
+| HTTP | `gin-gonic/gin` + `olahol/melody` | REST + WebSocket |
+| TUI | `charm.land/bubbletea/v2`、`bubbles/v2`、`lipgloss/v2`、`glamour/v2` | 终端界面（注意是 **v2**） |
+| 浏览器 | `go-rod/rod` | Browser-Agent（CDP 驱动 Chrome） |
+| Token | `pkoukk/tiktoken-go` | cl100k_base 计数（`internal/tokenutil`） |
+| 配置 | `BurntSushi/toml` + `fsnotify` | 配置解析、热加载（词典） |
+| Diff | `aymanbagabas/go-udiff` | `search_replace_in_file` 返回 unified diff |
+| 其他 | `google/uuid`、`lucasb-eyer/go-colorful`、`rivo/uniseg` | ID、配色、字宽 |
 
 ### 2.2 外部依赖
 
-| 依赖 | 用途 |
-|------|------|
-| `codeseek` (Rust) | 代码分析服务（语义搜索、骨架提取、依赖分析） |
-| `ripgrep` (rg) | 全文正则搜索 |
-| `fzf` | 模糊文件搜索 |
+`ripgrep`（已内嵌，见 `dist/bin`）、`fzf`（模糊搜索）、Chrome/Chromium（Browser-Agent 需要，可自动发现）、`codeseek` 二进制（默认从 `dist/bin` 解出到 `~/.yagent/bin`）。
 
-### 2.3 支持的 LLM 提供商
+### 2.3 LLM 接入
 
-小米 MiMo、阿里云百炼、硅基流动、DeepSeek、Moonshot、Mistral、智谱 Z.ai、AWS Bedrock、OpenRouter 等。
+两种 `api_format`：**openai**（默认，OpenAI-compatible）与 **anthropic**（原生 Messages，支持 Extended Thinking）。
+Provider 只是 base_url + api_key 的组合，因此小米 MiMo、百炼、硅基流动、DeepSeek、Moonshot、Mistral、Z.ai、OpenRouter、Bedrock、Anthropic 官方均可用。
 
 ---
 
-## 3. Agent 角色定义
-
-### 3.1 Director (指挥家)
-
-**定位**: 项目经理 + 技术主管，**唯一与用户直接交互的 Agent**。
-
-**核心职责**:
-
-| 职责 | 说明 |
-|------|------|
-| 任务分析 | 解析用户需求，拆解为可执行的 TODO 列表 |
-| 上下文管理 | 维护全局状态（文件修改、任务进度等） |
-| 任务委派 | 根据任务类型委派给合适的子 Agent |
-| 结果评审 | 验证子 Agent 的输出，决定是否接受或修正 |
-
-**拥有工具**:
-
-| 工具 | 类别 | 说明 |
-|------|------|------|
-| `delegate_repo` | 委派 | 委派仓库分析任务 |
-| `delegate_coding` | 委派 | 委派编码/修改任务 |
-| `delegate_chat` | 委派 | 委派通用问答 |
-| `delegate_meta` | 委派 | 设计自定义 Agent |
-| `delegate_devops` | 委派 | 委派运维/系统任务 |
-| `read_file` | 分析 | 读取文件（只读） |
-| `search_by_regex` | 分析 | ripgrep 正则搜索（只读） |
-| `list_dir` | 分析 | 列出目录内容（只读） |
-| `print_dir_tree` | 分析 | 打印目录树（只读） |
-| `agent_exit` | 流程 | 通知任务完成 |
-
-### 3.2 Coding (编码)
-
-**定位**: 高级开发工程师，拥有文件系统完整读写权限。
-
-**核心职责**:
-
-| 职责 | 说明 |
-|------|------|
-| 代码编写 | 创建新文件、编写功能代码 |
-| 代码修改 | 精确替换现有代码块 |
-| 测试验证 | 运行编译和测试确认修改正确 |
-| 错误修复 | 调试和修复编译/运行时错误 |
-
-**拥有工具** (14 个全部):
-
-| 工具 | 类别 | 说明 |
-|------|------|------|
-| `read_file` | 文件 | 读取文件（支持行范围） |
-| `create_file` | 文件 | 创建新文件 |
-| `delete_file` | 文件 | 批量删除文件/目录 |
-| `rename_file` | 文件 | 重命名/移动文件 |
-| `list_dir` | 文件 | 列出目录内容 |
-| `print_dir_tree` | 文件 | 打印目录树 |
-| `search_replace_in_file` | 编辑 | 精准代码块替换 |
-| `search_by_regex` | 搜索 | ripgrep 全文正则搜索 |
-| `semantic_search` | 仓库 | 语义搜索（调用 codeseek 服务） |
-| `query_code_skeleton` | 仓库 | 查询代码骨架 |
-| `query_code_snippet` | 仓库 | 查询函数实现 |
-| `run_bash` | 系统 | 执行 Shell 命令 |
-| `thinking` | 认知 | 错误分析和反思思维链 |
-| `agent_exit` | 流程 | 通知任务完成 |
-
-### 3.3 Repo (分析)
-
-**定位**: 资深架构师/代码审计员，**只读模式**。
-
-**核心职责**:
-
-| 职责 | 说明 |
-|------|------|
-| 代码检索 | 语义搜索和结构化代码查询 |
-| 依赖分析 | 评估影响范围和依赖关系 |
-| 预调查 | ~~已废弃~~ 原为每次 Run 之前自动调用 `POST /investigate_repo` 获取仓库全景（功能已移除） |
-| 上下文提供 | 为 Coding Agent 提供必要的代码上下文 |
-
-**拥有工具** (7 个):
-
-| 工具 | 类别 | 说明 |
-|------|------|------|
-| `read_file` | 文件 | 读取文件（只读） |
-| `search_by_regex` | 搜索 | ripgrep 全文正则搜索 |
-| `list_dir` | 文件 | 列出目录内容 |
-| `print_dir_tree` | 文件 | 打印目录树 |
-| `semantic_search` | 仓库 | 语义搜索（调用 codeseek 服务） |
-| `query_code_skeleton` | 仓库 | 查询代码骨架 |
-| `query_code_snippet` | 仓库 | 查询函数实现 |
-
-### 3.4 Chat (对话)
-
-**定位**: 通用 AI 助手。
-
-**核心职责**:
-
-| 职责 | 说明 |
-|------|------|
-| 技术解释 | 解释代码逻辑、架构设计 |
-| 百科问答 | 通用技术知识问答 |
-| 创意写作 | 文档编写、文案创作 |
-
-**限制**: 无法访问文件系统，无工具调用权限。
-
-### 3.5 DevOps (运维)
-
-**定位**: 系统管理员。
-
-**核心职责**:
-
-| 职责 | 说明 |
-|------|------|
-| Shell 执行 | 运行系统命令、构建脚本 |
-| 日志检查 | 查看和分析系统/应用日志 |
-| 进程管理 | 检查和管理后台进程 |
-| 系统诊断 | 环境检查和故障排查 |
-
-**限制**: 只读文件检查和 Shell 执行，不能修改/创建文件。
-
-### 3.6 Meta (设计)
-
-**定位**: 自定义 Agent 设计器。
-
-**核心职责**:
-
-| 职责 | 说明 |
-|------|------|
-| Agent 设计 | 使用高级 Prompt 工程技术设计定制 Agent |
-| 工具选择 | 选择最小必要工具集 |
-| 任务执行 | 执行设计并返回结构化结果 |
-| 自动注册 | 将新 Agent 注册为永久 Delegate 工具 |
-
-**动态注册流程**:
+## 3. 模块地图
 
 ```
-Director 调用 delegate_meta(task)
-  ↓
-MetaAgent.Run(task) - LLM 生成 JSON 输出
-  ↓
-parseMetaAgentOutput() - 提取 JSON，验证必填字段
-  ↓
-registerCustomAgent() - 创建 delegate_<name> 工具
-  ↓
-立即执行新 Agent（最多 15 步）
-  ↓
-返回格式化结果，新 Agent 永久可用
+yagent/
+├── main.go                     # cobra 入口：tui(默认) / http；--prompt -f -p -d -c -y -Y -Q
+├── embed.go                    # //go:embed dist/bin/*  +  dist/data/models.json
+├── build.sh                    # Rust(codeseek) + Go 一体构建（release 默认）
+├── internal/
+│   ├── agents/                 # Agent 实现（根包 = 具体 Agent + 通用循环）
+│   │   ├── director.go         # Director（门面；编排逻辑在 director/ 子包）
+│   │   ├── coding.go repo.go chat.go devops.go browser_agent.go meta.go
+│   │   ├── executor.go         # RunAgentLoop：所有子 Agent 共享的 LLM-工具循环
+│   │   ├── tools.go            # 解析 tools.json（内嵌 schema）
+│   │   ├── tools.json          # 27 个工具的 JSON Schema 声明（单一事实来源）
+│   │   ├── ports.go            # 窄接口：切断 agents ↔ 子系统的循环依赖
+│   │   ├── result.go           # 子 Agent 结果 finalize / FormatForDirector
+│   │   ├── activity/           # 活动感知 idle/total timeout（Heartbeat / WithIdleTimeout）
+│   │   ├── director/           # Planner、Meta 注册表、项目上下文加载、熔断状态、指标
+│   │   ├── toolbatch/          # 只读工具并行分批调度（无业务依赖的叶子包）
+│   │   ├── git_checkpoint.go   # 每个编码子任务的 git 快照/回滚
+│   │   ├── repo_memory.go consolidation_worker.go knowledge_hook.go
+│   │   └── *.prompt.md         # 各 Agent 的 System Prompt
+│   ├── app/app.go              # Yagent：一次性装配 MCP/工具引擎/守卫/子 Agent/Director
+│   ├── blackboard/             # 跨 Agent 便签（文件后端，~/.yagent/notes）
+│   ├── artifact/               # 超预算委派结果的落盘存储 + 摘要
+│   ├── browser/                # go-rod Manager（懒启动、页并发信号量、空闲回收）
+│   ├── compression/            # 三档上下文压缩（rule / emergency / ultimate）
+│   ├── config/                 # TOML 加载 + 三级 provider 解析 + 原子写回
+│   ├── datamanager/            # 任务记忆 JSONL（5s 防抖）+ 索引
+│   ├── dict/                   # 补全词典（fsnotify 热加载）
+│   ├── diff/                   # unified diff
+│   ├── embedbin/               # 从 embed FS 解出二进制（MD5 校验，版本化）
+│   ├── globalctx/              # 全局上下文 + Version/BuildTime/GitCommit（ldflags 注入）
+│   ├── http/                   # gin REST + melody WebSocket + TaskManager
+│   ├── knowledge/              # 知识检索注入 + 固化（走 codeseek MCP）
+│   ├── llm/                    # Engine 接口、OpenAI/Anthropic 引擎、Fallback、Router
+│   ├── logging/                # slog 全局日志 + 按任务分目录
+│   ├── mcp/                    # 自研 stdio JSON-RPC MCP 客户端 + codeseek/knowledge 桥
+│   ├── memory/                 # ConversationMemory、rollout 读写（断点续跑的数据源）
+│   ├── messaging/              # 事件总线（Dispatcher / Publisher / consumers/）
+│   ├── models/                 # 模型目录（dist/data/models.json）：context window + benchmark
+│   ├── protocol/               # 由 protocol/agent-events.yaml 生成的事件类型
+│   ├── recovery/               # LLM 熔断器
+│   ├── skills/                 # SKILL.md 注册表（仅 TUI 斜杠命令消费）
+│   ├── thinklink/              # 结构化 <thought> 解析 + 思维日志（驱动 ultimate 压缩）
+│   ├── tokenutil/              # tiktoken 封装（EstimateTokens）
+│   ├── tools/                  # 工具 Adapter 实现 + workspace_guard + user_confirm
+│   │   └── browser/            # 17 个浏览器工具
+│   ├── tui/                    # Bubble Tea v2 界面（75 个文件）
+│   │   ├── anim/ common/ components/ layout/
+│   └── util/                   # 崩溃上报等
+├── protocol/                   # agent-events.yaml（SSOT）+ 生成的 go/ 与 ts/ 副本
+├── scripts/                    # build-centos7 / build-extension / 架构守卫 / protoc-gen-yagent
+├── patches/                    # CI 用的 vendored-openssl 补丁
+├── dist/                       # 构建产物 + 被跟踪的 models.json（见 §11 坑 2）
+├── codeseek/                   # git submodule → iohub/codeseek（Rust 代码智能引擎）
+└── docs/                       # ARCHITECTURE.md / config-guide.md / 设计稿
 ```
 
-### 3.8 Executor (执行器)
+> 旧的 `pkg/messaging/` 已迁到 `internal/messaging/`；`internal/compact/` 已重构为 `internal/compression/`。
 
-**定位**: 通用 Agent 执行循环引擎。
+---
 
-**核心职责**:
-| 职责 | 说明 |
-|------|------|
-| 标准循环 | 所有 Agent 共享的 LLM 调用-工具执行循环 |
-| 步骤管理 | 步骤计数、超时控制、结果返回 |
+## 4. Agent 角色定义
 
-**关键配置**:
-```go
-type ExecutorConfig struct {
-    SystemPrompt   string
-    UserInput      string
-    Adapters       []*tools.Adapter
-    LLM            llm.Engine
-    MaxSteps       int
-    Publisher      *messaging.MessagePublisher
-    AgentName      string
-    StopOnFinish   bool
-}
+所有 Agent 实现 `Agent` 接口（`internal/agents/types.go:20`），由 `internal/app/app.go:349-533` 统一构造。
+每个 Agent 的 System Prompt 是同目录的 `<name>.prompt.md`，改动行为请同时改 prompt 与代码。
+
+| Agent | 文件 | 定位 | 权限 | Max Steps 默认 |
+|-------|------|------|------|----------------|
+| **Director** | `director.go` + `director/` | 项目经理/技术主管，唯一对话入口 | 只读 + 委派 | 100 |
+| **Coding** | `coding.go` | 高级开发工程师 | 完整读写 + Shell | 150 |
+| **Repo** | `repo.go` | 架构师/审计员 | 只读 + 可委派 DevOps | 50 |
+| **Chat** | `chat.go` | 通用问答 | 无文件系统访问 | 50 |
+| **DevOps** | `devops.go` | 系统管理员 | 只读 + Shell | 50 |
+| **Browser** | `browser_agent.go` | 网页操作 | 17 个浏览器工具 | 200 |
+| **Meta** | `meta.go` | 自定义 Agent 设计器 | 无工具，单次 LLM 出 JSON | 50（重试 5） |
+| **Custom** | `director/types.go:60` | Meta 设计后运行时注册 | 由 LLM 选择的子集 | 15 |
+
+**Director 工具**：`delegate_*` + `agent_exit`、`read_artifact`、`read_note`、`deepthinking`、`ask_user_for_help`，
+以及 `director.go:236-287` 里显式列出的只读分析工具（`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree`）。
+
+**Coding 工具**：`create_file`、`search_replace_in_file`、`delete_file`、`rename_file`、`list_dir`、`print_dir_tree`、
+`read_file`、`search_by_regex`、`run_bash`、`thinking`/`micro_agent`/`deepthinking`/`design`、
+`semantic_search`/`query_code_skeleton`/`query_code_snippet`/`find_function_callee`/`find_function_caller`、
+`consolidate_knowledge`/`prune_history`、`git_checkpoint_*`（仓库+配置开启时）、`delegate_browser`、`agent_exit`、`ask_user_for_help`。
+
+**Repo 工具**（只读，含调用图）：`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree`、
+`semantic_search`、`query_code_skeleton`、`query_code_snippet`、`find_function_callee`、`find_function_caller`、
+`query_call_graph`、`deepthinking`、`delegate_devops`、知识检索、`agent_exit`。
+
+> 各 Agent 实际持有哪个工具由 `lookupToolFunc` 的 switch 决定（`coding.go:211`、`repo.go:90`、`chat.go:63`、
+> `devops.go:69`、`director.go:262`）。**tools.json 里声明但 switch 未列举的工具会被静默跳过**——这是
+> `thinking` / `query_call_graph` 在 Coding 上缺失的原因（见 §11 坑 5）。
+
+### Meta / 自定义 Agent 注册流程
+
+```
+delegate_meta → MetaAgent 单次 LLM 出 JSON → ParseMetaAgentOutput (director/meta_handler.go:100)
+  → 校验必填字段 → 按名字建 delegate_<snake_name> Adapter 并追加到 Director 工具表 (director.go:626-689)
+  → 立即以 MaxSteps=15 执行一次 → 新 Agent 在本任务内永久可用（写进 system prompt 的清单）
 ```
 
 ---
 
-## 4. 核心工具
+## 5. 核心工具
 
-### 4.1 工具总览
-
-| 工具名 | 类别 | 权限 | 说明 |
-|--------|------|------|------|
-| `read_file` | 文件 | R | 读取文件（支持行范围） |
-| `create_file` | 文件 | W | 创建新文件 |
-| `delete_file` | 文件 | D | 批量删除文件/目录 |
-| `rename_file` | 文件 | M | 重命名/移动文件 |
-| `list_dir` | 文件 | R | 列出目录内容 |
-| `print_dir_tree` | 文件 | R | 打印目录树 |
-| `search_replace_in_file` | 编辑 | E | 精准代码块替换 |
-| `search_by_regex` | 搜索 | R | ripgrep 全文正则搜索 |
-| `semantic_search` | 仓库 | 语义搜索（调用 codeseek 服务） |
-| `query_code_skeleton` | 仓库 | R | 查询代码骨架 |
-| `query_code_snippet` | 仓库 | R | 查询函数实现 |
-| `run_bash` | 系统 | S | 执行 Shell 命令 |
-| `thinking` | 认知 | C | 错误分析和反思思维链 |
-| `micro_agent` | 认知 | MC | 子 LLM 推理调用，允许 Agent 进行深度思考 |
-| `flow_control` | 流程 | FC | Agent 退出和用户帮助请求 |
-| `agent_exit` | 流程 | P | 通知任务完成 |
-
-**图例**: R=只读, W=写入, D=删除, M=移动/重命名, E=编辑, S=系统, C=认知, MC=子LLM调用, FC=流控制, P=流程
-
-### 4.2 文件操作工具
-
-#### read_file
-
-```go
-// 读取文件内容，支持指定行范围
-read_file(
-    target_file: string,   // 文件路径（绝对或相对）
-    start_line: int,       // 起始行（1-indexed）
-    end_line: int,         // 结束行（1-indexed）
-    should_read_entire_file: bool
-)
-```
-
-#### create_file
-
-```go
-// 创建新文件
-create_file(
-    target_file: string,   // 文件路径
-    content: string        // 文件内容
-)
-```
-
-#### search_replace_in_file
-
-```go
-// 精准替换文件中的代码块
-search_replace_in_file(
-    file_path: string,     // 文件路径
-    old_string: string,    // 原文（需包含3-5行上下文，唯一匹配）
-    new_string: string     // 替换文
-)
-```
-
-**约束**: `old_string` 必须唯一标识要替换的实例，需包含充分的上下文。
-
-### 4.3 搜索工具
-
-#### search_by_regex
-
-```go
-// ripgrep 全文正则搜索
-search_by_regex(
-    query: string,         // 正则表达式
-    search_directory: string  // 搜索目录
-)
-```
-
-#### semantic_search
-
-```go
-// 调用 codeseek Rust 服务进行语义搜索
-semantic_search(
-    query: string,         // 自然语言或代码片段
-    limit: int             // 返回结果数量上限
-)
-```
-
-### 4.4 仓库查询工具
-
-#### query_code_skeleton
-
-```go
-// 获取文件的方法/类定义（无实现）
-query_code_skeleton(
-    filepaths: []string    // 文件路径列表
-)
-```
-
-#### query_code_snippet
-
-```go
-// 获取特定函数的实现代码
-query_code_snippet(
-    filepath: string,      // 文件路径
-    function_name: string  // 函数名
-)
-```
-
-### 4.5 系统工具
-
-#### run_bash
-
-```go
-// 执行 Shell 命令
-run_bash(
-    command: string,       // 命令字符串
-    is_background: bool,   // 是否后台运行
-    is_dangerous: bool     // 是否危险操作
-)
-```
-
-**约束**: 禁止启动长期运行的服务器进程，使用编译/测试验证代码。
-
-#### thinking
-
-```go
-// 反思和错误分析
-thinking(
-    problem_description: string,  // 问题描述
-    current_action: string,       // 当前操作
-    observation: string           // 观察结果
-)
-```
-
-#### micro_agent
-
-```go
-// 子 LLM 推理调用
-micro_agent(
-    task: string,          // 子推理任务描述
-    context: string        // 上下文信息
-)
-```
-
-#### flow_control
-
-```go
-// Agent 退出或请求帮助
-flow_control(
-    action: string,        // exit / ask_user_help
-    reason: string         // 原因描述
-)
-```
-
-### 4.6 工具适配器模式
-
-所有工具通过 `Adapter` 模式包装为 LLM 的 `Tool` 接口：
+### 5.1 Adapter 模式
 
 ```go
 type ToolFunc func(ctx context.Context, params map[string]interface{}) (interface{}, error)
 
-type Adapter struct {
-    name        string
-    description string
-    fn          ToolFunc
-    schema      map[string]interface{}
-}
+type Adapter struct { name, description string; fn ToolFunc
+                      schema map[string]interface{}; guard *WorkspaceGuard; readOnly bool }
 ```
+
+`internal/tools/adapter.go`：`NewAdapter` + `WithSchema` / `WithReadOnly` / `WithReadOnlyIfKnown`；
+`Call()` 依次做 JSON 解析 → 工作区边界检查 → 危险操作授权 → 执行；`ToToolDef()` 产出 `llm.ToolDef`。
+`SortToolDefs` / `ComputeToolDefsHash` 保证工具顺序稳定（利于 provider 端 prompt 缓存）。
+
+**并行性判定**：`Adapter.IsReadOnly()` 为真、且不在 `nonParallelToolNames{agent_exit, delegate_meta}` 里的工具，
+可由 `toolbatch` 分批并行执行（默认并发 4，上限 8，`[agent] max_parallel_readonly_tools`）。
+
+### 5.2 工具总览（schema 见 `internal/agents/tools.json`）
+
+| 工具 | 类别 | 说明 |
+|------|------|------|
+| `read_file` `list_dir` `print_dir_tree` `search_by_regex` | R | 只读文件与 ripgrep 搜索 |
+| `create_file` `delete_file` `rename_file` `search_replace_in_file` | W/D/M/E | 文件写；替换强制唯一匹配并返回 diff |
+| `run_bash` | S | Shell；`is_background` / `is_dangerous` |
+| `semantic_search` `query_code_skeleton` `query_code_snippet` | R | codeseek MCP 桥 |
+| `find_function_callee` `find_function_caller` `query_call_graph` | R | 调用图；改函数前**必须**先查 callers |
+| `thinking` `micro_agent` `deepthinking` `design` | C | 反思 / 隔离子 LLM 推理 / 多步深度思考 / 编码前设计闸门 |
+| `agent_exit` `ask_user_for_help` | P | 结束任务 / 反问用户（confirm、select、input 三种交互） |
+| `consolidate_knowledge` `prune_history` | K | 长期知识固化与历史裁剪（codeseek knowledge） |
+| `git_checkpoint_create` `git_checkpoint_list` `git_checkpoint_rollback` | G | 编码子任务快照 |
+| `read_note` `read_artifact` | R | 读跨 Agent 便签 / 超预算产物（boardID 存在时自动注入） |
+| `delegate_repo/coding/chat/devops/browser/meta` | 委派 | Director 持有；`delegate_browser` 也在 Coding 上 |
+| 17 个浏览器工具 | B | navigate/click/input/extract_text/screenshot/evaluate_js… |
+
+> **不存在** 名为 `flow_control` 的工具（旧文档有误）；流控制由 `agent_exit` 与 `ask_user_for_help` 承担。
+
+### 5.3 MCP 与 codeseek
+
+- `internal/mcp` 是一个**自研 stdio JSON-RPC 2.0 客户端**（只发 `tools/call`，不调 `tools/list`），
+  因此 MCP 侧工具**不会自动暴露**，全部靠 Go 手写桥接并换成 yagent 的工具名：
+  `semantic_search→codeseek_search`、`query_code_skeleton→codeseek_skeleton`、`query_code_snippet→codeseek_snippet`、
+  `find_function_callee→codeseek_callees`、`find_function_caller→codeseek_callers`、`query_call_graph→codeseek_callgraph`。
+- 二进制解析顺序：`[codeseek] binary_path` → `embedbin` 解出的 `~/.yagent/bin/codeseek`；都为空则 MCP 关闭，
+  Agent 退化为纯文件工具模式。启动参数默认 `["serve","--mcp"]`；索引在 codeseek 内部异步构建，
+  期间 `CallTool` 返回 `ErrIndexBuilding` 并附带"请改用文件工具"的提示。
+- 只有一个 MCP server（codeseek）。没有通用多 server MCP 配置。
+
+### 5.4 安全机制
+
+| 机制 | 位置 | 实际行为 |
+|------|------|----------|
+| **WorkspaceGuard** | `tools/workspace_guard.go` | 危险工具（create/edit/delete/rename/run_bash）路径必须落在工作区内；会话/项目级放行记录在 `~/.yagent/settings.json` |
+| **UserConfirmManager** | `tools/user_confirm.go` | 走事件总线的 pub-sub 授权：发 `user_help_needed`，等待 `user_help_response`（按 `request_id` 配对） |
+| **run_bash 纵深防御** | 同上 | 无黑名单；信任 LLM 的 `is_dangerous` + 任何指向工作区外的绝对路径 token 都要求授权（`safeSystemPaths` 例外） |
+| **大小限制** | `tools/file_*` | 编辑双向 10MB；整读 10MB、软警告 2MB、单次 1000 行 |
+| **YOLO** | `-y` / `-Y` | `--yolo` 跳过工作区内授权；`--full-yolo` 连工作区外路径也放行，并移除 `ask_user_for_help` |
+| **分层守卫** | `agents/ports.go` + `scripts/` | 子 Agent 需要的依赖经窄接口注入；`director/` 子包禁止 import `internal/agents`（防循环） |
 
 ---
 
-## 5. 系统架构
+## 6. 系统架构
 
-### 5.1 Hub-and-Spoke 消息流
-
-```
-                    用户交互层
-                TUI / HTTP / WebSocket
-                        │
-              Yagent (任务调度)
-                        │
-              DirectorAgent (中枢指挥家)
-              ┌───────────┼───────────┬───────────┐
-              │           │           │           │
-        delegate_repo delegate_coding delegate_chat delegate_meta
-              │           │           │           │
-         RepoAgent   CodingAgent   ChatAgent   MetaAgent → 注册自定义Agent
-```
-
-### 5.2 Pub-Sub 消息总线
+### 6.1 消息流
 
 ```
-Agent → MessagePublisher → MessageDispatcher → TUIConsumer / WebSocketConsumer
+用户 → TUI / HTTP / --prompt → Yagent(app) → DirectorAgent(planner)
+                                              ├ delegate_repo  → RepoAgent   ┐
+                                              ├ delegate_coding→ CodingAgent  ├ 各自跑 RunAgentLoop
+                                              ├ delegate_browser→ BrowserAgent│  共享同一事件总线
+                                              ├ delegate_chat/devops/meta    ┘
+                                              └ agent_exit
 ```
 
-**事件类型**:
+### 6.2 执行循环
 
-| 事件 | 说明 |
-|------|------|
-| `ai_response` | AI 文本回复 |
-| `tool_call_start` | 工具调用开始 |
-| `tool_call_result` | 工具调用结果 |
-| `user_help_needed` | 需要用户帮助 |
-| `user_help_response` | 用户帮助回复 |
+- **子 Agent**：`RunAgentLoop(ctx, ExecutorConfig)`（`agents/executor.go:136`）。
+  每步：LLM 重试（指数退避 ≤30s）→ 三档压缩检查 → 带 `llmTimeout` 的 LLM 调用 → 抽取 `<thought>` →
+  纯文本回复则注入提醒或结束 → 工具调用交给 `toolbatch` 分批并行 → `agent_exit` 立即返回；
+  步数耗尽报错，panic 被 recover 并写 `turn_aborted` rollout。
+  `ExecutorConfig` 关键字段：`SystemPrompt / UserInput / Adapters / LLM / MaxSteps / Publisher / StopOnFinish /
+  LLMTimeout / StepRetries / SystemAsHuman / NoActionRetryLimit / MaxParallelReadOnlyTools / OnAgentStart / OnAgentExit / OnStepEnd`。
+- **Director**：自己的 `director.Planner`（`director/planner_run.go`），额外有熔断器、
+  未委派提醒（最多 3 次强制委派 nudges）、`activity.WithIdleTimeout` 包裹的委派超时
+  （`[agent] delegate_idle_timeout` / `delegate_total_timeout`）。
 
-### 5.3 任务执行流程
+### 6.3 路由（auto-routing）
+
+`internal/llm/router.go` 的 **RoutingEngine** 包裹每个 Agent 的引擎，按任务难度把调用路由到
+**fast / balanced / high** 三档模型之一：`Client.BuildRouter` 用模型目录里的 benchmark 分数为每个 provider
+建三档引擎；`Classify` 用 fast 模型输出 `{"tier": ...}`（30s 上限，失败回落到该角色的 baseline）；
+档位通过 context 传递，在 `RunAgentLoop` 里由 `ResolveTierEngine` 解析。
+`[routing] mode = "auto" | "fixed"`，`baselines` 可为 director/coding/repo/chat/devops/browser/meta 指定默认档。
+
+> 坑：任何重建 Agent 引擎的地方都必须保留 `*RoutingEngine` 包装，否则 auto-routing 静默失效（commit 0c87c8a）。
+
+### 6.4 上下文与知识
+
+- **Blackboard**（`internal/blackboard`）：Director 把每次委派结果写成便签文件 `~/.yagent/notes/{boardID}/{agent}/{stem}.md`；
+  子 Agent 可用 `read_note` 或 `context_refs` 解析出的 ContextPack 读取，预算 6000 字符/总量、2000/便签、3 便签/Agent。`YAGENT_BLACKBOARD=0` 关闭。
+- **Artifact**（`internal/artifact`）：超过预算（默认 500 token）的委派全文落盘 `~/.yagent/data/artifacts`，
+  上下文里只留摘要 + ID，Director 用 `read_artifact` 分页取回。`YAGENT_ARTIFACT_DISABLE=1` 关闭。
+- **Knowledge**（`internal/knowledge`）：向 Director/Coding/Repo 注入历史知识（写入走 `consolidate_knowledge`，
+  自动固化在 `knowledge_hook.go`）。当前**注入器被临时硬关闭**（`injector.go:67-71`）。
+- **RepoMemory / ConsolidationWorker**：仓库级长期记忆存在 SharedMemory 的 KV 中，由后台 worker 周期性用 LLM + codeseek 重写。
+- **Thinklink**（`internal/thinklink`）：append-only 的思维日志（用户输入 + T&P 块），是 ultimate 压缩重建上下文的原料。
+
+### 6.5 三档上下文压缩（`internal/compression`）
+
+阈值 = 模型目录收录的 `limit.context × 0.75`（目录未命中则回退 `[enhanced_commander] context_compression_threshold`，默认 120000），
+每步检查，`enhanced_commander.enable_context_compression` 总开关：
+
+1. **Rule**：`TruncateToolResultsToBudget` — 按优先级先截低价值工具结果（`deepthinking`/`design` 结果受保护），保留最近 `tool_result_keep_tokens`（默认 200）。
+2. **Emergency**：抽取 T&P 块进 thinklink，最近 3 条保留原文，其余 LLM 摘要，记忆整体重写为 `[system, one user]`。
+3. **Ultimate**：仍超阈值时，用 thinklink 日志重建上下文（保留最近 N 个 T&P，N 由 `ultimate_compression_keep_plans` 决定，0=全部），最后硬截断到预算。
+
+三档都会发 `context_*_compressed` 事件并写 `compacted` rollout 记录。
+
+### 6.6 事件总线（`internal/messaging`）
+
+`Event{ID,Type,Source,Target,Content,Priority,Timestamp,Deadline,TraceID,Metadata}` →
+`MessageDispatcher`（每个 consumer 一条 1000 容量队列 + 独立 goroutine）。
+普通事件队列满则**丢弃并限流告警**；`user_help_needed` / `user_help_response` 走 **critical 旁路队列**（永不丢弃，FIFO，满则丢最旧）。
+Consumer 有两种：旧版 `MessageConsumer`（广播）与新版 `Consumer{Types()}`（过滤订阅）。
+
+当前总线上的事件类型（约 21 个，SSOT 是 `protocol/agent-events.yaml`，由 `scripts/protoc-gen-yagent` 生成 Go/TS/JSON-Schema）：
+
+`ai_stream_start` · `ai_chunk` · `ai_stream_end` · `ai_response` · `thinking` ·
+`llm_call_start` · `llm_call_end` · `model_info` · `model_routed` ·
+`tool_call_start` · `tool_call_result` · `user_help_needed` · `user_help_response` ·
+`context_loaded` · `commit_context_loaded` · `context_compressed` · `context_emergency_compressed` ·
+`context_ultimate_compressed` · `knowledge_injected` · `thinklink_entry` · `conversation_error` / `conversation_result`
+
+> **新增事件类型要改 `protocol/agent-events.yaml` 再重新生成**，不要手改 `internal/protocol/agent_events.go`（文件头写着 DO NOT EDIT）。
+> 生成器与 schema 目前落后于实际总线（`model_routed`、`context_*_compressed`、`thinklink_entry` 等未入 schema）。
+
+### 6.7 任务生命周期与持久化
 
 ```
-1. 用户输入 (TUI 或 HTTP POST /api/start_task)
-2. TaskManager.CreateTask() - 生成 UUID，创建 Memory
-3. ExecuteTask() - 初始化 codeseek 索引，启动消息分发
-4. DirectorAgent.Run() - 进入循环
-5. Director 循环 (最多 maxSteps 步):
-   ├── 构造 messages: [SystemPrompt, ...Memory.Messages]
-   ├── LLM.GenerateContent(messages, WithTools)
-   ├── 发布 ai_response 事件
-   ├── 如果有 ToolCall → 执行对应 Adapter
-   │   ├── delegate_repo → RepoAgent.Run()（含预调查）
-   │   ├── delegate_coding → CodingAgent.Run()
-   │   ├── delegate_meta → MetaAgent 设计并注册新 Agent
-   │   └── agent_exit → 返回 "Task completed"
-   └── 将 ToolCallResponse 追加到 messages
-6. 任务完成 → 保存 Memory → 广播状态 → 关闭分发器
+main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子 Agent/Director（sync.Once）
+        → TUI 建 Task(uuid + ConversationMemory) 并每轮新建 Dispatcher(100) + tuiEventConsumer
+        → NewTaskRequest(...).WithProjectDir/WithUserMessage/WithMemory/WithResumed
+        → ProcessCodingTaskWithCallback / ProcessConversation → Director.Run（多轮复用同一 Memory）
 ```
 
-### 5.4 模块结构
+| 数据 | 路径 | 写入方式 |
+|------|------|----------|
+| 任务记忆 | `~/.yagent/tasks/{taskID}.jsonl` | **5 秒防抖**、增量追加（条数变少则全量重写） |
+| **Rollout（断点续跑的事实来源）** | `~/.yagent/data/rollout/{projectID}/{ts}_{session}[_{agent}].jsonl` | **同步写**，类型含 `session_meta/turn_context/response_item/event_msg/compacted/world_state` |
+| Blackboard 便签 | `~/.yagent/notes/{boardID}/{agent}/*.md` | 原子写，`YAGENT_NOTES_ROOT` 可覆盖 |
+| Artifact | `~/.yagent/data/artifacts/{id}` | 原子写，ID `^\d{8}-\d{6}-[0-9a-f]{8}$` |
+| 共享/仓库记忆 | `~/.yagent/data/shared_memory/{projectID}/shared_memory.json` | 5 秒 ticker + dirty 标记，退出前 flush |
+| 授权状态 | `~/.yagent/settings.json` → `authorized_projects` | 持久 |
+| 日志 | `~/.yagent/logs/`（`app-`、`llm-`、`llm-error-`、`tool-`、`delegate-`、`knowledge-*`，按任务分子目录） | 追加 |
 
-```
-yagent/
-├── main.go                    # 入口
-├── internal/
-│   ├── agents/                # Agent 实现（扁平文件）
-│   │   ├── director.go       # Director Agent
-│   │   ├── coding.go          # Coding Agent
-│   │   ├── repo.go            # Repo Agent
-│   │   ├── chat.go            # Chat Agent
-│   │   ├── devops.go          # DevOps Agent
-│   │   ├── meta.go            # Meta Agent
-│   │   ├── executor.go        # 通用执行循环
-│   │   ├── tools.go           # 工具注册
-│   │   ├── types.go           # 类型定义
-│   │   └── *.prompt.md        # 各 Agent 的 System Prompt
-│   ├── app/                   # 应用入口
-│   │   └── app.go             # Yagent 编排
-│   ├── compact/               # 上下文压缩引擎
-│   │   ├── engine.go          # 压缩引擎
-│   │   ├── compressor.go      # 规则压缩器
-│   │   ├── summarizer.go      # LLM 摘要器
-│   │   ├── tokenizer.go       # Token 计数器
-│   │   ├── priority.go        # 优先级计算
-│   │   └── compact_config.go  # 压缩配置
-│   ├── config/                # 配置加载
-│   ├── datamanager/           # 数据存储
-│   ├── diff/                  # 差异计算 (unified diff)
-│   ├── embedbin/              # 嵌入二进制 (Rust codeseek 服务)
-│   ├── globalctx/             # 全局上下文
-│   ├── http/                  # HTTP API
-│   ├── llm/                   # LLM 抽象层
-│   │   ├── engine.go          # Engine 接口 + 日志包装器
-│   │   ├── engine_openai.go   # OpenAI 兼容引擎
-│   │   └── llm.go             # LLM 客户端
-│   ├── memory/                # 任务记忆
-│   ├── tools/                 # 工具适配器（16 个工具）
-│   │   ├── adapter.go         # Adapter 模式实现
-│   │   ├── file_operations.go # 文件操作 (6 个)
-│   │   ├── file_edit.go       # 代码编辑
-│   │   ├── search_operations.go # 搜索操作 (2 个)
-│   │   ├── system_operations.go # 系统操作
-│   │   ├── repo_operations.go # 仓库操作 (3 个)
-│   │   ├── cognitive.go       # 认知工具 (thinking)
-│   │   ├── micro_agent.go     # 子 LLM 推理
-│   │   ├── flow_control.go    # 流控制
-│   │   ├── workspace_guard.go # 工作空间守卫
-│   │   └── user_confirm.go    # 用户确认管道
-│   ├── tui/                   # 终端界面
-│   └── util/                  # 工具函数
-├── pkg/messaging/             # 消息总线
-├── codeseek/                  # Rust 代码引擎 (独立二进制)
-│   ├── src/
-│   │   ├── codegraph/         # AST 解析 + 调用图 (tree-sitter, petgraph)
-│   │   ├── http/              # Axum HTTP 服务
-│   │   ├── storage/           # 图谱持久化 + 增量文件检测
-│   │   ├── services/          # 高层分析服务 (analyzer, embedding, snippet)
-│   │   ├── cli/               # CLI 子命令
-│   │   └── config.rs          # 配置加载
-│   └── grammar/               # Tree-sitter 语法定义 (Go, Python)
-├── clients/                   # 客户端
-├── config/                    # 配置文件
-├── docs/                      # 文档
-└── benchmark/                 # 基准测试
-```
+**`/resume`** 列出 rollout 会话 → `ReadRolloutMemory` 重建 Memory（修复工具调用配对）→ 恢复 thinklink 条目，
+被打断的任务标记为失败并提示；下一轮以 `resumed=true` 强制重注入项目上下文。
+
+### 6.8 TUI（`internal/tui`，Bubble Tea **v2**）
+
+- **状态**：`tui_model.go`（logEntry + 渲染缓存 + keymap + `eventCh(1000)`）；更新逻辑按 `tui_update_*.go` 拆分；
+  渲染按 `tui_view.go` / `tui_render.go` / `render.go` / `tui_chrome.go` / `tui_tabs.go` / `tui_dashboard.go`。
+- **叠加模式**：timeline 全屏、thinklink 全屏、history、resume、dialog 栈、主页面——按此优先级渲染。
+  每层都必须正常消费 `taskEventMsg` 并重新武装 `listenForEvents`（该 cmd 是一次性的，事件没有重放队列）。
+- **Dialog**：`components.DialogStack`（Push/Pop/ReplaceTop/Overlay），10 个对话框；
+  弹窗打开时全局守卫只放行 KeyMsg/taskEventMsg/tickMsg，新增消息类型必须显式放行（`tea.PasteMsg` 的坑已踩过）。
+- **模态编辑**：Esc→NORMAL、`i`→INSERT、`:` 命令行、`/` 真搜索、textarea 用 `SetVirtualCursor(true)`、支持 `10j` 数字前缀。
+- **快捷键提示**只出现在 tab 行右侧与各面板底边框，**状态栏不含任何键帽**。
+- **设计语言**：圆角手绘边框（`tui_chrome.go` 的 `╭╮╰╯─▌`），配色令牌集中在
+  `common/styles.go`（`Styles`/`Theme`，深浅双主题）、`styles.go`（工具背景 16 色哈希、Agent 前景色）、
+  `common/grad.go`（渐变）。强调色：`141`（lavender，活动 tab / thinklink / LLM 调用）、`62`（INSERT、滚动条、面板边框）、
+  `214`（命令）、`39`（搜索）、`76`（运行中）、`235/250`（键帽）。
+- **i18n**：`i18n.go` 一张 ~120 字段翻译表，zh/en，默认英文，仅通过 TUI 内切换（无配置项）。
+- **测试约定**：断言**精确单元格宽度**而非子串；宽度矩阵 `{30..240}`、终端尺寸矩阵 `{20..240}`；
+  共享 fixture `newTestModel()` / `chromeTestModel(t,w,h)`；主要闸门是 `tui_chrome_test.go`、
+  `tui_paste_test.go`、`components/user_help_dialog_render_test.go`、`tui_resume_restore_test.go`。
+
+### 6.9 HTTP
+
+`POST /api/start_task`、`GET /api/task_status`、`GET|DELETE /api/memory`、`GET /api/memory/:type`、
+`GET /api/history`、`POST /api/load_task`、`POST /api/cancel_task`、`GET /ws`。
+WebSocket 用 melody，每个任务一个 Dispatcher + `WebSocketConsumer`，向所有连接广播 `realtime` envelope（无按会话过滤）。
 
 ---
 
-## 6. 开发与构建
+## 7. 配置系统
 
-### 6.1 构建命令
+**解析顺序**：`--config` 指定路径（不自动创建）→ `~/.yagent/config/config.toml`（不存在则用内嵌模板生成）→ `./config/config.toml`。
+仓库里的 `config/config.toml` 是注释模板；运行时写回（改 provider/超时/路由模式）走 `config/persist.go` 的原子替换。
 
-```bash
-# 构建主程序
-go build -o yagent .
+**顶层表**：`[global.llm]`、`[agents.llm]`、`[tools.llm]`、`[app]`、`[agent]`、`[llm]`、`[routing]`、
+`[browser]`、`[keywords]`、`[git_checkpoint]`、`[codeseek]`（含 `[codeseek.knowledge]`）、`[enhanced_commander]`、`[tui]`，
+以及顶层 `task_timeout`。
 
-# 构建 Rust codeseek 服务
-cd codeseek/rust-core && cargo build --release
-```
-
-### 6.2 运行模式
-
-```bash
-# TUI 模式
-./yagent tui [--taskfile TASK.md] [--disable-agents=repo,coding,chat,meta]
-
-# HTTP 服务器模式
-./yagent http [--disable-agents=repo,coding,chat,meta]
-```
-
-### 6.3 CLI 客户端（Node.js）
-
-```bash
-cd clients/nodejs-cli && npm install
-
-# 创建任务
-node index.js run <project-dir> "task description"
-
-# 继续对话
-node index.js chat <task-id> <project-dir>
-
-# 查询状态
-node index.js status <task-id>
-
-# 查看记忆
-node index.js memory <task-id>
-```
-
-### 6.4 测试方法
-
-```bash
-# 单元测试（mock LLM）
-go test ./internal/... -v -count=1
-
-# 特定测试
-go test ./internal/agents/... -v -run TestDelegateMeta_DynamicRegistration
-```
-
-### 6.5 配置系统
-
-**配置文件路径**: `$HOME/.yagent/config/config.toml` → `config/config.toml`（降级）
-
-**配置结构**:
+**三级 Provider 覆盖（仍存在）**：`ResolveProvider(agent, tool)` = 工具指定 → `tools.llm.use_provider` →
+Agent 指定 → `agents.llm.use_provider` → `global.llm.use_provider`。
 
 ```toml
-[http]
-server_port = 9080
-
 [global.llm]
-use_provider = "xiaomi"
-
-[global.llm.providers.<name>]
-model = "mimo-v2-flash"
+use_provider = "bailian"
+[global.llm.providers.bailian]
+model = "qwen3-coder"          # 必填
+api_base_url = "https://..."    # 与 api_key 一起必填（bedrock 用 aws_region）
+context_window = 262144         # 只影响 TUI 上下文进度条；压缩阈值走模型目录（见 §11 坑 3）
 temperature = 0.3
 max_tokens = 28000
-api_base_url = "https://..."
-api_key = "your-key"
+reasoning_effort = "high"       # anthropic 时映射为 thinking budget
+api_format = "anthropic"        # 默认 openai
+fallback_providers = ["deepseek", { provider = "mimo", weight = 2 }]
+
+[agents.llm]  coding.use_provider = "deepseek"
+[tools.llm]   micro_agent.use_provider = "local"   # 另有 thinking / deepthinking / design
 
 [agent]
-director_max_steps = 30
-coding_max_steps = 50
-repo_max_steps = 30
+director_max_steps = 100  coding_max_steps = 150  repo_max_steps = 50
+chat_max_steps = 50  devops_max_steps = 50  browser_max_steps = 200  meta_max_steps = 50
+delegate_idle_timeout = "60s"  delegate_total_timeout = "20m"
+max_parallel_readonly_tools = 4
 lang = "Chinese"
+
+[llm]   timeout / max_retries(5) / step_retries / circuit_breaker_threshold / enable_fallback / fallback_max_retries(2)
+[routing] mode = "auto"  [routing.baselines]  coding = "high"  repo = "balanced"
+[enhanced_commander] enable / max_delegation_depth(3) / enable_context_compression
+  context_compression_threshold / tool_result_keep_tokens(200) / enable_ultimate_compression / ultimate_compression_keep_plans
 ```
-
-**三级 LLM 配置优先级** (tools > agents > global):
-
-```toml
-# 第一级: global.llm (全局默认)
-[global.llm]
-use_provider = "siliconflow"
-
-# 第二级: agents.llm (按 Agent 覆盖)
-[agents.llm]
-director.use_provider = "aliyun"
-coding.use_provider = "deepseek"
-
-# 第三级: tools.llm (按 Tool 覆盖)
-[tools.llm]
-micro_agent.use_provider = "local"
-thinking.use_provider = "xiaomi"
-```
-
-### 6.6 数据存储
-
-| 类型 | 路径 |
-|------|------|
-| 任务 Memory | `~/.yagent/tasks/{taskID}.json` |
-| LLM 日志 | `~/.yagent/logs/llm-{date}.log` |
-| Codeseek MCP 日志 | `~/.yagent/logs/` 目录 | MCP 客户端输出 |
 
 ---
 
-## 7. 编码规范
+## 8. 开发与构建
 
-### 7.1 导入路径
+### 8.1 构建
 
-```go
-import (
-    "yagent/internal/..."
-    "yagent/pkg/..."
-)
+```bash
+./build.sh                    # Rust(codeseek release) + Go，产物 dist/bin/codeseek 与 ./yagent
+./build.sh -j 8               # 调 cargo 并行度
+./build.sh clean | release | help
+SKIP_RUST=true ./build.sh     # 只构建 Go（复用已存在的 dist/bin）；dist/bin 为空时二进制里不嵌任何引擎
+SKIP_GO=true ./build.sh
+BUILD_TYPE=debug ./build.sh
 ```
 
-### 7.2 Agent 接口
+只想快速验证 Go 侧改动：`go build -o yagent .`（`dist/bin` 已有文件时可用）。
+版本号通过 ldflags 注入 `internal/globalctx.{Version,BuildTime,GitCommit}`。
 
-```go
-type Agent interface {
-    Name() string
-    Run(ctx context.Context, input string) (string, error)
-}
+### 8.2 运行
+
+```bash
+./yagent                      # 默认 TUI
+./yagent tui --taskfile TASK.md
+./yagent -p "问题"             # 非交互单轮
+./yagent http --port 9080     # 注意：--port 0 表示系统分配端口
+# 通用 flag: -d/--disable-agents  -c/--config  -y/--yolo  -Y/--full-yolo  -Q/--force-quit
 ```
 
-### 7.3 错误处理
+工作目录即项目根（`os.Getwd()`），没有 `--cwd` 类参数。
 
-- 必须清晰传递错误栈，不要吞掉错误
-- 使用 `fmt.Errorf("context: %w", err)` 包装错误
-- 关键操作失败时返回有意义的错误信息
+### 8.3 测试
 
-### 7.4 并发规范
+```bash
+go test ./internal/... -count=1 -timeout 420s        # 全量（agents 很慢）
+go test ./internal/tui/... ./internal/messaging/... -count=1   # 快循环，秒级
+go test ./internal/agents/... -run 'TestRunAgentLoop|TestExecutor|TestFullChain' -count=1 -timeout 300s
+go vet ./...                                          # 必须干净
+```
 
-- 使用 goroutine 和 channel 进行并发操作
-- 注意 mutex 锁的粒度，避免死锁
-- 长时间运行的操作必须支持 context 取消
-
-### 7.5 代码风格
-
-- 遵循 Go 官方 `gofmt` 和 `golint` 规范
-- 函数命名使用驼峰命名法（camelCase）
-- 常量使用全大写下划线分隔（UPPER_SNAKE_CASE）
-- 接口命名遵循 Go 惯例（单方法接口加 `-er` 后缀）
+- 共 82 个测试文件、22 个包。**`internal/agents` 是全仓瓶颈**（数百个测试、无 `testing.Short()` 保护），
+  务必给足 `-timeout` 并单独后台跑，不要把"慢"当成"卡住"。
+- **没有 CI 质量闸门**：`.github/workflows/release.yml` 只做跨平台构建 + 发布，不跑测试/lint；也没有 Makefile/golangci。
+  验证靠本地 `go build` + `go vet` + 相关包测试。
+- TUI 改动必须跑渲染/尺寸矩阵测试（见 §6.8）。
 
 ---
 
-## 8. Director 行为准则
+## 9. 编码规范与架构不变量
 
-> **以下准则为 Director Agent 的强制约束，所有 Agent 在执行任务时必须遵守。**
+### 9.1 规范
 
-### 8.1 核心原则
+- 导入路径 `yagent/internal/...`（已无 `yagent/pkg/...`）。
+- `gofmt` 为准，但**存量文件有对齐漂移**（`internal/tui` 若干）；改到被 `gofmt -l` 报出的文件时先用 `gofmt -d`
+  区分"我写的"和"历史遗留"，不要顺手全量重排。新建/大改的文件必须干净。
+- 错误用 `fmt.Errorf("context: %w", err)` 包装，不吞错误；长任务必须响应 `ctx` 取消。
+- 注释默认不写；只写"为什么"，且不超过一行。
 
-| 原则 | 说明 |
-|------|------|
-| **禁止幻觉** | 只依赖 Repo-Agent 提供的信息，不编造文件名或代码 |
-| **编码分离** | 不直接输出代码块，必须委派给 Coding-Agent |
-| **逐步执行** | 一次只委派一个子任务，验证后再继续 |
-| **强制委派** | 仓库探索必须通过 `delegate_repo`，不可直接操作文件 |
-| **思考先于行动** | 必须在结构化 `<thought>` 块中分析后再执行工具调用 |
+### 9.2 工具/规模守卫
 
-### 8.2 行为约束
+```bash
+bash scripts/check_file_sizes.sh          # internal/agents/director/ 下非测试文件 ≤300 行
+bash scripts/check_no_agents_import.sh    # director/ 子包不得 import yagent/internal/agents（防循环依赖）
+```
 
-1. **禁止幻觉**
-   - 只依赖 Repo-Agent 提供的信息
-   - 不编造文件名、函数名或代码内容
-   - 不确定时先委派 Repo-Agent 查询
+- Director 采用**门面 + 子包**结构：`internal/agents/director.go` 只做装配与 delegate 注册，
+  编排逻辑进 `internal/agents/director/`，跨子系统依赖一律经 `internal/agents/ports.go` 的窄接口注入。
+- `toolbatch` 是无业务依赖的叶子包，不要往里加业务。
 
-2. **编码分离**
-   - 不直接输出代码块供用户复制
-   - 所有代码修改必须通过 `delegate_coding` 完成
-   - 代码评审应关注逻辑正确性而非复制粘贴
+### 9.3 新增一个工具的正确步骤
 
-3. **逐步执行**
-   - 一次只委派一个子任务
-   - 验证子 Agent 输出后再继续下一步
-   - 复杂任务分解为可独立验证的小步骤
+1. 在 `internal/tools/` 实现 `Execute*`（或独立 `*Tool` 结构）。
+2. 在 `internal/agents/tools.json` 加 name/description/JSON Schema（或就地 `WithSchema`）。
+3. 在对应 Agent 的 `lookupToolFunc` switch 里加 `case`（否则静默不生效）；必要时扩 `ports.go`。
+4. 标记元数据：只读加进 `adapter.go` 的 `knownReadOnlyTools`；写文件加进 `workspace_guard.go` 的
+   `dangerousTools` + `pathParamNames`；必须串行加进 `executor.go` 的 `nonParallelToolNames`。
+5. 用 `client.GetToolEngine("<name>")` + `[tools.llm.<name>]` 取工具级引擎；构造期依赖从 `globalctx` 拿。
+6. 加 `internal/tools/*_test.go`；涉及循环则补 `agents` 的执行循环测试。
 
-4. **禁止长进程**
-   - 不启动开发服务器
-   - 使用 `go build` 或测试验证代码
-   - 避免长时间阻塞的操作
+---
 
-5. **并行执行**
-   - 要求子 Agent 对只读操作使用并行工具调用
-   - 独立任务可同时委派（如多个只读分析）
+## 10. Director 行为准则
 
-6. **思考先于行动**
-   - 在每次工具调用前包含结构化 `<thought>` 块
-   - 分析问题根因再选择工具
-   - 记录决策理由和预期结果
+### 10.1 核心约束
 
-### 8.3 `<thought>` 块模板
+1. **禁止幻觉** — 不编造文件名/函数名/代码；不确定就委派 Repo。
+2. **编码分离** — 不向用户输出代码块，所有修改经 `delegate_coding`。
+3. **逐步执行** — 一次委派一个子任务，验证后再继续。
+4. **强制委派** — 仓库探索走 `delegate_repo`；文件写走 Coding；Director 自己只用只读工具。
+5. **禁止长驻进程** — 用 `go build` / 测试验证，不起 dev server。
+6. **并行执行** — 只读工具与独立只读委派可以并行（由 `toolbatch` 调度）。
+7. **思考先于行动** — 每次工具调用前给出 `<thought>` 块。
 
-结构化、可解析、可校验的思考块。用显式定界标签 `<thought>...</thought>` 包裹固定的
-`key: value` 行式结构，取代旧的自由 markdown（Go 侧只能靠正则猜边界、无法做字段校验）：
+### 10.2 `<thought>` 格式契约（`internal/thinklink/thoughtplan.go`）
 
 ```
 <thought>
@@ -750,59 +505,36 @@ plan:
 - [x] [已完成]
 - [>] [当前 — 即将委派]
 - [ ] [待处理]
-- [ ] [待处理]
 </thought>
 ```
 
-**格式契约**（解析时校验，见 `internal/thinklink/thoughtplan.go`）：
-
-- `<thought>` / `</thought>` 为字面定界符，必填；每轮回复恰好一个块，置于工具调用之前。
-- `goal`/`step`/`reason`/`plan` 为固定小写 key，各占一行，形如 `key: value`。
-- `goal`、`reason` 必填（缺失即校验失败）；三个字段均单行、简洁。
-- `plan:` 下每行一条，前缀恰为一个状态标记：`[x]` 已完成、`[>]` 进行中（至多一条）、`[ ]` 待处理。
-- 字段**值**使用 **Language Instructions** 指定语言；key、状态标记与 `<thought>` 标签保持英文原样。
-
----
-
-## 附录
-
-### A. 文件索引
-
-| 文件/目录 | 说明 |
-|-----------|------|
-| `main.go` | 程序入口 |
-| `internal/agents/` | 所有 Agent 实现 |
-| `internal/tools/` | 工具适配器 |
-| `internal/memory/` | 任务记忆管理 |
-| `pkg/messaging/` | Pub-Sub 消息总线 |
-| `codeseek/` | Rust 代码引擎 |
-| `clients/nodejs-cli/` | Node.js CLI 客户端 |
-| `config/config.toml` | 示例配置文件 |
-| `docs/` | 补充文档 |
-
-### B. 快速参考
-
-```bash
-# 常用命令速查
-go build -o yagent .          # 构建
-./yagent tui                  # TUI 模式
-./yagent http                 # HTTP 模式
-go test ./internal/... -v -count=1  # 测试
-cd codeseek/rust-core && cargo build       # Rust 构建
-```
-
-### C. 安全机制
-
-| 机制 | 说明 |
-|------|------|
-| **WorkspaceGuard** | 工作空间边界检查，确保文件操作不超出项目目录 |
-| **UserConfirmManager** | Pub-Sub 确认管道，危险操作需用户批准 |
-| **3 级压缩策略** | 保守/平衡/激进，防止上下文溢出 |
-| **文件大小限制** | 10MB 文件编辑上限 |
+- `<thought>`/`</thought>` 为字面定界符；每轮回复恰好一个块，置于工具调用之前。
+- `goal`/`step`/`reason`/`plan` 为固定小写 key，各占一行（`current goal`/`reasoning`/`plan update` 等别名会被归一）。
+- `Validate()` 要求 `goal` 与 `reason` 非空，且**至多一条** `[>]` 进行中项。
+- 状态标记支持 `[x]` 已完成、`[>]` 进行中、`[ ]` 待处理（解析器也容忍 `X`、`-`、`1.` 等写法）。
+- 字段**值**用配置语言（`[agent] lang`）书写；key、标记、标签保持英文。
+- 该块同时是 TUI thinklink 面板的显示内容和 ultimate 压缩的重建原料；**解析失败不会报错，只会静默丢失**，所以格式必须严格遵守。
+- 目前 Director 与 Coding 的 prompt 强制该格式；Repo/Chat/DevOps/Meta/Browser 未要求。
 
 ---
 
-*本文档由 Yagent Agent 系统自动生成并维护，最后更新: 2025*
+## 11. 已知坑
+
+1. **本文档之外的旧资料普遍过期**：`docs/ARCHITECTURE.md` 与 `README.md` 里的部分描述（模块图、`pkg/`、工具数）落后于代码；以本文件和源码为准。
+2. **`dist/` 被 `.gitignore` 忽略，但 `dist/data/models.json` 与 `dist/bin` 里的文件是被跟踪的**。改目录后 `git add -f dist/...`，否则 `go:embed` 编不过、或二进制继续用旧数据。
+3. **模型目录与配置里的 `context_window` 会打架，且两个消费者取法相反**：
+   - 压缩阈值（`compression/threshold.go:19`）= **目录命中优先** → 未命中才用 `context_compression_threshold`（默认 120000）；
+     **provider 的 `context_window` 完全不参与**。
+   - TUI 上下文进度条（`tui/tui_model.go:600`）= **provider 的 `context_window` 优先** → 未设置才查目录。
+   所以给目录里已收录的模型手写一个不同的 `context_window`，会出现"压缩时机与进度条口径不一致"。
+4. **`default_config.toml` 里有一段 `[context]` 表**（`enable_auto_compact` 等）`Config` 根本不解析；真正的开关在 `[enhanced_commander]`。别照着模板那段改配置。
+5. **tools.json 声明 ≠ 工具可用**：只有 Agent 的 `lookupToolFunc` switch 里列举的名字才会注册。`thinking` 与
+   `query_call_graph` 目前 Coding 拿不到就是这个问题。
+6. **TUI 事件通道无重放**：`listenForEvents` 是一次性 cmd，谁消费了事件不重新武装监听器就会永久断流；
+   弹窗守卫只放行少数消息类型（`tea.PasteMsg` 不是 KeyMsg）。任何新增叠加模式/守卫都必须显式放行需要的消息类型并 re-arm。
+7. **布局高度必须自洽**：`computeFooterHeight` 与 `View()` 的 footer 组装顺序要完全一致，差一个空行整屏抖动；
+   `viewport.SetHighlights` 在我们的重着色日志上会算错偏移，改用 `StyleLineFunc`。
+
 
 <!-- CODESEEK_INJECTION -->
 # Code exploration: use CodeSeek MCP tools first
