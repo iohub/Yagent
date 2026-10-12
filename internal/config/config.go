@@ -187,7 +187,6 @@ type Config struct {
 	Agent       AgentConfig    `toml:"agent"`
 	LLM         LLMConfig      `toml:"llm" json:"llm" yaml:"llm"`
 	Routing     RoutingConfig  `toml:"routing"`
-	Browser     BrowserConfig  `toml:"browser"`
 	Keywords    KeywordsConfig `toml:"keywords"`
 	TaskTimeout time.Duration  `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"`
 
@@ -615,24 +614,6 @@ func (c *Config) hasKeywordsConfig() bool {
 		return true
 	}
 	return false
-}
-
-type BrowserConfig struct {
-	Headless           bool     `toml:"headless"`
-	BrowserPath        string   `toml:"browser_path"`
-	UserDataDir        string   `toml:"user_data_dir"`
-	ViewportWidth      int      `toml:"viewport_width"`
-	ViewportHeight     int      `toml:"viewport_height"`
-	AllowedDomains     []string `toml:"allowed_domains"`
-	BlockedDomains     []string `toml:"blocked_domains"`
-	TimeoutSeconds     int      `toml:"timeout_seconds"`
-	TaskTimeoutSeconds int      `toml:"task_timeout_seconds"`
-	MaxConcurrentPages int      `toml:"max_concurrent_pages"`
-	AutoLaunch         bool     `toml:"auto_launch"`
-	IdleTimeout        string   `toml:"idle_timeout"`
-	AllowNoSandbox     bool     `toml:"allow_no_sandbox"`
-	ExtraArgs          []string `toml:"extra_args"`
-	EnableBrowserAgent bool     `toml:"enable_browser_agent"`
 }
 
 type EnhancedCommanderConfig struct {

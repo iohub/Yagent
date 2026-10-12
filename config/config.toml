@@ -135,24 +135,6 @@ injection_max_entries = 8            # 知识注入最大条目数
 injection_min_score = 0.3            # 知识检索最低得分阈值
 injection_rerank = true              # 是否请求 Cross-Encoder 精排（codeseek 端 reranker 未启用时自动降级）
 
-# ── 浏览器配置 ──
-[browser]
-headless = true                      # 无头模式
-browser_path = ""                    # 浏览器可执行文件路径（空=自动查找）
-user_data_dir = ""                   # 用户数据目录（空=临时目录）
-viewport_width = 1280                # 视口宽度
-viewport_height = 720                # 视口高度
-timeout_seconds = 120                # 单页操作超时（秒）
-task_timeout_seconds = 300           # 单个浏览器任务超时（秒）
-max_concurrent_pages = 4             # 最大并发页面数
-auto_launch = true                   # 是否自动启动浏览器
-idle_timeout = "5m"                  # 空闲超时
-allow_no_sandbox = false             # 允许 --no-sandbox 启动（容器环境可能需要）
-enable_browser_agent = true          # 总开关：禁用后 Browser-Agent 不可用
-# allowed_domains = []               # 允许访问的域名白名单（空=不限制）
-# blocked_domains = []               # 禁止访问的域名黑名单
-# extra_args = []                    # 附加浏览器启动参数
-
 # ── 关键词词典配置 ──
 [keywords]
 default_path = "~/.yagent/keywords.txt"  # 默认关键词文件路径

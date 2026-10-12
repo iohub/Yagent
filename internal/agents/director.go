@@ -385,7 +385,7 @@ func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []
 	}).WithSchema(buildDelegateSchema("The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."))
 
 	delegateBrowser := tools.NewAdapter("delegate_browser",
-		"Delegate browser automation tasks to Browser-Agent. Browser-Agent controls a headless Chrome browser using go-rod to navigate websites, click elements, fill forms, extract data, take screenshots, generate PDFs, execute JavaScript (with user confirmation), and manage cookies. Use this for tasks like: 'screenshot https://example.com', 'extract text from https://example.com/article', 'fill and submit the login form at https://example.com/login', 'check if website is reachable', 'get the current URL after navigation'. The agent handles all browser lifecycle and page management internally.",
+		"Placeholder for Browser-Agent, currently under reconstruction. The browser stack (headless Chrome driver and browser_* tools) has been stripped, so this tool always returns a not-implemented error and touches no browser. Prefer local docs, read-only tools, or another sub-agent; if the user really needs web automation, report that the capability is unavailable.",
 		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			task, ok := params["task"].(string)
 			if !ok {
@@ -401,7 +401,7 @@ func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []
 			result, err := a.BrowserAgent.Run(ctx, packedTask)
 			noteRef := a.writeDelegateNote("browser_agent", "delegate_browser", task, result, err)
 			return a.applyEnhancedCommander("browser", task, result, err, noteRef, unresolved)
-		}).WithSchema(buildDelegateSchema("The browser automation task for Browser-Agent, e.g., 'screenshot https://example.com homepage', 'extract article text from https://example.com/blog/post-1', 'fill the login form and submit', 'navigate to https://example.com and return the page title'."))
+		}).WithSchema(buildDelegateSchema("A description of the browser task. Browser-Agent is a placeholder and always returns a not-implemented error."))
 
 	delegateMeta := tools.NewAdapter("delegate_meta", "Delegate to Meta-Agent to DESIGN a custom specialized agent. Meta-Agent will craft a tailored system prompt using prompt engineering best practices and select appropriate tools. The designed agent is automatically registered and immediately executed to complete the task. After this, the new agent becomes a permanent delegate tool for future use.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)

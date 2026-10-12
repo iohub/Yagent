@@ -440,7 +440,7 @@
   },
   {
     "name": "delegate_browser",
-    "description": "Delegate web research to Browser-Agent. Use ONLY when info CANNOT be obtained from local docs (go docs, python docs, help, man, --help). Browser-Agent navigates the web and returns findings. Provide a clear, self-contained task description.",
+    "description": "Placeholder for Browser-Agent, currently under reconstruction: calling it always returns a not-implemented error and performs no browser actions. Do not delegate here; use local docs, shell-based checks, or another agent.",
     "parameters": {
       "type": "object",
       "properties": {
