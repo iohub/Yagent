@@ -645,3 +645,113 @@ func TestChrome_InfoLineRenders(t *testing.T) {
 		t.Errorf("footer should grow for the info line, height=%d", h)
 	}
 }
+
+// tabTestModel 带会话 tab 的模型：tab 行右端的键帽组只在有 tab 时才渲染。
+func tabTestModel(t *testing.T, w, h int) *model {
+	t.Helper()
+	m := chromeTestModel(t, w, h)
+	m.maxTabs = 3
+	m.initSessionTabs()
+	return m
+}
+
+// TestTabBar_GlobalKeycaps 模型/路由的提示挂在 tab 行右端，与 ctrl+t、alt+w 同行。
+func TestTabBar_GlobalKeycaps(t *testing.T) {
+	m := tabTestModel(t, 140, 40)
+	row := stripANSIForChrome(m.renderTabBar())
+	for _, key := range []string{"ctrl+t", "alt+w", "alt+m", "alt+r"} {
+		if !strings.Contains(row, key) {
+			t.Errorf("tab row should advertise %s, got %q", key, row)
+		}
+	}
+
+	// dashboard 没画出来时（无用量）alt+d 也补位；面板自己的标题栏一旦可见就不重复报。
+	if !strings.Contains(row, "alt+d") {
+		t.Errorf("tab row should advertise alt+d while the dashboard is hidden, got %q", row)
+	}
+	m.inputTokens = 1000
+	if strings.Contains(stripANSIForChrome(m.renderTabBar()), "alt+d") {
+		t.Error("dashboard header already shows alt+d; the tab row should not repeat it")
+	}
+}
+
+// TestTabBar_KeycapsDegradeByPrefix 空间不够时从尾部丢，不能出现"少了前面的键、留着后面的键"。
+func TestTabBar_KeycapsDegradeByPrefix(t *testing.T) {
+	order := []string{"ctrl+t", "alt+w", "alt+m", "alt+r", "alt+d"}
+	for _, w := range []int{40, 60, 80, 100, 120, 140, 200} {
+		m := tabTestModel(t, w, 40)
+		m.maxTabs = 10
+		for i := 2; i <= 4; i++ {
+			m.sessionTabs = append(m.sessionTabs, m.newSessionTab(i, m.generateTabTitle(i)))
+		}
+		row := stripANSIForChrome(m.renderTabBar())
+
+		seen := -1
+		for i, key := range order {
+			if strings.Contains(row, key) {
+				if i != seen+1 {
+					t.Errorf("width=%d: %s shown while an earlier key is missing, row=%q", w, key, row)
+				}
+				seen = i
+			}
+		}
+	}
+}
+
+// TestTabBar_WidthMatrix tab 行必须恒为 1 行且不超过终端宽度。
+func TestTabBar_WidthMatrix(t *testing.T) {
+	for _, w := range []int{30, 40, 60, 80, 100, 120, 160, 200, 240} {
+		m := tabTestModel(t, w, 40)
+		row := m.renderTabBar()
+		if n := len(strings.Split(row, "\n")); n != 1 {
+			t.Errorf("width=%d: tab row has %d lines, want 1", w, n)
+		}
+		if got := lipgloss.Width(row); got > w {
+			t.Errorf("width=%d: tab row width = %d, want <= %d\n%s", w, got, w, stripANSIForChrome(row))
+		}
+	}
+}
+
+// TestStatusBar_OnlyViewToggles 底部状态栏不再重复上半屏的快捷键，只留视图开关。
+func TestStatusBar_OnlyViewToggles(t *testing.T) {
+	m := tabTestModel(t, 140, 40)
+	m.currentProvider = "siliconflow"
+	m.currentModel = "DeepSeek-V3.2"
+
+	for _, commandMode := range []bool{false, true} {
+		m.commandMode = commandMode
+		bar := stripANSIForChrome(m.renderAirlineStatusBar())
+		for _, key := range []string{"alt+m", "alt+r", "alt+d", "ctrl+t"} {
+			if strings.Contains(bar, key) {
+				t.Errorf("commandMode=%v: status bar should not advertise %s, got %q", commandMode, key, bar)
+			}
+		}
+		if commandMode && !strings.Contains(bar, "alt+t") {
+			t.Errorf("normal mode should still advertise alt+t, got %q", bar)
+		}
+	}
+}
+
+// TestEditorHintBar_TimelineBeforeHelp ctrl+l 挂在面板底边框且排在 ctrl+h 之前：
+// 窄面板从尾部丢弃提示时先掉帮助、留住视图开关。状态栏不再重复报它。
+func TestEditorHintBar_TimelineBeforeHelp(t *testing.T) {
+	prev := langManager.currentLang
+	t.Cleanup(func() { langManager.SetLanguage(prev) })
+
+	for _, lang := range []Language{LangChinese, LangEnglish} {
+		langManager.SetLanguage(lang)
+		hints := langManager.GetText("EditorHintEdit")
+		li, hi := strings.Index(hints, "ctrl+l"), strings.Index(hints, "ctrl+h")
+		if li < 0 || hi < 0 {
+			t.Fatalf("lang=%s: hint bar should carry both toggles, got %q", lang, hints)
+		}
+		if li > hi {
+			t.Errorf("lang=%s: ctrl+l must precede ctrl+h, got %q", lang, hints)
+		}
+
+		m := chromeTestModel(t, 140, 40)
+		if bar := stripANSIForChrome(m.renderAirlineStatusBar()); strings.Contains(bar, "ctrl+l") {
+			t.Errorf("lang=%s: INSERT status bar should not repeat the panel hint, got %q", lang, bar)
+		}
+	}
+}

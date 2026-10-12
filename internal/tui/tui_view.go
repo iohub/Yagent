@@ -340,9 +340,6 @@ func (m *model) renderAirlineStatusBar() string {
 
 	modeSeg, modeBg, tipsText := m.airlineModeSegment()
 
-	if m.dashboardCollapsed && width >= 120 {
-		tipsText += "  alt+d " + langManager.GetText("DashboardExpandHint")
-	}
 	leftPart := modeSeg + makeRightSep(modeBg, airlineColorInfoBg)
 	rightSegs := m.airlineRightSegments()
 
@@ -368,6 +365,7 @@ func (m *model) renderAirlineStatusBar() string {
 // airlineModeSegment 返回状态栏最左的模式段、其背景色和对应的提示文案。
 // 语义与输入面板一致：commandMode 就是 vim 的 NORMAL，能打字时是 INSERT
 // —— 旧实现在非 commandMode 也显示 NORMAL，与"正在输入"的实际状态相矛盾。
+// INSERT 侧留空：视图开关（ctrl+l）已挂到面板底边框的键帽条上。
 func (m *model) airlineModeSegment() (string, color.Color, string) {
 	chip := func(bg, fg color.Color) lipgloss.Style {
 		return lipgloss.NewStyle().Background(bg).Foreground(fg).Bold(true).Padding(0, 1)
@@ -380,7 +378,7 @@ func (m *model) airlineModeSegment() (string, color.Color, string) {
 
 	case m.taskCancelled:
 		return chip(airlineColorCancelBg, airlineColorCancelFg).Render("● CANCELLED"),
-			airlineColorCancelBg, langManager.GetText("EditModeTips")
+			airlineColorCancelBg, ""
 
 	case m.taskRunning:
 		// padding 必须加在渐变外层：ApplyBoldForegroundGrad 是逐字着色，
@@ -392,11 +390,11 @@ func (m *model) airlineModeSegment() (string, color.Color, string) {
 			common.DefaultGradTo,
 		)
 		return lipgloss.NewStyle().Background(airlineColorRunBg).Padding(0, 1).Render(grad),
-			airlineColorRunBg, langManager.GetText("EditModeTips")
+			airlineColorRunBg, ""
 
 	default:
 		return chip(airlineColorInsertBg, airlineColorInsertFg).Render("INSERT"),
-			airlineColorInsertBg, langManager.GetText("EditModeTips")
+			airlineColorInsertBg, ""
 	}
 }
 
