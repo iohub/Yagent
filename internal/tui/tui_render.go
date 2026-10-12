@@ -345,7 +345,7 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	}
 
 	if entry.toolEntry != nil {
-		if entry.toolEntry.Call.Name == "deepthinking" &&
+		if (entry.toolEntry.Call.Name == "deepthinking" || entry.toolEntry.Call.Name == "design") &&
 			entry.toolEntry.Status == ToolStatusSuccess &&
 			entry.toolEntry.Result != nil &&
 			entry.toolEntry.Result.Content != "" &&

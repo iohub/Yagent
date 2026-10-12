@@ -98,6 +98,7 @@ type CodingAgentParams struct {
 	Flow        FlowToolSet
 	Thinker     Thinker
 	DeepThinker DeepThinker
+	Designer    Designer
 	MicroAgent  MicroAgentRunner
 
 	Guard   *tools.WorkspaceGuard
@@ -241,6 +242,8 @@ func lookupToolFunc(name string, p CodingAgentParams) tools.ToolFunc {
 		return p.MicroAgent.Execute
 	case "deepthinking":
 		return p.DeepThinker.Execute
+	case "design":
+		return p.Designer.Execute
 	case "agent_exit":
 		return p.Flow.ExecuteAgentExit
 	case "ask_user_for_help":

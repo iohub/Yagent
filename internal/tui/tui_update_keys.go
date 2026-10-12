@@ -12,7 +12,7 @@ import (
 )
 
 func isModelTargetTool(target string) bool {
-	return target == "deepthinking"
+	return target == "deepthinking" || target == "design"
 }
 
 func (m *model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

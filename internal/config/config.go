@@ -135,6 +135,7 @@ type ToolsLLMConfig struct {
 	MicroAgent   *ToolLLMOverride `toml:"micro_agent,omitempty"`
 	Thinking     *ToolLLMOverride `toml:"thinking,omitempty"`
 	DeepThinking *ToolLLMOverride `toml:"deepthinking,omitempty"`
+	Design       *ToolLLMOverride `toml:"design,omitempty"`
 }
 
 type TopLevelConfig struct {
@@ -260,6 +261,8 @@ func (c *Config) getToolOverride(toolName string) *ToolLLMOverride {
 		return c.Tools.LLM.Thinking
 	case "deepthinking":
 		return c.Tools.LLM.DeepThinking
+	case "design":
+		return c.Tools.LLM.Design
 	default:
 		return nil
 	}

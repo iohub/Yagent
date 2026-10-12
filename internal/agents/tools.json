@@ -179,6 +179,27 @@
     }
   },
   {
+    "name": "design",
+    "description": "Agent-friendly solution design BEFORE coding. Produces a structured implementation plan (goal, affected files, ordered steps, risks, verification). MANDATORY for complex tasks after code exploration, before implementation. Input: context (task requirements, explored codebase findings, constraints) and goal (what the design must decide/produce).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "type": "string",
+          "description": "Task requirements, explored codebase findings (key file paths, types/functions, existing patterns), constraints, and any other relevant info for designing the implementation."
+        },
+        "goal": {
+          "type": "string",
+          "description": "What the design must decide or produce. A specific implementation objective the plan should target."
+        }
+      },
+      "required": [
+        "context",
+        "goal"
+      ]
+    }
+  },
+  {
     "name": "delete_file",
     "description": "Delete files (multiple in one call). Must ensure files exist before deleting.",
     "parameters": {

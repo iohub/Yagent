@@ -22,6 +22,7 @@ func testConfigEntries(n int) []ConfigEntry {
 		{Target: "devops", Group: TargetGroupAgents, Provider: "localai", Model: "Qwen3.8-27B-GSQ-RCO", Context: 126000},
 		{Target: "browser", Group: TargetGroupAgents, Provider: "private_endpoint", Model: "my-custom-llm-v2", Context: 0},
 		{Target: "deepthinking", Group: TargetGroupTools, Provider: "xiaomi", Model: "mimo-v2-flash", Context: 262144},
+		{Target: "design", Group: TargetGroupTools, Provider: "xiaomi", Model: "mimo-v2-flash", Context: 262144},
 	}
 	if n <= len(base) {
 		return base[:n]

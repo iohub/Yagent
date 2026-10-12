@@ -149,14 +149,16 @@ func (m *model) showModelSelectionDialog() tea.Cmd {
 	}
 	// Tool entries (per-tool provider overrides)
 	if client != nil {
-		prov, modelName := m.assistant.GetToolProviderInfo("deepthinking")
-		entries = append(entries, components.ConfigEntry{
-			Target:   "deepthinking",
-			Group:    components.TargetGroupTools,
-			Provider: prov,
-			Model:    modelName,
-			Context:  ctxWindow(prov),
-		})
+		for _, tool := range []string{"deepthinking", "design"} {
+			prov, modelName := m.assistant.GetToolProviderInfo(tool)
+			entries = append(entries, components.ConfigEntry{
+				Target:   tool,
+				Group:    components.TargetGroupTools,
+				Provider: prov,
+				Model:    modelName,
+				Context:  ctxWindow(prov),
+			})
+		}
 	}
 	dialog := components.NewAgentSelectDialog(entries)
 	dialog.SetBounds(m.termWidth, m.termHeight)
