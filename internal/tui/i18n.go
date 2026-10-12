@@ -59,11 +59,9 @@ type translations struct {
 	TaskCompleteTitle string
 	TaskCompleteOK    string
 	TaskCompleteHelp  string
-	// Command mode (vim-like modal editing)
-	CommandModeTips     string
-	CommandModeIdleTips string
-	HelpDialogTitle     string
-	HelpDialogContent   string
+	// Vim keybinding help dialog
+	HelpDialogTitle   string
+	HelpDialogContent string
 	// Editor / command-line panel chrome
 	EditorPanelLabel   string
 	EditorHintEdit     string
@@ -140,11 +138,9 @@ var langMap = map[Language]translations{
 		TaskCompleteTitle:                "任务完成",
 		TaskCompleteOK:                   "确定",
 		TaskCompleteHelp:                 "按 ENTER 或 SPACE 关闭",
-		CommandModeTips:                  "gg/G:首/尾  j/k:上下  f/b:翻页  i:编辑  ctrl+e:编辑模式",
-		CommandModeIdleTips:              "alt+t:token  ctrl+l:时间线",
 		EditorPanelLabel:                 "TASK",
 		EditorHintEdit:                   "alt+s 提交 · esc 普通模式 · / 技能 · @ 文件 · ctrl+l 时间线 · ctrl+h 帮助",
-		CmdlineHintIdle:                  "j/k 滚动 · u/d 半页 · gg/G 首尾 · / 搜索 · : 命令 · i 编辑",
+		CmdlineHintIdle:                  "j/k 滚动 · u/d 半页 · gg/G 首尾 · / 搜索 · : 命令 · i 编辑 · ctrl+l 时间线",
 		CmdlineHintEx:                    "enter 执行 · esc 取消 · ↑/↓ 历史",
 		CmdlineHintSearch:                "enter 搜索 · n/N 上下个 · esc 取消 · ↑/↓ 历史",
 		CmdlinePlaceholder:               ": 执行命令    / 搜索日志",
@@ -230,11 +226,9 @@ var langMap = map[Language]translations{
 		TaskCompleteTitle:                "Task Completed",
 		TaskCompleteOK:                   "OK",
 		TaskCompleteHelp:                 "Press ENTER or SPACE to close",
-		CommandModeTips:                  "gg/G:top/btm  j/k:scroll  f/b:pgdn/up  i:edit  ctrl+e:edit",
-		CommandModeIdleTips:              "alt+t:token  ctrl+l:timeline",
 		EditorPanelLabel:                 "TASK",
 		EditorHintEdit:                   "alt+s submit · esc normal · / skill · @ file · ctrl+l timeline · ctrl+h help",
-		CmdlineHintIdle:                  "j/k scroll · u/d half · gg/G ends · / search · : cmd · i edit",
+		CmdlineHintIdle:                  "j/k scroll · u/d half · gg/G ends · / search · : cmd · i edit · ctrl+l timeline",
 		CmdlineHintEx:                    "enter run · esc cancel · ↑/↓ history",
 		CmdlineHintSearch:                "enter search · n/N next · esc cancel · ↑/↓ history",
 		CmdlinePlaceholder:               ": run command    / search log",
@@ -388,10 +382,6 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.TaskCompleteOK
 	case "TaskCompleteHelp":
 		return translations.TaskCompleteHelp
-	case "CommandModeTips":
-		return translations.CommandModeTips
-	case "CommandModeIdleTips":
-		return translations.CommandModeIdleTips
 	case "HelpDialogTitle":
 		return translations.HelpDialogTitle
 	case "HelpDialogContent":
