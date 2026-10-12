@@ -36,6 +36,7 @@ type GlobalCtx struct {
 	UserConfirmMgr   *tools.UserConfirmManager
 	Guard            *tools.WorkspaceGuard
 	DeepThinkingTool *tools.DeepThinkingTool
+	DesignTool       *tools.DesignTool
 	// BrowserMgr 浏览器管理器（单例，管理 Chromium 浏览器实例生命周期）
 	BrowserMgr *browser.Manager
 

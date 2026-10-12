@@ -105,6 +105,12 @@ type DeepThinker interface {
 	Execute(ctx context.Context, params map[string]interface{}) (interface{}, error)
 }
 
+// Designer 方案设计工具（编码前的前瞻性实现设计，产出可执行分步计划）。
+// 由 *tools.DesignTool 天然实现。
+type Designer interface {
+	Execute(ctx context.Context, params map[string]interface{}) (interface{}, error)
+}
+
 // MicroAgentRunner 微代理工具（隔离上下文的聚焦子任务推理）。
 // 由 *tools.MicroAgentTool 天然实现。
 type MicroAgentRunner interface {

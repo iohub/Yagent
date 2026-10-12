@@ -19,7 +19,7 @@ const (
 // ConfigEntry 是目标选择器中的一行：global / 某个 agent / 某个 tool，
 // 连同它当前生效的 provider、模型与上下文窗口。
 type ConfigEntry struct {
-	Target   string // "global"、agent 名（如 "director"）或 tool 名（如 "deepthinking"）
+	Target   string // "global"、agent 名（如 "director"）或 tool 名（如 "deepthinking"/"design"）
 	Group    string // 分组标签，见 TargetGroup*；相邻同组条目只渲染一次组标题
 	Provider string // 当前生效的 provider，"" = 未能解析
 	Model    string // 当前生效的模型名

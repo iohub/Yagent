@@ -117,6 +117,14 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			}
 		}
 
+		// Resolve tool-specific engine for design
+		// design 不挂自动路由档位：走纯配置（[tools.llm.design]），
+		// 保留用户独立指定编码前方案设计模型的能力。
+		designEngine := engine
+		if ca.client != nil {
+			designEngine = ca.client.GetToolEngine("design")
+		}
+
 		// ── 确定 codeseek 二进制路径并启动 MCP 客户端 ──
 		codeseekBinaryPath := ""
 
@@ -213,6 +221,22 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 					}
 				}
 				return dt
+			}(),
+
+			DesignTool: func() *tools.DesignTool {
+				design := tools.NewDesignTool(designEngine)
+				if publisher != nil {
+					design.StreamHandler = func(ctx context.Context, chunk []byte) error {
+						if len(chunk) > 0 {
+							publisher.Publish("ai_chunk", map[string]interface{}{
+								"content": string(chunk),
+								"agent":   "design",
+							}, "design")
+						}
+						return nil
+					}
+				}
+				return design
 			}(),
 
 			// BrowserMgr 浏览器管理器（单例，管理 Chromium 浏览器实例生命周期）
@@ -464,6 +488,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Flow:                 gctx.FlowOps,
 			Thinker:              gctx.ThinkingTool,
 			DeepThinker:          gctx.DeepThinkingTool,
+			Designer:             gctx.DesignTool,
 			MicroAgent:           gctx.MicroAgentTool,
 			Guard:                guard,
 			RepoCtx:              repoCtx,
@@ -677,8 +702,8 @@ func (ca *Yagent) GetAllAgentOverrides() map[string]string {
 }
 
 // SetToolProvider 为指定工具设置运行时 provider 覆盖。
-// 对 "deepthinking" 额外执行热替换：重新解析其 engine 并替换
-// globalCtx.DeepThinkingTool.LLM，保证后续 Execute 立即使用新模型。
+// 对 "deepthinking"/"design" 额外执行热替换：重新解析其 engine 并替换
+// globalCtx 中对应工具的 LLM，保证后续 Execute 立即使用新模型。
 func (ca *Yagent) SetToolProvider(toolName, providerName string) error {
 	if ca.client == nil {
 		return fmt.Errorf("LLM client not available")
@@ -691,6 +716,12 @@ func (ca *Yagent) SetToolProvider(toolName, providerName string) error {
 		slog.Info("Hot-swapped deepthinking tool engine",
 			"provider", providerName,
 			"model", ca.globalCtx.DeepThinkingTool.LLM.Model())
+	}
+	if toolName == "design" && ca.globalCtx != nil && ca.globalCtx.DesignTool != nil {
+		ca.globalCtx.DesignTool.LLM = ca.client.GetToolEngine("design")
+		slog.Info("Hot-swapped design tool engine",
+			"provider", providerName,
+			"model", ca.globalCtx.DesignTool.LLM.Model())
 	}
 	return nil
 }

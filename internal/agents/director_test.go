@@ -54,9 +54,10 @@ func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 		SysOps:       tools.NewSystemOperationsTool(workDir),
 		ReplaceTool:  tools.NewReplaceBlockTool(workDir),
 		ThinkingTool: tools.NewThinkingTool(),
-		// micro_agent/deepthinking 工具在 agent 构造期做方法值求值(接口不可为 nil),
+		// micro_agent/deepthinking/design 工具在 agent 构造期做方法值求值(接口不可为 nil),
 		// 与旧测试 GlobalCtx 提供真实工具实例的语义一致;LLM 为 nil(测试不触发调用)。
 		DeepThinkingTool: tools.NewDeepThinkingTool(nil),
+		DesignTool:       tools.NewDesignTool(nil),
 		MicroAgentTool:   tools.NewMicroAgentTool(nil),
 		FlowOps:          tools.NewFlowControlTool(workDir),
 		RepoOps:          tools.NewRepoOperationsTool(nil, workDir, 0),

@@ -11,7 +11,7 @@ func toolTruncationPriority(toolName string) int {
 		"print_dir_tree", "search_by_regex", "query_call_graph",
 		"find_function_callee", "find_function_caller":
 		return 0
-	case "deepthinking":
+	case "deepthinking", "design":
 		return -1
 	default:
 		return 1

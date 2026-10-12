@@ -134,6 +134,7 @@ func newFullChainDirector(t *testing.T, workDir string, mock *fullChainMockLLM) 
 		Flow:        gctx.FlowOps,
 		Thinker:     gctx.ThinkingTool,
 		DeepThinker: gctx.DeepThinkingTool,
+		Designer:    gctx.DesignTool,
 		MicroAgent:  gctx.MicroAgentTool,
 		Guard:       gctx.Guard,
 		RepoCtx:     repoCtx,

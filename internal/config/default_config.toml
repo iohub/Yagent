@@ -70,6 +70,10 @@ use_provider = "deepseek_v4_pro"
 [tools.llm.deepthinking]
 use_provider = "deepseek_v4_pro"
 
+# 编码前方案设计工具（design）：产出供 Coding-Agent 执行的分步实现计划
+[tools.llm.design]
+use_provider = "deepseek_v4_pro"
+
 # ── 应用设置 ──
 [app]
 enable_streaming = true
