@@ -872,13 +872,13 @@ Yagent 支持为不同的 Agent 和工具配置不同的 LLM 模型：
 ```
 
 ```go
-// 引擎解析
-directorEngine   = client.GetAgentEngine("director")
-codingEngine     = client.GetAgentEngine("coding")
+// 引擎解析（自动路由启用时按档位分派，未启用时透明回落到按 Agent 的提供商引擎）
+directorEngine   = llm.NewRoutingEngine(client, "director")
+codingEngine     = llm.NewRoutingEngine(client, "coding")
 microAgentEngine = client.GetToolEngine("micro_agent")
 ```
 
-引擎可在运行时重新解析：Director 持有 `llmClient *llm.Client`，当热重载配置改变提供商映射时调用 `refreshSubAgentEngines()`（`config.SetToolProvider`、提供商配置查找）。
+引擎可在运行时重新解析：Director 持有 `llmClient *llm.Client`，每轮开始处重建各 Agent 的 `RoutingEngine`（`refreshSubAgentEngines()`），使提供商覆盖与 auto/fixed 切换立即生效。这里必须保留 `RoutingEngine` 包装而不是裸提供商引擎——`RunAgentLoop` 靠 `llm.ResolveTierEngine` 的类型识别把 ctx 里的档位换成具体引擎，包装一丢自动路由静默失效（`model_routed` 事件照发、实际模型不变）。注意：路由启用时档位模型优先于 `[agents.llm.*].use_provider`。
 
 **回退链**（`internal/llm/fallback.go`）：主引擎失败时，回退提供商按 `FallbackProvider.Weight` **降序**尝试（对 weight 做 `sort.SliceStable`）。每一次回退尝试都受相同的超时/重试设置约束。
 

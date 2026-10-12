@@ -293,11 +293,11 @@ Reply with ONLY a JSON object: {"tier":"fast|balanced|high"}`
 
 	resp, err := eng.GenerateContent(cctx, msgs, nil, &CallOptions{MaxTokens: 32})
 	if err != nil || resp == nil || len(resp.Choices) == 0 {
-		slog.Debug("routing classify failed, using baseline", "error", err, "fallback", fallback)
+		slog.Warn("routing classify failed, using baseline", "error", err, "fallback", fallback.String())
 		return fallback
 	}
 	tier := parseTierJSON(resp.Choices[0].Content, fallback)
-	slog.Debug("routing classify", "tier", tier, "fallback", fallback)
+	slog.Info("routing classify", "tier", tier.String(), "fallback", fallback.String())
 	return tier
 }
 
