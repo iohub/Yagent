@@ -281,6 +281,32 @@ func (a *DirectorAgent) buildToolAdapters() []*tools.Adapter {
 	return adapters
 }
 
+// routeCtx 对 delegate 子任务做难度分类，把选中的档位写入 ctx（供子 agent 的
+// RunAgentLoop 解析实际引擎），并发布 model_routed 事件。自动路由未启用时原样返回。
+// 分类失败会安全回退到该 agent 的角色基线档位，绝不阻塞委派。
+func (a *DirectorAgent) routeCtx(ctx context.Context, agentName, task string) context.Context {
+	if a.llmClient == nil {
+		return ctx
+	}
+	r := a.llmClient.GetRouter()
+	if !r.Enabled() {
+		return ctx
+	}
+	baseline := r.BaselineOf(agentName)
+	tier := r.Classify(ctx, task, baseline)
+	ctx = llm.WithTier(ctx, tier)
+	if a.Publisher != nil {
+		a.Publisher.Publish("model_routed", map[string]interface{}{
+			"agent":    agentName,
+			"tier":     tier.String(),
+			"model":    r.ModelFor(tier),
+			"score":    r.ScoreFor(tier),
+			"baseline": baseline.String(),
+		}, a.Name())
+	}
+	return ctx
+}
+
 // buildDelegateAdapters 装配六个内建 delegate_<agent> 工具，并按 disabledAgents 过滤。
 // 闭包在运行时读取接收者字段（boardID/Adapters/metaRetryCount 等），故必须在结构体
 // 填充完成后调用。返回顺序固定为：repo, coding, chat, meta, devops, browser。
@@ -296,6 +322,7 @@ func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
+		ctx = a.routeCtx(ctx, "repo", task)
 		result, err := a.RepoAgent.Run(ctx, packedTask)
 		noteRef := a.writeDelegateNote("repo_agent", "delegate_repo", task, result, err)
 		return a.applyEnhancedCommander("repo", task, result, err, noteRef, unresolved)
@@ -312,6 +339,7 @@ func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
+		ctx = a.routeCtx(ctx, "coding", task)
 		result, err := a.CodingAgent.Run(ctx, packedTask)
 		noteRef := a.writeDelegateNote("coding_agent", "delegate_coding", task, result, err)
 		return a.applyEnhancedCommander("coding", task, result, err, noteRef, unresolved)
@@ -328,6 +356,7 @@ func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
+		ctx = a.routeCtx(ctx, "chat", task)
 		result, err := a.ChatAgent.Run(ctx, packedTask)
 		noteRef := a.writeDelegateNote("chat_agent", "delegate_chat", task, result, err)
 		return a.applyEnhancedCommander("chat", task, result, err, noteRef, unresolved)
@@ -344,6 +373,7 @@ func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []
 			defer rolloutWriter.Close()
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
+		ctx = a.routeCtx(ctx, "devops", task)
 		result, err := a.DevOpsAgent.Run(ctx, packedTask)
 		noteRef := a.writeDelegateNote("devops_agent", "delegate_devops", task, result, err)
 		return a.applyEnhancedCommander("devops", task, result, err, noteRef, unresolved)
@@ -362,6 +392,7 @@ func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []
 				defer rolloutWriter.Close()
 				ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 			}
+			ctx = a.routeCtx(ctx, "browser", task)
 			result, err := a.BrowserAgent.Run(ctx, packedTask)
 			noteRef := a.writeDelegateNote("browser_agent", "delegate_browser", task, result, err)
 			return a.applyEnhancedCommander("browser", task, result, err, noteRef, unresolved)
@@ -378,6 +409,7 @@ func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []
 			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 		}
 		slog.Info("Director delegating to Meta-Agent (design)", "task", task)
+		ctx = a.routeCtx(ctx, "meta", task)
 
 		maxRetries := a.metaRetryCount
 		var lastRawOutput string
@@ -624,6 +656,7 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 			}
 			packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
 			ctx = blackboard.WithBoardID(ctx, a.boardID)
+			ctx = a.routeCtx(ctx, agentRef.Name, task)
 			resultStr, err := a.executeCustomAgent(ctx, agentRef, adaptersRef, packedTask)
 			agentResult := a.takePendingSubAgentMemory()
 			if agentResult == nil {

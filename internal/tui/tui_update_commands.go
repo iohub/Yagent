@@ -59,6 +59,12 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		return nil
 
 	// ═══════════════════════════════════════════════════════════════
+	// :route — 打开模型自动路由对话框（切换 auto/fixed，查看三档模型与分数）
+	// ═══════════════════════════════════════════════════════════════
+	case cmd == ":route" || cmd == ":routing":
+		return m.showRoutingDialog()
+
+	// ═══════════════════════════════════════════════════════════════
 	// /resume — Resume a session from rollout log
 	// (alias /rs; must come BEFORE the /pattern log-search fallback)
 	// ═══════════════════════════════════════════════════════════════
@@ -155,6 +161,38 @@ func (m *model) showModelSelectionDialog() tea.Cmd {
 	dialog := components.NewAgentSelectDialog(entries)
 	dialog.SetBounds(m.termWidth, m.termHeight)
 	m.dialogStack.Push(dialog)
+	return nil
+}
+
+// showRoutingDialog 打开模型自动路由对话框：切换 auto/fixed 模式，并展示 auto
+// 模式下三档模型（高智商/性价比/快速）及其 ai_score；路由不可用时展示原因。
+func (m *model) showRoutingDialog() tea.Cmd {
+	if m.assistant == nil {
+		m.infoMsg = "Routing unavailable: assistant not initialized"
+		return nil
+	}
+	snap := m.assistant.GetRouteSnapshot()
+	info := components.RoutingInfo{
+		Enabled: snap.Enabled,
+		Mode:    snap.Mode,
+		Reason:  snap.Reason,
+	}
+	// 按 高智商 → 性价比 → 快速 的展示顺序取档位。
+	for _, want := range []string{"high", "balanced", "fast"} {
+		for _, t := range snap.Tiers {
+			if t.Tier.String() == want {
+				info.Tiers = append(info.Tiers, components.RoutingTierView{
+					Label:    strings.ToUpper(want),
+					Provider: t.Provider,
+					Model:    t.Model,
+					Score:    t.Score,
+				})
+			}
+		}
+	}
+	d := components.NewRoutingDialog(info)
+	d.SetBounds(m.termWidth, m.termHeight)
+	m.dialogStack.Push(d)
 	return nil
 }
 

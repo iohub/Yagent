@@ -165,6 +165,19 @@ type LLMConfig struct {
 	FallbackMaxRetries int `toml:"fallback_max_retries" json:"fallback_max_retries" yaml:"fallback_max_retries"`
 }
 
+// RoutingConfig 控制模型自动路由（[routing] 节）。
+type RoutingConfig struct {
+	// Mode 为 "auto"（默认，空值等同 auto）或 "fixed"（关闭路由，沿用各 provider 配置）。
+	Mode string `toml:"mode"`
+	// Baselines 覆盖各 agent 的角色基线档位，键为 agent 名，值为 "fast"|"balanced"|"high"。
+	Baselines map[string]string `toml:"baselines"`
+}
+
+// IsAuto 报告是否启用自动路由（空 Mode 默认按 auto 处理）。
+func (r RoutingConfig) IsAuto() bool {
+	return !strings.EqualFold(strings.TrimSpace(r.Mode), "fixed")
+}
+
 type Config struct {
 	Global      TopLevelConfig `toml:"global"`
 	Agents      AgentsConfig   `toml:"agents"`
@@ -172,6 +185,7 @@ type Config struct {
 	App         AppConfig      `toml:"app"`
 	Agent       AgentConfig    `toml:"agent"`
 	LLM         LLMConfig      `toml:"llm" json:"llm" yaml:"llm"`
+	Routing     RoutingConfig  `toml:"routing"`
 	Browser     BrowserConfig  `toml:"browser"`
 	Keywords    KeywordsConfig `toml:"keywords"`
 	TaskTimeout time.Duration  `toml:"task_timeout" json:"task_timeout" yaml:"task_timeout"`

@@ -76,6 +76,23 @@ use_provider = "deepseek_v4_pro"
 [app]
 enable_streaming = true
 
+# ── 模型自动路由 ──
+# mode = "auto" 时，启动会对「配置中所有 provider 的模型」按内嵌基准目录打分，
+# 选出三档：最高分=高智商模型、中位数=性价比模型、最低分=快速模型；
+# 每次 delegate 子任务时用快速模型做一次难度分类，动态选择该子 agent 的档位，
+# deepthinking 工具固定使用高智商档位。
+# 打分口径：候选模型基准项的「严格交集」，ai_score = Σ(score × weight)，
+# 其中 DeepSWE / SWE-Bench Pro / GPQA Diamond 权重 1.5，其余 1.0。
+# 若可打分候选不足 3 个，或交集为空，则 auto 自动失效并回退到固定 provider 行为。
+# 切到 "fixed" 可完全关闭路由（等价于此前行为）。
+[routing]
+mode = "auto"
+# 角色基线档位覆盖（可选）：值为 "fast" | "balanced" | "high"
+# [routing.baselines]
+# director = "high"
+# coding = "balanced"
+# devops = "fast"
+
 # ── Agent 行为配置 ──
 [agent]
 yolo_mode = false             # YOLO 模式：自动批准所有危险操作

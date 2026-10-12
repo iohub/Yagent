@@ -133,6 +133,11 @@ func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (str
 }
 
 func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResult, retErr error) {
+	// 自动路由：把 RoutingEngine 换成本轮档位（ctx 覆盖或角色基线）对应的具体引擎。
+	// 固定模式 / 未启用路由时为 no-op。之后 Model()、压缩阈值、model_info 事件
+	// 都会反映实际路由到的模型。
+	cfg.LLM = llm.ResolveTierEngine(ctx, cfg.LLM)
+
 	if cfg.Publisher != nil {
 		cfg.Publisher.Publish("model_info", map[string]interface{}{
 			"model": cfg.LLM.Model(),

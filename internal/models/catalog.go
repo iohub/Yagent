@@ -25,11 +25,18 @@ const CatalogPath = "dist/data/models.json"
 // 带厂商后缀的私有部署名，同时把无关字符串（实测 ≤0.45）挡在外面。
 const fuzzyMinSimilarity = 0.6
 
+// benchmark 是目录中单条基准成绩，score 兼容整数与浮点（如 18 与 86.6）。
+type benchmark struct {
+	Name  string  `json:"name"`
+	Score float64 `json:"score"`
+}
+
 // entry 只解析目录中用得到的字段，其余（description/modalities/weights 等）忽略。
 type entry struct {
 	Limit struct {
 		Context int `json:"context"`
 	} `json:"limit"`
+	Benchmarks []benchmark `json:"benchmarks"`
 }
 
 // fuzzyItem 是模糊匹配索引项，按 id 字典序排列以保证并列时取舍确定。
@@ -126,6 +133,51 @@ func ContextWindow(model string) int {
 		return item.ctx
 	}
 	return 0
+}
+
+// resolveEntry 按 ContextWindow 相同的三级顺序（完整 id → 裸名 → 模糊）解析出
+// 目录条目，供 Benchmarks 等需要完整字段的调用方复用。模糊命中不额外告警
+// （告警只在 ContextWindow 路径触发一次即可）。
+func resolveEntry(model string) (entry, bool) {
+	key := strings.ToLower(strings.TrimSpace(model))
+	if key == "" {
+		return entry{}, false
+	}
+	mu.RLock()
+	defer mu.RUnlock()
+	if e, ok := byID[key]; ok {
+		return e, true
+	}
+	bare := bareName(key)
+	if e, ok := byBare[bare]; ok {
+		return e, true
+	}
+	if item, _, ok := fuzzyLookup(bare); ok {
+		if e, ok2 := byID[item.id]; ok2 {
+			return e, true
+		}
+	}
+	return entry{}, false
+}
+
+// Benchmarks 返回模型的基准成绩（name → score），未收录或无基准数据时返回空 map。
+// 同名基准出现多次时取最高分。
+func Benchmarks(model string) map[string]float64 {
+	e, ok := resolveEntry(model)
+	if !ok || len(e.Benchmarks) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(e.Benchmarks))
+	for _, b := range e.Benchmarks {
+		name := strings.TrimSpace(b.Name)
+		if name == "" {
+			continue
+		}
+		if prev, dup := out[name]; !dup || b.Score > prev {
+			out[name] = b.Score
+		}
+	}
+	return out
 }
 
 // fuzzyLookup 在归一化裸名上做 Levenshtein 相似度匹配，返回最优且不低于

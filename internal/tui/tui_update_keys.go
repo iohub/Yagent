@@ -308,6 +308,55 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		}
 		return m, nil, true
 
+	case *components.RoutingDialog:
+		_, cmd := d.Update(msg)
+		if cmd != nil {
+			return m, cmd, true
+		}
+		if d.Selected != "" {
+			mode := d.Selected
+			persist := d.Persist
+			logStatus := func(kind, content string) {
+				m.logEntries = append(m.logEntries, logEntry{timestamp: time.Now(), eventType: kind, content: content})
+				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+			}
+			if err := m.assistant.SetRoutingMode(mode); err != nil {
+				logStatus("error", fmt.Sprintf("Failed to switch routing mode: %v", err))
+			} else {
+				snap := m.assistant.GetRouteSnapshot()
+				m.autoRouting = snap.Enabled
+				line := "Routing mode set to " + strings.ToUpper(mode)
+				switch {
+				case snap.Enabled:
+					// Tiers 索引：0=fast, 1=balanced, 2=high
+					line += fmt.Sprintf(" — high: %s (%.1f) · balanced: %s (%.1f) · fast: %s (%.1f)",
+						snap.Tiers[2].Model, snap.Tiers[2].Score,
+						snap.Tiers[1].Model, snap.Tiers[1].Score,
+						snap.Tiers[0].Model, snap.Tiers[0].Score)
+				case snap.Reason != "":
+					line += " — auto unavailable: " + snap.Reason
+				}
+				logStatus("status", line)
+				if persist {
+					if err := m.assistant.PersistRoutingMode(mode); err != nil {
+						logStatus("error", fmt.Sprintf("Failed to save routing mode to config: %v", err))
+					} else {
+						logStatus("status", fmt.Sprintf("Saved routing mode '%s' to config file", mode))
+					}
+				}
+				m.invalidateFooterCache()
+			}
+			m.dialogStack.Pop()
+			return m, nil, true
+		}
+		switch key {
+		case "esc", "q", "Q":
+			d.Selected = ""
+			m.dialogStack.Pop()
+			return m, nil, true
+		}
+		return m, nil, true
+
 	case *components.HelpDialog:
 		switch key {
 		case "esc", "i", "I", "ctrl+h":
@@ -572,6 +621,9 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "alt+m":
 		return m, m.showModelSelectionDialog()
 
+	case "alt+r":
+		return m, m.showRoutingDialog()
+
 	case "ctrl+l":
 		if !m.timelineFullscreenMode {
 			m.timelineFullscreenMode = true
@@ -701,6 +753,12 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.showModelSelectionDialog()
+
+	case "alt+r":
+		if m.taskRunning {
+			return m, nil
+		}
+		return m, m.showRoutingDialog()
 
 	case "alt+d":
 		m.toggleDashboard()
