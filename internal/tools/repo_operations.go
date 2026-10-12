@@ -67,14 +67,6 @@ type CallGraphResult struct {
 	Depth int           `json:"depth"`
 }
 
-// IndexStatus 表示 CodeSeek 索引健康状态
-type IndexStatus struct {
-	ProjectPath string `json:"project_path"`
-	Indexed     bool   `json:"indexed"`
-	LastUpdated string `json:"last_updated,omitempty"`
-	FileCount   int    `json:"file_count,omitempty"`
-}
-
 // QueryCodeSkeletonResponse 表示骨架查询响应
 type QueryCodeSkeletonResponse struct {
 	Success bool `json:"success"`
@@ -431,23 +423,5 @@ func (t *RepoOperationsTool) ExecuteCallGraph(ctx context.Context, params map[st
 	return map[string]interface{}{
 		"success": true,
 		"result":  result,
-	}, nil
-}
-
-// ExecuteCheckStatus 检查 CodeSeek 索引状态
-func (t *RepoOperationsTool) ExecuteCheckStatus(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-	raw, err := t.callMCPTool(ctx, "codeseek_status", map[string]interface{}{})
-	if err != nil {
-		return nil, fmt.Errorf("索引状态检查失败: %w", err)
-	}
-
-	var status IndexStatus
-	if err := json.Unmarshal([]byte(raw), &status); err != nil {
-		return nil, fmt.Errorf("解析索引状态失败: %w", err)
-	}
-
-	return map[string]interface{}{
-		"success": true,
-		"status":  status,
 	}, nil
 }

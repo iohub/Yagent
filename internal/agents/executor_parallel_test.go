@@ -514,26 +514,21 @@ func TestRunAgentLoop_ParentCancel_AllCallsAccounted(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 6 个阻塞只读工具(依赖 ctx.Done 返回);限流 2 → 后 4 个必然在取消后排队
+	// 6 个阻塞只读工具(依赖 ctx.Done 返回);限流 2 → 取消时组内必有在飞调用与排队调用
 	names := []string{"ro_a", "ro_b", "ro_c", "ro_d", "ro_e", "ro_f"}
 
-	// 首个工具内部触发取消:全部组内调用将以已取消 ctx 分批启动
-	var cancelOnce sync.Once
 	var ads []*tools.Adapter
 	var calls []llm.ToolCall
 	for idx, n := range names {
 		calls = append(calls, makeCall(fmt.Sprintf("c%d", idx+1), n))
-		if idx == 0 {
-			fn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-				cancelOnce.Do(cancel)
-				<-ctx.Done()
-				return nil, ctx.Err()
-			}
-			ads = append(ads, tools.NewAdapter(n, "blocking", fn).WithReadOnly(true))
-		} else {
-			ads = append(ads, newBlockingReadOnly(n, nil))
-		}
+		ads = append(ads, newBlockingReadOnly(n, nil))
 	}
+
+	// 取消必须来自批次外部：toolbatch 不保证组内启动顺序，若把 cancel 放进某个工具，
+	// 该工具可能一直排在信号量队列里，两个在飞调用便无人可取消，只能等
+	// defaultToolTimeout(180s) 逐波超时才解开。
+	stopCancel := time.AfterFunc(30*time.Millisecond, cancel)
+	defer stopCancel.Stop()
 
 	mockResponses := []*llm.Response{
 		newToolResponse(calls...),

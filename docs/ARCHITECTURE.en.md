@@ -15,7 +15,7 @@
   - [3.6 Parallel Execution of Read-Only Tools](#36-parallel-execution-of-read-only-tools)
 - [4. Tool System](#4-tool-system)
   - [4.1 Adapter Pattern](#41-adapter-pattern)
-  - [4.2 Tool Registry](#42-tool-registry)
+  - [4.2 Tool Manifest and Wiring](#42-tool-manifest-and-wiring)
   - [4.3 WorkspaceGuard](#43-workspaceguard)
   - [4.4 Delegation Tools](#44-delegation-tools)
   - [4.5 Core Tool List](#45-core-tool-list)
@@ -117,7 +117,6 @@ yagent/
 │   ├── knowledge/         # Knowledge injector (KnowledgeInjector, pre-conversation retrieval)
 │   ├── mcp/               # MCP client (MCPClient, stdio JSON-RPC)
 │   ├── recovery/          # Circuit breaker (CircuitBreaker, closed/open/half-open)
-│   ├── registry/          # Capability registry (CapabilityRegistry)
 │   ├── skills/            # Skill system (SkillRegistry, loads .md skill files)
 │   ├── dict/              # Dictionary/autocomplete engine (DictEngine)
 │   ├── diff/              # Diff comparison utilities
@@ -666,27 +665,26 @@ sequenceDiagram
     ADP-->>LLM: Result string
 ```
 
-### 4.2 Tool Registry
+### 4.2 Tool Manifest and Wiring
 
-**Registry** is a thread-safe tool registry supporting registration/lookup/listing:
+There is **no runtime tool registry**: `internal/agents/tools.json` is only a manifest, and the code inside each agent's constructor is what turns that manifest into a tool set.
 
 ```go
-// internal/tools/registry.go
-type Registry struct {
-    adapters map[string]*Adapter
-    mu       sync.RWMutex
-    hash     string // tool-list hash (cache-consistency detection)
-    dirty    bool   // hash needs recomputation
+// internal/tools/adapter.go
+type ToolDefinition struct {
+    Name        string                 // tool name as seen by the LLM
+    Description string                 // tells the LLM when to use it
+    Parameters  map[string]interface{} // JSON Schema
 }
 ```
 
-**API**: `Register(*Adapter)`, `Execute(ctx, name, params)`, `List()` — plus cheap change detection: registering a tool sets `dirty`, and the memoized tool-list `hash` lets the system-prompt layer notice "tool set changed" without diffing names.
+Wiring path: `tools.json` → `json.Unmarshal` into `[]tools.ToolDefinition` → each agent's `lookupToolFunc` switch resolves the name to an `internal/tools` executor → `tools.NewAdapter(name, desc, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()` → `ExecutorConfig.Adapters` → `ToToolDef()` + `SortToolDefs()` produce a stable `[]llm.ToolDef`.
 
-**Features**:
-- Thread-safe (read-write lock)
-- Indexed by name
-- Batch retrieval (for LLM system prompts)
-- Memoized tool-list hash for cache-consistency checks
+**Key points**:
+- **Names the switch does not list are silently skipped**: a tool declared in tools.json but missing a `case` for that agent never reaches its tool set (this is why `thinking` and `query_call_graph` are absent from the Coding-Agent).
+- Read-only metadata comes from `WithReadOnly` / `WithReadOnlyIfKnown` (the `knownReadOnlyTools` whitelist) and decides whether a tool may join a parallel batch (see 3.6).
+- `SortToolDefs` and `ComputeToolDefsHash` provide stable ordering and a hash, so the tool block in the system prompt stays cache-friendly and "tool set changed" is detectable without diffing names.
+- A few tools bypass the manifest: the Director's `delegate_*`, `read_note`/`read_artifact`, and Coding's `git_checkpoint_*` and knowledge tools are built inline with `tools.NewAdapter(...)`.
 
 ### 4.3 WorkspaceGuard
 
@@ -724,8 +722,6 @@ type WorkspaceGuard struct {
 | 5 | **First call** | `RequestAuth(ctx)` blocks until the user approves or denies |
 
 ### 4.4 Delegation Tools
-
-> **Note (v2.0.0)**: `internal/tools/delegate.go` still exists — it defines the `AgentRunner` interface (`Run(ctx, task) (string, error)`), a `NewDelegateAdapter` builder, and a `DelegateFunc` adapter — but currently has **no call sites**. It remains as a generic helper.
 
 The six built-in `delegate_<agent>` tools are constructed **inline in `NewDirectorAgent()`** as ordinary `tools.NewAdapter` instances whose closures run the target sub-Agent (through `executeCustomAgent` / `applyEnhancedCommander`, each with its own tool registry, step budget, LLM engine, and delegate timeout). Inline construction is what enables per-tool details such as `delegate_repo.WithReadOnly(true)`:
 
@@ -1732,10 +1728,8 @@ flowchart LR
 | `internal/thinklink/thinklink.go` | Ultimate-compression journal |
 | `internal/artifact/store.go` | Artifact persistence |
 | `internal/artifact/summary.go` | Tiered summary generation |
-| `internal/tools/adapter.go` | Tool adapter (read-only metadata) |
-| `internal/tools/registry.go` | Tool registry (hash/dirty change detection) |
+| `internal/tools/adapter.go` | Tool adapter + `ToolDefinition` (tools.json entries, read-only metadata, ordering/hash) |
 | `internal/tools/workspace_guard.go` | Workspace guard + authorization levels |
-| `internal/tools/delegate.go` | `AgentRunner` / `NewDelegateAdapter` helper (no call sites) |
 | `internal/tools/browser/` | 10 `browser_*` tools + registry entry |
 | `internal/llm/engine.go` | `Engine` interface + `Message`/`ToolDef`/`TruncationMarker` |
 | `internal/llm/engine_openai.go` | OpenAI-compatible implementation |

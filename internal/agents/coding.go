@@ -79,7 +79,6 @@ type CodingAgent struct {
 	Adapters         []*tools.Adapter
 	BrowserAgent     *BrowserAgent
 	maxSteps         int
-	registry         *tools.Registry  // 工具注册表引用
 	thinkLink        *thinklink.Store // 终极压缩支撑存储，实时记录用户原始输入，与 Director 模式一致，与 agent 同生命周期
 
 }
@@ -115,15 +114,10 @@ type CodingAgentParams struct {
 	Browser  *BrowserAgent
 }
 
-// NewCodingAgent 构造 CodingAgent：先按 tools.json 与参数集中的工具集装配适配器，
-// 再注册进工具表。全部依赖通过 CodingAgentParams 传入。
+// NewCodingAgent 构造 CodingAgent：按 tools.json 与参数集中的工具集装配适配器。
+// 全部依赖通过 CodingAgentParams 传入。
 func NewCodingAgent(p CodingAgentParams) *CodingAgent {
 	adapters := buildCodingAdapters(p)
-
-	registry := tools.NewRegistry()
-	for _, adapter := range adapters {
-		registry.MustRegister(adapter)
-	}
 
 	return &CodingAgent{
 		BaseAgent: BaseAgent{
@@ -142,7 +136,6 @@ func NewCodingAgent(p CodingAgentParams) *CodingAgent {
 		Adapters:         adapters,
 		maxSteps:         p.MaxSteps,
 		BrowserAgent:     p.Browser,
-		registry:         registry,
 		thinkLink:        thinklink.NewStore(0), // 容量 0=全量，与 Director 一致
 	}
 }
@@ -449,11 +442,6 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		autoConsolidateSubtask(a.mcpClient, a.LLM, "coding_agent", "coding_modification", input, agentResult.Text)
 	}
 	return agentResult, nil
-}
-
-// Registry 返回工具注册表引用（供外部访问）
-func (a *CodingAgent) Registry() *tools.Registry {
-	return a.registry
 }
 
 // pruneSchema 是 prune_history 工具的 JSON Schema，提取为包级变量供多处复用。
