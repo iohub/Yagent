@@ -237,42 +237,70 @@ func buildHelpData(lang Language) helpData {
 	if lang == LanguageZh {
 		return helpData{
 			Title:   "⌨  帮助",
-			Dismiss: "按 Esc 或任意键关闭",
+			Dismiss: "按 Esc 或 i 关闭",
 			Sections: []keySection{
 				{
-					Title: "通用导航",
+					Title: "滚动（普通模式）",
 					Items: []keyItem{
 						{[]string{"j", "↓"}, "向下滚动一行"},
 						{[]string{"k", "↑"}, "向上滚动一行"},
 						{[]string{"f", "Ctrl+F"}, "向下翻页"},
 						{[]string{"b", "Ctrl+B"}, "向上翻页"},
+						{[]string{"u", "Ctrl+U"}, "向上半页"},
+						{[]string{"d", "Ctrl+D"}, "向下半页"},
 						{[]string{"gg"}, "跳到开头"},
 						{[]string{"G"}, "跳到末尾"},
+						{[]string{"10j", "5G"}, "数字前缀：滚动 N 行 / 跳到第 N 行"},
 					},
 				},
 				{
 					Title: "模式切换",
 					Items: []keyItem{
-						{[]string{"i"}, "进入编辑模式"},
-						{[]string{"Ctrl+E"}, "进入命令模式"},
+						{[]string{"Esc"}, "编辑 → 普通（补全展开时先收补全）"},
+						{[]string{"Ctrl+E"}, "编辑 → 普通"},
+						{[]string{"i", "a"}, "普通 → 编辑"},
+						{[]string{"Enter"}, "普通 → 编辑"},
 						{[]string{"Ctrl+L"}, "全屏时间线"},
-						{[]string{"Ctrl+G"}, "thinklink 视图（命令模式）"},
+						{[]string{"Ctrl+G"}, "thinklink 视图（普通模式）"},
 						{[]string{"?", "Ctrl+H"}, "显示帮助"},
-						{[]string{"Esc"}, "返回 / 关闭"},
+					},
+				},
+				{
+					Title: "搜索（普通模式）",
+					Items: []keyItem{
+						{[]string{"/word"}, "高亮全部命中并跳到第一条"},
+						{[]string{"n"}, "下一个命中"},
+						{[]string{"N"}, "上一个命中"},
+						{[]string{"Esc"}, "清除高亮"},
+						{[]string{":nohl"}, "清除高亮"},
+					},
+				},
+				{
+					Title: "命令行（普通模式）",
+					Items: []keyItem{
+						{[]string{":"}, "打开命令行，Enter 执行"},
+						{[]string{"↑", "↓"}, "翻检历史命令"},
+						{[]string{":q", ":q!"}, "退出（带确认 / 直接退出）"},
+						{[]string{":help"}, "显示本帮助"},
+						{[]string{":model"}, "模型设置面板"},
+						{[]string{":route"}, "模型自动路由"},
+						{[]string{":timeout"}, "LLM 调用超时"},
+						{[]string{":clear"}, "清空当前会话"},
+						{[]string{":language"}, "切换中英文"},
 					},
 				},
 				{
 					Title: "任务与输入（编辑模式）",
 					Items: []keyItem{
-						{[]string{"Alt+S"}, "提交任务"},
-						{[]string{"Tab"}, "自动补全"},
+						{[]string{"Alt+S", "Ctrl+S"}, "提交任务"},
+						{[]string{"Tab"}, "切换补全候选"},
 						{[]string{"/"}, "关键词 / 技能补全"},
 						{[]string{"@"}, "FZF 文件选择"},
 						{[]string{"Enter"}, "确认补全 / 换行"},
 					},
 				},
 				{
-					Title: "标签页（编辑模式）",
+					Title: "标签页",
 					Items: []keyItem{
 						{[]string{"Ctrl+T"}, "新建标签页"},
 						{[]string{"Alt+[", "Alt+]"}, "上一 / 下一标签页"},
@@ -282,17 +310,14 @@ func buildHelpData(lang Language) helpData {
 					},
 				},
 				{
-					Title: "面板与命令",
+					Title: "面板",
 					Items: []keyItem{
 						{[]string{"Alt+D"}, "收缩 / 展开仪表盘"},
-						{[]string{"Alt+T"}, "Token 面板（命令模式）"},
-						{[]string{"Alt+M"}, "模型设置面板（切换 Provider / 模型，含 LLM 调用超时）"},
+						{[]string{"Alt+T"}, "收缩 / 展开 Token 面板"},
+						{[]string{"Alt+M"}, "模型设置面板（Provider / 模型 / 超时）"},
 						{[]string{"Alt+R"}, "模型自动路由（auto / fixed）"},
-						{[]string{":q"}, "退出程序"},
-						{[]string{":help"}, "显示命令帮助"},
-						{[]string{":route"}, "打开路由设置"},
 						{[]string{"/resume"}, "恢复会话（别名 /rs）"},
-						{[]string{"/pattern"}, "搜索日志"},
+						{[]string{":hist"}, "浏览历史会话"},
 					},
 				},
 				{
@@ -310,6 +335,7 @@ func buildHelpData(lang Language) helpData {
 					Title: "退出",
 					Items: []keyItem{
 						{[]string{"Ctrl+C"}, "退出（弹出确认对话框）"},
+						{[]string{":q!"}, "直接退出，不确认"},
 						{[]string{"q"}, "退出全屏 / 列表视图"},
 					},
 				},
@@ -318,42 +344,70 @@ func buildHelpData(lang Language) helpData {
 	}
 	return helpData{
 		Title:   "⌨  Help",
-		Dismiss: "Press Esc or any key to close",
+		Dismiss: "Press Esc or i to close",
 		Sections: []keySection{
 			{
-				Title: "Navigation",
+				Title: "Scrolling (normal mode)",
 				Items: []keyItem{
 					{[]string{"j", "↓"}, "scroll down one line"},
 					{[]string{"k", "↑"}, "scroll up one line"},
 					{[]string{"f", "Ctrl+F"}, "page down"},
 					{[]string{"b", "Ctrl+B"}, "page up"},
+					{[]string{"u", "Ctrl+U"}, "half page up"},
+					{[]string{"d", "Ctrl+D"}, "half page down"},
 					{[]string{"gg"}, "go to top"},
 					{[]string{"G"}, "go to bottom"},
+					{[]string{"10j", "5G"}, "count prefix: N lines / go to line N"},
 				},
 			},
 			{
 				Title: "Mode Switching",
 				Items: []keyItem{
-					{[]string{"i"}, "enter edit mode"},
-					{[]string{"Ctrl+E"}, "enter command mode"},
+					{[]string{"Esc"}, "insert → normal (closes completion first)"},
+					{[]string{"Ctrl+E"}, "insert → normal"},
+					{[]string{"i", "a"}, "normal → insert"},
+					{[]string{"Enter"}, "normal → insert"},
 					{[]string{"Ctrl+L"}, "fullscreen timeline"},
-					{[]string{"Ctrl+G"}, "thinklink view (command mode)"},
+					{[]string{"Ctrl+G"}, "thinklink view (normal mode)"},
 					{[]string{"?", "Ctrl+H"}, "show help"},
-					{[]string{"Esc"}, "back / close"},
 				},
 			},
 			{
-				Title: "Task & Input (Edit Mode)",
+				Title: "Search (normal mode)",
 				Items: []keyItem{
-					{[]string{"Alt+S"}, "submit task"},
-					{[]string{"Tab"}, "autocomplete"},
+					{[]string{"/word"}, "highlight all matches, jump to first"},
+					{[]string{"n"}, "next match"},
+					{[]string{"N"}, "previous match"},
+					{[]string{"Esc"}, "clear highlights"},
+					{[]string{":nohl"}, "clear highlights"},
+				},
+			},
+			{
+				Title: "Command line (normal mode)",
+				Items: []keyItem{
+					{[]string{":"}, "open command line, Enter runs it"},
+					{[]string{"↑", "↓"}, "recall history"},
+					{[]string{":q", ":q!"}, "quit (confirm / immediately)"},
+					{[]string{":help"}, "show this help"},
+					{[]string{":model"}, "model settings panel"},
+					{[]string{":route"}, "model auto-routing"},
+					{[]string{":timeout"}, "LLM call timeout"},
+					{[]string{":clear"}, "clear current session"},
+					{[]string{":language"}, "toggle language"},
+				},
+			},
+			{
+				Title: "Task & Input (insert mode)",
+				Items: []keyItem{
+					{[]string{"Alt+S", "Ctrl+S"}, "submit task"},
+					{[]string{"Tab"}, "cycle completions"},
 					{[]string{"/"}, "keyword / skill completion"},
 					{[]string{"@"}, "FZF file picker"},
 					{[]string{"Enter"}, "accept completion / newline"},
 				},
 			},
 			{
-				Title: "Tabs (Edit Mode)",
+				Title: "Tabs",
 				Items: []keyItem{
 					{[]string{"Ctrl+T"}, "new tab"},
 					{[]string{"Alt+[", "Alt+]"}, "previous / next tab"},
@@ -363,17 +417,14 @@ func buildHelpData(lang Language) helpData {
 				},
 			},
 			{
-				Title: "Panels & Commands",
+				Title: "Panels",
 				Items: []keyItem{
 					{[]string{"Alt+D"}, "collapse / expand dashboard"},
-					{[]string{"Alt+T"}, "token panel (command mode)"},
-					{[]string{"Alt+M"}, "model settings panel (switch provider / model, incl. LLM call timeout)"},
+					{[]string{"Alt+T"}, "collapse / expand token panel"},
+					{[]string{"Alt+M"}, "model settings panel (provider / model / timeout)"},
 					{[]string{"Alt+R"}, "model auto-routing (auto / fixed)"},
-					{[]string{":q"}, "quit"},
-					{[]string{":help"}, "show command help"},
-					{[]string{":route"}, "open routing settings"},
 					{[]string{"/resume"}, "resume session (alias /rs)"},
-					{[]string{"/pattern"}, "search log"},
+					{[]string{":hist"}, "browse history sessions"},
 				},
 			},
 			{
@@ -391,6 +442,7 @@ func buildHelpData(lang Language) helpData {
 				Title: "Quit",
 				Items: []keyItem{
 					{[]string{"Ctrl+C"}, "quit (confirmation dialog)"},
+					{[]string{":q!"}, "quit without confirming"},
 					{[]string{"q"}, "exit fullscreen / list view"},
 				},
 			},

@@ -217,6 +217,10 @@ func (m *model) restoreSessionTab(idx int) {
 
 	// 恢复 viewport
 	m.viewport = tab.viewport
+	// viewport 被整体替换，逐行回调（搜索高亮）必须重新挂上；
+	// 命中行号是相对上一个会话的内容算的，切标签页后一律作废。
+	m.bindViewportHooks()
+	m.clearSearch()
 	// 按当前终端尺寸修正 viewport
 	m.viewport.SetWidth(m.termWidth - m.dashboardWidth())
 	vpHeight := m.termHeight - m.computeFooterHeight() - tabBarHeight
@@ -297,7 +301,7 @@ func (m *model) newSessionTabAction() tea.Cmd {
 	m.activeSessionIdx = len(m.sessionTabs) - 1
 	m.nextTabID++
 	m.restoreSessionTab(m.activeSessionIdx)
-	m.infoMsg = langManager.GetText("TabNewCreated")
+	m.setInfoMsg(langManager.GetText("TabNewCreated"))
 	return nil
 }
 
@@ -346,7 +350,7 @@ func (m *model) clearCurrentSession() {
 
 	// 保存清空后的状态
 	m.saveActiveSession()
-	m.infoMsg = langManager.GetText("TabCleared")
+	m.setInfoMsg(langManager.GetText("TabCleared"))
 }
 
 // closeCurrentSessionTab 关闭当前 tab（至少保留一个）
@@ -357,7 +361,7 @@ func (m *model) closeCurrentSessionTab() {
 	}
 
 	if len(m.sessionTabs) <= 1 {
-		m.infoMsg = langManager.GetText("TabCloseLastBlocked")
+		m.setInfoMsg(langManager.GetText("TabCloseLastBlocked"))
 		return
 	}
 
@@ -374,7 +378,7 @@ func (m *model) closeCurrentSessionTab() {
 
 	// 恢复新活动 tab
 	m.restoreSessionTab(m.activeSessionIdx)
-	m.infoMsg = langManager.GetText("TabClosed")
+	m.setInfoMsg(langManager.GetText("TabClosed"))
 }
 
 // updateActiveTabTitle 更新当前 tab 的标题（基于任务描述）

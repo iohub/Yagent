@@ -65,7 +65,9 @@ func StartTUI(taskFilePath string, ca *app.Yagent, tm *http.TaskManager, dm *dat
 	}
 }
 func (m *model) computeFieldWidth() int {
-	const minField = 38
+	// 下限必须容纳面板骨架（左右边框各 1 + 内边距各 1），否则 panelWidth()
+	// 会算出比终端更宽的区块，把整屏挤到下一行。
+	const minField = 16
 	const margin = 4 // small padding from terminal edges
 	if m.termWidth <= 0 {
 		return 80

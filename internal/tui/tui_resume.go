@@ -152,7 +152,7 @@ func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.resumeErr = fmt.Sprintf("List rollout sessions: %v", msg.err)
 		}
 		if len(msg.items) == 0 && msg.err == nil {
-			m.infoMsg = "No rollout sessions found"
+			m.setInfoMsg("No rollout sessions found")
 		}
 		m.resumeGroups = buildResumeGroups(msg.items)
 		m.resumeExpanded = make(map[string]bool, len(m.resumeGroups))
@@ -479,7 +479,7 @@ func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.Ro
 	if len(notes) > 0 {
 		infoMsg += " · " + strings.Join(notes, ", ")
 	}
-	m.infoMsg = infoMsg
+	m.setInfoMsg(infoMsg)
 }
 
 func rolloutFirstNonEmptyStr(ss ...string) string {

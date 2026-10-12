@@ -111,15 +111,6 @@ var (
 	collapseHintLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	collapseHintTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
-	inputPanelStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("62")).
-			BorderBackground(lipgloss.Color("236")).
-			Padding(0, 1).
-			MarginTop(1)
-
-	inputSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-
 	diffHunkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	diffAddStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	diffDelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
@@ -131,12 +122,6 @@ var (
 
 	llmCallStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
 	llmCallEndStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("111"))
-
-	commandPrefixStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	commandModeBarStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("214")).
-				Foreground(lipgloss.Color("0")).
-				Bold(true)
 )
 
 var (
@@ -144,8 +129,13 @@ var (
 	airlineColorNormalFg = compat.AdaptiveColor{Light: lipgloss.Color("15"), Dark: lipgloss.Color("15")}
 	airlineColorRunBg    = compat.AdaptiveColor{Light: lipgloss.Color("70"), Dark: lipgloss.Color("76")}
 	airlineColorRunFg    = compat.AdaptiveColor{Light: lipgloss.Color("15"), Dark: lipgloss.Color("15")}
-	airlineColorCmdBg    = compat.AdaptiveColor{Light: lipgloss.Color("202"), Dark: lipgloss.Color("214")}
-	airlineColorCmdFg    = compat.AdaptiveColor{Light: lipgloss.Color("0"), Dark: lipgloss.Color("0")}
+
+	// INSERT 段与输入面板边框同色，模式切换时上下两处的视觉指示一致。
+	airlineColorInsertBg = compat.AdaptiveColor{Light: lipgloss.Color("62"), Dark: lipgloss.Color("62")}
+	airlineColorInsertFg = compat.AdaptiveColor{Light: lipgloss.Color("15"), Dark: lipgloss.Color("15")}
+
+	airlineColorSearchBg = compat.AdaptiveColor{Light: lipgloss.Color("24"), Dark: lipgloss.Color("24")}
+	airlineColorSearchFg = compat.AdaptiveColor{Light: lipgloss.Color("75"), Dark: lipgloss.Color("117")}
 
 	airlineColorInfoBg    = compat.AdaptiveColor{Light: lipgloss.Color("235"), Dark: lipgloss.Color("236")}
 	airlineColorInfoFg    = compat.AdaptiveColor{Light: lipgloss.Color("252"), Dark: lipgloss.Color("250")}
@@ -160,48 +150,11 @@ var (
 )
 
 var (
-	airlineNormalModeStyle = lipgloss.NewStyle().
-				Background(airlineColorNormalBg).
-				Foreground(airlineColorNormalFg).
-				Bold(true).
-				Padding(0, 1)
-
-	airlineRunModeStyle = lipgloss.NewStyle().
-				Background(airlineColorRunBg).
-				Foreground(airlineColorRunFg).
-				Bold(true).
-				Padding(0, 1)
-
-	airlineCommandModeStyle = lipgloss.NewStyle().
-				Background(airlineColorCmdBg).
-				Foreground(airlineColorCmdFg).
-				Bold(true).
-				Padding(0, 1)
-
-	airlineInfoStyle = lipgloss.NewStyle().
-				Background(airlineColorInfoBg).
-				Foreground(airlineColorInfoFg).
-				Padding(0, 1)
-
-	airlineInfoAltStyle = lipgloss.NewStyle().
-				Background(airlineColorInfoAltBg).
-				Foreground(airlineColorInfoAltFg).
-				Padding(0, 1)
-
-	airlineAccentStyle = lipgloss.NewStyle().
-				Background(airlineColorAccentBg).
-				Foreground(airlineColorAccentFg).
-				Padding(0, 1)
-
-	airlineCancelModeStyle = lipgloss.NewStyle().
-				Background(airlineColorCancelBg).
-				Foreground(airlineColorCancelFg).
-				Bold(true).
-				Padding(0, 1)
-
+	// 模式段与右段统一由 airlineSegment / chip 现场构造（配色见 tui_view.go
+	// 的 airlineModeSegment），这里只保留填充区需要的样式。
 	airlineFillerStyle = lipgloss.NewStyle().
-				Background(airlineColorInfoBg).
-				Foreground(airlineColorInfoFg)
+		Background(airlineColorInfoBg).
+		Foreground(airlineColorInfoFg)
 )
 
 type aiChunkBuffer struct {
@@ -439,6 +392,25 @@ type model struct {
 	commandBuffer string
 	lastKey       string
 
+	// cmdHistory 保存已执行过的命令行（含 ":" / "/" 前缀原文）。
+	// cmdRecalling 为 false 表示不在历史导航中；此时 cmdDraft 暂存开始导航前敲的半截命令。
+	cmdHistory   []string
+	cmdRecalling bool
+	cmdRecallIdx int
+	cmdDraft     string
+
+	// NORMAL 模式数字前缀：输入 "10" 后接 j 表示下滚 10 行。
+	pendingCount string
+
+	// searchPattern 为空表示当前没有活动搜索。searchLines 保存命中行在
+	// viewport 内容中的行号（升序），searchLineAt 是其反查表（行号→命中序号），
+	// searchCursor 为当前命中下标。
+	searchPattern   string
+	searchLines     []int
+	searchLineAt    map[int]int
+	searchCursor    int
+	searchContentFP int
+
 	timelineEntries  []*TimelineEntry
 	timelineExpanded bool
 	timelineCache    string
@@ -546,7 +518,6 @@ type model struct {
 	glamourRenderers map[int]*glamour.TermRenderer
 
 	cachedFooterHeight int
-	cachedSeparator    string
 	footerHeightValid  bool
 
 	glamourCache    map[string]string
@@ -644,7 +615,9 @@ func (m *model) refreshContextWindow() {
 	m.contextWindow = contextWindowFromCfg(client.Config, m.currentProvider)
 }
 
-func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) *model {
+// newTaskInput 构造任务输入框（textarea），带完整的视觉状态样式。
+// 独立成函数是为了让渲染测试能用与生产完全一致的输入框。
+func newTaskInput(preloadedTaskContent string) textarea.Model {
 	ti := textarea.New()
 
 	ti.Placeholder = langManager.GetText("TaskDescPlaceholder")
@@ -657,32 +630,35 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 
+	// 输入区是一块比面板底色更深的"字段"，光标所在行再抬亮一档，
+	// 让多行编辑时的当前行位置一眼可辨。
 	editBaseStyle := lipgloss.NewStyle().Background(lipgloss.Color("235"))
 
 	focusedStyle := textarea.StyleState{
 		Base:        editBaseStyle,
 		Text:        textStyle,
 		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Background(lipgloss.Color("235")),
-		CursorLine:  lipgloss.NewStyle().Background(lipgloss.Color("237")),
-		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("235")),
+		CursorLine:  lipgloss.NewStyle().Background(lipgloss.Color("236")),
+		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Background(lipgloss.Color("235")).Italic(true),
 	}
 
 	blurredStyle := textarea.StyleState{
 		Base:        editBaseStyle,
-		Text:        textStyle,
-		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("235")),
-		CursorLine:  lipgloss.NewStyle().Background(lipgloss.Color("237")),
-		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color("235")),
-	}
-
-	cursorStyle := textarea.CursorStyle{
-		Color: lipgloss.Color("39"),
+		Text:        lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
+		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color("235")),
+		CursorLine:  lipgloss.NewStyle().Background(lipgloss.Color("235")),
+		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color("235")).Italic(true),
 	}
 
 	ti.SetStyles(textarea.Styles{
 		Focused: focusedStyle,
 		Blurred: blurredStyle,
-		Cursor:  cursorStyle,
+		Cursor: textarea.CursorStyle{
+			Color:      lipgloss.Color("39"),
+			Shape:      tea.CursorBar,
+			Blink:      true,
+			BlinkSpeed: 400 * time.Millisecond,
+		},
 	})
 
 	ti.SetPromptFunc(2, func(info textarea.PromptInfo) string {
@@ -695,6 +671,11 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 	if preloadedTaskContent != "" {
 		ti.SetValue(preloadedTaskContent)
 	}
+	return ti
+}
+
+func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) *model {
+	ti := newTaskInput(preloadedTaskContent)
 
 	projectDir, _ := os.Getwd()
 
@@ -860,7 +841,6 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 		dataManager:              dm,
 		input:                    ti,
 		projectDir:               projectDir,
-		infoMsg:                  langManager.GetText("InfoMessage"),
 		currentLang:              langManager.currentLang,
 		eventCh:                  make(chan *messaging.MessageEvent, 1000),
 		logEntries:               make([]logEntry, 0),
@@ -934,6 +914,7 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 
 		maxTabs: 10,
 	}
+	m.bindViewportHooks()
 	m.initSessionTabs()
 	return m
 }
@@ -959,7 +940,6 @@ func (m *model) toggleLanguage() {
 		m.currentLang = LangEnglish
 	}
 	m.input.Placeholder = langManager.GetText("TaskDescPlaceholder")
-	m.infoMsg = langManager.GetText("InfoMessage")
 }
 
 func formatKeyDisplayName(key string) string {

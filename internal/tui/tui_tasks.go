@@ -16,6 +16,26 @@ import (
 	"github.com/google/uuid"
 )
 
+// submitFromEditor 提交输入框内容（alt+s / ctrl+s 共用）。
+// 运行中静默忽略：此时输入框仍然可打字，用于排队写下一条指令。
+func (m *model) submitFromEditor() tea.Cmd {
+	if m.taskRunning {
+		return nil
+	}
+	taskDesc := strings.TrimSpace(m.input.Value())
+	if taskDesc == "" {
+		return nil
+	}
+	if ok, errStr := validateInputs(m.projectDir, taskDesc); !ok {
+		m.errMsg = errStr
+		return nil
+	}
+	if m.currentTask != nil {
+		return m.submitFollowUp(taskDesc)
+	}
+	return m.submitTask()
+}
+
 func (m *model) submitTask() tea.Cmd {
 	return m.submitTaskWithContent(m.input.Value())
 }

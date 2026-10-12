@@ -108,6 +108,7 @@ func (m *model) View() tea.View {
 	}
 
 	if !m.viewportViewValid {
+		m.syncSearchMatches()
 		m.cachedViewportView = m.viewport.View()
 		m.viewportViewValid = true
 		m.prevViewportYOffset = m.viewport.YOffset()
@@ -204,89 +205,85 @@ func (m *model) View() tea.View {
 		}
 	}
 
-	if m.cachedSeparator == "" {
-		sepWidth := m.termWidth
-		if sepWidth < 40 {
-			sepWidth = 40
-		}
-		m.cachedSeparator = inputSeparatorStyle.Render(strings.Repeat("─", sepWidth))
-	}
-	b.WriteString(m.cachedSeparator)
-	b.WriteString("\n")
-
-	var footer strings.Builder
-	if !m.commandMode {
-		m.input.SetWidth(m.computeFieldWidth())
-		m.input.SetHeight(m.computeInputHeight())
-		inputLine := m.input.View()
-		panelStyle := inputPanelIdleStyle
-		if m.taskStarted {
-			panelStyle = inputPanelStyle
-		}
-		footer.WriteString(panelStyle.Render(inputLine))
-		footer.WriteString("\n")
-
-		if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
-			var suggestionParts []string
-			for i, name := range m.skillSuggestions {
-				displayName := name
-				if skill, ok := m.assistant.SkillRegistry.Get(name); ok && skill.Description != "" {
-					displayName = name + " - " + skill.Description
-				}
-				if i == m.skillSuggestionIdx {
-					suggestionParts = append(suggestionParts, m.skillHighlightStyle.Render("▶ "+displayName))
-				} else {
-					suggestionParts = append(suggestionParts, m.skillSuggestionStyle.Render("  "+displayName))
-				}
-			}
-			footer.WriteString(strings.Join(suggestionParts, "\n"))
-			footer.WriteString("\n")
-			footer.WriteString(m.skillHintStyle.Render("Tab 切换  Enter 选择  Esc 关闭"))
-			footer.WriteString("\n")
+	// footer 由若干区块纵向拼接，每块自身不带首尾空行，块之间恰好一个 "\n"。
+	// computeFooterHeight 按同样的顺序逐块累加行数，两处必须保持一致，
+	// 否则 viewport 高度算错会让整屏在滚动时抖动。
+	var blocks []string
+	if m.commandMode {
+		blocks = append(blocks, m.renderCmdlinePanel())
+	} else {
+		blocks = append(blocks, m.renderEditorPanel())
+		if s := m.renderSkillSuggestions(); s != "" {
+			blocks = append(blocks, s)
 		}
 	}
-
-	if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 {
-		var suggestionParts []string
-		for i, suggestion := range m.keywordSuggestions {
-			if i == m.keywordSuggestionIdx {
-				suggestionParts = append(suggestionParts,
-					m.keywordHighlightStyle.Render(suggestion))
-			} else {
-				suggestionParts = append(suggestionParts,
-					m.keywordSuggestionStyle.Render(suggestion))
-			}
-		}
-		footer.WriteString(strings.Join(suggestionParts, "  "))
-		footer.WriteString("\n")
+	if s := m.renderKeywordSuggestions(); s != "" {
+		blocks = append(blocks, s)
 	}
-
 	if m.errMsg != "" {
-		footer.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(errorStyle.Render("✖ " + m.errMsg)))
-		footer.WriteString("\n")
+		blocks = append(blocks,
+			lipgloss.NewStyle().MarginLeft(2).Render(errorStyle.Render("✖ "+m.errMsg)))
 	}
-
-	if !m.dashboardVisible() {
-		tokenDash := m.cachedTokenDashboard
-		if !m.tokenDashboardValid {
-			tokenDash = m.renderTokenDashboard()
-		}
-		footer.WriteString(tokenDash)
+	if s := m.renderInfoLine(); s != "" {
+		blocks = append(blocks, s)
+	}
+	if dash := m.tokenDashboardBlock(); dash != "" {
+		blocks = append(blocks, dash)
 	}
 
 	statusBar := m.cachedStatusBar
 	if !m.statusBarValid {
 		statusBar = m.renderAirlineStatusBar()
 	}
-	footer.WriteString("\n")
-	if !m.commandMode {
-		footer.WriteString("\n")
-	}
-	footer.WriteString(statusBar)
 
-	b.WriteString(footer.String())
+	// 两个 "\n\n" 的后一个才真正是空行：视口文本与 blocks 都不以换行结尾，
+	// 单个 "\n" 只会终止上一行。computeFooterHeight 里的 "1 + blocks + 2"
+	// 就是按 空行 / blocks / 空行 / 状态栏 四段算的。
+	b.WriteString("\n\n")
+	b.WriteString(strings.Join(blocks, "\n"))
+	b.WriteString("\n\n")
+	b.WriteString(statusBar)
 
 	return tea.View{AltScreen: true, Content: b.String()}
+}
+
+// renderSkillSuggestions 渲染技能补全列表（含末行操作提示），共 len+1 行。
+func (m *model) renderSkillSuggestions() string {
+	if !m.skillAutoComplete || len(m.skillSuggestions) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(m.skillSuggestions))
+	for i, name := range m.skillSuggestions {
+		displayName := name
+		if m.assistant != nil {
+			if skill, ok := m.assistant.SkillRegistry.Get(name); ok && skill.Description != "" {
+				displayName = name + " - " + skill.Description
+			}
+		}
+		if i == m.skillSuggestionIdx {
+			parts = append(parts, m.skillHighlightStyle.Render("▶ "+displayName))
+		} else {
+			parts = append(parts, m.skillSuggestionStyle.Render("  "+displayName))
+		}
+	}
+	parts = append(parts, m.skillHintStyle.Render("Tab 切换  Enter 选择  Esc 关闭"))
+	return strings.Join(parts, "\n")
+}
+
+// renderKeywordSuggestions 渲染关键词补全行（单行，横向排布）。
+func (m *model) renderKeywordSuggestions() string {
+	if !m.keywordAutoComplete || len(m.keywordSuggestions) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(m.keywordSuggestions))
+	for i, suggestion := range m.keywordSuggestions {
+		if i == m.keywordSuggestionIdx {
+			parts = append(parts, m.keywordHighlightStyle.Render(suggestion))
+		} else {
+			parts = append(parts, m.keywordSuggestionStyle.Render(suggestion))
+		}
+	}
+	return strings.Join(parts, "  ")
 }
 
 func (m *model) renderTimelinePanel(width int) string {
@@ -341,141 +338,227 @@ func (m *model) renderAirlineStatusBar() string {
 		width = 80
 	}
 
-	var modeSeg string
-	var modeBg color.Color
-	var tipsText string
+	modeSeg, modeBg, tipsText := m.airlineModeSegment()
 
-	gradModeStyle := lipgloss.NewStyle().Bold(true).Padding(0, 1)
+	if m.dashboardCollapsed && width >= 120 {
+		tipsText += "  alt+d " + langManager.GetText("DashboardExpandHint")
+	}
+	leftPart := modeSeg + makeRightSep(modeBg, airlineColorInfoBg)
+	rightSegs := m.airlineRightSegments()
 
-	if m.commandMode {
-		modeSeg = gradModeStyle.
-			Background(airlineColorCmdBg).
-			Foreground(lipgloss.Color("15")).
-			Render("COMMAND")
-		modeBg = airlineColorCmdBg
-		tipsText = langManager.GetText("CommandModeIdleTips")
-	} else if m.taskCancelled {
-		modeText := lipgloss.NewStyle().
-			Background(airlineColorCancelBg).
-			Foreground(airlineColorCancelFg).
-			Bold(true).
-			Padding(0, 1).
-			Render("● CANCELLED")
-		modeSeg = modeText
-		modeBg = airlineColorCancelBg
-		tipsText = langManager.GetText("EditModeTips")
-	} else if m.taskRunning {
-		modeText := common.ApplyBoldForegroundGrad(
+	// 右段组放不下时从组头逐个丢弃（丢的是低优先级的搜索/滚动信息，
+	// 保留模型名与 spinner），而不是整组一起消失。
+	rightPart, rightW := renderAirlineRight(width-lipgloss.Width(leftPart)-2, rightSegs)
+
+	endSep := ""
+	if rightPart == "" {
+		endSep = makeRightSepToEnd(airlineColorInfoBg)
+	}
+	fillerW := width - lipgloss.Width(leftPart) - rightW - lipgloss.Width(endSep)
+	if fillerW < 0 {
+		fillerW = 0
+	}
+	// 必须先按列裁剪：lipgloss 的 Width() 对放不下的文本是折行而非截断，
+	// 多出一行会让状态栏与 viewport 拼接错位。
+	fillerPart := airlineFillerStyle.Width(fillerW).Render(clipToWidth(tipsText, fillerW))
+
+	return leftPart + fillerPart + endSep + rightPart
+}
+
+// airlineModeSegment 返回状态栏最左的模式段、其背景色和对应的提示文案。
+// 语义与输入面板一致：commandMode 就是 vim 的 NORMAL，能打字时是 INSERT
+// —— 旧实现在非 commandMode 也显示 NORMAL，与"正在输入"的实际状态相矛盾。
+func (m *model) airlineModeSegment() (string, color.Color, string) {
+	chip := func(bg, fg color.Color) lipgloss.Style {
+		return lipgloss.NewStyle().Background(bg).Foreground(fg).Bold(true).Padding(0, 1)
+	}
+
+	switch {
+	case m.commandMode:
+		return chip(airlineColorNormalBg, airlineColorNormalFg).Render("NORMAL"),
+			airlineColorNormalBg, langManager.GetText("CommandModeIdleTips")
+
+	case m.taskCancelled:
+		return chip(airlineColorCancelBg, airlineColorCancelFg).Render("● CANCELLED"),
+			airlineColorCancelBg, langManager.GetText("EditModeTips")
+
+	case m.taskRunning:
+		// padding 必须加在渐变外层：ApplyBoldForegroundGrad 是逐字着色，
+		// 把带 Padding 的样式传进去会让每个字符各自缩进一次。
+		grad := common.ApplyBoldForegroundGrad(
 			lipgloss.NewStyle().Background(airlineColorRunBg),
 			"● RUN",
 			common.DefaultGradFrom,
 			common.DefaultGradTo,
 		)
-		modeSeg = modeText
-		modeBg = airlineColorRunBg
-		tipsText = langManager.GetText("EditModeTips")
-	} else {
-		modeSeg = gradModeStyle.
-			Background(airlineColorNormalBg).
-			Foreground(lipgloss.Color("15")).
-			Render("NORMAL")
-		modeBg = airlineColorNormalBg
-		tipsText = langManager.GetText("EditModeTips")
+		return lipgloss.NewStyle().Background(airlineColorRunBg).Padding(0, 1).Render(grad),
+			airlineColorRunBg, langManager.GetText("EditModeTips")
+
+	default:
+		return chip(airlineColorInsertBg, airlineColorInsertFg).Render("INSERT"),
+			airlineColorInsertBg, langManager.GetText("EditModeTips")
+	}
+}
+
+// airlineSegment 是状态栏右对齐组里的一个色块。
+type airlineSegment struct {
+	bg, fg color.Color
+	bold   bool
+	text   string
+}
+
+func (s airlineSegment) render() string {
+	st := lipgloss.NewStyle().Background(s.bg).Foreground(s.fg).Padding(0, 1)
+	if s.bold {
+		st = st.Bold(true)
+	}
+	return st.Render(s.text)
+}
+
+// airlineRightSegments 按优先级从低到高收集右段（放不下时从头部丢弃）：
+// 搜索命中 → 滚动位置 → 路由模式 → 模型 → 当前 agent → spinner。
+func (m *model) airlineRightSegments() []airlineSegment {
+	var segs []airlineSegment
+
+	if label := m.searchLabel(); label != "" {
+		segs = append(segs, airlineSegment{
+			bg: airlineColorSearchBg, fg: airlineColorSearchFg, bold: true, text: label,
+		})
 	}
 
-	if m.dashboardCollapsed && m.termWidth >= 120 {
-		tipsText += "  alt+d " + langManager.GetText("DashboardExpandHint")
+	if ruler := m.viewportRuler(); ruler != "" {
+		segs = append(segs, airlineSegment{
+			bg: airlineColorInfoAltBg, fg: airlineColorInfoAltFg, text: ruler,
+		})
 	}
-	leftPart := modeSeg + makeRightSep(modeBg, airlineColorInfoBg)
-
-	type segDef struct {
-		bg    color.Color
-		style lipgloss.Style
-		text  string
-	}
-
-	var rightSegs []segDef
 
 	if m.autoRouting {
-		rightSegs = append(rightSegs, segDef{
-			bg: airlineColorRunBg,
-			style: lipgloss.NewStyle().
-				Background(airlineColorRunBg).
-				Foreground(airlineColorRunFg).
-				Bold(true).
-				Padding(0, 1),
+		segs = append(segs, airlineSegment{
+			bg: airlineColorRunBg, fg: airlineColorRunFg, bold: true,
 			text: "⚡ AUTO",
 		})
 	}
 
-	modelDisplay := ""
-	if m.currentProvider != "" && m.currentModel != "" {
-		modelDisplay = m.currentProvider + "/" + m.currentModel
-	} else if m.currentModel != "" {
-		modelDisplay = m.currentModel
-	} else if m.currentProvider != "" {
-		modelDisplay = m.currentProvider
-	}
-	if modelDisplay != "" {
-		rightSegs = append(rightSegs, segDef{
-			bg:    airlineColorAccentBg,
-			style: airlineAccentStyle,
-			text:  modelDisplay,
+	if model := m.airlineModelLabel(); model != "" {
+		segs = append(segs, airlineSegment{
+			bg: airlineColorAccentBg, fg: airlineColorAccentFg, text: model,
 		})
 	}
 
-	if m.taskRunning && !m.commandMode {
+	if m.taskRunning {
 		if m.currentAgent != "" {
-			rightSegs = append(rightSegs, segDef{
-				bg:    airlineColorInfoAltBg,
-				style: airlineInfoAltStyle,
-				text:  m.currentAgent,
+			segs = append(segs, airlineSegment{
+				bg: airlineColorInfoAltBg, fg: airlineColorInfoAltFg, text: m.currentAgent,
 			})
 		}
-		rightSegs = append(rightSegs, segDef{
-			bg:    airlineColorInfoBg,
-			style: airlineInfoStyle,
-			text:  m.anim.Render(),
+		segs = append(segs, airlineSegment{
+			bg: airlineColorInfoBg, fg: airlineColorInfoFg, text: m.anim.Render(),
 		})
 	}
 
-	var rightPart string
-	if len(rightSegs) > 0 {
-		var rParts []string
-		rParts = append(rParts, makeLeftSep(airlineColorInfoBg, rightSegs[0].bg))
-		for i, seg := range rightSegs {
-			rParts = append(rParts, seg.style.Render(seg.text))
-			if i < len(rightSegs)-1 {
-				rParts = append(rParts, makeLeftSep(seg.bg, rightSegs[i+1].bg))
-			}
+	return segs
+}
+
+// viewportRuler 是 vim ruler 式的滚动位置指示：贴边时直接说 TOP/BOT，
+// 避免内容不足一屏时百分比恒为 0% 造成的误导。
+func (m *model) viewportRuler() string {
+	total := m.viewport.TotalLineCount()
+	if total == 0 {
+		return ""
+	}
+	switch {
+	case m.viewport.AtTop():
+		return "TOP"
+	case m.viewport.AtBottom():
+		return "BOT"
+	default:
+		return fmt.Sprintf("%d%%", int(m.viewport.ScrollPercent()*100))
+	}
+}
+
+func (m *model) airlineModelLabel() string {
+	switch {
+	case m.currentProvider != "" && m.currentModel != "":
+		return m.currentProvider + "/" + m.currentModel
+	case m.currentModel != "":
+		return m.currentModel
+	default:
+		return m.currentProvider
+	}
+}
+
+// renderAirlineRight 渲染右对齐 segment 组（含 ◀ 衔接符），从组头丢弃放不下的项。
+// 返回渲染结果与其占用宽度；全部放不下时返回 ("", 0)。
+func renderAirlineRight(maxWidth int, segs []airlineSegment) (string, int) {
+	for len(segs) > 0 {
+		w := airlineRightWidth(segs)
+		if w <= maxWidth {
+			return buildAirlineRight(segs), w
 		}
-		rightPart = strings.Join(rParts, "")
+		segs = segs[1:]
+	}
+	return "", 0
+}
+
+func airlineRightWidth(segs []airlineSegment) int {
+	total := 1 // 与填充区衔接的 ◀
+	for i, s := range segs {
+		total += lipgloss.Width(s.render())
+		if i < len(segs)-1 {
+			total++ // 段与段之间的 ◀
+		}
+	}
+	return total
+}
+
+func buildAirlineRight(segs []airlineSegment) string {
+	var b strings.Builder
+	b.WriteString(makeLeftSep(airlineColorInfoBg, segs[0].bg))
+	for i, s := range segs {
+		b.WriteString(s.render())
+		if i < len(segs)-1 {
+			b.WriteString(makeLeftSep(s.bg, segs[i+1].bg))
+		}
+	}
+	return b.String()
+}
+
+// clipToWidth 按终端显示宽度裁剪 s，超出部分以 "…" 收尾。
+// 优先在最近的一个空格处断开，避免把 "alt+m:model" 砍成 "alt+m:m…"。
+func clipToWidth(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
+		return s
 	}
 
-	leftRenderedWidth := lipgloss.Width(leftPart)
-	if leftRenderedWidth >= width {
-		return modeSeg + makeRightSepToEnd(modeBg)
-	}
-
-	rightRenderedWidth := lipgloss.Width(rightPart)
-	fillerWidth := width - leftRenderedWidth - rightRenderedWidth
-	if fillerWidth < 0 {
-		rightPart = ""
-		rightRenderedWidth = 0
-		fillerWidth = width - leftRenderedWidth
-		if fillerWidth < 0 {
-			fillerWidth = 0
+	budget := w - 1 // 预留 1 列给省略号
+	used := 0
+	end := 0
+	lastSpace := 0
+	for i, r := range s {
+		rw := lipgloss.Width(string(r))
+		if used+rw > budget {
+			break
+		}
+		used += rw
+		end = i + len(string(r))
+		if r == ' ' {
+			lastSpace = end
 		}
 	}
 
-	fillerPart := airlineFillerStyle.Width(fillerWidth).Render(tipsText)
-
-	var endSep string
-	if len(rightSegs) == 0 {
-		endSep = makeRightSepToEnd(airlineColorInfoBg)
+	// 词边界若是长 token 中间之前那一格，会白丢掉一大段可用宽度；
+	// 浪费超过 6 列就退回硬截，把状态栏填满。
+	cut := strings.TrimRight(s[:end], " ")
+	if w-lipgloss.Width(s[:lastSpace]) <= 6 {
+		cut = strings.TrimRight(s[:lastSpace], " ")
 	}
-
-	return leftPart + fillerPart + endSep + rightPart
+	if cut == "" {
+		return "…"
+	}
+	return cut + "…"
 }
 
 func (m *model) renderWelcomePanel() string {
