@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -740,5 +741,62 @@ func TestPanelHints_CtrlLOrdering(t *testing.T) {
 		if clIdx < iIdx {
 			t.Errorf("lang=%s: ctrl+l must follow the last motion, got %q", lang, cmdline)
 		}
+	}
+}
+
+// TestDashboard_ActivityChainsEvents 侧边 dashboard 的 Activity 段既没有进度动画
+// 也没有 "running" 文字（进度条在底部栏），只把事件按 git timeline 那样串起来。
+func TestDashboard_ActivityChainsEvents(t *testing.T) {
+	m := chromeTestModel(t, 140, 40)
+	m.taskRunning = true
+	m.inputTokens = 1000
+	m.tokenUsagePerAgent["Director"] = &AgentTokenUsage{
+		AgentName: "Director", InputTokens: 500, OutputTokens: 200,
+	}
+	m.timelineEntries = []*TimelineEntry{
+		{ID: "1", Kind: TimelineKindTool, Status: ToolStatusSuccess, Name: "search_by_regex", Duration: 1200 * time.Millisecond},
+		{ID: "2", Kind: TimelineKindTool, Status: ToolStatusRunning, Name: "read_file"},
+	}
+
+	dash := stripANSIForChrome(m.renderDashboard(dashboardPanelWidth, 20))
+	if strings.ContainsAny(dash, "░▒█") {
+		t.Errorf("dashboard should not render the progress animation, got:\n%s", dash)
+	}
+	if strings.Contains(dash, "running") {
+		t.Errorf("dashboard should not spell out a running label, got:\n%s", dash)
+	}
+	// 脊柱：节点之间必须有连线，且两个工具名都在。
+	if !strings.Contains(dash, "\n│  │") {
+		t.Errorf("dashboard should chain the two events with a connector, got:\n%s", dash)
+	}
+	for _, name := range []string{"search_by_regex", "read_file"} {
+		if !strings.Contains(dash, name) {
+			t.Errorf("dashboard lost the %q entry, got:\n%s", name, dash)
+		}
+	}
+
+	// 高度不足会截断时间线，截断处不能留下半截连线（孤立的 │ 紧贴 ctrl+l 提示）。
+	// 宽松高度下先确认提示确实渲染了，否则下面的断言会是空跑。
+	if !strings.Contains(dash, "ctrl+l") {
+		t.Errorf("dashboard should show the detail hint at height 20, got:\n%s", dash)
+	}
+	for _, h := range []int{10, 12, 14, 16, 18, 20, 24} {
+		lines := strings.Split(stripANSIForChrome(m.renderDashboard(dashboardPanelWidth, h)), "\n")
+		for i, l := range lines {
+			if i == 0 || !strings.Contains(l, "ctrl+l") {
+				continue
+			}
+			if inner := strings.TrimSpace(strings.Trim(lines[i-1], "│")); inner == "│" {
+				t.Errorf("height=%d: dangling connector above the hint:\n%s", h,
+					strings.Join(lines, "\n"))
+			}
+		}
+	}
+
+	// 动画没有整体消失：底部栏仍给出进度条。
+	m.currentAgent = "Director"
+	if bar := m.renderAirlineStatusBar(); !strings.ContainsAny(bar, "░▒█") {
+		t.Errorf("status bar should still carry the progress animation:\n%s",
+			stripANSIForChrome(bar))
 	}
 }
