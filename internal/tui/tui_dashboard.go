@@ -305,8 +305,10 @@ func (m *model) renderDashboard(width, height int) string {
 			Bold(true).
 			Render("⚙ Activity"))
 
-		// Timeline content
-		content := RenderTimeline(m.timelineEntries, false, false, width-4, m.anim)
+		// Timeline content —— 传 nil 而不是 m.anim：进度动画已经在底部栏的
+		// spinner 段里了，46 列的面板再塞一条 20 列的进度条只会挤掉工具名。
+		// 运行状态由节点亮色表达，面板这里只把事件串成 git 式的脊柱。
+		content := RenderTimeline(m.timelineEntries, false, false, width-4, nil)
 		if content != "" {
 			tlLines := strings.Split(content, "\n")
 			if len(tlLines) > 1 {
@@ -324,6 +326,10 @@ func (m *model) renderDashboard(width, height int) string {
 			}
 			if len(tlInnerLines) > maxTL {
 				tlInnerLines = tlInnerLines[:maxTL]
+				// 脊柱行成对出现在节点之后，截断后末尾可能剩半截线。
+				if n := len(tlInnerLines); n > 0 && tlInnerLines[n-1] == timelineConnector() {
+					tlInnerLines = tlInnerLines[:n-1]
+				}
 			}
 			hint := dashKeycap("ctrl+l", langManager.GetText("TimelineDetailHint"))
 			lines = append(lines, tlInnerLines...)

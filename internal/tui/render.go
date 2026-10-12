@@ -874,9 +874,9 @@ func RenderTimeline(entries []*TimelineEntry, expanded bool, showDetail bool, wi
 		isLast := i == len(visible)-1
 		lines = append(lines, renderTimelineRow(e, width, showDetail, anim))
 
-		if !isLast && expanded {
-			connector := timelineLineStyle.Render("│")
-			lines = append(lines, " "+connector)
+		// git-log 式的脊柱：折叠视图也把事件串起来，节点之间的关系一眼可读。
+		if !isLast {
+			lines = append(lines, timelineConnector())
 		}
 	}
 
@@ -896,6 +896,12 @@ var (
 func addTimelineTopBorder(content string, width int) string {
 	border := timelineBorderStyle.Render(strings.Repeat("─", width))
 	return border + "\n" + content
+}
+
+// timelineConnector 是节点之间的脊柱行。面板截断内容时用它辨认并丢弃
+// 末尾那条没有下文的下划线。
+func timelineConnector() string {
+	return " " + timelineLineStyle.Render("│")
 }
 
 func renderTimelineRow(e *TimelineEntry, width int, showDetail bool, anim *Anim) string {
@@ -921,13 +927,11 @@ func renderTimelineRow(e *TimelineEntry, width int, showDetail bool, anim *Anim)
 		name = nameStyle.Render(nameStr)
 	}
 
+	// 运行中只由节点亮色（可选进度条）表达：过去没有 anim 时会补一个
+	// "running" 文字，在窄面板里既抢宽度又与高亮的工具名重复。
 	var animStr string
-	if effectiveStatus == ToolStatusRunning {
-		if anim != nil {
-			animStr = " " + anim.Render()
-		} else {
-			animStr = " " + timelineRunningStyle.Render("running")
-		}
+	if anim != nil && effectiveStatus == ToolStatusRunning {
+		animStr = " " + anim.Render()
 	}
 
 	var durStr string
@@ -1017,13 +1021,11 @@ func renderTimelineRowWithCursor(e *TimelineEntry, width int, anim *Anim, isCurs
 		name = nameStyle.Render(nameStr)
 	}
 
+	// 运行中只由节点亮色（可选进度条）表达：过去没有 anim 时会补一个
+	// "running" 文字，在窄面板里既抢宽度又与高亮的工具名重复。
 	var animStr string
-	if effectiveStatus == ToolStatusRunning {
-		if anim != nil {
-			animStr = " " + anim.Render()
-		} else {
-			animStr = " " + timelineRunningStyle.Render("running")
-		}
+	if anim != nil && effectiveStatus == ToolStatusRunning {
+		animStr = " " + anim.Render()
 	}
 
 	var durStr string
