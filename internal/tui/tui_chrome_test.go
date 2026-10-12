@@ -349,34 +349,6 @@ func TestHintBar_FitsAndDegrades(t *testing.T) {
 	}
 }
 
-// TestClipToWidth 状态栏提示必须既放不下得完整、又不溢出，
-// 而且不能因为找一个早前的空格白丢掉大半可用宽度。
-func TestClipToWidth(t *testing.T) {
-	s := "alt+d:dash  alt+m:model  alt+r:routing  ctrl+t:new tab"
-
-	if got := clipToWidth(s, 200); got != s {
-		t.Errorf("fits case should be a no-op, got %q", got)
-	}
-
-	for _, w := range []int{12, 20, 34, 40, 47, 54, 60} {
-		got := clipToWidth(s, w)
-		if lw := lipgloss.Width(got); lw > w {
-			t.Errorf("w=%d: clipped width = %d, want <= %d (%q)", w, lw, w, got)
-		}
-		// 允许在词边界处留一点空隙，但不能空得离谱。
-		if w-lipgloss.Width(got) > 8 {
-			t.Errorf("w=%d: wasted %d columns, clipped to %q", w, w-lipgloss.Width(got), got)
-		}
-	}
-
-	if got := clipToWidth(s, 1); got != "…" {
-		t.Errorf("w=1 should degrade to an ellipsis, got %q", got)
-	}
-	if got := clipToWidth(s, 0); got != "" {
-		t.Errorf("w=0 should be empty, got %q", got)
-	}
-}
-
 // TestSearch_JumpsAndCycles /pattern 要真的跳过去，n/N 在命中间循环。
 func TestSearch_JumpsAndCycles(t *testing.T) {
 	m := chromeTestModel(t, 100, 20)
@@ -712,46 +684,61 @@ func TestTabBar_WidthMatrix(t *testing.T) {
 	}
 }
 
-// TestStatusBar_OnlyViewToggles 底部状态栏不再重复上半屏的快捷键，只留视图开关。
-func TestStatusBar_OnlyViewToggles(t *testing.T) {
+// TestStatusBar_CarriesNoKeyHints 底部栏只剩模式与运行时信息：快捷键提示分别属于
+// tab 行和面板底边框，写在这里就又是重复广告。
+func TestStatusBar_CarriesNoKeyHints(t *testing.T) {
 	m := tabTestModel(t, 140, 40)
 	m.currentProvider = "siliconflow"
 	m.currentModel = "DeepSeek-V3.2"
 
-	for _, commandMode := range []bool{false, true} {
-		m.commandMode = commandMode
+	for _, mode := range []struct {
+		name          string
+		commandMode   bool
+		taskRunning   bool
+		taskCancelled bool
+	}{
+		{"insert", false, false, false},
+		{"normal", true, false, false},
+		{"run", false, true, false},
+		{"cancelled", false, false, true},
+	} {
+		m.commandMode, m.taskRunning, m.taskCancelled = mode.commandMode, mode.taskRunning, mode.taskCancelled
 		bar := stripANSIForChrome(m.renderAirlineStatusBar())
-		for _, key := range []string{"alt+m", "alt+r", "alt+d", "ctrl+t"} {
-			if strings.Contains(bar, key) {
-				t.Errorf("commandMode=%v: status bar should not advertise %s, got %q", commandMode, key, bar)
+		for _, unwanted := range []string{"alt+", "ctrl+", "token", "timeline"} {
+			if strings.Contains(bar, unwanted) {
+				t.Errorf("%s: status bar should not contain %q, got %q", mode.name, unwanted, bar)
 			}
-		}
-		if commandMode && !strings.Contains(bar, "alt+t") {
-			t.Errorf("normal mode should still advertise alt+t, got %q", bar)
 		}
 	}
 }
 
-// TestEditorHintBar_TimelineBeforeHelp ctrl+l 挂在面板底边框且排在 ctrl+h 之前：
-// 窄面板从尾部丢弃提示时先掉帮助、留住视图开关。状态栏不再重复报它。
-func TestEditorHintBar_TimelineBeforeHelp(t *testing.T) {
+// TestPanelHints_CtrlLOrdering ctrl+l 挂在面板底边框：编辑面板里排在
+// ctrl+h 之前，命令行里排在最后一个动作 i 之后 —— 两处都保证窄面板从尾部丢弃时
+// 先掉帮助/动作提示、留住视图开关。
+func TestPanelHints_CtrlLOrdering(t *testing.T) {
 	prev := langManager.currentLang
 	t.Cleanup(func() { langManager.SetLanguage(prev) })
 
+	lastMotion := map[Language]string{LangChinese: "i 编辑", LangEnglish: "i edit"}
 	for _, lang := range []Language{LangChinese, LangEnglish} {
 		langManager.SetLanguage(lang)
-		hints := langManager.GetText("EditorHintEdit")
-		li, hi := strings.Index(hints, "ctrl+l"), strings.Index(hints, "ctrl+h")
+
+		editor := langManager.GetText("EditorHintEdit")
+		li, hi := strings.Index(editor, "ctrl+l"), strings.Index(editor, "ctrl+h")
 		if li < 0 || hi < 0 {
-			t.Fatalf("lang=%s: hint bar should carry both toggles, got %q", lang, hints)
+			t.Fatalf("lang=%s: editor hint bar should carry both toggles, got %q", lang, editor)
 		}
 		if li > hi {
-			t.Errorf("lang=%s: ctrl+l must precede ctrl+h, got %q", lang, hints)
+			t.Errorf("lang=%s: ctrl+l must precede ctrl+h, got %q", lang, editor)
 		}
 
-		m := chromeTestModel(t, 140, 40)
-		if bar := stripANSIForChrome(m.renderAirlineStatusBar()); strings.Contains(bar, "ctrl+l") {
-			t.Errorf("lang=%s: INSERT status bar should not repeat the panel hint, got %q", lang, bar)
+		cmdline := langManager.GetText("CmdlineHintIdle")
+		iIdx, clIdx := strings.Index(cmdline, lastMotion[lang]), strings.Index(cmdline, "ctrl+l")
+		if iIdx < 0 || clIdx < 0 {
+			t.Fatalf("lang=%s: cmdline hint bar should carry i and ctrl+l, got %q", lang, cmdline)
+		}
+		if clIdx < iIdx {
+			t.Errorf("lang=%s: ctrl+l must follow the last motion, got %q", lang, cmdline)
 		}
 	}
 }

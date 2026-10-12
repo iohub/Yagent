@@ -338,7 +338,7 @@ func (m *model) renderAirlineStatusBar() string {
 		width = 80
 	}
 
-	modeSeg, modeBg, tipsText := m.airlineModeSegment()
+	modeSeg, modeBg := m.airlineModeSegment()
 
 	leftPart := modeSeg + makeRightSep(modeBg, airlineColorInfoBg)
 	rightSegs := m.airlineRightSegments()
@@ -355,18 +355,17 @@ func (m *model) renderAirlineStatusBar() string {
 	if fillerW < 0 {
 		fillerW = 0
 	}
-	// 必须先按列裁剪：lipgloss 的 Width() 对放不下的文本是折行而非截断，
-	// 多出一行会让状态栏与 viewport 拼接错位。
-	fillerPart := airlineFillerStyle.Width(fillerW).Render(clipToWidth(tipsText, fillerW))
+	// 中段只是一条纯色填充带：底部栏不写快捷键说明，它们分别挂在 tab 行
+	// （全局开关）与面板底边框（当前模式的动作）上，这里只留模式与运行时信息。
+	fillerPart := airlineFillerStyle.Width(fillerW).Render("")
 
 	return leftPart + fillerPart + endSep + rightPart
 }
 
-// airlineModeSegment 返回状态栏最左的模式段、其背景色和对应的提示文案。
+// airlineModeSegment 返回状态栏最左的模式段与其背景色。
 // 语义与输入面板一致：commandMode 就是 vim 的 NORMAL，能打字时是 INSERT
 // —— 旧实现在非 commandMode 也显示 NORMAL，与"正在输入"的实际状态相矛盾。
-// INSERT 侧留空：视图开关（ctrl+l）已挂到面板底边框的键帽条上。
-func (m *model) airlineModeSegment() (string, color.Color, string) {
+func (m *model) airlineModeSegment() (string, color.Color) {
 	chip := func(bg, fg color.Color) lipgloss.Style {
 		return lipgloss.NewStyle().Background(bg).Foreground(fg).Bold(true).Padding(0, 1)
 	}
@@ -374,11 +373,11 @@ func (m *model) airlineModeSegment() (string, color.Color, string) {
 	switch {
 	case m.commandMode:
 		return chip(airlineColorNormalBg, airlineColorNormalFg).Render("NORMAL"),
-			airlineColorNormalBg, langManager.GetText("CommandModeIdleTips")
+			airlineColorNormalBg
 
 	case m.taskCancelled:
 		return chip(airlineColorCancelBg, airlineColorCancelFg).Render("● CANCELLED"),
-			airlineColorCancelBg, ""
+			airlineColorCancelBg
 
 	case m.taskRunning:
 		// padding 必须加在渐变外层：ApplyBoldForegroundGrad 是逐字着色，
@@ -390,11 +389,11 @@ func (m *model) airlineModeSegment() (string, color.Color, string) {
 			common.DefaultGradTo,
 		)
 		return lipgloss.NewStyle().Background(airlineColorRunBg).Padding(0, 1).Render(grad),
-			airlineColorRunBg, ""
+			airlineColorRunBg
 
 	default:
 		return chip(airlineColorInsertBg, airlineColorInsertFg).Render("INSERT"),
-			airlineColorInsertBg, ""
+			airlineColorInsertBg
 	}
 }
 
@@ -519,44 +518,6 @@ func buildAirlineRight(segs []airlineSegment) string {
 		}
 	}
 	return b.String()
-}
-
-// clipToWidth 按终端显示宽度裁剪 s，超出部分以 "…" 收尾。
-// 优先在最近的一个空格处断开，避免把 "alt+m:model" 砍成 "alt+m:m…"。
-func clipToWidth(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= w {
-		return s
-	}
-
-	budget := w - 1 // 预留 1 列给省略号
-	used := 0
-	end := 0
-	lastSpace := 0
-	for i, r := range s {
-		rw := lipgloss.Width(string(r))
-		if used+rw > budget {
-			break
-		}
-		used += rw
-		end = i + len(string(r))
-		if r == ' ' {
-			lastSpace = end
-		}
-	}
-
-	// 词边界若是长 token 中间之前那一格，会白丢掉一大段可用宽度；
-	// 浪费超过 6 列就退回硬截，把状态栏填满。
-	cut := strings.TrimRight(s[:end], " ")
-	if w-lipgloss.Width(s[:lastSpace]) <= 6 {
-		cut = strings.TrimRight(s[:lastSpace], " ")
-	}
-	if cut == "" {
-		return "…"
-	}
-	return cut + "…"
 }
 
 func (m *model) renderWelcomePanel() string {
