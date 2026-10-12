@@ -15,7 +15,7 @@
   - [3.6 只读工具并行执行](#36-只读工具并行执行)
 - [4. 工具系统](#4-工具系统)
   - [4.1 Adapter 模式](#41-adapter-模式)
-  - [4.2 工具注册表](#42-工具注册表)
+  - [4.2 工具清单与装配](#42-工具清单与装配)
   - [4.3 WorkspaceGuard](#43-workspaceguard)
   - [4.4 委派工具](#44-委派工具)
   - [4.5 核心工具列表](#45-核心工具列表)
@@ -117,7 +117,6 @@ yagent/
 │   ├── knowledge/         # 知识注入器（KnowledgeInjector、对话前检索）
 │   ├── mcp/               # MCP 客户端（MCPClient、stdio JSON-RPC）
 │   ├── recovery/          # 熔断器（CircuitBreaker、closed/open/half-open）
-│   ├── registry/          # 能力注册表（CapabilityRegistry）
 │   ├── skills/            # 技能系统（SkillRegistry，加载 .md 技能文件）
 │   ├── dict/              # 词典/自动补全引擎（DictEngine）
 │   ├── diff/              # Diff 对比工具
@@ -666,28 +665,27 @@ sequenceDiagram
     ADP-->>LLM: Result string
 ```
 
-### 4.2 工具注册表
+### 4.2 工具清单与装配
 
-**Registry** 是线程安全的工具注册表，支持注册/查找/列举：
+工具层**没有运行时注册表**：`internal/agents/tools.json` 只是清单，把清单变成工具集的是各 Agent 构造函数里的编译期 Go 代码。
 
 ```go
-// internal/tools/registry.go
-type Registry struct {
-    adapters map[string]*Adapter
-    mu       sync.RWMutex
-    hash     string // 工具列表哈希（缓存一致性检测）
-    dirty    bool   // 哈希需要重算
+// internal/tools/adapter.go
+type ToolDefinition struct {
+    Name        string                 // 工具名（LLM 看到的名字）
+    Description string                 // 供 LLM 判断何时使用
+    Parameters  map[string]interface{} // JSON Schema
 }
 ```
 
-**API**：`Register(*Adapter)`、`Execute(ctx, name, params)`、`List()` —— 另有廉价的变更检测：注册工具会置 `dirty`，而记忆化的工具列表 `hash` 让系统提示词层无需逐名比对即可察觉"工具集已变化"。
+装配链路：`tools.json` → `json.Unmarshal` 成 `[]tools.ToolDefinition` → 各 Agent 的 `lookupToolFunc` switch 按名字取 `internal/tools` 的执行函数 → `tools.NewAdapter(name, desc, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()` → `ExecutorConfig.Adapters` → `ToToolDef()` + `SortToolDefs()` 生成稳定的 `[]llm.ToolDef`。
 
-**特性**：
+**要点**：
 
-- 线程安全（读写锁）
-- 按名称索引
-- 批量获取（供 LLM 系统提示词使用）
-- 记忆化的工具列表哈希用于缓存一致性检查
+- **switch 未列举的名字会被静默跳过**：tools.json 里声明了、但该 Agent 没有对应 `case` 的工具，不会进入它的工具集（历史上 `thinking`、`query_call_graph` 在 Coding-Agent 上缺失即源于此）。
+- 只读元数据由 `WithReadOnly` / `WithReadOnlyIfKnown`（`knownReadOnlyTools` 白名单）声明，决定工具能否进并行批次（见 3.6）。
+- 顺序与哈希由 `SortToolDefs` 与 `ComputeToolDefsHash` 提供，保证系统提示词中的工具块稳定（利于 provider 端 prompt 缓存），无需逐名比对即可察觉"工具集已变化"。
+- 少量工具不走清单：Director 的 `delegate_*` 与 `read_note`/`read_artifact`、Coding 的 `git_checkpoint_*` 与知识工具都是就地 `tools.NewAdapter(...)` 构造。
 
 ### 4.3 WorkspaceGuard
 
@@ -726,8 +724,6 @@ type WorkspaceGuard struct {
 | 5 | **首次调用** | `RequestAuth(ctx)` 阻塞直至用户批准或拒绝 |
 
 ### 4.4 委派工具
-
-> **注意（v2.0.0）**：`internal/tools/delegate.go` 仍然存在——它定义了 `AgentRunner` 接口（`Run(ctx, task) (string, error)`）、一个 `NewDelegateAdapter` 构建器与一个 `DelegateFunc` 适配器——但当前**没有任何调用点**。它作为通用辅助函数保留。
 
 六个内建 `delegate_<agent>` 工具均在 `NewDirectorAgent()` 中装配：其中 5 个以普通 `tools.NewAdapter` 实例的形式**内联构建**，闭包负责运行目标子 Agent（经 `executeCustomAgent` / `applyEnhancedCommander`，各自拥有独立的工具注册表、步骤预算、LLM 引擎与委派超时）；`delegate_browser` 则是 `tools.json` 清单中定义的唯一委派工具（见 4.5）。内联构建使 `delegate_repo.WithReadOnly(true)` 这类按工具定制成为可能：
 
@@ -1745,10 +1741,8 @@ flowchart LR
 | `internal/thinklink/thinklink.go` | 终极压缩日志 |
 | `internal/artifact/store.go` | Artifact 持久化 |
 | `internal/artifact/summary.go` | 分层摘要生成 |
-| `internal/tools/adapter.go` | 工具适配器（只读元数据） |
-| `internal/tools/registry.go` | 工具注册表（hash/dirty 变更检测） |
+| `internal/tools/adapter.go` | 工具适配器 + `ToolDefinition`（tools.json 条目、只读元数据、顺序/哈希） |
 | `internal/tools/workspace_guard.go` | 工作区安全守卫 + 授权级别 |
-| `internal/tools/delegate.go` | `AgentRunner` / `NewDelegateAdapter` 辅助（无调用点） |
 | `internal/tools/browser/` | 10 个 `browser_*` 工具 + 注册入口 |
 | `internal/llm/engine.go` | `Engine` 接口 + `Message`/`ToolDef`/`TruncationMarker` |
 | `internal/llm/engine_openai.go` | OpenAI 兼容实现 |

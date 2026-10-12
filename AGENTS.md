@@ -435,14 +435,17 @@ BUILD_TYPE=debug ./build.sh
 ### 8.3 测试
 
 ```bash
-go test ./internal/... -count=1 -timeout 420s        # 全量（agents 很慢）
+go test ./... -count=1 -timeout 600s                  # 全仓 21 个测试包，约 80s
 go test ./internal/tui/... ./internal/messaging/... -count=1   # 快循环，秒级
-go test ./internal/agents/... -run 'TestRunAgentLoop|TestExecutor|TestFullChain' -count=1 -timeout 300s
+go test ./internal/agents/... -count=1 -timeout 300s  # 最慢的一档，约 40s
 go vet ./...                                          # 必须干净
 ```
 
-- 共 82 个测试文件、22 个包。**`internal/agents` 是全仓瓶颈**（数百个测试、无 `testing.Short()` 保护），
-  务必给足 `-timeout` 并单独后台跑，不要把"慢"当成"卡住"。
+- 共 82 个测试文件、21 个有测试的包。慢的只有两个：`internal/agents`（~39s）与 `internal/compression`（~28s）。
+  历史上 `TestRunAgentLoop_ParentCancel_AllCallsAccounted` 会卡在 `toolbatch.Run`：它把 `cancel()`
+  放在批次内的第一个工具里，而 `toolbatch` **不保证组内启动顺序**，负责取消的工具一旦排在信号量队列里，
+  在飞调用就无人可取消，只能等 `defaultToolTimeout`(180s) 逐波解开。现在改成从批次外部取消
+  （`time.AfterFunc`），写并发工具测试时不要重现这个假设。
 - **没有 CI 质量闸门**：`.github/workflows/release.yml` 只做跨平台构建 + 发布，不跑测试/lint；也没有 Makefile/golangci。
   验证靠本地 `go build` + `go vet` + 相关包测试。
 - TUI 改动必须跑渲染/尺寸矩阵测试（见 §6.8）。
