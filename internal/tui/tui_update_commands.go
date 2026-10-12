@@ -70,11 +70,20 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	// :timeout — 查看 / 设置全局 LLM API 调用超时（别名 :llm_timeout）
 	//   :timeout        打开对话框（查看当前值 + 选择式设置）
 	//   :timeout 10m    设置（30s ~ 24h），立即生效并持久化到 config.toml
+	//   /timeout        :timeout 的 slash 别名，用法一致：
+	//                   /timeout 打开对话框；/timeout 10m 直接设置
+	// （须位于下方 "/" 前缀日志搜索兜底 case 之前，否则会被搜索截获）
 	// ═══════════════════════════════════════════════════════════════
 	case cmd == ":timeout", cmd == ":llm_timeout",
-		strings.HasPrefix(cmd, ":timeout "), strings.HasPrefix(cmd, ":llm_timeout "):
+		strings.HasPrefix(cmd, ":timeout "), strings.HasPrefix(cmd, ":llm_timeout "),
+		cmd == "/timeout", cmd == "/llm_timeout",
+		strings.HasPrefix(cmd, "/timeout "), strings.HasPrefix(cmd, "/llm_timeout "):
+		// 统一剥离别名前缀：先剥长前缀（llm_timeout）再剥短前缀（timeout），
+		// 兼容 ":" 与 "/" 两种触发方式
 		arg := strings.TrimPrefix(cmd, ":llm_timeout")
-		arg = strings.TrimSpace(strings.TrimPrefix(arg, ":timeout"))
+		arg = strings.TrimPrefix(arg, "/llm_timeout")
+		arg = strings.TrimPrefix(arg, ":timeout")
+		arg = strings.TrimSpace(strings.TrimPrefix(arg, "/timeout"))
 		if arg == "" {
 			// 无参数：打开对话框（查看当前值 + 选择式设置）
 			return m.showTimeoutDialog()
