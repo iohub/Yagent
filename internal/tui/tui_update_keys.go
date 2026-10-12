@@ -357,6 +357,28 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		}
 		return m, nil, true
 
+	case *components.LLMTimeoutDialog:
+		_, cmd := d.Update(msg)
+		if cmd != nil {
+			return m, cmd, true
+		}
+		// 非空 Selected = 用户确认了预设：应用（Space 才持久化）后关闭。
+		if d.Selected != "" {
+			dur, err := time.ParseDuration(d.Selected)
+			if err == nil {
+				m.applyLLMTimeout(dur, d.Persist)
+			}
+			m.dialogStack.Pop()
+			return m, nil, true
+		}
+		switch key {
+		case "esc", "q", "Q":
+			d.Selected = ""
+			m.dialogStack.Pop()
+			return m, nil, true
+		}
+		return m, nil, true
+
 	case *components.HelpDialog:
 		switch key {
 		case "esc", "i", "I", "ctrl+h":
