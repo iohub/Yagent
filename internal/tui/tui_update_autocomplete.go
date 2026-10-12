@@ -169,14 +169,6 @@ func (m *model) doSkillAutocomplete(text string, contentRunes []rune, cursor int
 		if hasPrefixIgnoreCase("rs", query) {
 			matches = append(matches, "rs")
 		}
-
-		// 添加 "timeout"/"llm_timeout" 作为内置命令（查看 / 设置全局 LLM 调用超时）
-		if hasPrefixIgnoreCase("timeout", query) {
-			matches = append(matches, "timeout")
-		}
-		if hasPrefixIgnoreCase("llm_timeout", query) {
-			matches = append(matches, "llm_timeout")
-		}
 	}
 
 	if len(matches) > 0 {

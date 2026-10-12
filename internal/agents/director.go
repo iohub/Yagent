@@ -164,7 +164,7 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 		projectCtxLoader: director.NewProjectContextLoader(func() string { return p.Env.ProjectPath() }),
 
 		llmTimeout: func() time.Duration {
-			// 三级优先：全局运行时值（TUI /timeout 可动态修改）> 配置文件 > 程序默认值。
+			// 三级优先：全局运行时值（TUI 模型设置面板可动态修改）> 配置文件 > 程序默认值。
 			// 构造期快照仅作兜底；运行期真实值见 currentLLMTimeout()。
 			if t := config.GlobalLLMTimeout(); t > 0 {
 				return t
@@ -679,7 +679,7 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 	slog.Info("Custom agent registered", "delegate_name", delegateName, "display_name", ca.DisplayName, "tools", ca.ToolsUsed)
 }
 
-// currentLLMTimeout 返回当前生效的 LLM 调用超时：全局运行时值（TUI /timeout
+// currentLLMTimeout 返回当前生效的 LLM 调用超时：全局运行时值（TUI 模型设置面板
 // 可动态修改）优先，未初始化时回落构造期快照 a.llmTimeout。
 // 每次构造 ExecutorConfig / PlannerConfig 时求值（而非使用构造期快照），
 // 确保 TUI 调整后新发起的 LLM 调用立即使用新值。

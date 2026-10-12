@@ -4,7 +4,7 @@
 // config.LLMConfig 的值拷贝，运行期修改配置文件无法生效。该全局值提供
 // "运行时唯一事实源"：
 //   - 启动时由配置加载链路（internal/llm 的 LoadConfig / NewClient）初始化；
-//   - TUI 的 /timeout 命令可动态修改（唯一写入口，atomic 保证并发安全，
+//   - TUI 模型设置面板可动态修改（唯一写入口，atomic 保证并发安全，
 //     不给引擎加锁）；
 //   - 所有引擎（internal/llm）与执行层（internal/agents）在发起 LLM 调用时
 //     按"全局值 > 局部配置 > DefaultLLMCallTimeout"的优先级取值。

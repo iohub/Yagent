@@ -85,7 +85,7 @@ func (e *OpenAIEngine) CloseIdleConnections() {
 // GenerateContent implements Engine.
 func (e *OpenAIEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
 	// Apply timeout if configured.
-	// 取值优先级：全局运行时值（TUI /timeout 命令可动态修改）> 构造期局部配置。
+	// 取值优先级：全局运行时值（TUI 模型设置面板可动态修改）> 构造期局部配置。
 	// 全局值未初始化时为 0，回落 e.cfg.Timeout，保证既有显式配置行为不变。
 	timeout := e.cfg.Timeout
 	if t := config.GlobalLLMTimeout(); t > 0 {
