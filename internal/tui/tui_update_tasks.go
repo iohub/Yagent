@@ -35,6 +35,42 @@ func parseEventInt(v interface{}, fallback int) int {
 	return fallback
 }
 
+// flushStreamBuffers 把节流缓冲里已到达、尚未落进日志的流式文本写入对应条目。
+// maxAge<=0 表示无条件落地（任务收尾时用）。
+//
+// ai_chunk 的 300ms 超时原先只在"下一个 chunk 到达"时才被求值，所以模型一停顿、
+// 或流被异常中断（没有 ai_stream_end / ai_response 来兜底）时，缓冲里的那段尾部
+// 文字就再也不会显示 —— 直到从历史恢复才看得到这条完整消息。
+func (m *model) flushStreamBuffers(maxAge time.Duration) {
+	for agent, buf := range m.aiChunkBuffers {
+		if buf == nil || buf.content == "" {
+			continue
+		}
+		if maxAge > 0 && time.Since(buf.lastFlush) < maxAge {
+			continue
+		}
+		idx, ok := m.aiStreamActiveEntries[agent]
+		if !ok || idx < 0 || idx >= len(m.logEntries) {
+			continue
+		}
+		le := &m.logEntries[idx]
+		le.streamContent += buf.content
+		le.content = le.streamContent
+		buf.content = ""
+		buf.count = 0
+		buf.lastFlush = time.Now()
+		le.clearRenderCache()
+		m.markEntryDirty(idx)
+		m.viewportDirty = true
+	}
+}
+
+// opensDialogEvent 报告该事件是否会推送对话框（user-help 求助 / 危险操作确认）。
+// 只有它们需要在已有对话框时被忽略，避免叠出第二层弹窗。
+func opensDialogEvent(eventType string) bool {
+	return eventType == "user_help_needed"
+}
+
 func stringFromEventMap(m map[string]interface{}, key string) string {
 	s, _ := m[key].(string)
 	return s
@@ -54,13 +90,19 @@ func (m *model) updateAgentContextTokens(agentName string, contextTokens int64) 
 }
 
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
-	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
-		if msg.event.Type == "ai_stream_end" || msg.event.Type == "ai_response" {
-		} else if m.taskRunning {
+	// 对话框打开时只拦住"会再弹一层对话框"的事件，其余照常消费：日志与时间线
+	// 此时并不可见，但丢弃就是永久缺失 —— 实时视图少一条，要等从历史恢复才看得到。
+	if m.dialogStack != nil && m.dialogStack.Len() > 0 && opensDialogEvent(string(msg.event.Type)) {
+		if m.taskRunning {
 			return m, listenForEvents(m.eventCh)
-		} else {
-			return m, nil
 		}
+		return m, nil
+	}
+
+	// 用户对确认框的回答由 TUI 自己发布，又会经消息总线回送一份：
+	// 它不是 agent 的输出，落到日志里只会变成一行 map[...] 噪音。
+	if msg.event.Type == "user_help_response" {
+		return m, listenForEvents(m.eventCh)
 	}
 
 	if msg.event.Type == "ai_response" {
@@ -997,6 +1039,8 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 func (m *model) handleTaskCompleteMsg(msg taskCompleteMsg) (tea.Model, tea.Cmd) {
 	m.taskRunning = false
 	m.viewportDirty = true
+	// 任务结束（含取消/异常）后 tick 链可能就此停下，缓冲里的尾部文字再无机会落地。
+	m.flushStreamBuffers(0)
 	m.updateActiveAnim()
 	if m.anim != nil {
 		m.anim.Reset()

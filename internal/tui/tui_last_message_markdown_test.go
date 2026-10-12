@@ -27,24 +27,30 @@ func newTestModel() *model {
 	}
 
 	return &model{
-		termWidth:         100,
-		termHeight:        30,
-		viewport:          vp,
-		glamourRenderer:   gr,
-		useDarkStyle:      true,
+		termWidth:       100,
+		termHeight:      30,
+		viewport:        vp,
+		glamourRenderer: gr,
+		useDarkStyle:    true,
+		// 真模型在 tui_model.go 里恒有 anim；漏掉它会让"渲染运行中的工具行"这条路
+		// 直接 nil panic，而不是暴露被断言的行为。
+		anim: NewAnim(10),
 
 		logEntries:               make([]logEntry, 0),
 		contentParts:             make([]string, 0),
 		dirtyEntryIndices:        make(map[int]struct{}),
 		aiStreamActiveEntries:    make(map[string]int),
 		aiStreamCompletedEntries: make(map[string]int),
-		aiChunkBuffers:          make(map[string]*aiChunkBuffer),
+		aiChunkBuffers:           make(map[string]*aiChunkBuffer),
+		llmCallActiveEntries:     make(map[string]int),
+		toolCallEntries:          make(map[string]*ToolEntry),
+		tokenUsagePerAgent:       make(map[string]*AgentTokenUsage),
 
 		glamourCache:    make(map[string]string),
 		glamourLRU:      make([]string, 0, 32),
 		glamourCacheCap: 32,
 
-		dialogStack: components.NewDialogStack(),
+		dialogStack:  components.NewDialogStack(),
 		contentCache: &strings.Builder{},
 	}
 }
@@ -123,27 +129,40 @@ func TestScenarioA_AIResponseThroughDialog(t *testing.T) {
 	}
 }
 
-// ── Scenario B: dialog is showing, tool_call_start must STILL be blocked ──
+// ── Scenario B: a dialog only blocks events that would stack another dialog ──
 
-func TestScenarioB_OtherEventsBlockedByDialog(t *testing.T) {
+// 对话框期间事件照常写进日志：它们是"退出对话框后要看的内容"，丢弃不会稍后补发，
+// 表现就是主界面少掉几条、只能靠历史恢复。唯一必须挡住的是会再弹一层弹窗的事件。
+func TestScenarioB_TranscriptEventsNotBlockedByDialog(t *testing.T) {
 	m := newTestModel()
 
-	// Push a dialog
 	d := components.NewTaskCompleteDialog(true, "All tasks have been finished.", components.LanguageEn)
 	d.SetBounds(100, 30)
 	m.dialogStack.Push(d)
 
-	beforeLen := len(m.logEntries)
-
-	// Send a tool_call_start event — should be blocked by dialogStack guard
+	before := len(m.logEntries)
 	m = feedEvent(m, buildEvent("tool_call_start", "agent", map[string]interface{}{
-		"tool": "run_bash",
-		"args": "{}",
+		"tool_name":    "run_bash",
+		"tool_call_id": "call-1",
+		"arguments":    "{\"command\":\"ls\"}",
 	}))
+	if len(m.logEntries) == before {
+		t.Fatalf("tool_call_start was dropped while a dialog was open")
+	}
 
-	// Assert: no new entry was created
-	if len(m.logEntries) != beforeLen {
-		t.Fatalf("expected %d log entries (event blocked), got %d", beforeLen, len(m.logEntries))
+	// user_help_needed 会推送对话框：已有对话框时仍然挡住，且不入日志。
+	dialogs := m.dialogStack.Len()
+	logCount := len(m.logEntries)
+	m = feedEvent(m, buildEvent("user_help_needed", "agent", map[string]interface{}{
+		"interaction_type": "confirm",
+		"question":         "overwrite?",
+		"request_id":       "req-1",
+	}))
+	if m.dialogStack.Len() != dialogs {
+		t.Errorf("a second dialog stacked behind the first: %d → %d", dialogs, m.dialogStack.Len())
+	}
+	if len(m.logEntries) != logCount {
+		t.Errorf("blocked event still reached the transcript: %d → %d", logCount, len(m.logEntries))
 	}
 }
 

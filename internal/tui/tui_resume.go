@@ -178,6 +178,15 @@ func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		m.termHeight = msg.Height
 		return m, nil
 
+	case taskEventMsg:
+		// 与 historyUpdate 同理：恢复选择器不拥有事件流，丢弃就等于少几条消息。
+		_, cmd := m.handleTaskEventMsg(msg)
+		return m, cmd
+
+	case taskCompleteMsg:
+		_, cmd := m.handleTaskCompleteMsg(msg)
+		return m, cmd
+
 	default:
 		return m, nil
 	}
