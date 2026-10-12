@@ -517,37 +517,46 @@ func (a *DirectorAgent) Name() string {
 	return "Director"
 }
 
-func (a *DirectorAgent) refreshSubAgentEngines() {
+// routingEngine 为指定 agent 重建路由引擎包装。必须保留 RoutingEngine 而非裸
+// provider 引擎：RunAgentLoop 起始处的 ResolveTierEngine 靠类型识别把档位换成具体
+// 引擎，包装一丢档位就被丢弃（model_routed 事件照发、实际模型不变）。
+// RoutingEngine 在路由关闭时透明回落到 Client.GetAgentEngine，因此按轮重建同样
+// 能拾取运行时的 provider 覆盖与 auto/fixed 切换。
+func (a *DirectorAgent) routingEngine(agentName string) llm.Engine {
 	if a.llmClient == nil {
-		return
+		return nil
 	}
+	return llm.NewRoutingEngine(a.llmClient, agentName)
+}
+
+func (a *DirectorAgent) refreshSubAgentEngines() {
 	if a.RepoAgent != nil {
-		if e := a.llmClient.GetAgentEngine("repo"); e != nil {
+		if e := a.routingEngine("repo"); e != nil {
 			a.RepoAgent.LLM = e
 		}
 	}
 	if a.CodingAgent != nil {
-		if e := a.llmClient.GetAgentEngine("coding"); e != nil {
+		if e := a.routingEngine("coding"); e != nil {
 			a.CodingAgent.LLM = e
 		}
 	}
 	if a.ChatAgent != nil {
-		if e := a.llmClient.GetAgentEngine("chat"); e != nil {
+		if e := a.routingEngine("chat"); e != nil {
 			a.ChatAgent.LLM = e
 		}
 	}
 	if a.MetaAgent != nil {
-		if e := a.llmClient.GetAgentEngine("meta"); e != nil {
+		if e := a.routingEngine("meta"); e != nil {
 			a.MetaAgent.LLM = e
 		}
 	}
 	if a.DevOpsAgent != nil {
-		if e := a.llmClient.GetAgentEngine("devops"); e != nil {
+		if e := a.routingEngine("devops"); e != nil {
 			a.DevOpsAgent.LLM = e
 		}
 	}
 	if a.BrowserAgent != nil {
-		if e := a.llmClient.GetAgentEngine("browser"); e != nil {
+		if e := a.routingEngine("browser"); e != nil {
 			a.BrowserAgent.LLM = e
 		}
 	}
@@ -1042,10 +1051,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 	defer func() { a.currentMemory = nil }()
 
 	if a.llmClient != nil {
-		newEngine := a.llmClient.GetAgentEngine("director")
-		if newEngine != nil {
-			a.LLM = newEngine
-		}
+		a.LLM = a.routingEngine("director")
 		a.refreshSubAgentEngines()
 	}
 

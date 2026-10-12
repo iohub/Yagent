@@ -869,13 +869,14 @@ Configuration hierarchy:
 ```
 
 ```go
-// Engine resolution
-directorEngine   = client.GetAgentEngine("director")
-codingEngine     = client.GetAgentEngine("coding")
+// Engine resolution (dispatched by tier when auto-routing is on; transparently falls
+// back to the per-agent provider engine when it is off)
+directorEngine   = llm.NewRoutingEngine(client, "director")
+codingEngine     = llm.NewRoutingEngine(client, "coding")
 microAgentEngine = client.GetToolEngine("micro_agent")
 ```
 
-Engines are re-resolvable at runtime: the Director keeps `llmClient *llm.Client` and calls `refreshSubAgentEngines()` when hot-reloaded configuration changes provider mappings (`config.SetToolProvider`, provider config lookup).
+Engines are re-resolvable at runtime: the Director keeps `llmClient *llm.Client` and rebuilds each agent's `RoutingEngine` at the start of every turn (`refreshSubAgentEngines()`), so provider overrides and auto/fixed switches take effect immediately. The `RoutingEngine` wrapper must be kept rather than a bare provider engine — `RunAgentLoop` relies on `llm.ResolveTierEngine`'s type check to swap the ctx tier for a concrete engine; without the wrapper auto-routing fails silently (`model_routed` events still fire while the actual model never changes). Note that when routing is enabled the tier model wins over `[agents.llm.*].use_provider`.
 
 **Fallback chain** (`internal/llm/fallback.go`): when the primary engine fails, fallback providers are tried in `FallbackProvider.Weight` **descending** order (`sort.SliceStable` on weight). Every fallback attempt is capped by the same timeout/retry settings.
 

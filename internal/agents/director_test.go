@@ -808,6 +808,40 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 	}
 }
 
+// ─── Sub-Agent Engine Refresh / Auto-Routing Tests ──────────────────────────
+
+// refreshSubAgentEngines must keep the *llm.RoutingEngine wrapper. Assigning a bare
+// provider engine makes RunAgentLoop's ResolveTierEngine type assertion fail, so the
+// tier written by routeCtx is silently discarded and auto-routing stops working.
+func TestRefreshSubAgentEngines_KeepsRoutingEngine(t *testing.T) {
+	a := &DirectorAgent{
+		llmClient:    &llm.Client{},
+		RepoAgent:    &RepoAgent{},
+		CodingAgent:  &CodingAgent{},
+		ChatAgent:    &ChatAgent{},
+		MetaAgent:    &MetaAgent{},
+		DevOpsAgent:  &DevOpsAgent{},
+		BrowserAgent: &BrowserAgent{},
+	}
+
+	a.refreshSubAgentEngines()
+
+	engines := map[string]llm.Engine{
+		"repo":     a.RepoAgent.LLM,
+		"coding":   a.CodingAgent.LLM,
+		"chat":     a.ChatAgent.LLM,
+		"meta":     a.MetaAgent.LLM,
+		"devops":   a.DevOpsAgent.LLM,
+		"browser":  a.BrowserAgent.LLM,
+		"director": a.routingEngine("director"),
+	}
+	for name, eng := range engines {
+		if _, ok := eng.(*llm.RoutingEngine); !ok {
+			t.Errorf("%s engine = %T, want *llm.RoutingEngine", name, eng)
+		}
+	}
+}
+
 // ─── Memory Conversion Tests (existing) ─────────────────────────────────────
 
 func TestConvertMemoryMessageToLLMSMessage_ToolMessage(t *testing.T) {
