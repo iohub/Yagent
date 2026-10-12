@@ -250,7 +250,7 @@ func (c *Client) CloseIdleConnections() {
 func LoadConfig(configPath string) (*config.Config, error) {
 	slog.Debug("Decoding TOML configuration file", "config_path", configPath)
 
-	config, err := config.LoadConfig(configPath)
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		slog.Error("Failed to decode TOML configuration file",
 			"error", err,
@@ -258,21 +258,28 @@ func LoadConfig(configPath string) (*config.Config, error) {
 		return nil, err
 	}
 
-	activeProvider, err := config.ResolveProvider("", "")
+	// 加载成功后初始化全局 LLM 调用超时运行时值（运行时唯一事实源，TUI 的
+	// :timeout 命令可动态修改；仅当配置值 > 0 时生效，未配置时各调用方回落到
+	// config.DefaultLLMCallTimeout）。
+	if cfg.LLM.Timeout > 0 {
+		config.SetGlobalLLMTimeout(cfg.LLM.Timeout)
+	}
+
+	activeProvider, err := cfg.ResolveProvider("", "")
 	if err != nil {
 		slog.Error("Failed to get active provider configuration", "error", err)
 		return nil, err
 	}
 
 	slog.Debug("Configuration loaded successfully",
-		"provider", config.Global.LLM.UseProvider,
+		"provider", cfg.Global.LLM.UseProvider,
 		"model", activeProvider.Model,
 		"api_base_url", activeProvider.APIBaseURL,
 		"temperature", activeProvider.Temperature,
 		"max_tokens", activeProvider.MaxTokens,
-		"streaming_enabled", config.App.EnableStreaming)
+		"streaming_enabled", cfg.App.EnableStreaming)
 
-	return config, nil
+	return cfg, nil
 }
 
 func NewEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) Engine {
@@ -282,7 +289,7 @@ func NewEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) Engine 
 	return NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, llmCfg, provider.ReasoningEffort)
 }
 
-func NewClient(config *config.Config) (*Client, error) {
+func NewClient(cfg *config.Config) (*Client, error) {
 	ctx := context.Background()
 
 	if err := initLLMLogger(); err != nil {
@@ -290,7 +297,13 @@ func NewClient(config *config.Config) (*Client, error) {
 		return nil, util.WrapError(ctx, err, "failed to initialize LLM logger")
 	}
 
-	defaultProvider, err := config.ResolveProvider("", "")
+	// 启动时初始化全局 LLM 调用超时运行时值（覆盖未经 LoadConfig 的直接
+	// 构造路径；仅当配置值 > 0 时生效，TUI :timeout 命令可动态修改）。
+	if cfg.LLM.Timeout > 0 {
+		config.SetGlobalLLMTimeout(cfg.LLM.Timeout)
+	}
+
+	defaultProvider, err := cfg.ResolveProvider("", "")
 	if err != nil {
 		slog.Error("Failed to resolve default provider", "error", err)
 		return nil, util.WrapError(ctx, err, "failed to resolve default provider")
@@ -305,12 +318,12 @@ func NewClient(config *config.Config) (*Client, error) {
 		"model", defaultProvider.Model,
 		"api_base_url", defaultProvider.APIBaseURL)
 
-	engine := NewEngine(defaultProvider, config.LLM)
+	engine := NewEngine(defaultProvider, cfg.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
 
 	client := &Client{
 		Engine:                 loggingEngine,
-		Config:                 config,
+		Config:                 cfg,
 		engines:                make(map[string]Engine),
 		agentProviderOverrides: make(map[string]string),
 		toolProviderOverrides:  make(map[string]string),
@@ -510,6 +523,33 @@ func (c *Client) PersistRoutingMode(mode string) error {
 		return fmt.Errorf("PersistRoutingMode: %w", err)
 	}
 	slog.Info("Persisted routing mode to config file", "mode", mode, "config_path", c.ConfigPath)
+	return nil
+}
+
+// SetLLMTimeout 运行时更新 LLM API 调用超时：写入内存配置（mu 保护）并同步
+// 全局运行时值（config 包 atomic），对所有引擎/执行层立即生效。
+// 不写配置文件（持久化用 PersistLLMTimeout）。
+func (c *Client) SetLLMTimeout(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("SetLLMTimeout: invalid timeout %s (must be positive)", d)
+	}
+	c.mu.Lock()
+	c.Config.LLM.Timeout = d
+	c.mu.Unlock()
+	config.SetGlobalLLMTimeout(d)
+	slog.Info("LLM call timeout updated", "timeout", config.FormatLLMTimeout(d))
+	return nil
+}
+
+// PersistLLMTimeout 将 LLM 调用超时写回 config.toml 的 [llm] 段 timeout 键。
+func (c *Client) PersistLLMTimeout(d time.Duration) error {
+	if c.ConfigPath == "" {
+		return fmt.Errorf("PersistLLMTimeout: config path is empty (set Client.ConfigPath to enable persistence)")
+	}
+	if err := config.PersistLLMTimeout(c.ConfigPath, d); err != nil {
+		return fmt.Errorf("PersistLLMTimeout: %w", err)
+	}
+	slog.Info("Persisted LLM timeout to config file", "timeout", config.FormatLLMTimeout(d), "config_path", c.ConfigPath)
 	return nil
 }
 

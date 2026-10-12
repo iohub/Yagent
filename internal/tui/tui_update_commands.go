@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"yagent/internal/config"
+	"yagent/internal/llm"
 	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
@@ -63,6 +65,17 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	// ═══════════════════════════════════════════════════════════════
 	case cmd == ":route" || cmd == ":routing":
 		return m.showRoutingDialog()
+
+	// ═══════════════════════════════════════════════════════════════
+	// :timeout — 查看 / 设置全局 LLM API 调用超时（别名 :llm_timeout）
+	//   :timeout        显示当前值
+	//   :timeout 10m    设置（30s ~ 24h），立即生效并持久化到 config.toml
+	// ═══════════════════════════════════════════════════════════════
+	case cmd == ":timeout", cmd == ":llm_timeout",
+		strings.HasPrefix(cmd, ":timeout "), strings.HasPrefix(cmd, ":llm_timeout "):
+		arg := strings.TrimPrefix(cmd, ":llm_timeout")
+		arg = strings.TrimSpace(strings.TrimPrefix(arg, ":timeout"))
+		return m.handleTimeoutCommand(arg)
 
 	// ═══════════════════════════════════════════════════════════════
 	// /resume — Resume a session from rollout log
@@ -214,4 +227,72 @@ func (m *model) searchInLog(query string) {
 	})
 	m.viewportDirty = true
 	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+}
+
+// handleTimeoutCommand 处理 :timeout 命令：查看或设置全局 LLM API 调用超时。
+// 设置按三级动作执行：运行时全局值（atomic，引擎/执行层立即读取）→
+// 内存配置同步（llm.Client 以 mu 保护）→ 持久化写入 config.toml 的
+// [llm].timeout 键。参数接受 time.ParseDuration 格式（如 10m/90s/1h），
+// 合法区间 30s ~ 24h。
+func (m *model) handleTimeoutCommand(arg string) tea.Cmd {
+	logStatus := func(kind, content string) {
+		m.logEntries = append(m.logEntries, logEntry{
+			timestamp: time.Now(),
+			eventType: kind,
+			content:   content,
+		})
+		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+	}
+	var client *llm.Client
+	if m.assistant != nil {
+		client = m.assistant.GetClient()
+	}
+
+	// 无参数：显示当前生效超时（全局值优先，回落内存配置 / 默认值）
+	if arg == "" {
+		current := config.GlobalLLMTimeout()
+		if current <= 0 && client != nil && client.Config != nil {
+			current = client.Config.LLM.Timeout
+		}
+		if current <= 0 {
+			current = config.DefaultLLMCallTimeout
+		}
+		logStatus("status", fmt.Sprintf("LLM call timeout: %s (change with \":timeout <duration>\", e.g. \":timeout 10m\")", config.FormatLLMTimeout(current)))
+		return nil
+	}
+
+	// 设置模式：解析时长参数
+	d, err := time.ParseDuration(arg)
+	if err != nil {
+		logStatus("error", fmt.Sprintf("Invalid duration %q — usage: \":timeout <duration>\" (e.g. :timeout 10m, :timeout 90s)", arg))
+		return nil
+	}
+	if d < 30*time.Second || d > 24*time.Hour {
+		logStatus("error", fmt.Sprintf("Timeout %s out of range (allowed: 30s ~ 24h) — usage: \":timeout <duration>\"", config.FormatLLMTimeout(d)))
+		return nil
+	}
+
+	// 1) 运行时生效：全局值（唯一写入口，atomic 保证并发安全）+ 内存配置同步
+	if client != nil {
+		if err := client.SetLLMTimeout(d); err != nil {
+			// 兜底：内存配置更新失败时仍保证全局运行时值生效
+			config.SetGlobalLLMTimeout(d)
+			logStatus("error", fmt.Sprintf("Applied timeout %s to runtime globals only: %v", config.FormatLLMTimeout(d), err))
+			return nil
+		}
+	} else {
+		config.SetGlobalLLMTimeout(d)
+	}
+
+	// 2) 持久化写入 config.toml 的 [llm].timeout
+	if client != nil {
+		if err := client.PersistLLMTimeout(d); err != nil {
+			logStatus("status", fmt.Sprintf("LLM call timeout set to %s (runtime only — not persisted: %v)", config.FormatLLMTimeout(d), err))
+			return nil
+		}
+		logStatus("status", fmt.Sprintf("LLM call timeout set to %s (persisted to config.toml)", config.FormatLLMTimeout(d)))
+		return nil
+	}
+	logStatus("status", fmt.Sprintf("LLM call timeout set to %s (runtime only — LLM client not available)", config.FormatLLMTimeout(d)))
+	return nil
 }

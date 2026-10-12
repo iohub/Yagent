@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // useProviderKeyRe 匹配 use_provider 键行（作用于 trim 后的行）。
@@ -13,6 +14,93 @@ var useProviderKeyRe = regexp.MustCompile(`^use_provider\s*=`)
 
 // routingModeKeyRe 匹配 [routing] 段中的 mode 键行（作用于 trim 后的行）。
 var routingModeKeyRe = regexp.MustCompile(`^mode\s*=`)
+
+// llmTimeoutKeyRe 匹配 [llm] 段中的 timeout 键行（作用于 trim 后的行）。
+var llmTimeoutKeyRe = regexp.MustCompile(`^timeout\s*=`)
+
+// PersistLLMTimeout 将 LLM API 调用超时持久化写入 config.toml 的 [llm] 段
+// timeout 键（如 timeout = "10m"），文本级精确更新，保留注释与格式。
+// 段或键缺失时自动补齐。d 必须 > 0。值格式由 FormatLLMTimeout 生成，
+// 可被 time.ParseDuration 与 TOML 解析正确读回。
+func PersistLLMTimeout(path string, d time.Duration) error {
+	if path == "" {
+		return fmt.Errorf("config: config file path is empty")
+	}
+	if d <= 0 {
+		return fmt.Errorf("config: invalid LLM timeout %s (must be positive)", d)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("config: read config file: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		lines = nil
+	}
+
+	masked := multilineMask(lines)
+	const secHeader = "[llm]"
+	value := tomlBasicString(FormatLLMTimeout(d))
+	timeoutLine := func(indent string) string { return indent + "timeout = " + value }
+
+	// 定位段头：仅接受 trim 后精确等于 "[llm]" 的行，
+	// 防止误匹配任何名为 [xxx.llm] 的子表。
+	secStart := -1
+	for i, line := range lines {
+		if !masked[i] && strings.TrimSpace(line) == secHeader {
+			secStart = i
+			break
+		}
+	}
+	if secStart < 0 {
+		// 段缺失 → 文件末尾追加：空行 + 段头 + 键
+		out := lines
+		if len(out) > 0 && out[len(out)-1] != "" {
+			out = append(out, "")
+		}
+		out = append(out, secHeader, timeoutLine(""), "")
+		return atomicWriteFile(path, []byte(strings.Join(out, "\n")))
+	}
+
+	// 段范围：段头下一行起，至下一个段头（含 [[...]] 数组表头）或 EOF
+	secEnd := len(lines)
+	for i := secStart + 1; i < len(lines); i++ {
+		if !masked[i] && strings.HasPrefix(strings.TrimSpace(lines[i]), "[") {
+			secEnd = i
+			break
+		}
+	}
+
+	keyRow, indent, lastNonEmpty := -1, "", secStart
+	for i := secStart + 1; i < secEnd; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+		lastNonEmpty = i
+		if keyRow < 0 && !masked[i] && llmTimeoutKeyRe.MatchString(trimmed) {
+			keyRow = i
+		}
+		if indent == "" && !strings.HasPrefix(trimmed, "#") {
+			indent = leadingWhitespace(lines[i])
+		}
+	}
+
+	if keyRow >= 0 {
+		eq := strings.Index(lines[keyRow], "=")
+		prefix := lines[keyRow][:eq+1]
+		lines[keyRow] = prefix + " " + value
+	} else {
+		// 键缺失 → 段内最后一个非空行之后插入
+		updated := make([]string, 0, len(lines)+1)
+		updated = append(updated, lines[:lastNonEmpty+1]...)
+		updated = append(updated, timeoutLine(indent))
+		updated = append(updated, lines[lastNonEmpty+1:]...)
+		lines = updated
+	}
+	return atomicWriteFile(path, []byte(strings.Join(lines, "\n")))
+}
 
 // PersistRoutingMode 将路由模式（"auto" | "fixed"）持久化写入 config.toml 的
 // [routing] 段，文本级精确更新 mode 键，保留注释与格式。段或键缺失时自动补齐。
