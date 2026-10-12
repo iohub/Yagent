@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"yagent/internal/messaging"
+	"yagent/internal/thinklink"
 
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
@@ -352,6 +353,11 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 		if entry.streaming && content != "" {
 			content += "▌"
 		}
+		// 流式期间已闭合的 thought 块同样提前渲染成面板，未闭合的尾部保持原文，
+		// 与 markdown 只在 ai_response 定稿时才套样式的既有节奏一致。
+		if blocks, rest := thinklink.SplitThoughtBlocks(content); len(blocks) > 0 {
+			return joinThinklinkPanels(renderThinklinkPanels(blocks, width-thinklinkPanelGutter), rest)
+		}
 		return content
 	}
 
@@ -385,14 +391,8 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 		return rendered
 	}
 
-	if entry.eventType == "ai_response" && m.glamourRenderer != nil {
-		if cached, ok := m.getGlamourCached(entry.content); ok {
-			entry.setCachedRender(cached, width)
-			return cached
-		}
-		rendered, err := m.glamourRenderer.Render(entry.content)
-		if err == nil {
-			m.putGlamourCached(entry.content, rendered)
+	if entry.eventType == "ai_response" {
+		if rendered, ok := m.renderAssistantContent(entry.content, width); ok {
 			entry.setCachedRender(rendered, width)
 			return rendered
 		}
@@ -413,6 +413,82 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	formatted := formatLogEntry(*entry, width)
 	entry.setCachedRender(formatted, width)
 	return formatted
+}
+
+// thinklinkPanelGutter 主页面 thought 面板相对 viewport.Width() 让出的列数：
+// 视口左右 padding(2) + 2 列留白，与用户消息框同宽。
+const thinklinkPanelGutter = 4
+
+// renderAssistantContent 渲染 assistant 正文：结构化 thought 块渲染成与 thinklink 全屏
+// 详情一致的面板，排在正文之前（"先思考后回答"的阅读顺序），其余正文走 markdown。
+// 没有 thought 块时与旧实现逐字一致；markdown 渲染失败且没有面板可依附时返回
+// ok=false，由调用方退回单行兜底渲染。
+func (m *model) renderAssistantContent(content string, width int) (string, bool) {
+	blocks, body := thinklink.SplitThoughtBlocks(content)
+	hasBlocks := len(blocks) > 0
+	if !hasBlocks {
+		body = content
+	}
+
+	rendered, ok := m.renderMarkdownBody(body)
+	if !ok && !hasBlocks {
+		return "", false
+	}
+	if !hasBlocks {
+		return rendered, true
+	}
+	panels := renderThinklinkPanels(blocks, width-thinklinkPanelGutter)
+	return joinThinklinkPanels(panels, rendered), true
+}
+
+// renderMarkdownBody 渲染去掉 thought 块之后的正文。glamour 不可用或渲染失败时
+// 返回原文与 ok=false —— 有 thought 面板时正文宁可原样显示，也不丢整条消息。
+func (m *model) renderMarkdownBody(body string) (string, bool) {
+	if body == "" {
+		return "", true
+	}
+	if m.glamourRenderer == nil {
+		return body, false
+	}
+	if cached, ok := m.getGlamourCached(body); ok {
+		return cached, true
+	}
+	rendered, err := m.glamourRenderer.Render(body)
+	if err != nil {
+		return body, false
+	}
+	m.putGlamourCached(body, rendered)
+	return rendered, true
+}
+
+// renderThinklinkPanels 把 thought 块逐个渲染成圆角面板（多个块纵向堆叠）。
+func renderThinklinkPanels(blocks []string, panelW int) string {
+	innerW := panelW - 4 // 边框(2) + 内边距(2)
+	if innerW < 10 {
+		innerW, panelW = 10, 14
+	}
+	panels := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		lines := thinklinkDetailLines(ThinklinkEntry{Kind: "thought_plan", Content: block}, innerW)
+		rows := []string{thinklinkPanelTop("THOUGHT", "", panelW)}
+		rows = append(rows, thinklinkPanelRows(lines, innerW)...)
+		rows = append(rows, thinklinkPanelBottom(panelW))
+		panels = append(panels, strings.Join(rows, "\n"))
+	}
+	return strings.Join(panels, "\n")
+}
+
+// joinThinklinkPanels 把面板与正文纵向拼接，去掉正文尾部多余的空行。
+func joinThinklinkPanels(panels, body string) string {
+	body = strings.TrimRight(body, "\n")
+	switch {
+	case panels == "":
+		return body
+	case body == "":
+		return panels
+	default:
+		return panels + "\n" + body
+	}
 }
 
 func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {

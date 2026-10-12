@@ -582,6 +582,42 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 	return tea.View{AltScreen: true, Content: b.String()}
 }
 
+// thinklinkPanelTop 面板顶边框，标题内嵌在左轨：╭─ ◆ TITLE · meta ─────╮。
+func thinklinkPanelTop(title, meta string, width int) string {
+	label := lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render(" ◆ ") +
+		lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg).Render(title)
+	if meta != "" {
+		label += lipgloss.NewStyle().Foreground(tlDimFg).Render(" · " + meta + " ")
+	} else {
+		label += " " // 无副标题时也留一格，免得标题直接贴上长划线
+	}
+	fill := width - 3 - lipgloss.Width(label)
+	if fill < 0 {
+		fill = 0
+	}
+	return thinklinkBorderStyle.Render("╭─") + label +
+		thinklinkBorderStyle.Render(strings.Repeat("─", fill)+"╮")
+}
+
+// thinklinkPanelRows 给每行套上左右边框与内边距，超过 innerW 的行被截断。
+func thinklinkPanelRows(inner []string, innerW int) []string {
+	rows := make([]string, 0, len(inner))
+	padStyle := lipgloss.NewStyle().Width(innerW)
+	for _, l := range inner {
+		if lipgloss.Width(l) > innerW {
+			l = lipgloss.NewStyle().MaxWidth(innerW).Render(l)
+		}
+		rows = append(rows, thinklinkBorderStyle.Render("│ ")+
+			padStyle.Render(l)+thinklinkBorderStyle.Render(" │"))
+	}
+	return rows
+}
+
+// thinklinkPanelBottom 面板底边框：╰────╯。
+func thinklinkPanelBottom(width int) string {
+	return thinklinkBorderStyle.Render("╰" + strings.Repeat("─", width-2) + "╯")
+}
+
 // renderThinklinkDetailPanel 渲染带标题的圆角详情面板，
 // 返回恰好 detailH+2 行、每行显示宽度为 width 的字符串切片。
 func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH int) []string {
@@ -598,17 +634,7 @@ func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH i
 	if m.thinklinkDetailActive {
 		scrollMode = "scroll"
 	}
-
-	// 顶边框：╭─ ◆ DETAIL · TP-02 · static ─────╮
-	label := lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render(" ◆ ") +
-		lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg).Render("DETAIL") +
-		lipgloss.NewStyle().Foreground(tlDimFg).Render(fmt.Sprintf(" · %s · %s ", detailLabel, scrollMode))
-	fill := width - 3 - lipgloss.Width(label)
-	if fill < 0 {
-		fill = 0
-	}
-	top := thinklinkBorderStyle.Render("╭─") + label +
-		thinklinkBorderStyle.Render(strings.Repeat("─", fill)+"╮")
+	top := thinklinkPanelTop("DETAIL", detailLabel+" · "+scrollMode, width)
 
 	// 内容行
 	var inner []string
@@ -640,15 +666,8 @@ func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH i
 
 	lines := make([]string, 0, detailH+2)
 	lines = append(lines, top)
-	padStyle := lipgloss.NewStyle().Width(innerW)
-	for _, l := range inner {
-		if lipgloss.Width(l) > innerW {
-			l = lipgloss.NewStyle().MaxWidth(innerW).Render(l)
-		}
-		lines = append(lines,
-			thinklinkBorderStyle.Render("│ ")+padStyle.Render(l)+thinklinkBorderStyle.Render(" │"))
-	}
-	lines = append(lines, thinklinkBorderStyle.Render("╰"+strings.Repeat("─", width-2)+"╯"))
+	lines = append(lines, thinklinkPanelRows(inner, innerW)...)
+	lines = append(lines, thinklinkPanelBottom(width))
 	return lines
 }
 

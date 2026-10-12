@@ -79,6 +79,9 @@ func (tp ThoughtPlan) Empty() bool {
 // thoughtBlockRe 匹配 <thought>...</thought>（忽略大小写、跨行、非贪婪）。
 var thoughtBlockRe = regexp.MustCompile(`(?is)<thought>(.*?)</thought>`)
 
+// blankRunRe 折叠删块后残留的连续空行。
+var blankRunRe = regexp.MustCompile(`\n{3,}`)
+
 // ExtractThoughtBlocks 从自由文本中提取所有结构化 <thought> 块的内部内容
 // （不含定界标签，已 TrimSpace）。无匹配或全为空返回 nil。
 func ExtractThoughtBlocks(content string) []string {
@@ -98,6 +101,32 @@ func ExtractThoughtBlocks(content string) []string {
 		return nil
 	}
 	return blocks
+}
+
+// SplitThoughtBlocks 按出现顺序拆出结构化 <thought> 块（不含定界标签，已 TrimSpace），
+// 并返回删掉这些块之后的剩余正文 —— 展示时块要单独渲染成结构化面板，正文才走 markdown。
+// 无匹配时 blocks 为 nil、rest 即原内容。
+func SplitThoughtBlocks(content string) (blocks []string, rest string) {
+	matches := thoughtBlockRe.FindAllStringSubmatchIndex(content, -1)
+	if len(matches) == 0 {
+		return nil, content
+	}
+
+	var kept strings.Builder
+	cursor := 0
+	for _, mm := range matches {
+		// mm[0]:mm[1] 是含标签的整块，mm[2]:mm[3] 是标签内的正文。
+		if inner := strings.TrimSpace(content[mm[2]:mm[3]]); inner != "" {
+			blocks = append(blocks, inner)
+		}
+		kept.WriteString(content[cursor:mm[0]])
+		cursor = mm[1]
+	}
+	kept.WriteString(content[cursor:])
+	if len(blocks) == 0 {
+		return nil, content
+	}
+	return blocks, blankRunRe.ReplaceAllString(strings.TrimSpace(kept.String()), "\n\n")
 }
 
 // keyLineRe 匹配 "key: value" 行（key 仅由字母与空格组成，取第一个冒号分隔）。
