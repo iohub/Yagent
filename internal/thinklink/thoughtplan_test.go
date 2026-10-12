@@ -2,6 +2,7 @@ package thinklink
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,62 @@ func TestExtractThoughtBlocks_StripsTags(t *testing.T) {
 	if blocks[0] != "goal: g\nreason: r" {
 		t.Fatalf("inner content = %q, want tags stripped and trimmed", blocks[0])
 	}
+}
+
+// SplitThoughtBlocks 是展示层的拆分入口：块单独渲染成面板，正文去掉块后走 markdown。
+func TestSplitThoughtBlocks(t *testing.T) {
+	t.Run("no block keeps content untouched", func(t *testing.T) {
+		blocks, rest := SplitThoughtBlocks("just prose\nwith two lines")
+		if blocks != nil {
+			t.Errorf("blocks = %q, want nil", blocks)
+		}
+		if rest != "just prose\nwith two lines" {
+			t.Errorf("rest = %q, want original content", rest)
+		}
+	})
+
+	t.Run("block split out and blank gap collapsed", func(t *testing.T) {
+		content := "<thought>\ngoal: g\nreason: r\n</thought>\n\n\n\n回答正文"
+		blocks, rest := SplitThoughtBlocks(content)
+		if len(blocks) != 1 || blocks[0] != "goal: g\nreason: r" {
+			t.Fatalf("blocks = %q", blocks)
+		}
+		if rest != "回答正文" {
+			t.Fatalf("rest = %q, want prose only", rest)
+		}
+	})
+
+	t.Run("keeps prose around two blocks", func(t *testing.T) {
+		content := "前\n<thought>\ngoal: a\n</thought>\n中\n<thought>\ngoal: b\n</thought>\n后"
+		blocks, rest := SplitThoughtBlocks(content)
+		if len(blocks) != 2 || blocks[0] != "goal: a" || blocks[1] != "goal: b" {
+			t.Fatalf("blocks = %q, want both in order", blocks)
+		}
+		if want := "前\n\n中\n\n后"; rest != want {
+			t.Fatalf("rest = %q, want %q", rest, want)
+		}
+	})
+
+	t.Run("empty inner falls back to original", func(t *testing.T) {
+		content := "prose <thought>\n   \n</thought> more"
+		blocks, rest := SplitThoughtBlocks(content)
+		if blocks != nil {
+			t.Errorf("blocks = %q, want nil", blocks)
+		}
+		if rest != content {
+			t.Errorf("rest = %q, want original content", rest)
+		}
+	})
+
+	t.Run("unterminated tag stays in prose", func(t *testing.T) {
+		blocks, rest := SplitThoughtBlocks("<thought>\ngoal: a")
+		if blocks != nil {
+			t.Errorf("blocks = %q, want nil", blocks)
+		}
+		if !strings.Contains(rest, "goal: a") {
+			t.Errorf("rest = %q, want the partial block preserved", rest)
+		}
+	})
 }
 
 func TestParseThoughtPlan_Full(t *testing.T) {
