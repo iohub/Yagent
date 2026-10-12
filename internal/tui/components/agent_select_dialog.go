@@ -11,9 +11,10 @@ import (
 
 // 目标分组标签，由调用方按语义填写，对话框统一大写展示。
 const (
-	TargetGroupGlobal = "global"
-	TargetGroupAgents = "agents"
-	TargetGroupTools  = "tools"
+	TargetGroupGlobal   = "global"
+	TargetGroupAgents   = "agents"
+	TargetGroupTools    = "tools"
+	TargetGroupSettings = "settings"
 )
 
 // ConfigEntry 是目标选择器中的一行：global / 某个 agent / 某个 tool，

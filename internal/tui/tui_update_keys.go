@@ -151,6 +151,11 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		}
 		if d.Selected != "" {
 			target := d.Selected
+			// 设置项：LLM 调用超时。弹出目标选择器后打开超时对话框，而非 provider 选择器。
+			if target == timeoutTarget {
+				m.dialogStack.Pop()
+				return m, m.showTimeoutDialog(), true
+			}
 			if target == "global" {
 				m.pendingModelTarget = ""
 			} else {
@@ -899,17 +904,6 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.invalidateFooterCache()
 				return m, enterResumeMode(m)
 			}
-			if skillName == "timeout" || skillName == "llm_timeout" {
-				// 内置 /timeout 命令：完整命令须在清空 input 之前取出，
-				// 以保留参数（/timeout 10m 直接设置；无参唤起超时对话框）
-				fullCmd := strings.TrimSpace(m.input.Value())
-				m.skillAutoComplete = false
-				m.skillSuggestions = nil
-				m.skillSuggestionIdx = 0
-				m.input.SetValue("")
-				m.invalidateFooterCache()
-				return m, m.processCommand(fullCmd)
-			}
 			if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 				userContext := strings.TrimSpace(m.input.Value())
 				combinedContent := skill.Content + "\n\n---\n用户上下文: " + userContext
@@ -919,18 +913,6 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.infoMsg = fmt.Sprintf("正在执行 skill: %s", skill.Name)
 				return m, m.submitTaskWithContent(combinedContent)
 			}
-		}
-		// 兜底拦截：补全状态未激活时，直接输入完整 /timeout 命令回车也能触发。
-		// 仅当整段输入（TrimSpace 后）构成该命令时才拦截，不影响多行输入。
-		if fullCmd := strings.TrimSpace(m.input.Value()); fullCmd == "/timeout" ||
-			fullCmd == "/llm_timeout" ||
-			strings.HasPrefix(fullCmd, "/timeout ") || strings.HasPrefix(fullCmd, "/llm_timeout ") {
-			m.skillAutoComplete = false
-			m.skillSuggestions = nil
-			m.skillSuggestionIdx = 0
-			m.input.SetValue("")
-			m.invalidateFooterCache()
-			return m, m.processCommand(fullCmd)
 		}
 		var inputCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)

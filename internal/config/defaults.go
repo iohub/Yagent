@@ -48,7 +48,7 @@ func DefaultBrowserConfig() *BrowserConfig {
 }
 
 // DefaultLLMCallTimeout 是 LLM API 调用超时的程序保证默认值（用户未配置时的兜底）。
-// 运行期真实值以 GlobalLLMTimeout()（llm_timeout.go）为准：TUI 的 /timeout 命令
+// 运行期真实值以 GlobalLLMTimeout()（llm_timeout.go）为准：TUI 模型设置面板
 // 可动态修改全局值；无全局值时各调用方回落到本常量。
 const DefaultLLMCallTimeout = 10 * time.Minute
 
