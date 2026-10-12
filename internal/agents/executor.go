@@ -16,6 +16,7 @@ import (
 	"yagent/internal/agents/toolbatch"
 	"yagent/internal/blackboard"
 	"yagent/internal/compression"
+	"yagent/internal/config"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
 	"yagent/internal/tools"
@@ -169,9 +170,15 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 	history := make([]llm.Message, 0)
 	history = append(history, systemMsg, userMsg)
 
+	// LLM 调用超时取值：上游显式传入 > 全局运行时值（TUI :timeout 可动态修改）
+	// > DefaultLLMCallTimeout（默认 10 分钟）。
 	llmTimeout := cfg.LLMTimeout
 	if llmTimeout <= 0 {
-		llmTimeout = 5 * time.Minute
+		if t := config.GlobalLLMTimeout(); t > 0 {
+			llmTimeout = t
+		} else {
+			llmTimeout = config.DefaultLLMCallTimeout
+		}
 	}
 
 	if bid := blackboard.BoardIDFrom(ctx); bid != "" && blackboardEnabled() {

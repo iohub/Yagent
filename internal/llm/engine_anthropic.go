@@ -148,9 +148,16 @@ func (e *AnthropicEngine) CloseIdleConnections() {
 
 // GenerateContent implements Engine.
 func (e *AnthropicEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
-	if e.cfg.Timeout > 0 {
+	// Apply timeout if configured.
+	// 取值优先级：全局运行时值（TUI :timeout 命令可动态修改）> 构造期局部配置。
+	// 全局值未初始化时为 0，回落 e.cfg.Timeout，保证既有显式配置行为不变。
+	timeout := e.cfg.Timeout
+	if t := config.GlobalLLMTimeout(); t > 0 {
+		timeout = t
+	}
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, e.cfg.Timeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 

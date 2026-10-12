@@ -6,7 +6,8 @@ import (
 )
 
 // DeriveDelegateIdleTimeout 派生规则：max(10 分钟, llmTimeout + 5 分钟)；
-// llmTimeout ≤0 时按 5 分钟兜底（与 executor.go 的 LLM 超时兜底一致）。
+// llmTimeout ≤0 时按 DefaultDelegateIdleTimeoutLLMFallback（5 分钟）兜底。
+// （输入均为显式值，与 LLM 调用超时默认值的调整无关。）
 func TestDeriveDelegateIdleTimeout(t *testing.T) {
 	cases := []struct {
 		name       string

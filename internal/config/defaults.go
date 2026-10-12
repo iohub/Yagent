@@ -47,10 +47,15 @@ func DefaultBrowserConfig() *BrowserConfig {
 	}
 }
 
+// DefaultLLMCallTimeout 是 LLM API 调用超时的程序保证默认值（用户未配置时的兜底）。
+// 运行期真实值以 GlobalLLMTimeout()（llm_timeout.go）为准：TUI 的 :timeout 命令
+// 可动态修改全局值；无全局值时各调用方回落到本常量。
+const DefaultLLMCallTimeout = 10 * time.Minute
+
 // DefaultLLMConfig 返回默认的 LLM 推理兜底配置
 func DefaultLLMConfig() *LLMConfig {
 	return &LLMConfig{
-		Timeout:                    5 * time.Minute,
+		Timeout: DefaultLLMCallTimeout,
 		MaxRetries:                 5,
 		StepRetries:                0,
 		CircuitBreakerThreshold:    0,
@@ -105,16 +110,16 @@ const DefaultDelegateIdleTimeoutFloor = 10 * time.Minute
 // DefaultDelegateIdleTimeoutLLMBuffer 在单步 LLM 推理最长无心跳时间之上额外预留的缓冲。
 const DefaultDelegateIdleTimeoutLLMBuffer = 5 * time.Minute
 
-// DefaultDelegateIdleTimeoutLLMFallback llmTimeout ≤0 时的兜底值
-// （与 executor.go 的 LLM 超时兜底一致，均为 5 分钟）。
+// DefaultDelegateIdleTimeoutLLMFallback delegate 空闲超时派生中 llmTimeout ≤0 时的兜底值
+// （保留 5 分钟，属 delegate 语义，独立于 LLM 调用超时默认值 DefaultLLMCallTimeout）。
 const DefaultDelegateIdleTimeoutLLMFallback = 5 * time.Minute
 
 // DeriveDelegateIdleTimeout 派生 delegate 空闲超时默认值。
-// 规则：max(10 分钟, llmTimeout + 5 分钟)。llmTimeout ≤0 时按 5 分钟兜底
-// （与 executor.go 的 LLM 超时兜底一致）。
+// 规则：max(10 分钟, llmTimeout + 5 分钟)。llmTimeout ≤0 时按
+// DefaultDelegateIdleTimeoutLLMFallback（5 分钟）兜底。
 // 语义：空闲阈值必须显著大于子代理单步最长无心跳时间（单次 LLM 推理最长
 // llmTimeout），否则正常长推理会被误杀。
-// 默认结果：llmTimeout=5min 时返回 10min。
+// 注意：输入 llmTimeout 的取值来源（配置/全局运行时值）变化属预期，派生逻辑保持不变。
 func DeriveDelegateIdleTimeout(llmTimeout time.Duration) time.Duration {
 	if llmTimeout <= 0 {
 		llmTimeout = DefaultDelegateIdleTimeoutLLMFallback

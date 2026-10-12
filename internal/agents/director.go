@@ -164,10 +164,15 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 		projectCtxLoader: director.NewProjectContextLoader(func() string { return p.Env.ProjectPath() }),
 
 		llmTimeout: func() time.Duration {
+			// 三级优先：全局运行时值（TUI :timeout 可动态修改）> 配置文件 > 程序默认值。
+			// 构造期快照仅作兜底；运行期真实值见 currentLLMTimeout()。
+			if t := config.GlobalLLMTimeout(); t > 0 {
+				return t
+			}
 			if p.Config.LLM.Timeout > 0 {
 				return p.Config.LLM.Timeout
 			}
-			return 5 * time.Minute
+			return config.DefaultLLMCallTimeout
 		}(),
 
 		delegateIdleTimeout: func() time.Duration {
@@ -674,6 +679,20 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
 	slog.Info("Custom agent registered", "delegate_name", delegateName, "display_name", ca.DisplayName, "tools", ca.ToolsUsed)
 }
 
+// currentLLMTimeout 返回当前生效的 LLM 调用超时：全局运行时值（TUI :timeout
+// 可动态修改）优先，未初始化时回落构造期快照 a.llmTimeout。
+// 每次构造 ExecutorConfig / PlannerConfig 时求值（而非使用构造期快照），
+// 确保 TUI 调整后新发起的 LLM 调用立即使用新值。
+func (a *DirectorAgent) currentLLMTimeout() time.Duration {
+	if t := config.GlobalLLMTimeout(); t > 0 {
+		return t
+	}
+	if a.llmTimeout > 0 {
+		return a.llmTimeout
+	}
+	return config.DefaultLLMCallTimeout
+}
+
 func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent, adapters []*tools.Adapter, task string) (string, error) {
 	systemPrompt := a.promptFmt.FormatPrompt(ca.SystemPrompt)
 
@@ -687,7 +706,7 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = ca.DisplayName
 	cfg.StopOnFinish = true
-	cfg.LLMTimeout = a.llmTimeout
+	cfg.LLMTimeout = a.currentLLMTimeout()
 
 	if rolloutWriter := a.createRolloutWriter(ca.DisplayName, task); rolloutWriter != nil {
 		defer rolloutWriter.Close()
@@ -698,10 +717,11 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	if err != nil {
 		return "", err
 	}
-	agentResult := AgentResult{
-		Text:   result.Text,
-		Memory: ConvertLLMHistoryToMemory(result.History),
-	}
+	// 统一走委派结果分级构造基础设施：Text=完整子代理输出（delegate 闭包与
+	// note 程序化消费），Summary=分级摘要（预算内=全文；超预算时落盘 artifact
+	// 并生成带 ID 的摘要）。此前手工构造漏填 Summary，导致 FormatForDirector
+	// 注入上下文时子代理输出丢失（回归测试 TestCustomAgentDelegateTool_* 钉住）。
+	agentResult := FinalizeResultFull(ca.DisplayName, task, result)
 	a.setPendingSubAgentMemory(&agentResult)
 	return result.Text, nil
 }
@@ -1102,7 +1122,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		Prompts:                   prompts,
 		Compressor:                a.compressor,
 		MaxSteps:                  a.maxSteps,
-		LLMTimeout:                a.llmTimeout,
+		LLMTimeout:                a.currentLLMTimeout(),
 		Recovery:                  recovery,
 		Metrics:                   metrics,
 		NormalizeMessages:         validateAndRepairToolCallPairs,
