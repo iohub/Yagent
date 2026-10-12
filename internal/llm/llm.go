@@ -259,7 +259,7 @@ func LoadConfig(configPath string) (*config.Config, error) {
 	}
 
 	// 加载成功后初始化全局 LLM 调用超时运行时值（运行时唯一事实源，TUI 的
-	// :timeout 命令可动态修改；仅当配置值 > 0 时生效，未配置时各调用方回落到
+	// /timeout 命令可动态修改；仅当配置值 > 0 时生效，未配置时各调用方回落到
 	// config.DefaultLLMCallTimeout）。
 	if cfg.LLM.Timeout > 0 {
 		config.SetGlobalLLMTimeout(cfg.LLM.Timeout)
@@ -298,7 +298,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	}
 
 	// 启动时初始化全局 LLM 调用超时运行时值（覆盖未经 LoadConfig 的直接
-	// 构造路径；仅当配置值 > 0 时生效，TUI :timeout 命令可动态修改）。
+	// 构造路径；仅当配置值 > 0 时生效，TUI /timeout 命令可动态修改）。
 	if cfg.LLM.Timeout > 0 {
 		config.SetGlobalLLMTimeout(cfg.LLM.Timeout)
 	}
