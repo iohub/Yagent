@@ -242,12 +242,14 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case taskEventMsg:
-		// 全屏模式下保持事件监听链存活，但事件暂不处理
-		// 退出全屏后事件会被正常消费
-		if m.taskRunning {
-			return m, listenForEvents(m.eventCh)
-		}
-		return m, nil
+		// 事件照常消费：全屏没有自己的副本，"暂不处理"就是永久丢失 ——
+		// 实时视图少一条，只有从历史恢复才补得回来。handler 自己会续上监听链。
+		_, cmd := m.handleTaskEventMsg(msg)
+		return m, cmd
+
+	case taskCompleteMsg:
+		_, cmd := m.handleTaskCompleteMsg(msg)
+		return m, cmd
 
 	default:
 		return m, nil

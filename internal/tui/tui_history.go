@@ -110,6 +110,16 @@ func historyUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		m.termHeight = msg.Height
 		return m, nil
 
+	case taskEventMsg:
+		// 浏览历史时任务仍在跑：事件必须照常消费，否则退出后主界面停在旧内容上，
+		// 少掉的那几条要等从历史恢复才看得见。
+		_, cmd := m.handleTaskEventMsg(msg)
+		return m, cmd
+
+	case taskCompleteMsg:
+		_, cmd := m.handleTaskCompleteMsg(msg)
+		return m, cmd
+
 	default:
 		return m, nil
 	}

@@ -8,6 +8,22 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+// keepListening 覆盖层模式（全屏 timeline / thinklink、历史、恢复选择器）消费掉一条
+// 事件后补回监听：listenForEvents 是一次性 cmd，本轮不接替，通道里后续到达的事件就
+// 再没人读，退出覆盖层后主界面永远停在旧内容上（少掉的几条只能等历史恢复）。
+//
+// 只补"事件被消费"这一种：按键、resize 都不动用那个 pending cmd，给它们补会让
+// 监听者按按键次数线性堆积成一堆阻塞的 goroutine。
+func (m *model) keepListening(cmd tea.Cmd, msg tea.Msg) tea.Cmd {
+	if cmd != nil || !m.taskRunning {
+		return cmd
+	}
+	if _, ok := msg.(taskEventMsg); ok {
+		return listenForEvents(m.eventCh)
+	}
+	return cmd
+}
+
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Ctrl+Z: suspend the program (SIGTSTP) and return to the shell.
 	// Intercepted globally — before all mode guards (dialog/timeline/history) —
@@ -77,25 +93,29 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// 全屏 timeline 模式：拦截所有消息，委托给全屏处理器
 	if m.timelineFullscreenMode {
-		return timelineFullscreenUpdate(msg, m)
+		mod, cmd := timelineFullscreenUpdate(msg, m)
+		return mod, m.keepListening(cmd, msg)
 	}
 
 	// Thinklink 全屏模式：拦截所有消息
 	if m.thinklinkMode {
-		return thinklinkFullscreenUpdate(msg, m)
+		mod, cmd := thinklinkFullscreenUpdate(msg, m)
+		return mod, m.keepListening(cmd, msg)
 	}
 
 	// History mode: intercept all messages and delegate to history handler.
 	// Skip when a dialog is active so dialog confirmations (e.g. delete_history_confirm)
 	// can be processed by the DialogStack key handler below.
 	if m.historyMode && (m.dialogStack == nil || m.dialogStack.Len() == 0) {
-		return historyUpdate(msg, m)
+		mod, cmd := historyUpdate(msg, m)
+		return mod, m.keepListening(cmd, msg)
 	}
 
 	// Resume mode: intercept all messages and delegate to resume handler.
 	// Skip when a dialog is active (same guard as history mode above).
 	if m.resumeMode && (m.dialogStack == nil || m.dialogStack.Len() == 0) {
-		return resumeUpdate(msg, m)
+		mod, cmd := resumeUpdate(msg, m)
+		return mod, m.keepListening(cmd, msg)
 	}
 
 	switch msg := msg.(type) {

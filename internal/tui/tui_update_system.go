@@ -17,6 +17,10 @@ func (m *model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
 		m.animManager.Tick(100)
 	}
 
+	// 流式节流缓冲的超时检查只有 tick 能驱动（chunk 自己到得勤，流一停就没了），
+	// 放在 idle 早退之前：落地后 viewportDirty 变 true，本轮自然会把尾巴渲染出来。
+	m.flushStreamBuffers(aiChunkFlushInterval)
+
 	// Stop tick early when idle: avoids unnecessary View() calls that cause flicker
 	if !m.activeAnim && !m.taskRunning && !m.viewportDirty {
 		m.tickStarted = false
