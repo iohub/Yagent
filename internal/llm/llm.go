@@ -221,6 +221,30 @@ type Client struct {
 	mu                     sync.RWMutex
 	agentProviderOverrides map[string]string
 	toolProviderOverrides  map[string]string
+	router                 *Router
+}
+
+// GetRouter 返回启动时构建并缓存的自动路由器（可能未启用）。
+func (c *Client) GetRouter() *Router {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.router
+}
+
+// CloseIdleConnections 关闭默认引擎与所有已缓存 provider 引擎的空闲连接。
+func (c *Client) CloseIdleConnections() {
+	c.mu.RLock()
+	engines := make([]Engine, 0, len(c.engines)+1)
+	if c.Engine != nil {
+		engines = append(engines, c.Engine)
+	}
+	for _, e := range c.engines {
+		engines = append(engines, e)
+	}
+	c.mu.RUnlock()
+	for _, e := range engines {
+		e.CloseIdleConnections()
+	}
 }
 
 func LoadConfig(configPath string) (*config.Config, error) {
@@ -284,13 +308,16 @@ func NewClient(config *config.Config) (*Client, error) {
 	engine := NewEngine(defaultProvider, config.LLM)
 	loggingEngine := &LoggingEngine{inner: engine}
 
-	return &Client{
+	client := &Client{
 		Engine:                 loggingEngine,
 		Config:                 config,
 		engines:                make(map[string]Engine),
 		agentProviderOverrides: make(map[string]string),
 		toolProviderOverrides:  make(map[string]string),
-	}, nil
+	}
+	// 启动时计算并缓存模型三档分类（候选池 = 配置中的所有 provider）。
+	client.BuildRouter()
+	return client, nil
 }
 
 func (c *Client) getOrCreateEngine(provider *config.ProviderConfig, providerName string) Engine {
@@ -455,6 +482,34 @@ func (c *Client) PersistProviderChoice(kind, name, provider string) error {
 	}
 	slog.Info("Persisted provider choice to config file",
 		"kind", kind, "name", name, "provider", provider, "config_path", c.ConfigPath)
+	return nil
+}
+
+// SetRoutingMode 在运行时切换自动路由模式（"auto" | "fixed"），更新内存配置并
+// 重建路由器。不写配置文件（持久化用 PersistRoutingMode）。
+func (c *Client) SetRoutingMode(mode string) error {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode != "auto" && mode != "fixed" {
+		return fmt.Errorf("SetRoutingMode: invalid mode %q (want auto|fixed)", mode)
+	}
+	c.mu.Lock()
+	c.Config.Routing.Mode = mode
+	c.mu.Unlock()
+
+	c.BuildRouter()
+	slog.Info("Routing mode switched", "mode", mode, "enabled", c.GetRouter().Enabled())
+	return nil
+}
+
+// PersistRoutingMode 将当前路由模式写回 config.toml 的 [routing] 段。
+func (c *Client) PersistRoutingMode(mode string) error {
+	if c.ConfigPath == "" {
+		return fmt.Errorf("PersistRoutingMode: config path is empty (set Client.ConfigPath to enable persistence)")
+	}
+	if err := config.PersistRoutingMode(c.ConfigPath, mode); err != nil {
+		return fmt.Errorf("PersistRoutingMode: %w", err)
+	}
+	slog.Info("Persisted routing mode to config file", "mode", mode, "config_path", c.ConfigPath)
 	return nil
 }
 

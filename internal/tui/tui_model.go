@@ -471,6 +471,9 @@ type model struct {
 	contextWindow      int
 	pendingModelTarget string
 
+	// autoRouting 反映自动路由是否生效，用于状态栏展示 AUTO 段。
+	autoRouting bool
+
 	inputTokens              int64
 	outputTokens             int64
 	cacheCreationInputTokens int64
@@ -735,10 +738,12 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 
 	initProvider := ""
 	initModel := ""
+	initAutoRouting := false
 	if ca != nil && ca.GetClient() != nil {
 		prov, model := ca.GetClient().GetCurrentProviderInfo()
 		initProvider = prov
 		initModel = model
+		initAutoRouting = ca.GetRouteSnapshot().Enabled
 	}
 
 	styles := common.NewStyles()
@@ -882,6 +887,7 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 		currentProvider: initProvider,
 		currentModel:    initModel,
 		contextWindow:   contextWindowFromCfg(cfg, initProvider),
+		autoRouting:     initAutoRouting,
 
 		skillSuggestionStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245")).

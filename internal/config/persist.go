@@ -11,6 +11,86 @@ import (
 // useProviderKeyRe 匹配 use_provider 键行（作用于 trim 后的行）。
 var useProviderKeyRe = regexp.MustCompile(`^use_provider\s*=`)
 
+// routingModeKeyRe 匹配 [routing] 段中的 mode 键行（作用于 trim 后的行）。
+var routingModeKeyRe = regexp.MustCompile(`^mode\s*=`)
+
+// PersistRoutingMode 将路由模式（"auto" | "fixed"）持久化写入 config.toml 的
+// [routing] 段，文本级精确更新 mode 键，保留注释与格式。段或键缺失时自动补齐。
+func PersistRoutingMode(path, mode string) error {
+	if path == "" {
+		return fmt.Errorf("config: config file path is empty")
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode != "auto" && mode != "fixed" {
+		return fmt.Errorf("config: invalid routing mode %q (want auto|fixed)", mode)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("config: read config file: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		lines = nil
+	}
+
+	masked := multilineMask(lines)
+	const secHeader = "[routing]"
+	modeLine := func(indent string) string { return indent + "mode = " + tomlBasicString(mode) }
+
+	secStart := -1
+	for i, line := range lines {
+		if !masked[i] && strings.TrimSpace(line) == secHeader {
+			secStart = i
+			break
+		}
+	}
+	if secStart < 0 {
+		out := lines
+		if len(out) > 0 && out[len(out)-1] != "" {
+			out = append(out, "")
+		}
+		out = append(out, secHeader, modeLine(""), "")
+		return atomicWriteFile(path, []byte(strings.Join(out, "\n")))
+	}
+
+	secEnd := len(lines)
+	for i := secStart + 1; i < len(lines); i++ {
+		if !masked[i] && strings.HasPrefix(strings.TrimSpace(lines[i]), "[") {
+			secEnd = i
+			break
+		}
+	}
+
+	keyRow, indent, lastNonEmpty := -1, "", secStart
+	for i := secStart + 1; i < secEnd; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+		lastNonEmpty = i
+		if keyRow < 0 && !masked[i] && routingModeKeyRe.MatchString(trimmed) {
+			keyRow = i
+		}
+		if indent == "" && !strings.HasPrefix(trimmed, "#") {
+			indent = leadingWhitespace(lines[i])
+		}
+	}
+
+	if keyRow >= 0 {
+		eq := strings.Index(lines[keyRow], "=")
+		prefix := lines[keyRow][:eq+1]
+		lines[keyRow] = prefix + " " + tomlBasicString(mode)
+	} else {
+		updated := make([]string, 0, len(lines)+1)
+		updated = append(updated, lines[:lastNonEmpty+1]...)
+		updated = append(updated, modeLine(indent))
+		updated = append(updated, lines[lastNonEmpty+1:]...)
+		lines = updated
+	}
+	return atomicWriteFile(path, []byte(strings.Join(lines, "\n")))
+}
+
 // PersistUseProvider 将 provider 选择持久化写入 config.toml：文本级精确更新，
 // 只改动目标段中的 use_provider 键，保留注释、空行与原有格式。
 // 禁止整文件 TOML 重编码——那会丢失用户注释与字段顺序。

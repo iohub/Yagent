@@ -103,9 +103,18 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		}
 
 		// Resolve tool-specific engine for deepthinking
+		// 自动路由启用时，deepthinking 固定使用高智商档位引擎。
 		deepthinkingEngine := engine
 		if ca.client != nil {
-			deepthinkingEngine = ca.client.GetToolEngine("deepthinking")
+			if r := ca.client.GetRouter(); r.Enabled() {
+				if hi := r.EngineFor(llm.TierHigh); hi != nil {
+					deepthinkingEngine = hi
+				} else {
+					deepthinkingEngine = ca.client.GetToolEngine("deepthinking")
+				}
+			} else {
+				deepthinkingEngine = ca.client.GetToolEngine("deepthinking")
+			}
 		}
 
 		// ── 确定 codeseek 二进制路径并启动 MCP 客户端 ──
@@ -297,22 +306,15 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		}
 
 		// Resolve per-agent engines
-		directorEngine := engine
-		repoEngine := engine
-		codingEngine := engine
-		chatEngine := engine
-		metaEngine := engine
-		devopsEngine := engine
-		browserEngine := engine
-		if ca.client != nil {
-			directorEngine = ca.client.GetAgentEngine("director")
-			repoEngine = ca.client.GetAgentEngine("repo")
-			codingEngine = ca.client.GetAgentEngine("coding")
-			chatEngine = ca.client.GetAgentEngine("chat")
-			metaEngine = ca.client.GetAgentEngine("meta")
-			devopsEngine = ca.client.GetAgentEngine("devops")
-			browserEngine = ca.client.GetAgentEngine("browser")
-		}
+		// 自动路由启用时，每个 agent 拿到一个绑定角色基线的 RoutingEngine；
+		// 实际档位在每次 delegate 时由难度分类器写入 ctx，RunAgentLoop 起始处解析。
+		directorEngine := ca.agentEngine("director", engine)
+		repoEngine := ca.agentEngine("repo", engine)
+		codingEngine := ca.agentEngine("coding", engine)
+		chatEngine := ca.agentEngine("chat", engine)
+		metaEngine := ca.agentEngine("meta", engine)
+		devopsEngine := ca.agentEngine("devops", engine)
+		browserEngine := ca.agentEngine("browser", engine)
 
 		// 创建 RepoContextStore（带锁仓库上下文存储：Director 写入 delegate_repo 结果，
 		// coding/browser agent 读取）与 EnvView（运行时环境字段动态读取视图）。
@@ -614,6 +616,40 @@ func (ca *Yagent) SwitchProvider(providerName string) error {
 // GetClient returns the underlying LLM client.
 func (ca *Yagent) GetClient() *llm.Client {
 	return ca.client
+}
+
+// SetRoutingMode 运行时切换自动路由模式（"auto" | "fixed"），立即生效。
+func (ca *Yagent) SetRoutingMode(mode string) error {
+	if ca.client == nil {
+		return fmt.Errorf("LLM client not available")
+	}
+	return ca.client.SetRoutingMode(mode)
+}
+
+// PersistRoutingMode 将路由模式写回 config.toml。
+func (ca *Yagent) PersistRoutingMode(mode string) error {
+	if ca.client == nil {
+		return fmt.Errorf("LLM client not available")
+	}
+	return ca.client.PersistRoutingMode(mode)
+}
+
+// GetRouteSnapshot 返回自动路由的只读快照，供 TUI 展示。
+func (ca *Yagent) GetRouteSnapshot() llm.RouteSnapshot {
+	if ca.client == nil {
+		return llm.RouteSnapshot{Mode: "fixed", Reason: "LLM client not available"}
+	}
+	return ca.client.GetRouter().Snapshot()
+}
+
+// agentEngine 解析某个 agent 应使用的引擎：始终返回 RoutingEngine 包装，
+// 它在自动路由启用时按档位分派，固定模式 / 路由不可用时透明回退到该 agent 的
+// provider 级引擎，因此运行时切换 auto/fixed 无需重建 agent。
+func (ca *Yagent) agentEngine(agentName string, fallback llm.Engine) llm.Engine {
+	if ca.client == nil {
+		return fallback
+	}
+	return llm.NewRoutingEngine(ca.client, agentName)
 }
 
 // SetAgentProvider 为指定 agent 设置运行时 provider 覆盖（通过 LLM Client）

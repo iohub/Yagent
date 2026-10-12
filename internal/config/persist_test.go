@@ -275,3 +275,63 @@ func TestPersistUseProvider_Errors(t *testing.T) {
 		t.Error("missing config file should fail")
 	}
 }
+
+// TestPersistRoutingMode 覆盖 [routing] mode 键的写回：替换已有键、段缺失时追加、
+// 键缺失时插入，均验证结果可被 TOML 解码且 mode 值往返正确。
+func TestPersistRoutingMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial string
+		mode    string
+		want    string
+	}{
+		{
+			name:    "替换已有 mode",
+			initial: "[routing]\nmode = \"auto\"\n",
+			mode:    "fixed",
+			want:    "[routing]\nmode = \"fixed\"\n",
+		},
+		{
+			name:    "段缺失时追加",
+			initial: "[app]\nenable_streaming = true\n",
+			mode:    "auto",
+			want:    "[app]\nenable_streaming = true\n\n[routing]\nmode = \"auto\"\n",
+		},
+		{
+			name:    "键缺失时插入_保留其它键",
+			initial: "[routing]\n# comment\nfoo = 1\n",
+			mode:    "fixed",
+			want:    "[routing]\n# comment\nfoo = 1\nmode = \"fixed\"\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writePersistConfig(t, tt.initial)
+			if err := PersistRoutingMode(path, tt.mode); err != nil {
+				t.Fatalf("PersistRoutingMode() error = %v", err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read back: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("file =\n%q\nwant\n%q", string(got), tt.want)
+			}
+			var raw map[string]any
+			if _, err := toml.DecodeFile(path, &raw); err != nil {
+				t.Fatalf("written config is not valid TOML: %v", err)
+			}
+			routing, _ := raw["routing"].(map[string]any)
+			if v, _ := routing["mode"].(string); v != tt.mode {
+				t.Errorf("decoded mode = %q, want %q", v, tt.mode)
+			}
+		})
+	}
+}
+
+func TestPersistRoutingMode_InvalidMode(t *testing.T) {
+	path := writePersistConfig(t, "[routing]\nmode = \"auto\"\n")
+	if err := PersistRoutingMode(path, "turbo"); err == nil {
+		t.Error("expected error for invalid mode")
+	}
+}

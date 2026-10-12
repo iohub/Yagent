@@ -213,6 +213,35 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 	}
 
+	if msg.event.Type == "model_routed" {
+		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
+			agent, _ := contentMap["agent"].(string)
+			tier, _ := contentMap["tier"].(string)
+			routedModel, _ := contentMap["model"].(string)
+			if routedModel != "" {
+				m.currentModel = routedModel
+			}
+			line := fmt.Sprintf("routed %s → %s tier", agent, strings.ToUpper(tier))
+			if routedModel != "" {
+				if score, ok := contentMap["score"].(float64); ok {
+					line += fmt.Sprintf(" (%s, ai_score %.1f)", routedModel, score)
+				} else {
+					line += fmt.Sprintf(" (%s)", routedModel)
+				}
+			}
+			m.logEntries = append(m.logEntries, logEntry{
+				timestamp: msg.event.Timestamp,
+				eventType: "status",
+				from:      msg.event.From,
+				content:   line,
+				isVerbose: true,
+			})
+			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+		}
+		m.invalidateFooterCache()
+		return m, listenForEvents(m.eventCh)
+	}
+
 	if msg.event.Type == "ai_stream_start" {
 		agentName := msg.event.From
 		if agentName == "" {

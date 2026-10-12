@@ -396,6 +396,18 @@ func (m *model) renderAirlineStatusBar() string {
 
 	var rightSegs []segDef
 
+	if m.autoRouting {
+		rightSegs = append(rightSegs, segDef{
+			bg: airlineColorRunBg,
+			style: lipgloss.NewStyle().
+				Background(airlineColorRunBg).
+				Foreground(airlineColorRunFg).
+				Bold(true).
+				Padding(0, 1),
+			text: "⚡ AUTO",
+		})
+	}
+
 	modelDisplay := ""
 	if m.currentProvider != "" && m.currentModel != "" {
 		modelDisplay = m.currentProvider + "/" + m.currentModel
