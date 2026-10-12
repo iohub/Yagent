@@ -67,22 +67,16 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		return m.showRoutingDialog()
 
 	// ═══════════════════════════════════════════════════════════════
-	// :timeout — 查看 / 设置全局 LLM API 调用超时（别名 :llm_timeout）
-	//   :timeout        打开对话框（查看当前值 + 选择式设置）
-	//   :timeout 10m    设置（30s ~ 24h），立即生效并持久化到 config.toml
-	//   /timeout        :timeout 的 slash 别名，用法一致：
-	//                   /timeout 打开对话框；/timeout 10m 直接设置
+	// /timeout — 查看 / 设置全局 LLM API 调用超时（别名 /llm_timeout）
+	//   /timeout        打开对话框（查看当前值 + 选择式设置）
+	//   /timeout 10m    设置（30s ~ 24h），立即生效并持久化到 config.toml
 	// （须位于下方 "/" 前缀日志搜索兜底 case 之前，否则会被搜索截获）
 	// ═══════════════════════════════════════════════════════════════
-	case cmd == ":timeout", cmd == ":llm_timeout",
-		strings.HasPrefix(cmd, ":timeout "), strings.HasPrefix(cmd, ":llm_timeout "),
-		cmd == "/timeout", cmd == "/llm_timeout",
+	case cmd == "/timeout", cmd == "/llm_timeout",
 		strings.HasPrefix(cmd, "/timeout "), strings.HasPrefix(cmd, "/llm_timeout "):
-		// 统一剥离别名前缀：先剥长前缀（llm_timeout）再剥短前缀（timeout），
-		// 兼容 ":" 与 "/" 两种触发方式
-		arg := strings.TrimPrefix(cmd, ":llm_timeout")
-		arg = strings.TrimPrefix(arg, "/llm_timeout")
-		arg = strings.TrimPrefix(arg, ":timeout")
+		// 剥离命令前缀：先剥长前缀（/llm_timeout）再剥短前缀（/timeout），
+		// 仅支持 slash 触发方式
+		arg := strings.TrimPrefix(cmd, "/llm_timeout")
 		arg = strings.TrimSpace(strings.TrimPrefix(arg, "/timeout"))
 		if arg == "" {
 			// 无参数：打开对话框（查看当前值 + 选择式设置）
@@ -310,7 +304,7 @@ func (m *model) showTimeoutDialog() tea.Cmd {
 // applyLLMTimeout 将超时应用到运行时并按需持久化，结果写入日志。按三级动作执行：
 // 运行时全局值（atomic，引擎/执行层立即读取）→ 内存配置同步（llm.Client 以 mu
 // 保护）→ persist 为 true 时持久化写入 config.toml 的 [llm].timeout 键。
-// 对话框（Enter=仅运行时、Space=应用并持久化）与 :timeout 带参命令共用此逻辑。
+// 对话框（Enter=仅运行时、Space=应用并持久化）与 /timeout 带参命令共用此逻辑。
 func (m *model) applyLLMTimeout(d time.Duration, persist bool) {
 	logStatus := func(kind, content string) {
 		m.logEntries = append(m.logEntries, logEntry{
@@ -355,9 +349,9 @@ func (m *model) applyLLMTimeout(d time.Duration, persist bool) {
 	logStatus("status", fmt.Sprintf("LLM call timeout set to %s (runtime only — LLM client not available)", config.FormatLLMTimeout(d)))
 }
 
-// handleTimeoutCommand 处理 :timeout 带参命令：直接设置全局 LLM API 调用超时。
+// handleTimeoutCommand 处理 /timeout 带参命令：直接设置全局 LLM API 调用超时。
 // 参数接受 time.ParseDuration 格式（如 10m/90s/1h），合法区间 30s ~ 24h；
-// 设置与持久化复用 applyLLMTimeout。无参展示当前值的职责已由 :timeout
+// 设置与持久化复用 applyLLMTimeout。无参展示当前值的职责已由 /timeout
 // 对话框取代，此处仅保留直接调用兼容。
 func (m *model) handleTimeoutCommand(arg string) tea.Cmd {
 	logStatus := func(kind, content string) {
@@ -372,18 +366,18 @@ func (m *model) handleTimeoutCommand(arg string) tea.Cmd {
 	// 无参数：显示当前生效超时（全局值优先，回落内存配置 / 默认值）
 	if arg == "" {
 		current := m.llmEffectiveTimeout()
-		logStatus("status", fmt.Sprintf("LLM call timeout: %s (change with \":timeout <duration>\", e.g. \":timeout 10m\")", config.FormatLLMTimeout(current)))
+		logStatus("status", fmt.Sprintf("LLM call timeout: %s (change with \"/timeout <duration>\", e.g. \"/timeout 10m\")", config.FormatLLMTimeout(current)))
 		return nil
 	}
 
 	// 设置模式：解析时长参数
 	d, err := time.ParseDuration(arg)
 	if err != nil {
-		logStatus("error", fmt.Sprintf("Invalid duration %q — usage: \":timeout <duration>\" (e.g. :timeout 10m, :timeout 90s)", arg))
+		logStatus("error", fmt.Sprintf("Invalid duration %q — usage: \"/timeout <duration>\" (e.g. /timeout 10m, /timeout 90s)", arg))
 		return nil
 	}
 	if d < 30*time.Second || d > 24*time.Hour {
-		logStatus("error", fmt.Sprintf("Timeout %s out of range (allowed: 30s ~ 24h) — usage: \":timeout <duration>\"", config.FormatLLMTimeout(d)))
+		logStatus("error", fmt.Sprintf("Timeout %s out of range (allowed: 30s ~ 24h) — usage: \"/timeout <duration>\"", config.FormatLLMTimeout(d)))
 		return nil
 	}
 
