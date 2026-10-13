@@ -392,7 +392,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.viewportDirty = true
 		}
 		delete(m.aiChunkBuffers, agentName)
-		return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+		return m, tea.Batch(listenForEvents(m.eventCh), m.ensureTick())
 	}
 
 	if msg.event.Type == "ai_response" {
@@ -426,7 +426,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.viewportDirty = true
 			delete(m.aiStreamCompletedEntries, agentName)
 			delete(m.aiChunkBuffers, agentName)
-			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+			return m, tea.Batch(listenForEvents(m.eventCh), m.ensureTick())
 		}
 
 		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
@@ -447,7 +447,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			m.viewportDirty = true
 			delete(m.aiStreamActiveEntries, agentName)
 			delete(m.aiChunkBuffers, agentName)
-			return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+			return m, tea.Batch(listenForEvents(m.eventCh), m.ensureTick())
 		}
 
 	}

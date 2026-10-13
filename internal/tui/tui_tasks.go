@@ -105,7 +105,7 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 		executeTaskCmd(taskDesc, task, m.sessionID, m.assistant, m.taskManager, m.dataManager, m.eventCh, m.publisherCh),
 		listenForEvents(m.eventCh),
 		listenForPublisher(m.publisherCh),
-		tickCmd(),
+		m.ensureTick(),
 	)
 }
 

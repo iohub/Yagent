@@ -47,21 +47,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tickMsg:
 				// Keep ticking for animation, but don't touch the viewport
 				if m.taskRunning {
-					return m, tickCmd()
+					return m, m.armTick()
 				}
+				m.stopTick()
 				return m, nil
 			case tea.PasteMsg:
 				// 粘贴是独立消息类型（非 KeyMsg）：必须路由到栈顶对话框，
 				// 否则对话框内 textarea（如 user-help 的 Custom input）无法粘贴。
 				cmd, _ := m.dialogStack.Update(msg)
 				if m.taskRunning {
-					return m, tea.Batch(cmd, listenForEvents(m.eventCh), tickCmd())
+					return m, tea.Batch(cmd, listenForEvents(m.eventCh), m.ensureTick())
 				}
 				return m, cmd
 			default:
 				// WindowSizeMsg, MouseMsg, publisherReadyMsg, etc.
 				if m.taskRunning {
-					return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+					return m, tea.Batch(listenForEvents(m.eventCh), m.ensureTick())
 				}
 				return m, nil
 			}

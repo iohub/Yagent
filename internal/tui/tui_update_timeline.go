@@ -237,8 +237,9 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.anim.Tick()
 		}
 		if m.taskRunning {
-			return m, tickCmd()
+			return m, m.armTick()
 		}
+		m.stopTick()
 		return m, nil
 
 	case taskEventMsg:
