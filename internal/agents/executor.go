@@ -50,6 +50,8 @@ type ExecutorConfig struct {
 	ToolResultKeepTokens        int
 	UltimateThinkLink           compression.ThinkLinkJournal
 	UltimateKeepPlans           int
+	// 第三档需要两个条件同时成立：配置允许 + 有重建原料（ThinkLink），与 Director Planner 一致。
+	EnableUltimateCompression bool
 
 	MaxParallelReadOnlyTools int
 }
@@ -397,6 +399,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 				}
 
 				if compression.EstimateMessagesTokens(messages) > threshold {
+					// 摘要的独立 LLM 调用（内部上限 90s）不经过 step/llm 心跳，须显式续期。
+					activity.Heartbeat(ctx, "compress:emergency")
 					newMessages, emergencyStats := compression.EmergencyCompressMessages(ctx, messages, cfg.UserInput, threshold, cfg.LLM, cfg.AgentName, compression.DefaultEmergencyCompressKeepLastN)
 					messages = newMessages
 					history = make([]llm.Message, len(messages))
@@ -430,7 +434,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 							TokensAfter:  emergencyStats.CompressedTokens,
 						})
 					}
-					if compression.EstimateMessagesTokens(messages) > threshold && cfg.UltimateThinkLink != nil {
+					if compression.EstimateMessagesTokens(messages) > threshold && cfg.EnableUltimateCompression && cfg.UltimateThinkLink != nil {
 						ultCompressor := compression.NewContextCompressor(cfg.LLM, cfg.AgentName, cfg.UltimateThinkLink, nil)
 						newMessages, ultStats := ultCompressor.ApplyUltimate(messages, threshold, nil, cfg.UltimateKeepPlans)
 						messages = newMessages
@@ -608,6 +612,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 						_ = cfg.Publisher.Publish("thinklink_entry", map[string]interface{}{
 							"id":        entry.ID,
 							"kind":      entry.Kind.String(),
+							"agent":     cfg.AgentName,
 							"content":   entry.Content,
 							"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
 							"step":      entry.Step,

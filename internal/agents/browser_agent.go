@@ -11,6 +11,7 @@ import (
 	"yagent/internal/browserctl"
 	"yagent/internal/config"
 	"yagent/internal/llm"
+	"yagent/internal/thinklink"
 	"yagent/internal/tools"
 )
 
@@ -148,6 +149,13 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
 	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
 	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
+
+	// 一次委派一个 store：RebuildPrompt 保留全部用户输入，本实例又被 Director 与 Coding 共用。
+	store := thinklink.NewStore(0)
+	store.AddUserInput(input, 0)
+	cfg.UltimateThinkLink = store
+	cfg.UltimateKeepPlans = ec.UltimateCompressionKeepPlans // 0=全部保留
+	cfg.EnableUltimateCompression = ec.EnableUltimateCompression
 
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {

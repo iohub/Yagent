@@ -548,6 +548,8 @@ type model struct {
 	thinklinkCursor       int
 	thinklinkVP           *viewport.Model
 	thinklinkDetailActive bool
+	// thinklinkAgentFilter 为空表示不过滤；非空时只显示该 Agent 的条目（`f` 循环）。
+	thinklinkAgentFilter string
 
 	editKeyMap map[string]string
 

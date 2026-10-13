@@ -46,10 +46,12 @@ func TruncateToTokenBudget(content string, keepTokens int) string {
 
 // EstimateMessagesTokens 遍历消息列表，累加各消息的 token 估算值。
 // 对 assistant 消息，除 Content 外还将 ToolCalls[].Function.Arguments 文本计入。
+// Reasoning 同样计入：thinking/reasoning_content 会被原样回灌给 provider，漏算会让压缩触发过晚。
 func EstimateMessagesTokens(messages []llm.Message) int {
 	total := 0
 	for _, msg := range messages {
 		total += tokenutil.EstimateTokens(msg.Content)
+		total += tokenutil.EstimateTokens(msg.Reasoning)
 		if msg.Role == llm.RoleAssistant {
 			for _, tc := range msg.ToolCalls {
 				total += tokenutil.EstimateTokens(tc.Function.Arguments)

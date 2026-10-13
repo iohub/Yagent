@@ -303,6 +303,13 @@ type Adapter struct { name, description string; fn ToolFunc
 
 三档都会发 `context_*_compressed` 事件并写 `compacted` rollout 记录。
 
+> **子 Agent 的第三档需要两个条件同时成立**：`ExecutorConfig.EnableUltimateCompression`（来自
+> `enable_ultimate_compression`）与非空的 `UltimateThinkLink`，与 Director Planner 同语义
+> （`executor.go` 的 T3 分支）。Browser/Repo/DevOps 的 store 在 `Run()` 内按委派创建——
+> `RebuildPrompt` 会保留全部用户输入，放构造期会让历次委派的任务串进同一次重建。
+> token 估算（`EstimateMessagesTokens`）**包含 `Reasoning`**：thinking/reasoning_content 会被回灌给
+> provider，漏算会让压缩触发时机系统性偏晚。
+
 ### 6.6 事件总线（`internal/messaging`）
 
 `Event{ID,Type,Source,Target,Content,Priority,Timestamp,Deadline,TraceID,Metadata}` →
@@ -350,6 +357,9 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
   渲染按 `tui_view.go` / `tui_render.go` / `render.go` / `tui_chrome.go` / `tui_tabs.go` / `tui_dashboard.go`。
 - **叠加模式**：timeline 全屏、thinklink 全屏、history、resume、dialog 栈、主页面——按此优先级渲染。
   每层都必须正常消费 `taskEventMsg` 并重新武装 `listenForEvents`（该 cmd 是一次性的，事件没有重放队列）。
+- **thinklink 全屏**：条目来自 `thinklink_entry` 事件（payload 的 `agent` 字段 = 发布方 Agent 名），
+  `f` 在 All ↔ 各 Agent 间过滤（`RebuildPrompt` 之外，一次委派里 Director/Coding/Browser 的块会混排，
+  Browser 一轮可贡献上百条）。`/resume` 恢复的旧 rollout 没有 Agent 标记，只在 All 视图出现。
 - **Dialog**：`components.DialogStack`（Push/Pop/ReplaceTop/Overlay），10 个对话框；
   弹窗打开时全局守卫只放行 KeyMsg/taskEventMsg/tickMsg，新增消息类型必须显式放行（`tea.PasteMsg` 的坑已踩过）。
 - **模态编辑**：Esc→NORMAL、`i`→INSERT、`:` 命令行、`/` 真搜索、textarea 用 `SetVirtualCursor(true)`、支持 `10j` 数字前缀。
@@ -535,7 +545,7 @@ plan:
 - 状态标记支持 `[x]` 已完成、`[>]` 进行中、`[ ]` 待处理（解析器也容忍 `X`、`-`、`1.` 等写法）。
 - 字段**值**用配置语言（`[agent] lang`）书写；key、标记、标签保持英文。
 - 该块同时是 TUI thinklink 面板的显示内容和 ultimate 压缩的重建原料；**解析失败不会报错，只会静默丢失**，所以格式必须严格遵守。
-- 目前 Director 与 Coding 的 prompt 强制该格式；Repo/Chat/DevOps/Meta/Browser 未要求。
+- 目前 Director、Coding、Browser 的 prompt 强制该格式（`browser.prompt.md` 的 Thought Block Contract）；Repo/Chat/DevOps/Meta 未要求——这三个子 Agent 虽然也建了 per-Run thinklink store，但没有 T&P 块，ultimate 重建只剩原始任务输入。
 
 ---
 

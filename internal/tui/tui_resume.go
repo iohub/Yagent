@@ -617,6 +617,7 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 	m.timelineCache = ""
 	m.timelineCacheKey = ""
 	m.thinklinkEntries = nil
+	m.thinklinkAgentFilter = ""
 	if m.toolCallEntries == nil {
 		m.toolCallEntries = make(map[string]*ToolEntry)
 	} else {

@@ -54,6 +54,13 @@ Rules: the four keys `goal`/`step`/`reason`/`plan` are fixed and lowercase, one 
 - Do not screenshot repeatedly; capture when it is evidence, not as a habit.
 - Keep each tool call purposeful: one action, then verify.
 
+### Context Budget
+Runs are long and page observations are bulky, so older tool results get truncated and the history is eventually compacted.
+
+- A tool result ending with `[truncated: ...]` proves content *existed*, it is not the content. Re-read what you need with `browser_inspect(query="…", limit=10)`; never conclude from a truncated remnant.
+- If the history arrives as `[紧急上下文压缩…]` or "context has been RESET", the page state is gone: call `browser_status` first (which tab, which URL), then `browser_snapshot` to mint fresh `@ref`s. Do not act on any ref or URL remembered from before the reset.
+- Write findings into your own messages as you go (one line per verified fact, with the URL). Assistant text survives compaction; page observations do not.
+
 ### Safety Rules
 1. **Never guess or submit credentials.** Do not type passwords, tokens, or payment details.
 2. When a page needs login, CAPTCHA, 2FA, or payment confirmation, call `ask_user_for_help` and explain exactly what the user must do (which page, which field).

@@ -7,6 +7,7 @@ import (
 
 	"yagent/internal/config"
 	"yagent/internal/llm"
+	"yagent/internal/thinklink"
 	"yagent/internal/tools"
 )
 
@@ -123,6 +124,13 @@ func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
 	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
 	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
+
+	// 一次委派一个 store：RebuildPrompt 保留全部用户输入，本实例会被多次委派复用。
+	store := thinklink.NewStore(0)
+	store.AddUserInput(input, 0)
+	cfg.UltimateThinkLink = store
+	cfg.UltimateKeepPlans = ec.UltimateCompressionKeepPlans // 0=全部保留
+	cfg.EnableUltimateCompression = ec.EnableUltimateCompression
 	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {

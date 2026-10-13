@@ -416,6 +416,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	// 三级终极压缩配置
 	cfg.UltimateThinkLink = a.thinkLink // 三级终极压缩重建源（thinklink 只读窄接口）
 	cfg.UltimateKeepPlans = 0           // 0=全部保留
+	cfg.EnableUltimateCompression = ec.EnableUltimateCompression
 
 	// 如果是 git 仓库且 checkpoint 启用，设置回调和添加工具
 	if gitCheckpointEnabled {

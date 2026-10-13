@@ -75,7 +75,7 @@ func thinklinkChip(kind string, selected bool) string {
 // enterThinklinkMode 进入 thinklink 全屏模式：查看用户输入与 Thought & Plan 块。
 func enterThinklinkMode(m *model) tea.Cmd {
 	m.thinklinkMode = true
-	if n := len(m.thinklinkEntries); n > 0 {
+	if n := len(thinklinkVisibleEntries(m)); n > 0 {
 		m.thinklinkCursor = n - 1
 	} else {
 		m.thinklinkCursor = 0
@@ -93,6 +93,68 @@ func exitThinklinkMode(m *model) {
 	m.thinklinkCursor = 0
 	m.thinklinkVP = nil
 	m.thinklinkDetailActive = false
+	m.thinklinkAgentFilter = ""
+	m.invalidateFooterCache()
+}
+
+// thinklinkAgentOptions 返回条目里出现过的 Agent 名（按首次出现顺序，跳过空名）。
+// 空名来自 /resume 恢复的旧 rollout——它们只在"全部"视图里出现。
+func thinklinkAgentOptions(entries []ThinklinkEntry) []string {
+	var out []string
+	for _, e := range entries {
+		if e.Agent == "" {
+			continue
+		}
+		seen := false
+		for _, a := range out {
+			if a == e.Agent {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			out = append(out, e.Agent)
+		}
+	}
+	return out
+}
+
+// thinklinkVisibleEntries 当前过滤条件下的条目；cursor 与列表都以此为准。
+func thinklinkVisibleEntries(m *model) []ThinklinkEntry {
+	if m.thinklinkAgentFilter == "" {
+		return m.thinklinkEntries
+	}
+	out := make([]ThinklinkEntry, 0, len(m.thinklinkEntries))
+	for _, e := range m.thinklinkEntries {
+		if e.Agent == m.thinklinkAgentFilter {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// cycleThinklinkAgentFilter 在 All → 各 Agent 之间循环，并把 cursor 落到新列表的最后一条。
+func cycleThinklinkAgentFilter(m *model) {
+	opts := thinklinkAgentOptions(m.thinklinkEntries)
+	if len(opts) == 0 {
+		return
+	}
+	if m.thinklinkAgentFilter == "" {
+		m.thinklinkAgentFilter = opts[0]
+	} else {
+		next := ""
+		for i, a := range opts {
+			if a == m.thinklinkAgentFilter && i+1 < len(opts) {
+				next = opts[i+1]
+				break
+			}
+		}
+		m.thinklinkAgentFilter = next // 走到最后一个 Agent 后回到 All
+	}
+	m.thinklinkDetailActive = false
+	initThinklinkViewport(m)
+	m.thinklinkCursor = len(thinklinkVisibleEntries(m)) - 1
+	syncThinklinkDetail(m)
 	m.invalidateFooterCache()
 }
 
@@ -134,18 +196,19 @@ func syncThinklinkDetail(m *model) {
 	if m.thinklinkVP == nil {
 		return
 	}
+	visible := thinklinkVisibleEntries(m)
 	entry := ThinklinkEntry{}
-	if m.thinklinkCursor >= 0 && m.thinklinkCursor < len(m.thinklinkEntries) {
-		entry = m.thinklinkEntries[m.thinklinkCursor]
+	if m.thinklinkCursor >= 0 && m.thinklinkCursor < len(visible) {
+		entry = visible[m.thinklinkCursor]
 	}
 	content := thinklinkDetailContent(entry, thinklinkDetailWidth(m))
 	m.thinklinkVP.SetContent(content)
 	m.thinklinkVP.GotoTop()
 }
 
-// clampThinklinkCursor 保证 cursor 落在条目列表的合法范围内。
+// clampThinklinkCursor 保证 cursor 落在可见条目列表的合法范围内。
 func clampThinklinkCursor(m *model) {
-	n := len(m.thinklinkEntries)
+	n := len(thinklinkVisibleEntries(m))
 	if m.thinklinkCursor >= n {
 		m.thinklinkCursor = n - 1
 	}
@@ -398,24 +461,49 @@ func thinklinkListPreview(entry ThinklinkEntry) string {
 	return firstThinklinkLine(entry.Content)
 }
 
-// thinklinkHintBar 渲染底部 keycap 提示条（与 dashboard 的 dashKeycap 风格一致）。
-func thinklinkHintBar() string {
-	return " " +
-		dashKeycap("↑/↓", "select") +
-		dashKeycap("enter", "scroll detail") +
-		dashKeycap("g", "top") +
-		dashKeycap("esc/q", "close")
+// thinklinkHintCells 底部 keycap 提示，按重要性排列：终端越窄越先裁掉后面的键帽，
+// 整行必须留在终端宽度内（折一行就把详情面板的起始位置顶掉，整屏错位）。
+var thinklinkHintCells = [][2]string{
+	{"↑/↓", "select"},
+	{"enter", "scroll detail"},
+	{"g", "top"},
+	{"f", "filter agent"},
+	{"esc/q", "close"},
 }
 
-// thinklinkHeader 渲染标题行：◆ Thinklink + 副标题（左），条目计数（右对齐）。
+// thinklinkHintLine 渲染底部提示条（与 dashboard 的 dashKeycap 风格一致）。
+func thinklinkHintLine(width int) string {
+	var sb strings.Builder
+	sb.WriteString(" ")
+	used := 1
+	for _, c := range thinklinkHintCells {
+		cell := dashKeycap(c[0], c[1])
+		w := lipgloss.Width(cell)
+		if used+w > width {
+			break
+		}
+		sb.WriteString(cell)
+		used += w
+	}
+	return thinklinkDimStyle.Render(sb.String())
+}
+
+// thinklinkHeader 渲染标题行：◆ Thinklink + 副标题/Agent 过滤（左），条目计数（右对齐）。
 func thinklinkHeader(m *model, width int) string {
 	diamond := lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render("◆ ")
 	title := thinklinkTitleStyle.Render("Thinklink")
-	sub := thinklinkDimStyle.Render("  user inputs & thought plans")
-	left := diamond + title + sub
+	sub := "  user inputs & thought plans"
+	if m.thinklinkAgentFilter != "" {
+		sub += " · " + m.thinklinkAgentFilter
+	}
+	left := diamond + title + thinklinkDimStyle.Render(sub)
 
-	count := lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg).
-		Render(fmt.Sprintf("%d", len(m.thinklinkEntries)))
+	visible := len(thinklinkVisibleEntries(m))
+	countText := fmt.Sprintf("%d", visible)
+	if m.thinklinkAgentFilter != "" {
+		countText = fmt.Sprintf("%d/%d", visible, len(m.thinklinkEntries))
+	}
+	count := lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg).Render(countText)
 	right := count + thinklinkDimStyle.Render(" entries ")
 
 	fill := width - lipgloss.Width(right)
@@ -448,7 +536,7 @@ func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			if m.thinklinkDetailActive && m.thinklinkVP != nil {
 				m.thinklinkVP.ScrollDown(1)
-			} else if m.thinklinkCursor < len(m.thinklinkEntries)-1 {
+			} else if m.thinklinkCursor < len(thinklinkVisibleEntries(m))-1 {
 				m.thinklinkCursor++
 				syncThinklinkDetail(m)
 			}
@@ -456,6 +544,11 @@ func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 		case "enter":
 			// 切换详情滚动模式（列表导航 ↔ 详情滚动）
 			m.thinklinkDetailActive = !m.thinklinkDetailActive
+			return m, nil
+		case "f":
+			// 按 Agent 过滤：一次委派里 Director/Coding/Browser 的块会混排，
+			// Browser 一轮就能贡献上百条，不过滤基本没法读。
+			cycleThinklinkAgentFilter(m)
 			return m, nil
 		case "g":
 			// 回顶部：滚动模式滚详情，否则跳到第一条
@@ -516,9 +609,13 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 	b.WriteString(thinklinkHairStyle.Render(strings.Repeat("─", width)) + "\n")
 
 	// 空态：标题 + 发丝线 + 居中提示 + 底部提示
-	if len(m.thinklinkEntries) == 0 {
-		emptyMsg := lipgloss.NewStyle().Foreground(tlDimFg).Italic(true).
-			Render("◇  No thinklink entries yet")
+	visible := thinklinkVisibleEntries(m)
+	if len(visible) == 0 {
+		emptyText := "◇  No thinklink entries yet"
+		if m.thinklinkAgentFilter != "" {
+			emptyText = "◇  No entries from " + m.thinklinkAgentFilter
+		}
+		emptyMsg := lipgloss.NewStyle().Foreground(tlDimFg).Italic(true).Render(emptyText)
 		pad := (width - lipgloss.Width(emptyMsg)) / 2
 		if pad < 0 {
 			pad = 0
@@ -535,7 +632,7 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 		for i := top + 1; i < midRows; i++ {
 			b.WriteString("\n")
 		}
-		b.WriteString(thinklinkDimStyle.Render(thinklinkHintBar()))
+		b.WriteString(thinklinkHintLine(width))
 		return tea.View{AltScreen: true, Content: b.String()}
 	}
 
@@ -548,7 +645,7 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 	}
 
 	// ── 列表区：窗口切片保证 cursor 可见（优先靠底） ──
-	n := len(m.thinklinkEntries)
+	n := len(visible)
 	start := 0
 	if n > listH {
 		start = m.thinklinkCursor - listH + 1
@@ -564,20 +661,20 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 		end = n
 	}
 	for i := start; i < end; i++ {
-		b.WriteString(renderThinklinkListLine(m, i, width) + "\n")
+		b.WriteString(renderThinklinkListLine(m, visible[i], i, width) + "\n")
 	}
 	for i := end - start; i < listH; i++ {
 		b.WriteString("\n") // 列表不满时补空行，保持详情区位置稳定
 	}
 
 	// ── 圆角详情面板 ──
-	entry := m.thinklinkEntries[m.thinklinkCursor]
+	entry := visible[m.thinklinkCursor]
 	for _, l := range renderThinklinkDetailPanel(m, entry, width, detailH) {
 		b.WriteString(l + "\n")
 	}
 
 	// ── 底部 keycap 提示（最后一行不带换行） ──
-	b.WriteString(thinklinkDimStyle.Render(thinklinkHintBar()))
+	b.WriteString(thinklinkHintLine(width))
 
 	return tea.View{AltScreen: true, Content: b.String()}
 }
@@ -586,6 +683,15 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 func thinklinkPanelTop(title, meta string, width int) string {
 	label := lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render(" ◆ ") +
 		lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg).Render(title)
+	// meta 里现在带着 Agent 名，窄终端下必须让它先让步，否则长划归零、整行溢出宽度。
+	if meta != "" {
+		room := width - 3 - lipgloss.Width(label) - 4
+		if room < 1 {
+			meta = ""
+		} else {
+			meta = truncateThinklinkRunes(meta, room)
+		}
+	}
 	if meta != "" {
 		label += lipgloss.NewStyle().Foreground(tlDimFg).Render(" · " + meta + " ")
 	} else {
@@ -634,7 +740,12 @@ func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH i
 	if m.thinklinkDetailActive {
 		scrollMode = "scroll"
 	}
-	top := thinklinkPanelTop("DETAIL", detailLabel+" · "+scrollMode, width)
+	// 未经过滤时列表里混排着各 Agent 的块，Agent 名只在详情标题里点出来。
+	meta := detailLabel
+	if entry.Agent != "" {
+		meta += " · " + entry.Agent
+	}
+	top := thinklinkPanelTop("DETAIL", meta+" · "+scrollMode, width)
 
 	// 内容行
 	var inner []string
@@ -673,9 +784,8 @@ func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH i
 
 // renderThinklinkListLine 渲染单行条目：导轨标记 + 序号 + 类型 chip + 时间 + 步数 + 预览。
 // 选中行以亮色 ▌ 导轨与更亮的文字突出，未选中行为暗色 │ 导轨。
-func renderThinklinkListLine(m *model, idx, width int) string {
-	e := m.thinklinkEntries[idx]
-	selected := idx == m.thinklinkCursor
+func renderThinklinkListLine(m *model, e ThinklinkEntry, pos, width int) string {
+	selected := pos == m.thinklinkCursor
 
 	// 导轨
 	rail := lipgloss.NewStyle().Foreground(tlRailFg).Render("│")
@@ -684,7 +794,7 @@ func renderThinklinkListLine(m *model, idx, width int) string {
 	}
 
 	// 序号
-	idxStr := fmt.Sprintf("%02d", idx+1)
+	idxStr := fmt.Sprintf("%02d", pos+1)
 	idxStyle := lipgloss.NewStyle().Foreground(tlDimFg)
 	if selected {
 		idxStyle = lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg)
