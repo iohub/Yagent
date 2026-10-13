@@ -308,9 +308,11 @@ fallback_providers = [
 |------|------|--------|------|
 | `enable` | bool | `false` | 总开关 |
 | `max_delegation_depth` | int | `3` | 最大委派深度 |
-| `enable_context_compression` | bool | `false` | 启用上下文压缩（超阈值截断 tool 执行结果），适用于 Director、Repo-Agent、Coding-Agent、DevOps-Agent |
-| `context_compression_threshold` | int | `120000` | 触发上下文压缩的 token 阈值 |
+| `enable_context_compression` | bool | `false` | 启用上下文压缩（超阈值截断 tool 执行结果），适用于 Director、Repo-Agent、Coding-Agent、DevOps-Agent、Browser-Agent |
+| `context_compression_threshold` | int | `120000` | 触发上下文压缩的 token 阈值（仅在模型未被内嵌 models.json 收录时生效，命中时按「上下文窗口 × 0.75」推导） |
 | `tool_result_keep_tokens` | int | `200` | 截断后每条 tool 结果保留的 token 数 |
+| `enable_ultimate_compression` | bool | `true` | 第三档：前两级压完仍超限时，用 thinklink 记录的 Thought & Plan 重建上下文 |
+| `ultimate_compression_keep_plans` | int | `0` | 重建时保留的 Thought & Plan 块数上限，`0` = 全部保留 |
 
 ### 5.9 `[tui]` — TUI 快捷键配置
 

@@ -594,7 +594,7 @@ Director 侧的 blackboard 便签与 artifact 落盘由既有代码处理（`dir
 | `internal/tools/workspace_guard.go:42` `dangerousTools` | P0 只加 `browser_eval`，并在 `Check` 的 switch 里加 `case "browser_eval"` → **按 JS 敏感特征判定**（cookie/存储/网络请求/表单提交/动态执行才弹窗）；良性逃生口（`location.reload()`、`history.back()`、派发 mouseover）不打断流程。P1 再加 `browser_pdf`、`browser_upload`、`browser_download_path` |
 | `internal/tools/workspace_guard.go:51` `pathParamNames` | **`browser_screenshot` 不进这张表**：截图落在 `~/.yagent/data/browser/{delegation}` 内，本就在项目工作区之外，登记它等于每次截图都问用户一次；路径收敛由工具层 `prepareArtifactPath` 硬约束（拒绝越界与 `..`）。P1 给 `browser_upload` 的 `paths` 登记（那是"本地文件外传"面，需要工作区边界检查） |
 | `internal/agents/executor.go:74` `nonParallelToolNames` | 加 `browser_eval`、`browser_open`、`browser_tabs`（会改当前 tab 的都不能并行） |
-| `internal/compression/priority.go:9` 优先级 0 | 加 `browser_snapshot`、`browser_inspect`、`browser_devtools`、`browser_text`（陈旧观察结果最该先丢；现在它们落在 default=1，会先截 `read_file`，方向是反的） |
+| `internal/compression/priority.go:9` 优先级 0 | 加 `browser_snapshot`、`browser_inspect`、`browser_eval`、`browser_status`（陈旧观察结果最该先丢；现在它们落在 default=1，会先截 `read_file`，方向是反的。原计划的 `browser_devtools`/`browser_text` 两个名字并不存在，已按实际 14 个工具名校正） |
 | `internal/agents/tools.json` | 14 条 `browser_*` + 改 `delegate_browser` 描述 |
 | `internal/config/config.go:195` 附近 | `Config` 加 `Browser BrowserConfig \`toml:"browser"\``；新增 `BrowserConfig` struct；默认值填充函数里补零值兜底（照 `:405-409` 的 `BrowserMaxSteps` 写法） |
 
@@ -687,12 +687,16 @@ enable_skills = false     # P2：注入 domain-skills 语料
 ## 9. 上下文与成本治理
 
 1. 观察类工具结果进压缩优先级 0（见 7.2）——这是长循环不炸上下文的关键。
-2. prompt 里把 `inspect` 定为默认观察手段，`snapshot` 只在"马上要动作"时用。
-3. 渲染层做去重 + 60 字符截断 + 预算截断（见 4.6）。
-4. P1 给 `micro_agent`：长正文摘要放隔离子上下文，不进主循环。
-5. 无进展检测：在 `OnStepEnd` 里记录最近 N 步的 `url|title`；连续 5 步不变且无成功动作 →
+2. 三档压缩全部对 Browser 生效（`[enhanced_commander]` 开启后）：
+   Rule 截陈旧观察 → Emergency 用 LLM 摘要历史 → Ultimate 用本次委派的 thinklink 存储重建
+   （store 在 `Run()` 内创建，跨委派不复用）。压缩后页面状态与 `@ref` 全丢，
+   prompt 的 Context Budget 一节负责把 Agent 拉回"先 `browser_status` 再 `browser_snapshot`"。
+3. prompt 里把 `inspect` 定为默认观察手段，`snapshot` 只在"马上要动作"时用。
+4. 渲染层做去重 + 60 字符截断 + 预算截断（见 4.6）。
+5. P1 给 `micro_agent`：长正文摘要放隔离子上下文，不进主循环。
+6. 无进展检测：在 `OnStepEnd` 里记录最近 N 步的 `url|title`；连续 5 步不变且无成功动作 →
    注入一条 nudge（照 Director 的强制委派 nudge 模式）；连续 10 步 → 直接结束并报失败。
-6. `MaxSteps` 沿用 `[agent] browser_max_steps`（默认 200，`internal/config/defaults.go:23`）。
+7. `MaxSteps` 沿用 `[agent] browser_max_steps`（默认 200，`internal/config/defaults.go:23`）。
    不要改默认值；真实长流程需要它。
 
 ---

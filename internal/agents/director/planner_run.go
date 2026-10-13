@@ -37,6 +37,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				_ = p.cfg.Publisher.Publish("thinklink_entry", map[string]interface{}{
 					"id":        entry.ID,
 					"kind":      entry.Kind.String(),
+					"agent":     "Director",
 					"content":   entry.Content,
 					"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
 					"step":      entry.Step,
@@ -484,6 +485,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 						_ = p.cfg.Publisher.Publish("thinklink_entry", map[string]interface{}{
 							"id":        entry.ID,
 							"kind":      entry.Kind.String(),
+							"agent":     "Director",
 							"content":   entry.Content,
 							"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
 							"step":      entry.Step,

@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"yagent/internal/messaging"
 )
@@ -88,7 +90,92 @@ func TestThinklinkFullscreen_EscExitsMode(t *testing.T) {
 	}
 }
 
-// 测试 4：WindowSizeMsg 仍由全屏自行处理——重建 thinklinkVP 并同步尺寸。
+// 测试 4：`f` 在 All ↔ 各 Agent 之间循环。
+// 背景：一次委派里 Director/Coding/Browser 的块混排在同一条时间线里，
+// Browser 一轮就能贡献上百条，不过滤基本读不了；列表、计数、详情都要跟着过滤走。
+func TestThinklinkFullscreen_AgentFilterCycles(t *testing.T) {
+	m := newThinklinkTestModel()
+	block := "goal: verify the pricing page\nreason: need the rendered text\nplan:\n- [>] inspect"
+	m.thinklinkEntries = []ThinklinkEntry{
+		{ID: "1", Kind: "thought_plan", Agent: "Director", Content: block},
+		{ID: "2", Kind: "user_input", Agent: "Browser-Agent", Content: "open example.com"},
+		{ID: "3", Kind: "thought_plan", Agent: "Browser-Agent", Content: block},
+	}
+
+	steps := []struct {
+		wantFilter string
+		wantCount  int
+	}{
+		{"Director", 1},
+		{"Browser-Agent", 2},
+		{"", 3}, // 走到最后一个 Agent 后回到 All
+	}
+	for i, s := range steps {
+		_, cmd := thinklinkFullscreenUpdate(keyMsgFor("f"), m)
+		if cmd != nil {
+			t.Fatalf("step %d: f must be handled locally (nil cmd), got non-nil", i)
+		}
+		if m.thinklinkAgentFilter != s.wantFilter {
+			t.Errorf("step %d: filter = %q, want %q", i, m.thinklinkAgentFilter, s.wantFilter)
+		}
+		if got := len(thinklinkVisibleEntries(m)); got != s.wantCount {
+			t.Errorf("step %d: visible = %d, want %d", i, got, s.wantCount)
+		}
+		if m.thinklinkCursor < 0 || m.thinklinkCursor >= s.wantCount {
+			t.Errorf("step %d: cursor = %d out of visible range [0,%d)", i, m.thinklinkCursor, s.wantCount)
+		}
+	}
+}
+
+// 测试 5：/resume 恢复的旧 rollout 没有 Agent 标记，必须留在 All 视图里，
+// 不能被任何过滤条件吞掉。
+func TestThinklinkFilter_KeepsUnlabeledEntriesInAll(t *testing.T) {
+	m := newThinklinkTestModel()
+	m.thinklinkEntries = []ThinklinkEntry{
+		{ID: "1", Kind: "user_input", Content: "restored input"},
+		{ID: "2", Kind: "thought_plan", Agent: "Director", Content: "goal: x\nreason: y"},
+	}
+	if got := thinklinkAgentOptions(m.thinklinkEntries); len(got) != 1 || got[0] != "Director" {
+		t.Fatalf("agent options = %v, want [Director]", got)
+	}
+	m.thinklinkAgentFilter = "Director"
+	if got := len(thinklinkVisibleEntries(m)); got != 1 {
+		t.Errorf("visible under Director filter = %d, want 1", got)
+	}
+	m.thinklinkAgentFilter = ""
+	if got := len(thinklinkVisibleEntries(m)); got != 2 {
+		t.Errorf("visible in All view = %d, want 2 (unlabeled entries must stay reachable)", got)
+	}
+}
+
+// 测试 6：过滤态下的全屏渲染在宽度矩阵内不得溢出终端宽度
+// （详情面板标题现在带着 Agent 名，窄终端里靠 thinklinkPanelTop 的 meta 截断兜底）。
+func TestThinklinkFullscreen_FilteredRenderWidthMatrix(t *testing.T) {
+	block := "goal: verify the pricing page\nreason: need the rendered text\nplan:\n- [>] inspect"
+	for _, w := range []int{30, 60, 120, 240} {
+		m := newThinklinkTestModel()
+		m.termWidth, m.termHeight = w, 40
+		m.thinklinkEntries = []ThinklinkEntry{
+			{ID: "1", Kind: "thought_plan", Agent: "Director", Content: block, Timestamp: time.Now()},
+			{ID: "2", Kind: "user_input", Agent: "Browser-Agent", Content: "open example.com", Timestamp: time.Now()},
+		}
+		m.thinklinkAgentFilter = "Browser-Agent"
+		m.thinklinkCursor = 0
+
+		view := renderThinklinkFullscreenView(m)
+		for i, line := range strings.Split(view.Content, "\n") {
+			if lw := lipgloss.Width(line); lw > w {
+				t.Errorf("width %d: line %d overflows (%d cells): %q", w, i, lw, line)
+			}
+		}
+		// 30 列下头部与详情标题都会被裁短，Agent 名只在放得下的宽度上断言。
+		if w >= 60 && !strings.Contains(view.Content, "Browser-Agent") {
+			t.Errorf("width %d: filtered view should name the active agent", w)
+		}
+	}
+}
+
+// 测试 7：WindowSizeMsg 仍由全屏自行处理——重建 thinklinkVP 并同步尺寸。
 func TestThinklinkFullscreen_WindowSizeHandledLocally(t *testing.T) {
 	m := newThinklinkTestModel()
 	m.thinklinkEntries = []ThinklinkEntry{

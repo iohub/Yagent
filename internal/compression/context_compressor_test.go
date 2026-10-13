@@ -25,6 +25,17 @@ func TestEstimateMessagesTokens(t *testing.T) {
 	}
 	// 验证 assistant 的 tool_calls arguments 被计入
 	t.Logf("total tokens: %d", total)
+
+	// Reasoning 会被回灌给 provider，必须计入估算，否则压缩触发时机偏晚。
+	withReasoning := []llm.Message{{
+		Role:      llm.RoleAssistant,
+		Content:   "assistant text",
+		Reasoning: strings.Repeat("detailed reasoning sentence. ", 40),
+	}}
+	bare := []llm.Message{{Role: llm.RoleAssistant, Content: "assistant text"}}
+	if got, want := EstimateMessagesTokens(withReasoning), EstimateMessagesTokens(bare); got <= want {
+		t.Errorf("EstimateMessagesTokens with Reasoning = %d, want > %d (content only)", got, want)
+	}
 }
 
 // TestToolTruncationPriority 验证优先级映射
@@ -46,15 +57,17 @@ func TestToolTruncationPriority(t *testing.T) {
 		{"find_function_callee", 0},
 		{"find_function_caller", 0},
 		{"deepthinking", -1},
-		// 浏览器观察结果最该先丢：同一页面每次 inspect/snapshot 都产生新的，旧的既过时又占大头
+		// 浏览器观察/取数结果最该先丢：同一页面每次 inspect/snapshot/eval 都产生新的，旧的既过时又占大头
 		{"browser_snapshot", 0},
 		{"browser_inspect", 0},
-		{"browser_text", 0},
-		{"browser_devtools", 0},
+		{"browser_eval", 0},
+		{"browser_status", 0},
 		{"list_dir", 1},
 		{"agent_exit", 1},
-		// 交互类不截断：失败/成功的动作记录是恢复上下文的锚点
+		// 交互类不截断：失败/成功的动作记录是恢复上下文的锚点；
+		// browser_screenshot 只返回工作区里的路径字符串，本身没有体积。
 		{"browser_click", 1},
+		{"browser_screenshot", 1},
 		{"unknown_tool", 1},
 	}
 	for _, tt := range tests {

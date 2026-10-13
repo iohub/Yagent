@@ -847,7 +847,12 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			e := ThinklinkEntry{
 				ID:      stringFromEventMap(contentMap, "id"),
 				Kind:    stringFromEventMap(contentMap, "kind"),
+				Agent:   stringFromEventMap(contentMap, "agent"),
 				Content: stringFromEventMap(contentMap, "content"),
+			}
+			if e.Agent == "" {
+				// 事件来源即发布方 Agent 名（Publish 的 from 参数）
+				e.Agent = msg.event.Source
 			}
 			if tsStr, ok := contentMap["timestamp"].(string); ok {
 				if parsed, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {

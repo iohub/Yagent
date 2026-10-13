@@ -11,9 +11,8 @@ func toolTruncationPriority(toolName string) int {
 		"print_dir_tree", "search_by_regex", "query_call_graph",
 		"find_function_callee", "find_function_caller":
 		return 0
-	// 浏览器观察结果是最该先丢的：同一页面每次 inspect/snapshot 都会产生新的，
-	// 旧的既过时又占大头（归到 default=1 会先截 read_file，方向是反的）。
-	case "browser_snapshot", "browser_inspect", "browser_text", "browser_devtools":
+	// 浏览器观察/取数结果每次都是新的且最易过时，必须先丢；证据已写进 assistant 文本，不受 tool 截断影响。
+	case "browser_snapshot", "browser_inspect", "browser_eval", "browser_status":
 		return 0
 	case "deepthinking", "design":
 		return -1

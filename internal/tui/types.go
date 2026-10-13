@@ -157,11 +157,12 @@ func (e *TimelineEntry) EffectiveStatus() ToolStatus {
 }
 
 // ThinklinkEntry 表示 thinklink 全屏视图中的条目
-// （用户原始输入 / Director 的 Thought & Plan 块）。
+// （用户原始输入 / 各 Agent 的 Thought & Plan 块）。
 type ThinklinkEntry struct {
 	ID        string    // 条目唯一标识（后端 thinklink.Store 生成）
 	Kind      string    // "user_input" 或 "thought_plan"
+	Agent     string    // 产出该条目的 Agent（"Director" / "Coding-Agent" / "Browser-Agent"…）；旧 rollout 恢复时为空
 	Content   string    // 用户原始输入 或 Thought & Plan 块原文
 	Timestamp time.Time // 记录时间
-	Step      int       // 记录发生时 Director 的步数（无则为 0）
+	Step      int       // 记录发生时该 Agent 的步数（无则为 0）
 }
