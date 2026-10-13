@@ -3,9 +3,10 @@ package agents
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 
+	"yagent/internal/blackboard"
 	"yagent/internal/tools"
+	"yagent/internal/toolspec"
 
 	"yagent/internal/llm"
 )
@@ -16,7 +17,7 @@ var chatPrompt string
 type ChatAgent struct {
 	BaseAgent
 	promptFmt PromptFormatter
-	Adapters  []*tools.Adapter
+	params    ChatAgentParams
 	maxSteps  int
 }
 
@@ -43,50 +44,9 @@ func NewChatAgent(p ChatAgentParams) *ChatAgent {
 			Publisher: p.Publisher,
 		},
 		promptFmt: p.Formatter,
-		Adapters:  buildChatAdapters(p),
+		params:    p,
 		maxSteps:  p.MaxSteps,
 	}
-}
-
-// buildChatAdapters 装配 Chat-Agent 的最小工具集：
-// micro_agent（子 LLM 推理）、thinking（认知反思）、agent_exit（退出）、deepthinking。
-func buildChatAdapters(p ChatAgentParams) []*tools.Adapter {
-	var toolDefs []tools.ToolDefinition
-	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
-		// Errors parsing tools.json are logged but non-fatal —
-		// ChatAgent falls back to no-tool mode.
-	}
-
-	adapters := make([]*tools.Adapter, 0, len(toolDefs))
-	for _, def := range toolDefs {
-		var fn tools.ToolFunc
-		switch def.Name {
-		case "micro_agent":
-			fn = p.MicroAgent.Execute
-		case "thinking":
-			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-				inputBytes, _ := json.Marshal(params)
-				return p.Thinker.Call(ctx, string(inputBytes))
-			}
-		case "agent_exit":
-			fn = p.Flow.ExecuteAgentExit
-		case "deepthinking":
-			fn = p.DeepThinker.Execute
-		case "ask_user_for_help":
-			if p.Env.FullYoloMode() {
-				continue
-			}
-			fn = p.Flow.ExecuteAskUserForHelp
-		default:
-			continue
-		}
-
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
-		adapters = append(adapters, adapter)
-	}
-	tools.SetGuardOnAdapters(adapters, p.Guard)
-
-	return adapters
 }
 
 func (a *ChatAgent) Name() string {
@@ -98,7 +58,14 @@ func (a *ChatAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	systemPrompt := a.promptFmt.FormatPrompt(chatPrompt)
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
-	cfg.Adapters = a.Adapters
+	// 工具面由注册表按画像装配：Chat 的画像只给认知族 + 流程控制 + 便签回读，
+	// 没有任何文件系统能力（历史上这是 buildChatAdapters 里那 5 个 case）。
+	deps := depsFor("chat", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx))
+	deps.Flow = a.params.Flow
+	deps.Thinker = a.params.Thinker
+	deps.Micro = a.params.MicroAgent
+	deps.Deep = a.params.DeepThinker
+	cfg.Surface = surfaceFor(toolspec.ProfileChat, deps, a.Name())
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
 	cfg.Publisher = a.Publisher

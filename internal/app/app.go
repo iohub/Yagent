@@ -484,6 +484,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Thinker:        gctx.ThinkingTool,
 			MicroAgent:     gctx.MicroAgentTool,
 			DeepThinker:    gctx.DeepThinkingTool,
+			Repo:           gctx.RepoOps,
 			Guard:          guard,
 			RepoCtx:        repoCtx,
 			Knowledge:      gctx.KnowledgeInjector,

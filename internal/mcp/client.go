@@ -38,6 +38,9 @@ type MCPClient struct {
 	mu       sync.Mutex
 	requests map[int]chan *JSONRPCResponse
 	nextID   atomic.Int64
+	// writeMu 保护 stdin 管道写入：os.File.Write 只对 ≤PIPE_BUF 保证原子，
+	// knowledge 写入这类大请求并发时会交错成非法 JSON-RPC。
+	writeMu sync.Mutex
 
 	alive       atomic.Bool
 	initialized atomic.Bool
@@ -399,6 +402,11 @@ func (c *MCPClient) sendJSON(v interface{}) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
+	// 并发只读工具（semantic_search / find_function_* 等）会同时往同一条管道写请求。
+	// 超过 PIPE_BUF 的单次 write 不保证原子，两条消息会交错成非法 JSON-RPC，
+	// readLoop 只能报 "invalid JSON" 并把两个在飞请求一起拖到超时。
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	_, err = c.stdin.Write(append(data, '\n'))
 	if err != nil {
 		return fmt.Errorf("failed to write to stdin: %w", err)

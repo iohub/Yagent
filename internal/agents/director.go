@@ -35,33 +35,42 @@ type CustomAgent = director.CustomAgent
 
 type DirectorAgent struct {
 	BaseAgent
-	RepoAgent      *RepoAgent
-	CodingAgent    *CodingAgent
-	ChatAgent      *ChatAgent
-	MetaAgent      *MetaAgent
-	DevOpsAgent    *DevOpsAgent
-	BrowserAgent   *BrowserAgent
-	promptFmt      PromptFormatter
-	env            Env
-	files          FileToolSet
-	search         SearchToolSet
-	sys            SysToolSet
-	edit           EditToolSet
-	flow           FlowToolSet
-	thinker        Thinker
-	microAgent     MicroAgentRunner
-	deepThinker    DeepThinker
-	guard          *tools.WorkspaceGuard
-	repoCtx        RepoContextStore
-	knowledge      KnowledgeProvider
-	mcpClient      *mcp.MCPClient
-	Adapters       []*tools.Adapter
-	maxSteps       int
-	metaRetryCount int
-	toolDefMap     map[string]tools.ToolDefinition
-	metaHandler    *director.MetaAgentHandler
-	adapter        *DirectorAdapter
-	llmClient      *llm.Client
+	RepoAgent    *RepoAgent
+	CodingAgent  *CodingAgent
+	ChatAgent    *ChatAgent
+	MetaAgent    *MetaAgent
+	DevOpsAgent  *DevOpsAgent
+	BrowserAgent *BrowserAgent
+	promptFmt    PromptFormatter
+	env          Env
+	files        FileToolSet
+	search       SearchToolSet
+	sys          SysToolSet
+	edit         EditToolSet
+	flow         FlowToolSet
+	thinker      Thinker
+	microAgent   MicroAgentRunner
+	deepThinker  DeepThinker
+	guard        *tools.WorkspaceGuard
+	repo         RepoToolSet
+	repoCtx      RepoContextStore
+	knowledge    KnowledgeProvider
+	mcpClient    *mcp.MCPClient
+	// Adapters 是 surface 的快照视图，只供仍按字段读取的调用点与测试使用；
+	// 工具声明与执行一律走 surface（见 rebuildSurface）。
+	Adapters []*tools.Adapter
+	// surface 是 Director 的工具面。boardID 按任务变化，而 read_note/read_artifact
+	// 的可用性取决于它，所以它按轮重建，不在构造期固化。
+	surface *tools.Surface
+	// materializedAcrossTurns 记住本会话里已经取回过 schema 的冷工具。
+	// Surface 每轮重建，不跨轮保存的话第一轮 load_tool 取回的东西第二轮要再付一次。
+	materializedAcrossTurns map[string]bool
+	disabledAgents          map[string]bool
+	maxSteps                int
+	metaRetryCount          int
+	metaHandler             *director.MetaAgentHandler
+	adapter                 *DirectorAdapter
+	llmClient               *llm.Client
 
 	projectCtxLoader *director.ProjectContextLoader
 
@@ -104,6 +113,7 @@ type DirectorAgentParams struct {
 	Thinker     Thinker
 	MicroAgent  MicroAgentRunner
 	DeepThinker DeepThinker
+	Repo        RepoToolSet
 	Guard       *tools.WorkspaceGuard
 	RepoCtx     RepoContextStore
 	Knowledge   KnowledgeProvider
@@ -190,19 +200,7 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 		thinkLink: thinklink.NewStore(0),
 	}
 
-	adapters := self.buildToolAdapters()
-	delegateAdapters := self.buildDelegateAdapters(p.DisabledAgents)
-
-	tools.SetGuardOnAdapters(adapters, p.Guard)
-	tools.SetGuardOnAdapters(delegateAdapters, p.Guard)
-
-	knowledgeAdapters := createKnowledgeToolAdapters(p.MCPClient, p.LLM, "", "")
-	allAdapters := append(adapters, delegateAdapters...)
-	if len(knowledgeAdapters) > 0 {
-		tools.SetGuardOnAdapters(knowledgeAdapters, p.Guard)
-		allAdapters = append(allAdapters, knowledgeAdapters...)
-	}
-	self.Adapters = allAdapters
+	self.disabledAgents = p.DisabledAgents
 
 	if self.boardID == "" {
 		self.boardID = blackboard.GenerateAdhocID()
@@ -214,76 +212,20 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 		SetProjectPathProvider(self.env.ProjectPath)
 	}
 
-	toolDefsForHash := make([]llm.ToolDef, len(allAdapters))
-	for i, ad := range allAdapters {
-		toolDefsForHash[i] = ad.ToToolDef()
-	}
-	toolHash := tools.ComputeToolDefsHash(toolDefsForHash)
-	names := make([]string, len(toolDefsForHash))
-	for i, td := range toolDefsForHash {
-		names[i] = td.Function.Name
+	// 构造期先建一次工具面：让启动日志说清 Director 到底有哪些工具，并把"依赖没装配
+	// 所以被跳过"的项汇总出来 —— 历史上这类信息散在 6 处日志里，没人汇总。
+	self.rebuildSurface()
+	defs := self.surface.Defs()
+	names := make([]string, 0, len(defs))
+	for _, td := range defs {
+		names = append(names, td.Function.Name)
 	}
 	slog.Info("Director tool definitions initialized",
-		"hash", toolHash,
-		"tool_count", len(toolDefsForHash),
+		"hash", tools.ComputeToolDefsHash(defs),
+		"tool_count", len(defs),
 		"tool_names", names)
 
 	return self
-}
-
-// buildToolAdapters 装配 Director 的基础工具（agent_exit/read_artifact/read_note）
-// 与 tools.json 中声明的只读工具，并顺带填充 a.toolDefMap（供 registerCustomAgent 查询）。
-func (a *DirectorAgent) buildToolAdapters() []*tools.Adapter {
-	adapters := []*tools.Adapter{
-		tools.NewAdapter("agent_exit", "Exit the agent with a reason. Use this when you are done — whether the task completed successfully, failed, needs clarification, or must be terminated. The reason must explain WHY the agent is exiting.", a.flow.ExecuteAgentExit).WithSchema(map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"reason": map[string]interface{}{"type": "string", "description": "The reason the agent is exiting, e.g., task completed, cannot proceed, blocked by missing information, or must terminate."},
-			},
-			"required": []string{"reason"},
-		}),
-		newReadArtifactAdapter(),
-		newReadNoteAdapter(func() string { return a.boardID }),
-	}
-
-	var toolDefs []tools.ToolDefinition
-	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
-		slog.Error("Failed to unmarshal tools", "error", err)
-	}
-
-	toolDefMap := make(map[string]tools.ToolDefinition, len(toolDefs))
-	for _, def := range toolDefs {
-		toolDefMap[def.Name] = def
-	}
-	a.toolDefMap = toolDefMap
-
-	for _, def := range toolDefs {
-		var fn tools.ToolFunc
-		switch def.Name {
-		case "search_by_regex":
-			fn = a.search.ExecuteGrepSearch
-		case "list_dir":
-			fn = a.files.ExecuteListDir
-		case "read_file":
-			fn = a.files.ExecuteReadFile
-		case "print_dir_tree":
-			fn = a.files.ExecutePrintDirTree
-		case "deepthinking":
-			fn = a.deepThinker.Execute
-		case "ask_user_for_help":
-			if a.env.FullYoloMode() {
-				continue
-			}
-			fn = a.flow.ExecuteAskUserForHelp
-		default:
-			continue
-		}
-
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
-		adapters = append(adapters, adapter)
-	}
-
-	return adapters
 }
 
 // routeCtx 对 delegate 子任务做难度分类，把选中的档位写入 ctx（供子 agent 的
@@ -310,213 +252,6 @@ func (a *DirectorAgent) routeCtx(ctx context.Context, agentName, task string) co
 		}, a.Name())
 	}
 	return ctx
-}
-
-// buildDelegateAdapters 装配六个内建 delegate_<agent> 工具，并按 disabledAgents 过滤。
-// 闭包在运行时读取接收者字段（boardID/Adapters/metaRetryCount 等），故必须在结构体
-// 填充完成后调用。返回顺序固定为：repo, coding, chat, meta, devops, browser。
-func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []*tools.Adapter {
-	delegateRepo := tools.NewAdapter("delegate_repo", "Delegate analysis task to Repo-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		task, ok := params["task"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task parameter required")
-		}
-		packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
-		ctx = blackboard.WithBoardID(ctx, a.boardID)
-		if rolloutWriter := a.createRolloutWriter("repo", task); rolloutWriter != nil {
-			defer rolloutWriter.Close()
-			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-		}
-		ctx = a.routeCtx(ctx, "repo", task)
-		result, err := a.RepoAgent.Run(ctx, packedTask)
-		noteRef := a.writeDelegateNote("repo_agent", "delegate_repo", task, result, err)
-		return a.applyEnhancedCommander("repo", task, result, err, noteRef, unresolved)
-	}).WithSchema(buildDelegateSchema("The task description for Repo-Agent")).WithReadOnly(true)
-
-	delegateCoding := tools.NewAdapter("delegate_coding", "Delegate coding task to Coding-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		task, ok := params["task"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task parameter required")
-		}
-		packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
-		ctx = blackboard.WithBoardID(ctx, a.boardID)
-		if rolloutWriter := a.createRolloutWriter("coding", task); rolloutWriter != nil {
-			defer rolloutWriter.Close()
-			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-		}
-		ctx = a.routeCtx(ctx, "coding", task)
-		result, err := a.CodingAgent.Run(ctx, packedTask)
-		noteRef := a.writeDelegateNote("coding_agent", "delegate_coding", task, result, err)
-		return a.applyEnhancedCommander("coding", task, result, err, noteRef, unresolved)
-	}).WithSchema(buildDelegateSchema("The task description for Coding-Agent"))
-
-	delegateChat := tools.NewAdapter("delegate_chat", "Delegate general conversation, explanation, or non-coding tasks to Chat-Agent", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		task, ok := params["task"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task parameter required")
-		}
-		packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
-		ctx = blackboard.WithBoardID(ctx, a.boardID)
-		if rolloutWriter := a.createRolloutWriter("chat", task); rolloutWriter != nil {
-			defer rolloutWriter.Close()
-			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-		}
-		ctx = a.routeCtx(ctx, "chat", task)
-		result, err := a.ChatAgent.Run(ctx, packedTask)
-		noteRef := a.writeDelegateNote("chat_agent", "delegate_chat", task, result, err)
-		return a.applyEnhancedCommander("chat", task, result, err, noteRef, unresolved)
-	}).WithSchema(buildDelegateSchema("The message or question for Chat-Agent")).WithReadOnly(true)
-
-	delegateDevOps := tools.NewAdapter("delegate_devops", "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		task, ok := params["task"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task parameter required")
-		}
-		packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
-		ctx = blackboard.WithBoardID(ctx, a.boardID)
-		if rolloutWriter := a.createRolloutWriter("devops", task); rolloutWriter != nil {
-			defer rolloutWriter.Close()
-			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-		}
-		ctx = a.routeCtx(ctx, "devops", task)
-		result, err := a.DevOpsAgent.Run(ctx, packedTask)
-		noteRef := a.writeDelegateNote("devops_agent", "delegate_devops", task, result, err)
-		return a.applyEnhancedCommander("devops", task, result, err, noteRef, unresolved)
-	}).WithSchema(buildDelegateSchema("The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."))
-
-	// 浏览器能力探测：不可用时描述必须显式降级，否则 Director 会反复委派一个必然报错的工具
-	browserAvailable, browserReason := false, "浏览器执行层未装配"
-	if a.BrowserAgent != nil {
-		browserAvailable, browserReason = a.BrowserAgent.Capability()
-	}
-
-	delegateBrowser := tools.NewAdapter("delegate_browser",
-		browserDelegateDescription(browserAvailable, browserReason),
-		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			task, ok := params["task"].(string)
-			if !ok {
-				return nil, fmt.Errorf("task parameter required")
-			}
-			packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
-			ctx = blackboard.WithBoardID(ctx, a.boardID)
-			if rolloutWriter := a.createRolloutWriter("browser", task); rolloutWriter != nil {
-				defer rolloutWriter.Close()
-				ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-			}
-			ctx = a.routeCtx(ctx, "browser", task)
-			result, err := a.BrowserAgent.Run(ctx, packedTask)
-			noteRef := a.writeDelegateNote("browser_agent", "delegate_browser", task, result, err)
-			return a.applyEnhancedCommander("browser", task, result, err, noteRef, unresolved)
-		}).WithSchema(buildDelegateSchema("A self-contained browser task: the target URL, what to do on the page, and what evidence to return."))
-
-	delegateMeta := tools.NewAdapter("delegate_meta", "Delegate to Meta-Agent to DESIGN a custom specialized agent. Meta-Agent will craft a tailored system prompt using prompt engineering best practices and select appropriate tools. The designed agent is automatically registered and immediately executed to complete the task. After this, the new agent becomes a permanent delegate tool for future use.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		task, ok := params["task"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task parameter required")
-		}
-		ctx = blackboard.WithBoardID(ctx, a.boardID)
-		if rolloutWriter := a.createRolloutWriter("meta", task); rolloutWriter != nil {
-			defer rolloutWriter.Close()
-			ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-		}
-		slog.Info("Director delegating to Meta-Agent (design)", "task", task)
-		ctx = a.routeCtx(ctx, "meta", task)
-
-		maxRetries := a.metaRetryCount
-		var lastRawOutput string
-
-		for attempt := 0; attempt < maxRetries; attempt++ {
-			retryTask := task
-			if attempt > 0 {
-				retryTask = fmt.Sprintf(
-					"%s\n\n[FORMAT CORRECTION — Attempt %d/%d]\nYour previous output was NOT valid JSON or missing required fields. You MUST output ONLY a valid JSON object with these exact top-level keys:\n{\n  \"thinking\": \"...\",\n  \"agent_name\": \"...\",\n  \"agent_design\": \"...\",\n  \"tools_used\": [...],\n  \"task_for_agent\": \"...\"\n}\n\nDo NOT wrap in markdown code fences (```). Do NOT include any text outside the JSON object.",
-					task, attempt, maxRetries-1,
-				)
-			}
-
-			metaResult, err := a.MetaAgent.Run(ctx, retryTask)
-			if err != nil {
-				return nil, fmt.Errorf("Meta-Agent design failed: %w", err)
-			}
-			a.setPendingSubAgentMemory(&metaResult)
-			lastRawOutput = metaResult.Text
-
-			systemPrompt, execResult, parseErr := director.ParseMetaAgentOutput(metaResult.Text)
-			if parseErr != nil {
-				slog.Warn("Meta-Agent JSON parse failed, retrying", "attempt", attempt+1, "maxRetries", maxRetries, "error", parseErr)
-				continue
-			}
-
-			if execResult.AgentName != "" && systemPrompt != "" {
-				snakeName := toSnakeCase(execResult.AgentName)
-				customAgent := &CustomAgent{
-					Name:         snakeName,
-					DisplayName:  execResult.AgentName,
-					SystemPrompt: systemPrompt,
-					ToolsUsed:    execResult.ToolsUsed,
-					Description:  fmt.Sprintf("Custom agent designed for: %s. Uses tools: %s.", execResult.AgentName, strings.Join(execResult.ToolsUsed, ", ")),
-				}
-				a.registerCustomAgent(customAgent)
-
-				agentTask := execResult.TaskForAgent
-				if agentTask == "" {
-					agentTask = task
-				}
-
-				delegateName := "delegate_" + snakeName
-				for _, ad := range a.Adapters {
-					if ad.Name() == delegateName {
-						slog.Info("Director executing newly designed agent", "delegate", delegateName, "display_name", execResult.AgentName)
-						callResult, callErr := ad.Call(ctx, fmt.Sprintf(`{"task": %q}`, agentTask))
-						if callErr != nil {
-							return nil, fmt.Errorf("new agent %s execution failed: %w", execResult.AgentName, callErr)
-						}
-						var rawResult string
-						if err := json.Unmarshal([]byte(callResult), &rawResult); err != nil {
-							rawResult = callResult
-						}
-						formattedResult := fmt.Sprintf(
-							"[Meta-Agent: Agent Designed and Executed]\nDesigned Agent: %s\nTools: %s\n\n[Execution Result]\n%s\n\n[New Agent Registered]\nA new specialized agent \"%s\" is now available via the `%s` tool for future tasks of this type.",
-							execResult.AgentName,
-							strings.Join(execResult.ToolsUsed, ", "),
-							rawResult,
-							execResult.AgentName,
-							delegateName,
-						)
-						return formattedResult, nil
-					}
-				}
-				return nil, fmt.Errorf("newly registered agent %s not found in adapters", delegateName)
-			}
-
-			return fmt.Sprintf("[Meta-Agent Design Result]\nAgent could not be registered (missing name or design). Raw output: %s", metaResult.Text), nil
-		}
-
-		slog.Warn("Meta-Agent JSON parse failed after all retries, returning raw output")
-		return lastRawOutput, nil
-	}).WithSchema(buildDelegateSchema("Detailed task description for Meta-Agent. Include: what needs to be accomplished, why existing agents are insufficient, and what the expected output format should be."))
-
-	var delegateAdapters []*tools.Adapter
-	if !disabledAgents["repo"] {
-		delegateAdapters = append(delegateAdapters, delegateRepo)
-	}
-	if !disabledAgents["coding"] {
-		delegateAdapters = append(delegateAdapters, delegateCoding)
-	}
-	if !disabledAgents["chat"] {
-		delegateAdapters = append(delegateAdapters, delegateChat)
-	}
-	if !disabledAgents["meta"] {
-		delegateAdapters = append(delegateAdapters, delegateMeta)
-	}
-	if !disabledAgents["devops"] {
-		delegateAdapters = append(delegateAdapters, delegateDevOps)
-	}
-	if !disabledAgents["browser"] {
-		delegateAdapters = append(delegateAdapters, delegateBrowser)
-	}
-
-	return delegateAdapters
 }
 
 func (a *DirectorAgent) Name() string {
@@ -568,43 +303,6 @@ func (a *DirectorAgent) refreshSubAgentEngines() {
 	}
 }
 
-func (a *DirectorAgent) getToolFunc(name string) tools.ToolFunc {
-	switch name {
-	case "read_file":
-		return a.files.ExecuteReadFile
-	case "search_replace_in_file":
-		return a.edit.ExecuteReplaceBlock
-	case "create_file":
-		return a.files.ExecuteCreateFile
-	case "run_bash":
-		return a.sys.ExecuteRunBash
-	case "search_by_regex":
-		return a.search.ExecuteGrepSearch
-	case "list_dir":
-		return a.files.ExecuteListDir
-	case "print_dir_tree":
-		return a.files.ExecutePrintDirTree
-	case "thinking":
-		return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			inputBytes, _ := json.Marshal(params)
-			return a.thinker.Call(ctx, string(inputBytes))
-		}
-	case "micro_agent":
-		return a.microAgent.Execute
-	case "deepthinking":
-		return a.deepThinker.Execute
-	case "agent_exit":
-		return a.flow.ExecuteAgentExit
-	case "ask_user_for_help":
-		if a.env.FullYoloMode() {
-			return nil
-		}
-		return a.flow.ExecuteAskUserForHelp
-	default:
-		return nil
-	}
-}
-
 func toSnakeCase(name string) string {
 	var result strings.Builder
 	for i, r := range strings.ToLower(name) {
@@ -629,71 +327,6 @@ func toSnakeCase(name string) string {
 	return raw
 }
 
-func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) {
-	delegateName := "delegate_" + ca.Name
-
-	if err := a.metaHandler.Register(ca); err != nil {
-		slog.Info("Custom agent already registered", "name", delegateName)
-		return
-	}
-
-	customAdapters := make([]*tools.Adapter, 0, len(ca.ToolsUsed))
-	for _, toolName := range ca.ToolsUsed {
-		fn := a.getToolFunc(toolName)
-		if fn == nil {
-			slog.Warn("Custom agent references unknown tool", "agent", ca.Name, "tool", toolName)
-			continue
-		}
-		def, ok := a.toolDefMap[toolName]
-		if !ok {
-			slog.Warn("Tool definition not found in toolDefMap", "tool", toolName)
-			continue
-		}
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
-		customAdapters = append(customAdapters, adapter)
-	}
-
-	finishDef, ok := a.toolDefMap["agent_exit"]
-	if ok {
-		fn := a.getToolFunc("agent_exit")
-		adapter := tools.NewAdapter("agent_exit", finishDef.Description, fn).WithSchema(finishDef.Parameters)
-		customAdapters = append(customAdapters, adapter)
-	}
-
-	tools.SetGuardOnAdapters(customAdapters, a.guard)
-
-	agentRef := ca
-	adaptersRef := customAdapters
-
-	description := fmt.Sprintf("Delegate to %s — a custom specialized agent designed by Meta-Agent. %s",
-		ca.DisplayName, ca.Description)
-
-	delegateAdapter := tools.NewAdapter(delegateName, description,
-		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			task, ok := params["task"].(string)
-			if !ok {
-				return nil, fmt.Errorf("task parameter required")
-			}
-			packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
-			ctx = blackboard.WithBoardID(ctx, a.boardID)
-			ctx = a.routeCtx(ctx, agentRef.Name, task)
-			resultStr, err := a.executeCustomAgent(ctx, agentRef, adaptersRef, packedTask)
-			agentResult := a.takePendingSubAgentMemory()
-			if agentResult == nil {
-				agentResult = &AgentResult{Text: resultStr, Summary: resultStr}
-			}
-			noteRef := a.writeDelegateNote(agentRef.Name+"_agent", delegateName, task, *agentResult, err)
-			if err != nil {
-				return "", err
-			}
-			return FormatForDirector(agentRef.Name, *agentResult, noteRef, unresolved), nil
-		}).WithSchema(buildDelegateSchema("The task description for " + ca.DisplayName))
-
-	a.Adapters = append(a.Adapters, delegateAdapter)
-
-	slog.Info("Custom agent registered", "delegate_name", delegateName, "display_name", ca.DisplayName, "tools", ca.ToolsUsed)
-}
-
 // currentLLMTimeout 返回当前生效的 LLM 调用超时：全局运行时值（TUI 模型设置面板
 // 可动态修改）优先，未初始化时回落构造期快照 a.llmTimeout。
 // 每次构造 ExecutorConfig / PlannerConfig 时求值（而非使用构造期快照），
@@ -708,14 +341,14 @@ func (a *DirectorAgent) currentLLMTimeout() time.Duration {
 	return config.DefaultLLMCallTimeout
 }
 
-func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent, adapters []*tools.Adapter, task string) (string, error) {
+func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent, surface *tools.Surface, task string) (string, error) {
 	systemPrompt := a.promptFmt.FormatPrompt(ca.SystemPrompt)
 
 	cfg := DefaultExecutorConfig()
 	cfg.MaxParallelReadOnlyTools = a.maxParallelReadOnlyTools
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = task
-	cfg.Adapters = adapters
+	cfg.Surface = surface
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = 15
 	cfg.Publisher = a.Publisher
@@ -854,21 +487,6 @@ func parseContextRefs(raw interface{}) []string {
 	return refs
 }
 
-func buildDelegateSchema(taskDesc string) map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": taskDesc},
-			"context_refs": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "Optional references to prior blackboard notes or artifacts. Formats: 'agent:<name>' (latest notes from agent), 'note:<agent>/<stem>' (specific note), 'artifact:<id>' (existing artifact).",
-			},
-		},
-		"required": []string{"task"},
-	}
-}
-
 func (a *DirectorAgent) writeDelegateNote(agentName, toolName, task string, result AgentResult, runErr error) string {
 	if !blackboardEnabled() || a.boardID == "" {
 		return ""
@@ -971,87 +589,105 @@ type directorToolRunner struct {
 }
 
 func (r *directorToolRunner) Specs() []llm.ToolDef {
-	defs := make([]llm.ToolDef, len(r.agent.Adapters))
-	for i, ad := range r.agent.Adapters {
-		defs[i] = ad.ToToolDef()
+	if r.agent.surface == nil {
+		// 兼容仍手工注入 Adapters 的调用点与测试（生产路径总是有 Surface）。
+		defs := make([]llm.ToolDef, len(r.agent.Adapters))
+		for i, ad := range r.agent.Adapters {
+			defs[i] = ad.ToToolDef()
+		}
+		return defs
 	}
-	return defs
+	// 每次调用都重新向 Surface 取：deferred 的取回（load_tool）与 Meta 运行期注册的
+	// Custom Agent 都要在下一步就对模型可见。过去这里返回构造期快照、planner 每轮再
+	// 冻结一次，结果新注册的委派工具本回合只有代码能调到。
+	return r.agent.surfaceOrDefault().Defs()
 }
 
 func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON string) (string, error) {
 	a := r.agent
 
-	for _, t := range a.Adapters {
-		if t.Name() != name {
-			continue
-		}
-
-		if strings.HasPrefix(t.Name(), "delegate_") {
-			agentName := strings.TrimPrefix(t.Name(), "delegate_")
-			LogDelegateCall(t.Name(), agentName, argsJSON)
-		}
-
-		toolTimeout := 120 * time.Second
-		isDelegate := strings.HasPrefix(name, "delegate_")
-		cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
-		toolCtx := cancelCtx
-		toolCancel := cancelCtxCancel
-		switch {
-		case isInteractiveUserTool(name):
-		case isDelegate:
-			toolCtx, toolCancel = activity.WithIdleTimeout(cancelCtx, activity.Options{
-				IdleTimeout:  a.delegateIdleTimeout,
-				TotalTimeout: a.delegateTotalTimeout,
-			})
-		default:
-			toolCtx, toolCancel = context.WithTimeout(cancelCtx, toolTimeout)
-		}
-		toolResult, err := t.Call(toolCtx, argsJSON)
-		cancelCtxCancel()
-		toolCancel()
-
-		if psm := a.takePendingSubAgentMemory(); psm != nil {
-			a.injectSubAgentMemory(*psm, "", name)
-			r.state.SetPendingSubAgentMemory(toSubAgentMemory(psm))
-		}
-
-		if strings.HasPrefix(t.Name(), "delegate_") {
-			r.state.RecordDelegation(err == nil)
-		}
-
-		if err != nil {
-			cause := context.Cause(toolCtx)
-			var idleErr *activity.IdleTimeoutError
-			var totalErr *activity.TotalTimeoutError
-			switch {
-			case errors.As(cause, &idleErr):
-				return "", fmt.Errorf("tool execution timed out (idle): %w", idleErr)
-			case errors.As(cause, &totalErr):
-				return "", fmt.Errorf("tool execution timed out (total): %w", totalErr)
-			case errors.Is(err, context.DeadlineExceeded):
-				return "", fmt.Errorf("tool execution timed out after %d seconds", int(toolTimeout.Seconds()))
-			}
-			return "", err
-		} else if t.Name() == "delegate_repo" {
-			if psm := r.state.PendingSubAgentMemory; psm != nil {
-				a.repoCtx.Set(psm.Text)
-			} else {
-				var summary string
-				if uerr := json.Unmarshal([]byte(toolResult), &summary); uerr == nil {
-					a.repoCtx.Set(summary)
-				} else {
-					a.repoCtx.Set(toolResult)
-				}
-			}
-		}
-		return toolResult, nil
+	ad, state := a.resolveTool(name)
+	if state == tools.StateUnknown || ad == nil {
+		return fmt.Sprintf("Tool %s not found", name), nil
 	}
-	return fmt.Sprintf("Tool %s not found", name), nil
+	// 模型跳过 load_tool 直接调冷工具：不判它幻觉，把完整 schema 回吐一次，
+	// 同一步就能自己纠正过来。
+	if state == tools.StateColdKnown {
+		schema, err := a.surfaceOrDefault().Materialize([]string{name})
+		if err != nil {
+			return "", fmt.Errorf("cannot load schema for %s: %w", name, err)
+		}
+		return fmt.Sprintf("Error: schema for %s was not loaded. Full schema:\n%s\nRetry the call now with these parameters.", name, schema), nil
+	}
+
+	if strings.HasPrefix(ad.Name(), "delegate_") {
+		agentName := strings.TrimPrefix(ad.Name(), "delegate_")
+		LogDelegateCall(ad.Name(), agentName, argsJSON)
+	}
+
+	toolTimeout := 120 * time.Second
+	isDelegate := strings.HasPrefix(name, "delegate_")
+	cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
+	toolCtx := cancelCtx
+	toolCancel := cancelCtxCancel
+	switch {
+	case isInteractiveUserTool(name):
+	case isDelegate:
+		toolCtx, toolCancel = activity.WithIdleTimeout(cancelCtx, activity.Options{
+			IdleTimeout:  a.delegateIdleTimeout,
+			TotalTimeout: a.delegateTotalTimeout,
+		})
+	default:
+		toolCtx, toolCancel = context.WithTimeout(cancelCtx, toolTimeout)
+	}
+	toolResult, err := ad.Call(toolCtx, argsJSON)
+	cancelCtxCancel()
+	toolCancel()
+
+	if psm := a.takePendingSubAgentMemory(); psm != nil {
+		a.injectSubAgentMemory(*psm, "", name)
+		r.state.SetPendingSubAgentMemory(toSubAgentMemory(psm))
+	}
+
+	if strings.HasPrefix(ad.Name(), "delegate_") {
+		r.state.RecordDelegation(err == nil)
+	}
+
+	if err != nil {
+		cause := context.Cause(toolCtx)
+		var idleErr *activity.IdleTimeoutError
+		var totalErr *activity.TotalTimeoutError
+		switch {
+		case errors.As(cause, &idleErr):
+			return "", fmt.Errorf("tool execution timed out (idle): %w", idleErr)
+		case errors.As(cause, &totalErr):
+			return "", fmt.Errorf("tool execution timed out (total): %w", totalErr)
+		case errors.Is(err, context.DeadlineExceeded):
+			return "", fmt.Errorf("tool execution timed out after %d seconds", int(toolTimeout.Seconds()))
+		}
+		return "", err
+	} else if ad.Name() == "delegate_repo" {
+		if psm := r.state.PendingSubAgentMemory; psm != nil {
+			a.repoCtx.Set(psm.Text)
+		} else {
+			var summary string
+			if uerr := json.Unmarshal([]byte(toolResult), &summary); uerr == nil {
+				a.repoCtx.Set(summary)
+			} else {
+				a.repoCtx.Set(toolResult)
+			}
+		}
+	}
+	return toolResult, nil
 }
 
 func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
 	resumedTask := a.resumedTask
 	a.resumedTask = false
+
+	// boardID 是按任务写入的（SetTaskID），而 read_note/read_artifact 的可用性取决于它，
+	// 所以每轮开始重建工具面。
+	a.rebuildSurface()
 
 	a.currentMemory = mem
 	defer func() { a.currentMemory = nil }()
@@ -1071,6 +707,11 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 
 	prompts := func(ctx context.Context, in director.PromptInput) (string, error) {
 		systemPrompt := a.promptFmt.FormatPrompt(directorPrompt)
+		if a.surface != nil {
+			if catalog := a.surface.Catalog(); catalog != "" {
+				systemPrompt += "\n\n" + catalog
+			}
+		}
 		var projectContext string
 		if in.FirstConversation || in.ForceProjectContext {
 			if loadResult := a.loadProjectContext(); loadResult != nil && loadResult.Content != "" {
@@ -1081,13 +722,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 			}
 		}
 
-		if customAgents := a.metaHandler.List(); len(customAgents) > 0 {
-			systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
-			for _, ca := range customAgents {
-				systemPrompt += fmt.Sprintf("- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, ca.Description)
-			}
-			systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n"
-		}
+		systemPrompt += a.customAgentPromptSection()
 
 		if projectContext != "" {
 			systemPrompt += projectContext
@@ -1158,19 +793,31 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		TaskID:  a.taskID,
 		Resumed: resumedTask,
 	})
+	a.carryOverMaterialized()
 	return result.Text, err
 }
 
-func (a *DirectorAgent) isToolParallelizable(name string) bool {
-	if isInteractiveUserTool(name) || nonParallelToolNames[name] {
-		return false
+// resolveTool 按名解析执行器。有 Surface 时以注册表为准（含冷工具状态）；
+// 没有 Surface 时回退到 Adapters 快照 —— 生产路径恒有 Surface，这个回退只为
+// 仍手工注入适配器表的测试与调用点保留。
+func (a *DirectorAgent) resolveTool(name string) (*tools.Adapter, tools.ToolState) {
+	if a.surface != nil {
+		return a.surface.Lookup(name)
 	}
-	for _, t := range a.Adapters {
-		if t.Name() == name {
-			return t.IsReadOnly()
+	for _, ad := range a.Adapters {
+		if ad.Name() == name {
+			return ad, tools.StateReady
 		}
 	}
-	return false
+	return nil, tools.StateUnknown
+}
+
+func (a *DirectorAgent) isToolParallelizable(name string) bool {
+	if isInteractiveUserTool(name) || isSerialTool(name) {
+		return false
+	}
+	ad, state := a.resolveTool(name)
+	return state == tools.StateReady && ad != nil && ad.IsReadOnly()
 }
 
 func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages []llm.Message, threshold int) ([]llm.Message, *compression.EmergencyCompressionStats) {

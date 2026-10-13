@@ -5,6 +5,7 @@ import (
 
 	"yagent/internal/llm"
 	"yagent/internal/tokenutil"
+	"yagent/internal/toolspec"
 )
 
 const (
@@ -24,12 +25,12 @@ type TruncatedToolInfo struct {
 
 // ContextCompressionStats 记录上下文压缩的整体统计信息。
 type ContextCompressionStats struct {
-	OriginalTokens   int                   `json:"original_tokens"`
-	CompressedTokens int                   `json:"compressed_tokens"`
-	SavedTokens      int                   `json:"saved_tokens"`
-	SavedPercent     float64               `json:"saved_percent"`
-	TruncatedCount   int                   `json:"truncated_count"`
-	TruncatedTools   []TruncatedToolInfo   `json:"truncated_tools"`
+	OriginalTokens   int                 `json:"original_tokens"`
+	CompressedTokens int                 `json:"compressed_tokens"`
+	SavedTokens      int                 `json:"saved_tokens"`
+	SavedPercent     float64             `json:"saved_percent"`
+	TruncatedCount   int                 `json:"truncated_count"`
+	TruncatedTools   []TruncatedToolInfo `json:"truncated_tools"`
 }
 
 // TruncateToolResultsToBudget 当消息总 token 超过 maxTokens 时，按优先级对 tool 执行结果进行截断。
@@ -61,7 +62,7 @@ func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens i
 		if msg.Role != llm.RoleTool || msg.ToolName == "" || msg.Content == "" {
 			continue
 		}
-		prio := toolTruncationPriority(msg.ToolName)
+		prio := toolspec.TruncationPriority(msg.ToolName)
 		if prio == -1 {
 			continue // 保护，永不截断
 		}

@@ -264,6 +264,7 @@ func LoadConfig(configPath string) (*config.Config, error) {
 	if cfg.LLM.Timeout > 0 {
 		config.SetGlobalLLMTimeout(cfg.LLM.Timeout)
 	}
+	config.SetGlobalDeferredTools(cfg.Tools.Deferred)
 
 	activeProvider, err := cfg.ResolveProvider("", "")
 	if err != nil {
@@ -302,6 +303,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	if cfg.LLM.Timeout > 0 {
 		config.SetGlobalLLMTimeout(cfg.LLM.Timeout)
 	}
+	config.SetGlobalDeferredTools(cfg.Tools.Deferred)
 
 	defaultProvider, err := cfg.ResolveProvider("", "")
 	if err != nil {

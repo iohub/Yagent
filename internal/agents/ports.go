@@ -5,6 +5,7 @@ import (
 
 	"yagent/internal/browserctl"
 	"yagent/internal/knowledge"
+	"yagent/internal/toolspec"
 )
 
 // 本文件定义按消费方划分的窄接口（ports），用于解耦各 Agent 对
@@ -46,77 +47,21 @@ type KnowledgeProvider interface {
 	Inject(ctx context.Context, injCtx knowledge.InjectionContext) (string, error)
 }
 
-// FileToolSet 文件操作工具集。
-// 由 *tools.FileOperationsTool 天然实现。
-// 含 Delete/Rename：Coding-Agent 的工具注册表需要完整文件操作。
-type FileToolSet interface {
-	ExecuteReadFile(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecuteListDir(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecutePrintDirTree(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecuteCreateFile(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecuteDeleteFile(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecuteRenameFile(ctx context.Context, params map[string]interface{}) (interface{}, error)
-}
-
-// SearchToolSet 搜索操作工具集。
-// 由 *tools.SearchOperationsTool 天然实现。
-type SearchToolSet interface {
-	ExecuteGrepSearch(ctx context.Context, params map[string]interface{}) (interface{}, error)
-}
-
-// SysToolSet 系统操作工具集（执行 shell 命令）。
-// 由 *tools.SystemOperationsTool 天然实现。
-type SysToolSet interface {
-	ExecuteRunBash(ctx context.Context, params map[string]interface{}) (interface{}, error)
-}
-
-// EditToolSet 文件编辑工具集（按块替换）。
-// 由 *tools.ReplaceBlockTool 天然实现。
-type EditToolSet interface {
-	ExecuteReplaceBlock(ctx context.Context, params map[string]interface{}) (interface{}, error)
-}
-
-// RepoToolSet 仓库理解工具集（语义搜索/代码骨架/代码片段/调用图）。
-// 由 *tools.RepoOperationsTool 天然实现。
-type RepoToolSet interface {
-	ExecuteSemanticSearch(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecuteQueryCodeSkeleton(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecuteQueryCodeSnippet(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecuteFindFunctionCallees(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecuteFindFunctionCallers(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecuteCallGraph(ctx context.Context, params map[string]interface{}) (interface{}, error)
-}
-
-// FlowToolSet 流程控制工具集（退出 agent / 请求用户帮助）。
-// 由 *tools.FlowControlTool 天然实现。
-type FlowToolSet interface {
-	ExecuteAgentExit(ctx context.Context, params map[string]interface{}) (interface{}, error)
-	ExecuteAskUserForHelp(ctx context.Context, params map[string]interface{}) (interface{}, error)
-}
-
-// Thinker 认知思考工具（轻量推理，无工具调用）。
-// 由 *tools.ThinkingTool 天然实现。
-type Thinker interface {
-	Call(ctx context.Context, input string) (string, error)
-}
-
-// DeepThinker 深度思考工具（复杂问题的系统性深度分析）。
-// 由 *tools.DeepThinkingTool 天然实现。
-type DeepThinker interface {
-	Execute(ctx context.Context, params map[string]interface{}) (interface{}, error)
-}
-
-// Designer 方案设计工具（编码前的前瞻性实现设计，产出可执行分步计划）。
-// 由 *tools.DesignTool 天然实现。
-type Designer interface {
-	Execute(ctx context.Context, params map[string]interface{}) (interface{}, error)
-}
-
-// MicroAgentRunner 微代理工具（隔离上下文的聚焦子任务推理）。
-// 由 *tools.MicroAgentTool 天然实现。
-type MicroAgentRunner interface {
-	Execute(ctx context.Context, params map[string]interface{}) (interface{}, error)
-}
+// 工具类窄接口已下移到 internal/toolspec（注册表与执行器工厂都要用它们，
+// 而 toolspec 是 leaf）。这里保留别名：既有调用点与具体实现的对应关系不变，
+// 但方法集只有一处声明，不会再出现"两边各写一份、改一边忘另一边"的漂移。
+type (
+	FileToolSet      = toolspec.FileToolSet
+	SearchToolSet    = toolspec.SearchToolSet
+	SysToolSet       = toolspec.SysToolSet
+	EditToolSet      = toolspec.EditToolSet
+	RepoToolSet      = toolspec.RepoOps
+	FlowToolSet      = toolspec.FlowToolSet
+	Thinker          = toolspec.Thinker
+	DeepThinker      = toolspec.DeepThinker
+	Designer         = toolspec.Designer
+	MicroAgentRunner = toolspec.MicroAgentRunner
+)
 
 // BrowserControl 浏览器执行层入口（由 *browserctl.Manager 天然实现）。
 // 用类型别名而不是新接口：Browser-Agent 与工具层共用同一份契约，避免两份声明漂移。

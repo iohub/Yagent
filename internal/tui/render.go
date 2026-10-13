@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"yagent/internal/toolspec"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -15,14 +16,10 @@ const (
 	MaxContentWidth = 120
 )
 
-var skipBodyTools = map[string]bool{
-	"read_file":       true,
-	"delete_file":     true,
-	"rename_file":     true,
-	"list_dir":        true,
-	"print_dir_tree":  true,
-	"search_by_regex": true,
-	"semantic_search": true,
+// skipBodyTools 的判据来自注册表的 Display=DisplayCompact 声明。
+// 未注册的名字一律展开正文（与历史白名单行为一致）。
+func skipBodyTool(name string) bool {
+	return toolspec.IsCompactDisplay(name)
 }
 
 func RenderPending(name string, summary string, anim *Anim) string {
@@ -105,7 +102,7 @@ func RenderToolLine(entry *ToolEntry, anim *Anim, width int) string {
 		return header
 	}
 
-	if skipBodyTools[entry.Call.Name] && entry.Status == ToolStatusSuccess {
+	if skipBodyTool(entry.Call.Name) && entry.Status == ToolStatusSuccess {
 		if entry.Call.Name == "read_file" || entry.Call.Name == "search_by_regex" || entry.Call.Name == "semantic_search" {
 			return header
 		}

@@ -3,9 +3,8 @@ package agents
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"fmt"
-	"log/slog"
+	"yagent/internal/toolspec"
 
 	"yagent/internal/blackboard"
 	"yagent/internal/browserctl"
@@ -24,7 +23,7 @@ var browserPrompt string
 type BrowserAgent struct {
 	BaseAgent
 	promptFmt PromptFormatter
-	Adapters  []*tools.Adapter
+	params    BrowserAgentParams
 	maxSteps  int
 	ecCfg     config.EnhancedCommanderConfig
 	browser   BrowserControl
@@ -55,7 +54,7 @@ func NewBrowserAgent(p BrowserAgentParams) *BrowserAgent {
 			Publisher: p.Publisher,
 		},
 		promptFmt: p.Formatter,
-		Adapters:  buildBrowserAdapters(p),
+		params:    p,
 		maxSteps:  p.MaxSteps,
 		ecCfg:     p.EnhancedCommanderCfg,
 		browser:   p.Browser,
@@ -70,45 +69,16 @@ func (a *BrowserAgent) Capability() (bool, string) {
 	return a.browser.Probe()
 }
 
-// buildBrowserAdapters 装配浏览器工具集（声明式表驱动，见 tools.BrowserToolNames）
-// 与流程控制工具（agent_exit / ask_user_for_help）。
-func buildBrowserAdapters(p BrowserAgentParams) []*tools.Adapter {
-	if p.Browser == nil {
-		return nil
+// surfaceFor 装配 Browser 的工具面：14 个 browser_* 能力族 + 流程控制 + 便签回读。
+// 浏览器不可用时整族不注册；delegate_browser 的描述降级由 Spec.Describe 负责
+// （Director 与 Coding 共用同一条路径）。
+func (a *BrowserAgent) surfaceFor(ctx context.Context) *tools.Surface {
+	deps := depsFor("browser", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx))
+	deps.Flow = a.params.Flow
+	if a.params.Browser != nil {
+		deps.Browser = tools.NewBrowserOperationsTool(a.params.Browser, browserctl.FromAppConfig(a.params.BrowserCfg))
 	}
-
-	var toolDefs []tools.ToolDefinition
-	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
-		slog.Error("Failed to unmarshal browser tools", "error", err)
-		return nil
-	}
-
-	browserSet := tools.NewBrowserOperationsTool(p.Browser, browserctl.FromAppConfig(p.BrowserCfg))
-	adapters, errs := browserSet.BuildAdapters(toolDefs, p.Guard)
-	for _, e := range errs {
-		// 声明与实现不一致属于开发期错误：记录并继续，但绝不静默
-		slog.Warn("browser tool declaration mismatch", "error", e)
-	}
-
-	if p.Flow == nil {
-		return adapters
-	}
-	for _, def := range toolDefs {
-		switch def.Name {
-		case "agent_exit":
-			adapters = append(adapters,
-				tools.NewAdapter(def.Name, def.Description, p.Flow.ExecuteAgentExit).WithSchema(def.Parameters))
-		case "ask_user_for_help":
-			if p.Env != nil && p.Env.FullYoloMode() {
-				continue
-			}
-			adapters = append(adapters,
-				tools.NewAdapter(def.Name, def.Description, p.Flow.ExecuteAskUserForHelp).WithSchema(def.Parameters))
-		}
-	}
-	tools.SetGuardOnAdapters(adapters, p.Guard)
-
-	return adapters
+	return surfaceFor(toolspec.ProfileBrowser, deps, a.Name())
 }
 
 func (a *BrowserAgent) Name() string {
@@ -138,7 +108,7 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 		cfg.SystemPrompt = browserPrompt
 	}
 	cfg.UserInput = input
-	cfg.Adapters = a.Adapters
+	cfg.Surface = a.surfaceFor(ctx)
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
 	cfg.Publisher = a.Publisher

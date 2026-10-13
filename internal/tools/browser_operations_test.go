@@ -3,13 +3,12 @@ package tools_test
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"yagent/internal/browserctl"
 	"yagent/internal/tools"
+	"yagent/internal/toolspec"
 )
 
 // fakeRunner 实现 browserctl.Runner：记录 argv 并按命令回放预设输出。
@@ -54,29 +53,52 @@ func newToolSet(t *testing.T) (*tools.BrowserOperationsTool, *fakeController, *f
 	return tools.NewBrowserOperationsTool(ctrl, cfg), ctrl, runner
 }
 
-// loadToolDefs 从磁盘读取 tools.json，避免 tools_test 反向依赖 internal/agents 包。
+// loadToolDefs 从注册表的声明层取工具定义。声明文件已搬到 internal/toolspec，
+// 这里不再按相对路径读磁盘上的兄弟包文件（那条路径曾经让 tools.json 一改名就悄悄测试失真）。
 func loadToolDefs(t *testing.T) []tools.ToolDefinition {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "agents", "tools.json"))
-	if err != nil {
-		t.Fatalf("read tools.json: %v", err)
+	if err := toolspec.SchemasError(); err != nil {
+		t.Fatalf("schemas.json: %v", err)
 	}
-	var defs []tools.ToolDefinition
-	if err := json.Unmarshal(raw, &defs); err != nil {
-		t.Fatalf("parse tools.json: %v", err)
+	names := toolspec.SchemaNames()
+	defs := make([]tools.ToolDefinition, 0, len(names))
+	for _, name := range names {
+		s, ok := toolspec.GetSchema(name)
+		if !ok {
+			t.Fatalf("schema for %q disappeared", name)
+		}
+		defs = append(defs, tools.ToolDefinition{Name: s.Name, Description: s.Description, Parameters: s.Parameters})
+	}
+	if len(defs) == 0 {
+		t.Fatal("schemas.json 解析结果为空")
 	}
 	return defs
+}
+
+// browserSurface 用真实注册表路径装配浏览器工具面：
+// Spec 提供能力标签与 schema，argv/render 仍来自 browserToolSpecs。
+// 取代原来的 BuildAdapters —— 那是第二条注册路径，与 Surface 平行存在时迟早漂移。
+func containsName(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func browserSurface(t *testing.T, set *tools.BrowserOperationsTool) *tools.Surface {
+	t.Helper()
+	deps := toolspec.ProfileBrowser.ProbeDeps()
+	deps.Browser = set
+	return tools.NewSurface(toolspec.ProfileBrowser, deps, tools.SurfaceOptions{})
 }
 
 // adapterByName 用同一套 fake Controller/Runner 构建适配器并返回，保证断言能看到真实调用。
 func adapterByName(t *testing.T, defs []tools.ToolDefinition, name string) (*tools.Adapter, *fakeController, *fakeRunner) {
 	t.Helper()
 	set, ctrl, runner := newToolSet(t)
-	adapters, errs := set.BuildAdapters(defs, nil)
-	if len(errs) > 0 {
-		t.Fatalf("adapter build reported inconsistencies: %v", errs)
-	}
-	for _, a := range adapters {
+	for _, a := range browserSurface(t, set).Adapters() {
 		if a.Name() == name {
 			return a, ctrl, runner
 		}
@@ -85,51 +107,43 @@ func adapterByName(t *testing.T, defs []tools.ToolDefinition, name string) (*too
 	return nil, nil, nil
 }
 
-// TestBrowserToolSpecsMatchToolsJSON 是"声明了但没注册"这类静默失效的闸门。
-func TestBrowserToolSpecsMatchToolsJSON(t *testing.T) {
-	defs := loadToolDefs(t)
+// TestBrowserSpecsMatchRegistry 是"声明了但没注册"这类静默失效的闸门：
+// browserToolSpecs 里的每个 argv 实现都必须有对应的注册表 Spec，
+// 且该 Spec 必须能把执行器解析出来。
+func TestBrowserSpecsMatchRegistry(t *testing.T) {
 	set, _, _ := newToolSet(t)
-
-	adapters, errs := set.BuildAdapters(defs, nil)
-	if len(errs) > 0 {
-		t.Fatalf("tools.json 与 browserToolSpecs 不一致：%v", errs)
-	}
-
-	declared := map[string]bool{}
-	for _, d := range defs {
-		if strings.HasPrefix(d.Name, "browser_") {
-			declared[d.Name] = true
-		}
-	}
-	if len(declared) == 0 {
-		t.Fatal("tools.json 里没有任何 browser_* 声明")
-	}
-
+	surface := browserSurface(t, set)
 	built := map[string]bool{}
-	for _, a := range adapters {
+	for _, a := range surface.Adapters() {
 		built[a.Name()] = true
 	}
-	for _, name := range tools.BrowserToolNames() {
-		if !declared[name] {
-			t.Errorf("%s 已实现但 tools.json 未声明", name)
+	names := tools.BrowserToolNames()
+	for _, name := range names {
+		if _, ok := toolspec.Get(name); !ok {
+			t.Errorf("%s 已在 browserToolSpecs 实现，但注册表没有它的 Spec", name)
 		}
 		if !built[name] {
-			t.Errorf("%s 已声明但未生成适配器", name)
+			t.Errorf("%s 没有被装配进浏览器工具面", name)
 		}
 	}
-	if len(adapters) != len(tools.BrowserToolNames()) {
-		t.Errorf("adapter count = %d, want %d", len(adapters), len(tools.BrowserToolNames()))
+	// 不比对总数：浏览器画像还含流程控制与便签回读族，数量断言只会制造无意义脆弱性。
+	// 逐个名字的存在性检查已在上面的循环里完成。
+	for name := range built {
+		if !strings.HasPrefix(name, "browser_") {
+			continue
+		}
+		if !containsName(names, name) {
+			t.Errorf("装配出 %s，但 browserToolSpecs 未实现", name)
+		}
 	}
 }
 
 // TestBrowserToolsAreNeverReadOnly：current-tab 与 ref 是磁盘共享状态，
 // 并行观察会读到错页，所以任何 browser 工具都不得标记为只读。
 func TestBrowserToolsAreNeverReadOnly(t *testing.T) {
-	defs := loadToolDefs(t)
 	set, _, _ := newToolSet(t)
 
-	adapters, _ := set.BuildAdapters(defs, nil)
-	for _, a := range adapters {
+	for _, a := range browserSurface(t, set).Adapters() {
 		if a.IsReadOnly() {
 			t.Errorf("%s must not be marked read-only", a.Name())
 		}
@@ -303,12 +317,11 @@ func TestBrowserStatus_ToleratesMissingPage(t *testing.T) {
 }
 
 func TestBrowserTool_UnavailableCapability(t *testing.T) {
-	defs := loadToolDefs(t)
 	cfg := browserctl.DefaultConfig()
 	runner := &fakeRunner{dir: t.TempDir()}
 	ctrl := &fakeController{ok: false, reason: "未找到 browser-control", runner: runner}
 	set := tools.NewBrowserOperationsTool(ctrl, cfg)
-	adapters, _ := set.BuildAdapters(defs, nil)
+	adapters := browserSurface(t, set).Adapters()
 
 	var click *tools.Adapter
 	for _, a := range adapters {

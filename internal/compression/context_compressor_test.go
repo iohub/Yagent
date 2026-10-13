@@ -1,8 +1,12 @@
 package compression
 
 import (
+	// 截断优先级现在由工具注册表派生（Spec.Trunc）。注册表靠各包 init() 自注册，
+	// 而本包在生产链路里总是和 tools/agents 一起被链接；单元测试二进制不链接它们就会
+	// 查不到声明、把 deepthinking 当未注册工具返回常规优先级，所以这里显式拉进来。
 	"strings"
 	"testing"
+	_ "yagent/internal/tools"
 
 	"yagent/internal/llm"
 )
@@ -35,47 +39,6 @@ func TestEstimateMessagesTokens(t *testing.T) {
 	bare := []llm.Message{{Role: llm.RoleAssistant, Content: "assistant text"}}
 	if got, want := EstimateMessagesTokens(withReasoning), EstimateMessagesTokens(bare); got <= want {
 		t.Errorf("EstimateMessagesTokens with Reasoning = %d, want > %d (content only)", got, want)
-	}
-}
-
-// TestToolTruncationPriority 验证优先级映射
-func TestToolTruncationPriority(t *testing.T) {
-	tests := []struct {
-		name     string
-		expected int
-	}{
-		{"read_file", 0},
-		{"run_bash", 0},
-		{"create_file", 0},
-		{"search_replace_in_file", 0},
-		{"semantic_search", 0},
-		{"query_code_skeleton", 0},
-		{"query_code_snippet", 0},
-		{"print_dir_tree", 0},
-		{"search_by_regex", 0},
-		{"query_call_graph", 0},
-		{"find_function_callee", 0},
-		{"find_function_caller", 0},
-		{"deepthinking", -1},
-		// 浏览器观察/取数结果最该先丢：同一页面每次 inspect/snapshot/eval 都产生新的，旧的既过时又占大头
-		{"browser_snapshot", 0},
-		{"browser_inspect", 0},
-		{"browser_eval", 0},
-		{"browser_status", 0},
-		{"list_dir", 1},
-		{"agent_exit", 1},
-		// 交互类不截断：失败/成功的动作记录是恢复上下文的锚点；
-		// browser_screenshot 只返回工作区里的路径字符串，本身没有体积。
-		{"browser_click", 1},
-		{"browser_screenshot", 1},
-		{"unknown_tool", 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := toolTruncationPriority(tt.name); got != tt.expected {
-				t.Errorf("toolTruncationPriority(%q) = %d, want %d", tt.name, got, tt.expected)
-			}
-		})
 	}
 }
 
