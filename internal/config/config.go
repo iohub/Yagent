@@ -147,8 +147,8 @@ type AgentsConfig struct {
 }
 
 type ToolsConfig struct {
-	LLM      ToolsLLMConfig        `toml:"llm"`
-	Deferred DeferredToolsConfig   `toml:"deferred"`
+	LLM      ToolsLLMConfig      `toml:"llm"`
+	Deferred DeferredToolsConfig `toml:"deferred"`
 }
 
 type LLMConfig struct {
@@ -197,6 +197,8 @@ type Config struct {
 
 	Browser BrowserConfig `toml:"browser"`
 
+	Blackboard BlackboardConfig `toml:"blackboard"`
+
 	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`
 
 	TUI TUIConfig `toml:"tui"`
@@ -204,6 +206,20 @@ type Config struct {
 	// browserSectionDefined 记录配置文件里是否出现过 [browser] 段（由 LoadFromFile 写入），
 	// 用于区分"用户显式配置"与"整表缺省"。
 	browserSectionDefined bool
+
+	// blackboardSectionDefined 同理，记录 [blackboard] 段是否被显式写过。
+	blackboardSectionDefined bool
+}
+
+// staleKeysIn 列出某个表里没被当前 schema 解析掉的键。
+func staleKeysIn(md toml.MetaData, section string) []string {
+	var out []string
+	for _, key := range md.Undecoded() {
+		if len(key) > 0 && key[0] == section {
+			out = append(out, strings.Join(key, "."))
+		}
+	}
+	return out
 }
 
 // staleBrowserKeys 列出 [browser] 段里没被新 schema 解析掉的键。
@@ -218,21 +234,25 @@ func staleBrowserKeys(md toml.MetaData) []string {
 	return out
 }
 
-// browserSectionConfigured 判断 [browser] 段里是否至少有一个**被新 schema 认识**的键。
-// 只剩旧栈键的段落等同于没写过：那种情况按整表缺省处理，
-// 否则 enabled 会被读成 false，用户既看不到自己的旧配置生效、也看不到能力开启。
-func browserSectionConfigured(md toml.MetaData) bool {
+// sectionHasDecodedKey 判断某个表里是否至少有一个**被当前 schema 认识**的键。
+// 只剩失效键的段落等同于没写过：那种情况按整表缺省处理，
+// 否则某个 bool 的零值会把新能力静默关掉（[browser] enabled 踩过这个坑）。
+func sectionHasDecodedKey(md toml.MetaData, section string) bool {
 	undecoded := make(map[string]bool)
 	for _, key := range md.Undecoded() {
 		undecoded[strings.Join(key, ".")] = true
 	}
 	for _, key := range md.Keys() {
-		// len>1：跳过 `[browser]` 这个表头本身，只看段内的字段
-		if len(key) > 1 && key[0] == "browser" && !undecoded[strings.Join(key, ".")] {
+		// len>1：跳过表头本身（如 `[browser]`），只看段内的字段
+		if len(key) > 1 && key[0] == section && !undecoded[strings.Join(key, ".")] {
 			return true
 		}
 	}
 	return false
+}
+
+func browserSectionConfigured(md toml.MetaData) bool {
+	return sectionHasDecodedKey(md, "browser")
 }
 
 func (c *Config) GetProvider(name string) (*ProviderConfig, error) {
@@ -382,6 +402,20 @@ func LoadFromFile(path string) (*Config, error) {
 			"stale_keys", strings.Join(stale, ", "),
 			"hint", "headless→mode，browser_path→chrome_path，新栈还需 binary_path 指向 browser-control")
 	}
+	// [blackboard] 里有三个键允许显式取 0，且各有语义（关索引注入 / 不裁剪索引行 / 不清理），
+	// 而"没写这一段"解析出来同样是 0 —— 所以缺省判定必须看键的存在性，不能看零值。
+	cfg.blackboardSectionDefined = sectionHasDecodedKey(md, "blackboard")
+	if stale := staleKeysIn(md, "blackboard"); len(stale) > 0 {
+		slog.Warn("[blackboard] 段存在不认识的键，将被忽略",
+			"stale_keys", strings.Join(stale, ", "),
+			"hint", blackboardKeyHint)
+	}
+	SetGlobalBlackboard(cfg.Blackboard, BlackboardPresence{
+		Section:        cfg.blackboardSectionDefined,
+		IndexMaxNotes:  md.IsDefined("blackboard", "index_max_notes"),
+		IndexLineChars: md.IsDefined("blackboard", "index_line_chars"),
+		TTL:            md.IsDefined("blackboard", "ttl"),
+	})
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}

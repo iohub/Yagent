@@ -370,10 +370,13 @@ type model struct {
 	glamourRenderer *glamour.TermRenderer
 	useDarkStyle    bool
 
-	taskRunning        bool
-	taskStarted        bool
-	taskCancelled      bool
-	currentTask        *http.Task
+	taskRunning   bool
+	taskStarted   bool
+	taskCancelled bool
+	currentTask   *http.Task
+	// sessionID 决定本块会话用哪块便签板：同一 tab 内的多次任务共享便签，
+	// 换 tab（restoreSessionTab）或清空会话（clearCurrentSession）才换新的。
+	sessionID          string
 	resumedFromRollout bool
 	eventCh            chan *messaging.MessageEvent
 

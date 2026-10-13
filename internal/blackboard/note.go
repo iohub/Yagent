@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-const noteSchemaVersion = 1
+const noteSchemaVersion = 2
 
 // Note represents a blackboard note: JSON front-matter + Markdown body.
 type Note struct {
@@ -27,6 +27,7 @@ type Note struct {
 	ArtifactIDs []string `json:"artifact_ids"`
 	BodySize    int      `json:"body_size"`
 	Status      string   `json:"status"`
+	Handoff     Handoff  `json:"handoff"`
 
 	Body string `json:"-"`
 }
@@ -43,6 +44,8 @@ type NoteMeta struct {
 	ArtifactIDs []string `json:"artifact_ids"`
 	BodySize    int      `json:"body_size"`
 	Status      string   `json:"status"`
+	Conclusion  string   `json:"conclusion"`
+	Degraded    string   `json:"degraded,omitempty"`
 }
 
 // NoteInput carries the fields needed to write a note.
@@ -56,11 +59,12 @@ type NoteInput struct {
 	Body        string
 	ArtifactIDs []string
 	Status      string // "ok" or "error"
+	Handoff     Handoff
 }
 
 const (
 	maxTaskLen    = 300
-	maxSummaryLen = 200
+	maxSummaryLen = MaxConclusionRunes
 )
 
 // WriteNote creates a note file on disk and returns its noteRef.
@@ -76,9 +80,22 @@ func WriteNote(input NoteInput) (string, error) {
 	stem := strings.TrimSuffix(filename, noteFileExt)
 	noteRef := agent + "/" + stem
 
+	// Handoff 是便签的 canonical 内容；Summary 只是 v1 读者的兼容位。
+	handoff := input.Handoff.Normalize()
+	if handoff.Conclusion == "" {
+		// 调用方没给结构化交接（老路径，或 LLM 没填 handoff）：用 Summary 兜底并诚实标降级。
+		handoff.Conclusion = truncateRunes(strings.TrimSpace(input.Summary), maxSummaryLen)
+		handoff.Degraded = DegradedAbsent
+	}
+	if handoff.Status == "" {
+		handoff.Status = input.Status
+	}
+	// artifact 线索以系统侧为准：LLM 自报的 ID 从未被验证存在过。
+	handoff.Artifacts = input.ArtifactIDs
+
 	body := input.Body
 	if body == "" {
-		body = input.Summary
+		body = handoff.Render(0)
 	}
 
 	note := Note{
@@ -90,10 +107,11 @@ func WriteNote(input NoteInput) (string, error) {
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 		Tool:        input.Tool,
 		Task:        truncateRunes(input.Task, maxTaskLen),
-		Summary:     truncateRunes(input.Summary, maxSummaryLen),
+		Summary:     handoff.Conclusion,
 		ArtifactIDs: input.ArtifactIDs,
 		BodySize:    utf8.RuneCountInString(body),
 		Status:      input.Status,
+		Handoff:     handoff,
 		Body:        body,
 	}
 
@@ -212,6 +230,8 @@ func (n Note) toMeta() NoteMeta {
 		ArtifactIDs: n.ArtifactIDs,
 		BodySize:    n.BodySize,
 		Status:      n.Status,
+		Conclusion:  n.Handoff.Conclusion,
+		Degraded:    n.Handoff.Degraded,
 	}
 }
 
@@ -256,6 +276,16 @@ func decodeNote(data []byte) (Note, error) {
 	if err := json.Unmarshal([]byte(jsonPart), &note); err != nil {
 		return Note{}, fmt.Errorf("blackboard: unmarshal front-matter: %w", err)
 	}
+	// v1 存量便签没有 handoff：读的时候从 Summary 合成，不迁移也不重写。
+	// 合成出来的结论只是当年那句摘要，所以标 DegradedV1 —— 渲染侧据此改用头尾摘录。
+	if note.Version < noteSchemaVersion {
+		note.Handoff = Handoff{
+			Conclusion: note.Summary,
+			Artifacts:  note.ArtifactIDs,
+			Status:     note.Status,
+			Degraded:   DegradedV1,
+		}.Normalize()
+	}
 	note.Body = strings.TrimRight(bodyPart, "\n")
 	return note, nil
 }
@@ -270,10 +300,21 @@ func parseNoteRef(ref string) (agent, stem string, err error) {
 	return sanitizeAgentName(parts[0]), parts[1], nil
 }
 
+// truncateRunes 截断到**至多** max 个 rune，超长时以省略号结尾。
+// 省略号计入预算（而非额外追加），所以调用方给的长度上限就是产出的长度上限。
 func truncateRunes(s string, max int) string {
-	if utf8.RuneCountInString(s) <= max {
+	if max < 0 {
+		max = 0
+	}
+	r := []rune(s)
+	if len(r) <= max {
 		return s
 	}
-	runes := []rune(s)
-	return string(runes[:max]) + "…"
+	if max == 0 {
+		return ""
+	}
+	if max == 1 {
+		return "…"
+	}
+	return string(r[:max-1]) + "…"
 }

@@ -119,10 +119,24 @@ func executeReadNote(ctx context.Context, params map[string]interface{}, getBoar
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "note %s | agent: %s | status: %s | %d lines | showing %d-%d\n",
+	fmt.Fprintf(&b, "note %s | agent: %s | status: %s | %d lines | showing %d-%d",
 		note.NoteRef, note.Agent, note.Status, total, startLine, actualEnd)
+	if note.Handoff.Degraded != "" {
+		// 让读的人知道结论的可信度：v1 存量与"没填 handoff"的便签，结论只是当年那句摘要。
+		fmt.Fprintf(&b, " | degraded: %s", note.Handoff.Degraded)
+	}
+	b.WriteByte('\n')
 	if len(note.ArtifactIDs) > 0 {
 		fmt.Fprintf(&b, "artifacts: %s\n", strings.Join(note.ArtifactIDs, ", "))
+	}
+	// handoff 块不分页：它是这条便签存在的主要理由，正文反而只是它的证据。
+	if block := note.Handoff.Render(0); block != "" {
+		b.WriteString("--- handoff ---\n")
+		b.WriteString(strings.TrimRight(block, "\n"))
+		b.WriteByte('\n')
+	}
+	if len(lineOutputs) > 0 {
+		b.WriteString("--- body ---\n")
 	}
 	for _, lineOut := range lineOutputs {
 		fmt.Fprint(&b, lineOut)

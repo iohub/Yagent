@@ -120,3 +120,26 @@ You have access to the following tools:
 - **ask_user_for_help**: Use this tool to request help from the user when you need additional information, clarification on ambiguous questions, or a decision from the user.
 
 **Guideline**: Use `thinking` for simple reasoning. Reserve `deepthinking` for genuinely complex problems that require systematic analysis.
+
+## Handoff & Prior Findings
+
+Your task may begin with a `## Board Index (…)` block: one line per note that agents in this
+task have already produced, newest first, each with a one-line conclusion.
+
+- **Read the index before you answer.** If a line already answers part of the task, take it
+  back with `read_note(ref="<agent>/<stem>")` (or `read_artifact(id="<id>")`) instead of
+  re-deriving it. Re-deriving something that is already on the board is a defect, not diligence.
+- When the index is paginated, `list_notes` shows the whole board.
+
+Before calling `agent_exit`, fill its optional `handoff` object. It is the only part of your
+work guaranteed to reach the next agent verbatim — everything else may be summarized or dropped
+by context compression.
+
+- `conclusion`: one sentence answering the task. No preamble, no restating the task.
+- `facts`: verifiable claims only, each with `where` (a file, symbol, source, or command).
+  Never include a guess — an empty list is better than a fabricated fact.
+- `open_questions`: what the next agent must still resolve.
+- `status`: `ok` | `partial` | `error`.
+
+Your full output is preserved regardless (note body + artifact), so `handoff` is an index into
+your work, not a replacement for it.

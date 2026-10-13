@@ -345,6 +345,31 @@ fallback_providers = [
 | `toggle_dashboard` | string | `"alt+d"` | 收缩/展开右上角仪表盘 |
 | `quit` | string | `"ctrl+c"` | 退出 |
 
+### 5.10 `[blackboard]` — 跨 Agent 便签板
+
+Director 把每次委派的结果写成便签（`~/.yagent/notes/{boardID}/{agent}/*.md`），
+后续委派通过 `context_refs` 与**自动注入的索引**把这些结论传给下一个子 Agent。
+完整设计见 `docs/blackboard-handoff-design.md`。
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `index_max_notes` | int | `12` | 索引每次最多列几条便签。**`0` = 关掉索引注入**（应急阀门），负数或没写 = 默认值 |
+| `index_line_chars` | int | `160` | 索引单行的 rune 预算。**显式 `0` = 不裁剪行**，负数或没写 = 默认值 |
+| `summary_max_runes` | int | `1200` | 给 Director 的 handoff 摘要预算（ContextPack 节选同源）；`<=0` = 默认值 |
+| `ttl` | duration | `"168h"` | board 目录多久没动就整目录清理。**`"0"` 或 `0` = 不清理**，负数 = 不清理 |
+| `max_notes_per_board` | int | `200` | 每个 board 保留的最新便签数，超出的旧便签删除。0 或负数 = 默认值（它没有"关"的语义，放宽就写大数字） |
+
+**关于"没写这一段"**：三个键的 `0` 各有含义，而缺省解析出来同样是 `0`，因此判定看**键的存在性**（`toml.MetaData.IsDefined`）而不是零值——
+整段缺省时全部取默认值，绝不会因为"没写 `index_max_notes`"就把索引静默关掉。
+段里只剩不认识的键时同样按整表缺省处理，并在启动日志里点名这些失效键。
+
+**总开关不在这里**：整个便签板由环境变量 `YAGENT_BLACKBOARD=0` 关闭（不写便签、不读便签、不注入索引）。
+不设 `[blackboard] enabled` 是有意的——布尔零值会把新能力静默关掉，这个坑在 `[browser] enabled` 上踩过。
+
+索引的体积上限是 `index_max_notes × index_line_chars`（默认约 1920 rune）。
+它会进 Director 的**每一轮**上下文与每次委派的任务前缀，所以是常驻成本；
+觉得太贵就调小 `index_max_notes`，想彻底关掉就写 `index_max_notes = 0`。
+
 ### 5.11 `task_timeout` — 根级字段
 
 | 字段 | 类型 | 默认值 | 说明 |

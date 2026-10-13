@@ -134,6 +134,22 @@ profile_dir = ""
 # 站点手册语料注入（P2）
 enable_skills = false
 
+# ── 跨 Agent 便签板（docs/blackboard-handoff-design.md）──
+[blackboard]
+# 索引每次最多列几条便签。0 = 关掉索引注入（应急阀门），负数 = 回到默认 12。
+index_max_notes = 12
+# 索引单行的 rune 预算；没写或负数 = 默认 160，**显式 0 = 不裁剪行**。
+# 索引总开销上限 = index_max_notes × index_line_chars。
+index_line_chars = 160
+# 给 Director 的 handoff 摘要预算（ContextPack 节选同源）；<=0 = 默认 1200。
+summary_max_runes = 1200
+# board 目录多久没动就整目录清理。"0" = 不清理。
+ttl = "168h"
+# 每个 board 保留的最新便签数，超出的旧便签删除。0 或负数 = 默认 200（放宽请写大数字）。
+max_notes_per_board = 200
+# 整体关闭用环境变量 YAGENT_BLACKBOARD=0（不写便签、不读便签、不注入索引）。
+# 这里刻意不设 enabled 键：布尔零值会把新能力静默关掉，[browser] enabled 踩过这个坑。
+
 # ── 增强型 Commander（分布式认知架构）──
 # 所有选项默认关闭，启用时需显式设置
 # 注意：enable_context_compression 压缩 tool 执行结果，适用于 Director / Repo / Coding / DevOps / Browser

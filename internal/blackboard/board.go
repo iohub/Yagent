@@ -12,17 +12,23 @@ import (
 )
 
 const (
-	notesDirName    = "notes"
-	yagentDirName   = ".yagent"
-	maxBoardIDLen   = 128
-	noteFileExt     = ".md"
-	tmpFileExt      = ".md.tmp"
-	dirPerm         = 0o700
-	filePerm        = 0o600
+	notesDirName     = "notes"
+	yagentDirName    = ".yagent"
+	maxBoardIDLen    = 128
+	noteFileExt      = ".md"
+	tmpFileExt       = ".md.tmp"
+	dirPerm          = 0o700
+	filePerm         = 0o600
 	frontMatterDelim = "---"
 )
 
 var boardIDPattern = regexp.MustCompile(`[^A-Za-z0-9_.\-]`)
+
+// Enabled 报告便签板是否可用。唯一判据是 YAGENT_BLACKBOARD=0：
+// 写便签、读便签、注入索引、启动清理四处都问它，开关规则因此只有一份。
+func Enabled() bool {
+	return os.Getenv("YAGENT_BLACKBOARD") != "0"
+}
 
 // NotesRootDir returns the root directory for blackboard notes.
 // Priority: env YAGENT_NOTES_ROOT → ~/.yagent/notes → "./notes" fallback.

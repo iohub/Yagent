@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"yagent/internal/agents/activity"
 	director "yagent/internal/agents/director"
@@ -371,6 +371,10 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	// 注入上下文时子代理输出丢失（回归测试 TestCustomAgentDelegateTool_* 钉住）。
 	agentResult := FinalizeResultFull(ca.DisplayName, task, result)
 	a.setPendingSubAgentMemory(&agentResult)
+	// 落一张便签。以前 custom agent 的产物只活在 Director 的上下文里，一次压缩就没了，
+	// 与 Coding→Browser 是同一类黑洞。不返回 noteRef 也无妨：Board Index 每轮从磁盘重扫，
+	// 下一次委派与 Director 自己的上下文都会自动看到这条。
+	a.writeDelegateNote(ca.Name, "delegate_"+ca.Name, task, agentResult, nil)
 	return result.Text, nil
 }
 
@@ -405,9 +409,20 @@ func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID stri
 
 }
 
-func (a *DirectorAgent) SetTaskID(taskID string) {
+// SetBoardScope 绑定本次任务的身份与便签板作用域。
+//
+// boardID 优先取 sessionID：同一会话（TUI 的一个 tab / HTTP 的一个 chat session）里开新任务
+// 应该接着看同一块板，否则前一次委派写下的结论对新任务完全不可见，只能重做一遍。
+// taskID 仍单独保留 —— rollout 文件名与 tasks/{id}.jsonl 都以它为键，不能跟着换。
+// 两者都为空时不能交给 SanitizeBoardID：它会给空串编一个 adhoc id，每轮都是新板。
+func (a *DirectorAgent) SetBoardScope(sessionID, taskID string) {
 	a.taskID = taskID
-	a.boardID = blackboard.SanitizeBoardID(taskID)
+	switch {
+	case sessionID != "":
+		a.boardID = blackboard.SanitizeBoardID(sessionID)
+	case taskID != "":
+		a.boardID = blackboard.SanitizeBoardID(taskID)
+	}
 }
 
 func (a *DirectorAgent) SetResumedTask(resumed bool) {
@@ -425,6 +440,9 @@ func (a *DirectorAgent) createRolloutWriter(agentName, task string) *memory.Roll
 		)
 		return nil
 	}
+	// 把便签板一起记进 rollout：/resume 靠它找回这块板。task_id 已经不够用了 ——
+	// board 现在是 session 级的，一个 board 会横跨多个 task。
+	writer.SetBoardID(a.boardID)
 
 	slog.Debug("Rollout: writer created for delegate agent",
 		"agent", agentName,
@@ -470,7 +488,7 @@ func (a *DirectorAgent) applyEnhancedCommander(
 }
 
 func blackboardEnabled() bool {
-	return os.Getenv("YAGENT_BLACKBOARD") != "0"
+	return blackboard.Enabled()
 }
 
 func parseContextRefs(raw interface{}) []string {
@@ -491,58 +509,147 @@ func (a *DirectorAgent) writeDelegateNote(agentName, toolName, task string, resu
 	if !blackboardEnabled() || a.boardID == "" {
 		return ""
 	}
-	status := "ok"
+	status := blackboard.StatusOK
 	if runErr != nil {
-		status = "error"
+		status = blackboard.StatusError
 	}
 	var artifactIDs []string
 	if result.ArtifactRef != nil {
 		artifactIDs = []string{result.ArtifactRef.ID}
 	}
-	body := result.Text
-	if result.ArtifactRef != nil {
-		body = result.Summary
+	// 正文恒为交付全文。以前在超预算路径上写的是 result.Summary
+	// （= artifact.Reduce 的前缀，实测只保留原文 29%），便签就成了缩略图的缩略图。
+	body := result.Deliverable
+	if body == "" {
+		body = result.Text
+	}
+	handoff := result.Handoff
+	if handoff == nil {
+		handoff = &blackboard.Handoff{Conclusion: result.Summary, Status: status}
+	} else if handoff.Status == "" {
+		// LLM 没自报状态时由委派结果判定：说 ok 但实际抛错的情况不能信它的。
+		copied := *handoff
+		handoff = &copied
+		handoff.Status = status
 	}
 	noteRef, err := blackboard.WriteNote(blackboard.NoteInput{
 		BoardID:     a.boardID,
 		Agent:       agentName,
 		Tool:        toolName,
 		Task:        task,
-		Summary:     result.Summary,
+		Summary:     handoff.Conclusion,
 		Body:        body,
 		ArtifactIDs: artifactIDs,
 		Status:      status,
+		Handoff:     *handoff,
 	})
 	if err != nil {
 		slog.Warn("blackboard: failed to write note", "agent", agentName, "error", err)
 		return ""
 	}
-	slog.Debug("blackboard: note written", "agent", agentName, "noteRef", noteRef, "boardID", a.boardID)
+	slog.Debug("blackboard: note written", "agent", agentName, "noteRef", noteRef, "boardID", a.boardID,
+		"body_chars", utf8.RuneCountInString(body), "degraded", handoff.Degraded)
 	return noteRef
 }
 
-func (a *DirectorAgent) resolveDelegateRefs(ctx context.Context, task string, params map[string]interface{}) (packedTask string, unresolvedCount int) {
+// BoardID 返回当前便签板。便签板被 YAGENT_BLACKBOARD=0 关掉时返回空串 ——
+// 开关的判定留在本包，调用方（app 的启动清理）不必认识这个环境变量。
+func (a *DirectorAgent) BoardID() string {
+	if !blackboardEnabled() {
+		return ""
+	}
+	return a.boardID
+}
+
+// boardIDForPlanner 只在便签板可用时把 board 交给 Planner。
+// YAGENT_BLACKBOARD=0 时必须传空串：那条路径上既不写便签，也就不该注入索引。
+func (a *DirectorAgent) boardIDForPlanner() string {
+	return a.BoardID()
+}
+
+// indexOpts 把 [blackboard] 配置换算成 blackboard 的索引参数。
+// 换算（index_line_chars = 0 → 不裁剪）在 blackboard 自己的构造函数里完成，
+// 配置层与特性层不必互相认识。
+func (a *DirectorAgent) indexOpts() blackboard.IndexOptions {
+	c := config.GlobalBlackboard()
+	return blackboard.IndexOptionsFromConfig(c.IndexMaxNotes, c.IndexLineChars)
+}
+
+func (a *DirectorAgent) resolveOpts() blackboard.ResolveOptions {
+	c := config.GlobalBlackboard()
+	return blackboard.ResolveOptions{
+		SummaryRunes: c.SummaryMaxRunes,
+	}
+}
+
+// WriteDelegateNote 实现 BoardWriter：把一次委派的产物写成便签。
+func (a *DirectorAgent) WriteDelegateNote(agentName, toolName, task string, result AgentResult, runErr error) string {
+	return a.writeDelegateNote(agentName, toolName, task, result, runErr)
+}
+
+// PackDelegateTask 实现 BoardWriter：给子任务前置便签索引与显式 refs 的内容。
+func (a *DirectorAgent) PackDelegateTask(task string, params map[string]interface{}) (string, int) {
+	return a.packDelegateTask(task, params)
+}
+
+// packDelegateTask 组装子 Agent 真正收到的任务文本：**索引 → 显式 refs 的 ContextPack → 任务**。
+//
+// 索引每轮从磁盘重扫，不来自会话历史，因此两件事同时成立：
+//   - 上下文压缩（第二/三档会丢掉 tool 消息里的 note:/artifact 引用）动不到它；
+//   - 子 Agent 能否发现前序结论，不再取决于 Director 是否记得传 context_refs。
+//     context_refs 从此语义是"强调"（额外内联全文），而不是"准入"。
+func (a *DirectorAgent) packDelegateTask(task string, params map[string]interface{}) (packedTask string, unresolvedCount int) {
 	if !blackboardEnabled() {
 		return task, 0
 	}
-	refs := parseContextRefs(params["context_refs"])
-	if len(refs) == 0 {
-		return task, 0
+
+	idx, _, err := blackboard.BuildIndex(a.boardID, a.indexOpts())
+	if err != nil {
+		slog.Debug("blackboard: index build failed", "board", a.boardID, "error", err)
 	}
-	pack := blackboard.ResolveRefs(a.boardID, refs, a.artifactExists)
-	unresolvedCount = len(pack.Unresolved)
-	packText := pack.Text()
-	if packText == "" {
+
+	refs := parseContextRefs(params["context_refs"])
+	var packText string
+	if len(refs) > 0 {
+		pack := blackboard.ResolveRefs(a.boardID, refs, a.artifactInfo, a.resolveOpts())
+		unresolvedCount = len(pack.Unresolved)
+		packText = pack.Text()
+		if packText == "" && unresolvedCount == 0 {
+			// refs 全被解析但什么都没渲染出来，说明 board 里确实没有——值得留一行日志。
+			slog.Debug("blackboard: refs resolved to an empty pack", "board", a.boardID, "refs", len(refs))
+		}
+	}
+
+	if idx == "" && packText == "" {
 		return task, unresolvedCount
 	}
-	slog.Debug("blackboard: context pack assembled", "refs", len(refs), "entries", len(pack.Entries), "unresolved", unresolvedCount, "packChars", len(packText))
-	return packText + "\n---\n" + task, unresolvedCount
+
+	var b strings.Builder
+	if idx != "" {
+		b.WriteString(idx)
+		b.WriteString("\n\n")
+	}
+	if packText != "" {
+		b.WriteString(packText)
+		b.WriteString("\n---\n")
+	}
+	b.WriteString(task)
+
+	slog.Debug("blackboard: delegate task packed", "board", a.boardID,
+		"index", idx != "", "refs", len(refs), "unresolved", unresolvedCount,
+		"chars", utf8.RuneCountInString(b.String()))
+	return b.String(), unresolvedCount
 }
 
-func (a *DirectorAgent) artifactExists(id string) bool {
-	projectID := a.computeProjectID()
-	_, err := artifact.DefaultStore().Load(projectID, id)
-	return err == nil
+// artifactInfo 回查 artifact 的摘要与体积。blackboard 不 import artifact，
+// 所以这里以回调形式提供（今天的 ArtifactExistsFn 只能回答"在不在"，
+// 于是 ContextPack 打印的是 (0 chars)，子 Agent 只能盲调 read_artifact）。
+func (a *DirectorAgent) artifactInfo(id string) (string, int, bool) {
+	art, err := artifact.DefaultStore().Load(a.computeProjectID(), id)
+	if err != nil {
+		return "", 0, false
+	}
+	return art.Summary, art.CharCount, true
 }
 
 func convertToolCalls(tcs []llm.ToolCall) []memory.ToolCallData {
@@ -685,7 +792,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 	resumedTask := a.resumedTask
 	a.resumedTask = false
 
-	// boardID 是按任务写入的（SetTaskID），而 read_note/read_artifact 的可用性取决于它，
+	// boardID 是按会话写入的（SetBoardScope），而 read_note/read_artifact/list_notes 的可用性取决于它，
 	// 所以每轮开始重建工具面。
 	a.rebuildSurface()
 
@@ -784,6 +891,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 
 		MaxParallelReadOnlyTools: a.maxParallelReadOnlyTools,
 		IsParallelizableTool:     a.isToolParallelizable,
+		BoardID:                  a.boardIDForPlanner(),
 	}
 
 	planner := director.NewPlanner(cfg, state)

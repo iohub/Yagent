@@ -22,15 +22,22 @@ func NewFlowControlTool(workingDir string) *FlowControlTool {
 }
 
 // ExecuteAgentExit 实现agent_exit工具
+//
+// handoff 只做透传与回显，不在这里解析：结构化解读属于 Agent 侧（agents/result.go 的
+// FinalizeResult），工具层负责把它写进返回值，于是它也自然出现在 rollout 与 TUI 里。
 func (t *FlowControlTool) ExecuteAgentExit(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	reason, ok := params["reason"].(string)
 	if !ok {
 		return nil, util.WrapError(ctx, fmt.Errorf("reason parameter must be a string"), "executeFinish")
 	}
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"finished": true,
 		"reason":   reason,
-	}, nil
+	}
+	if handoff, present := params["handoff"]; present && handoff != nil {
+		result["handoff"] = handoff
+	}
+	return result, nil
 }
 
 // ExecuteAskUserForHelp implements the ask_user_for_help tool

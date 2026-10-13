@@ -39,6 +39,9 @@ type RolloutSessionInfo struct {
 	ProjectID string // 所属 projectID（root 直下文件为空）
 	SessionID string // 优先 meta.session_id，回退文件名解析
 	TaskID    string // meta.task_id（写侧自 B1 起落盘；存量文件为空）
+	// BoardID 是这次会话用的便签板（meta.board_id）。board 升到 session 级之后，
+	// 一块板横跨多个 task，/resume 只有拿到它才能续上便签；存量文件这里是空串。
+	BoardID   string
 	AgentName string // 仅文件名带 agent 段时非空（sub-agent 文件）
 	CWD       string // 首个 session_meta.cwd / 首个 turn_context.cwd
 	Model     string // 首个 turn_context.model
@@ -259,6 +262,7 @@ func (si *RolloutSessionInfo) headScanLine(raw []byte, state *rolloutHeadScanSta
 			si.SessionID = id
 		}
 		si.TaskID = meta.TaskID
+		si.BoardID = meta.BoardID
 		if meta.Cwd != "" {
 			si.CWD = meta.Cwd
 		}

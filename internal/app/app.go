@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"yagent/internal/agents"
+	"yagent/internal/blackboard"
 	"yagent/internal/browserctl"
 	"yagent/internal/config"
 	"yagent/internal/embedbin"
@@ -94,6 +95,20 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 
 	// initOnce 保证只执行一次完整初始化（创建 Agents、启动 MCP 客户端等）
 	ca.initOnce.Do(func() {
+		// 便签板只增不减，所以在装配的最开始清一次。这里传 nil 作为"活动 board"名单是刻意的：
+		// 进程刚起来、Director 还没构造，本就没有正在写的便签板；本次会话的板是这一刻才创建的，
+		// mtime 新鲜，TTL 与条数上限都碰不到它。
+		if blackboard.Enabled() {
+			cfg := config.GlobalBlackboard()
+			if _, _, err := blackboard.GC(blackboard.GCOptions{
+				TTL:              cfg.TTL,
+				MaxNotesPerBoard: cfg.MaxNotesPerBoard,
+			}, nil); err != nil {
+				// 清理失败绝不能阻断启动：磁盘占用是可容忍的问题，装配失败才是事故。
+				slog.Warn("blackboard: gc failed", "error", err)
+			}
+		}
+
 		// Initialize agents
 		publisher := messaging.NewMessagePublisher(ca.dispatcher)
 
@@ -502,6 +517,10 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Config:         *ca.config,
 			LLMClient:      ca.client,
 		})
+
+		// Director 比 CodingAgent 晚构造，便签写入器只能事后回注：
+		// 它让 Coding→Browser 的二级委派也上便签板（索引前置 + 写便签）。
+		codingAgent.SetBoardWriter(ca.director)
 	})
 }
 
@@ -527,6 +546,10 @@ type TaskRequest struct {
 	wsCallback  func(string, string)
 	publisher   *messaging.MessagePublisher
 	userMessage string
+	// sessionID 决定便签板（boardID）的作用域：同一会话内的多次任务共享一块板，
+	// 于是前一次委派写下的结论能被下一次直接读到，而不必重新调查一遍。
+	// 空串 ⇒ 回落到 taskID（HTTP 未带会话标识、--prompt 单发就是这个形态）。
+	sessionID string
 	// resumed 本次请求是否跑在恢复出来的历史会话上（TUI /resume 或 history 加载后
 	// 的首次追问）。Director 据此在续跑第一轮强制注入项目上下文：恢复的 memory 里
 	// 本就没有 system 消息（reader 默认丢弃、datamanager 从不存储），非首次对话判定
@@ -576,10 +599,17 @@ func (r *TaskRequest) WithResumed(resumed bool) *TaskRequest {
 	return r
 }
 
+// WithSessionID 指定便签板作用域。同一会话（TUI 的一个 tab、HTTP 的一个 chat session）
+// 内的多次任务共享一块板；不指定则回落到 taskID，行为与改动前一致。
+func (r *TaskRequest) WithSessionID(sessionID string) *TaskRequest {
+	r.sessionID = sessionID
+	return r
+}
+
 // ProcessCodingTaskWithCallback executes the task using the agent system.
 func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
-	ca.director.SetTaskID(req.taskID)
+	ca.director.SetBoardScope(req.sessionID, req.taskID)
 	ca.director.SetResumedTask(req.resumed)
 	res, err := ca.director.Run(memory.WithConversationMemory(req.ctx, req.memory), req.taskDesc)
 	return res.Text, err
@@ -588,7 +618,7 @@ func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error
 // ProcessConversation handles chat messages.
 func (ca *Yagent) ProcessConversation(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
-	ca.director.SetTaskID(req.taskID)
+	ca.director.SetBoardScope(req.sessionID, req.taskID)
 	ca.director.SetResumedTask(req.resumed)
 	res, err := ca.director.Run(memory.WithConversationMemory(req.ctx, req.memory), req.userMessage)
 	return res.Text, err

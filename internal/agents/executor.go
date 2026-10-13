@@ -233,8 +233,10 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 	}
 
-	// Surface 已经把 read_note/read_artifact 当成 EffectContext 能力处理了
-	// （可用性 = 有没有 boardID），这里只给还没迁移的 Adapters 路径兜底。
+	// EffectContext 三兄弟（read_note / read_artifact / list_notes）的正常来源是 Surface：
+	// 已核实的五个子 Agent（coding/browser/devops/repo/chat）全部设了 cfg.Surface。
+	// 下面这段只服务"只传 Adapters 的旧调用点"——今天只剩循环单测走它，
+	// 但删掉会让那些测试静默失去便签工具，所以留着并写清前提。
 	if cfg.Surface == nil {
 		if bid := blackboard.BoardIDFrom(ctx); bid != "" && blackboardEnabled() {
 			has := func(name string) bool {

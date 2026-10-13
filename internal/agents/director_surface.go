@@ -45,7 +45,7 @@ func (a *DirectorAgent) delegateTargets() map[string]delegateSpec {
 
 // toolDeps 组装 Director 一次工具装配所需的依赖。
 //
-// boardID 是按任务变化的（SetTaskID 里写），所以 Deps 与 Surface 都在运行期重建，
+// boardID 是按会话变化的（SetBoardScope 里写），所以 Deps 与 Surface 都在运行期重建，
 // 不能在构造期固化 —— 那正是历史上 read_note/read_artifact 只能在 executor 里
 // 运行期注入的原因，现在有了正规位置。
 func (a *DirectorAgent) toolDeps() *toolspec.Deps {
@@ -131,7 +131,7 @@ func (a *DirectorAgent) delegateTo(ctx context.Context, target string, params ma
 		return nil, fmt.Errorf("sub-agent %q is not wired", target)
 	}
 
-	packedTask, unresolved := a.resolveDelegateRefs(ctx, task, params)
+	packedTask, unresolved := a.packDelegateTask(task, params)
 	ctx = blackboard.WithBoardID(ctx, a.boardID)
 	if rolloutWriter := a.createRolloutWriter(target, task); rolloutWriter != nil {
 		defer rolloutWriter.Close()

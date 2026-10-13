@@ -7,9 +7,10 @@ import (
 
 	"yagent/internal/http"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/google/uuid"
 )
 
 // tabBarHeight 是 tab 栏的高度（固定 1 行）
@@ -21,20 +22,23 @@ type sessionTab struct {
 	title string // 显示标题
 
 	// 消息与渲染
-	logEntries          []logEntry
-	contentParts        []string
-	dirtyEntryIndices   map[int]struct{}
-	needFullRebuild     bool
+	logEntries            []logEntry
+	contentParts          []string
+	dirtyEntryIndices     map[int]struct{}
+	needFullRebuild       bool
 	contentPartLinePrefix []int
-	contentCache        *strings.Builder
-	viewport            viewport.Model // 值复制，保留滚动位置
-	viewportYOffset     int            // 保存的滚动偏移量
+	contentCache          *strings.Builder
+	viewport              viewport.Model // 值复制，保留滚动位置
+	viewportYOffset       int            // 保存的滚动偏移量
 
 	// 输入
 	inputValue string // textarea 文本（Value/SetValue 恢复）
 
 	// 任务状态
-	currentTask   *http.Task
+	currentTask *http.Task
+	// sessionID 决定这块会话用哪块便签板：同一 tab 内的多次任务共享结论，
+	// 换 tab 或清空会话才换新 id（见 model.sessionID）。
+	sessionID     string
 	taskRunning   bool
 	taskStarted   bool
 	taskCancelled bool
@@ -84,23 +88,24 @@ func (m *model) newSessionTab(id int, title string) *sessionTab {
 	// 创建默认尺寸的 viewport（会在 resize 时调整）
 	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(0))
 	return &sessionTab{
-		id:    id,
-		title: title,
-		viewport:            vp,
-		viewportYOffset:     0,
-		logEntries:          make([]logEntry, 0),
-		contentParts:        make([]string, 0),
-		dirtyEntryIndices:   make(map[int]struct{}),
-		needFullRebuild:     true,
-		contentPartLinePrefix: make([]int, 0),
-		contentCache:        &strings.Builder{},
-		inputValue:          "",
-		taskRunning:         false,
-		taskStarted:         false,
-		taskCancelled:       false,
-		timelineEntries:     make([]*TimelineEntry, 0),
-		timelineExpanded:    false,
-		toolCallEntries:     make(map[string]*ToolEntry),
+		id:                       id,
+		title:                    title,
+		viewport:                 vp,
+		viewportYOffset:          0,
+		logEntries:               make([]logEntry, 0),
+		contentParts:             make([]string, 0),
+		dirtyEntryIndices:        make(map[int]struct{}),
+		needFullRebuild:          true,
+		contentPartLinePrefix:    make([]int, 0),
+		contentCache:             &strings.Builder{},
+		inputValue:               "",
+		sessionID:                uuid.New().String(),
+		taskRunning:              false,
+		taskStarted:              false,
+		taskCancelled:            false,
+		timelineEntries:          make([]*TimelineEntry, 0),
+		timelineExpanded:         false,
+		toolCallEntries:          make(map[string]*ToolEntry),
 		llmCallActiveEntries:     make(map[string]int),
 		aiStreamActiveEntries:    make(map[string]int),
 		aiStreamCompletedEntries: make(map[string]int),
@@ -141,6 +146,7 @@ func (m *model) saveActiveSession() {
 
 	// 保存任务状态
 	tab.currentTask = m.currentTask
+	tab.sessionID = m.sessionID
 	tab.taskRunning = m.taskRunning
 	tab.taskStarted = m.taskStarted
 	tab.taskCancelled = m.taskCancelled
@@ -240,6 +246,7 @@ func (m *model) restoreSessionTab(idx int) {
 
 	// 恢复任务状态
 	m.currentTask = tab.currentTask
+	m.sessionID = tab.sessionID
 	m.taskRunning = tab.taskRunning
 	m.taskStarted = tab.taskStarted
 	m.taskCancelled = tab.taskCancelled
@@ -322,6 +329,8 @@ func (m *model) clearCurrentSession() {
 	m.viewport.SetContent("")
 	m.viewport.GotoTop()
 	m.currentTask = nil
+	// 清空会话 = 换一块便签板：旧会话的结论不该继续出现在新话题的索引里。
+	m.sessionID = uuid.New().String()
 	m.taskRunning = false
 	m.taskStarted = false
 	m.taskCancelled = false

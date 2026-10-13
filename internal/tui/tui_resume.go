@@ -441,6 +441,9 @@ func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.Ro
 	}
 
 	infoMsg := applyRestoredMemory(m, mem, taskID, projectDir, "Resumed")
+	// 接管这块会话原来的便签板。没有这一步，恢复出来的任务会拿到一个刚生成的
+	// sessionID ⇒ 旧结论全部不可见，只能把已经调查过的东西再做一遍。
+	m.adoptRestoredBoard(info.BoardID, taskID)
 
 	applyRolloutRunState(m, info, agentName)
 
@@ -609,6 +612,18 @@ func restoredInterruptSummary(info memory.RolloutInfo) string {
 	default:
 		return fmt.Sprintf("interrupted (%s)", reason)
 	}
+}
+
+// adoptRestoredBoard 让恢复出来的会话接管它原来的便签板。
+//
+// boardID 优先（rollout 里记的 board_id）；存量 rollout 没有这个字段时退回 taskID ——
+// 那正好是 board 作用域升级前的取值规则，所以旧会话照样能读到自己当年的便签。
+func (m *model) adoptRestoredBoard(boardID, taskID string) {
+	if boardID != "" {
+		m.sessionID = boardID
+		return
+	}
+	m.sessionID = taskID
 }
 
 func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, projectDir, sourceLabel string) string {
