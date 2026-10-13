@@ -20,7 +20,6 @@ import (
 	"yagent/internal/http"
 	"yagent/internal/messaging"
 	"yagent/internal/models"
-	"yagent/internal/tui/anim"
 	"yagent/internal/tui/common"
 	"yagent/internal/tui/components"
 	"yagent/internal/tui/layout"
@@ -465,7 +464,6 @@ type model struct {
 
 	anim       *Anim
 	activeAnim bool
-	animFrame  int
 
 	historyMode     bool
 	historyItems    []datamanager.TaskHistoryItem
@@ -490,7 +488,6 @@ type model struct {
 	pendingDeleteTaskID string
 
 	dialogStack  *components.DialogStack
-	animManager  *anim.Manager
 	layoutEngine *layout.LayoutEngine
 	mouseHandler *components.ClickDetector
 
@@ -700,11 +697,8 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 	}
 
 	ds := components.NewDialogStack()
-	am := anim.NewManager()
 	le := layout.NewLayoutEngine()
 	md := components.NewClickDetector()
-
-	am.Register("tool_call_anim", 10)
 
 	var keywordDict *dict.CompletionDict
 	var completionEnabled bool
@@ -863,7 +857,6 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 		tokenDashboardCollapsed:  false,
 
 		dialogStack:          ds,
-		animManager:          am,
 		layoutEngine:         le,
 		mouseHandler:         md,
 		keywordDict:          keywordDict,

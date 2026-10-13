@@ -585,8 +585,9 @@ func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 		//（它会直接操作被全屏隐藏的主界面 viewport，造成 UI 错乱）。
 		// 对齐主 Update 的 dialog 弹窗分支策略。
 		if m.taskRunning {
-			return m, tickCmd()
+			return m, m.armTick()
 		}
+		m.stopTick()
 		return m, nil
 	}
 	// 其余未知消息（如 MouseMsg、未匹配任何 case 的消息，以及 KeyMsg 中
@@ -594,7 +595,7 @@ func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 	// 一致——任务运行时同时续上事件链与 tick 链，否则退出全屏后主界面
 	// 永久失去刷新（TUI 冻结）。
 	if m.taskRunning {
-		return m, tea.Batch(listenForEvents(m.eventCh), tickCmd())
+		return m, tea.Batch(listenForEvents(m.eventCh), m.ensureTick())
 	}
 	return m, nil
 }

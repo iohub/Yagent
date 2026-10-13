@@ -7,23 +7,47 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
+// tick 链唯一性守卫
+//
+// 不变量：任一时刻，一个 model 上最多只应有一条活跃的 tick 链。否则每 100ms
+// 会收到 N 个 tickMsg，动画按"被调用次数"而非真实时间推进（表现为"忽快"）
+// 并浪费大量 CPU。
+//   · 会再产生 tickMsg 的地方     → armTick()
+//   · tickMsg 处理器决定不再续期处  → stopTick()
+//   · 非 tick 消息想补链的地方      → ensureTick()
+// ─────────────────────────────────────────────────────────────────────────────
+
+// armTick 续期 tick 链：仅由处理 tickMsg 的分支调用，保证链继续。
+func (m *model) armTick() tea.Cmd {
+	m.tickStarted = true
+	return tickCmd()
+}
+
+// stopTick 标记 tick 链已结束：处理 tickMsg 却不再续期时调用。
+func (m *model) stopTick() {
+	m.tickStarted = false
+}
+
+// ensureTick 幂等补链：非 tick 消息想让动画继续时调用；已有链在跑时返回 nil。
+func (m *model) ensureTick() tea.Cmd {
+	if m.tickStarted {
+		return nil
+	}
+	return m.armTick()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // handleTickMsg — 原 Update case tickMsg 提取
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (m *model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
-	m.animFrame++
-
-	if m.animManager != nil {
-		m.animManager.Tick(100)
-	}
-
 	// 流式节流缓冲的超时检查只有 tick 能驱动（chunk 自己到得勤，流一停就没了），
 	// 放在 idle 早退之前：落地后 viewportDirty 变 true，本轮自然会把尾巴渲染出来。
 	m.flushStreamBuffers(aiChunkFlushInterval)
 
 	// Stop tick early when idle: avoids unnecessary View() calls that cause flicker
 	if !m.activeAnim && !m.taskRunning && !m.viewportDirty {
-		m.tickStarted = false
+		m.stopTick()
 		return m, nil
 	}
 
@@ -84,7 +108,7 @@ func (m *model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
 		m.viewportDirty = false
 	}
 
-	return m, tickCmd()
+	return m, m.armTick()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,7 +140,7 @@ func (m *model) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) 
 		tab.needFullRebuild = true
 	}
 
-	return m, tickCmd()
+	return m, m.ensureTick()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
