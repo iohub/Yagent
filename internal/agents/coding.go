@@ -175,6 +175,7 @@ func buildCodingAdapters(p CodingAgentParams) []*tools.Adapter {
 
 // newBrowserDelegateAdapter 将 delegate_browser 绑定到 BrowserAgent。
 // browser 为 nil 或 tools.json 未定义该工具时返回 nil（即不注册）。
+// 浏览器能力不可用时把描述换成降级文案，避免 Coding 反复委派一个必然失败的入口。
 func newBrowserDelegateAdapter(toolDefs []tools.ToolDefinition, browser *BrowserAgent) *tools.Adapter {
 	if browser == nil {
 		return nil
@@ -182,6 +183,10 @@ func newBrowserDelegateAdapter(toolDefs []tools.ToolDefinition, browser *Browser
 	for _, def := range toolDefs {
 		if def.Name != "delegate_browser" {
 			continue
+		}
+		description := def.Description
+		if ok, reason := browser.Capability(); !ok {
+			description = browserDelegateDescription(false, reason)
 		}
 		fn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			task, ok := params["task"].(string)
@@ -194,7 +199,7 @@ func newBrowserDelegateAdapter(toolDefs []tools.ToolDefinition, browser *Browser
 			}
 			return result.Text, nil
 		}
-		return tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters)
+		return tools.NewAdapter(def.Name, description, fn).WithSchema(def.Parameters)
 	}
 	return nil
 }

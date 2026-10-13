@@ -440,7 +440,7 @@
   },
   {
     "name": "delegate_browser",
-    "description": "Placeholder for Browser-Agent, currently under reconstruction: calling it always returns a not-implemented error and performs no browser actions. Do not delegate here; use local docs, shell-based checks, or another agent.",
+    "description": "Delegate a task to Browser-Agent, which drives a real Chrome over CDP: open pages, click/fill/wait, read rendered text, take screenshots. Use it when the task needs JS rendering, an existing login session, or page interaction — not for static docs you can fetch with read-only tools. The task string must be self-contained: target URL, what to do, and what evidence to return.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -649,6 +649,296 @@
       },
       "required": [
         "action"
+      ]
+    }
+  },
+  {
+    "name": "browser_status",
+    "description": "Check the browser session: CDP endpoint, browser version, daemon health and the current page (url/title). Call this first when browser actions start failing, or after a resume.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "browser_open",
+    "description": "Navigate the current tab to a URL and wait for load. Only http/https is allowed. Prefer reusing the current page when possible instead of reopening the same URL.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Absolute http/https URL to open"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  {
+    "name": "browser_inspect",
+    "description": "Primary way to read a page: returns compact visible text, headings, and a numbered list of interactive elements. Use query to jump straight to relevant text instead of pulling the whole page.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Optional keyword; returns text excerpts around matches and filters elements"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max elements to list (default 30, max 80)"
+        },
+        "text_chars": {
+          "type": "integer",
+          "description": "Max visible-text characters (default 2500, max 8000)"
+        }
+      }
+    }
+  },
+  {
+    "name": "browser_snapshot",
+    "description": "Refresh the numbered @ref handles for every actionable element. Call it right before acting; refs expire after navigation or SPA re-render and are renumbered on each snapshot.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "browser_click",
+    "description": "Click an element. Target must be a @ref from a recent browser_snapshot, a CSS selector, or \"x,y\" coordinates. For headers/dropdowns that need hovering, use browser_eval with a mouseover event.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "@e3, #submit, or 100,200"
+        },
+        "wait": {
+          "type": "integer",
+          "description": "Seconds to poll for the element before clicking (default 3)"
+        },
+        "button": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right",
+            "middle"
+          ],
+          "description": "Mouse button (default left)"
+        },
+        "clicks": {
+          "type": "integer",
+          "description": "2 for double click (default 1)"
+        },
+        "frame": {
+          "type": "string",
+          "description": "Optional iframe target id or URL substring"
+        }
+      },
+      "required": [
+        "target"
+      ]
+    }
+  },
+  {
+    "name": "browser_fill",
+    "description": "Set the value of an input/textarea and fire input+change events (works with React-controlled inputs). Target must be a @ref, CSS selector, or coordinates.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "@e3 or CSS selector of the input"
+        },
+        "value": {
+          "type": "string",
+          "description": "Text to set"
+        },
+        "wait": {
+          "type": "integer",
+          "description": "Seconds to poll for the element first (default 3)"
+        },
+        "frame": {
+          "type": "string",
+          "description": "Optional iframe target id or URL substring"
+        }
+      },
+      "required": [
+        "target",
+        "value"
+      ]
+    }
+  },
+  {
+    "name": "browser_type",
+    "description": "Insert text at the current focus position as raw keyboard input (Input.insertText). Use browser_fill when you can target the field directly.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Text to insert"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "browser_press",
+    "description": "Press a key or key combination: Enter, Escape, Tab, ArrowDown, or combos like ctrl+a, cmd+shift+t. Editing combos work headless and on macOS.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Key or combo, e.g. Enter, ctrl+a, cmd+shift+t"
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  },
+  {
+    "name": "browser_scroll",
+    "description": "Scroll the window (default -300px) or an inner scrollable container via coordinates. Use it to reveal lazily-loaded content before reading or clicking.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "dy": {
+          "type": "integer",
+          "description": "Vertical delta in px (default -300, negative scrolls down)"
+        },
+        "dx": {
+          "type": "integer",
+          "description": "Horizontal delta in px (default 0)"
+        },
+        "at": {
+          "type": "string",
+          "description": "Optional \"x,y\" to dispatch a wheel event inside an inner container"
+        }
+      }
+    }
+  },
+  {
+    "name": "browser_select",
+    "description": "Choose an option in a <select> element by value, firing input+change events.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "@ref or CSS selector of the select element"
+        },
+        "value": {
+          "type": "string",
+          "description": "Option value to select"
+        }
+      },
+      "required": [
+        "target",
+        "value"
+      ]
+    }
+  },
+  {
+    "name": "browser_tabs",
+    "description": "Manage browser tabs: list them, open a new one, switch the active tab, or close one. The active tab is shared by every browser_* call in this task.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "new",
+            "switch",
+            "close"
+          ],
+          "description": "Operation to perform"
+        },
+        "target": {
+          "type": "string",
+          "description": "Tab index (as shown by list) or target id; required for switch"
+        },
+        "url": {
+          "type": "string",
+          "description": "Optional URL when action=new (http/https only)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "browser_wait",
+    "description": "Wait until the page is ready: mode=load (page load event), mode=networkidle (no network activity), or mode=element (a selector becomes present/visible). Prefer waiting on a concrete element over fixed sleeps.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "load",
+            "networkidle",
+            "element"
+          ],
+          "description": "What to wait for (default load)"
+        },
+        "seconds": {
+          "type": "integer",
+          "description": "Timeout in seconds (default 10, max 60)"
+        },
+        "selector": {
+          "type": "string",
+          "description": "CSS selector; required when mode=element"
+        },
+        "visible": {
+          "type": "boolean",
+          "description": "Require the element to be visible (mode=element)"
+        }
+      }
+    }
+  },
+  {
+    "name": "browser_screenshot",
+    "description": "Capture the current page to a PNG inside the session workspace and return its absolute path as evidence. Use full=true for the whole scrollable page. The path is confined to the session workspace.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Optional file name/path inside the session workspace; defaults to shot-<time>.png"
+        },
+        "full": {
+          "type": "boolean",
+          "description": "Capture the full page instead of the viewport"
+        }
+      }
+    }
+  },
+  {
+    "name": "browser_eval",
+    "description": "Escape hatch: run JavaScript in the current page (top-level `return` is auto-wrapped). Use it for anything the helper commands cannot express, e.g. location.reload(), history.back(), or dispatching mouseover. Touch cookie/storage/network/submit APIs triggers an authorization prompt.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "js": {
+          "type": "string",
+          "description": "JavaScript expression or statements; the result is returned"
+        },
+        "frame": {
+          "type": "string",
+          "description": "Optional iframe target id or URL substring"
+        }
+      },
+      "required": [
+        "js"
       ]
     }
   }

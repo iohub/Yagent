@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 
+	"yagent/internal/browserctl"
 	"yagent/internal/knowledge"
 )
 
@@ -116,3 +117,7 @@ type Designer interface {
 type MicroAgentRunner interface {
 	Execute(ctx context.Context, params map[string]interface{}) (interface{}, error)
 }
+
+// BrowserControl 浏览器执行层入口（由 *browserctl.Manager 天然实现）。
+// 用类型别名而不是新接口：Browser-Agent 与工具层共用同一份契约，避免两份声明漂移。
+type BrowserControl = browserctl.Controller

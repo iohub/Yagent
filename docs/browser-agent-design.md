@@ -49,8 +49,8 @@ MIT，Rust，纯 CDP，无 LLM、无 MCP、无常驻 server。我们核对的是
 
 | 命令 | 形态 | 输出 |
 |---|---|---|
-| `--version` | — | 版本号（用于契约校验） |
-| `launch [url] [--port N] [--headless]` | 启动 Chrome 并写状态 | 一行 `BROWSER_CONTROL_CDP_URL=http://127.0.0.1:{port}` |
+| `--help` | — | 用法（**不要用 `--version`**：本机安装的这版 clap 未声明 version，`--version` 直接报 `unexpected argument`，见 2.5 第 6 条） |
+| `launch [url] [--port N] [--headless]` | 启动 Chrome 并写状态（**spawn 完立刻返回，不等端口**） | 一行 `BROWSER_CONTROL_CDP_URL=http://127.0.0.1:{port}` |
 | `doctor` | 只读诊断 | 多行 `[ok  ]/[FAIL] label — detail`；CDP 不可达时**退出码非 0** |
 | `status` | 只读 | `cdp: ok` + `Browser.getVersion` 的 JSON |
 | `stop` | 杀掉自己启动的 Chrome | `stopped {pid}` 或 `no recorded browser-control browser` |
@@ -155,6 +155,11 @@ e.setAttribute('data-browser-control-ref', `e${i+1}`)                    // ref 
    `wait networkidle` 有直连 CDP 回退（`src/main.rs` 里先试 daemon 再试 `c.wait_network_idle`），
    `cdp`/`eval` 也有直连回退。→ 对策：Windows 上把这些工具的 description 标注为不可用，不要静默失败。
 5. **每次命令失败都写一个 trace 目录**（`write_failure_trace`）。→ 对策：按 `[browser] workspace_ttl` 清理。
+6. **`launch` 不等端口就绪**（真实 E2E 复现）：spawn 完就返回，Chrome 调试端口要稍后才 bind，
+   紧跟的第一条命令会报 `DevToolsActivePort not found`。
+   → 对策：`Manager.makeReadyLocked` 拿端点后轮询 `status` 直到应答（上限 20s，300ms 间隔），就绪后才交回会话。
+7. **本机安装的这版没有 `--version`**：clap 未声明 version，调用直接 `unexpected argument` 退出 2。
+   → 对策：不做运行时版本校验（原设计的 `expectedCLIVersion` 已删除），契约以本文档为准。
 
 ### 2.6 输出样例（Go 侧解析用）
 
@@ -218,7 +223,7 @@ Director ─delegate_browser─┐                    Coding ─delegate_browser
 | `internal/tools/browser_operations_test.go` | 与 `tools.json` 的一致性测试 + 参数映射测试（用 fake Session） | — |
 | `internal/agents/browser_agent.go` | 从 stub 改成真实现（`Run` + `lookupBrowserToolFunc`） | ≤200 行 |
 | `internal/agents/browser.prompt.md` | System Prompt（新增，`//go:embed`） | — |
-| `internal/agents/ports.go` | 新增 `BrowserControl` / `BrowserSession` 窄接口 | +25 行 |
+| `internal/agents/ports.go` | `BrowserControl = browserctl.Controller` 类型别名（契约见 4.1） | +6 行 |
 | `internal/agents/tools.json` | 14 条 `browser_*` 声明 + 改回 `delegate_browser` 真描述 | +约 300 行 |
 | `internal/config/config.go` | `BrowserConfig` struct + `Config.Browser` 字段 + 默认值填充 | +60 行 |
 | `internal/config/default_config.toml`、`config/config.toml` | `[browser]` 段（注释模板） | +30 行 |
@@ -270,20 +275,20 @@ func (s *Session) Run(ctx context.Context, command string, args ...string) (*Res
 func (s *Session) Release()
 ```
 
-`ports.go` 里对应两个窄接口（`*Manager` / `*Session` 天然实现，无需适配器）：
+`ports.go` 里只放一个类型别名（`BrowserControl = browserctl.Controller`）：
+契约本身由提供方 `browserctl` 声明（`interfaces.go` 的 `Controller` / `Runner`），
+工具层直接使用 `browserctl.Runner`。两处各自声明接口会漂移，别名零成本且不会引入依赖环。
 
 ```go
-// BrowserControl 浏览器执行层入口。由 *browserctl.Manager 天然实现。
-type BrowserControl interface {
-    Probe() (bool, string)
-    Acquire(ctx context.Context, delegationID string) (BrowserSession, error)
+// browserctl/interfaces.go
+type Runner interface {
+	Run(ctx context.Context, command string, args ...string) (*Result, error)
+	Dir() string
+	Release()
 }
-
-// BrowserSession 一次委派独占的浏览器工作区。由 *browserctl.Session 天然实现。
-type BrowserSession interface {
-    Run(ctx context.Context, command string, args ...string) (*browserctl.Result, error)
-    Dir() string
-    Release()
+type Controller interface {
+	Probe() (bool, string)
+	Acquire(ctx context.Context, delegationID string) (Runner, error)
 }
 ```
 
@@ -586,8 +591,8 @@ Director 侧的 blackboard 便签与 artifact 落盘由既有代码处理（`dir
 | 文件 | 改动 |
 |---|---|
 | `internal/tools/adapter.go:76` `knownReadOnlyTools` | **不加任何 browser 工具**（见 12.3） |
-| `internal/tools/workspace_guard.go:42` `dangerousTools` | 加 `browser_screenshot`、`browser_eval`；P1 加 `browser_pdf`、`browser_upload`、`browser_download_path` |
-| `internal/tools/workspace_guard.go:51` `pathParamNames` | `browser_screenshot: {"path"}`、`browser_pdf: {"path"}`、`browser_upload: {"paths"}`、`browser_download_path: {"path"}` |
+| `internal/tools/workspace_guard.go:42` `dangerousTools` | P0 只加 `browser_eval`，并在 `Check` 的 switch 里加 `case "browser_eval"` → **按 JS 敏感特征判定**（cookie/存储/网络请求/表单提交/动态执行才弹窗）；良性逃生口（`location.reload()`、`history.back()`、派发 mouseover）不打断流程。P1 再加 `browser_pdf`、`browser_upload`、`browser_download_path` |
+| `internal/tools/workspace_guard.go:51` `pathParamNames` | **`browser_screenshot` 不进这张表**：截图落在 `~/.yagent/data/browser/{delegation}` 内，本就在项目工作区之外，登记它等于每次截图都问用户一次；路径收敛由工具层 `prepareArtifactPath` 硬约束（拒绝越界与 `..`）。P1 给 `browser_upload` 的 `paths` 登记（那是"本地文件外传"面，需要工作区边界检查） |
 | `internal/agents/executor.go:74` `nonParallelToolNames` | 加 `browser_eval`、`browser_open`、`browser_tabs`（会改当前 tab 的都不能并行） |
 | `internal/compression/priority.go:9` 优先级 0 | 加 `browser_snapshot`、`browser_inspect`、`browser_devtools`、`browser_text`（陈旧观察结果最该先丢；现在它们落在 default=1，会先截 `read_file`，方向是反的） |
 | `internal/agents/tools.json` | 14 条 `browser_*` + 改 `delegate_browser` 描述 |
@@ -654,8 +659,8 @@ chrome_path = ""          # 空 → 由 browser-control 自动探测 Chrome/Chro
 mode = "headless"         # headless | headful | attach（attach 复用已登录的 Chrome）
 cdp_url = ""              # mode=attach 时必填，如 http://127.0.0.1:9222
 cdp_port_base = 9333      # 自启端口起点，递增找空闲（刻意避开 9222/9223，上游会兜底硬扫这两个端口）
-cdp_timeout = "20s"       # 上游内部 CDP 往返超时（默认仅 15s，wait  longer 会提前失败）
-command_timeout = "45s"   # 单次工具调用上限
+cdp_timeout = "65s"       # → BROWSER_CONTROL_TIMEOUT；须覆盖最长 wait（60s），上游出厂默认仅 15s
+command_timeout = "75s"   # 单次调用上限；须 > cdp_timeout，否则外层先杀进程，模型看不到上游失败原因
 idle_ttl = "15m"          # 空闲多久后关掉自己启动的 Chrome
 max_chrome = 1
 workspace_root = ""       # 空 → ~/.yagent/data/browser/{delegation}
@@ -670,6 +675,12 @@ enable_skills = false     # P2：注入 domain-skills 语料
 
 注意：`persist.go` 是**文本级精确改段**（`:21`/`:107`/`:187`），新增表只要在 struct 与模板里存在即可安全写回，
 **不要**新增整文件重编码的持久化函数（会丢用户注释）。
+
+另：老用户的 `~/.yagent/config/config.toml` 里可能已经有 `[browser]` 段——那是被删掉的旧浏览器栈留下的
+（`headless = true` / `browser_path = ...`），新 schema 不认识这些键，TOML 会把 `enabled` 读成 `false`
+而静默关掉新能力（2026-10-13 的真实故障）。实现上要求段内**至少有一个被新 schema 认识的键**才算"用户显式配置"
+（`browserSectionConfigured`），只剩失效键的段落按整表缺省处理；失效键用 `slog.Warn` 点名提示改写。
+表存在时逐项兜零值（`applyDefaults`），并对两个超时做下限兜底（`MinBrowserCDPTimeout` / `MinBrowserCommandTimeout`）。
 
 ---
 
@@ -706,9 +717,17 @@ fake 手段：`SessionProvider` 用内存实现（记录 argv/env/dir，返回�
 
 ### 10.2 集成测试（门控，本地手动跑）
 
-`internal/browserctl/e2e_test.go`，`testing.Short()` 与 `YAGENT_BROWSER_E2E != "1"` 时 `t.Skip`；
-再检查 `browser-control` 与 Chrome 是否可用，缺则 skip。用例：
-`launch → open https://example.com → inspect → snapshot → click @e1 → 断言 URL 变为 iana.org → screenshot → stop`。
+`internal/tools/browser_operations_e2e_test.go`（已实现）。`YAGENT_BROWSER_E2E != "1"` 时 `t.Skip`，
+并在 `Probe()` 失败时 skip。用例刻意从**工具层**打进真实 Chrome，覆盖整条链路
+（tools.json 声明 → Adapter → argv 映射 → Session/env/Dir → CLI → CDP）：
+
+```bash
+YAGENT_BROWSER_E2E=1 go test ./internal/tools/ -run TestE2EBrowserStack -v -timeout 300s
+```
+
+`browser_status → browser_open(example.com) → browser_inspect(query) → browser_snapshot →
+browser_click(@ref) → 断言落到 iana.org → browser_screenshot → 断言 `.browser-control` 只在会话工作区`，
+收尾由 `mgr.Close()` 关掉 Chrome（断言无孤儿）。
 
 ### 10.3 必须断言的不变量
 
@@ -739,27 +758,36 @@ bash scripts/check_no_agents_import.sh
 4. `browser_agent.go` 真实现 + `browser.prompt.md`。
 5. `ports.go` 两个窄接口；`app.go` 构造/注入/`Close` 回收。
 6. `[browser]` 配置 + 模板 + 默认值。
-7. 注册表增补：`dangerousTools`、`pathParamNames`、`nonParallelToolNames`、`toolTruncationPriority`。
+7. 注册表增补：`dangerousTools`（browser_eval，按 JS 敏感特征）、`nonParallelToolNames`、`toolTruncationPriority`（见 7.2 的取舍说明）。
 8. 能力探测降级（7.3）。
 9. `AGENTS.md` 同步（§3 模块地图、§4 Agent 表权限列、§5 工具表、§7 配置表清单、§11 坑）。
 
 验收：
-- `go build` / `go vet` / 上述包 `go test` 全绿；两个 `scripts/check_*.sh` 通过。
-- 无 Chrome/无二进制的环境下：`delegate_browser` 描述显示不可用原因，`BrowserAgent.Run` 立即返回可行动错误。
-- 有环境时（人工验证）：`./yagent -p "打开 https://example.com，找到第一个链接点进去，返回新页面的标题和 URL"` 成功，
-  且**仓库根没有 `.browser-control/`**、进程退出后无孤儿 Chrome。
+- `go build` / `go vet` / 上述包 `go test` 全绿；`scripts/check_no_agents_import.sh` 通过。
+  （`scripts/check_file_sizes.sh` 有一处**既存**违规：`internal/agents/director/planner_run.go` 655 行，
+  与浏览器改动无关，别顺手重构它。）
+- 无 Chrome/无二进制的环境下：`delegate_browser` 描述显示不可用原因，`BrowserAgent.Run` 立即返回可行动错误
+  （`browser_agent_test.go` 覆盖）。
+- 有环境时：`YAGENT_BROWSER_E2E=1 go test ./internal/tools/ -run TestE2EBrowserStack`（见 10.2）。
+  2026-10-13 已在 Chrome/155 + `~/.cargo/bin/browser-control` 上跑通：
+  open→inspect→snapshot(`@e1 link "Learn more"`)→click→落到 `https://www.iana.org/help/example-domains`→截图落会话工作区→Chrome 干净退出。
 
 ### P1：可用性与可诊断性
 
-`browser_devtools`（Unix 门控）、`browser_upload`/`browser_pdf`/`browser_download_path`/`browser_dialog`、
-traces 摘要回传与清理、workspace TTL 清理、启动 reap、无进展检测、`micro_agent`/`deepthinking`/`thinking` 接入、
-`networkidle` 与 Windows 降级的 description 标注、E2E 门控测试。
+P0 已顺带完成：traces 摘要回传、workspace TTL 清理（含 traces 目录）、启动时 reap 遗留 Chrome、E2E 门控测试。
+P1 剩下这些：
+
+`browser_devtools`（`events`/`network`/`console`，Unix 门控）、`browser_upload`/`browser_pdf`/
+`browser_download_path`/`browser_dialog`（dialog 的**自动**处理已在 P0 实现，这里只是给 `ask` 策略留出人工入口）、
+无进展检测（`OnStepEnd` 里比对 url+title）、`thinking`/`micro_agent`/`deepthinking` 接入、
+Windows 下不可用工具的 description 标注、`browser_upload` 的 `pathParamNames` 登记。
 
 验收：一个需要 5+ 步表单交互的真实站点任务跑通；失败时工具结果里能看到 trace 摘要。
 
 ### P2：登录态与语料
 
-`mode=attach` 复用用户 Chrome、`profile_dir` symlink 共享、domain-skills 注入
+`profile_dir` 的 symlink 共享与 `mode=attach` 已在 P0 落地（`linkProfileLocked` / `chromeProc.attached`，
+且 attach 模式下 `Close()` 不会关用户的浏览器）。P2 做：domain-skills 注入
 （上游 `skills/domain-skills/<site>/<task>.md` ~250 篇，MIT；按当前 host 匹配注入 1-2 篇，预算 2-4KB；
 用 `BROWSER_CONTROL_ASSET_DIR` 指向我们解出的目录）、云 provider、TUI 侧页面状态/截图路径展示。
 

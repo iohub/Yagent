@@ -135,6 +135,27 @@ injection_max_entries = 8            # 知识注入最大条目数
 injection_min_score = 0.3            # 知识检索最低得分阈值
 injection_rerank = true              # 是否请求 Cross-Encoder 精排（codeseek 端 reranker 未启用时自动降级）
 
+# ── Browser-Agent（外部 browser-control CLI 驱动真实 Chrome）──
+[browser]
+enabled = true                       # 关闭后 delegate_browser 会降级为不可用
+binary_path = ""                     # 空 → ~/.yagent/bin/browser-control → $PATH
+chrome_path = ""                     # 空 → 由 browser-control 自动探测 Chrome/Chromium
+mode = "headless"                    # headless | headful | attach（attach 复用已登录浏览器）
+cdp_url = ""                         # mode=attach 时必填，如 http://127.0.0.1:9222
+cdp_port_base = 9333                 # 自启端口起点（刻意避开 9222/9223）
+cdp_timeout = "65s"                  # 上游内部 CDP 超时：必须覆盖最长 wait（60s），其出厂默认仅 15s
+command_timeout = "75s"              # 单次工具调用上限：必须大于 cdp_timeout，否则外层先杀进程看不到上游原因
+idle_ttl = "15m"                     # 空闲多久后关掉自启的 Chrome
+max_chrome = 1                       # 进程内 Chrome 上限
+workspace_root = ""                  # 空 → ~/.yagent/data/browser
+workspace_ttl = "72h"                # 过期工作区清理
+max_output_bytes = 24000             # 交给模型的单次输出预算
+dialog_policy = "accept"             # accept | dismiss | ask
+allowed_domains = []                 # 空 = 不限公网
+denied_domains = ["*.local", "localhost", "127.0.0.1", "::1", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "169.254.0.0/16"]
+profile_dir = ""                     # 需要登录态复用时的 profile 目录
+enable_skills = false                # P2：注入站点手册语料
+
 # ── 关键词词典配置 ──
 [keywords]
 default_path = "~/.yagent/keywords.txt"  # 默认关键词文件路径

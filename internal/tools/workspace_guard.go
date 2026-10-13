@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"yagent/internal/browserctl"
 )
 
 // WorkspaceGuard checks tool calls for potentially dangerous operations
@@ -45,6 +47,9 @@ var dangerousTools = map[string]bool{
 	"delete_file":            true,
 	"rename_file":            true,
 	"run_bash":               true,
+	// browser_eval 能在这台浏览器的当前页面里执行任意 JS（读取登录态、发起请求），
+	// 按敏感特征要求授权；截图路径已由工具层收敛到会话工作区，无需再走路径检查。
+	"browser_eval": true,
 }
 
 // pathParamNames maps dangerous tool names to their file-path parameter names.
@@ -92,9 +97,27 @@ func (g *WorkspaceGuard) Check(toolName string, params map[string]interface{}) (
 
 	case "create_file", "delete_file", "rename_file", "search_replace_in_file":
 		return g.checkFileOp(toolName, params)
+
+	case "browser_eval":
+		return g.checkBrowserEval(params)
 	}
 
 	return false, ""
+}
+
+// checkBrowserEval 只在 JS 触及敏感能力时要求授权：读写 cookie/存储、发起网络请求、
+// 提交表单、动态执行代码。良性逃生口（location.reload()、history.back()、派发 mouseover）
+// 不打断流程——否则模型会把 eval 当禁区，遇到死路时只能空转。
+func (g *WorkspaceGuard) checkBrowserEval(params map[string]interface{}) (bool, string) {
+	js, _ := params["js"].(string)
+	if strings.TrimSpace(js) == "" {
+		return false, ""
+	}
+	risky, reason := browserctl.RiskyJS(js)
+	if !risky {
+		return false, ""
+	}
+	return true, fmt.Sprintf("这段 JS 会在浏览器当前页面执行，且会%s:\n```js\n%s\n```", reason, js)
 }
 
 // RequestAuth blocks until the user approves or denies the operation.

@@ -62,7 +62,9 @@
 
 ### 2.2 外部依赖
 
-`ripgrep`（已内嵌，见 `dist/bin`）、`fzf`（模糊搜索）、Chrome/Chromium（Browser-Agent 重构后才需要）、`codeseek` 二进制（默认从 `dist/bin` 解出到 `~/.yagent/bin`）。
+`ripgrep`（已内嵌，见 `dist/bin`）、`fzf`（模糊搜索）、`codeseek` 二进制（默认从 `dist/bin` 解出到 `~/.yagent/bin`）、
+`browser-control`（Rust CLI，**刻意不内嵌**：按 `[browser] binary_path` → `~/.yagent/bin/browser-control` → `$PATH` 依次查找）
+与 Chrome/Chromium —— 两者缺一，Browser-Agent 即不可用（`delegate_browser` 描述会自动降级）。
 
 ### 2.3 LLM 接入
 
@@ -94,6 +96,7 @@ yagent/
 │   │   ├── repo_memory.go consolidation_worker.go knowledge_hook.go
 │   │   └── *.prompt.md         # 各 Agent 的 System Prompt
 │   ├── app/app.go              # Yagent：一次性装配 MCP/工具引擎/守卫/子 Agent/Director
+│   ├── browserctl/             # 浏览器执行层：外部 browser-control CLI 的进程/工作区/URL 策略/渲染
 │   ├── blackboard/             # 跨 Agent 便签（文件后端，~/.yagent/notes）
 │   ├── artifact/               # 超预算委派结果的落盘存储 + 摘要
 │   ├── compression/            # 三档上下文压缩（rule / emergency / ultimate）
@@ -144,7 +147,7 @@ yagent/
 | **Repo** | `repo.go` | 架构师/审计员 | 只读 + 可委派 DevOps | 50 |
 | **Chat** | `chat.go` | 通用问答 | 无文件系统访问 | 50 |
 | **DevOps** | `devops.go` | 系统管理员 | 只读 + Shell | 50 |
-| **Browser** | `browser_agent.go` | 网页操作 —— **重构占位**：`Run` 恒返回未实现错误 | 无 | 200 |
+| **Browser** | `browser_agent.go` | 网页操作：经外部 `browser-control` CLI 驱动真实 Chrome | 浏览器动作 + 会话工作区产物（无 Shell、无文件写工具） | 200 |
 | **Meta** | `meta.go` | 自定义 Agent 设计器 | 无工具，单次 LLM 出 JSON | 50（重试 5） |
 | **Custom** | `director/types.go:60` | Meta 设计后运行时注册 | 由 LLM 选择的子集 | 15 |
 
@@ -159,6 +162,14 @@ yagent/
 **Repo 工具**（只读，含调用图）：`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree`、
 `semantic_search`、`query_code_skeleton`、`query_code_snippet`、`find_function_callee`、`find_function_caller`、
 `query_call_graph`、`deepthinking`、`delegate_devops`、知识检索、`agent_exit`。
+
+**Browser 工具**（14 个，由 `tools/browser_operations.go` 的声明式表生成，schema 在 tools.json）：
+`browser_status`、`browser_open`、`browser_inspect`、`browser_snapshot`、`browser_click`、`browser_fill`、
+`browser_type`、`browser_press`、`browser_scroll`、`browser_select`、`browser_tabs`、`browser_wait`、
+`browser_screenshot`、`browser_eval`，外加 `agent_exit` / `ask_user_for_help`。
+`browser_eval` 仅对敏感 JS（cookie/存储/网络请求/提交表单/动态执行）要求授权；截图路径由工具层收敛到会话工作区。
+能力不可用时 `delegate_browser` 的描述会降级为"不可用 + 原因 + 修复方式"（见 `browserDelegateDescription`）。
+完整设计见 `docs/browser-agent-design.md`。
 
 > 各 Agent 实际持有哪个工具由 `lookupToolFunc` 的 switch 决定（`coding.go:211`、`repo.go:90`、`chat.go:63`、
 > `devops.go:69`、`director.go:262`）。**tools.json 里声明但 switch 未列举的工具会被静默跳过**——这是
@@ -206,7 +217,8 @@ type Adapter struct { name, description string; fn ToolFunc
 | `consolidate_knowledge` `prune_history` | K | 长期知识固化与历史裁剪（codeseek knowledge） |
 | `git_checkpoint_create` `git_checkpoint_list` `git_checkpoint_rollback` | G | 编码子任务快照 |
 | `read_note` `read_artifact` | R | 读跨 Agent 便签 / 超预算产物（boardID 存在时自动注入） |
-| `delegate_repo/coding/chat/devops/browser/meta` | 委派 | Director 持有；`delegate_browser` 也在 Coding 上，但 Browser 目前是占位实现 |
+| `browser_status` `browser_open` `browser_inspect` `browser_snapshot` `browser_click` `browser_fill` `browser_type` `browser_press` `browser_scroll` `browser_select` `browser_tabs` `browser_wait` `browser_screenshot` `browser_eval` | 浏览器 | 经外部 `browser-control` CLI 驱动真实 Chrome；Browser-Agent 持有（详见 `docs/browser-agent-design.md`） |
+| `delegate_repo/coding/chat/devops/browser/meta` | 委派 | Director 持有；`delegate_browser` 也在 Coding 上（能力不可用时描述自动降级） |
 
 > **不存在** 名为 `flow_control` 的工具（旧文档有误）；流控制由 `agent_exit` 与 `ask_user_for_help` 承担。
 
@@ -326,6 +338,7 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 | Artifact | `~/.yagent/data/artifacts/{id}` | 原子写，ID `^\d{8}-\d{6}-[0-9a-f]{8}$` |
 | 共享/仓库记忆 | `~/.yagent/data/shared_memory/{projectID}/shared_memory.json` | 5 秒 ticker + dirty 标记，退出前 flush |
 | 授权状态 | `~/.yagent/settings.json` → `authorized_projects` | 持久 |
+| 浏览器工作区 | `~/.yagent/data/browser/{delegation}/.browser-control/` | 由 `cmd.Dir` 决定落点（上游状态路径是 CWD 相对）；含 current-tab、chrome.pid、traces、截图；`[browser] workspace_ttl` 清理 |
 | 日志 | `~/.yagent/logs/`（`app-`、`llm-`、`llm-error-`、`tool-`、`delegate-`、`knowledge-*`，按任务分子目录） | 追加 |
 
 **`/resume`** 列出 rollout 会话 → `ReadRolloutMemory` 重建 Memory（修复工具调用配对）→ 恢复 thinklink 条目，
@@ -364,7 +377,7 @@ WebSocket 用 melody，每个任务一个 Dispatcher + `WebSocketConsumer`，向
 仓库里的 `config/config.toml` 是注释模板；运行时写回（改 provider/超时/路由模式）走 `config/persist.go` 的原子替换。
 
 **顶层表**：`[global.llm]`、`[agents.llm]`、`[tools.llm]`、`[app]`、`[agent]`、`[llm]`、`[routing]`、
-`[keywords]`、`[git_checkpoint]`、`[codeseek]`（含 `[codeseek.knowledge]`）、`[enhanced_commander]`、`[tui]`，
+`[keywords]`、`[git_checkpoint]`、`[codeseek]`（含 `[codeseek.knowledge]`）、`[browser]`、`[enhanced_commander]`、`[tui]`，
 以及顶层 `task_timeout`。
 
 **三级 Provider 覆盖（仍存在）**：`ResolveProvider(agent, tool)` = 工具指定 → `tools.llm.use_provider` →
@@ -397,7 +410,15 @@ lang = "Chinese"
 [routing] mode = "auto"  [routing.baselines]  coding = "high"  repo = "balanced"
 [enhanced_commander] enable / max_delegation_depth(3) / enable_context_compression
   context_compression_threshold / tool_result_keep_tokens(200) / enable_ultimate_compression / ultimate_compression_keep_plans
+[browser] enabled / binary_path / chrome_path / mode(headless|headful|attach) / cdp_url / cdp_port_base(9333)
+  cdp_timeout(65s) / command_timeout(75s) / idle_ttl(15m) / max_chrome(1) / workspace_root / workspace_ttl(72h)
+  max_output_bytes(24000) / dialog_policy(accept) / allowed_domains / denied_domains / profile_dir / enable_skills
 ```
+
+> `[browser]` **整表缺省**（老配置没有这一段，或只剩旧浏览器栈的失效键 `headless` / `browser_path`）时，
+> 按 `config.DefaultBrowserConfig()` 填默认值。判据是段内是否存在**至少一个被新 schema 认识的键**
+> （`config.go` 的 `browserSectionConfigured`），不能用 `enabled` 的零值判断——它缺省就是 false，
+> 会把新能力静默关掉；失效键会被 `slog.Warn` 点名提示改写。
 
 ---
 
@@ -534,6 +555,15 @@ plan:
    弹窗守卫只放行少数消息类型（`tea.PasteMsg` 不是 KeyMsg）。任何新增叠加模式/守卫都必须显式放行需要的消息类型并 re-arm。
 7. **布局高度必须自洽**：`computeFooterHeight` 与 `View()` 的 footer 组装顺序要完全一致，差一个空行整屏抖动；
    `viewport.SetHighlights` 在我们的重着色日志上会算错偏移，改用 `StyleLineFunc`。
+8. **browser-control 的状态目录是进程 CWD 相对路径**（`.browser-control/`），上游没有任何环境变量可改这个根：
+   所有调用必须带 `cmd.Dir`（指向 `~/.yagent/data/browser/{delegation}`）。漏设就会在用户仓库里长出该目录——
+   `internal/browserctl` 已把它固化成唯一入口，新增调用点不要自己拼路径。
+9. **上游 `reload` 实际等于 `stop`**（README 写 "minimal lifecycle reset"，但 `src/main.rs` 里
+   `Cmd::Stop | Cmd::Reload => lifecycle::stop()`），刷新页面要用 `eval 'location.reload()'`；
+   上游也**没有** `hover` / `back`，需要用 `browser_eval` 派发 `mouseover` / 调 `history.back()`。
+10. **无 CDP 环境变量时上游会硬扫 9222/9223**：必须显式注入 `BROWSER_CONTROL_CDP_URL`，
+    自启端口从 `cdp_port_base`(9333) 递增且跳过 9222/9223，否则会连到用户自己的调试浏览器或另一个任务。
+    另外上游内部 CDP 超时默认仅 15s，`browserctl` 会按最长 wait 把它抬到 ≥65s，别在别处重复注入这个变量。
 
 
 <!-- CODESEEK_INJECTION -->
