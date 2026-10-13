@@ -8,6 +8,7 @@ import (
 	"yagent/internal/browserctl"
 	"yagent/internal/config"
 	"yagent/internal/tools"
+	"yagent/internal/toolspec"
 )
 
 type stubRunner struct{ dir string }
@@ -59,8 +60,9 @@ func newBrowserAgentWith(ctrl BrowserControl, env Env) *BrowserAgent {
 func TestBrowserAgent_AdaptersCoverDeclarations(t *testing.T) {
 	agent := newBrowserAgentWith(&stubController{ok: true}, stubEnv{})
 
-	registered := make(map[string]bool, len(agent.Adapters))
-	for _, a := range agent.Adapters {
+	adapters := agent.surfaceFor(context.Background()).Adapters()
+	registered := make(map[string]bool, len(adapters))
+	for _, a := range adapters {
 		registered[a.Name()] = true
 	}
 
@@ -75,16 +77,21 @@ func TestBrowserAgent_AdaptersCoverDeclarations(t *testing.T) {
 	if !registered["ask_user_for_help"] {
 		t.Error("ask_user_for_help must be registered for login/CAPTCHA handoff")
 	}
-	// 14 个浏览器工具 + agent_exit + ask_user_for_help
-	if got, want := len(agent.Adapters), len(tools.BrowserToolNames())+2; got != want {
-		t.Errorf("adapter count = %d, want %d", got, want)
+	// 反向也要成立：浏览器 Agent 拿不到写文件/Shell/委派类工具。
+	for _, a := range adapters {
+		n := a.Name()
+		if strings.HasPrefix(n, "browser_") || n == "agent_exit" || n == "ask_user_for_help" ||
+			n == "read_note" || n == "read_artifact" || n == "load_tool" {
+			continue
+		}
+		t.Errorf("浏览器工具面混入了不该有的工具：%s", n)
 	}
 }
 
 func TestBrowserAgent_FullYoloDropsAskUserForHelp(t *testing.T) {
 	agent := newBrowserAgentWith(&stubController{ok: true}, stubEnv{fullYolo: true})
 
-	for _, a := range agent.Adapters {
+	for _, a := range agent.surfaceFor(context.Background()).Adapters() {
 		if a.Name() == "ask_user_for_help" {
 			t.Fatal("full-yolo mode must drop ask_user_for_help")
 		}
@@ -95,8 +102,15 @@ func TestBrowserAgent_FullYoloDropsAskUserForHelp(t *testing.T) {
 // 避免把必然失败的入口交给 LLM。
 func TestBrowserAgent_NoAdaptersWithoutExecutionLayer(t *testing.T) {
 	agent := newBrowserAgentWith(nil, stubEnv{})
-	if len(agent.Adapters) != 0 {
-		t.Errorf("expected no adapters when browser controller is nil, got %d", len(agent.Adapters))
+	// 没有执行层时整族 browser_* 不注册，但收尾工具必须在，否则该 Agent 无法结束。
+	var browserTools int
+	for _, a := range agent.surfaceFor(context.Background()).Adapters() {
+		if strings.HasPrefix(a.Name(), "browser_") {
+			browserTools++
+		}
+	}
+	if browserTools != 0 {
+		t.Errorf("expected no browser_* adapters when controller is nil, got %d", browserTools)
 	}
 
 	if ok, reason := agent.Capability(); ok || reason == "" {
@@ -140,15 +154,14 @@ func TestBrowserDelegateDescription_DegradesWhenUnavailable(t *testing.T) {
 
 // TestBrowserMutatingToolsStaySerial：会改动共享当前标签页/ref 状态的工具必须串行，
 // 且任何 browser 工具都不能被登记为只读（否则 toolbatch 会并发观察，读到错页）。
+// 判据已从 nonParallelToolNames 那张名字表迁到注册表的 Spec.Serial。
 func TestBrowserMutatingToolsStaySerial(t *testing.T) {
-	for _, name := range []string{"browser_open", "browser_tabs", "browser_eval"} {
-		if !nonParallelToolNames[name] {
-			t.Errorf("%s must be listed in nonParallelToolNames", name)
-		}
-	}
 	for _, name := range tools.BrowserToolNames() {
-		if tools.IsKnownReadOnlyTool(name) {
-			t.Errorf("%s must not be in the read-only whitelist", name)
+		if !toolspec.IsSerial(name) {
+			t.Errorf("%s must be declared Serial on its Spec", name)
+		}
+		if toolspec.IsReadOnly(name) {
+			t.Errorf("%s must not be derived as read-only", name)
 		}
 	}
 }

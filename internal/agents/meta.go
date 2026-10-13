@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"yagent/internal/llm"
@@ -40,7 +41,7 @@ func (a *MetaAgent) Name() string {
 // Run makes a single LLM call (no tools) to design a specialized agent.
 // It returns the raw JSON design output from the LLM.
 func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) {
-	systemPrompt := a.promptFmt.FormatPrompt(metaPrompt)
+	systemPrompt := a.promptFmt.FormatPrompt(strings.ReplaceAll(metaPrompt, "{{TOOL_POOL_TABLE}}", renderCustomAgentToolPool()))
 
 	messages := []llm.Message{
 		{

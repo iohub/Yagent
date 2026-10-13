@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"yagent/internal/toolspec"
 
 	directorpkg "yagent/internal/agents/director"
 	"yagent/internal/config"
@@ -265,36 +266,53 @@ func TestParseMetaAgentOutput_EmptyAgentName(t *testing.T) {
 	}
 }
 
-// ─── getToolFunc Tests ──────────────────────────────────────────────────────
+// ─── Custom Agent 工具池（取代原 getToolFunc）────────────────────────────────
+// 过去 Custom Agent 能拿什么由 director.go 里第二个 switch 硬编码；现在由注册表按
+// 名字解析 + Director 的 Palette 上限约束。这里钉住"历史可用集合仍然可用"。
 
-func TestGetToolFunc_KnownTools(t *testing.T) {
+func TestCustomAgentPool_KnownTools(t *testing.T) {
 	workDir := t.TempDir()
 	agent := newTestDirectorAgent(t, workDir)
 
+	// 历史 getToolFunc 支持的 12 个工具，必须仍在可发放范围内。
 	knownTools := []string{
 		"read_file", "search_replace_in_file", "create_file", "run_bash",
 		"search_by_regex", "list_dir", "print_dir_tree",
 		"thinking", "micro_agent", "deepthinking",
 		"agent_exit", "ask_user_for_help",
 	}
+	// meta.prompt.md 一直广告这三个，但旧 switch 没有 case，等于给了个假承诺
+	// （docs/tool-registry-design.md §9.4）。
+	newlyHonored := []string{"semantic_search", "query_code_skeleton", "query_code_snippet"}
 
-	for _, name := range knownTools {
-		t.Run(name, func(t *testing.T) {
-			fn := agent.getToolFunc(name)
-			if fn == nil {
-				t.Errorf("getToolFunc(%q) returned nil for known tool", name)
-			}
-		})
+	selected, unknown, rejected := toolspec.MatchNames(
+		append(append([]string(nil), knownTools...), newlyHonored...),
+		toolspec.ProfileDirector.Palette, agent.toolDeps())
+
+	if len(unknown) != 0 {
+		t.Errorf("未注册的工具：%v", unknown)
+	}
+	if len(rejected) != 0 {
+		t.Errorf("被 Palette 拒绝的工具：%v", rejected)
+	}
+	got := map[string]bool{}
+	for _, sp := range selected {
+		got[sp.Name] = true
+	}
+	for _, name := range append(append([]string(nil), knownTools...), newlyHonored...) {
+		if !got[name] {
+			t.Errorf("%s 应可发放给 Custom Agent", name)
+		}
 	}
 }
 
-func TestGetToolFunc_UnknownTool(t *testing.T) {
+func TestCustomAgentPool_UnknownTool(t *testing.T) {
 	workDir := t.TempDir()
 	agent := newTestDirectorAgent(t, workDir)
 
-	fn := agent.getToolFunc("nonexistent_tool_xyz")
-	if fn != nil {
-		t.Error("getToolFunc should return nil for unknown tool")
+	_, unknown, _ := toolspec.MatchNames([]string{"nonexistent_tool_xyz"}, toolspec.ProfileDirector.Palette, agent.toolDeps())
+	if len(unknown) != 1 || unknown[0] != "nonexistent_tool_xyz" {
+		t.Errorf("unknown = %v, want [nonexistent_tool_xyz]", unknown)
 	}
 }
 
@@ -902,23 +920,23 @@ func TestConvertMemoryMessageToLLMSMessage_AssistantWithToolCalls(t *testing.T) 
 	}
 }
 
-// ─── ToolDefMap Tests ───────────────────────────────────────────────────────
+// ─── 注册表覆盖 ─────────────────────────────────────────────────────────────
+// 取代原 toolDefMap 断言：声明现在是 toolspec 的单一事实来源，双向对账由
+// registry_gate_test.go 负责，这里只确认门面没把历史声明读丢。
 
-func TestToolDefMap_Populated(t *testing.T) {
-	workDir := t.TempDir()
-	agent := newTestDirectorAgent(t, workDir)
-
-	// toolDefMap should contain all tools from tools.json
+func TestRegistryCoversHistoricalTools(t *testing.T) {
 	expectedTools := []string{
 		"read_file", "search_replace_in_file", "create_file", "run_bash",
 		"search_by_regex", "delete_file", "rename_file", "list_dir",
 		"print_dir_tree", "semantic_search", "query_code_skeleton",
 		"query_code_snippet", "thinking", "micro_agent", "agent_exit",
 	}
-
 	for _, name := range expectedTools {
-		if _, ok := agent.toolDefMap[name]; !ok {
-			t.Errorf("toolDefMap missing expected tool: %s", name)
+		if _, ok := toolspec.Get(name); !ok {
+			t.Errorf("注册表缺少 %s", name)
+		}
+		if _, ok := toolspec.GetSchema(name); !ok {
+			t.Errorf("schemas.json 缺少 %s", name)
 		}
 	}
 }

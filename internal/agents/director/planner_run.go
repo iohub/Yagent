@@ -94,10 +94,15 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		})
 	}
 
-	var toolDefs []llm.ToolDef
-	if p.cfg.Tools != nil {
-		toolDefs = p.cfg.Tools.Specs()
-		tools.SortToolDefs(toolDefs)
+	// 工具声明每步重取，而不是整轮冻结一次：deferred schema 取回后、以及 Meta 在运行期
+	// 注册 Custom Agent 之后，都要在下一步就对模型可见。返回 nil 表示本轮没有工具。
+	defsForStep := func() []llm.ToolDef {
+		if p.cfg.Tools == nil {
+			return nil
+		}
+		defs := p.cfg.Tools.Specs()
+		tools.SortToolDefs(defs)
+		return defs
 	}
 
 	if p.cfg.Publisher != nil {
@@ -341,7 +346,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 
 			llmStartTime := time.Now()
 			llmCtx, llmCancel := context.WithTimeout(ctx, p.cfg.LLMTimeout)
-			resp, llmErr = p.cfg.LLM.GenerateContent(llmCtx, messages, toolDefs, opts)
+			resp, llmErr = p.cfg.LLM.GenerateContent(llmCtx, messages, defsForStep(), opts)
 			llmCancel()
 			llmDuration := time.Since(llmStartTime).Seconds()
 
@@ -560,36 +565,26 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					"tool_call_id": tc.ID,
 				}, "director")
 			}
-			found := false
-			for _, def := range toolDefs {
-				if def.Function.Name == tc.Function.Name {
-					found = true
-
-					if callCtx.Err() != nil {
-						out.cancelled = true
-						return out
-					}
-
-					toolResult, err := p.cfg.Tools.Call(callCtx, tc.Function.Name, tc.Function.Arguments)
-
-					if err != nil {
-						errMsg := err.Error()
-						if len(errMsg) > 1000 {
-							errMsg = errMsg[:1000] + "... [truncated]"
-						}
-						if errors.Is(err, context.DeadlineExceeded) {
-							out.result = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(p.cfg.ToolTimeout.Seconds()))
-						} else {
-							out.result = fmt.Sprintf("Error: %s", errMsg)
-						}
-					} else {
-						out.result = toolResult
-					}
-					break
-				}
+			if callCtx.Err() != nil {
+				out.cancelled = true
+				return out
 			}
-			if !found {
-				out.result = fmt.Sprintf("Tool %s not found", tc.Function.Name)
+
+			// 是否可执行由 runner 按注册表判定（未注册 → "Tool x not found"，
+			// 冷工具未取回 → 回吐 schema），这里不再拿一份可能已过时的声明快照当门控。
+			toolResult, err := p.cfg.Tools.Call(callCtx, tc.Function.Name, tc.Function.Arguments)
+			if err != nil {
+				errMsg := err.Error()
+				if len(errMsg) > 1000 {
+					errMsg = errMsg[:1000] + "... [truncated]"
+				}
+				if errors.Is(err, context.DeadlineExceeded) {
+					out.result = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(p.cfg.ToolTimeout.Seconds()))
+				} else {
+					out.result = fmt.Sprintf("Error: %s", errMsg)
+				}
+			} else {
+				out.result = toolResult
 			}
 			return out
 		}

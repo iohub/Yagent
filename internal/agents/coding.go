@@ -3,10 +3,10 @@ package agents
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
+	"yagent/internal/blackboard"
+	"yagent/internal/toolspec"
 
 	"yagent/internal/config"
 	"yagent/internal/knowledge"
@@ -76,7 +76,7 @@ type CodingAgent struct {
 	gitCheckpointCfg *config.GitCheckpointConfig
 	ecCfg            config.EnhancedCommanderConfig
 	guard            *tools.WorkspaceGuard
-	Adapters         []*tools.Adapter
+	params           CodingAgentParams
 	BrowserAgent     *BrowserAgent
 	maxSteps         int
 	thinkLink        *thinklink.Store // 终极压缩支撑存储，实时记录用户原始输入，与 Director 模式一致，与 agent 同生命周期
@@ -117,8 +117,6 @@ type CodingAgentParams struct {
 // NewCodingAgent 构造 CodingAgent：按 tools.json 与参数集中的工具集装配适配器。
 // 全部依赖通过 CodingAgentParams 传入。
 func NewCodingAgent(p CodingAgentParams) *CodingAgent {
-	adapters := buildCodingAdapters(p)
-
 	return &CodingAgent{
 		BaseAgent: BaseAgent{
 			LLM:       p.LLM,
@@ -133,126 +131,69 @@ func NewCodingAgent(p CodingAgentParams) *CodingAgent {
 		gitCheckpointCfg: p.GitCheckpointCfg,
 		ecCfg:            p.EnhancedCommanderCfg,
 		guard:            p.Guard,
-		Adapters:         adapters,
+		params:           p,
 		maxSteps:         p.MaxSteps,
 		BrowserAgent:     p.Browser,
 		thinkLink:        thinklink.NewStore(0), // 容量 0=全量，与 Director 一致
 	}
 }
 
-// buildCodingAdapters 装配 Coding-Agent 的完整工具适配器列表：
-// tools.json 定义的常规工具 + delegate_browser（依赖 BrowserAgent）+ 知识维护工具。
-// 顺序与历史保持一致：常规工具 → delegate_browser → 知识工具。
-func buildCodingAdapters(p CodingAgentParams) []*tools.Adapter {
-	var toolDefs []tools.ToolDefinition
-	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
-		slog.Error("Failed to unmarshal coding tools", "error", err)
+func (a *CodingAgent) surfaceFor(ctx context.Context, gcm *GitCheckpointManager) *tools.Surface {
+	p := a.params
+	deps := depsFor("coding", a.env, a.guard, blackboard.BoardIDFrom(ctx))
+	deps.Files = p.Files
+	deps.Search = p.Search
+	deps.Sys = p.Sys
+	deps.Edit = p.Edit
+	deps.Repo = p.RepoOps
+	deps.Flow = p.Flow
+	deps.Thinker = p.Thinker
+	deps.Micro = p.MicroAgent
+	deps.Deep = p.DeepThinker
+	deps.Design = p.Designer
+	if p.MCPClient != nil {
+		deps.Prune = tools.NewPruneHistoryTool(p.MCPClient, a.LLM).Execute
+		deps.Consolidate = tools.NewConsolidateKnowledgeTool(p.MCPClient, a.LLM, "coding_agent", "coding_modification").Execute
 	}
-
-	adapters := make([]*tools.Adapter, 0, len(toolDefs)+1)
-	for _, def := range toolDefs {
-		fn := lookupToolFunc(def.Name, p)
-		if fn == nil {
-			continue // delegate_browser 等需特殊处理的工具在此跳过
+	// Coding 只会委派 browser；其余 delegate_ 由 Spec.Audience 排除在外。
+	deps.Delegate = a.browserDelegate
+	if gcm != nil {
+		deps.CheckpointList = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			return gcm.ListCheckpoints(ctx)
 		}
-		adapters = append(adapters,
-			tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown())
+		deps.CheckpointCreate = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			return gcm.CreateManualCheckpoint(ctx, stringParam(params, "message"))
+		}
+		deps.CheckpointRollback = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			return nil, gcm.RollbackToCheckpoint(ctx, stringParam(params, "checkpoint_tag"))
+		}
 	}
-
-	if browserAdapter := newBrowserDelegateAdapter(toolDefs, p.Browser); browserAdapter != nil {
-		adapters = append(adapters, browserAdapter)
-	}
-
-	tools.SetGuardOnAdapters(adapters, p.Guard)
-
-	// 知识整理/维护工具（需要 llm engine + CodeSeekMCP，不来自 tools.json 自动加载）
-	knowledgeAdapters := createKnowledgeToolAdapters(p.MCPClient, p.LLM, "coding_agent", "coding_modification")
-	tools.SetGuardOnAdapters(knowledgeAdapters, p.Guard)
-	adapters = append(adapters, knowledgeAdapters...)
-
-	return adapters
+	return surfaceFor(toolspec.ProfileCoding, deps, a.Name())
 }
 
-// newBrowserDelegateAdapter 将 delegate_browser 绑定到 BrowserAgent。
-// browser 为 nil 或 tools.json 未定义该工具时返回 nil（即不注册）。
-// 浏览器能力不可用时把描述换成降级文案，避免 Coding 反复委派一个必然失败的入口。
-func newBrowserDelegateAdapter(toolDefs []tools.ToolDefinition, browser *BrowserAgent) *tools.Adapter {
-	if browser == nil {
-		return nil
+// browserDelegate 与历史闭包语义一致：task 必填，返回 BrowserAgent 的文本结果。
+// 能力不可用时的描述降级不在这里 —— 由 Spec.Describe 统一处理，Director/Coding 同一条路径。
+func (a *CodingAgent) browserDelegate(ctx context.Context, target string, params map[string]interface{}) (interface{}, error) {
+	if target != "browser" {
+		return nil, fmt.Errorf("Coding-Agent 只能委派给 browser，收到 %q", target)
 	}
-	for _, def := range toolDefs {
-		if def.Name != "delegate_browser" {
-			continue
-		}
-		description := def.Description
-		if ok, reason := browser.Capability(); !ok {
-			description = browserDelegateDescription(false, reason)
-		}
-		fn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			task, ok := params["task"].(string)
-			if !ok || task == "" {
-				return nil, fmt.Errorf("delegate_browser requires a non-empty 'task' parameter")
-			}
-			result, err := browser.Run(ctx, task)
-			if err != nil {
-				return nil, err
-			}
-			return result.Text, nil
-		}
-		return tools.NewAdapter(def.Name, description, fn).WithSchema(def.Parameters)
+	if a.BrowserAgent == nil {
+		return nil, fmt.Errorf("Browser-Agent 未装配")
 	}
-	return nil
+	task, ok := params["task"].(string)
+	if !ok || task == "" {
+		return nil, fmt.Errorf("delegate_browser requires a non-empty 'task' parameter")
+	}
+	result, err := a.BrowserAgent.Run(ctx, task)
+	if err != nil {
+		return nil, err
+	}
+	return result.Text, nil
 }
 
-// lookupToolFunc 根据工具名查找执行函数（替代外部 switch-case 硬编码）
-// 返回 nil 表示该工具需要特殊处理（如 delegate_browser）
-func lookupToolFunc(name string, p CodingAgentParams) tools.ToolFunc {
-	switch name {
-	case "read_file":
-		return p.Files.ExecuteReadFile
-	case "search_replace_in_file":
-		return p.Edit.ExecuteReplaceBlock
-	case "create_file":
-		return p.Files.ExecuteCreateFile
-	case "run_bash":
-		return p.Sys.ExecuteRunBash
-	case "search_by_regex":
-		return p.Search.ExecuteGrepSearch
-	case "delete_file":
-		return p.Files.ExecuteDeleteFile
-	case "rename_file":
-		return p.Files.ExecuteRenameFile
-	case "list_dir":
-		return p.Files.ExecuteListDir
-	case "print_dir_tree":
-		return p.Files.ExecutePrintDirTree
-	case "semantic_search":
-		return p.RepoOps.ExecuteSemanticSearch
-	case "query_code_skeleton":
-		return p.RepoOps.ExecuteQueryCodeSkeleton
-	case "query_code_snippet":
-		return p.RepoOps.ExecuteQueryCodeSnippet
-	case "find_function_callee":
-		return p.RepoOps.ExecuteFindFunctionCallees
-	case "find_function_caller":
-		return p.RepoOps.ExecuteFindFunctionCallers
-	case "micro_agent":
-		return p.MicroAgent.Execute
-	case "deepthinking":
-		return p.DeepThinker.Execute
-	case "design":
-		return p.Designer.Execute
-	case "agent_exit":
-		return p.Flow.ExecuteAgentExit
-	case "ask_user_for_help":
-		if p.Env.FullYoloMode() {
-			return nil
-		}
-		return p.Flow.ExecuteAskUserForHelp
-	// delegate_browser 需要 browser agent 引用，返回 nil 由 buildCodingAdapters 特殊处理
-	default:
-		return nil
-	}
+func stringParam(params map[string]interface{}, key string) string {
+	v, _ := params[key].(string)
+	return v
 }
 
 func (a *CodingAgent) Name() string {
@@ -397,7 +338,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
-	cfg.Adapters = a.Adapters
+	cfg.Surface = a.surfaceFor(ctx, gcm)
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
 	cfg.Publisher = a.Publisher
@@ -430,10 +371,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 			return gcm.OnStepEnd(ctx, stepInfo)
 		}
 
-		// Add checkpoint tools to the adapter list
-		checkpointAdapters := createCheckpointToolAdapters(gcm)
-		tools.SetGuardOnAdapters(checkpointAdapters, a.guard)
-		cfg.Adapters = append(cfg.Adapters, checkpointAdapters...)
+		// 快照工具随 gcm 一起由 surfaceFor 决定是否注册，不再运行期 append
 	}
 
 	result, err := RunAgentLoop(ctx, cfg)
@@ -448,184 +386,4 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		autoConsolidateSubtask(a.mcpClient, a.LLM, "coding_agent", "coding_modification", input, agentResult.Text)
 	}
 	return agentResult, nil
-}
-
-// pruneSchema 是 prune_history 工具的 JSON Schema，提取为包级变量供多处复用。
-var pruneSchema = map[string]interface{}{
-	"type": "object",
-	"properties": map[string]interface{}{
-		"action": map[string]interface{}{
-			"type":        "string",
-			"enum":        []string{"list", "merge", "delete"},
-			"description": "Operation type: list=List entries, merge=Merge similar entries, delete=Delete by ID",
-		},
-		"limit": map[string]interface{}{
-			"type":        "integer",
-			"description": "Max entries to read for list/merge, default 50",
-			"default":     50,
-		},
-		"type": map[string]interface{}{
-			"type":        "string",
-			"description": "Filter by knowledge type (optional, empty=all)",
-		},
-		"tag": map[string]interface{}{
-			"type":        "string",
-			"description": "Filter by tag (optional)",
-		},
-		"ids": map[string]interface{}{
-			"type":        "array",
-			"items":       map[string]interface{}{"type": "string"},
-			"description": "Required for delete: list of entry IDs to delete",
-		},
-		"similarity_threshold": map[string]interface{}{
-			"type":        "number",
-			"description": "Similarity threshold for merge, default 0.80",
-			"default":     0.80,
-		},
-	},
-	"required": []string{"action"},
-}
-
-// createKnowledgeToolAdapters creates tool adapters for knowledge management operations.
-// sourceAgent/knowledgeType 非空时注册 consolidate_knowledge，为空时仅注册 prune_history（用于 Director）。
-func createKnowledgeToolAdapters(mcpClient *mcp.MCPClient, llm llm.Engine, sourceAgent, knowledgeType string) []*tools.Adapter {
-	pruneTool := tools.NewPruneHistoryTool(mcpClient, llm)
-
-	adapters := []*tools.Adapter{
-		tools.NewAdapter("prune_history", "Maintain knowledge base health: list current entries, merge similar entries, or delete stale entries by ID. Run merge periodically to deduplicate.", pruneTool.Execute).WithSchema(pruneSchema),
-	}
-
-	// sourceAgent/knowledgeType 为空时不注册 consolidate_knowledge（如 Director）
-	if sourceAgent == "" || knowledgeType == "" {
-		return adapters
-	}
-
-	consolidateTool := tools.NewConsolidateKnowledgeTool(mcpClient, llm, sourceAgent, knowledgeType)
-
-	consolidateSchema := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"title": map[string]interface{}{
-				"type":        "string",
-				"description": "Knowledge entry title (≤200 characters)",
-				"maxLength":   200,
-			},
-			"content": map[string]interface{}{
-				"type":        "string",
-				"description": "Knowledge content (≤1500 characters). Keep file paths, function names, and symbol names.",
-				"maxLength":   1500,
-			},
-			"tags": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"minItems":    1,
-				"description": "Knowledge tag list, at least 1 tag",
-			},
-			"related_files": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "Related file paths (optional)",
-			},
-			"task_id": map[string]interface{}{
-				"type":        "string",
-				"description": "Associated task ID (optional)",
-			},
-			"confidence": map[string]interface{}{
-				"type":        "number",
-				"description": "Confidence 0-1, default 1.0",
-				"default":     1.0,
-			},
-		},
-		"required": []string{"title", "content", "tags"},
-	}
-
-	adapters = append(adapters,
-		tools.NewAdapter("consolidate_knowledge", "Consolidate key knowledge from the current task and write it into the knowledge base. Type and source are automatically tagged by the system — no need to provide them. Suitable for: (1) distilling domain knowledge after code analysis; (2) recording key change decisions after code modifications; (3) capturing important architecture patterns or design rules. Condense content to ≤1500 characters and provide at least 1 tag before execution.", consolidateTool.Execute).WithSchema(consolidateSchema),
-	)
-
-	return adapters
-}
-
-// createCheckpointToolAdapters creates tool adapters for manual git checkpoint operations.
-func createCheckpointToolAdapters(gcm *GitCheckpointManager) []*tools.Adapter {
-	// git_checkpoint_list
-	listAdapter := tools.NewAdapter("git_checkpoint_list",
-		"List all available git checkpoints for the current coding session. Use this to see what rollback points are available. Each checkpoint represents a saved state of the codebase that you can return to if something goes wrong.",
-		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			checkpoints, err := gcm.ListCheckpoints(ctx)
-			if err != nil {
-				return "", err
-			}
-			if len(checkpoints) == 0 {
-				return "No checkpoints available yet. Checkpoints are created automatically after file-modifying steps.", nil
-			}
-			var sb strings.Builder
-			sb.WriteString("Available checkpoints:\n")
-			for i, cp := range checkpoints {
-				sb.WriteString(fmt.Sprintf("%d. [%s] %s — %s\n", i+1, cp.Date, cp.Tag, cp.Message))
-			}
-			sb.WriteString("\nUse git_checkpoint_rollback with the tag name to roll back.")
-			return sb.String(), nil
-		}).WithSchema(map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
-		"required":   []string{},
-	})
-
-	// git_checkpoint_rollback
-	rollbackAdapter := tools.NewAdapter("git_checkpoint_rollback",
-		"Roll back the working tree to a specific checkpoint. WARNING: This discards all changes made AFTER the checkpoint. Use git_checkpoint_list first to see available checkpoints. The checkpoint_tag parameter should be the full tag name from the list.",
-		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			tagRaw, ok := params["checkpoint_tag"]
-			if !ok {
-				return "", fmt.Errorf("checkpoint_tag is required")
-			}
-			tag, ok := tagRaw.(string)
-			if !ok || tag == "" {
-				return "", fmt.Errorf("checkpoint_tag must be a non-empty string")
-			}
-			if err := gcm.RollbackToCheckpoint(ctx, tag); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Successfully rolled back to checkpoint: %s", tag), nil
-		}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"checkpoint_tag": map[string]interface{}{
-				"type":        "string",
-				"description": "The tag name of the checkpoint to roll back to (from git_checkpoint_list)",
-			},
-		},
-		"required": []string{"checkpoint_tag"},
-	})
-
-	// git_checkpoint_create
-	createAdapter := tools.NewAdapter("git_checkpoint_create",
-		"Manually create a git checkpoint at the current state. Use this before attempting risky operations like large refactors, complex merges, or experimental changes. A checkpoint allows you to roll back if something goes wrong.",
-		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			msgRaw, ok := params["message"]
-			if !ok {
-				return "", fmt.Errorf("message is required")
-			}
-			msg, ok := msgRaw.(string)
-			if !ok || msg == "" {
-				return "", fmt.Errorf("message must be a non-empty string")
-			}
-			tag, err := gcm.CreateManualCheckpoint(ctx, msg)
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Checkpoint created successfully: %s", tag), nil
-		}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"message": map[string]interface{}{
-				"type":        "string",
-				"description": "A brief description of why this checkpoint is being created",
-			},
-		},
-		"required": []string{"message"},
-	})
-
-	return []*tools.Adapter{listAdapter, rollbackAdapter, createAdapter}
 }

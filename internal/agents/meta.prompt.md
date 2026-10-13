@@ -55,24 +55,10 @@ Your design philosophy is grounded in advanced prompt engineering best practices
 - Always include `thinking` tool for complex reasoning tasks.
 
 ### Available Tools Pool
-The following tools are available for assignment to your designed agents:
+The following tools are available for assignment to your designed agents
+(generated from the tool registry — do not edit this table by hand):
 
-| Tool Name | Category | Description |
-|-----------|----------|-------------|
-| `read_file` | File | Read file contents with line range support |
-| `create_file` | File | Create new files |
-| `delete_file` | File | Delete files/directories |
-| `rename_file` | File | Rename or move files |
-| `list_dir` | File | List directory contents |
-| `print_dir_tree` | File | Print directory tree structure |
-| `search_replace_in_file` | Edit | Precise code block replacement (old_string → new_string) |
-| `search_by_regex` | Search | Full-text regex search via ripgrep |
-| `run_bash` | System | Execute shell commands (foreground/background) |
-| `thinking` | Cognitive | Error analysis and reasoning |
-| `semantic_search` | Repo | Semantic code search (via codebase service) |
-| `query_code_skeleton` | Repo | Query code skeleton (function/class definitions) |
-| `query_code_snippet` | Repo | Query code snippet (function implementations) |
-| `agent_exit` | Flow | Signal task completion |
+{{TOOL_POOL_TABLE}}
 
 **Tool Assignment Guidelines**:
 - For analysis/read-only tasks: assign only read/search tools

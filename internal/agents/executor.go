@@ -20,12 +20,17 @@ import (
 	"yagent/internal/llm"
 	"yagent/internal/memory"
 	"yagent/internal/tools"
+	"yagent/internal/toolspec"
 )
 
 type ExecutorConfig struct {
-	SystemPrompt  string
-	UserInput     string
-	Adapters      []*tools.Adapter
+	SystemPrompt string
+	UserInput    string
+	Adapters     []*tools.Adapter
+	// Surface 是注册表驱动的工具面（docs/tool-registry-design.md）。
+	// 非 nil 时它接管三件事：每步重算工具声明、按名解析执行器（含冷工具兜底）、
+	// 并发谓词。Adapters 仍保留给尚未迁移的调用点与既有循环测试。
+	Surface       *tools.Surface
 	LLM           llm.Engine
 	MaxSteps      int
 	Publisher     EventBus
@@ -73,14 +78,9 @@ const MaxMaxParallelReadOnlyTools = 8
 
 var defaultToolTimeout = 180 * time.Second
 
-var nonParallelToolNames = map[string]bool{
-	"agent_exit":    true,
-	"delegate_meta": true,
-	// 浏览器动作会改动共享的当前标签页与 ref 状态，必须串行
-	"browser_open": true,
-	"browser_tabs": true,
-	"browser_eval": true,
-}
+// 并发/串行的判据来自注册表（Spec.Serial），不再是本文件里的一张名字表：
+// 新工具只要在实现旁边声明能力，就不用记得再来这里补一条。
+func isSerialTool(name string) bool { return toolspec.IsSerial(name) }
 
 func NormalizeMaxParallelReadOnlyTools(n int) int {
 	switch {
@@ -106,37 +106,76 @@ func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (str
 		}, cfg.AgentName)
 	}
 
-	for _, t := range cfg.Adapters {
-		if t.Name() == tc.Function.Name {
-			startTime := time.Now()
+	ad, found := resolveAdapter(cfg, tc.Function.Name)
+	if !found {
+		return "", false
+	}
+	// 模型跳过 load_tool 直接调冷工具：不执行、不报"没这个工具"，
+	// 而是把完整 schema 回吐给它，同一步就能自己纠正过来。
+	if isColdUnloaded(cfg, tc.Function.Name) {
+		return teachColdTool(cfg, tc.Function.Name), true
+	}
 
-			if strings.HasPrefix(tc.Function.Name, "delegate_") {
-				agentName := strings.TrimPrefix(tc.Function.Name, "delegate_")
-				LogDelegateCall(tc.Function.Name, agentName, tc.Function.Arguments)
-			}
+	startTime := time.Now()
+	if strings.HasPrefix(tc.Function.Name, "delegate_") {
+		agentName := strings.TrimPrefix(tc.Function.Name, "delegate_")
+		LogDelegateCall(tc.Function.Name, agentName, tc.Function.Arguments)
+	}
 
-			cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
-			toolCtx := cancelCtx
-			toolCancel := cancelCtxCancel
-			if !isInteractiveUserTool(tc.Function.Name) {
-				toolCtx, toolCancel = context.WithTimeout(cancelCtx, defaultToolTimeout)
-			}
-			toolResult, callErr := t.Call(toolCtx, tc.Function.Arguments)
-			cancelCtxCancel()
-			toolCancel()
-			if callErr != nil {
-				if errors.Is(callErr, context.DeadlineExceeded) {
-					toolResult = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(defaultToolTimeout/time.Second))
-				} else {
-					toolResult = fmt.Sprintf("Error: %v", callErr)
-				}
-			}
-			logToolCall(tc.Function.Name, cfg.AgentName, tc.Function.Arguments, toolResult, callErr, startTime)
-			activity.Heartbeat(ctx, "tool:done:"+tc.Function.Name)
-			return toolResult, true
+	cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
+	toolCtx := cancelCtx
+	toolCancel := cancelCtxCancel
+	if !isInteractiveUserTool(tc.Function.Name) {
+		toolCtx, toolCancel = context.WithTimeout(cancelCtx, defaultToolTimeout)
+	}
+	toolResult, callErr := ad.Call(toolCtx, tc.Function.Arguments)
+	cancelCtxCancel()
+	toolCancel()
+	if callErr != nil {
+		if errors.Is(callErr, context.DeadlineExceeded) {
+			toolResult = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(defaultToolTimeout/time.Second))
+		} else {
+			toolResult = fmt.Sprintf("Error: %v", callErr)
 		}
 	}
-	return "", false
+	logToolCall(tc.Function.Name, cfg.AgentName, tc.Function.Arguments, toolResult, callErr, startTime)
+	activity.Heartbeat(ctx, "tool:done:"+tc.Function.Name)
+	return toolResult, true
+}
+
+// resolveAdapter 按名解析执行器：Surface 优先（注册表路径），回退到 Adapters 线性扫描。
+// 两条路径都是"取第一个同名适配器"，语义一致。
+func resolveAdapter(cfg *ExecutorConfig, name string) (*tools.Adapter, bool) {
+	if cfg.Surface != nil {
+		if ad, state := cfg.Surface.Lookup(name); state != tools.StateUnknown {
+			return ad, true
+		}
+		return nil, false
+	}
+	for _, t := range cfg.Adapters {
+		if t.Name() == name {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// isColdUnloaded 报告该工具在 Surface 里还没被模型取回过 schema。
+func isColdUnloaded(cfg *ExecutorConfig, name string) bool {
+	if cfg.Surface == nil {
+		return false
+	}
+	_, state := cfg.Surface.Lookup(name)
+	return state == tools.StateColdKnown
+}
+
+// teachColdTool 登记取回并把 schema 作为工具结果回给模型。
+func teachColdTool(cfg *ExecutorConfig, name string) string {
+	schema, err := cfg.Surface.Materialize([]string{name})
+	if err != nil {
+		return fmt.Sprintf("Error: cannot load schema for %s: %v", name, err)
+	}
+	return fmt.Sprintf("Error: schema for %s was not loaded. Full schema:\n%s\nRetry the call now with these parameters.", name, schema)
 }
 
 func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResult, retErr error) {
@@ -163,6 +202,13 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 	if cfg.RepoContext != "" {
 		systemPrompt += "\n\n" + cfg.RepoContext
 	}
+	// deferred 目录跟着系统提示走：它是稳定前缀的一部分，比每步重发的
+	// 完整参数声明便宜一个数量级（docs/tool-registry-design.md §7.6）。
+	if cfg.Surface != nil {
+		if catalog := cfg.Surface.Catalog(); catalog != "" {
+			systemPrompt += "\n\n" + catalog
+		}
+	}
 	systemMsg := llm.Message{
 		Role:    systemRole,
 		Content: systemPrompt,
@@ -187,30 +233,40 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 	}
 
-	if bid := blackboard.BoardIDFrom(ctx); bid != "" && blackboardEnabled() {
-		hasReadNote := false
-		hasReadArtifact := false
-		for _, ad := range cfg.Adapters {
-			switch ad.Name() {
-			case "read_note":
-				hasReadNote = true
-			case "read_artifact":
-				hasReadArtifact = true
+	// Surface 已经把 read_note/read_artifact 当成 EffectContext 能力处理了
+	// （可用性 = 有没有 boardID），这里只给还没迁移的 Adapters 路径兜底。
+	if cfg.Surface == nil {
+		if bid := blackboard.BoardIDFrom(ctx); bid != "" && blackboardEnabled() {
+			has := func(name string) bool {
+				for _, ad := range cfg.Adapters {
+					if ad.Name() == name {
+						return true
+					}
+				}
+				return false
 			}
-		}
-		if !hasReadNote {
-			cfg.Adapters = append(cfg.Adapters, newReadNoteAdapter(func() string { return bid }))
-		}
-		if !hasReadArtifact {
-			cfg.Adapters = append(cfg.Adapters, newReadArtifactAdapter())
+			if !has("read_note") {
+				cfg.Adapters = append(cfg.Adapters, newReadNoteAdapter(func() string { return bid }))
+			}
+			if !has("read_artifact") {
+				cfg.Adapters = append(cfg.Adapters, newReadArtifactAdapter())
+			}
 		}
 	}
 
-	toolDefs := make([]llm.ToolDef, len(cfg.Adapters))
+	// 工具声明：Surface 存在时每步重算（deferred 取回与运行期注册都要立刻生效），
+	// 否则沿用历史的一次性快照。
+	frozenDefs := make([]llm.ToolDef, len(cfg.Adapters))
 	for i, ad := range cfg.Adapters {
-		toolDefs[i] = ad.ToToolDef()
+		frozenDefs[i] = ad.ToToolDef()
 	}
-	tools.SortToolDefs(toolDefs)
+	tools.SortToolDefs(frozenDefs)
+	defsForStep := func() []llm.ToolDef {
+		if cfg.Surface != nil {
+			return cfg.Surface.Defs()
+		}
+		return frozenDefs
+	}
 
 	opts := &llm.CallOptions{}
 
@@ -484,7 +540,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			activity.Heartbeat(ctx, "llm:start")
 
 			llmCtx, llmCancel := context.WithTimeout(ctx, llmTimeout)
-			resp, err = cfg.LLM.GenerateContent(llmCtx, messages, toolDefs, opts)
+			resp, err = cfg.LLM.GenerateContent(llmCtx, messages, defsForStep(), opts)
 			llmCancel()
 
 			activity.Heartbeat(ctx, "llm:done")
@@ -649,7 +705,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		toolCalls := choice.ToolCalls
 		isParallelizable := func(i int) bool {
 			name := toolCalls[i].Function.Name
-			if isInteractiveUserTool(name) || nonParallelToolNames[name] {
+			if isInteractiveUserTool(name) || isSerialTool(name) {
 				return false
 			}
 			for _, t := range cfg.Adapters {

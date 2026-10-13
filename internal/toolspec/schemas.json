@@ -519,7 +519,7 @@
   },
   {
     "name": "git_checkpoint_list",
-    "description": "List all git checkpoints for the current session. See available rollback points. Each represents a saved codebase state to return to if something goes wrong.",
+    "description": "List all available git checkpoints for the current coding session. Use this to see what rollback points are available. Each checkpoint represents a saved state of the codebase that you can return to if something goes wrong.",
     "parameters": {
       "type": "object",
       "properties": {},
@@ -528,7 +528,7 @@
   },
   {
     "name": "git_checkpoint_rollback",
-    "description": "Roll back working tree to a specific checkpoint. WARNING: discards all changes AFTER the checkpoint. Use git_checkpoint_list first. checkpoint_tag must be the full tag name from the list.",
+    "description": "Roll back the working tree to a specific checkpoint. WARNING: This discards all changes made AFTER the checkpoint. Use git_checkpoint_list first to see available checkpoints. The checkpoint_tag parameter should be the full tag name from the list.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -544,7 +544,7 @@
   },
   {
     "name": "git_checkpoint_create",
-    "description": "Manually create a git checkpoint at the current state. Use before risky operations (large refactors, complex merges, experimental changes). Allows rollback if something goes wrong.",
+    "description": "Manually create a git checkpoint at the current state. Use this before attempting risky operations like large refactors, complex merges, or experimental changes. A checkpoint allows you to roll back if something goes wrong.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -560,7 +560,7 @@
   },
   {
     "name": "consolidate_knowledge",
-    "description": "Consolidate key knowledge from the current task into the knowledge base. Type and source auto-tagged by the system. Suitable for: (1) distilling domain knowledge after code analysis; (2) recording key change decisions after modifications; (3) capturing architecture patterns or design rules. Content ≤1500 chars, at least 1 tag required.",
+    "description": "Consolidate key knowledge from the current task and write it into the knowledge base. Type and source are automatically tagged by the system — no need to provide them. Suitable for: (1) distilling domain knowledge after code analysis; (2) recording key change decisions after code modifications; (3) capturing important architecture patterns or design rules. Condense content to ≤1500 characters and provide at least 1 tag before execution.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -608,7 +608,7 @@
   },
   {
     "name": "prune_history",
-    "description": "Maintain knowledge base health: list entries, merge similar entries, or delete stale entries by ID. Run merge periodically to deduplicate.",
+    "description": "Maintain knowledge base health: list current entries, merge similar entries, or delete stale entries by ID. Run merge periodically to deduplicate.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -939,6 +939,190 @@
       },
       "required": [
         "js"
+      ]
+    }
+  },
+  {
+    "name": "delegate_repo",
+    "description": "Delegate analysis task to Repo-Agent",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "description": "The task description for Repo-Agent"
+        },
+        "context_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional references to prior blackboard notes or artifacts. Formats: 'agent:<name>' (latest notes from agent), 'note:<agent>/<stem>' (specific note), 'artifact:<id>' (existing artifact)."
+        }
+      },
+      "required": [
+        "task"
+      ]
+    }
+  },
+  {
+    "name": "delegate_coding",
+    "description": "Delegate coding task to Coding-Agent",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "description": "The task description for Coding-Agent"
+        },
+        "context_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional references to prior blackboard notes or artifacts. Formats: 'agent:<name>' (latest notes from agent), 'note:<agent>/<stem>' (specific note), 'artifact:<id>' (existing artifact)."
+        }
+      },
+      "required": [
+        "task"
+      ]
+    }
+  },
+  {
+    "name": "delegate_chat",
+    "description": "Delegate general conversation, explanation, or non-coding tasks to Chat-Agent",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "description": "The message or question for Chat-Agent"
+        },
+        "context_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional references to prior blackboard notes or artifacts. Formats: 'agent:<name>' (latest notes from agent), 'note:<agent>/<stem>' (specific note), 'artifact:<id>' (existing artifact)."
+        }
+      },
+      "required": [
+        "task"
+      ]
+    }
+  },
+  {
+    "name": "delegate_devops",
+    "description": "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "description": "The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."
+        },
+        "context_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional references to prior blackboard notes or artifacts. Formats: 'agent:<name>' (latest notes from agent), 'note:<agent>/<stem>' (specific note), 'artifact:<id>' (existing artifact)."
+        }
+      },
+      "required": [
+        "task"
+      ]
+    }
+  },
+  {
+    "name": "delegate_meta",
+    "description": "Delegate to Meta-Agent to DESIGN a custom specialized agent. Meta-Agent will craft a tailored system prompt using prompt engineering best practices and select appropriate tools. The designed agent is automatically registered and immediately executed to complete the task. After this, the new agent becomes a permanent delegate tool for future use.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "description": "Detailed task description for Meta-Agent. Include: what needs to be accomplished, why existing agents are insufficient, and what the expected output format should be."
+        },
+        "context_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional references to prior blackboard notes or artifacts. Formats: 'agent:<name>' (latest notes from agent), 'note:<agent>/<stem>' (specific note), 'artifact:<id>' (existing artifact)."
+        }
+      },
+      "required": [
+        "task"
+      ]
+    }
+  },
+  {
+    "name": "read_note",
+    "description": "Read the full body of a blackboard note by its reference. Use when a [Sub-Agent Result] header shows a 'note: <ref>' field and you need details beyond the inline summary, or when a Context Pack entry was truncated. Params: ref (required) — the note reference (format: agent/stem); start_line (optional, 1-based, default 1); max_lines (optional, hard cap 2000).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "Note reference from the [Sub-Agent Result] header (note: field), format: agent/stem."
+        },
+        "start_line": {
+          "type": "integer",
+          "description": "1-based start line (default 1)."
+        },
+        "max_lines": {
+          "type": "integer",
+          "description": "Max lines to return (hard cap 2000)."
+        }
+      },
+      "required": [
+        "ref"
+      ]
+    }
+  },
+  {
+    "name": "read_artifact",
+    "description": "Read the full artifact content of a delegated sub-agent result, paginated by line. Use when the [Sub-Agent Result] header shows an 'artifact: <id>' field and you need details beyond the truncated summary. Params: id (required) — the artifact ID from the [Sub-Agent Result] header; start_line (optional, 1-based, default 1); max_lines (optional; omit for dynamic sizing — pages are auto-sized so typical artifacts are fully read in at most 2 calls; explicit values are clamped, hard cap 2000).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Artifact ID from the [Sub-Agent Result] header (artifact: field)."
+        },
+        "start_line": {
+          "type": "integer",
+          "description": "1-based start line (default 1)."
+        },
+        "max_lines": {
+          "type": "integer",
+          "description": "Max lines to return. Omit for dynamic sizing (auto-sized so the full content is read in at most 2 calls when possible; hard cap 2000)."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "load_tool",
+    "description": "Fetch the full parameter schema of deferred tools listed in the 'Deferred tools' section, then call them. Required before using any deferred tool: until loaded you only know its name and one-line summary. Batch every tool you expect to need into one call.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 8,
+          "description": "Tool names from the deferred tools list whose full schema to load."
+        }
+      },
+      "required": [
+        "names"
       ]
     }
   }

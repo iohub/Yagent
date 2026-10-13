@@ -9,10 +9,13 @@ import (
 	"sort"
 
 	"yagent/internal/llm"
+	"yagent/internal/toolspec"
 )
 
-// ToolFunc is a function type that matches the tool execution signature
-type ToolFunc func(ctx context.Context, params map[string]interface{}) (interface{}, error)
+// ToolFunc is a function type that matches the tool execution signature.
+// 别名到 toolspec.ToolFunc：注册表与适配器共用同一个函数类型，
+// 否则 Spec.Build 的返回值要在这里做一次手工转换（转换点就是漂移点）。
+type ToolFunc = toolspec.ToolFunc
 
 // ToolDefinition 是 internal/agents/tools.json 里一条工具声明的 JSON 结构，
 // 由各 Agent 的构造代码映射成 Adapter。
@@ -43,12 +46,12 @@ func NewAdapter(name, description string, fn ToolFunc) *Adapter {
 		"type": "object",
 		"properties": map[string]interface{}{
 			"input": map[string]interface{}{
-				"type": "string",
+				"type":        "string",
 				"description": "Input for the tool",
 			},
 		},
 	}
-	
+
 	return &Adapter{
 		name:        name,
 		description: description,
@@ -68,32 +71,6 @@ func (a *Adapter) WithSchema(schema map[string]interface{}) *Adapter {
 // 并发执行的竞态，标记前必须逐个确认其实现语义。
 func (a *Adapter) WithReadOnly(enabled bool) *Adapter {
 	a.readOnly = enabled
-	return a
-}
-
-// knownReadOnlyTools 公共共享只读工具白名单（按名自动标记；第一阶段集合，
-// 后续阶段可扩展 delegate_*/其他无副作用工具）。
-var knownReadOnlyTools = map[string]bool{
-	"read_file":           true,
-	"list_dir":            true,
-	"print_dir_tree":      true,
-	"search_by_regex":     true,
-	"semantic_search":     true,
-	"query_code_skeleton": true,
-	"query_code_snippet":  true,
-}
-
-// IsKnownReadOnlyTool 报告给定工具名是否属于已知公共只读工具白名单。
-func IsKnownReadOnlyTool(name string) bool {
-	return knownReadOnlyTools[name]
-}
-
-// WithReadOnlyIfKnown 按工具名自动标记已知只读工具（供 tools.json 批量注册点
-// 统一调用：名字命中白名单 → WithReadOnly(true)，否则保持默认 false）。
-func (a *Adapter) WithReadOnlyIfKnown() *Adapter {
-	if knownReadOnlyTools[a.name] {
-		a.readOnly = true
-	}
 	return a
 }
 

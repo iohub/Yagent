@@ -3,9 +3,9 @@ package agents
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"fmt"
-	"log/slog"
+	"yagent/internal/blackboard"
+	"yagent/internal/toolspec"
 
 	"yagent/internal/config"
 	"yagent/internal/knowledge"
@@ -26,7 +26,7 @@ type RepoAgent struct {
 	knowledge KnowledgeProvider
 	mcpClient *mcp.MCPClient
 	ecCfg     config.EnhancedCommanderConfig
-	Adapters  []*tools.Adapter
+	params    RepoAgentParams
 	maxSteps  int
 
 	// DevOps-Agent（可选，nil 表示未注入，delegate_devops 将返回友好提示）
@@ -73,90 +73,29 @@ func NewRepoAgent(p RepoAgentParams) *RepoAgent {
 		ecCfg:     p.EnhancedCommanderCfg,
 		maxSteps:  p.MaxSteps,
 	}
-	self.Adapters = self.buildAdapters(p)
+	self.params = p
 	return self
 }
 
-// buildAdapters 装配 Repo-Agent 的工具适配器列表。
-// delegate_devops 闭包在运行时读取 a.devops（由 SetDevOpsAgent 注入，晚于构造）。
-func (a *RepoAgent) buildAdapters(p RepoAgentParams) []*tools.Adapter {
-	var toolDefs []tools.ToolDefinition
-	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
-		slog.Error("Failed to unmarshal tools", "error", err)
+// devopsDelegate 是 Repo 自己的委派实现：只认 devops 一个目标，并沿用历史的
+// "友好降级"文案（DevOps 未接线/执行失败都不抛错，而是把说明回给模型）。
+// 与 Director 的委派流水线不同：这里不写便签、不做档位路由、不落 artifact。
+func (a *RepoAgent) devopsDelegate(ctx context.Context, target string, params map[string]interface{}) (interface{}, error) {
+	if target != "devops" {
+		return nil, fmt.Errorf("Repo-Agent 只能委派给 devops，收到 %q", target)
 	}
-
-	adapters := make([]*tools.Adapter, 0, len(toolDefs)+1)
-	for _, def := range toolDefs {
-		var fn tools.ToolFunc
-		switch def.Name {
-		case "read_file":
-			fn = p.Files.ExecuteReadFile
-		case "search_by_regex":
-			fn = p.Search.ExecuteGrepSearch
-		case "list_dir":
-			fn = p.Files.ExecuteListDir
-		case "print_dir_tree":
-			fn = p.Files.ExecutePrintDirTree
-		case "semantic_search":
-			fn = p.RepoOps.ExecuteSemanticSearch
-		case "query_code_skeleton":
-			fn = p.RepoOps.ExecuteQueryCodeSkeleton
-		case "query_code_snippet":
-			fn = p.RepoOps.ExecuteQueryCodeSnippet
-		case "find_function_callee":
-			fn = p.RepoOps.ExecuteFindFunctionCallees
-		case "find_function_caller":
-			fn = p.RepoOps.ExecuteFindFunctionCallers
-		case "query_call_graph":
-			fn = p.RepoOps.ExecuteCallGraph
-		case "deepthinking":
-			fn = p.DeepThinker.Execute
-		case "ask_user_for_help":
-			if p.Env.FullYoloMode() {
-				continue
-			}
-			fn = p.Flow.ExecuteAskUserForHelp
-		default:
-			continue
-		}
-
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
-		adapters = append(adapters, adapter)
+	task, ok := params["task"].(string)
+	if !ok {
+		return nil, fmt.Errorf("task parameter required")
 	}
-
-	// delegate_devops：将运维类任务委托给 DevOps-Agent（与 Director 中同名工具保持一致的名称与参数 schema）
-	delegateDevOps := tools.NewAdapter("delegate_devops", "Delegate operational and system administration tasks to DevOps-Agent. DevOps-Agent can run shell commands, inspect files, check logs, manage processes, and perform any non-coding infrastructure work. Use this for tasks like checking disk usage, finding files, running diagnostics, inspecting configurations, or executing ad-hoc shell commands.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		task, ok := params["task"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task parameter required")
-		}
-		if a.devops == nil {
-			return "[DevOps-Agent unavailable] DevOps-Agent has not been wired to Repo-Agent. Complete the analysis with the information you have and note that the operational task could not be delegated.", nil
-		}
-		result, err := a.devops.Run(ctx, task)
-		if err != nil {
-			// 友好地把错误信息返回给 LLM，而不是中断执行循环
-			return fmt.Sprintf("[DevOps-Agent execution failed] task: %q, error: %v. You may retry with a clearer task description, or note the failure in your analysis result.", task, err), nil
-		}
-		return result.Text, nil
-	}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"task": map[string]interface{}{"type": "string", "description": "The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."},
-		},
-		"required": []string{"task"},
-	})
-	adapters = append(adapters, delegateDevOps)
-	tools.SetGuardOnAdapters(adapters, p.Guard)
-
-	// 注册知识整理/维护工具（需要 llm engine + CodeSeekMCP）
-	knowledgeAdapters := createKnowledgeToolAdapters(p.MCPClient, p.LLM, "repo_agent", "repo_retrieval")
-	if len(knowledgeAdapters) > 0 {
-		tools.SetGuardOnAdapters(knowledgeAdapters, p.Guard)
-		adapters = append(adapters, knowledgeAdapters...)
+	if a.devops == nil {
+		return "[DevOps-Agent unavailable] DevOps-Agent has not been wired to Repo-Agent. Complete the analysis with the information you have and note that the operational task could not be delegated.", nil
 	}
-
-	return adapters
+	result, err := a.devops.Run(ctx, task)
+	if err != nil {
+		return fmt.Sprintf("[DevOps-Agent execution failed] task: %q, error: %v. You may retry with a clearer task description, or note the failure in your analysis result.", task, err), nil
+	}
+	return result.Text, nil
 }
 
 func (a *RepoAgent) Name() string {
@@ -207,7 +146,19 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
-	cfg.Adapters = a.Adapters
+	// 工具面：只读 + 调用图 + deepthinking + 委派 devops + 知识维护 + 便签回读。
+	deps := depsFor("repo", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx))
+	deps.Files = a.params.Files
+	deps.Search = a.params.Search
+	deps.Repo = a.params.RepoOps
+	deps.Flow = a.params.Flow
+	deps.Deep = a.params.DeepThinker
+	deps.Delegate = a.devopsDelegate
+	if a.mcpClient != nil {
+		deps.Prune = tools.NewPruneHistoryTool(a.mcpClient, a.LLM).Execute
+		deps.Consolidate = tools.NewConsolidateKnowledgeTool(a.mcpClient, a.LLM, "repo_agent", "repo_retrieval").Execute
+	}
+	cfg.Surface = surfaceFor(toolspec.ProfileRepo, deps, a.Name())
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
 	cfg.Publisher = a.Publisher

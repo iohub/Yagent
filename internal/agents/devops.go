@@ -3,7 +3,8 @@ package agents
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
+	"yagent/internal/blackboard"
+	"yagent/internal/toolspec"
 
 	"yagent/internal/config"
 	"yagent/internal/llm"
@@ -17,7 +18,7 @@ var devopsPrompt string
 type DevOpsAgent struct {
 	BaseAgent
 	promptFmt PromptFormatter
-	Adapters  []*tools.Adapter
+	params    DevOpsAgentParams
 	maxSteps  int
 	ecCfg     config.EnhancedCommanderConfig
 }
@@ -50,58 +51,10 @@ func NewDevOpsAgent(p DevOpsAgentParams) *DevOpsAgent {
 			Publisher: p.Publisher,
 		},
 		promptFmt: p.Formatter,
-		Adapters:  buildDevOpsAdapters(p),
+		params:    p,
 		maxSteps:  p.MaxSteps,
 		ecCfg:     p.EnhancedCommanderCfg,
 	}
-}
-
-// buildDevOpsAdapters 装配 DevOps-Agent 的运维工具集：
-// run_bash（命令执行）、文件工具（巡检）、thinking/micro_agent（分析与自纠错）。
-func buildDevOpsAdapters(p DevOpsAgentParams) []*tools.Adapter {
-	var toolDefs []tools.ToolDefinition
-	if err := json.Unmarshal(ToolsJSON, &toolDefs); err != nil {
-		// Non-fatal: agent falls back to no-tool mode.
-	}
-
-	adapters := make([]*tools.Adapter, 0, len(toolDefs))
-	for _, def := range toolDefs {
-		var fn tools.ToolFunc
-		switch def.Name {
-		case "run_bash":
-			fn = p.Sys.ExecuteRunBash
-		case "read_file":
-			fn = p.Files.ExecuteReadFile
-		case "list_dir":
-			fn = p.Files.ExecuteListDir
-		case "print_dir_tree":
-			fn = p.Files.ExecutePrintDirTree
-		case "search_by_regex":
-			fn = p.Search.ExecuteGrepSearch
-		case "thinking":
-			fn = func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-				inputBytes, _ := json.Marshal(params)
-				return p.Thinker.Call(ctx, string(inputBytes))
-			}
-		case "micro_agent":
-			fn = p.MicroAgent.Execute
-		case "agent_exit":
-			fn = p.Flow.ExecuteAgentExit
-		case "ask_user_for_help":
-			if p.Env.FullYoloMode() {
-				continue
-			}
-			fn = p.Flow.ExecuteAskUserForHelp
-		default:
-			continue
-		}
-
-		adapter := tools.NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters).WithReadOnlyIfKnown()
-		adapters = append(adapters, adapter)
-	}
-	tools.SetGuardOnAdapters(adapters, p.Guard)
-
-	return adapters
 }
 
 func (a *DevOpsAgent) Name() string {
@@ -113,7 +66,15 @@ func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error
 	systemPrompt := a.promptFmt.FormatPrompt(devopsPrompt)
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
-	cfg.Adapters = a.Adapters
+	// DevOps 的画像：Shell + 只读文件 + 两个认知工具 + 流程控制；没有写文件能力。
+	deps := depsFor("devops", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx))
+	deps.Sys = a.params.Sys
+	deps.Files = a.params.Files
+	deps.Search = a.params.Search
+	deps.Flow = a.params.Flow
+	deps.Thinker = a.params.Thinker
+	deps.Micro = a.params.MicroAgent
+	cfg.Surface = surfaceFor(toolspec.ProfileDevOps, deps, a.Name())
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
 	cfg.Publisher = a.Publisher

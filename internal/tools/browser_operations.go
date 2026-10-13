@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"yagent/internal/toolspec"
 
 	"yagent/internal/browserctl"
 )
@@ -287,43 +288,24 @@ func BrowserToolNames() []string {
 	return names
 }
 
-// BuildAdapters 依据 tools.json 的声明生成适配器。
-// tools.json 是 schema 的单一事实来源；返回的错误列出两边的差异（声明了没实现 / 实现了没声明）。
-func (t *BrowserOperationsTool) BuildAdapters(defs []ToolDefinition, guard *WorkspaceGuard) ([]*Adapter, []error) {
-	byName := make(map[string]browserToolSpec, len(browserToolSpecs))
-	for _, s := range browserToolSpecs {
-		byName[s.name] = s
-	}
-
-	var errs []error
-	declared := make(map[string]bool, len(browserToolSpecs))
-	adapters := make([]*Adapter, 0, len(browserToolSpecs))
-
-	for _, def := range defs {
-		if !strings.HasPrefix(def.Name, "browser_") {
-			continue
-		}
-		declared[def.Name] = true
-		spec, ok := byName[def.Name]
-		if !ok {
-			errs = append(errs, fmt.Errorf("tools.json 声明了 %s，但 browserToolSpecs 未实现", def.Name))
+// ToolFunc / Available 让本类型满足 toolspec.BrowserResolver：注册表按工具名取执行器，
+// argv 组装与结果渲染留在这里。名字两侧由 Registry.Validate() 对账，
+// 不需要再单独维护一条"浏览器声明 vs 实现"的核对路径。
+func (t *BrowserOperationsTool) ToolFunc(name string) (toolspec.ToolFunc, bool) {
+	for _, spec := range browserToolSpecs {
+		if spec.name != name {
 			continue
 		}
 		s := spec
-		fn := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return t.execute(ctx, s, params)
-		}
-		adapters = append(adapters, NewAdapter(def.Name, def.Description, fn).WithSchema(def.Parameters))
+		}, true
 	}
-	for _, s := range browserToolSpecs {
-		if !declared[s.name] {
-			errs = append(errs, fmt.Errorf("%s 已在 browserToolSpecs 实现，但 tools.json 未声明", s.name))
-		}
-	}
-
-	SetGuardOnAdapters(adapters, guard)
-	return adapters, errs
+	return nil, false
 }
+
+// Available 报告浏览器能力当前是否可用（缺二进制/Chrome 时委派描述会降级）。
+func (t *BrowserOperationsTool) Available() (bool, string) { return t.ctrl.Probe() }
 
 func (t *BrowserOperationsTool) execute(ctx context.Context, spec browserToolSpec, params map[string]interface{}) (interface{}, error) {
 	if ok, reason := t.ctrl.Probe(); !ok {

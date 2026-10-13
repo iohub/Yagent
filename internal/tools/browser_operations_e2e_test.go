@@ -41,12 +41,8 @@ func TestE2EBrowserStack(t *testing.T) {
 		}
 	})
 
-	defs := loadToolDefs(t)
 	set := tools.NewBrowserOperationsTool(mgr, cfg)
-	adapters, errs := set.BuildAdapters(defs, nil)
-	if len(errs) > 0 {
-		t.Fatalf("adapter build reported inconsistencies: %v", errs)
-	}
+	adapters := browserSurface(t, set).Adapters()
 	byName := map[string]*tools.Adapter{}
 	for _, a := range adapters {
 		byName[a.Name()] = a

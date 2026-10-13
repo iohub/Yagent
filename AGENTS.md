@@ -85,8 +85,7 @@ yagent/
 │   │   ├── director.go         # Director（门面；编排逻辑在 director/ 子包）
 │   │   ├── coding.go repo.go chat.go devops.go browser_agent.go meta.go
 │   │   ├── executor.go         # RunAgentLoop：所有子 Agent 共享的 LLM-工具循环
-│   │   ├── tools.go            # 解析 tools.json（内嵌 schema）
-│   │   ├── tools.json          # 27 个工具的 JSON Schema 声明（单一事实来源）
+│   │   ├── specs.go            # Agent 侧工具的注册表声明（checkpoint/delegate_*/read_*）
 │   │   ├── ports.go            # 窄接口：切断 agents ↔ 子系统的循环依赖
 │   │   ├── result.go           # 子 Agent 结果 finalize / FormatForDirector
 │   │   ├── activity/           # 活动感知 idle/total timeout（Heartbeat / WithIdleTimeout）
@@ -163,7 +162,7 @@ yagent/
 `semantic_search`、`query_code_skeleton`、`query_code_snippet`、`find_function_callee`、`find_function_caller`、
 `query_call_graph`、`deepthinking`、`delegate_devops`、知识检索、`agent_exit`。
 
-**Browser 工具**（14 个，由 `tools/browser_operations.go` 的声明式表生成，schema 在 tools.json）：
+**Browser 工具**（14 个，能力标签在注册表、argv/render 在 `tools/browser_operations.go` 的 spec 表，schema 在 schemas.json）：
 `browser_status`、`browser_open`、`browser_inspect`、`browser_snapshot`、`browser_click`、`browser_fill`、
 `browser_type`、`browser_press`、`browser_scroll`、`browser_select`、`browser_tabs`、`browser_wait`、
 `browser_screenshot`、`browser_eval`，外加 `agent_exit` / `ask_user_for_help`。
@@ -171,9 +170,11 @@ yagent/
 能力不可用时 `delegate_browser` 的描述会降级为"不可用 + 原因 + 修复方式"（见 `browserDelegateDescription`）。
 完整设计见 `docs/browser-agent-design.md`。
 
-> 各 Agent 实际持有哪个工具由 `lookupToolFunc` 的 switch 决定（`coding.go:211`、`repo.go:90`、`chat.go:63`、
-> `devops.go:69`、`director.go:262`）。**tools.json 里声明但 switch 未列举的工具会被静默跳过**——这是
-> `thinking` / `query_call_graph` 在 Coding 上缺失的原因（见 §11 坑 5）。
+> **工具注册已收归注册表**（`internal/toolspec`，见 `docs/tool-registry-design.md`）：每个工具在实现旁边
+> `MustRegister(Spec{...})` 声明能力标签/频率档/授权要求/执行器，Agent 侧只写一份**能力画像**
+> （`toolspec/profiles.go`），装配统一走 `tools.NewSurface(profile, deps)`。
+> 七个 Agent（Director + 六个子 Agent）**全部**走这条路，`lookupToolFunc`/`getToolFunc` 已删除；
+> `scripts/check_no_manual_lookup.sh` 是棘轮守卫（PENDING 名单已清空，往里加条目必须评审）。
 
 ### Meta / 自定义 Agent 注册流程
 
@@ -200,10 +201,15 @@ type Adapter struct { name, description string; fn ToolFunc
 `Call()` 依次做 JSON 解析 → 工作区边界检查 → 危险操作授权 → 执行；`ToToolDef()` 产出 `llm.ToolDef`。
 `SortToolDefs` / `ComputeToolDefsHash` 保证工具顺序稳定（利于 provider 端 prompt 缓存）。
 
-**并行性判定**：`Adapter.IsReadOnly()` 为真、且不在 `nonParallelToolNames{agent_exit, delegate_meta}` 里的工具，
+**并行性判定**：`Adapter.IsReadOnly()`（由 `Spec` 的 `!Mutates && !Serial` 派生）为真、且不在
+`toolspec.IsSerial` 名单里的工具，
 可由 `toolbatch` 分批并行执行（默认并发 4，上限 8，`[agent] max_parallel_readonly_tools`）。
 
-### 5.2 工具总览（schema 见 `internal/agents/tools.json`）
+### 5.2 工具总览（schema 见 `internal/toolspec/schemas.json`，49 条）
+
+> 每个工具的完整契约 = `schemas.json` 的 description/parameters + `Spec` 的能力标签。
+> 派生查询：`IsReadOnly` / `IsSerial` / `NeedsAuth` / `PathParams` / `TruncationPriority` /
+> `IsInteractive` / `IsCompactDisplay` / `ModelSlot`。
 
 | 工具 | 类别 | 说明 |
 |------|------|------|
@@ -504,10 +510,14 @@ bash scripts/check_no_agents_import.sh    # director/ 子包不得 import yagent
 ### 9.3 新增一个工具的正确步骤
 
 1. 在 `internal/tools/` 实现 `Execute*`（或独立 `*Tool` 结构）。
-2. 在 `internal/agents/tools.json` 加 name/description/JSON Schema（或就地 `WithSchema`）。
-3. 在对应 Agent 的 `lookupToolFunc` switch 里加 `case`（否则静默不生效）；必要时扩 `ports.go`。
-4. 标记元数据：只读加进 `adapter.go` 的 `knownReadOnlyTools`；写文件加进 `workspace_guard.go` 的
-   `dangerousTools` + `pathParamNames`；必须串行加进 `executor.go` 的 `nonParallelToolNames`。
+2. 在 `internal/toolspec/schemas.json` 加 name/description/JSON Schema。
+3. 在实现旁边 `toolspec.MustRegister(Spec{Name, Effect, Frequency, Mutates, Serial, NeedsAuth,
+   PathParams, Trunc, Display, Brief, Build})` —— **这一条取代了旧的第 3、4 步**：
+   并发/授权/截断/展示全部从 `Effect` + 显式字段派生，不再往任何名字表里加条目。
+4. 让该工具进入某个 Agent 的工具面：优先靠已有的能力标签（画像会自动匹配，无需改 Agent）；
+   仅当它是委派类工具时才在 Spec 上写 `Audience`。
+   ⤷ 改完必须跑 `go test ./internal/agents -run TestAgentSurfacesGolden -update` 之前先看清 diff，
+     工具面变化必须以显式改写 golden 的方式被评审。
 5. 用 `client.GetToolEngine("<name>")` + `[tools.llm.<name>]` 取工具级引擎；构造期依赖从 `globalctx` 拿。
 6. 加 `internal/tools/*_test.go`；涉及循环则补 `agents` 的执行循环测试。
 
@@ -559,8 +569,11 @@ plan:
    - TUI 上下文进度条（`tui/tui_model.go:600`）= **provider 的 `context_window` 优先** → 未设置才查目录。
    所以给目录里已收录的模型手写一个不同的 `context_window`，会出现"压缩时机与进度条口径不一致"。
 4. **`default_config.toml` 里有一段 `[context]` 表**（`enable_auto_compact` 等）`Config` 根本不解析；真正的开关在 `[enhanced_commander]`。别照着模板那段改配置。
-5. **tools.json 声明 ≠ 工具可用**：只有 Agent 的 `lookupToolFunc` switch 里列举的名字才会注册。`thinking` 与
-   `query_call_graph` 目前 Coding 拿不到就是这个问题。
+5. **声明 ≠ 可用（已消解）**：`Registry.Validate()` 双向对账 schemas.json 与 Spec，"声明了没人实现"
+   是启动错误；工具面由画像派生，golden 基线（`internal/agents/testdata/tool_surfaces.golden`）钉住
+   每个 Agent 实际拿到什么。加工具若只改 schemas.json 不改 Spec，`check_no_manual_lookup.sh` 与
+   `TestRegistryMatchesSchemas` 会立刻报。
+   另：`mcp` 客户端的 `sendJSON` 已加写锁 —— 并发只读工具（codeseek 桥接那批现在可并发了）依赖它。
 6. **TUI 事件通道无重放**：`listenForEvents` 是一次性 cmd，谁消费了事件不重新武装监听器就会永久断流；
    弹窗守卫只放行少数消息类型（`tea.PasteMsg` 不是 KeyMsg）。任何新增叠加模式/守卫都必须显式放行需要的消息类型并 re-arm。
 7. **布局高度必须自洽**：`computeFooterHeight` 与 `View()` 的 footer 组装顺序要完全一致，差一个空行整屏抖动；

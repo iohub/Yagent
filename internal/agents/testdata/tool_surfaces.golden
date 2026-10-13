@@ -1,0 +1,119 @@
+# 各 Agent 的工具面（由 toolspec 画像解析得出，-update 重写）
+# tier: hot|warm|cold  ro: 可并发  auth: 需用户授权  serial: 必须串行
+
+[director] 17 tools  grant=[fs_read,search_regex,context,tool_load,cog_deep,knowledge_prune,flow,delegate] deny=[fs_write,shell]
+  agent_exit               tier=hot  serial
+  ask_user_for_help        tier=hot  serial,blocks
+  deepthinking             tier=hot  ro
+  delegate_browser         tier=hot  
+  delegate_chat            tier=hot  ro
+  delegate_coding          tier=hot  
+  delegate_devops          tier=hot  
+  delegate_meta            tier=hot  serial
+  delegate_repo            tier=hot  ro
+  list_dir                 tier=hot  ro
+  load_tool                tier=hot  serial
+  print_dir_tree           tier=hot  ro
+  prune_history            tier=cold 
+  read_artifact            tier=warm ro
+  read_file                tier=hot  ro
+  read_note                tier=warm ro
+  search_by_regex          tier=hot  ro
+
+[coding] 30 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_reflect,cog_subllm,cog_deep,cog_design,fs_write,shell,knowledge_write,knowledge_prune,checkpoint,flow,delegate] deny=[]
+  agent_exit               tier=hot  serial
+  ask_user_for_help        tier=hot  serial,blocks
+  consolidate_knowledge    tier=cold 
+  create_file              tier=hot  auth
+  deepthinking             tier=cold ro
+  delegate_browser         tier=hot  
+  delete_file              tier=hot  auth
+  design                   tier=cold ro
+  find_function_callee     tier=cold ro
+  find_function_caller     tier=hot  ro
+  git_checkpoint_create    tier=cold serial
+  git_checkpoint_list      tier=cold serial
+  git_checkpoint_rollback  tier=cold serial
+  list_dir                 tier=hot  ro
+  load_tool                tier=hot  serial
+  micro_agent              tier=warm ro
+  print_dir_tree           tier=cold ro
+  prune_history            tier=cold 
+  query_call_graph         tier=cold ro
+  query_code_skeleton      tier=cold ro
+  query_code_snippet       tier=hot  ro
+  read_artifact            tier=warm ro
+  read_file                tier=hot  ro
+  read_note                tier=warm ro
+  rename_file              tier=hot  auth
+  run_bash                 tier=hot  auth
+  search_by_regex          tier=hot  ro
+  search_replace_in_file   tier=hot  auth
+  semantic_search          tier=hot  ro
+  thinking                 tier=warm ro
+
+[repo] 19 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_deep,knowledge_write,knowledge_prune,flow,delegate] deny=[cog_reflect,cog_subllm,cog_design]
+  agent_exit               tier=hot  serial
+  ask_user_for_help        tier=hot  serial,blocks
+  consolidate_knowledge    tier=cold 
+  deepthinking             tier=cold ro
+  delegate_devops          tier=hot  
+  find_function_callee     tier=cold ro
+  find_function_caller     tier=hot  ro
+  list_dir                 tier=hot  ro
+  load_tool                tier=hot  serial
+  print_dir_tree           tier=hot  ro
+  prune_history            tier=cold 
+  query_call_graph         tier=hot  ro
+  query_code_skeleton      tier=cold ro
+  query_code_snippet       tier=hot  ro
+  read_artifact            tier=warm ro
+  read_file                tier=hot  ro
+  read_note                tier=warm ro
+  search_by_regex          tier=hot  ro
+  semantic_search          tier=hot  ro
+
+[chat] 8 tools  grant=[context,tool_load,cog_reflect,cog_subllm,cog_deep,flow] deny=[]
+  agent_exit               tier=hot  serial
+  ask_user_for_help        tier=hot  serial,blocks
+  deepthinking             tier=cold ro
+  load_tool                tier=hot  serial
+  micro_agent              tier=warm ro
+  read_artifact            tier=warm ro
+  read_note                tier=warm ro
+  thinking                 tier=warm ro
+
+[devops] 12 tools  grant=[fs_read,search_regex,context,tool_load,cog_reflect,cog_subllm,shell,flow] deny=[]
+  agent_exit               tier=hot  serial
+  ask_user_for_help        tier=hot  serial,blocks
+  list_dir                 tier=hot  ro
+  load_tool                tier=hot  serial
+  micro_agent              tier=warm ro
+  print_dir_tree           tier=cold ro
+  read_artifact            tier=warm ro
+  read_file                tier=hot  ro
+  read_note                tier=warm ro
+  run_bash                 tier=hot  auth
+  search_by_regex          tier=hot  ro
+  thinking                 tier=warm ro
+
+[browser] 19 tools  grant=[context,tool_load,browser_observe,browser_act,browser_eval,browser_artifact,flow] deny=[]
+  agent_exit               tier=hot  serial
+  ask_user_for_help        tier=hot  serial,blocks
+  browser_click            tier=hot  serial
+  browser_eval             tier=hot  serial,auth
+  browser_fill             tier=hot  serial
+  browser_inspect          tier=hot  serial
+  browser_open             tier=hot  serial
+  browser_press            tier=cold serial
+  browser_screenshot       tier=hot  serial
+  browser_scroll           tier=cold serial
+  browser_select           tier=cold serial
+  browser_snapshot         tier=hot  serial
+  browser_status           tier=hot  serial
+  browser_tabs             tier=cold serial
+  browser_type             tier=cold serial
+  browser_wait             tier=hot  serial
+  load_tool                tier=hot  serial
+  read_artifact            tier=warm ro
+  read_note                tier=warm ro

@@ -147,7 +147,8 @@ type AgentsConfig struct {
 }
 
 type ToolsConfig struct {
-	LLM ToolsLLMConfig `toml:"llm"`
+	LLM      ToolsLLMConfig        `toml:"llm"`
+	Deferred DeferredToolsConfig   `toml:"deferred"`
 }
 
 type LLMConfig struct {

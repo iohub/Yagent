@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"yagent/internal/toolspec"
 
 	"yagent/internal/browserctl"
 )
@@ -40,25 +41,13 @@ func (g *WorkspaceGuard) SetYoloMode(enabled bool) {
 	g.yoloMode = enabled
 }
 
-// dangerousTools lists tool names that can modify files or system state.
-var dangerousTools = map[string]bool{
-	"create_file":            true,
-	"search_replace_in_file": true,
-	"delete_file":            true,
-	"rename_file":            true,
-	"run_bash":               true,
-	// browser_eval 能在这台浏览器的当前页面里执行任意 JS（读取登录态、发起请求），
-	// 按敏感特征要求授权；截图路径已由工具层收敛到会话工作区，无需再走路径检查。
-	"browser_eval": true,
-}
-
-// pathParamNames maps dangerous tool names to their file-path parameter names.
-var pathParamNames = map[string][]string{
-	"create_file":            {"target_file"},
-	"search_replace_in_file": {"file_path"},
-	"delete_file":            {"target_file", "file_paths"},
-	"rename_file":            {"file_path", "rename_file_path"},
-}
+// 危险工具与它们的路径参数名不再在这里各写一张表：判据来自注册表
+// （Spec.NeedsAuth / Spec.PathParams），分派按能力标签而不是工具名。
+//
+// 这修掉了历史上的一类静默失效：往 dangerousTools 里加一个名字、但忘了在
+// Check 的 switch 里加 case，结果那个工具"看着受保护、其实什么都不检查"。
+// 现在 Validate() 保证 authEffects 与 NeedsAuth 一致，分派又按 Effect 走，
+// 三者里任意一处漏了都会在启动自检里报错。
 
 // Check determines if a tool call requires user authorization.
 // Returns (needsAuth, reason).
@@ -72,7 +61,7 @@ func (g *WorkspaceGuard) Check(toolName string, params map[string]interface{}) (
 		return false, ""
 	}
 
-	if !dangerousTools[toolName] {
+	if !toolspec.NeedsAuth(toolName) {
 		return false, ""
 	}
 
@@ -91,14 +80,15 @@ func (g *WorkspaceGuard) Check(toolName string, params map[string]interface{}) (
 		return false, ""
 	}
 
-	switch toolName {
-	case "run_bash":
+	// 分派按能力标签：写文件类查路径，shell 查命令 token，浏览器 eval 查敏感 JS。
+	switch effect := toolspec.EffectOf(toolName); {
+	case effect.Has(toolspec.EffectShell):
 		return g.checkBash(params)
 
-	case "create_file", "delete_file", "rename_file", "search_replace_in_file":
+	case effect.Has(toolspec.EffectFSWrite):
 		return g.checkFileOp(toolName, params)
 
-	case "browser_eval":
+	case effect.Has(toolspec.EffectBrowserEval):
 		return g.checkBrowserEval(params)
 	}
 
@@ -180,8 +170,8 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 }
 
 func (g *WorkspaceGuard) checkFileOp(toolName string, params map[string]interface{}) (bool, string) {
-	pathNames, ok := pathParamNames[toolName]
-	if !ok {
+	pathNames := toolspec.PathParams(toolName)
+	if len(pathNames) == 0 {
 		return false, ""
 	}
 
