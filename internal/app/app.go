@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"yagent/internal/agents"
+	"yagent/internal/browserctl"
 	"yagent/internal/config"
 	"yagent/internal/embedbin"
 	"yagent/internal/globalctx"
@@ -43,6 +44,9 @@ type Yagent struct {
 	YoloMode       bool   // YOLO模式：所有agent授权自动通过
 	FullYoloMode   bool   // FULL-YOLO模式：隐含YoloMode + 移除ask_user_for_help + 自主决策
 	ForceQuit      bool   // ForceQuit：强制退出模式，agent_exit 时直接退出，不等待 codeseek 进程安全退出
+
+	// browserMgr 浏览器执行层：管理外部 browser-control CLI 与它启动的 Chrome 生命周期
+	browserMgr *browserctl.Manager
 
 	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .yagent/skills/ 下的 .md 文件
 
@@ -336,6 +340,18 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		repoCtx := globalctx.NewRepoContextStore()
 		env := globalctx.NewEnvView(&gctx)
 
+		// ── 浏览器执行层：外部 browser-control CLI（Go 侧不引浏览器依赖）──
+		browserMgr := browserctl.NewManager(browserctl.FromAppConfig(ca.config.Browser))
+		if ok, reason := browserMgr.Probe(); ok {
+			slog.Info("Browser-Agent 就绪（browser-control 可用）")
+		} else {
+			slog.Warn("Browser-Agent 不可用，delegate_browser 描述已降级", "reason", reason)
+		}
+		// 回收上次崩溃遗留的浏览器实例，并清理过期工作区（含 traces 与截图）
+		browserMgr.ReapStale(context.Background())
+		browserMgr.CleanupExpiredWorkspaces()
+		ca.browserMgr = browserMgr
+
 		repoAgent := agents.NewRepoAgent(agents.RepoAgentParams{
 			Formatter:            &gctx,
 			Publisher:            publisher,
@@ -418,9 +434,16 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		// 注入 DevOps-Agent，使 Repo-Agent 的 delegate_devops 工具可用
 		repoAgent.SetDevOpsAgent(devopsAgent)
 		browserAgent := agents.NewBrowserAgent(agents.BrowserAgentParams{
-			Publisher: publisher,
-			LLM:       browserEngine,
-			MaxSteps:  browserMaxSteps,
+			Formatter:            &gctx,
+			Publisher:            publisher,
+			Env:                  env,
+			Flow:                 gctx.FlowOps,
+			Guard:                guard,
+			Browser:              browserMgr,
+			BrowserCfg:           ca.config.Browser,
+			EnhancedCommanderCfg: ca.config.EnhancedCommander,
+			LLM:                  browserEngine,
+			MaxSteps:             browserMaxSteps,
 		})
 
 		codingAgent := agents.NewCodingAgent(agents.CodingAgentParams{
@@ -712,6 +735,13 @@ func (ca *Yagent) Close() {
 	if ca.consolidationWorker != nil {
 		slog.Info("Stopping consolidation worker...")
 		ca.consolidationWorker.Stop()
+	}
+	// 停止 Browser-Agent 启动的 Chrome。上游 stop 自带归属校验
+	//（命令行需含 --remote-debugging-port 且 user-data-dir 匹配），不会误杀用户自己的浏览器。
+	if ca.browserMgr != nil {
+		if err := ca.browserMgr.Close(context.Background()); err != nil {
+			slog.Warn("停止浏览器失败", "error", err)
+		}
 	}
 	// 关闭 CodeSeek MCP 客户端
 	if ca.globalCtx != nil && ca.globalCtx.CodeSeekMCP != nil {

@@ -194,9 +194,44 @@ type Config struct {
 
 	CodeSeek CodeSeekConfig `toml:"codeseek"`
 
+	Browser BrowserConfig `toml:"browser"`
+
 	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`
 
 	TUI TUIConfig `toml:"tui"`
+
+	// browserSectionDefined 记录配置文件里是否出现过 [browser] 段（由 LoadFromFile 写入），
+	// 用于区分"用户显式配置"与"整表缺省"。
+	browserSectionDefined bool
+}
+
+// staleBrowserKeys 列出 [browser] 段里没被新 schema 解析掉的键。
+// 被删掉的旧浏览器栈配置（headless / browser_path 等）会落在这里。
+func staleBrowserKeys(md toml.MetaData) []string {
+	var out []string
+	for _, key := range md.Undecoded() {
+		if len(key) > 0 && key[0] == "browser" {
+			out = append(out, strings.Join(key, "."))
+		}
+	}
+	return out
+}
+
+// browserSectionConfigured 判断 [browser] 段里是否至少有一个**被新 schema 认识**的键。
+// 只剩旧栈键的段落等同于没写过：那种情况按整表缺省处理，
+// 否则 enabled 会被读成 false，用户既看不到自己的旧配置生效、也看不到能力开启。
+func browserSectionConfigured(md toml.MetaData) bool {
+	undecoded := make(map[string]bool)
+	for _, key := range md.Undecoded() {
+		undecoded[strings.Join(key, ".")] = true
+	}
+	for _, key := range md.Keys() {
+		// len>1：跳过 `[browser]` 这个表头本身，只看段内的字段
+		if len(key) > 1 && key[0] == "browser" && !undecoded[strings.Join(key, ".")] {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) GetProvider(name string) (*ProviderConfig, error) {
@@ -332,8 +367,19 @@ func LoadConfig(path string) (*Config, error) {
 // LoadFromFile 从文件加载配置（提取自 LoadConfig，不执行 validate）
 func LoadFromFile(path string) (*Config, error) {
 	cfg := &Config{}
-	if _, err := toml.DecodeFile(path, cfg); err != nil {
+	md, err := toml.DecodeFile(path, cfg)
+	if err != nil {
 		return nil, fmt.Errorf("failed to decode config file: %w", err)
+	}
+	// 老配置没有 [browser] 段（或只剩旧浏览器栈的失效键）时按"整表缺省"填默认值：
+	// enabled 的零值是 false，靠它判断等于把新能力静默关掉。
+	cfg.browserSectionDefined = browserSectionConfigured(md)
+	if stale := staleBrowserKeys(md); len(stale) > 0 {
+		// 旧浏览器栈留下的 [browser] 键（headless / browser_path 等）在新 schema 里不存在，
+		// 静默忽略会让用户以为自己的配置还在生效。
+		slog.Warn("[browser] 段存在已失效的键，将被忽略；请按新的 [browser] 配置改写",
+			"stale_keys", strings.Join(stale, ", "),
+			"hint", "headless→mode，browser_path→chrome_path，新栈还需 binary_path 指向 browser-control")
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
@@ -472,6 +518,23 @@ func (c *Config) validate() error {
 	}
 	if !c.EnhancedCommander.EnableUltimateCompression {
 		c.EnhancedCommander.EnableUltimateCompression = true
+	}
+
+	if !c.browserSectionDefined {
+		c.Browser = DefaultBrowserConfig()
+	} else {
+		c.Browser.applyDefaults()
+	}
+	// 执行层会把这些下限当作保底，配置得更小时只会告警并按下限生效。
+	if c.Browser.CDPTimeout < MinBrowserCDPTimeout {
+		slog.Warn("browser.cdp_timeout 低于保底下限，将按下限生效（需覆盖最长 wait 60s）",
+			"configured", c.Browser.CDPTimeout, "floor", MinBrowserCDPTimeout)
+		c.Browser.CDPTimeout = MinBrowserCDPTimeout
+	}
+	if c.Browser.CommandTimeout <= c.Browser.CDPTimeout {
+		slog.Warn("browser.command_timeout 不大于 cdp_timeout，会被抬高到 cdp_timeout+10s（否则外层判不到上游超时）",
+			"configured", c.Browser.CommandTimeout, "cdp_timeout", c.Browser.CDPTimeout)
+		c.Browser.CommandTimeout = c.Browser.CDPTimeout + 10*time.Second
 	}
 
 	gitCfgDefaults := DefaultGitCheckpointConfig()
@@ -637,6 +700,108 @@ type CodeSeekConfig struct {
 	MCPArgs        []string        `toml:"mcp_args"`
 	RequestTimeout int             `toml:"request_timeout"`
 	Knowledge      KnowledgeConfig `toml:"knowledge"`
+}
+
+// 浏览器超时的保底下限。上游内部 CDP 超时必须覆盖最长 wait（browser_wait 上限 60s），
+// 外层单次调用超时又要比它更大，否则抢在内层之前把进程杀掉，模型只看到"命令超时"。
+const (
+	MinBrowserCDPTimeout     = 65 * time.Second
+	MinBrowserCommandTimeout = 75 * time.Second
+)
+
+// BrowserConfig 控制 Browser-Agent 如何通过外部 browser-control CLI 驱动 Chrome。
+// Go 侧不直接讲 CDP：所有浏览器动作都是 exec 一次 CLI 子命令。
+type BrowserConfig struct {
+	Enabled bool `toml:"enabled"`
+
+	// BinaryPath 为空时按 ~/.yagent/bin/browser-control → $PATH 依次查找。
+	BinaryPath string `toml:"binary_path"`
+	// ChromePath 透传给 BROWSER_CONTROL_CHROME；为空则由 CLI 自动探测 Chrome/Chromium。
+	ChromePath string `toml:"chrome_path"`
+
+	// Mode: headless | headful | attach。attach 表示只连 CDPURL，不启动浏览器。
+	Mode string `toml:"mode"`
+	// CDPURL 为 attach 模式的端点，如 http://127.0.0.1:9222。
+	CDPURL string `toml:"cdp_url"`
+	// CDPPortBase 是自启端口起点，递增找空闲。刻意避开 9222/9223：
+	// 上游在没有任何 CDP 环境变量时会硬扫这两个端口，会串到别的浏览器实例上。
+	CDPPortBase int `toml:"cdp_port_base"`
+
+	CDPTimeout     time.Duration `toml:"cdp_timeout"`     // → BROWSER_CONTROL_TIMEOUT（上游默认仅 15s）
+	CommandTimeout time.Duration `toml:"command_timeout"` // 单次 CLI 调用上限
+
+	IdleTTL   time.Duration `toml:"idle_ttl"`   // 空闲超过它就关掉我们自己启动的 Chrome
+	MaxChrome int           `toml:"max_chrome"` // 进程内 Chrome 实例上限
+
+	WorkspaceRoot string        `toml:"workspace_root"` // 空 → ~/.yagent/data/browser
+	WorkspaceTTL  time.Duration `toml:"workspace_ttl"`  // 过期工作区清理
+
+	MaxOutputBytes int    `toml:"max_output_bytes"`
+	DialogPolicy   string `toml:"dialog_policy"` // accept | dismiss | ask
+
+	AllowedDomains []string `toml:"allowed_domains"`
+	DeniedDomains  []string `toml:"denied_domains"`
+
+	ProfileDir   string `toml:"profile_dir"`
+	EnableSkills bool   `toml:"enable_skills"`
+}
+
+// applyDefaults 逐项兜底零值字段（用户只写了一半的 [browser] 段时仍能工作）。
+func (b *BrowserConfig) applyDefaults() {
+	d := DefaultBrowserConfig()
+	if b.Mode == "" {
+		b.Mode = d.Mode
+	}
+	if b.CDPPortBase <= 0 {
+		b.CDPPortBase = d.CDPPortBase
+	}
+	if b.CDPTimeout <= 0 {
+		b.CDPTimeout = d.CDPTimeout
+	}
+	if b.CommandTimeout <= 0 {
+		b.CommandTimeout = d.CommandTimeout
+	}
+	if b.IdleTTL <= 0 {
+		b.IdleTTL = d.IdleTTL
+	}
+	if b.MaxChrome <= 0 {
+		b.MaxChrome = d.MaxChrome
+	}
+	if b.WorkspaceTTL <= 0 {
+		b.WorkspaceTTL = d.WorkspaceTTL
+	}
+	if b.MaxOutputBytes <= 0 {
+		b.MaxOutputBytes = d.MaxOutputBytes
+	}
+	if b.DialogPolicy == "" {
+		b.DialogPolicy = d.DialogPolicy
+	}
+	if b.DeniedDomains == nil {
+		b.DeniedDomains = d.DeniedDomains
+	}
+}
+
+// DefaultBrowserConfig 是 [browser] 整表缺省时的取值。
+// cdp_timeout/command_timeout 取的是执行层保底下限（65s/75s）：
+// 上游内部 CDP 超时必须覆盖最长 wait（60s），否则 `wait load 60` 会提前失败，
+// 而外层 command_timeout 又要比它更大，否则判定权被内层抢走。
+func DefaultBrowserConfig() BrowserConfig {
+	return BrowserConfig{
+		Enabled:        true,
+		Mode:           "headless",
+		CDPPortBase:    9333,
+		CDPTimeout:     MinBrowserCDPTimeout,
+		CommandTimeout: MinBrowserCommandTimeout,
+		IdleTTL:        15 * time.Minute,
+		MaxChrome:      1,
+		WorkspaceTTL:   72 * time.Hour,
+		MaxOutputBytes: 24000,
+		DialogPolicy:   "accept",
+		DeniedDomains: []string{
+			"*.local", "localhost", "127.0.0.1", "::1",
+			"192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "169.254.0.0/16",
+		},
+	}
 }
 
 type KnowledgeConfig struct {

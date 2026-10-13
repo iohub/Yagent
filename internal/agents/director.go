@@ -384,8 +384,14 @@ func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []
 		return a.applyEnhancedCommander("devops", task, result, err, noteRef, unresolved)
 	}).WithSchema(buildDelegateSchema("The operational task for DevOps-Agent, e.g., 'check disk usage', 'find all log files modified today', 'check if port 8080 is in use'."))
 
+	// 浏览器能力探测：不可用时描述必须显式降级，否则 Director 会反复委派一个必然报错的工具
+	browserAvailable, browserReason := false, "浏览器执行层未装配"
+	if a.BrowserAgent != nil {
+		browserAvailable, browserReason = a.BrowserAgent.Capability()
+	}
+
 	delegateBrowser := tools.NewAdapter("delegate_browser",
-		"Placeholder for Browser-Agent, currently under reconstruction. The browser stack (headless Chrome driver and browser_* tools) has been stripped, so this tool always returns a not-implemented error and touches no browser. Prefer local docs, read-only tools, or another sub-agent; if the user really needs web automation, report that the capability is unavailable.",
+		browserDelegateDescription(browserAvailable, browserReason),
 		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			task, ok := params["task"].(string)
 			if !ok {
@@ -401,7 +407,7 @@ func (a *DirectorAgent) buildDelegateAdapters(disabledAgents map[string]bool) []
 			result, err := a.BrowserAgent.Run(ctx, packedTask)
 			noteRef := a.writeDelegateNote("browser_agent", "delegate_browser", task, result, err)
 			return a.applyEnhancedCommander("browser", task, result, err, noteRef, unresolved)
-		}).WithSchema(buildDelegateSchema("A description of the browser task. Browser-Agent is a placeholder and always returns a not-implemented error."))
+		}).WithSchema(buildDelegateSchema("A self-contained browser task: the target URL, what to do on the page, and what evidence to return."))
 
 	delegateMeta := tools.NewAdapter("delegate_meta", "Delegate to Meta-Agent to DESIGN a custom specialized agent. Meta-Agent will craft a tailored system prompt using prompt engineering best practices and select appropriate tools. The designed agent is automatically registered and immediately executed to complete the task. After this, the new agent becomes a permanent delegate tool for future use.", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		task, ok := params["task"].(string)

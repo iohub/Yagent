@@ -74,6 +74,10 @@ var defaultToolTimeout = 180 * time.Second
 var nonParallelToolNames = map[string]bool{
 	"agent_exit":    true,
 	"delegate_meta": true,
+	// 浏览器动作会改动共享的当前标签页与 ref 状态，必须串行
+	"browser_open": true,
+	"browser_tabs": true,
+	"browser_eval": true,
 }
 
 func NormalizeMaxParallelReadOnlyTools(n int) int {

@@ -46,8 +46,15 @@ func TestToolTruncationPriority(t *testing.T) {
 		{"find_function_callee", 0},
 		{"find_function_caller", 0},
 		{"deepthinking", -1},
+		// 浏览器观察结果最该先丢：同一页面每次 inspect/snapshot 都产生新的，旧的既过时又占大头
+		{"browser_snapshot", 0},
+		{"browser_inspect", 0},
+		{"browser_text", 0},
+		{"browser_devtools", 0},
 		{"list_dir", 1},
 		{"agent_exit", 1},
+		// 交互类不截断：失败/成功的动作记录是恢复上下文的锚点
+		{"browser_click", 1},
 		{"unknown_tool", 1},
 	}
 	for _, tt := range tests {
