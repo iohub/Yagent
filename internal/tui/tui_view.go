@@ -305,7 +305,9 @@ func (m *model) renderTimelinePanel(width int) string {
 		return m.timelineCache
 	}
 
-	content := RenderTimeline(m.timelineEntries, false, true, width-4, m.anim)
+	// 进度动画已由底部 airline 状态栏的 spinner 段表达，
+	// 此折叠模式下的时间线浮层不再重复渲染动画（与右上角 dashboard 面板一致）。
+	content := RenderTimeline(m.timelineEntries, false, true, width-4, nil)
 	if content == "" {
 		return ""
 	}
