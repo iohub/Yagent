@@ -406,6 +406,23 @@ func extractToolSummary(toolName string, argsJSON string) string {
 		if from != "" && to != "" {
 			return from + " → " + to
 		}
+	case "load_tool":
+		// load_tool 参数为 names（string 数组）：列出本次取回 schema 的工具名
+		if raw, ok := args["names"].([]interface{}); ok && len(raw) > 0 {
+			names := make([]string, 0, len(raw))
+			for _, v := range raw {
+				if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+					names = append(names, s)
+				}
+			}
+			if len(names) > 0 {
+				summary := fmt.Sprintf("加载 %d 个工具: %s", len(names), strings.Join(names, "、"))
+				if len(summary) > 80 {
+					return summary[:77] + "..."
+				}
+				return summary
+			}
+		}
 	}
 	if strings.HasPrefix(toolName, "delegate_") {
 		if task, ok := args["task"].(string); ok && task != "" {
