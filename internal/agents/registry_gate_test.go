@@ -176,7 +176,9 @@ func TestDerivedMetadataMatchesLegacyTables(t *testing.T) {
 	}
 
 	// newTools 是本次重构引入的工具，没有历史基线可比，只需确认它们没被误标。
-	newTools := map[string]bool{"load_tool": true}
+	// list_notes：只读枚举本地便签板的 front-matter，无共享写端（不像 codeseek 桥接
+	// 那批要抢 MCP 的 stdin），也无外部进程 —— 并行安全不依赖任何前置修复。
+	newTools := map[string]bool{"load_tool": true, "list_notes": true}
 
 	for _, name := range legacyCompactDisplay {
 		if !toolspec.IsCompactDisplay(name) {

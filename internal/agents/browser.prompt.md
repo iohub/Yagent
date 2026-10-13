@@ -77,4 +77,27 @@ Artifacts: absolute path of any screenshot you produced
 Blocked on: what needs a human (login, CAPTCHA, confirmation), if anything
 ```
 
+## Handoff & Prior Findings
+
+Your task may begin with a `## Board Index (…)` block: one line per note that agents in this
+task have already produced, newest first, each with a one-line conclusion.
+
+- **Read the index before you re-open pages.** If a line already carries the evidence the task
+  asks for, fetch it with `read_note(ref="<agent>/<stem>")` (or `read_artifact(id="<id>")`)
+  instead of crawling again — a page fetch is the most expensive thing you do.
+- When the index is paginated, `list_notes` shows the whole board.
+
+Along with `agent_exit`, fill its optional `handoff` object. It is the only part of your work
+guaranteed to reach the next agent verbatim — everything else may be summarized or dropped by
+context compression.
+
+- `conclusion`: one sentence answering the task (what the page actually said), not "I opened the page".
+- `facts`: verifiable observations, each with `where` — the URL, the screenshot path, or the
+  quoted text. Never include a guess; an empty list is better than a fabricated fact.
+- `open_questions`: what still needs a human (login, CAPTCHA, confirmation).
+- `status`: `ok` | `partial` | `error`.
+
+Your full output is preserved regardless (note body + artifact), so `handoff` is an index into
+your work, not a replacement for it.
+
 If the task is impossible (page gone, feature requires login you cannot perform, site blocks automation), say so explicitly with the evidence you gathered — a clear negative result is a valid answer. Never fabricate page content.

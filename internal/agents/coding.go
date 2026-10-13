@@ -81,6 +81,14 @@ type CodingAgent struct {
 	maxSteps         int
 	thinkLink        *thinklink.Store // 终极压缩支撑存储，实时记录用户原始输入，与 Director 模式一致，与 agent 同生命周期
 
+	// boardWriter 让 delegate_browser 的产物也上便签板。Director 在本 Agent 之后才构造，
+	// 所以它只能事后用 SetBoardWriter 注入；nil 时退回"直接返回文本"的旧行为。
+	boardWriter BoardWriter
+}
+
+// SetBoardWriter 注入便签板写入器（由 app 在 Director 构造之后调用）。
+func (a *CodingAgent) SetBoardWriter(w BoardWriter) {
+	a.boardWriter = w
 }
 
 // CodingAgentParams 聚合 NewCodingAgent 所需的全部依赖。
@@ -184,11 +192,31 @@ func (a *CodingAgent) browserDelegate(ctx context.Context, target string, params
 	if !ok || task == "" {
 		return nil, fmt.Errorf("delegate_browser requires a non-empty 'task' parameter")
 	}
-	result, err := a.BrowserAgent.Run(ctx, task)
+
+	// 带上下文走：便签索引前置到子任务里，Browser 才知道前面已经查到过什么。
+	packedTask := task
+	if a.boardWriter != nil {
+		if packed, _ := a.boardWriter.PackDelegateTask(task, params); packed != "" {
+			packedTask = packed
+		}
+	}
+
+	result, err := a.BrowserAgent.Run(ctx, packedTask)
+	if a.boardWriter == nil {
+		// 没注入写入器（老装配路径）：保持改动前的行为。
+		if err != nil {
+			return nil, err
+		}
+		return result.Text, nil
+	}
+
+	// 先落便签再判错：失败的委派也要留下"试过什么、为什么失败"，
+	// 否则下一次同类任务会从头再试一遍。
+	noteRef := a.boardWriter.WriteDelegateNote("browser_agent", "delegate_browser", task, result, err)
 	if err != nil {
 		return nil, err
 	}
-	return result.Text, nil
+	return FormatForDirector("browser", result, noteRef, 0), nil
 }
 
 func stringParam(params map[string]interface{}, key string) string {

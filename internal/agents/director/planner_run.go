@@ -346,7 +346,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 
 			llmStartTime := time.Now()
 			llmCtx, llmCancel := context.WithTimeout(ctx, p.cfg.LLMTimeout)
-			resp, llmErr = p.cfg.LLM.GenerateContent(llmCtx, messages, defsForStep(), opts)
+			resp, llmErr = p.cfg.LLM.GenerateContent(llmCtx, p.messagesForLLMCall(messages), defsForStep(), opts)
 			llmCancel()
 			llmDuration := time.Since(llmStartTime).Seconds()
 

@@ -424,13 +424,61 @@
   },
   {
     "name": "agent_exit",
-    "description": "Exit the agent with a reason. Use when done — task completed, failed, needs clarification, or must terminate. Reason must explain WHY.",
+    "description": "Exit the agent with a reason. Use when done — task completed, failed, needs clarification, or must terminate. Reason must explain WHY. Also fill `handoff`: its conclusion is the only part of your work guaranteed to reach the next agent verbatim.",
     "parameters": {
       "type": "object",
       "properties": {
         "reason": {
           "type": "string",
           "description": "Reason for exiting, e.g., task completed, cannot proceed, blocked by missing info, or must terminate."
+        },
+        "handoff": {
+          "type": "object",
+          "description": "Structured handoff for the next agent. STRONGLY recommended: everything outside it may be summarized or dropped by context compression. facts must be verifiable claims (file:line, symbol, URL), never guesses — an empty list is better than a fabricated one.",
+          "properties": {
+            "conclusion": {
+              "type": "string",
+              "description": "One sentence answering the delegated task (<=200 chars). No preamble, no restating the task."
+            },
+            "facts": {
+              "type": "array",
+              "maxItems": 12,
+              "description": "Verifiable claims backing the conclusion.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "claim": {
+                    "type": "string",
+                    "description": "One verifiable fact (<=160 chars)."
+                  },
+                  "where": {
+                    "type": "string",
+                    "description": "file:line, symbol name, URL, or command backing the claim."
+                  }
+                },
+                "required": [
+                  "claim"
+                ]
+              }
+            },
+            "open_questions": {
+              "type": "array",
+              "maxItems": 5,
+              "description": "What the next agent must still resolve.",
+              "items": {
+                "type": "string"
+              }
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "partial",
+                "error"
+              ],
+              "description": "How complete the deliverable is."
+            }
+          }
         }
       },
       "required": [
@@ -447,6 +495,13 @@
         "task": {
           "type": "string",
           "description": "Clear, self-contained research task, e.g., 'Search for the latest docs on Python's asyncio.run' or 'Find solutions for Go error: undefined: sql.NullString'."
+        },
+        "context_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional references to prior blackboard notes or artifacts. Formats: 'agent:<name>' (latest notes from agent), 'note:<agent>/<stem>' (specific note), 'artifact:<id>' (existing artifact)."
         }
       },
       "required": [
@@ -1059,13 +1114,13 @@
   },
   {
     "name": "read_note",
-    "description": "Read the full body of a blackboard note by its reference. Use when a [Sub-Agent Result] header shows a 'note: <ref>' field and you need details beyond the inline summary, or when a Context Pack entry was truncated. Params: ref (required) — the note reference (format: agent/stem); start_line (optional, 1-based, default 1); max_lines (optional, hard cap 2000).",
+    "description": "Read a blackboard note by reference: its structured handoff (conclusion + verifiable facts + open questions) and then its full deliverable body, paginated by line. Use when a [Sub-Agent Result] header shows a 'note: <ref>' field, when a Board Index line points at a note you need, or when a Context Pack entry was truncated. Params: ref (required) — the note reference (format: agent/stem); start_line (optional, 1-based, default 1); max_lines (optional, hard cap 2000). To discover which notes exist, use list_notes.",
     "parameters": {
       "type": "object",
       "properties": {
         "ref": {
           "type": "string",
-          "description": "Note reference from the [Sub-Agent Result] header (note: field), format: agent/stem."
+          "description": "Note reference from the [Sub-Agent Result] header (note: field) or the Board Index, format: agent/stem."
         },
         "start_line": {
           "type": "integer",
@@ -1079,6 +1134,28 @@
       "required": [
         "ref"
       ]
+    }
+  },
+  {
+    "name": "list_notes",
+    "description": "Enumerate the blackboard notes of the current task so you can see what prior agents already concluded, before redoing their work. Returns one line per note (ref, delegating tool, created_at, status, body size, one-line conclusion, artifact ids) and NEVER the bodies — it is cheap enough to call first. Paginated: agent (optional filter, 'repo' and 'repo_agent' are equivalent), limit (default 20, cap 50), offset (default 0). Read a note's full text with read_note(ref=...).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string",
+          "description": "Optional agent filter, e.g. 'repo' or 'repo_agent'. Omit to list the whole board."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Notes per page (default 20, hard cap 50)."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "0-based offset into the newest-first list (default 0)."
+        }
+      },
+      "required": []
     }
   },
   {

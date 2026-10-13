@@ -22,6 +22,10 @@ type SessionMeta struct {
 	ID             string     `json:"id,omitempty"`
 	SessionID      string     `json:"session_id,omitempty"`
 	TaskID         string     `json:"task_id,omitempty"`
+	// BoardID 是这次会话用的便签板。board 作用域提到 session 级之后，
+	// task_id 已经不足以在 /resume 时找回那块板（一个板对应多个 task），
+	// 所以要把板本身记下来。存量 rollout 没有这个字段 ⇒ 读出来是空串。
+	BoardID        string     `json:"board_id,omitempty"`
 	Cwd            string     `json:"cwd,omitempty"`
 	CliVersion     string     `json:"cli_version,omitempty"`
 	Originator     string     `json:"originator,omitempty"`

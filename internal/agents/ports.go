@@ -63,6 +63,18 @@ type (
 	MicroAgentRunner = toolspec.MicroAgentRunner
 )
 
+// BoardWriter 让子 Agent 的二级委派（今天只有 Coding→Browser）也能落便签、也能带上索引。
+//
+// 没有它时 Browser 的结论只活在 Coding 的上下文里：Coding 一旦被压缩，或者 Director
+// 换一次委派，那份证据就没了，只能把同一个网页再抓一遍。由 *DirectorAgent 实现；
+// 未注入（nil）时 browserDelegate 退回改动前的行为，绝不 panic。
+type BoardWriter interface {
+	// PackDelegateTask 前置便签索引与显式 refs 的 ContextPack。
+	PackDelegateTask(task string, params map[string]interface{}) (packedTask string, unresolved int)
+	// WriteDelegateNote 把子 Agent 的结果写成便签，返回 noteRef（写不出就返回空串）。
+	WriteDelegateNote(agentName, toolName, task string, r AgentResult, runErr error) string
+}
+
 // BrowserControl 浏览器执行层入口（由 *browserctl.Manager 天然实现）。
 // 用类型别名而不是新接口：Browser-Agent 与工具层共用同一份契约，避免两份声明漂移。
 type BrowserControl = browserctl.Controller

@@ -358,6 +358,10 @@ func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 	}
 
 	m.setInfoMsg(applyRestoredMemory(m, mem, taskID, m.projectDir, "Loaded"))
+	// history 加载只有 taskID 可用（tasks/*.jsonl 不记 board_id）。
+	// 于是：改动前的旧会话（board 就是 taskID）能续上便签；
+	// 改动后的新会话只能靠 /resume 那条路（rollout 里写了 board_id）。
+	m.adoptRestoredBoard("", taskID)
 }
 
 // ── History Mode Entry/Exit ──

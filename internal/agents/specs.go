@@ -113,19 +113,36 @@ func buildDelegate(target string) func(*toolspec.Deps) (toolspec.ToolFunc, error
 
 // 跨 Agent 便签与超预算产物回读。今天由 executor 在 ctx 带 boardID 时运行期注入，
 // 现在收敛成能力标签 + Available：语义相同，但注册点只剩一处。
+//
+// 三个工具共享同一条可用性判据（有没有 boardID）：没有便签板时它们无从谈起。
 func registerContextSpecs() {
 	for _, s := range []struct {
 		name  string
 		brief string
+		pick  func(*toolspec.Deps) toolspec.ToolFunc
 	}{
-		{"read_note", "按引用读取其他 Agent 的便签全文"},
-		{"read_artifact", "分页读取超预算的委派结果全文"},
+		{"read_note", "按引用读取其他 Agent 的便签全文", func(d *toolspec.Deps) toolspec.ToolFunc {
+			boardID := d.BoardID
+			return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				return executeReadNote(ctx, params, func() string { return boardID })
+			}
+		}},
+		{"read_artifact", "分页读取超预算的委派结果全文", func(d *toolspec.Deps) toolspec.ToolFunc {
+			return executeReadArtifact
+		}},
+		{"list_notes", "枚举便签板上有哪些结论（只给一行摘要，不含正文）", func(d *toolspec.Deps) toolspec.ToolFunc {
+			boardID := d.BoardID
+			return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				return executeListNotes(ctx, params, func() string { return boardID })
+			}
+		}},
 	} {
+		spec := s // 闭包捕获副本，Go 1.22 前的循环变量语义不假设
 		toolspec.MustRegister(toolspec.Spec{
-			Name:      s.name,
+			Name:      spec.name,
 			Effect:    toolspec.EffectContext,
 			Frequency: toolspec.Warm,
-			Brief:     s.brief,
+			Brief:     spec.brief,
 			Available: func(d *toolspec.Deps) (bool, string) {
 				if !d.HasBoard() {
 					return false, "本次运行没有 blackboard 便签板"
@@ -133,13 +150,11 @@ func registerContextSpecs() {
 				return true, ""
 			},
 			Build: func(d *toolspec.Deps) (toolspec.ToolFunc, error) {
-				boardID := d.BoardID
-				if s.name == "read_note" {
-					return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-						return executeReadNote(ctx, params, func() string { return boardID })
-					}, nil
+				fn := spec.pick(d)
+				if fn == nil {
+					return nil, errNoBinding(spec.name)
 				}
-				return executeReadArtifact, nil
+				return fn, nil
 			},
 		})
 	}

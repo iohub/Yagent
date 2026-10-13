@@ -1,12 +1,16 @@
 package agents
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
 	"yagent/internal/agents/director"
 	"yagent/internal/artifact"
+	"yagent/internal/blackboard"
+	"yagent/internal/config"
+	"yagent/internal/llm"
 )
 
 // 本文件实现"委派返回物分级"基础设施（第二批次接线完成）：
@@ -45,52 +49,134 @@ func currentProjectPath() string {
 	return projectPathFunc()
 }
 
+// deliverableText 返回本次委派真正的交付文本。
+//
+// 以 agent_exit 收尾的 Agent（Coding/Browser/DevOps/Chat 都设了 StopOnFinish），
+// ExecutorResult.Text 是 ExecuteAgentExit 返回的那一小段 JSON，
+// 真实的分析散在最后一条 assistant 消息里。不取回来的话，便签与 artifact 里
+// 就只剩一句 reason —— 下一个 Agent 只能重新委派一次才能拿回已有结论。
+func deliverableText(exec ExecutorResult) string {
+	if !isAgentExitResult(exec.Text) {
+		return exec.Text
+	}
+	for i := len(exec.History) - 1; i >= 0; i-- {
+		m := exec.History[i]
+		if m.Role == llm.RoleAssistant && strings.TrimSpace(m.Content) != "" {
+			return m.Content
+		}
+	}
+	return exec.Text
+}
+
+// isAgentExitResult 认 ExecuteAgentExit 的返回形态（{"finished":true,"reason":"..."}）。
+// 判据要够窄：普通交付文本恰好是一段 JSON 并不罕见，误判会把摘要换成无关内容。
+func isAgentExitResult(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "{") {
+		return false
+	}
+	var probe map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
+		return false
+	}
+	finished, ok := probe["finished"].(bool)
+	if !ok || !finished {
+		return false
+	}
+	_, hasReason := probe["reason"]
+	return hasReason
+}
+
+// collectHandoff 从 agent_exit 的返回值里提取结构化交接。
+//
+// 返回值 JSON 的形状是 {"finished":true,"reason":"...","handoff":{...}}，与工具参数同构，
+// 所以解析器可以直接吃它——采集点因此只有本文件这一处，executor 不必认识 Handoff。
+// 非 agent_exit 收尾（纯文本回复、步数耗尽）返回 nil：宁可不结构化，也不编造一个假结论。
+func collectHandoff(exec ExecutorResult, full string) *blackboard.Handoff {
+	if !isAgentExitResult(exec.Text) {
+		return nil
+	}
+	h := blackboard.ParseHandoff([]byte(exec.Text), reasonFromExitJSON(exec.Text), full)
+	return &h
+}
+
+func reasonFromExitJSON(text string) string {
+	var probe struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &probe); err != nil {
+		return ""
+	}
+	return probe.Reason
+}
+
 // FinalizeResult 统一构造函数：完整结果落盘为 artifact，生成分级摘要。
 // Save 失败时降级为全文摘要（信息完整性优先，绝不静默丢内容，不返回 error、不阻断委派）。
 func FinalizeResult(agentName, task string, exec ExecutorResult) AgentResult {
 	mem := ConvertLLMHistoryToMemory(exec.History)
+	full := deliverableText(exec)
+	handoff := collectHandoff(exec, full)
 
-	// kill-switch 或空文本：回退旧行为，不落盘。
-	if artifact.Disabled() || exec.Text == "" {
+	// kill-switch 或没有任何文本：回退旧行为，不落盘。
+	if artifact.Disabled() || full == "" {
 		return AgentResult{
-			Text:    exec.Text,
-			Summary: exec.Text,
-			Memory:  mem,
+			Text:        exec.Text,
+			Summary:     exec.Text,
+			Deliverable: full,
+			Memory:      mem,
+			Handoff:     handoff,
 		}
 	}
 
 	// 预算内：全文即摘要，零行为变化，不落盘。
-	if artifact.EstTokens(exec.Text) <= artifact.DefaultBudgetTokens {
+	if artifact.EstTokens(full) <= artifact.DefaultBudgetTokens {
 		return AgentResult{
-			Text:    exec.Text,
-			Summary: exec.Text,
-			Memory:  mem,
+			Text:        exec.Text,
+			Summary:     full,
+			Deliverable: full,
+			Memory:      mem,
+			Handoff:     handoff,
 		}
 	}
 
-	// 超预算：先落盘完整结果拿 Ref，再 Reduce 生成带 ID 的分级摘要。
+	// 超预算：先落盘**完整交付文本**拿 Ref（重构前存的是 exec.Text，
+	// 对 agent_exit 收尾的 Agent 那就是一小段退出 JSON）。
 	projectID := director.ComputeProjectID(currentProjectPath())
 	store := artifact.DefaultStore()
-	ref, err := store.Save(projectID, agentName, task, "", exec.Text)
+	ref, err := store.Save(projectID, agentName, task, "", full)
 	if err != nil {
 		// Save 失败：降级为全文摘要，不阻断委派。
 		return AgentResult{
-			Text:    exec.Text,
-			Summary: exec.Text,
-			Memory:  mem,
+			Text:        exec.Text,
+			Summary:     full,
+			Deliverable: full,
+			Memory:      mem,
+			Handoff:     handoff,
 		}
 	}
 
-	summary, _ := artifact.Reduce(exec.Text, ref.ID, artifact.DefaultBudgetTokens)
-	// 把带 ID 的摘要回写进 artifact（Load -> 改 Summary -> 覆盖写回同路径）。
+	// 有合规 handoff 时摘要就是它——结论是字段，不再依赖"前缀里恰好有答案"。
+	// 否则逐字回落到 Reduce 前缀，最坏情况等于本次重构之前。
+	summary := ""
+	if handoff != nil && handoff.Degraded == "" {
+		summary = handoff.Render(config.GlobalBlackboard().SummaryMaxRunes)
+	}
+	if summary == "" {
+		summary, _ = artifact.Reduce(full, ref.ID, artifact.DefaultBudgetTokens)
+	}
+	// 把摘要回写进 artifact（Load -> 改 Summary -> 覆盖写回同路径）。
 	// 失败仅影响 artifact 内 summary 元数据完整性，不影响返回值，不阻断委派。
 	_ = store.UpdateSummary(projectID, ref.ID, summary)
 
+	// Text 保持重构前的形态（超预算时是摘要），Full 变体再覆盖成 exec.Text；
+	// 需要交付全文的下游（便签正文）读 Deliverable。
 	return AgentResult{
 		Text:        summary,
 		Summary:     summary,
+		Deliverable: full,
 		ArtifactRef: &ref,
 		Memory:      mem,
+		Handoff:     handoff,
 	}
 }
 

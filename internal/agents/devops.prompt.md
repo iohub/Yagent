@@ -67,3 +67,27 @@ Use cases:
 - "Check if port 8080 is in use"
 - "List all running Docker containers"
 - "Find large files (>100MB) in the project directory"
+
+## Handoff & Prior Findings
+
+Your task may begin with a `## Board Index (…)` block: one line per note that agents in this
+task have already produced, newest first, each with a one-line conclusion.
+
+- **Read the index before you run commands.** If a line already answers part of the task, take
+  it back with `read_note(ref="<agent>/<stem>")` (or `read_artifact(id="<id>")`) instead of
+  re-running the investigation. Re-deriving something that is already on the board is a defect,
+  not diligence.
+- When the index is paginated, `list_notes` shows the whole board.
+
+Before calling `agent_exit`, fill its optional `handoff` object. It is the only part of your
+work guaranteed to reach the next agent verbatim — everything else may be summarized or dropped
+by context compression.
+
+- `conclusion`: one sentence answering the task. No preamble, no restating the task.
+- `facts`: verifiable claims only, each with `where` (the command that produced it, a file, or
+  a metric). Never include a guess — an empty list is better than a fabricated fact.
+- `open_questions`: what the next agent must still resolve.
+- `status`: `ok` | `partial` | `error`.
+
+Paste command output into `facts[].claim` rather than into the conclusion; the conclusion is
+what survives compression, so keep it to the finding, not the transcript.

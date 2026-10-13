@@ -86,6 +86,10 @@ type PlannerConfig struct {
 
 	MaxParallelReadOnlyTools int
 	IsParallelizableTool     func(name string) bool
+
+	// BoardID 是本次任务的便签板；空串表示便签板不可用
+	// （YAGENT_BLACKBOARD=0，或 Director 还没装配 board）。见 board_index.go 的不变量。
+	BoardID string
 }
 
 type PlanInput struct {

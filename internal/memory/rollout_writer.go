@@ -44,6 +44,10 @@ type RolloutWriter struct {
 	sessionID         string
 	agentName         string
 	taskID            string
+	// boardID 是本次会话的便签板，由 SetBoardID 注入（构造签名不动，它有 10 个测试调用点）。
+	// 记进 session_meta 是为了 /resume：board 作用域升到 session 级后，
+	// 一块板对应多个 task，只靠 task_id 找不回原来的板。
+	boardID           string
 	projectID         string
 	turnID            string
 	turnCounter       int
@@ -138,11 +142,19 @@ func (w *RolloutWriter) writeEnvelope(recordType string, payload interface{}) er
 	return nil
 }
 
+// SetBoardID 记下本次会话的便签板，供 WriteSessionMeta 兜底填充。
+func (w *RolloutWriter) SetBoardID(boardID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.boardID = boardID
+}
+
 // WriteSessionMeta 写入会话元数据
 //
 // task_id 由 writer 在构造时持有（NewRolloutWriter 的入参），此处兜底填充：两个调用点
 //（planner_run.go 的 director 会话、executor.go 的 sub-agent 会话）都不必各自记得传，
 // 避免漏传导致恢复侧无法把 rollout 回连到原任务（tasks/{id}.jsonl、blackboard boardID）。
+// board_id 同理走兜底：board 现在是 session 级的，一个 session 会有多个 task。
 func (w *RolloutWriter) WriteSessionMeta(meta SessionMeta) error {
 	if !w.enabled || w.file == nil {
 		return nil
@@ -152,6 +164,9 @@ func (w *RolloutWriter) WriteSessionMeta(meta SessionMeta) error {
 	w.sessionMetaWritten = true
 	if meta.TaskID == "" {
 		meta.TaskID = w.taskID
+	}
+	if meta.BoardID == "" {
+		meta.BoardID = w.boardID
 	}
 	return w.writeEnvelope("session_meta", meta)
 }

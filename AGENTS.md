@@ -96,7 +96,8 @@ yagent/
 │   │   └── *.prompt.md         # 各 Agent 的 System Prompt
 │   ├── app/app.go              # Yagent：一次性装配 MCP/工具引擎/守卫/子 Agent/Director
 │   ├── browserctl/             # 浏览器执行层：外部 browser-control CLI 的进程/工作区/URL 策略/渲染
-│   ├── blackboard/             # 跨 Agent 便签（文件后端，~/.yagent/notes）
+│   ├── blackboard/             # 跨 Agent 便签：note(存储) / handoff(结构化交接) / index(派生索引)
+│   │                           #   resolve(ContextPack) / gc(生命周期) / board(路径与原子写)
 │   ├── artifact/               # 超预算委派结果的落盘存储 + 摘要
 │   ├── compression/            # 三档上下文压缩（rule / emergency / ultimate）
 │   ├── config/                 # TOML 加载 + 三级 provider 解析 + 原子写回
@@ -150,7 +151,7 @@ yagent/
 | **Meta** | `meta.go` | 自定义 Agent 设计器 | 无工具，单次 LLM 出 JSON | 50（重试 5） |
 | **Custom** | `director/types.go:60` | Meta 设计后运行时注册 | 由 LLM 选择的子集 | 15 |
 
-**Director 工具**：`delegate_*` + `agent_exit`、`read_artifact`、`read_note`、`deepthinking`、`ask_user_for_help`，
+**Director 工具**：`delegate_*` + `agent_exit`、`read_artifact`、`read_note`、`list_notes`、`deepthinking`、`ask_user_for_help`，
 以及 `director.go:236-287` 里显式列出的只读分析工具（`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree`）。
 
 **Coding 工具**：`create_file`、`search_replace_in_file`、`delete_file`、`rename_file`、`list_dir`、`print_dir_tree`、
@@ -204,8 +205,11 @@ type Adapter struct { name, description string; fn ToolFunc
 **并行性判定**：`Adapter.IsReadOnly()`（由 `Spec` 的 `!Mutates && !Serial` 派生）为真、且不在
 `toolspec.IsSerial` 名单里的工具，
 可由 `toolbatch` 分批并行执行（默认并发 4，上限 8，`[agent] max_parallel_readonly_tools`）。
+`read_note` / `read_artifact` / `list_notes` 与认知类、调用图工具都走这条派生路径。
+闸门是 `TestDerivedMetadataMatchesLegacyTables`：新增可并发工具必须进 `signedReadOnlyAdditions` 或 `newTools`
+集合并写明理由，否则测试直接红 —— 那两处集合就是"公开承认我扩大了并发面"的地方。
 
-### 5.2 工具总览（schema 见 `internal/toolspec/schemas.json`，49 条）
+### 5.2 工具总览（schema 见 `internal/toolspec/schemas.json`，50 条）
 
 > 每个工具的完整契约 = `schemas.json` 的 description/parameters + `Spec` 的能力标签。
 > 派生查询：`IsReadOnly` / `IsSerial` / `NeedsAuth` / `PathParams` / `TruncationPriority` /
@@ -219,10 +223,10 @@ type Adapter struct { name, description string; fn ToolFunc
 | `semantic_search` `query_code_skeleton` `query_code_snippet` | R | codeseek MCP 桥 |
 | `find_function_callee` `find_function_caller` `query_call_graph` | R | 调用图；改函数前**必须**先查 callers |
 | `thinking` `micro_agent` `deepthinking` `design` | C | 反思 / 隔离子 LLM 推理 / 多步深度思考 / 编码前设计闸门 |
-| `agent_exit` `ask_user_for_help` | P | 结束任务 / 反问用户（confirm、select、input 三种交互） |
+| `agent_exit` `ask_user_for_help` | P | 结束任务（可带 `handoff{conclusion,facts[],open_questions,status}`，见 §6.4）/ 反问用户（confirm、select、input 三种交互） |
 | `consolidate_knowledge` `prune_history` | K | 长期知识固化与历史裁剪（codeseek knowledge） |
 | `git_checkpoint_create` `git_checkpoint_list` `git_checkpoint_rollback` | G | 编码子任务快照 |
-| `read_note` `read_artifact` | R | 读跨 Agent 便签 / 超预算产物（boardID 存在时自动注入） |
+| `read_note` `read_artifact` `list_notes` | R | 读跨 Agent 便签（handoff 块 + 分页正文）/ 超预算产物全文 / 枚举整块板上有哪些结论（boardID 存在时自动注入，`list_notes` 刻意不含正文） |
 | `browser_status` `browser_open` `browser_inspect` `browser_snapshot` `browser_click` `browser_fill` `browser_type` `browser_press` `browser_scroll` `browser_select` `browser_tabs` `browser_wait` `browser_screenshot` `browser_eval` | 浏览器 | 经外部 `browser-control` CLI 驱动真实 Chrome；Browser-Agent 持有（详见 `docs/browser-agent-design.md`） |
 | `delegate_repo/coding/chat/devops/browser/meta` | 委派 | Director 持有；`delegate_browser` 也在 Coding 上（能力不可用时描述自动降级） |
 
@@ -289,10 +293,24 @@ type Adapter struct { name, description string; fn ToolFunc
 
 ### 6.4 上下文与知识
 
-- **Blackboard**（`internal/blackboard`）：Director 把每次委派结果写成便签文件 `~/.yagent/notes/{boardID}/{agent}/{stem}.md`；
-  子 Agent 可用 `read_note` 或 `context_refs` 解析出的 ContextPack 读取，预算 6000 字符/总量、2000/便签、3 便签/Agent。`YAGENT_BLACKBOARD=0` 关闭。
+- **Blackboard**（`internal/blackboard`，完整设计见 `docs/blackboard-handoff-design.md`）：每次委派的结果写成一张便签
+  `~/.yagent/notes/{boardID}/{agent}/{stem}.md`，**正文是交付物全文**（以 `agent_exit` 收尾的 Agent，全文取最后一条 assistant 消息，
+  不是那句 reason）。front-matter 带 `Handoff`（`conclusion` / `facts[]{claim,where}` / `open_questions` / `status`），
+  schema v2；读 v1 存量便签时自动从 `Summary` 合成并标 `degraded: v1`。
+  - **索引是派生态**：`BuildIndex` 每轮从磁盘重扫，注入 Director 的**每一轮**上下文与每次委派的任务前缀；
+    它**只进 LLM 调用的 messages**，绝不写进 `ConversationMemory` 或 rollout —— 这是它能扛住上下文压缩的唯一原因
+    （压缩动的是会话历史里的 tool 消息，`note:`/`artifact:` 引用以前就是这么蒸发掉的）。
+  - `context_refs` 的语义是**强调**（额外内联全文），不是准入：不传也能从索引发现。`agent:` 前缀认 `repo` 与 `repo_agent` 两种写法，
+    取不到必须计入 `unresolved` 并在结果头显示。
+  - **board 作用域 = session**（`SetBoardScope(sessionID, taskID)`）：同一 TUI tab / 同一 HTTP chat session 内多次任务共享一块板；
+    `/resume` 靠 `session_meta.board_id` 重连旧板，存量 rollout 回落 taskID。
+  - 三个读回工具：`read_note`（handoff 块 + 分页正文）、`read_artifact`（分页全文）、`list_notes`（整板目录，只给一行结论不含正文）。
+  - 预算与 GC 在 `[blackboard]`。三个阀门靠**键的存在性**判定（不是零值）：`index_max_notes = 0` 关索引、
+    `index_line_chars = 0` 不裁剪行、`ttl = "0"` 不清理；`summary_max_runes` 与 `max_notes_per_board` 的 0/负数一律归默认
+    （它们没有"关"的语义，放宽就写大数字）。整体关闭仍是 `YAGENT_BLACKBOARD=0`（`blackboard.Enabled()` 是唯一判据，
+    写/读/注入/清理四处共用）。
 - **Artifact**（`internal/artifact`）：超过预算（默认 500 token）的委派全文落盘 `~/.yagent/data/artifacts`，
-  上下文里只留摘要 + ID，Director 用 `read_artifact` 分页取回。`YAGENT_ARTIFACT_DISABLE=1` 关闭。
+  上下文里只留摘要 + ID（摘要优先来自 handoff，缺 handoff 时逐字回落到正文前缀），Director 用 `read_artifact` 分页取回。`YAGENT_ARTIFACT_DISABLE=1` 关闭。
 - **Knowledge**（`internal/knowledge`）：向 Director/Coding/Repo 注入历史知识（写入走 `consolidate_knowledge`，
   自动固化在 `knowledge_hook.go`）。当前**注入器被临时硬关闭**（`injector.go:67-71`）。
 - **RepoMemory / ConsolidationWorker**：仓库级长期记忆存在 SharedMemory 的 KV 中，由后台 worker 周期性用 LLM + codeseek 重写。
@@ -393,7 +411,7 @@ WebSocket 用 melody，每个任务一个 Dispatcher + `WebSocketConsumer`，向
 仓库里的 `config/config.toml` 是注释模板；运行时写回（改 provider/超时/路由模式）走 `config/persist.go` 的原子替换。
 
 **顶层表**：`[global.llm]`、`[agents.llm]`、`[tools.llm]`、`[app]`、`[agent]`、`[llm]`、`[routing]`、
-`[keywords]`、`[git_checkpoint]`、`[codeseek]`（含 `[codeseek.knowledge]`）、`[browser]`、`[enhanced_commander]`、`[tui]`，
+`[keywords]`、`[git_checkpoint]`、`[codeseek]`（含 `[codeseek.knowledge]`）、`[browser]`、`[blackboard]`、`[enhanced_commander]`、`[tui]`，
 以及顶层 `task_timeout`。
 
 **三级 Provider 覆盖（仍存在）**：`ResolveProvider(agent, tool)` = 工具指定 → `tools.llm.use_provider` →
@@ -435,6 +453,21 @@ lang = "Chinese"
 > 按 `config.DefaultBrowserConfig()` 填默认值。判据是段内是否存在**至少一个被新 schema 认识的键**
 > （`config.go` 的 `browserSectionConfigured`），不能用 `enabled` 的零值判断——它缺省就是 false，
 > 会把新能力静默关掉；失效键会被 `slog.Warn` 点名提示改写。
+
+```toml
+[blackboard]
+index_max_notes = 12          # 索引条数上限；**0 = 关掉索引注入**，负数/没写 = 默认 12
+index_line_chars = 160        # 索引单行 rune 预算；**显式 0 = 不裁剪行**，负数/没写 = 默认
+summary_max_runes = 1200      # Director 侧 handoff 摘要预算；<=0 = 默认
+ttl = "168h"                  # board 目录多久没动就整板清理；"0" 或 0 = 不清理
+max_notes_per_board = 200     # 每 board 保留的最新便签数；0/负数 = 默认（放宽请写大数字）
+```
+
+> 与 `[browser]` 同构的整表缺省判定在 `blackboardSectionDefined`；但本表有**三个键的 0 是有意义的**
+> （关索引 / 不裁剪行 / 不清理），所以除段级判定外还要看**单个键的存在性**（`md.IsDefined`）——
+> 只看零值会把用户的"关掉"当成"没写"，或反过来把"没写"当成"关掉"。
+> 整体关闭不设 `enabled` 键：kill-switch 是环境变量 `YAGENT_BLACKBOARD=0`（`blackboard.Enabled()` 唯一判据）。
+> 索引的 token 成本上限 = `index_max_notes × index_line_chars`，且它是**每轮**都注入（Director 自己 + 每次委派）。
 
 ---
 
@@ -587,6 +620,20 @@ plan:
 10. **无 CDP 环境变量时上游会硬扫 9222/9223**：必须显式注入 `BROWSER_CONTROL_CDP_URL`，
     自启端口从 `cdp_port_base`(9333) 递增且跳过 9222/9223，否则会连到用户自己的调试浏览器或另一个任务。
     另外上游内部 CDP 超时默认仅 15s，`browserctl` 会按最长 wait 把它抬到 ≥65s，别在别处重复注入这个变量。
+11. **便签索引必须是派生态、且瞬态**：`messagesForLLMCall` 只在**这次 LLM 调用**的消息上附加索引，
+    返回值绝不写回外层 `messages`（`planner_run.go` 传的就是返回值）。
+    一旦漏回，下一步的压缩预算会把目录算进正文、紧急压缩还会把它当成一条用户输入折叠进摘要 ——
+    那正好是它要解决的病（`note:`/`artifact:` 引用消失在 tool 消息里）。
+    `TestMessagesForLLMCallIsIdempotent` 与 `TestIndexSurvivesEmergencyCompressionShape` 钉住这条不变量。
+12. **`agent_exit` 收尾的 Agent，交付物不在 `Text` 里**：`RunAgentLoop` 在这条路径上把 `Text` 设成
+    `{"finished":true,"reason":...}`（`executor.go` 的 stop 分支），真实分析在最后一条 assistant 消息。
+    便签正文与 artifact 全文一律经 `deliverableText()` 取，判据是"JSON 里有 `finished:true` + `reason` 键"
+    这个**形态**而不是 Agent 名字；`AgentResult.Text` 的既有语义没动（超预算时仍是摘要），
+    需要全文的下游读 `AgentResult.Deliverable`。
+13. **`[blackboard]` 的三个阀门靠"键存在性"而非零值**（`md.IsDefined`）：`index_max_notes = 0` = 关索引、
+    `index_line_chars = 0` = 不裁剪行、`ttl = "0"` = 不清理；"没写这一段"解析出来同样是 0，
+    只看零值会把用户的关闭意图当成没写（或反之静默关掉新能力）。不设 `enabled` 键，
+    整体关闭是 `YAGENT_BLACKBOARD=0`（`blackboard.Enabled()` 是写/读/注入/清理四处共用的唯一判据）。
 
 
 <!-- CODESEEK_INJECTION -->

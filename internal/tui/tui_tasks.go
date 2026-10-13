@@ -17,6 +17,18 @@ import (
 )
 
 // submitFromEditor 提交输入框内容（alt+s / ctrl+s 共用）。
+// ensureSessionID 保证本次提交有一块确定的便签板。
+//
+// 需要它是因为 tab 的 sessionID 只写在 sessionTab 上，而首个 tab 是在初始化里造的、
+// 不经过 restoreSessionTab —— 于是 m.sessionID 会是空串，Board 只能退回 taskID，
+// 同一会话内"开第二个任务"就看不见第一个任务的结论。空串在这里补一个 id，
+// 之后由 tab 的 save/restore 接管。
+func (m *model) ensureSessionID() {
+	if m.sessionID == "" {
+		m.sessionID = uuid.New().String()
+	}
+}
+
 // 运行中静默忽略：此时输入框仍然可打字，用于排队写下一条指令。
 func (m *model) submitFromEditor() tea.Cmd {
 	if m.taskRunning {
@@ -30,6 +42,7 @@ func (m *model) submitFromEditor() tea.Cmd {
 		m.errMsg = errStr
 		return nil
 	}
+	m.ensureSessionID()
 	if m.currentTask != nil {
 		return m.submitFollowUp(taskDesc)
 	}
@@ -89,7 +102,7 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 
 	m.publisherCh = make(chan *messaging.MessagePublisher, 1)
 	return tea.Batch(
-		executeTaskCmd(taskDesc, task, m.assistant, m.taskManager, m.dataManager, m.eventCh, m.publisherCh),
+		executeTaskCmd(taskDesc, task, m.sessionID, m.assistant, m.taskManager, m.dataManager, m.eventCh, m.publisherCh),
 		listenForEvents(m.eventCh),
 		listenForPublisher(m.publisherCh),
 		tickCmd(),
@@ -98,6 +111,9 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 
 // submitFollowUp sends a follow-up message to an existing task.
 func (m *model) submitFollowUp(message string) tea.Cmd {
+	// 除 submitFromEditor 之外还有直接调用本函数的入口（恢复会话后的续跑），
+	// 所以兜底也要在这里过一次。
+	m.ensureSessionID()
 
 	m.input.SetValue("")
 	m.taskRunning = true
@@ -129,7 +145,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 
 	m.publisherCh = make(chan *messaging.MessagePublisher, 1)
 	return tea.Batch(
-		executeFollowUpCmd(message, m.currentTask, m.assistant, m.dataManager, m.eventCh, m.publisherCh, resumed),
+		executeFollowUpCmd(message, m.currentTask, m.sessionID, m.assistant, m.dataManager, m.eventCh, m.publisherCh, resumed),
 		listenForEvents(m.eventCh),
 		listenForPublisher(m.publisherCh),
 	)
@@ -139,6 +155,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 func executeTaskCmd(
 	taskDesc string,
 	task *http.Task,
+	sessionID string,
 	ca *app.Yagent,
 	tm *http.TaskManager,
 	dm *datamanager.DataManager,
@@ -162,6 +179,7 @@ func executeTaskCmd(
 		}
 
 		request := app.NewTaskRequest(task.Context, task.ID).
+			WithSessionID(sessionID).
 			WithProjectDir(task.ProjectDir).
 			WithTaskDesc(taskDesc).
 			WithMemory(task.Memory).
@@ -212,6 +230,7 @@ func executeTaskCmd(
 func executeFollowUpCmd(
 	message string,
 	task *http.Task,
+	sessionID string,
 	ca *app.Yagent,
 	dm *datamanager.DataManager,
 	eventCh chan *messaging.MessageEvent,
@@ -235,6 +254,7 @@ func executeFollowUpCmd(
 		}
 
 		request := app.NewTaskRequest(task.Context, task.ID).
+			WithSessionID(sessionID).
 			WithProjectDir(task.ProjectDir).
 			WithUserMessage(message).
 			WithMemory(task.Memory).
