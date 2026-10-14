@@ -3,6 +3,7 @@ package director
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,48 +155,18 @@ func TestRecoveryHandler_StepFailureTracking(t *testing.T) {
 	}
 }
 
-func TestComputeBackoff(t *testing.T) {
-	tests := []struct {
-		attempt  int
-		minDelay time.Duration
-		maxDelay time.Duration
-	}{
-		{0, 1 * time.Second, 2 * time.Second},
-		{1, 2 * time.Second, 3 * time.Second},
-		{2, 4 * time.Second, 5 * time.Second},
-		{3, 8 * time.Second, 9 * time.Second},
-		{4, 16 * time.Second, 17 * time.Second},
-		{10, 30 * time.Second, 31 * time.Second}, // capped at 30s
-	}
-
-	for _, tc := range tests {
-		got := ComputeBackoff(tc.attempt)
-		if got < tc.minDelay || got > tc.maxDelay {
-			t.Errorf("ComputeBackoff(%d) = %v, want between %v and %v",
-				tc.attempt, got, tc.minDelay, tc.maxDelay)
-		}
-	}
-}
-
-func TestRetryWithBackoff_Success(t *testing.T) {
-	attempts := 0
-	err := RetryWithBackoff(context.Background(), 3, func(attempt int) error {
-		attempts++
-		return nil // immediate success
-	})
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if attempts != 1 {
-		t.Errorf("attempts = %d, want 1", attempts)
-	}
-}
-
+// ComputeBackoff 的精确序列由 director_characterization_test.go 的
+// TestCharacterizationComputeBackoff 逐值钉住；首次成功 / maxRetries=0 /
+// ctx 取消三条语义由同文件的 TestCharacterizationRetryWithBackoff 覆盖。
+// 这里只补它没覆盖的两条：重试到达上限的次数，与耗尽后返回最后一次错误。
+//
+// maxRetries 刻意取 1：RetryWithBackoff 直接 sleep 生产的指数退避（1s、2s…），
+// 没有注入点，多一次重试就要多等 2s。
 func TestRetryWithBackoff_EventualSuccess(t *testing.T) {
 	attempts := 0
-	err := RetryWithBackoff(context.Background(), 3, func(attempt int) error {
+	err := RetryWithBackoff(context.Background(), 1, func(attempt int) error {
 		attempts++
-		if attempt < 2 {
+		if attempt < 1 {
 			return errors.New("transient error")
 		}
 		return nil
@@ -203,34 +174,25 @@ func TestRetryWithBackoff_EventualSuccess(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if attempts != 3 {
-		t.Errorf("attempts = %d, want 3", attempts)
+	if attempts != 2 {
+		t.Errorf("attempts = %d, want 2", attempts)
 	}
 }
 
 func TestRetryWithBackoff_AllFail(t *testing.T) {
 	attempts := 0
-	err := RetryWithBackoff(context.Background(), 2, func(attempt int) error {
+	err := RetryWithBackoff(context.Background(), 1, func(attempt int) error {
 		attempts++
 		return errors.New("persistent error")
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if attempts != 3 { // 0, 1, 2 = 3 attempts total (maxRetries=2)
-		t.Errorf("attempts = %d, want 3", attempts)
+	if !strings.Contains(err.Error(), "persistent error") {
+		t.Errorf("err = %v, want the last attempt's error", err)
 	}
-}
-
-func TestRetryWithBackoff_CancelContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	err := RetryWithBackoff(ctx, 3, func(attempt int) error {
-		return errors.New("error")
-	})
-	if err == nil {
-		t.Fatal("expected context error")
+	if attempts != 2 { // 0, 1 = 2 attempts total (maxRetries=1)
+		t.Errorf("attempts = %d, want 2", attempts)
 	}
 }
 

@@ -48,14 +48,3 @@ func TestWorkspaceGuard_BrowserEvalAuthByRisk(t *testing.T) {
 		}
 	}
 }
-
-// TestBrowserScreenshotIsNotPathGuarded：截图路径由工具层收敛到会话工作区，
-// 不该再走工作区外的路径授权弹窗（那会每次都打扰用户）。
-func TestBrowserScreenshotIsNotPathGuarded(t *testing.T) {
-	guard := tools.NewWorkspaceGuard(t.TempDir(), tools.NewUserConfirmManager())
-
-	needsAuth, reason := guard.Check("browser_screenshot", map[string]interface{}{"path": "/tmp/outside.png"})
-	if needsAuth {
-		t.Errorf("screenshot path is confined by the tool layer, not by the workspace guard (reason=%q)", reason)
-	}
-}

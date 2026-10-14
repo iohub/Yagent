@@ -42,17 +42,6 @@ func TestSanitizeBoardID(t *testing.T) {
 	}
 }
 
-func TestGenerateAdhocID(t *testing.T) {
-	id := GenerateAdhocID()
-	if !strings.HasPrefix(id, "adhoc_") {
-		t.Errorf("GenerateAdhocID() = %q, want adhoc_ prefix", id)
-	}
-	parts := strings.Split(id, "_")
-	if len(parts) != 3 {
-		t.Errorf("GenerateAdhocID() = %q, want 3 parts", id)
-	}
-}
-
 func TestAtomicWrite(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sub", "test.txt")

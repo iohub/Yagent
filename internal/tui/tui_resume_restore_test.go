@@ -8,7 +8,9 @@ package tui
 
 import (
 	"encoding/json"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,11 +28,10 @@ import (
 
 func restoreTestModel(t *testing.T) *model {
 	t.Helper()
-	InitLangManager() // 状态栏文案依赖全局 langManager，测试环境需显式初始化
+	testLang(t) // 状态栏文案依赖全局 langManager，测试环境需显式初始化（走生产入口）
 	m := newTestModel()
 	m.taskManager = http.NewTaskManager(nil, 0)
 	m.toolCallEntries = make(map[string]*ToolEntry)
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 	return m
 }
 
@@ -400,7 +401,7 @@ func TestApplyRolloutRunState_SubAgentName(t *testing.T) {
 		t.Errorf("currentAgent = %q, want coding", m.currentAgent)
 	}
 	if _, ok := m.tokenUsagePerAgent["coding"]; !ok {
-		t.Errorf("per-agent usage keys = %v, want coding", keysOf(m.tokenUsagePerAgent))
+		t.Errorf("per-agent usage keys = %v, want coding", slices.Sorted(maps.Keys(m.tokenUsagePerAgent)))
 	}
 }
 
@@ -422,14 +423,6 @@ func TestApplyRolloutRunState_StatusBarShowsRestoredIdentity(t *testing.T) {
 	if got := lipgloss.Width(bar); got != m.termWidth {
 		t.Errorf("status bar width = %d, want %d", got, m.termWidth)
 	}
-}
-
-func keysOf(m map[string]*AgentTokenUsage) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
 
 // ─── 恢复态 vs 实时态渲染一致性 ───
@@ -726,25 +719,36 @@ func TestBuildResumeGroups(t *testing.T) {
 }
 
 func TestResumeExpandAndRows(t *testing.T) {
-	m := restoreTestModel(t)
 	base := time.Now()
-	m.resumeGroups = buildResumeGroups([]memory.RolloutSessionInfo{
-		mkItem("/r/a_director.jsonl", "T1", "director", base),
-		mkItem("/r/a_sub_coder.jsonl", "T1", "coder", base.Add(time.Second)),
-		mkItem("/r/a_sub_repo.jsonl", "T1", "repo", base.Add(2*time.Second)),
-	})
-	m.resumeExpanded = make(map[string]bool)
-	m.resumePageSize = defaultPageSize
+	// 每个子测试拿自己的 model：旧写法四个子测试串用同一个 m 且严格依赖执行顺序
+	// （折叠→展开→点成员→收起），顺序一变就会掩盖失败。
+	// expanded 就是"上一条子测试留下的状态"，现在改成显式前置条件。
+	newRowsModel := func(t *testing.T, expanded bool) *model {
+		t.Helper()
+		m := restoreTestModel(t)
+		m.resumeGroups = buildResumeGroups([]memory.RolloutSessionInfo{
+			mkItem("/r/a_director.jsonl", "T1", "director", base),
+			mkItem("/r/a_sub_coder.jsonl", "T1", "coder", base.Add(time.Second)),
+			mkItem("/r/a_sub_repo.jsonl", "T1", "repo", base.Add(2*time.Second)),
+		})
+		m.resumeExpanded = make(map[string]bool)
+		if expanded {
+			m.resumeExpanded["task:T1"] = true
+		}
+		m.resumePageSize = defaultPageSize
+		m.rebuildResumeRows()
+		return m
+	}
 
 	t.Run("collapsed_shows_head_only", func(t *testing.T) {
-		m.rebuildResumeRows()
+		m := newRowsModel(t, false)
 		if len(m.resumeRows) != 1 || !m.resumeRows[0].isHead {
 			t.Fatalf("rows = %+v, want single head row", m.resumeRows)
 		}
 	})
 
 	t.Run("enter_on_head_expands", func(t *testing.T) {
-		m.rebuildResumeRows()
+		m := newRowsModel(t, false)
 		m.resumeCursor = 0
 		m.resumeOffset = 0
 		m, _ = resumeHandleKey(tea.KeyPressMsg{Code: tea.KeyEnter}, m)
@@ -757,7 +761,8 @@ func TestResumeExpandAndRows(t *testing.T) {
 	})
 
 	t.Run("enter_on_member_loads_file", func(t *testing.T) {
-		m.resumeCursor = 1 // 第一行是组头，第二行是成员
+		m := newRowsModel(t, true) // 第一行是组头，第二行是成员
+		m.resumeCursor = 1
 		m, _ = resumeHandleKey(tea.KeyPressMsg{Code: tea.KeyEnter}, m)
 		if !m.resumeLoading {
 			t.Fatal("enter on member should trigger load (resumeLoading=true)")
@@ -765,7 +770,7 @@ func TestResumeExpandAndRows(t *testing.T) {
 	})
 
 	t.Run("space_toggles", func(t *testing.T) {
-		m.resumeLoading = false
+		m := newRowsModel(t, true)
 		m.resumeCursor = 0
 		m, _ = resumeHandleKey(tea.KeyPressMsg{Code: tea.KeySpace}, m)
 		if len(m.resumeRows) != 1 {
@@ -787,13 +792,47 @@ func TestRenderResumeRows(t *testing.T) {
 	m.resumePageSize = defaultPageSize
 	m.resumeRoot = "/r"
 
+	// 逐行钉死单元格宽度（AGENTS.md §6.8 的口径），而不是只看有没有 "%!"。
+	//
+	// 行数必须等于 termHeight，且除明细行外每行都必须是满宽：
+	//   - renderResumeView 在 contentArea 之后要补换行，否则最后一条补白行会和状态栏
+	//     粘成一行（宽度 2×width，真机上被折行）；
+	//   - renderResumeRow 的 arrow 必须按 lipgloss.Width 扣宽，不能用 len()
+	//     （"▾ " 是 4 字节 / 2 格，多减会把组头行压短）；
+	//   - 明细行是组内子行，不做右侧补白，恒为 detailWidth 格。
+	const (
+		detailRow   = 3
+		detailLine  = "    a_direct · 0 B"
+		detailWidth = 18
+	)
 	for _, width := range []int{60, 80, 100, 160} {
 		m.termWidth, m.termHeight = width, 30
 		view := renderResumeView(m).Content
 		if strings.Contains(view, "%!") {
-			t.Errorf("width %d: view has format errors", width)
+			t.Errorf("width %d: view has format errors:\n%s", width, stripANSI(view))
+		}
+		lines := strings.Split(view, "\n")
+		if len(lines) != m.termHeight {
+			t.Fatalf("width=%d: 行数 = %d, want termHeight %d\n----\n%s----", width, len(lines), m.termHeight, stripANSI(view))
+		}
+		for i, l := range lines {
+			want := width
+			if i == detailRow {
+				want = detailWidth
+			}
+			if got := lipgloss.Width(l); got != want {
+				t.Errorf("width=%d line %d 宽度 = %d, want %d（%q）", width, i, got, want, stripANSI(l))
+			}
+		}
+		if got := stripANSI(lines[detailRow]); got != detailLine {
+			t.Errorf("width=%d 明细行 = %q, want %q", width, got, detailLine)
+		}
+		if first, last := stripANSI(lines[0]), stripANSI(lines[len(lines)-1]); !strings.HasPrefix(first, "┌") ||
+			!strings.HasSuffix(first, "┐") || !strings.HasPrefix(last, "└") || !strings.HasSuffix(last, "┘") {
+			t.Errorf("width=%d 边框破了：%q / %q", width, first, last)
 		}
 	}
+
 	// 展开视图应含成员徽标与缩进前缀
 	m.termWidth, m.termHeight = 120, 30
 	view := renderResumeView(m).Content

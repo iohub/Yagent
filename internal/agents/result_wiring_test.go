@@ -10,8 +10,10 @@ import (
 // 本文件为"委派返回物分级"第二批次接线断言：
 //   - FinalizeResultFull（Full 变体）：超预算路径 ArtifactRef 非 nil、Summary 含
 //     分级标记、Text 恒为完整输出（程序化消费保护）；
-//   - FormatForDirector：有 ArtifactRef 时含 read_artifact 取回指令；
-//   - 短文本路径回归保护（两变体一致）。
+//   - FinalizeResultFull 的预算内路径：不落盘、Text=Summary=全文。
+//
+// FormatForDirector 的完整输出格式由 result_test.go 的
+// TestFormatForDirectorWithRef 逐行钉住，本文件不再重复子串断言。
 
 // TestFinalizeResultFullLongText Full 变体超长文本接线断言。
 func TestFinalizeResultFullLongText(t *testing.T) {
@@ -49,42 +51,13 @@ func TestFinalizeResultFullLongText(t *testing.T) {
 	}
 }
 
-// TestFormatForDirectorReadArtifactInstruction 接线断言：有 ArtifactRef 时
-// FormatForDirector 输出含 artifact 元信息行与 read_artifact(id="{ID}") 取回指令。
-func TestFormatForDirectorReadArtifactInstruction(t *testing.T) {
-	const id = "20260219-120000-3fa9c2d1"
-	r := AgentResult{
-		Summary:     "kept summary text\n\n[Truncated: showing first 100 of 2000 chars. Full result stored as artifact " + id + ".]\n",
-		ArtifactRef: &artifact.Ref{ID: id, CharCount: 2000},
-	}
-	got := FormatForDirector("delegate_repo", r, "", 0)
-
-	if !strings.Contains(got, "artifact: "+id) {
-		t.Errorf("FormatForDirector should contain artifact meta line with id %q, got:\n%s", id, got)
-	}
-	wantInstr := `Call read_artifact(id="` + id + `")`
-	if !strings.Contains(got, wantInstr) {
-		t.Errorf("FormatForDirector should contain %q, got:\n%s", wantInstr, got)
-	}
-	if !strings.HasPrefix(got, "[Sub-Agent Result: delegate_repo]\n") {
-		t.Errorf("FormatForDirector should keep [Sub-Agent Result: tool] header, got:\n%s", got)
-	}
-}
-
-// TestFinalizeShortTextRegression 短文本路径回归保护：ArtifactRef == nil 且
-// Summary == Text == 全文（FinalizeResult 与 FinalizeResultFull 两变体一致）。
-func TestFinalizeShortTextRegression(t *testing.T) {
+// TestFinalizeResultFullShortText Full 变体的预算内路径：不落盘、Text=Summary=全文。
+// （短文本的 FinalizeResult 侧由 result_test.go 的 TestFinalizeResultShortText 钉住，
+// 这里只补 Full 变体——TestFinalizeResultFullLongText 走的是超预算路径，覆盖不到这条分支。）
+func TestFinalizeResultFullShortText(t *testing.T) {
 	setArtifactRoot(t)
 	// 400 ascii = 100 token <= 500。
 	text := strings.Repeat("a", 400)
-
-	got := FinalizeResult("repo_agent", "task", newTestExecutor(text))
-	if got.ArtifactRef != nil {
-		t.Errorf("FinalizeResult: ArtifactRef = %+v, want nil (within budget)", got.ArtifactRef)
-	}
-	if got.Summary != text || got.Text != text {
-		t.Error("FinalizeResult: short text Summary/Text should equal full text")
-	}
 
 	gotFull := FinalizeResultFull("repo_agent", "task", newTestExecutor(text))
 	if gotFull.ArtifactRef != nil {

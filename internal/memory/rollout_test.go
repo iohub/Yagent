@@ -616,18 +616,6 @@ func TestRolloutWriter(t *testing.T) {
 		}
 	}
 
-	// Write InterAgentCommunicationMetadata
-	comm := InterAgentCommunicationMetadata{
-		ParentAgent:      "director",
-		ChildAgent:       "worker",
-		ParentToolCallID: "parent-call-id",
-		Direction:        "outbound",
-		Summary:          "Delegated task to worker agent",
-	}
-	if err := writer.WriteInterAgentComm(comm); err != nil {
-		t.Fatalf("WriteInterAgentComm error: %v", err)
-	}
-
 	// Write Compacted
 	compacted := CompactedPayload{
 		Summary:      "Compressed history",
@@ -638,15 +626,9 @@ func TestRolloutWriter(t *testing.T) {
 		t.Fatalf("WriteCompacted error: %v", err)
 	}
 
-	// Write WorldState
-	worldState := WorldStatePayload{
-		Files:     []string{"a.go", "b.go"},
-		GitBranch: "main",
-		GitStatus: "clean",
-	}
-	if err := writer.WriteWorldState(worldState); err != nil {
-		t.Fatalf("WriteWorldState error: %v", err)
-	}
+	// world_state / inter_agent_communication_metadata 两类记录在 2026-10-14 删掉了写入侧
+	// （无生产调用方）。读侧对这两类记录、以及任何未知类型的容忍度仍由
+	// rollout_reader_test.go 钉住 —— /resume 会读到老二进制留下的文件，那条契约不能丢。
 
 	if err := writer.Close(); err != nil {
 		t.Fatalf("Close error: %v", err)
@@ -669,46 +651,14 @@ func TestRolloutWriter(t *testing.T) {
 		t.Fatal("expected non-empty file")
 	}
 
-	allowedTypes := map[string]bool{
-		"session_meta":                    true,
-		"turn_context":                    true,
-		"response_item":                   true,
-		"event_msg":                       true,
-		"inter_agent_communication_metadata": true,
-		"compacted":                       true,
-		"world_state":                     true,
-	}
-
-	iso8601Re := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z$`)
-
+	// 信封格式（timestamp 形态、type 白名单、恰好三个顶层字段、首条是 session_meta）
+	// 由 TestRolloutEnvelopeFormat 统一钉住；这里只保证写出来的每一行都是可读的回执信封，
+	// 不再重复一遍校验规则。
 	for i, line := range lines {
 		var envelope RolloutEnvelope
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
 			t.Fatalf("line %d: invalid JSON: %v\nLine: %s", i, err, line)
 		}
-		// Check top-level fields
-		if envelope.Timestamp == "" {
-			t.Errorf("line %d: empty timestamp", i)
-		}
-		if !iso8601Re.MatchString(envelope.Timestamp) {
-			t.Errorf("line %d: timestamp %q is not valid ISO8601", i, envelope.Timestamp)
-		}
-		if envelope.Type == "" {
-			t.Errorf("line %d: empty type", i)
-		}
-		if !allowedTypes[envelope.Type] {
-			t.Errorf("line %d: unknown type %q", i, envelope.Type)
-		}
-		if envelope.Payload == nil {
-			t.Errorf("line %d: nil payload", i)
-		}
-	}
-
-	// Verify first line is session_meta
-	var first RolloutEnvelope
-	json.Unmarshal([]byte(lines[0]), &first)
-	if first.Type != "session_meta" {
-		t.Errorf("expected first record to be session_meta, got %q", first.Type)
 	}
 
 	// Verify session_meta content
@@ -1393,20 +1343,24 @@ func TestRolloutThinklinkAndCompactedRestore(t *testing.T) {
 		}
 	})
 
-	t.Run("summary_tail_injects_anchor", func(t *testing.T) {
+	// tail 模式的语义（恢复条数、顺序、"compacted 后无消息"边界）由
+	// TestReadRolloutMemory_CompactedModes 用更丰富的夹具钉住；compacted 的统计字段
+	// 往返由 TestRolloutWriter_CompactedRoundTrip 钉住。这里只留这两者都覆盖不到的一件事：
+	// 真实写入路径产出的 Summary 原文，在 tail 模式下必须原样出现在锚定的 System 消息里。
+	t.Run("summary_tail_round_trips_written_summary", func(t *testing.T) {
 		mem, info, err := ReadRolloutMemory(path, RolloutReadOptions{Compaction: CompactionSummaryTail})
 		if err != nil {
 			t.Fatalf("ReadRolloutMemory: %v", err)
-		}
-		if info.FinishState() != FinishComplete {
-			t.Errorf("FinishState = %v, want complete", info.FinishState())
 		}
 		msgs := mem.GetMessages()
 		if len(msgs) == 0 || msgs[0].Type != MessageTypeSystem || !msgs[0].IsAnchored {
 			t.Fatalf("first message = %+v, want anchored system summary", firstOr(msgs))
 		}
-		if !strings.Contains(msgs[0].Content, "context truncated") {
-			t.Errorf("summary content = %q, want truncation description", msgs[0].Content)
+		if msgs[0].Content != "context truncated: 3 results compacted" {
+			t.Errorf("summary content = %q, want the exact text passed to WriteCompacted", msgs[0].Content)
+		}
+		if info.FinishState() != FinishComplete {
+			t.Errorf("FinishState = %v, want complete", info.FinishState())
 		}
 	})
 }

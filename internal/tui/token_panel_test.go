@@ -182,7 +182,6 @@ func TestTokenPanel_SigmaUsesNormalizedInput(t *testing.T) {
 // agent 切换不再清掉别人的本轮用量。
 func TestTokenPanel_PerAgentRunIndependent(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestAiResponse("Director", 1000))
 	m = feedEvent(m, ctxTestAiResponse("Repo-Agent", 500))
@@ -208,7 +207,6 @@ func TestTokenPanel_PerAgentRunIndependent(t *testing.T) {
 // TestTokenPanel_RunResetOnSubmit 验证新一轮提交只清 RUN，不动 Σ 与 TOTAL。
 func TestTokenPanel_RunResetOnSubmit(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 	m = feedEvent(m, ctxTestAiResponse("Director", 1000))
 
 	before := m.tokenSnapshot()
@@ -237,7 +235,7 @@ func TestTokenPanel_RunResetOnSubmit(t *testing.T) {
 // TestTokenPanel_FooterAndSidebarAgree 是两个表面口径一致的唯一直接证据：
 // 同一个 model 在侧栏与底部表面上，Σ / 每 agent TOTAL / 命中率必须一模一样。
 func TestTokenPanel_FooterAndSidebarAgree(t *testing.T) {
-	initLangManager()
+	testLang(t)
 	m := s1Model()
 	m.termWidth = 140
 	sidebar := stripANSI(strings.Join(buildTokenPanel(m.tokenSnapshot(), s1Spec(46)), "\n"))
@@ -300,7 +298,6 @@ func TestTokenPanel_FooterFitsTermWidth(t *testing.T) {
 // 覆盖 OpenAI 形态（prompt 含缓存）与 total_input 缺省的回落。
 func TestTokenPanel_AiResponseFeedsSnapshot(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, &messaging.MessageEvent{
 		Type:      "ai_response",
@@ -331,7 +328,6 @@ func TestTokenPanel_AiResponseFeedsSnapshot(t *testing.T) {
 
 	// total_input 缺省 → 回落三项相加
 	m2 := newTestModel()
-	m2.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 	m2 = feedEvent(m2, &messaging.MessageEvent{
 		Type:      "ai_response",
 		From:      "Director",

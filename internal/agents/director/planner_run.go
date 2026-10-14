@@ -15,7 +15,9 @@ import (
 	"yagent/internal/tools"
 )
 
-const maxNonDelegationPrompts = 3
+// MaxNonDelegationPrompts 是没委派任何子 Agent 时允许注入"强制委派"提醒的次数。
+// 导出是为了让门面层与测试引用同一个值（agents 里曾有一份只有测试在读的同名常量）。
+const MaxNonDelegationPrompts = 3
 
 func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 	p.state.HasDelegated = false
@@ -526,7 +528,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			ToolCalls: choice.ToolCalls,
 		})
 		if len(choice.ToolCalls) == 0 {
-			if !p.state.HasDelegated && p.state.NonDelegationPrompts < maxNonDelegationPrompts {
+			if !p.state.HasDelegated && p.state.NonDelegationPrompts < MaxNonDelegationPrompts {
 				p.state.NonDelegationPrompts++
 				var forceMsg string
 				if p.state.NonDelegationPrompts == 1 {

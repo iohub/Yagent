@@ -2,41 +2,18 @@ package tui
 
 import (
 	"testing"
-
-	"charm.land/bubbles/v2/textarea"
 )
 
-// tabModel 造一个能真正走 tab 路径的 model。两处补齐都是必需的：
-//   - textarea：restoreSessionTab 会 m.input.SetValue(...)，零值 textarea 的内部 viewport 是 nil；
-//   - sessionTabs：clearCurrentSession 要写回 sessionTabs[activeSessionIdx]，
-//     生产里 initTabs 恒建一个默认 tab，裸 model 没有就 index out of range。
-func tabModel(t *testing.T) *model {
-	t.Helper()
-	// langManager 只在生产入口 StartTUI 里初始化；clearCurrentSession → generateTabTitle
-	// → langManager.GetText 会在 nil 接收器上 panic，所以测试自己补这一步。
-	langManager = NewLanguageManager()
-
-	m := newTestModel()
-	input := textarea.New()
-	input.SetWidth(80)
-	input.SetHeight(3)
-	input.ShowLineNumbers = false
-	input.SetVirtualCursor(true)
-	m.input = input
-
-	tab := m.newSessionTab(m.nextTabID, "default")
-	m.nextTabID++
-	m.sessionTabs = []*sessionTab{tab}
-	m.activeSessionIdx = 0
-	m.sessionID = tab.sessionID
-	return m
-}
+// tabTestModel（tui_chrome_test.go）已经备好走 tab 路径所需的一切：
+// InitLangManager（clearCurrentSession → generateTabTitle → langManager.GetText 不为 nil）、
+// 带 textarea 的 input（restoreSessionTab 会 m.input.SetValue(...)）、
+// 以及 initSessionTabs 建的默认 tab（clearCurrentSession 要写回 sessionTabs[activeSessionIdx]）。
 
 // 便签板作用域 = tab：新建 tab 必须换新板，切 tab 必须把板跟着 tab 带走。
 // 若 newSessionTab 继承了 m.sessionID，两个 tab 会共用一块板，
 // 于是一个不相关话题能看见另一个话题的结论（docs/blackboard-handoff-design.md §12.8 明确禁止）。
 func TestSessionIDIsPerTabAndFollowsTabSwitch(t *testing.T) {
-	m := tabModel(t)
+	m := tabTestModel(t, 100, 30)
 
 	first := m.newSessionTab(1, "first")
 	second := m.newSessionTab(2, "second")
@@ -68,7 +45,7 @@ func TestSessionIDIsPerTabAndFollowsTabSwitch(t *testing.T) {
 
 // 清空会话意味着换话题：旧会话的结论不该出现在新话题的索引里。
 func TestClearCurrentSessionRotatesBoard(t *testing.T) {
-	m := tabModel(t)
+	m := tabTestModel(t, 100, 30)
 	m.ensureSessionID()
 	before := m.sessionID
 	if before == "" {

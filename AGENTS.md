@@ -513,19 +513,37 @@ BUILD_TYPE=debug ./build.sh
 ### 8.3 测试
 
 ```bash
-go test ./... -count=1 -timeout 600s                  # 全仓 21 个测试包，约 80s
-go test ./internal/tui/... ./internal/messaging/... -count=1   # 快循环，秒级
-go test ./internal/agents/... -count=1 -timeout 300s  # 最慢的一档，约 40s
+go test ./... -count=1 -timeout 600s                  # 全仓 23 个测试包，约 7s
+go test ./internal/tui/... ./internal/messaging/... -count=1   # 快循环，亚秒级
+go test ./internal/agents/... -count=1 -timeout 300s  # 最慢的一档，约 8s
+bash scripts/check_test_hygiene.sh                    # 单测卫生棘轮（见 §9.2）
 go vet ./...                                          # 必须干净
 ```
 
-- 共 82 个测试文件、21 个有测试的包。慢的只有两个：`internal/agents`（~39s）与 `internal/compression`（~28s）。
-  历史上 `TestRunAgentLoop_ParentCancel_AllCallsAccounted` 会卡在 `toolbatch.Run`：它把 `cancel()`
+- 共 111 个测试文件、约 805 个 `Test*`、30.8k 行（2026-10-14 整理后：966→805 个测试、
+  33.3k→30.8k 行，全仓墙钟 80s→7s）。
+- **耗时必须由测试自己负责**：历史上 `internal/compression` 的 28s 全部来自五个用
+  `strings.Repeat("x", 50000)` 造工具结果的截断测试（tiktoken 反复编几百 KB）——payload 缩到
+  1-2k 并等比缩预算后整包 0.17s，断言语义不变。`internal/agents` 的 30s 来自
+  `TestRunAgentLoop_MultipleToolCalls` 把工具阻塞到 **父 ctx 的 30s 超时**；现在统一用
+  `restoreToolTimeout(t, …)`（改 `defaultToolTimeout` 这个已有 seam）+ `context.Background()`。
+- **不要写"永远不会失败"的测试**。整理前的基线里有 16 个用例没有任何断言能力
+  （只有 `t.Logf`、整函数体只有一行 `t.Skip`、或恒真断言）。三类典型坑：
+  - 断言在异步完成之前：`callConsolidationLLM` 失败要睡 1s+2s 真实退避，而测试只睡 2s，
+    于是"LLM 失败后保留旧记忆"这条断言在重试跑完之前就检查了 —— 无论实现对错都通过。
+    改法是等确定性信号（`Stop()` 会排干队列），不是等更久。
+  - fixture 小到根本没触发被测分支：`TestEnforceTokenBudget_TruncatesAtSectionBoundary`
+    的夹具只有 643 token < 上限 1500，从未截断过。现在每条这类测试都自带
+    `t.Fatalf` 前置条件（"夹具必须超预算"）。
+  - 去重先把数量吃掉：`TestResolveRefsMaxLimit` 用 20 条**相同** ref 去测上限 10，
+    去重后必然剩 1 条，上限断言永远为真。
+- 历史上 `TestRunAgentLoop_ParentCancel_AllCallsAccounted` 会卡在 `toolbatch.Run`：它把 `cancel()`
   放在批次内的第一个工具里，而 `toolbatch` **不保证组内启动顺序**，负责取消的工具一旦排在信号量队列里，
   在飞调用就无人可取消，只能等 `defaultToolTimeout`(180s) 逐波解开。现在改成从批次外部取消
   （`time.AfterFunc`），写并发工具测试时不要重现这个假设。
 - **没有 CI 质量闸门**：`.github/workflows/release.yml` 只做跨平台构建 + 发布，不跑测试/lint；也没有 Makefile/golangci。
-  验证靠本地 `go build` + `go vet` + 相关包测试。
+  验证靠本地 `go build` + `go vet` + 相关包测试 + `scripts/` 下的守卫。
+  `-race` 不在默认流程里；改动并发/事件总线相关测试时手动跑一次。
 - TUI 改动必须跑渲染/尺寸矩阵测试（见 §6.8）。
 
 ---
@@ -545,7 +563,17 @@ go vet ./...                                          # 必须干净
 ```bash
 bash scripts/check_file_sizes.sh          # internal/agents/director/ 下非测试文件 ≤300 行
 bash scripts/check_no_agents_import.sh    # director/ 子包不得 import yagent/internal/agents（防循环依赖）
+bash scripts/check_toolspec_leaf.sh       # toolspec 不得反向依赖 agents/tools
+bash scripts/check_test_hygiene.sh        # 单测卫生棘轮，见下
 ```
+
+- `check_test_hygiene.sh` 守的是**测试自己**：① 每个 `Test*` 必须能失败（自身有 `t.Error*/t.Fatal*`，
+  或调用 `assert*/check*/verify*/expect*/require*` 辅助，或写明 `hygiene:panic-guard` 豁免标记）；
+  ② 函数体第一层不得出现裸 `t.Skip*`（按环境跳过必须带条件）；③ 同一个包只允许一个
+  `string→string` 的 ANSI 剥离辅助函数。脚本自己也会报"只扫到 N 个函数"的失步异常，
+  不会静默放行 —— 2026-10-14 整理前的基线是 882 个 `Test*`，其中 16 个没有任何失败能力
+  （`t.Logf` dump、只有一行 `t.Skip` 的空壳、恒真断言如"发布 1000 条却断言 count>1000"）。
+  唯一豁免途径是 `hygiene:panic-guard`：去掉某条 nil 守卫后测试会 panic 而失败的那类用例。
 
 - Director 采用**门面 + 子包**结构：`internal/agents/director.go` 只做装配与 delegate 注册，
   编排逻辑进 `internal/agents/director/`，跨子系统依赖一律经 `internal/agents/ports.go` 的窄接口注入。

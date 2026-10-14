@@ -171,21 +171,7 @@ func TestUserConfirmManager_RequestUserHelp_ContextTimeout(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 6：OnUserResponse 正确传递响应
-// ---------------------------------------------------------------------------
-
-func TestUserConfirmManager_OnUserResponse(t *testing.T) {
-	publisher := createMockPublisher(t)
-	m := NewUserConfirmManager()
-	m.SetPublisher(publisher)
-
-	// 跳过这个测试因为无法在不知道 requestID 的情况下调用 OnUserResponse
-	// 实际的响应路由测试通过场景 7 (ConsumeDeliversResponse) 间接验证
-	t.Skip("OnUserResponse requires knowing the random requestID; test via Consume instead")
-}
-
-// ---------------------------------------------------------------------------
-// 场景 7：Consume 方法正确处理 user_help_response 事件
+// 场景 6：Consume 方法正确处理 user_help_response 事件
 // 这是测试 RequestConfirmation + OnUserResponse 完整流程的间接方式
 // ---------------------------------------------------------------------------
 
@@ -217,21 +203,7 @@ func TestUserConfirmManager_ConsumeDeliversResponse(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 8：OnUserResponse 对不存在的 requestID 只输出 warning
-// ---------------------------------------------------------------------------
-
-func TestUserConfirmManager_OnUserResponse_UnknownID(t *testing.T) {
-	m := NewUserConfirmManager()
-
-	// 对未知的 requestID 调用 OnUserResponse 不应 panic
-	// 只会输出 warning 日志
-	m.OnUserResponse("nonexistent-request-id", "some response")
-
-	// 如果没有 panic 通过
-}
-
-// ---------------------------------------------------------------------------
-// 场景 9：并发调用 RequestConfirmation 各自独立
+// 场景 7：并发调用 RequestConfirmation 各自独立
 // ---------------------------------------------------------------------------
 
 func TestUserConfirmManager_ConcurrentRequests(t *testing.T) {
@@ -274,7 +246,7 @@ func TestUserConfirmManager_ConcurrentRequests(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 10：Consume 忽略缺少 response 字段的事件
+// 场景 8：Consume 忽略缺少 response 字段的事件
 // ---------------------------------------------------------------------------
 
 func TestUserConfirmManager_Consume_NoResponse(t *testing.T) {
@@ -311,7 +283,7 @@ func TestUserConfirmManager_Consume_NoResponse(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 11：Consume 从 Metadata 中正确提取 request_id
+// 场景 9：Consume 从 Metadata 中正确提取 request_id
 // ---------------------------------------------------------------------------
 
 func TestUserConfirmManager_Consume_ExtractsRequestID(t *testing.T) {
@@ -345,58 +317,7 @@ func TestUserConfirmManager_Consume_ExtractsRequestID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 12：RequestUserHelp 在 publisher 为 nil 时返回错误
-// ---------------------------------------------------------------------------
-
-func TestUserConfirmManager_RequestUserHelp_PublisherNotSet(t *testing.T) {
-	m := NewUserConfirmManager()
-	ctx := context.Background()
-
-	_, err := m.RequestUserHelp(ctx, &protocol.UserHelpNeededData{
-		Question:        "What is your name?",
-		InteractionType: protocol.InteractionInput,
-	})
-	if err == nil {
-		t.Fatal("expected error when publisher is not set")
-	}
-	if !strings.Contains(err.Error(), "publisher not set") {
-		t.Errorf("expected 'publisher not set' error, got: %v", err)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// 场景 13：RequestConfirmation 的 extraFields 被正确合并
-// ---------------------------------------------------------------------------
-
-func TestUserConfirmManager_ExtraFields(t *testing.T) {
-	// 这个测试验证 extraFields 参数能正确传递给 publisher
-	// 由于我们无法断言 publisher.Publish 的内容，我们通过观察
-	// 是否有 panic 或错误来间接验证
-	publisher := createMockPublisher(t)
-	m := NewUserConfirmManager()
-	m.SetPublisher(publisher)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	_, err := m.RequestConfirmation(
-		ctx,
-		"Delete file?",
-		"yes,no",
-		map[string]interface{}{
-			"tool_name": "delete_file",
-			"reason":    "cleanup",
-		},
-	)
-
-	// 应该因为 context 超时而失败，而不是因为 extraFields 处理错误
-	if err == nil {
-		t.Fatal("expected error due to context timeout")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// 场景 14：RequestUserHelp 自动分配 RequestID（在 publisher 检查通过后）
+// 场景 10：RequestUserHelp 自动分配 RequestID（在 publisher 检查通过后）
 // ---------------------------------------------------------------------------
 
 func TestUserConfirmManager_RequestUserHelp_AutoRequestID(t *testing.T) {

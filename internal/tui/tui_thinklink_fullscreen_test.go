@@ -28,7 +28,8 @@ func newThinklinkTestModel() *model {
 }
 
 // 测试 1：taskRunning=true 时 taskEventMsg 必须透传给 handleTaskEventMsg，
-// handler 内部自行续链 listenForEvents（cmd 非 nil），事件数据不被丢弃。
+// handler 内部自行续链 listenForEvents（cmd 非 nil），且事件真的被消费进日志
+// （不是被全屏静默丢弃）。
 // 事件类型用 "info"，避开 ai_stream_end / ai_response 的 dialog 穿透特例。
 func TestThinklinkFullscreen_TaskEventMsgKeepsChainAlive(t *testing.T) {
 	m := newThinklinkTestModel()
@@ -48,6 +49,15 @@ func TestThinklinkFullscreen_TaskEventMsgKeepsChainAlive(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("expected non-nil cmd (listenForEvents chain must stay alive), got nil")
+	}
+	// 事件数据不被丢弃：handleTaskEventMsg 的兜底分支会把它落成一条日志。
+	if len(got.logEntries) != 1 {
+		t.Fatalf("logEntries = %d, want 1 (event dropped on the floor while fullscreen)", len(got.logEntries))
+	}
+	e := got.logEntries[0]
+	if e.eventType != "info" || e.from != "agent" || e.content != "hello from agent" {
+		t.Errorf("logged entry = {type:%q from:%q content:%q}, want {info agent \"hello from agent\"}",
+			e.eventType, e.from, e.content)
 	}
 }
 

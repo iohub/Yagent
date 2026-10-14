@@ -73,7 +73,7 @@ func TestLiveRender_EventsConsumedInTimelineFullscreen(t *testing.T) {
 	m = feedEvent(m, buildEvent("ai_response", "director", "开头内容"+zzTail))
 	m.timelineFullscreenMode = false
 
-	view := stripANSIForChrome(m.View().Content)
+	view := stripANSI(m.View().Content)
 	if !strings.Contains(view, zzTail) {
 		t.Errorf("message streamed during timeline fullscreen never reached the main view:\n%s", view)
 	}

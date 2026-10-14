@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestEstTokens token 估算：ASCII 约 4 字符/token、非 ASCII 约 1 字符/token。
@@ -55,54 +56,78 @@ func TestReduceSlightlyOverBudget(t *testing.T) {
 	}
 }
 
-// TestReducePureASCII 纯 ASCII 截断：标记行包含正确 id 与字符数，结果满足预算。
+// markerSep 是正文与截断标记的分界；标记内部的措辞怎么改都不影响这里的切分。
+const markerSep = "\n\n[Truncated:"
+
+// assertReduceContract 钉住截断输出的契约，而不是二分/窗口回退算出来的中间数字
+// （那些随 ReserveForMarker 与估算系数变化）：
+//   - 前缀必须是原文的逐字前缀，并且尽量占满预算（不是一刀砍到几个字符）；
+//   - 标记里的两个数字必须等于实际前缀长度与实际全文长度；
+//   - 标记必须带上 artifact id（否则 Director 无从取回全文）；
+//   - 整体不超过 budget，且以换行收尾。
+func assertReduceContract(t *testing.T, text, got, id string, budget int) (prefix, marker string) {
+	t.Helper()
+
+	idx := strings.Index(got, markerSep)
+	if idx < 0 {
+		t.Fatalf("summary has no %q separator:\n%s", markerSep, got)
+	}
+	prefix, marker = got[:idx], got[idx:]
+
+	if !strings.HasPrefix(text, prefix) {
+		t.Errorf("prefix is not a verbatim prefix of the full text: %q", prefix)
+	}
+	if kept, total := utf8.RuneCountInString(prefix), utf8.RuneCountInString(text); !strings.Contains(
+		marker, fmt.Sprintf("%d of %d chars", kept, total)) {
+		t.Errorf("marker counts must match kept=%d total=%d, got: %s", kept, total, marker)
+	}
+	if !strings.Contains(marker, id) {
+		t.Errorf("marker must carry the artifact id %s: %s", id, marker)
+	}
+	if strings.Count(got, markerSep) != 1 {
+		t.Errorf("summary should contain exactly one truncation marker:\n%s", got)
+	}
+	if est := EstTokens(got); est > budget {
+		t.Errorf("EstTokens(summary) = %d, want <= %d", est, budget)
+	}
+	if want := budget - ReserveForMarker; want > 0 && EstTokens(prefix) < want/2 {
+		t.Errorf("summary kept only %d tokens of the %d available: %q", EstTokens(prefix), want, prefix)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Errorf("summary should end with a newline:\n%q", got)
+	}
+	return prefix, marker
+}
+
+// TestReducePureASCII 纯 ASCII 截断：满足契约，正文一个换行都没有所以原样截断。
 func TestReducePureASCII(t *testing.T) {
 	const id = "20260219-120000-3fa9c2d1"
-	// 2004 ascii = 501 token，budget=500（target=440 → kept=1763）。
-	text := strings.Repeat("a", 2004)
+	text := strings.Repeat("a", 2004) // 501 token > DefaultBudgetTokens
 	got, truncated := Reduce(text, id, DefaultBudgetTokens)
 	if !truncated {
 		t.Fatal("expected truncation")
 	}
-	if !strings.Contains(got, fmt.Sprintf("showing first %d of %d chars", 1763, 2004)) {
-		t.Errorf("marker should contain kept/total char counts, got: %s", got)
-	}
-	if !strings.Contains(got, id) {
-		t.Errorf("marker should contain artifact id %s", id)
-	}
-	if est := EstTokens(got); est > DefaultBudgetTokens {
-		t.Errorf("EstTokens(summary) = %d, want <= %d", est, DefaultBudgetTokens)
-	}
-	if strings.Count(got, "\n\n[Truncated: showing first") != 1 {
-		t.Error("summary should contain exactly one truncation marker")
-	}
-	if !strings.HasSuffix(got, "]\n") {
-		t.Error("marker line should end with newline")
+	prefix, _ := assertReduceContract(t, text, got, id, DefaultBudgetTokens)
+	if strings.HasSuffix(prefix, "\n") {
+		t.Errorf("no-newline text cannot end on a line boundary: %q", prefix)
 	}
 }
 
-// TestReducePureChinese 纯中文截断：rune 计数正确、结果满足预算。
+// TestReducePureChinese 纯中文截断：按 rune 计数，契约同样成立。
 func TestReducePureChinese(t *testing.T) {
 	const id = "20260219-120000-00000000"
-	// 600 中文 = 600 token，budget=500（target=440 → kept=440 rune）。
-	text := strings.Repeat("中", 600)
+	text := strings.Repeat("中", 600) // 600 token > DefaultBudgetTokens
 	got, truncated := Reduce(text, id, DefaultBudgetTokens)
 	if !truncated {
 		t.Fatal("expected truncation")
 	}
-	if !strings.Contains(got, fmt.Sprintf("showing first %d of %d chars", 440, 600)) {
-		t.Errorf("marker should contain kept/total char counts, got: %s", got)
-	}
-	if est := EstTokens(got); est > DefaultBudgetTokens {
-		t.Errorf("EstTokens(summary) = %d, want <= %d", est, DefaultBudgetTokens)
-	}
-	// 摘要中文正文应为 440 个 '中'。
-	if !strings.HasPrefix(got, strings.Repeat("中", 440)) {
-		t.Error("summary should start with the kept chinese prefix")
+	prefix, _ := assertReduceContract(t, text, got, id, DefaultBudgetTokens)
+	if !strings.HasPrefix(prefix, "中") {
+		t.Errorf("summary should start with the kept chinese prefix: %q", prefix)
 	}
 }
 
-// TestReduceSingleLineNoNewline 单行超长无换行：不 panic、不回退、标记正确。
+// TestReduceSingleLineNoNewline 单行超长无换行：不 panic、不回退、契约成立。
 func TestReduceSingleLineNoNewline(t *testing.T) {
 	const id = "20260219-120000-00000001"
 	text := strings.Repeat("b", 2004) // 无任何 '\n'
@@ -110,61 +135,37 @@ func TestReduceSingleLineNoNewline(t *testing.T) {
 	if !truncated {
 		t.Fatal("expected truncation")
 	}
-	if !strings.Contains(got, "showing first 1763 of 2004 chars") {
-		t.Errorf("no-newline text should keep the binary-search prefix as-is, got: %s", got)
-	}
-	if est := EstTokens(got); est > DefaultBudgetTokens {
-		t.Errorf("EstTokens(summary) = %d, want <= %d", est, DefaultBudgetTokens)
+	prefix, _ := assertReduceContract(t, text, got, id, DefaultBudgetTokens)
+	if strings.Contains(prefix, "\n") {
+		t.Errorf("no-newline input must not gain one: %q", prefix)
 	}
 }
 
 // TestReduceWindowFallbackNewline 截断点落在最后 10% 窗口内时回退到最近的 '\n'。
 //
-// 构造：100 行 "aaaa\n"（500 ascii = 125 token），budget=100（target=40）。
-// 二分 kept=163（163/4=40）；窗口=16，搜索区间 [147,162] 内 '\n' 位置为
-// 149/154/159（i%5==4），取最近者 159，kept=160（保留到 '\n' 含）。
+// 契约是"回退到**最近**的那个换行"，不是"回退到某个换行"，更不是 kept=160 这个算出来的数：
+// 前缀以换行收尾，而下一个换行边界就会超出预算。
 func TestReduceWindowFallbackNewline(t *testing.T) {
 	const id = "20260219-120000-00000002"
-	text := strings.Repeat("aaaa\n", 100)
-	got, truncated := Reduce(text, id, 100)
+	text := strings.Repeat("aaaa\n", 100) // 500 ascii = 125 token > budget 100
+	const budget = 100
+	got, truncated := Reduce(text, id, budget)
 	if !truncated {
 		t.Fatal("expected truncation")
 	}
+	prefix, _ := assertReduceContract(t, text, got, id, budget)
 
-	wantKept := text[:160] // 以 '\n' 结尾的回退前缀
-	if !strings.HasPrefix(got, wantKept) {
-		t.Errorf("summary should start with newline-bounded prefix ending at char 160")
+	if !strings.HasSuffix(prefix, "\n") {
+		t.Errorf("kept prefix should fall back to a newline boundary: %q", prefix)
 	}
-	if !strings.Contains(got, "showing first 160 of 500 chars") {
-		t.Errorf("marker should reflect fallback kept count, got: %s", got)
+	rest := text[len(prefix):]
+	next := strings.Index(rest, "\n")
+	if next < 0 {
+		t.Fatal("fixture must still have a following line")
 	}
-	if est := EstTokens(got); est > 100 {
-		t.Errorf("EstTokens(summary) = %d, want <= 100", est)
-	}
-}
-
-// TestReduceTruncationMarkerFormat 标记行格式逐字段断言。
-func TestReduceTruncationMarkerFormat(t *testing.T) {
-	const id = "20260219-120000-3fa9c2d1"
-	text := strings.Repeat("x", 2004)
-	got, truncated := Reduce(text, id, DefaultBudgetTokens)
-	if !truncated {
-		t.Fatal("expected truncation")
-	}
-	want := fmt.Sprintf("showing first %d of %d chars. Full result stored as artifact %s.", 1763, 2004, id)
-	if !strings.Contains(got, want) {
-		t.Errorf("marker mismatch, want substring %q in:\n%s", want, got)
-	}
-}
-
-// TestReduceDeterministic 同输入多次调用结果一致（无随机性）。
-func TestReduceDeterministic(t *testing.T) {
-	const id = "20260219-120000-3fa9c2d1"
-	text := strings.Repeat("line\n", 300)
-	a, _ := Reduce(text, id, DefaultBudgetTokens)
-	b, _ := Reduce(text, id, DefaultBudgetTokens)
-	if a != b {
-		t.Error("Reduce must be deterministic")
+	if est := EstTokens(prefix + rest[:next+1]); est <= budget-ReserveForMarker {
+		t.Errorf("next newline boundary also fits the target (%d <= %d), so the fallback cut one line too early",
+			est, budget-ReserveForMarker)
 	}
 }
 

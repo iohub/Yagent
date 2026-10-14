@@ -82,8 +82,9 @@ func TestBuildIndexNewestFirstAndCap(t *testing.T) {
 	if !strings.Contains(text, stems[2]) {
 		t.Errorf("the third-newest note should still be listed: %q", stems[2])
 	}
-	if !strings.Contains(lines[4], "[2 older notes not listed") {
-		t.Errorf("footer wrong: %q", lines[4])
+	// 尾巴只要求"存在且报出被隐藏的数量"——措辞是给人读的，没有任何代码解析它。
+	if !strings.HasPrefix(lines[4], "[") || !strings.Contains(lines[4], "2") {
+		t.Errorf("want a bracketed footer reporting 2 hidden notes, got: %q", lines[4])
 	}
 }
 
@@ -120,8 +121,15 @@ func TestBuildIndexSkipsUnreadableNotes(t *testing.T) {
 	if !strings.Contains(text, "好的那条") {
 		t.Errorf("readable note missing:\n%s", text)
 	}
-	if !strings.Contains(text, "1 unreadable notes skipped") {
-		t.Errorf("skip not reported:\n%s", text)
+	// 坏文件必须被"说出来"，而不是静默消失：结构 = 表头 + 幸存便签 + 一行说明。
+	// 说明里的措辞没有任何代码解析，所以只查它存在并报出了数量。
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %d, want 3 (header + 1 listed note + footer):\n%s", len(lines), text)
+	}
+	footer := lines[len(lines)-1]
+	if !strings.HasPrefix(footer, "[") || !strings.Contains(footer, "1") {
+		t.Errorf("want a footer reporting 1 skipped note, got: %q\n%s", footer, text)
 	}
 }
 

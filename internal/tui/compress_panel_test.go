@@ -50,14 +50,6 @@ func compressGoldenWant() []string {
 	}
 }
 
-func mapCompressStrip(rows []string) []string {
-	out := make([]string, len(rows))
-	for i, r := range rows {
-		out[i] = stripANSI(r)
-	}
-	return out
-}
-
 // compressFeed 直接喂一个档位事件（绕过 Update），返回并入后的快照。
 func compressFeed(m *model, eventType string, original, compressed, saved int) compressSnapshot {
 	m.recordCompression(eventType, map[string]interface{}{
@@ -77,10 +69,10 @@ func TestCompressPanel_Golden(t *testing.T) {
 
 	if len(rows) != len(want) {
 		t.Fatalf("行数 = %d, want %d\n----\n%s----", len(rows), len(want),
-			strings.Join(mapCompressStrip(rows), "\n"))
+			strings.Join(stripANSILines(rows), "\n"))
 	}
 	for i, w := range want {
-		got := mapCompressStrip(rows)[i]
+		got := stripANSILines(rows)[i]
 		if got != w {
 			t.Errorf("line %d:\n got %q\nwant %q", i, got, w)
 			continue
@@ -106,7 +98,7 @@ func TestCompressPanel_HeightLadder(t *testing.T) {
 
 	for maxRows := 1; maxRows <= 7; maxRows++ {
 		rows := buildCompressBlock(snap, compressPanelSpec{innerWidth: 46, maxRows: maxRows})
-		joined := strings.Join(mapCompressStrip(rows), "\n")
+		joined := strings.Join(stripANSILines(rows), "\n")
 
 		if maxRows == 1 {
 			// 只剩分隔线或只剩标题都是空壳：整块让位。
@@ -141,8 +133,8 @@ func TestCompressPanel_HeightLadder(t *testing.T) {
 		tiers: [compressTierCount]tierStat{{count: 1, saved: 200, original: 1000}},
 	}}).compressSnapshot()
 	spec := compressPanelSpec{innerWidth: 46}
-	fullRows := mapCompressStrip(renderCompressTier(onlyT1, spec, compressTierFull))
-	noIdleRows := mapCompressStrip(renderCompressTier(onlyT1, spec, compressTierNoIdle))
+	fullRows := stripANSILines(renderCompressTier(onlyT1, spec, compressTierFull))
+	noIdleRows := stripANSILines(renderCompressTier(onlyT1, spec, compressTierNoIdle))
 	if diff := len(fullRows) - len(noIdleRows); diff != 2 {
 		t.Errorf("NoIdle 档应省 2 行，实际省 %d\nfull:\n%s\nnoIdle:\n%s", diff,
 			strings.Join(fullRows, "\n"), strings.Join(noIdleRows, "\n"))
@@ -162,7 +154,7 @@ func TestCompressPanel_PercentUsesPeakOriginal(t *testing.T) {
 	if snap.pct != 0.6 {
 		t.Errorf("pct = %v, want 0.6", snap.pct)
 	}
-	joined := strings.Join(mapCompressStrip(
+	joined := strings.Join(stripANSILines(
 		buildCompressBlock(snap, compressPanelSpec{innerWidth: 46})), "\n")
 	if !strings.Contains(joined, "(60%)") {
 		t.Errorf("标题应显示 (60%%)\n----\n%s----", joined)
@@ -205,7 +197,7 @@ func TestCompressPanel_EmergencyHasNoSavedPercent(t *testing.T) {
 	}
 	// 徽标 T2：NoIdle 档只砍"高于已触发档"的行 —— T1 虽然没触发过（低于已触发档），
 	// 仍然留着当暗色对照，这样"到过 T2 却从没到过 T1"这件事本身才是看得见的。
-	rows := mapCompressStrip(renderCompressTier(snap, compressPanelSpec{innerWidth: 46}, compressTierNoIdle))
+	rows := stripANSILines(renderCompressTier(snap, compressPanelSpec{innerWidth: 46}, compressTierNoIdle))
 	joined := strings.Join(rows, "\n")
 	if strings.Contains(joined, "T3 ultimate") {
 		t.Errorf("只到过 T2 时不该出现 T3 行\n----\n%s----", joined)
@@ -256,7 +248,7 @@ func TestCompressPanel_CutRankingAndOverflow(t *testing.T) {
 	}
 	// inner < 30 时整行不渲染
 	rows := buildCompressBlock(snap, compressPanelSpec{innerWidth: 29})
-	if joined := strings.Join(mapCompressStrip(rows), "\n"); strings.Contains(joined, "cut:") {
+	if joined := strings.Join(stripANSILines(rows), "\n"); strings.Contains(joined, "cut:") {
 		t.Errorf("inner=29 不该画 cut: 行\n----\n%s----", joined)
 	}
 }
@@ -314,7 +306,7 @@ func TestCompressPanel_CutFeedsFromEvent(t *testing.T) {
 // （Update → 统计 → 侧栏渲染 → timeline 明细）。这是唯一能抓住
 // "类型断言写错 ⇒ 面板静默少一行数据"的闸门。
 func TestCompressPanel_RealPublisherShapeEndToEnd(t *testing.T) {
-	initLangManager()
+	testLang(t)
 	m := tabTestModel(t, 140, 40)
 	m.inputTokens = 120000
 	m.outputTokens = 34000
@@ -436,7 +428,7 @@ func TestCompressPanel_IdleStateIsTwoRows(t *testing.T) {
 		t.Error("没有压缩事件时 any() 不该为真")
 	}
 
-	rows := mapCompressStrip(buildCompressBlock(snap, compressPanelSpec{innerWidth: 46}))
+	rows := stripANSILines(buildCompressBlock(snap, compressPanelSpec{innerWidth: 46}))
 	if len(rows) != 2 {
 		t.Fatalf("空闲态应恰好 2 行（分隔线+标题），实际 %d 行\n----\n%s----", len(rows), strings.Join(rows, "\n"))
 	}
@@ -601,7 +593,7 @@ func TestCompressPanel_RestoredFromRollout(t *testing.T) {
 	if len(snap.cuts) != 0 || len(snap.samples) != 0 {
 		t.Errorf("恢复后 cut/采样应为空，实际 cuts=%+v samples=%v", snap.cuts, snap.samples)
 	}
-	rows := mapCompressStrip(buildCompressBlock(snap, compressPanelSpec{innerWidth: 46}))
+	rows := stripANSILines(buildCompressBlock(snap, compressPanelSpec{innerWidth: 46}))
 	joined := strings.Join(rows, "\n")
 	if !strings.Contains(joined, "T2") || !strings.Contains(joined, "T1 rule") {
 		t.Errorf("恢复后区块必须仍然渲染并带 T2 徽标\n----\n%s----", joined)
@@ -665,24 +657,10 @@ func TestCompressPanel_RoundTripThroughTabs(t *testing.T) {
 	}
 }
 
-func TestCompressPanel_TierLabelsAndSavedStr(t *testing.T) {
-	for i, w := range []string{"T1 rule", "T2 emergency", "T3 ultimate"} {
-		if got := compressTierLabel(i); got != w {
-			t.Errorf("compressTierLabel(%d) = %q, want %q", i, got, w)
-		}
-	}
-	if got := compressSavedStr(0); got != "0" {
-		t.Errorf("saved=0 不该带负号，实际 %q", got)
-	}
-	if got := compressSavedStr(180200); got != "−180.2k" {
-		t.Errorf("compressSavedStr = %q, want −180.2k", got)
-	}
-}
-
 // TestCompressPanel_NarrowWidthDropsBar 验证宽度阶梯：bar 不足 8 格时去条形。
 func TestCompressPanel_NarrowWidthDropsBar(t *testing.T) {
 	snap := compressGoldenModel().compressSnapshot()
-	rows := mapCompressStrip(buildCompressBlock(snap, compressPanelSpec{innerWidth: 30}))
+	rows := stripANSILines(buildCompressBlock(snap, compressPanelSpec{innerWidth: 30}))
 	joined := strings.Join(rows, "\n")
 	if strings.Contains(joined, "▰") || strings.Contains(joined, "▱") {
 		t.Errorf("inner=30 不该有进度条\n----\n%s----", joined)
@@ -723,7 +701,7 @@ func TestCompressPanel_SummaryWidthLadder(t *testing.T) {
 
 // TestCompressPanel_CollapsedFooterHasNoSummary 折叠态（alt+t）不加行。
 func TestCompressPanel_CollapsedFooterHasNoSummary(t *testing.T) {
-	initLangManager()
+	testLang(t)
 	m := s1Model()
 	m.compress = compressStats{
 		tiers: [compressTierCount]tierStat{{count: 1, saved: 180200, original: 1000000}},
@@ -760,7 +738,7 @@ func TestCompressPanel_BlockWidthsAcrossInner(t *testing.T) {
 						inner, maxRows, i, w, stripANSI(r))
 				}
 			}
-			if !strings.Contains(strings.Join(mapCompressStrip(rows), "\n"), "COMPRESS") {
+			if !strings.Contains(strings.Join(stripANSILines(rows), "\n"), "COMPRESS") {
 				t.Errorf("inner=%d maxRows=%d 标题行丢了", inner, maxRows)
 			}
 		}

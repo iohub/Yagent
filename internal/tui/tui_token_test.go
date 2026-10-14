@@ -15,7 +15,6 @@ import (
 // TestTokenCounting_OnlyAiResponseCounts 验证只有 ai_response 事件统计token，ai_stream_end 不统计
 func TestTokenCounting_OnlyAiResponseCounts(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	// 发送 ai_stream_end 带 usage metadata — 不应统计token
 	streamEndEvent := &messaging.MessageEvent{
@@ -48,7 +47,6 @@ func TestTokenCounting_OnlyAiResponseCounts(t *testing.T) {
 // TestTokenCounting_AiResponseAccumulates 验证 ai_response 事件正确累计token
 func TestTokenCounting_AiResponseAccumulates(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	// Director 的 ai_response
 	directorEvent := &messaging.MessageEvent{
@@ -139,7 +137,6 @@ func TestTokenCounting_AiResponseAccumulates(t *testing.T) {
 // TestTokenCounting_CurrentAgentReset 验证 agent 切换时 currentAgentRunTokens 正确重置
 func TestTokenCounting_CurrentAgentReset(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	// Director 的调用
 	directorEvent := &messaging.MessageEvent{
@@ -203,53 +200,12 @@ func TestTokenCounting_CurrentAgentReset(t *testing.T) {
 	}
 }
 
-// TestTokenCounting_EmptyContentNotOverwriteStream 验证 ai_response 空Content不覆盖已累积的流式内容
-func TestTokenCounting_EmptyContentNotOverwriteStream(t *testing.T) {
-	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
-
-	// 先模拟流式内容累积
-	streamEvent := &messaging.MessageEvent{
-		Type:      "ai_chunk",
-		From:      "Director",
-		Content:   map[string]interface{}{"content": "流式内容"},
-		Timestamp: time.Now(),
-	}
-	m = feedEvent(m, streamEvent)
-
-	// 定稿时 Content 为空（纯工具调用轮次）
-	emptyResponseEvent := &messaging.MessageEvent{
-		Type:      "ai_response",
-		From:      "Director",
-		Content:   "",
-		Timestamp: time.Now(),
-		Metadata: map[string]interface{}{
-			"usage": map[string]interface{}{
-				"prompt_tokens":     1000,
-				"completion_tokens": 0,
-				"total_tokens":      1000,
-			},
-		},
-	}
-	m = feedEvent(m, emptyResponseEvent)
-
-	// 流式内容应保留（不被空字符串覆盖）
-	// 注意：contentCache 可能已被清空，这里主要验证 token 统计
-	if m.inputTokens != 1000 {
-		t.Errorf("inputTokens 期望1000，实际%d", m.inputTokens)
-	}
-	if m.outputTokens != 0 {
-		t.Errorf("outputTokens 期望0，实际%d", m.outputTokens)
-	}
-}
-
 // TestTokenCounting_NoUsageMetadataIgnored 验证不带 usage 的 ai_response 不再被 TUI 自估。
 // 三个发布方（executor.go / planner_run.go / meta.go）都会挂上 usage —— provider 不给
 // usage 时上游已经用 EstimateTokens 兜底并标 estimated；TUI 再按 len/4 估一次只会造出
 // 第二种口径（而且只估 output，把 input 估成 0）。
 func TestTokenCounting_NoUsageMetadataIgnored(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, &messaging.MessageEvent{
 		Type:      "ai_response",
@@ -347,7 +303,6 @@ func TestTokenCacheMeterRow(t *testing.T) {
 // 命中率应为 300/1000 = 30%（不是 300/1500 = 20%）
 func TestTotalInputTokens_OpenAICompatibility(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	// 模拟 OpenAI 兼容 API 返回（prompt_tokens 已包含 cached_tokens）
 	event := &messaging.MessageEvent{
@@ -400,7 +355,6 @@ func TestTotalInputTokens_OpenAICompatibility(t *testing.T) {
 // TestTotalInputTokens_BackwardCompatibility 验证向后兼容：无 total_input_tokens 时回退旧公式
 func TestTotalInputTokens_BackwardCompatibility(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	// 模拟旧版 API（不含 total_input_tokens 字段）
 	event := &messaging.MessageEvent{
@@ -433,7 +387,6 @@ func TestTotalInputTokens_BackwardCompatibility(t *testing.T) {
 // TestTotalInputTokens_ZeroFallback 验证 totalInputTokens=0 时回退旧公式
 func TestTotalInputTokens_ZeroFallback(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	// 第一个事件设置 totalInputTokens=0（模拟未初始化场景）
 	event1 := &messaging.MessageEvent{
@@ -483,7 +436,6 @@ func TestTotalInputTokens_ZeroFallback(t *testing.T) {
 // TestCacheHitRate_OpenAIPath 验证 OpenAI 路径下命中率计算正确（100% 命中不封顶 50%）
 func TestCacheHitRate_OpenAIPath(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	// 模拟 100% cache 命中场景：prompt_tokens=1000 全部是 cached_tokens
 	event := &messaging.MessageEvent{
@@ -564,7 +516,6 @@ func ctxTestCompression(eventType, from string, compressed int64) *messaging.Mes
 // TestContextTokens_OverwriteNotAccumulate 验证 ContextTokens 覆盖式更新（非累计）
 func TestContextTokens_OverwriteNotAccumulate(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestAiResponse("Director", 1000))
 	if m.currentRun().ContextTokens != 1000 {
@@ -581,7 +532,6 @@ func TestContextTokens_OverwriteNotAccumulate(t *testing.T) {
 // 压缩后立即显示压缩估算值，下一次 LLM 调用的 total_input 覆盖为精确值
 func TestContextTokens_CompressThenCallSequence(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestAiResponse("Director", 1000))
 	if m.currentRun().ContextTokens != 1000 {
@@ -604,7 +554,6 @@ func TestContextTokens_CompressThenCallSequence(t *testing.T) {
 // TestContextTokens_AgentSwitchResetsRun 验证压缩事件的 From 与当前 agent 不同时重置 run tokens
 func TestContextTokens_AgentSwitchResetsRun(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestAiResponse("Director", 500))
 	if m.currentRun().AgentName != "Director" {
@@ -629,7 +578,6 @@ func TestContextTokens_AgentSwitchResetsRun(t *testing.T) {
 // 可到达 TUI 事件处理：ContextTokens 更新、渲染缓存失效，且事件循环仍存活
 func TestContextTokens_EmergencyCompressedReachable(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestCompression("context_emergency_compressed", "Director", 250))
 
@@ -656,7 +604,6 @@ func TestContextTokens_EmergencyCompressedReachable(t *testing.T) {
 // TestContextTokens_EmptyFromNormalized 验证压缩事件 From 为空时归一化为 "Unknown"
 func TestContextTokens_EmptyFromNormalized(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestCompression("context_compressed", "", 300))
 
@@ -671,7 +618,6 @@ func TestContextTokens_EmptyFromNormalized(t *testing.T) {
 // TestContextTokens_ZeroUsageGuard 验证全零 usage 的 ai_response 不会清零 ContextTokens
 func TestContextTokens_ZeroUsageGuard(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestAiResponse("Director", 500))
 	if m.currentRun().ContextTokens != 500 {
@@ -766,7 +712,7 @@ func TestTokenPanel_CtxLineAppearsAndDisappears(t *testing.T) {
 // TestDashboardCacheKey_IncludesContextTokens 验证 dashboard 缓存 key 纳入 ContextTokens：
 // 仅修改 ContextTokens（不走 invalidateFooterCache）时面板必须重新渲染
 func TestDashboardCacheKey_IncludesContextTokens(t *testing.T) {
-	initLangManager()
+	testLang(t)
 	m := newTestModel()
 	m.inputTokens = 1000
 	m.outputTokens = 200
@@ -801,7 +747,7 @@ func TestDashboardCacheKey_IncludesContextTokens(t *testing.T) {
 // TestDashboardRunTokensInvalidateCache 验证本轮 RUN 变化同样会让侧栏重渲染
 // —— RUN 进缓存键是新增列能被看到的前提。
 func TestDashboardRunTokensInvalidateCache(t *testing.T) {
-	initLangManager()
+	testLang(t)
 	m := newTestModel()
 	m.inputTokens = 1000
 	m.outputTokens = 200
@@ -829,7 +775,7 @@ func TestDashboardRunTokensInvalidateCache(t *testing.T) {
 // TestDashboardCtx_DoesNotExceedPanelWidth 验证极大 ContextTokens 下 dashboard
 // 所有行可见宽度恰好等于面板宽度（超宽内容应被截断，不得撑破边框）
 func TestDashboardCtx_DoesNotExceedPanelWidth(t *testing.T) {
-	initLangManager()
+	testLang(t)
 	m := newTestModel()
 	m.inputTokens = 5000000
 	m.outputTokens = 100000

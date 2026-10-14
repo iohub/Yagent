@@ -160,25 +160,38 @@ func TestSurface_MaterializeUnknownNames(t *testing.T) {
 	}
 }
 
-// 预算降级：预算极紧时把 Warm 里声明最大的工具降成 Cold，但绝不碰 Hot。
+// 预算降级：预算极紧时把 Warm 工具降成 Cold，但绝不碰 Hot。
 func TestSurface_BudgetDemotesWarmOnly(t *testing.T) {
 	before := tools.NewSurface(toolspec.ProfileCoding, codingDeps(), tools.SurfaceOptions{Deferred: true})
-	warmCount := 0
+	warm := map[string]bool{}
 	for _, name := range before.Names() {
 		if before.Tier(name) == toolspec.Warm {
-			warmCount++
+			warm[name] = true
 		}
 	}
-	if warmCount == 0 {
-		t.Skip("画像里已无 Warm 工具，预算降级路径需要新 fixture")
+	if len(warm) == 0 {
+		// 画像里一个 Warm 工具都没有，降级路径就没人覆盖了 —— 静默跳过比失败更糟。
+		t.Fatal("ProfileCoding 里没有 Warm 工具：本测试失去意义，请更新 fixture 或删除它")
 	}
 
 	after := deferredSurface(t, 1) // 1 token 预算，必然触发降级
-	for _, name := range after.Names() {
-		if after.Tier(name) == toolspec.Hot && before.Tier(name) == toolspec.Hot {
-			continue
+
+	demoted := 0
+	for name := range warm {
+		switch after.Tier(name) {
+		case toolspec.Cold:
+			demoted++
+		case toolspec.Hot:
+			t.Errorf("%s 从 Warm 被提到 Hot，不该发生", name)
 		}
-		if after.Tier(name) == toolspec.Hot {
+	}
+	if demoted == 0 {
+		t.Errorf("预算=1 时没有任何 Warm 工具被降级（Warm 共 %d 个）", len(warm))
+	}
+
+	// 降级只动 Warm：原本 Hot 的必须还是 Hot。
+	for _, name := range after.Names() {
+		if before.Tier(name) != toolspec.Hot && after.Tier(name) == toolspec.Hot {
 			t.Errorf("%s 从 %v 被提到 Hot，不该发生", name, before.Tier(name))
 		}
 	}
@@ -187,9 +200,6 @@ func TestSurface_BudgetDemotesWarmOnly(t *testing.T) {
 		if after.Tier(name) != toolspec.Hot {
 			t.Errorf("%s 被降级成 %v：收尾/写操作工具不能依赖额外一次往返", name, after.Tier(name))
 		}
-	}
-	if before.Tier("micro_agent") == toolspec.Warm && after.Tier("micro_agent") == toolspec.Hot {
-		t.Error("预算紧张时不应把 Warm 提回 Hot")
 	}
 }
 

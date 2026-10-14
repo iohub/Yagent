@@ -170,6 +170,14 @@ func TestRepoMemoryStore_Concurrent_Safe(t *testing.T) {
 
 	<-done
 	<-done
+
+	// 只靠 -race 的话这个测试在本地跑等于什么都不检查：
+	// 写入方最后一条 Save 与这里之间由 done channel 建立 happens-before，
+	// 所以终态必须可预期，且不能出现读到半个内容的撕裂状态。
+	const want = "## Architecture\n- Content"
+	if got := store.Get(); got != want {
+		t.Errorf("final content = %q, want %q", got, want)
+	}
 }
 
 // ============================================================================
@@ -200,29 +208,49 @@ func TestEnforceTokenBudget_OverBudget_Truncated(t *testing.T) {
 }
 
 func TestEnforceTokenBudget_TruncatesAtSectionBoundary(t *testing.T) {
-	var sb strings.Builder
-	sb.WriteString("## Architecture\n")
-	for i := 0; i < 30; i++ {
-		sb.WriteString("- Item with some text to make lines longer. ")
+	section := func(title, item string, n int) string {
+		var sb strings.Builder
+		sb.WriteString("## " + title + "\n")
+		for i := 0; i < n; i++ {
+			sb.WriteString(item)
+		}
+		sb.WriteString("\n")
+		return sb.String()
 	}
-	sb.WriteString("\n## Patterns\n")
-	for i := 0; i < 30; i++ {
-		sb.WriteString("- Another item with text. ")
+	longContent := section("Architecture", "- Item with some text to make lines longer. ", 150) +
+		section("Patterns", "- Another item with text to fill budget. ", 150) +
+		section("Conventions", "- Yet another convention line worth keeping. ", 150)
+
+	// 前置条件：fixture 必须真的超预算，否则本测试会像历史上那样静默通过
+	if got := EstimateTokens(longContent); got <= MaxMemoryTokens {
+		t.Fatalf("fixture must exceed MaxMemoryTokens=%d to exercise truncation, got %d", MaxMemoryTokens, got)
 	}
-	sb.WriteString("\n## Conventions\n")
-	for i := 0; i < 30; i++ {
-		sb.WriteString("- Yet another item. ")
-	}
-	longContent := sb.String()
 
 	result := EnforceTokenBudget(longContent)
 
-	// Verify result is within budget using character-based estimation
-	estimatedTokens := EstimateTokens(result)
-	if estimatedTokens > MaxMemoryTokens {
-		t.Errorf("result has ~%d tokens (estimated), exceeds max %d", estimatedTokens, MaxMemoryTokens)
+	if got := EstimateTokens(result); got > MaxMemoryTokens {
+		t.Fatalf("result still over budget: %d tokens, max %d", got, MaxMemoryTokens)
 	}
-	// Result should end with a section boundary (##) or within budget
+	if len(result) >= len(longContent) {
+		t.Fatal("result was not truncated at all")
+	}
+	// 只能整段丢弃：结果必须是原内容的前缀，且切点必须落在下一个 "## " 之前
+	if !strings.HasPrefix(longContent, result) {
+		t.Fatalf("budget enforcement must drop whole tail sections, not rewrite the head")
+	}
+	if rest := longContent[len(result):]; !strings.HasPrefix(rest, "## ") {
+		t.Errorf("cut must land on a section boundary, remainder starts with %q", firstLineOf(rest))
+	}
+	if strings.Count(result, "## ") >= strings.Count(longContent, "## ") {
+		t.Error("no section was dropped")
+	}
+}
+
+func firstLineOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // ============================================================================
@@ -230,11 +258,37 @@ func TestEnforceTokenBudget_TruncatesAtSectionBoundary(t *testing.T) {
 // ============================================================================
 
 func TestEstimateTokens(t *testing.T) {
-	text := "Hello, world!"
-	tokens := EstimateTokens(text)
-	if tokens <= 0 {
-		t.Errorf("expected positive token count, got %d", tokens)
+	tests := []struct {
+		name  string
+		input string
+		want  int // -1 = 只要求 > 0
+	}{
+		{"empty is zero", "", 0},
+		{"ascii", "Hello, world!", -1},
+		{"cjk not swallowed", "仓库记忆整理", -1},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := EstimateTokens(tc.input)
+			if tc.want == 0 {
+				if got != 0 {
+					t.Errorf("EstimateTokens(%q) = %d, want 0", tc.input, got)
+				}
+				return
+			}
+			if got <= 0 {
+				t.Errorf("EstimateTokens(%q) = %d, want > 0", tc.input, got)
+			}
+		})
+	}
+
+	t.Run("longer text is never cheaper", func(t *testing.T) {
+		short := EstimateTokens("one two three")
+		long := EstimateTokens("one two three four five six seven eight nine ten")
+		if long <= short {
+			t.Errorf("long=%d must exceed short=%d", long, short)
+		}
+	})
 }
 
 // ============================================================================
@@ -302,56 +356,5 @@ func TestTruncateObservations_Long_Truncated(t *testing.T) {
 	}
 	if !strings.HasSuffix(result, "\n...(truncated)") {
 		t.Error("truncated text should end with truncation marker")
-	}
-}
-
-// ============================================================================
-// Test NewRepoMemoryStore
-// ============================================================================
-
-func TestNewRepoMemoryStore(t *testing.T) {
-	shared := memory.NewSharedMemory(100)
-	store := NewRepoMemoryStore("my-project", shared)
-	if store == nil {
-		t.Fatal("expected non-nil store")
-	}
-	if store.repoID != "my-project" {
-		t.Errorf("expected repoID 'my-project', got %q", store.repoID)
-	}
-	if store.shared != shared {
-		t.Error("shared memory reference mismatch")
-	}
-}
-
-func TestRepoMemoryStore_Load_Failure_DoesNotPanic(t *testing.T) {
-	// Test that Load handles errors gracefully
-	shared := memory.NewSharedMemory(100)
-	store := NewRepoMemoryStore("test-repo", shared)
-
-	// Multiple loads should be safe
-	if err := store.Load(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Load(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestAllMemorySections_AllPresent(t *testing.T) {
-	if len(AllMemorySections) != 6 {
-		t.Errorf("expected 6 sections, got %d", len(AllMemorySections))
-	}
-	expected := []MemorySection{
-		SectionArchitecture,
-		SectionPatterns,
-		SectionConventions,
-		SectionDependencies,
-		SectionGotchas,
-		SectionKeyFiles,
-	}
-	for i, s := range AllMemorySections {
-		if s != expected[i] {
-			t.Errorf("position %d: expected %q, got %q", i, expected[i], s)
-		}
 	}
 }

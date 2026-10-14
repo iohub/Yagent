@@ -70,8 +70,8 @@ func spyIndexOf(events []spyEvent, evType, callID string) int {
 
 // ─── 工具构造 ────────────────────────────────────────────────────────────────
 
-// newReadOnlyTestAdapter 具名只读测试工具:记录并发峰值、可选按序取消 ctx
-func newReadOnlyTestAdapter(t *testing.T, name string, delay time.Duration, ret string, cur, maxCur *atomic.Int64, cancelFn context.CancelFunc) *tools.Adapter {
+// newReadOnlyTestAdapter 具名只读测试工具:记录并发峰值
+func newReadOnlyTestAdapter(t *testing.T, name string, delay time.Duration, ret string, cur, maxCur *atomic.Int64) *tools.Adapter {
 	t.Helper()
 	return tools.NewAdapter(name, "read-only test tool", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		if cur != nil && maxCur != nil {
@@ -84,20 +84,14 @@ func newReadOnlyTestAdapter(t *testing.T, name string, delay time.Duration, ret 
 			}
 			defer cur.Add(-1)
 		}
-		if name == "ro_first" && cancelFn != nil {
-			cancelFn()
-		}
 		time.Sleep(delay)
 		return ret, nil
 	}).WithReadOnly(true)
 }
 
 // newBlockingReadOnly 阻塞直到 ctx 取消的只读工具
-func newBlockingReadOnly(name string, cancelFn context.CancelFunc) *tools.Adapter {
+func newBlockingReadOnly(name string) *tools.Adapter {
 	return tools.NewAdapter(name, "blocking read-only", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		if cancelFn != nil {
-			cancelFn()
-		}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}).WithReadOnly(true)
@@ -199,9 +193,9 @@ func TestRunAgentLoop_ReadOnlyBatch_ParallelEvidence(t *testing.T) {
 	// 共享并发计量器:三个工具都经闭包引用同一组 atomic
 	var cur, maxCur atomic.Int64
 	ads := []*tools.Adapter{
-		newReadOnlyTestAdapter(t, "ro_a", 60*time.Millisecond, "a", &cur, &maxCur, nil),
-		newReadOnlyTestAdapter(t, "ro_b", 60*time.Millisecond, "b", &cur, &maxCur, nil),
-		newReadOnlyTestAdapter(t, "ro_c", 60*time.Millisecond, "c", &cur, &maxCur, nil),
+		newReadOnlyTestAdapter(t, "ro_a", 60*time.Millisecond, "a", &cur, &maxCur),
+		newReadOnlyTestAdapter(t, "ro_b", 60*time.Millisecond, "b", &cur, &maxCur),
+		newReadOnlyTestAdapter(t, "ro_c", 60*time.Millisecond, "c", &cur, &maxCur),
 	}
 
 	mockResponses := []*llm.Response{
@@ -246,9 +240,9 @@ func TestRunAgentLoop_ReadOnlyBatch_ParallelEvidence(t *testing.T) {
 func TestRunAgentLoop_ReadOnlyBatch_OrderPreserved(t *testing.T) {
 	// 注意:delay 使完成顺序与提交顺序错乱(c1 最慢、c3 最快)
 	ads := []*tools.Adapter{
-		newReadOnlyTestAdapter(t, "ro_search", 90*time.Millisecond, "s-result", nil, nil, nil),
-		newReadOnlyTestAdapter(t, "ro_list", 45*time.Millisecond, "l-result", nil, nil, nil),
-		newReadOnlyTestAdapter(t, "ro_tree", 5*time.Millisecond, "t-result", nil, nil, nil),
+		newReadOnlyTestAdapter(t, "ro_search", 90*time.Millisecond, "s-result", nil, nil),
+		newReadOnlyTestAdapter(t, "ro_list", 45*time.Millisecond, "l-result", nil, nil),
+		newReadOnlyTestAdapter(t, "ro_tree", 5*time.Millisecond, "t-result", nil, nil),
 	}
 
 	w, err := memory.NewRolloutWriter("order-test-agent", "task-order-test", "parallel-readonly-test")
@@ -312,14 +306,14 @@ func toolMessagesFromResult(r ExecutorResult) []llm.Message {
 // ═══ T4 混合批 [R1,R2,W,R3] 事件分段证据 ═══
 
 func TestRunAgentLoop_MixedBatch_EventSegmentation(t *testing.T) {
-	roR1 := newReadOnlyTestAdapter(t, "ro_r1", 40*time.Millisecond, "r1", nil, nil, nil)
-	roR2 := newReadOnlyTestAdapter(t, "ro_r2", 40*time.Millisecond, "r2", nil, nil, nil)
+	roR1 := newReadOnlyTestAdapter(t, "ro_r1", 40*time.Millisecond, "r1", nil, nil)
+	roR2 := newReadOnlyTestAdapter(t, "ro_r2", 40*time.Millisecond, "r2", nil, nil)
 	// 写类工具:未标记只读 → 原位串行元素
 	writeTool := tools.NewAdapter("create_file", "write tool", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		time.Sleep(20 * time.Millisecond)
 		return "w-done", nil
 	})
-	roR3 := newReadOnlyTestAdapter(t, "ro_r3", 5*time.Millisecond, "r3", nil, nil, nil)
+	roR3 := newReadOnlyTestAdapter(t, "ro_r3", 5*time.Millisecond, "r3", nil, nil)
 
 	mockResponses := []*llm.Response{
 		newToolResponse(
@@ -396,17 +390,14 @@ func assertNoGoroutineLeak(t *testing.T, before int) {
 	t.Fatalf("goroutine leak suspected: before=%d after=%d", before, runtime.NumGoroutine())
 }
 
-// unusedFmt 引用占位(保持 fmt 导入)
-var _ = fmt.Sprintf
-
 // ═══ T5 [R1, agent_exit, R2]:R1 落账、exit 落账后立即 return、R2 不落账 ═══
 
 func TestRunAgentLoop_AgentExitStopsAfterFlush(t *testing.T) {
-	r1 := newReadOnlyTestAdapter(t, "ro_r1", 10*time.Millisecond, "r1-done", nil, nil, nil)
+	r1 := newReadOnlyTestAdapter(t, "ro_r1", 10*time.Millisecond, "r1-done", nil, nil)
 	exitTool := tools.NewAdapter("agent_exit", "exit", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		return "exited: task complete", nil
 	})
-	r2 := newReadOnlyTestAdapter(t, "ro_r2", 10*time.Millisecond, "r2-done", nil, nil, nil)
+	r2 := newReadOnlyTestAdapter(t, "ro_r2", 10*time.Millisecond, "r2-done", nil, nil)
 
 	mockResponses := []*llm.Response{newToolResponse(
 		makeCall("c1", "ro_r1"),
@@ -475,7 +466,7 @@ func TestRunAgentLoop_FailureIsolation(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		return nil, fmt.Errorf("boom")
 	}).WithReadOnly(true)
-	rok := newReadOnlyTestAdapter(t, "ro_ok", 5*time.Millisecond, "ok-result", nil, nil, nil)
+	rok := newReadOnlyTestAdapter(t, "ro_ok", 5*time.Millisecond, "ok-result", nil, nil)
 
 	mockResponses := []*llm.Response{
 		newToolResponse(makeCall("c1", "ro_err"), makeCall("c2", "ro_ok")),
@@ -521,7 +512,7 @@ func TestRunAgentLoop_ParentCancel_AllCallsAccounted(t *testing.T) {
 	var calls []llm.ToolCall
 	for idx, n := range names {
 		calls = append(calls, makeCall(fmt.Sprintf("c%d", idx+1), n))
-		ads = append(ads, newBlockingReadOnly(n, nil))
+		ads = append(ads, newBlockingReadOnly(n))
 	}
 
 	// 取消必须来自批次外部：toolbatch 不保证组内启动顺序，若把 cancel 放进某个工具，
@@ -564,9 +555,7 @@ func TestRunAgentLoop_ParentCancel_AllCallsAccounted(t *testing.T) {
 
 func TestRunAgentLoop_ToolTimeoutMessage(t *testing.T) {
 	// 注入短超时 seam(默认 180s 太长无法在测试内触发)
-	old := defaultToolTimeout
-	defaultToolTimeout = 80 * time.Millisecond
-	defer func() { defaultToolTimeout = old }()
+	restoreToolTimeout(t, 80*time.Millisecond)
 
 	// 工具阻塞等待 ctx.Done → DeadlineExceeded → 固定文案
 	adapter := tools.NewAdapter("slow_ro", "slow read-only", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -607,7 +596,7 @@ func TestRunAgentLoop_ThrottleSixReadOnlyMaxTwo(t *testing.T) {
 	var ads []*tools.Adapter
 	names := []string{"ro_a", "ro_b", "ro_c", "ro_d", "ro_e", "ro_f"}
 	for _, n := range names {
-		ads = append(ads, newReadOnlyTestAdapter(t, n, 15*time.Millisecond, "ok", &cur, &maxCur, nil))
+		ads = append(ads, newReadOnlyTestAdapter(t, n, 15*time.Millisecond, "ok", &cur, &maxCur))
 	}
 	var calls []llm.ToolCall
 	for i, n := range names {
@@ -639,7 +628,7 @@ func TestRunAgentLoop_KillSwitchMaxOneIsFullySerial(t *testing.T) {
 	names := []string{"ro_a", "ro_b", "ro_c", "ro_d", "ro_e", "ro_f"}
 	var ads []*tools.Adapter
 	for _, n := range names {
-		ads = append(ads, newReadOnlyTestAdapter(t, n, 5*time.Millisecond, "ok", nil, nil, nil))
+		ads = append(ads, newReadOnlyTestAdapter(t, n, 5*time.Millisecond, "ok", nil, nil))
 	}
 	var calls []llm.ToolCall
 	for i, id := range ids {
@@ -689,4 +678,3 @@ func TestRunAgentLoop_KillSwitchMaxOneIsFullySerial(t *testing.T) {
 		}
 	}
 }
-

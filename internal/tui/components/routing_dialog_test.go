@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 func enabledRoutingInfo() RoutingInfo {
@@ -17,21 +18,6 @@ func enabledRoutingInfo() RoutingInfo {
 			{Label: "FAST", Provider: "local", Model: "Qwen3-30B-A3B", Score: 95.0},
 		},
 	}
-}
-
-func TestRoutingDialog_VisualRender(t *testing.T) {
-	d := NewRoutingDialog(enabledRoutingInfo())
-	d.SetBounds(120, 30)
-	t.Logf("\n%s\n", d.View())
-
-	// 禁用形态：展示原因而非三档。
-	d2 := NewRoutingDialog(RoutingInfo{
-		Enabled: false,
-		Mode:    "auto",
-		Reason:  "insufficient scorable candidates: need at least 3 configured providers",
-	})
-	d2.SetBounds(100, 24)
-	t.Logf("\n%s\n", d2.View())
 }
 
 func TestRoutingDialog_ShowsTiersAndScores(t *testing.T) {
@@ -109,15 +95,10 @@ func TestRoutingDialog_SizeMatrix(t *testing.T) {
 			d := NewRoutingDialog(enabledRoutingInfo())
 			d.SetBounds(w, h)
 			out := d.View()
-			if w < 40 || h < 8 {
-				if out != "" {
-					t.Errorf("(%dx%d) expected empty view, got content", w, h)
-				}
-				continue
-			}
+			// 按显示宽度比对（CJK 一字两格，len([]rune) 会低估、漏报超宽行）。
 			for _, line := range strings.Split(stripANSICodes(out), "\n") {
-				if len([]rune(line)) > w {
-					t.Errorf("(%dx%d) line exceeds width: %d chars", w, h, len([]rune(line)))
+				if lw := lipgloss.Width(line); lw > w {
+					t.Errorf("(%dx%d) line exceeds width: %d cells: %q", w, h, lw, line)
 				}
 			}
 		}

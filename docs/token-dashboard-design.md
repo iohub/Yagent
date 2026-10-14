@@ -462,7 +462,7 @@ go test ./internal/tui/... -count=1                   # 秒级
 | `TestDashboardBorder_*`（4 个） | `tui_dashboard_border_test.go:21 / :102 / :159 / :214` | fixture 里的 `inputTokens/outputTokens` 需补 `totalInputTokens` 与新 map |
 | `tui_resume_restore_test.go:351-387` | | `:387` 断言 `renderTokenDashboard()` 含 `592.7k` ⇒ 改调新渲染器 |
 
-**必须保持绿且不改语义**的：`TestTokenCounting_OnlyAiResponseCounts`(`:16`)、`_AiResponseAccumulates`(`:49`)、`_CurrentAgentReset`(`:140`)、`_EmptyContentNotOverwriteStream`(`:207`)、`TestContextTokens_*`(`:570-707`)、`TestTotalInputTokens_*`(`:358/:411/:444`)、`TestCacheHitRate_OpenAIPath`(`:494`)、`TestContextWindowFromCfg_CatalogFallback`(`:876`)。其中 `TestTokenCounting_CurrentAgentReset` 与 `TestContextTokens_AgentSwitchResetsRun` 的**期望值会变**（RUN 不再在 agent 切换时清零，而是各 agent 独立保留），改之前先读懂它们钉的是哪条语义，并在 PR 描述里写明。
+**必须保持绿且不改语义**的：`TestTokenCounting_OnlyAiResponseCounts`(`:16`)、`_AiResponseAccumulates`(`:49`)、`_CurrentAgentReset`(`:140`)、`TestContextTokens_*`(`:570-707`)、`TestTotalInputTokens_*`(`:358/:411/:444`)、`TestCacheHitRate_OpenAIPath`(`:494`)、`TestContextWindowFromCfg_CatalogFallback`(`:876`)。（原列于此的 `_EmptyContentNotOverwriteStream`(`:207`) 已于 2026-10-14 单测整理中删除：它只重复 `:49` 已钉的计数器，"空块不覆盖流式内容"这条真正的契约由 `tui_last_message_markdown_test.go` 的 `TestAIResponse_ShortStreamFlushedOnEnd` 钉住。）其中 `TestTokenCounting_CurrentAgentReset` 与 `TestContextTokens_AgentSwitchResetsRun` 的**期望值会变**（RUN 不再在 agent 切换时清零，而是各 agent 独立保留），改之前先读懂它们钉的是哪条语义，并在 PR 描述里写明。
 
 ### 10.2 新增测试（已落地）
 

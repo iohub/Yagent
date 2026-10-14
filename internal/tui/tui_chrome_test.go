@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -10,12 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
-
-var ansiStripper = regexp.MustCompile(`\x1b\[[0-9;]*m`)
-
-func stripANSIForChrome(s string) string {
-	return ansiStripper.ReplaceAllString(s, "")
-}
 
 // chromeTestModel 构造一个可以完整跑 View() 的模型：输入框、viewport 与
 // 生产环境同源（newTaskInput / bindViewportHooks），只是不接后端。
@@ -68,7 +61,7 @@ func TestStatusBar_WidthIsExact(t *testing.T) {
 			bar := m.renderAirlineStatusBar()
 			if got := lipgloss.Width(bar); got != w {
 				t.Errorf("width=%d mode=%s: status bar width = %d, want %d\n%s",
-					w, mode.name, got, w, stripANSIForChrome(bar))
+					w, mode.name, got, w, stripANSI(bar))
 			}
 			if n := len(strings.Split(bar, "\n")); n != 1 {
 				t.Errorf("width=%d mode=%s: status bar has %d lines, want 1", w, mode.name, n)
@@ -83,14 +76,14 @@ func TestStatusBar_ModeSemantics(t *testing.T) {
 
 	m.commandMode = true
 	if got := m.renderAirlineStatusBar(); !strings.Contains(got, "NORMAL") {
-		t.Errorf("command mode should render NORMAL:\n%s", stripANSIForChrome(got))
+		t.Errorf("command mode should render NORMAL:\n%s", stripANSI(got))
 	}
 
 	m.commandMode = false
 	m.taskRunning = false
 	m.taskCancelled = false
 	if got := m.renderAirlineStatusBar(); !strings.Contains(got, "INSERT") {
-		t.Errorf("edit mode should render INSERT:\n%s", stripANSIForChrome(got))
+		t.Errorf("edit mode should render INSERT:\n%s", stripANSI(got))
 	}
 }
 
@@ -102,7 +95,7 @@ func TestStatusBar_SearchProgress(t *testing.T) {
 
 	bar := m.renderAirlineStatusBar()
 	if !strings.Contains(bar, "[1/2]") {
-		t.Errorf("status bar should show search progress [1/2]:\n%s", stripANSIForChrome(bar))
+		t.Errorf("status bar should show search progress [1/2]:\n%s", stripANSI(bar))
 	}
 
 	m.searchStep(1)
@@ -111,7 +104,7 @@ func TestStatusBar_SearchProgress(t *testing.T) {
 	}
 
 	m.clearSearch()
-	if strings.Contains(stripANSIForChrome(m.renderAirlineStatusBar()), "[") {
+	if strings.Contains(stripANSI(m.renderAirlineStatusBar()), "[") {
 		t.Error("cleared search should not leave a progress chip")
 	}
 }
@@ -143,11 +136,11 @@ func TestPanelChrome_RowsAlign(t *testing.T) {
 			for i, line := range lines {
 				if got := lipgloss.Width(line); got != want {
 					t.Errorf("w=%d case=%s line %d: width = %d, want %d\n%q",
-						w, tc.name, i, got, want, stripANSIForChrome(line))
+						w, tc.name, i, got, want, stripANSI(line))
 				}
 			}
-			top := stripANSIForChrome(lines[0])
-			bottom := stripANSIForChrome(lines[len(lines)-1])
+			top := stripANSI(lines[0])
+			bottom := stripANSI(lines[len(lines)-1])
 			if !strings.HasPrefix(top, "╭") || !strings.HasSuffix(top, "╮") {
 				t.Errorf("w=%d case=%s: top row not rounded: %q", w, tc.name, top)
 			}
@@ -169,7 +162,7 @@ func TestCmdline_VisibleBuffer(t *testing.T) {
 	}
 
 	m.commandBuffer = ":help"
-	out := stripANSIForChrome(m.renderCmdlinePanel())
+	out := stripANSI(m.renderCmdlinePanel())
 	if h := len(strings.Split(out, "\n")); h != 3 {
 		t.Errorf("active buffer should open a 3-row cmdline, got %d rows\n%s", h, out)
 	}
@@ -181,7 +174,7 @@ func TestCmdline_VisibleBuffer(t *testing.T) {
 	}
 
 	m.commandBuffer = "/错误处理"
-	out = stripANSIForChrome(m.renderCmdlinePanel())
+	out = stripANSI(m.renderCmdlinePanel())
 	if !strings.Contains(out, "/错误处理") {
 		t.Errorf("cmdline must show multibyte input:\n%s", out)
 	}
@@ -298,12 +291,12 @@ func TestView_ExactHeight(t *testing.T) {
 			if len(lines) != sz.h {
 				t.Errorf("w=%d h=%d mode=%s: view has %d lines, want %d\n----\n%s----",
 					sz.w, sz.h, mode.name, len(lines), sz.h,
-					truncateForTest(stripANSIForChrome(view.Content)))
+					truncateForTest(stripANSI(view.Content)))
 			}
 			for i, line := range lines {
 				if got := lipgloss.Width(line); got > sz.w {
 					t.Errorf("w=%d h=%d mode=%s line %d overflows: width=%d\n%q",
-						sz.w, sz.h, mode.name, i, got, stripANSIForChrome(line))
+						sz.w, sz.h, mode.name, i, got, stripANSI(line))
 				}
 			}
 		}
@@ -324,13 +317,13 @@ func TestEditorCursorCoordinate(t *testing.T) {
 	m.input.SetValue("first\nsecond")
 	m.input.MoveToBegin()
 
-	out := stripANSIForChrome(m.renderEditorPanel())
+	out := stripANSI(m.renderEditorPanel())
 	if !strings.Contains(out, "1:1") {
 		t.Errorf("top border should show 1:1 at buffer start:\n%s", out)
 	}
 
 	m.input.MoveToEnd()
-	out = stripANSIForChrome(m.renderEditorPanel())
+	out = stripANSI(m.renderEditorPanel())
 	if !strings.Contains(out, "2:7") {
 		t.Errorf("top border should show 2:7 at buffer end:\n%s", out)
 	}
@@ -614,7 +607,7 @@ func TestView_ExactHeightWithPanels(t *testing.T) {
 				for i, line := range lines {
 					if got := lipgloss.Width(line); got > sz.w {
 						t.Errorf("w=%d h=%d variant=%s line %d overflows to %d: %q",
-							sz.w, sz.h, label, i, got, stripANSIForChrome(line))
+							sz.w, sz.h, label, i, got, stripANSI(line))
 					}
 				}
 			}
@@ -646,7 +639,7 @@ func TestChrome_InfoLineRenders(t *testing.T) {
 		t.Error("empty infoMsg should render nothing")
 	}
 	m.setInfoMsg("cannot do that")
-	got := stripANSIForChrome(m.renderInfoLine())
+	got := stripANSI(m.renderInfoLine())
 	if !strings.Contains(got, "cannot do that") || !strings.Contains(got, "ℹ") {
 		t.Errorf("info line should render with a marker, got %q", got)
 	}
@@ -667,7 +660,7 @@ func tabTestModel(t *testing.T, w, h int) *model {
 // TestTabBar_GlobalKeycaps 模型/路由的提示挂在 tab 行右端，与 ctrl+t、alt+w 同行。
 func TestTabBar_GlobalKeycaps(t *testing.T) {
 	m := tabTestModel(t, 140, 40)
-	row := stripANSIForChrome(m.renderTabBar())
+	row := stripANSI(m.renderTabBar())
 	for _, key := range []string{"ctrl+t", "alt+w", "alt+m", "alt+r"} {
 		if !strings.Contains(row, key) {
 			t.Errorf("tab row should advertise %s, got %q", key, row)
@@ -679,7 +672,7 @@ func TestTabBar_GlobalKeycaps(t *testing.T) {
 		t.Errorf("tab row should advertise alt+d while the dashboard is hidden, got %q", row)
 	}
 	m.inputTokens = 1000
-	if strings.Contains(stripANSIForChrome(m.renderTabBar()), "alt+d") {
+	if strings.Contains(stripANSI(m.renderTabBar()), "alt+d") {
 		t.Error("dashboard header already shows alt+d; the tab row should not repeat it")
 	}
 }
@@ -693,7 +686,7 @@ func TestTabBar_KeycapsDegradeByPrefix(t *testing.T) {
 		for i := 2; i <= 4; i++ {
 			m.sessionTabs = append(m.sessionTabs, m.newSessionTab(i, m.generateTabTitle(i)))
 		}
-		row := stripANSIForChrome(m.renderTabBar())
+		row := stripANSI(m.renderTabBar())
 
 		seen := -1
 		for i, key := range order {
@@ -716,7 +709,7 @@ func TestTabBar_WidthMatrix(t *testing.T) {
 			t.Errorf("width=%d: tab row has %d lines, want 1", w, n)
 		}
 		if got := lipgloss.Width(row); got > w {
-			t.Errorf("width=%d: tab row width = %d, want <= %d\n%s", w, got, w, stripANSIForChrome(row))
+			t.Errorf("width=%d: tab row width = %d, want <= %d\n%s", w, got, w, stripANSI(row))
 		}
 	}
 }
@@ -740,7 +733,7 @@ func TestStatusBar_CarriesNoKeyHints(t *testing.T) {
 		{"cancelled", false, false, true},
 	} {
 		m.commandMode, m.taskRunning, m.taskCancelled = mode.commandMode, mode.taskRunning, mode.taskCancelled
-		bar := stripANSIForChrome(m.renderAirlineStatusBar())
+		bar := stripANSI(m.renderAirlineStatusBar())
 		for _, unwanted := range []string{"alt+", "ctrl+", "token", "timeline"} {
 			if strings.Contains(bar, unwanted) {
 				t.Errorf("%s: status bar should not contain %q, got %q", mode.name, unwanted, bar)
@@ -756,26 +749,45 @@ func TestPanelHints_CtrlLOrdering(t *testing.T) {
 	prev := langManager.currentLang
 	t.Cleanup(func() { langManager.SetLanguage(prev) })
 
-	lastMotion := map[Language]string{LangChinese: "i 编辑", LangEnglish: "i edit"}
+	// 提示栏是 " · " 分隔的键帽段，说明文字才是翻译内容 —— 只按键帽比较顺序，
+	// 不钉措辞（措辞是装饰性的，改词不该红）。
+	keycaps := func(s string) []string {
+		var caps []string
+		for _, seg := range strings.Split(s, "·") {
+			if fields := strings.Fields(seg); len(fields) > 0 {
+				caps = append(caps, fields[0])
+			}
+		}
+		return caps
+	}
+	pos := func(caps []string, want string) int {
+		for i, c := range caps {
+			if c == want {
+				return i
+			}
+		}
+		return -1
+	}
+
 	for _, lang := range []Language{LangChinese, LangEnglish} {
 		langManager.SetLanguage(lang)
 
-		editor := langManager.GetText("EditorHintEdit")
-		li, hi := strings.Index(editor, "ctrl+l"), strings.Index(editor, "ctrl+h")
+		editor := keycaps(langManager.GetText("EditorHintEdit"))
+		li, hi := pos(editor, "ctrl+l"), pos(editor, "ctrl+h")
 		if li < 0 || hi < 0 {
 			t.Fatalf("lang=%s: editor hint bar should carry both toggles, got %q", lang, editor)
 		}
 		if li > hi {
-			t.Errorf("lang=%s: ctrl+l must precede ctrl+h, got %q", lang, editor)
+			t.Errorf("lang=%s: ctrl+l must precede ctrl+h, got %v", lang, editor)
 		}
 
-		cmdline := langManager.GetText("CmdlineHintIdle")
-		iIdx, clIdx := strings.Index(cmdline, lastMotion[lang]), strings.Index(cmdline, "ctrl+l")
+		cmdline := keycaps(langManager.GetText("CmdlineHintIdle"))
+		iIdx, clIdx := pos(cmdline, "i"), pos(cmdline, "ctrl+l")
 		if iIdx < 0 || clIdx < 0 {
-			t.Fatalf("lang=%s: cmdline hint bar should carry i and ctrl+l, got %q", lang, cmdline)
+			t.Fatalf("lang=%s: cmdline hint bar should carry the i keycap and ctrl+l, got %v", lang, cmdline)
 		}
 		if clIdx < iIdx {
-			t.Errorf("lang=%s: ctrl+l must follow the last motion, got %q", lang, cmdline)
+			t.Errorf("lang=%s: ctrl+l must follow the last motion keycap, got %v", lang, cmdline)
 		}
 	}
 }
@@ -794,7 +806,7 @@ func TestDashboard_ActivityChainsEvents(t *testing.T) {
 		{ID: "2", Kind: TimelineKindTool, Status: ToolStatusRunning, Name: "read_file"},
 	}
 
-	dash := stripANSIForChrome(m.renderDashboard(dashboardPanelWidth, 20))
+	dash := stripANSI(m.renderDashboard(dashboardPanelWidth, 20))
 	if strings.ContainsAny(dash, "░▒█") {
 		t.Errorf("dashboard should not render the progress animation, got:\n%s", dash)
 	}
@@ -817,7 +829,7 @@ func TestDashboard_ActivityChainsEvents(t *testing.T) {
 		t.Errorf("dashboard should show the detail hint at height 20, got:\n%s", dash)
 	}
 	for _, h := range []int{10, 12, 14, 16, 18, 20, 24} {
-		lines := strings.Split(stripANSIForChrome(m.renderDashboard(dashboardPanelWidth, h)), "\n")
+		lines := strings.Split(stripANSI(m.renderDashboard(dashboardPanelWidth, h)), "\n")
 		for i, l := range lines {
 			if i == 0 || !strings.Contains(l, "ctrl+l") {
 				continue
@@ -833,6 +845,6 @@ func TestDashboard_ActivityChainsEvents(t *testing.T) {
 	m.currentAgent = "Director"
 	if bar := m.renderAirlineStatusBar(); !strings.ContainsAny(bar, "░▒█") {
 		t.Errorf("status bar should still carry the progress animation:\n%s",
-			stripANSIForChrome(bar))
+			stripANSI(bar))
 	}
 }

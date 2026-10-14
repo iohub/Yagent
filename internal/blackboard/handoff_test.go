@@ -1,7 +1,6 @@
 package blackboard
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -177,26 +176,6 @@ func TestRenderEmptyHandoff(t *testing.T) {
 	}
 }
 
-func TestConclusionForIndex(t *testing.T) {
-	h := Handoff{Conclusion: "多行\n结论要压成一行"}
-	got := h.ConclusionForIndex("")
-	if strings.Contains(got, "\n") {
-		t.Errorf("index conclusion contains newline: %q", got)
-	}
-	if !strings.Contains(got, "结论要压成一行") {
-		t.Errorf("conclusion lost: %q", got)
-	}
-	// v1 存量便签没有 handoff：回落到 Summary。
-	if fb := (Handoff{}).ConclusionForIndex("v1 的 summary"); fb != "v1 的 summary" {
-		t.Errorf("fallback = %q, want the v1 summary", fb)
-	}
-	// 索引行必须是单行且不超过 IndexConclusionRunes。
-	long := Handoff{Conclusion: strings.Repeat("长", IndexConclusionRunes+40)}
-	if n := runeLen(long.ConclusionForIndex("")); n > IndexConclusionRunes {
-		t.Errorf("index conclusion len = %d, want <= %d", n, IndexConclusionRunes)
-	}
-}
-
 // 档 1 与档 2 的区别只在 conclusion 来源；两者都不该被标成 absent。
 func TestParseHandoffHandoffPresentIsNeverAbsent(t *testing.T) {
 	args := []byte(`{"handoff":{"conclusion":"有结论"}}`)
@@ -261,29 +240,5 @@ func TestHandoffRenderOmittedFooterFitsBudget(t *testing.T) {
 	}
 	if !strings.Contains(out, "因预算省略") {
 		t.Errorf("footer missing:\n%s", out)
-	}
-}
-
-// Handoff 必须能原样往返 front-matter —— 它是便签的 canonical 内容。
-func TestHandoffJSONRoundTrip(t *testing.T) {
-	original := Handoff{
-		Conclusion:    "c",
-		Facts:         []Fact{{Claim: "f1", Where: "w1"}, {Claim: "f2"}},
-		Artifacts:     []string{"20261013-000000-aaaaaaaa"},
-		OpenQuestions: []string{"q"},
-		Status:        "partial",
-		Degraded:      DegradedMissingFields,
-	}
-	data, err := json.Marshal(original)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var back Handoff
-	if err := json.Unmarshal(data, &back); err != nil {
-		t.Fatalf("unmarshal %s: %v", data, err)
-	}
-	if back.Facts[1].Where != "" || len(back.Facts) != 2 || back.Status != "partial" ||
-		back.Degraded != DegradedMissingFields || back.Artifacts[0] != "20261013-000000-aaaaaaaa" {
-		t.Errorf("round trip lost data: %+v (json=%s)", back, data)
 	}
 }

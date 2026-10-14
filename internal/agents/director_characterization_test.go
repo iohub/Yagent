@@ -6,17 +6,17 @@ package agents
 // 作为后续拆分搬迁逻辑时的回归防线。断言只锁定"关键特征"（输入→输出的关键不变量），
 // 不与实现细节强耦合，避免后续合法重构误报。所有用例稳定可重复（无随机、无真实时间依赖）。
 //
-// 覆盖四组行为：
+// 覆盖三组行为：
 //  1. 压缩行为：applyEmergencyCompression / applyUltimateCompression
 //  2. 恢复行为：director.RecoveryHandler 熔断语义、ComputeBackoff、RetryWithBackoff
 //  3. Meta 解析：parseMetaAgentOutput
-//  4. 项目上下文加载缓存：loadProjectContext
+//
+// 项目上下文加载（原组 4）不在此重复：门面 loadProjectContext 只是单行转发，
+// 行为由 director/project_context_test.go 钉住。
 
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -47,14 +47,6 @@ func charAssistantMessages(n int, prefix string) []llm.Message {
 		})
 	}
 	return msgs
-}
-
-// charWriteFile 在临时目录写入文件，失败即 Fatal。
-func charWriteFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
 }
 
 // ─── 组 1a：紧急压缩 applyEmergencyCompression ───────────────────────────────
@@ -352,21 +344,6 @@ func TestCharacterizationApplyUltimateCompression(t *testing.T) {
 
 // ─── 组 2：恢复行为（director.RecoveryHandler）────────────────────────────────
 
-// TestCharacterizationDefaultRecoveryConfig 固化默认恢复配置：
-// MaxRetries=3、CircuitBreakerThreshold=5（默认熔断阈值）、ResetTimeout=30s。
-func TestCharacterizationDefaultRecoveryConfig(t *testing.T) {
-	cfg := director.DefaultRecoveryConfig()
-	if cfg.MaxRetries != 3 {
-		t.Errorf("DefaultRecoveryConfig().MaxRetries = %d, want 3", cfg.MaxRetries)
-	}
-	if cfg.CircuitBreakerThreshold != 5 {
-		t.Errorf("DefaultRecoveryConfig().CircuitBreakerThreshold = %d, want 5", cfg.CircuitBreakerThreshold)
-	}
-	if cfg.CircuitBreakerResetTimeout != 30*time.Second {
-		t.Errorf("DefaultRecoveryConfig().CircuitBreakerResetTimeout = %v, want 30s", cfg.CircuitBreakerResetTimeout)
-	}
-}
-
 // TestCharacterizationRecoveryCircuitBreaker 固化熔断语义：
 //   - 初始 closed → IsCircuitBreakerOpen()==false；
 //   - 连续失败达到 threshold 后 open → IsCircuitBreakerOpen()==true；
@@ -630,67 +607,7 @@ func TestCharacterizationParseMetaAgentOutput(t *testing.T) {
 	}
 }
 
-// ─── 组 4：项目上下文加载与缓存 loadProjectContext ───────────────────────────
-
-// TestCharacterizationLoadProjectContextCache 固化项目上下文加载与缓存行为：
-//   - 按序尝试读取 YAGENT.md、CLAUDE.md、AGENTS.md，不存在的文件忽略；
-//   - Content 按序拼接为 "### <file>\n```\n<content>\n```\n" 格式；
-//   - 同一实例二次调用命中缓存（返回同一指针），即使文件系统已变化；
-//   - 无任何文件时返回空结果，且空结果同样被缓存。
-func TestCharacterizationLoadProjectContextCache(t *testing.T) {
-	t.Run("loads existing files in priority order", func(t *testing.T) {
-		dir := t.TempDir()
-		charWriteFile(t, filepath.Join(dir, "YAGENT.md"), "YAGENT-CONTENT")
-		charWriteFile(t, filepath.Join(dir, "AGENTS.md"), "AGENTS-CONTENT")
-
-		agent := newCharDirectorAgent(t, &mockEngine{}, dir)
-		res := agent.loadProjectContext()
-
-		if len(res.LoadedFiles) != 2 {
-			t.Fatalf("len(LoadedFiles) = %d, want 2", len(res.LoadedFiles))
-		}
-		if res.LoadedFiles[0].FileName != "YAGENT.md" || res.LoadedFiles[0].Content != "YAGENT-CONTENT" {
-			t.Errorf("LoadedFiles[0] = %+v, want YAGENT.md with its content", res.LoadedFiles[0])
-		}
-		if res.LoadedFiles[1].FileName != "AGENTS.md" || res.LoadedFiles[1].Content != "AGENTS-CONTENT" {
-			t.Errorf("LoadedFiles[1] = %+v, want AGENTS.md with its content", res.LoadedFiles[1])
-		}
-		if !strings.Contains(res.Content, "### YAGENT.md") || !strings.Contains(res.Content, "YAGENT-CONTENT") {
-			t.Errorf("Content should be formatted with file headings, got %q", res.Content)
-		}
-	})
-
-	t.Run("second call hits cache even if files change", func(t *testing.T) {
-		dir := t.TempDir()
-		charWriteFile(t, filepath.Join(dir, "YAGENT.md"), "YAGENT-CONTENT")
-
-		agent := newCharDirectorAgent(t, &mockEngine{}, dir)
-		first := agent.loadProjectContext()
-
-		// 缓存命中后修改文件系统：新增文件不应出现在二次结果中
-		charWriteFile(t, filepath.Join(dir, "CLAUDE.md"), "CLAUDE-CONTENT")
-		second := agent.loadProjectContext()
-
-		if first != second {
-			t.Errorf("second call should return the cached result (same pointer)")
-		}
-		if len(second.LoadedFiles) != 1 {
-			t.Errorf("cache should prevent re-reading, LoadedFiles = %d, want 1", len(second.LoadedFiles))
-		}
-	})
-
-	t.Run("empty dir yields empty result which is also cached", func(t *testing.T) {
-		agent := newCharDirectorAgent(t, &mockEngine{}, t.TempDir())
-		first := agent.loadProjectContext()
-		if len(first.LoadedFiles) != 0 {
-			t.Errorf("LoadedFiles = %d, want 0 for empty dir", len(first.LoadedFiles))
-		}
-		if first.Content != "" {
-			t.Errorf("Content = %q, want empty for empty dir", first.Content)
-		}
-		second := agent.loadProjectContext()
-		if first != second {
-			t.Errorf("empty result should also be cached (same pointer)")
-		}
-	})
-}
+// 组 4（项目上下文加载与缓存）不在这里重复：director.go:98 的 loadProjectContext
+// 只是 projectCtxLoader.Load() 的单行转发，其行为由
+// director/project_context_test.go 的 TestProjectContextLoader{LoadFirstCall,
+// CacheHit,EmptyDir} 在真实对象上钉住。
