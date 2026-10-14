@@ -8,7 +8,9 @@
 //     context.WithCancelCause 注入可诊断错误并取消 context；
 //   - 心跳（Heartbeat）由被监视方（子代理各执行环节）上报活动，纯原子写，
 //     non-blocking、无竞态、无泄漏；
-//   - 嵌套 delegate 场景下，内层子代理的心跳沿 parent 链上抛续期外层监视器。
+//   - 嵌套 delegate 场景下，内层子代理的心跳沿 parent 链上抛续期外层监视器；
+//   - 暂停（Pause/Resume）冻结整条链上的两个计时器 —— 心跳只能续 idle，
+//     total 的起点是创建时刻固定的，不显式冻结就会把暂停中的任务杀掉。
 //
 // 设计取舍：心跳是纯原子写（atomic.Store），天然 non-blocking、无竞态、
 // 无泄漏；代价是空闲检测延迟至多 CheckInterval（轮询间隔），可忽略。
@@ -52,9 +54,16 @@ type record struct {
 
 // sink 是存放于 context.Value 的最近活动槽位。parent 指向嵌套 delegate
 // 场景下外层 delegate 的 sink；心跳沿 parent 链向上续期各层监视器。
+//
+// 暂停计时用两个原子 int64 而不是 mutex：pausedAt 是"这次暂停的起点"
+// （0 = 未暂停），pausedTotal 是累计暂停时长。Resume 把当前这段结算进 total
+// 并清零起点，所以 Pause/Resume 各自幂等，嵌套委派里内外两层闸门重复冻结
+// 同一链条也只会结算一次。
 type sink struct {
-	parent *sink
-	last   atomic.Pointer[record]
+	parent      *sink
+	last        atomic.Pointer[record]
+	pausedAt    atomic.Int64
+	pausedTotal atomic.Int64
 }
 
 // IdleTimeoutError 表示持续无动作超过空闲阈值导致的取消原因。
@@ -177,8 +186,15 @@ func WithIdleTimeout(parent context.Context, opts Options) (context.Context, con
 				// 时间与标签取自同一原子快照，保证错误消息内一致。
 				last := s.last.Load()
 				now := nowFn()
+				// idleFor 不必再扣暂停时长：Resume 会把空闲基准推到恢复时刻。
 				idleFor := now.Sub(last.at)
-				totalElapsed := now.Sub(startTime)
+				totalElapsed := now.Sub(startTime) - time.Duration(s.pausedTotal.Load())
+				if pa := s.pausedAt.Load(); pa != 0 {
+					// 暂停中：这段既不算空闲（否则 60s 阈值照样把停住的任务杀掉），
+					// 也不算总耗时（total 的起点是创建时刻固定的，心跳续不了它）。
+					totalElapsed -= now.Sub(time.Unix(0, pa))
+					idleFor = 0
+				}
 				if idleFor > idleThreshold {
 					cancelCause(&IdleTimeoutError{
 						IdleFor:          idleFor,
@@ -221,5 +237,47 @@ func Heartbeat(ctx context.Context, detail string) {
 	r := &record{at: time.Now(), kind: detail}
 	for cur := s; cur != nil; cur = cur.parent {
 		cur.last.Store(r)
+	}
+}
+
+// Pause 冻结 ctx 所在监视链上的 idle 与 total 计时（沿 parent 链逐层置位）。
+//
+// 为什么必须由暂停方显式调用而不是靠心跳：Heartbeat 只能续 idle ——
+// totalElapsed 取自创建时固定的 startTime，持续心跳也照样会在
+// delegate_total_timeout（默认 20m）之后把停住的任务杀掉。
+//
+//   - 无监视器时静默 no-op；
+//   - 幂等：已在暂停中则不重复起算（嵌套委派时内外两层闸门都会调它）；
+//   - 与 Heartbeat 一样是纯原子操作，不持锁、不阻塞。
+func Pause(ctx context.Context) {
+	s, ok := ctx.Value(ctxKey{}).(*sink)
+	if !ok || s == nil {
+		return
+	}
+	now := time.Now().UnixNano()
+	for cur := s; cur != nil; cur = cur.parent {
+		cur.pausedAt.CompareAndSwap(0, now)
+	}
+}
+
+// Resume 解冻监视链，并把空闲基准推到恢复时刻。
+//
+// 时间戳为什么必须换掉：暂停前最后一次心跳可能是一分钟以前，若不重置，
+// 恢复后的第一个 tick 就会算出 idleFor = 暂停时长 而立刻杀掉刚恢复的任务。
+// 标签写成 "resumed" 而不是沿用上一个动作，是为了让超时报白读起来是真的
+// （"last activity: resumed 60s ago"）。
+//
+// 未处于暂停状态时 no-op（不续 idle，否则重复 Resume 会变成免费心跳）。
+func Resume(ctx context.Context) {
+	s, ok := ctx.Value(ctxKey{}).(*sink)
+	if !ok || s == nil {
+		return
+	}
+	now := time.Now()
+	for cur := s; cur != nil; cur = cur.parent {
+		if pa := cur.pausedAt.Swap(0); pa != 0 {
+			cur.pausedTotal.Add(now.UnixNano() - pa)
+			cur.last.Store(&record{at: now, kind: "resumed"})
+		}
 	}
 }
