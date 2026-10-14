@@ -311,18 +311,6 @@ func (e EventMsg) MarshalJSON() ([]byte, error) {
 	}
 }
 
-// ─── InterAgentCommunicationMetadata — 多 Agent 通信元数据 payload ───
-
-// InterAgentCommunicationMetadata 多 Agent 通信元数据
-type InterAgentCommunicationMetadata struct {
-	ParentAgent      string `json:"parent_agent,omitempty"`
-	ChildAgent       string `json:"child_agent,omitempty"`
-	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
-	Direction        string `json:"direction,omitempty"`
-	Summary          string `json:"summary,omitempty"`
-	Timestamp        string `json:"timestamp,omitempty"`
-}
-
 // ─── CompactedPayload — 压缩快照 payload ───
 
 // ─── CompactedPayload — 压缩快照 payload ───
@@ -345,16 +333,6 @@ type CompactedPayload struct {
 	TokensAfter  int    `json:"tokens_after,omitempty"`
 	Kind         string `json:"kind,omitempty"`         // CompactionKind*
 	SavedTokens  int    `json:"saved_tokens,omitempty"` // 与事件的 saved_tokens 同源
-}
-
-// ─── WorldStatePayload — 世界状态 payload ───
-
-// WorldStatePayload 世界状态快照
-type WorldStatePayload struct {
-	Files      []string `json:"files,omitempty"`
-	GitBranch  string   `json:"git_branch,omitempty"`
-	GitStatus  string   `json:"git_status,omitempty"`
-	Timestamp  string   `json:"timestamp,omitempty"`
 }
 
 // ─── 辅助函数 ───

@@ -32,26 +32,6 @@ func keyPress(s string) tea.KeyPressMsg {
 	}
 }
 
-// stripANSI 移除 SGR 转义序列（lipgloss 样式输出），便于测量可见宽度。
-func stripANSI(s string) string {
-	var b strings.Builder
-	inEsc := false
-	for _, r := range s {
-		if inEsc {
-			if r == 'm' {
-				inEsc = false
-			}
-			continue
-		}
-		if r == '\x1b' {
-			inEsc = true
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
 func TestResumeDialog_KeyHandling(t *testing.T) {
 	t.Run("enter_on_resume_selects_resume", func(t *testing.T) {
 		d := newTestResumeDialog()
@@ -127,7 +107,7 @@ func TestResumeDialog_Render(t *testing.T) {
 		}
 		var borderSeen bool
 		for _, line := range strings.Split(view, "\n") {
-			plain := stripANSI(line)
+			plain := stripANSICodes(line)
 			if strings.Contains(plain, "╰") {
 				if lw := lipgloss.Width(strings.TrimSpace(plain)); lw != dialogWidth {
 					t.Errorf("width %d: bottom border width %d, want %d", w, lw, dialogWidth)

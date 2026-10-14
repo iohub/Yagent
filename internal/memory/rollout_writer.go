@@ -246,16 +246,6 @@ func (w *RolloutWriter) WriteRunAborted(reason string, rs RunState) error {
 	})
 }
 
-// WriteInterAgentComm 写入多 Agent 通信元数据
-func (w *RolloutWriter) WriteInterAgentComm(meta InterAgentCommunicationMetadata) error {
-	if !w.enabled || w.file == nil {
-		return nil
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.writeEnvelope("inter_agent_communication_metadata", meta)
-}
-
 // WriteCompacted 写入上下文压缩快照
 func (w *RolloutWriter) WriteCompacted(payload CompactedPayload) error {
 	if !w.enabled || w.file == nil {
@@ -264,16 +254,6 @@ func (w *RolloutWriter) WriteCompacted(payload CompactedPayload) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.writeEnvelope("compacted", payload)
-}
-
-// WriteWorldState 写入世界状态快照
-func (w *RolloutWriter) WriteWorldState(payload WorldStatePayload) error {
-	if !w.enabled || w.file == nil {
-		return nil
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.writeEnvelope("world_state", payload)
 }
 
 // WriteTokenCount 写入 token_count 事件，自动累计 total 用量

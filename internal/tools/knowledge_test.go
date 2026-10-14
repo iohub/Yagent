@@ -2,226 +2,172 @@ package tools
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
+
+// executor 是 ConsolidateKnowledgeTool / PruneHistoryTool 的公共形状，
+// 让"nil MCP → skipped"这类同一契约的两个实现共用一张表。
+type executor interface {
+	Execute(context.Context, map[string]interface{}) (interface{}, error)
+}
 
 // ============================================================================
 // extractJSON 测试
 // ============================================================================
 
-func TestExtractJSON_PureJSON(t *testing.T) {
-	input := `{"title":"test","content":"hello"}`
-	got := extractJSON(input)
-	if got != input {
-		t.Errorf("extractJSON(pure JSON) = %q, want %q", got, input)
+func TestExtractJSON(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"pure JSON", `{"title":"test","content":"hello"}`, `{"title":"test","content":"hello"}`},
+		{"markdown fence with lang", "```json\n{\"title\":\"test\"}\n```", `{"title":"test"}`},
+		{"markdown fence no lang", "```\n{\"key\":\"val\"}\n```", `{"key":"val"}`},
+		{"no json", "just some plain text with no json", "just some plain text with no json"},
+		{"surrounding text", `Here is the result: {"key": "value"} and more.`, `{"key": "value"}`},
+		{"empty string", "", ""},
+		{"missing closing brace", `{"key": "value"`, `{"key": "value"`},
 	}
-}
 
-func TestExtractJSON_MarkdownFenceJson(t *testing.T) {
-	input := "```json\n{\"title\":\"test\"}\n```"
-	expected := `{"title":"test"}`
-	got := extractJSON(input)
-	if got != expected {
-		t.Errorf("extractJSON(markdown fence json) = %q, want %q", got, expected)
-	}
-}
-
-func TestExtractJSON_MarkdownFenceNoLang(t *testing.T) {
-	input := "```\n{\"key\":\"val\"}\n```"
-	expected := `{"key":"val"}`
-	got := extractJSON(input)
-	if got != expected {
-		t.Errorf("extractJSON(markdown fence no lang) = %q, want %q", got, expected)
-	}
-}
-
-func TestExtractJSON_NoJSON(t *testing.T) {
-	input := "just some plain text with no json"
-	got := extractJSON(input)
-	// should return the text as-is when no braces found
-	if got != input {
-		t.Errorf("extractJSON(no json) = %q, want %q", got, input)
-	}
-}
-
-func TestExtractJSON_SurroundingText(t *testing.T) {
-	input := `Here is the result: {"key": "value"} and more.`
-	expected := `{"key": "value"}`
-	got := extractJSON(input)
-	if got != expected {
-		t.Errorf("extractJSON(surrounding text) = %q, want %q", got, expected)
-	}
-}
-
-func TestExtractJSON_EmptyString(t *testing.T) {
-	got := extractJSON("")
-	if got != "" {
-		t.Errorf("extractJSON(empty) = %q, want empty", got)
-	}
-}
-
-func TestExtractJSON_MissingClosingBrace(t *testing.T) {
-	input := `{"key": "value"`
-	// end < start check: end would be -1 (no '}'), returns text as-is
-	got := extractJSON(input)
-	if got != input {
-		t.Errorf("extractJSON(missing close brace) = %q, want %q", got, input)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractJSON(tc.input); got != tc.want {
+				t.Errorf("extractJSON(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
 	}
 }
 
 // ============================================================================
-// ConsolidateKnowledgeTool.Execute 参数校验（mcp nil 降级路径）
+// ConsolidateKnowledgeTool.Execute 参数校验（未绑定模式）
 // ============================================================================
 
-func TestConsolidateKnowledgeTool_Execute_InvalidType(t *testing.T) {
-	// 未绑定时，params type 非法应报错
-	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":         "invalid_type",
-		"title":        "test",
-		"content":      "content",
-		"tags":         []interface{}{"tag1"},
-		"source_agent": "repo_agent",
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid type, got nil")
+func TestConsolidateKnowledgeTool_Execute_InvalidParams(t *testing.T) {
+	cases := []struct {
+		name       string
+		params     map[string]interface{}
+		wantErrSub string
+	}{
+		{
+			name: "invalid type",
+			params: map[string]interface{}{
+				"type": "invalid_type", "title": "test", "content": "content",
+				"tags": []interface{}{"tag1"}, "source_agent": "repo_agent",
+			},
+			wantErrSub: "invalid type",
+		},
+		{
+			name: "missing title",
+			params: map[string]interface{}{
+				"type": "repo_retrieval", "content": "content",
+				"tags": []interface{}{"tag1"}, "source_agent": "repo_agent",
+			},
+			wantErrSub: "title parameter is required",
+		},
+		{
+			name: "missing content",
+			params: map[string]interface{}{
+				"type": "repo_retrieval", "title": "test",
+				"tags": []interface{}{"tag1"}, "source_agent": "repo_agent",
+			},
+			wantErrSub: "content parameter is required",
+		},
+		{
+			name: "missing tags",
+			params: map[string]interface{}{
+				"type": "repo_retrieval", "title": "test", "content": "content",
+				"source_agent": "repo_agent",
+			},
+			wantErrSub: "tags parameter is required",
+		},
+		{
+			name: "empty tags",
+			params: map[string]interface{}{
+				"type": "repo_retrieval", "title": "test", "content": "content",
+				"tags": []interface{}{}, "source_agent": "repo_agent",
+			},
+			wantErrSub: "tags parameter is required",
+		},
 	}
-	if err.Error() == "" {
-		t.Fatal("expected non-empty error message")
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
+			_, err := tool.Execute(context.Background(), tc.params)
+			if err == nil {
+				t.Fatalf("expected error for %s, got nil", tc.name)
+			}
+			// 前缀匹配而不是全等：措辞可以改，但"缺哪个参数"必须仍写在消息里。
+			if !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Errorf("error = %q, want it to mention %q", err.Error(), tc.wantErrSub)
+			}
+		})
 	}
 }
 
-func TestConsolidateKnowledgeTool_Execute_MissingTitle(t *testing.T) {
-	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":         "repo_retrieval",
-		"content":      "content",
-		"tags":         []interface{}{"tag1"},
-		"source_agent": "repo_agent",
-	})
-	if err == nil {
-		t.Fatal("expected error for missing title, got nil")
+// ============================================================================
+// nil MCP / codeseek 不可用 → fail-safe 返回 skipped
+// ============================================================================
+
+func TestKnowledgeTools_NilMCPReturnsSkipped(t *testing.T) {
+	cases := []struct {
+		name   string
+		tool   executor
+		params map[string]interface{}
+	}{
+		{
+			// 绑定模式：params 里的非法 type/空 source_agent 应被绑定值覆盖
+			name:   "consolidate/bound overrides invalid params",
+			tool:   NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval"),
+			params: map[string]interface{}{"type": "invalid_type", "source_agent": "", "title": "test title", "content": "test content here", "tags": []interface{}{"tag1"}},
+		},
+		{
+			name:   "prune/list",
+			tool:   NewPruneHistoryTool(nil, nil),
+			params: map[string]interface{}{"action": "list"},
+		},
+		{
+			name:   "prune/delete",
+			tool:   NewPruneHistoryTool(nil, nil),
+			params: map[string]interface{}{"action": "delete", "ids": []interface{}{"id1", "id2"}},
+		},
+		{
+			name:   "prune/merge",
+			tool:   NewPruneHistoryTool(nil, nil),
+			params: map[string]interface{}{"action": "merge"},
+		},
 	}
-	if err.Error() == "" {
-		t.Fatal("expected non-empty error message")
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := tc.tool.Execute(context.Background(), tc.params)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			resMap, ok := result.(map[string]interface{})
+			if !ok {
+				t.Fatalf("expected map result, got %T", result)
+			}
+			if resMap["status"] != "skipped" {
+				t.Errorf("expected status 'skipped', got %v", resMap["status"])
+			}
+			if reason, _ := resMap["reason"].(string); reason == "" {
+				t.Error("skipped result must carry a reason so the model knows why nothing was written")
+			}
+		})
 	}
 }
 
-func TestConsolidateKnowledgeTool_Execute_MissingContent(t *testing.T) {
-	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":         "repo_retrieval",
-		"title":        "test",
-		"tags":         []interface{}{"tag1"},
-		"source_agent": "repo_agent",
-	})
-	if err == nil {
-		t.Fatal("expected error for missing content, got nil")
-	}
-}
-
-func TestConsolidateKnowledgeTool_Execute_MissingTags(t *testing.T) {
-	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":         "repo_retrieval",
-		"title":        "test",
-		"content":      "content",
-		"source_agent": "repo_agent",
-	})
-	if err == nil {
-		t.Fatal("expected error for missing tags, got nil")
-	}
-}
-
-func TestConsolidateKnowledgeTool_Execute_EmptyTags(t *testing.T) {
-	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
-	_, err := tool.Execute(context.Background(), map[string]interface{}{
-		"type":         "repo_retrieval",
-		"title":        "test",
-		"content":      "content",
-		"tags":         []interface{}{},
-		"source_agent": "repo_agent",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty tags, got nil")
-	}
-}
-
-func TestConsolidateKnowledgeTool_Execute_ValidWithNilMCP(t *testing.T) {
-	// 有效参数 + nil MCP → 应返回 skipped
-	// 使用绑定模式：LLM 无法篡改 type 和 source_agent
-	tool := NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval")
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		// 即使 params 传非法 type 和空 source_agent，绑定值应生效
-		"type":         "invalid_type",
-		"source_agent": "",
-		"title":        "test title",
-		"content":      "test content here",
-		"tags":         []interface{}{"tag1"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	resMap, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected map result, got %T", result)
-	}
-	if resMap["status"] != "skipped" {
-		t.Errorf("expected status 'skipped', got %v", resMap["status"])
-	}
-}
-
-func TestConsolidateKnowledgeTool_Execute_LongContentNilEngine(t *testing.T) {
-	// content > 1500 字符且 engine 为 nil → 直接入库（无截断），MCP nil 时返回 skipped
-	longContent := ""
-	for i := 0; i < 1600; i++ {
-		longContent += "x"
-	}
-	tool := NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval")
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		"title":   "test",
-		"content": longContent,
-		"tags":    []interface{}{"tag1"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	resMap, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected map result, got %T", result)
-	}
-	if resMap["status"] != "skipped" {
-		t.Errorf("expected status 'skipped', got %v", resMap["status"])
-	}
-}
-
-// TestConsolidateKnowledgeTool_Execute_BoundSourceOverridesParams 验证绑定值覆盖 params 中的非法值
-func TestConsolidateKnowledgeTool_Execute_BoundSourceOverridesParams(t *testing.T) {
-	// 绑定 ("repo_agent", "repo_retrieval") 时，即使 params 传非法 type/空 source_agent，工具内部也应使用绑定值
-	tool := NewConsolidateKnowledgeTool(nil, nil, "repo_agent", "repo_retrieval")
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		// params 中传入非法值和空 source_agent
-		"type":         "invalid_type",
-		"source_agent": "",
-		"title":        "test title",
-		"content":      "test content",
-		"tags":         []interface{}{"tag1"},
-	})
-	if err != nil {
-		t.Fatalf("expected no error when bound values override invalid params, got: %v", err)
-	}
-	resMap, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected map result, got %T", result)
-	}
-	if resMap["status"] != "skipped" {
-		t.Errorf("expected status 'skipped', got %v", resMap["status"])
-	}
-}
+// 错误消息的前缀契约：消息里出现别的关键词就说明校验分支换了。
+const (
+	errPrefixSourceAgent = "source_agent"
+	errPrefixPruneAction = "action must be one of"
+)
 
 // TestConsolidateKnowledgeTool_Execute_MissingSourceAgent 验证未绑定且 params 缺 source_agent 时报错
 func TestConsolidateKnowledgeTool_Execute_MissingSourceAgent(t *testing.T) {
-	// 未绑定时，params 缺 source_agent 应报错
 	tool := NewConsolidateKnowledgeTool(nil, nil, "", "")
 	_, err := tool.Execute(context.Background(), map[string]interface{}{
 		"type":    "repo_retrieval",
@@ -233,15 +179,10 @@ func TestConsolidateKnowledgeTool_Execute_MissingSourceAgent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing source_agent, got nil")
 	}
-	expected := "source_agent is required"
-	if err.Error() != expected {
-		t.Errorf("expected error %q, got %q", expected, err.Error())
+	if !strings.HasPrefix(err.Error(), errPrefixSourceAgent) {
+		t.Errorf("error = %q, want prefix %q", err.Error(), errPrefixSourceAgent)
 	}
 }
-
-// ============================================================================
-// PruneHistoryTool.Execute 参数校验
-// ============================================================================
 
 func TestPruneHistoryTool_Execute_InvalidAction(t *testing.T) {
 	tool := NewPruneHistoryTool(nil, nil)
@@ -251,80 +192,8 @@ func TestPruneHistoryTool_Execute_InvalidAction(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid action, got nil")
 	}
-	expected := "action must be one of: list, delete, merge"
-	if err.Error() != expected {
-		t.Errorf("expected error %q, got %q", expected, err.Error())
-	}
-}
-
-func TestPruneHistoryTool_Execute_ListNilMCP(t *testing.T) {
-	tool := NewPruneHistoryTool(nil, nil)
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		"action": "list",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	resMap, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected map result, got %T", result)
-	}
-	if resMap["status"] != "skipped" {
-		t.Errorf("expected status 'skipped', got %v", resMap["status"])
-	}
-}
-
-func TestPruneHistoryTool_Execute_DeleteNilMCP(t *testing.T) {
-	tool := NewPruneHistoryTool(nil, nil)
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		"action": "delete",
-		"ids":    []interface{}{"id1", "id2"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	resMap, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected map result, got %T", result)
-	}
-	if resMap["status"] != "skipped" {
-		t.Errorf("expected status 'skipped', got %v", resMap["status"])
-	}
-}
-
-func TestPruneHistoryTool_Execute_MergeNilMCP(t *testing.T) {
-	tool := NewPruneHistoryTool(nil, nil)
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		"action": "merge",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	resMap, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected map result, got %T", result)
-	}
-	if resMap["status"] != "skipped" {
-		t.Errorf("expected status 'skipped', got %v", resMap["status"])
-	}
-}
-
-func TestPruneHistoryTool_Execute_DeleteMissingIDs(t *testing.T) {
-	// 当 mcp 为 nil 时，delete 会提前返回 skipped，不会走到 ids 校验
-	// 这里验证 nil MCP 的 delete 返回 skipped（fail-safe 路径）
-	tool := NewPruneHistoryTool(nil, nil)
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		"action": "delete",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	resMap, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected map result, got %T", result)
-	}
-	if resMap["status"] != "skipped" {
-		t.Errorf("expected status 'skipped', got %v", resMap["status"])
+	if !strings.HasPrefix(err.Error(), errPrefixPruneAction) {
+		t.Errorf("error = %q, want prefix %q", err.Error(), errPrefixPruneAction)
 	}
 }
 
@@ -333,24 +202,27 @@ func TestPruneHistoryTool_Execute_DeleteMissingIDs(t *testing.T) {
 // ============================================================================
 
 func TestMergeStrings(t *testing.T) {
-	a := []string{"tag1", "tag2"}
-	b := []string{"tag2", "tag3"}
-	got := mergeStrings(a, b)
-	expected := []string{"tag1", "tag2", "tag3"}
-	if len(got) != len(expected) {
-		t.Fatalf("mergeStrings = %v, want %v", got, expected)
+	cases := []struct {
+		name string
+		a, b []string
+		want []string
+	}{
+		{"dedups and keeps order", []string{"tag1", "tag2"}, []string{"tag2", "tag3"}, []string{"tag1", "tag2", "tag3"}},
+		{"both empty", nil, nil, nil},
 	}
-	for i := range expected {
-		if got[i] != expected[i] {
-			t.Errorf("mergeStrings[%d] = %q, want %q", i, got[i], expected[i])
-		}
-	}
-}
 
-func TestMergeStrings_Empty(t *testing.T) {
-	got := mergeStrings(nil, nil)
-	if len(got) != 0 {
-		t.Errorf("mergeStrings(nil, nil) = %v, want empty", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeStrings(tc.a, tc.b)
+			if len(got) != len(tc.want) {
+				t.Fatalf("mergeStrings(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("mergeStrings[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
 	}
 }
 
@@ -358,102 +230,34 @@ func TestMergeStrings_Empty(t *testing.T) {
 // replaceProjectAbsPath 测试
 // ============================================================================
 
-func TestReplaceProjectAbsPath_AbsolutePrefix(t *testing.T) {
-	projectDir := "/home/do/ssd/iohub/dev/yagent"
-	title := "/home/do/ssd/iohub/dev/yagent/foo/bar.go 相关设计"
-	got := replaceProjectAbsPath(title, projectDir)
-	expected := "foo/bar.go 相关设计"
-	if got != expected {
-		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
-	}
-}
+func TestReplaceProjectAbsPath(t *testing.T) {
+	const projectDir = "/home/do/ssd/iohub/dev/yagent"
 
-func TestReplaceProjectAbsPath_NoAbsolutePath(t *testing.T) {
-	projectDir := "/home/do/ssd/iohub/dev/yagent"
-	title := "foo/bar.go 相关设计"
-	got := replaceProjectAbsPath(title, projectDir)
-	if got != title {
-		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want original %q", title, projectDir, got, title)
+	cases := []struct {
+		name       string
+		title      string
+		projectDir string
+		want       string
+	}{
+		{"absolute prefix", projectDir + "/foo/bar.go 相关设计", projectDir, "foo/bar.go 相关设计"},
+		{"no absolute path", "foo/bar.go 相关设计", projectDir, "foo/bar.go 相关设计"},
+		{"exact match", projectDir, projectDir, "."},
+		{"empty project dir", "/home/do/ssd/iohub/dev/yagent/foo/bar.go", "", "/home/do/ssd/iohub/dev/yagent/foo/bar.go"},
+		{"empty title", "", projectDir, ""},
+		{"no false prefix match", projectDir + "Xxx/foo/bar.go", projectDir, projectDir + "Xxx/foo/bar.go"},
+		{"only rel path part", projectDir + "/", projectDir, "."},
+		{"path in middle", "修复 " + projectDir + "/foo/bar.go 中的 bug", projectDir, "修复 foo/bar.go 中的 bug"},
+		{"multiple paths",
+			"参考 " + projectDir + "/a/x.go 和 " + projectDir + "/b/y.go 的改动", projectDir,
+			"参考 a/x.go 和 b/y.go 的改动"},
+		{"project dir alone", "参考 " + projectDir + " 文档", projectDir, "参考 . 文档"},
 	}
-}
 
-func TestReplaceProjectAbsPath_ExactMatch(t *testing.T) {
-	projectDir := "/home/do/ssd/iohub/dev/yagent"
-	title := "/home/do/ssd/iohub/dev/yagent"
-	got := replaceProjectAbsPath(title, projectDir)
-	expected := "."
-	if got != expected {
-		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
-	}
-}
-
-func TestReplaceProjectAbsPath_EmptyProjectDir(t *testing.T) {
-	title := "/home/do/ssd/iohub/dev/yagent/foo/bar.go"
-	got := replaceProjectAbsPath(title, "")
-	if got != title {
-		t.Errorf("replaceProjectAbsPath(%q, \"\") = %q, want original %q", title, got, title)
-	}
-}
-
-func TestReplaceProjectAbsPath_EmptyTitle(t *testing.T) {
-	projectDir := "/home/do/ssd/iohub/dev/yagent"
-	got := replaceProjectAbsPath("", projectDir)
-	if got != "" {
-		t.Errorf("replaceProjectAbsPath(\"\", %q) = %q, want \"\"", projectDir, got)
-	}
-}
-
-func TestReplaceProjectAbsPath_NoFalsePrefix(t *testing.T) {
-	// projectDir 是 "/home/do/ssd/iohub/dev/yagent"，
-	// 不应误替换 "/home/do/ssd/iohub/dev/yagentXxx"（缺少分隔符）
-	projectDir := "/home/do/ssd/iohub/dev/yagent"
-	title := "/home/do/ssd/iohub/dev/yagentXxx/foo/bar.go"
-	got := replaceProjectAbsPath(title, projectDir)
-	if got != title {
-		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want original %q (no false prefix match)", title, projectDir, got, title)
-	}
-}
-
-func TestReplaceProjectAbsPath_OnlyRelPathPart(t *testing.T) {
-	// title 恰好是 projectDir + "/"，清理后应为 "."
-	projectDir := "/home/do/ssd/iohub/dev/yagent"
-	title := "/home/do/ssd/iohub/dev/yagent/"
-	got := replaceProjectAbsPath(title, projectDir)
-	expected := "."
-	if got != expected {
-		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
-	}
-}
-
-func TestReplaceProjectAbsPath_PathInMiddle(t *testing.T) {
-	// 绝对路径出现在 title 中间
-	projectDir := "/home/do/ssd/iohub/dev/yagent"
-	title := "修复 /home/do/ssd/iohub/dev/yagent/foo/bar.go 中的 bug"
-	got := replaceProjectAbsPath(title, projectDir)
-	expected := "修复 foo/bar.go 中的 bug"
-	if got != expected {
-		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
-	}
-}
-
-func TestReplaceProjectAbsPath_MultiplePaths(t *testing.T) {
-	// title 包含多个绝对路径片段，全部被替换
-	projectDir := "/home/do/ssd/iohub/dev/yagent"
-	title := "参考 /home/do/ssd/iohub/dev/yagent/a/x.go 和 /home/do/ssd/iohub/dev/yagent/b/y.go 的改动"
-	got := replaceProjectAbsPath(title, projectDir)
-	expected := "参考 a/x.go 和 b/y.go 的改动"
-	if got != expected {
-		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
-	}
-}
-
-func TestReplaceProjectAbsPath_ProjectDirAlone(t *testing.T) {
-	// title 中包含单独出现的 projectDir（后面没有分隔符）
-	projectDir := "/home/do/ssd/iohub/dev/yagent"
-	title := "参考 /home/do/ssd/iohub/dev/yagent 文档"
-	got := replaceProjectAbsPath(title, projectDir)
-	expected := "参考 . 文档"
-	if got != expected {
-		t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", title, projectDir, got, expected)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := replaceProjectAbsPath(tc.title, tc.projectDir); got != tc.want {
+				t.Errorf("replaceProjectAbsPath(%q, %q) = %q, want %q", tc.title, tc.projectDir, got, tc.want)
+			}
+		})
 	}
 }

@@ -1,17 +1,12 @@
 package components
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
-
-var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
-
-func stripANSICodes(s string) string { return ansiRE.ReplaceAllString(s, "") }
 
 // testModelOptions 取自真实配置形态：provider 名长短不一、模型名带 org 前缀、
 // 上下文窗口从 128k 到 1M，另有一个目录查不到（Context=0）的私有模型。
@@ -37,18 +32,6 @@ func testModelOptions(n int) []ModelOption {
 	return opts
 }
 
-// TestModelSelectDialog_VisualRender 打印渲染结果，供人工核对版式。
-func TestModelSelectDialog_VisualRender(t *testing.T) {
-	d := NewModelSelectDialog(testModelOptions(9), "siliconflow_dsv32")
-	d.SetBounds(120, 30)
-	t.Logf("\n%s\n", d.View())
-
-	// 长列表在矮终端下的滚动形态
-	d2 := NewModelSelectDialog(testModelOptions(20), "extra_provider_c")
-	d2.SetBounds(100, 18)
-	t.Logf("\n%s\n", d2.View())
-}
-
 // TestModelSelectDialog_ShowsContextSize 每行都应带上上下文窗口列，未知的显示 "-"。
 func TestModelSelectDialog_ShowsContextSize(t *testing.T) {
 	d := NewModelSelectDialog(testModelOptions(9), "")
@@ -60,34 +43,17 @@ func TestModelSelectDialog_ShowsContextSize(t *testing.T) {
 			t.Errorf("rendered dialog missing %q\n%s", want, out)
 		}
 	}
-	// Context=0 的私有模型显示占位符而不是空白，保证列对齐
-	if !strings.Contains(out, "my-custom-llm-v2") || !strings.Contains(out, "-") {
-		t.Errorf("unknown context should render as \"-\"\n%s", out)
+	// Context=0 的私有模型显示占位符 "-" 而不是空白，保证列对齐。
+	// 不能对整段 View() 断言 Contains("-") —— 提示行里的 "1-9 jump" 自带连字符，恒为真。
+	// 该行 provider/model 名（private_endpoint / my-custom-llm-v2）共含 3 个连字符，
+	// 第 4 个只能来自 context 占位符（截断省略号用 "…"，不贡献 "-"）。
+	privateRow := lineContaining(out, "my-custom-llm-v2")
+	if strings.Count(privateRow, "-") < 4 {
+		t.Errorf("unknown context should render as \"-\", got %q", privateRow)
 	}
 	// 未指定当前 provider 时不应出现 ACTIVE 标记
 	if strings.Contains(out, "ACTIVE") {
 		t.Errorf("no active provider configured, badge should be absent\n%s", out)
-	}
-}
-
-// TestModelSelectDialog_FitsTerminal 渲染高度不得超过终端高度（滚动窗口生效的前提）。
-func TestModelSelectDialog_FitsTerminal(t *testing.T) {
-	for _, count := range []int{1, 3, 9, 15, 20, 40} {
-		for _, size := range [][2]int{{120, 30}, {100, 24}, {80, 20}, {60, 16}, {44, 12}} {
-			w, h := size[0], size[1]
-			d := NewModelSelectDialog(testModelOptions(count), "")
-			d.SetBounds(w, h)
-			out := d.View()
-			if out == "" {
-				continue // 尺寸低于渲染下限
-			}
-			if got := lipgloss.Height(out); got > h {
-				t.Errorf("providers=%d size=%dx%d: rendered height %d exceeds terminal height %d", count, w, h, got, h)
-			}
-			if got := lipgloss.Width(out); got > w {
-				t.Errorf("providers=%d size=%dx%d: rendered width %d exceeds terminal width %d", count, w, h, got, w)
-			}
-		}
 	}
 }
 
@@ -108,155 +74,37 @@ func TestModelSelectDialog_InitialCursorOnActive(t *testing.T) {
 	}
 }
 
-// TestModelSelectDialog_Navigation 覆盖 vim 键、翻页、首尾跳转与首尾相接。
-func TestModelSelectDialog_Navigation(t *testing.T) {
-	newDialog := func() *ModelSelectDialog {
-		d := NewModelSelectDialog(testModelOptions(9), "")
-		d.SetBounds(120, 30)
-		return d
-	}
-	key := func(d *ModelSelectDialog, code rune) {
-		d.Update(tea.KeyPressMsg{Code: code})
-	}
-
-	t.Run("j/k 移动", func(t *testing.T) {
-		d := newDialog()
-		key(d, 'j')
-		key(d, 'j')
-		if d.cursor != 2 {
-			t.Errorf("cursor = %d, want 2", d.cursor)
-		}
-		key(d, 'k')
-		if d.cursor != 1 {
-			t.Errorf("cursor = %d, want 1", d.cursor)
-		}
-	})
-
-	t.Run("首尾相接", func(t *testing.T) {
-		d := newDialog()
-		key(d, 'k') // 从首行向上应绕到末行
-		if d.cursor != 8 {
-			t.Errorf("wrap up: cursor = %d, want 8", d.cursor)
-		}
-		key(d, 'j') // 从末行向下应绕回首行
-		if d.cursor != 0 {
-			t.Errorf("wrap down: cursor = %d, want 0", d.cursor)
-		}
-	})
-
-	t.Run("g/G 跳转首尾", func(t *testing.T) {
-		d := newDialog()
-		key(d, 'G')
-		if d.cursor != 8 {
-			t.Errorf("G: cursor = %d, want 8", d.cursor)
-		}
-		key(d, 'g')
-		if d.cursor != 0 {
-			t.Errorf("g: cursor = %d, want 0", d.cursor)
-		}
-	})
-
-	t.Run("方向键与 Enter 确认", func(t *testing.T) {
-		d := newDialog()
-		key(d, tea.KeyDown)
-		key(d, tea.KeyEnter)
-		if d.Selected != "autodl_dsv41_flash" {
-			t.Errorf("Selected = %q, want %q", d.Selected, "autodl_dsv41_flash")
-		}
-	})
-
-	t.Run("数字键直选", func(t *testing.T) {
-		d := newDialog()
-		key(d, '5')
-		if d.cursor != 4 || d.Selected != "qn_glm51" {
-			t.Errorf("digit 5: cursor = %d, Selected = %q, want 4 / %q", d.cursor, d.Selected, "qn_glm51")
-		}
-	})
-
-	t.Run("越界数字键忽略", func(t *testing.T) {
-		d := NewModelSelectDialog(testModelOptions(3), "")
-		d.SetBounds(120, 30)
-		key(d, '7')
-		if d.Selected != "" || d.cursor != 0 {
-			t.Errorf("digit 7 with 3 options: Selected = %q, cursor = %d, want \"\" / 0", d.Selected, d.cursor)
-		}
-	})
-
-	t.Run("Esc 取消", func(t *testing.T) {
-		d := newDialog()
-		key(d, '3')
-		key(d, tea.KeyEscape)
-		if d.Selected != "" {
-			t.Errorf("Selected = %q, want \"\" after Esc", d.Selected)
-		}
-	})
-}
-
-// TestModelSelectDialog_Scrolling 列表超出可见行数时应滚动并提示被裁剪的条数，
-// 且游标行始终可见。
-func TestModelSelectDialog_Scrolling(t *testing.T) {
-	d := NewModelSelectDialog(testModelOptions(20), "")
+// TestModelSelectDialog_ScrollWindowMath 只钉共享契约表达不了的那一层：
+// listRows()/scrollWindow() 的窗口算术（listDialog 接口不含这两个方法，
+// 契约文件只能从 View() 的可见性侧覆盖）。游标行可见、"more" 提示、
+// 终端尺寸矩阵等可观察行为由 select_dialog_contract_test.go 统一覆盖。
+func TestModelSelectDialog_ScrollWindowMath(t *testing.T) {
+	const count = 20
+	d := NewModelSelectDialog(testModelOptions(count), "")
 	d.SetBounds(100, 16)
 
 	rows, showMore := d.listRows()
-	if rows >= 20 {
-		t.Fatalf("listRows() = %d, want < 20 so scrolling kicks in", rows)
+	if rows >= count {
+		t.Fatalf("listRows() = %d, want < %d so scrolling kicks in", rows, count)
 	}
 	if !showMore {
 		t.Error("listRows() showMore = false, want true for a clipped list")
 	}
 
-	// 游标移到末尾：最后一条必须可见，并出现向上的 "more" 提示
-	for i := 0; i < 19; i++ {
+	// 游标移到末行：窗口应贴到列表尾部，即 [count-rows, count)
+	for i := 0; i < count-1; i++ {
 		d.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if d.cursor != 19 {
-		t.Fatalf("cursor = %d, want 19", d.cursor)
-	}
-	out := stripANSICodes(d.View())
-	if !strings.Contains(out, "extra_provider_j") {
-		t.Errorf("cursor row not visible after scrolling to the end\n%s", out)
-	}
-	if !strings.Contains(out, "more") {
-		t.Errorf("expected a scroll indicator\n%s", out)
+	if d.cursor != count-1 {
+		t.Fatalf("cursor = %d, want %d", d.cursor, count-1)
 	}
 
 	start, end := d.scrollWindow(rows)
-	if start != 20-rows {
-		t.Errorf("scrollWindow start = %d, want %d", start, 20-rows)
+	if start != count-rows {
+		t.Errorf("scrollWindow start = %d, want %d", start, count-rows)
 	}
-	if end != 20 {
-		t.Errorf("scrollWindow end = %d, want 20", end)
-	}
-}
-
-// TestModelSelectDialog_SingleItem 只有一个 provider 时不应出现滚动提示，也不提示数字键。
-func TestModelSelectDialog_SingleItem(t *testing.T) {
-	d := NewModelSelectDialog(testModelOptions(1), "")
-	d.SetBounds(100, 24)
-	out := stripANSICodes(d.View())
-	if strings.Contains(out, "more") {
-		t.Errorf("single item should not render a scroll indicator\n%s", out)
-	}
-	if strings.Contains(out, "1-9 jump") {
-		t.Errorf("single item should not advertise number-key jump\n%s", out)
-	}
-}
-
-// TestModelSelectDialog_EmptyAndSmall 空列表或过小的终端返回空串，不 panic。
-func TestModelSelectDialog_EmptyAndSmall(t *testing.T) {
-	if got := NewModelSelectDialog(nil, "").View(); got != "" {
-		t.Errorf("empty options before SetBounds = %q, want \"\"", got)
-	}
-	d := NewModelSelectDialog(nil, "")
-	d.SetBounds(120, 30)
-	if got := d.View(); got != "" {
-		t.Errorf("empty options = %q, want \"\"", got)
-	}
-	small := NewModelSelectDialog(testModelOptions(3), "")
-	small.SetBounds(20, 30)
-	if got := small.View(); got != "" {
-		t.Errorf("narrow terminal = %q, want \"\"", got)
+	if end != count {
+		t.Errorf("scrollWindow end = %d, want %d", end, count)
 	}
 }
 

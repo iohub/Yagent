@@ -37,13 +37,6 @@ func TestEstimateTokens_Chinese(t *testing.T) {
 	}
 }
 
-func TestEstimateTokens_FallbackOnEmpty(t *testing.T) {
-	// 空字符串应始终返回 0（无论是否降级）
-	if got := EstimateTokens(""); got != 0 {
-		t.Errorf("EstimateTokens(\"\") = %d, want 0", got)
-	}
-}
-
 func TestEstimateTokens_LargeChinese(t *testing.T) {
 	// 构造一段较长的中文文本，验证估算结果合理
 	text := strings.Repeat("这是一个中文测试句子。", 100)

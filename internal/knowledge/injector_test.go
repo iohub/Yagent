@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"yagent/internal/config"
@@ -91,22 +92,22 @@ func TestFormatKnowledgeBlock_SingleResult(t *testing.T) {
 		t.Fatal("FormatKnowledgeBlock returned empty string")
 	}
 	// 验证标签
-	if !containsStr(block, "<knowledge_context>") {
+	if !strings.Contains(block, "<knowledge_context>") {
 		t.Error("FormatKnowledgeBlock: missing <knowledge_context> opening tag")
 	}
-	if !containsStr(block, "</knowledge_context>") {
+	if !strings.Contains(block, "</knowledge_context>") {
 		t.Error("FormatKnowledgeBlock: missing </knowledge_context> closing tag")
 	}
-	if !containsStr(block, "[检索]") {
+	if !strings.Contains(block, "[检索]") {
 		t.Error("FormatKnowledgeBlock: missing [检索] tag for repo_retrieval")
 	}
-	if !containsStr(block, "**置信度**: 0.90") {
+	if !strings.Contains(block, "**置信度**: 0.90") {
 		t.Error("FormatKnowledgeBlock: missing confidence")
 	}
-	if !containsStr(block, "**得分**: 0.950") {
+	if !strings.Contains(block, "**得分**: 0.950") {
 		t.Error("FormatKnowledgeBlock: missing score")
 	}
-	if !containsStr(block, "**相关文件**: auth.go") {
+	if !strings.Contains(block, "**相关文件**: auth.go") {
 		t.Error("FormatKnowledgeBlock: missing related files")
 	}
 }
@@ -125,10 +126,10 @@ func TestFormatKnowledgeBlock_CodingModification(t *testing.T) {
 		},
 	}
 	block := k.FormatKnowledgeBlock(results)
-	if !containsStr(block, "[编码]") {
+	if !strings.Contains(block, "[编码]") {
 		t.Error("FormatKnowledgeBlock: missing [编码] tag for coding_modification")
 	}
-	if containsStr(block, "[检索]") {
+	if strings.Contains(block, "[检索]") {
 		t.Error("FormatKnowledgeBlock: should not have [检索] for coding_modification")
 	}
 }
@@ -156,10 +157,10 @@ func TestFormatKnowledgeBlock_MultipleResults(t *testing.T) {
 		},
 	}
 	block := k.FormatKnowledgeBlock(results)
-	if !containsStr(block, "First") {
+	if !strings.Contains(block, "First") {
 		t.Error("FormatKnowledgeBlock: missing first result title")
 	}
-	if !containsStr(block, "Second") {
+	if !strings.Contains(block, "Second") {
 		t.Error("FormatKnowledgeBlock: missing second result title")
 	}
 }
@@ -180,7 +181,7 @@ func TestFormatKnowledgeBlock_NilRerankScore(t *testing.T) {
 	}
 	block := k.FormatKnowledgeBlock(results)
 	// 应使用 FinalScore 而非 nil RerankScore
-	if !containsStr(block, "**得分**: 0.500") {
+	if !strings.Contains(block, "**得分**: 0.500") {
 		t.Errorf("FormatKnowledgeBlock: expected score 0.500, got block: %s", block)
 	}
 }
@@ -212,7 +213,7 @@ func TestTruncateToTokenBudget_WithTruncation(t *testing.T) {
 		t.Errorf("TruncateToTokenBudget: expected truncation, got same length")
 	}
 	// 应保留 </knowledge_context> 闭合标签
-	if !containsStr(result, "</knowledge_context>") {
+	if !strings.Contains(result, "</knowledge_context>") {
 		t.Error("TruncateToTokenBudget: missing closing tag after truncation")
 	}
 }
@@ -229,44 +230,67 @@ func TestTruncateToTokenBudget_EmptyText(t *testing.T) {
 // Inject fail-safe 测试
 // ============================================================================
 
-func TestInject_NilMCPClient(t *testing.T) {
-	k := &KnowledgeInjector{mcpClient: nil}
-	injCtx := InjectionContext{UserMessage: "test"}
-	block, err := k.Inject(context.Background(), injCtx)
-	if err != nil {
-		t.Errorf("Inject(nil mcp) returned error: %v", err)
+// TestInject_SkipPaths 钉住跳过路径的统一契约：任何"不该检索"的输入都必须返回
+// ("", nil)，且不发布任何事件 —— 知识注入永远不能阻塞或弄脏主流程。
+// 原先的四个测试（nil mcp / 未启用 / 空 query / 跳过路径不发事件）断言完全相同，
+// 区别只在输入，所以收成一张表。
+//
+// 今天这四个输入走的是**同一个**提前返回：生产在 Inject 开头有临时硬关闭
+// （injector.go 的 `if disabled := true; disabled`）。因此本测试目前保护的是
+// "Inject 在关闭状态下不报错、不发布事件、不返回内容"这一条，而不是三个 fail-safe
+// 分支各自的判定；恢复注入（删掉硬编码 if 块）后，同一张表才真正逐条钉住
+// nil mcpClient / !cfg.Enabled / 空 query 三条分支。
+func TestInject_SkipPaths(t *testing.T) {
+	tests := []struct {
+		name   string
+		client *mcp.MCPClient
+		cfg    config.KnowledgeConfig
+		pub    EventPublisher
+		injCtx InjectionContext
+	}{
+		{
+			name:   "nil_mcp_client",
+			client: nil,
+			cfg:    config.KnowledgeConfig{Enabled: true},
+			pub:    &fakeEventPublisher{},
+			injCtx: InjectionContext{UserMessage: "test"},
+		},
+		{
+			name:   "injector_disabled_in_config",
+			client: nil,
+			cfg:    config.KnowledgeConfig{Enabled: false},
+			pub:    &fakeEventPublisher{},
+			injCtx: InjectionContext{UserMessage: "test"},
+		},
+		{
+			name:   "empty_query",
+			client: nil,
+			cfg:    config.KnowledgeConfig{Enabled: true},
+			pub:    &fakeEventPublisher{},
+			injCtx: InjectionContext{},
+		},
+		{
+			name:   "zero_value_injector_with_nil_publisher",
+			client: nil,
+			cfg:    config.KnowledgeConfig{},
+			pub:    nil,
+			injCtx: InjectionContext{UserMessage: "test"},
+		},
 	}
-	if block != "" {
-		t.Errorf("Inject(nil mcp) = %q, want empty", block)
-	}
-}
 
-func TestInject_Disabled(t *testing.T) {
-	k := &KnowledgeInjector{
-		cfg: config.KnowledgeConfig{Enabled: false},
-	}
-	injCtx := InjectionContext{UserMessage: "test"}
-	block, err := k.Inject(context.Background(), injCtx)
-	if err != nil {
-		t.Errorf("Inject(disabled) returned error: %v", err)
-	}
-	if block != "" {
-		t.Errorf("Inject(disabled) = %q, want empty", block)
-	}
-}
-
-func TestInject_EmptyUserMessage(t *testing.T) {
-	k := &KnowledgeInjector{
-		mcpClient: nil, // nil 触发 fail-safe 路径
-		cfg:       config.KnowledgeConfig{Enabled: true},
-	}
-	injCtx := InjectionContext{}
-	block, err := k.Inject(context.Background(), injCtx)
-	if err != nil {
-		t.Errorf("Inject(empty) returned error: %v", err)
-	}
-	if block != "" {
-		t.Errorf("Inject(empty) = %q, want empty", block)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			block, err := NewKnowledgeInjector(tt.client, tt.cfg, tt.pub).Inject(context.Background(), tt.injCtx)
+			if err != nil {
+				t.Errorf("Inject must never return an error on a skip path, got: %v", err)
+			}
+			if block != "" {
+				t.Errorf("Inject = %q, want empty", block)
+			}
+			if pub, ok := tt.pub.(*fakeEventPublisher); ok && len(pub.events) != 0 {
+				t.Errorf("skip path published %d event(s), want 0", len(pub.events))
+			}
+		})
 	}
 }
 
@@ -412,6 +436,9 @@ func TestPublishInjectedSummary_SkipsOnZeroHits(t *testing.T) {
 }
 
 func TestPublishInjectedSummary_NilPublisherNoPanic(t *testing.T) {
+	// hygiene:panic-guard —— 本用例的唯一失败模式是 panic：
+	// 去掉 publishInjectedSummary 开头的 `k == nil || k.publisher == nil` 守卫，
+	// 这里立刻空指针 panic 并让测试失败。
 	k := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, nil)
 	// publisher 为 nil 时应静默跳过，不得 panic
 	k.publishInjectedSummary("coding", "query", []mcp.KnowledgeSearchResult{
@@ -432,45 +459,4 @@ func TestPublishInjectedSummary_PublishErrorSwallowed(t *testing.T) {
 	if len(pub.events) != 1 {
 		t.Errorf("event should still be recorded despite returned error")
 	}
-}
-
-// TestInject_SkipPath_NoEventPublished 验证跳过路径（未启用 / mcpClient 为 nil）不发布事件
-func TestInject_SkipPath_NoEventPublished(t *testing.T) {
-	// 未启用
-	pubDisabled := &fakeEventPublisher{}
-	k1 := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: false}, pubDisabled)
-	block, err := k1.Inject(context.Background(), InjectionContext{UserMessage: "test"})
-	if err != nil || block != "" {
-		t.Fatalf("Inject(disabled) = (%q, %v), want (\"\", nil)", block, err)
-	}
-	if len(pubDisabled.events) != 0 {
-		t.Errorf("disabled path published %d event(s), want 0", len(pubDisabled.events))
-	}
-
-	// mcpClient 为 nil（Enabled=true）
-	pubNoClient := &fakeEventPublisher{}
-	k2 := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, pubNoClient)
-	block2, err2 := k2.Inject(context.Background(), InjectionContext{UserMessage: "test"})
-	if err2 != nil || block2 != "" {
-		t.Fatalf("Inject(nil client) = (%q, %v), want (\"\", nil)", block2, err2)
-	}
-	if len(pubNoClient.events) != 0 {
-		t.Errorf("skip path published %d event(s), want 0", len(pubNoClient.events))
-	}
-}
-
-// ============================================================================
-// 辅助函数
-// ============================================================================
-
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		func() bool {
-			for i := 0; i <= len(s)-len(substr); i++ {
-				if s[i:i+len(substr)] == substr {
-					return true
-				}
-			}
-			return false
-		}())
 }

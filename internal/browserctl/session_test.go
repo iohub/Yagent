@@ -34,10 +34,6 @@ func TestSessionRun_InjectsDirEnvAndArgv(t *testing.T) {
 	if call.Timeout <= 0 {
 		t.Error("each call must carry a timeout")
 	}
-	// 工作区目录必须由 Go 侧创建，CLI 不会自己建
-	if _, err := os.Stat(filepath.Join(session.Dir(), ".browser-control")); err == nil {
-		t.Log("note: CLI creates .browser-control on demand")
-	}
 }
 
 func TestSessionRun_TruncatesOversizedOutput(t *testing.T) {

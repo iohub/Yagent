@@ -43,7 +43,7 @@ func dashboardLines(m *model, width, height int) []string {
 // TestDashboardCompressBlock_BelowActivity 钉住位置：⧉ 段在 ⚙ Activity 之下、
 // 面板底边框之前 —— 这是"压缩是事后复盘"的排版表达，不是可选项。
 func TestDashboardCompressBlock_BelowActivity(t *testing.T) {
-	initLangManager()
+	testLang(t)
 	m := compressDashboardModel()
 
 	lines := dashboardLines(m, dashboardPanelWidth, 30)
@@ -71,21 +71,21 @@ func TestDashboardCompressBlock_BelowActivity(t *testing.T) {
 	if comp >= len(lines)-1 {
 		t.Errorf("⧉ 段必须是最后一段（row %d / 共 %d 行）", comp, len(lines))
 	}
-	// token 段在 Activity 之前
-	for i, l := range lines[:activity] {
-		if strings.Contains(l, "◆ Tokens") {
-			if i >= activity {
-				t.Errorf("◆ Tokens 必须在 Activity 之前")
-			}
-			break
-		}
+	// token 段在 Activity 之前：两个标题都要求真实存在，再比行号。
+	// （旧写法遍历 lines[:activity] 后判断 i >= activity，条件恒假，这个契约从没被检查过。）
+	token := indexOfLine(lines, "◆ Tokens")
+	if token < 0 {
+		t.Fatalf("◆ Tokens 段不见了\n----\n%s----", strings.Join(lines, "\n"))
+	}
+	if token >= activity {
+		t.Errorf("◆ Tokens(row %d) 必须在 ⚙ Activity(row %d) 之上", token, activity)
 	}
 }
 
 // TestDashboardCompressBlock_ExactBorderGeometry 带压缩数据时边框几何不许破
 // （§10.2 对 TestDashboardBorder_* 的要求）。
 func TestDashboardCompressBlock_ExactBorderGeometry(t *testing.T) {
-	initLangManager()
+	testLang(t)
 	for height := 7; height <= 34; height++ {
 		m := compressDashboardModel()
 		lines := dashboardLines(m, dashboardPanelWidth, height)
@@ -111,7 +111,7 @@ func TestDashboardCompressBlock_ExactBorderGeometry(t *testing.T) {
 // Activity 最少要 3 行（分隔线+标题+提示），所以 height<=7 时物理上放不下，
 // 这时面板让位给 token 段（宁可少一段，也不像以前那样多排 2 行再被截掉）。
 func TestDashboard_ActivityNeverStarvedByCompress(t *testing.T) {
-	initLangManager()
+	testLang(t)
 	for height := 8; height <= 24; height++ {
 		for _, tc := range []struct {
 			name  string
@@ -147,7 +147,7 @@ func TestDashboard_ActivityNeverStarvedByCompress(t *testing.T) {
 // TestDashboard_IdleBlockCostsExactlyTwoRows 空闲态的代价必须可核算：
 // 只多"分隔线 + 标题"两行，其余段落的位置与内容都不受影响，且绝不留下空壳。
 func TestDashboard_IdleBlockCostsExactlyTwoRows(t *testing.T) {
-	initLangManager()
+	testLang(t)
 
 	idle := compressDashboardModel()
 	idle.compress = compressStats{}
@@ -208,7 +208,7 @@ func indexOfLine(lines []string, needle string) int {
 // TestDashboardCacheKey_IncludesCompressStats 是"事件到了面板确实刷新"的证据：
 // 压缩事件既不动 timeline 也不动任何累计计数器，只有压缩签名能打破缓存。
 func TestDashboardCacheKey_IncludesCompressStats(t *testing.T) {
-	initLangManager()
+	testLang(t)
 	m := s1Model()
 	m.termWidth = 140
 	m.taskRunning = true

@@ -62,11 +62,6 @@ func rrAssistantItem(id, text string) string {
 	return `{"type":"message","role":"assistant","id":"` + id + `","content":[{"type":"output_text","text":"` + text + `"}]}`
 }
 
-// rrRawMessageItem 自由构造 message payload（原始 JSON）。
-func rrRawMessageItem(raw string) string {
-	return raw
-}
-
 // rrCallItem function_call payload（args 为内联 JSON 字符串内容）。
 func rrCallItem(callID, name, argsJSONStr string) string {
 	return `{"type":"function_call","id":"fc_` + callID + `","call_id":"` + callID + `","name":"` + name + `","namespace":"","arguments":"` + argsJSONStr + `"}`
@@ -480,7 +475,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			// 多部件 input_text + 回退拼接
 			name: "user_multi_part_and_fallback",
 			lines: baseLines(
-				rrLine(rrTs3, "response_item", rrRawMessageItem(`{"type":"message","role":"user","id":"u1","content":[{"type":"input_text","text":"part-a"},{"type":"input_text","text":"part-b"}]}`)),
+				rrLine(rrTs3, "response_item", `{"type":"message","role":"user","id":"u1","content":[{"type":"input_text","text":"part-a"},{"type":"input_text","text":"part-b"}]}`),
 			),
 			opts: opts,
 			check: func(t *testing.T, mem *ConversationMemory, info RolloutInfo, err error) {
@@ -496,7 +491,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			// 无 input_text 部件 → 回退拼接所有 text
 			name: "user_fallback_all_text",
 			lines: baseLines(
-				rrLine(rrTs3, "response_item", rrRawMessageItem(`{"type":"message","role":"user","id":"u1","content":[{"type":"image","text":"pic-1"},{"type":"misc","text":"txt-2"}]}`)),
+				rrLine(rrTs3, "response_item", `{"type":"message","role":"user","id":"u1","content":[{"type":"image","text":"pic-1"},{"type":"misc","text":"txt-2"}]}`),
 			),
 			opts: opts,
 			check: func(t *testing.T, mem *ConversationMemory, info RolloutInfo, err error) {
@@ -619,7 +614,7 @@ func TestReadRolloutMemory_CompactedModes(t *testing.T) {
 	optsTail := DefaultRolloutReadOptions()
 	optsTail.Compaction = CompactionSummaryTail
 	pathTail := writeRolloutFixture(t, "compacted-tail.jsonl", lines)
-	memTail, infoTail, err := ReadRolloutMemory(pathTail, optsTail)
+	memTail, _, err := ReadRolloutMemory(pathTail, optsTail)
 	if err != nil {
 		t.Fatalf("tail: %v", err)
 	}
@@ -645,7 +640,6 @@ func TestReadRolloutMemory_CompactedModes(t *testing.T) {
 	if len(memTail2.Messages) != 1 || memTail2.Messages[0].Type != MessageTypeSystem {
 		t.Fatalf("tail-only messages = %+v", memTail2.Messages)
 	}
-	_ = infoTail
 }
 
 // ─── ⑭ MaxMessages tail-keep ───
@@ -683,7 +677,7 @@ func TestReadRolloutMemory_MaxMessagesTailKeep(t *testing.T) {
 
 // callIDForRound 生成轮次 call_id（c-round-N）。
 func callIDForRound(round int) string {
-	return "c-round-" + string(rune('0'+round))
+	return "c-round-" + strconv.Itoa(round)
 }
 
 // TestReadRolloutMemory_MaxMessagesTruncateSynthesizes 截头产生悬空 call / 孤儿输出后的归一化。

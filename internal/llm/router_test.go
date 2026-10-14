@@ -94,16 +94,26 @@ func TestResolveTierEngine(t *testing.T) {
 	}
 }
 
+// TestBaselineOf 钉住"查不到就回落 balanced"这条解析行为本身。
+// 各角色的默认档位是可被 [routing.baselines] 覆盖的产品可调值，不属于行为契约，故不在此断言。
 func TestBaselineOf(t *testing.T) {
-	r := &Router{baselines: defaultBaselines}
-	if r.BaselineOf("devops") != TierFast {
-		t.Error("devops baseline should be fast")
+	r := &Router{baselines: map[string]Tier{"coding": TierHigh, "repo": TierBalanced}}
+
+	if got := r.BaselineOf("coding"); got != TierHigh {
+		t.Errorf("BaselineOf(coding) = %v, want the configured High", got)
 	}
-	if r.BaselineOf("director") != TierHigh {
-		t.Error("director baseline should be high")
+	// 角色名大小写不敏感：配置里写 "Coding" 也必须命中。
+	if got := r.BaselineOf("CODING"); got != TierHigh {
+		t.Errorf("BaselineOf(CODING) = %v, want High (lookup is case-insensitive)", got)
 	}
-	if r.BaselineOf("unknown-agent") != TierBalanced {
-		t.Error("unknown agent should fall back to balanced")
+	// 没有基线条目的角色（自定义 Agent 的 delegate_<name>）回落 balanced，而不是零值 Tier。
+	if got := r.BaselineOf("security_reviewer"); got != TierBalanced {
+		t.Errorf("BaselineOf(unknown) = %v, want Balanced", got)
+	}
+	// nil router：调用方（RoutingEngine.resolve）不应拿到零值档位。
+	var nilRouter *Router
+	if got := nilRouter.BaselineOf("coding"); got != TierBalanced {
+		t.Errorf("nil Router BaselineOf = %v, want Balanced", got)
 	}
 }
 

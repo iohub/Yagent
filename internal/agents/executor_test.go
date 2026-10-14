@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -55,15 +56,22 @@ func newFastAdapter(name, description string, result string) *tools.Adapter {
 	})
 }
 
+// restoreToolTimeout 把 defaultToolTimeout 临时调短，让超时路径在测试里可触发；
+// 恢复交给 t.Cleanup，因此测试函数不要用 defer 还原（会与并行测试交错）。
+func restoreToolTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := defaultToolTimeout
+	defaultToolTimeout = d
+	t.Cleanup(func() { defaultToolTimeout = old })
+}
+
 // ─── Test Cases ──────────────────────────────────────────────────────────────
 
 // TestRunAgentLoop_ToolCallTimeout 测试工具调用超时保护机制
 // 验证当工具调用超时时，系统能正确返回超时错误信息
 func TestRunAgentLoop_ToolCallTimeout(t *testing.T) {
-	// 创建一个短超时的 context（模拟 executor 的 60 秒超时被触发）
-	// 由于 executor 内部有 60 秒超时，我们需要一个更短的父 context
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	// 用 executor 自己的超时 seam，避免让测试等真实墙钟
+	restoreToolTimeout(t, 50*time.Millisecond)
 
 	// 创建 blocking adapter：模拟 run_bash 卡死
 	blockingAdapter := newBlockingAdapter("run_bash", "run bash command")
@@ -107,7 +115,7 @@ func TestRunAgentLoop_ToolCallTimeout(t *testing.T) {
 		AgentName:    "timeout-test",
 	}
 
-	result, err := RunAgentLoop(ctx, cfg)
+	result, err := RunAgentLoop(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("RunAgentLoop returned error: %v", err)
 	}
@@ -222,9 +230,8 @@ func TestRunAgentLoop_ToolCallNormal(t *testing.T) {
 // TestRunAgentLoop_MultipleToolCalls 测试多个工具调用场景
 // 验证当一个工具超时时，其他工具仍能正常执行
 func TestRunAgentLoop_MultipleToolCalls(t *testing.T) {
-	// 使用较长的 context 超时
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// 用 executor 自己的超时 seam：阻塞工具在 50ms 内超时，快速工具不受影响
+	restoreToolTimeout(t, 50*time.Millisecond)
 
 	// 创建 blocking adapter：模拟某个工具卡死
 	blockingAdapter := newBlockingAdapter("slow_tool", "a slow tool that will timeout")
@@ -281,7 +288,7 @@ func TestRunAgentLoop_MultipleToolCalls(t *testing.T) {
 		AgentName:    "multiple-test",
 	}
 
-	result, err := RunAgentLoop(ctx, cfg)
+	result, err := RunAgentLoop(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("RunAgentLoop returned error: %v", err)
 	}
@@ -508,8 +515,8 @@ func TestRunAgentLoop_NilUsageEstimatesTokens(t *testing.T) {
 
 	// 使用 MessageDispatcher + legacy consumer 捕获事件
 	dispatcher := messaging.NewMessageDispatcher(10000)
-	var capturedEvents []*messaging.MessageEvent
-	dispatcher.RegisterConsumer(&eventCapturingConsumer{events: &capturedEvents})
+	consumer := &eventCapturingConsumer{arrived: make(chan struct{}, 64)}
+	dispatcher.RegisterConsumer(consumer)
 	publisher := messaging.NewMessagePublisher(dispatcher)
 	defer dispatcher.Shutdown()
 
@@ -529,82 +536,106 @@ func TestRunAgentLoop_NilUsageEstimatesTokens(t *testing.T) {
 		t.Fatalf("RunAgentLoop returned error: %v", err)
 	}
 
-	// Give the dispatcher consumer goroutine time to process events
-	time.Sleep(50 * time.Millisecond)
+	// dispatcher 在独立 goroutine 上回调 consumer：等到事件出现再断言，而不是睡固定的 50ms
+	ev := consumer.waitFor("ai_response", 2*time.Second)
+	if ev == nil {
+		t.Fatal("Expected ai_response event to be published with usage metadata")
+	}
 
 	// 验证发布了 ai_response 事件且带 usage metadata
-	found := false
-	for _, ev := range capturedEvents {
-		if ev.Type == "ai_response" {
-			found = true
-			if ev.Metadata == nil {
-				t.Fatal("ai_response event should have non-nil metadata")
-			}
-			usageData, ok := ev.Metadata["usage"]
-			if !ok {
-				t.Fatal("ai_response event metadata should contain 'usage' key")
-			}
-			usageMap, ok := usageData.(map[string]interface{})
-			if !ok {
-				t.Fatalf("usage should be a map, got %T", usageData)
-			}
-			// 验证估算值 > 0
-			promptTokens, ok := usageMap["prompt_tokens"]
-			if !ok {
-				t.Fatal("usage should contain 'prompt_tokens'")
-			}
-			var promptFloat float64
-			switch v := promptTokens.(type) {
-			case float64:
-				promptFloat = v
-			case int:
-				promptFloat = float64(v)
-			default:
-				t.Fatalf("prompt_tokens should be float64 or int, got %T", promptTokens)
-			}
-			if promptFloat <= 0 {
-				t.Errorf("prompt_tokens should be > 0, got %v", promptTokens)
-			}
-			completionTokens, ok := usageMap["completion_tokens"]
-			if !ok {
-				t.Fatal("usage should contain 'completion_tokens'")
-			}
-			var completionFloat float64
-			switch v := completionTokens.(type) {
-			case float64:
-				completionFloat = v
-			case int:
-				completionFloat = float64(v)
-			default:
-				t.Fatalf("completion_tokens should be float64 or int, got %T", completionTokens)
-			}
-			if completionFloat <= 0 {
-				t.Errorf("completion_tokens should be > 0, got %v", completionTokens)
-			}
-			// 验证 estimated 标记
-			estimated, ok := usageMap["estimated"]
-			if !ok {
-				t.Fatal("usage should contain 'estimated' key")
-			}
-			if estimatedBool, ok := estimated.(bool); !ok || !estimatedBool {
-				t.Errorf("estimated should be true, got %v", estimated)
-			}
-			break
-		}
+	if ev.Metadata == nil {
+		t.Fatal("ai_response event should have non-nil metadata")
 	}
-	if !found {
-		t.Fatal("Expected ai_response event to be published with usage metadata")
+	usageData, ok := ev.Metadata["usage"]
+	if !ok {
+		t.Fatal("ai_response event metadata should contain 'usage' key")
+	}
+	usageMap, ok := usageData.(map[string]interface{})
+	if !ok {
+		t.Fatalf("usage should be a map, got %T", usageData)
+	}
+	// 验证估算值 > 0
+	promptTokens, ok := usageMap["prompt_tokens"]
+	if !ok {
+		t.Fatal("usage should contain 'prompt_tokens'")
+	}
+	var promptFloat float64
+	switch v := promptTokens.(type) {
+	case float64:
+		promptFloat = v
+	case int:
+		promptFloat = float64(v)
+	default:
+		t.Fatalf("prompt_tokens should be float64 or int, got %T", promptTokens)
+	}
+	if promptFloat <= 0 {
+		t.Errorf("prompt_tokens should be > 0, got %v", promptTokens)
+	}
+	completionTokens, ok := usageMap["completion_tokens"]
+	if !ok {
+		t.Fatal("usage should contain 'completion_tokens'")
+	}
+	var completionFloat float64
+	switch v := completionTokens.(type) {
+	case float64:
+		completionFloat = v
+	case int:
+		completionFloat = float64(v)
+	default:
+		t.Fatalf("completion_tokens should be float64 or int, got %T", completionTokens)
+	}
+	if completionFloat <= 0 {
+		t.Errorf("completion_tokens should be > 0, got %v", completionTokens)
+	}
+	// 验证 estimated 标记
+	estimated, ok := usageMap["estimated"]
+	if !ok {
+		t.Fatal("usage should contain 'estimated' key")
+	}
+	if estimatedBool, ok := estimated.(bool); !ok || !estimatedBool {
+		t.Errorf("estimated should be true, got %v", estimated)
 	}
 }
 
-// eventCapturingConsumer 捕获所有事件，用于测试
+// eventCapturingConsumer 捕获所有事件，用于测试。
+// Consume 由 dispatcher 的 goroutine 调用，读写共享切片必须过锁。
 type eventCapturingConsumer struct {
-	events *[]*messaging.MessageEvent
+	mu      sync.Mutex
+	events  []*messaging.MessageEvent
+	arrived chan struct{}
 }
 
 func (c *eventCapturingConsumer) Consume(event *messaging.MessageEvent) error {
-	*c.events = append(*c.events, event)
+	c.mu.Lock()
+	c.events = append(c.events, event)
+	c.mu.Unlock()
+	select {
+	case c.arrived <- struct{}{}:
+	default:
+	}
 	return nil
+}
+
+// waitFor 等到第一个指定类型的事件；超时返回 nil（不静默通过，调用方按缺失处理）。
+func (c *eventCapturingConsumer) waitFor(evType string, timeout time.Duration) *messaging.MessageEvent {
+	deadline := time.Now().Add(timeout)
+	for {
+		c.mu.Lock()
+		for _, ev := range c.events {
+			if string(ev.Type) == evType {
+				c.mu.Unlock()
+				return ev
+			}
+		}
+		c.mu.Unlock()
+		if time.Now().After(deadline) {
+			return nil
+		}
+		select {
+		case <-c.arrived:
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
 }
 
 // ─── Rollout 终止事件 ─────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 package blackboard
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -58,15 +59,24 @@ func TestResolveRefsDedup(t *testing.T) {
 	}
 }
 
+// refs 必须真的被 MaxRefs 截断：20 个**互不相同**的 ref 只留前 BudgetMaxRefs 个。
+// （以前用 20 个完全相同的 ref，去重后必然只剩 1 条，任何上限都能"通过"。）
 func TestResolveRefsMaxLimit(t *testing.T) {
-	refs := make([]string, 20)
+	refs := make([]string, BudgetMaxRefs*2)
 	for i := range refs {
-		refs[i] = "artifact:art_" + strings.Repeat("x", 5)
+		refs[i] = fmt.Sprintf("artifact:art_%03d", i)
 	}
 	pack := ResolveRefs("board", refs, existsAll, ResolveOptions{})
-	total := len(pack.Entries) + len(pack.Unresolved)
-	if total > BudgetMaxRefs {
-		t.Errorf("refs should be capped at %d, got %d", BudgetMaxRefs, total)
+
+	if len(pack.Unresolved) != 0 {
+		t.Fatalf("unresolved = %v, want none (all ids report as existing)", pack.Unresolved)
+	}
+	if len(pack.Entries) != BudgetMaxRefs {
+		t.Errorf("entries = %d, want exactly the cap %d", len(pack.Entries), BudgetMaxRefs)
+	}
+	// 被截掉的是尾部，不是头部——顺序即优先级。
+	if got := pack.Entries[len(pack.Entries)-1].Ref; got != refs[BudgetMaxRefs-1][len("artifact:"):] {
+		t.Errorf("last kept entry = %q, want the %d-th ref (%q)", got, BudgetMaxRefs, refs[BudgetMaxRefs-1])
 	}
 }
 
@@ -314,8 +324,13 @@ func TestContextPackText(t *testing.T) {
 	pack := ResolveRefs("board", []string{"note:" + noteRef, "artifact:art_999"}, existsAll, ResolveOptions{})
 	text := pack.Text()
 
-	if !strings.Contains(text, "## Referenced Context (from prior agent work)") {
-		t.Error("text should contain header")
+	// 表头只要求"第一行是一段标题"——具体措辞给人读，没有代码解析。
+	firstLine := text
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		firstLine = text[:i]
+	}
+	if !strings.HasPrefix(firstLine, "## ") {
+		t.Errorf("pack text should open with a header line, got %q", firstLine)
 	}
 	if !strings.Contains(text, "[note]") {
 		t.Error("text should contain [note] entry")

@@ -53,31 +53,6 @@ func newToolSet(t *testing.T) (*tools.BrowserOperationsTool, *fakeController, *f
 	return tools.NewBrowserOperationsTool(ctrl, cfg), ctrl, runner
 }
 
-// loadToolDefs 从注册表的声明层取工具定义。声明文件已搬到 internal/toolspec，
-// 这里不再按相对路径读磁盘上的兄弟包文件（那条路径曾经让 tools.json 一改名就悄悄测试失真）。
-func loadToolDefs(t *testing.T) []tools.ToolDefinition {
-	t.Helper()
-	if err := toolspec.SchemasError(); err != nil {
-		t.Fatalf("schemas.json: %v", err)
-	}
-	names := toolspec.SchemaNames()
-	defs := make([]tools.ToolDefinition, 0, len(names))
-	for _, name := range names {
-		s, ok := toolspec.GetSchema(name)
-		if !ok {
-			t.Fatalf("schema for %q disappeared", name)
-		}
-		defs = append(defs, tools.ToolDefinition{Name: s.Name, Description: s.Description, Parameters: s.Parameters})
-	}
-	if len(defs) == 0 {
-		t.Fatal("schemas.json 解析结果为空")
-	}
-	return defs
-}
-
-// browserSurface 用真实注册表路径装配浏览器工具面：
-// Spec 提供能力标签与 schema，argv/render 仍来自 browserToolSpecs。
-// 取代原来的 BuildAdapters —— 那是第二条注册路径，与 Surface 平行存在时迟早漂移。
 func containsName(xs []string, v string) bool {
 	for _, x := range xs {
 		if x == v {
@@ -87,6 +62,9 @@ func containsName(xs []string, v string) bool {
 	return false
 }
 
+// browserSurface 用真实注册表路径装配浏览器工具面：
+// Spec 提供能力标签与 schema，argv/render 仍来自 browserToolSpecs。
+// 取代原来的 BuildAdapters —— 那是第二条注册路径，与 Surface 平行存在时迟早漂移。
 func browserSurface(t *testing.T, set *tools.BrowserOperationsTool) *tools.Surface {
 	t.Helper()
 	deps := toolspec.ProfileBrowser.ProbeDeps()
@@ -95,7 +73,7 @@ func browserSurface(t *testing.T, set *tools.BrowserOperationsTool) *tools.Surfa
 }
 
 // adapterByName 用同一套 fake Controller/Runner 构建适配器并返回，保证断言能看到真实调用。
-func adapterByName(t *testing.T, defs []tools.ToolDefinition, name string) (*tools.Adapter, *fakeController, *fakeRunner) {
+func adapterByName(t *testing.T, name string) (*tools.Adapter, *fakeController, *fakeRunner) {
 	t.Helper()
 	set, ctrl, runner := newToolSet(t)
 	for _, a := range browserSurface(t, set).Adapters() {
@@ -151,10 +129,9 @@ func TestBrowserToolsAreNeverReadOnly(t *testing.T) {
 }
 
 func TestBrowserClick_BuildsArgvWithDefaults(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, _, runner := adapterByName(t, defs, "browser_click")
+	adapter, _, runner := adapterByName(t, "browser_click")
 
-	probeAndRun(t, adapter, runner, `{"target":"@e3"}`)
+	probeAndRun(t, adapter, `{"target":"@e3"}`)
 
 	if len(runner.calls) != 1 {
 		t.Fatalf("expected one CLI call, got %v", runner.calls)
@@ -167,10 +144,9 @@ func TestBrowserClick_BuildsArgvWithDefaults(t *testing.T) {
 }
 
 func TestBrowserFill_PassesFrameWhenGiven(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, _, runner := adapterByName(t, defs, "browser_fill")
+	adapter, _, runner := adapterByName(t, "browser_fill")
 
-	probeAndRun(t, adapter, runner, `{"target":"#email","value":"a@b.c","frame":"checkout","wait":5}`)
+	probeAndRun(t, adapter, `{"target":"#email","value":"a@b.c","frame":"checkout","wait":5}`)
 
 	got := strings.Join(runner.calls[0], " ")
 	if !strings.Contains(got, "fill #email a@b.c") || !strings.Contains(got, "--frame checkout") {
@@ -179,8 +155,7 @@ func TestBrowserFill_PassesFrameWhenGiven(t *testing.T) {
 }
 
 func TestBrowserInspect_ComposesPageInfoAndInspect(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, _, runner := adapterByName(t, defs, "browser_inspect")
+	adapter, _, runner := adapterByName(t, "browser_inspect")
 	runner.response = func(argv []string) (*browserctl.Result, error) {
 		if argv[0] == "inspect" {
 			return &browserctl.Result{
@@ -192,7 +167,7 @@ func TestBrowserInspect_ComposesPageInfoAndInspect(t *testing.T) {
 		return &browserctl.Result{Command: argv[0], Stdout: `{"url":"https://a.test","title":"T"}`, ExitCode: 0}, nil
 	}
 
-	out := probeAndRun(t, adapter, runner, `{"query":"hello","limit":5}`)
+	out := probeAndRun(t, adapter, `{"query":"hello","limit":5}`)
 
 	if len(runner.calls) != 2 || runner.calls[0][0] != "page-info" || runner.calls[1][0] != "inspect" {
 		t.Fatalf("expected page-info + inspect, got %v", runner.calls)
@@ -207,8 +182,7 @@ func TestBrowserInspect_ComposesPageInfoAndInspect(t *testing.T) {
 }
 
 func TestBrowserTabs_RequiresAction(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, _, runner := adapterByName(t, defs, "browser_tabs")
+	adapter, _, runner := adapterByName(t, "browser_tabs")
 
 	if _, err := adapter.Call(context.Background(), `{}`); err == nil {
 		t.Fatal("action is required")
@@ -219,8 +193,7 @@ func TestBrowserTabs_RequiresAction(t *testing.T) {
 }
 
 func TestBrowserTabs_NewTabGuardsURL(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, _, runner := adapterByName(t, defs, "browser_tabs")
+	adapter, _, runner := adapterByName(t, "browser_tabs")
 
 	if _, err := adapter.Call(context.Background(), `{"action":"new","url":"file:///etc/passwd"}`); err == nil {
 		t.Fatal("file:// must be rejected")
@@ -231,14 +204,13 @@ func TestBrowserTabs_NewTabGuardsURL(t *testing.T) {
 }
 
 func TestBrowserScreenshot_ConfinesPathToSessionWorkspace(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, _, runner := adapterByName(t, defs, "browser_screenshot")
+	adapter, _, runner := adapterByName(t, "browser_screenshot")
 
 	if _, err := adapter.Call(context.Background(), `{"path":"../../escape.png"}`); err == nil {
 		t.Fatal("path traversal in screenshot must be rejected")
 	}
 
-	out := probeAndRun(t, adapter, runner, `{"full":true}`)
+	out := probeAndRun(t, adapter, `{"full":true}`)
 	if !strings.Contains(out, runner.dir) {
 		t.Errorf("result should carry the absolute artifact path, got %s", out)
 	}
@@ -249,14 +221,13 @@ func TestBrowserScreenshot_ConfinesPathToSessionWorkspace(t *testing.T) {
 }
 
 func TestBrowserWait_ElementModeRequiresSelector(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, _, runner := adapterByName(t, defs, "browser_wait")
+	adapter, _, runner := adapterByName(t, "browser_wait")
 
 	if _, err := adapter.Call(context.Background(), `{"mode":"element"}`); err == nil {
 		t.Fatal("selector is required for mode=element")
 	}
 
-	probeAndRun(t, adapter, runner, `{"mode":"element","selector":"#ready","seconds":7,"visible":true}`)
+	probeAndRun(t, adapter, `{"mode":"element","selector":"#ready","seconds":7,"visible":true}`)
 	got := strings.Join(runner.calls[0], " ")
 	if !strings.Contains(got, "wait-element #ready 7") || !strings.Contains(got, "--visible") {
 		t.Errorf("argv = %q", got)
@@ -264,10 +235,9 @@ func TestBrowserWait_ElementModeRequiresSelector(t *testing.T) {
 }
 
 func TestBrowserWait_ClampsSeconds(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, _, runner := adapterByName(t, defs, "browser_wait")
+	adapter, _, runner := adapterByName(t, "browser_wait")
 
-	probeAndRun(t, adapter, runner, `{"mode":"load","seconds":9999}`)
+	probeAndRun(t, adapter, `{"mode":"load","seconds":9999}`)
 	got := strings.Join(runner.calls[0], " ")
 	if !strings.Contains(got, "wait load 60") {
 		t.Errorf("seconds must be clamped to the upstream-safe maximum, got %q", got)
@@ -275,8 +245,7 @@ func TestBrowserWait_ClampsSeconds(t *testing.T) {
 }
 
 func TestBrowserFailure_AppendsActionableHint(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, _, runner := adapterByName(t, defs, "browser_click")
+	adapter, _, runner := adapterByName(t, "browser_click")
 	runner.response = func(argv []string) (*browserctl.Result, error) {
 		return &browserctl.Result{
 			Command:  argv[0],
@@ -298,8 +267,7 @@ func TestBrowserFailure_AppendsActionableHint(t *testing.T) {
 }
 
 func TestBrowserStatus_ToleratesMissingPage(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, _, runner := adapterByName(t, defs, "browser_status")
+	adapter, _, runner := adapterByName(t, "browser_status")
 	runner.response = func(argv []string) (*browserctl.Result, error) {
 		if argv[0] == "page-info" {
 			return &browserctl.Result{Command: "page-info", Stderr: "no page", ExitCode: 1}, nil
@@ -307,7 +275,7 @@ func TestBrowserStatus_ToleratesMissingPage(t *testing.T) {
 		return &browserctl.Result{Command: "doctor", Stdout: "[ok  ] cdp endpoint — ws://x", ExitCode: 0}, nil
 	}
 
-	out := probeAndRun(t, adapter, runner, `{}`)
+	out := probeAndRun(t, adapter, `{}`)
 	if !strings.Contains(out, "cdp endpoint") {
 		t.Errorf("doctor output should survive a missing page:\n%s", out)
 	}
@@ -342,8 +310,7 @@ func TestBrowserTool_UnavailableCapability(t *testing.T) {
 }
 
 func TestBrowserTool_UsesDelegationIDFromContext(t *testing.T) {
-	defs := loadToolDefs(t)
-	adapter, ctrl, runner := adapterByName(t, defs, "browser_snapshot")
+	adapter, ctrl, runner := adapterByName(t, "browser_snapshot")
 
 	ctx := browserctl.WithDelegationID(context.Background(), "board-42")
 	if _, err := adapter.Call(ctx, `{}`); err != nil {
@@ -358,7 +325,7 @@ func TestBrowserTool_UsesDelegationIDFromContext(t *testing.T) {
 }
 
 // probeAndRun 调用工具并断言成功，返回渲染后的 output 文本。
-func probeAndRun(t *testing.T, adapter *tools.Adapter, _ *fakeRunner, input string) string {
+func probeAndRun(t *testing.T, adapter *tools.Adapter, input string) string {
 	t.Helper()
 	raw, err := adapter.Call(context.Background(), input)
 	if err != nil {

@@ -1038,6 +1038,9 @@ func renderResumeView(m *model) tea.View {
 
 	contentArea := renderResumeContent(m, width, contentHeight, effectivePageSize)
 	b.WriteString(contentArea)
+	// renderResumeContent 用 "\n" 连接且不收尾；这里不补换行，最后一条补白行就会
+	// 和状态栏粘成一行（宽度 2×width，真机上被终端折行）。
+	b.WriteString("\n")
 
 	statusBar := renderResumeStatusBar(m, width)
 	b.WriteString(statusBar)
@@ -1139,7 +1142,9 @@ func renderResumeRow(m *model, row resumeRow, selected bool, width int) string {
 			arrow = "▾ "
 		}
 		badge := fmt.Sprintf(" +%d", len(g.members))
-		line := renderResumeItem(m, row.item, selected, width-len(arrow)-lipgloss.Width(badge))
+		// arrow 的显示宽度必须按格子算："▸ "/"▾ " 是 3/4 字节但只占 2 格，
+		// 用 len() 会把内容区多砍 1-2 格（下面 memberPrefix 分支就是正确写法）。
+		line := renderResumeItem(m, row.item, selected, width-lipgloss.Width(arrow)-lipgloss.Width(badge))
 		if selected {
 			s := m.resumeStyles
 			if s == nil {

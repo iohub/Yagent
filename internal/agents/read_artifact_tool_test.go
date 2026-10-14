@@ -74,29 +74,43 @@ func TestReadArtifactFullRead(t *testing.T) {
 }
 
 // TestReadArtifactPaging 分页：showing 10-29、more 提示含 start_line=30。
+// 两种数字入参都要走通：LLM 经 JSON 调用时反序列化成 float64，
+// 程序化直传则是 int。
 func TestReadArtifactPaging(t *testing.T) {
-	ref := saveTestArtifact(t, multLines(50))
-	out := callReadArtifact(t, map[string]interface{}{
-		"id":         ref.ID,
-		"start_line": float64(10), // LLM 经 JSON 调用：数字反序列化为 float64
-		"max_lines":  float64(20),
-	})
+	tests := []struct {
+		name     string
+		start    interface{}
+		maxLines interface{}
+	}{
+		{"json_float64", float64(10), float64(20)},
+		{"programmatic_int", 10, 20},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ref := saveTestArtifact(t, multLines(50))
+			out := callReadArtifact(t, map[string]interface{}{
+				"id":         ref.ID,
+				"start_line": tc.start,
+				"max_lines":  tc.maxLines,
+			})
 
-	wantHeader := fmt.Sprintf("artifact %s | agent: coding | 50 lines | showing 10-29", ref.ID)
-	if !strings.HasPrefix(out, wantHeader) {
-		t.Errorf("header mismatch:\nwant prefix: %q\ngot:\n%s", wantHeader, out)
-	}
-	for i := 10; i <= 29; i++ {
-		if !strings.Contains(out, fmt.Sprintf("%2d: line %d", i, i)) {
-			t.Errorf("line %d missing from paged output", i)
-		}
-	}
-	if strings.Contains(out, " 9: line 9\n") || strings.Contains(out, "30: line 30\n") {
-		t.Errorf("lines outside [10,29] leaked into output")
-	}
-	wantMore := "[more: 21 lines left; continue with start_line=30]"
-	if !strings.Contains(out, wantMore) {
-		t.Errorf("more hint mismatch: want %q in output:\n%s", wantMore, out)
+			wantHeader := fmt.Sprintf("artifact %s | agent: coding | 50 lines | showing 10-29", ref.ID)
+			if !strings.HasPrefix(out, wantHeader) {
+				t.Errorf("header mismatch:\nwant prefix: %q\ngot:\n%s", wantHeader, out)
+			}
+			for i := 10; i <= 29; i++ {
+				if !strings.Contains(out, fmt.Sprintf("%2d: line %d", i, i)) {
+					t.Errorf("line %d missing from paged output", i)
+				}
+			}
+			if strings.Contains(out, " 9: line 9\n") || strings.Contains(out, "30: line 30\n") {
+				t.Errorf("lines outside [10,29] leaked into output")
+			}
+			wantMore := "[more: 21 lines left; continue with start_line=30]"
+			if !strings.Contains(out, wantMore) {
+				t.Errorf("more hint mismatch: want %q in output:\n%s", wantMore, out)
+			}
+		})
 	}
 }
 
@@ -186,20 +200,6 @@ func TestReadArtifactLongLine(t *testing.T) {
 	// 短行不受影响。
 	if !strings.Contains(out, "1: short head") || !strings.Contains(out, "3: short tail") {
 		t.Errorf("short lines corrupted:\n%s", out)
-	}
-}
-
-// TestReadArtifactIntParams 兼容 int 直传（非 JSON 程序化调用路径的稳健性）。
-func TestReadArtifactIntParams(t *testing.T) {
-	ref := saveTestArtifact(t, multLines(50))
-	out := callReadArtifact(t, map[string]interface{}{
-		"id":         ref.ID,
-		"start_line": 10,
-		"max_lines":  20,
-	})
-	wantHeader := fmt.Sprintf("artifact %s | agent: coding | 50 lines | showing 10-29", ref.ID)
-	if !strings.HasPrefix(out, wantHeader) {
-		t.Errorf("int params not handled:\nwant prefix: %q\ngot:\n%s", wantHeader, out)
 	}
 }
 

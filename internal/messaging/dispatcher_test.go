@@ -40,6 +40,32 @@ func (r *recConsumer) snapshot() []*Event {
 	return cp
 }
 
+// gateConsumer 在 Consume 里等 gate 放开，用来把某条订阅的队列写满。
+type gateConsumer struct {
+	id   string
+	gate chan struct{}
+	mu   sync.Mutex
+	got  []*Event
+}
+
+func (g *gateConsumer) ID() string { return g.id }
+
+func (g *gateConsumer) Types() []EventType { return nil }
+
+func (g *gateConsumer) Consume(_ context.Context, e *Event) error {
+	<-g.gate
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.got = append(g.got, e)
+	return nil
+}
+
+func (g *gateConsumer) count() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.got)
+}
+
 // newEvt 构造测试事件。
 func newEvt(t EventType, content any) *Event {
 	return &Event{Type: t, Content: content, Timestamp: time.Now()}
@@ -58,8 +84,8 @@ func waitFor(t *testing.T, desc string, cond func() bool) {
 	t.Fatalf("timeout waiting for: %s", desc)
 }
 
-// Test1 过滤路由：按 Types() 精确路由，nil 订阅全部。
-func Test1_DispatcherFilterRouting(t *testing.T) {
+// 过滤路由：按 Types() 精确路由，nil 订阅全部。
+func TestDispatcherFilterRouting(t *testing.T) {
 	d := NewMessageDispatcher(64)
 	defer d.Shutdown()
 
@@ -79,8 +105,8 @@ func Test1_DispatcherFilterRouting(t *testing.T) {
 	}
 }
 
-// Test2 同消费者保序：订阅全部，50 条严格按 0..49 送达（50 < bufferSize 不丢弃）。
-func Test2_DispatcherPerConsumerOrder(t *testing.T) {
+// 同消费者保序：订阅全部，50 条严格按 0..49 送达（50 < bufferSize 不丢弃）。
+func TestDispatcherPerConsumerOrder(t *testing.T) {
 	d := NewMessageDispatcher(128)
 	defer d.Shutdown()
 
@@ -100,12 +126,13 @@ func Test2_DispatcherPerConsumerOrder(t *testing.T) {
 	}
 }
 
-// Test3 普通类超载不阻塞：channel 满载时发布立即返回（丢弃合法）。
-func Test3_DispatcherOverflowNonBlocking(t *testing.T) {
+// 普通类超载不阻塞：channel 满载时发布立即返回（丢弃合法）。
+func TestDispatcherOverflowDropsWithoutBlocking(t *testing.T) {
 	d := NewMessageDispatcher(1)
-	defer d.Shutdown()
 
-	c := &recConsumer{id: "slow"}
+	// 卡住消费者，队列（容量 1）必然被写满 —— 否则"丢事件"这条契约根本没被走到，
+	// 而此前的断言是 count>1000，在只发布 1000 条的情况下永远为假。
+	c := &gateConsumer{id: "blocked", gate: make(chan struct{})}
 	d.Subscribe(c)
 
 	start := time.Now()
@@ -116,14 +143,21 @@ func Test3_DispatcherOverflowNonBlocking(t *testing.T) {
 		t.Fatalf("publishing 1000 events must not block, took %v", elapsed)
 	}
 
+	close(c.gate)
+	waitFor(t, "blocked consumer to start delivering", func() bool { return c.count() > 0 })
 	d.Shutdown()
-	if got := c.count(); got > 1000 {
-		t.Fatalf("received %d events, want <= 1000 (drop is legal)", got)
+
+	got := c.count()
+	if got >= 1000 {
+		t.Fatalf("delivered %d of 1000 with a queue of 1 — 丢弃路径没有被覆盖", got)
+	}
+	if got == 0 {
+		t.Fatal("delivered nothing; the already-queued events must still arrive")
 	}
 }
 
-// Test4 关键类洪峰全量按序送达：user_help_response 旁路 FIFO 永不丢。
-func Test4_DispatcherCriticalBypassFIFO(t *testing.T) {
+// 关键类洪峰全量按序送达：user_help_response 旁路 FIFO 永不丢。
+func TestDispatcherCriticalBypassFIFO(t *testing.T) {
 	d := NewMessageDispatcher(1)
 	defer d.Shutdown()
 
@@ -156,8 +190,8 @@ func Test4_DispatcherCriticalBypassFIFO(t *testing.T) {
 	}
 }
 
-// Test5 Shutdown 幂等与 drain：二次调用不 panic；返回后消息全部送达；此后发布被丢弃。
-func Test5_DispatcherShutdownIdempotentDrain(t *testing.T) {
+// Shutdown 幂等与 drain：二次调用不 panic；返回后消息全部送达；此后发布被丢弃。
+func TestDispatcherShutdownIdempotentDrain(t *testing.T) {
 	d := NewMessageDispatcher(64)
 	c := &recConsumer{id: "drain"}
 	d.Subscribe(c)

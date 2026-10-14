@@ -13,18 +13,6 @@ import (
 	"yagent/internal/mcp"
 )
 
-// knowledgeDomainsForAgent 根据知识来源 agent 返回可检索的 domain 列表
-// repo_agent → 仅 repo；coding_agent → repo + coding；其他 → 全部（nil）
-func knowledgeDomainsForAgent(sourceAgent string) []string {
-	switch sourceAgent {
-	case "repo_agent":
-		return []string{"repo"}
-	case "coding_agent":
-		return []string{"repo", "coding"}
-	}
-	return nil
-}
-
 // ============================================================================
 // ConsolidateKnowledgeTool
 // ============================================================================

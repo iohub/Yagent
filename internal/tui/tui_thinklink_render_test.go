@@ -17,13 +17,17 @@ plan:
 - [>] Delegate patch to Coding-Agent
 - [ ] Verify with go build`
 
+// thinklinkRenderMarkers 是结构化 thought 块渲染在两个表面（全屏详情、主页面板）
+// 都必须产出的期望值集合；各自的表面专属标记在调用处追加。
+var thinklinkRenderMarkers = []string{"GOAL", "REASON", "PLAN", "✓", "▸", "○", "1/3"}
+
 // 结构化 thought 块详情渲染：字段标签、进度计数与状态图标都应出现。
 func TestThinklinkDetailLines_Structured(t *testing.T) {
 	entry := ThinklinkEntry{Kind: "thought_plan", Content: structuredBlock}
 	lines := thinklinkDetailLines(entry, 60)
 	joined := strings.Join(lines, "\n")
 
-	for _, want := range []string{"GOAL", "STEP", "REASON", "PLAN", "✓", "▸", "○", "1/3"} {
+	for _, want := range append(append([]string{}, thinklinkRenderMarkers...), "STEP") {
 		if !strings.Contains(joined, want) {
 			t.Errorf("detail render missing %q\n%s", want, joined)
 		}
@@ -122,7 +126,7 @@ func TestMainPage_ThoughtPanelMatchesFullscreenDetail(t *testing.T) {
 	const width = 100
 	m := newTestModel()
 	e := logEntry{eventType: "ai_response", from: "director", content: mainPageMessage}
-	rendered := stripANSIForChrome(m.renderSingleEntry(&e, width))
+	rendered := stripANSI(m.renderSingleEntry(&e, width))
 
 	blocks, _ := thinklink.SplitThoughtBlocks(mainPageMessage)
 	if len(blocks) != 1 {
@@ -131,14 +135,14 @@ func TestMainPage_ThoughtPanelMatchesFullscreenDetail(t *testing.T) {
 	want := thinklinkDetailLines(
 		ThinklinkEntry{Kind: "thought_plan", Content: blocks[0]}, width-thinklinkPanelGutter-4)
 	for i, l := range want {
-		want[i] = strings.TrimRight(stripANSIForChrome(l), " ")
+		want[i] = strings.TrimRight(stripANSI(l), " ")
 	}
 	got := panelContentRows(rendered)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("panel body differs from fullscreen detail\nmain: %q\ndetail: %q", got, want)
 	}
 
-	for _, want := range []string{"◆ THOUGHT", "GOAL", "REASON", "PLAN", "✓", "▸", "○", "1/3"} {
+	for _, want := range append(append([]string{}, thinklinkRenderMarkers...), "◆ THOUGHT") {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("panel missing %q:\n%s", want, rendered)
 		}
@@ -162,7 +166,7 @@ func TestMainPage_ThoughtPanelWidthMatrix(t *testing.T) {
 		e := logEntry{eventType: "ai_response", from: "director", content: mainPageMessage}
 		for i, line := range strings.Split(m.renderSingleEntry(&e, width), "\n") {
 			if w := lipgloss.Width(line); w > width-2 {
-				t.Fatalf("width=%d line %d: %d > %d: %q", width, i, w, width-2, stripANSIForChrome(line))
+				t.Fatalf("width=%d line %d: %d > %d: %q", width, i, w, width-2, stripANSI(line))
 			}
 		}
 	}
@@ -172,7 +176,7 @@ func TestMainPage_ThoughtPanelWidthMatrix(t *testing.T) {
 func TestMainPage_PlainResponseKeepsMarkdownPath(t *testing.T) {
 	m := newTestModel()
 	e := logEntry{eventType: "ai_response", from: "director", content: "**plain** answer, no thinking"}
-	rendered := stripANSIForChrome(m.renderSingleEntry(&e, 100))
+	rendered := stripANSI(m.renderSingleEntry(&e, 100))
 	if strings.Contains(rendered, "THOUGHT") || strings.Contains(rendered, "╭") {
 		t.Errorf("plain answer got a thought panel:\n%s", rendered)
 	}
@@ -187,13 +191,13 @@ func TestMainPage_StreamedBlockRendersOnceClosed(t *testing.T) {
 	const width = 100
 	open := logEntry{eventType: "ai_stream", from: "director", streaming: true,
 		streamContent: "<thought>\ngoal: g\nreason: r\n"}
-	if out := stripANSIForChrome(m.renderSingleEntry(&open, width)); strings.Contains(out, "THOUGHT") {
+	if out := stripANSI(m.renderSingleEntry(&open, width)); strings.Contains(out, "THOUGHT") {
 		t.Errorf("unterminated block should stay raw:\n%s", out)
 	}
 
 	closed := logEntry{eventType: "ai_stream", from: "director", streaming: true,
 		streamContent: "<thought>\ngoal: g\nreason: r\n</thought>\n\nhalf an answer"}
-	out := stripANSIForChrome(m.renderSingleEntry(&closed, width))
+	out := stripANSI(m.renderSingleEntry(&closed, width))
 	if !strings.Contains(out, "◆ THOUGHT") || !strings.Contains(out, "GOAL") {
 		t.Errorf("closed block should render as a panel:\n%s", out)
 	}
@@ -208,7 +212,7 @@ func TestMainPage_MultipleBlocksStackPanels(t *testing.T) {
 	e := logEntry{eventType: "ai_response", from: "director",
 		content: "<thought>\ngoal: a\nreason: b\n</thought>\nmid\n" +
 			"<thought>\ngoal: c\nreason: d\n</thought>\ntail"}
-	rendered := stripANSIForChrome(m.renderSingleEntry(&e, 100))
+	rendered := stripANSI(m.renderSingleEntry(&e, 100))
 	if n := strings.Count(rendered, "◆ THOUGHT"); n != 2 {
 		t.Errorf("want 2 panels, got %d:\n%s", n, rendered)
 	}

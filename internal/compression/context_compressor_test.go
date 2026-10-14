@@ -9,7 +9,29 @@ import (
 	_ "yagent/internal/tools"
 
 	"yagent/internal/llm"
+	"yagent/internal/tokenutil"
 )
+
+// 截断用例的负载尺寸。断言关心的是「总量相对阈值落在哪一档」以及截断/保护的记账，
+// 与绝对体积无关。此前这里用 50000 字符负载 + 10000 字符 filler，而
+// TruncateToolResultsToBudget 每截一条都要重新编码整份消息（约 160KB），
+// 本包 28s 的墙钟时间几乎全花在这上面。下面等比缩到约 1/25（'x' 在 cl100k 下
+// 8 字符/token，'s'/'u' 2 字符/token），阈值改为由实测 token 值推导而非魔法数字，
+// 每个用例落在 production 分支上的位置和缩小前完全一致。
+const (
+	truncPayloadChars = 2000 // → 250 tokens
+	truncFillerChars  = 400  // → 200 tokens
+	truncKeepTokens   = 8    // 截断后每条 tool 结果保留的 token 预算
+
+	// 截断会在保留前缀后追加 "\n\n[truncated: 内容已截断，原始 N tokens, 保留 M tokens]"，
+	// 实测约 28 token；把这条消息的体积算进阈值时需要带上它。
+	truncMarkerTokens = 28
+)
+
+// truncTokens 返回一条 tool 结果被截断后实际占用的 token（保留前缀 + 截断标记）。
+func truncTokens(content string, keepTokens int) int {
+	return tokenutil.EstimateTokens(TruncateToTokenBudget(content, keepTokens)) + truncMarkerTokens
+}
 
 // TestEstimateMessagesTokens 验证 token 估算函数对各类消息的处理
 func TestEstimateMessagesTokens(t *testing.T) {
@@ -68,28 +90,29 @@ func TestTruncateToolResultsToBudget_NotOverThreshold(t *testing.T) {
 
 // TestTruncateToolResultsToBudget_Priority 优先级测试：预算只够截一条时 read_file 先被截
 func TestTruncateToolResultsToBudget_Priority(t *testing.T) {
-	// 构造足够大的消息使总 token 超过阈值
-	largeContent := strings.Repeat("x", 50000) // 约 12500+ tokens
+	largeContent := strings.Repeat("x", truncPayloadChars)
 	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: strings.Repeat("s", 10000)},
-		{Role: llm.RoleUser, Content: strings.Repeat("u", 10000)},
+		{Role: llm.RoleSystem, Content: strings.Repeat("s", truncFillerChars)},
+		{Role: llm.RoleUser, Content: strings.Repeat("u", truncFillerChars)},
 		{Role: llm.RoleAssistant, Content: "assistant response"},
 		// 优先级 0 工具
 		{Role: llm.RoleTool, ToolName: "read_file", Content: largeContent},
 		// 优先级 1 工具
 		{Role: llm.RoleTool, ToolName: "list_dir", Content: largeContent},
 	}
-	// 计算基础 token 数（不含大结果），阈值设在"截断 read_file 后"与"截断前"之间
-	baseTokens := EstimateMessagesTokens([]llm.Message{
-		{Role: llm.RoleSystem, Content: strings.Repeat("s", 10000)},
-		{Role: llm.RoleUser, Content: strings.Repeat("u", 10000)},
-		{Role: llm.RoleAssistant, Content: "assistant response"},
-	})
-	// 截断 read_file 后大约减少 12300 tokens，截断后总量约 base+200+12500
-	// 设阈值为 base + 200 + 12000，确保截断 read_file 后达标，但截断前不达标
-	threshold := baseTokens + 200 + 12000
+	payloadTokens := tokenutil.EstimateTokens(largeContent)
+	// 基础 token 数（不含两条大结果）
+	baseTokens := EstimateMessagesTokens([]llm.Message{messages[0], messages[1], messages[2]})
+	// 阈值必须严格落在「两条都在」和「只截掉 prio0 那一条」之间，
+	// 才能证明截的是优先级而不是先到先截。
+	overBudget := baseTokens + 2*payloadTokens
+	afterOneCut := baseTokens + payloadTokens + truncTokens(largeContent, truncKeepTokens)
+	if afterOneCut >= overBudget {
+		t.Fatalf("负载太小导致阈值区间为空: afterOneCut=%d >= overBudget=%d", afterOneCut, overBudget)
+	}
+	threshold := (overBudget + afterOneCut) / 2
 
-	result, _ := TruncateToolResultsToBudget(messages, threshold, 200)
+	result, _ := TruncateToolResultsToBudget(messages, threshold, truncKeepTokens)
 
 	// read_file (prio 0) 应被截断
 	readFileMsg := result[3]
@@ -109,27 +132,29 @@ func TestTruncateToolResultsToBudget_Priority(t *testing.T) {
 
 // TestTruncateToolResultsToBudget_DeepThinkingProtected deepthinking 永不截断
 func TestTruncateToolResultsToBudget_DeepThinkingProtected(t *testing.T) {
-	largeContent := strings.Repeat("x", 50000)
+	largeContent := strings.Repeat("x", truncPayloadChars)
 	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: strings.Repeat("s", 10000)},
-		{Role: llm.RoleUser, Content: strings.Repeat("u", 10000)},
+		{Role: llm.RoleSystem, Content: strings.Repeat("s", truncFillerChars)},
+		{Role: llm.RoleUser, Content: strings.Repeat("u", truncFillerChars)},
 		{Role: llm.RoleAssistant, Content: "assistant response"},
 		{Role: llm.RoleTool, ToolName: "deepthinking", Content: largeContent},
 		{Role: llm.RoleTool, ToolName: "list_dir", Content: largeContent},
 	}
-	baseTokens := EstimateMessagesTokens([]llm.Message{
-		{Role: llm.RoleSystem, Content: strings.Repeat("s", 10000)},
-		{Role: llm.RoleUser, Content: strings.Repeat("u", 10000)},
-		{Role: llm.RoleAssistant, Content: "assistant response"},
-	})
-	threshold := baseTokens + 300
+	payloadTokens := tokenutil.EstimateTokens(largeContent)
+	baseTokens := EstimateMessagesTokens([]llm.Message{messages[0], messages[1], messages[2]})
+	// 阈值取「基础 + 一条完整负载」，比截完 list_dir 后仍然达不到的量级更低，
+	// 所以走的是「可截的都截完了仍不达标」那条出口——受保护的 deepthinking 全程没动过。
+	threshold := baseTokens + payloadTokens
 
-	result, _ := TruncateToolResultsToBudget(messages, threshold, 200)
+	result, _ := TruncateToolResultsToBudget(messages, threshold, truncKeepTokens)
 
 	// deepthinking 不应被截断
 	dtMsg := result[3]
 	if dtMsg.TruncationMarker != nil {
 		t.Error("expected deepthinking message NOT to be truncated")
+	}
+	if dtMsg.Content != largeContent {
+		t.Error("expected deepthinking content to be untouched")
 	}
 	// list_dir 应被截断（替代 deepthinking）
 	listDirMsg := result[4]
@@ -140,15 +165,15 @@ func TestTruncateToolResultsToBudget_DeepThinkingProtected(t *testing.T) {
 
 // TestTruncateToolResultsToBudget_Idempotent 幂等性：对已截断的消息再次调用不重复截断
 func TestTruncateToolResultsToBudget_Idempotent(t *testing.T) {
-	largeContent := strings.Repeat("x", 50000)
+	largeContent := strings.Repeat("x", truncPayloadChars)
 	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: strings.Repeat("s", 10000)},
-		{Role: llm.RoleUser, Content: strings.Repeat("u", 10000)},
+		{Role: llm.RoleSystem, Content: strings.Repeat("s", truncFillerChars)},
+		{Role: llm.RoleUser, Content: strings.Repeat("u", truncFillerChars)},
 		{Role: llm.RoleAssistant, Content: "assistant response"},
 		{Role: llm.RoleTool, ToolName: "read_file", Content: largeContent},
 	}
-	threshold := 500 // 很低，肯定触发
-	keepTokens := 50
+	threshold := 100 // 远低于任何可达状态，肯定触发
+	keepTokens := truncKeepTokens
 
 	// 第一次截断
 	result1, _ := TruncateToolResultsToBudget(messages, threshold, keepTokens)
@@ -173,16 +198,16 @@ func TestTruncateToolResultsToBudget_Idempotent(t *testing.T) {
 
 // TestTruncateToolResultsToBudget_AllCut 多条大结果全部被截断
 func TestTruncateToolResultsToBudget_AllCut(t *testing.T) {
-	largeContent := strings.Repeat("x", 50000)
+	largeContent := strings.Repeat("x", truncPayloadChars)
 	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: strings.Repeat("s", 10000)},
+		{Role: llm.RoleSystem, Content: strings.Repeat("s", truncFillerChars)},
 		{Role: llm.RoleAssistant, Content: "assistant"},
 		{Role: llm.RoleTool, ToolName: "read_file", Content: largeContent},
 		{Role: llm.RoleTool, ToolName: "run_bash", Content: largeContent},
 		{Role: llm.RoleTool, ToolName: "list_dir", Content: largeContent},
 	}
-	threshold := 100 // 极低阈值
-	keepTokens := 50
+	threshold := 100 // 即使三条全截完也达不到，必须逐条走到底
+	keepTokens := truncKeepTokens
 
 	result, _ := TruncateToolResultsToBudget(messages, threshold, keepTokens)
 
@@ -208,22 +233,22 @@ func TestTruncateToolResultsToBudget_AllCut(t *testing.T) {
 
 // TestTruncateToolResultsToBudget_Stats 验证压缩统计信息正确性
 func TestTruncateToolResultsToBudget_Stats(t *testing.T) {
-	largeContent := strings.Repeat("x", 50000)
+	largeContent := strings.Repeat("x", truncPayloadChars)
 	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: strings.Repeat("s", 10000)},
+		{Role: llm.RoleSystem, Content: strings.Repeat("s", truncFillerChars)},
 		{Role: llm.RoleAssistant, Content: "assistant"},
 		{Role: llm.RoleTool, ToolName: "read_file", Content: largeContent},
 		{Role: llm.RoleTool, ToolName: "run_bash", Content: largeContent},
 	}
-	threshold := 500 // 很低，肯定触发
-	keepTokens := 50
+	threshold := 100 // 远低于任何可达状态，肯定触发
+	keepTokens := truncKeepTokens
 
 	_, stats := TruncateToolResultsToBudget(messages, threshold, keepTokens)
 	if stats == nil {
 		t.Fatal("expected non-nil stats")
 	}
-	if stats.TruncatedCount == 0 {
-		t.Error("expected TruncatedCount > 0")
+	if stats.TruncatedCount != 2 {
+		t.Errorf("expected both tool results truncated, got TruncatedCount = %d", stats.TruncatedCount)
 	}
 	if stats.SavedTokens <= 0 {
 		t.Errorf("expected SavedTokens > 0, got %d", stats.SavedTokens)
@@ -250,5 +275,16 @@ func TestTruncateToolResultsToBudget_Stats(t *testing.T) {
 		if tool.OriginalTokens < tool.KeptTokens {
 			t.Errorf("expected OriginalTokens (%d) >= KeptTokens (%d) for tool %s", tool.OriginalTokens, tool.KeptTokens, tool.ToolName)
 		}
+		// 截断必须真的省了 token：Omitted 等于 Original-Kept，否则统计口径是空的。
+		if tool.OmittedTokens != tool.OriginalTokens-tool.KeptTokens {
+			t.Errorf("expected OmittedTokens (%d) == Original(%d) - Kept(%d) for tool %s",
+				tool.OmittedTokens, tool.OriginalTokens, tool.KeptTokens, tool.ToolName)
+		}
+	}
+	// 总账要对得上：Saved/Compressed 是消息级口径，会比各条 Omitted 之和少掉
+	// 每条截断标记自身的开销，所以这里只校验消息级恒等式。
+	if stats.SavedTokens != stats.OriginalTokens-stats.CompressedTokens {
+		t.Errorf("expected SavedTokens (%d) == Original(%d) - Compressed(%d)",
+			stats.SavedTokens, stats.OriginalTokens, stats.CompressedTokens)
 	}
 }

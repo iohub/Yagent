@@ -65,40 +65,6 @@ func (m *mockConsolidationEngine) CallCount() int {
 }
 
 // ============================================================================
-// Test ConsolidationTask
-// ============================================================================
-
-func TestConsolidationTask_Basic(t *testing.T) {
-	task := &ConsolidationTask{
-		NewObservations: "## Architecture\n- Found a new architecture pattern",
-	}
-	if task.NewObservations == "" {
-		t.Error("task should have observations")
-	}
-}
-
-// ============================================================================
-// Test NewConsolidationWorker
-// ============================================================================
-
-func TestNewConsolidationWorker(t *testing.T) {
-	shared := memory.NewSharedMemory(100)
-	store := NewRepoMemoryStore("test-repo", shared)
-	engine := &mockConsolidationEngine{}
-
-	worker := NewConsolidationWorker(store, engine, nil)
-	if worker == nil {
-		t.Fatal("expected non-nil worker")
-	}
-	if worker.store != store {
-		t.Error("store reference mismatch")
-	}
-	if worker.engine != engine {
-		t.Error("engine reference mismatch")
-	}
-}
-
-// ============================================================================
 // Test Submit
 // ============================================================================
 
@@ -111,36 +77,31 @@ func TestSubmit_NonBlocking_Success(t *testing.T) {
 	worker.Start()
 
 	defer worker.Stop()
-	// Worker 未启动时 Submit 应该阻塞或返回...实际上未启动时channel有buffer，应该可以提交
 	ok := worker.Submit(&ConsolidationTask{NewObservations: "test"})
-	// channel buffer 足够，应该成功
 	if !ok {
 		t.Error("submit should succeed when channel has space")
 	}
 }
 
-func TestSubmit_ChannelFull_Drop(t *testing.T) {
+func TestSubmit_ChannelFull_DropsExtras(t *testing.T) {
 	shared := memory.NewSharedMemory(100)
 	store := NewRepoMemoryStore("test-repo", shared)
-	engine := &mockConsolidationEngine{delay: 100 * time.Millisecond} // 足够让 channel 填满且测试快速完成
+	engine := &mockConsolidationEngine{}
 
+	// 故意不 Start()：没有消费者取走任务，buffer 语义变成确定性的，
+	// 不需要靠引擎 delay 去抢时间窗。
 	worker := NewConsolidationWorker(store, engine, nil)
-	worker.Start()
-	defer worker.Stop()
 
-	// 填充 channel
-	filled := 0
+	accepted := 0
 	for i := 0; i < channelBufferSize*2; i++ {
 		if worker.Submit(&ConsolidationTask{NewObservations: "test"}) {
-			filled++
+			accepted++
 		}
 	}
 
-	// 至少 channelBufferSize 个应该成功
-	if filled < channelBufferSize {
-		t.Errorf("expected at least %d successful submits, got %d", channelBufferSize, filled)
+	if accepted != channelBufferSize {
+		t.Errorf("accepted = %d, want exactly %d (buffer 写满后必须丢弃)", accepted, channelBufferSize)
 	}
-	// 有可能超过 channelBufferSize 的提交被丢弃
 }
 
 // ============================================================================
@@ -160,14 +121,13 @@ func TestConsolidationWorker_Process_UpdatesMemory(t *testing.T) {
 
 	worker := NewConsolidationWorker(store, engine, nil)
 	worker.Start()
-	defer worker.Stop()
 
 	// 提交任务
 	task := &ConsolidationTask{NewObservations: "## Architecture\n- Found a router"}
 	worker.Submit(task)
 
-	// 等待处理完成（worker 内部异步）
-	time.Sleep(500 * time.Millisecond)
+	// Stop 会等 run 循环把队列里的任务处理完，比睡固定时长确定
+	worker.Stop()
 
 	// 验证记忆已更新
 	current := store.Get()
@@ -208,14 +168,14 @@ func TestConsolidationWorker_Process_LLMFailure_KeepsOldMemory(t *testing.T) {
 
 	worker := NewConsolidationWorker(store, engine, nil)
 	worker.Start()
-	defer worker.Stop()
 
 	// 提交任务
 	task := &ConsolidationTask{NewObservations: "## Architecture\n- New content"}
 	worker.Submit(task)
 
-	// 等待处理完成
-	time.Sleep(2 * time.Second)
+	// Stop 排干队列后再断言：callConsolidationLLM 的重试要睡 1s+2s，
+	// 此前睡 2s 去断言等于在重试完成前就检查，无论怎么写都通过。
+	worker.Stop()
 
 	// 验证旧记忆未被覆盖
 	current := store.Get()
@@ -237,13 +197,12 @@ func TestConsolidationWorker_Process_EmptyObservation_Skipped(t *testing.T) {
 
 	worker := NewConsolidationWorker(store, engine, nil)
 	worker.Start()
-	defer worker.Stop()
 
 	// 提交空观察
 	task := &ConsolidationTask{NewObservations: ""}
 	worker.Submit(task)
 
-	time.Sleep(200 * time.Millisecond)
+	worker.Stop()
 
 	if engine.CallCount() > 0 {
 		t.Error("LLM should not be called with empty observation")
@@ -269,12 +228,11 @@ func TestConsolidationWorker_Process_InvalidFormat_KeepsOldMemory(t *testing.T) 
 
 	worker := NewConsolidationWorker(store, engine, nil)
 	worker.Start()
-	defer worker.Stop()
 
 	task := &ConsolidationTask{NewObservations: "some observations"}
 	worker.Submit(task)
 
-	time.Sleep(500 * time.Millisecond)
+	worker.Stop()
 
 	current := store.Get()
 	if current != originalContent {
@@ -321,31 +279,6 @@ func TestConsolidationWorker_Stop_DrainsPending(t *testing.T) {
 }
 
 // ============================================================================
-// Test Submit - after stop
-// ============================================================================
-
-func TestConsolidationWorker_Submit_AfterStop_Panics(t *testing.T) {
-	shared := memory.NewSharedMemory(100)
-	store := NewRepoMemoryStore("test-repo", shared)
-	engine := &mockConsolidationEngine{}
-
-	worker := NewConsolidationWorker(store, engine, nil)
-	worker.Start()
-	worker.Stop()
-
-	// Stop 后 channel 被关闭，可能 panic 可能不 panic，取决于是否还有 goroutine 在接收
-	// 我们应该只是测试不 panic
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("recovered from panic after submit to stopped worker: %v", r)
-		}
-	}()
-
-	worker.Submit(&ConsolidationTask{NewObservations: "test"})
-	// 不验证结果，只是确保不崩溃
-}
-
-// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -376,57 +309,33 @@ var _ llm.Engine = (*mockConsolidationEngine)(nil)
 // Test truncateRunes
 // ============================================================================
 
-func TestTruncateRunes_ShortContent_NoTruncate(t *testing.T) {
-	// 短内容（字节数和 rune 数都 < 200），不应截断
-	input := "Hello, 世界！这是简短内容。"
-	result := truncateRunes(input, 200)
-	if result != input {
-		t.Errorf("expected no truncation for short content, got: %q", result)
+// TestTruncateRunes 固化"按 rune 而非按字节计数"这条契约：
+// 中文按字节会提前触发截断（修复前还会 panic），按 rune 才不会。
+func TestTruncateRunes(t *testing.T) {
+	chinese := strings.Repeat("中文字符测试", 20) // 120 rune = 360 字节
+	if len(chinese) <= 200 {
+		t.Fatalf("fixture must exceed 200 bytes to pin the byte/rune confusion, got %d bytes", len(chinese))
 	}
-}
 
-func TestTruncateRunes_ChineseOver200Bytes_Under200Runes_NoPanic(t *testing.T) {
-	// 中文每个字符 3 字节：80 个中文字 = 240 字节，但只有 80 个 rune
-	// 字节数 > 200 但 rune 数 < 200，之前会 panic，修复后应完整保留
-	chineseContent := strings.Repeat("中文字符测试", 20) // 120 个中文字 = 360 字节, 120 个 rune
-	if len(chineseContent) <= 200 {
-		t.Skip("test requires content > 200 bytes, adjust string count")
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"short_mixed", "Hello, 世界！这是简短内容。", "Hello, 世界！这是简短内容。"},
+		{"cjk_over_200_bytes_under_200_runes", chinese, chinese},
+		{"ascii_over_limit", strings.Repeat("A", 300), strings.Repeat("A", 200) + "..."},
+		{"ascii_exact_boundary", strings.Repeat("B", 200), strings.Repeat("B", 200)},
+		{"ascii_one_past_boundary", strings.Repeat("C", 201), strings.Repeat("C", 200) + "..."},
 	}
-	result := truncateRunes(chineseContent, 200)
-	// rune 数 80 < 200，不应截断，不应有 "..." 后缀
-	if strings.HasSuffix(result, "...") {
-		t.Errorf("expected no truncation for Chinese content under 200 runes, got: %q", result)
-	}
-	if result != chineseContent {
-		t.Errorf("expected full content preserved, got: %q", result)
-	}
-}
 
-func TestTruncateRunes_LongASCII_TruncatedWithEllipsis(t *testing.T) {
-	// 300 个 ASCII 字符：rune 数 > 200，应截断到 200 + "..."
-	longContent := strings.Repeat("A", 300)
-	result := truncateRunes(longContent, 200)
-	expected := strings.Repeat("A", 200) + "..."
-	if result != expected {
-		t.Errorf("expected truncated result, got: %q (len=%d)", result, len(result))
-	}
-}
-
-func TestTruncateRunes_ExactBoundary(t *testing.T) {
-	// 恰好 200 个 ASCII 字符，不应截断
-	exact := strings.Repeat("B", 200)
-	result := truncateRunes(exact, 200)
-	if result != exact {
-		t.Errorf("expected no truncation at exact boundary, got: %q", result)
-	}
-}
-
-func TestTruncateRunes_201stCharTrigger(t *testing.T) {
-	// 201 个 ASCII 字符，应截断到 200 + "..."
-	slightlyLong := strings.Repeat("C", 201)
-	result := truncateRunes(slightlyLong, 200)
-	expected := strings.Repeat("C", 200) + "..."
-	if result != expected {
-		t.Errorf("expected truncation at 201st char, got: %q", result)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncateRunes(tc.input, 200)
+			if got != tc.want {
+				t.Errorf("truncateRunes(%d bytes / %d runes) = %d runes, want %d runes",
+					len(tc.input), len([]rune(tc.input)), len([]rune(got)), len([]rune(tc.want)))
+			}
+		})
 	}
 }

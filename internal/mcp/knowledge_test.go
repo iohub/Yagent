@@ -282,71 +282,72 @@ func TestKnowledgeRecord_Deserialize_Array(t *testing.T) {
 }
 
 // ============================================================================
-// KnowledgeAddRequest / KnowledgeSearchRequest 参数构造验证
+// KnowledgeAddRequest / KnowledgeSearchRequest / KnowledgeDeleteRequest 的出向 JSON 形状
 // ============================================================================
 
-func TestKnowledgeAddRequest_JSONSerialization(t *testing.T) {
-	req := KnowledgeAddRequest{
-		Type:         "repo_retrieval",
-		Title:        "Test",
-		Content:      "Content here",
-		Tags:         []string{"tag1", "tag2"},
-		RelatedFiles: []string{"file.go"},
-		SourceAgent:  "repo_agent",
-		Confidence:   0.9,
+// TestKnowledgeRequest_JSONSerialization 三个请求结构体的序列化：key 名与值必须正好是
+// Rust 侧 serde 期望的样子——这是 Go→Rust 那一半的线上契约（改 tag 就会静默丢参数），
+// 所以保留；三者只差一个结构体，收成一张表。
+func TestKnowledgeRequest_JSONSerialization(t *testing.T) {
+	tests := []struct {
+		name string
+		req  any
+		want map[string]any
+	}{
+		{
+			name: "knowledge_add",
+			req: KnowledgeAddRequest{
+				Type:         "repo_retrieval",
+				Title:        "Test",
+				Content:      "Content here",
+				Tags:         []string{"tag1", "tag2"},
+				RelatedFiles: []string{"file.go"},
+				SourceAgent:  "repo_agent",
+				Confidence:   0.9,
+			},
+			want: map[string]any{
+				"type":         "repo_retrieval",
+				"title":        "Test",
+				"content":      "Content here",
+				"source_agent": "repo_agent",
+				"confidence":   float64(0.9),
+			},
+		},
+		{
+			name: "knowledge_search",
+			req: KnowledgeSearchRequest{
+				Query:  "test query",
+				Limit:  5,
+				Rerank: true,
+			},
+			want: map[string]any{
+				"query":  "test query",
+				"limit":  float64(5),
+				"rerank": true,
+			},
+		},
+		{
+			name: "knowledge_delete",
+			req:  KnowledgeDeleteRequest{ID: "kn_123"},
+			want: map[string]any{"id": "kn_123"},
+		},
 	}
-	data, err := json.Marshal(req)
-	if err != nil {
-		t.Fatalf("failed to marshal KnowledgeAddRequest: %v", err)
-	}
-	var decoded map[string]interface{}
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-	if decoded["type"] != "repo_retrieval" {
-		t.Errorf("type = %v, want 'repo_retrieval'", decoded["type"])
-	}
-	if decoded["confidence"] != float64(0.9) {
-		t.Errorf("confidence = %v, want 0.9", decoded["confidence"])
-	}
-}
 
-func TestKnowledgeSearchRequest_JSONSerialization(t *testing.T) {
-	req := KnowledgeSearchRequest{
-		Query:  "test query",
-		Limit:  5,
-		Rerank: true,
-	}
-	data, err := json.Marshal(req)
-	if err != nil {
-		t.Fatalf("failed to marshal KnowledgeSearchRequest: %v", err)
-	}
-	var decoded map[string]interface{}
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-	if decoded["query"] != "test query" {
-		t.Errorf("query = %v, want 'test query'", decoded["query"])
-	}
-	if decoded["limit"] != float64(5) {
-		t.Errorf("limit = %v, want 5", decoded["limit"])
-	}
-	if decoded["rerank"] != true {
-		t.Errorf("rerank = %v, want true", decoded["rerank"])
-	}
-}
-
-func TestKnowledgeDeleteRequest_JSONSerialization(t *testing.T) {
-	req := KnowledgeDeleteRequest{ID: "kn_123"}
-	data, err := json.Marshal(req)
-	if err != nil {
-		t.Fatalf("failed to marshal KnowledgeDeleteRequest: %v", err)
-	}
-	var decoded map[string]interface{}
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-	if decoded["id"] != "kn_123" {
-		t.Errorf("id = %v, want 'kn_123'", decoded["id"])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.req)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var decoded map[string]any
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("unmarshal %s: %v", data, err)
+			}
+			for key, want := range tt.want {
+				if got, ok := decoded[key]; !ok || got != want {
+					t.Errorf("decoded[%q] = %v (present=%v), want %v", key, got, ok, want)
+				}
+			}
+		})
 	}
 }

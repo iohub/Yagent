@@ -247,16 +247,6 @@ func renderOmittedFooter(n int) string {
 	return "…（余下 " + strconv.Itoa(n) + " 条事实因预算省略，见同一便签的正文或 read_note）\n"
 }
 
-// ConclusionForIndex 是索引行里的一小段结论，比 Render 更狠地裁剪。
-// Handoff 为空时回落到 fallback（v1 便签的 Summary 字段）。
-func (h Handoff) ConclusionForIndex(fallback string) string {
-	c := h.Conclusion
-	if c == "" {
-		c = fallback
-	}
-	return truncateRunes(strings.ReplaceAll(strings.TrimSpace(c), "\n", " "), IndexConclusionRunes)
-}
-
 func runeLen(s string) int {
 	return len([]rune(s))
 }

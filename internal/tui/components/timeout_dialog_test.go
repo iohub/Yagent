@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 func timeoutInfo() TimeoutInfo {
@@ -18,12 +19,6 @@ func timeoutInfo() TimeoutInfo {
 			{Value: "30m", Desc: "Long"},
 		},
 	}
-}
-
-func TestLLMTimeoutDialog_VisualRender(t *testing.T) {
-	d := NewLLMTimeoutDialog(timeoutInfo())
-	d.SetBounds(120, 30)
-	t.Logf("\n%s\n", d.View())
 }
 
 func TestLLMTimeoutDialog_CursorStartsOnCurrent(t *testing.T) {
@@ -167,14 +162,15 @@ func TestLLMTimeoutDialog_SizeGuard(t *testing.T) {
 	}
 }
 
-// TestLLMTimeoutDialog_WidthMatrix 确保多种宽度下折行/截断不超过宽度预算。
+// TestLLMTimeoutDialog_WidthMatrix 确保多种宽度下折行/截断不超过宽度预算
+// （按显示宽度比对：CJK 一字两格，len([]rune) 会误判）。
 func TestLLMTimeoutDialog_WidthMatrix(t *testing.T) {
 	for _, w := range []int{40, 60, 80, 100, 120, 200} {
 		d := NewLLMTimeoutDialog(timeoutInfo())
 		d.SetBounds(w, 24)
 		for _, line := range strings.Split(stripANSICodes(d.View()), "\n") {
-			if len([]rune(line)) > w {
-				t.Errorf("(w=%d) line exceeds width: %d chars", w, len([]rune(line)))
+			if lw := lipgloss.Width(line); lw > w {
+				t.Errorf("(w=%d) line exceeds width: %d cells: %q", w, lw, line)
 			}
 		}
 	}

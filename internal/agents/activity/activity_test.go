@@ -233,16 +233,26 @@ func TestMonitorGoroutineExitsOnIdleTrigger(t *testing.T) {
 	}
 }
 
-// 6) cancel 后再 Heartbeat 不 panic。
+// 6) cancel 后再 Heartbeat：不 panic，也不得把已取消的 ctx 复活。
 func TestHeartbeatAfterCancelNoPanic(t *testing.T) {
 	ctx, cancel := WithIdleTimeout(context.Background(), Options{
 		IdleTimeout:   50 * time.Millisecond,
 		CheckInterval: 10 * time.Millisecond,
 	})
 	cancel()
-	time.Sleep(50 * time.Millisecond) // 给监视 goroutine 退出时间
+
 	Heartbeat(ctx, "late")
 	Heartbeat(ctx, "late-again")
+
+	// 真正的契约不只是"不 panic"：取消必须仍然是终态，迟到的心跳不能重新武装监视器。
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("Heartbeat after cancel must not un-cancel the context")
+	}
+	if err := ctx.Err(); err != context.Canceled {
+		t.Errorf("ctx.Err() = %v, want context.Canceled", err)
+	}
 }
 
 // 7) 嵌套链式：仅对内层 ctx 心跳 → 外层不 cancel（链式上抛）；停止心跳后两层均取消。
@@ -310,12 +320,19 @@ func TestNestedChainHeartbeatRenewsOuter(t *testing.T) {
 	}
 }
 
-// 8) 无 sink 的普通 ctx 调用 Heartbeat 为 no-op（不 panic 不影响）。
+// 8) 无 sink 的普通 ctx 调用 Heartbeat 为 no-op：既不 panic，也绝不制造取消/超时。
 func TestHeartbeatNoSinkNoop(t *testing.T) {
 	Heartbeat(context.Background(), "no-sink")
+
 	cctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	Heartbeat(cctx, "no-sink-with-cancel")
+
+	// 无 sink 时 Heartbeat 必须什么都不做 —— 一旦它误以为自己找到了监视器，
+	// 这里就会看到被取消的 ctx。
+	if err := cctx.Err(); err != nil {
+		t.Errorf("ctx with no activity sink must stay alive, got Err()=%v", err)
+	}
 }
 
 // 9) 多 goroutine 并发 Heartbeat 同一 ctx 无竞态（-race 验证）。

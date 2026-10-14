@@ -29,8 +29,6 @@ import (
 //go:embed director.prompt.md
 var directorPrompt string
 
-const maxNonDelegationPrompts = 3
-
 type CustomAgent = director.CustomAgent
 
 type DirectorAgent struct {

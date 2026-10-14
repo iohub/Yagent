@@ -5,25 +5,6 @@ import (
 	"testing"
 )
 
-// TestWithConversationMemory_RoundTrip 验证注入后可以取回同一指针
-func TestWithConversationMemory_RoundTrip(t *testing.T) {
-	ctx := context.Background()
-	mem := NewConversationMemory(100)
-
-	got := WithConversationMemory(ctx, mem)
-	if got == ctx {
-		t.Fatal("expected a new context carrying the memory, got the original ctx")
-	}
-
-	gotMem, ok := GetConversationMemory(got)
-	if !ok {
-		t.Fatal("expected ok=true after injecting memory")
-	}
-	if gotMem != mem {
-		t.Fatalf("expected the same *ConversationMemory pointer, got different pointer")
-	}
-}
-
 // TestWithConversationMemory_NilMem_ReturnsOriginalCtx 验证 nil mem 时原样返回 ctx
 func TestWithConversationMemory_NilMem_ReturnsOriginalCtx(t *testing.T) {
 	ctx := context.Background()
@@ -33,23 +14,12 @@ func TestWithConversationMemory_NilMem_ReturnsOriginalCtx(t *testing.T) {
 		t.Fatal("expected the original ctx unchanged when mem is nil, got a new context")
 	}
 
+	// 这一步同时钉住"ctx 里压根没有 memory"的取值（返回 (nil, false)）：
+	// 单独为 context.Background() 写一个用例只是在断言 context.Value 的自身保证。
 	if _, ok := GetConversationMemory(got); ok {
 		t.Fatal("expected ok=false when no memory was injected")
 	}
 	if mem, _ := GetConversationMemory(got); mem != nil {
-		t.Fatalf("expected nil memory, got %+v", mem)
-	}
-}
-
-// TestGetConversationMemory_Missing_ReturnsNilFalse 验证空 ctx 时返回 (nil, false)
-func TestGetConversationMemory_Missing_ReturnsNilFalse(t *testing.T) {
-	ctx := context.Background()
-
-	mem, ok := GetConversationMemory(ctx)
-	if ok {
-		t.Fatal("expected ok=false for a context without memory")
-	}
-	if mem != nil {
 		t.Fatalf("expected nil memory, got %+v", mem)
 	}
 }

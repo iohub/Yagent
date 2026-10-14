@@ -42,18 +42,18 @@ func (e *compressorTestEngine) CloseIdleConnections() {}
 // RebuildPrompt 语义贴近真实 Store:keepPlans>0 保留最近 N 个 T&P 块，
 // keepPlans<=0 全部保留；用户输入区始终全部保留（最后一条标 [CURRENT TASK]）。
 type fakeThinkLink struct {
-	planCount    int
-	inputCount   int
 	plans        []string // T&P 块内容（按时间序）
 	userInputs   []string // 用户输入内容（按时间序）
 	rebuildCalls []int    // 每次 RebuildPrompt 的 keepPlans 参数
 }
 
+// Count 与 RebuildPrompt 读同一份切片：此前这里是两个手写的计数字段，
+// 改负载时两处会不一致。
 func (f *fakeThinkLink) Count(kind thinklink.Kind) int {
 	if kind == thinklink.KindThoughtPlan {
-		return f.planCount
+		return len(f.plans)
 	}
-	return f.inputCount
+	return len(f.userInputs)
 }
 
 func (f *fakeThinkLink) RebuildPrompt(keepPlans int) string {
@@ -266,12 +266,11 @@ func TestCompressorApplyEmergencyNilMemory(t *testing.T) {
 // ─── 组 2:ApplyUltimate ─────────────────────────────────────────────────────
 
 // newUltimateFixtures 构造带 fake thinklink（2 plans + 1 user input）的压缩组件与 memory。
-func newUltimateFixtures(t *testing.T, keepPlansLimit int, callbackCalls *int) (*ContextCompressor, *fakeThinkLink, *memory.ConversationMemory, []llm.Message) {
+// 保留数量上限（keepPlansLimit）是 ApplyUltimate 的入参，不属于夹具，由各自用例直接传。
+func newUltimateFixtures(t *testing.T, callbackCalls *int) (*ContextCompressor, *fakeThinkLink, *memory.ConversationMemory, []llm.Message) {
 	t.Helper()
 	engine := newCompressorTestEngine()
 	store := &fakeThinkLink{
-		planCount:  2,
-		inputCount: 1,
 		plans:      []string{"PLAN_ONE", "PLAN_TWO"},
 		userInputs: []string{"原始任务 U"},
 	}
@@ -291,7 +290,7 @@ func newUltimateFixtures(t *testing.T, keepPlansLimit int, callbackCalls *int) (
 // thinklink 交互正确（Count 查询 T&P 与用户输入）；回调执行一次；memory 覆盖。
 func TestCompressorApplyUltimateRebuildContext(t *testing.T) {
 	callbackCalls := 0
-	c, store, mem, msgs := newUltimateFixtures(t, 0, &callbackCalls)
+	c, store, mem, msgs := newUltimateFixtures(t, &callbackCalls)
 
 	out, stats := c.ApplyUltimate(msgs, 100000, mem, 0)
 
@@ -340,7 +339,7 @@ func TestCompressorApplyUltimateRebuildContext(t *testing.T) {
 func TestCompressorApplyUltimateTinyBudgetHardTruncates(t *testing.T) {
 	callbackCalls := 0
 	// threshold=1:远小于重建提示的固有体积 → 递减到 0 后硬截断兜底
-	c, store, mem, msgs := newUltimateFixtures(t, 0, &callbackCalls)
+	c, store, mem, msgs := newUltimateFixtures(t, &callbackCalls)
 
 	out, stats := c.ApplyUltimate(msgs, 1, mem, 0)
 
@@ -366,7 +365,7 @@ func TestCompressorApplyUltimateTinyBudgetHardTruncates(t *testing.T) {
 // 取配置值与全部数量的较小值。
 func TestCompressorApplyUltimateKeepPlansLimit(t *testing.T) {
 	callbackCalls := 0
-	c, store, mem, msgs := newUltimateFixtures(t, 1, &callbackCalls)
+	c, store, mem, msgs := newUltimateFixtures(t, &callbackCalls)
 
 	out, stats := c.ApplyUltimate(msgs, 100000, mem, 1)
 
@@ -389,7 +388,7 @@ func TestCompressorApplyUltimateKeepPlansLimit(t *testing.T) {
 // 回调仍执行。
 func TestCompressorApplyUltimateNilMemory(t *testing.T) {
 	callbackCalls := 0
-	c, _, _, msgs := newUltimateFixtures(t, 0, &callbackCalls)
+	c, _, _, msgs := newUltimateFixtures(t, &callbackCalls)
 
 	out, stats := c.ApplyUltimate(msgs, 100000, nil, 0)
 
@@ -410,8 +409,6 @@ func TestCompressorApplyUltimateZeroTotalPlans(t *testing.T) {
 	callbackCalls := 0
 	engine := newCompressorTestEngine()
 	store := &fakeThinkLink{
-		planCount:  0,
-		inputCount: 1,
 		userInputs: []string{"只有任务没有计划"},
 	}
 	c := newCompressor(engine, store, &callbackCalls)
@@ -457,7 +454,7 @@ func TestCompressorShouldCompress(t *testing.T) {
 // 自身 token 时 userBudget 钳位为 0（不产生负预算），硬截断兜底。
 func TestCompressorApplyUltimateNegativeBudgetClamped(t *testing.T) {
 	callbackCalls := 0
-	c, _, mem, msgs := newUltimateFixtures(t, 0, &callbackCalls)
+	c, _, mem, msgs := newUltimateFixtures(t, &callbackCalls)
 
 	// threshold=1 而 system 消息 token 已 > 1 → userBudget = 0（钳位）
 	out, stats := c.ApplyUltimate(msgs, 1, mem, 0)

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -36,9 +35,12 @@ func TestUpdate_PasteMsgRoutedToTopDialog(t *testing.T) {
 	if top.IsClosed() {
 		t.Fatal("dialog should stay open after paste")
 	}
-	// textarea 收到了粘贴内容的间接断言：渲染结果包含该文本
-	if v := top.View(); !strings.Contains(v, "pasted-content") {
-		t.Errorf("dialog view should contain pasted text, got:\n%s", v)
+	// 粘贴是否真的落进 textarea：textInput 是 components 的未导出字段，本包读不到，
+	// 改用提交结果验证 —— Enter 提交的就是 textarea 里的值；
+	// 若粘贴被吞，Input 模式的空值校验会让 Result 保持 nil。
+	top.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if r := top.Result(); r == nil || r.Response != "pasted-content" {
+		t.Errorf("submitted result = %v, want Response %q (paste must have reached the textarea)", r, "pasted-content")
 	}
 }
 

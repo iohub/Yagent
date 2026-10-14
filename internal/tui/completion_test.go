@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,18 +18,46 @@ func TestNewCompletionDict(t *testing.T) {
 	}
 }
 
-func TestAddWord(t *testing.T) {
-	d := dict.NewCompletionDict("test", nil)
-
-	d.AddWords([]string{"banana", "apple", "cherry"})
-
-	// 验证已排序
-	got := d.Complete("")
-	expected := []string{"apple", "banana", "cherry"}
-	for i, w := range got {
-		if w != expected[i] {
-			t.Errorf("word[%d] = %q, expected %q", i, w, expected[i])
-		}
+// TestCompleteEmptyPrefixSorted 是"空前缀 Complete 返回排序全量"的同一契约：
+// 单批/多批/显式空前缀三种构造路径合并成一张表。
+func TestCompleteEmptyPrefixSorted(t *testing.T) {
+	tests := []struct {
+		name  string
+		batch [][]string
+		want  []string
+	}{
+		{
+			name:  "single batch sorted",
+			batch: [][]string{{"banana", "apple", "cherry"}},
+			want:  []string{"apple", "banana", "cherry"},
+		},
+		{
+			name:  "multiple batches re-sorted",
+			batch: [][]string{{"cherry"}, {"banana", "apple", "date"}},
+			want:  []string{"apple", "banana", "cherry", "date"},
+		},
+		{
+			name:  "empty prefix returns all within default limit",
+			batch: [][]string{{"banana", "apple", "cherry"}},
+			want:  []string{"apple", "banana", "cherry"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := dict.NewCompletionDict("test", nil)
+			for _, words := range tt.batch {
+				d.AddWords(words)
+			}
+			got := d.Complete("")
+			if len(got) != len(tt.want) {
+				t.Fatalf("Complete(\"\") = %v, want %v", got, tt.want)
+			}
+			for i, w := range got {
+				if w != tt.want[i] {
+					t.Errorf("word[%d] = %q, want %q", i, w, tt.want[i])
+				}
+			}
+		})
 	}
 }
 
@@ -43,24 +70,6 @@ func TestAddWordDuplicate(t *testing.T) {
 	got := d.Complete("")
 	if len(got) != 1 || got[0] != "apple" {
 		t.Errorf("expected [apple] (no duplicates), got %v", got)
-	}
-}
-
-func TestAddWords(t *testing.T) {
-	d := dict.NewCompletionDict("test", nil)
-
-	d.AddWords([]string{"cherry"})
-	d.AddWords([]string{"banana", "apple", "date"})
-
-	got := d.Complete("")
-	if len(got) != 4 {
-		t.Errorf("expected 4 words, got %d", len(got))
-	}
-	expected := []string{"apple", "banana", "cherry", "date"}
-	for i, w := range got {
-		if w != expected[i] {
-			t.Errorf("word[%d] = %q, expected %q", i, w, expected[i])
-		}
 	}
 }
 
@@ -99,17 +108,6 @@ func TestComplete(t *testing.T) {
 	}
 }
 
-func TestCompleteEmpty(t *testing.T) {
-	d := dict.NewCompletionDict("test", nil)
-	d.AddWords([]string{"banana", "apple", "cherry"})
-
-	// 空前缀返回前 20 个（默认限制）
-	result := d.Complete("")
-	if len(result) != 3 {
-		t.Errorf("expected 3 results for empty prefix, got %d: %v", len(result), result)
-	}
-}
-
 func TestLoadFromFile(t *testing.T) {
 	// 创建临时词典文件
 	tmpDir := t.TempDir()
@@ -144,31 +142,5 @@ func TestLoadFromFileNotFound(t *testing.T) {
 	// 不存在的源被忽略，词典保持为空（WordCount 删除后改用等价的 Complete 断言）
 	if got := d.Complete(""); len(got) != 0 {
 		t.Errorf("expected 0 words for nonexistent file, got %v", got)
-	}
-}
-
-func TestConcurrency(t *testing.T) {
-	d := dict.NewCompletionDict("test", nil)
-
-	// 并发添加
-	done := make(chan bool)
-	for i := 0; i < 100; i++ {
-		go func(n int) {
-			word := fmt.Sprintf("word%d", n)
-			d.AddWords([]string{word})
-			done <- true
-		}(i)
-	}
-
-	// 并发搜索
-	for i := 0; i < 10; i++ {
-		go func() {
-			d.Complete("word")
-		}()
-	}
-
-	// 等待所有添加完成
-	for i := 0; i < 100; i++ {
-		<-done
 	}
 }

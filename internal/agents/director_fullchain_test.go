@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
+	directorpkg "yagent/internal/agents/director"
 	"yagent/internal/globalctx"
 	"yagent/internal/llm"
 	"yagent/internal/messaging"
-	"yagent/internal/tools"
 )
 
 type fullChainCallLog struct {
@@ -298,8 +298,6 @@ func TestFullChain_FullYoloMode(t *testing.T) {
 		adapterNames[ad.Name()] = true
 	}
 
-	t.Logf("Director adapters: %v", sortedAdapterNames(director.Adapters))
-
 	if adapterNames["ask_user_for_help"] {
 		t.Error("ask_user_for_help should NOT be registered in FullYoloMode")
 	}
@@ -402,12 +400,16 @@ func writeSafeFile(t *testing.T, dir, name, content string, perm os.FileMode) er
 	return os.WriteFile(path, data, perm)
 }
 
-func sortedAdapterNames(adapters []*tools.Adapter) []string {
-	names := make([]string, len(adapters))
-	for i, ad := range adapters {
-		names[i] = ad.Name()
-	}
-	return names
+// 强制委派提醒的文案来自 director/planner_run.go:533/535。
+// 这里只留一份副本给三个断言点共用，避免文案改了而某处断言静默失效。
+const (
+	forceDelegationFirst  = "You must delegate an agent to complete the task. Do not reply with plain text — call a delegate_* tool now."
+	forceDelegationRepeat = "You still have not delegated any agent. You MUST call a delegate_* tool to complete the task before responding."
+)
+
+func isForceDelegationMsg(msg llm.Message) bool {
+	return msg.Role == llm.RoleUser &&
+		(msg.Content == forceDelegationFirst || msg.Content == forceDelegationRepeat)
 }
 
 func TestDirector_ForceDelegation_InjectUserMessage(t *testing.T) {
@@ -450,8 +452,7 @@ func TestDirector_ForceDelegation_InjectUserMessage(t *testing.T) {
 	secondCallMessages := mock.callLog[1].Messages
 	foundForceMsg := false
 	for _, msg := range secondCallMessages {
-		if msg.Role == llm.RoleUser && msg.Content != "" &&
-			msg.Content == "You must delegate an agent to complete the task. Do not reply with plain text — call a delegate_* tool now." {
+		if msg.Role == llm.RoleUser && msg.Content == forceDelegationFirst {
 			foundForceMsg = true
 			break
 		}
@@ -473,7 +474,7 @@ func TestDirector_ForceDelegation_MaxPromptsThenReturn(t *testing.T) {
 
 	workDir := t.TempDir()
 
-	plainTextResponses := make([]*llm.Response, maxNonDelegationPrompts+2)
+	plainTextResponses := make([]*llm.Response, directorpkg.MaxNonDelegationPrompts+2)
 	for i := range plainTextResponses {
 		plainTextResponses[i] = &llm.Response{Choices: []llm.Choice{{Content: fmt.Sprintf("plain text response %d", i)}}}
 	}
@@ -509,9 +510,7 @@ func TestDirector_ForceDelegation_MaxPromptsThenReturn(t *testing.T) {
 	for idx, log := range mock.callLog {
 		forceCount := 0
 		for _, msg := range log.Messages {
-			if msg.Role == llm.RoleUser &&
-				(msg.Content == "You must delegate an agent to complete the task. Do not reply with plain text — call a delegate_* tool now." ||
-					msg.Content == "You still have not delegated any agent. You MUST call a delegate_* tool to complete the task before responding.") {
+			if isForceDelegationMsg(msg) {
 				forceCount++
 			}
 		}
@@ -520,8 +519,8 @@ func TestDirector_ForceDelegation_MaxPromptsThenReturn(t *testing.T) {
 		}
 		prevForceCount = forceCount
 	}
-	if injectionCount != maxNonDelegationPrompts {
-		t.Errorf("expected %d force message injections, got %d (total calls: %d)", maxNonDelegationPrompts, injectionCount, mock.CallCount())
+	if injectionCount != directorpkg.MaxNonDelegationPrompts {
+		t.Errorf("expected %d force message injections, got %d (total calls: %d)", directorpkg.MaxNonDelegationPrompts, injectionCount, mock.CallCount())
 	}
 }
 
@@ -564,9 +563,7 @@ func TestDirector_NoForceAfterDelegation(t *testing.T) {
 
 	for _, log := range mock.callLog {
 		for _, msg := range log.Messages {
-			if msg.Role == llm.RoleUser &&
-				(msg.Content == "You must delegate an agent to complete the task. Do not reply with plain text — call a delegate_* tool now." ||
-					msg.Content == "You still have not delegated any agent. You MUST call a delegate_* tool to complete the task before responding.") {
+			if isForceDelegationMsg(msg) {
 				t.Error("unexpected force delegation user message after successful delegation")
 			}
 		}

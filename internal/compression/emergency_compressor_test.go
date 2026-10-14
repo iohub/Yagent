@@ -61,17 +61,6 @@ Then I'll write the code.`,
 			wantSubs: []string{"## Thought & Plan"},
 		},
 		{
-			name: "single Thought & Plan block (typo variant)",
-			content: `Here is my thinking:
-
-## Thought & Plan
-I will read the file first.
-
-Then I'll write the code.`,
-			wantLen:  1,
-			wantSubs: []string{"## Thought & Plan"},
-		},
-		{
 			name: "multiple blocks mixed case",
 			content: `## THOUGHT & PLAN
 Step 1: read file
@@ -123,7 +112,10 @@ Final plan here.`,
 			wantSubs: []string{"## Thought＆Plan"},
 		},
 		{
-			name:     "html entity amp",
+			// 曾被叫作 "html entity amp"，但内容和普通 `&` 写法完全一样：
+			// 抽取器的分隔符Alternation是 `&|&|＆|and`，压根没有 &amp; 分支，
+			// 所以这一行只钉住"整段只有一行块"这种最短形状。
+			name:     "plain amp, single-line block",
 			content:  "## Thought & Plan\nStep E",
 			wantLen:  1,
 			wantSubs: []string{"## Thought & Plan"},
@@ -257,35 +249,93 @@ func TestEmergencyCompressMessages_KeepLastN(t *testing.T) {
 	}
 }
 
-// ─── TestEmergencyCompressMessages_NoBlocks ─────────────────────────────────
+// ─── TestEmergencyCompressMessages_FewBlocks ────────────────────────────────
 
-func TestEmergencyCompressMessages_NoBlocks(t *testing.T) {
-	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: "system"},
-		{Role: llm.RoleUser, Content: "do something"},
-		{Role: llm.RoleAssistant, Content: "I will do it."},
-		{Role: llm.RoleTool, ToolName: "run_bash", Content: strings.Repeat("z", 5000)},
-	}
-
-	mock := &mockEmergencyLLM{
-		responses: []*llm.Response{
-			{Choices: []llm.Choice{{Content: "summary"}}},
+// keepLastN 未被超过时的两种形态：没有任何 T&P 块（整段 assistant 内容保底成块）、
+// 以及块数刚好小于 keepLastN。两者钉的都是同一条分支——"全部保留、一次 LLM 都不调"，
+// 所以合成一张表（原先是两个独立用例，断言互为子集）。
+func TestEmergencyCompressMessages_FewBlocks(t *testing.T) {
+	tests := []struct {
+		name             string
+		messages         []llm.Message
+		originalInput    string
+		threshold        int
+		wantExtracted    int
+		wantKept         int
+		wantSummarized   int
+		wantUserContains []string
+	}{
+		{
+			name: "no T&P block: whole assistant message kept as fallback block",
+			messages: []llm.Message{
+				{Role: llm.RoleSystem, Content: "system"},
+				{Role: llm.RoleUser, Content: "do something"},
+				{Role: llm.RoleAssistant, Content: "I will do it."},
+				{Role: llm.RoleTool, ToolName: "run_bash", Content: strings.Repeat("z", 5000)},
+			},
+			originalInput: "do something",
+			// 阈值给足：低于重建文本自身体积会触发第 7 步强制截断，
+			// 把保底块从尾部切掉，这一行想钉的是"块被提取并保留"（强制截断由 OverBudget 用例负责）。
+			threshold:        10000,
+			wantExtracted:    1,
+			wantKept:         1,
+			wantSummarized:   0,
+			wantUserContains: []string{"do something", "I will do it."},
+		},
+		{
+			name: "two T&P blocks fit within keepLastN",
+			messages: []llm.Message{
+				{Role: llm.RoleSystem, Content: "system"},
+				{Role: llm.RoleUser, Content: "task"},
+				{Role: llm.RoleAssistant, Content: "## Thought & Plan\nBlock 1"},
+				{Role: llm.RoleAssistant, Content: "## Thought & Plan\nBlock 2"},
+			},
+			originalInput:    "task",
+			threshold:        100,
+			wantExtracted:    2,
+			wantKept:         2,
+			wantSummarized:   0,
+			wantUserContains: []string{"Block 1", "Block 2"},
 		},
 	}
 
-	threshold := 100
-	newMessages, stats := EmergencyCompressMessages(context.Background(), messages, "do something", threshold, mock, "mock-agent", 3)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockEmergencyLLM{
+				responses: []*llm.Response{
+					{Choices: []llm.Choice{{Content: "summary"}}},
+				},
+			}
 
-	if len(newMessages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(newMessages))
-	}
-	// 无 T&P 块时，assistant 整条内容作为一个保底块，共 1 块 <= 3，不调用 LLM
-	if stats.ExtractedBlocks != 1 {
-		t.Errorf("expected ExtractedBlocks=1, got %d", stats.ExtractedBlocks)
-	}
-	// 块数 <= keepLastN，不调用 LLM
-	if mock.calls != 0 {
-		t.Errorf("expected 0 LLM calls when blocks <= keepLastN, got %d", mock.calls)
+			// keepLastN=3：块数 <= 3，不应产生任何 LLM 调用
+			newMessages, stats := EmergencyCompressMessages(context.Background(), tt.messages, tt.originalInput, tt.threshold, mock, "mock-agent", 3)
+
+			if len(newMessages) != 2 {
+				t.Fatalf("expected 2 messages [system, user], got %d", len(newMessages))
+			}
+			if mock.calls != 0 {
+				t.Errorf("expected 0 LLM calls when blocks <= keepLastN, got %d", mock.calls)
+			}
+			if stats.ExtractedBlocks != tt.wantExtracted {
+				t.Errorf("expected ExtractedBlocks=%d, got %d", tt.wantExtracted, stats.ExtractedBlocks)
+			}
+			if stats.KeptBlocks != tt.wantKept {
+				t.Errorf("expected KeptBlocks=%d, got %d", tt.wantKept, stats.KeptBlocks)
+			}
+			if stats.SummarizedBlocks != tt.wantSummarized {
+				t.Errorf("expected SummarizedBlocks=%d, got %d", tt.wantSummarized, stats.SummarizedBlocks)
+			}
+			if stats.SummarizedByLLM {
+				t.Error("expected SummarizedByLLM=false when nothing was summarized")
+			}
+
+			userContent := newMessages[1].Content
+			for _, want := range tt.wantUserContains {
+				if !strings.Contains(userContent, want) {
+					t.Errorf("user content should contain %q, got:\n%s", want, userContent)
+				}
+			}
+		})
 	}
 }
 
@@ -360,50 +410,6 @@ func TestEmergencyCompressMessages_OverBudget(t *testing.T) {
 	}
 	if stats.Reason != "forced truncation after emergency compression" {
 		t.Errorf("expected Reason='forced truncation after emergency compression', got %q", stats.Reason)
-	}
-}
-
-// ─── TestEmergencyCompressMessages_FewBlocks ────────────────────────────────
-
-func TestEmergencyCompressMessages_FewBlocks(t *testing.T) {
-	blocks := []string{
-		"## Thought & Plan\nBlock 1",
-		"## Thought & Plan\nBlock 2",
-	}
-	messages := []llm.Message{
-		{Role: llm.RoleSystem, Content: "system"},
-		{Role: llm.RoleUser, Content: "task"},
-		{Role: llm.RoleAssistant, Content: blocks[0]},
-		{Role: llm.RoleAssistant, Content: blocks[1]},
-	}
-
-	mock := &mockEmergencyLLM{
-		responses: []*llm.Response{
-			{Choices: []llm.Choice{{Content: "summary"}}},
-		},
-	}
-
-	// keepLastN=3，块数 2 <= 3，不调用 LLM
-	threshold := 100
-	newMessages, stats := EmergencyCompressMessages(context.Background(), messages, "task", threshold, mock, "mock-agent", 3)
-
-	if mock.calls != 0 {
-		t.Errorf("expected 0 LLM calls when blocks <= keepLastN, got %d", mock.calls)
-	}
-	if stats.KeptBlocks != 2 {
-		t.Errorf("expected KeptBlocks=2, got %d", stats.KeptBlocks)
-	}
-	if stats.SummarizedBlocks != 0 {
-		t.Errorf("expected SummarizedBlocks=0, got %d", stats.SummarizedBlocks)
-	}
-
-	// 验证两条原始块都保留在 user 消息中
-	userContent := newMessages[1].Content
-	if !strings.Contains(userContent, "Block 1") {
-		t.Error("user content should contain Block 1")
-	}
-	if !strings.Contains(userContent, "Block 2") {
-		t.Error("user content should contain Block 2")
 	}
 }
 

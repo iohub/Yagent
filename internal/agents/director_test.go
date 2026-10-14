@@ -3,12 +3,10 @@ package agents
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 	"yagent/internal/toolspec"
 
-	directorpkg "yagent/internal/agents/director"
 	"yagent/internal/config"
 	"yagent/internal/globalctx"
 	"yagent/internal/llm"
@@ -123,64 +121,6 @@ func makeMetaOutput(agentName, systemPrompt string, toolsUsed []string) string {
 	return string(b)
 }
 
-// ─── extractJSONObject Tests ──────────────────────────────────────────────
-
-func TestExtractJSONObject_PureJSON(t *testing.T) {
-	input := `{"thinking": "test", "agent_name": "Test"}`
-	got := directorpkg.ExtractJSONObject(input)
-	if got != input {
-		t.Errorf("extractJSONObject = %q, want %q", got, input)
-	}
-}
-
-func TestExtractJSONObject_MarkdownFence(t *testing.T) {
-	input := "```json\n{\"key\": \"value\"}\n```"
-	expected := `{"key": "value"}`
-	got := directorpkg.ExtractJSONObject(input)
-	if got != expected {
-		t.Errorf("extractJSONObject = %q, want %q", got, expected)
-	}
-}
-
-func TestExtractJSONObject_SurroundingText(t *testing.T) {
-	input := `Here's the output: {"key": "value"} with some trailing text.`
-	expected := `{"key": "value"}`
-	got := directorpkg.ExtractJSONObject(input)
-	if got != expected {
-		t.Errorf("extractJSONObject = %q, want %q", got, expected)
-	}
-}
-
-func TestExtractJSONObject_NestedBraces(t *testing.T) {
-	input := `{"key": {"nested": true}, "list": [1,2,3]}`
-	got := directorpkg.ExtractJSONObject(input)
-	if got != input {
-		t.Errorf("extractJSONObject = %q, want %q", got, input)
-	}
-}
-
-func TestExtractJSONObject_NoBraces(t *testing.T) {
-	got := directorpkg.ExtractJSONObject("Just plain text without any braces.")
-	if got != "" {
-		t.Errorf("expected empty string, got %q", got)
-	}
-}
-
-func TestExtractJSONObject_MetaOutput(t *testing.T) {
-	output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file"})
-	got := directorpkg.ExtractJSONObject(output)
-	if got == "" {
-		t.Fatal("extractJSONObject returned empty for valid Meta-Agent output")
-	}
-	var result directorpkg.MetaAgentResult
-	if err := json.Unmarshal([]byte(got), &result); err != nil {
-		t.Fatalf("extracted JSON is not valid: %v\nraw: %s", err, got)
-	}
-	if result.AgentName != "Security Auditor" {
-		t.Errorf("agent_name = %q, want 'Security Auditor'", result.AgentName)
-	}
-}
-
 // ─── toSnakeCase Tests ──────────────────────────────────────────────────────
 
 func TestToSnakeCase(t *testing.T) {
@@ -209,60 +149,6 @@ func TestToSnakeCase(t *testing.T) {
 				t.Errorf("toSnakeCase(%q) = %q, want %q", tc.input, got, tc.expected)
 			}
 		})
-	}
-}
-
-// ─── parseMetaAgentOutput Tests ──────────────────────────────────────────────
-
-func TestParseMetaAgentOutput_Valid(t *testing.T) {
-	output := makeMetaOutput("Security Auditor", "You are a security auditor.", []string{"read_file", "search_by_regex"})
-
-	sysPrompt, result, err := directorpkg.ParseMetaAgentOutput(output)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if sysPrompt != "You are a security auditor." {
-		t.Errorf("system prompt = %q, want %q", sysPrompt, "You are a security auditor.")
-	}
-	if result.AgentName != "Security Auditor" {
-		t.Errorf("agent name = %q, want %q", result.AgentName, "Security Auditor")
-	}
-	if len(result.ToolsUsed) != 2 {
-		t.Errorf("tools count = %d, want 2", len(result.ToolsUsed))
-	}
-
-}
-func TestParseMetaAgentOutput_MissingJSON(t *testing.T) {
-	output := "Just some plain text without JSON."
-	_, _, err := directorpkg.ParseMetaAgentOutput(output)
-	if err == nil {
-		t.Fatal("expected error for missing JSON object")
-	}
-}
-
-func TestParseMetaAgentOutput_InvalidJSON(t *testing.T) {
-	output := `{"thinking": "test", "agent_name": "Test", "agent_design": "prompt", "tools_used": ["read_file"], "result": {not valid json}}`
-	_, _, err := directorpkg.ParseMetaAgentOutput(output)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-}
-
-func TestParseMetaAgentOutput_NoAgentDesign(t *testing.T) {
-	// agent_design is now required — missing it should cause an error
-	output := `{"thinking": "designing...", "agent_name": "Test", "tools_used": ["read_file"], "result": {"key": "value"}}`
-	_, _, err := directorpkg.ParseMetaAgentOutput(output)
-	if err == nil {
-		t.Fatal("expected error when agent_design is missing")
-	}
-}
-
-func TestParseMetaAgentOutput_EmptyAgentName(t *testing.T) {
-	// agent_name is now required — empty should cause an error
-	output := `{"thinking": "test", "agent_name": "", "agent_design": "Some prompt", "tools_used": [], "result": {}}`
-	_, _, err := directorpkg.ParseMetaAgentOutput(output)
-	if err == nil {
-		t.Fatal("expected error when agent_name is empty")
 	}
 }
 
@@ -521,22 +407,15 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 }
 
 // ─── System Prompt Custom Agents Tests ───────────────────────────────────────
+// 断言走生产构造器 customAgentPromptSection()（director.go:832 拼进 system prompt 的
+// 就是它），此前测试自己重写了一遍拼接逻辑，生产改文案测试也不会红。
 
 func TestSystemPrompt_NoCustomAgents(t *testing.T) {
 	workDir := t.TempDir()
 	agent := newTestDirectorAgent(t, workDir)
 
-	// Build system prompt like Run() does
-	systemPrompt := agent.promptFmt.FormatPrompt(directorPrompt)
-	if agent.metaHandler.Len() > 0 {
-		systemPrompt += "\n\n### Custom Agents..."
-	}
-
-	// The director prompt references ### Custom Agents in the Meta-Agent section,
-	// so we check that the actual markdown block (with agent listings) is NOT present.
-	// The key difference: the listing block starts with "\n\n### Custom Agents\nThe following specialized"
-	if strings.Contains(systemPrompt, "\n\n### Custom Agents\nThe following specialized agents") {
-		t.Error("system prompt should NOT contain the ### Custom Agents listing block when no custom agents registered")
+	if got := agent.customAgentPromptSection(); got != "" {
+		t.Errorf("no custom agents registered, section should be empty, got %q", got)
 	}
 }
 
@@ -560,30 +439,21 @@ func TestSystemPrompt_WithCustomAgents(t *testing.T) {
 		Description:  "Handles database migration planning.",
 	})
 
-	// Build system prompt like Run() does
-	systemPrompt := agent.promptFmt.FormatPrompt(directorPrompt)
-	if agent.metaHandler.Len() > 0 {
-		systemPrompt += "\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n"
-		for _, ca := range agent.metaHandler.List() {
-			systemPrompt += fmt.Sprintf("- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, ca.Description)
+	section := agent.customAgentPromptSection()
+	for _, want := range []string{
+		"### Custom Agents",
+		"Security Auditor", "delegate_security_auditor", "Audits code for security vulnerabilities.",
+		"Data Migrator", "delegate_data_migrator", "Handles database migration planning.",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("custom agents section missing %q:\n%s", want, section)
 		}
-		systemPrompt += "\nUse these agents via their delegate tools for tasks matching their specializations.\n\n"
 	}
 
-	if !strings.Contains(systemPrompt, "### Custom Agents") {
-		t.Error("system prompt SHOULD contain ### Custom Agents block")
-	}
-	if !strings.Contains(systemPrompt, "Security Auditor") {
-		t.Error("system prompt should mention Security Auditor")
-	}
-	if !strings.Contains(systemPrompt, "delegate_security_auditor") {
-		t.Error("system prompt should mention delegate_security_auditor")
-	}
-	if !strings.Contains(systemPrompt, "Data Migrator") {
-		t.Error("system prompt should mention Data Migrator")
-	}
-	if !strings.Contains(systemPrompt, "delegate_data_migrator") {
-		t.Error("system prompt should mention delegate_data_migrator")
+	// 清单必须真的出现在最终 system prompt 里（拼接位置由 Run 决定）
+	full := agent.promptFmt.FormatPrompt(directorPrompt) + section
+	if !strings.Contains(full, "delegate_security_auditor") {
+		t.Error("system prompt should carry the custom agents section")
 	}
 }
 
@@ -917,27 +787,6 @@ func TestConvertMemoryMessageToLLMSMessage_AssistantWithToolCalls(t *testing.T) 
 	}
 	if llmMsg.ToolCalls[0].Function.Name != "read_file" {
 		t.Errorf("Expected ToolCall function name 'read_file', got %q", llmMsg.ToolCalls[0].Function.Name)
-	}
-}
-
-// ─── 注册表覆盖 ─────────────────────────────────────────────────────────────
-// 取代原 toolDefMap 断言：声明现在是 toolspec 的单一事实来源，双向对账由
-// registry_gate_test.go 负责，这里只确认门面没把历史声明读丢。
-
-func TestRegistryCoversHistoricalTools(t *testing.T) {
-	expectedTools := []string{
-		"read_file", "search_replace_in_file", "create_file", "run_bash",
-		"search_by_regex", "delete_file", "rename_file", "list_dir",
-		"print_dir_tree", "semantic_search", "query_code_skeleton",
-		"query_code_snippet", "thinking", "micro_agent", "agent_exit",
-	}
-	for _, name := range expectedTools {
-		if _, ok := toolspec.Get(name); !ok {
-			t.Errorf("注册表缺少 %s", name)
-		}
-		if _, ok := toolspec.GetSchema(name); !ok {
-			t.Errorf("schemas.json 缺少 %s", name)
-		}
 	}
 }
 
