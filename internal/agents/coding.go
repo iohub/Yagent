@@ -9,6 +9,7 @@ import (
 	"yagent/internal/toolspec"
 
 	"yagent/internal/config"
+	"yagent/internal/gitinfo"
 	"yagent/internal/knowledge"
 	"yagent/internal/mcp"
 	"yagent/internal/thinklink"
@@ -232,7 +233,7 @@ func (a *CodingAgent) Run(ctx context.Context, input string) (AgentResult, error
 	// === Git Checkpoint Integration ===
 
 	// 先检查项目是否是 git 仓库
-	isGitRepo := IsGitRepository(a.env.ProjectPath())
+	isGitRepo := gitinfo.IsRepo(a.env.ProjectPath())
 	gitCheckpointEnabled := isGitRepo && a.gitCheckpointCfg != nil && a.gitCheckpointCfg.Enabled
 
 	var gcm *GitCheckpointManager

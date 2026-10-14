@@ -44,6 +44,12 @@ type GitInfo struct {
 	OriginURL string `json:"origin_url,omitempty"`
 }
 
+// Empty 报告三项是否全部缺失。WriteSessionMeta 用它决定要不要自己去问 git ——
+// 显式传了值的调用点永远优先。
+func (g GitInfo) Empty() bool {
+	return g.SHA == "" && g.Branch == "" && g.OriginURL == ""
+}
+
 // ─── TurnContext — 回合上下文 payload ───
 
 // TurnContext 回合上下文

@@ -106,6 +106,9 @@ type RolloutInfo struct {
 	Source     string
 	GitBranch  string
 	GitSHA     string
+	// GitOrigin 是 session_meta.git.origin_url。恢复时用它判断"这份 rollout 属于哪个仓库"：
+	// projectID 含绝对路径哈希，换机器/换目录就对不上，而 origin 认的是仓库本身。
+	GitOrigin string
 
 	StartedAt time.Time
 
@@ -334,6 +337,7 @@ func (p *rolloutParser) handleEnvelope(line []byte) {
 			p.info.Source = meta.Source
 			p.info.GitBranch = meta.Git.Branch
 			p.info.GitSHA = meta.Git.SHA
+			p.info.GitOrigin = meta.Git.OriginURL
 		}
 
 	case "turn_context":
