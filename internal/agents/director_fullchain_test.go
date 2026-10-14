@@ -97,7 +97,10 @@ func makeTextThenExitResponse(content string) *llm.Response {
 	}
 }
 
-func newFullChainDirector(t *testing.T, workDir string, mock *fullChainMockLLM) *DirectorAgent {
+// newFullChainDirector 只把引擎当 llm.Engine 用，所以参数是接口而不是具体 mock：
+// e2e_handoff_test.go 需要一台"会读回上下文再决定下一步"的脚本引擎
+// （note/artifact 的引用是运行期生成的，固定队列预知不了 ID）。
+func newFullChainDirector(t *testing.T, workDir string, mock llm.Engine) *DirectorAgent {
 	t.Helper()
 
 	gctx := newTestGlobalCtx(workDir)
