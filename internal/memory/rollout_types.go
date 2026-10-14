@@ -19,22 +19,22 @@ type RolloutEnvelope struct {
 
 // SessionMeta 会话元数据
 type SessionMeta struct {
-	ID             string     `json:"id,omitempty"`
-	SessionID      string     `json:"session_id,omitempty"`
-	TaskID         string     `json:"task_id,omitempty"`
+	ID        string `json:"id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	TaskID    string `json:"task_id,omitempty"`
 	// BoardID 是这次会话用的便签板。board 作用域提到 session 级之后，
 	// task_id 已经不足以在 /resume 时找回那块板（一个板对应多个 task），
 	// 所以要把板本身记下来。存量 rollout 没有这个字段 ⇒ 读出来是空串。
-	BoardID        string     `json:"board_id,omitempty"`
-	Cwd            string     `json:"cwd,omitempty"`
-	CliVersion     string     `json:"cli_version,omitempty"`
-	Originator     string     `json:"originator,omitempty"`
-	ModelProvider  string     `json:"model_provider,omitempty"`
-	Source         string     `json:"source,omitempty"`
-	BaseInstructions string   `json:"base_instructions,omitempty"`
-	ContextWindow  int        `json:"context_window,omitempty"`
-	HistoryMode    string     `json:"history_mode,omitempty"`
-	Git            GitInfo    `json:"git,omitempty"`
+	BoardID          string  `json:"board_id,omitempty"`
+	Cwd              string  `json:"cwd,omitempty"`
+	CliVersion       string  `json:"cli_version,omitempty"`
+	Originator       string  `json:"originator,omitempty"`
+	ModelProvider    string  `json:"model_provider,omitempty"`
+	Source           string  `json:"source,omitempty"`
+	BaseInstructions string  `json:"base_instructions,omitempty"`
+	ContextWindow    int     `json:"context_window,omitempty"`
+	HistoryMode      string  `json:"history_mode,omitempty"`
+	Git              GitInfo `json:"git,omitempty"`
 }
 
 // GitInfo git 元数据
@@ -77,17 +77,17 @@ type MessageContentItem struct {
 
 // ResponseItem 模型响应项，使用 Type 字段做联合体
 type ResponseItem struct {
-	Type                string                  `json:"type"`
-	Role                string                  `json:"role,omitempty"`
-	ID                  string                  `json:"id,omitempty"`
-	Content             []MessageContentItem    `json:"content,omitempty"`
-	Summary             []MessageContentItem    `json:"summary,omitempty"`
-	EncryptedContent    string                  `json:"encrypted_content,omitempty"`
-	CallID              string                  `json:"call_id,omitempty"`
-	Name                string                  `json:"name,omitempty"`
-	Namespace           string                  `json:"namespace,omitempty"`
-	Arguments           string                  `json:"arguments,omitempty"`
-	Output              string                  `json:"output,omitempty"`
+	Type             string               `json:"type"`
+	Role             string               `json:"role,omitempty"`
+	ID               string               `json:"id,omitempty"`
+	Content          []MessageContentItem `json:"content,omitempty"`
+	Summary          []MessageContentItem `json:"summary,omitempty"`
+	EncryptedContent string               `json:"encrypted_content,omitempty"`
+	CallID           string               `json:"call_id,omitempty"`
+	Name             string               `json:"name,omitempty"`
+	Namespace        string               `json:"namespace,omitempty"`
+	Arguments        string               `json:"arguments,omitempty"`
+	Output           string               `json:"output,omitempty"`
 }
 
 // MarshalJSON 根据 Type 字段只输出对应子类型的字段
@@ -95,10 +95,10 @@ func (r ResponseItem) MarshalJSON() ([]byte, error) {
 	switch r.Type {
 	case "message":
 		type msgAlias struct {
-			Type    string                  `json:"type"`
-			Role    string                  `json:"role,omitempty"`
-			ID      string                  `json:"id,omitempty"`
-			Content []MessageContentItem    `json:"content,omitempty"`
+			Type    string               `json:"type"`
+			Role    string               `json:"role,omitempty"`
+			ID      string               `json:"id,omitempty"`
+			Content []MessageContentItem `json:"content,omitempty"`
 		}
 		return json.Marshal(msgAlias{
 			Type:    r.Type,
@@ -108,11 +108,11 @@ func (r ResponseItem) MarshalJSON() ([]byte, error) {
 		})
 	case "reasoning":
 		type reasonAlias struct {
-			Type               string                  `json:"type"`
-			ID                 string                  `json:"id,omitempty"`
-			Summary            []MessageContentItem    `json:"summary,omitempty"`
-			Content            interface{}             `json:"content"` // 显式输出 null
-			EncryptedContent   string                  `json:"encrypted_content,omitempty"`
+			Type             string               `json:"type"`
+			ID               string               `json:"id,omitempty"`
+			Summary          []MessageContentItem `json:"summary,omitempty"`
+			Content          interface{}          `json:"content"` // 显式输出 null
+			EncryptedContent string               `json:"encrypted_content,omitempty"`
 		}
 		return json.Marshal(reasonAlias{
 			Type:             r.Type,
@@ -152,17 +152,17 @@ func (r ResponseItem) MarshalJSON() ([]byte, error) {
 	default:
 		// 未知类型，输出所有字段
 		return json.Marshal(map[string]interface{}{
-			"type":               r.Type,
-			"role":               r.Role,
-			"id":                 r.ID,
-			"content":            r.Content,
-			"summary":            r.Summary,
-			"encrypted_content":  r.EncryptedContent,
-			"call_id":            r.CallID,
-			"name":               r.Name,
-			"namespace":          r.Namespace,
-			"arguments":          r.Arguments,
-			"output":             r.Output,
+			"type":              r.Type,
+			"role":              r.Role,
+			"id":                r.ID,
+			"content":           r.Content,
+			"summary":           r.Summary,
+			"encrypted_content": r.EncryptedContent,
+			"call_id":           r.CallID,
+			"name":              r.Name,
+			"namespace":         r.Namespace,
+			"arguments":         r.Arguments,
+			"output":            r.Output,
 		})
 	}
 }
@@ -171,17 +171,17 @@ func (r ResponseItem) MarshalJSON() ([]byte, error) {
 
 // EventMsg 运行时事件，使用 Type 字段做联合体
 type EventMsg struct {
-	Type        string      `json:"type"`
-	Text        string      `json:"text,omitempty"`
-	Message     string      `json:"message,omitempty"`
-	Reason      string      `json:"reason,omitempty"`
-	Info        interface{} `json:"info,omitempty"`
-	StepNumber  int         `json:"step_number,omitempty"`
-	ToolName    string      `json:"tool_name,omitempty"`
-	ToolInput   interface{} `json:"tool_input,omitempty"`
-	Success     bool        `json:"success,omitempty"`
-	AgentName   string      `json:"agent_name,omitempty"`
-	Summary     string      `json:"summary,omitempty"`
+	Type       string      `json:"type"`
+	Text       string      `json:"text,omitempty"`
+	Message    string      `json:"message,omitempty"`
+	Reason     string      `json:"reason,omitempty"`
+	Info       interface{} `json:"info,omitempty"`
+	StepNumber int         `json:"step_number,omitempty"`
+	ToolName   string      `json:"tool_name,omitempty"`
+	ToolInput  interface{} `json:"tool_input,omitempty"`
+	Success    bool        `json:"success,omitempty"`
+	AgentName  string      `json:"agent_name,omitempty"`
+	Summary    string      `json:"summary,omitempty"`
 
 	// ── 终止事件（task_complete / turn_aborted）携带的断点状态 ──
 	// 恢复侧据此判断会话为何结束、停在第几步，而不是只能靠"有没有终止事件"猜。
@@ -327,6 +327,36 @@ const (
 	CompactionKindRule      = "rule"
 	CompactionKindEmergency = "emergency"
 	CompactionKindUltimate  = "ultimate"
+)
+
+// 终止词表：event_msg 的 stop_reason 取值（task_complete 与 turn_aborted 都带它）。
+//
+// 写入端有两处——executor.go 的子 Agent 循环与 director/planner_run.go 的 Director 循环；
+// 读取端有 TUI 的断点面板和恢复候选扫描。这三处分属三个包，而 director 子包不得
+// import agents（scripts/check_no_agents_import.sh），所以词表只能放在共同依赖的 memory。
+// 与上面的 CompactionKind* 同一个理由：写成裸字符串的话，一个 typo 只会让恢复侧
+// 少认一类停止原因，而没有任何地方会报错。
+const (
+	// StopKindCancelled 是没有别的解释的取消：用户按停止、任务被丢弃、上层 ctx 关掉。
+	// 只有这一类（以及将来的 paused）应当被当作"可以原样继续"。
+	StopKindCancelled = "cancelled"
+	// StopKindIdleTimeout / StopKindTotalTimeout 来自 activity 的两个上限。
+	// 刻意不与 cancelled 合并：超时的那一步可能已经把 "Error: context canceled"
+	// 记进了 rollout，原样重放会重复执行副作用。
+	StopKindIdleTimeout  = "idle_timeout"
+	StopKindTotalTimeout = "total_timeout"
+	StopKindMaxSteps     = "max_steps"
+	// StopKindLLMError 涵盖重试耗尽；StopKindCircuitBreakerOpen 是 Director 独有的
+	// 更早出口（连续失败到阈值直接拦截调用）。两者都不能重放，但保留区分是因为
+	// 熔断器意味着 provider 侧出了问题，这个信息对排查有用。
+	StopKindLLMError           = "llm_error"
+	StopKindCircuitBreakerOpen = "circuit_breaker_open"
+	StopKindPanic              = "panic"
+	StopKindPlainText          = "plain_text"
+	StopKindAgentExit          = "agent_exit"
+	// StopKindUnaccounted 表示"这一轮结束了，但没有任何出口认领原因"。
+	// 存在的意义是让新增的 return 路径立刻可诊断，而不是静默留下空的 stop_reason。
+	StopKindUnaccounted = "unaccounted"
 )
 
 // CompactedPayload 上下文压缩后的快照。

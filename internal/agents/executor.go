@@ -324,10 +324,16 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 	var agentErr error
 	stepNumber := 0
+	// stopKind 记录这一轮是**怎么**结束的。终止事件此前只写 reason 字符串，恢复侧
+	// 只能靠 errors.Is(err, context.Canceled) 去猜；而"猜"分不出用户主动停止、
+	// idle 超时、total 超时，三者的正确续跑策略完全不同。
+	// 每个出口都在 RunAgentLoop 内部，所以它只是个局部变量，不必进 ExecutorConfig。
+	stopKind := newStopKindTracker(ctx)
 	defer func() {
 		r := recover()
 		if r != nil {
 			agentErr = fmt.Errorf("agent panic: %v", r)
+			stopKind.record(StopKindPanic, agentErr)
 		}
 		if cfg.OnAgentExit != nil {
 			if exitErr := cfg.OnAgentExit(ctx, agentErr); exitErr != nil {
@@ -339,9 +345,15 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			if termErr == nil {
 				termErr = retErr
 			}
-			rs := memory.RunState{Steps: stepNumber, MaxSteps: cfg.MaxSteps}
+			rs := memory.RunState{
+				Steps:      stepNumber,
+				MaxSteps:   cfg.MaxSteps,
+				StopReason: stopKind.kindOf(),
+			}
 			if termErr != nil {
-				rw.WriteRunAborted(termErr.Error(), rs)
+				// 文案取自分类时采用的那个错误，而不是循环返回的那个：
+				// 取消路径上引擎给的是裸 context.Canceled，真正的原因在 context.Cause 上。
+				rw.WriteRunAborted(stopKind.reasonText(termErr.Error()), rs)
 			} else {
 				rw.WriteRunComplete(rs)
 			}
@@ -390,6 +402,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 				slog.Warn("AgentExecutor retrying LLM call", "agent", cfg.AgentName, "step", i, "attempt", attempt, "wait", wait)
 				select {
 				case <-ctx.Done():
+					stopKind.record("", ctx.Err())
 					return ExecutorResult{}, ctx.Err()
 				case <-time.After(wait):
 				}
@@ -609,6 +622,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			llm.LogLLMError("AgentExecutor LLM error after all retries",
 				"agent", cfg.AgentName, "error", err, "step", i,
 			)
+			stopKind.record("", err)
 			return ExecutorResult{}, err
 		}
 
@@ -682,6 +696,21 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 							"step":      entry.Step,
 						}, cfg.AgentName)
 					}
+					// 与 Director 侧 planner_run.go:48-55 对称：事件总线是**视图**的来源，
+					// rollout 才是**恢复**的来源。只有总线上的一份额外好处是 TUI 面板，
+					// 代价是这份子 Agent 日志在进程退出后彻底不存在——ultimate 压缩
+					// 重建上下文全靠它（RebuildPrompt），恢复后它只能从"原始任务 + 零个
+					// T&P 块"重建，等于把压缩后的子 Agent 变成失忆状态。
+					// 只落 thought_plan：user_input 那份由各自 Run() 播的种子，
+					// 内容等于 rollout 首条 user 消息，落两遍没有意义。
+					if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
+						_ = rw.WriteEventMsg(memory.EventMsg{
+							Type:       "thinklink_entry",
+							Kind:       entry.Kind.String(),
+							Text:       entry.Content,
+							StepNumber: entry.Step,
+						})
+					}
 				}
 			}
 		}
@@ -707,6 +736,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 				writeRollout(reminderMsg)
 				continue
 			}
+			stopKind.record(StopKindPlainTextReply, nil)
 			return ExecutorResult{Text: choice.Content, History: history}, nil
 		}
 
@@ -773,6 +803,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		for _, seg := range plan {
 			if !seg.Parallel {
 				if res := execOneToolCall(seg.Indices[0]); res != nil {
+					stopKind.record(StopKindAgentExit, nil)
 					return *res, nil
 				}
 				continue
@@ -829,7 +860,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 	}
 
-	return ExecutorResult{}, fmt.Errorf("%s exceeded max steps (%d)", cfg.AgentName, cfg.MaxSteps)
+	exhausted := fmt.Errorf("%s exceeded max steps (%d)", cfg.AgentName, cfg.MaxSteps)
+	stopKind.record(StopKindMaxSteps, exhausted)
+	return ExecutorResult{}, exhausted
 }
 
 func ConvertLLMHistoryToMemory(history []llm.Message) []memory.ChatMessage {
