@@ -25,6 +25,8 @@ export const EventTypes = {
   StatusUpdate: "status_update",
   Thinking: "thinking",
   TaskComplete: "task_complete",
+  TaskPaused: "task_paused",
+  TaskResumed: "task_resumed",
 } as const;
 
 export type EventType = typeof EventTypes[keyof typeof EventTypes];
@@ -169,6 +171,21 @@ export interface TaskCompleteEvent {
   summary?: string;
 }
 
+export interface TaskPausedEvent {
+  /** 任务暂停闸门已按下（执行停在下一个 step 边界） */
+  event: "task_paused";
+  task_id: string;
+  reason?: string;
+  blocked?: boolean;
+}
+
+export interface TaskResumedEvent {
+  /** 任务暂停闸门已放开，执行从 step 边界继续 */
+  event: "task_resumed";
+  task_id: string;
+  reason?: string;
+}
+
 // ===== 事件联合类型 =====
 export type AgentEvent =
   | ModelInfoEvent
@@ -189,7 +206,9 @@ export type AgentEvent =
   | ConversationResultEvent
   | StatusUpdateEvent
   | ThinkingEvent
-  | TaskCompleteEvent;
+  | TaskCompleteEvent
+  | TaskPausedEvent
+  | TaskResumedEvent;
 
 // ===== WebSocket 消息包装 =====
 export interface WebSocketMessage {
@@ -282,5 +301,13 @@ export function isThinking(msg: AgentEvent | WebSocketMessage): msg is ThinkingE
 
 export function isTaskComplete(msg: AgentEvent | WebSocketMessage): msg is TaskCompleteEvent {
   return 'event' in msg && msg.event === "task_complete";
+}
+
+export function isTaskPaused(msg: AgentEvent | WebSocketMessage): msg is TaskPausedEvent {
+  return 'event' in msg && msg.event === "task_paused";
+}
+
+export function isTaskResumed(msg: AgentEvent | WebSocketMessage): msg is TaskResumedEvent {
+  return 'event' in msg && msg.event === "task_resumed";
 }
 

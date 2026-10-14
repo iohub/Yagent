@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"time"
@@ -103,6 +102,8 @@ func (s *Server) setupRoutes() {
 
 	// 取消任务的API
 	s.router.POST("/api/cancel_task", s.handleCancelTask)
+	s.router.POST("/api/pause_task", s.handlePauseTask)
+	s.router.POST("/api/continue_task", s.handleContinueTask)
 
 	// 获取特定类型消息的API
 	s.router.GET("/api/memory/:type", s.handleGetMemoryByType)
@@ -178,14 +179,8 @@ func (s *Server) handleLoadTask(c *gin.Context) {
 		taskTimeout = s.yagent.GetClient().Config.TaskTimeout
 	}
 
-	// 创建可取消的上下文，如果配置了超时则使用 WithTimeout
-	var ctx context.Context
-	var cancel context.CancelFunc
-	if taskTimeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), taskTimeout)
-	} else {
-		ctx, cancel = context.WithCancel(context.Background())
-	}
+	// 创建可取消的上下文（带暂停闸门），如果配置了超时则使用 WithTimeout
+	ctx, cancel := NewTaskContext(taskTimeout)
 	task := &Task{
 		ID:         req.TaskID,
 		Status:     TaskStatusRunning,
@@ -225,14 +220,8 @@ func (s *Server) handleStartTask(c *gin.Context) {
 		taskTimeout = s.yagent.GetClient().Config.TaskTimeout
 	}
 
-	// 创建可取消的上下文，如果配置了超时则使用 WithTimeout
-	var ctx context.Context
-	var cancel context.CancelFunc
-	if taskTimeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), taskTimeout)
-	} else {
-		ctx, cancel = context.WithCancel(context.Background())
-	}
+	// 创建可取消的上下文（带暂停闸门），如果配置了超时则使用 WithTimeout
+	ctx, cancel := NewTaskContext(taskTimeout)
 
 	var task *Task
 
@@ -251,6 +240,8 @@ func (s *Server) handleStartTask(c *gin.Context) {
 			task.UpdatedAt = time.Now()
 			task.CancelFunc = cancel
 			task.Context = ctx
+			// 闸门跟着 ctx 一起换：Task.Gate() 是从 ctx 读回来的，所以这里没有第二个
+			// 地方需要记得改 —— 旧闸门属于已经结束的那一轮，留着它只会停错对象。
 			// 保留 Memory，不重新创建
 			slog.Info("Continuing existing task", "task_id", task.ID)
 		} else {
@@ -408,6 +399,58 @@ func (s *Server) handleCancelTask(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "Task not found or not running"})
 		slog.Warn("Failed to cancel task", "task_id", req.TaskID)
 	}
+}
+
+// handlePauseTask 按下任务的暂停闸门：执行在下一个 step 边界停住，ctx 不取消。
+// 与 cancel_task 的区别就是这停住的代价 —— 取消不可复活，暂停可以（/continue_task）。
+func (s *Server) handlePauseTask(c *gin.Context) {
+	var req struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid request body"})
+		return
+	}
+	if req.TaskID == "" {
+		c.JSON(400, gin.H{"error": "task_id is required"})
+		return
+	}
+
+	if !s.taskManager.PauseTask(req.TaskID) {
+		c.JSON(409, gin.H{"error": "Task not found, has no pause gate, or is not running"})
+		return
+	}
+	c.JSON(200, gin.H{
+		"task_id": req.TaskID,
+		"status":  TaskStatusPaused,
+		"message": "Task will stop at the next step boundary",
+	})
+}
+
+// handleContinueTask 放开闸门。已取消的任务救不回来（A 层只在进程内有效），
+// 所以这里会明确拒绝而不是假装继续。
+func (s *Server) handleContinueTask(c *gin.Context) {
+	var req struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid request body"})
+		return
+	}
+	if req.TaskID == "" {
+		c.JSON(400, gin.H{"error": "task_id is required"})
+		return
+	}
+
+	if !s.taskManager.ContinueTask(req.TaskID) {
+		c.JSON(409, gin.H{"error": "Task not found or was not paused"})
+		return
+	}
+	c.JSON(200, gin.H{
+		"task_id": req.TaskID,
+		"status":  TaskStatusRunning,
+		"message": "Task resumed from the step boundary",
+	})
 }
 
 func (s *Server) handleGetMemoryByType(c *gin.Context) {

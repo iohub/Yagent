@@ -100,6 +100,16 @@
       "event": "task_complete",
       "component": "TaskCompleteCard",
       "heading": "任务完成"
+    },
+    {
+      "event": "task_paused",
+      "component": "StatusPill",
+      "heading": "任务暂停"
+    },
+    {
+      "event": "task_resumed",
+      "component": "StatusPill",
+      "heading": "任务继续"
     }
   ]
 }

@@ -29,6 +29,8 @@ const (
   EventTypeStatusUpdate EventType = "status_update"
   EventTypeThinking EventType = "thinking"
   EventTypeTaskComplete EventType = "task_complete"
+  EventTypeTaskPaused EventType = "task_paused"
+  EventTypeTaskResumed EventType = "task_resumed"
 )
 
 // EventType 是事件类型的字符串枚举
@@ -159,6 +161,19 @@ type TaskCompleteData struct {
   Summary string `json:"summary,omitempty"` // 任务摘要
 }
 
+// TaskPausedData 任务暂停闸门已按下（执行停在下一个 step 边界）
+type TaskPausedData struct {
+  TaskId string `json:"task_id"` // 任务 ID
+  Reason string `json:"reason,omitempty"` // 暂停来源（如 /pause、http /api/pause_task）
+  Blocked bool `json:"blocked,omitempty"` // true = 已停在 step 边界；false = 还有工具在飞，尚未停住
+}
+
+// TaskResumedData 任务暂停闸门已放开，执行从 step 边界继续
+type TaskResumedData struct {
+  TaskId string `json:"task_id"` // 任务 ID
+  Reason string `json:"reason,omitempty"` // 继续来源（如 /continue、http /api/continue_task）
+}
+
 // AgentEventEnvelope 是 WebSocket 传输的统一消息包裹
 type AgentEventEnvelope struct {
   Type string `json:"type"`
@@ -190,6 +205,8 @@ var EventTypeRegistry = map[EventType]func() interface{}{
   EventTypeStatusUpdate: func() interface{} { return &StatusUpdateData{} },
   EventTypeThinking: func() interface{} { return &ThinkingData{} },
   EventTypeTaskComplete: func() interface{} { return &TaskCompleteData{} },
+  EventTypeTaskPaused: func() interface{} { return &TaskPausedData{} },
+  EventTypeTaskResumed: func() interface{} { return &TaskResumedData{} },
 }
 
 // RenderHint 包含前端渲染提示
@@ -265,6 +282,14 @@ var EventRenderHints = map[EventType]RenderHint{
   EventTypeTaskComplete: {
     Component: "TaskCompleteCard",
     Heading: "任务完成",
+  },
+  EventTypeTaskPaused: {
+    Component: "StatusPill",
+    Heading: "任务暂停",
+  },
+  EventTypeTaskResumed: {
+    Component: "StatusPill",
+    Heading: "任务继续",
   },
 }
 

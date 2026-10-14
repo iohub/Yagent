@@ -133,7 +133,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 				// 如果ProjectDir为空，我们可以尝试查找最近的一个ProjectDir，或者在Agent层面报错
 				projectDir := chatData.ProjectDir
 
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := NewTaskContext(0)
 				task = &Task{
 					ID:         chatData.TaskID,
 					Status:     TaskStatusRunning, // 重新激活
