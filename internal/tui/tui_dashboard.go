@@ -98,12 +98,23 @@ func (m *model) renderDashboard(width, height int) string {
 	}
 
 	innerWidth := width - 4 // border(2) + padding(2)
-
-	// token 段预算：给 Activity 留行，但自己至少保 3 行（标题/Σ/⛁）。
-	maxTokenRows := height
-	if len(m.timelineEntries) > 0 {
-		maxTokenRows = height - timelineReserveRows
+	// 三段抢同一个**内容**高度。lipgloss 的 Height(h) 是含上下边框的总高，
+	// 所以能放内容的只有 height-2 行；按 height 分配预算会多要 2 行，
+	// 末尾那段（现在是 ⧉，改之前是 Activity 的最后几行）会被下面的高度收敛截断悄悄切掉。
+	contentRows := height - 2
+	if contentRows < 1 {
+		contentRows = 1
 	}
+
+	cs := m.compressSnapshot()
+
+	// ① token 段预算：给 Activity 留行，再给 ⧉ 段留它最低成本形态的 2 行
+	// （空闲态也常驻，见 compress_panel.go 的 any()），但自己至少保 3 行（标题/Σ/⛁）。
+	maxTokenRows := contentRows
+	if len(m.timelineEntries) > 0 {
+		maxTokenRows = contentRows - timelineReserveRows
+	}
+	maxTokenRows -= compressReserveRows
 	if maxTokenRows < 3 {
 		maxTokenRows = 3
 	}
@@ -123,6 +134,9 @@ func (m *model) renderDashboard(width, height int) string {
 	key := fmt.Sprintf("%d|%s|%d|%d|%s|ctx:%d/%d",
 		len(m.timelineEntries), m.timelineLastID(), width, height,
 		snap.signature(), snap.ctxTokens, snap.ctxWindow)
+	// ⧉ 段的签名必须进键：压缩事件动的只有压缩统计与采样，Σ/RUN/TOTAL 计数器一个都不改，
+	// 不进键的话压缩块会永远命中旧缓存 —— 事件到了、面板不刷新，编译测试都发现不了。
+	key += "|cmp:" + cs.signature()
 
 	if !hasRunning && key == m.dashboardCacheKey && m.dashboardCache != "" {
 		return m.dashboardCache
@@ -130,8 +144,23 @@ func (m *model) renderDashboard(width, height int) string {
 
 	lines := append([]string(nil), tokenRows...)
 
-	// ── Timeline section (bottom) ──
-	tlAvailable := height - len(lines)
+	// ② ⧉ 压缩段：位置在 Activity 之下、面板最后一段，但行预算必须先算 ——
+	// 有 timeline 时先给它保底 timelineReserveRows（分隔线+标题+事件+提示），
+	// 剩下的才轮到压缩段。装不下最低形态（分隔线+标题）时整段让位。
+	//
+	// 注意 maxRows<=0 在渲染器里是"不限高"，所以预算不足时必须跳过，不能把 0 传进去
+	// —— 那会让压缩段反过来把 Activity 挤掉。
+	var compressRows []string
+	compressMax := contentRows - len(lines)
+	if len(m.timelineEntries) > 0 {
+		compressMax -= timelineReserveRows
+	}
+	if compressMax >= compressReserveRows {
+		compressRows = buildCompressBlock(cs, compressPanelSpec{innerWidth: innerWidth, maxRows: compressMax})
+	}
+
+	// ── Timeline section ──
+	tlAvailable := contentRows - len(lines) - len(compressRows)
 	if len(m.timelineEntries) > 0 && tlAvailable > 2 {
 		// Separator + title (2 rows)
 		lines = append(lines, tokenSep(innerWidth))
@@ -171,6 +200,9 @@ func (m *model) renderDashboard(width, height int) string {
 			lines = append(lines, hint)
 		}
 	}
+
+	// ③ ⧉ 压缩段落在 Activity 之下，是面板的最后一段。行预算已在上面算好并预留。
+	lines = append(lines, compressRows...)
 
 	// Trim any lines that exceed innerWidth before applying border.
 	// lipgloss v2 MaxWidth preserves ANSI styles and truncates by display width.

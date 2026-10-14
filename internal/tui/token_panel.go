@@ -271,12 +271,15 @@ func (m *model) resetRunTokens() {
 	m.invalidateFooterCache()
 }
 
-// updateAgentContextTokens 覆写（不是累加）该 agent 的上下文占用：
-// ContextTokens 的含义是"最近一次调用的输入规模"，压缩事件之后必须立刻反映压缩结果。
-func (m *model) updateAgentContextTokens(agentName string, contextTokens int64) {
+// setContextTokens 是 ContextTokens 的唯一写入者。
+//
+// 覆写（不是累加）该 agent 的上下文占用：ContextTokens 的含义是"最近一次调用的输入规模"，
+// 压缩事件之后必须立刻反映压缩结果。顺带采一个趋势点给 ⧉ 段的 sparkline。
+func (m *model) setContextTokens(agentName string, contextTokens int64) {
 	rt := m.runTokens(agentName)
 	m.runAgent = rt.AgentName
 	rt.ContextTokens = contextTokens
+	m.compress.sampleContext(contextTokens)
 	m.invalidateFooterCache()
 }
 
@@ -713,6 +716,14 @@ func (m *model) renderFooterTokenPanel() string {
 	})
 	if len(rows) == 0 {
 		return ""
+	}
+	// ⧉ 压缩摘要只给 1 行，且属于同一个面板（不另起边框、不前置空行）：
+	// 这样 lipgloss.Height 会自己跟着长，computeFooterHeight 不必新增分支。
+	// 折叠态一行都塞不下，直接不给。
+	if !m.tokenDashboardCollapsed {
+		if summary := compressSummaryRow(m.compressSnapshot(), inner); summary != "" {
+			rows = append(rows, summary)
+		}
 	}
 	return lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).

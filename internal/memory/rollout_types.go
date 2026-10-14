@@ -325,11 +325,26 @@ type InterAgentCommunicationMetadata struct {
 
 // ─── CompactedPayload — 压缩快照 payload ───
 
-// CompactedPayload 上下文压缩后的快照
+// ─── CompactedPayload — 压缩快照 payload ───
+
+// 压缩档位名。写入端（executor / director planner）与读取端（TUI 的 ⧉ 段）共用这一份
+// 词表 —— 写成裸字符串的话，一个 typo 就会让 /resume 静默丢掉一整档统计。
+const (
+	CompactionKindRule      = "rule"
+	CompactionKindEmergency = "emergency"
+	CompactionKindUltimate  = "ultimate"
+)
+
+// CompactedPayload 上下文压缩后的快照。
+//
+// Kind/SavedTokens 是给 /resume 重建 ⧉ 压缩段用的（TUI 侧的三档统计否则只能靠
+// Summary 前缀猜）。老 rollout 里这两个字段是空的，读取端负责回落。
 type CompactedPayload struct {
 	Summary      string `json:"summary,omitempty"`
 	TokensBefore int    `json:"tokens_before,omitempty"`
 	TokensAfter  int    `json:"tokens_after,omitempty"`
+	Kind         string `json:"kind,omitempty"`         // CompactionKind*
+	SavedTokens  int    `json:"saved_tokens,omitempty"` // 与事件的 saved_tokens 同源
 }
 
 // ─── WorldStatePayload — 世界状态 payload ───

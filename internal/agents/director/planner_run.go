@@ -171,12 +171,16 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			directorRolloutWriter.WriteRunAborted(reason, runState(stopReason))
 		}
 	}
-	writeCompacted := func(summary string, tokensBefore, tokensAfter int) {
+	// kind 与 savedTokens 是给 /resume 重建 ⧉ 压缩段用的；Summary 的文案不动
+	// （历史恢复与人工排查都依赖它）。
+	writeCompacted := func(kind, summary string, tokensBefore, tokensAfter, savedTokens int) {
 		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
 			_ = directorRolloutWriter.WriteCompacted(memory.CompactedPayload{
 				Summary:      summary,
 				TokensBefore: tokensBefore,
 				TokensAfter:  tokensAfter,
+				Kind:         kind,
+				SavedTokens:  savedTokens,
 			})
 		}
 	}
@@ -258,11 +262,11 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 						"saved_tokens", compStats.SavedTokens,
 						"saved_percent", compStats.SavedPercent,
 						"truncated_count", compStats.TruncatedCount)
-					writeCompacted(fmt.Sprintf(
+					writeCompacted(memory.CompactionKindRule, fmt.Sprintf(
 						"tool-result truncation: %d results compacted, saved %d tokens (%d → %d)",
 						compStats.TruncatedCount, compStats.SavedTokens,
 						compStats.OriginalTokens, compStats.CompressedTokens),
-						compStats.OriginalTokens, compStats.CompressedTokens)
+						compStats.OriginalTokens, compStats.CompressedTokens, compStats.SavedTokens)
 				}
 
 				if compression.EstimateMessagesTokens(messages) > threshold {
@@ -285,12 +289,12 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 						"extracted_blocks", emergencyStats.ExtractedBlocks,
 						"kept_blocks", emergencyStats.KeptBlocks,
 						"summarized_by_llm", emergencyStats.SummarizedByLLM)
-					writeCompacted(fmt.Sprintf(
+					writeCompacted(memory.CompactionKindEmergency, fmt.Sprintf(
 						"emergency compression: %d blocks extracted, %d summarized, %d kept, saved %d tokens (%d → %d)",
 						emergencyStats.ExtractedBlocks, emergencyStats.SummarizedBlocks,
 						emergencyStats.KeptBlocks, emergencyStats.SavedTokens,
 						emergencyStats.OriginalTokens, emergencyStats.CompressedTokens),
-						emergencyStats.OriginalTokens, emergencyStats.CompressedTokens)
+						emergencyStats.OriginalTokens, emergencyStats.CompressedTokens, emergencyStats.SavedTokens)
 				}
 
 				if p.cfg.UltimateCompressEnable && p.cfg.Journal != nil && compression.EstimateMessagesTokens(messages) > threshold {
@@ -307,11 +311,11 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 							"truncated":         ultStats.Truncated,
 							"detail":            "终极压缩(ultimate compression)已触发,上下文已重置为用户原始输入 + Thought & Plan 块",
 						}, "director")
-						writeCompacted(fmt.Sprintf(
+						writeCompacted(memory.CompactionKindUltimate, fmt.Sprintf(
 							"ultimate compression: context rebuilt from %d user inputs + %d/%d Thought & Plan blocks, saved %d tokens (%d → %d)",
 							ultStats.UserInputs, ultStats.KeptPlans, ultStats.TotalPlans,
 							ultStats.SavedTokens, ultStats.OriginalTokens, ultStats.CompressedTokens),
-							ultStats.OriginalTokens, ultStats.CompressedTokens)
+							ultStats.OriginalTokens, ultStats.CompressedTokens, ultStats.SavedTokens)
 					}
 				}
 			}

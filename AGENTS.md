@@ -319,7 +319,9 @@ type Adapter struct { name, description string; fn ToolFunc
 ### 6.5 三档上下文压缩（`internal/compression`）
 
 阈值 = 模型目录收录的 `limit.context × 0.75`（目录未命中则回退 `[enhanced_commander] context_compression_threshold`，默认 120000），
-每步检查，`enhanced_commander.enable_context_compression` 总开关：
+每步检查，`enhanced_commander.enable_context_compression` 总开关。
+调试例外：`YAGENT_COMPRESS_THRESHOLD` 一旦设了就**直接当阈值**，压过目录与配置 ——
+目录收录的模型动辄 1M 窗口（阈值 750k），想在真机上肉眼验收压缩行为只能靠它；生产不要用。
 
 1. **Rule**：`TruncateToolResultsToBudget` — 按优先级先截低价值工具结果（`deepthinking`/`design` 结果受保护），保留最近 `tool_result_keep_tokens`（默认 200）。
 2. **Emergency**：抽取 T&P 块进 thinklink，最近 3 条保留原文，其余 LLM 摘要，记忆整体重写为 `[system, one user]`。
@@ -383,6 +385,11 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
   所有口径只在 `(*model).tokenSnapshot()` 里算一次（输入量一律用 provider 归一化的 `TotalInputTokens` ——
   OpenAI 的 `prompt_tokens` 含缓存、Anthropic 的 `input_tokens` 不含，混用会让同一标签出两个数）。
   不要在任何表面里另取计数器直接格式化；完整规格见 `docs/token-dashboard-design.md`。
+- **⧉ 压缩段**：`compress_panel.go` 的 `buildCompressBlock` 排在侧栏 Activity **之下**（底部面板只给 1 行摘要，折叠态不给行），
+  数字只在 `(*model).compressSnapshot()` 里算一次；`pct = Σsaved / max(original_tokens)` 且**显示层封顶 100%**
+  —— 三档串行嵌套，用 Σoriginal 当分母会重复计算同一批 token；而压缩是**每个 step 独立触发**的，
+  多轮任务的 Σsaved 会合法地超过任何单次 original。没触发过压缩时区块**不消失**，而是退到常驻的
+  2 行空闲形态（`⧉ COMPRESS 0 (0%) T0`）。完整规格见 `docs/token-compress-panel-design.md`。
 - **叠加模式**：timeline 全屏、thinklink 全屏、history、resume、dialog 栈、主页面——按此优先级渲染。
   每层都必须正常消费 `taskEventMsg` 并重新武装 `listenForEvents`（该 cmd 是一次性的，事件没有重放队列）。
 - **thinklink 全屏**：条目来自 `thinklink_entry` 事件（payload 的 `agent` 字段 = 发布方 Agent 名），
@@ -601,10 +608,12 @@ plan:
 1. **本文档之外的旧资料普遍过期**：`docs/ARCHITECTURE.md` 与 `README.md` 里的部分描述（模块图、`pkg/`、工具数）落后于代码；以本文件和源码为准。
 2. **`dist/` 被 `.gitignore` 忽略，但 `dist/data/models.json` 与 `dist/bin` 里的文件是被跟踪的**。改目录后 `git add -f dist/...`，否则 `go:embed` 编不过、或二进制继续用旧数据。
 3. **模型目录与配置里的 `context_window` 会打架，且两个消费者取法相反**：
-   - 压缩阈值（`compression/threshold.go:19`）= **目录命中优先** → 未命中才用 `context_compression_threshold`（默认 120000）；
+   - 压缩阈值（`compression/threshold.go` 的 `ResolveThreshold`）= **目录命中优先** → 未命中才用 `context_compression_threshold`（默认 120000）；
      **provider 的 `context_window` 完全不参与**。
-   - TUI 上下文进度条（`tui/tui_model.go:600`）= **provider 的 `context_window` 优先** → 未设置才查目录。
+   - TUI 上下文进度条（`tui/tui_model.go` 的 `contextWindowFromCfg`）= **provider 的 `context_window` 优先** → 未设置才查目录。
    所以给目录里已收录的模型手写一个不同的 `context_window`，会出现"压缩时机与进度条口径不一致"。
+   **想临时压低阈值做验收**只能靠 `YAGENT_COMPRESS_THRESHOLD`（目录命中时配置项是被跳过的，改配置不起作用）；
+   它是纯调试入口：非法值原样回落，取值不缓存，生产配置不要用 —— 会让压缩早于模型真实容量触发，白丢上下文。
 4. **`default_config.toml` 里有一段 `[context]` 表**（`enable_auto_compact` 等）`Config` 根本不解析；真正的开关在 `[enhanced_commander]`。别照着模板那段改配置。
 5. **声明 ≠ 可用（已消解）**：`Registry.Validate()` 双向对账 schemas.json 与 Spec，"声明了没人实现"
    是启动错误；工具面由画像派生，golden 基线（`internal/agents/testdata/tool_surfaces.golden`）钉住
@@ -615,6 +624,9 @@ plan:
    弹窗守卫只放行少数消息类型（`tea.PasteMsg` 不是 KeyMsg）。任何新增叠加模式/守卫都必须显式放行需要的消息类型并 re-arm。
 7. **布局高度必须自洽**：`computeFooterHeight` 与 `View()` 的 footer 组装顺序要完全一致，差一个空行整屏抖动；
    `viewport.SetHighlights` 在我们的重着色日志上会算错偏移，改用 `StyleLineFunc`。
+   另：`lipgloss.Style.Height(h)` 是**含上下边框**的总高（实测 `Height(5)` 装 3 行内容 → 输出 5 行，内容多了就撑破），
+   所以给一个面板里的若干段分配行预算时要按 `height-2` 算；按 `height` 算会多要 2 行，
+   被 `renderDashboard` 末尾的"行数收敛 + 补边框"悄悄截掉，表现是最后一段莫名少两行而不报错。
 8. **browser-control 的状态目录是进程 CWD 相对路径**（`.browser-control/`），上游没有任何环境变量可改这个根：
    所有调用必须带 `cmd.Dir`（指向 `~/.yagent/data/browser/{delegation}`）。漏设就会在用户仓库里长出该目录——
    `internal/browserctl` 已把它固化成唯一入口，新增调用点不要自己拼路径。

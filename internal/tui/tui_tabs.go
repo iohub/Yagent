@@ -70,6 +70,7 @@ type sessionTab struct {
 	tokenUsagePerAgent       map[string]*AgentTokenUsage
 	runTokensPerAgent        map[string]*AgentRunTokens
 	runAgent                 string
+	compress                 compressStats
 }
 
 // initSessionTabs 初始化会话 tab 系统，创建第一个默认 tab
@@ -205,6 +206,9 @@ func (m *model) saveActiveSession() {
 		tab.runTokensPerAgent[k] = &copied
 	}
 	tab.runAgent = m.runAgent
+	// 压缩统计是会话累计（与 Σ 同生命周期）。cut 表和采样数组都会被事件原地改写，
+	// 所以和 RUN 表一样必须深拷贝，否则两个 tab 会共用同一份压缩历史。
+	tab.compress = m.compress.clone()
 
 	// 如果当前有活跃任务，保存其 memory
 	if m.currentTask != nil && !m.taskRunning {
@@ -293,6 +297,7 @@ func (m *model) restoreSessionTab(idx int) {
 		m.runTokensPerAgent[k] = &copied
 	}
 	m.runAgent = tab.runAgent
+	m.compress = tab.compress.clone()
 
 	// 重建内容缓存并恢复滚动位置
 	m.rebuildContentCache()
@@ -367,6 +372,7 @@ func (m *model) clearCurrentSession() {
 	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 	m.runTokensPerAgent = make(map[string]*AgentRunTokens)
 	m.runAgent = ""
+	m.compress = compressStats{}
 	m.input.SetValue("")
 
 	// 更新 tab 标题为默认
