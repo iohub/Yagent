@@ -18,6 +18,7 @@ import (
 	"yagent/internal/agents/activity"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
+	"yagent/internal/pause"
 	"yagent/internal/thinklink"
 	"yagent/internal/tools"
 )
@@ -361,4 +362,98 @@ func TestStopKindTracker_FailureBeatsSuccessAndFirstFailureWins(t *testing.T) {
 			t.Errorf("kindOf() = %q, want %q", got, StopKindUnaccounted)
 		}
 	})
+}
+
+// TestRunAgentLoop_AbandonedPauseReportsPaused 停在闸门上之后被取消（用户按停止、
+// 或直接关终端）→ 账本上必须是 paused，而不是被 Unwrap 出来的 context.Canceled
+// 掩盖成 cancelled。差别在于"停在哪"：闸门只在 step 边界生效，所以这一轮的
+// 工具批次已全部提交完，P2 可以按这个证据决定原样继续。
+func TestRunAgentLoop_AbandonedPauseReportsPaused(t *testing.T) {
+	g := pause.NewGate()
+	g.Pause("/pause")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx = pause.WithGate(ctx, g)
+
+	go func() {
+		for i := 0; i < 1500; i++ {
+			if g.Blocked() {
+				cancel()
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		cancel() // 夹具失效也要让循环结束，否则这里是死等
+	}()
+
+	info, err := abortedReader(t, ctx, newHangEngine("mock"), nil)
+	if err != nil {
+		t.Fatalf("ReadRolloutMemory: %v", err)
+	}
+	if !g.Blocked() && !info.Aborted {
+		t.Fatal("夹具失效：循环从没停在闸门上，这一轮走的是别的出口")
+	}
+	if info.StopReason != StopKindPaused {
+		t.Errorf("StopReason = %q, want %q（AbandonedError 被 Unwrap 成裸取消了）",
+			info.StopReason, StopKindPaused)
+	}
+	if !strings.Contains(info.AbortReason, "paused run abandoned") {
+		t.Errorf("AbortReason = %q, want it to say the pause was abandoned", info.AbortReason)
+	}
+}
+
+// TestRunAgentLoop_ReleasedPauseLeavesNoAbort 放开闸门之后，这一轮的账本必须
+// 看起来根本没被打断过 —— 写 task_complete 而不是 turn_aborted。
+// 把"恢复"记成一次中断的话，/resume 的清单会凭空多出一个坏任务，
+// 而用户刚刚明明已经让它跑完了。
+func TestRunAgentLoop_ReleasedPauseLeavesNoAbort(t *testing.T) {
+	g := pause.NewGate()
+	g.Pause("/pause")
+	ctx := pause.WithGate(context.Background(), g)
+
+	w, err := memory.NewRolloutWriter("pause-agent", "task-pause-agent", "pause-release")
+	if err != nil || !w.Enabled() {
+		t.Skipf("rollout writer unavailable: %v", err)
+	}
+	path := w.FilePath()
+	ctx = memory.WithRolloutWriter(ctx, w)
+
+	script := &mockLLM{responses: []*llm.Response{newTextResponse("done")}}
+	done := make(chan error, 1)
+	go func() {
+		_, rerr := RunAgentLoop(ctx, ExecutorConfig{
+			SystemPrompt: "You are a test agent.",
+			UserInput:    "park once then finish",
+			LLM:          script,
+			MaxSteps:     3,
+			AgentName:    "pause-agent",
+		})
+		done <- rerr
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for !g.Blocked() && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !g.Blocked() {
+		t.Fatal("夹具失效：循环没有在第一个 step 边界上停住")
+	}
+	g.Resume()
+	if rerr := <-done; rerr != nil {
+		t.Fatalf("恢复后 RunAgentLoop 返回错误：%v", rerr)
+	}
+	if cerr := w.Close(); cerr != nil {
+		t.Fatalf("close rollout: %v", cerr)
+	}
+
+	_, info, rerr := memory.ReadRolloutMemory(path, memory.DefaultRolloutReadOptions())
+	if rerr != nil {
+		t.Fatalf("ReadRolloutMemory: %v", rerr)
+	}
+	if info.Aborted {
+		t.Errorf("Aborted = true（一次被放开的暂停被记成了中断）：%+v", info)
+	}
+	if info.StopReason != StopKindPlainTextReply {
+		t.Errorf("StopReason = %q, want %q", info.StopReason, StopKindPlainTextReply)
+	}
 }

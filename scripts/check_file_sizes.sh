@@ -25,7 +25,10 @@ MAX_LINES=300
 # 格式 <相对路径>:<允许的最大行数>
 PENDING=(
 	# planner_run.go：主循环 + 压缩 + 委派编排三段职责，拆分是独立一次改动。
-	"internal/agents/director/planner_run.go:658"
+	# P1 加暂停闸门要进 9 行（循环顶部 8 行 + pause import），换来的是把 runState
+	# 闭包挪进 planner_rollout.go（省 8 行）和把一条三行 slog 收成一行（省 2 行），
+	# 所以行数不升反降 —— 上限随之下调。
+	"internal/agents/director/planner_run.go:657"
 )
 
 if [ ! -d "$TARGET_DIR" ]; then

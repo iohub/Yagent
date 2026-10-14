@@ -12,6 +12,7 @@ import (
 	"yagent/internal/compression"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
+	"yagent/internal/pause"
 	"yagent/internal/tools"
 )
 
@@ -148,29 +149,19 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		items := memory.LLMMessageToResponseItems(msg, msgID)
 		for _, item := range items {
 			if err := directorRolloutWriter.WriteResponseItem(item); err != nil {
-				slog.Warn("Rollout: failed to write director message",
-					"error", err,
-				)
+				slog.Warn("Rollout: failed to write director message", "error", err)
 			}
 		}
 	}
 
-	runState := func(stopReason string) memory.RunState {
-		return memory.RunState{
-			Steps:        p.state.Step,
-			MaxSteps:     p.cfg.MaxSteps,
-			StopReason:   stopReason,
-			HasDelegated: p.state.HasDelegated,
-		}
-	}
 	writeComplete := func(stopReason string) {
 		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-			directorRolloutWriter.WriteRunComplete(runState(stopReason))
+			directorRolloutWriter.WriteRunComplete(p.runState(stopReason))
 		}
 	}
 	writeAborted := func(reason, stopReason string) {
 		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-			directorRolloutWriter.WriteRunAborted(reason, runState(stopReason))
+			directorRolloutWriter.WriteRunAborted(reason, p.runState(stopReason))
 		}
 	}
 	// kind 与 savedTokens 是给 /resume 重建 ⧉ 压缩段用的；Summary 的文案不动
@@ -193,6 +184,14 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 	}
 
 	for i := 0; i < p.cfg.MaxSteps; i++ {
+		// 暂停闸门（A 层）与子 Agent 用同一个：ctx 不取消，停在 step 边界，
+		// 放开后原地继续。p.state.Step 不推进 —— 这一步根本没跑过，
+		// 推进会让恢复侧的游标多算一步。
+		if perr := pause.From(ctx).Wait(ctx); perr != nil {
+			writeAborted(perr.Error(), memory.StopKindPaused)
+			return PlanResult{Steps: p.state.Step, StopReason: memory.StopKindPaused}, perr
+		}
+
 		p.state.Step = i + 1
 
 		if p.cfg.Recovery != nil && p.cfg.Recovery.IsCircuitBreakerOpen() {
