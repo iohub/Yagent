@@ -157,14 +157,14 @@ func TestTokenCounting_CurrentAgentReset(t *testing.T) {
 	}
 	m = feedEvent(m, directorEvent)
 
-	if m.currentAgentRunTokens.AgentName != "Director" {
-		t.Errorf("currentAgentRunTokens.AgentName 期望 Director，实际 %s", m.currentAgentRunTokens.AgentName)
+	if m.currentRun().AgentName != "Director" {
+		t.Errorf("currentAgentRunTokens.AgentName 期望 Director，实际 %s", m.currentRun().AgentName)
 	}
-	if m.currentAgentRunTokens.InputTokens != 1000 {
-		t.Errorf("currentAgentRunTokens.InputTokens 期望1000，实际%d", m.currentAgentRunTokens.InputTokens)
+	if m.currentRun().InputTokens != 1000 {
+		t.Errorf("currentAgentRunTokens.InputTokens 期望1000，实际%d", m.currentRun().InputTokens)
 	}
-	if m.currentAgentRunTokens.OutputTokens != 200 {
-		t.Errorf("currentAgentRunTokens.OutputTokens 期望200，实际%d", m.currentAgentRunTokens.OutputTokens)
+	if m.currentRun().OutputTokens != 200 {
+		t.Errorf("currentAgentRunTokens.OutputTokens 期望200，实际%d", m.currentRun().OutputTokens)
 	}
 
 	// Repo-Agent 的调用 — 应触发重置
@@ -184,14 +184,14 @@ func TestTokenCounting_CurrentAgentReset(t *testing.T) {
 	m = feedEvent(m, repoEvent)
 
 	// 应重置为 Repo-Agent 的数值
-	if m.currentAgentRunTokens.AgentName != "Repo-Agent" {
-		t.Errorf("currentAgentRunTokens.AgentName 期望 Repo-Agent，实际 %s", m.currentAgentRunTokens.AgentName)
+	if m.currentRun().AgentName != "Repo-Agent" {
+		t.Errorf("currentAgentRunTokens.AgentName 期望 Repo-Agent，实际 %s", m.currentRun().AgentName)
 	}
-	if m.currentAgentRunTokens.InputTokens != 500 {
-		t.Errorf("currentAgentRunTokens.InputTokens 期望500，实际%d", m.currentAgentRunTokens.InputTokens)
+	if m.currentRun().InputTokens != 500 {
+		t.Errorf("currentAgentRunTokens.InputTokens 期望500，实际%d", m.currentRun().InputTokens)
 	}
-	if m.currentAgentRunTokens.OutputTokens != 100 {
-		t.Errorf("currentAgentRunTokens.OutputTokens 期望100，实际%d", m.currentAgentRunTokens.OutputTokens)
+	if m.currentRun().OutputTokens != 100 {
+		t.Errorf("currentAgentRunTokens.OutputTokens 期望100，实际%d", m.currentRun().OutputTokens)
 	}
 
 	// 全局值应累加
@@ -243,111 +243,101 @@ func TestTokenCounting_EmptyContentNotOverwriteStream(t *testing.T) {
 	}
 }
 
-// TestTokenCounting_NoUsageMetadataFallback 验证 ai_response 事件不带 usage metadata 时，
-// TUI 按 content 长度估算 output tokens 并计入 tokenUsagePerAgent
-func TestTokenCounting_NoUsageMetadataFallback(t *testing.T) {
+// TestTokenCounting_NoUsageMetadataIgnored 验证不带 usage 的 ai_response 不再被 TUI 自估。
+// 三个发布方（executor.go / planner_run.go / meta.go）都会挂上 usage —— provider 不给
+// usage 时上游已经用 EstimateTokens 兜底并标 estimated；TUI 再按 len/4 估一次只会造出
+// 第二种口径（而且只估 output，把 input 估成 0）。
+func TestTokenCounting_NoUsageMetadataIgnored(t *testing.T) {
 	m := newTestModel()
 	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
-	// 发送不带 usage metadata 的 ai_response（模拟本地模型场景）
-	noUsageEvent := &messaging.MessageEvent{
+	m = feedEvent(m, &messaging.MessageEvent{
 		Type:      "ai_response",
 		From:      "Repo-Agent",
 		Content:   "这是一段测试回复内容，包含多个字符用于估算 token",
 		Timestamp: time.Now(),
 		Metadata:  map[string]interface{}{}, // 无 usage key
-	}
-	m = feedEvent(m, noUsageEvent)
+	})
 
-	// 全局 outputTokens 应按 content 长度估算（len/4）
-	contentStr := noUsageEvent.Content.(string)
-	expectedOutput := int64(len(contentStr) / 4)
-	if m.outputTokens != expectedOutput {
-		t.Errorf("outputTokens 期望 %d（%d/4），实际 %d", expectedOutput, len(contentStr), m.outputTokens)
+	if m.outputTokens != 0 || m.inputTokens != 0 {
+		t.Errorf("无 usage 时不该累加：in=%d out=%d", m.inputTokens, m.outputTokens)
 	}
-
-	// tokenUsagePerAgent 应出现对应 agent
-	if len(m.tokenUsagePerAgent) != 1 {
-		t.Fatalf("期望1个agent，实际 %d", len(m.tokenUsagePerAgent))
+	if len(m.tokenUsagePerAgent) != 0 {
+		t.Errorf("无 usage 时不该建 agent 条目，实际 %v", m.tokenUsagePerAgent)
 	}
-	agentUsage, ok := m.tokenUsagePerAgent["Repo-Agent"]
-	if !ok {
-		t.Fatal("缺少 Repo-Agent agent统计")
-	}
-	if agentUsage.OutputTokens != expectedOutput {
-		t.Errorf("Repo-Agent OutputTokens 期望 %d，实际 %d", expectedOutput, agentUsage.OutputTokens)
-	}
-	// input 无法估算，应为 0
-	if agentUsage.InputTokens != 0 {
-		t.Errorf("Repo-Agent InputTokens 期望0，实际 %d", agentUsage.InputTokens)
+	if rows := buildTokenPanel(m.tokenSnapshot(), tokenPanelSpec{innerWidth: 46}); rows != nil {
+		t.Errorf("无用量时面板不该产出任何行，实际 %d 行", len(rows))
 	}
 }
 
-// TestFormatCacheInfo 验证 formatCacheInfo 长格式输出
-func TestFormatCacheInfo(t *testing.T) {
+// TestCacheHitRatio 钉住命中率口径：分母必须是归一化输入。
+// OpenAI 的 prompt_tokens 已含 cached，再把它加进分母第二次就会把命中率算低
+// （commit 6a35cbc 修的就是这个），所以这里同时守住"没有缓存活动/没有分母就不画计量条"。
+func TestCacheHitRatio(t *testing.T) {
 	cases := []struct {
-		name          string
-		cacheRead     int64
-		cacheCreation int64
-		totalInput    int64
-		wantContains  []string
-		wantEmpty     bool
+		name   string
+		read   int64
+		create int64
+		total  int64
+		want   string // ratioPct 结果；"" = 整条计量条不该出现
 	}{
-		{"both read and creation", 300, 200, 1500, []string{"Cache:", "CacheW:"}, false},
-		{"only read", 300, 0, 1500, []string{"Cache:"}, false},
-		{"only creation", 0, 200, 1500, []string{"CacheW: 200"}, false},
-		{"none", 0, 0, 1500, nil, true},
-		{"zero total", 300, 200, 0, nil, true},
+		{"both read and creation", 300, 200, 1500, "20%"},
+		{"only read", 300, 0, 1500, "20%"},
+		{"only creation", 0, 200, 1500, "0%"},
+		{"no cache activity", 0, 0, 1500, ""},
+		{"no denominator", 300, 200, 0, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := formatCacheInfo(tc.cacheRead, tc.cacheCreation, tc.totalInput)
-			if tc.wantEmpty {
-				if got != "" {
-					t.Errorf("期望空字符串，实际 %q", got)
+			ratio, ok := cacheHitRatio(tc.read, tc.create, tc.total)
+			if tc.want == "" {
+				if ok {
+					t.Errorf("cacheHitRatio(%d,%d,%d) 应判为无可展示缓存，实际 ok=true", tc.read, tc.create, tc.total)
 				}
 				return
 			}
-			for _, want := range tc.wantContains {
-				if !strings.Contains(got, want) {
-					t.Errorf("输出 %q 应包含 %q", got, want)
-				}
+			if !ok {
+				t.Fatalf("cacheHitRatio(%d,%d,%d) 应可展示，实际 ok=false", tc.read, tc.create, tc.total)
+			}
+			if got := ratioPct(ratio); got != tc.want {
+				t.Errorf("ratioPct = %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestFormatCacheShort 验证 formatCacheShort 短格式输出
-func TestFormatCacheShort(t *testing.T) {
-	cases := []struct {
-		name          string
-		cacheRead     int64
-		cacheCreation int64
-		totalInput    int64
-		wantContains  []string
-		wantEmpty     bool
-	}{
-		{"both read and creation", 300, 200, 1500, []string{"⊕", "W:"}, false},
-		{"only read", 300, 0, 1500, []string{"⊕20%"}, false},
-		{"only creation", 0, 200, 1500, []string{"W:200"}, false},
-		{"none", 0, 0, 1500, nil, true},
-		{"zero total", 300, 200, 0, nil, true},
+// TestTokenCacheMeterRow 验证 ⊕ 计量条：hit 恒在、new 仅在有写缓存时出现、
+// 明细塞不下时整段消失（而不是溢出或截半）。
+func TestTokenCacheMeterRow(t *testing.T) {
+	snap := tokenSnapshot{totalIn: 1500, cacheRead: 300, cacheNew: 200}
+
+	full := tokenCacheMeterRow(snap, 46, tokenMeterCells)
+	if w := lipgloss.Width(full); w != 46 {
+		t.Errorf("计量条宽度 = %d, want 46", w)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := formatCacheShort(tc.cacheRead, tc.cacheCreation, tc.totalInput)
-			if tc.wantEmpty {
-				if got != "" {
-					t.Errorf("期望空字符串，实际 %q", got)
-				}
-				return
-			}
-			for _, want := range tc.wantContains {
-				if !strings.Contains(got, want) {
-					t.Errorf("输出 %q 应包含 %q", got, want)
-				}
-			}
-		})
+	want := "⊕ ▰▰▱▱▱▱▱▱▱▱ 20%             hit 300 · new 200"
+	if got := stripANSI(full); got != want {
+		t.Errorf("计量条输出\n got %q\nwant %q", got, want)
+	}
+
+	// 只有读缓存时不该出现 new 段
+	onlyRead := stripANSI(tokenCacheMeterRow(tokenSnapshot{totalIn: 1500, cacheRead: 300}, 46, tokenMeterCells))
+	if strings.Contains(onlyRead, "new") {
+		t.Errorf("无写缓存时不该出现 new 段：%q", onlyRead)
+	}
+
+	// 宽度不够放明细时，宁可不显示也不越界
+	narrow := tokenCacheMeterRow(snap, 24, tokenMeterCells)
+	if strings.Contains(stripANSI(narrow), "hit") {
+		t.Errorf("窄面板应丢掉明细段：%q", stripANSI(narrow))
+	}
+	if w := lipgloss.Width(narrow); w > 24 {
+		t.Errorf("窄面板计量条宽度 = %d, want <= 24", w)
+	}
+
+	// 完全没有缓存活动 → 整行不渲染
+	if got := tokenCacheMeterRow(tokenSnapshot{totalIn: 1500}, 46, tokenMeterCells); got != "" {
+		t.Errorf("无缓存活动时应返回空串，实际 %q", got)
 	}
 }
 
@@ -402,8 +392,8 @@ func TestTotalInputTokens_OpenAICompatibility(t *testing.T) {
 	}
 
 	// 验证 currentAgentRunTokens 统计
-	if m.currentAgentRunTokens.TotalInputTokens != 1000 {
-		t.Errorf("currentAgentRunTokens.TotalInputTokens 期望1000，实际%d", m.currentAgentRunTokens.TotalInputTokens)
+	if m.currentRun().TotalInputTokens != 1000 {
+		t.Errorf("currentAgentRunTokens.TotalInputTokens 期望1000，实际%d", m.currentRun().TotalInputTokens)
 	}
 }
 
@@ -453,9 +443,9 @@ func TestTotalInputTokens_ZeroFallback(t *testing.T) {
 		Timestamp: time.Now(),
 		Metadata: map[string]interface{}{
 			"usage": map[string]interface{}{
-				"prompt_tokens":     100,
-				"completion_tokens": 50,
-				"total_tokens":      150,
+				"prompt_tokens":      100,
+				"completion_tokens":  50,
+				"total_tokens":       150,
 				"total_input_tokens": 0, // 模拟未设置
 			},
 		},
@@ -475,9 +465,9 @@ func TestTotalInputTokens_ZeroFallback(t *testing.T) {
 		Timestamp: time.Now(),
 		Metadata: map[string]interface{}{
 			"usage": map[string]interface{}{
-				"prompt_tokens":     200,
-				"completion_tokens": 100,
-				"total_tokens":      300,
+				"prompt_tokens":      200,
+				"completion_tokens":  100,
+				"total_tokens":       300,
 				"total_input_tokens": 200,
 			},
 		},
@@ -519,13 +509,18 @@ func TestCacheHitRate_OpenAIPath(t *testing.T) {
 		t.Errorf("totalInputTokens 期望1000，实际%d", m.totalInputTokens)
 	}
 
-	// 验证命中率计算：formatCacheInfo 应该显示 100%
-	cacheInfo := formatCacheInfo(m.cacheReadInputTokens, m.cacheCreationInputTokens, m.totalInputTokens)
-	if cacheInfo == "" {
-		t.Fatal("cacheInfo 不应为空")
+	// 命中率：1000 全是 cached → 100%，不能被算成 50%
+	ratio, ok := cacheHitRatio(m.cacheReadInputTokens, m.cacheCreationInputTokens, m.totalInputTokens)
+	if !ok {
+		t.Fatal("有缓存命中时计量条应可展示")
 	}
-	if !strings.Contains(cacheInfo, "100.0%") {
-		t.Errorf("cacheInfo 应包含 100.0%%，实际 %q", cacheInfo)
+	if got := ratioPct(ratio); got != "100%" {
+		t.Errorf("命中率 = %q, want 100%%", got)
+	}
+	// 渲染出口同样要显示满格
+	row := stripANSI(tokenCacheMeterRow(m.tokenSnapshot(), 46, tokenMeterCells))
+	if !strings.Contains(row, "⊕ ▰▰▰▰▰▰▰▰▰▰ 100%") {
+		t.Errorf("计量条应显示满格 100%%，实际 %q", row)
 	}
 }
 
@@ -554,8 +549,8 @@ func ctxTestAiResponse(from string, totalInput int64) *messaging.MessageEvent {
 // ctxTestCompression 构造带 compressed_tokens 的上下文压缩事件（三级压缩共用载荷结构）
 func ctxTestCompression(eventType, from string, compressed int64) *messaging.MessageEvent {
 	return &messaging.MessageEvent{
-		Type:      messaging.EventType(eventType),
-		From:      from,
+		Type: messaging.EventType(eventType),
+		From: from,
 		Content: map[string]interface{}{
 			"original_tokens":   compressed * 4,
 			"compressed_tokens": compressed,
@@ -572,13 +567,13 @@ func TestContextTokens_OverwriteNotAccumulate(t *testing.T) {
 	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestAiResponse("Director", 1000))
-	if m.currentAgentRunTokens.ContextTokens != 1000 {
-		t.Errorf("首次 ai_response 后 ContextTokens 期望1000，实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 1000 {
+		t.Errorf("首次 ai_response 后 ContextTokens 期望1000，实际%d", m.currentRun().ContextTokens)
 	}
 
 	m = feedEvent(m, ctxTestAiResponse("Director", 800))
-	if m.currentAgentRunTokens.ContextTokens != 800 {
-		t.Errorf("第二次 ai_response 后 ContextTokens 期望800（覆盖式，非1800累计），实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 800 {
+		t.Errorf("第二次 ai_response 后 ContextTokens 期望800（覆盖式，非1800累计），实际%d", m.currentRun().ContextTokens)
 	}
 }
 
@@ -589,20 +584,20 @@ func TestContextTokens_CompressThenCallSequence(t *testing.T) {
 	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestAiResponse("Director", 1000))
-	if m.currentAgentRunTokens.ContextTokens != 1000 {
-		t.Fatalf("ai_response 后 ContextTokens 期望1000，实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 1000 {
+		t.Fatalf("ai_response 后 ContextTokens 期望1000，实际%d", m.currentRun().ContextTokens)
 	}
 
 	// 压缩事件：面板立即反映压缩后的真实值
 	m = feedEvent(m, ctxTestCompression("context_compressed", "Director", 300))
-	if m.currentAgentRunTokens.ContextTokens != 300 {
-		t.Errorf("压缩事件后 ContextTokens 期望300，实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 300 {
+		t.Errorf("压缩事件后 ContextTokens 期望300，实际%d", m.currentRun().ContextTokens)
 	}
 
 	// 下一次 ai_response：覆盖为精确值
 	m = feedEvent(m, ctxTestAiResponse("Director", 310))
-	if m.currentAgentRunTokens.ContextTokens != 310 {
-		t.Errorf("压缩后 ai_response ContextTokens 期望310（精确值覆盖估算），实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 310 {
+		t.Errorf("压缩后 ai_response ContextTokens 期望310（精确值覆盖估算），实际%d", m.currentRun().ContextTokens)
 	}
 }
 
@@ -612,21 +607,21 @@ func TestContextTokens_AgentSwitchResetsRun(t *testing.T) {
 	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestAiResponse("Director", 500))
-	if m.currentAgentRunTokens.AgentName != "Director" {
-		t.Fatalf("初始 agent 期望 Director，实际 %s", m.currentAgentRunTokens.AgentName)
+	if m.currentRun().AgentName != "Director" {
+		t.Fatalf("初始 agent 期望 Director，实际 %s", m.currentRun().AgentName)
 	}
 
 	// Repo-Agent 的压缩事件：视为 agent 切换，整体重置
 	m = feedEvent(m, ctxTestCompression("context_compressed", "Repo-Agent", 200))
 
-	if m.currentAgentRunTokens.AgentName != "Repo-Agent" {
-		t.Errorf("agent 切换后 AgentName 期望 Repo-Agent，实际 %s", m.currentAgentRunTokens.AgentName)
+	if m.currentRun().AgentName != "Repo-Agent" {
+		t.Errorf("agent 切换后 AgentName 期望 Repo-Agent，实际 %s", m.currentRun().AgentName)
 	}
-	if m.currentAgentRunTokens.ContextTokens != 200 {
-		t.Errorf("agent 切换后 ContextTokens 期望200，实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 200 {
+		t.Errorf("agent 切换后 ContextTokens 期望200，实际%d", m.currentRun().ContextTokens)
 	}
-	if m.currentAgentRunTokens.InputTokens != 0 {
-		t.Errorf("agent 切换应重置 InputTokens 期望0，实际%d", m.currentAgentRunTokens.InputTokens)
+	if m.currentRun().InputTokens != 0 {
+		t.Errorf("agent 切换应重置 InputTokens 期望0，实际%d", m.currentRun().InputTokens)
 	}
 }
 
@@ -638,8 +633,8 @@ func TestContextTokens_EmergencyCompressedReachable(t *testing.T) {
 
 	m = feedEvent(m, ctxTestCompression("context_emergency_compressed", "Director", 250))
 
-	if m.currentAgentRunTokens.ContextTokens != 250 {
-		t.Errorf("emergency 压缩后 ContextTokens 期望250，实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 250 {
+		t.Errorf("emergency 压缩后 ContextTokens 期望250，实际%d", m.currentRun().ContextTokens)
 	}
 	if m.tokenDashboardValid {
 		t.Error("写入 ContextTokens 应失效渲染缓存（tokenDashboardValid 期望 false）")
@@ -650,8 +645,8 @@ func TestContextTokens_EmergencyCompressedReachable(t *testing.T) {
 
 	// 随后再发一条 ai_response，确认事件循环未被 emergency 分支的 return 打断
 	m = feedEvent(m, ctxTestAiResponse("Director", 400))
-	if m.currentAgentRunTokens.ContextTokens != 400 {
-		t.Errorf("emergency 后 ai_response ContextTokens 期望400，实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 400 {
+		t.Errorf("emergency 后 ai_response ContextTokens 期望400，实际%d", m.currentRun().ContextTokens)
 	}
 	if m.totalInputTokens != 400 {
 		t.Errorf("emergency 后事件循环应存活：totalInputTokens 期望400，实际%d", m.totalInputTokens)
@@ -665,11 +660,11 @@ func TestContextTokens_EmptyFromNormalized(t *testing.T) {
 
 	m = feedEvent(m, ctxTestCompression("context_compressed", "", 300))
 
-	if m.currentAgentRunTokens.AgentName != "Unknown" {
-		t.Errorf("空 From 应归一化为 Unknown，实际 %s", m.currentAgentRunTokens.AgentName)
+	if m.currentRun().AgentName != "Unknown" {
+		t.Errorf("空 From 应归一化为 Unknown，实际 %s", m.currentRun().AgentName)
 	}
-	if m.currentAgentRunTokens.ContextTokens != 300 {
-		t.Errorf("ContextTokens 期望300，实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 300 {
+		t.Errorf("ContextTokens 期望300，实际%d", m.currentRun().ContextTokens)
 	}
 }
 
@@ -679,8 +674,8 @@ func TestContextTokens_ZeroUsageGuard(t *testing.T) {
 	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 
 	m = feedEvent(m, ctxTestAiResponse("Director", 500))
-	if m.currentAgentRunTokens.ContextTokens != 500 {
-		t.Fatalf("前置 ai_response 后 ContextTokens 期望500，实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 500 {
+		t.Fatalf("前置 ai_response 后 ContextTokens 期望500，实际%d", m.currentRun().ContextTokens)
 	}
 
 	// provider 错误路径：全零 usage（无 total_input_tokens 字段，回退公式也为 0）
@@ -700,65 +695,71 @@ func TestContextTokens_ZeroUsageGuard(t *testing.T) {
 	}
 	m = feedEvent(m, zeroEvent)
 
-	if m.currentAgentRunTokens.ContextTokens != 500 {
-		t.Errorf("全零 usage 不应清零面板：ContextTokens 期望仍为500，实际%d", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 500 {
+		t.Errorf("全零 usage 不应清零面板：ContextTokens 期望仍为500，实际%d", m.currentRun().ContextTokens)
 	}
 }
 
-// TestCollapsedDashboard_EmptyWhenAllZero 验证折叠面板三零时返回空串
-func TestCollapsedDashboard_EmptyWhenAllZero(t *testing.T) {
+// TestTokenPanel_CollapsedEmptyWhenNoUsage 验证完全没有用量时不渲染任何行
+func TestTokenPanel_CollapsedEmptyWhenNoUsage(t *testing.T) {
 	m := newTestModel()
-	m.currentAgentRunTokens = AgentRunTokens{AgentName: "Director"}
+	m.setRun(AgentRunTokens{AgentName: "Director"})
 
-	if out := m.renderCollapsedTokenDashboard(); out != "" {
-		t.Errorf("三零时折叠面板应返回空串，实际 %q", out)
+	if rows := buildTokenPanel(m.tokenSnapshot(), tokenPanelSpec{innerWidth: 90, collapsed: true}); rows != nil {
+		t.Errorf("无用量时折叠面板应返回 nil，实际 %q", rows)
 	}
 }
 
-// TestCollapsedDashboard_ShowsCtx 验证折叠面板仅 ContextTokens>0 时显示独立 Context 行（新样式）
-func TestCollapsedDashboard_ShowsCtx(t *testing.T) {
+// TestTokenPanel_CollapsedOneLine 验证折叠形态恰好 1 行，并带上活跃 agent、Σ 与 ⛁ 上下文。
+func TestTokenPanel_CollapsedOneLine(t *testing.T) {
 	m := newTestModel()
-	m.currentAgentRunTokens = AgentRunTokens{AgentName: "Director", ContextTokens: 5000}
+	m.totalInputTokens = 1000
+	m.outputTokens = 200
+	m.contextWindow = 200000
+	m.tokenUsagePerAgent = map[string]*AgentTokenUsage{
+		"Director": {AgentName: "Director", TotalInputTokens: 1000, InputTokens: 1000, OutputTokens: 200},
+	}
+	m.setRun(AgentRunTokens{AgentName: "Director", TotalInputTokens: 1000, InputTokens: 1000, OutputTokens: 200, ContextTokens: 5000})
 
-	out := stripANSI(m.renderCollapsedTokenDashboard())
+	rows := buildTokenPanel(m.tokenSnapshot(), tokenPanelSpec{
+		innerWidth: 90,
+		collapsed:  true,
+		keycap:     dashKeycap("alt+t", "展开"),
+	})
+	if len(rows) != 1 {
+		t.Fatalf("折叠形态应恰好 1 行，实际 %d 行", len(rows))
+	}
+	out := stripANSI(rows[0])
+	for _, want := range []string{"[Director]", "▸1.2k", "⛁", "5.0k"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("折叠行缺少 %q：%q", want, out)
+		}
+	}
 	if strings.Contains(out, "Ctx:") {
-		t.Errorf("折叠面板不应再包含旧样式 Ctx: 段，实际 %q", out)
+		t.Errorf("不应再出现旧样式 Ctx: 段：%q", out)
 	}
-	if !strings.Contains(out, "⛁") || !strings.Contains(out, "Context") {
-		t.Errorf("折叠面板应包含独立 Context 行（⛁/Context 字样），实际 %q", out)
-	}
-	if !strings.Contains(out, "5.0k") {
-		t.Errorf("Context 值应经 formatToken 格式化为 5.0k，实际 %q", out)
+	if w := lipgloss.Width(rows[0]); w > 90 {
+		t.Errorf("折叠行宽度 %d 超过 inner 90", w)
 	}
 }
 
-// TestTokenDashboard_IndependentContextLine 验证展开面板 Total 行不再拼接旧样式 Ctx:，
-// Context 以独立行（新样式）展示，且 ContextTokens==0 时不显示
-func TestTokenDashboard_IndependentContextLine(t *testing.T) {
+// TestTokenPanel_CtxLineAppearsAndDisappears 验证展开面板的 ⛁ 行随 ContextTokens 出现/消失。
+func TestTokenPanel_CtxLineAppearsAndDisappears(t *testing.T) {
 	m := newTestModel()
-	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
+	m.tokenUsagePerAgent = map[string]*AgentTokenUsage{}
 	m.inputTokens = 100
 	m.outputTokens = 50
-	m.currentAgentRunTokens = AgentRunTokens{
-		AgentName:      "Director",
-		InputTokens:    100,
-		OutputTokens:   50,
-		ContextTokens:  500,
+	m.setRun(AgentRunTokens{AgentName: "Director", InputTokens: 100, OutputTokens: 50, ContextTokens: 500})
+
+	expanded := stripANSI(strings.Join(buildTokenPanel(m.tokenSnapshot(), tokenPanelSpec{innerWidth: 46}), "\n"))
+	if !strings.Contains(expanded, "⛁") {
+		t.Errorf("ContextTokens>0 时应出现 ⛁ 行，实际 %q", expanded)
 	}
 
-	out := stripANSI(m.renderTokenDashboard())
-	if strings.Contains(out, "Ctx:") {
-		t.Errorf("展开面板不应再包含旧样式 Ctx: 拼接，实际 %q", out)
-	}
-	if !strings.Contains(out, "⛁") || !strings.Contains(out, "Context") {
-		t.Errorf("ContextTokens>0 时展开面板应包含独立 Context 行（⛁/Context 字样），实际 %q", out)
-	}
-
-	// ContextTokens 归零后不再显示 Context 行
-	m.currentAgentRunTokens.ContextTokens = 0
-	out = stripANSI(m.renderTokenDashboard())
-	if strings.Contains(out, "⛁") {
-		t.Errorf("ContextTokens==0 时展开面板不应显示 Context 行，实际 %q", out)
+	m.currentRun().ContextTokens = 0
+	expanded = stripANSI(strings.Join(buildTokenPanel(m.tokenSnapshot(), tokenPanelSpec{innerWidth: 46}), "\n"))
+	if strings.Contains(expanded, "⛁") {
+		t.Errorf("ContextTokens==0 时不应出现 ⛁ 行，实际 %q", expanded)
 	}
 }
 
@@ -767,37 +768,73 @@ func TestTokenDashboard_IndependentContextLine(t *testing.T) {
 func TestDashboardCacheKey_IncludesContextTokens(t *testing.T) {
 	initLangManager()
 	m := newTestModel()
+	m.inputTokens = 1000
+	m.outputTokens = 200
+	m.totalInputTokens = 1000
 	m.tokenUsagePerAgent = map[string]*AgentTokenUsage{
-		"Director": {AgentName: "Director", InputTokens: 1000, OutputTokens: 200},
+		"Director": {AgentName: "Director", InputTokens: 1000, OutputTokens: 200, TotalInputTokens: 1000},
 	}
-	m.currentAgentRunTokens = AgentRunTokens{
-		AgentName:     "Director",
-		InputTokens:   1000,
-		OutputTokens:  200,
-		ContextTokens: 1000,
-	}
+	m.setRun(AgentRunTokens{
+		AgentName:        "Director",
+		InputTokens:      1000,
+		OutputTokens:     200,
+		TotalInputTokens: 1000,
+		ContextTokens:    1000,
+	})
 
 	const w, h = dashboardPanelWidth, 30
 	first := m.renderDashboard(w, h)
 
 	// 仅修改 ContextTokens，不调用 invalidateFooterCache ——
 	// 若 key 未纳入 ctx 值，第二次渲染将命中旧缓存并返回与 first 相同的结果
-	m.currentAgentRunTokens.ContextTokens = 5000
+	m.currentRun().ContextTokens = 5000
 	second := m.renderDashboard(w, h)
 
 	if first == second {
 		t.Error("ContextTokens 变化后 dashboard 应重新渲染（缓存 key 需纳入 ctx 值）")
 	}
 	if secondCtx := stripANSI(second); !strings.Contains(secondCtx, "⛁") || !strings.Contains(secondCtx, "5.0k") {
-		t.Errorf("第二次渲染应显示更新后的 Context · 5.0k tokens，实际 %q", secondCtx)
+		t.Errorf("第二次渲染应显示更新后的 ⛁ 行 · 5.0k，实际 %q", secondCtx)
+	}
+}
+
+// TestDashboardRunTokensInvalidateCache 验证本轮 RUN 变化同样会让侧栏重渲染
+// —— RUN 进缓存键是新增列能被看到的前提。
+func TestDashboardRunTokensInvalidateCache(t *testing.T) {
+	initLangManager()
+	m := newTestModel()
+	m.inputTokens = 1000
+	m.outputTokens = 200
+	m.totalInputTokens = 1200
+	m.tokenUsagePerAgent = map[string]*AgentTokenUsage{
+		"Director": {AgentName: "Director", InputTokens: 1000, OutputTokens: 200, TotalInputTokens: 1200},
+	}
+	m.setRun(AgentRunTokens{AgentName: "Director", InputTokens: 100, OutputTokens: 20, TotalInputTokens: 120})
+
+	const w, h = dashboardPanelWidth, 30
+	before := stripANSI(m.renderDashboard(w, h))
+
+	// 只改 ContextTokens 之外的本轮输入：RUN 取的是归一化输入，所以动 TotalInputTokens
+	m.currentRun().TotalInputTokens = 5000
+	after := stripANSI(m.renderDashboard(w, h))
+
+	if before == after {
+		t.Error("RUN 变化后 dashboard 应重新渲染（缓存 key 需纳入 run 值）")
+	}
+	if !strings.Contains(after, "5.0k ▸") {
+		t.Errorf("agent 行的 RUN 列应显示 5.0k，实际\n----\n%s----", after)
 	}
 }
 
 // TestDashboardCtx_DoesNotExceedPanelWidth 验证极大 ContextTokens 下 dashboard
-// 所有行可见宽度恰好等于面板宽度（Total 行超宽内容应被截断，不得撑破边框）
+// 所有行可见宽度恰好等于面板宽度（超宽内容应被截断，不得撑破边框）
 func TestDashboardCtx_DoesNotExceedPanelWidth(t *testing.T) {
 	initLangManager()
 	m := newTestModel()
+	m.inputTokens = 5000000
+	m.outputTokens = 100000
+	m.totalInputTokens = 5150000
+	m.contextWindow = 8000000
 	m.tokenUsagePerAgent = map[string]*AgentTokenUsage{
 		"Director": {
 			AgentName:                "Director",
@@ -805,14 +842,16 @@ func TestDashboardCtx_DoesNotExceedPanelWidth(t *testing.T) {
 			OutputTokens:             100000,
 			CacheReadInputTokens:     100000,
 			CacheCreationInputTokens: 50000,
+			TotalInputTokens:         5150000,
 		},
 	}
-	m.currentAgentRunTokens = AgentRunTokens{
-		AgentName:     "Director",
-		InputTokens:   5000000,
-		OutputTokens:  100000,
-		ContextTokens: 9999999,
-	}
+	m.setRun(AgentRunTokens{
+		AgentName:        "Director",
+		InputTokens:      5000000,
+		OutputTokens:     100000,
+		TotalInputTokens: 5150000,
+		ContextTokens:    9999999,
+	})
 
 	const w, h = dashboardPanelWidth, 30
 	result := m.renderDashboard(w, h)
@@ -825,48 +864,45 @@ func TestDashboardCtx_DoesNotExceedPanelWidth(t *testing.T) {
 			t.Errorf("line %d: 期望宽度 %d，实际 %d（content=%q）", i, w, lw, stripANSI(line))
 		}
 	}
-	if resultCtx := stripANSI(result); !strings.Contains(resultCtx, "⛁") || !strings.Contains(resultCtx, "Context") {
-		t.Error("面板应包含独立 Context 行")
+	resultCtx := stripANSI(result)
+	if !strings.Contains(resultCtx, "⛁") || !strings.Contains(resultCtx, "10.00m") {
+		t.Errorf("面板应显示 ⛁ 行与格式化后的 9999999 → 10.00m，实际 %q", resultCtx)
 	}
 }
 
-// TestRenderContextLine_BarStyle 有窗口上限且宽度足够时输出进度条样式
-func TestRenderContextLine_BarStyle(t *testing.T) {
-	out := stripANSI(renderContextLine(45000, 200000, 80))
-	if !strings.Contains(out, "▰") || !strings.Contains(out, "▱") {
-		t.Errorf("有窗口上限时应输出进度条样式，实际 %q", out)
+// TestTokenCtxMeterRow_BarStyle 有窗口上限时输出进度条形态，值与上限都经 formatToken
+func TestTokenCtxMeterRow_BarStyle(t *testing.T) {
+	snap := tokenSnapshot{totalIn: 1000, totalOut: 100, ctxTokens: 45000, ctxWindow: 200000}
+	line := tokenCtxMeterRow(snap, 46, tokenMeterCells)
+	out := stripANSI(line)
+	for _, want := range []string{"⛁", "▰", "▱", "45.0k", "200.0k", "%"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("⛁ 行缺少 %q：%q", want, out)
+		}
 	}
-	if !strings.Contains(out, "%") {
-		t.Errorf("进度条样式应包含百分比，实际 %q", out)
-	}
-	if !strings.Contains(out, "45.0k") || !strings.Contains(out, "200.0k") {
-		t.Errorf("进度条样式应包含当前值与窗口上限，实际 %q", out)
-	}
-}
-
-// TestRenderContextLine_Degraded 窗口未知（<=0）时退化为无进度条简约样式
-func TestRenderContextLine_Degraded(t *testing.T) {
-	out := stripANSI(renderContextLine(45000, 0, 80))
-	if strings.Contains(out, "▰") || strings.Contains(out, "%") {
-		t.Errorf("窗口为 0 时不应输出进度条与百分比，实际 %q", out)
-	}
-	if !strings.Contains(out, "Context") || !strings.Contains(out, "tokens") {
-		t.Errorf("退化样式应包含 Context 与 tokens 字样，实际 %q", out)
-	}
-
-	// 宽度不足同样退化
-	out = stripANSI(renderContextLine(45000, 200000, contextBarThresholdWidth-1))
-	if strings.Contains(out, "▰") {
-		t.Errorf("宽度低于阈值时应退化为简约样式，实际 %q", out)
+	if w := lipgloss.Width(line); w != 46 {
+		t.Errorf("⛁ 行宽度 = %d, want 46", w)
 	}
 }
 
-// TestRenderContextLine_Empty tokens<=0 时返回空串（调用方跳过该行）
-func TestRenderContextLine_Empty(t *testing.T) {
-	if out := renderContextLine(0, 200000, 80); out != "" {
+// TestTokenCtxMeterRow_NoWindow 窗口未知（<=0）时不显示分母，也不会因为缺上限而报错
+func TestTokenCtxMeterRow_NoWindow(t *testing.T) {
+	snap := tokenSnapshot{totalIn: 1000, totalOut: 100, ctxTokens: 45000}
+	out := stripANSI(tokenCtxMeterRow(snap, 46, tokenMeterCells))
+	if strings.Contains(out, " / ") {
+		t.Errorf("窗口未知时不应出现分母：%q", out)
+	}
+	if !strings.Contains(out, "45.0k") {
+		t.Errorf("窗口未知时仍应显示当前值：%q", out)
+	}
+}
+
+// TestTokenCtxMeterRow_Empty tokens<=0 时返回空串（调用方跳过该行）
+func TestTokenCtxMeterRow_Empty(t *testing.T) {
+	if out := tokenCtxMeterRow(tokenSnapshot{ctxTokens: 0}, 46, tokenMeterCells); out != "" {
 		t.Errorf("tokens=0 应返回空串，实际 %q", out)
 	}
-	if out := renderContextLine(-1, 200000, 80); out != "" {
+	if out := tokenCtxMeterRow(tokenSnapshot{ctxTokens: -1}, 46, tokenMeterCells); out != "" {
 		t.Errorf("tokens<0 应返回空串，实际 %q", out)
 	}
 }

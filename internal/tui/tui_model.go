@@ -460,7 +460,11 @@ type model struct {
 
 	dashboardCollapsed bool
 
-	currentAgentRunTokens AgentRunTokens
+	// runTokensPerAgent 是"本轮（自最近一次提交）每个 agent 的用量"，dashboard 的 RUN 列依赖它；
+	// runAgent 指向当前活跃 agent（⛁ 行显示它的 ContextTokens）。
+	// 不能用 m.currentAgent 当指针 —— 它只在 taskRunning 时才被赋值。
+	runTokensPerAgent map[string]*AgentRunTokens
+	runAgent          string
 
 	anim       *Anim
 	activeAnim bool
@@ -854,6 +858,7 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 		toolCallEntries:          make(map[string]*ToolEntry),
 		anim:                     NewAnim(10),
 		tokenUsagePerAgent:       make(map[string]*AgentTokenUsage),
+		runTokensPerAgent:        make(map[string]*AgentRunTokens),
 		tokenDashboardCollapsed:  false,
 
 		dialogStack:          ds,

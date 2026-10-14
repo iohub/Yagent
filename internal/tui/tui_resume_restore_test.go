@@ -362,11 +362,11 @@ func TestApplyRolloutRunState(t *testing.T) {
 	if m.totalInputTokens != 592667+522240 {
 		t.Errorf("totalInputTokens = %d, want %d", m.totalInputTokens, 592667+522240)
 	}
-	if m.currentAgentRunTokens.ContextTokens != 86413 {
-		t.Errorf("ContextTokens = %d, want 86413（上下文进度条依赖它）", m.currentAgentRunTokens.ContextTokens)
+	if m.currentRun().ContextTokens != 86413 {
+		t.Errorf("ContextTokens = %d, want 86413（上下文进度条依赖它）", m.currentRun().ContextTokens)
 	}
-	if m.currentAgent != "director" || m.currentAgentRunTokens.AgentName != "director" {
-		t.Errorf("agent = %q/%q, want director", m.currentAgent, m.currentAgentRunTokens.AgentName)
+	if m.currentAgent != "director" || m.currentRun().AgentName != "director" {
+		t.Errorf("agent = %q/%q, want director", m.currentAgent, m.currentRun().AgentName)
 	}
 	if m.currentModel != "deepseek-v3" {
 		t.Errorf("currentModel = %q, want deepseek-v3", m.currentModel)
@@ -380,11 +380,14 @@ func TestApplyRolloutRunState(t *testing.T) {
 	if u, ok := m.tokenUsagePerAgent["director"]; !ok || u.InputTokens != 592667 {
 		t.Errorf("per-agent usage = %+v, want director/592667", m.tokenUsagePerAgent)
 	}
-	// 缓存被失效（View 会按需重算），重算结果必须带上恢复出的用量
+	// 缓存被失效（View 会按需重算），重算结果必须带上恢复出的用量。
 	if m.tokenDashboardValid {
 		t.Error("tokenDashboardValid = true, want invalidated so View recomputes")
 	}
-	if dash := m.renderTokenDashboard(); !strings.Contains(dash, "592.7k") {
+	// Σ 用归一化输入：input+cached = 1114907，再加 output 6554 → 1.12m。
+	// 旧断言钉的是 592.7k（只算 inputTokens），那正是 Anthropic 路径漏掉缓存的口径 bug。
+	m.termWidth = 100
+	if dash := m.renderFooterTokenPanel(); !strings.Contains(dash, "1.12m") {
 		t.Errorf("dashboard = %q, want it to contain the restored total", dash)
 	}
 }

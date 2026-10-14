@@ -2,10 +2,7 @@ package tui
 
 import (
 	"fmt"
-	"image/color"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -34,27 +31,16 @@ func dashKeycap(key, label string) string {
 	return keyStyle.Render(" "+key+" ") + labelStyle.Render(label+" ")
 }
 
-// dashMetric renders a dimmed label followed by a bold coloured value ("in 1.2m").
-func dashMetric(label, value string, valueFg color.Color) string {
-	return lipgloss.NewStyle().Foreground(dashLabelFg).Render(label+" ") +
-		lipgloss.NewStyle().Foreground(valueFg).Bold(true).Render(value)
-}
-
 // dashDot renders a coloured agent marker dot.
 func dashDot(name string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(AgentColor(name))).Render("●")
 }
 
-// truncateRunes shortens s to at most width display runes, adding an ellipsis.
-func truncateRunes(s string, width int) string {
-	r := []rune(s)
-	if len(r) <= width {
-		return s
-	}
-	if width <= 1 {
-		return "…"
-	}
-	return string(r[:width-1]) + "…"
+// hasTokenUsage 判断是否有任何可展示的用量。口径与面板的 Σ 一致：
+// 用归一化输入，Anthropic 路径才不把缓存漏掉。
+func (m *model) hasTokenUsage() bool {
+	totalIn := normalizedInput(m.totalInputTokens, m.inputTokens, m.cacheReadInputTokens, m.cacheCreationInputTokens)
+	return totalIn+m.outputTokens > 0
 }
 
 // dashboardVisible 判断宽屏模式下是否显示右上角 dashboard
@@ -62,7 +48,7 @@ func (m *model) dashboardVisible() bool {
 	if m.dashboardCollapsed {
 		return false
 	}
-	return m.termWidth >= 120 && (m.taskRunning || len(m.timelineEntries) > 0 || m.inputTokens+m.outputTokens > 0)
+	return m.termWidth >= 120 && (m.taskRunning || len(m.timelineEntries) > 0 || m.hasTokenUsage())
 }
 
 // toggleDashboard 切换右上角 dashboard 收缩/展开（alt+d）
@@ -83,28 +69,6 @@ func (m *model) dashboardWidth() int {
 	return dashboardPanelWidth
 }
 
-// formatCacheShort 格式化缓存信息短格式（用于右上角 dashboard 紧凑展示）
-// 返回格式:
-//   - 只有读缓存: "⊕30%"
-//   - 只有写缓存: "W:0.8k"
-//   - 两者都有:   "⊕30% W:0.8k"
-//
-// 没有任何缓存活动时返回空字符串
-func formatCacheShort(cacheRead, cacheCreation, totalInput int64) string {
-	if totalInput <= 0 {
-		return ""
-	}
-	var parts []string
-	if cacheRead > 0 {
-		rate := float64(cacheRead) / float64(totalInput) * 100
-		parts = append(parts, fmt.Sprintf("⊕%.0f%%", rate))
-	}
-	if cacheCreation > 0 {
-		parts = append(parts, fmt.Sprintf("W:%s", formatToken(cacheCreation)))
-	}
-	return strings.Join(parts, " ")
-}
-
 var borderANSIRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // stripANSIForBorder strips ANSI escape sequences from a rendered line so that
@@ -113,7 +77,11 @@ func stripANSIForBorder(s string) string {
 	return borderANSIRe.ReplaceAllString(s, "")
 }
 
-// renderDashboard 渲染右上角 dashboard（token 优先，timeline 次之）
+// timelineReserveRows 是给底部 Activity 段留的行数：分隔线 + 段标题 + 1 条事件 + 快捷键提示。
+// 不留够这 4 行，运行中的时间线会在面板里整个消失（旧实现只留 1 行，实测会挤掉）。
+const timelineReserveRows = 4
+
+// renderDashboard 渲染右上角 dashboard（token 优先，timeline 次之）。
 // width / height 为面板可用尺寸，返回恰好 height 行的字符串。
 func (m *model) renderDashboard(width, height int) string {
 	if width <= 0 || height <= 0 {
@@ -129,177 +97,44 @@ func (m *model) renderDashboard(width, height int) string {
 		}
 	}
 
-	// Build cache key
-	var lastID string
+	innerWidth := width - 4 // border(2) + padding(2)
+
+	// token 段预算：给 Activity 留行，但自己至少保 3 行（标题/Σ/⛁）。
+	maxTokenRows := height
 	if len(m.timelineEntries) > 0 {
-		lastID = m.timelineEntries[len(m.timelineEntries)-1].ID
+		maxTokenRows = height - timelineReserveRows
+	}
+	if maxTokenRows < 3 {
+		maxTokenRows = 3
 	}
 
-	// Collect and sort agents for token section (also drives the cache signature)
-	agents := make([]*AgentTokenUsage, 0, len(m.tokenUsagePerAgent))
-	for _, au := range m.tokenUsagePerAgent {
-		if au.InputTokens+au.OutputTokens > 0 {
-			agents = append(agents, au)
-		}
-	}
-	sort.Slice(agents, func(i, j int) bool {
-		return (agents[i].InputTokens + agents[i].OutputTokens) > (agents[j].InputTokens + agents[j].OutputTokens)
+	snap := m.tokenSnapshot()
+	tokenRows := buildTokenPanel(snap, tokenPanelSpec{
+		innerWidth: innerWidth,
+		maxRows:    maxTokenRows,
+		keycap:     dashKeycap("alt+d", langManager.GetText("DashboardCollapseHint")),
 	})
 
-	// Build token signature for cache key
-	var tokenSig strings.Builder
-	for _, au := range agents {
-		fmt.Fprintf(&tokenSig, "%s:%d:%d:%d:%d;", au.AgentName, au.InputTokens, au.OutputTokens, au.CacheReadInputTokens, au.CacheCreationInputTokens)
-	}
-
-	key := fmt.Sprintf("%d|%s|%d|%d|%v|%d|%d|%d|%s",
-		len(m.timelineEntries), lastID, width, height,
-		m.tokenDashboardCollapsed,
-		m.inputTokens+m.outputTokens,
-		m.cacheReadInputTokens,
-		m.cacheCreationInputTokens,
-		tokenSig.String())
-	// 尾部追加 ContextTokens（不触碰上方 fmt.Sprintf 的既有 verb 与参数位置）：
-	// 压缩事件（尤其 emergency）可能不改变 timeline 与任何累计计数器，而 ContextTokens
-	// 只反映在 Total 行 —— 若不纳入 key，面板将永远命中旧缓存、无法刷新。
-	key += "|ctx:" + strconv.FormatInt(m.currentAgentRunTokens.ContextTokens, 10)
+	// 缓存键必须覆盖所有会影响渲染的输入。tokenSnapshot 已按 TOTAL 稳定排序，
+	// 所以直接拿它的数字串当签名即可。
+	//
+	// 尾部为什么必须带 ctx：压缩事件（尤其 emergency）可能既不改变 timeline 也不改变
+	// 任何累计计数器，ContextTokens 只反映在 ⛁ 行上 —— 不进键的话面板会永远命中旧缓存。
+	key := fmt.Sprintf("%d|%s|%d|%d|%s|ctx:%d/%d",
+		len(m.timelineEntries), m.timelineLastID(), width, height,
+		snap.signature(), snap.ctxTokens, snap.ctxWindow)
 
 	if !hasRunning && key == m.dashboardCacheKey && m.dashboardCache != "" {
 		return m.dashboardCache
 	}
 
-	innerWidth := width - 4 // border(2) + padding(2)
-	sep := lipgloss.NewStyle().Foreground(dashSepFg).Render(strings.Repeat("─", innerWidth))
-
-	var lines []string
-
-	// ── Header: ◆ Tokens (left) + collapse keycap (right) ──
-	diamond := lipgloss.NewStyle().Foreground(dashAccent).Bold(true).Render("◆ ")
-	tokenTitle := lipgloss.NewStyle().Foreground(dashTitleFg).Bold(true).Render("Tokens")
-	titleLeft := diamond + tokenTitle
-	collapseHint := dashKeycap("alt+d", langManager.GetText("DashboardCollapseHint"))
-	hintWidth := lipgloss.Width(collapseHint)
-	fillWidth := innerWidth - hintWidth
-	if fillWidth < lipgloss.Width(titleLeft) {
-		fillWidth = lipgloss.Width(titleLeft)
-	}
-	titleLine := lipgloss.NewStyle().Width(fillWidth).Render(titleLeft) + collapseHint
-	lines = append(lines, titleLine)
-
-	if len(agents) > 0 {
-		// Space allocation
-		timelineReserve := 0
-		if len(m.timelineEntries) > 0 {
-			timelineReserve = 1 // 1 entry (hint merged into title line)
-		}
-		maxTokenRows := height - timelineReserve
-		if maxTokenRows < 3 {
-			maxTokenRows = 3
-		}
-
-		// 使用 totalInputTokens（provider 口径）作为分母，避免 OpenAI 路径重复计算 cached tokens
-		totalInput := m.totalInputTokens
-		if totalInput == 0 {
-			totalInput = m.inputTokens + m.cacheReadInputTokens + m.cacheCreationInputTokens
-		}
-		inStr := formatToken(totalInput)
-		outStr := formatToken(m.outputTokens)
-
-		// Total row — name column width 10 aligns with agent rows below.
-		totalName := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color(AgentColor("Total"))).
-			Width(10).
-			Render("Total")
-		totalLine := totalName + " " +
-			dashMetric("in", inStr, dashInFg) +
-			"  " +
-			dashMetric("out", outStr, dashOutFg)
-		if cacheInfo := formatCacheShort(m.cacheReadInputTokens, m.cacheCreationInputTokens, totalInput); cacheInfo != "" {
-			totalLine += "  " + lipgloss.NewStyle().Foreground(dashAccent).Render(cacheInfo)
-		}
-		lines = append(lines, totalLine)
-
-		// Context 独立成行（Total 之后、分隔线之前）：复用折叠面板的渲染逻辑，
-		// 有窗口上限时带用量进度条；ctxTokens<=0 时跳过。
-		ctxLine := renderContextLine(m.currentAgentRunTokens.ContextTokens, m.contextWindow, innerWidth)
-		if ctxLine != "" {
-			lines = append(lines, ctxLine)
-		}
-
-		// Separator
-		lines = append(lines, sep)
-
-		// Determine display agents (truncate if needed)
-		tokenRows := 3 + len(agents) // title + Total + separator + agent rows
-		if ctxLine != "" {
-			tokenRows++ // Context 独立行占 1 行预算
-		}
-		var displayAgents []*AgentTokenUsage
-		moreCount := 0
-		if tokenRows > maxTokenRows {
-			maxAgentRows := maxTokenRows - 3
-			if maxAgentRows < 0 {
-				maxAgentRows = 0
-			}
-			// "+N more" 提示行需要额外 1 行，从 agent 行预算中扣除
-			if maxAgentRows > 0 {
-				maxAgentRows--
-			}
-			displayAgents = agents[:maxAgentRows]
-			moreCount = len(agents) - maxAgentRows
-			// 没有空间显示任何 agent 时，也放弃 more 提示（仅保留 标题+Total+分隔线）
-			if maxAgentRows == 0 && moreCount > 0 {
-				moreCount = 0
-			}
-			tokenRows = maxTokenRows
-		} else {
-			displayAgents = agents
-		}
-
-		// Agent rows — coloured dot + name (aligned to the same 10-col field).
-		for _, au := range displayAgents {
-			name := au.AgentName
-			if name == "" {
-				name = "—"
-			}
-			nameField := lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color(AgentColor(au.AgentName))).
-				Width(8).
-				Render(truncateRunes(name, 8))
-			prefix := dashDot(au.AgentName) + " " + nameField // 1 + 1 + 8 = 10 cols
-
-			auTotalInput := au.TotalInputTokens
-			if auTotalInput == 0 {
-				auTotalInput = au.InputTokens + au.CacheReadInputTokens + au.CacheCreationInputTokens
-			}
-			auInStr := formatToken(auTotalInput)
-			auOutStr := formatToken(au.OutputTokens)
-
-			line := prefix + " " +
-				dashMetric("in", auInStr, dashInFg) +
-				"  " +
-				dashMetric("out", auOutStr, dashOutFg)
-			if cacheInfo := formatCacheShort(au.CacheReadInputTokens, au.CacheCreationInputTokens, auTotalInput); cacheInfo != "" {
-				line += "  " + lipgloss.NewStyle().Foreground(dashAccent).Render(cacheInfo)
-			}
-			lines = append(lines, line)
-		}
-
-		if moreCount > 0 {
-			lines = append(lines, lipgloss.NewStyle().
-				Foreground(lipgloss.Color("243")).
-				Italic(true).
-				Render(fmt.Sprintf("┈ +%d more", moreCount)))
-		}
-	}
+	lines := append([]string(nil), tokenRows...)
 
 	// ── Timeline section (bottom) ──
 	tlAvailable := height - len(lines)
 	if len(m.timelineEntries) > 0 && tlAvailable > 2 {
 		// Separator + title (2 rows)
-		lines = append(lines, sep)
+		lines = append(lines, tokenSep(innerWidth))
 		lines = append(lines, lipgloss.NewStyle().
 			Foreground(lipgloss.Color("247")).
 			Bold(true).
@@ -382,4 +217,12 @@ func (m *model) renderDashboard(width, height int) string {
 	m.dashboardCache = result
 	m.dashboardCacheKey = key
 	return result
+}
+
+// timelineLastID 取时间线最后一条的 ID，用于缓存键。
+func (m *model) timelineLastID() string {
+	if len(m.timelineEntries) == 0 {
+		return ""
+	}
+	return m.timelineEntries[len(m.timelineEntries)-1].ID
 }
