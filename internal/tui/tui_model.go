@@ -466,6 +466,10 @@ type model struct {
 	runTokensPerAgent map[string]*AgentRunTokens
 	runAgent          string
 
+	// compress 是本任务历次上下文压缩的累计效果，dashboard 的 ⧉ 段依赖它。
+	// 与 Σ 同生命周期（会话累计），不受 resetRunTokens 影响。
+	compress compressStats
+
 	anim       *Anim
 	activeAnim bool
 

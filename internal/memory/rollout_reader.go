@@ -61,6 +61,15 @@ type RolloutTokenTotals struct {
 	LastContextTokens int64
 }
 
+// CompactionRecord 是一次上下文压缩的恢复用摘要。
+// 与 Compaction 读取选项无关：任何模式都会收集，TUI 的 ⧉ 压缩段靠它重建。
+type CompactionRecord struct {
+	Kind         string // "rule" | "emergency" | "ultimate"
+	Saved        int64
+	TokensBefore int64
+	TokensAfter  int64
+}
+
 type DanglingToolCall struct {
 	ID   string
 	Name string
@@ -124,6 +133,9 @@ type RolloutInfo struct {
 	EndsWithFinalAnswer bool
 
 	Tokens RolloutTokenTotals
+
+	// Compressions 是历次上下文压缩的恢复用摘要（§8.2），与 Compaction 读取选项无关。
+	Compressions []CompactionRecord
 
 	ThinklinkEntries []RolloutThinklinkEntry
 }
@@ -553,6 +565,12 @@ func (p *rolloutParser) addToolOutput(item ResponseItem, ts time.Time) {
 }
 
 func (p *rolloutParser) handleCompacted(cp CompactedPayload, ts time.Time) {
+	// 压缩摘要必须先于 Compaction 选项收集：fixed/rebuild 模式同样要能重建 ⧉ 段，
+	// 把它放在下面那个 return 之后就等于把它删了。
+	if rec, ok := compactionRecordFrom(cp); ok {
+		p.info.Compressions = append(p.info.Compressions, rec)
+	}
+
 	if p.opts.Compaction != CompactionSummaryTail {
 		return
 	}
@@ -567,6 +585,48 @@ func (p *rolloutParser) handleCompacted(cp CompactedPayload, ts time.Time) {
 	}
 	p.messages = kept
 	p.pendingReasoningSummary = ""
+}
+
+// compactionRecordFrom 把一条 compacted 记录归一成 CompactionRecord。
+//
+// 老 rollout 没有 kind/saved_tokens：kind 从 Summary 前缀判定，认不出来就整条跳过
+// （宁可少一档统计，也不把它猜成 rule）；saved 用 before-after 回落 —— 对 T1 会偏大
+// （T1 的 saved_tokens 只算被截断的工具结果之和），但 T1 是"省了多少"最不重要的一档。
+func compactionRecordFrom(cp CompactedPayload) (CompactionRecord, bool) {
+	kind := cp.Kind
+	if !isCompactionKind(kind) {
+		// 没有 kind，或 kind 是将来某个新版本写来的陌生值：退回前缀判定。
+		switch {
+		case strings.HasPrefix(cp.Summary, "tool-result truncation"):
+			kind = CompactionKindRule
+		case strings.HasPrefix(cp.Summary, "emergency compression"):
+			kind = CompactionKindEmergency
+		case strings.HasPrefix(cp.Summary, "ultimate compression"):
+			kind = CompactionKindUltimate
+		default:
+			return CompactionRecord{}, false
+		}
+	}
+	saved := int64(cp.SavedTokens)
+	if saved <= 0 {
+		if diff := int64(cp.TokensBefore) - int64(cp.TokensAfter); diff > 0 {
+			saved = diff
+		}
+	}
+	return CompactionRecord{
+		Kind:         kind,
+		Saved:        saved,
+		TokensBefore: int64(cp.TokensBefore),
+		TokensAfter:  int64(cp.TokensAfter),
+	}, true
+}
+
+func isCompactionKind(kind string) bool {
+	switch kind {
+	case CompactionKindRule, CompactionKindEmergency, CompactionKindUltimate:
+		return true
+	}
+	return false
 }
 
 func rolloutExtractText(content []MessageContentItem, preferred string) string {

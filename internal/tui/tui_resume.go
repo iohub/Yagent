@@ -941,9 +941,27 @@ func resetTokenState(m *model) {
 	m.totalInputTokens = 0
 	m.runTokensPerAgent = make(map[string]*AgentRunTokens)
 	m.runAgent = ""
+	m.compress = compressStats{}
 	for k := range m.tokenUsagePerAgent {
 		delete(m.tokenUsagePerAgent, k)
 	}
+}
+
+// applyRolloutCompressions 用 rollout 的 compacted 记录重建 ⧉ 段的累计统计。
+// 老 rollout 没有 kind/saved_tokens 时，读取端已按 Summary 前缀与 before-after 归一好了。
+// cut 榜与 ctx 采样没有落盘（§8.4），恢复后这两行自然不渲染。
+//
+// 开头先清零：这是"重建"而不是"并入"，恢复流程里被调用两次也不该把统计翻倍。
+func applyRolloutCompressions(m *model, info memory.RolloutInfo) {
+	m.compress = compressStats{}
+	for _, rec := range info.Compressions {
+		idx, ok := compressTierByKind(rec.Kind)
+		if !ok {
+			continue
+		}
+		m.compress.addTier(idx, rec.Saved, rec.TokensBefore)
+	}
+	m.invalidateFooterCache()
 }
 
 func applyRolloutRunState(m *model, info memory.RolloutInfo, agentName string) {
@@ -972,6 +990,8 @@ func applyRolloutRunState(m *model, info memory.RolloutInfo, agentName string) {
 		m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 	}
 	m.tokenUsagePerAgent[agentName] = &usage
+
+	applyRolloutCompressions(m, info)
 
 	m.currentAgent = agentName
 	if info.Model != "" {

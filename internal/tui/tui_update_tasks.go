@@ -178,7 +178,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				// ContextTokens 是"最近一次调用的输入规模"，必须覆写而非累加：
 				// 压缩事件之后，下一次调用要立刻反映压缩结果而不是历史之和。
 				if totalInputVal > 0 {
-					rt.ContextTokens = totalInputVal
+					m.setContextTokens(agentName, totalInputVal)
 				}
 
 				if m.taskRunning && msg.event.From != "" {
@@ -683,8 +683,11 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		msg.event.Type == "context_ultimate_compressed" {
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
 			if compTokens := parseEventInt(contentMap["compressed_tokens"], 0); compTokens > 0 {
-				m.updateAgentContextTokens(msg.event.From, int64(compTokens))
+				m.setContextTokens(msg.event.From, int64(compTokens))
 			}
+			// 三档的累计效果只在这个共享分支统计一次（它不 return）；
+			// 下面各档自己的分支只写日志与时间线，不再碰计数器。
+			m.recordCompression(string(msg.event.Type), contentMap)
 		}
 	}
 
@@ -701,19 +704,17 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			var detailLines []string
 			detailLines = append(detailLines, fmt.Sprintf("Context compressed: %d → %d tokens (saved %d tokens, %.1f%%)", origTokens, compTokens, savedTokens, savedPercent))
 			detailLines = append(detailLines, fmt.Sprintf("Truncated %d tool result(s):", truncCount))
-			if tools, ok := contentMap["truncated_tools"].([]interface{}); ok {
-				for _, ti := range tools {
-					if tm, ok := ti.(map[string]interface{}); ok {
-						toolName := ""
-						if tn, ok := tm["tool_name"].(string); ok {
-							toolName = tn
-						}
-						oTokens := parseEventInt(tm["original_tokens"], 0)
-						kTokens := parseEventInt(tm["kept_tokens"], 0)
-						sTokens := parseEventInt(tm["omitted_tokens"], 0)
-						detailLines = append(detailLines, fmt.Sprintf("  %s: %d → %d tokens (saved %d)", toolName, oTokens, kTokens, sTokens))
-					}
+			// 两个发布方给的是 []map[string]interface{}，只断言 []interface{} 会让这段
+			// 明细在真机上永远只剩一行 "Truncated N tool result(s):" 后面空着。
+			for _, tm := range compressionToolEntries(contentMap) {
+				toolName := ""
+				if tn, ok := tm["tool_name"].(string); ok {
+					toolName = tn
 				}
+				oTokens := parseEventInt(tm["original_tokens"], 0)
+				kTokens := parseEventInt(tm["kept_tokens"], 0)
+				sTokens := parseEventInt(tm["omitted_tokens"], 0)
+				detailLines = append(detailLines, fmt.Sprintf("  %s: %d → %d tokens (saved %d)", toolName, oTokens, kTokens, sTokens))
 			}
 			detail := strings.Join(detailLines, "\n")
 			entry := logEntry{

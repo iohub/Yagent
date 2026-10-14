@@ -452,6 +452,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 								compStats.OriginalTokens, compStats.CompressedTokens),
 							TokensBefore: compStats.OriginalTokens,
 							TokensAfter:  compStats.CompressedTokens,
+							Kind:         memory.CompactionKindRule,
+							SavedTokens:  compStats.SavedTokens,
 						})
 					}
 				}
@@ -490,6 +492,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 								emergencyStats.OriginalTokens, emergencyStats.CompressedTokens),
 							TokensBefore: emergencyStats.OriginalTokens,
 							TokensAfter:  emergencyStats.CompressedTokens,
+							Kind:         memory.CompactionKindEmergency,
+							SavedTokens:  emergencyStats.SavedTokens,
 						})
 					}
 					if compression.EstimateMessagesTokens(messages) > threshold && cfg.EnableUltimateCompression && cfg.UltimateThinkLink != nil {
@@ -527,6 +531,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 									ultStats.SavedTokens, ultStats.OriginalTokens, ultStats.CompressedTokens),
 								TokensBefore: ultStats.OriginalTokens,
 								TokensAfter:  ultStats.CompressedTokens,
+								Kind:         memory.CompactionKindUltimate,
+								SavedTokens:  ultStats.SavedTokens,
 							})
 						}
 					}

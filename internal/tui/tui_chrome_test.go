@@ -566,6 +566,25 @@ func TestView_ExactHeightWithPanels(t *testing.T) {
 			m.outputTokens = 120000
 			m.dashboardCollapsed = false
 		}},
+		// ⧉ 压缩段：w=100 时走底部面板那 1 行摘要，w>=120 时走侧栏整块。
+		// 两条路都必须让 View() 的行数恰好等于终端高度（AGENTS.md §11 坑 7）。
+		{"compress-block", func(m *model) {
+			m.taskRunning = true
+			m.inputTokens = 500000
+			m.outputTokens = 120000
+			m.dashboardCollapsed = false
+			m.compress = compressFixture()
+		}},
+		{"compress-footer", func(m *model) {
+			m.taskStarted = true
+			m.inputTokens = 120000
+			m.outputTokens = 34000
+			m.totalInputTokens = 140000
+			m.cacheReadInputTokens = 90000
+			m.tokenUsagePerAgent["Director"] = &AgentTokenUsage{AgentName: "Director", TotalInputTokens: 140000, OutputTokens: 34000}
+			m.setRun(AgentRunTokens{AgentName: "Director", ContextTokens: 45000})
+			m.compress = compressFixture()
+		}},
 		{"err-and-info", func(m *model) {
 			m.errMsg = "project dir is not writable"
 			m.setInfoMsg("cannot switch model while running")
@@ -600,6 +619,23 @@ func TestView_ExactHeightWithPanels(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// compressFixture 是给 chrome/footer 测试用的三档压缩记录：够填满阶梯的每一行。
+func compressFixture() compressStats {
+	return compressStats{
+		tiers: [compressTierCount]tierStat{
+			{count: 2, saved: 180200, original: 900000},
+			{count: 1, saved: 1240000, original: 3750000},
+		},
+		cutByTool: map[string]*cutStat{
+			"read_file":       {tool: "read_file", count: 7, omitted: 120000},
+			"search_by_regex": {tool: "search_by_regex", count: 2, omitted: 30000},
+		},
+		ctxSamples:  []int64{100000, 114286, 142857, 185714, 200000},
+		peakCtx:     200000,
+		maxOriginal: 3750000,
 	}
 }
 
