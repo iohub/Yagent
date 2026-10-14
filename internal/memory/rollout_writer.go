@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"yagent/internal/gitinfo"
 )
 
 // rolloutWriterCtxKey 私有 context key 类型
@@ -155,9 +157,20 @@ func (w *RolloutWriter) SetBoardID(boardID string) {
 //（planner_run.go 的 director 会话、executor.go 的 sub-agent 会话）都不必各自记得传，
 // 避免漏传导致恢复侧无法把 rollout 回连到原任务（tasks/{id}.jsonl、blackboard boardID）。
 // board_id 同理走兜底：board 现在是 session 级的，一个 session 会有多个 task。
+//
+// git 身份也在这里补齐，理由同上，但多一条更硬的：仓库探测要在**取消路径**上也能跑
+// （终止事件与恢复校验都依赖它），而两个调用点分别在 agents 与 agents/director 两个包，
+// 谁都不该各自抄一份带 WithoutCancel 的 subprocess 代码。放在 writer 里，两个调用点
+// 一行都不用改，将来新增的写入点也自动带上身份。
 func (w *RolloutWriter) WriteSessionMeta(meta SessionMeta) error {
 	if !w.enabled || w.file == nil {
 		return nil
+	}
+	if meta.Git.Empty() && meta.Cwd != "" {
+		// 探测放在取锁之前：gitinfo 自带 2s 预算，但不能让它在 w.mu 上占住其它写入。
+		// writer 手上没有 ctx，用 Background —— gitinfo.Collect 内部会保证有界。
+		g := gitinfo.Collect(context.Background(), meta.Cwd)
+		meta.Git = GitInfo{SHA: g.SHA, Branch: g.Branch, OriginURL: g.OriginURL}
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
