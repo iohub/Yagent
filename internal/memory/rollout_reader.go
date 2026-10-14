@@ -118,6 +118,10 @@ type RolloutInfo struct {
 	SkippedSystemMessages int
 	SyntheticOutputs      int
 	DroppedOrphanOutputs  int
+	// SupersededOutputs 是同一 call_id 后到的输出覆盖前一条的次数。恢复路径会为一次委派
+	// 写出两条 function_call_output（取消时那条 "Error:" 与重放完成后的真实结果），
+	// 与 llm.repairToolCallPairs 的 map 语义一致：**后者胜出**。
+	SupersededOutputs int
 
 	Finished            bool
 	Aborted             bool
@@ -737,6 +741,12 @@ func normalizeToolPairing(messages []ChatMessage, info *RolloutInfo) []ChatMessa
 	}
 	var openCalls []openCall
 	openSet := make(map[string]int)
+	// emittedAt: call_id → 该 call 的输出在 out 中的下标。后到的同 id 输出**原位覆盖**，
+	// 与 llm.repairToolCallPairs / validateAndRepairToolCallPairs 的 map 语义一致
+	// （两处都是后写胜出）。以前这里是 first-wins + 丢弃其余，于是同一份 rollout 在
+	// "进程内直接喂模型"和"/resume 后喂模型"两条路径下会得到不同对话 —— 而委派被暂停后
+	// 恢复正会写出第二条同 id 输出（取消时一条 "Error:"，重放完成后一条真实结果）。
+	emittedAt := make(map[string]int)
 
 	flushOpen := func(out []ChatMessage) []ChatMessage {
 		for _, oc := range openCalls {
@@ -765,6 +775,8 @@ func normalizeToolPairing(messages []ChatMessage, info *RolloutInfo) []ChatMessa
 		}
 		openCalls = nil
 		openSet = make(map[string]int)
+		// 闭组后不再有"可覆盖的目标"：此后同 id 的输出属于已闭合的组，按孤儿处理。
+		emittedAt = make(map[string]int)
 		return out
 	}
 
@@ -784,8 +796,15 @@ func normalizeToolPairing(messages []ChatMessage, info *RolloutInfo) []ChatMessa
 			continue
 		}
 		if m.Type == MessageTypeTool && m.ToolCallID != nil {
-			if idx, ok := openSet[*m.ToolCallID]; ok && idx >= 0 {
-				openSet[*m.ToolCallID] = -1
+			id := *m.ToolCallID
+			if pos, seen := emittedAt[id]; seen {
+				out[pos] = m
+				info.SupersededOutputs++
+				continue
+			}
+			if idx, ok := openSet[id]; ok && idx >= 0 {
+				openSet[id] = -1
+				emittedAt[id] = len(out)
 				out = append(out, m)
 				continue
 			}

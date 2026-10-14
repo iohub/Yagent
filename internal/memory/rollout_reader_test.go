@@ -361,8 +361,8 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ⑦ 同一 call_id 多条输出 → 保留第一条
-			name: "duplicate_output_keep_first",
+			// ⑦ 同一 call_id 多条输出 → **保留最后一条**（原位覆盖，与 llm 侧 map 语义一致）
+			name: "duplicate_output_keep_last",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrAssistantItem("a1", "call")),
 				rrLine(rrTs4, "response_item", rrCallItem("c1", "t", `{}`)),
@@ -377,13 +377,46 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if len(mem.Messages) != 2 {
 					t.Fatalf("messages = %d, want 2: %+v", len(mem.Messages), mem.Messages)
 				}
-				if mem.Messages[1].Content != `"first"` {
-					t.Fatalf("kept output = %q, want first", mem.Messages[1].Content)
+				if mem.Messages[1].Content != `"second"` {
+					t.Fatalf("kept output = %q, want the LAST one (`\"second\"`)", mem.Messages[1].Content)
 				}
-				if info.DroppedOrphanOutputs != 1 {
-					t.Fatalf("DroppedOrphanOutputs = %d, want 1 (dup counted)", info.DroppedOrphanOutputs)
+				if info.SupersededOutputs != 1 {
+					t.Fatalf("SupersededOutputs = %d, want 1", info.SupersededOutputs)
+				}
+				if info.DroppedOrphanOutputs != 0 {
+					t.Fatalf("DroppedOrphanOutputs = %d, want 0 (覆盖不是丢弃)", info.DroppedOrphanOutputs)
 				}
 				assertRolloutPairingInvariant(t, mem)
+			},
+		},
+		{
+			// ⑦b 覆盖窗口只在同一个 call 组内：组被下一条 assistant 闭掉之后，
+			// 同 id 的后到输出仍是孤儿。不钉这条，last-wins 会退化成"全局 last-wins"，
+			// 一个属于第 5 轮的结果就能改写第 1 轮的 output。
+			name: "duplicate_after_group_close_is_orphan",
+			lines: baseLines(
+				rrLine(rrTs3, "response_item", rrAssistantItem("a1", "call")),
+				rrLine(rrTs4, "response_item", rrCallItem("c1", "t", `{}`)),
+				rrLine(rrTs5, "response_item", rrCallOutItem("c1", `"first"`)),
+				rrLine(rrTs6, "response_item", rrAssistantItem("a2", "next turn")),
+				rrLine(rrTs7, "response_item", rrCallOutItem("c1", `"too late"`)),
+			),
+			opts: opts,
+			check: func(t *testing.T, mem *ConversationMemory, info RolloutInfo, err error) {
+				if err != nil {
+					t.Fatalf("unexpected err: %v", err)
+				}
+				if info.SupersededOutputs != 0 {
+					t.Fatalf("SupersededOutputs = %d, want 0 (组已闭合，不该再覆盖)", info.SupersededOutputs)
+				}
+				if info.DroppedOrphanOutputs != 1 {
+					t.Fatalf("DroppedOrphanOutputs = %d, want 1", info.DroppedOrphanOutputs)
+				}
+				for _, m := range mem.Messages {
+					if m.Type == MessageTypeTool && m.Content == `"too late"` {
+						t.Fatalf("late duplicate leaked into the recovered conversation")
+					}
+				}
 			},
 		},
 		{
