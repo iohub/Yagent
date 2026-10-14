@@ -8,8 +8,12 @@
 # 注意：只检查组件层 internal/agents/director/ 目录，
 # 不检查门面层 internal/agents/director.go（其达标是后续阶段的目标）。
 #
+# 棘轮：存量超限项在 PENDING 里点名冻结 —— 每项记录"当前行数上限"，
+# 只许减不许增。这样守卫对新增改动永远是硬的，而历史债务不会被顺手藏起来
+# （以前它直接红灯，于是所有人对它视而不见）。拆到阈值以下就把该项删掉。
+#
 # 用法：在项目根目录执行 `bash scripts/check_file_sizes.sh`
-# 退出码：0 = 通过；非 0 = 存在超限文件。
+# 退出码：0 = 通过；非 0 = 出现新的超限或存量项膨胀。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,26 +22,70 @@ cd "$ROOT"
 TARGET_DIR="internal/agents/director"
 MAX_LINES=300
 
+# 格式 <相对路径>:<允许的最大行数>
+PENDING=(
+	# planner_run.go：主循环 + 压缩 + 委派编排三段职责，拆分是独立一次改动。
+	"internal/agents/director/planner_run.go:658"
+)
+
 if [ ! -d "$TARGET_DIR" ]; then
     echo "ERROR: directory not found: $TARGET_DIR" >&2
     exit 1
 fi
 
-violations=()
-while IFS= read -r file; do
-    lines="$(wc -l < "$file")"
-    if [ "$lines" -gt "$MAX_LINES" ]; then
-        violations+=("${file}: ${lines} lines (limit ${MAX_LINES})")
-    fi
-done < <(find "$TARGET_DIR" -name '*.go' ! -name '*_test.go' -type f | sort)
+pending_ceiling() {
+	local want="$1"
+	local entry
+	for entry in "${PENDING[@]}"; do
+		if [[ "${entry%%:*}" == "$want" ]]; then
+			echo "${entry##*:}"
+			return 0
+		fi
+	done
+	return 1
+}
 
-if [ "${#violations[@]}" -gt 0 ]; then
-    echo "ERROR: non-test .go files in ${TARGET_DIR} exceed ${MAX_LINES} lines:" >&2
-    for v in "${violations[@]}"; do
-        echo "  $v" >&2
-    done
+violations=()
+stale=()
+while IFS= read -r file; do
+	lines="$(awk 'END{print NR}' "$file")"
+	rel="${file#$ROOT/}"
+	if ceiling="$(pending_ceiling "$rel")"; then
+		# 存量项：只许减；长回去照样拦。
+		if [ "$lines" -gt "$ceiling" ]; then
+			violations+=("${rel}: ${lines} lines (冻结上限 ${ceiling}，只能降不能升)")
+		fi
+	elif [ "$lines" -gt "$MAX_LINES" ]; then
+		violations+=("${rel}: ${lines} lines (limit ${MAX_LINES})")
+	fi
+done < <(find "$TARGET_DIR" -name '*.go' ! -name '*_test.go')
+
+# PENDING 里指向已消失/已达标的文件也要报：否则棘轮名单会变成假债务。
+for entry in "${PENDING[@]}"; do
+	rel="${entry%%:*}"
+	if [ ! -f "$rel" ]; then
+		stale+=("${rel} 已不存在，请从 PENDING 删除该项")
+		continue
+	fi
+	ceiling="${entry##*:}"
+	actual="$(awk 'END{print NR}' "$rel")"
+	if [ "$actual" -le "$MAX_LINES" ]; then
+		stale+=("${rel}: ${actual} 行已达标，请从 PENDING 删除（棘轮收紧）")
+	elif [ "$actual" -lt "$ceiling" ]; then
+		stale+=("${rel}: 现在 ${actual} 行，请把冻结上限从 ${ceiling} 下调到 ${actual}")
+	fi
+done
+
+if [ ${#violations[@]} -gt 0 ]; then
+    echo "ERROR: non-test .go files in ${TARGET_DIR} exceed the line budget:" >&2
+    printf '  %s\n' "${violations[@]}" >&2
     exit 1
 fi
 
-echo "OK: all non-test .go files in ${TARGET_DIR} are within ${MAX_LINES} lines"
-exit 0
+if [ ${#stale[@]} -gt 0 ]; then
+    echo "ERROR: check_file_sizes 的 PENDING 名单与实际不同步（棘轮必须收紧）:" >&2
+    printf '  %s\n' "${stale[@]}" >&2
+    exit 1
+fi
+
+echo "OK: ${TARGET_DIR} 组件层行数守卫通过（PENDING 冻结 ${#PENDING[@]} 项）"

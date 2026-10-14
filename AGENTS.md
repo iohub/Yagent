@@ -1,7 +1,9 @@
 # Yagent Agent 开发知识库
 
 > **本文件是 Agent 理解仓库和进行开发的标准指南。** 所有 Agent 在操作此仓库前必须先阅读本文件。
-> 本文件描述的是当前代码的真实状态（核对时间 2026-10-13）。文件末尾由 codeseek 自动维护的注入区块除外。
+> 本文件描述的是当前代码的真实状态（核对时间 2026-10-14：补齐核心系统单测基线，并修掉三处
+> "错了不报错"的静默失效 —— Bedrock 配置归一化、Anthropic thinking budget、流式 tool_use 装配）。
+> 文件末尾由 codeseek 自动维护的注入区块除外。
 
 ---
 
@@ -71,6 +73,12 @@
 两种 `api_format`：**openai**（默认，OpenAI-compatible）与 **anthropic**（原生 Messages，支持 Extended Thinking）。
 Provider 只是 base_url + api_key 的组合，因此小米 MiMo、百炼、硅基流动、DeepSeek、Moonshot、Mistral、Z.ai、OpenRouter、Bedrock、Anthropic 官方均可用。
 
+`reasoning_effort` 在两侧含义不同：**openai** 侧原样透传 `reasoning_effort` 并额外发
+`thinking={type:enabled}`（DeepSeek 思考模式要求两者都在）；**anthropic** 侧映射成 `thinking.budget_tokens`
+—— `low|medium|high|max` = 1024/8192/24576/32000，同时把 `max_tokens` 顶到 `budget+4096`、
+`temperature` 强制 1.0（provider 在思考模式下拒绝其它值）。**认不出的取值一律当作"没开思考"**：
+以前会把 `budget_tokens: 0` 发出去，而 provider 要求 ≥1024，一个拼错的 effort 就让此后每次调用都 400。
+
 ---
 
 ## 3. 模块地图
@@ -124,7 +132,8 @@ yagent/
 │   │   ├── anim/ common/ components/ layout/
 │   └── util/                   # 崩溃上报等
 ├── protocol/                   # agent-events.yaml（SSOT）+ 生成的 go/ 与 ts/ 副本
-├── scripts/                    # build-centos7 / build-extension / 架构守卫 / protoc-gen-yagent
+├── scripts/                    # build-centos7 / build-extension / protoc-gen-yagent
+│                               #   + 五把守卫（check_*.sh），其中 check_all.sh 是一条命令的本地闸门
 ├── patches/                    # CI 用的 vendored-openssl 补丁
 ├── dist/                       # 构建产物 + 被跟踪的 models.json（见 §11 坑 2）
 ├── codeseek/                   # git submodule → iohub/codeseek（Rust 代码智能引擎）
@@ -290,6 +299,8 @@ type Adapter struct { name, description string; fn ToolFunc
 `[routing] mode = "auto" | "fixed"`，`baselines` 可为 director/coding/repo/chat/devops/browser/meta 指定默认档。
 
 > 坑：任何重建 Agent 引擎的地方都必须保留 `*RoutingEngine` 包装，否则 auto-routing 静默失效（commit 0c87c8a）。
+> 这条契约由 `internal/app/assembly_test.go:TestAgentEngineAlwaysWrapsWithRoutingEngine` 钉住 ——
+> 它只看返回类型，不驱动 `resolve()`（后者要真实 provider，属于 `internal/llm` 的测试范围）。
 
 ### 6.4 上下文与知识
 
@@ -329,6 +340,11 @@ type Adapter struct { name, description string; fn ToolFunc
 
 三档都会发 `context_*_compressed` 事件并写 `compacted` rollout 记录。
 
+> `enable_ultimate_compression` **今天关不掉**：`config.validate()` 见 false 就写回 true，所以这个键
+> 只剩"默认开"的效果，写 false 不会有任何后果（两个 TOML 模板都把它当可配项在说，别被骗）。
+> 现状由 `internal/config/validate_test.go:TestLoadFromFile_UltimateCompressionIsForcedOn` 钉住；
+> 想改成尊重配置，就改写那条用例并同步本节。
+>
 > **子 Agent 的第三档需要两个条件同时成立**：`ExecutorConfig.EnableUltimateCompression`（来自
 > `enable_ultimate_compression`）与非空的 `UltimateThinkLink`，与 Director Planner 同语义
 > （`executor.go` 的 T3 分支）。Browser/Repo/DevOps 的 store 在 `Run()` 内按委派创建——
@@ -433,11 +449,11 @@ Agent 指定 → `agents.llm.use_provider` → `global.llm.use_provider`。
 use_provider = "bailian"
 [global.llm.providers.bailian]
 model = "qwen3-coder"          # 必填
-api_base_url = "https://..."    # 与 api_key 一起必填（bedrock 用 aws_region）
+api_base_url = "https://..."    # 与 api_key 一起必填；豁免看 §11 坑 14（按 provider 名字前缀，不看 api_format）
 context_window = 262144         # 只影响 TUI 上下文进度条；压缩阈值走模型目录（见 §11 坑 3）
 temperature = 0.3
 max_tokens = 28000
-reasoning_effort = "high"       # anthropic 时映射为 thinking budget
+reasoning_effort = "high"       # openai 原样透传(+thinking 扩展字段)；anthropic 映射为 budget 1024/8192/24576/32000
 api_format = "anthropic"        # 默认 openai
 fallback_providers = ["deepseek", { provider = "mimo", weight = 2 }]
 
@@ -451,10 +467,12 @@ delegate_idle_timeout = "60s"  delegate_total_timeout = "20m"
 max_parallel_readonly_tools = 4
 lang = "Chinese"
 
-[llm]   timeout / max_retries(5) / step_retries / circuit_breaker_threshold / enable_fallback / fallback_max_retries(2)
+[llm]   timeout / max_retries(5) / step_retries / enable_fallback / fallback_max_retries(2)
+  circuit_breaker_threshold = 0 意为**不启用**（仓库模板与 defaults.go 都是 0）；
+  只有 > 0 才创建熔断器，此时 reset_timeout 缺省补 60s
 [routing] mode = "auto"  [routing.baselines]  coding = "high"  repo = "balanced"
 [enhanced_commander] enable / max_delegation_depth(3) / enable_context_compression
-  context_compression_threshold / tool_result_keep_tokens(200) / enable_ultimate_compression / ultimate_compression_keep_plans
+  context_compression_threshold / tool_result_keep_tokens(200) / enable_ultimate_compression(写 false 也关不掉，见 §6.5) / ultimate_compression_keep_plans
 [browser] enabled / binary_path / chrome_path / mode(headless|headful|attach) / cdp_url / cdp_port_base(9333)
   cdp_timeout(65s) / command_timeout(75s) / idle_ttl(15m) / max_chrome(1) / workspace_root / workspace_ttl(72h)
   max_output_bytes(24000) / dialog_policy(accept) / allowed_domains / denied_domains / profile_dir / enable_skills
@@ -513,20 +531,41 @@ BUILD_TYPE=debug ./build.sh
 ### 8.3 测试
 
 ```bash
-go test ./... -count=1 -timeout 600s                  # 全仓 23 个测试包，约 7s
+bash scripts/check_all.sh                 # 一条命令的本地闸门：build + vet + 五把守卫 + 全量单测
+RACE=true bash scripts/check_all.sh       # 同上，再对并发包跑 -race（慢 3-8 倍，改到并发时手动跑）
+bash scripts/check_all.sh --fast          # 只跑 ./internal/... 的全量单测，跳过 ./... 与守卫之外的部分
+go test ./... -count=1 -timeout 600s      # 全仓 26 个测试包，墙钟约 6s（包间并行）
 go test ./internal/tui/... ./internal/messaging/... -count=1   # 快循环，亚秒级
 go test ./internal/agents/... -count=1 -timeout 300s  # 最慢的一档，约 8s
-bash scripts/check_test_hygiene.sh                    # 单测卫生棘轮（见 §9.2）
-go vet ./...                                          # 必须干净
+bash scripts/check_test_hygiene.sh        # 单测卫生棘轮（见 §9.2）
+go vet ./...                              # 必须干净
 ```
 
-- 共 111 个测试文件、约 805 个 `Test*`、30.8k 行（2026-10-14 整理后：966→805 个测试、
-  33.3k→30.8k 行，全仓墙钟 80s→7s）。
+- 共 124 个测试文件、约 952 个 `Test*`（2026-10-14 两轮整理：先 966→805 清掉"永远不会失败"的
+  用例并把全仓墙钟 80s→7s；同日补齐核心系统契约后 805→952。加了 147 个用例而墙钟没涨（并行下
+  仍约 6-7s），因为新增的都自带计时 seam 或走假服务端，没有一个是靠 sleep 等出来的。
+- **核心包覆盖率基线**（`go test -cover`，2026-10-14）：recovery 97.6%、toolspec 87.3%、
+  config 84.2%、messaging 80.4%、datamanager 65.2%、memory 64.3%、llm 61.6%、mcp 62.1%、
+  agents 59.5%、app 16.9%。`app`/`toolspec`/`mcp`/`llm` 原本分别只有 0%/8.5%/8.6%/18.6% ——
+  低覆盖率的共性是"错了不报错，只是静默换模型/静默丢工具"，所以补的是**契约**而不是行数。
+- **协议层用 `httptest` 假服务端钉字节形状**：`internal/llm/engine_openai_test.go` 与
+  `engine_anthropic_test.go` 断言的是发出去的 JSON（`system` 顶层字段、`tool_result` 块、
+  `reasoning_content` 回灌、`stream_options.include_usage`）与读回来的账目
+  （OpenAI 的 `prompt_tokens` 已含缓存、Anthropic 的 `input_tokens` 不含 —— 两边口径相反）。
+- **MCP 客户端的假服务器 = 重新执行测试二进制**：`internal/mcp/client_process_test.go` 的
+  `TestMain` 认 `YAGENT_TEST_FAKE_MCP_SERVER=<模式>` 环境变量，子进程直接跑假服务器而不是
+  `m.Run()`。不要改成 `go run` 或外部脚本：那会把编译时间算进单测，也会让 `-race` 下起不了进程。
+- **计时类 seam 只有一个**：`datamanager.taskFlushDebounce`（5s 防抖窗口）。凡是"等 timer"的
+  测试都必须走这个变量而不是 `time.Sleep`，同 `tools.defaultToolTimeout` 一个道理。
+  新增 timer 请先加 seam，再让测试自己负责耗时。
 - **耗时必须由测试自己负责**：历史上 `internal/compression` 的 28s 全部来自五个用
   `strings.Repeat("x", 50000)` 造工具结果的截断测试（tiktoken 反复编几百 KB）——payload 缩到
   1-2k 并等比缩预算后整包 0.17s，断言语义不变。`internal/agents` 的 30s 来自
   `TestRunAgentLoop_MultipleToolCalls` 把工具阻塞到 **父 ctx 的 30s 超时**；现在统一用
   `restoreToolTimeout(t, …)`（改 `defaultToolTimeout` 这个已有 seam）+ `context.Background()`。
+  LLM 引擎的退避（baseDelay 10s）**不要**试图跑完整重试序列：用短 `cfg.Timeout` 把退避钳制到
+  剩余预算，然后断言"服务端只收到 1 次请求"——这条断言同时钉住 SDK 自带重试被
+  `option.WithMaxRetries(0)` 关掉了。
 - **不要写"永远不会失败"的测试**。整理前的基线里有 16 个用例没有任何断言能力
   （只有 `t.Logf`、整函数体只有一行 `t.Skip`、或恒真断言）。三类典型坑：
   - 断言在异步完成之前：`callConsolidationLLM` 失败要睡 1s+2s 真实退避，而测试只睡 2s，
@@ -537,6 +576,11 @@ go vet ./...                                          # 必须干净
     `t.Fatalf` 前置条件（"夹具必须超预算"）。
   - 去重先把数量吃掉：`TestResolveRefsMaxLimit` 用 20 条**相同** ref 去测上限 10，
     去重后必然剩 1 条，上限断言永远为真。
+  - 反向的坑同样致命：**校验规则本身也可能不可触发**。`toolspec.Validate()` 里那条
+    "Serial 与 IsReadOnly 冲突"永远为假（`IsReadOnly()` 的定义含 `!Serial`），
+    而它与 `Serial` 字段"无副作用也必须串行"的文档直接矛盾 —— 已删除，由
+    `registry_test.go` 的 `TestValidate_ReportsEachRule` 保证每条规则都有能响的夹具。
+    新写校验时，请同时写一个"它必须报"的夹具用例。
 - 历史上 `TestRunAgentLoop_ParentCancel_AllCallsAccounted` 会卡在 `toolbatch.Run`：它把 `cancel()`
   放在批次内的第一个工具里，而 `toolbatch` **不保证组内启动顺序**，负责取消的工具一旦排在信号量队列里，
   在飞调用就无人可取消，只能等 `defaultToolTimeout`(180s) 逐波解开。现在改成从批次外部取消
@@ -561,12 +605,19 @@ go vet ./...                                          # 必须干净
 ### 9.2 工具/规模守卫
 
 ```bash
-bash scripts/check_file_sizes.sh          # internal/agents/director/ 下非测试文件 ≤300 行
+bash scripts/check_all.sh                 # 上面五把守卫 + build + vet + 全量单测，一条命令跑完
+bash scripts/check_file_sizes.sh          # internal/agents/director/ 下非测试文件 ≤300 行（存量按 PENDING 冻结）
 bash scripts/check_no_agents_import.sh    # director/ 子包不得 import yagent/internal/agents（防循环依赖）
 bash scripts/check_toolspec_leaf.sh       # toolspec 不得反向依赖 agents/tools
+bash scripts/check_no_manual_lookup.sh    # 不许重新出现按名字查工具的 lookupToolFunc/getToolFunc
 bash scripts/check_test_hygiene.sh        # 单测卫生棘轮，见下
 ```
 
+- `check_file_sizes.sh` 现在是**棘轮而不是硬门**：存量超限项在脚本顶部的 `PENDING` 里
+  点名并记下"当前行数"作为冻结上限（今天只有 `director/planner_run.go:658`，主循环 +
+  压缩 + 委派编排三段职责，拆分是独立一次改动）。规则：新文件超 300 行直接红；
+  存量文件长回去也红；**改小了必须同步下调 PENDING 里的数字**，否则脚本会主动报失步。
+  以前它无条件红灯，结果所有人对它视而不见 —— 一条常红的守卫等于没有守卫。
 - `check_test_hygiene.sh` 守的是**测试自己**：① 每个 `Test*` 必须能失败（自身有 `t.Error*/t.Fatal*`，
   或调用 `assert*/check*/verify*/expect*/require*` 辅助，或写明 `hygiene:panic-guard` 豁免标记）；
   ② 函数体第一层不得出现裸 `t.Skip*`（按环境跳过必须带条件）；③ 同一个包只允许一个
@@ -574,6 +625,8 @@ bash scripts/check_test_hygiene.sh        # 单测卫生棘轮，见下
   不会静默放行 —— 2026-10-14 整理前的基线是 882 个 `Test*`，其中 16 个没有任何失败能力
   （`t.Logf` dump、只有一行 `t.Skip` 的空壳、恒真断言如"发布 1000 条却断言 count>1000"）。
   唯一豁免途径是 `hygiene:panic-guard`：去掉某条 nil 守卫后测试会 panic 而失败的那类用例。
+  注意它按**名字**认断言：自定义等待辅助（如 messaging 的 `waitFor`）不算断言，
+  所以"等异步"的用例仍必须补一条直接的 `t.Errorf`。
 
 - Director 采用**门面 + 子包**结构：`internal/agents/director.go` 只做装配与 delegate 注册，
   编排逻辑进 `internal/agents/director/`，跨子系统依赖一律经 `internal/agents/ports.go` 的窄接口注入。
@@ -678,6 +731,17 @@ plan:
     `index_line_chars = 0` = 不裁剪行、`ttl = "0"` = 不清理；"没写这一段"解析出来同样是 0，
     只看零值会把用户的关闭意图当成没写（或反之静默关掉新能力）。不设 `enabled` 键，
     整体关闭是 `YAGENT_BLACKBOARD=0`（`blackboard.Enabled()` 是写/读/注入/清理四处共用的唯一判据）。
+14. **Bedrock 的必填项豁免按 `use_provider` 名字前缀判定，不看 `api_format`**：`config.validate()` 里是
+    `strings.HasPrefix(effectiveProvider, "bedrock")` —— 名字不带 bedrock 的真 Bedrock 配置照样会要求
+    `api_key`/`api_base_url`，名字带 bedrock 的反而会跳过这两项。更要命的是这段豁免和**整段缺省归一化**
+    挤在同一个函数里：以前它写成 `return nil`，于是 Bedrock 用户的 max steps、`[browser]` 缺省、
+    TUI 键位、压缩参数全部停在零值（表现不是报错，是能力静默缺失）。现在只豁免那两项检查，
+    归一化照常跑；回归由 `internal/config/validate_test.go:TestLoadFromFile_BedrockSkipsOnlyKeyChecks` 钉住。
+    往 `validate()` 里加提前 return 之前，先确认下面的归一化段还会被执行。
+15. **`toolspec.Validate()` 的每条规则都必须有能触发它的夹具**：`IsReadOnly()` 的定义含 `!Serial`，
+    所以曾经那条 "Serial 与 IsReadOnly 冲突" 在数学上不可能成立 —— 它既不会响，又与 `Serial`
+    字段"无副作用也必须串行"的文档承诺矛盾，已删除。教训：只测"生产注册表没有 problems"等于
+    没测，删掉任何一条规则都不会有人发现。见 `registry_test.go:TestValidate_ReportsEachRule`。
 
 
 <!-- CODESEEK_INJECTION -->

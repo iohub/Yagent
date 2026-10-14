@@ -6,96 +6,107 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"yagent/internal/recovery"
 )
 
-func TestCircuitBreaker_InitialState(t *testing.T) {
-	cb := recovery.NewCircuitBreaker(5, 30*time.Second)
-	if !cb.Allow() {
-		t.Error("new circuit breaker should allow requests")
-	}
-	if cb.State() != "closed" {
-		t.Errorf("state = %q, want 'closed'", cb.State())
-	}
-}
+// 熔断器本身的状态机契约在 internal/recovery/circuit_breaker_test.go。
+// 这里只测 RecoveryHandler 如何使唤它 —— 也就是 Director 实际依赖的闸门语义。
 
-func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
-	cb := recovery.NewCircuitBreaker(3, 30*time.Second)
+// IsCircuitBreakerOpen() == !Allow()，而 Allow() 在 open 期过了 resetTimeout 会
+// 直接把状态迁移到 half-open 并放行。所以"查询闸门"这个动作本身就是半开试探：
+// 打开时查到 true，窗口过后查到 false，且试探成功后必须真的闭合。
+func TestRecoveryHandler_IsOpenQueryIsTheTrialRequest(t *testing.T) {
+	// 窗口取 20ms：足够让下面那次"刚打开"的查询确定性地返回 true，
+	// 又能在用例内的轮询里等到半开放行。取 1ms 会让首个断言取决于调度。
+	rh := NewRecoveryHandler(RecoveryConfig{
+		MaxRetries:                 3,
+		CircuitBreakerThreshold:    2,
+		CircuitBreakerResetTimeout: 20 * time.Millisecond,
+	})
 
-	// Fail 2 times - should still be closed
-	cb.Failure()
-	cb.Failure()
-	if cb.State() != "closed" {
-		t.Errorf("after 2 failures: state = %q, want 'closed'", cb.State())
-	}
-
-	// Fail 3rd time - should open
-	cb.Failure()
-	if cb.State() != "open" {
-		t.Errorf("after 3 failures: state = %q, want 'open'", cb.State())
+	rh.RecordLLMFailure()
+	rh.RecordLLMFailure()
+	if !rh.IsCircuitBreakerOpen() {
+		t.Fatal("IsCircuitBreakerOpen() = false right after hitting the threshold, want true")
 	}
 
-	// Should not allow
-	if cb.Allow() {
-		t.Error("circuit breaker should not allow when open")
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) && rh.IsCircuitBreakerOpen() {
+		time.Sleep(time.Millisecond)
 	}
-}
-
-func TestCircuitBreaker_ResetsAfterTimeout(t *testing.T) {
-	cb := recovery.NewCircuitBreaker(1, 50*time.Millisecond)
-
-	cb.Failure()
-	if cb.State() != "open" {
-		t.Errorf("after 1 failure: state = %q, want 'open'", cb.State())
+	if rh.IsCircuitBreakerOpen() {
+		t.Error("IsCircuitBreakerOpen() stayed true past resetTimeout, want false (trial allowed)")
 	}
-
-	// Wait for reset
-	time.Sleep(60 * time.Millisecond)
-
-	if !cb.Allow() {
-		t.Error("circuit breaker should allow after reset timeout")
-	}
-	if cb.State() != "half-open" {
-		t.Errorf("after timeout: state = %q, want 'half-open'", cb.State())
+	// 试探成功后必须真的闭合；否则下一轮又在半开与打开之间抖。
+	rh.RecordLLMSuccess()
+	if rh.IsCircuitBreakerOpen() {
+		t.Error("IsCircuitBreakerOpen() = true after a successful trial, want false")
 	}
 }
 
-func TestCircuitBreaker_ClosesOnSuccess(t *testing.T) {
-	cb := recovery.NewCircuitBreaker(1, 30*time.Second)
-
-	cb.Failure()
-	if cb.State() != "open" {
-		t.Errorf("state = %q, want 'open'", cb.State())
+// circuit_breaker_threshold 的默认值是 0（config/defaults.go 与仓库里的
+// config.toml 都是 0），此时不该创建熔断器：Director 绝不能因为网络抖动停摆。
+// 把 `> 0` 写成 `>= 0` 会让默认配置下也建出 threshold=0 的熔断器 —— 一次失败就
+// failures >= 0 成立，永久拒绝服务。
+func TestRecoveryHandler_BreakerDisabledAtThresholdZero(t *testing.T) {
+	rh := NewRecoveryHandler(RecoveryConfig{MaxRetries: 3, CircuitBreakerThreshold: 0})
+	// "不启用"的实现是不创建熔断器，而不是创建一个空转的。这个区别有可观测后果：
+	// threshold=0 时任何一次 Failure 都满足 failures >= 0，而 resetTimeout=0 又让
+	// Allow() 立刻放行 —— 于是计数在暗处一路增长，日志与 metrics 全错。
+	if rh.breaker != nil {
+		t.Error("breaker was constructed with threshold 0, want nil (disabled)")
 	}
 
-	// Force half-open
-	cb.SetLastFailure(time.Now().Add(-60 * time.Second))
-	cb.Allow() // transitions to half-open
-	if cb.State() != "half-open" {
-		t.Errorf("state = %q, want 'half-open'", cb.State())
+	for i := 0; i < 50; i++ {
+		rh.RecordLLMFailure()
 	}
-
-	cb.Success()
-	if cb.State() != "closed" {
-		t.Errorf("state = %q, want 'closed'", cb.State())
+	if rh.IsCircuitBreakerOpen() {
+		t.Error("IsCircuitBreakerOpen() = true with threshold 0, want false (disabled)")
+	}
+	// 负数同样不该启用（配置写错时宁可少熔断，也不要锁死 Director）。
+	neg := NewRecoveryHandler(RecoveryConfig{MaxRetries: 3, CircuitBreakerThreshold: -1})
+	if neg.breaker != nil {
+		t.Error("breaker was constructed with a negative threshold, want nil")
+	}
+	for i := 0; i < 5; i++ {
+		neg.RecordLLMFailure()
+	}
+	if neg.IsCircuitBreakerOpen() {
+		t.Error("IsCircuitBreakerOpen() = true with a negative threshold, want false")
+	}
+	// 对照组：阈值 1 必须真的建出熔断器，否则上面的 nil 断言在"永不创建"的实现下也通过。
+	// resetTimeout 必须显式给非零值：留 0 的话 open 立刻被 Allow() 判成过期，断言取决于时钟。
+	on := NewRecoveryHandler(RecoveryConfig{
+		MaxRetries:                 3,
+		CircuitBreakerThreshold:    1,
+		CircuitBreakerResetTimeout: 30 * time.Second,
+	})
+	if on.breaker == nil {
+		t.Fatal("breaker is nil with threshold 1, want a constructed breaker")
+	}
+	on.RecordLLMFailure()
+	if !on.IsCircuitBreakerOpen() {
+		t.Error("IsCircuitBreakerOpen() = false after reaching threshold 1, want true")
 	}
 }
 
-func TestCircuitBreaker_ReOpensOnHalfOpenFailure(t *testing.T) {
-	cb := recovery.NewCircuitBreaker(1, 30*time.Second)
-
-	cb.Failure()
-	// Force half-open
-	cb.SetLastFailure(time.Now().Add(-60 * time.Second))
-	cb.Allow() // transitions to half-open
-	if cb.State() != "half-open" {
-		t.Errorf("state = %q, want 'half-open'", cb.State())
+// RecordLLMFailureStats / ConsecutiveLLMFailures 是 lift-and-shift 的日志计数，
+// 刻意与熔断器计数分离：成功不重置它（原 DirectorAgent 字段语义）。
+// "顺手修成"真正的连续计数会改掉日志含义，所以钉住现状。
+func TestRecoveryHandler_FailureStatsNotResetBySuccess(t *testing.T) {
+	rh := NewRecoveryHandler(DefaultRecoveryConfig())
+	if !rh.LastLLMFailureTime().IsZero() {
+		t.Error("LastLLMFailureTime() should be zero before any failure")
 	}
 
-	cb.Failure()
-	if cb.State() != "open" {
-		t.Errorf("state = %q, want 'open' after half-open failure", cb.State())
+	rh.RecordLLMFailureStats()
+	rh.RecordLLMFailureStats()
+	rh.RecordLLMSuccess()
+
+	if got := rh.ConsecutiveLLMFailures(); got != 2 {
+		t.Errorf("ConsecutiveLLMFailures() = %d after 2 failures + 1 success, want 2", got)
+	}
+	if rh.LastLLMFailureTime().IsZero() {
+		t.Error("LastLLMFailureTime() = zero after RecordLLMFailureStats(), want a timestamp")
 	}
 }
 
@@ -234,5 +245,35 @@ func TestGetFailureStats(t *testing.T) {
 	}
 	if stats["step_b"] != 1 {
 		t.Errorf("stats[step_b] = %d, want 1", stats["step_b"])
+	}
+}
+
+// Reset 走的是 Director 新任务开始时的复位路径：步骤计数与熔断器都要归零。
+func TestRecoveryHandler_ResetClearsBothCounters(t *testing.T) {
+	cfg := DefaultRecoveryConfig()
+	cfg.MaxRetries = 1
+	rh := NewRecoveryHandler(cfg)
+
+	rh.RecordStepFailure("step_a")
+	if !rh.RecordStepFailure("step_a") {
+		t.Fatal("step_a should have exceeded MaxRetries=1 before Reset()")
+	}
+	for i := 0; i < cfg.CircuitBreakerThreshold; i++ {
+		rh.RecordLLMFailure()
+	}
+	if !rh.IsCircuitBreakerOpen() {
+		t.Fatal("breaker should be open before Reset()")
+	}
+
+	rh.Reset()
+
+	if rh.IsCircuitBreakerOpen() {
+		t.Error("IsCircuitBreakerOpen() = true after Reset(), want false")
+	}
+	if rh.RecordStepFailure("step_a") {
+		t.Error("RecordStepFailure after Reset() should start from 1, not carry over")
+	}
+	if got := rh.GetFailureStats()["step_a"]; got != 1 {
+		t.Errorf("GetFailureStats()[step_a] = %d after Reset()+1 failure, want 1", got)
 	}
 }

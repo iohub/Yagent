@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -279,8 +280,10 @@ func (e *AnthropicEngine) buildRequestBody(messages []Message, tools []ToolDef, 
 	if opts != nil && opts.ReasoningEffort != "" {
 		effort = opts.ReasoningEffort
 	}
-	if effort != "" {
-		budget := reasoningEffortToBudget(effort)
+	// budget==0 表示 effort 认不出来。这时不能发出 {type:enabled, budget_tokens:0}：
+	// provider 要求 budget_tokens ≥1024，一个拼错的 effort 会让此后每次调用都 400；
+	// 也不该连带把 temperature 钉成 1.0。
+	if budget := reasoningEffortToBudget(effort); budget > 0 {
 		if req.MaxTokens <= budget {
 			req.MaxTokens = budget + 4096
 		}
@@ -673,13 +676,19 @@ func (e *AnthropicEngine) parseStreamResponse(ctx context.Context, body io.Reade
 		return nil, fmt.Errorf("anthropic stream scan: %w", err)
 	}
 
-	// Build tool calls from indexed map (ordered by index)
+	// Build tool calls ordered by block index. 不能用"从 0 连续递增"来遍历：
+	// toolCallByIndex 只收 tool_use，而 Anthropic 的块索引里混着 text/thinking，
+	// 工具块通常从 1 或 2 开始 —— 连续性遍历会在 index 0 就 break，把工具整批丢掉
+	// （表现是模型明确调了工具，Agent 却收到空 tool_calls）。
+	indexes := make([]int, 0, len(toolCallByIndex))
+	for i := range toolCallByIndex {
+		indexes = append(indexes, i)
+	}
+	sort.Ints(indexes)
+
 	var toolCalls []ToolCall
-	for i := 0; ; i++ {
-		tc, ok := toolCallByIndex[i]
-		if !ok {
-			break
-		}
+	for _, i := range indexes {
+		tc := toolCallByIndex[i]
 		args := tc.arguments.String()
 		if args == "" {
 			args = "{}"
