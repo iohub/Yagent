@@ -164,6 +164,10 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.SystemAsHuman = true // RepoAgent uses Human role for its prompt
+	// repo.prompt.md 要求模型以 agent_exit 收尾（handoff 是它的一部分）；
+	// 不置这个标志时 agent_exit 只是"又执行了一次工具"，循环继续烧到 MaxSteps，
+	// 而交付物变成后续那几轮的文本 —— 便签正文与 artifact 全文跟着全错。
+	cfg.StopOnFinish = true
 
 	// 上下文压缩配置（tool 结果截断）
 	ec := a.ecCfg

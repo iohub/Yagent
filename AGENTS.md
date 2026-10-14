@@ -548,6 +548,17 @@ go vet ./...                              # 必须干净
   config 84.2%、messaging 80.4%、datamanager 65.2%、memory 64.3%、llm 61.6%、mcp 62.1%、
   agents 59.5%、app 16.9%。`app`/`toolspec`/`mcp`/`llm` 原本分别只有 0%/8.5%/8.6%/18.6% ——
   低覆盖率的共性是"错了不报错，只是静默换模型/静默丢工具"，所以补的是**契约**而不是行数。
+- **链路级 E2E 只 mock 模型，不 mock 被测组件**：`internal/agents/e2e_*_test.go` 钉四条
+  核心链路 —— 授权回路（`e2e_authorization_test.go`）、跨委派交接（`e2e_handoff_test.go`：
+  便签 + artifact + deferred schema 重试）、委派生命周期（`e2e_lifecycle_test.go`：idle/total
+  超时与取消传播）、`/resume`（`e2e_resume_test.go`）。它们用的是**真实** dispatcher、真实
+  `WorkspaceGuard`、真实便签盘（`TestMain` 已把 `$HOME` 隔离到临时目录）、真实 rollout 文件，
+  只把 LLM 换成脚本。harness 的接线顺序照抄 `app.go:115-287` —— 换顺序会测到一条生产不存在的路。
+- **脚本引擎按 Agent 身份分派，不按全局调用序号**（`e2e_engine_test.go`）：序号会被循环里的
+  补偿动作打断（纯文本触发 NoActionRetryLimit、Director 未委派触发强制委派提醒、超时后的重试），
+  一个无关的 +1 就让整条脚本错位，失败看起来像产品 bug。身份靠各家 System Prompt 的首行措辞识别，
+  prompt 改了会失败在"认不出是谁"。脚本引擎**必须先看 ctx**：忽略 ctx 的 mock 会把
+  "取消没传播"这类缺陷直接掩盖掉。
 - **协议层用 `httptest` 假服务端钉字节形状**：`internal/llm/engine_openai_test.go` 与
   `engine_anthropic_test.go` 断言的是发出去的 JSON（`system` 顶层字段、`tool_result` 块、
   `reasoning_content` 回灌、`stream_options.include_usage`）与读回来的账目
@@ -742,6 +753,14 @@ plan:
     所以曾经那条 "Serial 与 IsReadOnly 冲突" 在数学上不可能成立 —— 它既不会响，又与 `Serial`
     字段"无副作用也必须串行"的文档承诺矛盾，已删除。教训：只测"生产注册表没有 problems"等于
     没测，删掉任何一条规则都不会有人发现。见 `registry_test.go:TestValidate_ReportsEachRule`。
+16. **子 Agent 的 `agent_exit` 会不会真的收尾，取决于 `cfg.StopOnFinish`**：`RunAgentLoop` 的判据是
+    `cfg.StopOnFinish && tc.Function.Name == "agent_exit"`，而这个标志是各 Agent 自己在
+    `ExecutorConfig` 上逐个设的。`repo.go` 曾漏掉它 —— Repo 的 prompt 明确指示"以 agent_exit 收尾"，
+    于是收尾信号只是"又执行了一次工具"，循环继续烧到 MaxSteps，交付物变成后续那几轮的文本。
+    连带后果在便签/artifact 上：`deliverableText()` 取的是最后一条 assistant 消息，
+    所以便签正文与 artifact 全文存的都不是那份交付。现在由
+    `internal/agents/e2e_{handoff,lifecycle}_test.go` 钉住（委派只花 1 次 LLM 调用），
+    新增子 Agent 时漏设 StopOnFinish 会直接红。
 
 
 <!-- CODESEEK_INJECTION -->
