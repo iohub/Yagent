@@ -470,6 +470,68 @@
         "heading": "任务完成"
       }
     },
+    "TaskPausedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "blocked": {
+          "description": "true = 已停在 step 边界；false = 还有工具在飞，尚未停住",
+          "type": "boolean"
+        },
+        "event": {
+          "description": "任务暂停闸门已按下（执行停在下一个 step 边界）",
+          "enum": [
+            "task_paused"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "description": "暂停来源（如 /pause、http /api/pause_task）",
+          "type": "string"
+        },
+        "task_id": {
+          "description": "任务 ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "task_id"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StatusPill",
+        "heading": "任务暂停"
+      }
+    },
+    "TaskResumedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "description": "任务暂停闸门已放开，执行从 step 边界继续",
+          "enum": [
+            "task_resumed"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "description": "继续来源（如 /continue、http /api/continue_task）",
+          "type": "string"
+        },
+        "task_id": {
+          "description": "任务 ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "task_id"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StatusPill",
+        "heading": "任务继续"
+      }
+    },
     "ThinkingEvent": {
       "additionalProperties": false,
       "properties": {
@@ -755,6 +817,12 @@
     },
     {
       "$ref": "#/definitions/TaskCompleteEvent"
+    },
+    {
+      "$ref": "#/definitions/TaskPausedEvent"
+    },
+    {
+      "$ref": "#/definitions/TaskResumedEvent"
     }
   ],
   "title": "Yagent Agent Events",

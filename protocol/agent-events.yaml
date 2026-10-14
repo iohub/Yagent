@@ -377,6 +377,40 @@ event_types:
         description: "任务摘要"
         required: false
 
+  - name: task_paused
+    description: "任务暂停闸门已按下（执行停在下一个 step 边界）"
+    render_hint:
+      component: StatusPill
+      heading: "任务暂停"
+    fields:
+      - name: task_id
+        type: string
+        description: "任务 ID"
+        required: true
+      - name: reason
+        type: string
+        description: "暂停来源（如 /pause、http /api/pause_task）"
+        required: false
+      - name: blocked
+        type: boolean
+        description: "true = 已停在 step 边界；false = 还有工具在飞，尚未停住"
+        required: false
+
+  - name: task_resumed
+    description: "任务暂停闸门已放开，执行从 step 边界继续"
+    render_hint:
+      component: StatusPill
+      heading: "任务继续"
+    fields:
+      - name: task_id
+        type: string
+        description: "任务 ID"
+        required: true
+      - name: reason
+        type: string
+        description: "继续来源（如 /continue、http /api/continue_task）"
+        required: false
+
 # ==============================================================================
 # WebSocket 消息包装（传输层协议）
 # ==============================================================================
