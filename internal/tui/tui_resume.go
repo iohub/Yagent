@@ -488,6 +488,11 @@ func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.Ro
 	if info.DroppedOrphanOutputs > 0 {
 		notes = append(notes, fmt.Sprintf("%d orphan outputs dropped", info.DroppedOrphanOutputs))
 	}
+	// 一个 call_id 有两条 output = 那次委派先被打断、后来又恢复完成。
+	// 说清楚，否则用户会以为恢复把上一轮的失败也带了回来。
+	if info.SupersededOutputs > 0 {
+		notes = append(notes, fmt.Sprintf("%d tool outputs superseded by a resumed call", info.SupersededOutputs))
+	}
 	if len(notes) > 0 {
 		infoMsg += " · " + strings.Join(notes, ", ")
 	}
