@@ -19,6 +19,7 @@ import (
 	"yagent/internal/config"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
+	"yagent/internal/pause"
 	"yagent/internal/tools"
 	"yagent/internal/toolspec"
 )
@@ -385,6 +386,13 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 	maxParallel := NormalizeMaxParallelReadOnlyTools(cfg.MaxParallelReadOnlyTools)
 
 	for i := 0; i < cfg.MaxSteps; i++ {
+		// 暂停闸门（A 层）落在 step 边界：上一个批次的工具结果都已提交，所以停在这里
+		// 不会留下"副作用做了一半"的状态。ctx 不取消，恢复后从这行原地往下走。
+		if perr := pause.From(ctx).Wait(ctx); perr != nil {
+			stopKind.record("", perr)
+			return ExecutorResult{}, perr
+		}
+
 		stepNumber++
 		activity.Heartbeat(ctx, fmt.Sprintf("step:%d", stepNumber))
 		slog.Debug("AgentExecutor calling LLM", "agent", cfg.AgentName, "step", i)
