@@ -969,11 +969,54 @@ B1 与 B5 需要重点评审：B1 改的是恢复语义，B5 改的是工作区�
 
 | 阶段 | 状态 | 备注 |
 |------|------|------|
-| P0 前置修复 | 未开始 | 四条独立真 bug，可先合 |
+| P0 前置修复 | **已落地**（4 条全在 `feat-pause-resume`） | P0.1 `48af58f`、P0.3 `6fb11ad`、P0.4 `c39e5fb`、P0.2 `4fd7ee3` |
 | P1 活暂停（A） | 未开始 | 交付即拿到可用的停止/继续 |
 | P2 检查点重放（B） | 未开始 | 承重层，跨进程/换机器靠它 |
 | P3 交接兜底（C） | 未开始 | 换机器场景的实际主路径（§6.4 判据 5） |
 
-落地后请更新本表，并同步 `AGENTS.md`：§6.2（执行循环多一个 gate 接入点）、
+### 15.1 P0 落地时对本文的四处修正
+
+实施结果与本文原稿不一致的地方，以代码为准：
+
+1. **§5.4「停止原因词表」的位置变了**。原稿把 `StopKind*` 放在 `internal/agents`，
+   实际放在 **`internal/memory`**（`rollout_types.go`，与 `CompactionKind*` 并列）：
+   写入端有 `agents` 与 `agents/director` 两个包，而后者不得 import 前者
+   （`scripts/check_no_agents_import.sh`），只有共同依赖能承载它。
+   `agents` 侧保留 `const` 别名，`director` 侧有一份形态相同的 `StopKindOf`，
+   两份实现由 `TestStopKindClassifiersAgree` 钉住。
+2. **§5.4 的词表多了一个值**：`circuit_breaker_open`。原稿把它并进 `llm_error`，
+   实际保留了区分 —— Director 的熔断器出口比"重试耗尽"更早，也更值得单独排查。
+3. **§4.3 的去重包装不需要做**。原稿假设子 Agent 的 T&P 块会被两条路径各写一次
+   （主循环 + `compressor.extractThinklinkEntries`）。实测 `AddThoughtPlan` 全仓只有
+   主循环一个调用点，`ApplyUltimate` 只读不写，所以落盘就是加一个调用，无需去重层。
+4. **§9「保留状态文件」的表述偏乐观**。`.git/yagent_session.json` 今天**没有任何读者**
+   （只有 `persistState` 写、`clearState` 删）。中断路径保留它是为了给人看，
+   以及给 P2 留一个接入点；但**当前**能支撑"恢复时判断工作区"的事实只有
+   agent 分支本身、检查点 tag 与 rollout。P2 若要读这份 JSON，必须先给它一个读者。
+
+另外两条实施中发现、**本次刻意未修**的既有缺陷：
+
+- `CreateManualCheckpoint` 的 tag 名取 `time.Now().Unix()`，同一秒内的第二个手动检查点
+  会撞 tag 名、以 exit 128 失败（`git_checkpoint_test.go` 里绕过并写明）。
+  它属于"检查点坐标"，P2 依赖它，届时一并修。
+- `internal/memory` 的测试没有 `TestMain` 隔离 `$HOME`（`internal/agents` 有），
+  所以该包多数 rollout 测试会往真实的 `~/.yagent/data/rollout` 写文件。
+  新增的测试自己用了 `t.Setenv`，但整包仍会挤脏 `/resume` 的会话清单。
+
+### 15.2 验证方式
+
+- **实测变异（在一次性 worktree 里跑，不动工作区）**：
+  P0.1 关掉原位覆盖分支 → 2 个测试红；P0.3 关掉 writer 兜底 / 去掉 `WithoutCancel`
+  → 各自红；P0.2 强制 `interrupted=false`（用户分支被推进、半成品落进用户分支）
+  与收尾回到死 ctx → 六个测试红。
+- **未做变异验证**：P0.4 的 cause 优先级与 thinklink 落盘。断言的值旧实现给不出来，
+  但没有实测；`c39e5fb` 的提交说明在这点上说得过满。
+- `bash scripts/check_all.sh` 全绿（build / vet / 五把守卫 / 全量单测）；
+  `go test -race ./internal/agents/... ./internal/memory/` 干净。
+- `planner_run.go` 保持 658 行未动（分类理由写在新增的 `director/stop_kind.go`）。
+
+落地 P1 之后请继续更新本表，并同步 `AGENTS.md`：§6.2（执行循环多一个 gate 接入点）、
 §6.6（新事件类型）、§6.7（rollout 新记录类型 —— 顺手修掉 `world_state` 那句过期描述）、
 §7（`[resume]` 配置表）、§11（新增坑：暂停不能走 `handleTaskCompleteMsg` 的换 ctx 路径）。
+P0 已经改了 §6.7 与 §11 坑 16 依赖的事实（rollout 现在带 git 身份与 stop_reason），
+那两处 `AGENTS.md` 的同步留到 P1 一并做，避免同一个文件改两遍。
