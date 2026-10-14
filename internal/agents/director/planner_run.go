@@ -198,7 +198,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		if p.cfg.Recovery != nil && p.cfg.Recovery.IsCircuitBreakerOpen() {
 			slog.Error("Circuit breaker open, too many consecutive LLM failures",
 				"step", i)
-			writeAborted("circuit breaker open", "circuit_breaker_open")
+			writeAborted("circuit breaker open", memory.StopKindCircuitBreakerOpen)
 			return PlanResult{Steps: p.state.Step, StopReason: "circuit_breaker_open"},
 				fmt.Errorf("circuit breaker open: LLM calls blocked")
 		}
@@ -218,7 +218,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				slog.Warn("DirectorAgent retrying LLM call", "step", i, "attempt", attempt, "wait", wait)
 				select {
 				case <-ctx.Done():
-					writeAborted(ctx.Err().Error(), "cancelled")
+					writeAborted(ctx.Err().Error(), StopKindOf(ctx.Err(), ctx))
 					return PlanResult{Steps: p.state.Step, StopReason: "cancelled"}, ctx.Err()
 				case <-time.After(wait):
 				}
@@ -422,7 +422,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		if llmErr != nil {
 			slog.Error("DirectorAgent LLM error after all retries",
 				"error", llmErr, "step", i)
-			writeAborted(llmErr.Error(), "llm_error")
+			writeAborted(llmErr.Error(), StopKindOf(llmErr, ctx))
 			return PlanResult{Steps: p.state.Step, StopReason: "llm_error"}, llmErr
 		}
 
@@ -542,7 +542,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				slog.Debug("DirectorAgent force delegation via user message", "step", i, "prompt_count", p.state.NonDelegationPrompts)
 				continue
 			}
-			writeComplete("plain_text")
+			writeComplete(memory.StopKindPlainText)
 			return PlanResult{Text: choice.Content, Steps: p.state.Step, StopReason: "plain_text"}, nil
 		}
 
@@ -628,7 +628,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			})
 
 			if tc.Function.Name == "agent_exit" {
-				writeComplete("agent_exit")
+				writeComplete(memory.StopKindAgentExit)
 				return "agent_exit"
 			}
 			return ""
@@ -644,7 +644,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					stop = commitPlannerToolCall(i, out)
 				})
 			if stop == "cancelled" {
-				writeAborted(ctx.Err().Error(), "cancelled")
+				writeAborted(ctx.Err().Error(), StopKindOf(ctx.Err(), ctx))
 				return PlanResult{Steps: p.state.Step, StopReason: "cancelled"}, ctx.Err()
 			}
 			if stop == "agent_exit" {
@@ -653,6 +653,6 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		}
 	}
 
-	writeAborted("DirectorAgent exceeded max steps", "max_steps")
+	writeAborted("DirectorAgent exceeded max steps", memory.StopKindMaxSteps)
 	return PlanResult{Steps: p.state.Step, StopReason: "max_steps"}, fmt.Errorf("DirectorAgent exceeded max steps")
 }
