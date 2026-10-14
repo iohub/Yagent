@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"yagent/internal/config"
+	"yagent/internal/http"
 	"yagent/internal/llm"
+	"yagent/internal/pause"
 	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
@@ -25,6 +27,15 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	if strings.HasPrefix(cmd, "/") {
 		if cmd == "/resume" || cmd == "/rs" {
 			return m.resumeFromCmdline()
+		}
+		// 暂停闸门。/resume 是"换一棵 ctx 重新起跑"，/pause 与 /continue 是
+		// "同一棵 ctx 上停住再走" —— 名字相近但语义不同，所以各走各的分支。
+		// 必须在这里显式列出：斜杠前缀默认是搜索，不列的话 /pause 变成搜 "pause"。
+		if cmd == "/pause" {
+			return m.pauseActiveTask()
+		}
+		if cmd == "/continue" || cmd == "/unpause" {
+			return m.continueActiveTask()
 		}
 		m.runSearch(strings.TrimPrefix(cmd, "/"))
 		return nil
@@ -85,6 +96,12 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	case "resume", "rs":
 		return m.resumeFromCmdline()
 
+	case "pause":
+		return m.pauseActiveTask()
+
+	case "continue", "unpause":
+		return m.continueActiveTask()
+
 	default:
 		m.setInfoMsg(fmt.Sprintf("Unknown command: %s（:help 或 ? 查看全部命令）", name))
 	}
@@ -113,6 +130,83 @@ func (m *model) resumeFromCmdline() tea.Cmd {
 		m.enterNormalMode()
 	}
 	return enterResumeMode(m)
+}
+
+// pauseActiveTask 按下当前任务的暂停闸门（A 层）。
+//
+// 与 Esc 的差别是这停住的代价：取消解开调用栈、这一轮就废了；闸门不取消 ctx，
+// 执行在下一个 step 边界上停住，/continue 之后原地往下跑。
+// 文案必须说"下一个边界"而不是"已停止" —— 一个在飞的 run_bash 最长要跑
+// defaultToolTimeout(180s) 才会到边界，说"已停"是骗人。
+func (m *model) pauseActiveTask() tea.Cmd {
+	gate := m.activeGate()
+	if gate == nil {
+		m.setInfoMsg("No running task to pause")
+		return nil
+	}
+	if gate.Paused() {
+		m.setInfoMsg("Task is already paused — /continue to resume")
+		return nil
+	}
+	gate.Pause("/pause")
+	m.markTaskPaused()
+	m.appendStatusLine("⏸ Pausing — the run stops at the next step boundary. /continue to resume.")
+	return nil
+}
+
+// continueActiveTask 放开闸门。只能放开"按过且任务还活着"的闸门：
+// 暂停中被取消的任务在本进程里救不回来（跨进程继续是 P2 的 B 层）。
+func (m *model) continueActiveTask() tea.Cmd {
+	gate := m.activeGate()
+	if gate == nil {
+		m.setInfoMsg("No task to continue")
+		return nil
+	}
+	if !gate.Paused() {
+		m.setInfoMsg("Task is not paused")
+		return nil
+	}
+	gate.Resume()
+	m.markTaskResumed()
+	m.appendStatusLine("▶ Resumed from the step boundary.")
+	return nil
+}
+
+// activeGate 取当前任务的闸门；没有任务、任务已结束时返回 nil。
+// 返回 nil 也可能是"这个任务的 ctx 没带闸门"——两种都必须拒绝而不是假装停了。
+func (m *model) activeGate() *pause.Gate {
+	if m.currentTask == nil || !m.taskRunning {
+		return nil
+	}
+	return m.currentTask.Gate()
+}
+
+// appendStatusLine 写一行状态提示并让 footer 重算（状态栏里的暂停标记就靠这一步）。
+func (m *model) appendStatusLine(text string) {
+	m.logEntries = append(m.logEntries, logEntry{
+		timestamp: time.Now(),
+		eventType: "status",
+		content:   text,
+	})
+	m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
+	m.invalidateFooterCache()
+}
+
+// markTaskPaused / markTaskResumed 只动状态字符串与时间戳：闸门停住不产生
+// task_complete，所以这条路径绝不能走 handleTaskCompleteMsg —— 那里会换掉整个
+// ctx（tui_update_tasks.go 的 newCtx 分支），而闸门就挂在那棵被换掉的 ctx 上。
+func (m *model) markTaskPaused() {
+	if m.currentTask != nil {
+		m.currentTask.Status = http.TaskStatusPaused
+		m.currentTask.UpdatedAt = time.Now()
+	}
+}
+
+func (m *model) markTaskResumed() {
+	if m.currentTask != nil {
+		m.currentTask.Status = http.TaskStatusRunning
+		m.currentTask.UpdatedAt = time.Now()
+	}
 }
 
 // timeoutTarget 是模型设置面板中"LLM 调用超时"行的哨兵 Target 值；选中后打开

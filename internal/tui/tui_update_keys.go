@@ -991,6 +991,16 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.invalidateFooterCache()
 				return m, enterResumeMode(m)
 			}
+			if skillName == "pause" || skillName == "continue" || skillName == "unpause" {
+				// 补全选中的是内置命令，不是 SKILL.md —— 走 processCommand，
+				// 否则会掉进下面的 SkillRegistry 查找并静默什么都不做。
+				m.skillAutoComplete = false
+				m.skillSuggestions = nil
+				m.skillSuggestionIdx = 0
+				m.input.SetValue("")
+				m.invalidateFooterCache()
+				return m, m.processCommand(skillName)
+			}
 			if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
 				userContext := strings.TrimSpace(m.input.Value())
 				combinedContent := skill.Content + "\n\n---\n用户上下文: " + userContext

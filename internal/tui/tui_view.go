@@ -449,12 +449,32 @@ func (m *model) airlineRightSegments() []airlineSegment {
 				bg: airlineColorInfoAltBg, fg: airlineColorInfoAltFg, text: m.currentAgent,
 			})
 		}
-		segs = append(segs, airlineSegment{
-			bg: airlineColorInfoBg, fg: airlineColorInfoFg, text: m.anim.Render(),
-		})
+		// 暂停时 spinner 是假的"还在干活"：换成暂停标记，并区分"正在停"与"已停住"
+		// —— 一个在飞的工具最长要等完 defaultToolTimeout(180s) 才到 step 边界。
+		if label := m.airlinePauseLabel(); label != "" {
+			segs = append(segs, airlineSegment{
+				bg: airlineColorRunBg, fg: airlineColorRunFg, bold: true, text: label,
+			})
+		} else {
+			segs = append(segs, airlineSegment{
+				bg: airlineColorInfoBg, fg: airlineColorInfoFg, text: m.anim.Render(),
+			})
+		}
 	}
 
 	return segs
+}
+
+// airlinePauseLabel 只在闸门按下时给文案；未暂停返回空串（该段整条不出现）。
+func (m *model) airlinePauseLabel() string {
+	gate := m.currentTask.Gate()
+	if gate == nil || !gate.Paused() {
+		return ""
+	}
+	if gate.Blocked() {
+		return "⏸ PAUSED"
+	}
+	return "⏸ PAUSING"
 }
 
 // viewportRuler 是 vim ruler 式的滚动位置指示：贴边时直接说 TOP/BOT，

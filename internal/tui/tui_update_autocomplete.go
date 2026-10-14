@@ -169,6 +169,14 @@ func (m *model) doSkillAutocomplete(text string, contentRunes []rune, cursor int
 		if hasPrefixIgnoreCase("rs", query) {
 			matches = append(matches, "rs")
 		}
+		// 暂停闸门（A 层）：与 resume 不是一回事 —— resume 是"换一棵 ctx 重新起跑"，
+		// pause/continue 是"同一棵 ctx 上停住再走"。
+		if hasPrefixIgnoreCase("pause", query) {
+			matches = append(matches, "pause")
+		}
+		if hasPrefixIgnoreCase("continue", query) {
+			matches = append(matches, "continue")
+		}
 	}
 
 	if len(matches) > 0 {
