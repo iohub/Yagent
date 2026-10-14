@@ -19,6 +19,11 @@ const (
 	DataDirName = ".yagent" // 隐藏数据目录名称
 )
 
+// taskFlushDebounce 是 SaveTaskMemory 的防抖窗口。它写成变量而不是常量，
+// 因为测试必须自己为耗时负责：真实任务里它是 5s，测试不可能为等一个 timer
+// 付 5s（同 tools 的 defaultToolTimeout seam 一个道理）。
+var taskFlushDebounce = 5 * time.Second
+
 // taskWriterState 管理单个任务的写入状态
 type taskWriterState struct {
 	mu               sync.Mutex
@@ -111,11 +116,16 @@ func (dm *DataManager) getOrCreateWriter(taskID, filePath string) *taskWriterSta
 	return ws
 }
 
-// flushWriter 内部方法：刷新单个任务的待写入消息
+// flushWriter 内部方法：刷新单个任务的待写入消息（防抖 timer 的回调）。
+// 这条路径没有调用方可返回错误，但静默失败等于任务记忆凭空消失且无人知晓 ——
+// 记 warn 并跳过索引更新（索引描述的是磁盘状态，文件没写成就不能更新它）。
 func (dm *DataManager) flushWriter(taskID, filePath string, ws *taskWriterState) {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
-	dm.doFlush(filePath, ws)
+	if err := dm.doFlush(filePath, ws); err != nil {
+		slog.Warn("deferred task memory flush failed", "task_id", taskID, "path", filePath, "error", err)
+		return
+	}
 	dm.updateIndexFromFile(taskID, filePath)
 }
 
@@ -191,11 +201,11 @@ func (dm *DataManager) SaveTaskMemory(taskID string, mem *memory.ConversationMem
 	}
 	ws.lastFlushedCount = currentCount
 
-	// 重置 5s 定时器
+	// 重置防抖定时器（窗口见 taskFlushDebounce）
 	if ws.timer != nil {
 		ws.timer.Stop()
 	}
-	ws.timer = time.AfterFunc(5*time.Second, func() {
+	ws.timer = time.AfterFunc(taskFlushDebounce, func() {
 		dm.flushWriter(taskID, filePath, ws)
 	})
 

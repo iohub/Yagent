@@ -454,19 +454,22 @@ func (c *Config) validate() error {
 		return fmt.Errorf("model must be specified for provider '%s'", effectiveProvider)
 	}
 
-	if strings.HasPrefix(effectiveProvider, "bedrock") {
+	// Bedrock 用 AWS 凭证（aws_region + 环境里的 IAM/profile）而不是 api_key/base_url，
+	// 所以只有这两项检查对它豁免。这里绝不能直接 return：下面整段是缺省值归一化，
+	// 提前返回会让 max steps、[browser] 缺省、TUI 键位、压缩参数全部停在零值。
+	isBedrock := strings.HasPrefix(effectiveProvider, "bedrock")
+	if isBedrock {
 		if activeProvider.AWSRegion == "" {
 			return fmt.Errorf("aws_region must be specified for Bedrock provider")
 		}
-		return nil
-	}
+	} else {
+		if activeProvider.APIKey == "" {
+			return fmt.Errorf("api_key must be specified for provider '%s'", effectiveProvider)
+		}
 
-	if activeProvider.APIKey == "" {
-		return fmt.Errorf("api_key must be specified for provider '%s'", effectiveProvider)
-	}
-
-	if activeProvider.APIBaseURL == "" {
-		return fmt.Errorf("api_base_url must be specified for provider '%s'", effectiveProvider)
+		if activeProvider.APIBaseURL == "" {
+			return fmt.Errorf("api_base_url must be specified for provider '%s'", effectiveProvider)
+		}
 	}
 
 	defaultSteps := DefaultMaxSteps

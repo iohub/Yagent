@@ -198,10 +198,12 @@ func Validate() []string {
 		if s.Trunc == TruncProtected && s.Mutates {
 			report("%s: TruncProtected 与 Mutates=true 冲突", s.Name)
 		}
-		// 并发正确性：声明可并发就不能要求串行。
-		if s.Serial && s.IsReadOnly() {
-			report("%s: Serial 与 IsReadOnly 冲突（内部一致性检查）", s.Name)
-		}
+		// 原先这里还有一条 "Serial 与 IsReadOnly 冲突" 的一致性检查，已删除：
+		// IsReadOnly() 的定义就是 !Mutates && !Serial，该条件在数学上不可成立，
+		// 而 "无副作用但必须串行"（Serial=true, Mutates=false）恰是 Serial 字段
+		// 文档承诺要支持的声明。不可触发的校验只会给出假安全感。
+		// 派生关系由 internal/toolspec/queries_test.go 的
+		// TestDerivedMetadataIsInternallyConsistent 直接对账。
 	}
 
 	// schemas.json 里若有名字没注册 Spec，就是"声明了但没人实现"的静默失效。
