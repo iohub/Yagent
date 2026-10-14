@@ -19,6 +19,7 @@ import (
 	"yagent/internal/agents/director"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
+	"yagent/internal/pause"
 )
 
 // TestStopKindVocabularyIsTheRolloutContract 把落在盘上的字符串钉死。
@@ -26,6 +27,7 @@ import (
 // 改名不会让测试变绿，只会让存量 rollout 与 TUI 文案对不上号。
 func TestStopKindVocabularyIsTheRolloutContract(t *testing.T) {
 	want := map[string]string{
+		StopKindPaused:             "paused",
 		StopKindCancelled:          "cancelled",
 		StopKindIdleTimeout:        "idle_timeout",
 		StopKindTotalTimeout:       "total_timeout",
@@ -112,6 +114,34 @@ func TestClassifyStop_Table(t *testing.T) {
 		{"包了一层的空闲超时", &wrapped{err: &activity.IdleTimeoutError{IdleFor: time.Minute}}, live, StopKindIdleTimeout},
 		{"包了一层的总时长超限", &wrapped{err: &activity.TotalTimeoutError{Limit: time.Hour}}, live, StopKindTotalTimeout},
 		{"nil ctx 不许 panic", errors.New("boom"), nil, StopKindLLMError},
+		// 闸门（A 层）：停在 step 边界上后被取消 = paused，与"停在工具中途"的
+		// cancelled 分开 —— P2 的重放判据靠这个差别决定敢不敢原样继续。
+		{
+			"停在闸门上后被取消",
+			&pause.AbandonedError{Reason: "/pause", Cause: context.Canceled},
+			canceled,
+			StopKindPaused,
+		},
+		{
+			"闸门包着裸取消（ctx 还活着）",
+			&pause.AbandonedError{Reason: "/pause", Cause: context.Canceled},
+			live,
+			StopKindPaused,
+		},
+		// 一个包着超时的 AbandonedError，真实原因是超时而不是"用户停住了"：
+		// 超时那一步可能已把失败结果记进 rollout，重放会重复副作用。
+		{
+			"闸门包着空闲超时",
+			&pause.AbandonedError{Cause: &activity.IdleTimeoutError{IdleFor: time.Minute, Threshold: time.Minute}},
+			live,
+			StopKindIdleTimeout,
+		},
+		{
+			"闸门包着 deadline",
+			&pause.AbandonedError{Cause: context.DeadlineExceeded},
+			live,
+			StopKindTotalTimeout,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -166,6 +196,10 @@ func TestStopKindClassifiersAgree(t *testing.T) {
 		{"cause 是 total 而 err 是裸取消", context.Canceled, causeCtx(totalCause)},
 		{"cause 是 idle 且 err 为 nil", nil, causeCtx(idleCause)},
 		{"cause 就是裸取消（用户按停止）", nil, causeCtx(context.Canceled)},
+		// 闸门那两类必须也进这张表：两份实现各有一份 abandoned 分支，
+		// 只在一边删掉的话，同一个停止会在两份账本里留下两个名字。
+		{"停在闸门上后被取消", &pause.AbandonedError{Reason: "/pause", Cause: context.Canceled}, context.Background()},
+		{"闸门包着空闲超时", &pause.AbandonedError{Cause: idleCause}, context.Background()},
 	}
 	for _, in := range inputs {
 		t.Run(in.name, func(t *testing.T) {
@@ -226,8 +260,8 @@ func TestScanResumeCandidates_ClassifiesEveryStopKind(t *testing.T) {
 	}
 
 	kinds := []string{
-		StopKindCancelled, StopKindIdleTimeout, StopKindTotalTimeout, StopKindMaxSteps,
-		StopKindLLMError, StopKindCircuitBreakerOpen, StopKindPanic,
+		StopKindPaused, StopKindCancelled, StopKindIdleTimeout, StopKindTotalTimeout,
+		StopKindMaxSteps, StopKindLLMError, StopKindCircuitBreakerOpen, StopKindPanic,
 		StopKindPlainTextReply, StopKindAgentExit, StopKindUnaccounted, "brand_new_kind",
 	}
 	for i, kind := range kinds {
@@ -267,7 +301,9 @@ func TestScanResumeCandidates_ClassifiesEveryStopKind(t *testing.T) {
 		byKind[c.StopKind] = c
 	}
 
-	resumable := map[string]bool{StopKindCancelled: true}
+	// 默认拒绝：只有"主动停下来的"两类允许原样继续。paused 必然落在 step 边界，
+	// cancelled 可能停在工具中途 —— 两者都可继续，但 P2 的重放判据要能分得开。
+	resumable := map[string]bool{StopKindCancelled: true, StopKindPaused: true}
 	for _, kind := range kinds {
 		c, ok := byKind[kind]
 		if !ok {

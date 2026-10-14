@@ -337,8 +337,13 @@ const (
 // 与上面的 CompactionKind* 同一个理由：写成裸字符串的话，一个 typo 只会让恢复侧
 // 少认一类停止原因，而没有任何地方会报错。
 const (
+	// StopKindPaused 是执行停在暂停闸门（A 层）上、随后被取消的那一轮。
+	// 它与 cancelled 的唯一但关键的差别是**停在哪**：闸门只在 step 边界生效，
+	// 所以到这一步的工具批次已整体提交完，重放不会重复半截副作用；
+	// 而 cancelled 可能停在某个在飞的 run_bash 中间。
+	// 只有这两类应当被当作"可以原样继续"。
+	StopKindPaused = "paused"
 	// StopKindCancelled 是没有别的解释的取消：用户按停止、任务被丢弃、上层 ctx 关掉。
-	// 只有这一类（以及将来的 paused）应当被当作"可以原样继续"。
 	StopKindCancelled = "cancelled"
 	// StopKindIdleTimeout / StopKindTotalTimeout 来自 activity 的两个上限。
 	// 刻意不与 cancelled 合并：超时的那一步可能已经把 "Error: context canceled"

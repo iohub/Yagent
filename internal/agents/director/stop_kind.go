@@ -14,6 +14,7 @@ import (
 
 	"yagent/internal/agents/activity"
 	"yagent/internal/memory"
+	"yagent/internal/pause"
 )
 
 // StopKindOf 把一个取消/超时错误翻译成停止原因。
@@ -32,6 +33,7 @@ func StopKindOf(err error, ctx context.Context) string {
 	}
 	var idleErr *activity.IdleTimeoutError
 	var totalErr *activity.TotalTimeoutError
+	var abandoned *pause.AbandonedError
 	switch {
 	case errors.As(err, &idleErr):
 		return memory.StopKindIdleTimeout
@@ -40,7 +42,11 @@ func StopKindOf(err error, ctx context.Context) string {
 	case errors.Is(err, context.DeadlineExceeded):
 		// 委派之外也有 deadline（单工具 120s / 单次 LLM llmTimeout）。
 		// 归到 total 比归到 cancelled 有用：两者都不该原样重放同一步。
+		// 也排在 abandoned 之前：包着超时的 AbandonedError 真实原因是超时。
 		return memory.StopKindTotalTimeout
+	case errors.As(err, &abandoned):
+		// 必须排在 cancelled 之前：AbandonedError 能 errors.Is 到 context.Canceled。
+		return memory.StopKindPaused
 	case errors.Is(err, context.Canceled):
 		return memory.StopKindCancelled
 	case err != nil:
