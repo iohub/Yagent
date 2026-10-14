@@ -22,11 +22,13 @@ import (
 
 	"yagent/internal/agents/activity"
 	"yagent/internal/memory"
+	"yagent/internal/pause"
 )
 
 // 本包使用的词表别名。必须是 const 别名而不是 var：
 // 写成变量的话，"两边取值一致"这类断言会退化成两个变量互比，改一边红不了另一边。
 const (
+	StopKindPaused             = memory.StopKindPaused
 	StopKindCancelled          = memory.StopKindCancelled
 	StopKindIdleTimeout        = memory.StopKindIdleTimeout
 	StopKindTotalTimeout       = memory.StopKindTotalTimeout
@@ -65,6 +67,7 @@ func classifyStop(err error, ctx context.Context) (string, error) {
 	}
 	var idleErr *activity.IdleTimeoutError
 	var totalErr *activity.TotalTimeoutError
+	var abandoned *pause.AbandonedError
 	switch {
 	case errors.As(err, &idleErr):
 		return StopKindIdleTimeout, err
@@ -73,7 +76,13 @@ func classifyStop(err error, ctx context.Context) (string, error) {
 	case errors.Is(err, context.DeadlineExceeded):
 		// 委派之外也有 deadline（单工具 defaultToolTimeout / 单次 LLM llmTimeout）。
 		// 归到 total 比归到 cancelled 有用：两者都不该原样重放同一步。
+		// 排在 abandoned 之前：一个包着超时的 AbandonedError，真实原因是超时，
+		// 不是"用户停住了"。
 		return StopKindTotalTimeout, err
+	case errors.As(err, &abandoned):
+		// 必须排在 cancelled 之前：AbandonedError 能 errors.Is 到 context.Canceled，
+		// 先写 cancelled 的话这一整类就永远不会出现。
+		return StopKindPaused, err
 	case errors.Is(err, context.Canceled):
 		return StopKindCancelled, err
 	default:
@@ -217,7 +226,10 @@ func ScanResumeCandidates(dir string) ([]ResumeCandidate, error) {
 		// 反过来写（默认允许）会让将来新增的任何停止原因自动获得重放资格，
 		// 而那正是把一次失败当成可继续、进而重复执行副作用的路径。
 		switch kind {
-		case StopKindCancelled:
+		case StopKindPaused, StopKindCancelled:
+			// 两类都是"主动停下来的"，所以可以原样继续；差别在停在哪：
+			// paused 必然落在 step 边界（闸门只在批次之后生效），
+			// cancelled 可能停在某个在飞的工具中间 —— P2 的重放判据用得上。
 			c.Resumable = true
 		case StopKindMaxSteps:
 			c.Unresumeable = "run exhausted its max steps; replaying it would do the same"
