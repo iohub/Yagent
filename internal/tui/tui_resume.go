@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -770,7 +769,8 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 		}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// 任务 ctx 一律带闸门：恢复出来的会话首轮就能被 /pause 停住。
+	ctx, cancel := http.NewTaskContext(0)
 	m.taskManager.AddTask(&http.Task{
 		ID:         taskID,
 		Status:     "finished",

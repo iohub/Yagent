@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"strings"
 	"time"
 
@@ -73,7 +72,9 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 	m.cachedStatusBar = m.renderAirlineStatusBar()
 	m.statusBarValid = true
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// 任务 ctx 一律带闸门（A 层）：/pause 与 /continue 碰的就是它，
+	// 而 http.Task.Gate() 从 ctx 上把它读回来 —— 只有一份，不会漂移。
+	ctx, cancel := http.NewTaskContext(0)
 	task := &http.Task{
 		ID:         uuid.New().String(),
 		Status:     http.TaskStatusRunning,
