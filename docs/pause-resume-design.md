@@ -970,7 +970,7 @@ B1 与 B5 需要重点评审：B1 改的是恢复语义，B5 改的是工作区�
 | 阶段 | 状态 | 备注 |
 |------|------|------|
 | P0 前置修复 | **已落地**（4 条全在 `feat-pause-resume`） | P0.1 `48af58f`、P0.3 `6fb11ad`、P0.4 `c39e5fb`、P0.2 `4fd7ee3` |
-| P1 活暂停（A） | 未开始 | 交付即拿到可用的停止/继续 |
+| P1 活暂停（A） | **已落地** | P1.1–P1.6 全部；对本文的修正见 §15.3，变异验证见 §15.4 |
 | P2 检查点重放（B） | 未开始 | 承重层，跨进程/换机器靠它 |
 | P3 交接兜底（C） | 未开始 | 换机器场景的实际主路径（§6.4 判据 5） |
 
@@ -1020,3 +1020,96 @@ B1 与 B5 需要重点评审：B1 改的是恢复语义，B5 改的是工作区�
 §7（`[resume]` 配置表）、§11（新增坑：暂停不能走 `handleTaskCompleteMsg` 的换 ctx 路径）。
 P0 已经改了 §6.7 与 §11 坑 16 依赖的事实（rollout 现在带 git 身份与 stop_reason），
 那两处 `AGENTS.md` 的同步留到 P1 一并做，避免同一个文件改两遍。
+→ P1 已按此同步（见 §15.3 第 7 条与 `AGENTS.md` 的对应小节）；`[resume]` 配置表属于 P2.8，本轮没做。
+
+### 15.3 P1 落地时对本文的七处修正
+
+实施结果与本文原稿不一致的地方，以代码为准：
+
+1. **§5.4 内部自相矛盾，取了「gate 处于 paused」那一支**。原稿一处说
+   `Wait` 在暂停中被取消要写 `stop_kind=cancelled`，另一处（§4.1 的 planner 接入点）
+   说走 `writeAborted("paused", "paused")`。实现取 **`paused`**，理由是它严格更有信息：
+   闸门只在 step 边界生效，所以记为 `paused` 的那一轮**必然**是"批次已整体提交完"，
+   而 `cancelled` 可能停在某个在飞的 `run_bash` 中间 —— P2 的重放判据正好需要这个差别。
+   两类都在 `ScanResumeCandidates` 里可继续；`AbandonedError` 仍 `errors.Is` 到
+   `context.Canceled`（`Unwrap` 带着 ctx 的 cause），取消传播一行都没改。
+   分类顺序因此是承重的：idle/total/deadline 排在 abandoned **之前**（包着超时的
+   `AbandonedError` 真实原因是超时），abandoned 排在 cancelled **之前**
+   （否则它永远匹配不上）。
+2. **§4.2 的监视器伪码少了一半**。原稿只写"暂停期间 `idleFor = 0`"。这只覆盖阻塞中；
+   `Resume` 之后 `last.at` 还是暂停前那次心跳的时刻，第一个 tick 就会算出
+   `idleFor = 暂停时长` 而**立刻杀掉刚恢复的任务**。实现是 `activity.Resume` 在结算
+   `pausedTotal` 的同时把 `last` 写成 `{at: 恢复时刻, kind: "resumed"}` —— 空闲基准
+   随恢复前移，不需要做区间求交的算术。标签用 `resumed` 而不是沿用上一个动作，
+   是为了让超时报白（"last activity: resumed 60s ago"）读起来是真的。
+3. **`Pause`/`Resume` 的幂等方向要写死**：`Resume` 未在暂停中时**不得**重建 `resumeCh`
+   （否则给正在 `Wait` 的循环留下一个永不关闭的通道），也**不得**顺手续期 idle
+   （否则闸门里多出的一次 Resume 成了免费心跳，暂停-恢复循环能把任务永远吊着不超时）。
+   两条各有一个用例钉住。
+4. **§4.1 的"Blocked 布尔"改成了计数**。嵌套委派时 Director 与它派出的子 Agent 会同时
+   停在同一个闸门上，布尔的话先醒来那个会把还在停的人报成"没停"。UI 用
+   `Paused()`（按下了）与 `Blocked()`（确有循环停住）区分"正在停"与"已停住" ——
+   从按下到停住最长要等一个 `defaultToolTimeout`(180s)，说"已停"是骗人。
+5. **§8.2 的 `/pause` 在这个 TUI 里不是命令，是搜索**。`processCommand` 的 `/` 前缀默认
+   走 `runSearch`，只有 `/resume`、`/rs` 被显式列出。所以 `/pause`、`/continue`、
+   `/unpause` 也必须显式列出，否则按下去是在搜字符串 "pause"（界面上什么都没发生）。
+   `:pause` 与裸 `pause` 同一条实现；Tab 补全选中的内置命令也要单独分流，否则会掉进
+   `SkillRegistry` 查找。**键位仍未实现** —— §14 第 1 条是未决项，不由实施方替用户决定。
+6. **§8.1 的 `Task.Resumption` 没加**，闸门也不是 `Task` 上的字段。原稿要给 Task 加一个
+   `Gate` 字段：那样就有两份状态，任何"换了 `Context` 忘了换闸门"的地方（`handleStartTask`
+   的续跑分支正是这种）都会让 `/pause` 停在一个没人在等的闸门上，且不报错。
+   实现是 `NewTaskContext()` 把闸门挂进 ctx 唯一一份，`Task.Gate()` 从 ctx 读回来。
+   `Resumption` 属于 P2（它描述的是检查点），本轮没有可填的数据。
+7. **协议生成器落后于它自己的产物，不能无脑重新生成**（AGENTS.md §6.6 的说法要打折）：
+   `scripts/protoc-gen-yagent` 现在跑出来的 `protocol/go/agent-events.go` 与仓库里那份
+   有 27 行差异 —— 仓库那份的 `ParseEventPayload` 被手工修过（走 `json.RawMessage`，
+   而生成器还在走 `interface{}` 类型断言）；`internal/protocol/agent_events.go` 与
+   `protocol/go/agent-events.go` 更是有 445 行差异。所以本轮的做法是：改 yaml → 重新生成
+   那三个"与生成器输出逐字节相同"的产物（`ts/agent-events.ts`、`ts/render-mapping.ts`、
+   `agent-events.schema.json`）→ 对两份 Go 产物只**逐字粘贴生成器新增的那几块**，
+   并验证粘贴结果与新生成器输出对新事件的部分逐字节相同。
+   P2 若还要加事件，先把 `ParseEventPayload` 的手工修复回植进生成器，否则每次生成都要重做这个判断。
+
+另两条 P1 中发现、**本次刻意未做**的事：
+
+- §9 里"收尾时看 `pause.From(ctx).Paused()`"没加。A 层的暂停根本走不到 `OnAgentExit`
+  （循环还阻塞着），而被丢弃的暂停已有 `ctx.Err() != nil` → `interrupted=true`。
+  现在加它是没有读者的死分支；P2 的检查点写入才是它的读者。
+- `--prompt` 非交互模式仍然没有闸门可按（它连 cancel 都没有，`main.go` 用
+  `context.Background()`）—— §14 第 3 条，跨进程继续天然可用（检查点在盘上），
+  触发入口留待以后。
+
+### 15.4 P1 的验证方式
+
+- **实测变异**（本轮在工作区里改、跑完立刻还原；还原后用 `git diff` 与改动前的备份
+  逐行比对，确认只剩刻意新增的两行测试表项。**注意**：这不是 §15.2 说的"一次性 worktree"
+  —— worktree 从 HEAD 切出来会**没有**这些未提交的改动，跑不到被测代码）：
+
+  | # | 变异 | 红掉的测试 |
+  |---|------|-----------|
+  | M1 | 监视器阻塞期间不置 `idleFor = 0` | `TestIdleTimeoutFrozenWhilePaused`、`TestPauseFreezesWholeNestedChain` |
+  | M2 | `totalElapsed` 不扣暂停时长 | `TestTotalTimeoutExcludesPaused`（G4a 仍绿 —— 两条独立） |
+  | M3 | executor 接入点取到闸门却从不阻塞 | `TestPauseStopsAtStepBoundary`、`TestPauseMidDelegationKeepsTheDelegationWhole`、`TestRunAgentLoop_AbandonedPauseReportsPaused`、`TestRunAgentLoop_ReleasedPauseLeavesNoAbort` |
+  | M4 | 删掉 agents 侧 abandoned 分支 | `TestClassifyStop_Table` 两条 paused 行 + 上面两个循环级测试 |
+  | M4b | **只**把 agents 侧改成 return cancelled | `TestStopKindClassifiersAgree/停在闸门上后被取消` —— 两份实现的漂移由聚合测试单独抓住 |
+  | M5 | 删掉 `processCommand` 的 `/pause` 分支 | `TestSlashPauseDrivesTheGateOnTheTaskContext` |
+  | M6 | `ContinueTask` 只看闸门不看任务状态 | `TestContinueRefusesCancelledWhilePaused` |
+
+  M4 之后发现聚合测试原本**没有** abandoned 输入（一边漂走只能靠值表偶然抓到），
+  已补两行 —— 这也是 M4b 能红的原因。
+- `bash scripts/check_all.sh` 全绿（build / vet / 五把守卫 / 全量单测）；
+  `go test -race` 对 `./internal/agents/... ./internal/memory/ ./internal/pause/ ./internal/http/`
+  干净（闸门是并发原语，这轮必须跑）。
+- 计时稳定性：`activity`/`agents`/`pause`/`tui` 四个包连续 3 轮全绿。
+- **测试耗时更正**：新增闸门测试自带约 1.0s（`activity` 包 1.7s→2.7s，用 `-skip` 实测归因），
+  `./internal/agents` 约 10.7s（与本轮无关，占头的是 `TestConsolidationWorker_...LLMFailure`
+  的 3.0s 与两条 e2e 生命周期用例的 1.1s 各一条）；`go test ./internal/...` 墙钟约 11s。
+  `AGENTS.md` §8.3 里"全仓约 6-7s / agents 约 8s"的旧口径已按实测改写。
+- `planner_run.go` 从 658 降到 **657** 行：暂停闸门接入点要 9 行（8 行循环顶部 + 1 行 import），
+  换来的是把 `runState` 闭包挪进新增的 `director/planner_rollout.go`（−8 行）和一条三行
+  `slog.Warn` 收成一行（−2 行）。`scripts/check_file_sizes.sh` 的 PENDING 冻结上限同步下调到 657。
+- TUI 只跑了渲染/段数断言与宽度相关用例（`go test ./internal/tui/...` 全绿）。
+  **没有 TTY，无法肉眼验收状态栏**：新增的 `⏸ PAUSING/⏸ PAUSED` 段是**替换** spinner
+  而不是多加一段（`TestAirlineOmitsPauseSegmentWhenIdle` 钉住段数不变），
+  但真机上按一次 `/pause` 的观感仍需人工确认。
+

@@ -1,8 +1,10 @@
 # Yagent Agent 开发知识库
 
 > **本文件是 Agent 理解仓库和进行开发的标准指南。** 所有 Agent 在操作此仓库前必须先阅读本文件。
-> 本文件描述的是当前代码的真实状态（核对时间 2026-10-14：补齐核心系统单测基线，并修掉三处
-> "错了不报错"的静默失效 —— Bedrock 配置归一化、Anthropic thinking budget、流式 tool_use 装配）。
+> 本文件描述的是当前代码的真实状态（核对时间 2026-10-15：落地 P1 活暂停 —— `internal/pause` 闸门、
+> `activity` 计时冻结、两个循环的 step 边界接入点、`paused` 停止原因、TUI `/pause` `/continue` 与
+> HTTP pause/continue；上一轮 2026-10-14 补齐核心系统单测基线，并修掉三处"错了不报错"的静默失效 ——
+> Bedrock 配置归一化、Anthropic thinking budget、流式 tool_use 装配）。
 > 文件末尾由 codeseek 自动维护的注入区块除外。
 
 ---
@@ -96,7 +98,7 @@ yagent/
 │   │   ├── specs.go            # Agent 侧工具的注册表声明（checkpoint/delegate_*/read_*）
 │   │   ├── ports.go            # 窄接口：切断 agents ↔ 子系统的循环依赖
 │   │   ├── result.go           # 子 Agent 结果 finalize / FormatForDirector
-│   │   ├── activity/           # 活动感知 idle/total timeout（Heartbeat / WithIdleTimeout）
+│   │   ├── activity/           # 活动感知 idle/total timeout（Heartbeat / WithIdleTimeout / Pause / Resume）
 │   │   ├── director/           # Planner、Meta 注册表、项目上下文加载、熔断状态、指标
 │   │   ├── toolbatch/          # 只读工具并行分批调度（无业务依赖的叶子包）
 │   │   ├── git_checkpoint.go   # 每个编码子任务的 git 快照/回滚
@@ -123,6 +125,7 @@ yagent/
 │   ├── messaging/              # 事件总线（Dispatcher / Publisher / consumers/）
 │   ├── models/                 # 模型目录（dist/data/models.json）：context window + benchmark
 │   ├── protocol/               # 由 protocol/agent-events.yaml 生成的事件类型
+│   ├── pause/                  # 暂停闸门（A 层）：Gate + ctx value + AbandonedError，只依赖 activity
 │   ├── recovery/               # LLM 熔断器
 │   ├── skills/                 # SKILL.md 注册表（仅 TUI 斜杠命令消费）
 │   ├── thinklink/              # 结构化 <thought> 解析 + 思维日志（驱动 ultimate 压缩）
@@ -289,6 +292,14 @@ type Adapter struct { name, description string; fn ToolFunc
 - **Director**：自己的 `director.Planner`（`director/planner_run.go`），额外有熔断器、
   未委派提醒（最多 3 次强制委派 nudges）、`activity.WithIdleTimeout` 包裹的委派超时
   （`[agent] delegate_idle_timeout` / `delegate_total_timeout`）。
+- **暂停闸门（A 层，`docs/pause-resume-design.md`）**：两个循环的 step 边界各有一行
+  `pause.From(ctx).Wait(ctx)` —— 子 Agent 在 `executor.go` 循环体开头（`stepNumber++` 之前），
+  Director 在 `planner_run.go` 循环体开头（`p.state.Step = i + 1` 之前）。闸门挂在任务 ctx 上
+  （`internal/pause`，`http.NewTaskContext` 建、`http.Task.Gate()` 读回），嵌套委派自动继承。
+  `Wait` 对 nil receiver 安全：没有闸门的调用点（测试、`--prompt`）一行都不用改。
+  与取消的区别：闸门**不取消** ctx，所以恢复后是从阻塞点原地继续，而不是"一次失败的委派"
+  （`AGENTS.md` §11 坑 17）。暂停期间 `activity` 的 idle 与 total 计时都被冻结
+  （`Heartbeat` 只能续 idle —— total 的起点是创建时固定的）。
 
 ### 6.3 路由（auto-routing）
 
@@ -365,9 +376,16 @@ Consumer 有两种：旧版 `MessageConsumer`（广播）与新版 `Consumer{Typ
 `llm_call_start` · `llm_call_end` · `model_info` · `model_routed` ·
 `tool_call_start` · `tool_call_result` · `user_help_needed` · `user_help_response` ·
 `context_loaded` · `commit_context_loaded` · `context_compressed` · `context_emergency_compressed` ·
-`context_ultimate_compressed` · `knowledge_injected` · `thinklink_entry` · `conversation_error` / `conversation_result`
+`context_ultimate_compressed` · `knowledge_injected` · `thinklink_entry` · `conversation_error` / `conversation_result` ·
+`task_paused` / `task_resumed`（暂停闸门，由 `TaskManager.PauseTask/ContinueTask` 经 melody 广播）
 
 > **新增事件类型要改 `protocol/agent-events.yaml` 再重新生成**，不要手改 `internal/protocol/agent_events.go`（文件头写着 DO NOT EDIT）。
+> **但"重新生成"今天不能无脑跑**：`scripts/protoc-gen-yagent` 的输出与仓库里两份 Go 产物已经漂移
+> （`protocol/go/agent-events.go` 的 `ParseEventPayload` 被手工修成走 `json.RawMessage`，生成器还在走
+> `interface{}` 类型断言；`internal/protocol/agent_events.go` 与它差约 445 行）。整体重跑会把那个手工修复
+> 冲掉。当前可行做法是：改 yaml → 只覆盖 `ts/agent-events.ts`、`ts/render-mapping.ts`、
+> `agent-events.schema.json`（这三个与生成器输出逐字节相同）→ 把生成器**新增的那几块**逐字粘进两份 Go 产物。
+> 想恢复"一条命令生成"，先把生成器追上现状。详见 `docs/pause-resume-design.md` §15.3 第 7 条。
 > 生成器与 schema 目前落后于实际总线（`model_routed`、`context_*_compressed`、`thinklink_entry` 等未入 schema）。
 
 ### 6.7 任务生命周期与持久化
@@ -382,7 +400,7 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 | 数据 | 路径 | 写入方式 |
 |------|------|----------|
 | 任务记忆 | `~/.yagent/tasks/{taskID}.jsonl` | **5 秒防抖**、增量追加（条数变少则全量重写） |
-| **Rollout（断点续跑的事实来源）** | `~/.yagent/data/rollout/{projectID}/{ts}_{session}[_{agent}].jsonl` | **同步写**，类型含 `session_meta/turn_context/response_item/event_msg/compacted/world_state` |
+| **Rollout（断点续跑的事实来源）** | `~/.yagent/data/rollout/{projectID}/{ts}_{session}[_{agent}].jsonl` | **同步写**，类型含 `session_meta/turn_context/response_item/event_msg/compacted`（`world_state` 已于 2026-10-14 删除）；`session_meta` 带 git 身份，终止事件带 `stop_reason`（词表在 `memory/rollout_types.go`：`paused/cancelled/idle_timeout/total_timeout/max_steps/llm_error/circuit_breaker_open/panic/plain_text/agent_exit/unaccounted`） |
 | Blackboard 便签 | `~/.yagent/notes/{boardID}/{agent}/*.md` | 原子写，`YAGENT_NOTES_ROOT` 可覆盖 |
 | Artifact | `~/.yagent/data/artifacts/{id}` | 原子写，ID `^\d{8}-\d{6}-[0-9a-f]{8}$` |
 | 共享/仓库记忆 | `~/.yagent/data/shared_memory/{projectID}/shared_memory.json` | 5 秒 ticker + dirty 标记，退出前 flush |
@@ -390,8 +408,14 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 | 浏览器工作区 | `~/.yagent/data/browser/{delegation}/.browser-control/` | 由 `cmd.Dir` 决定落点（上游状态路径是 CWD 相对）；含 current-tab、chrome.pid、traces、截图；`[browser] workspace_ttl` 清理 |
 | 日志 | `~/.yagent/logs/`（`app-`、`llm-`、`llm-error-`、`tool-`、`delegate-`、`knowledge-*`，按任务分子目录） | 追加 |
 
-**`/resume`** 列出 rollout 会话 → `ReadRolloutMemory` 重建 Memory（修复工具调用配对）→ 恢复 thinklink 条目，
-被打断的任务标记为失败并提示；下一轮以 `resumed=true` 强制重注入项目上下文。
+**`/resume`** 列出 rollout 会话 → `ReadRolloutMemory` 重建 Memory → 恢复 thinklink 条目，
+下一轮以 `resumed=true` 强制重注入项目上下文。工具调用配对按 **last-wins** 修复（同一 `call_id`
+出现第二条 output 时原位覆盖并计入 `SupersededOutputs`）—— 这与 LLM 侧 `llm.repairToolCallPairs`
+的语义一致，两边不一致的表现是"进程内喂给模型的和 /resume 后喂给模型的不是同一份"
+（`TestToolPairingNormalizersAgree` 钉住）。终止事件带 `stop_reason`，
+`ScanResumeCandidates` 据此判定能否原样继续：**默认拒绝**，只有 `paused` 与 `cancelled`
+可重放（前者必然停在 step 边界，后者可能停在工具中间）；不可重放的候选照样返回并说明原因，
+不静默过滤。
 
 ### 6.8 TUI（`internal/tui`，Bubble Tea **v2**）
 
@@ -427,7 +451,11 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 ### 6.9 HTTP
 
 `POST /api/start_task`、`GET /api/task_status`、`GET|DELETE /api/memory`、`GET /api/memory/:type`、
-`GET /api/history`、`POST /api/load_task`、`POST /api/cancel_task`、`GET /ws`。
+`GET /api/history`、`POST /api/load_task`、`POST /api/cancel_task`、
+`POST /api/pause_task`、`POST /api/continue_task`、`GET /ws`。
+任务状态四档不变，另加 **`paused`**（`TaskStatusPaused`）：暂停闸门不产生 task_complete，
+所以旧四档里没有一个能表达"停住但可继续"。`http.Task.Gate()` 从 ctx 读回闸门，
+不在结构体里另存一份（两份状态 = 一处忘了换 = `/pause` 停错对象且不报错）。
 WebSocket 用 melody，每个任务一个 Dispatcher + `WebSocketConsumer`，向所有连接广播 `realtime` envelope（无按会话过滤）。
 
 ---
@@ -534,9 +562,10 @@ BUILD_TYPE=debug ./build.sh
 bash scripts/check_all.sh                 # 一条命令的本地闸门：build + vet + 五把守卫 + 全量单测
 RACE=true bash scripts/check_all.sh       # 同上，再对并发包跑 -race（慢 3-8 倍，改到并发时手动跑）
 bash scripts/check_all.sh --fast          # 只跑 ./internal/... 的全量单测，跳过 ./... 与守卫之外的部分
-go test ./... -count=1 -timeout 600s      # 全仓 26 个测试包，墙钟约 6s（包间并行）
+go test ./... -count=1 -timeout 600s      # 全仓 26 个测试包，墙钟约 12s（包间并行；2026-10-15 实测）
 go test ./internal/tui/... ./internal/messaging/... -count=1   # 快循环，亚秒级
-go test ./internal/agents/... -count=1 -timeout 300s  # 最慢的一档，约 8s
+go test ./internal/agents/... -count=1 -timeout 300s  # 最慢的一档，约 10.5s
+go test ./internal/agents/ -count=1 -skip 'TestPause...'       # 用 -skip 做耗时归因，别猜
 bash scripts/check_test_hygiene.sh        # 单测卫生棘轮（见 §9.2）
 go vet ./...                              # 必须干净
 ```
@@ -761,6 +790,21 @@ plan:
     所以便签正文与 artifact 全文存的都不是那份交付。现在由
     `internal/agents/e2e_{handoff,lifecycle}_test.go` 钉住（委派只花 1 次 LLM 调用），
     新增子 Agent 时漏设 StopOnFinish 会直接红。
+17. **暂停不是取消，两者弄混会静默丢工作**：A 层的闸门（`internal/pause`）**不取消 ctx**，只在
+    step 边界阻塞；取消会解开调用栈，并把那次委派的工具结果写成 `"Error: context canceled"`，
+    Director 于是以为"委派失败了"并自行重做或收尾。三条必须记住的推论：
+    ① 暂停期间必须显式冻结 `activity` 的 idle **和** total —— `Heartbeat` 只能续 idle
+    （`totalElapsed` 取自创建时固定的 `startTime`），只处理 idle 的表现是"暂停 20m 后被总超时杀掉"；
+    ② `activity.Resume` 必须把空闲基准推到恢复时刻，否则第一个 tick 就算出
+    `idleFor = 暂停时长`，**刚恢复的任务立刻被杀**；
+    ③ 暂停态绝不能走 `handleTaskCompleteMsg` 的换 ctx 分支（它会丢掉闸门所在的那棵 ctx）。
+    另外：`/` 前缀在 TUI 里默认是**搜索**，新命令必须显式列进 `processCommand` 的斜杠分支，
+    否则 `/pause` 是在搜字符串 "pause"，界面上什么都没发生。
+18. **"两份同形实现"必须各自有输入进聚合测试**：`agents.classifyStop` 与
+    `director.StopKindOf` 因分层守卫（`check_no_agents_import.sh`）只能各写一份，取值靠
+    `memory.StopKind*` 对齐、行为靠 `TestStopKindClassifiersAgree` 对齐。P1 加 `paused` 时，
+    值表先加了 abandoned 输入而聚合表没有 —— 结果**只有一边漂走**时聚合测试是绿的，
+    补上输入才红得出来。加词表值时的正确顺序：先给聚合测试喂一个新输入，再让两边实现去追它。
 
 
 <!-- CODESEEK_INJECTION -->
