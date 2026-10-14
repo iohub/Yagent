@@ -607,9 +607,9 @@ func (m *model) handleNormalGlobalKey(key string) (bool, tea.Cmd) {
 		return true, nil
 
 	case "alt+t":
+		// 只 toggle + 失效：在这里预渲染会被紧接着的 invalidate 丢掉，
+		// 面板由 tokenDashboardBlock 按需重算。
 		m.tokenDashboardCollapsed = !m.tokenDashboardCollapsed
-		m.cachedTokenDashboard = m.renderTokenDashboard()
-		m.tokenDashboardValid = true
 		m.invalidateFooterCache()
 		return true, nil
 

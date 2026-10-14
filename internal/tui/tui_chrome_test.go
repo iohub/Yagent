@@ -551,7 +551,7 @@ func TestView_ExactHeightWithPanels(t *testing.T) {
 			m.inputTokens = 120000
 			m.outputTokens = 34000
 			m.tokenDashboardCollapsed = true
-			m.currentAgentRunTokens = AgentRunTokens{AgentName: "Director", InputTokens: 120000, OutputTokens: 34000}
+			m.setRun(AgentRunTokens{AgentName: "Director", InputTokens: 120000, OutputTokens: 34000})
 		}},
 		{"token-dashboard-expanded", func(m *model) {
 			m.taskStarted = true

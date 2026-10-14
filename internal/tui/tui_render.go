@@ -75,14 +75,14 @@ func (m *model) tokenDashboardBlock() string {
 	if m.dashboardVisible() {
 		return ""
 	}
-	dash := m.cachedTokenDashboard
 	if !m.tokenDashboardValid {
-		dash = m.renderTokenDashboard()
+		m.cachedTokenDashboard = m.renderFooterTokenPanel()
+		m.tokenDashboardValid = true
 	}
-	if dash == "" {
+	if m.cachedTokenDashboard == "" {
 		return ""
 	}
-	return "\n" + dash
+	return "\n" + m.cachedTokenDashboard
 }
 
 func (m *model) updateViewportCache() {

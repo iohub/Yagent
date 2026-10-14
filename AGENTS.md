@@ -120,7 +120,7 @@ yagent/
 │   ├── thinklink/              # 结构化 <thought> 解析 + 思维日志（驱动 ultimate 压缩）
 │   ├── tokenutil/              # tiktoken 封装（EstimateTokens）
 │   ├── tools/                  # 工具 Adapter 实现 + workspace_guard + user_confirm
-│   ├── tui/                    # Bubble Tea v2 界面（75 个文件）
+│   ├── tui/                    # Bubble Tea v2 界面（78 个文件）
 │   │   ├── anim/ common/ components/ layout/
 │   └── util/                   # 崩溃上报等
 ├── protocol/                   # agent-events.yaml（SSOT）+ 生成的 go/ 与 ts/ 副本
@@ -379,6 +379,10 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 
 - **状态**：`tui_model.go`（logEntry + 渲染缓存 + keymap + `eventCh(1000)`）；更新逻辑按 `tui_update_*.go` 拆分；
   渲染按 `tui_view.go` / `tui_render.go` / `render.go` / `tui_chrome.go` / `tui_tabs.go` / `tui_dashboard.go`。
+  token 消耗展示是**单一渲染器**：`token_panel.go` 的 `buildTokenPanel` 同时产出侧栏 dashboard、底部面板与 `alt+t` 折叠行，
+  所有口径只在 `(*model).tokenSnapshot()` 里算一次（输入量一律用 provider 归一化的 `TotalInputTokens` ——
+  OpenAI 的 `prompt_tokens` 含缓存、Anthropic 的 `input_tokens` 不含，混用会让同一标签出两个数）。
+  不要在任何表面里另取计数器直接格式化；完整规格见 `docs/token-dashboard-design.md`。
 - **叠加模式**：timeline 全屏、thinklink 全屏、history、resume、dialog 栈、主页面——按此优先级渲染。
   每层都必须正常消费 `taskEventMsg` 并重新武装 `listenForEvents`（该 cmd 是一次性的，事件没有重放队列）。
 - **thinklink 全屏**：条目来自 `thinklink_entry` 事件（payload 的 `agent` 字段 = 发布方 Agent 名），

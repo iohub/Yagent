@@ -67,12 +67,11 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 	m.taskStarted = true
 	m.commandMode = true
 	m.errMsg = ""
+	// 新一轮开始：RUN 列归零，Σ 与每 agent 的 TOTAL 保留
+	m.resetRunTokens()
 	// Task started — update status bar cache
 	m.cachedStatusBar = m.renderAirlineStatusBar()
 	m.statusBarValid = true
-	// Also update token dashboard since we counted input tokens
-	m.cachedTokenDashboard = m.renderTokenDashboard()
-	m.tokenDashboardValid = true
 
 	ctx, cancel := context.WithCancel(context.Background())
 	task := &http.Task{
@@ -120,12 +119,11 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 	m.taskStarted = true
 	m.commandMode = true
 	m.errMsg = ""
+	// 追问同样是"新一轮"：RUN 列归零，Σ 与每 agent 的 TOTAL 保留
+	m.resetRunTokens()
 	// Task started — update status bar cache
 	m.cachedStatusBar = m.renderAirlineStatusBar()
 	m.statusBarValid = true
-	// Also update token dashboard since we counted input tokens
-	m.cachedTokenDashboard = m.renderTokenDashboard()
-	m.tokenDashboardValid = true
 
 	// 消费一次性续跑标记：恢复会话（/resume、history 加载）后的首次追问按 Resumed
 	// 提交，Director 续跑首轮强制注入项目上下文；只消费一次，与 FirstConversation

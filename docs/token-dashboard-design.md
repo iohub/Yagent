@@ -18,8 +18,8 @@
 | `token_panel.go` | **新建**：口径计算 + 统一渲染器 |
 | `tui_dashboard.go` | 重写 token 段（`:118-296`），保留 Activity 段（`:298-338`）与边框收敛逻辑（`:340-385`） |
 | `tui_view.go` | **删除** `renderTokenDashboard`(`:658-757`)、`renderCollapsedTokenDashboard`(`:759-807`)、`formatCacheInfo`(`:643-656`)；`formatToken`(`:632`) 保留并移入 `token_panel.go` |
-| `tui_context_line.go` | `renderContextLine` 改为调用统一的 `meterRow`，输出形态变化（见 §2.1） |
-| `tui_model.go` | 状态字段增删（`:452-464`） |
+| `tui_context_line.go` | **已删除**：⛁ 行收进 `token_panel.go` 的 `meterLine`/`ctxMeterParts`，与 ⊕ 行共用同一个计量条原语 |
+| `tui_model.go` | 状态字段增删（`:442-463`） |
 | `tui_update_tasks.go` | `ai_response` 累计逻辑（`:108-239`）改为写新的 per-agent run 表 |
 | `tui_render.go` | `tokenDashboardBlock`(`:74-86`) 改调新渲染器；`computeFooterHeight`(`:45`) 不变但行数会变 |
 | `tui_update_keys.go` | 修 `alt+t`(`:609-614`) 的 render-then-invalidate 顺序 bug |
@@ -62,7 +62,7 @@
 │ ◆ Tokens                           alt+d 收缩  │
 │ ────────────────────────────────────────────── │
 │ Σ 2.41m                   in 2.35m · out 58.2k │
-│ ⊕ ▰▰▰▰▰▰▰▱▱▱ 71%          hit 1.67m · new 0.8k │
+│ ⊕ ▰▰▰▰▰▰▰▱▱▱ 71%           hit 1.67m · new 800 │
 │ ⛁ ▰▰▰▰▰▰▱▱▱▱ 64%               128.4k / 200.0k │
 │ ────────────────────────────────────────────── │
 │   AGENT         RUN ▸   TOTAL          ⊕ CACHE │
@@ -100,7 +100,7 @@
 └────── 固定 16 列 ──────┘
 ```
 
-- `pct` 一律 `%.0f%%`（**注意**：现有 `renderContextLine` 用 `%.1f%%` → `64.2%`，新规范改成 `64%`，见 §8 缺陷 7）。
+- `pct` 一律 `%.0f%%`（**注意**：现有 `renderContextLine` 用 `%.1f%%` → `64.2%`，新规范改成 `64%`，见 §8 缺陷 10）。
 - bar 填充数 = `int(ratio*cells + 0.5)`，clamp 到 `[0, cells]`；`ratio` 封顶 1.0。
 - 左段恒为 16 列，右段右对齐到 inner —— 两条计量条的 bar 起点与 pct 位置严格对齐。
 
@@ -126,19 +126,26 @@
 
 **inner ≠ 46 时**：`dot/gap/RUN/arrow/TOTAL/gap` 固定（合计 21），`name` 固定 9，**余量全部给 ⊕ CACHE 段**（`cacheCol = inner - 30`），右对齐不变。
 
-### 2.3 golden 字符串（可直接粘进测试，均为 46 列）
+### 2.3 golden 字符串（实现已逐行核对，均为 46 列）
+
+来自 `TestTokenPanel_GoldenS1`，样例数据：`totalInput=2.35m / output=58.2k / cacheRead=1.67m / cacheNew=800 / ctx=128.4k, window=200k`，四个 agent 按 TOTAL 降序。
 
 ```go
 "◆ Tokens                           alt+d 收缩 "   // 标题行（fill = 46-8-12 = 26）
 "──────────────────────────────────────────────"   // 分隔
 "Σ 2.41m                   in 2.35m · out 58.2k"   // Σ 行
-"⊕ ▰▰▰▰▰▰▰▱▱▱ 71%          hit 1.67m · new 0.8k"   // 缓存计量条
+"⊕ ▰▰▰▰▰▰▰▱▱▱ 71%           hit 1.67m · new 800"   // 缓存计量条
 "⛁ ▰▰▰▰▰▰▱▱▱▱ 64%               128.4k / 200.0k"   // 上下文计量条
+"──────────────────────────────────────────────"   // 分隔
 "  AGENT         RUN ▸   TOTAL          ⊕ CACHE"   // 列头
 "● director    12.4k ▸   1.82m             ⊕74%"   // agent 行
 "● coding       8.2k ▸  384.2k             ⊕58%"
-"┈ +2 more"                                         // 截断提示（左对齐，不补齐）
+"● repo         3.1k ▸   96.4k             ⊕66%"
+"● browser      1.2k ▸   42.8k             ⊕31%"
 ```
+
+> **`formatToken` 的 m 档改成 2 位小数**（`%.2fm`，k 档仍 1 位）：`Σ` 与 `in` 常常只差几个百分点，1 位小数会把两者印成同一个数（`2.4m` / `2.4m`），英雄行就失去了意义。视觉稿里的 `2.41m / 2.35m / 1.82m` 依赖这一点。
+> 改这个函数是安全的：`internal/tui` 里只有 token 面板用它（`internal/tui/components` 另有自己的格式化，模型选择框的 `1.0m` 不受影响）。
 
 > **键帽宽度随语言变化**：`dashKeycap("alt+d", "收缩")` = 12 列，`dashKeycap("alt+d", "collapse")` = 16 列。fill 必须用 `inner - lipgloss.Width(title) - lipgloss.Width(keycap)` 现算，**禁止硬编码 26**。
 
@@ -164,7 +171,7 @@
 | `out` 值 | `114` | `dashOutFg` (`:25`) |
 | 所有标签（`in`/`out`/`hit`/`new`/`AGENT`/`RUN`/`TOTAL`/`⊕ CACHE`） | `244` | `dashLabelFg` (`:23`) |
 | ⛁ bar + pct 渐变 | `79` / `214` / `203`（<60% / 60–85% / >85%） | `tui_context_line.go:50-56` |
-| agent 圆点与名字 | `AgentColor(name)` | `styles.go:207` |
+| agent 圆点与名字 | `AgentColor(name)` | `styles.go:210` |
 | 分隔线 | `238` | `dashSepFg` (`:26`) |
 | 键帽 | `247` bold + `241` italic | `dashKeycap` (`:31-35`) |
 | `┈ +N more` | `243` italic | `tui_dashboard.go:291-294` |
@@ -225,33 +232,38 @@
 // tokenSnapshot 是渲染器的唯一输入：所有口径计算都在构造它时完成，
 // 渲染层只做排版，不再碰 model 上的任何计数器。
 type tokenSnapshot struct {
-    totalIn, totalOut     int64
-    cacheRead, cacheNew   int64
-    ctxTokens             int64
-    ctxWindow             int
-    activeAgent           string
-    agents                []agentTokens // 已按 Total 降序、已过滤零用量
+    totalIn, totalOut   int64
+    cacheRead, cacheNew int64
+    ctxTokens           int64
+    ctxWindow           int
+    agents              []agentTokens // 已按 TOTAL 降序（同值按名字），已过滤零用量
+    active              agentTokens   // 活跃 agent 的那一行，供折叠形态取用
 }
 
 type agentTokens struct {
-    name                        string
-    runIn, runOut               int64 // 本轮
-    totalIn, totalOut           int64 // 会话累计
-    cacheRead, cacheNew         int64
+    name              string
+    runIn, runOut     int64 // 本轮
+    totalIn, totalOut int64 // 会话累计
+    cacheRead, cacheNew int64
 }
 
 type tokenPanelSpec struct {
     innerWidth int
     maxRows    int    // 0 = 不限高
-    title      string // "◆ Tokens"
-    keycap     string // dashKeycap(...) 的结果；"" = 不渲染
+    keycap     string // dashKeycap(...) 的结果；"" = 不渲染。标题恒为 "◆ Tokens"，不是可配项
     collapsed  bool   // 单行摘要形态
 }
 
 func (m *model) tokenSnapshot() tokenSnapshot
-func buildTokenPanel(snap tokenSnapshot, spec tokenPanelSpec) []string
-func formatToken(n int64) string     // 从 tui_view.go:632 迁入
-func meterRow(glyph string, ratio float64, detail string, inner, cells int) string
+func buildTokenPanel(snap tokenSnapshot, spec tokenPanelSpec) []string // 返回不含边框的行
+func (m *model) renderFooterTokenPanel() string                        // 底部表面：行 + 圆角边框
+func (s tokenSnapshot) signature() string                              // 侧栏缓存键的数字串
+
+func formatToken(n int64) string            // 从 tui_view.go:632 迁入
+func normalizedInput(total, prompt, cacheRead, cacheNew int64) int64
+func cacheHitRatio(cacheRead, cacheNew, totalIn int64) (float64, bool)
+func meterLine(glyph string, ratio float64, detail string, inner, cells int, c color.Color) string   // 整行（明细右对齐）
+func meterInline(glyph string, ratio float64, detail string, cells int, c color.Color) string        // 不拉伸，供折叠行
 ```
 
 **组合方式**：
@@ -261,18 +273,21 @@ func meterRow(glyph string, ratio float64, detail string, inner, cells int) stri
 
 ### 4.3 宽度阶梯（底部表面）
 
-`inner` 决定细节档位；**≥46 时与 S1 完全一致**（侧栏永远命中这一档）。
+`inner` 决定细节档位；**≥46 时与 S1 同构**（侧栏恒为 46）。两个门槛彼此独立，不要耦合：
 
-| inner | bar 格数 | ⊕ CACHE 段 | Σ 行右段 | 列头 |
-|-------|---------|-----------|---------|------|
-| ≥ 90 | 20 | 长形态 `⊕74%  hit 1.2m · new 0.4k` | `in 2.35m · out 58.2k` | 有 |
-| 60–89 | 16 | 长形态 | 同上 | 有 |
-| 46–59 | 10 | 短形态 `⊕74%` | 同上 | 有 |
-| 40–45 | 10 | 短形态 | `in 2.35m·out 58.2k`（去 ` · ` 的空格） | **无** |
-| 34–39 | **无 bar**，`⊕ 71%` / `⛁ 64%` | 短形态 | 同上 | 无 |
-| < 34 | 无 bar，`⊕71%` | 短形态 | **无**（只有 Σ） | 无 |
+| inner | 计量条 bar 格数 | 列头 | agent 排布 | Σ 行右段 |
+|-------|----------------|------|-----------|---------|
+| ≥ 90 | 20 | 有 | 横条，每行 `inner/48` 段（≥98 才塞得下 2 段） | `in 2.35m · out 58.2k` |
+| 60–89 | 16 | 有 | 横条（实际每行 1 段） | 同上 |
+| 46–59 | 10 | 有 | 横条（每行 1 段，缓存列固定 16） | 同上 |
+| 40–45 | 10 | **无** | 一行一个，缓存列 = `inner - 30` | 同上 |
+| < 40 | **无 bar**（`⊕ 71%`） | 无 | 一行一个，纯文本 `truncateCells` 到 inner | `in 2.35m·out 58.2k`（去 ` · ` 空格） |
 
-底部表面的 agent 行按 `flow` 排版：每行贪心塞入尽可能多的 46 列 agent 段（段间 2 空格），最多 2 行，溢出显示 `┈ +N`。窄档（inner<46）退化为每行一个 agent、整行 `truncateRunes` 到 inner。
+**实现偏差记录**（相对本稿上一版）：
+
+1. **横条档门槛从 60 降到 46**（`tokenFlowFrom`）。原门槛下 60–97 列区间每行仍只塞得下一个 46 列段，等于凭空多一档却没有收益；而 `inner=46` 时"段宽 46 + 缓存列 16"与单列档的 golden **完全一致**，所以合并成一档更简单。
+2. **取消"每 agent 缓存长形态"**（`⊕74% hit 1.2m · new 0.4k`）。单列档最大 inner 是 45，长形态要求缓存列 ≥26 —— 那条分支永远走不到，是死代码；缓存明细由 `⊕` 那条整行计量条统一给出，agent 行只留 `⊕NN%`。
+3. 因此 `tokenLongCacheFrom` 常量已删除；bar 格数改用 `tokenMeterCellsMidFrom=60` / `tokenMeterCellsWideFrom=90` 两个显式门槛。
 
 窄档（inner 34）实测样例：
 
@@ -280,39 +295,45 @@ func meterRow(glyph string, ratio float64, detail string, inner, cells int) stri
 ╭────────────────────────────────────╮
 │ ◆ Tokens                    alt+d  │
 │ Σ 2.41m     in 2.35m·out 58.2k     │
-│ ⊕71%              ⛁128.4k/200k 64% │
+│ ⊕ 71%                              │
+│ ⛁ 128.4k · 64%                     │
 │ ────────────────────────────────── │
-│ ● director 12.4k ▸ 1.82m ⊕74%      │
-│ ┈ +3 agents                        │
-╰────────────────────────────────────╯
+│ ● director 12.4k▸1.82m ⊕74%        │
+└────────────────────────────────────╯
 ```
 
 ### 4.4 高度阶梯（侧栏，与 Activity 抢行）
 
-沿用既有的预算算法骨架（`tui_dashboard.go:190-198`：`timelineReserve = 1 if 有 timeline 条目`，`maxTokenRows = height - timelineReserve`，下限 3），但**砍行的优先级重定义**：
+预算入口在 `renderDashboard`：给 Activity 段留 `timelineReserveRows = 4` 行（分隔线 + 段标题 + 1 条事件 + 快捷键提示），下限 3 行。
 
-| 可用行数 | 组成 |
-|---------|------|
-| ≥ 9 + N | 完整（标题/sep/Σ/⊕/⛁/sep/列头/N 个 agent） |
-| 8 | 砍**列头** |
-| 7 | 砍 ⊕ 计量条，把 `⊕71%` 内联到 Σ 行尾 |
-| 6 | 再砍 Σ 行的 `in/out` 明细 |
-| 5 | ⛁ 降级为无 bar 形态 |
-| 4 | 砍 agent 行，只留 `┈ +N agents · ⊕71%` |
-| 3（下限） | 标题 + Σ + ⛁ |
+> 上一版只留 1 行，实测会把整条时间线挤出面板 —— 改成 4 行是让两个段都能活着的最低成本。
 
-`agentRows = maxTokenRows - fixedRows - (1 if 有截断提示)`，与现有 `:234-258` 的算法同构，但 `fixedRows` 随档位变化，必须**先定档再算行数**（现有代码是先算行数再截断，这是它 `maxAgentRows--` 那处补偿的由来）。
+`buildTokenPanel` 用"从富到简的档位循环"实现：渲染一档，行数超预算就升到下一档。**每档只砍一整行**，因为行内裁剪（去 `in/out` 明细、去 bar）根本不省行 —— 那些是**宽度**阶梯的事，不要混进高度阶梯。
+
+| 档位 | 相对上一档少掉 | 4 个 agent 时的行数 |
+|------|---------------|--------------------|
+| `tokenTierFull` | — | `7 + 4 = 11` |
+| `tokenTierNoHeader` | 列头 | 10 |
+| `tokenTierNoSep` | agent 段前的分隔线 | 9 |
+| `tokenTierCacheInline` | `⊕` 独立行（命中率内联进 Σ 行尾） | 8 |
+| `tokenTierAgentsSummary` | agent 行 → 一行 `┈ +N agents · ⊕NN%` | 6 |
+| `tokenTierNoSep1` | 标题后的分隔线 ⇒ 极限 **3 行**：标题 / Σ / ⛁ | 3 |
+
+另有一条与档位无关的硬规则，在 `tokenAgentBlock` 里：**先算预算再产出列头与分隔线**。装不下"至少一行 agent 内容"时整段让位，绝不画出"有列头、下面空着"的残缺表格；截断时保留 TOTAL 降序的前 N 个，并补 `┈ +N more`。
 
 **永不被砍**：标题行、Σ 行、⛁ 行。
+
+实测（`TestTokenPanel_HeightLadder`，4 个 agent）：`maxRows ≥ 9` 才有列头；`6–8` 行只剩 `┈ +4 agents` 摘要；`≤ 5` 行连摘要都放不下，agent 段整段消失。
 
 ### 4.5 折叠形态（`alt+t`，底部表面）
 
 ```
-[director] ▸12.4k ⊕74%   ·   Σ 2.41m ⊕71%   ·   ⛁ ▰▰▰▰▰▰▱▱▱▱ 128.4k/200.0k        (alt+t 展开)
+[director] ▸12.4k   ·   Σ 2.41m ⊕71%   ·   ⛁ ▰▰▰▰▰▰▱▱▱▱ 128.4k          alt+t 展开 
 ```
 
-- 左段 = **当前活跃 agent** 的 RUN + ⊕，中段 = 全局 Σ + ⊕，右段 = ⛁ 计量条。
-- 键帽右对齐到 inner；宽度不足时按"⛁ bar → ⛁ 明细 → agent 段"的顺序砍。
+- 三段：活跃 agent 的本轮量 → 全局 Σ + 命中率 → ⛁ 上下文。
+- ⛁ 段用 `meterInline`（**不拉伸**）：`meterLine` 会把明细右对齐到 inner、恒返回整行宽度，直接拼进摘要会把整行撑爆后被 `truncateCells` 截断 —— 只留当前值、不带 `/ 窗口上限`。
+- 键帽沿用 `dashKeycap`（与 `alt+d`、`ctrl+l` 同一族），不再用 `(alt+t 展开)` 这种括号写法。
 - `alt+t` 只影响底部表面（侧栏由 `alt+d` 整体收起）。**侧栏的 cache key 里不要再放 `tokenDashboardCollapsed`**（见 §8 缺陷 5）。
 
 ---
@@ -321,22 +342,25 @@ func meterRow(glyph string, ratio float64, detail string, inner, cells int) stri
 
 ### 5.1 新增：每 agent 的本轮用量
 
-现状：`currentAgentRunTokens AgentRunTokens`（`tui_model.go:464`）是**单值**，`updateAgentContextTokens`（`tui_update_tasks.go:79-90`）在 agent 切换时整体重置 ⇒ **"当前各 agent 消耗"目前无法渲染**，这是本次必须新增的状态。
+现状：`currentAgentRunTokens AgentRunTokens`（`tui_model.go:463`）是**单值**，`updateAgentContextTokens`（`tui_update_tasks.go:79-90`）在 agent 切换时整体重置 ⇒ **"当前各 agent 消耗"目前无法渲染**，这是本次必须新增的状态。
 
 ```go
-// tui_model.go —— 替换 currentAgentRunTokens (:464)
+// tui_model.go —— 替换 currentAgentRunTokens (:463)
 runTokensPerAgent map[string]*AgentRunTokens // 本轮（自最近一次提交）每 agent 的用量
+runAgent          string                     // 活跃 run 是哪一个 agent
 ```
 
-`AgentRunTokens`（`tui_model.go:247-255`）已经带 `ContextTokens`，直接复用；"当前活跃 agent" 用**已存在的** `m.currentAgent`（`:443`）指针，不再另存一份。
+`AgentRunTokens`（`tui_model.go:246-255`）已经带 `ContextTokens`，直接复用。
 
-⛁ 行取 `m.runTokensPerAgent[m.currentAgent].ContextTokens`（缺失则 0 → 整行跳过）。
+**不能借用 `m.currentAgent` 当活跃指针**（本稿上一版的错误）：`m.currentAgent` 只在 `taskRunning` 时才被 `ai_response` 赋值（`tui_update_tasks.go:197-201`），而 `ContextTokens` 必须在任务未运行时也能更新（历史恢复、单轮问答都走这条路）。所以新增 `runAgent`，由 `runTokens()/setRun()/updateAgentContextTokens()` 与事件里的 `From` 同步维护；测试用 `m.currentRun()` 取活跃项，`m.setRun(...)` 构造状态。
+
+⛁ 行取 `m.runTokensPerAgent[m.runAgent].ContextTokens`（缺失则 0 → 整行跳过）。
 
 ### 5.2 需要改的读写点（逐处）
 
 | 位置 | 改动 |
 |------|------|
-| `tui_model.go:464` | 字段替换；`:874` 附近的构造初始化补 `make(map...)` |
+| `tui_model.go:463` | 字段替换；`:856` 附近（`tokenUsagePerAgent` 的 `make` 处）补新 map 初始化 |
 | `tui_update_tasks.go:79-90` `updateAgentContextTokens` | 改为写 `runTokensPerAgent[agent].ContextTokens`，**不再重置整个结构** |
 | `tui_update_tasks.go:178-195` | RUN 累计写入 `runTokensPerAgent[agentNameForRun]`（不存在则建） |
 | `tui_update_tasks.go:716-724` 压缩事件 | 覆写对应 agent 的 `ContextTokens`（agent 名取 `event.From`，为空则用 `m.currentAgent`） |
@@ -359,7 +383,7 @@ runTokensPerAgent map[string]*AgentRunTokens // 本轮（自最近一次提交�
 
 ## 6. 缓存与失效
 
-现有三套缓存：`dashboardCache`/`dashboardCacheKey`（侧栏，`tui_model.go:515-516`）、`cachedTokenDashboard`/`tokenDashboardValid`（底部，`:510-511`）、`cachedFooterHeight`/`footerHeightValid`（`:523-524`）。三者都由 `invalidateFooterCache()`（`tui_render.go:96-104`）一把清空。
+现有三套缓存：`dashboardCache`/`dashboardCacheKey`（侧栏，`tui_model.go:512-513`）、`cachedTokenDashboard`/`tokenDashboardValid`（底部，`:507-508`）、`cachedFooterHeight`/`footerHeightValid`（`:520-521`）。三者都由 `invalidateFooterCache()`（`tui_render.go:96-104`）一把清空。
 
 **保留这套结构**，但修两处：
 
@@ -440,16 +464,32 @@ go test ./internal/tui/... -count=1                   # 秒级
 
 **必须保持绿且不改语义**的：`TestTokenCounting_OnlyAiResponseCounts`(`:16`)、`_AiResponseAccumulates`(`:49`)、`_CurrentAgentReset`(`:140`)、`_EmptyContentNotOverwriteStream`(`:207`)、`TestContextTokens_*`(`:570-707`)、`TestTotalInputTokens_*`(`:358/:411/:444`)、`TestCacheHitRate_OpenAIPath`(`:494`)、`TestContextWindowFromCfg_CatalogFallback`(`:876`)。其中 `TestTokenCounting_CurrentAgentReset` 与 `TestContextTokens_AgentSwitchResetsRun` 的**期望值会变**（RUN 不再在 agent 切换时清零，而是各 agent 独立保留），改之前先读懂它们钉的是哪条语义，并在 PR 描述里写明。
 
-### 10.2 新增测试
+### 10.2 新增测试（已落地）
 
-1. `TestTokenPanel_GoldenS1` —— 用 §2.3 的 golden 字符串逐行 `==` 比对（`stripANSI` 后），inner=46、4 个 agent、数据取 §2.1 的样例值。
-2. `TestTokenPanel_WidthLadder` —— inner ∈ `{30, 34, 40, 46, 52, 60, 90, 114}`，断言每行 `lipgloss.Width(line) <= inner`，且 ≥46 档与 golden 一致。
-3. `TestTokenPanel_HeightLadder` —— maxRows ∈ `{3,4,5,6,7,8,9,12}`，断言行数 `<= maxRows`、标题/Σ/⛁ 恒在、列头在 8 行档消失。
-4. `TestTokenPanel_SigmaUsesNormalizedInput` —— 构造 Anthropic 形态数据（`inputTokens=100, cacheRead=900, totalInputTokens=1000, outputTokens=50`），断言 Σ 渲染为 `1.1k` 而不是 `150`（钉住 §8 缺陷 2）。
-5. `TestTokenPanel_PerAgentRunIndependent` —— 两个 agent 交替产生 `ai_response`，断言两行 RUN 各自累计、互不清零。
-6. `TestTokenPanel_RunResetOnSubmit` —— 调 `resetRunTokens` 后 RUN 归零、TOTAL 与 Σ 不变。
-7. `TestTokenPanel_CollapsedOneLine` —— 折叠形态恰好 1 行且 `<= inner`。
-8. `TestFooterHeight_MatchesView_TokenPanel` —— 在底部面板可见/折叠/隐藏三态下，`computeFooterHeight()` 与 `View()` 实际行数一致（这是坑 7 的直接闸门，可复用 `chromeTestModel`）。
+`token_panel_test.go`：
+
+1. `TestTokenPanel_GoldenS1` —— §2.3 的 11 行逐行 `==`（`stripANSI` 后），并断言每行 `lipgloss.Width == 46`。
+2. `TestTokenPanel_WidthLadder` —— inner ∈ `{30,34,40,46,52,60,90,114}`：无行超界；首行恒为标题；列头仅 `inner>=46`；agent 排布行数由 `agentFlowPerRow` 推导。
+3. `TestTokenPanel_HeightLadder` —— maxRows ∈ `{3..12}`：`len(rows) <= maxRows`；标题/Σ/⛁ 恒在；**列头出现时下面必须有 agent 行**（禁止空表头）；截断提示最多 1 条。
+4. `TestTokenPanel_SigmaUsesNormalizedInput` —— Anthropic 形态（`input=100, cacheRead=900, totalInput=1000, output=50`）下 Σ 必须是 `1.1k`，且不得出现 `Σ 150`（钉 §8 缺陷 2）。
+5. `TestTokenPanel_PerAgentRunIndependent` —— 两个 agent 交替 `ai_response`，RUN 各自累计互不清零，`runAgent` 跟到最后一条事件。
+6. `TestTokenPanel_RunResetOnSubmit` —— `resetRunTokens` 后 RUN 与 `ctxTokens` 归零，Σ 与每 agent TOTAL 不变。
+7. `TestTokenPanel_FooterAndSidebarAgree` —— 同一 model 在侧栏（inner 46）与底部（inner 94）上 `Σ / in·out / 命中率 / 各 TOTAL` 逐片段相同。这是"消灭口径分叉"这条目标的直接证据。
+8. `TestTokenPanel_FooterFitsTermWidth` —— `{60,80,100,119} × {展开,折叠}`：无行超终端宽；`tokenDashboardBlock` 行数与缓存面板高度自洽；`View()` 行数恰等于终端高度（合并了原计划的 `TestFooterHeight_MatchesView_TokenPanel`）。
+9. `TestTokenPanel_AiResponseFeedsSnapshot` —— 端到端：OpenAI 形态（prompt 含 cached）命中率 30% 不被算成 20%；缺 `total_input_tokens` 时回落三项相加。
+
+`tui_token_test.go`（替换被删除的旧渲染器测试）：
+
+- `TestCacheHitRatio`、`TestTokenCacheMeterRow`（替 `TestFormatCacheInfo` / `TestFormatCacheShort`）
+- `TestTokenCtxMeterRow_BarStyle` / `_NoWindow` / `_Empty`（替 `TestRenderContextLine_*`）
+- `TestTokenPanel_CollapsedEmptyWhenNoUsage` / `TestTokenPanel_CollapsedOneLine`（替 `TestCollapsedDashboard_*`）
+- `TestTokenPanel_CtxLineAppearsAndDisappears`（替 `TestTokenDashboard_IndependentContextLine`）
+- `TestDashboardCacheKey_IncludesContextTokens`（保留，改文案断言）+ **新增** `TestDashboardRunTokensInvalidateCache`（RUN 必须进缓存键，否则新列永远不会刷新）
+- `TestTokenCounting_NoUsageMetadataIgnored`（替 `..._NoUsageMetadataFallback`，钉住 §8 缺陷 9 的反向行为）
+
+> 踩过的两个坑，写在这是为了避免下次重演：
+> ① `runTokensPerAgent` 的 `TotalInputTokens` 优先于 `InputTokens`，所以只改 `InputTokens` 的测试断言不会动 —— 要动 `TotalInputTokens`。
+> ② `meterLine` 恒返回整行宽度（明细右对齐到 inner），因此**不能**直接拼进折叠行，必须用 `meterInline`。
 
 ### 10.3 矩阵与 fixture（沿用既有约定，AGENTS.md §6.8）
 

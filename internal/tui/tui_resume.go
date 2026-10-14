@@ -939,7 +939,8 @@ func resetTokenState(m *model) {
 	m.cacheReadInputTokens = 0
 	m.cacheCreationInputTokens = 0
 	m.totalInputTokens = 0
-	m.currentAgentRunTokens = AgentRunTokens{}
+	m.runTokensPerAgent = make(map[string]*AgentRunTokens)
+	m.runAgent = ""
 	for k := range m.tokenUsagePerAgent {
 		delete(m.tokenUsagePerAgent, k)
 	}
@@ -962,14 +963,11 @@ func applyRolloutRunState(m *model, info memory.RolloutInfo, agentName string) {
 		CacheReadInputTokens: info.Tokens.CachedInput,
 		TotalInputTokens:     m.totalInputTokens,
 	}
-	m.currentAgentRunTokens = AgentRunTokens{
-		AgentName:            usage.AgentName,
-		InputTokens:          usage.InputTokens,
-		OutputTokens:         usage.OutputTokens,
-		CacheReadInputTokens: usage.CacheReadInputTokens,
-		TotalInputTokens:     usage.TotalInputTokens,
-		ContextTokens:        info.Tokens.LastContextTokens,
-	}
+	// RUN 列不恢复（本轮语义从 0 开始），但 ⛁ 行依赖的 ContextTokens 必须接上 rollout 末值。
+	m.setRun(AgentRunTokens{
+		AgentName:     agentName,
+		ContextTokens: info.Tokens.LastContextTokens,
+	})
 	if m.tokenUsagePerAgent == nil {
 		m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
 	}

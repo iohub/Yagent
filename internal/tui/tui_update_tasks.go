@@ -76,19 +76,6 @@ func stringFromEventMap(m map[string]interface{}, key string) string {
 	return s
 }
 
-func (m *model) updateAgentContextTokens(agentName string, contextTokens int64) {
-	if agentName == "" {
-		agentName = "Unknown"
-	}
-	if m.currentAgentRunTokens.AgentName != agentName {
-		m.currentAgentRunTokens = AgentRunTokens{
-			AgentName: agentName,
-		}
-	}
-	m.currentAgentRunTokens.ContextTokens = contextTokens
-	m.invalidateFooterCache()
-}
-
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	// 对话框打开时只拦住"会再弹一层对话框"的事件，其余照常消费：日志与时间线
 	// 此时并不可见，但丢弃就是永久缺失 —— 实时视图少一条，要等从历史恢复才看得到。
@@ -175,35 +162,29 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				}
 				m.totalInputTokens += totalInputVal
 
-				agentNameForRun := msg.event.From
-				if agentNameForRun == "" {
-					agentNameForRun = "Unknown"
-				}
-				if m.currentAgentRunTokens.AgentName != agentNameForRun {
-					m.currentAgentRunTokens = AgentRunTokens{
-						AgentName: agentNameForRun,
-					}
-				}
-				m.currentAgentRunTokens.InputTokens += promptVal
-				m.currentAgentRunTokens.OutputTokens += completionVal
-				m.currentAgentRunTokens.CacheReadInputTokens += cacheReadVal
-				m.currentAgentRunTokens.CacheCreationInputTokens += cacheCreationVal
-				m.currentAgentRunTokens.TotalInputTokens += totalInputVal
-
-				if totalInputVal > 0 {
-					m.updateAgentContextTokens(agentNameForRun, totalInputVal)
-				}
-
-				if m.taskRunning {
-					if msg.event.From != "" {
-						m.currentAgent = msg.event.From
-					}
-				}
-
 				agentName := msg.event.From
 				if agentName == "" {
 					agentName = "Unknown"
 				}
+
+				rt := m.runTokens(agentName)
+				m.runAgent = agentName
+				rt.InputTokens += promptVal
+				rt.OutputTokens += completionVal
+				rt.CacheReadInputTokens += cacheReadVal
+				rt.CacheCreationInputTokens += cacheCreationVal
+				rt.TotalInputTokens += totalInputVal
+
+				// ContextTokens 是"最近一次调用的输入规模"，必须覆写而非累加：
+				// 压缩事件之后，下一次调用要立刻反映压缩结果而不是历史之和。
+				if totalInputVal > 0 {
+					rt.ContextTokens = totalInputVal
+				}
+
+				if m.taskRunning && msg.event.From != "" {
+					m.currentAgent = msg.event.From
+				}
+
 				agentUsage, exists := m.tokenUsagePerAgent[agentName]
 				if !exists {
 					agentUsage = &AgentTokenUsage{AgentName: agentName}
@@ -215,26 +196,10 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				agentUsage.CacheReadInputTokens += cacheReadVal
 				agentUsage.TotalInputTokens += totalInputVal
 			}
-		} else {
-			contentStr := fmt.Sprintf("%v", msg.event.Content)
-			estimatedOutput := int64(len(contentStr) / 4)
-			if estimatedOutput > 0 && m.tokenUsagePerAgent != nil {
-				m.outputTokens += estimatedOutput
-
-				agentName := msg.event.From
-				if agentName == "" {
-					agentName = "Unknown"
-				}
-				agentUsage, exists := m.tokenUsagePerAgent[agentName]
-				if !exists {
-					agentUsage = &AgentTokenUsage{AgentName: agentName}
-					m.tokenUsagePerAgent[agentName] = agentUsage
-				}
-				agentUsage.OutputTokens += estimatedOutput
-			}
 		}
-		m.cachedTokenDashboard = m.renderTokenDashboard()
-		m.tokenDashboardValid = true
+		// 三个发布方（executor / planner / meta）的 ai_response 总带 usage，所以这里
+		// 不再按 content 长度自估 —— 那条兜底分支不可达，且口径与上游不一致。
+		// 只失效不预渲染：预渲染会用上过期的 termWidth。
 		m.invalidateFooterCache()
 	}
 

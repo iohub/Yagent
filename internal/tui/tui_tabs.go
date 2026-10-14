@@ -68,7 +68,8 @@ type sessionTab struct {
 	cacheReadInputTokens     int64
 	totalInputTokens         int64
 	tokenUsagePerAgent       map[string]*AgentTokenUsage
-	currentAgentRunTokens    AgentRunTokens
+	runTokensPerAgent        map[string]*AgentRunTokens
+	runAgent                 string
 }
 
 // initSessionTabs 初始化会话 tab 系统，创建第一个默认 tab
@@ -111,6 +112,7 @@ func (m *model) newSessionTab(id int, title string) *sessionTab {
 		aiStreamCompletedEntries: make(map[string]int),
 		aiChunkBuffers:           make(map[string]*aiChunkBuffer),
 		tokenUsagePerAgent:       make(map[string]*AgentTokenUsage),
+		runTokensPerAgent:        make(map[string]*AgentRunTokens),
 	}
 }
 
@@ -195,7 +197,14 @@ func (m *model) saveActiveSession() {
 	for k, v := range m.tokenUsagePerAgent {
 		tab.tokenUsagePerAgent[k] = v
 	}
-	tab.currentAgentRunTokens = m.currentAgentRunTokens
+	// RUN 表存的是会被事件原地改写的指针，切 tab 前必须深拷贝，
+	// 否则两个 tab 会共用同一个 agent 的计数器。
+	tab.runTokensPerAgent = make(map[string]*AgentRunTokens, len(m.runTokensPerAgent))
+	for k, v := range m.runTokensPerAgent {
+		copied := *v
+		tab.runTokensPerAgent[k] = &copied
+	}
+	tab.runAgent = m.runAgent
 
 	// 如果当前有活跃任务，保存其 memory
 	if m.currentTask != nil && !m.taskRunning {
@@ -278,7 +287,12 @@ func (m *model) restoreSessionTab(idx int) {
 	m.cacheReadInputTokens = tab.cacheReadInputTokens
 	m.totalInputTokens = tab.totalInputTokens
 	m.tokenUsagePerAgent = tab.tokenUsagePerAgent
-	m.currentAgentRunTokens = tab.currentAgentRunTokens
+	m.runTokensPerAgent = make(map[string]*AgentRunTokens, len(tab.runTokensPerAgent))
+	for k, v := range tab.runTokensPerAgent {
+		copied := *v
+		m.runTokensPerAgent[k] = &copied
+	}
+	m.runAgent = tab.runAgent
 
 	// 重建内容缓存并恢复滚动位置
 	m.rebuildContentCache()
@@ -351,7 +365,8 @@ func (m *model) clearCurrentSession() {
 	m.cacheReadInputTokens = 0
 	m.totalInputTokens = 0
 	m.tokenUsagePerAgent = make(map[string]*AgentTokenUsage)
-	m.currentAgentRunTokens = AgentRunTokens{}
+	m.runTokensPerAgent = make(map[string]*AgentRunTokens)
+	m.runAgent = ""
 	m.input.SetValue("")
 
 	// 更新 tab 标题为默认
