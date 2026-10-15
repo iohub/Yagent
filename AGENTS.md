@@ -1,9 +1,13 @@
 # Yagent Agent 开发知识库
 
 > **本文件是 Agent 理解仓库和进行开发的标准指南。** 所有 Agent 在操作此仓库前必须先阅读本文件。
-> 本文件描述的是当前代码的真实状态（核对时间 2026-10-15：落地 P1 活暂停 —— `internal/pause` 闸门、
-> `activity` 计时冻结、两个循环的 step 边界接入点、`paused` 停止原因、TUI `/pause` `/continue` 与
-> HTTP pause/continue；上一轮 2026-10-14 补齐核心系统单测基线，并修掉三处"错了不报错"的静默失效 ——
+> 本文件描述的是当前代码的真实状态（核对时间 2026-10-15：落地"停止/继续"三层
+> （`docs/pause-resume-design.md`）—— P1 活暂停（`internal/pause` 闸门、`activity` 计时冻结、
+> 两个循环的 step 边界接入点、`paused` 停止原因、TUI `/pause` `/continue` 与 HTTP pause/continue）；
+> P2 检查点重放 B 层（`delegation_id` 串父子 rollout、`agent_checkpoint` 记录、`ReadRolloutForReplay`、
+> executor 的 `ResumeState` 接缝、planner 的 `PendingResumption`、八条降级判据、`[resume]` 配置）；
+> P3 交接报告 C 层（不叫 LLM 的降级报告 + `status=degraded` 便签）；
+> 上一轮 2026-10-14 补齐核心系统单测基线，并修掉三处"错了不报错"的静默失效 ——
 > Bedrock 配置归一化、Anthropic thinking budget、流式 tool_use 装配）。
 > 文件末尾由 codeseek 自动维护的注入区块除外。
 
@@ -102,6 +106,9 @@ yagent/
 │   │   ├── director/           # Planner、Meta 注册表、项目上下文加载、熔断状态、指标
 │   │   ├── toolbatch/          # 只读工具并行分批调度（无业务依赖的叶子包）
 │   │   ├── git_checkpoint.go   # 每个编码子任务的 git 快照/回滚
+│   │   ├── resume_state.go     # 重放接缝（B 层）：WithResumeState(ctx) → RunAgentLoop 从第 N 步续跑
+│   │   ├── checkpoint.go       # 子 Agent 停止时落 agent_checkpoint 的薄封装
+│   │   ├── resume_delegation.go # 恢复侧编排（B+C）：delegation_id 扫描、八条判据、降级交接报告
 │   │   ├── repo_memory.go consolidation_worker.go knowledge_hook.go
 │   │   └── *.prompt.md         # 各 Agent 的 System Prompt
 │   ├── app/app.go              # Yagent：一次性装配 MCP/工具引擎/守卫/子 Agent/Director
@@ -122,6 +129,7 @@ yagent/
 │   ├── logging/                # slog 全局日志 + 按任务分目录
 │   ├── mcp/                    # 自研 stdio JSON-RPC MCP 客户端 + codeseek/knowledge 桥
 │   ├── memory/                 # ConversationMemory、rollout 读写（断点续跑的数据源）
+│   │                           #   rollout_replay.go(重放+指纹) / rollout_checkpoint.go(坐标+工作区) / rollout_ctx.go(delegation_id)
 │   ├── messaging/              # 事件总线（Dispatcher / Publisher / consumers/）
 │   ├── models/                 # 模型目录（dist/data/models.json）：context window + benchmark
 │   ├── protocol/               # 由 protocol/agent-events.yaml 生成的事件类型
@@ -300,6 +308,31 @@ type Adapter struct { name, description string; fn ToolFunc
   与取消的区别：闸门**不取消** ctx，所以恢复后是从阻塞点原地继续，而不是"一次失败的委派"
   （`AGENTS.md` §11 坑 17）。暂停期间 `activity` 的 idle 与 total 计时都被冻结
   （`Heartbeat` 只能续 idle —— total 的起点是创建时固定的）。
+- **检查点（B 层，`memory/rollout_checkpoint.go` + `agents/checkpoint.go`）**：两个循环各自在
+  **终止路径**上落一条 `agent_checkpoint`（子 Agent 在 `executor.go` 的 deferred 终止块里、
+  Director 在 `director/planner_rollout.go` 的 `aborted`/`checkpoint`），**不是每步一条** ——
+  每步一条会把 200 步的会话写成 200 条坐标，而重放只需要最后一个停点。
+  坐标里只存派生不出来的东西（step 游标、指纹、模型/档位、工作区 sha+dirty、`delegation_id`）；
+  消息正文、已取回的冷工具、thinklink T&P 块**刻意不存**，因为存了就会与代码漂移
+  （见 `rollout_types.go` 的 `AgentCheckpoint` 注释）。写与读共用 `memory.WriteCheckpoint`，
+  父子两个写入包不能互相 import，所以这里只留一份实现。
+- **重放接缝（B 层，`agents/resume_state.go`）**：`memory.WithDelegationID` 把 Director 那次
+  `delegate_*` 的 `tool_call_id` 挂到委派 ctx，子 Agent 的 rollout 文件名带 `_{agent}` 后缀、
+  `session_meta` 带 `delegation_id` + `parent_session_id`，父子就此串起来（`ScanDelegationStops` 反查）。
+  `ReadRolloutForReplay` 从子文件忠实重建（含 `Reasoning` 与工具全文，`compacted` 记录会替换被压过的前缀），
+  再以 `WithResumeState(ctx, *ResumeState)` 交回 `RunAgentLoop`：起点是 `StartStep` 而不是 0，
+  **不重写 system/user rollout**（续写会开新文件，靠 delegation_id 认亲），`Materialized` 回填
+  `Surface.RestoreMaterialized`（模型不必再 `load_tool` 一次），thinklink 经 `Seed` 复原（否则第三档压缩
+  只能拿原始任务输入重建）。走 ctx 而不是给 `ExecutorConfig` 加字段：六个子 Agent 一行都不用改，
+  也就不存在"漏改一个 Agent、那条路径的恢复静默失效"。
+- **恢复不经过模型（D7）**：`Director.Run` 在 `planner.Run` **之前**处理 `pendingResumption`，
+  把结果作为**第二条 tool output（同一个 `call_id`，last-wins）**交回（`planner_run.go` 的
+  `PendingResumption` 提交块），零 token、确定性。让模型决定怎么恢复的后果是"同样的停点有时重做、
+  有时接着跑"，不可复现比不能恢复更难排查。
+- **降级交接报告（C 层，`agents/resume_delegation.go`）**：`assessReplay` 是"不需要真跑一次就能判"的判据
+  （无子 rollout / 重读失败 / 无检查点 / 指纹不符 / 消息数不符 / 重放即超预算 / 工作区移动 / browser 委派 /
+  max_steps 耗尽 / 超时停的），任一命中就改用**程序生成的**降级报告（不叫 LLM）交回 Director，
+  并写一张 `status=degraded` 的便签把降级原因留在板上。报告分三段来自账目本身：已完成、未完成的计划项、下一步建议。
 
 ### 6.3 路由（auto-routing）
 
@@ -327,6 +360,12 @@ type Adapter struct { name, description string; fn ToolFunc
   - **board 作用域 = session**（`SetBoardScope(sessionID, taskID)`）：同一 TUI tab / 同一 HTTP chat session 内多次任务共享一块板；
     `/resume` 靠 `session_meta.board_id` 重连旧板，存量 rollout 回落 taskID。
   - 三个读回工具：`read_note`（handoff 块 + 分页正文）、`read_artifact`（分页全文）、`list_notes`（整板目录，只给一行结论不含正文）。
+  - `handoff.status` 词表 `ok | error | degraded`（+ LLM 可自报的 `partial`）。**只有 `ok`/`partial`/`error`
+    出现在 `agent_exit` 的枚举里**：`error` 由委派错误判定、`degraded` 由重放侧按降级判据判定，
+    让模型自报"我这份是降级的"等于把判断交给自己看不到判据的一方 —— 所以 `toolspec` golden 没动。
+    词表里**刻意没有 `paused`**：被闸门 abandon 的委派零交付物，`writeDelegateNote` 在那条路径上
+    **什么都不写**（写了就是一张空正文便签，还会占住每轮重扫的索引位去冒充一条结论），
+    "停在第几步"由 rollout 的 `stop_reason` + `agent_checkpoint` 记账，恢复成功后才落便签。
   - 预算与 GC 在 `[blackboard]`。三个阀门靠**键的存在性**判定（不是零值）：`index_max_notes = 0` 关索引、
     `index_line_chars = 0` 不裁剪行、`ttl = "0"` 不清理；`summary_max_runes` 与 `max_notes_per_board` 的 0/负数一律归默认
     （它们没有"关"的语义，放宽就写大数字）。整体关闭仍是 `YAGENT_BLACKBOARD=0`（`blackboard.Enabled()` 是唯一判据，
@@ -400,7 +439,7 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 | 数据 | 路径 | 写入方式 |
 |------|------|----------|
 | 任务记忆 | `~/.yagent/tasks/{taskID}.jsonl` | **5 秒防抖**、增量追加（条数变少则全量重写） |
-| **Rollout（断点续跑的事实来源）** | `~/.yagent/data/rollout/{projectID}/{ts}_{session}[_{agent}].jsonl` | **同步写**，类型含 `session_meta/turn_context/response_item/event_msg/compacted`（`world_state` 已于 2026-10-14 删除）；`session_meta` 带 git 身份，终止事件带 `stop_reason`（词表在 `memory/rollout_types.go`：`paused/cancelled/idle_timeout/total_timeout/max_steps/llm_error/circuit_breaker_open/panic/plain_text/agent_exit/unaccounted`） |
+| **Rollout（断点续跑的事实来源）** | `~/.yagent/data/rollout/{projectID}/{ts}_{session}[_{agent}].jsonl` | **同步写**，类型含 `session_meta/turn_context/response_item/event_msg/compacted/agent_checkpoint`（`world_state` 已于 2026-10-14 删除）；`session_meta` 带 git 身份 + `delegation_id` + `parent_session_id`，终止事件带 `stop_reason`（词表在 `memory/rollout_types.go`：`paused/cancelled/idle_timeout/total_timeout/max_steps/llm_error/circuit_breaker_open/panic/plain_text/agent_exit/unaccounted`）。子 Agent 的文件名后缀 `_{agent}` 就是"这次委派是哪一个"的凭据 |
 | Blackboard 便签 | `~/.yagent/notes/{boardID}/{agent}/*.md` | 原子写，`YAGENT_NOTES_ROOT` 可覆盖 |
 | Artifact | `~/.yagent/data/artifacts/{id}` | 原子写，ID `^\d{8}-\d{6}-[0-9a-f]{8}$` |
 | 共享/仓库记忆 | `~/.yagent/data/shared_memory/{projectID}/shared_memory.json` | 5 秒 ticker + dirty 标记，退出前 flush |
@@ -408,14 +447,20 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 | 浏览器工作区 | `~/.yagent/data/browser/{delegation}/.browser-control/` | 由 `cmd.Dir` 决定落点（上游状态路径是 CWD 相对）；含 current-tab、chrome.pid、traces、截图；`[browser] workspace_ttl` 清理 |
 | 日志 | `~/.yagent/logs/`（`app-`、`llm-`、`llm-error-`、`tool-`、`delegate-`、`knowledge-*`，按任务分子目录） | 追加 |
 
-**`/resume`** 列出 rollout 会话 → `ReadRolloutMemory` 重建 Memory → 恢复 thinklink 条目，
-下一轮以 `resumed=true` 强制重注入项目上下文。工具调用配对按 **last-wins** 修复（同一 `call_id`
-出现第二条 output 时原位覆盖并计入 `SupersededOutputs`）—— 这与 LLM 侧 `llm.repairToolCallPairs`
-的语义一致，两边不一致的表现是"进程内喂给模型的和 /resume 后喂给模型的不是同一份"
-（`TestToolPairingNormalizersAgree` 钉住）。终止事件带 `stop_reason`，
-`ScanResumeCandidates` 据此判定能否原样继续：**默认拒绝**，只有 `paused` 与 `cancelled`
-可重放（前者必然停在 step 边界，后者可能停在工具中间）；不可重放的候选照样返回并说明原因，
-不静默过滤。
+**`/resume` 有两层落点**，共用同一份账本：
+
+- **会话级**（旧有的）：列出 rollout 会话 → `ReadRolloutMemory` 重建 Memory → 恢复 thinklink 条目，
+  下一轮以 `resumed=true` 强制重注入项目上下文。工具调用配对按 **last-wins** 修复（同一 `call_id`
+  出现第二条 output 时原位覆盖并计入 `SupersededOutputs`）—— 这与 LLM 侧 `llm.repairToolCallPairs`
+  的语义一致，两边不一致的表现是"进程内喂给模型的和 /resume 后喂给模型的不是同一份"
+  （`TestToolPairingNormalizersAgree` 钉住）。终止事件带 `stop_reason`，
+  `ScanResumeCandidates` 据此判定能否原样继续：**默认拒绝**，只有 `paused` 与 `cancelled`
+  可重放（前者必然停在 step 边界，后者可能停在工具中间）；不可重放的候选照样返回并说明原因，
+  不静默过滤。
+- **委派级**（B 层，`docs/pause-resume-design.md` §6）：会话恢复后 `app.ResumableDelegation(路径)`
+  反问"这次会话是不是停在一次 `delegate_*` 上"，能就给恢复对话框加第三个选项
+  "从 <agent> step <n> 继续"；TUI 只交出**那份 Director rollout 的路径**（`internal/tui` 不许依赖
+  `internal/agents`，落点由 `app.resolveResumption` 在提交时算）。执行侧见 §6.2 的重放接缝与降级报告。
 
 ### 6.8 TUI（`internal/tui`，Bubble Tea **v2**）
 
@@ -466,7 +511,7 @@ WebSocket 用 melody，每个任务一个 Dispatcher + `WebSocketConsumer`，向
 仓库里的 `config/config.toml` 是注释模板；运行时写回（改 provider/超时/路由模式）走 `config/persist.go` 的原子替换。
 
 **顶层表**：`[global.llm]`、`[agents.llm]`、`[tools.llm]`、`[app]`、`[agent]`、`[llm]`、`[routing]`、
-`[keywords]`、`[git_checkpoint]`、`[codeseek]`（含 `[codeseek.knowledge]`）、`[browser]`、`[blackboard]`、`[enhanced_commander]`、`[tui]`，
+`[keywords]`、`[git_checkpoint]`、`[codeseek]`（含 `[codeseek.knowledge]`）、`[browser]`、`[blackboard]`、`[resume]`、`[enhanced_commander]`、`[tui]`，
 以及顶层 `task_timeout`。
 
 **三级 Provider 覆盖（仍存在）**：`ResolveProvider(agent, tool)` = 工具指定 → `tools.llm.use_provider` →
@@ -526,6 +571,24 @@ max_notes_per_board = 200     # 每 board 保留的最新便签数；0/负数 = 
 > 整体关闭不设 `enabled` 键：kill-switch 是环境变量 `YAGENT_BLACKBOARD=0`（`blackboard.Enabled()` 唯一判据）。
 > 索引的 token 成本上限 = `index_max_notes × index_line_chars`，且它是**每轮**都注入（Director 自己 + 每次委派）。
 
+```toml
+[resume]
+enable = true                            # 总开关；false = 不写检查点、不重放（停住的任务只能从 Director 继续）
+replay_token_budget = 0                  # 重放上下文 token 上限；0 = 用模型目录阈值，超预算**降级成交接报告**而不是报错
+max_replay_messages = 2000               # 重建消息条数上限；**显式 0 = 不限**，负数或没写 = 默认 2000
+degrade_on_workspace_change = "warn"     # warn = 工作区 HEAD 变了仍重放并记一条降级；block = 拒绝重放走交接报告
+checkpoint_workspace = true              # 停止时跑一次 git status 把工作区事实写进检查点（超大仓库可关）
+```
+
+> 与 `[blackboard]` 同一套存在性判定：整段缺省走 `sectionHasDecodedKey(md, "resume")`（结果记在
+> `cfg.resumeSectionDefined`），单键走 `md.IsDefined("resume", …)`。`max_replay_messages`
+> 的 **0 是有意义的**（不限），所以它不能被零值兜底成默认；认不出的 `degrade_on_workspace_change`
+> 会 `slog.Warn` 后回落 `warn`（静默按另一种策略走 = 用户写了 `block` 却以为挡住了危险重放）。
+> 缺省是 `warn` 而不是 `block`：换机器/pull 之后 HEAD 必然变，默认 block 会让 B 层在最主要的场景里失效。
+> 整体退出这套机制是环境变量 `YAGENT_RESUME=0`（`config.ResumeEnabled()` 是写检查点、重放、UI 入口
+> 三处共用的唯一判据）—— 关掉是**连写都不写**，留半套开关的后果是"这份 rollout 为什么没有检查点"
+> 变成没人能回答的新问题。
+
 ---
 
 ## 8. 开发与构建
@@ -577,10 +640,12 @@ go vet ./...                              # 必须干净
   config 84.2%、messaging 80.4%、datamanager 65.2%、memory 64.3%、llm 61.6%、mcp 62.1%、
   agents 59.5%、app 16.9%。`app`/`toolspec`/`mcp`/`llm` 原本分别只有 0%/8.5%/8.6%/18.6% ——
   低覆盖率的共性是"错了不报错，只是静默换模型/静默丢工具"，所以补的是**契约**而不是行数。
-- **链路级 E2E 只 mock 模型，不 mock 被测组件**：`internal/agents/e2e_*_test.go` 钉四条
+- **链路级 E2E 只 mock 模型，不 mock 被测组件**：`internal/agents/e2e_*_test.go` 钉五条
   核心链路 —— 授权回路（`e2e_authorization_test.go`）、跨委派交接（`e2e_handoff_test.go`：
   便签 + artifact + deferred schema 重试）、委派生命周期（`e2e_lifecycle_test.go`：idle/total
-  超时与取消传播）、`/resume`（`e2e_resume_test.go`）。它们用的是**真实** dispatcher、真实
+  超时与取消传播）、`/resume`（`e2e_resume_test.go`）、**委派级重放**（`e2e_replay_test.go`：
+  恢复后喂给模型的消息必须与暂停前**逐条同形**、取消路径也要写出可用检查点、
+  `delegation_id` 真的落进了子 rollout）。它们用的是**真实** dispatcher、真实
   `WorkspaceGuard`、真实便签盘（`TestMain` 已把 `$HOME` 隔离到临时目录）、真实 rollout 文件，
   只把 LLM 换成脚本。harness 的接线顺序照抄 `app.go:115-287` —— 换顺序会测到一条生产不存在的路。
 - **脚本引擎按 Agent 身份分派，不按全局调用序号**（`e2e_engine_test.go`）：序号会被循环里的
@@ -805,6 +870,33 @@ plan:
     `memory.StopKind*` 对齐、行为靠 `TestStopKindClassifiersAgree` 对齐。P1 加 `paused` 时，
     值表先加了 abandoned 输入而聚合表没有 —— 结果**只有一边漂走**时聚合测试是绿的，
     补上输入才红得出来。加词表值时的正确顺序：先给聚合测试喂一个新输入，再让两边实现去追它。
+19. **检查点指纹只能由读侧计算**：`agent_checkpoint.digest` 存的是写侧那一刻对**整个文件重建成**的
+    消息序列算出的 sha256，但比较发生在 `ReadRolloutForReplay` 用**同一套规则**重算之后 ——
+    而这套规则包括"用 `compacted` 记录替换被压过的前缀"。如果指纹是写侧按内存里那份消息算的，
+    任何触发过压缩的会话（=每一个长任务）都会在自己的检查点上对不上号，B 层恰好死在它
+    最该起作用的地方。`TestWriteCheckpointDigestMatchesReplay` 钉的就是两侧规则同源。
+20. **`Reasoning` 从此才真的进 rollout**：`memory/rollout_convert.go` 现在会为 thinking /
+    `reasoning_content` 发一条 `reasoning` item。此前它**从来没有被持久化**，
+    于是"重放出的消息与暂停前逐条同形"这条承诺缺一大块（token 估算与 ultimate 压缩都算它）。
+    改任何一边的转换都要记得 `DigestMessages` 把 `Reasoning` 算进指纹：漏算不是"少几个 token"，
+    是"整次重放被判成不可信、静默降级成交接报告"。
+21. **检查点写在终止路径，不写每步**：两个循环各只在终止/deadfer 块里落一条 `agent_checkpoint`
+    （`executor.go` 的 `writeExecutorCheckpoint`、`director/planner_rollout.go` 的 `aborted`）。
+    每步一条会让 150 步的会话多出 150 条记录，而重放永远只关心最后一个停点；
+    `TestNoPerStepCheckpointWritten` 钉住这条。想加"每步检查点"前先想清楚恢复侧怎么选。
+22. **降级不是错误**：`assessReplay` 命中判据时 `resumeDelegation` 返回的是一份**报告文本 + 理由列表**，
+    不是 `error`。把它写成 error 的表现与 §11 坑 17 同类 —— Director 认为"这次委派失败了"，
+    于是把已经做完的工作重做一遍。同理，重放成功后交回的是**同一个 `call_id` 的第二条 tool output**
+    （last-wins 覆盖），模型看到的是"那次委派成功返回了"，而不是一条新消息。
+23. **"扫目录再计数"的测试必须拥有那个目录**：`internal/memory` 的测试**不像 `internal/agents` 那样
+    把 `$HOME` 隔离到临时目录**，所以 `TestScanResumeCandidates_ClassifiesEveryStopKind` 这类
+    "往 `~/.yagent` 写夹具再扫"的用例在 `-count=4 -parallel 8` 下会把候选累加（24/36/48 条），
+    断言 `>=1` 恒真 —— 门禁当场失效。每个 run 生成唯一 projectID（或 `t.Setenv("HOME", t.TempDir())`）。
+24. **`pause` 的 `AbandonedError` 要 `errors.Is` 到 `context.Canceled`**：toolbatch 的取消短路、
+    `delegateTo` 的错误分类、`looksLikeCancelledContext` 的文本匹配都认它。
+    换成孤立新错误的表现是"取消了但没人认为是取消"，Director 把它当成一次失败的委派继续往下跑。
+    反过来，便签侧要区分"停住"与"失败"用的是 `errors.As`（`writeDelegateNote` 对 abandoned
+    **什么都不写**，词表里因此没有 `paused`），两件事都要保留。
 
 
 <!-- CODESEEK_INJECTION -->

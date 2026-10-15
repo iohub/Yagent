@@ -687,7 +687,9 @@ type PlanInput struct {
 
 ### 7.1 `NoteInput.Status` 扩词表
 
-`note.go:61` 的注释今天是 `// "ok" or "error"`，扩为 `ok | error | paused | degraded`。
+`note.go:61` 的注释今天是 `// "ok" or "error"`，方案原本要扩为 `ok | error | paused | degraded`。
+**落地时定为 `ok | error | degraded`（+ LLM 自报的 `partial`）—— 词表里没有 `paused`**，
+因为被闸门停住的那次委派根本没有交付物可写，理由与实现见 §15.5 第 15 条。
 `NoteMeta.Degraded`（`note.go:48`）已存在（v1 回落标记），复用它承载降级原因。
 
 ### 7.2 降级报告的合成
@@ -971,8 +973,8 @@ B1 与 B5 需要重点评审：B1 改的是恢复语义，B5 改的是工作区�
 |------|------|------|
 | P0 前置修复 | **已落地**（4 条全在 `feat-pause-resume`） | P0.1 `48af58f`、P0.3 `6fb11ad`、P0.4 `c39e5fb`、P0.2 `4fd7ee3` |
 | P1 活暂停（A） | **已落地** | P1.1–P1.6 全部；对本文的修正见 §15.3，变异验证见 §15.4 |
-| P2 检查点重放（B） | 未开始 | 承重层，跨进程/换机器靠它 |
-| P3 交接兜底（C） | 未开始 | 换机器场景的实际主路径（§6.4 判据 5） |
+| P2 检查点重放（B） | **已落地** | P2.1–P2.8 全部；对本文的修正见 §15.5，变异验证见 §15.6 |
+| P3 交接兜底（C） | **已落地** | P3.1–P3.3 与 P2 的降级路径同批落地（`degradedHandoff`）；修正见 §15.5 第 12–13 条 |
 
 ### 15.1 P0 落地时对本文的四处修正
 
@@ -1112,4 +1114,118 @@ P0 已经改了 §6.7 与 §11 坑 16 依赖的事实（rollout 现在带 git �
   **没有 TTY，无法肉眼验收状态栏**：新增的 `⏸ PAUSING/⏸ PAUSED` 段是**替换** spinner
   而不是多加一段（`TestAirlineOmitsPauseSegmentWhenIdle` 钉住段数不变），
   但真机上按一次 `/pause` 的观感仍需人工确认。
+
+### 15.5 P2/P3 落地时对本文的修正
+
+以代码为准。分两类：**名字/位置对不上**（照做就行）与**方案本身走不通**（改了设计）。
+
+**位置与命名**
+
+1. **§5.1 的 `PlannerTools` 不存在**，接口真名是 `director.ToolRunner`
+   （`director/planner.go`）。`Call` 加了第 4 个参数 `callID`（B7）：生产实现 1 个、
+   测试假实现 2 个、调用点 1 个 —— 全部编译期可见，正如原稿所料。
+2. **`SessionMeta.DelegationID/ParentSessionID` 不在两个写入点填**，而是 writer 兜底
+   （`SetDelegation` + `WriteSessionMeta` 回填），与 P0.3 的 `Git`/`task_id`/`board_id` 同一
+   个理由：`NewRolloutWriter` 有 10 个测试调用点不能动签名，而两个写入点分属两个包。
+3. **ctx key 落在 `memory/rollout_ctx.go`**（`WithDelegationID` / `WithRolloutSessionID`），
+   与 §5.1 的选定一致。注意 `internal/browserctl` 早有一份同名 `WithDelegationID`，
+   它只管浏览器工作区目录，两者无关 —— 别去复用。
+4. **`resume.go` 已存在**（P0.4 的停止原因分类），所以 `ResumeState` 放在新增的
+   `agents/resume_state.go`，B/C 的执行侧在 `agents/resume_delegation.go`。
+
+**设计层走不通、已改的**
+
+5. **指纹必须由读侧算**（§5.3 原稿是"重放时按同样规则重算"，但没说写入端算什么）。
+   如果写入端拿内存里的 `messages` 算，**任何被压缩改写过历史的长会话都会在判据 2 上失败**
+   —— 于是 B 层在最需要它的场景（跑了几十步、必然触发过压缩）里直接失效。
+   现在写入端调用 `memory.FinalizeCheckpoint` ⇒ 与重放端同一个函数，指纹不一致只剩
+   "文件真被动过"这一种可能。
+6. **`Reasoning` 在改动前根本没有落盘**：`LLMMessageToResponseItems` 不写 reasoning 项，
+   所以 G2 的"含 Reasoning 逐条相等"用原稿的读侧是实现不了的。现在写一条
+   `reasoning` 记录（形状沿用读侧已认识的 `summary_text`）。**这是一条行为变更**：
+   子 Agent 的 rollout 每条带思考的回复多一行（§11 的 B10）。
+7. **`function_call_output` 不存工具名**，所以重放出来的 tool 消息 `ToolName` 恒空，
+   报告里"哪个工具产出了这条"就全丢了。读侧现在从配对的 `function_call` 反查名字。
+8. **`AgentCheckpoint` 的字段改了三处**：`Nested` 至今没人写（P2 没有嵌套委派的恢复深度，
+   §14 第 7 条仍未决，留着空字段就是"声明≠可用"）；新增 `DirtyFilesTruncated`（截断必须
+   可见）与 `StatusError` —— 后者是把 §2 R6 的教训写进 schema：**探测失败不能记成
+   "工作区干净"**，那是同一个 bug 的新马甲。
+9. **判据 5 要区分"变了"与"不知道"**：检查点没记 sha（非仓库目录、`--prompt`）时不能判成
+   工作区移动 —— 否则一切没有 git 身份的会话都被拒绝重放。现在它算"无判据"并记一条说明。
+10. **降级判据是 9 条不是 8 条**：`idle_timeout` / `total_timeout` 与 §6.4 的八条并列，
+    理由同判据 3 —— 超时那一步可能已经把失败结果记进 rollout，重放就是重复副作用。
+    它标成 `extra:` 而不是占一个号，以免 §6.4 的编号在别处被引用时对不上。
+11. **§6.3 的预执行阶段放在门面层（`agents`）而不是 planner 里**：`delegateTo`、子 Agent 的
+    rollout writer、`ResumeState` 的注入全在门面层，planner 手上只有 `Tools.Call`。
+    planner 只做 §4.3 的收尾提交（把结果作为原 call_id 的第二条 output 落进 memory
+    与 rollout），这样恢复依旧不调模型。传递通道也没用 `SetPendingResumption(bool)`
+    那种"设置即生效"的形状：**每轮都显式设置，包括传 nil** —— 否则上一轮的落点会漏到
+    下一轮，把同一个重放结果再提交一次。
+12. **TUI 不 import `internal/agents`**（§8.2 的入口设计默认它可以）。恢复入口交出去的是
+    "我刚恢复的这份 Director rollout 路径"，由 `app.resolveResumption` 去扫落点；
+    `ResumeDialog` 因此拿到的是**标签字符串**而不是一个 stop 结构。选项从 2 个变 3 个之后
+    `GetConfirmed()` 的语义改成"选的不是最后一档"，索引→语义另由 `Choice()` 给出
+    —— 拿索引判断恢复路径，加一个选项就会把"仅浏览"和"从 Director 继续"搞混。
+13. **`degraded`（以及本节第 15 条里被去掉的 `paused`）刻意不进 `agent_exit` 的 `handoff.status` 枚举**（schemas.json 仍是
+    `ok|partial|error`）。让模型自报"我这份交付是降级的"，等于把降级判定交给最没资格的一方；
+    降级与否是重放侧按判据算出来的事实。因此**没有 golden 变更**，便签的
+    `status=degraded` 与 `degraded:` 理由都由系统写。报告的 note ref 会回填进正文，
+    Director 的 prompt 明确要求下一次委派把它放进 `context_refs`。
+14. **§8.4 说"这里没有 0 有语义的键"是不准确的**：`max_replay_messages = 0` = 不限。
+    所以 `[resume]` 与 `[blackboard]` 一样要按键的存在性判定（`ResumePresence`），
+    否则"没写"和"写了 0"会互相冒充。`degrade_on_workspace_change` 的拼错取值回落 `warn`
+    并告警 —— 回落成 `block` 会让用户以为危险重放被挡住了。
+15. **§7.1 的词表落地时少了 `paused`，而且这是对的**：本文原本要扩成
+    `ok | error | paused | degraded`，实现完复查发现没有任何一处会写 `paused` ——
+    被闸门 abandon 的那次委派，`agent.Run` 返回零值 result + `*pause.AbandonedError`，
+    `writeDelegateNote` 于是落了一张**空正文的 status=error 便签**。它既没有交付物、
+    又占住每轮重扫的索引位去冒充一条结论，正是便签存在目的的反面。
+    现在的落地：`writeDelegateNote` 用 `errors.As` 认出 abandoned 并**什么都不写**，
+    词表收成 `ok | error | degraded`（+ LLM 自报的 `partial`），"停在第几步"这件事
+    由 `stop_reason` 与 `agent_checkpoint` 记账，恢复成功后才由 `writeResumedNote`
+    落真交付（ok）或降级报告（degraded）。
+    闸门（`TestAbandonedDelegationWritesNoNote`）两头都断：停住的不许写、真失败的不许不写 ——
+    只断前一头的话，把整段 `writeDelegateNote` 删掉都能通过。实测变异两处各红一次（见 §15.6 M13/M14）。
+
+**P2/P3 中刻意未做/未覆盖的**
+
+- `RestoreMaterialized` 与 thinklink `Seed` 两条接缝**没有测试覆盖**：G2 的夹具走的是
+  `Adapters`（没有 `Surface`），三个建 store 的子 Agent 也没在夹具里出现。断言它们生效
+  需要一套带真实 Surface 的 e2e 夹具，本轮没做 —— 这两处若被删掉，现在没有测试会红。
+- §14 的 8 个未决项里，只有 #5（total 时长扣掉暂停）被 P1 实现顺带定了（倾向如此，已实现）；
+  #1 键位、#2 检查点是否冗余进仓库、#3 `--prompt`、#4 暂停期输入、#6 档位回落、
+  #7 嵌套恢复深度、#8 带检查点的 board 免于 GC —— 全部仍未决，本轮没有替用户决定。
+- 检查点只写**停止路径**（`turn_aborted` 旁边），正常跑完不写。G8 的断言因此是
+  "一次停止 1 条、跑完 0 条"。
+
+### 15.6 P2/P3 的验证方式
+
+- **实测变异**（就地改→跑目标用例→立刻还原，并用 sha256 比对确认还原；全部 RESTORED）：
+
+  | # | 变异 | 红掉的测试 |
+  |---|------|-----------|
+  | M7 | 判据 2（指纹校验）短路 | `TestDegradationIsNeverSilent/criterion2_digest_mismatch` 等 2 条 |
+  | M8 | 判据 1（找不到子文件）短路 | `.../criterion1_missing_child_rollout` |
+  | M9 | planner 的恢复收尾提交永不执行 | `TestPlannerCommitsResumedDelegationWithoutCallingLLM` |
+  | M10 | executor 接缝不接 `rs.Messages` | `TestResumeReplaysExactMessages` |
+  | M11 | `writeExecutorCheckpoint` 直接 return | `TestCancelWritesUsableCheckpoint` + `TestResumeReplaysExactMessages` |
+  | M12 | 报告里不回填 note ref | `TestDegradedHandoffWritesDegradedNote` |
+  | M13 | `writeDelegateNote` 的 abandoned 早退改成条件永假 | `TestAbandonedDelegationWritesNoNote`（两条断言同时红：写了便签 + 板上多出 1 张） |
+  | M14 | 反过来把早退扩成"任何 error 都不写" | `TestAbandonedDelegationWritesNoNote`（"真失败的委派没落便签"） |
+
+  **一次不算验证的尝试**：最初把 M9/M11 写成"删掉整块/改函数名"，结果是 build 失败而不是
+  测试失败 —— 那只能证明编译器在上班。换成语法合法的"条件永假/提前 return"之后才拿到信号。
+- `-race` 对 `./internal/agents/... ./internal/memory/ ./internal/pause/ ./internal/http/ ./internal/tui/...`
+  干净；`bash scripts/check_all.sh` 全绿；`planner_run.go` 仍是 657 行（未动冻结上限）。
+- **压 `-count=4 -parallel 8` 时抓到一个既有测试的脏夹具**：
+  `TestScanResumeCandidates_ClassifiesEveryStopKind` 复用同一个 projectID 目录，重跑时把
+  上一轮的 12 份夹具一起扫进来，断言"候选数 == 夹具数"于是变成 24/36/48 失败 ——
+  看起来像扫描逻辑漂了，其实是夹具串台。现在每次运行用唯一 projectID。
+  教训：任何"扫一个目录然后数几条"的用例都必须自带唯一的目录。
+- 一次未能复现的偶发红：`internal/agents/activity` 在全量并行跑时红过一次，当时没抓到
+  失败行；之后 `-count=3`、`-count=4 -parallel 8` 共 7 轮全绿。记在这里是为了不假装
+  "从没红过"。
+- TUI/组件用例覆盖了三档选项的循环、`Choice()` 映射、越界回落到"仅浏览"、窄面板渲染
+  （48/60/72/120 列）与中英文标签；**仍然没有 TTY 实测**，真机上从 `/resume`
+  选"从 coding step 37 继续"的完整体验需要人工走一遍。
 
