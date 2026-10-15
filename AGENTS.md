@@ -85,6 +85,15 @@ Provider 只是 base_url + api_key 的组合，因此小米 MiMo、百炼、硅�
 `temperature` 强制 1.0（provider 在思考模式下拒绝其它值）。**认不出的取值一律当作"没开思考"**：
 以前会把 `budget_tokens: 0` 发出去，而 provider 要求 ≥1024，一个拼错的 effort 就让此后每次调用都 400。
 
+provider 的 `max_tokens` / `temperature` 是**引擎级默认**，优先级为
+`单次 CallOptions > provider 配置 > 不发这个字段`（anthropic 侧未配时兜底 8192，因为 Messages API 必填）。
+两个引擎的构造函数收的是 `*config.ProviderConfig` 而不是散参数——散参数时每往 `ProviderConfig`
+加一个键就多一处"配置写了但没人读"，而 `max_tokens` 曾经正是这样失效的（请求体里根本没有它，
+thinking 模型因此能一口气生成 39k token）。**`0` 一律按"没配"处理**：`ProviderConfig.Temperature`
+是裸 `float64`，分不清"写了 0.0"和"没写"，而显式发 `temperature: 0` 会把服务端默认采样顶成贪心解码。
+钉住这套形状的是 `engine_openai_test.go:TestOpenAIEngine_ProviderDefaultsReachWire` 与
+`engine_anthropic_test.go:TestAnthropicBuildRequest_ProviderDefaults`。
+
 ---
 
 ## 3. 模块地图

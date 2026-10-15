@@ -20,14 +20,14 @@ import (
 
 // anthropicRequest is the request body for Anthropic Messages API.
 type anthropicRequest struct {
-	Model       string            `json:"model"`
-	MaxTokens   int               `json:"max_tokens"`
-	Temperature float64           `json:"temperature,omitempty"`
-	System      string            `json:"system,omitempty"`
-	Messages    []anthropicMsg    `json:"messages"`
-	Tools       []anthropicTool   `json:"tools,omitempty"`
+	Model       string             `json:"model"`
+	MaxTokens   int                `json:"max_tokens"`
+	Temperature float64            `json:"temperature,omitempty"`
+	System      string             `json:"system,omitempty"`
+	Messages    []anthropicMsg     `json:"messages"`
+	Tools       []anthropicTool    `json:"tools,omitempty"`
 	Thinking    *anthropicThinking `json:"thinking,omitempty"`
-	Stream      bool              `json:"stream,omitempty"`
+	Stream      bool               `json:"stream,omitempty"`
 }
 
 type anthropicMsg struct {
@@ -97,15 +97,19 @@ type AnthropicEngine struct {
 	apiKey          string
 	model           string
 	maxTokens       int
+	temperature     float64 // provider 默认；<=0 表示不发，让服务端用自己的默认
 	cfg             config.LLMConfig
 	reasoningEffort string
 }
 
-// NewAnthropicEngine creates a new AnthropicEngine.
+// defaultAnthropicMaxTokens 只在 provider 没写 max_tokens 时兜底。
+const defaultAnthropicMaxTokens = 8192
+
+// NewAnthropicEngine creates a new AnthropicEngine from a provider configuration.
 // baseURL is the Anthropic API base URL (e.g., "https://api.anthropic.com/v1").
-// apiKey is the Anthropic API key.
-// model is the model name (e.g., "claude-sonnet-4-20250514").
-func NewAnthropicEngine(baseURL, apiKey, model string, cfg config.LLMConfig, reasoningEffort string) *AnthropicEngine {
+//
+// 与 NewOpenAIEngine 同理：收整个 provider，配置里新增的键才不会"写了没人读"。
+func NewAnthropicEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) *AnthropicEngine {
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
@@ -123,15 +127,21 @@ func NewAnthropicEngine(baseURL, apiKey, model string, cfg config.LLMConfig, rea
 		Transport: transport,
 	}
 
+	maxTokens := provider.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = defaultAnthropicMaxTokens
+	}
+
 	return &AnthropicEngine{
 		client:          httpClient,
 		transport:       transport,
-		baseURL:         strings.TrimRight(baseURL, "/"),
-		apiKey:          apiKey,
-		model:           model,
-		maxTokens:       8192, // default, overridden by CallOptions
-		cfg:             cfg,
-		reasoningEffort: reasoningEffort,
+		baseURL:         strings.TrimRight(provider.APIBaseURL, "/"),
+		apiKey:          provider.APIKey,
+		model:           provider.Model,
+		maxTokens:       maxTokens,
+		temperature:     provider.Temperature,
+		cfg:             llmCfg,
+		reasoningEffort: provider.ReasoningEffort,
 	}
 }
 
@@ -247,7 +257,10 @@ func (e *AnthropicEngine) buildRequestBody(messages []Message, tools []ToolDef, 
 		req.System = strings.Join(systemParts, "\n\n")
 	}
 
-	// Apply call options
+	// Apply call options：provider 默认在前，单次调用覆盖在后。
+	if e.temperature > 0 {
+		req.Temperature = e.temperature
+	}
 	if opts != nil {
 		if opts.MaxTokens > 0 {
 			req.MaxTokens = opts.MaxTokens

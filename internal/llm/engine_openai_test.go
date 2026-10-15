@@ -47,7 +47,12 @@ func newFakeLLM(t *testing.T, handler func(capturedRequest) (status int, body st
 }
 
 func openAIEngine(baseURL string, cfg config.LLMConfig) *OpenAIEngine {
-	return NewOpenAIEngine(baseURL+"/v1", "test-key", "mimo-x", cfg, "")
+	return NewOpenAIEngine(testProvider(baseURL+"/v1", "test-key", "mimo-x"), cfg)
+}
+
+// testProvider 造一个只带必要寻址信息的 provider，其余键由用例自己补。
+func testProvider(baseURL, apiKey, model string) *config.ProviderConfig {
+	return &config.ProviderConfig{APIBaseURL: baseURL, APIKey: apiKey, Model: model}
 }
 
 const okCompletion = `{"id":"c1","object":"chat.completion","model":"mimo-x",
@@ -55,7 +60,7 @@ const okCompletion = `{"id":"c1","object":"chat.completion","model":"mimo-x",
 "usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`
 
 func TestOpenAIEngine_ModelAndInterface(t *testing.T) {
-	var e Engine = NewOpenAIEngine("http://127.0.0.1:1/v1", "k", "some-model", config.LLMConfig{}, "")
+	var e Engine = NewOpenAIEngine(testProvider("http://127.0.0.1:1/v1", "k", "some-model"), config.LLMConfig{})
 	if e.Model() != "some-model" {
 		t.Errorf("Model() = %q, want some-model", e.Model())
 	}
@@ -225,7 +230,9 @@ func TestOpenAIEngine_ReasoningEffortAndExtraFields(t *testing.T) {
 				got = req
 				return 200, okCompletion
 			})
-			e := NewOpenAIEngine(srv.URL+"/v1", "k", "m", config.LLMConfig{}, tc.providerEffort)
+			provider := testProvider(srv.URL+"/v1", "k", "m")
+			provider.ReasoningEffort = tc.providerEffort
+			e := NewOpenAIEngine(provider, config.LLMConfig{})
 
 			_, err := e.GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil,
 				&CallOptions{ReasoningEffort: tc.callEffort})
@@ -257,6 +264,65 @@ func TestOpenAIEngine_ReasoningEffortAndExtraFields(t *testing.T) {
 	}
 	if _, ok := got.Body["thinking"]; ok {
 		t.Error("未配置 effort 却发出了 thinking 扩展字段")
+	}
+}
+
+// provider 的 max_tokens / temperature 必须上线。此前它们只在日志里出现过
+// （llm.go 打 activeProvider.MaxTokens），请求体里根本没有 —— 表现就是
+// "配置写了 24000，模型却生成 39k token"，thinking 模型的输出长度完全没人管。
+// 优先级：单次 CallOptions > provider 默认 > 不发（让服务端用默认）。
+func TestOpenAIEngine_ProviderDefaultsReachWire(t *testing.T) {
+	var got capturedRequest
+	srv, _ := newFakeLLM(t, func(req capturedRequest) (int, string) {
+		got = req
+		return 200, okCompletion
+	})
+	provider := testProvider(srv.URL+"/v1", "k", "GLM-5.3-flash")
+	provider.MaxTokens = 24000
+	provider.Temperature = 0.5
+	e := NewOpenAIEngine(provider, config.LLMConfig{})
+
+	// 与两个 Agent 循环一致的空调用点：只有 StreamHandler 会被填。
+	if _, err := e.GenerateContent(context.Background(),
+		[]Message{{Role: RoleUser, Content: "x"}}, nil, &CallOptions{}); err != nil {
+		t.Fatalf("GenerateContent: %v", err)
+	}
+	if mt, _ := got.Body["max_completion_tokens"].(float64); mt != 24000 {
+		t.Errorf("max_completion_tokens = %v, want provider 默认 24000", got.Body["max_completion_tokens"])
+	}
+	if temp, _ := got.Body["temperature"].(float64); temp != 0.5 {
+		t.Errorf("temperature = %v, want provider 默认 0.5", got.Body["temperature"])
+	}
+
+	// 单次调用覆盖 provider（紧急压缩摘要、classify 都靠这条拿自己的小预算）。
+	if _, err := e.GenerateContent(context.Background(),
+		[]Message{{Role: RoleUser, Content: "x"}}, nil,
+		&CallOptions{MaxTokens: 32, Temperature: 0.1}); err != nil {
+		t.Fatalf("GenerateContent(override): %v", err)
+	}
+	if mt, _ := got.Body["max_completion_tokens"].(float64); mt != 32 {
+		t.Errorf("max_completion_tokens = %v, want 被 CallOptions 覆盖成 32", got.Body["max_completion_tokens"])
+	}
+	if temp, _ := got.Body["temperature"].(float64); temp != 0.1 {
+		t.Errorf("temperature = %v, want 被 CallOptions 覆盖成 0.1", got.Body["temperature"])
+	}
+
+	// provider 没写（0 值）时两个键都不该出现：发 temperature=0 会把服务端的
+	// 默认采样温度顶成贪心解码，那不是"没配"的意思。
+	var zero capturedRequest
+	srvZero, _ := newFakeLLM(t, func(req capturedRequest) (int, string) {
+		zero = req
+		return 200, okCompletion
+	})
+	if _, err := NewOpenAIEngine(testProvider(srvZero.URL+"/v1", "k", "m"), config.LLMConfig{}).
+		GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil, nil); err != nil {
+		t.Fatalf("GenerateContent(no provider defaults): %v", err)
+	}
+	if _, ok := zero.Body["max_completion_tokens"]; ok {
+		t.Errorf("provider 未配 max_tokens 却发出了 %v", zero.Body["max_completion_tokens"])
+	}
+	if _, ok := zero.Body["temperature"]; ok {
+		t.Errorf("provider 未配 temperature 却发出了 %v（0 会顶掉服务端默认）", zero.Body["temperature"])
 	}
 }
 

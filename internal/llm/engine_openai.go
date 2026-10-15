@@ -25,11 +25,22 @@ type OpenAIEngine struct {
 	model           string
 	cfg             config.LLMConfig
 	reasoningEffort string // provider-level default reasoning effort
+	// provider 级默认值。零值（MaxTokens<=0 / Temperature<=0）表示"不发这个字段"，
+	// 让服务端用自己的默认 —— temperature=0 与"没写"无法区分，而显式发 0 会
+	// 覆盖服务端默认（与 engine.go 的 CallOptions 同一套约定）。
+	maxTokens   int
+	temperature float64
 }
 
-// NewOpenAIEngine creates a new OpenAIEngine.
+// NewOpenAIEngine creates a new OpenAIEngine from a provider configuration.
 // baseURL is optional - if empty, uses OpenAI's default API endpoint.
-func NewOpenAIEngine(baseURL, apiKey, model string, cfg config.LLMConfig, reasoningEffort string) *OpenAIEngine {
+//
+// 收整个 provider 而不是四个字段：引擎需要的东西只会往 ProviderConfig 里加，
+// 拆成散参数时每加一个键就多一处"配置写了但没人读"的静默失效（max_tokens
+// 与 temperature 曾经就是这样）。
+func NewOpenAIEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) *OpenAIEngine {
+	baseURL := provider.APIBaseURL
+	apiKey := provider.APIKey
 	// Custom HTTP Transport with reasonable timeout parameters
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
@@ -63,9 +74,11 @@ func NewOpenAIEngine(baseURL, apiKey, model string, cfg config.LLMConfig, reason
 	return &OpenAIEngine{
 		client:          &client,
 		transport:       transport,
-		model:           model,
-		cfg:             cfg,
-		reasoningEffort: reasoningEffort,
+		model:           provider.Model,
+		cfg:             llmCfg,
+		reasoningEffort: provider.ReasoningEffort,
+		maxTokens:       provider.MaxTokens,
+		temperature:     provider.Temperature,
 	}
 }
 
@@ -123,18 +136,27 @@ func (e *OpenAIEngine) buildParams(messages []Message, tools []ToolDef, opts *Ca
 		params.Tools = e.convertTools(tools)
 	}
 
-	// Resolve reasoning effort: per-call override takes precedence over provider default
+	// Resolve per-call values: CallOptions 覆盖 provider 默认，两者都零值时不发这个字段。
 	effort := e.reasoningEffort
+	maxTokens := e.maxTokens
+	temperature := e.temperature
 	if opts != nil {
 		if opts.MaxTokens > 0 {
-			params.MaxCompletionTokens = openai.Int(int64(opts.MaxTokens))
+			maxTokens = opts.MaxTokens
 		}
 		if opts.Temperature > 0 {
-			params.Temperature = openai.Float(opts.Temperature)
+			temperature = opts.Temperature
 		}
 		if opts.ReasoningEffort != "" {
 			effort = opts.ReasoningEffort
 		}
+	}
+
+	if maxTokens > 0 {
+		params.MaxCompletionTokens = openai.Int(int64(maxTokens))
+	}
+	if temperature > 0 {
+		params.Temperature = openai.Float(temperature)
 	}
 
 	if effort != "" {
