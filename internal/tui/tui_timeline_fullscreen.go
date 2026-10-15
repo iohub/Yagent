@@ -217,8 +217,8 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 
 	// 头部：名称（合并条目显示计数）
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213")) // 粉色
-	modelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))              // 灰色
-	durationStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // 灰色
+	modelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))             // 灰色
+	durationStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))          // 灰色
 
 	nameDisplay := entry.Name
 	if entry.MergedCount() > 1 {
@@ -372,7 +372,6 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 	return sb.String()
 }
 
-
 // parseModelFromDetail 从LLMCall事件的Detail字段中提取模型名称（含方括号）。
 // Detail格式：
 //   - 运行中: "[gpt-4]"
@@ -400,6 +399,7 @@ func statusIconFor(entry *TimelineEntry) (icon string, colorStr string) {
 		return "", "245" // 无图标
 	}
 }
+
 // findToolEntryByCallID 通过 callID 在 logEntries 中查找关联的 ToolEntry。
 // 从后往前搜索，找到 toolCallID == callID && toolEntry != nil 的条目，返回其 toolEntry。
 func findToolEntryByCallID(m *model, callID string) *ToolEntry {
@@ -530,8 +530,8 @@ func buildAllTimelineDetails(m *model) {
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
 
 	// 预扫描：标记被合并的 thinking 条目（紧跟在 llm_call 后面的 thinking）
-	mergedThinkings := make(map[int]bool)    // thinking index → merged
-	mergedContent := make(map[int]string)    // llm_call index → thinking content
+	mergedThinkings := make(map[int]bool) // thinking index → merged
+	mergedContent := make(map[int]string) // llm_call index → thinking content
 
 	for i, entry := range entries {
 		if i > 0 && entry.Kind == TimelineKindThinking && entries[i-1].Kind == TimelineKindLLMCall {
@@ -603,7 +603,7 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 	} else {
 		leftBase = fmt.Sprintf(" %s", nameDisplay)
 	}
-	
+
 	// LLMCall: 在名称后追加模型名称
 	if entry.Kind == TimelineKindLLMCall {
 		if entry.Detail != "" {
@@ -612,10 +612,10 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 			}
 		}
 	}
-	
+
 	// 左侧：类型标签 + 名称 + 模型名
 	leftPart := headerStyle.Render(leftBase)
-	
+
 	// 右侧：时间 + 耗时 + 状态
 	var metaParts []string
 	metaParts = append(metaParts, entry.Timestamp.Format("15:04:05.000"))
@@ -625,7 +625,7 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 	statusText := statusTextFor(entry)
 	metaParts = append(metaParts, statusText)
 	rightPart := metaStyle.Render(strings.Join(metaParts, " · "))
-	
+
 	leftWidth := lipgloss.Width(leftPart)
 	rightWidth := lipgloss.Width(rightPart)
 	padding := width - leftWidth - rightWidth - 2
@@ -650,7 +650,7 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 // renderTimelineDetailBody 渲染条目详情的主体内容（不含头部元数据）
 func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string {
 	var sb strings.Builder
-	
+
 	switch entry.Kind {
 	case TimelineKindTool:
 		if len(entry.SubEntries) > 0 {
@@ -740,7 +740,7 @@ func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string 
 	default:
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (unknown entry type)"))
 	}
-	
+
 	return sb.String()
 }
 
@@ -776,7 +776,6 @@ func findFullThinkingContent(m *model, thinkingEntry *TimelineEntry) string {
 	// fallback: 返回 Detail 中的预览文本
 	return thinkingEntry.Detail
 }
-
 
 // renderThinkingInline 将 thinking 内容以优雅的内联方式嵌入 llm_call 详情中。
 // 使用 💭 紫色图标 + 黄色斜体文本 + 缩进，无边框、无多余装饰。

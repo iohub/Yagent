@@ -82,17 +82,17 @@ type translations struct {
 	DashboardCollapseHint string
 	DashboardExpandHint   string
 	// Session tab hints —— 右上角 tab 行右侧的键帽组
-	SessionTitlePrefix   string
-	TabNewHint           string
-	TabCloseHint         string
-	TabModelHint         string
-	TabRouteHint         string
-	TabMaxReached        string
+	SessionTitlePrefix    string
+	TabNewHint            string
+	TabCloseHint          string
+	TabModelHint          string
+	TabRouteHint          string
+	TabMaxReached         string
 	TabCannotWhileRunning string
-	TabCloseLastBlocked  string
-	TabCleared           string
-	TabClosed            string
-	TabNewCreated        string
+	TabCloseLastBlocked   string
+	TabCleared            string
+	TabClosed             string
+	TabNewCreated         string
 }
 
 var langMap = map[Language]translations{
@@ -164,25 +164,25 @@ var langMap = map[Language]translations{
 			"    ?               显示此帮助\n" +
 			"    ctrl+c          强制退出\n" +
 			"    alt+t         切换 token 仪表盘（折叠/展开）",
-		DeleteConfirmTitle:   "确认删除",
-		DeleteConfirmMessage: "确定要删除这条历史记录吗？此操作不可恢复。",
-		DeleteSuccess:        "历史记录已删除",
-		DeleteFailed:         "删除失败：",
-		TimelineDetailHint:   "详情",
-		TimelineExpandHint:   "全屏详情",
+		DeleteConfirmTitle:    "确认删除",
+		DeleteConfirmMessage:  "确定要删除这条历史记录吗？此操作不可恢复。",
+		DeleteSuccess:         "历史记录已删除",
+		DeleteFailed:          "删除失败：",
+		TimelineDetailHint:    "详情",
+		TimelineExpandHint:    "全屏详情",
 		DashboardCollapseHint: "收缩",
 		DashboardExpandHint:   "展开",
-		SessionTitlePrefix:   "会话",
-		TabNewHint:           "新建",
-		TabCloseHint:         "关闭",
-		TabModelHint:         "模型",
-		TabRouteHint:         "路由",
-		TabMaxReached:        "已达到最大会话数 (10)",
+		SessionTitlePrefix:    "会话",
+		TabNewHint:            "新建",
+		TabCloseHint:          "关闭",
+		TabModelHint:          "模型",
+		TabRouteHint:          "路由",
+		TabMaxReached:         "已达到最大会话数 (10)",
 		TabCannotWhileRunning: "任务运行中，无法切换/新建/清空会话",
-		TabCloseLastBlocked:  "无法关闭最后一个会话",
-		TabCleared:           "会话已清空",
-		TabClosed:            "会话已关闭",
-		TabNewCreated:        "已创建新会话",
+		TabCloseLastBlocked:   "无法关闭最后一个会话",
+		TabCleared:            "会话已清空",
+		TabClosed:             "会话已关闭",
+		TabNewCreated:         "已创建新会话",
 	},
 	LangEnglish: {
 		Title:                            "Yagent AI Assistant",
@@ -252,25 +252,25 @@ var langMap = map[Language]translations{
 			"    ?              show this help\n" +
 			"    ctrl+c         force quit\n" +
 			"    alt+t         toggle token dashboard (collapsed/expanded)",
-		DeleteConfirmTitle:   "Confirm Delete",
-		DeleteConfirmMessage: "Are you sure you want to delete this history entry? This action cannot be undone.",
-		DeleteSuccess:        "History entry deleted",
-		DeleteFailed:         "Delete failed: ",
-		TimelineDetailHint:   "Detail",
-		TimelineExpandHint:   "Fullscreen",
+		DeleteConfirmTitle:    "Confirm Delete",
+		DeleteConfirmMessage:  "Are you sure you want to delete this history entry? This action cannot be undone.",
+		DeleteSuccess:         "History entry deleted",
+		DeleteFailed:          "Delete failed: ",
+		TimelineDetailHint:    "Detail",
+		TimelineExpandHint:    "Fullscreen",
 		DashboardCollapseHint: "collapse",
 		DashboardExpandHint:   "expand",
-		SessionTitlePrefix:   "Session",
-		TabNewHint:           "New",
-		TabCloseHint:         "Close",
-		TabModelHint:         "Model",
-		TabRouteHint:         "Route",
-		TabMaxReached:        "Maximum sessions reached (10)",
+		SessionTitlePrefix:    "Session",
+		TabNewHint:            "New",
+		TabCloseHint:          "Close",
+		TabModelHint:          "Model",
+		TabRouteHint:          "Route",
+		TabMaxReached:         "Maximum sessions reached (10)",
 		TabCannotWhileRunning: "Cannot switch/new/clear session while a task is running",
-		TabCloseLastBlocked:  "Cannot close the last session",
-		TabCleared:           "Session cleared",
-		TabClosed:            "Session closed",
-		TabNewCreated:        "New session created",
+		TabCloseLastBlocked:   "Cannot close the last session",
+		TabCleared:            "Session cleared",
+		TabClosed:             "Session closed",
+		TabNewCreated:         "New session created",
 	},
 }
 

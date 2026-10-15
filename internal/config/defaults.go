@@ -33,7 +33,7 @@ const DefaultLLMCallTimeout = 10 * time.Minute
 // DefaultLLMConfig 返回默认的 LLM 推理兜底配置
 func DefaultLLMConfig() *LLMConfig {
 	return &LLMConfig{
-		Timeout: DefaultLLMCallTimeout,
+		Timeout:                    DefaultLLMCallTimeout,
 		MaxRetries:                 5,
 		StepRetries:                0,
 		CircuitBreakerThreshold:    0,

@@ -13,9 +13,9 @@ import (
 // SharedMemory is global context visible to all agents.
 // Thread-safe for concurrent access from multiple agents.
 type SharedMemory struct {
-	messages    []ChatMessage             // internal message storage
-	maxSize     int                       // default: 500
-	subscribers []func(ChatMessage)       // notify on new message
+	messages    []ChatMessage       // internal message storage
+	maxSize     int                 // default: 500
+	subscribers []func(ChatMessage) // notify on new message
 	mu          sync.RWMutex
 
 	// KV store for simple key-value persistence
@@ -27,7 +27,7 @@ type SharedMemory struct {
 	persistTick *time.Ticker  // periodic save ticker
 	persistDone chan struct{} // signal to stop ticker
 	persistWg   sync.WaitGroup
-	dirty       bool          // whether there's unsaved data
+	dirty       bool // whether there's unsaved data
 }
 
 // NewSharedMemory creates a new shared memory.
@@ -36,8 +36,8 @@ func NewSharedMemory(maxSize int) *SharedMemory {
 		maxSize = 500
 	}
 	return &SharedMemory{
-		messages:    make([]ChatMessage, 0),
-		maxSize:     maxSize,
+		messages: make([]ChatMessage, 0),
+		maxSize:  maxSize,
 	}
 }
 

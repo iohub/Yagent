@@ -95,10 +95,10 @@ func (s RolloutFinishState) String() string {
 }
 
 type RolloutInfo struct {
-	SessionID  string
-	CWD        string
-	Model      string
-	TaskID     string
+	SessionID string
+	CWD       string
+	Model     string
+	TaskID    string
 	// BoardID 是这次会话用的便签板（session_meta.board_id）。board 是 session 级的，
 	// 一块板横跨多个 task，/resume 只有拿到它才能续上便签；存量 rollout 里是空串。
 	BoardID    string

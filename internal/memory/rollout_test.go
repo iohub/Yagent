@@ -18,9 +18,9 @@ import (
 
 func TestResponseItemMarshal(t *testing.T) {
 	tests := []struct {
-		name     string
-		item     ResponseItem
-		contains []string // expected substrings in JSON output
+		name        string
+		item        ResponseItem
+		contains    []string // expected substrings in JSON output
 		notContains []string // unexpected substrings
 	}{
 		{
@@ -100,10 +100,10 @@ func TestResponseItemMarshal(t *testing.T) {
 		{
 			name: "reasoning",
 			item: ResponseItem{
-				Type:               "reasoning",
-				ID:                 "reason-1",
-				Summary:            []MessageContentItem{{Type: "summary_text", Text: "thinking..."}},
-				EncryptedContent:   "encrypted-data",
+				Type:             "reasoning",
+				ID:               "reason-1",
+				Summary:          []MessageContentItem{{Type: "summary_text", Text: "thinking..."}},
+				EncryptedContent: "encrypted-data",
 			},
 			contains: []string{
 				`"type":"reasoning"`,
@@ -155,9 +155,9 @@ func TestResponseItemMarshal(t *testing.T) {
 
 func TestEventMsgMarshal(t *testing.T) {
 	tests := []struct {
-		name     string
-		event    EventMsg
-		contains []string
+		name        string
+		event       EventMsg
+		contains    []string
 		notContains []string
 	}{
 		{
@@ -231,7 +231,7 @@ func TestEventMsgMarshal(t *testing.T) {
 			},
 		},
 		{
-			name: "user_message",
+			name:  "user_message",
 			event: EventMsg{Type: "user_message"},
 			contains: []string{
 				`{"type":"user_message"}`,
@@ -283,12 +283,12 @@ func TestEventMsgMarshal(t *testing.T) {
 
 func TestLLMMessageToResponseItems(t *testing.T) {
 	tests := []struct {
-		name             string
-		msg              llm.Message
-		msgID            string
-		wantCount        int
-		wantTypes        []string
-		wantContents     [][]string // per-item expected content substrings; empty slice means skip content check
+		name         string
+		msg          llm.Message
+		msgID        string
+		wantCount    int
+		wantTypes    []string
+		wantContents [][]string // per-item expected content substrings; empty slice means skip content check
 	}{
 		{
 			name:      "system message",
@@ -357,9 +357,9 @@ func TestLLMMessageToResponseItems(t *testing.T) {
 			},
 		},
 		{
-			name:  "tool message",
-			msg:   llm.Message{Role: llm.RoleTool, ToolCallID: "call-1", Content: "file1\nfile2"},
-			msgID: "msg-5",
+			name:      "tool message",
+			msg:       llm.Message{Role: llm.RoleTool, ToolCallID: "call-1", Content: "file1\nfile2"},
+			msgID:     "msg-5",
 			wantCount: 1,
 			wantTypes: []string{"function_call_output"},
 			wantContents: [][]string{
@@ -367,9 +367,9 @@ func TestLLMMessageToResponseItems(t *testing.T) {
 			},
 		},
 		{
-			name:  "tool message empty call id",
-			msg:   llm.Message{Role: llm.RoleTool, ToolCallID: "", Content: "error output"},
-			msgID: "msg-6",
+			name:      "tool message empty call id",
+			msg:       llm.Message{Role: llm.RoleTool, ToolCallID: "", Content: "error output"},
+			msgID:     "msg-6",
 			wantCount: 1,
 			wantTypes: []string{"function_call_output"},
 			wantContents: [][]string{
@@ -418,9 +418,9 @@ func TestChatMessageToResponseItems(t *testing.T) {
 		wantContents [][]string // per-item expected content substrings
 	}{
 		{
-			name:  "system message",
-			msg:   ChatMessage{Type: MessageTypeSystem, Content: "System prompt"},
-			msgID: "msg-sys",
+			name:      "system message",
+			msg:       ChatMessage{Type: MessageTypeSystem, Content: "System prompt"},
+			msgID:     "msg-sys",
 			wantCount: 1,
 			wantTypes: []string{"message"},
 			wantContents: [][]string{
@@ -428,9 +428,9 @@ func TestChatMessageToResponseItems(t *testing.T) {
 			},
 		},
 		{
-			name:  "human message",
-			msg:   ChatMessage{Type: MessageTypeHuman, Content: "User query"},
-			msgID: "msg-human",
+			name:      "human message",
+			msg:       ChatMessage{Type: MessageTypeHuman, Content: "User query"},
+			msgID:     "msg-human",
 			wantCount: 1,
 			wantTypes: []string{"message"},
 			wantContents: [][]string{
@@ -438,9 +438,9 @@ func TestChatMessageToResponseItems(t *testing.T) {
 			},
 		},
 		{
-			name:  "assistant plain text",
-			msg:   ChatMessage{Type: MessageTypeAssistant, Content: "Assistant reply"},
-			msgID: "msg-ast",
+			name:      "assistant plain text",
+			msg:       ChatMessage{Type: MessageTypeAssistant, Content: "Assistant reply"},
+			msgID:     "msg-ast",
 			wantCount: 1,
 			wantTypes: []string{"message"},
 			wantContents: [][]string{
@@ -465,9 +465,9 @@ func TestChatMessageToResponseItems(t *testing.T) {
 			},
 		},
 		{
-			name:  "tool message",
-			msg:   ChatMessage{Type: MessageTypeTool, Content: "tool result", ToolCallID: strPtr("tc-1")},
-			msgID: "msg-tool",
+			name:      "tool message",
+			msg:       ChatMessage{Type: MessageTypeTool, Content: "tool result", ToolCallID: strPtr("tc-1")},
+			msgID:     "msg-tool",
 			wantCount: 1,
 			wantTypes: []string{"function_call_output"},
 			wantContents: [][]string{
@@ -475,9 +475,9 @@ func TestChatMessageToResponseItems(t *testing.T) {
 			},
 		},
 		{
-			name:  "tool message nil call id",
-			msg:   ChatMessage{Type: MessageTypeTool, Content: "error", ToolCallID: nil},
-			msgID: "msg-tool2",
+			name:      "tool message nil call id",
+			msg:       ChatMessage{Type: MessageTypeTool, Content: "error", ToolCallID: nil},
+			msgID:     "msg-tool2",
 			wantCount: 1,
 			wantTypes: []string{"function_call_output"},
 			wantContents: [][]string{
@@ -543,16 +543,16 @@ func TestRolloutWriter(t *testing.T) {
 
 	// Write SessionMeta
 	meta := SessionMeta{
-		ID:            "sess-001",
-		SessionID:     "sess-001",
-		Cwd:           "/tmp/test",
-		CliVersion:    "0.118.0",
-		Originator:    "yagent",
-		ModelProvider: "openai",
-		Source:        "yagent-cli",
+		ID:               "sess-001",
+		SessionID:        "sess-001",
+		Cwd:              "/tmp/test",
+		CliVersion:       "0.118.0",
+		Originator:       "yagent",
+		ModelProvider:    "openai",
+		Source:           "yagent-cli",
 		BaseInstructions: "You are a helpful agent.",
-		ContextWindow: 200000,
-		HistoryMode:   "full",
+		ContextWindow:    200000,
+		HistoryMode:      "full",
 		Git: GitInfo{
 			SHA:       "abc123def",
 			Branch:    "main",
@@ -565,14 +565,14 @@ func TestRolloutWriter(t *testing.T) {
 
 	// Write TurnContext
 	tc := TurnContext{
-		TurnID:          writer.NextTurn(),
-		Cwd:             "/tmp/test",
-		Model:           "o4-mini",
-		Effort:          "medium",
-		ApprovalPolicy:  "suggest",
-		SandboxPolicy:   map[string]string{"mode": "danger-full-access"},
-		Summary:         "auto",
-		WorkspaceRoots:  []string{"/tmp/test"},
+		TurnID:            writer.NextTurn(),
+		Cwd:               "/tmp/test",
+		Model:             "o4-mini",
+		Effort:            "medium",
+		ApprovalPolicy:    "suggest",
+		SandboxPolicy:     map[string]string{"mode": "danger-full-access"},
+		Summary:           "auto",
+		WorkspaceRoots:    []string{"/tmp/test"},
 		CollaborationMode: "single",
 	}
 	if err := writer.WriteTurnContext(tc); err != nil {
@@ -795,16 +795,16 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 	// Write a complete session sequence
 	// 1. session_meta
 	writer.WriteSessionMeta(SessionMeta{
-		ID:            "sess-abc",
-		SessionID:     "sess-abc",
-		Cwd:           "/tmp/test",
-		CliVersion:    "0.118.0",
-		Originator:    "yagent",
-		ModelProvider: "openai",
-		Source:        "yagent-cli",
+		ID:               "sess-abc",
+		SessionID:        "sess-abc",
+		Cwd:              "/tmp/test",
+		CliVersion:       "0.118.0",
+		Originator:       "yagent",
+		ModelProvider:    "openai",
+		Source:           "yagent-cli",
 		BaseInstructions: "Be helpful.",
-		ContextWindow: 200000,
-		HistoryMode:   "full",
+		ContextWindow:    200000,
+		HistoryMode:      "full",
 	})
 
 	// 2. turn_context
@@ -882,13 +882,13 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 	}
 
 	allowedTypes := map[string]bool{
-		"session_meta":                    true,
-		"turn_context":                    true,
-		"response_item":                   true,
-		"event_msg":                       true,
+		"session_meta":                       true,
+		"turn_context":                       true,
+		"response_item":                      true,
+		"event_msg":                          true,
 		"inter_agent_communication_metadata": true,
-		"compacted":                       true,
-		"world_state":                     true,
+		"compacted":                          true,
+		"world_state":                        true,
 	}
 	iso8601Re := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z$`)
 

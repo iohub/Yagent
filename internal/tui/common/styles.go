@@ -65,13 +65,13 @@ func DisplayToolName(name string) string {
 // Styles holds all UI styles organized by category.
 type Styles struct {
 	// Banner / Welcome
-	BannerPad      lipgloss.Style
-	PromptFocused  lipgloss.Style
-	PromptBlurred  lipgloss.Style
-	WelcomePanel   lipgloss.Style
-	WelcomeTitle   lipgloss.Style
-	WelcomeSub     lipgloss.Style
-	WelcomeDim     lipgloss.Style
+	BannerPad     lipgloss.Style
+	PromptFocused lipgloss.Style
+	PromptBlurred lipgloss.Style
+	WelcomePanel  lipgloss.Style
+	WelcomeTitle  lipgloss.Style
+	WelcomeSub    lipgloss.Style
+	WelcomeDim    lipgloss.Style
 
 	// Message log
 	LogTime      lipgloss.Style
