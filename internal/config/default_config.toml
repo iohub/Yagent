@@ -150,6 +150,21 @@ max_notes_per_board = 200
 # 整体关闭用环境变量 YAGENT_BLACKBOARD=0（不写便签、不读便签、不注入索引）。
 # 这里刻意不设 enabled 键：布尔零值会把新能力静默关掉，[browser] enabled 踩过这个坑。
 
+# ── 停止/继续（docs/pause-resume-design.md §8.4）──
+[resume]
+# 总开关。false = 不写检查点、不尝试重放，停下来的任务只能从 Director 继续。
+enable = true
+# 重放上下文的 token 上限；0 = 用模型目录的阈值。超预算不是失败，是降级成交接报告。
+replay_token_budget = 0
+# 重建消息的条数上限；没写 = 默认 2000，**显式 0 = 不限**。
+max_replay_messages = 2000
+# 工作区 git sha 与检查点记下的一致才允许原样重放吗？
+# "warn" = 记录一条降级说明后继续重放；"block" = 拒绝重放、走交接报告。
+degrade_on_workspace_change = "warn"
+# 停止时跑一次 git status 把工作区事实写进检查点。超大仓库可以关掉。
+checkpoint_workspace = true
+# 整体退出这套机制用环境变量 YAGENT_RESUME=0（与 YAGENT_BLACKBOARD=0 同构）。
+
 # ── 增强型 Commander（分布式认知架构）──
 # 所有选项默认关闭，启用时需显式设置
 # 注意：enable_context_compression 压缩 tool 执行结果，适用于 Director / Repo / Coding / DevOps / Browser

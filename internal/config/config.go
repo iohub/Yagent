@@ -199,6 +199,9 @@ type Config struct {
 
 	Blackboard BlackboardConfig `toml:"blackboard"`
 
+	// Resume 是"停止/继续"（检查点重放）的预算与开关。
+	Resume ResumeConfig `toml:"resume"`
+
 	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`
 
 	TUI TUIConfig `toml:"tui"`
@@ -209,6 +212,9 @@ type Config struct {
 
 	// blackboardSectionDefined 同理，记录 [blackboard] 段是否被显式写过。
 	blackboardSectionDefined bool
+
+	// resumeSectionDefined 同理，记录 [resume] 段是否被显式写过。
+	resumeSectionDefined bool
 }
 
 // staleKeysIn 列出某个表里没被当前 schema 解析掉的键。
@@ -415,6 +421,19 @@ func LoadFromFile(path string) (*Config, error) {
 		IndexMaxNotes:  md.IsDefined("blackboard", "index_max_notes"),
 		IndexLineChars: md.IsDefined("blackboard", "index_line_chars"),
 		TTL:            md.IsDefined("blackboard", "ttl"),
+	})
+	// [resume] 与 [blackboard] 同构的一处坑：max_replay_messages 显式写 0 的意思是
+	// "不限条数"，而"没写这一段"解析出来也是 0，所以缺省判定要看键的存在性。
+	cfg.resumeSectionDefined = sectionHasDecodedKey(md, "resume")
+	if stale := staleKeysIn(md, "resume"); len(stale) > 0 {
+		slog.Warn("[resume] 段存在不认识的键，将被忽略",
+			"stale_keys", strings.Join(stale, ", "),
+			"hint", resumeKeyHint)
+	}
+	SetGlobalResume(cfg.Resume, ResumePresence{
+		Section:            cfg.resumeSectionDefined,
+		MaxReplayMessages:  md.IsDefined("resume", "max_replay_messages"),
+		DegradeOnWorkspace: md.IsDefined("resume", "degrade_on_workspace_change"),
 	})
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)

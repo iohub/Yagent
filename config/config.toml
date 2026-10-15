@@ -166,6 +166,15 @@ max_notes_per_board = 200              # 每 board 保留的最新便签数；0 
 # 整体关闭不在这里：用环境变量 YAGENT_BLACKBOARD=0（不写便签、不读便签、不注入索引）。
 # 不设 enabled 键是有意的——布尔零值会静默关掉新能力，[browser] enabled 踩过这个坑。
 
+# ── 停止/继续（docs/pause-resume-design.md §8.4）──
+[resume]
+enable = true                          # 总开关；false = 不写检查点、不重放，停住只能从 Director 继续
+replay_token_budget = 0                # 重放上下文 token 上限；0 = 用模型目录阈值，超预算降级成交接报告
+max_replay_messages = 2000             # 重建消息条数上限；**显式 0 = 不限**，负数或没写 = 默认 2000
+degrade_on_workspace_change = "warn"   # warn = 工作区变了仍重放并记降级；block = 拒绝重放走交接
+checkpoint_workspace = true            # 停止时是否跑 git status 把工作区事实写进检查点
+# 整体退出这套机制用环境变量 YAGENT_RESUME=0（与 YAGENT_BLACKBOARD=0 同构）。
+
 # ── 关键词词典配置 ──
 [keywords]
 default_path = "~/.yagent/keywords.txt"  # 默认关键词文件路径
