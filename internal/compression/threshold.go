@@ -45,23 +45,36 @@ func envThreshold() int {
 	return n
 }
 
-// ResolveThreshold 返回触发上下文压缩的 token 阈值，优先级：
+// ResolveThreshold 返回触发上下文压缩的 token 阈值。两个来源都是**上限**：
+// 目录回答"这个模型装得下多少"，配置回答"我愿意为延迟与成本付多少"，
+// 所以两者都给值时取小；只有一个给值就用那个；都不给用兜底默认。
 //
 //  0. EnvThreshold（仅调试用；显式设置时压过下面一切）；
 //  1. 内嵌模型目录（models.json）收录的上下文窗口 * ContextWindowRatio；
 //  2. configured（配置项 context_compression_threshold，>0 时）；
-//  3. DefaultContextCompressionThreshold。
+//  3. 1 与 2 都给值 → min(1, 2)；都不给 → DefaultContextCompressionThreshold。
 //
-// model 为 LLM 引擎实际使用的模型名，空串或未收录时直接走 2、3 级回退。
+// model 为 LLM 引擎实际使用的模型名，空串或未收录时目录那一路不参与。
+//
+// ⚠️ 调用方有两种语义，改动前先读 docs/compression-trigger-design.md §5.4：
+// 压缩触发传配置值，而重放预算（resume_delegation.go:187 的 ResolveThreshold(model, 0)）
+// 传 0，要的是"纯模型容量"，不参与取小。
 func ResolveThreshold(model string, configured int) int {
 	if n := envThreshold(); n > 0 {
 		return n
 	}
+	catalog := 0
 	if window := models.ContextWindow(model); window > 0 {
-		return int(float64(window) * ContextWindowRatio)
+		catalog = int(float64(window) * ContextWindowRatio)
 	}
-	if configured > 0 {
+	switch {
+	case catalog > 0 && configured > 0:
+		return min(catalog, configured)
+	case catalog > 0:
+		return catalog
+	case configured > 0:
 		return configured
+	default:
+		return DefaultContextCompressionThreshold
 	}
-	return DefaultContextCompressionThreshold
 }

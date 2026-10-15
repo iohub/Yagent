@@ -208,7 +208,7 @@ auto_merge_on_exit = false           # 退出时自动 squash-merge（false 则�
 enable = false                       # 总开关
 max_delegation_depth = 3             # 最大委派深度
 enable_context_compression = false   # 启用上下文压缩（超阈值截断 tool 结果；适用于 Director / Repo / Coding / DevOps / Browser）
-# context_compression_threshold = 120000  # 触发阈值（token）回退值：模型收录于内嵌 models.json 时按「上下文窗口 * 0.75」自动推导，此项被忽略
+# context_compression_threshold = 120000  # 触发阈值（token）：模型收录于内嵌 models.json 时与「上下文窗口 * 0.75」取小（两者都是上限）；不写则完全按目录推导
 # tool_result_keep_tokens = 200        # 截断后保留 token 数
 # enable_ultimate_compression = true   # 第三档：用 thinklink 的 Thought & Plan 重建上下文
 # ultimate_compression_keep_plans = 0  # 重建时保留的块数上限，0 = 全部保留
