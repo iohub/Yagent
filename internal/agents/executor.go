@@ -223,6 +223,23 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 	history := make([]llm.Message, 0)
 	history = append(history, systemMsg, userMsg)
 
+	// 重放入口（docs/pause-resume-design.md §6.2）：ctx 上有 ResumeState 时，
+	// 这一段会话不是"新任务"，而是"上一次停在哪儿"的继续 —— 消息、起点步数、
+	// 材料化过的冷工具、thinklink 的重建原料都要接上。
+	// 接不上的后果不是崩溃而是静默走偏：从第 0 步重跑会重复已经做完的副作用。
+	startStep := 0
+	if rs := resumeStateFrom(ctx); rs != nil && len(rs.Messages) > 0 {
+		messages = append([]llm.Message(nil), rs.Messages...)
+		history = append([]llm.Message(nil), rs.Messages...)
+		startStep = rs.StartStep
+		if cfg.Surface != nil && len(rs.Materialized) > 0 {
+			cfg.Surface.RestoreMaterialized(rs.Materialized)
+		}
+		if seeder, ok := cfg.UltimateThinkLink.(ThinklinkSeeder); ok {
+			SeedThinkLink(seeder, rs.ThinkLink)
+		}
+	}
+
 	// LLM 调用超时取值：上游显式传入 > 全局运行时值（TUI 模型设置面板可动态修改）
 	// > DefaultLLMCallTimeout（默认 10 分钟）。
 	llmTimeout := cfg.LLMTimeout
@@ -324,7 +341,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 	}
 
 	var agentErr error
-	stepNumber := 0
+	stepNumber := startStep
 	// stopKind 记录这一轮是**怎么**结束的。终止事件此前只写 reason 字符串，恢复侧
 	// 只能靠 errors.Is(err, context.Canceled) 去猜；而"猜"分不出用户主动停止、
 	// idle 超时、total 超时，三者的正确续跑策略完全不同。
@@ -355,6 +372,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 				// 文案取自分类时采用的那个错误，而不是循环返回的那个：
 				// 取消路径上引擎给的是裸 context.Canceled，真正的原因在 context.Cause 上。
 				rw.WriteRunAborted(stopKind.reasonText(termErr.Error()), rs)
+				writeExecutorCheckpoint(ctx, rw, cfg, stopKind.kindOf(), stepNumber)
 			} else {
 				rw.WriteRunComplete(rs)
 			}
@@ -380,12 +398,16 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 	}
 
-	writeRollout(systemMsg)
-	writeRollout(userMsg)
+	// 重放时不重写 system/user：它们在原文件里已经有了，续写会进新的文件，
+	// 而恢复侧靠 delegation_id 把两份串起来。
+	if resumeStateFrom(ctx) == nil {
+		writeRollout(systemMsg)
+		writeRollout(userMsg)
+	}
 
 	maxParallel := NormalizeMaxParallelReadOnlyTools(cfg.MaxParallelReadOnlyTools)
 
-	for i := 0; i < cfg.MaxSteps; i++ {
+	for i := startStep; i < cfg.MaxSteps; i++ {
 		// 暂停闸门（A 层）落在 step 边界：上一个批次的工具结果都已提交，所以停在这里
 		// 不会留下"副作用做了一半"的状态。ctx 不取消，恢复后从这行原地往下走。
 		if perr := pause.From(ctx).Wait(ctx); perr != nil {
