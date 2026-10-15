@@ -26,6 +26,48 @@ func (m *designMockEngine) GenerateContent(ctx context.Context, messages []llm.M
 func (m *designMockEngine) Model() string         { return "design-mock-model" }
 func (m *designMockEngine) CloseIdleConnections() {}
 
+// TestDesignTool_SetEngineReachesExecute 钉住热替换的接缝：TUI 在任务运行中切
+// provider 时替换的是同一个工具实例，下一次 Execute 必须用新引擎。
+func TestDesignTool_SetEngineReachesExecute(t *testing.T) {
+	first, second := &designMockEngine{}, &designMockEngine{}
+	tool := NewDesignTool(first)
+	tool.SetEngine(second)
+
+	params := map[string]interface{}{"context": "ctx", "goal": "goal"}
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if second.calls != 1 {
+		t.Errorf("new engine calls = %d, want 1", second.calls)
+	}
+	if first.calls != 0 {
+		t.Errorf("replaced engine calls = %d, want 0", first.calls)
+	}
+}
+
+// TestDesignTool_SetEngineConcurrentWithExecute 让热替换与执行真的撞上：
+// TUI 在任务运行中切 provider 就是在一个线程写、工具批次的工作线程读。
+// 去掉 engineMu 后这条用例只在 -race 下红，非 race 构建下接口值读撕裂是概率事件。
+func TestDesignTool_SetEngineConcurrentWithExecute(t *testing.T) {
+	tool := NewDesignTool(&designMockEngine{})
+	params := map[string]interface{}{"context": "ctx", "goal": "goal"}
+
+	swaps := make(chan struct{})
+	go func() {
+		defer close(swaps)
+		for i := 0; i < 200; i++ {
+			tool.SetEngine(&designMockEngine{})
+		}
+	}()
+
+	for i := 0; i < 200; i++ {
+		if _, err := tool.Execute(context.Background(), params); err != nil {
+			t.Fatalf("Execute #%d: %v", i, err)
+		}
+	}
+	<-swaps
+}
+
 func TestDesignTool_Execute_MissingContext(t *testing.T) {
 	engine := &designMockEngine{}
 	tool := NewDesignTool(engine)

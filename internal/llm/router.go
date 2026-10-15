@@ -347,11 +347,14 @@ func (e *RoutingEngine) CloseIdleConnections() {
 	e.client.CloseIdleConnections()
 }
 
-// resolve 返回本轮应使用的具体引擎：路由启用时取 ctx 档位（或角色基线），
-// 否则回退到该 agent 的 provider 级引擎。
+// resolve 返回本轮应使用的具体引擎：TUI 手动选过的 provider 优先（显式意图），
+// 其次路由启用时取 ctx 档位（或角色基线），否则回退到该 agent 的 provider 级引擎。
 func (e *RoutingEngine) resolve(ctx context.Context) Engine {
 	if e.client == nil {
 		return nil
+	}
+	if eng := e.client.overrideEngine(e.agent); eng != nil {
+		return eng
 	}
 	if r := e.client.GetRouter(); r.Enabled() {
 		tier := r.BaselineOf(e.agent)

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"yagent/internal/llm"
@@ -15,13 +16,29 @@ import (
 // proactive (runs before coding), in contrast to DeepThinkingTool which is
 // reactive (used when conventional methods have failed).
 type DesignTool struct {
-	LLM           llm.Engine
+	// engineMu 保护 engine：TUI 现在能在任务运行中切 provider，而 SetEngine 与 Execute 不在同一线程。
+	engineMu sync.RWMutex
+	engine   llm.Engine
+
 	StreamHandler llm.StreamHandler // 可选的流式处理器，如果设置则使用流式推理
 }
 
 // NewDesignTool creates a new DesignTool with the given LLM client.
 func NewDesignTool(engine llm.Engine) *DesignTool {
-	return &DesignTool{LLM: engine}
+	return &DesignTool{engine: engine}
+}
+
+// SetEngine 运行时替换推理引擎（provider 切换的热替换路径）。
+func (t *DesignTool) SetEngine(e llm.Engine) {
+	t.engineMu.Lock()
+	t.engine = e
+	t.engineMu.Unlock()
+}
+
+func (t *DesignTool) currentEngine() llm.Engine {
+	t.engineMu.RLock()
+	defer t.engineMu.RUnlock()
+	return t.engine
 }
 
 // Execute performs solution design using an isolated LLM call.
@@ -77,7 +94,7 @@ func (t *DesignTool) Execute(ctx context.Context, params map[string]interface{})
 		opts.StreamHandler = t.StreamHandler
 	}
 
-	resp, err := t.LLM.GenerateContent(llmCtx, messages, nil, opts)
+	resp, err := t.currentEngine().GenerateContent(llmCtx, messages, nil, opts)
 	if err != nil {
 		return nil, fmt.Errorf("design LLM call failed: %w", err)
 	}

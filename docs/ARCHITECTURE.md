@@ -874,7 +874,7 @@ codingEngine     = llm.NewRoutingEngine(client, "coding")
 microAgentEngine = client.GetToolEngine("micro_agent")
 ```
 
-引擎可在运行时重新解析：Director 持有 `llmClient *llm.Client`，每轮开始处重建各 Agent 的 `RoutingEngine`（`refreshSubAgentEngines()`），使提供商覆盖与 auto/fixed 切换立即生效。这里必须保留 `RoutingEngine` 包装而不是裸提供商引擎——`RunAgentLoop` 靠 `llm.ResolveTierEngine` 的类型识别把 ctx 里的档位换成具体引擎，包装一丢自动路由静默失效（`model_routed` 事件照发、实际模型不变）。注意：路由启用时档位模型优先于 `[agents.llm.*].use_provider`。
+引擎可在运行时重新解析：Director 持有 `llmClient *llm.Client`，每轮开始处重建各 Agent 的 `RoutingEngine`（`refreshSubAgentEngines()`），使提供商覆盖与 auto/fixed 切换立即生效。这里必须保留 `RoutingEngine` 包装而不是裸提供商引擎——`RunAgentLoop` 靠 `llm.ResolveTierEngine` 的类型识别把 ctx 里的档位换成具体引擎，包装一丢自动路由静默失效（`model_routed` 事件照发、实际模型不变）。优先级：**TUI 设置的运行时覆盖 > 路由档位 > 配置里的 `[agents.llm.*].use_provider`**。手动选过一次模型是显式意图，压过档位（`routeCtx` 因此跳过分类，也不发 `model_routed`）；配置的静态 use_provider 仍让位给档位。换模型不要求任务空闲：`RunAgentLoop` 在入口就把 `RoutingEngine` 解成具体引擎，所以子 Agent 在**下一次委派**换新模型，Director 每个 step 现场解析、下一步即生效，正在飞的那次调用不变。
 
 **回退链**（`internal/llm/fallback.go`）：主引擎失败时，回退提供商按 `FallbackProvider.Weight` **降序**尝试（对 weight 做 `sort.SliceStable`）。每一次回退尝试都受相同的超时/重试设置约束。
 

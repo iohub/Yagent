@@ -555,34 +555,50 @@ func (c *Client) PersistLLMTimeout(d time.Duration) error {
 	return nil
 }
 
-func (c *Client) GetAgentEngine(agentName string) Engine {
+// overrideEngine 返回该 agent 的运行时 provider 覆盖对应的引擎，没有覆盖时返回 nil。
+func (c *Client) overrideEngine(agentName string) Engine {
 	c.mu.RLock()
 	override, hasOverride := c.agentProviderOverrides[agentName]
 	c.mu.RUnlock()
-
-	if hasOverride {
-		provider, err := c.Config.GetProvider(override)
-		if err == nil {
-			return c.getOrCreateEngine(provider, override)
-		}
+	if !hasOverride {
+		return nil
+	}
+	provider, err := c.Config.GetProvider(override)
+	if err != nil {
 		slog.Warn("Runtime agent override provider not found, falling back to config",
 			"agent", agentName, "provider", override, "error", err)
+		return nil
+	}
+	return c.getOrCreateEngine(provider, override)
+}
+
+// HasAgentOverride 报告该 agent 是否被设了运行时 provider 覆盖。
+func (c *Client) HasAgentOverride(agentName string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, has := c.agentProviderOverrides[agentName]
+	return has
+}
+
+func (c *Client) GetAgentEngine(agentName string) Engine {
+	if eng := c.overrideEngine(agentName); eng != nil {
+		return eng
 	}
 
 	provider, err := c.Config.ResolveProvider(agentName, "")
 	if err != nil {
 		slog.Warn("Failed to resolve agent provider, falling back to default", "agent", agentName, "error", err)
-		return c.Engine
+		return c.DefaultEngine()
 	}
 
 	providerName := c.resolveProviderName(provider)
 	if providerName == "" {
-		return c.Engine
+		return c.DefaultEngine()
 	}
 
 	defaultProvider, defaultErr := c.Config.ResolveProvider("", "")
 	if defaultErr == nil && providersEqual(provider, defaultProvider) {
-		return c.Engine
+		return c.DefaultEngine()
 	}
 
 	return c.getOrCreateEngine(provider, providerName)
@@ -605,17 +621,17 @@ func (c *Client) GetToolEngine(toolName string) Engine {
 	provider, err := c.Config.ResolveProvider("", toolName)
 	if err != nil {
 		slog.Warn("Failed to resolve tool provider, falling back to default", "tool", toolName, "error", err)
-		return c.Engine
+		return c.DefaultEngine()
 	}
 
 	providerName := c.resolveProviderName(provider)
 	if providerName == "" {
-		return c.Engine
+		return c.DefaultEngine()
 	}
 
 	defaultProvider, defaultErr := c.Config.ResolveProvider("", "")
 	if defaultErr == nil && providersEqual(provider, defaultProvider) {
-		return c.Engine
+		return c.DefaultEngine()
 	}
 
 	return c.getOrCreateEngine(provider, providerName)
@@ -635,6 +651,13 @@ func providersEqual(a, b *config.ProviderConfig) bool {
 		return false
 	}
 	return a.APIBaseURL == b.APIBaseURL && a.APIKey == b.APIKey && a.Model == b.Model
+}
+
+// DefaultEngine 锁内返回默认引擎：SwitchProvider 会在 TUI 线程整体替换它，而 agent 线程随时在读。
+func (c *Client) DefaultEngine() Engine {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Engine
 }
 
 func (c *Client) SwitchProvider(providerName string) error {
