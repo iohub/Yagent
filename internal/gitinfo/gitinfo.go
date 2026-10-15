@@ -1,4 +1,5 @@
-// Package gitinfo 读取一个仓库的三项身份事实：HEAD 的 sha、当前分支名、origin URL。
+// Package gitinfo 读取一个仓库的事实：HEAD 的 sha、当前分支名、origin URL，
+// 以及工作区是否脏（Status）。
 //
 // 它住在这里而不是 internal/agents：rollout 的两个 session_meta 写入点分属
 // internal/agents（executor）与 internal/agents/director（planner），而后者不得
@@ -93,4 +94,45 @@ func run(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// maxStatusFiles 是脏文件清单的条数上限。这份清单要进 rollout 的一条 JSONL，
+// 而一个没配 .gitignore 的仓库在 `git add -A` 之前可以列出几万个 build 产物 ——
+// 检查点会因此比它要保护的会话还大。
+const maxStatusFiles = 200
+
+// Status 报告 dir 的工作区是否有未提交改动，并给出脏文件清单（最多 200 条，
+// truncated 说明被截断）。
+//
+// 用途是恢复侧的"工作区还是暂停时那个样子吗"判据：只记 sha 不够，
+// 未提交的改动同样会让子 Agent 的"我已经改了 X"变成假的。
+//
+// 与 Collect 同样的理由用 context.WithoutCancel 派生预算：这条探测发生在**停止**
+// 路径上，那个 ctx 往往已经取消；直接拿它跑 git 会得到"干净"的错误答案（§2 R6 的
+// 原样复刻 —— dirty=false 不是因为干净，而是因为命令根本没跑起来）。
+// 探测失败一律按"不知道"上报（err 非 nil），调用点必须把它记进检查点而不是当成干净。
+func Status(ctx context.Context, dir string) (dirty bool, files []string, truncated bool, err error) {
+	if !IsRepo(dir) {
+		return false, nil, false, nil
+	}
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), probeBudget)
+	defer cancel()
+
+	out, err := run(probeCtx, dir, "status", "--porcelain")
+	if err != nil {
+		return false, nil, false, err
+	}
+	lines := strings.Split(out, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		entry := strings.TrimSpace(line)
+		if entry == "" {
+			continue
+		}
+		if len(kept) >= maxStatusFiles {
+			return true, kept, true, nil
+		}
+		kept = append(kept, entry)
+	}
+	return len(kept) > 0, kept, false, nil
 }
