@@ -58,7 +58,7 @@ type NoteInput struct {
 	Summary     string
 	Body        string
 	ArtifactIDs []string
-	Status      string // "ok" or "error"
+	Status      string // ok | error | degraded（后两档由系统判定，见 handoff.go：没有 paused，停住的委派不写便签）
 	Handoff     Handoff
 }
 

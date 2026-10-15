@@ -254,7 +254,11 @@ func TestStopKindTracker_KeepsTheDiagnosableReason(t *testing.T) {
 // 都要有一个能触发它的夹具。词表里没被 switch 列出的值会落到 default（不可重放），
 // 这是故意的 —— 新增停止原因时必须显式决定能不能原样继续。
 func TestScanResumeCandidates_ClassifiesEveryStopKind(t *testing.T) {
-	dir := filepath.Join(memory.RolloutRootDir(), "scan-stopkinds")
+	// 项目目录必须每次运行都是新的：扫描的断言是"候选数 == 夹具数"，
+	// 而复用的目录会让上一次运行（-count=2、或同一 CI 进程里的重跑）留下的
+	// 12 份夹具一起被扫到 —— 那时失败看起来像"扫描逻辑漂了"，其实是夹具串了。
+	projectID := fmt.Sprintf("scan-stopkinds-%d", time.Now().UnixNano())
+	dir := filepath.Join(memory.RolloutRootDir(), projectID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -266,7 +270,7 @@ func TestScanResumeCandidates_ClassifiesEveryStopKind(t *testing.T) {
 	}
 	for i, kind := range kinds {
 		name := fmt.Sprintf("scan-%02d", i)
-		w, err := memory.NewRolloutWriter(name, "task-"+name, "scan-stopkinds")
+		w, err := memory.NewRolloutWriter(name, "task-"+name, projectID)
 		if err != nil || !w.Enabled() {
 			t.Skipf("rollout writer unavailable: %v", err)
 		}

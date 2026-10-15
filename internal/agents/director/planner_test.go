@@ -94,6 +94,9 @@ type fakePlannerTools struct {
 type fakeToolCall struct {
 	Name string
 	Args string
+	// CallID 是 planner 递过来的 tool_call_id。恢复侧全靠它（delegation_id 的源头），
+	// 所以假实现必须把它原样记下来，测试才可能发现"传了个空串"这种回归。
+	CallID string
 }
 
 func (t *fakePlannerTools) Specs() []llm.ToolDef {
@@ -104,8 +107,8 @@ func (t *fakePlannerTools) Specs() []llm.ToolDef {
 	}
 }
 
-func (t *fakePlannerTools) Call(_ context.Context, name, argsJSON string) (string, error) {
-	t.calls = append(t.calls, fakeToolCall{Name: name, Args: argsJSON})
+func (t *fakePlannerTools) Call(_ context.Context, name, argsJSON string, callID string) (string, error) {
+	t.calls = append(t.calls, fakeToolCall{Name: name, Args: argsJSON, CallID: callID})
 	if t.state != nil && strings.HasPrefix(name, "delegate_") {
 		t.state.HasDelegated = true
 		t.state.DelegationAttempts++

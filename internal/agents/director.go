@@ -22,6 +22,7 @@ import (
 	"yagent/internal/llm"
 	"yagent/internal/mcp"
 	"yagent/internal/memory"
+	"yagent/internal/pause"
 	"yagent/internal/thinklink"
 	"yagent/internal/tools"
 )
@@ -90,7 +91,10 @@ type DirectorAgent struct {
 	thinkLink            *thinklink.Store
 	taskID               string
 	resumedTask          bool
-	boardID              string
+	// pendingResumption 是 TUI/HTTP 的"从子 Agent 继续"入口交进来的落点。
+	// nil = 正常新任务。取用于 run()，用完即清。
+	pendingResumption *DelegationStop
+	boardID           string
 }
 
 func (a *DirectorAgent) loadProjectContext() *director.ProjectContextLoadResult {
@@ -354,7 +358,7 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	cfg.StopOnFinish = true
 	cfg.LLMTimeout = a.currentLLMTimeout()
 
-	if rolloutWriter := a.createRolloutWriter(ca.DisplayName, task); rolloutWriter != nil {
+	if rolloutWriter := a.createRolloutWriter(ctx, ca.DisplayName, task); rolloutWriter != nil {
 		defer rolloutWriter.Close()
 		ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 	}
@@ -427,7 +431,27 @@ func (a *DirectorAgent) SetResumedTask(resumed bool) {
 	a.resumedTask = resumed
 }
 
-func (a *DirectorAgent) createRolloutWriter(agentName, task string) *memory.RolloutWriter {
+// SetPendingResumption 交入一次"要把停在委派里的活儿接着做完"的落点。
+// 与 resumedTask 同样是**一次性**标记：run() 取出来用完即清，
+// 否则下一轮会把同一份重放结果再提交一遍（那是重复提交，不是恢复）。
+func (a *DirectorAgent) SetPendingResumption(stop DelegationStop) {
+	a.pendingResumption = &stop
+}
+
+// SetPendingResumptionOpt 允许传 nil：每一轮都必须显式设置，
+// "这次不带落点"和"没设置过"必须是同一件事，否则上一轮的落点会漏进这一轮。
+func (a *DirectorAgent) SetPendingResumptionOpt(stop *DelegationStop) {
+	a.pendingResumption = stop
+}
+
+// createRolloutWriter 为一次委派（或 Director 自己、Custom Agent、Meta 设计）建一份
+// 同步 rollout。
+//
+// ctx 是用来取父子坐标的：delegation_id 由 directorToolRunner 在 delegate_* 分支注入，
+// parent_session_id 由 Director 在自己的 writer 建好之后注入。两者都在这里一次性写进
+// writer，两个 SessionMeta 写入点（executor / planner）都不用各自记得去取 ——
+// 漏一个的表现是那份文件没有坐标，恢复侧只能把它判成"不可原样重放"。
+func (a *DirectorAgent) createRolloutWriter(ctx context.Context, agentName, task string) *memory.RolloutWriter {
 	projectID := a.computeProjectID()
 
 	writer, err := memory.NewRolloutWriter(agentName, a.taskID, projectID)
@@ -441,6 +465,7 @@ func (a *DirectorAgent) createRolloutWriter(agentName, task string) *memory.Roll
 	// 把便签板一起记进 rollout：/resume 靠它找回这块板。task_id 已经不够用了 ——
 	// board 现在是 session 级的，一个 board 会横跨多个 task。
 	writer.SetBoardID(a.boardID)
+	writer.SetDelegation(memory.DelegationIDFrom(ctx), memory.RolloutSessionIDFrom(ctx))
 
 	slog.Debug("Rollout: writer created for delegate agent",
 		"agent", agentName,
@@ -505,6 +530,13 @@ func parseContextRefs(raw interface{}) []string {
 
 func (a *DirectorAgent) writeDelegateNote(agentName, toolName, task string, result AgentResult, runErr error) string {
 	if !blackboardEnabled() || a.boardID == "" {
+		return ""
+	}
+	// 闸门 abandon 掉的那次委派**什么都不写**。它没有交付物，落上去就是一张空正文的便签，
+	// 却会占住每轮重扫的索引位、并在下一次委派的任务前缀里冒充一条结论；而"恢复后接着做完"
+	// 才是它的下一步，届时 writeResumedNote 落的是真交付（ok）或降级报告（degraded）。
+	var abandoned *pause.AbandonedError
+	if errors.As(runErr, &abandoned) {
 		return ""
 	}
 	status := blackboard.StatusOK
@@ -708,7 +740,7 @@ func (r *directorToolRunner) Specs() []llm.ToolDef {
 	return r.agent.surfaceOrDefault().Defs()
 }
 
-func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON string) (string, error) {
+func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON string, callID string) (string, error) {
 	a := r.agent
 
 	ad, state := a.resolveTool(name)
@@ -738,6 +770,9 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 	switch {
 	case isInteractiveUserTool(name):
 	case isDelegate:
+		// 委派坐标在这一层注入：它是唯一一个既知道 tool_call_id、又在子 Agent 的
+		// ctx 之下游还能被 createRolloutWriter 读到的位置。
+		cancelCtx = memory.WithDelegationID(cancelCtx, callID)
 		toolCtx, toolCancel = activity.WithIdleTimeout(cancelCtx, activity.Options{
 			IdleTimeout:  a.delegateIdleTimeout,
 			TotalTimeout: a.delegateTotalTimeout,
@@ -750,7 +785,8 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 	toolCancel()
 
 	if psm := a.takePendingSubAgentMemory(); psm != nil {
-		a.injectSubAgentMemory(*psm, "", name)
+		// callID 不再是空串：ParentID 从此能回答"这条摘要来自哪一次委派"。
+		a.injectSubAgentMemory(*psm, callID, name)
 		r.state.SetPendingSubAgentMemory(toSubAgentMemory(psm))
 	}
 
@@ -789,6 +825,9 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.ConversationMemory) (string, error) {
 	resumedTask := a.resumedTask
 	a.resumedTask = false
+	// 一次性取用：下一轮不该再把同一份重放结果提交进 memory。
+	pending := a.pendingResumption
+	a.pendingResumption = nil
 
 	// boardID 是按会话写入的（SetBoardScope），而 read_note/read_artifact/list_notes 的可用性取决于它，
 	// 所以每轮开始重建工具面。
@@ -847,8 +886,12 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 	}
 
 	var directorRolloutWriter *memory.RolloutWriter
-	if rw := a.createRolloutWriter("director", input); rw != nil {
+	if rw := a.createRolloutWriter(ctx, "director", input); rw != nil {
 		directorRolloutWriter = rw
+		// 把自己的 session_id 挂到 ctx 上：被委派的子 Agent 会把它记成
+		// ParentSessionID。没有它，父子只有单向指针 —— 从子文件能找到父 call，
+		// 从父 call 却不知道该读哪份子文件（同一角色在一个会话里可能被委派多次）。
+		ctx = memory.WithRolloutSessionID(ctx, rw.SessionID())
 		defer func() {
 			if directorRolloutWriter != nil {
 				directorRolloutWriter.Close()
@@ -893,11 +936,29 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 	}
 
 	planner := director.NewPlanner(cfg, state)
+
+	// 恢复的执行阶段放在门面层而不是 planner 里：委派机器（delegateTo、子 Agent 的
+	// rollout writer、ResumeState 的接缝）都在这层，planner 只拿到成品文本。
+	// 这一步不调 LLM，所以恢复本身确定且零 token 成本（§6.3）。
+	var resumption *director.Resumption
+	if pending != nil && config.ResumeEnabled() {
+		resultText, degraded := a.resumeDelegation(ctx, *pending)
+		resumption = &director.Resumption{
+			DelegationID: pending.DelegationID,
+			ToolName:     pending.ToolName,
+			AgentName:    pending.AgentName,
+			RolloutPath:  pending.ChildRolloutPath,
+			Result:       resultText,
+			Degraded:     degraded,
+		}
+	}
+
 	result, err := planner.Run(ctx, director.PlanInput{
-		Input:   input,
-		Mem:     mem,
-		TaskID:  a.taskID,
-		Resumed: resumedTask,
+		Input:             input,
+		Mem:               mem,
+		TaskID:            a.taskID,
+		Resumed:           resumedTask,
+		PendingResumption: resumption,
 	})
 	a.carryOverMaterialized()
 	return result.Text, err
