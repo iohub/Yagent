@@ -388,10 +388,13 @@ type Adapter struct { name, description string; fn ToolFunc
 
 ### 6.5 三档上下文压缩（`internal/compression`）
 
-阈值 = 模型目录收录的 `limit.context × 0.75`（目录未命中则回退 `[enhanced_commander] context_compression_threshold`，默认 120000），
-每步检查，`enhanced_commander.enable_context_compression` 总开关。
-调试例外：`YAGENT_COMPRESS_THRESHOLD` 一旦设了就**直接当阈值**，压过目录与配置 ——
-目录收录的模型动辄 1M 窗口（阈值 750k），想在真机上肉眼验收压缩行为只能靠它；生产不要用。
+阈值 = `min(模型目录收录的 limit.context × 0.75, [enhanced_commander] context_compression_threshold)` ——
+两个来源都是上限，配置没写（或写 0/负数）就纯按目录推导，都没值才是 120000；
+**provider 的 `context_window` 不参与**（见 §11 坑 3）。每步检查，`enhanced_commander.enable_context_compression` 总开关。
+调试例外：`YAGENT_COMPRESS_THRESHOLD` 一旦设了就**直接当阈值**，压过目录与配置。
+取小的代价是压缩会在更低的位置触发，所以第一档是**增量记账**：开头一次遍历得到逐条 token 数，
+之后每截一条只重算那一条（旧写法每截一条对整份消息重算两遍，200 条工具结果的会话要 9.3s）。
+完整规格与实测数据（含"为什么压缩不是延迟主因"）见 `docs/compression-trigger-design.md`。
 
 1. **Rule**：`TruncateToolResultsToBudget` — 按优先级先截低价值工具结果（`deepthinking`/`design` 结果受保护），保留最近 `tool_result_keep_tokens`（默认 200）。
 2. **Emergency**：抽取 T&P 块进 thinklink，最近 3 条保留原文，其余 LLM 摘要，记忆整体重写为 `[system, one user]`。
@@ -674,7 +677,8 @@ go vet ./...                              # 必须干净
   新增 timer 请先加 seam，再让测试自己负责耗时。
 - **耗时必须由测试自己负责**：历史上 `internal/compression` 的 28s 全部来自五个用
   `strings.Repeat("x", 50000)` 造工具结果的截断测试（tiktoken 反复编几百 KB）——payload 缩到
-  1-2k 并等比缩预算后整包 0.17s，断言语义不变。`internal/agents` 的 30s 来自
+  1-2k 并等比缩预算后整包 0.17s，断言语义不变（今天 0.55s：`TestTruncateCostScalesLinearly` 是故意留下的
+  一条计时用例，用来钉住"每截一条全量重算"不许回来，见 `docs/compression-trigger-design.md` R2）。`internal/agents` 的 30s 来自
   `TestRunAgentLoop_MultipleToolCalls` 把工具阻塞到 **父 ctx 的 30s 超时**；现在统一用
   `restoreToolTimeout(t, …)`（改 `defaultToolTimeout` 这个已有 seam）+ `context.Background()`。
   LLM 引擎的退避（baseDelay 10s）**不要**试图跑完整重试序列：用短 `cfg.Timeout` 把退避钳制到
@@ -802,13 +806,15 @@ plan:
 
 1. **本文档之外的旧资料普遍过期**：`docs/ARCHITECTURE.md` 与 `README.md` 里的部分描述（模块图、`pkg/`、工具数）落后于代码；以本文件和源码为准。
 2. **`dist/` 被 `.gitignore` 忽略，但 `dist/data/models.json` 与 `dist/bin` 里的文件是被跟踪的**。改目录后 `git add -f dist/...`，否则 `go:embed` 编不过、或二进制继续用旧数据。
-3. **模型目录与配置里的 `context_window` 会打架，且两个消费者取法相反**：
-   - 压缩阈值（`compression/threshold.go` 的 `ResolveThreshold`）= **目录命中优先** → 未命中才用 `context_compression_threshold`（默认 120000）；
+3. **模型目录与配置里的 `context_window` 是两个消费者的不同口径**：
+   - 压缩阈值（`compression/threshold.go` 的 `ResolveThreshold`）= 目录命中值（`limit.context × 0.75`）与
+     `[enhanced_commander] context_compression_threshold` **取小**（两者都是上限）；没写配置就纯按目录推导；
      **provider 的 `context_window` 完全不参与**。
    - TUI 上下文进度条（`tui/tui_model.go` 的 `contextWindowFromCfg`）= **provider 的 `context_window` 优先** → 未设置才查目录。
-   所以给目录里已收录的模型手写一个不同的 `context_window`，会出现"压缩时机与进度条口径不一致"。
-   **想临时压低阈值做验收**只能靠 `YAGENT_COMPRESS_THRESHOLD`（目录命中时配置项是被跳过的，改配置不起作用）；
-   它是纯调试入口：非法值原样回落，取值不缓存，生产配置不要用 —— 会让压缩早于模型真实容量触发，白丢上下文。
+   所以给目录里已收录的模型手写一个不同的 `context_window`，只影响进度条，不影响压缩时机。
+   **想临时压低阈值做验收**有两条路：写一个小的 `context_compression_threshold`（会被 min 采纳），
+   或设 `YAGENT_COMPRESS_THRESHOLD`（跳过目录与配置、且不缓存取值，非法值原样回落）。
+   生产配置不要用后者 —— 它绕过一切，会让压缩早于模型真实容量触发，白丢上下文。
 4. **`default_config.toml` 里有一段 `[context]` 表**（`enable_auto_compact` 等）`Config` 根本不解析；真正的开关在 `[enhanced_commander]`。别照着模板那段改配置。
 5. **声明 ≠ 可用（已消解）**：`Registry.Validate()` 双向对账 schemas.json 与 Spec，"声明了没人实现"
    是启动错误；工具面由画像派生，golden 基线（`internal/agents/testdata/tool_surfaces.golden`）钉住

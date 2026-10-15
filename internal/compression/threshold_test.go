@@ -29,16 +29,22 @@ func TestResolveThreshold(t *testing.T) {
 		configured int
 		want       int
 	}{
-		// 目录收录的模型：阈值 = 上下文窗口 * 0.75，忽略配置值（含线上常见的写死 120000）
-		{"窗口 128000 → 阈值为其 75%", "deepseek/deepseek-v3.2", 0, int(128000 * 0.75)},
-		{"目录优先于配置阈值", "deepseek/deepseek-v3.2", 120000, int(128000 * 0.75)},
-		{"裸模型名同样命中", "qwen3-coder-plus", 120000, int(1048576 * 0.75)},
+		// 目录与配置都是上限，两者都给值时取小（docs/compression-trigger-design.md §5.1）。
+		{"128000 窗口：目录 96000 小于配置 120000 → 目录胜出", "deepseek/deepseek-v3.2", 120000, int(128000 * 0.75)},
+		{"1M 窗口：配置 120000 小于目录 786432 → 配置胜出", "alibaba/qwen3-coder-plus", 120000, 120000},
+		{"1M 窗口：配置比目录还大 → 仍取目录", "alibaba/qwen3-coder-plus", 900000, int(1048576 * 0.75)},
+		// 只有一边给值
+		{"目录命中且无配置 → 目录", "deepseek/deepseek-v3.2", 0, int(128000 * 0.75)},
+		{"裸模型名同样命中目录", "qwen3-coder-plus", 0, int(1048576 * 0.75)},
 		// 未收录 / 无数据：回退配置值，再回退包默认值
 		{"未收录模型回退配置值", "acme/private-model", 50000, 50000},
 		{"未收录模型且无配置回退默认值", "acme/private-model", 0, DefaultContextCompressionThreshold},
 		{"embedding 模型无上下文数据", "baai/bge-m3", 0, DefaultContextCompressionThreshold},
+		{"embedding 模型 + 配置值 → 配置", "baai/bge-m3", 60000, 60000},
 		{"空模型名回退配置值", "", 80000, 80000},
 		{"负数配置视为未配置", "acme/private-model", -1, DefaultContextCompressionThreshold},
+		// 目录命中时，0 与负数都必须按"没写"处理，否则阈值会掉进兜底值
+		{"负数配置不参与取小", "alibaba/qwen3-coder-plus", -1, int(1048576 * 0.75)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -46,6 +52,26 @@ func TestResolveThreshold(t *testing.T) {
 				t.Errorf("ResolveThreshold(%q, %d) = %d, want %d", tt.model, tt.configured, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestResolveThreshold_ReplayBudgetUnaffected 钉住取小的**边界**：
+// ResolveThreshold 有两个语义不同的调用方 —— 压缩触发传配置值，而重放预算
+// （internal/agents/resume_delegation.go:187 的 ResolveThreshold(model, 0)）传 0，
+// 要的是"这个模型装得下多少"。取小一旦让 0 也参与，重放预算就会从 786432 掉到
+// 兜底的 120000，表现是"能重放的委派突然全部降级成交接报告"——那与压缩无关，
+// 却会被误当成压缩改动的一部分。
+func TestResolveThreshold_ReplayBudgetUnaffected(t *testing.T) {
+	loadCatalog(t)
+
+	const big = "alibaba/qwen3-coder-plus" // 1,048,576 窗口 → 目录推导 786,432
+	if got := ResolveThreshold(big, 0); got != int(1048576*0.75) {
+		t.Errorf("configured=0（重放预算的传参形态）= %d, want %d：0 必须按\"没写\"处理，不参与取小",
+			got, int(1048576*0.75))
+	}
+	// 对照：同一条模型路径上压缩触发确实会被配置压小，两件事不能糊在一起。
+	if got := ResolveThreshold(big, 120000); got != 120000 {
+		t.Errorf("configured=120000（压缩触发的传参形态）= %d, want 120000（取小没生效）", got)
 	}
 }
 
@@ -58,7 +84,7 @@ func TestResolveThreshold_EnvOverrideBeatsCatalog(t *testing.T) {
 
 	const model = "deepseek/deepseek-v3.2"
 	if got := ResolveThreshold(model, 120000); got != int(128000*0.75) {
-		t.Fatalf("基线：目录阈值应优先于配置项，实际 %d, want %d", got, int(128000*0.75))
+		t.Fatalf("基线：取小后应是目录的 96000，实际 %d, want %d", got, int(128000*0.75))
 	}
 
 	t.Setenv(EnvThreshold, "2000")

@@ -172,7 +172,8 @@ checkpoint_workspace = true
 # enable = false
 # max_delegation_depth = 3
 # enable_context_compression = false
-# 压缩阈值回退值：模型收录于内嵌 models.json 时按「上下文窗口 * 0.75」自动推导，此项被忽略
+# 压缩阈值（token）：模型收录于内嵌 models.json 时与「上下文窗口 * 0.75」取小
+# （两者都是上限）；不写这行则完全按目录推导，写 0 或负数等同没写
 # context_compression_threshold = 120000
 # tool_result_keep_tokens = 200
 # 第三档：用 thinklink 记录的 Thought & Plan 重建上下文，默认开启
