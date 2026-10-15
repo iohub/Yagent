@@ -25,7 +25,14 @@ type SessionMeta struct {
 	// BoardID 是这次会话用的便签板。board 作用域提到 session 级之后，
 	// task_id 已经不足以在 /resume 时找回那块板（一个板对应多个 task），
 	// 所以要把板本身记下来。存量 rollout 没有这个字段 ⇒ 读出来是空串。
-	BoardID          string  `json:"board_id,omitempty"`
+	BoardID string `json:"board_id,omitempty"`
+	// DelegationID 是父 Director 那一次 `delegate_*` 的 tool_call_id。它是父子
+	// rollout 之间唯一的关联坐标：恢复时靠它从"Director 停在哪个 call 上"走到
+	// "子 Agent 的那份文件"。Director 自己的文件里为空。
+	DelegationID string `json:"delegation_id,omitempty"`
+	// ParentSessionID 是父 rollout 的 session_id，让父子可以双向定位
+	// （只有 DelegationID 时，找到 call 还得先猜是哪份 Director 会话）。
+	ParentSessionID  string  `json:"parent_session_id,omitempty"`
 	Cwd              string  `json:"cwd,omitempty"`
 	CliVersion       string  `json:"cli_version,omitempty"`
 	Originator       string  `json:"originator,omitempty"`
@@ -363,6 +370,56 @@ const (
 	// 存在的意义是让新增的 return 路径立刻可诊断，而不是静默留下空的 stop_reason。
 	StopKindUnaccounted = "unaccounted"
 )
+
+// ─── AgentCheckpoint — 停止时的坐标（docs/pause-resume-design.md §5.3）───
+
+// RecordAgentCheckpoint 是检查点记录的顶层类型名（与 session_meta / turn_aborted /
+// compacted 同级）。取代已删除的 world_state：那份记录想表达的"世界停在什么状态"，
+// 现在由"会话文件本身 + 这一条坐标"合起来回答。
+const RecordAgentCheckpoint = "agent_checkpoint"
+
+// CheckpointSchemaVersion 是 AgentCheckpoint 的当前 schema 版本。
+const CheckpointSchemaVersion = 1
+
+// WorkspaceState 是停止那一刻的工作区事实。
+//
+// 只记 sha 不够：未提交的改动同样会让子 Agent 报告里的"我已经改了 X"变成假的。
+// StatusError 非空表示**探测失败**，与 Dirty=false 是两件不同的事 —— 混为一谈就是
+// §2 R6 那个 bug 的形状（git 命令根本没跑起来，却被记成"工作区干净"）。
+type WorkspaceState struct {
+	GitSHA              string   `json:"git_sha,omitempty"`
+	GitBranch           string   `json:"git_branch,omitempty"`
+	GitOrigin           string   `json:"git_origin,omitempty"`
+	Dirty               bool     `json:"dirty"`
+	DirtyFiles          []string `json:"dirty_files,omitempty"` // git status --porcelain，上限 200 条
+	DirtyFilesTruncated bool     `json:"dirty_files_truncated,omitempty"`
+	StatusError         string   `json:"status_error,omitempty"`
+	Cwd                 string   `json:"cwd,omitempty"`
+}
+
+// AgentCheckpoint 一条"这一轮停在这里"的坐标。
+//
+// 刻意不存三样东西，因为它们都能从同一份 rollout 派生，存了就会与代码漂移：
+// 消息正文（response_item 已经是同步全量）、已取回的冷工具（扫 load_tool 的
+// 成功配对）、thinklink T&P 块（从 assistant 正文重新提取）。
+//
+// Digest 是防漂移的那一环：重放侧按同一套规则重算，对不上就说明这份文件被截断、
+// 损坏或被 GC 动过 —— 那时必须降级到交接报告，而不是把一个残缺的上下文喂回模型。
+type AgentCheckpoint struct {
+	SchemaVersion int            `json:"schema_version"`
+	StopKind      string         `json:"stop_kind"` // StopKind* 词表
+	AgentName     string         `json:"agent_name"`
+	DelegationID  string         `json:"delegation_id,omitempty"`
+	Step          int            `json:"step"`      // 已完成步数 = 重放起点
+	MaxSteps      int            `json:"max_steps"` // 0 = 这一层没有步数上限（Director 之外都有）
+	MessageCount  int            `json:"message_count"`
+	Digest        string         `json:"digest"`
+	Model         string         `json:"model,omitempty"`
+	Tier          string         `json:"tier,omitempty"`
+	Workspace     WorkspaceState `json:"workspace"`
+	Nested        []string       `json:"nested_delegation_ids,omitempty"`
+	CreatedAt     string         `json:"created_at"`
+}
 
 // CompactedPayload 上下文压缩后的快照。
 //

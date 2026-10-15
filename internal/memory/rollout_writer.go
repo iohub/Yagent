@@ -37,31 +37,36 @@ func GetRolloutWriter(ctx context.Context) *RolloutWriter {
 
 // RolloutWriter Codex Rollout JSONL 实时写入器
 type RolloutWriter struct {
-	mu                sync.Mutex
-	file              *os.File
-	encoder           *json.Encoder
-	enabled           bool
-	closed            bool
-	filePath          string
-	sessionID         string
-	agentName         string
-	taskID            string
+	mu        sync.Mutex
+	file      *os.File
+	encoder   *json.Encoder
+	enabled   bool
+	closed    bool
+	filePath  string
+	sessionID string
+	agentName string
+	taskID    string
 	// boardID 是本次会话的便签板，由 SetBoardID 注入（构造签名不动，它有 10 个测试调用点）。
 	// 记进 session_meta 是为了 /resume：board 作用域升到 session 级后，
 	// 一块板对应多个 task，只靠 task_id 找不回原来的板。
-	boardID           string
-	projectID         string
-	turnID            string
-	turnCounter       int
-	msgCounter        int32
-	startTime         time.Time
+	boardID string
+	// delegationID / parentSessionID 是父子 rollout 之间的两个坐标，由
+	// createRolloutWriter 从 ctx 上取到后注入（与 boardID 同一个理由：构造签名有
+	// 10 个测试调用点，不动它）。WriteSessionMeta 兜底填充，两个写入点一行都不用改。
+	delegationID       string
+	parentSessionID    string
+	projectID          string
+	turnID             string
+	turnCounter        int
+	msgCounter         int32
+	startTime          time.Time
 	sessionMetaWritten bool
 
 	// token 累计字段
-	totalInputTokens    int64
-	totalOutputTokens   int64
-	totalCachedTokens   int64
-	totalTokens         int64
+	totalInputTokens  int64
+	totalOutputTokens int64
+	totalCachedTokens int64
+	totalTokens       int64
 }
 
 // generateSessionID 生成会话 ID（时间戳 + 随机数）
@@ -151,10 +156,21 @@ func (w *RolloutWriter) SetBoardID(boardID string) {
 	w.boardID = boardID
 }
 
+// SetDelegation 记下父子会话的两个坐标，供 WriteSessionMeta 兜底填充。
+// 调用点是 createRolloutWriter —— 那里手上就有 ctx，而两个 SessionMeta 写入点
+// （executor 与 planner）都不该各自记得去取，否则漏一个就是一份没有坐标的文件，
+// 而恢复侧只能把它判成"不可重放"，用户看到的是"这次停住的活儿捞不回来"。
+func (w *RolloutWriter) SetDelegation(delegationID, parentSessionID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.delegationID = delegationID
+	w.parentSessionID = parentSessionID
+}
+
 // WriteSessionMeta 写入会话元数据
 //
 // task_id 由 writer 在构造时持有（NewRolloutWriter 的入参），此处兜底填充：两个调用点
-//（planner_run.go 的 director 会话、executor.go 的 sub-agent 会话）都不必各自记得传，
+// （planner_run.go 的 director 会话、executor.go 的 sub-agent 会话）都不必各自记得传，
 // 避免漏传导致恢复侧无法把 rollout 回连到原任务（tasks/{id}.jsonl、blackboard boardID）。
 // board_id 同理走兜底：board 现在是 session 级的，一个 session 会有多个 task。
 //
@@ -181,7 +197,38 @@ func (w *RolloutWriter) WriteSessionMeta(meta SessionMeta) error {
 	if meta.BoardID == "" {
 		meta.BoardID = w.boardID
 	}
+	if meta.DelegationID == "" {
+		meta.DelegationID = w.delegationID
+	}
+	if meta.ParentSessionID == "" {
+		meta.ParentSessionID = w.parentSessionID
+	}
 	return w.writeEnvelope("session_meta", meta)
+}
+
+// WriteAgentCheckpoint 写入一条停止坐标。
+//
+// 只在停止路径上写一次：rollout 的每一条 response_item 已经是同步全量，
+// 文件尾本身就是游标，做 per-step 快照只会把体积翻倍（G8 钉住这条）。
+func (w *RolloutWriter) WriteAgentCheckpoint(c AgentCheckpoint) error {
+	if !w.enabled || w.file == nil {
+		return nil
+	}
+	if c.SchemaVersion == 0 {
+		c.SchemaVersion = CheckpointSchemaVersion
+	}
+	if c.CreatedAt == "" {
+		c.CreatedAt = nowRFC3339()
+	}
+	if c.DelegationID == "" {
+		c.DelegationID = w.delegationID
+	}
+	if c.AgentName == "" {
+		c.AgentName = w.agentName
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writeEnvelope(RecordAgentCheckpoint, c)
 }
 
 // WriteTurnContext 写入回合上下文

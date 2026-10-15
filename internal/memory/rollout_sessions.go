@@ -41,15 +41,21 @@ type RolloutSessionInfo struct {
 	TaskID    string // meta.task_id（写侧自 B1 起落盘；存量文件为空）
 	// BoardID 是这次会话用的便签板（meta.board_id）。board 升到 session 级之后，
 	// 一块板横跨多个 task，/resume 只有拿到它才能续上便签；存量文件这里是空串。
-	BoardID   string
-	AgentName string // 仅文件名带 agent 段时非空（sub-agent 文件）
-	CWD       string // 首个 session_meta.cwd / 首个 turn_context.cwd
-	Model     string // 首个 turn_context.model
-	GitBranch string // 首个 session_meta.git.branch
-	Preview   string // 首条 user 消息文本截 100 rune（超长消息跳过，见 headScanLine）
-	StartedAt time.Time
-	ModTime   time.Time
-	SizeBytes int64
+	BoardID string
+	// DelegationID 是这份文件对应的父 Director `delegate_*` 的 tool_call_id
+	//（meta.delegation_id）。空 = 要么它是 Director 自己的会话，要么它是本次改动之前
+	// 写的存量文件 —— 恢复侧必须把空串读成"没有坐标、不能原样重放"，而不是"它就是根"。
+	DelegationID string
+	// ParentSessionID 是父 rollout 的 session_id，让父子双向定位（§5.1）。
+	ParentSessionID string
+	AgentName       string // 仅文件名带 agent 段时非空（sub-agent 文件）
+	CWD             string // 首个 session_meta.cwd / 首个 turn_context.cwd
+	Model           string // 首个 turn_context.model
+	GitBranch       string // 首个 session_meta.git.branch
+	Preview         string // 首条 user 消息文本截 100 rune（超长消息跳过，见 headScanLine）
+	StartedAt       time.Time
+	ModTime         time.Time
+	SizeBytes       int64
 	// HeadMessages head-scan 窗口内观测到的 message 类 response_item 条数。
 	HeadMessages int
 	// Empty 整个文件已扫描完（未触发窗口截断）且没有任何 message 条目——
@@ -63,7 +69,7 @@ type RolloutSessionInfo struct {
 // 深度≤2 的 *.jsonl（忽略符号链接/权限错误/非 jsonl），os.Stat 后按 mtime 倒序，
 // 取前 limit 条（limit<=0 用默认 200），每文件 head-scan（≤256KB 或前 300 行，
 // 先到者停）提取元信息。扫描失败的坏文件不跳过：保留文件名回退身份并返回
-//（仅当文件本身打不开导致 Stat 不可得时才从结果中缺席）。
+// （仅当文件本身打不开导致 Stat 不可得时才从结果中缺席）。
 func ListRolloutSessions(root string, limit int) ([]RolloutSessionInfo, error) {
 	if limit <= 0 {
 		limit = rolloutSessionListDefaultLimit
@@ -263,6 +269,8 @@ func (si *RolloutSessionInfo) headScanLine(raw []byte, state *rolloutHeadScanSta
 		}
 		si.TaskID = meta.TaskID
 		si.BoardID = meta.BoardID
+		si.DelegationID = meta.DelegationID
+		si.ParentSessionID = meta.ParentSessionID
 		if meta.Cwd != "" {
 			si.CWD = meta.Cwd
 		}
@@ -314,7 +322,7 @@ func (si *RolloutSessionInfo) headScanLine(raw []byte, state *rolloutHeadScanSta
 //
 // writer 生成形状：<date>_<time>_<sessionID>[_<agentName>].jsonl，其中
 // <date>_<time> 为文件创建时间戳（2 段），<sessionID> 自身为 <date>_<time>_<hex>
-//（3 段）。故按 "_" 分段后：
+// （3 段）。故按 "_" 分段后：
 //   - len>=6：前 2 段文件时间戳 + 3 段 sessionID + 剩余段 join 为 agentName；
 //   - 3<=len<6：前 2 段为文件时间戳，其余段整体为 sessionID（无 agentName）；
 //   - len<3（畸形文件名）：整段当 sessionID。

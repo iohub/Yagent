@@ -37,6 +37,21 @@ func (k Kind) String() string {
 // DefaultMaxEntries Store 默认容量上限（条数），超出时按最旧优先淘汰。
 const DefaultMaxEntries = 200
 
+// ParseKind 是 Kind.String() 的反向映射，供从落盘记录（rollout 的 thinklink_entry）
+// 恢复条目时用。认不出来时返回 false 而不是回落成某个默认值：把一条 thought_plan
+// 错认成 user_input 会让 RebuildPrompt 把"上一步的思考"当成"用户的原始需求"重建进去，
+// 而那种错位在输出里看起来完全合理。
+func ParseKind(s string) (Kind, bool) {
+	switch s {
+	case KindUserInput.String():
+		return KindUserInput, true
+	case KindThoughtPlan.String():
+		return KindThoughtPlan, true
+	default:
+		return 0, false
+	}
+}
+
 // Entry thinklink 单条记录。
 type Entry struct {
 	ID        string    // 条目 ID（时间戳+序号生成）
@@ -103,6 +118,47 @@ func (s *Store) Snapshot() []Entry {
 	out := make([]Entry, len(s.entries))
 	copy(out, s.entries)
 	return out
+}
+
+// SeedEntries 是 Seed 的输入形状：一个不带 ID/时间的最小条目。
+// 调用方（重放侧）从 rollout 里读出来的只有 kind/content/step。
+type SeedEntry struct {
+	Kind    Kind
+	Content string
+	Step    int
+}
+
+// Seed 把恢复回来的条目灌进一个（通常是新建的）Store。
+//
+// 为什么需要它：ultimate 压缩的重建原料完全来自这份日志（RebuildPrompt），
+// 一次从检查点重放起来的会话如果没被 seed，走到第三档压缩时就只能拿原始任务输入
+// 去重建 —— 表现是"恢复后跑几步，任务目标莫名其妙退化成最初那句话"，
+// 中间所有已完成的步骤从模型的视野里消失。
+//
+// 已存在的条目不重复灌（同 kind+content 紧邻重复时跳过，与 AddUserInput 的去重同口径），
+// 空白内容跳过。返回真正写进去的条数。
+func (s *Store) Seed(entries []SeedEntry) int {
+	if len(entries) == 0 {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	added := 0
+	for _, e := range entries {
+		if strings.TrimSpace(e.Content) == "" {
+			continue
+		}
+		if n := len(s.entries); n > 0 {
+			last := s.entries[n-1]
+			if last.Kind == e.Kind && last.Content == e.Content {
+				continue
+			}
+		}
+		s.appendLocked(e.Kind, e.Content, e.Step)
+		added++
+	}
+	return added
 }
 
 // Len 返回当前条目总数。

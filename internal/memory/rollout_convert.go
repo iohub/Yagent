@@ -13,24 +13,35 @@ func LLMMessageToResponseItems(msg llm.Message, msgID string) []ResponseItem {
 	switch msg.Role {
 	case llm.RoleSystem, llm.RoleUser:
 		return []ResponseItem{{
-			Type:   "message",
-			Role:   string(msg.Role),
-			ID:     msgID,
+			Type: "message",
+			Role: string(msg.Role),
+			ID:   msgID,
 			Content: []MessageContentItem{
 				{Type: "input_text", Text: msg.Content},
 			},
 		}}
 	case llm.RoleAssistant:
+		// thinking/reasoning 会被回灌给 provider（AGENTS.md §2.3），所以它属于
+		// "这一段对话"的一部分；不写进 rollout 的话，重放出来的 messages 与暂停前
+		// 发给模型的就不是同一个世界 —— 表现是恢复后模型的推理风格突变，而没有任何
+		// 地方报错。形状沿用读侧已经认识的 reasoning/summary_text。
+		var items []ResponseItem
+		if msg.Reasoning != "" {
+			items = append(items, ResponseItem{
+				Type:    "reasoning",
+				ID:      msgID + "_rsn",
+				Summary: []MessageContentItem{{Type: "summary_text", Text: msg.Reasoning}},
+			})
+		}
 		if len(msg.ToolCalls) == 0 {
-			return []ResponseItem{{
+			return append(items, ResponseItem{
 				Type:    "message",
 				Role:    "assistant",
 				ID:      msgID,
 				Content: []MessageContentItem{{Type: "output_text", Text: msg.Content}},
-			}}
+			})
 		}
 		// assistant 有 ToolCalls
-		var items []ResponseItem
 		if msg.Content != "" {
 			items = append(items, ResponseItem{
 				Type:    "message",
