@@ -83,10 +83,10 @@ func TestListRolloutSessions(t *testing.T) {
 		t.Fatalf("sessions = %d, want 4", len(sessions))
 	}
 	wantOrder := []string{
-		"sess-a-new",  // 1020
-		"sess-b",      // 1015
-		"sess-a-mid",  // 1010
-		"sess-a-old",  // 1000
+		"sess-a-new", // 1020
+		"sess-b",     // 1015
+		"sess-a-mid", // 1010
+		"sess-a-old", // 1000
 	}
 	for i, s := range sessions {
 		if s.SessionID != wantOrder[i] {
@@ -207,9 +207,9 @@ func TestListRolloutSessions_FilenameFallback(t *testing.T) {
 
 func TestParseRolloutFilename(t *testing.T) {
 	cases := []struct {
-		stem              string
-		wantSession       string
-		wantAgent         string
+		stem        string
+		wantSession string
+		wantAgent   string
 	}{
 		// writer 形状：文件戳(2段) + sessionID(3段)
 		{"20250601_120000_20250601_115500_abc12345", "20250601_115500_abc12345", ""},

@@ -16,18 +16,18 @@ import (
 
 // historyStyles 预计算的样式集合，避免每帧重建
 type historyStyles struct {
-	badgeBgColor  string         // 选中行背景色 (lipgloss.Color string)
-	indicatorStyle lipgloss.Style  // 选中指示器 "● "
-	dateStyle     lipgloss.Style  // 日期样式
-	titleStyle    lipgloss.Style  // 标题样式
-	spacerStyle   lipgloss.Style  // 空白填充
-	normalStyle   lipgloss.Style  // 普通状态
+	badgeBgColor   string         // 选中行背景色 (lipgloss.Color string)
+	indicatorStyle lipgloss.Style // 选中指示器 "● "
+	dateStyle      lipgloss.Style // 日期样式
+	titleStyle     lipgloss.Style // 标题样式
+	spacerStyle    lipgloss.Style // 空白填充
+	normalStyle    lipgloss.Style // 普通状态
 }
 
 // initHistoryStyles 预创建样式对象（在 enterHistoryMode 中首次调用时初始化）
 func (m *model) initHistoryStyles() *historyStyles {
-	bgColor := lipgloss.Color("39")    // 蓝色
-	fgColor := lipgloss.Color("0")     // 黑色
+	bgColor := lipgloss.Color("39") // 蓝色
+	fgColor := lipgloss.Color("0")  // 黑色
 	dimFg := lipgloss.Color("245")
 	normalFg := lipgloss.Color("252")
 

@@ -151,7 +151,7 @@ func executeReadArtifact(ctx context.Context, params map[string]interface{}) (in
 		n := startLine + i
 		lineRunes := []rune(line)
 		var lineOut string
-		
+
 		if len(lineRunes) > readArtifactMaxLineRunes {
 			// 长单行兜底：仅展示首块（4000 rune）并标注。
 			lineOut = fmt.Sprintf("%*d: %s ... [line %d truncated, %d runes total]\n",
@@ -159,14 +159,14 @@ func executeReadArtifact(ctx context.Context, params map[string]interface{}) (in
 		} else {
 			lineOut = fmt.Sprintf("%*d: %s\n", width, n, line)
 		}
-		
+
 		lineOutRunes := len([]rune(lineOut))
 		// 判断是否超出预算（第一行始终输出，后续行判断）
 		if runesConsumed > 0 && runesConsumed+lineOutRunes > readArtifactMaxReturnRunes {
 			// 即将超出预算，停止输出
 			break
 		}
-		
+
 		lineOutputs = append(lineOutputs, lineOut)
 		runesConsumed += lineOutRunes
 		actualEnd = n

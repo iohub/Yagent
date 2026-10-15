@@ -32,12 +32,12 @@ func TestDeliverableTextRecoversAssistantContent(t *testing.T) {
 
 func TestDeliverableTextPassthrough(t *testing.T) {
 	cases := map[string]ExecutorResult{
-		"plain prose":            {Text: "一段普通交付文本"},
-		"json without finished":  {Text: `{"result":"ok"}`},
-		"finished false":         {Text: `{"finished":false,"reason":"卡住了"}`, History: []llm.Message{assistantMsg("不该被采用")}},
-		"exit json, no history":  {Text: `{"finished":true,"reason":"只有 reason"}`},
-		"exit json, blank msgs":  {Text: `{"finished":true,"reason":"只有 reason"}`, History: []llm.Message{assistantMsg("   \n  ")}},
-		"empty":                  {Text: ""},
+		"plain prose":           {Text: "一段普通交付文本"},
+		"json without finished": {Text: `{"result":"ok"}`},
+		"finished false":        {Text: `{"finished":false,"reason":"卡住了"}`, History: []llm.Message{assistantMsg("不该被采用")}},
+		"exit json, no history": {Text: `{"finished":true,"reason":"只有 reason"}`},
+		"exit json, blank msgs": {Text: `{"finished":true,"reason":"只有 reason"}`, History: []llm.Message{assistantMsg("   \n  ")}},
+		"empty":                 {Text: ""},
 	}
 	for name, exec := range cases {
 		t.Run(name, func(t *testing.T) {

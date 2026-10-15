@@ -20,11 +20,11 @@ type ModelOption struct {
 // Enter 确认（临时切换），空格确认并写入 config.toml（永久切换），Esc 取消。
 // 条目超出可用高度时按游标滚动并显示被裁剪的条数。
 type ModelSelectDialog struct {
-	options     []ModelOption
-	cursor      int
-	width       int
-	height      int
-	Selected    string // 确认后为 provider 名；取消时为 ""
+	options  []ModelOption
+	cursor   int
+	width    int
+	height   int
+	Selected string // 确认后为 provider 名；取消时为 ""
 	// Persist 表示本次确认是否把选择持久化写入 config.toml：
 	// 空格确认为 true（永久切换），Enter 与数字直选为 false（仅临时切换）。
 	Persist     bool

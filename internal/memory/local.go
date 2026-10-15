@@ -12,7 +12,7 @@ import (
 type LocalMemory struct {
 	agentID  string
 	messages []ChatMessage
-	maxSize  int               // max message count (default: 200)
+	maxSize  int // max message count (default: 200)
 	mu       sync.RWMutex
 	metadata map[string]interface{}
 }

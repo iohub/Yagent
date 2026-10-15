@@ -67,10 +67,10 @@ type ConsolidationWorker struct {
 // 需要调用 Start() 启动后台 goroutine。
 func NewConsolidationWorker(store *RepoMemoryStore, engine llm.Engine, mcpClient *mcp.MCPClient) *ConsolidationWorker {
 	return &ConsolidationWorker{
-		store:  store,
-		engine: engine,
-		ch:     make(chan *ConsolidationTask, channelBufferSize),
-		done:   make(chan struct{}),
+		store:     store,
+		engine:    engine,
+		ch:        make(chan *ConsolidationTask, channelBufferSize),
+		done:      make(chan struct{}),
 		mcpClient: mcpClient,
 	}
 }

@@ -86,23 +86,23 @@ func (e *ToolEntry) SetRendered(r string) {
 type TimelineKind int
 
 const (
-	TimelineKindTool     TimelineKind = iota // 工具調用
-	TimelineKindLLMCall                      // LLM 調用
-	TimelineKindThinking                     // Agent 思考内容
-	TimelineKindContextEvent                 // 上下文事件（壓縮、commit載等）
+	TimelineKindTool         TimelineKind = iota // 工具調用
+	TimelineKindLLMCall                          // LLM 調用
+	TimelineKindThinking                         // Agent 思考内容
+	TimelineKindContextEvent                     // 上下文事件（壓縮、commit載等）
 )
 
 // TimelineEntry表示時間線面板中的一個執行條目
 type TimelineEntry struct {
-	ID        string        // 工具調用 ID 或合成 ID
-	Kind      TimelineKind  // 條目種類
-	Timestamp time.Time     // 事件發生時間
-	Status    ToolStatus    // 工具狀態
-	Name      string        // 名稱，如 \"read_file\", \"llm_call\"
-	Detail    string        // 仔細消息（檔案路徑、命令摘要等）
-	Duration  time.Duration // 執行耗時（完成後設定）
-	IsError   bool          // 是否出錯
-	SubEntries []*TimelineEntry  // 連續相同類型工具調用的子條目
+	ID         string           // 工具調用 ID 或合成 ID
+	Kind       TimelineKind     // 條目種類
+	Timestamp  time.Time        // 事件發生時間
+	Status     ToolStatus       // 工具狀態
+	Name       string           // 名稱，如 \"read_file\", \"llm_call\"
+	Detail     string           // 仔細消息（檔案路徑、命令摘要等）
+	Duration   time.Duration    // 執行耗時（完成後設定）
+	IsError    bool             // 是否出錯
+	SubEntries []*TimelineEntry // 連續相同類型工具調用的子條目
 }
 
 // IsMergeableTool判定該工具是否可以被合併到前一條同類條目中。

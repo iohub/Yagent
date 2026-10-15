@@ -1,12 +1,12 @@
 package tui
 
 import (
-	"yagent/internal/toolspec"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
+	"yagent/internal/toolspec"
 
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"

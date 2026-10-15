@@ -424,7 +424,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			name: "bad_tail_line_tolerated",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrUserItem("u1", "hi")),
-				`{"timestamp":"` + rrTs4 + `","type":"response_item","paylo`, // 崩溃半行
+				`{"timestamp":"`+rrTs4+`","type":"response_item","paylo`, // 崩溃半行
 			),
 			opts: opts,
 			check: func(t *testing.T, mem *ConversationMemory, info RolloutInfo, err error) {

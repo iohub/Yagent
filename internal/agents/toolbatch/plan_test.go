@@ -6,7 +6,7 @@ import (
 )
 
 // segSlices 便于断言的段结构展开
-func segSlices(segs []Segment) ([2][]any) {
+func segSlices(segs []Segment) [2][]any {
 	out := [2][]any{}
 	for _, s := range segs {
 		if s.Parallel {
@@ -47,7 +47,7 @@ func TestPlan_Mixed(t *testing.T) {
 	// 模式 [p p w p] → 并行[0,1]、串行[2]、并行[3]
 	segs := Plan(4, func(i int) bool { return i != 2 })
 	got := segSlices(segs)
-	want := [2][]any{ {[]int{0, 1}, []int{3}}, {[]int{2}} }
+	want := [2][]any{{[]int{0, 1}, []int{3}}, {[]int{2}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v want %+v", got, want)
 	}

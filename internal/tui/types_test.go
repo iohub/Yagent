@@ -6,9 +6,9 @@ import (
 
 func TestIsMergeableTool(t *testing.T) {
 	tools := []struct {
-		name   string
-		merge  bool
-		msg    string
+		name  string
+		merge bool
+		msg   string
 	}{
 		{"read_file", true, ""},
 		{"list_dir", true, ""},
@@ -29,23 +29,23 @@ func TestIsMergeableTool(t *testing.T) {
 
 func TestEffectiveStatus(t *testing.T) {
 	tests := []struct {
-		entry    []*TimelineEntry
-		want    ToolStatus
-		reason   string
+		entry  []*TimelineEntry
+		want   ToolStatus
+		reason string
 	}{
 		{
-			entry: []*TimelineEntry{{Status: ToolStatusSuccess, IsError: false}},
-			want:  ToolStatusSuccess,
+			entry:  []*TimelineEntry{{Status: ToolStatusSuccess, IsError: false}},
+			want:   ToolStatusSuccess,
 			reason: "single finished -> Success",
 		},
 		{
-			entry: []*TimelineEntry{{Status: ToolStatusSuccess, IsError: false}, {Status: ToolStatusRunning, IsError: false}},
-			want:  ToolStatusRunning,
+			entry:  []*TimelineEntry{{Status: ToolStatusSuccess, IsError: false}, {Status: ToolStatusRunning, IsError: false}},
+			want:   ToolStatusRunning,
 			reason: "one Running -> Running",
 		},
 		{
-			entry: []*TimelineEntry{{Status: ToolStatusSuccess, IsError: false}, {Status: ToolStatusError, IsError: true}},
-			want:  ToolStatusError,
+			entry:  []*TimelineEntry{{Status: ToolStatusSuccess, IsError: false}, {Status: ToolStatusError, IsError: true}},
+			want:   ToolStatusError,
 			reason: "one IsError -> Error",
 		},
 		{
@@ -54,7 +54,7 @@ func TestEffectiveStatus(t *testing.T) {
 				{Status: ToolStatusSuccess, IsError: false},
 				{Status: ToolStatusSuccess, IsError: false},
 			},
-			want:  ToolStatusSuccess,
+			want:   ToolStatusSuccess,
 			reason: "all finished -> Success",
 		},
 		{
@@ -63,7 +63,7 @@ func TestEffectiveStatus(t *testing.T) {
 				{Status: ToolStatusRunning, IsError: false},
 				{Status: ToolStatusSuccess, IsError: false},
 			},
-			want:  ToolStatusRunning,
+			want:   ToolStatusRunning,
 			reason: "one Running among Success -> Running",
 		},
 		{
@@ -72,7 +72,7 @@ func TestEffectiveStatus(t *testing.T) {
 				{Status: ToolStatusRunning, IsError: false},
 				{Status: ToolStatusError, IsError: true},
 			},
-			want:  ToolStatusError,
+			want:   ToolStatusError,
 			reason: "Error beats Running",
 		},
 	}
