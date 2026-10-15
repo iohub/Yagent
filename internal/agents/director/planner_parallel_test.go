@@ -105,7 +105,7 @@ func (t *concurrentSpyToolRunner) Specs() []llm.ToolDef {
 	return defs
 }
 
-func (t *concurrentSpyToolRunner) Call(_ context.Context, name string, _ string) (string, error) {
+func (t *concurrentSpyToolRunner) Call(_ context.Context, name string, _ string, _ string) (string, error) {
 	// 模拟门面 Tools 包装闭包语义：一律记录委派统计（本测试关注分段/落账语义，
 	// 统一置 HasDelegated 以跳过 planner 的强制委派提醒控制流；锁方法走并发路径）
 	if t.state != nil {

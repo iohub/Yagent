@@ -53,9 +53,18 @@ const (
 
 // 交付状态。LLM 可自报 partial；error 由系统按委派错误判定，不接受 LLM 自报
 // （子 Agent 说自己 ok 但实际抛错的情况今天就已经存在）。
+//
+// degraded 同样是**系统专用**，刻意不进 agent_exit 的 handoff.status 枚举：
+// 让模型自报"我这份交付是降级的"等于把降级判交给最没资格判断的一方 —— 降级与否
+// 是重放侧按 §6.4 那八条判据算出来的事实，模型既看不到也没法复现。
+//
+// 词表里**没有 paused**：被闸门 abandon 的委派没有任何交付物，写上去只会是一张
+// 空正文的便签（它的 conclusion 为空、还会占住每轮重扫的索引）。"停在第几步"这件事
+// 由 rollout 的 stop_reason 与 agent_checkpoint 记账，恢复成功后再落一张 ok/degraded。
 const (
-	StatusOK    = "ok"
-	StatusError = "error"
+	StatusOK       = "ok"
+	StatusError    = "error"
+	StatusDegraded = "degraded"
 )
 
 // agent_exit 的 arguments 形态：只关心 handoff 键是否存在、形状是否对。

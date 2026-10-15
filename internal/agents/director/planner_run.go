@@ -97,6 +97,23 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		})
 	}
 
+	// 恢复的收尾（§4.3 / D6）：把重放结果作为**原 call_id 的第二条** tool output 追加。
+	// 取消那一刻 Director 已经把 "Error: context canceled" 记进了 memory 与 rollout；
+	// reader 与 LLM 侧都是 last-wins，所以这条真实结果会把它顶掉 ——
+	// 模型看到的是"这次委派成功了"，它完全不需要知道中间停过。
+	// 不调 LLM，所以恢复本身是确定性的、零 token 成本的。
+	if res := in.PendingResumption; res != nil && res.DelegationID != "" {
+		if in.Mem != nil {
+			in.Mem.AddToolMessage(res.Result, res.DelegationID)
+		}
+		messages = append(messages, llm.Message{
+			Role:       llm.RoleTool,
+			Content:    res.Result,
+			ToolCallID: res.DelegationID,
+			ToolName:   res.ToolName,
+		})
+	}
+
 	// 工具声明每步重取，而不是整轮冻结一次：deferred schema 取回后、以及 Meta 在运行期
 	// 注册 Custom Agent 之后，都要在下一步就对模型可见。返回 nil 表示本轮没有工具。
 	defsForStep := func() []llm.ToolDef {
@@ -154,28 +171,11 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		}
 	}
 
-	writeComplete := func(stopReason string) {
-		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-			directorRolloutWriter.WriteRunComplete(p.runState(stopReason))
-		}
-	}
-	writeAborted := func(reason, stopReason string) {
-		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-			directorRolloutWriter.WriteRunAborted(reason, p.runState(stopReason))
-		}
-	}
-	// kind 与 savedTokens 是给 /resume 重建 ⧉ 压缩段用的；Summary 的文案不动
-	// （历史恢复与人工排查都依赖它）。
-	writeCompacted := func(kind, summary string, tokensBefore, tokensAfter, savedTokens int) {
-		if directorRolloutWriter != nil && directorRolloutWriter.Enabled() {
-			_ = directorRolloutWriter.WriteCompacted(memory.CompactedPayload{
-				Summary:      summary,
-				TokensBefore: tokensBefore,
-				TokensAfter:  tokensAfter,
-				Kind:         kind,
-				SavedTokens:  savedTokens,
-			})
-		}
+	journal := directorJournal{ctx: ctx, p: p, rw: directorRolloutWriter}
+	writeComplete := func(stopReason string) { journal.complete(stopReason) }
+	writeAborted := func(reason, stopReason string) { journal.aborted(reason, stopReason) }
+	writeCompacted := func(kind, summary string, before, after, saved int) {
+		journal.compacted(kind, summary, before, after, saved)
 	}
 
 	initialMsgCount := len(messages)
@@ -577,7 +577,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 
 			// 是否可执行由 runner 按注册表判定（未注册 → "Tool x not found"，
 			// 冷工具未取回 → 回吐 schema），这里不再拿一份可能已过时的声明快照当门控。
-			toolResult, err := p.cfg.Tools.Call(callCtx, tc.Function.Name, tc.Function.Arguments)
+			toolResult, err := p.cfg.Tools.Call(callCtx, tc.Function.Name, tc.Function.Arguments, tc.ID)
 			if err != nil {
 				errMsg := err.Error()
 				if len(errMsg) > 1000 {

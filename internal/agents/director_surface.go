@@ -133,7 +133,7 @@ func (a *DirectorAgent) delegateTo(ctx context.Context, target string, params ma
 
 	packedTask, unresolved := a.packDelegateTask(task, params)
 	ctx = blackboard.WithBoardID(ctx, a.boardID)
-	if rolloutWriter := a.createRolloutWriter(target, task); rolloutWriter != nil {
+	if rolloutWriter := a.createRolloutWriter(ctx, target, task); rolloutWriter != nil {
 		defer rolloutWriter.Close()
 		ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 	}
@@ -151,7 +151,7 @@ func (a *DirectorAgent) delegateTo(ctx context.Context, target string, params ma
 // 改成直接走 delegateTo —— 少一次依赖隐式注册顺序的查找。
 func (a *DirectorAgent) runMetaDesign(ctx context.Context, task string) (interface{}, error) {
 	ctx = blackboard.WithBoardID(ctx, a.boardID)
-	if rolloutWriter := a.createRolloutWriter("meta", task); rolloutWriter != nil {
+	if rolloutWriter := a.createRolloutWriter(ctx, "meta", task); rolloutWriter != nil {
 		defer rolloutWriter.Close()
 		ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
 	}
