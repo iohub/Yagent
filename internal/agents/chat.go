@@ -16,9 +16,10 @@ var chatPrompt string
 
 type ChatAgent struct {
 	BaseAgent
-	promptFmt PromptFormatter
-	params    ChatAgentParams
-	maxSteps  int
+	promptFmt   PromptFormatter
+	params      ChatAgentParams
+	maxSteps    int
+	stepRetries int
 }
 
 // ChatAgentParams 聚合 NewChatAgent 所需的全部依赖。
@@ -34,6 +35,7 @@ type ChatAgentParams struct {
 	Guard       *tools.WorkspaceGuard
 	LLM         llm.Engine
 	MaxSteps    int
+	StepRetries int
 }
 
 // NewChatAgent 构造 ChatAgent：装配轻量工具集后返回。
@@ -43,9 +45,10 @@ func NewChatAgent(p ChatAgentParams) *ChatAgent {
 			LLM:       p.LLM,
 			Publisher: p.Publisher,
 		},
-		promptFmt: p.Formatter,
-		params:    p,
-		maxSteps:  p.MaxSteps,
+		promptFmt:   p.Formatter,
+		params:      p,
+		maxSteps:    p.MaxSteps,
+		stepRetries: p.StepRetries,
 	}
 }
 
@@ -68,6 +71,7 @@ func (a *ChatAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.Surface = surfaceFor(toolspec.ProfileChat, deps, a.Name())
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
+	cfg.StepRetries = a.stepRetries
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true

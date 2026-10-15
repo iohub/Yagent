@@ -17,10 +17,11 @@ var devopsPrompt string
 
 type DevOpsAgent struct {
 	BaseAgent
-	promptFmt PromptFormatter
-	params    DevOpsAgentParams
-	maxSteps  int
-	ecCfg     config.EnhancedCommanderConfig
+	promptFmt   PromptFormatter
+	params      DevOpsAgentParams
+	maxSteps    int
+	stepRetries int
+	ecCfg       config.EnhancedCommanderConfig
 }
 
 // DevOpsAgentParams 聚合 NewDevOpsAgent 所需的全部依赖。
@@ -39,8 +40,9 @@ type DevOpsAgentParams struct {
 
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 
-	LLM      llm.Engine
-	MaxSteps int
+	LLM         llm.Engine
+	MaxSteps    int
+	StepRetries int
 }
 
 // NewDevOpsAgent 构造 DevOpsAgent：装配运维工具集后返回。
@@ -50,10 +52,11 @@ func NewDevOpsAgent(p DevOpsAgentParams) *DevOpsAgent {
 			LLM:       p.LLM,
 			Publisher: p.Publisher,
 		},
-		promptFmt: p.Formatter,
-		params:    p,
-		maxSteps:  p.MaxSteps,
-		ecCfg:     p.EnhancedCommanderCfg,
+		promptFmt:   p.Formatter,
+		params:      p,
+		maxSteps:    p.MaxSteps,
+		stepRetries: p.StepRetries,
+		ecCfg:       p.EnhancedCommanderCfg,
 	}
 }
 
@@ -77,12 +80,13 @@ func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.Surface = surfaceFor(toolspec.ProfileDevOps, deps, a.Name())
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
+	cfg.StepRetries = a.stepRetries
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
 	// 上下文压缩配置（tool 结果截断）
 	ec := a.ecCfg
-	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
+	cfg.EnableContextCompression = ec.EnableContextCompression
 	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
 	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
 

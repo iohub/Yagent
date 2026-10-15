@@ -274,7 +274,6 @@ func TestBrowserAgent_UltimateCompressionIsPerDelegation(t *testing.T) {
 		Browser:    &stubController{ok: true},
 		BrowserCfg: config.DefaultBrowserConfig(),
 		EnhancedCommanderCfg: config.EnhancedCommanderConfig{
-			Enable:                      true,
 			EnableContextCompression:    true,
 			ContextCompressionThreshold: 8,
 			ToolResultKeepTokens:        200,

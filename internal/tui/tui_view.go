@@ -46,6 +46,10 @@ func (m *model) View() tea.View {
 		return tea.View{AltScreen: true}
 	}
 
+	if m.setupActive && m.wizard != nil {
+		return m.setupView()
+	}
+
 	if m.timelineFullscreenMode {
 		return renderTimelineFullscreenView(m)
 	}

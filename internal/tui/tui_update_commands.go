@@ -96,6 +96,9 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	case "resume", "rs":
 		return m.resumeFromCmdline()
 
+	case "setup":
+		return m.enterSetupMode()
+
 	case "pause":
 		return m.pauseActiveTask()
 

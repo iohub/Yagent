@@ -261,29 +261,6 @@ func TestRoutingIsAuto(t *testing.T) {
 	}
 }
 
-func TestDetectBedrockProvider(t *testing.T) {
-	cases := map[string]string{
-		"us.amazon.nova-premier-v1:0":    "amazon",
-		"anthropic.claude-v2":            "anthropic",
-		"us.anthropic.claude-3-5-sonnet": "anthropic",
-		"meta.llama3-70b-instruct-v1:0":  "meta",
-		"cohere.command-r-plus-v1:0":     "cohere",
-		"ai21.j2-mid-v1":                 "ai21",
-		"some-unknown-model":             "amazon", // 兜底
-		"":                               "amazon",
-		"ANTHROPIC.CLAUDE-V2":            "anthropic", // 大小写不敏感
-	}
-	for id, want := range cases {
-		if got := DetectBedrockProvider(id); got != want {
-			t.Errorf("DetectBedrockProvider(%q) = %q, want %q", id, got, want)
-		}
-	}
-	// nova 判定必须早于 amazon 兜底、且优先于同串里的其它厂商名。
-	if got := DetectBedrockProvider("amazon.nova-micro-v1:0"); got != "amazon" {
-		t.Errorf("nova 前缀判定 = %q, want amazon", got)
-	}
-}
-
 // ---------- 全局单例：LLM 超时与 deferred 开关 ----------
 
 // FormatLLMTimeout 的输出要写进 TOML 并给用户看，所以必须能被 time.ParseDuration
@@ -357,12 +334,9 @@ func TestGlobalDeferredToolsNormalization(t *testing.T) {
 		t.Errorf("没写预算时归一化成 %d, want 2500", got.BudgetTokens)
 	}
 
-	SetGlobalDeferredTools(DeferredToolsConfig{BudgetTokens: -1, Hot: []string{"run_bash"}, Cold: []string{"thinking"}})
+	SetGlobalDeferredTools(DeferredToolsConfig{BudgetTokens: -1})
 	got = GlobalDeferredTools()
 	if got.BudgetTokens != -1 {
 		t.Errorf("显式负预算被改成 %d, want 原样保留 -1（表示不设预算）", got.BudgetTokens)
-	}
-	if strings.Join(got.Hot, ",") != "run_bash" || strings.Join(got.Cold, ",") != "thinking" {
-		t.Errorf("调档名单 = hot%v cold%v, want [run_bash] / [thinking]", got.Hot, got.Cold)
 	}
 }

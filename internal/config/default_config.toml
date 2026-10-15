@@ -1,413 +1,258 @@
 # ═══════════════════════════════════════════════════════════════
-# Yagent default configuration template
-# (first run writes this file to ~/.yagent/config/config.toml)
+# Yagent configuration  (template written on first run)
 #
-# Every key below was checked against the current code (2026-10-15): each one has
-# a consumer, and keys that no longer do anything are labelled in place — editing
-# a dead key shows up as "I changed it and nothing happened".
-# Same key set as the repo's config/config.toml, different layout: change one, change both.
-# Full reference: docs/config-guide.md
+# You probably don't need to edit this file. `yagent setup` (or `/setup` inside
+# the TUI) configures providers and the first-run choices for you, preserves
+# every comment in here, and tests the connection before saving.
 #
-# Required: replace each provider's api_key with a real one. Validation only checks
-# that it is non-empty; it never tests whether the key works.
+# Full key reference: docs/config-guide.md · every key below has a consumer in
+# the code; keys that used to be parsed and ignored have been deleted.
 # ═══════════════════════════════════════════════════════════════
 
-# ── Global task timeout (root-level field) ──
-# Applies only to http mode (http.NewTaskContext / TaskManager); TUI and
-# non-interactive --prompt are not governed by it. 0 or omitted = disabled.
-# task_timeout = "30m"
-
-# ── Global LLM ──
-# Provider resolution order (highest first):
-#   tools.llm.<tool>  →  tools.llm.use_provider
-#   agents.llm.<agent>  →  agents.llm.use_provider
-#   global.llm.use_provider
-[global.llm]
-use_provider = "deepseek_v4_pro"
-
 # ── LLM providers ──
-# A provider is just a base_url + api_key pair, so any OpenAI-compatible endpoint
-# works (DashScope / SiliconFlow / DeepSeek / Moonshot / Mistral / Z.ai / OpenRouter ...).
-# What each key actually means:
-#   model                     Required.
-#   api_base_url / api_key    Required. The one exception: the *effective* provider's
-#                             name starts with "bedrock" (the check is on the name prefix,
-#                             not on api_format) — those two are then skipped and
-#                             aws_region becomes required instead. There is no Bedrock-specific
-#                             client in this repo; it still talks to an OpenAI-compatible endpoint.
-#   temperature               0 is always treated as "not set" (the field is a plain float64,
-#                             so "wrote 0.0" and "left it out" are indistinguishable):
-#                             the field is then omitted and the server's sampling default applies.
-#                             Forcing greedy decoding through config is currently not possible.
-#   max_tokens                Engine-level default. Priority: per-call override > this value >
-#                             field omitted entirely (required on the Anthropic side, 8192 fallback).
-#   context_window            Affects **only the TUI context progress bar**. It does not take
-#                             part in the compression threshold (that comes from the embedded
-#                             model catalog). Omit it and the bar is not shown.
-#   reasoning_effort          openai: passed through verbatim, plus thinking={type:enabled}.
-#                             anthropic: mapped to thinking.budget_tokens —
-#                             low/medium/high/max = 1024/8192/24576/32000; max_tokens is then
-#                             raised to budget+4096 and temperature forced to 1.0.
-#                             An unrecognised value = "thinking is off" (budget_tokens: 0 is never sent).
-#   api_format                "openai" (default) | "anthropic" (native Messages, Extended Thinking).
-#   aws_region / aws_profile / model_provider   Parsed, but apart from the bedrock exemption above
-#                             nothing reads them.
+# A provider is just base_url + api_key, so any OpenAI-compatible endpoint works
+# (DashScope / DeepSeek / SiliconFlow / Moonshot / Mistral / Z.ai / OpenRouter /
+# a local vLLM ...). There is no vendor-specific client in this repo — including
+# "Bedrock": point api_base_url at an OpenAI-compatible gateway or it won't work.
+#
+# Keys per provider:
+#   model               required
+#   api_base_url        required
+#   api_key             required, unless api_key_env names an environment variable
+#   api_key_env         e.g. "DASHSCOPE_API_KEY"; keeps the secret out of this file.
+#                       Leave unset in this shell and startup fails naming the variable.
+#   temperature         0 is always treated as "not set" — the field is omitted and the
+#                       server's sampling default applies. Greedy decoding cannot be
+#                       forced from config today (0.0 and "absent" are indistinguishable).
+#   max_tokens          engine-level default. Priority: per-call override > this > omitted
+#                       (the Anthropic side needs it, and falls back to 8192).
+#   context_window      affects ONLY the TUI context progress bar. The compression
+#                       threshold comes from the embedded model catalog, not from here.
+#   reasoning_effort    openai: passed through verbatim (+ thinking={type:enabled}).
+#                       anthropic: mapped to thinking.budget_tokens — low/medium/high/max =
+#                       1024/8192/24576/32000, max_tokens is raised to budget+4096 and
+#                       temperature forced to 1.0. An unrecognised value = thinking off.
+#   api_format          "openai" (default) | "anthropic" (native Messages + Extended Thinking)
+#   fallback_providers  failover list; needs [llm] enable_fallback = true to take effect:
+#                       fallback_providers = ["local", { provider = "other", weight = 5 }]
+[global.llm]
+use_provider = "aliyun"
+
 [global.llm.providers.aliyun]
 model = "qwen3-coder-plus"
+api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key = "your-key"          # ← replace, or run `yagent setup`
 temperature = 0.0
 max_tokens = 28000
-# context_window = 1000000        # TUI context usage bar only; 0/unset = no bar
-api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-api_key = "your-key"
+context_window = 1000000
 
-[global.llm.providers.deepseek_v4_pro]
-model = "deepseek-v4-pro"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "https://api.deepseek.com/v1"
-api_key = "your-key"
-reasoning_effort = "max"
-
+# A local server (vLLM / llama.cpp / Ollama's OpenAI endpoint), no thinking model:
 [global.llm.providers.local]
 model = "Qwen3-30B-A3B"
-temperature = 0.0
-max_tokens = 3000
-api_base_url = "http://127.0.0.1:8000"
+api_base_url = "http://127.0.0.1:8000/v1"
 api_key = "dummy-key"
+max_tokens = 3000
 
-# Native Anthropic protocol example (Extended Thinking):
+# Native Anthropic (Extended Thinking):
 # [global.llm.providers.claude]
 # model = "claude-sonnet-4-5"
 # api_format = "anthropic"
 # api_base_url = "https://api.anthropic.com"
-# api_key = "your-key"
-# max_tokens = 28672              # raised automatically with the reasoning_effort budget
-# reasoning_effort = "high"       # → thinking.budget_tokens = 24576
+# api_key_env = "ANTHROPIC_API_KEY"
+# max_tokens = 28672
+# reasoning_effort = "high"   # → thinking.budget_tokens = 24576
 
-# Failover: only takes effect when [llm] enable_fallback = true AND this is non-empty.
-# Shorthand (tried in declaration order):
-# fallback_providers = ["aliyun", "local"]
-# Full form (higher weight first; without weight, declaration order wins):
-# fallback_providers = [
-#     { provider = "aliyun", weight = 10 },
-#     { provider = "local", weight = 5 },
-# ]
-
-# ── Per-agent LLM overrides ──
-# Only these six names are recognised: director / coding / repo / chat / devops / meta.
-# WARNING: **there is no "browser"**. [agents.llm.browser] is reported as an undecoded key and
-# silently ignored (verified: undecoded = agents.llm.browser.use_provider). The Browser Agent can
-# only be reached through agents.llm.use_provider or the global default.
-[agents.llm.director]
-use_provider = "deepseek_v4_pro"
-
-[agents.llm.coding]
-use_provider = "local"
-
-[agents.llm.repo]
-use_provider = "local"
-
-[agents.llm.chat]
-use_provider = "local"
-
-[agents.llm.meta]
-use_provider = "local"
-
-[agents.llm.devops]
-use_provider = "local"
-
-# ── Per-tool LLM overrides (outrank every agent-level setting) ──
-[tools.llm.thinking]
-use_provider = "deepseek_v4_pro"
-
-[tools.llm.deepthinking]
-use_provider = "deepseek_v4_pro"
-
-# Pre-coding design tool: produces the step-by-step plan the Coding Agent executes.
-[tools.llm.design]
-use_provider = "deepseek_v4_pro"
-
-# [tools.llm.micro_agent]
+# ── Per-agent / per-tool provider overrides ──
+# Resolution order (highest first):
+#   tools.llm.<tool> → tools.llm.use_provider → agents.llm.<agent> →
+#   agents.llm.use_provider → global.llm.use_provider
+# Agent names: director / coding / repo / chat / devops / browser / meta.
+# Put all agents on one provider with the table-level key instead:
+# [agents.llm]
 # use_provider = "local"
+#
+# [agents.llm.coding]
+# use_provider = "local"
+#
+# Cognitive tools (these outrank every agent-level setting):
+# [tools.llm.deepthinking]
+# use_provider = "aliyun"
+# [tools.llm.design]
+# use_provider = "aliyun"
 
-# ── Deferred tool schemas (each step carries only the necessary declarations;
-#    the rest go into a catalog and are pulled back with load_tool) ──
-# Read by agents/deps.go; shapes the tool surface of every agent.
-[tools.deferred]
-disable = false                    # true = revert to "full schema on every step": no catalog, no load_tool
-budget_tokens = 2500               # Per-step tool-declaration budget. **Omitted or 0 → 2500**;
-                                   # **negative = no budget** (only the registry's own tiers).
-                                   # Warm tools over budget are demoted to Cold, largest declaration first.
-# hot / cold are parsed but have no consumer today: retiering happens only through a
-# profile's Promote/Demote lists.
-# hot = ["run_bash"]
-# cold = ["print_dir_tree"]
-
-# ── Application settings ──
-# enable_streaming only reaches the startup log ("streaming_enabled"). Both engines always
-# call the streaming API, so this key changes no behaviour — hence it is commented out rather
-# than recommended as a knob.
-# [app]
-# enable_streaming = true
+# ── Deferred tool schemas ──
+# Each step carries only the tool declarations it needs; the rest sit in a catalog
+# and are pulled back with load_tool.
+# [tools.deferred]
+# disable = false            # true = full schema on every step: no catalog, no load_tool
+# budget_tokens = 2500       # omitted or 0 → 2500; negative = no budget (registry tiers only)
 
 # ── Automatic model routing ──
-# With mode = "auto" (an empty value also means auto), startup scores **every model configured
-# in any provider** against the embedded benchmark catalog and picks three tiers:
-# top score = high-IQ, median = balanced, lowest = fast. On every delegate call a quick model
-# classifies the task's difficulty and the sub-agent runs on that tier; deepthinking always
-# uses the high-IQ tier.
-# Scoring: the **strict intersection** of the candidates' benchmark entries,
-# ai_score = Σ(score × weight), where DeepSWE / SWE-Bench Pro / GPQA Diamond weigh 1.5
-# and everything else 1.0.
-# Fewer than 3 scorable candidates, or an empty intersection → auto silently falls back
-# to fixed-provider behaviour.
-# mode = "fixed" turns routing off entirely; the TUI can switch it at runtime and writes
-# this line back.
+# auto (default; empty also means auto): startup scores every configured model against
+# the embedded benchmark catalog and picks fast / balanced / high. Each delegation
+# classifies the task's difficulty and runs on that tier; deepthinking always uses high.
+# Fewer than 3 scorable candidates, or an empty benchmark intersection → behaves like fixed.
 [routing]
 mode = "auto"
-
-# Per-role baseline tier (the fallback when the classifier fails).
-# Values: fast | balanced | high (mid/cost normalise to balanced, smart to high).
-# Defaults without this block: director=high meta=high coding=balanced repo=balanced
-# chat=balanced browser=balanced devops=fast.
+# Per-role baseline tier when the classifier fails: fast | balanced | high.
+# Defaults: director/meta = high, coding/repo/chat/browser = balanced, devops = fast.
 # [routing.baselines]
-# director = "high"
-# coding = "balanced"
-# devops = "fast"
+# coding = "high"
 
 # ── Agent behaviour ──
 [agent]
-yolo_mode = false                  # Approve dangerous operations inside the workspace (same as -y)
-full_yolo_mode = false             # Full autonomy: implies yolo, allows paths outside the workspace,
-                                   # and removes ask_user_for_help (same as -Y)
-director_max_steps = 100           # Omitted or 0 → code defaults: 100/150/50/50/50/200
-coding_max_steps = 150             #   (Director / Coding / Repo / Chat / DevOps / Browser)
+yolo_mode = false            # approve dangerous operations inside the workspace (same as -y)
+full_yolo_mode = false       # implies yolo, allows paths outside the workspace, drops ask_user_for_help (-Y)
+director_max_steps = 100     # omitted or 0 → defaults 100/150/50/50/50/200
+coding_max_steps = 150       #   (Director / Coding / Repo / Chat / DevOps / Browser)
 repo_max_steps = 50
 chat_max_steps = 50
 devops_max_steps = 50
 browser_max_steps = 200
-meta_max_steps = 50                # parsed, no effect — Meta is one LLM call, it never runs a step loop
-meta_retry_count = 5               # Retries when Meta emits invalid JSON
-# Delegation watchdog. **When omitted**, the idle threshold is derived:
-# max(10m, [llm] timeout + 5m) — it must stay well above the longest heartbeat-free step
-# (a single LLM call), otherwise healthy long reasoning gets killed.
-# An explicit value ≤ [llm] timeout triggers a startup warning; negative normalises to 0
-# (i.e. back to the derived value).
+meta_retry_count = 5         # retries when Meta emits invalid JSON (Meta is one LLM call; it has no step loop)
+max_parallel_readonly_tools = 4  # read-only tool fan-out: ≤0 → 4, >8 → 8, 1 = strictly serial
+lang = ""                    # answer language, e.g. "Chinese" / "English"; empty = no instruction injected
+# Delegation watchdog. When omitted, idle threshold = max(10m, [llm] timeout + 5m); it must
+# stay above the longest heartbeat-free step or healthy long reasoning gets killed.
 # delegate_idle_timeout = "15m"
-# Hard cap per delegation: 0/omitted = disabled. Warns at startup if smaller than the idle threshold.
-# delegate_total_timeout = "30m"
-max_parallel_readonly_tools = 4    # Parallelism of a read-only tool run: ≤0 → 4, >8 clamps to 8,
-                                   # **1 = strictly serial (kill switch)**
-lang = ""                          # Conversation language (empty = no language instruction injected,
-                                   # e.g. "Chinese" / "English")
+# delegate_total_timeout = "30m"   # hard cap per delegation; 0/omitted = disabled
 
 # ── LLM resilience ──
 [llm]
-# Per-call LLM timeout. **Omitted → 10m** (DefaultLLMCallTimeout).
-# Runtime priority: the TUI Alt+M model-panel global value > this setting > 10m; changing it in
-# the panel writes this line back.
-timeout = "10m"
-max_retries = 5                    # Engine-level retries (total requests = value + 1); the SDK's own
-                                   # retries are disabled; ≤0 → 5
-step_retries = 0                   # Step-level retries (Director and each sub-agent), 0 = off
-circuit_breaker_threshold = 0      # **0 = breaker disabled**; the breaker is only created when > 0
-circuit_breaker_reset_timeout = "0s" # Only defaulted to 60s when threshold > 0; 0s here changes nothing
-enable_fallback = false            # Provider-level failover switch (also needs fallback_providers)
-fallback_max_retries = 2           # Retries inside a fallback provider; **omitted → follows max_retries**
+timeout = "10m"              # per-call timeout; the TUI model panel can change it at runtime
+max_retries = 5              # engine-level retries (total requests = value + 1); SDK retries disabled; ≤0 → 5
+step_retries = 0             # step-level retries for the Director AND every sub-agent, 0 = off
+circuit_breaker_threshold = 0        # 0 = breaker disabled (only created when > 0)
+circuit_breaker_reset_timeout = "0s" # defaulted to 60s only when the threshold is > 0
+enable_fallback = false      # provider failover (also needs fallback_providers on the provider)
+fallback_max_retries = 2     # omitted → follows max_retries
 
-# ── CodeSeek MCP code-analysis engine ──
+# ── CodeSeek (MCP code-analysis engine) ──
 [codeseek]
-binary_path = ""                   # Empty → extract the embedded dist/bin into ~/.yagent/bin/codeseek.
-                                   # If neither is available MCP is off and agents fall back to
-                                   # plain file tools.
-mcp_args = ["serve", "--mcp"]      # MCP launch arguments
-request_timeout = 30               # Request timeout in seconds (≤0 → 30)
+binary_path = ""                    # empty → extract the embedded binary into ~/.yagent/bin/codeseek;
+                                    # if neither exists, MCP is off and agents use plain file tools
+mcp_args = ["serve", "--mcp"]
+request_timeout = 30                # seconds (≤0 → 30)
 
-# WARNING — current state: knowledge **injection** is hardcoded off (Inject in
-# internal/knowledge/injector.go returns early), so this whole block has no effect today.
-# It is kept so the defaults do not have to be re-guessed when injection comes back.
-# The write path is unaffected: consolidate_knowledge talks straight to MCP and does not read this.
-[codeseek.knowledge]
-enabled = true                     # Only decides whether the injector is constructed; injection itself is off
-injection_max_tokens = 2000        # Max token budget for the injected knowledge block
-injection_max_entries = 8          # Max number of injected entries
-injection_min_score = 0.3          # Minimum retrieval score to inject
-injection_rerank = true            # Request cross-encoder reranking (auto-degrades if the codeseek
-                                   # side has no reranker)
-
-# ── Browser-Agent (the external browser-control CLI drives a real Chrome) ──
-# WARNING — same trap as [blackboard]/[resume]: section presence is decided by "at least one key
-# this schema recognises", and Enabled is not defaulted. **If you write this section, write
-# enabled too** — otherwise the browser capability is silently off.
+# ── Browser-Agent (drives a real Chrome through the external browser-control CLI) ──
+# WARNING: writing this section without `enabled` switches the capability OFF —
+# the boolean has no default. Both binaries must exist or delegate_browser degrades
+# to "unavailable + reason + fix".
 [browser]
-enabled = true                     # Off → delegate_browser degrades to "unavailable + reason + fix"
-binary_path = ""                   # Empty → ~/.yagent/bin/browser-control → $PATH; missing = capability off
-chrome_path = ""                   # Empty → browser-control auto-detects Chrome/Chromium
-mode = "headless"                  # headless | headful | attach (attach reuses a logged-in browser)
-cdp_url = ""                       # Required with mode=attach, e.g. http://127.0.0.1:9222; missing = error
-cdp_port_base = 9333               # First auto-launch port (deliberately avoids 9222/9223: the upstream
-                                   # hard-scans those two when no CDP env var is set)
-cdp_timeout = "65s"                # Upstream's internal CDP timeout: must cover the longest wait (60s);
-                                   # its factory default is only 15s. Smaller values warn and floor at 65s.
-command_timeout = "75s"            # Per tool-call cap: must exceed cdp_timeout, else it is raised to
-                                   # cdp_timeout+10s (otherwise the outer layer kills the process before
-                                   # the model ever sees the upstream reason)
-idle_ttl = "15m"                   # Close the Chrome we started after this much idle (attached ones never)
-max_chrome = 1                     # Max Chrome instances in this process
-workspace_root = ""                # Empty → ~/.yagent/data/browser
-workspace_ttl = "72h"              # Expired workspace cleanup (traces and screenshots included)
-max_output_bytes = 24000           # Output budget handed to the model (stdout and stderr clipped separately)
-dialog_policy = "accept"           # accept | dismiss | ask
-allowed_domains = []               # Empty = no public-network allowlist
+enabled = true
+binary_path = ""             # empty → ~/.yagent/bin/browser-control → $PATH
+chrome_path = ""             # empty → browser-control auto-detects Chrome/Chromium
+mode = "headless"            # headless | headful | attach (attach reuses a logged-in browser)
+cdp_url = ""                 # required with mode=attach, e.g. http://127.0.0.1:9222
+cdp_port_base = 9333         # avoids 9222/9223, which the upstream CLI hard-scans
+cdp_timeout = "65s"          # must cover the longest wait (60s); smaller values warn and floor at 65s
+command_timeout = "75s"      # per tool call; must exceed cdp_timeout, else raised to cdp_timeout+10s
+idle_ttl = "15m"             # close the Chrome we started after this much idle (attached ones never)
+max_chrome = 1
+workspace_root = ""          # empty → ~/.yagent/data/browser
+workspace_ttl = "72h"
+max_output_bytes = 24000     # output handed to the model (stdout and stderr clipped separately)
+dialog_policy = "accept"     # accept | dismiss | ask
+allowed_domains = []         # empty = no public-network allowlist
 denied_domains = ["*.local", "localhost", "127.0.0.1", "::1", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "169.254.0.0/16"]
-profile_dir = ""                   # Profile directory when login state must survive across tasks
-enable_skills = false              # Site-playbook injection: parsed but unimplemented (P2), no effect
+profile_dir = ""             # keep login state across tasks
 
 # ── Cross-agent blackboard (docs/blackboard-handoff-design.md) ──
-# Notes live at ~/.yagent/notes/{boardID}/{agent}/*.md. The index is **derived and transient**:
-# rebuilt from disk every round and attached only to that round's LLM call, never written back into
-# the conversation history — which is exactly why it survives compression.
-# Index token cost ceiling = index_max_notes × index_line_chars, injected once per Director round
-# and once per delegation.
+# Notes at ~/.yagent/notes/{board}/{agent}/*.md. The index is derived and transient:
+# rebuilt from disk every round, attached only to that round's LLM call — which is why
+# it survives compression. Kill switch: environment variable YAGENT_BLACKBOARD=0.
 [blackboard]
-index_max_notes = 12                 # Max notes in the index; **0 = index injection off** (emergency valve);
-                                     # negative = default 12
-index_line_chars = 160               # Per-line rune budget; **explicit 0 = do not clip lines**;
-                                     # negative or omitted = default 160
-summary_max_runes = 1200             # Handoff summary budget for the Director; <=0 = default
-ttl = "168h"                         # Clean up a whole board dir after this long untouched; "0" = never
-max_notes_per_board = 200            # Newest notes kept per board; 0 or negative = default (raise with a bigger number)
-# Turning the feature off is not here: use the YAGENT_BLACKBOARD=0 environment variable (no writes,
-# no reads, no index injection). The missing `enabled` key is deliberate — a boolean zero value would
-# silently disable a new capability, and [browser] enabled already fell into that hole once.
-# YAGENT_NOTES_ROOT overrides the notes root (debugging / multiple instances).
+index_max_notes = 12         # 0 = index injection off (emergency valve); negative/omitted = 12
+index_line_chars = 160       # explicit 0 = do not clip lines; negative/omitted = 160
+summary_max_runes = 1200     # handoff summary budget for the Director; ≤0 = default
+ttl = "168h"                 # clean a board dir untouched this long; "0" = never
+max_notes_per_board = 200    # newest notes kept per board; 0/negative = default
 
-# ── Stop / resume (docs/pause-resume-design.md §8.4) ──
+# ── Stop / resume (docs/pause-resume-design.md) ──
+# WARNING: writing this section without `enable = true` switches the whole mechanism off.
+# Kill switch: YAGENT_RESUME=0 (stops writing checkpoints, not just replay).
 [resume]
-enable = true                          # Master switch; false = no checkpoints written, no replay, and a
-                                       # stopped task can only continue from the Director.
-                                       # WARNING: writing this section without enable = true switches
-                                       # the whole mechanism off.
-replay_token_budget = 0                # Token ceiling for the replayed context; 0 = the model catalog's
-                                       # threshold. Over budget is not an error — it degrades to a handoff report.
-max_replay_messages = 2000             # Max rebuilt messages; **explicit 0 = unlimited**, negative/omitted = 2000
-degrade_on_workspace_change = "warn"   # warn = HEAD moved but still replay, with a degradation note;
-                                       # block = refuse replay and emit the handoff report.
-                                       # An unrecognised value warns then falls back to warn (block by default would
-                                       # break layer B after any pull or machine switch).
-checkpoint_workspace = true            # Run git status at stop and record worktree facts in the checkpoint
-                                       # (switch off on enormous repos)
-# To opt out of the whole mechanism use YAGENT_RESUME=0 (same shape as YAGENT_BLACKBOARD=0).
-# Off means not even writing checkpoints — a half-enabled switch would turn "why does this rollout
-# have no checkpoint" into a new question nobody can answer.
+enable = true
+replay_token_budget = 0              # 0 = the model catalog's threshold; over budget degrades
+                                     # to a handoff report rather than failing
+max_replay_messages = 2000           # explicit 0 = unlimited; negative/omitted = 2000
+degrade_on_workspace_change = "warn" # warn = HEAD moved, still replay with a note; block = handoff report
+checkpoint_workspace = true          # git status at stop (switch off on enormous repos)
 
-# ── Context compression (three tiers, code in internal/compression) ──
-# Trigger measure = the previous step's provider-reported input tokens + local estimates for
-# messages added since.
-# Threshold = min(model catalog limit.context × 0.75, context_compression_threshold below) — both
-# are ceilings: the catalog answers "how much this model holds", the config answers "how much I'm
-# willing to pay". Omitted or ≤0 = catalog only; neither available = 120000.
-# **The provider's context_window plays no part in this path.**
-# WARNING: enable_context_compression is only one necessary condition — the code takes
-# enable && enable_context_compression, so both must be true.
-# Applies to: Director + Repo / Coding / DevOps / Browser (Chat and Meta are never compressed).
-# Debug valve: YAGENT_COMPRESS_THRESHOLD, when set, *is* the threshold — it bypasses both the
-# catalog and the config. Never use it in production (compression would fire before the model is
-# actually full, wasting context).
+# ── Context compression, three tiers (internal/compression) ──
+# Trigger = previous step's provider-reported input tokens + local estimate for messages since.
+# Threshold = min(model catalog limit.context × 0.75, context_compression_threshold).
+# The provider's context_window plays no part here. Debug valve: YAGENT_COMPRESS_THRESHOLD
+# overrides everything — never use it in production.
+# Applies to Director + Repo / Coding / DevOps / Browser (Chat and Meta are never compressed).
 [enhanced_commander]
-enable = false                         # Master switch for the enhanced commander
-enable_context_compression = false     # ANDed with enable; turning this alone does nothing
-# context_compression_threshold = 120000 # Capped against the catalog threshold; omit to stay catalog-only
-# tool_result_keep_tokens = 200          # Tokens kept after a tier-1 truncation
-enable_ultimate_compression = true     # Tier 3. **Writing false does not turn it off**: validate() writes
-                                       # true back, so this key currently only means "on by default"
-                                       # (the status quo is pinned by validate_test).
-# ultimate_compression_keep_plans = 0    # Thought & Plan blocks kept when rebuilding; 0 = keep all.
-                                        # WARNING: applies to Director / Repo / DevOps / Browser only —
-                                        # the Coding side hardcodes 0 (keep all), so this value never reaches it.
-# max_delegation_depth is parsed but has no consumer — delegation depth is not config-driven.
-# max_delegation_depth = 3
+enable_context_compression = false   # the single switch (there used to be a second `enable`
+                                     # that had to be true as well — that trap is gone)
+# context_compression_threshold = 120000  # capped against the catalog; omit = catalog only
+# tool_result_keep_tokens = 200           # tokens kept after a tier-1 truncation
+enable_ultimate_compression = true   # tier 3; explicit false now really turns it off
+# ultimate_compression_keep_plans = 0     # Thought & Plan blocks kept on rebuild; 0 = all
 
 # ── Git checkpoints ──
-# Checkpoints are created by the agent itself via the git_checkpoint_create tool at milestones.
+# Checkpoints are created by the agent via the git_checkpoint_create tool at milestones
+# (there is no automatic per-step checkpoint any more).
 [git_checkpoint]
-enabled = true                       # Master switch (the workspace must also be a git repo)
-agent_branch_prefix = "agent"        # Working branch prefix → agent/<session>
-checkpoint_tag_prefix = "checkpoint/coding"  # Checkpoint tag prefix
-stash_dirty_worktree = true          # Stash uncommitted changes at start
-squash_on_exit = true                # Squash the agent branch's commits into one at exit
-auto_merge_on_exit = false           # false = keep the branch for manual review/merge;
-                                     # true = squash-merge into the user branch at exit
-cleanup_agent_branch = true          # Delete the agent branch at exit (only if it really was merged)
-cleanup_checkpoint_tags = true       # Delete checkpoint tags at exit
-generate_commit_message = true       # Use an LLM to write checkpoint commit messages
-# These three keys have been abandoned by the code — writing them does nothing. They are listed
-# only to explain where they went:
-#   auto_checkpoint / checkpoint_interval — the auto-checkpoint hook has no caller left
-#   max_checkpoints — read into the struct, but never trims any tag or branch
-# auto_checkpoint = false
-# checkpoint_interval = 0
-# max_checkpoints = 50
+enabled = true                       # also requires the workspace to be a git repo
+agent_branch_prefix = "agent"        # working branch → agent/<session>
+checkpoint_tag_prefix = "checkpoint/coding"
+stash_dirty_worktree = true
+squash_on_exit = true
+auto_merge_on_exit = false           # false = keep the branch for manual review
+cleanup_agent_branch = true          # only deletes a branch that really was merged
+cleanup_checkpoint_tags = true
+generate_commit_message = true       # an LLM writes the checkpoint commit message
+# WARNING: once you write this section, every boolean below is yours to set.
+# Leaving one out means false — only the two prefixes get filled in.
 
-# ── Completion dictionary ──
-# The dictionary paths are **hardcoded**: ~/.yagent/keywords.txt (user) plus
-# <project>/.yagent/keywords.txt (project). default_path / hot_reload / [[keywords.dict]] are all
-# parsed but read by nobody; disable_completion is the only key in here that does anything.
+# ── Keyword completion ──
+# Dictionary paths are hardcoded: ~/.yagent/keywords.txt + <project>/.yagent/keywords.txt
 [keywords]
-disable_completion = false           # true = turn off keyword completion while typing
-# default_path = "~/.yagent/keywords.txt"   # parsed, no effect (paths are hardcoded)
-# hot_reload = false                          # parsed, no effect (hot-reload code was removed)
-# [[keywords.dict]]                           # parsed, no effect
-# name = "custom"
-# files = ["/path/to/keywords.txt"]
-# type = "prefix"                           # prefix | exact
-# builtin_type = "default"                  # default | none
+disable_completion = false
+
+# ── Task timeout ──
+# HTTP mode only (TaskManager); TUI and --prompt are not governed by it.
+# task_timeout = "30m"
 
 # ═══════════════════════════════════════════════════════════════
-# TUI keybindings
-# Anything you leave out uses the Go default — the values below *are* the current defaults.
-# Format: Bubble Tea **v2** key event strings (lowercase):
-#   - modifiers: "ctrl+e", "alt+s", "alt+enter"
-#   - plain keys: "j", "k", "f", "b", "i", "?"
-#   - special:    "enter", "esc", "tab", "space"
+# TUI keybindings — values below ARE the defaults; anything you omit
+# falls back to them. Format: Bubble Tea v2 key strings, lowercase
+# ("ctrl+e", "alt+enter", "j", "enter", "esc").
+# Setting a key REPLACES the default binding (it used to add an alias and
+# leave the default live, so a "moved" action was still reachable).
 # ═══════════════════════════════════════════════════════════════
 [tui]
   [tui.keybindings]
-
     [tui.keybindings.edit]
-    submit_task       = "alt+s"    # Submit the task
-    command_mode      = "ctrl+e"   # Enter command mode
-    toggle_help       = "ctrl+h"   # Toggle help
-    toggle_timeline   = "ctrl+l"   # Toggle the full-screen timeline
-    toggle_dashboard  = "alt+d"    # Toggle the sidebar dashboard
-    page_down         = "ctrl+f"   # Page down
-    page_up           = "ctrl+b"   # Page up
-    quit              = "ctrl+c"   # Quit
-    switch_model      = "alt+m"    # Switch model (also the panel that sets the LLM timeout)
-    new_tab           = "ctrl+t"   # New session tab
-    prev_tab          = "alt+["    # Previous tab
-    next_tab          = "alt+]"    # Next tab
-    clear_session     = "alt+c"    # Clear the current session
-    close_tab         = "alt+w"    # Close the current tab
-    # alt+1..9 jump straight to tab N (that is the default when unset)
+    submit_task      = "alt+s"
+    command_mode     = "ctrl+e"
+    toggle_help      = "ctrl+h"
+    toggle_timeline  = "ctrl+l"
+    toggle_dashboard = "alt+d"
+    page_down        = "ctrl+f"
+    page_up          = "ctrl+b"
+    quit             = "ctrl+c"
+    switch_model     = "alt+m"
+    new_tab          = "ctrl+t"
+    prev_tab         = "alt+["
+    next_tab         = "alt+]"
+    clear_session    = "alt+c"
+    close_tab        = "alt+w"
+    # alt+1..9 jump to tab N
     # tab_1 = "alt+1"
-    # tab_2 = "alt+2"
-    # tab_3 = "alt+3"
-    # tab_4 = "alt+4"
-    # tab_5 = "alt+5"
-    # tab_6 = "alt+6"
-    # tab_7 = "alt+7"
-    # tab_8 = "alt+8"
-    # tab_9 = "alt+9"
 
     [tui.keybindings.command]
-    scroll_down        = "j"       # Scroll one line down
-    scroll_up          = "k"       # Scroll one line up
-    page_down          = "f"       # Page down
-    page_up            = "b"       # Page up
-    edit_mode          = "i"       # Enter edit mode
-    toggle_help        = "?"       # Show help
-    toggle_token_panel = "alt+t"   # Toggle the token panel
-    toggle_dashboard   = "alt+d"   # Toggle the sidebar dashboard
-    switch_model       = "alt+m"   # Switch model
-    quit               = "ctrl+c"  # Quit
+    scroll_down        = "j"
+    scroll_up          = "k"
+    page_down          = "f"
+    page_up            = "b"
+    edit_mode          = "i"
+    toggle_help        = "?"
+    toggle_token_panel = "alt+t"
+    toggle_dashboard   = "alt+d"
+    switch_model       = "alt+m"
+    quit               = "ctrl+c"

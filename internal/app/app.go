@@ -286,8 +286,9 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 
 		// [知识管理] 创建 KnowledgeInjector（依赖 CodeSeekMCP，在 MCP 客户端就绪后生效）
 		// publisher 用于向 TUI 发布 knowledge_injected 概要事件（injector 内部 fail-safe）
-		if ca.config != nil && ca.config.CodeSeek.Knowledge.Enabled && ca.globalCtx.CodeSeekMCP != nil {
-			ca.globalCtx.KnowledgeInjector = knowledge.NewKnowledgeInjector(ca.globalCtx.CodeSeekMCP, ca.config.CodeSeek.Knowledge, publisher)
+		// 原 [codeseek.knowledge] enabled 不是判据：validate() 见 false 就写回 true，它从来关不掉。
+		if ca.globalCtx.CodeSeekMCP != nil {
+			ca.globalCtx.KnowledgeInjector = knowledge.NewKnowledgeInjector(ca.globalCtx.CodeSeekMCP, publisher)
 			slog.Info("KnowledgeInjector initialized", "enabled", true)
 		}
 
@@ -383,6 +384,13 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		browserMgr.CleanupExpiredWorkspaces()
 		ca.browserMgr = browserMgr
 
+		// [llm] step_retries：Director 走 planner 的 Recovery、Meta 走 JSON 重试，
+		// 子 Agent 现在也吃同一个值（默认 0 = 关，因此对现有配置零差异）。
+		stepRetries := 0
+		if ca.config != nil {
+			stepRetries = ca.config.LLM.StepRetries
+		}
+
 		repoAgent := agents.NewRepoAgent(agents.RepoAgentParams{
 			Formatter:            &gctx,
 			Publisher:            publisher,
@@ -398,6 +406,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			EnhancedCommanderCfg: ca.config.EnhancedCommander,
 			LLM:                  repoEngine,
 			MaxSteps:             repoMaxSteps,
+			StepRetries:          stepRetries,
 		})
 
 		// [NEW] 初始化 RepoAgent 记忆系统
@@ -441,11 +450,8 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Guard:       guard,
 			LLM:         chatEngine,
 			MaxSteps:    chatMaxSteps,
+			StepRetries: stepRetries,
 		})
-		stepRetries := 0
-		if ca.config != nil {
-			stepRetries = ca.config.LLM.StepRetries
-		}
 		metaAgent := agents.NewMetaAgent(&gctx, publisher, metaEngine, stepRetries)
 		devopsAgent := agents.NewDevOpsAgent(agents.DevOpsAgentParams{
 			Formatter:            &gctx,
@@ -461,6 +467,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			EnhancedCommanderCfg: ca.config.EnhancedCommander,
 			LLM:                  devopsEngine,
 			MaxSteps:             devopsMaxSteps,
+			StepRetries:          stepRetries,
 		})
 		// 注入 DevOps-Agent，使 Repo-Agent 的 delegate_devops 工具可用
 		repoAgent.SetDevOpsAgent(devopsAgent)
@@ -475,6 +482,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			EnhancedCommanderCfg: ca.config.EnhancedCommander,
 			LLM:                  browserEngine,
 			MaxSteps:             browserMaxSteps,
+			StepRetries:          stepRetries,
 		})
 
 		codingAgent := agents.NewCodingAgent(agents.CodingAgentParams{
@@ -499,6 +507,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			EnhancedCommanderCfg: ca.config.EnhancedCommander,
 			LLM:                  codingEngine,
 			MaxSteps:             codingMaxSteps,
+			StepRetries:          stepRetries,
 			Browser:              browserAgent,
 		})
 

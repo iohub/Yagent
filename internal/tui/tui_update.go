@@ -32,6 +32,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Suspend
 	}
 
+	// 引导向导独占键盘（/setup、首次启动、配置坏掉时）。放在弹窗守卫之前：
+	// 它是全屏模式而不是对话框，叠加优先级要与 timeline/thinklink 一致。
+	if m.setupActive {
+		return m.updateSetupMode(msg)
+	}
+
 	// Global popup guard: when any overlay is shown, only allow KeyMsg through.
 	// taskEventMsg is allowed through so the listenForEvents chain stays alive;
 	// its handler drops the event when dialogs are open but reschedules the chain.

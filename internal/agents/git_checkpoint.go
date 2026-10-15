@@ -20,9 +20,6 @@ import (
 // (Duplicate of config.GitCheckpointConfig for use within agents package.)
 type GitCheckpointConfig struct {
 	Enabled               bool
-	AutoCheckpoint        bool
-	CheckpointInterval    int
-	MaxCheckpoints        int
 	SquashOnExit          bool
 	GenerateCommitMessage bool
 	AgentBranchPrefix     string
@@ -37,9 +34,6 @@ type GitCheckpointConfig struct {
 func DefaultGitCheckpointConfig() GitCheckpointConfig {
 	return GitCheckpointConfig{
 		Enabled:               true,
-		AutoCheckpoint:        true,
-		CheckpointInterval:    1,
-		MaxCheckpoints:        50,
 		SquashOnExit:          true,
 		GenerateCommitMessage: true,
 		AgentBranchPrefix:     "agent",
@@ -58,9 +52,6 @@ func ConvertConfig(c *config.GitCheckpointConfig) GitCheckpointConfig {
 	}
 	return GitCheckpointConfig{
 		Enabled:               c.Enabled,
-		AutoCheckpoint:        c.AutoCheckpoint,
-		CheckpointInterval:    c.CheckpointInterval,
-		MaxCheckpoints:        c.MaxCheckpoints,
 		SquashOnExit:          c.SquashOnExit,
 		GenerateCommitMessage: c.GenerateCommitMessage,
 		AgentBranchPrefix:     c.AgentBranchPrefix,
@@ -201,30 +192,6 @@ func (g *GitCheckpointManager) OnAgentStart(ctx context.Context) error {
 	}
 
 	slog.Info("Git Checkpoint: Agent started", "session", g.session.SessionID, "branch", agentBranch)
-	return nil
-}
-
-// OnStepEnd is called after each step's tool calls complete.
-// Errors from this hook are logged but do not abort the loop.
-//
-// Deprecated: Auto-checkpoint creation has been removed. Use CreateManualCheckpoint
-// instead. This method only logs a deprecation warning when AutoCheckpoint is true.
-func (g *GitCheckpointManager) OnStepEnd(ctx context.Context, stepInfo StepInfo) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	if g.session.Completed || g.ended {
-		return nil
-	}
-
-	if g.config.AutoCheckpoint {
-		slog.Warn(
-			"Git Checkpoint: OnStepEnd auto-checkpoint is deprecated and will be removed. Use CreateManualCheckpoint instead.",
-			"step", stepInfo.StepNumber,
-			"tool", stepInfo.ToolName,
-		)
-	}
-
 	return nil
 }
 

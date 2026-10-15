@@ -242,7 +242,15 @@ go build -o yagent .    # Go only, reusing the prebuilt dist/bin
 
 ### Configure
 
-`~/.yagent/config/config.toml` is generated from an embedded template on first run (or point at your own with `-c`):
+You don't have to hand-edit TOML: **`./yagent setup`** opens a wizard that adds providers, tests the
+endpoint with a real request, and asks the five first-run questions (answer language, approval mode,
+routing, browser, per-call timeout). It writes `config.toml` comment-preservingly and nothing lands on
+disk until you confirm the review screen. The same wizard runs inside the TUI as **`/setup`**, and opens
+by itself on a fresh machine (template just generated, `api_key` still a placeholder, or a config that
+won't load).
+
+`~/.yagent/config/config.toml` is generated from an embedded template on first run (mode `0600`, since
+it can hold a literal key), or point at your own with `-c` — that path is used verbatim and never created.
 
 ```toml
 [global.llm]
@@ -252,6 +260,7 @@ use_provider = "siliconflow"
 model           = "deepseek-ai/DeepSeek-V3.2"
 api_base_url    = "https://api.siliconflow.cn/v1"
 api_key         = "your-api-key"
+# api_key_env   = "SILICONFLOW_API_KEY"   # or take the key from the environment
 temperature     = 0.0
 max_tokens      = 23000
 # context_window = 262144        # TUI context meter only (compression uses the model catalog)
@@ -260,7 +269,7 @@ max_tokens      = 23000
 # fallback_providers = ["mimo", { provider = "local", weight = 2 }]
 
 [agents.llm.coding]              # per-agent and per-tool provider overrides
-use_provider = "local"
+use_provider = "local"           # agents: director / coding / repo / chat / devops / browser / meta
 [tools.llm.micro_agent]
 use_provider = "local"
 
@@ -282,6 +291,7 @@ mode    = "headless"            # headless | headful | attach
 
 ```bash
 ./yagent                        # TUI (default)
+./yagent setup                  # configure providers + first-run choices, then exit
 ./yagent tui --taskfile TASK.md
 ./yagent -p "explain the build system"    # non-interactive single shot
 ./yagent http --port 0          # HTTP + WebSocket, port auto-detected from 9800

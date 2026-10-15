@@ -80,7 +80,10 @@ type CodingAgent struct {
 	params           CodingAgentParams
 	BrowserAgent     *BrowserAgent
 	maxSteps         int
-	thinkLink        *thinklink.Store // 终极压缩支撑存储，实时记录用户原始输入，与 Director 模式一致，与 agent 同生命周期
+	// stepRetries 是 [llm] step_retries 的步级重试次数（0=关）。
+	// 以前 ExecutorConfig.StepRetries 全仓没有写入点，六个子 Agent 恒为 0。
+	stepRetries int
+	thinkLink   *thinklink.Store // 终极压缩支撑存储，实时记录用户原始输入，与 Director 模式一致，与 agent 同生命周期
 
 	// boardWriter 让 delegate_browser 的产物也上便签板。Director 在本 Agent 之后才构造，
 	// 所以它只能事后用 SetBoardWriter 注入；nil 时退回"直接返回文本"的旧行为。
@@ -120,7 +123,9 @@ type CodingAgentParams struct {
 
 	LLM      llm.Engine
 	MaxSteps int
-	Browser  *BrowserAgent
+	// StepRetries 是步级 LLM 重试次数（[llm] step_retries），与各子 Agent 共用同一语义。
+	StepRetries int
+	Browser     *BrowserAgent
 }
 
 // NewCodingAgent 构造 CodingAgent：按 tools.json 与参数集中的工具集装配适配器。
@@ -142,6 +147,7 @@ func NewCodingAgent(p CodingAgentParams) *CodingAgent {
 		guard:            p.Guard,
 		params:           p,
 		maxSteps:         p.MaxSteps,
+		stepRetries:      p.StepRetries,
 		BrowserAgent:     p.Browser,
 		thinkLink:        thinklink.NewStore(0), // 容量 0=全量，与 Director 一致
 	}
@@ -370,6 +376,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	cfg.Surface = a.surfaceFor(ctx, gcm)
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
+	cfg.StepRetries = a.stepRetries
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
@@ -379,13 +386,13 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 
 	// 上下文压缩配置（tool 结果截断）
 	ec := a.ecCfg
-	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
+	cfg.EnableContextCompression = ec.EnableContextCompression
 	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
 	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
 
 	// 三级终极压缩配置
-	cfg.UltimateThinkLink = a.thinkLink // 三级终极压缩重建源（thinklink 只读窄接口）
-	cfg.UltimateKeepPlans = 0           // 0=全部保留
+	cfg.UltimateThinkLink = a.thinkLink                     // 三级终极压缩重建源（thinklink 只读窄接口）
+	cfg.UltimateKeepPlans = ec.UltimateCompressionKeepPlans // 0=全部保留
 	cfg.EnableUltimateCompression = ec.EnableUltimateCompression
 
 	// 如果是 git 仓库且 checkpoint 启用，设置回调和添加工具
@@ -395,9 +402,6 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		}
 		cfg.OnAgentExit = func(ctx context.Context, agentErr error) error {
 			return gcm.OnAgentExit(ctx, agentErr)
-		}
-		cfg.OnStepEnd = func(ctx context.Context, stepInfo StepInfo) error {
-			return gcm.OnStepEnd(ctx, stepInfo)
 		}
 
 		// 快照工具随 gcm 一起由 surfaceFor 决定是否注册，不再运行期 append

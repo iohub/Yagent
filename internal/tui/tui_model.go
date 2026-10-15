@@ -496,6 +496,10 @@ type model struct {
 	resumeStyles   *resumeStyles
 	resumeRoot     string
 
+	// 引导向导（/setup）。setupActive 时向导独占键盘，见 setup_embed.go。
+	setupActive bool
+	wizard      *setupWizard
+
 	pendingDeleteTaskID string
 
 	dialogStack  *components.DialogStack
@@ -740,108 +744,9 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 	styles := common.NewStyles()
 	com := common.NewCommon(styles, cfg, ca, projectDir, useDarkStyle)
 
-	editKeyMap := make(map[string]string)
-	cmdKeyMap := make(map[string]string)
-	if cfg != nil && cfg.TUI.Keybindings.Edit.SubmitTask != "alt+s" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.SubmitTask] = "alt+s"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.CommandMode != "ctrl+e" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.CommandMode] = "ctrl+e"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleHelp != "ctrl+h" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.ToggleHelp] = "ctrl+h"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleTimeline != "ctrl+l" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.ToggleTimeline] = "ctrl+l"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.PageDown != "ctrl+f" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.PageDown] = "ctrl+f"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.PageUp != "ctrl+b" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.PageUp] = "ctrl+b"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.Quit != "ctrl+c" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.Quit] = "ctrl+c"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.SwitchModel != "alt+m" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.SwitchModel] = "alt+m"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.ToggleDashboard != "alt+d" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.ToggleDashboard] = "alt+d"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.NewTab != "ctrl+t" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.NewTab] = "ctrl+t"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.PrevTab != "alt+[" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.PrevTab] = "alt+["
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.NextTab != "alt+]" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.NextTab] = "alt+]"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.ClearSession != "alt+c" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.ClearSession] = "alt+c"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Edit.CloseTab != "alt+w" {
-		editKeyMap[cfg.TUI.Keybindings.Edit.CloseTab] = "alt+w"
-	}
-	for i := 1; i <= 9; i++ {
-		def := fmt.Sprintf("alt+%d", i)
-		var cfgVal string
-		switch i {
-		case 1:
-			cfgVal = cfg.TUI.Keybindings.Edit.Tab1
-		case 2:
-			cfgVal = cfg.TUI.Keybindings.Edit.Tab2
-		case 3:
-			cfgVal = cfg.TUI.Keybindings.Edit.Tab3
-		case 4:
-			cfgVal = cfg.TUI.Keybindings.Edit.Tab4
-		case 5:
-			cfgVal = cfg.TUI.Keybindings.Edit.Tab5
-		case 6:
-			cfgVal = cfg.TUI.Keybindings.Edit.Tab6
-		case 7:
-			cfgVal = cfg.TUI.Keybindings.Edit.Tab7
-		case 8:
-			cfgVal = cfg.TUI.Keybindings.Edit.Tab8
-		case 9:
-			cfgVal = cfg.TUI.Keybindings.Edit.Tab9
-		}
-		if cfg != nil && cfgVal != def {
-			editKeyMap[cfgVal] = def
-		}
-	}
-
-	if cfg != nil && cfg.TUI.Keybindings.Command.ScrollDown != "j" {
-		cmdKeyMap[cfg.TUI.Keybindings.Command.ScrollDown] = "j"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.ScrollUp != "k" {
-		cmdKeyMap[cfg.TUI.Keybindings.Command.ScrollUp] = "k"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.PageDown != "f" {
-		cmdKeyMap[cfg.TUI.Keybindings.Command.PageDown] = "f"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.PageUp != "b" {
-		cmdKeyMap[cfg.TUI.Keybindings.Command.PageUp] = "b"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.EditMode != "i" {
-		cmdKeyMap[cfg.TUI.Keybindings.Command.EditMode] = "i"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.CmdToggleHelp != "?" {
-		cmdKeyMap[cfg.TUI.Keybindings.Command.CmdToggleHelp] = "?"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.ToggleTokenPanel != "alt+t" {
-		cmdKeyMap[cfg.TUI.Keybindings.Command.ToggleTokenPanel] = "alt+t"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.SwitchModel != "alt+m" {
-		cmdKeyMap[cfg.TUI.Keybindings.Command.SwitchModel] = "alt+m"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.ToggleDashboard != "alt+d" {
-		cmdKeyMap[cfg.TUI.Keybindings.Command.ToggleDashboard] = "alt+d"
-	}
-	if cfg != nil && cfg.TUI.Keybindings.Command.Quit != "ctrl+c" {
-		cmdKeyMap[cfg.TUI.Keybindings.Command.Quit] = "ctrl+c"
-	}
+	// 键位表：见 tui_keymap.go —— 自定义键是**替换**默认键，不是再加一个别名。
+	editKeyMap, _ := buildKeyMap(editKeyBindings(cfg))
+	cmdKeyMap, _ := buildKeyMap(commandKeyBindings(cfg))
 
 	m := &model{
 		com: com,

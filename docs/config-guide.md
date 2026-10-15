@@ -1,15 +1,16 @@
 # Yagent Configuration Guide
 
-> **Scope**: this is the user-facing reference for `config.toml` — every section, the provider
-> resolution chain, failover, and scenario examples. Related deep dives:
+> **Scope**: this is the user-facing reference for `config.toml` — every section, the setup wizard,
+> the provider resolution chain, failover, and scenario examples. Related deep dives:
 > - [Anthropic API configuration](./anthropic-config.md) — Claude access and Extended Thinking
 > - [LLM failover configuration](./llm-fallback-config.md) — multi-provider fallback strategies
 > - [Context compression trigger design](./compression-trigger-design.md) — how the threshold is
 >   derived and measured
 > - [Pause / resume design](./pause-resume-design.md) — what the `[resume]` budget controls
 >
-> Every key listed here was checked against the current code (2026-10-15). Keys the code parses
-> but never reads are called out in place and collected in [§7](#7-keys-that-are-parsed-but-do-nothing).
+> Every key listed here has a consumer in the code (checked 2026-10-16). Keys that were parsed but
+> never read have been deleted rather than documented: [§7](#7-removed-keys-what-to-write-instead)
+> maps each old name to what to write instead, and startup names any that are still in your file.
 
 ---
 
@@ -23,21 +24,30 @@ in `main.go` picks the first applicable entry:
 
 | Order | Path | Behaviour when missing |
 |:-----:|------|------------------------|
-| 1 | `--config` / `-c <path>` | Used verbatim; **never created**, never defaulted. A bad path is a startup error. |
+| 1 | `--config` / `-c <path>` | Used verbatim; **never created**, never defaulted. A path that cannot be loaded is a startup failure — the wizard in TUI mode, otherwise the stderr report in §9 |
 | 2 | `$HOME/.yagent/config/config.toml` | Generated from the embedded template (this is the normal path) |
-| 3 | `./config/config.toml` | Reached only if the home directory lookup itself fails |
+| 3 | `./config/config.toml` | Reached **only** if the home-directory lookup itself fails — it is not a second-tier search, and a project-level file is never consulted on a normal machine |
 
-The repo's `config/config.toml` is therefore a **reference example**, not an active config layer. The
-file that actually runs is the one in `~/.yagent/config/` — copy or link it there.
+The repo's `config/config.toml` is therefore an **annotated reference catalogue**, not an active config
+layer: the file that actually runs is the one in `~/.yagent/config/`, generated from
+`internal/config/default_config.toml`. Both carry the same key set — `template_test.go` fails if either
+contains a key the schema does not read.
 
 Because a single file is loaded, a key you change in `config/config.toml` while running from
 `~/.yagent/config/config.toml` has no effect at all.
 
 ### 1.2 First-run generation
 
-When the chosen path does not exist, `config.EnsureConfigExists()` materialises the embedded
-template `internal/config/default_config.toml` with an atomic write (`.tmp` then rename), so an
-interrupted write cannot leave a half-written config. An existing file is **never** overwritten.
+When the chosen path does not exist, `config.EnsureConfigExists()` materialises the embedded template
+`internal/config/default_config.toml` with an atomic write (`.tmp` then rename), so an interrupted
+write cannot leave a half-written config. The file is created **mode `0600`** — it may hold a literal
+API key, and `config.toml` is exactly the kind of file people paste into questions whole. A later
+write-back keeps the mode of the file it found. An existing file is **never** overwritten.
+
+The generated template is deliberately *not* a usable configuration: `use_provider` points at a
+provider whose `api_key` is the placeholder `your-key`. Startup recognises that (§2.3) and opens the
+setup wizard instead of pretending to be ready — the alternative was "TUI starts fine, then the very
+first task fails in an LLM call whose error only reaches a log file".
 
 ### 1.3 What changes at runtime (and gets written back)
 
@@ -53,6 +63,14 @@ comments and ordering (`internal/config/persist.go`):
 | `/route` | `[routing].mode` | Switches auto-routing between `auto` and `fixed` |
 
 Anything else needs a restart.
+
+The setup wizard (§2.3) writes through the same text-level layer — `SetKeyInSection`,
+`RemoveKeyInSection`, `RemoveSection`. Values are replaced in place, never re-encoded, so your comments
+and line ordering survive; `PersistUseProvider` / `PersistRoutingMode` / `PersistLLMTimeout` are now
+thin wrappers over that one function.
+
+Keys that no longer exist are named on every startup (§7), so an old file tells you what to change
+instead of quietly ignoring what you wrote.
 
 ---
 
@@ -73,8 +91,10 @@ api_base_url = "https://api.deepseek.com/v1"
 api_key = "sk-your-key"
 ```
 
-Validation only requires `use_provider`, a provider with a `model`, and non-empty `api_key` +
-`api_base_url` — it never tests whether the key works.
+Validation requires `use_provider`, that provider's `model`, and a non-empty `api_base_url` plus a key
+— for **every** provider, with no vendor exemption (§4.1). The key may come from `api_key_env` instead
+of the file. A literal key that still reads `your-key` counts as "not filled in" and opens the wizard
+(§2.3). Validation never contacts the endpoint; the wizard's probe does.
 
 ### 2.2 Switching the default provider
 
@@ -82,6 +102,53 @@ Validation only requires `use_provider`, a provider with a `model`, and non-empt
 [global.llm]
 use_provider = "local"   # move everything to the local model
 ```
+
+### 2.3 The setup wizard
+
+Hand-editing provider blocks is the slow path: the key has to land in the right table, and nothing in
+the file tells you whether the endpoint accepts it. The wizard configures providers plus the choices a
+first run has to make, can test the endpoint before saving, and writes comment-preservingly (§1.3).
+
+| Entry | Behaviour |
+|-------|-----------|
+| `yagent setup` | Runs the wizard on its own — no agent assembly, no MCP, no requirement that the current config loads. A broken `config.toml` is precisely when it is needed most. Without a terminal it refuses and points at this document. |
+| `/setup` in the TUI | The same wizard as a full-screen mode. Refused while a task is running or a dialog is open. |
+| Automatically at startup | When the config file was just created, when the effective provider's `api_key` is still a placeholder, or when loading/validation fails. With a terminal available in TUI mode this opens the wizard; `--prompt` and `http` have no UI to fall back on, so they get the stderr report described in §9. |
+
+Screens, in order: welcome → provider list → provider form → connectivity probe → default provider →
+first-run choices → review & write. On the list screen: `a` add, `e`/`Enter` edit, `d` delete, `t`
+probe, `c` choose the default provider.
+
+What it collects and where each answer goes:
+
+| Screen | Keys written |
+|--------|--------------|
+| Provider form | `[global.llm.providers.<name>]`: `model`, `api_base_url`, `api_key` **or** `api_key_env`, `api_format`, `reasoning_effort`, `max_tokens`, `context_window` |
+| Default provider | `[global.llm] use_provider` |
+| First-run choices | `[agent] lang` · `[agent] yolo_mode` + `full_yolo_mode` · `[routing] mode` · `[browser] enabled` · `[llm] timeout` |
+
+Worth knowing before using it:
+
+- **Nothing is written until the review screen.** Everything before it is a queued operation; `q` exits
+  from any screen and the file stays byte-for-byte unchanged. On the review screen `Enter` applies the
+  queue in order (providers written → providers deleted → `use_provider` → first-run keys → `[llm]
+  timeout`); the first failure stops the sequence and names the operation that failed, so a partial run
+  is never reported as a success.
+- The probe is a real request — one minimal completion (no tools, 30 s ceiling, tiny `max_tokens`). On
+  failure the provider's own error text is shown verbatim, not paraphrased, because that text is what
+  you go and search for.
+- Choosing `api_key_env` for a variable that is not set in this shell is allowed and only annotated —
+  the point is that the file stays free of secrets and the next start (or the probe) reports it.
+- `temperature` is deliberately not a form field: a bare `float64` cannot tell "wrote `0.0`" from "left
+  it out", and `0` already means "not set" (§4.1). Whatever is in the file is carried over untouched.
+- A provider still referenced anywhere — `global.llm` / `agents.llm.*` / `tools.llm.*` `use_provider`,
+  or any `fallback_providers` list — **cannot be deleted**. The wizard names the reference and makes
+  you move it first rather than writing a file that fails to load on the next start.
+- Provider names must match `[A-Za-z0-9_-]{1,64}` (a dot or quote in a table name would build a nested
+  or malformed file). Renaming an existing provider is blocked: a "renamed" block is a *second* block,
+  and the old one would stay behind pretending to be the active configuration.
+- `/setup` inside a running TUI changes only the file — restart to load it; the process keeps the
+  engine it started with. `yagent setup` has no running process to conflict with.
 
 ---
 
@@ -96,14 +163,13 @@ use_provider = "local"   # move everything to the local model
 | `[agent]` | Agent behaviour: step caps, YOLO, delegation watchdogs | No |
 | `[llm]` | Per-call timeout, retries, breaker, failover | No |
 | `[routing]` | Benchmark-scored automatic model routing | No |
-| `[codeseek]` + `[codeseek.knowledge]` | CodeSeek MCP engine (and the injection block, inert today) | No |
+| `[codeseek]` | CodeSeek MCP code-analysis engine | No |
 | `[browser]` | Browser-Agent driving the external `browser-control` CLI | No |
 | `[blackboard]` | Cross-agent note board budgets | No |
 | `[resume]` | Stop / resume checkpoint and replay budgets | No |
-| `[enhanced_commander]` | Context compression and commander options | No |
+| `[enhanced_commander]` | Context compression | No |
 | `[git_checkpoint]` | Git checkpoint / branch lifecycle | No |
-| `[keywords]` | Keyword completion (only one live key) | No |
-| `[app]` | Legacy application flags (no live keys) | No |
+| `[keywords]` | Keyword completion (one key) | No |
 | `[tui]` | TUI keybindings | No |
 | `task_timeout` | Global task timeout (root field, http mode only) | No |
 
@@ -120,23 +186,23 @@ OpenRouter, vLLM, Ollama's OpenAI surface ...).
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `model` | string | — | Required (e.g. `qwen3-coder-plus`, `deepseek-v4-pro`) |
-| `api_base_url` | string | — | Required, except for the Bedrock name-prefix exemption below |
-| `api_key` | string | — | Required, except for the Bedrock name-prefix exemption below |
+| `api_base_url` | string | — | Required, with no vendor exemption (see the note below); `validate()` demands it of the effective provider |
+| `api_key` | string | — | Required unless `api_key_env` supplies it. On the effective provider, a placeholder value (`your-key`, `changeme`, all-`x`, …) counts as "not filled in" and opens the wizard (§2.3) |
+| `api_key_env` | string | `""` | Name of an environment variable holding the key. Expanded into `api_key` **once, at load time**, so both engines and every other consumer read the same field — nothing has to remember "check the variable first". Unset variable: startup fails naming the variable if that provider is the effective one, otherwise a warning at startup and a failure only if it is actually used. Mutually exclusive with the literal key — the wizard drops `api_key` when you set this. There is no general `${VAR}` interpolation, deliberately: it would turn every key containing a `$` into a time bomb |
 | `temperature` | float | not sent | **`0` is treated as "not set"**: the field is a plain `float64`, so "wrote `0.0`" and "left it out" are indistinguishable, and `0` means the request omits `temperature`. Forcing greedy decoding via config is not currently possible. |
 | `max_tokens` | int | not sent | Engine-level default. Priority: per-call override > this value > field omitted. The Anthropic API requires it, so an unset value falls back to 8192. |
 | `context_window` | int | `0` | **Affects only the TUI context progress bar.** It is not used for the compression threshold (§5.9). `0`/unset = no bar. |
 | `reasoning_effort` | string | `""` | openai side: passed through verbatim, plus `thinking={type:enabled}`. anthropic side: mapped to `thinking.budget_tokens` — `low`/`medium`/`high`/`max` = 1024/8192/24576/32000, `max_tokens` is raised to budget+4096 and `temperature` forced to 1.0. An unrecognised value means "thinking off"; `budget_tokens: 0` is never sent. |
 | `api_format` | string | `"openai"` | `"openai"` or `"anthropic"` (native Messages API) |
-| `aws_region` | string | `""` | Only consumed as the Bedrock exemption's own requirement (see below) |
-| `aws_profile` | string | `""` | Parsed, no consumer |
-| `model_provider` | string | `""` | Parsed, no consumer |
 | `fallback_providers` | array | `[]` | Failover list; needs `[llm] enable_fallback = true` |
 
-**Bedrock caveat**: the required-key exemption is decided by the *name* of the effective provider —
-`strings.HasPrefix(effectiveProvider, "bedrock")` — not by `api_format`. A real Bedrock setup whose
-provider is named something else still gets `api_key`/`api_base_url` demanded, and a provider merely
-*named* `bedrock*` skips them. There is no Bedrock-specific client; it still speaks the
-OpenAI-compatible protocol.
+**No vendor exemptions.** `model` + `api_base_url` + a key are required for *every* provider. This
+repo has no Bedrock-specific client, so a provider named `bedrock*` must point `api_base_url` at an
+OpenAI-compatible gateway like any other one. The old exemption was `strings.HasPrefix(effectiveProvider,
+"bedrock")` — decided by the *name*, not by `api_format` — and it enabled nothing: a real Bedrock setup
+with any other name still had both keys demanded, while a merely *named* `bedrock*` skipped the checks
+and then failed on the first call. The three keys behind it (`aws_region`, `aws_profile`,
+`model_provider`) are gone (§7).
 
 ### 4.2 Resolution chain
 
@@ -159,25 +225,33 @@ global.llm.use_provider             ← global default
 
 ### 4.3 Agent-level overrides
 
-| Agent | Section | Live? |
-|-------|---------|:-----:|
-| Director | `[agents.llm.director]` | Yes |
-| Coding | `[agents.llm.coding]` | Yes |
-| Repo | `[agents.llm.repo]` | Yes |
-| Chat | `[agents.llm.chat]` | Yes |
-| DevOps | `[agents.llm.devops]` | Yes |
-| Meta | `[agents.llm.meta]` | Yes |
-| **Browser** | `[agents.llm.browser]` | **No — see below** |
+Seven agent names, all live:
 
-The switch in `config.getAgentOverride()` has exactly six cases. `[agents.llm.browser]` is reported
-by the TOML decoder as an undecoded key and silently ignored, so the Browser Agent can only be moved
-by `[agents.llm].use_provider` or the global default. To give the browser its own provider today,
-the only lever is automatic routing's per-role baseline (§5.4) or a runtime `/model` override.
+| Agent | Section |
+|-------|---------|
+| Director | `[agents.llm.director]` |
+| Coding | `[agents.llm.coding]` |
+| Repo | `[agents.llm.repo]` |
+| Chat | `[agents.llm.chat]` |
+| DevOps | `[agents.llm.devops]` |
+| Browser | `[agents.llm.browser]` |
+| Meta | `[agents.llm.meta]` |
+
+`config.getAgentOverride()` matches each of them, also under the legacy `<name>-agent` spelling.
+`[agents.llm.browser]` was added in this pass — before it, the section was reported as an undecoded key
+and silently dropped, so the Browser Agent could only be moved by the table-level `use_provider` or the
+global default.
 
 ```toml
 [agents.llm.coding]
 use_provider = "deepseek_v4_pro"
+
+[agents.llm.browser]
+use_provider = "local"
 ```
+
+Precedence above this static override: a model picked in the TUI at runtime outranks it, and with
+`[routing] mode = "auto"` the routing tier outranks the per-agent `use_provider` (§5.4).
 
 ### 4.4 Tool-level overrides
 
@@ -239,7 +313,6 @@ Details in [Anthropic API configuration](./anthropic-config.md).
 | `chat_max_steps` | int | `50` | Step cap for the Chat Agent |
 | `devops_max_steps` | int | `50` | Step cap for the DevOps Agent |
 | `browser_max_steps` | int | `200` | Step cap for the Browser Agent |
-| `meta_max_steps` | int | `50` | Parsed and normalised, **no consumer** — Meta emits one LLM call with no loop (§7) |
 | `meta_retry_count` | int | `5` | Retries when Meta emits invalid JSON |
 | `delegate_idle_timeout` | duration | derived | See below |
 | `delegate_total_timeout` | duration | `0` (= off) | Hard cap per delegation |
@@ -247,8 +320,8 @@ Details in [Anthropic API configuration](./anthropic-config.md).
 | `lang` | string | `""` | Conversation language. Empty injects no instruction; e.g. `"Chinese"`, `"English"` |
 
 Step caps: `0` or an omitted key falls back to the code defaults listed above — the same numbers.
-`meta_max_steps` is the exception: it is normalised but never read, because Meta produces a single
-LLM call rather than running a tool loop.
+Meta is not in this list: it is a single LLM call with no step loop, so only `meta_retry_count` means
+anything for it (`meta_max_steps` used to be normalised to 50 and read by nobody).
 
 Delegation watchdogs (`activity.WithIdleTimeout`): when `delegate_idle_timeout` is unset, the idle
 threshold is **derived** as `max(10m, [llm] timeout + 5m)`; it must stay well above the longest
@@ -269,7 +342,7 @@ CLI equivalents: `--yolo` / `-y`, `--full-yolo` / `-Y`.
 |-------|------|---------|-------|
 | `timeout` | duration | `10m` | Per-call LLM timeout. Runtime precedence: the global value set from `/timeout` or the Alt+M panel > this setting > `DefaultLLMCallTimeout` (10m). Overriding it at runtime writes this line back. |
 | `max_retries` | int | `5` | Engine-level retries — the request count is `max_retries + 1`. The SDK's own retries are disabled so this is the only budget. `≤0` → 5. |
-| `step_retries` | int | `0` | Step-level retries in the Director and sub-agent loops, `0` = off |
+| `step_retries` | int | `0` | Step-level LLM retries, `0` = off. Applies to the Director, Meta **and every sub-agent**. This pass wired it through: `ExecutorConfig.StepRetries` had no writer anywhere in the repo, so sub-agent loops always ran with 0 no matter what was configured |
 | `circuit_breaker_threshold` | int | `0` | Consecutive failures before the breaker opens; **`0` = breaker disabled**, it is not created at all |
 | `circuit_breaker_reset_timeout` | duration | `60s` when the breaker exists | Only defaulted when `circuit_breaker_threshold > 0` |
 | `enable_fallback` | bool | `false` | Master switch for provider-level failover |
@@ -285,7 +358,10 @@ catalog and the model pulls the full schema back with `load_tool`. This block is
 |-------|------|---------|-------|
 | `disable` | bool | `false` | `true` = revert to "full schema on every step": no catalog, no `load_tool`. Troubleshooting / A-B comparison. |
 | `budget_tokens` | int | `2500` | Per-step declaration budget. **Omitted or `0` → 2500**; **negative = no budget at all** (only the registry's own tiers). Over budget, Warm tools are demoted to Cold, largest declaration first. |
-| `hot` / `cold` | array | — | Parsed, **no consumer** — retiering only happens through a profile's `Promote`/`Demote` lists (§7). |
+
+There is no per-tool list here any more: the `hot` / `cold` arrays were parsed, logged by length, and
+read by nobody. Moving a tool between tiers is a code-side decision, made through a profile's
+`Promote` / `Demote` lists in `internal/toolspec`.
 
 ### 5.4 `[routing]` — benchmark-scored automatic routing
 
@@ -316,7 +392,7 @@ coding = "high"
 repo = "balanced"
 ```
 
-### 5.5 `[codeseek]` + `[codeseek.knowledge]` — code-analysis engine
+### 5.5 `[codeseek]` — code-analysis engine
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
@@ -324,18 +400,13 @@ repo = "balanced"
 | `mcp_args` | array | `["serve", "--mcp"]` | MCP launch arguments |
 | `request_timeout` | int | `30` | Request timeout, seconds (`≤0` → 30) |
 
-`[codeseek.knowledge]` — **inert today**: knowledge injection is hardcoded off (`Inject()` in
-`internal/knowledge/injector.go` returns early), so none of these keys produce any effect yet. They
-are kept so the defaults do not have to be re-guessed when injection returns. The write path is
-unaffected: `consolidate_knowledge` talks straight to MCP and does not read this block.
+`[codeseek.knowledge]` is deleted, not merely inert. Knowledge injection is hardcoded off — `Inject()`
+in `internal/knowledge/injector.go` returns early — so its four budget keys had no reachable reader,
+and `enabled` never worked either: `validate()` wrote `true` back whenever it saw `false`. The budgets
+are file constants in `injector.go` now (`injMaxEntries = 8`, `injMaxTokens = 2000`, `injMinScore = 0.3`,
+`injRerank = true`) and become configuration again only if injection returns.
 
-| Field | Type | Default | Notes |
-|-------|------|---------|-------|
-| `enabled` | bool | `true` | Only decides whether the injector is constructed |
-| `injection_max_tokens` | int | `2000` | Token budget of the injected block |
-| `injection_max_entries` | int | `8` | Max entries injected |
-| `injection_min_score` | float | `0.3` | Minimum retrieval score |
-| `injection_rerank` | bool | `true` | Ask for cross-encoder reranking (auto-degrades if the codeseek reranker is off) |
+The write path was never affected: `consolidate_knowledge` talks straight to MCP.
 
 ### 5.6 `[browser]` — Browser-Agent
 
@@ -345,7 +416,8 @@ CDP itself.
 > **Section-presence trap**: whether this section counts as "configured" is decided by *at least one
 > key the current schema recognises* — and `enabled` is never defaulted. **If you write this section,
 > write `enabled` too**, otherwise the browser capability is silently off. Legacy keys from the old
-> stack (`headless`, `browser_path`, ...) are named in a startup warning and ignored.
+> stack (`headless`, `browser_path`, ...) are named in a startup warning and ignored, as is the
+> deleted `enable_skills`.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
@@ -366,7 +438,6 @@ CDP itself.
 | `allowed_domains` | array | `[]` | Allowlist; empty = no restriction on the public internet |
 | `denied_domains` | array | local + RFC-1918 ranges | Supports `*.domain` and CIDR. `file://` and private ranges are denied by default |
 | `profile_dir` | string | `""` | Set it to reuse login state across tasks |
-| `enable_skills` | bool | `false` | Parsed, **unimplemented** (site playbooks are P2) |
 
 Browser workspaces land under `{workspace_root}/{delegation}/.browser-control/`; the CLI's state
 directory is CWD-relative, so every call goes through `internal/browserctl` with `cmd.Dir` set. Do
@@ -442,13 +513,13 @@ willing to pay". Omitted or `≤0` = catalog only; if neither gives a value, 120
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `enable` | bool | `false` | Commander master switch |
-| `enable_context_compression` | bool | `false` | Compression is on only when **both** `enable` and this are `true` (the code ANDs them) |
+| `enable_context_compression` | bool | `false` | The **single** switch for all three tiers. There used to be a second boolean, `[enhanced_commander] enable`, that the code ANDed with this one — it is deleted, so writing one key no longer silently does nothing |
 | `context_compression_threshold` | int | none | Caps the catalog-derived threshold (see above) |
-| `tool_result_keep_tokens` | int | `200` | Tokens kept per tool result after tier-1 truncation |
-| `enable_ultimate_compression` | bool | `true` | Tier 3. **Writing `false` does not turn it off**: `validate()` writes `true` back, so today this key only means "on by default" (pinned by `validate_test`) |
-| `ultimate_compression_keep_plans` | int | `0` | Thought & Plan blocks kept when rebuilding; `0` = keep all. Applies to Director / Repo / DevOps / Browser only — the **Coding side hardcodes 0**, so this value never reaches it |
-| `max_delegation_depth` | int | `3` | Parsed, **no consumer** — delegation depth is not config-driven |
+| `tool_result_keep_tokens` | int | `200` | Tokens kept per tool result after tier-1 truncation (`0`/omitted → 200) |
+| `enable_ultimate_compression` | bool | `true` **when the key is absent** | Tier 3. `validate()` used to write `true` back whenever it saw `false`, which made tier 3 impossible to switch off; the value is respected now. Since the default is "on" while Go's zero value is `false`, the distinction is decided by **TOML key presence**: omit the key → on, write `false` → off |
+| `ultimate_compression_keep_plans` | int | `0` | Thought & Plan blocks kept when rebuilding; `0` = keep all. Reaches the Director and every compressed sub-agent — the Coding side used to hardcode `0`, so a configured value never got there |
+
+Delegation depth is not configurable: `max_delegation_depth` was normalised to 3 and read by nobody.
 
 Scope: Director + Repo / Coding / DevOps / Browser. Chat and Meta are never compressed.
 
@@ -462,7 +533,7 @@ Checkpoints are created by the agent itself, at milestones, through the `git_che
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `enabled` | bool | `true` | Master switch (the workspace must also be a git repo) |
+| `enabled` | bool | `true` (only when the section is absent) | Master switch (the workspace must also be a git repo) |
 | `agent_branch_prefix` | string | `"agent"` | Working branch prefix → `agent/<session>` |
 | `checkpoint_tag_prefix` | string | `"checkpoint/coding"` | Checkpoint tag prefix |
 | `stash_dirty_worktree` | bool | `true` | Stash uncommitted changes at start |
@@ -471,12 +542,17 @@ Checkpoints are created by the agent itself, at milestones, through the `git_che
 | `cleanup_agent_branch` | bool | `true` | Delete the agent branch at exit (only when it really was merged) |
 | `cleanup_checkpoint_tags` | bool | `true` | Delete checkpoint tags at exit |
 | `generate_commit_message` | bool | `true` | Use an LLM for checkpoint commit messages |
-| `auto_checkpoint` | bool | — | **Dead** — the auto-checkpoint hook (`OnStepEnd`) has no caller left |
-| `checkpoint_interval` | int | — | **Dead** — same reason |
-| `max_checkpoints` | int | `50` | **Dead** — read into the struct but never trims any tag or branch |
 
-If `agent_branch_prefix` is empty the whole block is replaced by the defaults, so a partial
-`[git_checkpoint]` section can silently restore other values.
+**Section presence is all-or-nothing for booleans.** If `[git_checkpoint]` does not appear at all (or
+holds only keys the schema does not know), every field takes the default above. Once you write the
+section, **each boolean is yours to set** — omitting one means `false`, and only the two prefixes are
+filled in for you. The previous rule was different and worse: an empty `agent_branch_prefix` replaced
+the *entire* section with defaults, so `enabled = false` was silently flipped back to `true` and the
+one way to turn snapshots off was to write nothing at all.
+
+There is no automatic per-step checkpoint: `auto_checkpoint`, `checkpoint_interval` and
+`max_checkpoints` are deleted. The first one's only remaining effect was a deprecation warning printed
+every step, and nothing read the other two to trim tags or branches.
 
 ### 5.11 `[keywords]` — completion dictionary
 
@@ -485,22 +561,27 @@ Dictionary paths are **hardcoded**: `~/.yagent/keywords.txt` (user) plus
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `disable_completion` | bool | `false` | The **only live key here**: `true` turns off keyword completion while typing |
-| `default_path` | string | — | Parsed, no effect (paths are hardcoded) |
-| `hot_reload` | bool | — | Parsed, no effect (watcher code was removed) |
-| `[[keywords.dict]]` | array | — | Parsed, no effect |
+| `disable_completion` | bool | `false` | `true` turns off keyword completion while typing |
 
-### 5.12 `[app]`
+`default_path`, `hot_reload` and `[[keywords.dict]]` are deleted: they were parsed, written back into
+defaults by `validate()`, and read by nothing outside that loop. The two paths above are the only
+dictionaries.
 
-| Field | Type | Notes |
-|-------|------|-------|
-| `enable_streaming` | bool | Parsed, **no effect** — it only reaches the startup log line. Both engines always use the streaming API |
-
-### 5.13 `[tui]` — keybindings
+### 5.12 `[tui]` — keybindings
 
 Anything omitted keeps the Go default; the values below *are* the current defaults. Format is
 Bubble Tea **v2** key-event strings, lowercase: modifiers `"ctrl+e"` / `"alt+s"` / `"alt+enter"`,
 plain keys `"j"` / `"?"`, special keys `"enter"` / `"esc"` / `"tab"` / `"space"`.
+
+**A binding replaces, it does not alias.** Setting `submit_task = "ctrl+s"` makes `ctrl+s` submit the
+task **and** frees `alt+s`, which then does nothing. The old implementation only added
+`custom → default` to the translation table, so a "moved" action stayed reachable on its default key
+and that key could never be unbound — someone who relocated `quit` still got the program killed by
+`ctrl+c`.
+
+Two actions cannot share one key: on a conflict the action declared **first** in the table keeps it,
+the other stays on its own default, and everything dropped is collapsed into a single startup warning
+(`[tui.keybindings] 键位冲突，按声明顺序保留先者`). Keys that no action claims pass through untouched.
 
 **Edit mode** (`[tui.keybindings.edit]`):
 
@@ -537,13 +618,13 @@ plain keys `"j"` / `"?"`, special keys `"enter"` / `"esc"` / `"tab"` / `"space"`
 | `switch_model` | `"alt+m"` | Model panel |
 | `quit` | `"ctrl+c"` | Quit |
 
-### 5.14 `task_timeout` — root field
+### 5.13 `task_timeout` — root field
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `task_timeout` | duration | `"0s"` | Global task timeout — **only for http mode** (`http.NewTaskContext`, `TaskManager`). `"0s"`/omitted = off; e.g. `"30m"`. TUI and `--prompt` are not governed by it |
 
-### 5.15 Environment variables
+### 5.14 Environment variables
 
 Out-of-band switches, useful for troubleshooting without editing the file:
 
@@ -612,11 +693,12 @@ api_format = "anthropic"
 model = "claude-sonnet-4-5"
 max_tokens = 16000
 api_base_url = "https://api.anthropic.com/v1"
-api_key = "sk-ant-xxxxxxxxxxxx"
+api_key_env = "ANTHROPIC_API_KEY"   # keeps the secret out of config.toml
 reasoning_effort = "high"    # Extended Thinking: budget 24576, max_tokens raised to 28672
 ```
 
-Note that `temperature` is not configurable while thinking is on — the engine sends `1.0`.
+Note that `temperature` is not configurable while thinking is on — the engine sends `1.0`. With
+`api_key_env`, leaving that variable unset makes startup fail naming it (§4.1).
 
 ### 6.3 Local models (vLLM / Ollama compatible endpoints)
 
@@ -636,12 +718,10 @@ Make sure the server is up, listening on that port, and speaks the OpenAI chat-c
 ### 6.4 Verifying compression behaviour
 
 Catalog models have huge windows (1M tokens ⇒ threshold 750k), so a long task may never reach tier 1.
-To exercise compression on a real run, either cap the threshold for one provider, or use the debug
-valve:
+To exercise compression on a real run, either cap the threshold, or use the debug valve:
 
 ```toml
 [enhanced_commander]
-enable = true
 enable_context_compression = true
 context_compression_threshold = 40000
 ```
@@ -649,6 +729,9 @@ context_compression_threshold = 40000
 ```bash
 YAGENT_COMPRESS_THRESHOLD=40000 ./yagent   # bypasses catalog and config; never in production
 ```
+
+To check that tier 3 really is switchable, write `enable_ultimate_compression = false` — the value is
+honoured now, and tiers 1 and 2 keep running without it (§5.9).
 
 ### 6.5 Keeping routing but pinning one role high
 
@@ -662,29 +745,56 @@ devops = "fast"
 
 ---
 
-## 7. Keys that are parsed but do nothing
+## 7. Removed keys: what to write instead
 
-These decode without error and never reach a consumer. The failure mode is "I changed it and nothing
-happened", which is why they are worth listing:
+Every key below used to decode without error and reach no consumer. They are deleted from the schema
+rather than documented — the honest fix for "I changed it and nothing happened" is to make the key
+unnameable. Change log: [config-trim-onboarding-design.md](./config-trim-onboarding-design.md).
 
-| Key | Where | Reality |
-|-----|-------|---------|
-| `agents.llm.browser` | `[agents.llm.browser]` | Undecoded key — only six agent names exist (§4.3) |
-| `enable_streaming` | `[app]` | Startup log only; streaming is always on (§5.12) |
-| `keywords.default_path` / `hot_reload` / `[[keywords.dict]]` | `[keywords]` | Dictionary paths are hardcoded (§5.11) |
-| `git_checkpoint.auto_checkpoint` / `checkpoint_interval` / `max_checkpoints` | `[git_checkpoint]` | Hook removed / never enforced (§5.10) |
-| `agent.meta_max_steps` | `[agent]` | Normalised to 50, read by nobody — Meta is one LLM call, not a loop (§5.1) |
-| `enhanced_commander.max_delegation_depth` | `[enhanced_commander]` | Normalised to 3, read by nobody (§5.9) |
-| `enhanced_commander.enable_ultimate_compression = false` | `[enhanced_commander]` | `false` is written back to `true` by `validate()` |
-| `enhanced_commander.ultimate_compression_keep_plans` | `[enhanced_commander]` | Ignored for the Coding Agent (hardcoded 0) |
-| `tools.deferred.hot` / `cold` | `[tools.deferred]` | Retiering happens in profiles, not config (§5.3) |
-| `browser.enable_skills` | `[browser]` | Parsed, unimplemented (P2) |
-| `provider.aws_profile` / `model_provider` | `[global.llm.providers.*]` | No consumer; `aws_region` only satisfies the Bedrock name-prefix exemption (§4.1) |
-| `max_replay_messages = 0`, `blackboard.index_max_notes = 0`, `blackboard.index_line_chars = 0`, `blackboard.ttl = "0"` | — | Not dead, but easy to misread: these explicit `0`s **do** carry meaning, unlike an omitted key |
+**Old files are not silently ignored.** The decoder's undecoded keys are matched against the registry in
+`internal/config/config.go` (`removedKeyHints` / `removedProviderKeyHints`), and every hit is named in a
+startup warning along with the hint shown below (the warning prints those hints verbatim, in Chinese). A
+whole removed block is reported once, not once per child key. `yagent setup` / `/setup` (§2.3) rewrites
+the file cleanly; `config/config.toml` in a checkout is the current annotated catalogue.
+
+| Removed key | What to write instead |
+|-------------|---------------------|
+| `app.enable_streaming` (and the whole `[app]` table) | Nothing — both engines always use the streaming API, and the key never had a reader |
+| `keywords.default_path` | Nothing — dictionary paths are fixed to `~/.yagent/keywords.txt` and `<project>/.yagent/keywords.txt` |
+| `keywords.hot_reload` | Nothing — the hot-reload code is removed |
+| `keywords.dict` (`[[keywords.dict]]`) | Nothing — the dictionary list is those two paths; custom entries had no reader |
+| `agent.meta_max_steps` | Nothing — Meta is one LLM call with no step loop; only `meta_retry_count` means anything |
+| `enhanced_commander.enable` | Nothing beyond `enable_context_compression` — compression used to require **both** booleans |
+| `enhanced_commander.max_delegation_depth` | Nothing — delegation depth is not config-driven |
+| `git_checkpoint.auto_checkpoint` | Nothing — checkpoints are created by the `git_checkpoint_create` tool at milestones |
+| `git_checkpoint.checkpoint_interval` | Nothing — the auto-checkpoint hook is deleted |
+| `git_checkpoint.max_checkpoints` | Nothing — no code read it to trim tags or branches |
+| `tools.deferred.hot` / `tools.deferred.cold` | Nothing — retiering goes through a toolspec profile's `Promote` / `Demote` lists |
+| `browser.enable_skills` | Nothing — site playbook injection was never implemented |
+| `[codeseek.knowledge]` (whole block) | Nothing — knowledge injection is hard-disabled (`injector.go` returns early), and `enabled` never took effect because `validate()` wrote `true` back |
+| `global.llm.providers.<name>.aws_region` | Point `api_base_url` + `api_key` at an OpenAI-compatible gateway — there is no Bedrock-specific client here |
+| `global.llm.providers.<name>.aws_profile` / `.model_provider` | Nothing — no reader |
+
+**Not removed, but easy to misread.** These values carry meaning that an omitted key does not, and the
+distinction is made by TOML *key presence*, not by zero values: `blackboard.index_max_notes = 0` (index
+injection off) · `blackboard.index_line_chars = 0` (do not clip lines) · `blackboard.ttl = "0"` (never
+clean up) · `resume.max_replay_messages = 0` (unlimited) · `tools.deferred.budget_tokens` negative (no
+budget) · `enhanced_commander.enable_ultimate_compression` absent (on) versus `= false` (off).
+
+**Keys that were alive but lying.** They behave as documented now, so if you already had them written
+the effect may differ from the last run: `[llm] step_retries` reaches every sub-agent (§5.2),
+`ultimate_compression_keep_plans` reaches Coding (§5.9), `enable_ultimate_compression = false` really
+switches tier 3 off (§5.9), `[agents.llm.browser]` is honoured (§4.3), and a written `[git_checkpoint]`
+section keeps its booleans as written instead of an empty prefix replacing the whole block — which used
+to flip `enabled = false` back to `true` (§5.10). Remapped TUI keys are bound *only* to the new key
+(§5.12).
 
 ---
 
-## 8. Sections the code never reads
+## 8. Sections the code never had
+
+These names have no struct at all, so they are not in the removed-key registry either (§7) — a file
+carrying them produces **no** startup warning, and the lines just sit there. Delete them by hand.
 
 | Section | Why it is gone |
 |---------|----------------|
@@ -693,6 +803,7 @@ happened", which is why they are worth listing:
 | `[director]` | No matching struct; fields were never read |
 | `[tools_registry]` | Placeholder for "phase 2"; zero references |
 | `[context]` | Present in old generated files: `enable_auto_compact`, `max_context_tokens`, `summarization_*`, `keep_recent_rounds` — `Config` has no such struct. Compression is configured in `[enhanced_commander]` (§5.9) |
+| `[app]` | Struct deleted with its only key (§7) |
 
 ---
 
@@ -703,11 +814,33 @@ happened", which is why they are worth listing:
 1. **Check which file you edited** — only one file is loaded (§1.1). `config/config.toml` in a checkout
    is an example, not an active layer; run `yagent -c ./config/config.toml` to use it deliberately.
 2. **Check the precedence chain** (§4.2) — a `[tools.llm.*]` or `[agents.llm.*]` override will beat the
-   global `use_provider` you just changed.
-3. **Check whether the key is live at all** — see §7 and §8.
-4. **Check the startup log** — `Loading configuration config_path=...` names the file, and
-   `[browser]` / `[blackboard]` / `[resume]` warn about keys they did not recognise.
-5. **Validate the TOML**: `python3 -c "import tomllib; tomllib.load(open('config.toml','rb'))"`.
+   global `use_provider` you just changed, and with `mode = "auto"` the routing tier beats the per-agent
+   one (§4.3).
+3. **Check whether the key still exists** — §7 lists the deleted ones, §8 the sections that never had a
+   struct. A deleted key is named on every startup; a §8 section is not.
+4. **Check the startup log** — `Loading configuration config_path=... created=...` names the file,
+   `[browser]` / `[blackboard]` / `[resume]` warn about keys they did not recognise, and removed keys are
+   listed with what to write instead.
+5. **Check section presence** — writing `[git_checkpoint]`, `[browser]`, `[blackboard]` or `[resume]`
+   with a key missing can mean `false` / "section absent" rather than a default (§5.6, §5.7, §5.8, §5.10).
+6. **Validate the TOML**: `python3 -c "import tomllib; tomllib.load(open('config.toml','rb'))"`.
+
+### Q: startup prints `yagent: configuration is not usable`
+
+That is the whole failure report for non-interactive entries — before it, the error went to
+`~/.yagent/logs` and the process exited without printing anything on the terminal:
+
+```
+yagent: configuration is not usable
+  reason: <the validation error, or: provider "aliyun" still has api_key = "your-key">
+  file:   /Users/you/.yagent/config/config.toml
+  fix:    run `yagent setup` (or edit the file; see docs/config-guide.md)
+  logs:   ~/.yagent/logs
+```
+
+In TUI mode with a terminal available you get the wizard instead (§2.3); `--prompt` and `http` get these
+lines and exit code 2. The reason is one of: the file was just created, the effective provider's key is
+still a placeholder, or loading failed.
 
 ### Q: `provider 'xxx' not found in configuration`
 
@@ -717,17 +850,22 @@ The `use_provider` value (in `global.llm`, `agents.llm` or `tools.llm`) has no m
 ### Q: How do I switch models?
 
 - Globally: `[global.llm].use_provider`
-- Per agent: `[agents.llm.<agent>].use_provider` (six names, no `browser`)
+- Per agent: `[agents.llm.<agent>].use_provider` (seven names, `browser` included — §4.3)
 - Per tool: `[tools.llm.<tool>].use_provider`
 - At runtime: `/model` (or Alt+M), which can persist the choice back into the file
+- Through the wizard: `yagent setup` / `/setup`, with a live probe available before anything is written (§2.3)
 
 ### Q: How do I get a fresh config after corrupting the file?
 
-Delete it and start Yagent; the embedded template is written atomically.
+Delete it and start Yagent; the embedded template is written atomically, mode `0600` (§1.2), and the
+wizard opens because its key is still the placeholder. Or run the wizard against the damaged file
+directly — it reads the file as text and does not need it to load:
 
 ```bash
 rm ~/.yagent/config/config.toml
 yagent
+# or, keeping the file:
+yagent setup
 ```
 
 ### Q: How do I disable an agent?

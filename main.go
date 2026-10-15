@@ -73,6 +73,57 @@ var httpCmd = &cobra.Command{
 	},
 }
 
+// setupCmd 独立跑一次引导配置：不装配 Agent、不起 MCP，只把 config.toml 写对。
+// 它必须能独立于正常启动存在 —— 配置坏到加载不了的时候，"先修好再启动"是唯一顺序。
+var setupCmd = &cobra.Command{
+	Use:   "setup",
+	Short: "Configure LLM providers and first-run settings",
+	Run: func(cmd *cobra.Command, args []string) {
+		runSetup()
+	},
+}
+
+func runSetup() {
+	if err := logging.Init(logging.ModeTUI); err != nil {
+		slog.Error("Failed to initialize logging", "error", err)
+	}
+	defer logging.Close()
+
+	if !terminalAvailable() {
+		fmt.Fprintln(os.Stderr, "yagent setup needs a terminal (it opens an interactive wizard)")
+		fmt.Fprintln(os.Stderr, "  to edit by hand instead: docs/config-guide.md")
+		os.Exit(2)
+	}
+
+	path, _, err := getConfigPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "yagent: %v\n", err)
+		os.Exit(2)
+	}
+
+	// 这里刻意不 LoadConfig：配置坏了也要能进向导，那正是它存在的理由。
+	// NeedsSetup 走 nil cfg 时给 SetupBroken 判据，向导自己会显示原始错误。
+	cfg, loadErr := llm.LoadConfig(path)
+	reason, detail := config.NeedsSetup(cfg, path, false, loadErr)
+	// 配置看着可用时 reason = SetupNotNeeded、detail = ""：手动调用就是要再走一遍
+	// （比如来加第二个 provider），欢迎屏不展示"为什么进引导"。
+
+	saved, runErr := tui.RunSetup(path, reason, detail)
+	if runErr != nil {
+		fmt.Fprintf(os.Stderr, "yagent setup: %v\n", runErr)
+		os.Exit(1)
+	}
+	if !saved {
+		fmt.Fprintln(os.Stderr, "setup exited without writing: config.toml unchanged")
+		return
+	}
+	if _, err := llm.LoadConfig(path); err != nil {
+		fmt.Fprintf(os.Stderr, "setup wrote %s, but it still fails to load:\n  %v\n", path, err)
+		os.Exit(2)
+	}
+	fmt.Fprintf(os.Stderr, "saved %s — run `yagent` to start\n", path)
+}
+
 func init() {
 	// Safety net: silence all slog output until proper initialization in main().
 	// This prevents any pre-main() logging from corrupting the TUI display.
@@ -98,6 +149,7 @@ func init() {
 	// 注册子命令
 	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(httpCmd)
+	rootCmd.AddCommand(setupCmd)
 }
 
 func main() {
@@ -139,13 +191,7 @@ func runTUI(taskFile, disableAgents string) {
 	// TUI mode init — matches original switch "tui" case exactly
 	ctx := context.Background()
 
-	configPath := getConfigPath()
-	slog.Info("Loading configuration", "config_path", configPath)
-	config, err := llm.LoadConfig(configPath)
-	if err != nil {
-		slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
-		os.Exit(1)
-	}
+	config, configPath := loadConfigForStartup("tui")
 
 	client, err := llm.NewClient(config)
 	if err != nil {
@@ -243,13 +289,7 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	}))
 	slog.SetDefault(logger)
 
-	configPath := getConfigPath()
-	slog.Info("Loading configuration", "config_path", configPath)
-	config, err := llm.LoadConfig(configPath)
-	if err != nil {
-		slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
-		os.Exit(1)
-	}
+	config, configPath := loadConfigForStartup("http")
 	slog.Info("Creating assistant.client")
 	client, err := llm.NewClient(config)
 	if err != nil {
@@ -303,13 +343,7 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 
 	ctx := context.Background()
 
-	configPath := getConfigPath()
-	slog.Info("Loading configuration", "config_path", configPath)
-	config, err := llm.LoadConfig(configPath)
-	if err != nil {
-		slog.Error("Failed to load configuration", "error", util.WrapError(ctx, err, "main::LoadConfig"))
-		os.Exit(1)
-	}
+	config, configPath := loadConfigForStartup("prompt")
 
 	client, err := llm.NewClient(config)
 	if err != nil {
@@ -385,33 +419,110 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	}
 }
 
-// getConfigPath 返回配置文件的路径，优先使用 $HOME/.yagent/config/config.toml
-// 如果配置文件不存在，则自动生成默认配置模板
-// 如果命令行通过 --config/-c 指定了路径，则直接使用该路径（不自动创建）
-func getConfigPath() string {
-	// 如果命令行指定了 --config，直接使用（不自动创建配置文件）
+// getConfigPath 返回配置文件路径，并报告"这次是不是刚生成的模板"。
+// 优先级：--config 指定的路径（不自动创建）→ $HOME/.yagent/config/config.toml（缺失则生成）。
+// 只有在拿不到 home 目录时才会退到 CWD 相对的 config/config.toml —— 那不是第二级查找。
+func getConfigPath() (path string, created bool, err error) {
 	if configPathFlag != "" {
-		return configPathFlag
+		return configPathFlag, false, nil
 	}
 
-	// 原有逻辑...
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
+	homeDir, homeErr := os.UserHomeDir()
+	if homeErr != nil {
 		localPath := "config/config.toml"
-		if _, err := os.Stat(localPath); os.IsNotExist(err) {
-			if genErr := config.EnsureConfigExists(localPath); genErr != nil {
-				panic(fmt.Sprintf("无法创建配置文件: %v", genErr))
+		if _, statErr := os.Stat(localPath); os.IsNotExist(statErr) {
+			created, err = config.EnsureConfigExists(localPath)
+			if err != nil {
+				return "", false, fmt.Errorf("无法创建配置文件: %w", err)
 			}
 		}
-		return localPath
+		return localPath, created, nil
 	}
 
-	configDir := filepath.Join(homeDir, ".yagent", "config")
-	configPath := filepath.Join(configDir, "config.toml")
+	configPath := filepath.Join(homeDir, ".yagent", "config", "config.toml")
+	created, err = config.EnsureConfigExists(configPath)
+	if err != nil {
+		return "", false, fmt.Errorf("无法创建配置文件: %w", err)
+	}
+	return configPath, created, nil
+}
 
-	if err := config.EnsureConfigExists(configPath); err != nil {
-		panic(fmt.Sprintf("无法创建配置文件: %v", err))
+// loadConfigForStartup 是三入口（tui / http / prompt）共用的配置装配点：
+// 解析路径 → 加载 → 需要时把用户领进引导 → 返回可用配置。
+//
+// 修掉的是这个洞：以前加载失败只写进 ~/.yagent/logs 然后 os.Exit(1)，终端上什么都不显示；
+// 而模板自带的 api_key = "your-key" 能通过校验（validate 只查非空），于是全新机器
+// "启动成功"，直到第一次提交任务才在 LLM 调用上炸。
+func loadConfigForStartup(mode string) (*config.Config, string) {
+	ctx := context.Background()
+
+	path, created, err := getConfigPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "yagent: %v\n配置文件: %s\n", err, "~/.yagent/config/config.toml")
+		os.Exit(2)
 	}
 
-	return configPath
+	slog.Info("Loading configuration", "config_path", path, "created", created)
+	cfg, loadErr := llm.LoadConfig(path)
+	if loadErr != nil {
+		slog.Error("Failed to load configuration", "error", util.WrapError(ctx, loadErr, "main::LoadConfig"))
+	}
+
+	reason, detail := config.NeedsSetup(cfg, path, created, loadErr)
+	if reason == config.SetupNotNeeded {
+		return cfg, path
+	}
+
+	// 引导页要接管键盘，所以只有 TUI 且 stdin/stdout 都还在终端上才跑得动。
+	if mode == "tui" && terminalAvailable() {
+		fmt.Fprintf(os.Stderr, "yagent: 需要配置 LLM 连接（%s）\n正在打开引导…\n", reason)
+		if _, runErr := tui.RunSetup(path, reason, detail); runErr != nil {
+			fmt.Fprintf(os.Stderr, "yagent: 引导未正常结束: %v\n", runErr)
+		}
+		reloaded, err := llm.LoadConfig(path)
+		if err != nil {
+			failWithConfigError(path, reason, detail, err)
+		}
+		return reloaded, path
+	}
+
+	failWithConfigError(path, reason, detail, loadErr)
+	return nil, path // 不可达：failWithConfigError 直接退出
+}
+
+// failWithConfigError 把配置问题写成人话打到 stderr：哪一项、在哪个文件、下一步敲什么。
+// --prompt / http 这类非交互入口没有界面可退，这三行就是它们全部的失败 UX。
+func failWithConfigError(path string, reason config.SetupReason, detail string, loadErr error) {
+	fmt.Fprintln(os.Stderr, "yagent: configuration is not usable")
+	if detail != "" {
+		fmt.Fprintf(os.Stderr, "  reason: %s\n", detail)
+	} else if loadErr != nil {
+		fmt.Fprintf(os.Stderr, "  reason: %v\n", loadErr)
+	} else {
+		fmt.Fprintf(os.Stderr, "  reason: %s\n", reason)
+	}
+	fmt.Fprintf(os.Stderr, "  file:   %s\n", path)
+	fmt.Fprintln(os.Stderr, "  fix:    run `yagent setup` (or edit the file; see docs/config-guide.md)")
+	fmt.Fprintf(os.Stderr, "  logs:   %s\n", filepath.Join(configHomeDir(), "logs"))
+	os.Exit(2)
+}
+
+func configHomeDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".yagent")
+	}
+	return ".yagent"
+}
+
+// terminalAvailable 判断还能不能把终端交给 bubbletea：管道里跑 --prompt 时两者都不是字符设备。
+func terminalAvailable() bool {
+	in, err := os.Stdin.Stat()
+	if err != nil || in.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	out, err := os.Stdout.Stat()
+	if err != nil || out.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	return true
 }

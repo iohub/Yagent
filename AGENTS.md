@@ -1,14 +1,21 @@
 # Yagent Agent 开发知识库
 
 > **本文件是 Agent 理解仓库和进行开发的标准指南。** 所有 Agent 在操作此仓库前必须先阅读本文件。
-> 本文件描述的是当前代码的真实状态（核对时间 2026-10-15：落地"停止/继续"三层
-> （`docs/pause-resume-design.md`）—— P1 活暂停（`internal/pause` 闸门、`activity` 计时冻结、
-> 两个循环的 step 边界接入点、`paused` 停止原因、TUI `/pause` `/continue` 与 HTTP pause/continue）；
-> P2 检查点重放 B 层（`delegation_id` 串父子 rollout、`agent_checkpoint` 记录、`ReadRolloutForReplay`、
-> executor 的 `ResumeState` 接缝、planner 的 `PendingResumption`、八条降级判据、`[resume]` 配置）；
-> P3 交接报告 C 层（不叫 LLM 的降级报告 + `status=degraded` 便签）；
-> 上一轮 2026-10-14 补齐核心系统单测基线，并修掉三处"错了不报错"的静默失效 ——
-> Bedrock 配置归一化、Anthropic thinking budget、流式 tool_use 装配）。
+> 本文件描述的是当前代码的真实状态（核对时间 2026-10-16：**配置面连根拔 + 首次使用引导**
+> （`docs/config-trim-onboarding-design.md`）—— 删掉 13 组"解析了但没人读"的键并留下
+> `removedKeyHints` 逐条点名；把 6 处"文档与代码不符"的键补成真语义（第三档真能关、压缩只剩
+> 一个开关、`step_retries` 下发到六个子 Agent、Coding 侧 `keep_plans` 取配置、补
+> `[agents.llm.browser]`、TUI 键位从"追加别名"改成"替换+释放"）；新增注释安全的 provider
+> 写回层与 `api_key_env`；`yagent setup` / TUI `/setup` / 首启自动进入的引导向导；配置坏了
+> 不再静默 `os.Exit(1)` 而是打 stderr 人话。
+> 上一轮 2026-10-15 落地"停止/继续"三层（`docs/pause-resume-design.md`）—— P1 活暂停
+> （`internal/pause` 闸门、`activity` 计时冻结、两个循环的 step 边界接入点、`paused` 停止原因、
+> TUI `/pause` `/continue` 与 HTTP pause/continue）；P2 检查点重放 B 层（`delegation_id` 串父子
+> rollout、`agent_checkpoint` 记录、`ReadRolloutForReplay`、executor 的 `ResumeState` 接缝、
+> planner 的 `PendingResumption`、八条降级判据、`[resume]` 配置）；P3 交接报告 C 层
+> （不叫 LLM 的降级报告 + `status=degraded` 便签）；再上一轮 2026-10-14 补齐核心系统单测基线，
+> 并修掉三处"错了不报错"的静默失效 —— Bedrock 配置归一化、Anthropic thinking budget、
+> 流式 tool_use 装配）。
 > 文件末尾由 codeseek 自动维护的注入区块除外。
 
 ---
@@ -77,7 +84,7 @@
 ### 2.3 LLM 接入
 
 两种 `api_format`：**openai**（默认，OpenAI-compatible）与 **anthropic**（原生 Messages，支持 Extended Thinking）。
-Provider 只是 base_url + api_key 的组合，因此小米 MiMo、百炼、硅基流动、DeepSeek、Moonshot、Mistral、Z.ai、OpenRouter、Bedrock、Anthropic 官方均可用。
+Provider 只是 base_url + api_key 的组合，因此小米 MiMo、百炼、硅基流动、DeepSeek、Moonshot、Mistral、Z.ai、OpenRouter、Anthropic 官方均可用。**没有 Bedrock 专用客户端**：`api_base_url` + `api_key` 对每个 provider 一视同仁地必填，所谓 Bedrock 配置也得指向一个 OpenAI-compatible 网关（以前按 provider 名字前缀豁免那两项，只会把失败推迟到第一次调用，见 §11 坑 14）。密钥也可以来自环境变量：`api_key_env = "DASHSCOPE_API_KEY"` 在 `validate()` 里一次性展开进 `APIKey`，之后所有消费方读的都是同一个字段。
 
 `reasoning_effort` 在两侧含义不同：**openai** 侧原样透传 `reasoning_effort` 并额外发
 `thinking={type:enabled}`（DeepSeek 思考模式要求两者都在）；**anthropic** 侧映射成 `thinking.budget_tokens`
@@ -126,7 +133,9 @@ yagent/
 │   │                           #   resolve(ContextPack) / gc(生命周期) / board(路径与原子写)
 │   ├── artifact/               # 超预算委派结果的落盘存储 + 摘要
 │   ├── compression/            # 三档上下文压缩（rule / emergency / ultimate）
-│   ├── config/                 # TOML 加载 + 三级 provider 解析 + 原子写回
+│   ├── config/                 # TOML 加载 + 三级 provider 解析；persist.go 的 SetKeyInSection 是
+│   │                           #   唯一写回内核（文本级保注释），setup.go 是 provider 写/删 +
+│   │                           #   首启判据（NeedsSetup / IsPlaceholderKey / api_key_env 展开）
 │   ├── datamanager/            # 任务记忆 JSONL（5s 防抖）+ 索引
 │   ├── dict/                   # 补全词典（fsnotify 热加载）
 │   ├── diff/                   # unified diff
@@ -148,7 +157,9 @@ yagent/
 │   ├── thinklink/              # 结构化 <thought> 解析 + 思维日志（驱动 ultimate 压缩）
 │   ├── tokenutil/              # tiktoken 封装（EstimateTokens）
 │   ├── tools/                  # 工具 Adapter 实现 + workspace_guard + user_confirm
-│   ├── tui/                    # Bubble Tea v2 界面（78 个文件）
+│   ├── tui/                    # Bubble Tea v2 界面（82 个文件）
+│   │   ├── setup*.go           #   首次使用引导向导（状态机 / 按键 / 渲染 / 嵌入主 model）
+│   │   ├── tui_keymap.go       #   [tui.keybindings] → 按键翻译表（替换语义，见 §11 坑 29）
 │   │   ├── anim/ common/ components/ layout/
 │   └── util/                   # 崩溃上报等
 ├── protocol/                   # agent-events.yaml（SSOT）+ 生成的 go/ 与 ts/ 副本
@@ -177,7 +188,7 @@ yagent/
 | **Chat** | `chat.go` | 通用问答 | 无文件系统访问 | 50 |
 | **DevOps** | `devops.go` | 系统管理员 | 只读 + Shell | 50 |
 | **Browser** | `browser_agent.go` | 网页操作：经外部 `browser-control` CLI 驱动真实 Chrome | 浏览器动作 + 会话工作区产物（无 Shell、无文件写工具） | 200 |
-| **Meta** | `meta.go` | 自定义 Agent 设计器 | 无工具，单次 LLM 出 JSON | 50（重试 5） |
+| **Meta** | `meta.go` | 自定义 Agent 设计器 | 无工具，单次 LLM 出 JSON | —（无 step 循环；重试 5） |
 | **Custom** | `director/types.go:60` | Meta 设计后运行时注册 | 由 LLM 选择的子集 | 15 |
 
 **Director 工具**：`delegate_*` + `agent_exit`、`read_artifact`、`read_note`、`list_notes`、`deepthinking`、`ask_user_for_help`，
@@ -305,7 +316,12 @@ type Adapter struct { name, description string; fn ToolFunc
   纯文本回复则注入提醒或结束 → 工具调用交给 `toolbatch` 分批并行 → `agent_exit` 立即返回；
   步数耗尽报错，panic 被 recover 并写 `turn_aborted` rollout。
   `ExecutorConfig` 关键字段：`SystemPrompt / UserInput / Adapters / LLM / MaxSteps / Publisher / StopOnFinish /
-  LLMTimeout / StepRetries / SystemAsHuman / NoActionRetryLimit / MaxParallelReadOnlyTools / OnAgentStart / OnAgentExit / OnStepEnd`。
+  LLMTimeout / StepRetries / SystemAsHuman / NoActionRetryLimit / MaxParallelReadOnlyTools / OnAgentStart / OnAgentExit`。
+  `StepRetries` 现在由各 Agent 从 `[llm] step_retries` 带进来（以前全仓无写入点，六个子 Agent 恒为 0）。
+  `OnStepEnd` 已删除：自动检查点的钩子早没了，它唯一的作用是在 `AutoCheckpoint=true` 时
+  每步打一条 deprecation 警告。顺带修好一件事 —— `sub_agent_activity` 这条 rollout 记录以前
+  挂在那个钩子里，于是**只有"Coding + git checkpoint"那一条路径**会写步数事实，
+  其余子 Agent 的 `/resume` 步数只能靠 assistant 轮次猜；现在它在每个有工具调用的 step 都写。
 - **Director**：自己的 `director.Planner`（`director/planner_run.go`），额外有熔断器、
   未委派提醒（最多 3 次强制委派 nudges）、`activity.WithIdleTimeout` 包裹的委派超时
   （`[agent] delegate_idle_timeout` / `delegate_total_timeout`）。
@@ -417,15 +433,21 @@ type Adapter struct { name, description string; fn ToolFunc
 
 三档都会发 `context_*_compressed` 事件并写 `compacted` rollout 记录。
 
-> `enable_ultimate_compression` **今天关不掉**：`config.validate()` 见 false 就写回 true，所以这个键
-> 只剩"默认开"的效果，写 false 不会有任何后果（两个 TOML 模板都把它当可配项在说，别被骗）。
-> 现状由 `internal/config/validate_test.go:TestLoadFromFile_UltimateCompressionIsForcedOn` 钉住；
-> 想改成尊重配置，就改写那条用例并同步本节。
+> `enable_ultimate_compression` **现在真的能关**：`validate()` 不再"见 false 就写回 true"。
+> 因为它的缺省语义是"开"而 Go 零值是 false，区分靠的是 **TOML 键的存在性**
+> （`config.ultimateCompressionKeyDefined`，由 `md.IsDefined` 得出）：没写 → 开；显式写 false → 真的关。
+> 与 `[blackboard]` 三个阀门、`[git_checkpoint]` 段级判定是同一套办法（§11 坑 13）。
+> 现状由 `internal/config/validate_test.go:TestLoadFromFile_UltimateCompressionRespectsFalse` 钉住。
+>
+> **压缩只有一个开关**：`enable_context_compression`。以前它还要与 `[enhanced_commander] enable`
+> 同时为真才生效（5 个 AND 点：`coding.go` / `repo.go` / `devops.go` / `browser_agent.go` / `director.go`），
+> 而模板把两个都写成 false —— 那个 `enable` 键已删除，旧配置里残留它会走 `removedKeyHints` 点名告警。
 >
 > **子 Agent 的第三档需要两个条件同时成立**：`ExecutorConfig.EnableUltimateCompression`（来自
 > `enable_ultimate_compression`）与非空的 `UltimateThinkLink`，与 Director Planner 同语义
 > （`executor.go` 的 T3 分支）。Browser/Repo/DevOps 的 store 在 `Run()` 内按委派创建——
 > `RebuildPrompt` 会保留全部用户输入，放构造期会让历次委派的任务串进同一次重建。
+> `ultimate_compression_keep_plans` 现在也真的到达 Coding（`coding.go` 曾硬编码 0，即"永远全部保留"）。
 > token 估算（`EstimateMessagesTokens`）**包含 `Reasoning`**：thinking/reasoning_content 会被回灌给
 > provider，漏算会让压缩触发时机系统性偏晚。
 
@@ -536,22 +558,48 @@ WebSocket 用 melody，每个任务一个 Dispatcher + `WebSocketConsumer`，向
 
 ## 7. 配置系统
 
-**解析顺序**：`--config` 指定路径（不自动创建）→ `~/.yagent/config/config.toml`（不存在则用内嵌模板生成）→ `./config/config.toml`。
-仓库里的 `config/config.toml` 是注释模板；运行时写回（改 provider/超时/路由模式）走 `config/persist.go` 的原子替换。
+**解析顺序**：`--config` 指定路径（原样使用，**绝不自动创建**）→ `~/.yagent/config/config.toml`（不存在则用内嵌模板生成，权限 0600）。`./config/config.toml` **不是第二级查找**：只有 `os.UserHomeDir()` 失败时才会走到 CWD 相对路径，仓库里那份是注释参考。模板由 `config.EnsureConfigExists` 生成并返回 `created`，这个信号是首启判据之一（见下面的"引导"段）。
 
-**顶层表**：`[global.llm]`、`[agents.llm]`、`[tools.llm]`、`[app]`、`[agent]`、`[llm]`、`[routing]`、
-`[keywords]`、`[git_checkpoint]`、`[codeseek]`（含 `[codeseek.knowledge]`）、`[browser]`、`[blackboard]`、`[resume]`、`[enhanced_commander]`、`[tui]`，
-以及顶层 `task_timeout`。
+**顶层表**：`[global.llm]`、`[agents.llm]`、`[tools.llm]`（含 `[tools.deferred]`）、`[agent]`、`[llm]`、`[routing]`、
+`[keywords]`、`[git_checkpoint]`、`[codeseek]`、`[browser]`、`[blackboard]`、`[resume]`、`[enhanced_commander]`、`[tui]`，
+以及顶层 `task_timeout`。**`[app]` 与 `[codeseek.knowledge]` 已整体删除**（前者唯一的键只进 `slog.Debug`，后者五个键全部不可达 —— `enabled` 会被写回 true，其余四个读点在注入器的 early return 之后）。
+
+**运行时写回**：`config/persist.go` 只有一个内核 `SetKeyInSection(path, section, key, renderedValue)`
+（段缺失→末尾追加，键缺失→段内插入，存在→就地替换且保留行内注释与等号两侧空白；永不整文件重编码，
+那会蒸发用户注释），另有 `RemoveKeyInSection` / `RemoveSection`。
+`PersistUseProvider` / `PersistRoutingMode` / `PersistLLMTimeout` 是它的三个薄封装。
+provider 块的写/删在 `config/setup.go`（`WriteProvider` / `DeleteProvider` / `ProviderRefs` / `WriteFirstRun`），
+被任何 `use_provider`/`fallback_providers` 引用的 provider 拒绝删除 —— 留下一个"加载即失败"的文件比拒绝更糟。
+
+**首次使用引导**（`docs/config-trim-onboarding-design.md`）：手写 config.toml 不友好，而模板自带
+`api_key = "your-key"`、校验只查非空，于是全新机器"启动成功"、第一次任务才炸。现在：
+- 入口三个 —— `yagent setup` 子命令（不装配 Agent/MCP，配置坏了也能跑）、TUI `/setup`
+  （任务运行中或弹窗打开时拒绝，避免抢键盘；写完要重启才对新引擎生效）、以及 `main.go` 在
+  `config.NeedsSetup` 判出 `SetupFreshInstall / SetupPlaceholderKey / SetupBroken` 时自动进入。
+- 判据全部从配置本身推导，**没有"看过一次就不再问"的标记文件**（那是会漂移的第二份事实）。
+- 向导内容是 provider 全生命周期 + 一次真实连通性探测 + 五个首选项（`lang` / yolo 档位 /
+  `[routing] mode` / `[browser] enabled` / `[llm] timeout`）。排队到摘要屏才落盘，之前放弃 = 文件没动过。
+- 实现是 `internal/tui/setup*.go` 的状态机 `setupWizard`，既能独立跑（`RunSetup`）也能当主 TUI 的全屏模式；
+  View/Update 优先级最高，且必须把 `taskEventMsg` / `taskCompleteMsg` 透传给原 handler。
+- 非 TTY 的失败路径改成 stderr 三行人话（哪一项坏了 / 文件在哪 / `run yagent setup`）+ 退出码 2，
+  不再 `slog.Error` 进日志文件后静默 `os.Exit(1)`。
+
+**已删除的键**：残留它们的旧配置会命中 `config.go` 的 `removedKeyHints` / `removedProviderKeyHints`，
+启动时 `slog.Warn` **逐条点名并给出替代写法**（`removed_keys_test.go` 要求登记表与夹具互为镜像，
+所以这条承诺本身有测试）。
 
 **三级 Provider 覆盖（仍存在）**：`ResolveProvider(agent, tool)` = 工具指定 → `tools.llm.use_provider` →
-Agent 指定 → `agents.llm.use_provider` → `global.llm.use_provider`。
+Agent 指定 → `agents.llm.use_provider` → `global.llm.use_provider`。Agent 名现在有**七个**：
+`director / coding / repo / chat / devops / browser / meta`（`[agents.llm.browser]` 以前是 undecoded 键，
+被静默忽略）。
 
 ```toml
 [global.llm]
 use_provider = "bailian"
 [global.llm.providers.bailian]
 model = "qwen3-coder"          # 必填
-api_base_url = "https://..."    # 与 api_key 一起必填；豁免看 §11 坑 14（按 provider 名字前缀，不看 api_format）
+api_base_url = "https://..."    # 与 api_key 一样对每个 provider 必填（无 Bedrock 豁免，见 §11 坑 14）
+api_key_env = "BAILIAN_KEY"     # 或者由环境变量供给；变量没设 → 生效 provider 启动即失败并点名
 context_window = 262144         # 只影响 TUI 上下文进度条；压缩阈值走模型目录（见 §11 坑 3）
 temperature = 0.3
 max_tokens = 28000
@@ -564,20 +612,23 @@ fallback_providers = ["deepseek", { provider = "mimo", weight = 2 }]
 
 [agent]
 director_max_steps = 100  coding_max_steps = 150  repo_max_steps = 50
-chat_max_steps = 50  devops_max_steps = 50  browser_max_steps = 200  meta_max_steps = 50
+chat_max_steps = 50  devops_max_steps = 50  browser_max_steps = 200
 delegate_idle_timeout = "60s"  delegate_total_timeout = "20m"
 max_parallel_readonly_tools = 4
 lang = "Chinese"
 
 [llm]   timeout / max_retries(5) / step_retries / enable_fallback / fallback_max_retries(2)
+  step_retries 现在下发到**六个子 Agent**（以前 ExecutorConfig.StepRetries 全仓无写入点，只有 Director 和 Meta 生效）
   circuit_breaker_threshold = 0 意为**不启用**（仓库模板与 defaults.go 都是 0）；
   只有 > 0 才创建熔断器，此时 reset_timeout 缺省补 60s
 [routing] mode = "auto"  [routing.baselines]  coding = "high"  repo = "balanced"
-[enhanced_commander] enable / max_delegation_depth(3) / enable_context_compression
-  context_compression_threshold / tool_result_keep_tokens(200) / enable_ultimate_compression(写 false 也关不掉，见 §6.5) / ultimate_compression_keep_plans
+[enhanced_commander] enable_context_compression（唯一开关）
+  context_compression_threshold / tool_result_keep_tokens(200) / enable_ultimate_compression / ultimate_compression_keep_plans
 [browser] enabled / binary_path / chrome_path / mode(headless|headful|attach) / cdp_url / cdp_port_base(9333)
   cdp_timeout(65s) / command_timeout(75s) / idle_ttl(15m) / max_chrome(1) / workspace_root / workspace_ttl(72h)
-  max_output_bytes(24000) / dialog_policy(accept) / allowed_domains / denied_domains / profile_dir / enable_skills
+  max_output_bytes(24000) / dialog_policy(accept) / allowed_domains / denied_domains / profile_dir
+[git_checkpoint] enabled / agent_branch_prefix / checkpoint_tag_prefix / stash_dirty_worktree / squash_on_exit
+  auto_merge_on_exit / cleanup_agent_branch / cleanup_checkpoint_tags / generate_commit_message
 ```
 
 > `[browser]` **整表缺省**（老配置没有这一段，或只剩旧浏览器栈的失效键 `headless` / `browser_path`）时，
@@ -689,8 +740,9 @@ go vet ./...                              # 必须干净
 - **MCP 客户端的假服务器 = 重新执行测试二进制**：`internal/mcp/client_process_test.go` 的
   `TestMain` 认 `YAGENT_TEST_FAKE_MCP_SERVER=<模式>` 环境变量，子进程直接跑假服务器而不是
   `m.Run()`。不要改成 `go run` 或外部脚本：那会把编译时间算进单测，也会让 `-race` 下起不了进程。
-- **计时类 seam 只有一个**：`datamanager.taskFlushDebounce`（5s 防抖窗口）。凡是"等 timer"的
-  测试都必须走这个变量而不是 `time.Sleep`，同 `tools.defaultToolTimeout` 一个道理。
+- **计时类 seam**：`datamanager.taskFlushDebounce`（5s 防抖窗口）与 `agents.stepRetryBackoffBase`
+  （步级 LLM 重试退避基数）。凡是"等 timer / 等退避"的
+  测试都必须走这两个变量而不是 `time.Sleep`，同 `tools.defaultToolTimeout` 一个道理。
   新增 timer 请先加 seam，再让测试自己负责耗时。
 - **耗时必须由测试自己负责**：历史上 `internal/compression` 的 28s 全部来自五个用
   `strings.Repeat("x", 50000)` 造工具结果的截断测试（tiktoken 反复编几百 KB）——payload 缩到
@@ -832,7 +884,10 @@ plan:
    **想临时压低阈值做验收**有两条路：写一个小的 `context_compression_threshold`（会被 min 采纳），
    或设 `YAGENT_COMPRESS_THRESHOLD`（跳过目录与配置、且不缓存取值，非法值原样回落）。
    生产配置不要用后者 —— 它绕过一切，会让压缩早于模型真实容量触发，白丢上下文。
-4. **`default_config.toml` 里有一段 `[context]` 表**（`enable_auto_compact` 等）`Config` 根本不解析；真正的开关在 `[enhanced_commander]`。别照着模板那段改配置。
+4. **压缩的配置历史上写过两次假开关**：模板里曾经既有 `[enhanced_commander] enable`（必须与
+   `enable_context_compression` 同时为真）又有 `enable_ultimate_compression`（见 false 就被写回 true）。
+   两个坑在 2026-10-16 一并修掉：压缩现在只有一个键，第三档靠**键的存在性**决定默认开、显式 false 就真关。
+   （更早那条"`default_config.toml` 里有一段 `[context]` 表 `Config` 不解析"已经名不副实 —— 那段没了。）
 5. **声明 ≠ 可用（已消解）**：`Registry.Validate()` 双向对账 schemas.json 与 Spec，"声明了没人实现"
    是启动错误；工具面由画像派生，golden 基线（`internal/agents/testdata/tool_surfaces.golden`）钉住
    每个 Agent 实际拿到什么。加工具若只改 schemas.json 不改 Spec，`check_no_manual_lookup.sh` 与
@@ -868,13 +923,15 @@ plan:
     `index_line_chars = 0` = 不裁剪行、`ttl = "0"` = 不清理；"没写这一段"解析出来同样是 0，
     只看零值会把用户的关闭意图当成没写（或反之静默关掉新能力）。不设 `enabled` 键，
     整体关闭是 `YAGENT_BLACKBOARD=0`（`blackboard.Enabled()` 是写/读/注入/清理四处共用的唯一判据）。
-14. **Bedrock 的必填项豁免按 `use_provider` 名字前缀判定，不看 `api_format`**：`config.validate()` 里是
-    `strings.HasPrefix(effectiveProvider, "bedrock")` —— 名字不带 bedrock 的真 Bedrock 配置照样会要求
-    `api_key`/`api_base_url`，名字带 bedrock 的反而会跳过这两项。更要命的是这段豁免和**整段缺省归一化**
-    挤在同一个函数里：以前它写成 `return nil`，于是 Bedrock 用户的 max steps、`[browser]` 缺省、
-    TUI 键位、压缩参数全部停在零值（表现不是报错，是能力静默缺失）。现在只豁免那两项检查，
-    归一化照常跑；回归由 `internal/config/validate_test.go:TestLoadFromFile_BedrockSkipsOnlyKeyChecks` 钉住。
-    往 `validate()` 里加提前 return 之前，先确认下面的归一化段还会被执行。
+14. **Bedrock 豁免已整体删除**：以前 `config.validate()` 用 `strings.HasPrefix(effectiveProvider, "bedrock")`
+    跳过 `api_key`/`api_base_url` 并要求 `aws_region` —— 而本仓库没有 Bedrock 专用客户端，豁免只会把失败
+    推迟到第一次调用（空 base_url），同时"名字不带 bedrock 的真 Bedrock"反而被要求填密钥。
+    现在所有 provider 一视同仁，`aws_region/aws_profile/model_provider` 三个键连字段一起删了。
+    **仍然成立的教训**：这段豁免和**整段缺省归一化**挤在同一个函数里，以前它写成 `return nil`，于是
+    max steps、`[browser]` 缺省、TUI 键位、压缩参数全部停在零值（表现不是报错，是能力静默缺失）。
+    往 `validate()` 里加提前 return 之前，先确认下面的归一化段还会被执行；
+    回归由 `internal/config/validate_test.go:TestLoadFromFile_BedrockNoLongerExempted` 钉住
+    （它同时断言"归一化照常发生"，就是因为那条历史教训）。
 15. **`toolspec.Validate()` 的每条规则都必须有能触发它的夹具**：`IsReadOnly()` 的定义含 `!Serial`，
     所以曾经那条 "Serial 与 IsReadOnly 冲突" 在数学上不可能成立 —— 它既不会响，又与 `Serial`
     字段"无副作用也必须串行"的文档承诺矛盾，已删除。教训：只测"生产注册表没有 problems"等于
@@ -929,6 +986,33 @@ plan:
     换成孤立新错误的表现是"取消了但没人认为是取消"，Director 把它当成一次失败的委派继续往下跑。
     反过来，便签侧要区分"停住"与"失败"用的是 `errors.As`（`writeDelegateNote` 对 abandoned
     **什么都不写**，词表里因此没有 `paused`），两件事都要保留。
+25. **"配置项存在"不等于"配置项生效"**：本轮删掉的 13 组键里，大多数不是没人读，而是**读了也没用**
+    （`enable_streaming` 只进 `slog.Debug`；`auto_checkpoint` 只打一条每步 deprecation 警告；
+    `[codeseek.knowledge] enabled` 被 `validate()` 写回 true，因此连"关掉"这个动作都不成立）。
+    判断标准只能是"改这个值，有没有一条用户可观察的行为会变"。新增配置项时请同时新增
+    一个**能因为改值而失败**的测试；`removed_keys_test.go` 要求登记表与夹具互为镜像，
+    就是为了不让"承诺会点名"变成第二句空话。
+26. **布尔键的"缺省为真"必须靠键的存在性实现**（`md.IsDefined` / `sectionHasDecodedKey`）：
+    Go 零值是 false，直接看值就分不清"没写"与"写了 false"。`enable_ultimate_compression` 之前
+    用"见 false 就写回 true"绕过，结果那个键永远关不掉；`[git_checkpoint]` 之前用
+    "前缀为空就整段换默认值"绕过，结果只写 `enabled = false` 会被顶回 true。
+    正确形状见 §6.5 的第三档与 §11 坑 13。
+27. **写 config.toml 只能文本级替换**：`persist.go` 的内核是 `SetKeyInSection`，
+    用 `toml.NewEncoder` 整份重编码会把用户注释全部蒸发（模板里每个键都靠注释自我说明）。
+    两个例外规则也要记得：值一律 `tomlBasicString` 转义，且"删一个 provider"前必须查引用
+    （`ProviderRefs`），否则会写出一份"下次启动加载失败"的文件。
+28. **向导既能独立跑也能嵌进主 TUI，所以它不碰 Yagent/Dispatcher/MCP**：`setupWizard` 只读
+    配置文件文本（`config.DecodeRaw`，故意绕开 `LoadFromFile` —— 配置坏的时候正是最需要它的时候）、
+    写文件、最多发一次最小 LLM 请求。`/setup` 在任务运行中直接拒绝，因为它独占键盘而
+    `listenForEvents` 没有重放队列（坑 6）；`applyOps` 是逐条落盘、**不是事务**，
+    所以失败信息必须带上"哪一条 note 失败了"。
+29. **TUI 键位是"替换"不是"追加别名"**：翻译表把按下的键映射到**规范键名**（各 switch 分支的字面量），
+    所以自定义键 → 规范键，而被换掉的默认键 → 空串 = 解绑，消费点经 `translateKey` 换成
+    `keyUnbound` 哨兵落到 default 分支。旧实现只有 `editKeyMap[custom] = default` 这一半，
+    于是"把 quit 挪走"之后 `ctrl+c` 仍然退程序，而且默认键永远释放不掉。
+    两个附带约束：抢同一个键时**保留先声明的动作**并 `slog.Warn`；`keyUnbound` 绝不能长得像真按键
+    （`TestUnboundSentinelMatchesNothing`）。表单屏还在 `tab/enter` 之后把字符交给 textarea ——
+    字段自己得吃掉按键。
 
 
 <!-- CODESEEK_INJECTION -->

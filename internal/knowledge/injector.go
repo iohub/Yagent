@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"yagent/internal/config"
 	"yagent/internal/logging"
 	"yagent/internal/mcp"
 	"yagent/internal/tokenutil"
@@ -33,20 +32,28 @@ type EventPublisher interface {
 	Publish(eventType string, content interface{}, from string) error
 }
 
+// 注入预算此前挂在 [codeseek.knowledge] 上，但 Inject 今天被硬关闭（见下面的 early return），
+// 那几个键一个都到不了这里 —— 与其留一份"写了没人读"的配置，不如把取值内联在这里。
+// 恢复注入时若要重新可配，把常量换回配置字段即可。
+const (
+	injMaxEntries = 8
+	injMaxTokens  = 2000
+	injMinScore   = 0.3
+	injRerank     = true
+)
+
 // KnowledgeInjector 对话前知识检索注入器
 type KnowledgeInjector struct {
 	mcpClient *mcp.MCPClient
-	cfg       config.KnowledgeConfig
 	// publisher 事件发布器（可为 nil；用于向 TUI 发布知识注入概要事件，fail-safe）
 	publisher EventPublisher
 }
 
 // NewKnowledgeInjector 创建知识注入器
 // publisher 为可选的事件发布器（传入 *messaging.MessagePublisher 即可），nil 时跳过事件发布
-func NewKnowledgeInjector(mcpClient *mcp.MCPClient, cfg config.KnowledgeConfig, publisher EventPublisher) *KnowledgeInjector {
+func NewKnowledgeInjector(mcpClient *mcp.MCPClient, publisher EventPublisher) *KnowledgeInjector {
 	return &KnowledgeInjector{
 		mcpClient: mcpClient,
-		cfg:       cfg,
 		publisher: publisher,
 	}
 }
@@ -76,7 +83,7 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 		agent = "unknown"
 	}
 
-	if k.mcpClient == nil || !k.cfg.Enabled {
+	if k.mcpClient == nil {
 		kl.Debug("knowledge inject skipped", "event", "inject_skipped", "agent", agent, "reason", "disabled_or_no_mcp")
 		return "", nil
 	}
@@ -85,16 +92,16 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 		return "", nil
 	}
 
-	limit := k.cfg.InjectionMaxEntries
+	limit := injMaxEntries
 	if limit <= 0 {
 		limit = 8
 	}
-	kl.Info("knowledge injection start", "event", "inject_start", "agent", agent, "query", truncateByRune(query, 120), "query_len", runeCount(query), "limit", limit, "rerank", k.cfg.InjectionRerank, "domains", injCtx.Domains)
+	kl.Info("knowledge injection start", "event", "inject_start", "agent", agent, "query", truncateByRune(query, 120), "query_len", runeCount(query), "limit", limit, "rerank", injRerank, "domains", injCtx.Domains)
 
 	results, err := k.mcpClient.KnowledgeSearch(ctx, mcp.KnowledgeSearchRequest{
 		Query:   query,
 		Limit:   limit,
-		Rerank:  k.cfg.InjectionRerank,
+		Rerank:  injRerank,
 		Domains: injCtx.Domains,
 	})
 	if err != nil {
@@ -117,7 +124,7 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 	}
 
 	// 过滤低于阈值的条目
-	minScore := k.cfg.InjectionMinScore
+	minScore := injMinScore
 	if minScore <= 0 {
 		minScore = 0.3
 	}
@@ -144,12 +151,12 @@ func (k *KnowledgeInjector) Inject(ctx context.Context, injCtx InjectionContext)
 
 	block := k.FormatKnowledgeBlock(filtered)
 	// 预留 </knowledge_context> 标签的 token 开销
-	budget := k.cfg.InjectionMaxTokens - 50
+	budget := injMaxTokens - 50
 	if budget <= 0 {
 		budget = 950
 	}
 	block = k.TruncateToTokenBudget(block, budget)
-	kl.Info("knowledge block injected", "event", "inject_done", "agent", agent, "entries", len(filtered), "block_len", runeCount(block), "max_tokens", k.cfg.InjectionMaxTokens)
+	kl.Info("knowledge block injected", "event", "inject_done", "agent", agent, "entries", len(filtered), "block_len", runeCount(block), "max_tokens", injMaxTokens)
 	if block != "" {
 		ts := time.Now().Format("2006-01-02 15:04:05")
 		entry := fmt.Sprintf("============================================================\n[%s] knowledge inject | agent=%s | query=%s | entries=%d | tokens=%d\n%s",
