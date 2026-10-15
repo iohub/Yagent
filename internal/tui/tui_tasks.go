@@ -143,8 +143,12 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 	m.updateActiveTabTitle(message)
 
 	m.publisherCh = make(chan *messaging.MessagePublisher, 1)
+	// 一次性消费：与 resumedFromRollout 同生同灭，否则下一轮还会带着同一个落点。
+	delegationPath := m.resumedDelegationPath
+	m.resumedDelegationPath = ""
+
 	return tea.Batch(
-		executeFollowUpCmd(message, m.currentTask, m.sessionID, m.assistant, m.dataManager, m.eventCh, m.publisherCh, resumed),
+		executeFollowUpCmd(message, m.currentTask, m.sessionID, m.assistant, m.dataManager, m.eventCh, m.publisherCh, resumed, delegationPath),
 		listenForEvents(m.eventCh),
 		listenForPublisher(m.publisherCh),
 	)
@@ -235,6 +239,7 @@ func executeFollowUpCmd(
 	eventCh chan *messaging.MessageEvent,
 	publisherCh chan *messaging.MessagePublisher,
 	resumed bool,
+	resumedDelegationPath string,
 ) tea.Cmd {
 	return func() tea.Msg {
 		dispatcher := messaging.NewMessageDispatcher(100)
@@ -258,6 +263,7 @@ func executeFollowUpCmd(
 			WithUserMessage(message).
 			WithMemory(task.Memory).
 			WithResumed(resumed).
+			WithResumedDelegation(resumedDelegationPath).
 			WithMessagePublisher(messaging.NewMessagePublisher(dispatcher))
 
 		// Start periodic save (every 5 seconds)

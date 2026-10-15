@@ -545,7 +545,7 @@ func TestPushResumeDialog(t *testing.T) {
 
 	t.Run("interrupted_pushes_dialog", func(t *testing.T) {
 		m := restoreTestModel(t)
-		pushResumeDialog(m, interrupted)
+		pushResumeDialog(m, interrupted, "", "")
 		if m.dialogStack.Len() != 1 {
 			t.Fatalf("dialogStack.Len() = %d, want 1", m.dialogStack.Len())
 		}
@@ -567,7 +567,7 @@ func TestPushResumeDialog(t *testing.T) {
 
 	t.Run("complete_does_not_push", func(t *testing.T) {
 		m := restoreTestModel(t)
-		pushResumeDialog(m, memory.RolloutInfo{Finished: true})
+		pushResumeDialog(m, memory.RolloutInfo{Finished: true}, "", "")
 		if m.dialogStack.Len() != 0 {
 			t.Errorf("dialogStack.Len() = %d, want 0 for finished session", m.dialogStack.Len())
 		}
@@ -576,7 +576,7 @@ func TestPushResumeDialog(t *testing.T) {
 	t.Run("skipped_when_task_running", func(t *testing.T) {
 		m := restoreTestModel(t)
 		m.taskRunning = true
-		pushResumeDialog(m, interrupted)
+		pushResumeDialog(m, interrupted, "", "")
 		if m.dialogStack.Len() != 0 {
 			t.Errorf("dialogStack.Len() = %d, want 0 while task running", m.dialogStack.Len())
 		}
@@ -585,7 +585,7 @@ func TestPushResumeDialog(t *testing.T) {
 	t.Run("skipped_when_other_dialog_open", func(t *testing.T) {
 		m := restoreTestModel(t)
 		m.dialogStack.Push(components.NewQuitConfirmDialog("quit_confirm", "t", "m", "y", "n", "167"))
-		pushResumeDialog(m, interrupted)
+		pushResumeDialog(m, interrupted, "", "")
 		if m.dialogStack.Len() != 1 {
 			t.Errorf("dialogStack.Len() = %d, want 1 (pre-existing dialog untouched)", m.dialogStack.Len())
 		}

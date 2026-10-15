@@ -139,11 +139,20 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		switch key {
 		case "enter", "y", "Y":
 			confirmed := d.GetConfirmed()
+			choice := d.Choice()
 			m.dialogStack.Pop()
-			if confirmed && m.currentTask != nil && !m.taskRunning {
-				return m, m.submitFollowUp(buildResumeContinuationPrompt(d)), true
+			if !confirmed || m.currentTask == nil || m.taskRunning {
+				return m, nil, true
 			}
-			return m, nil, true
+			// 选了"从 <agent> step <n> 继续"：这一轮先让被停住的那次委派接着做完，
+			// 而不是把任务描述再交给 Director 重想一遍。恢复本身不调模型，
+			// 所以点这个选项的代价是确定性的（§6.3）。
+			// 另一档（从 Director 继续）必须把这个指路牌清掉 —— 留着它，
+			// 下一次追问会以为用户还是"从子 Agent 继续"，于是又提交一遍同一份重放结果。
+			if choice != components.ResumeChoiceAgent {
+				m.resumedDelegationPath = ""
+			}
+			return m, m.submitFollowUp(buildResumeContinuationPrompt(d)), true
 		case "esc", "n", "N":
 			d.SetConfirmed(false)
 			m.dialogStack.Pop()

@@ -17,11 +17,54 @@ type ResumeDialog struct {
 	StepInfo      string   // "step 30/30"，无步数信息时为空
 	PlanItems     []string // 未完成计划项（[ ] 复选框行，已截断）
 	DanglingTools []string // 悬空工具调用名（去重）
-	SelectedIndex int      // 0=续跑, 1=仅浏览
+	// AgentOption 非空 = 有一个"被停住的委派"可以接着做完，于是多出一个选项：
+	// 从子 Agent 的那一步继续（B/C 路径），而不是从 Director 重来。
+	// 空 = 这份会话没有可恢复的落点（存量 rollout、停在委派之外、或子文件没同步过来），
+	// 选项退回原来的两个 —— 摆一个点了也没用的选项比不摆更糟。
+	AgentOption   string
+	SelectedIndex int
 	Confirmed     bool
 	width         int
 	height        int
 	lang          Language
+}
+
+// ResumeChoice 用户最终选的那一条。
+type ResumeChoice int
+
+const (
+	ResumeChoiceBrowse ResumeChoice = iota
+	ResumeChoiceDirector
+	ResumeChoiceAgent
+)
+
+// options 返回当前可选的按钮标签，顺序即 Tab 的循环顺序，索引即 SelectedIndex。
+// "继续"的两档排在"仅浏览"之前：Confirmed 的判据就是"选的不是最后一档"。
+func (d *ResumeDialog) options() []string {
+	opts := make([]string, 0, 3)
+	if d.AgentOption != "" {
+		opts = append(opts, d.AgentOption)
+	}
+	opts = append(opts, getResumeText("ResumeBtnGo", d.lang), getResumeText("ResumeBtnBrowse", d.lang))
+	return opts
+}
+
+// Choice 把 SelectedIndex 翻成语义。用序号判断会把"仅浏览"和"从 Director 继续"
+// 搞混 —— 加了第三个选项之后，索引与含义的关系变了，而两者都是"点了个按钮"。
+func (d *ResumeDialog) Choice() ResumeChoice {
+	opts := d.options()
+	idx := d.SelectedIndex
+	if idx < 0 || idx >= len(opts) {
+		return ResumeChoiceBrowse
+	}
+	last := len(opts) - 1
+	if idx == last {
+		return ResumeChoiceBrowse
+	}
+	if d.AgentOption != "" && idx == 0 {
+		return ResumeChoiceAgent
+	}
+	return ResumeChoiceDirector
 }
 
 // NewResumeDialog 创建断点续跑确认框。
@@ -36,6 +79,9 @@ func NewResumeDialog(id, reason, stepInfo string, planItems, danglingTools []str
 		lang:          lang,
 	}
 }
+
+// SetAgentOption 挂上"从子 Agent 继续"这一档（label 由调用方按语言拼好）。
+func (d *ResumeDialog) SetAgentOption(label string) { d.AgentOption = label }
 
 func (d *ResumeDialog) ID() string         { return d.DialogID }
 func (d *ResumeDialog) Type() DialogType   { return DialogModal }
@@ -64,23 +110,32 @@ func (d *ResumeDialog) Update(msg tea.Msg) (Component, tea.Cmd) {
 
 	switch keyMsg.String() {
 	case "right", "tab", "left":
-		d.SelectedIndex = (d.SelectedIndex + 1) % 2
+		n := len(d.options())
+		d.SelectedIndex = (d.SelectedIndex + 1) % n
 		return d, nil
 	case "enter":
-		d.Confirmed = d.SelectedIndex == 0
+		d.setSelected()
 		return d, nil
 	case "y", "Y":
-		d.Confirmed = true
 		d.SelectedIndex = 0
+		d.setSelected()
 		return d, nil
 	case "n", "N", "esc":
+		d.SelectedIndex = len(d.options()) - 1
 		d.Confirmed = false
-		d.SelectedIndex = 1
 		return d, nil
 	case "ctrl+c":
 		return d, tea.Quit
 	}
 	return d, nil
+}
+
+// setSelected 按当前高亮项落定 Confirmed：最后一档是"仅浏览"，其余都是"继续"。
+func (d *ResumeDialog) setSelected() {
+	d.Confirmed = d.SelectedIndex < len(d.options())-1
+	if !d.Confirmed {
+		d.SelectedIndex = len(d.options()) - 1
+	}
 }
 
 // View 渲染对话框。
@@ -145,9 +200,15 @@ func (d *ResumeDialog) View() string {
 		}
 		return blurredBtn.Render(label)
 	}
-	buttons := lipgloss.JoinHorizontal(lipgloss.Center,
-		renderBtn(getResumeText("ResumeBtnGo", d.lang), 0), "  ",
-		renderBtn(getResumeText("ResumeBtnBrowse", d.lang), 1))
+	opts := d.options()
+	labels := make([]string, 0, 2*len(opts)-1)
+	for i, label := range opts {
+		if i > 0 {
+			labels = append(labels, "  ")
+		}
+		labels = append(labels, renderBtn(label, i))
+	}
+	buttons := lipgloss.JoinHorizontal(lipgloss.Center, labels...)
 
 	// ── 组装 ──
 	content := lipgloss.JoinVertical(lipgloss.Left,

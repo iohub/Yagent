@@ -555,6 +555,13 @@ type TaskRequest struct {
 	// 本就没有 system 消息（reader 默认丢弃、datamanager 从不存储），非首次对话判定
 	// 会漏掉 YAGENT.md/CLAUDE.md/AGENTS.md，LLM 等于蒙着眼睛接手半截任务。
 	resumed bool
+	// resumption 是"从子 Agent 的那一步继续"的落点（TUI 的 /resume 选项、将来 HTTP
+	// 的 continue 都走这里）。nil = 正常新任务或"从 Director 继续"。
+	resumption *agents.DelegationStop
+	// resumedDelegationPath 是"从被停住的那次委派继续"的**指路牌**而不是结果：
+	// TUI 只知道"我刚恢复的是哪份 Director 会话"，扫落点、算降级判据都在 app/agents 这边。
+	// 这样 TUI 不必 import internal/agents（它至今只认识 app）。
+	resumedDelegationPath string
 }
 
 func NewTaskRequest(ctx context.Context, taskID string) *TaskRequest {
@@ -599,6 +606,43 @@ func (r *TaskRequest) WithResumed(resumed bool) *TaskRequest {
 	return r
 }
 
+// WithResumption 直接指定落点（测试与 HTTP 用，调用方已经扫过一遍）。
+func (r *TaskRequest) WithResumption(stop *agents.DelegationStop) *TaskRequest {
+	r.resumption = stop
+	return r
+}
+
+// WithResumedDelegation 指定"从这份 Director 会话里被停住的那次委派继续"。
+// 落点由 resolveResumption 在提交时算，调用方只交出它刚恢复的那个 rollout 路径。
+func (r *TaskRequest) WithResumedDelegation(directorRolloutPath string) *TaskRequest {
+	r.resumedDelegationPath = directorRolloutPath
+	return r
+}
+
+// resolveResumption 把请求里的两种表达归一成 Director 门面要的那一个。
+// 找不到落点时返回 nil 并告警 —— "用户点了从子 Agent 继续，结果静默变成从
+// Director 重来"是必须能在工作日志里看到的事。
+func resolveResumption(req *TaskRequest) *agents.DelegationStop {
+	if req.resumption != nil {
+		return req.resumption
+	}
+	if req.resumedDelegationPath == "" {
+		return nil
+	}
+	stops, err := agents.ScanDelegationStops(memory.RolloutRootDir())
+	if err != nil {
+		slog.Warn("resume: failed to scan delegation stops", "error", err)
+		return nil
+	}
+	for _, s := range stops {
+		if s.DirectorRolloutPath == req.resumedDelegationPath {
+			return &s
+		}
+	}
+	slog.Warn("resume: no stopped delegation found in this session", "rollout", req.resumedDelegationPath)
+	return nil
+}
+
 // WithSessionID 指定便签板作用域。同一会话（TUI 的一个 tab、HTTP 的一个 chat session）
 // 内的多次任务共享一块板；不指定则回落到 taskID，行为与改动前一致。
 func (r *TaskRequest) WithSessionID(sessionID string) *TaskRequest {
@@ -606,11 +650,53 @@ func (r *TaskRequest) WithSessionID(sessionID string) *TaskRequest {
 	return r
 }
 
+// ResumableDelegation 报告"这份 Director 会话是不是停在一次委派上、能不能接着做完"。
+//
+// 返回的是 TUI 需要的那点信息（Agent 名、步数、能不能重放、不能的话为什么），
+// 而不是 agents.DelegationStop —— 否则 TUI 就得 import internal/agents，
+// 而它今天只认识 app。
+type ResumableDelegation struct {
+	AgentName  string
+	ToolName   string
+	Step       int
+	MaxSteps   int
+	Replayable bool
+	Reasons    []string
+}
+
+func (ca *Yagent) ResumableDelegation(directorRolloutPath string) *ResumableDelegation {
+	if directorRolloutPath == "" {
+		return nil
+	}
+	stops, err := agents.ScanDelegationStops(memory.RolloutRootDir())
+	if err != nil {
+		slog.Warn("resume: failed to scan delegation stops", "error", err)
+		return nil
+	}
+	for _, s := range stops {
+		if s.DirectorRolloutPath == directorRolloutPath {
+			return &ResumableDelegation{
+				AgentName: s.AgentName, ToolName: s.ToolName, Step: s.Step, MaxSteps: s.MaxSteps,
+				Replayable: s.Replayable, Reasons: s.Reasons,
+			}
+		}
+	}
+	return nil
+}
+
+// applyResumption 把请求里的"从子 Agent 继续"落到 Director 门面上。
+// 每轮都显式设置（含 nil），否则上一次的落点会漏到下一次任务里。
+func (ca *Yagent) applyResumption(req *TaskRequest) {
+	stop := resolveResumption(req)
+	ca.director.SetPendingResumptionOpt(stop)
+}
+
 // ProcessCodingTaskWithCallback executes the task using the agent system.
 func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 	ca.director.SetBoardScope(req.sessionID, req.taskID)
 	ca.director.SetResumedTask(req.resumed)
+	ca.applyResumption(req)
 	res, err := ca.director.Run(memory.WithConversationMemory(req.ctx, req.memory), req.taskDesc)
 	return res.Text, err
 }
@@ -620,6 +706,7 @@ func (ca *Yagent) ProcessConversation(req *TaskRequest) (string, error) {
 	ca.Init(ca.engine, req.projectDir)
 	ca.director.SetBoardScope(req.sessionID, req.taskID)
 	ca.director.SetResumedTask(req.resumed)
+	ca.applyResumption(req)
 	res, err := ca.director.Run(memory.WithConversationMemory(req.ctx, req.memory), req.userMessage)
 	return res.Text, err
 }
