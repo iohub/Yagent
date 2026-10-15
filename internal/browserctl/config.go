@@ -42,7 +42,6 @@ type Config struct {
 	AllowedDomains []string
 	DeniedDomains  []string
 	ProfileDir     string
-	EnableSkills   bool
 }
 
 // DefaultConfig 与 config.DefaultBrowserConfig 保持一致，供不经过配置文件的调用方使用。
@@ -70,6 +69,5 @@ func FromAppConfig(c config.BrowserConfig) Config {
 		AllowedDomains: c.AllowedDomains,
 		DeniedDomains:  c.DeniedDomains,
 		ProfileDir:     c.ProfileDir,
-		EnableSkills:   c.EnableSkills,
 	}
 }

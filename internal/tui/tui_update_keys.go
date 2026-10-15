@@ -494,12 +494,7 @@ func (m *model) handleTabShortcut(key string) (bool, tea.Cmd) {
 // handleCommandModeKey 处理 NORMAL（vim 普通模式）按键，分三层依次分派：
 // 命令行输入 → 全局快捷键 → 移动/跳转动作。
 func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	if m.cmdKeyMap != nil {
-		if mapped, ok := m.cmdKeyMap[key]; ok {
-			key = mapped
-		}
-	}
+	key := translateKey(m.cmdKeyMap, msg.String())
 
 	// 命令行激活时按键优先归命令行。此时 commandBuffer 一定以 ":" 或 "/" 开头
 	// —— 只有这两个前缀才会开启命令行，其它可打印字符不再被悄悄吞进缓冲区
@@ -837,12 +832,7 @@ func (m *model) toggleHelpDialog() tea.Cmd {
 }
 
 func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	editKeyStr := msg.String()
-	if m.editKeyMap != nil {
-		if mapped, ok := m.editKeyMap[editKeyStr]; ok {
-			editKeyStr = mapped
-		}
-	}
+	editKeyStr := translateKey(m.editKeyMap, msg.String())
 	if handled, cmd := m.handleTabShortcut(editKeyStr); handled {
 		return m, cmd
 	}

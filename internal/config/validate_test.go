@@ -78,9 +78,11 @@ api_key = "k"
 			want: "api_base_url must be specified",
 		},
 		{
-			name: "bedrock 没有 aws_region",
+			// 以前 provider 名字以 "bedrock" 开头就豁免 api_key/api_base_url、改成要求
+			// aws_region；但仓库里没有 Bedrock 客户端，豁免只会把失败推到第一次调用。
+			name: "bedrock 命名的 provider 也不再豁免 api_key",
 			body: "[global.llm]\nuse_provider = \"bedrock\"\n\n[global.llm.providers.bedrock]\nmodel = \"anthropic.claude-v2\"\n",
-			want: "aws_region must be specified",
+			want: "api_key must be specified",
 		},
 	}
 
@@ -102,20 +104,35 @@ api_key = "k"
 	}
 }
 
-// Bedrock 用 AWS 凭证而不是 api_key/base_url，所以这两项检查必须跳过 ——
-// 但**只有这两项**。归一化（max steps / [browser] 缺省 / LLM 重试 / TUI 键位）
-// 与协议无关，不能被提前 return 掉。
-func TestLoadFromFile_BedrockSkipsOnlyKeyChecks(t *testing.T) {
-	cfg, err := LoadFromFile(writeCfg(t, `
+// Bedrock 豁免已删除：必填项对每个 provider 一视同仁。这里同时钉住另一半——
+// 归一化（max steps / [browser] 缺省 / LLM 重试 / TUI 键位 / 压缩参数）不能被任何
+// 校验分支的提前 return 跳过（AGENTS.md §11 坑 14 的教训就是它曾经被跳过）。
+func TestLoadFromFile_BedrockNoLongerExempted(t *testing.T) {
+	broken := writeCfg(t, `
 [global.llm]
 use_provider = "bedrock"
 
 [global.llm.providers.bedrock]
 model = "anthropic.claude-v2"
 aws_region = "us-west-2"
+`)
+	if _, err := LoadFromFile(broken); err == nil {
+		t.Fatal("只带 aws_region 的 bedrock 配置仍然合法 —— 豁免没删干净")
+	} else if !strings.Contains(err.Error(), "api_key") {
+		t.Errorf("err = %q, want 点名 api_key", err)
+	}
+
+	cfg, err := LoadFromFile(writeCfg(t, `
+[global.llm]
+use_provider = "bedrock"
+
+[global.llm.providers.bedrock]
+model = "anthropic.claude-v2"
+api_base_url = "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1"
+api_key = "k"
 `))
 	if err != nil {
-		t.Fatalf("bedrock 配置应当合法（无 api_key/base_url）: %v", err)
+		t.Fatalf("指向 OpenAI-compatible 端点的 bedrock 配置应当合法: %v", err)
 	}
 
 	// 归一化必须照常发生。
@@ -142,6 +159,10 @@ aws_region = "us-west-2"
 	if cfg.EnhancedCommander.ToolResultKeepTokens != 200 {
 		t.Errorf("ToolResultKeepTokens = %d, want 200", cfg.EnhancedCommander.ToolResultKeepTokens)
 	}
+	// 该键的缺省语义是"开"，没写过就必须补成 true（关只能靠显式写 false）。
+	if !cfg.EnhancedCommander.EnableUltimateCompression {
+		t.Error("没写 enable_ultimate_compression 时第三档 = false, want 缺省为开")
+	}
 }
 
 // validate() 是缺省值的唯一写入点：每个"用户没写"的字段都必须在这里补齐，
@@ -155,7 +176,7 @@ func TestLoadFromFile_AppliesDefaultsForAbsentSections(t *testing.T) {
 	if got, want := cfg.Agent, DefaultMaxSteps; got.DirectorMaxSteps != want.Director ||
 		got.CodingMaxSteps != want.Coding || got.RepoMaxSteps != want.Repo ||
 		got.ChatMaxSteps != want.Chat || got.DevOpsMaxSteps != want.DevOps ||
-		got.BrowserMaxSteps != want.Browser || got.MetaMaxSteps != want.Meta ||
+		got.BrowserMaxSteps != want.Browser ||
 		got.MetaRetryCount != want.MetaRetry {
 		t.Errorf("max steps 未全部归一化: %+v", got)
 	}
@@ -216,9 +237,9 @@ func TestLoadFromFile_AppliesDefaultsForAbsentSections(t *testing.T) {
 		t.Errorf("负委派超时 = (%v,%v), want (0,0)", neg.Agent.DelegateIdleTimeout, neg.Agent.DelegateTotalTimeout)
 	}
 
-	// git checkpoint：整段没写 → 整份默认；写了名字 → 只补 interval/max 的零值。
-	if !cfg.GitCheckpoint.AutoCheckpoint && cfg.GitCheckpoint.CheckpointInterval == 0 {
-		t.Error("[git_checkpoint] 缺省没有被填成 DefaultGitCheckpointConfig()")
+	// git checkpoint：整段没写 → 整份默认；写过任一键 → 只补两个前缀，bool 尊重零值。
+	if !cfg.GitCheckpoint.Enabled || cfg.GitCheckpoint.AgentBranchPrefix != "agent" {
+		t.Errorf("[git_checkpoint] 缺省没有被填成 DefaultGitCheckpointConfig(): %+v", cfg.GitCheckpoint)
 	}
 	partial, err := LoadFromFile(writeCfg(t, twoProviders+"[git_checkpoint]\nenabled = true\nagent_branch_prefix = \"agent/\"\n"))
 	if err != nil {
@@ -227,17 +248,28 @@ func TestLoadFromFile_AppliesDefaultsForAbsentSections(t *testing.T) {
 	if !partial.GitCheckpoint.Enabled {
 		t.Error("[git_checkpoint] enabled=true 被整段默认覆盖掉了")
 	}
-	if partial.GitCheckpoint.CheckpointInterval != DefaultGitCheckpointConfig().CheckpointInterval {
-		t.Errorf("CheckpointInterval = %d, want 默认 %d",
-			partial.GitCheckpoint.CheckpointInterval, DefaultGitCheckpointConfig().CheckpointInterval)
+	if partial.GitCheckpoint.AgentBranchPrefix != "agent/" {
+		t.Errorf("AgentBranchPrefix = %q, want 保留 agent/", partial.GitCheckpoint.AgentBranchPrefix)
 	}
 
-	// 词典：没配 → 指向 ~/.yagent/keywords.txt 且热加载关闭。
-	if cfg.Keywords.DefaultPath == "" || !strings.HasSuffix(cfg.Keywords.DefaultPath, "/.yagent/keywords.txt") {
-		t.Errorf("Keywords.DefaultPath = %q, want 以 /.yagent/keywords.txt 结尾", cfg.Keywords.DefaultPath)
+	// 这一条是 old-vs-new 的分界：以前"前缀为空就整段换默认值"，于是只写 enabled = false
+	// 会被顶回 true —— 想关掉快照的人关不掉且不报错。
+	off, err := LoadFromFile(writeCfg(t, twoProviders+"[git_checkpoint]\nenabled = false\n"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
 	}
-	if len(cfg.Keywords.Dicts) != 1 || cfg.Keywords.Dicts[0].Name != "autocomplete" {
-		t.Errorf("Keywords.Dicts = %+v, want 一个 autocomplete 词典", cfg.Keywords.Dicts)
+	if off.GitCheckpoint.Enabled {
+		t.Error("[git_checkpoint] enabled = false 被顶回 true（段级存在性判定失效）")
+	}
+	if off.GitCheckpoint.AgentBranchPrefix != DefaultGitCheckpointConfig().AgentBranchPrefix {
+		t.Errorf("前缀 = %q, want 空值仍兜默认（否则会拼出 /<session> 这种坏分支名）",
+			off.GitCheckpoint.AgentBranchPrefix)
+	}
+
+	// 词典：只剩 disable_completion 一个键，默认开补全。
+	// （default_path / hot_reload / [[keywords.dict]] 没有读者，词典路径是硬编码的）
+	if cfg.Keywords.DisableCompletion {
+		t.Error("Keywords.DisableCompletion 缺省 = true, want false（补全默认开着）")
 	}
 
 	// TUI 键位 1..9 的 tab 快捷键按 alt+N 补齐。
@@ -261,25 +293,42 @@ func TestLoadFromFile_AppliesDefaultsForAbsentSections(t *testing.T) {
 	}
 }
 
-// enable_ultimate_compression 目前**关不掉**：validate() 见 false 就写回 true。
-// 这条断言钉的是现状（与 AGENTS.md §11 坑 4 的"[context] 表根本不解析"同类），
-// 想改成"尊重用户配置"就把它改写成一个显式 false 的断言，并同步 AGENTS.md。
-func TestLoadFromFile_UltimateCompressionIsForcedOn(t *testing.T) {
-	cfg, err := LoadFromFile(writeCfg(t, twoProviders+"[enhanced_commander]\nenable_ultimate_compression = false\n"))
+// enable_ultimate_compression 的缺省是"开"，而 Go 零值是 false —— 所以"没写"与
+// "写了 false"必须靠键的存在性区分。以前 validate() 是"见 false 就写回 true"，
+// 这个键因此关不掉（两份模板还把它当可配项在说）。
+func TestLoadFromFile_UltimateCompressionRespectsFalse(t *testing.T) {
+	off, err := LoadFromFile(writeCfg(t, twoProviders+"[enhanced_commander]\nenable_ultimate_compression = false\n"))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if !cfg.EnhancedCommander.EnableUltimateCompression {
-		t.Error("enable_ultimate_compression=false 被尊重了 —— 与现状不符，请连同 AGENTS.md 一起确认这次语义变更")
+	if off.EnhancedCommander.EnableUltimateCompression {
+		t.Error("enable_ultimate_compression = false 被写回 true —— 存在性判定没接上")
 	}
 
-	other, err := LoadFromFile(writeCfg(t, twoProviders+"[enhanced_commander]\nmax_delegation_depth = 5\ntool_result_keep_tokens = 333\n"))
+	on, err := LoadFromFile(writeCfg(t, twoProviders+"[enhanced_commander]\ntool_result_keep_tokens = 333\n"))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if other.EnhancedCommander.MaxDelegationDepth != 5 || other.EnhancedCommander.ToolResultKeepTokens != 333 {
-		t.Errorf("显式的同段字段被改写: depth=%d keep=%d, want 5 / 333",
-			other.EnhancedCommander.MaxDelegationDepth, other.EnhancedCommander.ToolResultKeepTokens)
+	if !on.EnhancedCommander.EnableUltimateCompression {
+		t.Error("同段写过别的键但没写这一条时，第三档应当仍是缺省的开")
+	}
+	if on.EnhancedCommander.ToolResultKeepTokens != 333 {
+		t.Errorf("显式的 tool_result_keep_tokens 被改写: %d, want 333", on.EnhancedCommander.ToolResultKeepTokens)
+	}
+}
+
+// 压缩只认一个开关：[enhanced_commander] enable 已删除（今天它只是与
+// enable_context_compression 做 AND 的第二个条件，两个布尔是纯粹的坑）。
+func TestLoadFromFile_CompressionSingleKey(t *testing.T) {
+	only, err := LoadFromFile(writeCfg(t, twoProviders+"[enhanced_commander]\nenable_context_compression = true\n"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !only.EnhancedCommander.EnableContextCompression {
+		t.Error("enable_context_compression = true 没有被尊重")
+	}
+	if _, ok := removedKeyHints["enhanced_commander.enable"]; !ok {
+		t.Error("enhanced_commander.enable 不在移除表里：旧配置里残留它会被静默当成没写")
 	}
 }
 
@@ -301,11 +350,16 @@ func TestLoadConfigSameAsLoadFromFile(t *testing.T) {
 }
 
 // EnsureConfigExists 是首次运行写模板的路径；已存在的文件绝不能被覆盖，
-// 否则用户配置在第二次启动时消失。
+// 否则用户配置在第二次启动时消失。created 必须如实报告"这次生成了"，
+// 首启判定全靠它 —— 模板里的密钥是占位符而校验只查非空。
 func TestEnsureConfigExistsDoesNotOverwrite(t *testing.T) {
 	path := writeCfg(t, "# 用户自己的配置\n")
-	if err := EnsureConfigExists(path); err != nil {
+	created, err := EnsureConfigExists(path)
+	if err != nil {
 		t.Fatalf("EnsureConfigExists: %v", err)
+	}
+	if created {
+		t.Error("已存在的配置被报告成\"本次生成\"，会把老用户领进引导页")
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -316,10 +370,19 @@ func TestEnsureConfigExistsDoesNotOverwrite(t *testing.T) {
 	}
 
 	fresh := filepath.Join(t.TempDir(), "sub", "config.toml")
-	if err := EnsureConfigExists(fresh); err != nil {
+	created, err = EnsureConfigExists(fresh)
+	if err != nil {
 		t.Fatalf("生成缺失的配置: %v", err)
 	}
-	if st, err := os.Stat(fresh); err != nil || st.Size() == 0 {
-		t.Errorf("模板没有生成: err=%v", err)
+	if !created {
+		t.Error("新建模板后 created = false，首启引导不会触发")
+	}
+	st, err := os.Stat(fresh)
+	if err != nil || st.Size() == 0 {
+		t.Fatalf("模板没有生成: err=%v", err)
+	}
+	// 模板可能带明文密钥位，权限必须收到 0600。
+	if perm := st.Mode().Perm(); perm != 0o600 {
+		t.Errorf("生成的模板权限 = %o, want 600", perm)
 	}
 }

@@ -21,13 +21,14 @@ var repoPrompt string
 
 type RepoAgent struct {
 	BaseAgent
-	promptFmt PromptFormatter
-	env       Env
-	knowledge KnowledgeProvider
-	mcpClient *mcp.MCPClient
-	ecCfg     config.EnhancedCommanderConfig
-	params    RepoAgentParams
-	maxSteps  int
+	promptFmt   PromptFormatter
+	env         Env
+	knowledge   KnowledgeProvider
+	mcpClient   *mcp.MCPClient
+	ecCfg       config.EnhancedCommanderConfig
+	params      RepoAgentParams
+	maxSteps    int
+	stepRetries int
 
 	// DevOps-Agent（可选，nil 表示未注入，delegate_devops 将返回友好提示）
 	devops *DevOpsAgent
@@ -54,8 +55,9 @@ type RepoAgentParams struct {
 
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 
-	LLM      llm.Engine
-	MaxSteps int
+	LLM         llm.Engine
+	MaxSteps    int
+	StepRetries int
 }
 
 // NewRepoAgent 构造 RepoAgent：先填充结构体字段，再装配工具适配器
@@ -66,12 +68,13 @@ func NewRepoAgent(p RepoAgentParams) *RepoAgent {
 			LLM:       p.LLM,
 			Publisher: p.Publisher,
 		},
-		promptFmt: p.Formatter,
-		env:       p.Env,
-		knowledge: p.Knowledge,
-		mcpClient: p.MCPClient,
-		ecCfg:     p.EnhancedCommanderCfg,
-		maxSteps:  p.MaxSteps,
+		promptFmt:   p.Formatter,
+		env:         p.Env,
+		knowledge:   p.Knowledge,
+		mcpClient:   p.MCPClient,
+		ecCfg:       p.EnhancedCommanderCfg,
+		maxSteps:    p.MaxSteps,
+		stepRetries: p.StepRetries,
 	}
 	self.params = p
 	return self
@@ -161,6 +164,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.Surface = surfaceFor(toolspec.ProfileRepo, deps, a.Name())
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
+	cfg.StepRetries = a.stepRetries
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.SystemAsHuman = true // RepoAgent uses Human role for its prompt
@@ -171,7 +175,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 
 	// 上下文压缩配置（tool 结果截断）
 	ec := a.ecCfg
-	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
+	cfg.EnableContextCompression = ec.EnableContextCompression
 	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
 	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
 

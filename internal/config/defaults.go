@@ -5,6 +5,7 @@ import "time"
 // DefaultMaxSteps 定义各 agent 的默认最大步数
 // 来源说明: default_config.toml 中的值作为"推荐值"，此处为"程序保证值"
 // 两者应保持一致。如果用户未在 TOML 中配置，使用此处定义的默认值。
+// Meta 不在此列：它是一次 LLM 调用，没有 step 循环（只有 MetaRetryCount 有意义）。
 var DefaultMaxSteps = struct {
 	Director  int
 	Coding    int
@@ -12,7 +13,6 @@ var DefaultMaxSteps = struct {
 	Chat      int
 	DevOps    int
 	Browser   int
-	Meta      int
 	MetaRetry int
 }{
 	Director:  100,
@@ -21,7 +21,6 @@ var DefaultMaxSteps = struct {
 	Chat:      50,
 	DevOps:    50,
 	Browser:   200,
-	Meta:      50,
 	MetaRetry: 5,
 }
 
@@ -43,23 +42,10 @@ func DefaultLLMConfig() *LLMConfig {
 	}
 }
 
-// DefaultKeywordsConfig 返回默认的关键词词典配置
-func DefaultKeywordsConfig() *KeywordsConfig {
-	return &KeywordsConfig{
-		DefaultPath:       "",
-		HotReload:         false,
-		DisableCompletion: false,
-		Dicts:             nil,
-	}
-}
-
 // DefaultGitCheckpointConfig 返回默认的 git checkpoint 配置
 func DefaultGitCheckpointConfig() GitCheckpointConfig {
 	return GitCheckpointConfig{
 		Enabled:               true,
-		AutoCheckpoint:        true,
-		CheckpointInterval:    1,
-		MaxCheckpoints:        50,
 		SquashOnExit:          true,
 		GenerateCommitMessage: true,
 		AgentBranchPrefix:     "agent",
@@ -68,17 +54,6 @@ func DefaultGitCheckpointConfig() GitCheckpointConfig {
 		CleanupAgentBranch:    true,
 		CleanupCheckpointTags: true,
 		AutoMergeOnExit:       false,
-	}
-}
-
-// DefaultKnowledgeConfig 返回默认的知识管理配置
-func DefaultKnowledgeConfig() KnowledgeConfig {
-	return KnowledgeConfig{
-		Enabled:             true,
-		InjectionMaxTokens:  2000,
-		InjectionMaxEntries: 8,
-		InjectionMinScore:   0.3,
-		InjectionRerank:     true,
 	}
 }
 

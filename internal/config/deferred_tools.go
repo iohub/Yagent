@@ -19,11 +19,6 @@ type DeferredToolsConfig struct {
 	// BudgetTokens 是每步工具声明的预算。超出时把 Warm 工具按声明体积从大到小
 	// 降级成 Cold。0 表示不设预算（只按 Spec 声明的档位）。
 	BudgetTokens int `toml:"budget_tokens"`
-
-	// Hot/Cold 按工具名强制调档，覆盖注册表与画像里的声明。
-	// 用于"跑真实任务后发现某工具的档位划错了"这种微调，不必改代码重编。
-	Hot  []string `toml:"hot"`
-	Cold []string `toml:"cold"`
 }
 
 // DefaultDeferredToolsConfig 是缺省值：deferred 开启，预算 2500 token
@@ -47,8 +42,7 @@ func SetGlobalDeferredTools(c DeferredToolsConfig) {
 	deferredMu.Unlock()
 	deferredConfig = c
 	if !c.Disable {
-		slog.Info("deferred tool schema enabled", "budget_tokens", c.BudgetTokens,
-			"forced_hot", len(c.Hot), "forced_cold", len(c.Cold))
+		slog.Info("deferred tool schema enabled", "budget_tokens", c.BudgetTokens)
 	} else {
 		slog.Info("deferred tool schema disabled")
 	}

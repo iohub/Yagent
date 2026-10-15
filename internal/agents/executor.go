@@ -47,8 +47,6 @@ type ExecutorConfig struct {
 
 	OnAgentExit func(ctx context.Context, agentErr error) error
 
-	OnStepEnd func(ctx context.Context, stepInfo StepInfo) error
-
 	NoActionRetryLimit int
 
 	EnableContextCompression    bool
@@ -78,6 +76,11 @@ const DefaultMaxParallelReadOnlyTools = 4
 const MaxMaxParallelReadOnlyTools = 8
 
 var defaultToolTimeout = 180 * time.Second
+
+// stepRetryBackoffBase 是步级 LLM 重试的退避基数（指数，上限 30s）。
+// 它是测试用的 seam（与 defaultToolTimeout 同理）：不改它的话，任何"重试真的发生了"
+// 的用例都要为第一次重试付 1 秒。
+var stepRetryBackoffBase = time.Second
 
 // 并发/串行的判据来自注册表（Spec.Serial），不再是本文件里的一张名字表：
 // 新工具只要在实现旁边声明能力，就不用记得再来这里补一条。
@@ -430,7 +433,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			if attempt > 0 {
-				wait := time.Duration(1<<(attempt-1)) * time.Second
+				wait := stepRetryBackoffBase * time.Duration(1<<(attempt-1))
 				if wait > 30*time.Second {
 					wait = 30 * time.Second
 				}
@@ -883,23 +886,11 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			)
 		}
 
-		if cfg.OnStepEnd != nil && len(choice.ToolCalls) > 0 {
-			toolName := ""
-			if len(choice.ToolCalls) > 0 {
-				toolName = choice.ToolCalls[0].Function.Name
-			}
-			stepInfo := StepInfo{
-				StepNumber: stepNumber,
-				ToolName:   toolName,
-				Success:    true,
-			}
-			if err := cfg.OnStepEnd(ctx, stepInfo); err != nil {
-				slog.Warn("OnStepEnd hook error", "agent", cfg.AgentName, "step", stepNumber, "error", err)
-			}
-			if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
-				event := memory.StepInfoToEventMsg(stepNumber, toolName, nil, true)
-				rw.WriteEventMsg(event)
-			}
+		// sub_agent_activity 供读侧推 MaxStepObserved（rollout_reader 的 EffectiveSteps）。
+		// 以前它挂在被删掉的 OnStepEnd 钩子里，于是只有"Coding + git checkpoint"那一条路径
+		// 会写步数事实，其余子 Agent 的 /resume 步数只能靠 assistant 轮次猜。
+		if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() && len(choice.ToolCalls) > 0 {
+			rw.WriteEventMsg(memory.StepInfoToEventMsg(stepNumber, choice.ToolCalls[0].Function.Name, nil, true))
 		}
 	}
 

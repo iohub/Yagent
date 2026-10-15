@@ -928,7 +928,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		NormalizeMessages:         validateAndRepairToolCallPairs,
 		EstimateTokensFn:          EstimateTokens,
 		ConvertToolCallsFn:        convertToolCalls,
-		CompressEnable:            a.EnhancedCommanderCfg.Enable && a.EnhancedCommanderCfg.EnableContextCompression,
+		CompressEnable:            a.EnhancedCommanderCfg.EnableContextCompression,
 		CompressThreshold:         a.EnhancedCommanderCfg.ContextCompressionThreshold,
 		CompressKeepTokens:        a.EnhancedCommanderCfg.ToolResultKeepTokens,
 		UltimateCompressEnable:    a.EnhancedCommanderCfg.EnableUltimateCompression,

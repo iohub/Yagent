@@ -18,9 +18,9 @@ type ProviderConfig struct {
 	ContextWindow int     `toml:"context_window"`
 	APIBaseURL    string  `toml:"api_base_url"`
 	APIKey        string  `toml:"api_key"`
-	AWSRegion     string  `toml:"aws_region,omitempty"`
-	AWSProfile    string  `toml:"aws_profile,omitempty"`
-	ModelProvider string  `toml:"model_provider,omitempty"`
+	// APIKeyEnv 指向一个环境变量名，用来替代明文 api_key（同一份配置在多台机器上
+	// 跑、或不想让密钥进 git 时用）。展开只发生在 validate() 一处，见 ResolveAPIKey。
+	APIKeyEnv string `toml:"api_key_env,omitempty"`
 
 	ReasoningEffort string `toml:"reasoning_effort,omitempty"`
 
@@ -31,6 +31,23 @@ type ProviderConfig struct {
 
 func (p *ProviderConfig) IsAnthropic() bool {
 	return strings.EqualFold(p.ApiFormat, "anthropic")
+}
+
+// ApplyAPIKeyEnv 把 api_key_env 指向的环境变量展开进 APIKey。
+// 展开只在这一个地方发生，所以两个引擎、NewClient 的检查、providersEqual 比较读到的
+// 都是同一个字段，不需要每处都记得"先看环境变量"。
+// 返回错误表示变量没设置；调用方（validate）只对**生效的那个 provider** 硬失败，
+// 其余 provider 告警了事 —— 为另一台机器准备的条目不该让本机启动不了。
+func (p *ProviderConfig) ApplyAPIKeyEnv() error {
+	if p.APIKeyEnv == "" {
+		return nil
+	}
+	v := os.Getenv(p.APIKeyEnv)
+	if v == "" {
+		return fmt.Errorf("api_key_env=%s is not set in the environment", p.APIKeyEnv)
+	}
+	p.APIKey = v
+	return nil
 }
 
 func (p *ProviderConfig) GetSortedFallbackProviders(allProviders map[string]ProviderConfig) []FallbackProvider {
@@ -67,10 +84,6 @@ func (fp *FallbackProvider) UnmarshalText(text []byte) error {
 	return nil
 }
 
-type AppConfig struct {
-	EnableStreaming bool `toml:"enable_streaming"`
-}
-
 type AgentConfig struct {
 	YoloMode         bool `toml:"yolo_mode"`
 	FullYoloMode     bool `toml:"full_yolo_mode"`
@@ -80,7 +93,6 @@ type AgentConfig struct {
 	RepoMaxSteps     int  `toml:"repo_max_steps"`
 	DevOpsMaxSteps   int  `toml:"devops_max_steps"`
 	BrowserMaxSteps  int  `toml:"browser_max_steps"`
-	MetaMaxSteps     int  `toml:"meta_max_steps"`
 	MetaRetryCount   int  `toml:"meta_retry_count"`
 
 	DelegateIdleTimeout time.Duration `toml:"delegate_idle_timeout" json:"delegate_idle_timeout" yaml:"delegate_idle_timeout"`
@@ -94,9 +106,6 @@ type AgentConfig struct {
 
 type GitCheckpointConfig struct {
 	Enabled               bool   `toml:"enabled"`
-	AutoCheckpoint        bool   `toml:"auto_checkpoint"`
-	CheckpointInterval    int    `toml:"checkpoint_interval"`
-	MaxCheckpoints        int    `toml:"max_checkpoints"`
 	SquashOnExit          bool   `toml:"squash_on_exit"`
 	GenerateCommitMessage bool   `toml:"generate_commit_message"`
 	AgentBranchPrefix     string `toml:"agent_branch_prefix"`
@@ -124,6 +133,9 @@ type AgentsLLMConfig struct {
 	Chat        *AgentLLMOverride `toml:"chat,omitempty"`
 	Meta        *AgentLLMOverride `toml:"meta,omitempty"`
 	DevOps      *AgentLLMOverride `toml:"devops,omitempty"`
+	// Browser 补齐第七个 Agent：以前 [agents.llm.browser] 会被报成 undecoded 键并静默忽略，
+	// 于是 Browser 只能靠 agents.llm.use_provider 或全局默认来换 provider。
+	Browser *AgentLLMOverride `toml:"browser,omitempty"`
 }
 
 type ToolLLMOverride struct {
@@ -184,7 +196,6 @@ type Config struct {
 	Global      TopLevelConfig `toml:"global"`
 	Agents      AgentsConfig   `toml:"agents"`
 	Tools       ToolsConfig    `toml:"tools"`
-	App         AppConfig      `toml:"app"`
 	Agent       AgentConfig    `toml:"agent"`
 	LLM         LLMConfig      `toml:"llm" json:"llm" yaml:"llm"`
 	Routing     RoutingConfig  `toml:"routing"`
@@ -215,6 +226,98 @@ type Config struct {
 
 	// resumeSectionDefined 同理，记录 [resume] 段是否被显式写过。
 	resumeSectionDefined bool
+
+	// gitCheckpointSectionDefined 同理。这里必须看段的存在性而不是某个字段是否为空：
+	// 老写法是"前缀为空就整段换默认值"，于是 enabled = false 会被顶回 true。
+	gitCheckpointSectionDefined bool
+
+	// ultimateCompressionKeyDefined 记录 [enhanced_commander] 里是否显式写过
+	// enable_ultimate_compression。该键缺省为"开"，因此"没写"与"写了 false"必须可区分。
+	ultimateCompressionKeyDefined bool
+}
+
+// removedKeyHints 是已被删除的 TOML 路径 → 该改写什么（空串 = 功能已不存在，什么都不必写）。
+// 判据是解码器的 Undecoded()，所以老配置里残留的键会被逐条点名，而不是静默当成没写。
+// 键名一律小写，与 toml 解码路径一致。
+// 只登记**会出现的最长路径**：父表（[app] 段头、[[keywords.dict]] 的元素）本身不进
+// Undecoded()，登记了也永远不响；子键靠上面的向上归并落到父表这一行。
+var removedKeyHints = map[string]string{
+	"app.enable_streaming":                    "两个引擎恒走流式，这个键从来没有读者",
+	"keywords.default_path":                   "词典路径固定为 ~/.yagent/keywords.txt 与 <project>/.yagent/keywords.txt",
+	"keywords.hot_reload":                     "热加载代码已移除",
+	"keywords.dict":                           "词典名单一路径硬编码，自定义条目没有读者",
+	"agent.meta_max_steps":                    "Meta 是一次 LLM 调用，没有 step 循环；只有 meta_retry_count 有意义",
+	"enhanced_commander.enable":               "压缩只需 enable_context_compression 一个键（以前要两个布尔同时为真）",
+	"enhanced_commander.max_delegation_depth": "委派深度不由配置决定",
+	"git_checkpoint.auto_checkpoint":          "检查点由 git_checkpoint_create 工具在里程碑处创建",
+	"git_checkpoint.checkpoint_interval":      "自动检查点的钩子已删除",
+	"git_checkpoint.max_checkpoints":          "没有裁剪标签或分支的代码读它",
+	"tools.deferred.hot":                      "调档只走 toolspec 画像的 Promote/Demote",
+	"tools.deferred.cold":                     "调档只走 toolspec 画像的 Promote/Demote",
+	"browser.enable_skills":                   "站点 playbook 注入未实现",
+	"codeseek.knowledge":                      "知识注入当前硬关闭（injector.go 的 early return）；enabled 也从未生效过 —— 它会被写回 true",
+}
+
+// removedProviderKeyHints 作用于 [global.llm.providers.<name>] 段内的死键。
+// provider 名是用户自定义的，所以按第四段匹配而不是整条路径。
+var removedProviderKeyHints = map[string]string{
+	"aws_region":     "本仓库没有 Bedrock 专用客户端：请把 api_base_url + api_key 指向 OpenAI-compatible 端点",
+	"aws_profile":    "没有读者",
+	"model_provider": "没有读者",
+}
+
+// removedKeyReports 把 Undecoded() 里命中移除表的键归并成人话列表。
+// 命中父表（如整段删掉的 [codeseek.knowledge]）时，其子键不再重复报。
+// 单独可调用是为了让测试能真的断言"这条键被点名了" —— 只写进 slog 的话，
+// 没有任何测试能让它失败。
+func removedKeyReports(md toml.MetaData) []string {
+	reported := make(map[string]bool)
+	var lines []string
+	for _, key := range md.Undecoded() {
+		lower := make([]string, len(key))
+		for i, s := range key {
+			lower[i] = strings.ToLower(s)
+		}
+		var hint string
+		var path string
+		var ok bool
+		if len(lower) >= 5 && lower[0] == "global" && lower[1] == "llm" && lower[2] == "providers" {
+			// 路径是 global.llm.providers.<name>.<key>：键名在第五段，第四段是用户自定义的 provider 名。
+			hint, ok = removedProviderKeyHints[lower[4]]
+			path = "global.llm.providers." + key[3] + "." + lower[4]
+		} else {
+			for i := len(lower); i > 0; i-- {
+				cand := strings.Join(lower[:i], ".")
+				if reported[cand] {
+					break
+				}
+				if h, hit := removedKeyHints[cand]; hit {
+					hint, path, ok = h, cand, true
+					break
+				}
+			}
+		}
+		if !ok || reported[path] {
+			continue
+		}
+		reported[path] = true
+		if hint == "" {
+			hint = "没有读者，已删除"
+		}
+		lines = append(lines, path+" → "+hint)
+	}
+	sort.Strings(lines)
+	return lines
+}
+
+func warnRemovedKeys(md toml.MetaData) {
+	lines := removedKeyReports(md)
+	if len(lines) == 0 {
+		return
+	}
+	slog.Warn("配置里存在已删除的键，它们不再有任何作用",
+		"removed_keys", strings.Join(lines, "; "),
+		"hint", "首启用 `yagent setup` 或 TUI 里的 /setup；手写请看 docs/config-guide.md")
 }
 
 // staleKeysIn 列出某个表里没被当前 schema 解析掉的键。
@@ -299,6 +402,8 @@ func (c *Config) getAgentOverride(agentName string) *AgentLLMOverride {
 		return c.Agents.LLM.Meta
 	case "devops-agent", "devops":
 		return c.Agents.LLM.DevOps
+	case "browser-agent", "browser":
+		return c.Agents.LLM.Browser
 	default:
 		return nil
 	}
@@ -361,32 +466,6 @@ func (c *Config) GetProviderNames() []string {
 	return names
 }
 
-func DetectBedrockProvider(modelID string) string {
-	modelID = strings.ToLower(modelID)
-
-	if strings.Contains(modelID, ".nova-") {
-		return "amazon"
-	}
-
-	if strings.Contains(modelID, "anthropic") {
-		return "anthropic"
-	}
-
-	if strings.Contains(modelID, "meta") {
-		return "meta"
-	}
-
-	if strings.Contains(modelID, "cohere") {
-		return "cohere"
-	}
-
-	if strings.Contains(modelID, "ai21") {
-		return "ai21"
-	}
-
-	return "amazon"
-}
-
 func LoadConfig(path string) (*Config, error) {
 	return LoadFromFile(path)
 }
@@ -398,6 +477,10 @@ func LoadFromFile(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode config file: %w", err)
 	}
+	// 已删除的键要先点名，否则"我改了它但什么都没发生"只能靠人肉发现。
+	warnRemovedKeys(md)
+	cfg.gitCheckpointSectionDefined = sectionHasDecodedKey(md, "git_checkpoint")
+	cfg.ultimateCompressionKeyDefined = md.IsDefined("enhanced_commander", "enable_ultimate_compression")
 	// 老配置没有 [browser] 段（或只剩旧浏览器栈的失效键）时按"整表缺省"填默认值：
 	// enabled 的零值是 false，靠它判断等于把新能力静默关掉。
 	cfg.browserSectionDefined = browserSectionConfigured(md)
@@ -464,6 +547,28 @@ func (c *Config) validate() error {
 		return fmt.Errorf("no providers configured in LLM section")
 	}
 
+	// api_key_env 在唯一一处展开成 APIKey，之后的必填项检查与各消费方无需再区分来源。
+	// 生效 provider 缺变量 = 启动失败（点名变量名）；其它 provider 缺变量 = 告警，
+	// 因为"为另一台机器准备的条目"不该让本机开不起来。
+	providerNames := make([]string, 0, len(c.Global.LLM.Providers))
+	for name := range c.Global.LLM.Providers {
+		providerNames = append(providerNames, name)
+	}
+	sort.Strings(providerNames)
+	for _, name := range providerNames {
+		p := c.Global.LLM.Providers[name]
+		if err := p.ApplyAPIKeyEnv(); err != nil {
+			if name == effectiveProvider {
+				return fmt.Errorf("provider '%s': %w", name, err)
+			}
+			slog.Warn("provider 引用了未设置的环境变量，用到它时才会失败",
+				"provider", name, "error", err)
+			continue
+		}
+		// map 的值是拷贝，展开结果必须写回去，否则后面的 GetProvider 拿到的还是空 key。
+		c.Global.LLM.Providers[name] = p
+	}
+
 	activeProvider, err := c.GetProvider(effectiveProvider)
 	if err != nil {
 		return err
@@ -473,22 +578,18 @@ func (c *Config) validate() error {
 		return fmt.Errorf("model must be specified for provider '%s'", effectiveProvider)
 	}
 
-	// Bedrock 用 AWS 凭证（aws_region + 环境里的 IAM/profile）而不是 api_key/base_url，
-	// 所以只有这两项检查对它豁免。这里绝不能直接 return：下面整段是缺省值归一化，
+	// api_key/api_base_url 对所有 provider 一视同仁：本仓库没有 Bedrock 专用客户端，
+	// 所谓 Bedrock 配置实际也是打到一个 OpenAI-compatible 端点上（网关或代理）。
+	// 以前按 provider 名字前缀豁免这两项，结果"名字不带 bedrock 的真 Bedrock"照样被要求、
+	// "名字带 bedrock 的"跳过检查然后在运行时炸（AGENTS.md §11 坑 14）。
+	// 这里绝不能提前 return：下面整段是缺省值归一化，
 	// 提前返回会让 max steps、[browser] 缺省、TUI 键位、压缩参数全部停在零值。
-	isBedrock := strings.HasPrefix(effectiveProvider, "bedrock")
-	if isBedrock {
-		if activeProvider.AWSRegion == "" {
-			return fmt.Errorf("aws_region must be specified for Bedrock provider")
-		}
-	} else {
-		if activeProvider.APIKey == "" {
-			return fmt.Errorf("api_key must be specified for provider '%s'", effectiveProvider)
-		}
+	if activeProvider.APIKey == "" {
+		return fmt.Errorf("api_key must be specified for provider '%s' (or point api_key_env at an environment variable) — every provider needs a base_url + key; there is no Bedrock-specific client here", effectiveProvider)
+	}
 
-		if activeProvider.APIBaseURL == "" {
-			return fmt.Errorf("api_base_url must be specified for provider '%s'", effectiveProvider)
-		}
+	if activeProvider.APIBaseURL == "" {
+		return fmt.Errorf("api_base_url must be specified for provider '%s'", effectiveProvider)
 	}
 
 	defaultSteps := DefaultMaxSteps
@@ -509,9 +610,6 @@ func (c *Config) validate() error {
 	}
 	if c.Agent.BrowserMaxSteps == 0 {
 		c.Agent.BrowserMaxSteps = defaultSteps.Browser
-	}
-	if c.Agent.MetaMaxSteps == 0 {
-		c.Agent.MetaMaxSteps = defaultSteps.Meta
 	}
 	if c.Agent.MetaRetryCount == 0 {
 		c.Agent.MetaRetryCount = defaultSteps.MetaRetry
@@ -553,27 +651,13 @@ func (c *Config) validate() error {
 		c.LLM.FallbackMaxRetries = c.LLM.MaxRetries
 	}
 
-	if !c.hasKeywordsConfig() {
-		homeDir, _ := os.UserHomeDir()
-		c.Keywords.DefaultPath = homeDir + "/.yagent/keywords.txt"
-		c.Keywords.HotReload = false
-		c.Keywords.Dicts = []DictConfig{
-			{
-				Name:        "autocomplete",
-				Files:       []string{},
-				Type:        DictTypePrefix,
-				BuiltinType: "default",
-			},
-		}
-	}
-
-	if c.EnhancedCommander.MaxDelegationDepth == 0 {
-		c.EnhancedCommander.MaxDelegationDepth = 3
-	}
 	if c.EnhancedCommander.ToolResultKeepTokens == 0 {
 		c.EnhancedCommander.ToolResultKeepTokens = 200
 	}
-	if !c.EnhancedCommander.EnableUltimateCompression {
+	// enable_ultimate_compression 的缺省语义是"开"，而 Go 零值是 false，所以只能靠键的存在性区分：
+	// 没写 → 开；显式写了 false → 真的关。以前 validate() 是"见 false 就写回 true"，
+	// 于是这个键关不掉，而两份模板还把它当可配项在说。
+	if !c.ultimateCompressionKeyDefined {
 		c.EnhancedCommander.EnableUltimateCompression = true
 	}
 
@@ -594,15 +678,19 @@ func (c *Config) validate() error {
 		c.Browser.CommandTimeout = c.Browser.CDPTimeout + 10*time.Second
 	}
 
-	gitCfgDefaults := DefaultGitCheckpointConfig()
-	if c.GitCheckpoint.AgentBranchPrefix == "" {
-		c.GitCheckpoint = gitCfgDefaults
+	// 整段没写过 → 全量默认值。写过任一键 → 只兜两个前缀：空的 agent_branch_prefix 会拼出
+	// "/<session>" 这种坏分支名，而 bool 一律尊重用户写下的零值。
+	// 以前的写法是 `AgentBranchPrefix == "" 就整段换成默认值`，后果是
+	// [git_checkpoint] enabled = false 会被顶回 true —— 想关掉快照的人关不掉且不报错。
+	if !c.gitCheckpointSectionDefined {
+		c.GitCheckpoint = DefaultGitCheckpointConfig()
 	} else {
-		if c.GitCheckpoint.CheckpointInterval == 0 {
-			c.GitCheckpoint.CheckpointInterval = gitCfgDefaults.CheckpointInterval
+		gitCfgDefaults := DefaultGitCheckpointConfig()
+		if c.GitCheckpoint.AgentBranchPrefix == "" {
+			c.GitCheckpoint.AgentBranchPrefix = gitCfgDefaults.AgentBranchPrefix
 		}
-		if c.GitCheckpoint.MaxCheckpoints == 0 {
-			c.GitCheckpoint.MaxCheckpoints = gitCfgDefaults.MaxCheckpoints
+		if c.GitCheckpoint.CheckpointTagPrefix == "" {
+			c.GitCheckpoint.CheckpointTagPrefix = gitCfgDefaults.CheckpointTagPrefix
 		}
 	}
 
@@ -706,41 +794,12 @@ func (c *Config) validate() error {
 		c.TUI.Keybindings.Command.Quit = "ctrl+c"
 	}
 
-	klDefaults := DefaultKnowledgeConfig()
-	if !c.CodeSeek.Knowledge.Enabled && klDefaults.Enabled {
-		c.CodeSeek.Knowledge.Enabled = klDefaults.Enabled
-	}
-	if c.CodeSeek.Knowledge.InjectionMaxTokens == 0 {
-		c.CodeSeek.Knowledge.InjectionMaxTokens = klDefaults.InjectionMaxTokens
-	}
-	if c.CodeSeek.Knowledge.InjectionMaxEntries == 0 {
-		c.CodeSeek.Knowledge.InjectionMaxEntries = klDefaults.InjectionMaxEntries
-	}
-	if c.CodeSeek.Knowledge.InjectionMinScore == 0 {
-		c.CodeSeek.Knowledge.InjectionMinScore = klDefaults.InjectionMinScore
-	}
-	if !c.CodeSeek.Knowledge.InjectionRerank && klDefaults.InjectionRerank {
-		c.CodeSeek.Knowledge.InjectionRerank = klDefaults.InjectionRerank
-	}
-
 	return nil
 }
 
-func (c *Config) hasKeywordsConfig() bool {
-	if len(c.Keywords.Dicts) > 0 {
-		return true
-	}
-	if c.Keywords.DefaultPath != "" {
-		return true
-	}
-	return false
-}
-
 type EnhancedCommanderConfig struct {
-	Enable bool `toml:"enable" json:"enable"`
-
-	MaxDelegationDepth int `toml:"max_delegation_depth" json:"max_delegation_depth"`
-
+	// Enable 已删：压缩今天要 enable && enable_context_compression 两个布尔同时为真，
+	// 而模板把两个都写成 false —— 只留这个描述性的键。
 	EnableContextCompression bool `toml:"enable_context_compression" json:"enable_context_compression"`
 
 	ContextCompressionThreshold int `toml:"context_compression_threshold" json:"context_compression_threshold"`
@@ -753,10 +812,9 @@ type EnhancedCommanderConfig struct {
 }
 
 type CodeSeekConfig struct {
-	BinaryPath     string          `toml:"binary_path"`
-	MCPArgs        []string        `toml:"mcp_args"`
-	RequestTimeout int             `toml:"request_timeout"`
-	Knowledge      KnowledgeConfig `toml:"knowledge"`
+	BinaryPath     string   `toml:"binary_path"`
+	MCPArgs        []string `toml:"mcp_args"`
+	RequestTimeout int      `toml:"request_timeout"`
 }
 
 // 浏览器超时的保底下限。上游内部 CDP 超时必须覆盖最长 wait（browser_wait 上限 60s），
@@ -799,8 +857,7 @@ type BrowserConfig struct {
 	AllowedDomains []string `toml:"allowed_domains"`
 	DeniedDomains  []string `toml:"denied_domains"`
 
-	ProfileDir   string `toml:"profile_dir"`
-	EnableSkills bool   `toml:"enable_skills"`
+	ProfileDir string `toml:"profile_dir"`
 }
 
 // applyDefaults 逐项兜底零值字段（用户只写了一半的 [browser] 段时仍能工作）。
@@ -861,31 +918,11 @@ func DefaultBrowserConfig() BrowserConfig {
 	}
 }
 
-type KnowledgeConfig struct {
-	Enabled             bool    `toml:"enabled"`
-	InjectionMaxTokens  int     `toml:"injection_max_tokens"`
-	InjectionMaxEntries int     `toml:"injection_max_entries"`
-	InjectionMinScore   float64 `toml:"injection_min_score"`
-	InjectionRerank     bool    `toml:"injection_rerank"`
-}
-
-const (
-	DictTypePrefix = "prefix"
-	DictTypeExact  = "exact"
-)
-
-type DictConfig struct {
-	Name        string   `toml:"name"`
-	Files       []string `toml:"files"`
-	Type        string   `toml:"type"`
-	BuiltinType string   `toml:"builtin_type"`
-}
-
+// KeywordsConfig 只剩一个活键：词典路径是硬编码的（~/.yagent/keywords.txt +
+// <project>/.yagent/keywords.txt，见 internal/tui/tui_model.go），
+// 曾经那些 default_path / hot_reload / [[keywords.dict]] 全都没有读者。
 type KeywordsConfig struct {
-	DefaultPath       string       `toml:"default_path"`
-	HotReload         bool         `toml:"hot_reload"`
-	DisableCompletion bool         `toml:"disable_completion"`
-	Dicts             []DictConfig `toml:"dict"`
+	DisableCompletion bool `toml:"disable_completion"`
 }
 
 type TUIConfig struct {

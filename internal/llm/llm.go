@@ -277,8 +277,7 @@ func LoadConfig(configPath string) (*config.Config, error) {
 		"model", activeProvider.Model,
 		"api_base_url", activeProvider.APIBaseURL,
 		"temperature", activeProvider.Temperature,
-		"max_tokens", activeProvider.MaxTokens,
-		"streaming_enabled", cfg.App.EnableStreaming)
+		"max_tokens", activeProvider.MaxTokens)
 
 	return cfg, nil
 }

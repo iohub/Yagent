@@ -22,11 +22,12 @@ var browserPrompt string
 // 生命周期由 internal/browserctl 管理。
 type BrowserAgent struct {
 	BaseAgent
-	promptFmt PromptFormatter
-	params    BrowserAgentParams
-	maxSteps  int
-	ecCfg     config.EnhancedCommanderConfig
-	browser   BrowserControl
+	promptFmt   PromptFormatter
+	params      BrowserAgentParams
+	maxSteps    int
+	stepRetries int
+	ecCfg       config.EnhancedCommanderConfig
+	browser     BrowserControl
 }
 
 // BrowserAgentParams 聚合 NewBrowserAgent 所需的全部依赖。
@@ -42,8 +43,9 @@ type BrowserAgentParams struct {
 
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 
-	LLM      llm.Engine
-	MaxSteps int
+	LLM         llm.Engine
+	MaxSteps    int
+	StepRetries int
 }
 
 // NewBrowserAgent 构造 BrowserAgent：装配浏览器工具集与流程控制工具后返回。
@@ -53,11 +55,12 @@ func NewBrowserAgent(p BrowserAgentParams) *BrowserAgent {
 			LLM:       p.LLM,
 			Publisher: p.Publisher,
 		},
-		promptFmt: p.Formatter,
-		params:    p,
-		maxSteps:  p.MaxSteps,
-		ecCfg:     p.EnhancedCommanderCfg,
-		browser:   p.Browser,
+		promptFmt:   p.Formatter,
+		params:      p,
+		maxSteps:    p.MaxSteps,
+		stepRetries: p.StepRetries,
+		ecCfg:       p.EnhancedCommanderCfg,
+		browser:     p.Browser,
 	}
 }
 
@@ -111,12 +114,13 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 	cfg.Surface = a.surfaceFor(ctx)
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
+	cfg.StepRetries = a.stepRetries
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
 
 	ec := a.ecCfg
-	cfg.EnableContextCompression = ec.Enable && ec.EnableContextCompression
+	cfg.EnableContextCompression = ec.EnableContextCompression
 	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
 	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
 

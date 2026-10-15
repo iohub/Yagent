@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"yagent/internal/config"
 	"yagent/internal/mcp"
 )
 
@@ -239,40 +238,30 @@ func TestTruncateToTokenBudget_EmptyText(t *testing.T) {
 // （injector.go 的 `if disabled := true; disabled`）。因此本测试目前保护的是
 // "Inject 在关闭状态下不报错、不发布事件、不返回内容"这一条，而不是三个 fail-safe
 // 分支各自的判定；恢复注入（删掉硬编码 if 块）后，同一张表才真正逐条钉住
-// nil mcpClient / !cfg.Enabled / 空 query 三条分支。
+// nil mcpClient / 空 query 两条分支（!cfg.Enabled 那行随 [codeseek.knowledge] 一起删除：
+// validate() 见 false 就写回 true，这个开关从来没关过任何东西）。
 func TestInject_SkipPaths(t *testing.T) {
 	tests := []struct {
 		name   string
 		client *mcp.MCPClient
-		cfg    config.KnowledgeConfig
 		pub    EventPublisher
 		injCtx InjectionContext
 	}{
 		{
 			name:   "nil_mcp_client",
 			client: nil,
-			cfg:    config.KnowledgeConfig{Enabled: true},
-			pub:    &fakeEventPublisher{},
-			injCtx: InjectionContext{UserMessage: "test"},
-		},
-		{
-			name:   "injector_disabled_in_config",
-			client: nil,
-			cfg:    config.KnowledgeConfig{Enabled: false},
 			pub:    &fakeEventPublisher{},
 			injCtx: InjectionContext{UserMessage: "test"},
 		},
 		{
 			name:   "empty_query",
 			client: nil,
-			cfg:    config.KnowledgeConfig{Enabled: true},
 			pub:    &fakeEventPublisher{},
 			injCtx: InjectionContext{},
 		},
 		{
 			name:   "zero_value_injector_with_nil_publisher",
 			client: nil,
-			cfg:    config.KnowledgeConfig{},
 			pub:    nil,
 			injCtx: InjectionContext{UserMessage: "test"},
 		},
@@ -280,7 +269,7 @@ func TestInject_SkipPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			block, err := NewKnowledgeInjector(tt.client, tt.cfg, tt.pub).Inject(context.Background(), tt.injCtx)
+			block, err := NewKnowledgeInjector(tt.client, tt.pub).Inject(context.Background(), tt.injCtx)
 			if err != nil {
 				t.Errorf("Inject must never return an error on a skip path, got: %v", err)
 			}
@@ -399,7 +388,7 @@ func TestBuildInjectedSummary_Empty(t *testing.T) {
 
 func TestPublishInjectedSummary_PublishesOnHits(t *testing.T) {
 	pub := &fakeEventPublisher{}
-	k := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, pub)
+	k := NewKnowledgeInjector(nil, pub)
 	results := []mcp.KnowledgeSearchResult{
 		{KnowledgeRecord: mcp.KnowledgeRecord{Title: "Auth Flow"}, FinalScore: 0.95},
 	}
@@ -426,7 +415,7 @@ func TestPublishInjectedSummary_PublishesOnHits(t *testing.T) {
 
 func TestPublishInjectedSummary_SkipsOnZeroHits(t *testing.T) {
 	pub := &fakeEventPublisher{}
-	k := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, pub)
+	k := NewKnowledgeInjector(nil, pub)
 	// 任务约束：仅当命中>0 时发布概要事件；无命中保持静默（不发布）
 	k.publishInjectedSummary("repo", "no match query", nil)
 
@@ -439,7 +428,7 @@ func TestPublishInjectedSummary_NilPublisherNoPanic(t *testing.T) {
 	// hygiene:panic-guard —— 本用例的唯一失败模式是 panic：
 	// 去掉 publishInjectedSummary 开头的 `k == nil || k.publisher == nil` 守卫，
 	// 这里立刻空指针 panic 并让测试失败。
-	k := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, nil)
+	k := NewKnowledgeInjector(nil, nil)
 	// publisher 为 nil 时应静默跳过，不得 panic
 	k.publishInjectedSummary("coding", "query", []mcp.KnowledgeSearchResult{
 		{KnowledgeRecord: mcp.KnowledgeRecord{Title: "T"}, FinalScore: 0.9},
@@ -451,7 +440,7 @@ func TestPublishInjectedSummary_NilPublisherNoPanic(t *testing.T) {
 
 func TestPublishInjectedSummary_PublishErrorSwallowed(t *testing.T) {
 	pub := &fakeEventPublisher{failErr: fmt.Errorf("simulated publish failure")}
-	k := NewKnowledgeInjector(nil, config.KnowledgeConfig{Enabled: true}, pub)
+	k := NewKnowledgeInjector(nil, pub)
 	// 发布返回错误时仅吞掉，不得 panic
 	k.publishInjectedSummary("coding", "query", []mcp.KnowledgeSearchResult{
 		{KnowledgeRecord: mcp.KnowledgeRecord{Title: "T"}, FinalScore: 0.9},
