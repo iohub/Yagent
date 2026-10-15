@@ -377,7 +377,10 @@ type model struct {
 	// 换 tab（restoreSessionTab）或清空会话（clearCurrentSession）才换新的。
 	sessionID          string
 	resumedFromRollout bool
-	eventCh            chan *messaging.MessageEvent
+	// resumedDelegationPath 是"从子 Agent 的那一步继续"要交给 app 的指路牌：
+	// 刚恢复的那份 Director rollout。一次性，与 resumedFromRollout 同生同灭。
+	resumedDelegationPath string
+	eventCh               chan *messaging.MessageEvent
 
 	termWidth   int
 	termHeight  int

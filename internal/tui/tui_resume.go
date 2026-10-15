@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"yagent/internal/app"
 	"yagent/internal/compression"
 	"yagent/internal/http"
 	"yagent/internal/memory"
@@ -465,7 +466,7 @@ func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.Ro
 			task.Result = restoredInterruptSummary(info)
 		}
 		infoMsg += " · " + restoredInterruptSummary(info)
-		pushResumeDialog(m, info)
+		pushResumeDialog(m, info, path, agentName)
 	}
 
 	infoMsg += fmt.Sprintf(" (%d messages, %d tool calls)", info.Messages, info.ToolCalls)
@@ -507,7 +508,7 @@ func rolloutFirstNonEmptyStr(ss ...string) string {
 	return ""
 }
 
-func pushResumeDialog(m *model, info memory.RolloutInfo) {
+func pushResumeDialog(m *model, info memory.RolloutInfo, rolloutPath, agentName string) {
 	if info.FinishState() != memory.FinishInterrupted {
 		return
 	}
@@ -534,8 +535,43 @@ func pushResumeDialog(m *model, info memory.RolloutInfo) {
 		danglingToolNames(info.DanglingToolCalls),
 		components.Language(m.currentLang),
 	)
+	// 多一个选项："从 coding step 37 继续"（B/C 路径），而不是只能从 Director 重来。
+	// 只有主会话那份 rollout 才谈得上"停在哪个委派上"；子 Agent 的文件本身不是入口。
+	m.resumedDelegationPath = ""
+	if agentName == "" && m.assistant != nil {
+		if stop := m.assistant.ResumableDelegation(rolloutPath); stop != nil {
+			d.SetAgentOption(resumeAgentOptionLabel(components.Language(m.currentLang), stop))
+			m.resumedDelegationPath = rolloutPath
+		}
+	}
+
 	d.SetBounds(m.termWidth, m.termHeight)
 	m.dialogStack.Push(d)
+}
+
+// resumeAgentOptionLabel 拼"从 <agent> step <n> 继续"。
+// 不可重放时也说清楚（走 C：把上一次的真实交付交回 Director 重新委派），
+// 而不是悄悄把这一档藏起来 —— 用户点了"继续"却发现从头再做，最需要一句解释。
+func resumeAgentOptionLabel(lang components.Language, stop *app.ResumableDelegation) string {
+	step := ""
+	if stop.MaxSteps > 0 {
+		step = fmt.Sprintf(" %d/%d", stop.Step, stop.MaxSteps)
+	} else if stop.Step > 0 {
+		step = fmt.Sprintf(" %d", stop.Step)
+	}
+	label := ""
+	if lang == components.LanguageZh {
+		label = "从 " + stop.AgentName + step + " 继续"
+		if !stop.Replayable {
+			label += "（交接）"
+		}
+		return label
+	}
+	label = "Resume " + stop.AgentName + step
+	if !stop.Replayable {
+		label += " (handoff)"
+	}
+	return label
 }
 
 func unfinishedPlanItems(entries []ThinklinkEntry) []string {
