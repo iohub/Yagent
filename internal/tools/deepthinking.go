@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"yagent/internal/llm"
@@ -13,13 +14,29 @@ import (
 // structured analysis of complex problems. This tool is EXPENSIVE and should
 // only be used after conventional methods have been exhausted.
 type DeepThinkingTool struct {
-	LLM           llm.Engine
+	// engineMu 保护 engine：TUI 现在能在任务运行中切 provider，而 SetEngine 与 Execute 不在同一线程。
+	engineMu sync.RWMutex
+	engine   llm.Engine
+
 	StreamHandler llm.StreamHandler // 可选的流式处理器，如果设置则使用流式推理
 }
 
 // NewDeepThinkingTool creates a new DeepThinkingTool with the given LLM client.
 func NewDeepThinkingTool(llm llm.Engine) *DeepThinkingTool {
-	return &DeepThinkingTool{LLM: llm}
+	return &DeepThinkingTool{engine: llm}
+}
+
+// SetEngine 运行时替换推理引擎（provider 切换的热替换路径）。
+func (t *DeepThinkingTool) SetEngine(e llm.Engine) {
+	t.engineMu.Lock()
+	t.engine = e
+	t.engineMu.Unlock()
+}
+
+func (t *DeepThinkingTool) currentEngine() llm.Engine {
+	t.engineMu.RLock()
+	defer t.engineMu.RUnlock()
+	return t.engine
 }
 
 // Execute performs deep system analysis using an isolated LLM call.
@@ -73,7 +90,7 @@ func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interf
 		opts.StreamHandler = t.StreamHandler
 	}
 
-	resp, err := t.LLM.GenerateContent(llmCtx, messages, nil, opts)
+	resp, err := t.currentEngine().GenerateContent(llmCtx, messages, nil, opts)
 	if err != nil {
 		return nil, fmt.Errorf("deepthinking LLM call failed: %w", err)
 	}

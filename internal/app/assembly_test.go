@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"yagent/internal/config"
 	"yagent/internal/globalctx"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
@@ -231,5 +232,48 @@ func TestGetSharedMemoryPathIsPerProject(t *testing.T) {
 	other := &Yagent{globalCtx: &globalctx.GlobalCtx{ProjectPath: "/tmp/proj-two"}}
 	if second := other.getSharedMemoryPath(); second == first {
 		t.Error("两个不同项目算出了同一个共享记忆路径")
+	}
+}
+
+// 运行中换 provider：SwitchProvider 在 UI 线程写 ca.engine，而任务线程每轮开头读它
+// （ProcessCodingTask* → ca.Init(ca.engine, …)）。去掉 engineMu，这条用例只在 -race 下红。
+func TestEngineFieldSurvivesConcurrentProviderSwitch(t *testing.T) {
+	cfg := &config.Config{Global: config.TopLevelConfig{LLM: &config.GlobalLLMConfig{
+		UseProvider: "alpha",
+		Providers: map[string]config.ProviderConfig{
+			"alpha": {Model: "alpha-model", APIBaseURL: "http://127.0.0.1:1/v1", APIKey: "k"},
+			"beta":  {Model: "beta-model", APIBaseURL: "http://127.0.0.1:1/v1", APIKey: "k"},
+		},
+	}}}
+	ca, err := NewYagent(&llm.Client{Config: cfg, Engine: stubEngine{model: "alpha-model"}})
+	if err != nil {
+		t.Fatalf("NewYagent: %v", err)
+	}
+
+	switched := make(chan struct{})
+	go func() {
+		defer close(switched)
+		for j := 0; j < 40; j++ {
+			want := "beta"
+			if j%2 == 0 {
+				want = "alpha"
+			}
+			if err := ca.SwitchProvider(want); err != nil {
+				t.Errorf("SwitchProvider(%q): %v", want, err)
+				return
+			}
+		}
+	}()
+	for j := 0; j < 40; j++ {
+		if e := ca.defaultEngine(); e == nil {
+			t.Fatal("defaultEngine() = nil，任务线程下一刻就会拿它当回落引擎")
+		}
+	}
+	<-switched
+
+	if e := ca.defaultEngine(); e == nil {
+		t.Fatal("defaultEngine() = nil")
+	} else if got := e.Model(); got != "alpha-model" && got != "beta-model" {
+		t.Errorf("defaultEngine().Model() = %q, want the last switched model", got)
 	}
 }

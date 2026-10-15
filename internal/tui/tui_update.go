@@ -41,9 +41,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// chains alive when the task is running, to prevent permanent TUI freeze.
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
 		if _, ok := msg.(tea.KeyMsg); !ok {
-			switch msg.(type) {
+			switch msg := msg.(type) {
 			case taskEventMsg:
 				// Let through — the handler's defensive check keeps chains alive
+			case taskCompleteMsg:
+				// taskRunning 唯一的清零点：弹窗期间吞掉它，界面就永久卡在"运行中"
+				// （最终答案也不会落地）。与 timeline/history/thinklink 全屏同样透传给 handler。
+				return m.handleTaskCompleteMsg(msg)
 			case tickMsg:
 				// Keep ticking for animation, but don't touch the viewport
 				if m.taskRunning {

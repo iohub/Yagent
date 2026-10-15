@@ -281,7 +281,12 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 					})
 					m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 				} else {
-					_, modelName := m.assistant.GetClient().GetCurrentProviderInfo()
+					// 取实际生效的引擎，而不是配置里的默认 provider：SwitchProvider 只换
+					// Client.Engine，不动配置，所以 GetCurrentProviderInfo 会说回旧模型。
+					modelName := ""
+					if eng := m.assistant.GetClient().DefaultEngine(); eng != nil {
+						modelName = eng.Model()
+					}
 					m.currentProvider = d.Selected
 					m.currentModel = modelName
 					m.refreshContextWindow()
@@ -885,9 +890,6 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.submitFromEditor()
 
 	case "alt+m":
-		if m.taskRunning {
-			return m, nil
-		}
 		return m, m.showModelSelectionDialog()
 
 	case "alt+r":

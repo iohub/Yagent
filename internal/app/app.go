@@ -31,7 +31,10 @@ import (
 
 // Yagent is the main entry point for the agent system.
 type Yagent struct {
-	engine               llm.Engine  // default engine (backward-compatible)
+	engine llm.Engine // default engine (backward-compatible)
+	// engineMu 保护 engine：TUI 的模型切换会在任务运行中替换它，而任务线程每轮都读。
+	engineMu sync.RWMutex
+
 	client               *llm.Client // LLM client for per-agent/tool engine resolution
 	config               *config.Config
 	director             *agents.DirectorAgent
@@ -67,11 +70,24 @@ func NewYagent(client *llm.Client) (*Yagent, error) {
 	ca := &Yagent{
 		userResponseChannels: make(map[string]chan string),
 		logger:               slog.Default().With("component", "coding_assistant"),
-		engine:               client.Engine,
+		engine:               client.DefaultEngine(),
 		client:               client,
 		config:               client.Config,
 	}
 	return ca, nil
+}
+
+// setEngine 与 defaultEngine 是 engine 字段唯一的读写入口（锁保护）。
+func (ca *Yagent) setEngine(e llm.Engine) {
+	ca.engineMu.Lock()
+	ca.engine = e
+	ca.engineMu.Unlock()
+}
+
+func (ca *Yagent) defaultEngine() llm.Engine {
+	ca.engineMu.RLock()
+	defer ca.engineMu.RUnlock()
+	return ca.engine
 }
 
 // SetEmbeddedBinaries 设置嵌入的二进制文件系统，用于自动提取 codeseek 等工具
@@ -82,8 +98,8 @@ func (ca *Yagent) SetEmbeddedBinaries(fs embed.FS) {
 // CloseIdleConnections 关闭 LLM engine 的 HTTP 空闲连接。
 // 在任务取消时调用，加速底层连接释放和 context 取消传播。
 func (ca *Yagent) CloseIdleConnections() {
-	if ca.engine != nil {
-		ca.engine.CloseIdleConnections()
+	if e := ca.defaultEngine(); e != nil {
+		e.CloseIdleConnections()
 	}
 }
 
@@ -91,7 +107,7 @@ func (ca *Yagent) CloseIdleConnections() {
 // Uses per-agent and per-tool engine resolution from the LLM client.
 func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 	// 始终更新 engine（后续调用也需要更新 engine）
-	ca.engine = engine
+	ca.setEngine(engine)
 
 	// initOnce 保证只执行一次完整初始化（创建 Agents、启动 MCP 客户端等）
 	ca.initOnce.Do(func() {
@@ -693,7 +709,7 @@ func (ca *Yagent) applyResumption(req *TaskRequest) {
 
 // ProcessCodingTaskWithCallback executes the task using the agent system.
 func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
-	ca.Init(ca.engine, req.projectDir)
+	ca.Init(ca.defaultEngine(), req.projectDir)
 	ca.director.SetBoardScope(req.sessionID, req.taskID)
 	ca.director.SetResumedTask(req.resumed)
 	ca.applyResumption(req)
@@ -703,7 +719,7 @@ func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error
 
 // ProcessConversation handles chat messages.
 func (ca *Yagent) ProcessConversation(req *TaskRequest) (string, error) {
-	ca.Init(ca.engine, req.projectDir)
+	ca.Init(ca.defaultEngine(), req.projectDir)
 	ca.director.SetBoardScope(req.sessionID, req.taskID)
 	ca.director.SetResumedTask(req.resumed)
 	ca.applyResumption(req)
@@ -722,7 +738,7 @@ func (ca *Yagent) SwitchProvider(providerName string) error {
 		return err
 	}
 	// Also update the local engine reference to keep it in sync
-	ca.engine = ca.client.Engine
+	ca.setEngine(ca.client.DefaultEngine())
 	return nil
 }
 
@@ -800,16 +816,18 @@ func (ca *Yagent) SetToolProvider(toolName, providerName string) error {
 		return err
 	}
 	if toolName == "deepthinking" && ca.globalCtx != nil && ca.globalCtx.DeepThinkingTool != nil {
-		ca.globalCtx.DeepThinkingTool.LLM = ca.client.GetToolEngine("deepthinking")
+		e := ca.client.GetToolEngine("deepthinking")
+		ca.globalCtx.DeepThinkingTool.SetEngine(e)
 		slog.Info("Hot-swapped deepthinking tool engine",
 			"provider", providerName,
-			"model", ca.globalCtx.DeepThinkingTool.LLM.Model())
+			"model", e.Model())
 	}
 	if toolName == "design" && ca.globalCtx != nil && ca.globalCtx.DesignTool != nil {
-		ca.globalCtx.DesignTool.LLM = ca.client.GetToolEngine("design")
+		e := ca.client.GetToolEngine("design")
+		ca.globalCtx.DesignTool.SetEngine(e)
 		slog.Info("Hot-swapped design tool engine",
 			"provider", providerName,
-			"model", ca.globalCtx.DesignTool.LLM.Model())
+			"model", e.Model())
 	}
 	return nil
 }

@@ -215,15 +215,14 @@ const timeoutTarget = "timeout"
 
 // showModelSelectionDialog opens an interactive agent → provider selection dialog
 func (m *model) showModelSelectionDialog() tea.Cmd {
-	// Block switching while a task is running
+	// 运行中也能换模型：改的是 Client 的运行时覆盖，正在飞的那次调用不受影响。
 	if m.taskRunning {
 		m.logEntries = append(m.logEntries, logEntry{
 			timestamp: time.Now(),
 			eventType: "status",
-			content:   "Cannot switch model while a task is running. Wait for the task to complete first.",
+			content:   "Task running: the in-flight call keeps its model; the Director uses the new one at its next step, sub-agents at their next delegation.",
 		})
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-		return nil
 	}
 
 	validAgents := []string{"director", "coding", "repo", "chat", "meta", "devops", "browser"}

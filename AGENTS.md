@@ -351,6 +351,14 @@ type Adapter struct { name, description string; fn ToolFunc
 档位通过 context 传递，在 `RunAgentLoop` 里由 `ResolveTierEngine` 解析。
 `[routing] mode = "auto" | "fixed"`，`baselines` 可为 director/coding/repo/chat/devops/browser/meta 指定默认档。
 
+**优先级：TUI 运行时覆盖 > 路由档位 > 配置里的 `[agents.llm.*].use_provider`。** 手动选过一次模型是显式意图，
+`RoutingEngine.resolve` 先查覆盖表再查档位；`routeCtx` 据此跳过 `Classify`（省一次 LLM 调用）也不发那条描述未使用档位的
+`model_routed`。配置的静态 use_provider 仍让位给档位。
+**运行中换模型不需要任务空闲**（`Alt+M` / `:model`）：`RunAgentLoop` 在入口就把 `RoutingEngine` 解成具体引擎，
+所以子 Agent 在**下一次委派**换新引擎，Director 每次调用现场解析（下一个 step 即生效），正在飞的那次调用不变。
+代价是几个引擎指针现在会被并发替换：`Client.Engine` 只能经 `DefaultEngine()` 读、`Yagent.engine` 只能经
+`defaultEngine()/setEngine()` 读写、deepthinking/design 的引擎只能经 `SetEngine()` 换。
+
 > 坑：任何重建 Agent 引擎的地方都必须保留 `*RoutingEngine` 包装，否则 auto-routing 静默失效（commit 0c87c8a）。
 > 这条契约由 `internal/app/assembly_test.go:TestAgentEngineAlwaysWrapsWithRoutingEngine` 钉住 ——
 > 它只看返回类型，不驱动 `resolve()`（后者要真实 provider，属于 `internal/llm` 的测试范围）。
@@ -496,11 +504,13 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
   2 行空闲形态（`⧉ COMPRESS 0 (0%) T0`）。完整规格见 `docs/token-compress-panel-design.md`。
 - **叠加模式**：timeline 全屏、thinklink 全屏、history、resume、dialog 栈、主页面——按此优先级渲染。
   每层都必须正常消费 `taskEventMsg` 并重新武装 `listenForEvents`（该 cmd 是一次性的，事件没有重放队列）。
+  叠加层还必须把 `taskCompleteMsg` 透传给 `handleTaskCompleteMsg`：它是 `taskRunning` 唯一的清零点，
+  吞掉的表现是界面永久卡在"运行中"且最终答案不落地（dialog 守卫曾经就这么吞过，弹窗打开时任务一完成就锁死）。
 - **thinklink 全屏**：条目来自 `thinklink_entry` 事件（payload 的 `agent` 字段 = 发布方 Agent 名），
   `f` 在 All ↔ 各 Agent 间过滤（`RebuildPrompt` 之外，一次委派里 Director/Coding/Browser 的块会混排，
   Browser 一轮可贡献上百条）。`/resume` 恢复的旧 rollout 没有 Agent 标记，只在 All 视图出现。
 - **Dialog**：`components.DialogStack`（Push/Pop/ReplaceTop/Overlay），10 个对话框；
-  弹窗打开时全局守卫只放行 KeyMsg/taskEventMsg/tickMsg，新增消息类型必须显式放行（`tea.PasteMsg` 的坑已踩过）。
+  弹窗打开时全局守卫只放行 KeyMsg/taskEventMsg/taskCompleteMsg/tickMsg，新增消息类型必须显式放行（`tea.PasteMsg` 的坑已踩过）。
 - **模态编辑**：Esc→NORMAL、`i`→INSERT、`:` 命令行、`/` 真搜索、textarea 用 `SetVirtualCursor(true)`、支持 `10j` 数字前缀。
 - **快捷键提示**只出现在 tab 行右侧与各面板底边框，**状态栏不含任何键帽**。
 - **设计语言**：圆角手绘边框（`tui_chrome.go` 的 `╭╮╰╯─▌`），配色令牌集中在

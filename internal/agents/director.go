@@ -241,6 +241,11 @@ func (a *DirectorAgent) routeCtx(ctx context.Context, agentName, task string) co
 	if !r.Enabled() {
 		return ctx
 	}
+	// 手动选过 provider 的 agent 不走档位（RoutingEngine.resolve 里覆盖优先），
+	// 所以既不必花一次分类调用，也不能发 model_routed 去描述一个不会被用到的模型。
+	if a.llmClient.HasAgentOverride(agentName) {
+		return ctx
+	}
 	baseline := r.BaselineOf(agentName)
 	tier := r.Classify(ctx, task, baseline)
 	ctx = llm.WithTier(ctx, tier)

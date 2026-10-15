@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"testing"
+
+	"yagent/internal/config"
 )
 
 // fakeEngine 是测试用的最小 Engine，记录被调用的 model 名。
@@ -91,6 +93,49 @@ func TestResolveTierEngine(t *testing.T) {
 	ctx := WithTier(context.Background(), TierHigh)
 	if got := ResolveTierEngine(ctx, re); got.Model() != "high-model" {
 		t.Errorf("ctx override resolve = %s, want high-model", got.Model())
+	}
+}
+
+// TestRoutingEngine_RuntimeOverrideBeatsTier 钉住"手动选过一次 provider 就压过档位"。
+// 默认 [routing] mode 是 auto，若覆盖排在档位之后，TUI 里切模型等于没切。
+func TestRoutingEngine_RuntimeOverrideBeatsTier(t *testing.T) {
+	c := &Client{
+		engines: map[string]Engine{},
+		Config: &config.Config{Global: config.TopLevelConfig{LLM: &config.GlobalLLMConfig{
+			Providers: map[string]config.ProviderConfig{
+				"hand": {Model: "hand-picked", APIBaseURL: "http://127.0.0.1:1/v1", APIKey: "k"},
+			},
+		}}},
+	}
+	c.setRouter(&Router{
+		enabled:   true,
+		engines:   [3]Engine{&fakeEngine{model: "fast-model"}, &fakeEngine{model: "bal-model"}, &fakeEngine{model: "high-model"}},
+		baselines: map[string]Tier{"coding": TierBalanced},
+	})
+	ctx := WithTier(context.Background(), TierHigh)
+
+	if err := c.SetAgentProvider("coding", "hand"); err != nil {
+		t.Fatalf("SetAgentProvider: %v", err)
+	}
+	if got := ResolveTierEngine(ctx, NewRoutingEngine(c, "coding")).Model(); got != "hand-picked" {
+		t.Errorf("overridden agent resolve = %q, want the hand-picked model", got)
+	}
+	// HasAgentOverride 必须与 resolve 的判据同源，否则 routeCtx 要么白跑一次分类，
+	// 要么发出一条描述未使用档位的 model_routed。
+	if !c.HasAgentOverride("coding") {
+		t.Error("HasAgentOverride(coding) = false，但 resolve 用的是它的覆盖")
+	}
+	// 没被手动选过的角色照旧走档位。
+	if got := ResolveTierEngine(ctx, NewRoutingEngine(c, "repo")).Model(); got != "high-model" {
+		t.Errorf("un-overridden agent resolve = %q, want the tier engine", got)
+	}
+	if c.HasAgentOverride("repo") {
+		t.Error("HasAgentOverride(repo) = true，但从未为它设置过覆盖")
+	}
+	// 覆盖指向配置里已不存在的 provider 时回落档位，绝不能交出 nil 引擎。
+	c.agentProviderOverrides["coding"] = "ghost"
+	if got := ResolveTierEngine(ctx, NewRoutingEngine(c, "coding")).Model(); got != "high-model" {
+		t.Errorf("ghost override resolve = %q, want fallback to the tier engine", got)
 	}
 }
 
