@@ -39,22 +39,27 @@ type ContextCompressionStats struct {
 //   - 每截断一条后重新估算总 token，若达标立即返回；
 //   - 若发生截断，返回 (messages, stats) 其中 stats 包含压缩统计信息。
 //
-// 总量是**增量**记账的：开头一次遍历得到逐条 token 数，之后每截一条只重算那一条。
+// 总量是**增量**记账的：每截一条只重算那一条。
 // 旧写法每截一条都对整份消息重跑两遍 tiktoken，200 条工具结果的会话上要花 9.3s
 // （docs/compression-trigger-design.md R2）。
-func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens int) ([]llm.Message, *ContextCompressionStats) {
-	tokens := make([]int, len(messages))
-	originalTotal := 0
-	for i := range messages {
-		tokens[i] = msgTokens(&messages[i])
-		originalTotal += tokens[i]
-	}
-	if originalTotal <= maxTokens {
+//
+// prefix 是 provider 上一步报的计量；没有计量时 Prefix{} 就等价于改动前的全量本地估算。
+// 判定与 stats 用两个口径，理由见函数体里的注释。
+func TruncateToolResultsToBudget(messages []llm.Message, prefix Prefix, maxTokens, keepTokens int) ([]llm.Message, *ContextCompressionStats) {
+	gate := prefix.Total(messages)
+	if gate <= maxTokens {
 		return messages, nil
 	}
 
+	// stats 一律用本地口径：TUI 的 ⧉ 面板按 saved/original 算百分比，把 provider 基数
+	// 混进去会让"省了多少"与"一共多少"不同源。没有计量时 gate 本来就是本地值，不必重算。
+	original := gate
+	if prefix.usable(messages) {
+		original = EstimateMessagesTokens(messages)
+	}
+
 	stats := &ContextCompressionStats{
-		OriginalTokens: originalTotal,
+		OriginalTokens: original,
 	}
 
 	// 收集所有可截断的 tool 消息，按优先级分组
@@ -89,11 +94,13 @@ func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens i
 	toTruncate = append(toTruncate, prio0...)
 	toTruncate = append(toTruncate, prio1...)
 
-	// 逐条截断，每截断一条后按增量更新总量，若达标立即返回
-	total := originalTotal
+	// 逐条截断，达标即停。projected 跟着判定口径走（它预测的是"下一步还会不会超"），
+	// compressed 跟着本地口径走（stats 与 TUI 面板用它）—— 两者减的是同一个 delta。
+	projected, compressed := gate, original
 	for _, entry := range toTruncate {
 		msg := entry.msg
 		originalContent := msg.Content
+		before := msgTokens(msg)
 		originalTokens := tokenutil.EstimateTokens(originalContent)
 		truncated := TruncateToTokenBudget(originalContent, keepTokens)
 		keptTokens := tokenutil.EstimateTokens(truncated)
@@ -112,10 +119,13 @@ func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens i
 			}
 		}
 		msg.Content = truncated + truncationNote(originalTokens, keepTokens)
-		// 这条消息自己重算一遍就够了，整份消息不需要。
-		before := tokens[entry.index]
-		tokens[entry.index] = msgTokens(msg)
-		total -= before - tokens[entry.index]
+		// 只重算被截断的那一条，整份消息不需要（旧写法在这里对全量跑两遍 tiktoken）。
+		saved := before - msgTokens(msg)
+		if saved < 0 {
+			saved = 0
+		}
+		projected -= saved
+		compressed -= saved
 		stats.TruncatedCount++
 		stats.TruncatedTools = append(stats.TruncatedTools, TruncatedToolInfo{
 			ToolName:       msg.ToolName,
@@ -123,20 +133,13 @@ func TruncateToolResultsToBudget(messages []llm.Message, maxTokens, keepTokens i
 			KeptTokens:     keptTokens,
 			OmittedTokens:  omittedTokens,
 		})
-		if total <= maxTokens {
-			stats.CompressedTokens = total
-			stats.SavedTokens = stats.OriginalTokens - stats.CompressedTokens
-			if stats.SavedTokens < 0 {
-				stats.SavedTokens = 0
-			}
-			if stats.OriginalTokens > 0 {
-				stats.SavedPercent = float64(stats.SavedTokens) / float64(stats.OriginalTokens) * 100
-			}
-			return messages, stats
+		if projected <= maxTokens {
+			break
 		}
 	}
-	// 所有可截断消息均已截断，仍未达标
-	stats.CompressedTokens = total
+	// 所有可截断消息均已截断时，projected 仍可能高于 maxTokens —— 那是要交给下一档的信号，
+	// 达标与不达标的收尾算法相同，所以这里只有一条路径。
+	stats.CompressedTokens = compressed
 	stats.SavedTokens = stats.OriginalTokens - stats.CompressedTokens
 	if stats.SavedTokens < 0 {
 		stats.SavedTokens = 0

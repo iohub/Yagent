@@ -72,11 +72,6 @@ func NewContextCompressor(engine llm.Engine, agentName string, thinkLink ThinkLi
 	}
 }
 
-// ShouldCompress 触发判断辅助：消息总 token 估算超过 threshold 时需要压缩。
-func (c *ContextCompressor) ShouldCompress(messages []llm.Message, threshold int) bool {
-	return EstimateMessagesTokens(messages) > threshold
-}
-
 // ApplyEmergency 执行紧急压缩：提取用户原始任务 + 总结/保留 Thought & Plan 历史，
 // 覆盖 memory 为单条输入消息后返回压缩后的 messages。
 // 逻辑逐字搬迁自 DirectorAgent.applyEmergencyCompression（依赖改为注入形式）。

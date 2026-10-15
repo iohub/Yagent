@@ -183,6 +183,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		writeDirectorRollout(messages[i])
 	}
 
+	var measured compression.Prefix
 	for i := 0; i < p.cfg.MaxSteps; i++ {
 		// 暂停闸门（A 层）与子 Agent 用同一个：ctx 不取消，停在 step 边界，
 		// 放开后原地继续。p.state.Step 不推进 —— 这一步根本没跑过，
@@ -227,99 +228,9 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				messages = p.cfg.NormalizeMessages(messages)
 			}
 
-			if p.cfg.CompressEnable {
-				var modelName string
-				if p.cfg.LLM != nil {
-					modelName = p.cfg.LLM.Model()
-				}
-				threshold := compression.ResolveThreshold(modelName, p.cfg.CompressThreshold)
-				keepTokens := p.cfg.CompressKeepTokens
-				if keepTokens <= 0 {
-					keepTokens = compression.DefaultToolResultKeepTokens
-				}
-				var compStats *compression.ContextCompressionStats
-				messages, compStats = compression.TruncateToolResultsToBudget(messages, threshold, keepTokens)
-				if compStats != nil && compStats.TruncatedCount > 0 && p.cfg.Publisher != nil {
-					truncatedTools := make([]map[string]interface{}, len(compStats.TruncatedTools))
-					for ti, tool := range compStats.TruncatedTools {
-						truncatedTools[ti] = map[string]interface{}{
-							"tool_name":       tool.ToolName,
-							"original_tokens": tool.OriginalTokens,
-							"kept_tokens":     tool.KeptTokens,
-							"omitted_tokens":  tool.OmittedTokens,
-						}
-					}
-					_ = p.cfg.Publisher.Publish("context_compressed", map[string]interface{}{
-						"original_tokens":   compStats.OriginalTokens,
-						"compressed_tokens": compStats.CompressedTokens,
-						"saved_tokens":      compStats.SavedTokens,
-						"saved_percent":     compStats.SavedPercent,
-						"truncated_count":   compStats.TruncatedCount,
-						"truncated_tools":   truncatedTools,
-					}, "director")
-					slog.Debug("context compression applied",
-						"original_tokens", compStats.OriginalTokens,
-						"compressed_tokens", compStats.CompressedTokens,
-						"saved_tokens", compStats.SavedTokens,
-						"saved_percent", compStats.SavedPercent,
-						"truncated_count", compStats.TruncatedCount)
-					writeCompacted(memory.CompactionKindRule, fmt.Sprintf(
-						"tool-result truncation: %d results compacted, saved %d tokens (%d → %d)",
-						compStats.TruncatedCount, compStats.SavedTokens,
-						compStats.OriginalTokens, compStats.CompressedTokens),
-						compStats.OriginalTokens, compStats.CompressedTokens, compStats.SavedTokens)
-				}
-
-				if compression.EstimateMessagesTokens(messages) > threshold {
-					newMessages, emergencyStats := p.cfg.Compressor.ApplyEmergency(ctx, messages, threshold, in.Mem)
-					messages = newMessages
-					if emergencyStats != nil && p.cfg.Publisher != nil {
-						_ = p.cfg.Publisher.Publish("context_emergency_compressed", map[string]interface{}{
-							"original_tokens":   emergencyStats.OriginalTokens,
-							"compressed_tokens": emergencyStats.CompressedTokens,
-							"saved_tokens":      emergencyStats.SavedTokens,
-							"extracted_blocks":  emergencyStats.ExtractedBlocks,
-							"summarized_blocks": emergencyStats.SummarizedBlocks,
-							"kept_blocks":       emergencyStats.KeptBlocks,
-							"summarized_by_llm": emergencyStats.SummarizedByLLM,
-						}, "director")
-					}
-					slog.Warn("emergency context compression applied",
-						"original_tokens", emergencyStats.OriginalTokens,
-						"compressed_tokens", emergencyStats.CompressedTokens,
-						"extracted_blocks", emergencyStats.ExtractedBlocks,
-						"kept_blocks", emergencyStats.KeptBlocks,
-						"summarized_by_llm", emergencyStats.SummarizedByLLM)
-					writeCompacted(memory.CompactionKindEmergency, fmt.Sprintf(
-						"emergency compression: %d blocks extracted, %d summarized, %d kept, saved %d tokens (%d → %d)",
-						emergencyStats.ExtractedBlocks, emergencyStats.SummarizedBlocks,
-						emergencyStats.KeptBlocks, emergencyStats.SavedTokens,
-						emergencyStats.OriginalTokens, emergencyStats.CompressedTokens),
-						emergencyStats.OriginalTokens, emergencyStats.CompressedTokens, emergencyStats.SavedTokens)
-				}
-
-				if p.cfg.UltimateCompressEnable && p.cfg.Journal != nil && compression.EstimateMessagesTokens(messages) > threshold {
-					newMessages, ultStats := p.cfg.Compressor.ApplyUltimate(messages, threshold, in.Mem, p.cfg.UltimateCompressKeepPlans)
-					messages = newMessages
-					if p.cfg.Publisher != nil && ultStats != nil {
-						_ = p.cfg.Publisher.Publish("context_ultimate_compressed", map[string]interface{}{
-							"original_tokens":   ultStats.OriginalTokens,
-							"compressed_tokens": ultStats.CompressedTokens,
-							"saved_tokens":      ultStats.SavedTokens,
-							"total_plans":       ultStats.TotalPlans,
-							"kept_plans":        ultStats.KeptPlans,
-							"user_inputs":       ultStats.UserInputs,
-							"truncated":         ultStats.Truncated,
-							"detail":            "终极压缩(ultimate compression)已触发,上下文已重置为用户原始输入 + Thought & Plan 块",
-						}, "director")
-						writeCompacted(memory.CompactionKindUltimate, fmt.Sprintf(
-							"ultimate compression: context rebuilt from %d user inputs + %d/%d Thought & Plan blocks, saved %d tokens (%d → %d)",
-							ultStats.UserInputs, ultStats.KeptPlans, ultStats.TotalPlans,
-							ultStats.SavedTokens, ultStats.OriginalTokens, ultStats.CompressedTokens),
-							ultStats.OriginalTokens, ultStats.CompressedTokens, ultStats.SavedTokens)
-					}
-				}
-			}
+			// 三档压缩都在 planner_compress.go：判据只有 compression.OverThreshold 一处，
+			// 别再把它抄回循环里。计量口径要穿过去、也要传回来（重写列表后必须作废）。
+			messages, measured = p.applyContextCompression(ctx, messages, measured, in.Mem, writeCompacted)
 
 			slog.Debug("DirectorAgent calling LLM", "step", i, "messages", messages)
 
@@ -353,6 +264,10 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			llmCtx, llmCancel := context.WithTimeout(ctx, p.cfg.LLMTimeout)
 			resp, llmErr = p.cfg.LLM.GenerateContent(llmCtx, p.messagesForLLMCall(messages), defsForStep(), opts)
 			llmCancel()
+
+			// 计量刷新点。sentLen 取**外层** messages 的长度：送出去的那份还末尾附了便签索引，
+			// 它不在外层列表里 —— 偏差方向是更早触发，与工具声明同源（见 compression.Prefix）。
+			measured = measured.Refresh(resp, llmErr, len(messages))
 			llmDuration := time.Since(llmStartTime).Seconds()
 
 			if p.cfg.Publisher != nil {

@@ -392,9 +392,16 @@ type Adapter struct { name, description string; fn ToolFunc
 两个来源都是上限，配置没写（或写 0/负数）就纯按目录推导，都没值才是 120000；
 **provider 的 `context_window` 不参与**（见 §11 坑 3）。每步检查，`enhanced_commander.enable_context_compression` 总开关。
 调试例外：`YAGENT_COMPRESS_THRESHOLD` 一旦设了就**直接当阈值**，压过目录与配置。
-取小的代价是压缩会在更低的位置触发，所以第一档是**增量记账**：开头一次遍历得到逐条 token 数，
-之后每截一条只重算那一条（旧写法每截一条对整份消息重算两遍，200 条工具结果的会话要 9.3s）。
-完整规格与实测数据（含"为什么压缩不是延迟主因"）见 `docs/compression-trigger-design.md`。
+判定口径是 `compression.Prefix`：上一步 provider 报的 `Usage.TotalInputTokens` 打底，加上此后新增消息的
+本地估算（本地估算从不计工具声明，且每步扫两遍全量 tiktoken）。计量缺失、还没跑过一步、或列表被
+第二/三档整段重写时必须作废 —— 作废后逐字回落到全量本地估算，就是改动前的行为。
+判定只有一处实现：`compression.OverThreshold(messages, prefix, threshold)`，两个循环各两处调用点，
+不要再抄 `EstimateMessagesTokens(messages) > threshold`。Director 侧的三档整段在
+`agents/director/planner_compress.go`（从 `planner_run.go` 搬出，该文件行数上限同步下调）。
+取小的代价是压缩会在更低的位置触发，所以第一档是**增量记账**：达标判定每截一条只重算那一条，
+不再对整份消息跑 tiktoken（旧写法 200 条工具结果的会话要 9.3s）；`stats` 一律保持本地口径，
+否则 TUI ⧉ 面板的百分比两个基数混在一起。完整规格与实测数据（含"为什么压缩不是延迟主因"）
+见 `docs/compression-trigger-design.md`。
 
 1. **Rule**：`TruncateToolResultsToBudget` — 按优先级先截低价值工具结果（`deepthinking`/`design` 结果受保护），保留最近 `tool_result_keep_tokens`（默认 200）。
 2. **Emergency**：抽取 T&P 块进 thinklink，最近 3 条保留原文，其余 LLM 摘要，记忆整体重写为 `[system, one user]`。

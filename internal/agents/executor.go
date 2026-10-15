@@ -407,6 +407,11 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 	maxParallel := NormalizeMaxParallelReadOnlyTools(cfg.MaxParallelReadOnlyTools)
 
+	// 触发判定的计量口径：provider 上一步报的 TotalInputTokens 打底，加此后新增消息的
+	// 本地估算。比每步扫两遍全量 tiktoken 便宜，并且把本地估算从不计入的工具声明也算上。
+	// 生命周期见 RunAgentLoop 末尾的赋值与压缩后的清零。
+	var measured compression.Prefix
+
 	for i := startStep; i < cfg.MaxSteps; i++ {
 		// 暂停闸门（A 层）落在 step 边界：上一个批次的工具结果都已提交，所以停在这里
 		// 不会留下"副作用做了一半"的状态。ctx 不取消，恢复后从这行原地往下走。
@@ -461,7 +466,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 					keepTokens = compression.DefaultToolResultKeepTokens
 				}
 				var compStats *compression.ContextCompressionStats
-				messages, compStats = compression.TruncateToolResultsToBudget(messages, threshold, keepTokens)
+				messages, compStats = compression.TruncateToolResultsToBudget(messages, measured, threshold, keepTokens)
 				if compStats != nil && compStats.TruncatedCount > 0 && cfg.Publisher != nil {
 					truncatedTools := make([]map[string]interface{}, len(compStats.TruncatedTools))
 					for ti, tool := range compStats.TruncatedTools {
@@ -501,11 +506,14 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 					}
 				}
 
-				if compression.EstimateMessagesTokens(messages) > threshold {
+				if compression.OverThreshold(messages, measured, threshold) {
 					// 摘要的独立 LLM 调用（内部上限 90s）不经过 step/llm 心跳，须显式续期。
 					activity.Heartbeat(ctx, "compress:emergency")
 					newMessages, emergencyStats := compression.EmergencyCompressMessages(ctx, messages, cfg.UserInput, threshold, cfg.LLM, cfg.AgentName, compression.DefaultEmergencyCompressKeepLastN)
 					messages = newMessages
+					// 消息列表被整段重写，上一步的计量已经对不上任何一条消息了 —— 清零，
+					// 下一步回落到全量本地估算，直到又一次响应带回新的计量。
+					measured = compression.Prefix{}
 					history = make([]llm.Message, len(messages))
 					copy(history, messages)
 					if emergencyStats != nil && cfg.Publisher != nil {
@@ -539,10 +547,11 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 							SavedTokens:  emergencyStats.SavedTokens,
 						})
 					}
-					if compression.EstimateMessagesTokens(messages) > threshold && cfg.EnableUltimateCompression && cfg.UltimateThinkLink != nil {
+					if compression.OverThreshold(messages, measured, threshold) && cfg.EnableUltimateCompression && cfg.UltimateThinkLink != nil {
 						ultCompressor := compression.NewContextCompressor(cfg.LLM, cfg.AgentName, cfg.UltimateThinkLink, nil)
 						newMessages, ultStats := ultCompressor.ApplyUltimate(messages, threshold, nil, cfg.UltimateKeepPlans)
 						messages = newMessages
+						measured = compression.Prefix{} // 同 emergency：列表被重建，计量作废
 						history = make([]llm.Message, len(messages))
 						copy(history, messages)
 						if ultStats != nil && cfg.Publisher != nil {
@@ -593,6 +602,10 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			llmCtx, llmCancel := context.WithTimeout(ctx, llmTimeout)
 			resp, err = cfg.LLM.GenerateContent(llmCtx, messages, defsForStep(), opts)
 			llmCancel()
+
+			// 计量刷新点：这次送出去的 messages 正是 provider 数过的那一段，所以 sentLen 取
+			// 追加 assistant 回复与工具结果**之前**的长度。规则本身在 compression.Prefix.Refresh。
+			measured = measured.Refresh(resp, err, len(messages))
 
 			activity.Heartbeat(ctx, "llm:done")
 
