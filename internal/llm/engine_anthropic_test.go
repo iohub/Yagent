@@ -19,7 +19,7 @@ import (
 // 或 Agent 看不见工具。
 
 func anthropicEngine(baseURL string, cfg config.LLMConfig) *AnthropicEngine {
-	return NewAnthropicEngine(baseURL+"/v1", "sk-test", "claude-sonnet-4", cfg, "")
+	return NewAnthropicEngine(testProvider(baseURL+"/v1", "sk-test", "claude-sonnet-4"), cfg)
 }
 
 const okAnthropic = `{"id":"m1","type":"message","role":"assistant",
@@ -27,7 +27,7 @@ const okAnthropic = `{"id":"m1","type":"message","role":"assistant",
 "usage":{"input_tokens":10,"output_tokens":5}}`
 
 func TestAnthropicEngine_Model(t *testing.T) {
-	var e Engine = NewAnthropicEngine("http://127.0.0.1:1/v1", "k", "claude-x", config.LLMConfig{}, "")
+	var e Engine = NewAnthropicEngine(testProvider("http://127.0.0.1:1/v1", "k", "claude-x"), config.LLMConfig{})
 	if e.Model() != "claude-x" {
 		t.Errorf("Model() = %q, want claude-x", e.Model())
 	}
@@ -220,6 +220,49 @@ func TestAnthropicBuildRequest_MaxTokensAndTools(t *testing.T) {
 	}
 	if got, _ := json.Marshal(toolReq.Tools[1].InputSchema); string(got) != `{"type":"object"}` {
 		t.Errorf("显式 input_schema = %s, want 原样透传", got)
+	}
+}
+
+// provider 的 max_tokens / temperature 必须进请求体。此前引擎里写死 8192，
+// 配置值只在日志里出现过 —— 表现是"改了 max_tokens 什么也没变"。
+// thinking 那一支仍然由 budget+4096 兜底：provider 的上限低于思考预算时必须抬上去，
+// 否则 thinking 被输出上限吃掉，provider 直接 400。
+func TestAnthropicBuildRequest_ProviderDefaults(t *testing.T) {
+	provider := testProvider("http://127.0.0.1:1/v1", "k", "claude-x")
+	provider.MaxTokens = 20000
+	provider.Temperature = 0.4
+	e := NewAnthropicEngine(provider, config.LLMConfig{})
+
+	base := e.buildRequestBody([]Message{{Role: RoleUser, Content: "x"}}, nil, &CallOptions{})
+	if base.MaxTokens != 20000 {
+		t.Errorf("max_tokens = %d, want provider 默认 20000", base.MaxTokens)
+	}
+	if base.Temperature != 0.4 {
+		t.Errorf("temperature = %v, want provider 默认 0.4", base.Temperature)
+	}
+
+	// 单次调用优先于 provider 默认。
+	over := e.buildRequestBody([]Message{{Role: RoleUser, Content: "x"}}, nil,
+		&CallOptions{MaxTokens: 60000, Temperature: 0.9})
+	if over.MaxTokens != 60000 || over.Temperature != 0.9 {
+		t.Errorf("opts = %+v, want 60000/0.9 覆盖 provider 默认", over)
+	}
+
+	// provider 上限低于 high 档思考预算（24576）→ 抬到 budget+4096。
+	think := e.buildRequestBody([]Message{{Role: RoleUser, Content: "x"}}, nil,
+		&CallOptions{ReasoningEffort: "high"})
+	if think.Thinking == nil || think.Thinking.BudgetTokens != 24576 {
+		t.Fatalf("thinking = %+v, want {enabled, 24576}", think.Thinking)
+	}
+	if think.MaxTokens != 24576+4096 {
+		t.Errorf("max_tokens = %d, want budget+4096=%d（provider 的 20000 装不下思考预算）",
+			think.MaxTokens, 24576+4096)
+	}
+
+	// 没配 max_tokens 时保持 8192 兜底，别突然不发这个字段（Messages API 要求必填）。
+	bare := NewAnthropicEngine(testProvider("http://127.0.0.1:1/v1", "k", "claude-x"), config.LLMConfig{})
+	if got := bare.buildRequestBody([]Message{{Role: RoleUser, Content: "x"}}, nil, nil); got.MaxTokens != 8192 {
+		t.Errorf("默认 max_tokens = %d, want 8192", got.MaxTokens)
 	}
 }
 
@@ -488,7 +531,7 @@ func TestAnthropicEngine_Headers(t *testing.T) {
 		return 200, okAnthropic
 	})
 	// 构造方给的 baseURL 以 / 结尾时必须吃掉，否则拼成 //v1/messages。
-	e := NewAnthropicEngine(srv.URL+"/v1/", "sk-test", "claude-sonnet-4", config.LLMConfig{}, "")
+	e := NewAnthropicEngine(testProvider(srv.URL+"/v1/", "sk-test", "claude-sonnet-4"), config.LLMConfig{})
 
 	if _, err := e.GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil, nil); err != nil {
 		t.Fatalf("GenerateContent: %v", err)
@@ -521,7 +564,9 @@ func TestAnthropicEngine_ThinkingSendsBetaHeader(t *testing.T) {
 		got = req
 		return 200, okAnthropic
 	})
-	e := NewAnthropicEngine(srv.URL+"/v1", "k", "claude-x", config.LLMConfig{}, "high")
+	provider := testProvider(srv.URL+"/v1", "k", "claude-x")
+	provider.ReasoningEffort = "high"
+	e := NewAnthropicEngine(provider, config.LLMConfig{})
 
 	if _, err := e.GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil, nil); err != nil {
 		t.Fatalf("GenerateContent: %v", err)

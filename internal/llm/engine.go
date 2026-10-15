@@ -16,14 +16,14 @@ const (
 
 // Message represents a single message in a conversation.
 type Message struct {
-	Role       Role       `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolName   string     `json:"name,omitempty"`
-	Reasoning  string          `json:"reasoning_content,omitempty"` // thinking/reasoning from models that support it
-	IsAnchored bool            `json:"-"`                           // 锚定标记，true 表示此消息永不压缩
-	TruncationMarker *TruncationMarker `json:"-"` // 截断标记，记录工具结果被截断的信息
+	Role             Role              `json:"role"`
+	Content          string            `json:"content,omitempty"`
+	ToolCalls        []ToolCall        `json:"tool_calls,omitempty"`
+	ToolCallID       string            `json:"tool_call_id,omitempty"`
+	ToolName         string            `json:"name,omitempty"`
+	Reasoning        string            `json:"reasoning_content,omitempty"` // thinking/reasoning from models that support it
+	IsAnchored       bool              `json:"-"`                           // 锚定标记，true 表示此消息永不压缩
+	TruncationMarker *TruncationMarker `json:"-"`                           // 截断标记，记录工具结果被截断的信息
 }
 
 // ToolDef defines a tool available to the LLM.
@@ -84,10 +84,11 @@ type Choice struct {
 }
 
 // CallOptions holds optional parameters for LLM calls.
+// 零值表示不覆盖，改用 provider 的同名默认值。
 type CallOptions struct {
-	MaxTokens       int
-	Temperature     float64
-	StreamHandler   StreamHandler
+	MaxTokens     int
+	Temperature   float64
+	StreamHandler StreamHandler
 	// ReasoningEffort overrides the provider-level reasoning effort for this call.
 	// Non-empty value ("high" or "max") enables DeepSeek thinking mode.
 	ReasoningEffort string

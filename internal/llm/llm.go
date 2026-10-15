@@ -285,9 +285,9 @@ func LoadConfig(configPath string) (*config.Config, error) {
 
 func NewEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) Engine {
 	if provider.IsAnthropic() {
-		return NewAnthropicEngine(provider.APIBaseURL, provider.APIKey, provider.Model, llmCfg, provider.ReasoningEffort)
+		return NewAnthropicEngine(provider, llmCfg)
 	}
-	return NewOpenAIEngine(provider.APIBaseURL, provider.APIKey, provider.Model, llmCfg, provider.ReasoningEffort)
+	return NewOpenAIEngine(provider, llmCfg)
 }
 
 func NewClient(cfg *config.Config) (*Client, error) {
