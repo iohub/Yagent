@@ -1,56 +1,66 @@
-# Yagent 配置指南
+# Yagent Configuration Guide
 
-> **定位说明**：本文档是面向用户的**完整配置参考手册**，涵盖所有配置段、优先级机制、故障转移、场景示例等。专项主题请参考：
-> - [Anthropic API 配置](./anthropic-config.md) — Claude 模型接入与 Extended Thinking
-> - [LLM 故障转移配置](./llm-fallback-config.md) — 多 Provider 降级策略
-> - [上下文压缩配置](./context-compression-config.md) — 长对话上下文管理
-
----
-
-## 1. 配置文件概述
-
-### 1.1 三层配置架构
-
-Yagent 支持**三层覆盖**的配置文件加载机制，优先级从高到低：
-
-| 优先级 | 路径 | 用途 |
-|:------:|------|------|
-| **高** | `~/.yagent/config/config.toml` | 用户级配置，覆盖全局默认值 |
-| **中** | `config/config.toml` | 项目级配置，适用于当前工作空间 |
-| **低** | `internal/config/default_config.toml` | 内置默认配置，应用层兜底 |
-
-**加载规则**：高层级配置会覆盖低层级的同名配置项。如果某个配置段完全缺失，应用层会通过 `validate()` 自动填充所有字段的默认值。
-
-### 1.2 配置文件路径解析
-
-启动时，Yagent 按以下顺序确定配置文件路径：
-
-1. **命令行 `--config` / `-c`**：优先使用指定路径（不自动创建文件）
-   ```bash
-   yagent --config /path/to/my-config.toml
-   ```
-2. **用户级默认**：`$HOME/.yagent/config/config.toml`（不存在时自动生成）
-3. **项目级兜底**：`config/config.toml`（不存在时自动生成）
-
-### 1.3 首次运行自动生成
-
-如果配置文件不存在，Yagent 会自动调用 `EnsureConfigExists()` 从内置模板（`internal/config/default_config.toml`）生成默认配置文件，采用原子写入方式（先写 `.tmp` 再 rename）避免损坏。
-
-### 1.4 热重载支持
-
-配置文件支持**热重载**。修改配置文件后，系统通过 `fsnotify` 自动检测变更，经 500ms 防抖后重新加载配置并通知所有订阅者。
-
-热重载覆盖以下配置段：`global`、`agents`、`tools`、`app`、`agent`、`llm`、`browser`、`keywords`、`task_timeout`。
-
-> **注意**：热重载行为以实际代码为准，部分内部状态变更可能不会自动生效。
+> **Scope**: this is the user-facing reference for `config.toml` — every section, the provider
+> resolution chain, failover, and scenario examples. Related deep dives:
+> - [Anthropic API configuration](./anthropic-config.md) — Claude access and Extended Thinking
+> - [LLM failover configuration](./llm-fallback-config.md) — multi-provider fallback strategies
+> - [Context compression trigger design](./compression-trigger-design.md) — how the threshold is
+>   derived and measured
+> - [Pause / resume design](./pause-resume-design.md) — what the `[resume]` budget controls
+>
+> Every key listed here was checked against the current code (2026-10-15). Keys the code parses
+> but never reads are called out in place and collected in [§7](#7-keys-that-are-parsed-but-do-nothing).
 
 ---
 
-## 2. 快速开始
+## 1. Configuration file basics
 
-### 2.1 最小可运行配置
+### 1.1 Which file is loaded — one file, no layering
 
-只需定义一个 Provider 并指定默认使用它：
+Yagent reads **exactly one** TOML file. There is no merge between an "user layer", a "project
+layer" and a "built-in layer" (older versions of this document claimed there was). `getConfigPath()`
+in `main.go` picks the first applicable entry:
+
+| Order | Path | Behaviour when missing |
+|:-----:|------|------------------------|
+| 1 | `--config` / `-c <path>` | Used verbatim; **never created**, never defaulted. A bad path is a startup error. |
+| 2 | `$HOME/.yagent/config/config.toml` | Generated from the embedded template (this is the normal path) |
+| 3 | `./config/config.toml` | Reached only if the home directory lookup itself fails |
+
+The repo's `config/config.toml` is therefore a **reference example**, not an active config layer. The
+file that actually runs is the one in `~/.yagent/config/` — copy or link it there.
+
+Because a single file is loaded, a key you change in `config/config.toml` while running from
+`~/.yagent/config/config.toml` has no effect at all.
+
+### 1.2 First-run generation
+
+When the chosen path does not exist, `config.EnsureConfigExists()` materialises the embedded
+template `internal/config/default_config.toml` with an atomic write (`.tmp` then rename), so an
+interrupted write cannot leave a half-written config. An existing file is **never** overwritten.
+
+### 1.3 What changes at runtime (and gets written back)
+
+There is no configuration hot-reload: the file is parsed once at startup. (The `fsnotify` module is
+still listed in `go.mod` but no Go code imports it any more.) Three things can be changed while
+Yagent runs, and each writes its key back into the loaded file with a text-level edit that preserves
+comments and ordering (`internal/config/persist.go`):
+
+| TUI control | Key written | Effect |
+|-------------|-------------|--------|
+| `/model` (also Alt+M) | `[global.llm].use_provider`, `[agents.llm.<agent>]`, `[tools.llm.<tool>]` | Immediate engine re-resolution; `deepthinking` is hot-swapped too |
+| `/timeout` | `[llm].timeout` | New global per-call timeout, takes effect from the next call |
+| `/route` | `[routing].mode` | Switches auto-routing between `auto` and `fixed` |
+
+Anything else needs a restart.
+
+---
+
+## 2. Quick start
+
+### 2.1 Minimal working configuration
+
+One provider plus the selection of it is enough:
 
 ```toml
 [global.llm]
@@ -58,119 +68,145 @@ use_provider = "deepseek_v4_pro"
 
 [global.llm.providers.deepseek_v4_pro]
 model = "deepseek-v4-pro"
-temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.deepseek.com/v1"
 api_key = "sk-your-key"
 ```
 
-保存文件后启动 Yagent 即可。
+Validation only requires `use_provider`, a provider with a `model`, and non-empty `api_key` +
+`api_base_url` — it never tests whether the key works.
 
-### 2.2 切换默认 Provider
-
-修改 `[global.llm]` 中的 `use_provider` 即可切换全局默认：
+### 2.2 Switching the default provider
 
 ```toml
 [global.llm]
-use_provider = "local"   # 切换到本地模型
+use_provider = "local"   # move everything to the local model
 ```
 
 ---
 
-## 3. 配置总览表
+## 3. Section index
 
-| 配置段 | 作用 | 是否必需 |
-|--------|------|:--------:|
-| `[global.llm]` + `[global.llm.providers.*]` | 定义 LLM Provider（模型、API 地址、密钥等） | **是**（至少 1 个） |
-| `[global.llm.use_provider]` | 指定默认使用的 Provider | **是** |
-| `[agents.llm.*]` | Agent 级 LLM 覆盖 | 否 |
-| `[tools.llm.*]` | 工具级 LLM 覆盖 | 否 |
-| `[app]` | 应用设置（流式输出等） | 否 |
-| `[agent]` | Agent 行为配置（步数限制、YOLO 模式等） | 否 |
-| `[llm]` | LLM 推理兜底配置（超时、重试、熔断、故障转移） | 否 |
-| `[codeseek]` + `[codeseek.knowledge]` | CodeSeek MCP 代码分析引擎 | 否 |
-| `[browser]` | 浏览器配置（视口、超时、并发等） | 否 |
-| `[keywords]` | 关键词词典配置 | 否 |
-| `[git_checkpoint]` | Git Checkpoint 机制 | 否 |
-| `[enhanced_commander]` | 增强型 Commander（分布式认知架构） | 否 |
-| `[tui]` | TUI 快捷键配置 | 否 |
-| `task_timeout` | 全局任务超时（根级字段） | 否 |
+| Section | Purpose | Required |
+|---------|---------|:--------:|
+| `[global.llm]` + `[global.llm.providers.*]` | Define LLM providers (model, endpoint, key) | **Yes** (at least one) |
+| `[agents.llm.*]` | Per-agent provider override | No |
+| `[tools.llm.*]` | Per-tool provider override (highest precedence) | No |
+| `[tools.deferred]` | Deferred tool-schema behaviour (catalog + `load_tool`) | No |
+| `[agent]` | Agent behaviour: step caps, YOLO, delegation watchdogs | No |
+| `[llm]` | Per-call timeout, retries, breaker, failover | No |
+| `[routing]` | Benchmark-scored automatic model routing | No |
+| `[codeseek]` + `[codeseek.knowledge]` | CodeSeek MCP engine (and the injection block, inert today) | No |
+| `[browser]` | Browser-Agent driving the external `browser-control` CLI | No |
+| `[blackboard]` | Cross-agent note board budgets | No |
+| `[resume]` | Stop / resume checkpoint and replay budgets | No |
+| `[enhanced_commander]` | Context compression and commander options | No |
+| `[git_checkpoint]` | Git checkpoint / branch lifecycle | No |
+| `[keywords]` | Keyword completion (only one live key) | No |
+| `[app]` | Legacy application flags (no live keys) | No |
+| `[tui]` | TUI keybindings | No |
+| `task_timeout` | Global task timeout (root field, http mode only) | No |
 
 ---
 
-## 4. LLM 配置详解
+## 4. LLM configuration
 
-### 4.1 Provider 字段表
+### 4.1 Provider fields
 
-所有 Provider 配置均位于 `[global.llm.providers.<name>]` 段：
+Every provider lives in `[global.llm.providers.<name>]`. A provider is just a base URL plus a key,
+so any OpenAI-compatible endpoint works (DashScope, SiliconFlow, DeepSeek, Moonshot, Mistral, Z.ai,
+OpenRouter, vLLM, Ollama's OpenAI surface ...).
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `model` | string | — | 模型名称（必填，如 `qwen3-coder-plus`、`deepseek-v4-pro`） |
-| `temperature` | float | `0.0` | 生成随机性，范围 0.0~1.0 |
-| `max_tokens` | int | — | 最大输出 token 数 |
-| `api_base_url` | string | — | API 端点地址（必填） |
-| `api_key` | string | — | API 密钥（必填） |
-| `api_format` | string | `"openai"` | API 格式：`"openai"`（默认）或 `"anthropic"` |
-| `reasoning_effort` | string | `""` | 推理强度（DeepSeek thinking 模式：`"low"`/`"medium"`/`"high"`/`"max"`） |
-| `aws_region` | string | `""` | AWS Bedrock 区域 |
-| `aws_profile` | string | `""` | AWS 配置文件名 |
-| `model_provider` | string | `""` | Bedrock 显式 Provider（如 `"anthropic"`、`"amazon"`） |
-| `fallback_providers` | array | `[]` | 故障转移备选 Provider 列表 |
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `model` | string | — | Required (e.g. `qwen3-coder-plus`, `deepseek-v4-pro`) |
+| `api_base_url` | string | — | Required, except for the Bedrock name-prefix exemption below |
+| `api_key` | string | — | Required, except for the Bedrock name-prefix exemption below |
+| `temperature` | float | not sent | **`0` is treated as "not set"**: the field is a plain `float64`, so "wrote `0.0`" and "left it out" are indistinguishable, and `0` means the request omits `temperature`. Forcing greedy decoding via config is not currently possible. |
+| `max_tokens` | int | not sent | Engine-level default. Priority: per-call override > this value > field omitted. The Anthropic API requires it, so an unset value falls back to 8192. |
+| `context_window` | int | `0` | **Affects only the TUI context progress bar.** It is not used for the compression threshold (§5.9). `0`/unset = no bar. |
+| `reasoning_effort` | string | `""` | openai side: passed through verbatim, plus `thinking={type:enabled}`. anthropic side: mapped to `thinking.budget_tokens` — `low`/`medium`/`high`/`max` = 1024/8192/24576/32000, `max_tokens` is raised to budget+4096 and `temperature` forced to 1.0. An unrecognised value means "thinking off"; `budget_tokens: 0` is never sent. |
+| `api_format` | string | `"openai"` | `"openai"` or `"anthropic"` (native Messages API) |
+| `aws_region` | string | `""` | Only consumed as the Bedrock exemption's own requirement (see below) |
+| `aws_profile` | string | `""` | Parsed, no consumer |
+| `model_provider` | string | `""` | Parsed, no consumer |
+| `fallback_providers` | array | `[]` | Failover list; needs `[llm] enable_fallback = true` |
 
-### 4.2 优先级链
+**Bedrock caveat**: the required-key exemption is decided by the *name* of the effective provider —
+`strings.HasPrefix(effectiveProvider, "bedrock")` — not by `api_format`. A real Bedrock setup whose
+provider is named something else still gets `api_key`/`api_base_url` demanded, and a provider merely
+*named* `bedrock*` skips them. There is no Bedrock-specific client; it still speaks the
+OpenAI-compatible protocol.
 
-LLM Provider 解析遵循以下优先级（从高到低）：
+### 4.2 Resolution chain
+
+Highest precedence first:
 
 ```
-tools.llm.<tool>.use_provider      ← 工具级覆盖（最高）
+tools.llm.<tool>.use_provider       ← per-tool override
     ↓
-tools.llm.use_provider             ← 工具默认
+tools.llm.use_provider              ← tool default
     ↓
-agents.llm.<agent>.use_provider    ← Agent 级覆盖
+agents.llm.<agent>.use_provider     ← per-agent override
     ↓
-agents.llm.use_provider            ← Agent 默认
+agents.llm.use_provider             ← agent default
     ↓
-global.llm.use_provider            ← 全局默认（最低）
+global.llm.use_provider             ← global default
 ```
 
-### 4.3 Agent 级覆盖列表
+`ResolveProvider(agentName, toolName)` walks that chain; if nothing matches, startup fails with
+`no LLM provider configured`.
 
-| Agent | 配置段 | 默认 Provider |
-|-------|--------|:-------------:|
-| Director | `[agents.llm.director]` | `deepseek_v4_pro` |
-| Coding | `[agents.llm.coding]` | `local` |
-| Repo | `[agents.llm.repo]` | `local` |
-| Browser | `[agents.llm.browser]` | `local` |
-| Chat | `[agents.llm.chat]` | `local` |
-| Meta | `[agents.llm.meta]` | `local` |
-| DevOps | `[agents.llm.devops]` | `local` |
+### 4.3 Agent-level overrides
 
-示例：覆盖 Coding Agent 使用 DeepSeek：
+| Agent | Section | Live? |
+|-------|---------|:-----:|
+| Director | `[agents.llm.director]` | Yes |
+| Coding | `[agents.llm.coding]` | Yes |
+| Repo | `[agents.llm.repo]` | Yes |
+| Chat | `[agents.llm.chat]` | Yes |
+| DevOps | `[agents.llm.devops]` | Yes |
+| Meta | `[agents.llm.meta]` | Yes |
+| **Browser** | `[agents.llm.browser]` | **No — see below** |
+
+The switch in `config.getAgentOverride()` has exactly six cases. `[agents.llm.browser]` is reported
+by the TOML decoder as an undecoded key and silently ignored, so the Browser Agent can only be moved
+by `[agents.llm].use_provider` or the global default. To give the browser its own provider today,
+the only lever is automatic routing's per-role baseline (§5.4) or a runtime `/model` override.
 
 ```toml
 [agents.llm.coding]
 use_provider = "deepseek_v4_pro"
 ```
 
-### 4.4 工具级覆盖列表
+### 4.4 Tool-level overrides
 
-| 工具 | 配置段 | 默认 Provider |
-|------|--------|:-------------:|
-| thinking | `[tools.llm.thinking]` | `deepseek_v4_pro` |
-| deepthinking | `[tools.llm.deepthinking]` | `deepseek_v4_pro` |
+| Tool | Section |
+|------|---------|
+| thinking | `[tools.llm.thinking]` |
+| deepthinking | `[tools.llm.deepthinking]` |
+| design | `[tools.llm.design]` |
+| micro_agent | `[tools.llm.micro_agent]` |
 
-### 4.5 故障转移 fallback_providers
+```toml
+[tools.llm.deepthinking]
+use_provider = "deepseek_v4_pro"
+```
 
-每个 Provider 可声明备选列表，当主 Provider 调用失败（429/5xx/超时）时自动切换。详见 [LLM 故障转移配置指南](./llm-fallback-config.md)。
+### 4.5 Failover (`fallback_providers`)
 
-#### 格式一：简写（按声明顺序尝试）
+Declare alternates on a provider; when the primary call fails (429 / 5xx / timeout) the fallback
+engine tries them in order. Requires `[llm] enable_fallback = true`. Names that are not defined in
+`[global.llm.providers]` are dropped. See
+[LLM failover configuration](./llm-fallback-config.md).
+
+Shorthand (declaration order wins):
 
 ```toml
 fallback_providers = ["deepseek_v4_pro", "local"]
 ```
 
-#### 格式二：完整（按权重排序，weight 越大越优先）
+Full form (higher weight first; entries without weight keep declaration order):
 
 ```toml
 fallback_providers = [
@@ -179,208 +215,354 @@ fallback_providers = [
 ]
 ```
 
-### 4.6 api_format="anthropic" 与 reasoning_effort
+### 4.6 `api_format = "anthropic"` with `reasoning_effort`
 
-- `api_format = "anthropic"`：启用 Anthropic Messages API 原生格式，支持 Claude Extended Thinking
-- `reasoning_effort`：控制推理深度，值映射为 `thinking.budget_tokens`（`"low"`=1024、`"medium"`=8192、`"high"`=24576、`"max"`=32000）
-
-详细说明参见 [Anthropic API 配置](./anthropic-config.md)。
-
----
-
-## 5. 各配置段详解
-
-### 5.1 `[agent]` — Agent 行为配置
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `yolo_mode` | bool | `false` | YOLO 模式：自动批准所有危险操作 |
-| `full_yolo_mode` | bool | `false` | 完全自治模式（移除 `ask_user_for_help`，Agent 独立决策） |
-| `director_max_steps` | int | `100` | Director 最大步数 |
-| `coding_max_steps` | int | `150` | Coding Agent 最大步数 |
-| `repo_max_steps` | int | `50` | Repo Agent 最大步数 |
-| `chat_max_steps` | int | `50` | Chat Agent 最大步数 |
-| `devops_max_steps` | int | `50` | DevOps Agent 最大步数 |
-| `browser_max_steps` | int | `200` | Browser Agent 最大步数 |
-| `meta_max_steps` | int | `50` | Meta Agent 最大步数 |
-| `meta_retry_count` | int | `5` | Meta Agent 重试次数 |
-| `lang` | string | `""` | 对话语言（空=默认） |
-
-> **⚠️ YOLO 模式警告**：`yolo_mode = true` 将跳过所有危险操作的用户确认。`full_yolo_mode = true` 将进一步移除 `ask_user_for_help` 工具，Agent 完全自主决策。仅在受控环境中使用。
-
-命令行等效选项：`--yolo` / `--full-yolo`。
-
-### 5.2 `[llm]` — LLM 推理兜底配置
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `timeout` | duration | `"5m"` | 单次 LLM 调用超时，`"0s"` = 不启用 |
-| `max_retries` | int | `5` | 底层引擎重试次数 |
-| `step_retries` | int | `0` | 步骤重试次数（executor/director/meta），`0` = 不重试 |
-| `circuit_breaker_threshold` | int | `0` | 熔断阈值（连续失败次数），`0` = 不启用 |
-| `circuit_breaker_reset_timeout` | duration | `"0s"` | 熔断恢复时间（默认 `"0s"`；仅在 `circuit_breaker_threshold > 0` 时生效，此时自动填充为 `60s`） |
-| `enable_fallback` | bool | `false` | 启用 Provider 级故障转移 |
-| `fallback_max_retries` | int | 使用 `max_retries` 的值 | 每个备选 Provider 的内部重试次数 |
-
-详细说明参见 [LLM 故障转移配置指南](./llm-fallback-config.md)。
-
-### 5.3 `[app]` — 应用设置
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enable_streaming` | bool | `true` | 启用流式输出 |
-
-### 5.4 `[codeseek]` + `[codeseek.knowledge]` — CodeSeek MCP 引擎
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `binary_path` | string | `""` | codeseek 二进制路径（空 = 不启用 MCP） |
-| `mcp_args` | array | `["serve", "--mcp"]` | MCP 启动参数 |
-| `request_timeout` | int | `30` | 请求超时秒数 |
-
-**`[codeseek.knowledge]` 子段：**
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enabled` | bool | `true` | 是否启用知识管理功能 |
-| `injection_max_tokens` | int | `2000` | 知识注入最大 token 数 |
-| `injection_max_entries` | int | `8` | 知识注入最大条目数 |
-| `injection_min_score` | float | `0.3` | 知识检索最低得分阈值 |
-| `injection_rerank` | bool | `true` | 是否请求 Cross-Encoder 精排 |
-
-### 5.5 `[browser]` — 浏览器配置
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `headless` | bool | `true` | 无头模式 |
-| `browser_path` | string | `""` | 浏览器可执行文件路径（空 = 自动查找） |
-| `user_data_dir` | string | `""` | 用户数据目录（空 = 临时目录） |
-| `viewport_width` | int | `1280` | 视口宽度 |
-| `viewport_height` | int | `720` | 视口高度 |
-| `timeout_seconds` | int | `120` | 单页操作超时（秒） |
-| `task_timeout_seconds` | int | `300` | 单个浏览器任务超时（秒） |
-| `max_concurrent_pages` | int | `4` | 最大并发页面数 |
-| `auto_launch` | bool | `true` | 是否自动启动浏览器 |
-| `idle_timeout` | string | `"5m"` | 空闲超时 |
-| `allow_no_sandbox` | bool | `false` | 允许 `--no-sandbox` 启动（容器环境需要） |
-| `enable_browser_agent` | bool | `true` | 总开关：禁用后 Browser-Agent 不可用 |
-| `allowed_domains` | array | `[]` | 允许访问的域名白名单（空 = 不限制） |
-| `blocked_domains` | array | `[]` | 禁止访问的域名黑名单 |
-| `extra_args` | array | `[]` | 附加浏览器启动参数 |
-
-### 5.6 `[keywords]` — 关键词词典配置
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `default_path` | string | `~/.yagent/keywords.txt` | 默认关键词文件路径 |
-| `hot_reload` | bool | `false` | 是否启用热重载 |
-| `disable_completion` | bool | `false` | 禁用关键词自动补全 |
-
-**子表 `[[keywords.dict]]`：**
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `name` | string | — | 词典名称 |
-| `files` | array | `[]` | 关键词文件路径列表（空 = 使用 DefaultPath） |
-| `type` | string | `"prefix"` | 词典类型：`"prefix"`（前缀匹配/补全）或 `"exact"`（精确匹配/扫描） |
-| `builtin_type` | string | `"default"` | 内置类型：`"default"` 或 `"none"` |
-
-### 5.7 `[git_checkpoint]` — Git Checkpoint 机制
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enabled` | bool | `true` | 总开关 |
-| `auto_checkpoint` | bool | `false` | **DEPRECATED**：已废弃，checkpoint 由 agent 通过 `git_checkpoint_create` 工具创建 |
-| `checkpoint_interval` | int | `0` | **DEPRECATED**：已废弃 |
-| `max_checkpoints` | int | `50` | 最大保留的 checkpoint 数量 |
-| `squash_on_exit` | bool | `true` | Agent 退出时 squash 合并到主分支 |
-| `generate_commit_message` | bool | `true` | 使用 LLM 生成 commit 消息 |
-| `agent_branch_prefix` | string | `"agent"` | agent 工作分支前缀 |
-| `checkpoint_tag_prefix` | string | `"checkpoint/coding"` | checkpoint 标签前缀 |
-| `stash_dirty_worktree` | bool | `true` | 启动时 stash 未提交的变更 |
-| `cleanup_agent_branch` | bool | `true` | 退出时清理 agent 分支 |
-| `cleanup_checkpoint_tags` | bool | `true` | 退出时清理 checkpoint 标签 |
-| `auto_merge_on_exit` | bool | `false` | 退出时自动 squash-merge（`false` 则保留分支供人工审查合并） |
-
-### 5.8 `[enhanced_commander]` — 增强型 Commander
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enable` | bool | `false` | 总开关 |
-| `max_delegation_depth` | int | `3` | 最大委派深度 |
-| `enable_context_compression` | bool | `false` | 启用上下文压缩（超阈值截断 tool 执行结果），适用于 Director、Repo-Agent、Coding-Agent、DevOps-Agent、Browser-Agent |
-| `context_compression_threshold` | int | `120000` | 触发上下文压缩的 token 阈值（仅在模型未被内嵌 models.json 收录时生效，命中时按「上下文窗口 × 0.75」推导） |
-| `tool_result_keep_tokens` | int | `200` | 截断后每条 tool 结果保留的 token 数 |
-| `enable_ultimate_compression` | bool | `true` | 第三档：前两级压完仍超限时，用 thinklink 记录的 Thought & Plan 重建上下文 |
-| `ultimate_compression_keep_plans` | int | `0` | 重建时保留的 Thought & Plan 块数上限，`0` = 全部保留 |
-
-### 5.9 `[tui]` — TUI 快捷键配置
-
-**编辑模式快捷键：**
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `submit_task` | string | `"alt+s"` | 提交任务 |
-| `command_mode` | string | `"ctrl+e"` | 进入命令模式 |
-| `toggle_help` | string | `"ctrl+h"` | 切换帮助 |
-| `toggle_timeline` | string | `"ctrl+l"` | 切换全屏时间线 |
-| `page_down` | string | `"ctrl+f"` | 向下翻页 |
-| `page_up` | string | `"ctrl+b"` | 向上翻页 |
-| `quit` | string | `"ctrl+c"` | 退出 |
-| `switch_model` | string | `"alt+m"` | 切换模型 |
-| `toggle_dashboard` | string | `"alt+d"` | 收缩/展开右上角仪表盘 |
-
-**命令模式快捷键：**
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `scroll_down` | string | `"j"` | 向下滚动一行 |
-| `scroll_up` | string | `"k"` | 向上滚动一行 |
-| `page_down` | string | `"f"` | 向下翻页 |
-| `page_up` | string | `"b"` | 向上翻页 |
-| `edit_mode` | string | `"i"` | 进入编辑模式 |
-| `toggle_help` | string | `"?"` | 显示帮助 |
-| `toggle_token_panel` | string | `"alt+t"` | 切换 Token 面板 |
-| `switch_model` | string | `"alt+m"` | 切换模型 |
-| `toggle_dashboard` | string | `"alt+d"` | 收缩/展开右上角仪表盘 |
-| `quit` | string | `"ctrl+c"` | 退出 |
-
-### 5.10 `[blackboard]` — 跨 Agent 便签板
-
-Director 把每次委派的结果写成便签（`~/.yagent/notes/{boardID}/{agent}/*.md`），
-后续委派通过 `context_refs` 与**自动注入的索引**把这些结论传给下一个子 Agent。
-完整设计见 `docs/blackboard-handoff-design.md`。
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `index_max_notes` | int | `12` | 索引每次最多列几条便签。**`0` = 关掉索引注入**（应急阀门），负数或没写 = 默认值 |
-| `index_line_chars` | int | `160` | 索引单行的 rune 预算。**显式 `0` = 不裁剪行**，负数或没写 = 默认值 |
-| `summary_max_runes` | int | `1200` | 给 Director 的 handoff 摘要预算（ContextPack 节选同源）；`<=0` = 默认值 |
-| `ttl` | duration | `"168h"` | board 目录多久没动就整目录清理。**`"0"` 或 `0` = 不清理**，负数 = 不清理 |
-| `max_notes_per_board` | int | `200` | 每个 board 保留的最新便签数，超出的旧便签删除。0 或负数 = 默认值（它没有"关"的语义，放宽就写大数字） |
-
-**关于"没写这一段"**：三个键的 `0` 各有含义，而缺省解析出来同样是 `0`，因此判定看**键的存在性**（`toml.MetaData.IsDefined`）而不是零值——
-整段缺省时全部取默认值，绝不会因为"没写 `index_max_notes`"就把索引静默关掉。
-段里只剩不认识的键时同样按整表缺省处理，并在启动日志里点名这些失效键。
-
-**总开关不在这里**：整个便签板由环境变量 `YAGENT_BLACKBOARD=0` 关闭（不写便签、不读便签、不注入索引）。
-不设 `[blackboard] enabled` 是有意的——布尔零值会把新能力静默关掉，这个坑在 `[browser] enabled` 上踩过。
-
-索引的体积上限是 `index_max_notes × index_line_chars`（默认约 1920 rune）。
-它会进 Director 的**每一轮**上下文与每次委派的任务前缀，所以是常驻成本；
-觉得太贵就调小 `index_max_notes`，想彻底关掉就写 `index_max_notes = 0`。
-
-### 5.11 `task_timeout` — 根级字段
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `task_timeout` | duration | `"0s"` | 全局任务超时（`"0s"` = 不启用，正数如 `"30m"` 表示超时时间） |
+`api_format = "anthropic"` switches to the native Messages API, which is what unlocks Claude Extended
+Thinking. There `reasoning_effort` is not forwarded verbatim: it selects a `thinking.budget_tokens`
+value (1024 / 8192 / 24576 / 32000), the request's `max_tokens` is raised to `budget + 4096`, and
+`temperature` is forced to `1.0` because the provider rejects other values while thinking is on.
+Details in [Anthropic API configuration](./anthropic-config.md).
 
 ---
 
-## 6. 场景示例
+## 5. Section reference
 
-### 6.1 日常开发：多 Provider + 故障转移
+### 5.1 `[agent]` — agent behaviour
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `yolo_mode` | bool | `false` | Auto-approves dangerous operations **inside the workspace** (same as `-y`) |
+| `full_yolo_mode` | bool | `false` | Full autonomy: implies yolo, allows paths outside the workspace, and removes `ask_user_for_help` (same as `-Y`) |
+| `director_max_steps` | int | `100` | Step cap for the Director loop |
+| `coding_max_steps` | int | `150` | Step cap for the Coding Agent |
+| `repo_max_steps` | int | `50` | Step cap for the Repo Agent |
+| `chat_max_steps` | int | `50` | Step cap for the Chat Agent |
+| `devops_max_steps` | int | `50` | Step cap for the DevOps Agent |
+| `browser_max_steps` | int | `200` | Step cap for the Browser Agent |
+| `meta_max_steps` | int | `50` | Parsed and normalised, **no consumer** — Meta emits one LLM call with no loop (§7) |
+| `meta_retry_count` | int | `5` | Retries when Meta emits invalid JSON |
+| `delegate_idle_timeout` | duration | derived | See below |
+| `delegate_total_timeout` | duration | `0` (= off) | Hard cap per delegation |
+| `max_parallel_readonly_tools` | int | `4` | Parallelism of a read-only tool run: `≤0` → 4, `>8` clamps to 8, **`1` = strictly serial (kill switch)** |
+| `lang` | string | `""` | Conversation language. Empty injects no instruction; e.g. `"Chinese"`, `"English"` |
+
+Step caps: `0` or an omitted key falls back to the code defaults listed above — the same numbers.
+`meta_max_steps` is the exception: it is normalised but never read, because Meta produces a single
+LLM call rather than running a tool loop.
+
+Delegation watchdogs (`activity.WithIdleTimeout`): when `delegate_idle_timeout` is unset, the idle
+threshold is **derived** as `max(10m, [llm] timeout + 5m)`; it must stay well above the longest
+heartbeat-free step (one LLM call) or healthy long reasoning gets killed. Writing a value `≤ [llm]
+timeout` warns at startup; negative values normalise to 0, i.e. back to the derived value.
+`delegate_total_timeout` measures from delegation start; `0` disables it. If it is smaller than the
+idle threshold, startup warns because the total cap fires first.
+
+> **YOLO warning**: `yolo_mode = true` skips every confirmation inside the workspace, and
+> `full_yolo_mode = true` additionally opens the filesystem outside it and removes the agent's last
+> escape hatch (`ask_user_for_help`). Use in controlled environments only.
+
+CLI equivalents: `--yolo` / `-y`, `--full-yolo` / `-Y`.
+
+### 5.2 `[llm]` — inference resilience
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `timeout` | duration | `10m` | Per-call LLM timeout. Runtime precedence: the global value set from `/timeout` or the Alt+M panel > this setting > `DefaultLLMCallTimeout` (10m). Overriding it at runtime writes this line back. |
+| `max_retries` | int | `5` | Engine-level retries — the request count is `max_retries + 1`. The SDK's own retries are disabled so this is the only budget. `≤0` → 5. |
+| `step_retries` | int | `0` | Step-level retries in the Director and sub-agent loops, `0` = off |
+| `circuit_breaker_threshold` | int | `0` | Consecutive failures before the breaker opens; **`0` = breaker disabled**, it is not created at all |
+| `circuit_breaker_reset_timeout` | duration | `60s` when the breaker exists | Only defaulted when `circuit_breaker_threshold > 0` |
+| `enable_fallback` | bool | `false` | Master switch for provider-level failover |
+| `fallback_max_retries` | int | follows `max_retries` | Retries inside each fallback provider |
+
+### 5.3 `[tools.deferred]` — deferred tool schemas
+
+Each step normally carries full JSON schemas only for "Hot" tools; "Cold" tools appear in a compact
+catalog and the model pulls the full schema back with `load_tool`. This block is read by
+`internal/agents/deps.go` and therefore shapes every agent's tool surface.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `disable` | bool | `false` | `true` = revert to "full schema on every step": no catalog, no `load_tool`. Troubleshooting / A-B comparison. |
+| `budget_tokens` | int | `2500` | Per-step declaration budget. **Omitted or `0` → 2500**; **negative = no budget at all** (only the registry's own tiers). Over budget, Warm tools are demoted to Cold, largest declaration first. |
+| `hot` / `cold` | array | — | Parsed, **no consumer** — retiering only happens through a profile's `Promote`/`Demote` lists (§7). |
+
+### 5.4 `[routing]` — benchmark-scored automatic routing
+
+With `mode = "auto"` (an empty value also means auto), startup scores **every model configured in any
+provider** against the embedded benchmark catalog (`dist/data/models.json`) and picks three tiers:
+highest score = high-IQ, median = balanced, lowest = fast. Each delegation runs one difficulty
+classification on the fast tier, and the sub-agent executes on the tier it picked; `deepthinking`
+always uses the high-IQ tier.
+
+Scoring: the **strict intersection** of the candidates' benchmark entries,
+`ai_score = Σ(score × weight)`, where DeepSWE, SWE-Bench Pro and GPQA Diamond weigh 1.5 and
+everything else 1.0. Fewer than three scorable candidates, or an empty intersection, disables `auto`
+and falls back to fixed-provider behaviour.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `mode` | string | `"auto"` | `"auto"` \| `"fixed"` (`fixed` turns routing off entirely) |
+| `[routing.baselines].<agent>` | string | per-role default | Tier used when the classifier fails. Values `fast` \| `balanced` \| `high` (`mid`/`cost` normalise to balanced, `smart` to high). Recognised agents: director, coding, repo, chat, devops, browser, meta |
+
+Default baselines without this block: `director=high`, `meta=high`, `coding=balanced`,
+`repo=balanced`, `chat=balanced`, `browser=balanced`, `devops=fast`.
+
+```toml
+[routing]
+mode = "auto"
+[routing.baselines]
+coding = "high"
+repo = "balanced"
+```
+
+### 5.5 `[codeseek]` + `[codeseek.knowledge]` — code-analysis engine
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `binary_path` | string | `""` | Empty → extract the embedded `dist/bin` to `~/.yagent/bin/codeseek`. Neither available = MCP off, agents fall back to plain file tools |
+| `mcp_args` | array | `["serve", "--mcp"]` | MCP launch arguments |
+| `request_timeout` | int | `30` | Request timeout, seconds (`≤0` → 30) |
+
+`[codeseek.knowledge]` — **inert today**: knowledge injection is hardcoded off (`Inject()` in
+`internal/knowledge/injector.go` returns early), so none of these keys produce any effect yet. They
+are kept so the defaults do not have to be re-guessed when injection returns. The write path is
+unaffected: `consolidate_knowledge` talks straight to MCP and does not read this block.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `enabled` | bool | `true` | Only decides whether the injector is constructed |
+| `injection_max_tokens` | int | `2000` | Token budget of the injected block |
+| `injection_max_entries` | int | `8` | Max entries injected |
+| `injection_min_score` | float | `0.3` | Minimum retrieval score |
+| `injection_rerank` | bool | `true` | Ask for cross-encoder reranking (auto-degrades if the codeseek reranker is off) |
+
+### 5.6 `[browser]` — Browser-Agent
+
+The Browser Agent drives a real Chrome through the external `browser-control` CLI; Go never speaks
+CDP itself.
+
+> **Section-presence trap**: whether this section counts as "configured" is decided by *at least one
+> key the current schema recognises* — and `enabled` is never defaulted. **If you write this section,
+> write `enabled` too**, otherwise the browser capability is silently off. Legacy keys from the old
+> stack (`headless`, `browser_path`, ...) are named in a startup warning and ignored.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `enabled` | bool | `true` (only when the section is absent) | Off → `delegate_browser` degrades to "unavailable + reason + how to fix it" |
+| `binary_path` | string | `""` | Lookup order: this value → `~/.yagent/bin/browser-control` → `$PATH`; none found = capability off |
+| `chrome_path` | string | `""` | Empty → `browser-control` auto-detects Chrome/Chromium |
+| `mode` | string | `"headless"` | `headless` \| `headful` \| `attach` (attach connects only, reusing a signed-in browser) |
+| `cdp_url` | string | `""` | Required with `mode = "attach"`, e.g. `http://127.0.0.1:9222`; missing is an error |
+| `cdp_port_base` | int | `9333` | First auto-launch port, incremented until free. Deliberately avoids 9222/9223 — upstream hard-scans those two when no CDP env var is set |
+| `cdp_timeout` | duration | `65s` | Upstream's internal CDP round-trip budget; must cover the longest wait (`browser_wait` up to 60s); its factory default is only 15s. Lower values warn and floor at 65s |
+| `command_timeout` | duration | `75s` | Per tool-call cap; must exceed `cdp_timeout` or it is raised to `cdp_timeout + 10s`, otherwise the outer layer kills the process before the model sees the upstream reason |
+| `idle_ttl` | duration | `15m` | Close the Chrome we started after this much idleness (attached browsers are never closed) |
+| `max_chrome` | int | `1` | Max Chrome instances in this process |
+| `workspace_root` | string | `""` | Empty → `~/.yagent/data/browser` |
+| `workspace_ttl` | duration | `72h` | Expired workspace cleanup (traces and screenshots included) |
+| `max_output_bytes` | int | `24000` | Output budget handed to the model (stdout and stderr clipped separately) |
+| `dialog_policy` | string | `"accept"` | `accept` \| `dismiss` \| `ask` |
+| `allowed_domains` | array | `[]` | Allowlist; empty = no restriction on the public internet |
+| `denied_domains` | array | local + RFC-1918 ranges | Supports `*.domain` and CIDR. `file://` and private ranges are denied by default |
+| `profile_dir` | string | `""` | Set it to reuse login state across tasks |
+| `enable_skills` | bool | `false` | Parsed, **unimplemented** (site playbooks are P2) |
+
+Browser workspaces land under `{workspace_root}/{delegation}/.browser-control/`; the CLI's state
+directory is CWD-relative, so every call goes through `internal/browserctl` with `cmd.Dir` set. Do
+not spawn `browser-control` from elsewhere.
+
+### 5.7 `[blackboard]` — cross-agent note board
+
+Each delegation's result is written as a note at
+`~/.yagent/notes/{boardID}/{agent}/*.md`; later delegations get those conclusions through
+`context_refs` plus the **automatically injected index**. Full design:
+[blackboard-handoff-design.md](./blackboard-handoff-design.md).
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `index_max_notes` | int | `12` | Max notes listed in the index. **`0` = index injection off** (emergency valve); negative or omitted = default |
+| `index_line_chars` | int | `160` | Per-line rune budget. **Explicit `0` = do not clip lines**; negative or omitted = default |
+| `summary_max_runes` | int | `1200` | Handoff summary budget handed to the Director (same source as the ContextPack excerpt); `≤0` = default |
+| `ttl` | duration | `"168h"` | Delete a whole board directory after this long untouched. **`"0"` or `0` = never clean up**; negative is clamped to 0 |
+| `max_notes_per_board` | int | `200` | Newest notes kept per board; older ones are deleted. `0` or negative = default — this key has no "off" meaning, raise it with a bigger number |
+
+**Why presence, not zero values**: three keys here have a meaningful `0` (off index / no line clip /
+no TTL cleanup) while "section absent" also decodes to `0`. The code therefore consults
+`toml.MetaData.IsDefined` for those keys, and treats a section containing only unrecognised keys as
+absent — so a missing `index_max_notes` never silently switches the index off. Unrecognised keys in
+this section are named in a startup warning.
+
+**The master switch is not here**: the whole board is disabled with `YAGENT_BLACKBOARD=0` (no writes,
+no reads, no index injection). There is deliberately no `[blackboard] enabled` key — a boolean zero
+value would silently disable a new capability, exactly the hole `[browser] enabled` fell into.
+`YAGENT_NOTES_ROOT` overrides the notes root.
+
+Index size ceiling = `index_max_notes × index_line_chars` (1920 runes by default), and it is injected
+**every** Director round plus every delegation prefix — a standing cost. Trim `index_max_notes` if it
+feels expensive, or set it to `0` to switch the index off.
+
+### 5.8 `[resume]` — stop / resume budgets
+
+Layer B of pause-resume: checkpoints recorded at a stop, and rollout replay on resume. Full design:
+[pause-resume-design.md](./pause-resume-design.md).
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `enable` | bool | `true` | Off = no checkpoints written, no replay; a stopped task can only continue from the Director. **WARNING: writing this section without `enable = true` switches the mechanism off** — `enable` is not re-defaulted once the section exists |
+| `replay_token_budget` | int | `0` | Token ceiling for the replayed context; `0` = the model catalog's threshold. Over budget is not an error — it degrades to a handoff report. Negative → 0 |
+| `max_replay_messages` | int | `2000` | Max messages rebuilt. **Explicit `0` = unlimited**; negative or omitted = 2000 |
+| `degrade_on_workspace_change` | string | `"warn"` | `warn` = HEAD moved but replay proceeds, with a degradation note; `block` = refuse replay and emit the handoff report. An unrecognised value warns, then falls back to `warn` |
+| `checkpoint_workspace` | bool | `true` | Run `git status` at stop and record worktree facts in the checkpoint (switch off on enormous repos) |
+
+`warn` is the default rather than `block` because HEAD always moves after a pull or a machine switch;
+blocking by default would disable layer B in its main scenario. To opt out of the whole mechanism use
+`YAGENT_RESUME=0` — off means not even writing checkpoints, because a half-enabled switch turns "why
+does this rollout have no checkpoint" into a new question nobody can answer.
+
+### 5.9 `[enhanced_commander]` — context compression
+
+Three tiers, all in `internal/compression`:
+
+1. **Rule** — `TruncateToolResultsToBudget`: cut low-value tool results first by priority, keeping
+   `tool_result_keep_tokens` per result. Results marked `TruncProtected` are never truncated
+   (`deepthinking`, `design`, and the `load_tool` catalog entry itself).
+2. **Emergency** — move Thought & Plan blocks into thinklink, keep the last 3 messages verbatim,
+   summarise the rest through an LLM, rewrite memory as `[system, one user]`.
+3. **Ultimate** — if still over budget, rebuild the context from the thinklink log.
+
+Trigger measure = the previous step's provider-reported input tokens plus local estimates for messages
+added since (a provider-side count is trusted; missing or rewritten history invalidates it and falls
+back to full local estimation, which is the pre-change behaviour).
+
+Threshold = `min(model catalog limit.context × 0.75, context_compression_threshold)` — **both are
+ceilings**: the catalog answers "how much this model holds", the config answers "how much I am
+willing to pay". Omitted or `≤0` = catalog only; if neither gives a value, 120000. The provider's
+`context_window` plays no part in this path (it only drives the TUI bar).
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `enable` | bool | `false` | Commander master switch |
+| `enable_context_compression` | bool | `false` | Compression is on only when **both** `enable` and this are `true` (the code ANDs them) |
+| `context_compression_threshold` | int | none | Caps the catalog-derived threshold (see above) |
+| `tool_result_keep_tokens` | int | `200` | Tokens kept per tool result after tier-1 truncation |
+| `enable_ultimate_compression` | bool | `true` | Tier 3. **Writing `false` does not turn it off**: `validate()` writes `true` back, so today this key only means "on by default" (pinned by `validate_test`) |
+| `ultimate_compression_keep_plans` | int | `0` | Thought & Plan blocks kept when rebuilding; `0` = keep all. Applies to Director / Repo / DevOps / Browser only — the **Coding side hardcodes 0**, so this value never reaches it |
+| `max_delegation_depth` | int | `3` | Parsed, **no consumer** — delegation depth is not config-driven |
+
+Scope: Director + Repo / Coding / DevOps / Browser. Chat and Meta are never compressed.
+
+Debug valve: `YAGENT_COMPRESS_THRESHOLD`, when set, *is* the threshold and bypasses both the catalog
+and the config (re-read on every call, invalid values fall back silently). Never use it in production
+— compression would fire before the model is actually full, throwing away context.
+
+### 5.10 `[git_checkpoint]` — checkpoint and branch lifecycle
+
+Checkpoints are created by the agent itself, at milestones, through the `git_checkpoint_create` tool.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `enabled` | bool | `true` | Master switch (the workspace must also be a git repo) |
+| `agent_branch_prefix` | string | `"agent"` | Working branch prefix → `agent/<session>` |
+| `checkpoint_tag_prefix` | string | `"checkpoint/coding"` | Checkpoint tag prefix |
+| `stash_dirty_worktree` | bool | `true` | Stash uncommitted changes at start |
+| `squash_on_exit` | bool | `true` | Squash the agent branch's commits into one at exit |
+| `auto_merge_on_exit` | bool | `false` | `false` = keep the branch squashed for manual review; `true` = squash-merge into the user branch |
+| `cleanup_agent_branch` | bool | `true` | Delete the agent branch at exit (only when it really was merged) |
+| `cleanup_checkpoint_tags` | bool | `true` | Delete checkpoint tags at exit |
+| `generate_commit_message` | bool | `true` | Use an LLM for checkpoint commit messages |
+| `auto_checkpoint` | bool | — | **Dead** — the auto-checkpoint hook (`OnStepEnd`) has no caller left |
+| `checkpoint_interval` | int | — | **Dead** — same reason |
+| `max_checkpoints` | int | `50` | **Dead** — read into the struct but never trims any tag or branch |
+
+If `agent_branch_prefix` is empty the whole block is replaced by the defaults, so a partial
+`[git_checkpoint]` section can silently restore other values.
+
+### 5.11 `[keywords]` — completion dictionary
+
+Dictionary paths are **hardcoded**: `~/.yagent/keywords.txt` (user) plus
+`<project>/.yagent/keywords.txt` (project), loaded in `internal/tui/tui_model.go`.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `disable_completion` | bool | `false` | The **only live key here**: `true` turns off keyword completion while typing |
+| `default_path` | string | — | Parsed, no effect (paths are hardcoded) |
+| `hot_reload` | bool | — | Parsed, no effect (watcher code was removed) |
+| `[[keywords.dict]]` | array | — | Parsed, no effect |
+
+### 5.12 `[app]`
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `enable_streaming` | bool | Parsed, **no effect** — it only reaches the startup log line. Both engines always use the streaming API |
+
+### 5.13 `[tui]` — keybindings
+
+Anything omitted keeps the Go default; the values below *are* the current defaults. Format is
+Bubble Tea **v2** key-event strings, lowercase: modifiers `"ctrl+e"` / `"alt+s"` / `"alt+enter"`,
+plain keys `"j"` / `"?"`, special keys `"enter"` / `"esc"` / `"tab"` / `"space"`.
+
+**Edit mode** (`[tui.keybindings.edit]`):
+
+| Field | Default | Action |
+|-------|---------|--------|
+| `submit_task` | `"alt+s"` | Submit the task |
+| `command_mode` | `"ctrl+e"` | Enter command mode |
+| `toggle_help` | `"ctrl+h"` | Toggle help |
+| `toggle_timeline` | `"ctrl+l"` | Toggle the full-screen timeline |
+| `toggle_dashboard` | `"alt+d"` | Collapse / expand the sidebar dashboard |
+| `page_down` | `"ctrl+f"` | Page down |
+| `page_up` | `"ctrl+b"` | Page up |
+| `quit` | `"ctrl+c"` | Quit |
+| `switch_model` | `"alt+m"` | Model panel (also where the LLM timeout is set) |
+| `new_tab` | `"ctrl+t"` | New session tab |
+| `prev_tab` | `"alt+["` | Previous tab |
+| `next_tab` | `"alt+]"` | Next tab |
+| `clear_session` | `"alt+c"` | Clear the current session |
+| `close_tab` | `"alt+w"` | Close the current tab |
+| `tab_1` … `tab_9` | `"alt+1"` … `"alt+9"` | Jump to tab N |
+
+**Command mode** (`[tui.keybindings.command]`):
+
+| Field | Default | Action |
+|-------|---------|--------|
+| `scroll_down` | `"j"` | Scroll one line down |
+| `scroll_up` | `"k"` | Scroll one line up |
+| `page_down` | `"f"` | Page down |
+| `page_up` | `"b"` | Page up |
+| `edit_mode` | `"i"` | Enter edit mode |
+| `toggle_help` | `"?"` | Show help |
+| `toggle_token_panel` | `"alt+t"` | Toggle the token panel |
+| `toggle_dashboard` | `"alt+d"` | Collapse / expand the sidebar dashboard |
+| `switch_model` | `"alt+m"` | Model panel |
+| `quit` | `"ctrl+c"` | Quit |
+
+### 5.14 `task_timeout` — root field
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `task_timeout` | duration | `"0s"` | Global task timeout — **only for http mode** (`http.NewTaskContext`, `TaskManager`). `"0s"`/omitted = off; e.g. `"30m"`. TUI and `--prompt` are not governed by it |
+
+### 5.15 Environment variables
+
+Out-of-band switches, useful for troubleshooting without editing the file:
+
+| Variable | Effect |
+|----------|--------|
+| `YAGENT_BLACKBOARD=0` | Disable the note board completely |
+| `YAGENT_NOTES_ROOT=<path>` | Relocate the notes root |
+| `YAGENT_RESUME=0` | Disable checkpoints and replay completely |
+| `YAGENT_ARTIFACT_DISABLE=1` | Disable oversized-result artifacts |
+| `YAGENT_ARTIFACT_ROOT=<path>` | Relocate the artifact store |
+| `YAGENT_COMPRESS_THRESHOLD=<tokens>` | Debug: force the compression threshold |
+| `YAGENT_LOG_LEVEL=<level>` | Log verbosity |
+| `YAGENT_BROWSER_DEBUG=<any>` | Extra browserctl debug output |
+
+---
+
+## 6. Scenario examples
+
+### 6.1 Day-to-day: several providers plus failover
 
 ```toml
 [global.llm]
@@ -392,16 +574,14 @@ fallback_max_retries = 2
 
 [global.llm.providers.aliyun]
 model = "qwen3-coder-plus"
-temperature = 0.0
 max_tokens = 28000
 api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 api_key = "sk-your-key"
-# 主 Provider 限流时，先尝试 deepseek，再切 local
+# Rate-limited on the primary: try deepseek first, then local
 fallback_providers = ["deepseek_v4_pro", "local"]
 
 [global.llm.providers.deepseek_v4_pro]
 model = "deepseek-v4-pro"
-temperature = 0.0
 max_tokens = 3000
 api_base_url = "https://api.deepseek.com/v1"
 api_key = "sk-your-key"
@@ -409,12 +589,11 @@ reasoning_effort = "max"
 
 [global.llm.providers.local]
 model = "Qwen3-30B-A3B"
-temperature = 0.0
 max_tokens = 3000
 api_base_url = "http://127.0.0.1:8000"
 api_key = "dummy-key"
 
-# Director 用高质量模型，Coding 用低成本本地模型
+# Director on the capable model, Coding on the cheap local one
 [agents.llm.director]
 use_provider = "aliyun"
 
@@ -422,7 +601,7 @@ use_provider = "aliyun"
 use_provider = "local"
 ```
 
-### 6.2 Anthropic 接入
+### 6.2 Anthropic access
 
 ```toml
 [global.llm]
@@ -430,17 +609,16 @@ use_provider = "anthropic"
 
 [global.llm.providers.anthropic]
 api_format = "anthropic"
-model = "claude-sonnet-4-20250514"
-temperature = 0.0
+model = "claude-sonnet-4-5"
 max_tokens = 16000
 api_base_url = "https://api.anthropic.com/v1"
 api_key = "sk-ant-xxxxxxxxxxxx"
-reasoning_effort = "high"    # 启用 Extended Thinking
+reasoning_effort = "high"    # Extended Thinking: budget 24576, max_tokens raised to 28672
 ```
 
-详细说明参见 [Anthropic API 配置](./anthropic-config.md)。
+Note that `temperature` is not configurable while thinking is on — the engine sends `1.0`.
 
-### 6.3 本地模型（vLLM/Ollama 兼容端点）
+### 6.3 Local models (vLLM / Ollama compatible endpoints)
 
 ```toml
 [global.llm]
@@ -448,70 +626,120 @@ use_provider = "local"
 
 [global.llm.providers.local]
 model = "Qwen3-30B-A3B"
-temperature = 0.0
 max_tokens = 3000
-api_base_url = "http://127.0.0.1:8000"   # vLLM 服务端点
-api_key = "dummy-key"                      # 本地模型通常不需要 API Key
+api_base_url = "http://127.0.0.1:8000"   # vLLM endpoint
+api_key = "dummy-key"                      # local servers usually do not check it
 ```
 
-> **注意**：确保本地模型服务已启动并监听指定端口，且 API 兼容 OpenAI 格式。
+Make sure the server is up, listening on that port, and speaks the OpenAI chat-completions format.
+
+### 6.4 Verifying compression behaviour
+
+Catalog models have huge windows (1M tokens ⇒ threshold 750k), so a long task may never reach tier 1.
+To exercise compression on a real run, either cap the threshold for one provider, or use the debug
+valve:
+
+```toml
+[enhanced_commander]
+enable = true
+enable_context_compression = true
+context_compression_threshold = 40000
+```
+
+```bash
+YAGENT_COMPRESS_THRESHOLD=40000 ./yagent   # bypasses catalog and config; never in production
+```
+
+### 6.5 Keeping routing but pinning one role high
+
+```toml
+[routing]
+mode = "auto"
+[routing.baselines]
+coding = "high"      # fallback tier when the classifier fails
+devops = "fast"
+```
 
 ---
 
-## 7. 无效/已废弃配置段
+## 7. Keys that are parsed but do nothing
 
-以下配置段在 `config/config.toml` 中已删除，**代码不读取这些段**：
+These decode without error and never reach a consumer. The failure mode is "I changed it and nothing
+happened", which is why they are worth listing:
 
-| 配置段 | 原因 |
-|--------|------|
-| `[messaging]` | 消息总线使用硬编码默认值创建（`BufferSize=1000` 等），配置项未映射 |
-| `[codexray]`（及子段） | 已删除，代码分析由 `[codeseek]` 提供 |
-| `[director]` | 代码中无对应结构体定义，字段未被读取 |
-| `[tools_registry]` | 占位符配置（"Phase 2 使用"），代码中零引用 |
+| Key | Where | Reality |
+|-----|-------|---------|
+| `agents.llm.browser` | `[agents.llm.browser]` | Undecoded key — only six agent names exist (§4.3) |
+| `enable_streaming` | `[app]` | Startup log only; streaming is always on (§5.12) |
+| `keywords.default_path` / `hot_reload` / `[[keywords.dict]]` | `[keywords]` | Dictionary paths are hardcoded (§5.11) |
+| `git_checkpoint.auto_checkpoint` / `checkpoint_interval` / `max_checkpoints` | `[git_checkpoint]` | Hook removed / never enforced (§5.10) |
+| `agent.meta_max_steps` | `[agent]` | Normalised to 50, read by nobody — Meta is one LLM call, not a loop (§5.1) |
+| `enhanced_commander.max_delegation_depth` | `[enhanced_commander]` | Normalised to 3, read by nobody (§5.9) |
+| `enhanced_commander.enable_ultimate_compression = false` | `[enhanced_commander]` | `false` is written back to `true` by `validate()` |
+| `enhanced_commander.ultimate_compression_keep_plans` | `[enhanced_commander]` | Ignored for the Coding Agent (hardcoded 0) |
+| `tools.deferred.hot` / `cold` | `[tools.deferred]` | Retiering happens in profiles, not config (§5.3) |
+| `browser.enable_skills` | `[browser]` | Parsed, unimplemented (P2) |
+| `provider.aws_profile` / `model_provider` | `[global.llm.providers.*]` | No consumer; `aws_region` only satisfies the Bedrock name-prefix exemption (§4.1) |
+| `max_replay_messages = 0`, `blackboard.index_max_notes = 0`, `blackboard.index_line_chars = 0`, `blackboard.ttl = "0"` | — | Not dead, but easy to misread: these explicit `0`s **do** carry meaning, unlike an omitted key |
 
 ---
 
-## 8. 常见问题 FAQ
+## 8. Sections the code never reads
 
-### Q: 配置不生效怎么办？
+| Section | Why it is gone |
+|---------|----------------|
+| `[messaging]` | The event bus is built with hardcoded values (`BufferSize=1000` etc.); nothing maps to config |
+| `[codexray]` (and sub-sections) | Removed; code analysis is provided by `[codeseek]` |
+| `[director]` | No matching struct; fields were never read |
+| `[tools_registry]` | Placeholder for "phase 2"; zero references |
+| `[context]` | Present in old generated files: `enable_auto_compact`, `max_context_tokens`, `summarization_*`, `keep_recent_rounds` — `Config` has no such struct. Compression is configured in `[enhanced_commander]` (§5.9) |
 
-1. **检查加载路径**：运行 `yagent --config /path/to/config.toml` 确认使用了正确的配置文件
-2. **检查优先级**：用户级（`~/.yagent/config/config.toml`）覆盖项目级（`config/config.toml`），确认修改的是正确的文件
-3. **检查语法**：确保 TOML 格式正确，可使用 `python3 -c "import tomllib; tomllib.load(open('config.toml','rb'))"` 验证
-4. **查看日志**：启动时打印 `Loading configuration` 日志确认加载路径
+---
 
-### Q: provider 未找到
+## 9. FAQ
 
-错误信息形如 `provider 'xxx' not found in configuration`。检查：
-- `[global.llm.providers.xxx]` 段是否存在
-- `use_provider` 的值与 provider 名称完全一致（区分大小写）
+### Q: My change had no effect
 
-### Q: 如何切换模型？
+1. **Check which file you edited** — only one file is loaded (§1.1). `config/config.toml` in a checkout
+   is an example, not an active layer; run `yagent -c ./config/config.toml` to use it deliberately.
+2. **Check the precedence chain** (§4.2) — a `[tools.llm.*]` or `[agents.llm.*]` override will beat the
+   global `use_provider` you just changed.
+3. **Check whether the key is live at all** — see §7 and §8.
+4. **Check the startup log** — `Loading configuration config_path=...` names the file, and
+   `[browser]` / `[blackboard]` / `[resume]` warn about keys they did not recognise.
+5. **Validate the TOML**: `python3 -c "import tomllib; tomllib.load(open('config.toml','rb'))"`.
 
-- **全局切换**：修改 `[global.llm].use_provider`
-- **按 Agent 切换**：修改 `[agents.llm.<agent>].use_provider`
-- **按工具切换**：修改 `[tools.llm.<tool>].use_provider`
+### Q: `provider 'xxx' not found in configuration`
 
-### Q: 配置文件损坏时的恢复？
+The `use_provider` value (in `global.llm`, `agents.llm` or `tools.llm`) has no matching
+`[global.llm.providers.xxx]` section. Names are case-sensitive and exact.
 
-删除配置文件后重新启动 Yagent，系统会自动从内置模板生成默认配置：
+### Q: How do I switch models?
+
+- Globally: `[global.llm].use_provider`
+- Per agent: `[agents.llm.<agent>].use_provider` (six names, no `browser`)
+- Per tool: `[tools.llm.<tool>].use_provider`
+- At runtime: `/model` (or Alt+M), which can persist the choice back into the file
+
+### Q: How do I get a fresh config after corrupting the file?
+
+Delete it and start Yagent; the embedded template is written atomically.
 
 ```bash
 rm ~/.yagent/config/config.toml
 yagent
 ```
 
-### Q: 如何禁用某个 Agent？
+### Q: How do I disable an agent?
 
-启动时通过 `--disable-agents` 参数：
+`--disable-agents` / `-d` at startup:
 
 ```bash
 yagent --disable-agents browser,devops
 ```
 
-### Q: 热重载不生效？
+### Q: Does hot reload exist?
 
-检查：
-1. 配置文件路径是否为 `~/.yagent/config/config.toml` 或项目级 `config/config.toml`
-2. 使用 `--config` 指定的自定义路径不支持热重载
-3. 编辑器可能使用 swap-and-replace 模式，确保文件确实发生了写入事件
+No. The file is parsed once at startup. Only the three runtime controls in §1.3 take effect mid-session,
+and each writes its own key back into the file. Restart for anything else — which also means editing the
+file while Yagent runs cannot race the loader.
