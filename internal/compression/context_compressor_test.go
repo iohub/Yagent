@@ -73,7 +73,7 @@ func TestTruncateToolResultsToBudget_NotOverThreshold(t *testing.T) {
 		{Role: llm.RoleTool, ToolName: "read_file", Content: "small result"},
 	}
 	// 阈值设很大，不会触发
-	result, stats := TruncateToolResultsToBudget(messages, 999999, 200)
+	result, stats := TruncateToolResultsToBudget(messages, Prefix{}, 999999, 200)
 	if len(result) != len(messages) {
 		t.Fatalf("expected %d messages, got %d", len(messages), len(result))
 	}
@@ -114,7 +114,7 @@ func TestTruncateToolResultsToBudget_Priority(t *testing.T) {
 	}
 	threshold := (overBudget + afterOneCut) / 2
 
-	result, _ := TruncateToolResultsToBudget(messages, threshold, truncKeepTokens)
+	result, _ := TruncateToolResultsToBudget(messages, Prefix{}, threshold, truncKeepTokens)
 
 	// read_file (prio 0) 应被截断
 	readFileMsg := result[3]
@@ -148,7 +148,7 @@ func TestTruncateToolResultsToBudget_DeepThinkingProtected(t *testing.T) {
 	// 所以走的是「可截的都截完了仍不达标」那条出口——受保护的 deepthinking 全程没动过。
 	threshold := baseTokens + payloadTokens
 
-	result, _ := TruncateToolResultsToBudget(messages, threshold, truncKeepTokens)
+	result, _ := TruncateToolResultsToBudget(messages, Prefix{}, threshold, truncKeepTokens)
 
 	// deepthinking 不应被截断
 	dtMsg := result[3]
@@ -178,7 +178,7 @@ func TestTruncateToolResultsToBudget_Idempotent(t *testing.T) {
 	keepTokens := truncKeepTokens
 
 	// 第一次截断
-	result1, _ := TruncateToolResultsToBudget(messages, threshold, keepTokens)
+	result1, _ := TruncateToolResultsToBudget(messages, Prefix{}, threshold, keepTokens)
 	dtMsg := result1[3]
 	if dtMsg.TruncationMarker == nil {
 		t.Fatal("expected first pass to truncate")
@@ -187,7 +187,7 @@ func TestTruncateToolResultsToBudget_Idempotent(t *testing.T) {
 	markerAfterFirst := dtMsg.TruncationMarker.TruncationPass
 
 	// 第二次截断（幂等）
-	result2, _ := TruncateToolResultsToBudget(result1, threshold, keepTokens)
+	result2, _ := TruncateToolResultsToBudget(result1, Prefix{}, threshold, keepTokens)
 	dtMsg2 := result2[3]
 	// 已截断的消息应被跳过，内容和 marker 不应再变化
 	if dtMsg2.Content != contentAfterFirst {
@@ -211,7 +211,7 @@ func TestTruncateToolResultsToBudget_AllCut(t *testing.T) {
 	threshold := 100 // 即使三条全截完也达不到，必须逐条走到底
 	keepTokens := truncKeepTokens
 
-	result, _ := TruncateToolResultsToBudget(messages, threshold, keepTokens)
+	result, _ := TruncateToolResultsToBudget(messages, Prefix{}, threshold, keepTokens)
 
 	// 所有可截断的工具结果都应被截断
 	for i, msg := range result {
@@ -245,7 +245,7 @@ func TestTruncateToolResultsToBudget_Stats(t *testing.T) {
 	threshold := 100 // 远低于任何可达状态，肯定触发
 	keepTokens := truncKeepTokens
 
-	_, stats := TruncateToolResultsToBudget(messages, threshold, keepTokens)
+	_, stats := TruncateToolResultsToBudget(messages, Prefix{}, threshold, keepTokens)
 	if stats == nil {
 		t.Fatal("expected non-nil stats")
 	}
@@ -523,7 +523,7 @@ func TestTruncateIncrementalMatchesFullRecompute(t *testing.T) {
 			}
 
 			_, refStats := truncateReference(refMsgs, sc.threshold, truncKeepTokens)
-			_, gotStats := TruncateToolResultsToBudget(gotMsgs, sc.threshold, truncKeepTokens)
+			_, gotStats := TruncateToolResultsToBudget(gotMsgs, Prefix{}, sc.threshold, truncKeepTokens)
 			assertSameTruncationOutcome(t, refMsgs, refStats, gotMsgs, gotStats)
 			if sc.mustExceed && refStats.TruncatedCount == 0 {
 				t.Fatalf("阈值 %d 下一条都没截，这条场景没有覆盖到截断逻辑", sc.threshold)
@@ -561,7 +561,7 @@ func TestTruncateCostScalesLinearly(t *testing.T) {
 
 	gotMsgs := build()
 	start := time.Now()
-	_, stats := TruncateToolResultsToBudget(gotMsgs, 1, truncKeepTokens)
+	_, stats := TruncateToolResultsToBudget(gotMsgs, Prefix{}, 1, truncKeepTokens)
 	incremental := time.Since(start)
 
 	refMsgs := build()

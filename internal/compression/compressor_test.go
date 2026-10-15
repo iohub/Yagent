@@ -4,7 +4,7 @@
 // 以 director_characterization_test.go 的断言为参照但独立编写，覆盖：
 //  1. 紧急压缩：少块保留/多块 LLM 总结/LLM 失败降级截断/nil memory；
 //  2. 终极压缩：重建上下文/thinklink 交互（RebuildPrompt 调用序列）/回调清理/nil memory；
-//  3. 阈值边界：ShouldCompress 严格大于语义、userBudget 下限钳位。
+//  3. 阈值边界：OverThreshold 严格大于语义、userBudget 下限钳位。
 package compression
 
 import (
@@ -430,23 +430,27 @@ func TestCompressorApplyUltimateZeroTotalPlans(t *testing.T) {
 
 // ─── 组 3:阈值边界 ──────────────────────────────────────────────────────────
 
-// TestCompressorShouldCompress 触发判断辅助：严格大于语义（等于阈值不触发）。
-func TestCompressorShouldCompress(t *testing.T) {
-	c := NewContextCompressor(nil, "Director", &fakeThinkLink{}, nil)
-
-	// 空消息 0 token:等于阈值不触发（严格大于语义）
-	if c.ShouldCompress(nil, 0) {
+// TestOverThresholdIsStrictlyGreater 触发判定的严格大于语义（等于阈值不触发）。
+// 这条性质原来由 ContextCompressor.ShouldCompress 提供，但非测试代码没人调用它，
+// 真正的判定抄在两个循环里四份 —— 现在收敛到 OverThreshold 一处（见 truncate.go）。
+func TestOverThresholdIsStrictlyGreater(t *testing.T) {
+	// 空消息 0 token：等于阈值不触发（严格大于语义）
+	if OverThreshold(nil, Prefix{}, 0) {
 		t.Errorf("nil messages (0 tokens) over threshold 0 should not trigger")
 	}
 	// 小消息大阈值：不触发
 	msgs := []llm.Message{{Role: llm.RoleUser, Content: "hi"}}
-	if c.ShouldCompress(msgs, 100000) {
+	if OverThreshold(msgs, Prefix{}, 100000) {
 		t.Errorf("small messages over big threshold should not trigger")
 	}
 	// 超阈值：触发（长消息肯定超过 1 token）
 	long := []llm.Message{{Role: llm.RoleUser, Content: strings.Repeat("word ", 50)}}
-	if !c.ShouldCompress(long, 1) {
+	if !OverThreshold(long, Prefix{}, 1) {
 		t.Errorf("messages above tiny threshold should trigger")
+	}
+	// 恰好等于本地估算值：仍然不触发
+	if OverThreshold(long, Prefix{}, EstimateMessagesTokens(long)) {
+		t.Errorf("等于阈值不应触发")
 	}
 }
 

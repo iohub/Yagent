@@ -300,15 +300,32 @@ tier-1 需要 `prefix` 是因为**两个口径必须一致**：如果 tier-1 用
 
 现有闸门全部照跑：`bash scripts/check_all.sh`（build + vet + 五把守卫 + 全量单测）。新增：
 
-| # | 用例 | 断言 |
-|---|------|------|
-| T1 | `ResolveThreshold` 四象限 | §5.1 表格四行各一条；`env` 覆盖仍压过一切；`configured = 0` **不**参与取小 |
-| T2 | 重放预算不受 D1 影响 | 以 `resume_delegation.go:187` 的传参形态（`configured = 0`）调用，断言结果 == `window×0.75`，且与 D1 之前逐字节相同 |
-| T3 | 增量记账等价性 | 同一夹具下，新实现的 `stats` 与一个 test-only 的"每截一条全量重算"参考实现**逐字段相同**；截断顺序相同 |
-| T4 | tier-1 耗时上界 | 200 条工具结果 / 129k token 的夹具，全程 **< 2s**（实测 ~45ms，留 40 倍余量避免 flaky）。夹具构造遵守 `AGENTS.md` §8.3：不靠 sleep |
-| T5 | `Prefix.Total` | 有计量时结果 == `Tokens + 本地(新增)`；`Tokens<=0` / `Len<=0` / `Len>len(messages)` 三种情况都回落全量；**前缀里有超长内容时不触碰它**（用"巨大前缀 + 短 delta"的夹具，断言结果只随 delta 变化） |
-| T6 | e2e 接线 | 脚本引擎在第一步响应里报 `TotalInputTokens = X`，把本地估算造得远小于 `X`，断言第二步**触发了**压缩。这是"四个判定点真的接上了"的唯一证据（参考 `AGENTS.md` §8.3 对 e2e 的要求：只 mock 模型，不 mock 被测组件） |
-| T7 | 计量失效 | emergency 触发后 `prefix` 被清空（下一步回落全量估算）；`Usage == nil` 时同样回落 |
+| # | 用例 | 断言 | 状态 |
+|---|------|------|------|
+| T1 | `ResolveThreshold` 四象限 | §5.1 表格四行各一条；`env` 覆盖仍压过一切；`configured <= 0` **不**参与取小 | ✅ `threshold_test.go:TestResolveThreshold`（12 例） |
+| T2 | 重放预算不受 D1 影响 | 以 `resume_delegation.go:187` 的传参形态（`configured = 0`）调用，断言结果 == `window×0.75` | ✅ `TestResolveThreshold_ReplayBudgetUnaffected` |
+| T3 | 增量记账等价性 | 同一夹具下，新实现的 `stats` 与"每截一条全量重算"的参考实现**逐字段相同**；截断顺序相同 | ✅ `TestTruncateIncrementalMatchesFullRecompute`（7 个场景，每条带"夹具必须超阈值"前置条件） |
+| T4 | tier-1 复杂度 | 与参考实现的**耗时比值** ≥ 8 倍（实测 16 倍），另加一条 2s 绝对上界 | ✅ `TestTruncateCostScalesLinearly` |
+| T5 | `Prefix.Total` | 有计量时结果 == `Tokens + 本地(新增)`；**改动已计量段的内容不得影响结果**；`Tokens<=0` / `Len<=0` / `Len>len(messages)` / 负数 一律回落全量 | ✅ `prefix_test.go`（`usable` 与 `Total` 的回落条件同源也断言） |
+| T6 | 两个循环真的接线 | 脚本引擎报 `TotalInputTokens = X`，把本地口径造在阈值之下，断言第一档**只因 X 而触发**；`original_tokens` 仍是本地口径（< X）；第二档不被拖入 | ✅ 子 Agent `executor_prefix_trigger_test.go` + Director `planner_prefix_trigger_test.go`（两条各红过一次：只改一边时另一边必红，已实测） |
+| T7 | 计量作废 | 第二档重写列表后，同一步的第三档判定不得继续沿用旧基数；`Usage == nil` 时回落本地估算 | ⚠️ 部分：emergency 之后的清零两侧都有测试；**`ApplyUltimate` 之后那行清零没有被任何夹具覆盖** —— 它只在"这步的调用失败、重试时重新进入压缩块"这条路径上才有效果，需要一个"重建后本地仍超阈值 + 注入调用失败"的夹具。留着这一行是便宜的不变量，但别以为它有闸门。 |
+
+**落地时对设计稿的偏离**（都是实施时才发现更好的形状）：
+
+1. §5.3 草图里 `Total` 的回落条件是内联的；实现抽成 `Prefix.usable(messages)`，
+   让 `Total` 与第一档的"stats 用哪个基数"共用同一个判据 —— 分开写会漂成"判定与 stats 两个基数"。
+2. `ShouldCompress` 选择**删除**（第五份没人调用的实现），同时新增 `OverThreshold(messages, prefix, threshold)`
+   作为唯一的触发判据，四个调用点都走它；原来的 `TestCompressorShouldCompress` 改写为
+   `TestOverThresholdIsStrictlyGreater`，"严格大于"这条性质仍然有测试。
+3. `TruncateToolResultsToBudget` 的达标判定与 stats 分成两个基数（`projected` 跟判定口径、
+   `compressed` 跟本地口径），两者减的是同一个 delta —— 设计稿只说了"stats 保持本地口径"，
+   没写清截断过程中该用哪个数判断"够不够"。
+4. §5.3 的"生命周期表"落地成方法 `Prefix.Refresh(resp, callErr, sentLen)`，两个循环各一行调用。
+   写在循环里是 11 行 × 2 份 + 一份规则，抽出来之后规则只有一处、且有直接的单测。
+5. Director 侧的三档压缩整段（96 行）从 `planner_run.go` 搬到 **`planner_compress.go`**。
+   动机有两个：`check_file_sizes.sh` 的棘轮只许降不许降，P2 需要的行数只能从这段挣出来；
+   而这段本来就是那份 PENDING 注释里点名的三段职责之一。
+   `planner_run.go` 657 → **572** 行，上限同步下调。
 
 **变异测试要求**（每条都必须亲手做过一次并看到红，写进 PR 描述）：
 - 把 §5.1 的 `min` 写成 `max` → T1 红。
@@ -325,12 +342,28 @@ tier-1 需要 `prefix` 是因为**两个口径必须一致**：如果 tier-1 用
 
 ## 8. 落地节奏
 
-**P1（可独立合）**：D1 阈值 + D2 增量记账 + T1/T2/T3/T4 + 两个模板注释 + `AGENTS.md` §6.5/§11 坑 3。
-理由：纯缺陷修复，自带等价性测试，不引入新口径。
+**P1（已落地，commit `4147ef7`）**：D1 阈值 + D2 增量记账 + T1/T2/T3/T4 + 两个模板注释 + `AGENTS.md` §6.5/§11 坑 3。
+**P2（已落地）**：D3 `Prefix` + 判定收敛到 `OverThreshold` + T5/T6/T7。
 
-**P2（依赖 P1）**：D3 `Prefix` + 四个判定点收敛 + T5/T6/T7。
-理由：P2 换的是"判定数字从哪来"，出错的表现是"压缩早触发/晚触发"；只有 P1 的记账正确性先落地，
-P2 的偏差才可归因。P2 落地后 §3 的实测应当重跑一次（同样 610 步口径），确认触发次数与冷 prefill 次数符合预期。
+变异测试逐条做过，每条都亲眼看到红：
+
+| 变异 | 变红的用例 |
+|------|-----------|
+| `min` → `max` | T1 三例 + T2 + env 覆盖那条 |
+| `configured = 0` 也当成上限 | T1 三例 + T2（重放预算掉到 0） |
+| 增量记账漏减 delta | T3（CompressedTokens 与参考不符）+ 既有的 `Stats`/`Priority` |
+| 把每截一条全量重算加回去 | T4 比值断言 |
+| `Prefix.usable` 判定写反 | T5 + 两侧 T6 |
+| `Total` 去掉未计量部分的 delta | T5 两例 + 两侧 T6 |
+| stats 混进计量基数 | T5 的 gate 用例 + 两侧 T6 的 `original_tokens` |
+| executor 侧退回本地口径（只改一边） | 子 Agent T6 红、Director 侧仍绿 —— 正是这条证明了两侧必须各有一测 |
+| planner 侧退回本地口径（只改另一边） | Director T6 红 |
+| 去掉 emergency 之后的计量清零 | 两侧 T7 各红一次 |
+| `Refresh` 在调用失败时改成清零 | `TestPrefixRefresh`（两个子例） |
+| 去掉 `ApplyUltimate` 之后的计量清零 | **全绿** —— 见 §7 T7 的说明，这行只在调用失败重试路径上有效，目前没有夹具 |
+
+**耗时账**：`internal/compression` 整包 0.17s → 0.6s，多出来的都在 T4（刻意留的计时用例）；
+`internal/agents` 与 director 包各加两条毫秒级 e2e。
 
 ---
 
