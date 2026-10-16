@@ -78,7 +78,7 @@
 ### 2.2 外部依赖
 
 `ripgrep`（已内嵌，见 `dist/bin`）、`fzf`（模糊搜索）、`codeseek` 二进制（默认从 `dist/bin` 解出到 `~/.yagent/bin`）、
-`browser-control`（Rust CLI，**刻意不内嵌**：按 `[browser] binary_path` → `~/.yagent/bin/browser-control` → `$PATH` 依次查找）
+`browser-control`（Rust CLI，随 release 构建内嵌 `dist/bin`、启动时解出到 `~/.yagent/bin`；查找顺序 `[browser] binary_path` → `~/.yagent/bin/browser-control` → `$PATH` 不变）
 与 Chrome/Chromium —— 两者缺一，Browser-Agent 即不可用（`delegate_browser` 描述会自动降级）。
 
 ### 2.3 LLM 接入

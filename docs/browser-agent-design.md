@@ -804,9 +804,12 @@ Windows 下不可用工具的 description 标注、`browser_upload` 的 `pathPar
 
 ## 12. 禁止事项
 
-1. **不要把 browser-control 二进制内嵌进 `dist/bin` / `go:embed`。**
+1. ~~**不要把 browser-control 二进制内嵌进 `dist/bin` / `go:embed`。**
    该能力的前提是机器上有 Chrome，内嵌 CLI 换不来开箱可用，却要往已 257MB 的 embed 里再加 4 个平台的二进制。
-   走"配置路径 → `~/.yagent/bin` → `$PATH`"三级解析 + 能力降级。
+   走"配置路径 → `~/.yagent/bin` → `$PATH`"三级解析 + 能力降级。~~
+   **决策变更（2026-10-16）**：v0.1.1 起 browser-control 随 release 构建内嵌（4 平台二进制 → `dist/bin` →
+   启动时解出 `~/.yagent/bin`），换取开箱可用，原体积顾虑由维护者拍板接受；"配置路径 → `~/.yagent/bin` →
+   `$PATH`"三级解析与能力降级保持不变（运行时前提仍是机器上有 Chrome）。
 2. **不要暴露 `run` / `--from-stdin` / `reload`**（前两者是任意代码执行；`reload` 在上游等于 `stop`）。
 3. **不要把任何 `browser_*` 加进 `knownReadOnlyTools`**：`current-tab` 与 ref 是磁盘共享状态，
    并行观察会读到错页；串行的代价远小于错页的代价。

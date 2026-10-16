@@ -159,6 +159,18 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			designEngine = ca.client.GetToolEngine("design")
 		}
 
+		// ── 提取嵌入的二进制（独立于 codeseek 配置）──
+		// 无论用户是否配置了 [codeseek] binary_path，都要把嵌入的 codeseek/fzf/rg/browser-control
+		// 解出到 ~/.yagent/bin：browserctl 等模块的二级查找（~/.yagent/bin/<name>）依赖这些文件。
+		binDir := ""
+		if ca.config != nil {
+			if dir, err := embedbin.ExtractBinaries(ca.embeddedBinFS, "dist/bin"); err != nil {
+				slog.Debug("Failed to extract embedded binaries; tools will fall back to PATH lookup", "error", err)
+			} else {
+				binDir = dir
+			}
+		}
+
 		// ── 确定 codeseek 二进制路径并启动 MCP 客户端 ──
 		codeseekBinaryPath := ""
 
@@ -166,19 +178,14 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		if ca.config != nil && ca.config.CodeSeek.BinaryPath != "" {
 			codeseekBinaryPath = ca.config.CodeSeek.BinaryPath
 			slog.Info("Using configured CodeSeek binary path", "path", codeseekBinaryPath)
-		} else if ca.config != nil {
-			// 优先级2：从嵌入的二进制中自动解压
-			binDir, err := embedbin.ExtractBinaries(ca.embeddedBinFS, "dist/bin")
-			if err != nil {
-				slog.Debug("No embedded binaries to extract, CodeSeek MCP will not be available", "error", err)
+		} else if binDir != "" {
+			// 优先级2：使用启动时解出的嵌入二进制
+			candidatePath := filepath.Join(binDir, "codeseek")
+			if _, statErr := os.Stat(candidatePath); statErr == nil {
+				codeseekBinaryPath = candidatePath
+				slog.Info("Auto-extracted embedded CodeSeek binary", "path", codeseekBinaryPath)
 			} else {
-				candidatePath := filepath.Join(binDir, "codeseek")
-				if _, statErr := os.Stat(candidatePath); statErr == nil {
-					codeseekBinaryPath = candidatePath
-					slog.Info("Auto-extracted embedded CodeSeek binary", "path", codeseekBinaryPath)
-				} else {
-					slog.Debug("Embedded codeseek binary not found in extracted files, CodeSeek MCP will not be available")
-				}
+				slog.Debug("Embedded codeseek binary not found in extracted files, CodeSeek MCP will not be available")
 			}
 		}
 

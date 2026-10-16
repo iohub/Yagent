@@ -28,6 +28,7 @@ jobs:
             goarch: amd64
             fzf_url: https://github.com/junegunn/fzf/releases/download/v0.73.1/fzf-0.73.1-darwin_amd64.tar.gz
             rg_url: https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-apple-darwin.tar.gz
+            bc_url: https://github.com/keon/browser-control/releases/download/v0.1.1/browser-control-x86_64-apple-darwin.tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
             suffix: darwin-arm64
@@ -35,6 +36,7 @@ jobs:
             goarch: arm64
             fzf_url: https://github.com/junegunn/fzf/releases/download/v0.73.1/fzf-0.73.1-darwin_arm64.tar.gz
             rg_url: https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-aarch64-apple-darwin.tar.gz
+            bc_url: https://github.com/keon/browser-control/releases/download/v0.1.1/browser-control-aarch64-apple-darwin.tar.gz
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             suffix: linux-x64
@@ -42,6 +44,7 @@ jobs:
             goarch: amd64
             fzf_url: https://github.com/junegunn/fzf/releases/download/v0.73.1/fzf-0.73.1-linux_amd64.tar.gz
             rg_url: https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz
+            bc_url: https://github.com/keon/browser-control/releases/download/v0.1.1/browser-control-x86_64-unknown-linux-gnu.tar.gz
 
     steps:
       - name: Checkout
@@ -103,12 +106,20 @@ jobs:
           find /tmp/rg_extract -name rg -type f -exec mv {} dist/bin/rg \;
           rm -rf /tmp/rg_extract /tmp/rg.tar.gz
 
+          # Download and extract browser-control
+          echo "Downloading browser-control from ${{ matrix.bc_url }}"
+          curl -fLo /tmp/browser-control.tar.gz "${{ matrix.bc_url }}"
+          mkdir -p /tmp/bc_extract
+          tar -xzf /tmp/browser-control.tar.gz -C /tmp/bc_extract
+          find /tmp/bc_extract -name browser-control -type f -exec mv {} dist/bin/browser-control \;
+          rm -rf /tmp/bc_extract /tmp/browser-control.tar.gz
+
           # Set executable permissions
-          chmod +x dist/bin/codeseek dist/bin/fzf dist/bin/rg
+          chmod +x dist/bin/codeseek dist/bin/fzf dist/bin/rg dist/bin/browser-control
 
           # Verify
           ls -la dist/bin/
-          echo "✓ Embedded binaries ready: codeseek, fzf, rg"
+          echo "✓ Embedded binaries ready: codeseek, fzf, rg, browser-control"
 
       - name: Build Go yagent (${{ matrix.suffix }})
         run: |
@@ -213,9 +224,17 @@ jobs:
           find /tmp/rg_extract -name rg -type f -exec mv {} dist/bin/rg \;
           rm -rf /tmp/rg_extract /tmp/rg.tar.gz
 
-          chmod +x dist/bin/codeseek dist/bin/fzf dist/bin/rg
+          # Download browser-control (用户要求：musl 发布嵌入 gnu 版 browser-control，上游无 musl 资产)
+          echo "Downloading browser-control..."
+          curl -fLo /tmp/browser-control.tar.gz "https://github.com/keon/browser-control/releases/download/v0.1.1/browser-control-x86_64-unknown-linux-gnu.tar.gz"
+          mkdir -p /tmp/bc_extract
+          tar -xzf /tmp/browser-control.tar.gz -C /tmp/bc_extract
+          find /tmp/bc_extract -name browser-control -type f -exec mv {} dist/bin/browser-control \;
+          rm -rf /tmp/bc_extract /tmp/browser-control.tar.gz
+
+          chmod +x dist/bin/codeseek dist/bin/fzf dist/bin/rg dist/bin/browser-control
           ls -la dist/bin/
-          echo "✓ Embedded binaries ready: codeseek, fzf, rg"
+          echo "✓ Embedded binaries ready: codeseek, fzf, rg, browser-control"
 
       - name: Build Go yagent (linux-x64-musl)
         run: |
