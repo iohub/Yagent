@@ -86,6 +86,13 @@ type setupSnapshot struct {
 	llmTimeout     time.Duration
 }
 
+// 密钥来源是一行两态（见 setup_keys.go 的 formRows 注释）。常量而不是 bool：
+// 三个消费点（load / collect / toggle）都要说得清"现在是哪一种"。
+const (
+	keyFromLiteral = iota
+	keyFromEnv
+)
+
 // setupWizard 是可被两个宿主驱动的状态机：独立程序（坏配置启动、`yagent setup`）
 // 与主 TUI 里的全屏模式（/setup）。对外只有 Init/Update/View/SetSize/Done/Saved。
 type setupWizard struct {
@@ -99,23 +106,47 @@ type setupWizard struct {
 
 	snap setupSnapshot
 
-	cursor    int
-	fieldIdx  int
-	inputs    []textarea.Model
-	editing   string // 正在编辑的 provider 名（"" = 新增）
-	probing   bool
-	probeText string
+	cursor   int
+	fieldIdx int
+	inputs   []textarea.Model
+	editing  string // 正在编辑的 provider 名（"" = 新增）
+	keyMode  int    // keyFromLiteral | keyFromEnv，见 formRows 的第 3 行
+	// ctxAutoValue 记住"上一次由目录回填的那个数"。只有仍等于它时才允许再回填，
+	// 于是手输过的 context_window 永远不会被目录覆盖（§3.2）。
+	ctxAutoValue int
+	optionalOpen bool // 可选区是否展开
+	presetOpen   bool // 表单屏内的端点预设子模式（不是新的一屏）
+	probing      bool
+	probeText    string
+	probeLatency time.Duration
+	probeStart   time.Time
+	probeDone    time.Time
+	spinFrame    int
+	// probeTarget / probeModel 是"这一次探测在打哪儿"的现场：探测屏要在等待时就把它显示出来，
+	// 而不是等结果回来再猜 —— 那正是这一屏唯一能证明"没有假装在工作"的东西。
+	probeTarget string
+	probeModel  string
 	// probeErr 与 probeText 分开存：混在一个字段里，失败原文会被当成"模型的回答"涂绿。
 	probeErr string
 
 	// firstRunIdx 是 5 个首启项各自选到的下标，见 setupRender 的 firstRunRows。
 	firstRunIdx [5]int
 
+	// summaryTop 是摘要屏的滚动偏移：摘要没有"选中某条 op"这回事（要么全写要么不写），
+	// 所以 j/k 只动视图，不动状态。
+	summaryTop int
+
 	ops []pendingOp
+	// writtenCount 由 applyOps 维护：它不是事务，失败时"已经写了几条"是用户唯一能自救的事实。
+	writtenCount int
 
 	width, height int
 	done          bool
 	saved         bool
+	// standalone 由 RunSetup 置真：独立宿主必须把 done 翻成 tea.Quit，
+	// 否则 q / ctrl+c 只改了状态，程序停在最后一屏。嵌在主 TUI 里时它是假的 ——
+	// 向导退出 = 交还键盘，不是退出 yagent。
+	standalone bool
 }
 
 func (w *setupWizard) Done() bool  { return w.done }
@@ -303,12 +334,20 @@ func (w *setupWizard) dropOpsOfKind(kind string) {
 }
 
 // queueProviderOp 校验并排队表单里的草稿。
-// 这里只做本地校验（名字合法 / 有 model / 有密钥来源）；"这个端点认不认这把 key"
+// 这里只做本地校验（名字合法 / 有 model / 有密钥来源 / 有 base_url）；"这个端点认不认这把 key"
 // 是探测屏的事 —— 校验器不联网，联网的探测也不假装在校验。
+//
+// base_url 这一条以前没查：config.WriteProvider 只要求"base_url 与密钥来源不全空"，
+// 而 validate() 要求每个 provider 都有 base_url（config.go:592）。于是填了 key 忘了 URL
+// 能一路放行到落盘，下一启动直接加载失败 —— 正是这个向导存在的理由。
 func (w *setupWizard) queueProviderOp() {
 	d := w.collectDraft()
 	if err := config.IsValidProviderName(d.Name); err != nil {
 		w.errMsg = strings.TrimPrefix(err.Error(), "config: ")
+		return
+	}
+	if d.APIBaseURL == "" {
+		w.errMsg = "api_base_url is required (startup validates it for every provider)"
 		return
 	}
 	if d.Model == "" {
@@ -352,6 +391,15 @@ func (w *setupWizard) queueDeleteOp(name string) {
 	}
 }
 
+// queueDefaultOp 排队"把某家设为默认"。列表屏的 s 与默认档屏的 enter 共用这一份实现：
+// 两处若各写一条 op，引用扫描（referencesTo）就要认两种形状。
+func (w *setupWizard) queueDefaultOp(name string) {
+	w.dropOpsOfKind("default")
+	w.ops = append(w.ops, pendingOp{
+		kind: "default", name: name, note: `use_provider = "` + name + `"`,
+	})
+}
+
 // referencesTo 在"当前视图"上重算引用：已排队的默认档变更要算进来，
 // 否则删掉一个刚被设为默认的 provider 会一路放行到写盘才炸。
 func (w *setupWizard) referencesTo(name string) []string {
@@ -378,9 +426,10 @@ func (w *setupWizard) referencesTo(name string) []string {
 }
 
 // applyOps 按队列顺序逐条写文件，失败立即停止。
-// 这不是事务：失败之前的几条已经落盘了，所以错误信息必须带上"是哪一条 note 失败了"，
-// 用户才知道剩下的自己改。把它包装成"什么都没发生"才是真的撒谎。
+// 这不是事务：失败之前的几条已经落盘了，所以错误信息必须带上"是哪一条 note 失败了"
+// 和"已经写了几条"，用户才知道剩下的自己改。把它包装成"什么都没发生"才是真的撒谎。
 func (w *setupWizard) applyOps() error {
+	w.writtenCount = 0
 	for _, op := range w.ops {
 		var err error
 		switch op.kind {
@@ -396,6 +445,7 @@ func (w *setupWizard) applyOps() error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", op.note, err)
 		}
+		w.writtenCount++
 	}
 	return nil
 }
@@ -412,18 +462,35 @@ type probeResultMsg struct {
 // 不要求模型把问题思考完。
 const probeTimeout = 30 * time.Second
 
-// startProbeCmd 发一次最小请求（无工具、极小 max_tokens）。
+// probeTickMsg 驱动那一格的转圈。刻意不接 internal/tui/anim —— 那个包目前全仓零引用，
+// 把一个正在交付的界面接到没有测试的包上是新风险（决策 DD）。
+type probeTickMsg struct{}
+
+// probeTickInterval 是计时 seam：测试把它调短，而不是 sleep 等一帧。
+var probeTickInterval = 120 * time.Millisecond
+
+func tickProbe() tea.Cmd {
+	return tea.Tick(probeTickInterval, func(time.Time) tea.Msg { return probeTickMsg{} })
+}
+
+// startProbeCmd 发一次最小请求（无工具、极小 max_tokens），并挂上转圈的 tick。
 func (w *setupWizard) startProbeCmd(d config.ProviderDraft) tea.Cmd {
-	w.probing = true
+	w.probing = false
 	w.probeText = ""
 	w.probeErr = ""
+	w.probeLatency = 0
 	w.note = ""
 	w.errMsg = ""
 	if d.Model == "" || (d.APIKey == "" && d.APIKeyEnv == "") {
 		w.errMsg = "cannot probe: model and a key are both required"
 		return nil
 	}
-	return func() tea.Msg {
+	w.probing = true
+	w.spinFrame = 0
+	w.probeStart = time.Now()
+	w.probeTarget = d.APIBaseURL
+	w.probeModel = d.Model
+	probe := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 		defer cancel()
 		start := time.Now()
@@ -450,6 +517,23 @@ func (w *setupWizard) startProbeCmd(d config.ProviderDraft) tea.Cmd {
 		}
 		return probeResultMsg{text: strings.TrimSpace(text), latency: time.Since(start)}
 	}
+	return tea.Batch(probe, tickProbe())
+}
+
+// probeHost 只取 scheme+host 上屏：带 token 的 URL 不该整条摊在终端里，
+// 而 path 对"这个端点认不认这把 key"也没有信息量。
+func probeHost(baseURL string) string {
+	s := strings.TrimSpace(baseURL)
+	if s == "" {
+		return "(no base_url)"
+	}
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexByte(s, '/'); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }
 
 func (w *setupWizard) Init() tea.Cmd { return nil }

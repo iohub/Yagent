@@ -217,6 +217,11 @@ func IsPlaceholderKey(s string) bool   // ""、"your-key"、"sk-your-key"、"cha
 
 ## 6. 阶段 E：引导向导（D7）
 
+> **2026-10-16 修订**：向导的呈现与交互已被 `docs/setup-wizard-ui-design.md` 取代并落地
+> （四段阶段轨 / 必填 4 格 + `ctrl+o` 可选区 / `ctrl+p` 端点预设 / `f2` 合并密钥来源 /
+> 探测 spinner / diff 摘要）。本节保留的是当时的决策记录 D1–D9，**其中 §6.2 的屏序细节与 §6.3 的
+> 第 2、4 条已按新文档更正**；未兑现项在每段末尾点名。
+
 ### 6.1 状态与文件
 
 `internal/tui/setup.go`（状态机 + 现状读取 + 落盘队列 + 探测）、`setup_keys.go`（按键与表单）、
@@ -240,28 +245,44 @@ setupErr      string           // 上一轮 probe 或写入的原始错误，逐
 ```
 1 welcome      解释要配什么、配置文件在哪、为什么现在问这个。Enter 开始 / Esc 跳过（不写任何东西）
 2 providerList 现有 provider 表格：名字 / model / base_url / key（明文显示前 4 后 2，配 api_key_env 显示变量名）
-               a 新增  e 编辑  d 删除  Enter 设为默认  t 连通性测试  数字键快捷选
-3 providerForm 字段顺序：name → api_base_url → api_key(或 1 切到 api_key_env) → model → api_format
-                         → reasoning_effort → max_tokens → context_window
-               Tab/Enter 下一字段，Shift+Tab 上一字段，Ctrl+S 保存草稿回 2，Esc 放弃
-               model 行右侧实时提示：目录里有没有这个模型、它的 limit.context、auto-routing 会归到哪一档
+               a 新增  e 编辑  d 删除  t 连通性测试  数字键快捷选
+               【更正】Enter 保持"编辑"（它是唯一能改块的地方），"设为默认"改成 s ——
+               同名键在两屏不同义比多按一次更贵。徽章取代文本 flag，占位密钥显形为 `fix key`。
+3 providerForm 必填 4 格：name → api_base_url → 密钥(api_key ⇄ api_key_env 一行两态，f2 切) → model
+                         可选 4 格（api_format / reasoning_effort / max_tokens / context_window）默认折叠，ctrl+o 展开
+               Tab/Enter 下一格（折叠态的"末格"是 model），Ctrl+S 随时存草稿，Esc 放弃
+               ctrl+p 端点预设只填空字段；model 命中内嵌目录时回填 context_window（手输过就不覆盖）
+               【更正】"auto-routing 会归到哪一档"没做：`internal/models` 只导出 ContextWindow 与
+               Benchmarks，`ClassifyTiers` 是对候选集分档、不是给单个模型定档 —— 报不出来就不报。
+               【本轮补】api_base_url 进必填：旧校验只查 name/model/密钥，而 validate() 要求每个
+               provider 都有 URL，于是表单能放行出一份"下次启动加载失败"的文件
 4 probe        一次最小请求（max_tokens=16，无 tools，超时 30s）。成功：model + 延迟 + 回包文本；
                失败：provider 返回的原话逐字显示，不做美化。Enter 回 3 改，p 重测
 5 globalDefault 从 provider 列表里选 use_provider（写 [global.llm]）
 6 firstRun     5 行可编辑：lang（""/中文/English）· yolo 档位（off/workspace/full）·
-               routing mode（auto/fixed）· browser enabled（true/false）· [llm] timeout（1m/5m/10m/30m）
-7 summary      将要写入的键与段逐条列出（含路径），Enter 落盘、Esc 不落盘
+               routing mode（auto/fixed）· browser enabled（true/false）· [llm] timeout（5m/10m/15m/30m）
+               （代码取的是 5m/10m/15m/30m：模板缺省 10m 的邻域，改文档不改档位）
+7 summary      将要写入的变更按 PROVIDERS/DEFAULT/CHOICES 分组显示成人话 diff（+ − → ~ =），
+               每条 op 的 note 原文保留为次级行（applyOps 失败时报的就是它），Enter 落盘、Esc 不落盘
 ```
 
 - 落盘顺序：`WriteProvider` → `DeleteProvider` → `SetKeyInSection("global.llm","use_provider")` → `[agent] lang/yolo_mode/full_yolo_mode` → `[routing] mode` → `[browser] enabled` → `[llm] timeout`。**这不是事务**：`applyOps` 逐条落盘、遇错立即停止，并把失败的 `note` 原文留在面板上 —— 报告"失败但前面几条已写入"才是实话，包装成"什么都没发生"是在骗人。
 - 写完后必须让**运行中的进程**也生效：复用现成的 runtime 路径（`client.SwitchProvider` / `SetLLMTimeout` / `SetRoutingMode`，见 `tui_update_keys.go:240-301` 的"先 runtime 再 persist"次序），而不是只改文件。
+  **仍未兑现**（2026-10-16 的 UI 刷新明确把它划出范围）：`/setup` 写完只改文件并提示重启，
+  运行中的引擎不变。摘要屏与退出信息都把这件事说出来，不假装生效。
 
 ### 6.3 必须照办的 TUI 约束（AGENTS §11 坑 6 / §6.8）
 
 1. `setupMode` 的 Update 必须把 `taskEventMsg` 交给 `handleTaskEventMsg`、`taskCompleteMsg` 交给 `handleTaskCompleteMsg`（后者是 `taskRunning` 唯一清零点），并重新 `listenForEvents` —— 抄 `tui_resume.go:181-188` 的透传形状。
 2. textarea 只在 `providerForm` 存在，样式沿用 `newTaskInput`（`tui_model.go:633-688`：`SetVirtualCursor(true)`、prompt 色 39、焦点态 bg 235/236），进入该步必须 `Focus()` + 返回 `textarea.Blink`。
+   ✅ 已兑现，且收成一份实现：`applyTextareaTokens`（`tui_model.go`）同时喂主输入框与向导的表单字段
+   —— 两边各写一遍的话，配置表单（用户对项目的第一印象）会比聊天框朴素。
 3. `WindowSizeMsg` 与 `MouseMsg`/`FocusMsg`/`BlurMsg`/`tea.PasteMsg` 都要放行（`PasteMsg` 的坑已在 `tui_update.go:58-65` 踩过一次）。
 4. 排版只用现成令牌：`common.DialogBorderStyle`、`renderPanelTop/renderPanelBottom`（`tui_chrome.go:100/128`）、`KeyHintStyle` 键帽、强调色 141/62/214/39/76。宽度不足（`<40`）时给"请把终端拉宽"的一行提示而不是空白。
+   ✅ 已兑现（2026-10-16）：`setupTop/setupBottom` 那套自造 chrome 已删，向导直接调 `tui_chrome.go`
+   的三个函数；列表原语上提到 `common/list_metrics.go` 与对话框共用。
+   附带补了**高度**闸门（原文只守宽度）：`<18` 行给一行提示，超出部分走滚动窗口 ——
+   旧版长错误 + 8 条 op 会溢出到 AltScreen 之外（AGENTS §11 坑 30）。
 5. `setupMode` 在 `View()` 优先级里排在 timeline/thinklink **之上**（首启时它们是空的），在 `Update()` 里同样最高优先级，避免 D7 提到的不对称。
 
 ---
