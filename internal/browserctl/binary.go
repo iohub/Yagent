@@ -8,7 +8,8 @@ import (
 )
 
 // ResolveBinaryPath 依次尝试：[browser] binary_path → ~/.yagent/bin/browser-control → $PATH。
-// 不内嵌二进制：这个能力的前提是机器上有 Chrome，内嵌 CLI 换不来开箱可用。
+// release 构建已把 browser-control 内嵌进 dist/bin、启动时解出到 ~/.yagent/bin（见 app.go
+// 对 embedbin.ExtractBinaries 的调用），查找顺序保持不变；运行时前提仍是机器上有 Chrome。
 func ResolveBinaryPath(configured string) (string, error) {
 	if configured != "" {
 		p, err := executablePath(configured)
