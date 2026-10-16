@@ -645,6 +645,18 @@ func newTaskInput(preloadedTaskContent string) textarea.Model {
 	ti.ShowLineNumbers = false
 	ti.SetVirtualCursor(true)
 
+	applyTextareaTokens(&ti)
+
+	if preloadedTaskContent != "" {
+		ti.SetValue(preloadedTaskContent)
+	}
+	return ti
+}
+
+// applyTextareaTokens 是"输入框长什么样"的唯一答案：主输入框与引导向导的表单字段共用
+// 同一套令牌（docs/setup-wizard-ui-design.md §3.5）。两边各写一份的后果是配置表单
+// —— 用户对这个项目的第一印象 —— 比聊天框朴素。
+func applyTextareaTokens(ti *textarea.Model) {
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 
 	// 输入区是一块比面板底色更深的"字段"，光标所在行再抬亮一档，
@@ -684,11 +696,6 @@ func newTaskInput(preloadedTaskContent string) textarea.Model {
 		}
 		return "  "
 	})
-
-	if preloadedTaskContent != "" {
-		ti.SetValue(preloadedTaskContent)
-	}
-	return ti
 }
 
 func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskManager, dm *datamanager.DataManager, useDarkStyle bool, cfg *config.Config, termWidth, termHeight int) *model {

@@ -1,11 +1,9 @@
 package components
 
 import (
-	"strconv"
-	"strings"
+	"yagent/internal/tui/common"
 
 	"charm.land/lipgloss/v2"
-	"yagent/internal/tui/common"
 )
 
 // 列表型对话框（ModelSelectDialog / AgentSelectDialog）共用的排版原语：
@@ -27,34 +25,23 @@ const (
 )
 
 // dialogWidths 由终端宽度推出对话框宽度与内容宽度。
+// 实现已上提到 common.PanelWidths（引导向导要用同一套推导，不能有两份）；
 // 内容宽度下限 30：再窄就无法保证 provider/model 两列还能区分彼此。
 func dialogWidths(termWidth int) (dialogWidth, innerWidth int) {
-	dialogWidth = min(dialogMaxWidth, termWidth-4)
-	return dialogWidth, max(dialogWidth-6, 30)
+	return common.PanelWidths(dialogMaxWidth, 30, termWidth)
 }
 
 // listBudget 返回列表可占用的行数，以及是否渲染上下滚动指示行。
-// 终端高度扣除固定行后受 dialogMaxListRows 限制；需要滚动且扣掉指示行后仍有余量时
-// 预留 2 行，否则放弃指示行——保证对话框永远不会高出终端。
+// 见 common.ListBudget：终端高度扣除固定行后受 dialogMaxListRows 限制，
+// 需要滚动且扣掉指示行后仍有余量时预留 2 行，否则放弃指示行 —— 保证对话框
+// 永远不会高出终端。
 func listBudget(height, needed int) (rows int, showMore bool) {
-	rows = max(min(height-dialogListChrome, dialogMaxListRows), 1)
-	if needed <= rows {
-		return rows, false
-	}
-	if rows-2 >= 1 {
-		return rows - 2, true
-	}
-	return rows, false
+	return common.ListBudget(dialogListChrome, dialogMaxListRows, height, needed)
 }
 
-// windowRange 返回可见区间的 [start, end)，focus 所在行尽量居中。
+// windowRange 返回可见区间的 [start, end)，focus 所在行尽量居中。见 common.WindowRange。
 func windowRange(n, focus, rows int) (start, end int) {
-	rows = max(rows, 1)
-	if n <= rows {
-		return 0, n
-	}
-	start = min(max(focus-rows/2, 0), n-rows)
-	return start, start + rows
+	return common.WindowRange(n, focus, rows)
 }
 
 // dialogHint 返回单行放得下的按键提示。
@@ -73,80 +60,27 @@ func dialogHint(innerWidth int, multi bool) string {
 	return hint
 }
 
-// moreLine 渲染 "↑ N more" / "↓ N more" 滚动指示行，在内容宽度内居中。
+// moreLine 渲染 "↑ N more" / "↓ N more" 滚动指示行。见 common.MoreLine。
 func moreLine(n int, up bool, innerWidth int, c common.ColorTokens) string {
-	arrow := "↓"
-	if up {
-		arrow = "↑"
-	}
-	text := arrow + " " + strconv.Itoa(n) + " more"
-	style := lipgloss.NewStyle().Foreground(c.TextMuted).Italic(true)
-	return strings.Repeat(" ", max((innerWidth-lipgloss.Width(text))/2, 0)) + style.Render(text)
+	return common.MoreLine(n, up, innerWidth, c)
 }
 
-// allocateColumns 在总宽 avail 内分配 provider / model 两列：
-// 自然宽度放得下就原样使用，放不下时按 2:3 分配（model 名通常更长），每列至少 6 格。
+// allocateColumns 在总宽 avail 内分配 provider / model 两列。见 common.AllocateColumns。
 func allocateColumns(avail, provNatural, modelNatural int) (int, int) {
-	if avail < 12 {
-		return max(avail/2, 1), max(avail-avail/2, 1)
-	}
-	if provNatural+modelNatural <= avail {
-		return provNatural, modelNatural
-	}
-	prov := avail * 2 / 5
-	model := avail - prov
-	if prov < 6 {
-		prov = 6
-		model = avail - prov
-	}
-	if model < 6 {
-		model = 6
-		prov = avail - model
-	}
-	return prov, model
+	return common.AllocateColumns(avail, provNatural, modelNatural)
 }
 
-// contextLabel 返回上下文窗口的紧凑文本（与 TUI 上下文进度条同一格式），未知时为 "-"。
+// contextLabel 返回上下文窗口的紧凑文本，未知时为 "-"。见 common.ContextLabel。
 func contextLabel(n int) string {
-	if n <= 0 {
-		return "-"
-	}
-	return common.FormatTokenShort(int64(n))
+	return common.ContextLabel(n)
 }
 
-// padLeft 左侧补空格至显示宽度 w（超出则原样返回）。
+// padLeft 左侧补空格至显示宽度 w。见 common.PadLeft。
 func padLeft(s string, w int) string {
-	if pad := w - lipgloss.Width(s); pad > 0 {
-		return strings.Repeat(" ", pad) + s
-	}
-	return s
+	return common.PadLeft(s, w)
 }
 
-// ellipsize 按显示宽度截断 s 并右侧补空格，使结果宽度恰为 w。
-// 超长时中间省略（保留首尾），因为同前缀的 provider/model 名靠尾部区分：
-// 窄终端下 "siliconflow_ds4_flash" 与 "siliconflow_dsv32" 若只保留头部会完全一样。
+// ellipsize 按显示宽度截断 s 并右侧补空格，使结果宽度恰为 w。见 common.Ellipsize。
 func ellipsize(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if width := lipgloss.Width(s); width <= w {
-		return s + strings.Repeat(" ", w-width)
-	}
-	runes := []rune(s)
-	if w > 1 && len(runes) >= w {
-		tail := (w - 1) / 2
-		head := w - 1 - tail
-		if middle := string(runes[:head]) + "…" + string(runes[len(runes)-tail:]); lipgloss.Width(middle) == w {
-			return middle
-		}
-	}
-	// 宽字符等导致中间省略对不齐时，退化为尾部省略
-	for len(runes) > 0 {
-		runes = runes[:len(runes)-1]
-		candidate := string(runes) + "…"
-		if width := lipgloss.Width(candidate); width <= w {
-			return candidate + strings.Repeat(" ", w-width)
-		}
-	}
-	return strings.Repeat(" ", w)
+	return common.Ellipsize(s, w)
 }

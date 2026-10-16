@@ -158,7 +158,8 @@ yagent/
 │   ├── tokenutil/              # tiktoken 封装（EstimateTokens）
 │   ├── tools/                  # 工具 Adapter 实现 + workspace_guard + user_confirm
 │   ├── tui/                    # Bubble Tea v2 界面（82 个文件）
-│   │   ├── setup*.go           #   首次使用引导向导（状态机 / 按键 / 渲染 / 嵌入主 model）
+│   │   ├── setup*.go           #   引导向导：状态机+落盘队列 / 按键与表单行规格 / 外壳 / 七屏正文 /
+│   │   │                         #   端点预设 / 嵌入主 model（docs/setup-wizard-ui-design.md）
 │   │   ├── tui_keymap.go       #   [tui.keybindings] → 按键翻译表（替换语义，见 §11 坑 29）
 │   │   ├── anim/ common/ components/ layout/
 │   └── util/                   # 崩溃上报等
@@ -535,6 +536,10 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
   弹窗打开时全局守卫只放行 KeyMsg/taskEventMsg/taskCompleteMsg/tickMsg，新增消息类型必须显式放行（`tea.PasteMsg` 的坑已踩过）。
 - **模态编辑**：Esc→NORMAL、`i`→INSERT、`:` 命令行、`/` 真搜索、textarea 用 `SetVirtualCursor(true)`、支持 `10j` 数字前缀。
 - **快捷键提示**只出现在 tab 行右侧与各面板底边框，**状态栏不含任何键帽**。
+- **列表/表单表面的共用原语在 `common/list_metrics.go`**（`PanelWidths` / `ListBudget` /
+  `WindowRange` / `MoreLine` / `AllocateColumns` / `Ellipsize` / `PadLeft`）：`components` 的十个对话框
+  与引导向导共用同一份，两边都只留别名。**不要在任何一边再写一份** —— 同形两份实现只有一边会漂走
+  （§11 坑 18）。输入框视觉令牌同理：`applyTextareaTokens`（`tui_model.go`）是主输入框与向导字段的唯一来源。
 - **设计语言**：圆角手绘边框（`tui_chrome.go` 的 `╭╮╰╯─▌`），配色令牌集中在
   `common/styles.go`（`Styles`/`Theme`，深浅双主题）、`styles.go`（工具背景 16 色哈希、Agent 前景色）、
   `common/grad.go`（渐变）。强调色：`141`（lavender，活动 tab / thinklink / LLM 调用）、`62`（INSERT、滚动条、面板边框）、
@@ -579,8 +584,26 @@ provider 块的写/删在 `config/setup.go`（`WriteProvider` / `DeleteProvider`
 - 判据全部从配置本身推导，**没有"看过一次就不再问"的标记文件**（那是会漂移的第二份事实）。
 - 向导内容是 provider 全生命周期 + 一次真实连通性探测 + 五个首选项（`lang` / yolo 档位 /
   `[routing] mode` / `[browser] enabled` / `[llm] timeout`）。排队到摘要屏才落盘，之前放弃 = 文件没动过。
-- 实现是 `internal/tui/setup*.go` 的状态机 `setupWizard`，既能独立跑（`RunSetup`）也能当主 TUI 的全屏模式；
+- 表单**必填只有 4 格**（name / api_base_url / 密钥 / model），其余 4 格收在 `ctrl+o` 才展开的可选区；
+  `ctrl+p` 是端点预设（**只填空字段**，`setup_presets.go` 那份手写的 URL 表不是权威，探测屏才是）；
+  `f2` 把 `api_key` 与 `api_key_env` 合并成一行两态（`config.WriteProvider` 本来就删另一行，
+  分成两格只会留下"两个都填了谁赢"这条只能靠 hint 说明的隐式规则）。
+  `model` 命中内嵌目录时自动回填 `context_window`，但**只在该格为空或仍是上一次自动填的那个值**时回填——
+  手输过的数不会被覆盖。校验集合与必填集合是同一份（`TestWizardRequiredGroupMatchesValidator` 双向钉），
+  其中 `api_base_url` 是本轮补的：`WriteProvider` 只要求"URL 与密钥不全空"，而 `validate()` 要求每个
+  provider 都有 URL —— 旧表单会放行出一份"下次启动直接加载失败"的文件。
+- 进度是**四段阶段轨**（PROVIDER / DEFAULT / CHOICES / REVIEW），判据来自账本（op 队列 + 文件现状），
+  **不是"走到第几屏"**：真实路径 `providers→form→probe→providers→default` 里游标会来回跳，
+  而"已经配完了"这个事实不会倒退。旧的 `4/7` 编号因此是假信息（见 §11 坑 30）。
+- 摘要屏是人话 diff（`+ 新增 / − 删除 / → 改默认 / ~ 改值 old → new / = 不变`），
+  每条 op 的 `note` 原文作为次级 dim 行**保留**——`applyOps` 失败时报的就是它；写失败还会带上
+  "已写入 N/M 条"（它不是事务，§11 坑 28）。
+- 实现是 `internal/tui/setup*.go` 的状态机 `setupWizard`（`setup.go` 状态与落盘队列、
+  `setup_keys.go` 按键与表单行规格、`setup_render.go` 外壳、`setup_screens.go` 七屏正文、
+  `setup_presets.go` 端点预设、`setup_embed.go` 主 TUI 宿主），既能独立跑（`RunSetup`）也能当主 TUI 的全屏模式；
   View/Update 优先级最高，且必须把 `taskEventMsg` / `taskCompleteMsg` 透传给原 handler。
+- **仍未兑现**：写完不会让运行中的进程生效（原方案 §6.2 要求复用 `SwitchProvider`/`SetLLMTimeout`/
+  `SetRoutingMode`），所以 `/setup` 之后要重启 yagent。
 - 非 TTY 的失败路径改成 stderr 三行人话（哪一项坏了 / 文件在哪 / `run yagent setup`）+ 退出码 2，
   不再 `slog.Error` 进日志文件后静默 `os.Exit(1)`。
 
@@ -1013,6 +1036,28 @@ plan:
     两个附带约束：抢同一个键时**保留先声明的动作**并 `slog.Warn`；`keyUnbound` 绝不能长得像真按键
     （`TestUnboundSentinelMatchesNothing`）。表单屏还在 `tab/enter` 之后把字符交给 textarea ——
     字段自己得吃掉按键。
+30. **TUI 的行数预算必须按"渲染后的行数"算**：`lipgloss.Style.Width()` 会把超宽的行**再折一次**，
+    所以"我数过 body 有 13 行"和屏上真正的 16 行不是一个数，面板因此能超出终端高度 ——
+    在 AltScreen 里多出来的行看不见也滚不回去，表现是"最后一屏莫名少几行"。
+    三道闸门都在计数之前做，缺一个就会复现：① `fitLines` 先把越宽的行剪断（宽度用 `lipgloss.Width`，
+    样式串里的 ANSI 不占列）；② `wrapPlain` 必须**硬切超长单词**（provider 错误原文里全是 URL、
+    base64 密钥、JSON 片段，只按空白折行等于没折）；③ 状态条（错误原文）自己有预算 `capStatus`，
+    否则"正文 = 高 - 2 - 状态行"会算出负数并夹到最小值，总高反而超出终端。
+    同理，卡片/表格每一行的列宽要**正好加到容器内宽**（分隔符数量按真正拼出的列数算，
+    徽章还要算上 `BadgeStyle` 的 `Padding(0,1)`）。闸门是 `TestWizardRenderWidthMatrix`
+    （宽度 {40..240} × 高度 {18,24,40} × 七屏 × 折叠/预设子模式，断言行数 ≤ 终端高度）。
+31. **表单屏的模态键必须带修饰符**：向导的表单每一格都是活的 textarea，裸字母要先送进输入框。
+    曾经用裸 `p`（端点预设）和裸 `o`（展开可选区），于是填 `https://…` 会吃掉 `ps`、
+    并莫名打开预设列表 —— 用户看到的是"我打的字少了两个字母"。正确形状：`ctrl+p` / `ctrl+o` / `f2`
+    （与主 TUI 用 `alt+s` 提交同理），只有在**没有 textarea 活着**的屏（列表、摘要、预设选择中）
+    才可以用裸键。`TestWizardHintsAreNotDecoration` 还反向钉住另一半：底栏键帽上写的每个单键
+    都必须真的能改状态，因为键帽比裸串更容易被相信。
+32. **向导的 `done` 不等于退出，退出是宿主的决定**：`setupWizard` 同一个状态机跑在两个宿主里，
+    `q` / `ctrl+c` / 摘要落盘只置 `done=true`，而 bubbletea 只认 `tea.Quit`。独立跑（`RunSetup`）
+    时必须把它翻成 `tea.Quit`（`w.standalone` + `Update` 里单点收口），否则进程停在最后一屏 ——
+    用户看到的症状是"按 q 没反应"；嵌在主 TUI 时反过来必须**不**翻，那会把整个 yagent 退掉，
+    交还键盘由 `updateSetupMode` 的 `Done()` 分支负责。闸门是 `TestRunSetupProgramActuallyExits`：
+    它用 `tea.WithInput(strings.NewReader("q"))` 真跑一次程序断言 `Run` 返回，不是只查 cmd 形状。
 
 
 <!-- CODESEEK_INJECTION -->
