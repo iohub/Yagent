@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"time"
 	"unicode/utf8"
+
+	"yagent/internal/util"
 )
 
 // schemaVersion 当前 artifact 落盘格式版本。
@@ -140,29 +142,23 @@ func (s *Store) LoadFullText(projectID, id string) (string, error) {
 	return art.FullText, nil
 }
 
-// write 原子写：先写 {id}.json.tmp（0600）再 os.Rename 到 {id}.json。
+// write 原子写：0700 目录 / 0600 文件 / `.tmp` 中间态。
+// tmp+rename 的语义在 util.AtomicWrite（全仓唯一一份，I21），这里只负责序列化与 ID 校验。
 func (s *Store) write(projectID string, art Artifact) error {
 	if !idPattern.MatchString(art.ID) {
 		return fmt.Errorf("invalid artifact id: %q", art.ID)
-	}
-	dir := filepath.Join(s.root, projectID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("artifact: create dir: %w", err)
 	}
 	data, err := json.MarshalIndent(art, "", "  ")
 	if err != nil {
 		return fmt.Errorf("artifact: marshal: %w", err)
 	}
-	finalPath := filepath.Join(dir, art.ID+".json")
-	tmpPath := finalPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
-		return fmt.Errorf("artifact: write tmp: %w", err)
-	}
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		_ = os.Remove(tmpPath) // rename 失败时清理残留 tmp
-		return fmt.Errorf("artifact: rename: %w", err)
-	}
-	return nil
+	finalPath := filepath.Join(s.root, projectID, art.ID+".json")
+	return util.AtomicWrite(finalPath, data, util.AtomicWriteOptions{
+		DirPerm:   0o700,
+		FilePerm:  0o600,
+		TmpSuffix: ".tmp",
+		Label:     "artifact",
+	})
 }
 
 // newArtifactID 生成 {YYYYMMDD-HHmmss UTC}-{8位 crypto/rand 小写 hex} 形态的 ID。

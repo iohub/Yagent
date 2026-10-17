@@ -3,11 +3,12 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"yagent/internal/util"
 )
 
 // 这套写回机制的唯一目的：改一个键，其它字节原样不动。
@@ -319,38 +320,16 @@ func leadingWhitespace(line string) string {
 	return line
 }
 
-// atomicWriteFile 原子写入：先写同目录临时文件再 rename，避免写一半被读到；
-// 失败时清理临时文件不残留，文件权限继承原文件（无则 0644）。
+// atomicWriteFile 原子写入：tmp+rename 的语义在 util.AtomicWrite（全仓唯一一份，I21）。
+// 这里保留 config 特有的那条规则：**权限继承原文件** —— 用户手工 chmod 过的
+// config.toml 不该因为一次写回被改回去；原文件不存在时用 0644。
 func atomicWriteFile(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	mode := os.FileMode(0o644)
-	if st, err := os.Stat(path); err == nil {
-		mode = st.Mode().Perm()
-	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".persist-*.tmp")
-	if err != nil {
-		return fmt.Errorf("config: create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("config: write temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("config: close temp file: %w", err)
-	}
-	if err := os.Chmod(tmpName, mode); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("config: chmod temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("config: rename temp file: %w", err)
-	}
-	return nil
+	return util.AtomicWrite(path, data, util.AtomicWriteOptions{
+		FilePerm:    0o644,
+		InheritPerm: true,
+		TmpSuffix:   ".persist.tmp",
+		Label:       "config",
+	})
 }
 
 // tomlBasicString 把 s 编码为 TOML basic string（双引号），转义反斜杠与引号。

@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"yagent/internal/util"
 )
 
 const (
@@ -269,27 +271,19 @@ func (dm *DataManager) extractMetaFromFile(path string) (IndexEntry, error) {
 	}, nil
 }
 
-// persistIndex 原子写索引文件（先写 .tmp 再 rename）
+// persistIndex 原子写索引文件。tmp+rename 的语义在 util.AtomicWrite（全仓唯一一份，I21）。
+// 保持原有取舍：不建目录（目录由 NewDataManager 负责，这里静默建它会藏住装配错误）、
+// 文件 0644。两个 TUI tab 同时写同一份索引时，内核的随机 tmp 名保证不会互相截断。
 func (dm *DataManager) persistIndex(idx *taskIndex) error {
-	path := dm.indexPath()
-	tmpPath := path + ".tmp"
-
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal index: %w", err)
 	}
-
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("write temp index: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		// rename 失败时清理临时文件
-		os.Remove(tmpPath)
-		return fmt.Errorf("rename index: %w", err)
-	}
-
-	return nil
+	return util.AtomicWrite(dm.indexPath(), data, util.AtomicWriteOptions{
+		FilePerm:  0o644,
+		TmpSuffix: ".tmp",
+		Label:     "datamanager",
+	})
 }
 
 // reconcileIndex 轻量校验：检查每个任务的 mtime 是否匹配，不匹配则从文件重新提取
