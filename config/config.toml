@@ -275,6 +275,28 @@ degrade_on_workspace_change = "warn"   # warn = HEAD moved but still replay, wit
                                        # block = refuse replay and emit the handoff report
 checkpoint_workspace = true            # git status at stop, recorded in the checkpoint
 
+# ── Repository blueprint (internal/blueprint) ──
+# What it is: a directory-level map of the project (module split + AST-verified dependency
+# edges, derived on the fly and never stored) plus the durable prose the Repo agent submits
+# with agent_exit.blueprint[] when it finishes an analysis run.
+# Where it lives: ~/.yagent/data/blueprint/{projectID}/blueprint.md is the only writable file.
+# Kill switch: YAGENT_BLUEPRINT=0 turns off deriving, injection, the tool, folding and GC —
+# one judgment shared by all five sites, no code change needed.
+[blueprint]
+enable = true                          # false opts the whole feature out (not just injection)
+inject_into = ["director", "repo", "coding"]
+                                       # which system prompts get the resident skeleton;
+                                       # explicit [] = nobody, unknown names warn then drop
+index_max_tokens = 1000                # injected skeleton ceiling; <=0 = default (this repo
+                                       # measures 874 for 42 modules / 103 edges)
+prose_budget_tokens = 1500             # read_blueprint + Repo/Coding prose budget
+export_path = ""                       # "" = never touch the workspace. Otherwise a path
+                                       # (relative = project root, must stay inside the
+                                       # workspace) that gets a regenerated rendering —
+                                       # untracked files dirty `git status` and can be swept
+                                       # by git_checkpoint's stash --include-untracked, which
+                                       # is exactly why the source of truth is not there
+
 # ── Context compression (three tiers, internal/compression) ──
 # Trigger measure = the previous step's provider-reported input tokens + local estimates for
 # messages added since.

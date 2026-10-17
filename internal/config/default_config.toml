@@ -179,6 +179,19 @@ max_replay_messages = 2000           # explicit 0 = unlimited; negative/omitted 
 degrade_on_workspace_change = "warn" # warn = HEAD moved, still replay with a note; block = handoff report
 checkpoint_workspace = true          # git status at stop (switch off on enormous repos)
 
+# ── Repository blueprint (internal/blueprint) ──
+# Directory-level navigation (derived, never stored) + prose the Repo agent commits when it
+# finishes an analysis. The source of truth is ~/.yagent/data/blueprint/{projectID}/blueprint.md —
+# the workspace copy only exists if you ask for it via export_path.
+[blueprint]
+enable = true
+inject_into = ["director", "repo", "coding"] # resident sites; explicit [] = inject nowhere,
+                                             # unknown names are dropped with a warning
+index_max_tokens = 1000        # ceiling for the injected skeleton (this repo measures 874)
+prose_budget_tokens = 1500     # budget for read_blueprint and the Repo/Coding prose render
+export_path = ""               # non-empty = also write a rendered copy into the workspace;
+                               # that copy is an idempotent export, never the writable source
+
 # ── Context compression, three tiers (internal/compression) ──
 # Trigger = previous step's provider-reported input tokens + local estimate for messages since.
 # Threshold = min(model catalog limit.context × 0.75, context_compression_threshold).

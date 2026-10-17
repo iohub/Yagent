@@ -213,6 +213,9 @@ type Config struct {
 	// Resume 是"停止/继续"（检查点重放）的预算与开关。
 	Resume ResumeConfig `toml:"resume"`
 
+	// Blueprint 是仓库蓝图（目录级导航 + Repo 提交的散文）的开关与预算。
+	Blueprint BlueprintConfig `toml:"blueprint"`
+
 	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`
 
 	TUI TUIConfig `toml:"tui"`
@@ -226,6 +229,9 @@ type Config struct {
 
 	// resumeSectionDefined 同理，记录 [resume] 段是否被显式写过。
 	resumeSectionDefined bool
+
+	// blueprintSectionDefined 同理，记录 [blueprint] 段是否被显式写过。
+	blueprintSectionDefined bool
 
 	// gitCheckpointSectionDefined 同理。这里必须看段的存在性而不是某个字段是否为空：
 	// 老写法是"前缀为空就整段换默认值"，于是 enabled = false 会被顶回 true。
@@ -517,6 +523,18 @@ func LoadFromFile(path string) (*Config, error) {
 		Section:            cfg.resumeSectionDefined,
 		MaxReplayMessages:  md.IsDefined("resume", "max_replay_messages"),
 		DegradeOnWorkspace: md.IsDefined("resume", "degrade_on_workspace_change"),
+	})
+	// [blueprint]：enable 的缺省是"开"，而 Go 零值是 false —— 判定必须看键与段的存在性（坑 26）。
+	cfg.blueprintSectionDefined = sectionHasDecodedKey(md, "blueprint")
+	if stale := staleKeysIn(md, "blueprint"); len(stale) > 0 {
+		slog.Warn("[blueprint] 段存在不认识的键，将被忽略",
+			"stale_keys", strings.Join(stale, ", "),
+			"hint", blueprintKeyHint)
+	}
+	SetGlobalBlueprint(cfg.Blueprint, BlueprintPresence{
+		Section:    cfg.blueprintSectionDefined,
+		Enable:     md.IsDefined("blueprint", "enable"),
+		InjectInto: md.IsDefined("blueprint", "inject_into"),
 	})
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
