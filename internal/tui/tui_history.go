@@ -445,7 +445,10 @@ func renderHistoryView(m *model) tea.View {
 	bottomLeft := "└" + strings.Repeat("─", width-2) + "┘"
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(bottomLeft))
 
-	return tea.NewView(b.String())
+	// AltScreen 必须显式为 true。tea.NewView 的这个字段是 false，而渲染器看到它
+	// 从 true 翻转就会**退出备用屏**（cursed_renderer.go:314）——
+	// 于是进 history 会把用户甩回主屏缓冲区，多出来的行直接滚进真实终端历史。
+	return tea.View{AltScreen: true, Content: b.String()}
 }
 
 // renderHistoryTitleBar renders the top title bar of the history view.

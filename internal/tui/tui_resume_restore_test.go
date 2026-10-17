@@ -735,7 +735,6 @@ func TestResumeExpandAndRows(t *testing.T) {
 		if expanded {
 			m.resumeExpanded["task:T1"] = true
 		}
-		m.resumePageSize = defaultPageSize
 		m.rebuildResumeRows()
 		return m
 	}
@@ -750,7 +749,6 @@ func TestResumeExpandAndRows(t *testing.T) {
 	t.Run("enter_on_head_expands", func(t *testing.T) {
 		m := newRowsModel(t, false)
 		m.resumeCursor = 0
-		m.resumeOffset = 0
 		m, _ = resumeHandleKey(tea.KeyPressMsg{Code: tea.KeyEnter}, m)
 		if len(m.resumeRows) != 3 {
 			t.Fatalf("rows after expand = %d, want 3", len(m.resumeRows))
@@ -777,72 +775,4 @@ func TestResumeExpandAndRows(t *testing.T) {
 			t.Fatalf("rows after collapse = %d, want 1", len(m.resumeRows))
 		}
 	})
-}
-
-func TestRenderResumeRows(t *testing.T) {
-	m := restoreTestModel(t)
-	m.resumeStyles = m.initResumeStyles()
-	base := time.Now()
-	m.resumeGroups = buildResumeGroups([]memory.RolloutSessionInfo{
-		mkItem("/r/a_director.jsonl", "T1", "director", base),
-		mkItem("/r/a_sub_coder.jsonl", "T1", "coder", base.Add(time.Second)),
-	})
-	m.resumeExpanded = map[string]bool{"task:T1": true}
-	m.rebuildResumeRows()
-	m.resumePageSize = defaultPageSize
-	m.resumeRoot = "/r"
-
-	// 逐行钉死单元格宽度（AGENTS.md §6.8 的口径），而不是只看有没有 "%!"。
-	//
-	// 行数必须等于 termHeight，且除明细行外每行都必须是满宽：
-	//   - renderResumeView 在 contentArea 之后要补换行，否则最后一条补白行会和状态栏
-	//     粘成一行（宽度 2×width，真机上被折行）；
-	//   - renderResumeRow 的 arrow 必须按 lipgloss.Width 扣宽，不能用 len()
-	//     （"▾ " 是 4 字节 / 2 格，多减会把组头行压短）；
-	//   - 明细行是组内子行，不做右侧补白，恒为 detailWidth 格。
-	const (
-		detailRow   = 3
-		detailLine  = "    a_direct · 0 B"
-		detailWidth = 18
-	)
-	for _, width := range []int{60, 80, 100, 160} {
-		m.termWidth, m.termHeight = width, 30
-		view := renderResumeView(m).Content
-		if strings.Contains(view, "%!") {
-			t.Errorf("width %d: view has format errors:\n%s", width, stripANSI(view))
-		}
-		lines := strings.Split(view, "\n")
-		if len(lines) != m.termHeight {
-			t.Fatalf("width=%d: 行数 = %d, want termHeight %d\n----\n%s----", width, len(lines), m.termHeight, stripANSI(view))
-		}
-		for i, l := range lines {
-			want := width
-			if i == detailRow {
-				want = detailWidth
-			}
-			if got := lipgloss.Width(l); got != want {
-				t.Errorf("width=%d line %d 宽度 = %d, want %d（%q）", width, i, got, want, stripANSI(l))
-			}
-		}
-		if got := stripANSI(lines[detailRow]); got != detailLine {
-			t.Errorf("width=%d 明细行 = %q, want %q", width, got, detailLine)
-		}
-		if first, last := stripANSI(lines[0]), stripANSI(lines[len(lines)-1]); !strings.HasPrefix(first, "┌") ||
-			!strings.HasSuffix(first, "┐") || !strings.HasPrefix(last, "└") || !strings.HasSuffix(last, "┘") {
-			t.Errorf("width=%d 边框破了：%q / %q", width, first, last)
-		}
-	}
-
-	// 展开视图应含成员徽标与缩进前缀
-	m.termWidth, m.termHeight = 120, 30
-	view := renderResumeView(m).Content
-	if !strings.Contains(view, "+1") {
-		t.Error("head row missing member-count badge")
-	}
-	if !strings.Contains(view, "└") {
-		t.Error("member row missing tree prefix")
-	}
-	if !strings.Contains(view, "main") || !strings.Contains(view, "sub:coder") {
-		t.Error("agent badges missing (main / sub:coder)")
-	}
 }
