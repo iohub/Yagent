@@ -10,13 +10,13 @@
 package director
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"yagent/internal/projectid"
 )
 
 // ProjectContextLoader 负责加载并缓存项目上下文文件（同一会话只加载一次）。
@@ -73,28 +73,9 @@ func (l *ProjectContextLoader) Load() *ProjectContextLoadResult {
 	return result
 }
 
-// ComputeProjectID 从项目路径计算文件系统安全的 projectID
+// ComputeProjectID 从项目路径计算文件系统安全的 projectID。
+// 实现已抽到 `internal/projectid`（rollout、artifact、蓝图共用一把主键），
+// 这里只留转发：调用点与既有测试(`project_context_test.go:103`)都不用改一个字。
 func ComputeProjectID(projectPath string) string {
-	if projectPath == "" {
-		return "default"
-	}
-	base := filepath.Base(projectPath)
-	if base == "." || base == "/" {
-		base = "root"
-	}
-	// 保留字母数字，其余替换为下划线
-	sanitized := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			return r
-		}
-		return '_'
-	}, base)
-	// 限制长度
-	if len(sanitized) > 100 {
-		sanitized = sanitized[:100]
-	}
-	// 添加短哈希
-	h := sha256.Sum256([]byte(projectPath))
-	shortHash := hex.EncodeToString(h[:])[:8]
-	return sanitized + "_" + shortHash
+	return projectid.Compute(projectPath)
 }
