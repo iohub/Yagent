@@ -486,14 +486,12 @@ type model struct {
 
 	resumeMode     bool
 	resumeGroups   []resumeGroup
+	resumeStops    resumeStopIndex // path → 终止事实；缺失 = 未知，不是不能续
 	resumeRows     []resumeRow
 	resumeExpanded map[string]bool
 	resumeCursor   int
-	resumeOffset   int
-	resumePageSize int
 	resumeLoading  bool
 	resumeErr      string
-	resumeStyles   *resumeStyles
 	resumeRoot     string
 
 	// 引导向导（/setup）。setupActive 时向导独占键盘，见 setup_embed.go。

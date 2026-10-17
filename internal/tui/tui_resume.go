@@ -14,54 +14,13 @@ import (
 	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
-
-type resumeStyles struct {
-	badgeBgColor   string
-	indicatorStyle lipgloss.Style
-	dateStyle      lipgloss.Style
-	titleStyle     lipgloss.Style
-	spacerStyle    lipgloss.Style
-	normalStyle    lipgloss.Style
-	dimStyle       lipgloss.Style
-	agentStyle     lipgloss.Style
-}
-
-func (m *model) initResumeStyles() *resumeStyles {
-	bgColor := lipgloss.Color("36")
-	fgColor := lipgloss.Color("0")
-	dimFg := lipgloss.Color("245")
-	normalFg := lipgloss.Color("252")
-	agentFg := lipgloss.Color("80")
-
-	return &resumeStyles{
-		badgeBgColor: "36",
-		indicatorStyle: lipgloss.NewStyle().
-			Background(bgColor).
-			Foreground(fgColor).
-			Bold(true),
-		dateStyle: lipgloss.NewStyle().
-			Background(bgColor).
-			Foreground(fgColor).
-			Bold(true),
-		titleStyle: lipgloss.NewStyle().
-			Background(bgColor).
-			Foreground(fgColor).
-			Bold(true),
-		spacerStyle: lipgloss.NewStyle().
-			Foreground(dimFg),
-		normalStyle: lipgloss.NewStyle().
-			Foreground(normalFg),
-		dimStyle: lipgloss.NewStyle().
-			Foreground(dimFg),
-		agentStyle: lipgloss.NewStyle().
-			Foreground(agentFg),
-	}
-}
 
 type resumeSessionsMsg struct {
 	items []memory.RolloutSessionInfo
+	// stops 是按 rollout 路径索引的终止事实（尾读得到）。缺失即"未知"，
+	// 不是"不能续" —— 渲染侧必须把两者分开画。
+	stops resumeStopIndex
 	err   error
 }
 
@@ -146,7 +105,6 @@ func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 	case resumeSessionsMsg:
 		m.resumeLoading = false
 		m.resumeCursor = 0
-		m.resumeOffset = 0
 		m.resumeErr = ""
 		if msg.err != nil {
 			m.resumeErr = fmt.Sprintf("List rollout sessions: %v", msg.err)
@@ -154,8 +112,13 @@ func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		if len(msg.items) == 0 && msg.err == nil {
 			m.setInfoMsg("No rollout sessions found")
 		}
-		m.resumeGroups = buildResumeGroups(msg.items)
-		m.resumeExpanded = make(map[string]bool, len(m.resumeGroups))
+		m.resumeStops = msg.stops
+		if m.resumeStops == nil {
+			m.resumeStops = resumeStopIndex{}
+		}
+		groups := sortResumeGroupsByState(buildResumeGroups(msg.items), m.resumeStops)
+		m.resumeGroups = groups
+		m.resumeExpanded = make(map[string]bool, len(groups))
 		m.rebuildResumeRows()
 		return m, nil
 
@@ -192,6 +155,11 @@ func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 	}
 }
 
+// resumeHandleKey 处理选择器的按键。
+//
+// 游标是**绝对行号**，滚动由 common.WindowRange 在渲染时做居中 —— 不再有
+// "offset + 页内游标"两套坐标（旧实现按键用 pageSize、渲染用夹过的高度，
+// 短终端会静默吞行，docs/resume-tui-redesign.md F5）。
 func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 	k := key.String()
 
@@ -204,19 +172,16 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		return m, nil
 	}
 
+	rows, _, endIdx := m.resumeWindow()
+	last := len(m.resumeRows) - 1
+
 	switch k {
 	case "j", "down":
-		_, endIdx := m.resumeVisibleRange()
-		visibleCount := endIdx - m.resumeOffset
-		if visibleCount > 0 && m.resumeCursor < visibleCount-1 {
-			m.resumeCursor++
-		}
+		m.resumeCursor = min(m.resumeCursor+1, last)
 		return m, nil
 
 	case "k", "up":
-		if m.resumeCursor > 0 {
-			m.resumeCursor--
-		}
+		m.resumeCursor = max(m.resumeCursor-1, 0)
 		return m, nil
 
 	case " ", "space", "l", "right":
@@ -224,6 +189,7 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 			g := m.resumeGroups[row.groupIdx]
 			m.resumeExpanded[g.key] = !m.resumeExpanded[g.key]
 			m.rebuildResumeRows()
+			m.resumeClampCursor()
 		}
 		return m, nil
 
@@ -233,33 +199,34 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 			if m.resumeExpanded[g.key] {
 				m.resumeExpanded[g.key] = false
 				m.rebuildResumeRows()
+				m.resumeClampCursor()
 			}
 		}
 		return m, nil
 
-	case "pgdown", "pgdn", "pagedown", "ctrl+d":
-		pageSize := m.resumePageSize
-		if pageSize <= 0 {
-			pageSize = defaultPageSize
-		}
-		if m.resumeOffset+pageSize < len(m.resumeRows) {
-			m.resumeOffset += pageSize
-			m.resumeCursor = 0
-		}
+	case "pgdown", "pgdn", "pagedown", "ctrl+d", "ctrl+f":
+		m.resumeCursor = min(m.resumeCursor+max(rows, 1), last)
 		return m, nil
 
-	case "pgup", "pageup", "ctrl+u":
-		pageSize := m.resumePageSize
-		if pageSize <= 0 {
-			pageSize = defaultPageSize
-		}
-		if m.resumeOffset > 0 {
-			m.resumeOffset -= pageSize
-			if m.resumeOffset < 0 {
-				m.resumeOffset = 0
-			}
-			m.resumeCursor = 0
-		}
+	case "pgup", "pageup", "ctrl+u", "ctrl+b":
+		m.resumeCursor = max(m.resumeCursor-max(rows, 1), 0)
+		return m, nil
+
+	case "g":
+		m.resumeCursor = 0
+		return m, nil
+
+	case "G":
+		m.resumeCursor = last
+		return m, nil
+
+	case "H":
+		_, start, _ := m.resumeWindow()
+		m.resumeCursor = start
+		return m, nil
+
+	case "L":
+		m.resumeCursor = max(endIdx-1, 0)
 		return m, nil
 
 	case "r":
@@ -279,6 +246,7 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		if row.isHead && len(g.members) > 0 && !m.resumeExpanded[g.key] {
 			m.resumeExpanded[g.key] = true
 			m.rebuildResumeRows()
+			m.resumeClampCursor()
 			return m, nil
 		}
 		m.resumeLoading = true
@@ -288,77 +256,12 @@ func resumeHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 	return m, nil
 }
 
+// resumeRowAtCursor 是绝对行号下的当前行 —— 不再有"页内游标"这层间接。
 func (m *model) resumeRowAtCursor() *resumeRow {
-	startIdx, _ := m.resumeVisibleRange()
-	absIdx := startIdx + m.resumeCursor
-	if absIdx < 0 || absIdx >= len(m.resumeRows) {
+	if m.resumeCursor < 0 || m.resumeCursor >= len(m.resumeRows) {
 		return nil
 	}
-	return &m.resumeRows[absIdx]
-}
-
-func (m *model) resumeVisibleRange() (startIdx, endIdx int) {
-	total := len(m.resumeRows)
-	pageSize := m.resumePageSize
-	if pageSize <= 0 {
-		pageSize = defaultPageSize
-	}
-
-	maxOffset := 0
-	if total > 0 {
-		maxOffset = ((total - 1) / pageSize) * pageSize
-	}
-	if m.resumeOffset < 0 || total == 0 {
-		m.resumeOffset = 0
-	}
-	if m.resumeOffset > maxOffset {
-		m.resumeOffset = maxOffset
-	}
-
-	startIdx = m.resumeOffset
-	endIdx = startIdx + pageSize
-	if endIdx > total {
-		endIdx = total
-	}
-	return startIdx, endIdx
-}
-
-func (m *model) resumeTotalNumPages() int {
-	if len(m.resumeRows) == 0 {
-		return 1
-	}
-	pageSize := m.resumePageSize
-	if pageSize <= 0 {
-		pageSize = defaultPageSize
-	}
-	pages := len(m.resumeRows) / pageSize
-	if len(m.resumeRows)%pageSize > 0 {
-		pages++
-	}
-	return pages
-}
-
-func (m *model) resumePageNum() int {
-	pageSize := m.resumePageSize
-	if pageSize <= 0 {
-		pageSize = defaultPageSize
-	}
-	return m.resumeOffset/pageSize + 1
-}
-
-func (m *model) resumeClampCursor() {
-	_, endIdx := m.resumeVisibleRange()
-	count := endIdx - m.resumeOffset
-	if count <= 0 {
-		m.resumeCursor = 0
-		return
-	}
-	if m.resumeCursor >= count {
-		m.resumeCursor = count - 1
-	}
-	if m.resumeCursor < 0 {
-		m.resumeCursor = 0
-	}
+	return &m.resumeRows[m.resumeCursor]
 }
 
 func loadResumeListCmd(m *model) tea.Cmd {
@@ -367,7 +270,9 @@ func loadResumeListCmd(m *model) tea.Cmd {
 		if err != nil {
 			return resumeSessionsMsg{err: err}
 		}
-		return resumeSessionsMsg{items: items}
+		// 尾读与清单同批交付：分成两个 msg 会让列表先渲染出一屏"没有状态"的行，
+		// 再整体重排 —— 那是第二次几何跳动，而几何稳定正是这次重设计要买的东西。
+		return resumeSessionsMsg{items: items, stops: readResumeStopFacts(items)}
 	}
 }
 
@@ -397,15 +302,12 @@ func enterResumeMode(m *model) tea.Cmd {
 	m.resumeGroups = nil
 	m.resumeRows = nil
 	m.resumeExpanded = nil
+	m.resumeStops = nil
 	m.resumeCursor = 0
-	m.resumeOffset = 0
-	m.resumePageSize = defaultPageSize
 	m.resumeLoading = true
 	m.resumeErr = ""
 	m.lastKey = ""
 	m.resumeRoot = memory.RolloutRootDir()
-
-	m.resumeStyles = m.initResumeStyles()
 
 	return loadResumeListCmd(m)
 }
@@ -416,11 +318,10 @@ func exitResumeMode(m *model) {
 	m.resumeRows = nil
 	m.resumeExpanded = nil
 	m.resumeCursor = 0
-	m.resumeOffset = 0
-	m.resumePageSize = 0
 	m.resumeLoading = false
 	m.resumeErr = ""
 	m.resumeRoot = ""
+	m.resumeStops = nil
 	m.lastKey = ""
 }
 
@@ -1042,346 +943,6 @@ func applyRolloutRunState(m *model, info memory.RolloutInfo, agentName string) {
 	m.taskStarted = true
 
 	m.invalidateFooterCache()
-}
-
-func renderResumeView(m *model) tea.View {
-	width := m.termWidth
-	height := m.termHeight
-	if width < 40 {
-		width = 40
-	}
-	if height < 8 {
-		height = 8
-	}
-
-	contentHeight := height - 4
-	if contentHeight < 1 {
-		contentHeight = 1
-	}
-
-	effectivePageSize := m.resumePageSize
-	if effectivePageSize > contentHeight {
-		effectivePageSize = contentHeight
-	}
-	if effectivePageSize < 1 {
-		effectivePageSize = 1
-	}
-
-	var b strings.Builder
-
-	topLeft := "┌" + strings.Repeat("─", width-2) + "┐"
-	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(topLeft))
-	b.WriteString("\n")
-
-	titleBar := renderResumeTitleBar(m, width)
-	b.WriteString(titleBar)
-	b.WriteString("\n")
-
-	contentArea := renderResumeContent(m, width, contentHeight, effectivePageSize)
-	b.WriteString(contentArea)
-	// renderResumeContent 用 "\n" 连接且不收尾；这里不补换行，最后一条补白行就会
-	// 和状态栏粘成一行（宽度 2×width，真机上被终端折行）。
-	b.WriteString("\n")
-
-	statusBar := renderResumeStatusBar(m, width)
-	b.WriteString(statusBar)
-	b.WriteString("\n")
-
-	bottomLeft := "└" + strings.Repeat("─", width-2) + "┘"
-	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(bottomLeft))
-
-	return tea.NewView(b.String())
-}
-
-func renderResumeTitleBar(m *model, width int) string {
-	pageNum := m.resumePageNum()
-	totalPages := m.resumeTotalNumPages()
-	titleText := fmt.Sprintf(" Resume Session     Page %d/%d ", pageNum, totalPages)
-	rightText := "esc: back  enter: resume  r: refresh"
-
-	contentWidth := width - 2
-	leftWidth := len(titleText)
-	rightWidth := len(rightText)
-	paddingNeeded := contentWidth - leftWidth - rightWidth
-	if paddingNeeded < 1 {
-		maxRight := contentWidth - leftWidth - 1
-		if maxRight > 3 {
-			rightText = rightText[:maxRight] + "…"
-		} else {
-			rightText = "..."
-		}
-	} else {
-		rightText = strings.Repeat(" ", paddingNeeded) + rightText
-	}
-
-	combined := titleText + rightText
-
-	style := lipgloss.NewStyle().
-		Background(lipgloss.Color("36")).
-		Foreground(lipgloss.Color("0")).
-		Bold(true).
-		Width(width)
-
-	return style.Render(combined)
-}
-
-func renderResumeContent(m *model, width, height, effectivePageSize int) string {
-	bgStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("234")).
-		Foreground(lipgloss.Color("252")).
-		Width(width)
-
-	if len(m.resumeRows) == 0 {
-		var centerText string
-		if m.resumeLoading {
-			centerText = "Loading rollout sessions…"
-		} else if m.resumeErr != "" {
-			centerText = m.resumeErr
-		} else {
-			centerText = fmt.Sprintf("No rollout sessions yet. Dir: %s", shrinkPath(m.resumeRoot, max(10, width-30)))
-		}
-		padding := strings.Repeat(" ", (width-len(centerText))/2)
-		lines := make([]string, height)
-		lines[0] = bgStyle.Render(padding + centerText)
-		for i := 1; i < height; i++ {
-			lines[i] = bgStyle.Render("")
-		}
-		return strings.Join(lines, "\n")
-	}
-
-	startIdx, endIdx := m.resumeVisibleRange()
-	m.resumeClampCursor()
-	visibleItems := m.resumeRows[startIdx:endIdx]
-
-	lines := make([]string, 0, height)
-	for i, row := range visibleItems {
-		if len(lines) >= height {
-			break
-		}
-		isSelected := i == m.resumeCursor
-		lines = append(lines, renderResumeRow(m, row, isSelected, width))
-		if isSelected && len(lines) < height {
-			lines = append(lines, renderResumeItemDetail(m, row.item, width))
-		}
-	}
-
-	for len(lines) < height {
-		lines = append(lines, bgStyle.Render(""))
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-func renderResumeRow(m *model, row resumeRow, selected bool, width int) string {
-	if row.isHead {
-		g := m.resumeGroups[row.groupIdx]
-		if len(g.members) == 0 {
-			return renderResumeItem(m, row.item, selected, width)
-		}
-		arrow := "▸ "
-		if m.resumeExpanded[g.key] {
-			arrow = "▾ "
-		}
-		badge := fmt.Sprintf(" +%d", len(g.members))
-		// arrow 的显示宽度必须按格子算："▸ "/"▾ " 是 3/4 字节但只占 2 格，
-		// 用 len() 会把内容区多砍 1-2 格（下面 memberPrefix 分支就是正确写法）。
-		line := renderResumeItem(m, row.item, selected, width-lipgloss.Width(arrow)-lipgloss.Width(badge))
-		if selected {
-			s := m.resumeStyles
-			if s == nil {
-				s = m.initResumeStyles()
-			}
-			return lipgloss.NewStyle().Background(lipgloss.Color(s.badgeBgColor)).
-				Render(s.indicatorStyle.Render(arrow) + line + s.indicatorStyle.Render(badge))
-		}
-		return m.resumeStyles.dimStyle.Render(arrow) + line + m.resumeStyles.dimStyle.Render(badge)
-	}
-
-	const memberPrefix = "  └ "
-	line := renderResumeItem(m, row.item, selected, width-lipgloss.Width(memberPrefix))
-	if selected {
-		s := m.resumeStyles
-		if s == nil {
-			s = m.initResumeStyles()
-		}
-		return lipgloss.NewStyle().Background(lipgloss.Color(s.badgeBgColor)).
-			Render(s.indicatorStyle.Render(memberPrefix) + line)
-	}
-	return m.resumeStyles.dimStyle.Render(memberPrefix) + line
-}
-
-func renderResumeItem(m *model, item memory.RolloutSessionInfo, selected bool, width int) string {
-	dateStr := item.StartedAt.Format("01-02 15:04")
-	if item.StartedAt.IsZero() {
-		dateStr = strings.Repeat("-", 11)
-	}
-
-	proj := ""
-	if item.ProjectID != "" {
-		proj = "[" + item.ProjectID + "] "
-	}
-
-	agent := item.AgentName
-	if isMainRolloutFile(item) {
-		agent = "main"
-	} else {
-		agent = "sub:" + agent
-	}
-
-	modelStr := item.Model
-	if modelStr == "" {
-		modelStr = "-"
-	}
-
-	fixed := 2 + len(dateStr) + 2 + len(proj) + len(agent) + 1 + len(modelStr) + 2
-	maxPreviewWidth := width - fixed
-	if maxPreviewWidth < 8 {
-		maxPreviewWidth = 8
-	}
-	preview := cleanTitle(item.Preview, maxPreviewWidth)
-	if preview == "" {
-		preview = "(no preview)"
-	}
-
-	if selected {
-		return renderResumeSelectedItem(m, dateStr, proj, agent, modelStr, preview, width)
-	}
-	return renderResumeNormalItem(m, dateStr, proj, agent, modelStr, preview, width)
-}
-
-func renderResumeSelectedItem(m *model, dateStr, proj, agent, modelStr, preview string, width int) string {
-	s := m.resumeStyles
-	if s == nil {
-		s = m.initResumeStyles()
-	}
-
-	left := s.indicatorStyle.Render("● ") +
-		s.dateStyle.Render(dateStr) + "  " +
-		s.titleStyle.Render(proj+agent) + " " +
-		s.titleStyle.Render(modelStr) + "  " +
-		s.titleStyle.Render(preview)
-
-	displayWidth := lipgloss.Width(left)
-	if displayWidth < width {
-		left += strings.Repeat(" ", width-displayWidth)
-	}
-
-	return lipgloss.NewStyle().
-		Background(lipgloss.Color(s.badgeBgColor)).
-		Foreground(lipgloss.Color("0")).
-		Bold(true).
-		Width(width).
-		Render(left)
-}
-
-func renderResumeNormalItem(m *model, dateStr, proj, agent, modelStr, preview string, width int) string {
-	s := m.resumeStyles
-	if s == nil {
-		s = m.initResumeStyles()
-	}
-
-	indicator := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		Render("  ")
-	datePart := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")).
-		Render(dateStr)
-	metaPart := s.dimStyle.Render(proj + agent + " " + modelStr)
-	previewPart := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
-		Render(preview)
-
-	left := indicator + datePart + "  " + metaPart + "  " + previewPart
-
-	displayWidth := lipgloss.Width(left)
-	if displayWidth < width {
-		left += strings.Repeat(" ", width-displayWidth)
-	}
-
-	return left
-}
-
-func renderResumeItemDetail(m *model, item memory.RolloutSessionInfo, width int) string {
-	s := m.resumeStyles
-	if s == nil {
-		s = m.initResumeStyles()
-	}
-
-	sid := item.SessionID
-	if sid == "" {
-		sid = strings.TrimSuffix(filepath.Base(item.Path), filepath.Ext(item.Path))
-	}
-	if r := []rune(sid); len(r) > 8 {
-		sid = string(r[:8])
-	}
-
-	var parts []string
-	parts = append(parts, sid)
-	if item.CWD != "" {
-		parts = append(parts, shrinkPath(item.CWD, 32))
-	}
-	if item.GitBranch != "" {
-		parts = append(parts, "git:"+cleanTitle(item.GitBranch, 20))
-	}
-	parts = append(parts, formatResumeBytes(item.SizeBytes))
-
-	const detailIndent = "    "
-	avail := width - len(detailIndent)
-	if avail < 4 {
-		avail = 4
-	}
-	content := cleanTitle(strings.Join(parts, " · "), avail)
-
-	return s.dimStyle.Render(detailIndent + content)
-}
-
-func renderResumeStatusBar(m *model, width int) string {
-	var statusText string
-	var commandHint string
-
-	if len(m.resumeRows) == 0 {
-		if m.resumeLoading {
-			statusText = "Loading…"
-		} else if m.resumeErr != "" {
-			statusText = "Error"
-		} else {
-			statusText = "No rollout sessions"
-		}
-		commandHint = ""
-	} else {
-		startIdx, endIdx := m.resumeVisibleRange()
-		statusText = fmt.Sprintf("Page %d/%d · %d-%d of %d",
-			m.resumePageNum(), m.resumeTotalNumPages(),
-			startIdx+1, endIdx,
-			len(m.resumeRows))
-
-		commandHint = "j/k:select  space:expand  pgup/pgdn:page  r:refresh  enter:resume  esc:back"
-	}
-
-	separator := "── "
-	suffix := " ──"
-	contentWidth := width - len(separator) - len(suffix)
-
-	var line string
-	if commandHint != "" {
-		statusWidth := len(statusText)
-		cmdWidth := len(commandHint)
-		if contentWidth > statusWidth+cmdWidth+4 {
-			padding := contentWidth - statusWidth - cmdWidth - 4
-			line = separator + statusText + strings.Repeat(" ", padding) + "  " + commandHint + suffix
-		} else {
-			line = separator + statusText + suffix
-		}
-	} else {
-		line = separator + statusText + strings.Repeat(" ", contentWidth-len(statusText)) + suffix
-	}
-
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		Background(lipgloss.Color("234")).
-		Width(width)
-
-	return style.Render(line)
 }
 
 func shrinkPath(p string, maxRunes int) string {
