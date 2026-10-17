@@ -59,9 +59,16 @@ func TestAtomicWrite(t *testing.T) {
 		t.Errorf("file content = %q, want %q", got, "hello world")
 	}
 
-	tmpPath := path + tmpFileExt
-	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
-		t.Errorf("tmp file still exists after rename")
+	// 内核的临时名带随机段（`note.md.1234.md.tmp`），所以断言不能只看某个固定路径存不存在 ——
+	// 那样改成随机名后这条断言就永远不会失败了。按"目录里不该留任何中间态"来断。
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("tmp file still exists after rename: %s", e.Name())
+		}
 	}
 }
 

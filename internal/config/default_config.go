@@ -4,7 +4,8 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
-	"path/filepath"
+
+	"yagent/internal/util"
 )
 
 //go:embed default_config.toml
@@ -24,18 +25,15 @@ func EnsureConfigExists(path string) (created bool, err error) {
 		return false, fmt.Errorf("检查配置文件 %s 时出错: %w", path, err)
 	}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return false, fmt.Errorf("创建配置目录 %s 失败: %w", dir, err)
-	}
-
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(defaultConfigTemplate), 0600); err != nil {
-		return false, fmt.Errorf("写入临时配置文件 %s 失败: %w", tmpPath, err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath) // 清理临时文件
-		return false, fmt.Errorf("重命名配置文件 %s 失败: %w", path, err)
+	// 模板落盘也走同一把内核（I21）：0755 目录 / 0600 文件 —— 配置文件里会有 api_key，
+	// 首次生成就不能是 0644。
+	if err := util.AtomicWrite(path, []byte(defaultConfigTemplate), util.AtomicWriteOptions{
+		DirPerm:   0o755,
+		FilePerm:  0o600,
+		TmpSuffix: ".tmp",
+		Label:     "config",
+	}); err != nil {
+		return false, fmt.Errorf("写入临时配置文件失败: %w", err)
 	}
 
 	return true, nil

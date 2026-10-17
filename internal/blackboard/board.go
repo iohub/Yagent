@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"yagent/internal/util"
 )
 
 const (
@@ -102,21 +104,16 @@ func EnsureDir(dir string) error {
 }
 
 // AtomicWrite writes data to path via temp file + rename (crash-safe).
-// Mirrors artifact/store.go write() semantics.
+// 落盘语义的内核在 util.AtomicWrite（全仓唯一一份，I21）；这里只保留便签的两个既有约定：
+// 目录 0700 / 文件 0600，以及 `.md.tmp` 后缀 —— 它刻意不以 `.md` 结尾，
+// 这样 `index.go:129` 与 `gc.go:131` 的"只认 *.md"过滤不会把中间态当成一张便签。
 func AtomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		return fmt.Errorf("blackboard: create dir: %w", err)
-	}
-	tmpPath := path + tmpFileExt
-	if err := os.WriteFile(tmpPath, data, filePerm); err != nil {
-		return fmt.Errorf("blackboard: write tmp: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("blackboard: rename: %w", err)
-	}
-	return nil
+	return util.AtomicWrite(path, data, util.AtomicWriteOptions{
+		DirPerm:   dirPerm,
+		FilePerm:  filePerm,
+		TmpSuffix: tmpFileExt,
+		Label:     "blackboard",
+	})
 }
 
 // GenerateNoteFilename produces a unique, sortable filename:
