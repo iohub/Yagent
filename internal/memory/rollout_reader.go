@@ -138,6 +138,9 @@ type RolloutInfo struct {
 	LastUserInput       string
 	DanglingToolCalls   []DanglingToolCall
 	EndsWithFinalAnswer bool
+	// Checkpoint 是文件里最后一条 agent_checkpoint 坐标；没有则为 nil
+	// （崩溃、存量文件，或这一层根本没走到终止路径）。
+	Checkpoint *AgentCheckpoint
 
 	Tokens RolloutTokenTotals
 
@@ -380,6 +383,19 @@ func (p *rolloutParser) handleEnvelope(line []byte) {
 		}
 		p.info.Entries++
 		p.handleCompacted(cp, ts)
+
+	case RecordAgentCheckpoint:
+		var cp AgentCheckpoint
+		if err := jsonUnmarshalRollout(env.Payload, &cp); err != nil {
+			p.info.SkippedBadLines++
+			return
+		}
+		p.info.Entries++
+		// 最后一条为准：一次会话可以暂停-继续多轮，每轮各写一条停点坐标。
+		// 整读侧也要看得见它，否则尾读（列表）与整读（恢复侧）会对同一个文件
+		// 给出不同判据 —— 表现是"列表说可原样重放、弹框说不能"。
+		kept := cp
+		p.info.Checkpoint = &kept
 
 	default:
 		p.info.Entries++
