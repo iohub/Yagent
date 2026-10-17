@@ -222,26 +222,16 @@ func ScanResumeCandidates(dir string) ([]ResumeCandidate, error) {
 			StopReason:  info.AbortReason,
 			BoardID:     info.BoardID,
 		}
+		// 分类表只有一份，住在 memory（StopKind 词表也在那里）。列表走尾读、
+		// 恢复侧走整读，两边必须对同一个文件给出同一个答案 —— 各自实现一份的话，
+		// 漂移的表现是"列表说可原样重放、点进去弹框说不能"。
+		//
 		// 默认不可重放：只有"用户/系统主动停止"这一类允许原样继续。
 		// 反过来写（默认允许）会让将来新增的任何停止原因自动获得重放资格，
 		// 而那正是把一次失败当成可继续、进而重复执行副作用的路径。
-		switch kind {
-		case StopKindPaused, StopKindCancelled:
-			// 两类都是"主动停下来的"，所以可以原样继续；差别在停在哪：
-			// paused 必然落在 step 边界（闸门只在批次之后生效），
-			// cancelled 可能停在某个在飞的工具中间 —— P2 的重放判据用得上。
-			c.Resumable = true
-		case StopKindMaxSteps:
-			c.Unresumeable = "run exhausted its max steps; replaying it would do the same"
-		case StopKindIdleTimeout, StopKindTotalTimeout:
-			c.Unresumeable = "timed out: the interrupted step may already be recorded in the rollout"
-		case StopKindLLMError, StopKindCircuitBreakerOpen, StopKindPanic:
-			c.Unresumeable = "the run stopped on a real failure, not on a stop request"
-		case StopKindPlainTextReply, StopKindAgentExit:
-			c.Unresumeable = "the run actually finished; nothing to continue"
-		default:
-			c.Unresumeable = "unknown stop reason " + kind
-		}
+		state, why := memory.StopFactsOf(&info).State()
+		c.Resumable = state == memory.ResumeReplayable
+		c.Unresumeable = why
 		candidates = append(candidates, c)
 	}
 	return candidates, nil
