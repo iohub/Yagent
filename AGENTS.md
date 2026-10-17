@@ -131,6 +131,13 @@ yagent/
 │   ├── browserctl/             # 浏览器执行层：外部 browser-control CLI 的进程/工作区/URL 策略/渲染
 │   ├── blackboard/             # 跨 Agent 便签：note(存储) / handoff(结构化交接) / index(派生索引)
 │   │                           #   resolve(ContextPack) / gc(生命周期) / board(路径与原子写)
+│   ├── blueprint/              # 仓库蓝图（R1 骨架，docs/repo-blueprint-design.md v4）：一份 blueprint.md 的
+│   │                           #   front-matter + 段落枚举 + "一行一原子"编解码 + 存储根与两条根护栏。
+│   │                           #   叶子包（只用标准库 + util + projectid，check_blueprint_leaf.sh 守）；
+│   │                           #   扫描器/注入/read_blueprint/折叠钩子在 R2–R6 落地，启用判据是
+│   │                           #   config.BlueprintEnabled()（本包不读环境变量）
+│   ├── projectid/              # 项目绝对路径 → 文件系统安全的目录名（rollout / artifact / 蓝图共用一把主键；
+│   │                           #   director.ComputeProjectID 现在只是转发，TestComputeProjectID 仍钉着具体串）
 │   ├── artifact/               # 超预算委派结果的落盘存储 + 摘要
 │   ├── compression/            # 三档上下文压缩（rule / emergency / ultimate）
 │   ├── config/                 # TOML 加载 + 三级 provider 解析；persist.go 的 SetKeyInSection 是
@@ -162,10 +169,10 @@ yagent/
 │   │   │                         #   端点预设 / 嵌入主 model（docs/setup-wizard-ui-design.md）
 │   │   ├── tui_keymap.go       #   [tui.keybindings] → 按键翻译表（替换语义，见 §11 坑 29）
 │   │   ├── anim/ common/ components/ layout/
-│   └── util/                   # 崩溃上报等
+│   └── util/                   # 崩溃上报等；atomic.go 是全仓唯一的 tmp+rename 落盘内核（I21）
 ├── protocol/                   # agent-events.yaml（SSOT）+ 生成的 go/ 与 ts/ 副本
 ├── scripts/                    # build-centos7 / build-extension / protoc-gen-yagent
-│                               #   + 五把守卫（check_*.sh），其中 check_all.sh 是一条命令的本地闸门
+│                               #   + 七把守卫（check_*.sh），其中 check_all.sh 是一条命令的本地闸门
 ├── patches/                    # CI 用的 vendored-openssl 补丁
 ├── dist/                       # 构建产物 + 被跟踪的 models.json（见 §11 坑 2）
 ├── codeseek/                   # git submodule → iohub/codeseek（Rust 代码智能引擎）
@@ -567,6 +574,9 @@ WebSocket 用 melody，每个任务一个 Dispatcher + `WebSocketConsumer`，向
 
 **顶层表**：`[global.llm]`、`[agents.llm]`、`[tools.llm]`（含 `[tools.deferred]`）、`[agent]`、`[llm]`、`[routing]`、
 `[keywords]`、`[git_checkpoint]`、`[codeseek]`、`[browser]`、`[blackboard]`、`[resume]`、`[enhanced_commander]`、`[tui]`，
+`[blueprint]`（仓库蓝图，R1 落骨架：`enable` / `inject_into` / `index_max_tokens` /
+`prose_budget_tokens` / `export_path`；启用判据 `config.BlueprintEnabled()` 同时吞下环境变量
+`YAGENT_BLUEPRINT=0` 与 `enable` 键），
 以及顶层 `task_timeout`。**`[app]` 与 `[codeseek.knowledge]` 已整体删除**（前者唯一的键只进 `slog.Debug`，后者五个键全部不可达 —— `enabled` 会被写回 true，其余四个读点在注入器的 early return 之后）。
 
 **运行时写回**：`config/persist.go` 只有一个内核 `SetKeyInSection(path, section, key, renderedValue)`
@@ -725,7 +735,7 @@ BUILD_TYPE=debug ./build.sh
 ### 8.3 测试
 
 ```bash
-bash scripts/check_all.sh                 # 一条命令的本地闸门：build + vet + 五把守卫 + 全量单测
+bash scripts/check_all.sh                 # 一条命令的本地闸门：build + vet + 七把守卫 + 全量单测
 RACE=true bash scripts/check_all.sh       # 同上，再对并发包跑 -race（慢 3-8 倍，改到并发时手动跑）
 bash scripts/check_all.sh --fast          # 只跑 ./internal/... 的全量单测，跳过 ./... 与守卫之外的部分
 go test ./... -count=1 -timeout 600s      # 全仓 26 个测试包，墙钟约 12s（包间并行；2026-10-15 实测）
@@ -815,12 +825,14 @@ go vet ./...                              # 必须干净
 ### 9.2 工具/规模守卫
 
 ```bash
-bash scripts/check_all.sh                 # 上面五把守卫 + build + vet + 全量单测，一条命令跑完
+bash scripts/check_all.sh                 # 上面七把守卫 + build + vet + 全量单测，一条命令跑完
 bash scripts/check_file_sizes.sh          # internal/agents/director/ 下非测试文件 ≤300 行（存量按 PENDING 冻结）
 bash scripts/check_no_agents_import.sh    # director/ 子包不得 import yagent/internal/agents（防循环依赖）
 bash scripts/check_toolspec_leaf.sh       # toolspec 不得反向依赖 agents/tools
 bash scripts/check_no_manual_lookup.sh    # 不许重新出现按名字查工具的 lookupToolFunc/getToolFunc
 bash scripts/check_test_hygiene.sh        # 单测卫生棘轮，见下
+bash scripts/check_blueprint_leaf.sh      # internal/blueprint 只准依赖标准库 + util + projectid
+bash scripts/check_no_inline_atomic_write.sh  # tmp+rename 只准有 internal/util/atomic.go 一处（I21）
 ```
 
 - `check_file_sizes.sh` 现在是**棘轮而不是硬门**：存量超限项在脚本顶部的 `PENDING` 里

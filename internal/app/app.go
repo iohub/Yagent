@@ -16,6 +16,7 @@ import (
 
 	"yagent/internal/agents"
 	"yagent/internal/blackboard"
+	"yagent/internal/blueprint"
 	"yagent/internal/browserctl"
 	"yagent/internal/config"
 	"yagent/internal/embedbin"
@@ -444,6 +445,22 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 				"repo_id", repoID,
 				"has_memory", !repoMemStore.IsEmpty(),
 			)
+		}
+
+		// [仓库蓝图] R1：启动时把存储根算出来并报一次。
+		// 这是 [blueprint] enable 的第一处真实读取；两条根护栏（I7/I16）也因此有了读者 ——
+		// "这个目录不该建蓝图"必须在启动时说出来，而不是等 R6 的落盘钩子从来不响。
+		{
+			root, err := ca.resolveBlueprintRoot()
+			switch {
+			case err != nil:
+				slog.Warn("blueprint: 本项目不建蓝图",
+					"project_path", ca.globalCtx.ProjectPath, "reason", err.Error())
+			case root == "":
+				slog.Info("blueprint: 已关闭（[blueprint] enable=false 或 YAGENT_BLUEPRINT=0）")
+			default:
+				slog.Info("blueprint: 存储根就绪", "root", root)
+			}
 		}
 
 		chatAgent := agents.NewChatAgent(agents.ChatAgentParams{
@@ -936,6 +953,20 @@ func getProjectID(projectPath string) string {
 	shortHash := hex.EncodeToString(h[:])[:12]
 
 	return sanitized + "_" + shortHash
+}
+
+// resolveBlueprintRoot 决定本项目蓝图的存储根，是 [blueprint] enable 的唯一读取点。
+//
+// 三种结果要能被调用方区分开：
+//   - ("", nil)   整套机制被关掉（配置或 YAGENT_BLUEPRINT=0）—— 什么都不做是对的
+//   - ("", err)   开着，但这个目录不该建蓝图：I16 的根护栏（$HOME、/、既非 git 又无 manifest），
+//     或 I7（存储根落进了项目里）
+//   - (root, nil) 就绪
+func (ca *Yagent) resolveBlueprintRoot() (string, error) {
+	if !config.BlueprintEnabled() {
+		return "", nil
+	}
+	return blueprint.Prepare(ca.globalCtx.ProjectPath)
 }
 
 // getSharedMemoryPath returns the shared memory file path.

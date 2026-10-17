@@ -31,9 +31,10 @@ go build ./... || fail "编译失败"
 step "go vet ./..."
 go vet ./... || fail "go vet 不干净"
 
-# 四把守卫：文件行数、包依赖方向、注册表叶子性、单测卫生。
+# 七把守卫：文件行数、包依赖方向（两处）、注册表叶子性、蓝图叶子性、
+# 手工查表回潮、单测卫生、原子写单一实现。
 # 每一个都对应一次"曾经静默漂移"的事故，别绕过。
-for guard in check_no_manual_lookup check_toolspec_leaf check_no_agents_import check_file_sizes check_test_hygiene; do
+for guard in check_no_manual_lookup check_toolspec_leaf check_no_agents_import check_blueprint_leaf check_file_sizes check_test_hygiene check_no_inline_atomic_write; do
 	script="scripts/${guard}.sh"
 	[[ -f "$script" ]] || fail "缺少 $script —— 守卫脚本本身丢了也要当失败处理"
 	step "bash ${script#scripts/}"
