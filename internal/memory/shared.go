@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"yagent/internal/util"
 )
 
 // SharedMemory is global context visible to all agents.
@@ -240,20 +242,23 @@ func (sm *SharedMemory) EnablePersistence(saveInterval time.Duration, filePath s
 	// Start periodic save
 	sm.persistTick = time.NewTicker(saveInterval)
 	sm.persistWg.Add(1)
-	go sm.persistLoop()
+	// 句柄在起跑时**捕获成参数**：原来 goroutine 的 select 每次迭代都重新读
+	// sm.persistTick / sm.persistDone 字段，于是 Close 一旦先置 nil，
+	// goroutine 就变成"nil channel 永不就绪"的永久阻塞（或 nil panic）。
+	go sm.persistLoop(sm.persistDone, sm.persistTick)
 
 	return nil
 }
 
 // persistLoop runs periodically to flush dirty data to file.
-func (sm *SharedMemory) persistLoop() {
+func (sm *SharedMemory) persistLoop(done <-chan struct{}, tick *time.Ticker) {
 	defer sm.persistWg.Done()
 
 	for {
 		select {
-		case <-sm.persistTick.C:
+		case <-tick.C:
 			sm.flushToFile()
-		case <-sm.persistDone:
+		case <-done:
 			sm.flushToFile() // final save before exit
 			return
 		}
@@ -297,16 +302,12 @@ func (sm *SharedMemory) saveToFileLocked() error {
 		return fmt.Errorf("marshal snapshot: %w", err)
 	}
 
-	// Atomic write: write to temp file, then rename
-	tmpFile := sm.persistPath + ".tmp"
-	if err := os.WriteFile(tmpFile, payload, 0644); err != nil {
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := os.Rename(tmpFile, sm.persistPath); err != nil {
-		return fmt.Errorf("rename temp to target: %w", err)
-	}
-
-	return nil
+	// 原子写走全仓唯一内核（I21）。原来这里 rename 失败会把 .tmp 留在盘上，现在会清掉。
+	return util.AtomicWrite(sm.persistPath, payload, util.AtomicWriteOptions{
+		FilePerm:  0o644,
+		TmpSuffix: ".tmp",
+		Label:     "shared memory",
+	})
 }
 
 // loadFromFileLocked loads KV data from the persistence file.
@@ -350,6 +351,10 @@ func (sm *SharedMemory) MarkDirty() {
 
 // Close shuts down the SharedMemory persistence goroutine and performs a final flush.
 // Safe to call multiple times or when persistence is not enabled.
+//
+// 置 nil 是安全的，因为 goroutine 的 select 读的是起跑时捕获的参数而不是这两个字段
+// （见 EnablePersistence 里那条注释）—— 修之前正是那个重新读字段的写法让 Close 变成
+// nil panic 或永久阻塞。persistDone 置 nil 同时给二次 Close 当幂等标记。
 func (sm *SharedMemory) Close() error {
 	sm.kvMu.Lock()
 	if sm.persistDone == nil {
@@ -357,14 +362,15 @@ func (sm *SharedMemory) Close() error {
 		return nil
 	}
 	done := sm.persistDone
+	tick := sm.persistTick
 	sm.persistDone = nil
 	sm.persistTick = nil
 	sm.kvMu.Unlock()
 
 	close(done)
-	if sm.persistTick != nil {
-		sm.persistTick.Stop()
-	}
 	sm.persistWg.Wait()
+	if tick != nil {
+		tick.Stop()
+	}
 	return nil
 }
