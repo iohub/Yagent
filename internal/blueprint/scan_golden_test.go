@@ -1,0 +1,96 @@
+package blueprint
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+// 本仓自扫 golden（§19 附录：R2 的测量要变成仓库里的 golden 测试；
+// v3 那个"14 片假模块"的 bug 就是靠这条形态的断言抓的）。
+//
+// 以下数字是 R2 的权威实测值（首次测定于 2026-10-18，HEAD 含 R1+R2 全部源文件）：
+//
+//	45 片、141 条模块级出边（入边转置后同为 141）、
+//	模块路径 "yagent"、internal/blueprint/testdata 被黑名单挡住不进实测。
+//
+// 仓库形状一变这些数字就该变 —— 变化本身是信号，不是测试腐烂：
+// 更新数字前必须先重跑一遍并确认变化来源（新包？submodule 跳过失效？），
+// 不许静默改数字。设计稿 §19 的近似值（103 条模块级边）由此替代。
+func TestScanSelfGolden(t *testing.T) {
+	snap, err := Scan("../..", DefaultOptions()) // 测试 CWD 是 internal/blueprint
+	if err != nil {
+		t.Fatalf("本仓自扫失败: %v", err)
+	}
+	if snap.ModulePath != "yagent" {
+		t.Fatalf("ModulePath = %q, 要 %q", snap.ModulePath, "yagent")
+	}
+	// golden 1：片数。
+	if len(snap.Leaves) != 45 {
+		t.Fatalf("片数 = %d, golden 是 45 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
+	}
+	// golden 2：模块级边数（out 与 in 是转置，总数必然相等）。
+	out, in := 0, 0
+	for i := range snap.Leaves {
+		out += snap.Leaves[i].EdgesOutTotal
+		in += snap.Leaves[i].EdgesInTotal
+	}
+	if out != 141 || in != 141 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 141/141 —— 形状变了，先确认变化来源", out, in)
+	}
+	// 排序不变量：Leaves 按 Dir 排序（确定性的一部分）。
+	for i := 1; i < len(snap.Leaves); i++ {
+		if snap.Leaves[i-1].Dir >= snap.Leaves[i].Dir {
+			t.Fatalf("Leaves 未按 Dir 排序: %q >= %q", snap.Leaves[i-1].Dir, snap.Leaves[i].Dir)
+		}
+	}
+	// submodule leaf：本仓含 codeseek submodule，目录分支命中即整片、不递归。
+	var found bool
+	for i := range snap.Leaves {
+		l := &snap.Leaves[i]
+		if l.Dir == "codeseek" {
+			found = true
+			if !l.Submodule || len(l.Files) != 0 {
+				t.Fatalf("codeseek 应是整片 submodule leaf: sub=%v files=%d", l.Submodule, len(l.Files))
+			}
+		}
+	}
+	if !found {
+		t.Fatal("codeseek submodule 未成为整片 leaf —— 目录分支跳过失效")
+	}
+	// 黑名单负样本：任何片路径不得含黑名单段；testdata（本 fixture 所在）不得进实测。
+	for i := range snap.Leaves {
+		dir := snap.Leaves[i].Dir
+		for _, seg := range strings.Split(dir, "/") {
+			if DefaultBlacklistSet()[seg] {
+				t.Fatalf("片路径 %q 含黑名单段 %q", dir, seg)
+			}
+		}
+		if strings.HasPrefix(dir, "internal/blueprint/testdata") {
+			t.Fatalf("fixture 目录 %q 不得进本仓实测（黑名单失效会污染 golden）", dir)
+		}
+	}
+	// 指纹不变量：每片 64 hex。
+	for i := range snap.Leaves {
+		if len(snap.Leaves[i].Fingerprint) != 64 {
+			t.Fatalf("片 %q 指纹长度 %d, 要 64", snap.Leaves[i].Dir, len(snap.Leaves[i].Fingerprint))
+		}
+	}
+	// 确定性：同一 HEAD 两次扫描 DeepEqual。
+	again, err := Scan("../..", DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(snap, again) {
+		t.Fatal("本仓两次自扫结果不一致 —— 违反确定性（I15 前置）")
+	}
+}
+
+// DefaultBlacklistSet 是黑名单的集合形态（测试用；与 DefaultBlacklist 同源）。
+func DefaultBlacklistSet() map[string]bool {
+	set := make(map[string]bool, len(DefaultBlacklist))
+	for _, name := range DefaultBlacklist {
+		set[name] = true
+	}
+	return set
+}

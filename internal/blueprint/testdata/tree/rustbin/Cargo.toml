@@ -1,0 +1,5 @@
+[package]
+name = "tree-rust"
+
+[[bin]]
+name = "treeapp"
