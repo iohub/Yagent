@@ -91,10 +91,13 @@ func (a *RepoAgent) devopsDelegate(ctx context.Context, target string, params ma
 	if !ok {
 		return nil, fmt.Errorf("task parameter required")
 	}
-	if a.devops == nil {
+	// 每次调用一个新实例：共享单例的 DevOps 一旦被两条并发 Repo 委派同时用，
+	// 今天没有可变状态不代表以后没有（见 spawn.go 的不变量）。
+	devops := a.devopsFor(ctx)
+	if devops == nil {
 		return "[DevOps-Agent unavailable] DevOps-Agent has not been wired to Repo-Agent. Complete the analysis with the information you have and note that the operational task could not be delegated.", nil
 	}
-	result, err := a.devops.Run(ctx, task)
+	result, err := devops.Run(ctx, task)
 	if err != nil {
 		return fmt.Sprintf("[DevOps-Agent execution failed] task: %q, error: %v. You may retry with a clearer task description, or note the failure in your analysis result.", task, err), nil
 	}

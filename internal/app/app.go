@@ -27,6 +27,7 @@ import (
 	"yagent/internal/memory"
 	"yagent/internal/messaging"
 	"yagent/internal/skills"
+	"yagent/internal/supervise"
 	"yagent/internal/tools"
 )
 
@@ -219,7 +220,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			} else {
 				slog.Info("CodeSeek MCP client starting in background (codeseek init runs async)")
 				// 后台监控初始化结果（仅用于日志记录）
-				go func() {
+				supervise.Root().Go("mcp/wait-ready", func(context.Context) {
 					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 					defer cancel()
 					if err := codeSeekMCP.WaitForReady(ctx); err != nil {
@@ -227,7 +228,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 					} else {
 						slog.Info("CodeSeek MCP client initialized and ready for code analysis")
 					}
-				}()
+				})
 			}
 		}
 
@@ -921,6 +922,14 @@ func (ca *Yagent) Close() {
 			slog.Info("Shutting down CodeSeek MCP client...")
 			ca.globalCtx.CodeSeekMCP.Shutdown()
 		}
+	}
+
+	// 最后一步：等进程根域里剩下的 goroutine（各家清理已经各自等过自己的子域，
+	// 走到这里的都是"故意不归任何一次任务收尾管"的后台活，比如 MCP 初始化看门狗、
+	// 后台命令的僵尸回收、自动知识整理）。预算很短 —— 退出不能因为它们而挂住，
+	// 但一定要把"还有什么在跑"报名出来。
+	if leaked := supervise.Root().Drain(3 * time.Second); len(leaked) > 0 {
+		slog.Warn("退出时仍有 goroutine 在跑", "count", len(leaked), "leases", supervise.LeaseNames(leaked))
 	}
 }
 

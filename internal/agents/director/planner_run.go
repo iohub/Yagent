@@ -58,8 +58,8 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 	}
 
 	if in.Mem != nil {
-		lastMsg := in.Mem.GetLastMessage()
-		if lastMsg == nil || lastMsg.Content != in.Input || lastMsg.Type != memory.MessageTypeHuman {
+		lastMsg, hasLast := in.Mem.LastMessage()
+		if !hasLast || lastMsg.Content != in.Input || lastMsg.Type != memory.MessageTypeHuman {
 			in.Mem.AddHumanMessage(in.Input)
 		}
 	}

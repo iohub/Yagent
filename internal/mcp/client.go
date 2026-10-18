@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"yagent/internal/supervise"
 )
 
 var ErrIndexBuilding = errors.New("codeseek index is still building")
@@ -50,19 +52,20 @@ type MCPClient struct {
 	initErr    error
 	closeReady sync.Once
 	cancelInit context.CancelFunc
+	// grp 拥有读循环与后台 initialize。原来 Shutdown 从不 join 它们：
+	// 于是"退出了但还有一条 goroutine 抓着 stdout 管道"是可能状态，
+	// 而表现是子进程僵在那里、日志里却没有任何线索。
+	grp *supervise.Group
 }
 
 func NewMCPClient(cfg MCPClientConfig) *MCPClient {
-	timeout := cfg.RequestTimeout
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-
+	grp, _ := supervise.New(context.Background(), "mcp")
 	return &MCPClient{
 		cfg:      cfg,
 		logger:   slog.Default().With("component", "mcp"),
 		requests: make(map[int]chan *JSONRPCResponse),
 		readyCh:  make(chan struct{}),
+		grp:      grp,
 	}
 }
 
@@ -96,12 +99,12 @@ func (c *MCPClient) Start(ctx context.Context) error {
 
 	c.alive.Store(true)
 
-	go c.readLoop()
+	c.grp.Go("mcp/read-loop", func(context.Context) { c.readLoop() })
 
 	initCtx, cancel := context.WithCancel(context.Background())
 	c.cancelInit = cancel
 
-	go func() {
+	c.grp.Go("mcp/initialize", func(context.Context) {
 		defer cancel()
 		c.logger.Info("MCP client initialization started in background")
 
@@ -110,7 +113,7 @@ func (c *MCPClient) Start(ctx context.Context) error {
 		} else {
 			c.markReady(nil)
 		}
-	}()
+	})
 
 	return nil
 }
@@ -247,7 +250,17 @@ func (c *MCPClient) Shutdown() {
 		c.cmd.Wait()
 	}
 
+	c.drainDomain()
 	c.logger.Info("MCP client shut down")
+}
+
+// drainDomain 等读循环与后台 initialize 真的退出。
+// 两条 Shutdown 路径都必须等：readLoop 抓着 stdout 管道时，子进程可能因为
+// 还连着 stdin 而不退出，而日志里只会留下"MCP client shut down"这句假话。
+func (c *MCPClient) drainDomain() {
+	if leaked := c.grp.Drain(3 * time.Second); len(leaked) > 0 {
+		c.logger.Warn("MCP 客户端已停止，但仍有 goroutine 在跑", "leases", supervise.LeaseNames(leaked))
+	}
 }
 
 func (c *MCPClient) ForceShutdown() {
@@ -276,6 +289,7 @@ func (c *MCPClient) ForceShutdown() {
 		_ = c.cmd.Wait()
 	}
 
+	c.drainDomain()
 	c.logger.Info("MCP client force shut down")
 }
 

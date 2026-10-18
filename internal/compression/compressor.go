@@ -53,22 +53,18 @@ type UltimateCompressionStats struct {
 //   - engine/agentName：LLM 摘要引擎与 Agent 名（原 a.LLM / a.Name()）；
 //   - thinkLink：终极压缩重建上下文的 thinklink 窄接口（原 a.thinkLink，须与
 //     DirectorAgent 持有同一实例，保证跨任务累积的条目可见）；
-//   - clearPendingSubAgent：清理 pendingSubAgentMemory 残留的回调
-//     （原 a.pendingSubAgentMemory = nil；agents 类型不得进入 compression 包）。
 type ContextCompressor struct {
-	engine               llm.Engine // LLM 摘要引擎（紧急压缩超块数时总结用）
-	agentName            string     // Agent 名（LLM 摘要与日志用）
-	thinkLink            ThinkLinkStore
-	clearPendingSubAgent func()
+	engine    llm.Engine // LLM 摘要引擎（紧急压缩超块数时总结用）
+	agentName string     // Agent 名（LLM 摘要与日志用）
+	thinkLink ThinkLinkStore
 }
 
 // NewContextCompressor 构造上下文压缩编排组件。
-func NewContextCompressor(engine llm.Engine, agentName string, thinkLink ThinkLinkStore, clearPendingSubAgent func()) *ContextCompressor {
+func NewContextCompressor(engine llm.Engine, agentName string, thinkLink ThinkLinkStore) *ContextCompressor {
 	return &ContextCompressor{
-		engine:               engine,
-		agentName:            agentName,
-		thinkLink:            thinkLink,
-		clearPendingSubAgent: clearPendingSubAgent,
+		engine:    engine,
+		agentName: agentName,
+		thinkLink: thinkLink,
 	}
 }
 
@@ -104,8 +100,7 @@ func (c *ContextCompressor) ApplyEmergency(ctx context.Context, messages []llm.M
 //
 //   - messages 重置为 [system..., 单条 user 重建消息]；
 //   - 同步覆盖 mem（保持 memory 与 messages 一致，参照 ApplyEmergency）；
-//   - 经 clearPendingSubAgent 回调清理 pendingSubAgentMemory 等可能导致
-//     tool_call/tool_response 配对校验失败的残留；
+//   - memory 与 messages 一起重置（否则会留下"内存比上下文长"的第二份真相）；
 //   - 循环保护：若重建后的输入自身仍超预算，逐步减少保留的 T&P 块数量
 //     （保留最近 N-1、N-2……直至只留用户原始输入），仍超限则对重建内容做硬截断，
 //     确保重建后必然低于阈值，绝不进入死循环；
@@ -165,11 +160,6 @@ func (c *ContextCompressor) ApplyUltimate(messages []llm.Message, threshold int,
 		}
 		mem.AddHumanMessage(prompt)
 	}
-	// 清理可能导致配对校验失败的残留
-	if c.clearPendingSubAgent != nil {
-		c.clearPendingSubAgent()
-	}
-
 	stats := &UltimateCompressionStats{
 		OriginalTokens:   originalTokens,
 		CompressedTokens: EstimateMessagesTokens(newMessages),

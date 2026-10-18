@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"runtime/debug"
 	"sync"
+
+	"yagent/internal/supervise"
 )
 
 // Run 按给定 Segment 调度执行，并对每个元素回调 onCommit：
@@ -54,9 +56,18 @@ func Run[T any](ctx context.Context, seg Segment, parallel int,
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, parallel)
 
+	// WaitGroup 留着、不交给 supervise.Drain：这一批的每个槽位都必须真的算完才能 commit，
+	// 而 Drain 是有预算的 —— 预算用尽就会把零值结果提交进对话（把"超时"伪装成"工具返回空"）。
+	// 域在这里只负责两件事：给每条元素一个出现在退出报告里的名字，和一层 recover 兜底。
+	grp := supervise.From(ctx)
+	// 执行用的必须是**传入的** ctx，而不是域的 ctx：域是创建时刻抓的那份祖先 ctx，
+	// 看不到这里派生出来的超时/取消（取消只往下传）。误用域 ctx 的表现不是崩溃，
+	// 是"用户取消了，工具还在跑" —— 所以单测专门钉这一条。
+	batchCtx := ctx
+
 	for slot, i := range seg.Indices {
 		wg.Add(1)
-		go func(slot, i int) {
+		grp.Go("toolbatch/item", func(context.Context) {
 			defer wg.Done()
 			// 信号量在 per-call ctx 创建之前获取（设计定稿）。
 			// 父 ctx 已取消时不阻塞等待信号量，也【不】执行释放（acquired
@@ -69,13 +80,13 @@ func Run[T any](ctx context.Context, seg Segment, parallel int,
 			select {
 			case sem <- struct{}{}:
 				acquired = true
-			case <-ctx.Done():
+			case <-batchCtx.Done():
 			}
 			if acquired {
 				defer func() { <-sem }()
 			}
-			results[slot] = guardedExec(ctx, i, exec)
-		}(slot, i)
+			results[slot] = guardedExec(batchCtx, i, exec)
+		})
 	}
 	wg.Wait()
 

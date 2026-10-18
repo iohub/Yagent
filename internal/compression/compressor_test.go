@@ -92,13 +92,9 @@ func newCompressorTestEngine() *compressorTestEngine {
 	return &compressorTestEngine{responseContent: "COMPRESSOR_TEST_SUMMARY"}
 }
 
-// newCompressor 构造带计数回调的 ContextCompressor。
-func newCompressor(engine llm.Engine, store ThinkLinkStore, callbackCalls *int) *ContextCompressor {
-	return NewContextCompressor(engine, "Director", store, func() {
-		if callbackCalls != nil {
-			*callbackCalls++
-		}
-	})
+// newCompressor 构造测试用的 ContextCompressor。
+func newCompressor(engine llm.Engine, store ThinkLinkStore) *ContextCompressor {
+	return NewContextCompressor(engine, "Director", store)
 }
 
 // assistantMessages 构造 n 条 assistant 文本消息（无 T&P 关键字，紧急压缩时每条整体作为一个块）。
@@ -123,8 +119,7 @@ func TestCompressorApplyEmergencyFewBlocksKeepsAll(t *testing.T) {
 		originalTask = "原始任务 XYZ"
 	)
 	engine := newCompressorTestEngine()
-	callbackCalls := 0
-	c := newCompressor(engine, &fakeThinkLink{}, &callbackCalls)
+	c := newCompressor(engine, &fakeThinkLink{})
 	mem := memory.NewConversationMemory(10)
 	mem.AddHumanMessage(originalTask)
 
@@ -161,7 +156,7 @@ func TestCompressorApplyEmergencyFewBlocksKeepsAll(t *testing.T) {
 		t.Errorf("stats tokens invalid: original=%d compressed=%d saved=%d",
 			stats.OriginalTokens, stats.CompressedTokens, stats.SavedTokens)
 	}
-	if len(mem.Messages) != 1 || mem.Messages[0].Type != memory.MessageTypeHuman || mem.Messages[0].Content != out[1].Content {
+	if len(mem.Snapshot()) != 1 || mem.Snapshot()[0].Type != memory.MessageTypeHuman || mem.Snapshot()[0].Content != out[1].Content {
 		t.Errorf("memory should be overwritten to single human message equal to out[1].Content")
 	}
 }
@@ -175,8 +170,7 @@ func TestCompressorApplyEmergencyLLMSummary(t *testing.T) {
 	)
 	engine := newCompressorTestEngine()
 	engine.responseContent = summaryText
-	callbackCalls := 0
-	c := newCompressor(engine, &fakeThinkLink{}, &callbackCalls)
+	c := newCompressor(engine, &fakeThinkLink{})
 	mem := memory.NewConversationMemory(10)
 	mem.AddHumanMessage(originalTask)
 
@@ -213,8 +207,7 @@ func TestCompressorApplyEmergencyLLMFailureFallback(t *testing.T) {
 	const originalTask = "原始任务 FALLBACK"
 	engine := newCompressorTestEngine()
 	engine.err = errors.New("forced llm failure for compressor test")
-	callbackCalls := 0
-	c := newCompressor(engine, &fakeThinkLink{}, &callbackCalls)
+	c := newCompressor(engine, &fakeThinkLink{})
 	mem := memory.NewConversationMemory(10)
 	mem.AddHumanMessage(originalTask)
 
@@ -242,7 +235,7 @@ func TestCompressorApplyEmergencyLLMFailureFallback(t *testing.T) {
 func TestCompressorApplyEmergencyNilMemory(t *testing.T) {
 	const inlineUserMsg = "USER_TASK_FROM_MESSAGES"
 	engine := newCompressorTestEngine()
-	c := newCompressor(engine, &fakeThinkLink{}, nil)
+	c := newCompressor(engine, &fakeThinkLink{})
 
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "SYSTEM_KEEP"},
@@ -267,14 +260,14 @@ func TestCompressorApplyEmergencyNilMemory(t *testing.T) {
 
 // newUltimateFixtures 构造带 fake thinklink（2 plans + 1 user input）的压缩组件与 memory。
 // 保留数量上限（keepPlansLimit）是 ApplyUltimate 的入参，不属于夹具，由各自用例直接传。
-func newUltimateFixtures(t *testing.T, callbackCalls *int) (*ContextCompressor, *fakeThinkLink, *memory.ConversationMemory, []llm.Message) {
+func newUltimateFixtures(t *testing.T) (*ContextCompressor, *fakeThinkLink, *memory.ConversationMemory, []llm.Message) {
 	t.Helper()
 	engine := newCompressorTestEngine()
 	store := &fakeThinkLink{
 		plans:      []string{"PLAN_ONE", "PLAN_TWO"},
 		userInputs: []string{"原始任务 U"},
 	}
-	c := newCompressor(engine, store, callbackCalls)
+	c := newCompressor(engine, store)
 	mem := memory.NewConversationMemory(10)
 	mem.AddHumanMessage("old stale history")
 	msgs := []llm.Message{
@@ -289,8 +282,7 @@ func newUltimateFixtures(t *testing.T, callbackCalls *int) (*ContextCompressor, 
 // （keep == totalPlans），重建消息含原始任务与 [CURRENT TASK] 标记；
 // thinklink 交互正确（Count 查询 T&P 与用户输入）；回调执行一次；memory 覆盖。
 func TestCompressorApplyUltimateRebuildContext(t *testing.T) {
-	callbackCalls := 0
-	c, store, mem, msgs := newUltimateFixtures(t, &callbackCalls)
+	c, store, mem, msgs := newUltimateFixtures(t)
 
 	out, stats := c.ApplyUltimate(msgs, 100000, mem, 0)
 
@@ -319,12 +311,8 @@ func TestCompressorApplyUltimateRebuildContext(t *testing.T) {
 	if len(store.rebuildCalls) != 1 || store.rebuildCalls[0] != 2 {
 		t.Errorf("RebuildPrompt calls = %v, want [2]", store.rebuildCalls)
 	}
-	// 回调清理：pendingSubAgentMemory 清理回调执行一次
-	if callbackCalls != 1 {
-		t.Errorf("clearPendingSubAgent callback calls = %d, want 1", callbackCalls)
-	}
 	// memory 覆盖：清空后只剩一条 human 消息，内容与输出末条 user 一致
-	if len(mem.Messages) != 1 || mem.Messages[0].Type != memory.MessageTypeHuman || mem.Messages[0].Content != out[1].Content {
+	if len(mem.Snapshot()) != 1 || mem.Snapshot()[0].Type != memory.MessageTypeHuman || mem.Snapshot()[0].Content != out[1].Content {
 		t.Errorf("memory should be overwritten to single human message equal to out[1].Content")
 	}
 	if stats.OriginalTokens <= 0 || stats.CompressedTokens <= 0 || stats.SavedTokens < 0 {
@@ -337,9 +325,8 @@ func TestCompressorApplyUltimateRebuildContext(t *testing.T) {
 // （RebuildPrompt 调用序列 keep, keep-1, ..., 0）直至硬截断兜底（truncated=true，keep=0），
 // 重建内容非空。
 func TestCompressorApplyUltimateTinyBudgetHardTruncates(t *testing.T) {
-	callbackCalls := 0
 	// threshold=1:远小于重建提示的固有体积 → 递减到 0 后硬截断兜底
-	c, store, mem, msgs := newUltimateFixtures(t, &callbackCalls)
+	c, store, mem, msgs := newUltimateFixtures(t)
 
 	out, stats := c.ApplyUltimate(msgs, 1, mem, 0)
 
@@ -356,16 +343,12 @@ func TestCompressorApplyUltimateTinyBudgetHardTruncates(t *testing.T) {
 	if strings.TrimSpace(out[1].Content) == "" {
 		t.Errorf("rebuilt user content should not be empty (truncated=%v)", stats.Truncated)
 	}
-	if callbackCalls != 1 {
-		t.Errorf("clearPendingSubAgent callback calls = %d, want 1", callbackCalls)
-	}
 }
 
 // TestCompressorApplyUltimateKeepPlansLimit 配置指定保留数量上限（0=全部保留）时，
 // 取配置值与全部数量的较小值。
 func TestCompressorApplyUltimateKeepPlansLimit(t *testing.T) {
-	callbackCalls := 0
-	c, store, mem, msgs := newUltimateFixtures(t, &callbackCalls)
+	c, store, mem, msgs := newUltimateFixtures(t)
 
 	out, stats := c.ApplyUltimate(msgs, 100000, mem, 1)
 
@@ -384,11 +367,9 @@ func TestCompressorApplyUltimateKeepPlansLimit(t *testing.T) {
 	}
 }
 
-// TestCompressorApplyUltimateNilMemory mem 为 nil 时跳过 memory 操作，不 panic，
-// 回调仍执行。
+// TestCompressorApplyUltimateNilMemory mem 为 nil 时跳过 memory 操作，不 panic。
 func TestCompressorApplyUltimateNilMemory(t *testing.T) {
-	callbackCalls := 0
-	c, _, _, msgs := newUltimateFixtures(t, &callbackCalls)
+	c, _, _, msgs := newUltimateFixtures(t)
 
 	out, stats := c.ApplyUltimate(msgs, 100000, nil, 0)
 
@@ -398,20 +379,16 @@ func TestCompressorApplyUltimateNilMemory(t *testing.T) {
 	if stats.Truncated {
 		t.Errorf("stats.Truncated = true, want false")
 	}
-	if callbackCalls != 1 {
-		t.Errorf("clearPendingSubAgent callback calls = %d, want 1", callbackCalls)
-	}
 }
 
 // TestCompressorApplyUltimateZeroTotalPlans thinklink 无 T&P 块时仍可重建
 // （只留用户原始输入区），不 panic。
 func TestCompressorApplyUltimateZeroTotalPlans(t *testing.T) {
-	callbackCalls := 0
 	engine := newCompressorTestEngine()
 	store := &fakeThinkLink{
 		userInputs: []string{"只有任务没有计划"},
 	}
-	c := newCompressor(engine, store, &callbackCalls)
+	c := newCompressor(engine, store)
 	mem := memory.NewConversationMemory(10)
 	msgs := []llm.Message{{Role: llm.RoleSystem, Content: "SYSTEM_KEEP"}}
 
@@ -457,8 +434,7 @@ func TestOverThresholdIsStrictlyGreater(t *testing.T) {
 // TestCompressorApplyUltimateNegativeBudgetClamped threshold 小于 system 消息
 // 自身 token 时 userBudget 钳位为 0（不产生负预算），硬截断兜底。
 func TestCompressorApplyUltimateNegativeBudgetClamped(t *testing.T) {
-	callbackCalls := 0
-	c, _, mem, msgs := newUltimateFixtures(t, &callbackCalls)
+	c, _, mem, msgs := newUltimateFixtures(t)
 
 	// threshold=1 而 system 消息 token 已 > 1 → userBudget = 0（钳位）
 	out, stats := c.ApplyUltimate(msgs, 1, mem, 0)
@@ -469,7 +445,7 @@ func TestCompressorApplyUltimateNegativeBudgetClamped(t *testing.T) {
 	if strings.TrimSpace(out[1].Content) == "" {
 		t.Errorf("truncated rebuilt content should not be empty")
 	}
-	if len(mem.Messages) != 1 || mem.Messages[0].Type != memory.MessageTypeHuman {
+	if len(mem.Snapshot()) != 1 || mem.Snapshot()[0].Type != memory.MessageTypeHuman {
 		t.Errorf("memory should be overwritten to single human message")
 	}
 }

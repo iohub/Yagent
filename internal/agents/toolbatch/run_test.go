@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"yagent/internal/supervise"
 )
 
 // TestRun_ParallelExecution_ConcurrencyEvidence 并发实证:
@@ -258,6 +260,41 @@ func TestRun_WaitGroupIntegrity(t *testing.T) {
 		)
 		if n := execCalls.Load(); n != 4 {
 			t.Fatalf("round %d: exec must be invoked exactly 4 times, got %d", round, n)
+		}
+	}
+}
+
+// TestRun_ExecUsesCallersContextNotDomainContext 钉住迁移时踩过的一个静默 bug：
+// 域的 ctx 是它**创建时刻**抓的那份祖先 ctx，看不见这里再派生出来的超时/取消/值
+// （取消只往下传）。若 exec 收到的是域 ctx 而不是传入的 ctx，症状不是崩溃，
+// 而是"用户取消了、工具还在跑"，以及 per-call 的 deadline 凭空消失。
+func TestRun_ExecUsesCallersContextNotDomainContext(t *testing.T) {
+	type markerKey struct{}
+
+	_, domainCtx := supervise.New(context.Background(), "task")
+	// 传入的 ctx 是域 ctx 的后代，带一个只有它才有的标记。
+	callCtx := context.WithValue(domainCtx, markerKey{}, "from-caller")
+
+	seg := Segment{Parallel: true, Indices: []int{0, 1}}
+	var mu sync.Mutex
+	seen := map[int]string{}
+
+	Run(callCtx, seg, 2,
+		func(ctx context.Context, i int) string {
+			mu.Lock()
+			seen[i], _ = ctx.Value(markerKey{}).(string)
+			mu.Unlock()
+			return "ok"
+		},
+		func(i int, res string) {})
+
+	if len(seen) != 2 {
+		t.Fatalf("exec 收到 %d 个元素, want 2", len(seen))
+	}
+	for i := 0; i < 2; i++ {
+		if seen[i] != "from-caller" {
+			t.Errorf("元素 %d 的 exec 收到的 ctx 标记 = %q, want from-caller —— "+
+				"说明用的是域 ctx，传入 ctx 上派生的取消与 deadline 会一起丢掉", i, seen[i])
 		}
 	}
 }

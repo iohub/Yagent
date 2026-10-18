@@ -14,11 +14,11 @@ import (
 
 	"yagent/internal/agents/activity"
 	"yagent/internal/agents/toolbatch"
-	"yagent/internal/blackboard"
 	"yagent/internal/compression"
 	"yagent/internal/config"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
+	"yagent/internal/messaging"
 	"yagent/internal/pause"
 	"yagent/internal/tools"
 	"yagent/internal/toolspec"
@@ -27,10 +27,10 @@ import (
 type ExecutorConfig struct {
 	SystemPrompt string
 	UserInput    string
-	Adapters     []*tools.Adapter
-	// Surface 是注册表驱动的工具面（docs/tool-registry-design.md）。
-	// 非 nil 时它接管三件事：每步重算工具声明、按名解析执行器（含冷工具兜底）、
-	// 并发谓词。Adapters 仍保留给尚未迁移的调用点与既有循环测试。
+	// Surface 是注册表驱动的工具面（docs/tool-registry-design.md），也是本循环
+	// **唯一**的工具来源：每步重算工具声明、按名解析执行器（含冷工具兜底）、并发谓词
+	// 都问它。这里刻意不再留一份 Adapters 快照 —— 并行谓词曾经扫那份列表，
+	// 而生产只填 Surface，于是测试全绿、并行一次都没发生（设计稿 R1）。
 	Surface       *tools.Surface
 	LLM           llm.Engine
 	MaxSteps      int
@@ -147,21 +147,40 @@ func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (str
 	return toolResult, true
 }
 
-// resolveAdapter 按名解析执行器：Surface 优先（注册表路径），回退到 Adapters 线性扫描。
-// 两条路径都是"取第一个同名适配器"，语义一致。
+// toolCallIsParallelizable 是一次工具调用能否进并行批次的**唯一**判据：
+// 名字级能力标签（IsReadOnly，由 Effect 的 !Mutates && !Serial 派生）+ 两个显式 deny-list。
+//
+// 它被两个循环共用（子 Agent 的 RunAgentLoop 与 Director 的 Planner），这是有意的：
+// 曾经两边各写一份、一份扫 cfg.Adapters 一份问 surface，于是生产里的子 Agent 并行
+// 静默失效而测试全绿（设计稿 R1）。判据只有一份，就不存在"另一边漂走"。
+//
+// 冷工具（还没取回 schema）算可并行：它在这一批里只会收到 teach 回执、不执行副作用，
+// 取回之后下一步才真正并发 —— 与串行时的行为逐字一致。
+func toolCallIsParallelizable(surface *tools.Surface, name string) bool {
+	if isInteractiveUserTool(name) || isSerialTool(name) {
+		return false
+	}
+	if surface == nil {
+		return false
+	}
+	ad, state := surface.Lookup(name)
+	if state == tools.StateUnknown || ad == nil {
+		return false
+	}
+	return ad.IsReadOnly()
+}
+
+// resolveAdapter 按名解析执行器。Surface 是唯一来源：查不到就是没有，
+// 不再回退到任何按名字线性扫描的列表（那正是 R1 的成因）。
 func resolveAdapter(cfg *ExecutorConfig, name string) (*tools.Adapter, bool) {
-	if cfg.Surface != nil {
-		if ad, state := cfg.Surface.Lookup(name); state != tools.StateUnknown {
-			return ad, true
-		}
+	if cfg.Surface == nil {
 		return nil, false
 	}
-	for _, t := range cfg.Adapters {
-		if t.Name() == name {
-			return t, true
-		}
+	ad, state := cfg.Surface.Lookup(name)
+	if state == tools.StateUnknown || ad == nil {
+		return nil, false
 	}
-	return nil, false
+	return ad, true
 }
 
 // isColdUnloaded 报告该工具在 Surface 里还没被模型取回过 schema。
@@ -183,6 +202,17 @@ func teachColdTool(cfg *ExecutorConfig, name string) string {
 }
 
 func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResult, retErr error) {
+	// 整条循环绑定一次委派坐标（而不是 10 个发布点各传一遍）：漏一处的事件不会报错，
+	// 只会让并行委派的输出粘在一起，而那是最难查的一类"界面少了字"。
+	// cfg 是值拷贝，所以这里改写它不影响调用方。
+	if id := memory.DelegationIDFrom(ctx); id != "" && cfg.Publisher != nil {
+		if scoped, ok := cfg.Publisher.(interface {
+			ForDelegation(string) *messaging.MessagePublisher
+		}); ok {
+			cfg.Publisher = scoped.ForDelegation(id)
+		}
+	}
+
 	// 自动路由：把 RoutingEngine 换成本轮档位（ctx 覆盖或角色基线）对应的具体引擎。
 	// 固定模式 / 未启用路由时为 no-op。之后 Model()、压缩阈值、model_info 事件
 	// 都会反映实际路由到的模型。
@@ -254,41 +284,13 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 	}
 
-	// EffectContext 三兄弟（read_note / read_artifact / list_notes）的正常来源是 Surface：
-	// 已核实的五个子 Agent（coding/browser/devops/repo/chat）全部设了 cfg.Surface。
-	// 下面这段只服务"只传 Adapters 的旧调用点"——今天只剩循环单测走它，
-	// 但删掉会让那些测试静默失去便签工具，所以留着并写清前提。
-	if cfg.Surface == nil {
-		if bid := blackboard.BoardIDFrom(ctx); bid != "" && blackboardEnabled() {
-			has := func(name string) bool {
-				for _, ad := range cfg.Adapters {
-					if ad.Name() == name {
-						return true
-					}
-				}
-				return false
-			}
-			if !has("read_note") {
-				cfg.Adapters = append(cfg.Adapters, newReadNoteAdapter(func() string { return bid }))
-			}
-			if !has("read_artifact") {
-				cfg.Adapters = append(cfg.Adapters, newReadArtifactAdapter())
-			}
-		}
-	}
-
-	// 工具声明：Surface 存在时每步重算（deferred 取回与运行期注册都要立刻生效），
-	// 否则沿用历史的一次性快照。
-	frozenDefs := make([]llm.ToolDef, len(cfg.Adapters))
-	for i, ad := range cfg.Adapters {
-		frozenDefs[i] = ad.ToToolDef()
-	}
-	tools.SortToolDefs(frozenDefs)
+	// 工具声明每步重算：deferred 取回（load_tool）与运行期注册都要立刻生效。
+	// 没有 Surface 就等于这个 Agent 没有工具 —— 不再有"构造期快照"那条平行路径。
 	defsForStep := func() []llm.ToolDef {
-		if cfg.Surface != nil {
-			return cfg.Surface.Defs()
+		if cfg.Surface == nil {
+			return nil
 		}
-		return frozenDefs
+		return cfg.Surface.Defs()
 	}
 
 	opts := &llm.CallOptions{}
@@ -551,7 +553,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 						})
 					}
 					if compression.OverThreshold(messages, measured, threshold) && cfg.EnableUltimateCompression && cfg.UltimateThinkLink != nil {
-						ultCompressor := compression.NewContextCompressor(cfg.LLM, cfg.AgentName, cfg.UltimateThinkLink, nil)
+						ultCompressor := compression.NewContextCompressor(cfg.LLM, cfg.AgentName, cfg.UltimateThinkLink)
 						newMessages, ultStats := ultCompressor.ApplyUltimate(messages, threshold, nil, cfg.UltimateKeepPlans)
 						messages = newMessages
 						measured = compression.Prefix{} // 同 emergency：列表被重建，计量作废
@@ -787,17 +789,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 
 		toolCalls := choice.ToolCalls
+		// 并发准入走全包唯一的那份判据（见 toolCallIsParallelizable）。
 		isParallelizable := func(i int) bool {
-			name := toolCalls[i].Function.Name
-			if isInteractiveUserTool(name) || isSerialTool(name) {
-				return false
-			}
-			for _, t := range cfg.Adapters {
-				if t.Name() == name {
-					return t.IsReadOnly()
-				}
-			}
-			return false
+			return toolCallIsParallelizable(cfg.Surface, toolCalls[i].Function.Name)
 		}
 		plan := toolbatch.Plan(len(toolCalls), isParallelizable)
 

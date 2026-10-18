@@ -11,6 +11,9 @@ import (
 	"yagent/internal/thinklink"
 )
 
+// EventPublisher 是 planner 需要的最小面。刻意**不含** ForDelegation：
+// Director 每任务只有一个，自己的流不会与自己混；它的 tool_call_* 事件本来就带 tool_call_id。
+// 需要绑定委派坐标的是子 Agent 那一侧（见 agents.EventBus.ForDelegation）。
 type EventPublisher interface {
 	Publish(event string, payload interface{}, source string) error
 	PublishWithMetadata(event string, payload interface{}, source string, metadata map[string]interface{}) error

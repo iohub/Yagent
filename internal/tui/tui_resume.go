@@ -128,7 +128,7 @@ func resumeUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.resumeErr = fmt.Sprintf("Restore session: %v", msg.err)
 			return m, nil
 		}
-		if msg.mem == nil || len(msg.mem.Messages) == 0 {
+		if msg.mem == nil || msg.mem.Size() == 0 {
 			m.resumeErr = "No messages in this session"
 			return m, nil
 		}
@@ -326,11 +326,10 @@ func exitResumeMode(m *model) {
 }
 
 func restoreFromRollout(m *model, mem *memory.ConversationMemory, info memory.RolloutInfo, path, agentName string) {
-	if mem == nil || len(mem.Messages) == 0 {
+	if mem == nil || mem.Size() == 0 {
 		m.resumeErr = "No messages in this session"
 		return
 	}
-
 	taskID := rolloutFirstNonEmptyStr(info.TaskID, info.SessionID)
 	if taskID == "" {
 		taskID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -581,9 +580,13 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 	}
 	resetTokenState(m)
 
+	// 一次快照、多处遍历共用同一份拷贝：下面要取 &msgs[i] 存进 map，
+	// 分多次 Snapshot 会得到不同的 slice，指针与遍历就错位了。
+	msgs := mem.Snapshot()
+
 	toolResults := make(map[string]*memory.ChatMessage)
-	for i := range mem.Messages {
-		msg := &mem.Messages[i]
+	for i := range msgs {
+		msg := &msgs[i]
 		if msg.Type != memory.MessageTypeTool || msg.ToolCallID == nil {
 			continue
 		}
@@ -600,8 +603,8 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 
 	lastGroupID := ""
 	assistantTurn := 0
-	for i := range mem.Messages {
-		msg := &mem.Messages[i]
+	for i := range msgs {
+		msg := &msgs[i]
 
 		if msg.IsSubAgent && msg.GroupID != "" && msg.GroupID != lastGroupID {
 			appendEntry(logEntry{
@@ -694,7 +697,7 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 	}
 
 	title := taskID
-	for _, msg := range mem.Messages {
+	for _, msg := range msgs {
 		if msg.Type == memory.MessageTypeHuman {
 			r := []rune(msg.Content)
 			if len(r) > 40 {
@@ -711,7 +714,7 @@ func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, proje
 	m.taskManager.AddTask(&http.Task{
 		ID:         taskID,
 		Status:     "finished",
-		Result:     fmt.Sprintf("Session restored: %d messages", len(mem.Messages)),
+		Result:     fmt.Sprintf("Session restored: %d messages", len(msgs)),
 		ProjectDir: projectDir,
 		Memory:     mem,
 		Context:    ctx,

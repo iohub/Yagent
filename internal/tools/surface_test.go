@@ -331,3 +331,76 @@ func hasDef(t *testing.T, s *tools.Surface, name string) bool {
 	}
 	return false
 }
+
+func noopToolFunc(_ context.Context, _ map[string]interface{}) (interface{}, error) {
+	return "ok", nil
+}
+
+// NewSurfaceFromAdapters 是 C3 之后测试唯一的工具面入口。它必须让执行循环问出与生产
+// 同一份答案 —— 尤其是"这个工具只读吗"（并行准入）与"这个名字有没有"。
+// 保留一条测试专用的第二载体（旧的 ExecutorConfig.Adapters）正是"测试全绿而生产不并行"
+// 那种不对称的温床，见 docs/structured-concurrency-design.md R1。
+func TestSurfaceFromAdapters_ReportsWhatTheLoopAsks(t *testing.T) {
+	ro := tools.NewAdapter("ro_search", "只读搜索", noopToolFunc).WithReadOnly(true)
+	rw := tools.NewAdapter("write_file", "可写", noopToolFunc)
+	ghost := tools.NewAdapter("", "空名", noopToolFunc)
+
+	s := tools.NewSurfaceFromAdapters("test-agent", ro, rw, nil, ghost)
+
+	ad, state := s.Lookup("ro_search")
+	if state != tools.StateReady {
+		t.Errorf("ro_search state = %v, want Ready（未开 deferred 时不该有冷工具）", state)
+	}
+	if ad == nil || !ad.IsReadOnly() {
+		t.Error("ro_search 的只读属性丢了 —— 并行准入就靠这一个回答")
+	}
+	ad, state = s.Lookup("write_file")
+	if state != tools.StateReady {
+		t.Errorf("write_file state = %v, want Ready", state)
+	}
+	if ad == nil || ad.IsReadOnly() {
+		t.Error("write_file 被报成只读 —— 那它会被放进并行批次")
+	}
+	if _, state := s.Lookup("totally_made_up"); state != tools.StateUnknown {
+		t.Errorf("未注入的名字 state = %v, want Unknown", state)
+	}
+
+	if got := s.Adapters(); len(got) != 2 {
+		t.Errorf("适配器数 = %d, want 2 —— nil 与空名不该变成幽灵条目", len(got))
+	}
+	defs := s.Defs()
+	if len(defs) != 2 {
+		t.Fatalf("声明数 = %d, want 2", len(defs))
+	}
+	// 按名排序：provider 端的 prompt 前缀缓存依赖它。
+	if defs[0].Function.Name != "ro_search" || defs[1].Function.Name != "write_file" {
+		t.Errorf("声明顺序 = [%s %s], want 按名排序",
+			defs[0].Function.Name, defs[1].Function.Name)
+	}
+	// load_tool 只在有待取回的冷工具时才出现；这里一个都没有。
+	for _, d := range defs {
+		if d.Function.Name == "load_tool" {
+			t.Error("没有冷工具却声明了 load_tool")
+		}
+	}
+	if c := s.Catalog(); c != "" {
+		t.Errorf("未开 deferred 不该有目录，got %q", c)
+	}
+	if names := s.Names(); len(names) != 2 {
+		t.Errorf("Names() = %v, want 2 个", names)
+	}
+}
+
+// 空工具面是合法形状（有些 Agent 就是没有工具，或测试只关心 LLM 侧行为）。
+func TestSurfaceFromAdapters_EmptyIsUsable(t *testing.T) {
+	s := tools.NewSurfaceFromAdapters("chat", nil)
+	if len(s.Defs()) != 0 {
+		t.Errorf("Defs() = %v, want 空", s.Defs())
+	}
+	if _, state := s.Lookup("anything"); state != tools.StateUnknown {
+		t.Errorf("空面上 Lookup = %v, want Unknown", state)
+	}
+	if len(s.Skipped()) != 0 {
+		t.Errorf("手工装配不该凭空报落选: %v", s.Skipped())
+	}
+}

@@ -132,6 +132,11 @@ func toolMessagesFromHistory(history []llm.Message) []llm.Message {
 // function_call_output 的 call_id 序列
 func rolloutToolCallOrder(t *testing.T, w *memory.RolloutWriter) []string {
 	t.Helper()
+	// 落盘是批量的：读回之前必须排干，否则这里读到的是"还没写出去"的空文件，
+	// 而断言会伪装成"顺序错了"。生产的同一条规则封在 (*RolloutWriter).FinalizeCheckpoint 里。
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush rollout: %v", err)
+	}
 	data, err := os.ReadFile(w.FilePath())
 	if err != nil {
 		t.Fatalf("read rollout file: %v", err)
@@ -190,6 +195,11 @@ func expectOrder(t *testing.T, got, want []string, desc string) {
 // ═══ T2 并发实证:3 个 sleep 假读工具,原子计数器最大并发 ≥2 ═══
 
 func TestRunAgentLoop_ReadOnlyBatch_ParallelEvidence(t *testing.T) {
+	// R1 的回归测试：工具面**只能经 Surface 表达**（生产就是只填 Surface）。
+	// 这条测试曾经往 cfg.Adapters 里塞夹具，于是并行谓词扫的是一条生产永远为空的列表 ——
+	// 断言全绿、while 生产一次都没并行过。把夹具换成 Surface 之后，它才真的在钉生产那条路。
+	// 对照臂见 TestRunAgentLoop_ReadOnlyBatch_SerialKillSwitch：没有它，
+	// "并发 ≥2"可能只是计量器自己的毛病。
 	// 共享并发计量器:三个工具都经闭包引用同一组 atomic
 	var cur, maxCur atomic.Int64
 	ads := []*tools.Adapter{
@@ -207,7 +217,7 @@ func TestRunAgentLoop_ReadOnlyBatch_ParallelEvidence(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:             "test",
 		UserInput:                "run read-only batch",
-		Adapters:                 ads,
+		Surface:                  tools.NewSurfaceFromAdapters("test-agent", ads...),
 		LLM:                      &mockLLM{responses: mockResponses},
 		MaxSteps:                 3,
 		Publisher:                publisher,
@@ -263,7 +273,7 @@ func TestRunAgentLoop_ReadOnlyBatch_OrderPreserved(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:             "test",
 		UserInput:                "order test",
-		Adapters:                 ads,
+		Surface:                  tools.NewSurfaceFromAdapters("test-agent", ads...),
 		LLM:                      &mockLLM{responses: mockResponses},
 		MaxSteps:                 3,
 		Publisher:                publisher,
@@ -328,7 +338,7 @@ func TestRunAgentLoop_MixedBatch_EventSegmentation(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:             "test",
 		UserInput:                "mixed batch",
-		Adapters:                 []*tools.Adapter{roR1, roR2, writeTool, roR3},
+		Surface:                  tools.NewSurfaceFromAdapters("test-agent", roR1, roR2, writeTool, roR3),
 		LLM:                      &mockLLM{responses: mockResponses},
 		MaxSteps:                 3,
 		Publisher:                publisher,
@@ -412,7 +422,7 @@ func TestRunAgentLoop_AgentExitStopsAfterFlush(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:             "test",
 		UserInput:                "exit in middle",
-		Adapters:                 []*tools.Adapter{r1, exitTool, r2},
+		Surface:                  tools.NewSurfaceFromAdapters("test-agent", r1, exitTool, r2),
 		LLM:                      &mockLLM{responses: mockResponses},
 		MaxSteps:                 3,
 		StopOnFinish:             true,
@@ -475,7 +485,7 @@ func TestRunAgentLoop_FailureIsolation(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:             "test",
 		UserInput:                "failure isolation",
-		Adapters:                 []*tools.Adapter{rerr, rok},
+		Surface:                  tools.NewSurfaceFromAdapters("test-agent", rerr, rok),
 		LLM:                      &mockLLM{responses: mockResponses},
 		MaxSteps:                 3,
 		AgentName:                "failure-isolation",
@@ -528,7 +538,7 @@ func TestRunAgentLoop_ParentCancel_AllCallsAccounted(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:             "test",
 		UserInput:                "parent cancel",
-		Adapters:                 ads,
+		Surface:                  tools.NewSurfaceFromAdapters("test-agent", ads...),
 		LLM:                      &mockLLM{responses: mockResponses},
 		MaxSteps:                 3,
 		AgentName:                "cancel-test",
@@ -570,7 +580,7 @@ func TestRunAgentLoop_ToolTimeoutMessage(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:             "test",
 		UserInput:                "timeout format",
-		Adapters:                 []*tools.Adapter{adapter},
+		Surface:                  tools.NewSurfaceFromAdapters("test-agent", adapter),
 		LLM:                      &mockLLM{responses: mockResponses},
 		MaxSteps:                 3,
 		AgentName:                "timeout-format",
@@ -609,7 +619,7 @@ func TestRunAgentLoop_ThrottleSixReadOnlyMaxTwo(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:             "test",
 		UserInput:                "throttle",
-		Adapters:                 ads,
+		Surface:                  tools.NewSurfaceFromAdapters("test-agent", ads...),
 		LLM:                      &mockLLM{responses: mockResponses},
 		MaxSteps:                 3,
 		AgentName:                "throttle",
@@ -641,7 +651,7 @@ func TestRunAgentLoop_KillSwitchMaxOneIsFullySerial(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:             "test",
 		UserInput:                "kill switch",
-		Adapters:                 ads,
+		Surface:                  tools.NewSurfaceFromAdapters("test-agent", ads...),
 		LLM:                      &mockLLM{responses: mockResponses},
 		MaxSteps:                 3,
 		Publisher:                publisher,
@@ -676,5 +686,45 @@ func TestRunAgentLoop_KillSwitchMaxOneIsFullySerial(t *testing.T) {
 		if got[0] != want[0] || got[1] != want[1] {
 			t.Fatalf("kill-switch event sequence mismatch at %d: got %v want %v (full=%v)", k, got, want, seq)
 		}
+	}
+}
+
+// 对照臂：`[agent] max_parallel_readonly_tools = 1` 是显式的串行 kill-switch，
+// 同一套夹具必须测不出任何重叠。它存在的意义是让上一条测试真的能失败 ——
+// 没有对照臂，"并发峰值 ≥2"可能来自计量器或脚本引擎的毛病，而不是调度器。
+func TestRunAgentLoop_ReadOnlyBatch_SerialKillSwitch(t *testing.T) {
+	var cur, maxCur atomic.Int64
+	ads := []*tools.Adapter{
+		newReadOnlyTestAdapter(t, "ro_a", 20*time.Millisecond, "a", &cur, &maxCur),
+		newReadOnlyTestAdapter(t, "ro_b", 20*time.Millisecond, "b", &cur, &maxCur),
+		newReadOnlyTestAdapter(t, "ro_c", 20*time.Millisecond, "c", &cur, &maxCur),
+	}
+
+	cfg := ExecutorConfig{
+		SystemPrompt: "test",
+		UserInput:    "run read-only batch serially",
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", ads...),
+		LLM: &mockLLM{responses: []*llm.Response{
+			newToolResponse(makeCall("c1", "ro_a"), makeCall("c2", "ro_b"), makeCall("c3", "ro_c")),
+			newTextResponse("done"),
+		}},
+		MaxSteps:                 3,
+		Publisher:                &spyPublisher{},
+		AgentName:                "serial-kill-switch",
+		MaxParallelReadOnlyTools: 1,
+	}
+
+	start := time.Now()
+	if _, err := RunAgentLoop(context.Background(), cfg); err != nil {
+		t.Fatalf("RunAgentLoop: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if m := maxCur.Load(); m != 1 {
+		t.Errorf("kill-switch 下并发峰值 = %d, want 1 —— 这个开关必须真能退回串行", m)
+	}
+	// 三个 20ms 的工具串行至少 60ms；快过这个数就说明开关没生效（而不是恰好没撞上）。
+	if elapsed < 60*time.Millisecond {
+		t.Errorf("整步只花了 %v, want ≥60ms —— 三个 20ms 的工具不可能这么快串完", elapsed)
 	}
 }

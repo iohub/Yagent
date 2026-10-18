@@ -2,6 +2,7 @@ package datamanager
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"yagent/internal/memory"
+	"yagent/internal/supervise"
 )
 
 const (
@@ -49,6 +51,10 @@ type DataManager struct {
 	// ── 索引轻量 reconcile ──
 	lastReconcileCheck time.Time
 	reconcileCheckMu   sync.Mutex
+
+	// grp 拥有本管理器起的所有后台 goroutine（启动校验 / 索引周期持久化 / 异步 reconcile）。
+	// 原来 Stop 只 close(stopCh) 就返回 —— 索引落盘是否真的完成，没人知道。
+	grp *supervise.Group
 }
 
 // NewDataManager 创建新的数据管理器
@@ -65,16 +71,18 @@ func NewDataManager() (*DataManager, error) {
 		return nil, err
 	}
 
+	grp, _ := supervise.New(context.Background(), "datamanager")
 	dm := &DataManager{
-		dataDir:     dataDir,
-		writers:     make(map[string]*taskWriterState),
-		persistCh:   make(chan struct{}, 1),
-		stopCh:      make(chan struct{}),
+		dataDir:   dataDir,
+		writers:   make(map[string]*taskWriterState),
+		persistCh: make(chan struct{}, 1),
+		stopCh:    make(chan struct{}),
+		grp:       grp,
 	}
 
 	// 异步校验索引一致性：修复因之前 bugs 导致的索引不一致
 	// 即使失败也不阻止启动，记录警告日志即可
-	go func() {
+	grp.Go("datamanager/startup-reconcile", func(context.Context) {
 		start := time.Now()
 		// 先确保索引已加载
 		if err := dm.ensureIndex(); err != nil {
@@ -91,14 +99,14 @@ func NewDataManager() (*DataManager, error) {
 			slog.Debug("Index reconciliation on startup completed",
 				"duration", time.Since(start))
 		}
-	}()
+	})
 
 	return dm, nil
 }
 
 // Start 启动 DataManager 的后台 goroutine（由调用方在初始化后调用）
 func (dm *DataManager) Start() {
-	go dm.indexPersistLoop()
+	dm.grp.Go("datamanager/index-persist", func(context.Context) { dm.indexPersistLoop() })
 }
 
 // getOrCreateWriter 获取或创建任务的写入状态
@@ -180,7 +188,10 @@ func (dm *DataManager) SaveTaskMemory(taskID string, mem *memory.ConversationMem
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 
-	currentCount := len(mem.Messages)
+	// 一次快照读完：增量判断与 pending 收集必须来自同一个瞬间的长度，
+	// 分两次读会在并行委派下算出"新消息"跨了两代。
+	snapshot := mem.Snapshot()
+	currentCount := len(snapshot)
 
 	if currentCount < ws.lastFlushedCount {
 		// 消息被截断或重置，需要全量覆写
@@ -196,7 +207,7 @@ func (dm *DataManager) SaveTaskMemory(taskID string, mem *memory.ConversationMem
 	}
 	if currentCount > newStart {
 		for i := newStart; i < currentCount; i++ {
-			ws.pending = append(ws.pending, mem.Messages[i])
+			ws.pending = append(ws.pending, snapshot[i])
 		}
 	}
 	ws.lastFlushedCount = currentCount
@@ -281,6 +292,7 @@ func (dm *DataManager) LoadTaskMemory(taskID string) (*memory.ConversationMemory
 	defer f.Close()
 
 	mem := memory.NewConversationMemory(300)
+	loaded := make([]memory.ChatMessage, 0)
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024) // 支持大行
 	for scanner.Scan() {
@@ -293,8 +305,11 @@ func (dm *DataManager) LoadTaskMemory(taskID string) (*memory.ConversationMemory
 			// 跳过无法解析的行（健壮性）
 			continue
 		}
-		mem.Messages = append(mem.Messages, msg)
+		loaded = append(loaded, msg)
 	}
+	// Replace 而不是逐条 Append：磁盘上有什么就恢复什么，加载路径不该被 MaxSize 截断
+	// （截断会改变 /resume 恢复出来的历史长度，那是另一个 bug）。
+	mem.Replace(loaded)
 
 	if err := scanner.Err(); err != nil {
 		return nil, err
@@ -374,7 +389,7 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 			continue
 		}
 
-		var mem memory.ConversationMemory
+		var loaded []memory.ChatMessage
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
 		for scanner.Scan() {
@@ -386,7 +401,7 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				continue
 			}
-			mem.Messages = append(mem.Messages, msg)
+			loaded = append(loaded, msg)
 		}
 		f.Close()
 		if err := scanner.Err(); err != nil {
@@ -396,7 +411,7 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 		// 提取首条用户消息作为标题
 		title := ""
 		var createdAt time.Time
-		for _, m := range mem.Messages {
+		for _, m := range loaded {
 			if m.Type == memory.MessageTypeHuman {
 				title = strings.TrimSpace(m.Content)
 				createdAt = m.Timestamp
@@ -417,8 +432,8 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 
 		// UpdatedAt: last message timestamp or file mod time
 		var updatedAt time.Time
-		if len(mem.Messages) > 0 {
-			updatedAt = mem.Messages[len(mem.Messages)-1].Timestamp
+		if len(loaded) > 0 {
+			updatedAt = loaded[len(loaded)-1].Timestamp
 		}
 		if updatedAt.IsZero() {
 			if info, err := entry.Info(); err == nil {
@@ -442,7 +457,7 @@ func (dm *DataManager) ListTaskHistory(limit int) ([]TaskHistoryItem, error) {
 				Title:        title,
 				CreatedAt:    createdAt,
 				UpdatedAt:    updatedAt,
-				MessageCount: len(mem.Messages),
+				MessageCount: len(loaded),
 			})
 		}
 	}
@@ -500,7 +515,12 @@ func (dm *DataManager) ListTaskHistoryFast(limit int) ([]TaskHistoryItem, error)
 
 // updateIndexFromMemory 从 ConversationMemory 更新索引元数据
 func (dm *DataManager) updateIndexFromMemory(taskID string, mem *memory.ConversationMemory) {
-	if mem == nil || len(mem.Messages) == 0 {
+	if mem == nil {
+		return
+	}
+	// 索引元数据是一次性读取，快照够用；直接摸内部 slice 在并行委派下会读到写了一半的列表。
+	msgs := mem.Snapshot()
+	if len(msgs) == 0 {
 		return
 	}
 
@@ -508,7 +528,7 @@ func (dm *DataManager) updateIndexFromMemory(taskID string, mem *memory.Conversa
 	var createdAt time.Time
 	var updatedAt time.Time
 
-	for _, msg := range mem.Messages {
+	for _, msg := range msgs {
 		if msg.Type == memory.MessageTypeHuman && title == "" {
 			title = strings.TrimSpace(msg.Content)
 			createdAt = msg.Timestamp
@@ -524,7 +544,7 @@ func (dm *DataManager) updateIndexFromMemory(taskID string, mem *memory.Conversa
 		title = string(tr[:30]) + "…"
 	}
 
-	msgCount := len(mem.Messages)
+	msgCount := len(msgs)
 
 	// 获取文件信息
 	filePath := filepath.Join(dm.dataDir, taskID+".jsonl")
@@ -615,7 +635,7 @@ func (dm *DataManager) scheduleLightReconcile() {
 		slog.Info("Index inconsistency detected, scheduling async reconciliation",
 			"files_on_disk", jsonlCount,
 			"entries_in_index", indexCount)
-		go func() {
+		dm.grp.Go("datamanager/async-reconcile", func(context.Context) {
 			dm.indexMu.RLock()
 			idx := dm.index
 			dm.indexMu.RUnlock()
@@ -624,6 +644,6 @@ func (dm *DataManager) scheduleLightReconcile() {
 					slog.Warn("Async reconciliation failed", "error", err)
 				}
 			}
-		}()
+		})
 	}
 }

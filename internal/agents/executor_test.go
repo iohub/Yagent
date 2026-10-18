@@ -108,7 +108,7 @@ func TestRunAgentLoop_ToolCallTimeout(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt: "You are a test agent.",
 		UserInput:    "Run a bash command.",
-		Adapters:     []*tools.Adapter{blockingAdapter},
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", blockingAdapter),
 		LLM:          mock,
 		MaxSteps:     3,
 		StopOnFinish: true,
@@ -184,7 +184,7 @@ func TestRunAgentLoop_ToolCallNormal(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt: "You are a helpful weather assistant.",
 		UserInput:    "What's the weather in Beijing?",
-		Adapters:     []*tools.Adapter{fastAdapter},
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", fastAdapter),
 		LLM:          mock,
 		MaxSteps:     3,
 		StopOnFinish: true,
@@ -281,7 +281,7 @@ func TestRunAgentLoop_MultipleToolCalls(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt: "You are a test agent.",
 		UserInput:    "Run multiple tools.",
-		Adapters:     []*tools.Adapter{blockingAdapter, fastAdapter},
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", blockingAdapter, fastAdapter),
 		LLM:          mock,
 		MaxSteps:     3,
 		StopOnFinish: true,
@@ -347,7 +347,7 @@ func TestRunAgentLoop_NoToolCalls(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt: "You are a test agent.",
 		UserInput:    "Say hello.",
-		Adapters:     []*tools.Adapter{}, // 没有适配器
+		Surface:      tools.NewSurfaceFromAdapters("test-agent"), // 没有适配器
 		LLM:          mock,
 		MaxSteps:     3,
 		StopOnFinish: true,
@@ -401,7 +401,7 @@ func TestRunAgentLoop_ContextCancellation(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt: "You are a test agent.",
 		UserInput:    "Run a command.",
-		Adapters:     []*tools.Adapter{blockingAdapter},
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", blockingAdapter),
 		LLM:          mock,
 		MaxSteps:     3,
 		StopOnFinish: true,
@@ -478,7 +478,7 @@ func TestRunAgentLoop_MaxStepsExceeded(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt: "You are a test agent.",
 		UserInput:    "Keep asking weather.",
-		Adapters:     []*tools.Adapter{fastAdapter},
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", fastAdapter),
 		LLM:          mock,
 		MaxSteps:     3,
 		StopOnFinish: false,
@@ -523,7 +523,7 @@ func TestRunAgentLoop_NilUsageEstimatesTokens(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt: "You are a test agent.",
 		UserInput:    "Say hello.",
-		Adapters:     []*tools.Adapter{},
+		Surface:      tools.NewSurfaceFromAdapters("test-agent"),
 		LLM:          mock,
 		MaxSteps:     3,
 		StopOnFinish: true,
@@ -709,7 +709,7 @@ func TestRunAgentLoop_RecordsAbortedOnMaxSteps(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt: "You are a test agent.",
 		UserInput:    "keep working",
-		Adapters:     []*tools.Adapter{newFastAdapter("echo_tool", "echo", "OK")},
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("echo_tool", "echo", "OK")),
 		LLM:          &mockLLM{responses: []*llm.Response{toolResp("c1"), toolResp("c2")}},
 		MaxSteps:     2,
 		AgentName:    "max-steps-agent",

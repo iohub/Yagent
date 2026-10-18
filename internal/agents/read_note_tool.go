@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"yagent/internal/blackboard"
-	"yagent/internal/tools"
 )
 
 const (
@@ -15,36 +14,6 @@ const (
 	readNoteMaxReturnRunes = 24000
 	readNoteMaxLineRunes   = 4000
 )
-
-// newReadNoteAdapter constructs the read_note tool adapter (Director-only, mirrors read_artifact).
-func newReadNoteAdapter(getBoardID func() string) *tools.Adapter {
-	return tools.NewAdapter("read_note",
-		"Read the full body of a blackboard note by its reference. "+
-			"Use when a [Sub-Agent Result] header shows a 'note: <ref>' field and you need details "+
-			"beyond the inline summary, or when a Context Pack entry was truncated. "+
-			"Params: ref (required) — the note reference (format: agent/stem); "+
-			"start_line (optional, 1-based, default 1); max_lines (optional, hard cap 2000).",
-		func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			return executeReadNote(ctx, params, getBoardID)
-		}).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"ref": map[string]interface{}{
-				"type":        "string",
-				"description": "Note reference from the [Sub-Agent Result] header (note: field), format: agent/stem.",
-			},
-			"start_line": map[string]interface{}{
-				"type":        "integer",
-				"description": "1-based start line (default 1).",
-			},
-			"max_lines": map[string]interface{}{
-				"type":        "integer",
-				"description": "Max lines to return (hard cap 2000).",
-			},
-		},
-		"required": []string{"ref"},
-	})
-}
 
 func executeReadNote(ctx context.Context, params map[string]interface{}, getBoardID func() string) (interface{}, error) {
 	ref, _ := params["ref"].(string)

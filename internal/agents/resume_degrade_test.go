@@ -53,7 +53,9 @@ func childFixture(t *testing.T, delegationID string, msgs []llm.Message, mutate 
 	// 先补齐派生字段（消息数、指纹），**再**让夹具改坏它 —— 反过来的话
 	// FinalizeCheckpoint 会把 mutate 的改动原样盖回去，这个 fixture 就再也触发不了
 	// 判据 3 了（第一次跑就是这么发现的）。
-	filled, _ := memory.FinalizeCheckpoint(w.FilePath(), cp)
+	// 用 writer 版本而不是 FinalizeCheckpoint(w.FilePath(), …)：它会先排干落盘队列，
+	// 少那一步算出来的就是"少几条记录"的指纹，判据 2 会抢在目标判据之前响。
+	filled, _ := w.FinalizeCheckpoint(cp)
 	if mutate != nil {
 		mutate(&filled)
 	}

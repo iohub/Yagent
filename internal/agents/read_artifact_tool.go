@@ -10,7 +10,6 @@ import (
 
 	"yagent/internal/agents/director"
 	"yagent/internal/artifact"
-	"yagent/internal/tools"
 )
 
 // 本文件实现"委派返回物分级"第三批次：read_artifact 工具。
@@ -28,34 +27,6 @@ const (
 	// readArtifactMaxLineRunes 单行展示的 rune 上限（超出截断并标注）。
 	readArtifactMaxLineRunes = 4000
 )
-
-// newReadArtifactAdapter 构造 read_artifact 工具适配器（注册进 Director 工具集）。
-func newReadArtifactAdapter() *tools.Adapter {
-	return tools.NewAdapter("read_artifact",
-		"Read the full artifact content of a delegated sub-agent result, paginated by line. "+
-			"Use when the [Sub-Agent Result] header shows an 'artifact: <id>' field and you need details "+
-			"beyond the truncated summary. Params: id (required) — the artifact ID from the [Sub-Agent Result] "+
-			"header; start_line (optional, 1-based, default 1); max_lines (optional; omit for dynamic sizing — "+
-			"pages are auto-sized so typical artifacts are fully read in at most 2 calls; explicit values are clamped, hard cap 2000).",
-		executeReadArtifact).WithSchema(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"id": map[string]interface{}{
-				"type":        "string",
-				"description": "Artifact ID from the [Sub-Agent Result] header (artifact: field).",
-			},
-			"start_line": map[string]interface{}{
-				"type":        "integer",
-				"description": "1-based start line (default 1).",
-			},
-			"max_lines": map[string]interface{}{
-				"type":        "integer",
-				"description": "Max lines to return. Omit for dynamic sizing (auto-sized so the full content is read in at most 2 calls when possible; hard cap 2000).",
-			},
-		},
-		"required": []string{"id"},
-	})
-}
 
 // executeReadArtifact read_artifact 工具 handler。
 func executeReadArtifact(ctx context.Context, params map[string]interface{}) (interface{}, error) {

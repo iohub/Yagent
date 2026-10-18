@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"yagent/internal/supervise"
 	"yagent/internal/util"
 )
 
@@ -28,8 +30,10 @@ type SharedMemory struct {
 	persistPath string        // file path for persistence, empty = no persistence
 	persistTick *time.Ticker  // periodic save ticker
 	persistDone chan struct{} // signal to stop ticker
-	persistWg   sync.WaitGroup
-	dirty       bool // whether there's unsaved data
+	// grp 拥有这块共享记忆起的所有 goroutine（周期落盘 + 订阅者扇出）。
+	// 取代原来的 persistWg：那条 WaitGroup 只管得住周期任务，订阅者起了就没人等。
+	grp   *supervise.Group
+	dirty bool // whether there's unsaved data
 }
 
 // NewSharedMemory creates a new shared memory.
@@ -37,9 +41,11 @@ func NewSharedMemory(maxSize int) *SharedMemory {
 	if maxSize <= 0 {
 		maxSize = 500
 	}
+	grp, _ := supervise.New(context.Background(), "shared-memory")
 	return &SharedMemory{
 		messages: make([]ChatMessage, 0),
 		maxSize:  maxSize,
+		grp:      grp,
 	}
 }
 
@@ -70,16 +76,10 @@ func (sm *SharedMemory) Publish(msg ChatMessage) error {
 
 	sm.mu.Unlock()
 
-	// Notify legacy subscribers (non-blocking, in goroutine)
+	// Notify legacy subscribers (each one gets its own goroutine so a slow subscriber
+	// cannot hold up the writer; supervise gives them a name and a place to be waited).
 	for _, fn := range allSubs {
-		go func(f func(ChatMessage)) {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Warn("[Memory] subscriber panicked", "recover", r)
-				}
-			}()
-			fn(msg)
-		}(fn)
+		sm.grp.Go("shared-memory/subscriber", func(context.Context) { fn(msg) })
 	}
 
 	return nil
@@ -241,19 +241,17 @@ func (sm *SharedMemory) EnablePersistence(saveInterval time.Duration, filePath s
 
 	// Start periodic save
 	sm.persistTick = time.NewTicker(saveInterval)
-	sm.persistWg.Add(1)
 	// 句柄在起跑时**捕获成参数**：原来 goroutine 的 select 每次迭代都重新读
 	// sm.persistTick / sm.persistDone 字段，于是 Close 一旦先置 nil，
 	// goroutine 就变成"nil channel 永不就绪"的永久阻塞（或 nil panic）。
-	go sm.persistLoop(sm.persistDone, sm.persistTick)
+	done, tick := sm.persistDone, sm.persistTick
+	sm.grp.Go("shared-memory/persist", func(context.Context) { sm.persistLoop(done, tick) })
 
 	return nil
 }
 
 // persistLoop runs periodically to flush dirty data to file.
 func (sm *SharedMemory) persistLoop(done <-chan struct{}, tick *time.Ticker) {
-	defer sm.persistWg.Done()
-
 	for {
 		select {
 		case <-tick.C:
@@ -368,7 +366,11 @@ func (sm *SharedMemory) Close() error {
 	sm.kvMu.Unlock()
 
 	close(done)
-	sm.persistWg.Wait()
+	// 等的是整块域，不只是周期任务：订阅者回调也在里面。
+	// 超时不报错 —— 拿到的名字清单就是"退出时还在跑什么"的答案。
+	if leaked := sm.grp.Drain(5 * time.Second); len(leaked) > 0 {
+		slog.Warn("SharedMemory.Close left goroutines running", "leases", supervise.LeaseNames(leaked))
+	}
 	if tick != nil {
 		tick.Stop()
 	}

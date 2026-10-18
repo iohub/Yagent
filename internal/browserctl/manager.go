@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"yagent/internal/config"
+	"yagent/internal/supervise"
 )
 
 const (
@@ -58,6 +59,9 @@ type Manager struct {
 	sweeperStarted bool
 	stopCh         chan struct{}
 	stopOnce       sync.Once
+	// grp 拥有回收协程。原来 Close 只关 stopCh、从不 join —— 于是"回收协程还在跑"
+	// 这件事在退出时无人知道，也就没人能判断最后一次 stopChrome 是不是被它抢先做了。
+	grp *supervise.Group
 }
 
 // Option 用于替换进程执行器（测试注入 fake Spawner）。
@@ -75,12 +79,14 @@ func WithReadyTimeout(d time.Duration) Option {
 }
 
 func NewManager(cfg Config, opts ...Option) *Manager {
+	grp, _ := supervise.New(context.Background(), "browserctl")
 	m := &Manager{
 		cfg:          cfg,
 		spawn:        NewSpawner(),
 		policy:       NewPolicy(cfg.AllowedDomains, cfg.DeniedDomains),
 		stopCh:       make(chan struct{}),
 		readyTimeout: readyTimeout,
+		grp:          grp,
 	}
 	for _, o := range opts {
 		o(m)
@@ -343,7 +349,12 @@ func (m *Manager) installPolicyLocked(ctx context.Context, dir string, env []str
 // Close 停止自己启动的浏览器并停掉空闲回收协程。由 Yagent.Close() 调用。
 func (m *Manager) Close(ctx context.Context) error {
 	m.stopOnce.Do(func() { close(m.stopCh) })
-	return m.stopChrome(ctx, "shutdown")
+	err := m.stopChrome(ctx, "shutdown")
+	// stopCh 关闭后回收协程最迟在一个 ticker 周期内退出；这里等它，等不到就报名字。
+	if leaked := m.grp.Drain(2 * time.Second); len(leaked) > 0 {
+		slog.Warn("浏览器回收协程未退出", "leases", leaked)
+	}
+	return err
 }
 
 // stopChrome 关掉我们自己启动的浏览器。可重复调用：空闲回收后若再次启动，
@@ -460,7 +471,7 @@ func (m *Manager) startSweeperLocked() {
 	}
 	m.sweeperStarted = true
 
-	go func() {
+	m.grp.Go("browserctl/idle-sweeper", func(context.Context) {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for {
@@ -485,7 +496,7 @@ func (m *Manager) startSweeperLocked() {
 				}
 			}
 		}
-	}()
+	})
 }
 
 func (m *Manager) touch() {

@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"yagent/internal/llm"
 	"yagent/internal/logging"
 	"yagent/internal/mcp"
+	"yagent/internal/supervise"
 	"yagent/internal/tools"
 )
 
@@ -57,7 +59,9 @@ type ConsolidationWorker struct {
 	store  *RepoMemoryStore
 	engine llm.Engine
 	ch     chan *ConsolidationTask
-	done   chan struct{}
+	// grp 取代原来的 done channel：join 与"是谁还没退"由同一个机制回答。
+	grp      *supervise.Group
+	stopOnce sync.Once
 	// [知识管理]
 	mcpClient          *mcp.MCPClient
 	consolidationCount int
@@ -66,24 +70,31 @@ type ConsolidationWorker struct {
 // NewConsolidationWorker 创建 consolidation 工作器。
 // 需要调用 Start() 启动后台 goroutine。
 func NewConsolidationWorker(store *RepoMemoryStore, engine llm.Engine, mcpClient *mcp.MCPClient) *ConsolidationWorker {
+	grp, _ := supervise.New(context.Background(), "consolidation")
 	return &ConsolidationWorker{
 		store:     store,
 		engine:    engine,
 		ch:        make(chan *ConsolidationTask, channelBufferSize),
-		done:      make(chan struct{}),
 		mcpClient: mcpClient,
+		grp:       grp,
 	}
 }
 
 // Start 启动后台 goroutine 开始处理 consolidation 请求。
 func (w *ConsolidationWorker) Start() {
-	go w.run()
+	w.grp.Go("consolidation/run", func(context.Context) { w.run() })
 }
 
 // Stop 优雅停止工作器。等待所有排队的任务处理完成。
+// 幂等：close 已关闭的 channel 会 panic，而这条路径挂在 Yagent.Close 上 ——
+// 退出被自己的第二行清理代码砸掉是最不该发生的失败方式。
 func (w *ConsolidationWorker) Stop() {
-	close(w.ch)
-	<-w.done
+	w.stopOnce.Do(func() { close(w.ch) })
+	// 一次整理最坏是 30s×(1+2 次重试)，预算给到 3 分钟；等不到就报名字，
+	// 不再像原来那样 `<-w.done` 无限期挂着退出流程。
+	if leaked := w.grp.Drain(3 * time.Minute); len(leaked) > 0 {
+		slog.Warn("ConsolidationWorker 停止后仍有 goroutine 在跑", "leases", supervise.LeaseNames(leaked))
+	}
 }
 
 // Submit 提交 consolidation 请求到通道。
@@ -100,7 +111,6 @@ func (w *ConsolidationWorker) Submit(task *ConsolidationTask) bool {
 
 // run 是后台 goroutine 的主循环。
 func (w *ConsolidationWorker) run() {
-	defer close(w.done)
 	for task := range w.ch {
 		w.process(task)
 	}

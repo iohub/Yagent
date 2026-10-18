@@ -10,6 +10,7 @@ import (
 
 	"yagent/internal/llm"
 	"yagent/internal/mcp"
+	"yagent/internal/supervise"
 	"yagent/internal/tools"
 )
 
@@ -34,8 +35,13 @@ func autoConsolidateSubtask(mcpClient *mcp.MCPClient, engine llm.Engine, sourceA
 		return
 	}
 
-	// 非阻塞 goroutine，60s 超时
-	go func() {
+	// 后台知识整理，**不阻塞委派返回**：挂在进程根域而不是委派域上。
+	// 挂委派域会让 delegateTo 结束时等它 —— 而它内部是一次最长 60s 的 LLM 调用，
+	// 用户看到的症状是"子 Agent 早答完了，界面还转一分钟"。
+	// 根域只在进程退出时按预算等一次，等不到就把这个名字报出来。
+	// ctx 仍是 Background 派生：调用方（工具 ctx）会在委派返回时被取消，
+	// 而这份知识写库不该跟着一起蒸发。
+	supervise.Root().Go("knowledge/auto-consolidate", func(context.Context) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
@@ -85,7 +91,7 @@ func autoConsolidateSubtask(mcpClient *mcp.MCPClient, engine llm.Engine, sourceA
 				}
 			}
 		}
-	}()
+	})
 }
 
 // extractMultiDimKnowledge 使用 LLM 从原始知识中提取多个独立维度的知识条目。

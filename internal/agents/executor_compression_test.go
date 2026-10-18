@@ -74,7 +74,7 @@ func TestRunAgentLoop_CompressionEventFeedsTUIPanel(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:                "You are a test agent.",
 		UserInput:                   "read something big then report",
-		Adapters:                    []*tools.Adapter{newFastAdapter("probe_tool", "probe", bigResult)},
+		Surface:                     tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
 		LLM:                         mock,
 		MaxSteps:                    2,
 		StopOnFinish:                true,
@@ -174,7 +174,7 @@ func TestRunAgentLoop_UltimateCompressionNeedsFlagAndStore(t *testing.T) {
 				// 截完仍超限才会把第三档的条件逼出来。
 				SystemPrompt:                strings.Repeat("system rule that must stay. ", 60),
 				UserInput:                   strings.Repeat("long delegated task description. ", 80),
-				Adapters:                    []*tools.Adapter{newFastAdapter("probe_tool", "probe", "ok")},
+				Surface:                     tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", "ok")),
 				LLM:                         mock,
 				MaxSteps:                    1,
 				StopOnFinish:                true,
@@ -237,7 +237,7 @@ func TestRunAgentLoop_RecordsThoughtPlanIntoThinkLink(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:      "You are a test agent.",
 		UserInput:         "record my thoughts",
-		Adapters:          []*tools.Adapter{newFastAdapter("probe_tool", "probe", "ok")},
+		Surface:           tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", "ok")),
 		LLM:               mock,
 		MaxSteps:          2,
 		StopOnFinish:      true,

@@ -47,7 +47,7 @@ func runStopped(t *testing.T, script map[string][]scriptStep) *memory.RolloutWri
 		_, rerr := RunAgentLoop(ctx, ExecutorConfig{
 			SystemPrompt: codingSystemPrompt,
 			UserInput:    "do the thing then stop",
-			Adapters:     []*tools.Adapter{blocker.ad},
+			Surface:      tools.NewSurfaceFromAdapters("test-agent", blocker.ad),
 			LLM:          newScripted(script),
 			MaxSteps:     5,
 			AgentName:    "coding",
@@ -116,7 +116,7 @@ func TestResumeReplaysExactMessages(t *testing.T) {
 	if _, rerr := RunAgentLoop(ctx, ExecutorConfig{
 		SystemPrompt: codingSystemPrompt,
 		UserInput:    "do the thing then stop",
-		Adapters:     []*tools.Adapter{tools.NewAdapter("noop_tool", "noop", func(context.Context, map[string]interface{}) (interface{}, error) { return "ok", nil })},
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", tools.NewAdapter("noop_tool", "noop", func(context.Context, map[string]interface{}) (interface{}, error) { return "ok", nil })),
 		LLM:          engine,
 		MaxSteps:     6,
 		AgentName:    "coding",
@@ -162,6 +162,10 @@ func TestResumeReplaysExactMessages(t *testing.T) {
 	// 从 0 重来的话 max_steps 会被每次暂停-继续白吃掉一格。
 	// 这里读终止事件而不是 replay.Step —— 第二轮正常跑完，没有检查点，
 	// replay.Step 是"按消息数派生的下界"，它测不到游标是否连续。
+	// 落盘是批量的，读回之前先排干（同一条规则见 memory.WriteCheckpoint）。
+	if ferr := w2.Flush(context.Background()); ferr != nil {
+		t.Fatalf("flush second rollout: %v", ferr)
+	}
 	_, info2, ierr := memory.ReadRolloutMemory(w2.FilePath(), memory.DefaultRolloutReadOptions())
 	if ierr != nil {
 		t.Fatalf("read second rollout info: %v", ierr)
@@ -190,7 +194,7 @@ func TestCancelWritesUsableCheckpoint(t *testing.T) {
 	_, rerr := RunAgentLoop(ctx, ExecutorConfig{
 		SystemPrompt: codingSystemPrompt,
 		UserInput:    "cancel me mid-run",
-		Adapters:     []*tools.Adapter{noop},
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", noop),
 		LLM:          engine,
 		MaxSteps:     4,
 		AgentName:    "coding",

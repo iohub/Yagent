@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"yagent/internal/supervise"
 )
 
 // DefaultCheckInterval 是 CheckInterval 未配置（≤0）时的默认监视轮询间隔。
@@ -170,7 +172,9 @@ func WithIdleTimeout(parent context.Context, opts Options) (context.Context, con
 	idleThreshold := opts.IdleTimeout
 	totalLimit := opts.TotalTimeout
 
-	go func() {
+	// 监视器挂到**父** ctx 的域上（不是本函数派生出来的那个 ctx —— 它会自己取消，
+	// 而取消与被等退出是两件事）。fn 不接收参数：内部的 select 认的是外层派生 ctx。
+	supervise.From(parent).Go("activity/monitor", func(context.Context) {
 		ticker := time.NewTicker(checkInterval)
 		defer ticker.Stop()
 		for {
@@ -216,7 +220,7 @@ func WithIdleTimeout(parent context.Context, opts Options) (context.Context, con
 				}
 			}
 		}
-	}()
+	})
 
 	return ctx, cancel
 }

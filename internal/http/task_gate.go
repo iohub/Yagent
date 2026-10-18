@@ -16,14 +16,15 @@ import (
 	"time"
 
 	"yagent/internal/pause"
+	"yagent/internal/supervise"
 )
 
 // NewTaskContext 建一个可取消的任务 ctx，并在上面挂好暂停闸门。
 // timeout ≤ 0 表示不设任务级超时（沿用原先只有 WithCancel 的那条分支）。
 //
-// 闸门只从这里返回 ctx 这一个通道出去，不另存一份字段：Task.Gate() 是从 ctx 读回来的。
-// 两处各存一份的话，任何"换了 ctx 忘了换闸门"的地方都会让 /pause 停在一个没人在等的
-// 闸门上 —— 而那条路径没有报错，只是什么都不发生。
+// 闸门与并发域都只从这里返回 ctx 这一个通道出去，不另存字段：Task.Gate() 是从 ctx 读
+// 回来的，并发域同理（supervise.From(ctx)）。两处各存一份的话，任何"换了 ctx 忘了换"
+// 的地方都会让 /pause 停在一个没人在等的闸门上 —— 而那条路径没有报错，只是什么都不发生。
 func NewTaskContext(timeout time.Duration) (context.Context, context.CancelFunc) {
 	var ctx context.Context
 	var cancel context.CancelFunc
@@ -32,5 +33,9 @@ func NewTaskContext(timeout time.Duration) (context.Context, context.CancelFunc)
 	} else {
 		ctx, cancel = context.WithCancel(context.Background())
 	}
-	return pause.WithGate(ctx, pause.NewGate()), cancel
+	ctx = pause.WithGate(ctx, pause.NewGate())
+	// 这个域装的是"这个任务起的后台工作"（周期保存、事件桥……），任务收尾时一起被等。
+	// 跑任务的那条 goroutine 自己**不放进域里** —— 否则它收尾时会等自己。
+	_, ctx = supervise.New(ctx, "task")
+	return ctx, cancel
 }

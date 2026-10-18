@@ -10,23 +10,23 @@ func TestConversationMemory(t *testing.T) {
 
 	// Test adding system message
 	mem.AddSystemMessage("System prompt")
-	if len(mem.Messages) != 1 {
-		t.Errorf("Expected 1 message, got %d", len(mem.Messages))
+	if len(mem.Snapshot()) != 1 {
+		t.Errorf("Expected 1 message, got %d", len(mem.Snapshot()))
 	}
-	if mem.Messages[0].Type != MessageTypeSystem {
-		t.Errorf("Expected system message, got %s", mem.Messages[0].Type)
+	if mem.Snapshot()[0].Type != MessageTypeSystem {
+		t.Errorf("Expected system message, got %s", mem.Snapshot()[0].Type)
 	}
 
 	// Test adding human message
 	mem.AddHumanMessage("Hello")
-	if len(mem.Messages) != 2 {
-		t.Errorf("Expected 2 messages, got %d", len(mem.Messages))
+	if len(mem.Snapshot()) != 2 {
+		t.Errorf("Expected 2 messages, got %d", len(mem.Snapshot()))
 	}
 
 	// Test adding assistant message
 	mem.AddAssistantMessage("Hi there", nil)
-	if len(mem.Messages) != 3 {
-		t.Errorf("Expected 3 messages, got %d", len(mem.Messages))
+	if len(mem.Snapshot()) != 3 {
+		t.Errorf("Expected 3 messages, got %d", len(mem.Snapshot()))
 	}
 
 	// Test message overflow
@@ -44,18 +44,18 @@ func TestConversationMemory(t *testing.T) {
 	// We keep the latest 4: "Hi there", "msg 4", "msg 5", "msg 6".
 	// Total: System + 4 = 5 messages.
 
-	if len(mem.Messages) != 5 {
-		t.Errorf("Expected 5 messages, got %d", len(mem.Messages))
+	if len(mem.Snapshot()) != 5 {
+		t.Errorf("Expected 5 messages, got %d", len(mem.Snapshot()))
 	}
 
 	// First message should still be System
-	if mem.Messages[0].Type != MessageTypeSystem {
-		t.Errorf("First message should be system, got %s", mem.Messages[0].Type)
+	if mem.Snapshot()[0].Type != MessageTypeSystem {
+		t.Errorf("First message should be system, got %s", mem.Snapshot()[0].Type)
 	}
 
 	// Last message should be "msg 6"
-	if mem.Messages[4].Content != "msg 6" {
-		t.Errorf("Last message should be 'msg 6', got '%s'", mem.Messages[4].Content)
+	if mem.Snapshot()[4].Content != "msg 6" {
+		t.Errorf("Last message should be 'msg 6', got '%s'", mem.Snapshot()[4].Content)
 	}
 }
 
@@ -74,11 +74,11 @@ func TestJSONSerialization(t *testing.T) {
 		t.Fatalf("Failed to unmarshal memory: %v", err)
 	}
 
-	if len(mem2.Messages) != 2 {
-		t.Errorf("Expected 2 messages after unmarshal, got %d", len(mem2.Messages))
+	if len(mem2.Snapshot()) != 2 {
+		t.Errorf("Expected 2 messages after unmarshal, got %d", len(mem2.Snapshot()))
 	}
-	if mem2.Messages[0].Content != "sys" {
-		t.Errorf("Expected content 'sys', got '%s'", mem2.Messages[0].Content)
+	if mem2.Snapshot()[0].Content != "sys" {
+		t.Errorf("Expected content 'sys', got '%s'", mem2.Snapshot()[0].Content)
 	}
 }
 

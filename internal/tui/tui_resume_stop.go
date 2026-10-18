@@ -7,11 +7,13 @@ package tui
 // 恢复侧仍然整读，两边共用 memory 那张分类表，所以对同一个文件不会给出矛盾答案。
 
 import (
+	"context"
 	"image/color"
 	"sort"
 	"sync"
 
 	"yagent/internal/memory"
+	"yagent/internal/supervise"
 
 	"charm.land/lipgloss/v2"
 )
@@ -21,6 +23,8 @@ type resumeStopIndex map[string]memory.StopFacts
 
 // stopScanConcurrency 是尾读的并发上限。用 WaitGroup +  buffered channel 而不是
 // errgroup：golang.org/x/sync 在 go.mod 里是 indirect，为这点便利提成直接依赖不值当。
+// WaitGroup 也留着没换成 supervise.Drain —— 这一批必须等**自己这几个**，
+// 而 Drain 等的是整条域（包含别的后台工作），语义不对。supervise 在这里只给名字和 recover。
 const stopScanConcurrency = 8
 
 // readResumeStopFacts 并发尾读每个文件的终止事实。
@@ -37,8 +41,9 @@ func readResumeStopFacts(items []memory.RolloutSessionInfo) resumeStopIndex {
 	sem := make(chan struct{}, stopScanConcurrency)
 	var wg sync.WaitGroup
 	for _, it := range items {
+		path := it.Path
 		wg.Add(1)
-		go func(path string) {
+		supervise.Root().Go("tui/resume-tail-read", func(context.Context) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -50,7 +55,7 @@ func readResumeStopFacts(items []memory.RolloutSessionInfo) resumeStopIndex {
 			mu.Lock()
 			out[path] = facts
 			mu.Unlock()
-		}(it.Path)
+		})
 	}
 	wg.Wait()
 	return out

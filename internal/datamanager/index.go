@@ -22,17 +22,17 @@ const (
 
 // IndexEntry 是单个任务的轻量元数据
 type IndexEntry struct {
-	TaskID   string    `json:"task_id"`
-	Title    string    `json:"title"`     // 首条人类消息前30字符
+	TaskID    string    `json:"task_id"`
+	Title     string    `json:"title"`      // 首条人类消息前30字符
 	CreatedAt time.Time `json:"created_at"` // 首条消息时间
-	UpdatedAt  time.Time `json:"updated_at"` // 末条消息时间
+	UpdatedAt time.Time `json:"updated_at"` // 末条消息时间
 	MsgCount  int       `json:"msg_count"`  // 消息总数
 	FileSize  int64     `json:"file_size"`  // JSONL 文件大小
 	Mtime     time.Time `json:"mtime"`      // 文件修改时间，用于一致性校验
 }
 
 type taskIndex struct {
-	Version int                    `json:"version"`
+	Version int                   `json:"version"`
 	Tasks   map[string]IndexEntry `json:"tasks"`
 }
 
@@ -170,11 +170,11 @@ func (dm *DataManager) extractMetaFromFile(path string) (IndexEntry, error) {
 			Content string `json:"content"`
 			TS      string `json:"timestamp"`
 		}
-		title       string
-		createdAt   time.Time
-		updatedAt   time.Time
-		lineCount   int
-		foundHuman  bool
+		title      string
+		createdAt  time.Time
+		updatedAt  time.Time
+		lineCount  int
+		foundHuman bool
 	)
 
 	scanner := bufio.NewScanner(f)
@@ -261,10 +261,10 @@ func (dm *DataManager) extractMetaFromFile(path string) (IndexEntry, error) {
 	}
 
 	return IndexEntry{
-		TaskID:   taskID,
-		Title:    title,
+		TaskID:    taskID,
+		Title:     title,
 		CreatedAt: createdAt,
-		UpdatedAt:  updatedAt,
+		UpdatedAt: updatedAt,
 		MsgCount:  lineCount,
 		FileSize:  info.Size(),
 		Mtime:     info.ModTime(),
@@ -391,10 +391,10 @@ func (dm *DataManager) updateIndexEntry(taskID string, title string, createdAt, 
 	} else {
 		// 新增条目
 		entry = IndexEntry{
-			TaskID:   taskID,
-			Title:    title,
+			TaskID:    taskID,
+			Title:     title,
 			CreatedAt: createdAt,
-			UpdatedAt:  updatedAt,
+			UpdatedAt: updatedAt,
 			MsgCount:  msgCount,
 			FileSize:  fileSize,
 			Mtime:     mtime,
@@ -466,13 +466,18 @@ func (dm *DataManager) schedulePersist() {
 	}
 }
 
-// Stop 关闭 DataManager，停止 persistLoop
+// Stop 关闭 DataManager，停止 persistLoop，并等它真的把最后一笔索引落盘。
+// 原来只 close(stopCh) 就返回：退出时索引可能还在写，下一次启动就看见一份旧账本
+// —— 而这份账本正是任务历史列表的唯一来源。
 func (dm *DataManager) Stop() {
 	select {
 	case <-dm.stopCh:
 		// 已经关闭
 	default:
 		close(dm.stopCh)
+	}
+	if leaked := dm.grp.Drain(5 * time.Second); len(leaked) > 0 {
+		slog.Warn("DataManager.Stop 仍有后台任务在跑", "leases", leaked)
 	}
 }
 
@@ -496,11 +501,11 @@ func (dm *DataManager) listTaskHistoryFallback(limit int) ([]TaskHistoryItem, er
 		}
 
 		var (
-			title       string
-			createdAt   time.Time
-			updatedAt   time.Time
-			lineCount   int
-			foundHuman  bool
+			title      string
+			createdAt  time.Time
+			updatedAt  time.Time
+			lineCount  int
+			foundHuman bool
 		)
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)

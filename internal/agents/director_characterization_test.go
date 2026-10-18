@@ -201,10 +201,10 @@ func TestCharacterizationApplyEmergencyCompression(t *testing.T) {
 			}
 
 			// memory 覆盖：清空后只剩一条 human 消息，内容与输出末条 user 一致
-			if len(agent.currentMemory.Messages) != 1 {
-				t.Fatalf("currentMemory should be overwritten to a single message, got %d", len(agent.currentMemory.Messages))
+			if len(agent.currentMemory.Snapshot()) != 1 {
+				t.Fatalf("currentMemory should be overwritten to a single message, got %d", len(agent.currentMemory.Snapshot()))
 			}
-			m := agent.currentMemory.Messages[0]
+			m := agent.currentMemory.Snapshot()[0]
 			if m.Type != memory.MessageTypeHuman {
 				t.Errorf("memory message type = %q, want %q", m.Type, memory.MessageTypeHuman)
 			}
@@ -222,7 +222,7 @@ func TestCharacterizationApplyEmergencyCompression(t *testing.T) {
 //   - system 消息原样保留，其余消息重置为单条 user 重建消息；
 //   - 预算充足时保留全部 T&P 块（keep == totalPlans），含原始任务与 [CURRENT TASK] 标记；
 //   - 预算极小时循环递减保留数量直至硬截断兜底（truncated=true，keep=0）；
-//   - 清理 pendingSubAgentMemory 残留；覆盖 currentMemory 为单条 human 消息。
+//   - 覆盖 currentMemory 为单条 human 消息。
 func TestCharacterizationApplyUltimateCompression(t *testing.T) {
 	const (
 		systemContent = "SYSTEM_PROMPT_KEEP"
@@ -233,7 +233,6 @@ func TestCharacterizationApplyUltimateCompression(t *testing.T) {
 		t.Helper()
 		agent := newCharDirectorAgent(t, &mockEngine{}, t.TempDir())
 		agent.EnhancedCommanderCfg.UltimateCompressionKeepPlans = 0 // 0 = 不限制保留数量
-		agent.pendingSubAgentMemory = &AgentResult{Text: "stale sub-agent result"}
 		agent.currentMemory = memory.NewConversationMemory(10)
 		agent.currentMemory.AddHumanMessage("old stale history")
 		agent.thinkLink.AddUserInput(userTask, 1)
@@ -322,16 +321,11 @@ func TestCharacterizationApplyUltimateCompression(t *testing.T) {
 				t.Errorf("stats.SavedTokens = %d, want >= 0", stats.SavedTokens)
 			}
 
-			// 残留清理：pendingSubAgentMemory 必须被清为 nil
-			if agent.pendingSubAgentMemory != nil {
-				t.Errorf("pendingSubAgentMemory should be cleared to nil after ultimate compression")
-			}
-
 			// memory 覆盖：只剩一条 human 消息，内容与重建消息一致
-			if len(agent.currentMemory.Messages) != 1 {
-				t.Fatalf("currentMemory should be overwritten to a single message, got %d", len(agent.currentMemory.Messages))
+			if len(agent.currentMemory.Snapshot()) != 1 {
+				t.Fatalf("currentMemory should be overwritten to a single message, got %d", len(agent.currentMemory.Snapshot()))
 			}
-			m := agent.currentMemory.Messages[0]
+			m := agent.currentMemory.Snapshot()[0]
 			if m.Type != memory.MessageTypeHuman {
 				t.Errorf("memory message type = %q, want %q", m.Type, memory.MessageTypeHuman)
 			}

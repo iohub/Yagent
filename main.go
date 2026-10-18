@@ -314,7 +314,7 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 
 	defer yagent.Close()
 
-	messageDispatcher := messaging.NewMessageDispatcher(100)
+	messageDispatcher := messaging.NewDefaultMessageDispatcher()
 	yagent.IntegrateMessaging(messageDispatcher)
 
 	server := http.NewServer(yagent)
@@ -391,7 +391,7 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	slog.Info("Skill registry loaded", "count", skillRegistry.Count())
 
 	// 设置消息总线 - 使用 TUIConsumer 输出到 stdout
-	dispatcher := messaging.NewMessageDispatcher(100)
+	dispatcher := messaging.NewDefaultMessageDispatcher()
 	defer dispatcher.Shutdown()
 
 	publisher := messaging.NewMessagePublisher(dispatcher)

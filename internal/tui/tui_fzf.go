@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"yagent/internal/embedbin"
+	"yagent/internal/supervise"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -121,15 +123,15 @@ func runFzfCmd(projectDir string) tea.Cmd {
 	// Channel to receive the selected path
 	ch := make(chan string, 1)
 
-	// Read output in a goroutine
-	go func() {
+	// Read output in a goroutine（消费方靠 <-ch 收，close(ch) 就是它的 join）
+	supervise.Root().Go("tui/fzf-read", func(context.Context) {
 		defer close(ch)
 		data, err := io.ReadAll(pr)
 		if err != nil || len(data) == 0 {
 			return
 		}
 		ch <- strings.TrimSpace(string(data))
-	}()
+	})
 
 	// Step 3: Build fzf command (no shell, safe args)
 	fzfArgs := []string{

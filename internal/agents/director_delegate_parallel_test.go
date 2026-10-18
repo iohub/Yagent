@@ -113,7 +113,7 @@ func TestRunAgentLoop_DelegateReadOnlyParallelGroup(t *testing.T) {
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = "sys"
 	cfg.UserInput = "task"
-	cfg.Adapters = []*tools.Adapter{mockRepoDelegate, mockChatDelegate, exitTool}
+	cfg.Surface = tools.NewSurfaceFromAdapters("repo", mockRepoDelegate, mockChatDelegate, exitTool)
 	cfg.LLM = &mockLLM{responses: []*llm.Response{
 		newToolResponse(
 			llm.ToolCall{ID: "call_ro_1", Type: "function", Function: llm.FunctionCall{Name: "delegate_repo", Arguments: `{}`}},
@@ -160,14 +160,13 @@ func TestDirectorSwitchPathMixedBatchViaPlanner(t *testing.T) {
 	var probe concurrencyProbe
 
 	agent := &DirectorAgent{
-		Adapters: []*tools.Adapter{
-			// 首元素用 delegate_ 前缀（mock readonly delegate）：真实覆盖 switch
-			// 的 isDelegate 分支（WithIdleTimeout）+ RunState 统计更新；IsReadOnly
-			// 标记使其进入只读并行段
+		// 首元素用 delegate_ 前缀（mock readonly delegate）：真实覆盖 switch
+		// 的 isDelegate 分支（WithIdleTimeout）+ RunState 统计更新；IsReadOnly
+		// 标记使其进入只读并行段
+		surface: tools.NewSurfaceFromAdapters("test-agent",
 			probe.readonlyTool("delegate_repo", 40*time.Millisecond),
 			probe.writeTool("write_tool", 30*time.Millisecond),
-			probe.readonlyTool("ro_2", 40*time.Millisecond),
-		},
+			probe.readonlyTool("ro_2", 40*time.Millisecond)),
 		maxParallelReadOnlyTools: NormalizeMaxParallelReadOnlyTools(4),
 		delegateIdleTimeout:      2 * time.Second, // >0：WithIdleTimeout 契约要求
 	}

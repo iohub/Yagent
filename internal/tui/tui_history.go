@@ -332,7 +332,7 @@ func loadMemoryCmd(m *model, taskID string) tea.Cmd {
 		if err != nil {
 			return historyErrMsg{err: err}
 		}
-		if mem == nil || len(mem.Messages) == 0 {
+		if mem == nil || mem.Size() == 0 {
 			return historyErrMsg{err: fmt.Errorf("no messages found in task %s", taskID)}
 		}
 		return memoryLoadedMsg{taskID: taskID, memory: mem}
@@ -352,7 +352,7 @@ func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 	m.historyLoading = true
 	defer func() { m.historyLoading = false }()
 
-	if mem == nil || len(mem.Messages) == 0 {
+	if mem == nil || mem.Size() == 0 {
 		m.setInfoMsg("No messages in this session")
 		return
 	}

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -55,11 +54,11 @@ type DirectorAgent struct {
 	repoCtx      RepoContextStore
 	knowledge    KnowledgeProvider
 	mcpClient    *mcp.MCPClient
-	// Adapters 是 surface 的快照视图，只供仍按字段读取的调用点与测试使用；
-	// 工具声明与执行一律走 surface（见 rebuildSurface）。
-	Adapters []*tools.Adapter
-	// surface 是 Director 的工具面。boardID 按任务变化，而 read_note/read_artifact
-	// 的可用性取决于它，所以它按轮重建，不在构造期固化。
+	// surface 是 Director 唯一的工具面：工具声明、按名解析、并发准入都问它。
+	// 这里不再有 Adapters 快照视图 —— 两份同形来源正是子 Agent 那边并行失效的成因
+	// （设计稿 R1），Director 侧没踩中只是因为谓词恰好走了 surface。
+	// boardID 按任务变化，而 read_note/read_artifact 的可用性取决于它，
+	// 所以它按轮重建，不在构造期固化。
 	surface *tools.Surface
 	// materializedAcrossTurns 记住本会话里已经取回过 schema 的冷工具。
 	// Surface 每轮重建，不跨轮保存的话第一轮 load_tool 取回的东西第二轮要再付一次。
@@ -73,12 +72,8 @@ type DirectorAgent struct {
 
 	projectCtxLoader *director.ProjectContextLoader
 
-	currentMemory         *memory.ConversationMemory
-	pendingSubAgentMemory *AgentResult
-	pendingSubAgentMu     sync.Mutex
-	compressor            *compression.ContextCompressor
-
-	injectSubAgentMemoryMu sync.Mutex
+	currentMemory *memory.ConversationMemory
+	compressor    *compression.ContextCompressor
 
 	llmTimeout time.Duration
 
@@ -208,7 +203,7 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 		self.boardID = blackboard.GenerateAdhocID()
 	}
 
-	self.compressor = compression.NewContextCompressor(p.LLM, self.Name(), self.thinkLink, func() { self.setPendingSubAgentMemory(nil) })
+	self.compressor = compression.NewContextCompressor(p.LLM, self.Name(), self.thinkLink)
 
 	if self.env != nil {
 		SetProjectPathProvider(self.env.ProjectPath)
@@ -377,7 +372,7 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	// 并生成带 ID 的摘要）。此前手工构造漏填 Summary，导致 FormatForDirector
 	// 注入上下文时子代理输出丢失（回归测试 TestCustomAgentDelegateTool_* 钉住）。
 	agentResult := FinalizeResultFull(ca.DisplayName, task, result)
-	a.setPendingSubAgentMemory(&agentResult)
+	recordDelegationOutcome(ctx, agentResult)
 	// 落一张便签。以前 custom agent 的产物只活在 Director 的上下文里，一次压缩就没了，
 	// 与 Coding→Browser 是同一类黑洞。不返回 noteRef 也无妨：Board Index 每轮从磁盘重扫，
 	// 下一次委派与 Director 自己的上下文都会自动看到这条。
@@ -386,9 +381,6 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 }
 
 func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID string, toolName string) {
-	a.injectSubAgentMemoryMu.Lock()
-	defer a.injectSubAgentMemoryMu.Unlock()
-
 	if a.currentMemory == nil {
 		return
 	}
@@ -411,7 +403,10 @@ func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID stri
 			IsSubAgent: true,
 			Metadata:   metadata,
 		}
-		a.currentMemory.Messages = append(a.currentMemory.Messages, summaryMsg)
+		// Append 而不是裸 append 到字段：锁在类型内部，且这条摘要现在也会参与
+		// MaxSize 溢出截断与配对修复（以前绕过它，摘要攒够了内存就无上限增长）。
+		// 也不用 AddMessage —— 它按 Type 分派重建消息，会丢掉 GroupID/ParentID/IsSubAgent。
+		a.currentMemory.Append(summaryMsg)
 	}
 
 }
@@ -484,18 +479,36 @@ func (a *DirectorAgent) computeProjectID() string {
 	return director.ComputeProjectID(a.env.ProjectPath())
 }
 
-func (a *DirectorAgent) setPendingSubAgentMemory(r *AgentResult) {
-	a.pendingSubAgentMu.Lock()
-	defer a.pendingSubAgentMu.Unlock()
-	a.pendingSubAgentMemory = r
+// delegationOutcome 是一次委派的**逐调用**结果载体。
+//
+// 它取代 Director 上的一个全局单槽（pendingSubAgentMemory）。单槽在并发委派下必然串味：
+// A 先完成 → set(A)，B 后完成 → set(B) 覆盖，父线程给 A 提交时 take 到的是 B，
+// 还以 A 的 callID 写进记忆 —— 摘要挂错委派，且不报错。
+//
+// 现在的形状：runner 在调用前把载体挂进 ctx，delegateTo 在自己的 goroutine 里写，
+// ad.Call 返回后由同一个 runner 线程读 —— happens-before 由"调用返回"本身保证，
+// 既不需要锁，也不留下任何跨调用、跨委派的全局残留。
+type delegationOutcome struct {
+	result AgentResult
+	has    bool
 }
 
-func (a *DirectorAgent) takePendingSubAgentMemory() *AgentResult {
-	a.pendingSubAgentMu.Lock()
-	defer a.pendingSubAgentMu.Unlock()
-	r := a.pendingSubAgentMemory
-	a.pendingSubAgentMemory = nil
-	return r
+type delegationOutcomeKey struct{}
+
+func withDelegationOutcome(ctx context.Context) (context.Context, *delegationOutcome) {
+	o := &delegationOutcome{}
+	return context.WithValue(ctx, delegationOutcomeKey{}, o), o
+}
+
+// recordDelegationOutcome 把子 Agent 的完整结果交给本次调用的载体。
+// ctx 上没有载体（非委派路径、或旧调用点）时静默 no-op —— 记忆注入只是锦上添花，
+// 不该因为载体缺失就让一次成功的委派失败。
+func recordDelegationOutcome(ctx context.Context, result AgentResult) {
+	o, ok := ctx.Value(delegationOutcomeKey{}).(*delegationOutcome)
+	if !ok || o == nil {
+		return
+	}
+	o.result, o.has = result, true
 }
 
 func (a *DirectorAgent) applyEnhancedCommander(
@@ -506,8 +519,6 @@ func (a *DirectorAgent) applyEnhancedCommander(
 	noteRef string,
 	unresolvedCount int,
 ) (string, error) {
-	a.setPendingSubAgentMemory(&result)
-
 	if err != nil {
 		return "", err
 	}
@@ -731,14 +742,6 @@ type directorToolRunner struct {
 }
 
 func (r *directorToolRunner) Specs() []llm.ToolDef {
-	if r.agent.surface == nil {
-		// 兼容仍手工注入 Adapters 的调用点与测试（生产路径总是有 Surface）。
-		defs := make([]llm.ToolDef, len(r.agent.Adapters))
-		for i, ad := range r.agent.Adapters {
-			defs[i] = ad.ToToolDef()
-		}
-		return defs
-	}
 	// 每次调用都重新向 Surface 取：deferred 的取回（load_tool）与 Meta 运行期注册的
 	// Custom Agent 都要在下一步就对模型可见。过去这里返回构造期快照、planner 每轮再
 	// 冻结一次，结果新注册的委派工具本回合只有代码能调到。
@@ -770,6 +773,9 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 	toolTimeout := 120 * time.Second
 	isDelegate := strings.HasPrefix(name, "delegate_")
 	cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
+	// 载体挂在 cancelCtx 上：它顺着 toolCtx 流进 delegateTo，
+	// 而下面读它的是同一个 goroutine（ad.Call 已经返回）。
+	cancelCtx, outcome := withDelegationOutcome(cancelCtx)
 	toolCtx := cancelCtx
 	toolCancel := cancelCtxCancel
 	switch {
@@ -789,10 +795,11 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 	cancelCtxCancel()
 	toolCancel()
 
-	if psm := a.takePendingSubAgentMemory(); psm != nil {
-		// callID 不再是空串：ParentID 从此能回答"这条摘要来自哪一次委派"。
-		a.injectSubAgentMemory(*psm, callID, name)
-		r.state.SetPendingSubAgentMemory(toSubAgentMemory(psm))
+	// 逐调用的载体，不是全局槽：并行批次里每次委派各拿各的结果，
+	// 注入用的是**这一次**的 callID（ParentID 从此能回答"这条摘要来自哪一次委派"）。
+	if outcome != nil && outcome.has {
+		a.injectSubAgentMemory(outcome.result, callID, name)
+		r.state.SetPendingSubAgentMemory(toSubAgentMemory(&outcome.result))
 	}
 
 	if strings.HasPrefix(ad.Name(), "delegate_") {
@@ -973,23 +980,16 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 // 没有 Surface 时回退到 Adapters 快照 —— 生产路径恒有 Surface，这个回退只为
 // 仍手工注入适配器表的测试与调用点保留。
 func (a *DirectorAgent) resolveTool(name string) (*tools.Adapter, tools.ToolState) {
-	if a.surface != nil {
-		return a.surface.Lookup(name)
+	if a.surface == nil {
+		return nil, tools.StateUnknown
 	}
-	for _, ad := range a.Adapters {
-		if ad.Name() == name {
-			return ad, tools.StateReady
-		}
-	}
-	return nil, tools.StateUnknown
+	return a.surface.Lookup(name)
 }
 
+// isToolParallelizable 与子 Agent 侧共用同一份判据（toolCallIsParallelizable）。
+// 分成两份实现的历史代价就是设计稿 R1：一边扫对了、一边扫错了也没人发现。
 func (a *DirectorAgent) isToolParallelizable(name string) bool {
-	if isInteractiveUserTool(name) || isSerialTool(name) {
-		return false
-	}
-	ad, state := a.resolveTool(name)
-	return state == tools.StateReady && ad != nil && ad.IsReadOnly()
+	return toolCallIsParallelizable(a.surface, name)
 }
 
 func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages []llm.Message, threshold int) ([]llm.Message, *compression.EmergencyCompressionStats) {

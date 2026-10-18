@@ -74,7 +74,7 @@ func syntheticMeta() map[string]interface{} {
 
 func restoreMemory(msgs ...memory.ChatMessage) *memory.ConversationMemory {
 	mem := memory.NewConversationMemory(300)
-	mem.Messages = msgs
+	mem.Replace(msgs)
 	return mem
 }
 

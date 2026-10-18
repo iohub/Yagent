@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -10,10 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"yagent/internal/gitinfo"
+	"yagent/internal/supervise"
 )
 
 // rolloutWriterCtxKey 私有 context key 类型
@@ -35,13 +37,35 @@ func GetRolloutWriter(ctx context.Context) *RolloutWriter {
 	return nil
 }
 
+// 落盘批量化（docs/structured-concurrency-design.md §7）：每条记录一次 write(2) 在
+// 一个 step 里是 3-6 次系统调用，全压在 LLM 关键路径上。现在每个 writer 有一条自己的
+// 写循环，公开方法只做"序列化 + 入队"，攒够一批或到期才真的写。
+const (
+	rolloutQueueSize    = 256 // 入队上限；满了就阻塞生产者（背压），绝不丢记录
+	rolloutFlushBatch   = 32  // 攒够这么多条就刷盘
+	rolloutFlushEvery   = 20 * time.Millisecond
+	rolloutWriteBufSize = 64 * 1024 // bufio 尺寸
+)
+
+// rolloutJob 是队列里的一项。data 为 nil 表示这是一次 flush 请求；
+// reply 非 nil 时写循环必须把本次刷盘的结果发回去（容量 1，永远不会阻塞写循环）。
+type rolloutJob struct {
+	data  []byte
+	reply chan error
+}
+
 // RolloutWriter Codex Rollout JSONL 实时写入器
+//
+// 锁的分工是这套设计里唯一不能妥协的地方：**写循环绝不取 w.mu**。
+// 生产者在持锁状态下往 q 里塞（队列满时会阻塞等空位），如果写循环同时要拿 w.mu 才能刷盘，
+// 就是"生产者等消费者排空、消费者等生产者放锁"的死锁 —— 而且它只在大输出时出现，
+// 平时一次都复现不了。
 type RolloutWriter struct {
-	mu        sync.Mutex
-	file      *os.File
-	encoder   *json.Encoder
-	enabled   bool
-	closed    bool
+	mu      sync.Mutex
+	enabled bool
+	closed  bool
+
+	// ── 以下字段只由构造时写入，之后只读 ──
 	filePath  string
 	sessionID string
 	agentName string
@@ -58,7 +82,7 @@ type RolloutWriter struct {
 	projectID          string
 	turnID             string
 	turnCounter        int
-	msgCounter         int32
+	msgCounter         int32 // 只在 w.mu 下读写（R9：原来 NextMessageID 用 atomic、这里用裸 ++，两套同步管同一个字段）
 	startTime          time.Time
 	sessionMetaWritten bool
 
@@ -67,6 +91,19 @@ type RolloutWriter struct {
 	totalOutputTokens int64
 	totalCachedTokens int64
 	totalTokens       int64
+
+	// ── 写循环的收件箱；q/quit/loopDone 在构造后不再重新赋值 ──
+	q         chan rolloutJob
+	quit      chan struct{}
+	loopDone  chan struct{}
+	closeOnce sync.Once
+	closeErr  error
+
+	// file/buf/pendingErr **只归写循环那个 goroutine 碰**（生产路径一个字节都不碰），
+	// 于是它们天然无竞态；Close 在 <-loopDone 之后才收 file，happens-before 由 channel 保证。
+	file       *os.File
+	buf        *bufio.Writer
+	pendingErr error
 }
 
 // generateSessionID 生成会话 ID（时间戳 + 随机数）
@@ -120,9 +157,7 @@ func NewRolloutWriter(agentName, taskID, projectID string) (*RolloutWriter, erro
 		return &RolloutWriter{enabled: false, sessionID: sessionID, agentName: agentName, taskID: taskID, projectID: projectID}, fmt.Errorf("failed to open output file: %w", err)
 	}
 
-	return &RolloutWriter{
-		file:        file,
-		encoder:     json.NewEncoder(file),
+	w := &RolloutWriter{
 		enabled:     true,
 		filePath:    filePath,
 		sessionID:   sessionID,
@@ -132,21 +167,149 @@ func NewRolloutWriter(agentName, taskID, projectID string) (*RolloutWriter, erro
 		startTime:   time.Now(),
 		msgCounter:  0,
 		turnCounter: 0,
-	}, nil
+		q:           make(chan rolloutJob, rolloutQueueSize),
+		quit:        make(chan struct{}),
+		loopDone:    make(chan struct{}),
+	}
+	// 写循环挂进 supervise：它是一条会存活整个会话的 goroutine，必须有名字、有 recover，
+	// 而且要有人在退出时等它（Yagent.Close 的根域 drain）。fn 参数不用：它认的是 w.quit。
+	supervise.Root().Go("memory/rollout-writer/"+filepath.Base(filePath), func(context.Context) {
+		w.writeLoop(file)
+	})
+	return w, nil
 }
 
-// writeEnvelope 写入一条 rollout 记录（内部方法，调用时需已加锁）
+// writeLoop 是每个 writer 唯一的落盘者：从 q 取已序列化的记录，攒批写进 bufio，
+// 到点/攒够/被要求/被关闭时刷盘。
+//
+// 它绝不取 w.mu（见结构体注释），也不读任何 w 的可变字段 —— 那些字段归生产路径。
+func (w *RolloutWriter) writeLoop(file *os.File) {
+	defer close(w.loopDone)
+
+	w.file = file
+	w.buf = bufio.NewWriterSize(file, rolloutWriteBufSize)
+	ticker := time.NewTicker(rolloutFlushEvery)
+	defer ticker.Stop()
+
+	pending := 0
+	flush := func() {
+		if pending == 0 {
+			return
+		}
+		if err := w.buf.Flush(); err != nil && w.pendingErr == nil {
+			w.pendingErr = err
+		}
+		pending = 0
+	}
+
+	for {
+		select {
+		case job := <-w.q:
+			if job.reply != nil {
+				// 读回之前必须看见全部已入队的记录（§7.3：检查点指纹由读侧算）。
+				flush()
+				job.reply <- w.pendingErr
+				continue
+			}
+			if len(job.data) == 0 {
+				continue
+			}
+			if _, err := w.buf.Write(job.data); err != nil && w.pendingErr == nil {
+				w.pendingErr = err
+			}
+			pending++
+			if pending >= rolloutFlushBatch {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		case <-w.quit:
+			// 收尾：先把已经排队的取干净再刷。生产者入队时先看 w.closed（在锁里），
+			// Close 也是先置 closed 再 close(quit)，所以这里排空后不会再有新项进来。
+			for {
+				select {
+				case job := <-w.q:
+					if len(job.data) > 0 {
+						if _, err := w.buf.Write(job.data); err != nil && w.pendingErr == nil {
+							w.pendingErr = err
+						}
+						pending++
+					}
+					if job.reply != nil {
+						job.reply <- w.pendingErr
+					}
+				default:
+					flush()
+					return
+				}
+			}
+		}
+	}
+}
+
+// writeEnvelope 序列化一条记录并交给写循环（调用时必须持有 w.mu）。
+// 返回的 error 只描述"这条没进去"，落盘本身的错误由 Flush/Close 回报。
 func (w *RolloutWriter) writeEnvelope(recordType string, payload interface{}) error {
+	var buf bytes.Buffer
 	envelope := RolloutEnvelope{
 		Timestamp: nowISO8601(),
 		Type:      recordType,
 		Payload:   payload,
 	}
-	if err := w.encoder.Encode(envelope); err != nil {
+	if err := json.NewEncoder(&buf).Encode(envelope); err != nil {
 		slog.Warn("RolloutWriter: failed to encode record", "error", err)
 		return fmt.Errorf("failed to encode record: %w", err)
 	}
-	return nil
+	return w.enqueueLocked(recordType, buf.Bytes())
+}
+
+// enqueueLocked 把一条已序列化的记录投进收件箱。队列满时**阻塞等空位**而不是丢弃：
+// rollout 是 /resume 唯一的事实来源，丢一条就是账本造假。
+// 同时盯着 quit 与 loopDone —— 前者是正常收尾，后者意味着写循环已经不在了
+// （panic 被 supervise 兜住的情形），那时必须说话，不能把持着 w.mu 的生产者挂死。
+func (w *RolloutWriter) enqueueLocked(recordType string, data []byte) error {
+	if w.q == nil || w.closed {
+		return nil // 未启用的 writer（目录/打开失败），或已经 Close：Close 之后不收新记录
+	}
+	select {
+	case w.q <- rolloutJob{data: data}:
+		return nil
+	case <-w.quit:
+		return nil
+	case <-w.loopDone:
+		slog.Error("RolloutWriter: 写循环已退出，这条记录没能落盘",
+			"file", w.filePath, "record_type", recordType)
+		return fmt.Errorf("rollout writer loop exited")
+	}
+}
+
+// Flush 等已经入队的记录真的落到文件里，然后回报落盘错误。
+//
+// 为什么需要它：检查点指纹是**读侧**对整份文件重算的（见 FinalizeCheckpoint），
+// 队列里还有没写出去的记录时算出来的指纹必然对不上，恢复侧就把一个本来能重放的会话
+// 判成损坏、静默降级成交接报告。所以任何"写完又马上要读回来"的路径都必须先 Flush。
+func (w *RolloutWriter) Flush(ctx context.Context) error {
+	if w == nil || !w.enabled || w.q == nil {
+		return nil
+	}
+	reply := make(chan error, 1)
+	select {
+	case w.q <- rolloutJob{reply: reply}:
+	case <-w.quit:
+		return nil
+	case <-w.loopDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-reply:
+		return err
+	case <-w.loopDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // SetBoardID 记下本次会话的便签板，供 WriteSessionMeta 兜底填充。
@@ -179,7 +342,7 @@ func (w *RolloutWriter) SetDelegation(delegationID, parentSessionID string) {
 // 谁都不该各自抄一份带 WithoutCancel 的 subprocess 代码。放在 writer 里，两个调用点
 // 一行都不用改，将来新增的写入点也自动带上身份。
 func (w *RolloutWriter) WriteSessionMeta(meta SessionMeta) error {
-	if !w.enabled || w.file == nil {
+	if !w.enabled {
 		return nil
 	}
 	if meta.Git.Empty() && meta.Cwd != "" {
@@ -208,10 +371,11 @@ func (w *RolloutWriter) WriteSessionMeta(meta SessionMeta) error {
 
 // WriteAgentCheckpoint 写入一条停止坐标。
 //
-// 只在停止路径上写一次：rollout 的每一条 response_item 已经是同步全量，
-// 文件尾本身就是游标，做 per-step 快照只会把体积翻倍（G8 钉住这条）。
+// 只在停止路径上写一次：rollout 的每条 response_item 都会落盘（现在是入队、
+// 由写循环攒批），文件尾本身就是游标，做 per-step 快照只会把体积翻倍（G8 钉住这条）。
+// 需要"读回整份文件"的调用点请用 (*RolloutWriter).FinalizeCheckpoint —— 它会先排干队列。
 func (w *RolloutWriter) WriteAgentCheckpoint(c AgentCheckpoint) error {
-	if !w.enabled || w.file == nil {
+	if !w.enabled {
 		return nil
 	}
 	if c.SchemaVersion == 0 {
@@ -233,7 +397,7 @@ func (w *RolloutWriter) WriteAgentCheckpoint(c AgentCheckpoint) error {
 
 // WriteTurnContext 写入回合上下文
 func (w *RolloutWriter) WriteTurnContext(tc TurnContext) error {
-	if !w.enabled || w.file == nil {
+	if !w.enabled {
 		return nil
 	}
 	w.mu.Lock()
@@ -247,7 +411,7 @@ func (w *RolloutWriter) WriteTurnContext(tc TurnContext) error {
 
 // WriteResponseItem 写入模型响应项
 func (w *RolloutWriter) WriteResponseItem(item ResponseItem) error {
-	if !w.enabled || w.file == nil {
+	if !w.enabled {
 		return nil
 	}
 	w.mu.Lock()
@@ -259,7 +423,7 @@ func (w *RolloutWriter) WriteResponseItem(item ResponseItem) error {
 
 // WriteEventMsg 写入运行时事件
 func (w *RolloutWriter) WriteEventMsg(event EventMsg) error {
-	if !w.enabled || w.file == nil {
+	if !w.enabled {
 		return nil
 	}
 	w.mu.Lock()
@@ -308,7 +472,7 @@ func (w *RolloutWriter) WriteRunAborted(reason string, rs RunState) error {
 
 // WriteCompacted 写入上下文压缩快照
 func (w *RolloutWriter) WriteCompacted(payload CompactedPayload) error {
-	if !w.enabled || w.file == nil {
+	if !w.enabled {
 		return nil
 	}
 	w.mu.Lock()
@@ -318,7 +482,7 @@ func (w *RolloutWriter) WriteCompacted(payload CompactedPayload) error {
 
 // WriteTokenCount 写入 token_count 事件，自动累计 total 用量
 func (w *RolloutWriter) WriteTokenCount(promptTokens, completionTokens, totalTokens, cacheCreationTokens, cacheReadTokens int64) error {
-	if !w.enabled || w.closed || promptTokens <= 0 && completionTokens <= 0 {
+	if !w.enabled || promptTokens <= 0 && completionTokens <= 0 {
 		return nil
 	}
 	w.mu.Lock()
@@ -361,10 +525,14 @@ func (w *RolloutWriter) NextTurn() string {
 	return w.turnID
 }
 
-// NextMessageID 返回 "msg_{n}" 并原子递增
+// NextMessageID 返回 "msg_{n}" 并递增计数器。
+// 计数统一走 w.mu：原来它用 atomic.AddInt32、而 WriteResponseItem 在锁内裸 ++，
+// 两套同步管同一个字段就是 R9 那个竞态（AGENTS.md §11 坑 19/20 的同族）。
 func (w *RolloutWriter) NextMessageID() string {
-	n := atomic.AddInt32(&w.msgCounter, 1)
-	return fmt.Sprintf("msg_%d", n-1)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.msgCounter++
+	return fmt.Sprintf("msg_%d", w.msgCounter-1)
 }
 
 // CurrentTurnID 返回当前 turnID
@@ -396,13 +564,25 @@ func (w *RolloutWriter) FilePath() string {
 	return w.filePath
 }
 
-// Close 关闭文件
+// Close 停止接收、把队列里的记录全部写完、刷盘、关文件，并等写循环真的退出。
+//
+// 原来它不持锁就读改 `file`/`closed`（而 `closed` 只在 WriteTokenCount 一处被认），
+// 也不 join —— 于是"Close 返回了但最后几条还在队列里"是可能状态，
+// 而 /resume 恰好就读这份文件。join 之后 file 才归调用者所有，可以安全关闭。
 func (w *RolloutWriter) Close() error {
-	if w.file == nil || w.closed {
+	if !w.enabled || w.q == nil {
 		return nil
 	}
-	w.closed = true
-	return w.file.Close()
+	w.closeOnce.Do(func() {
+		w.mu.Lock()
+		w.closed = true
+		w.mu.Unlock()
+
+		close(w.quit)
+		<-w.loopDone
+		w.closeErr = w.file.Close()
+	})
+	return w.closeErr
 }
 
 // homeDirOrFallback 获取用户家目录，失败时返回当前目录

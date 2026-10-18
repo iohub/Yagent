@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"yagent/internal/app"
 	"yagent/internal/datamanager"
 	"yagent/internal/memory"
+	"yagent/internal/supervise"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -16,11 +18,11 @@ import (
 
 // Server HTTP服务器结构
 type Server struct {
-	taskManager     *TaskManager
-	yagent *app.Yagent
-	dataManager     *datamanager.DataManager
-	melody          *melody.Melody
-	router          *gin.Engine
+	taskManager *TaskManager
+	yagent      *app.Yagent
+	dataManager *datamanager.DataManager
+	melody      *melody.Melody
+	router      *gin.Engine
 }
 
 // NewServer 创建新的HTTP服务器
@@ -58,11 +60,11 @@ func NewServer(yagent *app.Yagent) *Server {
 	}))
 
 	server := &Server{
-		taskManager:     taskManager,
-		yagent: yagent,
-		dataManager:     dataManager,
-		melody:          m,
-		router:          r,
+		taskManager: taskManager,
+		yagent:      yagent,
+		dataManager: dataManager,
+		melody:      m,
+		router:      r,
 	}
 
 	server.setupRoutes()
@@ -297,8 +299,12 @@ func (s *Server) handleStartTask(c *gin.Context) {
 		slog.Info("Task created", "task_id", task.ID)
 	}
 
-	// 后台执行任务
-	go ExecuteTask(task.ID, req.ProjectDir, req.TaskDesc, s.taskManager, s.yagent, s.dataManager)
+	// 后台执行任务。这条 goroutine 挂在进程根域、按任务 ID 命名：它是"任务本身"，
+	// 不属于任务 ctx 上那个域（那个域装它起的后台工作，收尾时会等 —— 把它自己算进去
+	// 就是等自己）。
+	supervise.Root().Go("http/task/"+task.ID, func(context.Context) {
+		ExecuteTask(task.ID, req.ProjectDir, req.TaskDesc, s.taskManager, s.yagent, s.dataManager)
+	})
 
 	c.JSON(200, CodingTaskResponse{TaskID: task.ID})
 }

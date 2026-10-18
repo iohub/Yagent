@@ -55,7 +55,9 @@ func ai(content string, ts time.Time) memory.ChatMessage {
 }
 
 func mem(msgs ...memory.ChatMessage) *memory.ConversationMemory {
-	return &memory.ConversationMemory{Messages: msgs}
+	m := memory.NewConversationMemory(0)
+	m.Replace(msgs)
+	return m
 }
 
 func readLines(t *testing.T, path string) []string {
@@ -140,8 +142,8 @@ func TestSaveTaskMemory_AppendsOnlyNewMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTaskMemory: %v", err)
 	}
-	if len(back.Messages) != 3 || back.Messages[2].Content != "q2" {
-		t.Errorf("读回 = %+v, want 3 条且末条是 q2", back.Messages)
+	if len(back.Snapshot()) != 3 || back.Snapshot()[2].Content != "q2" {
+		t.Errorf("读回 = %+v, want 3 条且末条是 q2", back.Snapshot())
 	}
 }
 
@@ -343,11 +345,11 @@ func TestLoadTaskMemorySkipsCorruptLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTaskMemory: %v", err)
 	}
-	if len(mem.Messages) != 2 {
-		t.Fatalf("读回 %d 条, want 2（坏行与空行被跳过）", len(mem.Messages))
+	if len(mem.Snapshot()) != 2 {
+		t.Fatalf("读回 %d 条, want 2（坏行与空行被跳过）", len(mem.Snapshot()))
 	}
-	if mem.Messages[0].Content != "一" || mem.Messages[1].Content != "二" {
-		t.Errorf("内容 = %q", []string{mem.Messages[0].Content, mem.Messages[1].Content})
+	if mem.Snapshot()[0].Content != "一" || mem.Snapshot()[1].Content != "二" {
+		t.Errorf("内容 = %q", []string{mem.Snapshot()[0].Content, mem.Snapshot()[1].Content})
 	}
 
 	// 超大行不能把 scanner 撑爆（默认 64KB 上限会让长工具结果整段读丢）。
@@ -359,8 +361,8 @@ func TestLoadTaskMemorySkipsCorruptLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTaskMemory(大行): %v", err)
 	}
-	if len(mem.Messages) != 1 || mem.Messages[0].Content != big {
-		t.Errorf("大行读回 %d 条 / 长度 %d, want 1 条完整内容", len(mem.Messages), len(mem.Messages[0].Content))
+	if len(mem.Snapshot()) != 1 || mem.Snapshot()[0].Content != big {
+		t.Errorf("大行读回 %d 条 / 长度 %d, want 1 条完整内容", len(mem.Snapshot()), len(mem.Snapshot()[0].Content))
 	}
 
 	if _, err := dm.LoadTaskMemory("no-such-task"); err == nil {
