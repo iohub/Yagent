@@ -101,6 +101,10 @@ type AgentConfig struct {
 
 	MaxParallelReadOnlyTools int `toml:"max_parallel_readonly_tools" json:"max_parallel_readonly_tools" yaml:"max_parallel_readonly_tools"`
 
+	// MaxParallelDelegations 是一次 Director 运行里能同时跑的子 Agent 数。
+	// 与 max_parallel_readonly_tools 同一套约定：1 = 严格串行，≤0 = 没配（取默认 2），>8 钳到 8。
+	MaxParallelDelegations int `toml:"max_parallel_delegations" json:"max_parallel_delegations" yaml:"max_parallel_delegations"`
+
 	SpeakLang string `toml:"lang"`
 }
 
@@ -177,6 +181,11 @@ type LLMConfig struct {
 	EnableFallback bool `toml:"enable_fallback" json:"enable_fallback" yaml:"enable_fallback"`
 
 	FallbackMaxRetries int `toml:"fallback_max_retries" json:"fallback_max_retries" yaml:"fallback_max_retries"`
+
+	// MaxInFlightRequests 是全进程同时在飞的 provider 调用上限（429 是 provider 的
+	// 全局属性，不是某个引擎的属性）。**显式写 0 = 不限**，所以"没写这个键"（解析出来
+	// 也是 0）必须靠键的存在性区分 —— 与 max_replay_messages 同一套坑（§11 坑 26）。
+	MaxInFlightRequests int `toml:"max_in_flight_requests" json:"max_in_flight_requests" yaml:"max_in_flight_requests"`
 }
 
 // RoutingConfig 控制模型自动路由（[routing] 节）。
@@ -240,6 +249,10 @@ type Config struct {
 	// ultimateCompressionKeyDefined 记录 [enhanced_commander] 里是否显式写过
 	// enable_ultimate_compression。该键缺省为"开"，因此"没写"与"写了 false"必须可区分。
 	ultimateCompressionKeyDefined bool
+
+	// inFlightKeyDefined 记录 [llm] 里是否显式写过 max_in_flight_requests。该键的
+	// 缺省是 8，而显式写 0 的意思是"不限"，两者解析出来都能是 0 —— 必须看存在性。
+	inFlightKeyDefined bool
 }
 
 // removedKeyHints 是已被删除的 TOML 路径 → 该改写什么（空串 = 功能已不存在，什么都不必写）。
@@ -487,6 +500,7 @@ func LoadFromFile(path string) (*Config, error) {
 	warnRemovedKeys(md)
 	cfg.gitCheckpointSectionDefined = sectionHasDecodedKey(md, "git_checkpoint")
 	cfg.ultimateCompressionKeyDefined = md.IsDefined("enhanced_commander", "enable_ultimate_compression")
+	cfg.inFlightKeyDefined = md.IsDefined("llm", "max_in_flight_requests")
 	// 老配置没有 [browser] 段（或只剩旧浏览器栈的失效键）时按"整表缺省"填默认值：
 	// enabled 的零值是 false，靠它判断等于把新能力静默关掉。
 	cfg.browserSectionDefined = browserSectionConfigured(md)
@@ -658,9 +672,23 @@ func (c *Config) validate() error {
 		}
 	}
 
+	// 急停开关要播出来：关掉并发的表现只是"变慢"，没人说出来的话下一次排查
+	// 会从"为什么委派不并行"开始绕一大圈（与 [resume]/[blackboard] 的 kill_switch 同构）。
+	if !ConcurrencyEnabled() {
+		slog.Warn("并发已被急停开关关掉：只读工具批与委派都按串行跑",
+			"kill_switch", "YAGENT_CONCURRENCY=0",
+			"hint", "unset it to get parallel tool batches and concurrent delegations back")
+	}
+
 	llmDefaults := DefaultLLMConfig()
 	if c.LLM.MaxRetries == 0 {
 		c.LLM.MaxRetries = llmDefaults.MaxRetries
+	}
+	// max_in_flight_requests 的 0 有语义（"不限"），而"没写这个键"解析出来也是 0，
+	// 所以缺省判定看键的存在性而不是零值（与 enable_ultimate_compression 同一套，坑 26）。
+	// 负数没有语义，按"没写"处理。
+	if !c.inFlightKeyDefined || c.LLM.MaxInFlightRequests < 0 {
+		c.LLM.MaxInFlightRequests = llmDefaults.MaxInFlightRequests
 	}
 	if c.LLM.CircuitBreakerResetTimeout == 0 && c.LLM.CircuitBreakerThreshold > 0 {
 		c.LLM.CircuitBreakerResetTimeout = 60 * time.Second

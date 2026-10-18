@@ -1,7 +1,18 @@
 # Yagent Agent 开发知识库
 
 > **本文件是 Agent 理解仓库和进行开发的标准指南。** 所有 Agent 在操作此仓库前必须先阅读本文件。
-> 本文件描述的是当前代码的真实状态（核对时间 2026-10-16：**配置面连根拔 + 首次使用引导**
+> 本文件描述的是当前代码的真实状态（核对时间 2026-10-18：**结构化并发 C1–C6 全部落地**
+> （`docs/structured-concurrency-design.md`）—— 新增叶子包 `internal/supervise`（全仓 goroutine 的
+> 唯一落脚点：具名 + recover + 可等待），裸 `go` 由 `check_no_bare_go.sh` 硬禁；rollout 改流入队 +
+> 停点 drain；并行委派的死锁根因（executor 的并发谓词扫一份生产恒空的 `Adapters`）连根拔掉，
+> 判据收成 `toolCallIsParallelizable` 一个函数；每次委派新建 Agent 实例（`SpawnForDelegation`）
+> 并取消单槽交接；`ConversationMemory` 封装成"字段不导出、只走方法"；事件信封带上
+> `Seq` + `delegation_id` 两个坐标，TUI 流式槽按委派分。C6 才真的放量：`[llm] max_in_flight_requests`
+> 进程级在飞闸门、`[agent] max_parallel_delegations` 每轮 Run 一条委派池、
+> `YAGENT_CONCURRENCY=0` 一键回串行，外加六处"锁内 IO / 静默失效"的清理（MCP 请求 deadline、
+> 熔断 half-open 单探针、TaskManager 投递移出锁 + 终态过期、consolidation `Submit` 不再
+> send-on-closed、`FlushAll` 锁外刷、TUI 覆盖 cancel 前先释放旧值）。
+> 上一轮 2026-10-16：**配置面连根拔 + 首次使用引导**
 > （`docs/config-trim-onboarding-design.md`）—— 删掉 13 组"解析了但没人读"的键并留下
 > `removedKeyHints` 逐条点名；把 6 处"文档与代码不符"的键补成真语义（第三档真能关、压缩只剩
 > 一个开关、`step_retries` 下发到六个子 Agent、Coding 侧 `keep_plans` 取配置、补
@@ -257,6 +268,11 @@ type Adapter struct { name, description string; fn ToolFunc
 `toolspec.IsSerial` 名单里的工具，
 可由 `toolbatch` 分批并行执行（默认并发 4，上限 8，`[agent] max_parallel_readonly_tools`）。
 `read_note` / `read_artifact` / `list_notes` 与认知类、调用图工具都走这条派生路径。
+**委派是另一道闸门**：`delegate_*` 在子 Agent 侧一律 `Serial`（所以一次只跑一个），
+Director 侧的只读委派可以并发，但同时跑几个由 `[agent] max_parallel_delegations` 决定 ——
+池子建在**这一轮 Run 的 `directorToolRunner`** 上（`newDirectorToolRunner` 是唯一构造方式），
+不是进程级：嵌套委派（Repo→`delegate_devops`）用的是自己那一轮的池，
+于是"父占一格、子在同一格里排队"的死锁形状从结构上不存在。
 判据是**一个函数**：`agents.toolCallIsParallelizable(surface, name)`（`executor.go`），
 Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份同形判据的历史代价见 §11 坑 33。
 冷工具（还没取回 schema）也算可并行：它在这一批里只收到 teach 回执、不执行副作用。
@@ -683,9 +699,11 @@ director_max_steps = 100  coding_max_steps = 150  repo_max_steps = 50
 chat_max_steps = 50  devops_max_steps = 50  browser_max_steps = 200
 delegate_idle_timeout = "60s"  delegate_total_timeout = "20m"
 max_parallel_readonly_tools = 4
+max_parallel_delegations = 2         # 一次 Director 运行里同时跑几个子 Agent
 lang = "Chinese"
 
 [llm]   timeout / max_retries(5) / step_retries / enable_fallback / fallback_max_retries(2)
+  max_in_flight_requests(8)          # 全进程同时在飞的 provider 调用上限
   step_retries 现在下发到**六个子 Agent**（以前 ExecutorConfig.StepRetries 全仓无写入点，只有 Director 和 Meta 生效）
   circuit_breaker_threshold = 0 意为**不启用**（仓库模板与 defaults.go 都是 0）；
   只有 > 0 才创建熔断器，此时 reset_timeout 缺省补 60s
@@ -703,6 +721,17 @@ lang = "Chinese"
 > 按 `config.DefaultBrowserConfig()` 填默认值。判据是段内是否存在**至少一个被新 schema 认识的键**
 > （`config.go` 的 `browserSectionConfigured`），不能用 `enabled` 的零值判断——它缺省就是 false，
 > 会把新能力静默关掉；失效键会被 `slog.Warn` 点名提示改写。
+
+> **并发那三个旋钮的取值约定是两套，而且各有理由**：
+> `max_parallel_readonly_tools` 与 `max_parallel_delegations` 用 **1 = 严格串行**、≤0 = 取默认（4 / 2）、>8 钳到 8；
+> 而 `[llm] max_in_flight_requests` 的 **0 有语义（不限流）**，所以它必须靠**键的存在性**
+> （`md.IsDefined("llm", "max_in_flight_requests")`）区分"没写 → 8"与"写了 0 → 不限"（坑 26）。
+> 别把后者的"串行"写成 0 —— 那两个 0 含义不同，而邻居那套（1 = 串行）已经是既有约定。
+> 急停开关是环境变量 `YAGENT_CONCURRENCY=0`，唯一判据 `config.ConcurrencyEnabled()`，
+> **写在两个 `Normalize*` 函数内部**而不是调用点：两个循环都只经这两个函数取值，
+> 判据写两处就会有一处忘，而漏掉那处的表现只是"还是并发"。只认精确的 `"0"`。
+> 在飞闸门的排队发生在 `llm.timeout` **之前**（等一个格子不是"provider 慢"），
+> 重试与流式在格子内完成（一次逻辑请求只占一格）。
 
 ```toml
 [blackboard]
@@ -910,6 +939,24 @@ bash scripts/check_no_inline_atomic_write.sh  # tmp+rename 只准有 internal/ut
   "装着 nil 的 interface"，于是 `agent == nil` 那条"not wired"守卫永远不成立，
   未装配的子 Agent 会一路走到 nil 解引用。凡"具体类型指针 → interface"的返回，
   必须在**具体类型**上先判 nil（见 `director_surface.go` 的 `delegateTargets` 注释）。
+- **锁不许跨过 IO；投递一律"锁内装配、锁外写"**（C6-d）：`internal/http` 的 6 个状态点
+  （三个 setter + pause/continue/cancel）在 `tm.lock` 内只编字节，`taskAction.deliver` 在
+  Unlock 之后做 `Socket.Write`/`Broadcast`；`DataManager.FlushAll` 先拿一份 writer 快照就放掉
+  `dm.mu`，且**首错不再提前 return**（退出时"第一条刷失败"不该让后面 N-1 条任务记忆蒸发）。
+  要测这类不变量得能把 IO 卡住，所以有 `writeSession` / `melodyBroadcast` / `flushHook` 三个
+  seam —— 探针必须用**不需要投递**的路径，否则带 socket 的 setter 会停在它自己的慢客户端上，
+  那不是"别人的锁压着"。
+- **排在闸门上的调用要替 ctx 让路，而且照样产出结果**（C6-a/C6-c）：在飞闸门
+  （`llm.acquireInFlight`）与委派池（`acquireDelegateSlot`）都是 `select` 上 `ctx.Done()`，
+  取不到格子时返回错误而不是硬等；`toolbatch.Run` 的既有纪律是"已取消的元素照样启动、
+  照样 commit"，为的都是同一条不变量：**每个 tool_call 必有一条 tool 结果**，少一条就是
+  provider 400（§11 坑 5）。从未取得的一格绝不去做 `<-sem` 接收 —— 那会和其他释放方的
+  接收互相吃掉，把整批卡在 WaitGroup 上。
+- **MCP 客户端的 `IsAlive()` 只读两个原子位**（C6-b）：`cmd.ProcessState` 由 `cmd.Wait()` 写，
+  而查活的线程可能在 Wait 落笔的同一瞬间读它（拿到"非空但还没填完"的指针不是不可能）。
+  进程真的没了这件事由 readLoop 的 stdout EOF 兜进 `alive`，所以删掉那次读不丢信息。
+  `doRequest` 给每条请求套 `context.WithTimeout(ctx, c.cfg.RequestTimeout)` —— **取调用方 ctx 的较小值**，
+  兜底 30s 只在 `NewMCPClient` 一处，别再往上游抄一份默认值。
 - Director 采用**门面 + 子包**结构：`internal/agents/director.go` 只做装配与 delegate 注册，
   编排逻辑进 `internal/agents/director/`，跨子系统依赖一律经 `internal/agents/ports.go` 的窄接口注入。
 - `toolbatch` 是无业务依赖的叶子包，不要往里加业务。
@@ -1156,6 +1203,22 @@ plan:
     于是满载丢弃比设计早一个数量级发生，表现是"界面偶尔少字"而日志只有一条限频 warn。
     现在统一走 `NewDefaultMessageDispatcher()`；配套的可见性是 `Dropped()` / `WarnDropped(scope)`。
     判断一个默认值是不是活的，别看文档，看有没有调用点真的走它。
+36. **熔断器的"查询"本身就是那次试探**（C6-d 改了这里的语义）：
+    `RecoveryHandler.IsCircuitBreakerOpen() == !breaker.Allow()`，而 `Allow()` 带着
+    open→half-open 的迁移副作用。half-open 现在只放**一个**探针（`probeAt` 记账），
+    于是"先查一下再决定要不要调用"的代码会**消费掉**那次试探 —— 生产安全的前提是 Director
+    每一步都在同一次迭代里"查询 → 调用 → 回报 Success/Failure"（`planner_run.go` 的
+    198/319/324 三行）；探针万一没人回报（调用方死在半路），过 `resetTimeout` 后重新放行一次，
+    所以最坏是多等一个周期而不是永久锁死。要加新的查询点之前先数一遍有几个调用点在读它，
+    并把"第二个调用者在试探回报之前必须被拒绝"这条测试一起改掉 ——
+    旧用例 `TestCircuitBreaker_HalfOpenAdmitsEveryRequest` 的注释就明确要求改写而不是删掉。
+37. **`[llm] timeout` 与"排队"的先后是能看出来的**：在飞闸门（`llm.SetInFlightLimit`）
+    与委派池都在**建这轮 ctx 链 / 套调用超时之前**取格子。放错顺序的后果不是崩溃，而是两件
+    很难查的事：①排队时间被算进 `llm.timeout`，一次正常的排队在真正发出去之前就被判成
+    "provider 慢"；②排队时间被算进 `activity` 的 idle 计时，一次"前面有人"的等待把子 Agent
+    的看门狗顶成超时。同一条理由也解释了 `MCP doRequest` 的 deadline 为什么必须
+    `WithTimeout(ctx, …)` 而不是 `WithTimeout(context.Background(), …)` —— 后者会整条丢掉
+    调用方的取消链，表现就是坑 17 那一类"取消了但没人认为被取消"。
 
 
 <!-- CODESEEK_INJECTION -->

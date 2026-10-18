@@ -42,7 +42,7 @@ for guard in check_no_manual_lookup check_toolspec_leaf check_no_agents_import c
 done
 
 # 并发面：这些包改了必须跑一次 -race（AGENTS.md §8.3）。
-RACE_PKGS=(./internal/supervise/ ./internal/memory/ ./internal/messaging/... ./internal/mcp/ ./internal/datamanager/ ./internal/toolspec/ ./internal/recovery/ ./internal/agents/toolbatch/ ./internal/tools/)
+RACE_PKGS=(./internal/supervise/ ./internal/memory/ ./internal/messaging/... ./internal/mcp/ ./internal/datamanager/ ./internal/http/ ./internal/llm/ ./internal/toolspec/ ./internal/recovery/ ./internal/agents/toolbatch/ ./internal/tools/)
 
 if [[ "$FAST" == true ]]; then
 	step "go test（受影响包，--fast）"

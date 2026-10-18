@@ -27,8 +27,15 @@ type MCPClientConfig struct {
 
 	WorkingDir string
 
+	// RequestTimeout 是**单条 JSON-RPC 请求**自己的 deadline，与调用方的 ctx 取小。
+	// 它存在的理由：CallTool 从工具线程上被调用，调用方常常只给了任务 ctx（没有
+	// deadline）。子进程不回包时，"永远转圈"的那条 goroutine 会把整个委派挂住。
+	// <=0 → defaultMCPRequestTimeout（两份配置模板承诺的 "≤0 → 30" 就是这一句）。
 	RequestTimeout time.Duration
 }
+
+// defaultMCPRequestTimeout 是调用方没给上限时的兜底 deadline。
+const defaultMCPRequestTimeout = 30 * time.Second
 
 type MCPClient struct {
 	cfg    MCPClientConfig
@@ -59,6 +66,9 @@ type MCPClient struct {
 }
 
 func NewMCPClient(cfg MCPClientConfig) *MCPClient {
+	if cfg.RequestTimeout <= 0 {
+		cfg.RequestTimeout = defaultMCPRequestTimeout
+	}
 	grp, _ := supervise.New(context.Background(), "mcp")
 	return &MCPClient{
 		cfg:      cfg,
@@ -206,17 +216,13 @@ func (c *MCPClient) CallTool(ctx context.Context, toolName string, arguments map
 	return &toolResult, nil
 }
 
+// IsAlive 只读那两个原子位。原来这里还读 `cmd.ProcessState` —— 而那个字段是
+// `cmd.Wait()` 写的（Shutdown/ForceShutdown 里），任何线程查活都可能在 Wait
+// 正在落笔时读它，是一次数据竞态；而它要给的结论（进程已经没了）readLoop 看到
+// stdout EOF 时已经写进 alive 了，所以删掉它不丢信息。
+// c.cmd 也不再在这里读：Start 之前 alive 恒为 false，语义不变。
 func (c *MCPClient) IsAlive() bool {
-	if c.stopped.Load() {
-		return false
-	}
-	if !c.alive.Load() {
-		return false
-	}
-	if c.cmd != nil {
-		return c.cmd.ProcessState == nil || c.cmd.ProcessState.Exited() == false
-	}
-	return false
+	return c.alive.Load() && !c.stopped.Load()
 }
 
 func (c *MCPClient) Shutdown() {
@@ -316,6 +322,15 @@ func (c *MCPClient) InitError() error {
 }
 
 func (c *MCPClient) doRequest(ctx context.Context, req JSONRPCRequest) (*JSONRPCResponse, error) {
+	// 每条请求自己的 deadline（取小：调用方给得更短时听调用方的）。没有这一句的话，
+	// 子进程不回包时这条 select 就只能等调用方那个往往没有 deadline 的 ctx ——
+	// 表现是那条委派永远转圈。
+	if c.cfg.RequestTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.cfg.RequestTimeout)
+		defer cancel()
+	}
+
 	ch := make(chan *JSONRPCResponse, 1)
 
 	c.mu.Lock()

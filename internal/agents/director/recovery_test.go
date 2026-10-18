@@ -30,11 +30,22 @@ func TestRecoveryHandler_IsOpenQueryIsTheTrialRequest(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(200 * time.Millisecond)
-	for time.Now().Before(deadline) && rh.IsCircuitBreakerOpen() {
+	granted := false
+	for time.Now().Before(deadline) {
+		if !rh.IsCircuitBreakerOpen() {
+			granted = true
+			break
+		}
 		time.Sleep(time.Millisecond)
 	}
-	if rh.IsCircuitBreakerOpen() {
+	if !granted {
 		t.Error("IsCircuitBreakerOpen() stayed true past resetTimeout, want false (trial allowed)")
+	}
+	// 这一次查询已经把半开期唯一试探权拿走了：在有人回报之前，第二次查询必须还在
+	// 闸门外面。生产里 Director 是"查询→同一步调用→回报"，所以这条不会挡住真实调用；
+	// 它挡的是"查询本身就是试探"这一含义被写宽 —— 那样 half-open 会对每个调用者放行。
+	if !rh.IsCircuitBreakerOpen() {
+		t.Error("第二次查询又拿到一次试探权 —— 单探针失效，惊群回来了")
 	}
 	// 试探成功后必须真的闭合；否则下一轮又在半开与打开之间抖。
 	rh.RecordLLMSuccess()

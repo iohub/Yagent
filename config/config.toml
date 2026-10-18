@@ -192,6 +192,10 @@ meta_retry_count = 5          # retries when Meta emits invalid JSON
 # Hard cap per delegation: 0/omitted = disabled; warns if smaller than the idle threshold.
 # delegate_total_timeout = "30m"
 max_parallel_readonly_tools = 4  # read-only tool fan-out: ≤0 → 4, >8 → 8, 1 = strictly serial
+max_parallel_delegations = 2     # concurrent sub-agents per Director turn: ≤0 → 2, >8 → 8, 1 = one at a
+                                 # time. Nested delegations (Repo → delegate_devops) get their own pool,
+                                 # so a parent can never wait on a slot it holds.
+                                 # Kill switch for both layers: env YAGENT_CONCURRENCY=0 → everything serial.
 lang = ""                     # conversation language (empty = no instruction injected;
                               # e.g. "Chinese" / "English")
 
@@ -208,6 +212,9 @@ circuit_breaker_threshold = 0        # **0 = disabled**; the breaker is only cre
 circuit_breaker_reset_timeout = "0s" # defaulted to 60s only when the threshold is > 0
 enable_fallback = false              # provider-level failover (also needs fallback_providers)
 fallback_max_retries = 2             # retries inside a fallback provider; omitted → follows max_retries
+max_in_flight_requests = 8           # concurrent provider calls across the whole process; 0 = unlimited.
+                                     # A 429 is a property of the provider rather than of one engine, so this
+                                     # gate is shared by every engine. Retries and streams hold their slot.
 
 # ── CodeSeek MCP code-analysis engine ──
 [codeseek]

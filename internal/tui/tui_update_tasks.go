@@ -1031,6 +1031,12 @@ func (m *model) handleTaskCompleteMsg(msg taskCompleteMsg) (tea.Model, tea.Cmd) 
 	if m.taskCancelled {
 		m.taskCancelled = false
 		if m.currentTask != nil {
+			// 旧 cancel 必须先调用再替换：直接覆盖的话那份 ctx 再也没有人能给它的
+			// 上游取消（它挂在 context.Background() 下），于是每取消一次任务就漏一个
+			// 永远活着的 context —— 不报错，只是内存慢慢涨。
+			if m.currentTask.CancelFunc != nil {
+				m.currentTask.CancelFunc()
+			}
 			newCtx, newCancel := context.WithCancel(context.Background())
 			m.currentTask.Context = newCtx
 			m.currentTask.CancelFunc = newCancel

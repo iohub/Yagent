@@ -265,6 +265,7 @@ func LoadConfig(configPath string) (*config.Config, error) {
 		config.SetGlobalLLMTimeout(cfg.LLM.Timeout)
 	}
 	config.SetGlobalDeferredTools(cfg.Tools.Deferred)
+	SetInFlightLimit(cfg.LLM.MaxInFlightRequests)
 
 	activeProvider, err := cfg.ResolveProvider("", "")
 	if err != nil {
@@ -303,6 +304,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 		config.SetGlobalLLMTimeout(cfg.LLM.Timeout)
 	}
 	config.SetGlobalDeferredTools(cfg.Tools.Deferred)
+	SetInFlightLimit(cfg.LLM.MaxInFlightRequests)
 
 	defaultProvider, err := cfg.ResolveProvider("", "")
 	if err != nil {

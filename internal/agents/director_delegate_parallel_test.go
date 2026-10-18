@@ -171,7 +171,7 @@ func TestDirectorSwitchPathMixedBatchViaPlanner(t *testing.T) {
 		delegateIdleTimeout:      2 * time.Second, // >0：WithIdleTimeout 契约要求
 	}
 	state := &director.RunState{MaxSteps: 4}
-	toolRunner := &directorToolRunner{agent: agent, state: state}
+	toolRunner := newDirectorToolRunner(agent, state)
 
 	mem := memory.NewConversationMemory(128)
 	mem.AddHumanMessage("task input")

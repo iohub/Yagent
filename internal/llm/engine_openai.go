@@ -97,6 +97,13 @@ func (e *OpenAIEngine) CloseIdleConnections() {
 
 // GenerateContent implements Engine.
 func (e *OpenAIEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
+	// 在飞闸门先于超时：等一个格子的时间不该算进"这次调用超时了"（inflight.go）。
+	release, err := acquireInFlight(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	// Apply timeout if configured.
 	// 取值优先级：全局运行时值（TUI 模型设置面板可动态修改）> 构造期局部配置。
 	// 全局值未初始化时为 0，回落 e.cfg.Timeout，保证既有显式配置行为不变。

@@ -62,6 +62,10 @@ type ConsolidationWorker struct {
 	// grp 取代原来的 done channel：join 与"是谁还没退"由同一个机制回答。
 	grp      *supervise.Group
 	stopOnce sync.Once
+	// sendMu + stopped 是为了让 Submit 不可能对已关闭的 ch 发送 —— 向关闭中的
+	// channel send 是 panic，而这条路径挂在正常退出上。
+	sendMu  sync.Mutex
+	stopped bool
 	// [知识管理]
 	mcpClient          *mcp.MCPClient
 	consolidationCount int
@@ -89,7 +93,14 @@ func (w *ConsolidationWorker) Start() {
 // 幂等：close 已关闭的 channel 会 panic，而这条路径挂在 Yagent.Close 上 ——
 // 退出被自己的第二行清理代码砸掉是最不该发生的失败方式。
 func (w *ConsolidationWorker) Stop() {
-	w.stopOnce.Do(func() { close(w.ch) })
+	w.stopOnce.Do(func() {
+		// 先立旗再关道：这两步必须在 sendMu 下完成，否则并发的 Submit 可能
+		// 在"检查过了"与"发送了"之间撞上 close。
+		w.sendMu.Lock()
+		w.stopped = true
+		w.sendMu.Unlock()
+		close(w.ch)
+	})
 	// 一次整理最坏是 30s×(1+2 次重试)，预算给到 3 分钟；等不到就报名字，
 	// 不再像原来那样 `<-w.done` 无限期挂着退出流程。
 	if leaked := w.grp.Drain(3 * time.Minute); len(leaked) > 0 {
@@ -99,7 +110,16 @@ func (w *ConsolidationWorker) Stop() {
 
 // Submit 提交 consolidation 请求到通道。
 // 非阻塞：如果通道已满，返回 false 并丢弃请求（优雅降级）。
+//
+// 已经 Stop 过之后一律回绝 false。原来这里会对已关闭的 channel 发送，而
+// send-on-closed 是 panic —— 退出竞态里"多来了一条后台整理请求"能把进程砸掉。
+// sendMu 在**非阻塞**发送之外加了一层，因此它永远不会被自己锁住在等一个没人收的槽。
 func (w *ConsolidationWorker) Submit(task *ConsolidationTask) bool {
+	w.sendMu.Lock()
+	defer w.sendMu.Unlock()
+	if w.stopped {
+		return false
+	}
 	select {
 	case w.ch <- task:
 		return true
