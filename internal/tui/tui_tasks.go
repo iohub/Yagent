@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"yagent/internal/logging"
 	"yagent/internal/memory"
 	"yagent/internal/messaging"
+	"yagent/internal/supervise"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
@@ -154,6 +157,36 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 	)
 }
 
+// stopTaskBackground 收掉这个任务的后台工作：先停成员，再等域排干。
+//
+// 顺序写在函数体里而不是靠 defer 的注册顺序，是因为 defer 是 LIFO：
+// 把 drain 注册在 close(stop) 之后就会**先**执行它 —— 那时周期保存还在跑，
+// 于是每次任务收尾都白等一整个 Drain 预算，还会误报一条泄漏。
+// 这类"看着对称、其实反的"接线错一次就足够难查，所以不留在调用点。
+func stopTaskBackground(task *http.Task, stopPeriodicSave chan struct{}, ticker *time.Ticker) {
+	if stopPeriodicSave != nil {
+		close(stopPeriodicSave)
+	}
+	if ticker != nil {
+		ticker.Stop()
+	}
+	drainTaskDomain(task)
+}
+
+// drainTaskDomain 等这个任务 ctx 上的并发域退干净（周期保存那条 goroutine 住在里面）。
+// 与 http.ExecuteTask 的收尾同构，是刻意的：任务结束必须等到它自己起的后台工作写完
+// 文件为止 —— 否则表现是"任务已经答完，任务文件还在被动"。
+// 等不到不报错，只报名字：退出路径不该被后台工作挂住。
+func drainTaskDomain(task *http.Task) {
+	if task == nil {
+		return
+	}
+	if leaked := supervise.From(task.Context).Drain(5 * time.Second); len(leaked) > 0 {
+		slog.Warn("TUI 任务收尾仍有任务级 goroutine 在跑",
+			"task_id", task.ID, "leases", supervise.LeaseNames(leaked))
+	}
+}
+
 // executeTaskCmd runs a coding task in a background goroutine.
 func executeTaskCmd(
 	taskDesc string,
@@ -166,8 +199,9 @@ func executeTaskCmd(
 	publisherCh chan *messaging.MessagePublisher,
 ) tea.Cmd {
 	return func() tea.Msg {
-		dispatcher := messaging.NewMessageDispatcher(100)
+		dispatcher := messaging.NewDefaultMessageDispatcher()
 		defer dispatcher.Shutdown()
+		defer dispatcher.WarnDropped("tui/task")
 
 		consumer := &tuiEventConsumer{ch: eventCh}
 		dispatcher.RegisterConsumer(consumer)
@@ -191,7 +225,7 @@ func executeTaskCmd(
 		// Start periodic save (every 5 seconds)
 		stopPeriodicSave := make(chan struct{})
 		ticker := time.NewTicker(5 * time.Second)
-		go func() {
+		supervise.From(task.Context).Go("tui/periodic-save", func(context.Context) {
 			for {
 				select {
 				case <-ticker.C:
@@ -202,9 +236,8 @@ func executeTaskCmd(
 					return
 				}
 			}
-		}()
-		defer close(stopPeriodicSave)
-		defer ticker.Stop()
+		})
+		defer stopTaskBackground(task, stopPeriodicSave, ticker)
 
 		// 设置当前 task ID，使日志路由到 task 专属目录
 		logging.SetCurrentTaskID(task.ID)
@@ -242,8 +275,9 @@ func executeFollowUpCmd(
 	resumedDelegationPath string,
 ) tea.Cmd {
 	return func() tea.Msg {
-		dispatcher := messaging.NewMessageDispatcher(100)
+		dispatcher := messaging.NewDefaultMessageDispatcher()
 		defer dispatcher.Shutdown()
+		defer dispatcher.WarnDropped("tui/task")
 
 		consumer := &tuiEventConsumer{ch: eventCh}
 		dispatcher.RegisterConsumer(consumer)
@@ -269,7 +303,7 @@ func executeFollowUpCmd(
 		// Start periodic save (every 5 seconds)
 		stopPeriodicSave := make(chan struct{})
 		ticker := time.NewTicker(5 * time.Second)
-		go func() {
+		supervise.From(task.Context).Go("tui/periodic-save", func(context.Context) {
 			for {
 				select {
 				case <-ticker.C:
@@ -280,9 +314,8 @@ func executeFollowUpCmd(
 					return
 				}
 			}
-		}()
-		defer close(stopPeriodicSave)
-		defer ticker.Stop()
+		})
+		defer stopTaskBackground(task, stopPeriodicSave, ticker)
 
 		// 设置当前 task ID，使日志路由到 task 专属目录
 		logging.SetCurrentTaskID(task.ID)

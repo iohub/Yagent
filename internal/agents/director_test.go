@@ -208,7 +208,7 @@ func TestRegisterCustomAgent_Success(t *testing.T) {
 	workDir := t.TempDir()
 	agent := newTestDirectorAgent(t, workDir)
 
-	initialAdapterCount := len(agent.Adapters)
+	initialAdapterCount := len(agent.surface.Adapters())
 
 	ca := &CustomAgent{
 		Name:         "security_auditor",
@@ -229,20 +229,20 @@ func TestRegisterCustomAgent_Success(t *testing.T) {
 	}
 
 	// Verify adapter was added
-	if len(agent.Adapters) != initialAdapterCount+1 {
-		t.Errorf("adapter count = %d, want %d", len(agent.Adapters), initialAdapterCount+1)
+	if len(agent.surface.Adapters()) != initialAdapterCount+1 {
+		t.Errorf("adapter count = %d, want %d", len(agent.surface.Adapters()), initialAdapterCount+1)
 	}
 
 	// Verify the new delegate tool exists
 	found := false
-	for _, ad := range agent.Adapters {
+	for _, ad := range agent.surface.Adapters() {
 		if ad.Name() == "delegate_security_auditor" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("delegate_security_auditor adapter not found in Adapters")
+		t.Error("delegate_security_auditor adapter not found in the surface")
 	}
 }
 
@@ -259,12 +259,12 @@ func TestRegisterCustomAgent_DuplicateRegistration(t *testing.T) {
 	}
 
 	agent.registerCustomAgent(ca)
-	countAfterFirst := len(agent.Adapters)
+	countAfterFirst := len(agent.surface.Adapters())
 
 	// Register the same agent again
 	agent.registerCustomAgent(ca)
-	if len(agent.Adapters) != countAfterFirst {
-		t.Errorf("duplicate registration should not add new adapters, got %d, want %d", len(agent.Adapters), countAfterFirst)
+	if len(agent.surface.Adapters()) != countAfterFirst {
+		t.Errorf("duplicate registration should not add new adapters, got %d, want %d", len(agent.surface.Adapters()), countAfterFirst)
 	}
 }
 
@@ -320,7 +320,7 @@ func TestCustomAgentDelegateTool_Execution(t *testing.T) {
 
 	// Find the newly created delegate tool
 	var delegateTool *tools.Adapter
-	for _, ad := range director.Adapters {
+	for _, ad := range director.surface.Adapters() {
 		if ad.Name() == "delegate_test_executor" {
 			delegateTool = ad
 			break
@@ -382,7 +382,7 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 	director.registerCustomAgent(ca)
 
 	var delegateTool *tools.Adapter
-	for _, ad := range director.Adapters {
+	for _, ad := range director.surface.Adapters() {
 		if ad.Name() == "delegate_finisher" {
 			delegateTool = ad
 			break
@@ -486,11 +486,11 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 
 	// DirectorAgent
 	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
-	initialAdapterCount := len(director.Adapters)
+	initialAdapterCount := len(director.surface.Adapters())
 
 	// Find and call delegate_meta tool
 	var delegateMeta *tools.Adapter
-	for _, ad := range director.Adapters {
+	for _, ad := range director.surface.Adapters() {
 		if ad.Name() == "delegate_meta" {
 			delegateMeta = ad
 			break
@@ -521,13 +521,13 @@ func TestDelegateMeta_DynamicRegistration(t *testing.T) {
 	}
 
 	// Verify adapter was added
-	if len(director.Adapters) != initialAdapterCount+1 {
-		t.Errorf("adapter count = %d, want %d", len(director.Adapters), initialAdapterCount+1)
+	if len(director.surface.Adapters()) != initialAdapterCount+1 {
+		t.Errorf("adapter count = %d, want %d", len(director.surface.Adapters()), initialAdapterCount+1)
 	}
 
 	// Verify delegate tool exists for the new agent
 	found := false
-	for _, ad := range director.Adapters {
+	for _, ad := range director.surface.Adapters() {
 		if ad.Name() == "delegate_security_auditor" {
 			found = true
 			break
@@ -565,7 +565,7 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 
 	// Call delegate_meta twice with the same agent design
 	var delegateMeta *tools.Adapter
-	for _, ad := range director.Adapters {
+	for _, ad := range director.surface.Adapters() {
 		if ad.Name() == "delegate_meta" {
 			delegateMeta = ad
 			break
@@ -577,7 +577,7 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first delegate_meta call failed: %v", err)
 	}
-	countAfterFirst := len(director.Adapters)
+	countAfterFirst := len(director.surface.Adapters())
 	mapCountAfterFirst := director.metaHandler.Len()
 
 	// Second call: should NOT register duplicate
@@ -586,8 +586,8 @@ func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
 		t.Fatalf("second delegate_meta call failed: %v", err)
 	}
 
-	if len(director.Adapters) != countAfterFirst {
-		t.Errorf("duplicate registration added adapters: %d → %d", countAfterFirst, len(director.Adapters))
+	if len(director.surface.Adapters()) != countAfterFirst {
+		t.Errorf("duplicate registration added adapters: %d → %d", countAfterFirst, len(director.surface.Adapters()))
 	}
 	if director.metaHandler.Len() != mapCountAfterFirst {
 		t.Errorf("duplicate registration added map entries: %d → %d", mapCountAfterFirst, director.metaHandler.Len())
@@ -604,14 +604,14 @@ func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
 	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
-	for _, ad := range director.Adapters {
+	for _, ad := range director.surface.Adapters() {
 		if ad.Name() == "delegate_meta" {
 			delegateMeta = ad
 			break
 		}
 	}
 
-	initialCount := len(director.Adapters)
+	initialCount := len(director.surface.Adapters())
 	result, err := delegateMeta.Call(context.Background(), `{"task": "Test"}`)
 	if err != nil {
 		t.Fatalf("delegate_meta call failed: %v", err)
@@ -628,7 +628,7 @@ func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
 		t.Errorf("expected raw output on parse failure, got: %s", actualOutput)
 	}
 	// Should NOT register any agent
-	if len(director.Adapters) != initialCount {
+	if len(director.surface.Adapters()) != initialCount {
 		t.Errorf("no agent should be registered on parse failure")
 	}
 }
@@ -647,22 +647,22 @@ func TestDelegateMeta_EmptyAgentName_NoRegistration(t *testing.T) {
 	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
-	for _, ad := range director.Adapters {
+	for _, ad := range director.surface.Adapters() {
 		if ad.Name() == "delegate_meta" {
 			delegateMeta = ad
 			break
 		}
 	}
 
-	initialCount := len(director.Adapters)
+	initialCount := len(director.surface.Adapters())
 	_, err := delegateMeta.Call(context.Background(), `{"task": "Test"}`)
 	if err != nil {
 		t.Fatalf("delegate_meta call failed: %v", err)
 	}
 
 	// No agent should be registered when name is empty
-	if len(director.Adapters) != initialCount {
-		t.Errorf("no agent should be registered with empty name, adapters: %d → %d", initialCount, len(director.Adapters))
+	if len(director.surface.Adapters()) != initialCount {
+		t.Errorf("no agent should be registered with empty name, adapters: %d → %d", initialCount, len(director.surface.Adapters()))
 	}
 }
 
@@ -677,22 +677,22 @@ func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
 	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
 
 	var delegateMeta *tools.Adapter
-	for _, ad := range director.Adapters {
+	for _, ad := range director.surface.Adapters() {
 		if ad.Name() == "delegate_meta" {
 			delegateMeta = ad
 			break
 		}
 	}
 
-	initialCount := len(director.Adapters)
+	initialCount := len(director.surface.Adapters())
 	_, err := delegateMeta.Call(context.Background(), `{"task": "Test"}`)
 	if err != nil {
 		t.Fatalf("delegate_meta call failed: %v", err)
 	}
 
 	// No agent_design field → parse fails on all retries → no registration
-	if len(director.Adapters) != initialCount {
-		t.Errorf("no agent should be registered without agent_design field, adapters: %d → %d", initialCount, len(director.Adapters))
+	if len(director.surface.Adapters()) != initialCount {
+		t.Errorf("no agent should be registered without agent_design field, adapters: %d → %d", initialCount, len(director.surface.Adapters()))
 	}
 }
 
@@ -799,8 +799,8 @@ func TestDirectorAgent_InitialAdapters(t *testing.T) {
 	// Should have: agent_exit + search_by_regex + list_dir + read_file + print_dir_tree
 	// + delegate_repo + delegate_coding + delegate_chat + delegate_meta
 	// = 9 adapters minimum
-	if len(agent.Adapters) < 9 {
-		t.Errorf("expected at least 9 initial adapters, got %d", len(agent.Adapters))
+	if len(agent.surface.Adapters()) < 9 {
+		t.Errorf("expected at least 9 initial adapters, got %d", len(agent.surface.Adapters()))
 	}
 
 	// Verify all core adapters are present
@@ -810,7 +810,7 @@ func TestDirectorAgent_InitialAdapters(t *testing.T) {
 	}
 	for _, name := range coreNames {
 		found := false
-		for _, ad := range agent.Adapters {
+		for _, ad := range agent.surface.Adapters() {
 			if ad.Name() == name {
 				found = true
 				break

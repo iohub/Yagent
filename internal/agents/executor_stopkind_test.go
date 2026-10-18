@@ -39,7 +39,7 @@ func abortedReader(t *testing.T, ctx context.Context, engine llm.Engine, adapter
 		_, e := RunAgentLoop(ctx, ExecutorConfig{
 			SystemPrompt: "You are a test agent.",
 			UserInput:    "do the thing",
-			Adapters:     adapters,
+			Surface:      tools.NewSurfaceFromAdapters("test-agent", adapters...),
 			LLM:          engine,
 			MaxSteps:     2,
 			StopOnFinish: true,
@@ -190,7 +190,7 @@ func TestRunAgentLoop_SuccessExitsClaimTheirOwnKind(t *testing.T) {
 			newTextResponse("should never be reached"),
 		}}
 		if _, rerr := RunAgentLoop(ctx, ExecutorConfig{
-			SystemPrompt: "sp", UserInput: "ui", Adapters: []*tools.Adapter{exit}, LLM: script,
+			SystemPrompt: "sp", UserInput: "ui", Surface: tools.NewSurfaceFromAdapters("test-agent", exit), LLM: script,
 			MaxSteps: 3, StopOnFinish: true, AgentName: "exit-agent",
 		}); rerr != nil {
 			t.Fatalf("RunAgentLoop: %v", rerr)
@@ -251,7 +251,7 @@ func TestRunAgentLoop_ThinklinkEntriesLandInRollout(t *testing.T) {
 
 	if _, rerr := RunAgentLoop(ctx, ExecutorConfig{
 		SystemPrompt: "You are a test agent.", UserInput: "journal my reasoning",
-		Adapters: []*tools.Adapter{noop}, LLM: script, MaxSteps: 4,
+		Surface: tools.NewSurfaceFromAdapters("test-agent", noop), LLM: script, MaxSteps: 4,
 		StopOnFinish: true, AgentName: "thinklink-agent", Publisher: publisher,
 		UltimateThinkLink: store,
 	}); rerr != nil {

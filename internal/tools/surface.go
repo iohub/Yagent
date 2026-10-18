@@ -72,6 +72,32 @@ func NewSurface(profile toolspec.Profile, deps *toolspec.Deps, opts SurfaceOptio
 	return s
 }
 
+// NewSurfaceFromAdapters 组装一个只装给定适配器的工具面：不查注册表、不分 deferred
+// （opts 零值 ⇒ hidden() 恒 false ⇒ Lookup 一律 StateReady）。
+//
+// 它存在的理由不是省事，而是**不让测试自带第二个载体**：执行循环问"这个工具有没有、
+// 只读吗、声明是什么"只能经 Surface 回答之后，测试也必须用 Surface 表达"这个 Agent
+// 有哪些工具"。C3 之前测试往 ExecutorConfig.Adapters 里塞、生产只填 Surface，于是
+// 并行谓词扫着一条生产永远为空的列表 —— 测试全绿而并行一次都没发生（设计稿 R1）。
+func NewSurfaceFromAdapters(agentDisplay string, adapters ...*Adapter) *Surface {
+	s := &Surface{
+		profile:      toolspec.Profile{Agent: agentDisplay},
+		deps:         &toolspec.Deps{AgentName: agentDisplay},
+		adapters:     make(map[string]*Adapter, len(adapters)),
+		tiers:        make(map[string]toolspec.Frequency, len(adapters)),
+		materialized: make(map[string]bool),
+	}
+	for _, ad := range adapters {
+		if ad == nil || ad.Name() == "" {
+			continue
+		}
+		s.adapters[ad.Name()] = ad
+		s.tiers[ad.Name()] = toolspec.Hot
+	}
+	s.invalidate()
+	return s
+}
+
 // rebuild 解析画像 → 评估可用性 → 构造适配器 → 计算档位与目录。
 // 落选的工具一律带原因记进 Skipped()，不做静默丢弃。
 func (s *Surface) rebuild() {

@@ -81,7 +81,7 @@ func TestPauseStopsAtStepBoundary(t *testing.T) {
 		_, err := RunAgentLoop(ctx, ExecutorConfig{
 			SystemPrompt: codingSystemPrompt,
 			UserInput:    "run the slow tool twice",
-			Adapters:     []*tools.Adapter{blocker.ad},
+			Surface:      tools.NewSurfaceFromAdapters("test-agent", blocker.ad),
 			LLM:          engine,
 			MaxSteps:     6,
 			AgentName:    "coding",

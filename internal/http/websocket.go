@@ -10,6 +10,7 @@ import (
 	"yagent/internal/datamanager"
 	messaging "yagent/internal/messaging"
 	consumers "yagent/internal/messaging/consumers"
+	"yagent/internal/supervise"
 
 	"log/slog"
 
@@ -94,8 +95,10 @@ func handleStartTask(s *melody.Session, msg SocketMessage, taskManager *TaskMana
 
 	// 发送开始执行消息
 	taskManager.SetTaskProgress(task.ID, "Starting coding task...")
-	// 后台执行任务
-	go ExecuteTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, yagent, dataManager)
+	// 后台执行任务（同 server.go 的那条：任务本身挂根域，ctx 上的域只装它起的后台工作）
+	supervise.Root().Go("http/task/"+task.ID, func(context.Context) {
+		ExecuteTask(task.ID, taskData.ProjectDir, taskData.TaskDesc, taskManager, yagent, dataManager)
+	})
 }
 
 func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskManager, yagent *app.Yagent, dataManager *datamanager.DataManager) {
@@ -172,12 +175,11 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 	}
 
 	// 后台处理AI回复
-	go func() {
+	supervise.Root().Go("http/ws-chat/"+chatData.TaskID, func(context.Context) {
 		ctx := context.Background()
 
 		// Initialize message dispatcher for this conversation
-		dispatcher := messaging.NewMessageDispatcher(100)
-
+		dispatcher := messaging.NewDefaultMessageDispatcher()
 
 		// Create WebSocket consumer
 		wsConsumer := consumers.NewWebSocketConsumer(func(data []byte) error {
@@ -191,10 +193,12 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 				Event: string(event.Type),
 				From:  event.From,
 				Data: gin.H{
-					"task_id":   chatData.TaskID,
-					"content":   event.Content,
-					"timestamp": event.Timestamp.Unix(),
-					"metadata":  event.Metadata,
+					"task_id":       chatData.TaskID,
+					"content":       event.Content,
+					"timestamp":     event.Timestamp.Unix(),
+					"metadata":      event.Metadata,
+					"seq":           event.Seq,
+					"delegation_id": event.DelegationID,
 				},
 			}
 			if socketData, err := json.Marshal(socketMsg); err == nil {
@@ -237,6 +241,7 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 
 			// Shutdown dispatcher
 			dispatcher.Shutdown()
+			dispatcher.WarnDropped("http/ws-chat")
 			return
 		}
 
@@ -267,7 +272,8 @@ func handleChatMessage(s *melody.Session, msg SocketMessage, taskManager *TaskMa
 
 		// Shutdown dispatcher
 		dispatcher.Shutdown()
-	}()
+		dispatcher.WarnDropped("http/ws-chat")
+	})
 }
 
 func handleGetMemory(s *melody.Session, msg SocketMessage, taskManager *TaskManager) {

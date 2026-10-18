@@ -198,7 +198,7 @@ func ReadRolloutMemory(path string, opts RolloutReadOptions) (*ConversationMemor
 		return nil, info, err
 	}
 	mem := NewConversationMemory(0)
-	mem.Messages = msgs
+	mem.Replace(msgs)
 	return mem, info, nil
 }
 

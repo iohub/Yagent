@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"yagent/internal/pause"
+	"yagent/internal/supervise"
 )
 
 func newPauseTask(tm *TaskManager, id, status string, withGate bool) *Task {
@@ -28,6 +29,38 @@ func newPauseTask(tm *TaskManager, id, status string, withGate bool) *Task {
 	}
 	tm.AddTask(task)
 	return task
+}
+
+// TestTaskContextCarriesSuperviseDomain 钉住任务 ctx 上那条并发域：每个任务一条、互不相同、
+// 且不是根域。任务级后台工作（周期保存、事件桥）靠它在收尾时被等 ——
+// 两条任务共用一条域的话，A 收尾会去等 B 还在跑的保存：不报错，只是慢且查不出来。
+func TestTaskContextCarriesSuperviseDomain(t *testing.T) {
+	ctxA, cancelA := NewTaskContext(0)
+	defer cancelA()
+	ctxB, cancelB := NewTaskContext(0)
+	defer cancelB()
+
+	ga, gb := supervise.From(ctxA), supervise.From(ctxB)
+	if ga == nil || ga == supervise.Root() {
+		t.Fatalf("任务 ctx 必须自带并发域，实际拿到 %v", ga)
+	}
+	if ga == gb {
+		t.Error("两条任务共用了同一条并发域")
+	}
+
+	done := make(chan struct{})
+	ga.Go("http/periodic-save", func(context.Context) { <-done })
+	leaked := ga.Drain(50 * time.Millisecond)
+	if len(leaked) != 1 || leaked[0].Name != "http/periodic-save" {
+		t.Errorf("Drain = %v, want 一条名为 http/periodic-save 的泄漏", leaked)
+	}
+	close(done)
+	if leaked := ga.Drain(2 * time.Second); len(leaked) != 0 {
+		t.Errorf("成员退出后 Drain 仍报泄漏: %v", leaked)
+	}
+	if leaked := gb.Drain(time.Second); len(leaked) != 0 {
+		t.Errorf("B 域不该看见 A 的成员: %v", leaked)
+	}
 }
 
 // TestTaskContextCarriesGate 钉住 ctx 与 Task.Gate() 是同一个对象。

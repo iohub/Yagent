@@ -86,7 +86,7 @@ func TestE2E_Resume_RestoresBoardAndProjectContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadRolloutMemory: %v", err)
 	}
-	if restored == nil || len(restored.Messages) == 0 {
+	if restored == nil || len(restored.Snapshot()) == 0 {
 		t.Fatal("重建出来的记忆是空的")
 	}
 	// 工具调用配对必须完整：role=tool 的每条都要有对应的 assistant tool_calls，
@@ -94,13 +94,13 @@ func TestE2E_Resume_RestoresBoardAndProjectContext(t *testing.T) {
 	if dangling := len(info.DanglingToolCalls); dangling != 0 {
 		t.Errorf("DanglingToolCalls = %d, want 0（重建出来的序列发不出去）", dangling)
 	}
-	if got := assertPairedToolMessages(t, restored.Messages); got != "" {
+	if got := assertPairedToolMessages(t, restored.Snapshot()); got != "" {
 		t.Errorf("重建出来的记忆里有孤儿工具消息: %s", got)
 	}
 	// 重建出来的必须含上一轮的交付正文与 note: 引用。分工要注意：工具回执存的是
 	// **正文**，handoff 结论落在便签上 —— 所以"结论有没有活下来"由下面 resumed
 	// 那一轮断言负责，这里管的是回执本身与回读入口。
-	joined := joinContents(restored.Messages)
+	joined := joinContents(restored.Snapshot())
 	if !strings.Contains(joined, "仓库结构已查清") {
 		t.Errorf("重建的记忆丢了上一轮的委派回执: %s", truncateForFailure(joined))
 	}

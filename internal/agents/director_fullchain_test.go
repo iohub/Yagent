@@ -297,7 +297,7 @@ func TestFullChain_FullYoloMode(t *testing.T) {
 	director := newFullChainDirector(t, workDir, mock)
 
 	adapterNames := make(map[string]bool)
-	for _, ad := range director.Adapters {
+	for _, ad := range director.surface.Adapters() {
 		adapterNames[ad.Name()] = true
 	}
 

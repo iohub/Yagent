@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"yagent/internal/messaging"
 	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
@@ -254,6 +255,8 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		if agentName == "" {
 			agentName = "default"
 		}
+		// 槽键带上委派坐标：并行委派同名 Agent 时只按名字分会把两股流粘成一段文字。
+		slotKey := streamSlotKey(msg.event, agentName)
 
 		entry := logEntry{
 			timestamp:     msg.event.Timestamp,
@@ -266,7 +269,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 		m.logEntries = append(m.logEntries, entry)
 		idx := len(m.logEntries) - 1
-		m.aiStreamActiveEntries[agentName] = idx
+		m.aiStreamActiveEntries[slotKey] = idx
 		m.markEntryDirty(idx)
 		m.viewportDirty = true
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -278,6 +281,8 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		if agentName == "" {
 			agentName = "default"
 		}
+		// 槽键带上委派坐标：并行委派同名 Agent 时只按名字分会把两股流粘成一段文字。
+		slotKey := streamSlotKey(msg.event, agentName)
 
 		var content string
 		if contentMap, ok := msg.event.Content.(map[string]interface{}); ok {
@@ -286,14 +291,14 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
+		if idx, ok := m.aiStreamActiveEntries[slotKey]; ok && idx >= 0 && idx < len(m.logEntries) {
 			if m.aiChunkBuffers == nil {
 				m.aiChunkBuffers = make(map[string]*aiChunkBuffer)
 			}
-			buf := m.aiChunkBuffers[agentName]
+			buf := m.aiChunkBuffers[slotKey]
 			if buf == nil {
 				buf = &aiChunkBuffer{lastFlush: time.Now()}
-				m.aiChunkBuffers[agentName] = buf
+				m.aiChunkBuffers[slotKey] = buf
 			}
 			buf.content += content
 			buf.count++
@@ -327,7 +332,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		}
 		m.logEntries = append(m.logEntries, entry)
 		idx := len(m.logEntries) - 1
-		m.aiStreamActiveEntries[agentName] = idx
+		m.aiStreamActiveEntries[slotKey] = idx
 		m.markEntryDirty(idx)
 		m.viewportDirty = true
 		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -339,9 +344,11 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		if agentName == "" {
 			agentName = "default"
 		}
+		// 槽键带上委派坐标：并行委派同名 Agent 时只按名字分会把两股流粘成一段文字。
+		slotKey := streamSlotKey(msg.event, agentName)
 
-		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
-			if buf := m.aiChunkBuffers[agentName]; buf != nil && buf.content != "" {
+		if idx, ok := m.aiStreamActiveEntries[slotKey]; ok && idx >= 0 && idx < len(m.logEntries) {
+			if buf := m.aiChunkBuffers[slotKey]; buf != nil && buf.content != "" {
 				le := &m.logEntries[idx]
 				le.streamContent += buf.content
 				le.content = le.streamContent
@@ -351,12 +358,12 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				buf.count = 0
 			}
 			m.logEntries[idx].streaming = false
-			m.aiStreamCompletedEntries[agentName] = idx
-			delete(m.aiStreamActiveEntries, agentName)
+			m.aiStreamCompletedEntries[slotKey] = idx
+			delete(m.aiStreamActiveEntries, slotKey)
 			m.markEntryDirty(idx)
 			m.viewportDirty = true
 		}
-		delete(m.aiChunkBuffers, agentName)
+		delete(m.aiChunkBuffers, slotKey)
 		return m, tea.Batch(listenForEvents(m.eventCh), m.ensureTick())
 	}
 
@@ -365,6 +372,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		if agentName == "" {
 			agentName = "default"
 		}
+		slotKey := streamSlotKey(msg.event, agentName)
 
 		content := ""
 		if s, ok := msg.event.Content.(string); ok {
@@ -373,7 +381,7 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			content = fmt.Sprintf("%v", msg.event.Content)
 		}
 
-		if idx, ok := m.aiStreamCompletedEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
+		if idx, ok := m.aiStreamCompletedEntries[slotKey]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
 			if content == "" && le.streamContent != "" {
 				content = le.streamContent
@@ -389,12 +397,12 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			le.clearRenderCache()
 			m.markEntryDirty(idx)
 			m.viewportDirty = true
-			delete(m.aiStreamCompletedEntries, agentName)
-			delete(m.aiChunkBuffers, agentName)
+			delete(m.aiStreamCompletedEntries, slotKey)
+			delete(m.aiChunkBuffers, slotKey)
 			return m, tea.Batch(listenForEvents(m.eventCh), m.ensureTick())
 		}
 
-		if idx, ok := m.aiStreamActiveEntries[agentName]; ok && idx >= 0 && idx < len(m.logEntries) {
+		if idx, ok := m.aiStreamActiveEntries[slotKey]; ok && idx >= 0 && idx < len(m.logEntries) {
 			le := &m.logEntries[idx]
 			if content == "" && le.streamContent != "" {
 				content = le.streamContent
@@ -410,8 +418,8 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			le.clearRenderCache()
 			m.markEntryDirty(idx)
 			m.viewportDirty = true
-			delete(m.aiStreamActiveEntries, agentName)
-			delete(m.aiChunkBuffers, agentName)
+			delete(m.aiStreamActiveEntries, slotKey)
+			delete(m.aiChunkBuffers, slotKey)
 			return m, tea.Batch(listenForEvents(m.eventCh), m.ensureTick())
 		}
 
@@ -1051,4 +1059,20 @@ func (m *model) handleTaskCompleteMsg(msg taskCompleteMsg) (tea.Model, tea.Cmd) 
 
 	m.input.SetValue("")
 	return m, nil
+}
+
+// streamSlotKey 是流式缓冲 / 活动条目 / 已完成条目三张表共用的键。
+//
+// 只按 Agent 名分槽在并行委派下会把两股流粘成一段文字：两个 Coding 同时输出时
+// 它们的 ai_chunk 都落到同一个 buf，而 buf 绑的是先建起来的那条 logEntry。
+// 委派坐标（delegate_* 的 tool_call_id）由 C5 起随事件信封带下来。
+//
+// 坐标为空时退回按名字 —— Director 自己的输出、以及 /resume 恢复出来的存量
+// rollout（旧事件没有这个字段）都走这条路，与改动前逐字一致。
+// 注意：这个键**不能**当显示名用（le.from / currentAgent 一律用 agentName）。
+func streamSlotKey(event *messaging.MessageEvent, agentName string) string {
+	if event == nil || event.DelegationID == "" {
+		return agentName
+	}
+	return agentName + "#" + event.DelegationID
 }

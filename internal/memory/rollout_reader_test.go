@@ -178,10 +178,10 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				if len(mem.Messages) != 2 {
-					t.Fatalf("messages = %d, want 2", len(mem.Messages))
+				if len(mem.Snapshot()) != 2 {
+					t.Fatalf("messages = %d, want 2", len(mem.Snapshot()))
 				}
-				m0, m1 := mem.Messages[0], mem.Messages[1]
+				m0, m1 := mem.Snapshot()[0], mem.Snapshot()[1]
 				if m0.Type != MessageTypeHuman || m0.Content != "你好" {
 					t.Fatalf("msg0 = %+v, want human 你好", m0)
 				}
@@ -219,10 +219,10 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				if len(mem.Messages) != 3 {
-					t.Fatalf("messages = %d, want 3: %+v", len(mem.Messages), mem.Messages)
+				if len(mem.Snapshot()) != 3 {
+					t.Fatalf("messages = %d, want 3: %+v", len(mem.Snapshot()), mem.Snapshot())
 				}
-				a := mem.Messages[1]
+				a := mem.Snapshot()[1]
 				if a.Type != MessageTypeAssistant || len(a.ToolCalls) != 1 {
 					t.Fatalf("assistant tool calls = %+v", a)
 				}
@@ -230,7 +230,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if tc.ID != "c1" || tc.Function.Name != "read_file" || string(tc.Function.Arguments) != `{"path":"main.go"}` {
 					t.Fatalf("tool call = %+v", tc)
 				}
-				tool := mem.Messages[2]
+				tool := mem.Snapshot()[2]
 				if tool.Type != MessageTypeTool || tool.ToolCallID == nil || *tool.ToolCallID != "c1" {
 					t.Fatalf("tool msg = %+v", tool)
 				}
@@ -262,15 +262,15 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 					t.Fatalf("unexpected err: %v", err)
 				}
 				// 丢弃的"call 无前导 assistant"不存在：A(c1,c2) 挂同一条。
-				if len(mem.Messages) != 3 {
-					t.Fatalf("messages = %d, want 3: %+v", len(mem.Messages), mem.Messages)
+				if len(mem.Snapshot()) != 3 {
+					t.Fatalf("messages = %d, want 3: %+v", len(mem.Snapshot()), mem.Snapshot())
 				}
-				a := mem.Messages[0]
+				a := mem.Snapshot()[0]
 				if len(a.ToolCalls) != 2 || a.ToolCalls[0].ID != "c1" || a.ToolCalls[1].ID != "c2" {
 					t.Fatalf("tool calls = %+v", a.ToolCalls)
 				}
-				if mem.Messages[1].Content != `"A"` || mem.Messages[2].Content != `"B"` {
-					t.Fatalf("outputs: %q %q", mem.Messages[1].Content, mem.Messages[2].Content)
+				if mem.Snapshot()[1].Content != `"A"` || mem.Snapshot()[2].Content != `"B"` {
+					t.Fatalf("outputs: %q %q", mem.Snapshot()[1].Content, mem.Snapshot()[2].Content)
 				}
 				assertRolloutPairingInvariant(t, mem)
 			},
@@ -287,10 +287,10 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				if len(mem.Messages) != 2 {
-					t.Fatalf("messages = %d, want 2: %+v", len(mem.Messages), mem.Messages)
+				if len(mem.Snapshot()) != 2 {
+					t.Fatalf("messages = %d, want 2: %+v", len(mem.Snapshot()), mem.Snapshot())
 				}
-				a, tool := mem.Messages[0], mem.Messages[1]
+				a, tool := mem.Snapshot()[0], mem.Snapshot()[1]
 				if a.Type != MessageTypeAssistant || a.Content != "" || len(a.ToolCalls) != 1 || a.ToolCalls[0].ID != "c1" {
 					t.Fatalf("synthetic assistant = %+v", a)
 				}
@@ -320,10 +320,10 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				if len(mem.Messages) != 5 {
-					t.Fatalf("messages = %d, want 5: %+v", len(mem.Messages), mem.Messages)
+				if len(mem.Snapshot()) != 5 {
+					t.Fatalf("messages = %d, want 5: %+v", len(mem.Snapshot()), mem.Snapshot())
 				}
-				last := mem.Messages[4]
+				last := mem.Snapshot()[4]
 				if last.Type != MessageTypeTool || last.Content != "会话中断前未返回结果" || *last.ToolCallID != "c2" {
 					t.Fatalf("synthetic tool = %+v", last)
 				}
@@ -348,11 +348,11 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				if len(mem.Messages) != 1 {
-					t.Fatalf("messages = %d, want 1 (orphan dropped): %+v", len(mem.Messages), mem.Messages)
+				if len(mem.Snapshot()) != 1 {
+					t.Fatalf("messages = %d, want 1 (orphan dropped): %+v", len(mem.Snapshot()), mem.Snapshot())
 				}
-				if mem.Messages[0].Type != MessageTypeHuman {
-					t.Fatalf("remaining msg = %+v", mem.Messages[0])
+				if mem.Snapshot()[0].Type != MessageTypeHuman {
+					t.Fatalf("remaining msg = %+v", mem.Snapshot()[0])
 				}
 				if info.DroppedOrphanOutputs != 1 {
 					t.Fatalf("DroppedOrphanOutputs = %d, want 1", info.DroppedOrphanOutputs)
@@ -374,11 +374,11 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				if len(mem.Messages) != 2 {
-					t.Fatalf("messages = %d, want 2: %+v", len(mem.Messages), mem.Messages)
+				if len(mem.Snapshot()) != 2 {
+					t.Fatalf("messages = %d, want 2: %+v", len(mem.Snapshot()), mem.Snapshot())
 				}
-				if mem.Messages[1].Content != `"second"` {
-					t.Fatalf("kept output = %q, want the LAST one (`\"second\"`)", mem.Messages[1].Content)
+				if mem.Snapshot()[1].Content != `"second"` {
+					t.Fatalf("kept output = %q, want the LAST one (`\"second\"`)", mem.Snapshot()[1].Content)
 				}
 				if info.SupersededOutputs != 1 {
 					t.Fatalf("SupersededOutputs = %d, want 1", info.SupersededOutputs)
@@ -412,7 +412,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if info.DroppedOrphanOutputs != 1 {
 					t.Fatalf("DroppedOrphanOutputs = %d, want 1", info.DroppedOrphanOutputs)
 				}
-				for _, m := range mem.Messages {
+				for _, m := range mem.Snapshot() {
 					if m.Type == MessageTypeTool && m.Content == `"too late"` {
 						t.Fatalf("late duplicate leaked into the recovered conversation")
 					}
@@ -434,8 +434,8 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if info.SkippedBadLines != 1 {
 					t.Fatalf("SkippedBadLines = %d, want 1", info.SkippedBadLines)
 				}
-				if len(mem.Messages) != 1 {
-					t.Fatalf("messages = %d, want 1", len(mem.Messages))
+				if len(mem.Snapshot()) != 1 {
+					t.Fatalf("messages = %d, want 1", len(mem.Snapshot()))
 				}
 				assertRolloutPairingInvariant(t, mem)
 			},
@@ -453,8 +453,8 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				if len(mem.Messages) != 1 || mem.Messages[0].Content != "still here" {
-					t.Fatalf("messages = %+v", mem.Messages)
+				if len(mem.Snapshot()) != 1 || mem.Snapshot()[0].Content != "still here" {
+					t.Fatalf("messages = %+v", mem.Snapshot())
 				}
 				if info.Entries != 4 {
 					t.Fatalf("Entries = %d, want 4", info.Entries)
@@ -477,7 +477,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if info.SkippedReasoning != 1 {
 					t.Fatalf("SkippedReasoning = %d, want 1", info.SkippedReasoning)
 				}
-				a := mem.Messages[0]
+				a := mem.Snapshot()[0]
 				if a.Metadata["reasoning_summary"] != "我说了要思考" {
 					t.Fatalf("reasoning_summary metadata = %+v", a.Metadata)
 				}
@@ -496,11 +496,11 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				if len(mem.Messages) != 1 || mem.Messages[0].Content != "answer" {
-					t.Fatalf("messages = %+v", mem.Messages)
+				if len(mem.Snapshot()) != 1 || mem.Snapshot()[0].Content != "answer" {
+					t.Fatalf("messages = %+v", mem.Snapshot())
 				}
-				if len(mem.Messages[0].Metadata) != 0 {
-					t.Fatalf("metadata should be empty by default: %+v", mem.Messages[0].Metadata)
+				if len(mem.Snapshot()[0].Metadata) != 0 {
+					t.Fatalf("metadata should be empty by default: %+v", mem.Snapshot()[0].Metadata)
 				}
 			},
 		},
@@ -515,8 +515,8 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				if mem.Messages[0].Content != "part-a\npart-b" {
-					t.Fatalf("multi-part content = %q", mem.Messages[0].Content)
+				if mem.Snapshot()[0].Content != "part-a\npart-b" {
+					t.Fatalf("multi-part content = %q", mem.Snapshot()[0].Content)
 				}
 			},
 		},
@@ -531,8 +531,8 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				if mem.Messages[0].Content != "pic-1\ntxt-2" {
-					t.Fatalf("fallback content = %q", mem.Messages[0].Content)
+				if mem.Snapshot()[0].Content != "pic-1\ntxt-2" {
+					t.Fatalf("fallback content = %q", mem.Snapshot()[0].Content)
 				}
 			},
 		},
@@ -549,7 +549,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected err: %v", err)
 				}
-				a := mem.Messages[0]
+				a := mem.Snapshot()[0]
 				if a.ToolCalls[0].Function.Name != "my_tool" {
 					t.Fatalf("tool name = %q", a.ToolCalls[0].Function.Name)
 				}
@@ -575,8 +575,8 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if info.Model != "model-m2" || info.CWD != "/repo2" {
 					t.Fatalf("info = %+v", info)
 				}
-				if len(mem.Messages) != 1 { // turn_context 不进消息
-					t.Fatalf("messages = %+v", mem.Messages)
+				if len(mem.Snapshot()) != 1 { // turn_context 不进消息
+					t.Fatalf("messages = %+v", mem.Snapshot())
 				}
 			},
 		},
@@ -635,11 +635,11 @@ func TestReadRolloutMemory_CompactedModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("full: %v", err)
 	}
-	if len(memFull.Messages) != 4 {
-		t.Fatalf("full messages = %d, want 4: %+v", len(memFull.Messages), memFull.Messages)
+	if len(memFull.Snapshot()) != 4 {
+		t.Fatalf("full messages = %d, want 4: %+v", len(memFull.Snapshot()), memFull.Snapshot())
 	}
-	if memFull.Messages[0].Content != "before-question" || memFull.Messages[3].Content != "after-answer" {
-		t.Fatalf("full messages = %+v", memFull.Messages)
+	if memFull.Snapshot()[0].Content != "before-question" || memFull.Snapshot()[3].Content != "after-answer" {
+		t.Fatalf("full messages = %+v", memFull.Snapshot())
 	}
 	assertRolloutPairingInvariant(t, memFull)
 
@@ -651,15 +651,15 @@ func TestReadRolloutMemory_CompactedModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tail: %v", err)
 	}
-	if len(memTail.Messages) != 3 {
-		t.Fatalf("tail messages = %d, want 3: %+v", len(memTail.Messages), memTail.Messages)
+	if len(memTail.Snapshot()) != 3 {
+		t.Fatalf("tail messages = %d, want 3: %+v", len(memTail.Snapshot()), memTail.Snapshot())
 	}
-	sysMsg := memTail.Messages[0]
+	sysMsg := memTail.Snapshot()[0]
 	if sysMsg.Type != MessageTypeSystem || sysMsg.Content != "这是压缩摘要" || !sysMsg.IsAnchored {
 		t.Fatalf("tail system msg = %+v", sysMsg)
 	}
-	if memTail.Messages[1].Content != "after-question" || memTail.Messages[2].Content != "after-answer" {
-		t.Fatalf("tail messages = %+v", memTail.Messages)
+	if memTail.Snapshot()[1].Content != "after-question" || memTail.Snapshot()[2].Content != "after-answer" {
+		t.Fatalf("tail messages = %+v", memTail.Snapshot())
 	}
 	assertRolloutPairingInvariant(t, memTail)
 
@@ -670,8 +670,8 @@ func TestReadRolloutMemory_CompactedModes(t *testing.T) {
 	if err2 != nil {
 		t.Fatalf("tail2: %v", err2)
 	}
-	if len(memTail2.Messages) != 1 || memTail2.Messages[0].Type != MessageTypeSystem {
-		t.Fatalf("tail-only messages = %+v", memTail2.Messages)
+	if len(memTail2.Snapshot()) != 1 || memTail2.Snapshot()[0].Type != MessageTypeSystem {
+		t.Fatalf("tail-only messages = %+v", memTail2.Snapshot())
 	}
 }
 
@@ -699,8 +699,8 @@ func TestReadRolloutMemory_MaxMessagesTailKeep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if len(mem.Messages) != 4 {
-		t.Fatalf("messages = %d, want 4: %+v", len(mem.Messages), mem.Messages)
+	if len(mem.Snapshot()) != 4 {
+		t.Fatalf("messages = %d, want 4: %+v", len(mem.Snapshot()), mem.Snapshot())
 	}
 	if info.SyntheticOutputs != 0 || info.DroppedOrphanOutputs != 0 {
 		t.Fatalf("complete rounds should have no synthetic/orphan: %+v", info)
@@ -733,14 +733,14 @@ func TestReadRolloutMemory_MaxMessagesTruncateSynthesizes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if len(mem.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2: %+v", len(mem.Messages), mem.Messages)
+	if len(mem.Snapshot()) != 2 {
+		t.Fatalf("messages = %d, want 2: %+v", len(mem.Snapshot()), mem.Snapshot())
 	}
-	if mem.Messages[0].Type != MessageTypeAssistant || len(mem.Messages[0].ToolCalls) != 1 || mem.Messages[0].ToolCalls[0].ID != "c2" {
-		t.Fatalf("first msg = %+v", mem.Messages[0])
+	if mem.Snapshot()[0].Type != MessageTypeAssistant || len(mem.Snapshot()[0].ToolCalls) != 1 || mem.Snapshot()[0].ToolCalls[0].ID != "c2" {
+		t.Fatalf("first msg = %+v", mem.Snapshot()[0])
 	}
-	if mem.Messages[1].Content != "会话中断前未返回结果" {
-		t.Fatalf("synthetic content = %q", mem.Messages[1].Content)
+	if mem.Snapshot()[1].Content != "会话中断前未返回结果" {
+		t.Fatalf("synthetic content = %q", mem.Snapshot()[1].Content)
 	}
 	if info.SyntheticOutputs != 1 || info.DroppedOrphanOutputs != 1 {
 		t.Fatalf("info = %+v", info)
@@ -766,7 +766,7 @@ func TestReadRolloutMemory_ToolOutputTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	toolMsg := mem.Messages[1]
+	toolMsg := mem.Snapshot()[1]
 	if !strings.Contains(toolMsg.Content, "已截断") {
 		t.Fatalf("truncation mark missing: %q", toolMsg.Content)
 	}
@@ -783,8 +783,8 @@ func TestReadRolloutMemory_ToolOutputTruncation(t *testing.T) {
 	if err2 != nil {
 		t.Fatalf("unexpected err: %v", err2)
 	}
-	if len([]rune(mem2.Messages[1].Content)) != 100 {
-		t.Fatalf("negative max must not truncate, got %d runes", len([]rune(mem2.Messages[1].Content)))
+	if len([]rune(mem2.Snapshot()[1].Content)) != 100 {
+		t.Fatalf("negative max must not truncate, got %d runes", len([]rune(mem2.Snapshot()[1].Content)))
 	}
 
 	// output 非字符串（对象）→ 重新序列化
@@ -799,11 +799,11 @@ func TestReadRolloutMemory_ToolOutputTruncation(t *testing.T) {
 	if err3 != nil {
 		t.Fatalf("unexpected err: %v", err3)
 	}
-	if mem3.Messages[1].Content != `{"k":1,"nested":"v"}` {
-		t.Fatalf("object output re-serialized = %q", mem3.Messages[1].Content)
+	if mem3.Snapshot()[1].Content != `{"k":1,"nested":"v"}` {
+		t.Fatalf("object output re-serialized = %q", mem3.Snapshot()[1].Content)
 	}
-	if mem3.Messages[1].Metadata["exit_code"] != float64(9) {
-		t.Fatalf("obj metadata = %+v", mem3.Messages[1].Metadata)
+	if mem3.Snapshot()[1].Metadata["exit_code"] != float64(9) {
+		t.Fatalf("obj metadata = %+v", mem3.Snapshot()[1].Metadata)
 	}
 	assertRolloutPairingInvariant(t, mem3)
 }
@@ -822,22 +822,22 @@ func TestReadRolloutMemory_TimestampMonotonic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if len(mem.Messages) != 3 {
-		t.Fatalf("messages = %d, want 3", len(mem.Messages))
+	if len(mem.Snapshot()) != 3 {
+		t.Fatalf("messages = %d, want 3", len(mem.Snapshot()))
 	}
-	prev := mem.Messages[0].Timestamp
+	prev := mem.Snapshot()[0].Timestamp
 	if prev.IsZero() {
 		t.Fatalf("first timestamp must not be zero")
 	}
-	for i, m := range mem.Messages[1:] {
+	for i, m := range mem.Snapshot()[1:] {
 		if m.Timestamp.Before(prev) {
 			t.Fatalf("msg[%d] timestamp %v before prev %v", i, m.Timestamp, prev)
 		}
 		prev = m.Timestamp
 	}
 	// 解析失败的行兜底 > 基准（meta 合法时间），保证单调推进
-	if !mem.Messages[1].Timestamp.After(mem.Messages[0].Timestamp) {
-		t.Fatalf("fallback (+1ms) must advance: %v vs %v", mem.Messages[1].Timestamp, mem.Messages[0].Timestamp)
+	if !mem.Snapshot()[1].Timestamp.After(mem.Snapshot()[0].Timestamp) {
+		t.Fatalf("fallback (+1ms) must advance: %v vs %v", mem.Snapshot()[1].Timestamp, mem.Snapshot()[0].Timestamp)
 	}
 }
 
@@ -856,8 +856,8 @@ func TestReadRolloutMemory_DuplicateSessionMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if len(mem.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2", len(mem.Messages))
+	if len(mem.Snapshot()) != 2 {
+		t.Fatalf("messages = %d, want 2", len(mem.Snapshot()))
 	}
 	if info.SessionID != "sess-1" || info.CWD != "/repo/one" || info.GitBranch != "main" {
 		t.Fatalf("first meta must win: %+v", info)
@@ -902,8 +902,8 @@ func TestReadRolloutMemory_TokenCountRestore(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	// token_count 不得产生消息（response_item 是消息唯一事实源）
-	if len(mem.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2 (event_msg must not create messages): %+v", len(mem.Messages), mem.Messages)
+	if len(mem.Snapshot()) != 2 {
+		t.Fatalf("messages = %d, want 2 (event_msg must not create messages): %+v", len(mem.Snapshot()), mem.Snapshot())
 	}
 	want := RolloutTokenTotals{Input: 250, CachedInput: 80, Output: 90, Total: 340, LastContextTokens: 200}
 	if info.Tokens != want {
@@ -1033,7 +1033,7 @@ func TestReadRolloutMemory_StepAndTurnCount(t *testing.T) {
 	}
 	// a1 + c2 的合成宿主 = 2 条 assistant
 	if info.AssistantTurns != 2 {
-		t.Fatalf("AssistantTurns = %d, want 2: %+v", info.AssistantTurns, mem.Messages)
+		t.Fatalf("AssistantTurns = %d, want 2: %+v", info.AssistantTurns, mem.Snapshot())
 	}
 	if info.LastUserInput != "task" {
 		t.Fatalf("LastUserInput = %q, want 'task'", info.LastUserInput)
@@ -1105,10 +1105,10 @@ func TestReadRolloutMemory_SystemMessageDroppedByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if len(mem.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2 (system dropped): %+v", len(mem.Messages), mem.Messages)
+	if len(mem.Snapshot()) != 2 {
+		t.Fatalf("messages = %d, want 2 (system dropped): %+v", len(mem.Snapshot()), mem.Snapshot())
 	}
-	for _, m := range mem.Messages {
+	for _, m := range mem.Snapshot() {
 		if m.Type == MessageTypeSystem {
 			t.Fatalf("system message must be dropped by default: %+v", m)
 		}
@@ -1125,8 +1125,8 @@ func TestReadRolloutMemory_SystemMessageDroppedByDefault(t *testing.T) {
 	if err2 != nil {
 		t.Fatalf("keep: %v", err2)
 	}
-	if len(mem2.Messages) != 3 || mem2.Messages[0].Type != MessageTypeSystem {
-		t.Fatalf("keep messages = %+v, want system first", mem2.Messages)
+	if len(mem2.Snapshot()) != 3 || mem2.Snapshot()[0].Type != MessageTypeSystem {
+		t.Fatalf("keep messages = %+v, want system first", mem2.Snapshot())
 	}
 	if info2.SkippedSystemMessages != 0 {
 		t.Fatalf("SkippedSystemMessages = %d, want 0 when keeping", info2.SkippedSystemMessages)
@@ -1169,7 +1169,7 @@ func TestReadRolloutMemory_SubAgentFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	for i, m := range mem.Messages {
+	for i, m := range mem.Snapshot() {
 		if !m.IsSubAgent {
 			t.Fatalf("msg[%d] not flagged sub-agent: %+v", i, m)
 		}

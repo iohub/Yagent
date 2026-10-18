@@ -69,7 +69,7 @@ func TestRunAgentLoop_TriggerUsesProviderMeasurement(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:                "You are a test agent.",
 		UserInput:                   "read something big then report",
-		Adapters:                    []*tools.Adapter{newFastAdapter("probe_tool", "probe", bigResult)},
+		Surface:                     tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
 		LLM:                         mock,
 		MaxSteps:                    2,
 		StopOnFinish:                true,
@@ -130,7 +130,7 @@ func TestRunAgentLoop_MeasurementInvalidatedAfterRewrite(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:                "You are a test agent.",
 		UserInput:                   "read big things",
-		Adapters:                    []*tools.Adapter{newFastAdapter("probe_tool", "probe", bigResult)},
+		Surface:                     tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
 		LLM:                         mock,
 		MaxSteps:                    2,
 		StopOnFinish:                true,
@@ -174,7 +174,7 @@ func TestRunAgentLoop_NoMeasurementFallsBackToLocalEstimate(t *testing.T) {
 	cfg := ExecutorConfig{
 		SystemPrompt:                "You are a test agent.",
 		UserInput:                   "read something big then report",
-		Adapters:                    []*tools.Adapter{newFastAdapter("probe_tool", "probe", bigResult)},
+		Surface:                     tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
 		LLM:                         mock,
 		MaxSteps:                    2,
 		StopOnFinish:                true,

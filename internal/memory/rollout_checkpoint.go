@@ -121,6 +121,28 @@ func replayDegraded(r *Replay) []string {
 	return r.Degraded
 }
 
+// FinalizeCheckpoint 的 writer 版本：先排干队列，再按这个 writer 自己的路径读回。
+//
+// 为什么要有它而不是让调用点自己 Flush + FinalizeCheckpoint(w.FilePath())：
+// 落盘是批量的，忘了中间那一步就会拿到一份"少了几条记录"的指纹，而它不会报错 ——
+// 恢复侧只把本来能重放的会话判成损坏、静默降级成交接报告（设计稿 §7.3）。
+// 把两步合成一步，就没人能只做一步。
+func (rw *RolloutWriter) FinalizeCheckpoint(base AgentCheckpoint) (AgentCheckpoint, []string) {
+	if rw == nil {
+		base.MessageCount = 0
+		base.Digest = ""
+		return base, []string{"checkpoint digest unavailable: no rollout writer"}
+	}
+	if err := rw.Flush(context.WithoutCancel(context.Background())); err != nil {
+		slog.Warn("checkpoint: 排干 rollout 队列失败，指纹可能少算几条记录",
+			"file", rw.FilePath(), "error", err)
+		base.MessageCount = 0
+		base.Digest = ""
+		return base, []string{"checkpoint flush failed: " + err.Error()}
+	}
+	return FinalizeCheckpoint(rw.FilePath(), base)
+}
+
 // CheckpointInput 是写一条检查点所需的最小事实。
 type CheckpointInput struct {
 	AgentName string
@@ -164,7 +186,10 @@ func WriteCheckpoint(ctx context.Context, rw *RolloutWriter, in CheckpointInput)
 		cp.Workspace.StatusError = "workspace probe disabled by [resume].checkpoint_workspace"
 	}
 
-	filled, degraded := FinalizeCheckpoint(rw.FilePath(), cp)
+	// 指纹走 writer 版本：它先排干落盘队列再读回（见方法注释）。放在这一层而不是各调用点，
+	// 是因为写检查点的两个包（agents 与 agents/director）不能互相 import，
+	// "各自记得 flush"一定会漏一个。
+	filled, degraded := rw.FinalizeCheckpoint(cp)
 	if len(degraded) > 0 {
 		slog.Debug("checkpoint: rebuilt with losses", "agent", in.AgentName, "degraded", degraded)
 	}
@@ -173,6 +198,12 @@ func WriteCheckpoint(ctx context.Context, rw *RolloutWriter, in CheckpointInput)
 		// 本来可用的会话当成存量文件拒绝重放，而没人知道为什么。
 		slog.Error("checkpoint: failed to write agent_checkpoint",
 			"agent", in.AgentName, "file", rw.FilePath(), "error", err)
+	}
+	// 这一侧也要排干：坐标本身还压在队列里就返回，等于"说好了要停住的地方"
+	// 可能在下一次崩溃时不见 —— 而崩溃恰恰是这套机制唯一在防的事。
+	// 停路径每个会话只走一次，多这一趟 flush 不在任何热路径上。
+	if err := rw.Flush(context.WithoutCancel(ctx)); err != nil {
+		slog.Warn("checkpoint: 排干检查点失败", "agent", in.AgentName, "file", rw.FilePath(), "error", err)
 	}
 }
 

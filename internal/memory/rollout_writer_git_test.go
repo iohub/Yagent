@@ -12,6 +12,7 @@ package memory
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -152,6 +153,10 @@ func TestWriteSessionMeta_KeepsExplicitGit(t *testing.T) {
 	if err := w.WriteSessionMeta(SessionMeta{Cwd: repo, Git: want}); err != nil {
 		t.Fatalf("WriteSessionMeta: %v", err)
 	}
+	// 落盘是批量的：读回自己的 writer 之前必须先排干（生产侧同一条规则见 WriteCheckpoint）。
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
 	raw, err := os.ReadFile(w.FilePath())
 	if err != nil {
 		t.Fatalf("read rollout: %v", err)
@@ -182,6 +187,9 @@ func TestWriteSessionMeta_NonRepoCwdStaysEmpty(t *testing.T) {
 	// 非仓库工作区是合法运行形态（yagent 不要求 git）。既不能报错，也不能编造身份。
 	if err := w.WriteSessionMeta(SessionMeta{Cwd: t.TempDir()}); err != nil {
 		t.Fatalf("WriteSessionMeta on a non-repo cwd returned an error: %v", err)
+	}
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
 	}
 	raw, err := os.ReadFile(w.FilePath())
 	if err != nil {

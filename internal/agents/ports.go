@@ -19,6 +19,10 @@ type EventBus interface {
 	PublishWithMetadata(eventType string, content interface{}, from string, metadata map[string]interface{}) error
 }
 
+// 委派坐标的绑定不放进 EventBus：那会逼着 5 个测试 mock 各写一个假方法，
+// 而"没绑定"的正确后果只是事件少一个坐标，不是编译不过。
+// 所以执行侧用能力断言（见 executor.go 的 ForDelegation 断言）。
+
 // PromptFormatter 提示词格式化器：为系统提示追加环境/语言/自定义指令等公共段。
 // 由 *globalctx.GlobalCtx 天然实现。
 type PromptFormatter interface {

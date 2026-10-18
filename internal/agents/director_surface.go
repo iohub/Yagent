@@ -30,16 +30,49 @@ type builtinAgent interface {
 type delegateSpec struct {
 	target    string
 	noteAgent string
-	agent     func() builtinAgent
+	// spawn 每次调用返回一个**新实例**（D2）：内建 Agent 是进程级单例，
+	// 并发委派复用同一份自身状态就是竞态；今天的实际例外是 Coding 的 thinkLink。
+	spawn func(ctx context.Context) builtinAgent
 }
 
+// delegateTargets 列出可委派的内建目标。
+//
+// 每个 spawn 都必须先判**具体类型**的 nil 再返回：`return a.RepoAgent`（或
+// `a.RepoAgent.SpawnForDelegation(ctx)`）在指针为 nil 时返回的是"装着 nil 的 interface"，
+// 它 != nil —— delegateTo 里 `agent == nil` 那条"not wired"守卫于是永远不成立，
+// 未装配的子 Agent 会一路走到 nil 解引用。这个坑在原实现里就存在（只是生产总是把五个都接上）。
 func (a *DirectorAgent) delegateTargets() map[string]delegateSpec {
 	return map[string]delegateSpec{
-		"repo":    {"repo", "repo_agent", func() builtinAgent { return a.RepoAgent }},
-		"coding":  {"coding", "coding_agent", func() builtinAgent { return a.CodingAgent }},
-		"chat":    {"chat", "chat_agent", func() builtinAgent { return a.ChatAgent }},
-		"devops":  {"devops", "devops_agent", func() builtinAgent { return a.DevOpsAgent }},
-		"browser": {"browser", "browser_agent", func() builtinAgent { return a.BrowserAgent }},
+		"repo": {"repo", "repo_agent", func(ctx context.Context) builtinAgent {
+			if a.RepoAgent == nil {
+				return nil
+			}
+			return a.RepoAgent.SpawnForDelegation(ctx)
+		}},
+		"coding": {"coding", "coding_agent", func(ctx context.Context) builtinAgent {
+			if a.CodingAgent == nil {
+				return nil
+			}
+			return a.CodingAgent.SpawnForDelegation(ctx)
+		}},
+		"chat": {"chat", "chat_agent", func(ctx context.Context) builtinAgent {
+			if a.ChatAgent == nil {
+				return nil
+			}
+			return a.ChatAgent.SpawnForDelegation(ctx)
+		}},
+		"devops": {"devops", "devops_agent", func(ctx context.Context) builtinAgent {
+			if a.DevOpsAgent == nil {
+				return nil
+			}
+			return a.DevOpsAgent.SpawnForDelegation(ctx)
+		}},
+		"browser": {"browser", "browser_agent", func(ctx context.Context) builtinAgent {
+			if a.BrowserAgent == nil {
+				return nil
+			}
+			return a.BrowserAgent.SpawnForDelegation(ctx)
+		}},
 	}
 }
 
@@ -65,7 +98,7 @@ func (a *DirectorAgent) toolDeps() *toolspec.Deps {
 	return d
 }
 
-// rebuildSurface 按当前依赖重建工具面，并刷新 Adapters 快照（兼容仍读该字段的调用点与测试）。
+// rebuildSurface 按当前依赖重建工具面。
 func (a *DirectorAgent) rebuildSurface() *tools.Surface {
 	s := surfaceFor(toolspec.ProfileDirector, a.toolDeps(), a.Name())
 	if len(a.materializedAcrossTurns) > 0 {
@@ -76,7 +109,6 @@ func (a *DirectorAgent) rebuildSurface() *tools.Surface {
 		s.RestoreMaterialized(names)
 	}
 	a.surface = s
-	a.Adapters = s.Adapters()
 	return s
 }
 
@@ -126,7 +158,7 @@ func (a *DirectorAgent) delegateTo(ctx context.Context, target string, params ma
 		return nil, fmt.Errorf("unknown delegate target %q", target)
 	}
 
-	agent := spec.agent()
+	agent := spec.spawn(ctx)
 	if agent == nil {
 		return nil, fmt.Errorf("sub-agent %q is not wired", target)
 	}
@@ -140,6 +172,9 @@ func (a *DirectorAgent) delegateTo(ctx context.Context, target string, params ma
 	ctx = a.routeCtx(ctx, target, task)
 
 	result, err := agent.Run(ctx, packedTask)
+	// 结果交给本次调用的载体，由 directorToolRunner 在 ad.Call 返回后注入记忆并写 RunState。
+	// 这里不直接碰 Director 上的全局槽 —— 并行委派下那会串味（见 delegationOutcome）。
+	recordDelegationOutcome(ctx, result)
 	noteRef := a.writeDelegateNote(spec.noteAgent, "delegate_"+target, task, result, err)
 	return a.applyEnhancedCommander(target, task, result, err, noteRef, unresolved)
 }
@@ -180,7 +215,7 @@ func (a *DirectorAgent) runMetaDesign(ctx context.Context, task string) (interfa
 		if err != nil {
 			return nil, fmt.Errorf("Meta-Agent design failed: %w", err)
 		}
-		a.setPendingSubAgentMemory(&metaResult)
+		recordDelegationOutcome(ctx, metaResult)
 		lastRawOutput = metaResult.Text
 
 		systemPrompt, execResult, parseErr := director.ParseMetaAgentOutput(metaResult.Text)
@@ -282,25 +317,15 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) bool {
 		},
 	}
 
-	if a.surface != nil {
-		if skipped := a.surface.Add(spec); len(skipped) > 0 {
-			slog.Warn("custom agent tool registration skipped", "delegate", delegateName,
-				"reasons", describeSkipped(skipped))
-		}
-		// Adapters 是 Surface 的快照视图，追加后刷新，避免按字段读取的调用点看不到。
-		a.Adapters = a.surface.Adapters()
-		return true
+	// Surface.Add 是 Custom Agent 唯一的注册通道：它挂的就是"模型下一步要看的东西"，
+	// 所以同名工具重复注册会被拒绝并记进返回值，而不是静默换一个执行器。
+	if a.surface == nil {
+		a.rebuildSurface()
 	}
-	// 没有 Surface（手工注入 Adapters 的测试/调用点）：直接追加，不覆盖已有条目。
-	fn, err := spec.Build(a.toolDeps())
-	if err != nil {
-		slog.Warn("custom agent tool registration failed", "delegate", delegateName, "error", err)
-		return true
+	if skipped := a.surface.Add(spec); len(skipped) > 0 {
+		slog.Warn("custom agent tool registration skipped", "delegate", delegateName,
+			"reasons", describeSkipped(skipped))
 	}
-	ad := tools.NewAdapter(spec.Name, spec.Description(a.toolDeps()), fn).
-		WithSchema(spec.Parameters()).WithReadOnly(spec.IsReadOnly())
-	tools.SetGuardOnAdapters([]*tools.Adapter{ad}, a.guard)
-	a.Adapters = append(a.Adapters, ad)
 	slog.Info("Custom agent registered", "delegate_name", delegateName, "display_name", ca.DisplayName, "tools", ca.ToolsUsed)
 	return true
 }

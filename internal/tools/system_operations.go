@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"yagent/internal/supervise"
 	"yagent/internal/util"
 )
 
@@ -44,10 +45,12 @@ func (t *SystemOperationsTool) ExecuteRunBash(ctx context.Context, params map[st
 			}, nil
 		}
 
-		// 在后台等待进程结束以避免僵尸进程
-		go func() {
-			cmd.Wait()
-		}()
+		// 在后台等待进程结束以避免僵尸进程。
+		// 挂在进程根域而不是任务域上：后台命令（`npm run dev`、`go test`）的寿命比这次委派长，
+		// 挂任务域会让委派结束时的 Drain 卡在等它。根域只在退出时按预算等一次，
+		// 等不到就把这个名字报出来 —— "还有后台命令在跑"是要让用户看见的事实。
+		supervise.Root().Go(fmt.Sprintf("run_bash/reap-pid%d", cmd.Process.Pid),
+			func(context.Context) { _ = cmd.Wait() })
 
 		return map[string]interface{}{
 			"success": true,

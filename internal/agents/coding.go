@@ -192,7 +192,10 @@ func (a *CodingAgent) browserDelegate(ctx context.Context, target string, params
 	if target != "browser" {
 		return nil, fmt.Errorf("Coding-Agent 只能委派给 browser，收到 %q", target)
 	}
-	if a.BrowserAgent == nil {
+	// 每次调用一个新实例（见 spawn.go）：Browser 的产物会写便签板，共享实例将来放可变
+	// 状态的话，两条并发委派就会写进同一份。
+	browser := a.browserFor(ctx)
+	if browser == nil {
 		return nil, fmt.Errorf("Browser-Agent 未装配")
 	}
 	task, ok := params["task"].(string)
@@ -208,7 +211,7 @@ func (a *CodingAgent) browserDelegate(ctx context.Context, target string, params
 		}
 	}
 
-	result, err := a.BrowserAgent.Run(ctx, packedTask)
+	result, err := browser.Run(ctx, packedTask)
 	if a.boardWriter == nil {
 		// 没注入写入器（老装配路径）：保持改动前的行为。
 		if err != nil {

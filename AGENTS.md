@@ -161,6 +161,9 @@ yagent/
 │   ├── pause/                  # 暂停闸门（A 层）：Gate + ctx value + AbandonedError，只依赖 activity
 │   ├── recovery/               # LLM 熔断器
 │   ├── skills/                 # SKILL.md 注册表（仅 TUI 斜杠命令消费）
+│   ├── supervise/              # 全仓 goroutine 的唯一落脚点：具名 + recover + 有人等（C1，
+│   │                           #   docs/structured-concurrency-design.md）。叶子包（只依赖标准库，
+│   │                           #   check_supervise_leaf.sh 守）；裸 `go` 由 check_no_bare_go.sh 禁掉
 │   ├── thinklink/              # 结构化 <thought> 解析 + 思维日志（驱动 ultimate 压缩）
 │   ├── tokenutil/              # tiktoken 封装（EstimateTokens）
 │   ├── tools/                  # 工具 Adapter 实现 + workspace_guard + user_confirm
@@ -172,7 +175,7 @@ yagent/
 │   └── util/                   # 崩溃上报等；atomic.go 是全仓唯一的 tmp+rename 落盘内核（I21）
 ├── protocol/                   # agent-events.yaml（SSOT）+ 生成的 go/ 与 ts/ 副本
 ├── scripts/                    # build-centos7 / build-extension / protoc-gen-yagent
-│                               #   + 七把守卫（check_*.sh），其中 check_all.sh 是一条命令的本地闸门
+│                               #   + 九把守卫（check_*.sh），其中 check_all.sh 是一条命令的本地闸门
 ├── patches/                    # CI 用的 vendored-openssl 补丁
 ├── dist/                       # 构建产物 + 被跟踪的 models.json（见 §11 坑 2）
 ├── codeseek/                   # git submodule → iohub/codeseek（Rust 代码智能引擎）
@@ -254,8 +257,14 @@ type Adapter struct { name, description string; fn ToolFunc
 `toolspec.IsSerial` 名单里的工具，
 可由 `toolbatch` 分批并行执行（默认并发 4，上限 8，`[agent] max_parallel_readonly_tools`）。
 `read_note` / `read_artifact` / `list_notes` 与认知类、调用图工具都走这条派生路径。
+判据是**一个函数**：`agents.toolCallIsParallelizable(surface, name)`（`executor.go`），
+Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份同形判据的历史代价见 §11 坑 33。
+冷工具（还没取回 schema）也算可并行：它在这一批里只收到 teach 回执、不执行副作用。
 闸门是 `TestDerivedMetadataMatchesLegacyTables`：新增可并发工具必须进 `signedReadOnlyAdditions` 或 `newTools`
 集合并写明理由，否则测试直接红 —— 那两处集合就是"公开承认我扩大了并发面"的地方。
+另外 `TestParallelAdmission_*`（`parallel_admission_test.go`）是拿**真实画像**
+（`ProfileRepo` / `ProfileCoding` / `ProfileChat`）问这个判据的，所以画像或能力标签漂走时会红；
+自己拼一个工具列表来测等于重犯坑 33。
 
 ### 5.2 工具总览（schema 见 `internal/toolspec/schemas.json`，50 条）
 
@@ -323,8 +332,9 @@ type Adapter struct { name, description string; fn ToolFunc
   每步：LLM 重试（指数退避 ≤30s）→ 三档压缩检查 → 带 `llmTimeout` 的 LLM 调用 → 抽取 `<thought>` →
   纯文本回复则注入提醒或结束 → 工具调用交给 `toolbatch` 分批并行 → `agent_exit` 立即返回；
   步数耗尽报错，panic 被 recover 并写 `turn_aborted` rollout。
-  `ExecutorConfig` 关键字段：`SystemPrompt / UserInput / Adapters / LLM / MaxSteps / Publisher / StopOnFinish /
+  `ExecutorConfig` 关键字段：`SystemPrompt / UserInput / Surface / LLM / MaxSteps / Publisher / StopOnFinish /
   LLMTimeout / StepRetries / SystemAsHuman / NoActionRetryLimit / MaxParallelReadOnlyTools / OnAgentStart / OnAgentExit`。
+  `Surface` 是**唯一**的工具来源（`Adapters` 字段已删除，见 §11 坑 33）：工具声明、按名解析、并发准入都只问它。
   `StepRetries` 现在由各 Agent 从 `[llm] step_retries` 带进来（以前全仓无写入点，六个子 Agent 恒为 0）。
   `OnStepEnd` 已删除：自动检查点的钩子早没了，它唯一的作用是在 `AutoCheckpoint=true` 时
   每步打一条 deprecation 警告。顺带修好一件事 —— `sub_agent_activity` 这条 rollout 记录以前
@@ -455,16 +465,41 @@ type Adapter struct { name, description string; fn ToolFunc
 > `enable_ultimate_compression`）与非空的 `UltimateThinkLink`，与 Director Planner 同语义
 > （`executor.go` 的 T3 分支）。Browser/Repo/DevOps 的 store 在 `Run()` 内按委派创建——
 > `RebuildPrompt` 会保留全部用户输入，放构造期会让历次委派的任务串进同一次重建。
+> **Coding 曾是唯一一个把 store 挂在单例上的**（`coding.go` 构造期 `thinkLink: thinklink.NewStore(0)`），
+> 现在由 `CodingAgent.SpawnForDelegation` 每次委派换一份新 store（`agents/spawn.go`，C4/D2）：
+> 挂在单例上不仅会串味，委派一旦并行化就直接是数据竞态。
+> 其余四家今天没有可变自身状态（五家 `Run()` 逐个核过：一处都不写 `a.<field>`），
+> 克隆看起来是空动作，仍统一做，是为了把"委派从不碰共享实例"变成不需要记住的不变量——
+> 以后谁往结构体上加可变字段，默认就是每委派一份。嵌套调用（Repo→`delegate_devops`、
+> Coding→`delegate_browser`）也各自 `Spawn` 一次，否则拷来的仍是同一个共享单例。
 > `ultimate_compression_keep_plans` 现在也真的到达 Coding（`coding.go` 曾硬编码 0，即"永远全部保留"）。
 > token 估算（`EstimateMessagesTokens`）**包含 `Reasoning`**：thinking/reasoning_content 会被回灌给
 > provider，漏算会让压缩触发时机系统性偏晚。
 
 ### 6.6 事件总线（`internal/messaging`）
 
-`Event{ID,Type,Source,Target,Content,Priority,Timestamp,Deadline,TraceID,Metadata}` →
+`Event{ID,Type,Source,Target,Content,Priority,Timestamp,Deadline,TraceID,Metadata,Seq,DelegationID}` →
 `MessageDispatcher`（每个 consumer 一条 1000 容量队列 + 独立 goroutine）。
 普通事件队列满则**丢弃并限流告警**；`user_help_needed` / `user_help_response` 走 **critical 旁路队列**（永不丢弃，FIFO，满则丢最旧）。
 Consumer 有两种：旧版 `MessageConsumer`（广播）与新版 `Consumer{Types()}`（过滤订阅）。
+
+**两个并行必需的坐标**（C5）：
+`Seq` 由 dispatcher 在 `Publish` 里盖（每个 dispatcher 一条单调序列），所以"界面少了字"第一次
+变成可回答的问题——消费者看见 7→9 就知道少了一条。`DelegationID` 是产生这条事件的那一次委派
+（`delegate_*` 的 tool_call_id）：**`Source` 在并行委派下不再唯一**，两个 Coding 同时输出时
+只按名字分槽会把两股流粘成一段文字。
+它由 `RunAgentLoop` 入口**一次**绑定（`Publisher.ForDelegation(memory.DelegationIDFrom(ctx))`），
+不是在 10 个发布点各传一遍——漏一处的事件不报错，只会留下没人能解释的现象。
+绑定用能力断言而非 `EventBus` 接口方法：没绑定的正确后果是少一个坐标，不该逼 5 个测试 mock 各写一个假方法。
+
+满载丢弃必须**可被知道**：`Dropped()` 是总数，任务收尾调 `WarnDropped(scope)`
+（HTTP 任务 / 两个 TUI 闭包 / WS 会话各自报告）。另外 6 个建调度器的地方原本都手写
+`NewMessageDispatcher(100)`，把文档承诺的"默认 1000"压成了十分之一——现在统一走
+`NewDefaultMessageDispatcher()`，容量只有一处定义。
+
+Web 侧坐标放在 `realtime` 信封的 `Data` map 里（`seq` / `delegation_id`），**不动
+`protocol.AgentEventEnvelope`**：那是生成物，AGENTS.md 下面那条"重跑生成器会冲掉手工修复"的
+警告仍然成立，而加字段不需要经过它。
 
 当前总线上的事件类型（约 21 个，SSOT 是 `protocol/agent-events.yaml`，由 `scripts/protoc-gen-yagent` 生成 Go/TS/JSON-Schema）：
 
@@ -496,7 +531,7 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 | 数据 | 路径 | 写入方式 |
 |------|------|----------|
 | 任务记忆 | `~/.yagent/tasks/{taskID}.jsonl` | **5 秒防抖**、增量追加（条数变少则全量重写） |
-| **Rollout（断点续跑的事实来源）** | `~/.yagent/data/rollout/{projectID}/{ts}_{session}[_{agent}].jsonl` | **同步写**，类型含 `session_meta/turn_context/response_item/event_msg/compacted/agent_checkpoint`（`world_state` 已于 2026-10-14 删除）；`session_meta` 带 git 身份 + `delegation_id` + `parent_session_id`，终止事件带 `stop_reason`（词表在 `memory/rollout_types.go`：`paused/cancelled/idle_timeout/total_timeout/max_steps/llm_error/circuit_breaker_open/panic/plain_text/agent_exit/unaccounted`）。子 Agent 的文件名后缀 `_{agent}` 就是"这次委派是哪一个"的凭据 |
+| **Rollout（断点续跑的事实来源）** | `~/.yagent/data/rollout/{projectID}/{ts}_{session}[_{agent}].jsonl` | **入队即返回、攒批落盘**（C2：每个 writer 一条写循环，32 条或 20ms 刷一次，`Close` 会 join），类型含 `session_meta/turn_context/response_item/event_msg/compacted/agent_checkpoint`（`world_state` 已于 2026-10-14 删除）；`session_meta` 带 git 身份 + `delegation_id` + `parent_session_id`，终止事件带 `stop_reason`（词表在 `memory/rollout_types.go`：`paused/cancelled/idle_timeout/total_timeout/max_steps/llm_error/circuit_breaker_open/panic/plain_text/agent_exit/unaccounted`）。子 Agent 的文件名后缀 `_{agent}` 就是"这次委派是哪一个"的凭据。**读回自己写过的文件之前必须排干**：`WriteCheckpoint` 走 `(*RolloutWriter).FinalizeCheckpoint`（先 Flush 再按整份文件算指纹，写完再 Flush 让坐标本身落地），自己拼 `Flush + FinalizeCheckpoint(path)` 的调用点一定会拿到"少几条"的指纹 —— 它不报错，只是把能重放的会话判成损坏 |
 | Blackboard 便签 | `~/.yagent/notes/{boardID}/{agent}/*.md` | 原子写，`YAGENT_NOTES_ROOT` 可覆盖 |
 | Artifact | `~/.yagent/data/artifacts/{id}` | 原子写，ID `^\d{8}-\d{6}-[0-9a-f]{8}$` |
 | 共享/仓库记忆 | `~/.yagent/data/shared_memory/{projectID}/shared_memory.json` | 5 秒 ticker + dirty 标记，退出前 flush |
@@ -735,7 +770,7 @@ BUILD_TYPE=debug ./build.sh
 ### 8.3 测试
 
 ```bash
-bash scripts/check_all.sh                 # 一条命令的本地闸门：build + vet + 七把守卫 + 全量单测
+bash scripts/check_all.sh                 # 一条命令的本地闸门：build + vet + 九把守卫 + 全量单测
 RACE=true bash scripts/check_all.sh       # 同上，再对并发包跑 -race（慢 3-8 倍，改到并发时手动跑）
 bash scripts/check_all.sh --fast          # 只跑 ./internal/... 的全量单测，跳过 ./... 与守卫之外的部分
 go test ./... -count=1 -timeout 600s      # 全仓 26 个测试包，墙钟约 12s（包间并行；2026-10-15 实测）
@@ -825,13 +860,15 @@ go vet ./...                              # 必须干净
 ### 9.2 工具/规模守卫
 
 ```bash
-bash scripts/check_all.sh                 # 上面七把守卫 + build + vet + 全量单测，一条命令跑完
+bash scripts/check_all.sh                 # 上面九把守卫 + build + vet + 全量单测，一条命令跑完
 bash scripts/check_file_sizes.sh          # internal/agents/director/ 下非测试文件 ≤300 行（存量按 PENDING 冻结）
 bash scripts/check_no_agents_import.sh    # director/ 子包不得 import yagent/internal/agents（防循环依赖）
 bash scripts/check_toolspec_leaf.sh       # toolspec 不得反向依赖 agents/tools
 bash scripts/check_no_manual_lookup.sh    # 不许重新出现按名字查工具的 lookupToolFunc/getToolFunc
 bash scripts/check_test_hygiene.sh        # 单测卫生棘轮，见下
 bash scripts/check_blueprint_leaf.sh      # internal/blueprint 只准依赖标准库 + util + projectid
+bash scripts/check_supervise_leaf.sh      # internal/supervise 只准依赖标准库
+bash scripts/check_no_bare_go.sh          # 全仓不许出现裸 go（唯一例外：internal/supervise 自己）
 bash scripts/check_no_inline_atomic_write.sh  # tmp+rename 只准有 internal/util/atomic.go 一处（I21）
 ```
 
@@ -850,9 +887,33 @@ bash scripts/check_no_inline_atomic_write.sh  # tmp+rename 只准有 internal/ut
   注意它按**名字**认断言：自定义等待辅助（如 messaging 的 `waitFor`）不算断言，
   所以"等异步"的用例仍必须补一条直接的 `t.Errorf`。
 
+- **goroutine 只能经 `internal/supervise` 起**（C1，`docs/structured-concurrency-design.md`）：
+  `supervise.From(ctx).Go("名字", fn)` / `supervise.New(ctx, 域名)` 给出**名字 + recover + 可等待**，
+  `Drain(timeout)` 返回的是"哪几条还没退"的名字清单，不是一句超时。裸 `go` 由
+  `check_no_bare_go.sh` 硬禁（**没有 PENDING 名单** —— 一条常红的守卫等于没有守卫，
+  而带名单的棘轮会变成第二个会漂走的事实）。两条纪律：
+  ① **需要"等这一批"的地方仍用本地 WaitGroup**（`toolbatch`、`tui_resume_stop`）—— Drain 等的是
+  整条域，把"批次"当成"域"会把不相关的后台工作一起算进来，甚至等自己（见 ②）。
+  ② **跑任务的那条 goroutine 不进任务自己的域**：域由 `http.NewTaskContext` 挂在 ctx 上，
+  任务收尾时 `Drain` 它；把执行体自己也算进去就是收尾时等自己，会死锁。
+- **`memory.ConversationMemory` 的 `messages` 字段不导出，读写只走方法**（C4/D6）：
+  `Snapshot()` 拿一份拷贝、`Append(...)`/`Add*` 写、`Replace()` 整体装载（从磁盘/rollout 重建时用，
+  **不**触发 MaxSize 截断）、`Size()`、`LastMessage()` 返回**拷贝**。
+  三条理由都要记住：① 并行委派的注入跑在工作线程上，planner 在主线程写同一份；
+  ② `GetMessages()` 的注释早就写着 "thread-safe copy" 而它返回的是内部 slice 本身——
+  注释与实现不符比没注释更糟，现在名副其实；③ 旧版 `GetLastMessage()` 返回
+  `*ChatMessage` 指向 slice 内部，拿着指针的人绕过锁还能改写它。
+  JSON 线上形态（`{"messages":[…],"max_size":n}`）由 `MarshalJSON/UnmarshalJSON` 原样保住，
+  封装不许改协议。
+- **把指针装进 interface 的那一瞬间就再也不等于 `nil`**（C4 顺手修的既有洞）：
+  `func() builtinAgent { return a.RepoAgent }` 在 `a.RepoAgent == nil` 时返回的是
+  "装着 nil 的 interface"，于是 `agent == nil` 那条"not wired"守卫永远不成立，
+  未装配的子 Agent 会一路走到 nil 解引用。凡"具体类型指针 → interface"的返回，
+  必须在**具体类型**上先判 nil（见 `director_surface.go` 的 `delegateTargets` 注释）。
 - Director 采用**门面 + 子包**结构：`internal/agents/director.go` 只做装配与 delegate 注册，
   编排逻辑进 `internal/agents/director/`，跨子系统依赖一律经 `internal/agents/ports.go` 的窄接口注入。
 - `toolbatch` 是无业务依赖的叶子包，不要往里加业务。
+
 
 ### 9.3 新增一个工具的正确步骤
 
@@ -1070,6 +1131,31 @@ plan:
     用户看到的症状是"按 q 没反应"；嵌在主 TUI 时反过来必须**不**翻，那会把整个 yagent 退掉，
     交还键盘由 `updateSetupMode` 的 `Done()` 分支负责。闸门是 `TestRunSetupProgramActuallyExits`：
     它用 `tea.WithInput(strings.NewReader("q"))` 真跑一次程序断言 `Run` 返回，不是只查 cmd 形状。
+33. **测试与生产必须共用同一个载体，否则测试会钉住一条不存在的路**：子 Agent 的并行曾经完全没生效 ——
+    `executor.go` 的并发谓词扫 `cfg.Adapters`，而五个子 Agent 全部只填 `cfg.Surface`，于是谓词恒 false、
+    `toolbatch` 被调用却一个 goroutine 都不开；同时 `executor_parallel_test.go` 的 8 个用例都往 `Adapters`
+    里塞夹具，**所以测试全绿**。同一文件里 `resolveAdapter`/`defsForStep` 都正确"Surface 优先"，
+    只有这个谓词漏了 —— 工具注册表迁移时没跟上，而两边不对称本身就是证据。
+    修法不是补一个分支，是把 `ExecutorConfig.Adapters` 与 `DirectorAgent.Adapters` **连根删掉**
+    （`resolveAdapter` 只认 Surface，判据收成 `toolCallIsParallelizable` 一个函数、两个循环共用），
+    测试改用 `tools.NewSurfaceFromAdapters`；`parallel_admission_test.go` 更进一步直接拿真实画像
+    （`ProfileRepo`/`ProfileCoding`）问判据。闸门是 `TestRunAgentLoop_ReadOnlyBatch_ParallelEvidence`
+    （+ 一条 `max_parallel_readonly_tools=1` 的对照臂，证明"并发峰值 ≥2"不是计量器自己的毛病）：
+    把谓词改回恒 false，它立刻红 `expected max concurrency >= 2, got 1`。
+    **教训通用**：新增一个"生产只填 A、测试却填 B"的字段对，就等于埋下一个永远不会红的测试。
+34. **流式槽的键不等于显示名**：TUI 的 `aiChunkBuffers` / `aiStreamActiveEntries` /
+    `aiStreamCompletedEntries` 现在按 `streamSlotKey(event, agentName)`（`agent#delegationID`）分槽，
+    而 `le.from` / `m.currentAgent` / token 归集**必须继续用裸 Agent 名** —— 把组合键当名字用的那一刻，
+    界面标签就变成 `Coding#call_3`。两者在同一个 handler 里挨着写，是顺手会搞混的地方。
+    坐标为空时键退回裸名字，于是 Director 自己的输出与 `/resume` 恢复的存量 rollout 行为逐字不变
+    （`TestLegacyStreamsWithoutDelegationKeepOldBehavior` 钉的就是"没有坐标时不许变新"）。
+    变异验证：让 `streamSlotKey` 忽略 `DelegationID` → `TestParallelStreamsSameAgentDoNotMerge` 红，
+    症状正是当年的 `"AAABBBAAABBB"` 粘成一条。
+35. **"默认值"必须有人真的用它的默认值**：调度器文档写着"每消费者 1000 容量"，而 6 个建
+    dispatcher 的地方全都手写 `NewMessageDispatcher(100)` —— 那个 1000 从来没生效过，
+    于是满载丢弃比设计早一个数量级发生，表现是"界面偶尔少字"而日志只有一条限频 warn。
+    现在统一走 `NewDefaultMessageDispatcher()`；配套的可见性是 `Dropped()` / `WarnDropped(scope)`。
+    判断一个默认值是不是活的，别看文档，看有没有调用点真的走它。
 
 
 <!-- CODESEEK_INJECTION -->

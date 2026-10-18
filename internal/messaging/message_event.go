@@ -81,6 +81,16 @@ type Event struct {
 	// 追踪
 	TraceID string `json:"trace_id"` // 链路追踪 ID
 
+	// Seq 由 dispatcher 在发布时盖上，每个 dispatcher 一条单调递增序列。
+	// 有了它，消费者才能把两股并发流各自排回自己的顺序，也能在满载丢事件时说出
+	// "从 N 到 M 之间少了 k 条" —— 而不是留下"界面少了几个字"这种没人能解释的现象。
+	Seq int64 `json:"seq,omitempty"`
+
+	// DelegationID 是产生这条事件的那一次委派坐标（delegate_* 的 tool_call_id）。
+	// Source 在并行委派下不再唯一：两个 Coding 同时跑时，只按 Agent 名分槽
+	// 会把两股流粘成一段文字。
+	DelegationID string `json:"delegation_id,omitempty"`
+
 	// 扩展元数据
 	Metadata map[string]interface{} `json:"metadata,omitempty"` // 自定义元数据
 

@@ -16,6 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"yagent/internal/supervise"
 )
 
 const (
@@ -111,7 +113,8 @@ func (e *dispatcherEntry) push(event *Event) {
 			}
 			if e.lastWarn.CompareAndSwap(last, now) {
 				slog.Warn("MessageDispatcher: consumer queue full, event dropped",
-					"consumer", e.id, "event_type", string(event.Type), "dropped_total", total)
+					"consumer", e.id, "event_type", string(event.Type),
+					"event_seq", event.Seq, "dropped_total", total)
 				break
 			}
 		}
@@ -127,8 +130,14 @@ type MessageDispatcher struct {
 	perConsumerBuf    int         // 每消费者独立队列容量（= bufferSize）
 	defaultMaxRetries int
 
+	// seq 是本 dispatcher 的事件序号源。序号让"丢了什么"第一次变成可回答的问题：
+	// 消费者看见 7→9 就知道少了一条，而不是留下"界面少了几个字"。
+	seq atomic.Int64
+
 	shutdownOnce sync.Once
-	wg           sync.WaitGroup
+	// grp 拥有每条 consumer 的 entryLoop。取代原来的裸 WaitGroup：WaitGroup 只能回答
+	// "还有几条没退"，回答不了"是哪一条"，而卡住的往往就是某个界面消费者。
+	grp *supervise.Group
 }
 
 // NewMessageDispatcher 创建带默认配置的调度器（向后兼容的旧接口）。
@@ -139,6 +148,15 @@ func NewMessageDispatcher(bufferSize int) *MessageDispatcher {
 	return NewDispatcher(opts)
 }
 
+// NewDefaultMessageDispatcher 用 DefaultDispatcherOptions 建调度器。
+//
+// 存在的理由是个很难看的事实：6 个调用点都手写 NewMessageDispatcher(100)，
+// 而"默认 1000"从来没生效过 —— 一个散在 6 处的数字没人知道实际容量是多少，
+// 并行委派后 ai_chunk 翻倍时丢得最狠的恰恰是它。要改容量现在只有一个地方。
+func NewDefaultMessageDispatcher() *MessageDispatcher {
+	return NewDispatcher(DefaultDispatcherOptions())
+}
+
 // NewDispatcher 创建带完整配置的调度器（新接口）。
 func NewDispatcher(opts DispatcherOptions) *MessageDispatcher {
 	if opts.BufferSize <= 0 {
@@ -147,9 +165,41 @@ func NewDispatcher(opts DispatcherOptions) *MessageDispatcher {
 	if opts.MaxRetries <= 0 {
 		opts.MaxRetries = 3
 	}
+	grp, _ := supervise.New(context.Background(), "messaging")
 	return &MessageDispatcher{
 		perConsumerBuf:    opts.BufferSize,
 		defaultMaxRetries: opts.MaxRetries,
+		grp:               grp,
+	}
+}
+
+// Dropped 返回累计丢了多少条事件（所有消费者相加）。
+// 并行委派之后 ai_chunk 的量会成倍上涨，满载丢弃是**设计内的行为**，
+// 所以它必须能被问出来 —— 沉默的丢弃和"界面少了字"之间没有别的线索。
+func (d *MessageDispatcher) Dropped() int64 {
+	var total int64
+	d.mu.RLock()
+	entries := make([]*dispatcherEntry, len(d.entries))
+	copy(entries, d.entries)
+	d.mu.RUnlock()
+	for _, e := range entries {
+		total += e.dropped.Load()
+	}
+	return total
+}
+
+// WarnDropped 在收尾时说出"界面少了多少条事件"。
+//
+// 满载丢弃是设计内的行为（生产者绝不能被一个卡住的 UI 挂住），但它必须**可被知道**：
+// ai_chunk 被丢的表现是回答少了一截字，而现场没有任何痕迹。并行委派之后这件事更容易发生，
+// 所以每个任务收尾都问一次。
+func (d *MessageDispatcher) WarnDropped(scope string) {
+	if d == nil {
+		return
+	}
+	if n := d.Dropped(); n > 0 {
+		slog.Warn("事件队列满载，已经丢了这些事件（正文不会补发）",
+			"scope", scope, "dropped", n, "consumer_queue_capacity", d.perConsumerBuf)
 	}
 }
 
@@ -170,6 +220,11 @@ func (d *MessageDispatcher) Publish(event *Event) error {
 	}
 	if event.MaxRetries <= 0 {
 		event.MaxRetries = d.defaultMaxRetries
+	}
+	// 序号在分发给任何消费者之前盖：同一 *Event 会被并发广播给多个消费者
+	// （见包注释"并发只读"），所以这里是它最后一次被写。
+	if event.Seq == 0 {
+		event.Seq = d.seq.Add(1)
 	}
 	if d.stopped.Load() {
 		slog.Warn("MessageDispatcher: publish after shutdown, event dropped",
@@ -205,8 +260,7 @@ func (d *MessageDispatcher) RegisterConsumer(consumer MessageConsumer) {
 		stop:   make(chan struct{}),
 	}
 	d.entries = append(d.entries, e)
-	d.wg.Add(1)
-	go d.entryLoop(e)
+	d.grp.Go("consumer:"+e.id, func(context.Context) { d.entryLoop(e) })
 }
 
 // Subscribe 注册新式 Consumer（Types() 为 nil/空 = 订阅所有事件类型）。
@@ -233,8 +287,7 @@ func (d *MessageDispatcher) Subscribe(consumer Consumer) {
 		stop:     make(chan struct{}),
 	}
 	d.entries = append(d.entries, e)
-	d.wg.Add(1)
-	go d.entryLoop(e)
+	d.grp.Go("consumer:"+e.id, func(context.Context) { d.entryLoop(e) })
 }
 
 // PublishCompat 兼容旧接口（void 返回），内部调用 Publish 并忽略返回值。
@@ -251,13 +304,16 @@ func (d *MessageDispatcher) Shutdown() {
 			close(e.stop) // 绝不 close 事件 channel（并发 send 会 panic）
 		}
 		d.mu.Unlock()
-		d.wg.Wait()
+		// 原来是 d.wg.Wait() —— 一个卡死的消费者会把退出挂住，且不告诉你卡在哪。
+		// 现在按预算等，等不到就报名字：退出路径宁可留下"界面消费者没排干"这条事实。
+		if leaked := d.grp.Drain(30 * time.Second); len(leaked) > 0 {
+			slog.Warn("MessageDispatcher.Shutdown 仍有消费者在跑", "leases", supervise.LeaseNames(leaked))
+		}
 	})
 }
 
 // entryLoop 每消费者独立消费 goroutine：优先 drain 关键旁路，再 select 等待。
 func (d *MessageDispatcher) entryLoop(e *dispatcherEntry) {
-	defer d.wg.Done()
 	for {
 		d.drainCritical(e) // 优先处理关键事件（wake 可能残留信号，drain 幂等）
 		select {
