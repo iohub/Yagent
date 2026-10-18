@@ -111,6 +111,9 @@ devops_max_steps = 50
 browser_max_steps = 200
 meta_retry_count = 5         # retries when Meta emits invalid JSON (Meta is one LLM call; it has no step loop)
 max_parallel_readonly_tools = 4  # read-only tool fan-out: ≤0 → 4, >8 → 8, 1 = strictly serial
+max_parallel_delegations = 2     # concurrent sub-agents per Director turn: ≤0 → 2, >8 → 8, 1 = one at a
+                                 # time; nested delegations get their own pool. Env YAGENT_CONCURRENCY=0
+                                 # forces both layers serial (kill switch)
 lang = ""                    # answer language, e.g. "Chinese" / "English"; empty = no instruction injected
 # Delegation watchdog. When omitted, idle threshold = max(10m, [llm] timeout + 5m); it must
 # stay above the longest heartbeat-free step or healthy long reasoning gets killed.
@@ -126,6 +129,8 @@ circuit_breaker_threshold = 0        # 0 = breaker disabled (only created when >
 circuit_breaker_reset_timeout = "0s" # defaulted to 60s only when the threshold is > 0
 enable_fallback = false      # provider failover (also needs fallback_providers on the provider)
 fallback_max_retries = 2     # omitted → follows max_retries
+max_in_flight_requests = 8   # concurrent provider calls process-wide; 0 = unlimited. Shared by every
+                             # engine because a 429 is a provider property, not an engine property
 
 # ── CodeSeek (MCP code-analysis engine) ──
 [codeseek]

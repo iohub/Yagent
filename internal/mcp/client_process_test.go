@@ -105,6 +105,9 @@ func runFakeMCPServer() {
 				continue
 			case "slow":
 				time.Sleep(300 * time.Millisecond)
+			case "hang":
+				// 收到请求但永不回包：用来测**每条请求自己的 deadline**。
+				continue
 			case "die-on-call":
 				if p.Name == "die" {
 					os.Exit(0) // 不给响应直接消失
@@ -358,6 +361,97 @@ func TestMCPClient_CallTimeoutLeavesClientUsable(t *testing.T) {
 	}
 }
 
+// 每条请求自己的 deadline。真实形状是：工具线程拿的是**没有 deadline 的任务 ctx**，
+// 而子进程可能就是不回包（索引重建中卡住的查询、或崩溃后挂在管道上）。
+// 没有这一层时那条 goroutine 永远转圈，整次委派跟着挂住，而日志里什么都没有。
+func TestCallToolHonoursRequestTimeout(t *testing.T) {
+	c := NewMCPClient(MCPClientConfig{BinaryPath: os.Args[0]})
+	startFakeClientWithEnv(t, c, "hang")
+	defer c.ForceShutdown()
+	// initialize 已经走完了，这里把上限压短只为了让用例本身跑得快 ——
+	// 判据是"会返回"，不是"等多久"。
+	c.cfg.RequestTimeout = 150 * time.Millisecond
+
+	errCh := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := c.CallTool(context.Background(), "codeseek_search", map[string]interface{}{"payload": "x"})
+		errCh <- err
+	}()
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(5 * time.Second):
+		// 走到这里就是"per-request deadline 不见了"：调用方的 ctx 没有 deadline，
+		// 于是这条请求会永远转圈。等下去没有意义，直接把诊断说完整。
+		t.Fatal("CallTool 在 5s 内没有返回 —— 请求自己的 deadline 没生效，而调用方没给 deadline")
+	}
+	if err == nil {
+		t.Fatal("服务器永不回包时 CallTool 却成功了")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want errors.Is(context.DeadlineExceeded) —— 该由请求自己的 deadline 判死", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("耗时 %v, want 在 150ms 那一侧结束（调用方没给 deadline）", elapsed)
+	}
+}
+
+// 调用方给得更短时听调用方的。这一臂守的是另一种写错：把 deadline 做成
+// `context.WithTimeout(context.Background(), timeout)` 会整条丢掉调用方的取消链
+// —— 表现是"取消了但没人认为被取消"（AGENTS.md §11 坑 17 同族）。
+func TestCallToolKeepsCallerDeadline(t *testing.T) {
+	c := NewMCPClient(MCPClientConfig{BinaryPath: os.Args[0]})
+	startFakeClientWithEnv(t, c, "hang")
+	defer c.ForceShutdown()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := c.CallTool(ctx, "codeseek_search", nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want 调用方的 deadline 判死", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("耗时 %v, want 在调用方的 100ms 一侧结束，而不是等客户端默认的 30s —— 说明请求的 deadline 顶掉了调用方的 ctx", elapsed)
+	}
+}
+
+// IsAlive 的读侧只能碰原子位。原来它还会读 `cmd.ProcessState`，而那个字段由
+// `cmd.Wait()` 写（就在 Shutdown/ForceShutdown 的收尾里）：一条线程刚越过
+// alive 的检查、还没读到那个指针时，收尾线程可以已经把 Wait 写完了 ——
+// 拿到"非空但还没填完"的 *os.ProcessState 也不是不可能。
+//
+// 读侧要覆盖整个收尾窗口：8 条线程从 ForceShutdown 之前一直查到它返回，
+// 窗口里每一次查活都是一次对旧实现的竞速。
+func TestIsAliveStaysRaceFreeWhileShutdownReapsChild(t *testing.T) {
+	c := startFakeClient(t, "plain")
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				_ = c.IsAlive()
+			}
+		}()
+	}
+
+	c.ForceShutdown()
+	close(done)
+	wg.Wait()
+
+	if c.IsAlive() {
+		t.Error("ForceShutdown 之后 IsAlive() = true")
+	}
+}
+
 // 子进程中途消失时，在飞调用必须被解栈（返回错误而不是永久挂起），
 // 且客户端从此报告"不存活"。
 func TestMCPClient_ProcessDeathReleasesPendingCalls(t *testing.T) {
@@ -454,8 +548,14 @@ func TestMCPClient_ForceShutdownKillsSubprocess(t *testing.T) {
 
 func TestNewMCPClientDefaults(t *testing.T) {
 	c := NewMCPClient(MCPClientConfig{BinaryPath: "/nope"})
-	if c.cfg.RequestTimeout != 0 {
-		t.Errorf("cfg.RequestTimeout = %v, want 保持调用方给的零值（默认 30s 只用于内部等待）", c.cfg.RequestTimeout)
+	// 两份配置模板都承诺 "request_timeout ≤0 → 30"，兑现点就在构造函数里：
+	// 兜底留在调用方（以前 app.go 抄了一份 30，而客户端从不读它）等于
+	// "配置写了但没人读"（AGENTS.md §11 坑 25）。
+	if c.cfg.RequestTimeout != defaultMCPRequestTimeout {
+		t.Errorf("cfg.RequestTimeout = %v, want 兜底 %v", c.cfg.RequestTimeout, defaultMCPRequestTimeout)
+	}
+	if got := NewMCPClient(MCPClientConfig{BinaryPath: "/nope", RequestTimeout: 250 * time.Millisecond}); got.cfg.RequestTimeout != 250*time.Millisecond {
+		t.Errorf("调用方给了 250ms 却被改成 %v, want 保持 250ms", got.cfg.RequestTimeout)
 	}
 	if c.IsReady() {
 		t.Error("新建客户端 IsReady() = true")

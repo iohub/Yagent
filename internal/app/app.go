@@ -196,15 +196,15 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		if codeseekBinaryPath != "" {
 			// 解析 MCP 参数，默认使用 ["serve", "--mcp"]
 			mcpArgs := []string{"serve", "--mcp"}
-			requestTimeout := 30
+			requestTimeout := 0
 			if ca.config != nil {
 				if len(ca.config.CodeSeek.MCPArgs) > 0 {
 					mcpArgs = ca.config.CodeSeek.MCPArgs
 				}
-				if ca.config.CodeSeek.RequestTimeout > 0 {
-					requestTimeout = ca.config.CodeSeek.RequestTimeout
-				}
+				requestTimeout = ca.config.CodeSeek.RequestTimeout
 			}
+			// 上限的兜底由 MCP 客户端自己做（<=0 → 30s），这里不再抄一份默认值 ——
+			// 两处各写一个 30 就是一件事的两种真相，模板那句 "≤0 → 30" 由客户端兑现。
 
 			codeSeekMCP = mcp.NewMCPClient(mcp.MCPClientConfig{
 				BinaryPath:     codeseekBinaryPath,

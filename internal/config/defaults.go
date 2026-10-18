@@ -29,6 +29,10 @@ var DefaultMaxSteps = struct {
 // 可动态修改全局值；无全局值时各调用方回落到本常量。
 const DefaultLLMCallTimeout = 10 * time.Minute
 
+// DefaultMaxInFlightRequests 是同时在飞的 provider 调用上限的程序保证默认值。
+// 只在 [llm] max_in_flight_requests 没写时生效；显式写 0 = 不限。
+const DefaultMaxInFlightRequests = 8
+
 // DefaultLLMConfig 返回默认的 LLM 推理兜底配置
 func DefaultLLMConfig() *LLMConfig {
 	return &LLMConfig{
@@ -39,6 +43,7 @@ func DefaultLLMConfig() *LLMConfig {
 		CircuitBreakerResetTimeout: 0,
 		EnableFallback:             false,
 		FallbackMaxRetries:         2,
+		MaxInFlightRequests:        DefaultMaxInFlightRequests,
 	}
 }
 

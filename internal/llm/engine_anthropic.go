@@ -159,6 +159,14 @@ func (e *AnthropicEngine) CloseIdleConnections() {
 
 // GenerateContent implements Engine.
 func (e *AnthropicEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
+	// 与 OpenAI 引擎共用同一个进程级闸门：429 记在账号上，不记在某个引擎指针上。
+	// 等格子的时间在超时之前（inflight.go）。
+	release, err := acquireInFlight(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	// Apply timeout if configured.
 	// 取值优先级：全局运行时值（TUI 模型设置面板可动态修改）> 构造期局部配置。
 	// 全局值未初始化时为 0，回落 e.cfg.Timeout，保证既有显式配置行为不变。

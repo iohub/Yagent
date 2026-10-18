@@ -1,6 +1,9 @@
 # 结构化并发：supervisor + 委派隔离 + 落盘管道 设计方案 v1
 
-> 状态：待实施。分支建议 `feat-structured-concurrency`（当前 `feat-blueprint-v2` 上的蓝图 R2–R6 与本方案无耦合）。
+> 状态：**C1–C6 全部落地**（C1–C5 已提交为 `fbe285f`，C6 在工作树未提交），分支 `feat-structured-concurrency`。
+> §8.2/§8.3/§8.4/§9/§10/§11.2.1/§11.3/§12 都改成了"实际落地的形状"，与原稿不同处已点名理由；
+> 刻意没做的项（`ai_chunk` 合批、日志 ctx 化、`git_checkpoint` 锁外子进程、单任务 writer 锁范围）
+> 各自写明为什么。
 > 所有行号核对时间 2026-10-17，HEAD `5b26228`。带 ✓ 的行号是本文作者逐条打开文件看过的；
 > 带 † 的来自探查阶段，实施时必须先复核（见附录 A）。
 
@@ -453,11 +456,26 @@ teach 回执、不执行副作用，取回后下一步才真正并发，所以�
 `TestAgentSurfacesGolden` 零漂移（生产工具面一个字没变）—— 这条改动删的是**没人读的第二份真相**。
 
 
-### 8.2 委派并发上限
+### 8.2 委派并发上限（**C6-c 已落地，三处与原稿不同**）
 
 Director 侧准入已经正确（`:987-993` ✓，`delegate_repo`/`delegate_chat` 是只读 → 进并行段）。要补的只有**上限与真值**：
 
-- `max_parallel_delegations` 信号量（默认 2，0=关）包在 `delegateTo` 外面，走同一条 `toolbatch.Run` 的语义：**已取消的元素照样要产出 tool 结果**（`toolbatch/run.go:66-78` †），避免"缺一条 tool message"导致 provider 400（AGENTS.md §11 坑 5 的配对不变量）。
+- **池子的归属与原稿不同，而且是刻意的**：信号量挂在**这一轮 Run 的 `directorToolRunner`** 上
+  （`newDirectorToolRunner` 是唯一构造方式），不是进程级、也不是 `DirectorAgent` 字段。
+  理由：嵌套委派（Repo→`delegate_devops`、Coding→`delegate_browser`）用的是**自己那一轮**的池，
+  于是"父占一格、子在同一格里排队"这种死锁形状从结构上不存在 —— 进程级池 + 上限 1 就会死锁。
+  取格子的位置在 `Call` 里**建这轮 ctx 链之前**：排队不是子 Agent 的活动，不该算进 idle/total 看门狗。
+- **取值约定与原稿不同**：原稿写"0 = 串行"，落地是 **1 = 串行**、≤0 = 没配（默认 2）、>8 钳到 8 ——
+  与已经存在的 `max_parallel_readonly_tools` 同一套约定。两个键各有各的"0 的含义"会变成
+  第二份真相，所以选了邻居的那一套；用户写 0 得到的是默认 2 而不是串行，模板里写明了这一点。
+- 判据只有一处：`NormalizeMaxParallelDelegations` 与 `NormalizeMaxParallelReadOnlyTools`
+  各自内含 `config.ConcurrencyEnabled()`（`YAGENT_CONCURRENCY=0` 一键把 G1+G2 一起退回串行）。
+  急停判据写在归一化函数里而不是各调用点，是因为两个循环都只经这两个函数取值 ——
+  写在调用方就会有一处忘，而漏掉那处的表现只是"还是并发"。
+- **配对不变量**：排在池子上的那一发在 ctx 结束后必须**仍然产出一条 tool 结果**
+  （`acquireDelegateSlot` 不排队也不做释放接收，与 `toolbatch.Run` 同一套纪律）。
+  这条由 `TestQueuedDelegationYieldsToCancelAndKeepsPairing` 钉：判据是"子 Agent 被执行几次"
+  而不是墙钟 —— toolbatch 会 join 整批，占着格子的不响应取消时两臂墙钟一样长。
 - 便签命名：**初稿这条是错的，落地时证伪**。`GenerateNoteFilename()`（`blackboard/board.go:121` ✓）
   用的是"UTC 秒级时间戳 + 2 字节随机后缀"，两次并发同名委派本来就不可能撞名。
   所以这里**不加**委派坐标（改了反而会让 `/resume` 认不出旧便签），只补一条契约测试：
@@ -479,15 +497,29 @@ Director 侧准入已经正确（`:987-993` ✓，`delegate_repo`/`delegate_chat
   写成拷走 dispatcher 指针，绑定后的事件会静默发往旧 dispatcher）。
   绑定不进取 `EventBus` 接口，用能力断言：没绑定的后果只是少一个坐标，不该逼测试 mock 造假方法。
 
-### 8.4 provider 侧限流
+### 8.4 provider 侧限流（**C6-a 已落地，两处与原稿不同**）
 
 并行一开，同一引擎指针会被并发 `GenerateContent`（今天已经可能：`deepthinking`/`design`/`micro_agent` 都是只读、可并发，† 由 `toolbatch` 起 goroutine）。加一个**全局进程级**信号量：
 
-```go
-llm.WithInFlightLimit(n int)   // [llm] max_in_flight_requests，默认 8，0=不限
-```
+落地形状（`internal/llm/inflight.go`）：
 
-放在两个引擎的 `GenerateContent` 入口（`engine_openai.go` / `engine_anthropic.go` 的公共前置），理由：429 是 provider 全局属性，不是每引擎属性。transport 今天只有 `MaxIdleConns:10 / MaxIdleConnsPerHost:5` †（那是连接复用，不是并发闸门）。
+- API 叫 `SetInFlightLimit(n int)` 而不是原稿的 `WithInFlightLimit` —— 它不是构造选项而是
+  **进程级装配项**，与 `config.SetGlobalLLMTimeout` 同一类；调用点是 `llm.LoadConfig`
+  与 `llm.NewClient` 两处（与超时、deferred 工具同一个装配带），键是
+  `[llm] max_in_flight_requests`，默认 8，**显式 0 = 不限**。
+- 挂在两个引擎的 `GenerateContent` 入口，且**在 timeout 之前**：等一个格子不是"provider 慢"，
+  把它算进 `llm.timeout` 会让一次正常排队在发出去之前就被判死。
+- 重试与流式在格子内完成（`retryChatCompletion` / `generateStreaming` 都在这一次调用里），
+  所以退避期间不会额外放行请求 —— 这正是"一次逻辑请求占一格"的含义。
+- `SetInFlightLimit` 对**同一个值幂等**：运行中换 provider 会重建引擎并再调一次，
+  若每次都新建 sem，那一瞬间在飞的请求就都不在旧闸门上了（表现为一次短暂的超限）。
+  这条由 `TestSetInFlightLimitSameValueDoesNotResetGate` 钉住。
+- 排队中的调用响应 ctx：`TestQueuedRequestHonoursContextWithoutTakingSlot` 断错误文本必须
+  点名"在等在飞格子"，否则它与"发出去之后才被打断"长得一模一样，而后者的代价是一次真实请求。
+
+transport 的 `MaxIdleConns:10 / MaxIdleConnsPerHost:5` 是连接复用，不是并发闸门 —— 原稿这句成立，
+没有改 transport。
+
 
 ### 8.6 C5 里刻意没做的两件，以及为什么（原 §8.5 日志 ctx 化并入 ②）
 
@@ -514,40 +546,62 @@ llm.WithInFlightLimit(n int)   // [llm] max_in_flight_requests，默认 8，0=�
 
 ## 9. 正确性修复清单（都随 L1–L4 落地，不单独立项）
 
-| 问题 | 位置 | 修法 | 钉住它的测试 |
-|------|------|------|-------------|
-| 锁内文件写 + 索引 parse | `datamanager/data_manager.go:122-129` ✓ | 序列化在锁内、IO 与 index 更新在锁外；或整条 flush 走 supervisor 的 worker | `TestFlushDoesNotHoldWriterLockAcrossIO`（锁外起一个会阻塞的假写，断言第二个任务不被顶住） |
-| `FlushAll` 持全局锁跨所有任务 IO | `:252-268` † | 快照 writer 状态 → 释放 `dm.mu` → 逐任务 drain | `TestFlushAllScalesLinearlyNotGloballySerialized` |
-| 检查点锁内跑 git 子进程 | `git_checkpoint.go:137-139` ✓ | 子进程在锁外跑，只有状态落库在锁内 | `TestGitCheckpointSubprocessNotUnderLock` |
-| `tm.lock` 跨 `Socket.Write` | `task_manager.go:88-96,124-126` ✓ | 锁内拷贝要发的 `TaskUpdate`，锁外广播 | `TestSlowSocketDoesNotBlockTaskManager`（假 session 阻塞 200ms，断言另一任务的状态更新不排队） |
-| Task 永不移除 | `task_manager.go` 无 `RemoveTask` ✓ | 加 `RemoveTask(taskID)`，由 `ExecuteTask` 的 defer 在 TTL 之后调；或 `time.Time` 过期清扫 | `TestCompletedTaskIsEvicted` |
-| MCP 请求无 deadline | `mcp/client.go:55-66` ✓ | 把 `timeout` 放进结构体，`CallTool` 用 `context.WithTimeout(ctx, c.requestTimeout)` | `TestCallToolHonoursRequestTimeout`（假服务器永不回包） |
-| `IsAlive` 无锁读 ProcessState | `:214` † | 与 `cmd.Wait()` 同锁，或改成 `alive atomic.Bool` | `TestIsAliveRaceFree`（-race） |
-| breaker half-open 惊群 | `circuit_breaker.go:38-48` ✓ | half-open 只放**一个**探针（CAS 布尔），其余仍拒绝 | `TestHalfOpenAdmitsExactlyOneProbe` |
-| publisher 无锁换 dispatcher | `message_publisher.go:19-26` ✓ | `dispatcher atomic.Pointer[MessageDispatcher]` | `TestPublisherSwapUnderLoad`（-race 下的 e2e） |
-| rollout 计数两套同步 | `rollout_writer.go:256,366` ✓ | 统一到 `mu`（§7.1） | `TestRolloutCountersUnderConcurrency`（-race） |
-| consolidation close 后 Submit panic | `consolidation_worker.go:91-99` † | `Submit` 走 `supervise.From(ctx)`，closed 后返回 error 而非 panic；drop 策略改成有界阻塞 | `TestSubmitAfterStopReturnsError` |
-| cancel 被覆盖不释放 | `tui_update_tasks.go:1026-1028` † | 赋新值前调旧 cancel；根域 Drain 兜底 | `TestSupersededTaskIsCancelled` |
-| `ws.mu` 与 `Memory` 裸读 | `tui_tasks.go:194-205` † + `memory.go:62-65` ✓ | D6 的锁 + `Snapshot()` | `TestPeriodicSaveReadsSnapshot`（-race） |
-| 12 站点无 recover | R8 | 全部走 `Group.Go`（§5.1 内含 recover） | `TestSuperviseRecoversPanickedGoroutine` |
+| 问题 | 位置 | 修法 | 状态与实测 |
+|------|------|------|-----------|
+| 锁内文件写 + 索引 parse（**单任务 writer**） | `datamanager/data_manager.go` ✓ | —— | **刻意不做**。`ws.mu` 是每任务一把，跨 IO 只挡住"同一个任务的第二次写"，而它本来就该串行（增量游标 `lastFlushedCount` 与 pending 必须同代）。真正的跨任务停顿在下一行的 `FlushAll`。 |
+| `FlushAll` 持全局锁跨所有任务 IO | `data_manager.go` ✓ | 拿一份 writer 快照 → 释放 `dm.mu` → 逐任务刷；**首错不再提前 return** | **C6-d 已落地**。`TestFlushAllReleasesManagerLockBeforeIO`（seam `flushHook` 卡住第一条的写，断言别的任务连登记都进不来 → 现在进得来）+ `TestFlushAllKeepsGoingAfterFirstFailure`。变异：把 `dm.mu.Unlock()` 挪回循环之后 → 2.00s 红并原话报"压在 IO 底下" ✅ |
+| 检查点锁内跑 git 子进程 | `git_checkpoint.go:137-139` ✓ | 子进程在锁外跑 | **未做，有理由**：`g.mu` 是 Coding 那一份 manager 的锁，而写类委派按 §14.1 保持串行 —— 今天不存在两个持有人在争它。把它拆开要在锁外做分支切换，风险大于收益。留作"哪天放开 delegate_coding"的前置项。 |
+| `tm.lock` 跨 `Socket.Write` / `Broadcast` | `task_manager.go` ✓ | 锁内装配字节 + 锁外投递（`taskAction.deliver`） | **C6-d 已落地**，覆盖 6 个点（三个 setter、pause/continue/cancel）。seam：`writeSession` / `melodyBroadcast`。测试 `TestSlowSocketDoesNotBlockTaskManager` + `TestPauseBroadcastDoesNotHoldTaskManagerLock`；探针必须用**没有 socket** 的任务（投递是 Unlock 后同步做的，带 socket 的 setter 会停在它自己的慢客户端上 —— 那不是别人的锁）。变异：把写挪回 `prepareTaskUpdate` 里 → 两条都 2.00s 红 ✅ |
+| Task 永不移除 | `task_manager.go` 无 `RemoveTask` ✓ | 加 `RemoveTask` + 在 `CreateTask` 时清扫过期的**终态**任务（`paused`/`running` 一律不动） | **C6-d 已落地**。不额外起定时 goroutine：没人建新任务时没人需要这份内存。测试 `TestFinishedTaskIsEvictedAfterRetention`（seam `taskRetention`，四臂：过期终态清掉、没过期/运行中/暂停中保留）+ `TestRemoveTaskDropsTheEntry`。变异：去掉 `evictLocked` 调用 → 点名"old-finished 还在表里" ✅ |
+| MCP 请求无 deadline | `mcp/client.go` ✓ | `NewMCPClient` 兜底 `<=0 → 30s`（模板那句 "≤0 → 30" 第一次真的兑现），`doRequest` 用 `context.WithTimeout(ctx, c.cfg.RequestTimeout)`，`app.go` 不再自己抄一份 30 | **C6-b 已落地**。`TestCallToolHonoursRequestTimeout`（假服务器 `hang` 模式永不回包 + 调用方**没有** deadline，5s 内必返）+ `TestCallToolKeepsCallerDeadline`。变异：删掉 doRequest 的 deadline → 5.01s 红并报"请求自己的 deadline 没生效" ✅；把 deadline 做成 `WithTimeout(context.Background(), …)` → 100ms 那一臂等满 30.01s 红 ✅ |
+| `IsAlive` 无锁读 ProcessState | `mcp/client.go` ✓ | 读侧只碰 `alive`/`stopped` 两个原子位（`alive` 由 readLoop 的 EOF 兜底，语义不变） | **C6-b 已落地**。`TestIsAliveStaysRaceFreeWhileShutdownReapsChild`：8 条线程从 ForceShutdown 之前一直查到它返回，覆盖整个 Wait 落笔的窗口。旧实现下 **-race 5/5 命中 DATA RACE**，改后 5/5 绿 ✅（这一项没有可观察的行为差异 —— 两个实现答的一样的问题，所以判据只能是竞态本身） |
+| breaker half-open 惊群 | `circuit_breaker.go` ✓ | 只放**一个**探针（`probeAt` 记账），试探回报即释放；探针没回来时过 `resetTimeout` 重新放行一次 | **C6-d 已落地**，且是一次**有意的语义变更**：`IsCircuitBreakerOpen() == !Allow()` —— 查询本身就是试探的领取。生产安全的前提是 Director 每一步"查询→调用→回报"都在同一次迭代里完成（`planner_run.go:198/319/324`）。旧测试 `TestCircuitBreaker_HalfOpenAdmitsEveryRequest` 的注释就要求"改行为时必须连同它一起改写"，已改写为 `TestCircuitBreaker_HalfOpenAdmitsExactlyOneProbe` + `_StuckProbeExpires` + `TestRecoveryHandler_IsOpenQueryIsTheTrialRequest` 补的第二问。变异：`case "half-open": return true` → 4 条红 ✅ |
+| publisher 无锁换 dispatcher | `message_publisher.go` ✓ | `dispatcher atomic.Pointer[MessageDispatcher]` | **C5 已提前落地** |
+| rollout 计数两套同步 | `rollout_writer.go` ✓ | 统一到 `mu`（§7.1） | **C2 已落地** |
+| consolidation close 后 Submit panic | `consolidation_worker.go` ✓ | `sendMu` + `stopped` 旗标：立旗与 `close(ch)` 同在 sendMu 下，Submit 先查旗标再**非阻塞**发送 | **C6-d 已落地**（修法与原稿不同：不把 Submit 改走 supervise，也不改成有界阻塞 —— 队列语义"满了就丢"是有意的）。`TestConsolidationWorker_SubmitAfterStopIsRejectedNotPanicked` + `_ConcurrentSubmitDuringStopNeverPanics`。变异：去掉守卫 → 16/16 次 `send on closed channel` panic 被抓到并计红 ✅ |
+| cancel 被覆盖不释放 | `tui_update_tasks.go` ✓ | 赋新值前先调用旧 cancel | **C6-d 已落地**。`TestSupersededTaskReleasesOldContext`（旧 ctx 必须已取消 + 新 ctx 必须是活的）。变异：删掉那次调用 → 红并报"这份 ctx 永远不会释放" ✅ |
+| `ws.mu` 与 `Memory` 裸读 | `tui_tasks.go` + `memory.go` ✓ | D6 的锁 + `Snapshot()` | **C4 已落地** |
+| 12 站点无 recover | R8 | 全部走 `Group.Go`（§5.1 内含 recover） | **C1 已落地** |
+| 只读工具批与委派并发没有急停开关 | 新增 | `config.ConcurrencyEnabled()`（`YAGENT_CONCURRENCY=0`）唯一判据，写在两个 `Normalize*` 函数里 | **C6-c 已落地**。`TestConcurrencyKillSwitchForcesSerialDelegations` / `_ToolBatches` / `TestKillSwitchReachesDirectorAgentPool`。变异：两处 `if !config.ConcurrencyEnabled()` 分支置否 → 三条红 ✅ |
 
 ---
 
-## 10. 配置面（只有两个新键）
+## 10. 配置面（两个新键，**C6 已落地**）
 
 ```toml
 [agent]
-max_parallel_readonly_tools = 4   # 已存在；R1 修完才真的到达六个子 Agent
-max_parallel_delegations     = 2  # 新。0 = 串行（等价于今天的行为）
+max_parallel_readonly_tools = 4   # 已存在；R1（C3）修完才真的到达六个子 Agent
+max_parallel_delegations     = 2  # 新。1 = 串行；≤0 = 取默认 2；>8 钳到 8
 
 [llm]
-max_in_flight_requests = 8        # 新。0 = 不限
+max_in_flight_requests = 8        # 新。**显式 0 = 不限**；没写 = 8；负数 = 没写
 ```
 
-- 每个新键都必须有一个**"改这个值就失败"**的测试（AGENTS.md §11 坑 25 的承诺）：`max_parallel_delegations=1` 时两条并发委派必须串行到可测出墙钟差；`max_in_flight_requests=1` 时两个并发 LLM 调用不能同时在飞。
-- kill-switch：环境变量 `YAGENT_CONCURRENCY=0` → `config.ConcurrencyEnabled()` 是**唯一判据**，被 G1（工具批）、G2（委派并发）、L4（合批）三处共用。照 `blackboard.Enabled()` / `config.ResumeEnabled()` 的先例：关掉是连写都不写，不留半套开关。
+- 每个新键都有一个**"改这个值就失败"**的测试：
+  `max_parallel_delegations` → `TestDelegatePoolCapsConcurrentDelegations`（1/2/4 三臂，
+  后两臂是对照臂，且串行臂同时断墙钟 ≥N×delay）；
+  `max_in_flight_requests` → `TestInFlightLimitCapsRequestsSeenByProvider`（1/2/0 三臂，
+  判据是假服务端见过的峰值并发，不是计数器读数）。
+- 两个键的"0"含义不同，而且这是**故意的**：`max_in_flight_requests` 的 0 有语义（不限流），
+  所以它必须靠**键的存在性**区分"没写"（坑 26），实现走 `md.IsDefined("llm", …)`；
+  `max_parallel_delegations` 则把"串行"交给 **1**（与邻居 `max_parallel_readonly_tools` 同一套约定），
+  于是 ≤0 一律"取默认"，不需要存在性判定。原稿写的"0 = 串行"落地时改成了这条 ——
+  两个键各有各的 0 语义就是第二份真相，而邻居那一套已经存在。
+- 键走到引擎的整条链都有测试：`TestLoadConfigAppliesInFlightLimit`（配置 → 进程级闸门）、
+  `TestDirectorAgentTakesDelegationCapFromConfig`（配置 → `NewDirectorAgent` → 池子容量）。
+  后者是变异逼出来的 —— 把构造期那句赋值写成常量，红的是它而不是并发行为测试
+  （struct-literal 构造的测试自己填字段，看不见装配线断了）。
+- kill-switch：环境变量 `YAGENT_CONCURRENCY=0` → `config.ConcurrencyEnabled()` 是**唯一判据**，
+  被 G1（工具批）与 G2（委派池）共用，且写在两个 `Normalize*` 函数**内部**而不是调用点。
+  照 `blackboard.Enabled()` / `config.ResumeEnabled()` 的先例只认精确的 `"0"`
+  （`TestConcurrencyEnabledKillSwitch` 把 `"false"`/`"00"`/空串都钉成"没关"）。
+  启动时 `validate()` 会 `slog.Warn` 播一次："并发已被急停开关关掉" —— 关掉的表现只是变慢，
+  没人说出来的话下次排查要从"为什么委派不并行"绕一大圈。
 - rollout 队列的深度/批量/flush 间隔**不设键**（D8）。
 - `[resume]` / `[blackboard]` 的键语义不变；注意 rollout 转异步后，`[resume]` 依赖的"检查点前 drain"是硬保证而非配置选项。
+- 顺手兑现的一条历史承诺：两份模板都写着 `[codeseek] request_timeout = 30 # seconds (≤0 → 30)`，
+  而 `RequestTimeout` 从来没人读（坑 25 的教科书形状）。C6-b 之后它真的成为每条 JSON-RPC
+  请求自己的 deadline，兜底落在 `mcp.NewMCPClient`（唯一一处），`app.go` 那份手抄的 30 已删。
 
 ---
 
@@ -601,19 +655,50 @@ M7 `writeEnvelope` 绕过队列直写文件 → 红 `TestRolloutQueuePreservesOr
 | M-C5a | `streamSlotKey` 忽略 `DelegationID`（退回只按 Agent 名分槽） | **红**：`第一条流的内容 = ""`、`第二条 = "AAABBBAAABBB"` —— 复现的正是当年那件事 ✅ |
 | M-C5b | `ForDelegation` 绑定了但没换出去（`_ = scoped.ForDelegation(id)`） | **红**：`7/7 条事件没有委派坐标（model_info/llm_call_start/ai_stream_start/ai_stream_end/llm_call_end/ai_response/tool_call_start）` ✅ —— 一条测试同时看住"漏一个点"和"整条链都没绑" |
 | M-C5c | `ForDelegation` 拷走 dispatcher 而不是共享 core | **红** `TestForDelegationSharesDispatcherWithParent`：任务换 dispatcher 后，已绑定的视图仍发往旧的 ⇒ 事件静默消失 ✅ |
+| M-C6a1 | `acquireInFlight` 直接返回空释放（闸门变成 no-op） | **红 4 条**：`假服务端见过的峰值并发 = 2, want 1（上限 1）`、`两个引擎合计的峰值并发 = 2, want 1`、排队那一臂报"err 里没有 in-flight —— 它其实是发出去之后才被打断的"、`重复设置同一个上限把闸门清空了` ✅ |
+| M-C6a2 | 删掉装配点那句 `SetInFlightLimit(cfg.LLM.MaxInFlightRequests)` | **红** `配置 "max_in_flight_requests = 3" → InFlightLimit() = 0, want 3` —— 这就是坑 25 的"解析了但没人读" ✅ |
+| M-C6a3 | 把存在性判定换成 `if c.LLM.MaxInFlightRequests <= 0 { 默认 }` | **红** `line "max_in_flight_requests = 0" → 8, want 0`（坑 26 命中） ✅ |
+| M-C6a4 | 只给 OpenAI 引擎挂闸门（Anthropic 侧删掉那 6 行） | **红** 跨引擎臂 `两个引擎合计的峰值并发 = 2, want 1` —— "漏接一个引擎"这种错法测得出来 ✅ |
+| M-C6b1 | `IsAlive` 改回读 `cmd.ProcessState` | **-race 5/5 命中 DATA RACE**（同一个测试跑 5 次，每次都报 `WARNING: DATA RACE` 并 FAIL；改后 5/5 绿） ✅ |
+| M-C6b2 | 删掉 `doRequest` 里的 per-request deadline | **红** `CallTool 在 5s 内没有返回 —— 请求自己的 deadline 没生效，而调用方没给 deadline`（5.01s 就判，不靠包级超时） ✅ |
+| M-C6b3 | deadline 做成 `WithTimeout(context.Background(), …)`（丢掉调用方 ctx） | **红** `耗时 30.002319625s, want 在调用方的 100ms 一侧结束` ✅ —— 两臂各钉一个方向 |
+| M-C6c1 | `acquireDelegateSlot` 无条件放行（池子失效） | **红 3 条**：`并发峰值 = 3, want 1`、`串行臂墙钟 92ms < 240ms`、`子 Agent 被执行 2 次, want 1` ✅ |
+| M-C6c2 | 两个 `Normalize*` 里的急停分支置否 | **红 3 条**：`急停开关之后并发峰值 = 2, want 1`、`只读批并行度 = 4, want 1`、`池子容量 = 4, want 1` ✅ |
+| M-C6c3 | 构造期把配置值换成硬编码 0（装配线断掉） | **红 3 臂**：`配置 1 → 池子容量 = 2, want 1`、`配置 3 → 2, want 3`、`配置 99 → 2, want 8` ✅ |
+| M-C6d1 | 熔断 half-open 改回 `return true` | **红 4 条**：`第 2 个调用者也通过了 half-open 闸门 —— 惊群回来了`、`探针还在飞时第二个调用者不该通过`、`second Allow() in half-open = true`、Director 侧 `第二次查询又拿到一次试探权` ✅ |
+| M-C6d2 | 把 `writeSession` 调用挪回锁内 | **红 2 条**（各 2.00s）：`一条卡住的 WebSocket 写把 TaskManager 顶住了`、`暂停的投递把锁压住了` ✅ |
+| M-C6d3 | `FlushAll` 恢复全程持 `dm.mu` | **红** `FlushAll 把 dm.mu 压在 IO 底下 —— 别的任务连登记都进不来`（2.00s）；同一变异下第二条测试直接把包拖到超时 ✅ |
+| M-C6d4 | 去掉 `Submit` 的 sendMu/stopped 守卫 | **红 2 条**：`Stop 之后 Submit panic: send on closed channel`、`竞速时 panic 了 16 次, want 0` ✅ |
+| M-C6d5 | 覆盖 `CancelFunc` 前不调用旧值 | **红** `被换掉的旧 ctx 还活着 —— 这份 ctx 永远不会释放` ✅ |
+| M-C6d6 | 去掉 `CreateTask` 里的 `evictLocked` | **红** `old-finished 还在表里`、`old-cancelled 还在表里` ✅ |
+
+C6 的 13 条变异里 M-C6b1 是唯一**没有可观察行为差异**的一项（新旧实现回答的是同一个问题），
+所以它的判据只能是 `-race` 本身；这也是为什么 `./internal/mcp/`、`./internal/http/`、
+`./internal/llm/` 都进了 `check_all.sh` 的 `RACE_PKGS`。
 
 每条变异都在工作树的临时副本上做、跑完立刻用 `/tmp` 里的备份复原并 `diff` 确认一致（本仓 memory 记录的规矩：绝不对未 commit 的文件跑 `git checkout` 还原）。
 
 ### 11.3 量化验收（不是"感觉快了"）
 
 - **G1**：一条 4 个只读工具、每个 200ms 的合成 step，墙钟从 ~800ms 降到 ~250ms（串行 kill-switch 下仍 ~800ms，用作对照臂）。
-- **G2**：两条并发 `delegate_repo`（各 mock 3 次 LLM 调用）的墙钟 ≤ 1.15 × 单条。
+  **C3 实测到的形状**：判据不是墙钟而是"并发峰值 ≥2"+ 一条 `max_parallel_readonly_tools=1` 的对照臂
+  （`TestRunAgentLoop_ReadOnlyBatch_ParallelEvidence` / `_SerialKillSwitch`）—— 墙钟在 CI 负载下会假阳/假阴，
+  峰值计数与对照臂一起才说明"是闸门在管，不是计量器自己的毛病"。
+- **G2**：**C6-c 实测**，同 G1 的口径：三臂 `TestDelegatePoolCapsConcurrentDelegations`
+  （上限 1 → 峰值 1 **且**墙钟 ≥N×delay；上限 2 → 峰值 2；上限 4 而只有 3 发 → 峰值 3）。
+  原稿那句"两条并发 delegate_repo 的墙钟 ≤ 1.15 × 单条"**没有按那条口径测** ——
+  它需要一个能稳定 sleep 的真实 LLM 往返，而本机负载下比值会漂；
+  换成"峰值 + 串行臂墙钟下界"后同一件事仍然被钉住，且不会因调度抖动假红。
 - **G3（C2 实测，Apple M1 Pro，`-benchtime=20000x -count=3`，数字稳定）**：一条 160 字节的 `response_item`，
   热路径成本 **3.0µs（入队）vs 7.1µs（入队+每条刷盘 ≈ 改造前行为）** —— 省 2.4×。
   一个 step 约 3-6 条，所以省下的是 **十几到二十几微秒**：相对一次几百毫秒的 LLM 调用**可以忽略**。
   诚实的结论是：C2 的价值不在墙钟，而在①退出/收尾时有了一次 join（原来 `Close` 不 join，
   "Close 返回了但最后几条还在队列里"是可能状态），②系统调用条数按批折叠，
   ③为 C6 放量后"多路并发一起写"预留了单写者顺序。**不要把这条改动当成性能优化来验收。**
+- **C6 自身的墙钟成本（诚实记录）**：`internal/agents` 从 §8.3 记录的 ~10.5s 涨到 ~15s，
+  其中新测试自己负责的部分约 1s（三臂 delay 80ms + 取消臂 300ms，全部走 sleep 而不是等 timer）；
+  其余增量来自 C1–C5 已有的并发用例在 `-count=1` 下的正常波动。
+  `RACE=true` 的那批包（mcp/http/llm/datamanager/recovery/agents）都在 3–22s 内完成，没有一条靠 sleep 等出来的长尾。
 - 全仓 `go test ./...` 墙钟不涨（本仓对耗时基线很敏感：AGENTS.md §8.3 记录 26 包约 12s）。
 
 ---
@@ -627,7 +712,7 @@ M7 `writeEnvelope` 绕过队列直写文件 → 红 `TestRolloutQueuePreservesOr
 | C3 | `fix(agents)` | **已落地**（2026-10-17）：判据收成 `toolCallIsParallelizable` 一个函数（两个循环共用）+ 删 `ExecutorConfig.Adapters`/`DirectorAgent.Adapters` 两条第二真相 + 31 处夹具迁 `NewSurfaceFromAdapters` + 真实画像的准入测试 + 串行对照臂；`TestAgentSurfacesGolden` 零漂移 | **G1 在此真正生效**（M1 变异实测红） |
 | C4 | `refactor(agents)` | **已落地**（2026-10-17）：`ConversationMemory.messages` 转为不导出 + `RWMutex`（编译器列出 31 处包外直读，全部改走 `Snapshot/Append/Replace/LastMessage`；JSON 契约用 `MarshalJSON` 保住）+ 单槽交接换成**每次调用的 ctx 载体**（连带删掉 `clearPendingSubAgent` 这个没人读的旋钮）+ `SpawnForDelegation` 五家 + 嵌套 `devopsFor`/`browserFor` + 顺手修掉"类型化 nil 装进 interface 让 not-wired 守卫永不成立"的既有缺陷 | G2 的安全前提就位 |
 | C5 | `feat(messaging,tui,http)` | **部分落地**（2026-10-17）：信封 `Seq`+`DelegationID`（避开生成物）+ 执行侧一次绑定 + TUI 三张槽表按 `agent#delegation` 分（显示名仍用裸名）+ 队列容量收成一个 `NewDefaultMessageDispatcher()`（原先 6 处手写 100，把"默认 1000"压成 1/10）+ `Dropped()`/`WarnDropped()` + publisher dispatcher 换成原子（R12 一项提前）+ 便签 stem 证伪原稿并钉成契约。<br>**未做**：`ai_chunk` 合批、日志 `currentTaskID` 的 ctx 化（见 §8.6） | 观测真值到位；两件未做的都有独立理由 |
-| C6 | `feat(concurrency)` | 打开委派并发上限 + `max_in_flight_requests` + §9 的锁内 IO 与静默失效清单 | 唯一"提速"的提交 |
+| C6 | `feat(concurrency)` | **部分落地**（2026-10-18，同一分支，未提交）：<br>**C6-a** `llm.SetInFlightLimit` + `[llm] max_in_flight_requests`（默认 8，**显式 0 = 不限**，靠键存在性）挂在两个引擎 `GenerateContent` 入口、在 timeout **之前**；<br>**C6-b** MCP 每条请求自己的 deadline（`NewMCPClient` 兜 30s，模板那句 "≤0 → 30" 第一次兑现，`app.go` 那份手抄默认值删掉）+ `IsAlive` 不再读 `cmd.ProcessState`；<br>**C6-c** `[agent] max_parallel_delegations` 池子（**每轮 Run 一条**，1 = 串行）+ `YAGENT_CONCURRENCY=0` 急停（G1/G2 共用一个判据，写在两个 `Normalize*` 里）；<br>**C6-d** §9 表里剩下的六项：`FlushAll` 锁外刷且不再首错即返、`tm.lock` 不再跨 Write/Broadcast、Task 终态过期清扫 + `RemoveTask`、熔断 half-open 单探针、consolidation `Submit` 不再 send-on-closed、TUI 覆盖 cancel 前先调用旧值。<br>**未做**：`git_checkpoint` 锁内子进程（写类委派按 §14.1 仍串行，没有第二个持有人）；单任务 writer 的锁跨 IO（本来就该串行）。13 条变异全部实测过，见 §11.2.1 | 唯一"提速"的提交；两处语义变更（熔断探针、0 的含义）写在 §9/§10 |
 
 C1/C2/C3 之间没有依赖倒置；C6 必须在 C1–C5 之后，因为它才是"放量"。
 

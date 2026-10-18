@@ -137,8 +137,15 @@ func (dm *DataManager) flushWriter(taskID, filePath string, ws *taskWriterState)
 	dm.updateIndexFromFile(taskID, filePath)
 }
 
+// flushHook 是测试用的 seam（与 taskFlushDebounce 同一类）：doFlush 真跑的是文件写，
+// 而这一层要钉的是"锁不许跨着 IO 持有" —— 能把某一次写卡住的钩子是唯一的测法。
+var flushHook func(filePath string)
+
 // doFlush 执行实际的写入操作（调用者需持有 ws.mu 锁）
 func (dm *DataManager) doFlush(filePath string, ws *taskWriterState) error {
+	if flushHook != nil {
+		flushHook(filePath)
+	}
 	if ws.needsFullRewrite {
 		// 全量覆写：打开文件（truncate），写入所有 pending
 		f, err := os.Create(filePath)
@@ -258,27 +265,51 @@ func (dm *DataManager) FlushTaskMemory(taskID string) error {
 	return nil
 }
 
-// FlushAll 刷新所有任务的待写入消息
+// FlushAll 刷新所有任务的待写入消息。
+//
+// dm.mu 只用来拿一份 writer 快照就放手：整段持着它逐任务做文件写 + 索引 parse 的话，
+// 退出时"把最后几条刷干净"会把所有还在写的任务一起顶住 —— 而 dm.mu 是每个任务
+// SaveTaskMemory 都要过的入口（并行委派下就是一整批任务在门外等）。
+// 出错也不提前返回：剩下的任务照样要刷，最后把第一条错误带回去。
 func (dm *DataManager) FlushAll() error {
-	dm.mu.Lock()
-	defer dm.mu.Unlock()
-
-	for taskID, ws := range dm.writers {
-		ws.mu.Lock()
-		if ws.timer != nil {
-			ws.timer.Stop()
-			ws.timer = nil
-		}
-		filePath := filepath.Join(dm.dataDir, taskID+".jsonl")
-		if err := dm.doFlush(filePath, ws); err != nil {
-			ws.mu.Unlock()
-			return err
-		}
-		// 更新索引（flush 后从文件状态同步）
-		dm.updateIndexFromFile(taskID, filePath)
-		ws.mu.Unlock()
+	type entry struct {
+		taskID   string
+		filePath string
+		ws       *taskWriterState
 	}
-	return nil
+
+	dm.mu.Lock()
+	entries := make([]entry, 0, len(dm.writers))
+	for taskID, ws := range dm.writers {
+		entries = append(entries, entry{
+			taskID:   taskID,
+			filePath: filepath.Join(dm.dataDir, taskID+".jsonl"),
+			ws:       ws,
+		})
+	}
+	dm.mu.Unlock()
+
+	var firstErr error
+	for _, e := range entries {
+		e.ws.mu.Lock()
+		if e.ws.timer != nil {
+			e.ws.timer.Stop()
+			e.ws.timer = nil
+		}
+		err := dm.doFlush(e.filePath, e.ws)
+		e.ws.mu.Unlock()
+
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("flush task %s: %w", e.taskID, err)
+			}
+			continue
+		}
+		// 索引更新在 ws.mu 之外：它自己拿 indexMu，把两个锁的先后顺序留给调用方
+		// 决定等于埋一条锁序依赖。
+		dm.updateIndexFromFile(e.taskID, e.filePath)
+	}
+	return firstErr
 }
 
 // LoadTaskMemory 从文件加载任务的memory

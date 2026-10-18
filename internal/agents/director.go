@@ -82,6 +82,10 @@ type DirectorAgent struct {
 
 	maxParallelReadOnlyTools int
 
+	// maxParallelDelegations 是一次 Director 运行里同时可跑几个子 Agent
+	// （[agent] max_parallel_delegations；池子建在每次 Run 的 toolRunner 上）。
+	maxParallelDelegations int
+
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 	thinkLink            *thinklink.Store
 	taskID               string
@@ -191,6 +195,8 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 		delegateTotalTimeout: p.Config.Agent.DelegateTotalTimeout,
 
 		maxParallelReadOnlyTools: NormalizeMaxParallelReadOnlyTools(p.Config.Agent.MaxParallelReadOnlyTools),
+
+		maxParallelDelegations: NormalizeMaxParallelDelegations(p.Config.Agent.MaxParallelDelegations),
 
 		EnhancedCommanderCfg: p.Config.EnhancedCommander,
 
@@ -739,6 +745,20 @@ func toSubAgentMemory(result *AgentResult) *memory.SubAgentMemory {
 type directorToolRunner struct {
 	agent *DirectorAgent
 	state *director.RunState
+	// delegateSem 是**这一轮 Run** 的委派并发池：一次回复里三个 delegate_* 时，
+	// 同时只跑 N 个子 Agent。池子挂在 runner 上而不是 DirectorAgent 上，
+	// 于是嵌套委派（Repo→delegate_devops）用的是自己那一轮的池 ——
+	// "父占一格、子在同一格里排队"这种死锁形状从结构上就不存在。
+	delegateSem chan struct{}
+}
+
+// newDirectorToolRunner 是唯一的构造方式：漏了池子等于漏了 max_parallel_delegations。
+func newDirectorToolRunner(a *DirectorAgent, state *director.RunState) *directorToolRunner {
+	return &directorToolRunner{
+		agent:       a,
+		state:       state,
+		delegateSem: newDelegatePool(NormalizeMaxParallelDelegations(a.maxParallelDelegations)),
+	}
 }
 
 func (r *directorToolRunner) Specs() []llm.ToolDef {
@@ -772,6 +792,17 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 
 	toolTimeout := 120 * time.Second
 	isDelegate := strings.HasPrefix(name, "delegate_")
+	// 委派并发上限（[agent] max_parallel_delegations）。取格子放在**建这轮 ctx 链之前**：
+	// 排队不是子 Agent 的活动，不该算进 idle/total 看门狗，也就不需要在这条早退路上
+	// 补一次 cancel。取不到格子只可能因为 ctx 已经结束 —— 交回 error，planner 会把它
+	// 写成一条 tool 结果，配对不变量照守。
+	if isDelegate {
+		release, ok := acquireDelegateSlot(ctx, r.delegateSem)
+		if !ok {
+			return "", ctx.Err()
+		}
+		defer release()
+	}
 	cancelCtx, cancelCtxCancel := context.WithCancel(ctx)
 	// 载体挂在 cancelCtx 上：它顺着 toolCtx 流进 delegateTo，
 	// 而下面读它的是同一个 goroutine（ad.Call 已经返回）。
@@ -911,7 +942,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		}()
 	}
 
-	toolRunner := &directorToolRunner{agent: a, state: state}
+	toolRunner := newDirectorToolRunner(a, state)
 
 	var recovery *director.RecoveryHandler
 	var metrics *director.MetricsCollector

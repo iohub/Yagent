@@ -339,3 +339,55 @@ func TestTruncateRunes(t *testing.T) {
 		})
 	}
 }
+
+// Stop 之后 Submit 必须回绝而不是 panic：向关闭中的 channel 发送是 panic，
+// 而这条路径挂在正常退出上 —— Yagent.Close 关掉 worker 的同时，某条还在收尾的
+// 委派递上来一条整理请求，进程就被自己的清理代码砸掉。
+func TestConsolidationWorker_SubmitAfterStopIsRejectedNotPanicked(t *testing.T) {
+	worker := NewConsolidationWorker(NewRepoMemoryStore("test-repo", memory.NewSharedMemory(100)), &mockConsolidationEngine{}, nil)
+	worker.Start()
+	worker.Stop()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Stop 之后 Submit panic: %v", r)
+		}
+	}()
+	if worker.Submit(&ConsolidationTask{NewObservations: "x"}) {
+		t.Error("Stop 之后 Submit 仍接受任务, want false —— 队列已经没有消费者了")
+	}
+}
+
+// 真实形状是竞态而不是顺序：提交方与收尾方同时跑。没有那把 sendMu 时
+// "检查过了"与"发送了"之间可以插进 close —— 偶发 panic，且发生在退出路径上最难复现。
+func TestConsolidationWorker_ConcurrentSubmitDuringStopNeverPanics(t *testing.T) {
+	worker := NewConsolidationWorker(NewRepoMemoryStore("test-repo", memory.NewSharedMemory(100)), &mockConsolidationEngine{}, nil)
+	worker.Start()
+
+	var panics atomic.Int64
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					panics.Add(1)
+				}
+			}()
+			for j := 0; j < 50; j++ {
+				worker.Submit(&ConsolidationTask{NewObservations: "x"})
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		worker.Stop()
+	}()
+	wg.Wait()
+
+	if got := panics.Load(); got != 0 {
+		t.Errorf("Submit 与 Stop 竞速时 panic 了 %d 次, want 0", got)
+	}
+}

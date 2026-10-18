@@ -73,7 +73,7 @@ func TestCircuitBreaker_StaysOpenUntilResetTimeoutElapses(t *testing.T) {
 
 // Allow() 本身带状态迁移副作用：IsCircuitBreakerOpen() 就是 !Allow()，
 // 所以"查询闸门"这个动作就是半开期的试探请求。迁移只能发生一次 ——
-// 第二次 Allow() 必须停在 half-open，否则每次轮询都在重新试探。
+// 第二次 Allow() 必须停在 half-open（并因单探针而被拒），否则每次轮询都在重新试探。
 func TestCircuitBreaker_OpenTransitionsToHalfOpenOnce(t *testing.T) {
 	cb := NewCircuitBreaker(1, 10*time.Millisecond)
 	cb.Failure()
@@ -85,11 +85,11 @@ func TestCircuitBreaker_OpenTransitionsToHalfOpenOnce(t *testing.T) {
 	if got := cb.State(); got != "half-open" {
 		t.Fatalf("State() = %q, want half-open", got)
 	}
-	if !cb.Allow() {
-		t.Error("second Allow() in half-open = false, want true")
+	if cb.Allow() {
+		t.Error("second Allow() in half-open = true, want false —— 试探权已经有人拿了")
 	}
 	if got := cb.State(); got != "half-open" {
-		t.Errorf("State() after a second Allow() = %q, want half-open", got)
+		t.Errorf("State() after a second Allow() = %q, want half-open（不得反复重新试探）", got)
 	}
 }
 
@@ -199,18 +199,72 @@ func TestCircuitBreaker_ResetClearsStateAndFailures(t *testing.T) {
 	}
 }
 
-// half-open 不做单探针限流：闸门放开期间所有请求都能通过。
-// 这是当前实现的事实行为（Allow() 的 half-open 分支无条件返回 true）。
-// 若将来改成"只放一个探针"，本用例必须连同注释一起改写，而不是被静默删掉。
-func TestCircuitBreaker_HalfOpenAdmitsEveryRequest(t *testing.T) {
+// half-open 只放**一个**探针。旧实现（`case "half-open": return true`）对每个调用者
+// 都放行，于是 provider 刚恢复的那一刻，所有在飞请求——并发委派下是一整批子 Agent——
+// 同时冲向它，而其中一个失败就把熔断重新打开，等于自己把自己打回去。
+//
+// 这条用例是原 TestCircuitBreaker_HalfOpenAdmitsEveryRequest 的改写（那个注释
+// 就要求"改行为时必须连同本用例一起改写，而不是静默删掉"）。
+func TestCircuitBreaker_HalfOpenAdmitsExactlyOneProbe(t *testing.T) {
 	cb := NewCircuitBreaker(1, 30*time.Second)
 	cb.Failure()
 	cb.SetLastFailure(time.Now().Add(-60 * time.Second))
 
-	for i := 0; i < 8; i++ {
-		if !cb.Allow() {
-			t.Fatalf("Allow() = false on trial %d of a half-open breaker, want true", i+1)
+	if !cb.Allow() {
+		t.Fatal("第一个调用者该拿到试探权")
+	}
+	for i := 1; i < 8; i++ {
+		if cb.Allow() {
+			t.Fatalf("第 %d 个调用者也通过了 half-open 闸门 —— 惊群回来了", i+1)
 		}
+	}
+	if got := cb.State(); got != "half-open" {
+		t.Errorf("State() = %q, want half-open", got)
+	}
+
+	// 试探成功 → 闸门开回 closed，后续调用者照常通过。
+	cb.Success()
+	if !cb.Allow() {
+		t.Error("试探成功后仍拒绝，want Allow() = true")
+	}
+	if got := cb.State(); got != "closed" {
+		t.Errorf("State() = %q, want closed", got)
+	}
+}
+
+// 试探失败 → 重回 open，而不是"探针额度忘了清"导致后续永远进不来。
+func TestCircuitBreaker_HalfOpenTrialFailureReopensAndRejects(t *testing.T) {
+	cb := NewCircuitBreaker(1, 30*time.Second)
+	cb.Failure()
+	cb.SetLastFailure(time.Now().Add(-60 * time.Second))
+
+	if !cb.Allow() {
+		t.Fatal("第一个调用者该拿到试探权")
+	}
+	cb.Failure()
+	if got := cb.State(); got != "open" {
+		t.Errorf("State() = %q, want open", got)
+	}
+	if cb.Allow() {
+		t.Error("刚重开的熔断又放行了")
+	}
+}
+
+// 探针没人回报（调用方死在半路）时不能永久锁死：过了 resetTimeout 重新放行一次。
+func TestCircuitBreaker_StuckProbeExpires(t *testing.T) {
+	cb := NewCircuitBreaker(1, 20*time.Millisecond)
+	cb.Failure()
+	cb.SetLastFailure(time.Now().Add(-time.Hour))
+
+	if !cb.Allow() {
+		t.Fatal("第一个调用者该拿到试探权")
+	}
+	if cb.Allow() {
+		t.Fatal("探针还在飞时第二个调用者不该通过")
+	}
+	time.Sleep(40 * time.Millisecond)
+	if !cb.Allow() {
+		t.Error("探针超时未回报后仍拒绝所有调用 —— 熔断锁死，恢复的机会没了")
 	}
 	if got := cb.State(); got != "half-open" {
 		t.Errorf("State() = %q, want half-open", got)

@@ -86,7 +86,13 @@ var stepRetryBackoffBase = time.Second
 // 新工具只要在实现旁边声明能力，就不用记得再来这里补一条。
 func isSerialTool(name string) bool { return toolspec.IsSerial(name) }
 
+// NormalizeMaxParallelReadOnlyTools 把配置值折成实际并行度。
+// 急停开关（YAGENT_CONCURRENCY=0）在这里生效而不是在调用方：两个循环都只经
+// 这一个函数取值，判据写两处就会有一处忘 —— 而漏掉的那处的表现只是"还是并发"。
 func NormalizeMaxParallelReadOnlyTools(n int) int {
+	if !config.ConcurrencyEnabled() {
+		return 1
+	}
 	switch {
 	case n == 1:
 		return 1
