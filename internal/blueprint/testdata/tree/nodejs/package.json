@@ -1,0 +1,6 @@
+{
+  "name": "tree-node",
+  "main": "index.js",
+  "bin": {"treecli": "cli.js"},
+  "scripts": {"build": "tsc", "test": "vitest"}
+}
