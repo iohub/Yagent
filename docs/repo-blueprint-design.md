@@ -851,7 +851,8 @@ R1 只让 `enable` 有真实读取点（`app.resolveBlueprintRoot`，三种结�
 | 入边渲染成 `<-tui`（一片引用它自己） | 出/入两头共用 `relEdgeName(e.From, e.To)`，入边的对端是 `From` | `TestRenderIndexSkeletonLines` 直接断 `<-app` |
 | 截断行把预算顶穿 | header 先按"不含 `+N` 那行"选行，选完再把这行加回去 | 迭代收敛（omitted 单调不减）；`TestIndexRespectsTokenBudget` 断总量不超 |
 | `Deriver.Run` 不听 `Close` | 只 select `ctx.Done()`，`--prompt` 收尾会挂住 | 加 `quit` 通道；`TestDeriveRequestNeverBlocks` 断 Close 后 Run 退出 |
-| 先 `DeriveOnce` 再 `Run` 会扫两遍 | `Run` 入口无条件扫描，绕过了缓存判据 | 起跑也走 `needsRescan()`（`TestCachedModeInvalidatesOnRepoToken`） |
+| 先 `DeriveOnce` 再 `Run` 会扫两遍 | **Repo 用纯文本交付，写通道因此从未被触发**（实测 10 份 rollout 里 7 份 `plain_text`） | 通道设计没变（§7.2 单一入口），但没人保证 `agent_exit` 真被调用；`repo.prompt.md` 一度只在后文提"optional handoff" | prompt 加 Output Contract + 循环给 Repo 一次收尾提醒（`NoActionRetryLimit=1` + 专用文案）；闸门 `TestE2EPlainTextRepoRunIsNudgedIntoSubmitting`（变异：limit 调回 0 → 不落盘），"零提交"另有一条可区分的 Info 账 |
+| `Run` 入口无条件扫描，绕过了缓存判据 | 起跑也走 `needsRescan()`（`TestCachedModeInvalidatesOnRepoToken`） |
 | 段配额排反 | 排序把"最该丢的"排到前面，`ranked[len-cap:]` 又切了一刀 → 淘汰 40 条留下 5 条 | `TestSectionQuotaEvictsTheRightAtoms`（不只数条数，还断"丢的是 stale/unanchored"） |
 
 ### 21.3 闸门有效性（每条都真做过变异）

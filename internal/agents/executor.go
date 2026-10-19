@@ -49,6 +49,14 @@ type ExecutorConfig struct {
 
 	NoActionRetryLimit int
 
+	// NoActionReminder 覆盖"纯文本回复"那条提醒的文案；空 = 用下面那条通用的。
+	//
+	// 存在的理由：通用文案是写给 Coding 的（"你停在文本上等于任务没被执行"），
+	// 而分析型 Agent 的交付物**就是**那段文本 —— 对它喊"立刻调用工具去探索/编辑/验证"
+	// 会把一次已经完成的分析推回去再做一遍，而真正缺的只是收尾信号 `agent_exit`
+	// （handoff 与 blueprint 都挂在它上面，没有它两者全丢，见 §11 坑 16 / §21）。
+	NoActionReminder string
+
 	EnableContextCompression    bool
 	ContextCompressionThreshold int
 	ToolResultKeepTokens        int
@@ -776,10 +784,13 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 				noActionCount++
 				slog.Warn("LLM returned text-only response, retrying", "agent", cfg.AgentName, "step", i, "no_action_count", noActionCount)
 
-				reminderContent := "SYSTEM REMINDER: You just ended your response without calling any tools, which immediately terminates your run and leaves the task unexecuted. This is unacceptable.\n\n" +
-					"You must immediately invoke a tool to execute the next step of your plan (explore/edit/run/verify); a `<thought>` block alone does not constitute action.\n\n" +
-					"Only call `agent_exit` when the task is truly complete or you are genuinely unable to proceed.\n\n" +
-					"Do not repeat your plan; take immediate action."
+				reminderContent := cfg.NoActionReminder
+				if reminderContent == "" {
+					reminderContent = "SYSTEM REMINDER: You just ended your response without calling any tools, which immediately terminates your run and leaves the task unexecuted. This is unacceptable.\n\n" +
+						"You must immediately invoke a tool to execute the next step of your plan (explore/edit/run/verify); a `<thought>` block alone does not constitute action.\n\n" +
+						"Only call `agent_exit` when the task is truly complete or you are genuinely unable to proceed.\n\n" +
+						"Do not repeat your plan; take immediate action."
+				}
 
 				reminderMsg := llm.Message{
 					Role:    llm.RoleUser,

@@ -16,7 +16,12 @@ import (
 // 没有任何写入点，六个子 Agent 恒为 0 —— 于是"step_retries = 3"的用户以为子 Agent 会重试，
 // 实际一次都不重试，而且没有任何提示。这里钉住它真的下发了。
 
-// flakyEngine 前 failsAllowed 次调用返回错误，之后正常给出文本收尾。
+// flakyEngine 前 failsAllowed 次调用返回错误，之后正常给出**以 agent_exit 收尾**的一轮。
+//
+// 那一句收尾不是可有可无：Repo 现在停在纯文本时会收到一次收尾提醒
+// （repo.go 的 NoActionRetryLimit=1，见 §11 坑 40），于是一次"成功"的文本回复会再多烧一次
+// LLM 调用 —— 那次调用属于提醒机制，不该记在只管 step_retries 的这个用例账上。
+// 提醒本身由 TestPlainTextReminder* 与 TestE2EPlainTextRepoRunIsNudgedIntoSubmitting 钉。
 type flakyEngine struct {
 	failsAllowed int
 	calls        int
@@ -27,7 +32,7 @@ func (e *flakyEngine) GenerateContent(context.Context, []llm.Message, []llm.Tool
 	if e.calls <= e.failsAllowed {
 		return nil, errors.New("simulated upstream 5xx")
 	}
-	return textResponse("调查完成：目录里只有 main.go。"), nil
+	return makeTextThenExitResponse("调查完成：目录里只有 main.go。"), nil
 }
 
 func (e *flakyEngine) Model() string         { return "flaky-mock" }

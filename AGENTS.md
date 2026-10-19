@@ -366,6 +366,11 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
   LLMTimeout / StepRetries / SystemAsHuman / NoActionRetryLimit / MaxParallelReadOnlyTools / OnAgentStart / OnAgentExit`。
   `Surface` 是**唯一**的工具来源（`Adapters` 字段已删除，见 §11 坑 33）：工具声明、按名解析、并发准入都只问它。
   `StepRetries` 现在由各 Agent 从 `[llm] step_retries` 带进来（以前全仓无写入点，六个子 Agent 恒为 0）。
+  纯文本收尾的提醒有**两条文案**：通用那条（"立刻调用工具去 explore/edit/run/verify"，Coding 那类
+  执行型 Agent）与 `cfg.NoActionReminder` 覆盖版（Repo 用收尾契约"Call `agent_exit` now + 填 handoff +
+  本轮打开过的目录补 blueprint[]"）。理由见 §11 坑 41：对以报告为交付物的分析型 Agent，
+  催它"再去执行一轮"是把已经做完的分析重做一遍。`NoActionRetryLimit` 历史上只有 Coding 设（2），
+  Repo 现在设 1。
   `OnStepEnd` 已删除：自动检查点的钩子早没了，它唯一的作用是在 `AutoCheckpoint=true` 时
   每步打一条 deprecation 警告。顺带修好一件事 —— `sub_agent_activity` 这条 rollout 记录以前
   挂在那个钩子里，于是**只有"Coding + git checkpoint"那一条路径**会写步数事实，
@@ -1286,7 +1291,17 @@ plan:
     这与 §11 坑 33（并发谓词扫 `Adapters`、测试自己填 `Adapters`）是同一类失效：
     **两边不对称本身就是证据**。修法是把能力加进 `testDeps()`（`toolspec/profile.go`），
     而不是在测试里另搭一套夹具；`TestProbeDepsIsCapabilityComplete` 是那道的兜底。
-40. **`testdata/` 是 Go 工具链的盲区**：R2 的 8 个 fixture 写着 `const F08 = 08`（非法八进制），
+40. **写通道挂在 `agent_exit` 上，就必须有人保证它真的被调用**：蓝图的 `blueprint[]` 与便签的
+    `handoff` 都只在 `agent_exit` 那一刻被采集，而 `repo.prompt.md` 开头三档 Mode Selection 全在教模型
+    "用文本返回答案"，全文一度没有一句要求以 `agent_exit` 收尾。实测 10-17~10-19 的 10 份 Repo rollout：
+    **7 份 `stop_reason=plain_text`、3 份 `agent_exit`** —— 前者 handoff 与蓝图一起消失，而且不报错
+    （只有 `派生起跑` 一条日志，用户看到的是"目录建了、文件没有"）。两道修复：Repo 的 prompt 加
+    Output Contract（答案写完，同一轮调 `agent_exit`）+ 循环补一次收尾提醒（`NoActionRetryLimit=1` +
+    `NoActionReminder`，见 §6.2）。闸门是 `TestE2EPlainTextRepoRunIsNudgedIntoSubmitting` 与
+    `TestNoSubmissionNote*`（"零提交"现在必须留下一句可区分的话）；变异：把 limit 调回 0，蓝图当场不落盘。
+    **通用教训**：把交付押在一个可选工具参数上时，要同时回答"模型不调它会发生什么"，
+    并且让那次"没发生"在日志里可读。
+41. **`testdata/` 是 Go 工具链的盲区**：R2 的 8 个 fixture 写着 `const F08 = 08`（非法八进制），
     而 `go build ./...` / `go vet ./...` / `go test ./...` **全都不看** `testdata/` 里的文件 ——
     只有 `gofmt -l <目录>` 会报（它按目录走，不按包）。所以扫描器/树遍历类的 fixture
     落地后请顺手跑一次 `gofmt -l`；"编译过了"不等于"夹具是能编译的 Go"。

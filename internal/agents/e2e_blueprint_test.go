@@ -309,3 +309,73 @@ func TestReadBlueprintDegradesInsteadOfVanishing(t *testing.T) {
 		}
 	}
 }
+
+// 这条是"补偿控制真的补上了那个洞"的证据：脚本先**只用文本交付**（就是今晚生产里
+// 5/5 次的形态），提醒之后才读文件、才以 agent_exit 提交。
+// 没有那条提醒，这个夹具会停在第一步，blueprint.md 根本不会出现。
+func TestE2EPlainTextRepoRunIsNudgedIntoSubmitting(t *testing.T) {
+	workDir, snap := blueprintProject(t)
+	storeRoot := filepath.Join(t.TempDir(), "blueprint")
+	view := NewBlueprintView(&testBlueprintSource{root: storeRoot, snap: snap}, "repo", true, 4000, 1500, nil)
+
+	engine := newScripted(map[string][]scriptStep{"repo": {
+		fixed(textResponse("internal/a 是这套夹具的算法片，调查完成。")),
+		toolCallStep("read_file", map[string]interface{}{
+			"target_file": "internal/a/a.go", "should_read_entire_file": true,
+		}),
+		fixed(exitWithBlueprint("补交结论。", []map[string]interface{}{
+			{"section": "modules", "module": "internal/a", "field": "purpose",
+				"claim": "holds the fixture algorithms", "where": "internal/a/a.go:3"},
+		})),
+	}})
+	agent := newBlueprintRepoAgent(t, workDir, engine, view)
+
+	if _, err := agent.Run(context.Background(), "看看 internal/a 是干什么的"); err != nil {
+		t.Fatalf("委派失败: %v", err)
+	}
+	data, err := os.ReadFile(blueprint.DocPath(storeRoot))
+	if err != nil {
+		t.Fatalf("提醒没有把这次 run 推向 agent_exit，蓝图没落盘: %v", err)
+	}
+	if !strings.Contains(string(data), "holds the fixture algorithms") {
+		t.Errorf("落盘了但内容不对:\n%s", data)
+	}
+	// 提醒必须真的发出去了（第二条 repo 调用里带着它），否则上一条断言可能只是脚本恰好走下去。
+	if len(engine.CallsFor("repo")) < 2 {
+		t.Fatalf("Repo 只被调用 %d 次，提醒分支根本没进", len(engine.CallsFor("repo")))
+	}
+	second := messagesText(engine.CallsFor("repo")[1].messages)
+	if !strings.Contains(second, "Call `agent_exit` now") {
+		t.Errorf("第二次调用里没有收尾契约的提醒:\n%s", truncateForFailure(second))
+	}
+	if strings.Contains(second, "explore/edit/run/verify") {
+		t.Errorf("Repo 收到的是通用那条\"再去执行一轮\"提醒 —— 它的报告本来就是交付物")
+	}
+}
+
+// 模型坚持只给文本时，补偿控制不许把分析本身弄丢：交付物仍是那段报告，
+// 蓝图不出现（没有提交），而且不无限追。
+func TestE2ERepoStillRefusingToExitKeepsItsReport(t *testing.T) {
+	workDir, snap := blueprintProject(t)
+	storeRoot := filepath.Join(t.TempDir(), "blueprint")
+	view := NewBlueprintView(&testBlueprintSource{root: storeRoot, snap: snap}, "repo", true, 4000, 1500, nil)
+
+	engine := newScripted(map[string][]scriptStep{"repo": {
+		fixed(textResponse("第一版报告：internal/a 负责夹具算法。")),
+		fixed(textResponse("第二版报告，仍然不收尾。")),
+	}})
+	agent := newBlueprintRepoAgent(t, workDir, engine, view)
+	res, err := agent.Run(context.Background(), "看看 internal/a")
+	if err != nil {
+		t.Fatalf("提醒之后模型仍不收尾，不该把委派变成错误: %v", err)
+	}
+	if !strings.Contains(res.Deliverable, "报告") {
+		t.Errorf("交付物丢了: %q", truncateForFailure(res.Deliverable))
+	}
+	if _, err := os.Stat(blueprint.DocPath(storeRoot)); err == nil {
+		t.Errorf("没有任何提交却写出了文档")
+	}
+	if n := len(engine.CallsFor("repo")); n != 2 {
+		t.Errorf("Repo 被调了 %d 次, 要 2 次（提醒一次，然后接受它的选择）", n)
+	}
+}
