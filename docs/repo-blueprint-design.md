@@ -818,3 +818,64 @@ R1 只让 `enable` 有真实读取点（`app.resolveBlueprintRoot`，三种结�
 `index_max_tokens` / `inject_into` / `prose_budget_tokens` / `export_path` 目前只有解析、归一化与
 逐键测试，消费者分别在 R3 / R4 / R4-R6 / R8 落地。
 **如果某个键到了它该被消费的阶段还没被读，它就是本文的 bug，删掉而不是补注释。**
+
+---
+
+## 21. R3–R6 实施记录（2026-10-19，落地时对本文的修正）
+
+分支 `feat-blueprint-persist`。**起点是一条账**：R2 的扫描器（`6415486`，77 文件 / +1965 行）
+从来没被并进任何主战分支，它只活在两条 `agent/coding-*` 委派分支上 —— 便签里"R2 已落地并全绿"
+是真的，只是不在工作区里。本轮第一步是把它接回来（它的父节点正好是 `cbb31d7`，所以是直线），
+然后 R3→R6 一次推平：派生快照 + 形状②注入 + `read_blueprint` + `agent_exit.blueprint[]` + fold 钩子。
+**验收的那条断言是文件出现**：`internal/agents/e2e_blueprint_test.go:TestE2ERepoRunWritesBlueprintFile`
+（真实 Repo 循环 + 真实扫描器 + 真实 WorkspaceGuard，只把 LLM 换成脚本）。
+
+### 21.1 落地时发现本文需要改的，以及实际做法
+
+| # | 本文原来的说法 | 落地时的事实 |
+|---|---|---|
+| 1 | §8 的钩子读 `agentResult.Handoff.Blueprint` | 落在 **`AgentResult.Blueprint`**。`Handoff` 是便签的 front-matter，把同一些句子既写进便签头又写进蓝图正文，就是 §2 R4 点名的"三份真相并行"再加一份。采集点仍然只有一处（`result.go`，与 `collectHandoff` 并排），executor 不认识蓝图 |
+| 2 | §15 的棘轮允许 blueprint import `gitinfo` / `tokenutil` | **没放宽守卫**。HEAD 读数与 token 计数器都做成了参数（`DeriveSpec.RepoToken` / `IndexSpec.CountTokens` / `ProseSpec.CountTokens`），生产由 `internal/app` 注入 `gitinfo` 与 `tokenutil`。守卫仍是 R1 那个更严的集合，而两条分支因此在测试里可确定性驱动 |
+| 3 | §7.4 的幂等 = "同批原子连 fold 两次字节不变" | 需要一个本文没写的判据：**正文逐字没变就不算一次 fold**（`FoldResult.NoOp`）。否则重放会推进 `Folds` 与 `sources`，于是 I20（字节不变）与 I18（"没更新"≠"更新失败"）直接打架 —— 第一次实现就红在这里 |
+| 4 | §7.2 `maxItems: 8` 与 §7.4 单段配额 40 | 两者会相互作用：一次 fold 最多落 8 条，所以"段里长过 40 条"在真实世界里**只能靠多次 fold 攒出来**。配额测试因此分批驱动（`commitBatches`），单批塞 45 条的夹具测的是一条生产走不到的路 |
+| 5 | §7.5 第 2 条"出参侧"列举了几个工具名 | 落成了 **`toolspec.Spec.ResultPaths`**（`""`=JSON / `bare` / `rg`）：`list_dir`/`print_dir_tree` 的结果是**裸文件名**，当路径用会映射到错误的片。按工具名 switch 会被 `check_no_manual_lookup.sh` 当场拦下 —— 守卫是对的，"结果里路径长什么样"确实是工具自己的事实 |
+| 6 | §8 纪律 1"各记一条 slog.Warn **并各记一条 rollout `event_msg`**" | **只落了 slog + `FoldResult` 账目**。钩子跑在委派返回的那条 goroutine 上，那里没有 rollout writer（writer 的生命周期在 `RunAgentLoop` 内部）。把 writer 交出来是另一次改动，不该塞进这一条分支的尾巴上。**这是本文与代码当前唯一已知的口径差**，I18 的"可区分"目前由日志与 NoOp 账目回答 |
+| 7 | §12 收编 KV 记忆（R7） | **没做**。Repo 完成接缝上现在并存两个 sink（`worker.Submit` 写 KV + 蓝图 fold）。所以 §6.4 里"注入被蓝图替换"这句只对**注入**成立，KV 那套的删除清单仍然待执行 |
+
+### 21.2 顺手挖出并修掉的既有缺陷
+
+| 症状 | 根因 | 现在的闸门 |
+|---|---|---|
+| **蓝图永远不会落盘，而且不报错** | `ExecuteAgentExit` 只回显 `handoff`，没有回显 `blueprint` —— 而 Agent 侧的采集点读的就是返回值。提交在离开循环的那一刻静默消失 | `TestE2ERepoRunWritesBlueprintFile`（变异 M2：删掉回显 → 红） |
+| R2 的 8 个 fixture 是非法 Go（`const F08 = 08`） | 八进制字面量里出现 8/9。它们在 `testdata/` 下，`go build` / `go vet` / `go test` **全都不看**，只有 `gofmt -l` 会报 | 全部改成十进制；`gofmt -l internal/blueprint/` 干净 |
+| 入边渲染成 `<-tui`（一片引用它自己） | 出/入两头共用 `relEdgeName(e.From, e.To)`，入边的对端是 `From` | `TestRenderIndexSkeletonLines` 直接断 `<-app` |
+| 截断行把预算顶穿 | header 先按"不含 `+N` 那行"选行，选完再把这行加回去 | 迭代收敛（omitted 单调不减）；`TestIndexRespectsTokenBudget` 断总量不超 |
+| `Deriver.Run` 不听 `Close` | 只 select `ctx.Done()`，`--prompt` 收尾会挂住 | 加 `quit` 通道；`TestDeriveRequestNeverBlocks` 断 Close 后 Run 退出 |
+| 先 `DeriveOnce` 再 `Run` 会扫两遍 | `Run` 入口无条件扫描，绕过了缓存判据 | 起跑也走 `needsRescan()`（`TestCachedModeInvalidatesOnRepoToken`） |
+| 段配额排反 | 排序把"最该丢的"排到前面，`ranked[len-cap:]` 又切了一刀 → 淘汰 40 条留下 5 条 | `TestSectionQuotaEvictsTheRightAtoms`（不只数条数，还断"丢的是 stale/unanchored"） |
+
+### 21.3 闸门有效性（每条都真做过变异）
+
+| 变异 | 命中的测试 |
+|---|---|
+| 删掉证据集校验（`fold.go validate` 的 `evidence[item.module]` 分支） | `TestCommitRejectsModuleNeverReadInThisRun` 红 + `TestE2ERepoRunDoesNotWriteUnreadModule` 红 |
+| 不回显 `blueprint[]`（`flow_control.go`） | `TestE2ERepoRunWritesBlueprintFile` 红 |
+| 注入侧不调 `Request()` | `TestE2ERepoRunWritesBlueprintFile` 红（"每轮请求一次重派生"的账目归零） |
+| 短 ID 的内容 key 掺入 `time.Now()` | `TestFoldIsIdempotent` + `TestFoldOrderIndependent` 红 |
+| 把 `edgeNames` 的 outbound 参数忽略 | `TestRenderIndexSkeletonLines` 红（`<-app` 变 `<-tui`） |
+| `commitReReadHook` 只在第 0 次动手 → 让它每次动手 | `TestFoldGivesUpAfterTwoConflicts` 红 |
+| 阈值判断 `cost >= deriveBudget` 改成恒 false | `TestDeriveModeFollowsCost` 红 |
+
+### 21.4 键的消费者对账（§20.3 欠账清单的结清）
+
+| 键 | 消费者 | 状态 |
+|---|---|---|
+| `enable` | `app.buildBlueprint`（唯一读取点，派生 / 注入 / 工具 / 钩子 / GC 五处共问） | ✅ |
+| `index_max_tokens` | `RenderIndex`（形状②的硬顶 + `+N modules not shown`） | ✅ |
+| `inject_into` | 三处 system prompt 注入点的开关（`viewFor`） | ✅ |
+| `prose_budget_tokens` | `RenderProse`（read_blueprint 与委派前缀） | ✅ |
+| `export_path` | **仍然没有消费者** —— 导出层是 §9 / R8。按 §20.3 的规矩，这条承诺本轮不结清：`docs/config-guide.md` 的 `[blueprint]` 段落**先不要写这个键** | ⏳ |
+
+自扫 golden：45 片不变，模块级边 **141 → 144**。三条新边逐条对过 ——
+`internal/agents → internal/blueprint`、`internal/app → internal/tokenutil`、`internal/app → internal/gitinfo`。
+没有新增目录（片数那条断言同时证明这一点），也没有哪条黑名单失效。

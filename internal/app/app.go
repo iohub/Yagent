@@ -60,6 +60,11 @@ type Yagent struct {
 	sharedMemory        *memory.SharedMemory
 	consolidationWorker *agents.ConsolidationWorker
 
+	// blueprint 是本进程的仓库蓝图运行时（nil = 这个项目没有蓝图）。
+	// 唯一持有者：派生循环、存储根、以及三处注入视图都从它出，
+	// 于是"关掉整套机制"只需要一处判据（I8）。
+	blueprint *blueprintRuntime
+
 	// embeddedBinFS 嵌入的二进制文件系统（用于自动提取 codeseek 等工具）
 	embeddedBinFS embed.FS
 
@@ -400,6 +405,11 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			stepRetries = ca.config.LLM.StepRetries
 		}
 
+		// [仓库蓝图] 启动装配。返回 nil = "这个项目没有蓝图"（关掉、或根护栏拒绝），
+		// 于是三处注入、read_blueprint、落盘钩子拿到的都是 nil —— 退回改动前的行为，
+		// 不需要每一处再问一遍开关（I8：启用判据只有一处）。
+		ca.blueprint = ca.buildBlueprint()
+
 		repoAgent := agents.NewRepoAgent(agents.RepoAgentParams{
 			Formatter:            &gctx,
 			Publisher:            publisher,
@@ -413,6 +423,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Knowledge:            gctx.KnowledgeInjector,
 			MCPClient:            gctx.CodeSeekMCP,
 			EnhancedCommanderCfg: ca.config.EnhancedCommander,
+			Blueprint:            ca.blueprint.viewFor("repo"),
 			LLM:                  repoEngine,
 			MaxSteps:             repoMaxSteps,
 			StepRetries:          stepRetries,
@@ -448,22 +459,6 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			)
 		}
 
-		// [仓库蓝图] R1：启动时把存储根算出来并报一次。
-		// 这是 [blueprint] enable 的第一处真实读取；两条根护栏（I7/I16）也因此有了读者 ——
-		// "这个目录不该建蓝图"必须在启动时说出来，而不是等 R6 的落盘钩子从来不响。
-		{
-			root, err := ca.resolveBlueprintRoot()
-			switch {
-			case err != nil:
-				slog.Warn("blueprint: 本项目不建蓝图",
-					"project_path", ca.globalCtx.ProjectPath, "reason", err.Error())
-			case root == "":
-				slog.Info("blueprint: 已关闭（[blueprint] enable=false 或 YAGENT_BLUEPRINT=0）")
-			default:
-				slog.Info("blueprint: 存储根就绪", "root", root)
-			}
-		}
-
 		chatAgent := agents.NewChatAgent(agents.ChatAgentParams{
 			Formatter:   &gctx,
 			Publisher:   publisher,
@@ -476,6 +471,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			LLM:         chatEngine,
 			MaxSteps:    chatMaxSteps,
 			StepRetries: stepRetries,
+			Blueprint:   ca.blueprint.viewFor("chat"),
 		})
 		metaAgent := agents.NewMetaAgent(&gctx, publisher, metaEngine, stepRetries)
 		devopsAgent := agents.NewDevOpsAgent(agents.DevOpsAgentParams{
@@ -493,6 +489,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			LLM:                  devopsEngine,
 			MaxSteps:             devopsMaxSteps,
 			StepRetries:          stepRetries,
+			Blueprint:            ca.blueprint.viewFor("devops"),
 		})
 		// 注入 DevOps-Agent，使 Repo-Agent 的 delegate_devops 工具可用
 		repoAgent.SetDevOpsAgent(devopsAgent)
@@ -508,6 +505,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			LLM:                  browserEngine,
 			MaxSteps:             browserMaxSteps,
 			StepRetries:          stepRetries,
+			Blueprint:            ca.blueprint.viewFor("browser"),
 		})
 
 		codingAgent := agents.NewCodingAgent(agents.CodingAgentParams{
@@ -530,6 +528,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			MCPClient:            gctx.CodeSeekMCP,
 			GitCheckpointCfg:     &ca.config.GitCheckpoint,
 			EnhancedCommanderCfg: ca.config.EnhancedCommander,
+			Blueprint:            ca.blueprint.viewFor("coding"),
 			LLM:                  codingEngine,
 			MaxSteps:             codingMaxSteps,
 			StepRetries:          stepRetries,
@@ -566,6 +565,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			MetaRetryCount: metaRetryCount,
 			Config:         *ca.config,
 			LLMClient:      ca.client,
+			Blueprint:      ca.blueprint.viewFor("director"),
 		})
 
 		// Director 比 CodingAgent 晚构造，便签写入器只能事后回注：
@@ -901,6 +901,9 @@ func parseDisabledAgents(s string) map[string]bool {
 
 // Close 清理资源
 func (ca *Yagent) Close() {
+	// 停蓝图派生循环并等它退。放在最前面：它是最短的一条后台活（一次扫描最坏 2s），
+	// 而 `--prompt` 那条一次性路径的收尾时间全靠它别拖住退出。
+	ca.blueprint.stop()
 	// 停止 consolidation worker
 	if ca.consolidationWorker != nil {
 		slog.Info("Stopping consolidation worker...")

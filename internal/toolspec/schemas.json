@@ -479,6 +479,61 @@
               "description": "How complete the deliverable is."
             }
           }
+        },
+        "blueprint": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "Durable, directory-level knowledge about the modules you actually analyzed in this run. One entry per module; omit entries for modules you did not read.",
+          "items": {
+            "type": "object",
+            "required": [
+              "section",
+              "claim"
+            ],
+            "properties": {
+              "section": {
+                "type": "string",
+                "enum": [
+                  "architecture",
+                  "modules",
+                  "flows",
+                  "conventions",
+                  "dependencies",
+                  "gotchas"
+                ],
+                "description": "Which part of the blueprint this belongs to. Use 'modules' only together with 'module' and 'field'."
+              },
+              "module": {
+                "type": "string",
+                "description": "Project-relative directory, exactly as it appears in the blueprint index. Required when section == 'modules'."
+              },
+              "field": {
+                "type": "string",
+                "enum": [
+                  "purpose",
+                  "data_flow",
+                  "add_here"
+                ],
+                "description": "Required when section == 'modules'."
+              },
+              "claim": {
+                "type": "string",
+                "description": "One sentence, English. <= 400 chars."
+              },
+              "where": {
+                "type": "string",
+                "description": "Evidence anchor: path, path:line, or path:symbol. Omit rather than guess."
+              },
+              "supersedes": {
+                "type": "array",
+                "maxItems": 4,
+                "description": "Short ids of existing atoms this claim replaces.",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       },
       "required": [
@@ -1201,6 +1256,58 @@
       "required": [
         "names"
       ]
+    }
+  },
+  {
+    "name": "read_blueprint",
+    "description": "Read the repository blueprint: a directory-level map (modules and their dependency edges, derived by scanning) plus durable annotations that Repo-Agent wrote after actually reading a module. Use before delegating work in an unfamiliar part of the repo, to see which module owns what and who talks to it. Section-less call with module='' returns the whole skeleton index. For symbol-level questions use semantic_search instead — the blueprint answers 'which directory', never 'which line'. If it says a module is stale, the annotation predates a structural change: read the code, then submit a corrected claim via agent_exit.blueprint[].",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "section": {
+          "type": "string",
+          "enum": [
+            "architecture",
+            "modules",
+            "flows",
+            "conventions",
+            "dependencies",
+            "gotchas"
+          ],
+          "description": "Which part to read. Omit for every section that has content."
+        },
+        "module": {
+          "type": "string",
+          "description": "Project-relative directory exactly as it appears in the index (e.g. 'internal/tui'). Empty with section='modules' returns the skeleton index."
+        },
+        "field": {
+          "type": "string",
+          "enum": [
+            "purpose",
+            "data_flow",
+            "add_here"
+          ],
+          "description": "Narrow a module read to one annotation field."
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "stale",
+            "unanchored"
+          ],
+          "description": "Narrow to annotations in one freshness state. 'stale' is the to-verify list."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "0-based line offset into the rendered section (default 0)."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Lines to return (default: everything within the prose budget)."
+        }
+      },
+      "required": []
     }
   }
 ]

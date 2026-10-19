@@ -71,3 +71,15 @@ func Prepare(projectPath string) (string, error) {
 	}
 	return root, nil
 }
+
+// EnsureRoot 把存储根建出来（0700：里面会有路径与结论，不该给同机其他用户读）。
+//
+// 与 Prepare 刻意分成两步：Prepare 是**纯判据**（装配探活、测试、`--prompt` 都可以反复调，
+// 不碰文件系统），EnsureRoot 才是那一次 mkdir。合成一个函数的后果是
+// "只是想问问这个项目该不该有蓝图"也会留下一个空目录，而空目录会被 GC 与列表当成数据。
+func EnsureRoot(root string) error {
+	if root == "" {
+		return nil
+	}
+	return os.MkdirAll(filepath.Clean(root), 0o700)
+}

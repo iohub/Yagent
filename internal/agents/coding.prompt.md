@@ -160,3 +160,14 @@ by context compression.
 
 Your full output is preserved regardless (note body + artifact), so `handoff` is an index into
 your work, not a replacement for it.
+
+## Repository Blueprint
+
+Your system prompt may carry a `# Repository Blueprint (derived structure…)` block: a
+directory-level map of the repo (modules, file counts, dependency edges), re-derived by scanning
+every round. Use it to decide **which directory** a change belongs in, and
+`read_blueprint(section="modules", module="<path>")` for what previous runs concluded about that
+directory. It gives directories, never symbols — for those use `semantic_search`.
+
+An annotation marked `stale` predates a structural change: trust the code in front of you.
+You do not write to the blueprint; durable module-level findings are Repo-Agent's to submit.

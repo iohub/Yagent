@@ -46,6 +46,10 @@ type BrowserAgentParams struct {
 	LLM         llm.Engine
 	MaxSteps    int
 	StepRetries int
+	// Blueprint 是仓库蓝图视图（nil = 这个项目没有蓝图）。
+	// 这三个 Agent 不做常驻注入，但 read_blueprint 在它们的工具面上要能真读到东西 ——
+	// 绑 nil 会让工具回答"没有蓝图"，那是一句谎话。
+	Blueprint *BlueprintView
 }
 
 // NewBrowserAgent 构造 BrowserAgent：装配浏览器工具集与流程控制工具后返回。
@@ -76,7 +80,7 @@ func (a *BrowserAgent) Capability() (bool, string) {
 // 浏览器不可用时整族不注册；delegate_browser 的描述降级由 Spec.Describe 负责
 // （Director 与 Coding 共用同一条路径）。
 func (a *BrowserAgent) surfaceFor(ctx context.Context) *tools.Surface {
-	deps := depsFor("browser", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx))
+	deps := depsFor("browser", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint)
 	deps.Flow = a.params.Flow
 	if a.params.Browser != nil {
 		deps.Browser = tools.NewBrowserOperationsTool(a.params.Browser, browserctl.FromAppConfig(a.params.BrowserCfg))

@@ -1,3 +1,3 @@
 package big
 
-const F01 = 01
+const F01 = 1

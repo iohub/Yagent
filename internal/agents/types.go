@@ -5,6 +5,7 @@ import (
 
 	"yagent/internal/artifact"
 	"yagent/internal/blackboard"
+	"yagent/internal/blueprint"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
 )
@@ -19,6 +20,13 @@ type AgentResult struct {
 	// Deliverable 是交付物全文（agent_exit 收尾时从最后一条 assistant 消息取回）。
 	// Text 在超预算路径上是摘要，所以便签正文必须读这个字段，否则修完 R1 又在这儿丢一次。
 	Deliverable string
+	// Blueprint 是 agent_exit 的 `blueprint[]` 提交（仓库级散文，落盘走 Repo 的完成接缝）。
+	// 空 = 这一轮没提交过结论。它刻意**不并进 Handoff**：那张便签的正文已经是交付物，
+	// 把同一些句子再写进 front-matter 就是本仓第 N 份"三份真相并行"。
+	Blueprint []blueprint.FoldItem
+	// EvidenceFiles 是本次 run 真打开过的文件路径（入参侧 ∪ 出参侧，§7.5 第 2 条）。
+	// 只有 Blueprint 非空时才计算 —— 绝大多数委派不提交蓝图，不该为它们扫一遍 History。
+	EvidenceFiles []string
 }
 
 // Agent defines the interface for all agents in the system.

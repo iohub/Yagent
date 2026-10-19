@@ -42,6 +42,13 @@ type Spec struct {
 	// 空串表示沿用所属 Agent 的引擎。
 	ModelSlot string
 
+	// ResultPaths 声明"这个工具的结果里文件路径以什么形态出现"。
+	//
+	// 它存在的理由和整个注册表一样：谁的结果算"读过这个文件"是**每个工具自己的事实**，
+	// 不该由消费方 switch 工具名 —— 那正是 check_no_manual_lookup.sh 守的东西。
+	// 蓝图的证据集（§7.5 第 2 条的出参侧）是第一个需要它的地方。
+	ResultPaths string
+
 	// Audience 限制该工具只发给哪些 Agent（取值同 Profile.Agent）。
 	// 空 = 由 Effect 决定受众。这是注册表里唯一允许出现 Agent 名字的地方，
 	// 目的是新增委派类工具时必须显式声明受众，不会静默扩权。
@@ -247,6 +254,28 @@ func ValidateProfile(p Profile) []string {
 }
 
 const exitToolName = "agent_exit"
+
+// ResultPaths 的三种取值（Spec.ResultPaths 的词典）。
+const (
+	// ResultPathsJSON：结果是结构化对象，路径在 file_path/path/filename 这类键下。
+	// 也是**默认**：没声明的工具按 JSON 尽力找，解析不出来就什么都不收 ——
+	// 判据宁缺毋滥（少一块证据只是少一片提交，多一块假证据会把结论挂到错的模块上）。
+	ResultPathsJSON = ""
+	// ResultPathsBare：结果是不带目录前缀的裸文件名（list_dir / print_dir_tree）。
+	// 必须显式排除：把它们当路径映射会落到"当前工作目录那一片"，是假证据。
+	ResultPathsBare = "bare"
+	// ResultPathsRipgrep：结果是 `path:line:` 命中行。
+	ResultPathsRipgrep = "rg"
+)
+
+// ResultPathsOf 返回某个工具的结果形态；未注册的名字按 JSON 处理（尽力找、找不到就算没有）。
+func ResultPathsOf(name string) string {
+	s, ok := Get(name)
+	if !ok {
+		return ResultPathsJSON
+	}
+	return s.ResultPaths
+}
 
 func duplicated(xs []string) string {
 	seen := map[string]bool{}

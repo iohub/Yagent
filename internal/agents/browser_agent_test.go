@@ -81,7 +81,8 @@ func TestBrowserAgent_AdaptersCoverDeclarations(t *testing.T) {
 	for _, a := range adapters {
 		n := a.Name()
 		if strings.HasPrefix(n, "browser_") || n == "agent_exit" || n == "ask_user_for_help" ||
-			n == "read_note" || n == "read_artifact" || n == "load_tool" {
+			n == "read_note" || n == "read_artifact" || n == "load_tool" ||
+			n == "read_blueprint" { // 只读上下文类：与 read_note 同族，无副作用
 			continue
 		}
 		t.Errorf("浏览器工具面混入了不该有的工具：%s", n)

@@ -55,6 +55,10 @@ func (p Profile) testDeps() *Deps {
 		Prune:          probeToolFunc,
 		CheckpointList: probeToolFunc, CheckpointCreate: probeToolFunc, CheckpointRollback: probeToolFunc,
 		LoadTool: probeToolFunc,
+		// Blueprint 恒绑：生产里 depsFor 永远给它一个非 nil 执行器（没有蓝图时
+		// 工具负责回答"为什么没有"），探针必须与生产同形 —— 否则 golden 会代表
+		// 一条生产不存在的路径（§11 坑 33 就是这么发现的）。
+		Blueprint: probeToolFunc,
 		// 探针按默认配置（[tools.deferred] enabled=true）建模，否则 golden 里
 		// 每个画像都会少掉 load_tool。
 		DeferSchemas:  true,

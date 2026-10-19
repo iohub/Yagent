@@ -55,6 +55,11 @@ type RepoAgentParams struct {
 
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 
+	// Blueprint 是仓库蓝图的注入视图（nil = 这个项目没有蓝图）。
+	// 放在 params 上而不是结构体上：每次委派走 SpawnForDelegation 克隆自身，
+	// 克隆只搬 params —— 挂在结构体上的那份会在下一次委派里变成共享可变状态（C4/D2）。
+	Blueprint *BlueprintView
+
 	LLM         llm.Engine
 	MaxSteps    int
 	StepRetries int
@@ -136,6 +141,11 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		}
 	}
 
+	// [仓库蓝图] 常驻骨架（形状②：模块 + 依赖边）。
+	// 只进这一次 LLM 调用的 system prompt，绝不写回 ConversationMemory/rollout（I2）——
+	// 第二/三档压缩会整段重写消息，进 messages 的东西会被摘要吞掉（§11 坑 11）。
+	systemPrompt += a.params.Blueprint.Resident()
+
 	// [知识管理] 对话前动态知识检索注入
 	if a.knowledge != nil {
 		injCtx := knowledge.InjectionContext{
@@ -153,7 +163,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
 	// 工具面：只读 + 调用图 + deepthinking + 委派 devops + 知识维护 + 便签回读。
-	deps := depsFor("repo", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx))
+	deps := depsFor("repo", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint)
 	deps.Files = a.params.Files
 	deps.Search = a.params.Search
 	deps.Repo = a.params.RepoOps
@@ -210,6 +220,11 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	if a.knowledge != nil {
 		autoConsolidateSubtask(a.mcpClient, a.LLM, "repo_agent", "repo_retrieval", input, agentResult.Text)
 	}
+
+	// [仓库蓝图] 落盘钩子：同一时点的第三个 sink。
+	// 只做"解析 + 校验 + 一次文件写"（ms 级），跑在委派返回的这条 goroutine 上，
+	// 不起线程、不调模型，也**绝不向 Repo 的返回值传播错误**（§8 纪律 2 / I11）。
+	NewBlueprintCommit(a.params.Blueprint).Commit(ctx, a.Name(), agentResult)
 
 	return agentResult, nil
 }

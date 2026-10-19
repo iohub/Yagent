@@ -14,8 +14,16 @@ import (
 //
 // AgentName 用的是画像键（"chat"/"coding"/…），不是 Name() 的显示名 ——
 // Spec.Audience 与 Profile.Agent 都按画像键比对，混进显示名会让受众判定失效。
-func depsFor(profileKey string, env Env, guard *tools.WorkspaceGuard, boardID string) *toolspec.Deps {
-	d := &toolspec.Deps{AgentName: profileKey, Guard: guard, BoardID: boardID}
+//
+// view 是蓝图注入视图（没有蓝图传 nil）。执行器**恒绑上**：read_blueprint 在
+// "这个项目没有蓝图"时给出原因与修复方式，而不是从工具面上静默消失（设计稿 §8）。
+// 参数收在签名上而不是各 Agent 自己记得绑：六个调用点少绑一个是编译不过，
+// 少记一处是"那个 Agent 的模型以为这个能力不存在"。
+func depsFor(profileKey string, env Env, guard *tools.WorkspaceGuard, boardID string, view *BlueprintView) *toolspec.Deps {
+	d := &toolspec.Deps{
+		AgentName: profileKey, Guard: guard, BoardID: boardID,
+		Blueprint: blueprintExecutor(view),
+	}
 	if env != nil {
 		d.ProjectPath = env.ProjectPath()
 		d.FullYolo = env.FullYoloMode()
