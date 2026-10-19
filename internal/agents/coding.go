@@ -126,6 +126,11 @@ type CodingAgentParams struct {
 	// StepRetries 是步级 LLM 重试次数（[llm] step_retries），与各子 Agent 共用同一语义。
 	StepRetries int
 	Browser     *BrowserAgent
+
+	// Blueprint 是仓库蓝图的注入视图（nil = 这个项目没有蓝图）。
+	// 常驻骨架让 Coding 在动手前就知道"这片是谁在管、谁依赖它"；
+	// 它只进这次调用的 system prompt，不进记忆也不进 rollout（I2）。
+	Blueprint *BlueprintView
 }
 
 // NewCodingAgent 构造 CodingAgent：按 tools.json 与参数集中的工具集装配适配器。
@@ -155,7 +160,7 @@ func NewCodingAgent(p CodingAgentParams) *CodingAgent {
 
 func (a *CodingAgent) surfaceFor(ctx context.Context, gcm *GitCheckpointManager) *tools.Surface {
 	p := a.params
-	deps := depsFor("coding", a.env, a.guard, blackboard.BoardIDFrom(ctx))
+	deps := depsFor("coding", a.env, a.guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint)
 	deps.Files = p.Files
 	deps.Search = p.Search
 	deps.Sys = p.Sys
@@ -354,6 +359,9 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	a.thinkLink.AddUserInput(input, 0) // 记录用户原始输入（自带去重）
 
 	systemPrompt := a.promptFmt.FormatPrompt(codingPrompt)
+
+	// [仓库蓝图] 常驻骨架（模块 + 依赖边），只进这一次调用的 system prompt（I2）。
+	systemPrompt += a.params.Blueprint.Resident()
 
 	// 如果是 git 仓库且 checkpoint 启用，追加 Git Checkpoint 章节到提示词
 	if gitCheckpointEnabled {

@@ -49,13 +49,15 @@ func init() {
 	})
 
 	toolspec.MustRegister(toolspec.Spec{
-		Name:      "list_dir",
-		Effect:    toolspec.EffectFSRead,
-		Frequency: toolspec.Hot,
-		Trunc:     toolspec.TruncNormal,
-		Display:   toolspec.DisplayCompact,
-		Brief:     "列出目录下的文件",
-		Available: func(d *toolspec.Deps) (bool, string) { return d.Files != nil, "文件工具未装配" },
+		Name: "list_dir",
+		// 结果里路径的形态（蓝图证据集的出参侧按它分派，见 toolspec.Spec.ResultPaths）。
+		ResultPaths: toolspec.ResultPathsBare,
+		Effect:      toolspec.EffectFSRead,
+		Frequency:   toolspec.Hot,
+		Trunc:       toolspec.TruncNormal,
+		Display:     toolspec.DisplayCompact,
+		Brief:       "列出目录下的文件",
+		Available:   func(d *toolspec.Deps) (bool, string) { return d.Files != nil, "文件工具未装配" },
 		Build: func(d *toolspec.Deps) (toolspec.ToolFunc, error) {
 			if err := require(d.Files, "Files"); err != nil {
 				return nil, err
@@ -66,13 +68,15 @@ func init() {
 
 	// print_dir_tree 单次声明 1162B 却很少用到第二次，是 deferred 的首选。
 	toolspec.MustRegister(toolspec.Spec{
-		Name:      "print_dir_tree",
-		Effect:    toolspec.EffectFSRead,
-		Frequency: toolspec.Cold,
-		Trunc:     toolspec.TruncFirst,
-		Display:   toolspec.DisplayCompact,
-		Brief:     "打印目录树（自动忽略构建产物）",
-		Available: func(d *toolspec.Deps) (bool, string) { return d.Files != nil, "文件工具未装配" },
+		Name: "print_dir_tree",
+		// 结果里路径的形态（蓝图证据集的出参侧按它分派，见 toolspec.Spec.ResultPaths）。
+		ResultPaths: toolspec.ResultPathsBare,
+		Effect:      toolspec.EffectFSRead,
+		Frequency:   toolspec.Cold,
+		Trunc:       toolspec.TruncFirst,
+		Display:     toolspec.DisplayCompact,
+		Brief:       "打印目录树（自动忽略构建产物）",
+		Available:   func(d *toolspec.Deps) (bool, string) { return d.Files != nil, "文件工具未装配" },
 		Build: func(d *toolspec.Deps) (toolspec.ToolFunc, error) {
 			if err := require(d.Files, "Files"); err != nil {
 				return nil, err
@@ -156,13 +160,15 @@ func init() {
 	})
 
 	toolspec.MustRegister(toolspec.Spec{
-		Name:      "search_by_regex",
-		Effect:    toolspec.EffectSearchRegex,
-		Frequency: toolspec.Hot,
-		Trunc:     toolspec.TruncFirst,
-		Display:   toolspec.DisplayCompact,
-		Brief:     "ripgrep 全文正则搜索",
-		Available: func(d *toolspec.Deps) (bool, string) { return d.Search != nil, "搜索工具未装配" },
+		Name: "search_by_regex",
+		// 结果里路径的形态（蓝图证据集的出参侧按它分派，见 toolspec.Spec.ResultPaths）。
+		ResultPaths: toolspec.ResultPathsRipgrep,
+		Effect:      toolspec.EffectSearchRegex,
+		Frequency:   toolspec.Hot,
+		Trunc:       toolspec.TruncFirst,
+		Display:     toolspec.DisplayCompact,
+		Brief:       "ripgrep 全文正则搜索",
+		Available:   func(d *toolspec.Deps) (bool, string) { return d.Search != nil, "搜索工具未装配" },
 		Build: func(d *toolspec.Deps) (toolspec.ToolFunc, error) {
 			if err := require(d.Search, "Search"); err != nil {
 				return nil, err

@@ -136,6 +136,9 @@ func TestDerivedMetadataMatchesLegacyTables(t *testing.T) {
 		"find_function_callee": true, "find_function_caller": true, "query_call_graph": true,
 		"read_note": true, "read_artifact": true,
 		"thinking": true, "micro_agent": true, "deepthinking": true, "design": true,
+		// read_blueprint 与 read_note 同族：只读一次派生快照 + 一份 markdown，
+		// 没有副作用、不串行（设计稿 §7.1 的 Spec 判定）。
+		"read_blueprint": true,
 	}
 
 	// NeedsAuth 必须与历史 dangerousTools 完全一致。

@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 
+	"yagent/internal/blueprint"
 	"yagent/internal/browserctl"
 	"yagent/internal/knowledge"
 	"yagent/internal/toolspec"
@@ -82,3 +83,17 @@ type BoardWriter interface {
 // BrowserControl 浏览器执行层入口（由 *browserctl.Manager 天然实现）。
 // 用类型别名而不是新接口：Browser-Agent 与工具层共用同一份契约，避免两份声明漂移。
 type BrowserControl = browserctl.Controller
+
+// BlueprintSource 是 Agent 侧对仓库蓝图派生层的全部需求（设计稿 §14）。
+// 由 *app 的蓝图运行时天然实现；未注入（nil）时所有蓝图路径退回改动前的行为。
+//
+// 刻意不含 Doc 读写：常驻注入只要快照，落盘钩子要的是存储根与快照，两者都由
+// 装配层算好后当值传进来 —— 否则 agents 会反过来需要一套生命周期管理。
+type BlueprintSource interface {
+	// Request 叫醒一次"看看仓库动了没"，永不阻塞（I15）。
+	Request()
+	// Snapshot 只读当前快照；没就绪返回 nil，调用方渲染 scanning… 而不是等。
+	Snapshot() *blueprint.Snapshot
+	// Root 是散文所在的存储根（"" = 本项目没有蓝图）。
+	Root() string
+}

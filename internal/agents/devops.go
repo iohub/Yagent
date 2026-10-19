@@ -43,6 +43,10 @@ type DevOpsAgentParams struct {
 	LLM         llm.Engine
 	MaxSteps    int
 	StepRetries int
+	// Blueprint 是仓库蓝图视图（nil = 这个项目没有蓝图）。
+	// 这三个 Agent 不做常驻注入，但 read_blueprint 在它们的工具面上要能真读到东西 ——
+	// 绑 nil 会让工具回答"没有蓝图"，那是一句谎话。
+	Blueprint *BlueprintView
 }
 
 // NewDevOpsAgent 构造 DevOpsAgent：装配运维工具集后返回。
@@ -70,7 +74,7 @@ func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
 	// DevOps 的画像：Shell + 只读文件 + 两个认知工具 + 流程控制；没有写文件能力。
-	deps := depsFor("devops", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx))
+	deps := depsFor("devops", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint)
 	deps.Sys = a.params.Sys
 	deps.Files = a.params.Files
 	deps.Search = a.params.Search

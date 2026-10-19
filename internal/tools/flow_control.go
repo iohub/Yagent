@@ -37,6 +37,12 @@ func (t *FlowControlTool) ExecuteAgentExit(ctx context.Context, params map[strin
 	if handoff, present := params["handoff"]; present && handoff != nil {
 		result["handoff"] = handoff
 	}
+	// blueprint[] 必须一起回显：Agent 侧的采集点（agents/result.go）读的是**返回值**，
+	// 因为那份 JSON 同时进 rollout 与 TUI。少回显这一个键，提交就在离开循环的那一刻
+	// 静默消失 —— 不报错、不丢日志，只是永远没有蓝图（与 handoff 当年同一个坑）。
+	if bp, present := params["blueprint"]; present && bp != nil {
+		result["blueprint"] = bp
+	}
 	return result, nil
 }
 

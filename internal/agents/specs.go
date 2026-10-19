@@ -48,6 +48,7 @@ func init() {
 
 	registerDelegateSpecs()
 	registerContextSpecs()
+	registerBlueprintSpec()
 }
 
 // 委派类工具。执行器是 d.Delegate 这一个泛化步骤（Director 提供完整流水线：

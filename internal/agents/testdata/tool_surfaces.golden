@@ -1,7 +1,7 @@
 # 各 Agent 的工具面（由 toolspec 画像解析得出，-update 重写）
 # tier: hot|warm|cold  ro: 可并发  auth: 需用户授权  serial: 必须串行
 
-[director] 18 tools  grant=[fs_read,search_regex,context,tool_load,cog_deep,knowledge_prune,flow,delegate] deny=[fs_write,shell]
+[director] 19 tools  grant=[fs_read,search_regex,context,tool_load,cog_deep,knowledge_prune,flow,delegate] deny=[fs_write,shell]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   deepthinking             tier=hot  ro
@@ -17,11 +17,12 @@
   print_dir_tree           tier=hot  ro
   prune_history            tier=cold 
   read_artifact            tier=warm ro
+  read_blueprint           tier=warm ro
   read_file                tier=hot  ro
   read_note                tier=warm ro
   search_by_regex          tier=hot  ro
 
-[coding] 31 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_reflect,cog_subllm,cog_deep,cog_design,fs_write,shell,knowledge_write,knowledge_prune,checkpoint,flow,delegate] deny=[]
+[coding] 32 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_reflect,cog_subllm,cog_deep,cog_design,fs_write,shell,knowledge_write,knowledge_prune,checkpoint,flow,delegate] deny=[]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   consolidate_knowledge    tier=cold 
@@ -45,6 +46,7 @@
   query_code_skeleton      tier=cold ro
   query_code_snippet       tier=hot  ro
   read_artifact            tier=warm ro
+  read_blueprint           tier=warm ro
   read_file                tier=hot  ro
   read_note                tier=warm ro
   rename_file              tier=hot  auth
@@ -54,7 +56,7 @@
   semantic_search          tier=hot  ro
   thinking                 tier=warm ro
 
-[repo] 20 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_deep,knowledge_write,knowledge_prune,flow,delegate] deny=[cog_reflect,cog_subllm,cog_design]
+[repo] 21 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_deep,knowledge_write,knowledge_prune,flow,delegate] deny=[cog_reflect,cog_subllm,cog_design]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   consolidate_knowledge    tier=cold 
@@ -71,12 +73,13 @@
   query_code_skeleton      tier=cold ro
   query_code_snippet       tier=hot  ro
   read_artifact            tier=warm ro
+  read_blueprint           tier=warm ro
   read_file                tier=hot  ro
   read_note                tier=warm ro
   search_by_regex          tier=hot  ro
   semantic_search          tier=hot  ro
 
-[chat] 9 tools  grant=[context,tool_load,cog_reflect,cog_subllm,cog_deep,flow] deny=[]
+[chat] 10 tools  grant=[context,tool_load,cog_reflect,cog_subllm,cog_deep,flow] deny=[]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   deepthinking             tier=cold ro
@@ -84,10 +87,11 @@
   load_tool                tier=hot  serial
   micro_agent              tier=warm ro
   read_artifact            tier=warm ro
+  read_blueprint           tier=warm ro
   read_note                tier=warm ro
   thinking                 tier=warm ro
 
-[devops] 13 tools  grant=[fs_read,search_regex,context,tool_load,cog_reflect,cog_subllm,shell,flow] deny=[]
+[devops] 14 tools  grant=[fs_read,search_regex,context,tool_load,cog_reflect,cog_subllm,shell,flow] deny=[]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   list_dir                 tier=hot  ro
@@ -96,13 +100,14 @@
   micro_agent              tier=warm ro
   print_dir_tree           tier=cold ro
   read_artifact            tier=warm ro
+  read_blueprint           tier=warm ro
   read_file                tier=hot  ro
   read_note                tier=warm ro
   run_bash                 tier=hot  auth
   search_by_regex          tier=hot  ro
   thinking                 tier=warm ro
 
-[browser] 20 tools  grant=[context,tool_load,browser_observe,browser_act,browser_eval,browser_artifact,flow] deny=[]
+[browser] 21 tools  grant=[context,tool_load,browser_observe,browser_act,browser_eval,browser_artifact,flow] deny=[]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   browser_click            tier=hot  serial
@@ -122,4 +127,5 @@
   list_notes               tier=warm ro
   load_tool                tier=hot  serial
   read_artifact            tier=warm ro
+  read_blueprint           tier=warm ro
   read_note                tier=warm ro

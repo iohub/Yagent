@@ -116,26 +116,33 @@ func FinalizeResult(agentName, task string, exec ExecutorResult) AgentResult {
 	mem := ConvertLLMHistoryToMemory(exec.History)
 	full := deliverableText(exec)
 	handoff := collectHandoff(exec, full)
+	// 蓝图提交与它的证据：采集点与 handoff 同处（executor 不认识蓝图，工具层只回显参数）。
+	// 没有提交时返回 nil，于是证据侧的那一遍 History 扫描根本不会发生。
+	blueprintItems, evidenceFiles := collectBlueprintSubmission(exec)
 
 	// kill-switch 或没有任何文本：回退旧行为，不落盘。
 	if artifact.Disabled() || full == "" {
 		return AgentResult{
-			Text:        exec.Text,
-			Summary:     exec.Text,
-			Deliverable: full,
-			Memory:      mem,
-			Handoff:     handoff,
+			Text:          exec.Text,
+			Summary:       exec.Text,
+			Deliverable:   full,
+			Memory:        mem,
+			Handoff:       handoff,
+			Blueprint:     blueprintItems,
+			EvidenceFiles: evidenceFiles,
 		}
 	}
 
 	// 预算内：全文即摘要，零行为变化，不落盘。
 	if artifact.EstTokens(full) <= artifact.DefaultBudgetTokens {
 		return AgentResult{
-			Text:        exec.Text,
-			Summary:     full,
-			Deliverable: full,
-			Memory:      mem,
-			Handoff:     handoff,
+			Text:          exec.Text,
+			Summary:       full,
+			Deliverable:   full,
+			Memory:        mem,
+			Handoff:       handoff,
+			Blueprint:     blueprintItems,
+			EvidenceFiles: evidenceFiles,
 		}
 	}
 
@@ -147,11 +154,13 @@ func FinalizeResult(agentName, task string, exec ExecutorResult) AgentResult {
 	if err != nil {
 		// Save 失败：降级为全文摘要，不阻断委派。
 		return AgentResult{
-			Text:        exec.Text,
-			Summary:     full,
-			Deliverable: full,
-			Memory:      mem,
-			Handoff:     handoff,
+			Text:          exec.Text,
+			Summary:       full,
+			Deliverable:   full,
+			Memory:        mem,
+			Handoff:       handoff,
+			Blueprint:     blueprintItems,
+			EvidenceFiles: evidenceFiles,
 		}
 	}
 
@@ -171,12 +180,14 @@ func FinalizeResult(agentName, task string, exec ExecutorResult) AgentResult {
 	// Text 保持重构前的形态（超预算时是摘要），Full 变体再覆盖成 exec.Text；
 	// 需要交付全文的下游（便签正文）读 Deliverable。
 	return AgentResult{
-		Text:        summary,
-		Summary:     summary,
-		Deliverable: full,
-		ArtifactRef: &ref,
-		Memory:      mem,
-		Handoff:     handoff,
+		Text:          summary,
+		Summary:       summary,
+		Deliverable:   full,
+		ArtifactRef:   &ref,
+		Memory:        mem,
+		Handoff:       handoff,
+		Blueprint:     blueprintItems,
+		EvidenceFiles: evidenceFiles,
 	}
 }
 

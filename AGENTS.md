@@ -1,7 +1,16 @@
 # Yagent Agent 开发知识库
 
 > **本文件是 Agent 理解仓库和进行开发的标准指南。** 所有 Agent 在操作此仓库前必须先阅读本文件。
-> 本文件描述的是当前代码的真实状态（核对时间 2026-10-18：**结构化并发 C1–C6 全部落地**
+> 本文件描述的是当前代码的真实状态（核对时间 2026-10-19：**仓库蓝图 R1–R6 全部落地**
+> （`docs/repo-blueprint-design.md` §21 实施记录）—— `internal/blueprint` 从零 LLM 扫描器一路做到
+> 派生快照（`atomic.Pointer` 唯一写者 + 150ms 成本自适应）、形状②常驻注入（token 硬顶 + 四态必显）、
+> `read_blueprint` 读通道、`agent_exit.blueprint[]` 写通道、五道校验 + 幂等 fold + 乐观 CAS +
+> `revisions/` 归档 + 孤儿子节老化；**验收断言就是"文件出现"**（`e2e_blueprint_test.go`：真实 Repo
+> 循环 + 真实扫描器 + 真实 guard，脚本化一轮 → `~/.yagent/data/blueprint/{projectID}/blueprint.md`）。
+> R2 的 1965 行曾经只活在两条 `agent/coding-*` 委派分支上（便签里"已落地并全绿"是真的，只是不在
+> 任何主战分支），本轮接回。仍待办：R7 收编 KV 仓库记忆（现在两个 sink 并存）、R8 导出层与
+> `/blueprint`（`[blueprint] export_path` 至今没有消费者，别写进配置指南）。
+> 上一轮 2026-10-18：**结构化并发 C1–C6 全部落地**
 > （`docs/structured-concurrency-design.md`）—— 新增叶子包 `internal/supervise`（全仓 goroutine 的
 > 唯一落脚点：具名 + recover + 可等待），裸 `go` 由 `check_no_bare_go.sh` 硬禁；rollout 改流入队 +
 > 停点 drain；并行委派的死锁根因（executor 的并发谓词扫一份生产恒空的 `Adapters`）连根拔掉，
@@ -142,11 +151,15 @@ yagent/
 │   ├── browserctl/             # 浏览器执行层：外部 browser-control CLI 的进程/工作区/URL 策略/渲染
 │   ├── blackboard/             # 跨 Agent 便签：note(存储) / handoff(结构化交接) / index(派生索引)
 │   │                           #   resolve(ContextPack) / gc(生命周期) / board(路径与原子写)
-│   ├── blueprint/              # 仓库蓝图（R1 骨架，docs/repo-blueprint-design.md v4）：一份 blueprint.md 的
-│   │                           #   front-matter + 段落枚举 + "一行一原子"编解码 + 存储根与两条根护栏。
-│   │                           #   叶子包（只用标准库 + util + projectid，check_blueprint_leaf.sh 守）；
-│   │                           #   扫描器/注入/read_blueprint/折叠钩子在 R2–R6 落地，启用判据是
-│   │                           #   config.BlueprintEnabled()（本包不读环境变量）
+│   ├── blueprint/              # 仓库蓝图（R1–R6 已落地，docs/repo-blueprint-design.md v4 + §21 实施记录）：
+│   │                           #   scan*.go 零 LLM 扫描器（45 片/144 条边的自扫 golden）；derive.go 的
+│   │                           #   派生快照（atomic.Pointer 唯一写者 + 成本自适应）；index.go 形状②渲染
+│   │                           #   （token 硬顶 + stale/unannotated/TRUNC/oversize 四态）；prose.go 按需视图；
+│   │                           #   fold.go/merge.go/commit.go 五道校验 + 幂等 fold + 乐观 CAS + revisions/；
+│   │                           #   freshness.go 结构指纹与三态锚点；gc.go 孤儿子节老化。
+│   │                           #   叶子包（只用标准库 + util + projectid，check_blueprint_leaf.sh 守：
+│   │                           #   gitinfo/tokenutil 由装配层做成参数传进来，不 import）；
+│   │                           #   启用判据是 config.BlueprintEnabled()（本包不读环境变量）
 │   ├── projectid/              # 项目绝对路径 → 文件系统安全的目录名（rollout / artifact / 蓝图共用一把主键；
 │   │                           #   director.ComputeProjectID 现在只是转发，TestComputeProjectID 仍钉着具体串）
 │   ├── artifact/               # 超预算委派结果的落盘存储 + 摘要
@@ -282,7 +295,7 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
 （`ProfileRepo` / `ProfileCoding` / `ProfileChat`）问这个判据的，所以画像或能力标签漂走时会红；
 自己拼一个工具列表来测等于重犯坑 33。
 
-### 5.2 工具总览（schema 见 `internal/toolspec/schemas.json`，50 条）
+### 5.2 工具总览（schema 见 `internal/toolspec/schemas.json`，51 条）
 
 > 每个工具的完整契约 = `schemas.json` 的 description/parameters + `Spec` 的能力标签。
 > 派生查询：`IsReadOnly` / `IsSerial` / `NeedsAuth` / `PathParams` / `TruncationPriority` /
@@ -296,10 +309,11 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
 | `semantic_search` `query_code_skeleton` `query_code_snippet` | R | codeseek MCP 桥 |
 | `find_function_callee` `find_function_caller` `query_call_graph` | R | 调用图；改函数前**必须**先查 callers |
 | `thinking` `micro_agent` `deepthinking` `design` | C | 反思 / 隔离子 LLM 推理 / 多步深度思考 / 编码前设计闸门 |
-| `agent_exit` `ask_user_for_help` | P | 结束任务（可带 `handoff{conclusion,facts[],open_questions,status}`，见 §6.4）/ 反问用户（confirm、select、input 三种交互） |
+| `agent_exit` `ask_user_for_help` | P | 结束任务（可带 `handoff{conclusion,facts[],open_questions,status}`，见 §6.4；另有 `blueprint[]` 写入通道，只有 Repo 的完成接缝会落盘，见 §6.4）/ 反问用户（confirm、select、input 三种交互） |
 | `consolidate_knowledge` `prune_history` | K | 长期知识固化与历史裁剪（codeseek knowledge） |
 | `git_checkpoint_create` `git_checkpoint_list` `git_checkpoint_rollback` | G | 编码子任务快照 |
 | `read_note` `read_artifact` `list_notes` | R | 读跨 Agent 便签（handoff 块 + 分页正文）/ 超预算产物全文 / 枚举整块板上有哪些结论（boardID 存在时自动注入，`list_notes` 刻意不含正文） |
+| `read_blueprint` | R | 读仓库蓝图：`section/module/field/state` 收窄 + `offset/limit` 分页。**六个画像**都拿得到（`EffectContext` 已 Grant），没有蓝图时回执自带原因与修复方式（不静默摘工具）。目录→目录归它，符号→符号归 codeseek |
 | `browser_status` `browser_open` `browser_inspect` `browser_snapshot` `browser_click` `browser_fill` `browser_type` `browser_press` `browser_scroll` `browser_select` `browser_tabs` `browser_wait` `browser_screenshot` `browser_eval` | 浏览器 | 经外部 `browser-control` CLI 驱动真实 Chrome；Browser-Agent 持有（详见 `docs/browser-agent-design.md`） |
 | `delegate_repo/coding/chat/devops/browser/meta` | 委派 | Director 持有；`delegate_browser` 也在 Coding 上（能力不可用时描述自动降级） |
 
@@ -442,6 +456,39 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
 - **Knowledge**（`internal/knowledge`）：向 Director/Coding/Repo 注入历史知识（写入走 `consolidate_knowledge`，
   自动固化在 `knowledge_hook.go`）。当前**注入器被临时硬关闭**（`injector.go:67-71`）。
 - **RepoMemory / ConsolidationWorker**：仓库级长期记忆存在 SharedMemory 的 KV 中，由后台 worker 周期性用 LLM + codeseek 重写。
+- **Blueprint**（`internal/blueprint`，设计稿 `docs/repo-blueprint-design.md` v4 + §21 实施记录）：仓库级导航知识的
+  **唯一有机械新鲜度判据**的一套。两层内容、一份文档：**派生的不落盘，落盘的不派生**。
+  - 派生层（内存，每次现算，本仓实测 6.6ms）= 模块集合 / 文件计数 / `go/parser` 验过的模块级边 / 入口与
+    manifest 事实 / 每片一个结构指纹。**结构层不落盘 ⇒ 模型没有任何途径写坏它**（§3.4）。
+  - 持久层 = `~/.yagent/data/blueprint/{projectID}/blueprint.md`（front-matter 是 JSON，与便签同形）
+    + `revisions/`（fold 前整档，滚动 5 份 —— "删错了"要有 Undo）。原子写走 `util.AtomicWrite`（I21）。
+  - 三条新鲜度判据全部机械：**(a) 结构指纹**不符 → 该片整节标 `stale` 但**散文保留**（清空会把可用信息
+    变成不可用）；**(b) 出处锚点**三态（`path` / `path:line` 越界 / `path:symbol` 词边界匹配 / 非路径形态
+    = `unverifiable` 不谎称验过）；**(c) 孤儿**：可见集合 == 派生集合，改名/删除的旧片既渲染不出来也
+    读不到，超过 90 天才从文件里摘除。
+  - **stale 是粘滞的**：没有后台进程会补写，一片过期之后只有下一次 Repo 真的覆盖它才修 —— 所以索引行写成
+    行动理由（`N modules annotated but stale (delegate_repo to refresh)`），把"值不值得为新鲜度花一次委派"
+    留给有任务上下文的一方。
+  - 读通道 `read_blueprint`；写通道是 `agent_exit` 的 **`blueprint[]`**（`section/module/field/claim/where/supersedes`，
+    一次最多 8 条）。落盘只发生在 **Repo 完成接缝**（`repo.go` 里第三个 sink，与 KV `worker.Submit` 和
+    `autoConsolidateSubtask` 同一时点）；**Director 侧不需要知道这个参数存在**，Coding prompt 明确写"你不写蓝图"。
+    提交采集在 `result.go`（与 `collectHandoff` 并排，executor 不认识蓝图），落在 `AgentResult.Blueprint`
+    而**不是** `Handoff` —— 同一些句子不该同时是便签头和蓝图正文（§2 R4 的病）。
+  - fold 是**确定性纯函数**：短 ID 由内容派生 ⇒ 幂等 + 乱序输入产出同一份字节；段内按 `(where, claim)` 稳定排序
+    （每次 fold 只动那一行，否则人类 review 与 provider 前缀缓存同时失效）；同 `module+field` 非空才覆盖；
+    `supersedes` 指认错 ID 时记账但不失败。**正文逐字没变就不算一次 fold**（`NoOp`），否则 I20 的"字节不变"
+    与 I18 的"没更新 ≠ 更新失败"会打架。
+  - 五道校验各有一条能读出来的拒收账（I18）；证据集 = 本次 run 真打开过的文件所属模块，
+    **入参侧 ∪ 出参侧**（只认入参会误伤"检索到 8 个、读了 3 个"那一轮）。
+    哪些工具的结果算"读过"是 `toolspec.Spec.ResultPaths`（`json`/`rg`/`bare`）—— `list_dir` 的裸文件名必须排除。
+  - 注入只有**形状②**（模块 + 边，`index_max_tokens` 硬顶、截断写进 header），三处 system prompt 由
+    `[blueprint] inject_into` 决定；`purpose` 这类不可验证的散文永不进常驻。委派前缀会带上目标模块的
+    现有散文（判据是"派生集合里的片路径逐字出现在任务里"，不是猜路径 —— §6.3 否决的是后者）。
+  - 启用判据只有 `config.BlueprintEnabled()`（I8，吞下 `enable` 与 `YAGENT_BLUEPRINT=0`）；
+    `internal/blueprint` 自己不读环境变量，也不 import `config`/`gitinfo`/`tokenutil` ——
+    仓库读数与 token 计数器由装配层做成参数传进来。
+  - **仍然没做**：`export_path` 的导出层（R8）、`/blueprint` 的 TUI/CLI 入口、KV 记忆的收编删除（R7，
+    现在两个 sink 并存）、以及 §8 纪律 1 里"每种拒收再记一条 rollout `event_msg`"（钩子那里没有 writer）。
 - **Thinklink**（`internal/thinklink`）：append-only 的思维日志（用户输入 + T&P 块），是 ultimate 压缩重建上下文的原料。
 
 ### 6.5 三档上下文压缩（`internal/compression`）
@@ -550,7 +597,8 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 | **Rollout（断点续跑的事实来源）** | `~/.yagent/data/rollout/{projectID}/{ts}_{session}[_{agent}].jsonl` | **入队即返回、攒批落盘**（C2：每个 writer 一条写循环，32 条或 20ms 刷一次，`Close` 会 join），类型含 `session_meta/turn_context/response_item/event_msg/compacted/agent_checkpoint`（`world_state` 已于 2026-10-14 删除）；`session_meta` 带 git 身份 + `delegation_id` + `parent_session_id`，终止事件带 `stop_reason`（词表在 `memory/rollout_types.go`：`paused/cancelled/idle_timeout/total_timeout/max_steps/llm_error/circuit_breaker_open/panic/plain_text/agent_exit/unaccounted`）。子 Agent 的文件名后缀 `_{agent}` 就是"这次委派是哪一个"的凭据。**读回自己写过的文件之前必须排干**：`WriteCheckpoint` 走 `(*RolloutWriter).FinalizeCheckpoint`（先 Flush 再按整份文件算指纹，写完再 Flush 让坐标本身落地），自己拼 `Flush + FinalizeCheckpoint(path)` 的调用点一定会拿到"少几条"的指纹 —— 它不报错，只是把能重放的会话判成损坏 |
 | Blackboard 便签 | `~/.yagent/notes/{boardID}/{agent}/*.md` | 原子写，`YAGENT_NOTES_ROOT` 可覆盖 |
 | Artifact | `~/.yagent/data/artifacts/{id}` | 原子写，ID `^\d{8}-\d{6}-[0-9a-f]{8}$` |
-| 共享/仓库记忆 | `~/.yagent/data/shared_memory/{projectID}/shared_memory.json` | 5 秒 ticker + dirty 标记，退出前 flush |
+| 共享/仓库记忆 | `~/.yagent/data/shared_memory/{projectID}/shared_memory.json` | 5 秒 ticker + dirty 标记，退出前 flush（**R7 将被蓝图收编后删除**） |
+| **仓库蓝图** | `~/.yagent/data/blueprint/{projectID}/blueprint.md` + `revisions/*.md` | **fold 前整档先落 `revisions/`（滚动 5）**；tmp+rename 走 `util.AtomicWrite`（0700/0600）；多进程用**乐观 CAS 重放**而不是锁文件；根护栏拒绝 `$HOME`/`/`/无 manifest 且非 git，存储根落进项目内也拒绝 |
 | 授权状态 | `~/.yagent/settings.json` → `authorized_projects` | 持久 |
 | 浏览器工作区 | `~/.yagent/data/browser/{delegation}/.browser-control/` | 由 `cmd.Dir` 决定落点（上游状态路径是 CWD 相对）；含 current-tab、chrome.pid、traces、截图；`[browser] workspace_ttl` 清理 |
 | 日志 | `~/.yagent/logs/`（`app-`、`llm-`、`llm-error-`、`tool-`、`delegate-`、`knowledge-*`，按任务分子目录） | 追加 |
@@ -625,10 +673,17 @@ WebSocket 用 melody，每个任务一个 Dispatcher + `WebSocketConsumer`，向
 
 **顶层表**：`[global.llm]`、`[agents.llm]`、`[tools.llm]`（含 `[tools.deferred]`）、`[agent]`、`[llm]`、`[routing]`、
 `[keywords]`、`[git_checkpoint]`、`[codeseek]`、`[browser]`、`[blackboard]`、`[resume]`、`[enhanced_commander]`、`[tui]`，
-`[blueprint]`（仓库蓝图，R1 落骨架：`enable` / `inject_into` / `index_max_tokens` /
+`[blueprint]`（仓库蓝图：`enable` / `inject_into` / `index_max_tokens` /
 `prose_budget_tokens` / `export_path`；启用判据 `config.BlueprintEnabled()` 同时吞下环境变量
-`YAGENT_BLUEPRINT=0` 与 `enable` 键），
+`YAGENT_BLUEPRINT=0` 与 `enable` 键。**五个键里四个已有真实消费者**（`enable`→`app.buildBlueprint`
+一处读取、五处共问；`index_max_tokens`→形状②硬顶；`inject_into`→三处 system prompt；
+`prose_budget_tokens`→`read_blueprint` 与委派前缀），**`export_path` 仍无消费者**（导出层是 R8，
+`docs/config-guide.md` 里先不要写它）。默认值与 `internal/blueprint` 的渲染兜底常数由
+`internal/config/blueprint_defaults_test.go` 钉成同源（同 §11 坑 18 那类"两份同形实现"），
 以及顶层 `task_timeout`。**`[app]` 与 `[codeseek.knowledge]` 已整体删除**（前者唯一的键只进 `slog.Debug`，后者五个键全部不可达 —— `enabled` 会被写回 true，其余四个读点在注入器的 early return 之后）。
+
+> 工具声明面的 schema 条数基线随 `read_blueprint` 从 50 → **51**；改动必须显式改数字
+> （`internal/toolspec/registry_test.go:TestSchemasLoadAndDescribeEveryEntry`）。
 
 **运行时写回**：`config/persist.go` 只有一个内核 `SetKeyInSection(path, section, key, renderedValue)`
 （段缺失→末尾追加，键缺失→段内插入，存在→就地替换且保留行内注释与等号两侧空白；永不整文件重编码，
@@ -1219,6 +1274,22 @@ plan:
     的看门狗顶成超时。同一条理由也解释了 `MCP doRequest` 的 deadline 为什么必须
     `WithTimeout(ctx, …)` 而不是 `WithTimeout(context.Background(), …)` —— 后者会整条丢掉
     调用方的取消链，表现就是坑 17 那一类"取消了但没人认为被取消"。
+38. **工具回显少一个键，提交就在离开循环的那一刻静默消失**：`ExecuteAgentExit`
+    （`tools/flow_control.go`）把 `handoff` 透传进返回值，Agent 侧的采集点读的就是**返回值**
+    —— 而它当初没有透传 `blueprint`，于是蓝图永远不落盘、不报错、不丢日志（R6 落地时
+    由 `TestE2ERepoRunWritesBlueprintFile` 抓出，变异 M2 把它改回去立刻红）。
+    **通用教训**：任何"工具层只回显、Agent 层才解读"的参数，加参数时必须同时改两处；
+    只改 schema 与解析侧，得到的是一条永远绿的路径。同类历史坑见 §11 坑 16（StopOnFinish）。
+39. **探针 Deps 必须与生产同形，否则 golden 在钉一条不存在的路**：`read_blueprint` 注册后
+    工具面 golden 一动不动 —— 因为 golden 走 `Profile.ProbeDeps()`，而生产的 `depsFor` 恒绑
+    `Blueprint` 执行器；探针没绑 → `Available` 为假 → 六个画像都"没有"这个工具。
+    这与 §11 坑 33（并发谓词扫 `Adapters`、测试自己填 `Adapters`）是同一类失效：
+    **两边不对称本身就是证据**。修法是把能力加进 `testDeps()`（`toolspec/profile.go`），
+    而不是在测试里另搭一套夹具；`TestProbeDepsIsCapabilityComplete` 是那道的兜底。
+40. **`testdata/` 是 Go 工具链的盲区**：R2 的 8 个 fixture 写着 `const F08 = 08`（非法八进制），
+    而 `go build ./...` / `go vet ./...` / `go test ./...` **全都不看** `testdata/` 里的文件 ——
+    只有 `gofmt -l <目录>` 会报（它按目录走，不按包）。所以扫描器/树遍历类的 fixture
+    落地后请顺手跑一次 `gofmt -l`；"编译过了"不等于"夹具是能编译的 Go"。
 
 
 <!-- CODESEEK_INJECTION -->

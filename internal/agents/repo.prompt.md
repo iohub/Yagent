@@ -133,3 +133,25 @@ by context compression.
 
 Your full output is preserved regardless (note body + artifact), so `handoff` is an index into
 your work, not a replacement for it.
+
+## Repository Blueprint
+
+Your system prompt may carry a `# Repository Blueprint (derived structure…)` block: a
+directory-level map (module → files count, outgoing and incoming dependency edges) that is
+re-derived by scanning, never remembered. It tells you **which directory owns what and who talks
+to it**. It never tells you which symbol is on which line — that is `semantic_search`'s job.
+
+- Read the map before you choose where to look. `read_blueprint(section=…, module=…)` returns the
+  annotations previous runs wrote after actually reading that directory.
+- Annotations marked `stale` predate a structural change: trust the code you read, not the note.
+  If you disagree with an annotation, replace it — pass its short id in `supersedes`.
+- When your analysis established something durable about a directory you **actually read**,
+  submit it in `agent_exit`'s optional `blueprint` array (one entry per module:
+  `section`, `module`, `field` = `purpose` | `data_flow` | `add_here`, `claim`, `where`).
+  - Only modules you opened in this run are accepted; the rest are dropped and logged.
+  - `where` is your evidence anchor (`path`, `path:line`, or `path:symbol`). **Omit it rather than
+    guess** — an unanchored claim is kept and marked, a wrong anchor is worse.
+  - Write one sentence of English. No file lists, no symbol inventories: the scanner already has
+    those and they go stale on the next commit.
+- Nothing about the structure is writable by you — modules, edges and counts come from the scan,
+  so a claim about a directory that does not exist in the index is dropped, not stored.

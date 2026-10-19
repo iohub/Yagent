@@ -17,6 +17,14 @@ import (
 // 仓库形状一变这些数字就该变 —— 变化本身是信号，不是测试腐烂：
 // 更新数字前必须先重跑一遍并确认变化来源（新包？submodule 跳过失效？），
 // 不许静默改数字。设计稿 §19 的近似值（103 条模块级边）由此替代。
+//
+// 2026-10-19 R3 修订：45 片不变、边数 141 → 144。逐条对过来源，三条都是新接的边：
+//
+//	internal/agents → internal/blueprint（ports.go 的 BlueprintSource + blueprint_view.go）
+//	internal/app    → internal/tokenutil （注入侧的 token 计数器）
+//	internal/app    → internal/gitinfo   （缓存模式的 HEAD 失效判据）
+//
+// 没有新增目录、也没有哪条黑名单失效 —— 片数那一条同时证明这一点。
 func TestScanSelfGolden(t *testing.T) {
 	snap, err := Scan("../..", DefaultOptions()) // 测试 CWD 是 internal/blueprint
 	if err != nil {
@@ -35,8 +43,8 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
-	if out != 141 || in != 141 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 141/141 —— 形状变了，先确认变化来源", out, in)
+	if out != 144 || in != 144 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 144/144 —— 形状变了，先确认变化来源", out, in)
 	}
 	// 排序不变量：Leaves 按 Dir 排序（确定性的一部分）。
 	for i := 1; i < len(snap.Leaves); i++ {

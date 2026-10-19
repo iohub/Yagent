@@ -72,6 +72,9 @@ type DirectorAgent struct {
 
 	projectCtxLoader *director.ProjectContextLoader
 
+	// blueprint 是常驻骨架的注入视图（构造期从 params 拷一份，见 NewDirectorAgent）。
+	blueprint *BlueprintView
+
 	currentMemory *memory.ConversationMemory
 	compressor    *compression.ContextCompressor
 
@@ -133,6 +136,11 @@ type DirectorAgentParams struct {
 	MetaRetryCount int
 	Config         config.Config
 	LLMClient      *llm.Client
+
+	// Blueprint 是仓库蓝图的注入视图（nil = 这个项目没有蓝图）。
+	// Director 拿到的只有形状②的骨架（目录→目录），符号级问题仍然归 codeseek ——
+	// 这条分工写进 prompt，不写进代码，是因为它约束的是"该委派谁"。
+	Blueprint *BlueprintView
 }
 
 // NewDirectorAgent 构造 DirectorAgent：先填充结构体字段，再装配工具适配器
@@ -172,6 +180,7 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 		metaHandler:      director.NewMetaAgentHandler(),
 		adapter:          NewDirectorAdapter(true, adapterCfg),
 		llmClient:        p.LLMClient,
+		blueprint:        p.Blueprint,
 		projectCtxLoader: director.NewProjectContextLoader(func() string { return p.Env.ProjectPath() }),
 
 		llmTimeout: func() time.Duration {
@@ -651,8 +660,14 @@ func (a *DirectorAgent) PackDelegateTask(task string, params map[string]interfac
 //   - 子 Agent 能否发现前序结论，不再取决于 Director 是否记得传 context_refs。
 //     context_refs 从此语义是"强调"（额外内联全文），而不是"准入"。
 func (a *DirectorAgent) packDelegateTask(task string, params map[string]interface{}) (packedTask string, unresolvedCount int) {
+	// [仓库蓝图] 先取"目标模块的现有散文"。它必须在黑图开关**之外**：
+	// YAGENT_BLACKBOARD=0 关掉的是便签板，不是蓝图 —— 两个 kill-switch 各管各的存储。
+	// 这一句是 R4 的承重件：Repo 拿到的不是空白页而是"这片已经被说成什么了"，
+	// 它的提交才是**更新**而不是重新发明。
+	bp := a.blueprint.ProseForTask(task)
+
 	if !blackboardEnabled() {
-		return task, 0
+		return bp + task, 0
 	}
 
 	idx, _, err := blackboard.BuildIndex(a.boardID, a.indexOpts())
@@ -673,10 +688,11 @@ func (a *DirectorAgent) packDelegateTask(task string, params map[string]interfac
 	}
 
 	if idx == "" && packText == "" {
-		return task, unresolvedCount
+		return bp + task, unresolvedCount
 	}
 
 	var b strings.Builder
+	b.WriteString(bp)
 	if idx != "" {
 		b.WriteString(idx)
 		b.WriteString("\n\n")
@@ -925,6 +941,9 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 				systemPrompt += knowledgeBlock
 			}
 		}
+		// [仓库蓝图] 常驻骨架（形状②）。每轮现算、只进这次调用的 system prompt（I2）：
+		// 它必须扛住第二/三档整段重写消息，而进 messages 的东西会被摘要吞掉（§11 坑 11）。
+		systemPrompt += a.blueprint.Resident()
 		return systemPrompt, nil
 	}
 

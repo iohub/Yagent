@@ -1,3 +1,3 @@
 package big
 
-const F06 = 06
+const F06 = 6

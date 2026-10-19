@@ -121,6 +121,10 @@ type Deps struct {
 	Consolidate ToolFunc
 	Prune       ToolFunc
 
+	// Blueprint 是 read_blueprint 的执行器。与 Consolidate/Prune 不同，它**恒非 nil**：
+	// 没有蓝图时工具要返回"为什么没有 + 怎么修"，而不是从工具面上静默消失（设计稿 §8）。
+	Blueprint ToolFunc
+
 	// Checkpoint 三个执行器；nil 表示当前仓库/配置不支持 git 快照
 	CheckpointList     ToolFunc
 	CheckpointCreate   ToolFunc

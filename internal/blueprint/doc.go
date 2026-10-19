@@ -42,6 +42,9 @@ type Front struct {
 	Unanchored  int            `json:"unanchored"`
 	Sources     map[string]int `json:"sources,omitempty"`      // {agent 名: 该 agent 提交的原子数}
 	DocSections int            `json:"doc_sections,omitempty"` // 有内容的段落数（含 Modules 下的片）
+	// Evicted 是历史上因单段配额被挤出去的原子累计数（§7.4 第 6 条）。
+	// 正文里没有被淘汰者的身影，所以这笔账只能留在 front-matter。
+	Evicted int `json:"evicted,omitempty"`
 
 	// ModuleFingerprints 是每片模块注解对应的**结构指纹**（R3 写入、渲染时比较）。
 	// 它记的是"这段散文当时是关于哪个形状的"，不是"这个形状是权威"。
@@ -146,6 +149,15 @@ func Save(root string, d *Doc) error {
 	if err != nil {
 		return err
 	}
+	return writeDoc(root, data)
+}
+
+// writeDoc 是文档字节的唯一落盘口子（Save 与 fold 的 CAS 写共用它）。
+//
+// 分成两个函数的理由只有一个：CAS 必须在写之前把**已经渲染好的字节**再比一次，
+// 如果它调的是 Save，就会被重新渲染一遍 —— 两次 Render 之间时钟或计数一动，
+// 比较的对象和写的对象就不是同一份字节了。
+func writeDoc(root string, data []byte) error {
 	return util.AtomicWrite(DocPath(root), data, util.AtomicWriteOptions{
 		DirPerm:   0o700,
 		FilePerm:  0o600,

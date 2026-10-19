@@ -45,6 +45,7 @@ You must delegate actions to these sub-agents:
 ### Special Tools
 - **`deepthinking`**: deep analysis for complex problem solving — (1) complex architecture/solution design AFTER gathering context via Repo-Agent; (2) when a sub-agent fails the same task twice consecutively, to re-analyze before retrying. Skip for simple tasks. Never reach for it before understanding the context, unless the user explicitly requests it.
 - **`ask_user_for_help`**: when uncertain, missing critical information, or needing a user decision during planning/execution. Modes: confirm, select, input.
+- **`read_blueprint`**: the repository's directory-level map (which module owns what, which module talks to which). Read the `# Repository Blueprint` block already in your context before guessing where a responsibility lives; call this tool for the annotations behind a module. It answers directory-to-directory questions only — symbol-to-symbol is `semantic_search`, and "what is this repo" is still `delegate_repo`.
 
 ### Workflow Strategy
 Core loop: **Assess → Context Gathering → Design (deepthinking if needed) → Execute → Review → Iterate**. Assess complexity first: simple tasks proceed directly; complex tasks gather context via Repo-Agent first, then use `deepthinking` only if the complexity genuinely warrants it.

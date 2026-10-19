@@ -36,6 +36,10 @@ type ChatAgentParams struct {
 	LLM         llm.Engine
 	MaxSteps    int
 	StepRetries int
+	// Blueprint 是仓库蓝图视图（nil = 这个项目没有蓝图）。
+	// 这三个 Agent 不做常驻注入，但 read_blueprint 在它们的工具面上要能真读到东西 ——
+	// 绑 nil 会让工具回答"没有蓝图"，那是一句谎话。
+	Blueprint *BlueprintView
 }
 
 // NewChatAgent 构造 ChatAgent：装配轻量工具集后返回。
@@ -63,7 +67,7 @@ func (a *ChatAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.UserInput = input
 	// 工具面由注册表按画像装配：Chat 的画像只给认知族 + 流程控制 + 便签回读，
 	// 没有任何文件系统能力（历史上这是 buildChatAdapters 里那 5 个 case）。
-	deps := depsFor("chat", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx))
+	deps := depsFor("chat", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint)
 	deps.Flow = a.params.Flow
 	deps.Thinker = a.params.Thinker
 	deps.Micro = a.params.MicroAgent

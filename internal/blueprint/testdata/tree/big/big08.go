@@ -1,3 +1,3 @@
 package big
 
-const F08 = 08
+const F08 = 8
