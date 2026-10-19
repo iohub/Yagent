@@ -19,6 +19,21 @@ import (
 //go:embed repo.prompt.md
 var repoPrompt string
 
+// repoFinishReminder 是 Repo 停在纯文本上时的那一句提醒。
+//
+// 它刻意**不是**通用那条（"立刻调用工具去 explore/edit/run/verify"）：Repo 的报告本身就是
+// 交付物，让它再去探索一轮是把已经做完的分析推翻重做。这里要补的只有收尾动作 ——
+// `agent_exit`，以及挂在那上面的 handoff 与 blueprint[] 两条通道。
+const repoFinishReminder = "SYSTEM REMINDER: your analysis above is the deliverable, but a text-only reply " +
+	"ends this run *without handing anything back*: the caller sees no handoff, and the repository " +
+	"blueprint stays unannotated because both are collected from agent_exit.\n\n" +
+	"Call `agent_exit` now. Do not repeat or rewrite the report. In it put:\n" +
+	"- `reason`: one line (what you analyzed).\n" +
+	"- `handoff`: conclusion + verifiable facts with `where` + status.\n" +
+	"- `blueprint`: one entry per directory you actually opened this run and reached a durable " +
+	"conclusion about — section/module/field/claim/where; omit it only if you read no directory " +
+	"or every finding is already annotated correctly (then say nothing rather than restate it)."
+
 type RepoAgent struct {
 	BaseAgent
 	promptFmt   PromptFormatter
@@ -181,10 +196,17 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.SystemAsHuman = true // RepoAgent uses Human role for its prompt
-	// repo.prompt.md 要求模型以 agent_exit 收尾（handoff 是它的一部分）；
+	// repo.prompt.md 的 Output Contract 要求模型以 agent_exit 收尾（handoff 与 blueprint 都挂在它上面）；
 	// 不置这个标志时 agent_exit 只是"又执行了一次工具"，循环继续烧到 MaxSteps，
 	// 而交付物变成后续那几轮的文本 —— 便签正文与 artifact 全文跟着全错。
 	cfg.StopOnFinish = true
+
+	// 停在文本上时补一次收尾提醒。存在的理由是实测：10-17~10-19 的 10 份 Repo rollout 里
+	// 7 份 stop_reason=plain_text、一次 agent_exit 都没有 —— 于是 handoff 与蓝图写通道
+	// 同时失效，而这两条通道的采集点都在 agent_exit 上。
+	// 上限给 1 而不是更多：模型坚持用文本交付时，第二次催促只是多烧一轮。
+	cfg.NoActionRetryLimit = 1
+	cfg.NoActionReminder = repoFinishReminder
 
 	// 上下文压缩配置（tool 结果截断）
 	ec := a.ecCfg

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,7 +42,14 @@ func NewBlueprintCommit(view *BlueprintView) *BlueprintCommit {
 
 // Commit 折叠本次提交并落盘。永不返回 error、永不 panic。
 func (c *BlueprintCommit) Commit(ctx context.Context, agentName string, res AgentResult) {
-	if c == nil || len(res.Blueprint) == 0 {
+	if c == nil {
+		return
+	}
+	if len(res.Blueprint) == 0 {
+		// "这一轮为什么没有蓝图"必须是日志答得出的问题，而不是留给用户的一个空目录。
+		if note := c.noSubmissionNote(res); note != "" {
+			slog.Info("blueprint: 本次没有提交", "agent", agentName, "reason", note)
+		}
 		return
 	}
 	// §8 纪律 3：只有以 agent_exit 收尾的 run 才有交付物。
@@ -130,4 +138,47 @@ func docProjectID(root string, snap *blueprint.Snapshot) string {
 		return doc.Front.ProjectID
 	}
 	return filepath.Base(filepath.Clean(root))
+}
+
+// noSubmissionNote 回答"这一轮为什么没有蓝图"。返回空串表示**不该说话**：
+// 没装配蓝图（root 空）、或这一轮根本没读过任何目录 —— 后一种情况提不出结论是正常的，
+// 给它记一条账只会把真正要紧的那一条淹掉。
+//
+// 判据只用**入参侧**（工具调用里的路径参数）。出参侧那一遍是为"检索到 8 个、读了 3 个"
+// 的提交校验准备的；这里只是解释一句话，不该为它多解析一轮工具结果。
+func (c *BlueprintCommit) noSubmissionNote(res AgentResult) string {
+	if c == nil || c.view == nil || c.view.src == nil {
+		return ""
+	}
+	root := c.view.src.Root()
+	if root == "" {
+		return ""
+	}
+	snap := c.view.src.Snapshot()
+	if snap == nil {
+		return "派生还没就绪"
+	}
+	mods := snap.EvidenceModules(openedPaths(res.Memory))
+	if len(mods) == 0 {
+		return ""
+	}
+	if !isAgentExitResult(res.Text) {
+		// 这条是真实世界最常中的：Repo 用一段文本收尾，写通道（agent_exit.blueprint[]）
+		// 因此根本没有被给到机会 —— 与 §11 坑 16（StopOnFinish）是同一个病灶。
+		return "本次以纯文本收尾，没走 agent_exit，写通道没有被调用" +
+			"（读过 " + strconv.Itoa(len(mods)) + " 片：" + strings.Join(mods, ", ") + "）"
+	}
+	return "以 agent_exit 收尾但没有 blueprint[] 条目" +
+		"（读过 " + strconv.Itoa(len(mods)) + " 片：" + strings.Join(mods, ", ") + "）"
+}
+
+// openedPaths 从子 Agent 的记忆里取工具调用参数中的路径（入参侧证据的轻量版）。
+func openedPaths(mem []memory.ChatMessage) []string {
+	var out []string
+	for _, m := range mem {
+		for _, tc := range m.ToolCalls {
+			out = append(out, pathsFromJSON(tc.Function.Arguments, pathArgKeys)...)
+		}
+	}
+	return out
 }
