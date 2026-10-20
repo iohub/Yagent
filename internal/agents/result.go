@@ -217,6 +217,7 @@ func FormatForDirector(toolName string, r AgentResult, noteRef string, unresolve
 	b.WriteByte('\n')
 	if r.ArtifactRef == nil {
 		b.WriteString(r.Summary)
+		appendBlueprintAccount(&b, r)
 		return b.String()
 	}
 	fmt.Fprintf(&b, "artifact: %s (%d chars total)\n", r.ArtifactRef.ID, r.ArtifactRef.CharCount)
@@ -226,5 +227,17 @@ func FormatForDirector(toolName string, r AgentResult, noteRef string, unresolve
 	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "[Output truncated to fit context. Full result stored as artifact %s. Call read_artifact(id=\"%s\") if you need details beyond the summary above.]",
 		r.ArtifactRef.ID, r.ArtifactRef.ID)
+	appendBlueprintAccount(&b, r)
 	return b.String()
+}
+
+// appendBlueprintAccount 把 Repo 那一轮的蓝图账目附在交付之后。
+// 它必须在**返回值正文之外**：正文是交付物（会被便签、artifact、压缩各读一遍），
+// 而这一行是"写通道这次成了没有"，只对 Director 的决定有用，对谁都不是内容。
+func appendBlueprintAccount(b *strings.Builder, r AgentResult) {
+	if r.BlueprintAccount == "" {
+		return
+	}
+	b.WriteString("\n\n[blueprint] ")
+	b.WriteString(r.BlueprintAccount)
 }

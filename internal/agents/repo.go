@@ -246,7 +246,9 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	// [仓库蓝图] 落盘钩子：同一时点的第三个 sink。
 	// 只做"解析 + 校验 + 一次文件写"（ms 级），跑在委派返回的这条 goroutine 上，
 	// 不起线程、不调模型，也**绝不向 Repo 的返回值传播错误**（§8 纪律 2 / I11）。
-	NewBlueprintCommit(a.params.Blueprint).Commit(ctx, a.Name(), agentResult)
+	// 返回值是这次 fold 的账目（提交/写入/逐条拒收），随结果一起回给 Director ——
+	// 只进日志的话，"四条散文全被拒收"在对话里等价于"这次委派顺利结束"。
+	agentResult.BlueprintAccount = NewBlueprintCommit(a.params.Blueprint).Commit(ctx, a.Name(), agentResult)
 
 	return agentResult, nil
 }

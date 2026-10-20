@@ -2,8 +2,11 @@ package agents
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -40,34 +43,41 @@ func NewBlueprintCommit(view *BlueprintView) *BlueprintCommit {
 	return &BlueprintCommit{view: view}
 }
 
-// Commit 折叠本次提交并落盘。永不返回 error、永不 panic。
-func (c *BlueprintCommit) Commit(ctx context.Context, agentName string, res AgentResult) {
+// Commit 折叠本次提交并落盘，返回一句"这一轮蓝图发生了什么"的账目（可空 = 无话可说）。
+// 永不返回 error、永不 panic。
+//
+// 返回值是 2026-10-20 加的第二条出口：`agent_exit` 是终止点，fold 的拒收如果只进 slog，
+// 模型不知道自己白交了四条、Director 看到的仍是"这次委派成功了"（实测那一轮 0 次读取、
+// 4 条 outside-evidence-set 拒收，账目在日志里，交付物里一个字都没有）。
+// 本函数不决定要不要写文件 —— 它只把 fold 已经做出的判据搬回对话。
+func (c *BlueprintCommit) Commit(ctx context.Context, agentName string, res AgentResult) string {
 	if c == nil {
-		return
+		return ""
 	}
 	if len(res.Blueprint) == 0 {
 		// "这一轮为什么没有蓝图"必须是日志答得出的问题，而不是留给用户的一个空目录。
-		if note := c.noSubmissionNote(res); note != "" {
+		note := c.noSubmissionNote(res)
+		if note != "" {
 			slog.Info("blueprint: 本次没有提交", "agent", agentName, "reason", note)
 		}
-		return
+		return note
 	}
 	// §8 纪律 3：只有以 agent_exit 收尾的 run 才有交付物。
 	// max_steps / 取消 / 暂停那几条路径上 History 是半轮的，拿它证明模块归属等于编造证据。
 	if !isAgentExitResult(res.Text) {
 		slog.Info("blueprint: 本次 run 不是 agent_exit 收尾，跳过落盘", "agent", agentName)
-		return
+		return fmt.Sprintf("本次 run 不是以 agent_exit 收尾，%d 条蓝图散文没有落盘", len(res.Blueprint))
 	}
 	root := c.view.src.Root()
 	if root == "" {
-		return
+		return ""
 	}
 	snap := c.view.src.Snapshot()
 	if snap == nil {
 		// 这是"没更新"，不是"更新失败"：一句可区分的話（I18）。
 		slog.Warn("blueprint: 派生还没就绪，本次提交没落盘",
 			"agent", agentName, "items", len(res.Blueprint))
-		return
+		return fmt.Sprintf("派生快照还没就绪，本次 %d 条蓝图提交没落盘（不是被拒收，重跑一次委派即可）", len(res.Blueprint))
 	}
 
 	evidence := map[string]bool{}
@@ -92,7 +102,7 @@ func (c *BlueprintCommit) Commit(ctx context.Context, agentName string, res Agen
 		// §8 纪律 2：IO 失败只 warn。降级不是错误（§11 坑 22 同族）——
 		// 把它向上抛，Director 就会以为这次委派失败了，然后把已经做完的工作重做一遍。
 		slog.Warn("blueprint: fold 失败，本次不更新", "root", root, "error", err.Error())
-		return
+		return fmt.Sprintf("蓝图 fold 失败，本次不更新：%s", err.Error())
 	}
 	// 拒收逐条报名（带 module 与违规 token）：静默丢失的反面教训是 thinklink。
 	for _, rej := range foldRes.Rejected {
@@ -105,12 +115,78 @@ func (c *BlueprintCommit) Commit(ctx context.Context, agentName string, res Agen
 		"superseded", foldRes.Supersede, "stale", foldRes.Stale, "unanchored", foldRes.Unanchored,
 		"rejected", len(foldRes.Rejected), "evicted", foldRes.Evicted,
 	}
+	account := blueprintAccount(len(req.Items), len(evidence), foldRes)
 	if foldRes.NoOp {
 		// "没更新"是一条独立的账：正文逐字没变（同一批结论重播了一次）。
 		slog.Info("blueprint: 本次提交没有改变文档", append(attrs, "noop", true)...)
-		return
+		return account
 	}
 	slog.Info("blueprint: 已折叠落盘", attrs...)
+	return account
+}
+
+// blueprintAccount 把 fold 的账目压成一行给 Director 读的话。
+//
+// 落得干干净净时也说话（"写入 N 条"）—— "这一轮的结论进没进蓝图"是 Director 决定
+// 要不要再来一次委派的依据。但本函数不重复任何校验：判据只有 fold 一份，
+// 这里只搬它的结论（§11 坑 18 那一类"两份同形实现"就是这么长出来的）。
+func blueprintAccount(submitted, evidenceModules int, res *blueprint.FoldResult) string {
+	landed := res.Added + res.Updated + res.Supersede + res.Deduped
+	parts := []string{fmt.Sprintf("蓝图：提交 %d 条，写入 %d 条（本轮证据覆盖 %d 片）",
+		submitted, landed, evidenceModules)}
+	if res.NoOp && landed == 0 {
+		parts = append(parts, "正文逐字没变，文件未重写")
+	}
+	if len(res.Rejected) > 0 {
+		parts = append(parts, rejectAccount(res.Rejected))
+	}
+	if res.Stale+res.Unanchored > 0 {
+		parts = append(parts, fmt.Sprintf("%d 条锚点判过期、%d 条没有锚点（已写入，只是标了状态）",
+			res.Stale, res.Unanchored))
+	}
+	return strings.Join(parts, "；")
+}
+
+// rejectAccount 按原因归堆：一条原因只报一次，带上被点名的片，上限 3 堆 ——
+// 一次提交最多 8 条，全堆出来会把对话挤成日志（多余的那几种仍然进 slog）。
+func rejectAccount(rejs []blueprint.Rejection) string {
+	type tally struct {
+		modules []string
+		count   int
+	}
+	var order []string
+	byReason := map[string]*tally{}
+	for _, r := range rejs {
+		key := string(r.Reason)
+		t, ok := byReason[key]
+		if !ok {
+			t = &tally{}
+			byReason[key] = t
+			order = append(order, key)
+		}
+		t.count++
+		if r.Module != "" && !slices.Contains(t.modules, r.Module) {
+			t.modules = append(t.modules, r.Module)
+		}
+	}
+	sort.Strings(order)
+	shown := order
+	if len(shown) > 3 {
+		shown = shown[:3]
+	}
+	lines := make([]string, 0, len(shown)+1)
+	for _, key := range shown {
+		t := byReason[key]
+		line := fmt.Sprintf("拒收 %d 条：%s", t.count, key)
+		if len(t.modules) > 0 {
+			line += "（片：" + strings.Join(t.modules, ", ") + "）"
+		}
+		lines = append(lines, line)
+	}
+	if extra := len(order) - len(shown); extra > 0 {
+		lines = append(lines, fmt.Sprintf("另有 %d 种拒收原因，见日志", extra))
+	}
+	return strings.Join(lines, "；")
 }
 
 // blueprintSrc 是 `{agent}@{会话坐标前 8 位}`：出处而非权限（§3.2）。

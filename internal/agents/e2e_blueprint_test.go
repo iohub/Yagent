@@ -138,8 +138,11 @@ func TestE2ERepoRunWritesBlueprintFile(t *testing.T) {
 				"section": "modules",
 				"module":  "internal/a",
 				"field":   "purpose",
-				"claim":   "holds the fixture algorithms for this repository",
-				"where":   "internal/a/a.go:3",
+				// 散文形状照 2026-10-19 生产里那三条被拒收的提交：斜杠分隔的标识符列表
+				// ("Alpha/Beta/Gamma") 与写短了的文件名 ("a.go") 都不是从根写全的路径。
+				// 它们曾经让 I14 把整条 claim 判成"外来路径"，三条全拒 ⇒ fold NoOp ⇒ 文件从未出现。
+				"claim": "放夹具算法：入口在 a.go，导出 Alpha/Beta/Gamma 三个常量",
+				"where": "internal/a/a.go:3",
 			},
 		})),
 	}})
@@ -159,6 +162,10 @@ func TestE2ERepoRunWritesBlueprintFile(t *testing.T) {
 	if strings.Join(res.EvidenceFiles, ",") != "internal/a/a.go" {
 		t.Errorf("证据集不对: %v, 要只有一条 internal/a/a.go", res.EvidenceFiles)
 	}
+	// 顺利的那一轮同样要留下一句账（Director 据此知道结论进蓝图了，不必再派一次）。
+	if !strings.Contains(res.BlueprintAccount, "写入 1 条") || strings.Contains(res.BlueprintAccount, "拒收") {
+		t.Errorf("落地账目不对: %q", res.BlueprintAccount)
+	}
 
 	data, err := os.ReadFile(blueprint.DocPath(storeRoot))
 	if err != nil {
@@ -166,7 +173,7 @@ func TestE2ERepoRunWritesBlueprintFile(t *testing.T) {
 	}
 	body := string(data)
 	for _, want := range []string{
-		"holds the fixture algorithms", "## Modules/internal/a", "field:purpose",
+		"导出 Alpha/Beta/Gamma 三个常量", "## Modules/internal/a", "field:purpose",
 		"src:repo_agent@call_del", // {agent}@{会话坐标前 8 位}
 		`"module_fingerprints"`,
 	} {
@@ -199,12 +206,21 @@ func TestE2ERepoRunDoesNotWriteUnreadModule(t *testing.T) {
 	}})
 
 	agent := newBlueprintRepoAgent(t, workDir, engine, view)
-	if _, err := agent.Run(context.Background(), "看看 internal/b"); err != nil {
+	res, err := agent.Run(context.Background(), "看看 internal/b")
+	if err != nil {
 		t.Fatalf("钩子把错误传给了委派（I11）: %v", err)
 	}
 	if _, err := os.Stat(blueprint.DocPath(storeRoot)); err == nil {
 		data, _ := os.ReadFile(blueprint.DocPath(storeRoot))
 		t.Errorf("没读过的片被写进了文档:\n%s", data)
+	}
+	// 拒收必须随结果同行：I17 拦住的是散文，拦住之后"这轮白交了"这件事
+	// 若只留在日志里，Director 看见的仍是一次成功的委派（2026-10-20 实测形状）。
+	if !strings.Contains(res.BlueprintAccount, "outside-evidence-set") {
+		t.Errorf("拒收原因没回到对话里: %q", res.BlueprintAccount)
+	}
+	if !strings.Contains(res.BlueprintAccount, "写入 0 条") {
+		t.Errorf("账目没说明一条都没落地: %q", res.BlueprintAccount)
 	}
 }
 
