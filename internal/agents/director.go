@@ -584,6 +584,11 @@ func (a *DirectorAgent) writeDelegateNote(agentName, toolName, task string, resu
 	if body == "" {
 		body = result.Text
 	}
+	if result.BlueprintAccount != "" {
+		// 蓝图账目挂在尾部、不进结论：它是"写通道这次成了没有"，不是交付内容，
+		// 混进 conclusion 会让每轮重扫的索引行冒充一句架构判断。
+		body = strings.TrimRight(body, "\n") + "\n\n> [blueprint] " + result.BlueprintAccount + "\n"
+	}
 	handoff := result.Handoff
 	if handoff == nil {
 		handoff = &blackboard.Handoff{Conclusion: result.Summary, Status: status}

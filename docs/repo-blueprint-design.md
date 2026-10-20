@@ -440,8 +440,18 @@ fold 是确定性纯函数，零 LLM：
    > v3 的理由照抄：只认入参，一轮"检索到 8 个文件、读过其中 3 个"的分析就只能提交 3 片，
    > 而那 8 片才是它真正掌握的 —— **只做入参侧的校验是个会误伤的校验**。闸门 `TestEvidenceSetIncludesSearchResults`。
    这条挡不住"读了但说错"，但挡得住"没读就说"，后者频率高得多。实现是一个纯函数，不动热循环。
-3. **路径成员校验（I14）**：散文里的"路径样 token"（含 `/` 或以已知源码扩展名结尾）必须属于该片的派生事实集（`files` ∪ 邻居模块路径）。
+3. **路径成员校验（I14）**：散文里的"路径样 token"（含 `/` 或以已知源码扩展名结尾）**如果能被归属**，必须属于该片的派生事实集（`files` ∪ 邻居模块路径）。
    v3 的理由保留：`os.Stat` 只证明"这条路径存在"，模型完全可以拿真路径支撑假断言；成员判定证明"它属于这个模块"，那才是真会被搞错的东西。
+   > **v4.1 修正（2026-10-20）**：归属判据必须是"它到底指哪儿"，而不是"它长得像不像路径"。
+   > 原实现把 `looksLikePath`（任何含 `/` 的 token）直接当违规判据，于是两类正常散文被当成幻觉：
+   > 斜杠分隔的标识符列表（`Name/Brief/Effect/Frequency`、`Cold/Hot`），以及少写前缀的真实路径
+   > （`toolspec/schemas.json`、裸 `schemas.json` —— `ModuleOf` 只沿目录前缀上溯，部分限定的写法永远落到根片）。
+   > 实测代价：2026-10-19 一次真实提交的三条 `blueprint[]` 全被判成 `path-not-in-module`，
+   > fold 因此 NoOp，`blueprint.md` 从未出现，唯一痕迹是两行 WARN。
+   > 现在的三条判据（`prosepath.go`，挂在 `AnchorChecker` 上 —— 存在性本来就只有它管）：
+   > ① 能归属到唯一一片（从根写全 / 少写前缀 / 裸文件名都算）才谈张冠李戴；② 同名散在多片 = 判不了，不谎称验过；
+   > ③ 仓库里查无此物 = 那不是路径断言，存在性交给 `where` 锚点（第 5 条）。
+   > 拒收语义没变：**一条被拒就丢整条 claim**，所以判据宁可弃权不可误判。闸门 `fold_prose_test.go` 四形 + `TestProsePathMustBelongToModule`。
 4. **长度**：`claim ≤ 400`、`where ≤ 120` rune，超限按 `handoff` 的"丢弃整字段"处理而非截半句（`handoff.go:134-184`）。
 5. **锚点复核（I19，v4 新增）**：`where` 非空则按 §5.2(b) 判定；判为 stale **不拒收** —— 写进去并立刻标 stale，比拒收更有信息量（拒收会让"最后一次正确说法"直接消失）。
 
@@ -647,7 +657,7 @@ export_path = ""               # 空 = 不导出；相对路径按项目根解�
 | I11 | 钩子从不向 Repo 返回值传播错误；`max_steps`/取消/暂停路径不写 | `TestCommitFailureNeverBreaksDelegate`、`TestAbandonedRepoRunWritesNothing` |
 | I12 | projectID 与 rollout 同源、零迁移；schema 的 `section` enum 与代码枚举双向对账；`maxItems` 与常数一致 | 既有 `TestComputeProjectID` 抽包后一字不改仍绿 + `TestSectionEnumMatchesSchema` |
 | I13 | 孤儿模块子节永不进注入、永不可被 `read_blueprint` 读到；可见集合 == 派生集合 | `TestOrphanSectionNeverRendered`、`TestVisibleSetEqualsDerivedSet` |
-| I14 | 散文里的路径样 token 必须属于该片派生事实集，否则整块丢弃 | `TestProsePathMustBelongToModule` |
+| I14 | 散文里**能归属**的路径样 token 必须属于该片（含写短的前缀与裸文件名），否则整块丢弃；同名多处与查无此物都弃权不拒收 | `TestProsePathMustBelongToModule`（无 fs 的老判据）+ `fold_prose_test.go` 四形 |
 | I15 | 快照不可变 + 原子替换；注入永不阻塞等派生 | `TestInjectionNeverBlocksOnDerive` |
 | I16 | 根护栏：cwd 是 `$HOME`/`/`/无 manifest 且非 git → 拒绝建蓝图并说明原因 | `TestRefusesHomeDirAsProjectRoot` |
 | I17 | 提交只能覆盖本次 run 的证据集模块（入参侧 ∪ 出参侧） | `TestCommitRejectsModuleNeverReadInThisRun`、`TestEvidenceSetIncludesSearchResults`、`TestEvidenceSetReadsAllPathParams` |
@@ -880,3 +890,60 @@ R1 只让 `enable` 有真实读取点（`app.resolveBlueprintRoot`，三种结�
 自扫 golden：45 片不变，模块级边 **141 → 144**。三条新边逐条对过 ——
 `internal/agents → internal/blueprint`、`internal/app → internal/tokenutil`、`internal/app → internal/gitinfo`。
 没有新增目录（片数那条断言同时证明这一点），也没有哪条黑名单失效。
+
+### 21.5 R6.1：蓝图从未落盘的真实原因（2026-10-20）
+
+排查"blueprint 没落盘"时先要分清两件事，因为它们的账目长得几乎一样（目录建了、文件没有）：
+
+1. **没人提交** —— `repo` 以纯文本收尾，`agent_exit` 一次都没调。本轮已由 bba25cb（收尾提醒 +
+   `NoActionReminder`）处理，账目是 `blueprint: 本次 run 不是 agent_exit 收尾，跳过落盘`。
+2. **提交了但全被拒** —— 账就在 `~/.yagent/logs/app-2026-10-19.log:179-182`：
+   三条 `blueprint: 提交被拒收 reason=path-not-in-module` + 一句 `本次提交没有改变文档 noop=true`。
+   被点名的"路径"是 `Name/Brief/Effect/Frequency/Mutates/Serial/…`、`Cold/Hot`、`toolspec/schemas.json`
+   —— 前两个是散文里的标识符列表，第三个是真的、只是没从仓库根写全。
+
+判据错误在 I14（§7.5 第 3 条）：`looksLikePath` 把"含 `/`"当成路径断言，`Snapshot.ModuleOf` 又只认
+从根写全的形态，于是**准确写法与正常中文都算违规**，而一条拒收丢整条 claim、三条全丢就没有 fold、
+没有 fold 就没有文件（I20 的 NoOp 判据在这里是对的，只是喂给它的东西全被丢光了）。
+
+修法是给归属判据补上它本来就缺的两问（`prosepath.go`，挂在 `AnchorChecker` 上）：
+**"它到底指哪儿"**（含写短的前缀与裸文件名）与 **"仓库里有没有这个东西"**。
+存在性不是这道的新职责 —— 凭空路径由 `where` 锚点复核兜住（第 5 条），那道本来就会判 stale。
+
+| 变异 | 红在 |
+|---|---|
+| `foreignPath` 强制走 `fs == nil` 的老判据 | `TestProseSlashListIsNotAPathAssertion` / `TestProseShortenedPathsResolveToRealOwner` / `TestProseInventedPathLeavesExistenceToAnchorCheck` / `TestCommitAcceptsProductionShapedProse` / `TestE2ERepoRunWritesBlueprintFile` 全红，且拒收 detail 逐字复现生产那两行 |
+| `foreignPath` 恒返回"没违规" | `TestProsePathMustBelongToModule` + `TestProseShortenedPathsResolveToRealOwner`（负向那条）+ `TestEveryRejectionReasonIsAccounted` 红 —— 真阳性仍然咬得住 |
+| 撤掉存在性闸门（`existsUnderRoot` 短路） | 斜杠列表与凭空路径两条红 |
+
+### 21.6 R6.2：拒收账目回到对话（2026-10-20）
+
+修完 I14 之后又跑了一轮，症状仍然一样（目录建了、文件没有），但账目换了一种：
+
+```
+blueprint: 提交被拒收 reason=outside-evidence-set module=internal/tui …  ×4
+blueprint: 本次提交没有改变文档 rejected=4 noop=true
+```
+
+那一轮的 rollout 只有 11 条记录、**一次读工具调用都没有**：任务是"快速架构讲解"，
+模型（`Qwen3.5-35B-A3B` / effort=medium）照着注入的 45 片目录名编了 4 句 `purpose`。
+I17 拦住它是**正确的** —— 蓝图不该收没读过的散文。要修的是接下来那一环：
+
+`agent_exit` 是终止点，fold 的拒收只进 `slog`。于是 Director 收到的仍是一次成功的委派，
+模型永远不知道自己白交了四条，下一轮同一批散文还会再交一次。**防线生效但没人知道防线生效过**，
+和静默丢失只差一步（I18 说的是"账要能读出来"，日志也是读不出给用户看的）。
+
+落点：`BlueprintCommit.Commit` 多返回一行账目（提交几条 / 写入几条 / 拒收原因逐条归堆、上限 3 堆 /
+证据覆盖几片），经 `AgentResult.BlueprintAccount` 到两处 ——
+`FormatForDirector` 的正文之外（这一次决策看的地方）与便签正文的 `> [blueprint]` 尾注
+（下一次委派与索引重扫看的地方）。**不进 `conclusion`**：索引每轮从磁盘重扫，
+把程序的账目混进结论等于替模型下了一句架构判断。
+
+两处都要：工具输出会被压缩卷走，便签正文不进索引 —— 只修一边，另一边就是新的静默。
+判据仍然只有 fold 一份，`blueprintAccount` 只搬结论不再校验一次。
+
+| 变异 | 红在 |
+|---|---|
+| `repo.go` 丢掉返回值（`agentResult.BlueprintAccount =` → `_ =`） | `TestE2ERepoRunDoesNotWriteUnreadModule` 红（账目空串） |
+| `FormatForDirector` 不附这一行 | `TestBlueprintAccountReachesDirectorTextAndNote` 红 |
+| `writeDelegateNote` 不写尾注 | 同一条用例的另一半红 |

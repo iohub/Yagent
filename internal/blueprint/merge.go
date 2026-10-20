@@ -25,15 +25,18 @@ type mergeState struct {
 	// claims 记归一化正文的存在性（dedupe 判据）。
 	claims map[string]bool
 	order  []Section
+	// fs 是 I14 的存在性/归属判据来源（可为 nil = 退回纯派生判据）。
+	fs *AnchorChecker
 }
 
-func newMergeState(blocks []SectionBlock, snap *Snapshot) *mergeState {
+func newMergeState(blocks []SectionBlock, snap *Snapshot, fs *AnchorChecker) *mergeState {
 	st := &mergeState{
 		snap:     snap,
 		sections: map[Section][]Atom{},
 		owners:   map[string]string{},
 		claims:   map[string]bool{},
 		order:    []Section{SecArchitecture, SecFlows, SecConventions, SecDependencies, SecGotchas},
+		fs:       fs,
 	}
 	for _, b := range blocks {
 		if b.Heading == "" {
@@ -352,7 +355,18 @@ func mergeSources(old map[string]int, src string, n int) map[string]int {
 // foreignPath 实现 I14：散文里的路径样 token 必须属于该片的派生事实集
 // （files ∪ 邻居模块路径）。os.Stat 只证明"这条路径存在"，而模型完全可以拿真路径
 // 支撑假断言；成员判定证明"它属于这个模块"，那才是真会被搞错的东西。
-func foreignPath(claim, module string, snap *Snapshot) (string, bool) {
+//
+// fs 为 nil 时（纯派生判据的单元测试、不接文件系统的调用方）退回"ModuleOf + 前缀关系"
+// 的老判据 —— 宁可保守，也不在缺判据时放行。
+//
+// fs 在场时多两道**只收紧假阳性、不放松真阳性**的闸门：
+//   - 归属先问"它在仓库里到底指哪几片"（含写短的路径与裸文件名，见 prosepath.go）；
+//     同名散在多片、哪片都对得上时**不判**，判不了不等于违规（I19 同一条纪律）；
+//   - 仓库里查无此物 ⇒ 那不是路径断言，是散文里的斜杠
+//     （"Name/Brief/Effect/Frequency" 这种标识符列表在中文技术写作里天天出现；
+//     2026-10-19 一次真实提交三条全被它打死，fold 因此 NoOp、蓝图文件从未出现）。
+//     "凭空写一个路径"由 `where` 锚点复核兜住，不靠这道。
+func foreignPath(claim, module string, snap *Snapshot, fs *AnchorChecker) (string, bool) {
 	if snap == nil {
 		return "", false
 	}
@@ -361,20 +375,49 @@ func foreignPath(claim, module string, snap *Snapshot) (string, bool) {
 		if tok == "" {
 			continue
 		}
-		if m, ok := snap.ModuleOf(tok); ok {
-			if m == module || neighbors[m] {
+		if belongsToPatch(tok, module, neighbors) {
+			continue
+		}
+		if fs == nil {
+			if m, ok := snap.ModuleOf(tok); ok {
+				if m == module || neighbors[m] {
+					continue
+				}
+				return tok, true
+			}
+			return tok, true
+		}
+		owners := fs.ownersOf(snap, tok)
+		if len(owners) > 0 {
+			if len(owners) > 1 {
+				continue // 多处同名：判不了，不谎称验过
+			}
+			if owners[0] == module || neighbors[owners[0]] {
 				continue
 			}
 			return tok, true
 		}
-		// 派生集合覆盖不到的路径（目录本身、或已被删掉的路径）：
-		// 目录前缀关系算属于这片，其余按外来处理。
-		if tok == module || strings.HasPrefix(tok, module+"/") || strings.HasPrefix(module, tok+"/") {
-			continue
+		if !fs.existsUnderRoot(tok) {
+			continue // 不是路径断言
 		}
 		return tok, true
 	}
 	return "", false
+}
+
+// belongsToPatch 收"token 与这片有直接字面关系"的三种写法：本片本身、本片的目录、
+// 本片的祖先目录。它必须在归属判定之前跑 —— "internal" 这类祖先会被 ModuleOf 上溯到根片，
+// 而根片并不是这条论断的归属。
+func belongsToPatch(tok, module string, neighbors map[string]bool) bool {
+	if tok == module || strings.HasPrefix(tok, module+"/") || strings.HasPrefix(module, tok+"/") {
+		return true
+	}
+	for n := range neighbors {
+		if n == tok || strings.HasPrefix(n, tok+"/") || strings.HasPrefix(tok, n+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // neighborSet 是一片模块的直接出/入边对端（§4.3 的派生事实里"邻居"这一项）。

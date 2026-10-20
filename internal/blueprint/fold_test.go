@@ -355,19 +355,22 @@ func TestEveryRejectionReasonIsAccounted(t *testing.T) {
 }
 
 // I14：邻居模块的路径可以出现在散文里，别的片不行。
+//
+// 这三条走 fs == nil 的老判据（纯派生集合），钉的是"没有存在性判据时不许放松"。
+// 带文件系统的两种形态（写短的路径、散文里的斜杠）在 fold_prose_test.go 里各有一条。
 func TestProsePathMustBelongToModule(t *testing.T) {
 	snap, _ := Scan(foldProjectOf(t), DefaultOptions())
 	// internal/b 依赖 internal/a：b 的散文里提 a 合法，提 other 不合法。
-	if tok, bad := foreignPath("delegates into internal/a/a.go", "internal/b", snap); bad {
+	if tok, bad := foreignPath("delegates into internal/a/a.go", "internal/b", snap, nil); bad {
 		t.Errorf("邻居模块的路径被判成外来（放行侧失效）: %q", tok)
 	}
-	if tok, bad := foreignPath("also reads internal/other/o.go", "internal/b", snap); !bad {
+	if tok, bad := foreignPath("also reads internal/other/o.go", "internal/b", snap, nil); !bad {
 		t.Errorf("非邻居、非本片的文件路径被放行了（I14 的承重判据失效）")
 	} else if tok != "internal/other/o.go" {
 		t.Errorf("报出来的 token 不对: %q", tok)
 	}
 	// 本片自己的文件永远合法，即使显示列表被截断（判据走 dirIndex，不是 Files 前 24 条）。
-	if _, bad := foreignPath("see internal/a/a.go", "internal/a", snap); bad {
+	if _, bad := foreignPath("see internal/a/a.go", "internal/a", snap, nil); bad {
 		t.Errorf("本片自己的文件被判成外来")
 	}
 }

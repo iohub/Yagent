@@ -111,7 +111,7 @@ func Merge(doc *Doc, snap *Snapshot, req FoldRequest, anchors *AnchorChecker) (*
 
 	derived := snap.DerivedModuleSet()
 	blocks, _ := doc.Sections()
-	state := newMergeState(blocks, snap)
+	state := newMergeState(blocks, snap, anchors)
 
 	for i, raw := range req.Items {
 		if i >= MaxSubmitItems {
@@ -252,7 +252,8 @@ func validate(raw FoldItem, derived, evidence map[string]bool, st *mergeState) (
 		}
 		// I14：散文里的路径样 token 必须属于这片。os.Stat 只证明"存在"，
 		// 成员判定才证明"属于这个模块" —— 后者才是真会被搞错的东西。
-		if bad, yes := foreignPath(claim, item.module, st.snap); yes {
+		// 判不了（同名多处、仓库里查无此物）不是违规：拒收会把正确的论断一起丢掉。
+		if bad, yes := foreignPath(claim, item.module, st.snap, st.fs); yes {
 			return mergeItem{}, RejectPathForeign, fmt.Sprintf("路径 %q 不属于 %s", bad, item.module)
 		}
 	} else if evidence != nil && len(evidence) == 0 {

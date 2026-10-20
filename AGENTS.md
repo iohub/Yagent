@@ -479,6 +479,9 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
     `autoConsolidateSubtask` 同一时点）；**Director 侧不需要知道这个参数存在**，Coding prompt 明确写"你不写蓝图"。
     提交采集在 `result.go`（与 `collectHandoff` 并排，executor 不认识蓝图），落在 `AgentResult.Blueprint`
     而**不是** `Handoff` —— 同一些句子不该同时是便签头和蓝图正文（§2 R4 的病）。
+    fold 的**账目**（提交几条 / 写入几条 / 拒收原因逐条归堆 / 证据覆盖几片）走 `AgentResult.BlueprintAccount`，
+    由 `FormatForDirector` 与便签正文的 `> [blueprint]` 尾注各渲染一次（同一个字符串，两处出口），
+    **不进 `conclusion`** —— 索引每轮重扫，程序的账混进去就是替模型下结论（坑 43）。
   - fold 是**确定性纯函数**：短 ID 由内容派生 ⇒ 幂等 + 乱序输入产出同一份字节；段内按 `(where, claim)` 稳定排序
     （每次 fold 只动那一行，否则人类 review 与 provider 前缀缓存同时失效）；同 `module+field` 非空才覆盖；
     `supersedes` 指认错 ID 时记账但不失败。**正文逐字没变就不算一次 fold**（`NoOp`），否则 I20 的"字节不变"
@@ -486,6 +489,8 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
   - 五道校验各有一条能读出来的拒收账（I18）；证据集 = 本次 run 真打开过的文件所属模块，
     **入参侧 ∪ 出参侧**（只认入参会误伤"检索到 8 个、读了 3 个"那一轮）。
     哪些工具的结果算"读过"是 `toolspec.Spec.ResultPaths`（`json`/`rg`/`bare`）—— `list_dir` 的裸文件名必须排除。
+    I14 的散文路径归属只问"它到底指哪儿 / 仓库里有没有它"，**判不了就弃权不拒收**（一条拒收丢整条 claim，
+    全丢就是 NoOp ⇒ 文件永不出现，见坑 42）；写短的前缀与裸文件名都算，存在性交给 `where` 锚点。
   - 注入只有**形状②**（模块 + 边，`index_max_tokens` 硬顶、截断写进 header），三处 system prompt 由
     `[blueprint] inject_into` 决定；`purpose` 这类不可验证的散文永不进常驻。委派前缀会带上目标模块的
     现有散文（判据是"派生集合里的片路径逐字出现在任务里"，不是猜路径 —— §6.3 否决的是后者）。
@@ -1305,6 +1310,29 @@ plan:
     而 `go build ./...` / `go vet ./...` / `go test ./...` **全都不看** `testdata/` 里的文件 ——
     只有 `gofmt -l <目录>` 会报（它按目录走，不按包）。所以扫描器/树遍历类的 fixture
     落地后请顺手跑一次 `gofmt -l`；"编译过了"不等于"夹具是能编译的 Go"。
+42. **"像路径"不等于"是路径断言"**：I14 的散文成员校验原本对任何含 `/` 的 token 要求归属，
+    而中文技术散文里的斜杠多半是标识符列表（`Name/Brief/Effect/Frequency`、`Cold/Hot`），
+    少写前缀的真路径（`toolspec/schemas.json`、裸 `schemas.json`）又因为 `ModuleOf` 只沿目录前缀上溯
+    而永远落到根片 —— 三条提交全被判成 `path-not-in-module`，一条被拒就丢整条 claim，
+    全丢 ⇒ fold `NoOp` ⇒ **蓝图文件从未出现**（`app-2026-10-19.log:179-182` 就是这个形状）。
+    最坏的地方在于症状与"模型根本没提交"（坑 40）**逐字相同**：目录建了、文件没有，
+    差别只在日志里那两行 WARN 有没有出现。修法见 `internal/blueprint/prosepath.go`：
+    先问"它到底指哪儿"（含写短的前缀与裸文件名），再问"仓库里有没有这个东西"，
+    两者都判不了就**弃权**（同名多处、凭空路径 —— 存在性由 `where` 锚点管，那是第 5 条的活）。
+    **通用教训**：任何"按形状识别 + 违规即丢弃"的校验，夹具里必须放一条**与违规串同形的正常散文**，
+    否则它只会在一堆永远不会出现在生产里的路径上绿灯（`TestProsePathMustBelongToModule` 原本三条
+    全是空格分隔英文 + 从根写全的路径，假阳性形态一条都没触发过）。闸门：`fold_prose_test.go` 四形
+    + `TestE2ERepoRunWritesBlueprintFile`（散文形状照生产那轮）；三条变异见设计稿 §21.5。
+43. **防线生效过但没人知道它生效过，和静默丢失只差一步**：修完坑 42 再跑一轮，症状一模一样
+    （目录建了、文件没有），账目却换成了 `outside-evidence-set` ×4 —— 那轮"快速架构讲解"一次文件
+    都没读，模型照着注入的 45 片目录名编了 4 句 `purpose`，I17 拦它是**对的**。要修的是下一环：
+    `agent_exit` 是终止点，fold 的拒收只进 `slog`，所以 Director 看到的仍是一次成功的委派，
+    模型也不知道自己白交了，下一轮还会这么干。现在 `BlueprintCommit.Commit` 返回一行账目，
+    经 `AgentResult.BlueprintAccount` 同时到 `FormatForDirector`（这次决策看的地方）与便签正文的
+    `> [blueprint]` 尾注（下次委派与索引重扫看的地方），**不进 conclusion**（程序的账目混进结论
+    = 替模型下了一句架构判断）。两处都得写：工具输出会被压缩卷走，便签正文不进索引，
+    只修一边另一边就是新的静默。三条变异见设计稿 §21.6。
+    **通用教训**：任何"可选写通道 + 终止型工具"的组合，都要问"被拦下来的那一次，谁看得见"。
 
 
 <!-- CODESEEK_INJECTION -->

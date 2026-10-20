@@ -69,6 +69,10 @@ type AnchorChecker struct {
 	root   string
 	lines  map[string]int
 	exists map[string]bool
+	// byBase 是"文件名 → 覆盖它的片"（prosepath.go，I14 的后缀归属）。
+	// 只有散文里真的出现写短了的路径才建它 —— 一次 fold 一份，与 exists 同生命周期。
+	byBase     map[string][]string
+	byBaseSeen map[string]bool
 }
 
 func NewAnchorChecker(root string) *AnchorChecker {
