@@ -91,13 +91,14 @@
 | TUI | `charm.land/bubbletea/v2`、`bubbles/v2`、`lipgloss/v2`、`glamour/v2` | 终端界面（注意是 **v2**） |
 | 浏览器 | `go-rod/rod`（go.mod 仍声明，代码已无引用） | Browser-Agent 重构时的候选依赖 |
 | Token | `pkoukk/tiktoken-go` | cl100k_base 计数（`internal/tokenutil`） |
-| 配置 | `BurntSushi/toml` + `fsnotify` | 配置解析、热加载（词典） |
+| 配置 | `BurntSushi/toml` | 配置解析。**`fsnotify` 只活在 `go.mod`，Go 代码里零引用**：词典与配置都没有热加载（见 `internal/AGENTS.md` 的 dict 一节） |
 | Diff | `aymanbagabas/go-udiff` | `search_replace_in_file` 返回 unified diff |
 | 其他 | `google/uuid`、`lucasb-eyer/go-colorful`、`rivo/uniseg` | ID、配色、字宽 |
 
 ### 2.2 外部依赖
 
-`ripgrep`（已内嵌，见 `dist/bin`）、`fzf`（模糊搜索）、`codeseek` 二进制（默认从 `dist/bin` 解出到 `~/.yagent/bin`）、
+`ripgrep`（**git 树里没有内嵌**：`dist/bin` 只跟踪一个占位文件，`internal/tools/search_operations.go:16-23`
+回落系统 PATH；release 构建才把 rg 放进 `dist/bin`）、`fzf`（模糊搜索）、`codeseek` 二进制（默认从 `dist/bin` 解出到 `~/.yagent/bin`）、
 `browser-control`（Rust CLI，随 release 构建内嵌 `dist/bin`、启动时解出到 `~/.yagent/bin`；查找顺序 `[browser] binary_path` → `~/.yagent/bin/browser-control` → `$PATH` 不变）
 与 Chrome/Chromium —— 两者缺一，Browser-Agent 即不可用（`delegate_browser` 描述会自动降级）。
 
@@ -168,10 +169,11 @@ yagent/
 │   │                           #   唯一写回内核（文本级保注释），setup.go 是 provider 写/删 +
 │   │                           #   首启判据（NeedsSetup / IsPlaceholderKey / api_key_env 展开）
 │   ├── datamanager/            # 任务记忆 JSONL（5s 防抖）+ 索引
-│   ├── dict/                   # 补全词典（fsnotify 热加载）
+│   ├── dict/                   # 补全词典（只在 TUI 构造时加载一次，无热加载）
 │   ├── diff/                   # unified diff
 │   ├── embedbin/               # 从 embed FS 解出二进制（MD5 校验，版本化）
-│   ├── globalctx/              # 全局上下文 + Version/BuildTime/GitCommit（ldflags 注入）
+│   ├── globalctx/              # 全局上下文（EnvView / RepoContextStore 两个并发视图）。
+│   │                           #   没有 Version/BuildTime/GitCommit 三个字段——build.sh 的 -X 注入的是空气
 │   ├── http/                   # gin REST + melody WebSocket + TaskManager
 │   ├── knowledge/              # 知识检索注入 + 固化（走 codeseek MCP）
 │   ├── llm/                    # Engine 接口、OpenAI/Anthropic 引擎、Fallback、Router
@@ -206,6 +208,29 @@ yagent/
 └── docs/                       # ARCHITECTURE.md / config-guide.md / 设计稿
 ```
 
+### 3.1 模块知识文档（嵌套 `AGENTS.md`）
+
+`internal/` 下 15 个模块目录各有一份**局部** `AGENTS.md`，加上导览 `internal/AGENTS.md` 共 16 份。
+局部文档写的是"在这个目录里改代码之前必须知道、而又派生不出来"的东西：职责边界（尤其不负责什么）、
+硬约束、历史坑、入口文件、钉住不变量的测试函数名。
+
+新增这类文档会让蓝图扫描器把它们计入所在目录的 md 文件数（**只数不读**，`agents.md` 出现在
+`internal/blueprint/freshness.go:47` 只是"这个 token 像路径"的词表，没有特殊处理）。
+
+| 约定 | 内容 |
+|------|------|
+| **什么时候读** | 进任何目录动手之前先看它有没有 `AGENTS.md`；没有局部文档 = 该目录没有不可派生的知识，直接读代码。导览表在 `internal/AGENTS.md` |
+| **写什么** | 只写机器派生不出的：边界、禁令、坑、入口、闸门 |
+| **不写什么** | 模块列表 / 文件计数 / 依赖边 / 每个模块有哪些文件——这些由 `internal/blueprint` 每轮派生，抄进文档就是第二份会漂走的事实 |
+| **与根文件的分工** | 根 `AGENTS.md`（本文件）讲跨模块的架构、流程与全局不变量；局部 `AGENTS.md` 讲"在这个包里怎么做会静默坏掉"。**同一句话不要同时写在两处** |
+| **引用格式** | 每条约束带 `internal/<包>/<文件>.go:行` 或测试函数名，让读者能跳过去核实；仓库根文件（`main.go`、`embed.go`、`build.sh`）按根路径写 |
+| **谁加载它** | yagent 运行时的 `internal/agents/director/project_context.go:53` 只读工作区根的 `YAGENT.md`/`CLAUDE.md`/`AGENTS.md`，**不递归**——所以嵌套文档今天只服务于读代码的人与 coding agent，运行时子 Agent 读不到 |
+
+> 2026-10-21 随这批文档一起做了一次事实核对，顺手改掉了根文件里五处与代码不符的描述：
+> `fsnotify` 热加载（Go 代码零引用）、`globalctx` 的三个版本字段（不存在，但 build.sh 还在 `-X` 注入）、
+> "ripgrep 已内嵌"（git 树里只有占位文件）、注入器硬关闭的位置（`internal/knowledge/injector.go:74-78`，不是 `:67-71`）、
+> 行数棘轮的 PENDING 上限（`planner_run.go` 是 **572 行**，不是 658）。
+
 > 旧的 `pkg/messaging/` 已迁到 `internal/messaging/`；`internal/compact/` 已重构为 `internal/compression/`。
 
 ---
@@ -224,10 +249,12 @@ yagent/
 | **DevOps** | `devops.go` | 系统管理员 | 只读 + Shell | 50 |
 | **Browser** | `browser_agent.go` | 网页操作：经外部 `browser-control` CLI 驱动真实 Chrome | 浏览器动作 + 会话工作区产物（无 Shell、无文件写工具） | 200 |
 | **Meta** | `meta.go` | 自定义 Agent 设计器 | 无工具，单次 LLM 出 JSON | —（无 step 循环；重试 5） |
-| **Custom** | `director/types.go:60` | Meta 设计后运行时注册 | 由 LLM 选择的子集 | 15 |
+| **Custom** | `internal/agents/director/types.go:60` | Meta 设计后运行时注册 | 由 LLM 选择的子集 | 15 |
 
-**Director 工具**：`delegate_*` + `agent_exit`、`read_artifact`、`read_note`、`list_notes`、`deepthinking`、`ask_user_for_help`，
-以及 `director.go:236-287` 里显式列出的只读分析工具（`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree`）。
+**Director 工具**：由画像 `toolspec.ProfileDirector` 派生（`internal/toolspec/profiles.go:27-42`，
+装配点 `internal/agents/director_surface.go:103`）——`delegate_*` + `agent_exit`、`read_artifact`、`read_note`、`list_notes`、`deepthinking`、`ask_user_for_help`，
+以及只读分析工具（`read_file`、`search_by_regex`、`list_dir`、`print_dir_tree`）。
+`Deny: EffectFSWrite | EffectShell` 是"Director 绝不直接写文件"的机械保证，不再依赖一份手写的工具清单。
 
 **Coding 工具**：`create_file`、`search_replace_in_file`、`delete_file`、`rename_file`、`list_dir`、`print_dir_tree`、
 `read_file`、`search_by_regex`、`run_bash`、`thinking`/`micro_agent`/`deepthinking`/`design`、
@@ -255,8 +282,9 @@ yagent/
 ### Meta / 自定义 Agent 注册流程
 
 ```
-delegate_meta → MetaAgent 单次 LLM 出 JSON → ParseMetaAgentOutput (director/meta_handler.go:100)
-  → 校验必填字段 → 按名字建 delegate_<snake_name> Adapter 并追加到 Director 工具表 (director.go:626-689)
+delegate_meta → MetaAgent 单次 LLM 出 JSON → ParseMetaAgentOutput (internal/agents/director/meta_handler.go:100)
+  → 校验必填字段 → 按名字建 delegate_<snake_name>（registerCustomAgent，internal/agents/director_surface.go:289；
+    工具子集由 ProfileDirector.Palette 选，同文件 :268）并追加到 Director 工具表
   → 立即以 MaxSteps=15 执行一次 → 新 Agent 在本任务内永久可用（写进 system prompt 的清单）
 ```
 
@@ -358,7 +386,7 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
 
 ### 6.2 执行循环
 
-- **子 Agent**：`RunAgentLoop(ctx, ExecutorConfig)`（`agents/executor.go:136`）。
+- **子 Agent**：`RunAgentLoop(ctx, ExecutorConfig)`（`internal/agents/executor.go:218`）。
   每步：LLM 重试（指数退避 ≤30s）→ 三档压缩检查 → 带 `llmTimeout` 的 LLM 调用 → 抽取 `<thought>` →
   纯文本回复则注入提醒或结束 → 工具调用交给 `toolbatch` 分批并行 → `agent_exit` 立即返回；
   步数耗尽报错，panic 被 recover 并写 `turn_aborted` rollout。
@@ -459,7 +487,7 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
 - **Artifact**（`internal/artifact`）：超过预算（默认 500 token）的委派全文落盘 `~/.yagent/data/artifacts`，
   上下文里只留摘要 + ID（摘要优先来自 handoff，缺 handoff 时逐字回落到正文前缀），Director 用 `read_artifact` 分页取回。`YAGENT_ARTIFACT_DISABLE=1` 关闭。
 - **Knowledge**（`internal/knowledge`）：向 Director/Coding/Repo 注入历史知识（写入走 `consolidate_knowledge`，
-  自动固化在 `knowledge_hook.go`）。当前**注入器被临时硬关闭**（`injector.go:67-71`）。
+  自动固化在 `knowledge_hook.go`）。当前**注入器被临时硬关闭**（`internal/knowledge/injector.go:74-78` 的恒真 if 提前返回）。
 - **RepoMemory / ConsolidationWorker**：仓库级长期记忆存在 SharedMemory 的 KV 中，由后台 worker 周期性用 LLM + codeseek 重写。
 - **Blueprint**（`internal/blueprint`，设计稿 `docs/repo-blueprint-design.md` v4 + §21 实施记录）：仓库级导航知识的
   **唯一有机械新鲜度判据**的一套。两层内容、一份文档：**派生的不落盘，落盘的不派生**。
@@ -889,7 +917,7 @@ go vet ./...                              # 必须干净
   恢复后喂给模型的消息必须与暂停前**逐条同形**、取消路径也要写出可用检查点、
   `delegation_id` 真的落进了子 rollout）。它们用的是**真实** dispatcher、真实
   `WorkspaceGuard`、真实便签盘（`TestMain` 已把 `$HOME` 隔离到临时目录）、真实 rollout 文件，
-  只把 LLM 换成脚本。harness 的接线顺序照抄 `app.go:115-287` —— 换顺序会测到一条生产不存在的路。
+  只把 LLM 换成脚本。harness 的接线顺序照抄 `internal/app/app.go:115-287` —— 换顺序会测到一条生产不存在的路。
 - **脚本引擎按 Agent 身份分派，不按全局调用序号**（`e2e_engine_test.go`）：序号会被循环里的
   补偿动作打断（纯文本触发 NoActionRetryLimit、Director 未委派触发强制委派提醒、超时后的重试），
   一个无关的 +1 就让整条脚本错位，失败看起来像产品 bug。身份靠各家 System Prompt 的首行措辞识别，
@@ -967,8 +995,8 @@ bash scripts/check_no_inline_atomic_write.sh  # tmp+rename 只准有 internal/ut
 ```
 
 - `check_file_sizes.sh` 现在是**棘轮而不是硬门**：存量超限项在脚本顶部的 `PENDING` 里
-  点名并记下"当前行数"作为冻结上限（今天只有 `director/planner_run.go:658`，主循环 +
-  压缩 + 委派编排三段职责，拆分是独立一次改动）。规则：新文件超 300 行直接红；
+  点名并记下"允许的最大行数"作为冻结上限（今天只有 `director/planner_run.go`，上限 **572 行**——
+  压缩段 96 行已抽到 `planner_compress.go`，657 → 572；剩下主循环 + 委派编排两段职责，拆分是独立一次改动）。规则：新文件超 300 行直接红；
   存量文件长回去也红；**改小了必须同步下调 PENDING 里的数字**，否则脚本会主动报失步。
   以前它无条件红灯，结果所有人对它视而不见 —— 一条常红的守卫等于没有守卫。
 - `check_test_hygiene.sh` 守的是**测试自己**：① 每个 `Test*` 必须能失败（自身有 `t.Error*/t.Fatal*`，
