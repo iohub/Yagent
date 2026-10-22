@@ -25,6 +25,18 @@ import (
 //	internal/app    → internal/gitinfo   （缓存模式的 HEAD 失效判据）
 //
 // 没有新增目录、也没有哪条黑名单失效 —— 片数那一条同时证明这一点。
+//
+// 2026-10-22 修订：45 → 44 片、144 → 134 条边。来源是"知识整理机制整体删除"
+// （KV 仓库记忆 + codeseek 知识注入/沉淀），仓库级持久知识只剩蓝图这一个 sink。
+// 十条边逐条对过：
+//
+//	internal/knowledge 片消失，带走它自己的 3 条出边（→logging /logging、→mcp、→tokenutil）
+//	internal/agents    → internal/knowledge / internal/mcp / internal/supervise（各 −1：
+//	                   consolidation_worker.go 与 knowledge_hook.go 是 agents 根包唯一直接用这三家的）
+//	internal/app       → internal/knowledge
+//	internal/globalctx → internal/knowledge
+//	internal/tools     → internal/logging（knowledge.go 是 tools 里唯一用它的）
+//	internal/memory    → internal/util   （shared.go 的原子写；local.go/shared.go 一并删除）
 func TestScanSelfGolden(t *testing.T) {
 	snap, err := Scan("../..", DefaultOptions()) // 测试 CWD 是 internal/blueprint
 	if err != nil {
@@ -34,8 +46,8 @@ func TestScanSelfGolden(t *testing.T) {
 		t.Fatalf("ModulePath = %q, 要 %q", snap.ModulePath, "yagent")
 	}
 	// golden 1：片数。
-	if len(snap.Leaves) != 45 {
-		t.Fatalf("片数 = %d, golden 是 45 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
+	if len(snap.Leaves) != 44 {
+		t.Fatalf("片数 = %d, golden 是 44 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
 	}
 	// golden 2：模块级边数（out 与 in 是转置，总数必然相等）。
 	out, in := 0, 0
@@ -43,8 +55,8 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
-	if out != 144 || in != 144 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 144/144 —— 形状变了，先确认变化来源", out, in)
+	if out != 134 || in != 134 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 134/134 —— 形状变了，先确认变化来源", out, in)
 	}
 	// 排序不变量：Leaves 按 Dir 排序（确定性的一部分）。
 	for i := 1; i < len(snap.Leaves); i++ {

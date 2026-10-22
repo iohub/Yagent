@@ -1,7 +1,7 @@
 # 各 Agent 的工具面（由 toolspec 画像解析得出，-update 重写）
 # tier: hot|warm|cold  ro: 可并发  auth: 需用户授权  serial: 必须串行
 
-[director] 19 tools  grant=[fs_read,search_regex,context,tool_load,cog_deep,knowledge_prune,flow,delegate] deny=[fs_write,shell]
+[director] 18 tools  grant=[fs_read,search_regex,context,tool_load,cog_deep,flow,delegate] deny=[fs_write,shell]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   deepthinking             tier=hot  ro
@@ -15,17 +15,15 @@
   list_notes               tier=warm ro
   load_tool                tier=hot  serial
   print_dir_tree           tier=hot  ro
-  prune_history            tier=cold 
   read_artifact            tier=warm ro
   read_blueprint           tier=warm ro
   read_file                tier=hot  ro
   read_note                tier=warm ro
   search_by_regex          tier=hot  ro
 
-[coding] 32 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_reflect,cog_subllm,cog_deep,cog_design,fs_write,shell,knowledge_write,knowledge_prune,checkpoint,flow,delegate] deny=[]
+[coding] 30 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_reflect,cog_subllm,cog_deep,cog_design,fs_write,shell,checkpoint,flow,delegate] deny=[]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
-  consolidate_knowledge    tier=cold 
   create_file              tier=hot  auth
   deepthinking             tier=cold ro
   delegate_browser         tier=hot  
@@ -41,7 +39,6 @@
   load_tool                tier=hot  serial
   micro_agent              tier=warm ro
   print_dir_tree           tier=cold ro
-  prune_history            tier=cold 
   query_call_graph         tier=cold ro
   query_code_skeleton      tier=cold ro
   query_code_snippet       tier=hot  ro
@@ -56,10 +53,9 @@
   semantic_search          tier=hot  ro
   thinking                 tier=warm ro
 
-[repo] 21 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_deep,knowledge_write,knowledge_prune,flow,delegate] deny=[cog_reflect,cog_subllm,cog_design]
+[repo] 19 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_deep,flow,delegate] deny=[cog_reflect,cog_subllm,cog_design]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
-  consolidate_knowledge    tier=cold 
   deepthinking             tier=cold ro
   delegate_devops          tier=hot  
   find_function_callee     tier=cold ro
@@ -68,7 +64,6 @@
   list_notes               tier=warm ro
   load_tool                tier=hot  serial
   print_dir_tree           tier=hot  ro
-  prune_history            tier=cold 
   query_call_graph         tier=hot  ro
   query_code_skeleton      tier=cold ro
   query_code_snippet       tier=hot  ro

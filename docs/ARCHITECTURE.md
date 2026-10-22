@@ -1,6 +1,12 @@
 # Yagent 系统架构文档
 
 > 版本：v2.0.0 | 最后更新：2025
+>
+> **本文已大面积落后于代码**（模块图、工具数、浏览器栈、注册表都变过），以仓库根 `AGENTS.md` 与源码为准。
+> 另：**知识整理机制已于 2026-10-22 整体删除** —— 本文提到的 `consolidation_worker.go`、
+> `repo_memory.go`、`knowledge_hook.go`、`internal/knowledge/`、`SharedMemory`/`LocalMemory`、
+> `consolidate_knowledge`/`prune_history` 都不再存在（§6.3、§6.5、§13 第 4/7 步、§15 相关行是死文档）。
+> 仓库级持久知识只有一条通道：`internal/blueprint`（`blueprint.md` + `read_blueprint`）。
 
 ## 目录
 

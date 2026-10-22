@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"yagent/internal/llm"
+	"yagent/internal/tokenutil"
 )
 
 //go:embed meta.prompt.md
@@ -149,8 +150,8 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 			}
 		} else {
 			// Local models may not return usage — estimate from message content
-			promptTokens := EstimateTokens(systemPrompt) + EstimateTokens(input)
-			completionTokens := EstimateTokens(content)
+			promptTokens := tokenutil.EstimateTokens(systemPrompt) + tokenutil.EstimateTokens(input)
+			completionTokens := tokenutil.EstimateTokens(content)
 			metadata["usage"] = map[string]interface{}{
 				"prompt_tokens":     promptTokens,
 				"completion_tokens": completionTokens,

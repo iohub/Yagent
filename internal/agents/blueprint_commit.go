@@ -17,9 +17,7 @@ import (
 )
 
 // 本文件是设计稿 §8 的落盘钩子：接在 Repo 完成的那个既有接缝上。
-//
-// 那三行今天已经在做同一件事的另外两种版本（worker.Submit 写 KV 记忆、
-// autoConsolidateSubtask 写 codeseek 知识库），蓝图是**同一时点的第三个 sink**。
+// 仓库级持久知识只有这一个 sink —— KV 仓库记忆与 codeseek 自动沉淀已整体删除。
 //
 // 四条实现纪律在这里的落点：
 //   1. 不许静默丢失 —— 每条拒收各打一条 warn（带 module 与违规 token），

@@ -2,9 +2,7 @@ package app
 
 import (
 	"context"
-	"crypto/sha256"
 	"embed"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,7 +19,6 @@ import (
 	"yagent/internal/config"
 	"yagent/internal/embedbin"
 	"yagent/internal/globalctx"
-	"yagent/internal/knowledge"
 	"yagent/internal/llm"
 	"yagent/internal/mcp"
 	"yagent/internal/memory"
@@ -55,10 +52,6 @@ type Yagent struct {
 	browserMgr *browserctl.Manager
 
 	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .yagent/skills/ 下的 .md 文件
-
-	// [NEW] 记忆系统
-	sharedMemory        *memory.SharedMemory
-	consolidationWorker *agents.ConsolidationWorker
 
 	// blueprint 是本进程的仓库蓝图运行时（nil = 这个项目没有蓝图）。
 	// 唯一持有者：派生循环、存储根、以及三处注入视图都从它出，
@@ -298,14 +291,6 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		}
 		ca.globalCtx = &gctx
 
-		// [知识管理] 创建 KnowledgeInjector（依赖 CodeSeekMCP，在 MCP 客户端就绪后生效）
-		// publisher 用于向 TUI 发布 knowledge_injected 概要事件（injector 内部 fail-safe）
-		// 原 [codeseek.knowledge] enabled 不是判据：validate() 见 false 就写回 true，它从来关不掉。
-		if ca.globalCtx.CodeSeekMCP != nil {
-			ca.globalCtx.KnowledgeInjector = knowledge.NewKnowledgeInjector(ca.globalCtx.CodeSeekMCP, publisher)
-			slog.Info("KnowledgeInjector initialized", "enabled", true)
-		}
-
 		// Wire up UserConfirmManager: register as consumer and set publisher
 		userConfirmMgr.SetPublisher(publisher)
 		gctx.FlowOps.UserConfirmMgr = userConfirmMgr
@@ -420,44 +405,12 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Flow:                 gctx.FlowOps,
 			DeepThinker:          gctx.DeepThinkingTool,
 			Guard:                guard,
-			Knowledge:            gctx.KnowledgeInjector,
-			MCPClient:            gctx.CodeSeekMCP,
 			EnhancedCommanderCfg: ca.config.EnhancedCommander,
 			Blueprint:            ca.blueprint.viewFor("repo"),
 			LLM:                  repoEngine,
 			MaxSteps:             repoMaxSteps,
 			StepRetries:          stepRetries,
 		})
-
-		// [NEW] 初始化 RepoAgent 记忆系统
-		{
-			ca.sharedMemory = memory.NewSharedMemory(100)
-			// 启用文件持久化，保存到 $HOME/.yagent/data/shared_memory/{projectid}/
-			sharedMemPath := ca.getSharedMemoryPath()
-			sharedMemDir := filepath.Dir(sharedMemPath)
-			if err := os.MkdirAll(sharedMemDir, 0700); err != nil {
-				slog.Warn("Failed to create shared memory directory", "path", sharedMemDir, "error", err)
-			} else if err := ca.sharedMemory.EnablePersistence(5*time.Second, sharedMemPath); err != nil {
-				slog.Warn("Shared memory persistence not available (first run?)", "path", sharedMemPath, "error", err)
-			} else {
-				slog.Info("Shared memory persistence enabled", "path", sharedMemPath, "interval", "5s")
-			}
-			repoID := ca.globalCtx.ProjectPath
-			repoMemStore := agents.NewRepoMemoryStore(repoID, ca.sharedMemory)
-			if err := repoMemStore.Load(context.Background()); err != nil {
-				slog.Warn("RepoAgent memory preload failed, continuing without memory",
-					"error", err,
-				)
-			}
-			consolidationWorker := agents.NewConsolidationWorker(repoMemStore, repoEngine, ca.globalCtx.CodeSeekMCP)
-			consolidationWorker.Start()
-			ca.consolidationWorker = consolidationWorker
-			repoAgent.SetMemory(repoMemStore, consolidationWorker)
-			slog.Info("RepoAgent memory system initialized",
-				"repo_id", repoID,
-				"has_memory", !repoMemStore.IsEmpty(),
-			)
-		}
 
 		chatAgent := agents.NewChatAgent(agents.ChatAgentParams{
 			Formatter:   &gctx,
@@ -524,8 +477,6 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			MicroAgent:           gctx.MicroAgentTool,
 			Guard:                guard,
 			RepoCtx:              repoCtx,
-			Knowledge:            gctx.KnowledgeInjector,
-			MCPClient:            gctx.CodeSeekMCP,
 			GitCheckpointCfg:     &ca.config.GitCheckpoint,
 			EnhancedCommanderCfg: ca.config.EnhancedCommander,
 			Blueprint:            ca.blueprint.viewFor("coding"),
@@ -551,8 +502,6 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Repo:           gctx.RepoOps,
 			Guard:          guard,
 			RepoCtx:        repoCtx,
-			Knowledge:      gctx.KnowledgeInjector,
-			MCPClient:      gctx.CodeSeekMCP,
 			LLM:            directorEngine,
 			RepoAgent:      repoAgent,
 			CodingAgent:    codingAgent,
@@ -904,11 +853,6 @@ func (ca *Yagent) Close() {
 	// 停蓝图派生循环并等它退。放在最前面：它是最短的一条后台活（一次扫描最坏 2s），
 	// 而 `--prompt` 那条一次性路径的收尾时间全靠它别拖住退出。
 	ca.blueprint.stop()
-	// 停止 consolidation worker
-	if ca.consolidationWorker != nil {
-		slog.Info("Stopping consolidation worker...")
-		ca.consolidationWorker.Stop()
-	}
 	// 停止 Browser-Agent 启动的 Chrome。上游 stop 自带归属校验
 	//（命令行需含 --remote-debugging-port 且 user-data-dir 匹配），不会误杀用户自己的浏览器。
 	if ca.browserMgr != nil {
@@ -929,42 +873,11 @@ func (ca *Yagent) Close() {
 
 	// 最后一步：等进程根域里剩下的 goroutine（各家清理已经各自等过自己的子域，
 	// 走到这里的都是"故意不归任何一次任务收尾管"的后台活，比如 MCP 初始化看门狗、
-	// 后台命令的僵尸回收、自动知识整理）。预算很短 —— 退出不能因为它们而挂住，
+	// 后台命令的僵尸回收）。预算很短 —— 退出不能因为它们而挂住，
 	// 但一定要把"还有什么在跑"报名出来。
 	if leaked := supervise.Root().Drain(3 * time.Second); len(leaked) > 0 {
 		slog.Warn("退出时仍有 goroutine 在跑", "count", len(leaked), "leases", supervise.LeaseNames(leaked))
 	}
-}
-
-// getProjectID generates a filesystem-safe, unique project identifier
-// from the project path. Format: {sanitized_basename}_{short_hash}
-// Example: "/home/user/my-app" → "my_app_a1b2c3d4e5f6"
-func getProjectID(projectPath string) string {
-	// Use the last path component as the human-readable prefix
-	base := filepath.Base(projectPath)
-	if base == "." || base == "/" {
-		base = "root"
-	}
-
-	// Sanitize: keep only alphanumeric characters, replace others with underscore
-	sanitized := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			return r
-		}
-		return '_'
-	}, base)
-
-	// Truncate to leave room for "_" + 12-char hash (filesystem limit: 255 bytes per component)
-	const maxBaseLen = 242
-	if len(sanitized) > maxBaseLen {
-		sanitized = sanitized[:maxBaseLen]
-	}
-
-	// Generate short hash for global uniqueness
-	h := sha256.Sum256([]byte(projectPath))
-	shortHash := hex.EncodeToString(h[:])[:12]
-
-	return sanitized + "_" + shortHash
 }
 
 // resolveBlueprintRoot 决定本项目蓝图的存储根，是 [blueprint] enable 的唯一读取点。
@@ -979,19 +892,4 @@ func (ca *Yagent) resolveBlueprintRoot() (string, error) {
 		return "", nil
 	}
 	return blueprint.Prepare(ca.globalCtx.ProjectPath)
-}
-
-// getSharedMemoryPath returns the shared memory file path.
-// Preferred: $HOME/.yagent/data/shared_memory/{projectID}/shared_memory.json
-// Fallback:  {ProjectPath}/.shared_memory.json (if home dir is unavailable)
-func (ca *Yagent) getSharedMemoryPath() string {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		// Fallback to project-local path (preserves old behavior)
-		slog.Warn("Cannot determine home directory, falling back to project-local shared memory", "error", err)
-		return filepath.Join(ca.globalCtx.ProjectPath, ".shared_memory.json")
-	}
-
-	projectID := getProjectID(ca.globalCtx.ProjectPath)
-	return filepath.Join(homeDir, ".yagent", "data", "shared_memory", projectID, "shared_memory.json")
 }

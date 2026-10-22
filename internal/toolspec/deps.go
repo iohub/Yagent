@@ -117,11 +117,7 @@ type Deps struct {
 	Guard    Guard
 	Delegate DelegateFunc
 
-	// 按 Agent 绑定的执行器（source/kind 因 Agent 而异，故在装配侧构造）
-	Consolidate ToolFunc
-	Prune       ToolFunc
-
-	// Blueprint 是 read_blueprint 的执行器。与 Consolidate/Prune 不同，它**恒非 nil**：
+	// Blueprint 是 read_blueprint 的执行器。它**恒非 nil**：
 	// 没有蓝图时工具要返回"为什么没有 + 怎么修"，而不是从工具面上静默消失（设计稿 §8）。
 	Blueprint ToolFunc
 

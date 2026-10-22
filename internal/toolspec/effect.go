@@ -31,7 +31,7 @@ const (
 	EffectCogDesign                           // design
 )
 
-// 写族：改变文件、进程、网络、浏览器或知识库状态。
+// 写族：改变文件、进程、浏览器或工作树状态。
 const (
 	EffectFSWrite         Effect = 1 << (iota + 10) // create_file / search_replace_in_file / delete_file / rename_file
 	EffectShell                                     // run_bash
@@ -39,8 +39,6 @@ const (
 	EffectBrowserAct                                // browser_click / fill / type / press / scroll / select / tabs / open
 	EffectBrowserEval                               // browser_eval：在当前页面执行任意 JS
 	EffectBrowserArtifact                           // browser_screenshot：向会话工作区写文件
-	EffectKnowledgeWrite                            // consolidate_knowledge
-	EffectKnowledgePrune                            // prune_history（action=delete/merge 会改知识库）
 	EffectCheckpoint                                // git_checkpoint_*
 )
 
@@ -54,8 +52,7 @@ const (
 	// writeEffects 是**必然**有副作用的能力集合：命中即必须声明 Mutates=true。
 	// EffectCheckpoint 不在其中 —— git_checkpoint_list 只读标签，create/rollback 才改工作树，
 	// 所以快照类由各自显式声明。
-	writeEffects = EffectFSWrite | EffectShell | EffectBrowserEval | EffectKnowledgeWrite |
-		EffectKnowledgePrune
+	writeEffects = EffectFSWrite | EffectShell | EffectBrowserEval
 	// authEffects 是需要 WorkspaceGuard 授权的能力集合。
 	authEffects = EffectFSWrite | EffectShell | EffectBrowserEval
 	// flowEffects 是流程控制能力：永远 Hot（不可 deferred），否则模型无法收尾。
@@ -98,8 +95,6 @@ var effectNames = []struct {
 	{EffectBrowserAct, "browser_act"},
 	{EffectBrowserEval, "browser_eval"},
 	{EffectBrowserArtifact, "browser_artifact"},
-	{EffectKnowledgeWrite, "knowledge_write"},
-	{EffectKnowledgePrune, "knowledge_prune"},
 	{EffectCheckpoint, "checkpoint"},
 	{EffectFlow, "flow"},
 	{EffectDelegate, "delegate"},

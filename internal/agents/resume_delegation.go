@@ -27,6 +27,7 @@ import (
 	"yagent/internal/config"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
+	"yagent/internal/tokenutil"
 )
 
 // DelegationStop 是"这一轮停在一次委派上"的落点。
@@ -146,7 +147,7 @@ func assessReplay(stop DelegationStop) (bool, []string) {
 	rc := config.GlobalResume()
 	budget := replayTokenBudget(rc, replay.Model)
 	if budget > 0 {
-		est := EstimateTokens
+		est := tokenutil.EstimateTokens
 		total := 0
 		for _, m := range replay.Messages {
 			total += est(m.Content) + est(m.Reasoning)

@@ -332,7 +332,11 @@ go test ./internal/... -count=1      # ~970 tests across 129 files, seconds not 
 | [anthropic-config.md](docs/anthropic-config.md) | Anthropic provider configuration |
 | [llm-fallback-config.md](docs/llm-fallback-config.md) | Fallback and circuit-breaker configuration |
 
-> **Known gap, stated plainly:** the long-term *knowledge* retrieval injector (`internal/knowledge/injector.go`) is temporarily gated off — the write path (`consolidate_knowledge`, repo-level memory consolidation) is live, but historical knowledge is not auto-injected into context yet.
+> **Repository knowledge, one channel:** the blueprint (`internal/blueprint`, `[blueprint]` config,
+> `read_blueprint`) is the only persistent per-repo knowledge. The older knowledge subsystem —
+> `internal/knowledge/` injection, the repo-level KV memory with its background consolidation worker,
+> and the `consolidate_knowledge` / `prune_history` tools — was removed on 2026-10-22; the injector
+> had been hardcoded off, so its writes had no reader.
 
 ---
 

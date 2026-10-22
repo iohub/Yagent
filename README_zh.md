@@ -322,7 +322,10 @@ go test ./internal/... -count=1      # 约 970 个用例 / 129 个测试文件�
 | [anthropic-config.md](docs/anthropic-config.md) | Anthropic 供应商配置 |
 | [llm-fallback-config.md](docs/llm-fallback-config.md) | 熔断与故障转移配置 |
 
-> **已知缺口，直说一句**：长期**知识检索注入**（`internal/knowledge/injector.go`）目前是临时硬关闭状态——写入侧（`consolidate_knowledge`、仓库级记忆固化）是活的，但历史知识还不会自动注入上下文。
+> **仓库级知识只有一条通道**：蓝图（`internal/blueprint`、`[blueprint]` 配置、`read_blueprint`）是
+> 唯一的仓库级持久知识。更早的那套知识机制——`internal/knowledge/` 注入、带后台整理 worker 的仓库级
+> KV 记忆、以及 `consolidate_knowledge` / `prune_history` 两个工具——已于 2026-10-22 整体删除；
+> 注入器当时是硬关闭状态，也就是说那些写入从来没有读者。
 
 ---
 

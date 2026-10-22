@@ -20,6 +20,7 @@ import (
 	"yagent/internal/memory"
 	"yagent/internal/messaging"
 	"yagent/internal/pause"
+	"yagent/internal/tokenutil"
 	"yagent/internal/tools"
 	"yagent/internal/toolspec"
 )
@@ -700,9 +701,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		} else {
 			estPrompt := 0
 			for _, msg := range messages {
-				estPrompt += EstimateTokens(msg.Content)
+				estPrompt += tokenutil.EstimateTokens(msg.Content)
 			}
-			estCompletion := EstimateTokens(choice.Content)
+			estCompletion := tokenutil.EstimateTokens(choice.Content)
 			promptTokens = int64(estPrompt)
 			completionTokens = int64(estCompletion)
 			totalTokens = promptTokens + completionTokens

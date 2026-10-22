@@ -16,9 +16,6 @@ const RepoAll = EffectCodeSemantic | EffectCodeGraph
 // BrowserAll 是 14 个浏览器工具的四族。
 const BrowserAll = EffectBrowserObserve | EffectBrowserAct | EffectBrowserEval | EffectBrowserArtifact
 
-// KnowledgeAll 是知识库写入与维护两族。
-const KnowledgeAll = EffectKnowledgeWrite | EffectKnowledgePrune
-
 // ProfileDirector 是唯一的用户接口：只读分析 + 委派，绝不直接写文件。
 //
 // Palette 是 Meta 设计的 Custom Agent 能拿到的能力上限。今天它等价于
@@ -27,7 +24,7 @@ const KnowledgeAll = EffectKnowledgeWrite | EffectKnowledgePrune
 var ProfileDirector = Profile{
 	Agent: "director",
 	Grant: EffectFSRead | EffectSearchRegex | EffectCogDeep | EffectFlow |
-		EffectKnowledgePrune | EffectContext | EffectDelegate | EffectToolLoad,
+		EffectContext | EffectDelegate | EffectToolLoad,
 	Deny: EffectFSWrite | EffectShell,
 	Palette: EffectFSRead | EffectSearchRegex | EffectFSWrite | EffectShell |
 		EffectCogReflect | EffectCogSubLLM | EffectCogDeep | EffectCodeSemantic | EffectFlow,
@@ -45,7 +42,7 @@ var ProfileDirector = Profile{
 var ProfileCoding = Profile{
 	Agent: "coding",
 	Grant: EffectFSRead | EffectFSWrite | EffectSearchRegex | EffectShell | RepoAll |
-		CogAll | EffectFlow | KnowledgeAll | EffectCheckpoint |
+		CogAll | EffectFlow | EffectCheckpoint |
 		EffectDelegate | EffectContext | EffectToolLoad,
 	// 改函数前必须先查 callers，所以把调用图从 Cold 提回 Hot；
 	// print_dir_tree 对编码任务是次要动作，留在 Cold。
@@ -57,7 +54,7 @@ var ProfileCoding = Profile{
 var ProfileRepo = Profile{
 	Agent: "repo",
 	Grant: EffectFSRead | EffectSearchRegex | RepoAll | EffectCogDeep | EffectFlow |
-		KnowledgeAll | EffectContext | EffectDelegate | EffectToolLoad,
+		EffectContext | EffectDelegate | EffectToolLoad,
 	Deny: EffectCogReflect | EffectCogSubLLM | EffectCogDesign,
 	// 审计的主用工具就是调用图与目录树，它们必须每步可见。
 	Promote:      []string{"query_call_graph", "find_function_caller", "print_dir_tree"},

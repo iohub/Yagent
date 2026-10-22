@@ -51,8 +51,6 @@ func (p Profile) testDeps() *Deps {
 		Delegate: func(context.Context, string, map[string]interface{}) (interface{}, error) {
 			return nil, nil
 		},
-		Consolidate:    probeToolFunc,
-		Prune:          probeToolFunc,
 		CheckpointList: probeToolFunc, CheckpointCreate: probeToolFunc, CheckpointRollback: probeToolFunc,
 		LoadTool: probeToolFunc,
 		// Blueprint 恒绑：生产里 depsFor 永远给它一个非 nil 执行器（没有蓝图时

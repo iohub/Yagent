@@ -1,6 +1,14 @@
 # Yagent System Architecture Document
 
 > Version: v2.0.0 | Last Updated: 2025
+>
+> **This document is broadly out of date** (module map, tool counts, browser stack, registry all
+> changed); the root `AGENTS.md` and the source are authoritative. Also: **the knowledge-consolidation
+> mechanism was deleted on 2026-10-22** — the `consolidation_worker.go`, `repo_memory.go`,
+> `knowledge_hook.go`, `internal/knowledge/`, `SharedMemory`/`LocalMemory`, and the
+> `consolidate_knowledge`/`prune_history` tools named below no longer exist (§6.3, §6.5, steps 4/7 of
+> §13, and the matching §15 rows are dead documentation). Repository-level knowledge now has exactly
+> one channel: `internal/blueprint` (`blueprint.md` + `read_blueprint`).
 
 ## Table of Contents
 

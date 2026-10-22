@@ -8,8 +8,6 @@ import (
 	"yagent/internal/toolspec"
 
 	"yagent/internal/config"
-	"yagent/internal/knowledge"
-	"yagent/internal/mcp"
 	"yagent/internal/thinklink"
 	"yagent/internal/tools"
 
@@ -38,8 +36,6 @@ type RepoAgent struct {
 	BaseAgent
 	promptFmt   PromptFormatter
 	env         Env
-	knowledge   KnowledgeProvider
-	mcpClient   *mcp.MCPClient
 	ecCfg       config.EnhancedCommanderConfig
 	params      RepoAgentParams
 	maxSteps    int
@@ -47,10 +43,6 @@ type RepoAgent struct {
 
 	// DevOps-Agent（可选，nil 表示未注入，delegate_devops 将返回友好提示）
 	devops *DevOpsAgent
-
-	// [NEW] 记忆系统（可选，nil 表示禁用）
-	memStore *RepoMemoryStore
-	worker   *ConsolidationWorker
 }
 
 // RepoAgentParams 聚合 NewRepoAgent 所需的全部依赖。
@@ -65,8 +57,6 @@ type RepoAgentParams struct {
 	Flow        FlowToolSet
 	DeepThinker DeepThinker
 	Guard       *tools.WorkspaceGuard
-	Knowledge   KnowledgeProvider
-	MCPClient   *mcp.MCPClient
 
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 
@@ -81,7 +71,7 @@ type RepoAgentParams struct {
 }
 
 // NewRepoAgent 构造 RepoAgent：先填充结构体字段，再装配工具适配器
-// （tools.json 常规工具 + delegate_devops + 知识维护工具）。
+// （tools.json 常规工具 + delegate_devops + 便签回读）。
 func NewRepoAgent(p RepoAgentParams) *RepoAgent {
 	self := &RepoAgent{
 		BaseAgent: BaseAgent{
@@ -90,8 +80,6 @@ func NewRepoAgent(p RepoAgentParams) *RepoAgent {
 		},
 		promptFmt:   p.Formatter,
 		env:         p.Env,
-		knowledge:   p.Knowledge,
-		mcpClient:   p.MCPClient,
 		ecCfg:       p.EnhancedCommanderCfg,
 		maxSteps:    p.MaxSteps,
 		stepRetries: p.StepRetries,
@@ -128,12 +116,6 @@ func (a *RepoAgent) Name() string {
 	return "Repo-Agent"
 }
 
-// SetMemory 注入记忆系统依赖。记忆系统可选，不设置时 Run() 行为与改造前一致。
-func (a *RepoAgent) SetMemory(store *RepoMemoryStore, worker *ConsolidationWorker) {
-	a.memStore = store
-	a.worker = worker
-}
-
 // SetDevOpsAgent 注入 DevOps-Agent 依赖，使 delegate_devops 工具可用。
 // DevOps-Agent 可选，不设置时 delegate_devops 调用会返回友好提示。
 func (a *RepoAgent) SetDevOpsAgent(devops *DevOpsAgent) {
@@ -149,35 +131,15 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 
 	systemPrompt = a.promptFmt.FormatPrompt(systemPrompt)
 
-	if a.memStore != nil {
-		memContent := a.memStore.Get()
-		if injection := RenderMemoryForInjection(memContent); injection != "" {
-			systemPrompt += injection
-		}
-	}
-
 	// [仓库蓝图] 常驻骨架（形状②：模块 + 依赖边）。
 	// 只进这一次 LLM 调用的 system prompt，绝不写回 ConversationMemory/rollout（I2）——
 	// 第二/三档压缩会整段重写消息，进 messages 的东西会被摘要吞掉（§11 坑 11）。
 	systemPrompt += a.params.Blueprint.Resident()
 
-	// [知识管理] 对话前动态知识检索注入
-	if a.knowledge != nil {
-		injCtx := knowledge.InjectionContext{
-			UserMessage: input,
-			TargetFiles: nil,
-			AgentName:   a.Name(),
-			Domains:     []string{"repo"}, // Repo-Agent 只检索 repo domain 知识
-		}
-		if knowledgeBlock, err := a.knowledge.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
-			systemPrompt += knowledgeBlock
-		}
-	}
-
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
-	// 工具面：只读 + 调用图 + deepthinking + 委派 devops + 知识维护 + 便签回读。
+	// 工具面：只读 + 调用图 + deepthinking + 委派 devops + 便签/蓝图回读。
 	deps := depsFor("repo", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint)
 	deps.Files = a.params.Files
 	deps.Search = a.params.Search
@@ -185,10 +147,6 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	deps.Flow = a.params.Flow
 	deps.Deep = a.params.DeepThinker
 	deps.Delegate = a.devopsDelegate
-	if a.mcpClient != nil {
-		deps.Prune = tools.NewPruneHistoryTool(a.mcpClient, a.LLM).Execute
-		deps.Consolidate = tools.NewConsolidateKnowledgeTool(a.mcpClient, a.LLM, "repo_agent", "repo_retrieval").Execute
-	}
 	cfg.Surface = surfaceFor(toolspec.ProfileRepo, deps, a.Name())
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
@@ -226,24 +184,12 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		return AgentResult{}, err
 	}
 
-	// Full 变体：Text 被程序化消费（下方 consolidation 提交 + Director 层
-	// delegate_repo 结果 → RepoSummary 注入 coding/browser 系统提示），
-	// 需恒为完整输出；LLM 上下文由 Director 层 FormatForDirector 走分级摘要。
+	// Full 变体：Text 被程序化消费（Director 层 delegate_repo 结果 → RepoSummary
+	// 注入 coding/browser 系统提示），需恒为完整输出；
+	// LLM 上下文由 Director 层 FormatForDirector 走分级摘要。
 	agentResult := FinalizeResultFull(a.Name(), input, result)
 
-	// [NEW] Step 2: 异步提交记忆整理任务（非阻塞）
-	if a.worker != nil && agentResult.Text != "" {
-		a.worker.Submit(&ConsolidationTask{
-			NewObservations: agentResult.Text,
-		})
-	}
-
-	// [知识管理] 子任务完成后自动沉淀到知识库（非阻塞）
-	if a.knowledge != nil {
-		autoConsolidateSubtask(a.mcpClient, a.LLM, "repo_agent", "repo_retrieval", input, agentResult.Text)
-	}
-
-	// [仓库蓝图] 落盘钩子：同一时点的第三个 sink。
+	// [仓库蓝图] 落盘钩子：仓库级持久知识只有这一个 sink。
 	// 只做"解析 + 校验 + 一次文件写"（ms 级），跑在委派返回的这条 goroutine 上，
 	// 不起线程、不调模型，也**绝不向 Repo 的返回值传播错误**（§8 纪律 2 / I11）。
 	// 返回值是这次 fold 的账目（提交/写入/逐条拒收），随结果一起回给 Director ——

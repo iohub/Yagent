@@ -90,11 +90,6 @@ func (a *DirectorAgent) toolDeps() *toolspec.Deps {
 	d.Repo = a.repo
 	d.Delegate = a.delegateTo
 	d.Disabled = a.disabledAgents
-	// Director 只做知识维护（裁剪），不写入本任务知识：与历史上
-	// createKnowledgeToolAdapters(mcp, llm, "", "") 只注册 prune 的行为一致。
-	if a.mcpClient != nil {
-		d.Prune = tools.NewPruneHistoryTool(a.mcpClient, a.LLM).Execute
-	}
 	return d
 }
 

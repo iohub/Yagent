@@ -29,30 +29,30 @@ func deferredSurface(t *testing.T, budget int) *tools.Surface {
 func TestSurface_DefersColdTools(t *testing.T) {
 	s := deferredSurface(t, 0)
 
-	if s.Tier("consolidate_knowledge") != toolspec.Cold {
-		t.Fatal("fixture moved: consolidate_knowledge 不再是 Cold 档")
+	if s.Tier("print_dir_tree") != toolspec.Cold {
+		t.Fatal("fixture moved: print_dir_tree 不再是 Cold 档")
 	}
-	if hasDef(t, s, "consolidate_knowledge") {
+	if hasDef(t, s, "print_dir_tree") {
 		t.Error("Cold 工具不应出现在完整声明里")
 	}
-	if !strings.Contains(s.Catalog(), "consolidate_knowledge") {
+	if !strings.Contains(s.Catalog(), "print_dir_tree") {
 		t.Error("冷工具必须出现在 deferred 目录里")
 	}
 	if !hasDef(t, s, "load_tool") {
 		t.Error("有未取回的冷工具时，load_tool 必须在场")
 	}
 
-	out, err := s.Materialize([]string{"consolidate_knowledge"})
+	out, err := s.Materialize([]string{"print_dir_tree"})
 	if err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
-	if !strings.Contains(out, `"consolidate_knowledge"`) || !strings.Contains(out, "tags") {
+	if !strings.Contains(out, `"print_dir_tree"`) || !strings.Contains(out, "dir_path") {
 		t.Errorf("Materialize 应返回完整 schema，得到：%s", out)
 	}
-	if !hasDef(t, s, "consolidate_knowledge") {
+	if !hasDef(t, s, "print_dir_tree") {
 		t.Error("取回后应进入完整声明")
 	}
-	if strings.Contains(s.Catalog(), "consolidate_knowledge") {
+	if strings.Contains(s.Catalog(), "print_dir_tree") {
 		t.Error("取回后不该继续留在目录里")
 	}
 }
@@ -88,7 +88,7 @@ func TestSurface_LookupStates(t *testing.T) {
 	if _, state := s.Lookup("read_file"); state != tools.StateReady {
 		t.Errorf("read_file state = %v, want Ready", state)
 	}
-	if _, state := s.Lookup("consolidate_knowledge"); state != tools.StateColdKnown {
+	if _, state := s.Lookup("deepthinking"); state != tools.StateColdKnown {
 		t.Errorf("冷工具 state = %v, want ColdKnown", state)
 	}
 	if _, state := s.Lookup("print_dir_tree"); state != tools.StateColdKnown {
@@ -98,10 +98,10 @@ func TestSurface_LookupStates(t *testing.T) {
 		t.Errorf("未注册名字 state = %v, want Unknown", state)
 	}
 	// 取回后同一工具转 Ready。
-	if _, err := s.Materialize([]string{"consolidate_knowledge"}); err != nil {
+	if _, err := s.Materialize([]string{"deepthinking"}); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
-	if _, state := s.Lookup("consolidate_knowledge"); state != tools.StateReady {
+	if _, state := s.Lookup("deepthinking"); state != tools.StateReady {
 		t.Errorf("取回后 state = %v, want Ready", state)
 	}
 }
@@ -210,8 +210,7 @@ func TestSurface_BudgetDemotesWarmOnly(t *testing.T) {
 // 注册，它们的跳过路径在 internal/agents/registry_gate_test.go 里覆盖。
 func TestSurface_SkipsUnboundTools(t *testing.T) {
 	deps := codingDeps()
-	deps.Consolidate = nil
-	deps.Prune = nil
+	deps.Design = nil
 	deps.Repo = nil
 	s := tools.NewSurface(toolspec.ProfileCoding, deps, tools.SurfaceOptions{Deferred: true})
 
@@ -219,7 +218,7 @@ func TestSurface_SkipsUnboundTools(t *testing.T) {
 	for _, item := range s.Skipped() {
 		skipped[item.Name] = item.Reason
 	}
-	for _, name := range []string{"consolidate_knowledge", "prune_history", "semantic_search", "query_call_graph"} {
+	for _, name := range []string{"design", "semantic_search", "query_call_graph"} {
 		if _, ok := skipped[name]; !ok {
 			t.Errorf("%s 应被跳过（执行器未绑定）", name)
 		}
@@ -284,7 +283,7 @@ func TestSurface_AddIsVisibleNextStep(t *testing.T) {
 // 并发 Materialize 与并发 Defs 不能撕坏内部缓存（执行循环里工具可能并行跑）。
 func TestSurface_ConcurrentMaterializeAndDefs(t *testing.T) {
 	s := deferredSurface(t, 0)
-	cold := []string{"design", "deepthinking", "consolidate_knowledge", "prune_history", "print_dir_tree"}
+	cold := []string{"design", "deepthinking", "print_dir_tree", "query_call_graph", "query_code_skeleton"}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 24; i++ {

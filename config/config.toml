@@ -222,11 +222,9 @@ binary_path = ""                     # empty → extract the embedded dist/bin i
                                      # neither available = MCP off, agents fall back to plain file tools
 mcp_args = ["serve", "--mcp"]
 request_timeout = 30                 # seconds (≤0 → 30)
-# [codeseek.knowledge] is gone. Knowledge injection is hard-disabled in
-# internal/knowledge/injector.go, so its four budgets were unreachable, and `enabled`
-# could not be turned off either (validate() wrote true back). The budgets are constants
-# in injector.go now; bring them back as config when injection returns.
-# The write path is unaffected by any of this: consolidate_knowledge talks straight to MCP.
+# [codeseek.knowledge] is gone. The whole knowledge injection/consolidation mechanism
+# was deleted from the Go layer: repository-level knowledge now travels only through
+# the blueprint (~/.yagent/data/blueprint/{projectID}/blueprint.md) and read_blueprint.
 
 # ── Browser-Agent (the external browser-control CLI drives a real Chrome) ──
 # WARNING: writing this section without `enabled` switches the capability OFF —

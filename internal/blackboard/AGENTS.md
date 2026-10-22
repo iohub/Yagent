@@ -24,7 +24,7 @@
 
 **3. `handoff.status` 词表刻意没有 `paused`。** `error` 由委派错误判定、`degraded` 由重放侧判定，
 让模型自报"我这份是降级的"等于把判断交给看不到判据的一方（`handoff.go:54-68`）。
-被闸门 abandon 的委派**什么都不写**（`internal/agents/director.go:566-572`）：写了就是一张空正文便签，
+被闸门 abandon 的委派**什么都不写**（`internal/agents/director.go:559-565`）：写了就是一张空正文便签，
 还会占住每轮重扫的索引位去冒充一条结论。
 
 **4. `ParseHandoff` 永不返回 error、也永不返回 nil**，三档回落最坏 `Degraded=absent`

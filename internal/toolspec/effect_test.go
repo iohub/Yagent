@@ -11,7 +11,7 @@ func TestEffectBitsAreDistinctPowersOfTwo(t *testing.T) {
 		EffectFSRead, EffectSearchRegex, EffectCodeSemantic, EffectCodeGraph, EffectContext, EffectToolLoad,
 		EffectCogReflect, EffectCogSubLLM, EffectCogDeep, EffectCogDesign,
 		EffectFSWrite, EffectShell, EffectBrowserObserve, EffectBrowserAct, EffectBrowserEval,
-		EffectBrowserArtifact, EffectKnowledgeWrite, EffectKnowledgePrune, EffectCheckpoint,
+		EffectBrowserArtifact, EffectCheckpoint,
 		EffectFlow, EffectDelegate,
 	)
 

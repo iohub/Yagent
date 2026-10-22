@@ -430,7 +430,7 @@ func TestProbeDepsIsCapabilityComplete(t *testing.T) {
 		deps.Deep == nil || deps.Design == nil || deps.Browser == nil {
 		t.Error("ProbeDeps 缺少某个执行器依赖，golden 会静默少一类工具")
 	}
-	if deps.Delegate == nil || deps.Consolidate == nil || deps.Prune == nil || deps.LoadTool == nil {
+	if deps.Delegate == nil || deps.LoadTool == nil {
 		t.Error("ProbeDeps 缺少按 Agent 绑定的执行器")
 	}
 	if deps.CheckpointList == nil || deps.CheckpointCreate == nil || deps.CheckpointRollback == nil {

@@ -2,7 +2,6 @@ package globalctx
 
 import (
 	"yagent/internal/config"
-	"yagent/internal/knowledge"
 	"yagent/internal/mcp"
 	"yagent/internal/messaging"
 	"yagent/internal/tools"
@@ -39,9 +38,6 @@ type GlobalCtx struct {
 
 	// CodeSeekMCP MCP 客户端（用于代码分析，nil=未启用）
 	CodeSeekMCP *mcp.MCPClient
-
-	// KnowledgeInjector 对话前知识注入器（nil=未启用）
-	KnowledgeInjector *knowledge.KnowledgeInjector
 
 	// GitCheckpointCfg holds the git checkpoint configuration (may be nil if not configured)
 	GitCheckpointCfg *config.GitCheckpointConfig

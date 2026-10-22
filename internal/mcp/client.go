@@ -48,7 +48,7 @@ type MCPClient struct {
 	requests map[int]chan *JSONRPCResponse
 	nextID   atomic.Int64
 	// writeMu 保护 stdin 管道写入：os.File.Write 只对 ≤PIPE_BUF 保证原子，
-	// knowledge 写入这类大请求并发时会交错成非法 JSON-RPC。
+	// 并发只读工具（semantic_search 那批）的大请求会交错成非法 JSON-RPC。
 	writeMu sync.Mutex
 
 	alive       atomic.Bool

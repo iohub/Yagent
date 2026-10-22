@@ -19,7 +19,7 @@ import (
 //   - FormatForDirector：注入 Director 上下文的统一格式文本（格式单源）。
 //
 // Text 字段语义（第二批次定案）：完整文本输出，供程序化消费（输出解析、
-// consolidation、错误消息）；LLM 上下文一律走 FormatForDirector（读
+// RepoSummary、错误消息）；LLM 上下文一律走 FormatForDirector（读
 // Summary/ArtifactRef），不依赖 Text。
 
 // projectPathProvider 返回当前项目路径（由 DirectorAgent.env.ProjectPath 提供）。
@@ -192,7 +192,7 @@ func FinalizeResult(agentName, task string, exec ExecutorResult) AgentResult {
 }
 
 // FinalizeResultFull 是 FinalizeResult 的 Full 变体：Text 恒为 exec.Text 完整输出，
-// 供依赖完整输出的程序化消费链路（consolidation、输出解析、RepoSummary 等）；
+// 供依赖完整输出的程序化消费链路（输出解析、RepoSummary 等）；
 // Summary/ArtifactRef 分级逻辑与 FinalizeResult 完全相同（LLM 上下文仍走分级摘要）。
 func FinalizeResultFull(agentName, task string, exec ExecutorResult) AgentResult {
 	r := FinalizeResult(agentName, task, exec)
