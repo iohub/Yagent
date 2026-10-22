@@ -65,10 +65,9 @@ const (
 const compressReserveRows = 2
 
 var (
-	compressLabelStyle     = lipgloss.NewStyle().Foreground(dashLabelFg)
-	compressTitleWordStyle = lipgloss.NewStyle().Foreground(dashLabelFg).Bold(true)
-	compressSavedStyle     = lipgloss.NewStyle().Foreground(dashOutFg).Bold(true)
-	compressIdleStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	compressLabelStyle = lipgloss.NewStyle().Foreground(dashLabelFg)
+	compressSavedStyle = lipgloss.NewStyle().Foreground(dashOutFg).Bold(true)
+	compressIdleStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	// 已触发档位的 label 配色：T1 中性、T2/T3 沿用 ⛁ 计量条的两档告警色。
 	compressTierStyles = [compressTierCount]lipgloss.Style{
 		lipgloss.NewStyle().Foreground(dashTitleFg).Bold(true),
@@ -489,15 +488,10 @@ func renderCompressTier(s compressSnapshot, spec compressPanelSpec, tier int) []
 // T0 = 还没压缩过 —— 空闲态也要有这一行，否则"这段存在但还没数据"只能靠
 // 真触发一次压缩才能确认。
 func compressTitleRow(s compressSnapshot, inner int) string {
-	left := tokenAccentStyle.Render("⧉ ") +
-		compressTitleWordStyle.Render("COMPRESS ") +
-		compressSavedStyle.Render(compressSavedStr(s.saved)) +
-		compressLabelStyle.Render(" "+compressPctLabel(s.pct))
-	badge := tokenAccentStyle.Render("T" + strconv.Itoa(s.maxTier))
-	if lipgloss.Width(left)+lipgloss.Width(badge) > inner {
-		return left
-	}
-	return padRight(left, inner-lipgloss.Width(badge)) + badge
+	detail := dashBand(compressSavedStyle).Render(compressSavedStr(s.saved)) +
+		dashBandDim.Render(" "+compressPctLabel(s.pct))
+	badge := dashBand(tokenAccentStyle).Render("T" + strconv.Itoa(s.maxTier))
+	return dashSectionRow("⧉", "COMPRESS", detail, badge, inner)
 }
 
 // compressRowStyles 决定一行的配色：未触发档位整行暗色，触发过的档位 label 用该档的

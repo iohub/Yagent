@@ -286,10 +286,23 @@ func (m *model) setContextTokens(agentName string, contextTokens int64) {
 // ── 排版 ──
 
 type tokenPanelSpec struct {
-	innerWidth int
-	maxRows    int // 0 = 不限高
-	keycap     string
-	collapsed  bool
+	innerWidth  int
+	maxRows     int    // 0 = 不限高
+	keycapKey   string // 键帽按键（"alt+d"）；两段都空 = 不给键帽
+	keycapLabel string // 键帽说明文案
+	collapsed   bool
+}
+
+// keycapText 交出键帽的两段文本渲染出的样子：类别行压在横带上（band=true），
+// 折叠行与普通提示行落在带外。按键与文案只有一份，两处不会漂成两种颜色。
+func (s tokenPanelSpec) keycapText(band bool) string {
+	if s.keycapKey == "" && s.keycapLabel == "" {
+		return ""
+	}
+	if band {
+		return dashBandKeycap(s.keycapKey, s.keycapLabel)
+	}
+	return dashKeycap(s.keycapKey, s.keycapLabel)
 }
 
 // buildTokenPanel 产出 token 段的若干行（不含边框），每行显示宽度 <= spec.innerWidth。
@@ -386,16 +399,8 @@ func meterInline(glyph string, ratio float64, detail string, cells int, meterCol
 	return left + " " + detail
 }
 
-func tokenTitleRow(keycap string, inner int) string {
-	left := lipgloss.NewStyle().Foreground(dashAccent).Bold(true).Render("◆ ") +
-		lipgloss.NewStyle().Foreground(dashTitleFg).Bold(true).Render("Tokens")
-	if keycap == "" {
-		return left
-	}
-	if lipgloss.Width(left)+1+lipgloss.Width(keycap) > inner {
-		return left
-	}
-	return padRight(left, inner-lipgloss.Width(keycap)) + keycap
+func tokenTitleRow(spec tokenPanelSpec, inner int) string {
+	return dashSectionRow("◆", "Tokens", "", spec.keycapText(true), inner)
 }
 
 // tokenSigmaRow 是英雄行：Σ 总量左置，in/out 明细右对齐；高度不足时明细里换上命中率。
@@ -490,7 +495,7 @@ func renderTokenTier(snap tokenSnapshot, spec tokenPanelSpec, tier int) []string
 	inlineCache := tier >= tokenTierCacheInline && cacheOK
 
 	var rows []string
-	rows = append(rows, tokenTitleRow(spec.keycap, inner))
+	rows = append(rows, tokenTitleRow(spec, inner))
 	if tier < tokenTierNoSep1 {
 		rows = append(rows, tokenSep(inner))
 	}
@@ -681,8 +686,9 @@ func collapsedTokenLine(snap tokenSnapshot, spec tokenPanelSpec) string {
 	}
 
 	line := strings.Join(parts, tokenSepStyle.Render("   ·   "))
-	if spec.keycap != "" && lipgloss.Width(line)+1+lipgloss.Width(spec.keycap) <= inner {
-		line = padRight(line, inner-lipgloss.Width(spec.keycap)) + spec.keycap
+	keycap := spec.keycapText(false)
+	if keycap != "" && lipgloss.Width(line)+1+lipgloss.Width(keycap) <= inner {
+		line = padRight(line, inner-lipgloss.Width(keycap)) + keycap
 	}
 	return truncateCells(line, inner)
 }
@@ -710,9 +716,10 @@ func (m *model) renderFooterTokenPanel() string {
 		label = langManager.GetText("DashboardExpandHint")
 	}
 	rows := buildTokenPanel(snap, tokenPanelSpec{
-		innerWidth: inner,
-		keycap:     dashKeycap("alt+t", label),
-		collapsed:  m.tokenDashboardCollapsed,
+		innerWidth:  inner,
+		keycapKey:   "alt+t",
+		keycapLabel: label,
+		collapsed:   m.tokenDashboardCollapsed,
 	})
 	if len(rows) == 0 {
 		return ""

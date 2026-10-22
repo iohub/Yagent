@@ -668,9 +668,10 @@ func TestTokenPanel_CollapsedOneLine(t *testing.T) {
 	m.setRun(AgentRunTokens{AgentName: "Director", TotalInputTokens: 1000, InputTokens: 1000, OutputTokens: 200, ContextTokens: 5000})
 
 	rows := buildTokenPanel(m.tokenSnapshot(), tokenPanelSpec{
-		innerWidth: 90,
-		collapsed:  true,
-		keycap:     dashKeycap("alt+t", "展开"),
+		innerWidth:  90,
+		collapsed:   true,
+		keycapKey:   "alt+t",
+		keycapLabel: "展开",
 	})
 	if len(rows) != 1 {
 		t.Fatalf("折叠形态应恰好 1 行，实际 %d 行", len(rows))
