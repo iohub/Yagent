@@ -18,10 +18,10 @@
 两个循环共用（`executor.go:164-173`）——两份同形实现必有一边漂走。
 
 **2. 以 `agent_exit` 收尾的 Agent 必须自己置 `StopOnFinish`。**
-`repo.go:202`、`coding.go:393`、`chat.go:81`、`devops.go:90`、`browser_agent.go:124`，
-消费点在 `executor.go:854`。漏设不报错：`agent_exit` 只是"又执行了一次工具"，循环继续烧到
+`repo.go:160`、`coding.go:367`、`chat.go:81`、`devops.go:90`、`browser_agent.go:124`，
+消费点在 `executor.go:855`。漏设不报错：`agent_exit` 只是"又执行了一次工具"，循环继续烧到
 MaxSteps，而 `deliverableText` 取的是最后一条 assistant 消息——便签正文与 artifact 全文存的
-都不是那份交付（`repo.go:199-202` 把这段写成了注释）。
+都不是那份交付（`repo.go:157-160` 把这段写成了注释）。
 
 **3. 交付全文只经 `deliverableText()` 取**（`result.go:52-60`）。判据是返回 JSON 的**形态**
 （`finished:true` + `reason` 键），不是 Agent 名字。`AgentResult.Text` 的既有语义没动。
@@ -34,11 +34,11 @@ MaxSteps，而 `deliverableText` 取的是最后一条 assistant 消息——便
 **5. 暂停闸门在 step 边界，且只有一处。** `executor.go:434-439`（`stepNumber++` 之前）：
 ctx 不取消，恢复后原地往下走。不要把它挪进批次中间——会留下"副作用做了一半"的状态。
 
-**6. 冷工具执行器恒绑。** `depsFor` 把蓝图视图写进签名参数（`deps.go:16-24`）：六个调用点少绑一个
+**6. 冷工具执行器恒绑。** `depsFor` 把蓝图视图写进签名参数（`deps.go:22`）：六个调用点少绑一个
 是编译不过，而少记一处判据是"那个 Agent 的模型以为这个能力不存在"。
 
 **7. 蓝图 fold 不许影响主流程。** 全程只 warn、不起 goroutine、不向 Repo 的返回值传播错误
-（`blueprint_commit.go:24-30`；接缝 `repo.go:246-251`）。落盘只发生在这里——Director 侧不需要知道
+（`blueprint_commit.go:24-30`；接缝 `repo.go:193-197`）。落盘只发生在这里——Director 侧不需要知道
 `agent_exit.blueprint[]` 这个参数存在。
 
 **8. 纯文本收尾的提醒有两条文案。** 通用那条催"去 explore/edit/run/verify"（执行型 Agent），
@@ -78,7 +78,7 @@ Resume 成免费心跳）。监视 goroutine 挂到**父** ctx 的域上，不�
   **真实画像** `ProfileRepo/ProfileCoding/ProfileChat` 问判据；画像或能力标签漂走即红。
 - e2e 五链路：`e2e_authorization_test.go:270`、`e2e_handoff_test.go:95`、
   `e2e_lifecycle_test.go:70`、`e2e_resume_test.go:29`、`e2e_replay_test.go:74`、
-  `e2e_blueprint_test.go:127`（验收断言就是"文件出现"）。harness 的接线顺序照抄 `internal/app/app.go:115-287`。
+  `e2e_blueprint_test.go:127`（验收断言就是"文件出现"）。harness 的接线顺序照抄 `internal/app/app.go:112-292`。
 - `TestSpawnForDelegation_CodingGetsItsOwnThinkLink`（`spawn_test.go:21`）：把 store 挂回单例即红。
 - `TestStopKindClassifiersAgree`（`resume_test.go:175`）：本包 `classifyStop` 与
   `director.StopKindOf` 因分层守卫只能各写一份，靠这条对齐。

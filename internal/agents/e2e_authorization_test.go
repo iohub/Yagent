@@ -26,7 +26,7 @@ import (
 // 链上任一环坏了（配对键改了、consumer 没注册、拒绝没回灌）都不会有测试变红，
 // 而表现是"要么静默放行越界写盘，要么用户答了却没反应"。
 //
-// 这里的 harness 按 app.go:115-287 的**同一条装配顺序**接线，
+// 这里的 harness 按 app.go:112-292 的**同一条装配顺序**接线，
 // 用真实 dispatcher + 真实 guard + 真实文件/Shell 工具，只把 LLM 与"用户的答复"换成脚本。
 
 type authHarness struct {

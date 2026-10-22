@@ -6,7 +6,8 @@
 
 rollout JSONL 的**唯一写入者与唯一事实来源**：`/resume`、检查点、重放都只读它。
 只管"会话账本"：不管压缩策略、不管委派编排、不判断业务对错。
-`SharedMemory` / `LocalMemory` 是顺带住在这里的 KV 存储，**不是**对话历史。
+仓库级持久知识不在这里（那是 `internal/blueprint`）——顺带住在这里的 KV 存储
+（`SharedMemory` / `LocalMemory`）已于 2026-10-22 随知识整理机制一并删除。
 任务记忆 `~/.yagent/tasks/*.jsonl` 在 `internal/datamanager`，**不是**断点续跑的事实来源。
 
 ## 硬约束
@@ -58,5 +59,3 @@ JSON 线上形态 `{"messages":[…],"max_size":n}` 由 `MarshalJSON/UnmarshalJS
 - `TestConversationMemoryConcurrentAppendKeepsEveryMessage`（`:384`）：去掉锁在 `-race` 下报竞态。
 - `TestReadRolloutStopFacts_NoTerminalRecordIsNotFoundNotError`（`rollout_stop_test.go:112`）、
   `TestStopFactsState_EveryKindIsClaimed`（`:176`）：新增停点词表没人认领即红。
-- `TestSharedMemoryPersistIsWholeDocumentAndLeavesNoTmp`（`shared_persist_test.go:18`）：
-  绕开 `util.AtomicWrite` 会留 tmp（另被 `check_no_inline_atomic_write.sh` 硬禁）。

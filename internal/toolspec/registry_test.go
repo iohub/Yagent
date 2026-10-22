@@ -409,16 +409,18 @@ func TestValidate_ProblemsAreSorted(t *testing.T) {
 
 // ---------- schemas.json 访问器 ----------
 
-// 51 条是与 agents 侧 gate 测试共享的基线：增删工具必然改动这里，
+// 49 条是与 agents 侧 gate 测试共享的基线：增删工具必然改动这里，
 // 改动必须是显式的（数字写死，不做 len() 自比较 —— 那种断言永远不会失败）。
 // 50 → 51：仓库蓝图的读通道 read_blueprint（docs/repo-blueprint-design.md §7.1）。
+// 51 → 49：consolidate_knowledge / prune_history 随知识整理机制整体删除，
+// 仓库级持久知识只剩 blueprint 一条通道。
 func TestSchemasLoadAndDescribeEveryEntry(t *testing.T) {
 	if err := SchemasError(); err != nil {
 		t.Fatalf("SchemasError() = %v, want nil —— 嵌入的声明文件解析失败", err)
 	}
 	names := SchemaNames()
-	if len(names) != 51 {
-		t.Errorf("SchemaNames() = %d 条, want 51 —— 增删工具请同步这条基线与 agents 侧 gate 测试", len(names))
+	if len(names) != 49 {
+		t.Errorf("SchemaNames() = %d 条, want 49 —— 增删工具请同步这条基线与 agents 侧 gate 测试", len(names))
 	}
 	for _, n := range names {
 		s, ok := GetSchema(n)

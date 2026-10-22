@@ -1,11 +1,8 @@
 package agents
 
 import (
-	"context"
-
 	"yagent/internal/blueprint"
 	"yagent/internal/browserctl"
-	"yagent/internal/knowledge"
 	"yagent/internal/toolspec"
 )
 
@@ -44,12 +41,6 @@ type Env interface {
 type RepoContextStore interface {
 	Get() string
 	Set(summary string)
-}
-
-// KnowledgeProvider 知识注入器：对话前检索并注入领域知识。
-// 由 *knowledge.KnowledgeInjector 天然实现。
-type KnowledgeProvider interface {
-	Inject(ctx context.Context, injCtx knowledge.InjectionContext) (string, error)
 }
 
 // 工具类窄接口已下移到 internal/toolspec（注册表与执行器工厂都要用它们，

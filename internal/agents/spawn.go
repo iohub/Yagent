@@ -3,7 +3,7 @@ package agents
 // spawn.go — 每次委派一个新实例（docs/structured-concurrency-design.md D2）。
 //
 // 为什么这件事值得做：内建子 Agent 的结构体几乎全是**不可变接线**
-// （promptFmt / env / params / maxSteps / engine / guard / mcpClient / knowledge …），
+// （promptFmt / env / params / maxSteps / engine / guard …），
 // 而 Run() 里一处都不写自身字段（五家逐个核过）。唯一的例外是 CodingAgent.thinkLink ——
 // 它挂在构造出来的单例上，于是：
 //   ① 两次 Coding 委派共用一份思维日志，第三档压缩的重建原料里混着**上一次委派**的任务。

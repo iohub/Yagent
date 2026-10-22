@@ -400,13 +400,12 @@ repo = "balanced"
 | `mcp_args` | array | `["serve", "--mcp"]` | MCP launch arguments |
 | `request_timeout` | int | `30` | Request timeout, seconds (`≤0` → 30) |
 
-`[codeseek.knowledge]` is deleted, not merely inert. Knowledge injection is hardcoded off — `Inject()`
-in `internal/knowledge/injector.go` returns early — so its four budget keys had no reachable reader,
-and `enabled` never worked either: `validate()` wrote `true` back whenever it saw `false`. The budgets
-are file constants in `injector.go` now (`injMaxEntries = 8`, `injMaxTokens = 2000`, `injMinScore = 0.3`,
-`injRerank = true`) and become configuration again only if injection returns.
-
-The write path was never affected: `consolidate_knowledge` talks straight to MCP.
+`[codeseek.knowledge]` is deleted, not merely inert. The whole knowledge injection/consolidation
+mechanism was removed on 2026-10-22: `internal/knowledge/` (whose `Inject()` had been hardcoded off),
+the repo-level KV memory + background consolidation worker, and the `consolidate_knowledge` /
+`prune_history` tools. Repository-level knowledge now travels through exactly one channel: the
+blueprint (`~/.yagent/data/blueprint/{projectID}/blueprint.md`, `[blueprint]` section, `read_blueprint`).
+Nothing in this section needs a knowledge counterpart.
 
 ### 5.6 `[browser]` — Browser-Agent
 

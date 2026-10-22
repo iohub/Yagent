@@ -2,13 +2,9 @@ package app
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"yagent/internal/config"
-	"yagent/internal/globalctx"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
 	"yagent/internal/messaging"
@@ -16,7 +12,7 @@ import (
 
 // app 包是一次性装配点，跑起来要真 LLM、真 MCP、真浏览器，不适合在这里做全流程测试。
 // 但它有几段"纯逻辑却决定别人能不能拿到自己那份上下文"的代码，出了错全是静默失效：
-// 任务请求的装配、引擎包装层、被禁用 Agent 的解析、项目标识的推导。
+// 任务请求的装配、引擎包装层、被禁用 Agent 的解析。
 
 // stubEngine 只够满足 llm.Engine 接口。
 type stubEngine struct{ model string }
@@ -160,79 +156,6 @@ func keysOf(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
-}
-
-// getProjectID 是共享记忆与 rollout 目录的主键：同一个仓库在不同进程里必须算出
-// 同一个 ID，否则 /resume 与长期记忆会散成多份互不可见的目录。
-func TestGetProjectID(t *testing.T) {
-	id := getProjectID("/home/user/my-app")
-	if !strings.HasPrefix(id, "my_app_") {
-		t.Errorf("id = %q, want 以 my_app_ 开头（可读前缀 + 短哈希）", id)
-	}
-	if len(id) != len("my_app_")+12 {
-		t.Errorf("id 长度 = %d, want 前缀 + 12 位哈希: %q", len(id), id)
-	}
-
-	// 稳定性：同一路径每次都相同。
-	if again := getProjectID("/home/user/my-app"); again != id {
-		t.Errorf("同一路径两次算出 %q 与 %q", id, again)
-	}
-	// 唯一性：路径不同必须不同（哪怕 basename 相同）。
-	a := getProjectID("/home/alice/app")
-	b := getProjectID("/home/bob/app")
-	if a == b {
-		t.Errorf("不同目录同名算出同一个 ID: %q", a)
-	}
-	if !strings.HasPrefix(a, "app_") || !strings.HasPrefix(b, "app_") {
-		t.Errorf("可读前缀丢失: %q / %q", a, b)
-	}
-
-	// 文件系统安全：非法字符一律换成下划线，绝不出现分隔符。
-	for _, p := range []string{`/tmp/we"ird name`, "/tmp/a/b/c", "/tmp/../etc/passwd"} {
-		got := getProjectID(p)
-		if strings.ContainsAny(got, `/"\ `) {
-			t.Errorf("getProjectID(%q) = %q, 含路径分隔符或空格", p, got)
-		}
-		if len(filepath.Base(got)) != len(got) {
-			t.Errorf("%q 会被当成多层路径", got)
-		}
-	}
-
-	// 根目录与相对路径的退化输入不能产出空名。
-	for _, p := range []string{"/", ".", ""} {
-		if got := getProjectID(p); got == "" || !strings.Contains(got, "_") {
-			t.Errorf("getProjectID(%q) = %q, want 仍然可用", p, got)
-		}
-	}
-
-	// 单个目录名components 受 255 字节限制：长名字必须截断而不是产出超长组件。
-	long := "/" + strings.Repeat("x", 400)
-	if got := getProjectID(long); len(got) > 255 {
-		t.Errorf("超长目录名的 ID 长度 = %d, want ≤255", len(got))
-	}
-}
-
-// getSharedMemoryPath 是仓库级长期记忆的位置。它必须由 ProjectPath 推导，
-// 否则两个项目的记忆会写进同一个文件。
-func TestGetSharedMemoryPathIsPerProject(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("os.UserHomeDir: %v", err)
-	}
-
-	ca := &Yagent{globalCtx: &globalctx.GlobalCtx{ProjectPath: "/tmp/proj-one"}}
-	first := ca.getSharedMemoryPath()
-	if !strings.HasSuffix(first, filepath.Join("shared_memory", getProjectID("/tmp/proj-one"), "shared_memory.json")) {
-		t.Errorf("路径 = %q, want $HOME/.yagent/data/shared_memory/{projectID}/shared_memory.json", first)
-	}
-	if !strings.HasPrefix(first, home) {
-		t.Errorf("路径 %q 不在 home 下", first)
-	}
-
-	other := &Yagent{globalCtx: &globalctx.GlobalCtx{ProjectPath: "/tmp/proj-two"}}
-	if second := other.getSharedMemoryPath(); second == first {
-		t.Error("两个不同项目算出了同一个共享记忆路径")
-	}
 }
 
 // 运行中换 provider：SwitchProvider 在 UI 线程写 ca.engine，而任务线程每轮开头读它

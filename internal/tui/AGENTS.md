@@ -27,7 +27,7 @@
 按 `height` 而不是 `height-2` 分配行预算会多要 2 行，被末尾的"行数收敛 + 补边框"悄悄截掉
 （根 AGENTS.md §11 坑 7）。
 
-**4. 流式槽的键 ≠ 显示名。** `streamSlotKey` 返回 `agent#delegationID`（`tui_update_tasks.go:1074-1082`），
+**4. 流式槽的键 ≠ 显示名。** `streamSlotKey` 返回 `agent#delegationID`（`tui_update_tasks.go:1025-1030`），
 它只用于分槽；`le.from` / `m.currentAgent` / token 归集**必须继续用裸 Agent 名**——混用的症状是
 标签变成 `Coding#call_3`。坐标为空时退回裸名，所以 Director 与存量 rollout 行为逐字不变。
 

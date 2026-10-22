@@ -688,7 +688,6 @@ func isVerboseEventType(eventType string) bool {
 	case "tool_call_start", "tool_call_result",
 		"llm_call_start", "llm_call_end",
 		"commit_context_loaded", "context_compressed", "context_ultimate_compressed",
-		"knowledge_injected",
 		"model_info", "thinking":
 		return true
 	}

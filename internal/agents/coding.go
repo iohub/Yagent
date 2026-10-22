@@ -10,8 +10,6 @@ import (
 
 	"yagent/internal/config"
 	"yagent/internal/gitinfo"
-	"yagent/internal/knowledge"
-	"yagent/internal/mcp"
 	"yagent/internal/thinklink"
 	"yagent/internal/tools"
 
@@ -72,8 +70,6 @@ type CodingAgent struct {
 	env              Env
 	microAgent       MicroAgentRunner
 	repoCtx          RepoContextStore
-	knowledge        KnowledgeProvider
-	mcpClient        *mcp.MCPClient
 	gitCheckpointCfg *config.GitCheckpointConfig
 	ecCfg            config.EnhancedCommanderConfig
 	guard            *tools.WorkspaceGuard
@@ -115,9 +111,6 @@ type CodingAgentParams struct {
 	Guard   *tools.WorkspaceGuard
 	RepoCtx RepoContextStore
 
-	Knowledge KnowledgeProvider
-	MCPClient *mcp.MCPClient
-
 	GitCheckpointCfg     *config.GitCheckpointConfig
 	EnhancedCommanderCfg config.EnhancedCommanderConfig
 
@@ -145,8 +138,6 @@ func NewCodingAgent(p CodingAgentParams) *CodingAgent {
 		env:              p.Env,
 		microAgent:       p.MicroAgent,
 		repoCtx:          p.RepoCtx,
-		knowledge:        p.Knowledge,
-		mcpClient:        p.MCPClient,
 		gitCheckpointCfg: p.GitCheckpointCfg,
 		ecCfg:            p.EnhancedCommanderCfg,
 		guard:            p.Guard,
@@ -171,10 +162,6 @@ func (a *CodingAgent) surfaceFor(ctx context.Context, gcm *GitCheckpointManager)
 	deps.Micro = p.MicroAgent
 	deps.Deep = p.DeepThinker
 	deps.Design = p.Designer
-	if p.MCPClient != nil {
-		deps.Prune = tools.NewPruneHistoryTool(p.MCPClient, a.LLM).Execute
-		deps.Consolidate = tools.NewConsolidateKnowledgeTool(p.MCPClient, a.LLM, "coding_agent", "coding_modification").Execute
-	}
 	// Coding 只会委派 browser；其余 delegate_ 由 Spec.Audience 排除在外。
 	deps.Delegate = a.browserDelegate
 	if gcm != nil {
@@ -368,19 +355,6 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 		systemPrompt += "\n" + gitCheckpointPromptSection
 	}
 
-	// [知识管理] 对话前动态知识检索注入（TargetFiles 留 nil，由 Injector 从 UserMessage 中提取）
-	if a.knowledge != nil {
-		injCtx := knowledge.InjectionContext{
-			UserMessage: input,
-			TargetFiles: nil,
-			AgentName:   a.Name(),
-			Domains:     []string{"repo", "coding"}, // Coding-Agent 检索 repo + coding domain 知识
-		}
-		if knowledgeBlock, err := a.knowledge.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
-			systemPrompt += knowledgeBlock
-		}
-	}
-
 	cfg := DefaultExecutorConfig()
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
@@ -422,12 +396,8 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	if err != nil {
 		return AgentResult{}, err
 	}
-	// Full 变体：Text 被程序化消费（下方 consolidation 提交依赖完整输出）；
+	// Full 变体：Text 需要恒为完整输出（Director 层用它做摘要与便签正文）；
 	// LLM 上下文由 Director 层 FormatForDirector 走分级摘要。
 	agentResult := FinalizeResultFull(a.Name(), input, result)
-	// [知识管理] 子任务完成后自动沉淀到知识库（非阻塞）
-	if a.knowledge != nil {
-		autoConsolidateSubtask(a.mcpClient, a.LLM, "coding_agent", "coding_modification", input, agentResult.Text)
-	}
 	return agentResult, nil
 }

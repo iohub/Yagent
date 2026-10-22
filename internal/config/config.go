@@ -274,7 +274,7 @@ var removedKeyHints = map[string]string{
 	"tools.deferred.hot":                      "调档只走 toolspec 画像的 Promote/Demote",
 	"tools.deferred.cold":                     "调档只走 toolspec 画像的 Promote/Demote",
 	"browser.enable_skills":                   "站点 playbook 注入未实现",
-	"codeseek.knowledge":                      "知识注入当前硬关闭（injector.go 的 early return）；enabled 也从未生效过 —— 它会被写回 true",
+	"codeseek.knowledge":                      "知识注入/整理机制已整体删除，仓库级知识只走 blueprint",
 }
 
 // removedProviderKeyHints 作用于 [global.llm.providers.<name>] 段内的死键。

@@ -35,9 +35,9 @@
 `Compute` 的 base 截断 100 + sha256 前 8 hex 是 rollout / artifact / 蓝图存储共用的主键
 （`internal/projectid/projectid.go:24-44`，`internal/blueprint/fold.go:70` 记为 I12）。改算法**不会报错，只会让历史数据
 找不到目录**。期望串必须是字面量：`TestComputeGoldenTable`（`internal/projectid/projectid_test.go:15`）。
-注意 `internal/app/app.go:942` 的 `getProjectID` 是**另一份已经分叉的实现**（只管 shared_memory），
-"顺手统一"会孤儿化既有 KV 数据（正是 R7 待办）。`director.ComputeProjectID` 只是转发，
-不许长成第二份（`TestDirectorForwardsToProjectid`）。
+`director.ComputeProjectID` 只是转发，不许长成第二份（`TestDirectorForwardsToProjectid`）。
+曾经分叉的那份（`app.getProjectID`，sha 前 12 hex，只管 `shared_memory` 目录）已随 KV 仓库记忆一起删除
+——**主键从此只有 `projectid.Compute` 一处**。
 
 ## protocol — DO NOT EDIT 的文件里有手写类型
 
@@ -49,8 +49,8 @@
 
 ## logging — TUI 模式永不写 stdout
 
-`internal/logging/logger.go:84-85`：TUI 下 stdout 归界面，任何 `fmt.Println` 都会撕裂渲染。自带日志器在开文件
-失败时必须退回 `GetFallbackWriter()`（`internal/logging/logger.go:236-253`，按模式返回 app 日志 / `io.Discard` /
+`internal/logging/logger.go:74-76`：TUI 下 stdout 归界面，任何 `fmt.Println` 都会撕裂渲染。自带日志器在开文件
+失败时必须退回 `GetFallbackWriter()`（`internal/logging/logger.go:208-225`，按模式返回 app 日志 / `io.Discard` /
 stderr），下游已把这条写成 CRITICAL 注释（`internal/agents/tool_logger.go:67,94`）。
 `YAGENT_LOG_LEVEL` **区分大小写**，只认 `DEBUG|INFO|WARN|ERROR`，小写静默回落 INFO（`:127-141`）。
 
@@ -62,7 +62,7 @@ stderr），下游已把这条写成 CRITICAL 注释（`internal/agents/tool_log
 它对提取不可见只因 `isExecutableName` 拒绝长度 1（`internal/embedbin/embedbin.go:154-156`）——改名成两字符会
 解出一个 1 字节的假可执行文件。是否重写磁盘由 `version.json` 决定，**不校验内容**
 （`:66-89`）：手工替换 `~/.yagent/bin/codeseek` 不会被发现。提取失败只 `slog.Debug`
-（`internal/app/app.go:175`），默认级别下不可见，症状是"退化成纯文件工具"。
+（`internal/app/app.go:168`），默认级别下不可见，症状是"退化成纯文件工具"。
 `rg` 不在 `dist/bin` 里（git 树），`internal/tools/search_operations.go:16-23` 回落系统 PATH。
 
 ## globalctx — 没有版本符号
@@ -111,13 +111,6 @@ nil，此后全进程走 `len(text)/4`，warn 只打一次（`:39-49`）。对�
 选项有牙齿：`TmpSuffix` 结果不得命中调用方目录的列举扩展（`internal/util/atomic.go:19-22`，blackboard 只认
 `*.md`）；`DirPerm=0` 保持"目录不存在就失败"（`:12-14`）；`InheritPerm` 是 config 的 chmod 保留规则。
 `numeric.go` 与 `error_utils.go` 的 `NewErrorWithContext` 是死代码（全仓零调用）。
-
-## knowledge — 注入当前是关的
-
-`Inject` 开头有一段恒真 if 提前返回（`internal/knowledge/injector.go:74-78`，注释写明"临时 hardcode 禁用"，恢复时
-删掉整块）。在此之前调试"知识注入没生效"是白费——注意根 AGENTS.md §6.4 写的 `:67-71` 已行号漂移。
-fail-safe 是铁律：任何"不该检索"的输入返回 `("", nil)` 且不发布任何事件（`:72,294-313`）。
-预算常量内联在本包（`:35-43`），因为原 `[codeseek.knowledge]` 五键全部不可达已删。
 
 ## recovery — 查询本身就是那次试探
 

@@ -17,12 +17,11 @@ import (
 	"yagent/internal/blackboard"
 	"yagent/internal/compression"
 	"yagent/internal/config"
-	"yagent/internal/knowledge"
 	"yagent/internal/llm"
-	"yagent/internal/mcp"
 	"yagent/internal/memory"
 	"yagent/internal/pause"
 	"yagent/internal/thinklink"
+	"yagent/internal/tokenutil"
 	"yagent/internal/tools"
 )
 
@@ -52,8 +51,6 @@ type DirectorAgent struct {
 	guard        *tools.WorkspaceGuard
 	repo         RepoToolSet
 	repoCtx      RepoContextStore
-	knowledge    KnowledgeProvider
-	mcpClient    *mcp.MCPClient
 	// surface 是 Director 唯一的工具面：工具声明、按名解析、并发准入都问它。
 	// 这里不再有 Adapters 快照视图 —— 两份同形来源正是子 Agent 那边并行失效的成因
 	// （设计稿 R1），Director 侧没踩中只是因为谓词恰好走了 surface。
@@ -120,8 +117,6 @@ type DirectorAgentParams struct {
 	Repo        RepoToolSet
 	Guard       *tools.WorkspaceGuard
 	RepoCtx     RepoContextStore
-	Knowledge   KnowledgeProvider
-	MCPClient   *mcp.MCPClient
 	LLM         llm.Engine
 
 	RepoAgent    *RepoAgent
@@ -144,7 +139,7 @@ type DirectorAgentParams struct {
 }
 
 // NewDirectorAgent 构造 DirectorAgent：先填充结构体字段，再装配工具适配器
-// （基础/JSON 工具 → 委派工具 → 知识工具），最后完成 blackboard、压缩器等后置初始化。
+// （基础/JSON 工具 → 委派工具），最后完成 blackboard、压缩器等后置初始化。
 // 委派闭包在运行时读取接收者字段，因此必须先构造 self 再调用两个 build* 方法。
 func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 	adapterCfg := director.DefaultRecoveryConfig()
@@ -173,8 +168,6 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 		deepThinker:      p.DeepThinker,
 		guard:            p.Guard,
 		repoCtx:          p.RepoCtx,
-		knowledge:        p.Knowledge,
-		mcpClient:        p.MCPClient,
 		maxSteps:         p.MaxSteps,
 		metaRetryCount:   p.MetaRetryCount,
 		metaHandler:      director.NewMetaAgentHandler(),
@@ -936,16 +929,6 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 			systemPrompt += projectContext
 		}
 
-		if a.knowledge != nil {
-			injCtx := knowledge.InjectionContext{
-				UserMessage: in.Input,
-				TargetFiles: nil,
-				AgentName:   a.Name(),
-			}
-			if knowledgeBlock, err := a.knowledge.Inject(ctx, injCtx); err == nil && knowledgeBlock != "" {
-				systemPrompt += knowledgeBlock
-			}
-		}
 		// [仓库蓝图] 常驻骨架（形状②）。每轮现算、只进这次调用的 system prompt（I2）：
 		// 它必须扛住第二/三档整段重写消息，而进 messages 的东西会被摘要吞掉（§11 坑 11）。
 		systemPrompt += a.blueprint.Resident()
@@ -988,7 +971,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		Recovery:                  recovery,
 		Metrics:                   metrics,
 		NormalizeMessages:         validateAndRepairToolCallPairs,
-		EstimateTokensFn:          EstimateTokens,
+		EstimateTokensFn:          tokenutil.EstimateTokens,
 		ConvertToolCallsFn:        convertToolCalls,
 		CompressEnable:            a.EnhancedCommanderCfg.EnableContextCompression,
 		CompressThreshold:         a.EnhancedCommanderCfg.ContextCompressionThreshold,

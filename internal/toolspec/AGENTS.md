@@ -58,4 +58,4 @@
   `TestCustomPaletteStaysInsideDirector`（`:256`，Custom Agent 拿到委派能力会成环）。
 
 **已知不一致**：`profile.go:28-30` 的注释称 `RequiresExit` "关掉它的唯一合理场景是 Chat"，
-而 `profiles.go:68-73` 的 `ProfileChat` 写的是 `RequiresExit: true`。引用这条约束时读代码，别读注释。
+而 `profiles.go:65-70` 的 `ProfileChat` 写的是 `RequiresExit: true`。引用这条约束时读代码，别读注释。

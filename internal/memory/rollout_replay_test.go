@@ -228,7 +228,7 @@ func TestReplayDerivesMaterializedTools(t *testing.T) {
 		{Role: llm.RoleTool, ToolCallID: "l1", Content: "loaded 2 tools"},
 		call("l2", "load_tool", `{"names":["deepthinking"]}`),
 		{Role: llm.RoleTool, ToolCallID: "l2", Content: "Error: unknown tool deepthinking"},
-		call("l3", "load_tool", `{"names":["prune_history"]}`), // 没有输出 = 没取回
+		call("l3", "load_tool", `{"names":["print_dir_tree"]}`), // 没有输出 = 没取回
 	}
 	path := replayFixture(t, "coding", in, nil)
 

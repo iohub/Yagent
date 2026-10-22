@@ -7,9 +7,8 @@ package util_test
 // 「内容逐字节正确」「不留中间态」「权限位符合各自声明」。
 // 光靠 Go 测试证不了"只有一份实现"，那半条由 scripts/check_no_inline_atomic_write.sh 守。
 //
-// datamanager.persistIndex 与 memory.SharedMemory 的写路径在各自包里测
-// （index_atomic_test.go / shared_persist_test.go）：它们是包内私有函数，
-// 跨包只能测到导出面。
+// datamanager.persistIndex 的写路径在各自包里测（index_atomic_test.go）：
+// 它是包内私有函数，跨包只能测到导出面。
 
 import (
 	"encoding/json"

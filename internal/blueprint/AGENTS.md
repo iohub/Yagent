@@ -74,7 +74,8 @@ derived 段不在 `AssertedSections`（`section.go:30-39`）；模块边界由�
 - `index_test.go:73,131,166`：四态必显、token 硬顶、前缀字节稳定。
 - `guard_test.go:51`、`store_test.go:36`、`gc_test.go:53` + `prose_test.go:32`、
   `derive_test.go:65,128,239`、`doc_test.go:37,66`。
-- `scan_golden_test.go:28`：45 片 / 144 条边的自扫 golden。
+- `scan_golden_test.go:40`：44 片 / 134 条边的自扫 golden（2026-10-22：随知识机制删除从 45/144 变来，
+  逐条归因写在该测试头上的注释里）。
   **改扫描器前先跑 `gofmt -l internal/blueprint/testdata`**——`testdata/` 是 Go 工具链的盲区，
   `go build/vet/test` 都不看它（根 AGENTS.md §11 坑 41）。
 - 端到端验收在**另一个包**：`internal/agents/e2e_blueprint_test.go:127 TestE2ERepoRunWritesBlueprintFile`

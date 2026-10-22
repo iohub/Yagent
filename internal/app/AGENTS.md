@@ -11,24 +11,24 @@
 ## 硬约束
 
 **1. `Init` 的装配顺序本身是被照抄的契约。** `internal/agents/e2e_authorization_test.go:29` 明写
-harness 按 `app.go:115-287` **同一条顺序**接线——换顺序就测到一条生产不存在的路（根 AGENTS.md §11
-坑 33 同族：测试与生产必须共用同一个载体）。两处连点是硬的：`KnowledgeInjector` 必须在 MCP 之后
-（`app.go:301-307`）；`userConfirmMgr.SetPublisher` 必须先于 `RegisterConsumer`（`:309-318`）。
+harness 按 `app.go:112-292` **同一条顺序**接线——换顺序就测到一条生产不存在的路（根 AGENTS.md §11
+坑 33 同族：测试与生产必须共用同一个载体）。一处连点是硬的：`userConfirmMgr.SetPublisher`
+必须先于 `RegisterConsumer`（`app.go:295-302`）。
 
-**2. 任何重建 Agent 引擎的地方都必须保留 `*llm.RoutingEngine` 包装**（`app.go:808-816`），
+**2. 任何重建 Agent 引擎的地方都必须保留 `*llm.RoutingEngine` 包装**（`app.go:757-764` 的 `agentEngine`），
 否则 auto-routing 静默失效（历史 commit 0c87c8a）。闸门
 `TestAgentEngineAlwaysWrapsWithRoutingEngine`（`assembly_test.go:36`）只看返回类型、不驱动 `resolve()`。
 
 **3. `engine` 字段只能经 `setEngine()/defaultEngine()` 读写**（`app.go:87-98`）：TUI 换模型与任务线程
 并发，接口值的两个机器字会撕裂。deepthinking / design 的引擎同理只能经 `SetEngine()` 换
-（`:146-167`，design 明确不挂路由档位）。**运行中换模型不需要任务空闲**：子 Agent 在下一次委派换新引擎，
+（`:139-160`，design 明确不挂路由档位）。**运行中换模型不需要任务空闲**：子 Agent 在下一次委派换新引擎，
 Director 下一个 step 即生效，正在飞的那次调用不变。
 
-**4. 嵌入二进制无条件解出，与 `[codeseek] binary_path` 无关**（`app.go:169-179`）——`browserctl`
-的二级查找依赖 `~/.yagent/bin`（见 `internal/browserctl/AGENTS.md`）。提取失败只 `slog.Debug`（`:175`）。
+**4. 嵌入二进制无条件解出，与 `[codeseek] binary_path` 无关**（`app.go:162-172`）——`browserctl`
+的二级查找依赖 `~/.yagent/bin`（见 `internal/browserctl/AGENTS.md`）。提取失败只 `slog.Debug`（`:168`）。
 
-**5. 蓝图"关掉"与"被护栏拒绝"必须可区分。** `resolveBlueprintRoot`（`app.go:977`）是
-`[blueprint] enable` 的唯一读取点，三种结果必须可区分（字段注释 `app.go:61-66`、
+**5. 蓝图"关掉"与"被护栏拒绝"必须可区分。** `resolveBlueprintRoot`（`app.go:890`）是
+`[blueprint] enable` 的唯一读取点，三种结果必须可区分（字段注释 `app.go:55-60`、
 `blueprint_root_test.go:32,48,62,88`）——把"被护栏拒绝"
 压成"关掉"，用户就永远不知道为什么没有蓝图。启动必须**同步**派生一次，孤儿老化要用快照
 （`blueprint_runtime.go:57-62`）；`inject_into` 只关常驻注入，**不关读通道与落盘钩子**
@@ -37,7 +37,7 @@ Director 下一个 step 即生效，正在飞的那次调用不变。
 
 **6. MCP 请求超时的兜底只在 `mcp.NewMCPClient` 一处**，不许在 app 再抄一份默认值（`app.go:211-212`）。
 便签 GC 只在装配最开头跑一次，且失败绝不阻断启动（`:121-133`）。
-`Close()` 的次序：蓝图先停，`supervise.Root().Drain` **最后**并报名字（`:902-936`）。
+`Close()` 的次序：蓝图先停，`supervise.Root().Drain` **最后**并报名字（`:852-881`）。
 
 ## 入口
 
