@@ -9,7 +9,9 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+// ansiRe 抓住 SGR 的参数段（组 1）：stripANSI 只用整段做替换，
+// tui_dashboard_section_test.go 的 bandGaps 要按参数判断这一段有没有背景色。
+var ansiRe = regexp.MustCompile(`\x1b\[([0-9;]*)m`)
 
 func stripANSI(s string) string {
 	return ansiRe.ReplaceAllString(s, "")

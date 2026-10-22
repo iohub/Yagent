@@ -10,25 +10,81 @@ import (
 
 const dashboardPanelWidth = 50
 
+// dashSectionBgHex 是类别行横带的字面量。走 truecolor 而不是 256 索引：索引 16–255 会被
+// 终端主题整段重映射（base16 一类方案就把 16–21 派给背景色），同一条带子在一台机器上是
+// 深靛蓝、在另一台上可能成了浅色 —— 底色必须是自己说了算的确定值。
+// 取值 = dashBorderFg（62 = 95,95,215）同相压到四成亮度：带子与边框是同一支颜色的深浅
+// 两级，而不是新添的一种颜色。
+const dashSectionBgHex = "#262656"
+
 // ── Dashboard palette ──
 // A restrained, cohesive accent set shared by the token/activity panels so the
 // dashboard reads as a single modern surface rather than a stack of ad-hoc rows.
 var (
-	dashBorderFg = lipgloss.Color("62")  // soft indigo frame
-	dashAccent   = lipgloss.Color("141") // lavender accent (header diamond, cache)
-	dashTitleFg  = lipgloss.Color("250") // near-white title
-	dashLabelFg  = lipgloss.Color("244") // dimmed metric labels
-	dashInFg     = lipgloss.Color("111") // input value (light blue)
-	dashOutFg    = lipgloss.Color("114") // output value (green)
-	dashSepFg    = lipgloss.Color("238") // hairline separators
-	dashKeyFg    = lipgloss.Color("247") // keycap text
+	dashBorderFg  = lipgloss.Color("62")             // soft indigo frame
+	dashAccent    = lipgloss.Color("141")            // lavender accent (header diamond, cache)
+	dashTitleFg   = lipgloss.Color("250")            // near-white title
+	dashLabelFg   = lipgloss.Color("244")            // dimmed metric labels
+	dashInFg      = lipgloss.Color("111")            // input value (light blue)
+	dashOutFg     = lipgloss.Color("114")            // output value (green)
+	dashSepFg     = lipgloss.Color("238")            // hairline separators
+	dashKeyFg     = lipgloss.Color("247")            // keycap text
+	dashSectionBg = lipgloss.Color(dashSectionBgHex) // category-row band
+	// dashBandDimFg 是横带上的次要文字（键帽说明、⧉ 行那个百分比）。带外同一角色用的是
+	// 241/244，那两个压在这条底色上都不到 4.5:1，所以带上单独提一档。
+	dashBandDimFg = lipgloss.Color("246")
 )
+
+// dashBand 给任意前景样式补上类别行横带的背景。背景必须逐段涂：lipgloss 在每个
+// 内层样式的末尾发 \x1b[m，会把外层背景一并关掉（v2.0.2 实测不会重新注入），
+// 所以"整行涂一次"的带子会在第一个彩色字之后断掉。
+func dashBand(s lipgloss.Style) lipgloss.Style { return s.Background(dashSectionBg) }
+
+var (
+	dashBandGlyph = dashBand(lipgloss.NewStyle().Foreground(dashAccent).Bold(true))
+	dashBandName  = dashBand(lipgloss.NewStyle().Foreground(dashTitleFg).Bold(true))
+	dashBandDim   = dashBand(lipgloss.NewStyle().Foreground(dashBandDimFg))
+	dashBandFill  = dashBand(lipgloss.NewStyle()) // 带子上的空白也是带子
+)
+
+// dashSectionRow 是三段类别行（◆ Tokens / ⚙ Activity / ⧉ COMPRESS）的唯一排版：
+// 一条铺满 inner 的深色横带，glyph 走 lavender、名称走近白粗体，右端（键帽或徽标）
+// 右对齐到带子末端。detail 是紧跟名称的细节段，可空。
+// 连 right 都放不下时只留左段 —— 短一截带子好过把内容挤掉。
+func dashSectionRow(glyph, name, detail, right string, inner int) string {
+	left := dashBandGlyph.Render(glyph+" ") + dashBandName.Render(name)
+	if detail != "" {
+		left += dashBandFill.Render(" ") + detail
+	}
+	w := lipgloss.Width(left)
+	pad := inner - w
+	if right != "" {
+		pad -= lipgloss.Width(right)
+	}
+	if pad < 0 {
+		return left
+	}
+	return left + dashBandFill.Render(strings.Repeat(" ", pad)) + right
+}
+
+// renderKeycap 是键帽的唯一排版：亮键 + 斜体暗标签。
+func renderKeycap(key, label string, keyStyle, labelStyle lipgloss.Style) string {
+	return keyStyle.Render(" "+key+" ") + labelStyle.Render(label+" ")
+}
 
 // dashKeycap renders a subtle " alt+d label " hint: bright key + dimmed label.
 func dashKeycap(key, label string) string {
-	keyStyle := lipgloss.NewStyle().Foreground(dashKeyFg).Bold(true)
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
-	return keyStyle.Render(" "+key+" ") + labelStyle.Render(label+" ")
+	return renderKeycap(key, label,
+		lipgloss.NewStyle().Foreground(dashKeyFg).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true))
+}
+
+// dashBandKeycap 是压在类别行横带上的同一枚键帽。标签走 dashBandDimFg 而不是带外的
+// 241：241 落在这条底色上只剩 3:1 不到的对比，"收缩"这种提示文字会糊成一片。
+func dashBandKeycap(key, label string) string {
+	return renderKeycap(key, label,
+		dashBand(lipgloss.NewStyle().Foreground(dashKeyFg).Bold(true)),
+		dashBand(lipgloss.NewStyle().Foreground(dashBandDimFg).Italic(true)))
 }
 
 // dashDot renders a coloured agent marker dot.
@@ -121,9 +177,10 @@ func (m *model) renderDashboard(width, height int) string {
 
 	snap := m.tokenSnapshot()
 	tokenRows := buildTokenPanel(snap, tokenPanelSpec{
-		innerWidth: innerWidth,
-		maxRows:    maxTokenRows,
-		keycap:     dashKeycap("alt+d", langManager.GetText("DashboardCollapseHint")),
+		innerWidth:  innerWidth,
+		maxRows:     maxTokenRows,
+		keycapKey:   "alt+d",
+		keycapLabel: langManager.GetText("DashboardCollapseHint"),
 	})
 
 	// 缓存键必须覆盖所有会影响渲染的输入。tokenSnapshot 已按 TOTAL 稳定排序，
@@ -164,10 +221,7 @@ func (m *model) renderDashboard(width, height int) string {
 	if len(m.timelineEntries) > 0 && tlAvailable > 2 {
 		// Separator + title (2 rows)
 		lines = append(lines, tokenSep(innerWidth))
-		lines = append(lines, lipgloss.NewStyle().
-			Foreground(lipgloss.Color("247")).
-			Bold(true).
-			Render("⚙ Activity"))
+		lines = append(lines, dashSectionRow("⚙", "Activity", "", "", innerWidth))
 
 		// Timeline content —— 传 nil 而不是 m.anim：进度动画已经在底部栏的
 		// spinner 段里了，46 列的面板再塞一条 20 列的进度条只会挤掉工具名。

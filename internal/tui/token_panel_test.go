@@ -37,7 +37,7 @@ func s1Model() *model {
 }
 
 func s1Spec(inner int) tokenPanelSpec {
-	return tokenPanelSpec{innerWidth: inner, keycap: dashKeycap("alt+d", "收缩")}
+	return tokenPanelSpec{innerWidth: inner, keycapKey: "alt+d", keycapLabel: "收缩"}
 }
 
 // TestTokenPanel_GoldenS1 钉住批准稿：侧栏 inner=46 时逐行等于设计文档 §2.3。
@@ -127,9 +127,10 @@ func TestTokenPanel_HeightLadder(t *testing.T) {
 	for _, maxRows := range []int{3, 4, 5, 6, 7, 8, 9, 10, 12} {
 		m := s1Model()
 		rows := buildTokenPanel(m.tokenSnapshot(), tokenPanelSpec{
-			innerWidth: 46,
-			maxRows:    maxRows,
-			keycap:     dashKeycap("alt+d", "收缩"),
+			innerWidth:  46,
+			maxRows:     maxRows,
+			keycapKey:   "alt+d",
+			keycapLabel: "收缩",
 		})
 		if len(rows) > maxRows {
 			t.Errorf("maxRows=%d 渲染了 %d 行\n----\n%s----", maxRows, len(rows), stripANSI(strings.Join(rows, "\n")))
