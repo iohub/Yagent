@@ -181,6 +181,48 @@ func TestSlashSkillsAndMCPOpenDialogs(t *testing.T) {
 	}
 }
 
+// 信息面板必须退得出去。model 的按键分发只认类型 switch 里逐个列出的对话框，
+// /skills 与 /mcp 曾经不在其中 —— 症状是"进了面板就出不来"：Esc 漏给编辑模式
+// （顺手把输入框切到 NORMAL），覆盖层却还压在屏幕上。现在按 components.InfoPanel
+// 认领，所以每一把键都归面板自己。
+func TestInfoDialogsCloseOnEsc(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		open func(*model)
+		id   string
+	}{
+		{"skills", func(m *model) { m.processCommand("/skills") }, "skills_dialog"},
+		{"mcp", func(m *model) { m.processCommand("/mcp") }, "mcp_dialog"},
+	} {
+		m := chromeTestModel(t, 100, 40)
+		m.assistant = &app.Yagent{}
+		tc.open(m)
+		if m.dialogStack.Len() != 1 || m.dialogStack.Top().ID() != tc.id {
+			t.Fatalf("%s: 面板没打开（%d 层）", tc.name, m.dialogStack.Len())
+		}
+
+		// 无关按键既不该关掉面板，也不该漏给编辑模式。
+		updated, _ := m.Update(keyMsgFor("x"))
+		got := updated.(*model)
+		if got.dialogStack.Len() != 1 {
+			t.Fatalf("%s: x 把面板关掉了", tc.name)
+		}
+		if got.input.Value() != "" {
+			t.Errorf("%s: 面板期间的 x 漏进了输入框（%q）", tc.name, got.input.Value())
+		}
+
+		updated, _ = got.Update(keyMsgFor("esc"))
+		got = updated.(*model)
+		if got.dialogStack.Len() != 0 {
+			t.Errorf("%s: Esc 没能关掉面板，还剩 %d 层", tc.name, got.dialogStack.Len())
+		}
+		// 一把键只做一件事：关掉面板，不顺手切换编辑模式。
+		if got.commandMode {
+			t.Errorf("%s: 关面板的 Esc 同时把编辑模式切走了", tc.name)
+		}
+	}
+}
+
 // 信息面板打开时 taskCompleteMsg 必须照常透传（TUI 硬约束 2）：
 // 被吞掉的表现是界面永久"运行中"且最终答案不落地。
 func TestTaskCompletePassesThroughInfoDialogs(t *testing.T) {

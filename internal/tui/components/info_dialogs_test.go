@@ -1,10 +1,10 @@
 package components
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -72,25 +72,55 @@ func TestInfoDialog_SizeGuard(t *testing.T) {
 }
 
 // 滚动必须能到列表末尾，且滚动指示行不会把总高撑破。
+//
+// 按的是 HandleInfoKey —— 生产里 model 把 KeyMsg 单独摘出来走 handleDialogStackKey，
+// 不会把按键送进对话框的 Update。测 Update 等于钉一条没人走的路（根 AGENTS.md §11 坑 33）。
 func TestInfoDialog_ScrollsToEnd(t *testing.T) {
 	var rows []SkillRow
 	for i := 0; i < 40; i++ {
-		rows = append(rows, SkillRow{Name: "skill-" + string(rune('a'+i%26)), Description: "d", Source: "user", FrontMatter: "none"})
+		rows = append(rows, SkillRow{
+			Name: fmt.Sprintf("skill-%02d", i), Description: "d", Source: "user", FrontMatter: "none",
+		})
 	}
 	d := NewSkillsDialog(rows)
 	d.SetBounds(100, 24)
 
 	first := d.View()
-	if !strings.Contains(first, "skill-a") {
+	if !strings.Contains(first, "skill-00") {
 		t.Fatalf("首屏没有第一条：\n%s", first)
 	}
-
-	// 直接翻到底（Update 是唯一的滚动入口，和用户按键走同一条路）。
-	for i := 0; i < 50; i++ {
-		_, _ = d.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if strings.Contains(first, "skill-39") {
+		t.Fatalf("首屏就看见了最后一条，夹具没有触发滚动：\n%s", first)
 	}
-	if got := d.View(); len(strings.Split(got, "\n")) > 24 {
-		t.Errorf("滚到底之后超过终端高度：%d 行", len(strings.Split(got, "\n")))
+
+	for i := 0; i < 50; i++ {
+		if d.HandleInfoKey(keyPress("j")) {
+			t.Fatal("向下滚动被当成了关闭请求")
+		}
+	}
+	last := d.View()
+	if strings.Contains(last, "skill-00") {
+		t.Errorf("滚到底之后 skill-00 仍在屏上，滚动没生效：\n%s", last)
+	}
+	if !strings.Contains(last, "skill-39") {
+		t.Errorf("滚到底之后看不见最后一条：\n%s", last)
+	}
+	if n := len(strings.Split(last, "\n")); n > 24 {
+		t.Errorf("滚到底之后 %d 行，超过终端高度", n)
+	}
+
+	// 滚动键之外，Esc/q 必须回报"该退了"（Pop 由 model 做）。
+	for _, k := range []string{"esc", "q", "Q"} {
+		if !d.HandleInfoKey(keyPress(k)) {
+			t.Errorf("%q 没有回报关闭", k)
+		}
+	}
+	// 与面板无关的按键既不滚动也不关：交给 model 吞掉，绝不能漏进编辑模式。
+	if d.HandleInfoKey(keyPress("x")) {
+		t.Error("x 不该关掉面板")
+	}
+	if !strings.Contains(d.View(), "skill-39") {
+		t.Error("x 把滚动窗口挪走了")
 	}
 }
 

@@ -1000,6 +1000,14 @@ m.dialogStack.Push(d)
 这两个是**信息对话框**（不可选择），所以不进 `selectProbe`（`select_dialog_contract_test.go:22-38`）；
 但要检查 `TestListDialogs_RenderContract`（`:329`）是否枚举列表类对话框 —— 如果枚举，加进去。
 
+**按键：本小节的原方案漏了这一条，落地后暴露成"面板进得去出不来"。**
+`handleDialogStackKey`（`tui_update_keys.go:51`）是**类型 switch**，而 `tui_update.go:86` 明确不把 KeyMsg
+转发给 `dialog.Update` —— 新面板没被那条分发认到时，Esc 与滚动键一起漏给编辑模式，覆盖层还压在屏幕上，
+且没有编译错误、没有日志。修法是让只读面板实现 `components.InfoPanel`（`info_dialogs.go:16`，
+model 侧 `tui_update_keys.go:428` 按接口认领），而不是往类型 switch 里再加两个 case；
+完整约束写在 `internal/tui/AGENTS.md` 硬约束 8.3。闸门 `TestInfoDialogsCloseOnEsc`
+（`slash_skill_test.go:188`；删掉接口那条 case → Esc 关不掉 + 编辑模式被切走 + 键漏进输入框，三条全红）。
+
 ### 7.3 斜杠命令
 
 `tui_update_commands.go` 的 `/` 分支（`:27-42`）**必须显式列出**，否则 `/skills` 是在搜字符串 "skills"：

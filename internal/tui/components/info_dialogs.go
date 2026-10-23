@@ -10,6 +10,20 @@ import (
 	"yagent/internal/tui/common"
 )
 
+// InfoPanel 是信息类对话框的按键契约。model 的分发按**接口**认它们，而不是往类型
+// switch 里逐个加 case —— 漏加的那个面板会同时失去 Esc 与滚动（按键漏给编辑模式，
+// 覆盖层却还在屏幕上），而且编译期一句报错都没有。
+type InfoPanel interface {
+	Dialog
+	// HandleInfoKey 消费属于本面板的按键；返回 true 表示用户要关掉这一层。
+	HandleInfoKey(msg tea.KeyMsg) bool
+}
+
+var (
+	_ InfoPanel = (*SkillsDialog)(nil)
+	_ InfoPanel = (*MCPDialog)(nil)
+)
+
 // 信息类对话框（/skills、/mcp）：只读列表 + 滚动，不选中任何东西。
 // 与 HelpDialog 同族（圆角边框 + 标题 + 渐变分隔线 + 弱化提示），
 // 但列表几何一律走 common/list_metrics.go —— 不许在这里再写一份。
@@ -179,13 +193,11 @@ func renderInfoCells(cells []string, widths []int, style lipgloss.Style) string 
 	return strings.Join(parts, "  ")
 }
 
-// Update 只处理滚动键；关闭由 model 决定（与 HelpDialog 一致）。
-func (d *infoDialogBase) Update(msg tea.Msg) (Component, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return d, nil
-	}
+// HandleInfoKey 滚动 + 关闭。关闭只回报"该退了"，Pop 由 model 做（与 HelpDialog 一致）。
+func (d *infoDialogBase) HandleInfoKey(keyMsg tea.KeyMsg) bool {
 	switch keyMsg.String() {
+	case "esc", "q", "Q":
+		return true
 	case "up", "k":
 		d.offset = max(d.offset-1, 0)
 	case "down", "j":
@@ -198,6 +210,16 @@ func (d *infoDialogBase) Update(msg tea.Msg) (Component, tea.Cmd) {
 		d.offset = 0
 	case "end", "G":
 		d.offset = max(len(d.rows)-1, 0)
+	}
+	return false
+}
+
+// Update 只处理滚动键；关闭由 model 决定（与 HelpDialog 一致）。
+// model 的按键分发走 HandleInfoKey，这条路径只在非 KeyMsg（如粘贴）时被用到，
+// 所以那个"该退了"的返回值在这里必须丢掉。
+func (d *infoDialogBase) Update(msg tea.Msg) (Component, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		d.HandleInfoKey(keyMsg)
 	}
 	return d, nil
 }
