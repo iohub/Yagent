@@ -1,6 +1,9 @@
 package toolspec
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // ToolFunc 是工具执行器签名。与 internal/tools 的 Adapter 共用同一形状。
 type ToolFunc func(ctx context.Context, params map[string]interface{}) (interface{}, error)
@@ -92,6 +95,38 @@ type BrowserResolver interface {
 // 路由档位与超预算落盘。
 type DelegateFunc func(ctx context.Context, target string, params map[string]interface{}) (interface{}, error)
 
+// SkillSource 是 Agent 侧对技能注册表的全部需求。由 *skills.Registry 天然实现。
+//
+// 只有两个方法：目录（进 system prompt 的稳定前缀）与正文（use_skill 按需取回）。
+// 列表/来源/账目留在 registry 自己那边 —— Agent 不需要知道"这个技能从哪个目录来"
+// 之外的任何东西。
+type SkillSource interface {
+	// Catalog 渲染目录块（含标题、每行 name: description、截断标记）。
+	// maxTokens <= 0 表示不限预算。没有技能时返回空串，调用方不注入空标题。
+	Catalog(maxTokens int) string
+	// Body 取回一个技能的正文（已按 offset/limit 分页）。
+	// 名字不存在时返回 ErrSkillNotFound，调用方据此回吐可用名单。
+	Body(name string, offset, limit int) (SkillBody, error)
+}
+
+// ErrSkillNotFound 表示技能名不在注册表里。
+// 执行器用它区分"查无此技能"（回吐可用名单，让模型自我纠正）与真正的读取失败。
+var ErrSkillNotFound = errors.New("skill not found")
+
+// SkillBody 是一次 use_skill 取回的全部事实。
+// AllowedTools 是**咨询性**的：只回吐给模型看，不改工具面、不做强制（设计稿 §6.5）。
+type SkillBody struct {
+	Name         string
+	Source       string // "project" | "user" | "extra:<dir>"
+	Path         string
+	Description  string
+	AllowedTools []string
+	Arguments    []string
+	Text         string // 已按 offset/limit 分页的正文（不含 front-matter）
+	Truncated    bool
+	NextOffset   int
+}
+
 // Deps 是一次工具装配需要的全部依赖。由 internal/tools.BuildDeps 构造，
 // 每个 Agent 在 Run 期填上自己的身份与可用范围。字段为 nil 表示该能力缺失，
 // 对应的 Spec 会经 Available() 判定为不可用并跳过（跳过原因记进 Surface.Skipped）。
@@ -120,6 +155,15 @@ type Deps struct {
 	// Blueprint 是 read_blueprint 的执行器。它**恒非 nil**：
 	// 没有蓝图时工具要返回"为什么没有 + 怎么修"，而不是从工具面上静默消失（设计稿 §8）。
 	Blueprint ToolFunc
+
+	// ExternalSpecs 是运行期发现的外部工具规格（MCP）。静态注册表之外的一条通道：
+	// 它们不进 schemas.json、不进 golden、不进 Meta 的工具池 —— 否则
+	// "静态注册表只读"与"Custom Agent 拿不到 Director 没有的能力"两条不变量都会破。
+	ExternalSpecs []*Spec
+
+	// Skills 是技能读通道。nil = 没有技能：use_skill 仍须在场并解释为什么没有
+	// （与 Blueprint 同一条决定），而不是从工具面消失。
+	Skills SkillSource
 
 	// Checkpoint 三个执行器；nil 表示当前仓库/配置不支持 git 快照
 	CheckpointList     ToolFunc

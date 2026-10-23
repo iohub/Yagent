@@ -80,13 +80,16 @@ stderr），下游已把这条写成 CRITICAL 注释（`internal/agents/tool_log
 `Complete` 的 20 条上限写死（`internal/dict/completion.go:82`），而 TUI 包装层的 `limit` 形参被丢弃
 （`internal/tui/completion.go:4-10`）。源文件读失败一律静默跳过（`internal/dict/completion.go:42-49`）。
 
-## skills — 有一条启动即崩的路径
+## skills — 合并语义，Load 永不返回 nil
 
-`LoadSkills` 在目录**存在但不可读**时返回 `(nil, err)`（`internal/skills/skills.go:37-40`），而两个调用点
-拿到就 `.Count()`（`main.go:230-234`、`:380-384`），`Count` 没有 nil 接收者守卫
-（`internal/skills/skills.go:116-120`）→ nil 解引用。"目录不存在"返回空注册表 + nil error，所以这条只在
-权限异常时响。项目技能**整体替换**用户级而非合并：回落条件是 `Count()==0`（`main.go:234`），
-项目里只要有一条技能，`~/.yagent/skills` 就永远看不见。
+`Load(dirs []string)` 按 user → project → `[skills] dirs` 的顺序**合并**（后者覆盖前者），
+返回 `(*Registry, LoadAccount)`：目录不存在跳过不记账，存在但读不出记一条 `Rejected` 并继续。
+签名里没有 error 就是这个意思 —— 所有失败都进账，"启动即崩"那条路径从接口上消失。
+磁盘两种形态都认：`<name>/SKILL.md`（目录式，同名时胜）与 `<name>.md`（扁平）。
+front-matter 是**手写的 JSON + 扁平 key:value 子集**，不是 YAML 解析器（`frontmatter.go` 头注释）；
+解析失败仍加载正文（`FrontMatter: none`）并 warn。`Catalog(maxTokens)` 的截断标记必须写进正文；
+`Body(name, offset, limit)` 的分页片段拼接 == 全文。三个入口（TUI/HTTP/--prompt）共用
+`app.Init` 里的同一份加载，`LoadSkills` 已删除。
 
 ## tokenutil — 降级是一次性粘滞的
 
@@ -155,15 +158,16 @@ failures（`:119-125`）。`SetLastFailure`（`:127-132`）注释写明"用于�
 `Seed` 不可省：未 seed 的重放会话走到第三档只能拿原始任务输入重建（`:132-146`）。
 `<thought>` 解析失败**不报错只静默丢失**（`internal/thinklink/thoughtplan.go:61-63`）。
 
-## mcp — 从不调 tools/list
+## mcp — 调 tools/list，且分页
 
-发送点只有 `initialize` / `notifications/initialized` / `tools/call` / `shutdown`
-（`internal/mcp/client.go:135,164,202,247`），所以 MCP 侧工具**不会自动暴露**，全靠 Go 手写桥接。
-`notifications/tools/list_changed` 只打日志（`:417-426`）。每条请求的 deadline 取调用方 ctx 与
-`RequestTimeout` 的较小值，`<=0 → 30s` 的兜底**只在 `NewMCPClient` 一处**（`:29-38,68-80`）。
-`IsAlive()` 只读两个原子位，不得再读 `cmd.ProcessState`（`:219-226`）。`sendJSON` 必须持 `writeMu`
-（`:50-52`，超过 PIPE_BUF 的并发写会交错成非法 JSON-RPC）。假服务器 = 重新执行测试二进制
-（`internal/mcp/client_process_test.go:22-33` 认 `YAGENT_TEST_FAKE_MCP_SERVER`），不要改成 `go run`。
+`MCPClient.ListTools` 跟随 `nextCursor`（20 页上限，超出报错而不是静默截断）；
+`initialize.instructions` 收进 `Instructions()`；`ToolAnnotations` 的四个 hint 用 `*bool`
+（`false` 与"没声明"必须可区分）。每条请求的 deadline 取调用方 ctx 与 `RequestTimeout` 的较小值，
+`<=0 → 30s` 的兜底**只在 `NewMCPClient` 一处**。`IsAlive()` 只读两个原子位；`sendJSON` 必须持 `writeMu`。
+`Manager`（`manager.go`）管多 server：状态机 disabled/starting/ready/degraded/offline、指数退避重连、
+`StatusLines()` 是状态账的唯一渲染出口。两条死锁/丢事件纪律见根 AGENTS.md §11 坑 45
+（list_changed 回调不能在 readLoop 里同步跑；连接落定前的通知要补一次）。
+假服务器 = 重新执行测试二进制（`client_process_test.go` 认 `YAGENT_TEST_FAKE_MCP_SERVER`），不要改成 `go run`。
 
 ## models — 查不到就返回 0
 

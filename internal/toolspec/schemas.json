@@ -1215,5 +1215,33 @@
       },
       "required": []
     }
+  },
+  {
+    "name": "use_skill",
+    "description": "Fetch the full body of a user-authored skill listed in the 'Skills' section of your system prompt, then follow it. Skills are reusable procedures the user wrote for this project. Returns the front-matter facts (source path, expected tools, declared arguments) plus the body; long bodies are paginated — call again with the returned offset to continue. If no skills are configured the call explains where to put them.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Skill name exactly as listed in the Skills section."
+        },
+        "arguments": {
+          "type": "string",
+          "description": "Free-form arguments the user gave; substituted for $ARGUMENTS / $1 / $2 in the body."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "0-based line offset for pagination (default 0)."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Lines to return (default: everything within the body budget)."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
   }
 ]

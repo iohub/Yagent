@@ -19,6 +19,7 @@ const (
   EventTypeToolCallError EventType = "tool_call_error"
   EventTypeContextLoaded EventType = "context_loaded"
   EventTypeCommitContextLoaded EventType = "commit_context_loaded"
+  EventTypeMcpServerStatus EventType = "mcp_server_status"
   EventTypeAiStreamStart EventType = "ai_stream_start"
   EventTypeAiChunk EventType = "ai_chunk"
   EventTypeAiStreamEnd EventType = "ai_stream_end"
@@ -99,6 +100,18 @@ type ContextLoadedData struct {
 // CommitContextLoadedData Commit 学习器上下文加载
 type CommitContextLoadedData struct {
   CommitCount float64 `json:"commit_count"` // 加载的 commit 数量
+}
+
+// McpServerStatusData MCP server 状态迁移（ready / degraded / offline / gave up）
+type McpServerStatusData struct {
+  Server string `json:"server"` // server 名
+  State string `json:"state"` // disabled / starting / ready / degraded / offline
+  Tools float64 `json:"tools,omitempty"` // 发现的工具数
+  Curated float64 `json:"curated,omitempty"` // 被 Go 手写桥接占用而排除的工具数
+  Error string `json:"error,omitempty"` // 离线原因
+  Attempt float64 `json:"attempt,omitempty"` // 当前重连次数
+  MaxAttempts float64 `json:"max_attempts,omitempty"` // 重连次数上限
+  Instructions string `json:"instructions,omitempty"` // 服务端 initialize 带回的使用说明
 }
 
 // AiStreamStartData AI 流式响应开始
@@ -195,6 +208,7 @@ var EventTypeRegistry = map[EventType]func() interface{}{
   EventTypeToolCallError: func() interface{} { return &ToolCallErrorData{} },
   EventTypeContextLoaded: func() interface{} { return &ContextLoadedData{} },
   EventTypeCommitContextLoaded: func() interface{} { return &CommitContextLoadedData{} },
+  EventTypeMcpServerStatus: func() interface{} { return &McpServerStatusData{} },
   EventTypeAiStreamStart: func() interface{} { return &AiStreamStartData{} },
   EventTypeAiChunk: func() interface{} { return &AiChunkData{} },
   EventTypeAiStreamEnd: func() interface{} { return &AiStreamEndData{} },
@@ -245,6 +259,10 @@ var EventRenderHints = map[EventType]RenderHint{
   EventTypeCommitContextLoaded: {
     Component: "StatusPill",
     Heading: "Commit",
+  },
+  EventTypeMcpServerStatus: {
+    Component: "StatusPill",
+    Heading: "MCP",
   },
   EventTypeAiStreamStart: {
     Component: "StreamingText",

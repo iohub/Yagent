@@ -48,13 +48,26 @@ const (
 	EffectDelegate                           // delegate_*
 )
 
+// 外部能力族：运行期发现的东西。位序必须追加在末尾 —— Names() 按位序输出，
+// 插在中间会让既存工具的 EffectSummary 整体漂移（golden 会以"画像变了"的样子变红）。
+const (
+	// EffectExternalRead 是外部 MCP server 的只读工具。
+	EffectExternalRead Effect = 1 << 26
+	// EffectExternalWrite 是外部 MCP server 的写类工具。
+	// 没有 annotations 的第三方工具一律落到这一族（fail-safe，见 BuildExternalSpecs）。
+	EffectExternalWrite Effect = 1 << 27
+	// EffectSkill 是 use_skill：读取用户写的技能正文。
+	EffectSkill Effect = 1 << 28
+)
+
 const (
 	// writeEffects 是**必然**有副作用的能力集合：命中即必须声明 Mutates=true。
 	// EffectCheckpoint 不在其中 —— git_checkpoint_list 只读标签，create/rollback 才改工作树，
 	// 所以快照类由各自显式声明。
-	writeEffects = EffectFSWrite | EffectShell | EffectBrowserEval
+	// EffectExternalWrite 在这里，是为了让第三方工具的"有副作用却不声明"被既存校验自动拦住。
+	writeEffects = EffectFSWrite | EffectShell | EffectBrowserEval | EffectExternalWrite
 	// authEffects 是需要 WorkspaceGuard 授权的能力集合。
-	authEffects = EffectFSWrite | EffectShell | EffectBrowserEval
+	authEffects = EffectFSWrite | EffectShell | EffectBrowserEval | EffectExternalWrite
 	// flowEffects 是流程控制能力：永远 Hot（不可 deferred），否则模型无法收尾。
 	flowEffects = EffectFlow | EffectToolLoad
 	// contextEffects 依赖 blackboard/boardID 才可用。
@@ -98,6 +111,9 @@ var effectNames = []struct {
 	{EffectCheckpoint, "checkpoint"},
 	{EffectFlow, "flow"},
 	{EffectDelegate, "delegate"},
+	{EffectExternalRead, "external_read"},
+	{EffectExternalWrite, "external_write"},
+	{EffectSkill, "skill"},
 }
 
 // Frequency 是 deferred schema 的频率档。

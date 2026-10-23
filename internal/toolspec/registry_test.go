@@ -409,18 +409,19 @@ func TestValidate_ProblemsAreSorted(t *testing.T) {
 
 // ---------- schemas.json 访问器 ----------
 
-// 49 条是与 agents 侧 gate 测试共享的基线：增删工具必然改动这里，
+// 50 条是与 agents 侧 gate 测试共享的基线：增删工具必然改动这里，
 // 改动必须是显式的（数字写死，不做 len() 自比较 —— 那种断言永远不会失败）。
 // 50 → 51：仓库蓝图的读通道 read_blueprint（docs/repo-blueprint-design.md §7.1）。
 // 51 → 49：consolidate_knowledge / prune_history 随知识整理机制整体删除，
 // 仓库级持久知识只剩 blueprint 一条通道。
+// 49 → 50：技能读通道 use_skill（docs/skills-and-mcp-design.md §6.4）。
 func TestSchemasLoadAndDescribeEveryEntry(t *testing.T) {
 	if err := SchemasError(); err != nil {
 		t.Fatalf("SchemasError() = %v, want nil —— 嵌入的声明文件解析失败", err)
 	}
 	names := SchemaNames()
-	if len(names) != 49 {
-		t.Errorf("SchemaNames() = %d 条, want 49 —— 增删工具请同步这条基线与 agents 侧 gate 测试", len(names))
+	if len(names) != 50 {
+		t.Errorf("SchemaNames() = %d 条, want 50 —— 增删工具请同步这条基线与 agents 侧 gate 测试", len(names))
 	}
 	for _, n := range names {
 		s, ok := GetSchema(n)
@@ -523,5 +524,165 @@ func TestSchemaStructuralErrorsAreDistinguishable(t *testing.T) {
 	var je jsonError
 	if !errors.As(errBlankName, &je) {
 		t.Error("errBlankName 不是 jsonError：调用方无法区分声明文件坏了与解析出空 map")
+	}
+}
+
+// ---------- ValidateDynamic：九类规则逐条可响 ----------
+
+// baseDynamicSpec 是一份"什么都不违反"的外部工具声明。
+// 名字与 Inline 都是外部工具的真实形状：不进 schemas.json，接口声明自带。
+func baseDynamicSpec() *Spec {
+	return &Spec{
+		Name:      "mcp__probe__echo",
+		Effect:    EffectExternalRead,
+		Frequency: Cold,
+		Brief:     "回显参数",
+		Inline: &Schema{
+			Name:        "mcp__probe__echo",
+			Description: "Echo the arguments back.",
+			Parameters:  map[string]interface{}{"type": "object"},
+		},
+		Build: func(*Deps) (ToolFunc, error) { return noopToolFunc, nil },
+	}
+}
+
+func TestValidateDynamic_ReportsEachRule(t *testing.T) {
+	cases := []struct {
+		name    string
+		dictum  string
+		mutate  func(*Spec)
+		wantSub string
+	}{
+		{
+			name:    "name without prefix",
+			dictum:  "动态工具名必须带 mcp__ 前缀，否则与静态名无法区分",
+			mutate:  func(s *Spec) { s.Name = "echo" },
+			wantSub: "名字不合法",
+		},
+		{
+			name:    "name too long",
+			dictum:  "provider 的 function name 上限 64",
+			mutate:  func(s *Spec) { s.Name = "mcp__probe__" + strings.Repeat("a", 60) },
+			wantSub: "名字不合法",
+		},
+		{
+			name:    "name with illegal char",
+			dictum:  "字符集只允许 [A-Za-z0-9_-]",
+			mutate:  func(s *Spec) { s.Name = "mcp__probe__e cho" },
+			wantSub: "名字不合法",
+		},
+		{
+			name:    "zero effect",
+			dictum:  "能力标签必须显式声明",
+			mutate:  func(s *Spec) { s.Effect = 0 },
+			wantSub: "Effect 未声明（零值）",
+		},
+		{
+			name:    "no build",
+			dictum:  "执行器工厂必填",
+			mutate:  func(s *Spec) { s.Build = nil },
+			wantSub: "Build 未提供",
+		},
+		{
+			name:    "no inline schema",
+			dictum:  "外部工具没有 schemas.json 兜底",
+			mutate:  func(s *Spec) { s.Inline = nil },
+			wantSub: "必须自带 Inline schema",
+		},
+		{
+			name:    "inline without parameters",
+			dictum:  "缺 parameters 等于声明一个无参工具",
+			mutate:  func(s *Spec) { s.Inline.Parameters = nil },
+			wantSub: "Inline.Parameters 为空",
+		},
+		{
+			name:    "inline without description",
+			dictum:  "模型不能拿到一个没有说明的工具",
+			mutate:  func(s *Spec) { s.Inline.Description = "  " },
+			wantSub: "Inline.Description 为空",
+		},
+		{
+			name:    "cold without brief",
+			dictum:  "外部工具默认 Cold，没有 Brief 目录里就是一行空名",
+			mutate:  func(s *Spec) { s.Brief = "" },
+			wantSub: "Cold 档必须提供 Brief",
+		},
+		{
+			name:    "overlong brief",
+			dictum:  "Brief 是每步都付的 token 成本",
+			mutate:  func(s *Spec) { s.Brief = strings.Repeat("汉", maxBriefRunes+1) },
+			wantSub: "超过上限",
+		},
+		{
+			name:   "write effect without Mutates",
+			dictum: "外部写工具必须声明副作用",
+			mutate: func(s *Spec) {
+				s.Effect = EffectExternalWrite
+				s.Mutates = false
+				s.NeedsAuth = true
+			},
+			wantSub: "有副作用但 Mutates=false",
+		},
+		{
+			name:   "write effect without NeedsAuth",
+			dictum: "外部写工具必须过授权",
+			mutate: func(s *Spec) {
+				s.Effect = EffectExternalWrite
+				s.Mutates = true
+				s.NeedsAuth = false
+			},
+			wantSub: "需要用户授权但 NeedsAuth=false",
+		},
+		{
+			name:   "protected result on a writing tool",
+			dictum: "受保护档位不能给有副作用的工具",
+			mutate: func(s *Spec) {
+				s.Effect = EffectExternalWrite
+				s.Mutates = true
+				s.NeedsAuth = true
+				s.Trunc = TruncProtected
+			},
+			wantSub: "TruncProtected 与 Mutates=true 冲突",
+		},
+		{
+			name:    "collides with static registry",
+			dictum:  "同名会让模型随机选一个，而两边结果形状不同",
+			mutate:  func(*Spec) {},
+			wantSub: "不得与静态工具同名",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			spec := baseDynamicSpec()
+			tc.mutate(spec)
+			if tc.name == "collides with static registry" {
+				// 让静态注册表里真的存在同名项（它是否合法与本条无关）。
+				installRegistry(t, Spec{
+					Name:   "mcp__probe__echo",
+					Effect: EffectFSRead,
+					Build:  func(*Deps) (ToolFunc, error) { return noopToolFunc, nil },
+				})
+			}
+
+			problems := ValidateDynamic([]*Spec{spec})
+			if len(problems) == 0 {
+				t.Fatalf("规则 %q 没有报出任何问题 —— 该校验已经失效", tc.dictum)
+			}
+			if !strings.Contains(strings.Join(problems, "\n"), tc.wantSub) {
+				t.Errorf("problems = %q, want one containing %q（规则 %q）", problems, tc.wantSub, tc.dictum)
+			}
+		})
+	}
+}
+
+func TestValidateDynamic_CleanSpecReportsNothing(t *testing.T) {
+	if problems := ValidateDynamic([]*Spec{baseDynamicSpec()}); len(problems) != 0 {
+		t.Errorf("合规的动态规格报告了问题：%q", problems)
+	}
+	// nil 元素不能 panic，且必须被点名（build 侧拼错一个 append 就会静默少工具）。
+	if problems := ValidateDynamic([]*Spec{nil}); len(problems) != 1 {
+		t.Errorf("nil 规格 problems = %q, want 1 条", problems)
 	}
 }

@@ -49,6 +49,11 @@
       "heading": "Commit"
     },
     {
+      "event": "mcp_server_status",
+      "component": "StatusPill",
+      "heading": "MCP"
+    },
+    {
       "event": "ai_stream_start",
       "component": "StreamingText",
       "stream_mode": true

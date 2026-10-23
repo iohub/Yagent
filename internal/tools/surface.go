@@ -115,9 +115,42 @@ func (s *Surface) rebuild() {
 		}
 		ad := NewAdapter(spec.Name, spec.Description(s.deps), fn).
 			WithSchema(spec.Parameters()).
-			WithReadOnly(spec.IsReadOnly())
+			WithReadOnly(spec.IsReadOnly()).
+			WithBrief(spec.Brief)
 		s.adapters[spec.Name] = ad
 		s.tiers[spec.Name] = s.profile.Tier(spec)
+		ordered = append(ordered, spec.Name)
+	}
+
+	// 外部工具（MCP）走第二条通道：不进全局注册表，按画像矩阵过滤后追加。
+	// 画像是"谁能拿到外部能力"的唯一表达 —— 少了这道过滤，chat / browser 也会看到
+	// 第三方工具，而 §4.5 的矩阵正是那次评审物。
+	for _, spec := range s.deps.ExternalSpecs {
+		if spec == nil {
+			continue
+		}
+		if !spec.Effect.Has(s.profile.Grant) || spec.Effect.Has(s.profile.Deny) {
+			continue
+		}
+		if s.adapters[spec.Name] != nil {
+			s.skipped = append(s.skipped, toolspec.SkippedTool{Name: spec.Name, Reason: "与静态工具同名，静态优先"})
+			continue
+		}
+		if ok, reason := spec.AvailableFor(s.deps); !ok {
+			s.skipped = append(s.skipped, toolspec.SkippedTool{Name: spec.Name, Reason: reason})
+			continue
+		}
+		fn, err := spec.Build(s.deps)
+		if err != nil {
+			s.skipped = append(s.skipped, toolspec.SkippedTool{Name: spec.Name, Reason: err.Error()})
+			continue
+		}
+		ad := NewAdapter(spec.Name, spec.Description(s.deps), fn).
+			WithSchema(spec.Parameters()).
+			WithReadOnly(spec.IsReadOnly()).
+			WithBrief(spec.Brief)
+		s.adapters[spec.Name] = ad
+		s.tiers[spec.Name] = spec.Frequency
 		ordered = append(ordered, spec.Name)
 	}
 	// 统一挂 guard：历史上三处 appender 各自记得再调一次，漏一处就是一个不受
@@ -179,7 +212,7 @@ func (s *Surface) estimatedTokens(ordered []string) int {
 	total := 0
 	for _, name := range ordered {
 		if s.tiers[name] == toolspec.Cold && !s.materialized[name] {
-			total += len(name) + len(toolspec.Brief(name)) + 8 // 目录里一行
+			total += len(name) + len(catalogBrief(s.adapters[name], name)) + 8 // 目录里一行
 			continue
 		}
 		total += s.declarationSize(name) / 4
@@ -405,7 +438,8 @@ func (s *Surface) Add(specs ...*toolspec.Spec) []toolspec.SkippedTool {
 		}
 		ad := NewAdapter(spec.Name, spec.Description(s.deps), fn).
 			WithSchema(spec.Parameters()).
-			WithReadOnly(spec.IsReadOnly())
+			WithReadOnly(spec.IsReadOnly()).
+			WithBrief(spec.Brief)
 		s.adapters[spec.Name] = ad
 		s.tiers[spec.Name] = spec.Frequency
 		added = append(added, ad)
@@ -534,22 +568,25 @@ func schemaText(ad *Adapter, name string) string {
 	return string(data)
 }
 
-// catalogBrief 给冷工具目录里的一行简介。
-// Cold 档本就在 Validate() 里强制要求 Brief；这里仍兜一层，
-// 免得预算降级进来的 Warm 工具（没写 Brief）在目录里显示成空串。
+// catalogBrief 给冷工具目录里的一行简介。取值顺序：
+// 适配器自带的 Brief > 静态注册表 Brief > 描述首句。
+//
+// 为什么把适配器放最前：toolspec.Brief(name) 查的是静态注册表，
+// 动态工具（外部 MCP）在那里查不到 —— 顺序写反的话 Spec.Brief 对它们形同虚设，
+// 目录里会出现一行截断的英文描述。
 func catalogBrief(ad *Adapter, name string) string {
+	if ad != nil {
+		if b := ad.Brief(); b != "" {
+			return b
+		}
+	}
 	if b := toolspec.Brief(name); b != "" {
 		return b
 	}
-	desc := ad.Description()
-	if idx := strings.IndexByte(desc, '.'); idx > 0 {
-		desc = desc[:idx]
+	if ad == nil {
+		return name
 	}
-	runes := []rune(strings.TrimSpace(desc))
-	if len(runes) > 60 {
-		runes = runes[:60]
-	}
-	return string(runes)
+	return truncateRunes(toolspec.FirstSentence(ad.Description()), 60)
 }
 
 func stringSliceParam(params map[string]interface{}, key string) []string {

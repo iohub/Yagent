@@ -37,6 +37,20 @@ import (
 //	internal/globalctx → internal/knowledge
 //	internal/tools     → internal/logging（knowledge.go 是 tools 里唯一用它的）
 //	internal/memory    → internal/util   （shared.go 的原子写；local.go/shared.go 一并删除）
+//
+// 2026-10-22 第二轮修订：片数不变，边数 134 → 135。来源是启动期注册表自检：
+//
+//	internal/app → internal/toolspec（app.Init 调 toolspec.Validate，让 spec.go
+//	              "装配期调用"那句注释第一次成为真话）
+//
+// 2026-10-23 第三轮修订：片数不变，边数 135 → 136。来源是 MCP 状态事件：
+//
+//	internal/tui → internal/mcp（mcp_server_status 的事件行复用 mcp.FormatServerLine，
+//	              避免同一件事在界面与状态账里各说一套）
+//
+// 2026-10-23 第四轮修订：片数不变，边数 136 → 137。来源是斜杠补全的类型化：
+//
+//	internal/tui → internal/skills（skillCompletionItems 读注册表拿技能名与描述）
 func TestScanSelfGolden(t *testing.T) {
 	snap, err := Scan("../..", DefaultOptions()) // 测试 CWD 是 internal/blueprint
 	if err != nil {
@@ -55,8 +69,8 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
-	if out != 134 || in != 134 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 134/134 —— 形状变了，先确认变化来源", out, in)
+	if out != 137 || in != 137 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 137/137 —— 形状变了，先确认变化来源", out, in)
 	}
 	// 排序不变量：Leaves 按 Dir 排序（确定性的一部分）。
 	for i := 1; i < len(snap.Leaves); i++ {

@@ -197,6 +197,45 @@ event_types:
         description: "加载的 commit 数量"
         required: true
 
+  - name: mcp_server_status
+    description: "MCP server 状态迁移（ready / degraded / offline / gave up）"
+    render_hint:
+      component: StatusPill
+      heading: "MCP"
+    fields:
+      - name: server
+        type: string
+        description: "server 名"
+        required: true
+      - name: state
+        type: string
+        description: "disabled / starting / ready / degraded / offline"
+        required: true
+      - name: tools
+        type: number
+        description: "发现的工具数"
+        required: false
+      - name: curated
+        type: number
+        description: "被 Go 手写桥接占用而排除的工具数"
+        required: false
+      - name: error
+        type: string
+        description: "离线原因"
+        required: false
+      - name: attempt
+        type: number
+        description: "当前重连次数"
+        required: false
+      - name: max_attempts
+        type: number
+        description: "重连次数上限"
+        required: false
+      - name: instructions
+        type: string
+        description: "服务端 initialize 带回的使用说明"
+        required: false
+
   # ---- 流式事件 ----
   - name: ai_stream_start
     description: "AI 流式响应开始"

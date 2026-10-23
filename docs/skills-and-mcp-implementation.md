@@ -307,7 +307,9 @@ bash scripts/check_all.sh
 
 变异：
 
-1. `testDeps()` 去掉 `Skills` ⇒ `TestAgentSurfacesGolden` 必须红（golden 里 `use_skill` 消失）。
+1. `testDeps()` 去掉 `Skills` ⇒ `TestProbeDepsIsCapabilityComplete` 必须红。**不是** golden：`use_skill`
+   的 `Available` 是 nil（没有技能也要在场并解释），所以它不会从 golden 消失 —— 探针少绑的后果是
+   "这条路径在生产里永远回答没有技能"，与坑 39 同族但形状不同。
 2. `writeEffects` 去掉 `EffectExternalWrite` ⇒ `TestValidateDynamic_ReportsEachRule` 里"写工具没声明 Mutates"那条夹具必须变绿（即闸门失效）⇒ 说明变异成功，改回。
 3. `Frequency` 改成 `Cold` ⇒ `TestValidate_ReportsEachRule` 不受影响，但 golden 的 tier 列变 `cold` ⇒ golden 红。
 

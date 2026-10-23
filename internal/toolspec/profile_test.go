@@ -433,6 +433,9 @@ func TestProbeDepsIsCapabilityComplete(t *testing.T) {
 	if deps.Delegate == nil || deps.LoadTool == nil {
 		t.Error("ProbeDeps 缺少按 Agent 绑定的执行器")
 	}
+	if deps.Skills == nil {
+		t.Error("ProbeDeps.Skills = nil：生产恒绑技能通道，探针少绑就代表一条不存在的路径（坑 39）")
+	}
 	if deps.CheckpointList == nil || deps.CheckpointCreate == nil || deps.CheckpointRollback == nil {
 		t.Error("ProbeDeps 缺少 git 快照执行器")
 	}

@@ -139,6 +139,33 @@ binary_path = ""                    # empty → extract the embedded binary into
 mcp_args = ["serve", "--mcp"]
 request_timeout = 30                # seconds (≤0 → 30)
 
+# ── Generic MCP servers (internal/mcp) ──
+# Every [[mcp.servers]] entry is one child process; its tools appear as
+# mcp__<name>__<tool> on the agents that grant external capabilities.
+# Tools without MCP annotations are treated as WRITE tools (serial + auth), and
+# write-class tools are skipped entirely unless allow_write = true.
+[mcp]
+enable = true                      # kill-switch: YAGENT_MCP=0
+startup_timeout = "30s"            # bounded wait for start + initialize + tools/list
+reconnect_backoff = "5s"           # first retry delay, doubles up to 5m
+max_reconnects = 3                 # exhausted → offline ("gave up after N attempts")
+max_tools_per_server = 40          # sorted by name; extras dropped with an account line
+status_line = true                 # one MCP status line in the Director system prompt
+status_max_lines = 8
+
+# [[mcp.servers]]
+# name = "github"                  # unique; becomes the tool-name prefix (codeseek is reserved)
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# env = { GITHUB_PERSONAL_ACCESS_TOKEN = "..." }
+# enabled = true                   # omit = true (this is a pointer so "not written" ≠ "false")
+# request_timeout = 30             # seconds; ≤0 → 30
+# working_dir = ""
+# allow_write = false              # write-class tools need this to be registered at all
+# read_only = []                   # names trusted as read-only despite missing annotations
+# tools = []                       # empty = all; non-empty = whitelist
+# exclude = []
+
 # ── Browser-Agent (drives a real Chrome through the external browser-control CLI) ──
 # WARNING: writing this section without `enabled` switches the capability OFF —
 # the boolean has no default. Both binaries must exist or delegate_browser degrades
@@ -196,6 +223,19 @@ index_max_tokens = 1000        # ceiling for the injected skeleton (this repo me
 prose_budget_tokens = 1500     # budget for read_blueprint and the Repo/Coding prose render
 export_path = ""               # non-empty = also write a rendered copy into the workspace;
                                # that copy is an idempotent export, never the writable source
+
+# ── Skills (internal/skills) ──
+# A skill is <dir>/<name>/SKILL.md (JSON front-matter recommended) or a flat
+# <dir>/<name>.md. The catalog is injected into the system prompt; the body is
+# fetched on demand through use_skill. Note: a skill's `allowed-tools` is
+# advisory only — it is printed back to the model and never enforced.
+[skills]
+enable = true                      # kill-switch: YAGENT_SKILLS=0
+dirs = []                          # extra dirs on top of ~/.yagent/skills and .yagent/skills
+inject_into = ["director", "coding", "repo", "chat"]  # explicit [] = inject nowhere
+catalog_max_tokens = 600
+catalog_line_chars = 120
+body_max_tokens = 4000
 
 # ── Context compression, three tiers (internal/compression) ──
 # Trigger = previous step's provider-reported input tokens + local estimate for messages since.

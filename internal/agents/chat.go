@@ -40,6 +40,9 @@ type ChatAgentParams struct {
 	// 这三个 Agent 不做常驻注入，但 read_blueprint 在它们的工具面上要能真读到东西 ——
 	// 绑 nil 会让工具回答"没有蓝图"，那是一句谎话。
 	Blueprint *BlueprintView
+
+	// External 是外部工具规格与技能通道（见 external.go）。
+	External External
 }
 
 // NewChatAgent 构造 ChatAgent：装配轻量工具集后返回。
@@ -67,12 +70,13 @@ func (a *ChatAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.UserInput = input
 	// 工具面由注册表按画像装配：Chat 的画像只给认知族 + 流程控制 + 便签回读，
 	// 没有任何文件系统能力（历史上这是 buildChatAdapters 里那 5 个 case）。
-	deps := depsFor("chat", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint)
+	deps := depsFor("chat", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint, a.params.External)
 	deps.Flow = a.params.Flow
 	deps.Thinker = a.params.Thinker
 	deps.Micro = a.params.MicroAgent
 	deps.Deep = a.params.DeepThinker
 	cfg.Surface = surfaceFor(toolspec.ProfileChat, deps, a.Name())
+	cfg.SkillCatalog = skillCatalogFor("chat", a.params.External.Skills)
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
 	cfg.StepRetries = a.stepRetries

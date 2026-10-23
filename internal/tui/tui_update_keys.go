@@ -966,50 +966,41 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.keywordSuggestionIdx = 0
 			return m, nil
 		}
-		if m.skillAutoComplete && len(m.skillSuggestions) > 0 && m.skillSuggestionIdx >= 0 && m.skillSuggestionIdx < len(m.skillSuggestions) {
-			skillName := m.skillSuggestions[m.skillSuggestionIdx]
-			if skillName == "history" {
-				m.skillAutoComplete = false
-				m.skillSuggestions = nil
-				m.skillSuggestionIdx = 0
-				if m.taskRunning {
-					m.setInfoMsg("Cannot browse history while a task is running")
-					return m, nil
+		if item, ok := m.selectedCompletionItem(); ok {
+			// 收尾一律先清补全状态：下面每条分支都会离开补全界面。
+			m.skillAutoComplete = false
+			m.skillSuggestions = nil
+			m.skillSuggestionIdx = 0
+
+			switch item.kind {
+			case completionCmd:
+				switch item.name {
+				case "history":
+					if m.taskRunning {
+						m.setInfoMsg("Cannot browse history while a task is running")
+						return m, nil
+					}
+					m.input.SetValue("")
+					m.invalidateFooterCache()
+					return m, enterHistoryMode(m)
+				case "resume", "rs":
+					if m.taskRunning {
+						m.setInfoMsg("Cannot resume sessions while a task is running")
+						return m, nil
+					}
+					m.input.SetValue("")
+					m.invalidateFooterCache()
+					return m, enterResumeMode(m)
+				default:
+					m.input.SetValue("")
+					m.invalidateFooterCache()
+					return m, m.processCommand(item.name)
 				}
+			case completionSkill:
+				args := strings.TrimSpace(m.input.Value())
 				m.input.SetValue("")
 				m.invalidateFooterCache()
-				return m, enterHistoryMode(m)
-			}
-			if skillName == "resume" || skillName == "rs" {
-				m.skillAutoComplete = false
-				m.skillSuggestions = nil
-				m.skillSuggestionIdx = 0
-				if m.taskRunning {
-					m.setInfoMsg("Cannot resume sessions while a task is running")
-					return m, nil
-				}
-				m.input.SetValue("")
-				m.invalidateFooterCache()
-				return m, enterResumeMode(m)
-			}
-			if skillName == "pause" || skillName == "continue" || skillName == "unpause" {
-				// 补全选中的是内置命令，不是 SKILL.md —— 走 processCommand，
-				// 否则会掉进下面的 SkillRegistry 查找并静默什么都不做。
-				m.skillAutoComplete = false
-				m.skillSuggestions = nil
-				m.skillSuggestionIdx = 0
-				m.input.SetValue("")
-				m.invalidateFooterCache()
-				return m, m.processCommand(skillName)
-			}
-			if skill, ok := m.assistant.SkillRegistry.Get(skillName); ok {
-				userContext := strings.TrimSpace(m.input.Value())
-				combinedContent := skill.Content + "\n\n---\n用户上下文: " + userContext
-				m.skillAutoComplete = false
-				m.skillSuggestions = nil
-				m.skillSuggestionIdx = 0
-				m.setInfoMsg(fmt.Sprintf("正在执行 skill: %s", skill.Name))
-				return m, m.submitTaskWithContent(combinedContent)
+				return m, m.runSkill(item.name, args)
 			}
 		}
 		var inputCmd tea.Cmd

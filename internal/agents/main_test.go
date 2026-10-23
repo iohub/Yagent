@@ -16,6 +16,14 @@ import (
 // 用例，t.Setenv 与 t.Parallel 互斥会直接 panic；TestMain 在任何用例开始前执行，
 // 不存在该冲突，且一处覆盖全包（含后续新增用例）。
 func TestMain(m *testing.M) {
+	// 假 MCP server 模式：子进程直接跑假服务器，绝不进入 m.Run()。
+	// 与 internal/mcp 的 TestMain 同一个套路（re-exec 测试二进制），
+	// 不改成 go run —— 那会把编译时间算进单测，-race 下也起不了进程。
+	if os.Getenv(fakeMCPEnv) != "" {
+		runFakeAgentsMCPServer()
+		os.Exit(0)
+	}
+
 	home, err := os.MkdirTemp("", "yagent-agents-test-home-")
 	if err != nil {
 		os.Exit(1)

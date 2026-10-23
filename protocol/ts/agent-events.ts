@@ -15,6 +15,7 @@ export const EventTypes = {
   ToolCallError: "tool_call_error",
   ContextLoaded: "context_loaded",
   CommitContextLoaded: "commit_context_loaded",
+  McpServerStatus: "mcp_server_status",
   AiStreamStart: "ai_stream_start",
   AiChunk: "ai_chunk",
   AiStreamEnd: "ai_stream_end",
@@ -99,6 +100,19 @@ export interface CommitContextLoadedEvent {
   /** Commit 学习器上下文加载 */
   event: "commit_context_loaded";
   commit_count: number;
+}
+
+export interface McpServerStatusEvent {
+  /** MCP server 状态迁移（ready / degraded / offline / gave up） */
+  event: "mcp_server_status";
+  server: string;
+  state: string;
+  tools?: number;
+  curated?: number;
+  error?: string;
+  attempt?: number;
+  max_attempts?: number;
+  instructions?: string;
 }
 
 export interface AiStreamStartEvent {
@@ -261,6 +275,10 @@ export function isContextLoaded(msg: AgentEvent | WebSocketMessage): msg is Cont
 
 export function isCommitContextLoaded(msg: AgentEvent | WebSocketMessage): msg is CommitContextLoadedEvent {
   return 'event' in msg && msg.event === "commit_context_loaded";
+}
+
+export function isMcpServerStatus(msg: AgentEvent | WebSocketMessage): msg is McpServerStatusEvent {
+  return 'event' in msg && msg.event === "mcp_server_status";
 }
 
 export function isAiStreamStart(msg: AgentEvent | WebSocketMessage): msg is AiStreamStartEvent {

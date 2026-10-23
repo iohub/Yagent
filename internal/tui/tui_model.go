@@ -422,8 +422,10 @@ type model struct {
 	timelineCacheKey string
 
 	skillAutoComplete  bool
-	skillSuggestions   []string
+	skillSuggestions   []completionItem
 	skillSuggestionIdx int
+	// skillCollisionWarned 让"技能与内置命令撞名"只 warn 一次（补全每敲一个字都重建）。
+	skillCollisionWarned map[string]bool
 
 	keywordAutoComplete  bool
 	keywordSuggestions   []string
@@ -580,7 +582,7 @@ type autocompleteCacheKey struct {
 }
 
 type AutocompleteResult struct {
-	skillSuggestions     []string
+	skillSuggestions     []completionItem
 	skillSuggestionIdx   int
 	keywordSuggestions   []string
 	keywordSuggestionIdx int

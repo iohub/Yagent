@@ -124,6 +124,9 @@ type CodingAgentParams struct {
 	// 常驻骨架让 Coding 在动手前就知道"这片是谁在管、谁依赖它"；
 	// 它只进这次调用的 system prompt，不进记忆也不进 rollout（I2）。
 	Blueprint *BlueprintView
+
+	// External 是外部工具规格与技能通道（见 external.go）。
+	External External
 }
 
 // NewCodingAgent 构造 CodingAgent：按 tools.json 与参数集中的工具集装配适配器。
@@ -151,7 +154,7 @@ func NewCodingAgent(p CodingAgentParams) *CodingAgent {
 
 func (a *CodingAgent) surfaceFor(ctx context.Context, gcm *GitCheckpointManager) *tools.Surface {
 	p := a.params
-	deps := depsFor("coding", a.env, a.guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint)
+	deps := depsFor("coding", a.env, a.guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint, a.params.External)
 	deps.Files = p.Files
 	deps.Search = p.Search
 	deps.Sys = p.Sys
@@ -368,6 +371,7 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	// NoActionRetryLimit: Allow up to 2 retries when LLM outputs text-only without tool calls to prevent premature termination on plan-only responses
 	cfg.NoActionRetryLimit = 2
 	cfg.RepoContext = a.repoCtx.Get()
+	cfg.SkillCatalog = skillCatalogFor("coding", a.params.External.Skills)
 
 	// 上下文压缩配置（tool 结果截断）
 	ec := a.ecCfg

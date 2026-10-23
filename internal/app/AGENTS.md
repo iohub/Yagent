@@ -35,9 +35,19 @@ Director 下一个 step 即生效，正在飞的那次调用不变。
 （`:129-143`）。关掉整套机制时必须"什么都不动"：不起线程、不建目录、不进 supervise 域
 （`blueprint_runtime_test.go:30,65,83`）。
 
-**6. MCP 请求超时的兜底只在 `mcp.NewMCPClient` 一处**，不许在 app 再抄一份默认值（`app.go:211-212`）。
-便签 GC 只在装配最开头跑一次，且失败绝不阻断启动（`:121-133`）。
-`Close()` 的次序：蓝图先停，`supervise.Root().Drain` **最后**并报名字（`:852-881`）。
+**6. MCP 请求超时的兜底只在 `mcp.NewMCPClient` 一处**，不许在 app 再抄一份默认值。
+便签 GC 只在装配最开头跑一次，且失败绝不阻断启动。
+`Close()` 的次序：蓝图先停 → 浏览器 → **`mcpMgr.Close()/ForceClose()` → `supervise.Root().Drain` 最后**并报名字。
+Manager 的 goroutine 属于它自己的域，等它先退干净，根域剩下的才是真正的后台活。
+
+**6.1 外部能力的装配点只有这里。** `mcpServerConfigs` 把 `[codeseek]` 与 `[[mcp.servers]]` 翻成
+`mcp.ServerConfig`（Manager 不读 config）；`rebuildExternalSpecs` 是 `tools.BuildExternalSpecs` 的唯一调用点
+（启动一次 + `OnToolsChanged`）；`ExternalSpecs()` 返回拷贝 —— 六个 Agent 每轮重建工具面都会问它。
+`codeseekCuratedTools` 只此一处声明（6 个手写桥的服务端名）。
+
+**6.2 技能注册表在 `Init` 里加载一次**（`skills.Load` 的合并语义），三个入口共用；`SkillSource()`
+必须显式判 nil（把 nil 具体类型指针装进 interface 之后它不等于 nil）。`main.go` 里那两份逐字相同的
+加载代码已删除 —— 不要加回去。
 
 ## 入口
 

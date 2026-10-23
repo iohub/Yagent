@@ -225,6 +225,12 @@ type Config struct {
 	// Blueprint 是仓库蓝图（目录级导航 + Repo 提交的散文）的开关与预算。
 	Blueprint BlueprintConfig `toml:"blueprint"`
 
+	// MCP 是通用 MCP server（含内建 codeseek）的配置面。
+	MCP MCPConfig `toml:"mcp"`
+
+	// Skills 是用户技能目录与注入预算。
+	Skills SkillsConfig `toml:"skills"`
+
 	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`
 
 	TUI TUIConfig `toml:"tui"`
@@ -241,6 +247,10 @@ type Config struct {
 
 	// blueprintSectionDefined 同理，记录 [blueprint] 段是否被显式写过。
 	blueprintSectionDefined bool
+
+	// mcpSectionDefined / skillsSectionDefined 同理：两者的 enable 缺省都是"开"。
+	mcpSectionDefined    bool
+	skillsSectionDefined bool
 
 	// gitCheckpointSectionDefined 同理。这里必须看段的存在性而不是某个字段是否为空：
 	// 老写法是"前缀为空就整段换默认值"，于是 enabled = false 会被顶回 true。
@@ -550,6 +560,30 @@ func LoadFromFile(path string) (*Config, error) {
 		Enable:     md.IsDefined("blueprint", "enable"),
 		InjectInto: md.IsDefined("blueprint", "inject_into"),
 	})
+	// [mcp]：enable 与 status_line 的缺省都是"开"，判定同样看键的存在性（坑 26）。
+	cfg.mcpSectionDefined = sectionHasDecodedKey(md, "mcp")
+	if stale := staleKeysIn(md, "mcp"); len(stale) > 0 {
+		slog.Warn("[mcp] 段存在不认识的键，将被忽略",
+			"stale_keys", strings.Join(stale, ", "),
+			"hint", mcpKeyHint)
+	}
+	SetGlobalMCP(cfg.MCP, MCPPresence{
+		Section:    cfg.mcpSectionDefined,
+		Enable:     md.IsDefined("mcp", "enable"),
+		StatusLine: md.IsDefined("mcp", "status_line"),
+	})
+	// [skills]：同构。
+	cfg.skillsSectionDefined = sectionHasDecodedKey(md, "skills")
+	if stale := staleKeysIn(md, "skills"); len(stale) > 0 {
+		slog.Warn("[skills] 段存在不认识的键，将被忽略",
+			"stale_keys", strings.Join(stale, ", "),
+			"hint", skillsKeyHint)
+	}
+	SetGlobalSkills(cfg.Skills, SkillsPresence{
+		Section:    cfg.skillsSectionDefined,
+		Enable:     md.IsDefined("skills", "enable"),
+		InjectInto: md.IsDefined("skills", "inject_into"),
+	})
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
@@ -577,6 +611,12 @@ func (c *Config) validate() error {
 
 	if c.Global.LLM == nil || len(c.Global.LLM.Providers) == 0 {
 		return fmt.Errorf("no providers configured in LLM section")
+	}
+
+	// MCP server 的名字要进工具名前缀（mcp__<name>__<tool>），拼错一个字符的后果是
+	// "工具名对不上"而不是报错 —— 所以在这里拒收，且不能等到装配期。
+	if err := validateMCPServers(c.MCP); err != nil {
+		return err
 	}
 
 	// api_key_env 在唯一一处展开成 APIKey，之后的必填项检查与各消费方无需再区分来源。

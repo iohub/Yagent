@@ -19,16 +19,30 @@ import (
 // "这个项目没有蓝图"时给出原因与修复方式，而不是从工具面上静默消失（设计稿 §8）。
 // 参数收在签名上而不是各 Agent 自己记得绑：六个调用点少绑一个是编译不过，
 // 少记一处是"那个 Agent 的模型以为这个能力不存在"。
-func depsFor(profileKey string, env Env, guard *tools.WorkspaceGuard, boardID string, view *BlueprintView) *toolspec.Deps {
+func depsFor(profileKey string, env Env, guard *tools.WorkspaceGuard, boardID string, view *BlueprintView, ext External) *toolspec.Deps {
 	d := &toolspec.Deps{
 		AgentName: profileKey, Guard: guard, BoardID: boardID,
 		Blueprint: blueprintExecutor(view),
+		// 外部工具与技能通道：nil 是合法状态（没有 server / 没有技能），
+		// 对应的工具要么不在工具面上，要么仍在场并解释为什么不可用。
+		ExternalSpecs: ext.specsOrNil(),
+		Skills:        ext.Skills,
 	}
 	if env != nil {
 		d.ProjectPath = env.ProjectPath()
 		d.FullYolo = env.FullYoloMode()
 	}
 	return d
+}
+
+// skillCatalogFor 是"哪个 Agent 的 system prompt 带技能目录"的**唯一**判据。
+// 五个子 Agent 各调一行，而不是各写一遍 if —— 压缩开关历史上就是这么写成
+// 5 个 AND 点，然后有一处忘了改（根 AGENTS.md §6.5）。
+func skillCatalogFor(agent string, skills toolspec.SkillSource) string {
+	if skills == nil || !config.SkillsInjectedInto(agent) {
+		return ""
+	}
+	return skills.Catalog(config.GlobalSkills().CatalogMaxTokens)
 }
 
 // surfaceFor 按画像与依赖构造工具面，并把"声明了但依赖没装配"的工具打进日志。
@@ -94,18 +108,11 @@ func renderCustomAgentToolPool() string {
 			continue
 		}
 		sc, _ := toolspec.GetSchema(s.Name)
-		desc := strings.TrimSpace(firstSentence(sc.Description))
+		desc := toolspec.FirstSentence(sc.Description)
 		if desc == "" {
 			desc = s.Brief
 		}
 		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", s.Name, effectCategory(s.Effect), desc)
 	}
 	return b.String()
-}
-
-func firstSentence(text string) string {
-	if idx := strings.IndexByte(text, '.'); idx > 0 {
-		return text[:idx+1]
-	}
-	return text
 }

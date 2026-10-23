@@ -72,6 +72,9 @@ type DirectorAgent struct {
 	// blueprint 是常驻骨架的注入视图（构造期从 params 拷一份，见 NewDirectorAgent）。
 	blueprint *BlueprintView
 
+	// external 是外部工具规格与技能通道（构造期从 params 拷一份）。
+	external External
+
 	currentMemory *memory.ConversationMemory
 	compressor    *compression.ContextCompressor
 
@@ -98,6 +101,29 @@ type DirectorAgent struct {
 
 func (a *DirectorAgent) loadProjectContext() *director.ProjectContextLoadResult {
 	return a.projectCtxLoader.Load()
+}
+
+// skillCatalog 是 Director 的 system prompt 里那段技能目录（"" = 不注入）。
+// 判据收在 skillCatalogFor：五个子 Agent 也调同一个函数。
+func (a *DirectorAgent) skillCatalog() string {
+	if s := skillCatalogFor("director", a.external.Skills); s != "" {
+		return "\n\n" + s
+	}
+	return ""
+}
+
+// mcpStatusLine 是"每个 server 现在什么状态"的一行账。
+// 只注入 Director：子 Agent 不需要知道拓扑，它们的工具面里没有就是没有
+// （Skipped 的日志足够排障）。
+func (a *DirectorAgent) mcpStatusLine() string {
+	if a.external.Status == nil || !config.MCPEnabled() || !config.GlobalMCP().StatusLine {
+		return ""
+	}
+	line := strings.TrimSpace(a.external.Status())
+	if line == "" {
+		return ""
+	}
+	return "\n\n## MCP servers\n" + line
 }
 
 // DirectorAgentParams 聚合 NewDirectorAgent 所需的全部依赖。
@@ -136,6 +162,9 @@ type DirectorAgentParams struct {
 	// Director 拿到的只有形状②的骨架（目录→目录），符号级问题仍然归 codeseek ——
 	// 这条分工写进 prompt，不写进代码，是因为它约束的是"该委派谁"。
 	Blueprint *BlueprintView
+
+	// External 是外部工具规格与技能通道（见 external.go）。
+	External External
 }
 
 // NewDirectorAgent 构造 DirectorAgent：先填充结构体字段，再装配工具适配器
@@ -174,6 +203,7 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 		adapter:          NewDirectorAdapter(true, adapterCfg),
 		llmClient:        p.LLMClient,
 		blueprint:        p.Blueprint,
+		external:         p.External,
 		projectCtxLoader: director.NewProjectContextLoader(func() string { return p.Env.ProjectPath() }),
 
 		llmTimeout: func() time.Duration {
@@ -932,6 +962,9 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 		// [仓库蓝图] 常驻骨架（形状②）。每轮现算、只进这次调用的 system prompt（I2）：
 		// 它必须扛住第二/三档整段重写消息，而进 messages 的东西会被摘要吞掉（§11 坑 11）。
 		systemPrompt += a.blueprint.Resident()
+		// 技能目录与 MCP 状态账也是稳定前缀：技能集与 server 拓扑在一次进程内基本不变。
+		systemPrompt += a.skillCatalog()
+		systemPrompt += a.mcpStatusLine()
 		return systemPrompt, nil
 	}
 

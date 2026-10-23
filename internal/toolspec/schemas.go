@@ -130,12 +130,16 @@ func SchemasError() error {
 }
 
 // Description 返回模型可见描述：Spec.Describe 优先（能力降级等动态文案），
-// 否则用 schemas.json 的静态文案。
+// 其次是动态规格自带的 Inline（外部 MCP 工具不在 schemas.json 里），
+// 最后才是 schemas.json 的静态文案。
 func (s *Spec) Description(deps *Deps) string {
 	if s.Describe != nil {
 		if d := s.Describe(deps); d != "" {
 			return d
 		}
+	}
+	if s.Inline != nil && s.Inline.Description != "" {
+		return s.Inline.Description
 	}
 	if sc, ok := GetSchema(s.Name); ok {
 		return sc.Description
@@ -143,9 +147,12 @@ func (s *Spec) Description(deps *Deps) string {
 	return s.Name
 }
 
-// Parameters 返回模型可见的参数 schema。缺失时为空对象（工具会声称无参数），
-// Validate() 会把"有 Spec 无声明"报成致命问题，所以正常路径不会走到这里返回 nil。
+// Parameters 返回模型可见的参数 schema。动态规格自带 Inline 时以它为准；
+// 都缺失时返回 nil（工具会声称无参数）—— Validate / ValidateDynamic 会把这种情况报成问题。
 func (s *Spec) Parameters() map[string]interface{} {
+	if s.Inline != nil && s.Inline.Parameters != nil {
+		return s.Inline.Parameters
+	}
 	if sc, ok := GetSchema(s.Name); ok {
 		return sc.Parameters
 	}

@@ -36,6 +36,9 @@ type Adapter struct {
 	// 网络、注册表等），可以安全地与其他只读工具并发执行。零值 false（fail-safe：
 	// 未显式声明的工具一律视为可能存在副作用，不可参与并发）。
 	readOnly bool
+	// brief 是目录里的一句话简介。动态工具（外部 MCP）在静态注册表里查不到，
+	// catalogBrief 回落找不到 Brief 时只能截英文描述 —— 所以这里留一份。
+	brief string
 }
 
 func NewAdapter(name, description string, fn ToolFunc) *Adapter {
@@ -73,6 +76,15 @@ func (a *Adapter) WithReadOnly(enabled bool) *Adapter {
 	a.readOnly = enabled
 	return a
 }
+
+// WithBrief 设置目录里的一句话简介（deferred 目录的冷工具行）。
+func (a *Adapter) WithBrief(brief string) *Adapter {
+	a.brief = brief
+	return a
+}
+
+// Brief 返回目录简介；空串表示没有单独设置。
+func (a *Adapter) Brief() string { return a.brief }
 
 // IsReadOnly 返回只读/无副作用元数据。false=不可并行（未声明或显式声明有副作用）。
 func (a *Adapter) IsReadOnly() bool {

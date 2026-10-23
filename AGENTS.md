@@ -10,6 +10,15 @@
 > R2 的 1965 行曾经只活在两条 `agent/coding-*` 委派分支上（便签里"已落地并全绿"是真的，只是不在
 > 任何主战分支），本轮接回。仍待办：R8 导出层与
 > `/blueprint`（`[blueprint] export_path` 至今没有消费者，别写进配置指南）。
+> 2026-10-23：**外部能力接入落地**（`docs/skills-and-mcp-design.md` + 实施文档）——
+> `internal/mcp` 从"只对着 codeseek 说话的单例"升级成多 server `Manager`（`tools/list` 分页、`instructions`、
+> annotations、重连退避、四态状态账）；codeseek 成为第一个内建 server，6 个手写桥经 curated 名单保留、
+> 漏掉的 3 个工具走通用通道；外部工具以 `mcp__<server>__<tool>` 动态进 `Deps.ExternalSpecs`（一律 Cold，
+> 走既有 deferred 目录；**不进**全局注册表、golden、Meta 工具池），没 annotations 一律按写处理；
+> `internal/skills` 重写成"目录式 + front-matter + 合并语义 + 逐条账"，目录进 system prompt 稳定前缀、
+> 正文由新工具 `use_skill` 按需取回（声明面 49 → 50）；`[mcp]` / `[[mcp.servers]]` / `[skills]` 三段配置；
+> 启动期第一次真的跑 `toolspec.Validate()`；TUI 新增 `/skills`、`/mcp` 面板与类型化斜杠补全（手打
+> `/name args` 直接执行技能）。
 > 上一轮 2026-10-22：**R7 以删除收场——知识整理机制整体下架，仓库级持久知识只剩蓝图一个 sink**
 > （`internal/agents/consolidation_worker.go`、`repo_memory.go`、`knowledge_hook.go`、`internal/knowledge/`、
 > `internal/memory/{shared,local}.go`、`internal/mcp/knowledge.go`、`internal/tools/{knowledge,specs_knowledge}.go`
@@ -184,7 +193,7 @@ yagent/
 │   ├── http/                   # gin REST + melody WebSocket + TaskManager
 │   ├── llm/                    # Engine 接口、OpenAI/Anthropic 引擎、Fallback、Router
 │   ├── logging/                # slog 全局日志 + 按任务分目录
-│   ├── mcp/                    # 自研 stdio JSON-RPC MCP 客户端 + codeseek 桥
+│   ├── mcp/                    # stdio JSON-RPC 客户端 + 多 server Manager（tools/list 发现、重连、状态账）
 │   ├── memory/                 # ConversationMemory、rollout 读写（断点续跑的数据源）
 │   │                           #   rollout_replay.go(重放+指纹) / rollout_checkpoint.go(坐标+工作区) / rollout_ctx.go(delegation_id)
 │   ├── messaging/              # 事件总线（Dispatcher / Publisher / consumers/）
@@ -192,7 +201,7 @@ yagent/
 │   ├── protocol/               # 由 protocol/agent-events.yaml 生成的事件类型
 │   ├── pause/                  # 暂停闸门（A 层）：Gate + ctx value + AbandonedError，只依赖 activity
 │   ├── recovery/               # LLM 熔断器
-│   ├── skills/                 # SKILL.md 注册表（仅 TUI 斜杠命令消费）
+│   ├── skills/                 # 技能注册表：目录式/扁平 SKILL.md、front-matter、合并语义、use_skill 读通道
 │   ├── supervise/              # 全仓 goroutine 的唯一落脚点：具名 + recover + 有人等（C1，
 │   │                           #   docs/structured-concurrency-design.md）。叶子包（只依赖标准库，
 │   │                           #   check_supervise_leaf.sh 守）；裸 `go` 由 check_no_bare_go.sh 禁掉
@@ -330,7 +339,7 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
 （`ProfileRepo` / `ProfileCoding` / `ProfileChat`）问这个判据的，所以画像或能力标签漂走时会红；
 自己拼一个工具列表来测等于重犯坑 33。
 
-### 5.2 工具总览（schema 见 `internal/toolspec/schemas.json`，49 条）
+### 5.2 工具总览（schema 见 `internal/toolspec/schemas.json`，50 条 + 运行期动态外部工具）
 
 > 每个工具的完整契约 = `schemas.json` 的 description/parameters + `Spec` 的能力标签。
 > 派生查询：`IsReadOnly` / `IsSerial` / `NeedsAuth` / `PathParams` / `TruncationPriority` /
@@ -347,22 +356,28 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
 | `agent_exit` `ask_user_for_help` | P | 结束任务（可带 `handoff{conclusion,facts[],open_questions,status}`，见 §6.4；另有 `blueprint[]` 写入通道，只有 Repo 的完成接缝会落盘，见 §6.4）/ 反问用户（confirm、select、input 三种交互） |
 | `git_checkpoint_create` `git_checkpoint_list` `git_checkpoint_rollback` | G | 编码子任务快照 |
 | `read_note` `read_artifact` `list_notes` | R | 读跨 Agent 便签（handoff 块 + 分页正文）/ 超预算产物全文 / 枚举整块板上有哪些结论（boardID 存在时自动注入，`list_notes` 刻意不含正文） |
+| `use_skill` | R | 按名取回用户技能的完整正文（front-matter 事实 + 分页），skill 目录在 system prompt 里常驻。没有技能时回执自带"放哪儿"的修复指引，不从工具面消失 |
 | `read_blueprint` | R | 读仓库蓝图：`section/module/field/state` 收窄 + `offset/limit` 分页。**六个画像**都拿得到（`EffectContext` 已 Grant），没有蓝图时回执自带原因与修复方式（不静默摘工具）。目录→目录归它，符号→符号归 codeseek |
 | `browser_status` `browser_open` `browser_inspect` `browser_snapshot` `browser_click` `browser_fill` `browser_type` `browser_press` `browser_scroll` `browser_select` `browser_tabs` `browser_wait` `browser_screenshot` `browser_eval` | 浏览器 | 经外部 `browser-control` CLI 驱动真实 Chrome；Browser-Agent 持有（详见 `docs/browser-agent-design.md`） |
 | `delegate_repo/coding/chat/devops/browser/meta` | 委派 | Director 持有；`delegate_browser` 也在 Coding 上（能力不可用时描述自动降级） |
 
 > **不存在** 名为 `flow_control` 的工具（旧文档有误）；流控制由 `agent_exit` 与 `ask_user_for_help` 承担。
 
-### 5.3 MCP 与 codeseek
+### 5.3 MCP、外部工具与 codeseek
 
-- `internal/mcp` 是一个**自研 stdio JSON-RPC 2.0 客户端**（只发 `tools/call`，不调 `tools/list`），
-  因此 MCP 侧工具**不会自动暴露**，全部靠 Go 手写桥接并换成 yagent 的工具名：
-  `semantic_search→codeseek_search`、`query_code_skeleton→codeseek_skeleton`、`query_code_snippet→codeseek_snippet`、
-  `find_function_callee→codeseek_callees`、`find_function_caller→codeseek_callers`、`query_call_graph→codeseek_callgraph`。
-- 二进制解析顺序：`[codeseek] binary_path` → `embedbin` 解出的 `~/.yagent/bin/codeseek`；都为空则 MCP 关闭，
-  Agent 退化为纯文件工具模式。启动参数默认 `["serve","--mcp"]`；索引在 codeseek 内部异步构建，
-  期间 `CallTool` 返回 `ErrIndexBuilding` 并附带"请改用文件工具"的提示。
-- 只有一个 MCP server（codeseek）。没有通用多 server MCP 配置。
+- `internal/mcp` 是自研 stdio JSON-RPC 2.0 客户端 + **多 server `Manager`**：`tools/list`（跟随
+  `nextCursor` 分页）、`initialize.instructions`、`tools/call`、重连退避、状态账四件事都在这一层。
+  传输层（`client.go` 的 `sendJSON`/`doRequest`/`readLoop`/`IsAlive`）没有改。
+- **codeseek 是第一个内建 server**。6 个手写桥（`semantic_search` 等）原样保留（结果整形 + `ErrIndexBuilding`
+  降级文案），服务端名进 curated 名单，不再以 `mcp__codeseek__*` 重复注册；`codeseek_init/status/list`
+  经通用 `tools/list` 成为动态工具。
+- **外部工具不进全局注册表**（`toolspec` 仍是 `init()` 期写入的只读事实）：它们从
+  `Deps.ExternalSpecs` 进 `Surface.rebuild()`，名字是 `mcp__<server>__<tool>`，一律 Cold（走既有
+  deferred 目录 + `load_tool`）。三条理由见 §11 坑 44。
+- 副作用判定：`readOnlyHint=true`（或配置 `read_only` 名单）⇒ 只读可并发；明确 false/destructive ⇒ 写；
+  **没有 annotations 一律按写处理**（`Mutates`+`Serial`+`NeedsAuth`），写类默认不注册，除非 `allow_write = true`。
+- 状态四档 ready / degraded（进程活着但 0 工具）/ offline / disabled，一段文本三处出口
+  （启动日志、`/mcp` 面板、Director 的 system prompt），由 `mcp.RenderStatusLines` 单源渲染。
 
 ### 5.4 安全机制
 
@@ -532,6 +547,13 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
   - **仍然没做**：`export_path` 的导出层（R8）、`/blueprint` 的 TUI/CLI 入口、
     以及 §8 纪律 1 里"每种拒收再记一条 rollout `event_msg`"（钩子那里没有 writer）。
     （R7 已了结，但方式不是"收编"而是把 KV 仓库记忆整套删掉——见本文件开头的 2026-10-22 记录。）
+- **Skills**（`internal/skills`）：用户写的可复用流程。磁盘约定两种都认 —— `<dir>/<name>/SKILL.md`
+  （目录式，胜）与 `<dir>/<name>.md`（扁平，兼容）；front-matter **JSON 优先**，容错扁平
+  `key: value` 子集，都没有时沿用"正文首行去 `#`"当描述。作用域是**合并**：user → project →
+  `[skills] dirs`，后者覆盖前者，覆盖与拒收都进 `LoadAccount` 的账（启动日志与 `/skills` 面板同源）。
+  目录（`## Skills`，一行一个 name: description，截断标记写进正文）进 system prompt 的稳定前缀；
+  正文由 `use_skill` 按需取回（**Hot** 工具，没有技能时仍在场并解释"放哪儿"）。`allowed-tools`
+  只是回吐给模型看的咨询信息，**不强制**。`Load` 永不返回 nil 注册表 —— 目录读不出只记一条 Rejected。
 - **Thinklink**（`internal/thinklink`）：append-only 的思维日志（用户输入 + T&P 块），是 ultimate 压缩重建上下文的原料。
 
 ### 6.5 三档上下文压缩（`internal/compression`）
@@ -724,8 +746,10 @@ WebSocket 用 melody，每个任务一个 Dispatcher + `WebSocketConsumer`，向
 `internal/config/blueprint_defaults_test.go` 钉成同源（同 §11 坑 18 那类"两份同形实现"），
 以及顶层 `task_timeout`。**`[app]` 与 `[codeseek.knowledge]` 已整体删除**（前者唯一的键只进 `slog.Debug`，后者五个键全部不可达 —— `enabled` 会被写回 true，其余四个读点在注入器的 early return 之后；那套注入器连同 `consolidate_knowledge`/`prune_history` 已在 2026-10-22 整体删除）。
 
-> 工具声明面的 schema 条数基线：`read_blueprint` 把它从 50 → 51，2026-10-22 随知识机制删除
-> 回到 **49**；改动必须显式改数字（`internal/toolspec/registry_test.go:TestSchemasLoadAndDescribeEveryEntry`）。
+> 工具声明面的 schema 条数基线：`read_blueprint` 把它从 50 → 51，2026-10-22 随知识机制删除回到 49，
+> 2026-10-23 技能读通道 `use_skill` 加到 **50**；改动必须显式改数字
+> （`internal/toolspec/registry_test.go:TestSchemasLoadAndDescribeEveryEntry`）。
+> MCP 外部工具**不计入**这个基线：它们走 `Deps.ExternalSpecs` 的动态通道。
 
 **运行时写回**：`config/persist.go` 只有一个内核 `SetKeyInSection(path, section, key, renderedValue)`
 （段缺失→末尾追加，键缺失→段内插入，存在→就地替换且保留行内注释与等号两侧空白；永不整文件重编码，
@@ -1073,6 +1097,10 @@ bash scripts/check_no_inline_atomic_write.sh  # tmp+rename 只准有 internal/ut
 5. 用 `client.GetToolEngine("<name>")` + `[tools.llm.<name>]` 取工具级引擎；构造期依赖从 `globalctx` 拿。
 6. 加 `internal/tools/*_test.go`；涉及循环则补 `agents` 的执行循环测试。
 
+> **外部工具走另一条通道**：MCP 工具由 `tools.BuildExternalSpecs` 在运行期构造 Spec，经
+> `Deps.ExternalSpecs` 进 `Surface.rebuild()`，**不进** `schemas.json`、不进全局注册表、不进 golden。
+> 判据见 §5.3 与 §11 坑 44。
+
 ---
 
 ## 10. Director 行为准则
@@ -1365,6 +1393,19 @@ plan:
     = 替模型下了一句架构判断）。两处都得写：工具输出会被压缩卷走，便签正文不进索引，
     只修一边另一边就是新的静默。三条变异见设计稿 §21.6。
     **通用教训**：任何"可选写通道 + 终止型工具"的组合，都要问"被拦下来的那一次，谁看得见"。
+
+44. **动态规格不进全局注册表**：`toolspec.registry` 写着"init() 期写入，之后只读"，把 MCP 工具塞进去会同时
+    打穿三处 ——（a）`TestAgentSurfacesGolden` 走 `ProbeDeps()`，探针不知道有哪些 server，golden 会钉一条
+    生产不存在的路径（坑 39 的变体）；（b）`renderCustomAgentToolPool` 遍历 `toolspec.Specs()`，Custom Agent
+    于是拿到第三方能力，而 `Palette` 的全部意义就是"拿不到 Director 没有的能力"；（c）`Validate()` 的
+    双向 1:1 会对每个外部工具报"schemas.json 里没有对应声明"。修法不是放宽校验，是让动态规格走
+    `Deps.ExternalSpecs`，在 `Surface.rebuild()` 汇合（`TestStaticRegistryNeverCarriesExternalTools` 钉住）。
+    **没 annotations 一律按写处理**是同一条纪律的安全侧：判错只是多问一次授权，判对则是第三方拿到一个
+    不受守卫的写入口 —— 放宽必须写配置（`read_only` / `allow_write`），不能靠猜。
+45. **"连接落定前收到的通知"必须补一次**：`tools/list_changed` 可能在 `initialize` 与 `markConnected` 之间到达，
+    而这时 Manager 的 `entry.client` 还是 nil，重发现会被守卫丢掉。`MCPClient` 用
+    `listChangedPending` 记住它、`markConnected` 事后补一次。另外通知回调**不能**在 readLoop 里同步调用
+    （回调里会发 `tools/list`，要等 readLoop 读响应 —— 那就是"读循环等自己"的死锁，表现是重发现永远超时）。
 
 
 <!-- CODESEEK_INJECTION -->

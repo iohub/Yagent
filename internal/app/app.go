@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"yagent/internal/skills"
 	"yagent/internal/supervise"
 	"yagent/internal/tools"
+	"yagent/internal/toolspec"
 )
 
 // Yagent is the main entry point for the agent system.
@@ -51,7 +53,23 @@ type Yagent struct {
 	// browserMgr 浏览器执行层：管理外部 browser-control CLI 与它启动的 Chrome 生命周期
 	browserMgr *browserctl.Manager
 
-	SkillRegistry *skills.SkillRegistry // 技能注册表，加载 .yagent/skills/ 下的 .md 文件
+	// mcpMgr 是全部 MCP server 的生命周期（codeseek 是其中一个内建 server）。
+	// nil = [mcp] 关掉、或没有任何 server。
+	mcpMgr *mcp.Manager
+	// mcpConfigs 按 server 名保存策略（白名单/allow_write/curated），
+	// BuildExternalSpecs 需要它，而 Manager 只认启动参数。
+	mcpConfigs map[string]mcp.ServerConfig
+
+	// specMu 保护外部工具规格快照。读侧是每轮重建工具面的六个 Agent，
+	// 写侧是 Manager 的状态回调 —— 所以是 RWMutex 而不是 atomic.Pointer 数组。
+	specMu          sync.RWMutex
+	externalSpecs   []*toolspec.Spec
+	externalAccount tools.ExternalAccount
+
+	// skills 是本进程的技能注册表（nil = 技能被关掉；use_skill 会解释为什么没有）。
+	// 加载在 Init 里做一次：三个入口（TUI / HTTP / --prompt）共用同一份合并语义。
+	skills       *skills.Registry
+	skillAccount skills.LoadAccount
 
 	// blueprint 是本进程的仓库蓝图运行时（nil = 这个项目没有蓝图）。
 	// 唯一持有者：派生循环、存储根、以及三处注入视图都从它出，
@@ -103,6 +121,15 @@ func (ca *Yagent) CloseIdleConnections() {
 	}
 }
 
+// checkRegistry 把静态注册表自检的问题逐条打进日志。
+// 抽成函数只为一件事：Validate 的问题无法从外部注入，"这条自检真的会被调用"
+// 只能靠一个能喂假问题的入口来证明（TestInitRunsRegistrySelfCheck）。
+func checkRegistry(validate func() []string, logger *slog.Logger) {
+	if problems := validate(); len(problems) > 0 {
+		logger.Error("tool registry self-check failed", "count", len(problems), "problems", problems)
+	}
+}
+
 // Init initializes the assistant with Engine and creates agents.
 // Uses per-agent and per-tool engine resolution from the LLM client.
 func (ca *Yagent) Init(engine llm.Engine, workDir string) {
@@ -111,6 +138,11 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 
 	// initOnce 保证只执行一次完整初始化（创建 Agents、启动 MCP 客户端等）
 	ca.initOnce.Do(func() {
+		// 静态注册表自检。spec.go 的 Validate 注释承诺"装配期调用"，而在此之前全仓
+		// 只有测试调它 —— 生产从不检查。逐条打日志而不是退出：构建期问题已被
+		// registry_gate_test 拦住，运行期退出只会让"配置坏了"与"代码坏了"同一个症状。
+		checkRegistry(toolspec.Validate, slog.Default())
+
 		// 便签板只增不减，所以在装配的最开始清一次。这里传 nil 作为"活动 board"名单是刻意的：
 		// 进程刚起来、Director 还没构造，本就没有正在写的便签板；本次会话的板是这一刻才创建的，
 		// mtime 新鲜，TTL 与条数上限都碰不到它。
@@ -123,6 +155,20 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 				// 清理失败绝不能阻断启动：磁盘占用是可容忍的问题，装配失败才是事故。
 				slog.Warn("blackboard: gc failed", "error", err)
 			}
+		}
+
+		// ── 技能：三个入口共用一份加载器（合并 user → project → [skills] dirs）──
+		if config.SkillsEnabled() {
+			dirs := skillDirs(workDir)
+			registry, account := skills.Load(dirs)
+			cfg := config.GlobalSkills()
+			registry.SetOptions(skills.Options{
+				LineChars:     cfg.CatalogLineChars,
+				BodyMaxTokens: cfg.BodyMaxTokens,
+			})
+			ca.skills = registry
+			ca.skillAccount = account
+			slog.Info("skills loaded", "line", account.String(), "dirs", strings.Join(dirs, ", "))
 		}
 
 		// Initialize agents
@@ -189,44 +235,42 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			}
 		}
 
-		// ── 启动 CodeSeek MCP 客户端 ──
+		// ── MCP Manager：codeseek（内建）+ [[mcp.servers]]（用户）──
+		// codeseek 从"唯一特例"变成第一个内建 server：它的 6 个手写桥继续由 Go 侧
+		// curated 名单占用，其余工具（init/status/list）走通用 tools/list 通道。
 		var codeSeekMCP *mcp.MCPClient
-		if codeseekBinaryPath != "" {
-			// 解析 MCP 参数，默认使用 ["serve", "--mcp"]
-			mcpArgs := []string{"serve", "--mcp"}
-			requestTimeout := 0
-			if ca.config != nil {
-				if len(ca.config.CodeSeek.MCPArgs) > 0 {
-					mcpArgs = ca.config.CodeSeek.MCPArgs
-				}
-				requestTimeout = ca.config.CodeSeek.RequestTimeout
+		ca.mcpConfigs = ca.mcpServerConfigs(codeseekBinaryPath, workDir)
+		if config.MCPEnabled() && len(ca.mcpConfigs) > 0 {
+			mcpCfg := config.GlobalMCP()
+			cfgs := make([]mcp.ServerConfig, 0, len(ca.mcpConfigs))
+			for _, cfg := range ca.mcpConfigs {
+				cfgs = append(cfgs, cfg)
 			}
-			// 上限的兜底由 MCP 客户端自己做（<=0 → 30s），这里不再抄一份默认值 ——
-			// 两处各写一个 30 就是一件事的两种真相，模板那句 "≤0 → 30" 由客户端兑现。
+			sort.Slice(cfgs, func(i, j int) bool { return cfgs[i].Name < cfgs[j].Name })
 
-			codeSeekMCP = mcp.NewMCPClient(mcp.MCPClientConfig{
-				BinaryPath:     codeseekBinaryPath,
-				Args:           mcpArgs,
-				WorkingDir:     workDir,
-				RequestTimeout: time.Duration(requestTimeout) * time.Second,
+			mgr := mcp.NewManager(cfgs, mcp.ManagerOptions{
+				StartupTimeout:   mcpCfg.StartupTimeout,
+				ReconnectBackoff: mcpCfg.ReconnectBackoff,
+				MaxReconnects:    mcpCfg.MaxReconnects,
+				StatusMaxLines:   mcpCfg.StatusMaxLines,
+				OnToolsChanged:   ca.rebuildExternalSpecs,
+				OnStatusChange:   ca.publishMCPStatus,
 			})
-			// 异步启动 MCP 客户端，不阻塞等待 codeseek init 完成
-			// 子进程启动成功后立即返回，初始化在后台 goroutine 中执行
-			if err := codeSeekMCP.Start(context.Background()); err != nil {
-				slog.Warn("Failed to start CodeSeek MCP client, repo exploration tools will be unavailable", "error", err)
-				codeSeekMCP = nil
+			// 先把 Manager 挂到 ca 上再 Start：connect goroutine 的 OnToolsChanged
+			// 会在启动期就回调 rebuildExternalSpecs，它读的是 ca.mcpMgr。
+			ca.mcpMgr = mgr
+			if err := mgr.Start(context.Background()); err != nil {
+				slog.Warn("Failed to start MCP manager", "error", err)
 			} else {
-				slog.Info("CodeSeek MCP client starting in background (codeseek init runs async)")
-				// 后台监控初始化结果（仅用于日志记录）
-				supervise.Root().Go("mcp/wait-ready", func(context.Context) {
-					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-					defer cancel()
-					if err := codeSeekMCP.WaitForReady(ctx); err != nil {
-						slog.Warn("CodeSeek MCP client initialization failed", "error", err)
-					} else {
-						slog.Info("CodeSeek MCP client initialized and ready for code analysis")
-					}
-				})
+				waitCtx, cancel := context.WithTimeout(context.Background(), mcpCfg.StartupTimeout+time.Second)
+				if err := mgr.WaitForReady(waitCtx); err != nil {
+					slog.Warn("MCP servers not all ready yet", "error", err)
+				}
+				cancel()
+				// 既有 RepoOperationsTool 一行不改：它拿到的仍是同一个客户端。
+				codeSeekMCP = mgr.Client("codeseek")
+				ca.rebuildExternalSpecs()
+				slog.Info("mcp status", "lines", mgr.StatusLines())
 			}
 		}
 
@@ -407,6 +451,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Guard:                guard,
 			EnhancedCommanderCfg: ca.config.EnhancedCommander,
 			Blueprint:            ca.blueprint.viewFor("repo"),
+			External:             agents.ExternalFrom(ca),
 			LLM:                  repoEngine,
 			MaxSteps:             repoMaxSteps,
 			StepRetries:          stepRetries,
@@ -425,6 +470,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			MaxSteps:    chatMaxSteps,
 			StepRetries: stepRetries,
 			Blueprint:   ca.blueprint.viewFor("chat"),
+			External:    agents.ExternalFrom(ca),
 		})
 		metaAgent := agents.NewMetaAgent(&gctx, publisher, metaEngine, stepRetries)
 		devopsAgent := agents.NewDevOpsAgent(agents.DevOpsAgentParams{
@@ -443,6 +489,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			MaxSteps:             devopsMaxSteps,
 			StepRetries:          stepRetries,
 			Blueprint:            ca.blueprint.viewFor("devops"),
+			External:             agents.ExternalFrom(ca),
 		})
 		// 注入 DevOps-Agent，使 Repo-Agent 的 delegate_devops 工具可用
 		repoAgent.SetDevOpsAgent(devopsAgent)
@@ -459,6 +506,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			MaxSteps:             browserMaxSteps,
 			StepRetries:          stepRetries,
 			Blueprint:            ca.blueprint.viewFor("browser"),
+			External:             agents.ExternalFrom(ca),
 		})
 
 		codingAgent := agents.NewCodingAgent(agents.CodingAgentParams{
@@ -480,6 +528,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			GitCheckpointCfg:     &ca.config.GitCheckpoint,
 			EnhancedCommanderCfg: ca.config.EnhancedCommander,
 			Blueprint:            ca.blueprint.viewFor("coding"),
+			External:             agents.ExternalFrom(ca),
 			LLM:                  codingEngine,
 			MaxSteps:             codingMaxSteps,
 			StepRetries:          stepRetries,
@@ -515,6 +564,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Config:         *ca.config,
 			LLMClient:      ca.client,
 			Blueprint:      ca.blueprint.viewFor("director"),
+			External:       agents.ExternalFrom(ca),
 		})
 
 		// Director 比 CodingAgent 晚构造，便签写入器只能事后回注：
@@ -860,14 +910,16 @@ func (ca *Yagent) Close() {
 			slog.Warn("停止浏览器失败", "error", err)
 		}
 	}
-	// 关闭 CodeSeek MCP 客户端
-	if ca.globalCtx != nil && ca.globalCtx.CodeSeekMCP != nil {
+	// 关闭 MCP Manager（它会逐个收掉 codeseek 与用户配置的 server）。
+	// 次序在 Drain 之前：Manager 的 goroutine 属于它自己的域，等它先退干净，
+	// 根域剩下的才是真正的"故意不归任何一次任务管"的后台活。
+	if ca.mcpMgr != nil {
 		if ca.ForceQuit {
-			slog.Info("Force quitting CodeSeek MCP client...")
-			ca.globalCtx.CodeSeekMCP.ForceShutdown()
+			slog.Info("Force quitting MCP manager...")
+			ca.mcpMgr.ForceClose()
 		} else {
-			slog.Info("Shutting down CodeSeek MCP client...")
-			ca.globalCtx.CodeSeekMCP.Shutdown()
+			slog.Info("Shutting down MCP manager...")
+			ca.mcpMgr.Close()
 		}
 	}
 

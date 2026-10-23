@@ -2,6 +2,7 @@ package toolspec
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -59,6 +60,10 @@ type Spec struct {
 	Available func(*Deps) (bool, string)
 	// Describe 覆盖 schemas.json 里的 description（用于能力降级等动态文案）。nil = 用静态文案。
 	Describe func(*Deps) string
+	// Inline 是动态注册（外部 MCP 工具）自带的模型接口声明。
+	// 静态工具一律留空 —— 它们的 description/parameters 只在 schemas.json 里，
+	// 而 schemas.json 必须与静态注册表双向 1:1（Validate 会当场报错）。
+	Inline *Schema
 	// Build 产出执行器。必填。返回 error 表示依赖缺失，该工具被跳过。
 	Build func(*Deps) (ToolFunc, error)
 }
@@ -152,7 +157,8 @@ type SkippedTool struct {
 const maxBriefRunes = 40
 
 // Validate 自检整个注册表，返回全部问题（不 panic）。
-// 装配期调用：生产环境把问题打到日志并跳过对应工具，测试里直接 t.Fatal。
+// 装配期由 app.Init 调用：生产环境把问题逐条打进日志（构建期 bug 已由测试拦住，
+// 运行期退出只会让"配置坏了"和"代码坏了"混成同一个症状）；测试里直接 t.Fatal。
 func Validate() []string {
 	var problems []string
 	report := func(format string, args ...interface{}) {
@@ -217,6 +223,70 @@ func Validate() []string {
 	for _, name := range SchemaNames() {
 		if _, ok := Get(name); !ok {
 			problems = append(problems, fmt.Sprintf("%s: schemas.json 有声明但未注册 Spec", name))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// dynamicNamePattern 是外部工具名的合法形状：mcp__<server>__<tool>。
+// 总长 ≤ 64 是 provider 的 function name 上限；字符集是它允许的 ASCII 集。
+var dynamicNamePattern = regexp.MustCompile(`^mcp__[A-Za-z0-9_-]{1,59}$`)
+
+// ValidateDynamic 自检一批运行期动态规格（外部 MCP 工具）。
+// 与 Validate() 分开：动态规格不在 schemas.json 里，"声明 ↔ 实现双向 1:1"
+// 那条规则对它们不适用，而"必须有 Inline schema"是它们自己的硬要求。
+func ValidateDynamic(specs []*Spec) []string {
+	var problems []string
+	report := func(format string, args ...interface{}) {
+		problems = append(problems, fmt.Sprintf(format, args...))
+	}
+
+	for _, s := range specs {
+		if s == nil {
+			report("动态规格为 nil")
+			continue
+		}
+		label := s.Name
+		if label == "" {
+			label = "<unnamed>"
+		}
+		if !dynamicNamePattern.MatchString(s.Name) {
+			report("%s: 名字不合法（要求 mcp__ 前缀、[A-Za-z0-9_-]、总长 ≤ 64）", label)
+		}
+		if _, exists := Get(s.Name); s.Name != "" && exists {
+			report("%s: 动态规格不得与静态工具同名", s.Name)
+		}
+		if s.Effect == 0 {
+			report("%s: Effect 未声明（零值）", label)
+		}
+		if s.Build == nil {
+			report("%s: Build 未提供，执行器无从构造", label)
+		}
+		if s.Inline == nil {
+			report("%s: 动态规格必须自带 Inline schema（外部工具没有 schemas.json 兜底）", label)
+		} else {
+			if strings.TrimSpace(s.Inline.Description) == "" {
+				report("%s: Inline.Description 为空，模型会拿到一个没有说明的工具", label)
+			}
+			if s.Inline.Parameters == nil {
+				report("%s: Inline.Parameters 为空，等于声明一个无参工具", label)
+			}
+		}
+		if s.Frequency == Cold && len([]rune(s.Brief)) == 0 {
+			report("%s: Cold 档必须提供 Brief，否则 deferred 目录里无法呈现", label)
+		}
+		if s.Brief != "" && len([]rune(s.Brief)) > maxBriefRunes {
+			report("%s: Brief 长度 %d 超过上限 %d", label, len([]rune(s.Brief)), maxBriefRunes)
+		}
+		if s.Effect.Has(writeEffects) && !s.Mutates {
+			report("%s: 能力 %v 有副作用但 Mutates=false", label, s.Effect.Names())
+		}
+		if s.Effect.Has(authEffects) && !s.NeedsAuth {
+			report("%s: 能力 %v 需要用户授权但 NeedsAuth=false", label, s.Effect.Names())
+		}
+		if s.Trunc == TruncProtected && s.Mutates {
+			report("%s: TruncProtected 与 Mutates=true 冲突", label)
 		}
 	}
 	sort.Strings(problems)

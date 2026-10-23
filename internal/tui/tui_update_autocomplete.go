@@ -146,38 +146,11 @@ func (m *model) doSkillAutocomplete(text string, contentRunes []rune, cursor int
 	// 提取 '/' 之后的文本作为查询
 	query := text[lastSlash+1:]
 
-	// 构建匹配的技能列表
-	var matches []string
-	if m.assistant.SkillRegistry != nil {
-		allSkills := m.assistant.SkillRegistry.List()
-		matches = make([]string, 0, len(allSkills)+1)
-		for _, name := range allSkills {
-			if hasPrefixIgnoreCase(name, query) {
-				matches = append(matches, name)
-			}
-		}
-
-		// 添加 "history" 作为内置命令
-		if hasPrefixIgnoreCase("history", query) {
-			matches = append([]string{"history"}, matches...)
-		}
-
-		// 添加 "resume"/"rs" 作为内置命令（恢复会话）
-		if hasPrefixIgnoreCase("resume", query) {
-			matches = append(matches, "resume")
-		}
-		if hasPrefixIgnoreCase("rs", query) {
-			matches = append(matches, "rs")
-		}
-		// 暂停闸门（A 层）：与 resume 不是一回事 —— resume 是"换一棵 ctx 重新起跑"，
-		// pause/continue 是"同一棵 ctx 上停住再走"。
-		if hasPrefixIgnoreCase("pause", query) {
-			matches = append(matches, "pause")
-		}
-		if hasPrefixIgnoreCase("continue", query) {
-			matches = append(matches, "continue")
-		}
+	// 构建匹配列表：内置命令在前、技能在后（撞名时内置胜，见 skillCompletionItems）。
+	if m.skillCollisionWarned == nil {
+		m.skillCollisionWarned = map[string]bool{}
 	}
+	matches := skillCompletionItems(m.assistant.Skills(), query, m.skillCollisionWarned)
 
 	if len(matches) > 0 {
 		m.skillAutoComplete = true
