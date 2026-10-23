@@ -1,14 +1,6 @@
 package memory
 
-// rollout_reader_test.go — ReadRolloutMemory 单元测试（表驱动 + 独立场景）。
-//
-// fixture 均写入 t.TempDir()，手动构造 rollout JSONL 行（时间戳合法格式，
-// 行序模拟 executor 的写入顺序）。核心不变式助手 assertRolloutPairingInvariant
-// 遍历 mem.ToMessages() 校验 tool 配对完整性。
-//
-// 覆盖 R1~R16：消息重建与配对归一化（表驱动）、压缩双模式、tail-keep、截断、
-// 时间戳单调、重复 meta、SubAgent 标记，以及 R16 的运行态恢复（token_count 累计、
-// 结束/中断判定、步数与回合数、悬空工具调用、role=system 丢弃）。
+// fixture 一律写入 t.TempDir()，手写 rollout JSONL 行（时间戳合法格式，行序模拟 executor 的写入顺序）。
 
 import (
 	"encoding/json"
@@ -22,8 +14,6 @@ import (
 	"yagent/internal/llm"
 )
 
-// ─── fixture 行构造 ───
-
 const (
 	rrTs1 = "2025-06-01T10:00:00.000Z"
 	rrTs2 = "2025-06-01T10:00:01.000Z"
@@ -34,7 +24,6 @@ const (
 	rrTs7 = "2025-06-01T10:00:06.000Z"
 )
 
-// rrLine 生成一条 envelope 行。
 func rrLine(ts, typ, payload string) string {
 	if payload == "" {
 		payload = "{}"
@@ -42,54 +31,45 @@ func rrLine(ts, typ, payload string) string {
 	return `{"timestamp":"` + ts + `","type":"` + typ + `","payload":` + payload + `}`
 }
 
-// rrMeta session_meta payload。
 func rrMeta(sessionID, cwd, branch string) string {
 	return `{"session_id":"` + sessionID + `","cwd":"` + cwd + `","originator":"yagent","source":"cli","git":{"branch":"` + branch + `","sha":"abc1234"}}`
 }
 
-// rrTurnCtx turn_context payload。
 func rrTurnCtx(model, cwd string) string {
 	return `{"turn_id":"t1","cwd":"` + cwd + `","model":"` + model + `"}`
 }
 
-// rrUserItem user message payload。
 func rrUserItem(id, text string) string {
 	return `{"type":"message","role":"user","id":"` + id + `","content":[{"type":"input_text","text":"` + text + `"}]}`
 }
 
-// rrAssistantItem assistant message payload。
 func rrAssistantItem(id, text string) string {
 	return `{"type":"message","role":"assistant","id":"` + id + `","content":[{"type":"output_text","text":"` + text + `"}]}`
 }
 
-// rrCallItem function_call payload（args 为内联 JSON 字符串内容）。
+// args 为内联 JSON 字符串内容。
 func rrCallItem(callID, name, argsJSONStr string) string {
 	return `{"type":"function_call","id":"fc_` + callID + `","call_id":"` + callID + `","name":"` + name + `","namespace":"","arguments":"` + argsJSONStr + `"}`
 }
 
-// rrCallItemNS function_call payload（带 namespace）。
 func rrCallItemNS(callID, name, namespace, argsJSONStr string) string {
 	return `{"type":"function_call","id":"fc_` + callID + `","call_id":"` + callID + `","name":"` + name + `","namespace":"` + namespace + `","arguments":"` + argsJSONStr + `"}`
 }
 
-// rrCallOutItem function_call_output payload（outputRaw 为 output 字段的 JSON 值，
-// 按真实 rollout 形态双重编码为 JSON 字符串后放入 output 字段）。
+// outputRaw 按真实 rollout 形态双重编码为 JSON 字符串后放入 output 字段。
 func rrCallOutItem(callID, outputRaw string) string {
-	encoded, _ := json.Marshal(outputRaw) // 把 JSON 值编码为字符串
+	encoded, _ := json.Marshal(outputRaw)
 	return `{"type":"function_call_output","call_id":"` + callID + `","output":` + string(encoded) + `}`
 }
 
-// rrReasoningItem reasoning payload。
 func rrReasoningItem(summaryText string) string {
 	return `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"` + summaryText + `"}],"content":null,"encrypted_content":"enc-abc"}`
 }
 
-// rrCompacted compacted payload。
 func rrCompacted(summary string) string {
 	return `{"summary":"` + summary + `","tokens_before":100,"tokens_after":40}`
 }
 
-// writeRolloutFixture 写入 fixture 文件（t.TempDir 下）并返回路径。
 func writeRolloutFixture(t *testing.T, name string, lines []string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
@@ -100,11 +80,7 @@ func writeRolloutFixture(t *testing.T, name string, lines []string) string {
 	return path
 }
 
-// ─── 核心不变式断言 ───
-
-// assertRolloutPairingInvariant 校验恢复出的对话满足 tool 配对不变式：
-//   - 每条 tool 消息之前必须存在包含其 call_id 的 assistant ToolCalls；
-//   - 每条 assistant ToolCall 的 id，其后（到下一条非 tool 消息之前）必须有对应 tool 消息。
+// assertRolloutPairingInvariant 校验恢复出的对话满足 tool 配对不变式：每条 tool 消息之前必须存在包含其 call_id 的 assistant ToolCalls，且每条 assistant ToolCall 其后（到下一条非 tool 消息之前）必须有对应 tool 消息。
 func assertRolloutPairingInvariant(t *testing.T, mem *ConversationMemory) {
 	t.Helper()
 	msgs := mem.ToMessages()
@@ -142,9 +118,6 @@ func assertRolloutPairingInvariant(t *testing.T, mem *ConversationMemory) {
 	}
 }
 
-// ─── 表驱动主测试 ───
-
-// rolloutCase 表驱动场景。
 type rolloutCase struct {
 	name  string
 	lines []string
@@ -163,7 +136,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 
 	cases := []rolloutCase{
 		{
-			// ① user/assistant 往返 + event_msg/world_state/turn_context 均不进消息
+			// event_msg/world_state/turn_context 均不进消息
 			name: "user_assistant_roundtrip",
 			lines: baseLines(
 				rrLine(rrTs2, "turn_context", rrTurnCtx("test-model", "/repo")),
@@ -188,7 +161,6 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				if m1.Type != MessageTypeAssistant || m1.Content != "你好，世界" {
 					t.Fatalf("msg1 = %+v, want assistant", m1)
 				}
-				// 身份提取（R1/R2）
 				if info.SessionID != "sess-1" || info.CWD != "/repo" || info.Originator != "yagent" ||
 					info.Source != "cli" || info.GitBranch != "main" || info.GitSHA != "abc1234" {
 					t.Fatalf("identity info = %+v", info)
@@ -206,7 +178,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ② 单 call 配对 + 嵌套 output 解析 + exit_code/duration 落 Metadata + 多部件 fallback 见后续 case
+			// exit_code/duration 落 Metadata；多部件 fallback 见后续 case
 			name: "single_call_pairing_nested_output",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrUserItem("u1", "read it")),
@@ -247,7 +219,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ③ 多个连续 call 挂同一条 assistant，输出顺序保留
+			// 输出顺序保留
 			name: "multi_call_same_assistant",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrAssistantItem("a1", "running batch")),
@@ -276,7 +248,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ④ 无前导 assistant 的 call → 合成空 assistant（SyntheticOutputs 不计）
+			// → 合成空 assistant，且不计入 SyntheticOutputs
 			name: "call_without_leading_assistant",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrCallItem("c1", "solo_tool", `{}`)),
@@ -304,7 +276,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ⑤ 文件尾悬空 call → 合成 tool 占位（SyntheticOutputs==1）
+			// 文件尾悬空 call → 合成 tool 占位，SyntheticOutputs==1
 			name: "dangling_call_at_eof",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrUserItem("u1", "go")),
@@ -312,7 +284,6 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 				rrLine(rrTs5, "response_item", rrCallItem("c1", "tool1", `{}`)),
 				rrLine(rrTs5, "response_item", rrCallOutItem("c1", `"ok"`)),
 				rrLine(rrTs6, "response_item", rrAssistantItem("a2", "step two")),
-				// c2 有 call 无 output —— 模拟崩溃中断
 				rrLine(rrTs7, "response_item", rrCallItem("c2", "tool2", `{}`)),
 			),
 			opts: opts,
@@ -337,7 +308,6 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ⑥ 孤儿输出 → 丢弃
 			name: "orphan_output_dropped",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrUserItem("u1", "hi")),
@@ -361,7 +331,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ⑦ 同一 call_id 多条输出 → **保留最后一条**（原位覆盖，与 llm 侧 map 语义一致）
+			// 同一 call_id 多条输出 → **保留最后一条**（原位覆盖，与 llm 侧 map 语义一致）
 			name: "duplicate_output_keep_last",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrAssistantItem("a1", "call")),
@@ -390,9 +360,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ⑦b 覆盖窗口只在同一个 call 组内：组被下一条 assistant 闭掉之后，
-			// 同 id 的后到输出仍是孤儿。不钉这条，last-wins 会退化成"全局 last-wins"，
-			// 一个属于第 5 轮的结果就能改写第 1 轮的 output。
+			// 覆盖窗口只在同一个 call 组内：不钉这条，last-wins 会退化成全局 last-wins，一个属于第 5 轮的结果就能改写第 1 轮的 output。
 			name: "duplicate_after_group_close_is_orphan",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrAssistantItem("a1", "call")),
@@ -420,11 +388,10 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ⑧ 尾部崩溃半行/坏 JSON → 容忍计数
 			name: "bad_tail_line_tolerated",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrUserItem("u1", "hi")),
-				`{"timestamp":"`+rrTs4+`","type":"response_item","paylo`, // 崩溃半行
+				`{"timestamp":"`+rrTs4+`","type":"response_item","paylo`,
 			),
 			opts: opts,
 			check: func(t *testing.T, mem *ConversationMemory, info RolloutInfo, err error) {
@@ -441,7 +408,6 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ⑨ 未知 envelope type / 未知 response_item 子类型 → 跳过
 			name: "unknown_types_skipped",
 			lines: baseLines(
 				rrLine(rrTs3, "mystery_type", `{"whatever":1}`),
@@ -463,7 +429,6 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ⑩ reasoning 跳过计数 + AttachReasoningSummary 挂载
 			name: "reasoning_summary_attach",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrReasoningItem("我说了要思考")),
@@ -485,7 +450,6 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// ⑩b reasoning 跳过但不挂载（默认）
 			name: "reasoning_not_attached_by_default",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrReasoningItem("hidden")),
@@ -505,7 +469,6 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// 多部件 input_text + 回退拼接
 			name: "user_multi_part_and_fallback",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", `{"type":"message","role":"user","id":"u1","content":[{"type":"input_text","text":"part-a"},{"type":"input_text","text":"part-b"}]}`),
@@ -521,7 +484,6 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// 无 input_text 部件 → 回退拼接所有 text
 			name: "user_fallback_all_text",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", `{"type":"message","role":"user","id":"u1","content":[{"type":"image","text":"pic-1"},{"type":"misc","text":"txt-2"}]}`),
@@ -537,7 +499,7 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// namespace 非空 → 存 Metadata，不污染 name
+			// 存 Metadata，不污染 name
 			name: "tool_namespace_metadata",
 			lines: baseLines(
 				rrLine(rrTs3, "response_item", rrAssistantItem("a1", "with ns")),
@@ -560,7 +522,6 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 			},
 		},
 		{
-			// turn_context 最新值生效（两个 turn_context，model m2 覆盖 m1）
 			name: "turn_context_latest_wins",
 			lines: baseLines(
 				rrLine(rrTs2, "turn_context", rrTurnCtx("model-m1", "/repo1")),
@@ -592,16 +553,12 @@ func TestReadRolloutMemory_Table(t *testing.T) {
 	}
 }
 
-// ─── ⑫ 空文件 / 仅 meta ───
-
 func TestReadRolloutMemory_EmptyAndMetaOnly(t *testing.T) {
-	// 空文件 → 明确错误
 	empty := writeRolloutFixture(t, "empty.jsonl", nil)
 	if mem, info, err := ReadRolloutMemory(empty, DefaultRolloutReadOptions()); err == nil {
 		t.Fatalf("empty rollout should error, got mem=%v info=%+v", mem, info)
 	}
 
-	// 仅有 meta（无任何消息）→ 明确错误，不 panic
 	onlyMeta := writeRolloutFixture(t, "meta-only.jsonl", []string{
 		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
 	})
@@ -616,8 +573,6 @@ func TestReadRolloutMemory_EmptyAndMetaOnly(t *testing.T) {
 		t.Fatalf("info.Entries = %d, want 1", info.Entries)
 	}
 }
-
-// ─── ⑪ compacted 双模式 ───
 
 func TestReadRolloutMemory_CompactedModes(t *testing.T) {
 	lines := []string{
@@ -675,8 +630,6 @@ func TestReadRolloutMemory_CompactedModes(t *testing.T) {
 	}
 }
 
-// ─── ⑭ MaxMessages tail-keep ───
-
 func TestReadRolloutMemory_MaxMessagesTailKeep(t *testing.T) {
 	// 3 轮完整 call→out（6 条消息），上限 4 → 保留 [A2,T2,A3,T3]，配对仍完整
 	var lines []string
@@ -708,15 +661,12 @@ func TestReadRolloutMemory_MaxMessagesTailKeep(t *testing.T) {
 	assertRolloutPairingInvariant(t, mem)
 }
 
-// callIDForRound 生成轮次 call_id（c-round-N）。
 func callIDForRound(round int) string {
 	return "c-round-" + strconv.Itoa(round)
 }
 
-// TestReadRolloutMemory_MaxMessagesTruncateSynthesizes 截头产生悬空 call / 孤儿输出后的归一化。
 func TestReadRolloutMemory_MaxMessagesTruncateSynthesizes(t *testing.T) {
-	// [U, A(c1), T1, A(c2)] 上限 2 → 截头保留 [T1, A(c2)]：
-	//   T1 无前导 assistant → 孤儿丢弃；c2 无输出 → 合成占位 → [A2, T合]
+	// 上限 2 → 截头保留 [T1, A(c2)]：T1 成孤儿丢弃、c2 合成占位 → [A2, T合]
 	lines := []string{
 		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
 		rrLine(rrTs2, "response_item", rrUserItem("u1", "hi")),
@@ -747,8 +697,6 @@ func TestReadRolloutMemory_MaxMessagesTruncateSynthesizes(t *testing.T) {
 	}
 	assertRolloutPairingInvariant(t, mem)
 }
-
-// ─── ⑮ 大工具输出截断 + output 非字符串重序列化 ───
 
 func TestReadRolloutMemory_ToolOutputTruncation(t *testing.T) {
 	big := strings.Repeat("x", 100)
@@ -808,8 +756,6 @@ func TestReadRolloutMemory_ToolOutputTruncation(t *testing.T) {
 	assertRolloutPairingInvariant(t, mem3)
 }
 
-// ─── ⑬ 时间戳单调 ───
-
 func TestReadRolloutMemory_TimestampMonotonic(t *testing.T) {
 	lines := []string{
 		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
@@ -841,8 +787,6 @@ func TestReadRolloutMemory_TimestampMonotonic(t *testing.T) {
 	}
 }
 
-// ─── ⑯ 多 session_meta 容忍 ───
-
 func TestReadRolloutMemory_DuplicateSessionMeta(t *testing.T) {
 	// 续写场景：文件中再次出现 meta（不同 sessionID/cwd）——首个为基准，消息不重复
 	lines := []string{
@@ -865,10 +809,7 @@ func TestReadRolloutMemory_DuplicateSessionMeta(t *testing.T) {
 	assertRolloutPairingInvariant(t, mem)
 }
 
-// ─── R16 event_msg 运行态恢复 ───
-
-// rrTokenCount token_count 事件 payload（形状对齐 RolloutWriter.WriteTokenCount：
-// total_token_usage 为累计值，last_token_usage 为本次调用值）。
+// rrTokenCount 的形状对齐 RolloutWriter.WriteTokenCount：total_token_usage 是累计值，last_token_usage 是本次调用值。
 func rrTokenCount(in, cached, out, total, lastIn, lastCached int64) string {
 	return `{"type":"token_count","info":{` +
 		`"total_token_usage":{"input_tokens":` + strconv.FormatInt(in, 10) +
@@ -885,8 +826,7 @@ func rrSystemItem(id, text string) string {
 	return `{"type":"message","role":"system","id":"` + id + `","content":[{"type":"input_text","text":"` + text + `"}]}`
 }
 
-// TestReadRolloutMemory_TokenCountRestore token_count 恢复为累计用量：
-// total_token_usage 是写侧已累计的值，多条事件必须「后到者胜」而非再次累加。
+// token_count 恢复的是写侧已累计的用量：多条事件必须「后到者胜」而非再次累加。
 func TestReadRolloutMemory_TokenCountRestore(t *testing.T) {
 	lines := []string{
 		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
@@ -911,11 +851,7 @@ func TestReadRolloutMemory_TokenCountRestore(t *testing.T) {
 	}
 }
 
-// TestReadRolloutMemory_FinishState 结束状态三态判定。
-//
-// 存量文件里终止事件大面积缺失（executor 曾把 task_complete 写入包在
-// cfg.OnAgentExit != nil 条件内），故「无终止事件」不能直接等于「中断」：
-// 还要看有没有悬空工具调用、末条是不是最终答复。
+// 存量文件里终止事件大面积缺失（executor 曾把 task_complete 写入包在 cfg.OnAgentExit != nil 条件内），故「无终止事件」不能直接等于「中断」：还要看有没有悬空工具调用、末条是不是最终答复。
 func TestReadRolloutMemory_FinishState(t *testing.T) {
 	base := []string{
 		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
@@ -957,8 +893,7 @@ func TestReadRolloutMemory_FinishState(t *testing.T) {
 	})
 
 	t.Run("no_terminal_event_but_final_answer", func(t *testing.T) {
-		// 存量文件常态：终止事件从未写入，但末条 assistant 已给出最终答复 → 判完成，
-		// 不能误报为中断（否则续跑确认框会在正常会话上弹出）
+		// 存量文件常态：终止事件从未写入但末条已给出最终答复 → 判完成；误报成中断会让续跑确认框在正常会话上弹出
 		info := read(t, "legacy-complete.jsonl", base)
 		if info.Finished || info.Aborted {
 			t.Fatalf("evidence = %+v, want no terminal event", info)
@@ -972,7 +907,6 @@ func TestReadRolloutMemory_FinishState(t *testing.T) {
 	})
 
 	t.Run("no_terminal_event_with_dangling_call", func(t *testing.T) {
-		// 崩在工具执行中：无终止事件 + 悬空 call → 中断
 		lines := []string{
 			rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
 			rrLine(rrTs2, "event_msg", `{"type":"task_started"}`),
@@ -1008,8 +942,7 @@ func TestReadRolloutMemory_FinishState(t *testing.T) {
 	})
 }
 
-// TestReadRolloutMemory_StepAndTurnCount 步数近似值：Director 文件用 AssistantTurns，
-// sub-agent 文件用 sub_agent_activity 的 MaxStepObserved。
+// 步数近似值：Director 文件用 AssistantTurns，sub-agent 文件用 sub_agent_activity 的 MaxStepObserved。
 func TestReadRolloutMemory_StepAndTurnCount(t *testing.T) {
 	lines := []string{
 		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
@@ -1018,7 +951,7 @@ func TestReadRolloutMemory_StepAndTurnCount(t *testing.T) {
 		rrLine(rrTs4, "event_msg", `{"type":"sub_agent_activity","step_number":2,"tool_name":"read_file","success":true}`),
 		rrLine(rrTs5, "response_item", rrCallItem("c1", "read_file", `{}`)),
 		rrLine(rrTs6, "response_item", rrCallOutItem("c1", `"body"`)),
-		// 无正文的 assistant（仅 tool_calls，由 R5 合成）同样代表一次真实回合
+		// 无正文的 assistant（仅 tool_calls，由读侧合成）同样代表一次真实回合
 		rrLine(rrTs6, "response_item", rrCallItem("c2", "list_dir", `{}`)),
 		rrLine(rrTs7, "response_item", rrCallOutItem("c2", `"files"`)),
 		rrLine(rrTs7, "event_msg", `{"type":"task_complete"}`),
@@ -1040,8 +973,7 @@ func TestReadRolloutMemory_StepAndTurnCount(t *testing.T) {
 	}
 }
 
-// TestReadRolloutMemory_LastUserInputIsLastTurn 写侧每轮重写完整历史，
-// LastUserInput 必须取最后一条 user（= 本轮任务目标），而非首条。
+// 写侧每轮重写完整历史，所以 LastUserInput 必须取最后一条 user（= 本轮任务目标），而非首条。
 func TestReadRolloutMemory_LastUserInputIsLastTurn(t *testing.T) {
 	lines := []string{
 		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
@@ -1060,8 +992,7 @@ func TestReadRolloutMemory_LastUserInputIsLastTurn(t *testing.T) {
 	}
 }
 
-// TestReadRolloutMemory_DanglingToolCalls 悬空 call 除计数外还要留下 id+name，
-// 供 TUI 时间线标记与续跑提示使用。
+// 悬空 call 除计数外还要留下 id+name，供 TUI 时间线标记与续跑提示使用。
 func TestReadRolloutMemory_DanglingToolCalls(t *testing.T) {
 	lines := []string{
 		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
@@ -1070,7 +1001,6 @@ func TestReadRolloutMemory_DanglingToolCalls(t *testing.T) {
 		rrLine(rrTs4, "response_item", rrCallItem("c1", "read_file", `{}`)),
 		rrLine(rrTs5, "response_item", rrCallItem("c2", "run_bash", `{}`)),
 		rrLine(rrTs6, "response_item", rrCallOutItem("c1", `"ok"`)),
-		// c2 无输出 → 悬空
 	}
 	path := writeRolloutFixture(t, "dangling.jsonl", lines)
 	_, info, err := ReadRolloutMemory(path, DefaultRolloutReadOptions())
@@ -1088,8 +1018,6 @@ func TestReadRolloutMemory_DanglingToolCalls(t *testing.T) {
 		t.Fatalf("dangling call = %+v, want {c2 run_bash}", got)
 	}
 }
-
-// ─── role=system 消息处理（默认丢弃 / 显式保留） ───
 
 func TestReadRolloutMemory_SystemMessageDroppedByDefault(t *testing.T) {
 	lines := []string{
@@ -1117,7 +1045,6 @@ func TestReadRolloutMemory_SystemMessageDroppedByDefault(t *testing.T) {
 		t.Fatalf("SkippedSystemMessages = %d, want 1", info.SkippedSystemMessages)
 	}
 
-	// KeepSystemMessages：对称恢复
 	keepOpts := DefaultRolloutReadOptions()
 	keepOpts.KeepSystemMessages = true
 	path2 := writeRolloutFixture(t, "sys-keep.jsonl", lines)
@@ -1133,8 +1060,7 @@ func TestReadRolloutMemory_SystemMessageDroppedByDefault(t *testing.T) {
 	}
 }
 
-// TestReadRolloutMemory_SystemPromptOnlyFile 仅有 system prompt 的文件在默认选项下
-// 恢复不出消息 → 走既有的零消息错误路径，不 panic。
+// 仅有 system prompt 的文件在默认选项下恢复不出消息 → 走既有的零消息错误路径，不 panic。
 func TestReadRolloutMemory_SystemPromptOnlyFile(t *testing.T) {
 	lines := []string{
 		rrLine(rrTs1, "session_meta", rrMeta("sess-1", "/repo", "main")),
@@ -1153,8 +1079,6 @@ func TestReadRolloutMemory_SystemPromptOnlyFile(t *testing.T) {
 		t.Fatalf("info = %+v", info)
 	}
 }
-
-// ─── R13 SubAgent 文件级标记 ───
 
 func TestReadRolloutMemory_SubAgentFlag(t *testing.T) {
 	lines := []string{

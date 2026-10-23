@@ -14,14 +14,12 @@ import (
 	"yagent/internal/llm"
 )
 
-// ─── TestResponseItemMarshal ───
-
 func TestResponseItemMarshal(t *testing.T) {
 	tests := []struct {
 		name        string
 		item        ResponseItem
-		contains    []string // expected substrings in JSON output
-		notContains []string // unexpected substrings
+		contains    []string
+		notContains []string
 	}{
 		{
 			name: "message user",
@@ -151,8 +149,6 @@ func TestResponseItemMarshal(t *testing.T) {
 	}
 }
 
-// ─── TestEventMsgMarshal ───
-
 func TestEventMsgMarshal(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -279,8 +275,6 @@ func TestEventMsgMarshal(t *testing.T) {
 	}
 }
 
-// ─── TestLLMMessageToResponseItems ───
-
 func TestLLMMessageToResponseItems(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -389,7 +383,6 @@ func TestLLMMessageToResponseItems(t *testing.T) {
 					t.Errorf("item[%d]: expected type %q, got %q", i, tt.wantTypes[i], item.Type)
 				}
 			}
-			// Verify JSON output for content checks per item
 			for i, item := range got {
 				b, err := json.Marshal(item)
 				if err != nil {
@@ -406,8 +399,6 @@ func TestLLMMessageToResponseItems(t *testing.T) {
 	}
 }
 
-// ─── TestChatMessageToResponseItems ───
-
 func TestChatMessageToResponseItems(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -415,7 +406,7 @@ func TestChatMessageToResponseItems(t *testing.T) {
 		msgID        string
 		wantCount    int
 		wantTypes    []string
-		wantContents [][]string // per-item expected content substrings
+		wantContents [][]string
 	}{
 		{
 			name:      "system message",
@@ -513,14 +504,7 @@ func TestChatMessageToResponseItems(t *testing.T) {
 	}
 }
 
-// ─── TestRolloutWriter ───
-
-// isolateRolloutHome 把 rollout 根目录隔离到 t.TempDir()。
-//
-// NewRolloutWriter 的输出路径由 $HOME 派生（RolloutRootDir → homeDirOrFallback），
-// 不隔离会让测试文件直接写进生产目录 ~/.yagent/data/rollout。该目录实测已积累 2000+
-// 文件、其中 400+ 是测试残留，而 TUI /resume 只按 mtime 倒序取前 200 条展示——
-// 测试垃圾会把真实会话挤出列表。
+// isolateRolloutHome 把 rollout 根目录隔离到 t.TempDir() —— 输出路径由 $HOME 派生（RolloutRootDir → homeDirOrFallback），不隔离就会把测试残留写进 ~/.yagent/data/rollout，而 TUI /resume 只按 mtime 倒序取前 200 条，测试垃圾会把真实会话挤出列表。
 func isolateRolloutHome(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
@@ -541,7 +525,6 @@ func TestRolloutWriter(t *testing.T) {
 		t.Fatal("expected non-empty file path")
 	}
 
-	// Write SessionMeta
 	meta := SessionMeta{
 		ID:               "sess-001",
 		SessionID:        "sess-001",
@@ -563,7 +546,6 @@ func TestRolloutWriter(t *testing.T) {
 		t.Fatalf("WriteSessionMeta error: %v", err)
 	}
 
-	// Write TurnContext
 	tc := TurnContext{
 		TurnID:            writer.NextTurn(),
 		Cwd:               "/tmp/test",
@@ -579,19 +561,14 @@ func TestRolloutWriter(t *testing.T) {
 		t.Fatalf("WriteTurnContext error: %v", err)
 	}
 
-	// Write ResponseItems
 	items := []ResponseItem{
-		// user message
 		{Type: "message", Role: "user", ID: writer.NextMessageID(), Content: []MessageContentItem{{Type: "input_text", Text: "hello"}}},
-		// assistant message (plain)
 		{Type: "message", Role: "assistant", ID: writer.NextMessageID(), Content: []MessageContentItem{{Type: "output_text", Text: "Hi there!"}}},
-		// function call
 		{
 			Type: "function_call", ID: writer.NextMessageID() + "_fc_0",
 			CallID: "call-123", Name: "shell", Namespace: "default",
 			Arguments: `{"command":"ls"}`,
 		},
-		// function_call_output
 		{
 			Type: "function_call_output", CallID: "call-123",
 			Output: `{"output":"file1\nfile2","metadata":{"exit_code":0,"duration_seconds":0}}`,
@@ -603,7 +580,6 @@ func TestRolloutWriter(t *testing.T) {
 		}
 	}
 
-	// Write EventMsgs
 	events := []EventMsg{
 		{Type: "task_started"},
 		{Type: "task_complete"},
@@ -616,7 +592,6 @@ func TestRolloutWriter(t *testing.T) {
 		}
 	}
 
-	// Write Compacted
 	compacted := CompactedPayload{
 		Summary:      "Compressed history",
 		TokensBefore: 5000,
@@ -626,15 +601,12 @@ func TestRolloutWriter(t *testing.T) {
 		t.Fatalf("WriteCompacted error: %v", err)
 	}
 
-	// world_state / inter_agent_communication_metadata 两类记录在 2026-10-14 删掉了写入侧
-	// （无生产调用方）。读侧对这两类记录、以及任何未知类型的容忍度仍由
-	// rollout_reader_test.go 钉住 —— /resume 会读到老二进制留下的文件，那条契约不能丢。
+	// world_state / inter_agent_communication_metadata 的写入侧已于 2026-10-14 删除（无生产调用方）；读侧对这两类记录及任何未知类型的容忍仍由 rollout_reader_test.go 钉住——/resume 会读到老二进制留下的文件。
 
 	if err := writer.Close(); err != nil {
 		t.Fatalf("Close error: %v", err)
 	}
 
-	// Read and validate
 	f, err := os.Open(filePath)
 	if err != nil {
 		t.Fatalf("Failed to open file: %v", err)
@@ -651,9 +623,7 @@ func TestRolloutWriter(t *testing.T) {
 		t.Fatal("expected non-empty file")
 	}
 
-	// 信封格式（timestamp 形态、type 白名单、恰好三个顶层字段、首条是 session_meta）
-	// 由 TestRolloutEnvelopeFormat 统一钉住；这里只保证写出来的每一行都是可读的回执信封，
-	// 不再重复一遍校验规则。
+	// 信封格式（timestamp 形态、type 白名单、恰好三个顶层字段、首条是 session_meta）由 TestRolloutEnvelopeFormat 统一钉住，这里只保证每行都是可解析的回执信封。
 	for i, line := range lines {
 		var envelope RolloutEnvelope
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
@@ -661,7 +631,6 @@ func TestRolloutWriter(t *testing.T) {
 		}
 	}
 
-	// Verify session_meta content
 	var env RolloutEnvelope
 	json.Unmarshal([]byte(lines[0]), &env)
 	smMap, ok := env.Payload.(map[string]interface{})
@@ -677,8 +646,6 @@ func TestRolloutWriter(t *testing.T) {
 
 	t.Logf("Wrote %d records to %s", len(lines), filePath)
 }
-
-// ─── TestRolloutWriterThreadSafety ───
 
 func TestRolloutWriterThreadSafety(t *testing.T) {
 	isolateRolloutHome(t)
@@ -733,7 +700,6 @@ func TestRolloutWriterThreadSafety(t *testing.T) {
 		t.Errorf("expected %d lines, got %d", expectedLines, len(lines))
 	}
 
-	// Verify each line is valid JSON
 	for i, line := range lines {
 		var envelope RolloutEnvelope
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
@@ -744,8 +710,6 @@ func TestRolloutWriterThreadSafety(t *testing.T) {
 	t.Logf("Thread safety test: wrote %d records, verified %d lines", expectedLines, len(lines))
 }
 
-// ─── TestRolloutWriterContext ───
-
 func TestRolloutWriterContext(t *testing.T) {
 	isolateRolloutHome(t)
 	writer, err := NewRolloutWriter("test-agent", "test-task-ctx", "test-project")
@@ -754,7 +718,6 @@ func TestRolloutWriterContext(t *testing.T) {
 	}
 	defer writer.Close()
 
-	// Test normal injection and retrieval
 	ctx := context.Background()
 	if GetRolloutWriter(ctx) != nil {
 		t.Fatal("expected nil writer from empty context")
@@ -769,21 +732,17 @@ func TestRolloutWriterContext(t *testing.T) {
 		t.Fatal("retrieved writer is not the same as injected writer")
 	}
 
-	// Test nil writer injection
 	ctxWithNil := WithRolloutWriter(ctx, nil)
 	if GetRolloutWriter(ctxWithNil) != nil {
 		t.Fatal("expected nil writer after injecting nil")
 	}
 
-	// Test disabled writer
 	disabledWriter := &RolloutWriter{enabled: false}
 	ctxWithDisabled := WithRolloutWriter(ctx, disabledWriter)
 	if GetRolloutWriter(ctxWithDisabled) != nil {
 		t.Fatal("expected nil writer after injecting disabled writer")
 	}
 }
-
-// ─── TestRolloutEnvelopeFormat ───
 
 func TestRolloutEnvelopeFormat(t *testing.T) {
 	isolateRolloutHome(t)
@@ -792,8 +751,6 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 		t.Fatalf("NewRolloutWriter error: %v", err)
 	}
 
-	// Write a complete session sequence
-	// 1. session_meta
 	writer.WriteSessionMeta(SessionMeta{
 		ID:               "sess-abc",
 		SessionID:        "sess-abc",
@@ -807,7 +764,6 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 		HistoryMode:      "full",
 	})
 
-	// 2. turn_context
 	writer.WriteTurnContext(TurnContext{
 		TurnID:            writer.NextTurn(),
 		Cwd:               "/tmp/test",
@@ -818,10 +774,8 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 		CollaborationMode: "single",
 	})
 
-	// 3. task_started event
 	writer.WriteEventMsg(EventMsg{Type: "task_started"})
 
-	// 4. user message
 	userID := writer.NextMessageID()
 	writer.WriteResponseItem(ResponseItem{
 		Type:    "message",
@@ -830,7 +784,6 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 		Content: []MessageContentItem{{Type: "input_text", Text: "What is Go?"}},
 	})
 
-	// 5. assistant message
 	assistID := writer.NextMessageID()
 	writer.WriteResponseItem(ResponseItem{
 		Type:    "message",
@@ -839,7 +792,6 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 		Content: []MessageContentItem{{Type: "output_text", Text: "Go is a statically typed, compiled programming language."}},
 	})
 
-	// 6. function call
 	fcID := writer.NextMessageID()
 	writer.WriteResponseItem(ResponseItem{
 		Type:      "function_call",
@@ -850,14 +802,12 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 		Arguments: `{"command":"go version"}`,
 	})
 
-	// 7. function_call_output
 	writer.WriteResponseItem(ResponseItem{
 		Type:   "function_call_output",
 		CallID: "tool-call-001",
 		Output: `{"output":"go version go1.22.0 linux/amd64","metadata":{"exit_code":0,"duration_seconds":0.01}}`,
 	})
 
-	// 8. task_complete event
 	writer.WriteEventMsg(EventMsg{Type: "task_complete"})
 
 	if err := writer.Close(); err != nil {
@@ -893,7 +843,6 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 	iso8601Re := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z$`)
 
 	for i, line := range lines {
-		// Check top-level has exactly 3 fields: timestamp, type, payload
 		var raw map[string]interface{}
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			t.Fatalf("line %d: invalid JSON: %v", i, err)
@@ -911,7 +860,6 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 			t.Errorf("line %d: missing 'payload' field", i)
 		}
 
-		// Validate timestamp format
 		ts, ok := raw["timestamp"].(string)
 		if !ok || ts == "" {
 			t.Errorf("line %d: invalid timestamp", i)
@@ -920,7 +868,6 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 			t.Errorf("line %d: timestamp %q is not valid ISO8601", i, ts)
 		}
 
-		// Validate type
 		typ, ok := raw["type"].(string)
 		if !ok || typ == "" {
 			t.Errorf("line %d: invalid type", i)
@@ -929,26 +876,22 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 			t.Errorf("line %d: unknown type %q", i, typ)
 		}
 
-		// Validate payload is not null
 		if raw["payload"] == nil {
 			t.Errorf("line %d: payload is nil", i)
 		}
 	}
 
-	// Verify first line is session_meta
 	var first RolloutEnvelope
 	json.Unmarshal([]byte(lines[0]), &first)
 	if first.Type != "session_meta" {
 		t.Errorf("expected first record to be session_meta, got %q", first.Type)
 	}
 
-	// Verify last line is task_complete
 	var last RolloutEnvelope
 	json.Unmarshal([]byte(lines[len(lines)-1]), &last)
 	if last.Type != "event_msg" {
 		t.Errorf("expected last record to be event_msg, got %q", last.Type)
 	}
-	// Verify the event_msg payload is task_complete
 	var lastEvent EventMsg
 	lastPayload, _ := json.Marshal(last.Payload)
 	json.Unmarshal(lastPayload, &lastEvent)
@@ -959,8 +902,6 @@ func TestRolloutEnvelopeFormat(t *testing.T) {
 	t.Logf("Envelope format test passed: %d records, first=%s, last=%s", len(lines), first.Type, last.Type)
 }
 
-// ─── TestRolloutWriterTokenCount ───
-
 func TestRolloutWriterTokenCount(t *testing.T) {
 	isolateRolloutHome(t)
 	writer, err := NewRolloutWriter("test-agent", "test-task-token", "test-project")
@@ -968,7 +909,6 @@ func TestRolloutWriterTokenCount(t *testing.T) {
 		t.Fatalf("NewRolloutWriter error: %v", err)
 	}
 
-	// 第一次 token_count 调用
 	usage1 := &llm.TokenUsage{
 		PromptTokens:             100,
 		CompletionTokens:         50,
@@ -980,7 +920,6 @@ func TestRolloutWriterTokenCount(t *testing.T) {
 		t.Fatalf("WriteTokenCount(1) error: %v", err)
 	}
 
-	// 第二次 token_count 调用
 	usage2 := &llm.TokenUsage{
 		PromptTokens:             200,
 		CompletionTokens:         80,
@@ -996,7 +935,6 @@ func TestRolloutWriterTokenCount(t *testing.T) {
 		t.Fatalf("Close error: %v", err)
 	}
 
-	// 读取并验证
 	filePath := writer.FilePath()
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -1010,7 +948,6 @@ func TestRolloutWriterTokenCount(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
-	// 应有 2 条 token_count 记录
 	var tokenCountLines []string
 	for _, line := range lines {
 		var envelope RolloutEnvelope
@@ -1026,7 +963,6 @@ func TestRolloutWriterTokenCount(t *testing.T) {
 		t.Fatalf("expected 2 token_count event_msg records, got %d", len(tokenCountLines))
 	}
 
-	// 验证第一条
 	var firstEnvelope RolloutEnvelope
 	json.Unmarshal([]byte(tokenCountLines[0]), &firstEnvelope)
 	firstEvent, _ := json.Marshal(firstEnvelope.Payload)
@@ -1051,7 +987,6 @@ func TestRolloutWriterTokenCount(t *testing.T) {
 		t.Errorf("first: expected last cached_input_tokens=30, got %v", firstLastUsage["cached_input_tokens"])
 	}
 
-	// 验证第二条（累计）
 	var secondEnvelope RolloutEnvelope
 	json.Unmarshal([]byte(tokenCountLines[1]), &secondEnvelope)
 	secondEvent, _ := json.Marshal(secondEnvelope.Payload)
@@ -1085,8 +1020,6 @@ func TestRolloutWriterTokenCount(t *testing.T) {
 	t.Logf("Token count test passed: %d token_count records, cumulative totals verified", len(tokenCountLines))
 }
 
-// ─── TestRolloutWriterTokenCount_NilUsage ───
-
 func TestRolloutWriterTokenCount_NilUsage(t *testing.T) {
 	isolateRolloutHome(t)
 	writer, err := NewRolloutWriter("test-agent", "test-task-nil", "test-project")
@@ -1100,7 +1033,6 @@ func TestRolloutWriterTokenCount_NilUsage(t *testing.T) {
 		t.Fatalf("WriteTokenCount(0,0,0,0,0) error: %v", err)
 	}
 
-	// 验证文件为空
 	filePath := writer.FilePath()
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -1120,10 +1052,7 @@ func TestRolloutWriterTokenCount_NilUsage(t *testing.T) {
 	t.Log("Nil usage test passed: no records written for zero token usage")
 }
 
-// ─── 终止事件断点状态 round-trip（写侧 → 读侧）───
-
-// TestRolloutRunStateRoundTrip 校验 B1 的写读契约：task_id 兜底填充、终止事件携带
-// steps/max_steps/stop_reason/has_delegated，且恢复侧能原样读回并据此判定结束状态。
+// B1 的写读契约：task_id 兜底填充、终止事件携带 steps/max_steps/stop_reason/has_delegated，且恢复侧能原样读回并据此判定结束状态。
 func TestRolloutRunStateRoundTrip(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -1231,7 +1160,6 @@ func TestRolloutRunStateRoundTrip(t *testing.T) {
 	}
 }
 
-// TestRolloutSessionMetaKeepsExplicitTaskID 调用方显式传入 task_id 时不被兜底值覆盖。
 func TestRolloutSessionMetaKeepsExplicitTaskID(t *testing.T) {
 	isolateRolloutHome(t)
 	w, err := NewRolloutWriter("director", "writer-task-id", "explicit-test")
@@ -1262,8 +1190,7 @@ func TestRolloutSessionMetaKeepsExplicitTaskID(t *testing.T) {
 	}
 }
 
-// TestRolloutInfoBestStepFallback BestStep 的回退顺序：显式步数 → sub_agent_activity
-// 观测值 → assistant 回合数近似。
+// BestStep 的回退顺序：显式步数 → sub_agent_activity 观测值 → assistant 回合数近似。
 func TestRolloutInfoBestStepFallback(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1284,9 +1211,7 @@ func TestRolloutInfoBestStepFallback(t *testing.T) {
 	}
 }
 
-// TestRolloutThinklinkAndCompactedRestore B4 往返：thinklink_entry 事件与 compacted
-// 快照落盘后可被读侧恢复——journal 条目进 RolloutInfo.ThinklinkEntries（不进消息），
-// compacted 在 SummaryTail 模式下注入锚点 System 消息。
+// B4 往返：thinklink_entry 与 compacted 落盘后可被读侧恢复——journal 条目进 RolloutInfo.ThinklinkEntries（不进消息），compacted 在 SummaryTail 模式下注入锚点 System 消息。
 func TestRolloutThinklinkAndCompactedRestore(t *testing.T) {
 	isolateRolloutHome(t)
 	w, err := NewRolloutWriter("director", "task-thinklink", "thinklink-test")
@@ -1343,10 +1268,7 @@ func TestRolloutThinklinkAndCompactedRestore(t *testing.T) {
 		}
 	})
 
-	// tail 模式的语义（恢复条数、顺序、"compacted 后无消息"边界）由
-	// TestReadRolloutMemory_CompactedModes 用更丰富的夹具钉住；compacted 的统计字段
-	// 往返由 TestRolloutWriter_CompactedRoundTrip 钉住。这里只留这两者都覆盖不到的一件事：
-	// 真实写入路径产出的 Summary 原文，在 tail 模式下必须原样出现在锚定的 System 消息里。
+	// tail 模式的条数/顺序/"compacted 后无消息"边界由 TestReadRolloutMemory_CompactedModes 钉住，统计字段往返由 TestRolloutWriter_CompactedRoundTrip 钉住；这里只留这一件：真实写入路径产出的 Summary 原文必须在锚定 System 消息里原样出现。
 	t.Run("summary_tail_round_trips_written_summary", func(t *testing.T) {
 		mem, info, err := ReadRolloutMemory(path, RolloutReadOptions{Compaction: CompactionSummaryTail})
 		if err != nil {
@@ -1365,7 +1287,6 @@ func TestRolloutThinklinkAndCompactedRestore(t *testing.T) {
 	})
 }
 
-// firstOr 返回首条消息（空切片返回零值），仅供测试断言可读性。
 func firstOr(msgs []ChatMessage) ChatMessage {
 	if len(msgs) > 0 {
 		return msgs[0]
@@ -1373,12 +1294,10 @@ func firstOr(msgs []ChatMessage) ChatMessage {
 	return ChatMessage{}
 }
 
-// TestListRolloutSessionsGroupsAndFiltering B5：清单按 task_id 归并的前置数据、
-// 空文件过滤与超长 preview 注入块的跳过。
+// B5：清单按 task_id 归并的前置数据、空文件过滤与超长 preview 注入块的跳过。
 func TestListRolloutSessionsGroupsAndFiltering(t *testing.T) {
 	isolateRolloutHome(t)
 
-	// 组 T1：主会话 + 子 Agent 文件（同 task_id）
 	wMain, err := NewRolloutWriter("director", "task-grp-1", "grp-test")
 	if err != nil {
 		t.Fatalf("writer: %v", err)
@@ -1466,7 +1385,6 @@ func TestListRolloutSessionsGroupsAndFiltering(t *testing.T) {
 	if sub.AgentName != "coder" {
 		t.Errorf("sub agent name = %q, want coder", sub.AgentName)
 	}
-	// 超长注入块不作 preview，取后续真实任务描述
 	if sub.Preview != "fix bug" {
 		t.Errorf("sub preview = %q, want %q (skip injected blob)", sub.Preview, "fix bug")
 	}

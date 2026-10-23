@@ -112,7 +112,6 @@ func (a *DirectorAgent) skillCatalog() string {
 	return ""
 }
 
-// mcpStatusLine 是"每个 server 现在什么状态"的一行账。
 // 只注入 Director：子 Agent 不需要知道拓扑，它们的工具面里没有就是没有
 // （Skipped 的日志足够排障）。
 func (a *DirectorAgent) mcpStatusLine() string {
@@ -126,7 +125,6 @@ func (a *DirectorAgent) mcpStatusLine() string {
 	return "\n\n## MCP servers\n" + line
 }
 
-// DirectorAgentParams 聚合 NewDirectorAgent 所需的全部依赖。
 // 用具名字段替代原先 27 个位置参数，让调用点自文档化，且增删依赖不再破坏函数签名。
 type DirectorAgentParams struct {
 	Formatter   PromptFormatter
@@ -167,8 +165,6 @@ type DirectorAgentParams struct {
 	External External
 }
 
-// NewDirectorAgent 构造 DirectorAgent：先填充结构体字段，再装配工具适配器
-// （基础/JSON 工具 → 委派工具），最后完成 blackboard、压缩器等后置初始化。
 // 委派闭包在运行时读取接收者字段，因此必须先构造 self 再调用两个 build* 方法。
 func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 	adapterCfg := director.DefaultRecoveryConfig()
@@ -367,8 +363,6 @@ func toSnakeCase(name string) string {
 	return raw
 }
 
-// currentLLMTimeout 返回当前生效的 LLM 调用超时：全局运行时值（TUI 模型设置面板
-// 可动态修改）优先，未初始化时回落构造期快照 a.llmTimeout。
 // 每次构造 ExecutorConfig / PlannerConfig 时求值（而非使用构造期快照），
 // 确保 TUI 调整后新发起的 LLM 调用立即使用新值。
 func (a *DirectorAgent) currentLLMTimeout() time.Duration {
@@ -482,13 +476,7 @@ func (a *DirectorAgent) SetPendingResumptionOpt(stop *DelegationStop) {
 	a.pendingResumption = stop
 }
 
-// createRolloutWriter 为一次委派（或 Director 自己、Custom Agent、Meta 设计）建一份
-// 同步 rollout。
-//
-// ctx 是用来取父子坐标的：delegation_id 由 directorToolRunner 在 delegate_* 分支注入，
-// parent_session_id 由 Director 在自己的 writer 建好之后注入。两者都在这里一次性写进
-// writer，两个 SessionMeta 写入点（executor / planner）都不用各自记得去取 ——
-// 漏一个的表现是那份文件没有坐标，恢复侧只能把它判成"不可原样重放"。
+// ctx 提供父子坐标：delegation_id 由 directorToolRunner 在 delegate_* 分支注入、parent_session_id 由 Director 在自己的 writer 建好之后注入，两者都在这里一次性写进 writer，两个 SessionMeta 写入点（executor / planner）都不必各自记得去取 —— 漏一个的表现是那份文件没有坐标，恢复侧只能把它判成"不可原样重放"。
 func (a *DirectorAgent) createRolloutWriter(ctx context.Context, agentName, task string) *memory.RolloutWriter {
 	projectID := a.computeProjectID()
 
@@ -538,7 +526,6 @@ func withDelegationOutcome(ctx context.Context) (context.Context, *delegationOut
 	return context.WithValue(ctx, delegationOutcomeKey{}, o), o
 }
 
-// recordDelegationOutcome 把子 Agent 的完整结果交给本次调用的载体。
 // ctx 上没有载体（非委派路径、或旧调用点）时静默 no-op —— 记忆注入只是锦上添花，
 // 不该因为载体缺失就让一次成功的委派失败。
 func recordDelegationOutcome(ctx context.Context, result AgentResult) {
@@ -650,13 +637,11 @@ func (a *DirectorAgent) BoardID() string {
 	return a.boardID
 }
 
-// boardIDForPlanner 只在便签板可用时把 board 交给 Planner。
 // YAGENT_BLACKBOARD=0 时必须传空串：那条路径上既不写便签，也就不该注入索引。
 func (a *DirectorAgent) boardIDForPlanner() string {
 	return a.BoardID()
 }
 
-// indexOpts 把 [blackboard] 配置换算成 blackboard 的索引参数。
 // 换算（index_line_chars = 0 → 不裁剪）在 blackboard 自己的构造函数里完成，
 // 配置层与特性层不必互相认识。
 func (a *DirectorAgent) indexOpts() blackboard.IndexOptions {
@@ -1047,9 +1032,6 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 	return result.Text, err
 }
 
-// resolveTool 按名解析执行器。有 Surface 时以注册表为准（含冷工具状态）；
-// 没有 Surface 时回退到 Adapters 快照 —— 生产路径恒有 Surface，这个回退只为
-// 仍手工注入适配器表的测试与调用点保留。
 func (a *DirectorAgent) resolveTool(name string) (*tools.Adapter, tools.ToolState) {
 	if a.surface == nil {
 		return nil, tools.StateUnknown

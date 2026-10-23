@@ -358,7 +358,7 @@ func statusIconFor(entry *TimelineEntry) (icon string, colorStr string) {
 	}
 }
 
-// 倒序扫 logEntries：同一个 callID 后写入的那条才是当前事实。
+// 倒序扫 logEntries：同一 callID 取最近的一条。
 func findToolEntryByCallID(m *model, callID string) *ToolEntry {
 	for i := len(m.logEntries) - 1; i >= 0; i-- {
 		entry := &m.logEntries[i]
@@ -699,8 +699,7 @@ func syncDetailToCursor(m *model) {
 	m.timelineDetailVP.SetYOffset(targetOffset)
 }
 
-// findFullThinkingContent 从 logEntries 中查找指定 thinking 条目的完整内容。
-// 通过匹配 eventType="thinking" 和时间戳来精确关联。
+// 通过匹配 eventType="thinking" 和时间戳精确关联 logEntries。
 func findFullThinkingContent(m *model, thinkingEntry *TimelineEntry) string {
 	ts := thinkingEntry.Timestamp
 	for i := len(m.logEntries) - 1; i >= 0; i-- {
@@ -709,12 +708,9 @@ func findFullThinkingContent(m *model, thinkingEntry *TimelineEntry) string {
 			return le.content
 		}
 	}
-	// fallback: 返回 Detail 中的预览文本
 	return thinkingEntry.Detail
 }
 
-// renderThinkingInline 将 thinking 内容以优雅的内联方式嵌入 llm_call 详情中。
-// 使用 💭 紫色图标 + 黄色斜体文本 + 缩进，无边框、无多余装饰。
 func renderThinkingInline(thinkingContent string, width int) string {
 	var sb strings.Builder
 
@@ -732,7 +728,6 @@ func renderThinkingInline(thinkingContent string, width int) string {
 			continue
 		}
 
-		// 截断超长行
 		displayLine := trimmed
 		runes := []rune(displayLine)
 		if len(runes) > contentWidth {
@@ -740,16 +735,13 @@ func renderThinkingInline(thinkingContent string, width int) string {
 		}
 
 		if i == 0 {
-			// 首行：💭 紫色图标 + 黄色斜体内容
 			sb.WriteString("  ")
 			sb.WriteString(thinkIconStyle.String())
 			sb.WriteString(thinkTextStyle.Render(displayLine))
 			sb.WriteString("\n")
 		} else {
-			// 续行：4空格缩进 + 黄色斜体内容（与首行文字对齐）
 			padding := 4
 			if strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "\t") {
-				// 保留原始缩进感
 				padding = 4
 			}
 			sb.WriteString(strings.Repeat(" ", padding))
