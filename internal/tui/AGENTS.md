@@ -58,6 +58,16 @@
 内置命令与技能撞名时**内置命令胜**且只 warn 一次（`tui_completion.go`）。手打 `/name args` 直接执行技能
 （首个 token 精确命中才算），否则回落搜索 —— 改这条要保留 `TestTUI_SlashUnknownFallsBackToSearch`。
 
+**8.3 新对话框进按键分发要么加 `case`，要么实现 `components.InfoPanel`。**
+`handleDialogStackKey`（`tui_update_keys.go:51`）是**类型 switch**，末尾 `return m, nil, false`（`:435`）
+就意味着这把键归编辑模式。而 `tui_update.go:86` 明确**不**把 KeyMsg 转发给 `dialog.Update`，
+所以漏加的那个对话框：Esc 关不掉（面板还压在屏幕上，输入框却顺手被切到 NORMAL）、滚动键全部失效，
+**并且没有任何编译错误或日志**——根 AGENTS.md §11 坑 33 的 TUI 版本（测试与生产不走同一个载体）。
+信息类面板因此按接口认领（`components/info_dialogs.go:16`，model 侧 `:428`）：
+只读面板实现 `HandleInfoKey` 就自动拿到 Esc/滚动，不必再改类型 switch。
+闸门：`TestInfoDialogsCloseOnEsc`（`slash_skill_test.go:188`，删掉接口那条 case 即红）、
+`TestInfoDialog_ScrollsToEnd`（`info_dialogs_test.go:78`，按的是 `HandleInfoKey` 而不是 `Update`）。
+
 **9. 向导独占键盘。** 任务运行中或弹窗打开时 `/setup` 直接拒绝（`setup_embed.go:24-34`），
 理由是第 1 条那个没有重放队列的监听器。
 
@@ -67,7 +77,7 @@
   grapheme 切分）。`PanelWidths` 的 inner = panel − 6；`ListBudget` 装不下指示行就**放弃指示行**
   （保证表面永远不高出终端）；`Ellipsize` 超长走**中间省略**——同前缀的模型名靠尾部区分。
   零测试文件，靠调用方的矩阵测试间接暴露。
-- **`components/`** — 10 个对话框 + `DialogStack`。只渲染、只消费按键。三个选择类对话框共用一套
+- **`components/`** — 对话框 + `DialogStack`。只渲染、只消费按键。三个选择类对话框共用一套
   按键契约，此前在三个文件各手抄一份（`internal/tui/components/select_dialog_contract_test.go:19-20`）——新选择类对话框
   必须接进 `selectProbe`。同包只准一个 ANSI 剥离辅助函数（`check_test_hygiene.sh` 硬拦）。
 - **`layout/`** — **当前实际不负责布局**：`Region`/`AllRegions`/`IsCompact` 在包外零调用点，

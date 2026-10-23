@@ -422,6 +422,16 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		return m, nil, true
 	}
 
+	// 信息面板（/skills、/mcp）按接口认领，不再往上面的类型 switch 里加 case：
+	// 漏一条 case 的后果不是编译错误，而是"这个面板进得去出不来"（Esc 连同滚动键
+	// 一起漏给编辑模式，覆盖层却还压在屏幕上）。面板是模态只读的，所以每一把键都归它。
+	if panel, ok := top.(components.InfoPanel); ok {
+		if panel.HandleInfoKey(msg) {
+			m.dialogStack.Pop()
+		}
+		return m, nil, true
+	}
+
 	return m, nil, false
 }
 
