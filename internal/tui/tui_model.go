@@ -184,6 +184,12 @@ type logEntry struct {
 	streaming     bool
 	finalized     bool
 	agentName     string
+
+	// 流式条目的 thought 面板 memo：streamPanelSrc 是已画面板对应的块原文，
+	// streamPanels 是画好的面板，streamPanelW 是画它们时用的宽度。
+	streamPanels   []string
+	streamPanelSrc []string
+	streamPanelW   int
 }
 
 func (e *logEntry) getCachedRender(width int) (string, bool) {
@@ -544,6 +550,13 @@ type model struct {
 	viewportViewValid   bool
 	prevViewportYOffset int
 	prevViewportHeight  int
+
+	// 每次真正重排正文的时刻，流式追加的合并窗口按它算（见 streamRepaintInterval）。
+	lastViewportRepaint time.Time
+
+	// transcript 顶部的固定头部：输入只有宽度/行高/cwd，每次重排都重算 banner 渐变是白做。
+	welcomeCache    string
+	welcomeCacheKey string
 
 	contentParts      []string
 	dirtyEntryIndices map[int]struct{}

@@ -46,7 +46,8 @@ func (m *model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
 	m.flushStreamBuffers(aiChunkFlushInterval)
 
 	// Stop tick early when idle: avoids unnecessary View() calls that cause flicker
-	if !m.activeAnim && !m.taskRunning && !m.viewportDirty {
+	// hasDirtyEntries 也要问：流式追加的重排可能被合并窗口推迟，tick 一停就没人再触发它。
+	if !m.activeAnim && !m.taskRunning && !m.viewportDirty && !m.hasDirtyEntries() {
 		m.stopTick()
 		return m, nil
 	}

@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"os"
 	"strings"
+	"time"
 
 	"yagent/internal/tui/common"
 
@@ -130,12 +131,23 @@ func (m *model) View() tea.View {
 
 	if m.hasDirtyEntries() || body.contentWidth != m.prevViewportWidth ||
 		len(m.contentParts) != len(m.logEntries) {
-		wasAtBottom := m.viewport.AtBottom()
-		m.rebuildContentCache()
-		if wasAtBottom {
-			m.viewport.GotoBottom()
+		structural := body.contentWidth != m.prevViewportWidth ||
+			len(m.contentParts) != len(m.logEntries)
+		// 一次重排是 O(整个 transcript) 的活（拆块 + 面板 + 拼接 + 让 viewport 重新换行），
+		// 而 bubbletea 每条消息都会调 View（tea.go 的 Update 后直接 render）。
+		// 流式追加不在这里挡掉，重排次数就等于 flush 次数 —— 而 flush 是按 chunk 数
+		// 触发的（见 aiChunkRenderThreshold），不是按时间。攒到下一拍再排。
+		if !structural && m.streamDirtyHeld() {
+			// viewportDirty 保持为真：tick（100ms）会再来问一次
+		} else {
+			wasAtBottom := m.viewport.AtBottom()
+			m.rebuildContentCache()
+			if wasAtBottom {
+				m.viewport.GotoBottom()
+			}
+			m.viewportViewValid = false
+			m.lastViewportRepaint = time.Now()
 		}
-		m.viewportViewValid = false
 	}
 
 	if !m.viewportViewValid {
@@ -540,19 +552,44 @@ func buildAirlineRight(segs []airlineSegment) string {
 	return b.String()
 }
 
+// renderWelcomePanel 是 transcript 顶部那块固定头部（banner + tagline + cwd）。
+// 每次整段重排它都会被 assembleViewportContent 要一遍，而它的输入只有宽度、cwd 和
+// "有没有日志" —— 不缓存就是每个刷新都把 banner 的逐字渐变与面板排版重算一遍。
 func (m *model) renderWelcomePanel() string {
-	if len(m.logEntries) == 0 {
-		vpHeight := m.termHeight - m.computeFooterHeight()
-		if vpHeight < 8 {
-			vpHeight = 8
-		}
-		width := m.termWidth
-		if width <= 0 {
-			width = 80
-		}
-		return m.renderCenteredStartupScreen(width, vpHeight)
+	empty := len(m.logEntries) == 0
+
+	// 已有日志时头部只跟字段宽度与 cwd 有关；空白启动屏还要行高（它要垂直居中）。
+	// 行高别在头部分支算：computeFooterHeight 会走 token 面板与 langManager，
+	// 那条路上本来不需要它。
+	key := fmt.Sprintf("header|%d|%s", m.computeFieldWidth(), m.projectDir)
+	if empty {
+		width, height := m.startupScreenSize()
+		key = fmt.Sprintf("startup|%d|%d|%s", width, height, m.projectDir)
 	}
-	return m.renderWelcomePanelLayout()
+	if m.welcomeCacheKey == key {
+		return m.welcomeCache
+	}
+
+	out := m.renderWelcomePanelLayout()
+	if empty {
+		width, height := m.startupScreenSize()
+		out = m.renderCenteredStartupScreen(width, height)
+	}
+	m.welcomeCacheKey, m.welcomeCache = key, out
+	return out
+}
+
+// startupScreenSize 是空白启动屏的画布：宽度兜底 80 列，行高至少 8 行才放得下 banner。
+func (m *model) startupScreenSize() (width, height int) {
+	width = m.termWidth
+	if width <= 0 {
+		width = 80
+	}
+	height = m.termHeight - m.computeFooterHeight()
+	if height < 8 {
+		height = 8
+	}
+	return width, height
 }
 
 func (m *model) renderCenteredStartupScreen(width, height int) string {

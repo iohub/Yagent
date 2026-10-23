@@ -33,6 +33,18 @@ viewport 自己已把每一行补齐到列宽（`TestViewportViewPadsEveryLine` 
 按 `height` 而不是 `height-2` 分配行预算会多要 2 行，被末尾的"行数收敛 + 补边框"悄悄截掉
 （根 AGENTS.md §11 坑 7）。
 
+**3.1 流式重排按时间合并，不按 chunk。** 一次"重排" = 拆块 + 画面板 + 拼接 + 让 viewport 重新换行，
+代价是 O(整个 transcript)（实测每消息 1.4ms@300 条 / 2.7ms@1200 条），而 bubbletea **每条消息都调
+`View()`**（`tea.go` 的 Update 后直接 render）—— 所以合并必须发生在 `View()` 里，发生在 chunk 处理里
+没用。规则：只有"没有结构性变化 **且** 脏条目全部是正在流式的 `ai_stream`"才允许推迟到
+`streamRepaintInterval`（80ms，必须 < tick 的 100ms，否则尾巴要迟一拍）—— 判据在 `streamDirtyHeld`
+（`tui_render.go:213`），别退化成布尔开关：定稿（`streaming=false`）、`ai_response`、新条目、尺寸变化
+都必须立刻落地。被推迟时 `viewportDirty` 保持为真，且 tick 的 idle 早退条件里必须带
+`hasDirtyEntries()`（`tui_update_system.go:50`），否则没人再来触发。配套的两处 memo：流式条目的
+已闭合 thought 面板（`renderStreamEntry`，`tui_render.go:448`：宽度或块序列变了才重画，定稿后走
+普通条目的 `renderedCache`）、transcript 顶部固定头部（`renderWelcomePanel`，`tui_view.go:558`，
+key 只含宽度/行高/cwd；**头部分支不许算 footer 行高**，那条路会走 token 面板与 langManager）。
+
 **4. 流式槽的键 ≠ 显示名。** `streamSlotKey` 返回 `agent#delegationID`（`tui_update_tasks.go:1025-1030`），
 它只用于分槽；`le.from` / `m.currentAgent` / token 归集**必须继续用裸 Agent 名**——混用的症状是
 标签变成 `Coding#call_3`。坐标为空时退回裸名，所以 Director 与存量 rollout 行为逐字不变。
@@ -110,6 +122,9 @@ viewport 自己已把每一行补齐到列宽（`TestViewportViewPadsEveryLine` 
 忽略 `DelegationID` 即红）、`TestTokenPanel_FooterFitsTermWidth`（`token_panel_test.go:257`）、
 `TestBodyWidthIsOneSource`（`tui_view_layout_test.go:34`，把 resize/切标签页的宽度公式改回旧写法即红）、
 `TestViewportViewPadsEveryLine`（同文件 `:100`，钉住"viewport 自己补齐每行"这条被 `joinColumns` 依赖的前提）、
+`TestTUI_StreamRepaintIsCoalesced` / `_NonStreamDirtIsNeverHeld` / `_TickStaysArmedWhileRepaintHeld` /
+`_StreamPanelsMatchOneShot`（增量渲染必须与一次性逐字相同）/ `_WelcomeHeaderSkipsFooterMath`
+（`tui_stream_repaint_test.go`：把 `streamDirtyHeld` 改成恒 false、或把面板 memo 关掉，立刻红）、
 `TestLLMTimeoutDialog_SizeGuard` / `_WidthMatrix`（`components/timeout_dialog_test.go:146,167`）、
 `TestWizardRenderWidthMatrix`（向导侧：宽度 {40..240} × 高度 × 七屏，断言行数 ≤ 终端高度）。
 
