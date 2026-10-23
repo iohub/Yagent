@@ -27,11 +27,13 @@ func chromeTestModel(t *testing.T, w, h int) *model {
 	return m
 }
 
-// seedLog 往 viewport 里灌入 n 行纯文本日志，返回其内容用于断言。
+// seedLog 往正文里灌一段纯文本日志。虚拟化之后 viewport 只显示可见区间，
+// 内容必须走"条目 → 排版块 → 行索引"这条唯一的路，不能再直接塞 viewport。
 func seedLog(m *model, text string) {
-	m.viewport.SetContent(text)
-	m.contentCache.Reset()
-	m.contentCache.WriteString(text)
+	m.logEntries = append(m.logEntries, logEntry{eventType: "thinking", content: text})
+	m.contentParts = append(m.contentParts, text)
+	m.bodyInvalidate(len(m.contentParts) - 1)
+	m.bodySync()
 }
 
 // TestStatusBar_WidthIsExact 覆盖窄到宽的终端：状态栏必须恒等于 termWidth，
@@ -359,11 +361,27 @@ func TestSearch_JumpsAndCycles(t *testing.T) {
 	m.updateViewportCache()
 
 	m.runSearch("needle")
-	if len(m.searchLines) != 1 || m.searchLines[0] != 45 {
-		t.Fatalf("expected one match on line 45, got %v", m.searchLines)
+	if len(m.searchLines) != 1 {
+		t.Fatalf("expected exactly one match, got %v", m.searchLines)
 	}
-	if m.viewport.YOffset() > 45 || m.viewport.YOffset()+m.viewport.Height() <= 45 {
-		t.Errorf("match should be scrolled into view, YOffset=%d", m.viewport.YOffset())
+	// 行号是**绝对行号**（含正文头部），所以断言"这一行确实是命中处"而不是某个数字。
+	line := m.searchLines[0]
+	text := m.bodyText(0, m.bodyTotalLines())
+	if got := stripANSI(sliceBodyLines(text, line, 1)); !strings.Contains(got, "needle") {
+		t.Errorf("match line %d is %q, want the needle row", line, got)
+	}
+	if line < m.body.top || line >= m.body.top+m.bodyHeight() {
+		t.Errorf("match should be scrolled into view, top=%d line=%d", m.body.top, line)
+	}
+	// 高亮回调拿到的是**窗口内**行号，命中记的是绝对行号：换算错了就是给错行上色。
+	probe := "x"
+	if got, want := m.searchLineStyle(line-m.body.top).Render(probe), searchCurrentStyle.Render(probe); got != want {
+		t.Errorf("命中行 %d（窗口第 %d 行）没拿到高亮样式：got=%q want=%q", line, line-m.body.top, got, want)
+	}
+	if other := line - m.body.top - 1; other >= 0 {
+		if got := m.searchLineStyle(other).Render(probe); got != probe {
+			t.Errorf("第 %d 行不是命中行却拿到了高亮：%q", other, got)
+		}
 	}
 	if got := m.searchLabel(); got != "[1/1]" {
 		t.Errorf("search label = %q, want [1/1]", got)
@@ -445,14 +463,21 @@ func TestSearch_RefreshesAfterContentChange(t *testing.T) {
 	seedLog(m, "alpha\nbeta\ngamma")
 	m.updateViewportCache()
 	m.runSearch("gamma")
-	if len(m.searchLines) != 1 || m.searchLines[0] != 2 {
-		t.Fatalf("initial match = %v, want [2]", m.searchLines)
+	if len(m.searchLines) != 1 {
+		t.Fatalf("initial match = %v, want exactly one", m.searchLines)
 	}
 
+	// 新内容接在正文后面：旧行号会失效，命中表必须跟着重算。
 	seedLog(m, "intro\nintro2\nalpha\nbeta\ngamma")
 	m.syncSearchMatches()
-	if len(m.searchLines) != 1 || m.searchLines[0] != 4 {
-		t.Errorf("match line should follow the new content, got %v", m.searchLines)
+	text := m.bodyText(0, m.bodyTotalLines())
+	if len(m.searchLines) != 2 {
+		t.Fatalf("match line should follow the new content, got %v", m.searchLines)
+	}
+	for _, line := range m.searchLines {
+		if got := stripANSI(sliceBodyLines(text, line, 1)); !strings.Contains(got, "gamma") {
+			t.Errorf("match line %d is %q, want a gamma row", line, got)
+		}
 	}
 }
 
@@ -462,7 +487,7 @@ func TestNormalMode_CountScroll(t *testing.T) {
 	m.commandMode = true
 	seedLog(m, strings.Repeat("line\n", 200))
 	m.viewport.SetHeight(10)
-	m.viewport.GotoTop()
+	m.bodyGotoTop()
 
 	press := func(k string) {
 		m.handleCommandModeKey(keyMsgFor(k))
@@ -471,7 +496,7 @@ func TestNormalMode_CountScroll(t *testing.T) {
 	press("0")
 	press("j")
 
-	if got := m.viewport.YOffset(); got != 10 {
+	if got := m.body.top; got != 10 {
 		t.Errorf("10j scrolled to %d, want 10", got)
 	}
 	if m.pendingCount != "" {
@@ -479,8 +504,8 @@ func TestNormalMode_CountScroll(t *testing.T) {
 	}
 
 	press("k")
-	if got := m.viewport.YOffset(); got != 9 {
-		t.Errorf("plain k should scroll by 1, YOffset=%d want 9", got)
+	if got := m.body.top; got != 9 {
+		t.Errorf("plain k should scroll by 1, body.top=%d want 9", got)
 	}
 }
 

@@ -92,12 +92,9 @@ func (m *model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
 						m.setEntryContent(i, m.renderSingleEntry(entry, width))
 					}
 				}
-				m.assembleViewportContent()
-				m.viewport.SetContent(m.contentCache.String())
-				if m.viewport.AtBottom() {
-					m.viewport.GotoBottom()
-				}
-				m.viewportViewValid = false
+				// setEntryContent 已经把行索引标脏，这里只落地可见区间
+				m.bodySync()
+				m.updateViewportCache()
 			}
 		}
 	}
@@ -154,6 +151,9 @@ func (m *model) handlePublisherReadyMsg(msg publisherReadyMsg) (tea.Model, tea.C
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// mouseWheelLines 是滚轮一格的行数（与 bubbles viewport 的默认值一致）。
+const mouseWheelLines = 3
+
 // handleMouseMsg — 原 Update case tea.MouseMsg 提取
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -162,13 +162,11 @@ func (m *model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		action, x, y := m.mouseHandler.Detect(msg)
 		switch action {
 		case components.MouseScrollUp:
-			// 滚动向上（viewport 减少行）
-			m.viewport.ScrollUp(3)
+			m.bodyScrollBy(-mouseWheelLines)
 			m.updateViewportCache()
 			m.invalidateFooterCache()
 		case components.MouseScrollDown:
-			// 滚动向下（viewport 增加行）
-			m.viewport.ScrollDown(3)
+			m.bodyScrollBy(mouseWheelLines)
 			m.updateViewportCache()
 			m.invalidateFooterCache()
 		case components.MouseClick:

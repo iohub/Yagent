@@ -55,36 +55,54 @@ func (m *model) clearSearch() {
 	m.invalidateFooterCache()
 }
 
-// recomputeSearchMatches 扫描 viewport 内容并记录命中行号。
+// recomputeSearchMatches 按**绝对行号**扫描正文并记录命中行。虚拟化之后 viewport 里
+// 只有可见区间那几行，命中必须落在整段历史上，所以这里读的是排版块本身而不是窗口文本 ——
+// 顺带省掉"把整段 transcript 拼成一个字符串"的那次分配。
+//
 // 必须先 ansi.Strip 再匹配：内容单元格带满 SGR/超链接转义，
 // 直接对原文匹配会让 "38"、"0m" 这类模式命中颜色码本身。
 func (m *model) recomputeSearchMatches() {
 	if m.searchPattern == "" {
 		return
 	}
-	content := m.viewport.GetContent()
-	m.searchContentFP = contentFingerprint(content)
+	m.bodyEnsureIndex()
+	m.searchContentFP = m.body.version
 	needle := strings.ToLower(m.searchPattern)
 
 	m.searchLines = nil
 	m.searchLineAt = make(map[int]int)
 
-	for i, line := range strings.Split(content, "\n") {
-		if !strings.Contains(strings.ToLower(ansi.Strip(line)), needle) {
-			continue
+	line := 0
+	scan := func(text string) {
+		for _, l := range strings.Split(text, "\n") {
+			if strings.Contains(strings.ToLower(ansi.Strip(l)), needle) {
+				m.searchLineAt[line] = len(m.searchLines)
+				m.searchLines = append(m.searchLines, line)
+			}
+			line++
 		}
-		m.searchLineAt[i] = len(m.searchLines)
-		m.searchLines = append(m.searchLines, i)
+	}
+	if m.body.headerLines > 0 {
+		scan(m.body.header)
+	}
+	for i := range m.body.blocks {
+		if head := m.body.blocks[i].head; head != "" {
+			scan(head)
+		}
+		if text := m.body.blocks[i].text; text != "" {
+			scan(text)
+		}
 	}
 }
 
-// syncSearchMatches 在内容变化后重算命中行。行号相对 viewport 内容而言，
-// 流式输出会不断插入新行，不跟随重算会让 n/N 跳到错位的地方。
+// syncSearchMatches 在内容变化后重算命中行。行号是绝对行号，流式输出会不断插入新行，
+// 不跟随重算会让 n/N 跳到错位的地方。
 func (m *model) syncSearchMatches() {
 	if m.searchPattern == "" {
 		return
 	}
-	if contentFingerprint(m.viewport.GetContent()) == m.searchContentFP {
+	m.bodyEnsureIndex()
+	if m.body.version == m.searchContentFP {
 		return
 	}
 	m.recomputeSearchMatches()
@@ -135,8 +153,10 @@ func (m *model) searchLabel() string {
 // 不用 viewport.SetHighlights：它把偏移量按 ansi.Strip 之后的字节位解析，
 // 却用原始带 ANSI 的 content 判换行（viewport/highlight.go），
 // 而我们整屏日志都是重着色文本，行号会算错。
+// line 是 viewport 传进来的**窗口内**行号，而命中记的是绝对行号 —— 不加回 body.top
+// 就是给错行上色。
 func (m *model) searchLineStyle(line int) lipgloss.Style {
-	idx, ok := m.searchLineAt[line]
+	idx, ok := m.searchLineAt[m.body.top+line]
 	if !ok {
 		return lipgloss.NewStyle()
 	}
@@ -153,21 +173,16 @@ func (m *model) bindViewportHooks() {
 	m.viewport.StyleLineFunc = m.searchLineStyle
 }
 
-// scrollToLogicalLine 把逻辑行 line 滚入视野，已在视野内则保持不动。
-// viewport 当前未开 SoftWrap（日志渲染时已按目标宽度排版），所以 YOffset
-// 与逻辑行号同构；将来若开启软换行，这里需要换算成视觉行偏移。
+// scrollToLogicalLine 把绝对行 line 滚入视野，已在视野内则保持不动。
+// 正文按目标宽度预先排过版、没开 SoftWrap，所以逻辑行号与屏幕行号同构。
 func (m *model) scrollToLogicalLine(line int) {
 	if line < 0 {
 		line = 0
 	}
-	visible := m.viewport.Height()
-	if visible < 1 {
-		visible = 1
+	if line >= m.body.top && line < m.body.top+m.bodyHeight() {
+		return
 	}
-	top := m.viewport.YOffset()
-	if line < top || line >= top+visible {
-		m.viewport.SetYOffset(line)
-	}
+	m.bodyScrollTo(line)
 }
 
 // setInfoMsg 显示一条瞬时提示行。

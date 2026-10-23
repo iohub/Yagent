@@ -75,7 +75,7 @@ stderr），下游已把这条写成 CRITICAL 注释（`internal/agents/tool_log
 
 ## dict — 没有热加载
 
-补全词典只在 TUI 构造时加载一次（`internal/tui/tui_model.go:734-736`），改文件必须重启。
+补全词典只在 TUI 构造时加载一次（`internal/tui/tui_model.go:653-657`），改文件必须重启。
 `fsnotify` 只活在 `go.mod`，Go 代码里零引用。根 AGENTS.md 的"fsnotify 热加载（词典）"是过期描述。
 `Complete` 的 20 条上限写死（`internal/dict/completion.go:82`），而 TUI 包装层的 `limit` 形参被丢弃
 （`internal/tui/completion.go:4-10`）。源文件读失败一律静默跳过（`internal/dict/completion.go:42-49`）。

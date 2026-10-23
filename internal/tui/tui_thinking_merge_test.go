@@ -21,7 +21,7 @@ func TestThinkingMerge_ContinuousThinkingWithVerboseInterleaved(t *testing.T) {
 	m = feedEvent(m, buildEvent("llm_call_end", "director", map[string]interface{}{"model": "test-model"}))
 	m = feedEvent(m, buildEvent("thinking", "director", "第三个思考内容"))
 
-	output := m.contentCache.String()
+	output := m.bodyText(0, m.bodyTotalLines())
 	t.Logf("=== TestThinkingMerge 完整输出 ===\n%s\n=== 结束 ===", output)
 	t.Logf("logEntries数量: %d", len(m.logEntries))
 	for i, e := range m.logEntries {
@@ -61,7 +61,7 @@ func TestThinkingMerge_DifferentFromNotMerged(t *testing.T) {
 	m = feedEvent(m, buildEvent("thinking", "repo", "repo思考"))
 	m = feedEvent(m, buildEvent("thinking", "coding", "coding思考"))
 
-	output := m.contentCache.String()
+	output := m.bodyText(0, m.bodyTotalLines())
 	t.Logf("=== TestThinkingMerge_DifferentFrom 完整输出 ===\n%s\n=== 结束 ===", output)
 	t.Logf("logEntries数量: %d", len(m.logEntries))
 	for i, e := range m.logEntries {
@@ -98,9 +98,9 @@ func TestThinkingMerge_EmptyPartBetweenThinking(t *testing.T) {
 	for i := range m.logEntries {
 		m.contentParts[i] = m.renderSingleEntry(&m.logEntries[i], m.viewport.Width())
 	}
-	m.assembleViewportContent()
+	m.bodyInvalidate(0)
 
-	output := m.contentCache.String()
+	output := m.bodyText(0, m.bodyTotalLines())
 	t.Logf("=== TestThinkingMerge_EmptyPart 完整输出 ===\n%s\n=== 结束 ===", output)
 	t.Logf("contentParts数量: %d", len(m.contentParts))
 	for i, p := range m.contentParts {
@@ -131,7 +131,7 @@ func TestThinkingMerge_EmptyPartBetweenThinking(t *testing.T) {
 // TestThinkingMerge_BlankPartBetweenThinking 验证 thinking 之间穿插纯空白 ai_stream 占位条目时
 // 仍能合并："\n\n"、" "、"  "、多个空白 chunk 累积（事件驱动路径，
 // 与 DirectBlankPart/DirectSingleSpaceBlank 的直接构造路径互补）都被
-// assembleViewportContent 跳过 —— 💭 只出现 1 次、产生缩进续行、无连续空行。
+// 排版块跳过 —— 💭 只出现 1 次、产生缩进续行、无连续空行。
 func TestThinkingMerge_BlankPartBetweenThinking(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -153,7 +153,7 @@ func TestThinkingMerge_BlankPartBetweenThinking(t *testing.T) {
 			}
 			m = feedEvent(m, buildEvent("thinking", "director", "思考2"))
 
-			output := m.contentCache.String()
+			output := m.bodyText(0, m.bodyTotalLines())
 			if emojiCount := strings.Count(output, "💭"); emojiCount != 1 {
 				t.Errorf("💭出现次数 = %d, want 1（空白 part 应被跳过、thinking 合并）\n%s", emojiCount, output)
 			}
@@ -167,7 +167,7 @@ func TestThinkingMerge_BlankPartBetweenThinking(t *testing.T) {
 	}
 }
 
-// TestThinkingMerge_DirectBlankPart 直接用direct构造验证assembleViewportContent对空白part的处理。
+// TestThinkingMerge_DirectBlankPart 直接用direct构造验证排版块对空白part的处理。
 // 修复后：纯空白 part（如"\n\n"、" "）应被跳过，thinking 条目正常合并。
 func TestThinkingMerge_DirectBlankPart(t *testing.T) {
 	m := newTestModel()
@@ -187,8 +187,8 @@ func TestThinkingMerge_DirectBlankPart(t *testing.T) {
 		t.Logf("  part[%d]: %q (len=%d)", i, p, len(p))
 	}
 
-	m.assembleViewportContent()
-	output := m.contentCache.String()
+	m.bodyInvalidate(0)
+	output := m.bodyText(0, m.bodyTotalLines())
 	t.Logf("=== 完整输出 ===\n%s\n=== 结束 ===", output)
 
 	// 断言：💭只出现1次
@@ -221,9 +221,9 @@ func TestThinkingMerge_DirectSingleSpaceBlank(t *testing.T) {
 	for i := range m.logEntries {
 		m.contentParts[i] = m.renderSingleEntry(&m.logEntries[i], m.viewport.Width())
 	}
-	m.assembleViewportContent()
+	m.bodyInvalidate(0)
 
-	output := m.contentCache.String()
+	output := m.bodyText(0, m.bodyTotalLines())
 	t.Logf("=== TestThinkingMerge_DirectSingleSpaceBlank 完整输出 ===\n%s\n=== 结束 ===", output)
 
 	emojiCount := strings.Count(output, "💭")
