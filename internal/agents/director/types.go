@@ -10,48 +10,10 @@ import (
 	"yagent/internal/llm"
 )
 
-// AgentRunner defines the interface for any sub-agent that Director can delegate to.
-// This breaks the circular dependency between director and agents packages.
-type AgentRunner interface {
-	// Name returns the agent's display name.
-	Name() string
-	// Run executes a task and returns the result text.
-	Run(ctx context.Context, task string) (AgentRunnerResult, error)
-}
-
-// AgentRunnerResult encapsulates a sub-agent execution result.
-type AgentRunnerResult struct {
-	Text string
-}
-
 // LLMClient abstracts the LLM interaction for the director sub-components.
 type LLMClient interface {
 	GenerateContent(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, opts *llm.CallOptions) (*llm.Response, error)
 	Model() string
-}
-
-// --- Event types for observability ---
-
-// ToolCallEvent represents a tool call start event.
-type ToolCallEvent struct {
-	ToolName   string `json:"tool_name"`
-	Arguments  string `json:"arguments"`
-	ToolCallID string `json:"tool_call_id"`
-}
-
-// ToolResultEvent represents a tool call result event.
-type ToolResultEvent struct {
-	ToolName   string `json:"tool_name"`
-	Result     string `json:"result"`
-	ToolCallID string `json:"tool_call_id"`
-}
-
-// LLMCallEvent represents LLM call metrics.
-type LLMCallEvent struct {
-	Model           string                 `json:"model"`
-	DurationSeconds float64                `json:"duration_seconds"`
-	Error           string                 `json:"error,omitempty"`
-	Usage           map[string]interface{} `json:"usage,omitempty"`
 }
 
 // --- Custom Agent types ---
@@ -92,9 +54,6 @@ type ProjectContextLoadResult struct {
 
 // MetricsSnapshot is a point-in-time snapshot of director metrics.
 type MetricsSnapshot struct {
-	TaskCount     int                `json:"task_count"`
-	ToolCallCount int                `json:"tool_call_count"`
-	ErrorCount    map[string]int     `json:"error_count"`
-	DurationMs    map[string]float64 `json:"duration_ms"`
-	Timestamp     time.Time          `json:"timestamp"`
+	DurationMs map[string]float64 `json:"duration_ms"`
+	Timestamp  time.Time          `json:"timestamp"`
 }

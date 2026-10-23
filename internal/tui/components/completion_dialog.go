@@ -157,6 +157,3 @@ func (d *TaskCompleteDialog) IsVisible() bool { return true }
 
 // SetVisible sets the visibility of this dialog.
 func (d *TaskCompleteDialog) SetVisible(bool) {}
-
-// WasClosed returns whether the dialog has been closed by the user.
-func (d *TaskCompleteDialog) WasClosed() bool { return d.Closed }

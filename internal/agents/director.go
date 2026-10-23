@@ -463,13 +463,6 @@ func (a *DirectorAgent) SetResumedTask(resumed bool) {
 	a.resumedTask = resumed
 }
 
-// SetPendingResumption 交入一次"要把停在委派里的活儿接着做完"的落点。
-// 与 resumedTask 同样是**一次性**标记：run() 取出来用完即清，
-// 否则下一轮会把同一份重放结果再提交一遍（那是重复提交，不是恢复）。
-func (a *DirectorAgent) SetPendingResumption(stop DelegationStop) {
-	a.pendingResumption = &stop
-}
-
 // SetPendingResumptionOpt 允许传 nil：每一轮都必须显式设置，
 // "这次不带落点"和"没设置过"必须是同一件事，否则上一轮的落点会漏进这一轮。
 func (a *DirectorAgent) SetPendingResumptionOpt(stop *DelegationStop) {

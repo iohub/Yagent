@@ -47,7 +47,8 @@ func IsValidProviderName(name string) error {
 }
 
 // WriteProvider 写入（或覆盖）一个 provider 块。
-// 走 SetKeysInSection 的文本级替换，所以块外的注释与行序不受影响；
+// 逐键走 SetKeyInSection 的文本级替换，所以块外的注释与行序不受影响；
+// 代价是块内每个键各一次读+原子写（一次 provider 保存 = 7 次 rename）。
 // 块是新建时按字段声明顺序追加到文件末尾。
 func WriteProvider(path string, d ProviderDraft) error {
 	if err := IsValidProviderName(d.Name); err != nil {

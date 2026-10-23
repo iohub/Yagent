@@ -113,13 +113,3 @@ func BuiltinProfiles() []Profile {
 		ProfileChat, ProfileDevOps, ProfileBrowser,
 	}
 }
-
-// IsBuiltinProfile 报告名字是否是内建画像（Custom Agent 的名字是动态的）。
-func IsBuiltinProfile(agent string) bool {
-	for _, p := range BuiltinProfiles() {
-		if p.Agent == agent {
-			return true
-		}
-	}
-	return false
-}

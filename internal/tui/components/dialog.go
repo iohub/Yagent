@@ -11,9 +11,7 @@ import (
 type DialogType int
 
 const (
-	DialogNormal DialogType = iota // Normal dialog
-	DialogModal                    // Modal dialog, intercepts all events
-	DialogToast                    // Toast dialog, auto-closes after short display
+	DialogModal DialogType = 1 // Modal dialog, intercepts all events
 )
 
 // Design tokens — overlay background color.

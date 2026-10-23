@@ -2,9 +2,6 @@
 package common
 
 import (
-	"fmt"
-	"strings"
-
 	"charm.land/lipgloss/v2"
 	"image/color"
 )
@@ -167,28 +164,11 @@ type Styles struct {
 	// Dynamic styles
 }
 
-// Theme represents the color theme for the TUI.
-type Theme int
-
-const (
-	// ThemeDark is the dark (default) theme.
-	ThemeDark Theme = iota
-	// ThemeLight is the light theme.
-	ThemeLight
-)
-
-// NewStyles creates a Styles instance for the given theme.
-func NewStyles(theme ...Theme) *Styles {
-	t := ThemeDark
-	if len(theme) > 0 {
-		t = theme[0]
-	}
-	switch t {
-	case ThemeLight:
-		return newLightStyles()
-	default:
-		return newDarkStyles()
-	}
+// NewStyles creates the TUI's style set. There is one palette: the terminal's own
+// dark/light background only switches the glamour markdown renderer (see
+// model.useDarkStyle in internal/tui), not these tokens.
+func NewStyles() *Styles {
+	return newDarkStyles()
 }
 
 // newDarkStyles creates the dark theme styles.
@@ -319,149 +299,6 @@ func newDarkStyles() *Styles {
 	return s
 }
 
-// newLightStyles creates the light theme styles.
-func newLightStyles() *Styles {
-	s := &Styles{
-		BannerPad:     lipgloss.NewStyle().Padding(0, 1),
-		PromptFocused: lipgloss.NewStyle().Foreground(lipgloss.Color("27")).Bold(true),
-		PromptBlurred: lipgloss.NewStyle().Foreground(lipgloss.Color("243")),
-
-		WelcomePanel: lipgloss.NewStyle().Padding(1, 2),
-		WelcomeTitle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("235")),
-		WelcomeSub:   lipgloss.NewStyle().Foreground(lipgloss.Color("242")),
-		WelcomeDim:   lipgloss.NewStyle().Foreground(lipgloss.Color("27")).Bold(true),
-
-		Error:   lipgloss.NewStyle().Foreground(lipgloss.Color("160")).Bold(true),
-		InfoMsg: lipgloss.NewStyle().Foreground(lipgloss.Color("243")),
-		Footer:  lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
-
-		LogTime:      lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true),
-		LogAIRes:     lipgloss.NewStyle().Foreground(lipgloss.Color("235")),
-		LogSeparator: lipgloss.NewStyle().Foreground(lipgloss.Color("248")),
-
-		UserPrefix: lipgloss.NewStyle().Foreground(lipgloss.Color("172")).Bold(true),
-		UserMsgContent: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("238")).
-			BorderLeft(true).
-			BorderForeground(lipgloss.Color("172")).
-			PaddingLeft(1),
-		UserMsgBoxBorder: lipgloss.NewStyle().Foreground(lipgloss.Color("248")),
-		UserMsgBoxText:   lipgloss.NewStyle().Foreground(lipgloss.Color("238")),
-
-		InputPanel: lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("27")).
-			Padding(0, 1).
-			MarginTop(1),
-		InputPanelBlurred: lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("248")).
-			Padding(0, 1).
-			MarginTop(1),
-		InputSeparator: lipgloss.NewStyle().Foreground(lipgloss.Color("248")),
-
-		DiffHunk:      lipgloss.NewStyle().Foreground(lipgloss.Color("27")),
-		DiffAdd:       lipgloss.NewStyle().Foreground(lipgloss.Color("28")),
-		DiffDel:       lipgloss.NewStyle().Foreground(lipgloss.Color("160")),
-		DiffCtx:       lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
-		DiffNoNewline: lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
-
-		ToolRunning: lipgloss.NewStyle().Foreground(lipgloss.Color("178")),
-		ToolDone:    lipgloss.NewStyle().Foreground(lipgloss.Color("28")),
-		ToolError:   lipgloss.NewStyle().Foreground(lipgloss.Color("160")),
-
-		LLMCall:    lipgloss.NewStyle().Foreground(lipgloss.Color("93")),
-		LLMCallEnd: lipgloss.NewStyle().Foreground(lipgloss.Color("26")),
-
-		CommandPrefix: lipgloss.NewStyle().Foreground(lipgloss.Color("172")).Bold(true),
-		CommandBar: lipgloss.NewStyle().
-			Background(lipgloss.Color("172")).
-			Foreground(lipgloss.Color("15")).
-			Bold(true),
-
-		IconPendingStr:  IconPending,
-		IconSuccessStr:  IconSuccess,
-		IconErrorStr:    IconError,
-		IconCanceledStr: IconCanceled,
-
-		NameNormal: lipgloss.NewStyle().Foreground(lipgloss.Color("27")),
-		NameNested: lipgloss.NewStyle().Foreground(lipgloss.Color("31")),
-		ParamMain:  lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		ParamKey:   lipgloss.NewStyle().Foreground(lipgloss.Color("243")),
-
-		StateRunning:  lipgloss.NewStyle().Foreground(lipgloss.Color("235")),
-		StateCanceled: lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
-		StateWaiting:  lipgloss.NewStyle().Foreground(lipgloss.Color("235")),
-
-		ErrorTag:     lipgloss.NewStyle().Background(lipgloss.Color("160")).Foreground(lipgloss.Color("15")).Bold(true),
-		ErrorMessage: lipgloss.NewStyle().Foreground(lipgloss.Color("160")),
-
-		Body:         lipgloss.NewStyle().Foreground(lipgloss.Color("235")).PaddingLeft(2),
-		ContentLine:  lipgloss.NewStyle().Foreground(lipgloss.Color("243")).PaddingLeft(1),
-		ContentTrunc: lipgloss.NewStyle().Foreground(lipgloss.Color("245")).PaddingLeft(1),
-
-		DiffHeader: lipgloss.NewStyle().Foreground(lipgloss.Color("235")).Bold(true),
-
-		Time:   lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true),
-		AIRes:  lipgloss.NewStyle().Foreground(lipgloss.Color("235")),
-		Status: lipgloss.NewStyle().Foreground(lipgloss.Color("29")),
-		Help:   lipgloss.NewStyle().Foreground(lipgloss.Color("178")),
-
-		ToolCallBorderTop:    lipgloss.NewStyle().Foreground(lipgloss.Color("248")),
-		ToolCallBorderBottom: lipgloss.NewStyle().Foreground(lipgloss.Color("248")),
-
-		CollapseHintLine: lipgloss.NewStyle().Foreground(lipgloss.Color("248")),
-		CollapseHintText: lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
-
-		Separator: lipgloss.NewStyle().Foreground(lipgloss.Color("250")),
-
-		AirlineNormalMode: lipgloss.NewStyle().
-			Background(lipgloss.Color("25")).
-			Foreground(lipgloss.Color("15")).
-			Bold(true).Padding(0, 1),
-		AirlineRunMode: lipgloss.NewStyle().
-			Background(lipgloss.Color("28")).
-			Foreground(lipgloss.Color("15")).
-			Bold(true).Padding(0, 1),
-		AirlineCommandMode: lipgloss.NewStyle().
-			Background(lipgloss.Color("172")).
-			Foreground(lipgloss.Color("15")).
-			Bold(true).Padding(0, 1),
-		AirlineInfo: lipgloss.NewStyle().
-			Background(lipgloss.Color("253")).
-			Foreground(lipgloss.Color("235")).
-			Padding(0, 1),
-		AirlineInfoAlt: lipgloss.NewStyle().
-			Background(lipgloss.Color("250")).
-			Foreground(lipgloss.Color("235")).
-			Padding(0, 1),
-		AirlineAccent: lipgloss.NewStyle().
-			Background(lipgloss.Color("166")).
-			Foreground(lipgloss.Color("15")).
-			Padding(0, 1),
-		AirlineFiller: lipgloss.NewStyle().
-			Background(lipgloss.Color("253")).
-			Foreground(lipgloss.Color("235")),
-	}
-	return s
-}
-
-// FormatTokenCount formats a token count with comma separators.
-func FormatTokenCount(n int) string {
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
-		return s
-	}
-	var result []byte
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			result = append(result, ',')
-		}
-		result = append(result, byte(c))
-	}
-	return string(result)
-}
-
 // ── Color Tokens ──
 // ColorTokens holds the 256-color ANSI palette for the design system.
 type ColorTokens struct {
@@ -509,30 +346,6 @@ func DarkModeColors() ColorTokens {
 	}
 }
 
-// LightModeColors returns the light theme color tokens.
-func LightModeColors() ColorTokens {
-	return ColorTokens{
-		Primary:       lipgloss.Color("27"),
-		PrimaryDim:    lipgloss.Color("25"),
-		PrimaryBright: lipgloss.Color("33"),
-		Accent:        lipgloss.Color("172"),
-		Success:       lipgloss.Color("28"),
-		Warning:       lipgloss.Color("178"),
-		Danger:        lipgloss.Color("160"),
-		DangerDim:     lipgloss.Color("131"),
-		TextPrimary:   lipgloss.Color("235"),
-		TextSecondary: lipgloss.Color("238"),
-		TextMuted:     lipgloss.Color("243"),
-		TextInverted:  lipgloss.Color("15"),
-		Surface:       lipgloss.Color("253"),
-		SurfaceRaised: lipgloss.Color("250"),
-		SurfaceHover:  lipgloss.Color("248"),
-		Overlay:       lipgloss.Color("235"),
-		Border:        lipgloss.Color("248"),
-		BorderActive:  lipgloss.Color("27"),
-	}
-}
-
 // SafetyLevel represents the risk level of a permission option.
 type SafetyLevel int
 
@@ -559,24 +372,6 @@ func (s SafetyLevel) Colors(c ColorTokens) (fg, bg color.Color) {
 		return c.TextInverted, c.Danger
 	default:
 		return c.TextPrimary, c.SurfaceHover
-	}
-}
-
-// Icon returns an icon character for the safety level.
-func (s SafetyLevel) Icon() string {
-	switch s {
-	case SafetySafe:
-		return "🛡️"
-	case SafetyLow:
-		return "⚡"
-	case SafetyMedium:
-		return "⚠️"
-	case SafetyHigh:
-		return "🔥"
-	case SafetyCritical:
-		return "⛔"
-	default:
-		return "●"
 	}
 }
 
@@ -654,39 +449,11 @@ func FocusedButtonStyle(c ColorTokens, level SafetyLevel) lipgloss.Style {
 		BorderBackground(bg)
 }
 
-// NormalOptionStyle creates a muted style for non-focused option items.
-func NormalOptionStyle(c ColorTokens, level SafetyLevel) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Padding(0, 1).
-		Foreground(c.TextSecondary).
-		PaddingLeft(4)
-}
-
 // CursorIndicatorStyle returns a style for the cursor indicator "▶".
 func CursorIndicatorStyle(c ColorTokens) lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(c.Primary).
 		Bold(true)
-}
-
-// FocusBarStyle returns a style for the focused option's left indicator bar (┃).
-func FocusBarStyle(c ColorTokens, level SafetyLevel) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(level.AccentColor(c)).
-		Bold(true)
-}
-
-// FocusedOptionTextStyle returns a style for the focused option's label text.
-func FocusedOptionTextStyle(c ColorTokens) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(c.TextPrimary).
-		Bold(true)
-}
-
-// UnfocusedOptionTextStyle returns a style for the unfocused option's label text.
-func UnfocusedOptionTextStyle(c ColorTokens) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(c.TextMuted)
 }
 
 // RadioFocusedStyle returns a style for the focused radio button indicator (◉).
@@ -727,24 +494,6 @@ func OptionKeyUnfocusedStyle(c ColorTokens) lipgloss.Style {
 		Foreground(c.Border)
 }
 
-// FocusedKeyHintStyle returns a style for the focused option's key hint letter.
-func FocusedKeyHintStyle(c ColorTokens, level SafetyLevel) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(level.AccentColor(c))
-}
-
-// UnfocusedKeyHintStyle returns a style for the unfocused option's key hint letter.
-func UnfocusedKeyHintStyle(c ColorTokens) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(c.Border)
-}
-
-// DialogOverlayStyle returns a style that creates a dimmed overlay covering the screen.
-func DialogOverlayStyle(c ColorTokens) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Background(c.Overlay)
-}
-
 // DialogBorderStyle returns a rounded border style for dialogs.
 func DialogBorderStyle(c ColorTokens) lipgloss.Style {
 	return lipgloss.NewStyle().
@@ -753,15 +502,6 @@ func DialogBorderStyle(c ColorTokens) lipgloss.Style {
 		BorderBackground(c.Surface).
 		Background(c.Surface).
 		Padding(1, 2)
-}
-
-// HighlightBarStyle returns a style for the highlighted selected row in select mode.
-func HighlightBarStyle(c ColorTokens) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Background(c.SurfaceHover).
-		Foreground(c.TextPrimary).
-		Bold(true).
-		Padding(0, 1)
 }
 
 // InfoBoxStyle returns a bordered style for structured context information.
@@ -852,32 +592,4 @@ func toLowerRune(r rune) rune {
 		return r + 32
 	}
 	return r
-}
-
-// HighlightMatch renders target with matched runes highlighted.
-// matchedRunes should contain the indices of matched characters.
-// If matchedRunes is nil or empty, target is returned as-is.
-func HighlightMatch(target string, matchedRunes []int, matchStyle lipgloss.Style) string {
-	if len(matchedRunes) == 0 {
-		return target
-	}
-
-	runes := []rune(target)
-	matchedSet := make(map[int]bool)
-	for _, idx := range matchedRunes {
-		if idx >= 0 && idx < len(runes) {
-			matchedSet[idx] = true
-		}
-	}
-
-	var result strings.Builder
-	for i, r := range runes {
-		if matchedSet[i] {
-			result.WriteString(matchStyle.Render(string(r)))
-		} else {
-			result.WriteRune(r)
-		}
-	}
-
-	return result.String()
 }

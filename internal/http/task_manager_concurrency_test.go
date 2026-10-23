@@ -164,20 +164,3 @@ func TestFinishedTaskIsEvictedAfterRetention(t *testing.T) {
 		}
 	}
 }
-
-// RemoveTask 是显式出口：摘掉之后 GetTask 必须报缺失，而不是留着一条没人认领的记录
-// 让客户端以为它还在跑。
-func TestRemoveTaskDropsTheEntry(t *testing.T) {
-	tm := NewTaskManager(nil, 0)
-	tm.AddTask(&Task{ID: "gone", Status: TaskStatusFinished, Context: context.Background(), UpdatedAt: time.Now()})
-
-	if !tm.RemoveTask("gone") {
-		t.Error("RemoveTask(gone) = false, want true")
-	}
-	if _, ok := tm.GetTask("gone"); ok {
-		t.Error("摘掉之后还在表里")
-	}
-	if tm.RemoveTask("gone") {
-		t.Error("重复摘同一个 ID 回报 true —— 表里没有就是 false，不许谎报")
-	}
-}

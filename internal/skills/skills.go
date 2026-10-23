@@ -315,13 +315,6 @@ func (r *Registry) Count() int {
 	return len(r.skills)
 }
 
-// Account 返回加载账。
-func (r *Registry) Account() LoadAccount {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.account
-}
-
 // Body 实现 toolspec.SkillSource：按行分页取回正文。
 func (r *Registry) Body(name string, offset, limit int) (toolspec.SkillBody, error) {
 	r.mu.RLock()

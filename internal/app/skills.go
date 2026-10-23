@@ -44,11 +44,3 @@ func (ca *Yagent) SkillSource() toolspec.SkillSource {
 	}
 	return ca.skills
 }
-
-// SkillAccount 是加载账（启动日志与 /skills 面板同源）。
-func (ca *Yagent) SkillAccount() skills.LoadAccount {
-	if ca == nil {
-		return skills.LoadAccount{}
-	}
-	return ca.skillAccount
-}

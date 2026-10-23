@@ -74,7 +74,6 @@ func (m *model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
 				entry := &m.logEntries[i]
 				if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
 					entry.clearRenderCache()
-					entry.toolEntry.InvalidateCache()
 					hasVisibleAnim = true
 				} else if entry.eventType == "llm_call_start" && entry.isToolRunning {
 					entry.clearRenderCache()

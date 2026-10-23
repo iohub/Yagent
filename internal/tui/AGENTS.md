@@ -110,7 +110,7 @@ O(变过的条目 + 窗口)，不再是 O(历史)（实测 4000 chunk：viewport
 
 ## 子目录
 
-- **`common/`** — 令牌层（`styles.go` 主题/配色、`list_metrics.go` 几何原语、`grad.go` 渐变按
+- **`common/`** — 令牌层（`styles.go` 配色令牌（只有一套深色）、`list_metrics.go` 几何原语、`grad.go` 渐变按
   grapheme 切分）。`PanelWidths` 的 inner = panel − 6；`ListBudget` 装不下指示行就**放弃指示行**
   （保证表面永远不高出终端）；`Ellipsize` 超长走**中间省略**——同前缀的模型名靠尾部区分。
   零测试文件，靠调用方的矩阵测试间接暴露。
@@ -122,9 +122,6 @@ O(变过的条目 + 窗口)，不再是 O(历史)（实测 4000 chunk：viewport
   改 `computeRegions` 不会改变界面；真实高度契约在 `tui_render.go`。compact 断点 120
   （`layout/engine.go:40-42`）与 dashboard 可见断点 `termWidth >= 120`（`tui_dashboard.go:51`）
   是同值两份实现。零测试，且因无消费者而永远不会红——要接进真实渲染就先补宽度矩阵，或先删掉它。
-- **`anim/`** — **零生产消费者**（全仓无 `yagent/internal/tui/anim` import），零测试文件。
-  别把新界面接到这个包：`setup.go:465` 给的理由就是"零引用 + 无测试 = 新风险"。
-  注意根目录的 `anim.go` 是另一套时间驱动动画，`tui/anim_test.go` 钉的是根目录那个。
 
 ## 入口
 

@@ -19,23 +19,6 @@ type fzfFileSelectedMsg struct {
 	path string
 }
 
-// execCommand exists only because tea.ExecCommand requires SetStdin/SetStdout/SetStderr methods.
-type execCommand struct {
-	*exec.Cmd
-}
-
-func (e *execCommand) SetStdin(r io.Reader) {
-	e.Cmd.Stdin = r
-}
-
-func (e *execCommand) SetStdout(w io.Writer) {
-	e.Cmd.Stdout = w
-}
-
-func (e *execCommand) SetStderr(w io.Writer) {
-	e.Cmd.Stderr = w
-}
-
 // pipeCommand captures fzf's stdout through a pipe because tea.Exec calls SetStdout(os.Stdout), which would override our redirection.
 type pipeCommand struct {
 	cmd *exec.Cmd

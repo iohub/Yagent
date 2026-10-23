@@ -36,9 +36,6 @@ type ToolEntry struct {
 	Result    *ToolResultInfo
 	Status    ToolStatus
 	Timestamp time.Time
-
-	// Cached rendering
-	rendered string
 }
 
 // NewToolEntry creates a new ToolEntry in Running state.
@@ -58,28 +55,11 @@ func (e *ToolEntry) SetResult(result ToolResultInfo) {
 	} else {
 		e.Status = ToolStatusSuccess
 	}
-	e.rendered = "" // invalidate cache
 }
 
 // SetCanceled marks the tool as canceled.
 func (e *ToolEntry) SetCanceled() {
 	e.Status = ToolStatusCanceled
-	e.rendered = ""
-}
-
-// InvalidateCache clears the cached render.
-func (e *ToolEntry) InvalidateCache() {
-	e.rendered = ""
-}
-
-// Rendered returns the cached render, or empty string if not cached.
-func (e *ToolEntry) Rendered() string {
-	return e.rendered
-}
-
-// SetRendered stores the cached render.
-func (e *ToolEntry) SetRendered(r string) {
-	e.rendered = r
 }
 
 // TimelineKind 表示时间條目目的種類

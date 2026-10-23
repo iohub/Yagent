@@ -94,15 +94,3 @@ func (g *GlobalCtx) FormatPrompt(prompt string) string {
 func (g *GlobalCtx) SetPublisher(publisher *messaging.MessagePublisher) {
 	g.Publisher = publisher
 }
-
-func (g *GlobalCtx) SetProjectPath(path string) {
-	g.ProjectPath = path
-}
-
-func (g *GlobalCtx) SetSpeakLang(lang string) {
-	g.SpeakLang = lang
-}
-
-func (g *GlobalCtx) SetCustomizePrompt(prompt string) {
-	g.CustomizePrompt = prompt
-}

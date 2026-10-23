@@ -13,11 +13,6 @@ func (r Region) IsEmpty() bool {
 	return r.Width <= 0 || r.Height <= 0
 }
 
-// Area 返回区域面积
-func (r Region) Area() int {
-	return r.Width * r.Height
-}
-
 // LayoutEngine 根据终端尺寸动态计算布局区域
 type LayoutEngine struct {
 	width, height int
@@ -32,7 +27,6 @@ const (
 	RegionMain    = "main"
 	RegionEditor  = "editor"
 	RegionStatus  = "status"
-	RegionDialog  = "dialog"
 	RegionSidebar = "sidebar"
 )
 
@@ -143,19 +137,6 @@ func (l *LayoutEngine) Region(id string) Region {
 	return l.regions[id]
 }
 
-// AllRegions 获取所有区域
-func (l *LayoutEngine) AllRegions() map[string]Region {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-
-	// 返回副本
-	result := make(map[string]Region, len(l.regions))
-	for k, v := range l.regions {
-		result[k] = v
-	}
-	return result
-}
-
 // Width 返回终端宽度
 func (l *LayoutEngine) Width() int {
 	l.mu.RLock()
@@ -168,27 +149,4 @@ func (l *LayoutEngine) Height() int {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.height
-}
-
-// IsCompact 返回是否为紧凑模式
-func (l *LayoutEngine) IsCompact() bool {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.compact
-}
-
-// SetCompact 手动设置紧凑模式（-1 切换，true/false 直接设置）
-func (l *LayoutEngine) SetCompact(compact bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.compact = compact
-	l.computeRegions()
-}
-
-// ToggleCompact 切换紧凑模式
-func (l *LayoutEngine) ToggleCompact() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.compact = !l.compact
-	l.computeRegions()
 }

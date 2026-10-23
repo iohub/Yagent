@@ -797,10 +797,6 @@ func RenderAgentSeparator(agent string, width int) string {
 	return prefix + name + middle + suffix
 }
 
-func timelineNodeFor(e *TimelineEntry) string {
-	return timelineNodeForStatus(e, e.Status)
-}
-
 func timelineNodeForStatus(e *TimelineEntry, status ToolStatus) string {
 	if e.Kind == TimelineKindLLMCall {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true).Render("◇")

@@ -17,9 +17,8 @@ const (
 type PackEntryKind string
 
 const (
-	EntryNote       PackEntryKind = "note"
-	EntryArtifact   PackEntryKind = "artifact"
-	EntryUnresolved PackEntryKind = "unresolved"
+	EntryNote     PackEntryKind = "note"
+	EntryArtifact PackEntryKind = "artifact"
 )
 
 // PackEntry is one resolved reference in a ContextPack.

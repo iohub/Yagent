@@ -45,14 +45,6 @@ type CallSite struct {
 	Column       int    `json:"column,omitempty"`
 }
 
-// CallGraphDirection 表示调用图遍历方向
-type CallGraphDirection string
-
-const (
-	CallGraphDirectionCallers CallGraphDirection = "callers"
-	CallGraphDirectionCallees CallGraphDirection = "callees"
-)
-
 // CallGraphNode 表示调用图中的节点
 type CallGraphNode struct {
 	FunctionName string          `json:"function_name"`

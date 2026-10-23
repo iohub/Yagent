@@ -79,19 +79,6 @@ func (tm *TaskManager) evictLocked(now time.Time) {
 	}
 }
 
-// RemoveTask 显式摘掉一个任务（调用方确定不再需要它的状态时）。
-// 摘掉之后 /api/task_status 会答"not found" —— 这是有意的：留着一条没人认领的记录
-// 比报缺失更容易被当成"还在跑"。
-func (tm *TaskManager) RemoveTask(taskID string) bool {
-	tm.lock.Lock()
-	defer tm.lock.Unlock()
-	if _, ok := tm.tasks[taskID]; !ok {
-		return false
-	}
-	delete(tm.tasks, taskID)
-	return true
-}
-
 func (tm *TaskManager) SetTaskResult(taskID, result string) {
 	tm.lock.Lock()
 	task, ok := tm.tasks[taskID]

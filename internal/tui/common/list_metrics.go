@@ -7,6 +7,7 @@
 package common
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -81,12 +82,24 @@ func AllocateColumns(avail, leftNatural, rightNatural int) (int, int) {
 	return left, right
 }
 
+// formatTokenShort 是 ContextLabel 的紧凑计数格式（k / m 后缀）。
+func formatTokenShort(n int64) string {
+	switch {
+	case n >= 1000000:
+		return fmt.Sprintf("%.1fm", float64(n)/1000000)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
 // ContextLabel 返回上下文窗口的紧凑文本（与 TUI 上下文进度条同一格式），未知时为 "-"。
 func ContextLabel(n int) string {
 	if n <= 0 {
 		return "-"
 	}
-	return FormatTokenShort(int64(n))
+	return formatTokenShort(int64(n))
 }
 
 // PadLeft 左侧补空格至显示宽度 w（超出则原样返回）。

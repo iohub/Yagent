@@ -70,8 +70,6 @@ const (
 	authEffects = EffectFSWrite | EffectShell | EffectBrowserEval | EffectExternalWrite
 	// flowEffects 是流程控制能力：永远 Hot（不可 deferred），否则模型无法收尾。
 	flowEffects = EffectFlow | EffectToolLoad
-	// contextEffects 依赖 blackboard/boardID 才可用。
-	contextEffects = EffectContext
 )
 
 // Has 报告 e 是否包含 want 中的任意一个位。

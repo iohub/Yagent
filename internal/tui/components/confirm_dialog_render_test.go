@@ -12,7 +12,7 @@ import (
 func TestConfirmDialogVisualRender_Chinese(t *testing.T) {
 	t.Log("━━━ 中文版授权界面 ━━━")
 
-	styles := common.NewStyles(common.ThemeDark)
+	styles := common.NewStyles()
 	d := NewConfirmDialog(styles, "SystemCommand", "rm -rf /tmp/test_cache",
 		"此操作可能影响工作空间外的文件或系统环境", "req-auth-001", LanguageZh)
 
@@ -29,7 +29,7 @@ func TestConfirmDialogVisualRender_Chinese(t *testing.T) {
 func TestConfirmDialogVisualRender_English(t *testing.T) {
 	t.Log("━━━ English Version Auth Dialog ━━━")
 
-	styles := common.NewStyles(common.ThemeDark)
+	styles := common.NewStyles()
 	d := NewConfirmDialog(styles, "SystemCommand", "rm -rf /tmp/test_cache",
 		"This operation may affect files outside the workspace", "req-auth-002", LanguageEn)
 
@@ -44,7 +44,7 @@ func TestConfirmDialogVisualRender_English(t *testing.T) {
 
 // TestConfirmDialogNavigation tests the keyboard navigation (up/down) in ConfirmDialog.
 func TestConfirmDialogNavigation(t *testing.T) {
-	styles := common.NewStyles(common.ThemeDark)
+	styles := common.NewStyles()
 	d := NewConfirmDialog(styles, "SystemCommand", "rm -rf /tmp/test_cache",
 		"此操作可能影响工作空间外的文件或系统环境", "req-auth-nav", LanguageZh)
 
@@ -82,7 +82,7 @@ func TestConfirmDialogNavigation(t *testing.T) {
 
 // TestConfirmDialogShortcuts tests the keyboard shortcuts for jumping to specific options.
 func TestConfirmDialogShortcuts(t *testing.T) {
-	styles := common.NewStyles(common.ThemeDark)
+	styles := common.NewStyles()
 	d := NewConfirmDialog(styles, "SystemCommand", "rm -rf /tmp/test_cache",
 		"此操作可能影响工作空间外的文件或系统环境", "req-auth-shortcut", LanguageZh)
 
@@ -118,7 +118,7 @@ func TestConfirmDialogShortcuts(t *testing.T) {
 
 // TestConfirmDialogAllOptionsRendered verifies that all 5 options appear in the rendered output.
 func TestConfirmDialogAllOptionsRendered(t *testing.T) {
-	styles := common.NewStyles(common.ThemeDark)
+	styles := common.NewStyles()
 	d := NewConfirmDialog(styles, "SystemCommand", "rm -rf /tmp/test_cache",
 		"此操作可能影响工作空间外的文件或系统环境", "req-auth-icons", LanguageZh)
 

@@ -111,19 +111,6 @@ func (m *model) syncSearchMatches() {
 	}
 }
 
-// contentFingerprint 是内容的廉价校验值。只用长度会让"等长但改写"的日志逃过
-// 重算，所以再按固定步长采样若干字节。
-func contentFingerprint(s string) int {
-	if s == "" {
-		return 0
-	}
-	h := len(s)
-	for i := 0; i < len(s); i += 61 {
-		h = h*31 + int(s[i])
-	}
-	return h
-}
-
 // searchStep 沿 dir 方向移动到下一条命中，dir 为 +1 / -1。
 func (m *model) searchStep(dir int) {
 	if !m.hasActiveSearch() {

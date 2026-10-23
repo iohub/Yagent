@@ -356,7 +356,7 @@ func (dm *DataManager) GetTaskMemoryPath(taskID string) string {
 
 // DeleteTaskMemory 删除任务的memory文件
 func (dm *DataManager) DeleteTaskMemory(taskID string) error {
-	filePath := filepath.Join(dm.dataDir, taskID+".jsonl")
+	filePath := dm.GetTaskMemoryPath(taskID)
 
 	// 清理 writer 状态
 	dm.mu.Lock()
@@ -371,23 +371,6 @@ func (dm *DataManager) DeleteTaskMemory(taskID string) error {
 	dm.mu.Unlock()
 
 	return os.Remove(filePath)
-}
-
-// ListTaskMemories 列出所有保存的任务memory文件
-func (dm *DataManager) ListTaskMemories() ([]string, error) {
-	files, err := os.ReadDir(dm.dataDir)
-	if err != nil {
-		return nil, err
-	}
-
-	var taskIDs []string
-	for _, file := range files {
-		if !file.IsDir() && strings.HasSuffix(file.Name(), ".jsonl") {
-			taskIDs = append(taskIDs, file.Name()[:len(file.Name())-6]) // 去掉.jsonl后缀
-		}
-	}
-
-	return taskIDs, nil
 }
 
 // TaskHistoryItem 用于TUI展示的历史任务信息
@@ -627,11 +610,6 @@ func (dm *DataManager) updateIndexFromFile(taskID, filePath string) {
 	entry.Mtime = info.ModTime()
 	dm.index.Tasks[taskID] = entry
 	dm.schedulePersist()
-}
-
-// GetDataDir 获取数据目录路径
-func (dm *DataManager) GetDataDir() string {
-	return dm.dataDir
 }
 
 // scheduleLightReconcile 轻量级检查索引一致性，必要时异步触发 reconcile

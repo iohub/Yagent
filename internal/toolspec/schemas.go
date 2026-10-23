@@ -95,10 +95,6 @@ func loadSchemas() (map[string]Schema, error) {
 	return schemaMap, schemaErr
 }
 
-// SchemasJSON 返回嵌入的声明原文，供尚未迁走的老调用点复用
-// （internal/agents/tools.go 目前把它当作 ToolsJSON 的来源）。
-func SchemasJSON() []byte { return schemasJSON }
-
 // GetSchema 按名查找声明。
 func GetSchema(name string) (Schema, bool) {
 	m, err := loadSchemas()

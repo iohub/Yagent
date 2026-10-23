@@ -543,14 +543,6 @@ func prefixed(label, val string) string {
 	return label + val
 }
 
-// firstColumnPad 放不下就整个丢掉，而不是让这一行越过 inner（越过就会被 editorBodyStyle 再折一次，行数预算当场失效）。
-func firstColumnPad(extra string, inner int) string {
-	if inner <= 0 || lipgloss.Width(extra) > inner {
-		return ""
-	}
-	return extra
-}
-
 func orDash(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return "-"

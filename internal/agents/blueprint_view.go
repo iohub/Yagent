@@ -66,15 +66,6 @@ func (v *BlueprintView) Resident() string {
 	return "\n\n" + blueprintBlockTitle + "\n" + blueprintBlockHint + "\n" + idx.String() + "\n"
 }
 
-// ModuleProse 是单个模块的现有散文（委派前缀与 read_blueprint 的模块视图共用）。
-// 找不到片、没有注解、或整套机制没开时返回 ""。
-func (v *BlueprintView) ModuleProse(module string) string {
-	if v == nil || module == "" {
-		return ""
-	}
-	return v.renderModule(v.doc(), module)
-}
-
 // renderModule 收 doc 而不是自己 Load：ProseForTask 会在一行任务文本里匹配到多个片，
 // 每个片各读一次 blueprint.md 是最不该出现的重复 IO（一次读、多次渲染）。
 func (v *BlueprintView) renderModule(doc *blueprint.Doc, module string) string {

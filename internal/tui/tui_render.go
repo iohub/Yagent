@@ -152,9 +152,6 @@ func (m *model) resizeViewport() {
 func (m *model) invalidateRenderedCache() {
 	for i := range m.logEntries {
 		m.logEntries[i].clearRenderCache()
-		if m.logEntries[i].toolEntry != nil {
-			m.logEntries[i].toolEntry.InvalidateCache()
-		}
 	}
 	m.glamourRenderers = nil
 	m.markAllEntriesDirty()
@@ -166,17 +163,6 @@ func (m *model) buildViewportContent() {
 	}
 	m.rebuildContentCache()
 	m.bodyGotoBottom()
-	m.updateViewportCache()
-}
-
-// rebuildViewportPreservingScroll 重排正文，并把游标拉回同一条绝对行。
-func (m *model) rebuildViewportPreservingScroll() {
-	if m.termWidth <= 0 || m.termHeight <= 0 {
-		return
-	}
-	top := m.body.top
-	m.rebuildContentCache()
-	m.bodyScrollTo(top)
 	m.updateViewportCache()
 }
 
