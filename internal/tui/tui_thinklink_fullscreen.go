@@ -11,8 +11,7 @@ import (
 	"yagent/internal/thinklink"
 )
 
-// thinklink 全屏视图调色板 —— 与 dashboard 的设计语言保持一致：
-// 薰衣草强调色 + 靛蓝圆角边框 + dim 标签 / 亮色数值分层。
+// 调色板与 dashboard 的设计语言一致：薰衣草强调色 + 靛蓝圆角边框 + dim 标签 / 亮色数值分层。
 var (
 	tlAccent    = lipgloss.Color("141") // ◆ 图标、选中行导轨、字段标签
 	tlBorderFg  = lipgloss.Color("62")  // 详情面板圆角边框
@@ -26,7 +25,6 @@ var (
 	tlPreviewFg = lipgloss.Color("246") // 未选中行预览
 	tlSelPrevFg = lipgloss.Color("252") // 选中行预览
 
-	// 结构化 thought 详情的语义配色
 	tlGoalFg    = lipgloss.Color("252") // GOAL 值：亮白，最突出
 	tlFieldFg   = lipgloss.Color("246") // STEP/REASON 值
 	tlDoneFg    = lipgloss.Color("114") // 已完成条目 ✓（柔和绿）
@@ -41,7 +39,6 @@ var (
 	thinklinkHairStyle   = lipgloss.NewStyle().Foreground(tlHairFg)
 	thinklinkBorderStyle = lipgloss.NewStyle().Foreground(tlBorderFg)
 
-	// 结构化 thought 详情样式
 	tlFieldLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(tlAccent)
 	tlGoalValueStyle  = lipgloss.NewStyle().Foreground(tlGoalFg)
 	tlFieldValueStyle = lipgloss.NewStyle().Foreground(tlFieldFg)
@@ -56,7 +53,6 @@ var (
 // thinklinkLabelGutter 结构化详情中字段标签的对齐槽宽（"REASON" 6 + 2 空格）。
 const thinklinkLabelGutter = 8
 
-// thinklinkChip 渲染类型徽标（USER / PLAN），彩底深字 chip。
 func thinklinkChip(kind string, selected bool) string {
 	label, bg := "PLAN", tlPlanChip
 	if kind == "user_input" {
@@ -72,7 +68,6 @@ func thinklinkChip(kind string, selected bool) string {
 	return style.Render(label)
 }
 
-// enterThinklinkMode 进入 thinklink 全屏模式：查看用户输入与 Thought & Plan 块。
 func enterThinklinkMode(m *model) tea.Cmd {
 	m.thinklinkMode = true
 	if n := len(thinklinkVisibleEntries(m)); n > 0 {
@@ -87,7 +82,6 @@ func enterThinklinkMode(m *model) tea.Cmd {
 	return nil
 }
 
-// exitThinklinkMode 退出 thinklink 全屏模式并复位全部相关状态。
 func exitThinklinkMode(m *model) {
 	m.thinklinkMode = false
 	m.thinklinkCursor = 0
@@ -97,8 +91,7 @@ func exitThinklinkMode(m *model) {
 	m.invalidateFooterCache()
 }
 
-// thinklinkAgentOptions 返回条目里出现过的 Agent 名（按首次出现顺序，跳过空名）。
-// 空名来自 /resume 恢复的旧 rollout——它们只在"全部"视图里出现。
+// 空 Agent 名来自 /resume 恢复的旧 rollout——它们只在"全部"视图里出现。
 func thinklinkAgentOptions(entries []ThinklinkEntry) []string {
 	var out []string
 	for _, e := range entries {
@@ -182,7 +175,6 @@ func thinklinkDetailWidth(m *model) int {
 	return w
 }
 
-// initThinklinkViewport 初始化/重置详情 viewport 尺寸（适配带边框详情面板）。
 func initThinklinkViewport(m *model) {
 	vp := viewport.New()
 	vp.SetWidth(thinklinkDetailWidth(m))
@@ -190,7 +182,6 @@ func initThinklinkViewport(m *model) {
 	m.thinklinkVP = &vp
 }
 
-// syncThinklinkDetail 将 cursor 所指条目的结构化渲染结果写入详情 viewport 并回到顶部。
 func syncThinklinkDetail(m *model) {
 	clampThinklinkCursor(m)
 	if m.thinklinkVP == nil {
@@ -206,7 +197,6 @@ func syncThinklinkDetail(m *model) {
 	m.thinklinkVP.GotoTop()
 }
 
-// clampThinklinkCursor 保证 cursor 落在可见条目列表的合法范围内。
 func clampThinklinkCursor(m *model) {
 	n := len(thinklinkVisibleEntries(m))
 	if m.thinklinkCursor >= n {
@@ -217,7 +207,6 @@ func clampThinklinkCursor(m *model) {
 	}
 }
 
-// truncateThinklinkRunes 按 rune 截断字符串，超出部分以 "…" 结尾。
 func truncateThinklinkRunes(s string, max int) string {
 	if max <= 0 {
 		return ""
@@ -232,9 +221,7 @@ func truncateThinklinkRunes(s string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
-// firstThinklinkLine 返回内容中第一个非空行（去空白与 markdown 前缀），用于列表行预览。
-// 跳过 "Thought & Plan" 标题行（每个 plan 块都以它开头，预览价值为零），
-// 全部行都是标题时退回标题本身。
+// 跳过 "Thought & Plan" 标题行（每个 plan 块都以它开头，预览价值为零），全是标题时才退回它。
 func firstThinklinkLine(s string) string {
 	fallback := ""
 	for _, line := range strings.Split(s, "\n") {
@@ -257,8 +244,7 @@ func firstThinklinkLine(s string) string {
 	return "(empty)"
 }
 
-// wrapWords 按词将纯文本折行到 width 列（超长单词硬切）；返回不含样式的行切片。
-// 空串返回单元素空切片，保证调用方至少有一行可渲染。
+// 按词折行、超长单词硬切；空串返回单元素空切片，保证调用方至少有一行可渲染。
 func wrapWords(s string, width int) []string {
 	if width < 4 {
 		width = 4
@@ -301,13 +287,10 @@ func wrapWords(s string, width int) []string {
 	return out
 }
 
-// thinklinkDetailContent 返回条目在详情面板中的完整结构化渲染文本（含样式，按 \n 连接）。
-// 供滚动模式的 viewport 使用。
 func thinklinkDetailContent(entry ThinklinkEntry, innerW int) string {
 	return strings.Join(thinklinkDetailLines(entry, innerW), "\n")
 }
 
-// thinklinkDetailLines 将条目渲染为已样式、每行显示宽度 ≤ innerW 的行切片。
 // 用户输入与非结构化（旧 markdown）内容走原文词折行；结构化 thought 块走字段化渲染。
 func thinklinkDetailLines(entry ThinklinkEntry, innerW int) []string {
 	if innerW < 10 {
@@ -318,13 +301,11 @@ func thinklinkDetailLines(entry ThinklinkEntry, innerW int) []string {
 	}
 	tp := thinklink.ParseThoughtPlan(entry.Content)
 	if tp.Empty() {
-		// 旧 markdown / 非结构化：原文按词折行渲染（兜底，不丢内容）。
 		return renderRawDetailLines(entry.Content, innerW, tlFieldValueStyle)
 	}
 	return renderThoughtPlanLines(tp, innerW)
 }
 
-// renderRawDetailLines 将纯文本按词折行并逐行套用 style。
 func renderRawDetailLines(content string, innerW int, style lipgloss.Style) []string {
 	wrapped := wrapWords(strings.TrimSpace(content), innerW)
 	out := make([]string, 0, len(wrapped))
@@ -338,8 +319,6 @@ func renderRawDetailLines(content string, innerW int, style lipgloss.Style) []st
 	return out
 }
 
-// renderThoughtPlanLines 渲染结构化 thought 块：
-// GOAL / STEP / REASON 三个带标签字段 + PLAN 清单（状态图标 + 进度计数）。
 func renderThoughtPlanLines(tp thinklink.ThoughtPlan, innerW int) []string {
 	var out []string
 	out = append(out, renderFieldLines("GOAL", tp.Goal, innerW, tlGoalValueStyle)...)
@@ -361,8 +340,7 @@ func renderThoughtPlanLines(tp thinklink.ThoughtPlan, innerW int) []string {
 	return out
 }
 
-// renderFieldLines 渲染一个 "标签  值" 字段，值按词折行、续行对齐到标签槽之后。
-// 值为空时返回 nil（不占行）。
+// 值按词折行、续行对齐到标签槽之后；值为空时返回 nil（不占行）。
 func renderFieldLines(label, value string, innerW int, valStyle lipgloss.Style) []string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -390,7 +368,6 @@ func renderFieldLines(label, value string, innerW int, valStyle lipgloss.Style) 
 	return out
 }
 
-// renderPlanHeader 渲染 PLAN 段标题：左侧 "PLAN"，右侧右对齐的 "已完成/总数" 计数。
 func renderPlanHeader(items []thinklink.PlanItem, innerW int) string {
 	done := 0
 	for _, it := range items {
@@ -407,7 +384,6 @@ func renderPlanHeader(items []thinklink.PlanItem, innerW int) string {
 	return left + strings.Repeat(" ", fill) + right
 }
 
-// renderPlanItemLines 渲染单条计划：状态图标（✓/▸/○）+ 词折行文本，续行缩进对齐。
 func renderPlanItemLines(item thinklink.PlanItem, innerW int) []string {
 	switch item.Status {
 	case thinklink.PlanDone:
@@ -440,9 +416,7 @@ func renderPlanItem(mark string, glyphStyle lipgloss.Style, text string, textSty
 	return out
 }
 
-// thinklinkListPreview 返回列表行预览文本：
-// 用户输入取首个非空行；结构化 thought 优先取进行中条目，其次 GOAL；
-// 非结构化兜底取首个非空行。
+// 预览取值优先级：user_input 取首个非空行；结构化优先进行中条目、其次 GOAL；兜底取首个非空行。
 func thinklinkListPreview(entry ThinklinkEntry) string {
 	if entry.Kind == "user_input" {
 		return firstThinklinkLine(entry.Content)
@@ -461,8 +435,7 @@ func thinklinkListPreview(entry ThinklinkEntry) string {
 	return firstThinklinkLine(entry.Content)
 }
 
-// thinklinkHintCells 底部 keycap 提示，按重要性排列：终端越窄越先裁掉后面的键帽，
-// 整行必须留在终端宽度内（折一行就把详情面板的起始位置顶掉，整屏错位）。
+// 按重要性排列：终端越窄越先裁掉后面的键帽，整行必须留在终端宽度内（折一行就把详情面板的起始位置顶掉）。
 var thinklinkHintCells = [][2]string{
 	{"↑/↓", "select"},
 	{"enter", "scroll detail"},
@@ -471,7 +444,6 @@ var thinklinkHintCells = [][2]string{
 	{"esc/q", "close"},
 }
 
-// thinklinkHintLine 渲染底部提示条（与 dashboard 的 dashKeycap 风格一致）。
 func thinklinkHintLine(width int) string {
 	var sb strings.Builder
 	sb.WriteString(" ")
@@ -488,7 +460,6 @@ func thinklinkHintLine(width int) string {
 	return thinklinkDimStyle.Render(sb.String())
 }
 
-// thinklinkHeader 渲染标题行：◆ Thinklink + 副标题/Agent 过滤（左），条目计数（右对齐）。
 func thinklinkHeader(m *model, width int) string {
 	diamond := lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render("◆ ")
 	title := thinklinkTitleStyle.Render("Thinklink")
@@ -517,7 +488,6 @@ func thinklinkHeader(m *model, width int) string {
 	return line
 }
 
-// thinklinkFullscreenUpdate thinklink 全屏模式下拦截所有消息。
 func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -542,16 +512,13 @@ func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "enter":
-			// 切换详情滚动模式（列表导航 ↔ 详情滚动）
 			m.thinklinkDetailActive = !m.thinklinkDetailActive
 			return m, nil
 		case "f":
-			// 按 Agent 过滤：一次委派里 Director/Coding/Browser 的块会混排，
-			// Browser 一轮就能贡献上百条，不过滤基本没法读。
+			// 一次委派里 Director/Coding/Browser 的块会混排，Browser 一轮就能贡献上百条，不过滤基本没法读。
 			cycleThinklinkAgentFilter(m)
 			return m, nil
 		case "g":
-			// 回顶部：滚动模式滚详情，否则跳到第一条
 			if m.thinklinkDetailActive && m.thinklinkVP != nil {
 				m.thinklinkVP.GotoTop()
 			} else {
@@ -561,7 +528,6 @@ func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case tea.WindowSizeMsg:
-		// 全屏模式下自行处理 resize（不透传给主 Update）
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		initThinklinkViewport(m)
@@ -569,39 +535,27 @@ func thinklinkFullscreenUpdate(msg tea.Msg, m *model) (tea.Model, tea.Cmd) {
 		m.invalidateFooterCache()
 		return m, nil
 	case taskEventMsg:
-		// 全屏模式必须维持任务事件链：透传给 handler（handler 内部有防御检查
-		// 且自行续链 listenForEvents），若在此丢弃事件，listenForEvents 链断裂，
-		// 退出全屏后主界面永久失去刷新（agent 输出不显示）。
-		// 对齐主 Update 的 dialog 弹窗分支策略。
+		// 必须透传：handler 内部有防御检查并自行续链 listenForEvents（一次性 cmd、没有重放队列），丢弃事件会让退出全屏后的主界面永久断流。
 		return m.handleTaskEventMsg(msg)
 	case taskCompleteMsg:
-		// 任务完成消息若在全屏期间被丢弃，m.taskRunning 会永久卡在 true。
-		// 先自动退出全屏回主界面，确保 handler 可能弹出的完成/错误对话框可见、
-		// 按键不被全屏吞掉，再透传给 handler 做收尾（重置 taskRunning、动画等）。
+		// taskCompleteMsg 是 taskRunning 唯一的清零点，全屏期间丢弃会永久卡在"运行中"；先退出全屏再透传，保证完成/错误对话框可见。
 		exitThinklinkMode(m)
 		return m.handleTaskCompleteMsg(msg)
 	case tickMsg:
-		// 全屏模式必须维持 tick 链：只续 tick 循环但绝不调用 handleTickMsg
-		//（它会直接操作被全屏隐藏的主界面 viewport，造成 UI 错乱）。
-		// 对齐主 Update 的 dialog 弹窗分支策略。
+		// 只续 tick 链、绝不调 handleTickMsg：它直接操作被全屏隐藏的主界面 viewport，会造成 UI 错乱。
 		if m.taskRunning {
 			return m, m.armTick()
 		}
 		m.stopTick()
 		return m, nil
 	}
-	// 其余未知消息（如 MouseMsg、未匹配任何 case 的消息，以及 KeyMsg 中
-	// 未匹配已知按键的情况）：与主 Update 的 dialog 弹窗分支 default 策略
-	// 一致——任务运行时同时续上事件链与 tick 链，否则退出全屏后主界面
-	// 永久失去刷新（TUI 冻结）。
+	// 兜底分支与主 Update 的 dialog 弹窗策略一致：任务运行时同时续上事件链与 tick 链，否则退出全屏后主界面永久失去刷新。
 	if m.taskRunning {
 		return m, tea.Batch(listenForEvents(m.eventCh), m.ensureTick())
 	}
 	return m, nil
 }
 
-// renderThinklinkFullscreenView 渲染 thinklink 全屏视图：
-// 标题行 + 发丝线 + 条目列表（窗口切片） + 圆角详情面板 + 底部 keycap 提示。
 func renderThinklinkFullscreenView(m *model) tea.View {
 	width, height := m.termWidth, m.termHeight
 	var b strings.Builder
@@ -609,7 +563,6 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 	b.WriteString(thinklinkHeader(m, width) + "\n")
 	b.WriteString(thinklinkHairStyle.Render(strings.Repeat("─", width)) + "\n")
 
-	// 空态：标题 + 发丝线 + 居中提示 + 底部提示
 	visible := thinklinkVisibleEntries(m)
 	if len(visible) == 0 {
 		emptyText := "◇  No thinklink entries yet"
@@ -645,7 +598,6 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 		listH = 1
 	}
 
-	// ── 列表区：窗口切片保证 cursor 可见（优先靠底） ──
 	n := len(visible)
 	start := 0
 	if n > listH {
@@ -668,19 +620,16 @@ func renderThinklinkFullscreenView(m *model) tea.View {
 		b.WriteString("\n") // 列表不满时补空行，保持详情区位置稳定
 	}
 
-	// ── 圆角详情面板 ──
 	entry := visible[m.thinklinkCursor]
 	for _, l := range renderThinklinkDetailPanel(m, entry, width, detailH) {
 		b.WriteString(l + "\n")
 	}
 
-	// ── 底部 keycap 提示（最后一行不带换行） ──
 	b.WriteString(thinklinkHintLine(width))
 
 	return tea.View{AltScreen: true, Content: b.String()}
 }
 
-// thinklinkPanelTop 面板顶边框，标题内嵌在左轨：╭─ ◆ TITLE · meta ─────╮。
 func thinklinkPanelTop(title, meta string, width int) string {
 	label := lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render(" ◆ ") +
 		lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg).Render(title)
@@ -706,7 +655,6 @@ func thinklinkPanelTop(title, meta string, width int) string {
 		thinklinkBorderStyle.Render(strings.Repeat("─", fill)+"╮")
 }
 
-// thinklinkPanelRows 给每行套上左右边框与内边距，超过 innerW 的行被截断。
 func thinklinkPanelRows(inner []string, innerW int) []string {
 	rows := make([]string, 0, len(inner))
 	padStyle := lipgloss.NewStyle().Width(innerW)
@@ -720,12 +668,10 @@ func thinklinkPanelRows(inner []string, innerW int) []string {
 	return rows
 }
 
-// thinklinkPanelBottom 面板底边框：╰────╯。
 func thinklinkPanelBottom(width int) string {
 	return thinklinkBorderStyle.Render("╰" + strings.Repeat("─", width-2) + "╯")
 }
 
-// renderThinklinkDetailPanel 渲染带标题的圆角详情面板，
 // 返回恰好 detailH+2 行、每行显示宽度为 width 的字符串切片。
 func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH int) []string {
 	innerW := width - 4 // 边框(2) + 内边距(2)
@@ -748,7 +694,6 @@ func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH i
 	}
 	top := thinklinkPanelTop("DETAIL", meta+" · "+scrollMode, width)
 
-	// 内容行
 	var inner []string
 	if m.thinklinkDetailActive && m.thinklinkVP != nil {
 		inner = strings.Split(m.thinklinkVP.View(), "\n")
@@ -768,7 +713,6 @@ func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH i
 		}
 		inner = lines
 	}
-	// 截断/补齐到 detailH 行
 	if len(inner) > detailH {
 		inner = inner[:detailH]
 	}
@@ -783,18 +727,14 @@ func renderThinklinkDetailPanel(m *model, entry ThinklinkEntry, width, detailH i
 	return lines
 }
 
-// renderThinklinkListLine 渲染单行条目：导轨标记 + 序号 + 类型 chip + 时间 + 步数 + 预览。
-// 选中行以亮色 ▌ 导轨与更亮的文字突出，未选中行为暗色 │ 导轨。
 func renderThinklinkListLine(m *model, e ThinklinkEntry, pos, width int) string {
 	selected := pos == m.thinklinkCursor
 
-	// 导轨
 	rail := lipgloss.NewStyle().Foreground(tlRailFg).Render("│")
 	if selected {
 		rail = lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render("▌")
 	}
 
-	// 序号
 	idxStr := fmt.Sprintf("%02d", pos+1)
 	idxStyle := lipgloss.NewStyle().Foreground(tlDimFg)
 	if selected {
@@ -811,8 +751,7 @@ func renderThinklinkListLine(m *model, e ThinklinkEntry, pos, width int) string 
 		stepStr = fmt.Sprintf("%-7s", fmt.Sprintf("step %d", e.Step))
 	}
 
-	// 纯文本前缀（用于计算预览可用宽度）：
-	// rail(1)+sp(1)+idx(2)+sp(2)+chip(4)+sp(2)+time(8)+sp(2)+step(7)+sp(2)
+	// 预览可用宽度 = 宽度 − 纯文本前缀 rail(1)+sp(1)+idx(2)+sp(2)+chip(4)+sp(2)+time(8)+sp(2)+step(7)+sp(2)
 	plainPrefixLen := 1 + 1 + 2 + 2 + 4 + 2 + 8 + 2 + 7 + 2
 	avail := width - plainPrefixLen - 1
 	if avail < 0 {

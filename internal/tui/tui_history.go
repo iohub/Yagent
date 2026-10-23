@@ -12,8 +12,6 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// ── History 样式缓存 ──
-
 // historyStyles 预计算的样式集合，避免每帧重建
 type historyStyles struct {
 	badgeBgColor   string         // 选中行背景色 (lipgloss.Color string)
@@ -24,7 +22,6 @@ type historyStyles struct {
 	normalStyle    lipgloss.Style // 普通状态
 }
 
-// initHistoryStyles 预创建样式对象（在 enterHistoryMode 中首次调用时初始化）
 func (m *model) initHistoryStyles() *historyStyles {
 	bgColor := lipgloss.Color("39") // 蓝色
 	fgColor := lipgloss.Color("0")  // 黑色
@@ -52,8 +49,6 @@ func (m *model) initHistoryStyles() *historyStyles {
 	}
 }
 
-// ── History message types ──
-
 // historyItemsMsg is sent when async history list loading completes.
 type historyItemsMsg struct {
 	items []datamanager.TaskHistoryItem
@@ -70,13 +65,9 @@ type historyErrMsg struct {
 	err error
 }
 
-// ── Constants ──
-
 const (
 	defaultPageSize = 20 // 每页固定20条
 )
-
-// ── History Update ──
 
 // historyUpdate processes all messages in history mode.
 func historyUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
@@ -111,8 +102,7 @@ func historyUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case taskEventMsg:
-		// 浏览历史时任务仍在跑：事件必须照常消费，否则退出后主界面停在旧内容上，
-		// 少掉的那几条要等从历史恢复才看得见。
+		// 浏览历史时任务仍在跑：事件必须照常消费并续链，否则退出后主界面停在旧内容上（listenForEvents 没有重放队列）。
 		_, cmd := m.handleTaskEventMsg(msg)
 		return m, cmd
 
@@ -151,7 +141,6 @@ func (m *model) visibleRange() (startIdx, endIdx int) {
 	page := m.historyPage
 	totalPages := m.totalNumPages()
 
-	// Clamp page
 	if page < 0 {
 		page = 0
 	}
@@ -203,21 +192,17 @@ func (m *model) clampCursor() {
 func historyHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 	k := key.String()
 
-	// Exit history mode on escape or ctrl+c
 	if k == "esc" || k == "ctrl+c" {
 		exitHistoryMode(m)
 		return m, nil
 	}
 
-	// Skip all other keys while loading (esc already handled above)
 	if m.historyLoading {
 		return m, nil
 	}
 
-	// Navigation
 	switch k {
 	case "j", "down":
-		// Cursor down within current page (no auto-page)
 		_, endIdx := m.visibleRange()
 		visibleCount := endIdx - (m.historyPage * m.historyPageSize)
 		if visibleCount > 0 && m.historyCursor < visibleCount-1 {
@@ -226,14 +211,12 @@ func historyHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case "k", "up":
-		// Cursor up within current page (no auto-page)
 		if m.historyCursor > 0 {
 			m.historyCursor--
 		}
 		return m, nil
 
 	case "n", "pagedown", "ctrl+f":
-		// Next page
 		totalPages := m.totalNumPages()
 		if m.historyPage+1 < totalPages {
 			m.historyPage++
@@ -242,7 +225,6 @@ func historyHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case "p", "pageup", "ctrl+b":
-		// Previous page
 		if m.historyPage > 0 {
 			m.historyPage--
 			m.historyCursor = 0
@@ -261,7 +243,6 @@ func historyHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		return m, nil
 
 	case "G":
-		// Last page
 		totalPages := m.totalNumPages()
 		if totalPages > 0 {
 			m.historyPage = totalPages - 1
@@ -273,7 +254,6 @@ func historyHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 		if len(m.historyItems) == 0 || m.historyLoading {
 			return m, nil
 		}
-		// Load memory for the selected item using absolute cursor index
 		absIdx := m.absCursor()
 		if absIdx < 0 || absIdx >= len(m.historyItems) {
 			return m, nil
@@ -291,7 +271,6 @@ func historyHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 			return m, nil
 		}
 		item := m.historyItems[absIdx]
-		// Open delete confirmation via DialogStack
 		detail := item.Title
 		if len(detail) > 30 {
 			detail = detail[:30] + "..."
@@ -305,8 +284,6 @@ func historyHandleKey(key tea.KeyMsg, m *model) (*model, tea.Cmd) {
 
 	return m, nil
 }
-
-// ── History Commands ──
 
 // loadHistoryCmd asynchronously loads the history list.
 func loadHistoryCmd(m *model) tea.Cmd {
@@ -339,11 +316,7 @@ func loadMemoryCmd(m *model, taskID string) tea.Cmd {
 	}
 }
 
-// ── Session Restore ──
-
-// restoreSession restores a conversation from loaded memory into the current TUI session.
-// The memory→TUI landing logic lives in applyRestoredMemory (tui_resume.go,
-// shared with the :resume rollout path); behavior is unchanged.
+// memory→TUI 的落点在 applyRestoredMemory（tui_resume.go，与 :resume rollout 路径共用）。
 func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 	// Guard against double-load (e.g., rapid double-press on history item)
 	if m.historyLoading {
@@ -358,13 +331,9 @@ func restoreSession(m *model, mem *memory.ConversationMemory, taskID string) {
 	}
 
 	m.setInfoMsg(applyRestoredMemory(m, mem, taskID, m.projectDir, "Loaded"))
-	// history 加载只有 taskID 可用（tasks/*.jsonl 不记 board_id）。
-	// 于是：改动前的旧会话（board 就是 taskID）能续上便签；
-	// 改动后的新会话只能靠 /resume 那条路（rollout 里写了 board_id）。
+	// history 加载只有 taskID 可用（tasks/*.jsonl 不记 board_id）：改动前的旧会话（board 就是 taskID）能续上便签，改动后的新会话只能靠 /resume（rollout 里写了 board_id）。
 	m.adoptRestoredBoard("", taskID)
 }
-
-// ── History Mode Entry/Exit ──
 
 // enterHistoryMode enters history browsing mode, loading the list asynchronously.
 func enterHistoryMode(m *model) tea.Cmd {
@@ -376,7 +345,6 @@ func enterHistoryMode(m *model) tea.Cmd {
 	m.historyLoading = true
 	m.lastKey = ""
 
-	// 初始化或重置历史样式
 	m.historyStyles = m.initHistoryStyles()
 
 	return loadHistoryCmd(m)
@@ -393,8 +361,6 @@ func exitHistoryMode(m *model) {
 	m.lastKey = ""
 }
 
-// ── History View Rendering ──
-
 // renderHistoryView renders the fullscreen history browsing UI.
 func renderHistoryView(m *model) tea.View {
 	width := m.termWidth
@@ -406,15 +372,12 @@ func renderHistoryView(m *model) tea.View {
 		height = 8
 	}
 
-	// ── Height calculation:
-	//   Top border (1) + Title bar (1) + Content area (?) + Status bar (1) + Bottom border (1) = height
-	//   => contentHeight = height - 4
+	// 顶边框(1) + 标题栏(1) + 内容区 + 状态栏(1) + 底边框(1) = height，故内容区 = height - 4
 	contentHeight := height - 4
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
 
-	// Actual rendered item lines = min(pageSize, contentHeight)
 	effectivePageSize := m.historyPageSize
 	if effectivePageSize > contentHeight {
 		effectivePageSize = contentHeight
@@ -422,50 +385,40 @@ func renderHistoryView(m *model) tea.View {
 
 	var b strings.Builder
 
-	// ── Top border ──
 	topLeft := "┌" + strings.Repeat("─", width-2) + "┐"
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(topLeft))
 	b.WriteString("\n")
 
-	// ── Title bar ──
 	titleBar := renderHistoryTitleBar(m, width)
 	b.WriteString(titleBar)
 	b.WriteString("\n")
 
-	// ── Content area ──
 	contentArea := renderHistoryContent(m, width, effectivePageSize)
 	b.WriteString(contentArea)
 
-	// ── Status bar ──
 	statusBar := renderHistoryStatusBar(m, width)
 	b.WriteString(statusBar)
 	b.WriteString("\n")
 
-	// ── Bottom border ──
 	bottomLeft := "└" + strings.Repeat("─", width-2) + "┘"
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(bottomLeft))
 
-	// AltScreen 必须显式为 true。tea.NewView 的这个字段是 false，而渲染器看到它
-	// 从 true 翻转就会**退出备用屏**（cursed_renderer.go:314）——
-	// 于是进 history 会把用户甩回主屏缓冲区，多出来的行直接滚进真实终端历史。
+	// AltScreen 必须显式为 true：渲染器看到它从 true 翻转就会退出备用屏（cursed_renderer.go:314），进 history 会把用户甩回主屏缓冲区，多出来的行滚进真实终端历史。
 	return tea.View{AltScreen: true, Content: b.String()}
 }
 
 // renderHistoryTitleBar renders the top title bar of the history view.
 func renderHistoryTitleBar(m *model, width int) string {
-	// Determine page info for title
 	totalPages := m.totalNumPages()
 	pageNum := m.historyPage + 1 // 1-based for display
 	titleText := fmt.Sprintf(" History          Page %d/%d ", pageNum, totalPages)
 	rightText := "esc: back  enter: load  d: delete"
 
-	// Calculate available width for right text
 	contentWidth := width - 2 // account for border
 	leftWidth := len(titleText)
 	rightWidth := len(rightText)
 	paddingNeeded := contentWidth - leftWidth - rightWidth
 	if paddingNeeded < 1 {
-		// Truncate right text to fit
 		maxRight := contentWidth - leftWidth - 1
 		if maxRight > 3 {
 			rightText = rightText[:maxRight] + "…"
@@ -487,8 +440,7 @@ func renderHistoryTitleBar(m *model, width int) string {
 	return style.Render(combined)
 }
 
-// renderHistoryContent renders the page-based content area.
-// It renders exactly `height` lines: visible items + empty fill lines.
+// renderHistoryContent renders exactly `height` lines: visible items plus empty fill lines.
 func renderHistoryContent(m *model, width, height int) string {
 	bgStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("234")).
@@ -506,7 +458,6 @@ func renderHistoryContent(m *model, width, height int) string {
 			}
 			return strings.Join(lines, "\n")
 		}
-		// Empty state
 		centerText := "No history yet. Start a conversation with alt+s."
 		padding := strings.Repeat(" ", (width-len(centerText))/2)
 		lines := make([]string, height)
@@ -517,22 +468,17 @@ func renderHistoryContent(m *model, width, height int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	// Calculate visible range
 	startIdx, endIdx := m.visibleRange()
 	visibleItems := m.historyItems[startIdx:endIdx]
 
-	// Clamp cursor for this page
 	m.clampCursor()
 
-	// Build lines
 	lines := make([]string, height)
 	for i := 0; i < height; i++ {
 		if i < len(visibleItems) {
-			// Render actual item
 			isSelected := (i == m.historyCursor)
 			lines[i] = renderHistoryItem(m, visibleItems[i], isSelected, width)
 		} else {
-			// Empty fill line
 			lines[i] = bgStyle.Render("")
 		}
 	}
@@ -540,18 +486,15 @@ func renderHistoryContent(m *model, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderHistoryItem renders a single history item line.
 // renderHistoryItem 渲染单个历史条目（使用预计算样式，零分配模式）
 func renderHistoryItem(m *model, item datamanager.TaskHistoryItem, selected bool, width int) string {
 	dateStr := item.CreatedAt.Format("01-02 15:04")
 
-	// Title 宽度计算
 	maxTitleWidth := width - 14
 	if maxTitleWidth < 10 {
 		maxTitleWidth = 10
 	}
 
-	// 用 Builder 优化字符串替换（一次遍历替换所有换行符）
 	title := cleanTitle(item.Title, maxTitleWidth)
 
 	if selected {
@@ -560,7 +503,7 @@ func renderHistoryItem(m *model, item datamanager.TaskHistoryItem, selected bool
 	return renderNormalItem(m, dateStr, title, width)
 }
 
-// cleanTitle 高效清理和截断标题（一次性遍历，避免多次 ReplaceAll）
+// 一次遍历完成换行替换与截断，避免多次 ReplaceAll。
 func cleanTitle(raw string, maxWidth int) string {
 	if raw == "" {
 		return ""
@@ -589,7 +532,6 @@ func cleanTitle(raw string, maxWidth int) string {
 	return result
 }
 
-// renderSelectedItem 渲染选中状态的条目
 func renderSelectedItem(m *model, dateStr, title string, width int) string {
 	s := m.historyStyles
 	if s == nil {
@@ -615,7 +557,6 @@ func renderSelectedItem(m *model, dateStr, title string, width int) string {
 		Render(left)
 }
 
-// renderNormalItem 渲染普通状态的条目
 func renderNormalItem(m *model, dateStr, title string, width int) string {
 	s := m.historyStyles
 	if s == nil {
@@ -628,7 +569,6 @@ func renderNormalItem(m *model, dateStr, title string, width int) string {
 	datePart := s.normalStyle.Render(dateStr)
 	titlePart := s.normalStyle.Render(title)
 
-	// 使用不同的颜色分别渲染日期和标题
 	datePart = lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245")).
 		Render(dateStr)
@@ -676,8 +616,7 @@ func renderHistoryStatusBar(m *model, width int) string {
 
 	var line string
 	if commandHint != "" {
-		// "statusText ── commandHint"
-		// Put status on left, commands on right
+		// 状态在左、命令提示在右
 		statusWidth := len(statusText)
 		cmdWidth := len(commandHint)
 		if contentWidth > statusWidth+cmdWidth+4 {
@@ -698,8 +637,7 @@ func renderHistoryStatusBar(m *model, width int) string {
 	return style.Render(line)
 }
 
-// confirmDeleteHistoryEntryByID executes the deletion of a history entry by taskID.
-// It is called after the delete confirmation dialog (via DialogStack) is confirmed.
+// confirmDeleteHistoryEntryByID deletes a history entry by taskID; called once the DialogStack confirmation comes back.
 func confirmDeleteHistoryEntryByID(m *model, taskID string) tea.Cmd {
 	if taskID == "" || m.dataManager == nil {
 		m.setInfoMsg("Cannot delete: data manager not available")
@@ -712,7 +650,6 @@ func confirmDeleteHistoryEntryByID(m *model, taskID string) tea.Cmd {
 		return nil
 	}
 
-	// Remove the deleted item from historyItems
 	absIdx := -1
 	for i, item := range m.historyItems {
 		if item.TaskID == taskID {
@@ -725,7 +662,6 @@ func confirmDeleteHistoryEntryByID(m *model, taskID string) tea.Cmd {
 		m.historyItems = append(m.historyItems[:absIdx], m.historyItems[absIdx+1:]...)
 	}
 
-	// Adjust cursor if needed
 	if len(m.historyItems) == 0 {
 		m.historyCursor = 0
 		m.historyPage = 0

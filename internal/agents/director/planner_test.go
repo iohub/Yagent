@@ -1,13 +1,4 @@
-// Package director — planner_test.go — P0-1 Phase 3-2a-2：Planner.Run 单测。
-//
-// 独立可测（注入 fake LLM/ToolRunner/Publisher 与真实 thinklink.Store），
-// 不依赖 DirectorAgent。风格参照同目录 compressor_test.go。覆盖：
-//  1. 退出路径：plain_text / agent_exit / max_steps / llm_error；
-//  2. 强制委派提醒：未委派纯文本时注入 user 角色提醒（两种文案）、
-//     NonDelegationPrompts 递增、上限 3 后放行、不污染 ConversationMemory；
-//  3. 工具调用路径：工具结果以 RoleTool 消息回填后续 LLM 调用；
-//  4. nil 容忍：Publisher/Journal/Rollout 传 nil 不 panic；
-//  5. 状态同步：Run 结束后 state.Step 与实际步数一致。
+// Package director 的 Planner.Run 单测：注入 fake LLM/ToolRunner/Publisher 与真实 thinklink.Store，不依赖 DirectorAgent。
 package director
 
 import (
@@ -22,11 +13,7 @@ import (
 	"yagent/internal/thinklink"
 )
 
-// ─── fake 实现 ───────────────────────────────────────────────────────────────
-
-// fakePlannerLLM 可控 LLM（实现 LLMClient）：按序返回预设响应序列，
-// 序列耗尽后重复最后一个元素（max_steps 场景需持续工具调用）；
-// 记录每次收到的 messages 深拷贝供断言。
+// fakePlannerLLM 按序返回预设响应，序列耗尽后重复最后一个（max_steps 场景需持续工具调用）。
 type fakePlannerLLM struct {
 	steps    []fakeLLMStep
 	idx      int
@@ -53,7 +40,6 @@ func (e *fakePlannerLLM) GenerateContent(_ context.Context, messages []llm.Messa
 
 func (e *fakePlannerLLM) Model() string { return "fake-model" }
 
-// cloneMessages 深拷贝消息（防 Planner 后续 append 复用底层数组污染已记录请求）。
 func cloneMessages(msgs []llm.Message) []llm.Message {
 	out := make([]llm.Message, len(msgs))
 	for i, m := range msgs {
@@ -63,12 +49,10 @@ func cloneMessages(msgs []llm.Message) []llm.Message {
 	return out
 }
 
-// textResp 构造纯文本响应。
 func textResp(content string) *llm.Response {
 	return &llm.Response{Choices: []llm.Choice{{Content: content}}}
 }
 
-// toolCallResp 构造单工具调用响应。
 func toolCallResp(id, name, args string) *llm.Response {
 	return &llm.Response{Choices: []llm.Choice{{
 		ToolCalls: []llm.ToolCall{{
@@ -79,11 +63,8 @@ func toolCallResp(id, name, args string) *llm.Response {
 	}}}
 }
 
-// fakePlannerTools 可控工具执行器（实现 ToolRunner）：记录 Call 参数，
-// 按工具名返回预设结果。Specs 含 echo_tool（普通工具）、delegate_sub_agent
-// （委派工具）与 agent_exit（退出工具）。state 非 nil 时模拟门面 Tools 包装
-// 闭包的委派检测语义（planner_run.go 只读 state 驱动提醒控制流）：delegate_*
-// 调用更新 HasDelegated/DelegationAttempts/PendingSubAgentMemory。
+// fakePlannerTools 的 state 非 nil 时模拟门面 Tools 包装闭包的委派检测语义
+// （planner_run.go 只读 state 驱动提醒控制流）：delegate_* 调用更新 HasDelegated/DelegationAttempts/PendingSubAgentMemory。
 type fakePlannerTools struct {
 	state   *RunState
 	calls   []fakeToolCall
@@ -120,7 +101,6 @@ func (t *fakePlannerTools) Call(_ context.Context, name, argsJSON string, callID
 	return t.results[name], nil
 }
 
-// fakePlannerPublisher 记录全部事件名的 EventPublisher fake。
 type fakePlannerPublisher struct {
 	events []string
 }
@@ -149,10 +129,9 @@ func newState(hasDelegated bool) *RunState {
 	return &RunState{HasDelegated: hasDelegated}
 }
 
-// newTestPlanner 统一构造：真实 thinklink.Store 作 Journal（CompressEnable=false
-// 时仅 AddUserInput/AddThoughtPlan 路径被触达），Prompts 返回固定 system prompt。
-// pub/journal 参数取接口类型：传 nil 字面量时接口为真 nil，cfg 判空生效
-// （具体类型指针会产生 typed-nil，使 p.cfg.Publisher != nil 误判为 true）。
+// newTestPlanner 用真实 thinklink.Store 作 Journal、固定 system prompt。
+// pub/journal 取接口类型而不是具体指针：传 nil 字面量时接口才是真 nil
+// （具体类型指针装箱后产生 typed-nil，使 p.cfg.Publisher != nil 误判为 true）。
 func newTestPlanner(maxSteps int, state *RunState, eng *fakePlannerLLM, tools *fakePlannerTools, pub EventPublisher, journal ThinklinkStore) *Planner {
 	return NewPlanner(PlannerConfig{
 		LLM:        eng,
@@ -192,12 +171,6 @@ func toolMessagesAt(t *testing.T, reqs [][]llm.Message, k int) []llm.Message {
 	return out
 }
 
-// ─── 退出路径 ────────────────────────────────────────────────────────────────
-
-// TestPlannerRunPlainTextExit 纯文本退出：先 delegate_sub_agent（fake Tools
-// 模拟门面闭包更新 state.HasDelegated=true）→ 下一步纯文本直接放行，不注入
-// 强制委派提醒。断言 Text/StopReason/Steps、LLM 两次调用、state.Step 同步、
-// thinklink 记录用户输入、委派状态更新、关键事件发布。
 func TestPlannerRunPlainTextExit(t *testing.T) {
 	eng := &fakePlannerLLM{steps: []fakeLLMStep{
 		{resp: toolCallResp("call-1", "delegate_sub_agent", `{"agent":"coder","task":"do it"}`)},
@@ -240,12 +213,10 @@ func TestPlannerRunPlainTextExit(t *testing.T) {
 	if len(tools.calls) != 1 || tools.calls[0].Name != "delegate_sub_agent" {
 		t.Errorf("tool calls = %+v, want single delegate_sub_agent call", tools.calls)
 	}
-	// thinklink 记录了用户原始输入
 	snap := journal.Snapshot()
 	if len(snap) != 1 || snap[0].Content != "PLAIN_TASK" || snap[0].Kind != thinklink.KindUserInput {
 		t.Errorf("journal snapshot = %+v, want single KindUserInput entry %q", snap, "PLAIN_TASK")
 	}
-	// 关键事件已发布
 	for _, ev := range []string{"model_info", "llm_call_start", "ai_stream_end", "ai_response", "thinklink_entry"} {
 		if !pub.hasEvent(ev) {
 			t.Errorf("event %q not published; got %v", ev, pub.events)
@@ -253,9 +224,7 @@ func TestPlannerRunPlainTextExit(t *testing.T) {
 	}
 }
 
-// TestPlannerRunAgentExit agent_exit 退出：LLM 返回 agent_exit 工具调用 →
-// Planner 执行工具后返回固定文本 "Task completed successfully"（不提取 exit
-// reason 参数）与 StopReason "agent_exit"。
+// TestPlannerRunAgentExit agent_exit 收尾返回固定文本 "Task completed successfully"，不提取 exit reason 参数。
 func TestPlannerRunAgentExit(t *testing.T) {
 	eng := &fakePlannerLLM{steps: []fakeLLMStep{{resp: toolCallResp("call-1", "agent_exit", `{"reason":"task done"}`)}}}
 	tools := &fakePlannerTools{}
@@ -279,14 +248,11 @@ func TestPlannerRunAgentExit(t *testing.T) {
 	if len(eng.requests) != 1 {
 		t.Fatalf("LLM calls = %d, want 1", len(eng.requests))
 	}
-	// 工具被按名调用且参数原样透传
 	if len(tools.calls) != 1 || tools.calls[0].Name != "agent_exit" || tools.calls[0].Args != `{"reason":"task done"}` {
 		t.Errorf("tool calls = %+v, want single agent_exit call with original args", tools.calls)
 	}
 }
 
-// TestPlannerRunMaxSteps max_steps 退出：LLM 持续返回工具调用，跑满 MaxSteps=3
-// 后停止，返回错误与 StopReason "max_steps"。
 func TestPlannerRunMaxSteps(t *testing.T) {
 	eng := &fakePlannerLLM{steps: []fakeLLMStep{{resp: toolCallResp("call-n", "echo_tool", `{"x":1}`)}}}
 	tools := &fakePlannerTools{results: map[string]string{"echo_tool": "OK"}}
@@ -315,8 +281,6 @@ func TestPlannerRunMaxSteps(t *testing.T) {
 	}
 }
 
-// TestPlannerRunLLMError llm_error 退出：LLM 返回错误原样透传（Recovery nil
-// → 零重试，单次调用即失败）。
 func TestPlannerRunLLMError(t *testing.T) {
 	wantErr := errors.New("boom from llm")
 	eng := &fakePlannerLLM{steps: []fakeLLMStep{{err: wantErr}}}
@@ -339,12 +303,7 @@ func TestPlannerRunLLMError(t *testing.T) {
 	}
 }
 
-// ─── 强制委派提醒 ────────────────────────────────────────────────────────────
-
-// TestPlannerRunForceDelegationReminder 强制委派提醒：未委派时 LLM 连续 4 次
-// 返回纯文本 → 前 3 次各注入一条 user 角色强制提醒（第 1 种文案 1 条、第 2 种
-// 文案 2 条），NonDelegationPrompts 递增至上限 3；第 4 次纯文本到达上限后放行。
-// 提醒不污染 ConversationMemory。
+// TestPlannerRunForceDelegationReminder 未委派纯文本时前 3 次各注入一条 user 角色提醒，上限 3 后放行；提醒不写进 ConversationMemory。
 func TestPlannerRunForceDelegationReminder(t *testing.T) {
 	const (
 		forceMsg1 = "You must delegate an agent to complete the task. Do not reply with plain text — call a delegate_* tool now."
@@ -385,7 +344,6 @@ func TestPlannerRunForceDelegationReminder(t *testing.T) {
 			t.Errorf("request #%d last user message = %v, want ending with forced reminder %q", k, uc, want)
 		}
 	}
-	// 第 1 次调用不含任何提醒
 	if uc := userContentsAt(t, eng.requests, 1); len(uc) != 1 || uc[0] != "DELEGATE_TASK" {
 		t.Errorf("request #1 user messages = %v, want only original input", uc)
 	}
@@ -401,11 +359,7 @@ func TestPlannerRunForceDelegationReminder(t *testing.T) {
 	}
 }
 
-// ─── 工具调用路径 ────────────────────────────────────────────────────────────
-
-// TestPlannerRunToolResultBackfill 工具结果回填：LLM 首步返回 echo_tool 调用 →
-// fake ToolRunner 返回结果 → 结果以 RoleTool 消息（含 ToolCallID/ToolName）
-// 回填进第 2 次 LLM 请求。末步 delegate 后纯文本放行（委派检测语义）。
+// TestPlannerRunToolResultBackfill 工具结果以 RoleTool 消息（含 ToolCallID/ToolName）回填进下一次 LLM 请求。
 func TestPlannerRunToolResultBackfill(t *testing.T) {
 	eng := &fakePlannerLLM{steps: []fakeLLMStep{
 		{resp: toolCallResp("call-7", "echo_tool", `{"input":"hello"}`)},
@@ -429,7 +383,6 @@ func TestPlannerRunToolResultBackfill(t *testing.T) {
 	if len(tools.calls) != 2 || tools.calls[0].Name != "echo_tool" || tools.calls[0].Args != `{"input":"hello"}` {
 		t.Fatalf("tool calls = %+v, want echo_tool then delegate_sub_agent", tools.calls)
 	}
-	// 结果回填第 2 次请求：RoleTool + 内容 + ID + 工具名
 	tms := toolMessagesAt(t, eng.requests, 2)
 	if len(tms) != 1 {
 		t.Fatalf("request #2 tool messages = %d, want 1", len(tms))
@@ -440,10 +393,6 @@ func TestPlannerRunToolResultBackfill(t *testing.T) {
 	}
 }
 
-// ─── nil 容忍与防御路径 ──────────────────────────────────────────────────────
-
-// TestPlannerRunNilTolerance Publisher/Journal/Rollout 全 nil 时不 panic，
-// delegate → 纯文本路径正常完成。
 func TestPlannerRunNilTolerance(t *testing.T) {
 	eng := &fakePlannerLLM{steps: []fakeLLMStep{
 		{resp: toolCallResp("call-1", "delegate_sub_agent", `{"agent":"coder"}`)},
@@ -466,8 +415,6 @@ func TestPlannerRunNilTolerance(t *testing.T) {
 	}
 }
 
-// TestPlannerRunPromptBuilderError PromptBuilder 返回错误时 Run 防御性返回错误，
-// LLM 不被调用。
 func TestPlannerRunPromptBuilderError(t *testing.T) {
 	eng := &fakePlannerLLM{}
 	p := NewPlanner(PlannerConfig{
@@ -509,13 +456,8 @@ func TestPlannerRunZeroMaxSteps(t *testing.T) {
 
 // ─── 终止事件落盘断点状态（B1）───────────────────────────────────────────────
 
-// TestPlannerRunPersistsRunState 两个终止路径（plain_text 完成 / max_steps 中断）
-// 都必须把断点状态写进 rollout：task_id 由 writer 回填、stop_reason/steps/
-// max_steps/has_delegated 随 task_complete / turn_aborted 落盘。
-//
-// 恢复侧 RolloutInfo.FinishState() 以 stop_reason 为主判据，缺字段就会把中断
-// 会话误判为已完成，TUI 因此不再提示断点续跑——这是存量 rollout 恢复不完整的
-// 根因之一，故在此按真实 writer/reader 往返断言，而非只查 PlanResult。
+// 恢复侧 RolloutInfo.FinishState() 以 stop_reason 为主判据，缺字段就会把中断会话误判为已完成，
+// TUI 因此不再提示断点续跑——所以这里按真实 writer/reader 往返断言，而非只查 PlanResult。
 func TestPlannerRunPersistsRunState(t *testing.T) {
 	tests := []struct {
 		name           string

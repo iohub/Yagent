@@ -255,6 +255,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			ProjectPath: workDir,
 			OS:          runtime.GOOS,
 			Arch:        runtime.GOARCH,
+			// Global utility
 			Publisher: publisher,
 
 			FileOps:        tools.NewFileOperationsTool(workDir),

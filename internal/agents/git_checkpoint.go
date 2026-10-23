@@ -406,7 +406,6 @@ func (g *GitCheckpointManager) RollbackToCheckpoint(ctx context.Context, tag str
 	}
 	g.session.Checkpoints = newCheckpoints
 
-	// Persist state
 	if err := g.persistState(); err != nil {
 		slog.Warn("Git Checkpoint: failed to persist state after rollback", "error", err)
 	}
@@ -415,7 +414,6 @@ func (g *GitCheckpointManager) RollbackToCheckpoint(ctx context.Context, tag str
 	return nil
 }
 
-// CreateManualCheckpoint creates a checkpoint at the current state.
 func (g *GitCheckpointManager) CreateManualCheckpoint(ctx context.Context, message string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -432,7 +430,6 @@ func (g *GitCheckpointManager) CreateManualCheckpoint(ctx context.Context, messa
 		return "", fmt.Errorf("git_checkpoint: no changes to checkpoint")
 	}
 
-	// Commit
 	_, err = g.runGitCommand(ctx, "add", "-A")
 	if err != nil {
 		return "", fmt.Errorf("git_checkpoint: add failed: %w", err)
@@ -444,7 +441,6 @@ func (g *GitCheckpointManager) CreateManualCheckpoint(ctx context.Context, messa
 		return "", fmt.Errorf("git_checkpoint: commit failed: %w", err)
 	}
 
-	// Create tag
 	tag := fmt.Sprintf("%s/%s-manual-%d", g.config.CheckpointTagPrefix, g.session.SessionID, time.Now().Unix())
 	_, err = g.runGitCommand(ctx, "tag", tag)
 	if err != nil {
@@ -453,7 +449,6 @@ func (g *GitCheckpointManager) CreateManualCheckpoint(ctx context.Context, messa
 
 	g.session.Checkpoints = append(g.session.Checkpoints, tag)
 
-	// Record checkpoint message
 	g.checkpointMessages = append(g.checkpointMessages, commitMsg)
 
 	if err := g.persistState(); err != nil {
@@ -463,8 +458,6 @@ func (g *GitCheckpointManager) CreateManualCheckpoint(ctx context.Context, messa
 	slog.Info("Git Checkpoint: Manual checkpoint created", "tag", tag, "message", message)
 	return tag, nil
 }
-
-// ─── Internal git operations ───
 
 func (g *GitCheckpointManager) getCurrentBranch(ctx context.Context) (string, error) {
 	out, err := g.runGitCommand(ctx, "rev-parse", "--abbrev-ref", "HEAD")
@@ -488,7 +481,6 @@ func (g *GitCheckpointManager) switchBranch(ctx context.Context, branch string) 
 }
 
 func (g *GitCheckpointManager) createAndSwitchBranch(ctx context.Context, branch string) error {
-	// Check if branch already exists, if so delete it
 	existing, err := g.runGitCommand(ctx, "rev-parse", "--verify", branch)
 	if err == nil && strings.TrimSpace(existing) != "" {
 		_, _ = g.runGitCommand(ctx, "branch", "-D", branch)
@@ -504,7 +496,6 @@ func (g *GitCheckpointManager) stashPop(ctx context.Context) error {
 }
 
 func (g *GitCheckpointManager) cleanupCheckpointTags(ctx context.Context) error {
-	// List all tags matching our prefix/session
 	out, err := g.runGitCommand(ctx, "tag", "-l", fmt.Sprintf("%s/%s-*", g.config.CheckpointTagPrefix, g.session.SessionID))
 	if err != nil {
 		return err
@@ -567,19 +558,14 @@ func (g *GitCheckpointManager) hasCommitsToSquash(ctx context.Context) (bool, er
 	return head != mergeBase, nil
 }
 
-// generateSquashCommitMessage builds an enriched diff and uses the LLM to
-// generate a Conventional Commits–style commit message.  This logic is shared
-// by both performSquashMerge and squashAgentBranch so that the message
-// generation is never duplicated.
+// generateSquashCommitMessage 由 performSquashMerge 与 squashAgentBranch 共用，避免消息生成有两份实现。
 func (g *GitCheckpointManager) generateSquashCommitMessage(ctx context.Context) (string, error) {
-	// Get diff
 	diff, err := g.getAgentDiff(ctx)
 	if err != nil {
 		slog.Warn("Git Checkpoint: failed to get diff for commit message", "error", err)
 		diff = "[diff unavailable]"
 	}
 
-	// Gather rich context: name-status, diffstat, checkpoint messages
 	var nameStatus, diffStat string
 	nameStatus, err = g.getDiffNameStatus(ctx, g.session.UserBranch, g.session.AgentBranch)
 	if err != nil {
@@ -590,7 +576,6 @@ func (g *GitCheckpointManager) generateSquashCommitMessage(ctx context.Context) 
 		slog.Warn("Git Checkpoint: failed to get diff-stat", "error", err)
 	}
 
-	// Build enriched diff with additional context
 	var enrichedDiff strings.Builder
 	enrichedDiff.WriteString(diff)
 
@@ -606,7 +591,6 @@ func (g *GitCheckpointManager) generateSquashCommitMessage(ctx context.Context) 
 		enrichedDiff.WriteString(diffStat)
 	}
 
-	// Add checkpoint messages if available
 	checkpointMessages := g.GetCheckpointMessages()
 	if len(checkpointMessages) > 0 {
 		enrichedDiff.WriteString("\n\n")
@@ -616,7 +600,6 @@ func (g *GitCheckpointManager) generateSquashCommitMessage(ctx context.Context) 
 		}
 	}
 
-	// Generate commit message
 	var commitMsg string
 	if g.llmCommitMsgFn != nil && g.config.GenerateCommitMessage {
 		msg, err := g.llmCommitMsgFn(ctx, enrichedDiff.String(), g.session.TaskSummary)
@@ -635,18 +618,15 @@ func (g *GitCheckpointManager) generateSquashCommitMessage(ctx context.Context) 
 }
 
 func (g *GitCheckpointManager) performSquashMerge(ctx context.Context) error {
-	// Generate commit message using shared logic
 	commitMsg, err := g.generateSquashCommitMessage(ctx)
 	if err != nil {
 		return fmt.Errorf("performSquashMerge: failed to generate commit message: %w", err)
 	}
 
-	// Switch to user branch
 	if err := g.switchBranch(ctx, g.session.UserBranch); err != nil {
 		return fmt.Errorf("failed to switch to user branch: %w", err)
 	}
 
-	// Squash merge
 	_, err = g.runGitCommand(ctx, "merge", "--squash", g.session.AgentBranch)
 	if err != nil {
 		// Abort merge on conflict
@@ -654,7 +634,6 @@ func (g *GitCheckpointManager) performSquashMerge(ctx context.Context) error {
 		return fmt.Errorf("squash merge conflict: %w", err)
 	}
 
-	// Commit with generated message
 	_, err = g.runGitCommand(ctx, "commit", "-m", commitMsg)
 	if err != nil {
 		return fmt.Errorf("failed to commit squash merge: %w", err)
@@ -664,11 +643,9 @@ func (g *GitCheckpointManager) performSquashMerge(ctx context.Context) error {
 	return nil
 }
 
-// squashAgentBranch squashes all commits on the agent branch into a single
-// professional commit.  It generates the commit message BEFORE the soft reset
-// so that git log is still available for the LLM to read.
+// squashAgentBranch 把 agent 分支上的所有提交压成一个提交：提交消息必须在 reset --soft
+// 之前生成，否则 git log 已经没了，LLM 读不到历史。
 func (g *GitCheckpointManager) squashAgentBranch(ctx context.Context) error {
-	// Guard: check if there are commits to squash
 	hasChanges, err := g.hasCommitsToSquash(ctx)
 	if err != nil {
 		return fmt.Errorf("squashAgentBranch: failed to check for changes: %w", err)
@@ -678,25 +655,21 @@ func (g *GitCheckpointManager) squashAgentBranch(ctx context.Context) error {
 		return nil
 	}
 
-	// Generate commit message BEFORE reset (reads git history)
 	commitMsg, err := g.generateSquashCommitMessage(ctx)
 	if err != nil {
 		return fmt.Errorf("squashAgentBranch: failed to generate commit message: %w", err)
 	}
 
-	// Find the merge base (fork point from user branch)
 	mergeBase, err := g.getMergeBase(ctx)
 	if err != nil {
 		return fmt.Errorf("squashAgentBranch: failed to find merge base: %w", err)
 	}
 
-	// Soft reset to merge base: collapses all commits, keeps changes staged
 	_, err = g.runGitCommand(ctx, "reset", "--soft", mergeBase)
 	if err != nil {
 		return fmt.Errorf("squashAgentBranch: git reset --soft failed: %w", err)
 	}
 
-	// Commit all staged changes with generated message
 	_, err = g.runGitCommand(ctx, "commit", "-m", commitMsg)
 	if err != nil {
 		return fmt.Errorf("squashAgentBranch: git commit failed: %w", err)
@@ -717,20 +690,17 @@ func (g *GitCheckpointManager) getCheckpointInfo(ctx context.Context) ([]Checkpo
 	var results []CheckpointInfo
 
 	for _, tag := range g.session.Checkpoints {
-		// Get commit hash
 		hashOut, err := g.runGitCommand(ctx, "rev-list", "-1", tag)
 		if err != nil {
 			continue
 		}
 
-		// Get date and message
 		format := "%ai %s"
 		msgOut, err := g.runGitCommand(ctx, "log", "-1", "--format="+format, tag)
 		if err != nil {
 			continue
 		}
 
-		// Parse: date is first part, message is after
 		parts := strings.SplitN(strings.TrimSpace(msgOut), " ", 2)
 		date := ""
 		message := strings.TrimSpace(msgOut)
@@ -758,7 +728,6 @@ func (g *GitCheckpointManager) persistState() error {
 		return fmt.Errorf("marshal session state: %w", err)
 	}
 
-	// Ensure .git directory exists (it should)
 	if err := os.WriteFile(statePath, data, 0644); err != nil {
 		return fmt.Errorf("write session state: %w", err)
 	}
