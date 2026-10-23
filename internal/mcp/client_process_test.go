@@ -70,6 +70,13 @@ func runFakeMCPServer() {
 
 		switch req.Method {
 		case "initialize":
+			switch mode {
+			case "no-initialize":
+				continue // 永远不回 initialize：用来钉"慢启动不该被判死并重开"
+			case "slow-initialize":
+				// 像 codeseek 冷启动那样慢：Start 若同步等发现，这条就会把测试拖过阈值
+				time.Sleep(700 * time.Millisecond)
+			}
 			writeLine(out, JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,

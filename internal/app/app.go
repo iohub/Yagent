@@ -256,22 +256,18 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 				OnToolsChanged:   ca.rebuildExternalSpecs,
 				OnStatusChange:   ca.publishMCPStatus,
 			})
-			// 先把 Manager 挂到 ca 上再 Start：connect goroutine 的 OnToolsChanged
-			// 会在启动期就回调 rebuildExternalSpecs，它读的是 ca.mcpMgr。
+			// Start 只 spawn 子进程，initialize 与 tools/list 在后台跑；
+			// **这里绝不等它们** —— 等待会把"终端启动卡在 MCP"变成用户可感知的故障，
+			// 而 codeseek 冷启动本来就要建索引（改动前也是同步 spawn + 后台 initialize）。
 			ca.mcpMgr = mgr
 			if err := mgr.Start(context.Background()); err != nil {
 				slog.Warn("Failed to start MCP manager", "error", err)
-			} else {
-				waitCtx, cancel := context.WithTimeout(context.Background(), mcpCfg.StartupTimeout+time.Second)
-				if err := mgr.WaitForReady(waitCtx); err != nil {
-					slog.Warn("MCP servers not all ready yet", "error", err)
-				}
-				cancel()
-				// 既有 RepoOperationsTool 一行不改：它拿到的仍是同一个客户端。
-				codeSeekMCP = mgr.Client("codeseek")
-				ca.rebuildExternalSpecs()
-				slog.Info("mcp status", "lines", mgr.StatusLines())
 			}
+			// 既有 RepoOperationsTool 一行不改：它在 Init 这一刻捕获客户端指针，
+			// 所以 Manager 必须在 Start 返回前就把进程起好（见 mcp/manager.go 的 Start）。
+			codeSeekMCP = mgr.Client("codeseek")
+			ca.rebuildExternalSpecs()
+			slog.Info("mcp starting", "servers", len(cfgs), "lines", mgr.StatusLines())
 		}
 
 		gctx := globalctx.GlobalCtx{

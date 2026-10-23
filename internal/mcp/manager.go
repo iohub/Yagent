@@ -24,6 +24,10 @@ const (
 	defaultStartupTimeout = 30 * time.Second
 	defaultMaxReconnects  = 3
 	defaultMaxTools       = 40
+	// defaultReadyTimeout 是等 initialize 完成的预算。它必须很长：codeseek 冷启动在
+	// 建索引，改动前的实现就是拿 15 分钟的看门狗等它 —— 用 30s 去等会把一个健康的
+	// server 判死并重开，而重开意味着索引从头再建。
+	defaultReadyTimeout = 15 * time.Minute
 )
 
 // ServerConfig 是 Manager 启动一个 server 需要的全部信息。
@@ -85,6 +89,11 @@ func (s ServerState) String() string {
 	}
 }
 
+// CountsTools 报告该状态下工具数是否已经算出来了。
+// starting（进程在、initialize/tools/list 还没回来）不算：把还没发生的事报成
+// "ready — 0 tools" 是让状态行说谎，而状态行正是用户唯一能看到的解释。
+func (s ServerState) CountsTools() bool { return s == StateReady || s == StateDegraded }
+
 // ServerHealth 是一个 server 状态的快照。StatusLines/面板/事件都从它渲染，
 // 不许在别处再拼一份格式（一个字符串三处出口，根 AGENTS.md §6.4）。
 type ServerHealth struct {
@@ -107,7 +116,11 @@ type ServerTool struct {
 
 // ManagerOptions 是 Manager 的运行参数与装配钩子。
 type ManagerOptions struct {
-	StartupTimeout   time.Duration
+	// StartupTimeout 是**发现阶段**（tools/list）的上界，不是启动阻塞时间：
+	// Start 只 spawn 子进程，initialize 与 tools/list 都在后台跑。
+	StartupTimeout time.Duration
+	// ReadyTimeout 是等 initialize 完成的预算（默认 15 分钟，见 defaultReadyTimeout）。
+	ReadyTimeout     time.Duration
 	ReconnectBackoff time.Duration
 	MaxReconnects    int
 	// StatusMaxLines 是状态账允许的 server 行数（含 disabled/offline），
@@ -124,6 +137,9 @@ type ManagerOptions struct {
 func (o ManagerOptions) withDefaults() ManagerOptions {
 	if o.StartupTimeout <= 0 {
 		o.StartupTimeout = defaultStartupTimeout
+	}
+	if o.ReadyTimeout <= 0 {
+		o.ReadyTimeout = defaultReadyTimeout
 	}
 	if o.ReconnectBackoff <= 0 {
 		o.ReconnectBackoff = reconnectBackoffBase
@@ -194,30 +210,127 @@ func NewManager(cfgs []ServerConfig, opts ManagerOptions) *Manager {
 	return m
 }
 
-// Start 并发启动全部 enabled 的 server，不阻塞。
-// 每个 server 一条具名 goroutine，Close 会 join 它们。
+// Start 为每个 enabled 的 server **同步** spawn 子进程，然后把 initialize/tools/list
+// 丢给后台 goroutine。两件事分开是硬要求：
+//   - 调用方（app.Init）拿到 Manager 后立刻要 `Client("codeseek")` —— 手写桥捕获的是那个
+//     指针，晚一步就是永久 nil（改动前 app 也是同步 spawn + 后台 initialize）；
+//   - spawn 只有 fork/exec 的成本，而 initialize 可能几分钟 —— 放在这里就是"启动卡在 MCP"。
+//
+// 进程起不来的 server 在 Start 里就落 offline 并排队重连（那条路径不会阻塞）。
 func (m *Manager) Start(ctx context.Context) error {
 	m.startOnce.Do(func() {
+		m.mu.RLock()
+		names := make([]string, 0, len(m.servers))
 		for name, entry := range m.servers {
-			if entry.state == StateDisabled {
-				continue
+			if entry.state != StateDisabled {
+				names = append(names, name)
 			}
-			name, entry := name, entry
-			m.grp.Go("mcp/connect-"+name, func(context.Context) {
-				m.connect(entry)
-			})
 		}
-		m.logger.Info("mcp manager started", "servers", len(m.servers))
+		m.mu.RUnlock()
+		sort.Strings(names)
+
+		for _, name := range names {
+			m.spawn(name)
+		}
+		m.logger.Info("mcp manager started", "servers", len(names))
 	})
 	return nil
 }
 
-// WaitForReady 有界等待所有 server 落定（ready / degraded / offline）。
-// 只要没有 server 还停在 starting 就返回 nil —— 连不上不是 manager 的错误，
+// spawn 创建客户端并启动进程；成功即登记（状态仍是 starting），发现交给后台 goroutine。
+func (m *Manager) spawn(name string) bool {
+	m.mu.RLock()
+	entry, ok := m.servers[name]
+	m.mu.RUnlock()
+	if !ok {
+		return false
+	}
+
+	client := m.newClient(name)
+	if err := client.Start(m.ctx); err != nil {
+		m.markOffline(name, err.Error())
+		m.scheduleReconnect(name)
+		return false
+	}
+
+	m.mu.Lock()
+	entry.client = client
+	if entry.state != StateReady && entry.state != StateDegraded {
+		entry.state = StateStarting
+	}
+	m.mu.Unlock()
+
+	m.grp.Go("mcp/discover-"+name, func(context.Context) {
+		m.discover(name, client)
+	})
+	return true
+}
+
+// newClient 构造客户端并挂上 list_changed 钩子。
+func (m *Manager) newClient(name string) *MCPClient {
+	cfg := m.configOf(name)
+	client := NewMCPClient(MCPClientConfig{
+		BinaryPath:     cfg.Command,
+		Args:           cfg.Args,
+		WorkingDir:     cfg.WorkingDir,
+		Env:            cfg.Env,
+		RequestTimeout: cfg.RequestTimeout,
+	})
+	client.SetOnListChanged(func() { m.refreshTools(name, client) })
+	return client
+}
+
+func (m *Manager) configOf(name string) ServerConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if e, ok := m.servers[name]; ok {
+		return e.cfg
+	}
+	return ServerConfig{}
+}
+
+// discover 等 initialize 完成后跑 tools/list。三条出口：
+//   - 进程已死 → offline + 重连（重开是对的，管道已经不在了）；
+//   - 进程活着但 tools/list 失败/超时 → degraded（不重开：一个能 tools/call
+//     却不实现 tools/list 的 server 值得保留，只是没有动态工具）；
+//   - 成功 → ready（0 个工具同样落 degraded，宁缺毋滥但在状态行里可辨）。
+func (m *Manager) discover(name string, client *MCPClient) {
+	readyCtx, cancelReady := context.WithTimeout(m.ctx, m.opts.ReadyTimeout)
+	defer cancelReady()
+	if err := client.WaitForReady(readyCtx); err != nil {
+		if client.IsAlive() {
+			// initialize 没回来但进程还在：留在 starting，让状态行说"正在启动"。
+			// 判死并重开会把一次慢索引变成 N 次慢索引。
+			m.logger.Warn("mcp server still initializing", "server", name, "error", err)
+			return
+		}
+		m.markOffline(name, err.Error())
+		m.scheduleReconnect(name)
+		return
+	}
+
+	listCtx, cancelList := context.WithTimeout(m.ctx, m.opts.StartupTimeout)
+	defer cancelList()
+	tools, instructions, err := client.ListTools(listCtx)
+	if err != nil {
+		if !client.IsAlive() {
+			m.markOffline(name, err.Error())
+			m.scheduleReconnect(name)
+			return
+		}
+		m.markDegraded(name, client, err.Error())
+		return
+	}
+	m.markConnected(name, client, tools, instructions)
+}
+
+// WaitForReady 等到所有 server 落定（ready / degraded / offline），上界就是调用方的 ctx。
+// 没有内部超时：装配路径**不等它**（见 Start 的注释），要用它的是测试与"我就是想要
+// 一个同步点"的调用方，预算该由他们定。
+// 只要没有 server 还停在 starting 就返回 nil —— 连不上不是 Manager 的错误，
 // 状态行与 Skipped 账目才是它的出口。
 func (m *Manager) WaitForReady(ctx context.Context) error {
-	timeoutCtx, cancel := context.WithTimeout(ctx, m.opts.StartupTimeout)
-	defer cancel()
+	timeoutCtx := ctx
 
 	for {
 		m.mu.RLock()
@@ -246,8 +359,8 @@ func (m *Manager) WaitForReady(ctx context.Context) error {
 			}
 			m.mu.RUnlock()
 			sort.Strings(pending)
-			return fmt.Errorf("mcp startup timed out after %v, still starting: %s",
-				m.opts.StartupTimeout, strings.Join(pending, ", "))
+			return fmt.Errorf("mcp wait timed out, still starting: %s (%w)",
+				strings.Join(pending, ", "), ctx.Err())
 		}
 	}
 }
@@ -387,7 +500,7 @@ func RenderStatusLines(health []ServerHealth, maxLines int) string {
 		if h.State == StateOffline {
 			offline++
 		}
-		if h.State == StateReady || h.State == StateDegraded {
+		if h.State.CountsTools() {
 			tools += h.Tools
 			curated += h.Curated
 			external += h.Tools - h.Curated
@@ -416,6 +529,8 @@ func FormatServerLine(h ServerHealth) string {
 			h.Name, h.Error, h.Attempt, h.MaxAttempts, h.Tools)
 	case StateDegraded:
 		return fmt.Sprintf("%s: degraded — process alive but tools/list returned nothing", h.Name)
+	case StateStarting:
+		return fmt.Sprintf("%s: starting — initializing, tools not discovered yet", h.Name)
 	default:
 		return fmt.Sprintf("%s: ready — %d tools (%d curated, %d external)",
 			h.Name, h.Tools, h.Curated, h.Tools-h.Curated)
@@ -490,44 +605,6 @@ func (m *Manager) drain() {
 }
 
 // ---------- 状态迁移（全部在锁内接装配、锁外发通知）----------
-
-// connect 完成一次"启动进程 → initialize → tools/list"。
-func (m *Manager) connect(entry *serverEntry) {
-	cfg := entry.cfg
-	client := NewMCPClient(MCPClientConfig{
-		BinaryPath:     cfg.Command,
-		Args:           cfg.Args,
-		WorkingDir:     cfg.WorkingDir,
-		Env:            cfg.Env,
-		RequestTimeout: cfg.RequestTimeout,
-	})
-	client.SetOnListChanged(func() { m.refreshTools(cfg.Name, client) })
-
-	if err := client.Start(m.ctx); err != nil {
-		m.markOffline(cfg.Name, err.Error())
-		m.scheduleReconnect(cfg.Name)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(m.ctx, m.opts.StartupTimeout)
-	defer cancel()
-	if err := client.WaitForReady(ctx); err != nil {
-		client.ForceShutdown()
-		m.markOffline(cfg.Name, err.Error())
-		m.scheduleReconnect(cfg.Name)
-		return
-	}
-
-	tools, instructions, err := client.ListTools(ctx)
-	if err != nil {
-		client.ForceShutdown()
-		m.markOffline(cfg.Name, err.Error())
-		m.scheduleReconnect(cfg.Name)
-		return
-	}
-
-	m.markConnected(cfg.Name, client, tools, instructions)
-}
 
 // refreshTools 在 tools/list_changed 之后重新发现，并 diff 工具集。
 // 变化非空才通知装配层重建动态规格 —— 空 diff 重算一遍 sha256 没有意义。
@@ -614,6 +691,25 @@ func (m *Manager) markConnected(name string, client *MCPClient, tools []Discover
 			m.opts.OnToolsChanged()
 		}
 	}
+}
+
+// markDegraded 用于"进程活着但没拿到工具清单"：不重开进程（那对一个不实现
+// tools/list 的 server 是死循环），但必须在状态行里说清楚——静默当 ready
+// 的表现是"这个 server 就是没有工具"。
+func (m *Manager) markDegraded(name string, client *MCPClient, reason string) {
+	m.mu.Lock()
+	entry, ok := m.servers[name]
+	if !ok || entry.stopped || entry.client != client {
+		m.mu.Unlock()
+		return
+	}
+	entry.state = StateDegraded
+	entry.err = reason
+	entry.tools = nil
+	health := m.healthOf(entry)
+	m.broadcastLocked()
+	m.mu.Unlock()
+	m.emitStatus(health)
 }
 
 // markOffline 把 server 转到 offline（幂等：已在 offline 时只更新原因）。
@@ -740,45 +836,49 @@ func (m *Manager) reconnectLoop(name string) {
 	m.logger.Warn("mcp reconnect gave up", "server", name, "attempts", m.opts.MaxReconnects)
 }
 
-// tryConnect 是一次重试：成功返回 true（状态已由 markConnected 更新）。
+// tryConnect 重开进程并就地等发现完成（重连循环需要"这一轮到底成没成"的答复，
+// 所以不像 Start 那样把 discover 丢到后台）。
 func (m *Manager) tryConnect(name string) bool {
 	m.mu.RLock()
 	entry, ok := m.servers[name]
-	if !ok || entry.stopped {
-		m.mu.RUnlock()
+	stopped := entry != nil && entry.stopped
+	m.mu.RUnlock()
+	if !ok || stopped {
 		return false
 	}
-	cfg := entry.cfg
-	m.mu.RUnlock()
 
-	client := NewMCPClient(MCPClientConfig{
-		BinaryPath:     cfg.Command,
-		Args:           cfg.Args,
-		WorkingDir:     cfg.WorkingDir,
-		Env:            cfg.Env,
-		RequestTimeout: cfg.RequestTimeout,
-	})
-	client.SetOnListChanged(func() { m.refreshTools(name, client) })
-
+	client := m.newClient(name)
 	if err := client.Start(m.ctx); err != nil {
 		m.logger.Warn("mcp reconnect: start failed", "server", name, "error", err)
 		return false
 	}
-	ctx, cancel := context.WithTimeout(m.ctx, m.opts.StartupTimeout)
-	defer cancel()
-	if err := client.WaitForReady(ctx); err != nil {
+	m.mu.Lock()
+	entry.client = client
+	m.mu.Unlock()
+
+	if err := m.awaitDiscovery(name, client); err != nil {
+		m.logger.Warn("mcp reconnect: discovery failed", "server", name, "error", err)
 		client.ForceShutdown()
-		m.logger.Warn("mcp reconnect: initialize failed", "server", name, "error", err)
 		return false
 	}
-	tools, instructions, err := client.ListTools(ctx)
+	return true
+}
+
+// awaitDiscovery 是 discover 的同步版本（重连循环用）。
+func (m *Manager) awaitDiscovery(name string, client *MCPClient) error {
+	readyCtx, cancelReady := context.WithTimeout(m.ctx, m.opts.ReadyTimeout)
+	defer cancelReady()
+	if err := client.WaitForReady(readyCtx); err != nil {
+		return err
+	}
+	listCtx, cancelList := context.WithTimeout(m.ctx, m.opts.StartupTimeout)
+	defer cancelList()
+	tools, instructions, err := client.ListTools(listCtx)
 	if err != nil {
-		client.ForceShutdown()
-		m.logger.Warn("mcp reconnect: tools/list failed", "server", name, "error", err)
-		return false
+		return err
 	}
 	m.markConnected(name, client, tools, instructions)
-	return true
+	return nil
 }
 
 // broadcastLocked 关闭当前广播通道并换一只新的。必须持锁调用。

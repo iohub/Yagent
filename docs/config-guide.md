@@ -418,7 +418,7 @@ deferred catalog (they are always Cold; the model fetches a schema with `load_to
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `enable` | bool | `true` | Whole mechanism. Kill-switch: `YAGENT_MCP=0` |
-| `startup_timeout` | duration | `"30s"` | Bounded wait for start + initialize + `tools/list` |
+| `startup_timeout` | duration | `"30s"` | Bound for the `tools/list` discovery step. Startup never waits for MCP: `Start` spawns the child processes synchronously and initialize/`tools/list` run in the background |
 | `reconnect_backoff` | duration | `"5s"` | First retry delay; doubles up to 5m |
 | `max_reconnects` | int | `3` | Exhausted → terminal `offline` ("gave up after N") |
 | `max_tools_per_server` | int | `40` | Sorted by name; extras dropped with an account line |
@@ -440,6 +440,11 @@ Each `[[mcp.servers]]` entry:
 | `read_only` | array | `[]` | Server-side tool names trusted as read-only despite missing annotations |
 | `tools` | array | `[]` | Empty = all; non-empty = whitelist |
 | `exclude` | array | `[]` | Blacklist |
+
+Because discovery is asynchronous, a server that is still initializing shows up as
+`starting — initializing, tools not discovered yet` and its tools appear from the next
+delegation onward. codeseek is the case that motivated this: a cold start builds an index
+and can take minutes, and a startup that waited for it made the terminal hang.
 
 A tool with no `annotations` is treated as a **write** tool (serial + authorization required).
 Read-only tools are parallel-safe; write tools additionally need `allow_write = true` because
