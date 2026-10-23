@@ -131,22 +131,17 @@ func (m *model) getGlamourRenderer(width int) *glamour.TermRenderer {
 	return r
 }
 
+// resizeViewport 把 viewport 尺寸对齐到 computeBodyLayout。这里曾经是另一套公式
+// （不扣滚动条列、也不扣 tab 栏），View 每一轮都要纠正它并重排整段正文。
 func (m *model) resizeViewport() {
-	footerHeight := m.cachedFooterHeight
-	if !m.footerHeightValid {
-		footerHeight = m.computeFooterHeight()
-	}
-	vpHeight := m.termHeight - footerHeight
-	if vpHeight < 3 {
-		vpHeight = 3
-	}
-	m.viewport.SetWidth(m.termWidth - m.dashboardWidth())
-	m.viewport.SetHeight(vpHeight)
+	l := m.computeBodyLayout(m.viewport.TotalLineCount())
+	m.viewport.SetWidth(l.contentWidth)
+	m.viewport.SetHeight(l.height)
 
-	if m.termWidth > 0 && m.viewport.Width() > 0 {
+	if m.termWidth > 0 && l.contentWidth > 0 {
 		frameSize := m.viewport.Style.GetHorizontalFrameSize()
 		const glamourGutter = 4
-		glamourWidth := m.viewport.Width() - frameSize - glamourGutter
+		glamourWidth := l.contentWidth - frameSize - glamourGutter
 		if glamourWidth < 40 {
 			glamourWidth = 40
 		}

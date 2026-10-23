@@ -21,9 +21,15 @@
 少数消息类型。`taskCompleteMsg` 是 `taskRunning` **唯一的清零点**，吞掉的表现是界面永久卡在
 "运行中"且最终答案不落地；`tea.PasteMsg` 不是 KeyMsg，也要转发给 textarea。
 
-**3. 布局高度必须自洽。** `computeFooterHeight`（`tui_render.go:15-17`）与 `View()` 的 footer
-拼接逐行对应（`tui_view.go:211-213`），viewport 高 = `termHeight - footerHeight`
-（`tui_render.go:139`），差一行整屏抖动。`lipgloss.Style.Height(h)` 是**含上下边框**的总高，
+**3. 布局尺寸只有一个口径。** `computeFooterHeight`（`tui_render.go:15-17`）与 `View()` 的 footer
+拼接逐行对应（`tui_view.go:212-214`）；视口行高与正文四列宽度也只算一次 —— `computeBodyLayout`
+（`tui_view.go:39`）= 高 `termHeight - footer - tabBarHeight`、宽 `termWidth - 滚动条列 - dashboard 列`，
+resize（`tui_render.go:137`）、切标签页（`tui_tabs.go:292`）、后台标签页尺寸（`tui_update_system.go:137`）
+全部走它。差一行整屏抖动；差一列（旧 resize 用 `termWidth - dashboardWidth` 且没扣 tab 栏）的代价是
+View 每轮纠正宽度 + 整段正文白排一遍。`View()` 因此**只拼接**正文列（`joinColumns`，`tui_view.go:224`）：
+viewport 自己已把每一行补齐到列宽（`TestViewportViewPadsEveryLine` 钉住这条第三方前提），再套一次
+`Width().Render()` 就是把同一件事做第二遍（40 行 × 109 列实测 243µs → 5.5µs），而且满宽的行会被
+再折一次、行数翻倍。`lipgloss.Style.Height(h)` 是**含上下边框**的总高，
 按 `height` 而不是 `height-2` 分配行预算会多要 2 行，被末尾的"行数收敛 + 补边框"悄悄截掉
 （根 AGENTS.md §11 坑 7）。
 
@@ -81,7 +87,7 @@
   按键契约，此前在三个文件各手抄一份（`internal/tui/components/select_dialog_contract_test.go:19-20`）——新选择类对话框
   必须接进 `selectProbe`。同包只准一个 ANSI 剥离辅助函数（`check_test_hygiene.sh` 硬拦）。
 - **`layout/`** — **当前实际不负责布局**：`Region`/`AllRegions`/`IsCompact` 在包外零调用点，
-  唯一被调的是 `Resize`（`tui_update_system.go:128-129`，构造在 `tui_model.go:720`）。
+  唯一被调的是 `Resize`（`tui_update_system.go:130-132`，构造在 `tui_model.go:722`）。
   改 `computeRegions` 不会改变界面；真实高度契约在 `tui_render.go`。compact 断点 120
   （`layout/engine.go:40-42`）与 dashboard 可见断点 `termWidth >= 120`（`tui_dashboard.go:51`）
   是同值两份实现。零测试，且因无消费者而永远不会红——要接进真实渲染就先补宽度矩阵，或先删掉它。
@@ -102,6 +108,8 @@
 `TestUpdate_PasteMsgRoutedToTopDialog`（`tui_paste_test.go:17`）、
 `TestParallelStreamsSameAgentDoNotMerge`（`tui_parallel_stream_test.go:26`，让 `streamSlotKey`
 忽略 `DelegationID` 即红）、`TestTokenPanel_FooterFitsTermWidth`（`token_panel_test.go:257`）、
+`TestBodyWidthIsOneSource`（`tui_view_layout_test.go:34`，把 resize/切标签页的宽度公式改回旧写法即红）、
+`TestViewportViewPadsEveryLine`（同文件 `:100`，钉住"viewport 自己补齐每行"这条被 `joinColumns` 依赖的前提）、
 `TestLLMTimeoutDialog_SizeGuard` / `_WidthMatrix`（`components/timeout_dialog_test.go:146,167`）、
 `TestWizardRenderWidthMatrix`（向导侧：宽度 {40..240} × 高度 × 七屏，断言行数 ≤ 终端高度）。
 

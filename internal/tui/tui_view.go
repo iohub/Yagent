@@ -17,6 +17,41 @@ const (
 	powerlineLeftSep  = "\ue0b2"
 )
 
+// 滚动条两段的配色是常量，没必要每帧重造样式。
+var (
+	scrollbarThumbStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
+	scrollbarTrackStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
+)
+
+// bodyLayout 是正文那几列的唯一口径：视口行高、dashboard 列、滚动条列、内容列宽。
+// View 与所有会改写 viewport 尺寸的路径（resize、切标签页）都必须从这里取值，
+// 否则正文按 A 列渲染、按 B 列拼接，边界只能靠事后重排来擦。
+type bodyLayout struct {
+	height       int
+	dashWidth    int
+	scrollbarCol int
+	contentWidth int
+	totalLines   int
+}
+
+// computeBodyLayout 收 totalLines 而不是自己读 m.viewport：每个标签页各有一份内容，
+// 溢不溢出（要不要占那一列滚动条）只有被改尺寸的那个 viewport 自己知道。
+func (m *model) computeBodyLayout(totalLines int) bodyLayout {
+	l := bodyLayout{
+		height:     m.termHeight - m.computeFooterHeight() - tabBarHeight,
+		dashWidth:  m.dashboardWidth(),
+		totalLines: totalLines,
+	}
+	if l.height < 3 {
+		l.height = 3
+	}
+	if totalLines > l.height {
+		l.scrollbarCol = 1
+	}
+	l.contentWidth = m.termWidth - l.scrollbarCol - l.dashWidth
+	return l
+}
+
 func makeRightSep(prevBg, nextBg color.Color) string {
 	return lipgloss.NewStyle().
 		Foreground(prevBg).
@@ -75,11 +110,8 @@ func (m *model) View() tea.View {
 
 	var b strings.Builder
 
-	footerHeight := m.computeFooterHeight()
-	vpHeight := m.termHeight - footerHeight - tabBarHeight
-	if vpHeight < 3 {
-		vpHeight = 3
-	}
+	body := m.computeBodyLayout(m.viewport.TotalLineCount())
+	vpHeight := body.height
 	if m.viewport.Height() != vpHeight {
 		heightWasAtBottom := m.viewport.AtBottom()
 		m.viewport.SetHeight(vpHeight)
@@ -89,19 +121,15 @@ func (m *model) View() tea.View {
 		}
 	}
 
-	scrollbarWidth := 0
-	totalLines := m.viewport.TotalLineCount()
-	if totalLines > vpHeight {
-		scrollbarWidth = 1
+	// 宽度只在这里定一次：其他路径算错了就由这里纠正，并且必须让正文缓存作废，
+	// 否则拼出来的列边界是旧宽度。
+	if m.viewport.Width() != body.contentWidth {
+		m.viewport.SetWidth(body.contentWidth)
+		m.viewportViewValid = false
 	}
-	dashW := m.dashboardWidth()
-	contentWidth := m.termWidth - scrollbarWidth - dashW
 
-	if m.hasDirtyEntries() || contentWidth != m.prevViewportWidth ||
+	if m.hasDirtyEntries() || body.contentWidth != m.prevViewportWidth ||
 		len(m.contentParts) != len(m.logEntries) {
-		if m.viewport.Width() != contentWidth {
-			m.viewport.SetWidth(contentWidth)
-		}
 		wasAtBottom := m.viewport.AtBottom()
 		m.rebuildContentCache()
 		if wasAtBottom {
@@ -118,86 +146,25 @@ func (m *model) View() tea.View {
 		m.prevViewportHeight = m.viewport.Height()
 	}
 
-	if dashW > 0 {
-		_ = m.renderDashboard(dashW, vpHeight)
+	if body.dashWidth > 0 {
+		_ = m.renderDashboard(body.dashWidth, vpHeight)
 	}
 
-	b.WriteString(m.renderTabBar() + "\n")
+	b.WriteString(m.renderTabBar())
+	b.WriteString("\n")
 
-	if scrollbarWidth > 0 {
-		sbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
-		trackStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
-		scrollbar := common.Scrollbar(sbStyle, trackStyle,
-			vpHeight, totalLines, vpHeight, m.viewport.YOffset())
-
-		vpLines := strings.Split(m.cachedViewportView, "\n")
-		sbLines := strings.Split(scrollbar, "\n")
-
-		var combinedLines []string
-		maxLines := len(vpLines)
-		if len(sbLines) > maxLines {
-			maxLines = len(sbLines)
-		}
-		if dashW > 0 {
-			dashLines := strings.Split(m.dashboardCache, "\n")
-			if len(dashLines) > maxLines {
-				maxLines = len(dashLines)
-			}
-			for i := 0; i < maxLines; i++ {
-				vpLine := ""
-				sbLine := ""
-				dashLine := ""
-				if i < len(vpLines) {
-					vpLine = vpLines[i]
-				}
-				if i < len(sbLines) {
-					sbLine = sbLines[i]
-				}
-				if i < len(dashLines) {
-					dashLine = dashLines[i]
-				}
-				vpPadded := lipgloss.NewStyle().Width(contentWidth).Render(vpLine)
-				combinedLines = append(combinedLines, vpPadded+sbLine+dashLine)
-			}
-		} else {
-			for i := 0; i < maxLines; i++ {
-				vpLine := ""
-				sbLine := ""
-				if i < len(vpLines) {
-					vpLine = vpLines[i]
-				}
-				if i < len(sbLines) {
-					sbLine = sbLines[i]
-				}
-				vpPadded := lipgloss.NewStyle().Width(contentWidth).Render(vpLine)
-				combinedLines = append(combinedLines, vpPadded+sbLine)
-			}
-		}
-		b.WriteString(strings.Join(combinedLines, "\n"))
-	} else if dashW > 0 {
-		dashLines := strings.Split(m.dashboardCache, "\n")
-		vpLines := strings.Split(m.cachedViewportView, "\n")
-		maxLines := len(vpLines)
-		if len(dashLines) > maxLines {
-			maxLines = len(dashLines)
-		}
-		for i := 0; i < maxLines; i++ {
-			vpLine := ""
-			dashLine := ""
-			if i < len(vpLines) {
-				vpLine = vpLines[i]
-			}
-			if i < len(dashLines) {
-				dashLine = dashLines[i]
-			}
-			vpPadded := lipgloss.NewStyle().Width(contentWidth).Render(vpLine)
-			b.WriteString(vpPadded + dashLine)
-			if i < maxLines-1 {
-				b.WriteString("\n")
-			}
-		}
-	} else {
+	if body.scrollbarCol == 0 && body.dashWidth == 0 {
 		b.WriteString(m.cachedViewportView)
+	} else {
+		var scrollbar, dashboard string
+		if body.scrollbarCol > 0 {
+			scrollbar = common.Scrollbar(scrollbarThumbStyle, scrollbarTrackStyle,
+				vpHeight, body.totalLines, vpHeight, m.viewport.YOffset())
+		}
+		if body.dashWidth > 0 {
+			dashboard = m.dashboardCache
+		}
+		b.WriteString(joinColumns(m.cachedViewportView, scrollbar, dashboard))
 	}
 
 	if !m.dashboardVisible() && (m.taskRunning || len(m.timelineEntries) > 0) {
@@ -248,6 +215,30 @@ func (m *model) View() tea.View {
 	b.WriteString(statusBar)
 
 	return tea.View{AltScreen: true, Content: b.String()}
+}
+
+// joinColumns 按行把若干列左右拼接。每一列都已由自己的渲染器补齐到列宽
+// （viewport 的 View 内部就是 lipgloss.Width(w).Height(h)，见 TestViewportViewPadsEveryLine），
+// 所以这里只拼接：再套一次 Width() 就是把同一件事做第二遍，还会把铺满列宽的行再折一道、
+// 整屏多出一倍行数。比最长列短的列，缺的行留空。
+func joinColumns(columns ...string) string {
+	split := make([][]string, 0, len(columns))
+	rows := 0
+	for _, col := range columns {
+		if col == "" {
+			continue
+		}
+		lines := strings.Split(col, "\n")
+		split = append(split, lines)
+		rows = max(rows, len(lines))
+	}
+	joined := make([]string, rows)
+	for _, lines := range split {
+		for i, line := range lines {
+			joined[i] += line
+		}
+	}
+	return strings.Join(joined, "\n")
 }
 
 // renderSkillSuggestions 渲染技能补全列表（含末行操作提示），共 len+1 行。

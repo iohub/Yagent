@@ -240,18 +240,6 @@ func (m *model) restoreSessionTab(idx int) {
 	// 命中行号是相对上一个会话的内容算的，切标签页后一律作废。
 	m.bindViewportHooks()
 	m.clearSearch()
-	// 按当前终端尺寸修正 viewport
-	m.viewport.SetWidth(m.termWidth - m.dashboardWidth())
-	vpHeight := m.termHeight - m.computeFooterHeight() - tabBarHeight
-	if vpHeight < 3 {
-		vpHeight = 3
-	}
-	m.viewport.SetHeight(vpHeight)
-
-	// 检测宽度变化需要重排
-	if tab.viewport.Width() != 0 && tab.viewport.Width() != m.viewport.Width() {
-		m.needFullRebuild = true
-	}
 
 	// 恢复输入
 	m.input.SetValue(tab.inputValue)
@@ -298,6 +286,15 @@ func (m *model) restoreSessionTab(idx int) {
 	}
 	m.runAgent = tab.runAgent
 	m.compress = tab.compress.clone()
+
+	// viewport 尺寸要在任务状态恢复之后才算：dashboard 占不占那一列取决于
+	// taskRunning 与 token 用量，早算用的是上一个标签页的状态。
+	l := m.computeBodyLayout(m.viewport.TotalLineCount())
+	m.viewport.SetWidth(l.contentWidth)
+	m.viewport.SetHeight(l.height)
+	if tab.viewport.Width() != 0 && tab.viewport.Width() != l.contentWidth {
+		m.needFullRebuild = true
+	}
 
 	// 重建内容缓存并恢复滚动位置
 	m.rebuildContentCache()
