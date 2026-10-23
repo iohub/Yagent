@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -259,105 +258,12 @@ type AgentRunTokens struct {
 	ContextTokens            int64
 }
 
-func (m *model) visibleEntryIndices() (start, end int) {
-	prefix := m.contentPartLinePrefix
-	n := len(prefix) - 1
-	if n <= 0 || m.termHeight <= 0 {
-		return 0, -1
-	}
-
-	footerHeight := m.computeFooterHeight()
-	vpHeight := m.termHeight - footerHeight
-	if vpHeight < 3 {
-		vpHeight = 3
-	}
-
-	yOffset := m.viewport.YOffset()
-	viewEnd := yOffset + vpHeight
-
-	start = sort.Search(n, func(i int) bool {
-		return prefix[i+1] > yOffset
-	})
-
-	endIdx := sort.Search(n, func(i int) bool {
-		return prefix[i] >= viewEnd
-	})
-	end = endIdx - 1
-
-	if start > end || start >= n {
-		return 0, -1
-	}
-	if end >= n {
-		end = n - 1
-	}
-
-	return start, end
-}
-
-func (m *model) rebuildLinePrefix() {
-	n := len(m.contentParts)
-	if n == 0 {
-		m.contentPartLinePrefix = nil
-		return
-	}
-	prefix := make([]int, n+1)
-	prefix[0] = 0
-	for i, part := range m.contentParts {
-		prefix[i+1] = prefix[i] + strings.Count(part, "\n") + 1
-	}
-	m.contentPartLinePrefix = prefix
-}
-
-func (m *model) appendLinePrefix(oldLen int) {
-	newLen := len(m.contentParts)
-	if newLen == 0 {
-		m.contentPartLinePrefix = nil
-		return
-	}
-	prefix := m.contentPartLinePrefix
-	if len(prefix) < oldLen+1 {
-		m.rebuildLinePrefix()
-		return
-	}
-	if cap(prefix) >= newLen+1 {
-		prefix = prefix[:newLen+1]
-	} else {
-		newPrefix := make([]int, newLen+1)
-		copy(newPrefix, prefix)
-		prefix = newPrefix
-	}
-	base := prefix[oldLen]
-	for i := oldLen; i < newLen; i++ {
-		prefix[i+1] = base + strings.Count(m.contentParts[i], "\n") + 1
-		base = prefix[i+1]
-	}
-	m.contentPartLinePrefix = prefix
-}
-
-func (m *model) updateLinePrefixEntry(i int) {
-	prefix := m.contentPartLinePrefix
-	n := len(m.contentParts)
-	if i < 0 || i >= n || len(prefix) < n+1 {
-		m.rebuildLinePrefix()
-		return
-	}
-	newLines := strings.Count(m.contentParts[i], "\n") + 1
-	oldLines := prefix[i+1] - prefix[i]
-	if newLines == oldLines {
-		return
-	}
-	delta := newLines - oldLines
-	for j := i + 1; j <= n; j++ {
-		prefix[j] += delta
-	}
-}
-
 func (m *model) setEntryContent(i int, content string) {
 	if i < 0 || i >= len(m.contentParts) {
 		return
 	}
 	m.contentParts[i] = content
-	m.updateLinePrefixEntry(i)
+	m.bodyInvalidate(i)
 }
 
 type model struct {
@@ -371,7 +277,6 @@ type model struct {
 
 	logEntries      []logEntry
 	viewport        viewport.Model
-	contentCache    *strings.Builder
 	glamourRenderer *glamour.TermRenderer
 	useDarkStyle    bool
 
@@ -546,10 +451,8 @@ type model struct {
 	glamourCacheMu  sync.Mutex
 	glamourCacheCap int
 
-	cachedViewportView  string
-	viewportViewValid   bool
-	prevViewportYOffset int
-	prevViewportHeight  int
+	cachedViewportView string
+	viewportViewValid  bool
 
 	// 每次真正重排正文的时刻，流式追加的合并窗口按它算（见 streamRepaintInterval）。
 	lastViewportRepaint time.Time
@@ -563,7 +466,8 @@ type model struct {
 	needFullRebuild   bool
 	prevViewportWidth int
 
-	contentPartLinePrefix []int
+	// 正文虚拟化：viewport 只拿可见区间那几行，滚动游标是绝对行号（见 tui_body.go）。
+	body bodyIndex
 
 	timelineFullscreenMode   bool
 	timelineFullscreenCursor int
@@ -784,7 +688,6 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 		aiStreamActiveEntries:    make(map[string]int),
 		aiStreamCompletedEntries: make(map[string]int),
 		aiChunkBuffers:           make(map[string]*aiChunkBuffer),
-		contentCache:             &strings.Builder{},
 		glamourRenderer:          glamourRenderer,
 		useDarkStyle:             useDarkStyle,
 		toolCallEntries:          make(map[string]*ToolEntry),

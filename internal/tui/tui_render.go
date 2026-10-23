@@ -90,8 +90,6 @@ func (m *model) updateViewportCache() {
 	m.syncSearchMatches()
 	m.cachedViewportView = m.viewport.View()
 	m.viewportViewValid = true
-	m.prevViewportYOffset = m.viewport.YOffset()
-	m.prevViewportHeight = m.viewport.Height()
 }
 
 func (m *model) invalidateFooterCache() {
@@ -135,7 +133,7 @@ func (m *model) getGlamourRenderer(width int) *glamour.TermRenderer {
 // resizeViewport 把 viewport 尺寸对齐到 computeBodyLayout。这里曾经是另一套公式
 // （不扣滚动条列、也不扣 tab 栏），View 每一轮都要纠正它并重排整段正文。
 func (m *model) resizeViewport() {
-	l := m.computeBodyLayout(m.viewport.TotalLineCount())
+	l := m.computeBodyLayout(m.bodyTotalLines())
 	m.viewport.SetWidth(l.contentWidth)
 	m.viewport.SetHeight(l.height)
 
@@ -167,39 +165,33 @@ func (m *model) buildViewportContent() {
 		return
 	}
 	m.rebuildContentCache()
-	m.viewport.SetContent(m.contentCache.String())
-	m.viewport.GotoBottom()
+	m.bodyGotoBottom()
 	m.updateViewportCache()
 }
 
+// rebuildViewportPreservingScroll 重排正文，并把游标拉回同一条绝对行。
 func (m *model) rebuildViewportPreservingScroll() {
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return
 	}
-	yOffset := m.viewport.YOffset()
+	top := m.body.top
 	m.rebuildContentCache()
-	m.viewport.SetContent(m.contentCache.String())
-	totalLines := m.viewport.TotalLineCount()
-	visibleLines := m.viewport.Height()
-	maxOffset := totalLines - visibleLines
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	if yOffset > maxOffset {
-		yOffset = maxOffset
-	}
-	m.viewport.SetYOffset(yOffset)
+	m.bodyScrollTo(top)
 	m.updateViewportCache()
 }
 
+// rebuildViewportScrollLock 重排正文；原本贴底就继续贴底（新内容把尾巴推出视野时，
+// 最后一条消息会被留在屏幕外）。
 func (m *model) rebuildViewportScrollLock() {
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return
 	}
-	wasAtBottom := m.viewport.AtBottom()
+	wasAtBottom := m.bodyAtBottom()
 	m.rebuildContentCache()
 	if wasAtBottom {
-		m.viewport.GotoBottom()
+		m.bodyGotoBottom()
+	} else {
+		m.bodySync()
 	}
 	m.updateViewportCache()
 }
@@ -229,6 +221,9 @@ func (m *model) streamDirtyHeld() bool {
 	return true
 }
 
+// rebuildContentCache 只重排"变过的条目"的正文文本，然后把行索引与窗口落地。
+// 它不再拼整段 transcript：拼接与 viewport.SetContent 都是 O(全部历史)，
+// 而虚拟化要省掉的正是这个（见 tui_body.go）。
 func (m *model) rebuildContentCache() {
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return
@@ -237,34 +232,35 @@ func (m *model) rebuildContentCache() {
 	currentWidth := m.viewport.Width()
 	widthChanged := currentWidth != m.prevViewportWidth
 
-	if widthChanged {
-		for i := range m.logEntries {
-			m.logEntries[i].clearRenderCache()
-		}
+	// firstChanged 是"从哪一条起需要重新排版"，正文索引按它做增量重建。
+	firstChanged := len(m.contentParts)
+	renderAll := func() {
 		m.contentParts = make([]string, len(m.logEntries))
 		for i := range m.logEntries {
 			entry := &m.logEntries[i]
 			m.contentParts[i] = m.renderSingleEntry(entry, currentWidth)
 		}
+		firstChanged = 0
+	}
+
+	if widthChanged {
+		for i := range m.logEntries {
+			m.logEntries[i].clearRenderCache()
+		}
+		renderAll()
 		m.prevViewportWidth = currentWidth
 		m.needFullRebuild = false
 		for k := range m.dirtyEntryIndices {
 			delete(m.dirtyEntryIndices, k)
 		}
-		m.rebuildLinePrefix()
-		m.assembleViewportContent()
-		m.viewport.SetContent(m.contentCache.String())
+		m.bodyRepaint(0)
 		return
 	}
 
 	contentChanged := false
 
 	if m.needFullRebuild {
-		m.contentParts = make([]string, len(m.logEntries))
-		for i := range m.logEntries {
-			entry := &m.logEntries[i]
-			m.contentParts[i] = m.renderSingleEntry(entry, currentWidth)
-		}
+		renderAll()
 		m.needFullRebuild = false
 		for k := range m.dirtyEntryIndices {
 			delete(m.dirtyEntryIndices, k)
@@ -277,10 +273,10 @@ func (m *model) rebuildContentCache() {
 					entry := &m.logEntries[idx]
 					entry.clearRenderCache()
 					m.contentParts[idx] = m.renderSingleEntry(entry, currentWidth)
+					firstChanged = min(firstChanged, idx)
 				}
 				delete(m.dirtyEntryIndices, idx)
 			}
-			m.rebuildLinePrefix()
 			contentChanged = true
 		}
 
@@ -293,72 +289,17 @@ func (m *model) rebuildContentCache() {
 				newParts[i] = m.renderSingleEntry(entry, currentWidth)
 			}
 			m.contentParts = newParts
-			m.appendLinePrefix(oldLen)
+			firstChanged = min(firstChanged, oldLen)
 			contentChanged = true
 		}
 	}
 
 	if contentChanged {
-		m.assembleViewportContent()
-		m.viewport.SetContent(m.contentCache.String())
+		m.bodyRepaint(firstChanged)
 	}
 }
 
-func (m *model) assembleViewportContent() {
-	m.contentCache.Reset()
-	estCap := len(m.contentParts)*200 + 1024
-	if estCap > m.contentCache.Cap() {
-		m.contentCache.Grow(estCap)
-	}
-	m.contentCache.WriteString(m.renderWelcomePanel())
-	if len(m.contentParts) > 0 {
-		m.contentCache.WriteString("\n")
-
-		var parts []string
-		lastAgent := ""
-		lastPartIsThinking := false
-
-		for i, part := range m.contentParts {
-			entry := &m.logEntries[i]
-
-			if entry.isVerbose {
-				continue
-			}
-
-			if part == "" || strings.TrimSpace(part) == "" {
-				continue
-			}
-
-			agentChanged := false
-			if entry.from != "" && entry.from != lastAgent {
-				if entry.eventType == "ai_response" {
-					sep := RenderAgentSeparator(entry.from, m.viewport.Width())
-					if sep != "" {
-						parts = append(parts, sep)
-					}
-				} else {
-					badge := RenderAgentBadge(entry.from)
-					if badge != "" {
-						parts = append(parts, badge)
-					}
-				}
-				lastAgent = entry.from
-				agentChanged = true
-			}
-
-			isThinking := entry.eventType == "thinking"
-			mergeAsContinuation := isThinking && lastPartIsThinking && !agentChanged
-			if mergeAsContinuation {
-				part = renderThinkingContinuation(*entry, m.viewport.Width())
-			}
-			lastPartIsThinking = isThinking
-
-			parts = append(parts, part)
-		}
-
-		m.contentCache.WriteString(strings.Join(parts, "\n"))
-	}
-}
+// 正文虚拟化之后，"条目 → 文本"由 tui_body.go 的排版块负责，这里只留渲染单条目的入口。
 
 func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
@@ -559,27 +500,6 @@ func joinThinklinkPanels(panels, body string) string {
 	}
 }
 
-func (m *model) renderEntryTo(entry *logEntry, b *strings.Builder) {
-	width := m.viewport.Width()
-
-	if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
-		b.WriteString(renderToolEntryWithAnim(*entry, width, m.anim))
-		return
-	}
-
-	if entry.eventType == "llm_call_start" && entry.isToolRunning {
-		b.WriteString(renderLLMCallWithAnim(*entry, width, m.anim))
-		return
-	}
-
-	if cached, ok := entry.getCachedRender(width); ok {
-		b.WriteString(cached)
-		return
-	}
-
-	b.WriteString(m.renderSingleEntry(entry, width))
-}
-
 func (m *model) renderDeepThinkingEntry(entry *logEntry) string {
 	maxWidth := m.viewport.Width()
 
@@ -600,29 +520,12 @@ func (m *model) renderDeepThinkingEntry(entry *logEntry) string {
 	return addToolCallBorders(header, maxWidth) + "\n" + renderedBody
 }
 
+// appendLogEntry 追一条已定稿的日志：渲染它的正文，然后把行索引从这一条起补上并落地窗口。
 func (m *model) appendLogEntry(entry *logEntry) {
 	m.viewportDirty = true
-	wasAtBottom := m.viewport.AtBottom()
-
-	if m.termWidth > 0 && m.termHeight > 0 {
-		currentWidth := m.viewport.Width()
-		rendered := m.renderSingleEntry(entry, currentWidth)
-		oldLen := len(m.contentParts)
-		m.contentParts = append(m.contentParts, rendered)
-		m.appendLinePrefix(oldLen)
-		m.assembleViewportContent()
-	} else {
-		if m.contentCache.Len() > 0 {
-			m.contentCache.WriteString("\n")
-		}
-		m.renderEntryTo(entry, m.contentCache)
-	}
-
-	m.viewport.SetContent(m.contentCache.String())
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
-	m.updateViewportCache()
+	oldLen := len(m.contentParts)
+	m.contentParts = append(m.contentParts, m.renderSingleEntry(entry, m.viewport.Width()))
+	m.bodyRepaint(oldLen)
 }
 
 func extractToolSummary(toolName string, argsJSON string) string {

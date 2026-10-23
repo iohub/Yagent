@@ -50,8 +50,7 @@ func newTestModel() *model {
 		glamourLRU:      make([]string, 0, 32),
 		glamourCacheCap: 32,
 
-		dialogStack:  components.NewDialogStack(),
-		contentCache: &strings.Builder{},
+		dialogStack: components.NewDialogStack(),
 	}
 }
 

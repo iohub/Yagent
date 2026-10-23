@@ -22,14 +22,14 @@ type sessionTab struct {
 	title string // 显示标题
 
 	// 消息与渲染
-	logEntries            []logEntry
-	contentParts          []string
-	dirtyEntryIndices     map[int]struct{}
-	needFullRebuild       bool
-	contentPartLinePrefix []int
-	contentCache          *strings.Builder
-	viewport              viewport.Model // 值复制，保留滚动位置
-	viewportYOffset       int            // 保存的滚动偏移量
+	logEntries        []logEntry
+	contentParts      []string
+	dirtyEntryIndices map[int]struct{}
+	needFullRebuild   bool
+	// 正文虚拟化状态（滚动游标 + 行索引）与 viewport 一起存：两者必须同版本，
+	// 否则恢复后 bodySync 会以为窗口没变而跳过 SetContent，屏幕停在另一个 tab 的内容上。
+	body     bodyIndex
+	viewport viewport.Model
 
 	// 输入
 	inputValue string // textarea 文本（Value/SetValue 恢复）
@@ -90,16 +90,14 @@ func (m *model) newSessionTab(id int, title string) *sessionTab {
 	// 创建默认尺寸的 viewport（会在 resize 时调整）
 	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(0))
 	return &sessionTab{
-		id:                       id,
-		title:                    title,
-		viewport:                 vp,
-		viewportYOffset:          0,
-		logEntries:               make([]logEntry, 0),
-		contentParts:             make([]string, 0),
-		dirtyEntryIndices:        make(map[int]struct{}),
-		needFullRebuild:          true,
-		contentPartLinePrefix:    make([]int, 0),
-		contentCache:             &strings.Builder{},
+		id:                id,
+		title:             title,
+		viewport:          vp,
+		logEntries:        make([]logEntry, 0),
+		contentParts:      make([]string, 0),
+		dirtyEntryIndices: make(map[int]struct{}),
+		needFullRebuild:   true,
+
 		inputValue:               "",
 		sessionID:                uuid.New().String(),
 		taskRunning:              false,
@@ -125,7 +123,6 @@ func (m *model) saveActiveSession() {
 	tab := m.sessionTabs[m.activeSessionIdx]
 
 	// 保存 viewport 滚动位置
-	tab.viewportYOffset = m.viewport.YOffset()
 
 	// 复制消息与渲染状态
 	tab.logEntries = make([]logEntry, len(m.logEntries))
@@ -137,9 +134,7 @@ func (m *model) saveActiveSession() {
 		tab.dirtyEntryIndices[k] = v
 	}
 	tab.needFullRebuild = m.needFullRebuild
-	tab.contentPartLinePrefix = make([]int, len(m.contentPartLinePrefix))
-	copy(tab.contentPartLinePrefix, m.contentPartLinePrefix)
-	tab.contentCache = m.contentCache
+	tab.body = m.body.clone()
 
 	// 保存 viewport（值复制保留内部内容）
 	tab.viewport = m.viewport
@@ -228,11 +223,7 @@ func (m *model) restoreSessionTab(idx int) {
 	m.contentParts = tab.contentParts
 	m.dirtyEntryIndices = tab.dirtyEntryIndices
 	m.needFullRebuild = tab.needFullRebuild
-	m.contentPartLinePrefix = tab.contentPartLinePrefix
-	m.contentCache = tab.contentCache
-	if m.contentCache == nil {
-		m.contentCache = &strings.Builder{}
-	}
+	m.body = tab.body.clone()
 
 	// 恢复 viewport
 	m.viewport = tab.viewport
@@ -289,7 +280,7 @@ func (m *model) restoreSessionTab(idx int) {
 
 	// viewport 尺寸要在任务状态恢复之后才算：dashboard 占不占那一列取决于
 	// taskRunning 与 token 用量，早算用的是上一个标签页的状态。
-	l := m.computeBodyLayout(m.viewport.TotalLineCount())
+	l := m.computeBodyLayout(m.bodyTotalLines())
 	m.viewport.SetWidth(l.contentWidth)
 	m.viewport.SetHeight(l.height)
 	if tab.viewport.Width() != 0 && tab.viewport.Width() != l.contentWidth {
@@ -298,7 +289,7 @@ func (m *model) restoreSessionTab(idx int) {
 
 	// 重建内容缓存并恢复滚动位置
 	m.rebuildContentCache()
-	m.viewport.SetYOffset(tab.viewportYOffset)
+	m.bodyScrollTo(m.body.top)
 
 	// 使缓存失效
 	m.invalidateFooterCache()
@@ -340,10 +331,9 @@ func (m *model) clearCurrentSession() {
 	m.contentParts = nil
 	m.dirtyEntryIndices = make(map[int]struct{})
 	m.needFullRebuild = true
-	m.contentPartLinePrefix = nil
-	m.contentCache = &strings.Builder{}
+	m.body = bodyIndex{}
+	m.body.forget()
 	m.viewport.SetContent("")
-	m.viewport.GotoTop()
 	m.currentTask = nil
 	// 清空会话 = 换一块便签板：旧会话的结论不该继续出现在新话题的索引里。
 	m.sessionID = uuid.New().String()

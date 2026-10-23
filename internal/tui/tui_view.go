@@ -111,21 +111,26 @@ func (m *model) View() tea.View {
 
 	var b strings.Builder
 
-	body := m.computeBodyLayout(m.viewport.TotalLineCount())
+	body := m.computeBodyLayout(m.bodyTotalLines())
 	vpHeight := body.height
 	if m.viewport.Height() != vpHeight {
-		heightWasAtBottom := m.viewport.AtBottom()
+		heightWasAtBottom := m.bodyAtBottom()
 		m.viewport.SetHeight(vpHeight)
-		m.viewportViewValid = false
+		// 行高变了，能滚到的最后一行也变了：贴着底的要重新贴回去。
 		if heightWasAtBottom {
-			m.viewport.GotoBottom()
+			m.bodyGotoBottom()
+		} else {
+			m.bodySync()
 		}
+		m.viewportViewValid = false
 	}
 
-	// 宽度只在这里定一次：其他路径算错了就由这里纠正，并且必须让正文缓存作废，
-	// 否则拼出来的列边界是旧宽度。
+	// 宽度只在这里定一次：其他路径算错了就由这里纠正。正文本来就是按宽度排的
+	//（agent 分隔行、thinking 续行、thought 面板都吃宽度），所以行索引会自己发现
+	// 宽度不一致并重排；这里补的是"纠正之后必须让正文缓存作废"。
 	if m.viewport.Width() != body.contentWidth {
 		m.viewport.SetWidth(body.contentWidth)
+		m.bodySync()
 		m.viewportViewValid = false
 	}
 
@@ -133,18 +138,16 @@ func (m *model) View() tea.View {
 		len(m.contentParts) != len(m.logEntries) {
 		structural := body.contentWidth != m.prevViewportWidth ||
 			len(m.contentParts) != len(m.logEntries)
-		// 一次重排是 O(整个 transcript) 的活（拆块 + 面板 + 拼接 + 让 viewport 重新换行），
-		// 而 bubbletea 每条消息都会调 View（tea.go 的 Update 后直接 render）。
-		// 流式追加不在这里挡掉，重排次数就等于 flush 次数 —— 而 flush 是按 chunk 数
-		// 触发的（见 aiChunkRenderThreshold），不是按时间。攒到下一拍再排。
+		// bubbletea 每条消息都会调 View（tea.go 的 Update 后直接 render），而一次 flush 就标
+		// 一次脏：不在这里挡掉，重排次数就等于 flush 次数 —— 而 flush 是按 chunk 数触发的
+		// （见 aiChunkRenderThreshold），不是按时间。虚拟化让单次重排只剩 O(变过的条目 + 窗口)，
+		// 但 transcript 越长、排版块与前缀和的增量维护仍然按次数计费 —— 攒到下一拍再排。
 		if !structural && m.streamDirtyHeld() {
 			// viewportDirty 保持为真：tick（100ms）会再来问一次
 		} else {
-			wasAtBottom := m.viewport.AtBottom()
+			// rebuildContentCache 内部会重排行索引并落地可见区间，贴不贴底由
+			// body.scrolledUp 决定，不再需要"先前是不是在底部"的现场快照。
 			m.rebuildContentCache()
-			if wasAtBottom {
-				m.viewport.GotoBottom()
-			}
 			m.viewportViewValid = false
 			m.lastViewportRepaint = time.Now()
 		}
@@ -154,8 +157,6 @@ func (m *model) View() tea.View {
 		m.syncSearchMatches()
 		m.cachedViewportView = m.viewport.View()
 		m.viewportViewValid = true
-		m.prevViewportYOffset = m.viewport.YOffset()
-		m.prevViewportHeight = m.viewport.Height()
 	}
 
 	if body.dashWidth > 0 {
@@ -171,7 +172,7 @@ func (m *model) View() tea.View {
 		var scrollbar, dashboard string
 		if body.scrollbarCol > 0 {
 			scrollbar = common.Scrollbar(scrollbarThumbStyle, scrollbarTrackStyle,
-				vpHeight, body.totalLines, vpHeight, m.viewport.YOffset())
+				vpHeight, body.totalLines, vpHeight, m.body.top)
 		}
 		if body.dashWidth > 0 {
 			dashboard = m.dashboardCache
@@ -491,17 +492,17 @@ func (m *model) airlinePauseLabel() string {
 // viewportRuler 是 vim ruler 式的滚动位置指示：贴边时直接说 TOP/BOT，
 // 避免内容不足一屏时百分比恒为 0% 造成的误导。
 func (m *model) viewportRuler() string {
-	total := m.viewport.TotalLineCount()
+	total := m.bodyTotalLines()
 	if total == 0 {
 		return ""
 	}
 	switch {
-	case m.viewport.AtTop():
+	case m.bodyAtTop():
 		return "TOP"
-	case m.viewport.AtBottom():
+	case m.bodyAtBottom():
 		return "BOT"
 	default:
-		return fmt.Sprintf("%d%%", int(m.viewport.ScrollPercent()*100))
+		return fmt.Sprintf("%d%%", int(m.bodyScrollPercent()*100))
 	}
 }
 
@@ -553,8 +554,8 @@ func buildAirlineRight(segs []airlineSegment) string {
 }
 
 // renderWelcomePanel 是 transcript 顶部那块固定头部（banner + tagline + cwd）。
-// 每次整段重排它都会被 assembleViewportContent 要一遍，而它的输入只有宽度、cwd 和
-// "有没有日志" —— 不缓存就是每个刷新都把 banner 的逐字渐变与面板排版重算一遍。
+// 它现在是正文行索引的第一块，每次落地窗口都会被要一遍，而输入只有宽度、cwd 和
+// "有没有日志" —— 不缓存就是把 banner 的逐字渐变与面板排版重算一遍。
 func (m *model) renderWelcomePanel() string {
 	empty := len(m.logEntries) == 0
 

@@ -547,22 +547,22 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "j", "down":
-		m.viewport.ScrollDown(count)
+		m.bodyScrollBy(count)
 	case "k", "up":
-		m.viewport.ScrollUp(count)
+		m.bodyScrollBy(-count)
 	case "f", "ctrl+f":
-		m.viewport.PageDown()
+		m.bodyPageBy(1)
 	case "b", "ctrl+b":
-		m.viewport.PageUp()
+		m.bodyPageBy(-1)
 	case "u", "ctrl+u":
-		m.viewport.HalfPageUp()
+		m.bodyHalfPageBy(-1)
 	case "d", "ctrl+d":
-		m.viewport.HalfPageDown()
+		m.bodyHalfPageBy(1)
 	case "G":
 		if count > 1 {
-			m.viewport.SetYOffset(count - 1)
+			m.bodyScrollTo(count - 1)
 		} else {
-			m.viewport.GotoBottom()
+			m.bodyGotoBottom()
 		}
 	case "g":
 		m.lastKey = key
@@ -592,10 +592,9 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.normalEscape()
 
 	default:
-		var vpCmd tea.Cmd
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		m.invalidateFooterCache()
-		return m, vpCmd
+		// 正文 viewport 不再自己吃按键：滚动游标是 body.top（绝对行号），
+		// 让它滚窗口内的那几行就会和索引对不上。滚轮在 handleMouseMsg 里处理。
+		return m, nil
 	}
 
 	m.updateViewportCache()
@@ -907,13 +906,13 @@ func (m *model) handleEditModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+f":
-		m.viewport.PageDown()
+		m.bodyPageBy(1)
 		m.updateViewportCache()
 		m.invalidateFooterCache()
 		return m, nil
 
 	case "ctrl+b":
-		m.viewport.PageUp()
+		m.bodyPageBy(-1)
 		m.updateViewportCache()
 		m.invalidateFooterCache()
 		return m, nil
