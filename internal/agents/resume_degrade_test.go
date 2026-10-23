@@ -442,6 +442,11 @@ func newResumeTestDirector(t *testing.T) *DirectorAgent {
 // 下一次委派的任务前缀里就会多出一条"什么结论都没有"的记录 —— 那正是便签存在目的的反面。
 // 反过来，真失败的委派必须留痕，所以两头都要断：只断前者，删掉整段 writeDelegateNote 都能通过。
 func TestAbandonedDelegationWritesNoNote(t *testing.T) {
+	// 便签根必须归这个 run 所有：下面那句"板上 0 张便签"是计数断言，而 board 目录
+	// 按名字复用 —— 上一次 run（-count=2/-count=3）留下的那张"真失败"便签会让它
+	// 恒不成立（根 AGENTS.md §11 坑 23）。
+	t.Setenv("YAGENT_NOTES_ROOT", t.TempDir())
+
 	a := newResumeTestDirector(t)
 	a.SetBoardScope("abandon-board-"+strings.ReplaceAll(t.Name(), "/", "_"), "abandon-task")
 
