@@ -118,10 +118,12 @@ func (m *model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
 func (m *model) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.termWidth = msg.Width
 	m.termHeight = msg.Height
+	// 先作废 footer 缓存再算视口尺寸：行高是从 footer 反推的，拿旧终端的缓存算
+	// 会得到另一个行数，View 随即纠正宽度、整段正文白渲染一遍。
+	m.invalidateFooterCache()
 	m.input.SetWidth(m.computeFieldWidth())
 	m.resizeViewport()
 	m.invalidateRenderedCache()
-	m.invalidateFooterCache()
 	m.viewportDirty = true
 	m.rebuildViewportScrollLock()
 	// 始终启动/重启 tick 循环（空闲时 tick 会自动停止）
@@ -129,14 +131,12 @@ func (m *model) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) 
 		m.layoutEngine.Resize(msg.Width, msg.Height)
 	}
 
-	// 更新所有 sessionTab 的 viewport 尺寸
+	// 更新所有 sessionTab 的 viewport 尺寸（后台标签页没有自己的 dashboard 状态，
+	// 只能按当前口径算；切过去时 View 会再校正一次宽度）
 	for _, tab := range m.sessionTabs {
-		vpHeight := m.termHeight - m.computeFooterHeight() - tabBarHeight
-		if vpHeight < 3 {
-			vpHeight = 3
-		}
-		tab.viewport.SetWidth(m.termWidth - m.dashboardWidth())
-		tab.viewport.SetHeight(vpHeight)
+		l := m.computeBodyLayout(tab.viewport.TotalLineCount())
+		tab.viewport.SetWidth(l.contentWidth)
+		tab.viewport.SetHeight(l.height)
 		tab.needFullRebuild = true
 	}
 
