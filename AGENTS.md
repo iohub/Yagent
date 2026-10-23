@@ -376,8 +376,11 @@ Director 的 `isToolParallelizable` 与子 Agent 循环都调它 —— 两份�
   deferred 目录 + `load_tool`）。三条理由见 §11 坑 44。
 - 副作用判定：`readOnlyHint=true`（或配置 `read_only` 名单）⇒ 只读可并发；明确 false/destructive ⇒ 写；
   **没有 annotations 一律按写处理**（`Mutates`+`Serial`+`NeedsAuth`），写类默认不注册，除非 `allow_write = true`。
-- 状态四档 ready / degraded（进程活着但 0 工具）/ offline / disabled，一段文本三处出口
+- 状态五档 starting / ready / degraded（进程活着但没拿到清单）/ offline / disabled，一段文本三处出口
   （启动日志、`/mcp` 面板、Director 的 system prompt），由 `mcp.RenderStatusLines` 单源渲染。
+- **启动不等 MCP**：`Manager.Start` 只同步 spawn 子进程（`Client("codeseek")` 当场可取，
+  手写桥捕获的就是这个指针），initialize 与 `tools/list` 在后台跑。initialize 的预算是 15 分钟
+  而不是 `startup_timeout` —— 判死并重开等于让冷索引从头再建。
 
 ### 5.4 安全机制
 

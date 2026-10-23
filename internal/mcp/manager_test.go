@@ -272,18 +272,94 @@ func TestManager_StatusLinesIsSingleSource(t *testing.T) {
 	}
 }
 
-func TestManager_WaitForReadyTimesOut(t *testing.T) {
+// Start 只 spawn，不等发现：这是"终端启动卡在 MCP"的回归闸门。
+// 假服务器的 initialize 慢 700ms（像 codeseek 冷启动），阈值 150ms —— 把 discover
+// 挪回 Start 里，这条必然红，而不是碰运气。
+func TestManager_StartDoesNotBlockOnDiscovery(t *testing.T) {
+	m := NewManager([]ServerConfig{fakeServerConfig("slow", "slow-initialize")}, ManagerOptions{
+		StartupTimeout: 5 * time.Second,
+		ReadyTimeout:   5 * time.Second,
+	})
+	t.Cleanup(m.ForceClose)
+
+	start := time.Now()
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 150*time.Millisecond {
+		t.Errorf("Start 花了 %v, want 只付 spawn 的成本（发现必须在后台）", elapsed)
+	}
+	if h := m.Status("slow"); h.State != StateStarting {
+		t.Errorf("Start 返回时状态 = %v, want starting（发现还没回来）", h.State)
+	}
+	// 客户端在 Start 返回时就该可取：手写桥在装配期捕获这个指针，
+	// 晚一步就是永久 nil（那比慢更糟）。
+	if m.Client("slow") == nil {
+		t.Error("Start 返回后 Client() 仍为 nil —— codeseek 那类桥接会永久捕获 nil 客户端")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.WaitForReady(ctx); err != nil {
+		t.Fatalf("WaitForReady: %v", err)
+	}
+	if h := m.Status("slow"); h.State != StateReady || h.Tools != 3 {
+		t.Errorf("后台发现结束后 = %+v, want ready + 3 tools", h)
+	}
+}
+
+// 进程活着但 tools/list 失败/超时 ⇒ degraded，而且**不重开进程**：
+// 一个能 tools/call 却不实现 tools/list 的 server，重开是无限循环 + 白烧索引。
+func TestManager_LiveServerWithFailedListIsDegradedNotRestarted(t *testing.T) {
 	m := NewManager([]ServerConfig{fakeServerConfig("slow", "slow-list")}, ManagerOptions{
 		StartupTimeout: 50 * time.Millisecond,
+		ReadyTimeout:   5 * time.Second,
 	})
 	t.Cleanup(m.ForceClose)
 	if err := m.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	err := m.WaitForReady(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "slow") {
+	first := m.Client("slow")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.WaitForReady(ctx); err != nil {
+		t.Fatalf("WaitForReady: %v", err)
+	}
+	if h := m.Status("slow"); h.State != StateDegraded {
+		t.Fatalf("State = %v, want degraded", h.State)
+	}
+	if m.Client("slow") != first {
+		t.Error("degraded 之后客户端被换掉了：慢启动的 server 会被反复重开")
+	}
+	if !first.IsAlive() {
+		t.Error("degraded 判死了进程：它只是没交工具清单")
+	}
+}
+
+// initialize 迟迟不回来（codeseek 在建索引）时不许判死：留在 starting，
+// 进程保留，状态行说"还在启动"。
+func TestManager_SlowInitializeStaysStarting(t *testing.T) {
+	m := NewManager([]ServerConfig{fakeServerConfig("quiet", "no-initialize")}, ManagerOptions{
+		StartupTimeout: 50 * time.Millisecond,
+		ReadyTimeout:   100 * time.Millisecond,
+	})
+	t.Cleanup(m.ForceClose)
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := m.WaitForReady(ctx); err == nil || !strings.Contains(err.Error(), "quiet") {
 		t.Fatalf("WaitForReady = %v, want 超时并点名还在 starting 的 server", err)
+	}
+	h := m.Status("quiet")
+	if h.State != StateStarting {
+		t.Errorf("State = %v, want starting（判死并重开会把一次慢索引变成 N 次）", h.State)
+	}
+	if c := m.Client("quiet"); c == nil || !c.IsAlive() {
+		t.Error("initialize 慢就被杀了：进程应当保留")
 	}
 }
 
@@ -363,5 +439,28 @@ func TestMCPClient_ListToolsCarriesAnnotations(t *testing.T) {
 	}
 	if g, ok := byName["gamma"]; !ok || g.Annotations != nil {
 		t.Errorf("gamma annotations = %+v, want nil", byName["gamma"].Annotations)
+	}
+}
+
+// 还没发现完的 server 不许被写成 "ready — 0 tools"：状态行是用户唯一能读到的解释，
+// 说谎的那一行会让人以为这个 server 本来就没有工具。
+func TestManager_StartingIsNotReportedAsReady(t *testing.T) {
+	m := NewManager([]ServerConfig{fakeServerConfig("quiet", "no-initialize")}, ManagerOptions{
+		ReadyTimeout: time.Hour,
+	})
+	t.Cleanup(m.ForceClose)
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	line := m.StatusLines()
+	if !strings.Contains(line, "quiet: starting") {
+		t.Errorf("状态行 = %q, want 写明 starting", line)
+	}
+	if strings.Contains(line, "ready — 0 tools") {
+		t.Errorf("状态行把未发现的 server 说成 ready：%q", line)
+	}
+	if !strings.Contains(line, "mcp: 1 servers, 0 tools") {
+		t.Errorf("摘要把还没算出的工具计了数：%q", line)
 	}
 }

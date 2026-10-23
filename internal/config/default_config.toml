@@ -146,7 +146,8 @@ request_timeout = 30                # seconds (≤0 → 30)
 # write-class tools are skipped entirely unless allow_write = true.
 [mcp]
 enable = true                      # kill-switch: YAGENT_MCP=0
-startup_timeout = "30s"            # bounded wait for start + initialize + tools/list
+startup_timeout = "30s"            # bound for the tools/list discovery step only; startup
+                                   # never blocks on MCP (spawn is sync, init/list are not)
 reconnect_backoff = "5s"           # first retry delay, doubles up to 5m
 max_reconnects = 3                 # exhausted → offline ("gave up after N attempts")
 max_tools_per_server = 40          # sorted by name; extras dropped with an account line

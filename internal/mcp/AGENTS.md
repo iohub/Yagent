@@ -21,7 +21,14 @@
 **3. hint 用 `*bool`。** `readOnlyHint: false` 与"没声明"在能力判定里走向不同分支（前者明确有副作用，
 后者 fail-safe 按写处理），裸 `bool` 分不清。
 
-**4. 状态迁移在锁内装配、锁外发通知。** `Call` 绝不持 `m.mu`；`Health()` 返回快照；
+**4. `Start` 只同步 spawn，绝不等发现。** 分两半是硬约束：`app.Init` 在 `Start` 返回后立刻
+`Client("codeseek")` —— 6 个手写桥在装配期捕获那个指针，客户端晚一步登记就是永久 nil
+（比慢更糟）；而 initialize 可能几分钟（冷索引），等它就是"终端启动卡在 MCP"。
+发现阶段的两条超时各管一件事：`ReadyTimeout`（默认 15 分钟）等 initialize，超时**只留在
+starting**、不杀进程；`StartupTimeout` 管 `tools/list`，失败且进程还活着 ⇒ degraded。
+`WaitForReady` 上界是调用方的 ctx，装配路径不调它。
+
+**4.1 状态迁移在锁内装配、锁外发通知。** `Call` 绝不持 `m.mu`；`Health()` 返回快照；
 重连 goroutine 一律 `supervise.From/Group.Go("mcp/reconnect-<name>")`。
 
 **5. 退避有 seam。** 包级 `reconnectBackoffBase` 与 `ManagerOptions.ReconnectBackoff` 是测试的入口——
@@ -38,7 +45,8 @@
 
 假服务器 = **重新执行测试二进制**（`TestMain` 认 `YAGENT_TEST_FAKE_MCP_SERVER`，`client_process_test.go`）。
 模式：`plain` / `junk-first` / `reverse` / `slow` / `hang` / `die-on-call` / `tools-list` /
-`tools-list-paged` / `tools-list-endless` / `empty-list` / `list-changed` / `slow-list`。
+`tools-list-paged` / `tools-list-endless` / `empty-list` / `list-changed` / `slow-list` /
+`no-initialize`（永不回 initialize，用来钉"慢启动不该被判死"）。
 不要改成 `go run` 或外部脚本：那会把编译时间算进单测，`-race` 下也起不了进程。
 
 ## 入口
@@ -51,6 +59,9 @@
 - `TestMCPClient_ListToolsPaginates` / `_PageCapErrors`：分页必须跟到底，上限必须报错。
 - `TestManager_ReconnectsAfterCrash` / `_GivesUpAfterMaxAttempts` / `_DegradedOnEmptyList`：
   三条状态迁移。
+- `TestManager_StartDoesNotBlockOnDiscovery` / `_SlowInitializeStaysStarting` /
+  `_LiveServerWithFailedListIsDegradedNotRestarted` / `_StartingIsNotReportedAsReady`：
+  启动不阻塞、慢初始化不重开、没有清单不谎报 ready。
 - `TestManager_CallRoutesToRightServer`：串台会把 A 的结果发给 B。
 - `TestManager_StatusLinesIsSingleSource`：`StatusLines()` 与 `RenderStatusLines(Health())` 逐字相同。
 - `TestManager_ConcurrentCallsStayFramed`（`-race`）：并发调用不交错。
