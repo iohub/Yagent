@@ -18,8 +18,7 @@ type ProviderConfig struct {
 	ContextWindow int     `toml:"context_window"`
 	APIBaseURL    string  `toml:"api_base_url"`
 	APIKey        string  `toml:"api_key"`
-	// APIKeyEnv 指向一个环境变量名，用来替代明文 api_key（同一份配置在多台机器上
-	// 跑、或不想让密钥进 git 时用）。展开只发生在 validate() 一处，见 ResolveAPIKey。
+	// 替代明文 api_key（同一份配置在多台机器上跑、或不想让密钥进 git）；展开只发生在 validate() 一处，见 ApplyAPIKeyEnv。
 	APIKeyEnv string `toml:"api_key_env,omitempty"`
 
 	ReasoningEffort string `toml:"reasoning_effort,omitempty"`
@@ -33,11 +32,7 @@ func (p *ProviderConfig) IsAnthropic() bool {
 	return strings.EqualFold(p.ApiFormat, "anthropic")
 }
 
-// ApplyAPIKeyEnv 把 api_key_env 指向的环境变量展开进 APIKey。
-// 展开只在这一个地方发生，所以两个引擎、NewClient 的检查、providersEqual 比较读到的
-// 都是同一个字段，不需要每处都记得"先看环境变量"。
-// 返回错误表示变量没设置；调用方（validate）只对**生效的那个 provider** 硬失败，
-// 其余 provider 告警了事 —— 为另一台机器准备的条目不该让本机启动不了。
+// 展开只在这一处，所以两个引擎、NewClient 的检查、providersEqual 读的都是同一个字段；变量没设就返回错误，validate 只对生效 provider 硬失败（为另一台机器准备的条目不该让本机启动不了）。
 func (p *ProviderConfig) ApplyAPIKeyEnv() error {
 	if p.APIKeyEnv == "" {
 		return nil
@@ -101,7 +96,6 @@ type AgentConfig struct {
 
 	MaxParallelReadOnlyTools int `toml:"max_parallel_readonly_tools" json:"max_parallel_readonly_tools" yaml:"max_parallel_readonly_tools"`
 
-	// MaxParallelDelegations 是一次 Director 运行里能同时跑的子 Agent 数。
 	// 与 max_parallel_readonly_tools 同一套约定：1 = 严格串行，≤0 = 没配（取默认 2），>8 钳到 8。
 	MaxParallelDelegations int `toml:"max_parallel_delegations" json:"max_parallel_delegations" yaml:"max_parallel_delegations"`
 
@@ -137,8 +131,7 @@ type AgentsLLMConfig struct {
 	Chat        *AgentLLMOverride `toml:"chat,omitempty"`
 	Meta        *AgentLLMOverride `toml:"meta,omitempty"`
 	DevOps      *AgentLLMOverride `toml:"devops,omitempty"`
-	// Browser 补齐第七个 Agent：以前 [agents.llm.browser] 会被报成 undecoded 键并静默忽略，
-	// 于是 Browser 只能靠 agents.llm.use_provider 或全局默认来换 provider。
+	// 第七个 Agent：以前 [agents.llm.browser] 是 undecoded 键、被静默忽略，Browser 只能靠 agents.llm.use_provider 或全局默认换 provider。
 	Browser *AgentLLMOverride `toml:"browser,omitempty"`
 }
 
@@ -182,13 +175,10 @@ type LLMConfig struct {
 
 	FallbackMaxRetries int `toml:"fallback_max_retries" json:"fallback_max_retries" yaml:"fallback_max_retries"`
 
-	// MaxInFlightRequests 是全进程同时在飞的 provider 调用上限（429 是 provider 的
-	// 全局属性，不是某个引擎的属性）。**显式写 0 = 不限**，所以"没写这个键"（解析出来
-	// 也是 0）必须靠键的存在性区分 —— 与 max_replay_messages 同一套坑（§11 坑 26）。
+	// 全进程同时在飞的 provider 调用上限（429 是 provider 的全局属性，不是某个引擎的）。**显式写 0 = 不限**，而"没写这个键"解析出来也是 0 —— 判定必须看键的存在性（§11 坑 26）。
 	MaxInFlightRequests int `toml:"max_in_flight_requests" json:"max_in_flight_requests" yaml:"max_in_flight_requests"`
 }
 
-// RoutingConfig 控制模型自动路由（[routing] 节）。
 type RoutingConfig struct {
 	// Mode 为 "auto"（默认，空值等同 auto）或 "fixed"（关闭路由，沿用各 provider 配置）。
 	Mode string `toml:"mode"`
@@ -235,8 +225,7 @@ type Config struct {
 
 	TUI TUIConfig `toml:"tui"`
 
-	// browserSectionDefined 记录配置文件里是否出现过 [browser] 段（由 LoadFromFile 写入），
-	// 用于区分"用户显式配置"与"整表缺省"。
+	// 由 LoadFromFile 写入：区分"用户显式配置过 [browser] 段"与"整表缺省"。
 	browserSectionDefined bool
 
 	// blackboardSectionDefined 同理，记录 [blackboard] 段是否被显式写过。
@@ -252,24 +241,17 @@ type Config struct {
 	mcpSectionDefined    bool
 	skillsSectionDefined bool
 
-	// gitCheckpointSectionDefined 同理。这里必须看段的存在性而不是某个字段是否为空：
-	// 老写法是"前缀为空就整段换默认值"，于是 enabled = false 会被顶回 true。
+	// 同理，但必须看段的存在性而不是某个字段是否为空：老写法"前缀为空就整段换默认值"会把 enabled = false 顶回 true。
 	gitCheckpointSectionDefined bool
 
-	// ultimateCompressionKeyDefined 记录 [enhanced_commander] 里是否显式写过
-	// enable_ultimate_compression。该键缺省为"开"，因此"没写"与"写了 false"必须可区分。
+	// 同理：该键缺省为"开"，所以"没写"与"写了 false"必须可区分。
 	ultimateCompressionKeyDefined bool
 
-	// inFlightKeyDefined 记录 [llm] 里是否显式写过 max_in_flight_requests。该键的
-	// 缺省是 8，而显式写 0 的意思是"不限"，两者解析出来都能是 0 —— 必须看存在性。
+	// 同理：缺省是 8，而显式写 0 的意思是"不限"，两者解析出来都能是 0。
 	inFlightKeyDefined bool
 }
 
-// removedKeyHints 是已被删除的 TOML 路径 → 该改写什么（空串 = 功能已不存在，什么都不必写）。
-// 判据是解码器的 Undecoded()，所以老配置里残留的键会被逐条点名，而不是静默当成没写。
-// 键名一律小写，与 toml 解码路径一致。
-// 只登记**会出现的最长路径**：父表（[app] 段头、[[keywords.dict]] 的元素）本身不进
-// Undecoded()，登记了也永远不响；子键靠上面的向上归并落到父表这一行。
+// 已删除的 TOML 路径 → 该改写什么（空串 = 功能已不存在），判据是解码器的 Undecoded()；键名一律小写，且只登记**会出现的最长路径**——父表本身不进 Undecoded()，子键靠向上归并落到父表这一行。
 var removedKeyHints = map[string]string{
 	"app.enable_streaming":                    "两个引擎恒走流式，这个键从来没有读者",
 	"keywords.default_path":                   "词典路径固定为 ~/.yagent/keywords.txt 与 <project>/.yagent/keywords.txt",
@@ -287,18 +269,14 @@ var removedKeyHints = map[string]string{
 	"codeseek.knowledge":                      "知识注入/整理机制已整体删除，仓库级知识只走 blueprint",
 }
 
-// removedProviderKeyHints 作用于 [global.llm.providers.<name>] 段内的死键。
-// provider 名是用户自定义的，所以按第四段匹配而不是整条路径。
+// 作用于 [global.llm.providers.<name>] 段内的死键；provider 名是用户自定义的，所以按第四段匹配而不是整条路径。
 var removedProviderKeyHints = map[string]string{
 	"aws_region":     "本仓库没有 Bedrock 专用客户端：请把 api_base_url + api_key 指向 OpenAI-compatible 端点",
 	"aws_profile":    "没有读者",
 	"model_provider": "没有读者",
 }
 
-// removedKeyReports 把 Undecoded() 里命中移除表的键归并成人话列表。
-// 命中父表（如整段删掉的 [codeseek.knowledge]）时，其子键不再重复报。
-// 单独可调用是为了让测试能真的断言"这条键被点名了" —— 只写进 slog 的话，
-// 没有任何测试能让它失败。
+// 命中父表（如整段删掉的 [codeseek.knowledge]）时其子键不再重复报；单独可调用是为了让测试能真的断言"这条键被点名了"——只写进 slog 就没有测试能让它失败。
 func removedKeyReports(md toml.MetaData) []string {
 	reported := make(map[string]bool)
 	var lines []string
@@ -360,8 +338,7 @@ func staleKeysIn(md toml.MetaData, section string) []string {
 	return out
 }
 
-// staleBrowserKeys 列出 [browser] 段里没被新 schema 解析掉的键。
-// 被删掉的旧浏览器栈配置（headless / browser_path 等）会落在这里。
+// [browser] 段里没被新 schema 解析掉的键；被删掉的旧浏览器栈配置（headless / browser_path 等）落在这里。
 func staleBrowserKeys(md toml.MetaData) []string {
 	var out []string
 	for _, key := range md.Undecoded() {
@@ -372,9 +349,7 @@ func staleBrowserKeys(md toml.MetaData) []string {
 	return out
 }
 
-// sectionHasDecodedKey 判断某个表里是否至少有一个**被当前 schema 认识**的键。
-// 只剩失效键的段落等同于没写过：那种情况按整表缺省处理，
-// 否则某个 bool 的零值会把新能力静默关掉（[browser] enabled 踩过这个坑）。
+// 判断某个表里是否至少有一个**被当前 schema 认识**的键：只剩失效键的段落等同于没写过，那种情况按整表缺省处理，否则某个 bool 的零值会把新能力静默关掉（[browser] enabled 踩过）。
 func sectionHasDecodedKey(md toml.MetaData, section string) bool {
 	undecoded := make(map[string]bool)
 	for _, key := range md.Undecoded() {
@@ -499,7 +474,6 @@ func LoadConfig(path string) (*Config, error) {
 	return LoadFromFile(path)
 }
 
-// LoadFromFile 从文件加载配置（提取自 LoadConfig，不执行 validate）
 func LoadFromFile(path string) (*Config, error) {
 	cfg := &Config{}
 	md, err := toml.DecodeFile(path, cfg)
@@ -511,18 +485,15 @@ func LoadFromFile(path string) (*Config, error) {
 	cfg.gitCheckpointSectionDefined = sectionHasDecodedKey(md, "git_checkpoint")
 	cfg.ultimateCompressionKeyDefined = md.IsDefined("enhanced_commander", "enable_ultimate_compression")
 	cfg.inFlightKeyDefined = md.IsDefined("llm", "max_in_flight_requests")
-	// 老配置没有 [browser] 段（或只剩旧浏览器栈的失效键）时按"整表缺省"填默认值：
-	// enabled 的零值是 false，靠它判断等于把新能力静默关掉。
+	// 老配置没有 [browser] 段（或只剩旧浏览器栈的失效键）时按"整表缺省"填默认值：enabled 的零值是 false，靠它判断等于把新能力静默关掉。
 	cfg.browserSectionDefined = browserSectionConfigured(md)
 	if stale := staleBrowserKeys(md); len(stale) > 0 {
-		// 旧浏览器栈留下的 [browser] 键（headless / browser_path 等）在新 schema 里不存在，
-		// 静默忽略会让用户以为自己的配置还在生效。
+		// 静默忽略旧浏览器栈留下的 [browser] 键会让用户以为自己的配置还在生效。
 		slog.Warn("[browser] 段存在已失效的键，将被忽略；请按新的 [browser] 配置改写",
 			"stale_keys", strings.Join(stale, ", "),
 			"hint", "headless→mode，browser_path→chrome_path，新栈还需 binary_path 指向 browser-control")
 	}
-	// [blackboard] 里有三个键允许显式取 0，且各有语义（关索引注入 / 不裁剪索引行 / 不清理），
-	// 而"没写这一段"解析出来同样是 0 —— 所以缺省判定必须看键的存在性，不能看零值。
+	// [blackboard] 里有三个键允许显式取 0 且各有语义（关索引注入 / 不裁剪索引行 / 不清理），而"没写这一段"解析出来同样是 0 —— 缺省判定必须看键的存在性，不能看零值。
 	cfg.blackboardSectionDefined = sectionHasDecodedKey(md, "blackboard")
 	if stale := staleKeysIn(md, "blackboard"); len(stale) > 0 {
 		slog.Warn("[blackboard] 段存在不认识的键，将被忽略",
@@ -535,8 +506,7 @@ func LoadFromFile(path string) (*Config, error) {
 		IndexLineChars: md.IsDefined("blackboard", "index_line_chars"),
 		TTL:            md.IsDefined("blackboard", "ttl"),
 	})
-	// [resume] 与 [blackboard] 同构的一处坑：max_replay_messages 显式写 0 的意思是
-	// "不限条数"，而"没写这一段"解析出来也是 0，所以缺省判定要看键的存在性。
+	// [resume] 与 [blackboard] 同构的一处坑：max_replay_messages 显式写 0 是"不限条数"，而"没写这一段"解析出来也是 0，所以缺省判定要看键的存在性。
 	cfg.resumeSectionDefined = sectionHasDecodedKey(md, "resume")
 	if stale := staleKeysIn(md, "resume"); len(stale) > 0 {
 		slog.Warn("[resume] 段存在不认识的键，将被忽略",
@@ -613,15 +583,12 @@ func (c *Config) validate() error {
 		return fmt.Errorf("no providers configured in LLM section")
 	}
 
-	// MCP server 的名字要进工具名前缀（mcp__<name>__<tool>），拼错一个字符的后果是
-	// "工具名对不上"而不是报错 —— 所以在这里拒收，且不能等到装配期。
+	// MCP server 的名字要进工具名前缀（mcp__<name>__<tool>），拼错一个字符的后果是"工具名对不上"而不是报错，所以在这里拒收、不能等到装配期。
 	if err := validateMCPServers(c.MCP); err != nil {
 		return err
 	}
 
-	// api_key_env 在唯一一处展开成 APIKey，之后的必填项检查与各消费方无需再区分来源。
-	// 生效 provider 缺变量 = 启动失败（点名变量名）；其它 provider 缺变量 = 告警，
-	// 因为"为另一台机器准备的条目"不该让本机开不起来。
+	// api_key_env 在唯一一处展开成 APIKey，之后无需区分来源；生效 provider 缺变量 = 启动失败（点名变量名），其它 provider 只告警。
 	providerNames := make([]string, 0, len(c.Global.LLM.Providers))
 	for name := range c.Global.LLM.Providers {
 		providerNames = append(providerNames, name)
@@ -650,12 +617,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("model must be specified for provider '%s'", effectiveProvider)
 	}
 
-	// api_key/api_base_url 对所有 provider 一视同仁：本仓库没有 Bedrock 专用客户端，
-	// 所谓 Bedrock 配置实际也是打到一个 OpenAI-compatible 端点上（网关或代理）。
-	// 以前按 provider 名字前缀豁免这两项，结果"名字不带 bedrock 的真 Bedrock"照样被要求、
-	// "名字带 bedrock 的"跳过检查然后在运行时炸（AGENTS.md §11 坑 14）。
-	// 这里绝不能提前 return：下面整段是缺省值归一化，
-	// 提前返回会让 max steps、[browser] 缺省、TUI 键位、压缩参数全部停在零值。
+	// api_key/api_base_url 对所有 provider 一视同仁：本仓库没有 Bedrock 专用客户端，以前按名字前缀豁免只会把失败推迟到运行时（AGENTS.md §11 坑 14）。
+	// 这里绝不能提前 return：下面是缺省值归一化，提前返回会让 max steps、[browser] 缺省、TUI 键位、压缩参数全部停在零值。
 	if activeProvider.APIKey == "" {
 		return fmt.Errorf("api_key must be specified for provider '%s' (or point api_key_env at an environment variable) — every provider needs a base_url + key; there is no Bedrock-specific client here", effectiveProvider)
 	}
@@ -712,8 +675,7 @@ func (c *Config) validate() error {
 		}
 	}
 
-	// 急停开关要播出来：关掉并发的表现只是"变慢"，没人说出来的话下一次排查
-	// 会从"为什么委派不并行"开始绕一大圈（与 [resume]/[blackboard] 的 kill_switch 同构）。
+	// 急停开关要播出来：关掉并发的表现只是"变慢"，不说出来的话下次排查会从"为什么委派不并行"开始绕一大圈。
 	if !ConcurrencyEnabled() {
 		slog.Warn("并发已被急停开关关掉：只读工具批与委派都按串行跑",
 			"kill_switch", "YAGENT_CONCURRENCY=0",
@@ -724,9 +686,7 @@ func (c *Config) validate() error {
 	if c.LLM.MaxRetries == 0 {
 		c.LLM.MaxRetries = llmDefaults.MaxRetries
 	}
-	// max_in_flight_requests 的 0 有语义（"不限"），而"没写这个键"解析出来也是 0，
-	// 所以缺省判定看键的存在性而不是零值（与 enable_ultimate_compression 同一套，坑 26）。
-	// 负数没有语义，按"没写"处理。
+	// max_in_flight_requests 的 0 有语义（"不限"）而"没写这个键"解析出来也是 0，所以缺省判定看键的存在性而不是零值（坑 26）；负数没有语义，按"没写"处理。
 	if !c.inFlightKeyDefined || c.LLM.MaxInFlightRequests < 0 {
 		c.LLM.MaxInFlightRequests = llmDefaults.MaxInFlightRequests
 	}
@@ -740,9 +700,7 @@ func (c *Config) validate() error {
 	if c.EnhancedCommander.ToolResultKeepTokens == 0 {
 		c.EnhancedCommander.ToolResultKeepTokens = 200
 	}
-	// enable_ultimate_compression 的缺省语义是"开"，而 Go 零值是 false，所以只能靠键的存在性区分：
-	// 没写 → 开；显式写了 false → 真的关。以前 validate() 是"见 false 就写回 true"，
-	// 于是这个键关不掉，而两份模板还把它当可配项在说。
+	// enable_ultimate_compression 的缺省语义是"开"而 Go 零值是 false，所以只能靠键的存在性区分：没写 → 开，显式 false → 真关（以前"见 false 就写回 true"让这个键关不掉）。
 	if !c.ultimateCompressionKeyDefined {
 		c.EnhancedCommander.EnableUltimateCompression = true
 	}
@@ -764,10 +722,7 @@ func (c *Config) validate() error {
 		c.Browser.CommandTimeout = c.Browser.CDPTimeout + 10*time.Second
 	}
 
-	// 整段没写过 → 全量默认值。写过任一键 → 只兜两个前缀：空的 agent_branch_prefix 会拼出
-	// "/<session>" 这种坏分支名，而 bool 一律尊重用户写下的零值。
-	// 以前的写法是 `AgentBranchPrefix == "" 就整段换成默认值`，后果是
-	// [git_checkpoint] enabled = false 会被顶回 true —— 想关掉快照的人关不掉且不报错。
+	// 整段没写过 → 全量默认值；写过任一键 → 只兜两个前缀（空的 agent_branch_prefix 会拼出 "/<session>" 这种坏分支名），bool 一律尊重用户写下的零值。以前"前缀为空就整段换默认值"会让 [git_checkpoint] enabled = false 被顶回 true。
 	if !c.gitCheckpointSectionDefined {
 		c.GitCheckpoint = DefaultGitCheckpointConfig()
 	} else {
@@ -884,8 +839,7 @@ func (c *Config) validate() error {
 }
 
 type EnhancedCommanderConfig struct {
-	// Enable 已删：压缩今天要 enable && enable_context_compression 两个布尔同时为真，
-	// 而模板把两个都写成 false —— 只留这个描述性的键。
+	// Enable 已删：压缩曾经要 enable && enable_context_compression 同时为真，而模板把两个都写成 false —— 只留这个描述性的键。
 	EnableContextCompression bool `toml:"enable_context_compression" json:"enable_context_compression"`
 
 	ContextCompressionThreshold int `toml:"context_compression_threshold" json:"context_compression_threshold"`
@@ -903,15 +857,13 @@ type CodeSeekConfig struct {
 	RequestTimeout int      `toml:"request_timeout"`
 }
 
-// 浏览器超时的保底下限。上游内部 CDP 超时必须覆盖最长 wait（browser_wait 上限 60s），
-// 外层单次调用超时又要比它更大，否则抢在内层之前把进程杀掉，模型只看到"命令超时"。
+// 上游内部 CDP 超时必须覆盖最长 wait（browser_wait 上限 60s），外层单次调用超时又要比它更大，否则抢在内层之前把进程杀掉，模型只看到"命令超时"。
 const (
 	MinBrowserCDPTimeout     = 65 * time.Second
 	MinBrowserCommandTimeout = 75 * time.Second
 )
 
-// BrowserConfig 控制 Browser-Agent 如何通过外部 browser-control CLI 驱动 Chrome。
-// Go 侧不直接讲 CDP：所有浏览器动作都是 exec 一次 CLI 子命令。
+// Go 侧不直接讲 CDP：所有浏览器动作都是 exec 一次外部 browser-control CLI 子命令。
 type BrowserConfig struct {
 	Enabled bool `toml:"enabled"`
 
@@ -924,8 +876,7 @@ type BrowserConfig struct {
 	Mode string `toml:"mode"`
 	// CDPURL 为 attach 模式的端点，如 http://127.0.0.1:9222。
 	CDPURL string `toml:"cdp_url"`
-	// CDPPortBase 是自启端口起点，递增找空闲。刻意避开 9222/9223：
-	// 上游在没有任何 CDP 环境变量时会硬扫这两个端口，会串到别的浏览器实例上。
+	// 自启端口起点，递增找空闲；刻意避开 9222/9223：上游在没有任何 CDP 环境变量时会硬扫这两个端口，会串到别的浏览器实例上。
 	CDPPortBase int `toml:"cdp_port_base"`
 
 	CDPTimeout     time.Duration `toml:"cdp_timeout"`     // → BROWSER_CONTROL_TIMEOUT（上游默认仅 15s）
@@ -981,10 +932,7 @@ func (b *BrowserConfig) applyDefaults() {
 	}
 }
 
-// DefaultBrowserConfig 是 [browser] 整表缺省时的取值。
-// cdp_timeout/command_timeout 取的是执行层保底下限（65s/75s）：
-// 上游内部 CDP 超时必须覆盖最长 wait（60s），否则 `wait load 60` 会提前失败，
-// 而外层 command_timeout 又要比它更大，否则判定权被内层抢走。
+// [browser] 整表缺省时的取值；cdp_timeout/command_timeout 取的是执行层保底下限（65s/75s），因为上游 CDP 超时必须覆盖最长 wait（60s），而外层判定要比内层晚。
 func DefaultBrowserConfig() BrowserConfig {
 	return BrowserConfig{
 		Enabled:        true,
@@ -1004,9 +952,7 @@ func DefaultBrowserConfig() BrowserConfig {
 	}
 }
 
-// KeywordsConfig 只剩一个活键：词典路径是硬编码的（~/.yagent/keywords.txt +
-// <project>/.yagent/keywords.txt，见 internal/tui/tui_model.go），
-// 曾经那些 default_path / hot_reload / [[keywords.dict]] 全都没有读者。
+// 只剩一个活键：词典路径是硬编码的（~/.yagent/keywords.txt + <project>/.yagent/keywords.txt，见 internal/tui/tui_model.go），曾经的 default_path / hot_reload / [[keywords.dict]] 全都没有读者。
 type KeywordsConfig struct {
 	DisableCompletion bool `toml:"disable_completion"`
 }

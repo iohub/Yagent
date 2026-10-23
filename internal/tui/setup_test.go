@@ -19,12 +19,10 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// 按键构造 helper：v2 的 KeyMsg 是接口，KeyPressMsg 就是它的实现（= Key 结构）。
 func pressKey(r rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
-// pressSpecial 构造特殊键（KeyEnter / KeyTab / KeyDown …，它们都是键码常量）。
 func pressSpecial(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
 
 func pressCtrl(r rune) tea.KeyPressMsg {
@@ -84,7 +82,6 @@ func inputOf(w *setupWizard, key string) string {
 	return w.inputAt(key).Value()
 }
 
-// fillRequired 把必填四格按顺序填好（name → base_url → key → model）。
 // 三格之间只有三次 tab —— 折叠态的 tab 循环不走可选区，这本身就是要被钉的形状。
 func fillRequired(t *testing.T, w *setupWizard, name, url, secret, model string) {
 	t.Helper()
@@ -97,7 +94,6 @@ func fillRequired(t *testing.T, w *setupWizard, name, url, secret, model string)
 	typeText(t, w, model)
 }
 
-// openForm 走到"新增 provider"的表单屏。
 func openForm(t *testing.T, w *setupWizard) {
 	t.Helper()
 	enterKey(t, w) // welcome → providers
@@ -124,7 +120,6 @@ func TestKeyHelpersMatchWizardVocabulary(t *testing.T) {
 	}
 }
 
-// 完整走一遍向导：新增 provider → 设为默认 → 首启项 → 摘要落盘。
 // 断言的是**写出来的文件能被下次启动正常加载**，因为那才是引导页的全部职责。
 func TestWizardHappyPathWritesUsableConfig(t *testing.T) {
 	path := setupConfigWith(t, nil)
@@ -232,8 +227,7 @@ func TestWizardRefusesToDeleteReferencedProvider(t *testing.T) {
 	}
 }
 
-// 数字字段里打字母不该静默变成 0（"8k" 是最常见的写法）。
-// max_tokens 在可选区，所以先 o 展开 —— 这条同时反证"折叠区不参与 tab 循环"。
+// 数字字段里打字母不该静默变成 0（"8k" 是最常见的写法）；max_tokens 在可选区所以先 o 展开，这同时反证"折叠区不参与 tab 循环"。
 func TestWizardFormFieldFiltersNonDigits(t *testing.T) {
 	path := setupConfigWith(t, nil)
 	w := newWizardAt(t, path)
@@ -297,8 +291,7 @@ func TestWizardOpensOnUnreadableConfig(t *testing.T) {
 	}
 }
 
-// 列表屏的 KEY 单元必须说清三种情况：有可用密钥、还是模板那个 your-key、还是根本没有。
-// 首启最常见的事故就是"占位密钥看起来像已经配好了"。
+// 列表屏的 KEY 单元必须说清三种情况：有可用密钥、还是模板那个 your-key、还是根本没有 —— 首启最常见的事故就是"占位密钥看起来像已经配好了"。
 func TestWizardMasksKeySources(t *testing.T) {
 	env := config.ProviderDraft{Name: "a", APIKeyEnv: "DASHSCOPE_API_KEY"}
 	if got := maskKey(env); got != "$DASHSCOPE_API_KEY" {
@@ -349,7 +342,6 @@ func TestWizardFirstRunDraftMapping(t *testing.T) {
 		t.Errorf("autonomy 第三档 = %+v, want full yolo", d)
 	}
 
-	// browser 关掉
 	w.cursor = 3
 	w.cycleField(1)
 	if d := w.firstRunDraft(); d.BrowserEnabled {
@@ -357,16 +349,11 @@ func TestWizardFirstRunDraftMapping(t *testing.T) {
 	}
 }
 
-// ── 骨架（§2）──
-
-// 阶段轨的"已完成"来自账本而不是游标（决策 DB）。
-// 反证很具体：模板夹具已经有 provider 和默认档，所以停在第一屏时前两段就该是 ✓；
-// 而"默认档指向一个不存在的块"必须让 DEFAULT 段退回未完成 —— 否则轨道在承诺一个写不出来的状态。
+// 阶段轨的"已完成"来自账本而不是游标（决策 DB）—— "默认档指向一个不存在的块"必须让 DEFAULT 段退回未完成，否则轨道在承诺一个写不出来的状态。
 func TestWizardRailCompletionComesFromLedger(t *testing.T) {
 	path := setupConfigWith(t, nil)
 	w := newWizardAt(t, path)
 
-	// 还没按 enter：游标在 welcome，但文件里已经有两家 provider 和一个默认档。
 	// 判据是账本，所以这两段此刻就该是 ✓（按"走到第几屏"算的版本在这里会红）。
 	if !w.stageDone(0) || !w.stageDone(1) {
 		t.Errorf("welcome 屏上账本已有 provider 与默认档，轨道却显示未完成：[0]=%v [1]=%v",
@@ -447,8 +434,7 @@ func TestWizardHiddenFieldsNeverHoldFocus(t *testing.T) {
 	}
 }
 
-// 必填区的定义必须与"真正会被拒的字段"一致：
-// 少一格 = 用户以为填完了却存不下；多一格 = 表单在问不必要的问题。
+// 必填区的定义必须与"真正会被拒的字段"一致：少一格 = 用户以为填完了却存不下，多一格 = 表单在问不必要的问题。
 func TestWizardRequiredGroupMatchesValidator(t *testing.T) {
 	path := setupConfigWith(t, nil)
 	w := newWizardAt(t, path)
@@ -548,7 +534,6 @@ func TestWizardPresetsOnlyFillEmptyFields(t *testing.T) {
 		t.Error("预设填了它不该碰的行（name / key）")
 	}
 
-	// 再来一次：已经写过的 URL 必须一个字都不动。
 	w.setInputValue("api_base_url", "https://mine.example/v1")
 	w.Update(pressCtrl('p'))
 	w.Update(pressKey('2')) // 第二条预设
@@ -584,7 +569,6 @@ func TestWizardCatalogPrefillDoesNotOverwriteTypedValue(t *testing.T) {
 		t.Errorf("ctxAutoValue = %d, want %d（否则下一次回填会覆盖用户输入）", w.ctxAutoValue, cw)
 	}
 
-	// 展开可选区，换成手输值，再从 model 行触发一次同样的回填路径。
 	w.Update(pressCtrl('o'))
 	ctxIdx := formRowIndexByKey("context_window")
 	for w.fieldIdx != ctxIdx {
@@ -646,8 +630,7 @@ func TestWizardKeySourceToggle(t *testing.T) {
 	}
 }
 
-// 摘要屏的每条 op 都必须带着它的 note：applyOps 失败时报的就是这条串，
-// 人话行不能替代它（AGENTS §11 坑 28）。
+// 摘要屏的每条 op 都必须带着它的 note：applyOps 失败时报的就是这条串，人话行不能替代它（AGENTS §11 坑 28）。
 func TestWizardSummaryLinesCarryTheirNote(t *testing.T) {
 	path := setupConfigWith(t, nil)
 	w := newWizardAt(t, path)
@@ -681,8 +664,7 @@ func TestWizardSummaryLinesCarryTheirNote(t *testing.T) {
 	}
 }
 
-// lang 选"不注入"时 WriteFirstRun 根本不写那一行 —— 摘要必须说实话，
-// 不能显示成"已经归零"。
+// lang 选"不注入"时 WriteFirstRun 根本不写那一行 —— 摘要必须说实话，不能显示成"已经归零"。
 func TestWizardSummaryTellsUnsetLangStays(t *testing.T) {
 	path := setupConfigWith(t, func(s string) string {
 		return strings.Replace(s, `lang = ""`, `lang = "Chinese"`, 1)
@@ -712,8 +694,7 @@ func TestWizardSummaryTellsUnsetLangStays(t *testing.T) {
 	}
 }
 
-// 面板必须容得下所有动态文本：每行不超过终端宽度，整个面板不超过终端高度。
-// 高度这一维以前根本没测，所以长错误 + 满队列的摘要屏会溢出到 AltScreen 之外。
+// 面板必须容得下所有动态文本：每行不超过终端宽度，整个面板不超过终端高度（高度这一维以前没测，长错误 + 满队列的摘要屏会溢出到 AltScreen 之外）。
 func TestWizardRenderWidthMatrix(t *testing.T) {
 	widths := []int{40, 50, 60, 72, 80, 100, 120, 160, 200, 240}
 	heights := []int{18, 24, 40}
@@ -780,9 +761,7 @@ func TestWizardNarrowTerminal(t *testing.T) {
 	}
 }
 
-// 底栏键帽不是装饰：hints() 里写出来的每一个单键都必须真的能被该屏处理。
-// 把裸串升级成键帽之后，"键帽上写着、按下没反应"就成了新的失效模式，
-// 而键帽比裸串更容易被相信。
+// 底栏键帽不是装饰：hints() 里写出来的每一个单键都必须真的能被该屏处理——键帽比裸串更容易被相信，"键帽上写着、按下没反应"是新的失效模式。
 func TestWizardHintsAreNotDecoration(t *testing.T) {
 	cases := []struct {
 		step setupStep
@@ -871,9 +850,7 @@ func keyToMsg(key string) (tea.Msg, bool) {
 	return nil, false
 }
 
-// loadTestCatalog 用一份最小目录覆盖全局模型索引。
-// 生产里 main.go 在任何子命令之前就把内嵌目录装好（main.go:160），
-// 所以向导的目录预填不是"只在 TUI 里才生效"的东西；测试要自己喂它。
+// 测试要自己喂一份最小目录：生产里 main.go:160 在任何子命令之前就把内嵌目录装好，向导的目录预填不是"只在 TUI 里才生效"的东西。
 func loadTestCatalog(t *testing.T, content string) {
 	t.Helper()
 	fsys := fstest.MapFS{models.CatalogPath: &fstest.MapFile{Data: []byte(content)}}
@@ -904,8 +881,7 @@ func wizardState(w *setupWizard) string {
 	return b.String()
 }
 
-// 探测期间必须有 tick，结果一到就必须停：
-// 空转的 spinner 比没有 spinner 更像卡死，而静止的等待屏等于骗用户"没在工作"。
+// 探测期间必须有 tick，结果一到就必须停：空转的 spinner 比没有 spinner 更像卡死，而静止的等待屏等于骗用户"没在工作"。
 func TestProbeSpinnerTicksWhileProbing(t *testing.T) {
 	path := setupConfigWith(t, nil)
 	w := newWizardAt(t, path)
@@ -982,8 +958,6 @@ func TestProbeAdviceOnlyForKnownFailures(t *testing.T) {
 	}
 }
 
-// ── 嵌入主 TUI 的那一半 ──
-
 // 任务运行中不进向导：它独占键盘，而任务事件必须有消费者。
 func TestSetupRefusedWhileTaskRunning(t *testing.T) {
 	m := newTestModel()
@@ -996,11 +970,9 @@ func TestSetupRefusedWhileTaskRunning(t *testing.T) {
 	}
 }
 
-// 向导打开期间 taskCompleteMsg 必须透传 —— 它是 taskRunning 唯一的清零点，
-// 吞掉的表现是界面永久卡在"运行中"（AGENTS.md §11 坑 6）。
+// 向导打开期间 taskCompleteMsg 必须透传 —— 它是 taskRunning 唯一的清零点，吞掉的表现是界面永久卡在"运行中"（AGENTS.md §11 坑 6）。
 func TestSetupModePassesTaskCompleteThrough(t *testing.T) {
-	// 必须用 chromeTestModel：handleTaskCompleteMsg 会清输入框（textarea），
-	// 最小 fixture 里没有它，测到的就是 fixture 而不是这段透传。
+	// 必须用 chromeTestModel：handleTaskCompleteMsg 会清输入框（textarea），最小 fixture 里没有它，测到的就是 fixture 而不是这段透传。
 	m := chromeTestModel(t, 100, 30)
 	path := setupConfigWith(t, nil)
 	w := newWizardAt(t, path)
@@ -1017,8 +989,6 @@ func TestSetupModePassesTaskCompleteThrough(t *testing.T) {
 	}
 }
 
-// ── 退出是宿主的决定（done ≠ quit）──
-
 func cmdPtr(c tea.Cmd) uintptr {
 	if c == nil {
 		return 0
@@ -1026,9 +996,7 @@ func cmdPtr(c tea.Cmd) uintptr {
 	return reflect.ValueOf(c).Pointer()
 }
 
-// 独立跑 `yagent setup` 时，q / ctrl+c / 写盘成功都必须真的把程序退掉。
-// 这个洞的历史形态是：handleKey 只置 done=true 并返回 nil —— 状态机说"我走了"，
-// 但 bubbletea 只认 tea.Quit，于是进程停在最后一屏，用户看到的是"按 q 没反应"。
+// 独立跑 `yagent setup` 时 q / ctrl+c / 写盘成功都必须真的发 tea.Quit：handleKey 只置 done=true 的话，bubbletea 不认，进程停在最后一屏——用户看到的是"按 q 没反应"。
 func TestStandaloneWizardQuitsTheProgram(t *testing.T) {
 	path := setupConfigWith(t, nil)
 
@@ -1072,8 +1040,7 @@ func TestStandaloneWizardQuitsTheProgram(t *testing.T) {
 	}
 }
 
-// 嵌在主 TUI 里时正相反：done 只意味着交还键盘。把 quit 漏进这条路径的后果
-// 是 /setup 里按 q 直接把 yagent 退掉。
+// 嵌在主 TUI 里时正相反：done 只意味着交还键盘，把 quit 漏进这条路径 = /setup 里按 q 直接把 yagent 退掉。
 func TestEmbeddedWizardNeverQuitsTheHost(t *testing.T) {
 	path := setupConfigWith(t, nil)
 	m := newTestModel()
@@ -1110,9 +1077,7 @@ func TestWizardWelcomeAcceptsAdd(t *testing.T) {
 	}
 }
 
-// 端到端跑一次真程序：`yagent setup` 里按 q 必须让 Run 返回。
-// 上面那条单元测试断的是 cmd 形状，这条断的是"进程真的会结束"——
-// 用户报的就是这个：按 q 和 ctrl+c 都不能退出。
+// 端到端跑一次真程序：上面的单元测试只断 cmd 形状，这条断"进程真的会结束"——用户报的就是按 q 和 ctrl+c 都不能退出。
 func TestRunSetupProgramActuallyExits(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

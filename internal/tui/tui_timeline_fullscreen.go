@@ -19,9 +19,6 @@ var (
 				BorderForeground(lipgloss.Color("236")) // dim gray
 )
 
-// renderTimelineFullscreenView 全屏时间线主渲染函数。
-// 分屏布局：左侧 ~35% 为 timeline 条目列表（带光标选择），
-// 右侧 ~65% 为选中条目的详细内容。
 func renderTimelineFullscreenView(m *model) tea.View {
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return tea.View{AltScreen: true}
@@ -44,20 +41,17 @@ func renderTimelineFullscreenView(m *model) tea.View {
 		rightWidth = 30
 	}
 
-	// 渲染各区域
 	titleBar := renderTimelineFullscreenTitleBar(m, m.termWidth)
 	leftList := renderTimelineFullscreenList(m, leftWidth, contentHeight)
 	var rightDetail string
 	if m.timelineDetailVP != nil {
-		// 使用 viewport 的 View() 输出作为右侧详情内容
-		// viewport 内容由 buildAllTimelineDetails 设置（全量拼接）
+		// 详情内容由 buildAllTimelineDetails 全量拼进 viewport，这里只取它的 View()
 		rightDetail = m.timelineDetailVP.View()
 	} else {
 		rightDetail = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (select an entry)")
 	}
 	statusBar := renderTimelineFullscreenStatusBar(m, m.termWidth)
 
-	// 组装：左侧 + 分隔线 + 右侧
 	var leftStyle, rightStyle lipgloss.Style
 	if m.timelineFullscreenFocus == "detail" {
 		leftStyle = unfocusedBorderStyle
@@ -71,14 +65,12 @@ func renderTimelineFullscreenView(m *model) tea.View {
 
 	contentArea := lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, " ", rightBlock)
 
-	// 完整布局：标题栏 + 内容区 + 状态栏
 	fullContent := strings.Join([]string{
 		titleBar,
 		contentArea,
 		statusBar,
 	}, "\n")
 
-	// 上下边框
 	topBorder := lipgloss.NewStyle().Foreground(lipgloss.Color("236")).Render(strings.Repeat("─", m.termWidth))
 	bottomBorder := lipgloss.NewStyle().Foreground(lipgloss.Color("236")).Render(strings.Repeat("─", m.termWidth))
 	fullContent = topBorder + "\n" + fullContent + "\n" + bottomBorder
@@ -86,8 +78,6 @@ func renderTimelineFullscreenView(m *model) tea.View {
 	return tea.View{AltScreen: true, Content: fullContent}
 }
 
-// renderTimelineFullscreenTitleBar 渲染标题栏。
-// 深色背景 + 白色加粗字体。
 func renderTimelineFullscreenTitleBar(m *model, width int) string {
 	titleStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("62")).
@@ -104,7 +94,6 @@ func renderTimelineFullscreenTitleBar(m *model, width int) string {
 	return titleStyle.Render(text)
 }
 
-// renderTimelineFullscreenList 渲染左侧 timeline 条目列表。
 // 采用窗口渲染（非 viewport，因为条目单行）。
 func renderTimelineFullscreenList(m *model, width, height int) string {
 	if len(m.timelineEntries) == 0 {
@@ -114,7 +103,6 @@ func renderTimelineFullscreenList(m *model, width, height int) string {
 	entries := m.timelineEntries
 	n := len(entries)
 
-	// 计算可见窗口：保持光标居中
 	half := height / 2
 	start := m.timelineFullscreenCursor - half
 	if start < 0 {
@@ -134,19 +122,16 @@ func renderTimelineFullscreenList(m *model, width, height int) string {
 
 	var lines []string
 
-	// 顶部省略指示
 	if start > 0 {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ▲ ..."))
 	}
 
-	// 遍历可见条目
 	for i := start; i < end; i++ {
 		isCursor := i == m.timelineFullscreenCursor
 		line := renderTimelineFullscreenListItem(entries[i], width, isCursor)
 		lines = append(lines, line)
 	}
 
-	// 底部省略指示
 	if end < n {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ▼ ..."))
 	}
@@ -154,9 +139,7 @@ func renderTimelineFullscreenList(m *model, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderTimelineFullscreenListItem 渲染单个 timeline 条目行。
-// 使用与非全屏一致的 dot+name+duration 样式（更好看），
-// 并添加光标指示器▸和选中高亮。
+// 行样式与非全屏一致（dot+name+duration），另加光标指示与选中高亮。
 func renderTimelineFullscreenListItem(entry *TimelineEntry, width int, isCursor bool) string {
 	// 宽度预留 -2 用于边框内边距
 	contentWidth := width - 2
@@ -166,8 +149,6 @@ func renderTimelineFullscreenListItem(entry *TimelineEntry, width int, isCursor 
 	return renderTimelineRowWithCursor(entry, contentWidth, nil, isCursor)
 }
 
-// renderTimelineFullscreenStatusBar 渲染底部状态栏。
-// 深色背景。
 func renderTimelineFullscreenStatusBar(m *model, width int) string {
 	statusStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("235")).
@@ -192,7 +173,6 @@ func renderTimelineFullscreenStatusBar(m *model, width int) string {
 	kindLabel := timelineKindLabel(entry.Kind)
 	statusText := statusTextFor(entry)
 
-	// 截断名称
 	nameStr := entry.Name
 	maxNameWidth := width - lipgloss.Width(posText) - lipgloss.Width(kindLabel) - lipgloss.Width(statusText) - 12
 	if maxNameWidth < 5 {
@@ -206,8 +186,6 @@ func renderTimelineFullscreenStatusBar(m *model, width int) string {
 	return statusStyle.Render(text)
 }
 
-// renderTimelineFullscreenDetail 渲染右侧详情 viewport 的内容。
-// 复用现有的 RenderToolLine 渲染工具调用行。
 func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) string {
 	if entry == nil {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (select an entry)")
@@ -215,7 +193,6 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 
 	var sb strings.Builder
 
-	// 头部：名称（合并条目显示计数）
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213")) // 粉色
 	modelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))             // 灰色
 	durationStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))          // 灰色
@@ -224,14 +201,12 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 	if entry.MergedCount() > 1 {
 		nameDisplay = fmt.Sprintf("%s ×%d", nameDisplay, entry.MergedCount())
 	}
-	// 仅 LLMCall 类型展示类型标签
 	if entry.Kind == TimelineKindLLMCall {
 		sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", timelineKindLabel(entry.Kind), nameDisplay)))
 	} else {
 		sb.WriteString(headerStyle.Render(nameDisplay))
 	}
 
-	// LLMCall: 在头部行追加模型名称、状态图标、耗时
 	if entry.Kind == TimelineKindLLMCall {
 		if entry.Detail != "" {
 			if modelPart := parseModelFromDetail(entry.Detail); modelPart != "" {
@@ -252,7 +227,6 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 
 	sb.WriteString("\n")
 
-	// 元数据行
 	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	metaParts := []string{
 		fmt.Sprintf("  Time: %s", entry.Timestamp.Format("15:04:05.000")),
@@ -266,20 +240,16 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 	sb.WriteString(metaStyle.Render(strings.Join(metaParts, "  │  ")))
 	sb.WriteString("\n")
 
-	// 分隔线
 	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", width)))
 	sb.WriteString("\n\n")
 
-	// 主体内容（按类型分发）
 	switch entry.Kind {
 	case TimelineKindTool:
 		if len(entry.SubEntries) > 0 {
-			// 合并条目：渲染所有子条目（父条目 + SubEntries）
 			allEntries := []*TimelineEntry{entry}
 			allEntries = append(allEntries, entry.SubEntries...)
 
 			for idx, sub := range allEntries {
-				// 子条目编号行
 				numStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("248"))
 				detailStr := sub.Detail
 				if detailStr == "" {
@@ -288,7 +258,6 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 				sb.WriteString(numStyle.Render(fmt.Sprintf("  #%d  %s", idx+1, detailStr)))
 				sb.WriteString("\n")
 
-				// 查找关联的 toolEntry 并渲染
 				toolEntry := findToolEntryByCallID(m, sub.ID)
 				if toolEntry != nil {
 					rendered := RenderToolLine(toolEntry, m.anim, width-4)
@@ -301,7 +270,6 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 						}
 					}
 
-					// 详情页展示：为 semantic_search 补充完整结果内容
 					if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
 						toolEntry.Call.Name == "semantic_search" {
 						bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-8)
@@ -314,7 +282,6 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 							}
 						}
 					}
-					// 没有 toolEntry 时显示简要状态
 					statusIcon := "●"
 					if sub.Status == ToolStatusRunning {
 						statusIcon = "○"
@@ -323,20 +290,16 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 					sb.WriteString(fmt.Sprintf("    %s  %s\n", statusIcon, statusStr))
 				}
 
-				// 子条目间添加空行分隔
 				if idx < len(allEntries)-1 {
 					sb.WriteString("\n")
 				}
 			}
 		} else {
-			// 单条目：保持原有逻辑
 			toolEntry := findToolEntryByCallID(m, entry.ID)
 			if toolEntry != nil {
-				// 复用 RenderToolLine 渲染工具调用行（header + body）
 				rendered := RenderToolLine(toolEntry, m.anim, width)
 				sb.WriteString(rendered)
 
-				// 详情页展示：为 semantic_search 补充完整结果内容
 				if toolEntry.Result != nil && toolEntry.Result.Content != "" &&
 					toolEntry.Call.Name == "semantic_search" {
 					bodyContent := RenderResultBody(toolEntry.Call.Name, toolEntry.Result.Content, width-4)
@@ -372,11 +335,7 @@ func renderTimelineFullscreenDetail(m *model, entry *TimelineEntry, width int) s
 	return sb.String()
 }
 
-// parseModelFromDetail 从LLMCall事件的Detail字段中提取模型名称（含方括号）。
-// Detail格式：
-//   - 运行中: "[gpt-4]"
-//   - 完成:   "✓ [gpt-4-o] · 3.42s"
-//   - 错误:   "✗ [gpt-4] · 1.20s"
+// Detail 的三种形态：运行中 "[gpt-4]"、完成 "✓ [gpt-4-o] · 3.42s"、错误 "✗ [gpt-4] · 1.20s"，模型名含方括号。
 func parseModelFromDetail(detail string) string {
 	start := strings.Index(detail, "[")
 	end := strings.Index(detail, "]")
@@ -386,7 +345,6 @@ func parseModelFromDetail(detail string) string {
 	return ""
 }
 
-// statusIconFor 返回状态图标及其颜色。
 func statusIconFor(entry *TimelineEntry) (icon string, colorStr string) {
 	switch entry.Status {
 	case ToolStatusSuccess:
@@ -400,8 +358,7 @@ func statusIconFor(entry *TimelineEntry) (icon string, colorStr string) {
 	}
 }
 
-// findToolEntryByCallID 通过 callID 在 logEntries 中查找关联的 ToolEntry。
-// 从后往前搜索，找到 toolCallID == callID && toolEntry != nil 的条目，返回其 toolEntry。
+// 倒序扫 logEntries：同一个 callID 后写入的那条才是当前事实。
 func findToolEntryByCallID(m *model, callID string) *ToolEntry {
 	for i := len(m.logEntries) - 1; i >= 0; i-- {
 		entry := &m.logEntries[i]
@@ -412,7 +369,6 @@ func findToolEntryByCallID(m *model, callID string) *ToolEntry {
 	return nil
 }
 
-// timelineKindLabel 返回类型标签。
 func timelineKindLabel(kind TimelineKind) string {
 	switch kind {
 	case TimelineKindTool:
@@ -428,7 +384,6 @@ func timelineKindLabel(kind TimelineKind) string {
 	}
 }
 
-// statusTextFor 返回状态文本。
 func statusTextFor(entry *TimelineEntry) string {
 	switch entry.Status {
 	case ToolStatusError:
@@ -446,7 +401,6 @@ func statusTextFor(entry *TimelineEntry) string {
 	}
 }
 
-// moveTimelineCursor 移动并更新详情 viewport。
 func moveTimelineCursor(m *model, delta int) {
 	n := len(m.timelineEntries)
 	if n == 0 {
@@ -462,13 +416,11 @@ func moveTimelineCursor(m *model, delta int) {
 	syncDetailToCursor(m)
 }
 
-// refreshTimelineDetail 重建所有条目详情内容，并滚动到当前光标位置
 func refreshTimelineDetail(m *model) {
 	buildAllTimelineDetails(m)
 	syncDetailToCursor(m)
 }
 
-// initTimelineDetailViewport 初始化/重置详情 viewport。
 func initTimelineDetailViewport(m *model) {
 	leftWidth := int(float64(m.termWidth-3) * 0.2333)
 	if leftWidth < 25 {
@@ -479,8 +431,7 @@ func initTimelineDetailViewport(m *model) {
 		rightWidth = 30
 	}
 
-	// 内容高度 = termHeight - title(1) - status(1) - 上下大边框(2)
-	// viewport 高度需要减去 lipgloss border 的上下各 1 行
+	// -4 = title(1) + status(1) + 上下大边框(2)
 	contentHeight := m.termHeight - 4 - 2 // -2 for lipgloss border (top+bottom)
 	if contentHeight < 3 {
 		contentHeight = 3
@@ -495,7 +446,6 @@ func initTimelineDetailViewport(m *model) {
 	syncDetailToCursor(m)
 }
 
-// ExitTimelineFullscreen 退出全屏时间线模式，恢复到正常视图。
 func (m *model) ExitTimelineFullscreen() {
 	m.timelineFullscreenMode = false
 	m.timelineFullscreenCursor = 0
@@ -517,8 +467,7 @@ func calcRightPaneWidth(m *model) int {
 	return rightWidth
 }
 
-// buildAllTimelineDetails 将所有 timeline 条目的详情拼接成一个连续页面。
-// LLM Call 条目和紧随其后的 Thinking 条目会被合并展示为一个整体。
+// LLM Call 条目与紧随其后的 Thinking 条目合并展示为一个整体。
 func buildAllTimelineDetails(m *model) {
 	entries := m.timelineEntries
 	rightWidth := calcRightPaneWidth(m)
@@ -529,7 +478,6 @@ func buildAllTimelineDetails(m *model) {
 
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
 
-	// 预扫描：标记被合并的 thinking 条目（紧跟在 llm_call 后面的 thinking）
 	mergedThinkings := make(map[int]bool) // thinking index → merged
 	mergedContent := make(map[int]string) // llm_call index → thinking content
 
@@ -546,7 +494,6 @@ func buildAllTimelineDetails(m *model) {
 	for i, entry := range entries {
 		offsets[i] = currentLine
 
-		// 检查是否被合并的 thinking
 		if mergedThinkings[i] {
 			continue
 		}
@@ -561,12 +508,10 @@ func buildAllTimelineDetails(m *model) {
 			}
 		}
 
-		// 正常渲染条目详情
 		detail := renderTimelineFullscreenDetailWithAnchor(m, entry, rightWidth, i)
 		sb.WriteString(detail)
 		currentLine += strings.Count(detail, "\n")
 
-		// 如果是 LLM Call 且有合并的 thinking 内容，追加内联 thinking
 		if content, ok := mergedContent[i]; ok {
 			inlineContent := renderThinkingInline(content, rightWidth)
 			sb.WriteString(inlineContent)
@@ -581,7 +526,6 @@ func buildAllTimelineDetails(m *model) {
 	}
 }
 
-// renderTimelineFullscreenDetailWithAnchor 渲染带锚点编号的单个条目详情
 func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, width int, index int) string {
 	if entry == nil {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (select an entry)")
@@ -596,7 +540,6 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 	if entry.MergedCount() > 1 {
 		nameDisplay = fmt.Sprintf("%s ×%d", nameDisplay, entry.MergedCount())
 	}
-	// 仅 LLMCall 类型展示类型标签
 	var leftBase string
 	if entry.Kind == TimelineKindLLMCall {
 		leftBase = fmt.Sprintf(" %s %s", timelineKindLabel(entry.Kind), nameDisplay)
@@ -604,7 +547,6 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 		leftBase = fmt.Sprintf(" %s", nameDisplay)
 	}
 
-	// LLMCall: 在名称后追加模型名称
 	if entry.Kind == TimelineKindLLMCall {
 		if entry.Detail != "" {
 			if modelPart := parseModelFromDetail(entry.Detail); modelPart != "" {
@@ -613,10 +555,8 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 		}
 	}
 
-	// 左侧：类型标签 + 名称 + 模型名
 	leftPart := headerStyle.Render(leftBase)
 
-	// 右侧：时间 + 耗时 + 状态
 	var metaParts []string
 	metaParts = append(metaParts, entry.Timestamp.Format("15:04:05.000"))
 	if entry.Duration > 0 {
@@ -637,17 +577,14 @@ func renderTimelineFullscreenDetailWithAnchor(m *model, entry *TimelineEntry, wi
 	sb.WriteString(rightPart)
 	sb.WriteString("\n")
 
-	// 分隔线
 	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", width)))
 	sb.WriteString("\n\n")
 
-	// 主体内容 — 复用原有的 renderTimelineFullscreenDetail 逻辑
 	sb.WriteString(renderTimelineDetailBody(m, entry, width))
 
 	return sb.String()
 }
 
-// renderTimelineDetailBody 渲染条目详情的主体内容（不含头部元数据）
 func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string {
 	var sb strings.Builder
 
@@ -744,7 +681,6 @@ func renderTimelineDetailBody(m *model, entry *TimelineEntry, width int) string 
 	return sb.String()
 }
 
-// syncDetailToCursor 将详情 viewport 滚动到当前光标条目对应的位置
 func syncDetailToCursor(m *model) {
 	if m.timelineDetailVP == nil {
 		return
