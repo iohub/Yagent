@@ -462,8 +462,7 @@ type probeResultMsg struct {
 // 不要求模型把问题思考完。
 const probeTimeout = 30 * time.Second
 
-// probeTickMsg 驱动那一格的转圈。刻意不接 internal/tui/anim —— 那个包目前全仓零引用，
-// 把一个正在交付的界面接到没有测试的包上是新风险（决策 DD）。
+// probeTickMsg 驱动那一格的转圈：计时与帧表都是向导自己的一份，不接共享动画包（决策 DD）。
 type probeTickMsg struct{}
 
 // probeTickInterval 是计时 seam：测试把它调短，而不是 sleep 等一帧。

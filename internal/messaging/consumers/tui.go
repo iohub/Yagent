@@ -101,10 +101,6 @@ var (
 			Foreground(lipgloss.Color("229")).
 			Bold(true)
 
-	chunkPrefixStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244")).
-				Faint(true)
-
 	contentStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252")).
 			MarginTop(1)

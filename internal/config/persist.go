@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -68,73 +67,6 @@ func SetKeyInSection(path, section, key, renderedValue string) error {
 		updated = append(updated, lines[:lastNonEmpty+1]...)
 		updated = append(updated, keyLine(indent))
 		updated = append(updated, lines[lastNonEmpty+1:]...)
-		lines = updated
-	}
-	return atomicWriteFile(path, []byte(strings.Join(lines, "\n")))
-}
-
-// SetKeysInSection 一次写同段的多个键：复用同一次读与一次原子写，
-// 中途失败不会留下"半段已改、半段没改"的文件。
-func SetKeysInSection(path, section string, kv map[string]string) error {
-	if len(kv) == 0 {
-		return nil
-	}
-	// 顺序固定，否则同一张 map 的两次调用会写出不同排列的文件。
-	keys := make([]string, 0, len(kv))
-	for k := range kv {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	lines, masked, err := readLines(path)
-	if err != nil {
-		return err
-	}
-
-	secStart, secEnd := sectionSpan(lines, masked, section)
-	if secStart < 0 {
-		out := make([]string, 0, len(keys))
-		for _, k := range keys {
-			out = append(out, k+" = "+kv[k])
-		}
-		return atomicWriteFile(path, []byte(strings.Join(appendSection(lines, "["+section+"]", out), "\n")))
-	}
-
-	// 已有键就地替换，缺的按 keys 顺序追加到段尾（而不是插在最后一条非空行后 ——
-	// provider 块一次写 7 个键时，连续插入会互相挤行）。
-	var missing []string
-	keyRow := map[string]int{}
-	for i := secStart + 1; i < secEnd; i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" || masked[i] {
-			continue
-		}
-		name, _, found := strings.Cut(trimmed, "=")
-		if !found {
-			continue
-		}
-		name = strings.TrimSpace(strings.Trim(name, "'\""))
-		if _, want := keyRow[name]; !want {
-			keyRow[name] = i
-		}
-	}
-	for _, k := range keys {
-		if row, ok := keyRow[k]; ok {
-			lines[row] = replaceValueOnLine(lines[row], kv[k])
-		} else {
-			missing = append(missing, k+" = "+kv[k])
-		}
-	}
-	if len(missing) > 0 {
-		insertAt := secEnd
-		// 贴着段内最后一行内容，别把新键丢到分隔空行之后
-		for insertAt-1 > secStart && strings.TrimSpace(lines[insertAt-1]) == "" {
-			insertAt--
-		}
-		updated := make([]string, 0, len(lines)+len(missing))
-		updated = append(updated, lines[:insertAt]...)
-		updated = append(updated, missing...)
-		updated = append(updated, lines[insertAt:]...)
 		lines = updated
 	}
 	return atomicWriteFile(path, []byte(strings.Join(lines, "\n")))

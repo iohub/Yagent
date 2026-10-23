@@ -381,7 +381,7 @@ func mustMarshalLine(t *testing.T, m memory.ChatMessage) string {
 
 // ---------- 历史列表 ----------
 
-func TestListTaskMemoriesAndHistory(t *testing.T) {
+func TestListTaskHistoryOrdersAndIgnoresNonTaskFiles(t *testing.T) {
 	dm := newTestDataManager(t)
 	base := time.Now()
 
@@ -405,20 +405,6 @@ func TestListTaskMemoriesAndHistory(t *testing.T) {
 	}
 	if err := dm.FlushAll(); err != nil {
 		t.Fatalf("FlushAll: %v", err)
-	}
-
-	ids, err := dm.ListTaskMemories()
-	if err != nil {
-		t.Fatalf("ListTaskMemories: %v", err)
-	}
-	joined := strings.Join(ids, ",")
-	for _, want := range []string{"normal", "nohuman", "long"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("ListTaskMemories = %q, want 含 %s", joined, want)
-		}
-	}
-	if strings.Contains(joined, "notes") || strings.Contains(joined, "sub") {
-		t.Errorf("ListTaskMemories 把非任务文件也算进来了: %q", joined)
 	}
 
 	items, err := dm.ListTaskHistory(0)

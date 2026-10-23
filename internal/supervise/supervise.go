@@ -108,17 +108,6 @@ func From(ctx context.Context) *Group {
 	return Root()
 }
 
-// WithGroup 把域塞进 ctx（供已经持有 *Group 的调用点使用，例如跨结构体字段重建 ctx）。
-func WithGroup(ctx context.Context, g *Group) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if g == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, ctxKey{}, g)
-}
-
 // Go 起一条具名 goroutine。
 //
 // fn 拿到的是域 ctx 本身，**不是**派生的 cancel ctx：本包不制造取消（AGENTS.md §11 坑 17

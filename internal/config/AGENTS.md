@@ -23,7 +23,7 @@ TUI 键位、压缩参数**全部停在零值**——表现不是报错，是能
 而 `[llm] max_in_flight_requests` 的 **0 有语义（不限流）**，所以必须靠存在性区分"没写 → 8"与"写了 0 → 不限"。
 
 **3. 写 config.toml 只能文本级替换。** `SetKeyInSection` 是唯一内核（`persist.go:13-23`），
-`SetKeysInSection` / `RemoveKeyInSection` / `RemoveSection` 与三个 `Persist*` 都建在它上面。
+`RemoveKeyInSection` / `RemoveSection` 与三个 `Persist*` 都建在它上面。
 禁止 `toml.NewEncoder` 整份重编码——模板里每个键都靠注释自我说明，重编码会把用户注释蒸发。
 两个细节：段头必须 trim 后逐字符相等，否则 `[global.llm]` 会匹配到 `[global.llm.providers.x]`
 （`:212-215`）；多行字符串里的假段头由 mask 排除（`:248-252`）。落盘走 `util.AtomicWrite`

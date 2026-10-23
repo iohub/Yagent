@@ -460,12 +460,6 @@ func (w *RolloutWriter) NextMessageID() string {
 	return fmt.Sprintf("msg_%d", w.msgCounter-1)
 }
 
-func (w *RolloutWriter) CurrentTurnID() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.turnID
-}
-
 func (w *RolloutWriter) SessionID() string {
 	return w.sessionID
 }

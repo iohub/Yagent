@@ -17,14 +17,6 @@ import (
 // 否则 Spec.Build 的返回值要在这里做一次手工转换（转换点就是漂移点）。
 type ToolFunc = toolspec.ToolFunc
 
-// ToolDefinition 是 internal/agents/tools.json 里一条工具声明的 JSON 结构，
-// 由各 Agent 的构造代码映射成 Adapter。
-type ToolDefinition struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Parameters  map[string]interface{} `json:"parameters"`
-}
-
 // Adapter wraps a ToolFunc with name, description, and schema for LLM function calling
 type Adapter struct {
 	name        string

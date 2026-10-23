@@ -98,11 +98,6 @@ func sanitizeAgentName(name string) string {
 	return name
 }
 
-// EnsureDir creates the directory (and parents) if it doesn't exist.
-func EnsureDir(dir string) error {
-	return os.MkdirAll(dir, dirPerm)
-}
-
 // AtomicWrite writes data to path via temp file + rename (crash-safe).
 // 落盘语义的内核在 util.AtomicWrite（全仓唯一一份，I21）；这里只保留便签的两个既有约定：
 // 目录 0700 / 文件 0600，以及 `.md.tmp` 后缀 —— 它刻意不以 `.md` 结尾，

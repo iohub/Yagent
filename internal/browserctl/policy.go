@@ -62,29 +62,9 @@ func (p *Policy) CheckURL(raw string) error {
 	return nil
 }
 
-// HostAllowed 供动作后的越界复检使用（页面内跳转绕不过这一步）。
-func (p *Policy) HostAllowed(host string) bool {
-	if p == nil {
-		return true
-	}
-	for _, d := range p.Denied {
-		if matchHost(d, host) {
-			return false
-		}
-	}
-	if len(p.Allowed) == 0 {
-		return true
-	}
-	for _, a := range p.Allowed {
-		if matchHost(a, host) {
-			return true
-		}
-	}
-	return false
-}
-
 // BlockedURLPatterns 产出 CDP Network.setBlockedURLs 需要的 URL 通配。
-// CIDR 条目无法用 URL 通配表达，只由 CheckURL/HostAllowed 承担。
+// CIDR 条目无法用 URL 通配表达，只由 CheckURL 承担 —— 而 CheckURL 只在导航入参上跑一次，
+// 页面内跳转/子资源不会被 Go 侧复检，所以 CIDR 的实际拦截力只有浏览器侧那一份通配。
 func (p *Policy) BlockedURLPatterns() []string {
 	if p == nil {
 		return nil

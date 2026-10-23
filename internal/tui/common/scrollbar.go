@@ -48,9 +48,3 @@ func Scrollbar(thumbStyle, trackStyle lipgloss.Style, height, contentSize, viewp
 
 	return sb.String()
 }
-
-// ScrollbarThumbChar is the character used for the scrollbar thumb.
-const ScrollbarThumbChar = "┃"
-
-// ScrollbarTrackChar is the character used for the scrollbar track.
-const ScrollbarTrackChar = "│"

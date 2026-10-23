@@ -39,8 +39,7 @@ func (w *setupWizard) body(c setupColors, L setupLayout) []string {
 
 // ── 通用小件 ──
 
-// spinnerFrames 只在探测屏用；帧表是自己的一份（决策 DD：不接 internal/tui/anim，
-// 那个包全仓零引用）。
+// spinnerFrames 只在探测屏用；帧表是自己的一份（决策 DD）。
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 func (w *setupWizard) para(c setupColors, s string, width int, style lipgloss.Style) []string {

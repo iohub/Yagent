@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 
@@ -198,14 +197,4 @@ func (ca *Yagent) publishMCPStatus(h mcp.ServerHealth) {
 		"max_attempts", h.MaxAttempts,
 		"error", h.Error,
 	)
-}
-
-// sortedServerNames 给测试与面板一个确定性顺序。
-func sortedServerNames(cfgs map[string]mcp.ServerConfig) []string {
-	names := make([]string, 0, len(cfgs))
-	for name := range cfgs {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }

@@ -3,7 +3,6 @@ package memory
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"yagent/internal/llm"
 )
@@ -185,9 +184,4 @@ func StepInfoToEventMsg(stepNumber int, toolName string, toolInput interface{}, 
 // strPtr 返回字符串指针
 func strPtr(s string) *string {
 	return &s
-}
-
-// nowISO8601Nano 返回当前 UTC 时间的 ISO 8601 格式（含纳秒），用于兼容性
-func nowISO8601Nano() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
 }

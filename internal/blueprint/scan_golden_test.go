@@ -51,6 +51,11 @@ import (
 // 2026-10-23 第四轮修订：片数不变，边数 136 → 137。来源是斜杠补全的类型化：
 //
 //	internal/tui → internal/skills（skillCompletionItems 读注册表拿技能名与描述）
+//
+// 2026-10-23 第五轮修订：44 → 43 片、边数不变（137）。来源是删掉 `internal/tui/anim` 整包：
+// 全仓零 import、零测试文件，包内 15 个声明没有一条被调用过（`internal/tui/setup.go` 与
+// `setup_screens.go` 的注释就是当时拒绝接线的记录）。它只 import 标准库与 bubbletea，
+// 也没有人 import 它，所以边的账不动，只有片数 −1。
 func TestScanSelfGolden(t *testing.T) {
 	snap, err := Scan("../..", DefaultOptions()) // 测试 CWD 是 internal/blueprint
 	if err != nil {
@@ -60,8 +65,8 @@ func TestScanSelfGolden(t *testing.T) {
 		t.Fatalf("ModulePath = %q, 要 %q", snap.ModulePath, "yagent")
 	}
 	// golden 1：片数。
-	if len(snap.Leaves) != 44 {
-		t.Fatalf("片数 = %d, golden 是 44 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
+	if len(snap.Leaves) != 43 {
+		t.Fatalf("片数 = %d, golden 是 43 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
 	}
 	// golden 2：模块级边数（out 与 in 是转置，总数必然相等）。
 	out, in := 0, 0

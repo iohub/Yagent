@@ -89,13 +89,6 @@ func formRowIndexByKey(key string) int {
 	return -1
 }
 
-func formRowByKey(key string) formRow {
-	if i := formRowIndexByKey(key); i >= 0 {
-		return formRows[i]
-	}
-	return formRow{}
-}
-
 // visibleFormRows 返回当前可见的行号：可选区折叠时它们根本不参与 tab 循环，
 // 于是"焦点停在一个看不见的输入框里"不可能出现（TestWizardHiddenFieldsNeverHoldFocus）。
 func (w *setupWizard) visibleFormRows() []int {

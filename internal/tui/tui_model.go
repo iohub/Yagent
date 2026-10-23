@@ -83,36 +83,20 @@ var (
 
 	welcomePanelStyle = lipgloss.NewStyle().Padding(1, 2)
 	welcomeSubStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	welcomeTipStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	welcomeDimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Bold(true)
 
 	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
 
-	logTimeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
-	logAIResStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	userPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	logUserMsgStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("222")).
-			BorderLeft(true).
-			BorderForeground(lipgloss.Color("214")).
-			PaddingLeft(1)
+	logAIResStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	userPrefixStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	userMsgBoxBorderStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240"))
 	userMsgBoxTextStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("222"))
 	logToolStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
-	logResultStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	logStatusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
 	logErrorLogStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
 	logSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-
-	collapseHintLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	collapseHintTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-
-	diffHunkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	diffAddStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
-	diffDelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
-	diffCtxStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	toolRunningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
 	toolDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))

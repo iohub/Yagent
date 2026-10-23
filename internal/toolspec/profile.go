@@ -84,11 +84,6 @@ func Match(p Profile, deps *Deps) []*Spec {
 	return match(p, deps, false)
 }
 
-// matchIgnoringAvailability 供静态校验使用：不看运行期可用性。
-func matchIgnoringAvailability(p Profile) []*Spec {
-	return match(p, p.testDeps(), true)
-}
-
 func match(p Profile, deps *Deps, ignoreAvailability bool) []*Spec {
 	if deps == nil {
 		deps = p.testDeps()

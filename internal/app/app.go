@@ -561,8 +561,6 @@ type TaskRequest struct {
 	sessionID string
 	// Director 据 resumed 在续跑第一轮强制注入项目上下文：恢复的 memory 里本就没有 system 消息（reader 默认丢弃、datamanager 从不存储），非首次对话判定会漏掉 YAGENT.md/CLAUDE.md/AGENTS.md。
 	resumed bool
-	// resumption 是"从子 Agent 的那一步继续"的落点；nil = 正常新任务或"从 Director 继续"。
-	resumption *agents.DelegationStop
 	// resumedDelegationPath 是"从被停住的那次委派继续"的指路牌而不是结果：TUI 只交出它刚恢复的那份 Director 会话，扫落点与算降级判据都在 app/agents 侧，于是 TUI 不必 import internal/agents。
 	resumedDelegationPath string
 }
@@ -609,12 +607,6 @@ func (r *TaskRequest) WithResumed(resumed bool) *TaskRequest {
 	return r
 }
 
-// WithResumption 直接指定落点（测试与 HTTP 用，调用方已经扫过一遍）。
-func (r *TaskRequest) WithResumption(stop *agents.DelegationStop) *TaskRequest {
-	r.resumption = stop
-	return r
-}
-
 // WithResumedDelegation 指定"从这份 Director 会话里被停住的那次委派继续"。
 // 落点由 resolveResumption 在提交时算，调用方只交出它刚恢复的那个 rollout 路径。
 func (r *TaskRequest) WithResumedDelegation(directorRolloutPath string) *TaskRequest {
@@ -622,13 +614,10 @@ func (r *TaskRequest) WithResumedDelegation(directorRolloutPath string) *TaskReq
 	return r
 }
 
-// resolveResumption 把请求里的两种表达归一成 Director 门面要的那一个。
+// resolveResumption 把"用户点了从子 Agent 继续"的那份 rollout 路径翻成 Director 门面要的落点。
 // 找不到落点时返回 nil 并告警 —— "用户点了从子 Agent 继续，结果静默变成从
 // Director 重来"是必须能在工作日志里看到的事。
 func resolveResumption(req *TaskRequest) *agents.DelegationStop {
-	if req.resumption != nil {
-		return req.resumption
-	}
 	if req.resumedDelegationPath == "" {
 		return nil
 	}

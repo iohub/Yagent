@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"fmt"
-
 	"charm.land/lipgloss/v2"
 )
 
@@ -113,23 +111,11 @@ var (
 	DiffNoNewline = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 )
 
-// ── Prefix styles for different message types ──
-var (
-	TimeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true)
-	AIResStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	StatusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
-	ErrorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
-	HelpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
-)
-
 // ── Tool call area borders ──
 var (
 	ToolCallBorderTop    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	ToolCallBorderBottom = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
-
-// ── Separator ──
-var SeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 
 // ── Timeline panel (floating panel) styles ──
 // timelinePanelStyle 悬浮面板样式（类似 tokenDashboard）
@@ -142,12 +128,6 @@ var timelinePanelStyle = lipgloss.NewStyle().
 var timelineHintStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("241")).
 	Italic(true)
-
-// ── Animation styles ──
-var (
-	AnimGradFrom = lipgloss.Color("240")
-	AnimGradTo   = lipgloss.Color("250")
-)
 
 // ToolIcon returns the appropriate icon string for a tool status.
 func ToolIcon(status ToolStatus, nested bool) string {
@@ -163,30 +143,6 @@ func ToolIcon(status ToolStatus, nested bool) string {
 	default:
 		return IconPending
 	}
-}
-
-// ToolNameStyle returns the name style for a given nesting level.
-func ToolNameStyle(nested bool) lipgloss.Style {
-	if nested {
-		return NameNested
-	}
-	return NameNormal
-}
-
-// FormatTokenCount formats a token count with comma separators.
-func FormatTokenCount(n int) string {
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
-		return s
-	}
-	var result []byte
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			result = append(result, ',')
-		}
-		result = append(result, byte(c))
-	}
-	return string(result)
 }
 
 // ── Agent color palette ──
@@ -226,5 +182,4 @@ func AgentColor(name string) string {
 var (
 	thinkIconStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).SetString("💭 ")
 	thinkTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("251")).Italic(true).Faint(true)
-	thinkDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 )

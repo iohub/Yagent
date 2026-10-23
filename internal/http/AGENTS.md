@@ -50,7 +50,7 @@ gin REST + melody WebSocket + `TaskManager` 的任务生命周期。不负责暂
 `:69 TestTaskContextCarriesGate`（改成结构体另存一份即红）、`:99`、`:137 TestPauseContinueRoundTrip`、
 `:182 TestContinueRefusesCancelledWhilePaused`；
 `task_manager_concurrency_test.go:46 TestSlowSocketDoesNotBlockTaskManager`、
-`:93 TestPauseBroadcastDoesNotHoldTaskManagerLock`、`:136`、`:170`。
+`:93 TestPauseBroadcastDoesNotHoldTaskManagerLock`、`:136`。
 
 **并发域的第二条纪律**：跑任务的那条 goroutine **不进任务自己的域**（`supervise` 挂在 ctx 上、
 收尾时 `Drain`，把执行体自己算进去就是收尾时等自己 → 死锁）。

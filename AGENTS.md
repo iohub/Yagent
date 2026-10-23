@@ -169,7 +169,7 @@ yagent/
 │   ├── blackboard/             # 跨 Agent 便签：note(存储) / handoff(结构化交接) / index(派生索引)
 │   │                           #   resolve(ContextPack) / gc(生命周期) / board(路径与原子写)
 │   ├── blueprint/              # 仓库蓝图（R1–R6 已落地，docs/repo-blueprint-design.md v4 + §21 实施记录）：
-│   │                           #   scan*.go 零 LLM 扫描器（44 片/134 条边的自扫 golden）；derive.go 的
+│   │                           #   scan*.go 零 LLM 扫描器（43 片/137 条边的自扫 golden）；derive.go 的
 │   │                           #   派生快照（atomic.Pointer 唯一写者 + 成本自适应）；index.go 形状②渲染
 │   │                           #   （token 硬顶 + stale/unannotated/TRUNC/oversize 四态）；prose.go 按需视图；
 │   │                           #   fold.go/merge.go/commit.go 五道校验 + 幂等 fold + 乐观 CAS + revisions/；
@@ -714,7 +714,8 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
   与引导向导共用同一份，两边都只留别名。**不要在任何一边再写一份** —— 同形两份实现只有一边会漂走
   （§11 坑 18）。输入框视觉令牌同理：`applyTextareaTokens`（`tui_model.go`）是主输入框与向导字段的唯一来源。
 - **设计语言**：圆角手绘边框（`tui_chrome.go` 的 `╭╮╰╯─▌`），配色令牌集中在
-  `common/styles.go`（`Styles`/`Theme`，深浅双主题）、`styles.go`（工具背景 16 色哈希、Agent 前景色）、
+  `common/styles.go`（`Styles` 与 `ColorTokens`，**只有一套深色**；终端背景只切 glamour
+  markdown 渲染，不切这些令牌）、`styles.go`（工具背景 16 色哈希、Agent 前景色）、
   `common/grad.go`（渐变）。强调色：`141`（lavender，活动 tab / thinklink / LLM 调用）、`62`（INSERT、滚动条、面板边框）、
   `214`（命令）、`39`（搜索）、`76`（运行中）、`235/250`（键帽）。
 - **i18n**：`i18n.go` 一张 ~120 字段翻译表，zh/en，默认英文，仅通过 TUI 内切换（无配置项）。

@@ -39,17 +39,6 @@ func (p Priority) String() string {
 // EventType 事件类型
 type EventType string
 
-// 预定义事件类型
-const (
-	EventTypesSystem  EventType = "system"
-	EventTypeInfo     EventType = "info"
-	EventTypeError    EventType = "error"
-	EventUserConfirm  EventType = "user_confirm"
-	EventConversation EventType = "conversation"
-	EventTaskProgress EventType = "task_progress"
-	EventToolCall     EventType = "tool_call"
-)
-
 // ---------------------------------------------------------------------------
 // 事件结构体
 // ---------------------------------------------------------------------------
@@ -181,19 +170,6 @@ func (e *Event) Validate() error {
 		return fmt.Errorf("event: retry_count (%d) exceeds max_retries (%d)", e.RetryCount, e.MaxRetries)
 	}
 	return nil
-}
-
-// IsExpired 检查消息是否已过期
-func (e *Event) IsExpired() bool {
-	if e.Deadline == nil {
-		return false
-	}
-	return time.Now().After(*e.Deadline)
-}
-
-// ShouldRetry 检查是否应该重试
-func (e *Event) ShouldRetry() bool {
-	return e.RetryCount < e.MaxRetries && !e.IsExpired()
 }
 
 // Clone 创建 Event 的深度副本
