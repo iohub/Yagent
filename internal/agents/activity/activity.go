@@ -1,20 +1,4 @@
-// Package activity 提供"活动感知空闲超时"监视机制。
-//
-// 背景：Director 委派子代理的 delegate_* 工具若使用固定总时长超时，长任务
-// 必然被误杀。本包改为"有动作就重置计时器、持续无动作才超时"：
-//
-//   - 监视器（WithIdleTimeout）在独立 goroutine 中以固定间隔轮询最近活动
-//     时间戳，空闲超过 IdleTimeout 或总耗时超过 TotalTimeout 时经
-//     context.WithCancelCause 注入可诊断错误并取消 context；
-//   - 心跳（Heartbeat）由被监视方（子代理各执行环节）上报活动，纯原子写，
-//     non-blocking、无竞态、无泄漏；
-//   - 嵌套 delegate 场景下，内层子代理的心跳沿 parent 链上抛续期外层监视器；
-//   - 暂停（Pause/Resume）冻结整条链上的两个计时器 —— 心跳只能续 idle，
-//     total 的起点是创建时刻固定的，不显式冻结就会把暂停中的任务杀掉。
-//
-// 设计取舍：心跳是纯原子写（atomic.Store），天然 non-blocking、无竞态、
-// 无泄漏；代价是空闲检测延迟至多 CheckInterval（轮询间隔），可忽略。
-// 不采用 channel + 可重置 timer 方案（有锁、有 channel 语义负担）。
+// Package activity 提供"活动感知空闲超时"监视机制：固定总时长超时必然误杀长任务，故有动作就续 idle、持续无动作才取消。
 package activity
 
 import (
@@ -30,7 +14,6 @@ import (
 // DefaultCheckInterval 是 CheckInterval 未配置（≤0）时的默认监视轮询间隔。
 const DefaultCheckInterval = time.Second
 
-// Options 配置活动感知空闲超时监视器。
 type Options struct {
 	// IdleTimeout 必填 > 0：持续无动作超过此值即取消 context（≤0 属编程错误，panic）。
 	IdleTimeout time.Duration
@@ -43,24 +26,18 @@ type Options struct {
 	now func() time.Time
 }
 
-// ctxKey 是 WithIdleTimeout 存入 context.Value 的私有 key 类型。
-// 使用非导出 struct 类型（而非导出类型或字符串），避免与其他包的 key 冲突。
+// ctxKey 用非导出 struct 类型（而非导出类型或字符串），避免与其他包的 context.Value key 冲突。
 type ctxKey struct{}
 
-// record 单次心跳记录：时间戳 + 动作标签。构造后只读（不可变），
-// 沿 sink 链共享同一指针是安全的。
+// record 构造后只读（不可变），沿 sink 链共享同一指针是安全的。
 type record struct {
 	at   time.Time
 	kind string
 }
 
-// sink 是存放于 context.Value 的最近活动槽位。parent 指向嵌套 delegate
-// 场景下外层 delegate 的 sink；心跳沿 parent 链向上续期各层监视器。
-//
-// 暂停计时用两个原子 int64 而不是 mutex：pausedAt 是"这次暂停的起点"
-// （0 = 未暂停），pausedTotal 是累计暂停时长。Resume 把当前这段结算进 total
-// 并清零起点，所以 Pause/Resume 各自幂等，嵌套委派里内外两层闸门重复冻结
-// 同一链条也只会结算一次。
+// sink 的 parent 指向嵌套 delegate 场景下外层 delegate 的槽位，心跳沿链向上逐层续期。
+// 暂停计时用两个原子 int64 而非 mutex：Resume 结算并清零 pausedAt，所以 Pause/Resume 各自幂等，
+// 嵌套两层闸门重复冻结同一链条也只结算一次。
 type sink struct {
 	parent      *sink
 	last        atomic.Pointer[record]
@@ -68,24 +45,16 @@ type sink struct {
 	pausedTotal atomic.Int64
 }
 
-// IdleTimeoutError 表示持续无动作超过空闲阈值导致的取消原因。
-// 经 context.WithCancelCause 注入，调用方用 context.Cause / errors.As 取回。
+// IdleTimeoutError 经 context.WithCancelCause 注入，调用方用 context.Cause / errors.As 取回。
 type IdleTimeoutError struct {
-	// IdleFor 触发时实际空闲时长。
-	IdleFor time.Duration
-	// Threshold 空闲阈值。
-	Threshold time.Duration
-	// TotalElapsed 本次 delegate（监视器创建起）总耗时。
+	IdleFor      time.Duration
+	Threshold    time.Duration
 	TotalElapsed time.Duration
 	// LastActivityKind 最后一个动作标签（如 "tool:start:run_bash"、"llm done"）。
 	LastActivityKind string
-	// LastActivityAgo 最后动作距今时长。
-	LastActivityAgo time.Duration
+	LastActivityAgo  time.Duration
 }
 
-// Error 生成可诊断消息，例如：
-//
-//	no activity for 10m3s (idle threshold 10m0s); last activity: tool 'apply_patch' started 10m3s ago; total elapsed 27m40s
 func (e *IdleTimeoutError) Error() string {
 	return fmt.Sprintf("no activity for %s (idle threshold %s); last activity: %s %s ago; total elapsed %s",
 		e.IdleFor, e.Threshold, describeKind(e.LastActivityKind), e.LastActivityAgo, e.TotalElapsed)
@@ -93,27 +62,18 @@ func (e *IdleTimeoutError) Error() string {
 
 // TotalTimeoutError 表示总时长上限触发的取消原因（与是否空闲无关）。
 type TotalTimeoutError struct {
-	// Limit 总时长上限。
-	Limit time.Duration
-	// TotalElapsed 触发时总耗时。
-	TotalElapsed time.Duration
-	// LastActivityKind 最后一个动作标签。
+	Limit            time.Duration
+	TotalElapsed     time.Duration
 	LastActivityKind string
-	// LastActivityAgo 最后动作距今时长。
-	LastActivityAgo time.Duration
+	LastActivityAgo  time.Duration
 }
 
-// Error 生成可诊断消息，例如：
-//
-//	total limit 1h0m0s exceeded; last activity: llm done 12s ago; total elapsed 1h0m1s
 func (e *TotalTimeoutError) Error() string {
 	return fmt.Sprintf("total limit %s exceeded; last activity: %s %s ago; total elapsed %s",
 		e.Limit, describeKind(e.LastActivityKind), e.LastActivityAgo, e.TotalElapsed)
 }
 
-// describeKind 把动作标签转为更可读的描述。识别 "tool:start:NAME" 形态
-// （第二批次心跳标签约定）生成 "tool 'NAME' started"；其他形态原样输出
-// （kind 由调用方定义，如 "llm done" 本身即可读）。
+// describeKind 认 "tool:start:NAME" 形态（心跳标签约定）生成 "tool 'NAME' started"，其余形态原样输出。
 func describeKind(kind string) string {
 	if kind == "" {
 		return "<unknown>"
@@ -124,21 +84,8 @@ func describeKind(kind string) string {
 	return kind
 }
 
-// WithIdleTimeout 创建活动感知空闲超时监视器：
-// 有动作（Heartbeat）就重置计时器，持续无动作超过 opts.IdleTimeout 才取消。
-//
-//   - opts.IdleTimeout ≤ 0 属编程错误，直接 panic；
-//   - 返回的 ctx 上已挂载本监视器的活动槽位，供 Heartbeat 上报；
-//   - 若 parent ctx 已存在监视器（嵌套 delegate），新监视器链接到外层槽位，
-//     内层心跳沿链上抛续期外层监视器；
-//   - 返回的 cancel 为主动取消（包装 cancelCause(nil)，cause=nil 时
-//     context.Cause 返回 context.Canceled）；监视 goroutine 内部超时触发
-//     直接调用 cancelCause 注入错误原因，调用方经 context.Cause/errors.As
-//     取回（幂等，首因胜出：监视器注入的超时原因与调用方先到的 cancel
-//     谁先谁生效）；
-//   - 监视 goroutine 在 cancel / 触发超时后必然退出，无泄漏。
-//
-// 空闲检测延迟至多 CheckInterval（轮询间隔），属可忽略的固有代价。
+// WithIdleTimeout 创建活动感知空闲超时监视器：有动作（Heartbeat）就重置计时器，持续无动作超过 opts.IdleTimeout 才取消。
+// IdleTimeout ≤ 0 属编程错误直接 panic；取消原因首因胜出（监视器注入的超时与调用方先到的 cancel 谁先谁生效）。
 func WithIdleTimeout(parent context.Context, opts Options) (context.Context, context.CancelFunc) {
 	if opts.IdleTimeout <= 0 {
 		panic(fmt.Sprintf("activity: IdleTimeout must be > 0, got %v", opts.IdleTimeout))
@@ -153,10 +100,7 @@ func WithIdleTimeout(parent context.Context, opts Options) (context.Context, con
 	}
 
 	ctx, cancelCause := context.WithCancelCause(parent)
-	// API 约定返回 context.CancelFunc；包装 CancelCauseFunc：cancel() 为
-	// 主动取消，等价 cancelCause(nil)（cause=nil 时 context.Cause 返回
-	// context.Canceled）。监视 goroutine 内部超时触发不走此包装，直接调用
-	// cancelCause 注入错误原因，供调用方经 context.Cause/errors.As 取回。
+	// 返回类型是 context.CancelFunc，所以主动取消走 cancelCause(nil)；监视器超时则直接调 cancelCause 注入原因。
 	cancel := context.CancelFunc(func() { cancelCause(nil) })
 
 	// 链接既有父 sink（嵌套 delegate）：内层心跳沿链上抛续期外层监视器。
@@ -180,7 +124,6 @@ func WithIdleTimeout(parent context.Context, opts Options) (context.Context, con
 		for {
 			select {
 			case <-ctx.Done():
-				// cancel（调用方或本监视器触发）后必然退出。
 				return
 			case <-ticker.C:
 				// cancel 后最多再处理一次 tick 即退出，保证"必然退出"。
@@ -225,19 +168,13 @@ func WithIdleTimeout(parent context.Context, opts Options) (context.Context, con
 	return ctx, cancel
 }
 
-// Heartbeat 向 ctx 关联的监视链上报一次活动（有动作就重置计时器）。
-//
-//   - 无监视器（普通 ctx）时静默 no-op；
-//   - 必须 non-blocking：纯原子写，不发送 channel、不持锁等待；
-//   - 晚于 cancel 到达的心跳无害：只写槽位，无人消费，不 panic；
-//   - 嵌套 delegate：沿 parent 链向上逐层续期（循环实现，非递归调用），
-//     保证内层子代理的活动为外层监视器续期。
+// Heartbeat 向 ctx 关联的监视链上报一次活动（有动作就重置计时器），沿 parent 链向上逐层续期。
+// 必须 non-blocking（纯原子写，不发送 channel、不持锁等待）；晚于 cancel 到达的心跳无害：只写槽位，无人消费。
 func Heartbeat(ctx context.Context, detail string) {
 	s, ok := ctx.Value(ctxKey{}).(*sink)
 	if !ok || s == nil {
 		return
 	}
-	// record 构造后只读，沿链共享同一指针；时间与标签取自同一次构造。
 	r := &record{at: time.Now(), kind: detail}
 	for cur := s; cur != nil; cur = cur.parent {
 		cur.last.Store(r)
@@ -245,14 +182,8 @@ func Heartbeat(ctx context.Context, detail string) {
 }
 
 // Pause 冻结 ctx 所在监视链上的 idle 与 total 计时（沿 parent 链逐层置位）。
-//
-// 为什么必须由暂停方显式调用而不是靠心跳：Heartbeat 只能续 idle ——
-// totalElapsed 取自创建时固定的 startTime，持续心跳也照样会在
-// delegate_total_timeout（默认 20m）之后把停住的任务杀掉。
-//
-//   - 无监视器时静默 no-op；
-//   - 幂等：已在暂停中则不重复起算（嵌套委派时内外两层闸门都会调它）；
-//   - 与 Heartbeat 一样是纯原子操作，不持锁、不阻塞。
+// 必须由暂停方显式调用而不是靠心跳：Heartbeat 只能续 idle —— totalElapsed 取自创建时固定的
+// startTime，持续心跳也照样会在 delegate_total_timeout（默认 20m）之后把停住的任务杀掉。
 func Pause(ctx context.Context) {
 	s, ok := ctx.Value(ctxKey{}).(*sink)
 	if !ok || s == nil {
@@ -264,14 +195,9 @@ func Pause(ctx context.Context) {
 	}
 }
 
-// Resume 解冻监视链，并把空闲基准推到恢复时刻。
-//
-// 时间戳为什么必须换掉：暂停前最后一次心跳可能是一分钟以前，若不重置，
-// 恢复后的第一个 tick 就会算出 idleFor = 暂停时长 而立刻杀掉刚恢复的任务。
-// 标签写成 "resumed" 而不是沿用上一个动作，是为了让超时报白读起来是真的
-// （"last activity: resumed 60s ago"）。
-//
-// 未处于暂停状态时 no-op（不续 idle，否则重复 Resume 会变成免费心跳）。
+// Resume 解冻监视链并把空闲基准推到恢复时刻 —— 不重置的话恢复后的第一个 tick 就算出
+// idleFor = 暂停时长，刚恢复的任务立刻被杀掉。
+// 未处于暂停状态时 no-op（不续 idle，否则重复 Resume 变成免费心跳）。
 func Resume(ctx context.Context) {
 	s, ok := ctx.Value(ctxKey{}).(*sink)
 	if !ok || s == nil {

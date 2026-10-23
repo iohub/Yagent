@@ -16,7 +16,6 @@ import (
 	"yagent/internal/config"
 )
 
-// GitCheckpointConfig holds configuration for the git checkpoint mechanism.
 // (Duplicate of config.GitCheckpointConfig for use within agents package.)
 type GitCheckpointConfig struct {
 	Enabled               bool
@@ -30,7 +29,6 @@ type GitCheckpointConfig struct {
 	AutoMergeOnExit       bool
 }
 
-// DefaultGitCheckpointConfig returns a GitCheckpointConfig with sensible defaults.
 func DefaultGitCheckpointConfig() GitCheckpointConfig {
 	return GitCheckpointConfig{
 		Enabled:               true,
@@ -45,7 +43,6 @@ func DefaultGitCheckpointConfig() GitCheckpointConfig {
 	}
 }
 
-// ConvertConfig converts config.GitCheckpointConfig to agents GitCheckpointConfig.
 func ConvertConfig(c *config.GitCheckpointConfig) GitCheckpointConfig {
 	if c == nil {
 		return DefaultGitCheckpointConfig()
@@ -64,9 +61,7 @@ func ConvertConfig(c *config.GitCheckpointConfig) GitCheckpointConfig {
 }
 
 // SessionState is persisted to .git/yagent_session.json across the agent lifecycle.
-//
-// 今天**没有任何代码读这个文件**（只有 persistState 写、clearState 删）。它是一份
-// 给人看的证据：一次被中止的 run 留下了哪个分支、哪些 tag、为什么停。
+// 今天**没有任何代码读这个文件**（只有 persistState 写、clearState 删）：它是一份给人看的证据，
 // docs/pause-resume-design.md 的 P2 阶段会把它接进恢复侧。
 type SessionState struct {
 	SessionID   string    `json:"session_id"`
@@ -84,7 +79,6 @@ type SessionState struct {
 	Checkpoints []string `json:"checkpoints"`
 }
 
-// StepInfo holds information about a single agent step.
 type StepInfo struct {
 	StepNumber int
 	ToolName   string
@@ -92,7 +86,6 @@ type StepInfo struct {
 	Success    bool
 }
 
-// CheckpointInfo holds metadata about a single checkpoint.
 type CheckpointInfo struct {
 	Tag     string
 	Hash    string
@@ -100,7 +93,6 @@ type CheckpointInfo struct {
 	Message string
 }
 
-// GitCheckpointManager manages git checkpoints during agent execution.
 type GitCheckpointManager struct {
 	config             GitCheckpointConfig
 	projectPath        string
@@ -111,7 +103,6 @@ type GitCheckpointManager struct {
 	checkpointMessages []string
 }
 
-// NewGitCheckpointManager creates a new GitCheckpointManager.
 func NewGitCheckpointManager(
 	cfg GitCheckpointConfig,
 	projectPath string,
@@ -132,8 +123,7 @@ func NewGitCheckpointManager(
 	}
 }
 
-// OnAgentStart is called once before the agent loop begins.
-// It creates/stashes and switches to an agent branch.
+// OnAgentStart 在循环开始前跑一次：记下用户分支 → stash 脏工作区 → 建并切到 agent 分支 → pop stash。
 func (g *GitCheckpointManager) OnAgentStart(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -142,14 +132,12 @@ func (g *GitCheckpointManager) OnAgentStart(ctx context.Context) error {
 		return nil // Already completed, skip
 	}
 
-	// 1. Get current branch
 	userBranch, err := g.getCurrentBranch(ctx)
 	if err != nil {
 		return fmt.Errorf("git_checkpoint: failed to get current branch: %w", err)
 	}
 	g.session.UserBranch = userBranch
 
-	// 2. Stash dirty worktree if needed
 	dirty, err := g.isWorktreeDirty(ctx)
 	if err != nil {
 		return fmt.Errorf("git_checkpoint: failed to check dirty status: %w", err)
@@ -166,7 +154,6 @@ func (g *GitCheckpointManager) OnAgentStart(ctx context.Context) error {
 		}
 	}
 
-	// 3. Create and switch to agent branch
 	agentBranch := fmt.Sprintf("%s/%s", g.config.AgentBranchPrefix, g.session.SessionID)
 	g.session.AgentBranch = agentBranch
 
@@ -178,7 +165,6 @@ func (g *GitCheckpointManager) OnAgentStart(ctx context.Context) error {
 		return fmt.Errorf("git_checkpoint: failed to create agent branch: %w", err)
 	}
 
-	// 4. Pop stash if we stashed
 	if g.session.StashRef != "" {
 		_, err := g.runGitCommand(ctx, "stash", "pop")
 		if err != nil {
@@ -186,7 +172,6 @@ func (g *GitCheckpointManager) OnAgentStart(ctx context.Context) error {
 		}
 	}
 
-	// 5. Persist state
 	if err := g.persistState(); err != nil {
 		slog.Warn("Git Checkpoint: failed to persist state", "error", err)
 	}
@@ -195,19 +180,14 @@ func (g *GitCheckpointManager) OnAgentStart(ctx context.Context) error {
 	return nil
 }
 
-// exitCleanupBudget 是收尾的总时限。context.WithoutCancel 会把父 ctx 的 deadline
-// 一起丢掉（否则取消路径上一条命令都跑不了），所以必须自己上一个界：无限期的收尾
-// 会变成"停止之后进程不退"。
+// exitCleanupBudget 是收尾的总时限：context.WithoutCancel 会把父 ctx 的 deadline 一起丢掉
+// （否则取消路径上一条命令都跑不了），所以必须自己上一个界——无限期的收尾会变成"停止之后进程不退"。
 const exitCleanupBudget = 2 * time.Minute
 
-// OnAgentExit is called once after the agent loop ends.
-// It performs squash merge, cleanup, and final commit.
-//
-// **递进来的 ctx 很可能已经被取消了** —— executor.go 是在 deferred 块里调用它的
-// （executor.go:333）。以前这些 git 命令直接跑在那个死 ctx 上：每条都失败、错误被
-// `_, _ =` 丢弃，然而代码仍然无条件 `Completed = true`、清 tag、删状态文件。
-// 表现不是报错，是"一个半途而废的 run 被记成干净收尾，而它的中间历史已经被抹掉"。
-// 所以这里先换一个干净的 ctx，再把中断与完成分成两条路走。
+// OnAgentExit 收到的 ctx 很可能已经被取消（executor.go 在 deferred 块里调用它，executor.go:333）。
+// 以前这些 git 命令直接跑在那个死 ctx 上：每条都失败、错误被 `_, _ =` 丢弃，然而代码仍然无条件
+// `Completed = true`、清 tag、删状态文件——表现不是报错，是"一个半途而废的 run 被记成干净收尾，
+// 而它的中间历史已经被抹掉"。所以这里先换一个干净的 ctx，再把中断与完成分成两条路走。
 func (g *GitCheckpointManager) OnAgentExit(ctx context.Context, agentErr error) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), exitCleanupBudget)
 	defer cancel()
@@ -246,16 +226,13 @@ func exitReason(ctx context.Context, agentErr error) string {
 	return ctx.Err().Error()
 }
 
-// finalizeInterrupted 保全证据，不宣告完成。
-//
-// 三条刻意不做的事，每条都比"没收尾干净"更贵：
+// finalizeInterrupted 保全证据，不宣告完成。三条刻意不做的事，每条都比"没收尾干净"更贵：
 //   - 不 squash：把逐步提交压成一坨，抹掉的正是"它停在哪一步"这条信息本身；
-//   - 不 merge 到用户分支：AutoMergeOnExit 开着时，一次半途而废的 run 会把
-//     没做完的改动直接落进用户的工作分支；
+//   - 不 merge 到用户分支：AutoMergeOnExit 开着时，一次半途而废的 run 会把没做完的改动直接落进用户的工作分支；
 //   - 不清 tag、不删状态文件：那是恢复侧唯一的线索。
 //
-// 提交前先确认 HEAD 还在 agent 分支上。不确认的代价是不可逆的：委派链上任何一处
-// 切过分支，`git add -A` 就会把半成品提交进**用户的**分支。
+// 提交前先确认 HEAD 还在 agent 分支上——不确认的代价不可逆：委派链上任何一处切过分支，
+// `git add -A` 就会把半成品提交进**用户的**分支。
 func (g *GitCheckpointManager) finalizeInterrupted(ctx context.Context) error {
 	slog.Warn("Git Checkpoint: run interrupted — preserving agent branch, tags and session state",
 		"session", g.session.SessionID,
@@ -318,15 +295,13 @@ func (g *GitCheckpointManager) finalizeInterrupted(ctx context.Context) error {
 	return nil
 }
 
-// finalizeCompleted 是原有的收尾：提交残留改动、按配置 squash、清 tag、删状态文件。
-// 与之前的唯一区别是错误不再被丢弃——收尾失败必须有人说出来。
+// finalizeCompleted 按 提交残留改动 → squash → 清 tag → 删状态文件 的顺序收尾。
 func (g *GitCheckpointManager) finalizeCompleted(ctx context.Context) error {
 	slog.Info("Git Checkpoint: Agent exit — processing finalization",
 		"session", g.session.SessionID,
 		"auto_merge_on_exit", g.config.AutoMergeOnExit,
 	)
 
-	// 1. Commit any remaining uncommitted changes
 	dirty, err := g.isWorktreeDirty(ctx)
 	if err != nil {
 		return fmt.Errorf("git_checkpoint: cannot check worktree before final commit: %w", err)
@@ -340,7 +315,6 @@ func (g *GitCheckpointManager) finalizeCompleted(ctx context.Context) error {
 		}
 	}
 
-	// 2. Perform squash operation
 	if g.config.SquashOnExit && g.session.UserBranch != "" && g.session.AgentBranch != "" {
 		if g.config.AutoMergeOnExit {
 			// Legacy behavior: squash-merge into user branch
@@ -349,7 +323,6 @@ func (g *GitCheckpointManager) finalizeCompleted(ctx context.Context) error {
 				return fmt.Errorf("git_checkpoint: squash merge failed: %w", err)
 			}
 
-			// Cleanup agent branch (legacy behavior for auto-merge)
 			if g.config.CleanupAgentBranch {
 				if _, err := g.runGitCommand(ctx, "branch", "-D", g.session.AgentBranch); err != nil {
 					slog.Warn("Git Checkpoint: failed to delete agent branch after merge",
@@ -374,14 +347,12 @@ func (g *GitCheckpointManager) finalizeCompleted(ctx context.Context) error {
 		}
 	}
 
-	// 3. Cleanup checkpoint tags (always clean up regardless of path)
 	if g.config.CleanupCheckpointTags {
 		if err := g.cleanupCheckpointTags(ctx); err != nil {
 			slog.Warn("Git Checkpoint: failed to clean up checkpoint tags", "error", err)
 		}
 	}
 
-	// 4. Clear state file
 	if _, err := g.clearState(); err != nil {
 		slog.Warn("Git Checkpoint: failed to clear session state", "error", err)
 	}
@@ -390,7 +361,6 @@ func (g *GitCheckpointManager) finalizeCompleted(ctx context.Context) error {
 	return nil
 }
 
-// ListCheckpoints returns all checkpoints for the current session.
 func (g *GitCheckpointManager) ListCheckpoints(ctx context.Context) ([]CheckpointInfo, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -408,7 +378,6 @@ func (g *GitCheckpointManager) GetCheckpointMessages() []string {
 	return result
 }
 
-// RollbackToCheckpoint rolls back the working tree to a specific checkpoint.
 func (g *GitCheckpointManager) RollbackToCheckpoint(ctx context.Context, tag string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -418,7 +387,6 @@ func (g *GitCheckpointManager) RollbackToCheckpoint(ctx context.Context, tag str
 		return fmt.Errorf("git_checkpoint: tag %s does not belong to current session %s", tag, g.session.SessionID)
 	}
 
-	// Reset hard to the checkpoint
 	_, err := g.runGitCommand(ctx, "reset", "--hard", tag)
 	if err != nil {
 		return fmt.Errorf("git_checkpoint: reset failed: %w", err)

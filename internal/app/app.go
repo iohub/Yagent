@@ -30,7 +30,6 @@ import (
 	"yagent/internal/toolspec"
 )
 
-// Yagent is the main entry point for the agent system.
 type Yagent struct {
 	engine llm.Engine // default engine (backward-compatible)
 	// engineMu 保护 engine：TUI 的模型切换会在任务运行中替换它，而任务线程每轮都读。
@@ -76,14 +75,12 @@ type Yagent struct {
 	// 于是"关掉整套机制"只需要一处判据（I8）。
 	blueprint *blueprintRuntime
 
-	// embeddedBinFS 嵌入的二进制文件系统（用于自动提取 codeseek 等工具）
 	embeddedBinFS embed.FS
 
 	// initOnce 保证 Init() 只执行一次，防止重复初始化导致资源泄漏
 	initOnce sync.Once
 }
 
-// NewYagent creates a new Yagent.
 func NewYagent(client *llm.Client) (*Yagent, error) {
 	ca := &Yagent{
 		userResponseChannels: make(map[string]chan string),
@@ -108,12 +105,10 @@ func (ca *Yagent) defaultEngine() llm.Engine {
 	return ca.engine
 }
 
-// SetEmbeddedBinaries 设置嵌入的二进制文件系统，用于自动提取 codeseek 等工具
 func (ca *Yagent) SetEmbeddedBinaries(fs embed.FS) {
 	ca.embeddedBinFS = fs
 }
 
-// CloseIdleConnections 关闭 LLM engine 的 HTTP 空闲连接。
 // 在任务取消时调用，加速底层连接释放和 context 取消传播。
 func (ca *Yagent) CloseIdleConnections() {
 	if e := ca.defaultEngine(); e != nil {
@@ -121,22 +116,17 @@ func (ca *Yagent) CloseIdleConnections() {
 	}
 }
 
-// checkRegistry 把静态注册表自检的问题逐条打进日志。
-// 抽成函数只为一件事：Validate 的问题无法从外部注入，"这条自检真的会被调用"
-// 只能靠一个能喂假问题的入口来证明（TestInitRunsRegistrySelfCheck）。
+// 抽成函数只为一件事：Validate 的问题无法从外部注入，"这条自检真的会被调用"只能靠一个能喂假问题的入口证明（TestInitRunsRegistrySelfCheck）。
 func checkRegistry(validate func() []string, logger *slog.Logger) {
 	if problems := validate(); len(problems) > 0 {
 		logger.Error("tool registry self-check failed", "count", len(problems), "problems", problems)
 	}
 }
 
-// Init initializes the assistant with Engine and creates agents.
-// Uses per-agent and per-tool engine resolution from the LLM client.
 func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 	// 始终更新 engine（后续调用也需要更新 engine）
 	ca.setEngine(engine)
 
-	// initOnce 保证只执行一次完整初始化（创建 Agents、启动 MCP 客户端等）
 	ca.initOnce.Do(func() {
 		// 静态注册表自检。spec.go 的 Validate 注释承诺"装配期调用"，而在此之前全仓
 		// 只有测试调它 —— 生产从不检查。逐条打日志而不是退出：构建期问题已被
@@ -171,18 +161,15 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			slog.Info("skills loaded", "line", account.String(), "dirs", strings.Join(dirs, ", "))
 		}
 
-		// Initialize agents
 		publisher := messaging.NewMessagePublisher(ca.dispatcher)
 
 		userConfirmMgr := tools.NewUserConfirmManager()
 
-		// Resolve tool-specific engine for micro_agent
 		microAgentEngine := engine
 		if ca.client != nil {
 			microAgentEngine = ca.client.GetToolEngine("micro_agent")
 		}
 
-		// Resolve tool-specific engine for deepthinking
 		// 自动路由启用时，deepthinking 固定使用高智商档位引擎。
 		deepthinkingEngine := engine
 		if ca.client != nil {
@@ -197,7 +184,6 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			}
 		}
 
-		// Resolve tool-specific engine for design
 		// design 不挂自动路由档位：走纯配置（[tools.llm.design]），
 		// 保留用户独立指定编码前方案设计模型的能力。
 		designEngine := engine
@@ -205,9 +191,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			designEngine = ca.client.GetToolEngine("design")
 		}
 
-		// ── 提取嵌入的二进制（独立于 codeseek 配置）──
-		// 无论用户是否配置了 [codeseek] binary_path，都要把嵌入的 codeseek/fzf/rg/browser-control
-		// 解出到 ~/.yagent/bin：browserctl 等模块的二级查找（~/.yagent/bin/<name>）依赖这些文件。
+		// 无论 [codeseek] binary_path 配没配，都要把嵌入的 codeseek/fzf/rg/browser-control 解出到 ~/.yagent/bin：browserctl 等模块的二级查找依赖这些文件。
 		binDir := ""
 		if ca.config != nil {
 			if dir, err := embedbin.ExtractBinaries(ca.embeddedBinFS, "dist/bin"); err != nil {
@@ -217,15 +201,12 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			}
 		}
 
-		// ── 确定 codeseek 二进制路径并启动 MCP 客户端 ──
 		codeseekBinaryPath := ""
 
-		// 优先级1：配置中显式指定的路径（用户手动设置）
 		if ca.config != nil && ca.config.CodeSeek.BinaryPath != "" {
 			codeseekBinaryPath = ca.config.CodeSeek.BinaryPath
 			slog.Info("Using configured CodeSeek binary path", "path", codeseekBinaryPath)
 		} else if binDir != "" {
-			// 优先级2：使用启动时解出的嵌入二进制
 			candidatePath := filepath.Join(binDir, "codeseek")
 			if _, statErr := os.Stat(candidatePath); statErr == nil {
 				codeseekBinaryPath = candidatePath
@@ -235,7 +216,6 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			}
 		}
 
-		// ── MCP Manager：codeseek（内建）+ [[mcp.servers]]（用户）──
 		// codeseek 从"唯一特例"变成第一个内建 server：它的 6 个手写桥继续由 Go 侧
 		// curated 名单占用，其余工具（init/status/list）走通用 tools/list 通道。
 		var codeSeekMCP *mcp.MCPClient
@@ -275,10 +255,8 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			ProjectPath: workDir,
 			OS:          runtime.GOOS,
 			Arch:        runtime.GOARCH,
-			// Global utility
 			Publisher: publisher,
 
-			// Tools
 			FileOps:        tools.NewFileOperationsTool(workDir),
 			SearchOps:      tools.NewSearchOperationsTool(workDir),
 			SysOps:         tools.NewSystemOperationsTool(workDir),
@@ -323,33 +301,27 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			// CodeSeekMCP MCP 客户端（用于代码分析，nil=未启用）
 			CodeSeekMCP: codeSeekMCP,
 
-			// Git Checkpoint config
 			GitCheckpointCfg: &ca.config.GitCheckpoint,
 
-			// EnhancedCommander 配置
 			EnhancedCommander: ca.config.EnhancedCommander,
 		}
 		ca.globalCtx = &gctx
 
-		// Wire up UserConfirmManager: register as consumer and set publisher
 		userConfirmMgr.SetPublisher(publisher)
 		gctx.FlowOps.UserConfirmMgr = userConfirmMgr
 
-		// Create workspace guard for authorizing dangerous operations
 		guard := tools.NewWorkspaceGuard(workDir, userConfirmMgr)
 		gctx.Guard = guard
 		if ca.dispatcher != nil {
 			ca.dispatcher.RegisterConsumer(userConfirmMgr)
 		}
 
-		// Determine FullYoloMode and apply to GlobalCtx
 		isFullYolo := ca.FullYoloMode || (ca.config != nil && ca.config.Agent.FullYoloMode)
 		gctx.FullYoloMode = isFullYolo
 
 		// FullYolo implies Yolo
 		isYolo := ca.YoloMode || (ca.config != nil && ca.config.Agent.YoloMode) || isFullYolo
 
-		// Apply YOLO mode
 		if isYolo {
 			guard.SetYoloMode(true)
 			slog.Info("🚀 YOLO mode enabled — all authorization checks bypassed")
@@ -357,7 +329,6 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		if isFullYolo {
 			slog.Info("🔥 FULL-YOLO mode enabled — autonomous decision-making, ask_user_for_help removed")
 		}
-		// Get max steps from config, default to DefaultMaxSteps if not set
 		defaultSteps := config.DefaultMaxSteps
 		repoMaxSteps := defaultSteps.Repo
 		codingMaxSteps := defaultSteps.Coding
@@ -391,10 +362,8 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			metaRetryCount = ca.config.Agent.MetaRetryCount
 		}
 
-		// Parse disabled agents from comma-separated string
 		disabledAgents := parseDisabledAgents(ca.DisabledAgents)
 
-		// Resolve per-agent engines
 		// 自动路由启用时，每个 agent 拿到一个绑定角色基线的 RoutingEngine；
 		// 实际档位在每次 delegate 时由难度分类器写入 ctx，RunAgentLoop 起始处解析。
 		directorEngine := ca.agentEngine("director", engine)
@@ -405,9 +374,7 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		devopsEngine := ca.agentEngine("devops", engine)
 		browserEngine := ca.agentEngine("browser", engine)
 
-		// 创建 RepoContextStore（带锁仓库上下文存储：Director 写入 delegate_repo 结果，
-		// coding/browser agent 读取）与 EnvView（运行时环境字段动态读取视图）。
-		// 替代原 GlobalCtx.RepoSummary 共享可变字段，消除数据竞争。
+		// RepoContextStore + EnvView 替代原 GlobalCtx.RepoSummary 共享可变字段（Director 写 delegate_repo 结果、coding/browser 读），消除数据竞争。
 		repoCtx := globalctx.NewRepoContextStore()
 		env := globalctx.NewEnvView(&gctx)
 
@@ -531,7 +498,6 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Browser:              browserAgent,
 		})
 
-		// Create DirectorAgent
 		ca.director = agents.NewDirectorAgent(agents.DirectorAgentParams{
 			Formatter:      &gctx,
 			Publisher:      publisher,
@@ -581,7 +547,6 @@ func (ca *Yagent) IntegrateMessaging(dispatcher *messaging.MessageDispatcher) {
 	}
 }
 
-// TaskRequest encapsulates the request context.
 type TaskRequest struct {
 	ctx         context.Context
 	taskID      string
@@ -591,21 +556,13 @@ type TaskRequest struct {
 	wsCallback  func(string, string)
 	publisher   *messaging.MessagePublisher
 	userMessage string
-	// sessionID 决定便签板（boardID）的作用域：同一会话内的多次任务共享一块板，
-	// 于是前一次委派写下的结论能被下一次直接读到，而不必重新调查一遍。
-	// 空串 ⇒ 回落到 taskID（HTTP 未带会话标识、--prompt 单发就是这个形态）。
+	// sessionID 决定便签板作用域：同一会话内多次任务共享一块板；空串 ⇒ 回落到 taskID（HTTP 未带会话标识、--prompt 单发就是这个形态）。
 	sessionID string
-	// resumed 本次请求是否跑在恢复出来的历史会话上（TUI /resume 或 history 加载后
-	// 的首次追问）。Director 据此在续跑第一轮强制注入项目上下文：恢复的 memory 里
-	// 本就没有 system 消息（reader 默认丢弃、datamanager 从不存储），非首次对话判定
-	// 会漏掉 YAGENT.md/CLAUDE.md/AGENTS.md，LLM 等于蒙着眼睛接手半截任务。
+	// Director 据 resumed 在续跑第一轮强制注入项目上下文：恢复的 memory 里本就没有 system 消息（reader 默认丢弃、datamanager 从不存储），非首次对话判定会漏掉 YAGENT.md/CLAUDE.md/AGENTS.md。
 	resumed bool
-	// resumption 是"从子 Agent 的那一步继续"的落点（TUI 的 /resume 选项、将来 HTTP
-	// 的 continue 都走这里）。nil = 正常新任务或"从 Director 继续"。
+	// resumption 是"从子 Agent 的那一步继续"的落点；nil = 正常新任务或"从 Director 继续"。
 	resumption *agents.DelegationStop
-	// resumedDelegationPath 是"从被停住的那次委派继续"的**指路牌**而不是结果：
-	// TUI 只知道"我刚恢复的是哪份 Director 会话"，扫落点、算降级判据都在 app/agents 这边。
-	// 这样 TUI 不必 import internal/agents（它至今只认识 app）。
+	// resumedDelegationPath 是"从被停住的那次委派继续"的指路牌而不是结果：TUI 只交出它刚恢复的那份 Director 会话，扫落点与算降级判据都在 app/agents 侧，于是 TUI 不必 import internal/agents。
 	resumedDelegationPath string
 }
 
@@ -695,11 +652,7 @@ func (r *TaskRequest) WithSessionID(sessionID string) *TaskRequest {
 	return r
 }
 
-// ResumableDelegation 报告"这份 Director 会话是不是停在一次委派上、能不能接着做完"。
-//
-// 返回的是 TUI 需要的那点信息（Agent 名、步数、能不能重放、不能的话为什么），
-// 而不是 agents.DelegationStop —— 否则 TUI 就得 import internal/agents，
-// 而它今天只认识 app。
+// ResumableDelegation 只带 TUI 需要的那点信息（Agent 名、步数、能不能重放、不能的话为什么），而不是 agents.DelegationStop —— 否则 TUI 就得 import internal/agents，而它今天只认识 app。
 type ResumableDelegation struct {
 	AgentName  string
 	ToolName   string
@@ -736,7 +689,6 @@ func (ca *Yagent) applyResumption(req *TaskRequest) {
 	ca.director.SetPendingResumptionOpt(stop)
 }
 
-// ProcessCodingTaskWithCallback executes the task using the agent system.
 func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error) {
 	ca.Init(ca.defaultEngine(), req.projectDir)
 	ca.director.SetBoardScope(req.sessionID, req.taskID)
@@ -746,7 +698,6 @@ func (ca *Yagent) ProcessCodingTaskWithCallback(req *TaskRequest) (string, error
 	return res.Text, err
 }
 
-// ProcessConversation handles chat messages.
 func (ca *Yagent) ProcessConversation(req *TaskRequest) (string, error) {
 	ca.Init(ca.defaultEngine(), req.projectDir)
 	ca.director.SetBoardScope(req.sessionID, req.taskID)
@@ -756,9 +707,7 @@ func (ca *Yagent) ProcessConversation(req *TaskRequest) (string, error) {
 	return res.Text, err
 }
 
-// SwitchProvider dynamically switches the LLM provider for all agents.
-// The change takes effect on the next task execution (since Init() is called
-// at the start of ProcessCodingTaskWithCallback / ProcessConversation).
+// 改动在下一次任务执行时才生效（Init() 在 ProcessCodingTaskWithCallback / ProcessConversation 开头被调用）。
 func (ca *Yagent) SwitchProvider(providerName string) error {
 	if ca.client == nil {
 		return fmt.Errorf("LLM client not available")
@@ -766,12 +715,10 @@ func (ca *Yagent) SwitchProvider(providerName string) error {
 	if err := ca.client.SwitchProvider(providerName); err != nil {
 		return err
 	}
-	// Also update the local engine reference to keep it in sync
 	ca.setEngine(ca.client.DefaultEngine())
 	return nil
 }
 
-// GetClient returns the underlying LLM client.
 func (ca *Yagent) GetClient() *llm.Client {
 	return ca.client
 }
@@ -878,8 +825,7 @@ func (ca *Yagent) GetToolProviderInfo(toolName string) (string, string) {
 	return ca.client.GetToolProviderInfo(toolName)
 }
 
-// parseDisabledAgents converts a comma-separated string of agent names
-// into a map[string]bool for O(1) lookup. Valid agent names: repo, coding, chat, meta, devops, browser.
+// 合法 Agent 名：repo, coding, chat, meta, devops, browser。
 func parseDisabledAgents(s string) map[string]bool {
 	result := make(map[string]bool)
 	if s == "" {
@@ -894,7 +840,6 @@ func parseDisabledAgents(s string) map[string]bool {
 	return result
 }
 
-// Close 清理资源
 func (ca *Yagent) Close() {
 	// 停蓝图派生循环并等它退。放在最前面：它是最短的一条后台活（一次扫描最坏 2s），
 	// 而 `--prompt` 那条一次性路径的收尾时间全靠它别拖住退出。

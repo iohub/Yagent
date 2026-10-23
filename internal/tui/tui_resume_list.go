@@ -1,20 +1,10 @@
 package tui
 
-// tui_resume_list.go — /resume 会话选择器的几何层（docs/resume-tui-redesign.md §2、R3）。
-//
-// 四条硬规则，缺一条就复现原来那几个病：
-//  1. 列宽一律按**显示宽度**算，截断只走 common.Ellipsize（它保证输出恰好 w 格）。
-//     旧实现用 len() 字节算列宽、按 rune 截断预览，中文任务名能把一行顶到 135 格 ——
-//     软换行之后整屏多出一行（F1）。
-//  2. 可见区间只有一个来源（resumeWindow → common.WindowRange），按键与渲染读同一个
-//     rows。旧实现按键用 pageSize、渲染用夹过的 effectivePageSize，短终端静默吞行（F5）。
-//  3. 详情区在列表**之外**且行数恒定 ⇒ 游标移动不改变列表几何（F4）。
-//  4. 每一行出框前过 fitLines，整个面板最后过高度闸门 —— lipgloss 的 Width() 会把
-//     超宽的行**再折一次**，而行数预算是按折行之前算的（AGENTS §11 坑 30）。
-//
-// 导轨与键帽直接调 renderPanelTop / renderPanelBottom / editorBodyStyle（tui_chrome.go），
-// 所以和输入面板、引导向导逐字节同源。在这个文件里再抄一套更好看的版本是禁止的：
-// 漂走的那一份永远不会报错。
+// tui_resume_list.go — /resume 会话选择器的几何层（docs/resume-tui-redesign.md §2、R3），四条硬规则各对应一个历史故障：
+// 列宽按显示宽度算、截断只走 common.Ellipsize，否则中文任务名把一行顶到 135 格后软换行多出一行（F1）。
+// 可见区间只有一个来源（resumeWindow → common.WindowRange），按键与渲染读同一个 rows；旧实现两套游标，短终端静默吞行（F5）。
+// 详情区在列表之外且行数恒定，游标移动不改变列表几何（F4）；每一行出框前过 fitLines、面板最后过高度闸门——lipgloss 的 Width() 会把超宽的行再折一次（AGENTS §11 坑 30）。
+// 导轨与键帽只调 renderPanelTop/renderPanelBottom/editorBodyStyle（tui_chrome.go），与输入面板、引导向导逐字节同源；在这里再抄一套是禁止的——漂走的那一份永远不会报错。
 
 import (
 	"fmt"
@@ -35,8 +25,7 @@ const (
 	resumeMaxPanelWidth = 104
 	// resumeMinInner 是"标题列 + 一个可读预览"的下限。
 	resumeMinInner = 30
-	// resumeDetailRows 是详情抽屉的**恒定**行数。它不随选中项变、也不随终端变 ——
-	// 这正是列表不再跳的原因。
+	// resumeDetailRows 恒定不随选中项与终端变——这正是列表不跳的原因。
 	resumeDetailRows = 4
 	// resumeBodyChrome = 列表后空行 1 + 发丝线 1 + 详情 resumeDetailRows。
 	resumeBodyChrome = 2 + resumeDetailRows
@@ -44,21 +33,17 @@ const (
 	resumeMaxListRows = 1000
 )
 
-// 行首三列与尾列的固定宽度。树形列宽恒定，展开与否不再移动正文起点。
-// 列的成本模型只有一个：**每列 = 1 格前置分隔 + 自身宽度**，
-// 只有最左边的树形列不要分隔（它就是第一格）。
-// 分配器、渲染器与 resumeUsedCells 都按这个模型算 —— 三处各算一遍就是三份事实。
+// 列的成本模型只有一个：每列 = 1 格前置分隔 + 自身宽度，只有最左的树形列不要分隔；
+// 分配器、渲染器与 resumeUsedCells 都按这个模型算——三处各算一遍就是三份事实。
 const (
-	resumeTreeCol  = 3  // ▌/▸/▾/└ + 标记 + 空格
-	resumeStateCol = 1  // 停点字形
+	resumeTreeCol  = 3
+	resumeStateCol = 1
 	resumeDateCol  = 12 // 01-02 15:04
-	resumeBadgeCol = 5  // "+12"
-	// resumeBaseCol = 树形 + (分隔+状态) + (分隔+日期)
-	resumeBaseCol = resumeTreeCol + 1 + resumeStateCol + 1 + resumeDateCol
+	resumeBadgeCol = 5
+	resumeBaseCol  = resumeTreeCol + 1 + resumeStateCol + 1 + resumeDateCol
 )
 
-// resumeCols 是一次渲染的列宽事实。preview 是**唯一**吸收余量的列，
-// 因此每行总宽恒等于 inner，不需要在任何别处再对齐一次。
+// resumeCols 是一次渲染的列宽事实。preview 是唯一吸收余量的列，因此每行总宽恒等于 inner。
 type resumeCols struct {
 	inner   int // 正文宽（= panelW - 4，与 editorBodyStyle 的口径一致）
 	proj    int // 0 = 这一档放不下，整列丢掉
@@ -69,13 +54,8 @@ type resumeCols struct {
 	badge   int // 0 = 丢掉成员计数列
 }
 
-// 列的保留优先级（从高到低）：日期 · 状态符 · Agent · 成员计数 · 大小 · 模型 · projectID。
-//
-// 成员计数排在大小之前 —— "+3" 告诉你这一组还有子 Agent 文件没展开看，那是**下一步动作**
-// 的信息；"3.3 MB" 不是。
-//
-// 阈值不是写死的数字，而是下面那段累加算术的结果（见 resumeColumnSpecs）：
-// 写死阈值与逐列累加是两份事实，早晚会漂走。
+// 列的保留优先级（高→低）：日期·状态符·Agent·成员计数·大小·模型·projectID；成员计数排在大小之前——"+3" 是下一步动作的信息，"3.3 MB" 不是。
+// 阈值不是写死的数字，而是 resumeColumnSpecs 那段累加算术的结果——写死阈值与逐列累加是两份事实，早晚会漂走。
 var resumeColumnSpecs = []struct {
 	field string
 	width int
@@ -90,12 +70,7 @@ var resumeColumnSpecs = []struct {
 // resumePreviewFloor 是预览列的最低可读写度：再窄就不算"标题"了。
 const resumePreviewFloor = 8
 
-// resumeColumnsFor 按可用宽度逐列累加。
-//
-// 两个约束：
-//  1. **前缀单调** —— 一旦某一列付不起就停止，后面的列不许再插进来。
-//     否则会出现"projectID 在位而模型被丢掉"这种说不通的组合。
-//  2. **preview 拿走余量** —— 行宽是算出来的，不是靠最后 padOrClip 剪一刀。
+// resumeColumnsFor 逐列累加，两条约束：前缀单调（某一列付不起之后不许再插后面的列）、preview 拿走余量（行宽是算出来的，不靠最后 padOrClip 剪一刀）。
 func resumeColumnsFor(inner int) resumeCols {
 	c := resumeCols{inner: inner}
 	used := resumeBaseCol
@@ -122,17 +97,14 @@ func resumeColumnsFor(inner int) resumeCols {
 	// preview 自己也要付 1 格分隔。
 	c.preview = inner - used - 1
 	if c.preview < resumePreviewFloor {
-		// 连 8 格预览都放不下：退到"日期 + 预览"，把让出来的格子还给预览。
-		// 半截到看不清的列不是在区分东西，是在制造噪音。
+		// 连 8 格预览都放不下就退到"日期 + 预览"——半截到看不清的列不是在区分东西，是在制造噪音。
 		c.agent, c.badge, c.size, c.model, c.proj = 0, 0, 0, 0, 0
 		c.preview = max(inner-resumeBaseCol-1, resumePreviewFloor)
 	}
 	return c
 }
 
-// resumeUsedCells 按同一套成本模型算出"这一行应当占多少格"。
-// 它不参与渲染，存在的意义是把模型变成可断言的东西：
-// 行宽不等于 inner 就意味着有人在靠 padOrClip 兜底，而那是会静默错位的地方。
+// resumeUsedCells 不参与渲染，存在的意义是把成本模型变成可断言的东西——行宽不等于 inner 就意味着有人在靠 padOrClip 兜底。
 func resumeUsedCells(c resumeCols) int {
 	cells := resumeBaseCol
 	for _, w := range []int{c.agent, c.badge, c.size, c.model, c.proj} {
@@ -143,15 +115,13 @@ func resumeUsedCells(c resumeCols) int {
 	return cells + 1 + c.preview
 }
 
-// resumeLayout 由终端尺寸推出面板宽、正文宽与列语法。
 func (m *model) resumeLayout() (panelW, inner int, cols resumeCols) {
 	panelW, _ = common.PanelWidths(resumeMaxPanelWidth, resumeMinInner, m.termWidth)
 	inner = max(panelW-4, resumeMinInner)
 	return panelW, inner, resumeColumnsFor(inner)
 }
 
-// resumeWindow 是**按键与渲染共用**的可见区间。返回的 rows 就是这一屏能放几行列表；
-// 两处各算一套是 F5 的成因（旧实现按键用 pageSize、渲染用夹过的高度）。
+// resumeWindow 是按键与渲染共用的可见区间；两处各算一套是 F5 的成因（旧实现按键用 pageSize、渲染用夹过的高度）。
 func (m *model) resumeWindow() (rows, start, end int) {
 	bodyRows := max(m.termHeight-2, 3)
 	rows, _ = common.ListBudget(resumeBodyChrome, resumeMaxListRows, bodyRows, len(m.resumeRows))
@@ -159,7 +129,6 @@ func (m *model) resumeWindow() (rows, start, end int) {
 	return rows, start, end
 }
 
-// resumeClampCursor 把游标夹回 [0, 行数)。
 func (m *model) resumeClampCursor() {
 	if m.resumeCursor < 0 {
 		m.resumeCursor = 0
@@ -173,8 +142,7 @@ func (m *model) resumeClampCursor() {
 }
 
 func (m *model) resumeBorderColor(c common.ColorTokens) color.Color {
-	// 颜色是停点判据的第二重指示（setup_render.go 的 borderFor 是先例）：
-	// 有可原样重放的停点 = 等待决策的紫，只能交接 = 橙，真失败 = 红，没有停点 = 灰。
+	// 颜色是停点判据的第二重指示（setup_render.go 的 borderFor 是先例）：可原样重放=紫，只能交接=橙，真失败=红，没有停点=灰。
 	switch m.resumeBestState() {
 	case memory.ResumeReplayable:
 		return lipgloss.Color("141")
@@ -187,8 +155,7 @@ func (m *model) resumeBorderColor(c common.ColorTokens) color.Color {
 	}
 }
 
-// resumeBestState 是整份清单里"最好的那一档"，用于边框色。
-// 取组级判据（groupRank），所以一个可重放的子文件会把它那一组抬到最前。
+// resumeBestState 是整份清单里"最好的那一档"（用于边框色），取组级判据 groupRank——一个可重放的子文件会把它那一组抬到最前。
 func (m *model) resumeBestState() memory.ResumeState {
 	best := memory.ResumeFinished
 	for _, g := range m.resumeGroups {
@@ -205,8 +172,6 @@ func (m *model) resumeBestState() memory.ResumeState {
 	}
 	return best
 }
-
-// ── 渲染 ──
 
 func renderResumeView(m *model) tea.View {
 	c := common.DarkModeColors()
@@ -229,8 +194,7 @@ func renderResumeView(m *model) tea.View {
 	for len(lines) < bodyRows {
 		lines = append(lines, blankLine(inner))
 	}
-	// 两道闸门都在计数之后：任何一行越过 inner 都会被 editorBodyStyle 的 Width()
-	// 再折一次，而总行数预算是按折行之前算的。
+	// 两道闸门都在计数之后：任何一行越过 inner 都会被 editorBodyStyle 的 Width() 再折一次，而行数预算是按折行之前算的。
 	lines = fitLines(lines, inner)
 	if len(lines) > bodyRows {
 		lines = lines[:bodyRows]
@@ -243,9 +207,7 @@ func renderResumeView(m *model) tea.View {
 		renderPanelBottom(m.resumeHints(), panelW, rail),
 	}, "\n")
 
-	// AltScreen 必须是 true：主视图开着备用屏，而 tea.NewView 的这个字段是 false，
-	// 渲染器看到它翻转就会**退出备用屏**（cursed_renderer.go:314）。
-	// 旧实现正是这样 —— 进 /resume 就把用户甩回主屏缓冲区。
+	// AltScreen 必须为 true：主视图开着备用屏，而渲染器看到这个字段翻转就会退出备用屏（cursed_renderer.go:314）——旧实现进 /resume 就把用户甩回主屏缓冲区。
 	return tea.View{AltScreen: true, Content: lipgloss.Place(
 		m.termWidth, m.termHeight, lipgloss.Center, lipgloss.Top, frame)}
 }
@@ -258,8 +220,7 @@ func (m *model) resumeLabel(inner int) string {
 	return fmt.Sprintf("RESUME · %d sessions", n)
 }
 
-// resumeMeta 是顶栏右侧的账目。可续条数是这一屏最该先看到的事实：
-// 不写它，用户就得逐条 Enter 试才知道哪条其实早就跑完了。
+// resumeMeta 的账目里可续条数最该先看到：不写它，用户就得逐条 Enter 试才知道哪条其实早就跑完了。
 func (m *model) resumeMeta(inner int) string {
 	resumable := resumableGroups(m.resumeStops, m.resumeGroups)
 	if inner < 52 {
@@ -279,7 +240,6 @@ func (m *model) resumeHints() string {
 	return "j/k move · ⏎ open · q quit · space expand · pgup/pgdn page · g/G first/last · r rescan"
 }
 
-// renderResumeRow 输出一行**恰好 inner 格**的列表行。
 func renderResumeRow(m *model, row resumeRow, selected bool, cols resumeCols, c common.ColorTokens) string {
 	item := row.item
 	g := m.resumeGroups[row.groupIdx]
@@ -334,8 +294,7 @@ func renderResumeRow(m *model, row resumeRow, selected bool, cols resumeCols, c 
 	return padOrClip(seg, cols.inner, selected, c)
 }
 
-// resumeTreeCell 是三格宽的树形/选中列：▌ 是选中轨道，▸/▾/└ 是树形，两者同栏共存。
-// 旧实现用 "▸ " 前缀把有子文件的行整体右推 2 格（F2），而选中符 ● 又占了同一栏。
+// resumeTreeCell 三格宽：选中轨道与树形符同栏共存——旧实现用 "▸ " 前缀把有子文件的行整体右推 2 格（F2）。
 func resumeTreeCell(row resumeRow, g resumeGroup, expanded, selected bool, c common.ColorTokens) string {
 	mark := " "
 	switch {
@@ -384,8 +343,7 @@ func styled(s string, fg color.Color, c common.ColorTokens) string {
 	return lipgloss.NewStyle().Foreground(fg).Render(s)
 }
 
-// padOrClip 把整行收到 inner 格。Ellipsize 已经保证各列精确，
-// 这里只收最后的累计误差；越过 inner 必须**剪掉**而不是留着让它再折一次。
+// padOrClip 只收累计误差；越过 inner 必须剪掉而不是留着——lipgloss 的 Width() 会把超宽的行再折一次，行数预算当场失效。
 func padOrClip(s string, inner int, selected bool, c common.ColorTokens) string {
 	if w := lipgloss.Width(s); w < inner {
 		s += strings.Repeat(" ", inner-w)
@@ -421,9 +379,7 @@ func renderResumeDetail(m *model, inner int, c common.ColorTokens) []string {
 		prefixed("board ", item.BoardID),
 	), " · ")
 
-	// 四行的分工：**停在哪 → 为什么不能（或能）这样续 → 有没有坐标 → 账目**。
-	// 原因单独占一行：它是这一屏里唯一决定"我该不该按 Enter"的文字，
-	// 挤在状态行尾巴上就会被截断，而截断的原因等于没有原因。
+	// 四行分工：停在哪 → 为什么不能（或能）这样续 → 有没有坐标 → 账目；原因独占一行才不会被截断——挤在状态行尾巴上的截断原因等于没有原因。
 	lines := []string{
 		head.Render("▌STOP") + " " + dim.Render(clipCells(sid+" "+meta, inner-7)),
 		" " + styled(resumeStateGlyph(state), resumeStateColor(state), c) + " " +
@@ -442,11 +398,7 @@ func renderResumeDetail(m *model, inner int, c common.ColorTokens) []string {
 	return lines[:resumeDetailRows]
 }
 
-// checkpointLine 只陈述"有没有重放坐标"这一件事，不下结论。
-//
-// 结论归状态行。曾经这一行写的是"只能带着已有结论重新规划（走交接）"，
-// 于是当 stop_reason=paused（可原样重放）而文件里恰好没有检查点时，
-// 同一张卡上会出现 "● replayable" 与 "只能走交接" 两句话互相打脸。
+// checkpointLine 只陈述"有没有重放坐标"，不下结论——结论归状态行，两处都写会出现 "● replayable" 与 "只能走交接" 互相打脸。
 func checkpointLine(f memory.StopFacts, hasFacts bool) string {
 	if hasFacts && f.Checkpoint != nil {
 		cp := f.Checkpoint
@@ -464,8 +416,7 @@ func checkpointLine(f memory.StopFacts, hasFacts bool) string {
 	return "no checkpoint record (legacy file, or the run never reached a stop path)"
 }
 
-// stopHeadline 是详情第二行的主干：状态 + 停在第几步 + 停止原因码。
-// 刻意不带 why —— why 自己占一行，才有不被截断的机会。
+// stopHeadline 是详情第二行的主干：状态 + 停在第几步 + 停止原因码；刻意不带 why——why 自己占一行才有不被截断的机会。
 func stopHeadline(state memory.ResumeState, f memory.StopFacts) string {
 	out := state.String()
 	if f.Step > 0 {
@@ -478,8 +429,7 @@ func stopHeadline(state memory.ResumeState, f memory.StopFacts) string {
 	return out + " · " + orNoStopReason(f.StopReason)
 }
 
-// reasonFor 是"为什么是这个资格"。可原样重放时给一句肯定话而不是留空行 ——
-// 空行会让人以为渲染坏了。
+// reasonFor 可原样重放时给一句肯定话而不是留空行——空行会让人以为渲染坏了。
 func reasonFor(why string, state memory.ResumeState) string {
 	if why != "" {
 		return why
@@ -499,8 +449,7 @@ func describeStop(state memory.ResumeState, why string, f memory.StopFacts) stri
 	return out
 }
 
-// resumeEmptyLines 是空 / 加载 / 出错三态。错误原文必须看得见落点：
-// 只显示 "Error" 而不说是哪个目录，等于把排查工作推给用户。
+// resumeEmptyLines 的错误原文必须看得见落点：只显示 "Error" 而不说是哪个目录，等于把排查工作推给用户。
 func resumeEmptyLines(m *model, inner int, c common.ColorTokens) []string {
 	dim := lipgloss.NewStyle().Foreground(c.TextMuted).Italic(true)
 	text := "Loading rollout sessions…"
@@ -533,7 +482,6 @@ func resumeMoreLines(up, down int, showMore bool, inner int, c common.ColorToken
 	return out
 }
 
-// moreRule 是分隔列表与详情的发丝线：分节要看得见，但不能再加一层边框。
 func moreRule(inner int, c common.ColorTokens) string {
 	return lipgloss.NewStyle().Foreground(c.Border).Render(strings.Repeat("─", inner))
 }
@@ -595,8 +543,7 @@ func prefixed(label, val string) string {
 	return label + val
 }
 
-// firstColumnPad 在余量内放第二个字段：放不下就整个丢掉，
-// 而不是让这一行越过 inner（越过就会被 editorBodyStyle 再折一次，行数预算当场失效）。
+// firstColumnPad 放不下就整个丢掉，而不是让这一行越过 inner（越过就会被 editorBodyStyle 再折一次，行数预算当场失效）。
 func firstColumnPad(extra string, inner int) string {
 	if inner <= 0 || lipgloss.Width(extra) > inner {
 		return ""

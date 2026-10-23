@@ -14,14 +14,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// fzfFileSelectedMsg is sent when the user selects a file in the fzf fuzzy finder.
-// If path is empty, the user cancelled (Esc/Ctrl-C).
+// Empty path means the user cancelled (Esc/Ctrl-C).
 type fzfFileSelectedMsg struct {
 	path string
 }
 
-// execCommand wraps *exec.Cmd to satisfy tea.ExecCommand interface.
-// In bubbletea v1.3.4, tea.ExecCommand requires SetStdin, SetStdout, and SetStderr methods.
+// execCommand exists only because tea.ExecCommand requires SetStdin/SetStdout/SetStderr methods.
 type execCommand struct {
 	*exec.Cmd
 }
@@ -38,16 +36,13 @@ func (e *execCommand) SetStderr(w io.Writer) {
 	e.Cmd.Stderr = w
 }
 
-// pipeCommand wraps *exec.Cmd and uses a pipe to capture fzf's stdout.
-// This is needed because tea.Exec will call SetStdout(os.Stdout), which
-// would override our shell redirection.
+// pipeCommand captures fzf's stdout through a pipe because tea.Exec calls SetStdout(os.Stdout), which would override our redirection.
 type pipeCommand struct {
 	cmd *exec.Cmd
 	pw  *io.PipeWriter
 }
 
 func (w *pipeCommand) Run() error {
-	// Always set stdout to the pipe, regardless of what tea.Exec set
 	w.cmd.Stdout = w.pw
 	return w.cmd.Run()
 }
@@ -64,14 +59,8 @@ func (w *pipeCommand) SetStderr(w2 io.Writer) {
 	w.cmd.Stderr = w2
 }
 
-// runFzfCmd returns a Command that suspends the TUI, shows an fzf file picker,
-// and returns the selected file path as fzfFileSelectedMsg.
-//
-// Security: Uses native exec.Command with []string args instead of shell
-// string concatenation to prevent shell injection when projectDir contains
-// special characters like ', ", $, etc.
+// Security: native exec.Command with []string args instead of a shell string — projectDir may contain ', ", $, etc.
 func runFzfCmd(projectDir string) tea.Cmd {
-	// Normalize projectDir to absolute path
 	projectDir = filepath.Clean(projectDir)
 	if !filepath.IsAbs(projectDir) {
 		var err error
@@ -86,12 +75,10 @@ func runFzfCmd(projectDir string) tea.Cmd {
 		fzfBin = "fzf" // fallback to system fzf
 	}
 
-	// Verify fzf binary exists
 	if _, statErr := os.Stat(fzfBin); statErr != nil {
 		fzfBin = "fzf"
 	}
 
-	// Step 1: Run find to get file list (no shell, safe argument passing)
 	findArgs := []string{
 		projectDir,
 		"-type", "f",
@@ -113,14 +100,11 @@ func runFzfCmd(projectDir string) tea.Cmd {
 	findCmd := exec.Command("find", findArgs...)
 	fileList, err := findCmd.Output()
 	if err != nil {
-		// Return empty result on find error
 		return func() tea.Msg { return fzfFileSelectedMsg{path: ""} }
 	}
 
-	// Step 2: Create pipe to capture fzf's stdout (selected file path)
 	pr, pw := io.Pipe()
 
-	// Channel to receive the selected path
 	ch := make(chan string, 1)
 
 	// Read output in a goroutine（消费方靠 <-ch 收，close(ch) 就是它的 join）
@@ -133,7 +117,6 @@ func runFzfCmd(projectDir string) tea.Cmd {
 		ch <- strings.TrimSpace(string(data))
 	})
 
-	// Step 3: Build fzf command (no shell, safe args)
 	fzfArgs := []string{
 		"--height=40%",
 		"--layout=reverse",
@@ -151,14 +134,11 @@ func runFzfCmd(projectDir string) tea.Cmd {
 		// Close the write end first to signal EOF to the reader goroutine
 		pw.Close()
 
-		// Wait for goroutine to finish reading and send to channel
 		selectedPath := <-ch
 
-		// Now close the read end
 		pr.Close()
 
 		if err != nil {
-			// User cancelled (Esc/Ctrl-C) or error
 			return fzfFileSelectedMsg{path: ""}
 		}
 
@@ -166,7 +146,6 @@ func runFzfCmd(projectDir string) tea.Cmd {
 			return fzfFileSelectedMsg{path: ""}
 		}
 
-		// Convert to relative path
 		relPath, relErr := filepath.Rel(projectDir, selectedPath)
 		if relErr != nil {
 			relPath = selectedPath

@@ -12,27 +12,21 @@ import (
 	"yagent/internal/supervise"
 )
 
-// reconnectBackoffBase 是重连退避的起点（之后指数翻倍，上限 5m）。
 // 包级变量是测试的 seam：重连类测试不许 sleep 真实退避（根 AGENTS.md §8.3）。
 var reconnectBackoffBase = 5 * time.Second
 
 const (
 	// maxReconnectBackoff 是退避上限：再长就等于放弃，只是状态看起来还在重试。
 	maxReconnectBackoff = 5 * time.Minute
-	// defaultStartupTimeout / defaultMaxReconnects / defaultMaxTools 是配置缺省值。
 	// 只在装配层（config）与这里各有一份：config 的模板承诺与这里的兜底必须同值。
 	defaultStartupTimeout = 30 * time.Second
 	defaultMaxReconnects  = 3
 	defaultMaxTools       = 40
-	// defaultReadyTimeout 是等 initialize 完成的预算。它必须很长：codeseek 冷启动在
-	// 建索引，改动前的实现就是拿 15 分钟的看门狗等它 —— 用 30s 去等会把一个健康的
-	// server 判死并重开，而重开意味着索引从头再建。
+	// 等 initialize 的预算必须很长（codeseek 冷启动在建索引）：用 30s 去等会把健康的 server 判死并重开，而重开意味着索引从头再建。
 	defaultReadyTimeout = 15 * time.Minute
 )
 
-// ServerConfig 是 Manager 启动一个 server 需要的全部信息。
-// Manager 自己不读 config、不读环境变量：这些值由装配层算好传进来
-// （与 internal/blueprint 不读环境变量是同一个决定）。
+// Manager 自己不读 config、不读环境变量：这些值由装配层算好传进来（与 internal/blueprint 同一个决定）。
 type ServerConfig struct {
 	Name    string
 	Command string
@@ -57,7 +51,6 @@ type ServerConfig struct {
 	Curated map[string]bool
 }
 
-// ServerState 是一个 server 的当前状态。
 type ServerState int
 
 const (
@@ -67,8 +60,7 @@ const (
 	StateStarting
 	// StateReady：进程活着且拿到了工具清单。
 	StateReady
-	// StateDegraded：进程活着但 tools/list 返回 0 个工具。
-	// 与 ready 分开：宁缺毋滥，但必须在状态行里可辨（否则看起来像"这个 server 没有工具"）。
+	// StateDegraded：进程活着但 tools/list 返回 0 个工具；与 ready 分开是为了在状态行里可辨（否则看起来像"这个 server 没有工具"）。
 	StateDegraded
 	// StateOffline：进程不在，正在重连（或重连次数用尽）。
 	StateOffline
@@ -89,13 +81,10 @@ func (s ServerState) String() string {
 	}
 }
 
-// CountsTools 报告该状态下工具数是否已经算出来了。
-// starting（进程在、initialize/tools/list 还没回来）不算：把还没发生的事报成
-// "ready — 0 tools" 是让状态行说谎，而状态行正是用户唯一能看到的解释。
+// starting 不算：把还没发生的事报成 "ready — 0 tools" 是让状态行说谎，而状态行是用户唯一能看到的解释。
 func (s ServerState) CountsTools() bool { return s == StateReady || s == StateDegraded }
 
-// ServerHealth 是一个 server 状态的快照。StatusLines/面板/事件都从它渲染，
-// 不许在别处再拼一份格式（一个字符串三处出口，根 AGENTS.md §6.4）。
+// StatusLines/面板/事件都从它渲染，不许在别处再拼一份格式（一个字符串三处出口，根 AGENTS.md §6.4）。
 type ServerHealth struct {
 	Name         string
 	State        ServerState
@@ -107,30 +96,24 @@ type ServerHealth struct {
 	Instructions string
 }
 
-// ServerTool 是"哪个 server 的哪个工具"。归属包在这里而不是塞进 DiscoveredTool：
-// 后者是 tools/list 的线上形状，加字段就是撒谎。
+// 归属包在这里而不是塞进 DiscoveredTool：后者是 tools/list 的线上形状，加字段就是撒谎。
 type ServerTool struct {
 	Server string
 	Tool   DiscoveredTool
 }
 
-// ManagerOptions 是 Manager 的运行参数与装配钩子。
 type ManagerOptions struct {
-	// StartupTimeout 是**发现阶段**（tools/list）的上界，不是启动阻塞时间：
-	// Start 只 spawn 子进程，initialize 与 tools/list 都在后台跑。
+	// StartupTimeout 是发现阶段（tools/list）的上界，不是启动阻塞时间：Start 只 spawn，发现在后台。
 	StartupTimeout time.Duration
 	// ReadyTimeout 是等 initialize 完成的预算（默认 15 分钟，见 defaultReadyTimeout）。
 	ReadyTimeout     time.Duration
 	ReconnectBackoff time.Duration
 	MaxReconnects    int
-	// StatusMaxLines 是状态账允许的 server 行数（含 disabled/offline），
-	// 超出合并成一行 "+N more servers"。0 = 不限。
+	// StatusMaxLines 是状态账允许的行数，超出合并成一行 "+N more servers"；0 = 不限。
 	StatusMaxLines int
-	// OnStatusChange 在每次状态快照变化时被调用（装配层据此发事件）。
-	// 回调在锁外调用，且不得阻塞 —— 它跑在状态迁移的那条 goroutine 上。
+	// 回调在锁外调用且不得阻塞 —— 它跑在状态迁移的那条 goroutine 上。
 	OnStatusChange func(ServerHealth)
-	// OnToolsChanged 在工具集真的变了（含重连后重新发现）时被调用，
-	// 装配层据此让 BuildExternalSpecs 的缓存失效。
+	// 工具集真的变了（含重连后重新发现）才调用；装配层据此让 BuildExternalSpecs 的缓存失效。
 	OnToolsChanged func()
 }
 
@@ -166,8 +149,7 @@ type serverEntry struct {
 	stopped bool
 }
 
-// Manager 管理多个 MCP server 的进程、状态与工具发现。
-// 它不 import toolspec/tools：只吐 DiscoveredTool 这种纯数据，如何处理由装配层决定。
+// 不 import toolspec/tools：只吐 DiscoveredTool 这种纯数据，如何处理由装配层决定。
 type Manager struct {
 	mu      sync.RWMutex
 	servers map[string]*serverEntry
@@ -178,14 +160,12 @@ type Manager struct {
 	cancel context.CancelFunc
 	grp    *supervise.Group
 
-	// changed 是状态变更的广播通道：每次快照变化就关闭它并换一只新的。
-	// WaitForReady 靠它等待，不用 sleep 轮询。
+	// 每次快照变化就关闭它并换一只新的；WaitForReady 靠它等待，不用 sleep 轮询。
 	changed   chan struct{}
 	startOnce sync.Once
 	closeOnce sync.Once
 }
 
-// NewManager 构造 Manager。Enabled=false 的 serve 直接落 StateDisabled。
 func NewManager(cfgs []ServerConfig, opts ManagerOptions) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	grp, _ := supervise.New(ctx, "mcp-manager")
@@ -203,20 +183,13 @@ func NewManager(cfgs []ServerConfig, opts ManagerOptions) *Manager {
 		if !cfg.Enabled {
 			state = StateDisabled
 		}
-		// 同名后者覆盖前者是不可发生的：配置校验会拒绝重名（config.validate）。
-		// Manager 不重复校验，但也不会静默合并两份配置。
+		// 重名由 config.validate 拒收，这里不重复校验（同名 map 写入会静默覆盖两份配置）。
 		m.servers[cfg.Name] = &serverEntry{cfg: cfg, state: state, attempt: 0}
 	}
 	return m
 }
 
-// Start 为每个 enabled 的 server **同步** spawn 子进程，然后把 initialize/tools/list
-// 丢给后台 goroutine。两件事分开是硬要求：
-//   - 调用方（app.Init）拿到 Manager 后立刻要 `Client("codeseek")` —— 手写桥捕获的是那个
-//     指针，晚一步就是永久 nil（改动前 app 也是同步 spawn + 后台 initialize）；
-//   - spawn 只有 fork/exec 的成本，而 initialize 可能几分钟 —— 放在这里就是"启动卡在 MCP"。
-//
-// 进程起不来的 server 在 Start 里就落 offline 并排队重连（那条路径不会阻塞）。
+// 只同步 spawn、发现丢后台是硬要求：app.Init 在 Start 返回后立刻 Client("codeseek")（手写桥捕获那个指针，晚一步就是永久 nil），而 initialize 可能几分钟。
 func (m *Manager) Start(ctx context.Context) error {
 	m.startOnce.Do(func() {
 		m.mu.RLock()
@@ -237,7 +210,6 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-// spawn 创建客户端并启动进程；成功即登记（状态仍是 starting），发现交给后台 goroutine。
 func (m *Manager) spawn(name string) bool {
 	m.mu.RLock()
 	entry, ok := m.servers[name]
@@ -266,7 +238,6 @@ func (m *Manager) spawn(name string) bool {
 	return true
 }
 
-// newClient 构造客户端并挂上 list_changed 钩子。
 func (m *Manager) newClient(name string) *MCPClient {
 	cfg := m.configOf(name)
 	client := NewMCPClient(MCPClientConfig{
@@ -289,18 +260,13 @@ func (m *Manager) configOf(name string) ServerConfig {
 	return ServerConfig{}
 }
 
-// discover 等 initialize 完成后跑 tools/list。三条出口：
-//   - 进程已死 → offline + 重连（重开是对的，管道已经不在了）；
-//   - 进程活着但 tools/list 失败/超时 → degraded（不重开：一个能 tools/call
-//     却不实现 tools/list 的 server 值得保留，只是没有动态工具）；
-//   - 成功 → ready（0 个工具同样落 degraded，宁缺毋滥但在状态行里可辨）。
+// 三条出口：进程已死 → offline+重连；进程活着但 tools/list 失败 → degraded（不重开：能 tools/call 却不实现 tools/list 的 server 值得保留）；成功 → ready。
 func (m *Manager) discover(name string, client *MCPClient) {
 	readyCtx, cancelReady := context.WithTimeout(m.ctx, m.opts.ReadyTimeout)
 	defer cancelReady()
 	if err := client.WaitForReady(readyCtx); err != nil {
 		if client.IsAlive() {
-			// initialize 没回来但进程还在：留在 starting，让状态行说"正在启动"。
-			// 判死并重开会把一次慢索引变成 N 次慢索引。
+			// 留在 starting 而不是判死：重开会把一次慢索引变成 N 次慢索引。
 			m.logger.Warn("mcp server still initializing", "server", name, "error", err)
 			return
 		}
@@ -324,11 +290,7 @@ func (m *Manager) discover(name string, client *MCPClient) {
 	m.markConnected(name, client, tools, instructions)
 }
 
-// WaitForReady 等到所有 server 落定（ready / degraded / offline），上界就是调用方的 ctx。
-// 没有内部超时：装配路径**不等它**（见 Start 的注释），要用它的是测试与"我就是想要
-// 一个同步点"的调用方，预算该由他们定。
-// 只要没有 server 还停在 starting 就返回 nil —— 连不上不是 Manager 的错误，
-// 状态行与 Skipped 账目才是它的出口。
+// 没有内部超时，上界就是调用方的 ctx（装配路径不等它，见 Start）：连不上不是 Manager 的错误，状态行与 Skipped 账目才是它的出口。
 func (m *Manager) WaitForReady(ctx context.Context) error {
 	timeoutCtx := ctx
 
@@ -365,8 +327,7 @@ func (m *Manager) WaitForReady(ctx context.Context) error {
 	}
 }
 
-// Client 返回某个 server 的客户端（供 codeseek 手写桥复用）。
-// nil = 没有这个 server，或它当前没有活着的客户端。
+// nil = 没有这个 server，或它当前没有活着的客户端（供 codeseek 手写桥复用）。
 func (m *Manager) Client(name string) *MCPClient {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -376,8 +337,7 @@ func (m *Manager) Client(name string) *MCPClient {
 	return nil
 }
 
-// DiscoveredTools 返回全部 Ready/Degraded server 的工具（带归属）。
-// 结果按 server 名、再按工具名排序：确定性是缓存与 golden 的前提。
+// 按 server 名、再按工具名排序：确定性是缓存与 golden 的前提。
 func (m *Manager) DiscoveredTools() []ServerTool {
 	m.refreshStates()
 
@@ -401,7 +361,6 @@ func (m *Manager) DiscoveredTools() []ServerTool {
 	return out
 }
 
-// Call 把一次工具调用路由到对应的 server。
 // server 名或工具名写错都返回错误 —— 静默落到别的 server 是这里最坏的失效形状。
 func (m *Manager) Call(ctx context.Context, server, tool string, args map[string]interface{}) (*ToolCallResult, error) {
 	m.mu.RLock()
@@ -478,15 +437,12 @@ func (m *Manager) healthOf(e *serverEntry) ServerHealth {
 	return h
 }
 
-// StatusLines 是状态账的唯一渲染实现：启动日志、/mcp 面板、system prompt 状态行
-// 三处共用同一段文本（各渲染一份的结果是一边漂走，根 AGENTS.md §6.4）。
+// 状态账的唯一渲染实现：启动日志、/mcp 面板、system prompt 三处共用同一段文本（各渲染一份必有一边漂走，根 AGENTS.md §6.4）。
 func (m *Manager) StatusLines() string {
 	return RenderStatusLines(m.Health(), m.opts.StatusMaxLines)
 }
 
-// RenderStatusLines 把健康快照渲染成一行摘要 + 每 server 一行。
-// 单独导出是为了让测试与装配层能对同一份快照断言"逐字相同"。
-// maxLines <= 0 表示不限；超出时末尾写一行 "+N more servers"（截断必须写进正文）。
+// 单独导出是为了让测试与装配层能对同一份快照断言"逐字相同"；maxLines <= 0 不限，超出时末尾写一行 "+N more servers"（截断必须写进正文）。
 func RenderStatusLines(health []ServerHealth, maxLines int) string {
 	if len(health) == 0 {
 		return "mcp: no servers configured"
@@ -518,7 +474,6 @@ func RenderStatusLines(health []ServerHealth, maxLines int) string {
 	return strings.Join(append([]string{header}, lines...), "\n")
 }
 
-// FormatServerLine 渲染单个 server 的一行状态。
 // 状态账与 TUI 的事件行共用它 —— 各渲染一份的结果是同一件事两种说法（根 AGENTS.md §6.4）。
 func FormatServerLine(h ServerHealth) string {
 	switch h.State {
@@ -537,8 +492,7 @@ func FormatServerLine(h ServerHealth) string {
 	}
 }
 
-// ServerStateFromString 解析事件/配置里的状态名。认不出 → offline（fail-safe）：
-// 把一个未知状态当成 ready 会让界面报"可用"而工具实际不来。
+// 认不出 → offline（fail-safe）：把未知状态当成 ready 会让界面报"可用"而工具实际不来。
 func ServerStateFromString(s string) ServerState {
 	switch s {
 	case "disabled":
@@ -604,9 +558,8 @@ func (m *Manager) drain() {
 	}
 }
 
-// ---------- 状态迁移（全部在锁内接装配、锁外发通知）----------
+// 状态迁移一律在锁内装配、锁外发通知。
 
-// refreshTools 在 tools/list_changed 之后重新发现，并 diff 工具集。
 // 变化非空才通知装配层重建动态规格 —— 空 diff 重算一遍 sha256 没有意义。
 func (m *Manager) refreshTools(name string, client *MCPClient) {
 	ctx, cancel := context.WithTimeout(m.ctx, m.opts.StartupTimeout)
@@ -647,7 +600,6 @@ func (m *Manager) refreshTools(name string, client *MCPClient) {
 	}
 }
 
-// markConnected 记录一次成功的连接/重连。
 func (m *Manager) markConnected(name string, client *MCPClient, tools []DiscoveredTool, instructions string) {
 	m.mu.Lock()
 	entry, ok := m.servers[name]
@@ -679,8 +631,7 @@ func (m *Manager) markConnected(name string, client *MCPClient, tools []Discover
 	}
 	m.emitStatus(health)
 
-	// 连接落定之前到达的 list_changed 在 refreshTools 里被守卫跳过了（那时 entry.client
-	// 还是 nil）。补一次重新发现，否则"启动瞬间工具变了"会一直停在旧清单上。
+	// 连接落定前到达的 list_changed 会被 refreshTools 的守卫跳过（那时 entry.client 还是 nil），这里补一次重新发现。
 	if client.TakeListChangedPending() {
 		m.grp.Go("mcp/refresh-"+name, func(context.Context) { m.refreshTools(name, client) })
 	}
@@ -693,9 +644,7 @@ func (m *Manager) markConnected(name string, client *MCPClient, tools []Discover
 	}
 }
 
-// markDegraded 用于"进程活着但没拿到工具清单"：不重开进程（那对一个不实现
-// tools/list 的 server 是死循环），但必须在状态行里说清楚——静默当 ready
-// 的表现是"这个 server 就是没有工具"。
+// 不重开进程（对一个不实现 tools/list 的 server 是死循环），但状态行必须说清楚——静默当 ready 的表现是"这个 server 就是没有工具"。
 func (m *Manager) markDegraded(name string, client *MCPClient, reason string) {
 	m.mu.Lock()
 	entry, ok := m.servers[name]
@@ -738,9 +687,7 @@ func (m *Manager) markOffline(name, reason string) {
 	m.emitStatus(health)
 }
 
-// refreshStates 在快照求值时顺带检查进程是否还活着。
-// 不做轮询：readLoop 的 EOF 已经把 alive 置 false，这里只是"看一眼"。
-// 需要重连时在锁外起 goroutine（锁内起 goroutine 会让调度不可预期）。
+// 不轮询：readLoop 的 EOF 已把 alive 置 false，这里只是看一眼；需要重连时在锁外起 goroutine（锁内起会让调度不可预期）。
 func (m *Manager) refreshStates() {
 	type dead struct {
 		name   string
@@ -780,8 +727,7 @@ func (m *Manager) scheduleReconnect(name string) {
 
 func (m *Manager) reconnectLoop(name string) {
 	backoff := m.opts.ReconnectBackoff
-	// base 是第一次失败的原因：每一轮都往它后面拼，而不是往上一轮的结果后面拼
-	// （否则状态行会变成 "… (retry 1/3) (retry 2/3) (retry 3/3)"）。
+	// base 是第一次失败的原因：每轮往它后面拼而不是往上一轮结果后面拼（否则状态行会变成 "… (retry 1/3) (retry 2/3)"）。
 	m.mu.RLock()
 	entry0, ok := m.servers[name]
 	base := ""
@@ -836,8 +782,7 @@ func (m *Manager) reconnectLoop(name string) {
 	m.logger.Warn("mcp reconnect gave up", "server", name, "attempts", m.opts.MaxReconnects)
 }
 
-// tryConnect 重开进程并就地等发现完成（重连循环需要"这一轮到底成没成"的答复，
-// 所以不像 Start 那样把 discover 丢到后台）。
+// 就地等发现完成：重连循环需要"这一轮到底成没成"的答复，所以不像 Start 那样把 discover 丢后台。
 func (m *Manager) tryConnect(name string) bool {
 	m.mu.RLock()
 	entry, ok := m.servers[name]
@@ -881,7 +826,7 @@ func (m *Manager) awaitDiscovery(name string, client *MCPClient) error {
 	return nil
 }
 
-// broadcastLocked 关闭当前广播通道并换一只新的。必须持锁调用。
+// 必须持锁调用；关闭当前广播通道并换一只新的。
 func (m *Manager) broadcastLocked() {
 	close(m.changed)
 	m.changed = make(chan struct{})
