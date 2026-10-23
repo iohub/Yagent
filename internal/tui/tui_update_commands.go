@@ -37,6 +37,22 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		if cmd == "/continue" || cmd == "/unpause" {
 			return m.continueActiveTask()
 		}
+		// 信息面板：与 pause/resume 一样必须显式列出，否则 /skills 是在搜字符串 "skills"。
+		if cmd == "/skills" {
+			return m.showSkillsDialog()
+		}
+		if cmd == "/mcp" {
+			return m.showMCPDialog()
+		}
+		// 手打 `/name args` + Enter 直接执行技能：首个 token 精确命中技能名才走这条路，
+		// 否则照旧搜索（技能名是 kebab-case，搜索词通常不是）。
+		if name, args := splitSlashSkill(cmd); name != "" {
+			if registry := m.assistant.Skills(); registry != nil {
+				if _, ok := registry.Get(name); ok {
+					return m.runSkill(name, args)
+				}
+			}
+		}
 		m.runSearch(strings.TrimPrefix(cmd, "/"))
 		return nil
 	}
@@ -98,6 +114,12 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 
 	case "setup":
 		return m.enterSetupMode()
+
+	case "skills":
+		return m.showSkillsDialog()
+
+	case "mcp":
+		return m.showMCPDialog()
 
 	case "pause":
 		return m.pauseActiveTask()
@@ -427,4 +449,75 @@ func (m *model) applyLLMTimeout(d time.Duration, persist bool) {
 		return
 	}
 	logStatus("status", fmt.Sprintf("LLM call timeout set to %s (runtime only — LLM client not available)", config.FormatLLMTimeout(d)))
+}
+
+// ── 技能与 MCP 信息面板 ──
+
+// showSkillsDialog 列出已加载的技能（名称/描述/来源/front-matter 档）。
+// 入栈前必须 SetBounds：弹窗守卫会吞 WindowSizeMsg，漏设的话对话框永远按 0×0 渲染。
+func (m *model) showSkillsDialog() tea.Cmd {
+	var rows []components.SkillRow
+	if registry := m.assistant.Skills(); registry != nil {
+		for _, s := range registry.Skills() {
+			rows = append(rows, components.SkillRow{
+				Name:        s.Name,
+				Description: s.Description,
+				Source:      s.Source,
+				FrontMatter: s.FrontMatter,
+			})
+		}
+	}
+	d := components.NewSkillsDialog(rows)
+	d.SetBounds(m.termWidth, m.termHeight)
+	m.dialogStack.Push(d)
+	return nil
+}
+
+// showMCPDialog 列出每个 server 的状态账（与 system prompt 的状态行同源）。
+func (m *model) showMCPDialog() tea.Cmd {
+	var rows []components.MCPServerRow
+	for _, h := range m.assistant.MCPServers() {
+		detail := h.Error
+		if detail == "" {
+			detail = firstLine(h.Instructions)
+		}
+		rows = append(rows, components.MCPServerRow{
+			Name:    h.Name,
+			State:   h.State.String(),
+			Detail:  detail,
+			Tools:   h.Tools,
+			Curated: h.Curated,
+		})
+	}
+	d := components.NewMCPDialog(rows, m.assistant.MCPStatusLines())
+	d.SetBounds(m.termWidth, m.termHeight)
+	m.dialogStack.Push(d)
+	return nil
+}
+
+// runSkill 把技能正文拼进任务提交。
+// 用户显式点了这个技能就不该再为它付一次 use_skill 往返 —— 模型自主发现走那条路。
+func (m *model) runSkill(name, args string) tea.Cmd {
+	registry := m.assistant.Skills()
+	if registry == nil {
+		m.setInfoMsg("技能未启用（[skills] enable=false 或 YAGENT_SKILLS=0）")
+		return nil
+	}
+	skill, ok := registry.Get(name)
+	if !ok {
+		m.setInfoMsg(fmt.Sprintf("技能 %q 不存在", name))
+		return nil
+	}
+	body := skill.Body
+	if strings.TrimSpace(args) != "" {
+		body += "\n\n---\n用户上下文: " + args
+	}
+	m.setInfoMsg(fmt.Sprintf("正在执行 skill: %s", skill.Name))
+	return m.submitTaskWithContent(body)
+}
+
+// firstLine 取一段文本的首行（MCP 面板的详情列只放得下一行）。
+func firstLine(text string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	return line
 }

@@ -46,6 +46,12 @@ TUI 键位、压缩参数**全部停在零值**——表现不是报错，是能
 **7. 全局单例只接受正方向写入**：`SetGlobalLLMTimeout` 拒绝非正值（`llm_timeout.go:26-34`）；
 `FormatLLMTimeout` 的输出必须能被 `time.ParseDuration` 读回（`:42-45`）。
 
+**7.1 `[mcp]` / `[skills]` 与 `[blueprint]` 同构**：`enable` / `status_line` 的缺省是"开"而 Go 零值是
+false，所以靠 `MCPPresence` / `SkillsPresence`（`md.IsDefined`）判键；`[[mcp.servers]].enabled` 是数组元素，
+`MetaData.IsDefined` 拿不到"这一条写没写"，所以用 `*bool`（`mcp.go` 的 `IsEnabled()`）。
+`MCPEnabled()` / `SkillsEnabled()` 各自吞下 `YAGENT_MCP=0` / `YAGENT_SKILLS=0`（只认精确 `"0"`）；
+server 名字要进工具名前缀，`validateMCPServers` 在 `validate()` 里拒收重名/非法字符/`codeseek` 保留名。
+
 **8. 三个 kill-switch 是各自机制的唯一启用判据**：`BlueprintEnabled()`（`blueprint.go:163-173`）、
 `ResumeEnabled()`（`resume.go:122-130`）、`ConcurrencyEnabled()`（`concurrency.go:5-14`），环境变量
 只认精确 `"0"`。`internal/blueprint` 自己不读环境变量。判据要写在 `Normalize*` 函数**内部**而不是

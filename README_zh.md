@@ -73,7 +73,7 @@
                    │                     │  🗜️ 三档压缩 ← 🧠 Thinklink 日志
                    │                     │  📼 Rollout JSONL → /resume
                    └──────────┬──────────┘
-                              │  MCP stdio（6 个工具）
+                              │  MCP stdio（9 个工具：6 个 curated 桥 + 通用发现）
               🦀 codeseek — Tree-sitter AST · Petgraph 调用图
                  · LanceDB 稠密向量 · Tantivy BM25 · RRF · 交叉编码精排
 ```
@@ -90,7 +90,7 @@ Repo-Agent 背后是 **codeseek**——一个 Rust 引擎（git submodule，随 
 
 - **25 种 Tree-sitter 语言 ID**；其中函数/类抽取**与调用图边**经过实测验证的有 7 种：Rust · Python · JS · TS · Go · C/C++ · Java
 - **调用图分析**（Petgraph）：谁调用了它、改这里会波及什么、深度受限的图遍历、不看全文也能拿到代码骨架
-- **六个 MCP 桥接工具**：`semantic_search`、`query_code_skeleton`、`query_code_snippet`、`find_function_caller`、`find_function_callee`、`query_call_graph`
+- **六个 curated 桥接工具**（`semantic_search`、`query_code_skeleton`、`query_code_snippet`、`find_function_caller`、`find_function_callee`、`query_call_graph`）外加**通用 `tools/list` 发现**：`codeseek_init` / `status` / `list` 现在可达，`[[mcp.servers]]` 里加的任意 server 也会以 `mcp__<server>__<tool>` 出现
 - **自动索引**：文件监听 2 秒防抖，你边改它边同步
 - **优雅降级**：没有 embedding 服务、没有 reranker、或索引还在构建——引擎退化为基于图的名字搜索，Agent 退化为文件工具，**绝不会硬失败**
 
@@ -288,7 +288,7 @@ mode    = "headless"             # headless | headful | attach
 ```
 
 通用 flag：`-d/--disable-agents` · `-c/--config` · `-y/--yolo` · `-Y/--full-yolo` · `-Q/--force-quit`。
-当前工作目录即项目根。把常用提示写成 `*.md` 放进 `.yagent/skills/`（或 `~/.yagent/skills/`），它们会以 `/斜杠命令` 的形式出现在补全里。
+当前工作目录即项目根。技能放在 `.yagent/skills/<name>/SKILL.md`（或 `~/.yagent/skills/`，也兼容扁平的 `<name>.md`）：既是 `/斜杠命令`，也进模型可见的技能目录（模型可自行用 `use_skill` 取回正文）。想接第三方能力就在 `[[mcp.servers]]` 里加一个 stdio MCP server，`/mcp` 能看到每个 server 的状态。
 
 ---
 

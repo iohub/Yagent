@@ -12,6 +12,7 @@ import (
 	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
+	"yagent/internal/mcp"
 )
 
 const (
@@ -90,6 +91,21 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	// 用户对确认框的回答由 TUI 自己发布，又会经消息总线回送一份：
 	// 它不是 agent 的输出，落到日志里只会变成一行 map[...] 噪音。
 	if msg.event.Type == "user_help_response" {
+		return m, listenForEvents(m.eventCh)
+	}
+
+	// MCP 状态迁移：渲染成一行人类可读文本。不处理的话它会落到
+	// formatEventAsEntry 的 default 分支，界面上就是一行 map[...]。
+	if msg.event.Type == "mcp_server_status" {
+		entry := logEntry{
+			timestamp: msg.event.Timestamp,
+			eventType: "mcp_status",
+			from:      msg.event.From,
+			content:   formatMCPStatusEvent(msg.event.Content),
+		}
+		m.logEntries = append(m.logEntries, entry)
+		m.viewportDirty = true
+		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
 		return m, listenForEvents(m.eventCh)
 	}
 
@@ -1027,4 +1043,39 @@ func streamSlotKey(event *messaging.MessageEvent, agentName string) string {
 		return agentName
 	}
 	return agentName + "#" + event.DelegationID
+}
+
+// formatMCPStatusEvent 把 mcp_server_status 的 payload 渲染成一行。
+// 措辞必须与 Manager.StatusLines 同源：这里只把 payload 还原成 ServerHealth，
+// 真正拼字符串的是 mcp.FormatServerLine（各写一份就是同一件事两种说法）。
+func formatMCPStatusEvent(content interface{}) string {
+	m, ok := content.(map[string]interface{})
+	if !ok {
+		return "mcp: status update"
+	}
+	h := mcp.ServerHealth{
+		Name:        stringFromEventMap(m, "server"),
+		State:       mcp.ServerStateFromString(stringFromEventMap(m, "state")),
+		Error:       stringFromEventMap(m, "error"),
+		Attempt:     intFromEventMap(m, "attempt"),
+		MaxAttempts: intFromEventMap(m, "max_attempts"),
+		Tools:       intFromEventMap(m, "tools"),
+		Curated:     intFromEventMap(m, "curated"),
+	}
+	return mcp.FormatServerLine(h)
+}
+
+// intFromEventMap 读一个数值字段。总线上的数字可能是 int（进程内直传）
+// 或 float64（过了一遍 JSON），两种都要认。
+func intFromEventMap(m map[string]interface{}, key string) int {
+	switch v := m[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
 }

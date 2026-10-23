@@ -82,7 +82,7 @@ func (a *DirectorAgent) delegateTargets() map[string]delegateSpec {
 // 不能在构造期固化 —— 那正是历史上 read_note/read_artifact 只能在 executor 里
 // 运行期注入的原因，现在有了正规位置。
 func (a *DirectorAgent) toolDeps() *toolspec.Deps {
-	d := depsFor("director", a.env, a.guard, a.boardID, a.blueprint)
+	d := depsFor("director", a.env, a.guard, a.boardID, a.blueprint, a.external)
 	d.Files = a.files
 	d.Search = a.search
 	d.Flow = a.flow

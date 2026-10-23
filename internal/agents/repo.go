@@ -65,6 +65,10 @@ type RepoAgentParams struct {
 	// 克隆只搬 params —— 挂在结构体上的那份会在下一次委派里变成共享可变状态（C4/D2）。
 	Blueprint *BlueprintView
 
+	// External 是外部工具规格与技能通道（见 external.go）。同样只放 params：
+	// 浅拷整个结构体时它自动跟着走，不需要逐字段搬运。
+	External External
+
 	LLM         llm.Engine
 	MaxSteps    int
 	StepRetries int
@@ -140,7 +144,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
 	// 工具面：只读 + 调用图 + deepthinking + 委派 devops + 便签/蓝图回读。
-	deps := depsFor("repo", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint)
+	deps := depsFor("repo", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint, a.params.External)
 	deps.Files = a.params.Files
 	deps.Search = a.params.Search
 	deps.Repo = a.params.RepoOps
@@ -148,6 +152,7 @@ func (a *RepoAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	deps.Deep = a.params.DeepThinker
 	deps.Delegate = a.devopsDelegate
 	cfg.Surface = surfaceFor(toolspec.ProfileRepo, deps, a.Name())
+	cfg.SkillCatalog = skillCatalogFor("repo", a.params.External.Skills)
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
 	cfg.StepRetries = a.stepRetries

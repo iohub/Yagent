@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,10 @@ type MCPClientConfig struct {
 	Args []string
 
 	WorkingDir string
+
+	// Env 是追加给子进程的环境变量（覆盖同名项）。第三方 server（github 这类）
+	// 靠它拿 token；nil = 继承当前进程环境。
+	Env map[string]string
 
 	// RequestTimeout 是**单条 JSON-RPC 请求**自己的 deadline，与调用方的 ctx 取小。
 	// 它存在的理由：CallTool 从工具线程上被调用，调用方常常只给了任务 ctx（没有
@@ -54,6 +59,19 @@ type MCPClient struct {
 	alive       atomic.Bool
 	initialized atomic.Bool
 	stopped     atomic.Bool
+
+	// instructions 是 initialize 带回的"这个 server 怎么用"。
+	// 单独用 atomic.Value 存：IsAlive 只准读两个原子位，不能顺手把这条也读进去。
+	instructions atomic.Value // string
+
+	// hookMu 保护 onListChanged：readLoop 每次收到通知都要读它，
+	// 而 Manager 在启动前设置一次。
+	hookMu        sync.RWMutex
+	onListChanged func()
+	// listChangedPending 记住"连接还没落定时收到过 list_changed"。
+	// 没有它的话，initialize 期间到达的通知会被 refreshTools 里的
+	// "entry.client != client" 守卫丢掉 —— 那个窗口正是通知最可能到达的时候。
+	listChangedPending atomic.Bool
 
 	readyCh    chan struct{}
 	initErr    error
@@ -85,6 +103,13 @@ func (c *MCPClient) Start(ctx context.Context) error {
 
 	if c.cfg.WorkingDir != "" {
 		cmd.Dir = c.cfg.WorkingDir
+	}
+	if len(c.cfg.Env) > 0 {
+		env := append([]string{}, os.Environ()...)
+		for k, v := range c.cfg.Env {
+			env = append(env, k+"="+v)
+		}
+		cmd.Env = env
 	}
 
 	cmd.Stderr = &captureWriter{logger: c.logger}
@@ -153,10 +178,14 @@ func (c *MCPClient) performInitialize(ctx context.Context) error {
 		return fmt.Errorf("failed to unmarshal initialize result: %w", err)
 	}
 
+	if initResult.Instructions != "" {
+		c.instructions.Store(initResult.Instructions)
+	}
 	c.logger.Info("MCP server info",
 		"name", initResult.ServerInfo.Name,
 		"version", initResult.ServerInfo.Version,
 		"protocol", initResult.ProtocolVersion,
+		"has_instructions", initResult.Instructions != "",
 	)
 
 	notif := JSONRPCNotification{
@@ -214,6 +243,69 @@ func (c *MCPClient) CallTool(ctx context.Context, toolName string, arguments map
 	}
 
 	return &toolResult, nil
+}
+
+// Instructions 返回 initialize 带回的服务端说明（没有就是空串）。
+func (c *MCPClient) Instructions() string {
+	v, _ := c.instructions.Load().(string)
+	return v
+}
+
+// TakeListChangedPending 取走"连接落定前收到过 list_changed"的标记。
+// Manager 在 markConnected 之后用它补一次重新发现。
+func (c *MCPClient) TakeListChangedPending() bool { return c.listChangedPending.Swap(false) }
+
+// SetOnListChanged 注册 tools/list_changed 通知的回调。
+// Manager 用它触发"重新发现 + diff"，而不是让通知停在一条日志里。
+func (c *MCPClient) SetOnListChanged(fn func()) {
+	c.hookMu.Lock()
+	c.onListChanged = fn
+	c.hookMu.Unlock()
+}
+
+// maxToolsListPages 是分页跟随的硬上限。超过就报错而不是静默截断 ——
+// "少了一批工具"与"这个 server 就这些"在界面上长得一模一样。
+const maxToolsListPages = 20
+
+// ListTools 取回服务端的全部工具声明，自动跟随 nextCursor 分页。
+// 第二个返回值是 initialize 时缓存的服务端说明。
+//
+// 请求本身全部走既有的 doRequest：deadline 取小、writeMu 写锁、乱序配对都继承，
+// 传输层一行不用重写。
+func (c *MCPClient) ListTools(ctx context.Context) ([]DiscoveredTool, string, error) {
+	if !c.IsAlive() {
+		return nil, "", errors.New("MCP client is not alive")
+	}
+	if !c.initialized.Load() {
+		return nil, "", errors.New("MCP client is not initialized yet")
+	}
+
+	var (
+		all    []DiscoveredTool
+		cursor string
+	)
+	for page := 0; page < maxToolsListPages; page++ {
+		req := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      int(c.nextID.Add(1)),
+			Method:  "tools/list",
+			Params:  mustMarshal(ListToolsParams{Cursor: cursor}),
+		}
+		resp, err := c.doRequest(ctx, req)
+		if err != nil {
+			return nil, "", fmt.Errorf("tools/list failed: %w", err)
+		}
+		var result ListToolsResult
+		if err := json.Unmarshal(resp.Result, &result); err != nil {
+			return nil, "", fmt.Errorf("failed to unmarshal tools/list result: %w", err)
+		}
+		all = append(all, result.Tools...)
+		if result.NextCursor == "" {
+			return all, c.Instructions(), nil
+		}
+		cursor = result.NextCursor
+	}
+	return nil, "", fmt.Errorf("tools/list exceeded %d pages — server keeps returning nextCursor", maxToolsListPages)
 }
 
 // IsAlive 只读那两个原子位。原来这里还读 `cmd.ProcessState` —— 而那个字段是
@@ -420,6 +512,15 @@ func (c *MCPClient) handleNotification(method string, msg map[string]interface{}
 	switch method {
 	case "notifications/tools/list_changed":
 		c.logger.Info("MCP tools list changed notification received")
+		c.listChangedPending.Store(true)
+		c.hookMu.RLock()
+		hook := c.onListChanged
+		c.hookMu.RUnlock()
+		if hook != nil {
+			// 不能同步调用：回调里会发 tools/list，而响应要靠本方法所在的 readLoop 去读 ——
+			// 同步调就是"读循环等自己"的死锁，表现是重发现永远超时。
+			c.grp.Go("mcp/list-changed", func(context.Context) { hook() })
+		}
 	default:
 		c.logger.Debug("MCP unknown notification", "method", method)
 	}

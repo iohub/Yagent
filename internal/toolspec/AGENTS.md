@@ -16,7 +16,7 @@
 
 **2. 声明写在该工具实现同一个文件的 `init()`**（`spec.go:13`）。重名 `Register` 会被拒绝且**保留先
 注册者**（`:87-93`）。`schemas.json` ↔ `Spec` 必须双向 1:1（`:163-166,216-221`）；
-条数基线**硬写 51**，不许换成 `len(...)` 自比较（`registry_test.go:412-421`）——
+条数基线**硬写 50**，不许换成 `len(...)` 自比较（`registry_test.go` 的 `TestSchemasLoadAndDescribeEveryEntry`）——
 自比较的断言永远不会失败，加工具漏改数字必须红。
 
 **3. 每条校验规则都必须有能触发它的夹具。** 曾经那条"Serial 与 `IsReadOnly` 冲突"在数学上不可能成立
@@ -31,10 +31,21 @@
 （`spec.go:264-266` + `internal/tools/specs_file.go:54,73,165`）——否则蓝图的证据集会收到假路径，
 而后果是"入参侧 ∪ 出参侧"的判定误伤一整片模块（根 AGENTS.md §11 坑 42 同族）。
 
+**5.1 静态注册表只读，动态规格走 `Deps.ExternalSpecs`。** `registry` 是 `init()` 期写入的只读事实；
+运行期发现的 MCP 工具经 `Surface.rebuild()` 追加，名字 `mcp__<server>__<tool>`，用 `Spec.Inline`
+自带 schema。把它们塞进全局注册表会打穿 golden 探针、Meta 工具池与 `Validate()` 的双向 1:1
+（根 AGENTS.md §11 坑 44，闸门 `TestStaticRegistryNeverCarriesExternalTools`）。
+`ValidateDynamic` 是这些规格自己的九条校验（名字前缀/字符集/长度、Inline 必填、写族必须
+Mutates+NeedsAuth、不得与静态同名）。
+
 **6. 探针 `ProbeDeps()` 必须与生产 `depsFor` 同形。** 生产恒绑 `Blueprint` 执行器
 （`internal/agents/deps.go:18-26`），而探针少绑一次的结果是 `Available` 为假 → 六个画像都"没有"这个工具 →
 **golden 一动不动**（`profile.go:58-61`，根 AGENTS.md §11 坑 39）。修法是把能力加进 `testDeps()`，
 而不是在测试里另搭一套夹具。
+
+**6.1 画像矩阵决定谁能看见外部能力**：director/repo = external_read + skill；coding 额外拿
+external_write；chat 只有 skill；devops 只有 external_read；browser 全无。`Palette` 一个位都不加
+（Custom Agent 拿不到第三方能力）。改这张表必然让 `testdata/tool_surfaces.golden` 变红 —— 那是评审物。
 
 **7. 新增工具的正确步骤**（对照根 AGENTS.md §9.3，这里是它会红的地方）：实现旁边 `MustRegister`
 → `schemas.json` 加条目 → 让画像匹配（只有委派类工具才写 `Audience`）→
@@ -47,7 +58,7 @@
 
 ## 闸门
 
-- `TestSchemasLoadAndDescribeEveryEntry`（`registry_test.go:415`）：改条数或漏 description。
+- `TestSchemasLoadAndDescribeEveryEntry`（`registry_test.go:417`）：改条数或漏 description。
 - `TestValidate_ReportsEachRule`（`:180`）：删任一规则或让它不可响应；
   `_CleanSpecReportsNothingForItself`（`:305`）：规则全体误响、把死规则加回来。
 - `_ReportsSchemaWithoutSpec`（`:345`）：只加 schema 不注册。

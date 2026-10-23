@@ -57,6 +57,10 @@ func (p Profile) testDeps() *Deps {
 		// 工具负责回答"为什么没有"），探针必须与生产同形 —— 否则 golden 会代表
 		// 一条生产不存在的路径（§11 坑 33 就是这么发现的）。
 		Blueprint: probeToolFunc,
+		// Skills 同理：生产恒绑。use_skill 的 Available 是 nil（没有技能也要在场并解释），
+		// 所以少了这次绑定它不会从 golden 消失，而是让探针回答"没有技能" ——
+		// 探针与生产不同形的后果从"少一个工具"变成"一条永远为真的路径"（坑 39 的变体）。
+		Skills: probeSkills{},
 		// 探针按默认配置（[tools.deferred] enabled=true）建模，否则 golden 里
 		// 每个画像都会少掉 load_tool。
 		DeferSchemas:  true,
@@ -65,6 +69,14 @@ func (p Profile) testDeps() *Deps {
 }
 
 func probeToolFunc(context.Context, map[string]interface{}) (interface{}, error) { return nil, nil }
+
+// probeSkills 是 SkillSource 的探针：只让 "d.Skills != nil" 成立，
+// 不提供任何真实技能（Available 为 nil 的工具不看它的返回值）。
+type probeSkills struct{}
+
+func (probeSkills) Catalog(int) string { return "" }
+
+func (probeSkills) Body(string, int, int) (SkillBody, error) { return SkillBody{}, ErrSkillNotFound }
 
 // Match 返回画像应得的全部 Spec：Grant 命中 → Deny 排除 → Audience 允许 → Available 通过。
 // 结果按名字排序，与发给模型的 toolDefs 顺序一致。

@@ -13,6 +13,7 @@ func TestEffectBitsAreDistinctPowersOfTwo(t *testing.T) {
 		EffectFSWrite, EffectShell, EffectBrowserObserve, EffectBrowserAct, EffectBrowserEval,
 		EffectBrowserArtifact, EffectCheckpoint,
 		EffectFlow, EffectDelegate,
+		EffectExternalRead, EffectExternalWrite, EffectSkill,
 	)
 
 	seen := map[Effect]string{}

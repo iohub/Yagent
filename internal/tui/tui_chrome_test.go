@@ -515,7 +515,7 @@ func TestEditMode_EscEntersNormalMode(t *testing.T) {
 	// 补全展开时 Esc 先收起补全，不能越级改模式。
 	m.commandMode = false
 	m.skillAutoComplete = true
-	m.skillSuggestions = []string{"demo"}
+	m.skillSuggestions = []completionItem{{name: "demo", kind: completionCmd}}
 	m.handleEditModeKey(keyMsgFor("esc"))
 	if m.commandMode {
 		t.Error("esc should only close the completion popup first")

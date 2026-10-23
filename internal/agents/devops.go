@@ -47,6 +47,9 @@ type DevOpsAgentParams struct {
 	// 这三个 Agent 不做常驻注入，但 read_blueprint 在它们的工具面上要能真读到东西 ——
 	// 绑 nil 会让工具回答"没有蓝图"，那是一句谎话。
 	Blueprint *BlueprintView
+
+	// External 是外部工具规格与技能通道（见 external.go）。
+	External External
 }
 
 // NewDevOpsAgent 构造 DevOpsAgent：装配运维工具集后返回。
@@ -74,7 +77,7 @@ func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.SystemPrompt = systemPrompt
 	cfg.UserInput = input
 	// DevOps 的画像：Shell + 只读文件 + 两个认知工具 + 流程控制；没有写文件能力。
-	deps := depsFor("devops", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint)
+	deps := depsFor("devops", a.params.Env, a.params.Guard, blackboard.BoardIDFrom(ctx), a.params.Blueprint, a.params.External)
 	deps.Sys = a.params.Sys
 	deps.Files = a.params.Files
 	deps.Search = a.params.Search
@@ -82,6 +85,7 @@ func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error
 	deps.Thinker = a.params.Thinker
 	deps.Micro = a.params.MicroAgent
 	cfg.Surface = surfaceFor(toolspec.ProfileDevOps, deps, a.Name())
+	cfg.SkillCatalog = skillCatalogFor("devops", a.params.External.Skills)
 	cfg.LLM = a.LLM
 	cfg.MaxSteps = a.maxSteps
 	cfg.StepRetries = a.stepRetries

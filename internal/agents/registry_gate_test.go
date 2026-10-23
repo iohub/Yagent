@@ -139,6 +139,8 @@ func TestDerivedMetadataMatchesLegacyTables(t *testing.T) {
 		// read_blueprint 与 read_note 同族：只读一次派生快照 + 一份 markdown，
 		// 没有副作用、不串行（设计稿 §7.1 的 Spec 判定）。
 		"read_blueprint": true,
+		// use_skill 只读本地技能文件：没有共享写端，也不碰 MCP 的 stdin。
+		"use_skill": true,
 	}
 
 	// NeedsAuth 必须与历史 dangerousTools 完全一致。
@@ -338,5 +340,17 @@ func TestMaterializedCarriesAcrossDirectorTurns(t *testing.T) {
 	}
 	if _, state := second.Lookup(cold); state != tools.StateReady {
 		t.Errorf("跨轮后 %s 应已可见，state=%v", cold, state)
+	}
+}
+
+// 外部 MCP 工具必须走 Deps.ExternalSpecs 这条动态通道，绝不进静态注册表。
+// 塞进去会同时打穿三处：golden 变成运行期状态的函数、Meta 的工具池被第三方能力
+// 污染（Palette 的意义是"Custom Agent 拿不到 Director 没有的能力"）、Validate
+// 的双向 1:1 会对每个外部工具报"schemas.json 里没有对应声明"。
+func TestStaticRegistryNeverCarriesExternalTools(t *testing.T) {
+	for _, name := range toolspec.Names() {
+		if strings.HasPrefix(name, "mcp__") {
+			t.Errorf("%s: 外部工具出现在静态注册表里（应走 Deps.ExternalSpecs）", name)
+		}
 	}
 }

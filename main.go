@@ -19,7 +19,6 @@ import (
 	messaging "yagent/internal/messaging"
 	tuiMsg "yagent/internal/messaging/consumers"
 	"yagent/internal/models"
-	"yagent/internal/skills"
 	"yagent/internal/tui"
 	"yagent/internal/util"
 
@@ -221,25 +220,6 @@ func runTUI(taskFile, disableAgents string) {
 
 	defer yagent.Close()
 
-	// 加载 skills
-	homeDir, _ := os.UserHomeDir()
-	projectSkillsDir := filepath.Join(repoPath, ".yagent", "skills")
-	homeSkillsDir := filepath.Join(homeDir, ".yagent", "skills")
-
-	var skillRegistry *skills.SkillRegistry
-	skillRegistry, err = skills.LoadSkills(projectSkillsDir)
-	if err != nil {
-		slog.Warn("Failed to load project skills", "path", projectSkillsDir, "error", err)
-	}
-	if skillRegistry.Count() == 0 {
-		skillRegistry, err = skills.LoadSkills(homeSkillsDir)
-		if err != nil {
-			slog.Warn("Failed to load home skills", "path", homeSkillsDir, "error", err)
-		}
-	}
-	yagent.SkillRegistry = skillRegistry
-	slog.Info("Skill registry loaded", "count", skillRegistry.Count())
-
 	taskManager := http.NewTaskManager(nil, config.TaskTimeout)
 
 	dataManager, err := datamanager.NewDataManager()
@@ -370,25 +350,6 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	yagent.ForceQuit = forceQuit
 	yagent.Init(client.Engine, repoPath)
 	defer yagent.Close()
-
-	// 加载 skills
-	homeDir, _ := os.UserHomeDir()
-	projectSkillsDir := filepath.Join(repoPath, ".yagent", "skills")
-	homeSkillsDir := filepath.Join(homeDir, ".yagent", "skills")
-
-	var skillRegistry *skills.SkillRegistry
-	skillRegistry, err = skills.LoadSkills(projectSkillsDir)
-	if err != nil {
-		slog.Warn("Failed to load project skills", "path", projectSkillsDir, "error", err)
-	}
-	if skillRegistry.Count() == 0 {
-		skillRegistry, err = skills.LoadSkills(homeSkillsDir)
-		if err != nil {
-			slog.Warn("Failed to load home skills", "path", homeSkillsDir, "error", err)
-		}
-	}
-	yagent.SkillRegistry = skillRegistry
-	slog.Info("Skill registry loaded", "count", skillRegistry.Count())
 
 	// 设置消息总线 - 使用 TUIConsumer 输出到 stdout
 	dispatcher := messaging.NewDefaultMessageDispatcher()

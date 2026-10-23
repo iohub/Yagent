@@ -24,7 +24,11 @@ const BrowserAll = EffectBrowserObserve | EffectBrowserAct | EffectBrowserEval |
 var ProfileDirector = Profile{
 	Agent: "director",
 	Grant: EffectFSRead | EffectSearchRegex | EffectCogDeep | EffectFlow |
-		EffectContext | EffectDelegate | EffectToolLoad,
+		EffectContext | EffectDelegate | EffectToolLoad |
+		// 外部只读工具与技能目录：Director 是唯一对话入口，用户装的外部能力
+		// 必须先能被它看见，否则"加一个 MCP server"就毫无意义。
+		// 外部位只给读：与 Deny FSWrite 同一取向 —— Director 绝不直接产生副作用。
+		EffectExternalRead | EffectSkill,
 	Deny: EffectFSWrite | EffectShell,
 	Palette: EffectFSRead | EffectSearchRegex | EffectFSWrite | EffectShell |
 		EffectCogReflect | EffectCogSubLLM | EffectCogDeep | EffectCodeSemantic | EffectFlow,
@@ -43,7 +47,10 @@ var ProfileCoding = Profile{
 	Agent: "coding",
 	Grant: EffectFSRead | EffectFSWrite | EffectSearchRegex | EffectShell | RepoAll |
 		CogAll | EffectFlow | EffectCheckpoint |
-		EffectDelegate | EffectContext | EffectToolLoad,
+		EffectDelegate | EffectContext | EffectToolLoad |
+		// 唯一拿到 external_write 的画像：写类外部工具默认被 allow_write 挡在
+		// 构建之外，能走到这里的都是用户显式开了口的 server。
+		EffectExternalRead | EffectExternalWrite | EffectSkill,
 	// 改函数前必须先查 callers，所以把调用图从 Cold 提回 Hot；
 	// print_dir_tree 对编码任务是次要动作，留在 Cold。
 	Promote:      []string{"find_function_caller"},
@@ -54,7 +61,10 @@ var ProfileCoding = Profile{
 var ProfileRepo = Profile{
 	Agent: "repo",
 	Grant: EffectFSRead | EffectSearchRegex | RepoAll | EffectCogDeep | EffectFlow |
-		EffectContext | EffectDelegate | EffectToolLoad,
+		EffectContext | EffectDelegate | EffectToolLoad |
+		// 外部只读：审计一个集成了第三方 server 的仓库时，那些 server 的查询能力
+		// 就是新的证据来源。写类不给：它是只读审计员。
+		EffectExternalRead | EffectSkill,
 	Deny: EffectCogReflect | EffectCogSubLLM | EffectCogDesign,
 	// 审计的主用工具就是调用图与目录树，它们必须每步可见。
 	Promote:      []string{"query_call_graph", "find_function_caller", "print_dir_tree"},
@@ -65,7 +75,10 @@ var ProfileRepo = Profile{
 var ProfileChat = Profile{
 	Agent: "chat",
 	Grant: EffectCogReflect | EffectCogSubLLM | EffectCogDeep | EffectFlow |
-		EffectContext | EffectToolLoad,
+		EffectContext | EffectToolLoad |
+		// 技能只读本地文件，是纯问答也能用上的"用户写的流程"；
+		// 外部 IO 不给：没有文件系统能力的画像也不该有第三方网络/进程入口。
+		EffectSkill,
 	RequiresExit: true,
 }
 
@@ -74,11 +87,17 @@ var ProfileDevOps = Profile{
 	Agent: "devops",
 	Grant: EffectShell | EffectFSRead | EffectSearchRegex |
 		EffectCogReflect | EffectCogSubLLM | EffectFlow |
-		EffectContext | EffectToolLoad,
+		EffectContext | EffectToolLoad |
+		// 外部只读：诊断类 server（k8s/云厂商）正是它的用武之地。
+		// 技能不给：它已经有 run_bash，运维流程走命令比走散文更可审计；
+		// 外部写也不给 —— 那会变成一个比 run_bash 更难审计的写入口。
+		EffectExternalRead,
 	RequiresExit: true,
 }
 
 // ProfileBrowser 只拿到浏览器动作与流程控制：无 Shell、无文件写工具。
+// 外部位与技能都不给：它的工具面刻意只有 14 个浏览器动作 + 流程控制，
+// 加一个第三方入口就破坏了"这个 Agent 只能碰浏览器"这条可审计的边界。
 var ProfileBrowser = Profile{
 	Agent: "browser",
 	Grant: BrowserAll | EffectFlow | EffectContext | EffectToolLoad,

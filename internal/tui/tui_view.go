@@ -256,17 +256,21 @@ func (m *model) renderSkillSuggestions() string {
 		return ""
 	}
 	parts := make([]string, 0, len(m.skillSuggestions))
-	for i, name := range m.skillSuggestions {
-		displayName := name
-		if m.assistant != nil {
-			if skill, ok := m.assistant.SkillRegistry.Get(name); ok && skill.Description != "" {
-				displayName = name + " - " + skill.Description
+	for i, item := range m.skillSuggestions {
+		// 角标把"内置命令"与"技能"分开：两者混排且没有标记时，撞名看起来就像同一个东西。
+		badge := "[cmd]"
+		display := item.name + "  " + badge
+		if item.kind == completionSkill {
+			badge = "[skill]"
+			display = item.name + "  " + badge
+			if item.desc != "" {
+				display += " — " + item.desc
 			}
 		}
 		if i == m.skillSuggestionIdx {
-			parts = append(parts, m.skillHighlightStyle.Render("▶ "+displayName))
+			parts = append(parts, m.skillHighlightStyle.Render("▶ "+display))
 		} else {
-			parts = append(parts, m.skillSuggestionStyle.Render("  "+displayName))
+			parts = append(parts, m.skillSuggestionStyle.Render("  "+display))
 		}
 	}
 	parts = append(parts, m.skillHintStyle.Render("Tab 切换  Enter 选择  Esc 关闭"))

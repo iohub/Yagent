@@ -54,6 +54,7 @@ func runFakeMCPServer() {
 	in.Buffer(make([]byte, 1<<20), 1<<25)
 
 	var pending []fakeRequest // 供 reverse 模式攒批
+	listCalls := 0
 
 	for in.Scan() {
 		line := in.Bytes()
@@ -75,6 +76,7 @@ func runFakeMCPServer() {
 				Result: mustMarshal(InitializeResult{
 					ProtocolVersion: "2024-11-05",
 					ServerInfo:      ServerInfo{Name: "fake-codeseek", Version: "test"},
+					Instructions:    "Fake server: use these tools politely.",
 				}),
 			})
 		case "notifications/initialized", "no_reply":
@@ -82,6 +84,11 @@ func runFakeMCPServer() {
 		case "shutdown":
 			writeLine(out, JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: mustMarshal(map[string]any{"ok": true})})
 			os.Exit(0)
+		case "tools/list":
+			var p ListToolsParams
+			_ = json.Unmarshal(req.Params, &p)
+			listCalls++
+			writeFakeToolsList(out, mode, p.Cursor, listCalls, req.ID)
 		case "tools/call":
 			var p ToolCallParams
 			_ = json.Unmarshal(req.Params, &p)
@@ -129,13 +136,71 @@ func writeToolResult(out *bufio.Writer, req fakeRequest) {
 	var p ToolCallParams
 	_ = json.Unmarshal(req.Params, &p)
 	payload, _ := p.Arguments["payload"].(string)
+	tag := os.Getenv(fakeServerEnv + "_TAG")
+	text := fmt.Sprintf("%s:%s", p.Name, payload)
+	if tag != "" {
+		text = tag + ":" + text
+	}
 	writeLine(out, JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: mustMarshal(ToolCallResult{
-			Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("%s:%s", p.Name, payload)}},
+			Content: []ToolContent{{Type: "text", Text: text}},
 		}),
 	})
+}
+
+// writeFakeToolsList 覆盖 tools/list 的几种形状。readOnly 指针三态各有用途：
+// true = 明确只读，false = 明确有副作用，nil = 没声明（安全默认按写处理）。
+func writeFakeToolsList(out *bufio.Writer, mode, cursor string, calls, id int) {
+	readOnly := true
+	notReadOnly := false
+	alpha := DiscoveredTool{
+		Name:        "alpha",
+		Description: "Alpha tool.",
+		InputSchema: map[string]interface{}{"type": "object"},
+		Annotations: &ToolAnnotations{ReadOnlyHint: &readOnly},
+	}
+	beta := DiscoveredTool{
+		Name:        "beta",
+		Description: "Beta tool.",
+		InputSchema: map[string]interface{}{"type": "object"},
+		Annotations: &ToolAnnotations{ReadOnlyHint: &notReadOnly},
+	}
+	gamma := DiscoveredTool{
+		Name:        "gamma",
+		Description: "Gamma tool with no annotations at all.",
+		InputSchema: map[string]interface{}{"type": "object"},
+	}
+
+	write := func(result ListToolsResult) {
+		writeLine(out, JSONRPCResponse{JSONRPC: "2.0", ID: id, Result: mustMarshal(result)})
+	}
+
+	switch mode {
+	case "tools-list-paged":
+		if cursor == "" {
+			write(ListToolsResult{Tools: []DiscoveredTool{alpha}, NextCursor: "page-2"})
+		} else {
+			write(ListToolsResult{Tools: []DiscoveredTool{beta}})
+		}
+	case "tools-list-endless":
+		write(ListToolsResult{Tools: []DiscoveredTool{alpha}, NextCursor: "always-more"})
+	case "empty-list":
+		write(ListToolsResult{Tools: nil})
+	case "list-changed":
+		if calls == 1 {
+			write(ListToolsResult{Tools: []DiscoveredTool{alpha}})
+			writeLine(out, JSONRPCNotification{JSONRPC: "2.0", Method: "notifications/tools/list_changed"})
+		} else {
+			write(ListToolsResult{Tools: []DiscoveredTool{alpha, beta}})
+		}
+	case "slow-list":
+		time.Sleep(500 * time.Millisecond)
+		write(ListToolsResult{Tools: []DiscoveredTool{alpha, beta, gamma}})
+	default:
+		write(ListToolsResult{Tools: []DiscoveredTool{alpha, beta, gamma}})
+	}
 }
 
 // startFakeClient 起假服务器并等到初始化完成。
@@ -251,7 +316,7 @@ func TestMCPClient_WireFormat(t *testing.T) {
 // 未知方法必须换成带 code 的错误，而不是 nil error + 空结果。
 func TestMCPClient_RPCErrorSurfaces(t *testing.T) {
 	c := startFakeClient(t, "plain")
-	_, err := c.doRequest(context.Background(), JSONRPCRequest{JSONRPC: "2.0", ID: int(c.nextID.Add(1)), Method: "tools/list"})
+	_, err := c.doRequest(context.Background(), JSONRPCRequest{JSONRPC: "2.0", ID: int(c.nextID.Add(1)), Method: "resources/list"})
 	if err == nil {
 		t.Fatal("假服务器返回了 error 响应，客户端却报成功")
 	}

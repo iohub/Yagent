@@ -372,6 +372,60 @@
       ],
       "type": "object"
     },
+    "McpServerStatusEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "description": "当前重连次数",
+          "type": "number"
+        },
+        "curated": {
+          "description": "被 Go 手写桥接占用而排除的工具数",
+          "type": "number"
+        },
+        "error": {
+          "description": "离线原因",
+          "type": "string"
+        },
+        "event": {
+          "description": "MCP server 状态迁移（ready / degraded / offline / gave up）",
+          "enum": [
+            "mcp_server_status"
+          ],
+          "type": "string"
+        },
+        "instructions": {
+          "description": "服务端 initialize 带回的使用说明",
+          "type": "string"
+        },
+        "max_attempts": {
+          "description": "重连次数上限",
+          "type": "number"
+        },
+        "server": {
+          "description": "server 名",
+          "type": "string"
+        },
+        "state": {
+          "description": "disabled / starting / ready / degraded / offline",
+          "type": "string"
+        },
+        "tools": {
+          "description": "发现的工具数",
+          "type": "number"
+        }
+      },
+      "required": [
+        "event",
+        "server",
+        "state"
+      ],
+      "type": "object",
+      "x-render-hint": {
+        "component": "StatusPill",
+        "heading": "MCP"
+      }
+    },
     "ModelInfoEvent": {
       "additionalProperties": false,
       "properties": {
@@ -787,6 +841,9 @@
     },
     {
       "$ref": "#/definitions/CommitContextLoadedEvent"
+    },
+    {
+      "$ref": "#/definitions/McpServerStatusEvent"
     },
     {
       "$ref": "#/definitions/AiStreamStartEvent"

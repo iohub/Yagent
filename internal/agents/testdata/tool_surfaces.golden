@@ -1,7 +1,7 @@
 # 各 Agent 的工具面（由 toolspec 画像解析得出，-update 重写）
 # tier: hot|warm|cold  ro: 可并发  auth: 需用户授权  serial: 必须串行
 
-[director] 18 tools  grant=[fs_read,search_regex,context,tool_load,cog_deep,flow,delegate] deny=[fs_write,shell]
+[director] 19 tools  grant=[fs_read,search_regex,context,tool_load,cog_deep,flow,delegate,external_read,skill] deny=[fs_write,shell]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   deepthinking             tier=hot  ro
@@ -20,8 +20,9 @@
   read_file                tier=hot  ro
   read_note                tier=warm ro
   search_by_regex          tier=hot  ro
+  use_skill                tier=hot  ro
 
-[coding] 30 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_reflect,cog_subllm,cog_deep,cog_design,fs_write,shell,checkpoint,flow,delegate] deny=[]
+[coding] 31 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_reflect,cog_subllm,cog_deep,cog_design,fs_write,shell,checkpoint,flow,delegate,external_read,external_write,skill] deny=[]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   create_file              tier=hot  auth
@@ -52,8 +53,9 @@
   search_replace_in_file   tier=hot  auth
   semantic_search          tier=hot  ro
   thinking                 tier=warm ro
+  use_skill                tier=hot  ro
 
-[repo] 19 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_deep,flow,delegate] deny=[cog_reflect,cog_subllm,cog_design]
+[repo] 20 tools  grant=[fs_read,search_regex,code_semantic,code_graph,context,tool_load,cog_deep,flow,delegate,external_read,skill] deny=[cog_reflect,cog_subllm,cog_design]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   deepthinking             tier=cold ro
@@ -73,8 +75,9 @@
   read_note                tier=warm ro
   search_by_regex          tier=hot  ro
   semantic_search          tier=hot  ro
+  use_skill                tier=hot  ro
 
-[chat] 10 tools  grant=[context,tool_load,cog_reflect,cog_subllm,cog_deep,flow] deny=[]
+[chat] 11 tools  grant=[context,tool_load,cog_reflect,cog_subllm,cog_deep,flow,skill] deny=[]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   deepthinking             tier=cold ro
@@ -85,8 +88,9 @@
   read_blueprint           tier=warm ro
   read_note                tier=warm ro
   thinking                 tier=warm ro
+  use_skill                tier=hot  ro
 
-[devops] 14 tools  grant=[fs_read,search_regex,context,tool_load,cog_reflect,cog_subllm,shell,flow] deny=[]
+[devops] 14 tools  grant=[fs_read,search_regex,context,tool_load,cog_reflect,cog_subllm,shell,flow,external_read] deny=[]
   agent_exit               tier=hot  serial
   ask_user_for_help        tier=hot  serial,blocks
   list_dir                 tier=hot  ro

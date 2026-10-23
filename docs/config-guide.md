@@ -164,6 +164,8 @@ Worth knowing before using it:
 | `[llm]` | Per-call timeout, retries, breaker, failover | No |
 | `[routing]` | Benchmark-scored automatic model routing | No |
 | `[codeseek]` | CodeSeek MCP code-analysis engine | No |
+| `[mcp]` + `[[mcp.servers]]` | Generic MCP servers (lifecycle, discovery, write policy) | No |
+| `[skills]` | User skills: directories, injection sites, budgets | No |
 | `[browser]` | Browser-Agent driving the external `browser-control` CLI | No |
 | `[blackboard]` | Cross-agent note board budgets | No |
 | `[resume]` | Stop / resume checkpoint and replay budgets | No |
@@ -406,6 +408,62 @@ the repo-level KV memory + background consolidation worker, and the `consolidate
 `prune_history` tools. Repository-level knowledge now travels through exactly one channel: the
 blueprint (`~/.yagent/data/blueprint/{projectID}/blueprint.md`, `[blueprint]` section, `read_blueprint`).
 Nothing in this section needs a knowledge counterpart.
+
+### 5.5a `[mcp]` and `[[mcp.servers]]` — generic MCP servers
+
+codeseek is the first built-in server; everything else comes from `[[mcp.servers]]`.
+Tools are named `mcp__<server>__<tool>` and enter the agents' tool surfaces through the
+deferred catalog (they are always Cold; the model fetches a schema with `load_tool`).
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `enable` | bool | `true` | Whole mechanism. Kill-switch: `YAGENT_MCP=0` |
+| `startup_timeout` | duration | `"30s"` | Bounded wait for start + initialize + `tools/list` |
+| `reconnect_backoff` | duration | `"5s"` | First retry delay; doubles up to 5m |
+| `max_reconnects` | int | `3` | Exhausted → terminal `offline` ("gave up after N") |
+| `max_tools_per_server` | int | `40` | Sorted by name; extras dropped with an account line |
+| `status_line` | bool | `true` | Inject one MCP status line into the Director prompt |
+| `status_max_lines` | int | `8` | Server lines allowed in the status account |
+
+Each `[[mcp.servers]]` entry:
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `name` | string | — | Unique, `^[a-z0-9][a-z0-9_-]{0,31}$`; becomes the tool-name prefix. `codeseek` is reserved |
+| `command` | string | — | Executable; required when enabled |
+| `args` | array | `[]` | Passed through verbatim |
+| `env` | table | `{}` | Extra environment for the child process (tokens live here) |
+| `working_dir` | string | `""` | Empty = inherit the current process directory |
+| `enabled` | bool | `true` | Omitted ≠ false: it is a pointer so "not written" and "false" differ |
+| `request_timeout` | int | `30` | Seconds (`≤0` → 30, floored in one place only) |
+| `allow_write` | bool | `false` | Write-class tools are **not registered** unless this is true |
+| `read_only` | array | `[]` | Server-side tool names trusted as read-only despite missing annotations |
+| `tools` | array | `[]` | Empty = all; non-empty = whitelist |
+| `exclude` | array | `[]` | Blacklist |
+
+A tool with no `annotations` is treated as a **write** tool (serial + authorization required).
+Read-only tools are parallel-safe; write tools additionally need `allow_write = true` because
+they are third-party processes the workspace guard cannot inspect (they have no path parameters).
+
+### 5.5b `[skills]` — user-authored procedures
+
+A skill is `<dir>/<name>/SKILL.md` (directory layout, wins on name collision) or `<dir>/<name>.md`
+(flat, legacy). Front-matter is JSON inside `---` fences; a flat `key: value` / `key: a, b` subset is
+accepted as a fallback. Without front-matter the first body line (minus `#`) becomes the description.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `enable` | bool | `true` | Whole mechanism. Kill-switch: `YAGENT_SKILLS=0` |
+| `dirs` | array | `[]` | Extra directories, applied after `~/.yagent/skills` and `.yagent/skills` |
+| `inject_into` | array | `["director","coding","repo","chat"]` | Which agents get the catalog. `[]` = inject nowhere |
+| `catalog_max_tokens` | int | `600` | Catalog budget; truncation marker is written into the text |
+| `catalog_line_chars` | int | `120` | Per-line description cap (runes) |
+| `body_max_tokens` | int | `4000` | `use_skill` body budget; longer bodies paginate via `offset` |
+
+Directories are **merged** (user → project → `dirs`, later wins), and every override/rejection
+appears in one account line at startup and in `/skills`. The catalog is a stable system-prompt
+prefix; the body is fetched on demand with `use_skill`. A skill's `allowed-tools` is **advisory**:
+it is printed back to the model and never enforced.
 
 ### 5.6 `[browser]` — Browser-Agent
 

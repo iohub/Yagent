@@ -1,13 +1,18 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"os"
+	"strings"
 	"testing"
 
 	"yagent/internal/config"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
 	"yagent/internal/messaging"
+	"yagent/internal/toolspec"
 )
 
 // app 包是一次性装配点，跑起来要真 LLM、真 MCP、真浏览器，不适合在这里做全流程测试。
@@ -198,5 +203,42 @@ func TestEngineFieldSurvivesConcurrentProviderSwitch(t *testing.T) {
 		t.Fatal("defaultEngine() = nil")
 	} else if got := e.Model(); got != "alpha-model" && got != "beta-model" {
 		t.Errorf("defaultEngine().Model() = %q, want the last switched model", got)
+	}
+}
+
+// 启动自检必须真的有人调，而 Validate 的问题无法从外部注入 —— 所以拆成两条：
+// 这里钉日志路径（喂假 validator），下一条钉生产路径真的会走到它。
+//
+// 不调 Init：那要真 config、真 MCP、真浏览器，属于"全流程"而非这段纯逻辑。
+func TestCheckRegistryLogsProblems(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	checkRegistry(func() []string { return nil }, logger)
+	if buf.Len() != 0 {
+		t.Fatalf("干净注册表不该产生日志，得到 %q", buf.String())
+	}
+
+	buf.Reset()
+	checkRegistry(func() []string { return []string{"a: 坏", "b: 也坏"} }, logger)
+	if out := buf.String(); !strings.Contains(out, "tool registry self-check failed") || !strings.Contains(out, "count=2") {
+		t.Fatalf("自检没打日志或没带条数：%q", out)
+	}
+
+	if problems := toolspec.Validate(); len(problems) > 0 {
+		t.Errorf("生产注册表自检失败：%v", problems)
+	}
+}
+
+// Init 必须调用注册表自检。上一条只证明"日志路径能响"，删掉 Init 里那行它照样绿 ——
+// 而 spec.go 的 Validate 注释"装配期调用"正是靠这一行才是真话。
+// Init 需要真 config/MCP/浏览器，没法在单测里跑，所以这里读源码钉调用点。
+func TestInitRunsRegistrySelfCheck(t *testing.T) {
+	src, err := os.ReadFile("app.go")
+	if err != nil {
+		t.Fatalf("read app.go: %v", err)
+	}
+	if !strings.Contains(string(src), "checkRegistry(toolspec.Validate") {
+		t.Fatal("app.Init 没有调用 checkRegistry(toolspec.Validate)：注册表自检又会退回'只有测试调它'")
 	}
 }

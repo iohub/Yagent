@@ -73,7 +73,7 @@ Authority is not a suggestion in a prompt — it is derived. Each agent declares
                    │                     │  🗜️ Three-Tier Compression ← 🧠 Thinklink
                    │                     │  📼 Rollout JSONL → /resume
                    └──────────┬──────────┘
-                              │  MCP stdio (6 tools)
+                              │  MCP stdio (9 tools; 6 curated bridges + generic discovery)
               🦀 codeseek — Tree-sitter AST · Petgraph call graph
                  · LanceDB dense · Tantivy BM25 · RRF · cross-encoder
 ```
@@ -90,7 +90,7 @@ The Repo-Agent is backed by **codeseek** — a Rust engine (git submodule, shipp
 
 - **25 Tree-sitter language IDs**, with function/class extraction **and call-graph edges** verified for Rust · Python · JS · TS · Go · C/C++ · Java
 - **Call graph analysis** via Petgraph: *who calls this*, *what breaks if I change this*, depth-limited graph traversal, and code skeletons — so an agent reads a module's shape instead of opening every file
-- **Six tools bridged over MCP**: `semantic_search`, `query_code_skeleton`, `query_code_snippet`, `find_function_caller`, `find_function_callee`, `query_call_graph`
+- **Six curated bridges** over MCP (`semantic_search`, `query_code_skeleton`, `query_code_snippet`, `find_function_caller`, `find_function_callee`, `query_call_graph`) plus **generic `tools/list` discovery**: `codeseek_init` / `status` / `list` now reachable, and any server you add under `[[mcp.servers]]` exposes its tools as `mcp__<server>__<tool>`
 - **Auto-indexing**: file watcher with 2s debounce keeps the model in sync while you edit
 - **Graceful degradation**: no embedding API, no reranker, or index still building → the engine falls back to graph-based name search and the agents fall back to file tools. Never a hard failure.
 
@@ -298,7 +298,7 @@ mode    = "headless"            # headless | headful | attach
 ```
 
 Flags: `-d/--disable-agents` · `-c/--config` · `-y/--yolo` · `-Y/--full-yolo` · `-Q/--force-quit`.
-The working directory is the project root. Drop reusable prompts as `*.md` in `.yagent/skills/` (or `~/.yagent/skills/`) and they show up as `/slash` commands.
+The working directory is the project root. Skills live in `.yagent/skills/<name>/SKILL.md` (or `~/.yagent/skills/`, or a flat `<name>.md`); they show up as `/slash` commands **and** as a catalog the model can fetch on its own with `use_skill`. Point `[[mcp.servers]]` at any stdio MCP server to give the agents its tools — the status of every server is one `/mcp` away.
 
 ---
 

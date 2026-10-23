@@ -42,7 +42,10 @@ type ExecutorConfig struct {
 	StepRetries   int
 	SystemAsHuman bool
 	RepoContext   string
-	OnToolResult  func(toolName string, result string)
+	// SkillCatalog 是技能目录（稳定前缀的一部分，与 Surface.Catalog() 同理）。
+	// 空串 = 这个 Agent 不注入。由 skillCatalogFor 一处判定。
+	SkillCatalog string
+	OnToolResult func(toolName string, result string)
 
 	OnAgentStart func(ctx context.Context) error
 
@@ -257,6 +260,11 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		if catalog := cfg.Surface.Catalog(); catalog != "" {
 			systemPrompt += "\n\n" + catalog
 		}
+	}
+	// 技能目录紧跟工具目录：两者都是"按需取回"的入口，放在一起模型才看得懂
+	// 该用 load_tool 还是 use_skill。
+	if cfg.SkillCatalog != "" {
+		systemPrompt += "\n\n" + cfg.SkillCatalog
 	}
 	systemMsg := llm.Message{
 		Role:    systemRole,

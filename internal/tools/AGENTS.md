@@ -41,6 +41,13 @@ guard 由 `rebuild` 统一挂（`surface.go:122-125`），集中构造消除了"
 **7. 浏览器子进程不经 shell，argv 全由调用方构造**（`internal/browserctl/spawn.go:41-43`）——这是
 "LLM 提供的字符串不可能被解释成 shell 元字符"的前提，新增调用点不要自己拼路径或走 `sh -c`。
 
+**8. 外部工具走 `Deps.ExternalSpecs`，与静态规格在 `rebuild()` 汇合。**
+追加时按画像的 Grant/Deny 过滤（矩阵见 `toolspec/profiles.go`）、同名时静态优先并记进 `Skipped()`；
+guard 仍在循环之后统一挂。`ExternalSpecs` 一律 Cold，靠既有 deferred 目录与 `load_tool`。
+`catalogBrief` 的取值顺序是 **`Adapter.Brief()` > `toolspec.Brief(name)` > 描述首句** ——
+写反的话动态工具的 `Spec.Brief` 形同虚设（目录里会是一行截断的英文描述）。
+`use_skill` 的执行器只认 `toolspec.SkillSource`，本包不认识 `internal/skills`。
+
 ## 入口
 
 `surface.go`（装配与降级）、`adapter.go`（`Call()` 的顺序：JSON 解析 → 边界检查 → 授权 → 执行）、

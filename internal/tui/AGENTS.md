@@ -48,6 +48,16 @@
 吞掉 `WindowSizeMsg`，不设尺寸则 `View()` 因 width<40 返回空串，对话框永远不可见。
 `components` 不许 import `internal/tui`（循环依赖），共享类型在本地重定义（`internal/tui/components/shared_types.go:4-7`）。
 
+**8.1 信息类对话框（`/skills`、`/mcp`）与列表对话框共用同一套几何。**
+`components/info_dialogs.go` 的 `infoDialogChrome`（9）是除列表外的固定行数：边框 2 + 内边距 2 +
+标题 1 + 分隔线 1 + 表头 1 + 提示前空行 1 + 提示 1。每多/少一行非列表内容都必须同步改它，
+列表预算走 `common.ListBudget`。它们不可选择，所以**不进** `selectProbe`；但必须透传
+`taskCompleteMsg`（硬约束 2）。
+
+**8.2 斜杠补全带类型。** `skillSuggestions` 是 `[]completionItem{name,kind,desc}`，不是 `[]string`；
+内置命令与技能撞名时**内置命令胜**且只 warn 一次（`tui_completion.go`）。手打 `/name args` 直接执行技能
+（首个 token 精确命中才算），否则回落搜索 —— 改这条要保留 `TestTUI_SlashUnknownFallsBackToSearch`。
+
 **9. 向导独占键盘。** 任务运行中或弹窗打开时 `/setup` 直接拒绝（`setup_embed.go:24-34`），
 理由是第 1 条那个没有重放队列的监听器。
 
