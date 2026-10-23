@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"yagent/internal/messaging"
 	"yagent/internal/thinklink"
@@ -203,6 +204,31 @@ func (m *model) rebuildViewportScrollLock() {
 	m.updateViewportCache()
 }
 
+// streamRepaintInterval 是流式追加能合并多久再重排一次正文。它必须小于 tick 周期
+// （tickCmd 的 100ms），否则"下一拍 tick"永远赶不上窗口到点，尾巴要迟一拍才出现。
+const streamRepaintInterval = 80 * time.Millisecond
+
+// streamDirtyHeld 报告当前的脏是不是"只有正在流式的条目被追加了文本"、且合并窗口还没到点。
+// 只有那种脏可以推迟：新条目、工具结果、流式定稿、尺寸变化都必须立刻落地。
+func (m *model) streamDirtyHeld() bool {
+	if time.Since(m.lastViewportRepaint) >= streamRepaintInterval {
+		return false
+	}
+	if m.needFullRebuild || len(m.dirtyEntryIndices) == 0 {
+		return false
+	}
+	for idx := range m.dirtyEntryIndices {
+		if idx < 0 || idx >= len(m.logEntries) {
+			return false
+		}
+		le := &m.logEntries[idx]
+		if le.eventType != "ai_stream" || !le.streaming {
+			return false
+		}
+	}
+	return true
+}
+
 func (m *model) rebuildContentCache() {
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return
@@ -344,16 +370,17 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	}
 
 	if entry.eventType == "ai_stream" {
-		content := entry.streamContent
-		if entry.streaming && content != "" {
-			content += "▌"
+		if !entry.streaming {
+			// 定稿的流式条目和普通条目一样进渲染缓存：它的内容不会再变，
+			// 每次整段重排都重拆重画纯属白做。
+			if cached, ok := entry.getCachedRender(width); ok {
+				return cached
+			}
+			rendered := renderStreamEntry(entry, width)
+			entry.setCachedRender(rendered, width)
+			return rendered
 		}
-		// 流式期间已闭合的 thought 块同样提前渲染成面板，未闭合的尾部保持原文，
-		// 与 markdown 只在 ai_response 定稿时才套样式的既有节奏一致。
-		if blocks, rest := thinklink.SplitThoughtBlocks(content); len(blocks) > 0 {
-			return joinThinklinkPanels(renderThinklinkPanels(blocks, width-thinklinkPanelGutter), rest)
-		}
-		return content
+		return renderStreamEntry(entry, width)
 	}
 
 	if cached, ok := entry.getCachedRender(width); ok {
@@ -414,6 +441,46 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 // 视口左右 padding(2) + 2 列留白，与用户消息框同宽。
 const thinklinkPanelGutter = 4
 
+// renderStreamEntry 渲染流式条目：已闭合的 <thought> 块提前渲染成面板（与 markdown
+// 只在 ai_response 定稿时才套样式的既有节奏一致），未闭合的尾巴保持原文。
+// 面板按块 memo —— 块数量随步数增长，每次刷新整段重画就是二次的开销；
+// 输出与"一次性渲染全部块"逐字相同（TestTUI_StreamPanelsMatchOneShot）。
+func renderStreamEntry(entry *logEntry, width int) string {
+	content := entry.streamContent
+	if entry.streaming && content != "" {
+		content += "▌"
+	}
+	blocks, rest := thinklink.SplitThoughtBlocks(content)
+	if len(blocks) == 0 {
+		return content
+	}
+
+	panelW := width - thinklinkPanelGutter
+	if entry.streamPanelW != panelW || !sameThoughtBlockPrefix(entry.streamPanelSrc, blocks) {
+		// 宽度变了整段重画；块序列被改写（内容被替换而不是追加）同理。
+		entry.streamPanels, entry.streamPanelSrc, entry.streamPanelW = nil, nil, panelW
+	}
+	for _, block := range blocks[len(entry.streamPanels):] {
+		entry.streamPanels = append(entry.streamPanels, renderThinklinkPanel(block, panelW))
+		entry.streamPanelSrc = append(entry.streamPanelSrc, block)
+	}
+	return joinThinklinkPanels(strings.Join(entry.streamPanels, "\n"), rest)
+}
+
+// sameThoughtBlockPrefix 校验已画的面板对应的那批块还是同一批（流式正文只追加，
+// 正常情况下只有末尾会多出来）。
+func sameThoughtBlockPrefix(done, blocks []string) bool {
+	if len(done) > len(blocks) {
+		return false
+	}
+	for i, block := range done {
+		if blocks[i] != block {
+			return false
+		}
+	}
+	return true
+}
+
 // renderAssistantContent 渲染 assistant 正文：结构化 thought 块渲染成与 thinklink 全屏
 // 详情一致的面板，排在正文之前（"先思考后回答"的阅读顺序），其余正文走 markdown。
 // 没有 thought 块时与旧实现逐字一致；markdown 渲染失败且没有面板可依附时返回
@@ -458,19 +525,25 @@ func (m *model) renderMarkdownBody(body string) (string, bool) {
 
 // renderThinklinkPanels 把 thought 块逐个渲染成圆角面板（多个块纵向堆叠）。
 func renderThinklinkPanels(blocks []string, panelW int) string {
+	panels := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		panels = append(panels, renderThinklinkPanel(block, panelW))
+	}
+	return strings.Join(panels, "\n")
+}
+
+// renderThinklinkPanel 是单个已闭合块的面板 —— 面板之间互不依赖，所以流式条目可以
+// 只画新增的那一个（见 renderStreamEntry）。
+func renderThinklinkPanel(block string, panelW int) string {
 	innerW := panelW - 4 // 边框(2) + 内边距(2)
 	if innerW < 10 {
 		innerW, panelW = 10, 14
 	}
-	panels := make([]string, 0, len(blocks))
-	for _, block := range blocks {
-		lines := thinklinkDetailLines(ThinklinkEntry{Kind: "thought_plan", Content: block}, innerW)
-		rows := []string{thinklinkPanelTop("THOUGHT", "", panelW)}
-		rows = append(rows, thinklinkPanelRows(lines, innerW)...)
-		rows = append(rows, thinklinkPanelBottom(panelW))
-		panels = append(panels, strings.Join(rows, "\n"))
-	}
-	return strings.Join(panels, "\n")
+	lines := thinklinkDetailLines(ThinklinkEntry{Kind: "thought_plan", Content: block}, innerW)
+	rows := []string{thinklinkPanelTop("THOUGHT", "", panelW)}
+	rows = append(rows, thinklinkPanelRows(lines, innerW)...)
+	rows = append(rows, thinklinkPanelBottom(panelW))
+	return strings.Join(rows, "\n")
 }
 
 // joinThinklinkPanels 把面板与正文纵向拼接，去掉正文尾部多余的空行。
