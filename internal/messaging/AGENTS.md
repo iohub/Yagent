@@ -44,6 +44,30 @@ goroutine 自己排空（`:8-9,304,351-372`）。
 **9. 目录名 ≠ 包名**：`internal/messaging/consumers` 里两个文件都声明 `package messaging`
 （`consumers/websock.go:1`、`consumers/tui.go:1`），靠 import 别名使用。
 
+**10. 两代消费者：生产全部是旧版广播，而旧版拿到的是裁剪副本。**
+`RegisterConsumer(MessageConsumer)` 广播收全部类型、`Subscribe(Consumer)` 按 `Types()` 过滤
+（`message_consumer.go:6-21`、`message_dispatcher.go:246-265,266-291`）——**非测试代码里 `Subscribe` 零调用点**
+（生产 9 处注册全是 `RegisterConsumer`：`main.go:360`、`internal/tui/tui_tasks.go:207,283`、
+`internal/http/task_executor.go:57,86`、`internal/http/websocket.go:210,216`、`internal/app/app.go:317,547`）。
+两条推论：① 新增事件类型**不必**改任何 `Types()`，因为没人用过滤订阅；② 投递给旧版的是
+`toMessageEvent` 造的副本，**只搬 Type/From/Content/Timestamp/Metadata 五个字段**
+（`message_dispatcher.go:384`、`:396-404`），所以 `ID`/`Seq`/`DelegationID`/`Priority`/`TraceID` 到不了旧消费者手里。
+**现状要读清楚**：第 6 条把委派坐标盖在事件上、第 1 条把 `Seq` 盖在 `Publish` 里，但真实交付端拿到的是零值 ——
+`internal/http/task_executor.go:76-77` 往 realtime 信封里塞的 `seq`/`delegation_id` 与
+`internal/tui` 按委派分槽所读的那两个字段，在当前投递路径上恒为 0/空串。要修的是投递（旧副本带上坐标，
+或让 HTTP/TUI 走 `Subscribe`），**不是**再往发布侧加一遍坐标。
+`TestLegacyConsumerReceivesAdaptedCopy` 钉的是"只搬 5 个字段"这个现状本身，不等于"坐标已送达"。
+
+**11. 事件类型的生成物不能整体重跑生成器。** `internal/protocol/agent_events.go:1` 写着 DO NOT EDIT，
+但 `InteractionType`（`:46-55`）、`InferInteractionType`（`:382`）、`isBooleanPair`（`:398`）生成器不产出，
+而它把 `AgentEventEnvelope.Data` 手工写成 `interface{}` + 类型 switch（`:216-223`、`:340-374`），
+`scripts/protoc-gen-yagent/generator_go.go:105-120` 发的是 `json.RawMessage` 那一版
+（落在 `protocol/go/agent-events.go:191-198,315-345`，该文件零 Go 引用方）。两份产物今天实测差 507 行，
+整体重跑会同时冲掉手写类型与投递形状，打断授权对话框（消费方清单见 `internal/AGENTS.md` 的 protocol 一节）。
+可行做法：改 `protocol/agent-events.yaml` → 只覆盖 `ts/agent-events.ts`、`ts/render-mapping.ts`、
+`agent-events.schema.json` → 把生成器**新增的那几块**逐字粘进两份 Go 产物（`docs/skills-and-mcp-design.md:382-383`）。
+yaml 本身还落后于总线：`model_routed`、`context_*_compressed`、`thinklink_entry` 都没登记（`task_paused` 有）。
+
 ## 入口
 
 `message_dispatcher.go`（含包注释那四条全局约定）、`message_publisher.go`、`message_event.go`。
@@ -60,3 +84,8 @@ goroutine 自己排空（`:8-9,304,351-372`）。
   `:383 TestCriticalBypassDropsOldestOverLimit`、`:426`（shutdown 后注册被拒）、
   `:450`（Shutdown 排干旁路）、`:475`（丢弃 warn 限频 ≤1/s）、`:287,316`（零值归一 + 每消费者独立缓冲）。
 - 跨包：`internal/agents/e2e_lifecycle_test.go` 与 `internal/agents/event_delegation_test.go:40`。
+
+**已知覆盖缺口**（钉第 10 条）：没有任何用例断言 `Seq`/`DelegationID` **到达消费者**——
+`TestDispatcherStampsMonotonicSeq` 只测发布侧盖号，`TestLegacyConsumerReceivesAdaptedCopy`
+只测"副本不带 `ID`"。要修投递路径（旧副本带上坐标 / HTTP 与 TUI 改走 `Subscribe`）之前先补一条
+端到端夹具，否则改坏了也还是全绿。第 11 条没有测试（生成器与产物的漂移只能靠人核对）。

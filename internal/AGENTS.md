@@ -25,10 +25,11 @@
 | `internal/app/AGENTS.md` | 一次性装配（顺序本身是契约） |
 | `internal/http/AGENTS.md` | REST/WS 与任务生命周期 |
 | `internal/messaging/AGENTS.md` | 事件总线与丢弃记账 |
+| `internal/mcp/AGENTS.md` | stdio JSON-RPC 客户端 + 多 server Manager（状态账、重连、分页） |
 | `internal/browserctl/AGENTS.md` | 外部 browser-control CLI 的执行层 |
 
 **没有局部文档 = 这个目录没有不可派生的知识**，直接读代码。下面收录的是那些
-"没有局部文档、但有一条不读代码就会做错"的小包。
+"没有局部文档、但有一条不读代码就会做错"的小包（`mcp` 一节是例外：它已有局部文档，这里只留指针）。
 
 ## projectid — 算法逐字节冻结
 
@@ -89,7 +90,17 @@ stderr），下游已把这条写成 CRITICAL 注释（`internal/agents/tool_log
 front-matter 是**手写的 JSON + 扁平 key:value 子集**，不是 YAML 解析器（`frontmatter.go` 头注释）；
 解析失败仍加载正文（`FrontMatter: none`）并 warn。`Catalog(maxTokens)` 的截断标记必须写进正文；
 `Body(name, offset, limit)` 的分页片段拼接 == 全文。三个入口（TUI/HTTP/--prompt）共用
-`app.Init` 里的同一份加载，`LoadSkills` 已删除。
+`app.Init` 里的同一份加载，`LoadSkills` 已删除。只扫一层：子目录里没有 `SKILL.md` 就当资源目录、不递归
+（`internal/skills/skills.go:172-173`）。加载顺序的实际落点是 `~/.yagent/skills` →
+`<workDir>/.yagent/skills` → `[skills] dirs`（`internal/app/skills.go:11-21`）。
+`use_skill` 是 **Hot** 且 `Available` 刻意留 nil：没有技能时工具仍在场、回执自带"放哪儿"
+（`internal/tools/specs_skill.go:9-12,17`、`internal/tools/skill_operations.go:18-22`），
+名字查不到时回吐可用名单而不是报错（`skill_operations.go:41-49`）。`allowed-tools` 与 `arguments`
+是**咨询性**字段：只随回执回吐给模型，不改工具面、不做强制（`internal/skills/skills.go:34-37`、
+`internal/tools/skill_operations.go:51-52`）。账目一行的实现只有一份（`LoadAccount.String`，
+`internal/skills/skills.go:65-66`），而**当前唯一的消费者是启动日志**（`internal/app/app.go:161`）；
+`/skills` 面板列的是 `registry.Skills()` 的 name/description/source/front-matter 四列
+（`internal/tui/tui_update_commands.go:458-468`），与那行账**不同源**——改渲染时别以为改一处就都变了。
 
 ## tokenutil — 降级是一次性粘滞的
 
@@ -138,7 +149,13 @@ failures（`:119-125`）。`SetLastFailure`（`:127-132`）注释写明"用于�
 反序列化后必须校验 `schema_version == 1`（`:130-132`）。摘要必须带 ID，而 ID 要 `Save` 之后才有
 → `Save` 后 `UpdateSummary` 回写是既定两步（`:101-110` + `internal/agents/result.go:168-178`）。
 `EstTokens` 是确定性纯函数（ASCII/4 + 非 ASCII×1，`internal/artifact/summary.go:9-27`），判定与截断同一口径。
-本包无 TTL/GC：全文只增不删。kill-switch 是 `YAGENT_ARTIFACT_DISABLE=1`（`internal/artifact/summary.go:87-91`）。
+落盘只在**超预算**时发生：`EstTokens(交付全文) <= DefaultBudgetTokens` 就全文即摘要、不落盘
+（`internal/artifact/summary.go:29-34` 的 500/60 两个常数，判定在 `internal/agents/result.go:136-137`）；
+这个预算**没有配置键**，判定与降级摘要共用同一常数（`result.go:137,174`）。摘要优先取合规 handoff
+（`Degraded == ""` 才算合规），取不到才逐字回落到 `Reduce` 的正文前缀（`result.go:167-175`）；
+`Save` 失败时降级成全文摘要、不返回 error、不阻断委派（`result.go:149-165`）。
+本包无 TTL/GC：全文只增不删。kill-switch 是 `YAGENT_ARTIFACT_DISABLE=1`（`internal/artifact/summary.go:87-91`），
+它的落点在采集侧——关掉就是不落盘，`Text`/`Summary` 双双退回 `exec.Text`（`result.go:123-134`）。
 
 ## datamanager — 不是 /resume 的事实来源
 
@@ -157,17 +174,16 @@ failures（`:119-125`）。`SetLastFailure`（`:127-132`）注释写明"用于�
 `RebuildPrompt` 的 `[TP-n]` 全局序号要用淘汰偏移换算（`:204-234`），`keepPlans<=0` 是"全部保留"。
 `Seed` 不可省：未 seed 的重放会话走到第三档只能拿原始任务输入重建（`:132-146`）。
 `<thought>` 解析失败**不报错只静默丢失**（`internal/thinklink/thoughtplan.go:61-63`）。
+"追加记录"说的是写入方式，不是无限增长：Store 有 `DefaultMaxEntries = 200` 的条数上限、超出按最旧
+优先淘汰（第一条 `KindUserInput` 除外，`internal/thinklink/thinklink.go:37-38`、`:64-66`），
+所以"重建原料"从来是最近 200 条而不是全部。落盘副本走 rollout 的 `thinklink_entry`，
+`ParseKind` 就是那条反序列化路径的入口。
 
-## mcp — 调 tools/list，且分页
+## mcp — 已有局部文档，这里只留指针
 
-`MCPClient.ListTools` 跟随 `nextCursor`（20 页上限，超出报错而不是静默截断）；
-`initialize.instructions` 收进 `Instructions()`；`ToolAnnotations` 的四个 hint 用 `*bool`
-（`false` 与"没声明"必须可区分）。每条请求的 deadline 取调用方 ctx 与 `RequestTimeout` 的较小值，
-`<=0 → 30s` 的兜底**只在 `NewMCPClient` 一处**。`IsAlive()` 只读两个原子位；`sendJSON` 必须持 `writeMu`。
-`Manager`（`manager.go`）管多 server：状态机 disabled/starting/ready/degraded/offline、指数退避重连、
-`StatusLines()` 是状态账的唯一渲染出口。两条死锁/丢事件纪律见根 AGENTS.md §11 坑 45
-（list_changed 回调不能在 readLoop 里同步跑；连接落定前的通知要补一次）。
-假服务器 = 重新执行测试二进制（`client_process_test.go` 认 `YAGENT_TEST_FAKE_MCP_SERVER`），不要改成 `go run`。
+`internal/mcp/` 现在有自己的 `AGENTS.md`（分页发现、`*bool` annotations、`RequestTimeout` 兜底只在一处、
+状态五档与 `StatusLines()` 单一出口、两条 readLoop 死锁纪律、假服务器 = 重新执行测试二进制）。
+导览不再复述——上面表格是入口，正文在 `internal/mcp/AGENTS.md`。
 
 ## models — 查不到就返回 0
 

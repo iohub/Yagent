@@ -1,7 +1,7 @@
 # internal/compression — 三档上下文压缩
 
-> 范围：本目录内不可派生的约束。完整规格与实测数据见 `docs/compression-trigger-design.md`，
-> 全局摘要见仓库根 `AGENTS.md` §6.5。
+> 范围：本目录内不可派生的约束。全局摘要见仓库根 `AGENTS.md` §6.5。
+> （原 `docs/compression-trigger-design.md` 已不存在，规格由本文件持有。）
 
 ## 边界
 
@@ -36,6 +36,27 @@
 
 **7. 依赖方向**：本包**不得 import `internal/agents`**（`compressor.go:8-10`），agents 侧的清理
 经回调注入；对 thinklink 只走窄接口（`:20-38`）。
+
+**8. 临时压低阈值做验收只有两条路，语义不同。** 首选写小的
+`[enhanced_commander] context_compression_threshold`——与目录取 min、目录语义保留
+（`threshold.go:70-79`）；`YAGENT_COMPRESS_THRESHOLD` 是压过目录**与配置键**的旁路
+（`:52-55`），非正数或解析失败不生效、逐字回落到前两条路（`:32-39`，闸门
+`TestResolveThreshold_EnvOverrideInvalid`，`threshold_test.go:98`）。另一个消费者的口径
+相反且独立：TUI 进度条 `contextWindowFromCfg`（`internal/tui/tui_model.go:510-522`）是
+provider `context_window` 优先、未设置才查目录——给目录已收录的模型手写 `context_window`
+只改进度条，不改压缩时机。
+
+**9. 压缩只有两个开关，不许加第三道布尔闸门。** 第一、二档只看
+`enable_context_compression`（`internal/agents/executor.go:486`、
+`internal/agents/director/planner_compress.go:23`），第三档在此之上再要
+`enable_ultimate_compression` **与**非空 journal（`executor.go:578`、
+`planner_compress.go:99`；子 Agent 侧两条件见三档速记第 3 条，
+`TestRunAgentLoop_UltimateCompressionNeedsFlagAndStore`，
+`internal/agents/executor_compression_test.go:155` 钉"缺一不可"）。旧的
+`[enhanced_commander] enable` 已从 schema 删除、残留键由 config 的 `removedKeyHints`
+点名（`internal/config/config.go:261`）；第三档"缺省为开、显式 false 真关"由 config 的
+键存在性判定（`internal/config/config.go:486,703-705`），消费方只读布尔字段，
+**不许**在调用点复刻存在性判定。
 
 ## 三档速记
 

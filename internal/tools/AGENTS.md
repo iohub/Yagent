@@ -48,6 +48,46 @@ guard 仍在循环之后统一挂。`ExternalSpecs` 一律 Cold，靠既有 defe
 写反的话动态工具的 `Spec.Brief` 形同虚设（目录里会是一行截断的英文描述）。
 `use_skill` 的执行器只认 `toolspec.SkillSource`，本包不认识 `internal/skills`。
 
+**9. `Adapter.Call` 内部的四步顺序是契约**（JSON 解析 → 工作区边界 → 危险操作授权 → 执行，
+`adapter.go:99-127`）。JSON 解析失败**不报错**，回落成单参数 `{"input": 原始串}`（`:100-104`）——
+非 JSON 入参的工具靠这一步活着；结果一律 `json.Marshal` 回序列化（`:119-126`），
+执行器返回不可序列化的值是错误而不是空结果。
+
+**10. 工具声明上 provider 前必须按名字排序。** `SortToolDefs`（`adapter.go:138-142`）的三个消费点
+都调它（`surface.go:247`、`internal/agents/director/planner_run.go:124`、
+`internal/agents/director.go:255` 的 hash 日志）；`ComputeToolDefsHash` 自排序副本后取
+sha256 前 8 字节（`adapter.go:147-159`）。顺序漂走的症状不是崩溃，是 provider 端前缀缓存
+逐条失效——要到 token 账单对不上才被发现有两条路：排序漏一处，或 hash 比对基线被整体重算。
+
+**11. 授权只有"问用户"这一种强制，没有硬拒绝路径；放行状态分三层，持久化只有一处。**
+`Check` 对越界/危险只返回 needsAuth，`RequestAuth` 阻塞等用户（`workspace_guard.go:53-93,112-120`）；
+会话级 per-tool / 全局跳过（`:23-24`）、项目级 `authorized_projects` 持久化到
+`~/.yagent/settings.json`（`:298-345`）、YOLO（`:38-41`）。三层任意一层命中，此后所有检查直接跳过。
+
+**12. YOLO 两档的真实差异不在路径边界。** `-y` 的 `SetYoloMode` = **一切授权全绕过**，
+含工作区外路径（`:59-62` 短路 `Check`、`:117-120` 自动批准；装配点 `internal/app/app.go:324-328`）。
+`-Y` 隐含 `-y`，额外只做两件事：把 `ask_user_for_help` **摘出**工具面
+（`specs_flow.go:35-41`，与闸门 `_FullYoloRemovesAskUser` 成对）并注入自主决策指令
+（`internal/globalctx/global_context.go:83-90`）。根 AGENTS.md §5.4 的"-y 只跳工作区内授权"
+与代码不符——工作区外从来只是"要授权"，而授权被 `-y` 整体绕过。
+
+**13. 授权回路按 `request_id` 配对，这两个事件类型在总线上永不丢。**
+`RequestConfirmation`/`RequestUserHelp` 缺 ID 时自造 uuid、按 id 挂 channel 进 `pendingHelp`，
+`Consume` 只认 `user_help_response`，错配 id 只 warn 不响应（`user_confirm.go:42-107,141-183`）。
+`user_help_needed`/`user_help_response` 走 dispatcher 的 critical 旁路队列
+（FIFO、满丢最旧，`internal/messaging/message_dispatcher.go:4,32`）——与普通事件"队列满即丢"相反；
+队列满/无 pending 在回路两侧都只 warn（`user_confirm.go:150,209`），丢信号的兜底是 ctx 取消与超时。
+
+**14. 文件大小限制的数值口径住在这两个文件。** 整读 10MB 硬限 `MaxFileSizeForEntireRead`
+（`file_operations.go:108`）、2MB 软警告 `SoftFileSizeLimit`（`:111`）、单次 1000 行
+（`MaxEntireFileLines`/`MaxLineRangeSize`，`:115,125`）；编辑侧 old/new 双向 10MB
+（`file_edit.go:87,122`）。不在 `internal/diff`（见边界），也不在压缩层。
+
+**15. 仓库里可能根本没有 rg，搜索行为依赖 PATH。** `rgPath` 优先取内嵌产物，失败返回裸串
+`"rg"` 交给系统解析（`search_operations.go:16-23`）；git 树的 `dist/bin` 只有占位文件，
+真 rg 只在 release 构建进目录。改 `dist/` 下产物必须 `git add -f dist/...`
+（`dist/` 整体被 gitignore，漏加的表现是 `go:embed` 编不过或永远分发旧数据）。
+
 ## 入口
 
 `surface.go`（装配与降级）、`adapter.go`（`Call()` 的顺序：JSON 解析 → 边界检查 → 授权 → 执行）、

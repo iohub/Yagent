@@ -6,7 +6,8 @@
 
 `Engine` 抽象 + 两套协议实现（openai-go SDK / 自研 Anthropic Messages）、provider→引擎的解析与缓存、
 auto-routing 三档、故障转移、进程级在飞闸门、以及**发出/读入的字节形状**。
-不负责工具循环、不负责压缩阈值推导（`internal/compression`）、不解释 token 口径（消费方在 `internal/tui`）。
+不负责工具循环、不负责压缩阈值推导（`internal/compression`）；输入 token 的**跨 provider 归一**在本包
+（第 12 条），怎么展示是 `internal/tui` 的事。
 
 ## 硬约束
 
@@ -44,6 +45,34 @@ idle 计时，一次正常的排队被当成"provider 慢"（根 AGENTS.md §11 
 
 **8. `FallbackEngine` 必须过滤"不存在的 provider"与"自引用"**（`fallback.go:41-59`）。
 
+**9. `api_format` 只有两态，分支只有一处**（`llm.go:287-288` 问 `ProviderConfig.IsAnthropic()`，
+它是 `EqualFold` 而非精确匹配，`internal/config/config.go:31-33`）。**没有 Bedrock 专用客户端**：
+`api_base_url` + `api_key` 对每个 provider 一视同仁必填（`internal/config/config.go:620-623`），
+所谓 Bedrock 配置只能指向一个 OpenAI-compatible 网关——按名字前缀豁免那两项不等于多出一种协议。
+
+**10. `reasoning_effort` 在两侧是两件事，不许互相"对齐"成一份词表。**
+openai 侧非空即**原样透传**并**额外**发 `thinking={type:enabled}`（`engine_openai.go:169-173`）——
+DeepSeek 的思考模式要求两者都在；effort 的取值合法性由 provider 判，本包不设 `low|medium|high|max` 白名单。
+anthropic 侧才走第 3 条的 budget 映射。配套的一半在内容上：流式读侧从 `delta.RawJSON()` 抽
+`reasoning_content`（`engine_openai.go:199-207`），回灌 assistant 轮时必须经 `SetExtraFields`
+（`:309-320`）——openai-go 的类型不暴露这个字段，漏掉的症状是思考模型每轮都"忘了自己想过什么"，
+不报错。没配 effort 时两个字段都不许出现在请求体里（多数网关对未知字段报错）。
+
+**11. `RoutingEngine` 每次调用现场解析，档位分类失败绝不阻塞任务。**
+`Router.Classify` 用 **fast 档引擎**跑一次 `{"tier":"..."}`：30s 上限、`MaxTokens: 32`、
+任务文本截到 2000 字符，超时/出错/解析失败一律 `slog.Warn` 后回落调用方传入的 fallback
+（即该角色的 baseline，`router.go:265-300`）。`ResolveTierEngine`（`:372-`）在 `RunAgentLoop`
+入口把 `*RoutingEngine` 解成具体引擎——这就是"运行中换模型不需要任务空闲"的实现位置
+（被并发替换的那几个引擎指针的读写规矩见第 6 条与 `internal/app/AGENTS.md` 硬约束 3）。
+
+**12. 两个 provider 的"输入 token"口径相反，跨引擎只认 `TotalInputTokens`。**
+OpenAI 的 `prompt_tokens` **已含**缓存命中，直接照抄就是总输入（`engine_openai.go:259-260,422-423`）；
+Anthropic 的 `input_tokens` **不含** cache，总输入是三项相加（`engine_anthropic.go:497-498,680-681`）。
+字段口径的唯一声明在 `engine.go:67-70`。混用的表现不是崩溃而是**同一个标签出两个不同的数**——
+消费方是 `internal/tui` 的 token 面板，它一律走归一化后的 `TotalInputTokens`
+（`internal/tui/token_panel.go:127-129` 的 `normalizedInput`）；压缩判定同样只读它
+（`internal/compression/truncate.go:68`）。
+
 ## 入口
 
 `engine.go`（接口与 CallOptions）、`inflight.go`、`engine_anthropic.go`（`buildRequestBody` 一段最集中）、
@@ -61,9 +90,21 @@ idle 计时，一次正常的排队被当成"provider 慢"（根 AGENTS.md §11 
   限流改成每引擎一份、排队算进 timeout、同值重建闸门都会红。
 - `TestOpenAIRetrySemantics`（`engine_openai_test.go:425`）：SDK 重试被打开（服务端收到 >1 次请求）
   或 400 被重试即红。
+- `TestOpenAIEngine_Streaming`（`engine_openai_test.go:503`）：断言请求体里
+  `stream_options.include_usage` 为真（构造在 `engine_openai.go:184-186`，断言在 `:544`）——
+  没有它 OpenAI 兼容网关不在最后一个 chunk 回 usage，token 面板与压缩判定同时断了计量来源。
 - `TestAnthropicParseStreamResponse`（`engine_anthropic_test.go:395`）：流式 `tool_use` 装配退回
   "按 index 连续遍历"就丢整批工具（`engine_anthropic.go:700-708`）。
-- `router_test.go:101`、`client_switch_test.go:31,72`、`fallback_test.go:291`、`messages_test.go:198`。
+- `TestOpenAIEngine_ReasoningEffortAndExtraFields`（`engine_openai_test.go:216`）：两侧字段成对
+  （有 effort 时 `reasoning_effort` + `thinking` 都在、单次调用覆盖 provider 默认），
+  以及"没配 effort 时两个字段都不许出现"。
+- `TestResolveTierEngine`（`router_test.go:71`）、`TestClassify_DisabledFallsBack`（`:165`）：
+  路由关掉或分类失败时回落 baseline 而不是让任务失败。
+- `router_test.go:101`（`TestRoutingEngine_RuntimeOverrideBeatsTier`）、
+  `client_switch_test.go:31,72`、`fallback_test.go:291`、`messages_test.go:198`。
+- 跨包契约（不在本包，但去掉 `*RoutingEngine` 包装就会红）：
+  `TestAgentEngineAlwaysWrapsWithRoutingEngine`（`internal/app/assembly_test.go:37`）——
+  它只看返回类型、不驱动 `resolve()`。
 
 **耗时教训**（根 AGENTS.md §8.3）：不要在这包里跑完整重试序列——baseDelay 是 10s。用短 `cfg.Timeout`
 把退避钳到剩余预算，然后断言"服务端只收到 1 次请求"。
