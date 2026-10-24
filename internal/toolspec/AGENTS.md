@@ -1,7 +1,7 @@
 # internal/toolspec — 工具元数据的唯一声明面
 
-> 范围：本目录内不可派生的约束。完整设计见 `docs/tool-registry-design.md`，
-> 全局摘要见仓库根 `AGENTS.md` §5.1 与 §9.3。
+> 范围：本目录内不可派生的约束。（原 `docs/tool-registry-design.md` 已不存在，
+> 注册表与画像的规格由本文件持有。）全局摘要见仓库根 `AGENTS.md` §5.1 与 §9.3。
 
 ## 边界
 
@@ -33,10 +33,15 @@
 
 **5.1 静态注册表只读，动态规格走 `Deps.ExternalSpecs`。** `registry` 是 `init()` 期写入的只读事实；
 运行期发现的 MCP 工具经 `Surface.rebuild()` 追加，名字 `mcp__<server>__<tool>`，用 `Spec.Inline`
-自带 schema。把它们塞进全局注册表会打穿 golden 探针、Meta 工具池与 `Validate()` 的双向 1:1
-（根 AGENTS.md §11 坑 44，闸门 `TestStaticRegistryNeverCarriesExternalTools`）。
+自带 schema。把它们塞进全局注册表会打穿三处——(a) golden 走 `ProbeDeps()`，探针不知道有哪些
+server，钉的是一条生产不存在的路（第 6 条同族）；(b) `renderCustomAgentToolPool`
+（`internal/agents/deps.go:91-97`）遍历 `Specs()`，Custom Agent 于是拿到第三方能力，而 `Palette`
+的全部意义就是"拿不到 Director 没有的能力"；(c) `Validate()` 的双向 1:1 会对每个外部工具报
+"schemas.json 里没有对应声明"——修法不是放宽校验，是让它根本不进校验对象
+（根 AGENTS.md §11 坑 44，闸门 `TestStaticRegistryNeverCarriesExternalTools`，
+`internal/agents/registry_gate_test.go:350`）。外部工具**不计入**第 2 条的 schemas.json 条数基线。
 `ValidateDynamic` 是这些规格自己的九条校验（名字前缀/字符集/长度、Inline 必填、写族必须
-Mutates+NeedsAuth、不得与静态同名）。
+Mutates+NeedsAuth、不得与静态同名；调用点 `internal/tools/mcp_specs.go:131`）。
 
 **6. 探针 `ProbeDeps()` 必须与生产 `depsFor` 同形。** 生产恒绑 `Blueprint` 执行器
 （`internal/agents/deps.go:18-26`），而探针少绑一次的结果是 `Available` 为假 → 六个画像都"没有"这个工具 →
@@ -51,6 +56,27 @@ external_write；chat 只有 skill；devops 只有 external_read；browser 全�
 → `schemas.json` 加条目 → 让画像匹配（只有委派类工具才写 `Audience`）→
 `go test ./internal/agents -run TestAgentSurfacesGolden`，**工具面变化必须以显式重写 golden 的方式被评审**。
 
+**8. 派生查询是唯一读取面，查询→Spec 字段一一对应**（`queries.go:11-111`，
+`:3-8` 列着它替代的 8 张旧名字表）：`IsReadOnly`→`Spec.IsReadOnly()`、`IsSerial`→`Serial`、
+`IsInteractive`→`BlocksOnUser`（阻塞等用户 → 豁免工具级超时）、`NeedsAuth`、`PathParams`、
+`EffectOf`、`TruncationPriority`→`Trunc.ToPriority()`（未注册=1 常规）、
+`IsCompactDisplay`→`Display==DisplayCompact`、`ModelSlot`（空串=沿用所属 Agent 引擎）、`Brief`。
+**未注册名一律 fail-safe**——再往消费方抄一张按名字查的表，就是回到"八处各有一份默认值"。
+
+**9. 频率档决定 schema 怎么到达模型**（`effect.go:118-127`）：Hot 每步全量声明；
+Warm 默认全量、超每步预算可降成 Cold；Cold 只在目录里露 name+Brief，模型 `load_tool` 物化后
+才拿 parameters schema（`queries.go:124-148` 的 `DeferredSpecs`/`AdvertiseSpecs` 按画像的
+`resolveTier` 分这两堆）。校验器钉死的四条：Cold 必须带 `Brief`（≤40 rune，`spec.go:18,180-181`）、
+`BlocksOnUser` 要求 Serial+Hot（`:203-204`）、流程控制/元工具必须 Hot（`:207-208`）、
+`TruncProtected` 与 `Mutates` 冲突（`:211-212`）。**降级决策在 `internal/tools` 的 Surface**
+（该文档硬约束 4"只动 Warm 绝不动 Hot"），本包只声明档位。
+
+**10. `Validate()` 的启动期消费者在装配层，失败逐条打日志而不是退出。**
+`internal/app/app.go:129-134` 的 `checkRegistry(toolspec.Validate, ...)` 之前全仓只有测试调它——
+"注册表坏了"与"配置坏了"共用一个退出码只会混淆症状，而构建期问题已被 `registry_gate_test` 拦住。
+动态规格自检另走 `ValidateDynamic`（`spec.go:236-289`，九类规则各有夹具），静态↔动态的
+Cold-Brief 规则两侧各写一遍（`:180,276`），加校验规则时两边都要加。
+
 ## 入口
 
 `spec.go`（`Spec` / `Registry` / `Validate`）、`deps.go`（窄接口）、`profiles.go`（七个画像）、
@@ -62,6 +88,10 @@ external_write；chat 只有 skill；devops 只有 external_read；browser 全�
 - `TestValidate_ReportsEachRule`（`:180`）：删任一规则或让它不可响应；
   `_CleanSpecReportsNothingForItself`（`:305`）：规则全体误响、把死规则加回来。
 - `_ReportsSchemaWithoutSpec`（`:345`）：只加 schema 不注册。
+- `TestValidateDynamic_ReportsEachRule`（`:549`）与 `_CleanSpecReportsNothing`（`:680`）：
+  钉第 5.1/10 条——动态规格的九类规则删一条、或让它不可响应即红。
+- `TestStaticRegistryNeverCarriesExternalTools`（`internal/agents/registry_gate_test.go:350`）：
+  有人把 MCP 工具塞回全局注册表即红。
 - `TestProbeDepsIsCapabilityComplete`（`profile_test.go:420`）、
   `TestProbeDepsPassesEveryAvailabilityHook`（`:455`）：探针少填字段 → golden 静默少一类工具。
 - agents 侧的配套闸门：`TestDerivedMetadataMatchesLegacyTables`（`internal/agents/registry_gate_test.go:110`，

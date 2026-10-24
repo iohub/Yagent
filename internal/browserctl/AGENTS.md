@@ -1,7 +1,7 @@
 # internal/browserctl — browser-control CLI 执行层
 
-> 范围：本目录内不可派生的约束。完整设计见 `docs/browser-agent-design.md`，
-> 全局摘要见仓库根 `AGENTS.md` §5.4。
+> 范围：本目录内不可派生的约束。全局摘要见仓库根 `AGENTS.md` §5.4。
+> （原 `docs/browser-agent-design.md` 已不存在，浏览器侧的规格由本文件与 `internal/tools/AGENTS.md` 持有。）
 
 ## 边界
 
@@ -43,6 +43,17 @@
 `browser_eval 'location.reload()'`）；上游**没有** `hover` / `back`（用 `eval` 派发 `mouseover` /
 `history.back()`）。二进制查找顺序 `[browser] binary_path` → `~/.yagent/bin/browser-control` → `$PATH`，
 第一级由 `app` 无条件从嵌入层解出（见 `internal/app/AGENTS.md`）。
+上游源码不在本仓（只有 `dist/bin` 里的二进制），所以这三条只能按实测行为记，**不许编造 Rust 行号**。
+
+**10. 工作区目录就是隔离边界，清理只在装配期跑一次。** 每次委派独占
+`<workspaceRoot>/<SanitizeDelegationID(id)>`，默认 `~/.yagent/data/browser/{delegation}`
+（`WorkspaceDir` `manager.go:149-152`、根路径 `:154-165`）；里面是上游写的 `.browser-control/`
+（current-tab、`chrome.pid`、`traces/<毫秒时间戳>/error.txt`）与截图产物。上游把 `--user-data-dir`
+硬编码成 `.browser-control/profile` **且没有覆盖 flag**，`profile_dir` 只能靠 symlink 接过去
+（`manager.go:195`、`linkProfileLocked:287-302`）；trace 目录名按字典序即时间序（`session.go:197-199`）。
+两条回收只此一处调用（`internal/app/app.go:389-391`）：`ReapStale`（死 pid 直接删记录、活 pid 才
+spawn `stop`，`manager.go:391-435`）与 `CleanupExpiredWorkspaces`（按目录 mtime 比 `[browser]
+workspace_ttl`，`<=0` 一律不清理，`:438-461`）。**没有任何后台任务会删工作区**——别假设"过一会儿自己没了"。
 
 ## 入口
 
@@ -54,4 +65,6 @@
 CDP URL、每次调用带 timeout（`:28-36`）；`manager_test.go:66 TestAcquire_AttachModeInjectsEnvAndNeverLaunches`
 （`:88-93` 断言 65s 抬高）、`:188 TestFindFreePort_SkipsDebugPorts`、`:102`（启一次后复用）、
 `:231`（attach 不动用户浏览器）、`:282`（相对 profile 拒绝）、`:295,328`（端点就绪竞态，真实 E2E 复现过）、
-`policy_test.go:8,74`（file scheme）、`render_test.go:9,39,89`（丢坐标+去重、预算提示语、UTF-8 不切坏）。
+`policy_test.go:8,74`（file scheme）、`render_test.go:9,39,89`（丢坐标+去重、预算提示语、UTF-8 不切坏）、
+`manager_test.go:351 TestReapStale_RemovesDeadPidRecord`、`:371 TestCleanupExpiredWorkspaces`
+（钉第 10 条：TTL 与死 pid 两条回收；`<=0` 被改成"照样清"即红）。

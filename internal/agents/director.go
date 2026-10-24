@@ -671,9 +671,15 @@ func (a *DirectorAgent) packDelegateTask(task string, params map[string]interfac
 	// 这一句是 R4 的承重件：Repo 拿到的不是空白页而是"这片已经被说成什么了"，
 	// 它的提交才是**更新**而不是重新发明。
 	bp := a.blueprint.ProseForTask(task)
+	// [局部文档] 任务点到的目录的 AGENTS.md（根文件只装跨模块判据，包内约束住在盘上各份）。
+	// 与蓝图同一侧、同样在黑图开关之外：关掉便签板不该顺带关掉"这个包有哪些硬约束"。
+	md := ""
+	if a.env != nil {
+		md = LocalDocsForTask(a.env.ProjectPath(), task)
+	}
 
 	if !blackboardEnabled() {
-		return bp + task, 0
+		return bp + md + task, 0
 	}
 
 	idx, _, err := blackboard.BuildIndex(a.boardID, a.indexOpts())
@@ -694,11 +700,12 @@ func (a *DirectorAgent) packDelegateTask(task string, params map[string]interfac
 	}
 
 	if idx == "" && packText == "" {
-		return bp + task, unresolvedCount
+		return bp + md + task, unresolvedCount
 	}
 
 	var b strings.Builder
 	b.WriteString(bp)
+	b.WriteString(md)
 	if idx != "" {
 		b.WriteString(idx)
 		b.WriteString("\n\n")

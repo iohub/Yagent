@@ -31,7 +31,11 @@ viewport 自己已把每一行补齐到列宽（`TestViewportViewPadsEveryLine` 
 `Width().Render()` 就是把同一件事做第二遍（40 行 × 109 列实测 243µs → 5.5µs），而且满宽的行会被
 再折一次、行数翻倍。`lipgloss.Style.Height(h)` 是**含上下边框**的总高，
 按 `height` 而不是 `height-2` 分配行预算会多要 2 行，被末尾的"行数收敛 + 补边框"悄悄截掉
-（根 AGENTS.md §11 坑 7）。
+——那处收敛在 `renderDashboard`（`tui_dashboard.go:142`）：`:157-160` 明写三段抢的是 `height-2`，
+`:261-285` 先按 `innerWidth` 裁行、补圆角边框、最后再把超出的行砍掉，所以代价是**侧栏最后一段少两行
+而不报错**。同理日志的重着色：不走 `viewport.SetHighlights`（它按 `ansi.Strip` 之后的字节位算偏移、
+却用原文判行，在我们的上色日志上必然错位），走 `StyleLineFunc`（`tui_search.go:139-140`，挂点在 `:160`）。
+（根 AGENTS.md §11 坑 7。）
 
 **3.1 流式重排按时间合并，不按 chunk。** bubbletea **每条消息都调 `View()`**（`tea.go` 的 Update 后
 直接 render），而一次 flush 就标一次脏 —— 不合并的话"重排次数 = chunk 数 / 5"，实测 4000 chunk
@@ -65,15 +69,20 @@ O(变过的条目 + 窗口)，不再是 O(历史)（实测 4000 chunk：viewport
 否则恢复后 `bodySync` 以为窗口没变而跳过 SetContent，屏幕停在另一个 tab 的内容上。
 
 **4. 流式槽的键 ≠ 显示名。** `streamSlotKey` 返回 `agent#delegationID`（`tui_update_tasks.go:1025-1030`），
-它只用于分槽；`le.from` / `m.currentAgent` / token 归集**必须继续用裸 Agent 名**——混用的症状是
-标签变成 `Coding#call_3`。坐标为空时退回裸名，所以 Director 与存量 rollout 行为逐字不变。
+它是三张槽表 `aiChunkBuffers` / `aiStreamActiveEntries` / `aiStreamCompletedEntries`
+（`tui_model.go:335-338`，随标签页整体保存恢复 `tui_tabs.go:146-157`）唯一的键；`le.from` /
+`m.currentAgent` / token 归集**必须继续用裸 Agent 名**——混用的症状是标签变成 `Coding#call_3`。
+只按名字分槽的症状是两股流涌进同一条条目、文字粘成一段交错形态（`AAABBB`，
+`tui_parallel_stream_test.go:24` 写明症状、`:73` 断言那个形态）。坐标为空时退回裸名，
+所以 Director 与存量 rollout 行为逐字不变。
 
 **5. 口径只算一次。** token 面板三个表面共用 `buildTokenPanel`，所有口径只在 `tokenSnapshot()` 里算；
 压缩区块同理在 `compressSnapshot()`。**不要在任何表面另取计数器直接格式化**（根 AGENTS.md §6.8）。
 三个压缩事件名在本包只有一份字面量副本，加档位要同改三张表（`compress_panel.go:20-22`）。
 
-**6. 斜杠命令必须显式列进 `/` 分支**（`tui_update_commands.go:33`），否则 `/pause` 是在搜字符串
-"pause"，界面上什么都没发生。**暂停态绝不能走 `handleTaskCompleteMsg` 的换 ctx 分支**
+**6. 斜杠命令必须显式列进 `/` 分支**（`tui_update_commands.go:33`）：`/` 前缀在 TUI 里**默认是搜索**
+（`processCommand` 的该分支末尾是 `m.runSearch`，`:20,27-56`），不列进那条 switch 链的 `/name` 就是在搜
+字符串 "name"，界面上什么都没发生。**暂停态绝不能走 `handleTaskCompleteMsg` 的换 ctx 分支**
 （`tui_update_commands.go:199-201`）——那会丢掉闸门所在的那棵 ctx。
 
 **7. 列表/表单的共用原语只有一份。** `common/list_metrics.go:1-6` 就是"两份同形实现"的修法：
@@ -107,6 +116,53 @@ O(变过的条目 + 窗口)，不再是 O(历史)（实测 4000 chunk：viewport
 
 **9. 向导独占键盘。** 任务运行中或弹窗打开时 `/setup` 直接拒绝（`setup_embed.go:24-34`），
 理由是第 1 条那个没有重放队列的监听器。
+
+**10. TUI 键位是"替换"语义，不是追加别名。** 翻译表两个方向都要写：按下的键 → 规范键
+（各消费点 switch 的字面量），被换掉的默认键 → 空串 = 解绑（`buildKeyMap`，`tui_keymap.go:29-51`）；
+消费点一律先过 `translateKey`（`tui_update_keys.go:507,844`），解绑键换成 `keyUnbound` 哨兵
+（`tui_keymap.go:25,60-68`）落到 default 分支。只实现"自定义键 → 规范键"一半的症状：用户以为把
+quit 挪走了，ctrl+c 仍退程序，而且默认键永远释放不掉。抢同一个键时保留**先声明**的动作并归并
+一条 warn（`tui_keymap.go:42-53`；表在 `tui_model.go:656-657` 构造）。`keyUnbound` 绝不能
+长得像真按键（`\x00unbound`），否则"解绑"变成"触发某个动作"。
+
+**11. 行数预算必须按渲染后的行数算。** `lipgloss` 的 `Width()` 会把超宽的行**再折一次**，
+"我数过是 N 行"和屏上真正的行数不是一个数，多出来的行在 AltScreen 里看不见也滚不回去。
+三道闸门都在计数之前做，缺一个就能复现：① `fitLines` 先剪断越宽的行（宽度用 `lipgloss.Width`，
+样式串里的 ANSI 不占列，`setup_render.go:346`）；② `wrapPlain` 必须**硬切超长单词**——provider
+错误原文里全是 URL、base64 密钥、JSON 片段，只按空白折行等于没折（`setup_render.go:404`）；
+③ 状态条自己有预算 `capStatus`，否则"正文 = 高−2−状态行"算出负数并夹到最小值，总高反而超出
+终端（`setup_render.go:199`）。同理卡片/表格每行的列宽要**正好加到容器内宽**：分隔符数量按
+真正拼出的列数算，徽章还要算上 `BadgeStyle` 的 `Padding(0,1)`（`setup_screens.go:147`）。
+这套内核向导与恢复列表共用（`tui_resume_list.go:198,461`），新表面做排版先走它们，不许再抄一份。
+
+**12. 向导表单屏的模态键必须带修饰符。** 表单每一格都是活的 textarea，裸字母要先送进输入框
+（`setup_keys.go:567-577`：`ctrl+p` 预设 / `ctrl+o` 展开可选区 / `f2` 密钥两态），用裸键的症状是
+填 `https://…` 吃掉 `ps`、并莫名打开预设列表。裸键只允许在**没有 textarea 活着**的屏
+（列表、摘要、预设选择中）。反向的一半：底栏键帽上写的每个单键都必须真的能改状态——键帽比
+裸串更容易被相信，"键帽上写着、按下没反应"是新的失效模式。`setup_presets.go` 那份手写的端点 URL 表
+**不是权威**（`:1-10` 明写理由：`internal/models` 目录里没有 base_url），`applyPreset`（`:84`）
+**只填空字段**、绝不覆盖用户已经写过的值；"这个端点认不认这把 key"的唯一事实来源是探测屏。
+
+**13. setupWizard 的 `done` ≠ 退出，退出是宿主的决定。** 同一个状态机跑在两个宿主里：独立跑时
+（`RunSetup` 置 `standalone`，`setup_render.go:527-529`）`Update` 必须把 `done` 翻成 `tea.Quit`
+（`setup_keys.go:437-442`），否则 bubbletea 只认 `tea.Quit` 而程序停在最后一屏、症状是"按 q 没反应"；
+嵌在主 TUI 时（`standalone=false`）**必须不翻**——翻了就是把整个 yagent 退掉，交还键盘由宿主侧
+`Done()` 分支负责（`setup_embed.go:72-86`）。
+
+**14. `applyOps` 不是事务，失败信息必须带 note 与已写条数。** 逐条落盘、失败立即停止
+（`setup.go:431`），之前的几条已经真的写进了 config.toml；错误必须带上失败那条 op 的 `note` 原文
+（`fmt.Errorf("%s: %w", op.note, err)`，`setup.go:446`）与 `writtenCount`"已写入 N/M 条"
+（`:140-141,448`），用户才知道剩下几条怎么自救。包装成"什么都没发生"才是撒谎。
+
+**15. 配色令牌与界面语言各只有一个来源。** 调色集中在 `common/styles.go` 的 `Styles`/`ColorTokens`
+（**只有一套深色**）；强调色用途钉死：141 lavender = 活动 tab（`tui_tabs.go:370`）/ thinklink
+（`tui_thinklink_fullscreen.go:16`）/ LLM 调用（`common/styles.go:225`），62 = 滚动条
+（`tui_view.go:23`）/ 面板边框（`tui_dashboard.go:24`），214 = 命令（`common/styles.go:228`），
+39 = 搜索/输入（`common/styles.go:178`），76 = 运行中（`tui_model.go:112`）。终端背景判定只有
+一处 `tui_helpers.go:53`，它**只**用来切 glamour markdown 渲染器的样式（`tui_model.go:610-615`），
+不切上述令牌（明确用 `compat.AdaptiveColor` 的少数状态栏令牌除外）。界面语言是 `i18n.go` 的
+全局 `langManager`（69 个字段、默认英文 `i18n.go:283`、只在 TUI 内切换 `tui_model.go:757-762`，
+**没有配置项**），与 `[agent] lang`（LLM 写字段用的语言）是两回事，别互相读取。
 
 ## 子目录
 
@@ -146,7 +202,25 @@ O(变过的条目 + 窗口)，不再是 O(历史)（实测 4000 chunk：viewport
 `TestBody_AppendRebuildsOnlyTheTail`（`:91`，扩容用 `make` 换数组即红）/ `TestBody_FollowTail`
 （`:117`，`scrolledUp` 写反即红）/ `TestBody_TabSwitchKeepsCursorAndWindow`（`:208`）、
 `TestLLMTimeoutDialog_SizeGuard` / `_WidthMatrix`（`components/timeout_dialog_test.go:146,167`）、
-`TestWizardRenderWidthMatrix`（向导侧：宽度 {40..240} × 高度 × 七屏，断言行数 ≤ 终端高度）。
+`TestWizardRenderWidthMatrix`（向导侧：宽度 {40..240} × 高度 × 七屏，断言行数 ≤ 终端高度，钉第 11 条）、
+`TestUnboundSentinelMatchesNothing`（`tui_keymap_remap_test.go:90`：哨兵长得像真按键、或表里空值
+没被翻译成解绑，即红——钉第 10 条）、
+`TestWizardHintsAreNotDecoration`（`setup_test.go:765`：键帽写出的单键没有任何屏真的处理，即红——
+钉第 12 条的反向一半）、
+`TestRunSetupProgramActuallyExits`（`setup_test.go:1081`：用 `tea.WithInput` 真跑一次程序断言 `Run`
+返回，不是只查 cmd 形状；删掉 standalone 那条 `tea.Quit` 翻译即红——钉第 13 条）、
+`TestLegacyStreamsWithoutDelegationKeepOldBehavior`（`tui_parallel_stream_test.go:57`：钉第 4 条的
+"没有坐标时不许变新"）。
+授权对话框的渲染闸门在 `components/user_help_dialog_render_test.go`（`TestUserHelpDialog_NoANSINesting:12`、
+`_AutoDetectMode:62`、`_PasteReachesTextarea:110`，钉第 2 条的 `tea.PasteMsg` 那一半）；
+`/resume` 恢复链路的闸门在 `tui_resume_restore_test.go`（`TestApplyRestoredMemory_EntryShapeMatchesLivePath:85`
+与 `_RenderParityWithLivePath:443`：恢复出的 timeline 条目必须与实时事件构造的条目同名、同渲染，
+一次工具调用只产一条条目）。
+搜索高亮绕开 `viewport.SetHighlights` 的那个选择由 `TestSearch_StripANSIBeforeMatching`
+（`tui_chrome_test.go:393`）钉住（钉第 3 条）。
+向导侧 `TestWizardRequiredGroupMatchesValidator`（`setup_test.go:438`）**双向**钉"表单必填集合 ==
+config 侧真会拒的字段集合"：少一格 = 用户以为填完了却存不下（`config.WriteProvider` 的必填判据比
+`validate()` 弱），多一格 = 表单在问不必要的问题。
 
 **测试约定**：断言**精确单元格宽度**而非子串；宽度矩阵 `{30..240}`、终端尺寸矩阵 `{20..240}`；
 共享 fixture `newTestModel()` / `chromeTestModel(t,w,h)`。

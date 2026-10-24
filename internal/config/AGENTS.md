@@ -12,14 +12,15 @@
 ## 硬约束
 
 **1. `validate()` 是缺省值唯一写入点，往里加提前 return 之前先确认下面的归一化段还会被执行**
-（`config.go:614-620`）。曾经 Bedrock 豁免写成 `return nil`，于是 max steps、`[browser]` 缺省、
+（`config.go:621-622`）。曾经 Bedrock 豁免写成 `return nil`，于是 max steps、`[browser]` 缺省、
 TUI 键位、压缩参数**全部停在零值**——表现不是报错，是能力静默缺失（根 AGENTS.md §11 坑 14）。
-回归 `TestLoadFromFile_BedrockNoLongerExempted`（`validate_test.go:107-166`）同时断言"归一化照常发生"。
+回归 `TestLoadFromFile_BedrockNoLongerExempted`（`validate_test.go:110`）同时断言"归一化照常发生"。
 
 **2. "0 有语义 / 缺省为真"的键一律看键的存在性，不看零值。**
-段级 `sectionHasDecodedKey`（`config.go:365-380`）+ 单键 `md.IsDefined`（`:501-503,516,524-551`）；
-七个内部判定字段的理由逐条写在 `:232-255`。**只剩失效键的段落 == 没写过**（`:366-368`，
-`[browser] enabled` 踩过）。两套取值约定别混：`max_parallel_*` 用 1 = 严格串行、≤0 = 默认；
+段级 `sectionHasDecodedKey`（`config.go:353-365`）+ 单键 `md.IsDefined`
+（`:486-487,505-507,518-519,530-531,542-543,554-555`）；九个内部判定字段（mcp/skills 共用一行注释）
+的理由逐条写在 `:228-252`。**只剩失效键的段落 == 没写过**（`:352`，`[browser] enabled` 踩过）。
+两套取值约定别混：`max_parallel_*` 用 1 = 严格串行、≤0 = 默认；
 而 `[llm] max_in_flight_requests` 的 **0 有语义（不限流）**，所以必须靠存在性区分"没写 → 8"与"写了 0 → 不限"。
 
 **3. 写 config.toml 只能文本级替换。** `SetKeyInSection` 是唯一内核（`persist.go:13-23`），
@@ -60,9 +61,39 @@ server 名字要进工具名前缀，`validateMCPServers` 在 `validate()` 里�
 **9. 依赖面**：内部只依赖 `util`（`go list -deps` 实测）。`[blueprint]` 的默认值与渲染器兜底常数
 靠跨包对账钉同源（`blueprint_defaults_test.go:9-16`），**不许为省一个常数反转依赖方向**。
 
+**10. `api_base_url`+`api_key` 对生效 provider 一视同仁必填，没有按名字的豁免；`api_key_env` 只在一处展开。**
+Bedrock 豁免已连字段整体删除，`aws_region/aws_profile/model_provider` 进 provider 级失效键登记表
+（`config.go:272-276`）；生效 provider 缺 key/url = **加载即失败**（`:623-627`），不再是"推迟到第一次调用"。
+`ApplyAPIKeyEnv`（`:36-43`）是唯一展开点，此后所有消费方读同一个 `APIKey` 字段；展开循环（`:591-607`）
+必须把结果**写回 map**——map 值是拷贝，漏写回则 `GetProvider` 拿到的还是空 key。生效 provider 变量没设 =
+启动失败并点名；其它 provider 只 warn（为另一台机器准备的条目不该让本机起不来）。
+注意 `WriteProvider` 自身的必填判据更弱（"URL 与密钥不全空"，`setup.go:60-62`），向导侧必须另行把
+`api_base_url` 设为必填。闸门 `TestNeedsSetupCoversEveryTrigger`（`template_test.go:80`）内
+`:116-142` 钉两个方向：变量已设 → 展开进 `APIKey`；未设 → 加载失败且 err 点名变量名。
+
+**11. `[browser]`/`[blackboard]`/`[resume]` 的整表缺省判定共用一条 `sectionHasDecodedKey`，但各有判定入口与字段。**
+`browserSectionConfigured`（`config.go:367-369`）是唯一的包装；判据不能用 `enabled` 的零值——缺省就是
+false，用它判等于把新能力静默关掉（`:488` 明写，`:352` 同句还记着"只剩失效键的段落 == 没写过"）。
+判定字段落点：`blackboardSectionDefined`（`:497`）、`resumeSectionDefined`（`:510`）。
+`[blackboard]` 的三个显式 0 阀门（关索引注入 / 不裁剪行 / 不清理）逐键走 `md.IsDefined`（`:505-507`），
+而 `summary_max_runes`/`max_notes_per_board` **没有**"关"的语义，<=0 一律归默认、不加标记
+（`blackboard.go:26,33`，判据全文 `:50-61`）——同一段里两种键并存，逐条核对再决定要不要 presence 字段。
+
+**12. 认不出的字符串枚举值必须 warn 后回落默认，不许静默按其中一种策略走。**
+`degrade_on_workspace_change` 两态是常量而非裸串（`resume.go:15-20`，注释给出理由："写错一个字母的表现
+是默默按另一种策略走"）；归一化 switch 对认不出的值 `slog.Warn` 后回落 `warn`（`:84-94`）。
+缺省选 `warn` 而不是 `block`：换机器/pull 后 HEAD 必然变，默认 block 会让 B 层在最主要的场景里失效。
+闸门 `TestResumeUnknownWorkspacePolicyFallsBackToWarn`（`resume_test.go:76`）与
+`TestResumeExplicitBlockPolicyKept`（`:86`）。
+
+**13. `removedKeyHints` 的登记形态本身就是判据：键名一律小写、只登记会出现的最长路径。**
+父表本身不进 `Undecoded()`，子键靠向上归并落到父表这一行（`config.go:254`）——登记写短路径永远匹配不上，
+且不报错。provider 名是用户自定义的，`removedProviderKeyHints` 按**第四段**匹配而不是整条路径（`:272`）。
+闸门 `TestRemovedProviderKeysAreNamed`（`removed_keys_test.go:67`）与硬约束 4 的两条同族。
+
 ## 入口
 
-`config.go`（结构 + `LoadFromFile:493-557` + `validate:572-`）、`persist.go`、`setup.go`、`defaults.go`。
+`config.go`（结构 + `LoadFromFile:477-561` + `validate:576-`）、`persist.go`、`setup.go`、`defaults.go`。
 
 ## 闸门
 

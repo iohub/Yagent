@@ -40,6 +40,14 @@ gin REST + melody WebSocket + `TaskManager` 的任务生命周期。不负责暂
 `protocol.AgentEventEnvelope`**（`task_executor.go:72-77`）——那是生成物，且里面还有生成器不产出的
 手写类型（见 `internal/AGENTS.md` 的 protocol 一节）。WS 向**所有**连接广播，没有按会话过滤。
 
+**8. 本包的消费者全是旧版广播注册，所以第 7 条那两个坐标当前恒为零值。**
+`task_executor.go:57,86`、`websocket.go:210,216` 都走 `RegisterConsumer`，而旧接口拿到的是
+`toMessageEvent` 的 5 字段副本、不带 `ID`/`Seq`/`DelegationID`
+（`internal/messaging/message_dispatcher.go:384,396-404`，见 `internal/messaging/AGENTS.md` 硬约束 10）。
+于是 `task_executor.go:76-77` 塞进 `Data` 的 `seq`/`delegation_id` 在真实路径上是 0 与空串——
+前端"按委派分槽"因此拿不到区分量。修法只有两种（副本带上坐标，或本包改走 `Subscribe`），
+**都不许在本包再抄一份坐标**；当前没有任何用例钉住"坐标到达消费者"，改这段前先补一条夹具。
+
 ## 入口
 
 `task_gate.go`（最短的契约文件）、`task_manager.go`、`task_executor.go`。

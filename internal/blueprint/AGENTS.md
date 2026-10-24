@@ -1,7 +1,7 @@
 # internal/blueprint — 仓库蓝图
 
-> 范围：本目录内不可派生的约束。完整设计见 `docs/repo-blueprint-design.md` v4 + §21 实施记录，
-> 全局摘要见仓库根 `AGENTS.md` §6.4。
+> 范围：本目录内不可派生的约束。（原 `docs/repo-blueprint-design.md` v4 + §21 实施记录已不存在，
+> 蓝图的规格由本文件持有。）全局摘要见仓库根 `AGENTS.md` §6.4。
 > 注意：`section.go:1-11` 的包文档还写着"本包只做 R1 的骨架"，与 R1–R6 已落地不符——那是注释过期，
 > 不是功能缺失。
 
@@ -60,6 +60,45 @@ derived 段不在 `AssertedSections`（`section.go:30-39`）；模块边界由�
 默认常数与 `config` 的模板值靠 `internal/config/blueprint_defaults_test.go` 钉同源。
 落盘只走 `util.AtomicWrite` 一处（`doc.go:155-167`）。
 
+**11. fold 的账目必须经返回值离开本包，不许只留在日志里。**
+`FoldResult` 是拒收账目在本包内的唯一载体，注释明写"调用方必须把它打出去或写进 rollout"
+（`fold.go:79-95`），`Commit` 连 NoOp 也把账目带回（`commit.go:34,48-56`）。理由：`agent_exit` 是
+终止点，拒收若只进 `slog`，Director 看到的仍是一次"成功的委派"，模型也不知道自己白交了，
+下一轮还会这么干（根 AGENTS.md §11 坑 43 的包内那一半）。账目压成一行给 Director 读的渲染
+（`FormatForDirector` + 便签 `> [blueprint]` 尾注两处出口、"不进 conclusion"）是**调用方**的契约，
+见 `internal/agents/AGENTS.md`。
+
+**12. 出处锚点三态，程序判不了的一律记 unverifiable、不谎称验过。**
+`AnchorChecker.Check`（`freshness.go:86-126`）：`where` 为空 → unanchored，没声明出处就不该被追究
+（`:88-90`）；`path:line` 行号越界 → stale（`:108-116`）；`path:symbol` 走朴素词边界匹配，
+**不依赖 codeseek**——索引在建或不可用是常态（`:118-124`）；非路径形态（跨模块论断）state 保持 ok
+但记进 Coverage 的 unverifiable 计数（`:93-99`，I19）。行数/存在性缓存的生命周期 == 一次 fold
+（`freshness.go:64-76`）。
+
+**13. 常驻注入只有形状②，purpose 这类不可验证散文永不进常驻。**
+边是唯一无可替代的确定性事实，purpose 是唯一不可验证的散文；散文进上下文的入口只有
+`read_blueprint` 与委派前缀（`index.go:10-11`、`prose.go:9-12`）。token 硬顶
+`MaxTokens<=0 → DefaultIndexMaxTokens`（`index.go:86-88`）；header 先占预算、截断计数写进
+header，且选行必须**迭代**而不是两趟——`+N modules not shown` 那一行自己占 token，两趟写法会把
+硬顶从内部顶穿（I3，`index.go:125-132`）。四态 stale/unannotated/TRUNC/oversize 说出来的唯一
+地方是 `indexFlags`（`index.go:17,24-28,192-194`）；静默少一片是蓝图最坏的失效。
+
+**14. 证据集由调用方算好传进来；"集为空"与"不在集内"是两条不同的拒收。**
+`FoldRequest.Evidence` = 本次 run 真打开过的文件所属模块集，由 agents 侧用
+`Snapshot.EvidenceModules` 算——校验用的还是派生集合本身（`fold.go:61-67`）；
+module 不在集内 → `RejectNoEvidence`（`fold.go:250-251`），整轮一条证据都没有 →
+`RejectNoReadAtAll`（`:259`），不许因为"没证据"就放行。`EvidenceModules` 去重 + 排序（确定性）、
+未命中静默丢弃（`scan_types.go:171-174`）。"入参侧 ∪ 出参侧"的采集口径与
+`toolspec.Spec.ResultPaths`（`list_dir` 的裸文件名必须排除，否则证据集收到假路径、误伤一整片模块）
+不在本包——见 `internal/agents` 与 `internal/toolspec` 的文档。
+
+**15. `revisions/` 滚动 5 份，唯一存在理由是"删错了"必须有 Undo。**
+孤儿老化会真删段落、fold 会真替换正文，两者都动在唯一的可写文件上；没有归档，
+"上一次的正确说法"就是一次手滑就没回来的东西（`revisions.go:13-17`，`RevisionsKeep = 5` `:22`）。
+文件名用定宽 UTC 时间戳——字典序 == 时间序，"留最新 5 份"就是排序后砍尾巴；随机后缀防两个
+tab 同一秒各 fold 一次互相覆盖（`:19-20`）。失败只返回错误、绝不 panic，调用方只做 warn
+（`:28-30`）——与硬约束 7 的"归档写不下去不拦本次提交"同源。
+
 ## 入口
 
 `doc.go`（文档模型，以及两条 CAS 相关函数为何分开）、`fold.go`（校验与拒收账目）、
@@ -71,9 +110,15 @@ derived 段不在 `AssertedSections`（`section.go:30-39`）；模块边界由�
   改排序或 ID 派生即红。
 - `fold_prose_test.go:25,40,60,71`：坑 42 的四种散文形状（含"与违规串同形的正常散文"）。
 - `freshness_test.go:103`：指纹不符时删散文即红。
-- `index_test.go:73,131,166`：四态必显、token 硬顶、前缀字节稳定。
-- `guard_test.go:51`、`store_test.go:36`、`gc_test.go:53` + `prose_test.go:32`、
-  `derive_test.go:65,128,239`、`doc_test.go:37,66`。
+  `TestAnchorVerificationIsThreeValued`（`:17`）与 `TestAnchorSymbolMatchIsWordBounded`（`:87`）：
+  钉第 12 条——锚点退回两态、或符号匹配退化成子串（`Foo` 命中 `FooBar`）即红。
+- `fold_test.go:271`（`TestCommitRejectsModuleNeverReadInThisRun`）与
+  `:303`（`TestCommitWithoutAnyEvidenceWritesNothing`）：钉第 14 条——
+  "证据集外放行"或"空集当没有证据约束"即红。
+- `index_test.go:73,131,166`：四态必显、token 硬顶、前缀字节稳定（钉第 13 条）。
+- `guard_test.go:51`、`gc_test.go:53`、`gc_test.go:165`（`TestSaveRevisionRollsToKeep`，钉第 15 条）、
+  `store_test.go:36`、
+  `prose_test.go:32`、`derive_test.go:65,128,239`、`doc_test.go:37,66`。
 - `scan_golden_test.go:68,77`：43 片 / 137 条边的自扫 golden（逐条归因写在该测试头上的注释里；
   2026-10-22 随知识机制删除从 45/144 变来，2026-10-23 因删掉 `internal/tui/anim` 整包从 44 片变到 43 片）。
   **改扫描器前先跑 `gofmt -l internal/blueprint/testdata`**——`testdata/` 是 Go 工具链的盲区，
