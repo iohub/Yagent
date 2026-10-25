@@ -538,7 +538,7 @@ func (m *model) handleCommandModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		combo := m.lastKey + key
 		m.lastKey = ""
 		if combo == "gg" {
-			m.viewport.GotoTop()
+			m.bodyGotoTop()
 			m.updateViewportCache()
 			m.invalidateFooterCache()
 			return m, nil

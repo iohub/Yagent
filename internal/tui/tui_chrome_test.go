@@ -509,6 +509,33 @@ func TestNormalMode_CountScroll(t *testing.T) {
 	}
 }
 
+// TestNormalMode_GotoTop gg 必须把正文拉回开头：虚拟化之后 viewport 自己的游标恒为 0，
+// 只调 viewport.GotoTop() 的话 body.top 原地不动，症状就是"按 gg 没有任何反应"。
+func TestNormalMode_GotoTop(t *testing.T) {
+	m := chromeTestModel(t, 100, 20)
+	m.commandMode = true
+	seedLog(m, strings.Repeat("line\n", 200))
+	m.viewport.SetHeight(10)
+	m.bodyGotoBottom()
+	if m.body.top == 0 {
+		t.Fatalf("fixture did not scroll away from the top, body.top=%d", m.body.top)
+	}
+
+	m.handleCommandModeKey(keyMsgFor("g"))
+	if m.body.top == 0 {
+		t.Errorf("a single g jumped to the top, want it to wait for the second one")
+	}
+	m.handleCommandModeKey(keyMsgFor("g"))
+
+	if m.body.top != 0 {
+		t.Errorf("gg left body.top at %d, want 0", m.body.top)
+	}
+	// 光标归零还不够：窗口必须真的重新喂给 viewport，否则屏幕仍停在尾部。
+	if m.body.renderedTop != 0 {
+		t.Errorf("viewport still shows the window from row %d, want the head of the transcript", m.body.renderedTop)
+	}
+}
+
 // TestNormalMode_EditablesOnlyInCmdline 普通模式下随手敲的字母不该攒进 buffer。
 func TestNormalMode_PrintableDoesNotPolluteBuffer(t *testing.T) {
 	m := chromeTestModel(t, 100, 20)
