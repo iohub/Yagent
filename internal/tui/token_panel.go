@@ -731,6 +731,11 @@ func (m *model) renderFooterTokenPanel() string {
 		if summary := compressSummaryRow(m.compressSnapshot(), inner); summary != "" {
 			rows = append(rows, summary)
 		}
+		// ⧗ 那行同理：同一个面板、不另起边框、不前置空行，让 lipgloss.Height
+		// 自己跟着长，computeFooterHeight 不必新增分支。
+		if summary := latencySummaryRow(m.latencySnapshot(), inner); summary != "" {
+			rows = append(rows, summary)
+		}
 	}
 	return lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).

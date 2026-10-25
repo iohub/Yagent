@@ -370,6 +370,10 @@ type model struct {
 	// 与 Σ 同生命周期（会话累计），不受 resetRunTokens 影响。
 	compress compressStats
 
+	// latency 是 ⧗ LATENCY 段的账：近期事件耗时、各轮委派聚合、整体墙钟。
+	// 同样与会话同生命周期（不是本轮），且必须随标签页整体存取。
+	latency latencyStats
+
 	anim       *Anim
 	activeAnim bool
 

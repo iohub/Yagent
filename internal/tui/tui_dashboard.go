@@ -163,14 +163,15 @@ func (m *model) renderDashboard(width, height int) string {
 	}
 
 	cs := m.compressSnapshot()
+	ls := m.latencySnapshot()
 
-	// ① token 段预算：给 Activity 留行，再给 ⧉ 段留它最低成本形态的 2 行
-	// （空闲态也常驻，见 compress_panel.go 的 any()），但自己至少保 3 行（标题/Σ/⛁）。
+	// ① token 段预算：给 Activity 留行，再给 ⧉ 与 ⧗ 各留它们最低成本形态的 2 行
+	// （两段空闲态也常驻，见 compress_panel.go 的 any()），但自己至少保 3 行（标题/Σ/⛁）。
 	maxTokenRows := contentRows
 	if len(m.timelineEntries) > 0 {
 		maxTokenRows = contentRows - timelineReserveRows
 	}
-	maxTokenRows -= compressReserveRows
+	maxTokenRows -= compressReserveRows + latencyReserveRows
 	if maxTokenRows < 3 {
 		maxTokenRows = 3
 	}
@@ -194,6 +195,9 @@ func (m *model) renderDashboard(width, height int) string {
 	// ⧉ 段的签名必须进键：压缩事件动的只有压缩统计与采样，Σ/RUN/TOTAL 计数器一个都不改，
 	// 不进键的话压缩块会永远命中旧缓存 —— 事件到了、面板不刷新，编译测试都发现不了。
 	key += "|cmp:" + cs.signature()
+	// ⧗ 段同理：一次委派跑完可能既不加新事件条数也不改任何计数器，
+	// 只有耗时账在动。不进键的话这一段就是"事件到了、面板不刷新"。
+	key += "|lat:" + ls.signature()
 
 	if !hasRunning && key == m.dashboardCacheKey && m.dashboardCache != "" {
 		return m.dashboardCache
@@ -201,14 +205,24 @@ func (m *model) renderDashboard(width, height int) string {
 
 	lines := append([]string(nil), tokenRows...)
 
-	// ② ⧉ 压缩段：位置在 Activity 之下、面板最后一段，但行预算必须先算 ——
-	// 有 timeline 时先给它保底 timelineReserveRows（分隔线+标题+事件+提示），
-	// 剩下的才轮到压缩段。装不下最低形态（分隔线+标题）时整段让位。
+	// ② ⧗ 耗时段：位置在 Activity 之下、⧉ 之上，但行预算必须先算 ——
+	// 有 timeline 时先给它保底 timelineReserveRows，再给 ⧉ 留它最低形态的 2 行。
 	//
 	// 注意 maxRows<=0 在渲染器里是"不限高"，所以预算不足时必须跳过，不能把 0 传进去
-	// —— 那会让压缩段反过来把 Activity 挤掉。
+	// —— 那会让这一段反过来把 Activity 挤掉。
+	var latencyRows []string
+	latencyMax := contentRows - len(lines)
+	if len(m.timelineEntries) > 0 {
+		latencyMax -= timelineReserveRows
+	}
+	latencyMax -= compressReserveRows
+	if latencyMax >= latencyReserveRows {
+		latencyRows = buildLatencyBlock(ls, latencyPanelSpec{innerWidth: innerWidth, maxRows: latencyMax})
+	}
+
+	// ③ ⧉ 压缩段：同样的算法再走一遍，只是它排在 ⧗ 之后。装不下最低形态时整段让位。
 	var compressRows []string
-	compressMax := contentRows - len(lines)
+	compressMax := contentRows - len(lines) - len(latencyRows)
 	if len(m.timelineEntries) > 0 {
 		compressMax -= timelineReserveRows
 	}
@@ -217,7 +231,7 @@ func (m *model) renderDashboard(width, height int) string {
 	}
 
 	// ── Timeline section ──
-	tlAvailable := contentRows - len(lines) - len(compressRows)
+	tlAvailable := contentRows - len(lines) - len(latencyRows) - len(compressRows)
 	if len(m.timelineEntries) > 0 && tlAvailable > 2 {
 		// Separator + title (2 rows)
 		lines = append(lines, tokenSep(innerWidth))
@@ -255,7 +269,10 @@ func (m *model) renderDashboard(width, height int) string {
 		}
 	}
 
-	// ③ ⧉ 压缩段落在 Activity 之下，是面板的最后一段。行预算已在上面算好并预留。
+	// ④ ⧗ 耗时段落在 Activity 之下、⧉ 之上。行预算已在上面算好并预留。
+	lines = append(lines, latencyRows...)
+
+	// ⑤ ⧉ 压缩段是面板的最后一段。行预算同样已预留。
 	lines = append(lines, compressRows...)
 
 	// Trim any lines that exceed innerWidth before applying border.

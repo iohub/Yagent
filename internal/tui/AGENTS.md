@@ -31,7 +31,7 @@ viewport 自己已把每一行补齐到列宽（`TestViewportViewPadsEveryLine` 
 `Width().Render()` 就是把同一件事做第二遍（40 行 × 109 列实测 243µs → 5.5µs），而且满宽的行会被
 再折一次、行数翻倍。`lipgloss.Style.Height(h)` 是**含上下边框**的总高，
 按 `height` 而不是 `height-2` 分配行预算会多要 2 行，被末尾的"行数收敛 + 补边框"悄悄截掉
-——那处收敛在 `renderDashboard`（`tui_dashboard.go:142`）：`:157-160` 明写三段抢的是 `height-2`，
+——那处收敛在 `renderDashboard`（`tui_dashboard.go:142`）：`:157-160` 明写**四段**（◆ Tokens / ⚙ Activity / ⧗ LATENCY / ⧉ COMPRESS）抢的是同一份 `height-2`，让位序 = token > Activity > ⧗≈⧉（`:169-176` 的扣除、`:211-231` 的两段预算），两个后段在 `maxRows < 2` 时必须**整段让位**——传 0 进渲染器等于"不限高"，它会反过来把 Activity 挤掉。
 `:261-285` 先按 `innerWidth` 裁行、补圆角边框、最后再把超出的行砍掉，所以代价是**侧栏最后一段少两行
 而不报错**。同理日志的重着色：不走 `viewport.SetHighlights`（它按 `ansi.Strip` 之后的字节位算偏移、
 却用原文判行，在我们的上色日志上必然错位），走 `StyleLineFunc`（`tui_search.go:139-140`，挂点在 `:160`）。
@@ -77,8 +77,8 @@ O(变过的条目 + 窗口)，不再是 O(历史)（实测 4000 chunk：viewport
 所以 Director 与存量 rollout 行为逐字不变。
 
 **5. 口径只算一次。** token 面板三个表面共用 `buildTokenPanel`，所有口径只在 `tokenSnapshot()` 里算；
-压缩区块同理在 `compressSnapshot()`。**不要在任何表面另取计数器直接格式化**（根 AGENTS.md §6.8）。
-三个压缩事件名在本包只有一份字面量副本，加档位要同改三张表（`compress_panel.go:20-22`）。
+压缩区块同理在 `compressSnapshot()`、耗时区块同理在 `latencySnapshot()`（`latency_panel.go`）。**不要在任何表面另取计数器直接格式化**（根 AGENTS.md §6.8）。
+三个压缩事件名在本包只有一份字面量副本，加档位要同改三张表（`compress_panel.go:20-22`）。⧗ 段的 `total` 是唯一每 tick 会变的数字：显示粒度必须等于进 `dashboardCacheKey` 的粒度（1s），任务收尾必须 `freezeTotal` 定格 —— 不定格的话空闲态每秒白重画一次，而 `handleTickMsg` 永远不肯停 tick。
 
 **6. 斜杠命令必须显式列进 `/` 分支**（`tui_update_commands.go:33`）：`/` 前缀在 TUI 里**默认是搜索**
 （`processCommand` 的该分支末尾是 `m.runSearch`，`:20,27-56`），不列进那条 switch 链的 `/name` 就是在搜
@@ -191,7 +191,7 @@ quit 挪走了，ctrl+c 仍退程序，而且默认键永远释放不掉。抢�
 `TestTaskCompleteMsgNotSwallowedBehindDialog`（`tui_model_switch_test.go:155`）、
 `TestUpdate_PasteMsgRoutedToTopDialog`（`tui_paste_test.go:17`）、
 `TestParallelStreamsSameAgentDoNotMerge`（`tui_parallel_stream_test.go:26`，让 `streamSlotKey`
-忽略 `DelegationID` 即红）、`TestTokenPanel_FooterFitsTermWidth`（`token_panel_test.go:257`）、
+忽略 `DelegationID` 即红）、`TestTokenPanel_FooterFitsTermWidth`（`token_panel_test.go:257`）、`TestLatencyTierLadderRows` / `TestLatency_NeverStarvesTokensAndActivity` / `TestLatencySection_EntersDashboardCacheKey`（`latency_panel_render_test.go`：⧗ 段的 `latencyRunRows` 一旦返回拼好的多行串就被按一行计数、`latencyMax` 不再给 Activity 留行、签名漏进 `dashboardCacheKey`，三件事各自立刻红；⧗ 段的其余闸门在 `latency_panel_data_test.go` / `latency_total_test.go` / `latency_panel_surfaces_test.go`）、
 `TestBodyWidthIsOneSource`（`tui_view_layout_test.go:34`，把 resize/切标签页的宽度公式改回旧写法即红）、
 `TestViewportViewPadsEveryLine`（同文件 `:100`，钉住"viewport 自己补齐每行"这条被 `joinColumns` 依赖的前提）、
 `TestTUI_StreamRepaintIsCoalesced` / `_NonStreamDirtIsNeverHeld` / `_TickStaysArmedWhileRepaintHeld` /
