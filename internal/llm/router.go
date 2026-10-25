@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -335,10 +336,19 @@ func NewRoutingEngine(c *Client, agent string) *RoutingEngine {
 }
 
 func (e *RoutingEngine) GenerateContent(ctx context.Context, messages []Message, tools []ToolDef, opts *CallOptions) (*Response, error) {
-	return e.resolve(ctx).GenerateContent(ctx, messages, tools, opts)
+	eng := e.resolve(ctx)
+	if eng == nil {
+		return nil, fmt.Errorf("no engine resolved for agent %q: no provider configured", e.agent)
+	}
+	return eng.GenerateContent(ctx, messages, tools, opts)
 }
 
-func (e *RoutingEngine) Model() string { return e.resolve(context.Background()).Model() }
+func (e *RoutingEngine) Model() string {
+	if eng := e.resolve(context.Background()); eng != nil {
+		return eng.Model()
+	}
+	return ""
+}
 
 func (e *RoutingEngine) CloseIdleConnections() {
 	if e.client == nil {
@@ -375,5 +385,10 @@ func ResolveTierEngine(ctx context.Context, e Engine) Engine {
 	if !ok {
 		return e
 	}
-	return re.resolve(ctx)
+	if eng := re.resolve(ctx); eng != nil {
+		return eng
+	}
+	// 解析不出来时留着 RoutingEngine 本身：它的 GenerateContent 会给出成句的错误，
+	// 而不是让循环拿着 nil 引擎在下一步崩掉。
+	return re
 }

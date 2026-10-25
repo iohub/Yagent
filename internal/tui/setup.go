@@ -510,11 +510,11 @@ func (w *setupWizard) startProbeCmd(d config.ProviderDraft) tea.Cmd {
 		if err != nil {
 			return probeResultMsg{err: err, latency: time.Since(start)}
 		}
-		text := ""
-		if len(resp.Choices) > 0 {
-			text = resp.Choices[0].Content
+		choice, choiceErr := resp.FirstChoice()
+		if choiceErr != nil {
+			return probeResultMsg{err: choiceErr, latency: time.Since(start)}
 		}
-		return probeResultMsg{text: strings.TrimSpace(text), latency: time.Since(start)}
+		return probeResultMsg{text: strings.TrimSpace(choice.Content), latency: time.Since(start)}
 	}
 	return tea.Batch(probe, tickProbe())
 }

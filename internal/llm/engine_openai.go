@@ -130,7 +130,7 @@ func (e *OpenAIEngine) GenerateContent(ctx context.Context, messages []Message, 
 		return nil, fmt.Errorf("openai chat completion: %w", err)
 	}
 
-	return e.toResponse(completion), nil
+	return e.toResponse(completion)
 }
 
 func (e *OpenAIEngine) buildParams(messages []Message, tools []ToolDef, opts *CallOptions) openai.ChatCompletionNewParams {
@@ -190,10 +190,15 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 	var content string
 	var reasoning string
 	var toolCalls []ToolCall
+	// finish 取最后一个非空 finish_reason：OpenAI 只在收尾的 chunk 上带它。
+	var finish FinishReason
 
 	for stream.Next() {
 		chunk := stream.Current()
 		if len(chunk.Choices) > 0 {
+			if fr := chunk.Choices[0].FinishReason; fr != "" {
+				finish = normalizeFinishReason(fr)
+			}
 			delta := chunk.Choices[0].Delta
 			content += delta.Content
 
@@ -242,7 +247,7 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 			if retryErr != nil {
 				return nil, fmt.Errorf("openai streaming failed and non-streaming fallback also failed: %w", retryErr)
 			}
-			return e.toResponse(completion), nil
+			return e.toResponse(completion)
 		}
 		return nil, fmt.Errorf("openai streaming: %w", err)
 	}
@@ -278,14 +283,23 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 		}
 	}
 
-	return &Response{
+	resp := &Response{
 		Choices: []Choice{{
-			Content:   content,
-			Reasoning: reasoning,
-			ToolCalls: toolCalls,
+			Content:      content,
+			Reasoning:    reasoning,
+			ToolCalls:    toolCalls,
+			FinishReason: finish,
 		}},
 		Usage: usage,
-	}, nil
+	}
+	// 什么都没产出的流不是"空回答"：循环会把空白 assistant 轮读成一次成功的收尾。
+	if content == "" && reasoning == "" && len(toolCalls) == 0 {
+		return nil, fmt.Errorf("%w: openai stream ended with finish_reason=%q", ErrEmptyCompletion, string(finish))
+	}
+	if err := validateResponse(e.model, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func (e *OpenAIEngine) convertMessages(messages []Message) []openai.ChatCompletionMessageParamUnion {
@@ -376,11 +390,12 @@ func (e *OpenAIEngine) convertTools(tools []ToolDef) []openai.ChatCompletionTool
 	return result
 }
 
-func (e *OpenAIEngine) toResponse(completion *openai.ChatCompletion) *Response {
+func (e *OpenAIEngine) toResponse(completion *openai.ChatCompletion) (*Response, error) {
 	resp := &Response{}
 	for _, choice := range completion.Choices {
 		c := Choice{
-			Content: choice.Message.Content,
+			Content:      choice.Message.Content,
+			FinishReason: normalizeFinishReason(choice.FinishReason),
 		}
 
 		// Extract tool calls
@@ -441,7 +456,10 @@ func (e *OpenAIEngine) toResponse(completion *openai.ChatCompletion) *Response {
 		}
 	}
 
-	return resp
+	if err := validateResponse(e.model, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // isRetriableError checks if the error can be retried.

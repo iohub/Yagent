@@ -128,11 +128,12 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 		return AgentResult{}, fmt.Errorf("MetaAgent LLM call failed after %d retries: %w", maxRetries, err)
 	}
 
-	if len(resp.Choices) == 0 {
-		return AgentResult{}, fmt.Errorf("MetaAgent returned empty response")
+	choice, choiceErr := resp.FirstChoice()
+	if choiceErr != nil {
+		return AgentResult{}, fmt.Errorf("MetaAgent LLM call: %w", choiceErr)
 	}
 
-	content := resp.Choices[0].Content
+	content := choice.Content
 	if content == "" {
 		return AgentResult{}, fmt.Errorf("MetaAgent returned empty content")
 	}

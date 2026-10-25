@@ -99,10 +99,11 @@ func (t *DesignTool) Execute(ctx context.Context, params map[string]interface{})
 		return nil, fmt.Errorf("design LLM call failed: %w", err)
 	}
 
-	if len(resp.Choices) > 0 {
-		return resp.Choices[0].Content, nil
+	choice, err := resp.FirstChoice()
+	if err != nil {
+		return nil, fmt.Errorf("design: %w", err)
 	}
-	return "", nil
+	return choice.ContentWithNotice(), nil
 }
 
 // getDesignSystemPrompt returns the specialized system prompt for

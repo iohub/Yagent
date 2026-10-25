@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -341,11 +342,19 @@ func TestAnthropicConvertResponse(t *testing.T) {
 		t.Fatalf("unmarshal fixture: %v", err)
 	}
 
-	resp := e.convertResponse(&ar)
+	resp, err := e.convertResponse(&ar)
+	if err != nil {
+		t.Fatalf("convertResponse: %v", err)
+	}
 	if len(resp.Choices) != 1 {
 		t.Fatalf("choices = %d, want 1", len(resp.Choices))
 	}
 	c := resp.Choices[0]
+	// 这个夹具没有 stop_reason：空串必须保持空串，它读作"不知道为何停"，
+	// 既不是 end_turn 也不是截断。
+	if c.FinishReason != "" {
+		t.Errorf("finish_reason = %q, want 空串", c.FinishReason)
+	}
 	if c.Content != "第一段第二段" {
 		t.Errorf("content = %q, want 两段 text 拼接", c.Content)
 	}
@@ -386,9 +395,126 @@ func TestAnthropicConvertResponse_EmptyToolInput(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"content":[{"type":"tool_use","id":"t","name":"thinking"}],"usage":{}}`), &ar); err != nil {
 		t.Fatalf("fixture: %v", err)
 	}
-	resp := e.convertResponse(&ar)
+	resp, err := e.convertResponse(&ar)
+	if err != nil {
+		t.Fatalf("convertResponse: %v", err)
+	}
 	if got := resp.Choices[0].ToolCalls[0].Function.Arguments; got != "{}" {
 		t.Errorf("arguments = %q, want {}", got)
+	}
+}
+
+// ---------- finish_reason / stop_reason ----------
+
+// 被 max_tokens 掐断这一件事必须能从 Choice 上读出来：正文本身没有任何迹象，
+// 循环拿不到它就以为模型说完了。
+func TestAnthropicConvertResponse_TruncationIsVisible(t *testing.T) {
+	e := anthropicEngine("http://127.0.0.1:1", config.LLMConfig{})
+	var ar anthropicResponse
+	if err := json.Unmarshal([]byte(`{"content":[{"type":"text","text":"写到一半"}],"stop_reason":"max_tokens"}`), &ar); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	resp, err := e.convertResponse(&ar)
+	if err != nil {
+		t.Fatalf("截断不是错误，正文要留给模型: %v", err)
+	}
+	c := resp.Choices[0]
+	if c.FinishReason != FinishLength || !c.FinishReason.Truncated() {
+		t.Errorf("finish_reason = %q, want length（anthropic 的 max_tokens 归一到它）", c.FinishReason)
+	}
+	if c.Content != "写到一半" {
+		t.Errorf("provider 原字节被改写: %q", c.Content)
+	}
+	if !strings.Contains(c.ContentWithNotice(), "truncated") {
+		t.Errorf("交回的正文没有截断标记: %q", c.ContentWithNotice())
+	}
+}
+
+// 拒答不是"模型回了空"：交回正文等于让 Agent 把沉默当交付。
+func TestAnthropicConvertResponse_RefusalIsError(t *testing.T) {
+	e := anthropicEngine("http://127.0.0.1:1", config.LLMConfig{})
+	var ar anthropicResponse
+	if err := json.Unmarshal([]byte(`{"content":[{"type":"text","text":""}],"stop_reason":"refusal"}`), &ar); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	if _, err := e.convertResponse(&ar); !errors.Is(err, ErrRefusedCompletion) {
+		t.Errorf("err = %v, want errors.Is(ErrRefusedCompletion)", err)
+	}
+}
+
+// 200 但一个 content block 都没有：这不是空回答，是 provider 吞掉了上游错误。
+func TestAnthropicConvertResponse_NoContentIsError(t *testing.T) {
+	e := anthropicEngine("http://127.0.0.1:1", config.LLMConfig{})
+	var ar anthropicResponse
+	if err := json.Unmarshal([]byte(`{"content":[],"stop_reason":"end_turn"}`), &ar); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	if _, err := e.convertResponse(&ar); !errors.Is(err, ErrEmptyCompletion) {
+		t.Errorf("err = %v, want errors.Is(ErrEmptyCompletion)", err)
+	}
+}
+
+// 认不出的 stop_reason 保持原样：既不猜成截断，也不报错。
+func TestAnthropicConvertResponse_UnknownStopReasonKeptVerbatim(t *testing.T) {
+	e := anthropicEngine("http://127.0.0.1:1", config.LLMConfig{})
+	var ar anthropicResponse
+	if err := json.Unmarshal([]byte(`{"content":[{"type":"text","text":"ok"}],"stop_reason":"gateway_sneezed"}`), &ar); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	resp, err := e.convertResponse(&ar)
+	if err != nil {
+		t.Fatalf("认不出的 stop_reason 不该让调用失败: %v", err)
+	}
+	if got := resp.Choices[0].FinishReason; got != FinishReason("gateway_sneezed") {
+		t.Errorf("finish_reason = %q, want 原样留着", got)
+	}
+}
+
+// 流式的 stop_reason 只在 message_delta 上；这里曾经 parse 出来就丢掉。
+func TestAnthropicStream_StopReasonReachesChoice(t *testing.T) {
+	e := anthropicEngine("http://127.0.0.1:1", config.LLMConfig{})
+	sse := strings.Join([]string{
+		"event: message_start",
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":42}}}`,
+		"",
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		"",
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"半句"}}`,
+		"",
+		"event: message_delta",
+		`data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":7}}`,
+		"",
+		"event: message_stop",
+		"data: {\"type\":\"message_stop\"}",
+		"",
+	}, "\n")
+
+	resp, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil)
+	if err != nil {
+		t.Fatalf("parseStreamResponse: %v", err)
+	}
+	if got := resp.Choices[0].FinishReason; !got.Truncated() {
+		t.Errorf("finish_reason = %q, want 归一后的 length", got)
+	}
+}
+
+// 一个 block 都没吐的流不能当成"模型答完了空串"。
+func TestAnthropicStream_NothingProducedIsError(t *testing.T) {
+	e := anthropicEngine("http://127.0.0.1:1", config.LLMConfig{})
+	sse := strings.Join([]string{
+		"event: message_start",
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":42}}}`,
+		"",
+		"event: message_delta",
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}`,
+		"",
+		"",
+	}, "\n")
+
+	if _, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil); !errors.Is(err, ErrEmptyCompletion) {
+		t.Errorf("err = %v, want errors.Is(ErrEmptyCompletion)", err)
 	}
 }
 
@@ -674,5 +800,26 @@ func TestIsRetriableHTTPStatus(t *testing.T) {
 		if got := isRetriableHTTPStatus(status); got != want {
 			t.Errorf("isRetriableHTTPStatus(%d) = %v, want %v", status, got, want)
 		}
+	}
+}
+
+// 流式的 refusal 同理：正文已经喂给 handler 了，循环拿到的仍须是错误。
+func TestAnthropicStream_RefusalIsError(t *testing.T) {
+	e := anthropicEngine("http://127.0.0.1:1", config.LLMConfig{})
+	sse := strings.Join([]string{
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		"",
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"抱歉"}}`,
+		"",
+		"event: message_delta",
+		`data: {"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":3}}`,
+		"",
+		"",
+	}, "\n")
+
+	if _, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil); !errors.Is(err, ErrRefusedCompletion) {
+		t.Errorf("err = %v, want errors.Is(ErrRefusedCompletion)", err)
 	}
 }

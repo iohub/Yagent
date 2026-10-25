@@ -48,8 +48,9 @@ func (t *MicroAgentTool) Execute(ctx context.Context, params map[string]interfac
 		return nil, fmt.Errorf("micro_agent LLM call failed: %w", err)
 	}
 
-	if len(resp.Choices) > 0 {
-		return resp.Choices[0].Content, nil
+	choice, err := resp.FirstChoice()
+	if err != nil {
+		return nil, fmt.Errorf("micro_agent: %w", err)
 	}
-	return "", nil
+	return choice.ContentWithNotice(), nil
 }

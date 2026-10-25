@@ -29,8 +29,9 @@ PENDING=(
 	# 闭包挪进 planner_rollout.go（省 8 行）和把一条三行 slog 收成一行（省 2 行），
 	# 所以行数不升反降 —— 上限随之下调。
 	# 压缩段（96 行的三档判定与动作）已抽到 planner_compress.go，657 → 572；
+	# assistant/tool 两轮消息改走 llm.Choice 的单一构造点，572 → 557。
 	# 剩下主循环 + 委派编排两段职责，仍是一次独立改动。
-	"internal/agents/director/planner_run.go:572"
+	"internal/agents/director/planner_run.go:557"
 )
 
 if [ ! -d "$TARGET_DIR" ]; then

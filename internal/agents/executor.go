@@ -656,11 +656,10 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 			llmDuration := time.Since(llmStartTime).Seconds()
 
-			if err == nil && cfg.Publisher != nil && len(resp.Choices) > 0 {
-				reasoning := resp.Choices[0].Reasoning
-				if reasoning != "" {
+			if err == nil && cfg.Publisher != nil {
+				if c, cErr := resp.FirstChoice(); cErr == nil && c.Reasoning != "" {
 					cfg.Publisher.Publish("thinking", map[string]interface{}{
-						"content": reasoning,
+						"content": c.Reasoning,
 						"model":   cfg.LLM.Model(),
 						"agent":   cfg.AgentName,
 					}, cfg.AgentName)
@@ -697,7 +696,15 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			return ExecutorResult{}, err
 		}
 
-		choice := resp.Choices[0]
+		choice, choiceErr := resp.FirstChoice()
+		if choiceErr != nil {
+			slog.Error("AgentExecutor LLM response unusable", "agent", cfg.AgentName, "error", choiceErr, "step", i)
+			llm.LogLLMError("AgentExecutor LLM response unusable",
+				"agent", cfg.AgentName, "error", choiceErr, "step", i,
+			)
+			stopKind.record("", choiceErr)
+			return ExecutorResult{}, choiceErr
+		}
 
 		var promptTokens, completionTokens, totalTokens, cacheCreationTokens, cacheReadTokens int64
 		if resp.Usage != nil {
@@ -723,6 +730,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			}
 		}
 
+		assistantMsg := choice.AssistantMessage()
+
 		if cfg.Publisher != nil {
 			metadata := map[string]interface{}{}
 			if resp.Usage != nil {
@@ -742,15 +751,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 					"estimated":         true,
 				}
 			}
-			cfg.Publisher.PublishWithMetadata("ai_response", choice.Content, cfg.AgentName, metadata)
+			cfg.Publisher.PublishWithMetadata("ai_response", assistantMsg.Content, cfg.AgentName, metadata)
 		}
 
-		assistantMsg := llm.Message{
-			Role:      llm.RoleAssistant,
-			Content:   choice.Content,
-			Reasoning: choice.Reasoning,
-			ToolCalls: choice.ToolCalls,
-		}
 		messages = append(messages, assistantMsg)
 		history = append(history, assistantMsg)
 
@@ -811,7 +814,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 				continue
 			}
 			stopKind.record(StopKindPlainTextReply, nil)
-			return ExecutorResult{Text: choice.Content, History: history}, nil
+			return ExecutorResult{Text: assistantMsg.Content, History: history}, nil
 		}
 
 		toolCalls := choice.ToolCalls
@@ -822,6 +825,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		plan := toolbatch.Plan(len(toolCalls), isParallelizable)
 
 		commitToolCall := func(tc llm.ToolCall, toolResult string, publishResultEvent bool) {
+			// 残缺参数会被工具层当成裸字符串执行，回执不点名截断的话模型只看到一条陌生的参数错误。
+			toolResult += choice.ToolCallNote(tc)
+
 			if cfg.OnToolResult != nil {
 				cfg.OnToolResult(tc.Function.Name, toolResult)
 			}

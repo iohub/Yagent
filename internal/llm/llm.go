@@ -185,8 +185,11 @@ func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message,
 	}
 
 	resp, err := l.inner.GenerateContent(ctx, messages, tools, opts)
-	if err == nil && len(resp.Choices) > 0 {
-		choice := resp.Choices[0]
+	choice, choiceErr := resp.FirstChoice()
+	if err == nil && choiceErr != nil {
+		err = choiceErr
+	}
+	if err == nil {
 		logContent := choice.Content
 		if len(choice.ToolCalls) > 0 {
 			var toolCallsLog strings.Builder
@@ -199,6 +202,7 @@ func (l *LoggingEngine) GenerateContent(ctx context.Context, messages []Message,
 			}
 			logContent += toolCallsLog.String()
 		}
+		logContent += fmt.Sprintf("\n[finish_reason: %s]", string(choice.FinishReason))
 		LogLLMContent("LLM Response", logContent)
 	} else if err != nil {
 		LogLLMError("LLM GenerateContent error",

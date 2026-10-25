@@ -291,11 +291,10 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				p.cfg.Metrics.RecordLLMDuration(time.Since(llmStartTime))
 			}
 
-			if llmErr == nil && p.cfg.Publisher != nil && len(resp.Choices) > 0 {
-				reasoning := resp.Choices[0].Reasoning
-				if reasoning != "" {
+			if llmErr == nil && p.cfg.Publisher != nil {
+				if c, cErr := resp.FirstChoice(); cErr == nil && c.Reasoning != "" {
 					_ = p.cfg.Publisher.Publish("thinking", map[string]interface{}{
-						"content": reasoning,
+						"content": c.Reasoning,
 						"model":   p.cfg.LLM.Model(),
 						"agent":   "director",
 					}, "director")
@@ -340,7 +339,12 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			return PlanResult{Steps: p.state.Step, StopReason: "llm_error"}, llmErr
 		}
 
-		choice := resp.Choices[0]
+		choice, choiceErr := resp.FirstChoice()
+		if choiceErr != nil {
+			writeAborted(choiceErr.Error(), StopKindOf(choiceErr, ctx))
+			return PlanResult{Steps: p.state.Step, StopReason: "llm_error"}, choiceErr
+		}
+		assistantMsg := choice.AssistantMessage()
 		slog.Debug("DirectorAgent LLM response", "step", i, "content", choice.Content, "tool_calls", len(choice.ToolCalls))
 
 		var promptTokens, completionTokens, totalTokens, cacheCreationTokens, cacheReadTokens int64
@@ -392,7 +396,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 					"estimated":         true,
 				}
 			}
-			_ = p.cfg.Publisher.PublishWithMetadata("ai_response", choice.Content, "director", metadata)
+			_ = p.cfg.Publisher.PublishWithMetadata("ai_response", assistantMsg.Content, "director", metadata)
 		}
 
 		if in.Mem != nil {
@@ -400,7 +404,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			if p.cfg.ConvertToolCallsFn != nil {
 				toolCallData = p.cfg.ConvertToolCallsFn(choice.ToolCalls)
 			}
-			in.Mem.AddAssistantMessage(choice.Content, toolCallData)
+			in.Mem.AddAssistantMessage(assistantMsg.Content, toolCallData)
 		}
 
 		if p.cfg.Journal != nil {
@@ -428,19 +432,8 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			}
 		}
 
-		messages = append(messages, llm.Message{
-			Role:      llm.RoleAssistant,
-			Content:   choice.Content,
-			Reasoning: choice.Reasoning,
-			ToolCalls: choice.ToolCalls,
-		})
-
-		writeDirectorRollout(llm.Message{
-			Role:      llm.RoleAssistant,
-			Content:   choice.Content,
-			Reasoning: choice.Reasoning,
-			ToolCalls: choice.ToolCalls,
-		})
+		messages = append(messages, assistantMsg)
+		writeDirectorRollout(assistantMsg)
 		if len(choice.ToolCalls) == 0 {
 			if !p.state.HasDelegated && p.state.NonDelegationPrompts < MaxNonDelegationPrompts {
 				p.state.NonDelegationPrompts++
@@ -457,7 +450,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				continue
 			}
 			writeComplete(memory.StopKindPlainText)
-			return PlanResult{Text: choice.Content, Steps: p.state.Step, StopReason: "plain_text"}, nil
+			return PlanResult{Text: assistantMsg.Content, Steps: p.state.Step, StopReason: "plain_text"}, nil
 		}
 
 		maxParallel := p.cfg.MaxParallelReadOnlyTools
@@ -514,6 +507,8 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			if out.cancelled {
 				return "cancelled"
 			}
+			// 残缺参数会被工具层当成裸字符串执行，回执不点名截断的话模型只看到一条陌生的参数错误。
+			out.result += choice.ToolCallNote(tc)
 
 			if p.cfg.Publisher != nil {
 				_ = p.cfg.Publisher.Publish("tool_call_result", map[string]interface{}{
@@ -527,19 +522,9 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				in.Mem.AddToolMessage(out.result, tc.ID)
 			}
 
-			messages = append(messages, llm.Message{
-				Role:       llm.RoleTool,
-				Content:    out.result,
-				ToolCallID: tc.ID,
-				ToolName:   tc.Function.Name,
-			})
-
-			writeDirectorRollout(llm.Message{
-				Role:       llm.RoleTool,
-				Content:    out.result,
-				ToolCallID: tc.ID,
-				ToolName:   tc.Function.Name,
-			})
+			toolMsg := llm.Message{Role: llm.RoleTool, Content: out.result, ToolCallID: tc.ID, ToolName: tc.Function.Name}
+			messages = append(messages, toolMsg)
+			writeDirectorRollout(toolMsg)
 
 			if tc.Function.Name == "agent_exit" {
 				writeComplete(memory.StopKindAgentExit)
