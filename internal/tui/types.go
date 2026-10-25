@@ -83,6 +83,12 @@ type TimelineEntry struct {
 	Duration   time.Duration    // 執行耗時（完成後設定）
 	IsError    bool             // 是否出錯
 	SubEntries []*TimelineEntry // 連續相同類型工具調用的子條目
+	// Agent 是产出这条的 Agent（事件 From）。空 = 该条来自不报身份的旧路径。
+	Agent string
+	// DelegationID 是这一条所属那轮委派的 tool_call_id（delegate_* 自己的 ID）。
+	// Director 自己的调用与委派条目本身都是空；子 Agent 的每一条都非空，
+	// 于是"这一轮里发生了什么"只能靠它归组 —— 子 Agent 的正文不进 Director 的记忆。
+	DelegationID string
 }
 
 // IsMergeableTool判定該工具是否可以被合併到前一條同類條目中。

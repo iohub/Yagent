@@ -78,6 +78,22 @@ func stringFromEventMap(m map[string]interface{}, key string) string {
 	return s
 }
 
+// addTimelineEntry 是 m.timelineEntries 唯一的追加入口。
+// 之前是七处各自 append + 手写一遍 m.timelineCacheKey = ""；漏掉那一行不报错，
+// 只留下"事件到了、浮层还停在旧内容"。
+func (m *model) addTimelineEntry(e *TimelineEntry) {
+	m.timelineEntries = append(m.timelineEntries, e)
+	m.timelineCacheKey = ""
+}
+
+// timelineCoords 把事件的归属抄进条目：谁产出的、属于哪一轮委派。
+func timelineCoords(event *messaging.MessageEvent) (agent, delegation string) {
+	if event == nil {
+		return "", ""
+	}
+	return event.From, event.DelegationID
+}
+
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	// 对话框打开时只拦住"会再弹一层对话框"的事件，其余照常消费：日志与时间线
 	// 此时并不可见，但丢弃就是永久缺失 —— 实时视图少一条，要等从历史恢复才看得到。
@@ -448,15 +464,17 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 		callID := fmt.Sprintf("llm_%s_%d", msg.event.From, msg.event.Timestamp.UnixNano())
 		entry.toolCallID = callID
 
-		m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
-			ID:        callID,
-			Kind:      TimelineKindLLMCall,
-			Timestamp: msg.event.Timestamp,
-			Status:    ToolStatusRunning,
-			Name:      "llm_call",
-			Detail:    entry.content,
+		agent, delegation := timelineCoords(msg.event)
+		m.addTimelineEntry(&TimelineEntry{
+			ID:           callID,
+			Kind:         TimelineKindLLMCall,
+			Timestamp:    msg.event.Timestamp,
+			Status:       ToolStatusRunning,
+			Name:         "llm_call",
+			Detail:       entry.content,
+			Agent:        agent,
+			DelegationID: delegation,
 		})
-		m.timelineCacheKey = ""
 
 		m.logEntries = append(m.logEntries, entry)
 		m.viewportDirty = true
@@ -469,24 +487,33 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.event.Type == "llm_call_end" {
+		// 时长先解析、先记账：llm_call_start 被总线丢掉时，配不上那一行、
+		// 日志也没得更新，但这次调用真的花了那么多时间 —— 不该因此从分布里消失。
+		var llmDur time.Duration
+		if durationRaw, ok := msg.event.Metadata["duration_seconds"]; ok {
+			if dur, ok := durationRaw.(float64); ok {
+				llmDur = time.Duration(dur * float64(time.Second))
+			}
+		}
+		m.recordLLMLatency(msg.event, msg.event.Timestamp, llmDur)
+
+		agent, delegation := timelineCoords(msg.event)
 		if idx, ok := m.llmCallActiveEntries[msg.event.From]; ok && idx >= 0 && idx < len(m.logEntries) {
 			delete(m.llmCallActiveEntries, msg.event.From)
 
 			for i := len(m.timelineEntries) - 1; i >= 0; i-- {
-				if m.timelineEntries[i].Kind == TimelineKindLLMCall && m.timelineEntries[i].Status == ToolStatusRunning {
-					var duration time.Duration
-					if durationRaw, ok := msg.event.Metadata["duration_seconds"]; ok {
-						if dur, ok := durationRaw.(float64); ok {
-							duration = time.Duration(dur * float64(time.Second))
-						}
-					}
-					m.timelineEntries[i].Status = ToolStatusSuccess
-					m.timelineEntries[i].Duration = duration
-					m.timelineEntries[i].IsError = false
+				te := m.timelineEntries[i]
+				// 按坐标配对，而不是"最后一条 running 的 LLMCall"：并行委派下
+				// A 的 llm_call_end 会关掉 B 那一行，两条流的时长就此互串。
+				if te.Kind == TimelineKindLLMCall && te.Status == ToolStatusRunning &&
+					te.Agent == agent && te.DelegationID == delegation {
+					te.Status = ToolStatusSuccess
+					te.Duration = llmDur
+					te.IsError = false
 					if errStr, ok := msg.event.Metadata["error"]; ok && errStr != "" {
-						m.timelineEntries[i].Status = ToolStatusError
-						m.timelineEntries[i].IsError = true
-						m.timelineEntries[i].Detail = fmt.Sprintf("%v", errStr)
+						te.Status = ToolStatusError
+						te.IsError = true
+						te.Detail = fmt.Sprintf("%v", errStr)
 					}
 					break
 				}
@@ -590,15 +617,17 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 			preview = preview[:80] + "..."
 		}
 
-		m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
-			ID:        callID,
-			Kind:      TimelineKindThinking,
-			Timestamp: msg.event.Timestamp,
-			Status:    ToolStatusSuccess,
-			Name:      "thinking",
-			Detail:    preview,
+		agent, delegation := timelineCoords(msg.event)
+		m.addTimelineEntry(&TimelineEntry{
+			ID:           callID,
+			Kind:         TimelineKindThinking,
+			Timestamp:    msg.event.Timestamp,
+			Status:       ToolStatusSuccess,
+			Name:         "thinking",
+			Detail:       preview,
+			Agent:        agent,
+			DelegationID: delegation,
 		})
-		m.timelineCacheKey = ""
 
 		return m, listenForEvents(m.eventCh)
 	}
@@ -631,15 +660,17 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 					from:      msg.event.From,
 					content:   fmt.Sprintf("📦 Loaded %d relevant commit(s) for context", countInt),
 				}
-				m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
-					ID:        fmt.Sprintf("ctx_%d", msg.event.Timestamp.UnixNano()),
-					Kind:      TimelineKindContextEvent,
-					Timestamp: msg.event.Timestamp,
-					Status:    ToolStatusSuccess,
-					Name:      "commit_context",
-					Detail:    fmt.Sprintf("Loaded %d commits", countInt),
+				agent, delegation := timelineCoords(msg.event)
+				m.addTimelineEntry(&TimelineEntry{
+					ID:           fmt.Sprintf("ctx_%d", msg.event.Timestamp.UnixNano()),
+					Kind:         TimelineKindContextEvent,
+					Timestamp:    msg.event.Timestamp,
+					Status:       ToolStatusSuccess,
+					Name:         "commit_context",
+					Detail:       fmt.Sprintf("Loaded %d commits", countInt),
+					Agent:        agent,
+					DelegationID: delegation,
 				})
-				m.timelineCacheKey = ""
 				m.logEntries = append(m.logEntries, entry)
 				m.viewportDirty = true
 				m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -694,15 +725,17 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				content:   fmt.Sprintf("🧠 Context compressed: %d → %d tokens (%.1f%%)", origTokens, compTokens, savedPercent),
 				isVerbose: true,
 			}
-			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
-				ID:        fmt.Sprintf("ctx_comp_%d", msg.event.Timestamp.UnixNano()),
-				Kind:      TimelineKindContextEvent,
-				Timestamp: msg.event.Timestamp,
-				Status:    ToolStatusSuccess,
-				Name:      "Context Compressed",
-				Detail:    detail,
+			agent, delegation := timelineCoords(msg.event)
+			m.addTimelineEntry(&TimelineEntry{
+				ID:           fmt.Sprintf("ctx_comp_%d", msg.event.Timestamp.UnixNano()),
+				Kind:         TimelineKindContextEvent,
+				Timestamp:    msg.event.Timestamp,
+				Status:       ToolStatusSuccess,
+				Name:         "Context Compressed",
+				Detail:       detail,
+				Agent:        agent,
+				DelegationID: delegation,
 			})
-			m.timelineCacheKey = ""
 			m.logEntries = append(m.logEntries, entry)
 			m.viewportDirty = true
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -722,16 +755,18 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				content:   fmt.Sprintf("⚡ Emergency compression: %d → %d tokens (saved %d)", origTokens, compTokens, savedTokens),
 				isVerbose: true,
 			}
-			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
-				ID:        fmt.Sprintf("ctx_emg_%d", msg.event.Timestamp.UnixNano()),
-				Kind:      TimelineKindContextEvent,
-				Timestamp: msg.event.Timestamp,
-				Status:    ToolStatusSuccess,
-				Name:      "Emergency Compression",
+			agent, delegation := timelineCoords(msg.event)
+			m.addTimelineEntry(&TimelineEntry{
+				ID:           fmt.Sprintf("ctx_emg_%d", msg.event.Timestamp.UnixNano()),
+				Kind:         TimelineKindContextEvent,
+				Timestamp:    msg.event.Timestamp,
+				Status:       ToolStatusSuccess,
+				Name:         "Emergency Compression",
+				Agent:        agent,
+				DelegationID: delegation,
 				Detail: fmt.Sprintf("Context: %d → %d tokens (saved %d)",
 					origTokens, compTokens, savedTokens),
 			})
-			m.timelineCacheKey = ""
 			m.logEntries = append(m.logEntries, entry)
 			m.viewportDirty = true
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -758,19 +793,21 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 					origTokens, compTokens, keptPlans, totalPlans, userInputs, truncated),
 				isVerbose: true,
 			}
-			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
-				ID:        fmt.Sprintf("ctx_ult_%d", msg.event.Timestamp.UnixNano()),
-				Kind:      TimelineKindContextEvent,
-				Timestamp: msg.event.Timestamp,
-				Status:    ToolStatusSuccess,
-				Name:      "Ultimate Compression",
+			agent, delegation := timelineCoords(msg.event)
+			m.addTimelineEntry(&TimelineEntry{
+				ID:           fmt.Sprintf("ctx_ult_%d", msg.event.Timestamp.UnixNano()),
+				Kind:         TimelineKindContextEvent,
+				Timestamp:    msg.event.Timestamp,
+				Status:       ToolStatusSuccess,
+				Name:         "Ultimate Compression",
+				Agent:        agent,
+				DelegationID: delegation,
 				Detail: strings.Join([]string{
 					detailText,
 					fmt.Sprintf("Context: %d → %d tokens (saved %d)", origTokens, compTokens, savedTokens),
 					fmt.Sprintf("Plans kept: %d/%d, user inputs: %d, truncated: %v", keptPlans, totalPlans, userInputs, truncated),
 				}, "\n"),
 			})
-			m.timelineCacheKey = ""
 			m.logEntries = append(m.logEntries, entry)
 			m.viewportDirty = true
 			m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
@@ -835,18 +872,23 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 							entry.Status = ToolStatusError
 						}
 						entry.Detail = extractToolSummary(toolEntry.Call.Name, toolEntry.Call.Arguments)
+						m.recordToolLatency(msg.event, callID, toolEntry.Call.Name, entry.Timestamp, entry.Duration)
 						break
 					}
 					found := false
 					for j := range entry.SubEntries {
 						if entry.SubEntries[j].ID == callID {
-							entry.SubEntries[j].Status = ToolStatusSuccess
-							entry.SubEntries[j].Duration = time.Since(entry.SubEntries[j].Timestamp)
-							entry.SubEntries[j].IsError = isError
+							sub := entry.SubEntries[j]
+							sub.Status = ToolStatusSuccess
+							sub.Duration = time.Since(sub.Timestamp)
+							sub.IsError = isError
 							if isError {
-								entry.SubEntries[j].Status = ToolStatusError
+								sub.Status = ToolStatusError
 							}
-							entry.SubEntries[j].Detail = extractToolSummary(toolEntry.Call.Name, toolEntry.Call.Arguments)
+							sub.Detail = extractToolSummary(toolEntry.Call.Name, toolEntry.Call.Arguments)
+							// 合并组里每一条都要单独进窗口：只给整组记一次的话，
+							// "近 20 次"会变成"近 20 组"，分布的分母就不是事件数了。
+							m.recordToolLatency(msg.event, callID, toolEntry.Call.Name, sub.Timestamp, sub.Duration)
 							found = true
 							break
 						}
@@ -893,18 +935,21 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 							entry.Status = ToolStatusError
 						}
 						entry.Detail = extractToolSummary(matchedEntry.Call.Name, matchedEntry.Call.Arguments)
+						m.recordToolLatency(msg.event, matchedID, matchedEntry.Call.Name, entry.Timestamp, entry.Duration)
 						break
 					}
 					found := false
 					for j := range entry.SubEntries {
 						if entry.SubEntries[j].ID == matchedID {
-							entry.SubEntries[j].Status = ToolStatusSuccess
-							entry.SubEntries[j].Duration = time.Since(entry.SubEntries[j].Timestamp)
-							entry.SubEntries[j].IsError = isError
+							sub := entry.SubEntries[j]
+							sub.Status = ToolStatusSuccess
+							sub.Duration = time.Since(sub.Timestamp)
+							sub.IsError = isError
 							if isError {
-								entry.SubEntries[j].Status = ToolStatusError
+								sub.Status = ToolStatusError
 							}
-							entry.SubEntries[j].Detail = extractToolSummary(matchedEntry.Call.Name, matchedEntry.Call.Arguments)
+							sub.Detail = extractToolSummary(matchedEntry.Call.Name, matchedEntry.Call.Arguments)
+							m.recordToolLatency(msg.event, matchedID, matchedEntry.Call.Name, sub.Timestamp, sub.Duration)
 							found = true
 							break
 						}
@@ -940,32 +985,41 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if entry.eventType == "tool_call_start" && entry.toolCallID != "" && entry.toolEntry != nil {
+		agent, delegation := timelineCoords(msg.event)
 		merged := false
 		if len(m.timelineEntries) > 0 {
 			lastEntry := m.timelineEntries[len(m.timelineEntries)-1]
+			// 合并还要求同一 Agent、同一轮委派：并行委派下两个 Coding 的 read_file
+			// 会串成同一个节点，而那两件事对"哪一轮慢"是完全不同的答案。
 			if lastEntry.Kind == TimelineKindTool &&
 				lastEntry.Name == entry.toolName &&
+				lastEntry.Agent == agent &&
+				lastEntry.DelegationID == delegation &&
 				IsMergeableTool(entry.toolName) {
 				lastEntry.SubEntries = append(lastEntry.SubEntries, &TimelineEntry{
-					ID:        entry.toolCallID,
-					Kind:      TimelineKindTool,
-					Timestamp: entry.timestamp,
-					Status:    ToolStatusRunning,
-					Name:      entry.toolName,
-					Detail:    entry.executionSummary,
+					ID:           entry.toolCallID,
+					Kind:         TimelineKindTool,
+					Timestamp:    entry.timestamp,
+					Status:       ToolStatusRunning,
+					Name:         entry.toolName,
+					Detail:       entry.executionSummary,
+					Agent:        agent,
+					DelegationID: delegation,
 				})
 				merged = true
 			}
 		}
 
 		if !merged {
-			m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
-				ID:        entry.toolCallID,
-				Kind:      TimelineKindTool,
-				Timestamp: entry.timestamp,
-				Status:    ToolStatusRunning,
-				Name:      entry.toolName,
-				Detail:    entry.executionSummary,
+			m.addTimelineEntry(&TimelineEntry{
+				ID:           entry.toolCallID,
+				Kind:         TimelineKindTool,
+				Timestamp:    entry.timestamp,
+				Status:       ToolStatusRunning,
+				Name:         entry.toolName,
+				Detail:       entry.executionSummary,
+				Agent:        agent,
+				DelegationID: delegation,
 			})
 		}
 		m.timelineCacheKey = ""
@@ -979,6 +1033,9 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) handleTaskCompleteMsg(msg taskCompleteMsg) (tea.Model, tea.Cmd) {
 	m.taskRunning = false
+	// 收尾这一刻把 total 定格（含把"正停着"那段先结算掉）。不定格的话空闲态
+	// 每秒仍在重画整段面板，而停 tick 的条件永远不满足。
+	m.freezeTotal(time.Now())
 	m.viewportDirty = true
 	// 任务结束（含取消/异常）后 tick 链可能就此停下，缓冲里的尾部文字再无机会落地。
 	m.flushStreamBuffers(0)

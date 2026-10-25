@@ -300,8 +300,8 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 ### 6.8 TUI
 
 Bubble Tea **v2**（`internal/tui`）。渲染与输入契约全部在 `internal/tui/AGENTS.md`：一次性事件监听 cmd
-（**没有重放队列**）、弹窗守卫白名单（`taskCompleteMsg` 必须透传）、布局高度契约、token 面板与 ⧉ 压缩区块
-的单一渲染器、列表/表单共用原语、键位是**替换**语义、引导向导既能独立跑也能嵌进主 TUI。
+（**没有重放队列**）、弹窗守卫白名单（`taskCompleteMsg` 必须透传）、布局高度契约（侧栏四段抢同一份
+`height-2`，让位序 token > Activity > ⧗≈⧉）、token 面板 / ⧉ 压缩 / ⧗ 耗时的单一渲染器、列表/表单共用原语、键位是**替换**语义、引导向导既能独立跑也能嵌进主 TUI。
 **测试约定**：断言精确单元格宽度而非子串；宽度矩阵 {30..240} × 终端尺寸 {20..240}。
 
 ### 6.9 HTTP

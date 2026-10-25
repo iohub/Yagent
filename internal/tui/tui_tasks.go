@@ -66,7 +66,7 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 	}
 
 	m.taskRunning = true
-	m.taskStarted = true
+	m.markTaskStarted()
 	m.commandMode = true
 	m.errMsg = ""
 	// 新一轮开始：RUN 列归零，Σ 与每 agent 的 TOTAL 保留
@@ -120,7 +120,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 
 	m.input.SetValue("")
 	m.taskRunning = true
-	m.taskStarted = true
+	m.markTaskStarted()
 	m.commandMode = true
 	m.errMsg = ""
 	// 追问同样是"新一轮"：RUN 列归零，Σ 与每 agent 的 TOTAL 保留

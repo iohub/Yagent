@@ -60,6 +60,7 @@ type sessionTab struct {
 	runTokensPerAgent        map[string]*AgentRunTokens
 	runAgent                 string
 	compress                 compressStats
+	latency                  latencyStats
 }
 
 func (m *model) initSessionTabs() {
@@ -178,6 +179,8 @@ func (m *model) saveActiveSession() {
 	tab.runAgent = m.runAgent
 	// 压缩统计是会话累计（与 Σ 同生命周期），cut 表和采样数组同样被事件原地改写，所以同 RUN 表必须深拷贝。
 	tab.compress = m.compress.clone()
+	// 耗时账同理：环数组与轮次表都被事件原地改写，共用底层数组就是两个标签页共享一份耗时。
+	tab.latency = m.latency.clone()
 
 	if m.currentTask != nil && !m.taskRunning {
 		m.saveAndFlushTaskMemory()
@@ -240,6 +243,7 @@ func (m *model) restoreSessionTab(idx int) {
 	}
 	m.runAgent = tab.runAgent
 	m.compress = tab.compress.clone()
+	m.latency = tab.latency.clone()
 
 	// viewport 尺寸必须在任务状态恢复之后才算：dashboard 占不占那一列取决于 taskRunning 与 token 用量，早算用的是上一个标签页的状态。
 	l := m.computeBodyLayout(m.bodyTotalLines())
@@ -315,6 +319,7 @@ func (m *model) clearCurrentSession() {
 	m.runTokensPerAgent = make(map[string]*AgentRunTokens)
 	m.runAgent = ""
 	m.compress = compressStats{}
+	m.latency = latencyStats{}
 	m.input.SetValue("")
 
 	m.sessionTabs[m.activeSessionIdx].title = m.generateTabTitle(m.sessionTabs[m.activeSessionIdx].id)

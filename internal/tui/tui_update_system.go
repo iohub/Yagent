@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"time"
+
 	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
@@ -41,6 +43,10 @@ func (m *model) ensureTick() tea.Cmd {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (m *model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
+	// 暂停结算要在早退之前：闸门按下时 taskRunning 仍为真，tick 不会停，
+	// 而 total 必须在这一拍就被扣住（根 AGENTS.md §11 坑 17：暂停不是取消）。
+	m.accountPause(time.Now())
+
 	// 流式节流缓冲的超时检查只有 tick 能驱动（chunk 自己到得勤，流一停就没了），
 	// 放在 idle 早退之前：落地后 viewportDirty 变 true，本轮自然会把尾巴渲染出来。
 	m.flushStreamBuffers(aiChunkFlushInterval)

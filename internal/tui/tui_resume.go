@@ -799,7 +799,7 @@ func appendRestoredToolCall(
 	appendEntry(entry)
 
 	appendRestoredTimeline(m, tc.ID, tc.Function.Name, summary,
-		entry.timestamp, status, isError, duration)
+		entry.timestamp, status, isError, duration, from)
 }
 
 func appendRestoredStandaloneResult(m *model, appendEntry func(logEntry), msg *memory.ChatMessage, prefix, from string) {
@@ -832,11 +832,30 @@ func appendRestoredStandaloneResult(m *model, appendEntry func(logEntry), msg *m
 	appendEntry(entry)
 }
 
+// appendRestoredTimeline 是恢复侧的追加入口，与实时的 addTimelineEntry 同形。
+//
+// DelegationID 一律留空：恢复读的是 Director 那一层的记忆，子 Agent 的调用在**另一个**
+// rollout 文件里，不在其中。所以恢复出来的会话有叶子时长、没有轮次归属 ——
+// 耗时面板因此按"窗口里有没有看到该委派的子事件"来决定委派算不算嵌套容器，
+// 而不是按工具名硬判（见 latency_panel.go 的 isNestedRun）。
 func appendRestoredTimeline(m *model, id, name, detail string, ts time.Time,
-	status ToolStatus, isError bool, duration time.Duration) {
+	status ToolStatus, isError bool, duration time.Duration, agent string) {
+	// 恢复的会话也要喂耗时账：只重建时间线而不记这里，⧗ 段就会在"时间线有 30 条"
+	// 的会话里永远显示空闲态 —— 测试与生产不走同一个载体的老病（根 AGENTS.md §11 坑 33）。
+	if duration > 0 {
+		m.recordLatency(latencySample{
+			id:         id,
+			label:      DisplayToolName(name),
+			dur:        duration,
+			ts:         ts,
+			agent:      agent,
+			isDelegate: isDelegationTool(name),
+		})
+	}
 	if n := len(m.timelineEntries); n > 0 {
 		last := m.timelineEntries[n-1]
-		if last.Kind == TimelineKindTool && last.Name == name && IsMergeableTool(name) {
+		if last.Kind == TimelineKindTool && last.Name == name &&
+			last.Agent == agent && IsMergeableTool(name) {
 			last.SubEntries = append(last.SubEntries, &TimelineEntry{
 				ID:        id,
 				Kind:      TimelineKindTool,
@@ -846,11 +865,13 @@ func appendRestoredTimeline(m *model, id, name, detail string, ts time.Time,
 				Detail:    detail,
 				Duration:  duration,
 				IsError:   isError,
+				Agent:     agent,
 			})
+			m.timelineCacheKey = ""
 			return
 		}
 	}
-	m.timelineEntries = append(m.timelineEntries, &TimelineEntry{
+	m.addTimelineEntry(&TimelineEntry{
 		ID:        id,
 		Kind:      TimelineKindTool,
 		Timestamp: ts,
@@ -859,6 +880,7 @@ func appendRestoredTimeline(m *model, id, name, detail string, ts time.Time,
 		Detail:    detail,
 		Duration:  duration,
 		IsError:   isError,
+		Agent:     agent,
 	})
 }
 
@@ -887,6 +909,7 @@ func resetTokenState(m *model) {
 	m.runTokensPerAgent = make(map[string]*AgentRunTokens)
 	m.runAgent = ""
 	m.compress = compressStats{}
+	m.latency = latencyStats{}
 	for k := range m.tokenUsagePerAgent {
 		delete(m.tokenUsagePerAgent, k)
 	}
@@ -899,6 +922,7 @@ func resetTokenState(m *model) {
 // 开头先清零：这是"重建"而不是"并入"，恢复流程里被调用两次也不该把统计翻倍。
 func applyRolloutCompressions(m *model, info memory.RolloutInfo) {
 	m.compress = compressStats{}
+	m.latency = latencyStats{}
 	for _, rec := range info.Compressions {
 		idx, ok := compressTierByKind(rec.Kind)
 		if !ok {
@@ -943,6 +967,9 @@ func applyRolloutRunState(m *model, info memory.RolloutInfo, agentName string) {
 		m.currentModel = info.Model
 		m.refreshContextWindow()
 	}
+	// 这是"界面已经进入有过任务的状态"的输入框边框旗标，不是一次新执行的起点 ——
+	// 所以**不要**换成 markTaskStarted()：恢复出来的会话我们没计时，
+	// ⧗ 段带子上的 total 保持 — 比编一个数诚实。
 	m.taskStarted = true
 
 	m.invalidateFooterCache()
