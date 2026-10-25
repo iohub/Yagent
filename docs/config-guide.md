@@ -414,6 +414,8 @@ Nothing in this section needs a knowledge counterpart.
 codeseek is the first built-in server; everything else comes from `[[mcp.servers]]`.
 Tools are named `mcp__<server>__<tool>` and enter the agents' tool surfaces through the
 deferred catalog (they are always Cold; the model fetches a schema with `load_tool`).
+For a worked example with the annotation-split rules and a probe script that generates the
+block, see `docs/rea-mcp-config.md`.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
