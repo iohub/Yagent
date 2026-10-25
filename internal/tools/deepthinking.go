@@ -95,10 +95,11 @@ func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interf
 		return nil, fmt.Errorf("deepthinking LLM call failed: %w", err)
 	}
 
-	if len(resp.Choices) > 0 {
-		return resp.Choices[0].Content, nil
+	choice, err := resp.FirstChoice()
+	if err != nil {
+		return nil, fmt.Errorf("deepthinking: %w", err)
 	}
-	return "", nil
+	return choice.ContentWithNotice(), nil
 }
 
 // getDeepThinkingSystemPrompt returns the specialized system prompt for deep analysis.

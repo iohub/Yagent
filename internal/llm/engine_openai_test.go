@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -617,5 +618,137 @@ func TestOpenAIEngine_ErrorBodyPropagates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Incorrect API key provided") {
 		t.Errorf("err = %v, want 带上 provider 的原文（排障全靠它）", err)
+	}
+}
+
+// ---------- finish_reason ----------
+
+// 网关把上游错误咽成一个 200 + "choices":[] 时，必须交回错误而不是空 Choices：
+// 循环下一步就是 resp.Choices[0]，那里没有判空可写第二次。
+func TestOpenAIEngine_EmptyChoicesIsError(t *testing.T) {
+	srv, _ := newFakeLLM(t, func(capturedRequest) (int, string) {
+		return 200, `{"id":"c1","object":"chat.completion","choices":[],"usage":{"prompt_tokens":3}}`
+	})
+	e := openAIEngine(srv.URL, config.LLMConfig{})
+
+	_, err := e.GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil, nil)
+	if !errors.Is(err, ErrEmptyCompletion) {
+		t.Errorf("err = %v, want errors.Is(ErrEmptyCompletion)", err)
+	}
+}
+
+// 被 max_tokens 掐断要从 Choice 上读得出来：正文里没有任何痕迹，
+// 循环拿不到它就把它当成一次说完的回复。
+func TestOpenAIEngine_TruncationReachesChoice(t *testing.T) {
+	srv, _ := newFakeLLM(t, func(capturedRequest) (int, string) {
+		return 200, `{"choices":[{"index":0,"message":{"role":"assistant","content":"写到一半"},"finish_reason":"length"}]}`
+	})
+	e := openAIEngine(srv.URL, config.LLMConfig{})
+
+	resp, err := e.GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil, nil)
+	if err != nil {
+		t.Fatalf("截断不是错误，正文要留给模型: %v", err)
+	}
+	c := resp.Choices[0]
+	if c.FinishReason != FinishLength || !c.FinishReason.Truncated() {
+		t.Errorf("finish_reason = %q, want length", c.FinishReason)
+	}
+	if c.Content != "写到一半" {
+		t.Errorf("provider 原字节被改写: %q", c.Content)
+	}
+	if !strings.Contains(c.ContentWithNotice(), "truncated") {
+		t.Errorf("交回的正文没有截断标记: %q", c.ContentWithNotice())
+	}
+}
+
+// 内容审查不是"模型回了空"：交回正文等于让 Agent 把沉默当交付。
+func TestOpenAIEngine_RefusalIsError(t *testing.T) {
+	srv, _ := newFakeLLM(t, func(capturedRequest) (int, string) {
+		return 200, `{"choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"content_filter"}]}`
+	})
+	e := openAIEngine(srv.URL, config.LLMConfig{})
+
+	_, err := e.GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil, nil)
+	if !errors.Is(err, ErrRefusedCompletion) {
+		t.Errorf("err = %v, want errors.Is(ErrRefusedCompletion)", err)
+	}
+}
+
+// 认不出的取值原样留着：既不猜成截断，也不报错。
+func TestOpenAIEngine_UnknownFinishReasonKeptVerbatim(t *testing.T) {
+	srv, _ := newFakeLLM(t, func(capturedRequest) (int, string) {
+		return 200, `{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"insufficient_system_budget"}]}`
+	})
+	e := openAIEngine(srv.URL, config.LLMConfig{})
+
+	resp, err := e.GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil, nil)
+	if err != nil {
+		t.Fatalf("认不出的 finish_reason 不该让调用失败: %v", err)
+	}
+	if got := resp.Choices[0].FinishReason; got != FinishReason("insufficient_system_budget") {
+		t.Errorf("finish_reason = %q, want 原样留着", got)
+	}
+}
+
+// 流式的 finish_reason 只在收尾那个 chunk 上带，之前整条链路没人读它。
+func TestOpenAIEngine_StreamingTruncationReachesChoice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, sseChunks(t,
+			`{"choices":[{"index":0,"delta":{"content":"半句"}}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}`,
+		))
+	}))
+	defer srv.Close()
+
+	e := openAIEngine(srv.URL, config.LLMConfig{})
+	resp, err := e.GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil,
+		&CallOptions{StreamHandler: func(context.Context, []byte) error { return nil }})
+	if err != nil {
+		t.Fatalf("GenerateContent streaming: %v", err)
+	}
+	if got := resp.Choices[0].FinishReason; !got.Truncated() {
+		t.Errorf("finish_reason = %q, want 归一后的 length", got)
+	}
+}
+
+// 一个字节都没吐的流不是"模型答完了空串"。
+func TestOpenAIEngine_StreamingNothingProducedIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, sseChunks(t,
+			`{"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":0}}`,
+		))
+	}))
+	defer srv.Close()
+
+	e := openAIEngine(srv.URL, config.LLMConfig{})
+	_, err := e.GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil,
+		&CallOptions{StreamHandler: func(context.Context, []byte) error { return nil }})
+	if !errors.Is(err, ErrEmptyCompletion) {
+		t.Errorf("err = %v, want errors.Is(ErrEmptyCompletion)", err)
+	}
+}
+
+// 流式的内容审查同样不能当成一次正常收尾：正文已经吐给 handler 了，
+// 但交回循环的那一份必须是错误。
+func TestOpenAIEngine_StreamingRefusalIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, sseChunks(t,
+			`{"choices":[{"index":0,"delta":{"content":"写到一半"}}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`,
+		))
+	}))
+	defer srv.Close()
+
+	e := openAIEngine(srv.URL, config.LLMConfig{})
+	_, err := e.GenerateContent(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil,
+		&CallOptions{StreamHandler: func(context.Context, []byte) error { return nil }})
+	if !errors.Is(err, ErrRefusedCompletion) {
+		t.Errorf("err = %v, want errors.Is(ErrRefusedCompletion)", err)
 	}
 }

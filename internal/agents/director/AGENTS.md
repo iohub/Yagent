@@ -54,7 +54,7 @@ Director 的编排内核：Planner 主循环、熔断与恢复、指标、便签
 **11. 熔断的"查询"就是那次试探，所以本包的查询点必须与回报成对。**
 `IsCircuitBreakerOpen()` 的实现是 `return !r.breaker.Allow()`（`recovery.go:74-78`），而 `Allow()`
 带着 open→half-open 迁移、half-open 只放**一个**探针。生产安全的前提是 planner 每一步都在同一次
-迭代里 查询（`planner_run.go:198`）→ 调用 → 回报（`:319` `RecordLLMSuccess` / `:324` `RecordLLMFailure`）；
+迭代里 查询（`planner_run.go:198`）→ 调用 → 回报（`:318` `RecordLLMSuccess` / `:323` `RecordLLMFailure`）；
 多加一处"只查不报"的调用点会**消费掉**那次试探。探针真的没人回报时，最坏是多等一个
 `reset_timeout`（卡住的探针会过期）而不是永久锁死。**现状要说清楚**：这条配对没有自动化闸门——
 本包用例只固化状态机语义（`TestCharacterizationRecoveryCircuitBreaker`、
@@ -63,9 +63,9 @@ Director 的编排内核：Planner 主循环、熔断与恢复、指标、便签
 
 **12. 未委派提醒是"配额 3 + 两条文案"，耗尽后以 `plain_text` 收尾而不是报错。**
 计数在每次 `Run` 开头归零（`planner_run.go:25`）——跨任务保留会让第二次任务一开口就连吃三次提醒；
-第 1 次与第 2/3 次是两条不同文案（`:448-451`），注入的是**本步的 messages** 与 rollout
-（`:453-455`），绝不写进 `ConversationMemory`（与硬约束 3 同一个理由）；配额用尽走
-`writeComplete(StopKindPlainText)` 并正常返回文本（`:459-460`），把它写成 error 的表现是上层把一次
+第 1 次与第 2/3 次是两条不同文案（`:440-446`），注入的是**本步的 messages** 与 rollout
+（`:447-449`），绝不写进 `ConversationMemory`（与硬约束 3 同一个理由）；配额用尽走
+`writeComplete(StopKindPlainText)` 并正常返回文本（`:452-453`），把它写成 error 的表现是上层把一次
 已经写完回答的收尾当成失败重做（`internal/agents/AGENTS.md` 硬约束 13 同族）。
 
 ## 入口

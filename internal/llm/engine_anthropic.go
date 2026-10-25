@@ -482,12 +482,17 @@ func (e *AnthropicEngine) parseNonStreamResponse(body io.Reader) (*Response, err
 	if err := json.NewDecoder(body).Decode(&ar); err != nil {
 		return nil, fmt.Errorf("anthropic decode response: %w", err)
 	}
-	return e.convertResponse(&ar), nil
+	return e.convertResponse(&ar)
 }
 
-func (e *AnthropicEngine) convertResponse(ar *anthropicResponse) *Response {
+func (e *AnthropicEngine) convertResponse(ar *anthropicResponse) (*Response, error) {
+	if len(ar.Content) == 0 {
+		return nil, fmt.Errorf("%w: anthropic sent no content blocks (stop_reason=%q)",
+			ErrEmptyCompletion, ar.StopReason)
+	}
+
 	resp := &Response{
-		Choices: []Choice{{}},
+		Choices: []Choice{{FinishReason: normalizeFinishReason(ar.StopReason)}},
 		Usage: &TokenUsage{
 			PromptTokens:             int64(ar.Usage.InputTokens),
 			CompletionTokens:         int64(ar.Usage.OutputTokens),
@@ -524,7 +529,10 @@ func (e *AnthropicEngine) convertResponse(ar *anthropicResponse) *Response {
 		}
 	}
 
-	return resp
+	if err := validateResponse(e.model, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // ─── SSE Stream Parsing ──────────────────────────────────────────────────────
@@ -547,6 +555,8 @@ func (e *AnthropicEngine) parseStreamResponse(ctx context.Context, body io.Reade
 		currentEvent     string
 		currentData      strings.Builder
 		finalUsage       *TokenUsage
+		// stop_reason 只出现在 message_delta 上（message_start 那份是 null）。
+		finish FinishReason
 	)
 
 	for scanner.Scan() {
@@ -661,24 +671,29 @@ func (e *AnthropicEngine) parseStreamResponse(ctx context.Context, body io.Reade
 					} `json:"delta"`
 					Usage *anthropicUsage `json:"usage"`
 				}
-				if json.Unmarshal([]byte(data), &evt) == nil && evt.Usage != nil {
-					promptTokens := int64(0)
-					if finalUsage != nil {
-						promptTokens = finalUsage.PromptTokens
+				if json.Unmarshal([]byte(data), &evt) == nil {
+					if evt.Delta.StopReason != "" {
+						finish = normalizeFinishReason(evt.Delta.StopReason)
 					}
-					finalUsage = &TokenUsage{
-						PromptTokens:     promptTokens,
-						CompletionTokens: int64(evt.Usage.OutputTokens),
-						TotalTokens:      promptTokens + int64(evt.Usage.OutputTokens),
+					if evt.Usage != nil {
+						promptTokens := int64(0)
+						if finalUsage != nil {
+							promptTokens = finalUsage.PromptTokens
+						}
+						finalUsage = &TokenUsage{
+							PromptTokens:     promptTokens,
+							CompletionTokens: int64(evt.Usage.OutputTokens),
+							TotalTokens:      promptTokens + int64(evt.Usage.OutputTokens),
+						}
+						if evt.Usage.CacheReadInputTokens > 0 {
+							finalUsage.CacheReadInputTokens = int64(evt.Usage.CacheReadInputTokens)
+						}
+						if evt.Usage.CacheCreationInputTokens > 0 {
+							finalUsage.CacheCreationInputTokens = int64(evt.Usage.CacheCreationInputTokens)
+						}
+						// Anthropic 的 input_tokens 不含 cache，TotalInputTokens = 三者之和
+						finalUsage.TotalInputTokens = promptTokens + finalUsage.CacheReadInputTokens + finalUsage.CacheCreationInputTokens
 					}
-					if evt.Usage.CacheReadInputTokens > 0 {
-						finalUsage.CacheReadInputTokens = int64(evt.Usage.CacheReadInputTokens)
-					}
-					if evt.Usage.CacheCreationInputTokens > 0 {
-						finalUsage.CacheCreationInputTokens = int64(evt.Usage.CacheCreationInputTokens)
-					}
-					// Anthropic 的 input_tokens 不含 cache，TotalInputTokens = 三者之和
-					finalUsage.TotalInputTokens = promptTokens + finalUsage.CacheReadInputTokens + finalUsage.CacheCreationInputTokens
 				}
 
 			case "content_block_stop", "message_stop":
@@ -728,14 +743,24 @@ func (e *AnthropicEngine) parseStreamResponse(ctx context.Context, body io.Reade
 		finalUsage = &TokenUsage{}
 	}
 
-	return &Response{
+	resp := &Response{
 		Choices: []Choice{{
-			Content:   contentBuilder.String(),
-			Reasoning: reasoningBuilder.String(),
-			ToolCalls: toolCalls,
+			Content:      contentBuilder.String(),
+			Reasoning:    reasoningBuilder.String(),
+			ToolCalls:    toolCalls,
+			FinishReason: finish,
 		}},
 		Usage: finalUsage,
-	}, nil
+	}
+	// 什么都没产出的流不是"空回答"：循环会把空白 assistant 轮读成一次成功的收尾。
+	choice := resp.Choices[0]
+	if choice.Content == "" && choice.Reasoning == "" && len(choice.ToolCalls) == 0 {
+		return nil, fmt.Errorf("%w: anthropic stream ended with stop_reason=%q", ErrEmptyCompletion, finish)
+	}
+	if err := validateResponse(e.model, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // ─── Error Handling ──────────────────────────────────────────────────────────
