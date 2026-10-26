@@ -21,9 +21,11 @@ import (
 // 它是测试用的 seam（与 agents.defaultToolTimeout 同理）：不改它的话每条用例都要付 2 秒。
 var runBashWaitDelay = 2 * time.Second
 
-// maxShellOutputBytes 复用整读文件的口径，不新造一个"大概这么大"的数字。
+// maxShellOutputBytes 是前台 run_bash 的输出封顶（stdout+stderr 合计）。
+// 它表达的是"排空缓冲别无限长"，与 read_file 的单次输出预算是两件事，
+// 所以这里自带字面量，不复用文件读取的常量（共用一个数字 = 改一个动另一个）。
 // 写成 var 而不是 const 是为了让用例能把上限调到几 KB —— 见 TestExecuteRunBash_OutputCapKeepsDraining。
-var maxShellOutputBytes = MaxFileSizeForEntireRead
+var maxShellOutputBytes = 10 * 1024 * 1024 // 10 MB
 
 // SystemOperationsTool 实现系统操作相关工具
 type SystemOperationsTool struct {
