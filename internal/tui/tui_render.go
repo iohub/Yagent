@@ -245,7 +245,11 @@ func (m *model) rebuildContentCache() {
 
 	contentChanged := false
 
-	if m.needFullRebuild {
+	// 两种情况都只能整段重排：显式要求全量重建，或者 contentParts 比条目还长 ——
+	// 多出来的那截是**另一批条目**的残留（从历史里恢复了一个更短的会话就是这个形状），
+	// 逐条补尾部永远修不掉它，留着它下一次排版就会按虚高的条目数去索引 logEntries。
+	// 等长与"更短"两种正常形态仍然走下面的增量路径，流式热路径不受影响。
+	if m.needFullRebuild || len(m.contentParts) > len(m.logEntries) {
 		renderAll()
 		m.needFullRebuild = false
 		for k := range m.dirtyEntryIndices {

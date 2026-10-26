@@ -568,6 +568,17 @@ func (m *model) adoptRestoredBoard(boardID, taskID string) {
 
 func applyRestoredMemory(m *model, mem *memory.ConversationMemory, taskID, projectDir, sourceLabel string) string {
 	m.logEntries = nil
+	// 正文的排版状态整份作废。contentParts / dirtyEntryIndices / body 索引都是按**上一个
+	// 会话**的条目建的：只清 logEntries 就留下"条目比渲染缓存短"的失配，而下一次排版
+	// （View 纠正视口宽度那一步）会按缓存的长度去索引 logEntries —— 恢复一个更短的历史
+	// 就是这么崩的。口径与 clearCurrentSession 一致，末尾的 buildViewportContent 负责
+	// 从空缓存整段重排，这里不需要自己渲染。
+	m.contentParts = nil
+	m.dirtyEntryIndices = make(map[int]struct{})
+	m.needFullRebuild = true
+	m.prevViewportWidth = -1 // 逼一次"宽度变了"的全量重排，不复用上一个会话的渲染缓存
+	m.body = bodyIndex{}     // 恢复的会话从"跟随尾部"起步（scrolledUp 的零值语义，见 tui_body.go）
+	m.body.forget()
 	m.timelineEntries = nil
 	m.timelineCache = ""
 	m.timelineCacheKey = ""
