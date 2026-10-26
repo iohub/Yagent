@@ -128,22 +128,13 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 
 	content := string(data)
 
-	if !strings.Contains(content, oldString) {
+	newContent, endings, errText := applyReplace(content, oldString, newString)
+	if errText != "" {
 		return map[string]interface{}{
 			"success": false,
-			"error":   "old_string not found in file",
+			"error":   errText,
 		}, nil
 	}
-
-	occurrences := strings.Count(content, oldString)
-	if occurrences > 1 {
-		return map[string]interface{}{
-			"success": false,
-			"error":   fmt.Sprintf("old_string appears %d times in file, please provide more context to make it unique", occurrences),
-		}, nil
-	}
-
-	newContent := strings.Replace(content, oldString, newString, 1)
 
 	if err := ioutil.WriteFile(fullPath, []byte(newContent), 0644); err != nil {
 		return nil, util.WrapError(ctx, err, "ExecuteReplaceBlock::WriteFile")
@@ -152,12 +143,79 @@ func (t *ReplaceBlockTool) ExecuteReplaceBlock(ctx context.Context, params map[s
 	// Generate diff between original and new content
 	diffText := diff.GenerateUnifiedDiff(filePath, content, newContent)
 
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"success": true,
 		"file":    filePath,
 		"message": "Successfully replaced block",
 		"diff":    diffText,
-	}, nil
+	}
+	if endings != "" {
+		// 动过行尾就必须看得见：不写这一行，"模型抄了带 \r 的正文、编辑却按 \n 匹配"
+		// 只能靠猜（根 AGENTS.md §11 坑 43）。
+		result["line_endings"] = endings
+	}
+	return result, nil
+}
+
+const (
+	notFoundError     = "old_string not found in file"
+	mixedEndingsError = notFoundError + " (the file has mixed line endings; old_string must match byte-for-byte)"
+)
+
+// applyReplace 做一次"要求唯一"的字面替换，返回 (新内容, 行尾记账, 错误文本)。
+//
+// 两件事分开管，因为它们是两类事故：
+//
+//	**匹配**：read_file 的正文是字节保真的，但模型仍可能把 \r 抄丢。
+//	所以一致 CRLF 的文件在精确匹配失败后，允许去掉 \r 再比一次，命中后整体还原 CRLF。
+//	混合行尾不回退，而是点名原因 —— 静默把整个文件重写成一种行尾比一次编辑失败更糟。
+//
+//	**替换内容**：精确命中不等于行尾安全。old_string 是单行时它当然命中，
+//	而 new_string 是多行 LF 文本 —— 直接写进去就在 CRLF 文件里造出混合行尾。
+//	所以一致 CRLF 的文件里，纯 LF 的 new_string 先转成 CRLF 再插入。
+func applyReplace(content, oldString, newString string) (string, string, string) {
+	crlfFile := isUniformCRLF(content)
+
+	if strings.Contains(content, oldString) {
+		if n := strings.Count(content, oldString); n > 1 {
+			return "", "", duplicateOldString(n)
+		}
+		if crlfFile && strings.Contains(newString, "\n") && !strings.Contains(newString, "\r\n") {
+			return strings.Replace(content, oldString,
+				strings.ReplaceAll(newString, "\n", "\r\n"), 1), "crlf-applied", ""
+		}
+		return strings.Replace(content, oldString, newString, 1), "", ""
+	}
+
+	if !crlfFile {
+		if strings.Contains(content, "\r\n") {
+			return "", "", mixedEndingsError
+		}
+		return "", "", notFoundError
+	}
+
+	normContent := strings.ReplaceAll(content, "\r\n", "\n")
+	normOld := strings.ReplaceAll(oldString, "\r\n", "\n")
+	switch n := strings.Count(normContent, normOld); n {
+	case 0:
+		return "", "", notFoundError + " (CRLF-normalized comparison also failed)"
+	case 1:
+	default:
+		return "", "", duplicateOldString(n)
+	}
+	// newString 里的 \r 一律先塌成 \n：最后整体转 CRLF，否则照抄来的 "\r\n" 会变成 "\r\r\n"。
+	normNew := strings.ReplaceAll(strings.ReplaceAll(newString, "\r\n", "\n"), "\r", "\n")
+	return strings.ReplaceAll(strings.Replace(normContent, normOld, normNew, 1), "\n", "\r\n"), "crlf-normalized", ""
+}
+
+// isUniformCRLF 判断行尾是不是清一色 CRLF：每个 \n 前面是 \r，且没有游离的 \r。
+func isUniformCRLF(content string) bool {
+	nl := strings.Count(content, "\n")
+	return nl > 0 && strings.Count(content, "\r\n") == nl && strings.Count(content, "\r") == nl
+}
+
+func duplicateOldString(n int) string {
+	return fmt.Sprintf("old_string appears %d times in file, please provide more context to make it unique", n)
 }
 
 // Call handles the raw input string, parsing it and calling ExecuteReplaceBlock
