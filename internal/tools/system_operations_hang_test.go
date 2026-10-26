@@ -2,8 +2,11 @@ package tools
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -161,5 +164,143 @@ func TestExecuteRunBash_OutputCapKeepsDraining(t *testing.T) {
 	if res["success"] != true {
 		t.Errorf("success = %v（管道停止排空时孩子会收 SIGPIPE，退出码就不再是 0）：%v",
 			res["success"], res["error"])
+	}
+}
+
+// pidsFromDir 读出命令自己写的 pid 清单，并给每一个挂上兜底清理。
+func pidsFromDir(t *testing.T, dir string) []int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "pids"))
+	if err != nil {
+		t.Fatalf("读不到孩子进程的 pid 清单：%v —— 命令没跑到写文件那一步，本用例没测到杀进程组", err)
+	}
+	var pids []int
+	for _, field := range strings.Fields(string(data)) {
+		pid, err := strconv.Atoi(field)
+		if err != nil {
+			t.Fatalf("pid 清单里有非数字项 %q: %v", field, err)
+		}
+		pids = append(pids, pid)
+		// 断言失败时不许把子孙留在机器上（kill 对已退出的进程是无害的 ESRCH）。
+		t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	}
+	if len(pids) == 0 {
+		t.Fatal("pid 清单是空的 —— 本用例没有被测进程")
+	}
+	return pids
+}
+
+// TestExecuteRunBash_TimeoutKillsWholeProcessGroup 钉杀组：exec 默认的取消只打得到
+// 直接子进程 bash，`make`/`node` 这些子孙会留下占端口的孤儿。
+func TestExecuteRunBash_TimeoutKillsWholeProcessGroup(t *testing.T) {
+	restoreRunBashWaitDelay(t, 200*time.Millisecond)
+	dir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	// 直接子进程卡在 wait 上（它自己不会退），所以结束只能来自超时之后的杀组。
+	res := callRunBash(t, ctx, dir, `sleep 30 & echo $! > pids; sleep 30 & echo $! >> pids; wait`)
+	if res["success"] == true {
+		t.Errorf("被超时的调用回报 success=true：%v", res)
+	}
+
+	for _, pid := range pidsFromDir(t, dir) {
+		deadline := time.Now().Add(2 * time.Second)
+		for syscall.Kill(pid, 0) == nil && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond) // 等它从进程表里消失（回收是 init 的事，不是我们的）
+		}
+		if syscall.Kill(pid, 0) == nil {
+			t.Errorf("pid %d 还活着：取消只杀到了 bash，子孙留在机器上占着端口", pid)
+		}
+	}
+}
+
+// TestExecuteRunBash_ReturnedCallSurvivesLaterCancel 是上一条方向相反的闸门：
+// 调用**已经返回**之后 executor 会立刻取消那个 toolCtx（agents/executor.go:154-155），
+// 这一次取消不许把刚放行的后台进程杀掉 —— 否则 `nohup node server &` 就永远留不下服务。
+func TestExecuteRunBash_ReturnedCallSurvivesLaterCancel(t *testing.T) {
+	restoreRunBashWaitDelay(t, 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // 兜底；真正的断言在下面这一次显式 cancel
+
+	dir := t.TempDir()
+	res := callRunBash(t, ctx, dir, `sleep 30 & echo $! > pids; echo "PID=$(cat pids)"`)
+	output, _ := res["output"].(string)
+	if !strings.HasPrefix(output, "PID=") {
+		t.Fatalf("输出里没有后台进程的 PID：%q", output)
+	}
+
+	pid := pidsFromDir(t, dir)[0]
+	cancel()
+
+	// 这里没有事件可等，所以是一段有界的"必须仍然活着"窗口：
+	// 把杀组挪到返回之后（比如塞进 defer）就会在窗口里把它打死。
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if syscall.Kill(pid, 0) != nil {
+			t.Fatal("取消之后后台进程没了：杀组跑到了调用返回之后，故意 & 出去的服务永远留不下来")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func liveGroupCount(t *testing.T) int {
+	t.Helper()
+	liveGroupsMu.Lock()
+	defer liveGroupsMu.Unlock()
+	return len(liveGroups)
+}
+
+// TestKillLiveProcessGroupsEndsInFlightCall 钉硬退出那条路：os.Exit 跳过所有 defer，
+// 登记表是杀掉在飞子进程组的唯一机会。表空了、或者登记只在某一条分支上，
+// 表现都是"用户按了两次 Ctrl+C，机器上留下一堆占端口的进程"。
+func TestKillLiveProcessGroupsEndsInFlightCall(t *testing.T) {
+	restoreRunBashWaitDelay(t, 200*time.Millisecond)
+	dir := t.TempDir()
+
+	// deadline 故意放到 30 秒：本用例要证明结束调用的是杀组，不是超时。
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	done := make(chan map[string]interface{}, 1)
+	go func() {
+		res, err := NewSystemOperationsTool(dir).ExecuteRunBash(ctx, map[string]interface{}{
+			"command":     `sleep 30 & echo $! > pids; wait`,
+			"explanation": "test",
+		})
+		if err != nil {
+			done <- nil
+			return
+		}
+		m, _ := res.(map[string]interface{})
+		done <- m
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for liveGroupCount(t) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if liveGroupCount(t) == 0 {
+		t.Fatal("在飞的前台调用没登记进进程组表：硬退出时无组可杀")
+	}
+
+	KillLiveProcessGroups()
+
+	var res map[string]interface{}
+	select {
+	case res = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("杀组之后调用没有返回")
+	}
+	if res["success"] == true {
+		t.Errorf("被硬退出杀掉的调用回报 success=true：%v", res)
+	}
+	for _, pid := range pidsFromDir(t, dir) {
+		if syscall.Kill(pid, 0) == nil {
+			t.Errorf("pid %d 还活着：KillLiveProcessGroups 没打到整个组", pid)
+		}
+	}
+	if n := liveGroupCount(t); n != 0 {
+		t.Errorf("返回之后表里还剩 %d 项：注销漏了", n)
 	}
 }
