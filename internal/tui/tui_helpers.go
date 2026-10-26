@@ -59,9 +59,33 @@ func StartTUI(taskFilePath string, ca *app.Yagent, tm *http.TaskManager, dm *dat
 	}
 
 	p := tea.NewProgram(initialModel(taskContent, ca, tm, dm, useDarkStyle, cfg, termWidth, termHeight))
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		slog.Error("TUI 运行出错", "component", "tui-helpers", "error", err)
 		os.Exit(1)
+	}
+	// 退出前取消还在跑的任务：StartTUI 返回后 main 紧接着跑 FlushAll / yagent.Close，
+	// 那时任务 ctx 还活着的话收尾是在跟一个仍在写的循环赛跑 —— 表现就是日志里那条
+	// "退出时仍有 goroutine 在跑"，而它起的子进程组也没人杀（杀组只挂在 ctx 取消上，
+	// 见 internal/tools/AGENTS.md 硬约束 17）。放在这一个出口而不是六个 tea.Quit 站点：
+	// 漏一处的表现不是崩溃，只是每次都留下一个孤儿任务。
+	if m, ok := finalModel.(*model); ok {
+		m.cancelRunningTasksOnQuit()
+	}
+}
+
+// cancelRunningTasksOnQuit 取消活动 tab 与所有后台 tab 上挂着的那次运行。
+// 重复取消同一个 ctx 无害（context.CancelFunc 是幂等的），所以不先去重。
+func (m *model) cancelRunningTasksOnQuit() {
+	tasks := make([]*http.Task, 0, len(m.sessionTabs)+1)
+	tasks = append(tasks, m.currentTask) // 活动 tab 的状态还没写回 tab 里
+	for _, tab := range m.sessionTabs {
+		tasks = append(tasks, tab.currentTask)
+	}
+	for _, task := range tasks {
+		if task != nil && task.CancelFunc != nil {
+			task.CancelFunc()
+		}
 	}
 }
 func (m *model) computeFieldWidth() int {

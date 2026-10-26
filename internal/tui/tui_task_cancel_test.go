@@ -79,3 +79,35 @@ func TestCancelledTaskReplacementStaysUnderShutdownRoot(t *testing.T) {
 		t.Fatal("取消后重建的任务 ctx 不随信号结束：它没挂在 shutdown.Root() 上")
 	}
 }
+
+// TestQuitCancelsTasksAcrossAllTabs 钉 StartTUI 出口那一次收口（tui_helpers.go）：
+// 活动 tab 的任务还没写回 tab 结构，后台 tab 的任务则只存在于 tab 里 —— 两处都要取消。
+// 漏掉的表现不是崩溃，而是"退出时仍有 goroutine 在跑"加上一个没人杀的孤儿进程组。
+func TestQuitCancelsTasksAcrossAllTabs(t *testing.T) {
+	m := chromeTestModel(t, 120, 40)
+
+	activeCtx, activeCancel := context.WithCancel(context.Background())
+	defer activeCancel()
+	m.currentTask = &http.Task{ID: "active", Status: "running", Context: activeCtx, CancelFunc: activeCancel}
+
+	otherCtx, otherCancel := context.WithCancel(context.Background())
+	defer otherCancel()
+	m.sessionTabs = append(m.sessionTabs, &sessionTab{
+		id: 99,
+		currentTask: &http.Task{
+			ID:         "other",
+			Status:     "running",
+			Context:    otherCtx,
+			CancelFunc: otherCancel,
+		},
+	})
+
+	m.cancelRunningTasksOnQuit()
+
+	if activeCtx.Err() == nil {
+		t.Error("活动 tab 的任务没被取消：FlushAll / yagent.Close 会跑在一个还在写的循环上")
+	}
+	if otherCtx.Err() == nil {
+		t.Error("后台 tab 的任务没被取消：切走之后它就只存在于 tab 里")
+	}
+}
