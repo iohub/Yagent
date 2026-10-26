@@ -119,10 +119,10 @@ tab 同一秒各 fold 一次互相覆盖（`:19-20`）。失败只返回错误�
 - `guard_test.go:51`、`gc_test.go:53`、`gc_test.go:165`（`TestSaveRevisionRollsToKeep`，钉第 15 条）、
   `store_test.go:36`、
   `prose_test.go:32`、`derive_test.go:65,128,239`、`doc_test.go:37,66`。
-- `scan_golden_test.go:82,91`：44 片 / 142 条边的自扫 golden（逐条归因写在该测试头上的注释里；
+- `scan_golden_test.go:83,92`：44 片 / 143 条边的自扫 golden（逐条归因写在该测试头上的注释里；
   2026-10-22 随知识机制删除从 45/144 变来，2026-10-23 因删掉 `internal/tui/anim` 整包从 44 片变到 43 片，
   2026-10-26 因 `cappedBuffer` 上移成 `util.CappedBuffer` 到 138 条边，又因新增 `internal/shutdown`
-  回到 44 片 / 142 条边）。
+  与 `main → tools` 回到 44 片 / 143 条边）。
   **改扫描器前先跑 `gofmt -l internal/blueprint/testdata`**——`testdata/` 是 Go 工具链的盲区，
   `go build/vet/test` 都不看它（根 AGENTS.md §11 坑 41）。
 - 端到端验收在**另一个包**：`internal/agents/e2e_blueprint_test.go:127 TestE2ERepoRunWritesBlueprintFile`
