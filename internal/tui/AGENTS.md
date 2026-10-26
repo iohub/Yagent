@@ -99,8 +99,8 @@ key 只含宽度/行高/cwd；**头部分支不许算 footer 行高**，那条�
 列表预算走 `common.ListBudget`。它们不可选择，所以**不进** `selectProbe`；但必须透传
 `taskCompleteMsg`（硬约束 2）。
 
-**8.2 斜杠补全带类型。** `skillSuggestions` 是 `[]completionItem{name,kind,desc}`，不是 `[]string`；
-内置命令与技能撞名时**内置命令胜**且只 warn 一次（`tui_completion.go`）。手打 `/name args` 直接执行技能
+**8.2 斜杠补全带类型、按类型分组。** `skillSuggestions` 是 `[]completionItem{name,kind,desc}`，不是 `[]string`；
+内置命令与技能撞名时**内置命令胜**且只 warn 一次（`tui_completion.go`）。面板分两段（命令在前，空组连组头一起不渲染），**组头行数只由 `skillSuggestionHeaderCount()` 算** —— `renderSkillSuggestions` 与 `editorBlockHeight` 都走它，写死 +2 就是第 3 条那个差一行抖动（闸门 `TestSkillSuggestionHeightMatchesRenderedLines`）。手打 `/name args` 直接执行技能
 （首个 token 精确命中才算），否则回落搜索 —— 改这条要保留 `TestTUI_SlashUnknownFallsBackToSearch`。
 
 **8.3 新对话框进按键分发要么加 `case`，要么实现 `components.InfoPanel`。**

@@ -254,31 +254,29 @@ func joinColumns(columns ...string) string {
 	return strings.Join(joined, "\n")
 }
 
-// renderSkillSuggestions 渲染技能补全列表（含末行操作提示），共 len+1 行。
+// renderSkillSuggestions 渲染斜杠补全面板（分组版）：内置命令在前、技能在后，
+// 空组连组头一起不渲染，末尾固定一行操作提示。
+// 行数 = 组头数 + 条目数 + 1，其中组头数走 m.skillSuggestionHeaderCount() ——
+// editorBlockHeight 用的是同一个函数，两处必须同步，否则 footer 算错、整屏抖动。
 func (m *model) renderSkillSuggestions() string {
 	if !m.skillAutoComplete || len(m.skillSuggestions) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(m.skillSuggestions))
-	for i, item := range m.skillSuggestions {
-		// 角标把"内置命令"与"技能"分开：两者混排且没有标记时，撞名看起来就像同一个东西。
-		badge := "[cmd]"
-		display := item.name + "  " + badge
-		if item.kind == completionSkill {
-			badge = "[skill]"
-			display = item.name + "  " + badge
-			if item.desc != "" {
-				display += " — " + item.desc
-			}
-		}
-		if i == m.skillSuggestionIdx {
-			parts = append(parts, m.skillHighlightStyle.Render("▶ "+display))
-		} else {
-			parts = append(parts, m.skillSuggestionStyle.Render("  "+display))
+
+	groups := skillCompletionGroups(m.skillSuggestions)
+	band := m.completionBandWidth()
+
+	lines := make([]string, 0, len(m.skillSuggestions)+len(groups)+1)
+	for _, group := range groups {
+		lines = append(lines, completionGroupHeader(group.kind, band))
+		nameCol := completionGroupNameCol(group.rows, band)
+		for _, row := range group.rows {
+			lines = append(lines, completionItemRow(row, nameCol, band, row.index == m.skillSuggestionIdx))
 		}
 	}
-	parts = append(parts, m.skillHintStyle.Render("Tab 切换  Enter 选择  Esc 关闭"))
-	return strings.Join(parts, "\n")
+	lines = append(lines, completionHintBar(band))
+
+	return strings.Join(lines, "\n")
 }
 
 // renderKeywordSuggestions 渲染关键词补全行（单行，横向排布）。

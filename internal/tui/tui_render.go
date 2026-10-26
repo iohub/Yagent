@@ -63,8 +63,8 @@ func (m *model) editorBlockHeight() int {
 	}
 	h := 2 + m.computeInputHeight()
 	if m.skillAutoComplete && len(m.skillSuggestions) > 0 {
-		// 每条建议一行 + 末尾一行操作提示
-		h += len(m.skillSuggestions) + 1
+		// 组头（按实际出现的组数算，只有一组时是 1 行）+ 每条建议一行 + 末尾一行操作提示。
+		h += m.skillSuggestionHeaderCount() + len(m.skillSuggestions) + 1
 	}
 	return h
 }

@@ -405,9 +405,9 @@ type model struct {
 	layoutEngine *layout.LayoutEngine
 	mouseHandler *components.ClickDetector
 
-	skillSuggestionStyle   lipgloss.Style
-	skillHighlightStyle    lipgloss.Style
-	skillHintStyle         lipgloss.Style
+	// 关键词补全的配色。斜杠补全面板不在这里：它的样式是包级常量（tui_completion.go），
+	// 因为测试夹具造的 model 不走 NewModel，样式挂在字段上就等于"生产有缩进、测试没有"，
+	// 而面板的行数契约必须由渲染它的那段代码独自提供几何（AGENTS.md §11 坑 33 同族）。
 	keywordSuggestionStyle lipgloss.Style
 	keywordHighlightStyle  lipgloss.Style
 
@@ -695,16 +695,6 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 		contextWindow:   contextWindowFromCfg(cfg, initProvider),
 		autoRouting:     initAutoRouting,
 
-		skillSuggestionStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245")).
-			PaddingLeft(4),
-		skillHighlightStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("39")).
-			Bold(true).
-			PaddingLeft(4),
-		skillHintStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			PaddingLeft(4),
 		keywordSuggestionStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("243")).
 			PaddingLeft(1),
