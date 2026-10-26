@@ -75,7 +75,8 @@ func BuildIndex(boardID string, opts IndexOptions) (string, int, error) {
 		return "", 0, nil
 	}
 
-	// 文件名形如 20060102T150405Z_<rand4>.md ⇒ 字典序即时间序。
+	// 文件名形如 20060102T150405Z_<rand4>-<pid>-<seq6>.md ⇒ 字典序即时间序
+	// （时间戳在最前，序号定宽零填充，同进程内还兼作同秒内的写入顺序）。
 	// 所以先只按文件名排序，最后仅 decode 最新的 maxNotes 个（不像 ListNotes 那样全读进内存）。
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].name > candidates[j].name
