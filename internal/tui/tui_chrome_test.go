@@ -634,6 +634,17 @@ func TestView_ExactHeightWithPanels(t *testing.T) {
 			m.errMsg = "project dir is not writable"
 			m.setInfoMsg("cannot switch model while running")
 		}},
+		// 分组版斜杠补全面板：两组都在 → 两行组头 + 条目 + 提示行。
+		// 这里的高度契约与 renderSkillSuggestions 的实际行数必须对得上，
+		// 否则整屏行数就不是 sz.h（AGENTS.md 硬约束 3）。
+		{"slash-completion", func(m *model) {
+			m.skillAutoComplete = true
+			m.skillSuggestions = []completionItem{
+				{name: "resume", kind: completionCmd, desc: "恢复会话"},
+				{name: "history", kind: completionCmd, desc: "浏览历史任务"},
+				{name: "pdf-split", kind: completionSkill, desc: "按页拆分 PDF"},
+			}
+		}},
 	}
 
 	for _, sz := range []struct{ w, h int }{{100, 34}, {120, 40}, {160, 50}} {
