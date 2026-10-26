@@ -56,6 +56,12 @@ import (
 // 全仓零 import、零测试文件，包内 15 个声明没有一条被调用过（`internal/tui/setup.go` 与
 // `setup_screens.go` 的注释就是当时拒绝接线的记录）。它只 import 标准库与 bubbletea，
 // 也没有人 import 它，所以边的账不动，只有片数 −1。
+//
+// 2026-10-26 第六轮修订：片数不变，边数 137 → 138。来源是 run_bash 卡死的修复
+// （docs/run-bash-hang-fix.md）：browserctl 的 cappedBuffer 上移成 `internal/util.CappedBuffer`，
+// 于是多出一条以前不存在的模块级边 —— 两条同形实现合成一条，账上就是 +1 条依赖、−0 片。
+//
+//	internal/browserctl → internal/util
 func TestScanSelfGolden(t *testing.T) {
 	snap, err := Scan("../..", DefaultOptions()) // 测试 CWD 是 internal/blueprint
 	if err != nil {
@@ -74,8 +80,8 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
-	if out != 137 || in != 137 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 137/137 —— 形状变了，先确认变化来源", out, in)
+	if out != 138 || in != 138 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 138/138 —— 形状变了，先确认变化来源", out, in)
 	}
 	// 排序不变量：Leaves 按 Dir 排序（确定性的一部分）。
 	for i := 1; i < len(snap.Leaves); i++ {
