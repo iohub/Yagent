@@ -9,11 +9,14 @@ gin REST + melody WebSocket + `TaskManager` 的任务生命周期。不负责暂
 
 ## 硬约束
 
-**1. 每个建任务 ctx 的地方都必须走 `NewTaskContext`**（`task_gate.go:8-30`）。闸门与并发域
+**1. 每个建任务 ctx 的地方都必须走 `NewTaskContext`**（`task_gate.go:33`）。闸门与并发域
 **只挂在 ctx 上、不在结构体里另存一份**：`Task.Gate()` 是从 ctx 读回来的，`supervise.From(ctx)` 同理。
 两处各存一份的话，任何"换了 ctx 忘了换闸门"的地方都会让 `/pause` 停在一个没人在等的闸门上——
 那条路径没有报错，只是什么都不发生。漏用 `NewTaskContext` 不会静默失败（`/pause` 会拒绝并说明），
 但表现是"这一条路径上的任务从来停不了"，而它正是最常被新增的那条路径。
+根是 `shutdown.Root()`（`:34`）：一次 SIGINT/SIGTERM 就取消这里建出的**每一个**任务 ctx，
+闸门与任务域跟着走。没装过信号处理器时 `Root()` 就是 `context.Background()`，
+所以测试与库用法拿到的仍是旧行为——这条等价关系由 `task_shutdown_test.go:17` 发真信号钉住。
 
 **2. 续跑分支换 ctx 就是换闸门**（`server.go:244-247`）：旧闸门属于已经结束的那一轮，
 留着只会停错对象。
@@ -57,6 +60,8 @@ gin REST + melody WebSocket + `TaskManager` 的任务生命周期。不负责暂
 `task_pause_test.go:37 TestTaskContextCarriesSuperviseDomain`（两条任务共用一条域即红）、
 `:69 TestTaskContextCarriesGate`（改成结构体另存一份即红）、`:99`、`:137 TestPauseContinueRoundTrip`、
 `:182 TestContinueRefusesCancelledWhilePaused`；
+`task_shutdown_test.go:17 TestSignalCancelsTaskContext`（给测试进程发**真** SIGTERM——处理器已装，
+所以进程不会被打死；把 `NewTaskContext` 的根换回 `context.Background()` 即红）；
 `task_manager_concurrency_test.go:46 TestSlowSocketDoesNotBlockTaskManager`、
 `:93 TestPauseBroadcastDoesNotHoldTaskManagerLock`、`:136`。
 

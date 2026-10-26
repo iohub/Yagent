@@ -1,8 +1,7 @@
 # internal/tui — Bubble Tea v2 界面
 
 > 范围：本目录内不可派生的约束。全局见仓库根 `AGENTS.md` §6.8。
-> **这里没有任何脚本守卫**（九把 `check_*.sh` 只覆盖依赖方向、裸 go、原子写、文件行数、测试卫生），
-> 所以 TUI 的全部不变量只由代码注释 + 渲染/尺寸矩阵测试钉住。
+> **这里没有专属守卫**（`check_*.sh` 共十一把，管的是依赖方向、裸 go、原子写、文件行数、测试卫生），所以 TUI 的全部不变量只由代码注释 + 渲染/尺寸矩阵测试钉住。
 
 ## 边界
 
@@ -216,6 +215,7 @@ quit 挪走了，ctrl+c 仍退程序，而且默认键永远释放不掉。抢�
 `/resume` 恢复链路的闸门在 `tui_resume_restore_test.go`（`TestApplyRestoredMemory_EntryShapeMatchesLivePath:85`
 与 `_RenderParityWithLivePath:443`：恢复出的 timeline 条目必须与实时事件构造的条目同名、同渲染，
 一次工具调用只产一条条目）。
+退出收口在 `tui_helpers.go:73,79`：`p.Run()` 返回之后必须取消**每个 tab** 上还挂着的那次运行（闸门 `TestQuitCancelsTasksAcrossAllTabs`，`tui_task_cancel_test.go:86`）——TUI 里 Ctrl+C 是按键不是信号，漏掉的表现是 main 的 `FlushAll`/`Close` 跑在一个还活着的循环上 + 一个没人杀的进程组（杀组只挂在 ctx 取消上，见 `internal/tools/AGENTS.md` 硬约束 17）。
 搜索高亮绕开 `viewport.SetHighlights` 的那个选择由 `TestSearch_StripANSIBeforeMatching`
 （`tui_chrome_test.go:393`）钉住（钉第 3 条）。
 向导侧 `TestWizardRequiredGroupMatchesValidator`（`setup_test.go:438`）**双向**钉"表单必填集合 ==

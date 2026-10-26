@@ -32,7 +32,7 @@ lsof -p 79808:  1 PIPE ->0x62b2…   2 PIPE ->0x62b2…    # 握着 Go 在读的
 三段，互相独立，必须分开修：
 
 **(1) `Wait()` 的等待条件里含"管道 EOF"，而 EOF 由孙进程决定。**
-`is_background: false` 走 `internal/tools/system_operations.go:64-67` 的
+`is_background: false` 走当时的 `internal/tools/system_operations.go:64-67`（**修复前坐标**，现在那段在 `:81-112`）的
 `exec.CommandContext` + `CombinedOutput()`。`&` 的作用域是整个 `cd … && nohup node …` 列表，
 被后台化的是那个 bash 子 shell，它在 `waitpid` 一个常驻服务。直接子进程打完 `echo` 就退了，
 但管道写端仍被子 shell（以及 node）持有 → `Wait()` 里的 I/O 拷贝 goroutine 永远等不到 EOF。
@@ -76,7 +76,8 @@ Go 的 `exec` 只在"ctx 结束时进程还没退"时才调 `Cancel`/kill。这�
 var runBashWaitDelay = 2 * time.Second
 
 // 与"一次工具结果的体量上限"同源，不新造数字（internal/tools/AGENTS.md 硬约束 14）。
-const maxShellOutputBytes = MaxFileSizeForEntireRead
+// 实建写成 var 而不是 const：用例要把上限调到几 KB 才能测到"到顶之后继续排空"。
+var maxShellOutputBytes = MaxFileSizeForEntireRead
 
 // 前台执行
 cmd := exec.CommandContext(ctx, "bash", "-c", command)
@@ -128,10 +129,10 @@ default:
 
 ### `CappedBuffer` 放在哪
 
-`internal/browserctl/spawn.go:88-109` 已经有一份同形实现（`cappedBuffer`：到顶后**继续接受写入**，
-这样管道不会被写满、子进程不会反过来阻塞；上限常数是 `spawnHardCap`，用在 `:58-59`）。
+`internal/browserctl/spawn.go` 原来那份同形实现（`cappedBuffer`：到顶后**继续接受写入**，
+这样管道不会被写满、子进程不会反过来阻塞；上限常数 `spawnHardCap` 在 `:14`，用在 `:59-60`）。
 两份同形实现按 §9.2 的纪律必须各自有输入进聚合测试，所以**上移到 `internal/util/cappedbuffer.go`**
-（导出 `CappedBuffer{Max}` + `String()` + `Over()`；今天只有 `String()` 和一个私有 `over` 字段，
+（导出 `CappedBuffer{Max}` + `String()` + `Over()`；当时那份只有 `String()` 和一个私有 `over` 字段，
 `Over()` 是新增的读方法），browserctl 改成用它、`spawnHardCap` 留在原处不动——
 util 是叶子包，tools 与 browserctl 都能 import。
 
@@ -209,7 +210,7 @@ func Root() context.Context
 
 ### 4.3 `run_bash` 两个分支都 `Setpgid`
 
-前台分支加 §3 那套 + `Cancel: kill(-pgid, SIGKILL)`；后台分支（`system_operations.go:38`）
+前台分支加 §3 那套 + `Cancel: kill(-pgid, SIGKILL)`；后台分支（`system_operations.go:51`）
 也加 `Setpgid`，让 daemon 真的独立于终端——现有注释已经声明"后台命令的寿命比这次委派长"，
 但今天它和 yagent 同组，终端信号会带走它，那句话没有机制保证。
 
@@ -243,7 +244,7 @@ func Root() context.Context
    并说明前台调用在超时时会被整组终止。改描述不改条目数（仍 50 条），
    `tool_surfaces.golden` 里没有 description（实测 `grep -c description` = 0），**不触发 golden 重写**；
    代价是 provider 侧前缀缓存失效一次（§5.1）。
-2. **`internal/browserctl/spawn.go:53`** 同族：`cmd.Stdout = writer` 同样是"管道 + 拷贝 goroutine"，
+2. **`internal/browserctl/spawn.go:54`** 同族：`cmd.Stdout = writer` 同样是"管道 + 拷贝 goroutine"，
    同样没有 `WaitDelay`、没有 `Setpgid`。它的子进程是会退出的 CLI，风险低，但形状一样。
    P0 把 `CappedBuffer` 上移之后，这里补 `WaitDelay` 是 1 行。**做完 P0 再决定，不要一次改两处。**
 3. **`internal/tui/tui_fzf.go:83,111`**：`find` / `fzf` 完全没有 ctx 也没有超时。死挂载点上
@@ -296,7 +297,7 @@ foreground success / foreground failure / background start，外加一个 `termi
 所以这三条是新增覆盖而不是搬运；`internal/browserctl` 那五个测试文件经 `Spawn` 间接用到它，
 上移之后必须照旧绿。
 
-`internal/shutdown` 侧（用例一律走 §4.1 的 notify seam，**不许给测试进程发真信号**）：
+`internal/shutdown` 侧（本包的用例走 §4.1 的 seam；**跨包的两条端到端例外**，见下表下方）：
 
 | 用例 | 钉住什么 | 变异 |
 |------|----------|------|
@@ -306,6 +307,14 @@ foreground success / foreground failure / background start，外加一个 `termi
 | `TestNewTaskContextDerivesFromShutdownRoot`（在 `internal/http`） | root 取消 → 任务 ctx 取消，且 `Task.Gate()` 仍从同一个 ctx 读回 | 改回 `context.Background()` → 红 |
 | `TestCancelledTaskReplacementStaysUnderRoot`（在 `internal/tui`） | 取消后重建的那个 ctx 也在 root 之下、且带暂停闸门（钉住 §4.2 第三点） | 留着 `WithCancel(context.Background())` → 红 |
 | `TestQuitCancelsRunningTask`（在 `internal/tui`） | 任务在跑时 quit → 该任务的 cancel 被调用 | 去掉 §4.4 那一行 → 红 |
+
+`TestStopRetiresWatcherAndRestoresRoot` 还多钉了一条方案里没写的：收尾函数把 `Root()` 换回
+装之前那一份，否则测试与"再装一次"会互相踩残骸。
+
+**跨包的两条端到端发的是真 `SIGTERM`**（`syscall.Kill(getpid(), …)`）而不是 seam：
+`signalSeam` 是包内私有，跨包注入不了；而这条链真正要证的恰好是"处理器已装 + 根换对了"，
+用假信号就只能测到夹具。处理器在，所以进程不会被打死；两个包都没有 `t.Parallel()` 用例，
+信号不会波及并行的别人。变异验证过：根换回 `context.Background()` 各自当场红。
 
 `TestExecuteRunBash_ReturnedCallSurvivesLaterCancel` 与
 `TestExecuteRunBash_TimeoutKillsWholeProcessGroup` 是一对方向相反的闸门：
@@ -367,6 +376,34 @@ foreground success / foreground failure / background start，外加一个 `termi
    两处 "45 条" → 46、以及根文件的删行/抬棘轮决定。
 
 P2 六条各自单独开，不要塞进这个分支。
+
+## 11. 实施记录（2026-10-26，分支 `fix/run-bash-hang`）
+
+每个 commit 都过 `bash scripts/check_all.sh`（十一把守卫 + 全量单测），
+改到的包另跑 `go test -race`（tools / shutdown / http / util / browserctl）。
+
+| commit | 内容 | 与方案的差异 |
+|--------|------|--------------|
+| 1 | `util.CappedBuffer` 上移 + browserctl 改用 + 3 条用例 | browserctl 那份今天**零用例**，所以这三条是新增覆盖而不是搬运；自扫 golden 137→138 |
+| 2 | P0：`WaitDelay` + capped 输出 + 四类回执 + 4 条用例 + `internal/tools` 硬约束 16 | `maxShellOutputBytes` 写成 `var` seam（用例要能把上限调小）；回执文案用英文（工具层→模型的用户可见串） |
+| 3 | `internal/shutdown` + 第十一把守卫 + 接线 + 5 条用例 | **多一个落点**：`runPrompt` 里那句 `os.Exit(1)` 本来就跳过所有 defer——"信号来了收尾不跑"在 `--prompt` 上有两个原因，改成 `os.Exit(promptOnce(…))` 才让 §4.1 的承诺成立。另：`Install` 返回收尾函数并把 `Root()` 还原（方案没写，测试隔离需要） |
+| 4 | 两分支 `Setpgid` + 前台杀组 + `liveGroups` + 硬退出钩子 + 3 条用例（含方向相反的一对） | 自扫 golden 再 +1：`main → tools`（把硬退出钩子传进去） |
+| 5 | TUI 退出收口：`p.Run()` 返回后取消**每个 tab** 的任务 | 落点选在 StartTUI 的单一出口，而不是六个 `tea.Quit` 站点各补一次。**代价如实说**：那一行接线本身没有闸门（方法级有），删掉它测试不会红——记在这里，不在 AGENTS.md 里假装钉住了 |
+| 6 | 文档与棘轮结算 | **没有抬任何 PENDING 数字**：三处逐行换置——根 §5.1 一段 4→3 行、根 §9.2 棘轮注 3→2 行、`internal/tui` 头部"九把守卫"那句 2→1 行（顺手把数字改对成十一把）。结算后：根 608/608、tui 226/226、导览 199/200、`internal/tools` 140/200、`internal/http` 69/200 |
+
+新增守卫 `scripts/check_shutdown_leaf.sh`（只准标准库 + `supervise`）已接进 `check_all.sh`，
+`./internal/shutdown/` 同时进了 `RACE_PKGS`。
+
+变异验证：去掉 `WaitDelay`、回吐裸 `err.Error()`、合并超时与取消的文案、截断不记账、
+去掉 `Setpgid`、不登记、不注销、把杀组挪到返回之后、根换回 `Background`（http 与 tui 各一次）、
+第一次信号不取消 root、shutdown 里 import 业务包（打守卫）、不取消活动 tab 的任务、
+不取消后台 tab 的任务 —— 十四条全部当场红，随后无条件还原。
+
+未做（§5 那六条 P2，另开）：`is_background` 描述改写、browserctl 的 `WaitDelay`、
+`fzf`/`find` 没有超时、授权等待吃掉工具预算、HTTP 端口优雅停机、codeseek 进程组。
+
+**还欠一次真终端验收**（§9 的第 3-5 项，只有你能跑）：TUI 里复跑那条 `nohup … &`、
+`--prompt` 下 `kill -2` / `kill -15` / 连按两次、以及 TUI 任务在跑时退出看是否还留 WARN。
 
 ## 附：探针程序
 

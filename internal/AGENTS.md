@@ -143,6 +143,11 @@ failures（`:119-125`）。`SetLastFailure`（`:127-132`）注释写明"用于�
 两条使用纪律（批次仍用本地 WaitGroup、执行体不进自己的域）见 `internal/agents/AGENTS.md` 与
 `internal/http/AGENTS.md`。
 
+## shutdown — 信号只翻译成一次 ctx 取消
+
+`Install` 必须在第一个任务 ctx 派生之前（`main.go` 三个入口）：漏了不报错，只是"信号来了这条任务不停"。第一次取消 root；第二次先跑 `OnHardExit` 再按 128+signum 退出——`os.Exit` 跳过所有 defer，杀我们自己起的进程组只有这一次机会。
+返回的收尾函数只摘处理器并退掉那条 goroutine（不退则每次正常退出都会在 `supervise.Root().Drain` 里多报一条泄漏），它**不**取消 root；用例走 `signalSeam`/`exitSeam` 注入，别给测试进程发真信号。
+
 ## artifact — ID 形态是安全边界
 
 `^\d{8}-\d{6}-[0-9a-f]{8}$` 在 `Load` **和** `write` 两处强校验防路径穿越（`internal/artifact/store.go:20-22,113-118,147-150`）；
