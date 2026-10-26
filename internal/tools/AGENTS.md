@@ -88,6 +88,18 @@ sha256 前 8 字节（`adapter.go:147-159`）。顺序漂走的症状不是崩�
 真 rg 只在 release 构建进目录。改 `dist/` 下产物必须 `git add -f dist/...`
 （`dist/` 整体被 gitignore，漏加的表现是 `go:embed` 编不过或永远分发旧数据）。
 
+**16. 前台 `run_bash` 的等待必须有界，且四类结束方式各有回执。** `CombinedOutput` 的等待条件里
+含"管道 EOF"，而 EOF 由**子孙进程**决定：`cmd &` / `nohup … &` 时直接子进程打完 `echo` 就退了，
+Go 的 ctx 看门狗从此不再触发 `Cancel`（它只管"进程还活着时 ctx 结束"），于是工具超时、`activity`
+的 idle/total、用户取消**全部打在空气上**——2026-10-26 那次事故把整条委派卡到手工 kill 为止。
+唯一解开这道等待的是 `cmd.WaitDelay`（`system_operations.go:82`，seam 是 `runBashWaitDelay:19`）。
+同一分支不许直接回吐 `runErr.Error()`：超时时它长这样 `"signal: killed"`，模型看不出"该用
+is_background"和"命令自己失败了"的区别，所以四类出口在 `:90-110` 各写各的
+（成功 / `ErrWaitDelay` + ProcessState 里的真 exit code + `note:116` / 超时或取消 / 非零退出）。
+输出封顶复用 `MaxFileSizeForEntireRead`（`maxShellOutputBytes:23`），writer 到顶后**继续排空**——
+返回错误会让孩子收 SIGPIPE，把"输出太大"变成"命令失败"（`internal/util/cappedbuffer.go:5-7`）。
+**根 AGENTS.md §11 坑 46**。后台分支不受影响：它根本不接管道。
+
 ## 入口
 
 `surface.go`（装配与降级）、`adapter.go`（`Call()` 的顺序：JSON 解析 → 边界检查 → 授权 → 执行）、
@@ -104,3 +116,8 @@ sha256 前 8 字节（`adapter.go:147-159`）。顺序漂走的症状不是崩�
 - 授权回路整链在 `internal/agents/e2e_authorization_test.go:270,326,361,391,415,480`
   （批准执行 / 拒绝回灌给模型 / 会话级免问 / 工作区内不问 / 忽略错配 request_id / 取消解开阻塞的工具），
   用的是**真实** dispatcher 与真实 `WorkspaceGuard`。
+- 第 16 条的四条闸门在 `system_operations_hang_test.go:48,107,126,149`：去掉 `cmd.WaitDelay`、
+  把裸 `err.Error()` 交回模型、把超时与取消合并成一句文案、截断不记账——**都做过变异，各自当场红**。
+  计时走 `runBashWaitDelay` 与 `maxShellOutputBytes` 两个 seam，用例里没有 `time.Sleep` 等真实超时。
+- `TestExecuteRunBash`（`system_operations_test.go:11`）是这条改动前的行为基线：
+  `foreground success`/`foreground failure` 断言的是**精确**输出，改回执形状时它会先叫。
