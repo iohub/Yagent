@@ -1,7 +1,7 @@
 [
   {
     "name": "read_file",
-    "description": "Read file by line range (1-indexed) or entire file. LARGE FILE PROTECTION: (1) Files > 500MB — refused, use grep first. (2) Files > 10MB — should_read_entire_file=true blocked, use line ranges. (3) Entire reads capped at 1000 lines / 10KB (excess truncated, truncated=true). (4) Files > 2MB trigger warning. Response: content, lines, file_size_bytes, total_lines, truncated, warning, read_mode; range reads also add start_line, end_line, lines_before_range, lines_after_range. ALWAYS check file_size_bytes and total_lines before further reads. Max 1000 lines/call for range reads. should_read_entire_file=true only for files < 2MB, < 1000 lines. For large files, use start_line_one_indexed + end_line_one_indexed_inclusive to paginate. If truncated=true, read remaining with line ranges.",
+    "description": "Read a text file line by line. One call returns min(1500 lines, 50KB) starting at `start_line` — that covers a whole typical source file, so prefer ONE broad read over many narrow ones. There is no whole-file flag: omit start_line/max_lines to read from the top. Response: content (byte-faithful, CRLF kept), lines, start_line, end_line, total_lines, lines_before_range, lines_after_range, file_size_bytes, truncated, warning. `truncated` means this window was cut short and `warning` names the next start_line; anything beyond the window is counted in lines_after_range. Refused with an error+suggestion: files over 500MB (use search_by_regex first) and binary files (NUL byte in the first 8KB).",
     "parameters": {
       "type": "object",
       "properties": {
@@ -9,17 +9,13 @@
           "type": "string",
           "description": "File path to read (relative or absolute)."
         },
-        "start_line_one_indexed": {
+        "start_line": {
           "type": "integer",
-          "description": "1-indexed start line (inclusive). Required when should_read_entire_file=false. Default: 1."
+          "description": "1-indexed line to start at (inclusive). Values below 1 are treated as 1. Default: 1."
         },
-        "end_line_one_indexed_inclusive": {
+        "max_lines": {
           "type": "integer",
-          "description": "1-indexed end line (inclusive). Max 1000 lines from start_line. Required when should_read_entire_file=false. Default: start_line + 999."
-        },
-        "should_read_entire_file": {
-          "type": "boolean",
-          "description": "Read entire file. BLOCKED for > 10MB files. Capped at 1000 lines / 10KB. Only for < 2MB, < 1000 line files. Default: false."
+          "description": "Maximum lines to return, clamped to 1500. Default: 1500 (the whole line budget)."
         },
         "explanation": {
           "type": "string",
@@ -27,10 +23,7 @@
         }
       },
       "required": [
-        "target_file",
-        "should_read_entire_file",
-        "start_line_one_indexed",
-        "end_line_one_indexed_inclusive"
+        "target_file"
       ]
     }
   },

@@ -115,28 +115,26 @@ Consequences for you:
   * **Boundary**: `deepthinking` = reactive deep analysis for failures/stuck situations; `design` = proactive solution design BEFORE coding.
 
 ## Large File Safety
-`read_file` enforces strict protections:
+`read_file` returns `min(1500 lines, 50KB)` per call — that covers a whole typical source file, so **one broad read beats several narrow ones** (every extra call re-sends the entire context).
 
 ### Before Reading
-1. **Start small**: Read lines 1-50 to understand structure and size.
-2. **Check metadata**: After every call, examine `file_size_bytes`, `total_lines`, `truncated`.
-3. **grep first**: For files >2MB, use `search_by_regex` or `semantic_search` to find line numbers.
+1. **Read it, don't sample it**: `{"target_file": "path"}` gives you the top of the file up to the budget.
+2. **Check metadata**: after every call, examine `file_size_bytes`, `total_lines`, `truncated`.
+3. **grep first**: for files with tens of thousands of lines, use `search_by_regex` or `semantic_search` to find the line numbers, then read a window.
 
 ### Reading Strategy
-- **Range reads by default**: `should_read_entire_file=false` + `start_line_one_indexed` + `end_line_one_indexed_inclusive`.
-- **250 lines max per call**; paginate (e.g., [1,250], [251,500], [501,750], [751,1000]).
-- **Check `lines_after_range`** to plan further reads.
-- If `should_read_entire_file` errors (file >10MB), switch to line ranges immediately.
+- **No mode flag to choose** — `start_line` (+ optional `max_lines`) is the only way to go deeper.
+- **A window you asked for is a window you got**: `truncated` is only set when a budget cut the read, not merely because the file continues; use `lines_after_range` to plan further reads.
 
 ### Key Flags
-- **`truncated: true`**: More content — continue with `start_line_one_indexed = returned_lines + 1`.
-- **`warning`**: File exceeds 2MB soft limit — be conservative.
+- **`truncated: true`**: content was withheld — continue with the `start_line` named in `warning`.
+- **`warning`**: pagination hint, plus a mojibake advisory when the bytes aren't valid UTF-8.
 - **`error` with `suggestion`**: Follow the suggestion exactly.
+- **Line endings are preserved**: `content` is byte-faithful, so a CRLF file shows `\r` at end of each line. Copy `old_string` from `content` verbatim — including that `\r`.
 
 ### Blocked
 - **>500MB**: Refused entirely — use grep/search.
-- **>10MB with `should_read_entire_file=true`**: Blocked — use line ranges.
-- **Entire read cap**: Max 1000 lines / 10KB content.
+- **Binary** (NUL byte in the first 8KB): Refused — search the text instead.
 
 ## Handoff & Prior Findings
 

@@ -132,7 +132,7 @@ func TestE2ERepoRunWritesBlueprintFile(t *testing.T) {
 
 	engine := newScripted(map[string][]scriptStep{"repo": {
 		// 第一步：真读 internal/a/a.go —— 这条读就是后面那张提交唯一合法的证据。
-		toolCallStep("read_file", map[string]interface{}{"target_file": "internal/a/a.go", "should_read_entire_file": true}),
+		toolCallStep("read_file", map[string]interface{}{"target_file": "internal/a/a.go"}),
 		fixed(exitWithBlueprint("internal/a 是这套夹具的算法片。", []map[string]interface{}{
 			{
 				"section": "modules",
@@ -196,7 +196,7 @@ func TestE2ERepoRunDoesNotWriteUnreadModule(t *testing.T) {
 	view := NewBlueprintView(src, "repo", true, 4000, 1500, nil)
 
 	engine := newScripted(map[string][]scriptStep{"repo": {
-		toolCallStep("read_file", map[string]interface{}{"target_file": "internal/b/b.go", "should_read_entire_file": true}),
+		toolCallStep("read_file", map[string]interface{}{"target_file": "internal/b/b.go"}),
 		fixed(exitWithBlueprint("关于 internal/a 的臆测。", []map[string]interface{}{
 			{
 				"section": "modules", "module": "internal/a", "field": "purpose",
@@ -336,9 +336,7 @@ func TestE2EPlainTextRepoRunIsNudgedIntoSubmitting(t *testing.T) {
 
 	engine := newScripted(map[string][]scriptStep{"repo": {
 		fixed(textResponse("internal/a 是这套夹具的算法片，调查完成。")),
-		toolCallStep("read_file", map[string]interface{}{
-			"target_file": "internal/a/a.go", "should_read_entire_file": true,
-		}),
+		toolCallStep("read_file", map[string]interface{}{"target_file": "internal/a/a.go"}),
 		fixed(exitWithBlueprint("补交结论。", []map[string]interface{}{
 			{"section": "modules", "module": "internal/a", "field": "purpose",
 				"claim": "holds the fixture algorithms", "where": "internal/a/a.go:3"},

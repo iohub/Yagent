@@ -72,27 +72,25 @@ When you encounter situations during code analysis that require the user's domai
 
 ## File Exploration Safety (read_file)
 
-The `read_file` tool now enforces large file protections:
+`read_file` returns `min(1500 lines, 50KB)` per call — enough for a whole typical source file.
 
 ### Progressive Disclosure Strategy
-1. **Assess first**: Read lines 1-50 of any file to understand structure and estimate size
-2. **Check `file_size_bytes`**: If > 2MB, do NOT use `should_read_entire_file=true`
-3. **Use `total_lines` to plan**: Calculate how many 250-line chunks are needed
-4. **Respect `truncated` flag**: If true, plan multiple range reads
+1. **Read the file, not a 50-line sample**: `{"target_file": …}` gives you the top of it up to the budget plus exact `total_lines`.
+2. **Check `file_size_bytes` / `total_lines`**: they tell you whether one call was enough.
+3. **Go deeper with `start_line`** (and optional `max_lines`) instead of re-reading from the top.
+4. **Respect `truncated` flag**: if true, the `warning` names the exact `start_line` to continue from.
 
 ### Safety Limits Enforced
 - **500MB hard limit**: Files above this are refused — use grep to find relevant sections
-- **10MB entire-read limit**: Files > 10MB must use line ranges
-- **1000 lines / 10KB cap**: Entire file reads are truncated beyond this
-- **2MB soft limit**: Triggers a warning in the response
-- **Max 1000 lines per range read**: Always paginate large files
+- **Binary files**: refused when the first 8KB contains a NUL byte
+- **Per-call budget**: 1500 lines and 50KB, whichever binds first; content is never cut mid-line beyond that
 
 ### Key Response Fields
 - `file_size_bytes`: Total file size — use this to decide if more reads are needed
-- `total_lines`: Total line count — use this for pagination planning
+- `total_lines`: Exact line count of the whole file (counted even when only a window was returned) — use this for pagination planning
 - `lines_before_range` / `lines_after_range`: What context is missing from current read
-- `truncated`: Whether the response was truncated
-- `warning`: Size warnings or other advisories
+- `truncated`: Whether THIS window was cut short by a budget (not merely whether the file continues)
+- `warning`: Pagination hint, or a note that the bytes aren't valid UTF-8
 - `suggestion`: Guidance when an operation is blocked
 
 ### Service Mode (Passive)

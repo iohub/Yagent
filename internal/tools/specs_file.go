@@ -38,7 +38,7 @@ func init() {
 		Frequency: toolspec.Hot,
 		Trunc:     toolspec.TruncFirst,
 		Display:   toolspec.DisplayCompact,
-		Brief:     "按行区间或整读文件，带大文件保护",
+		Brief:     "按行预算读取文件，单次最多 1500 行/50KB",
 		Available: func(d *toolspec.Deps) (bool, string) { return d.Files != nil, "文件工具未装配" },
 		Build: func(d *toolspec.Deps) (toolspec.ToolFunc, error) {
 			if err := require(d.Files, "Files"); err != nil {

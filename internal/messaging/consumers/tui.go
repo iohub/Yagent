@@ -369,6 +369,11 @@ func extractToolSummary(toolName string, argsJSON string) string {
 	}
 	switch toolName {
 	case "read_file", "edit_file", "search_replace_in_file", "create_file", "delete_file":
+		// 键名顺序与 internal/tui/tui_render.go 的那份保持一致：read_file/create_file
+		// 用 target_file，编辑类用 file_path —— 少一个键不报错，只是活动行空着。
+		if fp, ok := args["target_file"].(string); ok && fp != "" {
+			return fp
+		}
 		if fp, ok := args["file_path"].(string); ok && fp != "" {
 			return fp
 		}
