@@ -1,9 +1,19 @@
 package tui
 
 import (
+	"runtime/debug"
 	"strings"
 	"testing"
 )
+
+// failOnPanic 把排版路径上的 panic 变成这条测试的失败，而不是让整个包的测试二进制中断。
+// 用法：defer failOnPanic(t) —— 崩溃现场（恢复更短的历史）原本就是这么进来的。
+func failOnPanic(t *testing.T) {
+	t.Helper()
+	if r := recover(); r != nil {
+		t.Fatalf("不应该 panic: %v\n%s", r, debug.Stack())
+	}
+}
 
 // seedBodyEntries 直接摆条目进正文：虚拟化之后 viewport 只显示可见区间，
 // 一切断言都得走"条目 → 排版块 → 行索引"这条真实的路，不能再直接塞 viewport。
@@ -246,4 +256,65 @@ func itoa(i int) string {
 		i /= 10
 	}
 	return string(digits)
+}
+
+// TestBody_EntriesShorterThanRenderCache 是"恢复一个条目更少的历史"崩溃的最小复现：
+// contentParts 只是 logEntries 的派生排版缓存，它可以短暂比条目长（恢复现场留下的残留），
+// 而条目数的权威必须是 logEntries —— 修前取的是 len(contentParts)，索引一作废就沿着
+// 更长的缓存走到 m.logEntries[4]，正是生产里 View 纠正视口宽度那一步的越界 panic。
+func TestBody_EntriesShorterThanRenderCache(t *testing.T) {
+	defer failOnPanic(t)
+
+	m := chromeTestModel(t, 100, 12)
+	entries := mixedTranscript()
+	seedBodyEntries(m, entries...)
+	if len(m.contentParts) != len(entries) || len(entries) < 5 {
+		t.Fatalf("夹具需要 5 条以上且两切片等长：entries=%d parts=%d", len(entries), len(m.contentParts))
+	}
+
+	// 只把条目截短，排版缓存保持上一批的长度 —— 恢复历史之后就是这个形状。
+	m.logEntries = append([]logEntry(nil), entries[:4]...)
+	m.body.forget() // 作废行索引，逼出一次从第 0 条起的整体重排（清空会话/恢复/View 纠正宽度都走它）
+
+	total := m.bodyTotalLines()
+	if got := len(m.body.blocks); got != len(m.logEntries) {
+		t.Errorf("排版块 = %d，条目 = %d：索引必须按 logEntries 建", got, len(m.logEntries))
+	}
+	if got := len(strings.Split(m.bodyText(0, total), "\n")); got != total {
+		t.Errorf("行数统计与取词不同源：bodyTotalLines=%d 但全文 %d 行", total, got)
+	}
+	m.bodySync()
+	if got := m.body.validFrom; got != len(m.logEntries) {
+		t.Errorf("validFrom=%d，期望 %d（索引补齐到条目数）", got, len(m.logEntries))
+	}
+}
+
+// TestBody_RenderCacheShorterThanEntries 是反方向的失配：条目已经到位、渲染缓存还没跟上。
+// 该条目这一帧按 0 行计（不是 panic，也不是把后面的条目顶上来），等 rebuildContentCache
+// 补齐尾部时由 bodyRepaint 重新排版。
+func TestBody_RenderCacheShorterThanEntries(t *testing.T) {
+	defer failOnPanic(t)
+
+	m := chromeTestModel(t, 100, 12)
+	seedBodyEntries(m, mixedTranscript()...)
+
+	kept := len(m.logEntries) - 2
+	m.contentParts = m.contentParts[:kept]
+	m.body.forget()
+
+	total := m.bodyTotalLines()
+	if got := len(m.body.blocks); got != len(m.logEntries) {
+		t.Fatalf("排版块 = %d，条目 = %d：缓存滞后不许缩短索引", got, len(m.logEntries))
+	}
+	if got := len(strings.Split(m.bodyText(0, total), "\n")); got != total {
+		t.Errorf("行数统计与取词不同源：bodyTotalLines=%d 但全文 %d 行", total, got)
+	}
+	m.bodySync()
+
+	// 缓存补齐之后必须重新排版，条目一条不许少。
+	m.needFullRebuild = true
+	m.rebuildContentCache()
+	if len(m.contentParts) != len(m.logEntries) {
+		t.Errorf("contentParts=%d，logEntries=%d", len(m.contentParts), len(m.logEntries))
+	}
 }

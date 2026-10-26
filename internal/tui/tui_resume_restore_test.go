@@ -776,3 +776,112 @@ func TestResumeExpandAndRows(t *testing.T) {
 		}
 	})
 }
+
+// ─── 恢复更短的历史 ──────────────────────────────────────────────────────────
+
+// TestApplyRestoredMemory_ShorterHistoryAfterLongerOne 恢复一个条目比当前会话更少的历史：
+// applyRestoredMemory 清了 logEntries，但排版缓存 contentParts 与行索引是按上一批条目建的，
+// 不清就是"条目 2 条、缓存 6 条"的失配现场。生产里的崩溃点是 View 纠正视口宽度之后的
+// 第一次 bodySync —— 修前 index out of range [2] with length 2。
+func TestApplyRestoredMemory_ShorterHistoryAfterLongerOne(t *testing.T) {
+	defer failOnPanic(t)
+
+	m := restoreTestModel(t)
+	applyRestoredMemory(m, restoreMemory(
+		memory.ChatMessage{Type: memory.MessageTypeHuman, Content: "长会话的任务", Timestamp: time.Now()},
+		restoreAssistant("先看第一个文件", restoreCall("c1", "read_file", `{"target_file":"a.go"}`)),
+		restoreToolResult("c1", "package a\n", nil),
+		restoreAssistant("再看第二个文件", restoreCall("c2", "read_file", `{"target_file":"b.go"}`)),
+		restoreToolResult("c2", "package b\n", nil),
+		restoreAssistant("两个都看完了"),
+	), "task-long", "/repo", "Resumed")
+
+	longEntries := len(m.logEntries)
+	if longEntries < 4 || len(m.contentParts) != longEntries {
+		t.Fatalf("夹具的长会话恢复后应等长且够长：entries=%d parts=%d", longEntries, len(m.contentParts))
+	}
+
+	applyRestoredMemory(m, restoreMemory(
+		memory.ChatMessage{Type: memory.MessageTypeHuman, Content: "换一个短会话", Timestamp: time.Now()},
+		restoreAssistant("这次只有一条回复"),
+	), "task-short", "/repo", "Resumed")
+
+	if len(m.logEntries) >= longEntries {
+		t.Fatalf("夹具要求第二个会话条目更少：%d vs %d", len(m.logEntries), longEntries)
+	}
+	if len(m.contentParts) != len(m.logEntries) {
+		t.Errorf("contentParts=%d，logEntries=%d：恢复必须把上一批的排版缓存一起清掉",
+			len(m.contentParts), len(m.logEntries))
+	}
+	if len(m.dirtyEntryIndices) != 0 {
+		t.Errorf("dirtyEntryIndices=%v：残留的脏下标属于另一批条目", m.dirtyEntryIndices)
+	}
+
+	// 复刻 View 的首次排版：按 bodyLayout 纠正宽度，然后 bodySync（tui_view.go 的那对调用）。
+	m.viewport.SetWidth(m.viewport.Width() - 6)
+	m.bodySync()
+
+	total := m.bodyTotalLines()
+	text := m.bodyText(0, total)
+	if got := len(strings.Split(text, "\n")); got != total {
+		t.Errorf("行数统计与取词不同源：bodyTotalLines=%d 但全文 %d 行", total, got)
+	}
+	if !strings.Contains(text, "这次只有一条回复") {
+		t.Errorf("恢复出来的回复没落到正文里：\n%s", stripANSI(text))
+	}
+	if strings.Contains(text, "先看第一个文件") {
+		t.Error("上一个会话的残留条目还在正文里")
+	}
+}
+
+// TestApplyRestoredMemory_ViewMatrix 把恢复接进完整的那条生产链：View() 才是崩溃现场
+// （bodyTotalLines → bodySync → bodyBlockFor）。长 / 短 / 更长 / 空四种形状各渲染两次，
+// 每一帧的行数必须正好等于终端高度，且不许留着上一个会话的条目。
+func TestApplyRestoredMemory_ViewMatrix(t *testing.T) {
+	defer failOnPanic(t)
+
+	long := restoreMemory(
+		memory.ChatMessage{Type: memory.MessageTypeHuman, Content: "长会话的任务", Timestamp: time.Now()},
+		restoreAssistant("先看第一个文件", restoreCall("c1", "read_file", `{"target_file":"a.go"}`)),
+		restoreToolResult("c1", "package a\n", nil),
+		restoreAssistant("再看第二个文件", restoreCall("c2", "read_file", `{"target_file":"b.go"}`)),
+		restoreToolResult("c2", "package b\n", nil),
+		restoreAssistant("两个都看完了"),
+	)
+	short := restoreMemory(
+		memory.ChatMessage{Type: memory.MessageTypeHuman, Content: "短会话的任务", Timestamp: time.Now()},
+		restoreAssistant("这次只有一条回复"),
+	)
+
+	for _, s := range []struct {
+		name string
+		mem  *memory.ConversationMemory
+	}{
+		{"long", long},
+		{"short", short},
+		{"empty", restoreMemory()},
+		{"long-again", long},
+	} {
+		// 每轮都从"已经恢复了一个长会话"的 model 起步：那才是会留下排版缓存残留的现场。
+		m := chromeTestModel(t, 120, 36)
+		m.taskManager = http.NewTaskManager(nil, 0)
+		applyRestoredMemory(m, long, "task-seed", "/repo", "Resumed")
+		applyRestoredMemory(m, s.mem, "task-"+s.name, "/repo", "Resumed")
+
+		if len(m.contentParts) != len(m.logEntries) {
+			t.Errorf("%s: contentParts=%d，logEntries=%d", s.name, len(m.contentParts), len(m.logEntries))
+		}
+		// 连续两帧：第一帧重排，第二帧走缓存 —— 两步都不许崩，行数也不许漂。
+		for frame := 0; frame < 2; frame++ {
+			lines := strings.Split(m.View().Content, "\n")
+			if len(lines) != 36 {
+				t.Errorf("%s frame=%d: 整屏 %d 行，want 36", s.name, frame, len(lines))
+			}
+		}
+		if s.name != "long" && s.name != "long-again" {
+			if got := stripANSI(m.View().Content); strings.Contains(got, "先看第一个文件") {
+				t.Errorf("%s: 正文里还留着上一个会话的条目", s.name)
+			}
+		}
+	}
+}

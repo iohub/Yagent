@@ -69,3 +69,32 @@ func TestRenderThinkingContinuation(t *testing.T) {
 		})
 	}
 }
+
+// TestRebuildContentCache_TrimsStaleContentParts 钉住 rebuildContentCache 的反向自愈：
+// contentParts 比 logEntries 长 = 另一批条目的残留缓存（恢复了一个更短的历史），
+// 只能整体重排。修前只有"更短 → 补尾部"这一条分支，失配永远留着，下一次排版就越界。
+func TestRebuildContentCache_TrimsStaleContentParts(t *testing.T) {
+	defer failOnPanic(t)
+
+	m := chromeTestModel(t, 100, 12)
+	entries := mixedTranscript()
+	seedBodyEntries(m, entries...)
+
+	m.logEntries = append([]logEntry(nil), entries[:3]...)
+	m.prevViewportWidth = m.viewport.Width() // 走"宽度没变"的增量分支：残留只有 shrink 分支能修
+	m.body.forget()
+
+	m.rebuildContentCache()
+
+	if len(m.contentParts) != len(m.logEntries) {
+		t.Fatalf("contentParts=%d，logEntries=%d：更长的残留缓存必须整体重排",
+			len(m.contentParts), len(m.logEntries))
+	}
+	if len(m.dirtyEntryIndices) != 0 {
+		t.Errorf("dirtyEntryIndices=%v：整体重排后不该留脏下标", m.dirtyEntryIndices)
+	}
+	total := m.bodyTotalLines()
+	if got := len(strings.Split(m.bodyText(0, total), "\n")); got != total {
+		t.Errorf("行数统计与取词不同源：bodyTotalLines=%d 但全文 %d 行", total, got)
+	}
+}

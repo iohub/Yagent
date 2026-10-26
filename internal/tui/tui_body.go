@@ -99,7 +99,11 @@ func (m *model) bodyInvalidate(from int) {
 // 排版，所以流式追加一行的成本是 O(1) 而不是 O(历史)。
 func (m *model) bodyEnsureIndex() {
 	b := &m.body
-	n := len(m.contentParts)
+	// 条目数的唯一权威是 logEntries。contentParts 只是它的派生渲染缓存，两切片可以短暂
+	// 不等长（恢复了一个条目更少的历史、或新条目的正文还没渲染）—— 拿缓存长度当上界，
+	// 索引一作废（清空会话、恢复历史、View 纠正视口宽度都走 validFrom=0）就会沿着更长的
+	// 缓存走到 m.logEntries[i] 上越界，症状是从历史里恢复一个短会话时整屏崩掉。
+	n := len(m.logEntries)
 
 	b.blocks = growBodySlice(b.blocks, n)
 	b.states = growBodySlice(b.states, n)
@@ -155,12 +159,24 @@ func growBodySlice[T any](s []T, n int) []T {
 
 // bodyBlockFor 排出条目 i 的贡献文本并推进顺序状态。它同时是行数统计与取词的唯一入口 ——
 // 两处必须严格同构，否则窗口切片会错位。
+//
+// m.logEntries 是条目数的唯一权威，m.contentParts 只是它的渲染缓存：两切片可以短暂不等长
+// （恢复了更短的历史、或新增条目还没走 rebuildContentCache），这里必须以 logEntries 为准，
+// 并且对两边都夹住边界 —— 排版发生在 View 的调用链上，越界一次就是整屏 panic。
+// 缓存还没跟上的那条按 0 行计，等 rebuildContentCache 补齐尾部时 bodyRepaint(firstChanged)
+// 会把这一段重新排出来。
 func (m *model) bodyBlockFor(state *bodyEmitState, i int) bodyBlock {
+	if i < 0 || i >= len(m.logEntries) {
+		return bodyBlock{}
+	}
 	entry := &m.logEntries[i]
 	if entry.isVerbose {
 		return bodyBlock{}
 	}
-	part := m.contentParts[i]
+	part := ""
+	if i < len(m.contentParts) {
+		part = m.contentParts[i]
+	}
 	if strings.TrimSpace(part) == "" {
 		return bodyBlock{}
 	}
