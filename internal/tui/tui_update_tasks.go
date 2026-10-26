@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"yagent/internal/messaging"
+	"yagent/internal/shutdown"
 	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
@@ -1051,12 +1052,13 @@ func (m *model) handleTaskCompleteMsg(msg taskCompleteMsg) (tea.Model, tea.Cmd) 
 		m.taskCancelled = false
 		if m.currentTask != nil {
 			// 旧 cancel 必须先调用再替换：直接覆盖的话那份 ctx 再也没有人能给它的
-			// 上游取消（它挂在 context.Background() 下），于是每取消一次任务就漏一个
-			// 永远活着的 context —— 不报错，只是内存慢慢涨。
+			// 上游取消，于是每取消一次任务就漏一个永远活着的 context —— 不报错，
+			// 只是内存慢慢涨。新的这份必须挂在 shutdown.Root() 下（与 NewTaskContext
+			// 同一个根）：挂在 Background 上就等于"这条任务从此不随信号取消"。
 			if m.currentTask.CancelFunc != nil {
 				m.currentTask.CancelFunc()
 			}
-			newCtx, newCancel := context.WithCancel(context.Background())
+			newCtx, newCancel := context.WithCancel(shutdown.Root())
 			m.currentTask.Context = newCtx
 			m.currentTask.CancelFunc = newCancel
 			m.currentTask.Status = "finished"

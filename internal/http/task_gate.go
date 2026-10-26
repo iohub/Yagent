@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"yagent/internal/pause"
+	"yagent/internal/shutdown"
 	"yagent/internal/supervise"
 )
 
@@ -25,13 +26,18 @@ import (
 // 闸门与并发域都只从这里返回 ctx 这一个通道出去，不另存字段：Task.Gate() 是从 ctx 读
 // 回来的，并发域同理（supervise.From(ctx)）。两处各存一份的话，任何"换了 ctx 忘了换"
 // 的地方都会让 /pause 停在一个没人在等的闸门上 —— 而那条路径没有报错，只是什么都不发生。
+//
+// 根是 shutdown.Root() 而不是 context.Background()：信号取消 root，这里建出来的每个任务
+// ctx 就一起取消，暂停闸门与任务域也跟着走。没装信号处理器时 Root() 就是 Background，
+// 所以测试与库用法拿到的行为与之前逐字一致。
 func NewTaskContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	base := shutdown.Root()
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), timeout)
+		ctx, cancel = context.WithTimeout(base, timeout)
 	} else {
-		ctx, cancel = context.WithCancel(context.Background())
+		ctx, cancel = context.WithCancel(base)
 	}
 	ctx = pause.WithGate(ctx, pause.NewGate())
 	// 这个域装的是"这个任务起的后台工作"（周期保存、事件桥……），任务收尾时一起被等。

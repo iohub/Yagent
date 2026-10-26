@@ -19,6 +19,7 @@ import (
 	messaging "yagent/internal/messaging"
 	tuiMsg "yagent/internal/messaging/consumers"
 	"yagent/internal/models"
+	"yagent/internal/shutdown"
 	"yagent/internal/tui"
 	"yagent/internal/util"
 
@@ -229,7 +230,15 @@ func runTUI(taskFile, disableAgents string) {
 		dataManager.Start()
 	}
 
+	// 信号 → 任务取消。必须在第一个任务 ctx 派生之前装好（TUI 的任务 ctx 都在 StartTUI 里建），
+	// 漏了不报错，只是"信号来了这条任务不停"。TUI 模式不写 OnSignal：raw mode 下 stderr 与
+	// 界面共用同一个终端，直接打印会撕裂渲染。
+	_, stopSignals := shutdown.Install(shutdown.Config{})
+
 	tui.StartTUI(taskFile, yagent, taskManager, dataManager, config)
+	// 看门狗挂在进程根域上：先把它收掉，否则下面 Close 的 Drain 会把 "shutdown/signals"
+	// 报成一条泄漏。
+	stopSignals()
 	dataManager.FlushAll()
 	dataManager.Stop()
 }
@@ -299,6 +308,12 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 
 	server := http.NewServer(yagent)
 
+	// 信号 → 停掉所有在跑的任务。HTTP 的监听端口不会优雅关闭（server.Run 就是 gin 的
+	// router.Run，手里没有 http.Server），所以第一次信号之后进程仍在 listen ——
+	// 要立刻走就再按一次：第二次是硬退出（先杀我们自己起的进程组，再按 128+signum 退）。
+	_, stopSignals := shutdown.Install(shutdown.Config{OnSignal: noticeSignal})
+	defer stopSignals()
+
 	slog.Info("Starting HTTP server", "port", httpPort)
 
 	if err := server.Run(httpPort); err != nil {
@@ -309,6 +324,13 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 
 // runPrompt 直接执行任务提示（非交互模式），将过程输出到 stdout
 func runPrompt(taskPromptStr, disableAgentsStr string) {
+	// 退出码在 promptOnce 返回之后才落地：函数体里直接 os.Exit(1) 会跳过 logging.Close、
+	// yagent.Close（含进程根域的 Drain）与 dispatcher.Shutdown —— 而"信号来了但收尾没跑"
+	// 正是这次要修的形状（docs/run-bash-hang-fix.md §4.1）。
+	os.Exit(promptOnce(taskPromptStr, disableAgentsStr))
+}
+
+func promptOnce(taskPromptStr, disableAgentsStr string) int {
 	// Initialize mode-aware logging: file only, never stdout/stderr
 	if err := logging.Init(logging.ModeTUI); err != nil {
 		slog.Error("Failed to initialize logging", "error", err)
@@ -318,7 +340,7 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	repoPath, err := initApp()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	ctx := context.Background()
@@ -328,7 +350,7 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	client, err := llm.NewClient(config)
 	if err != nil {
 		slog.Error("Failed to create client", "error", util.WrapError(ctx, err, "main::NewClient"))
-		os.Exit(1)
+		return 1
 	}
 	// 记录配置文件路径，供运行时持久化 provider 选择写回 config.toml
 	client.ConfigPath = configPath
@@ -336,7 +358,7 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	yagent, err := app.NewYagent(client)
 	if err != nil {
 		slog.Error("Failed to create coding assistant", "error", util.WrapError(ctx, err, "main::NewYagent"))
-		os.Exit(1)
+		return 1
 	}
 	yagent.SetEmbeddedBinaries(distBinFS)
 
@@ -361,9 +383,14 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 
 	yagent.IntegrateMessaging(dispatcher)
 
+	// 信号 → 取消这次任务。必须在下面建任务 ctx 之前装；defer 排在 Close 之后注册，
+	// 所以它在 yagent.Close 的 Drain 之前把看门狗收掉（否则每次退出都多报一条泄漏）。
+	_, stopSignals := shutdown.Install(shutdown.Config{OnSignal: noticeSignal})
+	defer stopSignals()
+
 	// 构建并执行任务
 	taskID := fmt.Sprintf("prompt-%d", time.Now().UnixMilli())
-	request := app.NewTaskRequest(ctx, taskID).
+	request := app.NewTaskRequest(shutdown.Root(), taskID).
 		WithProjectDir(repoPath).
 		WithTaskDesc(taskPromptStr).
 		WithMessagePublisher(publisher)
@@ -371,13 +398,22 @@ func runPrompt(taskPromptStr, disableAgentsStr string) {
 	result, err := yagent.ProcessCodingTaskWithCallback(request)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n❌ Task failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// 打印最终结果（仅在 TUIConsumer 未显示的情况下）
 	if result != "" {
 		fmt.Printf("\n📋 Task result:\n%s\n", result)
 	}
+	return 0
+}
+
+// noticeSignal 是两个非交互入口（--prompt / http）唯一的"信号到了"反馈通道：
+// 它们没有界面，stderr 就是全部的用户可见输出。TUI 模式刻意不传这个钩子 ——
+// raw mode 下 stderr 与界面共用同一个终端，写一行就撕一次渲染。
+func noticeSignal(sig os.Signal) {
+	fmt.Fprintf(os.Stderr, "\nyagent: received %v — cancelling running tasks; "+
+		"send the signal again to exit immediately\n", sig)
 }
 
 // getConfigPath 返回配置文件路径，并报告"这次是不是刚生成的模板"。

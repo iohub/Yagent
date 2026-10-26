@@ -31,10 +31,10 @@ go build ./... || fail "编译失败"
 step "go vet ./..."
 go vet ./... || fail "go vet 不干净"
 
-# 十把守卫：文件行数、包依赖方向（两处）、注册表叶子性、蓝图叶子性、并发域叶子性、
-# 裸 goroutine、手工查表回潮、单测卫生、原子写单一实现、AGENTS.md 体积棘轮。
+# 十一把守卫：文件行数、包依赖方向（两处）、注册表叶子性、蓝图叶子性、并发域叶子性、
+# 停止链叶子性、裸 goroutine、手工查表回潮、单测卫生、原子写单一实现、AGENTS.md 体积棘轮。
 # 每一个都对应一次"曾经静默漂移"的事故，别绕过。
-for guard in check_no_manual_lookup check_toolspec_leaf check_no_agents_import check_blueprint_leaf check_supervise_leaf check_no_bare_go check_file_sizes check_test_hygiene check_no_inline_atomic_write check_agents_md_size; do
+for guard in check_no_manual_lookup check_toolspec_leaf check_no_agents_import check_blueprint_leaf check_supervise_leaf check_shutdown_leaf check_no_bare_go check_file_sizes check_test_hygiene check_no_inline_atomic_write check_agents_md_size; do
 	script="scripts/${guard}.sh"
 	[[ -f "$script" ]] || fail "缺少 $script —— 守卫脚本本身丢了也要当失败处理"
 	step "bash ${script#scripts/}"
@@ -42,7 +42,7 @@ for guard in check_no_manual_lookup check_toolspec_leaf check_no_agents_import c
 done
 
 # 并发面：这些包改了必须跑一次 -race（AGENTS.md §8.3）。
-RACE_PKGS=(./internal/supervise/ ./internal/memory/ ./internal/messaging/... ./internal/mcp/ ./internal/datamanager/ ./internal/http/ ./internal/llm/ ./internal/toolspec/ ./internal/recovery/ ./internal/agents/toolbatch/ ./internal/tools/)
+RACE_PKGS=(./internal/supervise/ ./internal/shutdown/ ./internal/memory/ ./internal/messaging/... ./internal/mcp/ ./internal/datamanager/ ./internal/http/ ./internal/llm/ ./internal/toolspec/ ./internal/recovery/ ./internal/agents/toolbatch/ ./internal/tools/)
 
 if [[ "$FAST" == true ]]; then
 	step "go test（受影响包，--fast）"
