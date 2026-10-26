@@ -8,7 +8,7 @@
 把注册表里的 Spec 装配成一次运行的工具面（`Surface`），并提供文件/Shell/检索/调用图/浏览器/
 认知类工具的执行器，加上工作区守卫与授权回路。`internal/diff`（16 行）只是 `search_replace_in_file`
 的回显装饰：内容相同返回空串（`internal/diff/diff.go:10-12`），三个调用点都只当展示文本、不判错，
-所以"空串"不会被误读成失败——10MB/1000 行那些限制不在它那儿。
+所以"空串"不会被误读成失败——10MB/50KB 那些限制不在它那儿。
 
 ## 硬约束
 
@@ -78,10 +78,14 @@ sha256 前 8 字节（`adapter.go:147-159`）。顺序漂走的症状不是崩�
 （FIFO、满丢最旧，`internal/messaging/message_dispatcher.go:4,32`）——与普通事件"队列满即丢"相反；
 队列满/无 pending 在回路两侧都只 warn（`user_confirm.go:150,209`），丢信号的兜底是 ctx 取消与超时。
 
-**14. 文件大小限制的数值口径住在这两个文件。** 整读 10MB 硬限 `MaxFileSizeForEntireRead`
-（`file_operations.go:108`）、2MB 软警告 `SoftFileSizeLimit`（`:111`）、单次 1000 行
-（`MaxEntireFileLines`/`MaxLineRangeSize`，`:115,125`）；编辑侧 old/new 双向 10MB
-（`file_edit.go:87,122`）。不在 `internal/diff`（见边界），也不在压缩层。
+**14. 文件大小限制的数值口径住在这两个文件。** read_file 的单次预算是
+`maxReadLines`/`maxReadContentBytes`（`file_operations.go:112-113`，先触发的生效）、
+绝对拒绝线 `maxFileSizeForRead`（`:107`）；三个都写成 **var** 当测试 seam，
+否则"到顶之后"的分支在用例里要么触发不了、要么得造几百 MB 真文件。编辑侧 old/new 双向 10MB
+（`file_edit.go:87,122`）；run_bash 的输出封顶是**另一个数字**（见第 16 条）。
+不在 `internal/diff`（见边界），也不在压缩层。
+预算这么定是因为 read_file 的结果是 `TruncFirst`（prio-0，第一档压缩最先砍它）：
+多读可重取，而多跑一步要把整个上下文重发一遍。
 
 **15. 仓库里可能根本没有 rg，搜索行为依赖 PATH。** `rgPath` 优先取内嵌产物，失败返回裸串
 `"rg"` 交给系统解析（`search_operations.go:16-23`）；git 树的 `dist/bin` 只有占位文件，
@@ -92,24 +96,36 @@ sha256 前 8 字节（`adapter.go:147-159`）。顺序漂走的症状不是崩�
 含"管道 EOF"，而 EOF 由**子孙进程**决定：`cmd &` / `nohup … &` 时直接子进程打完 `echo` 就退了，
 Go 的 ctx 看门狗从此不再触发 `Cancel`（它只管"进程还活着时 ctx 结束"），于是工具超时、`activity`
 的 idle/total、用户取消**全部打在空气上**——2026-10-26 那次事故把整条委派卡到手工 kill 为止。
-唯一解开这道等待的是 `cmd.WaitDelay`（`system_operations.go:89`，seam 是 `runBashWaitDelay:22`）。
+唯一解开这道等待的是 `cmd.WaitDelay`（`system_operations.go:91`，seam 是 `runBashWaitDelay:22`）。
 同一分支不许直接回吐 `runErr.Error()`：超时时它长这样 `"signal: killed"`，模型看不出"该用
-is_background"和"命令自己失败了"的区别，所以四类出口在 `:111-131` 各写各的
-（成功 / `ErrWaitDelay` + ProcessState 里的真 exit code + `note:137` / 超时或取消 / 非零退出）。
-输出封顶复用 `MaxFileSizeForEntireRead`（`maxShellOutputBytes:26`），writer 到顶后**继续排空**——
+is_background"和"命令自己失败了"的区别，所以四类出口在 `:113-133` 各写各的
+（成功 / `ErrWaitDelay` + ProcessState 里的真 exit code + `note:139` / 超时或取消 / 非零退出）。
+输出封顶是 `maxShellOutputBytes`（`system_operations.go:28`，自带 10MB 字面量；它历史上复用
+read_file 的整读常量，两个数字如今表达两件不同的事，共用了改一个就动另一个），writer 到顶后**继续排空**——
 返回错误会让孩子收 SIGPIPE，把"输出太大"变成"命令失败"（`internal/util/cappedbuffer.go:5-7`）。
 **根 AGENTS.md §11 坑 46**。后台分支不受影响：它根本不接管道。
 
 **17. 前台调用拥有整个进程组，后台调用把寿命交给用户。** 两条分支都 `Setpgid`
-（前台 `system_operations.go:95`、后台 `:56`）。前台必须杀组（`Cancel: kill(-pgid)`，`:96`）：
+（前台 `system_operations.go:97`、后台 `:58`）。前台必须杀组（`Cancel: kill(-pgid)`，`:98`）：
 exec 默认的取消只打得到直接子进程 bash，`make`/`node` 这些子孙会留下占端口的孤儿
 （2026-10-26 那次事故留下的就是一个还在 LISTEN 的 proxy）。代价是**终端信号再也传不到子进程**
 —— 于是取消只有 ctx 这一条通道，那条链在 `internal/shutdown`，两半必须一起看。
-`liveGroups`（`:141-178`）只登记**在飞的前台**调用（`:102` 登记、`:104` 注销），唯一消费者是
+`liveGroups`（`:143-180`）只登记**在飞的前台**调用（`:104` 登记、`:106` 注销），唯一消费者是
 第二次信号的硬退出：`main.go` 把 `KillLiveProcessGroups` 传给 `shutdown.Config.OnHardExit`，
 因为 `os.Exit` 跳过所有 defer。`is_background=true` 刻意不进表 —— 那条分支的意义就是"服务留给用户"。
 反向的一半同样是契约而不是运气：exec 只在"进程还活着时 ctx 结束"才调 `Cancel`，所以调用**返回之后**
 `internal/agents/executor.go:154-155` 那次取消不会杀掉刚被放行的 daemon（`nohup … &` 因此真能留下服务）。
+
+**18. 行尾是契约，不是渲染细节。** `read_file` 只按 `\n` 切、把 `\r` 留在行内容里
+（`readFileInRange`），交回的正文与磁盘字节一致；因此 `search_replace_in_file` 允许**一次**回退：
+一致 CRLF 的文件在精确匹配失败后去掉 `\r` 再比一次，唯一命中才替换、随后整体还原 CRLF
+（`applyReplace`，`file_edit.go:176`）。两个方向都不许过头：
+① 混合行尾**不回退**，只点名原因——静默把整个文件重写成一种行尾比一次编辑失败更糟
+（`isUniformCRLF` 要求每个 `\n` 前是 `\r` 且没有游离 `\r`）；
+② 精确命中也都要转 `new_string` 的行尾——单行 old_string 必然精确命中，
+而多行 LF 的 new_string 直接插进 CRLF 文件就当场造出混合行尾。
+任何一种转换都要在回执里写 `line_endings`（`crlf-normalized` / `crlf-applied`），
+否则"兜住了"这件事只有读代码的人知道（根 AGENTS.md §11 坑 43 同族）。
 
 ## 入口
 
@@ -122,8 +138,8 @@ exec 默认的取消只打得到直接子进程 bash，`make`/`node` 这些子�
   `_BudgetDemotesWarmOnly`（`:164`）、`_FullYoloRemovesAskUser`（`:243`，与 `specs_flow.go:35-41` 成对）、
   `TestSurfaceFromAdapters_ReportsWhatTheLoopAsks`（`:343`）。
 - `TestWorkspaceGuard_BrowserEvalAuthByRisk`（`browser_guard_test.go:12`）：良性 JS 也弹授权。
-- `TestBrowserSpecsMatchRegistry`（`:91`）与 `TestBrowserToolsAreNeverReadOnly`（`:121`）：
-  argv 表与 Spec 两侧不对账即红。
+- `TestBrowserSpecsMatchRegistry`（`browser_operations_test.go:91`）与
+  `TestBrowserToolsAreNeverReadOnly`（`:121`）：argv 表与 Spec 两侧不对账即红。
 - 授权回路整链在 `internal/agents/e2e_authorization_test.go:270,326,361,391,415,480`
   （批准执行 / 拒绝回灌给模型 / 会话级免问 / 工作区内不问 / 忽略错配 request_id / 取消解开阻塞的工具），
   用的是**真实** dispatcher 与真实 `WorkspaceGuard`。
@@ -136,5 +152,13 @@ exec 默认的取消只打得到直接子进程 bash，`make`/`node` 这些子�
   `_ReturnedCallSurvivesLaterCancel`（`:221`，把杀组挪到返回之后即红）、
   `TestKillLiveProcessGroupsEndsInFlightCall`（`:257`，不登记 / 不注销 各红一次）。
   只留一条的话，"杀干净"与"别误杀"任意一边漂走都是绿的。
+  ⚠️ 最后这条在**整包并发跑**时会偶发假红（HEAD 上实测 5 次红 2 次，单跑 10 次全绿）：
+  它等的是真信号与真进程组，改动没碰到它时它红了要先怀疑这条，不要顺着改动找根因。
 - `TestExecuteRunBash`（`system_operations_test.go:11`）是这条改动前的行为基线：
   `foreground success`/`foreground failure` 断言的是**精确**输出，改回执形状时它会先叫。
+- 第 14 条的预算阶梯在 `file_operations_read_test.go`（23 条，`ExecuteReadFile` 在此之前
+  **零直接单测**）：每条夹具都带"必须真的超上限"的前置 `t.Fatalf`，否则上限断言恒真；
+  12 条变异逐条验过各自变红（`docs/read-file-redesign.md` §9 记了串号与结果）。
+  `BenchmarkReadFile_*`（同一目录的 bench 文件）是同一条探针的 before/after 落点，只做记录不做门禁。
+- 第 18 条的七条闸门在 `file_edit_crlf_test.go`：回退无条件生效、混合行尾也转换、
+  精确命中不转 `new_string`、回退不查唯一性、还原时忘记转回 CRLF——**各做过一次变异，都当场红**。

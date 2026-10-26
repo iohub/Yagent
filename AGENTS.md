@@ -164,7 +164,7 @@ codeseek 是第一个内建 server，6 个手写桥经 curated 名单保留、�
 | WorkspaceGuard | 危险工具（create/edit/delete/rename/run_bash）路径必须落在工作区内；只有"问用户"这一种强制，**没有硬拒绝路径**；放行状态三层（会话 / 项目级 `~/.yagent/settings.json` / YOLO） |
 | UserConfirmManager | 走事件总线：发 `user_help_needed` 等 `user_help_response`，按 `request_id` 配对；这两个事件类型在 critical 旁路队列，永不丢弃 |
 | `run_bash` 纵深防御 | **无黑名单**；信任 LLM 的 `is_dangerous` + 任何指向工作区外的绝对路径 token 都要授权（`safeSystemPaths` 例外，根目录恒危险） |
-| 大小限制 | 编辑双向 10MB；整读 10MB、软警告 2MB、单次 1000 行（数值口径住 `internal/tools`） |
+| 大小限制 | 编辑双向 10MB；read_file 单次 min(1500 行, 50KB)，>500MB 或二进制拒读（数值口径住 `internal/tools`） |
 | YOLO | `-y` = **一切授权全绕过**（含工作区外路径）；`-Y` 隐含 `-y`，额外只做两件事：把 `ask_user_for_help` 摘出工具面 + 注入自主决策指令 |
 | 分层守卫 | `director/` 子包禁止 import `internal/agents`；子 Agent 依赖经 `agents/ports.go` 窄接口注入 |
 
