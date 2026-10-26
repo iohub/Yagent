@@ -92,13 +92,24 @@ sha256 前 8 字节（`adapter.go:147-159`）。顺序漂走的症状不是崩�
 含"管道 EOF"，而 EOF 由**子孙进程**决定：`cmd &` / `nohup … &` 时直接子进程打完 `echo` 就退了，
 Go 的 ctx 看门狗从此不再触发 `Cancel`（它只管"进程还活着时 ctx 结束"），于是工具超时、`activity`
 的 idle/total、用户取消**全部打在空气上**——2026-10-26 那次事故把整条委派卡到手工 kill 为止。
-唯一解开这道等待的是 `cmd.WaitDelay`（`system_operations.go:82`，seam 是 `runBashWaitDelay:19`）。
+唯一解开这道等待的是 `cmd.WaitDelay`（`system_operations.go:89`，seam 是 `runBashWaitDelay:22`）。
 同一分支不许直接回吐 `runErr.Error()`：超时时它长这样 `"signal: killed"`，模型看不出"该用
-is_background"和"命令自己失败了"的区别，所以四类出口在 `:90-110` 各写各的
-（成功 / `ErrWaitDelay` + ProcessState 里的真 exit code + `note:116` / 超时或取消 / 非零退出）。
-输出封顶复用 `MaxFileSizeForEntireRead`（`maxShellOutputBytes:23`），writer 到顶后**继续排空**——
+is_background"和"命令自己失败了"的区别，所以四类出口在 `:111-131` 各写各的
+（成功 / `ErrWaitDelay` + ProcessState 里的真 exit code + `note:137` / 超时或取消 / 非零退出）。
+输出封顶复用 `MaxFileSizeForEntireRead`（`maxShellOutputBytes:26`），writer 到顶后**继续排空**——
 返回错误会让孩子收 SIGPIPE，把"输出太大"变成"命令失败"（`internal/util/cappedbuffer.go:5-7`）。
 **根 AGENTS.md §11 坑 46**。后台分支不受影响：它根本不接管道。
+
+**17. 前台调用拥有整个进程组，后台调用把寿命交给用户。** 两条分支都 `Setpgid`
+（前台 `system_operations.go:95`、后台 `:56`）。前台必须杀组（`Cancel: kill(-pgid)`，`:96`）：
+exec 默认的取消只打得到直接子进程 bash，`make`/`node` 这些子孙会留下占端口的孤儿
+（2026-10-26 那次事故留下的就是一个还在 LISTEN 的 proxy）。代价是**终端信号再也传不到子进程**
+—— 于是取消只有 ctx 这一条通道，那条链在 `internal/shutdown`，两半必须一起看。
+`liveGroups`（`:141-178`）只登记**在飞的前台**调用（`:102` 登记、`:104` 注销），唯一消费者是
+第二次信号的硬退出：`main.go` 把 `KillLiveProcessGroups` 传给 `shutdown.Config.OnHardExit`，
+因为 `os.Exit` 跳过所有 defer。`is_background=true` 刻意不进表 —— 那条分支的意义就是"服务留给用户"。
+反向的一半同样是契约而不是运气：exec 只在"进程还活着时 ctx 结束"才调 `Cancel`，所以调用**返回之后**
+`agents/executor.go:154-155` 那次取消不会杀掉刚被放行的 daemon（`nohup … &` 因此真能留下服务）。
 
 ## 入口
 
@@ -116,8 +127,14 @@ is_background"和"命令自己失败了"的区别，所以四类出口在 `:90-1
 - 授权回路整链在 `internal/agents/e2e_authorization_test.go:270,326,361,391,415,480`
   （批准执行 / 拒绝回灌给模型 / 会话级免问 / 工作区内不问 / 忽略错配 request_id / 取消解开阻塞的工具），
   用的是**真实** dispatcher 与真实 `WorkspaceGuard`。
-- 第 16 条的四条闸门在 `system_operations_hang_test.go:48,107,126,149`：去掉 `cmd.WaitDelay`、
+- 第 16 条的四条闸门在 `system_operations_hang_test.go:51,110,129,152`：去掉 `cmd.WaitDelay`、
   把裸 `err.Error()` 交回模型、把超时与取消合并成一句文案、截断不记账——**都做过变异，各自当场红**。
-  计时走 `runBashWaitDelay` 与 `maxShellOutputBytes` 两个 seam，用例里没有 `time.Sleep` 等真实超时。
+  计时走 `runBashWaitDelay` 与 `maxShellOutputBytes` 两个 seam，没有"等真实超时"的 sleep；
+  两处 `time.Sleep` 只在负向断言的有界窗口里（≤2s，见第 17 条那一对）。
+- 第 17 条是**方向相反的一对**加一本登记账：`_TimeoutKillsWholeProcessGroup`
+  （`system_operations_hang_test.go:195`，去掉 `Setpgid` 即红）、
+  `_ReturnedCallSurvivesLaterCancel`（`:221`，把杀组挪到返回之后即红）、
+  `TestKillLiveProcessGroupsEndsInFlightCall`（`:257`，不登记 / 不注销 各红一次）。
+  只留一条的话，"杀干净"与"别误杀"任意一边漂走都是绿的。
 - `TestExecuteRunBash`（`system_operations_test.go:11`）是这条改动前的行为基线：
   `foreground success`/`foreground failure` 断言的是**精确**输出，改回执形状时它会先叫。

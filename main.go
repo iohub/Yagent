@@ -20,6 +20,7 @@ import (
 	tuiMsg "yagent/internal/messaging/consumers"
 	"yagent/internal/models"
 	"yagent/internal/shutdown"
+	"yagent/internal/tools"
 	"yagent/internal/tui"
 	"yagent/internal/util"
 
@@ -233,7 +234,7 @@ func runTUI(taskFile, disableAgents string) {
 	// 信号 → 任务取消。必须在第一个任务 ctx 派生之前装好（TUI 的任务 ctx 都在 StartTUI 里建），
 	// 漏了不报错，只是"信号来了这条任务不停"。TUI 模式不写 OnSignal：raw mode 下 stderr 与
 	// 界面共用同一个终端，直接打印会撕裂渲染。
-	_, stopSignals := shutdown.Install(shutdown.Config{})
+	_, stopSignals := shutdown.Install(shutdown.Config{OnHardExit: tools.KillLiveProcessGroups})
 
 	tui.StartTUI(taskFile, yagent, taskManager, dataManager, config)
 	// 看门狗挂在进程根域上：先把它收掉，否则下面 Close 的 Drain 会把 "shutdown/signals"
@@ -311,7 +312,10 @@ func runHTTP(taskFile, disableAgents string, httpPort int) {
 	// 信号 → 停掉所有在跑的任务。HTTP 的监听端口不会优雅关闭（server.Run 就是 gin 的
 	// router.Run，手里没有 http.Server），所以第一次信号之后进程仍在 listen ——
 	// 要立刻走就再按一次：第二次是硬退出（先杀我们自己起的进程组，再按 128+signum 退）。
-	_, stopSignals := shutdown.Install(shutdown.Config{OnSignal: noticeSignal})
+	_, stopSignals := shutdown.Install(shutdown.Config{
+		OnSignal:   noticeSignal,
+		OnHardExit: tools.KillLiveProcessGroups,
+	})
 	defer stopSignals()
 
 	slog.Info("Starting HTTP server", "port", httpPort)
@@ -385,7 +389,10 @@ func promptOnce(taskPromptStr, disableAgentsStr string) int {
 
 	// 信号 → 取消这次任务。必须在下面建任务 ctx 之前装；defer 排在 Close 之后注册，
 	// 所以它在 yagent.Close 的 Drain 之前把看门狗收掉（否则每次退出都多报一条泄漏）。
-	_, stopSignals := shutdown.Install(shutdown.Config{OnSignal: noticeSignal})
+	_, stopSignals := shutdown.Install(shutdown.Config{
+		OnSignal:   noticeSignal,
+		OnHardExit: tools.KillLiveProcessGroups,
+	})
 	defer stopSignals()
 
 	// 构建并执行任务
