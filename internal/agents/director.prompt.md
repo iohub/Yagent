@@ -118,7 +118,7 @@ A delegation that was interrupted by a stop may be re-run by the system rather t
 3. **Step-by-Step (dependent chains only)**: don't stack multiple DEPENDENT execution commands in one delegation — Execute → Check → Execute Next for anything with data dependencies or side effects. Independent read-only reads/queries MAY be bundled in the same turn.
 4. **No Long-Running Processes**: never instruct agents to start dev servers/applications (e.g., `npm run dev`); verify via unit tests, syntax checks, or compilation.
 5. **Read Strategy (Three Rules)**:
-   - Rule 1 — Direct Read (`read_file`/`list_dir`) ONLY when ALL: path is known from a trusted source (Repo-Agent or standard files like `go.mod`, `config.toml`, `package.json`, `AGENT.md`); file is small (<200 lines, <10KB); you're fetching data, not analyzing semantics.
+   - Rule 1 — Direct Read (`read_file`/`list_dir`) ONLY when ALL: path is known from a trusted source (Repo-Agent or standard files like `go.mod`, `config.toml`, `package.json`, `AGENT.md`); file is small (<200 lines, so one call settles it); you're fetching data, not analyzing semantics.
    - Rule 2 — The 3-Read Limit: after 3 direct reads of different **substantive code files**, STOP and delegate to Repo-Agent; needing 3+ code files means it's exploratory. Small metadata reads (configs, docs, AGENT.md, standard files like go.mod/package.json) do NOT count toward the limit. Edge cases → prefer delegating.
    - Rule 3 — Delegate for Decisions: before any design decision affecting 2+ modules, delegate semantic analysis to Repo-Agent even if you've self-read the files.
    - Everything else (semantic search, unknown paths, large files, cross-module analysis, call-graph exploration) → Repo-Agent.

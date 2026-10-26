@@ -1,13 +1,15 @@
 package tools
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"yagent/internal/diff"
 	"yagent/internal/util"
@@ -84,7 +86,7 @@ var defaultIgnoredFiles = map[string]bool{
 var defaultIgnoredExts = map[string]bool{
 	".pyc": true, ".pyo": true, ".pyd": true,
 	".class": true,
-	".o": true, ".a": true, ".so": true, ".dylib": true,
+	".o":     true, ".a": true, ".so": true, ".dylib": true,
 	".exe": true, ".dll": true, ".lib": true,
 	".obj": true, ".pdb": true, ".idb": true,
 }
@@ -96,33 +98,29 @@ func hasIgnoredExt(name string) bool {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// read_file 大文件防护常量
+// read_file 的预算阶梯（数值口径只有这一处）
 // ═══════════════════════════════════════════════════════════════
 
-// MaxFileSizeForRangeRead 是任何读取操作的绝对硬限制。
-// 超过此大小的文件将被拒绝读取，建议使用 grep 等搜索工具。
-const MaxFileSizeForRangeRead = 500 * 1024 * 1024 // 500 MB
+// maxFileSizeForRead 是任何读取的绝对硬限制：超过这条，成本在"扫一遍文件"
+// 而不是"返回多少"，所以直接拒绝。写成 var 是用例的 seam——否则这条分支
+// 要么触发不了，要么得造一个真的 500MB 文件。
+var maxFileSizeForRead int64 = 500 * 1024 * 1024 // 500 MB
 
-// MaxFileSizeForEntireRead 是 should_read_entire_file=true 的硬限制。
-// 超过此大小的文件不允许整文件读取，必须使用行范围读取。
-const MaxFileSizeForEntireRead = 10 * 1024 * 1024 // 10 MB
+// maxReadLines / maxReadContentBytes 是单次返回的两个上限，先触发的生效。
+// 50KB 覆盖本仓 100% 的 .go（实测 max 42.2KB / 1398 行）。两个都是 var，
+// 理由同上：用例要把预算调到几 KB 才测得到"到顶之后"的形状。
+var maxReadLines = 1500
+var maxReadContentBytes = 50 * 1024 // 50 KB
 
-// SoftFileSizeLimit 是软限制阈值，超过此大小会触发警告。
-const SoftFileSizeLimit = 2 * 1024 * 1024 // 2 MB
+// binarySniffBytes 是 NUL 嗅探窗口：前 8KB 出现 NUL 就当二进制拒读。
+const binarySniffBytes = 8 * 1024
 
-// MaxEntireFileLines 是 entire file 模式下返回的最大行数，超出部分截断。
-// 最多返回 1000 行。
-const MaxEntireFileLines = 1000
+// readChunkSize 是流式读取的缓冲。旧写法用 bufio.Scanner，每次调用固定分配
+// 1MiB（与文件大小无关，4 路并行就是 4MiB/批）；这里 64KiB 且整个读取只分配一次。
+const readChunkSize = 64 * 1024
 
-// MaxEntireFileContentBytes 是 entire file 模式下返回内容的最大字节数。
-// 与 MaxEntireFileLines 双重保护：先触发的限制生效。
-const MaxEntireFileContentBytes = 10 * 1024 // 10 KB
-
-// MaxLineLength 是 bufio.Scanner 的单行缓冲区大小，用于处理 minified 文件中的超长行。
-const MaxLineLength = 1024 * 1024 // 1 MB per line
-
-// MaxLineRangeSize 是行范围读取的最大行数。
-const MaxLineRangeSize = 1000
+// newlineBytes 供尾扫的 bytes.Count 使用。
+var newlineBytes = []byte{'\n'}
 
 // treeEntry represents a single item in the directory tree output.
 type treeEntry struct {
@@ -130,26 +128,34 @@ type treeEntry struct {
 	isDir bool
 }
 
-// ExecuteReadFile 实现read_file工具 — 流式读取 + 分层大文件防护
+// ExecuteReadFile 实现 read_file — 单次读取 = min(maxReadLines 行, maxReadContentBytes 字节)。
+//
+// 没有"整读/区间"两种模式：只传 target_file 就是从第 1 行读到预算上限。
+// truncated 表示"这一段没给全"（要继续用 start_line 接）；区间之外还有多少行
+// 由 lines_after_range 说。预算比旧版宽得多是刻意的 —— read_file 的结果是
+// TruncFirst（prio-0），第一档压缩最先砍它，所以"多读"可重取、
+// 而"多跑一步"要把整个上下文重发一遍。判据见 docs/read-file-redesign.md §1.1。
 func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-	// ─────────────────────────────────────────────
-	// 1. 参数解析
-	// ─────────────────────────────────────────────
 	targetFile, ok := params["target_file"].(string)
 	if !ok || targetFile == "" {
 		return nil, util.WrapError(ctx, fmt.Errorf("target_file parameter must be a non-empty string"), "executeReadFile")
 	}
 
-	fullPath := t.resolveFilePath(targetFile)
-	shouldReadEntireFile, _ := params["should_read_entire_file"].(bool)
-	startLineF, _ := params["start_line_one_indexed"].(float64)
-	endLineF, _ := params["end_line_one_indexed_inclusive"].(float64)
-	startLine := int(startLineF)
-	endLine := int(endLineF)
+	startLine := 1
+	if v, ok := params["start_line"].(float64); ok && int(v) > 1 {
+		startLine = int(v)
+	}
+	maxLines := maxReadLines
+	// cappedWindow：这次要的那一段本来就比上限宽（缺省读，或显式要了超过行帽的行数）。
+	// 只有这种情況下撞行帽才算"我们没给全"；装满一个小区间不算，
+	// 区间外还有多少由 lines_after_range 说。
+	cappedWindow := true
+	if v, ok := params["max_lines"].(float64); ok && int(v) >= 1 && int(v) < maxReadLines {
+		maxLines = int(v)
+		cappedWindow = false
+	}
 
-	// ─────────────────────────────────────────────
-	// 2. 文件存在性和大小预检 (os.Stat — 不打开文件)
-	// ─────────────────────────────────────────────
+	fullPath := t.resolveFilePath(targetFile)
 	info, err := os.Stat(fullPath)
 	if err != nil {
 		return nil, util.WrapError(ctx, err, "executeReadFile::Stat")
@@ -159,179 +165,243 @@ func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[str
 	}
 	fileSize := info.Size()
 
-	// ─────────────────────────────────────────────
-	// 3. 硬限制 #1: 绝对最大文件大小 (500MB)
-	// ─────────────────────────────────────────────
-	if fileSize > MaxFileSizeForRangeRead {
+	// 硬限制：超过这条的成本在"扫一遍文件"而不是"返回多少"，所以直接拒。
+	// 判定必须在 Open 之前 —— 否则等于把拒绝的成本自己付掉。
+	if fileSize > maxFileSizeForRead {
 		return map[string]interface{}{
 			"error": fmt.Sprintf(
 				"File size %s (%d bytes) exceeds absolute maximum %s (%d bytes). Refusing to read. Use grep or other search tools to locate relevant sections first.",
 				humanizeBytes(fileSize), fileSize,
-				humanizeBytes(MaxFileSizeForRangeRead), MaxFileSizeForRangeRead,
+				humanizeBytes(maxFileSizeForRead), maxFileSizeForRead,
 			),
 			"file_size_bytes": fileSize,
 			"suggestion":      "Use search_by_regex or grep to find the relevant sections, then read specific line ranges.",
 		}, nil
 	}
 
-	// ─────────────────────────────────────────────
-	// 4. 硬限制 #2: entire file 模式的大小限制 (10MB)
-	// ─────────────────────────────────────────────
-	if shouldReadEntireFile && fileSize > MaxFileSizeForEntireRead {
-		return map[string]interface{}{
-			"error": fmt.Sprintf(
-				"File size %s (%d bytes) exceeds entire-file read limit %s (%d bytes). Use start_line_one_indexed and end_line_one_indexed_inclusive to read in chunks of %d lines.",
-				humanizeBytes(fileSize), fileSize,
-				humanizeBytes(MaxFileSizeForEntireRead), MaxFileSizeForEntireRead,
-				MaxLineRangeSize,
-			),
-			"file_size_bytes": fileSize,
-			"suggestion": fmt.Sprintf(
-				"Use line range reads: should_read_entire_file=false, start_line_one_indexed=1, end_line_one_indexed_inclusive=%d, then paginate by adding %d to both values.",
-				MaxLineRangeSize, MaxLineRangeSize,
-			),
-		}, nil
-	}
-
-	// ─────────────────────────────────────────────
-	// 5. 流式读取 — bufio.Scanner (O(1) 内存)
-	// ─────────────────────────────────────────────
 	f, err := os.Open(fullPath)
 	if err != nil {
 		return nil, util.WrapError(ctx, err, "executeReadFile::Open")
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	// 调大 buffer 以处理 minified 文件中的超长行 (如 JS bundle)
-	scanner.Buffer(make([]byte, 0, MaxLineLength), MaxLineLength)
-
-	var (
-		contentLines  []string
-		totalLines    int
-		truncated     bool
-		contentBytes  int
-		warnings      []string
-		rangeComplete bool
-	)
-
-	// 行范围默认值处理
-	if !shouldReadEntireFile {
-		if startLine < 1 {
-			startLine = 1
-		}
-		if endLine < 1 || endLine < startLine {
-			endLine = startLine + MaxLineRangeSize - 1
-		}
-		// 限制范围大小不超过 MaxLineRangeSize
-		if endLine-startLine+1 > MaxLineRangeSize {
-			endLine = startLine + MaxLineRangeSize - 1
-		}
+	scan, err := readFileInRange(f, startLine, maxLines, maxReadContentBytes, cappedWindow)
+	if err != nil {
+		return nil, util.WrapError(ctx, fmt.Errorf("error reading file %s: %w", targetFile, err), "executeReadFile::Read")
 	}
 
-	for scanner.Scan() {
-		totalLines++
-		line := scanner.Text()
-
-		if shouldReadEntireFile {
-			// 双重限制: 行数 + 内容字节数
-			if totalLines <= MaxEntireFileLines && contentBytes < MaxEntireFileContentBytes {
-				contentLines = append(contentLines, line)
-				contentBytes += len(line) + 1 // +1 for newline
-			} else {
-				truncated = true
-				// 继续扫描仅为了计数总行数（O(1) 内存，不累积内容）
-			}
-		} else {
-			// 行范围模式
-			if totalLines >= startLine && totalLines <= endLine {
-				contentLines = append(contentLines, line)
-			}
-			if totalLines >= endLine {
-				rangeComplete = true
-				// 继续扫描仅为了计数总行数
-			}
-		}
+	if scan.binary {
+		return map[string]interface{}{
+			"error":           fmt.Sprintf("'%s' looks like a binary file (NUL byte in the first %s); refusing to read it as text.", targetFile, humanizeBytes(binarySniffBytes)),
+			"file_size_bytes": fileSize,
+			"suggestion":      "Use search_by_regex for a text file, or an appropriate viewer for binary content.",
+		}, nil
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, util.WrapError(ctx, fmt.Errorf("error scanning file %s: %w", targetFile, err), "executeReadFile::Scan")
+	// 区间起点越界：给准合法范围，而不是返回一段空正文。
+	if scan.lines == 0 && startLine > scan.totalLines && scan.totalLines > 0 {
+		return map[string]interface{}{
+			"error":           fmt.Sprintf("start_line (%d) exceeds file total lines (%d)", startLine, scan.totalLines),
+			"file_size_bytes": fileSize,
+			"total_lines":     scan.totalLines,
+			"suggestion":      fmt.Sprintf("Use start_line between 1 and %d", scan.totalLines),
+		}, nil
 	}
 
-	// ─────────────────────────────────────────────
-	// 6. 后置校验 & 警告
-	// ─────────────────────────────────────────────
-
-	// 行范围越界检查
-	if !shouldReadEntireFile && len(contentLines) == 0 && totalLines > 0 {
-		if startLine > totalLines {
-			return map[string]interface{}{
-				"error":           fmt.Sprintf("start_line_one_indexed (%d) exceeds file total lines (%d)", startLine, totalLines),
-				"file_size_bytes": fileSize,
-				"total_lines":     totalLines,
-				"suggestion":      fmt.Sprintf("Use start_line_one_indexed between 1 and %d", totalLines),
-			}, nil
-		}
+	result := map[string]interface{}{
+		"content":            scan.content,
+		"lines":              scan.lines,
+		"start_line":         startLine,
+		"end_line":           scan.endLine,
+		"total_lines":        scan.totalLines,
+		"lines_before_range": max(0, startLine-1),
+		"lines_after_range":  max(0, scan.totalLines-scan.endLine),
+		"file_size_bytes":    fileSize,
+		"truncated":          scan.truncated,
 	}
 
-	// 软限制警告 (文件 > 2MB)
-	if fileSize > SoftFileSizeLimit {
-		warnings = append(warnings, fmt.Sprintf(
-			"File size %s exceeds soft limit %s. Consider using line ranges for targeted reads.",
-			humanizeBytes(fileSize), humanizeBytes(SoftFileSizeLimit),
-		))
-	}
-
-	// 截断警告 (entire file 模式)
-	if shouldReadEntireFile && truncated {
-		warnings = append(warnings, fmt.Sprintf(
-			"Only first %d lines (%.1f KB of content) returned out of %d total lines. Use start_line_one_indexed and end_line_one_indexed_inclusive to read remaining content.",
-			len(contentLines), float64(contentBytes)/1024, totalLines,
-		))
-	}
-
-	// 空文件警告
-	if totalLines == 0 {
+	var warnings []string
+	if scan.totalLines == 0 {
 		warnings = append(warnings, "File is empty (0 lines).")
 	}
-
-	_ = rangeComplete // 保留以备未来优化
-
-	// ─────────────────────────────────────────────
-	// 7. 构建向后兼容的返回值
-	// ─────────────────────────────────────────────
-	content := strings.Join(contentLines, "\n")
-
-	// 核心字段（向后兼容 — 保留 content 和 lines）
-	result := map[string]interface{}{
-		"content":         content,
-		"lines":           len(contentLines),
-		"file_size_bytes": fileSize,
-		"total_lines":     totalLines,
-		"truncated":       truncated,
+	if scan.truncated {
+		// 分页提示两种模式共用（旧版只有整读给，区间读不给 → 模型只能猜）。
+		warnings = append(warnings, fmt.Sprintf(
+			"Truncated at %s / %d lines (file has %d lines). Continue with start_line=%d.",
+			humanizeBytes(int64(len(scan.content))), maxLines, scan.totalLines, scan.endLine+1,
+		))
 	}
-
-	// 模式特有字段
-	if shouldReadEntireFile {
-		result["read_mode"] = "entire_file"
-		if truncated {
-			result["max_lines_returned"] = len(contentLines)
-			result["max_content_bytes"] = contentBytes
-		}
-	} else {
-		result["read_mode"] = "line_range"
-		result["start_line"] = startLine
-		result["end_line"] = endLine
-		result["lines_before_range"] = max(0, startLine-1)
-		result["lines_after_range"] = max(0, totalLines-endLine)
+	if len(scan.content) > 0 && !utf8.ValidString(scan.content) {
+		// 只警告不拒读：latin-1 之类的文本文件是合法的，一刀切会误伤。
+		warnings = append(warnings, "content contains invalid UTF-8; bytes may be mojibake")
 	}
-
-	// 警告信息
 	if len(warnings) > 0 {
 		result["warning"] = strings.Join(warnings, "; ")
 	}
 
 	return result, nil
+}
+
+// fileScan 是一次流式读取的结果，字段与回执一一对应。
+type fileScan struct {
+	content    string
+	lines      int
+	endLine    int
+	totalLines int
+	truncated  bool
+	binary     bool
+}
+
+// readFileInRange 分两阶段读一个文件：
+//
+//	阶段一（收集）逐行切分并收下区间内的行；
+//	阶段二（尾扫）只对剩余字节数换行（bytes.Count，memchr 速度、零分配）。
+//
+// 切换发生在**行边界**，所以尾扫拿到的字节流总是从新的一行开始，行号不会错位。
+// 这样 total_lines 保持精确，而代价从"每行都拷出来走一遍"降到"数一遍换行"。
+//
+// 行尾保真：只按 \n 切，\r 留在行内容里 —— 否则 CRLF 文件的正文照抄进
+// search_replace_in_file 必然匹配不上。
+//
+// 单行不设上限而是按预算裁：旧写法靠 bufio.Scanner 的 1MiB 缓冲，一行超过它
+// 整次读取直接失败（即使只要第 1-10 行）；现在超长行收成前缀 + truncated。
+//
+// cappedWindow 表示"要的那一段本来就比上限宽"（缺省读取，或显式要了超过
+// maxReadLines 的行数）：只有这种情況下撞行帽才算截断。显式给了一个装满的
+// 区间不算 —— 区间外还有多少由 lines_after_range 说。
+func readFileInRange(f *os.File, startLine, maxLines, budget int, cappedWindow bool) (fileScan, error) {
+	var (
+		out               fileScan
+		chunk             = make([]byte, readChunkSize)
+		acc               []byte
+		lineBuf           []byte
+		lineOver          bool // 当前行因预算被裁过
+		got               int
+		contentLen        int
+		endLine           int
+		lineNo            int
+		pending           bool // 自上个换行以来见过非换行字节
+		collecting        = true
+		sniffed           = false
+		stoppedByBudget   bool
+		stoppedByLineCap  bool
+		linePrefixCutSeen bool
+	)
+
+	// take 尝试把第 ln 行收进正文；返回 false 表示不再收集（原因记在两个 flag 里）。
+	take := func(ln int, line []byte, cut bool) bool {
+		if ln < startLine {
+			return true
+		}
+		sep := 0
+		if got > 0 {
+			sep = 1 // 行间分隔符，正文末尾不带换行
+		}
+		if contentLen+sep+len(line) > budget {
+			// 预算已满。首行不需要特例：addSeg 已经把每一行封顶在 budget 以内，
+			// 所以"一行比预算还长"在进到这里之前就变成了带前缀的正常一行。
+			stoppedByBudget = true
+			return false
+		}
+		if sep == 1 {
+			acc = append(acc, '\n')
+		}
+		acc = append(acc, line...)
+		contentLen += sep + len(line)
+		got++
+		endLine = ln
+		if cut {
+			linePrefixCutSeen = true
+		}
+		if got >= maxLines {
+			stoppedByLineCap = true
+			return false
+		}
+		return true
+	}
+
+	// addSeg 把一段不含换行的字节并进当前行；超出预算就停止累积（行号照数）。
+	addSeg := func(seg []byte) {
+		if len(seg) == 0 {
+			return
+		}
+		pending = true
+		if lineOver {
+			return
+		}
+		if len(lineBuf)+len(seg) <= budget {
+			lineBuf = append(lineBuf, seg...)
+			return
+		}
+		if room := budget - len(lineBuf); room > 0 {
+			lineBuf = append(lineBuf, seg[:room]...)
+		}
+		lineOver = true
+	}
+
+	for {
+		n, rerr := f.Read(chunk)
+		if n > 0 {
+			data := chunk[:n]
+			if !sniffed {
+				sniffed = true
+				win := data
+				if len(win) > binarySniffBytes {
+					win = win[:binarySniffBytes]
+				}
+				if bytes.IndexByte(win, 0) >= 0 {
+					out.binary = true
+					return out, nil
+				}
+			}
+
+			pos := 0
+			for collecting && pos < len(data) {
+				idx := bytes.IndexByte(data[pos:], '\n')
+				if idx < 0 {
+					addSeg(data[pos:])
+					pos = len(data)
+					break
+				}
+				addSeg(data[pos : pos+idx])
+				pos += idx + 1
+				lineNo++
+				pending = false
+				if !take(lineNo, lineBuf, lineOver) {
+					collecting = false
+				}
+				lineBuf = lineBuf[:0]
+				lineOver = false
+			}
+			if !collecting && pos < len(data) {
+				rest := data[pos:]
+				lineNo += bytes.Count(rest, newlineBytes)
+				pending = rest[len(rest)-1] != '\n'
+			}
+		}
+		if rerr != nil {
+			if rerr == io.EOF {
+				break
+			}
+			return out, rerr
+		}
+	}
+
+	// 末尾没有换行的那一行也算一行。
+	if pending {
+		lineNo++
+		if collecting {
+			take(lineNo, lineBuf, lineOver)
+		}
+	}
+
+	out.content = string(acc)
+	out.lines = got
+	out.endLine = endLine
+	out.totalLines = lineNo
+	out.truncated = stoppedByBudget || linePrefixCutSeen ||
+		(stoppedByLineCap && cappedWindow && lineNo > endLine)
+	return out, nil
 }
 
 // ExecuteDeleteFile 实现delete_file工具
