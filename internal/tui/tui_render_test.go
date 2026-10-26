@@ -98,3 +98,60 @@ func TestRebuildContentCache_TrimsStaleContentParts(t *testing.T) {
 		t.Errorf("行数统计与取词不同源：bodyTotalLines=%d 但全文 %d 行", total, got)
 	}
 }
+
+// TestRebuildContentCache_AppendedDirtyEntryAlignsFirst 钉住 rebuildContentCache 的分支顺序：
+// 新条目**同一拍**被追加又被置脏（logEntries 已经 +1、contentParts 还没跟上）时，
+// 长度对齐必须先于脏下标循环。修前顺序相反 —— 守卫是 `idx < len(m.logEntries)`，
+// 写的却是短一位的 `m.contentParts[idx]`，直接 index out of range。
+// 这条测试红在 panic 上，绿在对齐之后：条目一条不许少、正文必须真被渲染、脏集合必须清空。
+func TestRebuildContentCache_AppendedDirtyEntryAlignsFirst(t *testing.T) {
+	defer failOnPanic(t)
+
+	m := chromeTestModel(t, 100, 12)
+	seedBodyEntries(m, mixedTranscript()...)
+
+	// 追加一条新条目，但**不**往 contentParts 里放正文 —— 派生缓存落后一位就是这个形状。
+	idx := len(m.logEntries)
+	m.logEntries = append(m.logEntries, logEntry{
+		eventType: "ai_response", from: "coding", content: "刚追加、同一拍就被置脏的一条",
+	})
+	m.markEntryDirty(idx)
+	// 宽度与上一帧一致，逼出"增量分支"（整段重排会顺带把长度补齐，掩盖顺序问题）。
+	m.prevViewportWidth = m.viewport.Width()
+
+	if len(m.contentParts) != len(m.logEntries)-1 {
+		t.Fatalf("夹具需要 contentParts 比 logEntries 恰好短 1：%d vs %d",
+			len(m.contentParts), len(m.logEntries))
+	}
+	want := m.renderSingleEntry(&m.logEntries[idx], m.viewport.Width())
+	if want == "" {
+		t.Fatalf("夹具失效：新条目渲染为空，无法断言正文落进了缓存")
+	}
+
+	m.rebuildContentCache()
+
+	if len(m.contentParts) != len(m.logEntries) {
+		t.Fatalf("contentParts=%d，logEntries=%d：长度必须先对齐",
+			len(m.contentParts), len(m.logEntries))
+	}
+	if got := m.contentParts[idx]; got != want {
+		t.Errorf("新条目正文 = %q，期望渲染结果 %q", got, want)
+	}
+	if countBodyLines(m.contentParts[idx]) == 0 {
+		t.Errorf("新条目按 0 行计：正文没有真正渲染出来")
+	}
+	if len(m.dirtyEntryIndices) != 0 {
+		t.Errorf("dirtyEntryIndices=%v：处理过的脏下标必须清空", m.dirtyEntryIndices)
+	}
+	if m.needFullRebuild {
+		t.Errorf("needFullRebuild 仍为真：增量路径不该留全量标志")
+	}
+	// 补齐之后的整段正文仍然自洽（硬约束 3.2 ①：行数统计与取词同源）。
+	total := m.bodyTotalLines()
+	if got := len(strings.Split(m.bodyText(0, total), "\n")); got != total {
+		t.Errorf("行数统计与取词不同源：bodyTotalLines=%d 但全文 %d 行", total, got)
+	}
+	if got := len(m.body.blocks); got != len(m.logEntries) {
+		t.Errorf("排版块 = %d，条目 = %d：索引必须按 logEntries 建", got, len(m.logEntries))
+	}
+}

@@ -48,11 +48,10 @@ viewport 自己已把每一行补齐到列宽（`TestViewportViewPadsEveryLine` 
 普通条目的 `renderedCache`）、transcript 顶部固定头部（`renderWelcomePanel`，`tui_view.go:559`，
 key 只含宽度/行高/cwd；**头部分支不许算 footer 行高**，那条路会走 token 面板与 langManager）。
 
-**3.2 正文是虚拟化的：viewport 里只有可见区间。** 虚拟化之后一次重排的成本是
-O(变过的条目 + 窗口)，不再是 O(历史)（实测 4000 chunk：viewport 内容 924KB → 41KB，
+**3.2 正文是虚拟化的：viewport 里只有可见区间。** 虚拟化之后一次重排的成本是 O(变过的条目 + 窗口)，不再是 O(历史)（实测 4000 chunk：viewport 内容 924KB → 41KB，
 每消息 548µs → 385µs，且 300 条与 1200 条历史已经分不出差别）。滚动游标是绝对行号
 `body.top`，`bodyIndex`（`tui_body.go:43`）是唯一行索引：条目 → 排版块（agent 分隔行 + 正文，
-含 thinking 续行）→ 行数前缀和。三条不可违反：
+含 thinking 续行）→ 行数前缀和。四条不可违反：
 ① **行数统计与取词同源** —— `bodyBlockFor`（`:158`）既算 `lines` 也给文本，`bodyText`（`:295`）
 必须等于全文的连续切片；旧的 `contentPartLinePrefix` 按条目原始行数累加（不认跳过项、分隔行、
 续行），圈动画范围够用、拿来切片整屏错位，已删。
@@ -60,12 +59,13 @@ O(变过的条目 + 窗口)，不再是 O(历史)（实测 4000 chunk：viewport
 写反的症状是"流式输出停在开头"。
 ③ **`growBodySlice`（`:149`）必须保留内容** —— 换数组时 `make` 会把已排好的块清零，而 `validFrom`
 不知道数组被换过。
-滚动一律走 `bodyScrollTo/bodyScrollBy/bodyGoto*/bodyPageBy`，**不许**再直接对正文 viewport 调
-`Scroll*/Page*/SetYOffset/GotoBottom`，`viewport.Update` 也不接正文按键（滚轮在 `handleMouseMsg`）：
-两处都能滚就错位。滚动条、ruler、搜索读绝对索引 —— `searchLineAt` 存绝对行，
-而 `searchLineStyle`（`tui_search.go:158`）收到的是**窗口内**行号，必须加回 `body.top`。
-`bodyIndex` 整体随标签页保存/恢复（`tab.body = m.body.clone()`），且必须与 `tab.viewport` 同版本，
-否则恢复后 `bodySync` 以为窗口没变而跳过 SetContent，屏幕停在另一个 tab 的内容上。
+④ **条目数的唯一权威是 `m.logEntries`** —— `m.contentParts` 只是它的派生渲染缓存，**不许**当循环上界或条目数（`bodyEnsureIndex` 取的就是 `len(m.logEntries)`，`tui_body.go:100-106`）。
+换一批条目（清空会话、从历史恢复、切标签页）必须把排版缓存与 `bodyIndex` **一起**作废（`applyRestoredMemory`，`tui_resume.go:571-581`），只清 `logEntries` 会留下越界现场 —— 本次 panic 正是旧 `bodyBlockFor` 按 `len(contentParts)` 索引 `logEntries`、崩在 `View()` 里。
+排版/索引路径对两切片**短暂不等长**（新条目已追加而正文还没渲染、或恢复后残留更长的缓存）必须夹边界、**不许裸索引**：排版在 `View()` 调用链上，越界一次就是整屏 panic。`rebuildContentCache` 的增量分支同理是硬顺序 —— **先对齐 `contentParts` 长度、再处理脏下标**（`tui_render.go:248-303`，脏下标写的就是这份派生缓存，长度必须先行可信）；缓存没覆盖到的脏下标要**保留**给下一拍，`delete` 掉等于留下一段永不重排的陈旧正文。行数统计与取词同源见 ①。
+守卫：`TestBody_EntriesShorterThanRenderCache`、`TestBody_RenderCacheShorterThanEntries`（`tui_body_test.go:265,295`）、`TestRebuildContentCache_TrimsStaleContentParts`、`TestRebuildContentCache_AppendedDirtyEntryAlignsFirst`（`tui_render_test.go:76,107`）、`TestApplyRestoredMemory_ShorterHistoryAfterLongerOne`、`TestApplyRestoredMemory_ViewMatrix`（`tui_resume_restore_test.go:786,840`）。
+滚动一律走 `bodyScrollTo/bodyScrollBy/bodyGoto*/bodyPageBy`，**不许**再直接对正文 viewport 调 `Scroll*/Page*/SetYOffset/GotoBottom`，`viewport.Update` 也不接正文按键（滚轮在 `handleMouseMsg`）：
+两处都能滚就错位。滚动条、ruler、搜索读绝对索引 —— `searchLineAt` 存绝对行，而 `searchLineStyle`（`tui_search.go:158`）收到的是**窗口内**行号，必须加回 `body.top`。
+`bodyIndex` 整体随标签页保存/恢复（`tab.body = m.body.clone()`），且必须与 `tab.viewport` 同版本，否则恢复后 `bodySync` 以为窗口没变而跳过 SetContent，屏幕停在另一个 tab 的内容上。
 
 **4. 流式槽的键 ≠ 显示名。** `streamSlotKey` 返回 `agent#delegationID`（`tui_update_tasks.go:1025-1030`），
 它是三张槽表 `aiChunkBuffers` / `aiStreamActiveEntries` / `aiStreamCompletedEntries`

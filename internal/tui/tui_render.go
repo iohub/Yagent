@@ -245,10 +245,16 @@ func (m *model) rebuildContentCache() {
 
 	contentChanged := false
 
-	// 两种情况都只能整段重排：显式要求全量重建，或者 contentParts 比条目还长 ——
-	// 多出来的那截是**另一批条目**的残留（从历史里恢复了一个更短的会话就是这个形状），
-	// 逐条补尾部永远修不掉它，留着它下一次排版就会按虚高的条目数去索引 logEntries。
-	// 等长与"更短"两种正常形态仍然走下面的增量路径，流式热路径不受影响。
+	// 两条硬约束，分支顺序不许调换：
+	// ① 只能整段重排的两种情况：显式要求全量重建，或者 contentParts 比条目还长 ——
+	//    多出来的那截是**另一批条目**的残留（从历史里恢复了一个更短的会话就是这个形状），
+	//    逐条补尾部永远修不掉它，留着它下一次排版就会按虚高的条目数去索引 logEntries。
+	// ② 增量路径里**先对齐长度、再处理脏下标**（下面那两个 if 的先后）。脏下标写的是
+	//    contentParts 这份派生缓存，缓存长度必须先行可信：先跑脏循环就是拿 idx 裸索引一个
+	//    可能还没覆盖到它的切片（新条目一边被 markEntryDirty、一边正文还没 append，正是
+	//    同一拍）。代价只是"追加与置脏落在同一拍"的那条新条目重复渲染一次；两切片等长的
+	//    流式热路径仍然只走脏循环，每消息的增量成本一点没变。
+	//    守卫：TestRebuildContentCache_AppendedDirtyEntryAlignsFirst。
 	if m.needFullRebuild || len(m.contentParts) > len(m.logEntries) {
 		renderAll()
 		m.needFullRebuild = false
@@ -257,19 +263,6 @@ func (m *model) rebuildContentCache() {
 		}
 		contentChanged = true
 	} else {
-		if len(m.dirtyEntryIndices) > 0 {
-			for idx := range m.dirtyEntryIndices {
-				if idx >= 0 && idx < len(m.logEntries) {
-					entry := &m.logEntries[idx]
-					entry.clearRenderCache()
-					m.contentParts[idx] = m.renderSingleEntry(entry, currentWidth)
-					firstChanged = min(firstChanged, idx)
-				}
-				delete(m.dirtyEntryIndices, idx)
-			}
-			contentChanged = true
-		}
-
 		if len(m.contentParts) < len(m.logEntries) {
 			oldLen := len(m.contentParts)
 			newParts := make([]string, len(m.logEntries))
@@ -281,6 +274,28 @@ func (m *model) rebuildContentCache() {
 			m.contentParts = newParts
 			firstChanged = min(firstChanged, oldLen)
 			contentChanged = true
+		}
+
+		if len(m.dirtyEntryIndices) > 0 {
+			for idx := range m.dirtyEntryIndices {
+				if idx < 0 || idx >= len(m.logEntries) {
+					// 下标指向一条已经不存在的条目（另一批条目留下的脏）。它永远渲染不出来，
+					// 留着会让 hasDirtyEntries() 永远为真、tick 永远不肯停 —— 只能丢。
+					delete(m.dirtyEntryIndices, idx)
+					continue
+				}
+				if idx >= len(m.contentParts) {
+					// 上面的长度对齐之后不该到这里；真到了就把这个脏下标**留给下一拍**。
+					// 在这里 delete 掉等于留下一段永远不会重排的陈旧正文。
+					continue
+				}
+				entry := &m.logEntries[idx]
+				entry.clearRenderCache()
+				m.contentParts[idx] = m.renderSingleEntry(entry, currentWidth)
+				firstChanged = min(firstChanged, idx)
+				contentChanged = true
+				delete(m.dirtyEntryIndices, idx)
+			}
 		}
 	}
 
