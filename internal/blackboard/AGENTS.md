@@ -74,6 +74,13 @@ assistant 消息、不是那句 reason）在 `internal/agents` 的 `deliverableT
 **12. `NoteMeta` 刻意没有 `Body` 字段**（`note.go:36-49`，只有 `BodySize`）：`list_notes` 与索引行
 都从它渲染，枚举因此便宜到每轮可用；正文取回只有一条路（`ReadNote`，分页在工具层）。
 
+**13. 便签文件名的唯一性来自计数器，不来自随机段。** 形状是
+`20060102T150405Z_<rand4>-<pid>-<seq6>.md`（`board.go:124-142`）。随机段只有 2 字节：同进程
+20 个并发写同一块板撞名概率约 0.3%，200 个约 78%，而撞上的表现是 `AtomicWrite` 的 rename
+把先写那张**静默吃掉**——没有错误、也没有第二条日志，正是根 AGENTS.md §11 坑 43 那一族。
+所以进程内唯一交给 `noteSeq`（单调 + 定宽零填充，因此字典序仍然 == 时间序），pid 兜跨进程，
+随机段只兜"pid 复用 + 同秒"。用例把 `noteRandom`（`:136`）换成常量来证明机制在、不靠运气。
+
 ## 入口
 
 `note.go`（存储与 front-matter）、`index.go`（派生索引）、`resolve.go`（`ContextPack`）、`board.go`（路径与原子写）、
@@ -91,7 +98,9 @@ assistant 消息、不是那句 reason）在 `internal/agents` 的 `deliverableT
 `TestContextPackBudgetTruncationKeepsExcerpt`（`:187`）、
 `TestGCSkipsSymlinkInRoot`（`gc_test.go:185`）、`TestGCCountCapKeepsBoardDirs`（`:87`）、
 `TestGCCountCapSortsAcrossAgentDirs`（`:127`）、
-`TestConcurrentWriteNotesNeverCollide`（`note_stem_test.go:13`，有人把 stem 改成按任务文本命名即红）、
+`TestConcurrentWriteNotesNeverCollide`（`note_stem_test.go:52`，200 个并发写少一张即红）与
+`TestGenerateNoteFilenameSurvivesConstantRandomness`（`:18`，把 `noteRandom` 钉成常量：
+删掉计数器或让它不递增，第一条名字就重复，当场红）、
 `TestBoardWriterNoteCarriesFullDeliverable`（`internal/agents/board_writer_test.go:67`，正文退回摘要即红）。
 瞬态那条不变量的闸门在 `internal/agents/director/board_index_test.go`（见该目录 `AGENTS.md`）。
 
