@@ -109,7 +109,7 @@ exec 默认的取消只打得到直接子进程 bash，`make`/`node` 这些子�
 第二次信号的硬退出：`main.go` 把 `KillLiveProcessGroups` 传给 `shutdown.Config.OnHardExit`，
 因为 `os.Exit` 跳过所有 defer。`is_background=true` 刻意不进表 —— 那条分支的意义就是"服务留给用户"。
 反向的一半同样是契约而不是运气：exec 只在"进程还活着时 ctx 结束"才调 `Cancel`，所以调用**返回之后**
-`agents/executor.go:154-155` 那次取消不会杀掉刚被放行的 daemon（`nohup … &` 因此真能留下服务）。
+`internal/agents/executor.go:154-155` 那次取消不会杀掉刚被放行的 daemon（`nohup … &` 因此真能留下服务）。
 
 ## 入口
 

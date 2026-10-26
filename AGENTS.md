@@ -4,7 +4,7 @@
 > 和**告诉读者去哪儿查的指针**。包内"这么做会静默坏在哪里"写在 `internal/**/AGENTS.md`（17 份，
 > 导览在 `internal/AGENTS.md`），模块结构与文件计数由 `internal/blueprint` 每轮派生——
 > 抄进任何文档就是第二份会漂走的事实。
-> **编号是契约**：`§5.x`、`§6.x`、`§8.3`、`§9.3` 与 `§11` 的 45 条坑编号被 13 份嵌套文档共 25 处
+> **编号是契约**：`§5.x`、`§6.x`、`§8.3`、`§9.3` 与 `§11` 的 46 条坑编号被 13 份嵌套文档共 25 处
 > 指回，**重排或小节改号会让那些指针全部失效**。要瘦身就在小节内部删，不要动编号。
 >
 > 当前状态（核对 2026-10-24）：蓝图 R1–R6、结构化并发 C1–C6、停止/继续三层 A+B+C、配置连根拔 +
@@ -133,10 +133,9 @@ Meta / 自定义 Agent：`delegate_meta` → 单次 LLM 出 JSON → 校验必�
    （`newDirectorToolRunner` 是唯一构造方式），不是进程级——嵌套委派用的是自己那一轮的池，
    "父占一格、子在同一格排队"的死锁形状从结构上不存在。
 
-两个循环共用同一个判据 `agents.toolCallIsParallelizable`。
-**新增可并发工具必须进 `signedReadOnlyAdditions` 或 `newTools` 集合并写明理由**
-（`TestDerivedMetadataMatchesLegacyTables`）；并发准入测试必须拿**真实画像**问判据——
-自己拼一个工具列表来测等于重犯 §11 坑 33。
+两个循环共用同一个判据 `agents.toolCallIsParallelizable`。**新增可并发工具必须进
+`signedReadOnlyAdditions` 或 `newTools` 集合并写明理由**（`TestDerivedMetadataMatchesLegacyTables`）；
+并发准入测试必须拿**真实画像**问判据——自己拼一个工具列表来测等于重犯 §11 坑 33。
 
 ### 5.2 声明面
 
@@ -423,7 +422,7 @@ globalctx 一节）。**没有 CI 质量闸门**：`release.yml` 只做跨平台
 ### 8.3 测试
 
 ```bash
-bash scripts/check_all.sh                 # 本地闸门：build + vet + 十把守卫 + 全量单测
+bash scripts/check_all.sh                 # 本地闸门：build + vet + 十一把守卫 + 全量单测
 RACE=true bash scripts/check_all.sh       # 再对并发包跑 -race（慢 3-8 倍，改到并发时手动跑）
 bash scripts/check_all.sh --fast          # 只跑 ./internal/... 的单测
 go test ./... -count=1 -timeout 600s      # 26 个测试包，墙钟约 12s
@@ -470,7 +469,7 @@ go test ./internal/agents/... -count=1    # 最慢的一档，约 10.5s
 
 ### 9.2 守卫与全局不变量
 
-**十把守卫**（`bash scripts/check_all.sh` 一条命令跑完；每条都对应一次"曾经静默漂移"）：
+**十一把守卫**（`bash scripts/check_all.sh` 一条命令跑完；每条都对应一次"曾经静默漂移"）：
 
 ```
 check_no_manual_lookup        不许重新出现按名字查工具（FORBIDDEN 名单必须为零）
@@ -478,6 +477,7 @@ check_toolspec_leaf           toolspec 不得反向依赖 agents/tools
 check_no_agents_import        director/ 子包不得 import internal/agents（扫传递闭包，防循环）
 check_blueprint_leaf          internal/blueprint 只准标准库 + util + projectid
 check_supervise_leaf          internal/supervise 只准标准库
+check_shutdown_leaf           internal/shutdown 只准标准库 + supervise
 check_no_bare_go              裸 go 全仓硬禁，**无 PENDING 名单**（唯一例外：supervise 自己）
 check_no_inline_atomic_write  tmp+rename 只准 internal/util/atomic.go 一处
 check_file_sizes              director/ 非测试文件 ≤300 行，存量按 PENDING 冻结
@@ -486,8 +486,7 @@ check_test_hygiene            每个 Test* 必须能失败；裸 t.Skip 要有�
 ```
 
 > **棘轮的纪律**：超限即红、**长回去即红、改小了必须同步下调 PENDING 的数字**否则脚本主动报失步。
-> 一条常红的守卫等于没有守卫——所以 `check_no_bare_go.sh` 刻意不留名单（带名单的棘轮会变成第二份
-> 会漂走的事实）。
+> 一条常红的守卫等于没有守卫——所以 `check_no_bare_go.sh` 刻意不留名单（带名单的棘轮就是第二份会漂走的事实）。
 
 **跨模块不变量**（包内的写在各包文档）：
 
@@ -539,7 +538,7 @@ golden），判据见 §5.3 与 §11 坑 44。
 该块同时是 TUI thinklink 面板的内容与 ultimate 压缩的重建原料；**解析失败不报错、只静默丢失**，
 所以格式必须严格遵守。目前 Director、Coding、Browser 的 prompt 强制该格式；Repo/Chat/DevOps/Meta 未要求。
 
-## 11. 已知坑索引（45 条，编号稳定）
+## 11. 已知坑索引（46 条，编号稳定）
 
 每条 = 一句判据 + 去处。去处是**会红的那条测试/那条硬约束**，不是"某个地方写着"。
 四条跨模块的通用教训（33 / 25 / 39 / 18）正文在 §8.3 与 §9.2。
@@ -589,6 +588,7 @@ golden），判据见 §5.3 与 §11 坑 44。
 43. 防线生效过但没人知道它生效过，和静默丢失只差一步：**任何"可选写通道 + 终止型工具"的组合，都要问"被拦下来的那一次，谁看得见"**。账目经两处出口（工具输出会被压缩卷走、便签正文不进索引），不进 conclusion → `internal/blueprint` 硬约束 11、`internal/agents` 硬约束 15。
 44. 动态规格不进全局注册表（会同时打穿 golden、Custom Agent 的 `Palette`、`Validate()` 的双向 1:1）；**没 annotations 一律按写处理**是同一条纪律的安全侧 → `internal/toolspec` 硬约束 5.1、`internal/mcp` 硬约束 3。
 45. "连接落定前收到的通知"必须补一次（`listChangedPending`），且通知回调不能在 readLoop 里同步调用（读循环等自己 = 重发现永远超时）→ `internal/mcp` 硬约束 6。
+46. `CombinedOutput` 的等待条件里含**管道 EOF**，而 EOF 由子孙进程决定：直接子进程退出后 exec 的 ctx 看门狗再也不触发 `Cancel`，于是工具超时与用户取消都打在空气上（`WaitDelay` 是唯一解）→ `internal/tools` 硬约束 16/17、`internal/shutdown`。
 
 <!-- CODESEEK_INJECTION -->
 # Code exploration: use CodeSeek MCP tools first
