@@ -62,6 +62,14 @@ import (
 // 于是多出一条以前不存在的模块级边 —— 两条同形实现合成一条，账上就是 +1 条依赖、−0 片。
 //
 //	internal/browserctl → internal/util
+//
+// 2026-10-26 第七轮修订：43 → 44 片、138 → 142 边。来源是同一份方案里的 P1-a
+// （信号 → ctx 取消），新增 `internal/shutdown` 一片，四条边逐条对过：
+//
+//	internal/shutdown → internal/supervise（本包那条看门狗 goroutine，全仓 goroutine 只能经 supervise 起）
+//	internal/http     → internal/shutdown（NewTaskContext 的根从 Background 换成 shutdown.Root()）
+//	internal/tui      → internal/shutdown（取消后重建的任务 ctx 同一个根）
+//	.                 → internal/shutdown（main 三个入口装处理器）
 func TestScanSelfGolden(t *testing.T) {
 	snap, err := Scan("../..", DefaultOptions()) // 测试 CWD 是 internal/blueprint
 	if err != nil {
@@ -71,8 +79,8 @@ func TestScanSelfGolden(t *testing.T) {
 		t.Fatalf("ModulePath = %q, 要 %q", snap.ModulePath, "yagent")
 	}
 	// golden 1：片数。
-	if len(snap.Leaves) != 43 {
-		t.Fatalf("片数 = %d, golden 是 43 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
+	if len(snap.Leaves) != 44 {
+		t.Fatalf("片数 = %d, golden 是 44 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
 	}
 	// golden 2：模块级边数（out 与 in 是转置，总数必然相等）。
 	out, in := 0, 0
@@ -80,8 +88,8 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
-	if out != 138 || in != 138 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 138/138 —— 形状变了，先确认变化来源", out, in)
+	if out != 142 || in != 142 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 142/142 —— 形状变了，先确认变化来源", out, in)
 	}
 	// 排序不变量：Leaves 按 Dir 排序（确定性的一部分）。
 	for i := 1; i < len(snap.Leaves); i++ {

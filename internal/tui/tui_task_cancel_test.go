@@ -7,9 +7,12 @@ package tui
 
 import (
 	"context"
+	"syscall"
 	"testing"
+	"time"
 
 	"yagent/internal/http"
+	"yagent/internal/shutdown"
 )
 
 func TestSupersededTaskReleasesOldContext(t *testing.T) {
@@ -40,5 +43,39 @@ func TestSupersededTaskReleasesOldContext(t *testing.T) {
 	}
 	if m.currentTask.Context.Err() != nil {
 		t.Errorf("新 ctx 一上来就是死的：%v", m.currentTask.Context.Err())
+	}
+}
+
+// TestCancelledTaskReplacementStaysUnderShutdownRoot 钉换上去的那份新 ctx 也在
+// shutdown.Root() 之下。挂在 Background 上就等于"这条任务从此不随信号取消"——
+// 而正常路径（http.NewTaskContext）已经在根上了，两处不一致就是 §11 坑 18 的形状。
+// 走真信号：shutdown.Install 装了处理器，所以 SIGTERM 不会把测试进程打死。
+func TestCancelledTaskReplacementStaysUnderShutdownRoot(t *testing.T) {
+	_, stopSignals := shutdown.Install(shutdown.Config{})
+	t.Cleanup(stopSignals)
+
+	m := chromeTestModel(t, 120, 40)
+	oldCtx, oldCancel := context.WithCancel(shutdown.Root())
+	t.Cleanup(oldCancel)
+	m.currentTask = &http.Task{
+		ID:         "t2",
+		Status:     "running",
+		Context:    oldCtx,
+		CancelFunc: oldCancel,
+	}
+	m.taskRunning = true
+	m.taskCancelled = true
+
+	updated, _ := m.Update(taskCompleteMsg{taskID: "t2"})
+	m = updated.(*model)
+	replacement := m.currentTask.Context
+
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("发 SIGTERM 失败: %v", err)
+	}
+	select {
+	case <-replacement.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("取消后重建的任务 ctx 不随信号结束：它没挂在 shutdown.Root() 上")
 	}
 }
