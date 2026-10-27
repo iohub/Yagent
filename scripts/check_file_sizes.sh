@@ -32,8 +32,11 @@ PENDING=(
 	# assistant/tool 两轮消息改走 llm.Choice 的单一构造点，572 → 557。
 	# 本轮用户输入的落库抽到 planner_memory.go（FirstConversation 必须在写入之前取快照，
 	# 主循环里只留快照与注释），557 → 556。
+	# D2（终止收口）要给主循环加一条兜底 defer、D1 要给 exec 闭包加 recover，两者合计 +10 行
+	# 会顶破冻结上限：于是把 39 行的 writeDirectorRollout 闭包搬进 planner_rollout.go
+	# （它就是"记录"，与终止事件同属一个文件），journal 构造点顺带承载兜底 defer，556 → 532。
 	# 剩下主循环 + 委派编排两段职责，仍是一次独立改动。
-	"internal/agents/director/planner_run.go:556"
+	"internal/agents/director/planner_run.go:532"
 )
 
 if [ ! -d "$TARGET_DIR" ]; then

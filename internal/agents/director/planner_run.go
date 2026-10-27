@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"yagent/internal/agents/toolbatch"
@@ -32,6 +31,21 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				directorRolloutWriter.Close()
 			}
 		}()
+	}
+
+	// journal 是这一轮所有落盘动作的唯一出口：消息、压缩快照、终止事件。
+	//
+	// 兜底 defer 必须注册在**任何 return 之前**（这里是能选的最早点：writer 一建好就登记），
+	// 否则注册点之前的 return 依旧绕过它 —— 与子 Agent 侧 executor.go 的单一 defer 收口对齐。
+	// 提到 Prompts 之前的现成收益：装配期失败（拿不到 system prompt）以前一条终止事件都不写，
+	// rollout 看起来像"被切断"，而不是"根本没跑起来"。
+	// 上面那个 rollout Close 是本函数第一个 defer，LIFO 保证兜底先写、再关文件。
+	journal := directorJournal{ctx: ctx, p: p, rw: directorRolloutWriter}
+	defer journal.abortUnclaimed()
+	writeComplete := func(stopReason string) { journal.complete(stopReason) }
+	writeAborted := func(reason, stopReason string) { journal.aborted(reason, stopReason) }
+	writeCompacted := func(kind, summary string, before, after, saved int) {
+		journal.compacted(kind, summary, before, after, saved)
 	}
 
 	if p.cfg.Journal != nil {
@@ -131,55 +145,9 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		}, "director")
 	}
 
-	writeDirectorRollout := func(msg llm.Message) {
-		if directorRolloutWriter == nil || !directorRolloutWriter.Enabled() {
-			return
-		}
-		if !directorRolloutWriter.SessionMetaWritten() {
-			cwd, _ := os.Getwd()
-			directorRolloutWriter.WriteSessionMeta(memory.SessionMeta{
-				ID:          directorRolloutWriter.SessionID(),
-				SessionID:   directorRolloutWriter.SessionID(),
-				Cwd:         cwd,
-				Originator:  "yagent",
-				Source:      "cli",
-				HistoryMode: "standard",
-			})
-			turnID := directorRolloutWriter.NextTurn()
-			directorModel := ""
-			if p.cfg.LLM != nil {
-				directorModel = p.cfg.LLM.Model()
-			}
-			directorRolloutWriter.WriteTurnContext(memory.TurnContext{
-				TurnID:            turnID,
-				Cwd:               cwd,
-				Model:             directorModel,
-				Effort:            "medium",
-				CollaborationMode: "director",
-			})
-			directorRolloutWriter.WriteEventMsg(memory.EventMsg{
-				Type: "task_started",
-			})
-		}
-		msgID := directorRolloutWriter.NextMessageID()
-		items := memory.LLMMessageToResponseItems(msg, msgID)
-		for _, item := range items {
-			if err := directorRolloutWriter.WriteResponseItem(item); err != nil {
-				slog.Warn("Rollout: failed to write director message", "error", err)
-			}
-		}
-	}
-
-	journal := directorJournal{ctx: ctx, p: p, rw: directorRolloutWriter}
-	writeComplete := func(stopReason string) { journal.complete(stopReason) }
-	writeAborted := func(reason, stopReason string) { journal.aborted(reason, stopReason) }
-	writeCompacted := func(kind, summary string, before, after, saved int) {
-		journal.compacted(kind, summary, before, after, saved)
-	}
-
 	initialMsgCount := len(messages)
 	for i := 0; i < initialMsgCount; i++ {
-		writeDirectorRollout(messages[i])
+		journal.writeMessage(messages[i])
 	}
 
 	var measured compression.Prefix
@@ -432,7 +400,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		}
 
 		messages = append(messages, assistantMsg)
-		writeDirectorRollout(assistantMsg)
+		journal.writeMessage(assistantMsg)
 		if len(choice.ToolCalls) == 0 {
 			if !p.state.HasDelegated && p.state.NonDelegationPrompts < MaxNonDelegationPrompts {
 				p.state.NonDelegationPrompts++
@@ -444,7 +412,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				}
 				userMsg := llm.Message{Role: llm.RoleUser, Content: forceMsg}
 				messages = append(messages, userMsg)
-				writeDirectorRollout(userMsg)
+				journal.writeMessage(userMsg)
 				slog.Debug("DirectorAgent force delegation via user message", "step", i, "prompt_count", p.state.NonDelegationPrompts)
 				continue
 			}
@@ -464,12 +432,20 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		type plannerToolOutcome struct {
 			result    string
 			cancelled bool
-			failed    bool // 这次工具执行报错了；失败的 agent_exit 不许当成功收尾（与 executor.go 同缺陷）
+			failed    bool // 这次工具执行报错了；失败的 agent_exit 不许当成功收尾
 		}
 
-		execPlannerToolCall := func(callCtx context.Context, i int) plannerToolOutcome {
+		// 具名返回 + 自己 recover：toolbatch 的 guardedExec 只能把 panic 折成 T 的**零值**
+		// （result=""、failed=false），而零值的 agent_exit 会满足下面"收尾"判据、把一次
+		// 崩溃冒领成"任务完成"。泛型签名 Run[T any] 决定了那一层无法给任意 T 的 failed
+		// 赋值，所以这道防线只能在业务 exec 闭包里建（与 executor.go 的并行闭包同形）。
+		execPlannerToolCall := func(callCtx context.Context, i int) (out plannerToolOutcome) {
+			defer func() {
+				if r := recover(); r != nil {
+					out = plannerToolOutcome{result: fmt.Sprintf("Error: panic: %v", r), failed: true}
+				}
+			}()
 			tc := toolCalls[i]
-			var out plannerToolOutcome
 
 			if p.cfg.Publisher != nil {
 				_ = p.cfg.Publisher.Publish("tool_call_start", map[string]interface{}{
@@ -523,7 +499,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 
 			toolMsg := llm.Message{Role: llm.RoleTool, Content: out.result, ToolCallID: tc.ID, ToolName: tc.Function.Name}
 			messages = append(messages, toolMsg)
-			writeDirectorRollout(toolMsg)
+			journal.writeMessage(toolMsg)
 
 			if tc.Function.Name == "agent_exit" && !out.failed {
 				writeComplete(memory.StopKindAgentExit)
