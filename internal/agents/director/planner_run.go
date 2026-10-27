@@ -57,10 +57,10 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		}
 	}
 
-	// firstConversation = 「本轮开始时 memory 为空」：只有新任务首轮注入项目上下文，同任务追问不重复注入。
-	// 快照必须取在 seedHumanInput **之前** —— 本轮输入一旦写进 memory，len(GetMessages()) 就恒 ≥ 1，
-	// 判定永远为 false，门面层 director.go 的项目上下文注入守卫随之失效（本条 bug 的成因，勿改回）。
-	firstConversation := in.Mem == nil || len(in.Mem.GetMessages()) == 0
+	// firstConversation = 「本轮开始时 memory 里还没有任何 AI 回应」＝新任务首轮：只在这一轮注入项目上下文，追问不重复注入。
+	// 快照必须取在 seedHumanInput **之前**（判据问的是本轮开始时的状态，写完之后就把本轮自己算进去了，勿改回）。
+	// HTTP/WebUI 提交前预写的那条 human 消息不影响判定，理由见 startsFirstTurn（planner_memory.go）。
+	firstConversation := startsFirstTurn(in.Mem)
 	seedHumanInput(in.Mem, in.Input)
 
 	var messages []llm.Message
