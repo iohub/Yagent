@@ -26,9 +26,20 @@ func NewFlowControlTool(workingDir string) *FlowControlTool {
 // handoff 只做透传与回显，不在这里解析：结构化解读属于 Agent 侧（agents/result.go 的
 // FinalizeResult），工具层负责把它写进返回值，于是它也自然出现在 rollout 与 TUI 里。
 func (t *FlowControlTool) ExecuteAgentExit(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-	reason, ok := params["reason"].(string)
+	// 两种故障分开报，压成一条会把排查方向带偏：真实发生的是"键根本不在"（上游
+	// arguments 为空或非法，参数表整个丢了），旧消息 "reason parameter must be a
+	// string" 却指向"模型写错了类型"。present 为真但值是 nil（"reason": null）同样
+	// 属于"没给理由"，不是类型错误。
+	raw, present := params["reason"]
+	if !present || raw == nil {
+		return nil, util.WrapError(ctx,
+			fmt.Errorf(`required parameter "reason" is missing (tool arguments were empty or malformed)`),
+			"agent_exit")
+	}
+	reason, ok := raw.(string)
 	if !ok {
-		return nil, util.WrapError(ctx, fmt.Errorf("reason parameter must be a string"), "executeFinish")
+		return nil, util.WrapError(ctx,
+			fmt.Errorf(`parameter "reason" must be a string, got %T`, raw), "agent_exit")
 	}
 	result := map[string]interface{}{
 		"finished": true,
@@ -52,12 +63,12 @@ func (t *FlowControlTool) ExecuteAgentExit(ctx context.Context, params map[strin
 func (t *FlowControlTool) ExecuteAskUserForHelp(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	reason, _ := params["reason"].(string)
 	if reason == "" {
-		return nil, util.WrapError(ctx, fmt.Errorf("reason parameter is required"), "executeAskUserForHelp")
+		return nil, util.WrapError(ctx, fmt.Errorf("reason parameter is required"), "ask_user_for_help")
 	}
 
 	specificQuestion, _ := params["specific_question"].(string)
 	if specificQuestion == "" {
-		return nil, util.WrapError(ctx, fmt.Errorf("specific_question parameter is required"), "executeAskUserForHelp")
+		return nil, util.WrapError(ctx, fmt.Errorf("specific_question parameter is required"), "ask_user_for_help")
 	}
 
 	// 解析选项 —— 兼容 string 和 []interface{} 两种格式
@@ -109,7 +120,7 @@ func (t *FlowControlTool) ExecuteAskUserForHelp(ctx context.Context, params map[
 
 		userResponse, err := t.UserConfirmMgr.RequestUserHelp(ctx, helpData)
 		if err != nil {
-			return nil, util.WrapError(ctx, fmt.Errorf("user help failed: %w", err), "executeAskUserForHelp")
+			return nil, util.WrapError(ctx, fmt.Errorf("user help failed: %w", err), "ask_user_for_help")
 		}
 
 		result := map[string]interface{}{

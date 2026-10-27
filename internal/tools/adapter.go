@@ -6,11 +6,30 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
+	"unicode/utf8"
 
 	"yagent/internal/llm"
 	"yagent/internal/toolspec"
 )
+
+// maxFallbackRawLogBytes 是兜底日志里原始入参的字节上限：一次被 max_tokens 截断的
+// write_file 参数可能有几十 KB，全量进日志会把这条线索本身埋掉。
+const maxFallbackRawLogBytes = 500
+
+// truncateRawForLog 按字节预算截原始入参，并回退到最后一个完整码点：
+// 按字节硬切会把中文劈成两半，日志里就是乱码（与 truncateRunes 同一个顾虑）。
+func truncateRawForLog(s string) string {
+	if len(s) <= maxFallbackRawLogBytes {
+		return s
+	}
+	cut := s[:maxFallbackRawLogBytes]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return fmt.Sprintf("%s…[truncated %d of %d bytes]", cut, len(s)-len(cut), len(s))
+}
 
 // ToolFunc is a function type that matches the tool execution signature.
 // 别名到 toolspec.ToolFunc：注册表与适配器共用同一个函数类型，
@@ -97,9 +116,23 @@ func (a *Adapter) SetGuard(guard *WorkspaceGuard) {
 }
 
 func (a *Adapter) Call(ctx context.Context, input string) (string, error) {
+	// 步骤 1/4（AGENTS.md 硬约束 9）：JSON 解析。解析失败**不报错**，回落成单参数
+	// {"input": 原始串} —— 非 JSON 入参的工具靠这一步活着。
+	//
+	// 触发条件用 llm.UsableToolArguments 而不是"unmarshal 报错"：字面量 "null" 能
+	// unmarshal 成功却得到 nil map，旧写法让它带着一个空参数表往下走，于是必填参数
+	// 静默缺失、报错信息完全指不到真相。判据与 Choice.ToolCallNote 共用同一个函数
+	// （internal/llm/AGENTS.md 硬约束 13：两侧必须同形）。
 	var params map[string]interface{}
-	if err := json.Unmarshal([]byte(input), &params); err != nil {
-		// Try to treat as single "input" param if JSON fails
+	if !llm.UsableToolArguments(input) {
+		// 兜底本身按契约保留，但必须留下痕迹：一次"参数整个丢了"的执行如果无声无息，
+		// 事后从日志里根本分不出是模型没给参数还是工具没收到参数。
+		slog.Warn("tool arguments are not a usable JSON object; falling back to single input param",
+			"tool", a.name, "raw_len", len(input), "raw", truncateRawForLog(input))
+		params = map[string]interface{}{"input": input}
+	} else if err := json.Unmarshal([]byte(input), &params); err != nil {
+		// 理论上不可达：UsableToolArguments 刚用同一个输入、同一个 map 类型解成功过。
+		// 留着是为了不让兜底依赖"两处解析必然同结果"这个隐含前提。
 		params = map[string]interface{}{"input": input}
 	}
 
