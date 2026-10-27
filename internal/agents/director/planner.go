@@ -34,9 +34,15 @@ type ToolRunner interface {
 	Call(ctx context.Context, name string, argsJSON string, callID string) (string, error)
 }
 
+// PromptInput 是门面层构造本轮 system prompt 时拿到的判据（注入什么由门面层决定）。
 type PromptInput struct {
-	Input               string
-	FirstConversation   bool
+	Input string
+	// FirstConversation 表示「本轮开始时 memory 为空」＝新任务的首轮：项目上下文只在这一轮注入，
+	// 同一任务的追问不再重复注入。判定的取值必须快照在把本轮用户输入写进 memory **之前**，
+	// 写完再问就恒为 false（见 planner_run.go 里 firstConversation 的注释）。
+	FirstConversation bool
+	// ForceProjectContext 表示这一次必须强制注入项目上下文：从 rollout 恢复的 memory 里没有 system
+	// 消息，只按 FirstConversation 判定会让续跑首轮漏掉它（由 PlanInput.Resumed 置位，只消费一次）。
 	ForceProjectContext bool
 }
 
