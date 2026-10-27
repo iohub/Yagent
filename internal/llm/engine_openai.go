@@ -283,6 +283,15 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 		}
 	}
 
+	// 空串兜底放在收尾装配处，而不是上面每个分片的 += 处：在那里补 "{}" 会被后续分片
+	// 当作前缀继续拼接，产出脏参数。与 engine_anthropic.go parseStreamResponse 的收尾
+	// 装配对称。toolCalls 是本函数新建的切片，改写不涉及 history/rollout 的别名污染。
+	for i := range toolCalls {
+		if toolCalls[i].Function.Arguments == "" {
+			toolCalls[i].Function.Arguments = "{}"
+		}
+	}
+
 	resp := &Response{
 		Choices: []Choice{{
 			Content:      content,
@@ -347,13 +356,22 @@ func (e *OpenAIEngine) convertMessage(msg Message) openai.ChatCompletionMessageP
 func (e *OpenAIEngine) buildAssistantWithToolCalls(msg Message) openai.ChatCompletionMessageParamUnion {
 	toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(msg.ToolCalls))
 	for _, tc := range msg.ToolCalls {
+		// 只规范化发出去的这一份，绝不回写 tc.Function.Arguments / msg.ToolCalls：
+		// Message 是值拷贝但 ToolCalls 共享底层数组，原地改会连 history 与 rollout
+		// 那一份一起污染（AGENTS.md 硬约束 7）。
+		// 空串与非法 JSON 在出口统一折成 "{}"：OpenAI 兼容网关收到 "arguments": ""
+		// 直接 400，一次幻觉因此永久毒化上下文；resume 回放历史也走这里。
+		args := tc.Function.Arguments
+		if !UsableToolArguments(args) {
+			args = "{}"
+		}
 		toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
 			OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
 				ID:   tc.ID,
 				Type: "function",
 				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
 					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments,
+					Arguments: args,
 				},
 			},
 		})
@@ -402,12 +420,20 @@ func (e *OpenAIEngine) toResponse(completion *openai.ChatCompletion) (*Response,
 		for _, tc := range choice.Message.ToolCalls {
 			fn := tc.AsFunction()
 			if fn.ID != "" {
+				// 空串兜底，与 engine_anthropic.go convertResponse 的 argsStr 分支对称：
+				// provider 不发 arguments 字段时这里恒为空串，而 Agent 侧按 JSON 解析
+				// 工具参数，空串让一次工具分发直接报错。只补空串 —— 非法 JSON 原样留着，
+				// 截断/幻觉的诊断信息不在读取侧抹掉。
+				args := fn.Function.Arguments
+				if args == "" {
+					args = "{}"
+				}
 				c.ToolCalls = append(c.ToolCalls, ToolCall{
 					ID:   fn.ID,
 					Type: "function",
 					Function: FunctionCall{
 						Name:      fn.Function.Name,
-						Arguments: fn.Function.Arguments,
+						Arguments: args,
 					},
 				})
 			}

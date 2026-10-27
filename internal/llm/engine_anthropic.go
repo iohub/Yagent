@@ -219,9 +219,16 @@ func (e *AnthropicEngine) buildRequestBody(messages []Message, tools []ToolDef, 
 				blocks = append(blocks, anthropicContentBlock{Type: "thinking", Thinking: msg.Reasoning})
 			}
 			for _, tc := range msg.ToolCalls {
+				// 只读 tc，绝不回写 msg.ToolCalls 的元素（Message 是值拷贝、ToolCalls
+				// 共享底层数组，原地改会同时污染 history/rollout 那一份）。
 				var input map[string]any
 				if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
 					input = map[string]any{"raw": tc.Function.Arguments}
+				} else if !UsableToolArguments(tc.Function.Arguments) {
+					// 解析成功却仍"不可用"的只有字面量 null：它留下 nil map，原样 marshal
+					// 就是 "input": null，而 tool_use.input 必须是对象 —— 一个空参数因此
+					// 让整次请求 400。判据与 UsableToolArguments 同形（AGENTS.md 硬约束 13）。
+					input = map[string]any{}
 				}
 				inputRaw, _ := json.Marshal(input)
 				blocks = append(blocks, anthropicContentBlock{
