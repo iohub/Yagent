@@ -90,6 +90,13 @@ Director 的编排内核：Planner 主循环、熔断与恢复、指标、便签
   `TestProjectContextLoaderCacheHit`（`:59`）钉"同一实例只加载一次"。
   `project_context.go:53` 是"只读工作区根的 `YAGENT.md`/`CLAUDE.md`/`AGENTS.md`、不递归"这条
   加载契约的唯一实现。
+- **首轮判定**（项目上下文注入的唯一开关）是 `startsFirstTurn`（`planner_memory.go`）：
+  「本轮开始时 memory 里还没有任何 assistant/tool 消息」，**不是**「memory 为空」——http 路径在
+  提交任务前先把用户消息写进 memory 并落盘（`internal/http/websocket.go:169`，为了断线可恢复），
+  按"空"判定会让 WebUI 用户永远拿不到项目上下文。取值仍必须快照在 `seedHumanInput` **之前**。
+  `TestStartsFirstTurn`（`planner_memory_test.go:14`）钉判据的每个分支（含 `IsSubAgent` 过滤与
+  `nil` memory），`TestPlannerRunFirstTurnWithPrewrittenHumanInput`（`planner_test.go:696`）与
+  `TestPlannerRunFirstConversationSnapshottedBeforeHumanWrite`（`:620`）钉它到 `PromptInput` 的传递。
 - `TestPlannerRunForceDelegationReminder`（`planner_test.go:307`）：钉第 12 条的三件事——恰好 3 次、
   两条文案各一次、配额用尽后放行；`TestPlannerRunPlainTextExit`（`:174`）：委派过就不再注入提醒。
 - `TestCharacterizationRecoveryCircuitBreaker`
