@@ -83,7 +83,8 @@ Anthropic 的 `input_tokens` **不含** cache，总输入是三项相加（`engi
 `resp.Choices[0]`，一次网关吞掉上游错误就崩在任务中间，读取因此只准经 `Response.FirstChoice`。
 标记只加在**交回给模型**的那一份（`ContentWithNotice` / `AssistantMessage`），provider 原字节不改写：
 rollout 指纹与 llm 日志吃的是它。`ToolCallNote`（`:204`）的判据必须与 `internal/tools` 的
-`Adapter.Call` 裸字符串兜底同形（那边硬约束 9 的另一半）——判据不一致时"回执说明截断"会挂在一条
+`Adapter.Call` 裸字符串兜底同形（两侧都调 `UsableToolArguments`，那是本包唯一的判据；
+那边硬约束 9 的另一半）——判据不一致时"回执说明截断"会挂在一条
 生产永远不成立的条件上。
 
 ## 入口
@@ -111,7 +112,9 @@ rollout 指纹与 llm 日志吃的是它。`ToolCallNote`（`:204`）的判据�
 - 读取口那一组（`engine_response_test.go`）：`TestFirstChoiceRejectsEmptyAndNil`（nil 与零 choice
   必须是错误）、`TestNormalizeFinishReason`（两套词表 + 认不出的原样留着）、
   `TestContentWithNoticeMarksOnlyTruncatedTurns`（标记只加在交回侧，provider 原字节不动）、
-  `TestToolCallNoteOnlyForCutOffIncompleteArgs`（含裸字符串入参那条——它就是工具层兜底会走到的形状）。
+  `TestToolCallNoteOnlyForCutOffIncompleteArgs`（含裸字符串入参那条——它就是工具层兜底会走到的形状）、
+  `TestToolCallNote_CriterionMatchesAdapterFallback`（`tool_arguments_test.go`：同一批入参逐条对账
+  `ToolCallNote` 与 `UsableToolArguments`，两侧判据一分叉即红）。
 - finish_reason 穿过引擎边界（`engine_openai_test.go:628-`、`engine_anthropic_test.go:411-`）：
   `TestOpenAIEngine_EmptyChoicesIsError` / `_TruncationReachesChoice` / `_RefusalIsError` /
   `_UnknownFinishReasonKeptVerbatim` / `_StreamingTruncationReachesChoice` /

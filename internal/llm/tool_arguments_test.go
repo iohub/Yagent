@@ -257,3 +257,42 @@ func TestAnthropicRequest_ValidInput_SentVerbatim_SourceUnchanged(t *testing.T) 
 		t.Errorf("provider 原字节被改写: %q, want %q", got, args)
 	}
 }
+
+// ---------- Layer 3：判据同形（internal/llm/AGENTS.md 硬约束 13）----------
+
+// ToolCallNote 决定"这条工具调用的回执要不要说明被截断"，Adapter.Call 决定"这份参数
+// 要不要折成裸字符串兜底"。两处必须是同一个判据：判据不一致时，"回执说明截断"会挂在
+// 一条生产永远不成立的条件上（旧写法用 unmarshal 是否报错，于是 "null" 在这里算完整、
+// 在工具层算可用，两边同时沉默）。这里不逐条枚举期望值，只钉"两侧永不分叉"。
+func TestToolCallNote_CriterionMatchesAdapterFallback(t *testing.T) {
+	raws := []string{
+		"",
+		"null",
+		`{"a":`,
+		"{}",
+		`{"reason":"done"}`,
+		"hello",
+		"[]",
+		`"a string"`,
+		"   ",
+		"123",
+	}
+	for _, raw := range raws {
+		t.Run(raw, func(t *testing.T) {
+			// 只有截断轮才轮到这条说明：产出条件本层不动，只统一判据。
+			cut := Choice{
+				FinishReason: FinishLength,
+				ToolCalls:    []ToolCall{{Function: FunctionCall{Name: "agent_exit", Arguments: raw}}},
+			}
+			note := cut.ToolCallNote(cut.ToolCalls[0])
+			if usable := UsableToolArguments(raw); usable != (note == "") {
+				t.Errorf("arguments = %q: 可用 = %v, 无说明 = %v —— 判据分叉了", raw, usable, note == "")
+			}
+			// 非截断轮永远不该出现这条说明（那是工具层自己的错误）。
+			normal := Choice{FinishReason: FinishStop, ToolCalls: cut.ToolCalls}
+			if got := normal.ToolCallNote(normal.ToolCalls[0]); got != "" {
+				t.Errorf("非截断轮出现了截断说明: %q", got)
+			}
+		})
+	}
+}

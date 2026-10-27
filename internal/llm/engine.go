@@ -2,7 +2,6 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -198,15 +197,15 @@ func (c Choice) ContentWithNotice() string {
 }
 
 // ToolCallNote returns the note for this call's result, or "" when there is nothing
-// to explain. The completeness test is the same unmarshal the tool layer performs
-// (Adapter.Call): anything that does not parse as an object is executed via its
-// raw-string fallback, so a cut-off payload reaches the tool as a bogus parameter.
+// to explain. The completeness test is the same predicate the tool layer uses to pick
+// its raw-string fallback (Adapter.Call → UsableToolArguments): anything not usable
+// as an object reaches the tool as a bogus single "input" param, so a cut-off payload
+// must be named here too. AGENTS.md 硬约束 13 — 判据只有一份，两侧必须同形。
 func (c Choice) ToolCallNote(tc ToolCall) string {
 	if !c.FinishReason.Truncated() {
 		return ""
 	}
-	var params map[string]any
-	if json.Unmarshal([]byte(tc.Function.Arguments), &params) == nil {
+	if UsableToolArguments(tc.Function.Arguments) {
 		return ""
 	}
 	return toolArgsTruncatedNotice

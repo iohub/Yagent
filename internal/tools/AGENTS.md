@@ -30,7 +30,7 @@ guard 由 `rebuild` 统一挂（`surface.go:122-125`），集中构造消除了"
 （`surface.go:60-70`）。预算降级**只动 Warm，绝不能动 Hot**（`surface.go:128-144`）——
 流程控制与元工具降级会让模型失去收尾与取 schema 的能力。
 
-**5. `agent_exit` 的参数在本层只回显、不解析**（`flow_control.go:26-34`）。加一个参数必须同时改
+**5. `agent_exit` 的参数在本层只回显、不解析**（`flow_control.go:48-57`）。加一个参数必须同时改
 两处：schema、以及这里的回显。少回显一个键，提交就在离开循环的那一刻**静默消失**、不报错、不丢日志
 （`handoff` 与 `blueprint` 都挂在这条路上，根 AGENTS.md §11 坑 38）。
 
@@ -49,14 +49,15 @@ guard 仍在循环之后统一挂。`ExternalSpecs` 一律 Cold，靠既有 defe
 `use_skill` 的执行器只认 `toolspec.SkillSource`，本包不认识 `internal/skills`。
 
 **9. `Adapter.Call` 内部的四步顺序是契约**（JSON 解析 → 工作区边界 → 危险操作授权 → 执行，
-`adapter.go:99-127`）。JSON 解析失败**不报错**，回落成单参数 `{"input": 原始串}`（`:100-104`）——
-非 JSON 入参的工具靠这一步活着；结果一律 `json.Marshal` 回序列化（`:119-126`），
+`adapter.go:118-159`）。入参不可用**不报错**，回落成单参数 `{"input": 原始串}`，并留一条
+`slog.Warn`（`:126-137`；判据是 `llm.UsableToolArguments`，所以字面量 `null` 也算不可用）——
+非 JSON 入参的工具靠这一步活着；结果一律 `json.Marshal` 回序列化（`:152-159`），
 执行器返回不可序列化的值是错误而不是空结果。
 
-**10. 工具声明上 provider 前必须按名字排序。** `SortToolDefs`（`adapter.go:138-142`）的三个消费点
+**10. 工具声明上 provider 前必须按名字排序。** `SortToolDefs`（`adapter.go:171-175`）的三个消费点
 都调它（`surface.go:247`、`internal/agents/director/planner_run.go:124`、
 `internal/agents/director.go:255` 的 hash 日志）；`ComputeToolDefsHash` 自排序副本后取
-sha256 前 8 字节（`adapter.go:147-159`）。顺序漂走的症状不是崩溃，是 provider 端前缀缓存
+sha256 前 8 字节（`adapter.go:180-190`）。顺序漂走的症状不是崩溃，是 provider 端前缀缓存
 逐条失效——要到 token 账单对不上才被发现有两条路：排序漏一处，或 hash 比对基线被整体重算。
 
 **11. 授权只有"问用户"这一种强制，没有硬拒绝路径；放行状态分三层，持久化只有一处。**
@@ -156,6 +157,10 @@ exec 默认的取消只打得到直接子进程 bash，`make`/`node` 这些子�
   它等的是真信号与真进程组，改动没碰到它时它红了要先怀疑这条，不要顺着改动找根因。
 - `TestExecuteRunBash`（`system_operations_test.go:11`）是这条改动前的行为基线：
   `foreground success`/`foreground failure` 断言的是**精确**输出，改回执形状时它会先叫。
+- 第 9 条的兜底形状与"不可用入参必须留痕"在 `adapter_call_test.go`：半截 JSON、字面量 `null`、
+  空串各一条（都断言**不报错**且得到 `{"input": 原始串}`），外加"合法对象不被兜底吃掉"和一条
+  `slog.Warn` 的字段核对。`flow_control_test.go` 钉 agent_exit 的两条可区分消息与真实工具名
+  （`missing` vs `must be a string, got float64`），并把 `null` 入参整链跑通。
 - 第 14 条的预算阶梯在 `file_operations_read_test.go`（23 条，`ExecuteReadFile` 在此之前
   **零直接单测**）：每条夹具都带"必须真的超上限"的前置 `t.Fatalf`，否则上限断言恒真；
   12 条变异逐条验过各自变红（`docs/read-file-redesign.md` §9 记了串号与结果）。
