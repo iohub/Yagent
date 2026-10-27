@@ -117,7 +117,12 @@ func NormalizeMaxParallelReadOnlyTools(n int) int {
 	}
 }
 
-func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (string, bool) {
+// runToolCall 执行一次工具调用，返回 (给模型看的回执, 是否找到工具, 执行错误)。
+// execErr 是给**调用方**的失败事实：终止判据要靠它，而不是靠回执字符串的形状——失败
+// 从前只活在 "Error: ..." 那个串里，于是一次参数校验报错的 agent_exit 会以那条 Error
+// 作为交付收尾、并被 stopKind 记成一次成功收尾（见本文件终止判定处）。
+// found=false（工具没注册）不算执行失败，execErr 恒为 nil：两件事别混。
+func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (string, bool, error) {
 	activity.Heartbeat(ctx, "tool:start:"+tc.Function.Name)
 
 	if cfg.Publisher != nil {
@@ -130,12 +135,12 @@ func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (str
 
 	ad, found := resolveAdapter(cfg, tc.Function.Name)
 	if !found {
-		return "", false
+		return "", false, nil
 	}
 	// 模型跳过 load_tool 直接调冷工具：不执行、不报"没这个工具"，
 	// 而是把完整 schema 回吐给它，同一步就能自己纠正过来。
 	if isColdUnloaded(cfg, tc.Function.Name) {
-		return teachColdTool(cfg, tc.Function.Name), true
+		return teachColdTool(cfg, tc.Function.Name), true, nil
 	}
 
 	startTime := time.Now()
@@ -150,19 +155,19 @@ func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (str
 	if !isInteractiveUserTool(tc.Function.Name) {
 		toolCtx, toolCancel = context.WithTimeout(cancelCtx, defaultToolTimeout)
 	}
-	toolResult, callErr := ad.Call(toolCtx, tc.Function.Arguments)
+	toolResult, execErr := ad.Call(toolCtx, tc.Function.Arguments)
 	cancelCtxCancel()
 	toolCancel()
-	if callErr != nil {
-		if errors.Is(callErr, context.DeadlineExceeded) {
+	if execErr != nil {
+		if errors.Is(execErr, context.DeadlineExceeded) {
 			toolResult = fmt.Sprintf("Error: tool execution timed out after %d seconds", int(defaultToolTimeout/time.Second))
 		} else {
-			toolResult = fmt.Sprintf("Error: %v", callErr)
+			toolResult = fmt.Sprintf("Error: %v", execErr)
 		}
 	}
-	logToolCall(tc.Function.Name, cfg.AgentName, tc.Function.Arguments, toolResult, callErr, startTime)
+	logToolCall(tc.Function.Name, cfg.AgentName, tc.Function.Arguments, toolResult, execErr, startTime)
 	activity.Heartbeat(ctx, "tool:done:"+tc.Function.Name)
-	return toolResult, true
+	return toolResult, true, execErr
 }
 
 // toolCallIsParallelizable 是一次工具调用能否进并行批次的**唯一**判据：
@@ -859,14 +864,16 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 		execOneToolCall := func(idx int) *ExecutorResult {
 			tc := toolCalls[idx]
-			toolResult, found := runToolCall(ctx, &cfg, tc)
+			toolResult, found, execErr := runToolCall(ctx, &cfg, tc)
 			if !found {
 				toolResult = fmt.Sprintf("Tool %s not found", tc.Function.Name)
 			}
 
 			commitToolCall(tc, toolResult, true)
 
-			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" {
+			// 终止判据：名字对上**且**这一次真的执行成功。失败时 "Error: ..." 已经作为 tool 回执
+			// 交回模型，循环继续；反复失败由既有 MaxSteps 兜底（上限只有一处，别再套第二层）。
+			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" && execErr == nil {
 				return &ExecutorResult{Text: toolResult, History: history}
 			}
 			return nil
@@ -893,7 +900,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 							toolResult = fmt.Sprintf("Error: panic: %v", r)
 						}
 					}()
-					res, found := runToolCall(callCtx, &cfg, tc)
+					res, found, _ := runToolCall(callCtx, &cfg, tc)
 					if !found {
 						res = fmt.Sprintf("Tool %s not found", tc.Function.Name)
 					}

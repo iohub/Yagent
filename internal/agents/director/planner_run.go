@@ -464,6 +464,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		type plannerToolOutcome struct {
 			result    string
 			cancelled bool
+			failed    bool // 这次工具执行报错了；失败的 agent_exit 不许当成功收尾（与 executor.go 同缺陷）
 		}
 
 		execPlannerToolCall := func(callCtx context.Context, i int) plannerToolOutcome {
@@ -485,6 +486,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			// 是否可执行由 runner 按注册表判定（未注册 → "Tool x not found"，
 			// 冷工具未取回 → 回吐 schema），这里不再拿一份可能已过时的声明快照当门控。
 			toolResult, err := p.cfg.Tools.Call(callCtx, tc.Function.Name, tc.Function.Arguments, tc.ID)
+			out.result, out.failed = toolResult, err != nil
 			if err != nil {
 				errMsg := err.Error()
 				if len(errMsg) > 1000 {
@@ -495,8 +497,6 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				} else {
 					out.result = fmt.Sprintf("Error: %s", errMsg)
 				}
-			} else {
-				out.result = toolResult
 			}
 			return out
 		}
@@ -525,7 +525,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			messages = append(messages, toolMsg)
 			writeDirectorRollout(toolMsg)
 
-			if tc.Function.Name == "agent_exit" {
+			if tc.Function.Name == "agent_exit" && !out.failed {
 				writeComplete(memory.StopKindAgentExit)
 				return "agent_exit"
 			}

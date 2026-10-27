@@ -15,11 +15,11 @@
 **1. `ExecutorConfig.Surface` 是唯一工具来源。** 不许再把 `Adapters` 快照加回来
 （`executor.go:29-34`）：并行谓词曾经扫那份列表，而生产只填 Surface，于是**测试全绿、并行一次
 都没发生**（根 AGENTS.md §11 坑 33）。并发准入判据只有一份 `toolCallIsParallelizable`，
-两个循环共用（`executor.go:164-173`）——两份同形实现必有一边漂走。
+两个循环共用（`executor.go:182`）——两份同形实现必有一边漂走。
 
-**2. 以 `agent_exit` 收尾的 Agent 必须自己置 `StopOnFinish`。**
+**2. 以 `agent_exit` 收尾的 Agent 必须自己置 `StopOnFinish`，且收尾只认执行成功的那一次。**
 `repo.go:160`、`coding.go:367`、`chat.go:81`、`devops.go:90`、`browser_agent.go:124`，
-消费点在 `executor.go:868`。漏设不报错：`agent_exit` 只是"又执行了一次工具"，循环继续烧到
+消费点在 `executor.go:876`（判据 `StopOnFinish && execErr == nil`，失败那次回执交回模型继续跑）。漏设不报错：`agent_exit` 只是"又执行了一次工具"，循环继续烧到
 MaxSteps，而 `deliverableText` 取的是最后一条 assistant 消息——便签正文与 artifact 全文存的
 都不是那份交付（`repo.go:157-160` 把这段写成了注释）。
 
@@ -31,7 +31,7 @@ MaxSteps，而 `deliverableText` 取的是最后一条 assistant 消息——便
 `delegateTargets` 每个 spawn 必须先判**具体类型**的 nil 再返回 interface（`director_surface.go:36-43`）——
 装着 nil 的 interface `!= nil`，`delegateTo` 那条"not wired"守卫于是永远不成立。
 
-**5. 暂停闸门在 step 边界，且只有一处。** `executor.go:434-439`（`stepNumber++` 之前）：
+**5. 暂停闸门在 step 边界，且只有一处。** `executor.go:451-456`（`stepNumber++` 之前）：
 ctx 不取消，恢复后原地往下走。不要把它挪进批次中间——会留下"副作用做了一半"的状态。
 
 **6. 冷工具执行器恒绑。** `depsFor` 把蓝图视图写进签名参数（`deps.go:22`）：六个调用点少绑一个
@@ -73,7 +73,7 @@ ctx 不取消，恢复后原地往下走。不要把它挪进批次中间——�
 只在 step 边界生效，所以那一轮的工具批次已全部提交完，恢复侧据此决定能不能原样继续。
 
 **12. 检查点只在循环的 deferred 终止块里写一条。** `writeExecutorCheckpoint`
-（`executor.go:403`，实现 `checkpoint.go:23`）挂在终止分支上、仅在有终止错误时调用，不是每步一条：
+（`executor.go:408`，实现 `checkpoint.go:23`）挂在终止分支上、仅在有终止错误时调用，不是每步一条：
 每步一条会把 150 步的会话写成 150 条坐标，而重放永远只看最后一个停点。写与读共用
 `memory.WriteCheckpoint`——父子两个写入包不能互相 import，抄一份必然分叉（Director 侧同规矩，
 见 `director/AGENTS.md` 硬约束 6）。想加"每步检查点"之前先想清楚恢复侧怎么选。
@@ -86,14 +86,14 @@ ctx 不取消，恢复后原地往下走。不要把它挪进批次中间——�
 （last-wins，见 `director/AGENTS.md` 硬约束 4），模型看到的是"那次委派成功返回了"。
 重放接缝只有三个回填点，少任何一个都不报错：`ScanDelegationStops`（本包 `resume_delegation.go:53`，
 **不在 `memory`**）按 `delegation_id` 反查父子停点、`ResumeState.StartStep`（`resume_state.go:29-30`，
-消费点 `executor.go:286-290`）是循环起点（漏接 = 游标算错一步，重复或漏掉一次副作用）、
-`Surface.RestoreMaterialized`（`executor.go:291-293` → `internal/tools/surface.go:468`）回填已取回的
+消费点 `executor.go:291-295`）是循环起点（漏接 = 游标算错一步，重复或漏掉一次副作用）、
+`Surface.RestoreMaterialized`（`executor.go:296-298` → `internal/tools/surface.go:468`）回填已取回的
 冷工具（漏接 = 模型在恢复后的会话里重新 `load_tool` 一遍）。
 
 **14. 把交付押在 `agent_exit` 的可选参数上，就必须同时回答"模型不调它会发生什么"。**
 `handoff` 与 `blueprint[]` 都只在那一刻被采集，三件配套缺一不可：`repo.prompt.md:14-16` 的 Output
 Contract（答案写完、同一轮调 `agent_exit`）、循环补的一次收尾提醒（`repo.go:171` 置
-`NoActionRetryLimit = 1` + 覆盖文案，消费点 `executor.go:794`）、零提交留下一句可区分的账
+`NoActionRetryLimit = 1` + 覆盖文案，消费点 `executor.go:800`）、零提交留下一句可区分的账
 （`blueprint_commit.go:55-58` 的 `noSubmissionNote` 与 `:61-66` 的"本次 run 不是 agent_exit 收尾"）。
 缺任何一件的症状都是"目录建了、文件没有、不报错"，与"蓝图从来没写过"逐字相同，差别只在日志里
 那两行 WARN。变异：`NoActionRetryLimit` 调回 0 → 蓝图当场不落盘。
@@ -112,7 +112,7 @@ Contract（答案写完、同一轮调 `agent_exit`）、循环补的一次收�
 不要一条假证据）。`pathsFromJSON` 解析失败返回 nil，容错方向永远是"少收"（`:109-113`）。
 只有以 `agent_exit` 收尾的 run 才有交付物可作证据（`blueprint_commit.go:61-66`）。
 
-**17. `sub_agent_activity` 必须在每个有工具调用的 step 落 rollout。** `executor.go:917-919` 是读侧
+**17. `sub_agent_activity` 必须在每个有工具调用的 step 落 rollout。** `executor.go:922-926` 是读侧
 推 `EffectiveSteps` 的唯一凭据；它曾挂在已删除的 `OnStepEnd` 钩子里，于是**只有"Coding + git
 checkpoint"那一条路径**写步数事实，其余子 Agent 的 `/resume` 步数只能靠 assistant 轮次猜。
 `ExecutorConfig` 里没有 `OnStepEnd`，不要加回来（那个钩子剩下的唯一作用是每步打一条 deprecation
@@ -204,7 +204,7 @@ token 侧的 `..`/绝对路径拒绝只是第二层。闸门：`module_docs_test
   `TestEvidenceCollectedOnlyForRealSubmissions`（`:116`）：非 `agent_exit` 收尾还去采集证据即红。
 - 步数事实的读侧闸门在**另一个包**：`TestReadRolloutMemory_StepAndTurnCount`
   （`internal/memory/rollout_reader_test.go:946`）。本包没有测试钉住"每个有工具调用的 step 都写
-  `sub_agent_activity`"——这是当前覆盖缺口，改 `executor.go:917-919` 之前先补一条。
+  `sub_agent_activity`"——这是当前覆盖缺口，改 `executor.go:922-926` 之前先补一条。
 
 脚本守卫：`check_no_agents_import.sh` 管的是 `director/` 子包；本包受
 `check_no_bare_go.sh` 与 `check_no_manual_lookup.sh`（FORBIDDEN 名单必须为零）约束。
