@@ -57,18 +57,17 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		}
 	}
 
-	if in.Mem != nil {
-		lastMsg, hasLast := in.Mem.LastMessage()
-		if !hasLast || lastMsg.Content != in.Input || lastMsg.Type != memory.MessageTypeHuman {
-			in.Mem.AddHumanMessage(in.Input)
-		}
-	}
+	// firstConversation = 「本轮开始时 memory 为空」：只有新任务首轮注入项目上下文，同任务追问不重复注入。
+	// 快照必须取在 seedHumanInput **之前** —— 本轮输入一旦写进 memory，len(GetMessages()) 就恒 ≥ 1，
+	// 判定永远为 false，门面层 director.go 的项目上下文注入守卫随之失效（本条 bug 的成因，勿改回）。
+	firstConversation := in.Mem == nil || len(in.Mem.GetMessages()) == 0
+	seedHumanInput(in.Mem, in.Input)
 
 	var messages []llm.Message
 
 	systemPrompt, err := p.cfg.Prompts(ctx, PromptInput{
 		Input:               in.Input,
-		FirstConversation:   in.Mem == nil || len(in.Mem.GetMessages()) == 0,
+		FirstConversation:   firstConversation,
 		ForceProjectContext: in.Resumed,
 	})
 	if err != nil {

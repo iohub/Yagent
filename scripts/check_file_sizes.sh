@@ -30,8 +30,10 @@ PENDING=(
 	# 所以行数不升反降 —— 上限随之下调。
 	# 压缩段（96 行的三档判定与动作）已抽到 planner_compress.go，657 → 572；
 	# assistant/tool 两轮消息改走 llm.Choice 的单一构造点，572 → 557。
+	# 本轮用户输入的落库抽到 planner_memory.go（FirstConversation 必须在写入之前取快照，
+	# 主循环里只留快照与注释），557 → 556。
 	# 剩下主循环 + 委派编排两段职责，仍是一次独立改动。
-	"internal/agents/director/planner_run.go:557"
+	"internal/agents/director/planner_run.go:556"
 )
 
 if [ ! -d "$TARGET_DIR" ]; then

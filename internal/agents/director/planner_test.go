@@ -609,6 +609,82 @@ func TestPlannerRunResumedForcesProjectContext(t *testing.T) {
 	}
 }
 
+// TestPlannerRunFirstConversationSnapshottedBeforeHumanWrite 项目上下文注入的唯一判据：
+// FirstConversation 必须是「本轮开始时 memory 为空」，所以判定要快照在把本轮用户输入写进
+// memory **之前**。顺序颠倒时 memory 恒非空、该值恒为 false，门面层的
+// `in.FirstConversation || in.ForceProjectContext` 守卫（director.go:932）于是永不成立，
+// 新任务永远拿不到 YAGENT.md/CLAUDE.md/AGENTS.md —— 修复前首轮断言必红。
+func TestPlannerRunFirstConversationSnapshottedBeforeHumanWrite(t *testing.T) {
+	var captured []PromptInput
+	// agent_exit 收尾：每轮只调一次 LLM，不触发强制委派重试，也不碰真实 provider。
+	newPlanner := func() (*Planner, *fakePlannerLLM) {
+		eng := &fakePlannerLLM{steps: []fakeLLMStep{
+			{resp: toolCallResp("call-exit", "agent_exit", `{"reason":"done"}`)},
+		}}
+		return NewPlanner(PlannerConfig{
+			LLM:   eng,
+			Tools: &fakePlannerTools{},
+			Prompts: func(_ context.Context, in PromptInput) (string, error) {
+				captured = append(captured, in)
+				return "SYSTEM_PROMPT", nil
+			},
+			MaxSteps:   5,
+			LLMTimeout: 30 * time.Second,
+		}, newState(false)), eng
+	}
+
+	// 首轮：TUI 新任务用的就是这样一份空 memory（internal/tui/tui_tasks.go:87）。
+	mem := memory.NewConversationMemory(300)
+	p, eng := newPlanner()
+	if _, err := p.Run(context.Background(), PlanInput{Input: "FIRST_TURN", Mem: mem}); err != nil {
+		t.Fatalf("Run() first turn error = %v", err)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("PromptInput 捕获 = %d 次, want 1", len(captured))
+	}
+	if !captured[0].FirstConversation {
+		t.Error("FirstConversation = false 于空 memory 的首轮, want true（顺序陷阱：写入之后才判定 → 项目上下文永不注入）")
+	}
+	if captured[0].ForceProjectContext {
+		t.Error("ForceProjectContext = true 而 PlanInput.Resumed 为假, want false")
+	}
+	// 取快照不许顺手改掉写入本身：本轮输入仍要在 message 里送到模型。
+	if uc := userContentsAt(t, eng.requests, 1); len(uc) != 1 || uc[0] != "FIRST_TURN" {
+		t.Errorf("request #1 user messages = %v, want only FIRST_TURN", uc)
+	}
+
+	// 次轮（同一任务追问）：本轮开始时 memory 已非空 → 不再重复注入。
+	if _, err := p.Run(context.Background(), PlanInput{Input: "FOLLOW_UP", Mem: mem}); err != nil {
+		t.Fatalf("Run() follow-up error = %v", err)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("PromptInput 捕获 = %d 次, want 2", len(captured))
+	}
+	if captured[1].FirstConversation {
+		t.Error("FirstConversation = true 于追问轮（memory 非空）, want false")
+	}
+	var humans []string
+	for _, m := range mem.GetMessages() {
+		if m.Type == memory.MessageTypeHuman {
+			humans = append(humans, m.Content)
+		}
+	}
+	if len(humans) != 2 || humans[0] != "FIRST_TURN" || humans[1] != "FOLLOW_UP" {
+		t.Errorf("memory 里的 human 消息 = %v, want [FIRST_TURN FOLLOW_UP]（两轮输入都要落库）", humans)
+	}
+
+	// 没有 memory 时（老调用方，PlanInput.Mem == nil）恒判为首轮：注入判据不该因为没带
+	// memory 就失效。
+	captured = captured[:0]
+	p2, _ := newPlanner()
+	if _, err := p2.Run(context.Background(), PlanInput{Input: "NO_MEMORY"}); err != nil {
+		t.Fatalf("Run() with nil Mem error = %v", err)
+	}
+	if len(captured) != 1 || !captured[0].FirstConversation {
+		t.Errorf("nil Mem 时 captured = %+v, want FirstConversation true", captured)
+	}
+}
+
 // TestPlannerRunWritesThinklinkEntries B4：journal 条目（user_input / thought_plan）
 // 必须随写 rollout，恢复侧据此重建 journal 视图而不必从消息块重解析。
 func TestPlannerRunWritesThinklinkEntries(t *testing.T) {
