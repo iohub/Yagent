@@ -214,7 +214,7 @@ func TestRunAgentLoop_SuccessExitsClaimTheirOwnKind(t *testing.T) {
 // ─── thinklink 落盘（R7）───────────────────────────────────────────────────────
 
 // TestRunAgentLoop_ThinklinkEntriesLandInRollout 子 Agent 的 T&P 块此前只发事件总线，
-// 从不写 rollout（Director 侧 planner_run.go:48-55 两件事都做）。后果是
+// 从不写 rollout（Director 侧 planner_run.go:68-89 两件事都做）。后果是
 // 恢复后这份日志彻底不存在，而 ultimate 压缩重建上下文全靠它
 // （RebuildPrompt 的原料是"用户输入 + T&P 块"）。
 func TestRunAgentLoop_ThinklinkEntriesLandInRollout(t *testing.T) {

@@ -780,7 +780,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 							"step":      entry.Step,
 						}, cfg.AgentName)
 					}
-					// 与 Director 侧 planner_run.go:48-55 对称：事件总线是**视图**的来源，
+					// 与 Director 侧 planner_run.go:68-89 对称：事件总线是**视图**的来源，
 					// rollout 才是**恢复**的来源。只有总线上的一份额外好处是 TUI 面板，
 					// 代价是这份子 Agent 日志在进程退出后彻底不存在——ultimate 压缩
 					// 重建上下文全靠它（RebuildPrompt），恢复后它只能从"原始任务 + 零个

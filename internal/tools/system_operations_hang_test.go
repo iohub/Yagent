@@ -251,6 +251,39 @@ func liveGroupCount(t *testing.T) int {
 	return len(liveGroups)
 }
 
+// waitForPidsWritten 有界轮询孩子自己写出的 pid 清单：文件出现且非空，才算"命令真的跑到了
+// 写文件那一步"。杀组必须发生在这之后。
+//
+// 为什么不能拿"进程组已登记"当同步点：registerProcessGroup 紧跟 cmd.Start()
+// （system_operations.go:102-106），那一刻 bash 还没 fork/exec 任何内层命令。等登记就杀组，
+// SIGKILL 会落在 `echo $! > pids` 之前，用例于是只测到"读不到文件"，而它名字声称的是
+// "杀组收口在飞调用"。整包并发跑时前置用例留下的在飞登记会让那种轮询第一眼就看到非零，
+// 于是稳定红（单跑 -run 反而全绿 —— 因为那时表确实是空的）。
+//
+// 间隔 5ms 的轮询，不是固定 sleep：超时上限由调用方给，失败信息带上目录实况与最后一次
+// 读结果，免得把"孩子没起来"和"文件读不到"混成一句看不懂的 Fatal。
+func waitForPidsWritten(t *testing.T, dir string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(filepath.Join(dir, "pids"))
+		if err == nil && len(data) > 0 {
+			return
+		}
+		lastErr = err
+		time.Sleep(5 * time.Millisecond)
+	}
+	names := []string{}
+	if entries, readErr := os.ReadDir(dir); readErr == nil {
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+	}
+	t.Fatalf("等 %v 孩子仍未写出 pid 清单（最后一次读：%v；目录里只有 %v）："+
+		"命令没跑到写文件那一步，本用例没测到杀进程组", timeout, lastErr, names)
+}
+
 // TestKillLiveProcessGroupsEndsInFlightCall 钉硬退出那条路：os.Exit 跳过所有 defer，
 // 登记表是杀掉在飞子进程组的唯一机会。表空了、或者登记只在某一条分支上，
 // 表现都是"用户按了两次 Ctrl+C，机器上留下一堆占端口的进程"。
@@ -276,10 +309,9 @@ func TestKillLiveProcessGroupsEndsInFlightCall(t *testing.T) {
 		done <- m
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for liveGroupCount(t) == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	// 同步点是"孩子确实已经开始工作"（写出自己的 pid 清单），不是"进程组已登记"：
+	// 登记紧跟 cmd.Start()，在那一刻杀组会早于 `echo $! > pids`，本用例就什么都没能收口。
+	waitForPidsWritten(t, dir, 5*time.Second)
 	if liveGroupCount(t) == 0 {
 		t.Fatal("在飞的前台调用没登记进进程组表：硬退出时无组可杀")
 	}
