@@ -7,15 +7,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"yagent/internal/toolspec"
 
 	"yagent/internal/browserctl"
+
+	"yagent/internal/util"
 )
 
 // WorkspaceGuard checks tool calls for potentially dangerous operations
 // (modifications outside the workspace, system-changing commands) and
 // requests user authorization before allowing them to proceed.
 type WorkspaceGuard struct {
+	// mu 保护下面四个授权状态：sessionAllowed / sessionAllAllowed /
+	// projectAuthorized / yoloMode。一个 guard 是「一次 Init 一个实例、任务内全部
+	// Agent 共享」，而 Director 会在一步里并行 delegate_repo/delegate_chat
+	// （internal/agents/specs.go:71 那对 mutates:false 的委派工具），于是同一个 map
+	// 一边被 Check 读、一边被 RequestAuth 写 —— 无锁时是 runtime throw
+	// （fatal error: concurrent map read and map write），recover 拦不住。
+	//
+	// 加锁的铁律：**绝不包住 confirmMgr.RequestConfirmation**。那一调用阻塞到用户
+	// 作答或 ctx 取消，持锁等待等于把整条委派链排在这把锁上（同包先例
+	// user_confirm.go:50 也是「先取锁登记、锁外 select 等答复」）。
+	mu                sync.RWMutex
 	workspacePath     string
 	confirmMgr        *UserConfirmManager
 	sessionAllowed    map[string]bool // tools granted session-wide authorization
@@ -38,7 +52,9 @@ func NewWorkspaceGuard(workspacePath string, confirmMgr *UserConfirmManager) *Wo
 // SetYoloMode enables or disables YOLO mode. When enabled, all authorization
 // checks are automatically bypassed — equivalent to auto-approving every operation.
 func (g *WorkspaceGuard) SetYoloMode(enabled bool) {
+	g.mu.Lock()
 	g.yoloMode = enabled
+	g.mu.Unlock()
 }
 
 // 危险工具与它们的路径参数名不再在这里各写一张表：判据来自注册表
@@ -49,6 +65,18 @@ func (g *WorkspaceGuard) SetYoloMode(enabled bool) {
 // 现在 Validate() 保证 authEffects 与 NeedsAuth 一致，分派又按 Effect 走，
 // 三者里任意一处漏了都会在启动自检里报错。
 
+// authBypassed 在**一次 RLock 内**读完全部四个 bypass 状态（yolo / 项目永久 /
+// 会话全部 / 单工具会话），Check 与 RequestAuth 都调它 —— 同源判定，不许两处各写一份。
+//
+// 为什么必须一次锁而不是四个 flag 各加一次锁：并行委派下逐 flag 加锁允许
+// "yolo 刚被关掉、sessionAll 又被打开" 这种拼出来的假时刻，判据不再是任何一个
+// 真实存在的状态快照。
+func (g *WorkspaceGuard) authBypassed(toolName string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.yoloMode || g.projectAuthorized || g.sessionAllAllowed || g.sessionAllowed[toolName]
+}
+
 // Check determines if a tool call requires user authorization.
 // Returns (needsAuth, reason).
 func (g *WorkspaceGuard) Check(toolName string, params map[string]interface{}) (bool, string) {
@@ -56,31 +84,19 @@ func (g *WorkspaceGuard) Check(toolName string, params map[string]interface{}) (
 		return false, ""
 	}
 
-	// YOLO mode: skip all authorization checks
-	if g.yoloMode {
-		return false, ""
-	}
-
 	if !toolspec.NeedsAuth(toolName) {
 		return false, ""
 	}
 
-	// 项目级授权：跳过所有检查
-	if g.projectAuthorized {
-		return false, ""
-	}
-
-	// 会话级全部授权：跳过所有检查
-	if g.sessionAllAllowed {
-		return false, ""
-	}
-
-	// Session-wide authorization: skip check if tool was already approved
-	if g.sessionAllowed[toolName] {
+	// 四个 bypass（YOLO / 项目永久授权 / 会话全部授权 / 该工具已会话授权）
+	// 全部返回 (false, "")。yolo 历史上写在 NeedsAuth 之前，两个分支返回值逐字相同，
+	// 换位不改变任何判定 —— 换来的是不需要授权的工具连锁都不用取。
+	if g.authBypassed(toolName) {
 		return false, ""
 	}
 
 	// 分派按能力标签：写文件类查路径，shell 查命令 token，浏览器 eval 查敏感 JS。
+	// 下面三个 check 只依赖不可变的 workspacePath，不需要持锁。
 	switch effect := toolspec.EffectOf(toolName); {
 	case effect.Has(toolspec.EffectShell):
 		return g.checkBash(params)
@@ -117,8 +133,10 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 		return nil
 	}
 
-	// YOLO mode: auto-approve all authorization requests
-	if g.yoloMode {
+	// YOLO mode 以及任何已成立的 bypass：直接放行，不再打扰用户。
+	// 并行委派下两个 goroutine 可能同时通过 Check（各自的读都早于对方的写），
+	// 少了这道再检查就是同一件事弹两次授权框。
+	if g.authBypassed(toolName) {
 		return nil
 	}
 
@@ -136,6 +154,8 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 
 	options := "allow / deny"
 
+	// 这一次等待必须在**锁外**：RequestConfirmation 阻塞到用户作答或 ctx 取消，
+	// 持锁等会把同任务里所有并行委派的 Agent 排在这把锁上。
 	response, err := g.confirmMgr.RequestConfirmation(ctx, question, options, extraFields)
 	if err != nil {
 		return fmt.Errorf("授权请求失败: %w", err)
@@ -145,19 +165,27 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 
 	// Session-wide authorization: grant for all subsequent calls of this tool
 	if response == "allow_session" {
+		g.mu.Lock()
 		g.sessionAllowed[toolName] = true
+		g.mu.Unlock()
 		return nil
 	}
 
 	// 会话内全部工具授权
 	if response == "allow_all_session" {
+		g.mu.Lock()
 		g.sessionAllAllowed = true
+		g.mu.Unlock()
 		return nil
 	}
 
 	// 项目永久授权
 	if response == "allow_all_project" {
+		g.mu.Lock()
 		g.projectAuthorized = true
+		g.mu.Unlock()
+		// 落盘放在 Unlock 之后：它是磁盘 IO，且只读不可变的 workspacePath，
+		// 没有任何一个字段需要在锁内被它看到。
 		g.saveProjectAuth()
 		return nil
 	}
@@ -316,7 +344,10 @@ func (g *WorkspaceGuard) loadProjectAuth() {
 	}
 
 	if settings.AuthorizedProjects[g.workspacePath] {
+		// 构造期调用，本不需要锁；加锁只为与其它写点同源（同一状态只有一种写法）。
+		g.mu.Lock()
 		g.projectAuthorized = true
+		g.mu.Unlock()
 	}
 }
 
@@ -327,12 +358,6 @@ func (g *WorkspaceGuard) saveProjectAuth() {
 		return
 	}
 	settingsPath := filepath.Join(homeDir, ".yagent", "settings.json")
-
-	// 确保目录存在
-	settingsDir := filepath.Dir(settingsPath)
-	if err := os.MkdirAll(settingsDir, 0755); err != nil {
-		return
-	}
 
 	var settings struct {
 		AuthorizedProjects map[string]bool `json:"authorized_projects"`
@@ -352,5 +377,16 @@ func (g *WorkspaceGuard) saveProjectAuth() {
 	if err != nil {
 		return
 	}
-	os.WriteFile(settingsPath, data, 0644)
+	// 原子落盘（全仓唯一的 tmp+rename 内核，棘轮见 scripts/check_no_inline_atomic_write.sh）：
+	// 裸 os.WriteFile 会让读者看到半份 JSON，下一次 loadProjectAuth 的 Unmarshal
+	// 失败即静默返回，永久授权就"存在过但没生效"。目录创建交给 DirPerm，
+	// FilePerm 保持原来的 0644。这里的读-改-写仍是 last-writer-wins：并行委派的
+	// 两个 goroutine 可以同时答 allow_all_project 并各自重写整份文件，但同一任务里
+	// 写的是同一个 workspacePath，覆盖不丢信息；真会丢的是两个 yagent 进程各自
+	// 授权不同工作区 —— 那需要跨进程的 settings.json 锁，不在本守卫的职责内（mu 是进程内的）。
+	_ = util.AtomicWrite(settingsPath, data, util.AtomicWriteOptions{
+		DirPerm:  0755,
+		FilePerm: 0644,
+		Label:    "workspace auth settings",
+	})
 }
