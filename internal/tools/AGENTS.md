@@ -18,11 +18,11 @@
 `scripts/check_no_manual_lookup.sh:19-31` 的 FORBIDDEN 十条（按名字查工具的旧符号与名字表）必须为零，
 PENDING 名单已清空（`:34-37`），往 `internal/agents` 里重新写按工具名 `case` 分派直接红。
 
-**2. 授权判据来自注册表，分派按 Effect 不按名字**（`workspace_guard.go:44-50,83-93`）。
+**2. 授权判据来自注册表，分派按 Effect 不按名字**（`workspace_guard.go:Check`）。
 guard 由 `rebuild` 统一挂（`surface.go:122-125`），集中构造消除了"某个 appender 忘记 SetGuard"。
 
 **3. 工作区目录本身算越界。** `isInWorkspace` 对 `rel == "."` 返回 false
-（`workspace_guard.go:235-243`）。`run_bash` **没有黑名单**：纵深防御 = 信任 LLM 的 `is_dangerous`
+（`workspace_guard.go:isInWorkspace`）。`run_bash` **没有黑名单**：纵深防御 = 信任 LLM 的 `is_dangerous`
 + 任何指向工作区外的绝对路径 token 都要授权，`safeSystemPaths` 白名单只此一处且根目录恒危险
 （`:210-228,248-296`）。
 
@@ -61,7 +61,7 @@ sha256 前 8 字节（`adapter.go:180-190`）。顺序漂走的症状不是崩�
 逐条失效——要到 token 账单对不上才被发现有两条路：排序漏一处，或 hash 比对基线被整体重算。
 
 **11. 授权只有"问用户"这一种强制，没有硬拒绝路径；放行状态分三层，持久化只有一处。**
-`Check` 对越界/危险只返回 needsAuth，`RequestAuth` 阻塞等用户（`workspace_guard.go:53-93,112-120`）；
+`Check` 对越界/危险只返回 needsAuth，`RequestAuth` 阻塞等用户（`workspace_guard.go:Check,RequestAuth`）；
 会话级 per-tool / 全局跳过（`:23-24`）、项目级 `authorized_projects` 持久化到
 `~/.yagent/settings.json`（`:298-345`）、YOLO（`:38-41`）。三层任意一层命中，此后所有检查直接跳过。
 
