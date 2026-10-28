@@ -47,6 +47,9 @@ Director 的编排内核：Planner 主循环、熔断与恢复、指标、便签
 本包与 `agents.classifyStop` 是两份同形实现（分层守卫逼出来的），靠
 `TestStopKindClassifiersAgree` 对齐；加词表值时的正确顺序是**先给聚合测试喂新输入**，再让两边实现追它
 （根 AGENTS.md §11 坑 18）。
+词表回答「为什么停」，它与「要不要因 `agent_exit` 停」的**判定点**是两件事：后者单源在
+`internal/agents/exitpolicy`（本包 `planner_run.go` 调它，`check_no_agents_import.sh` 是整行匹配，允许 import 该子包），
+既不许把词表搬进去，也不许把判据内联回循环（闸门 `TestTerminationDecisionIsNotInlinedInLoops`）。
 
 **10. 强制委派提醒的次数上限必须导出**（`MaxNonDelegationPrompts`，`planner_run.go:19-21`）：
 曾经 `agents` 侧有一份只有测试在读的同名常量。

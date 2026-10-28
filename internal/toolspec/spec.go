@@ -303,13 +303,13 @@ func ValidateProfile(p Profile) []string {
 	if p.RequiresExit {
 		found := false
 		for _, s := range specs {
-			if s.Name == exitToolName {
+			if s.Name == ExitToolName {
 				found = true
 				break
 			}
 		}
 		if !found {
-			problems = append(problems, fmt.Sprintf("profile %q 要求 %s，但被 Grant/Deny 排除", p.Agent, exitToolName))
+			problems = append(problems, fmt.Sprintf("profile %q 要求 %s，但被 Grant/Deny 排除", p.Agent, ExitToolName))
 		}
 	}
 	for _, name := range append(append([]string(nil), p.Promote...), p.Demote...) {
@@ -323,7 +323,10 @@ func ValidateProfile(p Profile) []string {
 	return problems
 }
 
-const exitToolName = "agent_exit"
+// ExitToolName 是"以工具调用收尾"的那个工具的名字，全仓唯一字面量来源。
+// 导出是因为终止判据（internal/agents/exitpolicy）与工具注册（internal/tools/specs_flow.go）
+// 必须比对同一个值：判据侧写自己的字面量，注册名一旦改动就静默失配（根 AGENTS.md §11 坑 33 同族）。
+const ExitToolName = "agent_exit"
 
 // ResultPaths 的三种取值（Spec.ResultPaths 的词典）。
 const (

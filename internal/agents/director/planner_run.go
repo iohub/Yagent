@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"yagent/internal/agents/exitpolicy"
 	"yagent/internal/agents/toolbatch"
 	"yagent/internal/compression"
 	"yagent/internal/llm"
@@ -163,8 +164,7 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		p.state.Step = i + 1
 
 		if p.cfg.Recovery != nil && p.cfg.Recovery.IsCircuitBreakerOpen() {
-			slog.Error("Circuit breaker open, too many consecutive LLM failures",
-				"step", i)
+			slog.Error("Circuit breaker open, too many consecutive LLM failures", "step", i)
 			writeAborted("circuit breaker open", memory.StopKindCircuitBreakerOpen)
 			return PlanResult{Steps: p.state.Step, StopReason: "circuit_breaker_open"},
 				fmt.Errorf("circuit breaker open: LLM calls blocked")
@@ -432,11 +432,11 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 		type plannerToolOutcome struct {
 			result    string
 			cancelled bool
-			failed    bool // 这次工具执行报错了；失败的 agent_exit 不许当成功收尾
+			failed    bool // 这次工具执行报错了；失败那次的 agent_exit 不许冒领收尾（判据在 exitpolicy）
 		}
 
 		// 具名返回 + 自己 recover：toolbatch 的 guardedExec 只能把 panic 折成 T 的**零值**
-		// （result=""、failed=false），而零值的 agent_exit 会满足下面"收尾"判据、把一次
+		// （result=""、failed=false），而零值回执会满足下面 exitpolicy 的收尾判据、把一次
 		// 崩溃冒领成"任务完成"。泛型签名 Run[T any] 决定了那一层无法给任意 T 的 failed
 		// 赋值，所以这道防线只能在业务 exec 闭包里建（与 executor.go 的并行闭包同形）。
 		execPlannerToolCall := func(callCtx context.Context, i int) (out plannerToolOutcome) {
@@ -501,9 +501,9 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 			messages = append(messages, toolMsg)
 			journal.writeMessage(toolMsg)
 
-			if tc.Function.Name == "agent_exit" && !out.failed {
+			if exitpolicy.Terminate(tc.Function.Name, out.failed) {
 				writeComplete(memory.StopKindAgentExit)
-				return "agent_exit"
+				return memory.StopKindAgentExit
 			}
 			return ""
 		}
@@ -521,8 +521,8 @@ func (p *Planner) Run(ctx context.Context, in PlanInput) (PlanResult, error) {
 				writeAborted(ctx.Err().Error(), StopKindOf(ctx.Err(), ctx))
 				return PlanResult{Steps: p.state.Step, StopReason: "cancelled"}, ctx.Err()
 			}
-			if stop == "agent_exit" {
-				return PlanResult{Text: "Task completed successfully", Steps: p.state.Step, StopReason: "agent_exit"}, nil
+			if stop == memory.StopKindAgentExit {
+				return PlanResult{Text: "Task completed successfully", Steps: p.state.Step, StopReason: stop}, nil
 			}
 		}
 	}

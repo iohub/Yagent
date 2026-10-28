@@ -193,7 +193,7 @@ func MatchNames(names []string, palette Effect, deps *Deps) (selected []*Spec, u
 		// 混进来的话"权限不够"和"这个 Agent 没接 Shell"就分不开，排障时会误判。
 		selected = append(selected, s)
 	}
-	if exit, ok := Get(exitToolName); ok && !seen[exitToolName] && exit.Effect.Has(palette) {
+	if exit, ok := Get(ExitToolName); ok && !seen[ExitToolName] && exit.Effect.Has(palette) {
 		selected = append(selected, exit)
 	}
 	sortSpecsByName(selected)
