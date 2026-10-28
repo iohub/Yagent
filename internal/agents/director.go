@@ -771,6 +771,20 @@ func toSubAgentMemory(result *AgentResult) *memory.SubAgentMemory {
 	return &memory.SubAgentMemory{Text: result.Text, Memory: result.Memory}
 }
 
+// directorToolTimeout 是 Director 侧**一次工具执行**（非交互、非委派那一档）的 deadline。
+//
+// 为什么是包级 var 而不是 const：只为了给测试一个不必真等两分钟的 seam —— 与子 Agent 侧
+// `defaultToolTimeout`（executor.go:95，它的 t.Cleanup 版 helper 是 executor_test.go:61 的
+// restoreToolTimeout）严格对称。B3 之前这里是函数内的字面量，于是"超时真的响起之后两侧各
+// 交回什么"从来没被测过；契约测试的 timeout-expiry 场景（tool_exec_contract_test.go）就是
+// 为补这个缺口才有的 seam。
+//
+// 数值与子 Agent 侧不同（**120s vs 180s**）是已知漂移，本次**刻意不改**：改数值是行为变更，
+// 要单独决策，这一步只补可测性。该差异由契约测试白名单的 deadline 条目显式记账。
+// 还有第三处秒数在本文件下方（PlannerConfig.ToolTimeout），它只用于错误文案、不参与 deadline ——
+// 三处里改任一处都要同时核对另外两处，否则回执里的秒数与真实 deadline 不符。
+var directorToolTimeout = 120 * time.Second
+
 type directorToolRunner struct {
 	agent *DirectorAgent
 	state *director.RunState
@@ -807,10 +821,17 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 	// 模型跳过 load_tool 直接调冷工具：不判它幻觉，把完整 schema 回吐一次，
 	// 同一步就能自己纠正过来。
 	if state == tools.StateColdKnown {
-		schema, err := a.surfaceOrDefault().Materialize([]string{name})
-		if err != nil {
-			return "", fmt.Errorf("cannot load schema for %s: %w", name, err)
-		}
+		// Materialize 的 error **不接**（B4' 删掉了这一支）：走到这里的前提是 Lookup 给了
+		// StateColdKnown，而它只在 hidden() 为真时给出（surface.go:336-338），hidden() 的第一行
+		// 就是 `if !s.opts.Deferred { return false }`（surface.go:306-308）⇒ opts.Deferred 必为真
+		// （opts 只在新建 Surface 时赋值）。同一实例的 Materialize 只有三条错路：非 deferred
+		// （:348-350，与前提矛盾）、names 为空（:351-353，这里传的是一个非空名字）、三个桶全空
+		// （:397-399，单元素 names 必然落进 loaded/notDeferred/unknown 之一）。三条都不成立 ⇒
+		// 这一支在生产不可达（B3 论证 + 本次复核）。
+		// 留着它的代价不是死代码本身，而是**分类不一致**：它把一次"模型没 load_tool"交回成
+		// 非 nil error，上一层 planner 就记成一次执行失败；A 侧 teachColdTool（executor.go:224-230）
+		// 交回的是回执 + nil error。删掉之后两侧冷工具路径同形，错误文案只留 A 那一份。
+		schema, _ := a.surfaceOrDefault().Materialize([]string{name})
 		return fmt.Sprintf("Error: schema for %s was not loaded. Full schema:\n%s\nRetry the call now with these parameters.", name, schema), nil
 	}
 
@@ -819,7 +840,9 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 		LogDelegateCall(ad.Name(), agentName, argsJSON)
 	}
 
-	toolTimeout := 120 * time.Second
+	// 一次读取：deadline 与超时回执里的秒数必须同源（包级 var，测试用
+	// restoreDirectorToolTimeout 临时改短；默认值仍是原来的 120s）。
+	toolTimeout := directorToolTimeout
 	isDelegate := strings.HasPrefix(name, "delegate_")
 	// 委派并发上限（[agent] max_parallel_delegations）。取格子放在**建这轮 ctx 链之前**：
 	// 排队不是子 Agent 的活动，不该算进 idle/total 看门狗，也就不需要在这条早退路上
