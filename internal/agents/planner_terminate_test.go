@@ -88,10 +88,28 @@ type plannerExitEngine struct {
 	script     []*llm.Response
 	repeatLast bool
 	err        error // 非 nil：每次调用都失败（llm_error 用例）
-	calls      int
+	// cancelDuringRun 非 nil：在**第一次** GenerateContent 里触发一次，触发完即清空。
+	// 用例用它把"取消"钉进 Planner.Run 的执行期间：进入 LLM 调用时把外层 ctx 打掉，
+	// 紧接着下面那条 ctx.Err() 检查就是真实引擎在取消时的行为。
+	cancelDuringRun func()
+	calls           int
+}
+
+// fireCancelOnce 触发并清空登记的取消动作。锁内取、锁外调用：cancel() 本身不阻塞，
+// 而清空保证它只作用于第一次调用（第二次再触发等于没有触发——ctx 早已取消）。
+func (e *plannerExitEngine) fireCancelOnce() {
+	e.mu.Lock()
+	hook := e.cancelDuringRun
+	e.cancelDuringRun = nil
+	e.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 }
 
 func (e *plannerExitEngine) GenerateContent(ctx context.Context, _ []llm.Message, _ []llm.ToolDef, _ *llm.CallOptions) (*llm.Response, error) {
+	e.fireCancelOnce()
+
 	// 真实引擎在 ctx 取消时返回错误；不尊重 ctx 的替身会把"取消没传播"直接掩盖掉。
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -124,8 +142,8 @@ type plannerExitCase struct {
 	script     []*llm.Response
 	repeatLast bool
 	llmErr     error
-	failPrompt bool // 装配期就拿不到 system prompt
-	cancelCtx  bool
+	failPrompt bool   // 装配期就拿不到 system prompt
+	cancelCtx  bool   // true：取消在 Run 执行期间落地（由引擎第一次调用触发，见 fireCancelOnce）
 	wantKind   string // task_complete | turn_aborted
 	wantStop   string // memory.StopKind*
 }
@@ -169,15 +187,28 @@ func runPlannerExit(t *testing.T, c plannerExitCase) (director.PlanResult, error
 		}
 	}
 
+	engine := &plannerExitEngine{script: c.script, repeatLast: c.repeatLast, err: c.llmErr}
+
 	ctx := context.Background()
 	if c.cancelCtx {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
 		defer cancel()
+		// 只 defer cancel() 等于"Run **返回之后**才取消"：Run 全程 ctx 从未取消，替身
+		// 走进"脚本用尽"分支返回普通错误，分类出来就是 llm_error —— 这条子测试因此
+		// 从来没测过取消传播。取消改由引擎进入第一次 LLM 调用时触发，落在 Run 执行
+		// 期间，且不需要任何时间窗。
+		//
+		// 为什么不是 executor_parallel_test.go:514-531 那条 time.AfterFunc 范式：那边
+		// 一批 6 个阻塞工具把 Run 撑到取消落地，延迟与耗时之间没有竞争；这里的 Run 只
+		// 跟纯内存替身往返一次（≈百微秒），任何延迟都是在和它赛跑。要给 AfterFunc 让
+		// Run 活到取消时刻，就得塞一个阻塞夹具，而它只有在"取消没发生"（=变异验证）时
+		// 才被真正等满，一次回归检查要挂住十几到几十秒。
+		engine.cancelDuringRun = cancel
 	}
 
 	cfg := director.PlannerConfig{
-		LLM:                      &plannerExitEngine{script: c.script, repeatLast: c.repeatLast, err: c.llmErr},
+		LLM:                      engine,
 		Rollout:                  w,
 		Tools:                    newDirectorToolRunner(agent, state),
 		Prompts:                  prompts,
@@ -203,6 +234,10 @@ func runPlannerExit(t *testing.T, c plannerExitCase) (director.PlanResult, error
 //     六个用例全部红在"终止事件 2 条，want 1 条"；
 //   - 删掉 defer journal.abortUnclaimed() → prompts_error 用例红在"终止事件 0 条"
 //     （其余五条仍绿：那 8 个既有 return 点本来就会自己认领）。
+//
+// cancelled 那一条还顺带钉住"取消真的发生在本轮 Run 里"：取消由引擎的第一次调用触发，
+// 所以把 ctx 的取消挪回"Run 返回之后"（=原来的假绿写法）时，替身看不见取消，
+// 分类退回 llm_error，用例当场变红。
 func TestPlanner_EveryExitPathWritesExactlyOneTerminal(t *testing.T) {
 	cases := []plannerExitCase{
 		{
@@ -232,6 +267,8 @@ func TestPlanner_EveryExitPathWritesExactlyOneTerminal(t *testing.T) {
 			wantKind: "turn_aborted", wantStop: memory.StopKindLLMError,
 		},
 		{
+			// 取消发生在 Run 执行期间（见 runPlannerExit），替身按真实引擎的样子返回
+			// context.Canceled；分类必须回头看 ctx 才认得出这是"用户停了"而不是"provider 挂了"。
 			name: "cancelled", maxSteps: 3, cancelCtx: true,
 			wantKind: "turn_aborted", wantStop: memory.StopKindCancelled,
 		},
