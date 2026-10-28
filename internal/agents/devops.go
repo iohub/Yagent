@@ -92,18 +92,12 @@ func (a *DevOpsAgent) Run(ctx context.Context, input string) (AgentResult, error
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
-	// 上下文压缩配置（tool 结果截断）
-	ec := a.ecCfg
-	cfg.EnableContextCompression = ec.EnableContextCompression
-	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
-	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
-
 	// 一次委派一个 store：RebuildPrompt 保留全部用户输入，本实例会被多次委派复用。
 	store := thinklink.NewStore(0)
 	store.AddUserInput(input, 0)
 	cfg.UltimateThinkLink = store
-	cfg.UltimateKeepPlans = ec.UltimateCompressionKeepPlans // 0=全部保留
-	cfg.EnableUltimateCompression = ec.EnableUltimateCompression
+	// 上下文压缩（三档）的唯一装配点：见 compression_options.go。零值 = 不压缩。
+	cfg.Compression = compressionOptionsFromConfig(a.ecCfg)
 	// EnableCollaboration 已默认 true
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {

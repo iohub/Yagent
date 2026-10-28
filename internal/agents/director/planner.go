@@ -87,17 +87,16 @@ type PlannerConfig struct {
 	MaxSteps   int
 	LLMTimeout time.Duration
 
-	Recovery                  *RecoveryHandler
-	Metrics                   *MetricsCollector
-	NormalizeMessages         func([]llm.Message) []llm.Message
-	EstimateTokensFn          func(string) int
-	ConvertToolCallsFn        func([]llm.ToolCall) []memory.ToolCallData
-	CompressEnable            bool
-	CompressThreshold         int
-	CompressKeepTokens        int
-	UltimateCompressEnable    bool
-	UltimateCompressKeepPlans int
-	ToolTimeout               time.Duration
+	Recovery           *RecoveryHandler
+	Metrics            *MetricsCollector
+	NormalizeMessages  func([]llm.Message) []llm.Message
+	EstimateTokensFn   func(string) int
+	ConvertToolCallsFn func([]llm.ToolCall) []memory.ToolCallData
+	// Compression 是压缩选项的唯一载体（internal/compression.Options）：与子 Agent 侧
+	// ExecutorConfig.Compression 同一类型、同一装配函数，不再有第二套异名同义的字段。
+	// 第三档还需要 Journal（重建原料，依赖注入）非 nil，两个条件缺一不可。
+	Compression compression.Options
+	ToolTimeout time.Duration
 
 	MaxParallelReadOnlyTools int
 	IsParallelizableTool     func(name string) bool

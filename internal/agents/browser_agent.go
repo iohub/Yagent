@@ -127,17 +127,12 @@ func (a *BrowserAgent) Run(ctx context.Context, input string) (AgentResult, erro
 	cfg.AgentName = a.Name()
 	cfg.StopOnFinish = true
 
-	ec := a.ecCfg
-	cfg.EnableContextCompression = ec.EnableContextCompression
-	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
-	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
-
 	// 一次委派一个 store：RebuildPrompt 保留全部用户输入，本实例又被 Director 与 Coding 共用。
 	store := thinklink.NewStore(0)
 	store.AddUserInput(input, 0)
 	cfg.UltimateThinkLink = store
-	cfg.UltimateKeepPlans = ec.UltimateCompressionKeepPlans // 0=全部保留
-	cfg.EnableUltimateCompression = ec.EnableUltimateCompression
+	// 上下文压缩（三档）的唯一装配点：见 compression_options.go。零值 = 不压缩。
+	cfg.Compression = compressionOptionsFromConfig(a.ecCfg)
 
 	result, err := RunAgentLoop(ctx, cfg)
 	if err != nil {

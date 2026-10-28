@@ -20,7 +20,7 @@ import (
 func (p *Planner) applyContextCompression(ctx context.Context, messages []llm.Message,
 	measured compression.Prefix, mem *memory.ConversationMemory,
 	compact func(kind, summary string, before, after, saved int)) ([]llm.Message, compression.Prefix) {
-	if !p.cfg.CompressEnable {
+	if !p.cfg.Compression.Enabled {
 		return messages, measured
 	}
 
@@ -28,8 +28,8 @@ func (p *Planner) applyContextCompression(ctx context.Context, messages []llm.Me
 	if p.cfg.LLM != nil {
 		modelName = p.cfg.LLM.Model()
 	}
-	threshold := compression.ResolveThreshold(modelName, p.cfg.CompressThreshold)
-	keepTokens := p.cfg.CompressKeepTokens
+	threshold := compression.ResolveThreshold(modelName, p.cfg.Compression.Threshold)
+	keepTokens := p.cfg.Compression.KeepTokens
 	if keepTokens <= 0 {
 		keepTokens = compression.DefaultToolResultKeepTokens
 	}
@@ -96,8 +96,8 @@ func (p *Planner) applyContextCompression(ctx context.Context, messages []llm.Me
 			emergencyStats.OriginalTokens, emergencyStats.CompressedTokens, emergencyStats.SavedTokens)
 	}
 
-	if p.cfg.UltimateCompressEnable && p.cfg.Journal != nil && compression.OverThreshold(messages, measured, threshold) {
-		newMessages, ultStats := p.cfg.Compressor.ApplyUltimate(messages, threshold, mem, p.cfg.UltimateCompressKeepPlans)
+	if p.cfg.Compression.UltimateEnabled && p.cfg.Journal != nil && compression.OverThreshold(messages, measured, threshold) {
+		newMessages, ultStats := p.cfg.Compressor.ApplyUltimate(messages, threshold, mem, p.cfg.Compression.UltimateKeepPlans)
 		messages = newMessages
 		measured = compression.Prefix{} // 同 emergency：列表被重建
 		if p.cfg.Publisher != nil && ultStats != nil {
