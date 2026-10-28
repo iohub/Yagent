@@ -24,7 +24,7 @@ guard 由 `rebuild` 统一挂（`surface.go:122-125`），集中构造消除了"
 **3. 工作区目录本身算越界。** `isInWorkspace` 对 `rel == "."` 返回 false
 （`workspace_guard.go:isInWorkspace`）。`run_bash` **没有黑名单**：纵深防御 = 信任 LLM 的 `is_dangerous`
 + 任何指向工作区外的绝对路径 token 都要授权，`safeSystemPaths` 白名单只此一处且根目录恒危险
-（`:210-228,248-296`）。
+（`workspace_guard.go:checkBash,referencesOutsideWorkspace`）。
 
 **4. deferred 开关归 Surface。** 调用方或探针预填 `LoadTool`/`DeferSchemas` 不算开启
 （`surface.go:60-70`）。预算降级**只动 Warm，绝不能动 Hot**（`surface.go:128-144`）——
@@ -62,11 +62,11 @@ sha256 前 8 字节（`adapter.go:180-190`）。顺序漂走的症状不是崩�
 
 **11. 授权只有"问用户"这一种强制，没有硬拒绝路径；放行状态分三层，持久化只有一处。**
 `Check` 对越界/危险只返回 needsAuth，`RequestAuth` 阻塞等用户（`workspace_guard.go:Check,RequestAuth`）；
-会话级 per-tool / 全局跳过（`:23-24`）、项目级 `authorized_projects` 持久化到
-`~/.yagent/settings.json`（`:298-345`）、YOLO（`:38-41`）。三层任意一层命中，此后所有检查直接跳过。
+会话级 per-tool / 全局跳过（`workspace_guard.go:WorkspaceGuard`）、项目级 `authorized_projects` 持久化到
+`~/.yagent/settings.json`（`workspace_guard.go:loadProjectAuth,saveProjectAuth`）、YOLO（`workspace_guard.go:SetYoloMode`）。三层任意一层命中，此后所有检查直接跳过。
 
 **12. YOLO 两档的真实差异不在路径边界。** `-y` 的 `SetYoloMode` = **一切授权全绕过**，
-含工作区外路径（`:59-62` 短路 `Check`、`:117-120` 自动批准；装配点 `internal/app/app.go:324-328`）。
+含工作区外路径——单一判据 `workspace_guard.go:authBypassed`，`Check` 与 `RequestAuth` 各调它一次（跳过检查 / 直接放行；装配点 `internal/app/app.go:324-328`）。
 `-Y` 隐含 `-y`，额外只做两件事：把 `ask_user_for_help` **摘出**工具面
 （`specs_flow.go:35-41`，与闸门 `_FullYoloRemovesAskUser` 成对）并注入自主决策指令
 （`internal/globalctx/global_context.go:83-90`）。根 AGENTS.md §5.4 的"-y 只跳工作区内授权"
