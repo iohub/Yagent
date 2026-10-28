@@ -11,7 +11,7 @@ import (
 // BlocksOnUser 同时是"豁免 180s 工具超时"的判据（替代历史 isInteractiveUserTool）。
 func init() {
 	toolspec.MustRegister(toolspec.Spec{
-		Name:      "agent_exit",
+		Name:      toolspec.ExitToolName,
 		Effect:    toolspec.EffectFlow,
 		Frequency: toolspec.Hot,
 		Serial:    true,

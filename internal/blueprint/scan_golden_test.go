@@ -71,6 +71,14 @@ import (
 //	internal/tui      → internal/shutdown（取消后重建的任务 ctx 同一个根）
 //	.                 → internal/shutdown（main 三个入口装处理器）
 //	.                 → internal/tools（main 把 KillLiveProcessGroups 传给硬退出钩子）
+//
+// 2026-10-28 第八轮修订：44 → 45 片、143 → 146 边。来源是 B2「终止判据单源化」：
+// 新增 `internal/agents/exitpolicy` 一片（两个循环共用的判定纯函数），三条边逐条对过。
+//
+//	internal/agents/exitpolicy → internal/toolspec（唯一的收尾工具名来源 ExitToolName）
+//	internal/agents            → internal/agents/exitpolicy（executor.go 的子 Agent 侧调用点）
+//	internal/agents/director   → internal/agents/exitpolicy（planner_run.go 的 Director 侧调用点；
+//	                           整行匹配的依赖守卫允许 import 该子包，与 toolbatch/activity 同形）
 func TestScanSelfGolden(t *testing.T) {
 	snap, err := Scan("../..", DefaultOptions()) // 测试 CWD 是 internal/blueprint
 	if err != nil {
@@ -80,8 +88,8 @@ func TestScanSelfGolden(t *testing.T) {
 		t.Fatalf("ModulePath = %q, 要 %q", snap.ModulePath, "yagent")
 	}
 	// golden 1：片数。
-	if len(snap.Leaves) != 44 {
-		t.Fatalf("片数 = %d, golden 是 44 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
+	if len(snap.Leaves) != 45 {
+		t.Fatalf("片数 = %d, golden 是 45 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
 	}
 	// golden 2：模块级边数（out 与 in 是转置，总数必然相等）。
 	out, in := 0, 0
@@ -89,8 +97,8 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
-	if out != 143 || in != 143 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 143/143 —— 形状变了，先确认变化来源", out, in)
+	if out != 146 || in != 146 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 146/146 —— 形状变了，先确认变化来源", out, in)
 	}
 	// 排序不变量：Leaves 按 Dir 排序（确定性的一部分）。
 	for i := 1; i < len(snap.Leaves); i++ {

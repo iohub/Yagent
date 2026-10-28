@@ -18,8 +18,8 @@
 两个循环共用（`executor.go:182`）——两份同形实现必有一边漂走。
 
 **2. 以 `agent_exit` 收尾的 Agent 必须自己置 `StopOnFinish`，且收尾只认执行成功的那一次。**
-`repo.go:160`、`coding.go:367`、`chat.go:81`、`devops.go:90`、`browser_agent.go:124`，
-消费点在 `executor.go:876`（判据 `StopOnFinish && execErr == nil`，失败那次回执交回模型继续跑）。漏设不报错：`agent_exit` 只是"又执行了一次工具"，循环继续烧到
+判据只有一份：`internal/agents/exitpolicy`（两个循环都调它，谁也不许再写内联的名字比较 —— 闸门
+`TestTerminationDecisionIsNotInlinedInLoops` 直接扫源码，改回内联即红）。装配点 `repo.go:165`、`coding.go:370`、`chat.go:85`、`devops.go:94`、`browser_agent.go:128`、`director.go:390`（Custom Agent）。漏设不报错：`agent_exit` 只是"又执行了一次工具"，循环继续烧到
 MaxSteps，而 `deliverableText` 取的是最后一条 assistant 消息——便签正文与 artifact 全文存的
 都不是那份交付（`repo.go:157-160` 把这段写成了注释）。
 

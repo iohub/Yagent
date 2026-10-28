@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"yagent/internal/agents/activity"
+	"yagent/internal/agents/exitpolicy"
 	"yagent/internal/agents/toolbatch"
 	"yagent/internal/compression"
 	"yagent/internal/config"
@@ -875,9 +876,10 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 			commitToolCall(tc, toolResult, true)
 
-			// 终止判据：名字对上**且**这一次真的执行成功。失败时 "Error: ..." 已经作为 tool 回执
-			// 交回模型，循环继续；反复失败由既有 MaxSteps 兜底（上限只有一处，别再套第二层）。
-			if cfg.StopOnFinish && tc.Function.Name == "agent_exit" && execErr == nil {
+			// 终止判据在 exitpolicy（两个循环共用同一份）：名字对上**且**这一次真的执行成功。
+			// 失败时 "Error: ..." 已经作为 tool 回执交回模型，循环继续；反复失败由既有 MaxSteps
+			// 兜底（上限只有一处，别再套第二层）。判据为什么只有一份见 internal/agents/AGENTS.md 硬约束 2。
+			if exitpolicy.TerminateOnAgentExit(cfg.StopOnFinish, tc.Function.Name, execErr != nil) {
 				return &ExecutorResult{Text: toolResult, History: history}
 			}
 			return nil

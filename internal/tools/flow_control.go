@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"yagent/internal/protocol"
+	"yagent/internal/toolspec"
 	"yagent/internal/util"
 )
 
@@ -34,12 +35,12 @@ func (t *FlowControlTool) ExecuteAgentExit(ctx context.Context, params map[strin
 	if !present || raw == nil {
 		return nil, util.WrapError(ctx,
 			fmt.Errorf(`required parameter "reason" is missing (tool arguments were empty or malformed)`),
-			"agent_exit")
+			toolspec.ExitToolName)
 	}
 	reason, ok := raw.(string)
 	if !ok {
 		return nil, util.WrapError(ctx,
-			fmt.Errorf(`parameter "reason" must be a string, got %T`, raw), "agent_exit")
+			fmt.Errorf(`parameter "reason" must be a string, got %T`, raw), toolspec.ExitToolName)
 	}
 	result := map[string]interface{}{
 		"finished": true,
