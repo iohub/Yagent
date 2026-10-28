@@ -55,7 +55,7 @@ guard 仍在循环之后统一挂。`ExternalSpecs` 一律 Cold，靠既有 defe
 执行器返回不可序列化的值是错误而不是空结果。
 
 **10. 工具声明上 provider 前必须按名字排序。** `SortToolDefs`（`adapter.go:171-175`）的三个消费点
-都调它（`surface.go:247`、`internal/agents/director/planner_run.go:124`、
+都调它（`surface.go:247`、`internal/agents/director/planner_llm.go:34`、
 `internal/agents/director.go:255` 的 hash 日志）；`ComputeToolDefsHash` 自排序副本后取
 sha256 前 8 字节（`adapter.go:180-190`）。顺序漂走的症状不是崩溃，是 provider 端前缀缓存
 逐条失效——要到 token 账单对不上才被发现有两条路：排序漏一处，或 hash 比对基线被整体重算。
@@ -147,14 +147,13 @@ exec 默认的取消只打得到直接子进程 bash，`make`/`node` 这些子�
 - 第 16 条的四条闸门在 `system_operations_hang_test.go:51,110,129,152`：去掉 `cmd.WaitDelay`、
   把裸 `err.Error()` 交回模型、把超时与取消合并成一句文案、截断不记账——**都做过变异，各自当场红**。
   计时走 `runBashWaitDelay` 与 `maxShellOutputBytes` 两个 seam，没有"等真实超时"的 sleep；
-  两处 `time.Sleep` 只在负向断言的有界窗口里（≤2s，见第 17 条那一对）。
+  三处 `time.Sleep` 全在有界轮询里：两处只在负向断言的窗口（≤2s，见第 17 条那一对），一处是杀组用例等孩子写出 pid 清单（5ms 间隔、5s 上限）。
 - 第 17 条是**方向相反的一对**加一本登记账：`_TimeoutKillsWholeProcessGroup`
   （`system_operations_hang_test.go:195`，去掉 `Setpgid` 即红）、
   `_ReturnedCallSurvivesLaterCancel`（`:221`，把杀组挪到返回之后即红）、
-  `TestKillLiveProcessGroupsEndsInFlightCall`（`:257`，不登记 / 不注销 各红一次）。
+  `TestKillLiveProcessGroupsEndsInFlightCall`（`:290`，不登记 / 不注销 / 不杀组 各红一次）。
   只留一条的话，"杀干净"与"别误杀"任意一边漂走都是绿的。
-  ⚠️ 最后这条在**整包并发跑**时会偶发假红（HEAD 上实测 5 次红 2 次，单跑 10 次全绿）：
-  它等的是真信号与真进程组，改动没碰到它时它红了要先怀疑这条，不要顺着改动找根因。
+  它的同步点是"孩子写出 `pids` 文件"（`waitForPidsWritten`，`:265`），**不是**"进程组已登记"：登记紧跟 `cmd.Start()`（`system_operations.go:102-106`），那一刻 bash 还没 fork 任何内层命令，等登记就杀组会让 `pids` 根本来不及出现——曾经"整包并发跑稳定红、单跑全绿"就是这个形状，是用例的同步点错了，不是环境噪声。
 - `TestExecuteRunBash`（`system_operations_test.go:11`）是这条改动前的行为基线：
   `foreground success`/`foreground failure` 断言的是**精确**输出，改回执形状时它会先叫。
 - 第 9 条的兜底形状与"不可用入参必须留痕"在 `adapter_call_test.go`：半截 JSON、字面量 `null`、

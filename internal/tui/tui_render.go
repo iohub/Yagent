@@ -8,6 +8,7 @@ import (
 
 	"yagent/internal/messaging"
 	"yagent/internal/thinklink"
+	"yagent/internal/toolspec"
 
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
@@ -576,7 +577,8 @@ func extractToolSummary(toolName string, argsJSON string) string {
 		if from != "" && to != "" {
 			return from + " → " + to
 		}
-	case "thinking", "agent_exit":
+	// 收尾工具名走 toolspec 的单一来源（其余分支是纯展示用的名字，注册表里没有对应常量）。
+	case "thinking", toolspec.ExitToolName:
 		if reason, ok := args["reason"].(string); ok && reason != "" {
 			return reason
 		}

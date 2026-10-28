@@ -64,7 +64,7 @@ func toolCallResp(id, name, args string) *llm.Response {
 }
 
 // fakePlannerTools 的 state 非 nil 时模拟门面 Tools 包装闭包的委派检测语义
-// （planner_run.go 只读 state 驱动提醒控制流）：delegate_* 调用更新 HasDelegated/DelegationAttempts/PendingSubAgentMemory。
+// （提醒控制流只读 state，它在 planner_delegate.go）：delegate_* 调用更新 HasDelegated/DelegationAttempts/PendingSubAgentMemory。
 type fakePlannerTools struct {
 	state   *RunState
 	calls   []fakeToolCall

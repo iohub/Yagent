@@ -403,7 +403,8 @@ func writeSafeFile(t *testing.T, dir, name, content string, perm os.FileMode) er
 	return os.WriteFile(path, data, perm)
 }
 
-// 强制委派提醒的文案来自 director/planner_run.go:533/535。
+// 强制委派提醒的文案来自 director/planner_delegate.go:50/52（收尾判定与委派编排在
+// 那个文件里，主循环只剩骨架）。
 // 这里只留一份副本给三个断言点共用，避免文案改了而某处断言静默失效。
 const (
 	forceDelegationFirst  = "You must delegate an agent to complete the task. Do not reply with plain text — call a delegate_* tool now."
