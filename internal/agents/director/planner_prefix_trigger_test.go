@@ -64,16 +64,14 @@ func TestPlannerRun_TriggerUsesProviderMeasurement(t *testing.T) {
 	pub := &capturePublisher{}
 
 	p := NewPlanner(PlannerConfig{
-		LLM:                eng,
-		Tools:              tools,
-		Publisher:          pub,
-		Compressor:         compression.NewContextCompressor(nil, "director", nil),
-		Prompts:            func(_ context.Context, _ PromptInput) (string, error) { return "SYSTEM_PROMPT", nil },
-		MaxSteps:           4,
-		LLMTimeout:         30 * time.Second,
-		CompressEnable:     true,
-		CompressThreshold:  threshold,
-		CompressKeepTokens: 8,
+		LLM:         eng,
+		Tools:       tools,
+		Publisher:   pub,
+		Compressor:  compression.NewContextCompressor(nil, "director", nil),
+		Prompts:     func(_ context.Context, _ PromptInput) (string, error) { return "SYSTEM_PROMPT", nil },
+		MaxSteps:    4,
+		LLMTimeout:  30 * time.Second,
+		Compression: compression.Options{Enabled: true, Threshold: threshold, KeepTokens: 8},
 	}, tools.state)
 
 	res, err := p.Run(context.Background(), PlanInput{Input: "PREFIX_TASK"})
@@ -127,18 +125,16 @@ func TestPlannerRun_MeasurementInvalidatedAfterRewrite(t *testing.T) {
 	journal := thinklink.NewStore(0)
 
 	p := NewPlanner(PlannerConfig{
-		LLM:                    eng,
-		Tools:                  tools,
-		Publisher:              pub,
-		Journal:                journal,
-		Compressor:             compression.NewContextCompressor(nil, "director", journal),
-		Prompts:                func(_ context.Context, _ PromptInput) (string, error) { return "SYSTEM_PROMPT", nil },
-		MaxSteps:               4,
-		LLMTimeout:             30 * time.Second,
-		CompressEnable:         true,
-		CompressThreshold:      2000, // 基数 4000 单独就超阈值：清零与否的差别落在第三档上
-		CompressKeepTokens:     8,
-		UltimateCompressEnable: true,
+		LLM:        eng,
+		Tools:      tools,
+		Publisher:  pub,
+		Journal:    journal,
+		Compressor: compression.NewContextCompressor(nil, "director", journal),
+		Prompts:    func(_ context.Context, _ PromptInput) (string, error) { return "SYSTEM_PROMPT", nil },
+		MaxSteps:   4,
+		LLMTimeout: 30 * time.Second,
+		// 阈值 2000：基数 4000 单独就超阈值，清零与否的差别落在第三档上
+		Compression: compression.Options{Enabled: true, Threshold: 2000, KeepTokens: 8, UltimateEnabled: true},
 	}, tools.state)
 
 	if _, err := p.Run(context.Background(), PlanInput{Input: "INVALIDATE_TASK"}); err != nil {

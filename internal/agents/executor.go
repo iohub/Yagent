@@ -61,13 +61,14 @@ type ExecutorConfig struct {
 	// （handoff 与 blueprint 都挂在它上面，没有它两者全丢，见 §11 坑 16 / §21）。
 	NoActionReminder string
 
-	EnableContextCompression    bool
-	ContextCompressionThreshold int
-	ToolResultKeepTokens        int
-	UltimateThinkLink           compression.ThinkLinkJournal
-	UltimateKeepPlans           int
-	// 第三档需要两个条件同时成立：配置允许 + 有重建原料（ThinkLink），与 Director Planner 一致。
-	EnableUltimateCompression bool
+	// UltimateThinkLink 是第三档的重建原料（依赖注入，不是配置项）：nil = 第三档不可达。
+	// 第三档需要两个条件同时成立 —— 配置允许（Compression.UltimateEnabled）**且**这里有原料，
+	// 与 Director Planner 一致。
+	UltimateThinkLink compression.ThinkLinkJournal
+	// Compression 是压缩选项的唯一载体（internal/compression.Options）。以前这里是五个散字段、
+	// 与 PlannerConfig 的五个同语义异名字段并存，装配层因此复制两遍（根 AGENTS.md §11 坑 33）。
+	// 装配只经 compressionOptionsFromConfig 一处转换；零值 = 不压缩。
+	Compression compression.Options
 
 	MaxParallelReadOnlyTools int
 }
@@ -75,6 +76,9 @@ type ExecutorConfig struct {
 func DefaultExecutorConfig() ExecutorConfig {
 	return ExecutorConfig{
 		MaxParallelReadOnlyTools: DefaultMaxParallelReadOnlyTools,
+		// 零值 = 不启用压缩、阈值与保留预算都走 compression 包既有兜底（见 Options 的注释）。
+		// 不启用压缩的 Agent（chat / meta）保持这条默认即可。
+		Compression: compression.DefaultOptions(),
 	}
 }
 
@@ -488,13 +492,13 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 			messages = llm.NormalizeMessages(messages)
 
-			if cfg.EnableContextCompression {
+			if cfg.Compression.Enabled {
 				var modelName string
 				if cfg.LLM != nil {
 					modelName = cfg.LLM.Model()
 				}
-				threshold := compression.ResolveThreshold(modelName, cfg.ContextCompressionThreshold)
-				keepTokens := cfg.ToolResultKeepTokens
+				threshold := compression.ResolveThreshold(modelName, cfg.Compression.Threshold)
+				keepTokens := cfg.Compression.KeepTokens
 				if keepTokens <= 0 {
 					keepTokens = compression.DefaultToolResultKeepTokens
 				}
@@ -580,9 +584,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 							SavedTokens:  emergencyStats.SavedTokens,
 						})
 					}
-					if compression.OverThreshold(messages, measured, threshold) && cfg.EnableUltimateCompression && cfg.UltimateThinkLink != nil {
+					if compression.OverThreshold(messages, measured, threshold) && cfg.Compression.UltimateEnabled && cfg.UltimateThinkLink != nil {
 						ultCompressor := compression.NewContextCompressor(cfg.LLM, cfg.AgentName, cfg.UltimateThinkLink)
-						newMessages, ultStats := ultCompressor.ApplyUltimate(messages, threshold, nil, cfg.UltimateKeepPlans)
+						newMessages, ultStats := ultCompressor.ApplyUltimate(messages, threshold, nil, cfg.Compression.UltimateKeepPlans)
 						messages = newMessages
 						measured = compression.Prefix{} // 同 emergency：列表被重建，计量作废
 						history = make([]llm.Message, len(messages))

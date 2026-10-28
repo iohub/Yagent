@@ -47,12 +47,12 @@ provider `context_window` 优先、未设置才查目录——给目录已收录
 只改进度条，不改压缩时机。
 
 **9. 压缩只有两个开关，不许加第三道布尔闸门。** 第一、二档只看
-`enable_context_compression`（`internal/agents/executor.go:486`、
+`enable_context_compression`（`internal/agents/executor.go:495`、
 `internal/agents/director/planner_compress.go:23`），第三档在此之上再要
-`enable_ultimate_compression` **与**非空 journal（`executor.go:578`、
+`enable_ultimate_compression` **与**非空 journal（`executor.go:587`、
 `planner_compress.go:99`；子 Agent 侧两条件见三档速记第 3 条，
 `TestRunAgentLoop_UltimateCompressionNeedsFlagAndStore`，
-`internal/agents/executor_compression_test.go:155` 钉"缺一不可"）。旧的
+`internal/agents/executor_compression_test.go:158` 钉"缺一不可"）。旧的
 `[enhanced_commander] enable` 已从 schema 删除、残留键由 config 的 `removedKeyHints`
 点名（`internal/config/config.go:261`）；第三档"缺省为开、显式 false 真关"由 config 的
 键存在性判定（`internal/config/config.go:486,703-705`），消费方只读布尔字段，
@@ -65,8 +65,8 @@ provider `context_window` 优先、未设置才查目录——给目录已收录
 2. **Emergency**：把 T&P 块抽进 thinklink，最近 3 条保留原文，其余 LLM 摘要，记忆整体重写为
    `[system, one user]`。
 3. **Ultimate**：用 thinklink 日志重建上下文，保留最近 N 个 T&P（`ultimate_compression_keep_plans`，
-   0 = 全部），最后硬截断到预算。子 Agent 侧需要 `EnableUltimateCompression` **与** 非空
-   `UltimateThinkLink` 同时成立。
+   0 = 全部），最后硬截断到预算。子 Agent 侧需要 `Options.UltimateEnabled` **与** 非空
+   `UltimateThinkLink` 同时成立。执行层载体只有 `compression.Options`（`options.go`）。
 
 三档都会发 `context_*_compressed` 事件并写 `compacted` rollout 记录（`compacted` 会替换被压过的前缀，
 这正是第 2 条与"指纹由读侧算"要处理的东西）。

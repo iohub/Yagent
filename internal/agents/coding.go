@@ -373,16 +373,10 @@ Output ONLY the commit message text. No explanations, no markdown fences, no com
 	cfg.RepoContext = a.repoCtx.Get()
 	cfg.SkillCatalog = skillCatalogFor("coding", a.params.External.Skills)
 
-	// 上下文压缩配置（tool 结果截断）
-	ec := a.ecCfg
-	cfg.EnableContextCompression = ec.EnableContextCompression
-	cfg.ContextCompressionThreshold = ec.ContextCompressionThreshold
-	cfg.ToolResultKeepTokens = ec.ToolResultKeepTokens
-
-	// 三级终极压缩配置
-	cfg.UltimateThinkLink = a.thinkLink                     // 三级终极压缩重建源（thinklink 只读窄接口）
-	cfg.UltimateKeepPlans = ec.UltimateCompressionKeepPlans // 0=全部保留
-	cfg.EnableUltimateCompression = ec.EnableUltimateCompression
+	// 三级终极压缩的重建原料是注入的 thinklink 只读窄接口（不是配置项）；
+	// 压缩选项的唯一装配点见 compression_options.go，零值 = 不压缩。
+	cfg.UltimateThinkLink = a.thinkLink
+	cfg.Compression = compressionOptionsFromConfig(a.ecCfg)
 
 	// 如果是 git 仓库且 checkpoint 启用，设置回调和添加工具
 	if gitCheckpointEnabled {

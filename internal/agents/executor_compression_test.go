@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"yagent/internal/compression"
 	"yagent/internal/config"
 	"yagent/internal/llm"
 	"yagent/internal/memory"
@@ -13,7 +14,7 @@ import (
 )
 
 // 本包的测试二进制不调用 models.Load，目录未加载时 ContextWindow 恒为 0，
-// 因此 ResolveThreshold 会直接采用 ContextCompressionThreshold —— 下面的极小阈值可用。
+// 因此 ResolveThreshold 会直接采用 Compression.Threshold —— 下面的极小阈值可用。
 
 func ultimateEvents(t *testing.T, pub *spyPublisher) []map[string]interface{} {
 	t.Helper()
@@ -72,17 +73,19 @@ func TestRunAgentLoop_CompressionEventFeedsTUIPanel(t *testing.T) {
 	ctx := memory.WithRolloutWriter(context.Background(), w)
 
 	cfg := ExecutorConfig{
-		SystemPrompt:                "You are a test agent.",
-		UserInput:                   "read something big then report",
-		Surface:                     tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
-		LLM:                         mock,
-		MaxSteps:                    2,
-		StopOnFinish:                true,
-		AgentName:                   "compress-contract-agent",
-		Publisher:                   pub,
-		EnableContextCompression:    true,
-		ContextCompressionThreshold: 60,
-		ToolResultKeepTokens:        8,
+		SystemPrompt: "You are a test agent.",
+		UserInput:    "read something big then report",
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
+		LLM:          mock,
+		MaxSteps:     2,
+		StopOnFinish: true,
+		AgentName:    "compress-contract-agent",
+		Publisher:    pub,
+		Compression: compression.Options{
+			Enabled:    true,
+			Threshold:  60,
+			KeepTokens: 8,
+		},
 	}
 	if _, err := RunAgentLoop(ctx, cfg); err != nil {
 		t.Fatalf("RunAgentLoop: %v", err)
@@ -172,18 +175,20 @@ func TestRunAgentLoop_UltimateCompressionNeedsFlagAndStore(t *testing.T) {
 			cfg := ExecutorConfig{
 				// 系统提示必须大到第二档也压不进阈值：第二档只截 user 消息，
 				// 截完仍超限才会把第三档的条件逼出来。
-				SystemPrompt:                strings.Repeat("system rule that must stay. ", 60),
-				UserInput:                   strings.Repeat("long delegated task description. ", 80),
-				Surface:                     tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", "ok")),
-				LLM:                         mock,
-				MaxSteps:                    1,
-				StopOnFinish:                true,
-				AgentName:                   "compression-test",
-				Publisher:                   pub,
-				EnableContextCompression:    true,
-				ContextCompressionThreshold: 8,
-				ToolResultKeepTokens:        200,
-				EnableUltimateCompression:   tc.flag,
+				SystemPrompt: strings.Repeat("system rule that must stay. ", 60),
+				UserInput:    strings.Repeat("long delegated task description. ", 80),
+				Surface:      tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", "ok")),
+				LLM:          mock,
+				MaxSteps:     1,
+				StopOnFinish: true,
+				AgentName:    "compression-test",
+				Publisher:    pub,
+				Compression: compression.Options{
+					Enabled:         true,
+					Threshold:       8,
+					KeepTokens:      200,
+					UltimateEnabled: tc.flag,
+				},
 			}
 			if tc.withStore {
 				cfg.UltimateThinkLink = thinklink.NewStore(0)
@@ -193,7 +198,7 @@ func TestRunAgentLoop_UltimateCompressionNeedsFlagAndStore(t *testing.T) {
 				t.Fatalf("RunAgentLoop: %v", err)
 			}
 
-			// 第二档应当始终可达（它只依赖 EnableContextCompression）。
+			// 第二档应当始终可达（它只依赖 Compression.Enabled）。
 			if !hasEvent(pub, "context_emergency_compressed") {
 				t.Fatal("expected emergency compression to run; threshold too high for the fixture?")
 			}
@@ -273,6 +278,9 @@ func TestBrowserAgent_UltimateCompressionIsPerDelegation(t *testing.T) {
 		Flow:       stubFlow{},
 		Browser:    &stubController{ok: true},
 		BrowserCfg: config.DefaultBrowserConfig(),
+		// 下面写的是 config 层（TOML 键）的字段名，不是执行层选项：本用例走的是
+		// "配置文件 → 装配 → 执行层"的真实路径，执行层载体只有一个 ExecutorConfig.Compression，
+		// 由 compressionOptionsFromConfig 单点转换出来。
 		EnhancedCommanderCfg: config.EnhancedCommanderConfig{
 			EnableContextCompression:    true,
 			ContextCompressionThreshold: 8,

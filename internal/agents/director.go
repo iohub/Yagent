@@ -977,26 +977,22 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 	}
 
 	cfg := director.PlannerConfig{
-		LLM:                       a.LLM,
-		Publisher:                 a.Publisher,
-		Journal:                   a.thinkLink,
-		Rollout:                   directorRolloutWriter,
-		Tools:                     toolRunner,
-		Prompts:                   prompts,
-		Compressor:                a.compressor,
-		MaxSteps:                  a.maxSteps,
-		LLMTimeout:                a.currentLLMTimeout(),
-		Recovery:                  recovery,
-		Metrics:                   metrics,
-		NormalizeMessages:         validateAndRepairToolCallPairs,
-		EstimateTokensFn:          tokenutil.EstimateTokens,
-		ConvertToolCallsFn:        convertToolCalls,
-		CompressEnable:            a.EnhancedCommanderCfg.EnableContextCompression,
-		CompressThreshold:         a.EnhancedCommanderCfg.ContextCompressionThreshold,
-		CompressKeepTokens:        a.EnhancedCommanderCfg.ToolResultKeepTokens,
-		UltimateCompressEnable:    a.EnhancedCommanderCfg.EnableUltimateCompression,
-		UltimateCompressKeepPlans: a.EnhancedCommanderCfg.UltimateCompressionKeepPlans,
-		ToolTimeout:               120 * time.Second,
+		LLM:                a.LLM,
+		Publisher:          a.Publisher,
+		Journal:            a.thinkLink,
+		Rollout:            directorRolloutWriter,
+		Tools:              toolRunner,
+		Prompts:            prompts,
+		Compressor:         a.compressor,
+		MaxSteps:           a.maxSteps,
+		LLMTimeout:         a.currentLLMTimeout(),
+		Recovery:           recovery,
+		Metrics:            metrics,
+		NormalizeMessages:  validateAndRepairToolCallPairs,
+		EstimateTokensFn:   tokenutil.EstimateTokens,
+		ConvertToolCallsFn: convertToolCalls,
+		Compression:        compressionOptionsFromConfig(a.EnhancedCommanderCfg),
+		ToolTimeout:        120 * time.Second,
 
 		MaxParallelReadOnlyTools: a.maxParallelReadOnlyTools,
 		IsParallelizableTool:     a.isToolParallelizable,
@@ -1052,7 +1048,10 @@ func (a *DirectorAgent) applyEmergencyCompression(ctx context.Context, messages 
 type UltimateCompressionStats = compression.UltimateCompressionStats
 
 func (a *DirectorAgent) applyUltimateCompression(messages []llm.Message, threshold int) ([]llm.Message, *UltimateCompressionStats) {
-	return a.compressor.ApplyUltimate(messages, threshold, a.currentMemory, a.EnhancedCommanderCfg.UltimateCompressionKeepPlans)
+	// 保留数量也只从 compressionOptionsFromConfig 取：这里曾是执行层最后一处直接读
+	// [enhanced_commander] 字段的地方（绕过单一转换点的第二份真相）。
+	return a.compressor.ApplyUltimate(messages, threshold, a.currentMemory,
+		compressionOptionsFromConfig(a.EnhancedCommanderCfg).UltimateKeepPlans)
 }
 
 func validateAndRepairToolCallPairs(messages []llm.Message) []llm.Message {

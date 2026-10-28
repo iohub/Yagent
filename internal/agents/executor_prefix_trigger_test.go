@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"yagent/internal/compression"
 	"yagent/internal/llm"
 	"yagent/internal/thinklink"
 	"yagent/internal/tokenutil"
@@ -67,17 +68,19 @@ func TestRunAgentLoop_TriggerUsesProviderMeasurement(t *testing.T) {
 	}}
 
 	cfg := ExecutorConfig{
-		SystemPrompt:                "You are a test agent.",
-		UserInput:                   "read something big then report",
-		Surface:                     tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
-		LLM:                         mock,
-		MaxSteps:                    2,
-		StopOnFinish:                true,
-		AgentName:                   "prefix-trigger-test",
-		Publisher:                   pub,
-		EnableContextCompression:    true,
-		ContextCompressionThreshold: threshold,
-		ToolResultKeepTokens:        8,
+		SystemPrompt: "You are a test agent.",
+		UserInput:    "read something big then report",
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
+		LLM:          mock,
+		MaxSteps:     2,
+		StopOnFinish: true,
+		AgentName:    "prefix-trigger-test",
+		Publisher:    pub,
+		Compression: compression.Options{
+			Enabled:    true,
+			Threshold:  threshold,
+			KeepTokens: 8,
+		},
 	}
 	if _, err := RunAgentLoop(context.Background(), cfg); err != nil {
 		t.Fatalf("RunAgentLoop: %v", err)
@@ -128,19 +131,21 @@ func TestRunAgentLoop_MeasurementInvalidatedAfterRewrite(t *testing.T) {
 	}}
 
 	cfg := ExecutorConfig{
-		SystemPrompt:                "You are a test agent.",
-		UserInput:                   "read big things",
-		Surface:                     tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
-		LLM:                         mock,
-		MaxSteps:                    2,
-		StopOnFinish:                true,
-		AgentName:                   "measurement-invalidate-test",
-		Publisher:                   pub,
-		EnableContextCompression:    true,
-		ContextCompressionThreshold: 2000,
-		ToolResultKeepTokens:        8,
-		EnableUltimateCompression:   true,
-		UltimateThinkLink:           thinklink.NewStore(0),
+		SystemPrompt: "You are a test agent.",
+		UserInput:    "read big things",
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
+		LLM:          mock,
+		MaxSteps:     2,
+		StopOnFinish: true,
+		AgentName:    "measurement-invalidate-test",
+		Publisher:    pub,
+		Compression: compression.Options{
+			Enabled:         true,
+			Threshold:       2000,
+			KeepTokens:      8,
+			UltimateEnabled: true,
+		},
+		UltimateThinkLink: thinklink.NewStore(0),
 	}
 	if _, err := RunAgentLoop(context.Background(), cfg); err != nil {
 		t.Fatalf("RunAgentLoop: %v", err)
@@ -172,17 +177,19 @@ func TestRunAgentLoop_NoMeasurementFallsBackToLocalEstimate(t *testing.T) {
 	}}
 
 	cfg := ExecutorConfig{
-		SystemPrompt:                "You are a test agent.",
-		UserInput:                   "read something big then report",
-		Surface:                     tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
-		LLM:                         mock,
-		MaxSteps:                    2,
-		StopOnFinish:                true,
-		AgentName:                   "no-measurement-test",
-		Publisher:                   pub,
-		EnableContextCompression:    true,
-		ContextCompressionThreshold: threshold,
-		ToolResultKeepTokens:        8,
+		SystemPrompt: "You are a test agent.",
+		UserInput:    "read something big then report",
+		Surface:      tools.NewSurfaceFromAdapters("test-agent", newFastAdapter("probe_tool", "probe", bigResult)),
+		LLM:          mock,
+		MaxSteps:     2,
+		StopOnFinish: true,
+		AgentName:    "no-measurement-test",
+		Publisher:    pub,
+		Compression: compression.Options{
+			Enabled:    true,
+			Threshold:  threshold,
+			KeepTokens: 8,
+		},
 	}
 	if _, err := RunAgentLoop(context.Background(), cfg); err != nil {
 		t.Fatalf("RunAgentLoop: %v", err)
