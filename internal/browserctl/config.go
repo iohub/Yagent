@@ -41,7 +41,9 @@ type Config struct {
 	DialogPolicy   string
 	AllowedDomains []string
 	DeniedDomains  []string
-	ProfileDir     string
+	// ProfileDir 是跨任务共享的 Chrome profile。空 → 默认共享目录
+	// ~/.yagent/data/browser-profile（登录态得以复用）；显式配置时必须是绝对路径。
+	ProfileDir string
 }
 
 // DefaultConfig 与 config.DefaultBrowserConfig 保持一致，供不经过配置文件的调用方使用。

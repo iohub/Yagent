@@ -501,7 +501,7 @@ CDP itself.
 | `dialog_policy` | string | `"accept"` | `accept` \| `dismiss` \| `ask` |
 | `allowed_domains` | array | `[]` | Allowlist; empty = no restriction on the public internet |
 | `denied_domains` | array | local + RFC-1918 ranges | Supports `*.domain` and CIDR. `file://` and private ranges are denied by default |
-| `profile_dir` | string | `""` | Set it to reuse login state across tasks |
+| `profile_dir` | string | `""` → `~/.yagent/data/browser-profile` | Empty = the built-in shared profile, which keeps login state across tasks. A custom value must be absolute; it must live outside `workspace_root` or TTL cleanup would take the login state with it |
 
 Browser workspaces land under `{workspace_root}/{delegation}/.browser-control/`; the CLI's state
 directory is CWD-relative, so every call goes through `internal/browserctl` with `cmd.Dir` set. Do
