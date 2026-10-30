@@ -278,7 +278,7 @@ max_output_bytes = 24000             # output budget handed to the model (stdout
 dialog_policy = "accept"             # accept | dismiss | ask
 allowed_domains = []                 # empty = no public-network allowlist
 denied_domains = ["*.local", "localhost", "127.0.0.1", "::1", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "169.254.0.0/16"]
-profile_dir = ""                     # profile directory when login state must survive across tasks
+profile_dir = ""                     # empty -> ~/.yagent/data/browser-profile (shared, keeps login state)
 
 # ── Cross-agent blackboard (docs/blackboard-handoff-design.md) ──
 # Notes live at ~/.yagent/notes/{boardID}/{agent}/*.md. The index is derived and transient:

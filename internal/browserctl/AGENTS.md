@@ -27,13 +27,15 @@
 **4. 子进程不经 shell，argv 全由调用方构造**（`spawn.go:41-43`）——这是"LLM 提供的字符串不可能被
 解释成 shell 元字符"的前提。
 
-**5. attach 模式 / 非我们启动的浏览器绝不由我们 stop**（`manager.go:40,368-371`）；
-崩溃回收靠上游的归属校验（`:391-393` + `internal/app/app.go:858-859`）。
+**5. attach 模式 / 非我们启动的浏览器绝不由我们 stop**（`manager.go:40,426-429`）；
+崩溃回收靠上游的归属校验（`:449-451` + `internal/app/app.go:858-859`）。
 
 **6. 非零退出不是 error**：trace 摘要回带给模型自诊（`session.go:18-19,125-127,197-221`）。
 把它做成 Go error 的后果与根 AGENTS.md §11 坑 22 同族——上层会以为"这次委派失败了"。
 
-**7. `profile_dir` 必须绝对路径**（`manager.go:290-297`）；`delegationID` 必须过
+**7. `profile_dir` 为空不等于"不共享"**：`profileDir`（`manager.go:170-182`）会回落到默认共享目录
+`<home>/.yagent/data/browser-profile`（**必须在 workspaceRoot 之外**，否则登录态会被 TTL 清理扫走）；
+显式值必须是绝对路径，相对值直接报错而不是静默忽略。`delegationID` 必须过
 `SanitizeDelegationID`（防路径穿越，`context.go:32-51`）。
 
 **8. URL 只允许 http/https。** `file://` 会让浏览器变成绕过 `WorkspaceGuard` 读本地文件的通道
@@ -47,13 +49,16 @@
 
 **10. 工作区目录就是隔离边界，清理只在装配期跑一次。** 每次委派独占
 `<workspaceRoot>/<SanitizeDelegationID(id)>`，默认 `~/.yagent/data/browser/{delegation}`
-（`WorkspaceDir` `manager.go:149-152`、根路径 `:154-165`）；里面是上游写的 `.browser-control/`
+（`WorkspaceDir` `manager.go:150-152`、根路径 `:154-162`）；里面是上游写的 `.browser-control/`
 （current-tab、`chrome.pid`、`traces/<毫秒时间戳>/error.txt`）与截图产物。上游把 `--user-data-dir`
-硬编码成 `.browser-control/profile` **且没有覆盖 flag**，`profile_dir` 只能靠 symlink 接过去
-（`manager.go:195`、`linkProfileLocked:287-302`）；trace 目录名按字典序即时间序（`session.go:197-199`）。
+硬编码成 `.browser-control/profile` **且没有覆盖 flag**，登录态只能靠 symlink 把它接过去
+（调用点 `manager.go:214-218`、`linkProfileLocked:314-360`）。默认也共享：旧工作区留下的**真实** profile
+目录在首次 `Acquire` 时被 rename 迁进共享目录，迁不动（共享目录非空 = 别的委派正在用）就告警并保留本地副本、
+**绝不删用户数据、绝不阻断启动**（`takeOverWorkspaceProfile:368-384`；macOS 的 `rename` 连空目录都不允许覆盖，
+所以写法是先 `Remove` 空目录再 `Rename`）。trace 目录名按字典序即时间序（`session.go:197-199`）。
 两条回收只此一处调用（`internal/app/app.go:389-391`）：`ReapStale`（死 pid 直接删记录、活 pid 才
-spawn `stop`，`manager.go:391-435`）与 `CleanupExpiredWorkspaces`（按目录 mtime 比 `[browser]
-workspace_ttl`，`<=0` 一律不清理，`:438-461`）。**没有任何后台任务会删工作区**——别假设"过一会儿自己没了"。
+spawn `stop`，`manager.go:452-494`）与 `CleanupExpiredWorkspaces`（按目录 mtime 比 `[browser]
+workspace_ttl`，`<=0` 一律不清理，`:497-521`）。**没有任何后台任务会删工作区**——别假设"过一会儿自己没了"。
 
 ## 入口
 
@@ -64,7 +69,9 @@ workspace_ttl`，`<=0` 一律不清理，`:438-461`）。**没有任何后台任
 `session_test.go:11 TestSessionRun_InjectsDirEnvAndArgv`——**一条用例同时钉** `cmd.Dir`、env 里有
 CDP URL、每次调用带 timeout（`:28-36`）；`manager_test.go:66 TestAcquire_AttachModeInjectsEnvAndNeverLaunches`
 （`:88-93` 断言 65s 抬高）、`:188 TestFindFreePort_SkipsDebugPorts`、`:102`（启一次后复用）、
-`:231`（attach 不动用户浏览器）、`:282`（相对 profile 拒绝）、`:295,328`（端点就绪竞态，真实 E2E 复现过）、
+`:231`（attach 不动用户浏览器）、`:282`（相对 profile 拒绝）、`:419,452`（端点就绪竞态，真实 E2E 复现过）、
+**登录态三条钉死第 7/10 条**：`:305`（不设 profile_dir 也 symlink 到默认共享目录、且该目录在 workspaceRoot 之外）、
+`:339`（工作区已有真实 profile 目录 → rename 迁移，cookie 不丢）、`:375`（共享目录非空 → 保留本地副本、不报错）。
 `policy_test.go:8,74`（file scheme）、`render_test.go:9,39,89`（丢坐标+去重、预算提示语、UTF-8 不切坏）、
-`manager_test.go:351 TestReapStale_RemovesDeadPidRecord`、`:371 TestCleanupExpiredWorkspaces`
-（钉第 10 条：TTL 与死 pid 两条回收；`<=0` 被改成"照样清"即红）。
+`manager_test.go:475 TestReapStale_RemovesDeadPidRecord`、`:495 TestCleanupExpiredWorkspaces`
+（钉第 10 条：TTL 与死 pid 两条回收；`<=0` 被改成"照样清"即红）、`:524`（清理不得顺着 profile symlink 清空共享登录态）。

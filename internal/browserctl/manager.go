@@ -162,6 +162,25 @@ func (m *Manager) workspaceRoot() string {
 	return filepath.Join(home, ".yagent", "data", "browser")
 }
 
+// profileDir 返回共享 Chrome profile 的绝对路径：显式 [browser] profile_dir 优先，
+// 否则用默认共享目录 —— 登录态跨任务复用靠它，否则每次委派都要重新登录。
+//
+// 默认路径必须在 workspaceRoot 之外：CleanupExpiredWorkspaces / ReapStale 按 TTL 删的是
+// workspaceRoot 下的子目录，profile 落在里面就会连同登录态被扫走。
+func (m *Manager) profileDir() (string, error) {
+	if m.cfg.ProfileDir != "" {
+		if !filepath.IsAbs(m.cfg.ProfileDir) {
+			return "", fmt.Errorf("[browser] profile_dir 必须是绝对路径，当前为 %q", m.cfg.ProfileDir)
+		}
+		return m.cfg.ProfileDir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "yagent-browser-profile"), nil
+	}
+	return filepath.Join(home, ".yagent", "data", "browser-profile"), nil
+}
+
 // ensureChrome 返回可用的 CDP 端点：attach 配置优先，否则复用已启动实例，最后才启动新的。
 // 全程持锁：启动浏览器只应发生一次，并发委派排队复用同一个实例。
 func (m *Manager) ensureChrome(ctx context.Context, workspaceDir string) (string, error) {
@@ -193,7 +212,8 @@ func (m *Manager) ensureChrome(ctx context.Context, workspaceDir string) (string
 	}
 
 	// 上游把 --user-data-dir 硬编码成 `.browser-control/profile`（没有覆盖 flag），
-	// 所以跨任务复用登录态只能靠把该目录 symlink 到用户指定的 profile_dir。
+	// 所以跨任务复用登录态只能靠把该目录 symlink 到共享 profile（[browser] profile_dir，
+	// 为空则用默认共享目录）。attach 模式在上面就返回了，不会走到这里。
 	if err := m.linkProfileLocked(workspaceDir); err != nil {
 		return "", err
 	}
@@ -284,19 +304,21 @@ func (m *Manager) waitEndpointLocked(ctx context.Context, dir string, env []stri
 	return fmt.Errorf("浏览器 CDP 端点在 %s 内未就绪：%s", m.readyTimeout, Clip(reason, 300))
 }
 
-// linkProfileLocked 把上游硬编码的 `.browser-control/profile` 指向 [browser] profile_dir，
-// 让登录态跨任务复用。已存在真实目录时不删除（那可能是别的委派正在用的 profile），只告警。
+// linkProfileLocked 把上游硬编码的 `.browser-control/profile` 指向共享 profile 目录，
+// 让登录态跨任务复用。默认（profile_dir 为空）也生效 —— 每个工作区一份新 profile
+// 等于每次委派都要重新登录。
+//
+// 前提：共享 profile 意味着同一时刻只允许一个 Chrome 使用它。本 Manager 自启的 Chrome
+// 全程只有一个（ensureChrome 持锁复用 m.chrome），attach 模式在更早的分支返回，不会走到这里。
 // 必须在持有 m.mu 时调用。
 func (m *Manager) linkProfileLocked(workspaceDir string) error {
-	shared := m.cfg.ProfileDir
-	if shared == "" {
-		return nil
+	shared, err := m.profileDir()
+	if err != nil {
+		return err
 	}
-	if !filepath.IsAbs(shared) {
-		return fmt.Errorf("[browser] profile_dir 必须是绝对路径，当前为 %q", shared)
-	}
+	explicit := m.cfg.ProfileDir != ""
 	if err := os.MkdirAll(shared, 0o700); err != nil {
-		return fmt.Errorf("创建 profile_dir 失败: %w", err)
+		return fmt.Errorf("创建 profile 目录失败: %w", err)
 	}
 
 	stateDir := filepath.Join(workspaceDir, ".browser-control")
@@ -312,17 +334,53 @@ func (m *Manager) linkProfileLocked(workspaceDir string) error {
 		if err := os.Remove(link); err != nil {
 			return fmt.Errorf("替换 profile symlink 失败: %w", err)
 		}
-	} else if _, err := os.Lstat(link); err == nil {
-		slog.Warn("profile_dir 未生效：该工作区已有真实 profile 目录，不做删除",
-			"path", link, "profile_dir", shared)
-		return nil
+	} else if info, err := os.Lstat(link); err == nil {
+		// 旧版每工作区一份真实 profile 目录，里面可能就有用户上一次的 cookie：
+		// 迁进共享目录而不是删掉。迁不动（或这东西根本不是目录）就保留本地副本继续工作 ——
+		// 绝不删用户数据，也不阻断浏览器启动。
+		if !info.IsDir() || !takeOverWorkspaceProfile(link, shared) {
+			slog.Warn("共享 profile 无法接管该工作区的独立 profile，继续使用工作区本地副本",
+				"path", link, "profile_dir", shared)
+			return nil
+		}
 	}
 
 	if err := os.Symlink(shared, link); err != nil {
-		return fmt.Errorf("链接 profile_dir 失败: %w", err)
+		if explicit {
+			return fmt.Errorf("链接 profile_dir 失败: %w", err)
+		}
+		// 默认路径：拿不到 symlink 权限（Windows 常见）时降级为每工作区独立 profile，
+		// 不能让浏览器整体不可用。
+		slog.Warn("共享 profile symlink 创建失败，本次委派使用工作区独立 profile",
+			"path", link, "profile_dir", shared, "error", err)
+		return nil
 	}
 	slog.Info("浏览器登录态 profile 已共享", "profile_dir", shared)
 	return nil
+}
+
+// takeOverWorkspaceProfile 把旧版留在工作区里的真实 profile 目录迁到共享路径。
+// 只接管空共享目录：非空说明别的委派正在用它。
+//
+// 先 os.Remove 再 os.Rename 而不是直接 rename：macOS 的 rename 不允许目录覆盖任何
+// 已存在目录（哪怕空的，实测返回 EEXIST），Linux 允许 —— 两步写法两边都成立。
+// 返回 true 表示 link 路径已腾空，可以建 symlink。
+func takeOverWorkspaceProfile(link, shared string) bool {
+	if entries, err := os.ReadDir(shared); err != nil || len(entries) > 0 {
+		return false
+	}
+	if err := os.Remove(shared); err != nil {
+		return false
+	}
+	if err := os.Rename(link, shared); err != nil {
+		// 迁失败也要把共享目录建回来：它刚被删空，留着不存在会让下次 Acquire 的
+		// 判据（"共享目录为空"）依赖一次 mkdir。
+		if err := os.MkdirAll(shared, 0o700); err != nil {
+			slog.Warn("恢复共享 profile 目录失败", "profile_dir", shared, "error", err)
+		}
+		return false
+	}
+	return true
 }
 
 // installPolicyLocked 让浏览器自身阻断本地文件与内网请求（参数级校验拦不住页面内跳转）。

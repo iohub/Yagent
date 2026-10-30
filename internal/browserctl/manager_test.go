@@ -290,6 +290,130 @@ func TestAcquire_RejectsRelativeProfileDir(t *testing.T) {
 	}
 }
 
+// launchHandler 让 fake 的 launch 回一个端点，其余子命令一律成功。
+func launchHandler() func(SpawnOpts) (SpawnOutput, error) {
+	return func(opts SpawnOpts) (SpawnOutput, error) {
+		if len(opts.Args) > 0 && opts.Args[0] == "launch" {
+			return okOutput("BROWSER_CONTROL_CDP_URL=http://127.0.0.1:9333\n"), nil
+		}
+		return okOutput("ok\n"), nil
+	}
+}
+
+// TestAcquire_DefaultProfileDirIsShared：不设 profile_dir 也必须共享 profile ——
+// 每个工作区一份全新 profile 等于用户已登录的站点下次委派还要重新登录。
+func TestAcquire_DefaultProfileDirIsShared(t *testing.T) {
+	m, fake := newTestManager(t, func(c *Config) {
+		c.Mode = ModeHeadless
+		c.CDPURL = ""
+	})
+	fake.handler = launchHandler()
+
+	session, err := m.Acquire(context.Background(), "default-profile")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer session.Release()
+
+	want := filepath.Join(os.Getenv("HOME"), ".yagent", "data", "browser-profile")
+	link := filepath.Join(session.Dir(), ".browser-control", "profile")
+	dest, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("profile should be a symlink to the default shared profile dir: %v", err)
+	}
+	if dest != want {
+		t.Errorf("symlink target = %s, want %s", dest, want)
+	}
+	if fi, err := os.Stat(want); err != nil || !fi.IsDir() {
+		t.Errorf("default shared profile dir should exist as a directory: err = %v", err)
+	}
+	// 共享目录必须落在 workspaceRoot 之外，否则会被 workspace_ttl 连同登录态一起清掉。
+	root := m.Config().WorkspaceRoot
+	if want == root || strings.HasPrefix(want, root+string(filepath.Separator)) {
+		t.Errorf("shared profile dir %s must live outside workspace root %s", want, root)
+	}
+}
+
+// TestAcquire_MigratesLegacyWorkspaceProfile：旧版每个工作区一份真实 profile 目录，
+// 里面可能就有用户上一次的 cookie —— 必须迁进共享目录，而不是丢弃。
+func TestAcquire_MigratesLegacyWorkspaceProfile(t *testing.T) {
+	m, fake := newTestManager(t, func(c *Config) {
+		c.Mode = ModeHeadless
+		c.CDPURL = ""
+	})
+	fake.handler = launchHandler()
+
+	legacy := filepath.Join(m.WorkspaceDir("legacy"), ".browser-control", "profile")
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
+		t.Fatalf("mkdir legacy profile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "cookies.txt"), []byte("sessionid=abc"), 0o600); err != nil {
+		t.Fatalf("write cookie: %v", err)
+	}
+
+	session, err := m.Acquire(context.Background(), "legacy")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer session.Release()
+
+	dest, err := os.Readlink(filepath.Join(session.Dir(), ".browser-control", "profile"))
+	if err != nil {
+		t.Fatalf("legacy profile dir should be replaced by a symlink: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dest, "cookies.txt"))
+	if err != nil {
+		t.Fatalf("cookie should have been migrated into %s: %v", dest, err)
+	}
+	if string(got) != "sessionid=abc" {
+		t.Errorf("migrated cookie = %q, want %q", got, "sessionid=abc")
+	}
+}
+
+// TestAcquire_KeepsWorkspaceProfileWhenSharedOccupied：共享目录非空时 rename 会失败，
+// 这时必须降级为工作区独立 profile —— 既不删用户数据，也不阻断浏览器启动。
+func TestAcquire_KeepsWorkspaceProfileWhenSharedOccupied(t *testing.T) {
+	m, fake := newTestManager(t, func(c *Config) {
+		c.Mode = ModeHeadless
+		c.CDPURL = ""
+	})
+	fake.handler = launchHandler()
+
+	shared := filepath.Join(os.Getenv("HOME"), ".yagent", "data", "browser-profile")
+	if err := os.MkdirAll(shared, 0o700); err != nil {
+		t.Fatalf("mkdir shared: %v", err)
+	}
+	holder := filepath.Join(shared, "holder.txt")
+	if err := os.WriteFile(holder, []byte("in use"), 0o600); err != nil {
+		t.Fatalf("write holder: %v", err)
+	}
+
+	legacy := filepath.Join(m.WorkspaceDir("occupied"), ".browser-control", "profile")
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
+		t.Fatalf("mkdir workspace profile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "cookies.txt"), []byte("local"), 0o600); err != nil {
+		t.Fatalf("write cookie: %v", err)
+	}
+
+	session, err := m.Acquire(context.Background(), "occupied")
+	if err != nil {
+		t.Fatalf("an un-migratable profile must not fail the acquire: %v", err)
+	}
+	defer session.Release()
+
+	link := filepath.Join(session.Dir(), ".browser-control", "profile")
+	if _, err := os.Readlink(link); err == nil {
+		t.Error("profile must stay a real directory when the shared dir cannot take it")
+	}
+	if _, err := os.Stat(filepath.Join(legacy, "cookies.txt")); err != nil {
+		t.Errorf("workspace profile must be kept, not deleted: %v", err)
+	}
+	if got, err := os.ReadFile(holder); err != nil || string(got) != "in use" {
+		t.Errorf("shared profile contents must be untouched: %q (err %v)", got, err)
+	}
+}
+
 // TestAcquire_WaitsUntilEndpointIsReady：上游 launch 只 spawn 不等，
 // Chrome 调试端口要稍后才 bind——必须轮询到端点应答才交回会话。
 func TestAcquire_WaitsUntilEndpointIsReady(t *testing.T) {
@@ -391,6 +515,48 @@ func TestCleanupExpiredWorkspaces(t *testing.T) {
 	}
 	if _, err := os.Stat(fresh); err != nil {
 		t.Errorf("fresh workspace should survive: %v", err)
+	}
+}
+
+// TestCleanupExpiredWorkspaces_KeepsSharedProfileBehindSymlink：工作区里的
+// `.browser-control/profile` 只是指向共享目录的 symlink，清理过期工作区必须删链接本身，
+// 而不是顺着它把用户的登录态清空 —— 那正是本次修复要保住的东西。
+func TestCleanupExpiredWorkspaces_KeepsSharedProfileBehindSymlink(t *testing.T) {
+	m, fake := newTestManager(t, func(c *Config) {
+		c.Mode = ModeHeadless
+		c.CDPURL = ""
+		c.WorkspaceTTL = time.Hour
+	})
+	fake.handler = launchHandler()
+
+	session, err := m.Acquire(context.Background(), "expired")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	session.Release()
+
+	shared := filepath.Join(os.Getenv("HOME"), ".yagent", "data", "browser-profile")
+	if err := os.WriteFile(filepath.Join(shared, "cookies.txt"), []byte("keepme"), 0o600); err != nil {
+		t.Fatalf("write cookie: %v", err)
+	}
+
+	dir := m.WorkspaceDir("expired")
+	past := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(dir, past, past); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	m.CleanupExpiredWorkspaces()
+
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("expired workspace should be removed, stat err = %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(shared, "cookies.txt"))
+	if err != nil {
+		t.Fatalf("shared profile must survive workspace TTL cleanup: %v", err)
+	}
+	if string(got) != "keepme" {
+		t.Errorf("shared profile contents = %q, want %q", got, "keepme")
 	}
 }
 
