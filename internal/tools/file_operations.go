@@ -15,7 +15,6 @@ import (
 	"yagent/internal/util"
 )
 
-// FileOperationsTool 实现文件操作相关工具
 type FileOperationsTool struct {
 	workingDir string
 }
@@ -33,56 +32,44 @@ func (t *FileOperationsTool) resolveFilePath(filePath string) string {
 	return filepath.Join(t.workingDir, filePath)
 }
 
-// defaultIgnoredDirs contains directories that are typically non-informative.
 var defaultIgnoredDirs = map[string]bool{
-	// Version Control
 	".git": true, ".svn": true, ".hg": true, ".bzr": true,
 
-	// Dependencies / Package Managers
 	"node_modules": true, "bower_components": true, "jspm_packages": true,
 	"vendor": true, "venv": true, ".venv": true, "env": true,
 	".cargo": true, ".npm": true, ".yarn": true,
 	"Pods": true, "Carthage": true, ".swiftpm": true,
 
-	// Build / Compilation Output
 	"build": true, "dist": true, "out": true, "target": true,
 	"Debug": true, "Release": true,
 	".next": true, ".nuxt": true, ".svelte-kit": true,
 	".gradle": true, "cmake-build-debug": true, "cmake-build-release": true,
 	".dart_tool": true, "bin": true, "obj": true,
 
-	// Python Cache & Virtual Environments
 	"__pycache__": true, ".pytest_cache": true, ".mypy_cache": true,
 	".ruff_cache": true, ".tox": true, ".eggs": true,
 	".ipynb_checkpoints": true,
 
-	// Cache / Temp
 	".cache": true, ".parcel-cache": true, ".turbo": true,
 	"tmp": true, "temp": true, ".tmp": true,
 	".sass-cache": true, ".eslintcache": true,
 
-	// Test Coverage
 	"coverage": true, ".nyc_output": true,
 
-	// IDE / Editor
 	".idea": true, ".vscode": true, ".vs": true,
 	".project": true, ".settings": true,
 
-	// Infrastructure / Deploy
 	".terraform": true, ".serverless": true, ".vercel": true,
 
-	// Logs
 	"logs": true, "log": true,
 }
 
-// defaultIgnoredFiles contains individual files that are typically non-informative.
 var defaultIgnoredFiles = map[string]bool{
 	".DS_Store":   true,
 	"Thumbs.db":   true,
 	"desktop.ini": true,
 }
 
-// defaultIgnoredExts contains file extensions for compiled/binary artifacts.
 var defaultIgnoredExts = map[string]bool{
 	".pyc": true, ".pyo": true, ".pyd": true,
 	".class": true,
@@ -91,50 +78,27 @@ var defaultIgnoredExts = map[string]bool{
 	".obj": true, ".pdb": true, ".idb": true,
 }
 
-// hasIgnoredExt checks if a file has an ignored extension.
 func hasIgnoredExt(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	return defaultIgnoredExts[ext]
 }
 
-// ═══════════════════════════════════════════════════════════════
-// read_file 的预算阶梯（数值口径只有这一处）
-// ═══════════════════════════════════════════════════════════════
+var maxFileSizeForRead int64 = 500 * 1024 * 1024
 
-// maxFileSizeForRead 是任何读取的绝对硬限制：超过这条，成本在"扫一遍文件"
-// 而不是"返回多少"，所以直接拒绝。写成 var 是用例的 seam——否则这条分支
-// 要么触发不了，要么得造一个真的 500MB 文件。
-var maxFileSizeForRead int64 = 500 * 1024 * 1024 // 500 MB
-
-// maxReadLines / maxReadContentBytes 是单次返回的两个上限，先触发的生效。
-// 50KB 覆盖本仓 100% 的 .go（实测 max 42.2KB / 1398 行）。两个都是 var，
-// 理由同上：用例要把预算调到几 KB 才测得到"到顶之后"的形状。
 var maxReadLines = 1500
-var maxReadContentBytes = 50 * 1024 // 50 KB
+var maxReadContentBytes = 50 * 1024
 
-// binarySniffBytes 是 NUL 嗅探窗口：前 8KB 出现 NUL 就当二进制拒读。
 const binarySniffBytes = 8 * 1024
 
-// readChunkSize 是流式读取的缓冲。旧写法用 bufio.Scanner，每次调用固定分配
-// 1MiB（与文件大小无关，4 路并行就是 4MiB/批）；这里 64KiB 且整个读取只分配一次。
 const readChunkSize = 64 * 1024
 
-// newlineBytes 供尾扫的 bytes.Count 使用。
 var newlineBytes = []byte{'\n'}
 
-// treeEntry represents a single item in the directory tree output.
 type treeEntry struct {
 	name  string
 	isDir bool
 }
 
-// ExecuteReadFile 实现 read_file — 单次读取 = min(maxReadLines 行, maxReadContentBytes 字节)。
-//
-// 没有"整读/区间"两种模式：只传 target_file 就是从第 1 行读到预算上限。
-// truncated 表示"这一段没给全"（要继续用 start_line 接）；区间之外还有多少行
-// 由 lines_after_range 说。预算比旧版宽得多是刻意的 —— read_file 的结果是
-// TruncFirst（prio-0），第一档压缩最先砍它，所以"多读"可重取、
-// 而"多跑一步"要把整个上下文重发一遍。判据见 docs/read-file-redesign.md §1.1。
 func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	targetFile, ok := params["target_file"].(string)
 	if !ok || targetFile == "" {
@@ -146,9 +110,6 @@ func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[str
 		startLine = int(v)
 	}
 	maxLines := maxReadLines
-	// cappedWindow：这次要的那一段本来就比上限宽（缺省读，或显式要了超过行帽的行数）。
-	// 只有这种情況下撞行帽才算"我们没给全"；装满一个小区间不算，
-	// 区间外还有多少由 lines_after_range 说。
 	cappedWindow := true
 	if v, ok := params["max_lines"].(float64); ok && int(v) >= 1 && int(v) < maxReadLines {
 		maxLines = int(v)
@@ -165,8 +126,6 @@ func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[str
 	}
 	fileSize := info.Size()
 
-	// 硬限制：超过这条的成本在"扫一遍文件"而不是"返回多少"，所以直接拒。
-	// 判定必须在 Open 之前 —— 否则等于把拒绝的成本自己付掉。
 	if fileSize > maxFileSizeForRead {
 		return map[string]interface{}{
 			"error": fmt.Sprintf(
@@ -198,7 +157,6 @@ func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[str
 		}, nil
 	}
 
-	// 区间起点越界：给准合法范围，而不是返回一段空正文。
 	if scan.lines == 0 && startLine > scan.totalLines && scan.totalLines > 0 {
 		return map[string]interface{}{
 			"error":           fmt.Sprintf("start_line (%d) exceeds file total lines (%d)", startLine, scan.totalLines),
@@ -225,14 +183,12 @@ func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[str
 		warnings = append(warnings, "File is empty (0 lines).")
 	}
 	if scan.truncated {
-		// 分页提示两种模式共用（旧版只有整读给，区间读不给 → 模型只能猜）。
 		warnings = append(warnings, fmt.Sprintf(
 			"Truncated at %s / %d lines (file has %d lines). Continue with start_line=%d.",
 			humanizeBytes(int64(len(scan.content))), maxLines, scan.totalLines, scan.endLine+1,
 		))
 	}
 	if len(scan.content) > 0 && !utf8.ValidString(scan.content) {
-		// 只警告不拒读：latin-1 之类的文本文件是合法的，一刀切会误伤。
 		warnings = append(warnings, "content contains invalid UTF-8; bytes may be mojibake")
 	}
 	if len(warnings) > 0 {
@@ -242,7 +198,6 @@ func (t *FileOperationsTool) ExecuteReadFile(ctx context.Context, params map[str
 	return result, nil
 }
 
-// fileScan 是一次流式读取的结果，字段与回执一一对应。
 type fileScan struct {
 	content    string
 	lines      int
@@ -252,35 +207,18 @@ type fileScan struct {
 	binary     bool
 }
 
-// readFileInRange 分两阶段读一个文件：
-//
-//	阶段一（收集）逐行切分并收下区间内的行；
-//	阶段二（尾扫）只对剩余字节数换行（bytes.Count，memchr 速度、零分配）。
-//
-// 切换发生在**行边界**，所以尾扫拿到的字节流总是从新的一行开始，行号不会错位。
-// 这样 total_lines 保持精确，而代价从"每行都拷出来走一遍"降到"数一遍换行"。
-//
-// 行尾保真：只按 \n 切，\r 留在行内容里 —— 否则 CRLF 文件的正文照抄进
-// search_replace_in_file 必然匹配不上。
-//
-// 单行不设上限而是按预算裁：旧写法靠 bufio.Scanner 的 1MiB 缓冲，一行超过它
-// 整次读取直接失败（即使只要第 1-10 行）；现在超长行收成前缀 + truncated。
-//
-// cappedWindow 表示"要的那一段本来就比上限宽"（缺省读取，或显式要了超过
-// maxReadLines 的行数）：只有这种情況下撞行帽才算截断。显式给了一个装满的
-// 区间不算 —— 区间外还有多少由 lines_after_range 说。
 func readFileInRange(f *os.File, startLine, maxLines, budget int, cappedWindow bool) (fileScan, error) {
 	var (
 		out               fileScan
 		chunk             = make([]byte, readChunkSize)
 		acc               []byte
 		lineBuf           []byte
-		lineOver          bool // 当前行因预算被裁过
+		lineOver          bool
 		got               int
 		contentLen        int
 		endLine           int
 		lineNo            int
-		pending           bool // 自上个换行以来见过非换行字节
+		pending           bool
 		collecting        = true
 		sniffed           = false
 		stoppedByBudget   bool
@@ -288,18 +226,15 @@ func readFileInRange(f *os.File, startLine, maxLines, budget int, cappedWindow b
 		linePrefixCutSeen bool
 	)
 
-	// take 尝试把第 ln 行收进正文；返回 false 表示不再收集（原因记在两个 flag 里）。
 	take := func(ln int, line []byte, cut bool) bool {
 		if ln < startLine {
 			return true
 		}
 		sep := 0
 		if got > 0 {
-			sep = 1 // 行间分隔符，正文末尾不带换行
+			sep = 1
 		}
 		if contentLen+sep+len(line) > budget {
-			// 预算已满。首行不需要特例：addSeg 已经把每一行封顶在 budget 以内，
-			// 所以"一行比预算还长"在进到这里之前就变成了带前缀的正常一行。
 			stoppedByBudget = true
 			return false
 		}
@@ -320,7 +255,6 @@ func readFileInRange(f *os.File, startLine, maxLines, budget int, cappedWindow b
 		return true
 	}
 
-	// addSeg 把一段不含换行的字节并进当前行；超出预算就停止累积（行号照数）。
 	addSeg := func(seg []byte) {
 		if len(seg) == 0 {
 			return
@@ -387,7 +321,6 @@ func readFileInRange(f *os.File, startLine, maxLines, budget int, cappedWindow b
 		}
 	}
 
-	// 末尾没有换行的那一行也算一行。
 	if pending {
 		lineNo++
 		if collecting {
@@ -404,16 +337,13 @@ func readFileInRange(f *os.File, startLine, maxLines, budget int, cappedWindow b
 	return out, nil
 }
 
-// ExecuteDeleteFile 实现delete_file工具
 func (t *FileOperationsTool) ExecuteDeleteFile(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-	// 尝试获取 file_paths (数组)
 	if paths, ok := params["file_paths"].([]interface{}); ok {
 		var deletedFiles []string
 		var errors []string
 		for _, p := range paths {
 			if pathStr, ok := p.(string); ok {
 				fullPath := t.resolveFilePath(pathStr)
-				// 使用 RemoveAll 以支持目录删除
 				if err := os.RemoveAll(fullPath); err != nil {
 					errors = append(errors, fmt.Sprintf("%s: %v", pathStr, err))
 				} else {
@@ -453,7 +383,6 @@ func (t *FileOperationsTool) ExecuteDeleteFile(ctx context.Context, params map[s
 	}, nil
 }
 
-// ExecuteRenameFile 实现rename_file工具
 func (t *FileOperationsTool) ExecuteRenameFile(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	filePath, ok := params["file_path"].(string)
 	if !ok {
@@ -467,12 +396,10 @@ func (t *FileOperationsTool) ExecuteRenameFile(ctx context.Context, params map[s
 	fullOldPath := t.resolveFilePath(filePath)
 	fullNewPath := t.resolveFilePath(renameFilePath)
 
-	// 检查源文件是否存在
 	if _, err := os.Stat(fullOldPath); os.IsNotExist(err) {
 		return nil, util.WrapError(ctx, fmt.Errorf("source file does not exist: %s", filePath), "executeRenameFile")
 	}
 
-	// 确保目标目录存在
 	newDir := filepath.Dir(fullNewPath)
 	if err := os.MkdirAll(newDir, 0755); err != nil {
 		return nil, util.WrapError(ctx, err, "executeRenameFile::MkdirAll")
@@ -488,7 +415,6 @@ func (t *FileOperationsTool) ExecuteRenameFile(ctx context.Context, params map[s
 	}, nil
 }
 
-// ExecuteListDir 实现list_dir工具
 func (t *FileOperationsTool) ExecuteListDir(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	dirPath, ok := params["dir_path"].(string)
 	if !ok {
@@ -525,13 +451,11 @@ func (t *FileOperationsTool) ExecuteListDir(ctx context.Context, params map[stri
 			return nil
 		}
 
-		// Check for ignored directories
 		if info.IsDir() && ignoredDirs[info.Name()] {
 			result = append(result, fmt.Sprintf("%s/", relPath))
 			return filepath.SkipDir
 		}
 
-		// 计算深度
 		depth := strings.Count(relPath, string(os.PathSeparator)) + 1
 		if depth > maxDepth {
 			if info.IsDir() {
@@ -558,7 +482,6 @@ func (t *FileOperationsTool) ExecuteListDir(ctx context.Context, params map[stri
 	}, nil
 }
 
-// ExecuteCreateFile 实现create_file工具
 func (t *FileOperationsTool) ExecuteCreateFile(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	targetFile, ok := params["target_file"].(string)
 	if !ok {
@@ -572,7 +495,6 @@ func (t *FileOperationsTool) ExecuteCreateFile(ctx context.Context, params map[s
 
 	fullPath := t.resolveFilePath(targetFile)
 
-	// 检查文件是否已存在
 	if _, err := os.Stat(fullPath); err == nil {
 		return map[string]interface{}{
 			"success": false,
@@ -580,18 +502,15 @@ func (t *FileOperationsTool) ExecuteCreateFile(ctx context.Context, params map[s
 		}, nil
 	}
 
-	// 创建目录
 	dir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, util.WrapError(ctx, err, "executeCreateFile::MkdirAll")
 	}
 
-	// 创建文件
 	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
 		return nil, util.WrapError(ctx, err, "executeCreateFile::WriteFile")
 	}
 
-	// Generate diff for new file (empty → content)
 	diffText := diff.GenerateUnifiedDiff(targetFile, "", content)
 
 	return map[string]interface{}{
@@ -602,14 +521,12 @@ func (t *FileOperationsTool) ExecuteCreateFile(ctx context.Context, params map[s
 	}, nil
 }
 
-// ExecutePrintDirTree 实现print_dir_tree工具
 func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	dirPath, ok := params["dir_path"].(string)
 	if !ok || dirPath == "" {
 		return nil, util.WrapError(ctx, fmt.Errorf("dir_path parameter must be a valid string"), "executePrintDirTree")
 	}
 
-	// --- Parse optional: max_depth (default 2, hard cap at 2) ---
 	maxDepth := 2
 	if d, ok := params["max_depth"].(float64); ok {
 		maxDepth = int(d)
@@ -618,7 +535,6 @@ func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map
 		}
 	}
 
-	// --- Parse optional: show_files (default true) ---
 	showFiles := true
 	if v, ok := params["show_files"]; ok {
 		if b, ok := v.(bool); ok {
@@ -626,7 +542,6 @@ func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map
 		}
 	}
 
-	// --- Parse optional: max_items (default 50, ≤0 means unlimited) ---
 	maxItems := 50
 	if v, ok := params["max_items"]; ok {
 		if f, ok := v.(float64); ok && f > 0 {
@@ -634,7 +549,6 @@ func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map
 		}
 	}
 
-	// --- Parse optional: ignore_extra (merged with defaults) ---
 	extraIgnores := make(map[string]bool)
 	if v, ok := params["ignore_extra"]; ok {
 		if arr, ok := v.([]interface{}); ok {
@@ -646,7 +560,6 @@ func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map
 		}
 	}
 
-	// --- Resolve & validate path ---
 	fullPath := t.resolveFilePath(dirPath)
 	info, err := os.Stat(fullPath)
 	if err != nil {
@@ -656,10 +569,8 @@ func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map
 		return nil, util.WrapError(ctx, fmt.Errorf("path is not a directory: %s", dirPath), "executePrintDirTree")
 	}
 
-	// --- Build tree ---
 	var sb strings.Builder
 
-	// Root display
 	rootDisplay := dirPath
 	if !strings.HasSuffix(rootDisplay, "/") {
 		rootDisplay += "/"
@@ -677,7 +588,6 @@ func (t *FileOperationsTool) ExecutePrintDirTree(ctx context.Context, params map
 	}, nil
 }
 
-// walkDirTree recursively walks a directory and appends tree structure to sb.
 func (t *FileOperationsTool) walkDirTree(
 	dir string,
 	depth, maxDepth int,
@@ -693,45 +603,37 @@ func (t *FileOperationsTool) walkDirTree(
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		// Graceful degradation: show error but don't halt
 		sb.WriteString(fmt.Sprintf("%s[error: %v]\n", prefix, err))
 		return nil
 	}
 
-	// --- Filter & categorize ---
 	var items []treeEntry
 	for _, entry := range entries {
 		name := entry.Name()
 
-		// Skip symlinks to prevent cycles
 		if entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
 
 		if entry.IsDir() {
-			// Skip ignored directories
 			if defaultIgnoredDirs[name] || extraIgnores[name] {
 				continue
 			}
 			items = append(items, treeEntry{name: name, isDir: true})
 		} else {
-			// Skip ignored files and extensions
 			if defaultIgnoredFiles[name] || hasIgnoredExt(name) {
 				continue
 			}
 			if showFiles {
 				items = append(items, treeEntry{name: name, isDir: false})
 			}
-			// When !showFiles, files are silently skipped
 		}
 	}
 
-	// --- Sort: pure alphabetical order, ignoring file/directory type ---
 	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].name < items[j].name
 	})
 
-	// --- Truncate if exceeding max_items ---
 	total := len(items)
 	truncated := false
 	if maxItems > 0 && total > maxItems {
@@ -739,7 +641,6 @@ func (t *FileOperationsTool) walkDirTree(
 		truncated = true
 	}
 
-	// --- Print items ---
 	for i, e := range items {
 		isLast := i == len(items)-1 && !truncated
 
@@ -752,7 +653,6 @@ func (t *FileOperationsTool) walkDirTree(
 		if e.isDir {
 			displayName += "/"
 
-			// When showFiles is false, show file count per directory
 			if !showFiles {
 				childPath := filepath.Join(dir, e.name)
 				childEntries, err := os.ReadDir(childPath)
@@ -777,7 +677,6 @@ func (t *FileOperationsTool) walkDirTree(
 
 		sb.WriteString(prefix + connector + displayName + "\n")
 
-		// Recurse into subdirectories
 		if e.isDir {
 			childPrefix := prefix + "│   "
 			if isLast {
@@ -795,7 +694,6 @@ func (t *FileOperationsTool) walkDirTree(
 		}
 	}
 
-	// --- Truncation indicator ---
 	if truncated {
 		remaining := total - maxItems
 		sb.WriteString(fmt.Sprintf(
@@ -807,7 +705,6 @@ func (t *FileOperationsTool) walkDirTree(
 	return nil
 }
 
-// humanizeBytes 将字节数转换为人类可读的字符串 (e.g., "1.5MB")
 func humanizeBytes(b int64) string {
 	const unit = 1024
 	if b < unit {

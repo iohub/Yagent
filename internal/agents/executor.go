@@ -27,12 +27,8 @@ import (
 )
 
 type ExecutorConfig struct {
-	SystemPrompt string
-	UserInput    string
-	// Surface 是注册表驱动的工具面（docs/tool-registry-design.md），也是本循环
-	// **唯一**的工具来源：每步重算工具声明、按名解析执行器（含冷工具兜底）、并发谓词
-	// 都问它。这里刻意不再留一份 Adapters 快照 —— 并行谓词曾经扫那份列表，
-	// 而生产只填 Surface，于是测试全绿、并行一次都没发生（设计稿 R1）。
+	SystemPrompt  string
+	UserInput     string
 	Surface       *tools.Surface
 	LLM           llm.Engine
 	MaxSteps      int
@@ -43,10 +39,8 @@ type ExecutorConfig struct {
 	StepRetries   int
 	SystemAsHuman bool
 	RepoContext   string
-	// SkillCatalog 是技能目录（稳定前缀的一部分，与 Surface.Catalog() 同理）。
-	// 空串 = 这个 Agent 不注入。由 skillCatalogFor 一处判定。
-	SkillCatalog string
-	OnToolResult func(toolName string, result string)
+	SkillCatalog  string
+	OnToolResult  func(toolName string, result string)
 
 	OnAgentStart func(ctx context.Context) error
 
@@ -54,22 +48,10 @@ type ExecutorConfig struct {
 
 	NoActionRetryLimit int
 
-	// NoActionReminder 覆盖"纯文本回复"那条提醒的文案；空 = 用下面那条通用的。
-	//
-	// 存在的理由：通用文案是写给 Coding 的（"你停在文本上等于任务没被执行"），
-	// 而分析型 Agent 的交付物**就是**那段文本 —— 对它喊"立刻调用工具去探索/编辑/验证"
-	// 会把一次已经完成的分析推回去再做一遍，而真正缺的只是收尾信号 `agent_exit`
-	// （handoff 与 blueprint 都挂在它上面，没有它两者全丢，见 §11 坑 16 / §21）。
 	NoActionReminder string
 
-	// UltimateThinkLink 是第三档的重建原料（依赖注入，不是配置项）：nil = 第三档不可达。
-	// 第三档需要两个条件同时成立 —— 配置允许（Compression.UltimateEnabled）**且**这里有原料，
-	// 与 Director Planner 一致。
 	UltimateThinkLink compression.ThinkLinkJournal
-	// Compression 是压缩选项的唯一载体（internal/compression.Options）。以前这里是五个散字段、
-	// 与 PlannerConfig 的五个同语义异名字段并存，装配层因此复制两遍（根 AGENTS.md §11 坑 33）。
-	// 装配只经 compressionOptionsFromConfig 一处转换；零值 = 不压缩。
-	Compression compression.Options
+	Compression       compression.Options
 
 	MaxParallelReadOnlyTools int
 }
@@ -77,9 +59,7 @@ type ExecutorConfig struct {
 func DefaultExecutorConfig() ExecutorConfig {
 	return ExecutorConfig{
 		MaxParallelReadOnlyTools: DefaultMaxParallelReadOnlyTools,
-		// 零值 = 不启用压缩、阈值与保留预算都走 compression 包既有兜底（见 Options 的注释）。
-		// 不启用压缩的 Agent（chat / meta）保持这条默认即可。
-		Compression: compression.DefaultOptions(),
+		Compression:              compression.DefaultOptions(),
 	}
 }
 
@@ -94,18 +74,10 @@ const MaxMaxParallelReadOnlyTools = 8
 
 var defaultToolTimeout = 180 * time.Second
 
-// stepRetryBackoffBase 是步级 LLM 重试的退避基数（指数，上限 30s）。
-// 它是测试用的 seam（与 defaultToolTimeout 同理）：不改它的话，任何"重试真的发生了"
-// 的用例都要为第一次重试付 1 秒。
 var stepRetryBackoffBase = time.Second
 
-// 并发/串行的判据来自注册表（Spec.Serial），不再是本文件里的一张名字表：
-// 新工具只要在实现旁边声明能力，就不用记得再来这里补一条。
 func isSerialTool(name string) bool { return toolspec.IsSerial(name) }
 
-// NormalizeMaxParallelReadOnlyTools 把配置值折成实际并行度。
-// 急停开关（YAGENT_CONCURRENCY=0）在这里生效而不是在调用方：两个循环都只经
-// 这一个函数取值，判据写两处就会有一处忘 —— 而漏掉的那处的表现只是"还是并发"。
 func NormalizeMaxParallelReadOnlyTools(n int) int {
 	if !config.ConcurrencyEnabled() {
 		return 1
@@ -122,11 +94,6 @@ func NormalizeMaxParallelReadOnlyTools(n int) int {
 	}
 }
 
-// runToolCall 执行一次工具调用，返回 (给模型看的回执, 是否找到工具, 执行错误)。
-// execErr 是给**调用方**的失败事实：终止判据要靠它，而不是靠回执字符串的形状——失败
-// 从前只活在 "Error: ..." 那个串里，于是一次参数校验报错的 agent_exit 会以那条 Error
-// 作为交付收尾、并被 stopKind 记成一次成功收尾（见本文件终止判定处）。
-// found=false（工具没注册）不算执行失败，execErr 恒为 nil：两件事别混。
 func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (string, bool, error) {
 	activity.Heartbeat(ctx, "tool:start:"+tc.Function.Name)
 
@@ -142,8 +109,6 @@ func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (str
 	if !found {
 		return "", false, nil
 	}
-	// 模型跳过 load_tool 直接调冷工具：不执行、不报"没这个工具"，
-	// 而是把完整 schema 回吐给它，同一步就能自己纠正过来。
 	if isColdUnloaded(cfg, tc.Function.Name) {
 		return teachColdTool(cfg, tc.Function.Name), true, nil
 	}
@@ -175,15 +140,6 @@ func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (str
 	return toolResult, true, execErr
 }
 
-// toolCallIsParallelizable 是一次工具调用能否进并行批次的**唯一**判据：
-// 名字级能力标签（IsReadOnly，由 Effect 的 !Mutates && !Serial 派生）+ 两个显式 deny-list。
-//
-// 它被两个循环共用（子 Agent 的 RunAgentLoop 与 Director 的 Planner），这是有意的：
-// 曾经两边各写一份、一份扫 cfg.Adapters 一份问 surface，于是生产里的子 Agent 并行
-// 静默失效而测试全绿（设计稿 R1）。判据只有一份，就不存在"另一边漂走"。
-//
-// 冷工具（还没取回 schema）算可并行：它在这一批里只会收到 teach 回执、不执行副作用，
-// 取回之后下一步才真正并发 —— 与串行时的行为逐字一致。
 func toolCallIsParallelizable(surface *tools.Surface, name string) bool {
 	if isInteractiveUserTool(name) || isSerialTool(name) {
 		return false
@@ -198,8 +154,6 @@ func toolCallIsParallelizable(surface *tools.Surface, name string) bool {
 	return ad.IsReadOnly()
 }
 
-// resolveAdapter 按名解析执行器。Surface 是唯一来源：查不到就是没有，
-// 不再回退到任何按名字线性扫描的列表（那正是 R1 的成因）。
 func resolveAdapter(cfg *ExecutorConfig, name string) (*tools.Adapter, bool) {
 	if cfg.Surface == nil {
 		return nil, false
@@ -211,7 +165,6 @@ func resolveAdapter(cfg *ExecutorConfig, name string) (*tools.Adapter, bool) {
 	return ad, true
 }
 
-// isColdUnloaded 报告该工具在 Surface 里还没被模型取回过 schema。
 func isColdUnloaded(cfg *ExecutorConfig, name string) bool {
 	if cfg.Surface == nil {
 		return false
@@ -220,7 +173,6 @@ func isColdUnloaded(cfg *ExecutorConfig, name string) bool {
 	return state == tools.StateColdKnown
 }
 
-// teachColdTool 登记取回并把 schema 作为工具结果回给模型。
 func teachColdTool(cfg *ExecutorConfig, name string) string {
 	schema, err := cfg.Surface.Materialize([]string{name})
 	if err != nil {
@@ -230,9 +182,6 @@ func teachColdTool(cfg *ExecutorConfig, name string) string {
 }
 
 func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResult, retErr error) {
-	// 整条循环绑定一次委派坐标（而不是 10 个发布点各传一遍）：漏一处的事件不会报错，
-	// 只会让并行委派的输出粘在一起，而那是最难查的一类"界面少了字"。
-	// cfg 是值拷贝，所以这里改写它不影响调用方。
 	if id := memory.DelegationIDFrom(ctx); id != "" && cfg.Publisher != nil {
 		if scoped, ok := cfg.Publisher.(interface {
 			ForDelegation(string) *messaging.MessagePublisher
@@ -241,9 +190,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 	}
 
-	// 自动路由：把 RoutingEngine 换成本轮档位（ctx 覆盖或角色基线）对应的具体引擎。
-	// 固定模式 / 未启用路由时为 no-op。之后 Model()、压缩阈值、model_info 事件
-	// 都会反映实际路由到的模型。
 	cfg.LLM = llm.ResolveTierEngine(ctx, cfg.LLM)
 
 	if cfg.Publisher != nil {
@@ -264,15 +210,11 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 	if cfg.RepoContext != "" {
 		systemPrompt += "\n\n" + cfg.RepoContext
 	}
-	// deferred 目录跟着系统提示走：它是稳定前缀的一部分，比每步重发的
-	// 完整参数声明便宜一个数量级（docs/tool-registry-design.md §7.6）。
 	if cfg.Surface != nil {
 		if catalog := cfg.Surface.Catalog(); catalog != "" {
 			systemPrompt += "\n\n" + catalog
 		}
 	}
-	// 技能目录紧跟工具目录：两者都是"按需取回"的入口，放在一起模型才看得懂
-	// 该用 load_tool 还是 use_skill。
 	if cfg.SkillCatalog != "" {
 		systemPrompt += "\n\n" + cfg.SkillCatalog
 	}
@@ -289,10 +231,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 	history := make([]llm.Message, 0)
 	history = append(history, systemMsg, userMsg)
 
-	// 重放入口（docs/pause-resume-design.md §6.2）：ctx 上有 ResumeState 时，
-	// 这一段会话不是"新任务"，而是"上一次停在哪儿"的继续 —— 消息、起点步数、
-	// 材料化过的冷工具、thinklink 的重建原料都要接上。
-	// 接不上的后果不是崩溃而是静默走偏：从第 0 步重跑会重复已经做完的副作用。
 	startStep := 0
 	if rs := resumeStateFrom(ctx); rs != nil && len(rs.Messages) > 0 {
 		messages = append([]llm.Message(nil), rs.Messages...)
@@ -306,8 +244,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 	}
 
-	// LLM 调用超时取值：上游显式传入 > 全局运行时值（TUI 模型设置面板可动态修改）
-	// > DefaultLLMCallTimeout（默认 10 分钟）。
 	llmTimeout := cfg.LLMTimeout
 	if llmTimeout <= 0 {
 		if t := config.GlobalLLMTimeout(); t > 0 {
@@ -317,8 +253,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 	}
 
-	// 工具声明每步重算：deferred 取回（load_tool）与运行期注册都要立刻生效。
-	// 没有 Surface 就等于这个 Agent 没有工具 —— 不再有"构造期快照"那条平行路径。
 	defsForStep := func() []llm.ToolDef {
 		if cfg.Surface == nil {
 			return nil
@@ -380,10 +314,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 	var agentErr error
 	stepNumber := startStep
-	// stopKind 记录这一轮是**怎么**结束的。终止事件此前只写 reason 字符串，恢复侧
-	// 只能靠 errors.Is(err, context.Canceled) 去猜；而"猜"分不出用户主动停止、
-	// idle 超时、total 超时，三者的正确续跑策略完全不同。
-	// 每个出口都在 RunAgentLoop 内部，所以它只是个局部变量，不必进 ExecutorConfig。
 	stopKind := newStopKindTracker(ctx)
 	defer func() {
 		r := recover()
@@ -407,8 +337,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 				StopReason: stopKind.kindOf(),
 			}
 			if termErr != nil {
-				// 文案取自分类时采用的那个错误，而不是循环返回的那个：
-				// 取消路径上引擎给的是裸 context.Canceled，真正的原因在 context.Cause 上。
 				rw.WriteRunAborted(stopKind.reasonText(termErr.Error()), rs)
 				writeExecutorCheckpoint(ctx, rw, cfg, stopKind.kindOf(), stepNumber)
 			} else {
@@ -436,8 +364,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 	}
 
-	// 重放时不重写 system/user：它们在原文件里已经有了，续写会进新的文件，
-	// 而恢复侧靠 delegation_id 把两份串起来。
 	if resumeStateFrom(ctx) == nil {
 		writeRollout(systemMsg)
 		writeRollout(userMsg)
@@ -445,14 +371,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 	maxParallel := NormalizeMaxParallelReadOnlyTools(cfg.MaxParallelReadOnlyTools)
 
-	// 触发判定的计量口径：provider 上一步报的 TotalInputTokens 打底，加此后新增消息的
-	// 本地估算。比每步扫两遍全量 tiktoken 便宜，并且把本地估算从不计入的工具声明也算上。
-	// 生命周期见 RunAgentLoop 末尾的赋值与压缩后的清零。
 	var measured compression.Prefix
 
 	for i := startStep; i < cfg.MaxSteps; i++ {
-		// 暂停闸门（A 层）落在 step 边界：上一个批次的工具结果都已提交，所以停在这里
-		// 不会留下"副作用做了一半"的状态。ctx 不取消，恢复后从这行原地往下走。
 		if perr := pause.From(ctx).Wait(ctx); perr != nil {
 			stopKind.record("", perr)
 			return ExecutorResult{}, perr
@@ -545,12 +466,9 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 				}
 
 				if compression.OverThreshold(messages, measured, threshold) {
-					// 摘要的独立 LLM 调用（内部上限 90s）不经过 step/llm 心跳，须显式续期。
 					activity.Heartbeat(ctx, "compress:emergency")
 					newMessages, emergencyStats := compression.EmergencyCompressMessages(ctx, messages, cfg.UserInput, threshold, cfg.LLM, cfg.AgentName, compression.DefaultEmergencyCompressKeepLastN)
 					messages = newMessages
-					// 消息列表被整段重写，上一步的计量已经对不上任何一条消息了 —— 清零，
-					// 下一步回落到全量本地估算，直到又一次响应带回新的计量。
 					measured = compression.Prefix{}
 					history = make([]llm.Message, len(messages))
 					copy(history, messages)
@@ -589,7 +507,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 						ultCompressor := compression.NewContextCompressor(cfg.LLM, cfg.AgentName, cfg.UltimateThinkLink)
 						newMessages, ultStats := ultCompressor.ApplyUltimate(messages, threshold, nil, cfg.Compression.UltimateKeepPlans)
 						messages = newMessages
-						measured = compression.Prefix{} // 同 emergency：列表被重建，计量作废
+						measured = compression.Prefix{}
 						history = make([]llm.Message, len(messages))
 						copy(history, messages)
 						if ultStats != nil && cfg.Publisher != nil {
@@ -641,8 +559,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			resp, err = cfg.LLM.GenerateContent(llmCtx, messages, defsForStep(), opts)
 			llmCancel()
 
-			// 计量刷新点：这次送出去的 messages 正是 provider 数过的那一段，所以 sentLen 取
-			// 追加 assistant 回复与工具结果**之前**的长度。规则本身在 compression.Prefix.Refresh。
 			measured = measured.Refresh(resp, err, len(messages))
 
 			activity.Heartbeat(ctx, "llm:done")
@@ -780,13 +696,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 							"step":      entry.Step,
 						}, cfg.AgentName)
 					}
-					// 与 Director 侧 planner_run.go:68-89 对称：事件总线是**视图**的来源，
-					// rollout 才是**恢复**的来源。只有总线上的一份额外好处是 TUI 面板，
-					// 代价是这份子 Agent 日志在进程退出后彻底不存在——ultimate 压缩
-					// 重建上下文全靠它（RebuildPrompt），恢复后它只能从"原始任务 + 零个
-					// T&P 块"重建，等于把压缩后的子 Agent 变成失忆状态。
-					// 只落 thought_plan：user_input 那份由各自 Run() 播的种子，
-					// 内容等于 rollout 首条 user 消息，落两遍没有意义。
 					if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
 						_ = rw.WriteEventMsg(memory.EventMsg{
 							Type:       "thinklink_entry",
@@ -828,14 +737,12 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		}
 
 		toolCalls := choice.ToolCalls
-		// 并发准入走全包唯一的那份判据（见 toolCallIsParallelizable）。
 		isParallelizable := func(i int) bool {
 			return toolCallIsParallelizable(cfg.Surface, toolCalls[i].Function.Name)
 		}
 		plan := toolbatch.Plan(len(toolCalls), isParallelizable)
 
 		commitToolCall := func(tc llm.ToolCall, toolResult string, publishResultEvent bool) {
-			// 残缺参数会被工具层当成裸字符串执行，回执不点名截断的话模型只看到一条陌生的参数错误。
 			toolResult += choice.ToolCallNote(tc)
 
 			if cfg.OnToolResult != nil {
@@ -876,9 +783,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 			commitToolCall(tc, toolResult, true)
 
-			// 终止判据在 exitpolicy（两个循环共用同一份）：名字对上**且**这一次真的执行成功。
-			// 失败时 "Error: ..." 已经作为 tool 回执交回模型，循环继续；反复失败由既有 MaxSteps
-			// 兜底（上限只有一处，别再套第二层）。判据为什么只有一份见 internal/agents/AGENTS.md 硬约束 2。
 			if exitpolicy.TerminateOnAgentExit(cfg.StopOnFinish, tc.Function.Name, execErr != nil) {
 				return &ExecutorResult{Text: toolResult, History: history}
 			}
@@ -925,9 +829,6 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			)
 		}
 
-		// sub_agent_activity 供读侧推 MaxStepObserved（rollout_reader 的 EffectiveSteps）。
-		// 以前它挂在被删掉的 OnStepEnd 钩子里，于是只有"Coding + git checkpoint"那一条路径
-		// 会写步数事实，其余子 Agent 的 /resume 步数只能靠 assistant 轮次猜。
 		if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() && len(choice.ToolCalls) > 0 {
 			rw.WriteEventMsg(memory.StepInfoToEventMsg(stepNumber, choice.ToolCalls[0].Function.Name, nil, true))
 		}
