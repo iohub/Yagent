@@ -136,7 +136,6 @@ func renderTimelineFullscreenView(m *model) tea.View {
 	}
 
 	layout := computeTimelineLayout(m.termWidth, m.termHeight)
-	contentHeight := layout.ContentH
 
 	titleBar := renderTimelineFullscreenTitleBar(m, m.termWidth)
 
@@ -199,7 +198,7 @@ func renderTimelineFullscreenLeft(m *model, layout timelineLayout) string {
 	// gap 列：与窗口等行数，每行一个暗色 "│"，宽恰为 layout.Gap（==1）。
 	gapStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
 	gapLine := gapStyle.Render("│")
-rowCount := win.lineCount()
+	rowCount := win.lineCount()
 	if rowCount <= 0 {
 		// 无可见行（空树）：不插 gap，树列自会显示 "(no entries)"。
 		return treeBlock
@@ -330,6 +329,7 @@ const timelineMinBarSpan = time.Nanosecond
 //   - Duration>0：e = Timestamp + Duration。
 //   - Duration<=0 且运行中：e = now（经 timelineNowFunc，条随实时推进变长）。
 //   - Duration<=0 其它：e = Timestamp + timelineMinBarSpan（保证 1 列可见）。
+//
 // 任何情况下都保证 e >= s + timelineMinBarSpan（时钟回拨时夹住），使几何不退化。
 func timelineEntryInterval(e *TimelineEntry, now time.Time) (time.Time, time.Time) {
 	s := e.Timestamp
@@ -493,7 +493,6 @@ func padWaterfallRow(line string, width int) string {
 	}
 	return line + strings.Repeat(" ", width-dw)
 }
-
 
 // renderTimelineFullscreenTreeListItem 渲染一个树行：暗色 guides 前缀 + 源条目行。
 // 整行显示宽必须 <= 传入 width：用 lipgloss.Width 扣除 guides 的可视宽（不许用 len），
