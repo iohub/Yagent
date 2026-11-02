@@ -307,6 +307,19 @@ func (m *model) rebuildContentCache() {
 
 // 正文虚拟化之后，"条目 → 文本"由 tui_body.go 的排版块负责，这里只留渲染单条目的入口。
 
+// rendersMarkdownBody 是"哪个来源的正文要按 Markdown 排版"的唯一判据。
+// 之前这条判据在同一个函数里硬编码过一遍（toolEntry 分支），流式条目那边压根没有，
+// 于是 design/deepthinking 自己发出去的那段流永远停在原文渲染上。
+// 新增成员只改这一处；toolspec 里没有对应声明（那里的 Display 管的是"要不要展开结果正文"，
+// 不是"用什么排版"），所以判据留在本包。
+func rendersMarkdownBody(name string) bool {
+	switch name {
+	case "design", "deepthinking":
+		return true
+	}
+	return false
+}
+
 func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	if entry.toolEntry != nil && entry.toolEntry.Status == ToolStatusRunning {
 		return renderToolEntryWithAnim(*entry, width, m.anim)
@@ -317,17 +330,37 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	}
 
 	if entry.eventType == "ai_stream" {
-		if !entry.streaming {
-			// 定稿的流式条目和普通条目一样进渲染缓存：它的内容不会再变，
-			// 每次整段重排都重拆重画纯属白做。
-			if cached, ok := entry.getCachedRender(width); ok {
-				return cached
-			}
-			rendered := renderStreamEntry(entry, width)
-			entry.setCachedRender(rendered, width)
-			return rendered
+		if entry.streaming {
+			// 流式中不缓存、也不套样式：正文每帧都在追加。
+			return renderStreamEntry(entry, width)
 		}
-		return renderStreamEntry(entry, width)
+		// 定稿的流式条目和普通条目一样进渲染缓存：它的内容不会再变，
+		// 每次整段重排都重拆重画纯属白做。
+		if cached, ok := entry.getCachedRender(width); ok {
+			return cached
+		}
+		// 工具自己发出去的那段流（design / deepthinking 只有 ai_chunk，永远等不到
+		// ai_response）在定稿这一刻才第一次、也是唯一一次套上 markdown 样式 ——
+		// 与 ai_response 那条节奏一致：流式中一律原文。来源名优先 from，为空退 agentName
+		// （ai_chunk 建条目时两者同值）。
+		src := entry.from
+		if src == "" {
+			src = entry.agentName
+		}
+		if rendersMarkdownBody(src) {
+			body := entry.streamContent
+			if body == "" {
+				body = entry.content
+			}
+			if rendered, ok := m.renderAssistantContent(body, width); ok {
+				entry.setCachedRender(rendered, width)
+				return rendered
+			}
+			// markdown 渲染失败：宁可原样显示正文，也不能把整条消息渲成空白。
+		}
+		rendered := renderStreamEntry(entry, width)
+		entry.setCachedRender(rendered, width)
+		return rendered
 	}
 
 	if cached, ok := entry.getCachedRender(width); ok {
@@ -335,7 +368,7 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	}
 
 	if entry.toolEntry != nil {
-		if (entry.toolEntry.Call.Name == "deepthinking" || entry.toolEntry.Call.Name == "design") &&
+		if rendersMarkdownBody(entry.toolEntry.Call.Name) &&
 			entry.toolEntry.Status == ToolStatusSuccess &&
 			entry.toolEntry.Result != nil &&
 			entry.toolEntry.Result.Content != "" &&
