@@ -38,13 +38,11 @@ const (
 	timelineShellChrome = 3
 	// 全屏外壳固定占用的行数：标题 1 + 状态栏 1 + 上下发丝边框 2。
 	timelineShellRows = 4
-	// 左右分栏的 floors。窄终端下优先保右侧详情面板。
-	timelineLeftFloorW  = 24
-	timelineRightFloorW = 30
 	// 左列内部：树形区最小可用宽，低于它则放弃瀑布列、把整左列让给树。
-	timelineTreeMinW     = 22
-	timelineWaterfallMin = 16
-	timelineWaterfallMax = 30
+	// 注意：不再有左右分栏 floors——左列改为 termW/4 硬上限，窄终端下允许 rightW < 30。
+	timelineTreeMinW     = 16
+	timelineWaterfallMin = 8
+	timelineWaterfallMax = 20
 	// 防负值的绝对下界。
 	timelineMinAvailW = 1
 	timelineMinContH  = 3
@@ -69,7 +67,10 @@ type timelineLayout struct {
 //  1. LeftW + RightW == availWidth（availWidth = max(termW - 3, 1)）
 //  2. WaterfallW == 0 时 TreeW == LeftW；否则 TreeW + Gap + WaterfallW == LeftW
 //  3. 所有字段非负，ContentH >= 3
-//  4. availWidth 足够（>= 54）时 RightW >= 30
+//  4. termW 足够（>= 43）时 RightW >= 30（临界 43：avail=40、leftW=10、rightW=30）
+//  5. LeftW <= termW/4 恒成立（左列硬上限 = 屏幕宽度的 1/4，用户要求）
+//  6. termW >= 100 时开始出现瀑布列（leftW=25 → waterfallW=8、treeW=16）；
+//     临界 termW = 99 时 treeW = 24-1-8 = 15 < timelineTreeMinW(16)，整段让位、WaterfallW==0
 func computeTimelineLayout(termW, termH int) timelineLayout {
 	if termW < 1 {
 		termW = 1
@@ -84,22 +85,16 @@ func computeTimelineLayout(termW, termH int) timelineLayout {
 		contentH = timelineMinContH
 	}
 
-	// LeftW ≈ 56% of avail，整数守恒：RightW 由减法得出，永远 LeftW+RightW==avail。
-	leftW := avail * 56 / 100
-	if leftW < timelineLeftFloorW {
-		leftW = timelineLeftFloorW
-	}
+	// 左侧硬上限：最多占屏幕宽度的 1/4（用户要求）。窄终端下允许 rightW < 30。
+	// 整数守恒：RightW 由减法得出，永远 LeftW+RightW==avail。
+	leftW := termW / 4
 	if leftW > avail {
 		leftW = avail
 	}
-	rightW := avail - leftW
-
-	// 窄终端下优先保右详情面板：仅当 avail 能同时容纳两个 floor（>= 54）时才回挤左列，
-	// 否则维持减法结果（此时 RightW 可能 < 30，测试只在 avail 足够处断言 RightW>=30）。
-	if rightW < timelineRightFloorW && avail >= timelineLeftFloorW+timelineRightFloorW {
-		rightW = timelineRightFloorW
-		leftW = avail - rightW
+	if leftW < 1 {
+		leftW = 1
 	}
+	rightW := avail - leftW
 
 	// 左列内部分树 + 瀑布（本阶段仅计算尺寸、不渲染瀑布）。
 	gap := 1
@@ -286,9 +281,18 @@ func computeTimelineWindow(m *model, height int) timelineWindow {
 // 采用窗口渲染（非 viewport，因为条目单行）。窗口按"可见树行"取，光标是树行下标。
 // 窗口计算抽到 computeTimelineWindow，与瀑布列共用同一口径——两列行数必须严格一致。
 func renderTimelineFullscreenList(m *model, width, height int) string {
+	// 占位行与条目行同属一个会在外层套 thick border 的左列，预算必须 <= width-2
+	// （口径与 renderTimelineFullscreenTreeListItem 一致），否则极窄宽度下 "(no entries)"、
+	// ▲/▼ 会把整列顶破 termW。
+	if width < 3 {
+		width = 3
+	}
+	budget := width - 2
+
 	rows := m.timelineTreeRows
 	if len(rows) == 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no entries)")
+		return truncateAnsiToWidth(
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no entries)"), budget)
 	}
 
 	win := computeTimelineWindow(m, height)
@@ -296,7 +300,8 @@ func renderTimelineFullscreenList(m *model, width, height int) string {
 	var lines []string
 
 	if win.hasAbove {
-		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ▲ ..."))
+		lines = append(lines, truncateAnsiToWidth(
+			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ▲ ..."), budget))
 	}
 
 	for i := win.start; i < win.end; i++ {
@@ -306,7 +311,8 @@ func renderTimelineFullscreenList(m *model, width, height int) string {
 	}
 
 	if win.hasBelow {
-		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ▼ ..."))
+		lines = append(lines, truncateAnsiToWidth(
+			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ▼ ..."), budget))
 	}
 
 	return strings.Join(lines, "\n")
@@ -498,31 +504,92 @@ func padWaterfallRow(line string, width int) string {
 // 整行显示宽必须 <= 传入 width：用 lipgloss.Width 扣除 guides 的可视宽（不许用 len），
 // 余下宽度交给 renderTimelineRowWithCursor。entryIndex 越界时退化为占位行，绝不 panic。
 func renderTimelineFullscreenTreeListItem(m *model, row timelineTreeRow, width int, isCursor bool) string {
-	contentWidth := width - 2
-	if contentWidth < 20 {
-		contentWidth = 20
+	// 整行显示宽必须 <= 传入 width（窄终端防溢出）。guides+body 的预算是 width-2：
+	// 至少 1，且绝不超过 width-2（不再像旧代码那样在 width<22 时回弹到 20 而溢出）。
+	// 预算用 width-2 而非 width：左列在 renderTimelineFullscreenView 外面还会套
+	// thick border（左右各 +1），TreeW-2 的正文加回边框正好落在 TreeW / LeftW 内。
+	if width < 3 {
+		width = 3
 	}
+	contentWidth := width - 2
 
 	if row.entryIndex < 0 || row.entryIndex >= len(m.timelineEntries) {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(row.guides + " (missing entry)")
+		return truncateAnsiToWidth(
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(row.guides+" (missing entry)"),
+			contentWidth)
 	}
 	entry := m.timelineEntries[row.entryIndex]
 
-	guidesW := lipgloss.Width(row.guides)
-	guides := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(row.guides)
-	innerWidth := contentWidth - guidesW
-	if innerWidth < 8 {
-		innerWidth = 8
+	guides := row.guides
+	guidesW := lipgloss.Width(guides)
+	// guides 本身已占满宽度（contentWidth <= guidesW）：先按 rune 截到 contentWidth-1，
+	// 保证 body 至少有 1 列可渲染。
+	if contentWidth <= guidesW {
+		guides = truncateRunesToWidth(guides, contentWidth-1)
+		guidesW = lipgloss.Width(guides)
 	}
+	renderedGuides := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(guides)
+
+	innerWidth := contentWidth - guidesW
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	if innerWidth > contentWidth {
+		innerWidth = contentWidth
+	}
+
+	// body 仍可能超 innerWidth：renderTimelineRowWithCursor 的非光标分支不把结果
+	// clamp 到 width，长工具名 + 耗时会溢出。本文件不大改 render.go，改为在外层
+	// 把整行按 contentWidth 截断兜底，确保每行显示宽 <= width。宽终端下整行已在预算内，
+	// truncateAnsiToWidth 原样返回，不破坏宽度 memo。
 	body := renderTimelineRowWithCursor(entry, innerWidth, nil, isCursor)
-	return guides + body
+	return truncateAnsiToWidth(renderedGuides+body, contentWidth)
+}
+
+// truncateAnsiToWidth 把一行显示宽夹到 <= maxW（按 lipgloss 可视宽计，不破坏 ANSI 颜色）。
+// 已在预算内原样返回；仅超预算时用 MaxWidth 截断，避免宽终端下白白重排。
+func truncateAnsiToWidth(line string, maxW int) string {
+	if maxW < 1 {
+		maxW = 1
+	}
+	if lipgloss.Width(line) <= maxW {
+		return line
+	}
+	return lipgloss.NewStyle().MaxWidth(maxW).Render(line)
+}
+
+// truncateRunesToWidth 按 rune 截断纯文本到 <= maxW 个 rune（guides 全是单宽字符，
+// rune 数即显示宽）。maxW<=0 时返回空串。
+func truncateRunesToWidth(s string, maxW int) string {
+	if maxW <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= maxW {
+		return s
+	}
+	r := []rune(s)
+	if len(r) > maxW {
+		r = r[:maxW]
+	}
+	return string(r)
 }
 
 func renderTimelineFullscreenStatusBar(m *model, width int) string {
+	if width < 1 {
+		width = 1
+	}
+	// 状态栏是整屏行、外层不再套 border，故截断预算用 width（非 width-2）。
+	// lipgloss 的 Width 只补不截：极窄宽度下文本（pos+kind+name+status）仍可能溢出
+	// termW，故补 MaxWidth(width) 兜底，把每行显示宽硬夹到 <= width。
+	inner := width - 2
+	if inner < 1 {
+		inner = 1
+	}
 	statusStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("235")).
 		Foreground(lipgloss.Color("250")).
-		Width(width - 2)
+		Width(inner).
+		MaxWidth(width)
 
 	rows := m.timelineTreeRows
 	if len(rows) == 0 {

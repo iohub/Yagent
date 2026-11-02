@@ -85,9 +85,14 @@ func TestComputeTimelineLayout_Matrix(t *testing.T) {
 				nonNegative("WaterfallW", layout.WaterfallW)
 				nonNegative("Gap", layout.Gap)
 
-				// 不变量 4：装得下两个 floor（左 24 + 右 30）时详情面板必须拿到 >= 30 列。
-				if avail >= 54 && layout.RightW < 30 {
-					t.Fatalf("avail = %d 时 RightW = %d, want >= 30（详情面板的 floor）", avail, layout.RightW)
+				// 不变量 4：termW 足够（>= 43，临界 avail=40/leftW=10/rightW=30）时详情面板 >= 30 列。
+				if termW >= 43 && layout.RightW < 30 {
+					t.Fatalf("termW = %d 时 RightW = %d, want >= 30（左列 termW/4 硬上限腾出的详情面板下限）", termW, layout.RightW)
+				}
+
+				// 不变量 5：左列硬上限 —— LeftW 永远 <= termW/4（termW 30..240 全区间）。
+				if layout.LeftW > termW/4 {
+					t.Fatalf("LeftW = %d, want <= termW/4 = %d", layout.LeftW, termW/4)
 				}
 			})
 		}
@@ -118,23 +123,49 @@ func wantLayout(t *testing.T, got timelineLayout, leftW, rightW, treeW, wfW, gap
 }
 
 // TestComputeTimelineLayout_PinnedValues 上面那条是不变量（对任何比例都成立），
-// 所以公式本身被悄悄改动（56% 改 60%、floor 改 20、瀑布上限改 40）它抓不到 ——
-// 这里补三个精确数值，钉住当前策略。
+// 所以公式本身被悄悄改动（termW/4 改成别的分母、treeMin 改 20、瀑布上限改 40）它抓不到 ——
+// 这里补四个精确数值 + 两个临界断言，钉住"左列 = termW/4 硬上限"的当前策略。
 func TestComputeTimelineLayout_PinnedValues(t *testing.T) {
-	// 最窄：avail=27 → 左列撞 24 floor、右列只剩 3；瀑布列最小 16 列会把树挤到 7 列
-	// （< 22），于是整段让给树（Gap=0、WaterfallW=0、TreeW==LeftW）。
+	// 最窄 30x20：avail=27 → 左 = 30/4 = 7，右 = 20（窄终端允许 rightW<30）；
+	// 瀑布列最小 8 会把树挤到 7-1-8 < 16，整段让给树（Gap=0、WaterfallW=0、TreeW==LeftW=7）。
 	t.Run("narrow_30x20", func(t *testing.T) {
-		wantLayout(t, computeTimelineLayout(30, 20), 24, 3, 24, 0, 0, 16)
+		wantLayout(t, computeTimelineLayout(30, 20), 7, 20, 7, 0, 0, 16)
 	})
 
-	// 常见 100x40：avail=97 → 左 56% = 54，右 43；瀑布列 54/3 = 18，树 54-1-18 = 35。
-	t.Run("typical_100x40", func(t *testing.T) {
-		wantLayout(t, computeTimelineLayout(100, 40), 54, 43, 35, 18, 1, 36)
+	// 临界前 99x40：avail=96 → 左 = 99/4 = 24，右 72；瀑布列 24/3 = 8，树 24-1-8 = 15 (< 16)
+	// → 让位（WaterfallW=0、Gap=0、TreeW=24）。
+	t.Run("precritical_99x40", func(t *testing.T) {
+		wantLayout(t, computeTimelineLayout(99, 40), 24, 72, 24, 0, 0, 36)
 	})
 
-	// 宽屏 240x60：avail=237 → 左 132，右 105；瀑布列撞 30 上限，树 132-1-30 = 101。
+	// 临界 100x40：avail=97 → 左 = 25，右 72；瀑布列 25/3 = 8（>= 8），树 25-1-8 = 16 (== 16)
+	// → 保留瀑布列（WaterfallW=8、Gap=1、TreeW=16）。
+	t.Run("critical_100x40", func(t *testing.T) {
+		wantLayout(t, computeTimelineLayout(100, 40), 25, 72, 16, 8, 1, 36)
+	})
+
+	// 宽屏 240x60：avail=237 → 左 = 60，右 177；瀑布列 60/3 = 20（撞上限），树 60-1-20 = 39。
 	t.Run("wide_240x60", func(t *testing.T) {
-		wantLayout(t, computeTimelineLayout(240, 60), 132, 105, 101, 30, 1, 56)
+		wantLayout(t, computeTimelineLayout(240, 60), 60, 177, 39, 20, 1, 56)
+	})
+
+	// 临界显式断言：把"瀑布列恰好在哪一档宽度出现"单拎出来钉死，不依赖 wantLayout 全字段比对。
+	t.Run("waterfall_absent_at_99", func(t *testing.T) {
+		if got := computeTimelineLayout(99, 40).WaterfallW; got != 0 {
+			t.Errorf("termW=99 时 WaterfallW = %d, want 0（treeW=15 < 16 应整段让位）", got)
+		}
+	})
+	t.Run("waterfall_appears_at_100", func(t *testing.T) {
+		l := computeTimelineLayout(100, 40)
+		if l.WaterfallW != 8 {
+			t.Errorf("termW=100 时 WaterfallW = %d, want 8", l.WaterfallW)
+		}
+		if l.TreeW != 16 {
+			t.Errorf("termW=100 时 TreeW = %d, want 16", l.TreeW)
+		}
+		if l.Gap != 1 {
+			t.Errorf("termW=100 时 Gap = %d, want 1", l.Gap)
+		}
 	})
 }
 
