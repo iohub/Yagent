@@ -3,11 +3,17 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
+
+// timelineNowFunc 是瀑布几何里取"现在"的唯一入口：Duration<=0 且仍在运行的条目
+// 需要把条尾延伸到当下。生产代码与测试都经它取时间——测试在调用渲染前后临时替换
+// 它来固定时钟，几何函数内绝不直接调 time.Now（否则运行中的条目每帧变长、断言无法成立）。
+var timelineNowFunc = time.Now
 
 var (
 	focusedBorderStyle = lipgloss.NewStyle().
@@ -131,10 +137,13 @@ func renderTimelineFullscreenView(m *model) tea.View {
 
 	layout := computeTimelineLayout(m.termWidth, m.termHeight)
 	contentHeight := layout.ContentH
-	leftWidth := layout.LeftW
 
 	titleBar := renderTimelineFullscreenTitleBar(m, m.termWidth)
-	leftList := renderTimelineFullscreenList(m, leftWidth, contentHeight)
+
+	// 树列宽 = layout.TreeW：WaterfallW==0 时它等于 LeftW（树吃满整左列），
+	// 否则 LeftW = TreeW + Gap + WaterfallW。两列必须共用同一窗口口径。
+	leftList := renderTimelineFullscreenLeft(m, layout)
+
 	var rightDetail string
 	if m.timelineDetailVP != nil {
 		// 详情内容由 buildAllTimelineDetails 全量拼进 viewport，这里只取它的 View()
@@ -170,6 +179,40 @@ func renderTimelineFullscreenView(m *model) tea.View {
 	return tea.View{AltScreen: true, Content: fullContent}
 }
 
+// renderTimelineFullscreenLeft 组装全屏左列：
+//   - WaterfallW==0：整左列让给树（treeWidth==LeftW），行为与阶段 B2 逐字一致。
+//   - WaterfallW>0：树列 + 暗色 "│" gap 列（宽恰好 layout.Gap）+ 瀑布列并排，
+//     三块都走 computeTimelineWindow(m, ContentH) 的同一窗口，行数严格相等。
+//     最终显示宽 <= layout.LeftW（JoinHorizontal 把各块补到自身最大行宽，
+//     树 <= TreeW、gap == Gap、瀑布 == WaterfallW）。
+func renderTimelineFullscreenLeft(m *model, layout timelineLayout) string {
+	if layout.WaterfallW <= 0 {
+		return renderTimelineFullscreenList(m, layout.TreeW, layout.ContentH)
+	}
+
+	win := computeTimelineWindow(m, layout.ContentH)
+	treeBlock := renderTimelineFullscreenList(m, layout.TreeW, layout.ContentH)
+
+	wfLines := renderTimelineWaterfall(m, layout.WaterfallW, win)
+	waterfallBlock := strings.Join(wfLines, "\n")
+
+	// gap 列：与窗口等行数，每行一个暗色 "│"，宽恰为 layout.Gap（==1）。
+	gapStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
+	gapLine := gapStyle.Render("│")
+rowCount := win.lineCount()
+	if rowCount <= 0 {
+		// 无可见行（空树）：不插 gap，树列自会显示 "(no entries)"。
+		return treeBlock
+	}
+	var gapLines []string
+	for i := 0; i < rowCount; i++ {
+		gapLines = append(gapLines, gapLine)
+	}
+	gapBlock := strings.Join(gapLines, "\n")
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, treeBlock, gapBlock, waterfallBlock)
+}
+
 func renderTimelineFullscreenTitleBar(m *model, width int) string {
 	titleStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("62")).
@@ -186,15 +229,41 @@ func renderTimelineFullscreenTitleBar(m *model, width int) string {
 	return titleStyle.Render(text)
 }
 
-// 采用窗口渲染（非 viewport，因为条目单行）。窗口按"可见树行"取，光标是树行下标。
-func renderTimelineFullscreenList(m *model, width, height int) string {
+// timelineWindow 是全屏左列"当前可见窗口"的唯一口径：树列与瀑布列都从这里取
+// start/end 与上/下溢出标志，保证两列行数严格一致（含 ▲/▼ 占位行）。
+// 空树时 start==end==0、两个标志都 false（行数 0），由调用方各自处理占位。
+type timelineWindow struct {
+	start    int
+	end      int
+	hasAbove bool
+	hasBelow bool
+}
+
+// lineCount 返回该窗口渲染出的总行数：可见条目行 + ▲/▼ 占位行。
+func (w timelineWindow) lineCount() int {
+	n := w.end - w.start
+	if n < 0 {
+		n = 0
+	}
+	if w.hasAbove {
+		n++
+	}
+	if w.hasBelow {
+		n++
+	}
+	return n
+}
+
+// computeTimelineWindow 是窗口计算的唯一来源，从 renderTimelineFullscreenList
+// 原样抽出（不改任何边界行为）：half 居中、start/end 夹到 [0,n]、
+// hasAbove=start>0、hasBelow=end<n。光标是可见树行下标（m.timelineTreeRows）。
+func computeTimelineWindow(m *model, height int) timelineWindow {
 	rows := m.timelineTreeRows
-	if len(rows) == 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no entries)")
+	if len(rows) == 0 || height <= 0 {
+		return timelineWindow{}
 	}
 
 	n := len(rows)
-
 	half := height / 2
 	start := m.timelineFullscreenCursor - half
 	if start < 0 {
@@ -212,24 +281,219 @@ func renderTimelineFullscreenList(m *model, width, height int) string {
 		end = 1
 	}
 
+	return timelineWindow{start: start, end: end, hasAbove: start > 0, hasBelow: end < n}
+}
+
+// 采用窗口渲染（非 viewport，因为条目单行）。窗口按"可见树行"取，光标是树行下标。
+// 窗口计算抽到 computeTimelineWindow，与瀑布列共用同一口径——两列行数必须严格一致。
+func renderTimelineFullscreenList(m *model, width, height int) string {
+	rows := m.timelineTreeRows
+	if len(rows) == 0 {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no entries)")
+	}
+
+	win := computeTimelineWindow(m, height)
+
 	var lines []string
 
-	if start > 0 {
+	if win.hasAbove {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ▲ ..."))
 	}
 
-	for i := start; i < end; i++ {
+	for i := win.start; i < win.end; i++ {
 		isCursor := i == m.timelineFullscreenCursor
 		line := renderTimelineFullscreenTreeListItem(m, rows[i], width, isCursor)
 		lines = append(lines, line)
 	}
 
-	if end < n {
+	if win.hasBelow {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ▼ ..."))
 	}
 
 	return strings.Join(lines, "\n")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 阶段 C：瀑布图（waterfall）时间条列。
+//
+// 与树列共用 computeTimelineWindow 的同一窗口，逐行输出一条时间条；条的横轴位置
+// 由条目 [Timestamp, end] 映射到 [0, width-1] 列。时间跨度取"当前窗口内可见行"的
+// 最小起点与最大终点，因此窗口滚动时条会随之重新铺满，但同一时刻内两列行数严格一致。
+// 时钟经 timelineNowFunc 取，几何函数内不直接调 time.Now。
+// ─────────────────────────────────────────────────────────────────────────────
+
+// timelineMinBarSpan 是"瞬时/零时长"条目的极小兜底跨度：保证 end>start、
+// 在 span 归一时不至于 0，再配合下面的"条宽 >= 1 列"强制可见。
+const timelineMinBarSpan = time.Nanosecond
+
+// timelineEntryInterval 返回一个条目用于铺条的时间区间 [s, e]。
+//   - Duration>0：e = Timestamp + Duration。
+//   - Duration<=0 且运行中：e = now（经 timelineNowFunc，条随实时推进变长）。
+//   - Duration<=0 其它：e = Timestamp + timelineMinBarSpan（保证 1 列可见）。
+// 任何情况下都保证 e >= s + timelineMinBarSpan（时钟回拨时夹住），使几何不退化。
+func timelineEntryInterval(e *TimelineEntry, now time.Time) (time.Time, time.Time) {
+	s := e.Timestamp
+	end := s.Add(e.Duration)
+	if e.Duration <= 0 {
+		if e.Status == ToolStatusRunning {
+			end = now
+		} else {
+			end = s.Add(timelineMinBarSpan)
+		}
+	}
+	if !end.After(s) {
+		end = s.Add(timelineMinBarSpan)
+	}
+	return s, end
+}
+
+// waterfallBarColor 返回该条目时间条的前景色令牌，与树列配色协调：
+// 错误优先于 Kind（红 203），否则 Tool 绿 42 / LLMCall 蓝 111 / ContextEvent 黄 179 /
+// Thinking 及未知灰 245。运行中条目在颜色之外再加粗（见调用处）。
+func waterfallBarColor(e *TimelineEntry) string {
+	if e.IsError || e.Status == ToolStatusError {
+		return "203"
+	}
+	switch e.Kind {
+	case TimelineKindTool:
+		return "42"
+	case TimelineKindLLMCall:
+		return "111"
+	case TimelineKindContextEvent:
+		return "179"
+	case TimelineKindThinking:
+		return "245"
+	default:
+		return "245"
+	}
+}
+
+// renderTimelineWaterfall 产出与树列等长的行切片：win.hasAbove/hasBelow 对应
+// 暗色 ▲/▼ 占位行，中间每个可见树行对应一条时间条。每行显示宽严格 == width
+// （条右侧用空格补齐）。空窗口（0 行）返回 nil——JoinHorizontal 会把缺失块补成空白。
+//
+// 几何（按规格手算，被 TestTimelineWaterfall_Geometry 逐项核对）：
+//
+//	span      = maxEnd - minStart（<=0 时按 1ns 处理）
+//	barStart  = int( (entryStart - minStart) / span * (width-1) )，负则 0
+//	barEnd    = int( (entryEnd   - minStart) / span * (width-1) )，clamp 到 [barStart, width-1]
+//	barWidth  = barEnd - barStart + 1（恒 >= 1）
+func renderTimelineWaterfall(m *model, width int, win timelineWindow) []string {
+	rows := m.timelineTreeRows
+	total := win.lineCount()
+	if total == 0 || width <= 0 {
+		return nil
+	}
+
+	now := timelineNowFunc()
+
+	// 第一遍：收集可见区间内每个条目的 [s, e]，并求窗口跨度。
+	type wfItem struct {
+		s, e time.Time
+		ent  *TimelineEntry
+	}
+	visible := make([]wfItem, 0, win.end-win.start)
+	var minStart, maxEnd time.Time
+	first := true
+	for i := win.start; i < win.end && i < len(rows); i++ {
+		r := rows[i]
+		if r.entryIndex < 0 || r.entryIndex >= len(m.timelineEntries) {
+			continue
+		}
+		ent := m.timelineEntries[r.entryIndex]
+		if ent == nil {
+			continue
+		}
+		s, e := timelineEntryInterval(ent, now)
+		visible = append(visible, wfItem{s: s, e: e, ent: ent})
+		if first {
+			minStart, maxEnd = s, e
+			first = false
+		} else {
+			if s.Before(minStart) {
+				minStart = s
+			}
+			if e.After(maxEnd) {
+				maxEnd = e
+			}
+		}
+	}
+	// 跨度归一：<=0 时按 1ns，避免除零。
+	spanNs := float64(maxEnd.Sub(minStart))
+	if spanNs <= 0 {
+		spanNs = float64(time.Nanosecond)
+	}
+	colSpan := float64(width - 1)
+	if colSpan < 0 {
+		colSpan = 0
+	}
+
+	barStyleFor := func(ent *TimelineEntry) lipgloss.Style {
+		st := lipgloss.NewStyle().Foreground(lipgloss.Color(waterfallBarColor(ent)))
+		if ent.Status == ToolStatusRunning && !ent.IsError && ent.Status != ToolStatusError {
+			st = st.Bold(true)
+		}
+		return st
+	}
+	placeholderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	// 第二遍：逐行输出，占位行优先，与树列同序同长。
+	var lines []string
+	if win.hasAbove {
+		lines = append(lines, padWaterfallRow(placeholderStyle.Render("▲"), width))
+	}
+
+	// visible 与 [win.start, win.end) 里"有 entryIndex 的行"一一对应；占位行不算，
+	// 因此按窗口下标推进，跳过被过滤的缺失行，保持与树列逐行对齐。
+	visIdx := 0
+	for i := win.start; i < win.end && i < len(rows); i++ {
+		r := rows[i]
+		if r.entryIndex < 0 || r.entryIndex >= len(m.timelineEntries) || m.timelineEntries[r.entryIndex] == nil {
+			// 缺失条目行：树列也会渲染占位，这里输出同宽空白保持对齐。
+			lines = append(lines, strings.Repeat(" ", width))
+			continue
+		}
+		it := visible[visIdx]
+		visIdx++
+
+		barStart := int(float64(it.s.Sub(minStart)) / spanNs * colSpan)
+		if barStart < 0 {
+			barStart = 0
+		}
+		barEnd := int(float64(it.e.Sub(minStart)) / spanNs * colSpan)
+		if barEnd > width-1 {
+			barEnd = width - 1
+		}
+		if barEnd < barStart {
+			barEnd = barStart
+		}
+		if barStart > width-1 {
+			barStart = width - 1
+		}
+		barWidth := barEnd - barStart + 1 // 恒 >= 1
+
+		line := strings.Repeat(" ", barStart) +
+			barStyleFor(it.ent).Render(strings.Repeat("█", barWidth))
+		lines = append(lines, padWaterfallRow(line, width))
+	}
+
+	if win.hasBelow {
+		lines = append(lines, padWaterfallRow(placeholderStyle.Render("▼"), width))
+	}
+
+	return lines
+}
+
+// padWaterfallRow 把一行补空格到显示宽恰为 width（lipgloss.Width 计空格与 █ 各为 1）。
+// 若已超宽（不应发生）则原样返回，交由外层宽度不变量测试暴露。
+func padWaterfallRow(line string, width int) string {
+	dw := lipgloss.Width(line)
+	if dw >= width {
+		return line
+	}
+	return line + strings.Repeat(" ", width-dw)
+}
+
 
 // renderTimelineFullscreenTreeListItem 渲染一个树行：暗色 guides 前缀 + 源条目行。
 // 整行显示宽必须 <= 传入 width：用 lipgloss.Width 扣除 guides 的可视宽（不许用 len），
