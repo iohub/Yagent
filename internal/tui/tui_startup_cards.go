@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"yagent/internal/datamanager"
+	"yagent/internal/memory"
 	"yagent/internal/tui/common"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,7 +21,9 @@ import (
 //     原语，手拼边框字符时宽度一律走 lipgloss.Width（中文/emoji 是双宽，len() 会算成 1）。
 //  ② 启动屏文案（startupTextsFor）：短文案不进 i18n.go 的 translations（那套 69 字段、
 //     三处同步），但语言口径仍与界面同源（m.currentLang）。
-//  ③ 最近会话的取数与消息（startupRecentsMsg / loadStartupRecentsCmd）。
+//  ③ 最近会话的取数与消息（startupRecentsMsg / loadStartupRecentsCmd）：**rollout 优先、
+//     tasks 兜底**，两者投影成同一个 startupRecentItem，来源记在 startupRecentsSource 上，
+//     右卡 hint 随之切换 —— 卡片列的是哪个账本，就提示那个账本的入口。
 //
 // 尺寸预算见 renderCenteredStartupScreen：任何档位下每行显示宽 <= 传入 width、总行数
 // <= height —— lipgloss.Place 在内容超出时是 noop（gap<=0 直接返回原文），不会替我们夹。
@@ -56,46 +59,68 @@ type startupTexts struct {
 	HelpDesc    string // 命令模式的 ToggleHelp
 	ResumeDesc  string // /resume（斜杠命令，没有可配置键位）
 	StartHint   string
-	RecentHint  string
-	EmptyTitle  string
-	EmptyHint   string
-	TurnsFormat string // fmt.Sprintf 用，中文 "%d轮" / 英文 "%d turns"
-	Now         string // 刚刚 / just now
-	Yesterday   string // 昨天 / yesterday
+	// 右卡 hint 按数据来源分两句：说哪句取决于右卡那 4 条到底是哪个账本的。
+	// 一句通用文案必然对其中一套账本撒谎（看到 tasks 列表却提示 /resume，
+	// 敲下去是另一批会话）—— 这正是 startupRecentsSource 存在的理由。
+	RecentHintResume string // rollout 账本 → /resume（全量恢复，含断点续跑）
+	RecentHintHist   string // tasks 账本 → :hist（浏览并载入，弱恢复）
+	EmptyTitle       string
+	EmptyHint        string
+	TurnsFormat      string // fmt.Sprintf 用，中文 "%d轮" / 英文 "%d turns"
+	Untitled         string // Label 全空时的兜底，绝不画空串
+	Now              string // 刚刚 / just now
+	Yesterday        string // 昨天 / yesterday
+}
+
+// recentHint 按数据来源选右卡 hint。FromNone（两套账本都空）返回空串：
+// 空态已经有两行引导语，再加一句"怎么恢复会话"是指向不存在的东西。
+func (t startupTexts) recentHint(src startupRecentsSource) string {
+	switch src {
+	case startupRecentsFromRollout:
+		return t.RecentHintResume
+	case startupRecentsFromTasks:
+		return t.RecentHintHist
+	default:
+		return ""
+	}
 }
 
 func startupTextsFor(lang Language) startupTexts {
 	if lang == LangChinese {
 		return startupTexts{
-			StartTitle:  "⚡ 开始",
-			RecentTitle: "◷ 最近会话",
-			SendDesc:    "发送消息",
-			CommandDesc: "命令模式",
-			HelpDesc:    "帮助",
-			ResumeDesc:  "恢复会话",
-			StartHint:   "直接输入任务开始对话 ↓",
-			RecentHint:  "/resume 选择并恢复会话",
-			EmptyTitle:  "还没有历史会话",
-			EmptyHint:   "输入你的第一个任务，开始对话 ↓",
-			TurnsFormat: "%d轮",
-			Now:         "刚刚",
-			Yesterday:   "昨天",
+			StartTitle:       "⚡ 开始",
+			RecentTitle:      "◷ 最近会话",
+			SendDesc:         "发送消息",
+			CommandDesc:      "命令模式",
+			HelpDesc:         "帮助",
+			ResumeDesc:       "恢复会话",
+			StartHint:        "直接输入任务开始对话 ↓",
+			RecentHintResume: "/resume 选择并恢复会话",
+			RecentHintHist:   ":hist 浏览并载入历史会话",
+			EmptyTitle:       "还没有历史会话",
+			EmptyHint:        "输入你的第一个任务，开始对话 ↓",
+			TurnsFormat:      "%d轮",
+			Untitled:         "(无标题)",
+			Now:              "刚刚",
+			Yesterday:        "昨天",
 		}
 	}
 	return startupTexts{
-		StartTitle:  "⚡ Start",
-		RecentTitle: "◷ Recent sessions",
-		SendDesc:    "Send message",
-		CommandDesc: "Command mode",
-		HelpDesc:    "Help",
-		ResumeDesc:  "Resume session",
-		StartHint:   "Type a task to start ↓",
-		RecentHint:  "/resume to pick a session",
-		EmptyTitle:  "No past sessions yet",
-		EmptyHint:   "Type your first task to start ↓",
-		TurnsFormat: "%d turns",
-		Now:         "just now",
-		Yesterday:   "yesterday",
+		StartTitle:       "⚡ Start",
+		RecentTitle:      "◷ Recent sessions",
+		SendDesc:         "Send message",
+		CommandDesc:      "Command mode",
+		HelpDesc:         "Help",
+		ResumeDesc:       "Resume session",
+		StartHint:        "Type a task to start ↓",
+		RecentHintResume: "/resume to pick a session",
+		RecentHintHist:   ":hist to browse past sessions",
+		EmptyTitle:       "No past sessions yet",
+		EmptyHint:        "Type your first task to start ↓",
+		TurnsFormat:      "%d turns",
+		Untitled:         "(untitled)",
+		Now:              "just now",
+		Yesterday:        "yesterday",
 	}
 }
 
@@ -342,6 +367,10 @@ func (m *model) startupStartCardBody(plan startupCardPlan, t startupTexts, c com
 
 // startupRecentsCardBody 组装右卡「◷ 最近会话」的内容行：
 // 序号(Accent) + 标题(TextPrimary, 按剩余宽截断) + 相对时间·轮数(TextMuted, 右对齐)。
+//
+// 只认 startupRecentItem 的 Label/When/Turns —— 数据来自 rollout 还是 tasks 由
+// startupRecentsSource 决定（只影响 hint 文案），这里不出现任何账本字段名：
+// 换数据源不该动渲染代码。
 func (m *model) startupRecentsCardBody(plan startupCardPlan, t startupTexts, c common.ColorTokens, inner int) []string {
 	mutedStyle := lipgloss.NewStyle().Foreground(c.TextMuted)
 	if len(m.startupRecents) == 0 {
@@ -356,19 +385,21 @@ func (m *model) startupRecentsCardBody(plan startupCardPlan, t startupTexts, c c
 	rows := make([]string, 0, n+1)
 	for i := 0; i < n; i++ {
 		item := m.startupRecents[i]
-		when := item.UpdatedAt
-		if when.IsZero() {
-			when = item.CreatedAt
+		// Label 可能是空串（rollout 文件既无 user 消息又没有可回退的身份），
+		// 画成空列的话这行就只剩序号和时间，用户认不出是哪次会话。
+		label := strings.TrimSpace(item.Label)
+		if label == "" {
+			label = t.Untitled
 		}
 		// 行宽：1(序号) + 1(空格) + 标题 + [1(空格) + 元信息] == inner
-		meta := startupRelTimeLang(when, m.currentLang)
-		if item.MessageCount > 0 {
-			meta += " · " + fmt.Sprintf(t.TurnsFormat, item.MessageCount)
+		meta := startupRelTimeLang(item.When, m.currentLang)
+		if item.Turns > 0 {
+			meta += " · " + fmt.Sprintf(t.TurnsFormat, item.Turns)
 		}
 		titleW := inner - 3 - lipgloss.Width(meta)
-		if titleW < 4 && item.MessageCount > 0 {
+		if titleW < 4 && item.Turns > 0 {
 			// 元信息太长会挤掉标题：先退成只显示时间。
-			meta = startupRelTimeLang(when, m.currentLang)
+			meta = startupRelTimeLang(item.When, m.currentLang)
 			titleW = inner - 3 - lipgloss.Width(meta)
 		}
 		if titleW < 4 {
@@ -377,7 +408,7 @@ func (m *model) startupRecentsCardBody(plan startupCardPlan, t startupTexts, c c
 		}
 		titleW = max(titleW, 1)
 		row := numStyle.Render(fmt.Sprintf("%d", i+1)) + " " +
-			titleStyle.Render(padRight(truncateCells(item.Title, titleW), titleW))
+			titleStyle.Render(padRight(truncateCells(label, titleW), titleW))
 		if meta != "" {
 			row += " " + mutedStyle.Render(padLeft(meta, lipgloss.Width(meta)))
 		}
@@ -481,6 +512,19 @@ func cardHint(plan startupCardPlan, hint string) string {
 	return hint
 }
 
+// startupRecentsHint 是右卡 hint 的唯一取值口径：**数据来自哪个账本就提示哪个入口**。
+//
+// 这条映射是本文件的防欺骗底线：右卡曾经用 tasks 账本渲染、却固定写"/resume 选择并恢复会话"，
+// 用户敲 /resume 看到的是另一批会话（rollout 账本），而两套列表连条数都对不上。
+// 空态（两源皆空）返回空串 —— cardHint 之外的又一层保护：没有任何会话可恢复时，
+// 指路文案指向的是不存在的东西。
+func (m *model) startupRecentsHint(t startupTexts) string {
+	if len(m.startupRecents) == 0 {
+		return ""
+	}
+	return t.recentHint(m.startupRecentsSource)
+}
+
 // renderStartupSingleCard 只画左卡（放不下双卡的矮终端：先把"怎么用"讲清楚）。
 func (m *model) renderStartupSingleCard(t startupTexts, c common.ColorTokens, w, budget, items int) []string {
 	plan := fitStartupCard(items, budget)
@@ -506,35 +550,60 @@ func (m *model) renderStartupCardsRow(t startupTexts, c common.ColorTokens, w, b
 	rightW := w - startupCardGap - leftW
 	h := max(leftPlan.height, rightPlan.height)
 	left := renderTitledCard(t.StartTitle, cardHint(leftPlan, t.StartHint), m.startupStartCardBody(leftPlan, t, c, leftW-4), leftW, h, c)
-	right := renderTitledCard(t.RecentTitle, cardHint(rightPlan, t.RecentHint), m.startupRecentsCardBody(rightPlan, t, c, rightW-4), rightW, h, c)
+	right := renderTitledCard(t.RecentTitle, cardHint(rightPlan, m.startupRecentsHint(t)), m.startupRecentsCardBody(rightPlan, t, c, rightW-4), rightW, h, c)
 	gap := strings.Repeat(" ", startupCardGap)
 	return strings.Split(lipgloss.JoinHorizontal(lipgloss.Top, left, gap, right), "\n")
 }
 
+// startupStackGap 是堆叠档两卡之间**必须**保留的空行数。
+//
+// 它不是可让位的预算项：上卡的 ╯ 直接接下卡的 ╭ 时，两张卡在视觉上糊成一张大框
+// （没有空行 = 没有分组），"整体和谐有质感"当场破功。所以要塞下右卡时宁可先砍它的条目、
+// 再整块省略它，也不吃掉这一行 —— 少一张回顾卡是可接受的降级，糊成一坨不是。
+const startupStackGap = 1
+
 // renderStartupStack 在窄终端上下堆叠两卡（各占满可用宽）。
 //
-// 堆叠档的意义就是"两卡都在"，所以先按两卡的**最小形态**（条目 + 边框，无空行无 hint）
-// 预留：预算够就两卡都画、余量补给左卡（hint → 空行）；差一行时先吃掉两卡之间的空行，
-// 再不行才让右卡让位 —— 左卡是"怎么用"的入口，右卡只是回顾。
+// 让位顺序（从轻到重）：左卡空行 → 左卡 hint → 右卡条目 2→1 → **整块省略右卡**；
+// 两卡之间的空行恒定 1 行，永不参与压缩。左卡是"怎么用"的入口，条目不减（hint/空行可减）；
+// 右卡只是回顾，先让条目再让整卡。
 func (m *model) renderStartupStack(t startupTexts, c common.ColorTokens, w, budget, leftItems, rightItems int) []string {
-	minLeft, minRight := leftItems+2, rightItems+2
-	leftPlan, rightPlan := startupCardPlan{}, startupCardPlan{}
-	gap := 0
-	switch {
-	case budget >= minLeft+1+minRight:
-		gap = 1
-		extra := budget - (minLeft + 1 + minRight)
-		leftBudget := minLeft + min(extra, 2)
-		extra -= leftBudget - minLeft
-		leftPlan = fitStartupCard(leftItems, leftBudget)
-		rightPlan = fitStartupCard(rightItems, minRight+extra)
-	case budget >= minLeft+minRight:
-		// 两卡紧贴（上卡的 ╯ 直接接下卡的 ╭）：比"右卡整块消失"更值得。
-		leftPlan = fitStartupCard(leftItems, minLeft)
-		rightPlan = fitStartupCard(rightItems, minRight)
-	default:
-		leftPlan = fitStartupCard(leftItems, budget)
+	minLeft := leftItems + 2 // 左卡最小形态：条目 + 上下边框
+	if rightItems < 1 {
+		rightItems = 1
 	}
+	minRight := 1 + 2 // 右卡最小形态：1 条 + 上下边框
+
+	if budget < minLeft+startupStackGap+minRight {
+		// 空行 + 右卡最小形态装不下：只渲染左卡，把省下的预算还给它的条目/hint/空行。
+		plan := fitStartupCard(leftItems, budget)
+		if plan.height == 0 {
+			return nil
+		}
+		card := renderTitledCard(t.StartTitle, cardHint(plan, t.StartHint), m.startupStartCardBody(plan, t, c, w-4), w, plan.height, c)
+		return strings.Split(card, "\n")
+	}
+
+	extra := budget - (minLeft + startupStackGap + minRight)
+	// 余量按"信息量"分配，而不是按卡片顺序：
+	//  ① 左卡 hint（一行教怎么开始，信息量最高）
+	//  ② 右卡补回第 2 条历史（真实内容）
+	//  ③ 左卡空行（纯装饰，最后才给）
+	//  ④ 剩下的全给右卡（fitStartupCard 会自己封顶）
+	leftExtra, rightExtra := 0, 0
+	if extra > 0 {
+		leftExtra, extra = 1, extra-1
+	}
+	if extra > 0 && rightItems > 1 {
+		rightExtra, extra = 1, extra-1
+	}
+	if extra > 0 {
+		leftExtra, extra = leftExtra+1, extra-1
+	}
+	rightExtra += extra
+
+	leftPlan := fitStartupCard(leftItems, minLeft+leftExtra)
+	rightPlan := fitStartupCard(rightItems, minRight+rightExtra)
 	if leftPlan.height == 0 {
 		return nil
 	}
@@ -542,10 +611,12 @@ func (m *model) renderStartupStack(t startupTexts, c common.ColorTokens, w, budg
 	left := renderTitledCard(t.StartTitle, cardHint(leftPlan, t.StartHint), m.startupStartCardBody(leftPlan, t, c, w-4), w, leftPlan.height, c)
 	rows := strings.Split(left, "\n")
 	if rightPlan.height == 0 {
+		// minRight 已保证右卡放得下；走到这里说明不变量被破坏，此时也绝不能紧贴 ——
+		// 退回"只有左卡"而不是"省掉空行"。
 		return rows
 	}
-	right := renderTitledCard(t.RecentTitle, cardHint(rightPlan, t.RecentHint), m.startupRecentsCardBody(rightPlan, t, c, w-4), w, rightPlan.height, c)
-	for i := 0; i < gap; i++ {
+	right := renderTitledCard(t.RecentTitle, cardHint(rightPlan, m.startupRecentsHint(t)), m.startupRecentsCardBody(rightPlan, t, c, w-4), w, rightPlan.height, c)
+	for i := 0; i < startupStackGap; i++ {
 		rows = append(rows, "")
 	}
 	rows = append(rows, strings.Split(right, "\n")...)
@@ -554,44 +625,154 @@ func (m *model) renderStartupStack(t startupTexts, c common.ColorTokens, w, budg
 
 // ── 数据流 ──────────────────────────────────────────────────────────────────
 
+// startupRecentItem 是两套账本（rollout / tasks）的统一投影：右卡渲染只认
+// Label/When/Turns，不认任何账本字段名 —— 换数据源不该动渲染代码。
+type startupRecentItem struct {
+	Label string    // 会话标题/预览（允许空串，渲染侧兜底成 Untitled）
+	When  time.Time // 最近活动时间（rollout = ModTime / tasks = UpdatedAt）
+	Turns int       // 轮数（rollout = head-scan 到的 message 条数 / tasks = MessageCount）
+}
+
+// startupRecentsSource 说明右卡那几条到底来自哪个账本。它唯一的作用是选 hint 文案：
+// **数据来自哪个账本就提示哪个入口**（rollout → /resume；tasks → :hist）。
+//
+// 少了这层区分，两套账本就会被一句通用文案缝合：右卡列 tasks 的会话、hint 却写 /resume，
+// 用户敲下去看到的是另一批列表 —— 功能性欺骗，且两边条数永远对不上。
+type startupRecentsSource int
+
+const (
+	startupRecentsFromRollout startupRecentsSource = iota // → /resume（全量恢复，含断点续跑）
+	startupRecentsFromTasks                               // → :hist（浏览并载入，弱恢复）
+	startupRecentsFromNone                                // 两源皆空：走空态，无 hint
+)
+
 // startupRecentsMsg 只喂启动屏右卡。刻意不复用 historyItemsMsg：那份列表属于历史浏览
 // 模式（enterHistoryMode 会清空 m.historyItems），两者生命周期不同 —— 共用一条消息
 // 会让一次 /hist 把启动屏的 4 条换成 100 条。
 type startupRecentsMsg struct {
-	items []datamanager.TaskHistoryItem
+	items  []startupRecentItem
+	source startupRecentsSource
 }
 
-// loadStartupRecentsCmd 启动时取一次最近会话（最多 4 条）。读失败按空态处理：
-// 启动屏不该因为历史文件读不到而弹错误——那会盖住 banner。
+// startupRolloutLabel 给一条 rollout 会话找"能认出来"的标题。
+//
+// Preview 为空是常态（首条 user 消息超长被跳过、或这份文件只有 assistant 消息），
+// 此时依次回退 AgentName（子 Agent 会话唯一的人话身份）与 SessionID（文件名解析结果）。
+// 三者都空才返回空串，交给渲染侧兜底 —— 右卡不接受"只有序号和时间"的空行。
+func startupRolloutLabel(s memory.RolloutSessionInfo) string {
+	for _, cand := range []string{s.Preview, s.AgentName, s.SessionID} {
+		if v := strings.TrimSpace(cand); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// startupRecentItemsFromRollout 把 rollout 清单投影成右卡条目。
+// Empty 的会话直接滤掉：恢复它必然报 "no messages"，列出来等于点一次失败一次。
+func startupRecentItemsFromRollout(sessions []memory.RolloutSessionInfo, limit int) []startupRecentItem {
+	items := make([]startupRecentItem, 0, max(limit, 0))
+	for _, s := range sessions {
+		if limit > 0 && len(items) >= limit {
+			break
+		}
+		if s.Empty {
+			continue
+		}
+		items = append(items, startupRecentItem{
+			Label: startupRolloutLabel(s),
+			When:  s.ModTime,
+			Turns: s.HeadMessages,
+		})
+	}
+	return items
+}
+
+// startupRecentItemsFromTasks 把 tasks 账本投影成同一形状（回退路径用）。
+func startupRecentItemsFromTasks(tasks []datamanager.TaskHistoryItem, limit int) []startupRecentItem {
+	items := make([]startupRecentItem, 0, max(limit, 0))
+	for _, task := range tasks {
+		if limit > 0 && len(items) >= limit {
+			break
+		}
+		when := task.UpdatedAt
+		if when.IsZero() {
+			when = task.CreatedAt
+		}
+		items = append(items, startupRecentItem{
+			Label: task.Title,
+			When:  when,
+			Turns: task.MessageCount,
+		})
+	}
+	return items
+}
+
+// startupRecentsFromRollout 把"rollout 账本的取数结果"落成一条启动屏消息。
+// 读失败与过滤后为空都收敛成 source=None：调用方据此决定要不要回退 tasks。
+func startupRecentsMsgFromRollout(sessions []memory.RolloutSessionInfo, err error, limit int) startupRecentsMsg {
+	if err != nil {
+		return startupRecentsMsg{source: startupRecentsFromNone}
+	}
+	items := startupRecentItemsFromRollout(sessions, limit)
+	if len(items) == 0 {
+		return startupRecentsMsg{source: startupRecentsFromNone}
+	}
+	return startupRecentsMsg{items: items, source: startupRecentsFromRollout}
+}
+
+// startupRecentsFromTasks 把"tasks 账本的取数结果"落成一条启动屏消息（回退路径）。
+func startupRecentsMsgFromTasks(tasks []datamanager.TaskHistoryItem, err error, limit int) startupRecentsMsg {
+	if err != nil {
+		return startupRecentsMsg{source: startupRecentsFromNone}
+	}
+	items := startupRecentItemsFromTasks(tasks, limit)
+	if len(items) == 0 {
+		return startupRecentsMsg{source: startupRecentsFromNone}
+	}
+	return startupRecentsMsg{items: items, source: startupRecentsFromTasks}
+}
+
+// loadStartupRecentsCmd 启动时取一次最近会话（最多 4 条），**rollout 优先、tasks 兜底**。
+//
+// ① rollout 是 /resume 与断点续跑的事实来源，且 RolloutWriter 运行中持续写；tasks 副本
+// 只在完成/flush 后落盘。同样是"最近"，rollout 的语义更准，而且右卡的 hint 指的就是
+// /resume —— 两处读同一份账本，用户敲下去看到的就是卡上那几条。
+// ② rollout root 还不存在（从没跑过任务）时 ListRolloutSessions 返回 error：这不算错误，
+// 静默回退 tasks，并把 hint 换成 :hist（那条路径确实是 :hist 才能载入）。
+// ③ 任何读取失败都按空态处理：启动屏不该因为历史文件读不到而弹错误 —— 那会盖住 banner。
 func loadStartupRecentsCmd(m *model) tea.Cmd {
 	return func() tea.Msg {
+		sessions, rolloutErr := memory.ListRolloutSessions(memory.RolloutRootDir(), startupRecentsLimit)
+		if msg := startupRecentsMsgFromRollout(sessions, rolloutErr, startupRecentsLimit); msg.source == startupRecentsFromRollout {
+			return msg
+		}
 		if m.dataManager == nil {
-			return startupRecentsMsg{}
+			return startupRecentsMsg{source: startupRecentsFromNone}
 		}
-		items, err := m.dataManager.ListTaskHistoryFast(startupRecentsLimit)
-		if err != nil {
-			return startupRecentsMsg{}
-		}
-		return startupRecentsMsg{items: items}
+		tasks, tasksErr := m.dataManager.ListTaskHistoryFast(startupRecentsLimit)
+		return startupRecentsMsgFromTasks(tasks, tasksErr, startupRecentsLimit)
 	}
 }
 
 // startupRecentsFingerprint 是右卡内容的指纹，进启动屏 memo 的 key。跑完一轮回到空态时
 // 宽度/高度/cwd 全都没变，但 startupRecents 换了内容 —— 没有它就会继续显示上一轮的列表。
+// source 也进指纹：同一批条目换了账本，hint 文案跟着变，缓存必须失效。
 func (m *model) startupRecentsFingerprint() string {
 	if len(m.startupRecents) == 0 {
 		return "0"
 	}
-	return fmt.Sprintf("%d:%d", len(m.startupRecents), m.startupRecents[0].UpdatedAt.Unix())
+	return fmt.Sprintf("%d:%d:%d", len(m.startupRecents), m.startupRecents[0].When.Unix(), m.startupRecentsSource)
 }
 
-// handleStartupRecentsMsg 落地启动屏的最近会话。
+// handleStartupRecentsMsg 落地启动屏的最近会话（条目与来源必须一起落地：
+// 只更新 items 而丢掉 source，hint 就会退回默认分支说的还是 /resume）。
 //
 // 必须显式重排一次：空会话时 View() 的重排条件是"有脏条目 / 宽度变了 / 渲染缓存与条目数
 // 不等"，三者都不成立，所以只清 memo 的话再没人来读 —— 启动屏会一直停在空态，直到用户
 // 敲出第一条日志。有日志之后头部不再显示 recents，就不必为它重排整段正文。
 func (m *model) handleStartupRecentsMsg(msg startupRecentsMsg) (*model, tea.Cmd) {
-	m.startupRecents = msg.items
+	m.startupRecents, m.startupRecentsSource = msg.items, msg.source
 	m.welcomeCacheKey = ""
 	if len(m.logEntries) == 0 {
 		m.bodyRepaint(0)
