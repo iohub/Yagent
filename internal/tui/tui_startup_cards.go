@@ -33,6 +33,23 @@ const (
 	startupBrandRows = 5
 	// startupCardGap 是并排两卡之间的空列数（左 1 列 + 右 1 列）。
 	startupCardGap = 2
+	// startupCardsMaxWidth 是卡片区（含两卡之间的 gap）的最大总宽。
+	//
+	// 它不是第二套宽度口径：字段宽仍只由 computeFieldWidth 算，这里只是在它之上加一个
+	// 上界，再在画布内居中。原因是宽的终端上卡片区拉满会"上窄下宽" —— 品牌区（banner
+	// 约 50 列 + tagline + cwd）天生是收拢居中的，120 列终端下卡片区从 x=2 铺到 x=118，
+	// 两者不在同一条中轴上。上界取 104 是"并排两卡各 51 列"的舒服尺寸。
+	startupCardsMaxWidth = 104
+	// startupBrandGap 是品牌区与卡片区之间的空行目标值。
+	startupBrandGap = 2
+	// startupBrandGapMin 是该间距的保底值：可以降到 1，但绝不能降到 0
+	//（cwd 直接顶着卡片顶边框，品牌区与卡片区糊成一块）。
+	startupBrandGapMin = 1
+	// startupCardsBottomMargin 是卡片区底边框与画布最后一行之间必须留的行数。
+	// 卡片底边框贴着正文最后一行，就和下面的标签栏糊在一起（读起来像被截断）；
+	// 它也是"满配呼吸（startupBrandGap）能不能升上去"的最后一道门槛 ——
+	// 呼吸是花画布富余行，不是拿底噪去换。
+	startupCardsBottomMargin = 1
 	// startupWideWidth 起用双卡并排 + 左 4 条。
 	startupWideWidth = 88
 	// startupNarrowWidth 是不再并排（改为上下堆叠）的分界。
@@ -467,13 +484,18 @@ func (m *model) startupBrandLines(w int) []string {
 //	宽 < 76            → 上下堆叠（各占满可用宽），左 3 条 + 右 2 条
 //
 // 档位只决定"并排还是堆叠、理想条目数"；实际卡片高度由行预算
-// （height - 品牌区 - 1 行间隔）经 fitStartupCard 逐级收缩决定，所以并排/堆叠在预算不足时
+// （height - 品牌区 - 呼吸空行）经 fitStartupCard 逐级收缩决定，所以并排/堆叠在预算不足时
 // 会自己退成单卡，不会出现"算出来放不下、末尾被裁掉底边框"的形态（设计稿的"高<16 只放左卡"
 // 就是这条收缩的结果，比按高度硬切更准：80x24 的正文只有 15 行，但预算够放并排双卡）。
+//
+// 宽度同理：卡片区在字段宽之上再收一道 startupCardsMaxWidth 的上界，然后居中到字段宽
+// （centerStartupCards）。品牌区与卡片区于是共用画布中线，宽终端不再"上窄下宽"。
 func (m *model) renderCenteredStartupScreen(width, height int) string {
 	t := startupTextsFor(m.currentLang)
 	c := common.DarkModeColors()
 	w := m.computeFieldWidth()
+	// 卡片区只是"字段宽 + 一个上界"，宽度口径仍然只有 computeFieldWidth 一处。
+	cardsW := min(w, startupCardsMaxWidth)
 
 	place := func(rows []string) string {
 		block := strings.Join(rows, "\n")
@@ -487,19 +509,68 @@ func (m *model) renderCenteredStartupScreen(width, height int) string {
 		return place(m.startupBrandLines(w))
 	}
 
-	rows := m.startupBrandLines(w)
-	rows = append(rows, "") // 品牌区与卡片区之间的空行
-	budget := height - startupBrandRows - 1
-
-	switch {
-	case w >= startupWideWidth && height >= 18:
-		rows = append(rows, m.renderStartupCardsRow(t, c, w, budget, 4, 4)...)
-	case w >= startupNarrowWidth:
-		rows = append(rows, m.renderStartupCardsRow(t, c, w, budget, 3, 4)...)
-	default:
-		rows = append(rows, m.renderStartupStack(t, c, w, budget, 3, 2)...)
+	// 档位判定只看字段宽与画布高（阈值一个字都没动），卡片绘制统一吃 cardsW。
+	renderCards := func(budget int) []string {
+		switch {
+		case w >= startupWideWidth && height >= 18:
+			return m.renderStartupCardsRow(t, c, cardsW, budget, 4, 4)
+		case w >= startupNarrowWidth:
+			return m.renderStartupCardsRow(t, c, cardsW, budget, 3, 4)
+		default:
+			return m.renderStartupStack(t, c, cardsW, budget, 3, 2)
+		}
 	}
-	return place(rows)
+
+	// 呼吸空行先按保底值（1 行）排卡片区：只有它能保证"卡片内容不比上一版少"。
+	// 排完发现整块（连底部留白）仍装得下 2 行呼吸，才把呼吸加到 startupBrandGap 并放宽
+	// 预算重排 —— 多出来的那一行只花在版式上，一件卡片内容都不换。三条底线：
+	// 放不下就还它 1 行；绝不从"两卡最小形态"里抢；卡片底边框不许顶到画布最后一行。
+	cards := renderCards(height - startupBrandRows - startupBrandGapMin)
+	gap := startupBrandGapMin
+	if len(cards) > 0 &&
+		startupBrandRows+startupBrandGap+len(cards)+startupCardsBottomMargin <= height {
+		gap = startupBrandGap
+		// fitStartupCard 对预算单调（预算多只会多给提示/空行/条目），所以这一步
+		// 要么与上一版逐字相同，要么更满。
+		cards = renderCards(height - startupBrandRows - startupBrandGap)
+	}
+
+	rows := m.startupBrandLines(w)
+	for i := 0; i < gap; i++ {
+		rows = append(rows, "")
+	}
+	return place(append(rows, centerStartupCards(cards, w, cardsW)...))
+}
+
+// centerStartupCards 把卡片区收拢到 cardsW，并水平居中到字段宽 fieldW 上。
+//
+// 两个约束合起来才是"中轴统一"：
+//
+//	① 每行都补齐到 fieldW（与品牌区那 5 行同宽），整块才是一个矩形，
+//	   lipgloss.Place 才能把"品牌区 + 卡片区"当一个整体居中到画布上；
+//	② padLeft = (fieldW - cardsW) / 2，奇数余量给右侧 —— 屏上实测左端 =
+//	   (width-fieldW)/2 + padLeft == (width-cardsW)/2，左右空白差 <= 1 列。
+//
+// 只补到 cardsW 是不行的：块宽会由品牌区的 fieldW 决定，Place 依旧按 fieldW 居中，
+// 卡片区的收拢白算，两区还各自落在不同中轴上。
+func centerStartupCards(rows []string, fieldW, cardsW int) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	cardsW = min(cardsW, fieldW)
+	padLeft := max((fieldW-cardsW)/2, 0)
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if lipgloss.Width(row) > cardsW {
+			// 几何上不该发生（renderTitledCard 每行恰好 cardsW）：真发生了也宁可截断，
+			// 不让卡片顶破画布。
+			row = truncateCells(stripANSIForBorder(row), cardsW)
+		}
+		rowW := lipgloss.Width(row)
+		out = append(out, strings.Repeat(" ", padLeft)+row+
+			strings.Repeat(" ", max(fieldW-padLeft-rowW, 0)))
+	}
+	return out
 }
 
 // cardHint 让"计划里没有 hint 行"的卡不要画 hint：renderTitledCard 见到非空 hint 就占掉

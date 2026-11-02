@@ -152,12 +152,15 @@ func TestStartupScreen_NeverOverflowsCanvas(t *testing.T) {
 			if withRecents {
 				label = sz.name + "/recents"
 			}
-			if len(lines) > canvasH {
-				t.Errorf("%s %dx%d: 启动屏 %d 行，超出画布 %d 行", label, sz.w, sz.h, len(lines), canvasH)
+			if len(lines) != canvasH {
+				t.Errorf("%s %dx%d: 启动屏 %d 行，期望恰好 %d 行（Place 会补齐，不该少也不该多）\n----\n%s",
+					label, sz.w, sz.h, len(lines), canvasH, stripANSI(out))
 			}
 			for i, line := range lines {
-				if got := lipgloss.Width(line); got > canvasW {
-					t.Errorf("%s %dx%d: 第 %d 行宽 %d 超过画布 %d\n%q",
+				// 严格相等而不是 <=：少一列说明有行被 clampStartupBlock 截过（版式已经错了），
+				// 只是恰好没溢出而已。
+				if got := lipgloss.Width(line); got != canvasW {
+					t.Errorf("%s %dx%d: 第 %d 行宽 %d，期望恰好 %d\n%q",
 						label, sz.w, sz.h, i, got, canvasW, stripANSI(line))
 					break
 				}
@@ -600,5 +603,186 @@ func TestStartupScreen_StackKeepsGapBetweenCards(t *testing.T) {
 		if strings.TrimSpace(lines[leftBottom+1]) != "" {
 			t.Errorf("%dx%d: 两卡之间那一行不是空白：%q", sz.w, sz.h, lines[leftBottom+1])
 		}
+	}
+}
+
+// ── 版式：卡片区收拢居中 + 品牌区呼吸 ───────────────────────────────────────
+
+// startupIndent 返回一行左右两侧的空白列数。启动屏的留白全是 ASCII 空格
+// （卡片字符走的是 lipgloss.Width，不带外边距），所以直接数字符即可。
+func startupIndent(line string) (left, right int) {
+	return len(line) - len(strings.TrimLeft(line, " ")),
+		len(line) - len(strings.TrimRight(line, " "))
+}
+
+// TestStartupScreen_WideTerminalCentersCards 宽终端上卡片区不许拉满：它有
+// startupCardsMaxWidth 的上界，且必须与品牌区共用同一条画布中轴。
+//
+// 断言的是"屏上实测"而不是字段宽推导：卡片顶边框左侧至少 6 列空白（120 列下收拢到
+// 104 宽 ⇒ 左右各 8 列），且左右空白差 <= 1 列（奇数余量只允许偏一列）。
+func TestStartupScreen_WideTerminalCentersCards(t *testing.T) {
+	m := startupFixtureWithRecents(t, 120, 40)
+	out := m.renderWelcomePanel()
+	plain := stripANSI(out)
+	lines := strings.Split(plain, "\n")
+
+	topIdx := -1
+	for i, line := range lines {
+		if strings.Contains(line, "╭─ ⚡") {
+			topIdx = i
+			break
+		}
+	}
+	if topIdx < 0 {
+		t.Fatalf("120x40 找不到左卡顶边框\n----\n%s", plain)
+	}
+
+	// 顶边框与底边框的左右缩进必须一致，否则卡片本身是斜的。
+	for _, probe := range []struct {
+		name  string
+		idx   int
+		match string
+	}{{"顶边框", topIdx, "╭─ ⚡"}} {
+		left, right := startupIndent(lines[probe.idx])
+		if left < 6 {
+			t.Errorf("%s左侧只有 %d 列空白，应 >= 6（卡片区要收拢到 %d 宽并居中）\n%s",
+				probe.name, left, startupCardsMaxWidth, lines[probe.idx])
+		}
+		if d := left - right; d < -1 || d > 1 {
+			t.Errorf("%s左右空白不对称：左 %d 右 %d（差 %d > 1 列）\n%s",
+				probe.name, left, right, d, lines[probe.idx])
+		}
+	}
+
+	bottomIdx := -1
+	for i := topIdx; i < len(lines); i++ {
+		if strings.Contains(lines[i], "╰") {
+			bottomIdx = i
+		}
+	}
+	if bottomIdx < 0 {
+		t.Fatalf("120x40 找不到卡片底边框\n----\n%s", plain)
+	}
+	topLeft, topRight := startupIndent(lines[topIdx])
+	botLeft, botRight := startupIndent(lines[bottomIdx])
+	if topLeft != botLeft || topRight != botRight {
+		t.Errorf("卡片顶/底边框缩进不一致：顶(%d,%d) 底(%d,%d)——卡片是斜的",
+			topLeft, topRight, botLeft, botRight)
+	}
+
+	// 卡片区是浮在画布上的：底边框下方至少还要留 startupCardsBottomMargin 行空白，
+	// 贴着正文最后一行会和下面的标签栏糊在一起（读起来像被截断）。
+	below := len(lines) - 1 - bottomIdx
+	if below < startupCardsBottomMargin {
+		t.Errorf("卡片底边框下方只有 %d 行空白，期望 >= %d（别贴着标签栏）\n----\n%s",
+			below, startupCardsBottomMargin, plain)
+	}
+}
+
+// TestStartupScreen_BrandGapAboveCards 品牌区（banner + tagline + cwd）与卡片顶边框之间
+// 必须有**恰好两行空白**：cwd 直接贴着卡顶边框太挤，而这两行是可压缩项（预算不够时只降到
+// 1 行，绝不降到 0）。120x40 的正文有 31 行，预算足够，所以要拿到满配的 2 行。
+func TestStartupScreen_BrandGapAboveCards(t *testing.T) {
+	m := startupFixtureWithRecents(t, 120, 40)
+	plain := stripANSI(m.renderWelcomePanel())
+	lines := strings.Split(plain, "\n")
+
+	cwdIdx, topIdx := -1, -1
+	for i, line := range lines {
+		if cwdIdx < 0 && strings.Contains(line, "yagent-startup-fixture") {
+			cwdIdx = i
+		}
+		if strings.Contains(line, "╭─ ⚡") {
+			topIdx = i
+			break
+		}
+	}
+	if cwdIdx < 0 || topIdx < 0 {
+		t.Fatalf("找不到 cwd 行（%d）或卡片顶边框（%d）\n----\n%s", cwdIdx, topIdx, plain)
+	}
+	if gap := topIdx - cwdIdx - 1; gap != startupBrandGap {
+		t.Errorf("品牌区与卡片区之间 %d 行空白，期望 %d 行（cwd 在第 %d 行、卡顶在第 %d 行）\n----\n%s",
+			gap, startupBrandGap, cwdIdx, topIdx, plain)
+	}
+	for i := cwdIdx + 1; i < topIdx; i++ {
+		if strings.TrimSpace(lines[i]) != "" {
+			t.Errorf("第 %d 行本该是呼吸空行，却有内容：%q", i, lines[i])
+		}
+	}
+}
+
+// TestStartupScreen_NarrowTerminalIgnoresCardsMaxWidth 窄终端（字段宽 < 上界）不许被收窄：
+// 卡片区照旧占满字段宽，左右缩进仍是画布与字段宽之间的那点固定留白。
+// 这条钉住"startupCardsMaxWidth 只是上界，不是第二套宽度口径"。
+func TestStartupScreen_NarrowTerminalIgnoresCardsMaxWidth(t *testing.T) {
+	for _, sz := range []struct{ w, h int }{{80, 24}, {70, 24}, {70, 20}} {
+		m := startupFixtureWithRecents(t, sz.w, sz.h)
+		plain := stripANSI(m.renderWelcomePanel())
+		lines := strings.Split(plain, "\n")
+
+		topIdx := -1
+		for i, line := range lines {
+			if strings.Contains(line, "╭─ ⚡") {
+				topIdx = i
+				break
+			}
+		}
+		if topIdx < 0 {
+			t.Fatalf("%dx%d 找不到左卡顶边框\n----\n%s", sz.w, sz.h, plain)
+		}
+		fieldW := m.computeFieldWidth()
+		if fieldW >= startupCardsMaxWidth {
+			t.Fatalf("%dx%d 夹具前提不成立：字段宽 %d 不该 >= 上界 %d", sz.w, sz.h, fieldW, startupCardsMaxWidth)
+		}
+		left, right := startupIndent(lines[topIdx])
+		wantLeft := (sz.w - fieldW) / 2 // 字段宽在画布内的固定留白，与中心化无关
+		if left != wantLeft {
+			t.Errorf("%dx%d: 卡片左缩进 %d 列，期望 %d（窄终端不该被收拢）\n%s",
+				sz.w, sz.h, left, wantLeft, lines[topIdx])
+		}
+		if d := left - right; d < -1 || d > 1 {
+			t.Errorf("%dx%d: 左右空白不对称：左 %d 右 %d\n%s", sz.w, sz.h, left, right, lines[topIdx])
+		}
+	}
+}
+
+// TestCenterStartupCards 钉住居中器的不变量：每行恰好 fieldW 宽（padLeft 必须计入整块宽度，
+// 否则块宽由最宽那行决定，Place 会按别的宽度居中）、内容左端在 (fieldW-cardsW)/2、
+// 超宽行被截到 cardsW 而不是把整块撑破。
+func TestCenterStartupCards(t *testing.T) {
+	rows := []string{"╭──────╮", "", "│ 中文 │", strings.Repeat("x", 30)}
+	fieldW, cardsW := 20, 10
+	got := centerStartupCards(rows, fieldW, cardsW)
+	if len(got) != len(rows) {
+		t.Fatalf("行数变了：%d，期望 %d", len(got), len(rows))
+	}
+	padLeft := (fieldW - cardsW) / 2
+	for i, row := range got {
+		if w := lipgloss.Width(row); w != fieldW {
+			t.Errorf("第 %d 行宽 %d，期望恰为 %d（padLeft 没计入整块宽度）", i, w, fieldW)
+		}
+		if strings.TrimSpace(row) == "" {
+			continue // 整行空白（堆叠档两卡之间的空行）：缩进无从谈起，只校验宽度
+		}
+		if left, _ := startupIndent(row); left != padLeft {
+			t.Errorf("第 %d 行左缩进 %d，期望 %d", i, left, padLeft)
+		}
+		if content := lipgloss.Width(strings.TrimSpace(row)); content > cardsW {
+			t.Errorf("第 %d 行内容宽 %d，超过卡片区上界 %d", i, content, cardsW)
+		}
+	}
+
+	// cardsW > fieldW（窄终端）时按 fieldW 收口，不产生负缩进。
+	for _, row := range centerStartupCards([]string{"╭──╮"}, 8, 104) {
+		if w := lipgloss.Width(row); w != 8 {
+			t.Errorf("窄终端行宽 %d，期望 8", w)
+		}
+		if left, _ := startupIndent(row); left != 0 {
+			t.Errorf("窄终端左缩进 %d，期望 0", left)
+		}
+	}
+
+	if got := centerStartupCards(nil, 20, 10); got != nil {
+		t.Errorf("无卡片时应返回 nil，得到 %#v", got)
 	}
 }
