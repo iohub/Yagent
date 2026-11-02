@@ -47,14 +47,14 @@ const (
 // timelineLayout 是全屏 timeline 一次布局的全部尺寸。render/init/calc/resize
 // 四个表面都必须从这里取值，不许各自再算一遍。
 type timelineLayout struct {
-	TotalW      int // 终端总宽（termW，已 floor 到 >=1）
-	ContentH    int // 外壳内的内容高 = termH - timelineShellRows，floor 3
-	LeftW       int // 左列外框宽（含边框）
-	RightW      int // 右详情外框宽（含边框）；LeftW + RightW == avail
-	TreeW       int // 左列内树形区宽；WaterfallW==0 时 == LeftW
-	WaterfallW  int // 左列内瀑布列宽；可为 0（窄左列时整段让位）
-	Gap         int // 树形区与瀑布列之间的间隔
-	availWidth  int // 内部字段：termW - timelineShellChrome（含 floors），用于不变量
+	TotalW     int // 终端总宽（termW，已 floor 到 >=1）
+	ContentH   int // 外壳内的内容高 = termH - timelineShellRows，floor 3
+	LeftW      int // 左列外框宽（含边框）
+	RightW     int // 右详情外框宽（含边框）；LeftW + RightW == avail
+	TreeW      int // 左列内树形区宽；WaterfallW==0 时 == LeftW
+	WaterfallW int // 左列内瀑布列宽；可为 0（窄左列时整段让位）
+	Gap        int // 树形区与瀑布列之间的间隔
+	availWidth int // 内部字段：termW - timelineShellChrome（含 floors），用于不变量
 }
 
 // computeTimelineLayout 是全屏 timeline 尺寸的唯一来源。

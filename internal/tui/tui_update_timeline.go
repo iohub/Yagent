@@ -212,20 +212,11 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		m.termHeight = msg.Height
 		// 如果 viewport 已初始化，更新尺寸并刷新内容
 		if m.timelineDetailVP != nil {
-			leftWidth := int(float64(m.termWidth-3) * 0.35)
-			if leftWidth < 25 {
-				leftWidth = 25
-			}
-			rightWidth := m.termWidth - 3 - leftWidth - 4 // viewport content width
-			if rightWidth < 30 {
-				rightWidth = 30
-			}
-			contentHeight := m.termHeight - 4 - 2 // viewport height inside border
-			if contentHeight < 3 {
-				contentHeight = 3
-			}
-			m.timelineDetailVP.SetWidth(rightWidth)
-			m.timelineDetailVP.SetHeight(contentHeight)
+			// 尺寸只有一个口径：宽与 initTimelineDetailViewport 同源（calcRightPaneWidth），
+			// 高取 computeTimelineLayout 的 ContentH。此处不许再出现 0.35 / 边框手算。
+			layout := computeTimelineLayout(m.termWidth, m.termHeight)
+			m.timelineDetailVP.SetWidth(calcRightPaneWidth(m))
+			m.timelineDetailVP.SetHeight(layout.ContentH)
 			buildAllTimelineDetails(m)
 			syncDetailToCursor(m)
 		}
