@@ -19,27 +19,119 @@ var (
 				BorderForeground(lipgloss.Color("236")) // dim gray
 )
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 全屏 timeline 布局尺寸的唯一口径（internal/tui/AGENTS.md 硬约束 3）。
+//
+// 改造前这里有四套互相矛盾的公式（视图/init/calc 用 *0.2333、resize 用 *0.35，
+// 内容高 termHeight-4 与 termHeight-4-2 并存），任何一处单独改动都会让另几处对不上，
+// 造成 resize 时左右分栏比例跳变。现在所有调用点都从这里取尺寸，公式只算一次。
+// ─────────────────────────────────────────────────────────────────────────────
+
+const (
+	// 全屏外壳固定占用的列数：左右两条发丝边框/内边距的既有口径（avail = termW - 3）。
+	timelineShellChrome = 3
+	// 全屏外壳固定占用的行数：标题 1 + 状态栏 1 + 上下发丝边框 2。
+	timelineShellRows = 4
+	// 左右分栏的 floors。窄终端下优先保右侧详情面板。
+	timelineLeftFloorW  = 24
+	timelineRightFloorW = 30
+	// 左列内部：树形区最小可用宽，低于它则放弃瀑布列、把整左列让给树。
+	timelineTreeMinW     = 22
+	timelineWaterfallMin = 16
+	timelineWaterfallMax = 30
+	// 防负值的绝对下界。
+	timelineMinAvailW = 1
+	timelineMinContH  = 3
+)
+
+// timelineLayout 是全屏 timeline 一次布局的全部尺寸。render/init/calc/resize
+// 四个表面都必须从这里取值，不许各自再算一遍。
+type timelineLayout struct {
+	TotalW      int // 终端总宽（termW，已 floor 到 >=1）
+	ContentH    int // 外壳内的内容高 = termH - timelineShellRows，floor 3
+	LeftW       int // 左列外框宽（含边框）
+	RightW      int // 右详情外框宽（含边框）；LeftW + RightW == avail
+	TreeW       int // 左列内树形区宽；WaterfallW==0 时 == LeftW
+	WaterfallW  int // 左列内瀑布列宽；可为 0（窄左列时整段让位）
+	Gap         int // 树形区与瀑布列之间的间隔
+	availWidth  int // 内部字段：termW - timelineShellChrome（含 floors），用于不变量
+}
+
+// computeTimelineLayout 是全屏 timeline 尺寸的唯一来源。
+//
+// 不变量（被 TestComputeTimelineLayout_Matrix 全宽度扫描钉死）：
+//  1. LeftW + RightW == availWidth（availWidth = max(termW - 3, 1)）
+//  2. WaterfallW == 0 时 TreeW == LeftW；否则 TreeW + Gap + WaterfallW == LeftW
+//  3. 所有字段非负，ContentH >= 3
+//  4. availWidth 足够（>= 54）时 RightW >= 30
+func computeTimelineLayout(termW, termH int) timelineLayout {
+	if termW < 1 {
+		termW = 1
+	}
+	avail := termW - timelineShellChrome
+	if avail < timelineMinAvailW {
+		avail = timelineMinAvailW
+	}
+
+	contentH := termH - timelineShellRows
+	if contentH < timelineMinContH {
+		contentH = timelineMinContH
+	}
+
+	// LeftW ≈ 56% of avail，整数守恒：RightW 由减法得出，永远 LeftW+RightW==avail。
+	leftW := avail * 56 / 100
+	if leftW < timelineLeftFloorW {
+		leftW = timelineLeftFloorW
+	}
+	if leftW > avail {
+		leftW = avail
+	}
+	rightW := avail - leftW
+
+	// 窄终端下优先保右详情面板：仅当 avail 能同时容纳两个 floor（>= 54）时才回挤左列，
+	// 否则维持减法结果（此时 RightW 可能 < 30，测试只在 avail 足够处断言 RightW>=30）。
+	if rightW < timelineRightFloorW && avail >= timelineLeftFloorW+timelineRightFloorW {
+		rightW = timelineRightFloorW
+		leftW = avail - rightW
+	}
+
+	// 左列内部分树 + 瀑布（本阶段仅计算尺寸、不渲染瀑布）。
+	gap := 1
+	waterfallW := leftW / 3
+	if waterfallW < timelineWaterfallMin {
+		waterfallW = timelineWaterfallMin
+	}
+	if waterfallW > timelineWaterfallMax {
+		waterfallW = timelineWaterfallMax
+	}
+	treeW := leftW - gap - waterfallW
+	if treeW < timelineTreeMinW {
+		// 树形区太窄：整段让位，瀑布列与间隔归零，TreeW==LeftW。
+		gap = 0
+		waterfallW = 0
+		treeW = leftW
+	}
+
+	return timelineLayout{
+		TotalW:     termW,
+		ContentH:   contentH,
+		LeftW:      leftW,
+		RightW:     rightW,
+		TreeW:      treeW,
+		WaterfallW: waterfallW,
+		Gap:        gap,
+		availWidth: avail,
+	}
+}
+
 func renderTimelineFullscreenView(m *model) tea.View {
 	if m.termWidth <= 0 || m.termHeight <= 0 {
 		return tea.View{AltScreen: true}
 	}
 
-	titleHeight := 1
-	statusHeight := 1
-	borderPad := 2
-	contentHeight := m.termHeight - titleHeight - statusHeight - borderPad
-	if contentHeight < 3 {
-		contentHeight = 3
-	}
-
-	leftWidth := int(float64(m.termWidth-3) * 0.2333)
-	if leftWidth < 25 {
-		leftWidth = 25
-	}
-	rightWidth := m.termWidth - 3 - leftWidth
-	if rightWidth < 30 {
-		rightWidth = 30
-	}
+	layout := computeTimelineLayout(m.termWidth, m.termHeight)
+	contentHeight := layout.ContentH
+	leftWidth := layout.LeftW
 
 	titleBar := renderTimelineFullscreenTitleBar(m, m.termWidth)
 	leftList := renderTimelineFullscreenList(m, leftWidth, contentHeight)
@@ -255,20 +347,13 @@ func moveTimelineCursor(m *model, delta int) {
 }
 
 func initTimelineDetailViewport(m *model) {
-	leftWidth := int(float64(m.termWidth-3) * 0.2333)
-	if leftWidth < 25 {
-		leftWidth = 25
+	layout := computeTimelineLayout(m.termWidth, m.termHeight)
+	// viewport 内容宽 = 右详情外框宽 - ThickBorder 左右各 2。
+	rightWidth := layout.RightW - 4
+	if rightWidth < 1 {
+		rightWidth = 1
 	}
-	rightWidth := m.termWidth - 3 - leftWidth - 4 // viewport content width (inside border)
-	if rightWidth < 30 {
-		rightWidth = 30
-	}
-
-	// -4 = title(1) + status(1) + 上下大边框(2)
-	contentHeight := m.termHeight - 4 - 2 // -2 for lipgloss border (top+bottom)
-	if contentHeight < 3 {
-		contentHeight = 3
-	}
+	contentHeight := layout.ContentH
 
 	vp := viewport.New()
 	vp.SetWidth(rightWidth)
@@ -287,15 +372,13 @@ func (m *model) ExitTimelineFullscreen() {
 	m.timelineDetailVP = nil
 }
 
-// calcRightPaneWidth 计算右侧详情面板的 viewport 内容宽度（减去 lipgloss ThickBorder 左右各 2 字符）
+// calcRightPaneWidth 计算右侧详情面板的 viewport 内容宽度（减去 lipgloss ThickBorder 左右各 2 字符）。
+// 与 initTimelineDetailViewport 共用 computeTimelineLayout，二者宽度口径必须一致。
 func calcRightPaneWidth(m *model) int {
-	leftWidth := int(float64(m.termWidth-3) * 0.2333)
-	if leftWidth < 25 {
-		leftWidth = 25
-	}
-	rightWidth := m.termWidth - 3 - leftWidth - 4 // -4 for border (2 each side)
-	if rightWidth < 30 {
-		rightWidth = 30
+	layout := computeTimelineLayout(m.termWidth, m.termHeight)
+	rightWidth := layout.RightW - 4 // -4 for border (2 each side)
+	if rightWidth < 1 {
+		rightWidth = 1
 	}
 	return rightWidth
 }
