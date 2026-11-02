@@ -410,6 +410,10 @@ func TestResumeKeysMoveAbsoluteCursor(t *testing.T) {
 	}
 }
 
+// resumeDateColRe 匹配日期列（MM-DD）。这里**不能**写死某个日期：夹具的时间戳是
+// time.Now() 加偏移生成的，写死 "10-" 就成了"只有每月 10 号跑才绿"的假闸门。
+var resumeDateColRe = regexp.MustCompile(`\d{2}-\d{2}`)
+
 // TestResumeTreeColumnDoesNotShiftText 钉住 F2：有无子文件都不得移动正文起点。
 func TestResumeTreeColumnDoesNotShiftText(t *testing.T) {
 	m := resumeFixtureModel(t, resumeEnPreview, true)
@@ -423,10 +427,11 @@ func TestResumeTreeColumnDoesNotShiftText(t *testing.T) {
 	kinds := 0
 	for i := range m.resumeRows {
 		row := stripANSI(renderResumeRow(m, m.resumeRows[i], false, cols, c))
-		byteIdx := strings.Index(row, "10-")
-		if byteIdx < 0 {
+		loc := resumeDateColRe.FindStringIndex(row)
+		if loc == nil {
 			t.Fatalf("第 %d 行找不到日期列：%q", i, row)
 		}
+		byteIdx := loc[0]
 		starts = append(starts, lipgloss.Width(row[:byteIdx]))
 		if row[0] != ' ' || !strings.Contains(row[:byteIdx], " ") {
 			kinds++
