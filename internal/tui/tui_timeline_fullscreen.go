@@ -353,25 +353,35 @@ func timelineEntryInterval(e *TimelineEntry, now time.Time) (time.Time, time.Tim
 	return s, end
 }
 
-// waterfallBarColor 返回该条目时间条的前景色令牌，与树列配色协调：
-// 错误优先于 Kind（红 203），否则 Tool 绿 42 / LLMCall 蓝 111 / ContextEvent 黄 179 /
-// Thinking 及未知灰 245。运行中条目在颜色之外再加粗（见调用处）。
+// waterfallBarStatus 返回瀑布着色采用的"有效状态"：合并组的失败/运行中由
+// EffectiveStatus 聚合（任一子条目失败 → 整体失败），IsError 为真时一律按失败处理
+// （部分路径只置 IsError 不改 Status）。
+func waterfallBarStatus(e *TimelineEntry) ToolStatus {
+	if e == nil {
+		return ToolStatusPending
+	}
+	st := e.EffectiveStatus()
+	if e.IsError || st == ToolStatusError {
+		return ToolStatusError
+	}
+	return st
+}
+
+// waterfallBarColor：失败/运行中/取消/待定 一律用状态色（与树列 ● ○ 同色，
+// 于是"红=失败、黄=运行中、灰=取消/待定"全屏一致）；只有成功态才按种类取色
+// （Tool 绿 114 / LLM 蓝 75 / 上下文 141），让"谁占了多少时间"仍可扫读。
+// 色号唯一来源是 render.go 的 timelineStatusColor / timelineKindColor，
+// 与左侧树列状态图标共用，杜绝两份同形色表各自漂移。
 func waterfallBarColor(e *TimelineEntry) string {
-	if e.IsError || e.Status == ToolStatusError {
-		return "203"
+	switch st := waterfallBarStatus(e); st {
+	case ToolStatusError, ToolStatusRunning, ToolStatusCanceled, ToolStatusPending:
+		return timelineStatusColor(st)
 	}
-	switch e.Kind {
-	case TimelineKindTool:
-		return "42"
-	case TimelineKindLLMCall:
-		return "111"
-	case TimelineKindContextEvent:
-		return "179"
-	case TimelineKindThinking:
-		return "245"
-	default:
-		return "245"
+	// 成功态：按种类取色（Tool 返回 ""，落回状态绿）。
+	if c := timelineKindColor(e.Kind); c != "" {
+		return c
 	}
+	return timelineStatusColor(ToolStatusSuccess)
 }
 
 // renderTimelineWaterfall 产出与树列等长的行切片：win.hasAbove/hasBelow 对应
@@ -436,8 +446,11 @@ func renderTimelineWaterfall(m *model, width int, win timelineWindow) []string {
 
 	barStyleFor := func(ent *TimelineEntry) lipgloss.Style {
 		st := lipgloss.NewStyle().Foreground(lipgloss.Color(waterfallBarColor(ent)))
-		if ent.Status == ToolStatusRunning && !ent.IsError && ent.Status != ToolStatusError {
+		switch waterfallBarStatus(ent) {
+		case ToolStatusError, ToolStatusRunning:
 			st = st.Bold(true)
+		case ToolStatusCanceled:
+			st = st.Faint(true)
 		}
 		return st
 	}
