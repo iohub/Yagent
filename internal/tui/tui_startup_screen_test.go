@@ -1,11 +1,5 @@
 package tui
 
-// tui_startup_screen_test.go — 空白启动屏（品牌区 + 左右双卡片）的渲染闸门。
-//
-// 两条底线：① 卡片几何必须用**显示宽度**（中文是双宽，len() 会算成一半）；
-// ② 任何档位下每行宽 <= 画布宽、总行数 <= 画布高 —— lipgloss.Place 在内容超出时是
-// noop，不会替我们夹，一旦溢出就是整屏折行 / footer 被顶出可视区。
-
 import (
 	"errors"
 	"strings"
@@ -19,8 +13,6 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// startupFixtureModel 造一个能渲染启动屏的 model：语言固定中文（断言的文案是中文），
-// projectDir 固定（cwd 行可预测）。
 func startupFixtureModel(t *testing.T, w, h int) *model {
 	t.Helper()
 	InitLangManager()
@@ -31,11 +23,6 @@ func startupFixtureModel(t *testing.T, w, h int) *model {
 	return m
 }
 
-// startupFixtureRecents 造 4 条最近会话：时间戳覆盖"小时 / 昨天 / 天"三档，
-// 让相对时间的截断/宽度分配真的被走到。
-//
-// 造的是统一投影 startupRecentItem（不是某个账本的原生结构）：右卡渲染层只认它，
-// 账本差异只体现在 startupRecentsSource（决定 hint 文案）。
 func startupFixtureRecents(now time.Time) []startupRecentItem {
 	return []startupRecentItem{
 		{Label: "修复启动页布局", When: now.Add(-2 * time.Hour), Turns: 18},
@@ -45,13 +32,10 @@ func startupFixtureRecents(now time.Time) []startupRecentItem {
 	}
 }
 
-// setStartupRecents 是测试侧的落地助手：条目与来源必须一起设。
-// 只设条目会让 hint 读到上一个夹具残留的 source —— 那正是本文件要防的那类错配。
 func (m *model) setStartupRecents(source startupRecentsSource, items []startupRecentItem) {
 	m.startupRecents, m.startupRecentsSource = items, source
 }
 
-// startupFixtureWithRecents 装一个已带 4 条 rollout 来源会话的启动屏 model。
 func startupFixtureWithRecents(t *testing.T, w, h int) *model {
 	t.Helper()
 	m := startupFixtureModel(t, w, h)
@@ -59,7 +43,6 @@ func startupFixtureWithRecents(t *testing.T, w, h int) *model {
 	return m
 }
 
-// renderStartupPanel 走真实入口（renderWelcomePanel），并给出断言的画布尺寸。
 func renderStartupPanel(t *testing.T, m *model) (out string, canvasW, canvasH int) {
 	t.Helper()
 	out = m.renderWelcomePanel()
@@ -67,8 +50,6 @@ func renderStartupPanel(t *testing.T, m *model) (out string, canvasW, canvasH in
 	return out, w, h
 }
 
-// TestStartupScreen_SideBySideCards 宽屏（120x40）必须是并排双卡：两个卡片标题落在同一行，
-// 并且两卡的 hint 都在（左卡教怎么用，右卡指路 /resume）。
 func TestStartupScreen_SideBySideCards(t *testing.T) {
 	m := startupFixtureModel(t, 120, 40)
 	m.setStartupRecents(startupRecentsFromRollout, startupFixtureRecents(time.Now()))
@@ -94,7 +75,6 @@ func TestStartupScreen_SideBySideCards(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_EmptyRecentsShowsEmptyState 没有历史会话时右卡换成两行引导文案。
 func TestStartupScreen_EmptyRecentsShowsEmptyState(t *testing.T) {
 	m := startupFixtureModel(t, 120, 40)
 
@@ -109,8 +89,6 @@ func TestStartupScreen_EmptyRecentsShowsEmptyState(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_RecentsRowsShowItems 4 条会话的标题与轮数都要落到屏上
-// （标题被截断时用省略号收尾，但短标题必须完整）。
 func TestStartupScreen_RecentsRowsShowItems(t *testing.T) {
 	m := startupFixtureModel(t, 120, 40)
 	items := startupFixtureRecents(time.Now())
@@ -127,8 +105,6 @@ func TestStartupScreen_RecentsRowsShowItems(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_NeverOverflowsCanvas 是防溢出回归的核心：五档尺寸，空态与有数据各一遍，
-// 逐行断言显示宽 <= 画布宽，并断言总行数 <= 画布高。
 func TestStartupScreen_NeverOverflowsCanvas(t *testing.T) {
 	sizes := []struct {
 		name string
@@ -157,8 +133,6 @@ func TestStartupScreen_NeverOverflowsCanvas(t *testing.T) {
 					label, sz.w, sz.h, len(lines), canvasH, stripANSI(out))
 			}
 			for i, line := range lines {
-				// 严格相等而不是 <=：少一列说明有行被 clampStartupBlock 截过（版式已经错了），
-				// 只是恰好没溢出而已。
 				if got := lipgloss.Width(line); got != canvasW {
 					t.Errorf("%s %dx%d: 第 %d 行宽 %d，期望恰好 %d\n%q",
 						label, sz.w, sz.h, i, got, canvasW, stripANSI(line))
@@ -169,7 +143,6 @@ func TestStartupScreen_NeverOverflowsCanvas(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_NarrowStacksCards 窄终端（70 宽）必须上下堆叠：两个标题出现在不同行。
 func TestStartupScreen_NarrowStacksCards(t *testing.T) {
 	m := startupFixtureModel(t, 70, 24)
 	m.setStartupRecents(startupRecentsFromRollout, startupFixtureRecents(time.Now()))
@@ -195,8 +168,6 @@ func TestStartupScreen_NarrowStacksCards(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_CacheKeyTracksRecents 只改 startupRecents（不动宽度/高度/cwd）时，
-// 启动屏也必须重画 —— 这就是 memo key 里那个 recentsFP 的作用。
 func TestStartupScreen_CacheKeyTracksRecents(t *testing.T) {
 	m := startupFixtureModel(t, 120, 40)
 	before := m.renderWelcomePanel()
@@ -214,18 +185,15 @@ func TestStartupScreen_CacheKeyTracksRecents(t *testing.T) {
 	}
 }
 
-// TestUpdateLandsStartupRecentsMsg 主 Update 必须有这条 case：漏了会被 default 静默丢弃，
-// 右卡永远停在空态（且没有任何编译错误）。
 func TestUpdateLandsStartupRecentsMsg(t *testing.T) {
 	m := startupFixtureModel(t, 120, 40)
-	_ = m.renderWelcomePanel() // 先让空态落进 memo
+	_ = m.renderWelcomePanel()
 	items := startupFixtureRecents(time.Now())
 
 	_, _ = m.Update(startupRecentsMsg{items: items, source: startupRecentsFromTasks})
 	if len(m.startupRecents) != len(items) {
 		t.Fatalf("startupRecents 没落地：%d 条，期望 %d 条（消息被丢弃了）", len(m.startupRecents), len(items))
 	}
-	// 来源必须与条目一起落地：只落 items 会让 hint 说回默认的 /resume。
 	if m.startupRecentsSource != startupRecentsFromTasks {
 		t.Errorf("startupRecentsSource 没落地：%v，期望 tasks", m.startupRecentsSource)
 	}
@@ -240,8 +208,6 @@ func TestUpdateLandsStartupRecentsMsg(t *testing.T) {
 	}
 }
 
-// TestRenderTitledCardWidthIsExact 卡片的每一行（含标题行、hint 行、空内容行、中文超宽内容）
-// 都必须恰好等于 width：多一列会把边框挤到下一行，少一列会让两卡拼不齐。
 func TestRenderTitledCardWidthIsExact(t *testing.T) {
 	c := common.DarkModeColors()
 	titles := []string{"⚡ 开始", "◷ Recent sessions", "很长很长很长很长很长很长很长的标题", ""}
@@ -269,8 +235,6 @@ func TestRenderTitledCardWidthIsExact(t *testing.T) {
 	}
 }
 
-// TestFitStartupCardNeverExceedsBudget 收缩器的不变量：任何预算下 height <= budget，
-// 且 height == 2 + items + blank + hint。放不下最小形态时返回零值（调用方省略整张卡）。
 func TestFitStartupCardNeverExceedsBudget(t *testing.T) {
 	for items := 1; items <= 4; items++ {
 		for budget := 0; budget <= 12; budget++ {
@@ -302,12 +266,6 @@ func TestFitStartupCardNeverExceedsBudget(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_NarrowStackShowsPlanItems 70x24 堆叠档的行预算刚好落在"两卡最小形态
-// + 1 行间隔"那一档：左卡 3 条键位一条都不能少（hint 行不许把条目挤掉），右卡至少一条。
-//
-// 这里**故意不钉死右卡条数**：新让位序是"先砍右卡条目（2→1）再整块省略右卡"，
-// 条数由预算算出来，钉死具体条数等于把预算表抄进测试（预算一变就假红）。
-// "计划条数与实际渲染一致"由 TestStartupCardBodyHonorsPlanItems 直接钉渲染层。
 func TestStartupScreen_NarrowStackShowsPlanItems(t *testing.T) {
 	m := startupFixtureWithRecents(t, 70, 24)
 
@@ -325,9 +283,6 @@ func TestStartupScreen_NarrowStackShowsPlanItems(t *testing.T) {
 	}
 }
 
-// TestStartupCardBodyHonorsPlanItems 钉住"body 行数 == plan 承诺的行数"：
-// renderTitledCard 见到非空 hint 就占一行，body 若比 plan.items 多画一条，
-// 最后一条会被 bodyRows 静默裁掉（不报错、行数不变），用户看到的是少一条历史。
 func TestStartupCardBodyHonorsPlanItems(t *testing.T) {
 	m := startupFixtureWithRecents(t, 120, 40)
 	c := common.DarkModeColors()
@@ -345,8 +300,6 @@ func TestStartupCardBodyHonorsPlanItems(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_EnglishLabels 英文界面只换文案、不换几何：标题与 hint 都换成英文，
-// 卡片宽度仍然精确。
 func TestStartupScreen_EnglishLabels(t *testing.T) {
 	m := startupFixtureModel(t, 120, 40)
 	m.currentLang = LangEnglish
@@ -372,10 +325,6 @@ func TestStartupScreen_EnglishLabels(t *testing.T) {
 	}
 }
 
-// TestView_EmptySessionFitsExactlyOneScreen 空会话的整屏也必须正好一屏，且空态不该出现
-// 滚动条：启动屏比 viewport 高一行的话，computeBodyLayout 会判"溢出"并让出滚动条列，
-// 内容宽从 termWidth 变成 termWidth-1，于是满宽的启动屏每一行都被 viewport 折一次。
-// 这条钉住 startupScreenSize 与 computeBodyLayout 同源（减掉 tabBarHeight）。
 func TestView_EmptySessionFitsExactlyOneScreen(t *testing.T) {
 	sizes := []struct{ w, h int }{{120, 40}, {80, 24}, {70, 20}}
 	for _, sz := range sizes {
@@ -401,8 +350,6 @@ func TestView_EmptySessionFitsExactlyOneScreen(t *testing.T) {
 	}
 }
 
-// TestStartupRelTimeBoundaries 覆盖分钟 / 小时 / 昨天 / 天 / 周的边界。
-// 用 startupRelTimeAt 注入"现在"，否则跨零点跑时"昨天"与"3h"会互相串位。
 func TestStartupRelTimeBoundaries(t *testing.T) {
 	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.Local)
 	cases := []struct {
@@ -428,7 +375,6 @@ func TestStartupRelTimeBoundaries(t *testing.T) {
 			t.Errorf("%s: 得到 %q，期望 %q", c.name, got, c.want)
 		}
 	}
-	// 英文界面只换词，不换分档：分钟/小时/天/周仍是同一套数字。
 	if got := startupRelTimeAt(time.Date(2026, 11, 1, 20, 0, 0, 0, time.Local), now, LangEnglish); got != "yesterday" {
 		t.Errorf("英文 yesterday: 得到 %q", got)
 	}
@@ -437,11 +383,6 @@ func TestStartupRelTimeBoundaries(t *testing.T) {
 	}
 }
 
-// ── 双源与 hint（本次修复的闸门） ───────────────────────────────────────────
-
-// TestStartupScreen_RecentsHintFollowsSource 是"功能性欺骗"的核心闸门：
-// 右卡列的是哪个账本的会话，hint 就必须指向那个账本的入口。
-// 一句固定的 "/resume ..." 在 tasks 档会骗人 —— /resume 列的是 rollout 账本，另一批会话。
 func TestStartupScreen_RecentsHintFollowsSource(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -466,8 +407,6 @@ func TestStartupScreen_RecentsHintFollowsSource(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_EmptyRecentsHasNoHint 空态不指路：两源皆空时没有任何会话可恢复，
-// "/resume ..." / ":hist ..." 都是指向不存在的东西（空态已有两行引导语）。
 func TestStartupScreen_EmptyRecentsHasNoHint(t *testing.T) {
 	m := startupFixtureModel(t, 120, 40)
 
@@ -479,9 +418,6 @@ func TestStartupScreen_EmptyRecentsHasNoHint(t *testing.T) {
 	}
 }
 
-// TestStartupRecentsLedgerFallback 钉住 loadStartupRecentsCmd 的决策链：
-// rollout 有数据就用 rollout（绝不混入 tasks）；rollout 不可用（root 不存在 / 过滤后为空 /
-// 读失败）才回退 tasks，并把来源标成 tasks，让 hint 跟着换成 :hist。
 func TestStartupRecentsLedgerFallback(t *testing.T) {
 	now := time.Now()
 	rolloutSessions := []memory.RolloutSessionInfo{
@@ -511,8 +447,6 @@ func TestStartupRecentsLedgerFallback(t *testing.T) {
 		{"两源皆读失败 → None", nil, rolloutErr, nil, errors.New("tasks 读失败"), startupRecentsFromNone, 0, ""},
 	}
 	for _, c := range cases {
-		// 与 loadStartupRecentsCmd 同一条决策链：先取 rollout，拿不到才去读 tasks
-		//（生产代码里这一步还省掉了一次 tasks 索引构建）。
 		msg := startupRecentsMsgFromRollout(c.sessions, c.rollErr, startupRecentsLimit)
 		if msg.source != startupRecentsFromRollout {
 			msg = startupRecentsMsgFromTasks(c.tasks, c.tasksErr, startupRecentsLimit)
@@ -529,9 +463,6 @@ func TestStartupRecentsLedgerFallback(t *testing.T) {
 	}
 }
 
-// TestStartupRecentItemsFromRollout_LabelFallback Label 不许是空串：
-// Preview → AgentName → SessionID 依次回退；三者皆空时由渲染层兜底成 (无标题)。
-// 空 Label 会让那一行只剩序号与时间，用户认不出是哪一次会话。
 func TestStartupRecentItemsFromRollout_LabelFallback(t *testing.T) {
 	now := time.Now()
 	sessions := []memory.RolloutSessionInfo{
@@ -539,7 +470,7 @@ func TestStartupRecentItemsFromRollout_LabelFallback(t *testing.T) {
 		{Preview: "", AgentName: "director", SessionID: "s2", ModTime: now, HeadMessages: 3},
 		{Preview: "   ", AgentName: "", SessionID: "s3", ModTime: now, HeadMessages: 4},
 		{Preview: "", AgentName: "", SessionID: "", ModTime: now, HeadMessages: 5},
-		{Preview: "空会话", SessionID: "s5", ModTime: now, Empty: true}, // 必须被过滤
+		{Preview: "空会话", SessionID: "s5", ModTime: now, Empty: true},
 	}
 	items := startupRecentItemsFromRollout(sessions, startupRecentsLimit)
 	if len(items) != 4 {
@@ -552,7 +483,6 @@ func TestStartupRecentItemsFromRollout_LabelFallback(t *testing.T) {
 		}
 	}
 
-	// 最后兜底：Label 空串必须渲染成 (无标题)，而不是一列空白。
 	m := startupFixtureModel(t, 120, 40)
 	m.setStartupRecents(startupRecentsFromRollout, []startupRecentItem{{When: now, Turns: 5}})
 	plain := stripANSI(m.renderWelcomePanel())
@@ -561,16 +491,12 @@ func TestStartupRecentItemsFromRollout_LabelFallback(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_StackKeepsGapBetweenCards 堆叠档两卡之间必须有**恰好一行完全空白**。
-// 上卡 ╯ 紧接下卡 ╭ 会把两张卡糊成一张大框（没有空行 = 没有分组），
-// 所以这一行不参与预算压缩：宁可少一条右卡条目、甚至整块省略右卡。
 func TestStartupScreen_StackKeepsGapBetweenCards(t *testing.T) {
 	for _, sz := range []struct{ w, h int }{{70, 26}, {70, 24}, {70, 20}} {
 		m := startupFixtureWithRecents(t, sz.w, sz.h)
 		plain := stripANSI(m.renderWelcomePanel())
 		lines := strings.Split(plain, "\n")
 
-		// 反向检查：任何一档都不许出现"上卡 ╯ 紧接下卡 ╭"。
 		for i := 1; i < len(lines); i++ {
 			if strings.Contains(lines[i-1], "╯") && strings.Contains(lines[i], "╭") {
 				t.Errorf("%dx%d: 第 %d 行（╯）与第 %d 行（╭）紧贴，两卡之间没有空行\n----\n%s",
@@ -585,7 +511,7 @@ func TestStartupScreen_StackKeepsGapBetweenCards(t *testing.T) {
 			}
 		}
 		if rightTop < 0 {
-			continue // 该档整块省略右卡：只由上面的"绝不紧贴"约束保证质感
+			continue
 		}
 		leftBottom := -1
 		for i := 0; i < rightTop; i++ {
@@ -606,20 +532,11 @@ func TestStartupScreen_StackKeepsGapBetweenCards(t *testing.T) {
 	}
 }
 
-// ── 版式：卡片区收拢居中 + 品牌区呼吸 ───────────────────────────────────────
-
-// startupIndent 返回一行左右两侧的空白列数。启动屏的留白全是 ASCII 空格
-// （卡片字符走的是 lipgloss.Width，不带外边距），所以直接数字符即可。
 func startupIndent(line string) (left, right int) {
 	return len(line) - len(strings.TrimLeft(line, " ")),
 		len(line) - len(strings.TrimRight(line, " "))
 }
 
-// TestStartupScreen_WideTerminalCentersCards 宽终端上卡片区不许拉满：它有
-// startupCardsMaxWidth 的上界，且必须与品牌区共用同一条画布中轴。
-//
-// 断言的是"屏上实测"而不是字段宽推导：卡片顶边框左侧至少 6 列空白（120 列下收拢到
-// 104 宽 ⇒ 左右各 8 列），且左右空白差 <= 1 列（奇数余量只允许偏一列）。
 func TestStartupScreen_WideTerminalCentersCards(t *testing.T) {
 	m := startupFixtureWithRecents(t, 120, 40)
 	out := m.renderWelcomePanel()
@@ -637,7 +554,6 @@ func TestStartupScreen_WideTerminalCentersCards(t *testing.T) {
 		t.Fatalf("120x40 找不到左卡顶边框\n----\n%s", plain)
 	}
 
-	// 顶边框与底边框的左右缩进必须一致，否则卡片本身是斜的。
 	for _, probe := range []struct {
 		name  string
 		idx   int
@@ -670,8 +586,6 @@ func TestStartupScreen_WideTerminalCentersCards(t *testing.T) {
 			topLeft, topRight, botLeft, botRight)
 	}
 
-	// 卡片区是浮在画布上的：底边框下方至少还要留 startupCardsBottomMargin 行空白，
-	// 贴着正文最后一行会和下面的标签栏糊在一起（读起来像被截断）。
 	below := len(lines) - 1 - bottomIdx
 	if below < startupCardsBottomMargin {
 		t.Errorf("卡片底边框下方只有 %d 行空白，期望 >= %d（别贴着标签栏）\n----\n%s",
@@ -679,9 +593,6 @@ func TestStartupScreen_WideTerminalCentersCards(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_BrandGapAboveCards 品牌区（banner + tagline + cwd）与卡片顶边框之间
-// 必须有**恰好两行空白**：cwd 直接贴着卡顶边框太挤，而这两行是可压缩项（预算不够时只降到
-// 1 行，绝不降到 0）。120x40 的正文有 31 行，预算足够，所以要拿到满配的 2 行。
 func TestStartupScreen_BrandGapAboveCards(t *testing.T) {
 	m := startupFixtureWithRecents(t, 120, 40)
 	plain := stripANSI(m.renderWelcomePanel())
@@ -711,9 +622,6 @@ func TestStartupScreen_BrandGapAboveCards(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_NarrowTerminalIgnoresCardsMaxWidth 窄终端（字段宽 < 上界）不许被收窄：
-// 卡片区照旧占满字段宽，左右缩进仍是画布与字段宽之间的那点固定留白。
-// 这条钉住"startupCardsMaxWidth 只是上界，不是第二套宽度口径"。
 func TestStartupScreen_NarrowTerminalIgnoresCardsMaxWidth(t *testing.T) {
 	for _, sz := range []struct{ w, h int }{{80, 24}, {70, 24}, {70, 20}} {
 		m := startupFixtureWithRecents(t, sz.w, sz.h)
@@ -735,7 +643,7 @@ func TestStartupScreen_NarrowTerminalIgnoresCardsMaxWidth(t *testing.T) {
 			t.Fatalf("%dx%d 夹具前提不成立：字段宽 %d 不该 >= 上界 %d", sz.w, sz.h, fieldW, startupCardsMaxWidth)
 		}
 		left, right := startupIndent(lines[topIdx])
-		wantLeft := (sz.w - fieldW) / 2 // 字段宽在画布内的固定留白，与中心化无关
+		wantLeft := (sz.w - fieldW) / 2
 		if left != wantLeft {
 			t.Errorf("%dx%d: 卡片左缩进 %d 列，期望 %d（窄终端不该被收拢）\n%s",
 				sz.w, sz.h, left, wantLeft, lines[topIdx])
@@ -746,9 +654,6 @@ func TestStartupScreen_NarrowTerminalIgnoresCardsMaxWidth(t *testing.T) {
 	}
 }
 
-// TestCenterStartupCards 钉住居中器的不变量：每行恰好 fieldW 宽（padLeft 必须计入整块宽度，
-// 否则块宽由最宽那行决定，Place 会按别的宽度居中）、内容左端在 (fieldW-cardsW)/2、
-// 超宽行被截到 cardsW 而不是把整块撑破。
 func TestCenterStartupCards(t *testing.T) {
 	rows := []string{"╭──────╮", "", "│ 中文 │", strings.Repeat("x", 30)}
 	fieldW, cardsW := 20, 10
@@ -762,7 +667,7 @@ func TestCenterStartupCards(t *testing.T) {
 			t.Errorf("第 %d 行宽 %d，期望恰为 %d（padLeft 没计入整块宽度）", i, w, fieldW)
 		}
 		if strings.TrimSpace(row) == "" {
-			continue // 整行空白（堆叠档两卡之间的空行）：缩进无从谈起，只校验宽度
+			continue
 		}
 		if left, _ := startupIndent(row); left != padLeft {
 			t.Errorf("第 %d 行左缩进 %d，期望 %d", i, left, padLeft)
@@ -772,7 +677,6 @@ func TestCenterStartupCards(t *testing.T) {
 		}
 	}
 
-	// cardsW > fieldW（窄终端）时按 fieldW 收口，不产生负缩进。
 	for _, row := range centerStartupCards([]string{"╭──╮"}, 8, 104) {
 		if w := lipgloss.Width(row); w != 8 {
 			t.Errorf("窄终端行宽 %d，期望 8", w)
