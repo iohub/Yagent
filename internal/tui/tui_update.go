@@ -69,6 +69,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Batch(cmd, listenForEvents(m.eventCh), m.ensureTick())
 				}
 				return m, cmd
+			case startupRecentsMsg:
+				// 启动屏的异步取数：就地落地并发起重排，不占用任何事件链
+				// （它不推进 taskRunning，也不影响对话框，放行无副作用）。
+				return m.handleStartupRecentsMsg(msg)
 			default:
 				// WindowSizeMsg, MouseMsg, publisherReadyMsg, etc.
 				if m.taskRunning {
@@ -148,6 +152,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTaskEventMsg(msg)
 	case taskCompleteMsg:
 		return m.handleTaskCompleteMsg(msg)
+	case startupRecentsMsg:
+		// 启动屏右卡的异步取数（Init 里发起）。不在弹窗守卫里放行的话，
+		// 恰好在弹窗打开时返回就会被 default 吞掉，右卡永远停在空态。
+		return m.handleStartupRecentsMsg(msg)
 	}
 
 	// Handle fzf file selection

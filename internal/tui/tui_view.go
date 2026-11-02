@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"image/color"
-	"os"
 	"strings"
 	"time"
 
@@ -557,13 +556,14 @@ func buildAirlineRight(segs []airlineSegment) string {
 func (m *model) renderWelcomePanel() string {
 	empty := len(m.logEntries) == 0
 
-	// 已有日志时头部只跟字段宽度与 cwd 有关；空白启动屏还要行高（它要垂直居中）。
+	// 已有日志时头部只跟字段宽度与 cwd 有关；空白启动屏还要行高（它要垂直居中），
+	// 外加最近会话的指纹 —— 跑完一轮回到空态时宽/高/cwd 都没变，但右卡该换成新列表。
 	// 行高别在头部分支算：computeFooterHeight 会走 token 面板与 langManager，
-	// 那条路上本来不需要它。
+	// 那条路上本来不需要它（那条路也不渲染 recents，所以指纹只进 startup 分支）。
 	key := fmt.Sprintf("header|%d|%s", m.computeFieldWidth(), m.projectDir)
 	if empty {
 		width, height := m.startupScreenSize()
-		key = fmt.Sprintf("startup|%d|%d|%s", width, height, m.projectDir)
+		key = fmt.Sprintf("startup|%d|%d|%s|%s", width, height, m.projectDir, m.startupRecentsFingerprint())
 	}
 	if m.welcomeCacheKey == key {
 		return m.welcomeCache
@@ -579,51 +579,26 @@ func (m *model) renderWelcomePanel() string {
 }
 
 // startupScreenSize 是空白启动屏的画布：宽度兜底 80 列，行高至少 8 行才放得下 banner。
+//
+// 行高必须与正文那套口径同源（computeBodyLayout = termHeight - footer - tabBarHeight）：
+// 少减 tabBarHeight 会让启动屏比 viewport 高一行，于是空会话也"溢出"——正文多出来的那一行
+// 让 computeBodyLayout 判出滚动条列，内容宽度从 termWidth 变成 termWidth-1，而启动屏每行
+// 是满宽的，viewport 于是把每一行都折一次。空态不该有滚动条，也不该折行。
 func (m *model) startupScreenSize() (width, height int) {
 	width = m.termWidth
 	if width <= 0 {
 		width = 80
 	}
-	height = m.termHeight - m.computeFooterHeight()
+	height = m.termHeight - m.computeFooterHeight() - tabBarHeight
 	if height < 8 {
 		height = 8
 	}
 	return width, height
 }
 
-func (m *model) renderCenteredStartupScreen(width, height int) string {
-	banner := renderBanner()
-
-	cwd := m.projectDir
-	home, _ := os.UserHomeDir()
-	if strings.HasPrefix(cwd, home) {
-		cwd = "~" + strings.TrimPrefix(cwd, home)
-	}
-
-	var block strings.Builder
-	block.WriteString(banner)
-	block.WriteString("\n")
-	tagline := common.ApplyGrad("A Repository-Aware, Self-Evolving Agent")
-	block.WriteString(tagline)
-	block.WriteString("\n\n")
-	block.WriteString(welcomeSubStyle.Render(cwd))
-
-	return lipgloss.Place(
-		width,
-		height,
-		lipgloss.Center,
-		lipgloss.Center,
-		block.String(),
-	)
-}
-
 func (m *model) renderWelcomePanelLayout() string {
-	cwd := m.projectDir
-	home, _ := os.UserHomeDir()
-	if strings.HasPrefix(cwd, home) {
-		cwd = "~" + strings.TrimPrefix(cwd, home)
-	}
-	cwdLine := welcomeSubStyle.Render(cwd)
+	// cwd 的 ~ 缩写与启动屏共用一份（startupDisplayPath），避免两处各写一遍后漂移。
+	cwdLine := welcomeSubStyle.Render(startupDisplayPath(m.projectDir))
 
 	banner := renderBanner()
 	var left strings.Builder
@@ -660,18 +635,23 @@ func (m *model) renderWelcomePanelLayout() string {
 	inner += "\n\n" + cwdLine
 	return welcomePanelStyle.Width(innerWidth).Render(inner)
 }
-func renderBanner() string {
-	asciiLogo := []string{
+
+// bannerASCIILines 是 banner 的唯一数据源：渐变版给正常宽度，未上色版给窄终端
+// （启动屏按显示宽截断时不能切在 ANSI 序列中间）。
+func bannerASCIILines() []string {
+	return []string{
 		"██  ██   ▄████▄  ▄▄▄▄ ▄▄▄▄▄ ▄▄  ▄▄ ▄▄▄▄▄▄",
 		" ▀██▀    ██▄▄██ ██ ▄▄ ██▄▄  ███▄██   ██",
 		"  ██     ██  ██ ▀███▀ ██▄▄▄ ██ ▀██   ██",
 	}
+}
 
+func renderBanner() string {
 	gradFrom := common.DefaultGradFrom
 	gradTo := common.DefaultGradTo
 
 	var rendered []string
-	for _, line := range asciiLogo {
+	for _, line := range bannerASCIILines() {
 		gradLine := common.ApplyBoldForegroundGrad(
 			lipgloss.NewStyle(),
 			line,

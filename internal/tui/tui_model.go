@@ -449,6 +449,10 @@ type model struct {
 	welcomeCache    string
 	welcomeCacheKey string
 
+	// startupRecents 是空白启动屏右卡「◷ 最近会话」的数据源，启动时取一次（Init 的 cmd）。
+	// 与 m.historyItems 是两份东西：后者属于历史浏览模式，enterHistoryMode 会把它清空。
+	startupRecents []datamanager.TaskHistoryItem
+
 	contentParts      []string
 	dirtyEntryIndices map[int]struct{}
 	needFullRebuild   bool
@@ -739,8 +743,11 @@ func initialModel(preloadedTaskContent string, ca *app.Yagent, tm *http.TaskMana
 }
 
 func (m *model) Init() tea.Cmd {
+	// listenForEvents 是一次性 cmd，只在这里挂一次；启动屏的最近会话取数是另一条
+	// 独立 cmd，与事件链无关（取回的是 startupRecentsMsg，不是 taskEventMsg）。
 	return tea.Batch(
 		listenForEvents(m.eventCh),
+		loadStartupRecentsCmd(m),
 	)
 }
 
