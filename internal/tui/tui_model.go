@@ -451,7 +451,11 @@ type model struct {
 
 	// startupRecents 是空白启动屏右卡「◷ 最近会话」的数据源，启动时取一次（Init 的 cmd）。
 	// 与 m.historyItems 是两份东西：后者属于历史浏览模式，enterHistoryMode 会把它清空。
-	startupRecents []datamanager.TaskHistoryItem
+	// 条目是两套账本（rollout / tasks）的统一投影；startupRecentsSource 记住它来自哪一个 ——
+	// 右卡 hint 必须随之切换（rollout→/resume、tasks→:hist），否则卡片会指向一个列出
+	// 另一批会话的入口（rollout 与 tasks 是两个独立账本，条数与内容都对不上）。
+	startupRecents       []startupRecentItem
+	startupRecentsSource startupRecentsSource
 
 	contentParts      []string
 	dirtyEntryIndices map[int]struct{}

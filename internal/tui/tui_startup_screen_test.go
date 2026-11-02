@@ -7,11 +7,13 @@ package tui
 // noop，不会替我们夹，一旦溢出就是整屏折行 / footer 被顶出可视区。
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"yagent/internal/datamanager"
+	"yagent/internal/memory"
 	"yagent/internal/tui/common"
 
 	"charm.land/lipgloss/v2"
@@ -31,13 +33,30 @@ func startupFixtureModel(t *testing.T, w, h int) *model {
 
 // startupFixtureRecents 造 4 条最近会话：时间戳覆盖"小时 / 昨天 / 天"三档，
 // 让相对时间的截断/宽度分配真的被走到。
-func startupFixtureRecents(now time.Time) []datamanager.TaskHistoryItem {
-	return []datamanager.TaskHistoryItem{
-		{TaskID: "t1", Title: "修复启动页布局", CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour), MessageCount: 18},
-		{TaskID: "t2", Title: "蓝图导出层设计", CreatedAt: now.Add(-30 * time.Hour), UpdatedAt: now.Add(-26 * time.Hour), MessageCount: 42},
-		{TaskID: "t3", Title: "MCP 工具注册排查", CreatedAt: now.Add(-80 * time.Hour), UpdatedAt: now.Add(-72 * time.Hour), MessageCount: 7},
-		{TaskID: "t4", Title: "blackboard 索引优化", CreatedAt: now.Add(-130 * time.Hour), UpdatedAt: now.Add(-120 * time.Hour), MessageCount: 26},
+//
+// 造的是统一投影 startupRecentItem（不是某个账本的原生结构）：右卡渲染层只认它，
+// 账本差异只体现在 startupRecentsSource（决定 hint 文案）。
+func startupFixtureRecents(now time.Time) []startupRecentItem {
+	return []startupRecentItem{
+		{Label: "修复启动页布局", When: now.Add(-2 * time.Hour), Turns: 18},
+		{Label: "蓝图导出层设计", When: now.Add(-26 * time.Hour), Turns: 42},
+		{Label: "MCP 工具注册排查", When: now.Add(-72 * time.Hour), Turns: 7},
+		{Label: "blackboard 索引优化", When: now.Add(-120 * time.Hour), Turns: 26},
 	}
+}
+
+// setStartupRecents 是测试侧的落地助手：条目与来源必须一起设。
+// 只设条目会让 hint 读到上一个夹具残留的 source —— 那正是本文件要防的那类错配。
+func (m *model) setStartupRecents(source startupRecentsSource, items []startupRecentItem) {
+	m.startupRecents, m.startupRecentsSource = items, source
+}
+
+// startupFixtureWithRecents 装一个已带 4 条 rollout 来源会话的启动屏 model。
+func startupFixtureWithRecents(t *testing.T, w, h int) *model {
+	t.Helper()
+	m := startupFixtureModel(t, w, h)
+	m.setStartupRecents(startupRecentsFromRollout, startupFixtureRecents(time.Now()))
+	return m
 }
 
 // renderStartupPanel 走真实入口（renderWelcomePanel），并给出断言的画布尺寸。
@@ -52,7 +71,7 @@ func renderStartupPanel(t *testing.T, m *model) (out string, canvasW, canvasH in
 // 并且两卡的 hint 都在（左卡教怎么用，右卡指路 /resume）。
 func TestStartupScreen_SideBySideCards(t *testing.T) {
 	m := startupFixtureModel(t, 120, 40)
-	m.startupRecents = startupFixtureRecents(time.Now())
+	m.setStartupRecents(startupRecentsFromRollout, startupFixtureRecents(time.Now()))
 
 	plain := stripANSI(m.renderWelcomePanel())
 	for _, want := range []string{
@@ -95,12 +114,12 @@ func TestStartupScreen_EmptyRecentsShowsEmptyState(t *testing.T) {
 func TestStartupScreen_RecentsRowsShowItems(t *testing.T) {
 	m := startupFixtureModel(t, 120, 40)
 	items := startupFixtureRecents(time.Now())
-	m.startupRecents = items
+	m.setStartupRecents(startupRecentsFromRollout, items)
 
 	plain := stripANSI(m.renderWelcomePanel())
 	for i, item := range items {
-		if !strings.Contains(plain, item.Title) {
-			t.Errorf("第 %d 条会话 %q 没出现在启动屏\n----\n%s", i+1, item.Title, plain)
+		if !strings.Contains(plain, item.Label) {
+			t.Errorf("第 %d 条会话 %q 没出现在启动屏\n----\n%s", i+1, item.Label, plain)
 		}
 	}
 	if !strings.Contains(plain, "18轮") {
@@ -125,7 +144,7 @@ func TestStartupScreen_NeverOverflowsCanvas(t *testing.T) {
 		for _, withRecents := range []bool{false, true} {
 			m := startupFixtureModel(t, sz.w, sz.h)
 			if withRecents {
-				m.startupRecents = startupFixtureRecents(time.Now())
+				m.setStartupRecents(startupRecentsFromRollout, startupFixtureRecents(time.Now()))
 			}
 			out, canvasW, canvasH := renderStartupPanel(t, m)
 			lines := strings.Split(out, "\n")
@@ -150,7 +169,7 @@ func TestStartupScreen_NeverOverflowsCanvas(t *testing.T) {
 // TestStartupScreen_NarrowStacksCards 窄终端（70 宽）必须上下堆叠：两个标题出现在不同行。
 func TestStartupScreen_NarrowStacksCards(t *testing.T) {
 	m := startupFixtureModel(t, 70, 24)
-	m.startupRecents = startupFixtureRecents(time.Now())
+	m.setStartupRecents(startupRecentsFromRollout, startupFixtureRecents(time.Now()))
 
 	plain := stripANSI(m.renderWelcomePanel())
 	startLine, recentLine := -1, -1
@@ -182,7 +201,7 @@ func TestStartupScreen_CacheKeyTracksRecents(t *testing.T) {
 		t.Fatalf("夹具前提不成立：初始应是空态\n----\n%s", stripANSI(before))
 	}
 
-	m.startupRecents = startupFixtureRecents(time.Now())
+	m.setStartupRecents(startupRecentsFromRollout, startupFixtureRecents(time.Now()))
 	after := m.renderWelcomePanel()
 	if before == after {
 		t.Error("startupRecents 变了但启动屏命中了旧缓存（memo key 缺指纹）")
@@ -199,15 +218,22 @@ func TestUpdateLandsStartupRecentsMsg(t *testing.T) {
 	_ = m.renderWelcomePanel() // 先让空态落进 memo
 	items := startupFixtureRecents(time.Now())
 
-	_, _ = m.Update(startupRecentsMsg{items: items})
+	_, _ = m.Update(startupRecentsMsg{items: items, source: startupRecentsFromTasks})
 	if len(m.startupRecents) != len(items) {
 		t.Fatalf("startupRecents 没落地：%d 条，期望 %d 条（消息被丢弃了）", len(m.startupRecents), len(items))
+	}
+	// 来源必须与条目一起落地：只落 items 会让 hint 说回默认的 /resume。
+	if m.startupRecentsSource != startupRecentsFromTasks {
+		t.Errorf("startupRecentsSource 没落地：%v，期望 tasks", m.startupRecentsSource)
 	}
 	if strings.Contains(stripANSI(m.welcomeCache), "还没有历史会话") {
 		t.Error("落地后启动屏仍是空态：没有触发重绘")
 	}
-	if !strings.Contains(stripANSI(m.welcomeCache), items[0].Title) {
+	if !strings.Contains(stripANSI(m.welcomeCache), items[0].Label) {
 		t.Errorf("落地后启动屏没有第 1 条会话\n----\n%s", stripANSI(m.welcomeCache))
+	}
+	if !strings.Contains(stripANSI(m.welcomeCache), ":hist") {
+		t.Errorf("tasks 来源的右卡 hint 应该是 :hist 版本\n----\n%s", stripANSI(m.welcomeCache))
 	}
 }
 
@@ -273,12 +299,14 @@ func TestFitStartupCardNeverExceedsBudget(t *testing.T) {
 	}
 }
 
-// TestStartupScreen_PlanItemsReachTheCard 收缩后的条目数必须真的画出来：renderTitledCard 见到
-// 非空 hint 就占一行，调用方若不管 plan.hint，最后一条会被 bodyRows 静默挤掉（不报错、不少行）。
-// 70x24 的预算刚好落在"两卡紧贴、都不画 hint"那一档，正是会踩到这条的尺寸。
-func TestStartupScreen_PlanItemsReachTheCard(t *testing.T) {
-	m := startupFixtureModel(t, 70, 24)
-	m.startupRecents = startupFixtureRecents(time.Now())
+// TestStartupScreen_NarrowStackShowsPlanItems 70x24 堆叠档的行预算刚好落在"两卡最小形态
+// + 1 行间隔"那一档：左卡 3 条键位一条都不能少（hint 行不许把条目挤掉），右卡至少一条。
+//
+// 这里**故意不钉死右卡条数**：新让位序是"先砍右卡条目（2→1）再整块省略右卡"，
+// 条数由预算算出来，钉死具体条数等于把预算表抄进测试（预算一变就假红）。
+// "计划条数与实际渲染一致"由 TestStartupCardBodyHonorsPlanItems 直接钉渲染层。
+func TestStartupScreen_NarrowStackShowsPlanItems(t *testing.T) {
+	m := startupFixtureWithRecents(t, 70, 24)
 
 	plain := stripANSI(m.renderWelcomePanel())
 	for _, want := range []string{"Alt+S", "Ctrl+E", "?"} {
@@ -286,8 +314,31 @@ func TestStartupScreen_PlanItemsReachTheCard(t *testing.T) {
 			t.Errorf("左卡少了 %q（条目被 hint 行挤掉了）\n----\n%s", want, plain)
 		}
 	}
-	if !strings.Contains(plain, "修复启动页布局") || !strings.Contains(plain, "蓝图导出层设计") {
-		t.Errorf("右卡少了条目\n----\n%s", plain)
+	if !strings.Contains(plain, "修复启动页布局") {
+		t.Errorf("右卡一条会话都没有\n----\n%s", plain)
+	}
+	if !strings.Contains(plain, "◷ 最近会话") {
+		t.Errorf("右卡整块消失了（这一档应能放下右卡最小形态）\n----\n%s", plain)
+	}
+}
+
+// TestStartupCardBodyHonorsPlanItems 钉住"body 行数 == plan 承诺的行数"：
+// renderTitledCard 见到非空 hint 就占一行，body 若比 plan.items 多画一条，
+// 最后一条会被 bodyRows 静默裁掉（不报错、行数不变），用户看到的是少一条历史。
+func TestStartupCardBodyHonorsPlanItems(t *testing.T) {
+	m := startupFixtureWithRecents(t, 120, 40)
+	c := common.DarkModeColors()
+	txt := startupTextsFor(m.currentLang)
+
+	for items := 1; items <= 4; items++ {
+		plan := startupCardPlan{height: items + 2, items: items}
+		if body := m.startupRecentsCardBody(plan, txt, c, 40); len(body) != items {
+			t.Errorf("plan.items=%d 无空行: body %d 行，期望 %d 行", items, len(body), items)
+		}
+		plan = startupCardPlan{height: items + 4, items: items, blank: true, hint: true}
+		if body := m.startupRecentsCardBody(plan, txt, c, 40); len(body) != items+1 {
+			t.Errorf("plan.items=%d 满配: body %d 行，期望 %d 行（条目 + 空行）", items, len(body), items+1)
+		}
 	}
 }
 
@@ -296,7 +347,7 @@ func TestStartupScreen_PlanItemsReachTheCard(t *testing.T) {
 func TestStartupScreen_EnglishLabels(t *testing.T) {
 	m := startupFixtureModel(t, 120, 40)
 	m.currentLang = LangEnglish
-	m.startupRecents = startupFixtureRecents(time.Now())
+	m.setStartupRecents(startupRecentsFromRollout, startupFixtureRecents(time.Now()))
 
 	out := m.renderWelcomePanel()
 	plain := stripANSI(out)
@@ -327,7 +378,7 @@ func TestView_EmptySessionFitsExactlyOneScreen(t *testing.T) {
 	for _, sz := range sizes {
 		m := chromeTestModel(t, sz.w, sz.h)
 		m.currentLang = LangChinese
-		m.startupRecents = startupFixtureRecents(time.Now())
+		m.setStartupRecents(startupRecentsFromRollout, startupFixtureRecents(time.Now()))
 
 		lines := strings.Split(m.View().Content, "\n")
 		if len(lines) != sz.h {
@@ -380,5 +431,174 @@ func TestStartupRelTimeBoundaries(t *testing.T) {
 	}
 	if got := startupRelTimeAt(now.Add(-12*time.Minute), now, LangEnglish); got != "12m" {
 		t.Errorf("英文 12m: 得到 %q", got)
+	}
+}
+
+// ── 双源与 hint（本次修复的闸门） ───────────────────────────────────────────
+
+// TestStartupScreen_RecentsHintFollowsSource 是"功能性欺骗"的核心闸门：
+// 右卡列的是哪个账本的会话，hint 就必须指向那个账本的入口。
+// 一句固定的 "/resume ..." 在 tasks 档会骗人 —— /resume 列的是 rollout 账本，另一批会话。
+func TestStartupScreen_RecentsHintFollowsSource(t *testing.T) {
+	cases := []struct {
+		name       string
+		source     startupRecentsSource
+		wantHint   string
+		absentHint string
+	}{
+		{"rollout→/resume", startupRecentsFromRollout, "/resume 选择并恢复会话", ":hist 浏览并载入历史会话"},
+		{"tasks→:hist", startupRecentsFromTasks, ":hist 浏览并载入历史会话", "/resume 选择并恢复会话"},
+	}
+	for _, c := range cases {
+		m := startupFixtureModel(t, 120, 40)
+		m.setStartupRecents(c.source, startupFixtureRecents(time.Now()))
+
+		plain := stripANSI(m.renderWelcomePanel())
+		if !strings.Contains(plain, c.wantHint) {
+			t.Errorf("%s: 右卡 hint 缺少 %q\n----\n%s", c.name, c.wantHint, plain)
+		}
+		if strings.Contains(plain, c.absentHint) {
+			t.Errorf("%s: 右卡出现了不属于该来源的 hint %q\n----\n%s", c.name, c.absentHint, plain)
+		}
+	}
+}
+
+// TestStartupScreen_EmptyRecentsHasNoHint 空态不指路：两源皆空时没有任何会话可恢复，
+// "/resume ..." / ":hist ..." 都是指向不存在的东西（空态已有两行引导语）。
+func TestStartupScreen_EmptyRecentsHasNoHint(t *testing.T) {
+	m := startupFixtureModel(t, 120, 40)
+
+	plain := stripANSI(m.renderWelcomePanel())
+	for _, absent := range []string{"选择并恢复会话", "浏览并载入历史会话"} {
+		if strings.Contains(plain, absent) {
+			t.Errorf("空态不该出现 hint %q\n----\n%s", absent, plain)
+		}
+	}
+}
+
+// TestStartupRecentsLedgerFallback 钉住 loadStartupRecentsCmd 的决策链：
+// rollout 有数据就用 rollout（绝不混入 tasks）；rollout 不可用（root 不存在 / 过滤后为空 /
+// 读失败）才回退 tasks，并把来源标成 tasks，让 hint 跟着换成 :hist。
+func TestStartupRecentsLedgerFallback(t *testing.T) {
+	now := time.Now()
+	rolloutSessions := []memory.RolloutSessionInfo{
+		{SessionID: "sess-a", Preview: "rollout 里的任务", ModTime: now.Add(-time.Hour), HeadMessages: 12},
+	}
+	tasks := []datamanager.TaskHistoryItem{
+		{TaskID: "t1", Title: "tasks 里的任务", UpdatedAt: now.Add(-2 * time.Hour), MessageCount: 4},
+	}
+	rolloutErr := errors.New("rollout root 不存在")
+
+	cases := []struct {
+		name     string
+		sessions []memory.RolloutSessionInfo
+		rollErr  error
+		tasks    []datamanager.TaskHistoryItem
+		tasksErr error
+		want     startupRecentsSource
+		wantLen  int
+		wantItem string
+	}{
+		{"rollout 有数据 → 用 rollout", rolloutSessions, nil, tasks, nil, startupRecentsFromRollout, 1, "rollout 里的任务"},
+		{"rollout root 不存在 → 回退 tasks", nil, rolloutErr, tasks, nil, startupRecentsFromTasks, 1, "tasks 里的任务"},
+		{"rollout 全是 Empty → 回退 tasks",
+			[]memory.RolloutSessionInfo{{SessionID: "x", Empty: true, ModTime: now}}, nil,
+			tasks, nil, startupRecentsFromTasks, 1, "tasks 里的任务"},
+		{"两源皆空 → None", nil, nil, nil, nil, startupRecentsFromNone, 0, ""},
+		{"两源皆读失败 → None", nil, rolloutErr, nil, errors.New("tasks 读失败"), startupRecentsFromNone, 0, ""},
+	}
+	for _, c := range cases {
+		// 与 loadStartupRecentsCmd 同一条决策链：先取 rollout，拿不到才去读 tasks
+		//（生产代码里这一步还省掉了一次 tasks 索引构建）。
+		msg := startupRecentsMsgFromRollout(c.sessions, c.rollErr, startupRecentsLimit)
+		if msg.source != startupRecentsFromRollout {
+			msg = startupRecentsMsgFromTasks(c.tasks, c.tasksErr, startupRecentsLimit)
+		}
+		if msg.source != c.want {
+			t.Errorf("%s: source=%v，期望 %v", c.name, msg.source, c.want)
+		}
+		if len(msg.items) != c.wantLen {
+			t.Errorf("%s: %d 条，期望 %d 条", c.name, len(msg.items), c.wantLen)
+		}
+		if c.wantItem != "" && (len(msg.items) == 0 || msg.items[0].Label != c.wantItem) {
+			t.Errorf("%s: 第 1 条 = %+v，期望 Label=%q", c.name, msg.items, c.wantItem)
+		}
+	}
+}
+
+// TestStartupRecentItemsFromRollout_LabelFallback Label 不许是空串：
+// Preview → AgentName → SessionID 依次回退；三者皆空时由渲染层兜底成 (无标题)。
+// 空 Label 会让那一行只剩序号与时间，用户认不出是哪一次会话。
+func TestStartupRecentItemsFromRollout_LabelFallback(t *testing.T) {
+	now := time.Now()
+	sessions := []memory.RolloutSessionInfo{
+		{Preview: "有预览", SessionID: "s1", ModTime: now, HeadMessages: 2},
+		{Preview: "", AgentName: "director", SessionID: "s2", ModTime: now, HeadMessages: 3},
+		{Preview: "   ", AgentName: "", SessionID: "s3", ModTime: now, HeadMessages: 4},
+		{Preview: "", AgentName: "", SessionID: "", ModTime: now, HeadMessages: 5},
+		{Preview: "空会话", SessionID: "s5", ModTime: now, Empty: true}, // 必须被过滤
+	}
+	items := startupRecentItemsFromRollout(sessions, startupRecentsLimit)
+	if len(items) != 4 {
+		t.Fatalf("投影出 %d 条，期望 4 条（Empty 会话应被过滤）", len(items))
+	}
+	wantLabels := []string{"有预览", "director", "s3", ""}
+	for i, want := range wantLabels {
+		if items[i].Label != want {
+			t.Errorf("第 %d 条 Label=%q，期望 %q", i+1, items[i].Label, want)
+		}
+	}
+
+	// 最后兜底：Label 空串必须渲染成 (无标题)，而不是一列空白。
+	m := startupFixtureModel(t, 120, 40)
+	m.setStartupRecents(startupRecentsFromRollout, []startupRecentItem{{When: now, Turns: 5}})
+	plain := stripANSI(m.renderWelcomePanel())
+	if !strings.Contains(plain, "(无标题)") {
+		t.Errorf("空 Label 没有兜底成 (无标题)\n----\n%s", plain)
+	}
+}
+
+// TestStartupScreen_StackKeepsGapBetweenCards 堆叠档两卡之间必须有**恰好一行完全空白**。
+// 上卡 ╯ 紧接下卡 ╭ 会把两张卡糊成一张大框（没有空行 = 没有分组），
+// 所以这一行不参与预算压缩：宁可少一条右卡条目、甚至整块省略右卡。
+func TestStartupScreen_StackKeepsGapBetweenCards(t *testing.T) {
+	for _, sz := range []struct{ w, h int }{{70, 26}, {70, 24}, {70, 20}} {
+		m := startupFixtureWithRecents(t, sz.w, sz.h)
+		plain := stripANSI(m.renderWelcomePanel())
+		lines := strings.Split(plain, "\n")
+
+		// 反向检查：任何一档都不许出现"上卡 ╯ 紧接下卡 ╭"。
+		for i := 1; i < len(lines); i++ {
+			if strings.Contains(lines[i-1], "╯") && strings.Contains(lines[i], "╭") {
+				t.Errorf("%dx%d: 第 %d 行（╯）与第 %d 行（╭）紧贴，两卡之间没有空行\n----\n%s",
+					sz.w, sz.h, i-1, i, plain)
+			}
+		}
+
+		rightTop := -1
+		for i, line := range lines {
+			if strings.Contains(line, "◷ 最近会话") {
+				rightTop = i
+			}
+		}
+		if rightTop < 0 {
+			continue // 该档整块省略右卡：只由上面的"绝不紧贴"约束保证质感
+		}
+		leftBottom := -1
+		for i := 0; i < rightTop; i++ {
+			if strings.Contains(lines[i], "╰") {
+				leftBottom = i
+			}
+		}
+		if leftBottom < 0 {
+			t.Fatalf("%dx%d: 找不到左卡底边框（右卡标题在第 %d 行）\n----\n%s", sz.w, sz.h, rightTop, plain)
+		}
+		if rightTop-leftBottom != 2 {
+			t.Errorf("%dx%d: 两卡之间应恰好 1 行空行（左卡底 %d 行、右卡顶 %d 行）\n----\n%s",
+				sz.w, sz.h, leftBottom, rightTop, plain)
+		}
+		if strings.TrimSpace(lines[leftBottom+1]) != "" {
+			t.Errorf("%dx%d: 两卡之间那一行不是空白：%q", sz.w, sz.h, lines[leftBottom+1])
+		}
 	}
 }
