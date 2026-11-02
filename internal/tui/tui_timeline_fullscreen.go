@@ -668,3 +668,152 @@ func renderThinkingInline(thinkingContent string, width int) string {
 
 	return sb.String()
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 全屏 timeline 的树行派生（阶段 B1）。
+//
+// 这里只把扁平的 []*TimelineEntry 还原成"父子 + 缩进 + 树形引导符"的行序列，
+// 不触碰渲染/光标/键位（那些留给 B2）。归组规则见函数注释，刻意复用现有
+// (Agent, DelegationID) 坐标：DelegationID 指向前一个 delegate_* 工具条目的 ID，
+// 于是子 Agent 的条目挂到那轮委派工具条目之下，其余条目挂根。
+// ─────────────────────────────────────────────────────────────────────────────
+
+// maxTimelineTreeDepth 是缩进的层级上限：超过后 guides 不再增加祖先段，
+// 但当前层 connector（├─ / └─）照常渲染，避免极深嵌套把整行挤出台阶。
+const maxTimelineTreeDepth = 8
+
+// timelineTreeRow 是 buildTimelineTreeRows 输出的单行：指向源条目的下标、
+// 缩进深度（已 clamp 到 maxTimelineTreeDepth）、树形引导前缀、以及"是否为
+// 其父的最后一个子节点"标志（B2 的光标/折叠会用）。
+type timelineTreeRow struct {
+	entryIndex int    // 在传入 entries 切片中的原始下标（含被跳过的 Thinking 占位）
+	depth      int    // 缩进深度，根为 0，上限 maxTimelineTreeDepth
+	guides     string // 祖先竖线段 + 当前层 ├─/└─ connector；根为空串
+	isLast     bool   // 是否为其父的最后一个子节点（根视为 true）
+}
+
+// buildTimelineTreeRows 按追加顺序把扁平条目派生成 DFS（先父后子）的树行序列。
+//
+// 规则：
+//   - 跳过 Kind==TimelineKindThinking 的条目，它们不产行，也不影响其余行的相对顺序；
+//   - 若 entry.DelegationID 非空，且在它之前存在 Kind==TimelineKindTool 且 ID==DelegationID
+//     的条目，则挂为该条目的子节点；否则（含 ID 不存在、或指向非工具条目）挂根；
+//   - 同一父的子节点保持追加顺序，根节点保持追加顺序；
+//   - guides：祖先层为 "│  "（该祖先不是其父的最后子）或 "   "（是最后子），
+//     当前层为 "├─ "（非最后子）或 "└─ "（最后子），根的前缀为空串；
+//   - depth 超过 maxTimelineTreeDepth 后祖先段封顶，不再增加缩进。
+func buildTimelineTreeRows(entries []*TimelineEntry) []timelineTreeRow {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// 候选节点：过滤 nil 与 Thinking，保留其在 entries 中的原始下标 entryIndex。
+	type treeBuilderNode struct {
+		entryIndex int
+		children   []int // 指向 nodes 切片的下标，按追加顺序
+		isLast     bool  // 是否为其父的最后一个子；根在标记阶段保持默认 false，输出时按根处理
+	}
+	nodes := make([]treeBuilderNode, 0, len(entries))
+	entryToNode := make(map[int]int, len(entries)) // entryIndex -> node 下标
+	for i, e := range entries {
+		if e == nil || e.Kind == TimelineKindThinking {
+			continue
+		}
+		entryToNode[i] = len(nodes)
+		nodes = append(nodes, treeBuilderNode{entryIndex: i})
+	}
+
+	// 为每个节点找父：在 entries 中、位于其之前、Kind==Tool 且 ID==DelegationID 的条目。
+	roots := make([]int, 0)
+	for ni := range nodes {
+		n := &nodes[ni]
+		e := entries[n.entryIndex]
+
+		parent := -1
+		if e != nil && e.DelegationID != "" {
+			for j := 0; j < n.entryIndex; j++ {
+				pe := entries[j]
+				if pe == nil {
+					continue
+				}
+				if pe.Kind == TimelineKindTool && pe.ID == e.DelegationID {
+					// 命中的父条目必非 Thinking（Kind==Tool），故一定在 entryToNode 里。
+					if pj, ok := entryToNode[j]; ok {
+						parent = pj
+					}
+					break
+				}
+			}
+		}
+
+		if parent >= 0 {
+			nodes[parent].children = append(nodes[parent].children, ni)
+		} else {
+			roots = append(roots, ni)
+		}
+	}
+
+	// 标记每个子节点的 isLast：children 顺序即追加顺序（上面 ni 单调递增 append）。
+	for ni := range nodes {
+		ch := nodes[ni].children
+		for ci := range ch {
+			nodes[ch[ci]].isLast = ci == len(ch)-1
+		}
+	}
+
+	// DFS 输出。ancestorPrefix 是已构建的祖先竖线段；depth 为当前节点层级（根=0）。
+	rows := make([]timelineTreeRow, 0, len(nodes))
+	var visit func(ni int, depth int, ancestorPrefix string)
+	visit = func(ni int, depth int, ancestorPrefix string) {
+		n := nodes[ni]
+		isRoot := len(ancestorPrefix) == 0 && depth == 0
+
+		connector := ""
+		switch {
+		case isRoot:
+			connector = ""
+		case n.isLast:
+			connector = "└─ "
+		default:
+			connector = "├─ "
+		}
+
+		displayDepth := depth
+		if displayDepth > maxTimelineTreeDepth {
+			displayDepth = maxTimelineTreeDepth
+		}
+
+		rows = append(rows, timelineTreeRow{
+			entryIndex: n.entryIndex,
+			depth:      displayDepth,
+			guides:     ancestorPrefix + connector,
+			isLast:     isRoot || n.isLast,
+		})
+
+		// 下一层的祖先段前缀 = 当前祖先段 + 当前层延续段。
+		// 当前层延续段：根不画竖线（根无后续兄弟），其余按"当前节点是否最后子"决定 "   " / "│  "。
+		// depth 已达上限时冻结，不再增加缩进。
+		cont := ""
+		if !isRoot {
+			if n.isLast {
+				cont = "   "
+			} else {
+				cont = "│  "
+			}
+		}
+		nextPrefix := ancestorPrefix
+		if depth < maxTimelineTreeDepth {
+			nextPrefix = ancestorPrefix + cont
+		}
+
+		for _, ci := range n.children {
+			visit(ci, depth+1, nextPrefix)
+		}
+	}
+
+	for _, ri := range roots {
+		visit(ri, 0, "")
+	}
+
+	return rows
+}
