@@ -797,29 +797,65 @@ func RenderAgentSeparator(agent string, width int) string {
 	return prefix + name + middle + suffix
 }
 
+// timelineStatusColor 是时间线"状态色"的唯一来源：树列状态图标与全屏瀑布条共用，
+// 避免两份同形色表各自漂移。Running 黄 228、Success 绿 114、Error 红 167、
+// Pending 灰 243、Canceled 灰 245；未知一律回落 243。
+func timelineStatusColor(status ToolStatus) string {
+	switch status {
+	case ToolStatusRunning:
+		return "228"
+	case ToolStatusSuccess:
+		return "114"
+	case ToolStatusError:
+		return "167"
+	case ToolStatusPending:
+		return "243"
+	case ToolStatusCanceled:
+		return "245"
+	default:
+		return "243"
+	}
+}
+
+// timelineKindColor 是"种类色"的唯一来源：LLM 调用 75（与 ◇ 同色）、
+// 上下文事件/思考 141（与 ⊛ / 💭 同色）；工具类返回 ""（用状态色）。
+func timelineKindColor(kind TimelineKind) string {
+	switch kind {
+	case TimelineKindLLMCall:
+		return "75"
+	case TimelineKindContextEvent:
+		return "141"
+	case TimelineKindThinking:
+		return "141"
+	default:
+		return ""
+	}
+}
+
 func timelineNodeForStatus(e *TimelineEntry, status ToolStatus) string {
+	// 既有顺序：先判 Kind（种类节点不看状态），再按 status 取状态图标。
 	if e.Kind == TimelineKindLLMCall {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true).Render("◇")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(timelineKindColor(e.Kind))).Bold(true).Render("◇")
 	}
 	if e.Kind == TimelineKindThinking {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("💭")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(timelineKindColor(e.Kind))).Bold(true).Render("💭")
 	}
 	if e.Kind == TimelineKindContextEvent {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true).Render("⊛")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(timelineKindColor(e.Kind))).Bold(true).Render("⊛")
 	}
 	switch status {
 	case ToolStatusRunning:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true).Render("●")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(timelineStatusColor(status))).Bold(true).Render("●")
 	case ToolStatusSuccess:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Bold(true).Render("●")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(timelineStatusColor(status))).Bold(true).Render("●")
 	case ToolStatusError:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true).Render("●")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(timelineStatusColor(status))).Bold(true).Render("●")
 	case ToolStatusPending:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Bold(true).Render("○")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(timelineStatusColor(status))).Bold(true).Render("○")
 	case ToolStatusCanceled:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true).Render("●")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(timelineStatusColor(status))).Bold(true).Render("●")
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Bold(true).Render("○")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(timelineStatusColor(status))).Bold(true).Render("○")
 	}
 }
 
