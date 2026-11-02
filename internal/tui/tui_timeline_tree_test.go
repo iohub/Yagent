@@ -38,11 +38,11 @@ func assertRows(t *testing.T, rows []timelineTreeRow, want []struct {
 // + repo事件(call1) + delegate_devops(call2,委派自call1) + devops事件(call2)。
 func TestBuildTimelineTreeRows_NestedDelegation(t *testing.T) {
 	entries := []*TimelineEntry{
-		entry("dir", TimelineKindLLMCall, ""),       // 0: 根
-		entry("call1", TimelineKindTool, ""),        // 1: 根（委派工具）
-		entry("r1", TimelineKindLLMCall, "call1"),   // 2: call1 的子（非最后）
-		entry("call2", TimelineKindTool, "call1"),   // 3: call1 的子（最后）
-		entry("d1", TimelineKindLLMCall, "call2"),   // 4: call2 的子
+		entry("dir", TimelineKindLLMCall, ""),     // 0: 根
+		entry("call1", TimelineKindTool, ""),      // 1: 根（委派工具）
+		entry("r1", TimelineKindLLMCall, "call1"), // 2: call1 的子（非最后）
+		entry("call2", TimelineKindTool, "call1"), // 3: call1 的子（最后）
+		entry("d1", TimelineKindLLMCall, "call2"), // 4: call2 的子
 	}
 
 	rows := buildTimelineTreeRows(entries)
@@ -90,8 +90,8 @@ func TestBuildTimelineTreeRows_MissingParentGoesToRoot(t *testing.T) {
 // TestBuildTimelineTreeRows_DelegationPointsToNonTool：DelegationID 命中的条目不是工具 → 挂根。
 func TestBuildTimelineTreeRows_DelegationPointsToNonTool(t *testing.T) {
 	entries := []*TimelineEntry{
-		entry("x", TimelineKindLLMCall, ""),      // ID=x 但 Kind!=Tool，不能当父
-		entry("y", TimelineKindLLMCall, "x"),     // DelegationID 指向非工具条目 → 根
+		entry("x", TimelineKindLLMCall, ""),  // ID=x 但 Kind!=Tool，不能当父
+		entry("y", TimelineKindLLMCall, "x"), // DelegationID 指向非工具条目 → 根
 	}
 
 	rows := buildTimelineTreeRows(entries)
@@ -131,7 +131,7 @@ func TestBuildTimelineTreeRows_SkipThinking(t *testing.T) {
 	// 与 NestedDelegation 同构，但在委派工具与其子之间穿插 Thinking。
 	entries := []*TimelineEntry{
 		entry("dir", TimelineKindLLMCall, ""),
-		entry("th0", TimelineKindThinking, ""),      // 跳过
+		entry("th0", TimelineKindThinking, ""), // 跳过
 		entry("call1", TimelineKindTool, ""),
 		entry("th1", TimelineKindThinking, "call1"), // 跳过，且其 DelegationID 不参与派生
 		entry("r1", TimelineKindLLMCall, "call1"),
@@ -186,11 +186,11 @@ func TestBuildTimelineTreeRows_EmptyAndSingle(t *testing.T) {
 // 根顺序与同父兄弟顺序都等于追加顺序（用 ID 序列精确比对，防止意外重排）。
 func TestBuildTimelineTreeRows_RootAndSiblingOrderMatchesAppend(t *testing.T) {
 	entries := []*TimelineEntry{
-		entry("rootA", TimelineKindTool, ""),  // 0 根
+		entry("rootA", TimelineKindTool, ""),        // 0 根
 		entry("kid1", TimelineKindLLMCall, "rootA"), // 1 rootA 子
-		entry("rootB", TimelineKindTool, ""),  // 2 根
+		entry("rootB", TimelineKindTool, ""),        // 2 根
 		entry("kid2", TimelineKindLLMCall, "rootA"), // 3 rootA 子（追加在 rootB 之后，仍归 rootA）
-		entry("rootC", TimelineKindTool, ""),  // 4 根
+		entry("rootC", TimelineKindTool, ""),        // 4 根
 	}
 
 	rows := buildTimelineTreeRows(entries)
@@ -226,10 +226,10 @@ func TestBuildTimelineTreeRows_DepthCappedAtMax(t *testing.T) {
 	for d := 1; d <= maxTimelineTreeDepth+2; d++ {
 		prevTool := "t" + string(rune('0'+(d-1)))
 		// 子事件挂到上一个 tool 下
-		entries = append(entries, entry("c"+itoa(d), TimelineKindLLMCall, prevTool))
+		entries = append(entries, entry("c"+treeItoa(d), TimelineKindLLMCall, prevTool))
 		// 再放一个 tool 作为该子事件的"孙"，但子事件非 Tool 不能当父，
 		// 所以这个新 tool 必须挂在它自己之前最近的 Tool。这里改用 tool 链：
-		entries = append(entries, entry("t"+itoa(d), TimelineKindTool, "c"+itoa(d)))
+		entries = append(entries, entry("t"+treeItoa(d), TimelineKindTool, "c"+treeItoa(d)))
 	}
 
 	rows := buildTimelineTreeRows(entries)
@@ -243,8 +243,9 @@ func TestBuildTimelineTreeRows_DepthCappedAtMax(t *testing.T) {
 	}
 }
 
-// itoa 是小整数转字符串，避免额外 import 噪音（测试内仅个位数）。
-func itoa(n int) string {
+// treeItoa 是小整数转字符串（仅本测试内个位数使用）。
+// 改名避开 tui_body_test.go 里同包既有的 itoa，防止重复声明导致测试包无法编译。
+func treeItoa(n int) string {
 	if n == 0 {
 		return "0"
 	}

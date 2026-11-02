@@ -44,6 +44,7 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.timelineFullscreenCursor = 0
 			m.timelineFullscreenFocus = "list"
 			m.timelineDetailOffsets = nil
+			m.timelineTreeRows = nil
 			m.timelineDetailVP = nil
 			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
@@ -56,6 +57,7 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.timelineFullscreenCursor = 0
 			m.timelineFullscreenFocus = "list"
 			m.timelineDetailOffsets = nil
+			m.timelineTreeRows = nil
 			m.timelineDetailVP = nil
 			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
@@ -68,6 +70,7 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 			m.timelineFullscreenCursor = 0
 			m.timelineFullscreenFocus = "list"
 			m.timelineDetailOffsets = nil
+			m.timelineTreeRows = nil
 			m.timelineDetailVP = nil
 			m.timelineCacheKey = ""
 			m.invalidateFooterCache()
@@ -119,7 +122,7 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		// ── 跳转首/尾（根据焦点决定）──
 		case "g":
 			if m.timelineFullscreenFocus == "list" {
-				if len(m.timelineEntries) > 0 {
+				if len(m.timelineTreeRows) > 0 {
 					m.timelineFullscreenCursor = 0
 					syncDetailToCursor(m)
 				}
@@ -132,8 +135,8 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 
 		case "G":
 			if m.timelineFullscreenFocus == "list" {
-				if len(m.timelineEntries) > 0 {
-					m.timelineFullscreenCursor = len(m.timelineEntries) - 1
+				if len(m.timelineTreeRows) > 0 {
+					m.timelineFullscreenCursor = len(m.timelineTreeRows) - 1
 					syncDetailToCursor(m)
 				}
 			} else {
@@ -214,6 +217,8 @@ func timelineFullscreenUpdate(msg tea.Msg, m *model) (*model, tea.Cmd) {
 		if m.timelineDetailVP != nil {
 			// 尺寸只有一个口径：宽与 initTimelineDetailViewport 同源（calcRightPaneWidth），
 			// 高取 computeTimelineLayout 的 ContentH。此处不许再出现 0.35 / 边框手算。
+			// 树行随条目集变化才需重建；resize 不改条目，但统一在此夹光标、保证口径一致。
+			rebuildTimelineTreeRows(m)
 			layout := computeTimelineLayout(m.termWidth, m.termHeight)
 			m.timelineDetailVP.SetWidth(calcRightPaneWidth(m))
 			m.timelineDetailVP.SetHeight(layout.ContentH)

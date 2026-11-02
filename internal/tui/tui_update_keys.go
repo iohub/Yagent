@@ -808,8 +808,9 @@ func (m *model) toggleTimelineFullscreen() {
 	} else {
 		m.timelineFullscreenMode = true
 		m.timelineFullscreenFocus = "list"
-		if len(m.timelineEntries) > 0 {
-			m.timelineFullscreenCursor = len(m.timelineEntries) - 1
+		rebuildTimelineTreeRows(m)
+		if len(m.timelineTreeRows) > 0 {
+			m.timelineFullscreenCursor = len(m.timelineTreeRows) - 1
 		} else {
 			m.timelineFullscreenCursor = 0
 		}
