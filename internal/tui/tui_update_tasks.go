@@ -85,6 +85,11 @@ func stringFromEventMap(m map[string]interface{}, key string) string {
 func (m *model) addTimelineEntry(e *TimelineEntry) {
 	m.timelineEntries = append(m.timelineEntries, e)
 	m.timelineCacheKey = ""
+	// 全屏期间条目集变了，必须重派生可见树行（光标夹区间）；非全屏不付这个 O(n) 代价，
+	// 打开全屏时 toggleTimelineFullscreen 会统一 rebuild。绝不在每帧 View() 里重建。
+	if m.timelineFullscreenMode {
+		rebuildTimelineTreeRows(m)
+	}
 }
 
 // timelineCoords 把事件的归属抄进条目：谁产出的、属于哪一轮委派。

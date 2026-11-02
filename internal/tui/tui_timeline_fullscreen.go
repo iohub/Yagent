@@ -186,14 +186,14 @@ func renderTimelineFullscreenTitleBar(m *model, width int) string {
 	return titleStyle.Render(text)
 }
 
-// 采用窗口渲染（非 viewport，因为条目单行）。
+// 采用窗口渲染（非 viewport，因为条目单行）。窗口按"可见树行"取，光标是树行下标。
 func renderTimelineFullscreenList(m *model, width, height int) string {
-	if len(m.timelineEntries) == 0 {
+	rows := m.timelineTreeRows
+	if len(rows) == 0 {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  (no entries)")
 	}
 
-	entries := m.timelineEntries
-	n := len(entries)
+	n := len(rows)
 
 	half := height / 2
 	start := m.timelineFullscreenCursor - half
@@ -220,7 +220,7 @@ func renderTimelineFullscreenList(m *model, width, height int) string {
 
 	for i := start; i < end; i++ {
 		isCursor := i == m.timelineFullscreenCursor
-		line := renderTimelineFullscreenListItem(entries[i], width, isCursor)
+		line := renderTimelineFullscreenTreeListItem(m, rows[i], width, isCursor)
 		lines = append(lines, line)
 	}
 
@@ -231,14 +231,28 @@ func renderTimelineFullscreenList(m *model, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-// 行样式与非全屏一致（dot+name+duration），另加光标指示与选中高亮。
-func renderTimelineFullscreenListItem(entry *TimelineEntry, width int, isCursor bool) string {
-	// 宽度预留 -2 用于边框内边距
+// renderTimelineFullscreenTreeListItem 渲染一个树行：暗色 guides 前缀 + 源条目行。
+// 整行显示宽必须 <= 传入 width：用 lipgloss.Width 扣除 guides 的可视宽（不许用 len），
+// 余下宽度交给 renderTimelineRowWithCursor。entryIndex 越界时退化为占位行，绝不 panic。
+func renderTimelineFullscreenTreeListItem(m *model, row timelineTreeRow, width int, isCursor bool) string {
 	contentWidth := width - 2
 	if contentWidth < 20 {
 		contentWidth = 20
 	}
-	return renderTimelineRowWithCursor(entry, contentWidth, nil, isCursor)
+
+	if row.entryIndex < 0 || row.entryIndex >= len(m.timelineEntries) {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(row.guides + " (missing entry)")
+	}
+	entry := m.timelineEntries[row.entryIndex]
+
+	guidesW := lipgloss.Width(row.guides)
+	guides := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(row.guides)
+	innerWidth := contentWidth - guidesW
+	if innerWidth < 8 {
+		innerWidth = 8
+	}
+	body := renderTimelineRowWithCursor(entry, innerWidth, nil, isCursor)
+	return guides + body
 }
 
 func renderTimelineFullscreenStatusBar(m *model, width int) string {
@@ -247,21 +261,26 @@ func renderTimelineFullscreenStatusBar(m *model, width int) string {
 		Foreground(lipgloss.Color("250")).
 		Width(width - 2)
 
-	if len(m.timelineEntries) == 0 {
+	rows := m.timelineTreeRows
+	if len(rows) == 0 {
 		text := "  (no entries) "
 		return statusStyle.Render(text)
 	}
 
 	cursor := m.timelineFullscreenCursor
-	if cursor >= len(m.timelineEntries) {
-		cursor = len(m.timelineEntries) - 1
-	}
 	if cursor < 0 {
 		cursor = 0
 	}
-	entry := m.timelineEntries[cursor]
+	if cursor >= len(rows) {
+		cursor = len(rows) - 1
+	}
+	entryIndex := rows[cursor].entryIndex
+	if entryIndex < 0 || entryIndex >= len(m.timelineEntries) {
+		return statusStyle.Render("  (entry unavailable) ")
+	}
+	entry := m.timelineEntries[entryIndex]
 
-	posText := fmt.Sprintf(" %d/%d ", cursor+1, len(m.timelineEntries))
+	posText := fmt.Sprintf(" %d/%d ", cursor+1, len(rows))
 	kindLabel := timelineKindLabel(entry.Kind)
 	statusText := statusTextFor(entry)
 
@@ -332,7 +351,7 @@ func statusTextFor(entry *TimelineEntry) string {
 }
 
 func moveTimelineCursor(m *model, delta int) {
-	n := len(m.timelineEntries)
+	n := len(m.timelineTreeRows)
 	if n == 0 {
 		return
 	}
@@ -364,12 +383,32 @@ func initTimelineDetailViewport(m *model) {
 	syncDetailToCursor(m)
 }
 
+// rebuildTimelineTreeRows 重新派生全屏可见树行，并把光标夹到合法区间。
+//
+// 这是 buildTimelineTreeRows 唯一的生产调用点：只在"打开全屏 / resize / 全屏期间追加条目"
+// 这三处触发，绝不在每帧 View() 里跑（派生是 O(n)、且会重排光标）。空树时光标置 0。
+func rebuildTimelineTreeRows(m *model) {
+	m.timelineTreeRows = buildTimelineTreeRows(m.timelineEntries)
+	n := len(m.timelineTreeRows)
+	if n == 0 {
+		m.timelineFullscreenCursor = 0
+		return
+	}
+	if m.timelineFullscreenCursor < 0 {
+		m.timelineFullscreenCursor = 0
+	}
+	if m.timelineFullscreenCursor >= n {
+		m.timelineFullscreenCursor = n - 1
+	}
+}
+
 func (m *model) ExitTimelineFullscreen() {
 	m.timelineFullscreenMode = false
 	m.timelineFullscreenCursor = 0
 	m.timelineFullscreenFocus = "list"
 	m.timelineDetailOffsets = nil
 	m.timelineDetailVP = nil
+	m.timelineTreeRows = nil
 }
 
 // calcRightPaneWidth 计算右侧详情面板的 viewport 内容宽度（减去 lipgloss ThickBorder 左右各 2 字符）。
@@ -604,14 +643,23 @@ func syncDetailToCursor(m *model) {
 	if len(m.timelineDetailOffsets) == 0 {
 		return
 	}
+	// 光标是"可见树行下标"，须经 rows[cursor].entryIndex 映射回扁平条目下标，
+	// 再到该条目的详情起始 offset。空树 / offsets 缺失时安全返回，绝不越界 panic。
+	if len(m.timelineTreeRows) == 0 {
+		return
+	}
 	cursor := m.timelineFullscreenCursor
 	if cursor < 0 {
 		cursor = 0
 	}
-	if cursor >= len(m.timelineDetailOffsets) {
-		cursor = len(m.timelineDetailOffsets) - 1
+	if cursor >= len(m.timelineTreeRows) {
+		cursor = len(m.timelineTreeRows) - 1
 	}
-	targetOffset := m.timelineDetailOffsets[cursor]
+	entryIndex := m.timelineTreeRows[cursor].entryIndex
+	if entryIndex < 0 || entryIndex >= len(m.timelineDetailOffsets) {
+		return
+	}
+	targetOffset := m.timelineDetailOffsets[entryIndex]
 	m.timelineDetailVP.SetYOffset(targetOffset)
 }
 

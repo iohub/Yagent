@@ -462,6 +462,9 @@ type model struct {
 	timelineDetailVP         *viewport.Model
 	timelineFullscreenFocus  string
 	timelineDetailOffsets    []int
+	// timelineTreeRows 是全屏期间 m.timelineEntries 派生的树行序列（buildTimelineTreeRows）。
+	// timelineFullscreenCursor 是"可见树行下标"而非扁平条目下标；渲染/光标/详情定位都走它。
+	timelineTreeRows []timelineTreeRow
 
 	thinklinkMode         bool
 	thinklinkEntries      []ThinklinkEntry
