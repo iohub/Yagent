@@ -68,6 +68,105 @@ func (m *model) flushStreamBuffers(maxAge time.Duration) {
 	}
 }
 
+// finalizeStreamingEntryForTool 收尾 toolName 这个工具**自己**发出去的那段流式条目。
+//
+// design / deepthinking 的 StreamHandler 只发 ai_chunk（见 internal/app/app.go 的
+// globalCtx 装配）：既没有 ai_stream_start，也没有对应 From 的 ai_stream_end /
+// ai_response —— 父 Agent 那两条用的是父 Agent 名做槽键，落不到 "design" 的条目上。
+// 于是该条目的 streaming 恒为 true：renderSingleEntry 每帧走原文分支（永远拿不到
+// markdown），第二次同名调用的 chunk 还会追加进第一次那条。工具的调用结束是这段流
+// 唯一正确的终点，所以在这里补定稿。
+//
+// 收尾对任意工具名与同名来源都成立（thinking / micro_agent 这类"工具内流"顺带被正确
+// 定稿）；要不要渲染 markdown 由 rendersMarkdownBody 单独决定。找不到对应流条目时
+// （绝大多数工具根本不发流）直接返回，绝不凭空造条目。
+func (m *model) finalizeStreamingEntryForTool(toolName string) {
+	if toolName == "" {
+		return
+	}
+
+	// 要收尾的条目有两路：① 该工具名下的活动槽位 —— 尾部缓冲只能通过槽位找回它的条目；
+	// ② 按来源名匹配、仍在流式中的条目 —— 槽位已被别的事件摘掉、条目却还挂着 streaming
+	// 的形状（取消或异常打断流时正是这个样子）。
+	targets := make(map[int]struct{})
+	for key, idx := range m.aiStreamActiveEntries {
+		if streamSlotBelongsToTool(key, toolName) && idx >= 0 && idx < len(m.logEntries) {
+			targets[idx] = struct{}{}
+		}
+	}
+	for i := range m.logEntries {
+		le := &m.logEntries[i]
+		if le.eventType == "ai_stream" && le.streaming && (le.from == toolName || le.agentName == toolName) {
+			targets[i] = struct{}{}
+		}
+	}
+	if len(targets) == 0 {
+		return
+	}
+
+	// 尾部不丢：先把缓冲里没到节流阈值的最后几个 chunk 落地，再置定稿 —— 顺序反过来，
+	// renderStreamEntry 读到的 streamContent 就少了那截尾巴。语义与 flushStreamBuffers
+	// 相同，区别是不等 maxAge：流已经结束，这截文字必须立刻进正文。
+	for key, buf := range m.aiChunkBuffers {
+		if buf == nil || buf.content == "" || !streamSlotBelongsToTool(key, toolName) {
+			continue
+		}
+		idx, ok := m.aiStreamActiveEntries[key]
+		if !ok {
+			continue
+		}
+		if _, want := targets[idx]; !want || idx < 0 || idx >= len(m.logEntries) {
+			continue
+		}
+		le := &m.logEntries[idx]
+		le.streamContent += buf.content
+		le.content = le.streamContent
+		buf.content = ""
+		buf.count = 0
+	}
+
+	for idx := range targets {
+		if idx < 0 || idx >= len(m.logEntries) {
+			continue
+		}
+		le := &m.logEntries[idx]
+		le.streaming = false
+		le.finalized = true
+		le.clearRenderCache()
+		m.markEntryDirty(idx)
+	}
+
+	// 槽位必须清空：否则下一次同名调用的 chunk 会命中旧下标，把内容追加进上一条条目。
+	for key := range m.aiStreamActiveEntries {
+		if streamSlotBelongsToTool(key, toolName) {
+			delete(m.aiStreamActiveEntries, key)
+		}
+	}
+	for key := range m.aiStreamCompletedEntries {
+		if streamSlotBelongsToTool(key, toolName) {
+			delete(m.aiStreamCompletedEntries, key)
+		}
+	}
+	for key := range m.aiChunkBuffers {
+		if streamSlotBelongsToTool(key, toolName) {
+			delete(m.aiChunkBuffers, key)
+		}
+	}
+	m.viewportDirty = true
+}
+
+// streamSlotBelongsToTool 判断 streamSlotKey 造出的键是否属于某个工具。
+// 键要么是纯来源名（无委派坐标 —— design / deepthinking 的流就是这个形状，
+// toMessageEvent 不搬 DelegationID），要么是"来源名#坐标"（并行委派分槽）。
+// '#' 只可能出现在我们自己拼的键里，Agent 名与工具名都不含它，所以前缀匹配
+// 不会把 "read_file" 误认成某个以它开头的来源。
+func streamSlotBelongsToTool(slotKey, toolName string) bool {
+	if slotKey == toolName {
+		return true
+	}
+	return strings.HasPrefix(slotKey, toolName+"#")
+}
+
 // opensDialogEvent 报告该事件是否会推送对话框（user-help 求助 / 危险操作确认）。
 // 只有它们需要在已有对话框时被忽略，避免叠出第二层弹窗。
 func opensDialogEvent(eventType string) bool {
@@ -857,6 +956,13 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.event.Type == "tool_call_result" {
+		toolName := getToolNameFromEventContent(msg.event.Content)
+		// 先收尾该工具自己发出去的那段流（design / deepthinking 只有 ai_chunk，
+		// 没有对应 From 的 ai_stream_end / ai_response 会替它们定稿）。放在三条分派
+		// 路径之前而不是每个 return 前各抄一遍：按 callID 配对、按名字配对、
+		// 以及都没配对上落到下面的通用条目，三条都从这里过。
+		m.finalizeStreamingEntryForTool(toolName)
+
 		callID := getToolCallIDFromEventContent(msg.event.Content)
 		if callID != "" {
 			if toolEntry, ok := m.toolCallEntries[callID]; ok {
@@ -920,7 +1026,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				return m, listenForEvents(m.eventCh)
 			}
 		}
-		toolName := getToolNameFromEventContent(msg.event.Content)
 		if toolName != "" {
 			if matchedID, matchedEntry := findRunningEntryByName(m.toolCallEntries, toolName); matchedEntry != nil {
 				resultContent := getResultFromEventContent(msg.event.Content)
