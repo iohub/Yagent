@@ -25,7 +25,7 @@ func TestBoardWriterPacksIndexForSubDelegation(t *testing.T) {
 	d := boardDirector(t)
 
 	// 板上什么都没有：任务原样返回，不注入空块。
-	first, unresolved := d.PackDelegateTask("去查登录页的报错", map[string]interface{}{})
+	first, unresolved := d.PackDelegateTask("去查登录页的报错", map[string]interface{}{}, "repo")
 	if first != "去查登录页的报错" {
 		t.Errorf("packed = %q, want the task unchanged", first)
 	}
@@ -47,7 +47,7 @@ func TestBoardWriterPacksIndexForSubDelegation(t *testing.T) {
 		t.Fatal("WriteDelegateNote returned an empty ref")
 	}
 
-	packed, _ := d.PackDelegateTask("再查一次登录页", map[string]interface{}{})
+	packed, _ := d.PackDelegateTask("再查一次登录页", map[string]interface{}{}, "repo")
 	if !strings.HasPrefix(packed, blackboard.IndexHeaderPrefix) {
 		t.Errorf("sub-delegation must carry the board index, got:\n%s", packed)
 	}

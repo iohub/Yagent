@@ -158,7 +158,7 @@ func (a *DirectorAgent) delegateTo(ctx context.Context, target string, params ma
 		return nil, fmt.Errorf("sub-agent %q is not wired", target)
 	}
 
-	packedTask, unresolved := a.packDelegateTask(task, params)
+	packedTask, unresolved := a.packDelegateTask(task, params, target)
 	ctx = blackboard.WithBoardID(ctx, a.boardID)
 	if rolloutWriter := a.createRolloutWriter(ctx, target, task); rolloutWriter != nil {
 		defer rolloutWriter.Close()

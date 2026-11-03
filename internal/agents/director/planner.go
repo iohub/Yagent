@@ -35,17 +35,11 @@ type ToolRunner interface {
 }
 
 // PromptInput 是门面层构造本轮 system prompt 时拿到的判据（注入什么由门面层决定）。
+// 曾经这里有 FirstConversation / ForceProjectContext 两个字段，唯一消费者是门面层"要不要
+// 注入工作区根知识文件"的守卫；那条注入已整体删除，所以两个字段一并删除（留下无消费者的
+// 字段 = 下一个改的人以为它还有用）。
 type PromptInput struct {
 	Input string
-	// FirstConversation 表示「本轮开始时 memory 中还没有任何 assistant/tool 消息」＝新任务的首轮：
-	// 项目上下文只在这一轮注入，同一任务的追问不再重复注入。判定的取值必须快照在把本轮用户输入
-	// 写进 memory **之前**（见 planner_run.go 里 firstConversation 的注释）。
-	// 注意 HTTP 路径会在提交任务前先写一条 human 消息（internal/http/websocket.go:169），
-	// 所以判据不能是"memory 为空" —— 那样 WebUI 用户永远拿不到项目上下文（见 startsFirstTurn）。
-	FirstConversation bool
-	// ForceProjectContext 表示这一次必须强制注入项目上下文：从 rollout 恢复的 memory 里没有 system
-	// 消息，只按 FirstConversation 判定会让续跑首轮漏掉它（由 PlanInput.Resumed 置位，只消费一次）。
-	ForceProjectContext bool
 }
 
 type PromptBuilder func(ctx context.Context, in PromptInput) (string, error)
@@ -129,9 +123,13 @@ type Resumption struct {
 }
 
 type PlanInput struct {
-	Input   string
-	Mem     *memory.ConversationMemory
-	TaskID  string
+	Input  string
+	Mem    *memory.ConversationMemory
+	TaskID string
+	// Resumed 由门面层（TUI/app 的续跑管线）置位。**本包现在不读它**：它唯一的消费者是
+	// PromptInput.ForceProjectContext（续跑首轮强制重注入工作区根知识文件），那条注入已删除。
+	// 留着是为了不把旗子一路拔进 app/tui/http 的续跑装配（超出本次改动范围）；
+	// 要给"续跑"再加行为，从这里接，别另起一面旗。
 	Resumed bool
 	// PendingResumption 在进 LLM 循环**之前**处理，所以恢复本身不花 token、且确定。
 	PendingResumption *Resumption

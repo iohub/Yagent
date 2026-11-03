@@ -580,44 +580,12 @@ func TestPlannerRunAbortedPersistsReason(t *testing.T) {
 	}
 }
 
-// TestPlannerRunResumedForcesProjectContext 续跑标记传播：PlanInput.Resumed 必须以
-// PromptInput.ForceProjectContext 到达 PromptBuilder——恢复的 memory 无 system 消息，
-// 仅按 FirstConversation 判定会让续跑首轮漏掉项目上下文注入（B2）。
-func TestPlannerRunResumedForcesProjectContext(t *testing.T) {
-	captured := make(chan PromptInput, 1)
-	eng := &fakePlannerLLM{steps: []fakeLLMStep{{resp: textResp("OK")}}}
-	mem := memory.NewConversationMemory(10)
-	// 「非首轮」的形态是**已经有 AI 回应**（assistant/tool），不是"memory 非空"：
-	// 单条 human 恰是新任务首轮（http 路径在提交前预写，websocket.go:169）。
-	mem.AddHumanMessage("EARLIER")
-	mem.AddAssistantMessage("EARLIER_REPLY", nil)
-
-	p := NewPlanner(PlannerConfig{
-		LLM:        eng,
-		Tools:      &fakePlannerTools{},
-		Prompts:    func(_ context.Context, in PromptInput) (string, error) { captured <- in; return "SYSTEM_PROMPT", nil },
-		MaxSteps:   5,
-		LLMTimeout: 30 * time.Second,
-	}, newState(false))
-
-	if _, err := p.Run(context.Background(), PlanInput{Input: "RESUMED_TASK", Mem: mem, Resumed: true}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	in := <-captured
-	if in.FirstConversation {
-		t.Error("FirstConversation = true 于已有 AI 回应的追问, want false")
-	}
-	if !in.ForceProjectContext {
-		t.Error("ForceProjectContext = false, want true (PlanInput.Resumed must propagate)")
-	}
-}
-
-// TestPlannerRunFirstConversationSnapshottedBeforeHumanWrite 项目上下文注入的唯一判据：
-// FirstConversation 必须是「本轮开始时 memory 里还没有任何 AI 回应」，所以判定要快照在把本轮
-// 用户输入写进 memory **之前**（它问的是本轮开始时的状态）。门面层的
-// `in.FirstConversation || in.ForceProjectContext` 守卫（director.go:932）据此决定注入，
-// 判错一轮新任务就永远拿不到 YAGENT.md/CLAUDE.md/AGENTS.md。
-func TestPlannerRunFirstConversationSnapshottedBeforeHumanWrite(t *testing.T) {
+// TestPlannerRunSeedsHumanInputBeforeRebuildingMessages 本轮输入的落库与它的顺序：
+// Run 必须先 seedHumanInput、再构造 PromptInput 并从 memory 重建 messages，于是同一条输入
+// 只经 memory 进入模型视野一次；追问轮的输入同样要落库（两次 Run → 两条 human）。
+// 变异闸门：删掉 planner_run.go 的 seedHumanInput 调用 → 两轮之后的 memory 断言立刻红；
+// 把它挪到"从 memory 重建 messages"之后 → userContentsAt 那条红（模型看不到本轮输入）。
+func TestPlannerRunSeedsHumanInputBeforeRebuildingMessages(t *testing.T) {
 	var captured []PromptInput
 	// agent_exit 收尾：每轮只调一次 LLM，不触发强制委派重试，也不碰真实 provider。
 	newPlanner := func() (*Planner, *fakePlannerLLM) {
@@ -645,26 +613,24 @@ func TestPlannerRunFirstConversationSnapshottedBeforeHumanWrite(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("PromptInput 捕获 = %d 次, want 1", len(captured))
 	}
-	if !captured[0].FirstConversation {
-		t.Error("FirstConversation = false 于空 memory 的首轮, want true（顺序陷阱：写入之后才判定 → 项目上下文永不注入）")
+	// PromptInput 只剩 Input：它是门面层构造 system prompt 时唯一能问到的本轮事实。
+	if captured[0].Input != "FIRST_TURN" {
+		t.Errorf("PromptInput.Input = %q, want FIRST_TURN", captured[0].Input)
 	}
-	if captured[0].ForceProjectContext {
-		t.Error("ForceProjectContext = true 而 PlanInput.Resumed 为假, want false")
-	}
-	// 取快照不许顺手改掉写入本身：本轮输入仍要在 message 里送到模型。
+	// 落库不许顺手改掉送模型的 messages：本轮输入仍要在 message 里送到模型。
 	if uc := userContentsAt(t, eng.requests, 1); len(uc) != 1 || uc[0] != "FIRST_TURN" {
 		t.Errorf("request #1 user messages = %v, want only FIRST_TURN", uc)
 	}
 
-	// 次轮（同一任务追问）：本轮开始时已经有 AI 回应 → 不再重复注入。
+	// 次轮（同一任务追问）：输入照样要落库，上一轮的输入不许丢。
 	if _, err := p.Run(context.Background(), PlanInput{Input: "FOLLOW_UP", Mem: mem}); err != nil {
 		t.Fatalf("Run() follow-up error = %v", err)
 	}
 	if len(captured) != 2 {
 		t.Fatalf("PromptInput 捕获 = %d 次, want 2", len(captured))
 	}
-	if captured[1].FirstConversation {
-		t.Error("FirstConversation = true 于追问轮（memory 非空）, want false")
+	if captured[1].Input != "FOLLOW_UP" {
+		t.Errorf("PromptInput[1].Input = %q, want FOLLOW_UP", captured[1].Input)
 	}
 	var humans []string
 	for _, m := range mem.GetMessages() {
@@ -676,24 +642,27 @@ func TestPlannerRunFirstConversationSnapshottedBeforeHumanWrite(t *testing.T) {
 		t.Errorf("memory 里的 human 消息 = %v, want [FIRST_TURN FOLLOW_UP]（两轮输入都要落库）", humans)
 	}
 
-	// 没有 memory 时（老调用方，PlanInput.Mem == nil）恒判为首轮：注入判据不该因为没带
-	// memory 就失效。
+	// 没有 memory 时（老调用方，PlanInput.Mem == nil）不许 panic，本轮输入仍要单独送到模型。
 	captured = captured[:0]
-	p2, _ := newPlanner()
+	p2, eng2 := newPlanner()
 	if _, err := p2.Run(context.Background(), PlanInput{Input: "NO_MEMORY"}); err != nil {
 		t.Fatalf("Run() with nil Mem error = %v", err)
 	}
-	if len(captured) != 1 || !captured[0].FirstConversation {
-		t.Errorf("nil Mem 时 captured = %+v, want FirstConversation true", captured)
+	if len(captured) != 1 || captured[0].Input != "NO_MEMORY" {
+		t.Errorf("nil Mem 时 captured = %+v, want 一条 Input=NO_MEMORY", captured)
+	}
+	if uc := userContentsAt(t, eng2.requests, 1); len(uc) != 1 || uc[0] != "NO_MEMORY" {
+		t.Errorf("nil Mem 时 request #1 user messages = %v, want only NO_MEMORY", uc)
 	}
 }
 
-// TestPlannerRunFirstTurnWithPrewrittenHumanInput 钉住第二处断点：HTTP/WebUI 路径在提交任务
+// TestPlannerRunDoesNotDuplicatePrewrittenHumanInput 钉住 http/WebUI 那条入口：它在提交任务
 // **之前**就把用户消息写进 memory 并立即落盘（internal/http/websocket.go:169，为了让断线/崩溃
-// 可恢复，那个预写不许动），于是「memory 为空」这条判据在那条入口上恒为 false，WebUI 用户永远
-// 拿不到项目上下文。判据改成「本轮开始时还没有任何 AI 回应」之后，预写一条 human 仍是首轮 ——
-// 旧的 len(GetMessages()) == 0 判定下本用例的首个断言必红。
-func TestPlannerRunFirstTurnWithPrewrittenHumanInput(t *testing.T) {
+// 能从这份记忆恢复，那个预写不许动），于是 Run 里的 seedHumanInput 必须去重 —— 同一条输入落两遍
+// 的表现是模型看到重复提问，而压缩预算按两条算。
+// 变异闸门：去掉 seedHumanInput 的去重条件（无条件 AddHumanMessage）→ 第一个断言红；
+// 反过来把它整个删掉 → 追问轮那条断言红（本轮输入没落库）。
+func TestPlannerRunDoesNotDuplicatePrewrittenHumanInput(t *testing.T) {
 	var captured []PromptInput
 	eng := &fakePlannerLLM{steps: []fakeLLMStep{
 		{resp: toolCallResp("call-exit", "agent_exit", `{"reason":"done"}`)},
@@ -713,38 +682,40 @@ func TestPlannerRunFirstTurnWithPrewrittenHumanInput(t *testing.T) {
 	mem := memory.NewConversationMemory(300)
 	mem.AddHumanMessage("HTTP_TASK")
 
+	humansOf := func() []string {
+		var out []string
+		for _, m := range mem.GetMessages() {
+			if m.Type == memory.MessageTypeHuman {
+				out = append(out, m.Content)
+			}
+		}
+		return out
+	}
+
 	if _, err := p.Run(context.Background(), PlanInput{Input: "HTTP_TASK", Mem: mem}); err != nil {
 		t.Fatalf("Run() http first turn error = %v", err)
 	}
 	if len(captured) != 1 {
 		t.Fatalf("PromptInput 捕获 = %d 次, want 1", len(captured))
 	}
-	if !captured[0].FirstConversation {
-		t.Error("FirstConversation = false 于 http 预写 human 的新任务首轮, want true（WebUI 用户拿不到项目上下文）")
+	// 预写不许顶掉去重：同一条输入在 memory 里只能出现一遍。
+	if got := humansOf(); len(got) != 1 || got[0] != "HTTP_TASK" {
+		t.Errorf("memory 里的 human 消息 = %v, want [HTTP_TASK]（同一条输入不许落两遍）", got)
 	}
-	if captured[0].ForceProjectContext {
-		t.Error("ForceProjectContext = true 而 PlanInput.Resumed 为假, want false")
-	}
-	// 预写不许顶掉 seedHumanInput 的去重：同一条输入在 memory 里只能出现一遍。
-	var humans []string
-	for _, m := range mem.GetMessages() {
-		if m.Type == memory.MessageTypeHuman {
-			humans = append(humans, m.Content)
-		}
-	}
-	if len(humans) != 1 || humans[0] != "HTTP_TASK" {
-		t.Errorf("memory 里的 human 消息 = %v, want [HTTP_TASK]（同一条输入不许落两遍）", humans)
+	// 去重不等于丢掉它：本轮输入仍必须出现在送给模型的 messages 里，且只出现一次。
+	if uc := userContentsAt(t, eng.requests, 1); len(uc) != 1 || uc[0] != "HTTP_TASK" {
+		t.Errorf("request #1 user messages = %v, want [HTTP_TASK]", uc)
 	}
 
-	// 同一任务的追问：首轮已经把 assistant/tool 写进 memory → 不再重复注入。
+	// 同一任务的追问：本轮末尾不是同一条 human 了，必须照常落库。
 	if _, err := p.Run(context.Background(), PlanInput{Input: "HTTP_FOLLOW_UP", Mem: mem}); err != nil {
 		t.Fatalf("Run() http follow-up error = %v", err)
 	}
 	if len(captured) != 2 {
 		t.Fatalf("PromptInput 捕获 = %d 次, want 2", len(captured))
 	}
-	if captured[1].FirstConversation {
-		t.Error("FirstConversation = true 于 http 任务的追问轮, want false")
+	if got := humansOf(); len(got) != 2 || got[0] != "HTTP_TASK" || got[1] != "HTTP_FOLLOW_UP" {
+		t.Errorf("memory 里的 human 消息 = %v, want [HTTP_TASK HTTP_FOLLOW_UP]", got)
 	}
 }
 

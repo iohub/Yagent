@@ -191,7 +191,7 @@ func TestPackDelegateTask_CarriesModuleDocs(t *testing.T) {
 	writeModuleDocTree(t, workDir, map[string]int{"internal/compression": 10})
 	d := newTestDirectorAgent(t, workDir)
 
-	packed, _ := d.PackDelegateTask("把 internal/compression/truncate.go 的判定改成严格大于", map[string]interface{}{})
+	packed, _ := d.PackDelegateTask("把 internal/compression/truncate.go 的判定改成严格大于", map[string]interface{}{}, "coding")
 	if !strings.Contains(packed, moduleDocsTitle) ||
 		!strings.Contains(packed, "### internal/compression/AGENTS.md") {
 		t.Fatalf("delegate task must carry the module doc, got:\n%s", packed)
@@ -202,7 +202,34 @@ func TestPackDelegateTask_CarriesModuleDocs(t *testing.T) {
 		t.Errorf("original task must stay last:\n%s", packed)
 	}
 	// 变异闸门：删掉 packDelegateTask 里那一行调用，这条立刻红。
-	if bare, _ := d.PackDelegateTask("随便问一句没有路径的话", map[string]interface{}{}); bare != "随便问一句没有路径的话" {
+	if bare, _ := d.PackDelegateTask("随便问一句没有路径的话", map[string]interface{}{}, "coding"); bare != "随便问一句没有路径的话" {
 		t.Errorf("task without any path-shaped token must stay unchanged, got:\n%s", bare)
+	}
+}
+
+// TestPackDelegateTask_BrowserTargetCarriesNoModuleDocs 钉住"哪个委派目标不收局部文档"的判据：
+// browser 驱动的是真实 Chrome，仓库里的写码约束它既不能执行、也不该为它烧 token。
+// 变异闸门：删掉 packDelegateTask 里的 moduleDocsExcludedTarget 判定 → 第一组断言立刻红；
+// 把判据写反（只给 browser 注入）→ 第二组断言红。同一个 task 走两个目标，
+// 所以"没注入"不是因为任务里根本没有路径可匹配。
+func TestPackDelegateTask_BrowserTargetCarriesNoModuleDocs(t *testing.T) {
+	workDir := t.TempDir()
+	writeModuleDocTree(t, workDir, map[string]int{"internal/compression": 10})
+	d := newTestDirectorAgent(t, workDir)
+
+	const task = "把 internal/compression/truncate.go 的判定改成严格大于"
+
+	browserPacked, _ := d.PackDelegateTask(task, map[string]interface{}{}, "browser")
+	if strings.Contains(browserPacked, moduleDocsTitle) ||
+		strings.Contains(browserPacked, "### internal/compression/AGENTS.md") {
+		t.Errorf("browser target must not receive module docs, got:\n%s", browserPacked)
+	}
+	if !strings.HasSuffix(strings.TrimRight(browserPacked, "\n"), task) {
+		t.Errorf("browser-packed task must still end with the original task, got:\n%s", browserPacked)
+	}
+
+	codingPacked, _ := d.PackDelegateTask(task, map[string]interface{}{}, "coding")
+	if !strings.Contains(codingPacked, moduleDocsTitle) {
+		t.Fatalf("同一个任务给非 browser 目标必须带局部文档（否则上面那组断言是空的）:\n%s", codingPacked)
 	}
 }

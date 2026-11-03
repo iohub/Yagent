@@ -145,15 +145,15 @@ Resume 成免费心跳）。监视 goroutine 挂到**父** ctx 的域上，不�
 
 **19. 局部文档注入的判据是磁盘，不是路径形状**（`module_docs.go`）。`LocalDocsForTask` 只认
 "这个目录真的有一份 `AGENTS.md`"，祖先链最深优先、最多 3 份 / 12 KB，超预算必须留下可见的省略行
-（静默少一份文档 = 子 Agent 以为自己没见过约束，与 §11 坑 43 同族）。三条不许改：工作区根那一份
-**永不**注入（已在系统上下文里，重复是纯浪费）；正文每次现读、不缓存（缓存它就得再发明失效判据，
-同 `blueprint_view.go:123-125`）；输出顺序按 (深度 desc, 字典序) 稳定（前缀缓存靠它）。
-软链出工作区的文档由 `EvalSymlinks` + 前缀包含判据挡掉，这层守卫在**读取侧**而不是 token 侧——
-token 侧的 `..`/绝对路径拒绝只是第二层。闸门：`module_docs_test.go` 七条
-（`_MatchesClosedSet` / `_NearestWinsAndNeverCarriesRoot` / `_BudgetTruncationIsVisible` /
-`_RejectsPathEscape` / `_SkipsSymlinkOutsideWorkspace` / `_NeverCachesBody` /
-`TestPackDelegateTask_CarriesModuleDocs`）——删掉 `packDelegateTask` 里那一行调用、把预算判定改成
-恒真、排序改成浅先、或去掉软链包含检查，各自立刻红。
+（静默少一份文档 = 子 Agent 以为自己没见过约束，与 §11 坑 43 同族）。**工作区根那一份不进任何运行时上下文**：
+`ProjectContextLoader` 连同 `PromptInput.FirstConversation`/`ForceProjectContext` 已连根删除，`moduleDocsHint`
+只留一句指针让子 Agent 用 `read_file` 自取根文件。三条不许改：正文每次现读、不缓存（缓存它就得再发明失效判据，
+同 `blueprint_view.go:123-125`）；输出顺序按 (深度 desc, 字典序) 稳定（前缀缓存靠它）；软链出工作区的文档由
+`EvalSymlinks` + 前缀包含判据挡掉，守卫在**读取侧**而不是 token 侧。**只有一处按委派目标决定给不给**：
+`packDelegateTask` 调 `moduleDocsExcludedTarget` 判 `"browser"`（唯一判据 + 唯一调用点，抄第二处必漂）。
+闸门 `module_docs_test.go` 八条（`_MatchesClosedSet` / `_NearestWinsAndNeverCarriesRoot` /
+`_BudgetTruncationIsVisible` / `_RejectsPathEscape` / `_SkipsSymlinkOutsideWorkspace` / `_NeverCachesBody` /
+`_CarriesModuleDocs` / `_BrowserTargetCarriesNoModuleDocs`）：删掉那一行调用、把预算判定改成恒真、排序改成浅先、去掉软链包含检查、或摘掉 browser 判定，各自立刻红。
 
 ## 入口
 
@@ -167,7 +167,7 @@ token 侧的 `..`/绝对路径拒绝只是第二层。闸门：`module_docs_test
 - `TestParallelAdmission_*`（`parallel_admission_test.go:17,42,59`）：刻意不自己拼工具列表，直接拿
   **真实画像** `ProfileRepo/ProfileCoding/ProfileChat` 问判据；画像或能力标签漂走即红。
 - e2e 五链路：`e2e_authorization_test.go:270`、`e2e_handoff_test.go:95`、
-  `e2e_lifecycle_test.go:70`、`e2e_resume_test.go:29`、`e2e_replay_test.go:74`、
+  `e2e_lifecycle_test.go:70`、`e2e_resume_test.go:36`、`e2e_replay_test.go:74`、
   `e2e_blueprint_test.go:127`（验收断言就是"文件出现"）。harness 的接线顺序照抄 `internal/app/app.go:112-292`。
 - 那五条链路共用的模型替身是 `agentScriptedEngine`（`e2e_engine_test.go:23`）：脚本按 **Agent 身份**
   分派（`agentIdentity`，`:41`，靠各家 System Prompt 的首行措辞认人）而不是全局调用序号——序号会被

@@ -11,8 +11,8 @@ package agents
 //  2. 恢复行为：director.RecoveryHandler 熔断语义、ComputeBackoff、RetryWithBackoff
 //  3. Meta 解析：parseMetaAgentOutput
 //
-// 项目上下文加载（原组 4）不在此重复：门面 loadProjectContext 只是单行转发，
-// 行为由 director/project_context_test.go 钉住。
+// 原组 4（工作区根知识文件的加载与缓存）已随那条注入一并删除：Director 不再预置根 AGENTS.md，
+// 见文件末尾的说明与 internal/agents/module_docs_test.go。
 
 import (
 	"context"
@@ -601,7 +601,6 @@ func TestCharacterizationParseMetaAgentOutput(t *testing.T) {
 	}
 }
 
-// 组 4（项目上下文加载与缓存）不在这里重复：director.go:98 的 loadProjectContext
-// 只是 projectCtxLoader.Load() 的单行转发，其行为由
-// director/project_context_test.go 的 TestProjectContextLoader{LoadFirstCall,
-// CacheHit,EmptyDir} 在真实对象上钉住。
+// 组 4（工作区根知识文件的加载与缓存）已随该注入一并删除：Director 不再预置任何根文件，
+// 子 Agent 只经 module_docs.go 拿目录级 AGENTS.md（browser 目标不注入），判据与闸门在
+// internal/agents/module_docs_test.go。

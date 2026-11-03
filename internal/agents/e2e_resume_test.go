@@ -14,21 +14,29 @@ import (
 //
 //	跑完一轮 → rollout 同步落盘（session_meta 带 task_id + board_id + cwd）
 //	→ ListRolloutSessions 列会话 → ReadRolloutMemory 重建 Memory（修复工具调用配对）
-//	→ 接管原来那块便签板 → 标记 resumed → 下一轮强制重注入项目上下文
+//	→ 接管原来那块便签板 → 下一轮拿着重建出来的记忆接着做
 //
 // 三个环节各自有单测，串起来没人验过。串错的表现全是"静默降级"：
 //   - 板没接管 → 恢复出来的任务看不见已调查过的结论，只能重做一遍；
-//   - resumed 没传到 → 项目上下文（AGENTS.md/YAGENT.md）不注入，模型蒙着眼睛接手半截任务；
+//   - 记忆没重建 → 续跑那一轮看不到上一轮的提问与委派回执，等于重开一个新任务；
 //   - 配对没修好 → 下一轮请求被 provider 以"tool 消息没有对应的 tool_calls"整条拒掉。
+//
+// 判据在 2026-11 换过一次：这里原先用"工作区根 AGENTS.md 的哨兵出现在续跑轮的 prompt 里"
+// 证明 resumed 标志传到了（那是 PromptInput.ForceProjectContext 唯一可见的效果）。那条注入
+// 已整体删除 —— Director 不再预置任何根知识文件，于是哨兵**必须不出现**（夹具真的在盘上写了
+// 那份文件，所以这条不是恒真：有人把根文件加回运行时上下文，它立刻红）。"续跑确实接上了"改由
+// 三条仍然可观察的事实负责：便签板被接管（结论可见）、记忆被重建（上一轮的提问与回执在 prompt
+// 里）、续跑轮自己写出了 rollout。
 
 const (
 	resumeProjectMarker  = "RESUME-PROJECT-CONTEXT-MARKER"
 	resumeConclusionMark = "RESUME-FIRST-CONCLUSION"
 )
 
-func TestE2E_Resume_RestoresBoardAndProjectContext(t *testing.T) {
+func TestE2E_Resume_RestoresBoardAndMemory(t *testing.T) {
 	workDir := t.TempDir()
-	// 项目上下文文件：AGENTS.md 是 loadProjectContext 会读的名字之一。
+	// 工作区根知识文件：方案 B 之后它**不该**出现在任何运行时上下文里 —— 夹具真的在盘上写下
+	// 带哨兵的这一份，好让下面那条"必须没影"的断言不是恒真。
 	if err := writeFile(t, workDir, "AGENTS.md",
 		"# 项目约定\n\n"+resumeProjectMarker+"：所有写操作必须走 delegate_coding。\n"); err != nil {
 		t.Fatalf("write AGENTS.md: %v", err)
@@ -111,47 +119,69 @@ func TestE2E_Resume_RestoresBoardAndProjectContext(t *testing.T) {
 		t.Errorf("重建的记忆丢了用户输入: %s", truncateForFailure(joined))
 	}
 
-	// ── 第二轮：接管板 + resumed，重注入项目上下文 ──
+	// ── 第二轮：接管板 + 重建记忆，续跑 ──
 	engine2 := newScripted(map[string][]scriptStep{
 		"director": {func(msgs []llm.Message, _ []llm.ToolDef) *llm.Response {
 			text := messagesText(msgs)
-			// 1) 便签板续上了：上一轮的 handoff 结论（只存在于便签上）对模型可见
+			// 1) 便签板续上了：上一轮的 handoff 结论只存在于便签上，看得见才算接管成功
 			if !strings.Contains(text, resumeConclusionMark) {
-				t.Errorf("resumed 之后看不见上一轮的结论（便签板没接管）:\n%s", truncateForFailure(text))
+				t.Errorf("续跑之后看不见上一轮的结论（便签板没接管）:\n%s", truncateForFailure(text))
 			}
-			// 2) 项目上下文被强制重注入（恢复出来的记忆没有 system 消息，
-			//    "非首次对话"的判定会把它挡掉 —— resumed 标志就是为这个存在的）
-			if !strings.Contains(text, resumeProjectMarker) {
-				t.Errorf("resumed 轮没有重注入项目上下文:\n%s", truncateForFailure(text))
+			// 2) 记忆续上了：本轮输入只有"继续"，所以上一轮的提问与委派回执只能来自重建出来的 memory
+			if !strings.Contains(text, "先查清仓库") || !strings.Contains(text, "仓库结构已查清") {
+				t.Errorf("续跑轮看不到上一轮的记忆（等于重开了一个新任务）:\n%s", truncateForFailure(text))
+			}
+			// 3) 工作区根 AGENTS.md 不再进运行时上下文：盘上那份带哨兵的文件必须没影
+			if strings.Contains(text, resumeProjectMarker) {
+				t.Errorf("根知识文件又被预置进 Director 的上下文了:\n%s", truncateForFailure(text))
 			}
 			return textResponse("接手后继续")
 		}},
 	})
 	director2 := newFullChainDirector(t, workDir, engine2)
 	director2.SetBoardScope(sessionID, task2)
+	// 续跑旗照生产路径一路置位（TUI → app → DirectorAgent），但它现在不再改变 prompt。
 	director2.SetResumedTask(true)
 
 	if _, err := director2.Run(memory.WithConversationMemory(context.Background(), restored), "继续"); err != nil {
-		t.Fatalf("resumed 轮 Director.Run: %v", err)
+		t.Fatalf("续跑轮 Director.Run: %v", err)
 	}
 
-	// ── 对照组：**同一份恢复记忆**、但不带 resumed。
-	//    它的价值在于证明上一条"注入了项目上下文"不是因为"反正都会注入"：
-	//    恢复出来的记忆没有 system 消息，非首次对话的判定会把项目上下文挡掉，
-	//    resumed 标志就是为此存在的（重开一个空记忆的会话则会注入，那是另一回事）。
-	//    如果哪天这里注入了，说明判定条件被改宽 —— 上一条断言就变成了空断言，
-	//    所以必须让它红，而不是只记一行日志。
+	// 续跑轮必须自己落一份 rollout：这是"那一轮真的跑了"的外部证据，不是模型的回显。
+	sessionsAfterResume, listErr := memory.ListRolloutSessions(memory.RolloutRootDir(), 0)
+	if listErr != nil {
+		t.Fatalf("ListRolloutSessions（续跑后）: %v", listErr)
+	}
+	ranResumeRound := false
+	for i := range sessionsAfterResume {
+		if sessionsAfterResume[i].TaskID == task2 {
+			ranResumeRound = true
+			break
+		}
+	}
+	if !ranResumeRound {
+		t.Errorf("续跑轮 task %q 没写下自己的 rollout（那一轮其实没跑起来）", task2)
+	}
+
+	// ── 对照组：**同一份恢复记忆**、同一面续跑旗，只换一块全新的板。
+	//    上面第 1 条断言（结论可见）只有在这里看不见结论时才是因果的：若"反正都看得见"，
+	//    那条断言就永远绿，板没接管也测不出来 —— 与 e2e_handoff_test.go 的对照组同一个形状。
 	engine3 := newScripted(map[string][]scriptStep{
 		"director": {func(msgs []llm.Message, _ []llm.ToolDef) *llm.Response {
-			if strings.Contains(messagesText(msgs), resumeProjectMarker) {
-				t.Error("对照组（未标 resumed）也注入了项目上下文 —— 说明 resumed 标志没起作用，" +
-					"上面那条 resumed 断言因此是空断言")
+			text := messagesText(msgs)
+			if strings.Contains(text, resumeConclusionMark) {
+				t.Error("对照组（另一块板）也看见了结论 —— 上面那条「便签板接管」的断言因此是空断言")
+			}
+			// 记忆仍然在：差异只能来自便签板，不能来自"这轮根本没跑"。
+			if !strings.Contains(text, "先查清仓库") {
+				t.Errorf("对照组丢了重建出来的记忆:\n%s", truncateForFailure(text))
 			}
 			return textResponse("对照组结束")
 		}},
 	})
 	director3 := newFullChainDirector(t, workDir, engine3)
-	director3.SetBoardScope(sessionID, "resume-task-3")
+	director3.SetBoardScope("resume-session-fresh-board", "resume-task-3")
+	director3.SetResumedTask(true)
 	// 重新读一份，避免上一轮的 Run 改写过 restored。
 	restoredAgain, _, err2 := memory.ReadRolloutMemory(session.Path, memory.DefaultRolloutReadOptions())
 	if err2 != nil {

@@ -201,7 +201,7 @@ func (a *CodingAgent) browserDelegate(ctx context.Context, target string, params
 	// 带上下文走：便签索引前置到子任务里，Browser 才知道前面已经查到过什么。
 	packedTask := task
 	if a.boardWriter != nil {
-		if packed, _ := a.boardWriter.PackDelegateTask(task, params); packed != "" {
+		if packed, _ := a.boardWriter.PackDelegateTask(task, params, target); packed != "" {
 			packedTask = packed
 		}
 	}

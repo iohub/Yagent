@@ -5,7 +5,7 @@
 
 ## 边界
 
-Director 的编排内核：Planner 主循环、熔断与恢复、指标、便签索引注入、项目上下文加载、Meta 注册表。
+Director 的编排内核：Planner 主循环、熔断与恢复、指标、便签索引注入、projectID 主键、Meta 注册表。
 不负责子 Agent 实例与委派执行（经 `ToolRunner` 回调交给门面层）、不面向用户。
 
 ## 硬约束
@@ -93,17 +93,15 @@ Director 的编排内核：Planner 主循环、熔断与恢复、指标、便签
 - `TestPlannerRun_TriggerUsesProviderMeasurement` / `_MeasurementInvalidatedAfterRewrite`
   （`planner_prefix_trigger_test.go:52,116`）：第二/三档整段重写消息后 `measured` 必须作废，
   否则同一步下一档判定拿着不存在的规模做决定（`planner_compress.go:17-19`）。
-- `TestComputeProjectID`（`project_context_test.go:103`）钉具体串；
-  `TestProjectContextLoaderCacheHit`（`:59`）钉"同一实例只加载一次"。
-  `project_context.go:53` 是"只读工作区根的 `YAGENT.md`/`CLAUDE.md`/`AGENTS.md`、不递归"这条
-  加载契约的唯一实现。
-- **首轮判定**（项目上下文注入的唯一开关）是 `startsFirstTurn`（`planner_memory.go`）：
-  「本轮开始时 memory 里还没有任何 assistant/tool 消息」，**不是**「memory 为空」——http 路径在
-  提交任务前先把用户消息写进 memory 并落盘（`internal/http/websocket.go:169`，为了断线可恢复），
-  按"空"判定会让 WebUI 用户永远拿不到项目上下文。取值仍必须快照在 `seedHumanInput` **之前**。
-  `TestStartsFirstTurn`（`planner_memory_test.go:14`）钉判据的每个分支（含 `IsSubAgent` 过滤与
-  `nil` memory），`TestPlannerRunFirstTurnWithPrewrittenHumanInput`（`planner_test.go:696`）与
-  `TestPlannerRunFirstConversationSnapshottedBeforeHumanWrite`（`:620`）钉它到 `PromptInput` 的传递。
+- `TestComputeProjectID`（`project_context_test.go`）钉具体串 —— `project_context.go` 现在只剩这个
+  转发：工作区根知识文件的 `ProjectContextLoader` 连同它的三条用例已整体删除（Director 不再预置根
+  `AGENTS.md`，目录级注入的判据与闸门在 `internal/agents/module_docs*.go`）。
+- **本轮输入落库只有一处**：`seedHumanInput`（`planner_memory.go`），它跑在 `cfg.Prompts` 与
+  "从 memory 重建 messages" **之前**。http 路径提交前预写过一条 human
+  （`internal/http/websocket.go:169`）：去重条件放宽 = 同一条输入落两遍，删掉调用 = 模型看不到本轮
+  输入。闸门：`TestSeedHumanInputDedupesPrewrittenMessage`（`planner_memory_test.go`）、
+  `TestPlannerRunSeedsHumanInputBeforeRebuildingMessages` 与
+  `TestPlannerRunDoesNotDuplicatePrewrittenHumanInput`（`planner_test.go`）。
 - `TestPlannerRunForceDelegationReminder`（`planner_test.go:307`）：钉第 12 条的三件事——恰好 3 次、
   两条文案各一次、配额用尽后放行；`TestPlannerRunPlainTextExit`（`:174`）：委派过就不再注入提醒。
 - `TestCharacterizationRecoveryCircuitBreaker`
