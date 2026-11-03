@@ -28,6 +28,12 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return model, cmd
 		}
 	}
+	// 求助面板优先于编辑/普通模式：焦点在选项列表时它吃掉所有按键（否则打 "hello"
+	// 里的 h/e/l/o 会误触直选、或漏进输入框留下一个没人打算发的答案草稿）。
+	// ctrl+c / ctrl+z 不在表里认领，仍然走下面的全局退出与挂起。
+	if handled, cmd := m.handleAskKey(msg.String()); handled {
+		return m, cmd
+	}
 	if m.commandMode {
 		return m.handleCommandModeKey(msg)
 	}
@@ -49,38 +55,6 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 	}
 
 	switch d := top.(type) {
-	case *components.ConfirmDialog:
-		updated, cmd := d.Update(msg)
-		_ = updated
-
-		if key == "enter" {
-			action := d.GetResponseAction()
-			m.respondToAuth(action)
-			return m, nil, true
-		}
-		if cmd != nil {
-			return m, cmd, true
-		}
-		return m, nil, true
-
-	case *components.UserHelpDialog:
-		updated, cmd := d.Update(msg)
-		_ = updated
-
-		if d.IsClosed() {
-			m.dialogStack.Pop()
-			m.respondToUserHelp(d.Result())
-			if m.taskRunning {
-				return m, listenForEvents(m.eventCh), true
-			}
-			return m, nil, true
-		}
-
-		if cmd != nil {
-			return m, cmd, true
-		}
-		return m, nil, true
-
 	case *components.QuitConfirmDialog:
 		_, cmd := d.Update(msg)
 		if cmd != nil {

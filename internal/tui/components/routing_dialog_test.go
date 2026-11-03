@@ -104,3 +104,33 @@ func TestRoutingDialog_SizeMatrix(t *testing.T) {
 		}
 	}
 }
+
+// TestRoutingDialogHint 钉住收编进内核的第六份梯子：几何与 esc 优先，加上 space 的可观察性
+// （它和超时预设是同一种形状：Enter 本次切换、Space 写入配置）。
+func TestRoutingDialogHint(t *testing.T) {
+	for _, budget := range []int{8, 12, 20, 30, 44, 60, 100} {
+		got := routingDialogHint(budget)
+		if w := lipgloss.Width(got); w > budget {
+			t.Errorf("budget=%d: 提示条宽 %d 超预算: %q", budget, w, stripANSICodes(got))
+		}
+		plain := stripANSICodes(got)
+		if plain != "" && !strings.HasPrefix(plain, "esc") {
+			t.Errorf("budget=%d: 第一段不是退出键: %q", budget, plain)
+		}
+	}
+	if full := stripANSICodes(routingDialogHint(200)); !strings.Contains(full, "space save") {
+		t.Errorf("宽终端丢了 space save: %q", full)
+	}
+	d := NewRoutingDialog(enabledRoutingInfo())
+	d.SetBounds(100, 30)
+	d.Update(tea.KeyPressMsg{Code: ' '})
+	if !d.Persist {
+		t.Error("提示写着 space save，按下去 Persist 没变")
+	}
+	d2 := NewRoutingDialog(enabledRoutingInfo())
+	d2.SetBounds(100, 30)
+	d2.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if d2.Persist {
+		t.Error("Enter 不该顺手持久化")
+	}
+}

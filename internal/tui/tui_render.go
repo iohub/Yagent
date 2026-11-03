@@ -25,14 +25,14 @@ func (m *model) computeFooterHeight() int {
 
 	// 时间线浮层紧贴视口最后一行之下：View() 里那个 "\n" 只是终止视口的最后一行，
 	// 并不产生空行，所以这里只算面板自身的高度。
-	if !m.dashboardVisible() && (m.taskRunning || len(m.timelineEntries) > 0) {
-		if tl := m.renderTimelinePanel(m.termWidth); tl != "" {
-			height += lipgloss.Height(tl)
-		}
-	}
+	height += m.timelineFooterRows()
 
 	// 日志与输入面板之间的空行
 	height += 1
+	// 正文之后的第一块：求助/授权面板（View 里拼在输入面板之前）。
+	// 加的是同一个字符串的高度 —— askPanelBlock 渲染一次、缓存一份，
+	// 所以这里与 View 的拼接不可能差一行（见 ask_panel.go 的头注）。
+	height += m.askPanelHeight()
 	height += m.editorBlockHeight()
 
 	if m.keywordAutoComplete && len(m.keywordSuggestions) > 0 {
@@ -54,6 +54,28 @@ func (m *model) computeFooterHeight() int {
 	m.cachedFooterHeight = height
 	m.footerHeightValid = true
 	return height
+}
+
+// timelineFooterRows 是正文与输入面板之间那块时间线浮层占的行数（0 = 不出现）。
+//
+// 全仓只准有这一处算法：computeFooterHeight 加它，ask_budget 的固定段也扣它。
+// 漏扣的表现不是"难看"而是整屏行数超出 termHeight —— 而且只在侧栏不可见的宽度
+// （<120 列）上出现，240 列一切正常，这种"某些宽度正好、某些多四行"就是它的签名。
+func (m *model) timelineFooterRows() int {
+	// 有待答求助时整块让位：面板取代的就是"此刻正在发生什么、需要我做什么"这块位置，
+	// 两个表面抢同一份行数的话，被挤掉的会是唯一能让 Agent 继续跑下去的那个。
+	// 时间线本身没有丢：ctrl+l 的全屏视图照旧，正文里的工具卡也照旧。
+	if m.pendingAsk() != nil {
+		return 0
+	}
+	if m.dashboardVisible() || (!m.taskRunning && len(m.timelineEntries) == 0) {
+		return 0
+	}
+	tl := m.renderTimelinePanel(m.termWidth)
+	if tl == "" {
+		return 0
+	}
+	return lipgloss.Height(tl)
 }
 
 // editorBlockHeight 是输入面板区块的行数（不含前后空行）：
@@ -101,6 +123,10 @@ func (m *model) invalidateFooterCache() {
 	m.tokenDashboardValid = false
 	m.dashboardCache = ""
 	m.dashboardCacheKey = ""
+	// 面板的行数就是它渲染出来的那一串的行数，所以缓存必须和 footer 一起作废；
+	// 漏掉的表现是"焦点动了、面板还是旧的那一串"。
+	m.askBlockCache = ""
+	m.askBlockValid = false
 }
 
 func (m *model) getGlamourRenderer(width int) *glamour.TermRenderer {

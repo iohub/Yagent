@@ -42,8 +42,10 @@ func (m *model) computeBodyLayout(totalLines int) bodyLayout {
 		dashWidth:  m.dashboardWidth(),
 		totalLines: totalLines,
 	}
-	if l.height < 3 {
-		l.height = 3
+	// 下限来自整屏预算：ASK 面板借位时正文下限会降到 1（见 ask_budget.go 的头注）。
+	// 写死 3 的话，面板借的那几行不会真的生效 —— 整屏就会超出 termHeight。
+	if floor := m.askBodyFloor(); l.height < floor {
+		l.height = floor
 	}
 	if totalLines > l.height {
 		l.scrollbarCol = 1
@@ -91,6 +93,11 @@ func (m *model) View() tea.View {
 
 	if m.thinklinkMode {
 		return renderThinklinkFullscreenView(m)
+	}
+
+	// 求助全文阅读器排在对话框之前：它展开时就算有别的面板在栈上，用户看的也是这一层。
+	if m.askReaderMode {
+		return renderAskReaderView(m)
 	}
 
 	if m.dialogStack != nil && m.dialogStack.Len() > 0 {
@@ -179,18 +186,22 @@ func (m *model) View() tea.View {
 		b.WriteString(joinColumns(m.cachedViewportView, scrollbar, dashboard))
 	}
 
-	if !m.dashboardVisible() && (m.taskRunning || len(m.timelineEntries) > 0) {
-		timelineContent := m.renderTimelinePanel(m.termWidth)
-		if timelineContent != "" {
-			b.WriteString("\n")
-			b.WriteString(timelineContent)
-		}
+	// 时间与行数都只由 timelineFooterRows 一处口径决定（它内部就是这段判断 + 渲染），
+	// 这里只负责拼上去 —— 两处各写一遍就是整屏溢出的来源。
+	if m.timelineFooterRows() > 0 {
+		b.WriteString("\n")
+		b.WriteString(m.renderTimelinePanel(m.termWidth))
 	}
 
 	// footer 由若干区块纵向拼接，每块自身不带首尾空行，块之间恰好一个 "\n"。
 	// computeFooterHeight 按同样的顺序逐块累加行数，两处必须保持一致，
 	// 否则 viewport 高度算错会让整屏在滚动时抖动。
 	var blocks []string
+	// ASK/AUTH 面板排在输入面板之前：求助期间输入框就是它的答题区（ANSWER），
+	// 面板在上、答题在下，读起来才是一件事。
+	if blk := m.askPanelBlock(); blk != "" {
+		blocks = append(blocks, blk)
+	}
 	if m.commandMode {
 		blocks = append(blocks, m.renderCmdlinePanel())
 	} else {

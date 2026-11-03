@@ -30,6 +30,9 @@ type selectProbe struct {
 	small    func() *selectProbe
 	badDigit rune // 越界数字键
 
+	hint      func(innerWidth int) string // 这个对话框的按键提示条（与 View 同一个来源）
+	persisted func() bool                 // Space"保存到配置"是否可观察（nil = 该对话框没有这个动作）
+
 	hasEndKeys   bool // g/G 跳转（timeout 没有）
 	hasTabKey    bool // tab 向下循环（只有 timeout 有）
 	digitSelects bool // 数字键是否同时确认（agent/model 是，timeout 只移游标）
@@ -270,6 +273,7 @@ func TestSelectDialogs_KeyContract(t *testing.T) {
 			badDigit:     '7',
 			hasEndKeys:   true,
 			digitSelects: true,
+			hint:         func(w int) string { return dialogHint(w, true) },
 		}
 		if digit == '9' {
 			p.small = func() *selectProbe { return agentProbe(testConfigEntries(3), nil, 0) }
@@ -290,6 +294,8 @@ func TestSelectDialogs_KeyContract(t *testing.T) {
 			badDigit:     '7',
 			hasEndKeys:   true,
 			digitSelects: true,
+			hint:         func(w int) string { return modelDialogHint(w, true) },
+			persisted:    func() bool { return d.Persist },
 		}
 		if digit == '5' {
 			p.small = func() *selectProbe { return modelProbe(testModelOptions(3), nil, 0) }
@@ -308,6 +314,8 @@ func TestSelectDialogs_KeyContract(t *testing.T) {
 			digit:     '3', // 对 4 项主列表有效；越界用例改用 badDigit='9'（无 small 列表）
 			badDigit:  '9',
 			hasTabKey: true,
+			hint:      timeoutDialogHint,
+			persisted: func() bool { return d.Persist },
 		}
 	}
 
@@ -315,14 +323,21 @@ func TestSelectDialogs_KeyContract(t *testing.T) {
 		runSelectDialogKeyContract(t, "agent", func() *selectProbe {
 			return agentProbe(testConfigEntries(9), agentTargets, '9')
 		})
+		runSelectDialogHintContract(t, "agent", func() *selectProbe {
+			return agentProbe(testConfigEntries(9), agentTargets, '9')
+		})
 	})
 	t.Run("ModelSelectDialog", func(t *testing.T) {
 		runSelectDialogKeyContract(t, "model", func() *selectProbe {
 			return modelProbe(testModelOptions(9), modelProviders, '5')
 		})
+		runSelectDialogHintContract(t, "model", func() *selectProbe {
+			return modelProbe(testModelOptions(9), modelProviders, '5')
+		})
 	})
 	t.Run("LLMTimeoutDialog", func(t *testing.T) {
 		runSelectDialogKeyContract(t, "timeout", timeoutProbe)
+		runSelectDialogHintContract(t, "timeout", timeoutProbe)
 	})
 }
 
@@ -341,4 +356,57 @@ func TestListDialogs_RenderContract(t *testing.T) {
 			},
 			func(count, i int) string { return testModelOptions(count)[i].Provider })
 	})
+}
+
+// runSelectDialogHintContract 是提示条的共享契约（内核在 common.HintBar）。
+//
+// 钉四件事，每一件都曾由"三个对话框各写一条降级梯子"负责，也就是三处都可能各自漂走：
+// ① 任何预算下结果都不超宽（旧梯子的最窄一档会返回比 innerWidth 更长的字符串 —— 那不是
+//
+//	缩短，是溢出）；② 每一段要么整段在、要么整段没有；③ 第一段永远是退出键，
+//	且在任何 ≥ 一段按键的预算下都活着；④ 提示里写了 space save，space 就必须真的可观察。
+func runSelectDialogHintContract(t *testing.T, name string, build func() *selectProbe) {
+	t.Helper()
+	probe := build()
+	if probe.hint == nil {
+		t.Fatalf("%s: 没有接进提示条契约（hint 为空）", name)
+	}
+	for _, budget := range []int{20, 24, 30, 40, 44, 60, 80, 100, 120} {
+		got := probe.hint(budget)
+		plain := stripANSICodes(got)
+		if plain == "" {
+			continue
+		}
+		if w := lipgloss.Width(got); w > budget {
+			t.Errorf("%s budget=%d: 提示条宽 %d 超预算：%q", name, budget, w, plain)
+		}
+		segs := strings.Split(plain, " · ")
+		if !strings.HasPrefix(segs[0], "esc") {
+			t.Errorf("%s budget=%d: 第一段不是退出键：%q", name, budget, plain)
+		}
+		for _, seg := range segs {
+			if seg == "" {
+				t.Errorf("%s budget=%d: 出现空段（半截分隔符）：%q", name, budget, plain)
+			}
+			// 每段必须是"按键 + 说明"或纯按键，中间不能只剩半个词
+			if r := strings.TrimSpace(seg); strings.HasSuffix(r, " ") || strings.HasPrefix(r, " ") {
+				t.Errorf("%s budget=%d: 段内有悬空空白：%q", name, budget, seg)
+			}
+		}
+	}
+	if probe.persisted != nil {
+		full := stripANSICodes(probe.hint(200))
+		if strings.Contains(full, "space") {
+			n := build()
+			n.key(' ')
+			if !n.persisted() {
+				t.Errorf("%s: 提示写着 space save，按下去 Persist 却没变", name)
+			}
+			n2 := build()
+			n2.key(tea.KeyEnter)
+			if n2.persisted() {
+				t.Errorf("%s: Enter 不该顺手持久化（space 才是保存到配置）", name)
+			}
+		}
+	}
 }

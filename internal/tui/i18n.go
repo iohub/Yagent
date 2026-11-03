@@ -93,6 +93,10 @@ type translations struct {
 	TabCleared            string
 	TabClosed             string
 	TabNewCreated         string
+	// 决策面板家族（ASK/AUTH/ANSWER，docs/ask-panel-redesign.md）
+	AskCustomOption     string
+	AskFallbackQuestion string
+	AskEmptyAnswer      string
 }
 
 var langMap = map[Language]translations{
@@ -183,6 +187,9 @@ var langMap = map[Language]translations{
 		TabCleared:            "会话已清空",
 		TabClosed:             "会话已关闭",
 		TabNewCreated:         "已创建新会话",
+		AskCustomOption:     "自由输入…",
+		AskFallbackQuestion: "需要你做一个决定",
+		AskEmptyAnswer:      "答案不能为空：写点什么，或按 esc 取消",
 	},
 	LangEnglish: {
 		Title:                            "Yagent AI Assistant",
@@ -271,6 +278,9 @@ var langMap = map[Language]translations{
 		TabCleared:            "Session cleared",
 		TabClosed:             "Session closed",
 		TabNewCreated:         "New session created",
+		AskCustomOption:     "Custom input…",
+		AskFallbackQuestion: "A decision is needed",
+		AskEmptyAnswer:      "Answer cannot be empty: type something, or press esc to cancel",
 	},
 }
 
@@ -438,6 +448,12 @@ func (lm *LanguageManager) GetText(key string) string {
 		return translations.TabClosed
 	case "TabNewCreated":
 		return translations.TabNewCreated
+	case "AskCustomOption":
+		return translations.AskCustomOption
+	case "AskFallbackQuestion":
+		return translations.AskFallbackQuestion
+	case "AskEmptyAnswer":
+		return translations.AskEmptyAnswer
 	default:
 		return fmt.Sprintf("[Missing translation: %s]", key)
 	}

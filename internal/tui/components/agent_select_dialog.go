@@ -137,7 +137,6 @@ func (d *AgentSelectDialog) View() string {
 	c := common.DarkModeColors()
 	borderStyle := common.DialogBorderStyle(c)
 	titleStyle := common.SectionHeaderStyle(c)
-	helpStyle := common.HelpTextStyle(c)
 	cursorStyle := common.CursorIndicatorStyle(c)
 
 	dialogWidth, innerWidth := dialogWidths(d.width)
@@ -198,7 +197,7 @@ func (d *AgentSelectDialog) View() string {
 		"",
 		strings.Join(lines, "\n"),
 		"",
-		helpStyle.Render(dialogHint(innerWidth, len(d.entries) > 1)),
+		dialogHint(innerWidth, len(d.entries) > 1),
 	)
 
 	dialog := borderStyle.Width(dialogWidth).Render(dialogContent)

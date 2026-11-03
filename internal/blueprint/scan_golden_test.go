@@ -22,8 +22,12 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
-	if out != 146 || in != 146 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 146/146 —— 形状变了，先确认变化来源", out, in)
+	// 145/145：求助与授权从弹窗改成 footer 面板（docs/ask-panel-redesign.md），
+	// components/user_help_dialog.go 随之删除 —— 它是 internal/tui/components 里
+	// 唯一直接 import internal/protocol 的文件，删掉就少一条模块级直接边（进出各一）。
+	// 更新前用 grep 确认过该包现在零处直接引用 protocol。
+	if out != 145 || in != 145 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 145/145 —— 形状变了，先确认变化来源", out, in)
 	}
 	for i := 1; i < len(snap.Leaves); i++ {
 		if snap.Leaves[i-1].Dir >= snap.Leaves[i].Dir {

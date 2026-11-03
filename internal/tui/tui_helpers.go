@@ -103,38 +103,20 @@ func (m *model) computeFieldWidth() int {
 	return avail
 }
 
-// computeInputHeight calculates the textarea height based on content lines
-// and available terminal space. Height grows with content but is capped.
+// computeInputHeight 计算 textarea 的行数：随内容生长，但受整屏预算约束。
+//
+// 两处改动来自设计稿 §6.4：
+// ① 行数按**渲染后**的行数算（软折行也算行），不是只数显式换行 ——
+//    旧的 `strings.Count(value,"\n")+1` 把 1000 字符的单行答案算成 1 行，
+//    于是尾部被 textarea 内部裁掉，用户看不到自己写的全文。
+// ② 上限走 rowsLeftForInput（整屏预算），不再自己估 "(termHeight-8)/2" ——
+//    那个 8 是"分隔符 + 状态栏 + token 面板"的旧账，不知道 ASK 面板占了几行。
 func (m *model) computeInputHeight() int {
-	const minHeight = 3
-	const maxHeight = 12
-
-	// Count lines in current value (at least 1 for empty input)
-	lines := strings.Count(m.input.Value(), "\n") + 1
-	desired := lines + 1 // +1 line for comfortable editing headroom
-
-	if desired < minHeight {
-		desired = minHeight
-	}
-
-	// Cap to at most ~1/3 of terminal height so viewport remains usable
+	desired := m.inputWrappedLines() + 1 // +1 行编辑余量（与旧实现一致）
+	desired = clampRows(desired, inputMinRows, inputMaxRows)
 	if m.termHeight > 0 {
-		termMax := (m.termHeight - 8) / 2 // 8 lines reserved for separator + status + token dashboard
-		if termMax < minHeight {
-			termMax = minHeight
-		}
-		if termMax > maxHeight {
-			termMax = maxHeight
-		}
-		if desired > termMax {
-			desired = termMax
-		}
-	} else {
-		if desired > maxHeight {
-			desired = maxHeight
-		}
+		desired = clampRows(desired, inputMinRows, max(inputMinRows, m.rowsLeftForInput()))
 	}
-
 	return desired
 }
 

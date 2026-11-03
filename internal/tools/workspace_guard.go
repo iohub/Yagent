@@ -146,10 +146,16 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 		toolName, reason,
 	)
 
-	// 结构化数据供 TUI 渲染（避免中英双语混合）
+	// 结构化数据供界面渲染（避免中英双语混合）。
+	//
+	// detail 是这一次必须让用户读到的正文（越界路径清单 / 命令原文）。今天这里只发
+	// tool_name+reason，而 TUI 读的是 command/warning —— 于是授权对话框只显示得出工具名、
+	// 看不到要执行什么（docs/ask-panel-redesign.md R5）。两侧一起补：新增 detail，
+	// reason 继续留着当回落，旧的 question 字段不动（HTTP/WS 与老版本 TUI 都在读）。
 	extraFields := map[string]interface{}{
 		"tool_name": toolName,
 		"reason":    reason,
+		"detail":    reason,
 	}
 
 	options := "allow / deny"

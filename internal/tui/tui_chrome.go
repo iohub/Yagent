@@ -19,7 +19,7 @@ const (
 	panelCornerBR = "╯"
 	panelEdgeH    = "─"
 	panelAccent   = "▌"
-	panelHintSep  = " · "
+	panelHintSep  = common.HintSep
 )
 
 // 面板边框色 —— 颜色本身是模式的第二重指示（状态栏文字之外）。
@@ -35,9 +35,6 @@ var (
 var (
 	panelLabelStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("250"))
 	panelMetaStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	panelKeycapStyle   = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("250"))
-	panelHintDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	panelHintSepStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 	cmdlinePrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	cmdlineTextStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	cmdlineCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(lipgloss.Color("235"))
@@ -137,46 +134,15 @@ func renderPanelBottom(hints string, width int, c color.Color) string {
 		edge.Render(strings.Repeat(panelEdgeH, fill)) + edge.Render(panelCornerBR)
 }
 
-// renderHintBar 把 "alt+s 提交 · esc 普通模式" 渲染成键帽 + 说明序列，
-// 并保证总宽不超过 budget。与 help 对话框的键帽是同一套视觉语言。
+// renderHintBar / renderHintItem 是家族提示条内核在包内的两个入口
+// （实现已下沉到 common.HintBar，见 internal/tui/common/hintbar.go 的头注：
+// 这条规则曾有五份拷贝）。分隔符样式与键帽配色都在那一处。
 func renderHintBar(hints string, budget int) string {
-	if budget < 4 {
-		return ""
-	}
-	sep := panelHintSepStyle.Render(panelHintSep)
-	sepWidth := lipgloss.Width(sep)
-
-	var b strings.Builder
-	used := 0
-	for _, item := range strings.Split(hints, panelHintSep) {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		rendered := renderHintItem(item)
-		cost := lipgloss.Width(rendered)
-		if b.Len() > 0 {
-			cost += sepWidth
-		}
-		if used+cost > budget {
-			break
-		}
-		if b.Len() > 0 {
-			b.WriteString(sep)
-		}
-		b.WriteString(rendered)
-		used += cost
-	}
-	return b.String()
+	return common.HintBar(hints, budget)
 }
 
-// renderHintItem 把 "alt+s 提交" 渲染成 [alt+s] 提交：首词是按键，其余是说明。
 func renderHintItem(item string) string {
-	k, desc, found := strings.Cut(item, " ")
-	if !found {
-		return panelKeycapStyle.Render(k)
-	}
-	return panelKeycapStyle.Render(k) + panelHintDescStyle.Render(" "+desc)
+	return common.HintItem(item)
 }
 
 // renderInfoLine 渲染一条自动消失的提示行。infoMsg 过去只被写入、从不渲染，
@@ -190,9 +156,23 @@ func (m *model) renderInfoLine() string {
 
 // renderEditorPanel 渲染 INSERT 模式的输入面板：
 // 顶边框（标签 + 行列号）、textarea、底边框（上下文快捷键）。
+//
+// 有待答求助时这块面板是它的一部分（设计稿 D1：作答复用主输入框）：
+// 焦点在输入框里时改名 ANSWER、换面板配色、键帽交给那张唯一的动作表；
+// 焦点还在选项列表时把键帽清空 —— 此刻 alt+s 不提交任务，继续写 "alt+s submit"
+// 就是键帽骗人（设计稿 R4）。
 func (m *model) renderEditorPanel() string {
 	c := m.editorPanelColor()
 	w := m.panelWidth()
+	label := langManager.GetText("EditorPanelLabel")
+	hints := langManager.GetText("EditorHintEdit")
+	if p := m.pendingAsk(); p != nil {
+		if p.inputMode {
+			c, label, hints = askEdgeColor(p), "ANSWER", m.askHintBar(m.askStateNow())
+		} else {
+			hints = ""
+		}
+	}
 
 	m.input.SetWidth(m.computeFieldWidth())
 	m.input.SetHeight(m.computeInputHeight())
@@ -200,9 +180,9 @@ func (m *model) renderEditorPanel() string {
 	meta := fmt.Sprintf("%d:%d", m.input.Line()+1, m.input.Column()+1)
 
 	return strings.Join([]string{
-		renderPanelTop(langManager.GetText("EditorPanelLabel"), meta, w, c),
+		renderPanelTop(label, meta, w, c),
 		editorBodyStyle(c, w).Render(m.input.View()),
-		renderPanelBottom(langManager.GetText("EditorHintEdit"), w, c),
+		renderPanelBottom(hints, w, c),
 	}, "\n")
 }
 

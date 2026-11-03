@@ -193,25 +193,43 @@ func TestModelSelectDialog_PersistFlag(t *testing.T) {
 	})
 }
 
-// TestModelDialogHint 提示文案层级：含 Space save，窄终端逐级缩短。
+// TestModelDialogHint 提示条的新契约（内核在 common.HintBar，见 dialogHint 的头注）：
+// ① 宽终端里该说的都要说到；② 任何宽度下结果**不超过预算**（旧的三级梯子在最窄一级
+// 会返回一个 19 列的字符串，而 innerWidth 可能只有 12 —— 它不是"缩短"，是溢出）；
+// ③ 第一段（esc）永远活着；④ 段落要么整段在、要么整段没有。
+// modelHintSegments 是 modelDialogHint 允许出现的整段集合（新增一段必须同时登记在这里，
+// 否则这条断言就退化成恒真）。
+var modelHintSegments = map[string]bool{
+	"esc cancel": true, "⏎ select": true, "space save": true,
+	"1-9 jump": true, "j/k ↑/↓ move": true, "esc": true,
+}
+
 func TestModelDialogHint(t *testing.T) {
-	multi := modelDialogHint(100, true)
-	if !strings.Contains(multi, "1-9 jump") || !strings.Contains(multi, "Space save") {
-		t.Errorf("wide multi hint missing parts: %q", multi)
+	if multi := stripANSICodes(modelDialogHint(100, true)); !strings.Contains(multi, "1-9 jump") ||
+		!strings.Contains(multi, "space save") || !strings.HasPrefix(multi, "esc") {
+		t.Errorf("wide multi hint 缺段或顺序不对: %q", multi)
 	}
-	single := modelDialogHint(100, false)
+	single := stripANSICodes(modelDialogHint(100, false))
 	if strings.Contains(single, "1-9 jump") {
-		t.Errorf("single hint should not advertise number keys: %q", single)
+		t.Errorf("单 provider 时不该宣传数字键: %q", single)
 	}
-	if !strings.Contains(single, "Space save") {
+	if !strings.Contains(single, "space save") {
 		t.Errorf("single hint missing Space save: %q", single)
 	}
-	// 最窄一级仍是单行完整提示
-	narrow := modelDialogHint(12, true)
-	if strings.Contains(narrow, "\n") {
-		t.Errorf("narrow hint should stay single-line: %q", narrow)
-	}
-	if !strings.Contains(narrow, "Space") {
-		t.Errorf("even the narrowest hint should mention Space: %q", narrow)
+	for _, budget := range []int{8, 12, 20, 30, 44, 60, 100} {
+		got := modelDialogHint(budget, true)
+		if w := lipgloss.Width(got); w > budget {
+			t.Errorf("budget=%d: 提示条宽 %d，超预算（旧梯子就是死在这）: %q", budget, w, stripANSICodes(got))
+		}
+		plain := stripANSICodes(got)
+		if budget >= 11 && !strings.HasPrefix(plain, "esc") {
+			t.Errorf("budget=%d: 第一段不再是 esc → %q", budget, plain)
+		}
+		// 真正的不变量：每一段要么整段在、要么整段没有（半截按键会让人去按一个不存在的键）。
+		for _, seg := range strings.Split(plain, " · ") {
+			if !modelHintSegments[seg] {
+				t.Errorf("budget=%d: 出现没有整段声明过的提示段 %q → %q", budget, seg, plain)
+			}
+		}
 	}
 }
