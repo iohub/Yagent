@@ -18,7 +18,7 @@
 
 **2. 弹窗守卫是白名单，`taskCompleteMsg` 必须透传。** `tui_update.go:46-56`：弹窗打开时只放行
 少数消息类型。`taskCompleteMsg` 是 `taskRunning` **唯一的清零点**，吞掉的表现是界面永久卡在
-"运行中"且最终答案不落地；`tea.PasteMsg` 不是 KeyMsg，也要转发给 textarea。
+"运行中"且最终答案不落地。**求助与授权已不是弹窗**（`docs/ask-panel-redesign.md`）：它们是 footer 的一块，不进这道守卫。
 
 **3. 布局尺寸只有一个口径。** `computeFooterHeight`（`tui_render.go:16-18`）与 `View()` 的 footer
 拼接逐行对应（`tui_view.go:212-214`）；视口行高与正文四列宽度也只算一次 —— `computeBodyLayout`
@@ -32,7 +32,7 @@ viewport 自己已把每一行补齐到列宽（`TestViewportViewPadsEveryLine` 
 按 `height` 而不是 `height-2` 分配行预算会多要 2 行，被末尾的"行数收敛 + 补边框"悄悄截掉
 ——那处收敛在 `renderDashboard`（`tui_dashboard.go:142`）：`:157-160` 明写**四段**（◆ Tokens / ⚙ Activity / ⧗ LATENCY / ⧉ COMPRESS）抢的是同一份 `height-2`，让位序 = token > Activity > ⧗≈⧉（`:169-176` 的扣除、`:211-231` 的两段预算），两个后段在 `maxRows < 2` 时必须**整段让位**——传 0 进渲染器等于"不限高"，它会反过来把 Activity 挤掉。
 `:261-285` 先按 `innerWidth` 裁行、补圆角边框、最后再把超出的行砍掉，所以代价是**侧栏最后一段少两行
-而不报错**。同理日志的重着色：不走 `viewport.SetHighlights`（它按 `ansi.Strip` 之后的字节位算偏移、
+而不报错**。footer 每加一块都要同时进 `computeFooterHeight`，行数只从渲染结果数（`askPanelHeight` = `lipgloss.Height(askPanelBlock)`），固定段只有一个算法 `footerFixedRows`（含 `timelineFooterRows`，**有待答求助时它整块让位**）。同理日志的重着色：不走 `viewport.SetHighlights`（它按 `ansi.Strip` 之后的字节位算偏移、
 却用原文判行，在我们的上色日志上必然错位），走 `StyleLineFunc`（`tui_search.go:139-140`，挂点在 `:160`）。
 （根 AGENTS.md §11 坑 7。）
 
@@ -86,6 +86,7 @@ key 只含宽度/行高/cwd；**头部分支不许算 footer 行高**，那条�
 
 **7. 列表/表单的共用原语只有一份。** `common/list_metrics.go:1-6` 就是"两份同形实现"的修法：
 `components` 只留别名（`components/dialog_list.go:28-31`），引导向导共用同一份。**不许在任一边再抄一份**。
+提示条同理（`common/hintbar.go`，曾有六份拷贝）：放不进就从尾部整段丢弃，所以**书写顺序就是优先级、退出键写第一段**。
 输入框视觉令牌同理：`applyTextareaTokens`（`tui_model.go:573-576`）是主输入框与向导字段的唯一来源。
 `dialogListChrome = 10`（`internal/tui/components/dialog_list.go:18-22`）是"除列表外占用的行数"的事实，对话框加一行必须同步改它。
 
@@ -169,9 +170,8 @@ quit 挪走了，ctrl+c 仍退程序，而且默认键永远释放不掉。抢�
   grapheme 切分）。`PanelWidths` 的 inner = panel − 6；`ListBudget` 装不下指示行就**放弃指示行**
   （保证表面永远不高出终端）；`Ellipsize` 超长走**中间省略**——同前缀的模型名靠尾部区分。
   零测试文件，靠调用方的矩阵测试间接暴露。
-- **`components/`** — 对话框 + `DialogStack`。只渲染、只消费按键。三个选择类对话框共用一套
-  按键契约，此前在三个文件各手抄一份（`internal/tui/components/select_dialog_contract_test.go:19-20`）——新选择类对话框
-  必须接进 `selectProbe`。同包只准一个 ANSI 剥离辅助函数（`check_test_hygiene.sh` 硬拦）。
+- **`components/`** — 对话框 + `DialogStack`。只渲染、只消费按键。三个选择类对话框必须同时接进
+  `select_dialog_contract_test.go` 的三份契约（按键 / 渲染 / 提示条 `runSelectDialogHintContract`）。同包只准一个 ANSI 剥离辅助（`check_test_hygiene.sh` 硬拦）。
 - **`layout/`** — **当前实际不负责布局**：`Region`/`AllRegions`/`IsCompact` 在包外零调用点，
   唯一被调的是 `Resize`（`tui_update_system.go:130-132`，构造在 `tui_model.go:639`）。
   改 `computeRegions` 不会改变界面；真实高度契约在 `tui_render.go`。compact 断点 120
@@ -185,10 +185,10 @@ quit 挪走了，ctrl+c 仍退程序，而且默认键永远释放不掉。抢�
 
 ## 闸门
 
-`TestView_ExactHeight`（`tui_chrome_test.go:267`）与 `TestView_ExactHeightWithPanels`（`:530`）、
+`TestView_ExactHeight`（`tui_chrome_test.go:269`）与 `TestView_ExactHeightWithPanels`（`:582`）、
 `TestLiveRender_ListenerStaysArmedInOverlayModes`（`tui_livestream_test.go:97`，四个覆盖层）、
 `TestTaskCompleteMsgNotSwallowedBehindDialog`（`tui_model_switch_test.go:155`）、
-`TestUpdate_PasteMsgRoutedToTopDialog`（`tui_paste_test.go:17`）、
+`TestPaste_LandsInAskAnswerBox`（`tui_paste_test.go:20`，粘贴→答案框→总线上那条回答）、
 `TestParallelStreamsSameAgentDoNotMerge`（`tui_parallel_stream_test.go:26`，让 `streamSlotKey`
 忽略 `DelegationID` 即红）、`TestTokenPanel_FooterFitsTermWidth`（`token_panel_test.go:257`）、`TestLatencyTierLadderRows` / `TestLatency_NeverStarvesTokensAndActivity` / `TestLatencySection_EntersDashboardCacheKey`（`latency_panel_render_test.go`：⧗ 段的 `latencyRunRows` 一旦返回拼好的多行串就被按一行计数、`latencyMax` 不再给 Activity 留行、签名漏进 `dashboardCacheKey`，三件事各自立刻红；⧗ 段的其余闸门在 `latency_panel_data_test.go` / `latency_total_test.go` / `latency_panel_surfaces_test.go`）、
 `TestBodyWidthIsOneSource`（`tui_view_layout_test.go:34`，把 resize/切标签页的宽度公式改回旧写法即红）、
@@ -210,8 +210,8 @@ quit 挪走了，ctrl+c 仍退程序，而且默认键永远释放不掉。抢�
 返回，不是只查 cmd 形状；删掉 standalone 那条 `tea.Quit` 翻译即红——钉第 13 条）、
 `TestLegacyStreamsWithoutDelegationKeepOldBehavior`（`tui_parallel_stream_test.go:57`：钉第 4 条的
 "没有坐标时不许变新"）。
-授权对话框的渲染闸门在 `components/user_help_dialog_render_test.go`（`TestUserHelpDialog_NoANSINesting:12`、
-`_AutoDetectMode:62`、`_PasteReachesTextarea:110`，钉第 2 条的 `tea.PasteMsg` 那一半）；
+求助/授权面板的闸门在 `ask_panel_test.go`：`TestScreen_NeverExceedsTermHeight`（整屏行数全矩阵 =
+终端 {20..60} × 宽 {30..240} × {无/短/45 项/长答案/长答案+45 项}），外加键帽逐个按一遍、`esc` 首位、折叠提示、队列、正文回落、软折行高度各一条；
 `/resume` 恢复链路的闸门在 `tui_resume_restore_test.go`（`TestApplyRestoredMemory_EntryShapeMatchesLivePath:85`
 与 `_RenderParityWithLivePath:443`：恢复出的 timeline 条目必须与实时事件构造的条目同名、同渲染，
 一次工具调用只产一条条目）。

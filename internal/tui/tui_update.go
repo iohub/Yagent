@@ -61,14 +61,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.stopTick()
 				return m, nil
-			case tea.PasteMsg:
-				// 粘贴是独立消息类型（非 KeyMsg）：必须路由到栈顶对话框，
-				// 否则对话框内 textarea（如 user-help 的 Custom input）无法粘贴。
-				cmd, _ := m.dialogStack.Update(msg)
-				if m.taskRunning {
-					return m, tea.Batch(cmd, listenForEvents(m.eventCh), m.ensureTick())
-				}
-				return m, cmd
 			case startupRecentsMsg:
 				// 启动屏的异步取数：就地落地并发起重排，不占用任何事件链
 				// （它不推进 taskRunning，也不影响对话框，放行无副作用）。
@@ -115,6 +107,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Thinklink 全屏模式：拦截所有消息
 	if m.thinklinkMode {
 		mod, cmd := thinklinkFullscreenUpdate(msg, m)
+		return mod, m.keepListening(cmd, msg)
+	}
+
+	// 求助全文阅读器（ctrl+o）：拦截所有消息，与上面两个覆盖层同族。
+	if m.askReaderMode {
+		mod, cmd := askReaderUpdate(msg, m)
 		return mod, m.keepListening(cmd, msg)
 	}
 

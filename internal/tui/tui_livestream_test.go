@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"yagent/internal/protocol"
 	"yagent/internal/tui/components"
 
 	tea "charm.land/bubbletea/v2"
@@ -100,6 +101,13 @@ func TestLiveRender_ListenerStaysArmedInOverlayModes(t *testing.T) {
 		"thinklink": func(mm *model) { mm.thinklinkMode = true },
 		"history":   func(mm *model) { mm.historyMode = true },
 		"resume":    func(mm *model) { mm.resumeMode = true },
+		// 求助全文阅读器（ctrl+o）：docs/ask-panel-redesign.md §6.3 —— 覆盖层从四个变五个。
+		// 少加这一行，将来漏接 keepListening 的那个分支就不会有任何测试来报。
+		"askReader": func(mm *model) {
+			p := feedHelpAsk(mm, "问题", strings.Repeat("长到必须折叠的上下文。", 20), []string{"甲"}, protocol.InteractionSelect)
+			p.allowCustom = false
+			mm.openAskReader()
+		},
 	} {
 		m := chromeTestModel(t, 120, 40)
 		m.taskRunning = true

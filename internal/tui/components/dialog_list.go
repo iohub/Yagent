@@ -2,8 +2,6 @@ package components
 
 import (
 	"yagent/internal/tui/common"
-
-	"charm.land/lipgloss/v2"
 )
 
 // 列表型对话框（ModelSelectDialog / AgentSelectDialog）共用的排版原语：
@@ -44,20 +42,18 @@ func windowRange(n, focus, rows int) (start, end int) {
 	return common.WindowRange(n, focus, rows)
 }
 
-// dialogHint 返回单行放得下的按键提示。
-// 逐级缩短而非截断：提示一旦换行就会撑破 listBudget 的高度预算。
+// dialogHint 是单标签列表类对话框的按键提示。
+//
+// **顺序就是优先级**：common.HintBar 宽度不够时从尾部整段丢弃，所以退出通道写在第一段。
+// 这里原来是一条手写的"逐词缩短"梯子（"… · Esc cancel" → "↑/↓ move · Enter select · Esc"
+// → "↑/↓ · Enter · Esc"），Esc 活着纯靠作者记得把它留在最后 —— 加一段提示就可能
+// 正好把它挤掉。梯子连同它的两个副本一起删了（模型选择、超时预设各有一份）。
 func dialogHint(innerWidth int, multi bool) string {
-	hint := "↑/↓ navigate · Enter select · Esc cancel"
+	hints := "esc cancel · ⏎ select · j/k ↑/↓ move"
 	if multi {
-		hint = "↑/↓ navigate · 1-9 jump · Enter select · Esc cancel"
+		hints = "esc cancel · ⏎ select · 1-9 jump · j/k ↑/↓ move"
 	}
-	if lipgloss.Width(hint) > innerWidth {
-		hint = "↑/↓ move · Enter select · Esc cancel"
-	}
-	if lipgloss.Width(hint) > innerWidth {
-		hint = "↑/↓ · Enter · Esc"
-	}
-	return hint
+	return common.HintBar(hints, innerWidth)
 }
 
 // moreLine 渲染 "↑ N more" / "↓ N more" 滚动指示行。见 common.MoreLine。

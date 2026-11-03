@@ -110,7 +110,6 @@ func (d *LLMTimeoutDialog) View() string {
 	c := common.DarkModeColors()
 	borderStyle := common.DialogBorderStyle(c)
 	titleStyle := common.SectionHeaderStyle(c)
-	helpStyle := common.HelpTextStyle(c)
 	cursorStyle := common.CursorIndicatorStyle(c)
 
 	dialogWidth, innerWidth := dialogWidths(d.width)
@@ -160,18 +159,22 @@ func (d *LLMTimeoutDialog) View() string {
 		lines = append(lines, row)
 	}
 
-	hint := "↑/↓ select · Enter apply · Space save · Esc cancel"
-	if lipgloss.Width(hint) > innerWidth {
-		hint = "↑/↓ · Enter · Space · Esc"
-	}
+	hint := timeoutDialogHint(innerWidth)
 
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		titleStyle.Render("LLM Call Timeout"),
 		"",
 		strings.Join(lines, "\n"),
 		"",
-		helpStyle.Render(hint),
+		hint,
 	)
 	dialog := borderStyle.Width(dialogWidth).Render(content)
 	return lipgloss.Place(d.width, d.height, lipgloss.Center, lipgloss.Center, dialog)
+}
+
+// timeoutDialogHint 是超时预设对话框的按键提示。esc 第一位（见 dialogHint 的头注：
+// 同一个"逐词缩短"梯子在这里原本是第三份）。
+// 提成函数是为了让闸门能调用**同一个来源**，而不是在测试里再抄一遍字面量。
+func timeoutDialogHint(innerWidth int) string {
+	return common.HintBar("esc cancel · ⏎ apply · space save · tab next · j/k ↑/↓ move", innerWidth)
 }

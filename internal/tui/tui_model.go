@@ -482,6 +482,22 @@ type model struct {
 	// thinklinkAgentFilter 为空表示不过滤；非空时只显示该 Agent 的条目（`f` 循环）。
 	thinklinkAgentFilter string
 
+	// 决策面板家族（docs/ask-panel-redesign.md）。askQueue 是待答求助，
+	// askActiveIndex 是当前显示的那一条；-1 = 队列空。
+	// 求助不再进 dialogStack —— 它是 footer 的一块，transcript 保持可见。
+	askQueue       []*pendingAsk
+	askActiveIndex int
+	// askReaderMode 是 ctrl+o 全屏阅读器的覆盖层；与 timeline / thinklink 同族。
+	askReaderMode bool
+	askReaderVP   *viewport.Model
+	askReaderCur  int
+	// askBlockCache 是面板渲染后的那一串行；行数就数它（见 ask_panel.go 的头注）。
+	askBlockCache string
+	askBlockValid bool
+	// askBlockSec 是缓存里那份面板上写的"已等待秒数"：秒数变了就要重画，
+	// 但只在整点跨过的那一刻，不是每帧。
+	askBlockSec int
+
 	editKeyMap map[string]string
 
 	cmdKeyMap map[string]string

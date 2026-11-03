@@ -147,21 +147,14 @@ func (d *ModelSelectDialog) selectByDigit(key string) {
 	d.Persist = false // 数字直选仅临时切换
 }
 
-// modelDialogHint 返回模型选择对话框的单行按键提示，体现 Space=保存到配置
-// （永久切换）。与共享 dialogHint 相同的逐级缩短降级模式——提示换行会撑破
-// listBudget 的高度预算。共享 dialogHint 供 AgentSelectDialog 等使用，不改动。
+// modelDialogHint 是模型选择表格的按键提示：esc 第一位（见 dialogHint 的头注），
+// Space 是"保存到配置"与 Enter"本次切换"的唯一区别，绝不能被宽度挤掉。
 func modelDialogHint(innerWidth int, multi bool) string {
-	hint := "↑/↓ navigate · Enter select · Space save · Esc cancel"
+	hints := "esc cancel · ⏎ select · space save · j/k ↑/↓ move"
 	if multi {
-		hint = "↑/↓ navigate · 1-9 jump · Enter select · Space save · Esc cancel"
+		hints = "esc cancel · ⏎ select · space save · 1-9 jump · j/k ↑/↓ move"
 	}
-	if lipgloss.Width(hint) > innerWidth {
-		hint = "↑/↓ move · Enter select · Space save · Esc"
-	}
-	if lipgloss.Width(hint) > innerWidth {
-		hint = "↑/↓ · Enter · Space · Esc"
-	}
-	return hint
+	return common.HintBar(hints, innerWidth)
 }
 
 // View renders the dialog as a string.

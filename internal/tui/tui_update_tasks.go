@@ -167,12 +167,6 @@ func streamSlotBelongsToTool(slotKey, toolName string) bool {
 	return strings.HasPrefix(slotKey, toolName+"#")
 }
 
-// opensDialogEvent 报告该事件是否会推送对话框（user-help 求助 / 危险操作确认）。
-// 只有它们需要在已有对话框时被忽略，避免叠出第二层弹窗。
-func opensDialogEvent(eventType string) bool {
-	return eventType == "user_help_needed"
-}
-
 func stringFromEventMap(m map[string]interface{}, key string) string {
 	s, _ := m[key].(string)
 	return s
@@ -200,16 +194,12 @@ func timelineCoords(event *messaging.MessageEvent) (agent, delegation string) {
 }
 
 func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
-	// 对话框打开时只拦住"会再弹一层对话框"的事件，其余照常消费：日志与时间线
-	// 此时并不可见，但丢弃就是永久缺失 —— 实时视图少一条，要等从历史恢复才看得到。
-	if m.dialogStack != nil && m.dialogStack.Len() > 0 && opensDialogEvent(string(msg.event.Type)) {
-		if m.taskRunning {
-			return m, listenForEvents(m.eventCh)
-		}
-		return m, nil
-	}
+	// 这里曾经有一段"对话框打开时丢掉会再弹一层对话框的事件"：
+	// 并发委派同时问两个问题时，第二条 user_help_needed 被直接扔了（实测栈深 1→1），
+	// 而提问的 Agent 一直阻塞等回答 —— 屏幕上没有任何提示，也没有超时能解开它
+	// （ask_user_for_help 豁免工具超时）。现在求助走队列，不弹层也不丢。
 
-	// 用户对确认框的回答由 TUI 自己发布，又会经消息总线回送一份：
+	// 用户对求助/授权的回答由 TUI 自己发布，又会经消息总线回送一份：
 	// 它不是 agent 的输出，落到日志里只会变成一行 map[...] 噪音。
 	if msg.event.Type == "user_help_response" {
 		return m, listenForEvents(m.eventCh)
@@ -738,21 +728,27 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.event.Type == "user_help_needed" {
-		var focusCmd tea.Cmd
+		// 求助不再弹层，而是进队列（ask-panel-redesign §4/§9）：面板是 footer 的一块，
+		// transcript 保持可见，第二条并发求助也不会被丢掉。
+		var startCmd tea.Cmd
 		if content, ok := msg.event.Content.(map[string]interface{}); ok {
-			if _, hasInteractionType := content["interaction_type"]; hasInteractionType {
-				focusCmd = m.openUserHelpDialog(msg.event)
-			} else {
-				m.openConfirmDialog(msg.event)
+			// 需要自由文本时切到 INSERT：否则按键会先被 NORMAL 模式的命令行吃掉，
+			// 表现是"面板让你答，敲下去什么都没进"。主输入框本身从不 blur，
+			// 所以这里只需要切模式，不需要再聚焦一次。
+			if p := m.enqueueAsk(content, msg.event.From); p != nil && p.inputMode {
+				startCmd = m.enterInsertMode()
 			}
 		} else {
-			m.openConfirmDialog(msg.event)
+			// 不是 map 的旧形状也要能答：包一层，而不是丢掉这次求助。
+			m.enqueueAsk(map[string]interface{}{
+				"question": fmt.Sprintf("%v", msg.event.Content),
+			}, msg.event.From)
 		}
-		entry := formatEventAsEntry(msg.event)
-		m.logEntries = append(m.logEntries, entry)
-		m.viewportDirty = true
-		m.appendLogEntry(&m.logEntries[len(m.logEntries)-1])
-		return m, tea.Batch(listenForEvents(m.eventCh), focusCmd)
+		// 到达时不写 transcript 痕迹：问题原文已经在 ask_user_for_help 的工具卡里
+		// （tool_call_start 的 arguments），答完那条会补上"问了什么 + 答了什么"。
+		// 今天在这里追加的是 `? HELP HELP: map[allow_custom:true …]` —— Go 逐字打出的 map，
+		// 读不出问题（设计稿 R5 第三条）。
+		return m, tea.Batch(listenForEvents(m.eventCh), startCmd)
 	}
 
 	if msg.event.Type == "commit_context_loaded" {

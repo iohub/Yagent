@@ -310,31 +310,13 @@ func completionItemRow(row completionRow, nameCol, band int, selected bool) stri
 	return strings.Join(pieces, "")
 }
 
-// completionHintItems 是面板底部的操作提示；按键部分走输入面板同一套键帽样式。
-var completionHintItems = []string{"Tab 切换", "⏎ 选择", "Esc 关闭"}
+// completionHintItems 是面板底部的操作提示。**顺序就是优先级**：提示条放不进时
+// 从尾部整段丢弃，所以"怎么关掉这一屏"必须写在第一段（旧顺序把它放最后，
+// 窄终端上恰好把最丢不起的一条丢掉）。
+var completionHintItems = []string{"Esc 关闭", "⏎ 选择", "Tab 切换"}
 
 // completionHintBar 渲染提示行。宽度不够时从尾部整段丢弃（与 renderHintBar 同一取向）：
 // 少一个提示只是信息少了，折成两行则是 footer 行数与 computeFooterHeight 对不上。
 func completionHintBar(band int) string {
-	const sep = "   "
-	sepWidth := lipgloss.Width(sep)
-
-	var b strings.Builder
-	used := 0
-	for _, item := range completionHintItems {
-		rendered := renderHintItem(item)
-		cost := lipgloss.Width(rendered)
-		if b.Len() > 0 {
-			cost += sepWidth
-		}
-		if used+cost > band {
-			break
-		}
-		if b.Len() > 0 {
-			b.WriteString(sep)
-		}
-		b.WriteString(rendered)
-		used += cost
-	}
-	return completionIndentStyle.Render(b.String())
+	return common.HintBarItems(completionHintItems, "   ", band)
 }

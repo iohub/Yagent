@@ -4,25 +4,8 @@ import (
 	"testing"
 )
 
-// TestConfirmDialogCreation tests ConfirmDialog constructor.
-func TestConfirmDialogCreation(t *testing.T) {
-	d := NewConfirmDialog(nil, "run_bash", "ls -la", "Warning message", "", LanguageEn)
-	if d.ID() != "confirm_dialog" {
-		t.Errorf("expected ID 'confirm_dialog', got %q", d.ID())
-	}
-	if d.Type() != DialogModal {
-		t.Errorf("expected DialogModal, got %v", d.Type())
-	}
-	if d.Init() != nil {
-		t.Error("Init() should return nil")
-	}
-	if d.GetSelectedResult() != Allow {
-		t.Error("default selection should be Allow")
-	}
-	if d.GetResponseAction() != "allow" {
-		t.Errorf("default action should be 'allow', got %q", d.GetResponseAction())
-	}
-}
+// 授权确认不再是对话框（docs/ask-panel-redesign.md）：五档选项与动作词表住在
+// internal/tui/ask_state.go，由 tui 包的 TestAuthOptionActionTable 钉住。
 
 // TestQuitConfirmDialogFactories tests factory methods.
 func TestQuitConfirmDialogFactories(t *testing.T) {
@@ -113,7 +96,7 @@ func TestDialogStackIntegration(t *testing.T) {
 		t.Error("new stack should be empty")
 	}
 
-	d1 := NewConfirmDialog(nil, "test1", "cmd1", "warn1", "", LanguageEn)
+	d1 := NewHelpDialog(LanguageEn)
 	d2 := NewQuitConfirmDialogForQuit(LanguageEn)
 
 	stack.Push(d1)

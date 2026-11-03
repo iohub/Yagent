@@ -108,7 +108,6 @@ func (d *RoutingDialog) View() string {
 	c := common.DarkModeColors()
 	borderStyle := common.DialogBorderStyle(c)
 	titleStyle := common.SectionHeaderStyle(c)
-	helpStyle := common.HelpTextStyle(c)
 	cursorStyle := common.CursorIndicatorStyle(c)
 
 	dialogWidth, innerWidth := dialogWidths(d.width)
@@ -151,10 +150,7 @@ func (d *RoutingDialog) View() string {
 	// ── 三档信息 ──
 	tierLines := d.renderTiers(c, innerWidth)
 
-	hint := "↑/↓ select · Enter apply · Space save · Esc cancel"
-	if lipgloss.Width(hint) > innerWidth {
-		hint = "↑/↓ · Enter · Space · Esc"
-	}
+	hint := routingDialogHint(innerWidth)
 
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		titleStyle.Render("Model Auto-Routing"),
@@ -163,7 +159,7 @@ func (d *RoutingDialog) View() string {
 		"",
 		strings.Join(tierLines, "\n"),
 		"",
-		helpStyle.Render(hint),
+		hint,
 	)
 	dialog := borderStyle.Width(dialogWidth).Render(content)
 	return lipgloss.Place(d.width, d.height, lipgloss.Center, lipgloss.Center, dialog)
@@ -213,4 +209,11 @@ func (d *RoutingDialog) renderTiers(c common.ColorTokens, innerWidth int) []stri
 	lines = append(lines, lipgloss.NewStyle().Foreground(c.TextMuted).
 		Render(ellipsize("ai_score = Σ(benchmark × weight) on the candidate intersection", innerWidth)))
 	return lines
+}
+
+// routingDialogHint 是自动路由面板的按键提示：这条"逐词缩短"梯子是第六份拷贝
+// （见 dialogHint 的头注），一并收进内核。它的第二档 "↑/↓ · Enter · Space · Esc"
+// 在 40 列终端下仍宽于 innerWidth —— 那把梯子并没有真的解决溢出，只是换了个说法。
+func routingDialogHint(innerWidth int) string {
+	return common.HintBar("esc cancel · ⏎ apply · space save · j/k ↑/↓ move", innerWidth)
 }

@@ -97,7 +97,7 @@ func TestCompletionPanel_ExactLayout(t *testing.T) {
 		"      rs",
 		"    ◇ 技能 " + strings.Repeat("─", width-completionIndent-lipgloss.Width("◇ 技能")-1),
 		"      pdf-split 按页拆分 PDF",
-		"    Tab 切换   ⏎ 选择   Esc 关闭",
+		"Esc 关闭   ⏎ 选择   Tab 切换",
 	}
 	if dashes == "" {
 		t.Fatal("夹具宽度 40 下组头必须补满分隔线，算出的线数是空的")
