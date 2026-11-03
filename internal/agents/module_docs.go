@@ -12,9 +12,9 @@ import (
 
 // 局部文档注入（docs/agents-md-slimming-design.md §5）。
 //
-// 包内"这么做会静默坏在哪里"住在 internal/**/AGENTS.md，而运行时注入的只有工作区根的
-// AGENTS.md（`project_context.go` 不递归）——所以下沉出去的判据对子 Agent 曾是**不可达**的。
-// 这个通道把它接回来：委派前缀带上任务点到的目录的局部文档。
+// 包内"这么做会静默坏在哪里"住在 internal/**/AGENTS.md。运行时注入的只有**目录级**那几份
+// （工作区根那一份自 2026-11 起不再进任何运行时上下文，见 moduleDocsHint 的指针语义）——
+// 这个通道把目录级判据接到子 Agent 面前：委派前缀带上任务点到的目录的局部文档。
 const (
 	// 预算刻意不做成配置键：这个旋钮没有人调，写成配置就是第二个"存在但不生效"的假开关
 	// （§11 坑 25）。超预算必须留下看得见的省略行，而不是静默少一份文档。
@@ -23,8 +23,16 @@ const (
 
 	moduleDocsTitle = "# Module Constraints (verbatim from the nearest AGENTS.md files)"
 	moduleDocsHint  = "Package-local hard constraints and the tests that pin them. " +
-		"Already in your context: the repository-root AGENTS.md (cross-module rules only)."
+		"The repository-root AGENTS.md (cross-module rules) is NOT preloaded in your context — " +
+		"read_file it from the workspace root if the task depends on cross-module rules."
 )
+
+// moduleDocsExcludedTarget 是"哪个委派目标不收局部文档"的**唯一**判据，且只有一个调用点
+// （director.go 的 packDelegateTask）：判据抄到第二处，两处迟早漂走（§11 坑 18 同族）。
+// browser 驱动的是真实 Chrome，仓库里的写码约束它既不能执行也不该为它烧 token。
+func moduleDocsExcludedTarget(targetAgent string) bool {
+	return targetAgent == "browser"
+}
 
 // moduleDocsTokenRE 抓"至少带一层目录"的路径形态；绝对路径也收（用户在任务里会粘全路径）。
 var moduleDocsTokenRE = regexp.MustCompile(`/?[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+`)

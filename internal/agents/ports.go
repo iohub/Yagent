@@ -66,7 +66,8 @@ type (
 // 未注入（nil）时 browserDelegate 退回改动前的行为，绝不 panic。
 type BoardWriter interface {
 	// PackDelegateTask 前置便签索引与显式 refs 的 ContextPack。
-	PackDelegateTask(task string, params map[string]interface{}) (packedTask string, unresolved int)
+	// targetAgent 是被委派的目标名：局部文档的注入判据只看它（module_docs.go）。
+	PackDelegateTask(task string, params map[string]interface{}, targetAgent string) (packedTask string, unresolved int)
 	// WriteDelegateNote 把子 Agent 的结果写成便签，返回 noteRef（写不出就返回空串）。
 	WriteDelegateNote(agentName, toolName, task string, r AgentResult, runErr error) string
 }

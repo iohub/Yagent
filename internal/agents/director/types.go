@@ -36,20 +36,6 @@ type MetaAgentResult struct {
 	TaskForAgent string   `json:"task_for_agent"`
 }
 
-// --- Project Context types ---
-
-// ProjectContextFile represents a successfully loaded project context file.
-type ProjectContextFile struct {
-	FileName string `json:"file_name"`
-	Content  string `json:"content"`
-}
-
-// ProjectContextLoadResult represents the result of loading project context files.
-type ProjectContextLoadResult struct {
-	LoadedFiles []ProjectContextFile `json:"loaded_files"`
-	Content     string               `json:"content"`
-}
-
 // --- Metrics types ---
 
 // MetricsSnapshot is a point-in-time snapshot of director metrics.

@@ -129,9 +129,10 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 	m.cachedStatusBar = m.renderAirlineStatusBar()
 	m.statusBarValid = true
 
-	// 消费一次性续跑标记：恢复会话（/resume、history 加载）后的首次追问按 Resumed
-	// 提交，Director 续跑首轮强制注入项目上下文；只消费一次，与 FirstConversation
-	// "仅首次注入"的语义对齐。
+	// 消费一次性续跑标记：恢复会话（/resume、history 加载）后的首次追问按 Resumed 提交。
+	// 它如今只是一面旗：Director 侧唯一读它的地方（续跑首轮强制重注入工作区根知识文件）
+	// 已随那条注入删除，但旗子仍要一路传下去，别在下一轮还带着同一个落点。
+	// 真正让续跑接得上的是下面两条：重建出来的 ConversationMemory 与委派级落点。
 	resumed := m.resumedFromRollout
 	m.resumedFromRollout = false
 

@@ -64,7 +64,7 @@ Chrome 缺一则 Browser-Agent 不可用，`delegate_browser` 的描述会自动
 
 | 层 | 内容 | 谁读它 |
 |----|------|--------|
-| 根 `AGENTS.md`（本文件） | 跨模块决策面 + 路由 + 坑索引 | yagent 运行时注入每次 Director 会话；外部 agent |
+| 根 `AGENTS.md`（本文件） | 跨模块决策面 + 路由 + 坑索引 | 外部 agent；yagent 侧**不预置**，需要就 `read_file`（§3.2） |
 | `internal/**/AGENTS.md`（17 份） | 包内不可派生约束：边界 / 硬约束 N / 入口 / 闸门 | 外部 agent；yagent 侧随委派注入（§3.2） |
 | `internal/blueprint` | 模块集合、文件计数、依赖边、入口与 manifest | 运行时每轮派生；`read_blueprint` |
 | `docs/` | 只有 `config-guide.md` 与 `skills-and-mcp-*` 是活的 | 人 |
@@ -78,16 +78,16 @@ Chrome 缺一则 Browser-Agent 不可用，`delegate_browser` 的描述会自动
 
 ### 3.2 加载契约
 
-`internal/agents/director/project_context.go:42-72` 在工作区根依次试 `YAGENT.md`、`CLAUDE.md`、
-`AGENTS.md`，**读到的全部逐字拼接**（不是"第一个命中就停"）后按会话缓存一次，**没有任何字节上限**。
-这就是本文件必须保持精简的全部理由：这里的每一段散文都是每次委派前的固定 token 成本。
+运行时**不再把工作区根的任何知识文件预置进上下文**：`ProjectContextLoader` 与
+`PromptInput.FirstConversation`/`ForceProjectContext` 已连根删除，根 `AGENTS.md` 由想要它的 agent 自己
+`read_file`。本文件必须保持精简的理由因此从"每次会话的固定 token 成本"变成"谁读它都得整份读进来"。
 
-`internal/agents/module_docs.go` 补上另一半：每次委派前缀带上**任务点到的目录及其祖先**的
-`AGENTS.md`（判据与 `ProseForTask` 同源——分母是磁盘上真实存在的文档，不猜路径）。最深优先、
-最多 3 份 / 合计 12 KB，超预算在末尾写一行可见的省略账；工作区根那一份**永不重复注入**。
-接入点 `director.go:packDelegateTask`，在蓝图散文之后、与 `YAGENT_BLACKBOARD` 无关。
-**没有配置键、没有环境变量急停**：它的坏表现形态是"多花一点 token"，而多一个 kill-switch 就是多一处
-"三处共用判据"要维护（§11 坑 13 那一类）。
+`internal/agents/module_docs.go` 是唯一还在注入的通道：每次委派前缀带上**任务点到的目录及其祖先**的
+`AGENTS.md`（判据与 `ProseForTask` 同源——分母是磁盘上真实存在的文档，不猜路径），最深优先、最多 3 份 /
+合计 12 KB，超预算写一行可见的省略账；根那一份**永不**由它注入，`moduleDocsHint` 只留一句指针。
+`browser` 目标连目录级都不注入：唯一判据 `moduleDocsExcludedTarget`，唯一调用点 `packDelegateTask`（排在蓝图散文之后、与 `YAGENT_BLACKBOARD` 无关）。
+**没有配置键、没有环境变量急停**：坏表现是"多花一点 token"，而多一个 kill-switch 就是多一处"三处共用
+判据"要维护（§11 坑 13 那一类）。
 
 ## 4. Agent 角色定义
 
@@ -290,8 +290,8 @@ main.go → Yagent.Init(engine, repoPath) → 装配 MCP/工具引擎/守卫/子
 | 浏览器工作区 | `~/.yagent/data/browser/{delegation}/.browser-control/` | 由 `cmd.Dir` 决定落点；`workspace_ttl` 清理，**没有后台任务会删** |
 | 日志 | `~/.yagent/logs/`（`app-`/`llm-`/`llm-error-`/`tool-`/`delegate-`） | 追加 |
 
-**`/resume` 两层落点，共用同一份账本**：**会话级**（重建 Memory + 恢复 thinklink + 下一轮 `resumed=true`
-强制重注入项目上下文；配对按 last-wins 修复，与 LLM 侧 `repairToolCallPairs` 同语义；
+**`/resume` 两层落点，共用同一份账本**：**会话级**（重建 Memory + 恢复 thinklink；`resumed=true` 旗不再驱动任何
+注入（那条根文件注入已删，旗子留着只为不把续跑管线拔进 app/tui）；配对按 last-wins 修复，与 LLM 侧 `repairToolCallPairs` 同语义；
 `ScanResumeCandidates`（在 `internal/agents/resume.go`，不在 memory）**默认拒绝**，只有 `paused` 与
 `cancelled` 可重放）；**委派级**（`app.ResumableDelegation` 反问"这次会话是不是停在一次 `delegate_*` 上"，
 能才给恢复对话框第三个选项；TUI 只交出 rollout 路径，落点由 app 侧算）。

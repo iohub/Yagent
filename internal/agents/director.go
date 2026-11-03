@@ -62,8 +62,6 @@ type DirectorAgent struct {
 	adapter                 *DirectorAdapter
 	llmClient               *llm.Client
 
-	projectCtxLoader *director.ProjectContextLoader
-
 	blueprint *BlueprintView
 
 	external External
@@ -87,10 +85,6 @@ type DirectorAgent struct {
 
 	pendingResumption *DelegationStop
 	boardID           string
-}
-
-func (a *DirectorAgent) loadProjectContext() *director.ProjectContextLoadResult {
-	return a.projectCtxLoader.Load()
 }
 
 func (a *DirectorAgent) skillCatalog() string {
@@ -154,33 +148,32 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 	adapterCfg.LLMRetries = p.Config.LLM.StepRetries
 
 	self := &DirectorAgent{
-		BaseAgent:        BaseAgent{LLM: p.LLM, Publisher: p.Publisher},
-		RepoAgent:        p.RepoAgent,
-		CodingAgent:      p.CodingAgent,
-		ChatAgent:        p.ChatAgent,
-		MetaAgent:        p.MetaAgent,
-		DevOpsAgent:      p.DevOpsAgent,
-		BrowserAgent:     p.BrowserAgent,
-		promptFmt:        p.Formatter,
-		env:              p.Env,
-		files:            p.Files,
-		search:           p.Search,
-		sys:              p.Sys,
-		edit:             p.Edit,
-		flow:             p.Flow,
-		thinker:          p.Thinker,
-		microAgent:       p.MicroAgent,
-		deepThinker:      p.DeepThinker,
-		guard:            p.Guard,
-		repoCtx:          p.RepoCtx,
-		maxSteps:         p.MaxSteps,
-		metaRetryCount:   p.MetaRetryCount,
-		metaHandler:      director.NewMetaAgentHandler(),
-		adapter:          NewDirectorAdapter(true, adapterCfg),
-		llmClient:        p.LLMClient,
-		blueprint:        p.Blueprint,
-		external:         p.External,
-		projectCtxLoader: director.NewProjectContextLoader(func() string { return p.Env.ProjectPath() }),
+		BaseAgent:      BaseAgent{LLM: p.LLM, Publisher: p.Publisher},
+		RepoAgent:      p.RepoAgent,
+		CodingAgent:    p.CodingAgent,
+		ChatAgent:      p.ChatAgent,
+		MetaAgent:      p.MetaAgent,
+		DevOpsAgent:    p.DevOpsAgent,
+		BrowserAgent:   p.BrowserAgent,
+		promptFmt:      p.Formatter,
+		env:            p.Env,
+		files:          p.Files,
+		search:         p.Search,
+		sys:            p.Sys,
+		edit:           p.Edit,
+		flow:           p.Flow,
+		thinker:        p.Thinker,
+		microAgent:     p.MicroAgent,
+		deepThinker:    p.DeepThinker,
+		guard:          p.Guard,
+		repoCtx:        p.RepoCtx,
+		maxSteps:       p.MaxSteps,
+		metaRetryCount: p.MetaRetryCount,
+		metaHandler:    director.NewMetaAgentHandler(),
+		adapter:        NewDirectorAdapter(true, adapterCfg),
+		llmClient:      p.LLMClient,
+		blueprint:      p.Blueprint,
+		external:       p.External,
 
 		llmTimeout: func() time.Duration {
 			if t := config.GlobalLLMTimeout(); t > 0 {
@@ -579,15 +572,16 @@ func (a *DirectorAgent) WriteDelegateNote(agentName, toolName, task string, resu
 	return a.writeDelegateNote(agentName, toolName, task, result, runErr)
 }
 
-func (a *DirectorAgent) PackDelegateTask(task string, params map[string]interface{}) (string, int) {
-	return a.packDelegateTask(task, params)
+func (a *DirectorAgent) PackDelegateTask(task string, params map[string]interface{}, targetAgent string) (string, int) {
+	return a.packDelegateTask(task, params, targetAgent)
 }
 
-func (a *DirectorAgent) packDelegateTask(task string, params map[string]interface{}) (packedTask string, unresolvedCount int) {
+func (a *DirectorAgent) packDelegateTask(task string, params map[string]interface{}, targetAgent string) (packedTask string, unresolvedCount int) {
 	bp := a.blueprint.ProseForTask(task)
 
 	md := ""
-	if a.env != nil {
+	// 局部文档的唯一注入判据是 targetAgent（moduleDocsExcludedTarget 在 module_docs.go，只此一处调用）。
+	if a.env != nil && !moduleDocsExcludedTarget(targetAgent) {
 		md = LocalDocsForTask(a.env.ProjectPath(), task)
 	}
 
@@ -819,21 +813,7 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 				systemPrompt += "\n\n" + catalog
 			}
 		}
-		var projectContext string
-		if in.FirstConversation || in.ForceProjectContext {
-			if loadResult := a.loadProjectContext(); loadResult != nil && loadResult.Content != "" {
-				if a.Publisher != nil {
-					a.Publisher.Publish("context_loaded", loadResult, a.Name())
-				}
-				projectContext = fmt.Sprintf("\n\n### Project Workspace Context\n%s\n", loadResult.Content)
-			}
-		}
-
 		systemPrompt += a.customAgentPromptSection()
-
-		if projectContext != "" {
-			systemPrompt += projectContext
-		}
 
 		systemPrompt += a.blueprint.Resident()
 
