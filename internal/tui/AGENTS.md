@@ -212,7 +212,7 @@ quit 挪走了，ctrl+c 仍退程序，而且默认键永远释放不掉。抢�
 返回，不是只查 cmd 形状；删掉 standalone 那条 `tea.Quit` 翻译即红——钉第 13 条）、
 `TestLegacyStreamsWithoutDelegationKeepOldBehavior`（`tui_parallel_stream_test.go:57`：钉第 4 条的
 "没有坐标时不许变新"）。
-求助/授权面板的闸门在 `ask_panel_test.go`：`TestScreen_NeverExceedsTermHeight`（整屏行数全矩阵 = 终端 {20..60} × 宽 {30..240} × {无/短/45 项/长答案/长答案+45 项}），外加键帽逐个按一遍、`esc` 首位、折叠提示、队列、正文回落、软折行高度各一条；压暗的闸门在 `dim_test.go` / `dim_screen_test.go`（SGR 表与两套锚点、256 索引逐个不许跳段、判据跟着面板走、面板与答题区逐字节不变、真实渲染产物上行数与列宽一格不多、卡片底色两处同源）；
+求助/授权面板的闸门在 `ask_panel_test.go`：`TestScreen_NeverExceedsTermHeight`（整屏行数全矩阵 = 终端 {20..60} × 宽 {30..240} × {无/短/45 项/长答案/长答案+45 项}），外加键帽逐个按一遍、`esc` 首位、折叠提示、队列、正文回落、软折行高度各一条；压暗的闸门在 `dim_test.go` / `dim_screen_test.go`（SGR 表与两套锚点、256 索引逐个不许跳段、判据跟着面板走、面板与答题区逐字节不变、真实渲染产物上行数与列宽一格不多、卡片底色两处同源）；提交清空的闸门在 `submit_clear_test.go`（两条 submit 路径都清、校验失败与任务收尾都不许抹掉用户正在起草的下一条）；
 `/resume` 恢复链路的闸门在 `tui_resume_restore_test.go`（`TestApplyRestoredMemory_EntryShapeMatchesLivePath:85`
 与 `_RenderParityWithLivePath:443`：恢复出的 timeline 条目必须与实时事件构造的条目同名、同渲染，
 一次工具调用只产一条条目）。
