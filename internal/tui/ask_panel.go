@@ -173,6 +173,9 @@ var (
 	askColorAuth = lipgloss.Color("39")  // 授权待批
 	askColorType = lipgloss.Color("39")  // 焦点已切到输入框：面板让位，压暗
 	askColorIdle = lipgloss.Color("94")  // 授权 + 焦点不在列表：等按键，压暗
+
+	// askCardBg 是待答卡片的底色，只比终端默认底亮一档；压暗背景时它负责"浮起来"。
+	askCardBg = lipgloss.Color("235")
 )
 
 func askEdgeColor(p *pendingAsk) color.Color {
@@ -216,7 +219,11 @@ func (m *model) renderAskPanel() string {
 	if p.kind == askKindAuth {
 		label = "AUTH"
 	}
-	body := func(s string) string { return editorBodyStyle(edge, w).Render(s) }
+	// 卡片底色与输入框的字段底色（tui_model.go applyTextareaTokens 的 235）同一个值：
+	// 待答面板和它的答题区因此是同一块卡片的两格，而不是两个各自发亮的框。
+	body := func(s string) string {
+		return editorBodyStyle(edge, w).Background(askCardBg).Render(s)
+	}
 
 	rows := []string{renderPanelTop(label, m.askPanelMeta(p), w, edge)}
 	for i, l := range f.question {

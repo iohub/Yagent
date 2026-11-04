@@ -18,7 +18,7 @@
 
 **2. 弹窗守卫是白名单，`taskCompleteMsg` 必须透传。** `tui_update.go:46-56`：弹窗打开时只放行
 少数消息类型。`taskCompleteMsg` 是 `taskRunning` **唯一的清零点**，吞掉的表现是界面永久卡在
-"运行中"且最终答案不落地。**求助与授权已不是弹窗**（`docs/ask-panel-redesign.md`）：它们是 footer 的一块，不进这道守卫。
+"运行中"且最终答案不落地。**求助与授权已不是弹窗**（`ask_state.go` / `ask_panel.go`）：它们是 footer 的一块，不进这道守卫。
 
 **3. 布局尺寸只有一个口径。** `computeFooterHeight`（`tui_render.go:16-18`）与 `View()` 的 footer
 拼接逐行对应（`tui_view.go:212-214`）；视口行高与正文四列宽度也只算一次 —— `computeBodyLayout`
@@ -154,13 +154,17 @@ quit 挪走了，ctrl+c 仍退程序，而且默认键永远释放不掉。抢�
 （`fmt.Errorf("%s: %w", op.note, err)`，`setup.go:446`）与 `writtenCount`"已写入 N/M 条"
 （`:140-141,448`），用户才知道剩下几条怎么自救。包装成"什么都没发生"才是撒谎。
 
-**15. 配色令牌与界面语言各只有一个来源。** 调色集中在 `common/styles.go` 的 `Styles`/`ColorTokens`
+**15. 配色令牌、压暗内核与界面语言各只有一个来源。** 调色集中在 `common/styles.go` 的 `Styles`/`ColorTokens`
 （**只有一套深色**）；强调色用途钉死：141 lavender = 活动 tab（`tui_tabs.go:370`）/ thinklink
 （`tui_thinklink_fullscreen.go:16`）/ LLM 调用（`common/styles.go:225`），62 = 滚动条
 （`tui_view.go:23`）/ 面板边框（`tui_dashboard.go:24`），214 = 命令（`common/styles.go:228`），
 39 = 搜索/输入（`common/styles.go:178`），76 = 运行中（`tui_model.go:112`）。终端背景判定只有
-一处 `tui_helpers.go:53`，它**只**用来切 glamour markdown 渲染器的样式（`tui_model.go:610-615`），
-不切上述令牌（明确用 `compat.AdaptiveColor` 的少数状态栏令牌除外）。界面语言是 `i18n.go` 的
+一处 `tui_helpers.go:53`，它只切两样东西：glamour markdown 渲染器的样式（`tui_model.go:610-615`），
+以及压暗往哪个方向压（`dim.go` 的锚点）；不切上述令牌（明确用 `compat.AdaptiveColor` 的少数状态栏令牌除外）。
+压暗背景只有一个内核 `dim.go`：判据唯一 `m.askDimActive()`（面板不在场就逐字节原样返回，否则每帧白扫一遍全屏），
+`dimAnsi` 只改前景、保持原编码族、认不出的序列整条原样，并给没上色的正文补一个压暗后的默认字色；压哪几块由
+`View()` 里那处按位置算的排除表决定（面板与紧贴它下面的答题区不压），卡片底色与输入框字段同源（`askCardBg` = 235）。
+界面语言是 `i18n.go` 的
 全局 `langManager`（69 个字段、默认英文 `i18n.go:283`、只在 TUI 内切换 `tui_model.go:757-762`，
 **没有配置项**），与 `[agent] lang`（LLM 写字段用的语言）是两回事，别互相读取。
 
@@ -202,22 +206,18 @@ quit 挪走了，ctrl+c 仍退程序，而且默认键永远释放不掉。抢�
 （`:117`，`scrolledUp` 写反即红）/ `TestBody_TabSwitchKeepsCursorAndWindow`（`:208`）、
 `TestLLMTimeoutDialog_SizeGuard` / `_WidthMatrix`（`components/timeout_dialog_test.go:146,167`）、
 `TestWizardRenderWidthMatrix`（向导侧：宽度 {40..240} × 高度 × 七屏，断言行数 ≤ 终端高度，钉第 11 条）、
-`TestUnboundSentinelMatchesNothing`（`tui_keymap_remap_test.go:90`：哨兵长得像真按键、或表里空值
-没被翻译成解绑，即红——钉第 10 条）、
-`TestWizardHintsAreNotDecoration`（`setup_test.go:765`：键帽写出的单键没有任何屏真的处理，即红——
-钉第 12 条的反向一半）、
+`TestUnboundSentinelMatchesNothing`（`tui_keymap_remap_test.go:90`：哨兵长得像真按键、或表里空值没被翻译成解绑，即红——钉第 10 条）、
+`TestWizardHintsAreNotDecoration`（`setup_test.go:765`：键帽写出的单键没有任何屏真的处理，即红——钉第 12 条的反向一半）、
 `TestRunSetupProgramActuallyExits`（`setup_test.go:1081`：用 `tea.WithInput` 真跑一次程序断言 `Run`
 返回，不是只查 cmd 形状；删掉 standalone 那条 `tea.Quit` 翻译即红——钉第 13 条）、
 `TestLegacyStreamsWithoutDelegationKeepOldBehavior`（`tui_parallel_stream_test.go:57`：钉第 4 条的
 "没有坐标时不许变新"）。
-求助/授权面板的闸门在 `ask_panel_test.go`：`TestScreen_NeverExceedsTermHeight`（整屏行数全矩阵 =
-终端 {20..60} × 宽 {30..240} × {无/短/45 项/长答案/长答案+45 项}），外加键帽逐个按一遍、`esc` 首位、折叠提示、队列、正文回落、软折行高度各一条；
+求助/授权面板的闸门在 `ask_panel_test.go`：`TestScreen_NeverExceedsTermHeight`（整屏行数全矩阵 = 终端 {20..60} × 宽 {30..240} × {无/短/45 项/长答案/长答案+45 项}），外加键帽逐个按一遍、`esc` 首位、折叠提示、队列、正文回落、软折行高度各一条；压暗的闸门在 `dim_test.go` / `dim_screen_test.go`（SGR 表与两套锚点、256 索引逐个不许跳段、判据跟着面板走、面板与答题区逐字节不变、真实渲染产物上行数与列宽一格不多、卡片底色两处同源）；
 `/resume` 恢复链路的闸门在 `tui_resume_restore_test.go`（`TestApplyRestoredMemory_EntryShapeMatchesLivePath:85`
 与 `_RenderParityWithLivePath:443`：恢复出的 timeline 条目必须与实时事件构造的条目同名、同渲染，
 一次工具调用只产一条条目）。
 退出收口在 `tui_helpers.go:73,79`：`p.Run()` 返回之后必须取消**每个 tab** 上还挂着的那次运行（闸门 `TestQuitCancelsTasksAcrossAllTabs`，`tui_task_cancel_test.go:86`）——TUI 里 Ctrl+C 是按键不是信号，漏掉的表现是 main 的 `FlushAll`/`Close` 跑在一个还活着的循环上 + 一个没人杀的进程组（杀组只挂在 ctx 取消上，见 `internal/tools/AGENTS.md` 硬约束 17）。
-搜索高亮绕开 `viewport.SetHighlights` 的那个选择由 `TestSearch_StripANSIBeforeMatching`
-（`tui_chrome_test.go:393`）钉住（钉第 3 条）。
+搜索高亮绕开 `viewport.SetHighlights` 的那个选择由 `TestSearch_StripANSIBeforeMatching`（`tui_chrome_test.go:393`）钉住（钉第 3 条）。
 向导侧 `TestWizardRequiredGroupMatchesValidator`（`setup_test.go:438`）**双向**钉"表单必填集合 ==
 config 侧真会拒的字段集合"：少一格 = 用户以为填完了却存不下（`config.WriteProvider` 的必填判据比
 `validate()` 弱），多一格 = 表单在问不必要的问题。
