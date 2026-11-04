@@ -482,6 +482,11 @@ type model struct {
 	// thinklinkAgentFilter 为空表示不过滤；非空时只显示该 Agent 的条目（`f` 循环）。
 	thinklinkAgentFilter string
 
+	// thinkDetailOpen 是正文思考折叠的全局旗标（alt+h）：false = thinking 条目与
+	// thought 块各占一行，true = 就地展开（折行全文 / 圆角面板）。
+	// 判据与渲染落点见 docs/thinking-collapse-design.md §2-§3。
+	thinkDetailOpen bool
+
 	// 决策面板家族（docs/ask-panel-redesign.md）。askQueue 是待答求助，
 	// askActiveIndex 是当前显示的那一条；-1 = 队列空。
 	// 求助不再进 dialogStack —— 它是 footer 的一块，transcript 保持可见。

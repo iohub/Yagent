@@ -7,6 +7,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/rivo/uniseg"
 
 	"yagent/internal/thinklink"
 )
@@ -245,6 +246,8 @@ func firstThinklinkLine(s string) string {
 }
 
 // 按词折行、超长单词硬切；空串返回单元素空切片，保证调用方至少有一行可渲染。
+// 度量口径是**显示列**（CJK 一字两列）而不是 rune 数 —— 按 rune 折的中文行会溢出
+// 两倍的列宽，把 thought 面板的圆角边框撕开。
 func wrapWords(s string, width int) []string {
 	if width < 4 {
 		width = 4
@@ -257,24 +260,27 @@ func wrapWords(s string, width int) []string {
 			continue
 		}
 		cur := ""
+		curW := 0
 		for _, w := range words {
-			for len([]rune(w)) > width { // 超长单词硬切
+			for cellWidth(w) > width { // 超长单词硬切
+				head, tail := cutCells(w, width)
 				if cur != "" {
 					out = append(out, cur)
-					cur = ""
+					cur, curW = "", 0
 				}
-				r := []rune(w)
-				out = append(out, string(r[:width]))
-				w = string(r[width:])
+				out = append(out, head)
+				w = tail
 			}
+			ww := cellWidth(w)
 			switch {
 			case cur == "":
-				cur = w
-			case len([]rune(cur))+1+len([]rune(w)) <= width:
+				cur, curW = w, ww
+			case curW+1+ww <= width:
 				cur += " " + w
+				curW += 1 + ww
 			default:
 				out = append(out, cur)
-				cur = w
+				cur, curW = w, ww
 			}
 		}
 		if cur != "" {
@@ -285,6 +291,27 @@ func wrapWords(s string, width int) []string {
 		out = []string{""}
 	}
 	return out
+}
+
+func cellWidth(s string) int { return uniseg.StringWidth(s) }
+
+// cutCells 在显示列宽 width 处切开一个单词，返回前后两段；切点永远落在 grapheme
+// 簇边界上（组合字符与 emoji 不能从中间断开）。
+func cutCells(s string, width int) (head, tail string) {
+	if width <= 0 {
+		return "", s
+	}
+	used := 0
+	gr := uniseg.NewGraphemes(s)
+	for gr.Next() {
+		w := uniseg.StringWidth(gr.Str())
+		if used+w > width {
+			start, end := gr.Positions()
+			return s[:start], s[end:]
+		}
+		used += w
+	}
+	return s, ""
 }
 
 func thinklinkDetailContent(entry ThinklinkEntry, innerW int) string {

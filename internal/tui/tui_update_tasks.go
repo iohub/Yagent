@@ -695,7 +695,6 @@ func (m *model) handleTaskEventMsg(msg taskEventMsg) (tea.Model, tea.Cmd) {
 				eventType: "thinking",
 				from:      msg.event.From,
 				content:   thinkingText,
-				prefix:    "  │ ",
 				isVerbose: false,
 			}
 

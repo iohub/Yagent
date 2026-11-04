@@ -17,6 +17,19 @@ func TestTUI_StreamPanelsMatchOneShot(t *testing.T) {
 	m := chromeTestModel(t, 140, 45)
 	const width = 89
 
+	// 折叠/展开两形态都要钉住"增量 == 一次性"：renderThinklinkBlock 的判据是
+	// m.thinkDetailOpen，任何一边漂走都会让流式面板与定稿后的面板长得不一样。
+	for _, open := range []bool{false, true} {
+		t.Run(map[bool]string{false: "collapsed", true: "expanded"}[open], func(t *testing.T) {
+			verifyStreamPanelsMatchOneShot(t, m, width, open)
+		})
+	}
+}
+
+func verifyStreamPanelsMatchOneShot(t *testing.T, m *model, width int, detailOpen bool) {
+	t.Helper()
+	m.thinkDetailOpen = detailOpen
+
 	steps := []string{
 		"<thought>\ngoal: 修布局\nstep: 读完 View\nreason: 先加闸门\nplan:\n- [x] 读代码\n- [>] 加闸门\n</thought>\n",
 		"第一段正文，块与块之间还有散文。\n\n",
@@ -28,7 +41,7 @@ func TestTUI_StreamPanelsMatchOneShot(t *testing.T) {
 		if len(blocks) == 0 {
 			return content
 		}
-		return joinThinklinkPanels(renderThinklinkPanels(blocks, width-thinklinkPanelGutter), rest)
+		return joinThinklinkPanels(m.renderThinklinkBlocks(blocks, width-thinklinkPanelGutter), rest)
 	}
 
 	entry := &logEntry{eventType: "ai_stream", streaming: true}
@@ -38,7 +51,7 @@ func TestTUI_StreamPanelsMatchOneShot(t *testing.T) {
 		entry.streamContent = accumulated.String()
 		entry.clearRenderCache()
 
-		if got := renderStreamEntry(entry, width); got != oneShot(entry.streamContent+"▌") {
+		if got := m.renderStreamEntry(entry, width); got != oneShot(entry.streamContent+"▌") {
 			t.Errorf("step %d: 增量渲染与一次性渲染不一致\n---- got ----\n%s\n---- want ----\n%s",
 				i, stripANSI(got), stripANSI(oneShot(entry.streamContent+"▌")))
 		}
@@ -51,14 +64,14 @@ func TestTUI_StreamPanelsMatchOneShot(t *testing.T) {
 
 	// memo 里的面板必须真的被复用，而不是每次都重画 —— 这是这一档优化的全部意义
 	entry.streamPanels[0] = "SENTINEL-PANEL"
-	if got := renderStreamEntry(entry, width); !strings.Contains(stripANSI(got), "SENTINEL-PANEL") {
+	if got := m.renderStreamEntry(entry, width); !strings.Contains(stripANSI(got), "SENTINEL-PANEL") {
 		t.Error("已闭合块又被整段重画了一遍，memo 没起作用")
 	}
 
 	// 宽度变了必须整段重画：旧面板是按旧列宽排的
-	if got := renderStreamEntry(entry, 60); got != oneShotAt(entry.streamContent+"▌", 60) {
+	if got := m.renderStreamEntry(entry, 60); got != oneShotAt(m, entry.streamContent+"▌", 60) {
 		t.Errorf("换宽度后与一次性渲染不一致\n---- got ----\n%s\n---- want ----\n%s",
-			stripANSI(got), stripANSI(oneShotAt(entry.streamContent+"▌", 60)))
+			stripANSI(got), stripANSI(oneShotAt(m, entry.streamContent+"▌", 60)))
 	}
 	if want := 60 - thinklinkPanelGutter; entry.streamPanelW != want {
 		t.Errorf("换宽度后 memo 应按新宽度重建：panelW=%d，期望 %d", entry.streamPanelW, want)
@@ -66,7 +79,7 @@ func TestTUI_StreamPanelsMatchOneShot(t *testing.T) {
 
 	// 内容被替换（不是追加）时 memo 作废：ai_response 就会这样改写 streamContent
 	entry.streamContent = "<thought>\ngoal: 另一件事\nreason: 替换而不是追加\n</thought>\n收尾"
-	if got := renderStreamEntry(entry, width); got != oneShotAt(entry.streamContent+"▌", width) {
+	if got := m.renderStreamEntry(entry, width); got != oneShotAt(m, entry.streamContent+"▌", width) {
 		t.Errorf("内容被替换后残留了旧面板\n---- got ----\n%s", stripANSI(got))
 	}
 
@@ -84,12 +97,12 @@ func TestTUI_StreamPanelsMatchOneShot(t *testing.T) {
 	}
 }
 
-func oneShotAt(content string, width int) string {
+func oneShotAt(m *model, content string, width int) string {
 	blocks, rest := thinklink.SplitThoughtBlocks(content)
 	if len(blocks) == 0 {
 		return content
 	}
-	return joinThinklinkPanels(renderThinklinkPanels(blocks, width-thinklinkPanelGutter), rest)
+	return joinThinklinkPanels(m.renderThinklinkBlocks(blocks, width-thinklinkPanelGutter), rest)
 }
 
 // ── A：流式追加的重排合并 ────────────────────────────────────────────────────

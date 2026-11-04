@@ -27,10 +27,9 @@ type bodyBlock struct {
 	lines int
 }
 
-// bodyEmitState 是排版条目时必须顺序携带的状态：上一个可见条目是谁、是不是 thinking。
+// bodyEmitState 是排版条目时必须顺序携带的状态：上一个可见条目是谁。
 type bodyEmitState struct {
-	lastAgent    string
-	lastThinking bool
+	lastAgent string
 }
 
 // bodyIndex 是虚拟化的全部状态。它整体随会话标签页保存/恢复 —— 每个 tab 有自己的滚动位置
@@ -182,24 +181,18 @@ func (m *model) bodyBlockFor(state *bodyEmitState, i int) bodyBlock {
 	}
 
 	block := bodyBlock{}
-	agentChanged := false
 	if entry.from != "" && entry.from != state.lastAgent {
 		if entry.eventType == "ai_response" {
-			block.head = RenderAgentSeparator(entry.from, m.viewport.Width())
+			// 分隔行排在 viewport 的 Padding(0,1) 之内，必须按内宽排：
+			// 按外宽排的那版恒比内宽多 2 列，把整块正文顶宽。
+			block.head = RenderAgentSeparator(entry.from, m.viewport.Width()-2)
 		} else {
 			block.head = RenderAgentBadge(entry.from)
 		}
 		state.lastAgent = entry.from
-		agentChanged = true
 	}
 
-	isThinking := entry.eventType == "thinking"
 	block.text = part
-	if isThinking && state.lastThinking && !agentChanged {
-		block.text = renderThinkingContinuation(*entry, m.viewport.Width())
-	}
-	state.lastThinking = isThinking
-
 	block.lines = countBodyLines(block.head) + countBodyLines(block.text)
 	return block
 }

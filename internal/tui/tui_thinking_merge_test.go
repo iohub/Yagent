@@ -5,14 +5,29 @@ import (
 	"testing"
 )
 
-// TestThinkingMerge_ContinuousThinkingWithVerboseInterleaved 验证连续thinking（中间隔verbose条目）应合并：
-// 💭图标只出现1次，后续thinking渲染为缩进续行。
+// thinkingTestBody 走 View() 的那一步：事件路径只标脏，正文缓存由 View 落地，
+// 不先 rebuild 就会读到合并之前那一帧的旧 contentParts（而不是"渲染错了"）。
+func thinkingTestBody(m *model) string {
+	m.rebuildContentCache()
+	return stripANSI(m.bodyText(0, m.bodyTotalLines()))
+}
+
+// ── 折叠态的 thinking 契约（docs/thinking-collapse-design.md §2）──────────────
+//
+// 旧契约是"一段思考一行、同段后续行走缩进续行"，续行没有图标 —— 于是 💭 次数
+// 与条目数不相等，且合并进来的后续段落根本渲染不出来。新契约：
+// ① 每个 thinking 条目恰好一行，行首恒为 "💭 ×N │ "（N = 段数）；
+// ② 空白 part（ai_stream 占位）不产生任何行；
+// ③ 展开态（thinkDetailOpen）才逐段编号折行。
+
+// TestThinkingMerge_ContinuousThinkingWithVerboseInterleaved：
+// 连续 thinking 被 verbose 条目（llm_call_start/end）打断时各成一条目，
+// 折叠态每条一行、每行一个 💭，段与段之间不产生空行。
 func TestThinkingMerge_ContinuousThinkingWithVerboseInterleaved(t *testing.T) {
 	m := newTestModel()
 	m.anim = NewAnim(10)
 	m.llmCallActiveEntries = make(map[string]int)
 
-	// 3个thinking，中间隔llm_call_start/llm_call_end（verbose事件）
 	m = feedEvent(m, buildEvent("thinking", "director", "第一个思考内容"))
 	m = feedEvent(m, buildEvent("llm_call_start", "director", map[string]interface{}{"model": "test-model"}))
 	m = feedEvent(m, buildEvent("llm_call_end", "director", map[string]interface{}{"model": "test-model"}))
@@ -21,37 +36,54 @@ func TestThinkingMerge_ContinuousThinkingWithVerboseInterleaved(t *testing.T) {
 	m = feedEvent(m, buildEvent("llm_call_end", "director", map[string]interface{}{"model": "test-model"}))
 	m = feedEvent(m, buildEvent("thinking", "director", "第三个思考内容"))
 
+	nThinking := 0
+	for _, e := range m.logEntries {
+		if e.eventType == "thinking" {
+			nThinking++
+		}
+	}
+	if nThinking != 3 {
+		t.Fatalf("thinking 条目数 = %d, want 3（verbose 条目会断开合并）", nThinking)
+	}
+
 	output := m.bodyText(0, m.bodyTotalLines())
-	t.Logf("=== TestThinkingMerge 完整输出 ===\n%s\n=== 结束 ===", output)
-	t.Logf("logEntries数量: %d", len(m.logEntries))
-	for i, e := range m.logEntries {
-		t.Logf("  entry[%d]: eventType=%q from=%q isVerbose=%v content=%q", i, e.eventType, e.from, e.isVerbose, e.content)
+	plain := stripANSI(output)
+	if got := strings.Count(plain, "💭"); got != nThinking {
+		t.Errorf("💭 出现 %d 次, want %d（每条目一行、每行一个图标）\n%s", got, nThinking, plain)
 	}
-	t.Logf("contentParts数量: %d", len(m.contentParts))
-	for i, p := range m.contentParts {
-		t.Logf("  part[%d]: %q", i, p)
+	for _, want := range []string{"第一个思考内容", "第二个思考内容", "第三个思考内容"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("折叠行缺少 %q\n%s", want, plain)
+		}
 	}
-
-	// 断言：💭图标只出现1次
-	emojiCount := strings.Count(output, "💭")
-	t.Logf("💭出现次数: %d", emojiCount)
-	if emojiCount != 1 {
-		t.Fatalf("期望💭出现1次，实际出现%d次", emojiCount)
-	}
-
-	// 断言：包含renderThinkingContinuation生成的缩进续行（以"      │ "开头）
-	if !strings.Contains(output, "      │ ") {
-		t.Fatal("期望输出中包含缩进续行（以\"      │ \"开头），但未找到")
-	}
-
-	// 断言：应包含2个续行（第2、3个thinking）
-	continuationCount := strings.Count(output, "      │ ")
-	if continuationCount < 2 {
-		t.Fatalf("期望至少2个缩进续行，实际找到%d个", continuationCount)
+	if strings.Contains(plain, "\n\n") {
+		t.Errorf("折叠态不应出现空行\n%s", plain)
 	}
 }
 
-// TestThinkingMerge_DifferentFromNotMerged 验证不同from的thinking不应合并（应显示badge）。
+// TestThinkingMerge_AdjacentThinkingMergesIntoOneEntryCount：
+// 相邻同 Agent 的 thinking 合并成一条目，折叠态仍是一行，但 ×N 必须数出段数 ——
+// 这是"信息没丢、只是收起来"的唯一可见凭据。
+func TestThinkingMerge_AdjacentThinkingMergesIntoOneEntryCount(t *testing.T) {
+	m := newTestModel()
+	m = feedEvent(m, buildEvent("thinking", "director", "思考一"))
+	m = feedEvent(m, buildEvent("thinking", "director", "思考二"))
+	m = feedEvent(m, buildEvent("thinking", "director", "思考三"))
+
+	if n := len(m.logEntries); n != 1 {
+		t.Fatalf("logEntries = %d, want 1（相邻 thinking 必须合并）", n)
+	}
+	plain := thinkingTestBody(m)
+	// 行宽 = 视口内宽，preview 放得下时整段首行原样出现在同一行上。
+	if !strings.Contains(plain, "💭 ×3 │ 思考一") {
+		t.Errorf("折叠行应数出 3 段并只露首段\n%q", plain)
+	}
+	if strings.Contains(plain, "思考二") {
+		t.Errorf("折叠态不该把后续段落摊进同一行\n%s", plain)
+	}
+}
+
+// TestThinkingMerge_DifferentFromNotMerged 验证不同 from 的 thinking 不应合并（应显示 badge）。
 func TestThinkingMerge_DifferentFromNotMerged(t *testing.T) {
 	m := newTestModel()
 	m.anim = NewAnim(10)
@@ -61,38 +93,25 @@ func TestThinkingMerge_DifferentFromNotMerged(t *testing.T) {
 	m = feedEvent(m, buildEvent("thinking", "repo", "repo思考"))
 	m = feedEvent(m, buildEvent("thinking", "coding", "coding思考"))
 
-	output := m.bodyText(0, m.bodyTotalLines())
-	t.Logf("=== TestThinkingMerge_DifferentFrom 完整输出 ===\n%s\n=== 结束 ===", output)
-	t.Logf("logEntries数量: %d", len(m.logEntries))
-	for i, e := range m.logEntries {
-		t.Logf("  entry[%d]: eventType=%q from=%q isVerbose=%v content=%q", i, e.eventType, e.from, e.isVerbose, e.content)
+	output := thinkingTestBody(m)
+	if n := strings.Count(output, "💭"); n != 3 {
+		t.Fatalf("期望💭出现3次（不合并），实际出现%d次\n%s", n, output)
 	}
-
-	// 断言：💭图标出现3次（不合并）
-	emojiCount := strings.Count(output, "💭")
-	t.Logf("💭出现次数: %d", emojiCount)
-	if emojiCount != 3 {
-		t.Fatalf("期望💭出现3次（不合并），实际出现%d次", emojiCount)
-	}
-
-	// 断言：包含badge（"◈"符号）
 	if !strings.Contains(output, "◈") {
 		t.Fatal("期望输出中包含badge（\"◈\"符号），但未找到")
 	}
 }
 
-// TestThinkingMerge_EmptyPartBetweenThinking 验证空part（ai_stream占位条目）不破坏thinking合并：
-// thinking → ai_stream_start（空占位）→ thinking → ai_stream_start（空占位）→ thinking
-// 💭只出现1次，无空行（\n\n）。
+// TestThinkingMerge_EmptyPartBetweenThinking 验证空 part（ai_stream 占位条目）
+// 不产生行：三条 thinking 各占一行，中间没有空行。
 func TestThinkingMerge_EmptyPartBetweenThinking(t *testing.T) {
 	m := newTestModel()
-	// 直接构造model：thinking → ai_stream占位(空) → thinking → ai_stream占位(空) → thinking
 	m.logEntries = []logEntry{
-		{eventType: "thinking", from: "director", content: "思考1", prefix: "  │ ", isVerbose: false},
-		{eventType: "ai_stream", from: "director", streamContent: "", streaming: false, isVerbose: false},
-		{eventType: "thinking", from: "director", content: "思考2", prefix: "  │ ", isVerbose: false},
-		{eventType: "ai_stream", from: "director", streamContent: "", streaming: false, isVerbose: false},
-		{eventType: "thinking", from: "director", content: "思考3", prefix: "  │ ", isVerbose: false},
+		{eventType: "thinking", from: "director", content: "思考1"},
+		{eventType: "ai_stream", from: "director", streamContent: "", streaming: false},
+		{eventType: "thinking", from: "director", content: "思考2"},
+		{eventType: "ai_stream", from: "director", streamContent: "", streaming: false},
+		{eventType: "thinking", from: "director", content: "思考3"},
 	}
 	m.contentParts = make([]string, len(m.logEntries))
 	for i := range m.logEntries {
@@ -100,38 +119,18 @@ func TestThinkingMerge_EmptyPartBetweenThinking(t *testing.T) {
 	}
 	m.bodyInvalidate(0)
 
-	output := m.bodyText(0, m.bodyTotalLines())
-	t.Logf("=== TestThinkingMerge_EmptyPart 完整输出 ===\n%s\n=== 结束 ===", output)
-	t.Logf("contentParts数量: %d", len(m.contentParts))
-	for i, p := range m.contentParts {
-		t.Logf("  part[%d]: %q", i, p)
+	plain := thinkingTestBody(m)
+	if n := strings.Count(plain, "💭"); n != 3 {
+		t.Errorf("💭出现次数 = %d, want 3（每个 thinking 条目一行）\n%s", n, plain)
 	}
-
-	// 断言：💭只出现1次
-	emojiCount := strings.Count(output, "💭")
-	t.Logf("💭出现次数: %d", emojiCount)
-	if emojiCount != 1 {
-		t.Fatalf("期望💭出现1次，实际出现%d次", emojiCount)
+	if strings.Contains(plain, "\n\n") {
+		t.Errorf("期望输出中无空行（\\n\\n），空白 part 不该产生行\n%s", plain)
 	}
-
-	// 断言：包含2个缩进续行
-	continuationCount := strings.Count(output, "      │ ")
-	t.Logf("缩进续行数量: %d", continuationCount)
-	if continuationCount < 2 {
-		t.Fatalf("期望至少2个缩进续行，实际找到%d个", continuationCount)
-	}
-
-	// 断言：输出中不含连续空行（\n\n），即ai_stream空占位未产生空行
-	if strings.Contains(output, "\n\n") {
-		t.Fatalf("期望输出中无空行（\\n\\n），但找到空行")
-	}
-	t.Log("✓ 无空行，thinking条目成功跨越空part合并")
 }
 
-// TestThinkingMerge_BlankPartBetweenThinking 验证 thinking 之间穿插纯空白 ai_stream 占位条目时
-// 仍能合并："\n\n"、" "、"  "、多个空白 chunk 累积（事件驱动路径，
-// 与 DirectBlankPart/DirectSingleSpaceBlank 的直接构造路径互补）都被
-// 排版块跳过 —— 💭 只出现 1 次、产生缩进续行、无连续空行。
+// TestThinkingMerge_BlankPartBetweenThinking 验证 thinking 之间穿插纯空白 ai_stream
+// 占位条目时正文不出现空行：事件驱动路径（chunk 累积成 "\n\n"、" "）与
+// TestThinkingMerge_EmptyPartBetweenThinking 的直接构造路径互补。
 func TestThinkingMerge_BlankPartBetweenThinking(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -153,69 +152,47 @@ func TestThinkingMerge_BlankPartBetweenThinking(t *testing.T) {
 			}
 			m = feedEvent(m, buildEvent("thinking", "director", "思考2"))
 
-			output := m.bodyText(0, m.bodyTotalLines())
-			if emojiCount := strings.Count(output, "💭"); emojiCount != 1 {
-				t.Errorf("💭出现次数 = %d, want 1（空白 part 应被跳过、thinking 合并）\n%s", emojiCount, output)
+			plain := thinkingTestBody(m)
+			if n := strings.Count(plain, "💭"); n != 2 {
+				t.Errorf("💭出现次数 = %d, want 2（空白 part 不产生行，两个 thinking 各一行）\n%s", n, plain)
 			}
-			if !strings.Contains(output, "      │ ") {
-				t.Errorf("期望输出包含缩进续行（\"      │ \"），实际没有\n%s", output)
-			}
-			if strings.Contains(output, "\n\n") {
-				t.Errorf("期望输出中无连续空行（\\n\\n），空白 part 不应产生空行\n%s", output)
+			if strings.Contains(plain, "\n\n") {
+				t.Errorf("期望输出中无连续空行（\\n\\n），空白 part 不该产生行\n%s", plain)
 			}
 		})
 	}
 }
 
-// TestThinkingMerge_DirectBlankPart 直接用direct构造验证排版块对空白part的处理。
-// 修复后：纯空白 part（如"\n\n"、" "）应被跳过，thinking 条目正常合并。
+// TestThinkingMerge_DirectBlankPart 直接用构造路径验证排版块对空白 part 的处理。
 func TestThinkingMerge_DirectBlankPart(t *testing.T) {
 	m := newTestModel()
-	// 直接构造：thinking → ai_stream(空白"\n\n") → thinking
 	m.logEntries = []logEntry{
-		{eventType: "thinking", from: "director", content: "思考1", prefix: "  │ ", isVerbose: false},
-		{eventType: "ai_stream", from: "director", streamContent: "\n\n", streaming: false, isVerbose: false},
-		{eventType: "thinking", from: "director", content: "思考2", prefix: "  │ ", isVerbose: false},
+		{eventType: "thinking", from: "director", content: "思考1"},
+		{eventType: "ai_stream", from: "director", streamContent: "\n\n", streaming: false},
+		{eventType: "thinking", from: "director", content: "思考2"},
 	}
 	m.contentParts = make([]string, len(m.logEntries))
 	for i := range m.logEntries {
 		m.contentParts[i] = m.renderSingleEntry(&m.logEntries[i], m.viewport.Width())
 	}
-
-	t.Logf("=== TestThinkingMerge_DirectBlankPart contentParts ===")
-	for i, p := range m.contentParts {
-		t.Logf("  part[%d]: %q (len=%d)", i, p, len(p))
-	}
-
 	m.bodyInvalidate(0)
-	output := m.bodyText(0, m.bodyTotalLines())
-	t.Logf("=== 完整输出 ===\n%s\n=== 结束 ===", output)
 
-	// 断言：💭只出现1次
-	emojiCount := strings.Count(output, "💭")
-	t.Logf("💭出现次数: %d", emojiCount)
-	if emojiCount != 1 {
-		t.Fatalf("期望💭出现1次，实际出现%d次", emojiCount)
+	plain := thinkingTestBody(m)
+	if n := strings.Count(plain, "💭"); n != 2 {
+		t.Fatalf("期望💭出现2次，实际出现%d次\n%s", n, plain)
 	}
-
-	// 断言：输出中不含连续空行（\n\n）
-	if strings.Contains(output, "\n\n") {
-		t.Fatalf("期望输出中无空行（\\n\\n），但找到空行")
-	}
-
-	// 断言：包含缩进续行
-	if !strings.Contains(output, "      │ ") {
-		t.Fatalf("期望输出中包含缩进续行（以\"      │ \"开头），但未找到")
+	if strings.Contains(plain, "\n\n") {
+		t.Fatalf("期望输出中无空行（\\n\\n），但找到空行\n%s", plain)
 	}
 }
 
-// TestThinkingMerge_DirectSingleSpaceBlank 验证单个空格作为ai_stream part也被跳过。
+// TestThinkingMerge_DirectSingleSpaceBlank 验证单个空格作为 ai_stream part 也被跳过。
 func TestThinkingMerge_DirectSingleSpaceBlank(t *testing.T) {
 	m := newTestModel()
 	m.logEntries = []logEntry{
-		{eventType: "thinking", from: "director", content: "思考A", prefix: "  │ ", isVerbose: false},
-		{eventType: "ai_stream", from: "director", streamContent: " ", streaming: false, isVerbose: false},
-		{eventType: "thinking", from: "director", content: "思考B", prefix: "  │ ", isVerbose: false},
+		{eventType: "thinking", from: "director", content: "思考A"},
+		{eventType: "ai_stream", from: "director", streamContent: " ", streaming: false},
+		{eventType: "thinking", from: "director", content: "思考B"},
 	}
 	m.contentParts = make([]string, len(m.logEntries))
 	for i := range m.logEntries {
@@ -223,17 +200,11 @@ func TestThinkingMerge_DirectSingleSpaceBlank(t *testing.T) {
 	}
 	m.bodyInvalidate(0)
 
-	output := m.bodyText(0, m.bodyTotalLines())
-	t.Logf("=== TestThinkingMerge_DirectSingleSpaceBlank 完整输出 ===\n%s\n=== 结束 ===", output)
-
-	emojiCount := strings.Count(output, "💭")
-	if emojiCount != 1 {
-		t.Fatalf("期望💭出现1次，实际出现%d次", emojiCount)
+	plain := thinkingTestBody(m)
+	if n := strings.Count(plain, "💭"); n != 2 {
+		t.Fatalf("期望💭出现2次，实际出现%d次\n%s", n, plain)
 	}
-	if strings.Contains(output, "\n\n") {
-		t.Fatalf("期望输出中无空行（\\n\\n），但找到空行")
-	}
-	if !strings.Contains(output, "      │ ") {
-		t.Fatalf("期望输出中包含缩进续行，但未找到")
+	if strings.Contains(plain, "\n\n") {
+		t.Fatalf("期望输出中无空行（\\n\\n）\n%s", plain)
 	}
 }
