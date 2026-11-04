@@ -1190,7 +1190,8 @@ func (m *model) handleTaskCompleteMsg(msg taskCompleteMsg) (tea.Model, tea.Cmd) 
 		m.dialogStack.Push(d)
 	}
 
-	m.input.SetValue("")
+	// 这里**不**清输入框：清空是提交那一步的事（tui_tasks.go 的两条 submit 路径）。
+	// 运行期间输入框一直可以打字（用来起草下一条指令），收尾时抹一遍就是白打人一段。
 	return m, nil
 }
 

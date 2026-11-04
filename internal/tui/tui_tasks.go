@@ -69,6 +69,10 @@ func (m *model) submitTaskWithContent(taskDesc string) tea.Cmd {
 	m.markTaskStarted()
 	m.commandMode = true
 	m.errMsg = ""
+	// 文本已经离开输入框进 transcript 了，框里不该再留一份：留着就会一路活到任务结束，
+	// 而中途来的求助把它当 preDraft 存着、答完再塞回框里（respondToAsk）。
+	m.input.SetValue("")
+	m.invalidateFooterCache()
 	// 新一轮开始：RUN 列归零，Σ 与每 agent 的 TOTAL 保留
 	m.resetRunTokens()
 	// Task started — update status bar cache
@@ -119,6 +123,7 @@ func (m *model) submitFollowUp(message string) tea.Cmd {
 	m.ensureSessionID()
 
 	m.input.SetValue("")
+	m.invalidateFooterCache()
 	m.taskRunning = true
 	m.markTaskStarted()
 	m.commandMode = true

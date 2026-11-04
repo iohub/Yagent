@@ -972,7 +972,8 @@ func TestSetupRefusedWhileTaskRunning(t *testing.T) {
 
 // 向导打开期间 taskCompleteMsg 必须透传 —— 它是 taskRunning 唯一的清零点，吞掉的表现是界面永久卡在"运行中"（AGENTS.md §11 坑 6）。
 func TestSetupModePassesTaskCompleteThrough(t *testing.T) {
-	// 必须用 chromeTestModel：handleTaskCompleteMsg 会清输入框（textarea），最小 fixture 里没有它，测到的就是 fixture 而不是这段透传。
+	// 必须用 chromeTestModel：透传之后 handleTaskCompleteMsg 会渲染状态栏、推对话框，
+	// 最小 fixture 缺的那几件会让这条测试测到 fixture 而不是这段透传。
 	m := chromeTestModel(t, 100, 30)
 	path := setupConfigWith(t, nil)
 	w := newWizardAt(t, path)

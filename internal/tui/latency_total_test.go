@@ -117,8 +117,8 @@ func TestLatencyTickAccountsForPause(t *testing.T) {
 // TestLatencyTotalFreezesOnTaskComplete 收尾必须定格 total：不定格的话空闲态
 // 每秒仍在重画整段面板，而停 tick 的条件永远不满足 —— 静置时界面在转。
 func TestLatencyTotalFreezesOnTaskComplete(t *testing.T) {
-	// handleTaskCompleteMsg 结尾会 SetValue 清空输入框：newTestModel 没有可用的
-	// textarea，那条路会 nil panic 而不是断言失败，所以用 chromeTestModel。
+	// 用 chromeTestModel：这条路径要的是"能渲染"的 model（viewport / anim / dialogStack
+	// 全都在），newTestModel 缺的那些会让测到的不是被测行为而是 fixture 的形状。
 	m := chromeTestModel(t, 140, 40)
 	m.taskRunning = true
 	m.latency.taskStart = time.Now().Add(-30 * time.Second)
