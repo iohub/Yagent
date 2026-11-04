@@ -121,10 +121,12 @@ func panelContentRows(rendered string) []string {
 }
 
 // 主页面的 thought 面板正文必须与全屏详情逐行一致 —— "样式一样"靠共用同一
-// 渲染函数成立，这条测试钉住它不被分叉成两套。
+// 渲染函数成立，这条测试钉住它不被分叉成两套。展开态（alt+h）才是面板形态，
+// 折叠态的单行契约在 TestThoughtOneLine_ShapeAndYield。
 func TestMainPage_ThoughtPanelMatchesFullscreenDetail(t *testing.T) {
 	const width = 100
 	m := newTestModel()
+	m.thinkDetailOpen = true
 	e := logEntry{eventType: "ai_response", from: "director", content: mainPageMessage}
 	rendered := stripANSI(m.renderSingleEntry(&e, width))
 
@@ -185,7 +187,7 @@ func TestMainPage_PlainResponseKeepsMarkdownPath(t *testing.T) {
 	}
 }
 
-// 流式正文：块没闭合就先原样显示，闭合后立刻换成面板（与 markdown 的节奏一致）。
+// 流式正文：块没闭合就先原样显示，闭合后立刻换成折叠行（与 markdown 的节奏一致）。
 func TestMainPage_StreamedBlockRendersOnceClosed(t *testing.T) {
 	m := newTestModel()
 	const width = 100
@@ -198,8 +200,11 @@ func TestMainPage_StreamedBlockRendersOnceClosed(t *testing.T) {
 	closed := logEntry{eventType: "ai_stream", from: "director", streaming: true,
 		streamContent: "<thought>\ngoal: g\nreason: r\n</thought>\n\nhalf an answer"}
 	out := stripANSI(m.renderSingleEntry(&closed, width))
-	if !strings.Contains(out, "◆ THOUGHT") || !strings.Contains(out, "GOAL") {
-		t.Errorf("closed block should render as a panel:\n%s", out)
+	if !strings.Contains(out, "◆ THOUGHT │ g") {
+		t.Errorf("closed block should render as a collapsed one-line thought:\n%s", out)
+	}
+	if strings.Contains(out, "goal: g") {
+		t.Errorf("closed block leaked the raw thought text:\n%s", out)
 	}
 	if !strings.Contains(out, "half an answer▌") {
 		t.Errorf("stream cursor should stay at the tail:\n%s", out)

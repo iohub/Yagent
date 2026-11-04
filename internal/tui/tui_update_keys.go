@@ -615,6 +615,10 @@ func (m *model) handleNormalGlobalKey(key string) (bool, tea.Cmd) {
 	case "alt+r":
 		return true, m.showRoutingDialog()
 
+	case "alt+h":
+		m.toggleThinkDetail()
+		return true, nil
+
 	case "ctrl+l":
 		m.toggleTimelineFullscreen()
 		return true, nil

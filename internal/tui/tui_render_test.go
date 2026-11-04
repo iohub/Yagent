@@ -1,72 +1,115 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
 )
 
-// TestRenderThinkingContinuation 钉住续行渲染契约：8 列缩进前缀 + 单行内容，
-// 显示宽度按 maxWidth-10 预算（下限 20）截断并以 "..." 结尾，整行可见宽度精确可算。
-func TestRenderThinkingContinuation(t *testing.T) {
+// TestRenderThinkingCollapsed 钉住折叠态契约：每个 thinking 条目恰好一行、
+// 以 "💭 ×N │ " 开头、显示宽度 == 内宽预算，preview 是首段且超长时以 "…" 收尾。
+func TestRenderThinkingCollapsed(t *testing.T) {
 	tests := []struct {
 		name          string
 		content       string
 		maxWidth      int
-		wantTruncated bool
-		wantWidth     int // lipgloss.Width of the whole rendered line
+		wantParagraph int  // ×N 里的 N
+		wantDots      bool // 尾部省略号
+		wantLines     int  // 折叠态恒 1
 	}{
 		{
-			name:      "short content",
-			content:   "this is a short thought",
-			maxWidth:  80,
-			wantWidth: 8 + len("this is a short thought"),
+			name:          "single short paragraph",
+			content:       "this is a short thought",
+			maxWidth:      80,
+			wantParagraph: 1,
+			wantLines:     1,
 		},
 		{
-			name:      "content with newlines collapsed to spaces",
-			content:   "line1\nline2\nline3",
-			maxWidth:  80,
-			wantWidth: 8 + len("line1 line2 line3"),
+			name:          "merged paragraphs counted, only the first shown",
+			content:       "line1\nline2\nline3",
+			maxWidth:      80,
+			wantParagraph: 3,
+			wantLines:     1,
+		},
+		{
+			name:          "blank lines are not paragraphs",
+			content:       "a\n\n  \nb\n",
+			maxWidth:      80,
+			wantParagraph: 2,
+			wantLines:     1,
 		},
 		{
 			name:          "long content truncated",
 			content:       strings.Repeat("a", 200),
 			maxWidth:      80,
-			wantTruncated: true,
-			// indent 8 + (80-10) 列内容（含 3 列省略号）
-			wantWidth: 8 + 70,
+			wantParagraph: 1,
+			wantDots:      true,
+			wantLines:     1,
 		},
 		{
-			name:      "narrow width keeps content under the 20-cell floor",
-			content:   "hello world",
-			maxWidth:  30,
-			wantWidth: 8 + len("hello world"),
+			name:          "narrow terminal still one line",
+			content:       "hello world hello world hello world",
+			maxWidth:      30,
+			wantParagraph: 1,
+			wantDots:      true,
+			wantLines:     1,
 		},
 	}
 
+	m := newTestModel()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entry := logEntry{content: tt.content}
-			result := renderThinkingContinuation(entry, tt.maxWidth)
+			entry := &logEntry{eventType: "thinking", content: tt.content}
+			result := m.renderThinkingBlock(entry, tt.maxWidth)
 			plain := stripANSI(result)
 
-			if !strings.HasPrefix(result, "      │ ") {
-				t.Errorf("prefix = %q, want \"      │ \"", result[:min(len(result), 8)])
+			if h := lipgloss.Height(result); h != tt.wantLines {
+				t.Errorf("渲染为 %d 行, want %d（折叠态每条目一行）\n%s", h, tt.wantLines, plain)
 			}
-			if h := lipgloss.Height(result); h != 1 {
-				t.Errorf("渲染为 %d 行, want 1（续行必须单行）", h)
+			if want := "💭 ×" + strconv.Itoa(tt.wantParagraph) + " │ "; !strings.HasPrefix(plain, want) {
+				t.Errorf("前缀 = %q, want %q", plain[:min(len(plain), 12)], want)
 			}
-			if got := lipgloss.Width(result); got != tt.wantWidth {
-				t.Errorf("可见宽度 = %d, want %d（%q）", got, tt.wantWidth, plain)
+			if w := lipgloss.Width(result); w > tt.maxWidth-2 {
+				t.Errorf("可见宽度 %d 超过内宽 %d", w, tt.maxWidth-2)
 			}
-			if w := lipgloss.Width(result); w > tt.maxWidth {
-				t.Errorf("可见宽度 %d 超过 maxWidth %d", w, tt.maxWidth)
-			}
-			if truncated := strings.HasSuffix(plain, "..."); truncated != tt.wantTruncated {
-				t.Errorf("尾部省略号 = %v, want %v（%q）", truncated, tt.wantTruncated, plain)
+			if dots := strings.HasSuffix(plain, "…"); dots != tt.wantDots {
+				t.Errorf("尾部省略号 = %v, want %v（%q）", dots, tt.wantDots, plain)
 			}
 		})
+	}
+}
+
+// TestRenderThinkingExpanded 钉住展开态契约：逐段编号、段内折行、全文不截断，
+// 首行 "  N │ " 与续行 "    │ " 同列（6 列导轨），行宽不越内宽。
+func TestRenderThinkingExpanded(t *testing.T) {
+	m := newTestModel()
+	m.thinkDetailOpen = true
+
+	content := "first thought about the layout\n\nsecond thought is much longer: " +
+		strings.Repeat("word ", 40)
+	entry := &logEntry{eventType: "thinking", content: content}
+	const maxWidth = 80
+	got := m.renderThinkingBlock(entry, maxWidth)
+	plain := stripANSI(got)
+
+	if !strings.Contains(plain, "  1 │ first thought about the layout") {
+		t.Errorf("缺少首段编号导轨\n%s", plain)
+	}
+	if !strings.Contains(plain, "  2 │ second thought is much longer:") {
+		t.Errorf("空行没被当成段落分隔（第二段应编号 2）\n%s", plain)
+	}
+	if strings.Contains(plain, "…") {
+		t.Errorf("展开态不许截断\n%s", plain)
+	}
+	if !strings.Contains(plain, "    │ ") {
+		t.Errorf("折行续行缺少 6 列导轨\n%s", plain)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if w := lipgloss.Width(line); w > maxWidth-2 {
+			t.Errorf("行宽 %d 超过内宽 %d：%q", w, maxWidth-2, stripANSI(line))
+		}
 	}
 }
 
