@@ -169,11 +169,11 @@ func (m *model) View() tea.View {
 		_ = m.renderDashboard(body.dashWidth, vpHeight)
 	}
 
-	b.WriteString(m.renderTabBar())
+	b.WriteString(m.dimBehindAsk(m.renderTabBar()))
 	b.WriteString("\n")
 
 	if body.scrollbarCol == 0 && body.dashWidth == 0 {
-		b.WriteString(m.cachedViewportView)
+		b.WriteString(m.dimBehindAsk(m.cachedViewportView))
 	} else {
 		var scrollbar, dashboard string
 		if body.scrollbarCol > 0 {
@@ -183,14 +183,14 @@ func (m *model) View() tea.View {
 		if body.dashWidth > 0 {
 			dashboard = m.dashboardCache
 		}
-		b.WriteString(joinColumns(m.cachedViewportView, scrollbar, dashboard))
+		b.WriteString(m.dimBehindAsk(joinColumns(m.cachedViewportView, scrollbar, dashboard)))
 	}
 
 	// 时间与行数都只由 timelineFooterRows 一处口径决定（它内部就是这段判断 + 渲染），
 	// 这里只负责拼上去 —— 两处各写一遍就是整屏溢出的来源。
 	if m.timelineFooterRows() > 0 {
 		b.WriteString("\n")
-		b.WriteString(m.renderTimelinePanel(m.termWidth))
+		b.WriteString(m.dimBehindAsk(m.renderTimelinePanel(m.termWidth)))
 	}
 
 	// footer 由若干区块纵向拼接，每块自身不带首尾空行，块之间恰好一个 "\n"。
@@ -199,7 +199,9 @@ func (m *model) View() tea.View {
 	var blocks []string
 	// ASK/AUTH 面板排在输入面板之前：求助期间输入框就是它的答题区（ANSWER），
 	// 面板在上、答题在下，读起来才是一件事。
+	askAt := -1
 	if blk := m.askPanelBlock(); blk != "" {
+		askAt = len(blocks)
 		blocks = append(blocks, blk)
 	}
 	if m.commandMode {
@@ -223,6 +225,16 @@ func (m *model) View() tea.View {
 	if dash := m.tokenDashboardBlock(); dash != "" {
 		blocks = append(blocks, dash)
 	}
+	// 压暗的是"背景"，而待答面板与紧贴在它下面那块答题区是前景 —— 判据只看位置，
+	// 不再数一遍块的名字：多加一块 footer 时不需要记得去改排除表。
+	if askAt >= 0 {
+		for i := range blocks {
+			if i == askAt || i == askAt+1 {
+				continue
+			}
+			blocks[i] = m.dimBehindAsk(blocks[i])
+		}
+	}
 
 	statusBar := m.cachedStatusBar
 	if !m.statusBarValid {
@@ -235,7 +247,7 @@ func (m *model) View() tea.View {
 	b.WriteString("\n\n")
 	b.WriteString(strings.Join(blocks, "\n"))
 	b.WriteString("\n\n")
-	b.WriteString(statusBar)
+	b.WriteString(m.dimBehindAsk(statusBar))
 
 	return tea.View{AltScreen: true, Content: b.String()}
 }
