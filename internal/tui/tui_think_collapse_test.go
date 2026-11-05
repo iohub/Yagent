@@ -132,48 +132,31 @@ func TestThinkToggle_RoundTripKeepsScroll(t *testing.T) {
 	}
 }
 
-// TestThoughtOneLine_ShapeAndYield：折叠态的 thought 行只留 goal + 当前 plan 项 + 进度；
-// 窄宽度先丢 plan 段；展开态与圆角面板逐字相同。
-func TestThoughtOneLine_ShapeAndYield(t *testing.T) {
+// TestThoughtPanelNeverCollapses：thought 块恒是那块圆角面板，**不参与** alt+h 折叠 ——
+// 它是交付物的一部分而不是过程噪音。两种旗标取值下渲染结果必须逐字相同，
+// 且都含面板边框与字段标签（哪天有人再把单行形态加回来，这条先红）。
+func TestThoughtPanelNeverCollapses(t *testing.T) {
 	m := newTestModel()
 	e := &logEntry{eventType: "ai_response", from: "director", content: collapseLongThought}
 
-	one := stripANSI(m.renderSingleEntry(e, 100))
-	if n := strings.Count(one, "◆ THOUGHT"); n != 1 {
-		t.Errorf("折叠态 thought 行数 = %d, want 1\n%s", n, one)
-	}
-	for _, want := range []string{"◆ THOUGHT", "Analyze request and delegate coding",
-		"Delegate patch to Coding-Agent", "1/3"} {
-		if !strings.Contains(one, want) {
-			t.Errorf("折叠行缺少 %q\n%s", want, one)
-		}
-	}
-	for _, forbidden := range []string{"GOAL", "REASON", "STEP", "╭", "</thought>"} {
-		if strings.Contains(one, forbidden) {
-			t.Errorf("折叠行漏出展开态内容 %q\n%s", forbidden, one)
-		}
-	}
-
-	// 窄宽度：plan 段整段让位，goal 仍在，行宽不越界。
-	narrow := stripANSI(renderThinklinkPanelOneLine(
-		strings.TrimSuffix(strings.TrimPrefix(collapseLongThought, "<thought>\n"), "\n\nAnswer: the validator is patched."),
-		30))
-	if strings.Contains(narrow, "▸") {
-		t.Errorf("宽度 30 时 plan 段应整段丢弃\n%s", narrow)
-	}
-	if w := lipgloss.Width(narrow); w > 30 {
-		t.Errorf("窄行宽 %d > 30：%q", w, narrow)
-	}
-
-	// 展开态 == 圆角面板（同一渲染函数，不许分叉）。
+	e.clearRenderCache()
+	collapsed := stripANSI(m.renderSingleEntry(e, 100))
 	m.thinkDetailOpen = true
 	e.clearRenderCache()
-	expanded := m.renderSingleEntry(e, 100)
-	blocks := strings.Split(strings.SplitN(collapseLongThought, "</thought>", 2)[0], "<thought>")[1]
-	want := renderThinklinkPanel(strings.TrimPrefix(blocks, "\n"), 100-thinklinkPanelGutter)
-	if !strings.Contains(expanded, want) {
-		t.Errorf("展开态与 renderThinklinkPanel 不逐字相同\n---- got ----\n%s\n---- want ----\n%s",
-			stripANSI(expanded), stripANSI(want))
+	opened := stripANSI(m.renderSingleEntry(e, 100))
+	m.thinkDetailOpen = false
+	if collapsed != opened {
+		t.Errorf("thought 面板随 alt+h 变了形态\n---- collapsed ----\n%s\n---- opened ----\n%s",
+			collapsed, opened)
+	}
+	for _, want := range []string{"╭", "◆ THOUGHT", "GOAL", "STEP", "REASON", "PLAN", "1/3",
+		"Analyze request and delegate coding"} {
+		if !strings.Contains(collapsed, want) {
+			t.Errorf("面板缺少 %q\n%s", want, collapsed)
+		}
+	}
+	if strings.Contains(collapsed, "</thought>") {
+		t.Errorf("面板漏出原文标记\n%s", collapsed)
 	}
 }
 
