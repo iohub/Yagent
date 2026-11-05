@@ -358,7 +358,7 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 	if entry.eventType == "ai_stream" {
 		if entry.streaming {
 			// 流式中不缓存、也不套样式：正文每帧都在追加。
-			return m.renderStreamEntry(entry, width)
+			return renderStreamEntry(entry, width)
 		}
 		// 定稿的流式条目和普通条目一样进渲染缓存：它的内容不会再变，
 		// 每次整段重排都重拆重画纯属白做。
@@ -384,7 +384,7 @@ func (m *model) renderSingleEntry(entry *logEntry, width int) string {
 			}
 			// markdown 渲染失败：宁可原样显示正文，也不能把整条消息渲成空白。
 		}
-		rendered := m.renderStreamEntry(entry, width)
+		rendered := renderStreamEntry(entry, width)
 		entry.setCachedRender(rendered, width)
 		return rendered
 	}
@@ -451,7 +451,7 @@ const thinklinkPanelGutter = 4
 // 只在 ai_response 定稿时才套样式的既有节奏一致），未闭合的尾巴保持原文。
 // 面板按块 memo —— 块数量随步数增长，每次刷新整段重画就是二次的开销；
 // 输出与"一次性渲染全部块"逐字相同（TestTUI_StreamPanelsMatchOneShot）。
-func (m *model) renderStreamEntry(entry *logEntry, width int) string {
+func renderStreamEntry(entry *logEntry, width int) string {
 	content := entry.streamContent
 	if entry.streaming && content != "" {
 		content += "▌"
@@ -467,7 +467,7 @@ func (m *model) renderStreamEntry(entry *logEntry, width int) string {
 		entry.streamPanels, entry.streamPanelSrc, entry.streamPanelW = nil, nil, panelW
 	}
 	for _, block := range blocks[len(entry.streamPanels):] {
-		entry.streamPanels = append(entry.streamPanels, m.renderThinklinkBlock(block, panelW))
+		entry.streamPanels = append(entry.streamPanels, renderThinklinkPanel(block, panelW))
 		entry.streamPanelSrc = append(entry.streamPanelSrc, block)
 	}
 	return joinThinklinkPanels(strings.Join(entry.streamPanels, "\n"), rest)
@@ -505,7 +505,7 @@ func (m *model) renderAssistantContent(content string, width int) (string, bool)
 	if !hasBlocks {
 		return rendered, true
 	}
-	panels := m.renderThinklinkBlocks(blocks, width-thinklinkPanelGutter)
+	panels := renderThinklinkPanels(blocks, width-thinklinkPanelGutter)
 	return joinThinklinkPanels(panels, rendered), true
 }
 
@@ -529,78 +529,15 @@ func (m *model) renderMarkdownBody(body string) (string, bool) {
 	return rendered, true
 }
 
-// renderThinklinkBlocks 把 thought 块逐个渲染并纵向堆叠；单行/面板两形态由
-// renderThinklinkBlock 按 thinkDetailOpen 二选一（docs/thinking-collapse-design.md §2）。
-func (m *model) renderThinklinkBlocks(blocks []string, panelW int) string {
+// renderThinklinkPanels 把 thought 块逐个渲染成圆角面板（多个块纵向堆叠）。
+// 面板形态**不参与** alt+h 折叠：它是交付物的一部分，不是过程噪音
+// （docs/thinking-collapse-design.md §2）。
+func renderThinklinkPanels(blocks []string, panelW int) string {
 	panels := make([]string, 0, len(blocks))
 	for _, block := range blocks {
-		panels = append(panels, m.renderThinklinkBlock(block, panelW))
+		panels = append(panels, renderThinklinkPanel(block, panelW))
 	}
 	return strings.Join(panels, "\n")
-}
-
-func (m *model) renderThinklinkBlock(block string, panelW int) string {
-	if m.thinkDetailOpen {
-		return renderThinklinkPanel(block, panelW)
-	}
-	return renderThinklinkPanelOneLine(block, panelW)
-}
-
-// renderThinklinkPanelOneLine 是 thought 块的折叠态：goal + 当前 plan 项 + 进度挤一行。
-// 窄宽度的让步序与 thinklinkPanelTop 的 meta 同规矩：先丢 plan 段，再截 goal。
-func renderThinklinkPanelOneLine(block string, panelW int) string {
-	head := lipgloss.NewStyle().Foreground(tlAccent).Bold(true).Render(" ◆ ") +
-		lipgloss.NewStyle().Bold(true).Foreground(tlTitleFg).Render("THOUGHT") +
-		thinklinkHairStyle.Render(" │ ")
-	room := panelW - lipgloss.Width(head)
-	if room < 8 {
-		room = 8
-	}
-
-	tp := thinklink.ParseThoughtPlan(block)
-	goal := firstThinklinkLine(block)
-	planPart := ""
-	if !tp.Empty() {
-		if g := strings.TrimSpace(strings.ReplaceAll(tp.Goal, "\n", " ")); g != "" {
-			goal = g
-		}
-		if cur := currentPlanItemText(tp); cur != "" {
-			planPart = thinklinkHairStyle.Render(" │ ") +
-				tlCurGlyphStyle.Render("▸ ") + tlCurTextStyle.Render(cur) +
-				thinklinkDimStyle.Render(fmt.Sprintf(" %d/%d", planDoneCount(tp), len(tp.Plan)))
-		}
-	}
-
-	goalRoom := room - lipgloss.Width(planPart)
-	if goalRoom < 8 {
-		planPart = ""
-		goalRoom = room
-	}
-	return head + tlFieldValueStyle.Render(truncateThinklinkRunes(goal, goalRoom)) + planPart
-}
-
-func currentPlanItemText(tp thinklink.ThoughtPlan) string {
-	for _, it := range tp.Plan {
-		if it.Status == thinklink.PlanCurrent {
-			return strings.TrimSpace(strings.ReplaceAll(it.Text, "\n", " "))
-		}
-	}
-	for _, it := range tp.Plan {
-		if it.Status != thinklink.PlanDone {
-			return strings.TrimSpace(strings.ReplaceAll(it.Text, "\n", " "))
-		}
-	}
-	return ""
-}
-
-func planDoneCount(tp thinklink.ThoughtPlan) int {
-	done := 0
-	for _, it := range tp.Plan {
-		if it.Status == thinklink.PlanDone {
-			done++
-		}
-	}
-	return done
 }
 
 // renderThinklinkPanel 是单个已闭合块的面板 —— 面板之间互不依赖，所以流式条目可以
@@ -697,14 +634,13 @@ func renderThinkingExpanded(content string, inner int) string {
 	return strings.Join(out, "\n")
 }
 
-// toggleThinkDetail 切换正文思考折叠（alt+h）。两种形态行数不同，所以全部渲染缓存
-// 与流式面板 memo 一起作废；滚动位置按"贴底的继续贴底"保持。
+// toggleThinkDetail 切换 thinking 条目的折叠（alt+h）。thought 面板不参与（它恒是面板），
+// 所以流式 memo 不用动。两种形态行数不同，全部渲染缓存要作废；
+// 滚动位置按"贴底的继续贴底"保持。
 func (m *model) toggleThinkDetail() {
 	m.thinkDetailOpen = !m.thinkDetailOpen
 	for i := range m.logEntries {
 		m.logEntries[i].clearRenderCache()
-		m.logEntries[i].streamPanels = nil
-		m.logEntries[i].streamPanelSrc = nil
 	}
 	m.needFullRebuild = true
 	m.rebuildViewportScrollLock()

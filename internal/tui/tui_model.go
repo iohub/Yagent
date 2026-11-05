@@ -482,8 +482,8 @@ type model struct {
 	// thinklinkAgentFilter 为空表示不过滤；非空时只显示该 Agent 的条目（`f` 循环）。
 	thinklinkAgentFilter string
 
-	// thinkDetailOpen 是正文思考折叠的全局旗标（alt+h）：false = thinking 条目与
-	// thought 块各占一行，true = 就地展开（折行全文 / 圆角面板）。
+	// thinkDetailOpen 是 thinking 条目折叠的全局旗标（alt+h）：false = 每个 thinking 条目
+	// 一行（💭 ×N │ 首段预览），true = 逐段编号折行。thought 面板**不参与**这个旗标。
 	// 判据与渲染落点见 docs/thinking-collapse-design.md §2-§3。
 	thinkDetailOpen bool
 

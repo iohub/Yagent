@@ -51,7 +51,7 @@ key 只含宽度/行高/cwd；**头部分支不许算 footer 行高**，那条�
 **3.2 正文是虚拟化的：viewport 里只有可见区间。** 虚拟化之后一次重排的成本是 O(变过的条目 + 窗口)，不再是 O(历史)（实测 4000 chunk：viewport 内容 924KB → 41KB，
 每消息 548µs → 385µs，且 300 条与 1200 条历史已经分不出差别）。滚动游标是绝对行号
 `body.top`，`bodyIndex`（`tui_body.go:43`）是唯一行索引：条目 → 排版块（agent 分隔行按**视口内宽**
-排版 + 正文；thinking 条目与 thought 块各有折叠/展开两形态，切换只许走 `toggleThinkDetail`）→ 行数前缀和。四条不可违反：
+排版 + 正文；只有 thinking 条目有折叠/展开两形态且切换只许走 `toggleThinkDetail`，thought 面板恒是面板）→ 行数前缀和。四条不可违反：
 ① **行数统计与取词同源** —— `bodyBlockFor`（`:158`）既算 `lines` 也给文本，`bodyText`（`:295`）
 必须等于全文的连续切片；旧的 `contentPartLinePrefix` 按条目原始行数累加（不认跳过项与分隔行、
 只够圈动画范围），拿来切片整屏错位，已删。

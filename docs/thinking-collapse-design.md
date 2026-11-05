@@ -35,15 +35,14 @@
     `thinkTextStyle`（251 + italic + faint）。
   - preview 取首个非空行（复用 `firstThinklinkLine` 的去标题/去标记规则），截断补 `…`，
     整行 ≤ 视口内宽。
-- thought 块 = 恰好 1 行：`◆ THOUGHT │ <goal>… │ ▸ <当前 plan 项> (done/total)`
-  - 无结构化内容（`ParseThoughtPlan` 空）退化成 `◆ THOUGHT │ <首行>…`。
-  - 窄宽度让步序：先丢 plan 段，再截 goal（与 `thinklinkPanelTop` 的 meta 让步同规矩）。
+- **thought 块不参与折叠**：恒是那块圆角面板（`renderThinklinkPanel` 逐字不动）。
+  它是交付物的一部分，不是过程噪音 —— 第一版实现把它压成过单行，2026-11-05 由用户否决并回退，
+  闸门 `TestThoughtPanelNeverCollapses` 钉住"两种旗标取值下逐字相同 + 面板边框与字段标签都在"。
 
-**展开态（`alt+h` 全局切换）**
+**展开态（`alt+h` 全局切换，只作用于 thinking 条目）**
 
 - thinking 条目 = 逐段编号 + 折行：首行 `  1 │ `、续行 `    │ `（编号列 4 + 导轨 2 = 6 列对齐），
   折行走 `wrapWords`（`tui_thinklink_fullscreen.go:251`），预算 = 内宽 − 6；**不截断**。
-- thought 块 = 现有圆角面板，`renderThinklinkPanel` 逐字不动。
 
 **不做逐块展开**：正文没有行光标（j/k 只滚不选），逐块展开要先立"行光标"这个新交互，见 §6。
 
@@ -62,10 +61,9 @@
 - 新增 `(m *model) renderThinkingBlock(entry *logEntry, width int) string`，取代
   `formatLogEntry` 的 `"thinking"` 分支与 `renderThinkingContinuation`（两者删除）；
   `renderSingleEntry` 的 thinking 分支改调它。折叠/展开两形态是它的两个私有辅助。
-- `renderStreamEntry` 改方法（要读 `m.thinkDetailOpen`）；thought 块的单行/面板两形态由
-  新增的 `(m *model) renderThinklinkBlock(block string, panelW int) string` 二选一，
-  `renderThinklinkPanels` 改走它。流式 memo 的失效在切换时统一清零（§3），
-  `sameThoughtBlockPrefix` 不动。
+- thought 面板那条路**一个字都不动**：`renderStreamEntry` 与 `renderAssistantContent` 继续直接
+  调 `renderThinklinkPanels` → `renderThinklinkPanel`。（第一版把 `renderStreamEntry` 改成了方法、
+  插了 `renderThinklinkBlock` 两形态分支，2026-11-05 回退，见 §9 偏差 5。）
 - `bodyBlockFor` 删掉 `state.lastThinking` 续行分支（`bodyEmitState.lastThinking` 字段一并删）；
   分隔行改按内宽：`RenderAgentSeparator(entry.from, m.viewport.Width()-2)`。
 - 宽度账统一：正文一切排版按**视口内宽** = `viewport.Width() - 2`（Padding(0,1)）。
@@ -76,12 +74,12 @@
   切换走 `needFullRebuild` + `bodyRepaint(0)`，索引结构不动（硬约束 3.2 ①③④ 全保留）。
 - **流式合并**：thinking 条目不是 `ai_stream`，切换产生的脏不属于 `streamDirtyHeld` 的
   "可推迟"集合，立刻落地 —— 判据无需改。
-- **流式 parity**：`TestTUI_StreamPanelsMatchOneShot` 的"增量 == 一次性"在两种形态下都要成立
-  （用例对 `thinkDetailOpen` 两值各跑一遍）。
-- **merge 用例**：`tui_thinking_merge_test.go` 六条按新契约改写 —— 💭 次数 == thinking 条目数
+- **流式 parity**：`TestTUI_StreamPanelsMatchOneShot` 的"增量 == 一次性"在 `thinkDetailOpen`
+  两值下各跑一遍，两遍输出必须相同（thought 面板不参与折叠，所以这是"不许参与"的间接证据）。
+- **merge 用例**：`tui_thinking_merge_test.go` 七条按新契约改写 —— 💭 次数 == thinking 条目数
   （折叠与展开都成立）、折叠态每条目恰一行、空白 ai_stream 占位不产生行。
 - **恢复链路**：`TestApplyRestoredMemory_RenderParityWithLivePath` 继续钉"恢复 == 实时"；
-  恢复出的 ai_response 含 thought 块时按折叠态渲染。
+  恢复出的 ai_response 含 thought 块时按面板渲染（与实时同形态，因为面板不参与折叠）。
 
 ## 6. 不做（P2 及以后）
 
@@ -98,20 +96,21 @@
   宽度矩阵 {30,60,100,240}。
 - `TestThinkingCollapse_ExpandedShowsFullText`：展开态全文在、无 `…` 截断、折行 ≤ 内宽、段号连续。
 - `TestThinkToggle_RoundTripKeepsScroll`：切换前后 `bodyTotalLines` 对称回到原值、贴底保持。
-- `TestThoughtOneLine_ShapeAndYield`：单行含 goal 与 `(done/total)`；窄宽度先丢 plan 段；
-  展开态与 `renderThinklinkPanel` 逐字相同。
+- `TestThoughtPanelNeverCollapses`：thought 面板在 `thinkDetailOpen` 两值下**逐字相同**，
+  且都含边框与 GOAL/STEP/REASON/PLAN —— 有人再把单行形态加回来就红。
 - `TestAgentSeparatorFitsInnerWidth`：分隔行显示宽 == 视口内宽。
-- `TestStreamPanelsMatchOneShot_BothThinkModes`：parity 两形态各跑一遍。
+- parity 两形态 = `TestTUI_StreamPanelsMatchOneShot` 的两个子用例（`panels` /
+  `panels_with_think_detail_open`），不是独立函数名。
 
-改写：`tui_thinking_merge_test.go` 六条 → 新契约（见 §5）。
+改写：`tui_thinking_merge_test.go` 七条 → 新契约（见 §5）。
 
 ## 8. 落地坐标（改后行号，逐条对过磁盘）
 
 | 落点 | 位置 |
 |---|---|
-| 折叠/展开渲染 | `tui_render.go:639` `renderThinkingBlock`（+ `renderThinkingCollapsed` / `renderThinkingExpanded` / `thinkingParagraphs`） |
-| 切换动作 | `tui_render.go:702` `toggleThinkDetail`；旗标 `tui_model.go:488` `thinkDetailOpen` |
-| thought 两形态 | `tui_render.go:534` `renderThinklinkBlocks` / `:542` `renderThinklinkBlock` / `:551` `renderThinklinkPanelOneLine`；面板本体 `:608` |
+| thinking 折叠/展开渲染 | `tui_render.go:576` `renderThinkingBlock`（+ `renderThinkingCollapsed` / `renderThinkingExpanded` / `thinkingParagraphs`） |
+| 切换动作 | `tui_render.go:640` `toggleThinkDetail`；旗标 `tui_model.go:488` `thinkDetailOpen` |
+| thought 面板（不参与折叠） | `tui_render.go:535` `renderThinklinkPanels` → `:545` `renderThinklinkPanel`；流式侧 `:454` `renderStreamEntry`（自由函数，形态未动） |
 | 排版块 | `tui_body.go:167` `bodyBlockFor`（分隔行内宽 `:188`；`bodyEmitState.lastThinking` 已删） |
 | 键位 | `tui_update_keys.go:618` `alt+h`；提示条 `i18n.go:147`（中）/ `:238`（英） |
 | 折行度量 | `tui_thinklink_fullscreen.go:251` `wrapWords`（显示列口径）+ `cutCells` |
@@ -135,9 +134,16 @@
    —— 它按名字认断言，`test*` 前缀不算。
 4. **事件路径的测试必须先 `rebuildContentCache`**：thinking 合并只标脏、正文由 `View()` 落地，
    直接读 `bodyText` 会拿到合并前那一帧的旧 `contentParts`（新加的 `thinkingTestBody` 辅助钉住这个顺序）。
+5. **thought 面板的单行形态被否决并整体回退**（`e517672` → 本次）：第一版按本文档 §2 的原稿把
+   `<thought>` 块也压成 `◆ THOUGHT │ goal │ ▸ 当前项 1/3`。用户判据：**这块不能简化** ——
+   它是交付物的一部分，不是过程噪音。回退范围 = `renderThinklinkPanelOneLine` /
+   `renderThinklinkBlock` / `currentPlanItemText` / `planDoneCount` 四个函数删除，
+   `renderStreamEntry` 退回自由函数，`toggleThinkDetail` 不再清流式 memo（memo 与旗标无关了）。
+   §2 的判据同步改写，闸门换成 `TestThoughtPanelNeverCollapses`。
 
 **实测数字**（120 列视口，10 步 × 两段思考 + 一次工具调用，末尾一条带 thought 块的回复）：
 折叠态 24 行，展开态 63 行 —— 同一份内容，默认屏占比降到 38%。
+**回退 thought 单行后这个数字会变**：面板每步 9–10 行照旧出现，省下来的只是 reasoning 墙那部分。
 
 **闸门落地情况**：§7 列的六条全部存在（`tui_think_collapse_test.go` 四条 +
 `tui_render_test.go` 的折叠/展开两条），`tui_thinking_merge_test.go` 七条按新契约重写
