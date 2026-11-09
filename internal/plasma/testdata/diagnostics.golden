@@ -38,6 +38,8 @@ grade: (none)
 ### tool-outside-palette
 bundle.tools[1]: error[PLS-201]: tool "run_bash" 的能力 [shell] 超出 palette [fs_read search_regex code_graph tool_load flow]
                  note: 生成式 Agent 默认只读；要写/shell 必须走升级门并由用户批准
+bundle.policy.effects_required: warning[PLS-210]: 用到 base palette 之外的能力 [shell]
+                                note: grade 上限钉在 provisional；首次委派需经用户授权回路批准，批准按 bundle hash 记
 grade: (none)
 
 ### no-exit-channel
@@ -67,6 +69,11 @@ bundle.policy.deny: error[PLS-207]: 认不出的能力名 "fs_wirte"
                     note: 词表见 toolspec.Effect.Names；拼错会让 deny 静默少一项
 grade: (none)
 
+### escalation-approved-still-accounted
+bundle.policy.effects_required: warning[PLS-210]: 用到 base palette 之外的能力 [fs_write]
+                                note: 升级已获批准（按 hash 记）；仍留此账目以便审计
+grade: provisional
+
 ### multiple-errors-in-one-pass
 bundle.name: error[PLS-002]: name "Bad Name" 不是 snake_case
              note: 它要拼成 delegate_<name> 工具名，字符集受 provider 约束
@@ -75,6 +82,8 @@ bundle.tools[0]: error[PLS-101]: unknown tool "read_filez"
                  note: did you mean "read_file"?
 bundle.tools[1]: error[PLS-201]: tool "run_bash" 的能力 [shell] 超出 palette [fs_read search_regex code_graph tool_load flow]
                  note: 生成式 Agent 默认只读；要写/shell 必须走升级门并由用户批准
+bundle.policy.effects_required: warning[PLS-210]: 用到 base palette 之外的能力 [shell]
+                                note: grade 上限钉在 provisional；首次委派需经用户授权回路批准，批准按 bundle hash 记
 bundle.runtime.llm_timeout: error[PLS-204]: 3h0m0s 超出范围 [1s,1h0m0s]
 bundle.policy.deny: error[PLS-207]: 认不出的能力名 "nope"
                     note: 词表见 toolspec.Effect.Names；拼错会让 deny 静默少一项

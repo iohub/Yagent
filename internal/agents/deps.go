@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"yagent/internal/config"
+	"yagent/internal/plasma"
 	"yagent/internal/tools"
 	"yagent/internal/toolspec"
 )
@@ -94,8 +95,12 @@ func effectCategory(eff toolspec.Effect) string {
 // prompt 广告了 semantic_search / query_code_skeleton / query_code_snippet，
 // 而实现侧没有对应 case，Custom Agent 选了也是静默丢弃。改成从注册表派生，
 // "广告"与"能发"就是同一个来源。
+//
+// 上限用 plasma.PlasmaPalette 而不是 ProfileDirector.Palette：后者含 FSWrite|Shell，
+// 而生成式 Agent 默认只读（ADR-4）。**准入侧 runCustomAgent 必须用同一个常量**，
+// 只收窄广告等于没收窄 —— 模型照样可以幻觉出一个写工具然后被接受。
 func renderCustomAgentToolPool() string {
-	palette := toolspec.ProfileDirector.Palette
+	palette := plasma.PlasmaPalette
 	deps := toolspec.ProfileDirector.ProbeDeps()
 	var b strings.Builder
 	b.WriteString("| Tool Name | Category | Description |\n")

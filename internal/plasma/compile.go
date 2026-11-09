@@ -27,7 +27,13 @@ var snakeCasePattern = regexp.MustCompile(`^[a-z0-9]+(_[a-z0-9]+)*$`)
 // 刻意不给默认值 —— 一个"忘了配 palette"的编译器应当拒掉一切，而不是放行一切。
 type Compiler struct {
 	Palette toolspec.Effect
+	// EscalationApproved 是用户已批准的额外能力位，由调用方**按 bundle hash** 从
+	// store 的 meta.json 读出来注入。按 name 记会让一次批准被后续所有变异继承。
+	EscalationApproved toolspec.Effect
 }
+
+// effective 是本次编译真正使用的上限。未批准的升级位不在里面，所以那些工具照旧被拒。
+func (c *Compiler) effective() toolspec.Effect { return c.Palette | c.EscalationApproved }
 
 // Compile 跑阶段 1-3（Parse / Resolve / Typecheck）。阶段 4 属 P2、5 属 P6、6 属 P4。
 // 一次跑完全部阶段而不是遇错即停：生成侧需要一轮拿到所有问题，否则每修一处就要一次往返。
@@ -74,7 +80,7 @@ func (c *Compiler) parse(b *Bundle, r *Report) {
 // 阶段 2：对着活注册表解析工具名。MatchNames 忽略 deps（profile.go:175 的 `_ = deps`），
 // 所以传 nil 是安全的；它同时自动追加 agent_exit（:196），那条规则只此一份。
 func (c *Compiler) resolve(b *Bundle, r *Report) (selected []*toolspec.Spec, rejected []string) {
-	selected, unknown, rejected := toolspec.MatchNames(b.Tools, c.Palette, nil)
+	selected, unknown, rejected := toolspec.MatchNames(b.Tools, c.effective(), nil)
 	for _, name := range unknown {
 		note := ""
 		if s := suggestTool(name); s != "" {
@@ -86,14 +92,16 @@ func (c *Compiler) resolve(b *Bundle, r *Report) (selected []*toolspec.Spec, rej
 	return selected, rejected
 }
 
-// 阶段 3：权限包含、收尾通道、旋钮范围、deny 自洽。
+// 阶段 3：权限包含、升级门、收尾通道、旋钮范围、deny 自洽。
 func (c *Compiler) typecheck(b *Bundle, selected []*toolspec.Spec, rejected []string, r *Report) {
 	for _, name := range rejected {
 		r.errorf(CodeOutsidePalette, fmt.Sprintf("bundle.tools[%d]", indexOfTool(b.Tools, name)),
 			fmt.Sprintf("tool %q 的能力 %v 超出 palette %v", name,
-				toolspec.EffectOf(name).Names(), c.Palette.Names()),
+				toolspec.EffectOf(name).Names(), c.effective().Names()),
 			"生成式 Agent 默认只读；要写/shell 必须走升级门并由用户批准")
 	}
+
+	c.escalation(b, selected, rejected, r)
 
 	if !hasSpec(selected, toolspec.ExitToolName) {
 		r.errorf(CodeNoExit, "bundle.tools",
@@ -128,6 +136,37 @@ func (c *Compiler) typecheck(b *Bundle, selected []*toolspec.Spec, rejected []st
 				"声明放弃又选进来，两者必有一处是笔误")
 		}
 	}
+}
+
+// escalation 留一条可见账目：用到了 base palette 之外的能力就必须说出来，
+// 无论批准与否（坑 43：防线生效过却没人知道，与静默丢失只差一步）。
+// 未批准的那些工具已经在 resolve 里被拒（PLS-201），这里只负责"这份 bundle 需要升级"这个事实，
+// 以及把 grade 上限钉住 —— 批准状态由调用方按 hash 注入，本包不认识 store。
+func (c *Compiler) escalation(b *Bundle, selected []*toolspec.Spec, rejected []string, r *Report) {
+	var used toolspec.Effect
+	for _, s := range selected {
+		used |= s.Effect
+	}
+	// 被拒的工具恰恰是最需要留账目的那批：漏掉它们，"需要升级"就永远不会出现在
+	// 真正越权的那份 bundle 上，批准门也就无从问起。
+	for _, name := range rejected {
+		used |= toolspec.EffectOf(name)
+	}
+	declared, _ := toolspec.EffectFromNames(b.Policy.EffectsRequired)
+	used |= declared
+
+	beyond := BeyondBase(used, c.Palette)
+	if beyond == 0 {
+		return
+	}
+	r.EscalationRequired = true
+	unapproved := beyond &^ c.EscalationApproved
+	note := "grade 上限钉在 provisional；首次委派需经用户授权回路批准，批准按 bundle hash 记"
+	if unapproved == 0 {
+		note = "升级已获批准（按 hash 记）；仍留此账目以便审计"
+	}
+	r.add(CodeEscalation, SeverityWarning, "bundle.policy.effects_required",
+		fmt.Sprintf("用到 base palette 之外的能力 %v", beyond.Names()), note)
 }
 
 func hasSpec(specs []*toolspec.Spec, name string) bool {

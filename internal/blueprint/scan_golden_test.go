@@ -22,14 +22,15 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
-	// 148/148：新增 internal/plasma（生成式 Agent 的编译器，Plasma P0）带来三条模块级直接边——
+	// 149/149：P1 让 agents 首次 import plasma（renderCustomAgentToolPool 与 runCustomAgent
+	// 都改用 plasma.PlasmaPalette，广告侧与准入侧必须同一个常量），新增一条 agents→plasma。
+	// 上一版 148/148 的归因：新增 internal/plasma（Plasma P0）带来三条边——
 	// plasma→toolspec（MatchNames/EffectOf/EffectFromNames/ExitToolName，判据的单一来源）、
 	// plasma→util（SnakeCase）、agents→util（同一处 SnakeCase：原先 agents.toSnakeCase 是包内私有，
 	// 单源化到 util 后 agents 首次模块级依赖它）。更新前用 go list -f '{{.Imports}}' 逐条确认过。
-	// 上一版 145/145 的归因：求助与授权从弹窗改成 footer 面板，components/user_help_dialog.go
-	// 随之删除 —— 它是 internal/tui/components 里唯一直接 import internal/protocol 的文件。
-	if out != 148 || in != 148 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 148/148 —— 形状变了，先确认变化来源", out, in)
+	// 更早 145/145：求助与授权从弹窗改成 footer 面板，components/user_help_dialog.go 随之删除。
+	if out != 149 || in != 149 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 149/149 —— 形状变了，先确认变化来源", out, in)
 	}
 	for i := 1; i < len(snap.Leaves); i++ {
 		if snap.Leaves[i-1].Dir >= snap.Leaves[i].Dir {

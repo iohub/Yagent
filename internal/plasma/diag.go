@@ -30,6 +30,7 @@ const (
 	CodeParallelTools  = "PLS-205"
 	CodeDenyConflict   = "PLS-206"
 	CodeUnknownEffect  = "PLS-207"
+	CodeEscalation     = "PLS-210"
 )
 
 // Diagnostic 的 Path 用 bundle 相对定位（bundle.tools[3]），让生成侧能精确改一处而不是整份重写。
@@ -55,6 +56,10 @@ type Report struct {
 	Diagnostics []Diagnostic
 	// Grade 是本次编译能达到的上限；P0 只可能产出 provisional（5a/5b 尚未接入）。
 	Grade Grade
+	// EscalationRequired 表示这份 bundle 用到了 base palette 之外的能力。
+	// 它为真时 grade 上限钉在 provisional，直到用户批准 + 行为夹具通过（ADR-4/ADR-9）。
+	// 即使升级已批准也要置真：防线生效过必须留下可见账目（坑 43）。
+	EscalationRequired bool
 }
 
 func (r *Report) add(code string, sev Severity, path, msg, note string) {
