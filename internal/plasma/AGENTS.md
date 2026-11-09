@@ -20,7 +20,24 @@
 **不要 import agents / tools / llm / config / messaging。**
 
 **2. `Palette` 刻意不给默认值。** 零值 palette 会拒掉一切工具（`TestCompile_ZeroPaletteRejectsEverything`）
-—— "忘配 palette"必须是全拒而不是全放行。P0 由测试注入只读族画像，P1 起由装配层注入 `PlasmaPalette`。
+—— "忘配 palette"必须是全拒而不是全放行。生产由装配层注入 `PlasmaPalette`（`palette.go`）。
+`EscalationApproved` 是用户已批准的额外位，effective = `Palette | EscalationApproved`；
+**批准必须按 bundle hash 注入**，按 name 记会让一次批准被后续所有变异继承。
+
+**2.1 `PlasmaPalette` 不等于 `ProfileDirector.Palette`。** 后者含 FSWrite|Shell（`profiles.go:33`），
+生成式 Agent 继承它就是权限升级。前者只读族 + flow + tool_load，且**第三方能力一位不给**
+（ExternalRead/ExternalWrite/Skill）——`internal/toolspec/AGENTS.md` 硬约束 6.1 明写
+"Palette 一个位都不加"，而第三方 MCP 输出本身就是注入向量。含 `EffectToolLoad` 是**修 bug**：
+Director 的 Palette 缺它，于是今天 Custom Agent 的 Cold 工具永远取不回。
+**广告侧与准入侧必须同用这一个常量**：`agents.renderCustomAgentToolPool`（`deps.go`）与
+`agents.runCustomAgent`（`director_surface.go`）都改了，只收窄一边等于没收窄
+（闸门 `TestMetaPromptToolPoolMatchesPalette` 同时断言两侧）。
+
+**2.2 升级账目必须覆盖被拒的工具。** `escalation()` 合并 selected **和 rejected** 的能力位：
+漏掉 rejected 的话，"需要升级"这条 warning 就永远不会出现在真正越权的那份 bundle 上，
+批准门也无从问起（P1 实施时实测踩到，`TestEscalation_UnapprovedIsRejectedButAccounted` 钉住）。
+PLS-210 是 **warning 不是 error**：它是账目，阻断由 PLS-201 负责。已批准也照样发 PLS-210
+（坑 43：防线生效过必须有人看得见），note 文案区分已批准/未批准。
 
 **3. 工具名解析与 `agent_exit` 自动追加只有一份判据：`toolspec.MatchNames`**
 （`internal/toolspec/profile.go:174`，`:196` 自动追加）。本包不重写这两条规则。
@@ -83,10 +100,17 @@ P0 只可能产出 `provisional`（5a/5b 尚未接入），更高的档必须有
 - `TestElaborate_DefaultsAreActuallyUsed`：兜底常数没生效、或注入值被忽略，即红。
 - `TestElaborate_RejectsBadShapes`：四种坏输入各自必须报出**结构化** `*DiagError`。
 - `TestElaborate_Idempotent` / `_TaskIsNotPersisted`：见硬约束 9/10。
-- `TestDiagnosticsGolden`（`golden_test.go`）：`testdata/diagnostics.golden` 钉住 16 个 corpus
+- `TestDiagnosticsGolden`（`golden_test.go`）：`testdata/diagnostics.golden` 钉住 17 个 corpus
   的精确诊断文本。改码表/文案必须显式 `-update`，那个 diff 就是评审物。
 - `TestCorpusCoversEveryCode`：corpus 没触发某个码即红（防止 golden 看着很长、实际有规则从未被渲染）。
 - `TestRegistryIsProductionShaped`（`main_test.go`）：注册表不是 50 条即红。
+- `palette_test.go` 七条：`TestPlasmaPaletteIsReadOnly`（11 项禁用能力逐个断言 + flow/tool_load 必须在）、
+  `_UnapprovedIsRejectedButAccounted`（PLS-201 与 PLS-210 必须同时在场）、
+  `_ApprovedPassesButStillAccounted`（批准后仍留账目）、`_ApprovalIsPerBit`（只批 fs_write 时 shell 仍被拒）、
+  `_ReadOnlyBundleHasNoEscalation`（只读 bundle 不该带噪声 warning）、
+  `_DeclaredIntentIsAccounted`（光声明意图也要账目）、`TestBeyondBase`。
+- agents 侧配套：`TestMetaPromptToolPoolMatchesPalette`（`registry_gate_test.go`）同时断言
+  **广告与准入**两侧都用 PlasmaPalette，且 run_bash/create_file 两侧都拒、load_tool 必须在。
 
 脚本守卫：`check_plasma_leaf.sh`（硬约束 1）。
 `testdata/` 落地后要跑 `gofmt -l internal/plasma/testdata`（根 `AGENTS.md` §11 坑 41：
@@ -95,5 +119,7 @@ P0 只可能产出 `provisional`（5a/5b 尚未接入），更高的档必须有
 ## 尚未落地（别当成已有能力引用）
 
 阶段 4 Consistency（P2）、store 与加载期（P4）、`FixtureRunner` 与 5a 自动生成（P6）、
-trampoline 驱动器与 `Spawner`（P8）、`PlasmaPalette` 与升级门（P1）。
+trampoline 驱动器与 `Spawner`（P8）。
 `ir.go` 里的 `Fixtures`/`Quality` 只承载形状，**没有任何执行或落盘语义**。
+`Report.EscalationRequired` 已置位但**还没有消费者**：grade 上限的真正执行要等 P6 的棘轮，
+升级批准的用户回路要等 P9 接线。

@@ -9,6 +9,7 @@ import (
 	"yagent/internal/agents/director"
 	"yagent/internal/blackboard"
 	"yagent/internal/memory"
+	"yagent/internal/plasma"
 	"yagent/internal/tools"
 	"yagent/internal/toolspec"
 	"yagent/internal/util"
@@ -261,7 +262,7 @@ func (a *DirectorAgent) runMetaDesign(ctx context.Context, task string) (interfa
 // MaxSteps=15 保持不变：它是单次定向任务的一次性 Agent，不是常驻角色。
 func (a *DirectorAgent) runCustomAgent(ctx context.Context, ca *CustomAgent, task string) (string, error) {
 	deps := a.toolDeps()
-	selected, unknown, rejected := toolspec.MatchNames(ca.ToolsUsed, toolspec.ProfileDirector.Palette, deps)
+	selected, unknown, rejected := toolspec.MatchNames(ca.ToolsUsed, plasma.PlasmaPalette, deps)
 	if len(unknown) > 0 {
 		slog.Warn("custom agent asked for unregistered tools", "agent", ca.Name, "unknown", unknown)
 	}

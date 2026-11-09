@@ -100,7 +100,7 @@ func TestCompile_ReportsEachRule(t *testing.T) {
 		{
 			name:   "工具超出 palette",
 			mutate: func(b *plasma.Bundle) { b.Tools = append(b.Tools, "run_bash") },
-			want:   []string{plasma.CodeOutsidePalette},
+			want:   []string{plasma.CodeOutsidePalette, plasma.CodeEscalation},
 		},
 		{
 			name:    "palette 不含 flow 就没有收尾通道",
@@ -196,7 +196,7 @@ func TestCompile_ZeroPaletteRejectsEverything(t *testing.T) {
 	if !r.HasErrors() {
 		t.Fatal("零 palette 必须拒掉工具，否则忘配等于全放行")
 	}
-	if !equalCodes(codes(r), []string{plasma.CodeOutsidePalette, plasma.CodeOutsidePalette, plasma.CodeOutsidePalette, plasma.CodeNoExit}) {
+	if !equalCodes(codes(r), []string{plasma.CodeOutsidePalette, plasma.CodeOutsidePalette, plasma.CodeOutsidePalette, plasma.CodeNoExit, plasma.CodeEscalation}) {
 		t.Errorf("零 palette 的诊断 = %v\n%s", codes(r), r.Text())
 	}
 }

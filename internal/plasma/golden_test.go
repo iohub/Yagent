@@ -22,9 +22,10 @@ var goldenUpdate = flag.Bool("update", false, "rewrite the plasma diagnostics go
 // corpus 走完整路径（raw JSON → Elaborate → Compile），所以 golden 同时钉住扩充与判定。
 // 顺序是契约的一部分：诊断按发射顺序渲染， corpus 顺序变了 golden 就该变。
 var corpus = []struct {
-	name    string
-	raw     string
-	palette toolspec.Effect
+	name       string
+	raw        string
+	palette    toolspec.Effect
+	escalation toolspec.Effect
 }{
 	{
 		name: "clean-minimal-spec",
@@ -89,6 +90,11 @@ var corpus = []struct {
 		raw:  `{"schema_version":1,"name":"auditor","prompt":{"system":"s"},"tools":["read_file"],"policy":{"deny":["fs_wirte"]}}`,
 	},
 	{
+		name:       "escalation-approved-still-accounted",
+		raw:        `{"schema_version":1,"name":"auditor","prompt":{"system":"s"},"tools":["read_file","create_file"]}`,
+		escalation: toolspec.EffectFSWrite,
+	},
+	{
 		name: "multiple-errors-in-one-pass",
 		raw:  `{"schema_version":1,"name":"Bad Name","prompt":{"system":""},"tools":["read_filez","run_bash"],"runtime":{"max_steps":0,"llm_timeout":"3h"},"policy":{"deny":["nope"]}}`,
 	},
@@ -110,7 +116,7 @@ func renderCorpus() string {
 			fmt.Fprintf(&b, "elaborate: %v\n", err)
 			continue
 		}
-		r := (&plasma.Compiler{Palette: pal}).Compile(context.Background(), bundle)
+		r := (&plasma.Compiler{Palette: pal, EscalationApproved: tc.escalation}).Compile(context.Background(), bundle)
 		if len(r.Diagnostics) == 0 {
 			b.WriteString("(no diagnostics)\n")
 		} else {
@@ -169,7 +175,7 @@ func TestCorpusCoversEveryCode(t *testing.T) {
 			}
 			continue
 		}
-		r := (&plasma.Compiler{Palette: pal}).Compile(context.Background(), bundle)
+		r := (&plasma.Compiler{Palette: pal, EscalationApproved: tc.escalation}).Compile(context.Background(), bundle)
 		for _, d := range r.Diagnostics {
 			seen[d.Code] = true
 		}
@@ -179,7 +185,7 @@ func TestCorpusCoversEveryCode(t *testing.T) {
 		plasma.CodePromptEmpty, plasma.CodeToolsEmpty, plasma.CodeUnknownTool,
 		plasma.CodeOutsidePalette, plasma.CodeNoExit, plasma.CodeMaxSteps,
 		plasma.CodeLLMTimeout, plasma.CodeParallelTools, plasma.CodeDenyConflict,
-		plasma.CodeUnknownEffect,
+		plasma.CodeUnknownEffect, plasma.CodeEscalation,
 	} {
 		if !seen[code] {
 			t.Errorf("corpus 没有触发 %s —— 那条规则的诊断文本没被 golden 钉住", code)

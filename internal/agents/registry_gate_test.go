@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"yagent/internal/plasma"
 	"yagent/internal/tools"
 	"yagent/internal/toolspec"
 )
@@ -291,6 +292,8 @@ func TestCustomPaletteStaysInsideDirector(t *testing.T) {
 // TestMetaPromptToolPoolMatchesPalette 保证 Meta 的 prompt 不会再次广告实现不了的工具。
 // 历史上 meta.prompt.md 手写的表里有 semantic_search/query_code_*，而 director.go 的
 // getToolFunc 没有对应 case —— 模型照表选工具，注册时静默丢弃。
+// 上限的单一来源是 plasma.PlasmaPalette（ADR-4）：广告侧 renderCustomAgentToolPool 与
+// 准入侧 runCustomAgent 必须用同一个常量，只收窄一边等于没收窄。
 func TestMetaPromptToolPoolMatchesPalette(t *testing.T) {
 	pool := renderCustomAgentToolPool()
 	if strings.Contains(pool, "{{TOOL_POOL_TABLE}}") {
@@ -300,16 +303,37 @@ func TestMetaPromptToolPoolMatchesPalette(t *testing.T) {
 		t.Fatal("meta.prompt.md 丢了占位符，生成路径会失效")
 	}
 
-	palette := toolspec.ProfileDirector.Palette
+	palette := plasma.PlasmaPalette
 	for _, s := range toolspec.Specs() {
 		inside := strings.Contains(pool, "| `"+s.Name+"` |")
 		granted := s.Effect.Has(palette)
 		if granted && !inside {
-			t.Errorf("%s 在 Palette 内却没进工具池表格（prompt 与实现又将不一致）", s.Name)
+			t.Errorf("%s 在 PlasmaPalette 内却没进工具池表格（prompt 与实现又将不一致）", s.Name)
 		}
 		if !granted && inside {
-			t.Errorf("%s 不在 Palette 内却出现在工具池表格（广告了发不出去）", s.Name)
+			t.Errorf("%s 不在 PlasmaPalette 内却出现在工具池表格（广告了发不出去）", s.Name)
 		}
+	}
+	// 写/shell 必须既不在广告里、也不被准入接受 —— 这是 ADR-4 的安全底线。
+	for _, name := range []string{"run_bash", "create_file"} {
+		if strings.Contains(pool, "| `"+name+"` |") {
+			t.Errorf("%s 出现在广告里：生成式 Agent 默认只读", name)
+		}
+		selected, _, rejected := toolspec.MatchNames([]string{name}, plasma.PlasmaPalette, nil)
+		// MatchNames 会自动追加 agent_exit，所以 selected 非空是正常的；
+		// 要断言的是**那个写工具本身**没被选进来。
+		for _, s := range selected {
+			if s.Name == name {
+				t.Errorf("%s 被 PlasmaPalette 放行了：生成式 Agent 默认只读", name)
+			}
+		}
+		if len(rejected) != 1 || rejected[0] != name {
+			t.Errorf("%s 应进 rejected，得到 %v", name, rejected)
+		}
+	}
+	// load_tool 必须在：缺它则 Cold 工具永远取不回（ProfileDirector.Palette 今天的 bug）。
+	if !strings.Contains(pool, "| `load_tool` |") {
+		t.Error("load_tool 不在工具池里，Cold 工具将无法取回")
 	}
 }
 
