@@ -169,10 +169,10 @@ Resume 成免费心跳）。监视 goroutine 挂到**父** ctx 的域上，不�
 - e2e 五链路：`e2e_authorization_test.go:270`、`e2e_handoff_test.go:95`、
   `e2e_lifecycle_test.go:70`、`e2e_resume_test.go:36`、`e2e_replay_test.go:74`、
   `e2e_blueprint_test.go:127`（验收断言就是"文件出现"）。harness 的接线顺序照抄 `internal/app/app.go:112-292`。
-- 那五条链路共用的模型替身是 `agentScriptedEngine`（`e2e_engine_test.go:23`）：脚本按 **Agent 身份**
-  分派（`agentIdentity`，`:41`，靠各家 System Prompt 的首行措辞认人）而不是全局调用序号——序号会被
-  循环里的补偿动作打断；`GenerateContent` **必须先看 ctx**（`:66-67`），忽略 ctx 的 mock 会把
-  "取消没传播"这类缺陷直接掩盖掉。
+- 那五条链路共用的模型替身已提升为**生产包** `internal/llm/scripted`（ADR-12；5a 结构夹具要跑生产路径）：
+  `e2e_engine_test.go:18-22` 只剩本地别名（`agentScriptedEngine`/`scriptStep`/`newScripted` → `scripted.Engine`），
+  身份分派在 `scripted.Engine`（嗅探 `scripted.sniffIdentity` 认 Prompt 首行；`NewForIdentity` 绕开嗅探），且
+  `GenerateContent` **必须先看 ctx**（`internal/llm/scripted/scripted.go:65`）——忽略 ctx 的 mock 会把"取消没传播"直接掩盖掉。
 - **取消不许从批次内部发起**：`toolbatch` 不保证组内启动顺序，负责取消的那个工具一旦排在信号量队列里，
   在飞调用就无人可取消，只能等 `defaultToolTimeout`(180s，`executor.go:90`) 逐波解开。历史用例
   `TestRunAgentLoop_ParentCancel_AllCallsAccounted`（`executor_parallel_test.go:514`）就卡在这里，
