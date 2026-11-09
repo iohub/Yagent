@@ -91,6 +91,30 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
 `len/4`。降级是一次性粘滞的、对中文约 4 倍低估，所以 PLS-304 的 note 必须把这件事说出来，
 否则读诊断的人会以为那是精确 token 数。`PromptTokenBudget=8000` 留余量也是为它。
 
+**15. store 的不可变/可变必须分文件**（`store.go`）。`bundle.json` 与 `fixtures/` 一经落盘即不可变
+（主键 = sha256，`Put` 遇到已存在的 `{name,hash}` 直接返回、不覆盖）；`report.json` 与 `meta.json`
+是可变状态（grade 升降、`escalation_approved`、promoted 计数）。把可变状态写进 bundle 会改 hash。
+**改夹具 ⇒ 新 hash ⇒ 新目录 ⇒ grade 从 provisional 重来**，不继承 —— 这就是"夹具不可变 + grade
+不继承"的机械保证，不需要额外逻辑。
+
+**16. `Runtime.LLMTimeout` 是 `json:"-"`，每次从磁盘读回都必须 `normalizeRuntime()`。**
+落盘用可读的 `LLMTimeoutText`，内存里用 `time.Duration`。P4 实测踩到：漏还原时 `Load` 得到 0s，
+阶段 3 判 `PLS-204 越界`，所有已落地的 Agent 全部加载失败。`Put` 也会先把 duration 写成文本
+（否则落盘文件不自描述）。
+
+**17. 出题谱系分离在 store 层强制**（`checkFixtureProvenance`）。有夹具但
+`fixtures.provenance.lineage` 为空 → 拒收（无法证明分离）；等于 `lineage.mutation` → 拒收
+（自己出题自己考）。这是 Goodhart 的第一道防线，不能只在文档里写。
+
+**18. 加载期必须对活注册表重跑阶段 1-4**（`Link`）。hash 只保证"文件没被改"，不保证
+"它依赖的工具还在"。`LoadAll` 按 name **字典序**加载（前缀缓存），预算截断按 grade→score→name
+选留哪些、但**呈现顺序仍回字典序**；超预算返回 `omitted` 条数，调用方必须写出来。
+`Skipped` 绝不静默：一个 Agent 从工具面消失而没人知道原因，与它从来没存在过无法区分（坑 43）。
+
+**19. 遥测写入点是 `directorToolRunner.Call` 的 outcome 汇聚处**，不是 `applyEnhancedCommander`
+（那只在 builtin 分支跑）。本包只提供 `AppendTelemetry`（一行 JSONL，失败返回 error 但调用方
+不得因此阻断委派）；`agents` 侧用 `SetDelegationMetricsHook` 暴露接缝，app 在 P9 接线。
+
 ## 测试必须与生产同形（坑 39）
 
 `toolspec` 的注册表由**实现侧的 `init()`** populate：只 import `tools` 得到 37 条，

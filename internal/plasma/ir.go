@@ -13,6 +13,21 @@ import "time"
 // SchemaVersion 是 IR 的版本。读侧遇到不认得的版本必须拒载而不是尽力解析。
 const SchemaVersion = 1
 
+// normalizeRuntime 从落盘文本还原只在内存里存在的字段。
+// Runtime.LLMTimeout 是 time.Duration 且标了 json:"-"（序列化用 LLMTimeoutText，保证可读），
+// 所以**每一次从磁盘读回都必须调它** —— 漏掉的表现是加载期把 0s 判成越界（P4 实测踩到）。
+func (b *Bundle) normalizeRuntime() error {
+	if b.Runtime.LLMTimeoutText == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(b.Runtime.LLMTimeoutText)
+	if err != nil {
+		return err
+	}
+	b.Runtime.LLMTimeout = d
+	return nil
+}
+
 // Grade 是质量棘轮的三档（ADR-9）。只有 verified 以上可被自动委派。
 type Grade string
 
