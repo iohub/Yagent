@@ -38,6 +38,14 @@ const (
 	CodePromptBudget    = "PLS-304"
 	CodeDeadSelection   = "PLS-306"
 	CodeDeniedMention   = "PLS-307"
+
+	// 5xx 是阶段 5a（结构夹具）的失败族。一条失败一条诊断，Path 指向
+	// fixtures.structural[<下标>]，Reason 原样进 note —— 生成侧靠它改下一轮。
+	CodeFixtureFailed     = "PLS-501" // 未登记的夹具类型失败（回落码）
+	CodeFixtureExit       = "PLS-502" // exit 契约违反：交付内容或退出形状不符
+	CodeFixtureStepBudget = "PLS-503" // 步数预算未生效：stop_kind 或步数不符
+	CodeFixtureToolScope  = "PLS-504" // Surface 含未声明工具（或多出、或缺失）
+	CodeFixturePalette    = "PLS-505" // 工具能力超出 PlasmaPalette 且未批准
 )
 
 // Diagnostic 的 Path 用 bundle 相对定位（bundle.tools[3]），让生成侧能精确改一处而不是整份重写。

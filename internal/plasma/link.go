@@ -57,9 +57,17 @@ func (c *Compiler) Link(b *Bundle, hash string) (*LinkPlan, error) {
 	for _, s := range selected {
 		tools = append(tools, s.Name)
 	}
+	// Profile.Names 用**解析后**的名单，不是原始的 b.Tools：
+	//   - MatchNames 已去重、剔除越权项、并自动追加 agent_exit（只此一份规则）；
+	//   - 而 Surface 的按名通道（toolspec.matchByNames）**只认清单、不补收尾工具**，
+	//     沿用原始清单装配出来的 Agent 会无法收尾，只能烧到 max_steps。
+	// Palette/Grant 也在这里落位：`VerifyStructural` 的 palette-containment 要与
+	// 阶段 3 的 typecheck 用同一个 effective 判据，否则夹具就成了第二套能力数学。
 	profile := toolspec.Profile{
 		Agent:        b.Name,
-		Names:        append([]string(nil), b.Tools...),
+		Grant:        c.effective(),
+		Palette:      c.effective(),
+		Names:        append([]string(nil), tools...),
 		RequiresExit: true,
 	}
 	grade := r.Grade

@@ -115,6 +115,30 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
 （那只在 builtin 分支跑）。本包只提供 `AppendTelemetry`（一行 JSONL，失败返回 error 但调用方
 不得因此阻断委派）；`agents` 侧用 `SetDelegationMetricsHook` 暴露接缝，app 在 P9 接线。
 
+**20. 结构夹具**自动生成**只在为空时**（`ensureStructuralFixtures`，`Compile` 末尾）：作者提供的
+夹具一条都不覆盖（ADR-5 夹具不可变）。生成时必须同时补 `fixtures.provenance`
+（`plasma-compiler-auto` / `compiler`），否则"有夹具而无谱系"会被 `store.Put` 按
+「自己出题自己考」拒收 —— 编译能过、存不进去是最难查的一类失败。
+
+**21. `Outcome` 里不许出现 `llm.*`**（叶子约束的推论）：脚本用 IR 自己的 `ScriptStep` 表达，
+结果只留 `FixtureID/Passed/Reason/Steps/TokensIn/TokensOut/StopKind`。`Reason` 在
+`Passed=false` 时**必须**非空且可读：生成侧靠它改下一轮，一句 "failed" 等于没跑。
+
+**22. `FixtureRunner` 由 `agents` 实现，plasma 只声明**（`fixture.go`）：静态断言经 `surfaceFor`
+装配真实 Surface，行为夹具经 `scripted` + `RunAgentLoop` 在生产路径上回放。plasma 侧不得
+为了省事 import tools/llm；`LinkPlan.Profile` 必须带 `Names`（含自动追加的 `agent_exit`）
+与 `Palette`（`effective()`），否则夹具与 typecheck 会各算一套能力数学。
+
+**23. exit-contract 必须比对交付**内容**。** `deliverableText` 倒序找最后一条非空 assistant
+消息，找不到就回落 `exec.Text`（那段 `{"finished":true,…}` JSON）—— 只断言"非空"永远为真。
+脚本形状只能是**一条响应里同时带正文与 `agent_exit`**：循环在没有 `tool_calls` 时直接按
+纯文本收尾，"先文本、后退出"的两步脚本走不到第二步（5a 实施时实测踩到）。
+
+**24. 5xx 每个码一条 corpus 负样本**（`PLS-501`–`505`）：5xx 只在验证阶段产生，
+`corpusCase.verify` 是给它留的唯一通道，`TestCorpusCoversEveryCode` 同时扫编译与验证两侧。
+步数判据用 `stepsDone` 而不是 `exec.Steps`：预算耗尽那条出口的 result 是零值，直接读
+`exec.Steps` 会让"步数超限"永远为假 —— 又一条永真测试。
+
 ## 测试必须与生产同形（坑 39）
 
 `toolspec` 的注册表由**实现侧的 `init()`** populate：只 import `tools` 得到 37 条，
@@ -128,7 +152,7 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
 ## 入口
 
 `ir.go`（Bundle 与三档 Grade）、`diag.go`（码表 + Report）、`elaborate.go`（两种形态 → 完整 IR）、
-`compile.go`（阶段 1-3）、`suggest.go`（did-you-mean）。
+`compile.go`（阶段 1-3）、`fixture.go`（5a 夹具生成 + `VerifyStructural` + 棘轮）、`suggest.go`（did-you-mean）。
 
 ## 闸门
 
@@ -146,6 +170,11 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
   的精确诊断文本。改码表/文案必须显式 `-update`，那个 diff 就是评审物。
 - `TestCorpusCoversEveryCode`：corpus 没触发某个码即红（防止 golden 看着很长、实际有规则从未被渲染）。
 - `TestRegistryIsProductionShaped`（`main_test.go`）：注册表不是 50 条即红。
+- `fixture_test.go` 十条：四条夹具的 ID/形状/步数/幂等、作者夹具不被覆盖、改夹具换 hash 且
+  store 接受自动谱系、`Ratchet` 四臂 + `CanPromote` 边界、5 个 5xx 码各一条、以及"缺 runner /
+  缺 plan / runner 报错 / 失败不给 Reason"四种必须点名的失败（`Reason` 非空是硬约束 21）。
+- agents 侧 `TestPlasmaFixtureRunner_*`：四夹具**各一绿一红**（负样本证明判据会失败，见硬约束 23）、
+  5b 占位不白送通过、`stop_kind` 词表对账、端到端 `VerifyStructural` + `Ratchet` 停在 provisional。
 - `palette_test.go` 七条：`TestPlasmaPaletteIsReadOnly`（11 项禁用能力逐个断言 + flow/tool_load 必须在）、
   `_UnapprovedIsRejectedButAccounted`（PLS-201 与 PLS-210 必须同时在场）、
   `_ApprovedPassesButStillAccounted`（批准后仍留账目）、`_ApprovalIsPerBit`（只批 fs_write 时 shell 仍被拒）、
@@ -160,8 +189,8 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
 
 ## 尚未落地（别当成已有能力引用）
 
-阶段 4 Consistency（P2）、store 与加载期（P4）、`FixtureRunner` 与 5a 自动生成（P6）、
-trampoline 驱动器与 `Spawner`（P8）。
-`ir.go` 里的 `Fixtures`/`Quality` 只承载形状，**没有任何执行或落盘语义**。
-`Report.EscalationRequired` 已置位但**还没有消费者**：grade 上限的真正执行要等 P6 的棘轮，
-升级批准的用户回路要等 P9 接线。
+5a 已落地：`StructuralFixtures` 自动生成 + `VerifyStructural` + `Ratchet`（provisional/verified）；
+`promoted` 只由 `CanPromote` 判定"够不够"，写回 store 归 P9。**5b（真 LLM 行为夹具）仍是占位**，
+`RunBehavioral` 恒返回"未执行"，属 P11。trampoline 驱动器与 `Spawner`（P8）、CLI（P7）也未落地。
+`Report.EscalationRequired` 的消费者已就位（`Ratchet` 把它钉在 provisional），升级批准的用户回路
+仍等 P9 接线。

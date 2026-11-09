@@ -42,6 +42,12 @@ director/repo/coding/chat）给 e2e；`NewWithResolver`（`:49`）给需要自�
 重复 ID，改格式会让一批链路用例以误导的方式失败（症状是"工具结果丢了"，而不是"ID 变了"）。
 闸门 `TestToolCallIDFormatIsStable`（`scripted_test.go:96`）。
 
+**7.1 `TextAndToolCall` 存在的理由：一条响应里同时带正文与工具调用**（真实模型常这样回）。
+执行循环只在**没有** `tool_calls` 时才走纯文本收尾，所以"先文本、后调工具"的两步脚本
+根本走不到第二步；plasma 5a 的 `exit-contract` 靠这条形状验"交付文本取自 assistant 消息
+而不是退出 JSON"。别把它当"两条 step 的简写"合并掉 —— 语义不同（`TextResponse` 之后
+`ToolCall` 的那种写法会被当成纯文本收尾）。
+
 **8. import 只准 stdlib + `internal/llm`**，闸门 `scripts/check_llm_scripted.sh`。它查**直接 import**
 （含测试文件的 import），刻意不用 `-deps`——本包的依赖 `llm` 自己带着 config/logging/models/util，
 传递闭包会把它们全误报成越界。理由：本包一旦 import 装配/工具/配置层，依赖就成环，且替身开始依赖
