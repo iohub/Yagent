@@ -422,7 +422,7 @@ globalctx 一节）。**没有 CI 质量闸门**：`release.yml` 只做跨平台
 ### 8.3 测试
 
 ```bash
-bash scripts/check_all.sh                 # 本地闸门：build + vet + 十二把守卫 + 全量单测
+bash scripts/check_all.sh                 # 本地闸门：build + vet + 十三把守卫 + 全量单测
 RACE=true bash scripts/check_all.sh       # 再对并发包跑 -race（慢 3-8 倍，改到并发时手动跑）
 bash scripts/check_all.sh --fast          # 只跑 ./internal/... 的单测
 go test ./... -count=1 -timeout 600s      # 26 个测试包，墙钟约 12s
@@ -469,20 +469,20 @@ go test ./internal/agents/... -count=1    # 最慢的一档，约 10.5s
 
 ### 9.2 守卫与全局不变量
 
-**十二把守卫**（`bash scripts/check_all.sh` 一条命令跑完；每条都对应一次"曾经静默漂移"）：
+**十三把守卫**（`bash scripts/check_all.sh` 一条命令跑完；每条都对应一次"曾经静默漂移"）：
 
 ```
 check_no_manual_lookup        不许重新出现按名字查工具（FORBIDDEN 名单必须为零）
 check_toolspec_leaf           toolspec 不得反向依赖 agents/tools
 check_no_agents_import        director/ 子包不得 import internal/agents（扫传递闭包，防循环）
 check_blueprint_leaf          internal/blueprint 只准标准库 + util + projectid
-check_plasma_leaf             internal/plasma 只准标准库 + toolspec + util + projectid + tokenutil
+check_plasma_leaf / check_llm_scripted  plasma 只准 stdlib + toolspec + util + projectid + tokenutil；scripted 只准 stdlib + llm
 check_supervise_leaf          internal/supervise 只准标准库
 check_shutdown_leaf           internal/shutdown 只准标准库 + supervise
 check_no_bare_go              裸 go 全仓硬禁，**无 PENDING 名单**（唯一例外：supervise 自己）
 check_no_inline_atomic_write  tmp+rename 只准 internal/util/atomic.go 一处
 check_file_sizes              director/ 非测试文件 ≤300 行，存量按 PENDING 冻结
-check_agents_md_size          根 + 18 份 AGENTS.md 的体积棘轮（防本文件再次膨胀）
+check_agents_md_size          根 + 19 份 AGENTS.md 的体积棘轮（防本文件再次膨胀）
 check_test_hygiene            每个 Test* 必须能失败；裸 t.Skip 要有条件；同包只准一个 ANSI 剥离辅助
 ```
 

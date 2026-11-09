@@ -1088,5 +1088,44 @@ snake_case 正则恒真 / 去掉 did-you-mean / 下标恒 0 / Elaborate 无视�
 
 **待办**：P1（PlasmaPalette + 升级门 + 工具池改喂 manifest）。
 
+### P5 已落地（2026-11-09）
+
+**代码在上一轮已落地，本轮不改一行**（ADR-12 选项 (a) 的结果）：`internal/llm/scripted`（253 行，
+唯一实现，`New`/`NewWithResolver`/`NewForIdentity` 三个构造器）+ `llm.CallOptions.AgentName`
+（`engine.go:223-226`）+ `agents.ExecutorConfig.AgentName` 填进 opts；9 个 e2e 文件经
+`e2e_engine_test.go:18-22` 的类型别名全部指向 `scripted.Engine`，**无新旧并存**。
+
+**本轮补齐的验收配套**（§11 与 §16 自己要求、上一轮漏掉的三件）：
+① **新闸门** `scripts/check_llm_scripted.sh`：scripted 只准 import **stdlib + `yagent/internal/llm`**。
+判据是**直接 import**（`go list -f '{{join .Imports}}…{{join .TestImports}}…{{join .XTestImports}}'`），
+**刻意不用 `-deps`**——`internal/llm` 自己依赖 config/logging/models/util，传递闭包会把它们全误报成越界。
+已接进 `check_all.sh`（守卫 12→13，排在 `check_plasma_leaf` 之后）。
+② **`internal/llm/scripted/AGENTS.md`**（62 行，新建）：三条纪律各自绑定闸门名（
+`TestEngine_DispatchesByIdentityNotCallOrder` / `TestEngine_HonoursContext` / `TestEngine_StepRunsOutsideLock`）、
+三种身份注入分工、`AgentName` 只是进程内通道、耗尽回落为纯文本、`call_<tool>` ID 契约、import 约束、
+`Model()` 只是接线替身（质量验证在 ADR-3 的离线侧）。
+③ **两处 `agentIdentity` 过期引用**：该符号在代码里已不存在（实现是未导出的 `scripted.sniffIdentity`），
+已改 `internal/agents/AGENTS.md` 的闸门节与 `e2e_pause_test.go` 的 `codingSystemPrompt` 注释
+（后者标为**仅供 e2e 的嗅探兼容路径**，5a 走 `NewForIdentity` 不看首行措辞）。
+
+**行数棘轮的结算**：根 `AGENTS.md` 仍 **608 行**（新守卫并进 `check_plasma_leaf` 那一行，不增行；
+"根 + 18 份"→"根 + 19 份"）；`internal/agents/AGENTS.md` 仍 **212 行**（四行改写为四行）；
+`internal/tui/AGENTS.md` 仍 **226 行**（"十一把守卫"→"十三把"）；`internal/llm/AGENTS.md` 140→142 行
+（加一行子包指针，远低于 200 硬上限）。
+
+**验证**：`go build ./...` / `go vet ./...` 干净；`go test ./internal/llm/scripted/ -count=1`（8 条）
+与 `go test ./internal/agents/ -count=1`（9 个 e2e）全绿；`bash scripts/check_all.sh` **exit 0**
+（13 把守卫 + 全量单测）。**闸门变异在 `/tmp` 副本上实做**：给 `scripted.go` 加
+`_ "yagent/internal/config"` → 红（点名该 import）；再给 `scripted_test.go` 加
+`_ "yagent/internal/toolspec"` → 也红（证明 `TestImports` 分支不是空的）；删掉两行即回绿。
+`internal/agents/testdata/tool_surfaces.golden` 与 `internal/toolspec/schemas.json` **零改动**。
+
+**与本文的偏差**：① §11 只写"另需一条『只准 import llm + stdlib』约束"，没写清它必须查**直接依赖**
+而不是闭包——照 `check_plasma_leaf.sh` 的 `-deps` 形状写会立刻误报，已写进守卫注释与本节；
+② §16 原先只有 P0 一节，P1–P4 未按节追加，本轮只补 P5、不回填历史；
+③ `internal/llm/scripted` 的局部文档是**新建**，不是"同步既有文档"。
+
+**待办**：P6（`FixtureRunner` 窄接口 + `agents` 侧实现 + 5a 四夹具 + grade 棘轮）。
+
 （后续每个 P 完成后在此追加。方案落地后本文可能被删——届时不变量须已同步进
 `internal/plasma/AGENTS.md`、`internal/llm/scripted` 的局部文档与根 `AGENTS.md` §4/§5.3/§9.2/§11。）

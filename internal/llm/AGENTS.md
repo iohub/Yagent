@@ -9,6 +9,8 @@ auto-routing 三档、故障转移、进程级在飞闸门、以及**发出/读�
 不负责工具循环、不负责压缩阈值推导（`internal/compression`）；输入 token 的**跨 provider 归一**在本包
 （第 12 条），怎么展示是 `internal/tui` 的事。
 
+子包 `scripted/`（ADR-12：5a 结构夹具与 e2e 共用的确定性 `llm.Engine` 替身）见 `scripted/AGENTS.md`。
+
 ## 硬约束
 
 **1. 引擎构造函数收整个 `*config.ProviderConfig`，不收散参数**

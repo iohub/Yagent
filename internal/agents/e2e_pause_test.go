@@ -23,7 +23,8 @@ import (
 	"yagent/internal/tools"
 )
 
-// codingSystemPrompt 用 Coding 的 prompt 首行措辞，好让 agentIdentity 认出"coding"。
+// codingSystemPrompt 用 Coding 的 prompt 首行措辞，好让 scripted.sniffIdentity 认出"coding"
+// （这是**仅供 e2e 的嗅探兼容路径**；5a 结构夹具走 NewForIdentity，不依赖首行措辞）。
 const codingSystemPrompt = "Autonomous software engineering agent. You own the file system."
 
 // stepBlocker 是一个"进去之后要外部放行才出来"的工具：用它把执行停在
