@@ -650,8 +650,8 @@ bundle.tools[3]: error[PLS-101]: unknown tool "read_filez"
                  note: did you mean "read_file"?
 bundle.policy.effects_required: error[PLS-210]: "shell" is outside PlasmaPalette
                  note: grade capped at provisional; user approval required
-bundle.prompt.system: error[PLS-302]: mentions parameter "path" for "search_replace_in_file"
-                 note: schema declares "file_path"
+bundle.prompt.system: warning[PLS-302]: 提示把参数 "target_file" 与工具 "search_replace_in_file" 写在同一行，但该工具的 schema 里没有它
+                 note: "target_file" 是 create_file/read_file 的参数；调用会静默丢掉这个键
 ```
 
 码表单一来源在 Go（`internal/plasma/diag.go`），经 manifest 发布给 Python 只读 ⇒ 不可能两侧漂移。

@@ -95,6 +95,36 @@ var corpus = []struct {
 		escalation: toolspec.EffectFSWrite,
 	},
 	{
+		name: "consistency-no-exit-contract",
+		raw:  `{"schema_version":1,"name":"auditor","prompt":{"system":"Use read_file and search_by_regex and find_function_caller."},"tools":["read_file","search_by_regex","find_function_caller"],"contract":{"thought_format":false}}`,
+	},
+	{
+		name:       "consistency-param-mismatch",
+		raw:        `{"schema_version":1,"name":"auditor","prompt":{"system":"Use ` + "`read_file`" + `, ` + "`search_by_regex`" + `, ` + "`find_function_caller`" + `, ` + "`search_replace_in_file`" + ` then ` + "`agent_exit`" + `.\nEdit with ` + "`search_replace_in_file`" + ` and ` + "`target_file`" + `."},"tools":["read_file","search_by_regex","find_function_caller","search_replace_in_file"],"contract":{"thought_format":false},"policy":{}}`,
+		palette:    testPalette | toolspec.EffectFSWrite,
+		escalation: toolspec.EffectFSWrite,
+	},
+	{
+		name: "consistency-normal-prose-spared",
+		raw:  `{"schema_version":1,"name":"auditor","prompt":{"system":"Use ` + "`read_file`" + `, ` + "`search_by_regex`" + `, ` + "`find_function_caller`" + ` then ` + "`agent_exit`" + `.\nInspect the ` + "`注入风险`" + ` carefully."},"tools":["read_file","search_by_regex","find_function_caller"],"contract":{"thought_format":false}}`,
+	},
+	{
+		name: "consistency-thought-template-missing",
+		raw:  `{"schema_version":1,"name":"auditor","prompt":{"system":"Use read_file, search_by_regex, find_function_caller then agent_exit."},"tools":["read_file","search_by_regex","find_function_caller"],"contract":{"thought_format":true}}`,
+	},
+	{
+		name: "consistency-dead-selection",
+		raw:  `{"schema_version":1,"name":"auditor","prompt":{"system":"Use read_file, search_by_regex, find_function_caller then agent_exit."},"tools":["read_file","search_by_regex","find_function_caller","list_dir"],"contract":{"thought_format":false}}`,
+	},
+	{
+		name: "consistency-denied-mention",
+		raw:  `{"schema_version":1,"name":"auditor","prompt":{"system":"Use read_file, search_by_regex, find_function_caller then agent_exit. You may use run_bash."},"tools":["read_file","search_by_regex","find_function_caller"],"contract":{"thought_format":false},"policy":{"deny":["shell"]}}`,
+	},
+	{
+		name: "consistency-prompt-budget",
+		raw:  `{"schema_version":1,"name":"auditor","prompt":{"system":"Use read_file, search_by_regex, find_function_caller then agent_exit. ` + strings.Repeat("audit carefully. ", 3000) + `"},"tools":["read_file","search_by_regex","find_function_caller"],"contract":{"thought_format":false}}`,
+	},
+	{
 		name: "multiple-errors-in-one-pass",
 		raw:  `{"schema_version":1,"name":"Bad Name","prompt":{"system":""},"tools":["read_filez","run_bash"],"runtime":{"max_steps":0,"llm_timeout":"3h"},"policy":{"deny":["nope"]}}`,
 	},
@@ -186,6 +216,8 @@ func TestCorpusCoversEveryCode(t *testing.T) {
 		plasma.CodeOutsidePalette, plasma.CodeNoExit, plasma.CodeMaxSteps,
 		plasma.CodeLLMTimeout, plasma.CodeParallelTools, plasma.CodeDenyConflict,
 		plasma.CodeUnknownEffect, plasma.CodeEscalation,
+		plasma.CodeNoExitContract, plasma.CodeParamMismatch, plasma.CodeThoughtContract,
+		plasma.CodePromptBudget, plasma.CodeDeadSelection, plasma.CodeDeniedMention,
 	} {
 		if !seen[code] {
 			t.Errorf("corpus 没有触发 %s —— 那条规则的诊断文本没被 golden 钉住", code)

@@ -9,7 +9,9 @@
 #
 # 允许的依赖：Go 标准库 + toolspec（能力位数学与注册表查询，判据的单一来源）
 # + util（原子写内核 / SnakeCase）+ projectid（与 rollout/artifact 共用主键）
-# + tokenutil（阶段 4 的预算必须与压缩阈值同一个计数器）。
+# + tokenutil（阶段 4 的预算必须与压缩阈值同一个计数器）
+# + thinklink（阶段 4 的 <thought> 契约必须复用 ThoughtPlan.Validate，不重写一份）。
+# 两者都已实测是叶子包（thinklink 只依赖标准库）。
 #
 # 注意：go list -deps 不含测试文件的 import，所以 plasma_test 引入 agents/tools
 # 来 populate 真实注册表（坑 39：测试必须与生产同形）不会打穿本守卫。
@@ -22,7 +24,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 SELF="yagent/internal/plasma"
-ALLOWED="^yagent/internal/(toolspec|util|projectid|tokenutil)$"
+ALLOWED="^yagent/internal/(toolspec|util|projectid|tokenutil|thinklink)$"
 
 deps="$(go list -deps ./internal/plasma)"
 
@@ -38,5 +40,5 @@ if [[ -n "$offenders" ]]; then
 	exit 1
 fi
 
-echo "OK: $SELF 只依赖标准库 + toolspec + util + projectid + tokenutil"
+echo "OK: $SELF 只依赖标准库 + toolspec + util + projectid + tokenutil + thinklink"
 exit 0
