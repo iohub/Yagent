@@ -22,14 +22,16 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
+	// 153/153：P7 的 `yagent plasma` CLI 落在根包（cmd_plasma{,_run,_render}.go），
+	// 于是根包首次 import plasma 与 toolspec（两条新边）。根包不是叶子，不影响叶子性。
 	// 151/151：P2 让 plasma 再 import thinklink（复用 ThoughtPlan.Validate，不重写 thought 契约）
 	// 与 tokenutil（阶段 4 的预算必须与压缩阈值同一个计数器），两条新边。两者都已实测是叶子包。
 	// 上一版 149/149：P1 让 agents 首次 import plasma（工具池广告与准入同改用 PlasmaPalette）。
 	// 148/148：新增 internal/plasma（P0）带来 plasma→toolspec、plasma→util、agents→util
 	//（`toSnakeCase` 单源化成 `util.SnakeCase`）。更新前用 go list -f '{{.Imports}}' 逐条确认过。
 	// 更早 145/145：求助与授权从弹窗改成 footer 面板，components/user_help_dialog.go 随之删除。
-	if out != 151 || in != 151 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 151/151 —— 形状变了，先确认变化来源", out, in)
+	if out != 153 || in != 153 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 153/153 —— 形状变了，先确认变化来源", out, in)
 	}
 	for i := 1; i < len(snap.Leaves); i++ {
 		if snap.Leaves[i-1].Dir >= snap.Leaves[i].Dir {

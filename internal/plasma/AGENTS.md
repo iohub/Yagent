@@ -139,6 +139,10 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
 步数判据用 `stepsDone` 而不是 `exec.Steps`：预算耗尽那条出口的 result 是零值，直接读
 `exec.Steps` 会让"步数超限"永远为假 —— 又一条永真测试。
 
+**25. `Manifest` 是 Python 侧唯一的只读能力/码表来源，不许另写第二份码表。** 工具集合的判据与
+`agents.renderCustomAgentToolPool` 同一句 `Effect.Has(Palette)`；`Codes` 来自 `DiagCatalog()`
+（唯一来源，`TestDiagCatalogMatchesCorpus` 双向对账 corpus）；`CapabilityLock` 是整份 manifest 的 sha256。
+
 ## 测试必须与生产同形（坑 39）
 
 `toolspec` 的注册表由**实现侧的 `init()`** populate：只 import `tools` 得到 37 条，
@@ -152,7 +156,7 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
 ## 入口
 
 `ir.go`（Bundle 与三档 Grade）、`diag.go`（码表 + Report）、`elaborate.go`（两种形态 → 完整 IR）、
-`compile.go`（阶段 1-3）、`fixture.go`（5a 夹具生成 + `VerifyStructural` + 棘轮）、`suggest.go`（did-you-mean）。
+`compile.go`（阶段 1-3）、`fixture.go`（5a 夹具 + `VerifyStructural` + 棘轮）、`manifest.go`（能力/码表）、`suggest.go`（did-you-mean）。
 
 ## 闸门
 
@@ -191,6 +195,6 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
 
 5a 已落地：`StructuralFixtures` 自动生成 + `VerifyStructural` + `Ratchet`（provisional/verified）；
 `promoted` 只由 `CanPromote` 判定"够不够"，写回 store 归 P9。**5b（真 LLM 行为夹具）仍是占位**，
-`RunBehavioral` 恒返回"未执行"，属 P11。trampoline 驱动器与 `Spawner`（P8）、CLI（P7）也未落地。
+`RunBehavioral` 恒返回"未执行"，属 P11。trampoline 驱动器与 `Spawner`（P8）也未落地；CLI 已落地（P7：`yagent plasma ...`，根包 `cmd_plasma*.go`）。
 `Report.EscalationRequired` 的消费者已就位（`Ratchet` 把它钉在 provisional），升级批准的用户回路
 仍等 P9 接线。

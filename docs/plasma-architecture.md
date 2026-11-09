@@ -1180,5 +1180,76 @@ Surface，行为夹具经 `scripted.NewForIdentity` + `RunAgentLoop` 在**生产
 **待办**：P7（`yagent plasma` CLI：compile / sample / test / manifest / list / promote）。
 5b（真 LLM 行为夹具）仍在 P11，`RunBehavioral` 目前恒返回"未执行"。
 
+### P7 已落地（2026-11-09）
+
+**新增**：`internal/config/plasma.go` + `plasma_test.go` —— `[plasma]` 的 18 个键、`PlasmaPresence`
+（Section / Enable / catalog_line_chars / workdir_ttl / store_ttl）、`NormalizePlasma`（**返回 error**）、
+`SetGlobalPlasma`/`GlobalPlasma`/`PlasmaEnabled`/`PlasmaStoreDir`/`PlasmaProposalDir`；
+`default_config.toml` 与 `config/config.toml` 各加一段 `[plasma]`。
+`internal/plasma/manifest.go` + `manifest_test.go` —— `Manifest`/`ManifestTool`/`ManifestCode`/
+`ManifestDefaults`、`(*Compiler).Manifest()`、`CapabilityLock`；`diag.go` 新增 `CodeInfo`/`DiagCatalog()`
+（码表唯一来源）。`store.go` 新增 `SetGrade`。根包新增 `cmd_plasma.go`（命令树 / flag / 日志与退出码）、
+`cmd_plasma_support.go`（配置派生默认值、升级批准、compile 前半）、`cmd_plasma_compile.go`
+（compile / test 执行体）、`cmd_plasma_sample.go`、`cmd_plasma_promote.go`（manifest / list / promote）、
+`cmd_plasma_render.go` + `cmd_plasma_render_store.go`（JSON 与人读两路渲染）、`cmd_plasma_test.go`。
+
+**与本文的偏差**：
+1. **`NormalizePlasma` 返回 error 而不是 warn 后回落**，与 `internal/config/AGENTS.md` 硬约束 12
+   （认不出的字符串枚举 warn + 回落）刻意不同：`auto_delegate_min_grade` 是自动委派的安全边界，
+   回落成任何一档都可能在放行未验证的 Agent；负时长静默归零会让超时 / 清理变成"没有"。
+   判据在 `checkPlasmaDurations` / `checkPlasmaGrade`，由 `LoadFromFile` 归入
+   `config validation failed: %w`。
+2. **`PlasmaPresence` 多一个 `Enable`**：§7.4 没点名，但 `enable = true` 的缺省与 Go 零值相反，
+   不看键的存在性就会把"没写"当成"用户关掉了"（坑 26，与 `[blueprint]` 同形）。
+3. **`Manifest` 不调 `Spec.AvailableFor`**：`renderCustomAgentToolPool` 有这一步，但那是运行期装配
+   属性（某个 MCP server 没起来），而 manifest 是**能力契约**。判据仍是同一句 `Effect.Has(Palette)`。
+4. **`plasma compile` 只读、不落盘**：§7.2 的表格没有落盘语义，落盘属 P8 的 trampoline。因此
+   `promote` 的输入来自别处写入的 store（P7 之前只有测试或未来的 generate 会写）。
+5. **`compile` 的升级批准读取顺序**：`ensureStructuralFixtures` 在 `Compile` 内部补夹具 ⇒ hash 只有
+   编译之后才算得准。顺序因此是 Compile → `HashBundle` → `store.Load` 读批准 → 重编一次
+   （纯计算、幂等）。批准位用 `BeyondBase(声明集合, Palette)` 算，不重写能力数学。
+6. **`plasma test` 的 `grade` 打印成 `n/a`**：单条夹具不参与 `Ratchet`（要四条都有才有意义），
+   用 `(none)` 会看起来像"这份 bundle 掉档了"。
+7. **`--tier` 的落点是 `Client.GetRouter()` + `Router.EngineFor/ModelFor`**：既有 `RoutingEngine`
+   按 agent 基线选档，而 CLI 没有 agent 身份，所以直接取档位引擎；名字合法性复用
+   `llm.ParseTier(s, unknownTier)` 的哨兵，不新写一份 tier 词表。路由未启用时明确写"改用固定
+   provider"，不假装 tier 生效。
+8. **`promote` 判据不过时不动 `index.json`**；已 promoted 的版本再 promote 只改指针（回滚语义）——
+   后者若也走 `CanPromote` 会被 `grade == verified` 挡住，回滚就永远不可用。
+9. **`--behavioral` 仍是占位**：`RunBehavioral` 返回"未执行 + 原因"，CLI **如实打印为未执行**，
+   不谎报通过（5b 属 P11）。两种"未执行"分开措辞：没给 `--behavioral` 说"才跑"，给了但 bundle
+   里没有 behavior fixtures 说"已给但没有夹具"；`--json` 用 `behavioral_requested` 让机读侧也能分
+   （把两句混成一句 = 把"我请求了但它没跑"报成"我没请求"）。
+10. **夹具 runner 的 `Deps` 留 nil**：`agents.PlasmaFixtureRunner.fixtureDeps` 在 `Deps == nil` 时
+    会注入真实 `FlowControlTool`；显式传 `ProfileDirector.ProbeDeps()` 会让 exit-contract 永远
+    拿不到可解析的退出 JSON（`ProbeDeps` 的 Flow 是空实现）。
+
+**验证**：`go build ./...` / `go vet ./...` 干净；`go test ./internal/plasma/ ./internal/config/
+./internal/agents/` 全绿；真二进制冒烟（`go build -o /tmp/yagent-p7 .`）→ `plasma manifest`
+（19 工具 / 25 码 / lock）、`plasma list`（空 store **exit 0**）、`plasma compile --bundle` 一份最小
+只读 spec（四条结构夹具全 PASS、`grade=provisional`、exit 0）、`plasma test --fixture
+palette-containment`（exit 0）、`plasma test --fixture nope`（**exit 2**）、对幻觉工具名 compile
+（输出含 `PLS-101`、**exit 1**）、`plasma compile --behavioral`（bundle 里没有 behavior fixtures →
+文本写"已给但没有夹具"、`--json` 里 `behavioral_requested=true`，两种"未执行"可区分）。变异两条全部转红并还原：`CanPromote` 恒真 ⇒
+`TestRunPlasmaPromoteBranches` 红；`compile` 去掉 `report.HasErrors()` 判断 ⇒
+`TestRunPlasmaCompileRejectsUnknownTool` 红。`check_plasma_leaf.sh` / `check_llm_scripted.sh`
+exit 0；`bash scripts/check_all.sh` **exit 0**。`tool_surfaces.golden` 与 `schemas.json` **零改动**。
+
+**行数结算**：根 `AGENTS.md` 仍 **608**（§8.2 加一行命令，等量压缩同段散文）；`internal/agents/AGENTS.md`
+仍 **212**；`internal/plasma/AGENTS.md` 196 → **200**（≤200 硬上限）；新增 `cmd_plasma.go` 210 行、
+`cmd_plasma_support.go` 147 行、`cmd_plasma_compile.go` 143 行、`cmd_plasma_sample.go` 87 行、
+`cmd_plasma_promote.go` 89 行、`cmd_plasma_render.go` 198 行、`cmd_plasma_render_store.go` 82 行、
+`internal/config/plasma.go` 371 行、`internal/plasma/manifest.go` 156 行（都不在
+`check_file_sizes.sh` 的 `internal/agents/director` 范围）。
+`check_agents_md_size.sh` exit 0。
+
+**一处形状变化（必须说明）**：`internal/blueprint/scan_golden_test.go` 的模块级边数
+**151/151 → 153/153**。原因：CLI 落在根包，根包首次 import `internal/plasma` 与 `internal/toolspec`
+（两条新边）。片数仍 46，叶子性不受影响（根包不是叶子）。
+
+**待办**：P8（trampoline 驱动器 + `Spawner`）。P9（加载期接线、`auto_delegate_min_grade` 的自动委派
+判据、升级批准的用户回路）。P10（进化器 —— `evolve_*` 与 `proposal_dir` 目前只有配置没有读者）。
+P11（5b 真 LLM 行为夹具）。
+
 （后续每个 P 完成后在此追加。方案落地后本文可能被删——届时不变量须已同步进
 `internal/plasma/AGENTS.md`、`internal/llm/scripted` 的局部文档与根 `AGENTS.md` §4/§5.3/§9.2/§11。）

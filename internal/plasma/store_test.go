@@ -1,6 +1,7 @@
 package plasma_test
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -258,5 +259,58 @@ func TestStore_GCRemovesUnreferencedOldDirs(t *testing.T) {
 	// ttl=0 是"不清理"
 	if n, err := s.GC(time.Now(), 0); err != nil || n != 0 {
 		t.Errorf("ttl=0 时不该清理: n=%d err=%v", n, err)
+	}
+}
+
+// SetGrade 是 promote 的唯一写口。三条都必须钉住：写完能读回、hash 不存在时报错、
+// 写完 index.json 仍可解析（原子写的意义）。
+func TestStore_SetGrade(t *testing.T) {
+	s, root := newStore(t)
+	b := cleanBundle()
+	h, err := s.Put(b, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetGrade(b.Name, h, plasma.GradePromoted); err != nil {
+		t.Fatalf("SetGrade: %v", err)
+	}
+	if _, meta, err := s.Load(b.Name, h); err != nil {
+		t.Fatalf("Load: %v", err)
+	} else if meta.Grade != plasma.GradePromoted {
+		t.Errorf("grade = %q, want promoted", meta.Grade)
+	}
+
+	// 不存在的 hash：必须报错，且不能顺手建出目录（否则 store 里会多一份
+	// 没有 bundle.json 的幽灵条目，而 List 只读 index、看不见它）。
+	missing := filepath.Join(root, b.Name, "deadbeef")
+	if err := s.SetGrade(b.Name, "deadbeef", plasma.GradePromoted); err == nil {
+		t.Error("对不存在的 hash 调 SetGrade 却成功了")
+	}
+	if _, statErr := os.Stat(missing); !os.IsNotExist(statErr) {
+		t.Error("SetGrade 为不存在的 hash 建了目录")
+	}
+
+	// 非法档位必须被拒（空串尤其危险：它会静默把 grade 清空）。
+	if err := s.SetGrade(b.Name, h, plasma.Grade("")); err == nil {
+		t.Error("SetGrade 接受了空档位")
+	}
+	if _, meta, err := s.Load(b.Name, h); err != nil {
+		t.Fatal(err)
+	} else if meta.Grade != plasma.GradePromoted {
+		t.Errorf("失败的 SetGrade 改了 grade: %q", meta.Grade)
+	}
+
+	// 原子写：index.json 仍是合法 JSON 且仍指向这个 hash。
+	raw, err := os.ReadFile(filepath.Join(root, "index.json"))
+	if err != nil {
+		t.Fatalf("读 index.json: %v", err)
+	}
+	var idx map[string]string
+	if err := json.Unmarshal(raw, &idx); err != nil {
+		t.Fatalf("index.json 被写坏: %v\n%s", err, raw)
+	}
+	if idx[b.Name] != h {
+		t.Errorf("index[%s] = %q, want %q", b.Name, idx[b.Name], h)
 	}
 }
