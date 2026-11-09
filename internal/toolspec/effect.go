@@ -114,6 +114,26 @@ var effectNames = []struct {
 	{EffectSkill, "skill"},
 }
 
+// EffectFromNames 是 Names 的逆运算，共用同一张 effectNames 表。
+// 认不出的名字进 unknown 而不是被静默丢掉：调用方据此报错，否则一个拼错的能力名
+// 会让 deny 列表少一项而没有任何症状。
+func EffectFromNames(names []string) (eff Effect, unknown []string) {
+	for _, want := range names {
+		found := false
+		for _, c := range effectNames {
+			if c.name == want {
+				eff |= c.bit
+				found = true
+				break
+			}
+		}
+		if !found {
+			unknown = append(unknown, want)
+		}
+	}
+	return eff, unknown
+}
+
 // Frequency 是 deferred schema 的频率档。
 type Frequency int
 

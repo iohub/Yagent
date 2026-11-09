@@ -405,9 +405,16 @@ Python 的 `generate` 可产出**最小 spec**（沿用今天 Meta 的 5 字段�
 ```go
 PlasmaPalette = EffectFSRead | EffectSearchRegex | EffectCodeSemantic | EffectCodeGraph |
                 EffectContext | EffectFlow | EffectToolLoad |
-                EffectCogReflect | EffectCogDeep | EffectSkill | EffectExternalRead
-// 不含：FSWrite · Shell · Browser* · Checkpoint · ExternalWrite · Delegate
+                EffectCogReflect | EffectCogDeep
+// 不含：FSWrite · Shell · Browser* · Checkpoint · Delegate
+//       ExternalRead · ExternalWrite · Skill（见下条既有不变量）
 ```
+
+- **第三方能力一律不给**：`internal/toolspec/AGENTS.md` 硬约束 6.1 明写
+  "**`Palette` 一个位都不加**（Custom Agent 拿不到第三方能力）"。`PlasmaPalette` 遵守它——
+  不含 `EffectExternalRead`/`EffectExternalWrite`/`EffectSkill`。理由与 T2 同源：
+  第三方 MCP 输出是提示注入向量，而生成式 Agent 的 prompt 本身就是生成出来的，
+  两者叠加等于把注入面交给进化器。要给必须走升级门（逐个 Agent、用户批准）。
 
 - **升级路径**：请求窄 palette 之外的能力 → `PLS-210`，grade 上限 provisional →
   首次委派经 `UserConfirmManager` 明示批准 → 该 hash 记 `escalation_approved=true`。
@@ -992,12 +999,14 @@ Python 的生成进度可选经 stderr NDJSON 由 Go 转发到既有 `sub_agent_
 
 | ID | 问题 | 倾向 |
 |---|---|---|
-| OD-1 | P5 提升脚本引擎时，9 个 e2e 测试**一次全改**还是**新旧并存过渡**？ | 一次全改（并存就是坑 33 的两份同形实现）；代价是 P5 成为最大的单个 commit |
 | OD-2 | `generate` 首版是否直接产出完整 IR，还是先沿用 5 字段最小 spec？ | **先最小 spec**（迁移成本低、`meta.prompt.md` 可直接当种子），完整 IR 留给进化路径 |
 | OD-3 | Python 进度事件（stderr NDJSON → `sub_agent_activity`）是否首版就做？ | 后置到 P12：LLM 输出的流式已由 Go 侧保证，进度可见性是锦上添花 |
 
+**OD-1 已拍板（2026-11-09）：一次全改。** P5 提升脚本引擎时，9 个 e2e 测试文件在同一个 commit 里
+全部改用 `internal/llm/scripted`，不留新旧并存窗口（并存就是坑 33 的两份同形实现）。
+
 已定不再开放：编译器归 Go（ADR-1）、trampoline（ADR-14）、无 Go 兜底（ADR-15）、
-在线止于 provisional（ADR-3）、升级门钉 provisional + 问用户（ADR-4）。
+在线止于 provisional（ADR-3）、升级门钉 provisional + 问用户（ADR-4）、**9 个 e2e 一次全改（OD-1）**。
 
 ---
 
@@ -1042,6 +1051,42 @@ Python 的生成进度可选经 stderr NDJSON 由 Go 转发到既有 `sub_agent_
 
 ## 16. 实施记录
 
-（待补：每个 P 完成后追加实际落点行号、与本文的偏差、以及"方案写错才发现"的条目。
-方案落地后本文可能被删——届时不变量须已同步进 `internal/plasma/AGENTS.md`、
-`internal/llm/scripted` 的局部文档与根 `AGENTS.md` §4/§5.3/§9.2/§11。）
+### P0 已落地（2026-11-09）
+
+**新增** `internal/plasma`（叶子包，9 个文件）：`ir.go`（Bundle + 三档 Grade + Fixtures 形状）、
+`diag.go`（13 个码 + `Report` 按发射顺序渲染）、`elaborate.go`（最小 spec / 完整 IR 两形态 +
+注入式 `Defaults`）、`compile.go`（阶段 1–3）、`suggest.go`（Levenshtein did-you-mean）。
+测试用外部包 `plasma_test`，blank-import `agents` + `tools` 以 populate **真实的 50 条注册表**。
+
+**闸门**：`scripts/check_plasma_leaf.sh`（守卫 11→12，已接进 `check_all.sh`）；
+`internal/plasma/AGENTS.md`（11 条硬约束 + 闸门清单）；`testdata/diagnostics.golden`（16 个 corpus，
+13 个码全覆盖，`TestCorpusCoversEveryCode` 钉住"每个码都被渲染过"）。
+
+**顺带的单源化**：`agents.toSnakeCase` → `util.SnakeCase`（原先只有一个生产调用点，
+复制一份就是坑 18/33）；`toolspec.EffectFromNames` 新增（`effectNames` 表的逆运算，
+`policy.deny` 需要它，认不出的名字报 PLS-207 而不是静默丢掉）。
+
+**结算的既有基线**：`blueprint/scan_golden_test.go` 自扫 45 片/145 边 → **46 片/148 边**
+（三条新边：plasma→toolspec、plasma→util、agents→util，逐条 `go list` 核实）；
+根 `AGENTS.md` 的守卫数与文档数同步，**靠把 §9.2 的两行棘轮纪律压成一行保住 608 行冻结上限**；
+`internal/AGENTS.md` 加一行目录表（199→200，正好达上限）；
+`blueprint/AGENTS.md` 那条自扫数字原本就已过期（写着 44/143），一并修正。
+
+**验证**：`bash scripts/check_all.sh` **exit 0**（12 把守卫全跑）；
+`tool_surfaces.golden` 与 `schemas.json` **零改动**（`git status --porcelain` 为空）；
+`TestSchemasLoadAndDescribeEveryEntry`（50 条）与 `TestAgentSurfacesGolden` 均绿。
+**6 条变异在 `/tmp` 副本上实做，全部变红**：去掉 palette 判定 / 去掉 agent_exit 判定 /
+snake_case 正则恒真 / 去掉 did-you-mean / 下标恒 0 / Elaborate 无视注入的 MaxSteps。
+
+**与本文的偏差**：① `Elaborate` 签名多了 `Defaults` 参数（叶子包不能 import config，
+配置值必须由装配层注入，§7.1 已按此写）；② `Compiler.Palette` 是字段而非 `Paletter` 函数，
+且**刻意不给默认值**（零 palette 拒掉一切，"忘配"必须是全拒不是全放行）；
+③ `PlasmaPalette` 未在 P0 定义（属 P1），P0 由测试注入只读族画像；
+④ P0 复核时发现 ADR-4 原稿把 `EffectExternalRead|EffectSkill` 放进了 `PlasmaPalette`，
+与 `toolspec/AGENTS.md` 硬约束 6.1"Palette 一个位都不加（Custom Agent 拿不到第三方能力）"冲突，
+**已修文档去掉这两位**（第三方 MCP 输出是 T2 的注入向量，不该默认给生成式 Agent）。
+
+**待办**：P1（PlasmaPalette + 升级门 + 工具池改喂 manifest）。
+
+（后续每个 P 完成后在此追加。方案落地后本文可能被删——届时不变量须已同步进
+`internal/plasma/AGENTS.md`、`internal/llm/scripted` 的局部文档与根 `AGENTS.md` §4/§5.3/§9.2/§11。）

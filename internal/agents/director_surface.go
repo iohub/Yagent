@@ -11,6 +11,7 @@ import (
 	"yagent/internal/memory"
 	"yagent/internal/tools"
 	"yagent/internal/toolspec"
+	"yagent/internal/util"
 )
 
 // 本文件取代 director.go 里的三处手工装配：buildToolAdapters（一个 switch）、
@@ -223,7 +224,7 @@ func (a *DirectorAgent) runMetaDesign(ctx context.Context, task string) (interfa
 		}
 
 		customAgent := &CustomAgent{
-			Name:         toSnakeCase(execResult.AgentName),
+			Name:         util.SnakeCase(execResult.AgentName),
 			DisplayName:  execResult.AgentName,
 			SystemPrompt: systemPrompt,
 			ToolsUsed:    execResult.ToolsUsed,

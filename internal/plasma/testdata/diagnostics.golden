@@ -1,0 +1,81 @@
+# Plasma 诊断基线（raw JSON → Elaborate → Compile，-update 重写）
+# 顺序即契约：诊断按发射顺序渲染，不排序（排序会抹掉因果线索）。
+
+### clean-minimal-spec
+(no diagnostics)
+grade: provisional
+
+### bad-json
+elaborate: PLS-000: 不是合法 JSON: invalid character 'o' looking for beginning of object key string
+
+### unknown-shape
+elaborate: PLS-000: 既不是最小 spec（缺 agent_name）也不是完整 IR（缺 name）
+
+### unsupported-schema-version
+bundle.schema_version: error[PLS-001]: schema_version = 99，只支持 1
+                       note: 读侧不认得的版本必须拒载，而不是尽力解析
+grade: (none)
+
+### name-not-snake-case
+bundle.name: error[PLS-002]: name "Security Auditor" 不是 snake_case
+             note: 它要拼成 delegate_<name> 工具名，字符集受 provider 约束
+grade: (none)
+
+### empty-system-prompt
+bundle.prompt.system: error[PLS-003]: system prompt 为空
+grade: (none)
+
+### empty-tools
+bundle.tools: error[PLS-004]: tools 为空
+              note: 至少要能收尾；agent_exit 由 MatchNames 自动追加，但 tools 不能整份为空
+grade: (none)
+
+### hallucinated-tool-name
+bundle.tools[0]: error[PLS-101]: unknown tool "read_filez"
+                 note: did you mean "read_file"?
+grade: (none)
+
+### tool-outside-palette
+bundle.tools[1]: error[PLS-201]: tool "run_bash" 的能力 [shell] 超出 palette [fs_read search_regex code_graph tool_load flow]
+                 note: 生成式 Agent 默认只读；要写/shell 必须走升级门并由用户批准
+grade: (none)
+
+### no-exit-channel
+bundle.tools: error[PLS-202]: 工具面里没有 agent_exit
+              note: 没有收尾通道时循环会烧到 max_steps，交付物也取不回来
+grade: (none)
+
+### max-steps-out-of-range
+bundle.runtime.max_steps: error[PLS-203]: 900 超出范围 [1,500]
+grade: (none)
+
+### llm-timeout-out-of-range
+bundle.runtime.llm_timeout: error[PLS-204]: 2h0m0s 超出范围 [1s,1h0m0s]
+grade: (none)
+
+### parallel-tools-out-of-range
+bundle.runtime.max_parallel_readonly_tools: error[PLS-205]: 9 超出范围 [1,8]
+grade: (none)
+
+### deny-conflict
+bundle.tools[1]: error[PLS-206]: tool "create_file" 的能力 [fs_write] 与 policy.deny [fs_write] 冲突
+                 note: 声明放弃又选进来，两者必有一处是笔误
+grade: (none)
+
+### unknown-effect-name-in-deny
+bundle.policy.deny: error[PLS-207]: 认不出的能力名 "fs_wirte"
+                    note: 词表见 toolspec.Effect.Names；拼错会让 deny 静默少一项
+grade: (none)
+
+### multiple-errors-in-one-pass
+bundle.name: error[PLS-002]: name "Bad Name" 不是 snake_case
+             note: 它要拼成 delegate_<name> 工具名，字符集受 provider 约束
+bundle.prompt.system: error[PLS-003]: system prompt 为空
+bundle.tools[0]: error[PLS-101]: unknown tool "read_filez"
+                 note: did you mean "read_file"?
+bundle.tools[1]: error[PLS-201]: tool "run_bash" 的能力 [shell] 超出 palette [fs_read search_regex code_graph tool_load flow]
+                 note: 生成式 Agent 默认只读；要写/shell 必须走升级门并由用户批准
+bundle.runtime.llm_timeout: error[PLS-204]: 3h0m0s 超出范围 [1s,1h0m0s]
+bundle.policy.deny: error[PLS-207]: 认不出的能力名 "nope"
+                    note: 词表见 toolspec.Effect.Names；拼错会让 deny 静默少一项
+grade: (none)
