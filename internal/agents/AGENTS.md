@@ -120,7 +120,7 @@ checkpoint"那一条路径**写步数事实，其余子 Agent 的 `/resume` 步�
 
 **18. `ExecutorConfig` 的按-Agent 标志没有中心默认，漏一个就是那条路径静默少一套行为。**
 `StepRetries` 由各子 Agent 自己从 `[llm] step_retries` 带进来（`coding.go:367`、`repo.go:158`、
-`chat.go:82`、`devops.go:91`、`browser_agent.go:125`；Meta 走自己的字段，`meta.go:34,74`），漏设的
+`chat.go:82`、`devops.go:91`、`browser_agent.go:125`），漏设的
 那个 Agent 恒 0 步级重试且不报错。`NoActionRetryLimit` 同理（历史上只有 Coding 设 2，
 `coding.go:372`；Repo 现在设 1）。同类先例见硬约束 2（`StopOnFinish`）。
 

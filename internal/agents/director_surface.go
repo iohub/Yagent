@@ -6,13 +6,11 @@ import (
 	"log/slog"
 	"strings"
 
-	"yagent/internal/agents/director"
 	"yagent/internal/blackboard"
 	"yagent/internal/memory"
 	"yagent/internal/plasma"
 	"yagent/internal/tools"
 	"yagent/internal/toolspec"
-	"yagent/internal/util"
 )
 
 // 本文件取代 director.go 里的三处手工装配：buildToolAdapters（一个 switch）、
@@ -92,6 +90,9 @@ func (a *DirectorAgent) toolDeps() *toolspec.Deps {
 	d.Repo = a.repo
 	d.Delegate = a.delegateTo
 	d.Disabled = a.disabledAgents
+	// 生成器可用性：装配事实（gen != nil）由这一侧决定，toolspec 只负责问。
+	// 降级原因随端口一起走，Surface.Skipped 才有话可说（ADR-15）。
+	d.Plasma = plasmaGate{gen: a.plasmaGen, reason: a.plasmaWhy}
 	return d
 }
 
@@ -176,90 +177,13 @@ func (a *DirectorAgent) delegateTo(ctx context.Context, target string, params ma
 	return a.applyEnhancedCommander(target, task, result, err, noteRef, unresolved)
 }
 
-// runMetaDesign 让 Meta-Agent 设计一个新子 Agent：注册 → 立即执行一次 → 返回设计+执行结果。
-//
-// JSON 解析失败时带格式纠正提示重试（metaRetryCount 次），全部失败则回吐原始输出，
-// 这一段语义与历史一致，只是"执行新 Agent"从"在 Adapters 里找到那个适配器再 Call"
-// 改成直接走 delegateTo —— 少一次依赖隐式注册顺序的查找。
-func (a *DirectorAgent) runMetaDesign(ctx context.Context, task string) (interface{}, error) {
-	ctx = blackboard.WithBoardID(ctx, a.boardID)
-	if rolloutWriter := a.createRolloutWriter(ctx, "meta", task); rolloutWriter != nil {
-		defer rolloutWriter.Close()
-		ctx = memory.WithRolloutWriter(ctx, rolloutWriter)
-	}
-	ctx = a.routeCtx(ctx, "meta", task)
+// delegate_meta 的实现已整体搬到 plasma_meta.go（runMetaDesign）：生成职责移交
+// Python 之后，这条路径变成"驱动器 + 判定 + 装配"，留在本文件会让 Surface 装配
+// 与生成事务混在两件事里。
 
-	if a.MetaAgent == nil {
-		return nil, fmt.Errorf("Meta-Agent is not wired")
-	}
-
-	maxRetries := a.metaRetryCount
-	if maxRetries < 1 {
-		maxRetries = 1
-	}
-	var lastRawOutput string
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		retryTask := task
-		if attempt > 0 {
-			retryTask = fmt.Sprintf(
-				"%s\n\n[FORMAT CORRECTION — Attempt %d/%d]\nYour previous output was NOT valid JSON or missing required fields. You MUST output ONLY a valid JSON object with these exact top-level keys:\n{\n  \"thinking\": \"...\",\n  \"agent_name\": \"...\",\n  \"agent_design\": \"...\",\n  \"tools_used\": [...],\n  \"task_for_agent\": \"...\"\n}\n\nDo NOT wrap in markdown code fences (```). Do NOT include any text outside the JSON object.",
-				task, attempt, maxRetries-1,
-			)
-		}
-
-		metaResult, err := a.MetaAgent.Run(ctx, retryTask)
-		if err != nil {
-			return nil, fmt.Errorf("Meta-Agent design failed: %w", err)
-		}
-		recordDelegationOutcome(ctx, metaResult)
-		lastRawOutput = metaResult.Text
-
-		systemPrompt, execResult, parseErr := director.ParseMetaAgentOutput(metaResult.Text)
-		if parseErr != nil {
-			slog.Warn("Meta-Agent JSON parse failed, retrying", "attempt", attempt+1, "maxRetries", maxRetries, "error", parseErr)
-			continue
-		}
-		if execResult.AgentName == "" || systemPrompt == "" {
-			return fmt.Sprintf("[Meta-Agent Design Result]\nAgent could not be registered (missing name or design). Raw output: %s", metaResult.Text), nil
-		}
-
-		customAgent := &CustomAgent{
-			Name:         util.SnakeCase(execResult.AgentName),
-			DisplayName:  execResult.AgentName,
-			SystemPrompt: systemPrompt,
-			ToolsUsed:    execResult.ToolsUsed,
-			Description: fmt.Sprintf("Custom agent designed for: %s. Uses tools: %s.",
-				execResult.AgentName, strings.Join(execResult.ToolsUsed, ", ")),
-		}
-		if !a.registerCustomAgent(customAgent) {
-			return fmt.Sprintf("[Meta-Agent Design Result]\nAgent %s already registered; reuse its existing delegate tool.", execResult.AgentName), nil
-		}
-
-		agentTask := execResult.TaskForAgent
-		if strings.TrimSpace(agentTask) == "" {
-			agentTask = task
-		}
-		resultStr, callErr := a.runCustomAgent(ctx, customAgent, agentTask)
-		if callErr != nil {
-			return nil, fmt.Errorf("new agent %s execution failed: %w", execResult.AgentName, callErr)
-		}
-		return fmt.Sprintf(
-			"[Meta-Agent: Agent Designed and Executed]\nDesigned Agent: %s\nTools: %s\n\n[Execution Result]\n%s\n\n[New Agent Registered]\nA new specialized agent \"%s\" is now available via the `%s` tool for future tasks of this type.",
-			execResult.AgentName,
-			strings.Join(execResult.ToolsUsed, ", "),
-			resultStr,
-			execResult.AgentName,
-			"delegate_"+customAgent.Name,
-		), nil
-	}
-
-	slog.Warn("Meta-Agent JSON parse failed after all retries, returning raw output")
-	return lastRawOutput, nil
-}
-
-// runCustomAgent 用 Meta 交来的工具名清单装配该 Agent 的工具面并跑一轮。
-// MaxSteps=15 保持不变：它是单次定向任务的一次性 Agent，不是常驻角色。
+// runCustomAgent 用 plan 解析出的工具名清单装配该 Agent 的工具面并跑一轮。
+// 步数/超时/压缩等运行参数不在这里决定：它们来自 bundle.runtime（LinkPlan.Config），
+// 由 executeCustomAgent 的 applyExecutorConfig 套上去。
 func (a *DirectorAgent) runCustomAgent(ctx context.Context, ca *CustomAgent, task string) (string, error) {
 	deps := a.toolDeps()
 	selected, unknown, rejected := toolspec.MatchNames(ca.ToolsUsed, plasma.PlasmaPalette, deps)

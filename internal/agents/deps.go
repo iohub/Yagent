@@ -1,12 +1,9 @@
 package agents
 
 import (
-	"fmt"
 	"log/slog"
-	"strings"
 
 	"yagent/internal/config"
-	"yagent/internal/plasma"
 	"yagent/internal/tools"
 	"yagent/internal/toolspec"
 )
@@ -64,60 +61,9 @@ func surfaceFor(profile toolspec.Profile, deps *toolspec.Deps, agentDisplay stri
 	return s
 }
 
-// effectCategory 给 Meta 的工具池表格一个人类可读的分组名。
-// 分类来自能力标签，因此新工具注册时不需要再去 prompt 里补一行。
-func effectCategory(eff toolspec.Effect) string {
-	switch {
-	case eff.Has(toolspec.EffectFSWrite):
-		return "Write"
-	case eff.Has(toolspec.EffectFSRead):
-		return "File"
-	case eff.Has(toolspec.EffectSearchRegex):
-		return "Search"
-	case eff.Has(toolspec.EffectShell):
-		return "System"
-	case eff.Has(toolspec.EffectCodeSemantic | toolspec.EffectCodeGraph):
-		return "Repo"
-	case eff.Has(toolspec.EffectCogReflect | toolspec.EffectCogSubLLM | toolspec.EffectCogDeep | toolspec.EffectCogDesign):
-		return "Cognitive"
-	case eff.Has(toolspec.EffectContext):
-		return "Context"
-	case eff.Has(toolspec.EffectFlow | toolspec.EffectToolLoad):
-		return "Flow"
-	default:
-		return "Other"
-	}
-}
-
-// renderCustomAgentToolPool 生成 Meta-Agent prompt 里的可选工具池表格。
-//
-// 这张表过去是手写的，结果与 director.go 的 getToolFunc 长期不一致：
-// prompt 广告了 semantic_search / query_code_skeleton / query_code_snippet，
-// 而实现侧没有对应 case，Custom Agent 选了也是静默丢弃。改成从注册表派生，
-// "广告"与"能发"就是同一个来源。
-//
-// 上限用 plasma.PlasmaPalette 而不是 ProfileDirector.Palette：后者含 FSWrite|Shell，
-// 而生成式 Agent 默认只读（ADR-4）。**准入侧 runCustomAgent 必须用同一个常量**，
-// 只收窄广告等于没收窄 —— 模型照样可以幻觉出一个写工具然后被接受。
-func renderCustomAgentToolPool() string {
-	palette := plasma.PlasmaPalette
-	deps := toolspec.ProfileDirector.ProbeDeps()
-	var b strings.Builder
-	b.WriteString("| Tool Name | Category | Description |\n")
-	b.WriteString("|-----------|----------|-------------|\n")
-	for _, s := range toolspec.Specs() {
-		if !s.Effect.Has(palette) {
-			continue
-		}
-		if ok, _ := s.AvailableFor(deps); !ok {
-			continue
-		}
-		sc, _ := toolspec.GetSchema(s.Name)
-		desc := toolspec.FirstSentence(sc.Description)
-		if desc == "" {
-			desc = s.Brief
-		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", s.Name, effectCategory(s.Effect), desc)
-	}
-	return b.String()
-}
+// 生成式 Agent 的"能力清单"曾经也在这个文件里（renderCustomAgentToolPool 从注册表
+// 派生一张 markdown 表格喂给 Meta-Agent 的 prompt）。P9a 删掉 Go 侧生成器之后，
+// 这张表只剩一个消费者：Python 生成器。所以它搬到了 `plasma/prompts/generate_seed.md`
+// 的 {{TOOL_POOL_TABLE}} 占位符 + `plasma.Manifest().Tools`（manifestTools，唯一判据
+// `Effect.Has(PlasmaPalette)`）—— 保留一份"Go 侧渲染的表"等于承认第二套广告源，
+// 那正是当年"广告了实现不了的工具"那个坑的形状。

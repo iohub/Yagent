@@ -22,6 +22,11 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
+	// 155/155：P9a 删掉 Go 侧 Meta-Agent、把生成职责交给 plasma 之后，
+	//   ① internal/app 首次 import plasma（装配 trampoline 与启动期 workdir GC，app/plasma.go）；
+	//   ② internal/agents 首次 import embedbin（plasma 可用性判据要定位 plasma.pyz，
+	//      plasma_gate.go 与 spawner 读同一个落盘路径）。
+	// 两条都是**新增依赖**而不是搬家，逐条用 go list 确认过来源。
 	// 153/153：P7 的 `yagent plasma` CLI 落在根包（cmd_plasma{,_run,_render}.go），
 	// 于是根包首次 import plasma 与 toolspec（两条新边）。根包不是叶子，不影响叶子性。
 	// 151/151：P2 让 plasma 再 import thinklink（复用 ThoughtPlan.Validate，不重写 thought 契约）
@@ -30,8 +35,8 @@ func TestScanSelfGolden(t *testing.T) {
 	// 148/148：新增 internal/plasma（P0）带来 plasma→toolspec、plasma→util、agents→util
 	//（`toSnakeCase` 单源化成 `util.SnakeCase`）。更新前用 go list -f '{{.Imports}}' 逐条确认过。
 	// 更早 145/145：求助与授权从弹窗改成 footer 面板，components/user_help_dialog.go 随之删除。
-	if out != 153 || in != 153 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 153/153 —— 形状变了，先确认变化来源", out, in)
+	if out != 155 || in != 155 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 155/155 —— 形状变了，先确认变化来源", out, in)
 	}
 	for i := 1; i < len(snap.Leaves); i++ {
 		if snap.Leaves[i-1].Dir >= snap.Leaves[i].Dir {

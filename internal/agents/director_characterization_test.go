@@ -502,104 +502,13 @@ func TestCharacterizationRetryWithBackoff(t *testing.T) {
 	})
 }
 
-// ─── 组 3：Meta-Agent 输出解析 parseMetaAgentOutput ──────────────────────────
+// ─── 组 3：Meta-Agent 生成路径（P9a 重写）────────────────────────────────────
+//
+// 历史这一组固化的 7 条 parseMetaAgentOutput 用例随函数一起删除：Go 侧不再解析
+// LLM 裸输出（生成职责移交 Python，bundle 由 plasma.Elaborate 归一化）。
+// 新路径的特征固化在 plasma_meta_test.go：可用性判据、降级、Link→5a→Ratchet 顺序、
+// 以及"执行参数来自 bundle.runtime"这一条。
 
-// TestCharacterizationParseMetaAgentOutput 固化解析行为：
-//   - 支持纯 JSON、markdown code fence 包裹、前后文本包围三种形态；
-//   - systemPrompt 返回值等于 JSON 的 agent_design 字段；
-//   - 无 JSON / 非法 JSON / 缺 agent_name / 缺 agent_design 均返回 error 且
-//     systemPrompt 为空、execResult 为 nil。
-func TestCharacterizationParseMetaAgentOutput(t *testing.T) {
-	validJSON := `{"thinking":"plan","agent_name":"custom_helper","agent_design":"You are a helper.","tools_used":["read_file"],"task_for_agent":"do stuff"}`
-
-	tests := []struct {
-		name            string
-		input           string
-		wantErr         bool
-		wantErrContains string
-		wantPrompt      string
-		wantAgentName   string
-	}{
-		{
-			name:          "pure json object",
-			input:         validJSON,
-			wantPrompt:    "You are a helper.",
-			wantAgentName: "custom_helper",
-		},
-		{
-			name:          "markdown fenced json",
-			input:         "```json\n" + validJSON + "\n```",
-			wantPrompt:    "You are a helper.",
-			wantAgentName: "custom_helper",
-		},
-		{
-			name:          "json with surrounding text",
-			input:         "Sure! Here is the design:\n" + validJSON + "\nDone.",
-			wantPrompt:    "You are a helper.",
-			wantAgentName: "custom_helper",
-		},
-		{
-			name:            "no json at all",
-			input:           "plain text without any braces",
-			wantErr:         true,
-			wantErrContains: "no JSON object found",
-		},
-		{
-			name:            "malformed json body",
-			input:           `{"bad": }`,
-			wantErr:         true,
-			wantErrContains: "failed to parse Meta-Agent JSON",
-		},
-		{
-			name:            "missing agent_name",
-			input:           `{"agent_design":"You are a helper."}`,
-			wantErr:         true,
-			wantErrContains: "agent_name is empty",
-		},
-		{
-			name:            "missing agent_design",
-			input:           `{"agent_name":"custom_helper"}`,
-			wantErr:         true,
-			wantErrContains: "agent_design is empty",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			prompt, execResult, err := director.ParseMetaAgentOutput(tt.input)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil (prompt=%q)", prompt)
-				}
-				if tt.wantErrContains != "" && !strings.Contains(err.Error(), tt.wantErrContains) {
-					t.Errorf("error %q does not contain %q", err.Error(), tt.wantErrContains)
-				}
-				if execResult != nil {
-					t.Errorf("execResult should be nil on error, got %+v", execResult)
-				}
-				if prompt != "" {
-					t.Errorf("systemPrompt should be empty on error, got %q", prompt)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if prompt != tt.wantPrompt {
-				t.Errorf("systemPrompt = %q, want %q", prompt, tt.wantPrompt)
-			}
-			if execResult == nil {
-				t.Fatalf("execResult should not be nil on success")
-			}
-			if execResult.AgentName != tt.wantAgentName {
-				t.Errorf("execResult.AgentName = %q, want %q", execResult.AgentName, tt.wantAgentName)
-			}
-			if execResult.AgentDesign != tt.wantPrompt {
-				t.Errorf("execResult.AgentDesign = %q, want %q (systemPrompt mirrors AgentDesign)", execResult.AgentDesign, tt.wantPrompt)
-			}
-		})
-	}
-}
 
 // 组 4（工作区根知识文件的加载与缓存）已随该注入一并删除：Director 不再预置任何根文件，
 // 子 Agent 只经 module_docs.go 拿目录级 AGENTS.md（browser 目标不注入），判据与闸门在

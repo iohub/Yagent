@@ -34,8 +34,8 @@
 **5.1 静态注册表只读，动态规格走 `Deps.ExternalSpecs`。** `registry` 是 `init()` 期写入的只读事实；
 运行期发现的 MCP 工具经 `Surface.rebuild()` 追加，名字 `mcp__<server>__<tool>`，用 `Spec.Inline`
 自带 schema。把它们塞进全局注册表会打穿三处——(a) golden 走 `ProbeDeps()`，探针不知道有哪些
-server，钉的是一条生产不存在的路（第 6 条同族）；(b) `renderCustomAgentToolPool`
-（`internal/agents/deps.go:91-97`）遍历 `Specs()`，Custom Agent 于是拿到第三方能力，而 `Palette`
+server，钉的是一条生产不存在的路（第 6 条同族）；(b) `manifestTools`
+（`internal/plasma/manifest.go:95`）遍历 `Specs()`，Custom Agent 于是拿到第三方能力，而 `Palette`
 的全部意义就是"拿不到 Director 没有的能力"；(c) `Validate()` 的双向 1:1 会对每个外部工具报
 "schemas.json 里没有对应声明"——修法不是放宽校验，是让它根本不进校验对象
 （根 AGENTS.md §11 坑 44，闸门 `TestStaticRegistryNeverCarriesExternalTools`，

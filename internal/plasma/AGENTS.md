@@ -31,9 +31,9 @@
 （ExternalRead/ExternalWrite/Skill）——`internal/toolspec/AGENTS.md` 硬约束 6.1 明写
 "Palette 一个位都不加"，而第三方 MCP 输出本身就是注入向量。含 `EffectToolLoad` 是**修 bug**：
 Director 的 Palette 缺它，于是今天 Custom Agent 的 Cold 工具永远取不回。
-**广告侧与准入侧必须同用这一个常量**：`agents.renderCustomAgentToolPool`（`deps.go`）与
-`agents.runCustomAgent`（`director_surface.go`）都改了，只收窄一边等于没收窄
-（闸门 `TestMetaPromptToolPoolMatchesPalette` 同时断言两侧）。
+**广告侧与准入侧必须同用这一个常量**：`manifestTools`（本包；P9a 之前是 agents 的
+`renderCustomAgentToolPool`）与 `agents.runCustomAgent`（`director_surface.go`）都改了，只收窄一边等于没收窄
+（闸门 `TestPlasmaToolPoolMatchesPalette` 同时断言两侧）。
 
 **2.2 升级账目必须覆盖被拒的工具。** `escalation()` 合并 selected **和 rejected** 的能力位：
 漏掉 rejected 的话，"需要升级"这条 warning 就永远不会出现在真正越权的那份 bundle 上，
@@ -131,8 +131,8 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
 是唯一通道，`TestCorpusCoversEveryCode` 同时扫编译与验证两侧。步数判据用 `stepsDone` 而不是
 `exec.Steps`：预算耗尽那条出口的 result 是零值，直接读它会让"步数超限"永远为假 —— 又一条永真测试。
 
-**25. `Manifest` 是 Python 侧唯一的只读能力/码表来源，不许另写第二份码表。** 工具集合的判据与
-`agents.renderCustomAgentToolPool` 同一句 `Effect.Has(Palette)`；`Codes` 来自 `DiagCatalog()`
+**25. `Manifest` 是 Python 侧唯一的只读能力/码表来源，不许另写第二份码表。** 工具集合的判据是
+本包 `manifestTools` 的唯一实现 `Effect.Has(Palette)`（P9a 后广告表格由 Python 从它渲染）；`Codes` 来自 `DiagCatalog()`
 （唯一来源，`TestDiagCatalogMatchesCorpus` 双向对账 corpus）；`CapabilityLock` 是整份 manifest 的 sha256。
 
 **26. workdir 文件名与退出码是跨语言契约**（`workdir.go`）。文件名与 `exit 0/1/2/3/4` 改一处

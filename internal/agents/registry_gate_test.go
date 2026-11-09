@@ -289,37 +289,43 @@ func TestCustomPaletteStaysInsideDirector(t *testing.T) {
 	}
 }
 
-// TestMetaPromptToolPoolMatchesPalette 保证 Meta 的 prompt 不会再次广告实现不了的工具。
+// TestPlasmaToolPoolMatchesPalette 保证"广告的工具"与"发得出去的工具"是同一份清单。
 // 历史上 meta.prompt.md 手写的表里有 semantic_search/query_code_*，而 director.go 的
 // getToolFunc 没有对应 case —— 模型照表选工具，注册时静默丢弃。
-// 上限的单一来源是 plasma.PlasmaPalette（ADR-4）：广告侧 renderCustomAgentToolPool 与
-// 准入侧 runCustomAgent 必须用同一个常量，只收窄一边等于没收窄。
-func TestMetaPromptToolPoolMatchesPalette(t *testing.T) {
-	pool := renderCustomAgentToolPool()
-	if strings.Contains(pool, "{{TOOL_POOL_TABLE}}") {
-		t.Fatal("prompt 里的占位符没被替换")
+//
+// P9a 之后广告面搬到两处，但都归同一个判据（plasma.PlasmaPalette，ADR-4）：
+//   - manifest（Go 写、Python 只读）：manifestTools 用 `Effect.Has(palette)`；
+//   - 生成策略种子（plasma/prompts/generate_seed.md）：只留 {{TOOL_POOL_TABLE}} 占位符，
+//     工具表由 Python 从 manifest 渲染 —— Go 侧不再渲染第二份表（第二份必然漂移）。
+//
+// 准入侧 runCustomAgent 用同一个常量：只收窄一边等于没收窄。
+func TestPlasmaToolPoolMatchesPalette(t *testing.T) {
+	manifest := (&plasma.Compiler{Palette: plasma.PlasmaPalette}).Manifest()
+	pool := make(map[string]bool, len(manifest.Tools))
+	for _, tool := range manifest.Tools {
+		pool[tool.Name] = true
 	}
-	if strings.Contains(metaPrompt, "{{TOOL_POOL_TABLE}}") == false {
-		t.Fatal("meta.prompt.md 丢了占位符，生成路径会失效")
+	if len(pool) == 0 {
+		t.Fatal("manifest 里一个工具都没有，生成器无从选工具")
 	}
 
 	palette := plasma.PlasmaPalette
 	for _, s := range toolspec.Specs() {
-		inside := strings.Contains(pool, "| `"+s.Name+"` |")
 		granted := s.Effect.Has(palette)
-		if granted && !inside {
-			t.Errorf("%s 在 PlasmaPalette 内却没进工具池表格（prompt 与实现又将不一致）", s.Name)
+		if granted && !pool[s.Name] {
+			t.Errorf("%s 在 PlasmaPalette 内却没进 manifest 工具池（广告与准入又将不一致）", s.Name)
 		}
-		if !granted && inside {
-			t.Errorf("%s 不在 PlasmaPalette 内却出现在工具池表格（广告了发不出去）", s.Name)
+		if !granted && pool[s.Name] {
+			t.Errorf("%s 不在 PlasmaPalette 内却出现在 manifest 工具池（广告了发不出去）", s.Name)
 		}
 	}
+
 	// 写/shell 必须既不在广告里、也不被准入接受 —— 这是 ADR-4 的安全底线。
 	for _, name := range []string{"run_bash", "create_file"} {
-		if strings.Contains(pool, "| `"+name+"` |") {
-			t.Errorf("%s 出现在广告里：生成式 Agent 默认只读", name)
+		if pool[name] {
+			t.Errorf("%s 出现在 manifest 里：生成式 Agent 默认只读", name)
 		}
-		selected, _, rejected := toolspec.MatchNames([]string{name}, plasma.PlasmaPalette, nil)
+		selected, _, rejected := toolspec.MatchNames([]string{name}, palette, nil)
 		// MatchNames 会自动追加 agent_exit，所以 selected 非空是正常的；
 		// 要断言的是**那个写工具本身**没被选进来。
 		for _, s := range selected {
@@ -332,8 +338,24 @@ func TestMetaPromptToolPoolMatchesPalette(t *testing.T) {
 		}
 	}
 	// load_tool 必须在：缺它则 Cold 工具永远取不回（ProfileDirector.Palette 今天的 bug）。
-	if !strings.Contains(pool, "| `load_tool` |") {
+	if !pool["load_tool"] {
 		t.Error("load_tool 不在工具池里，Cold 工具将无法取回")
+	}
+
+	// 种子文件只许留占位符：手写工具表正是当年漂移的成因。
+	seedPath := filepath.Join("..", "..", "plasma", "prompts", "generate_seed.md")
+	raw, err := os.ReadFile(seedPath)
+	if err != nil {
+		t.Fatalf("读不到生成策略种子 %s：%v（P9a 的迁移产物，不许丢）", seedPath, err)
+	}
+	seed := string(raw)
+	if !strings.Contains(seed, "{{TOOL_POOL_TABLE}}") {
+		t.Error("种子丢了 {{TOOL_POOL_TABLE}} 占位符，Python 侧将拿不到工具池")
+	}
+	for _, s := range toolspec.Specs() {
+		if strings.Contains(seed, "| `"+s.Name+"` |") {
+			t.Errorf("%s 被硬编码进种子的表格里：工具池只能由 manifest 派生", s.Name)
+		}
 	}
 }
 

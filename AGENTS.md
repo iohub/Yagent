@@ -102,18 +102,18 @@ System Prompt 是同目录的 `<name>.prompt.md`——**改行为要同时改 pr
 | **Chat** | 通用问答 | 无文件系统访问 | 50 |
 | **DevOps** | 系统管理员 | 只读 + Shell | 50 |
 | **Browser** | 经外部 `browser-control` 驱动真实 Chrome | 浏览器动作 + 会话工作区产物 | 200 |
-| **Meta** | 自定义 Agent 设计器 | 无工具，单次 LLM 出 JSON | —（重试 5） |
-| **Custom** | Meta 设计后运行时注册 | 由 LLM 选的工具子集 | 15 |
+| **Custom** | plasma 生成后运行时注册 | 由生成器选的工具子集（受 `PlasmaPalette` 约束） | 15 |
 
 **"谁能用什么"只有一份**：能力画像 `internal/toolspec/profiles.go` + 装配点
 `internal/agents/director_surface.go`，基线是 `internal/agents/testdata/tool_surfaces.golden`。
 本文件**不列工具清单**（那是 golden 的副本）；Director 的 `Deny: EffectFSWrite | EffectShell` 是
 "Director 绝不直接写文件"的机械保证。改工具面必须以显式 `-update` 重写 golden 的方式被评审。
 
-Meta / 自定义 Agent：`delegate_meta` → 单次 LLM 出 JSON → 校验必填 → 按名字建
-`delegate_<snake_name>` 追加进 Director 工具表（子集从 `ProfileDirector.Palette` 选）→
-立即以 `MaxSteps=15` 执行一次 → 本任务内永久可用。落点在 `internal/agents/director/meta_handler.go`
-与 `director_surface.go`，装配层不许复刻。
+Meta-Agent 已删除（P9a）：`delegate_meta` 改由 **plasma 驱动器**执行 —— `PlasmaTrampoline.Generate`
+（Python 生成）→ `Link`（对活注册表复核）→ 结构夹具 5a → `Ratchet`（在线止于 `provisional`）→
+`Store.Put` → 建 `delegate_<snake_name>` 追加进 Director 工具表 → 立即执行一次 → 本任务内可用。
+落点 `internal/agents/plasma_meta.go`；生成器不可用时该工具**不进工具面**，原因进 `Surface.Skipped`。
+生成策略（原 `meta.prompt.md` 的 108 行原则 + 5 字段输出契约）已迁到 `plasma/prompts/generate_seed.md`。
 
 ## 5. 工具与执行面
 
@@ -536,7 +536,7 @@ golden），判据见 §5.3 与 §11 坑 44。
 会被归一）；`Validate()` 要求 `goal` 与 `reason` 非空且**至多一条** `[>]`；状态标记 `[x]` / `[>]` /
 `[ ]`（解析器也容忍 `X`、`-`、`1.`）；字段**值**用 `[agent] lang` 的语言书写，key、标记、标签保持英文。
 该块同时是 TUI thinklink 面板的内容与 ultimate 压缩的重建原料；**解析失败不报错、只静默丢失**，
-所以格式必须严格遵守。目前 Director、Coding、Browser 的 prompt 强制该格式；Repo/Chat/DevOps/Meta 未要求。
+所以格式必须严格遵守。目前 Director、Coding、Browser 的 prompt 强制该格式；Repo/Chat/DevOps 未要求。
 
 ## 11. 已知坑索引（46 条，编号稳定）
 

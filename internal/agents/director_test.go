@@ -69,32 +69,37 @@ func newTestGlobalCtx(workDir string) *globalctx.GlobalCtx {
 // （与旧测试 GlobalCtx 不设置这些字段的行为一致）。
 // 参数顺序沿用旧签名（gctx, engine, 六个子代理, maxSteps, disabledAgents,
 // metaRetryCount, cfg, llmClient），使各测试调用点零改动。
-func newDirectorAgentForTest(gctx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, meta *MetaAgent, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
+//
+// 第六位在 P9a 从 `meta *MetaAgent` 换成生成器窄接口：Go 侧已经没有 Meta-Agent，
+// 需要 delegate_meta 的用例注入假生成器，其余用例传 nil（= 降级，delegate_meta
+// 不进工具面）。传入非 nil 生成器时**必须**同时给 plasmaStore/plasmaRunner，
+// 否则会往用户 home 的产物仓里写 bundle（见 plasma_meta_test.go 的 newPlasmaDirector）。
+func newDirectorAgentForTest(gctx *globalctx.GlobalCtx, engine llm.Engine, repo *RepoAgent, coding *CodingAgent, chat *ChatAgent, gen PlasmaGenerator, devops *DevOpsAgent, browser *BrowserAgent, maxSteps int, disabledAgents map[string]bool, metaRetryCount int, cfg config.Config, llmClient *llm.Client) *DirectorAgent {
 	return NewDirectorAgent(DirectorAgentParams{
-		Formatter:      gctx,                       // PromptFormatter: *GlobalCtx 天然实现
-		Publisher:      gctx.Publisher,             // EventBus
-		Env:            globalctx.NewEnvView(gctx), // Env
-		Files:          gctx.FileOps,               // FileToolSet
-		Search:         gctx.SearchOps,             // SearchToolSet
-		Sys:            gctx.SysOps,                // SysToolSet
-		Edit:           gctx.ReplaceTool,           // EditToolSet
-		Flow:           gctx.FlowOps,               // FlowToolSet
-		Thinker:        gctx.ThinkingTool,          // Thinker
-		MicroAgent:     gctx.MicroAgentTool,        // MicroAgentRunner
-		DeepThinker:    gctx.DeepThinkingTool,      // DeepThinker
-		Guard:          gctx.Guard,                 // *tools.WorkspaceGuard: 测试中为 nil,与旧语义一致
-		LLM:            engine,
-		RepoAgent:      repo,
-		CodingAgent:    coding,
-		ChatAgent:      chat,
-		MetaAgent:      meta,
-		DevOpsAgent:    devops,
-		BrowserAgent:   browser,
-		MaxSteps:       maxSteps,
-		DisabledAgents: disabledAgents,
-		MetaRetryCount: metaRetryCount,
-		Config:         cfg,
-		LLMClient:      llmClient,
+		Formatter:       gctx,                       // PromptFormatter: *GlobalCtx 天然实现
+		Publisher:       gctx.Publisher,             // EventBus
+		Env:             globalctx.NewEnvView(gctx), // Env
+		Files:           gctx.FileOps,               // FileToolSet
+		Search:          gctx.SearchOps,             // SearchToolSet
+		Sys:             gctx.SysOps,                // SysToolSet
+		Edit:            gctx.ReplaceTool,           // EditToolSet
+		Flow:            gctx.FlowOps,               // FlowToolSet
+		Thinker:         gctx.ThinkingTool,          // Thinker
+		MicroAgent:      gctx.MicroAgentTool,        // MicroAgentRunner
+		DeepThinker:     gctx.DeepThinkingTool,      // DeepThinker
+		Guard:           gctx.Guard,                 // *tools.WorkspaceGuard: 测试中为 nil,与旧语义一致
+		LLM:             engine,
+		RepoAgent:       repo,
+		CodingAgent:     coding,
+		ChatAgent:       chat,
+		PlasmaGenerator: gen,
+		DevOpsAgent:     devops,
+		BrowserAgent:    browser,
+		MaxSteps:        maxSteps,
+		DisabledAgents:  disabledAgents,
+		MetaRetryCount:  metaRetryCount,
+		Config:          cfg,
+		LLMClient:       llmClient,
 		// RepoCtx/Knowledge/MCPClient 测试未用，留 nil（与旧语义一致）
 	})
 }
@@ -106,19 +111,6 @@ func newTestDirectorAgent(t *testing.T, workDir string) *DirectorAgent {
 	gctx := newTestGlobalCtx(workDir)
 	engine := &mockEngine{}
 	return newDirectorAgentForTest(gctx, engine, nil, nil, nil, nil, nil, nil, 10, nil, 3, config.Config{}, nil)
-}
-
-// makeMetaOutput builds a valid Meta-Agent JSON output string.
-func makeMetaOutput(agentName, systemPrompt string, toolsUsed []string) string {
-	obj := map[string]interface{}{
-		"thinking":       "Designing agent for the task.",
-		"agent_name":     agentName,
-		"agent_design":   systemPrompt,
-		"tools_used":     toolsUsed,
-		"task_for_agent": "Clean task for the agent to execute.",
-	}
-	b, _ := json.MarshalIndent(obj, "", "  ")
-	return string(b)
 }
 
 // ─── Custom Agent 工具池（取代原 getToolFunc）────────────────────────────────
@@ -426,257 +418,20 @@ func TestSystemPrompt_WithCustomAgents(t *testing.T) {
 	}
 }
 
-// ─── delegate_meta Full Integration Tests ────────────────────────────────────
-
-// metaAgentMockLLM returns a Meta-Agent-style response based on the input.
-func metaAgentMockLLM(responseContent string) *mockEngine {
-	return &mockEngine{
-		generateContent: func(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, opts *llm.CallOptions) (*llm.Response, error) {
-			return &llm.Response{
-				Choices: []llm.Choice{{Content: responseContent}},
-			}, nil
-		},
-	}
-}
-
-func TestDelegateMeta_DynamicRegistration(t *testing.T) {
-	workDir := t.TempDir()
-	gctx := newTestGlobalCtx(workDir)
-
-	// Meta-Agent output that designs a Security Auditor
-	metaOutput := makeMetaOutput(
-		"Security Auditor",
-		"You are a Security Auditor. Review code for vulnerabilities. Use tools to search and read files.",
-		[]string{"search_by_regex", "read_file", "thinking", "agent_exit"},
-	)
-
-	// MetaAgent that returns the pre-defined output (single LLM call, no tool calls)
-	metaAgent := NewMetaAgent(gctx, gctx.Publisher, metaAgentMockLLM(metaOutput), 0)
-
-	// DirectorAgent
-	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
-	initialAdapterCount := len(director.surface.Adapters())
-
-	// Find and call delegate_meta tool
-	var delegateMeta *tools.Adapter
-	for _, ad := range director.surface.Adapters() {
-		if ad.Name() == "delegate_meta" {
-			delegateMeta = ad
-			break
-		}
-	}
-	if delegateMeta == nil {
-		t.Fatal("delegate_meta tool not found in Director Adapters")
-	}
-
-	result, err := delegateMeta.Call(context.Background(), `{"task": "Perform a security audit of the project"}`)
-	if err != nil {
-		t.Fatalf("delegate_meta call failed: %v", err)
-	}
-
-	// Verify custom agent was registered
-	customAgent, ok := director.metaHandler.Get("delegate_security_auditor")
-	if !ok {
-		t.Fatal("Security Auditor was not registered in customAgents")
-	}
-	if customAgent.DisplayName != "Security Auditor" {
-		t.Errorf("display name = %q, want 'Security Auditor'", customAgent.DisplayName)
-	}
-	if customAgent.SystemPrompt != "You are a Security Auditor. Review code for vulnerabilities. Use tools to search and read files." {
-		t.Errorf("system prompt mismatch")
-	}
-	if len(customAgent.ToolsUsed) != 4 {
-		t.Errorf("tools count = %d, want 4", len(customAgent.ToolsUsed))
-	}
-
-	// Verify adapter was added
-	if len(director.surface.Adapters()) != initialAdapterCount+1 {
-		t.Errorf("adapter count = %d, want %d", len(director.surface.Adapters()), initialAdapterCount+1)
-	}
-
-	// Verify delegate tool exists for the new agent
-	found := false
-	for _, ad := range director.surface.Adapters() {
-		if ad.Name() == "delegate_security_auditor" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("delegate_security_auditor adapter not found after registration")
-	}
-
-	// Verify result message contains registration info
-	resultStr := result
-	if !strings.Contains(resultStr, "New Agent Registered") {
-		t.Error("result should contain 'New Agent Registered' notification")
-	}
-	if !strings.Contains(resultStr, "delegate_security_auditor") {
-		t.Error("result should mention delegate_security_auditor")
-	}
-	if !strings.Contains(resultStr, "Security Auditor") {
-		t.Error("result should mention Security Auditor")
-	}
-}
-
-func TestDelegateMeta_DuplicateRegistrationPrevented(t *testing.T) {
-	workDir := t.TempDir()
-	gctx := newTestGlobalCtx(workDir)
-
-	metaOutput := makeMetaOutput(
-		"Tester",
-		"You are a tester.",
-		[]string{"read_file"},
-	)
-
-	metaAgent := NewMetaAgent(gctx, gctx.Publisher, metaAgentMockLLM(metaOutput), 0)
-	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
-
-	// Call delegate_meta twice with the same agent design
-	var delegateMeta *tools.Adapter
-	for _, ad := range director.surface.Adapters() {
-		if ad.Name() == "delegate_meta" {
-			delegateMeta = ad
-			break
-		}
-	}
-
-	// First call: registers the agent
-	_, err := delegateMeta.Call(context.Background(), `{"task": "Test first"}`)
-	if err != nil {
-		t.Fatalf("first delegate_meta call failed: %v", err)
-	}
-	countAfterFirst := len(director.surface.Adapters())
-	mapCountAfterFirst := director.metaHandler.Len()
-
-	// Second call: should NOT register duplicate
-	_, err = delegateMeta.Call(context.Background(), `{"task": "Test second"}`)
-	if err != nil {
-		t.Fatalf("second delegate_meta call failed: %v", err)
-	}
-
-	if len(director.surface.Adapters()) != countAfterFirst {
-		t.Errorf("duplicate registration added adapters: %d → %d", countAfterFirst, len(director.surface.Adapters()))
-	}
-	if director.metaHandler.Len() != mapCountAfterFirst {
-		t.Errorf("duplicate registration added map entries: %d → %d", mapCountAfterFirst, director.metaHandler.Len())
-	}
-}
-
-func TestDelegateMeta_ParseFailure_ReturnsRawOutput(t *testing.T) {
-	workDir := t.TempDir()
-	gctx := newTestGlobalCtx(workDir)
-
-	// Meta-Agent returns malformed output (no execution_result block)
-	malformedOutput := "Just some plain text without structured blocks."
-	metaAgent := NewMetaAgent(gctx, gctx.Publisher, metaAgentMockLLM(malformedOutput), 0)
-	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
-
-	var delegateMeta *tools.Adapter
-	for _, ad := range director.surface.Adapters() {
-		if ad.Name() == "delegate_meta" {
-			delegateMeta = ad
-			break
-		}
-	}
-
-	initialCount := len(director.surface.Adapters())
-	result, err := delegateMeta.Call(context.Background(), `{"task": "Test"}`)
-	if err != nil {
-		t.Fatalf("delegate_meta call failed: %v", err)
-	}
-
-	// The adapter.Call() JSON-encodes the return value, so unmarshal to get the raw string
-	var actualOutput string
-	if err := json.Unmarshal([]byte(result), &actualOutput); err != nil {
-		t.Fatalf("failed to unmarshal result: %v", err)
-	}
-
-	// Should return raw output directly
-	if actualOutput != malformedOutput {
-		t.Errorf("expected raw output on parse failure, got: %s", actualOutput)
-	}
-	// Should NOT register any agent
-	if len(director.surface.Adapters()) != initialCount {
-		t.Errorf("no agent should be registered on parse failure")
-	}
-}
-
-func TestDelegateMeta_EmptyAgentName_NoRegistration(t *testing.T) {
-	workDir := t.TempDir()
-	gctx := newTestGlobalCtx(workDir)
-
-	// Meta-Agent output with empty agent name
-	metaOutput := makeMetaOutput(
-		"", // empty agent name
-		"Some system prompt",
-		[]string{"read_file"},
-	)
-	metaAgent := NewMetaAgent(gctx, gctx.Publisher, metaAgentMockLLM(metaOutput), 0)
-	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
-
-	var delegateMeta *tools.Adapter
-	for _, ad := range director.surface.Adapters() {
-		if ad.Name() == "delegate_meta" {
-			delegateMeta = ad
-			break
-		}
-	}
-
-	initialCount := len(director.surface.Adapters())
-	_, err := delegateMeta.Call(context.Background(), `{"task": "Test"}`)
-	if err != nil {
-		t.Fatalf("delegate_meta call failed: %v", err)
-	}
-
-	// No agent should be registered when name is empty
-	if len(director.surface.Adapters()) != initialCount {
-		t.Errorf("no agent should be registered with empty name, adapters: %d → %d", initialCount, len(director.surface.Adapters()))
-	}
-}
-
-func TestDelegateMeta_NoAgentDesign_NoRegistration(t *testing.T) {
-	workDir := t.TempDir()
-	gctx := newTestGlobalCtx(workDir)
-
-	// Meta-Agent output with missing agent_design field (all retries return same malformed output)
-	output := `{"thinking": "designing...", "agent_name": "Test Agent", "tools_used": ["read_file"], "result": {"key": "value"}}`
-
-	metaAgent := NewMetaAgent(gctx, gctx.Publisher, metaAgentMockLLM(output), 0)
-	director := newDirectorAgentForTest(gctx, &mockEngine{}, nil, nil, nil, metaAgent, nil, nil, 10, nil, 3, config.Config{}, nil)
-
-	var delegateMeta *tools.Adapter
-	for _, ad := range director.surface.Adapters() {
-		if ad.Name() == "delegate_meta" {
-			delegateMeta = ad
-			break
-		}
-	}
-
-	initialCount := len(director.surface.Adapters())
-	_, err := delegateMeta.Call(context.Background(), `{"task": "Test"}`)
-	if err != nil {
-		t.Fatalf("delegate_meta call failed: %v", err)
-	}
-
-	// No agent_design field → parse fails on all retries → no registration
-	if len(director.surface.Adapters()) != initialCount {
-		t.Errorf("no agent should be registered without agent_design field, adapters: %d → %d", initialCount, len(director.surface.Adapters()))
-	}
-}
-
 // ─── Sub-Agent Engine Refresh / Auto-Routing Tests ──────────────────────────
 
 // refreshSubAgentEngines must keep the *llm.RoutingEngine wrapper. Assigning a bare
 // provider engine makes RunAgentLoop's ResolveTierEngine type assertion fail, so the
 // tier written by routeCtx is silently discarded and auto-routing stops working.
+//
+// P9a 之后内建 Agent 是 6 个：meta 那一档已经交给生成器（plasma），Director 上不再有
+// MetaAgent 字段，所以「刷新子 Agent 引擎」的清单里也没有它。
 func TestRefreshSubAgentEngines_KeepsRoutingEngine(t *testing.T) {
 	a := &DirectorAgent{
 		llmClient:    &llm.Client{},
 		RepoAgent:    &RepoAgent{},
 		CodingAgent:  &CodingAgent{},
 		ChatAgent:    &ChatAgent{},
-		MetaAgent:    &MetaAgent{},
 		DevOpsAgent:  &DevOpsAgent{},
 		BrowserAgent: &BrowserAgent{},
 	}
@@ -687,7 +442,6 @@ func TestRefreshSubAgentEngines_KeepsRoutingEngine(t *testing.T) {
 		"repo":     a.RepoAgent.LLM,
 		"coding":   a.CodingAgent.LLM,
 		"chat":     a.ChatAgent.LLM,
-		"meta":     a.MetaAgent.LLM,
 		"devops":   a.DevOpsAgent.LLM,
 		"browser":  a.BrowserAgent.LLM,
 		"director": a.routingEngine("director"),
@@ -766,16 +520,20 @@ func TestDirectorAgent_InitialAdapters(t *testing.T) {
 	agent := newTestDirectorAgent(t, workDir)
 
 	// Should have: agent_exit + search_by_regex + list_dir + read_file + print_dir_tree
-	// + delegate_repo + delegate_coding + delegate_chat + delegate_meta
-	// = 9 adapters minimum
-	if len(agent.surface.Adapters()) < 9 {
-		t.Errorf("expected at least 9 initial adapters, got %d", len(agent.surface.Adapters()))
+	// + delegate_repo + delegate_coding + delegate_chat
+	// = 8 adapters minimum
+	//
+	// delegate_meta 不在这里：它的可用性由 plasma 生成器决定（ADR-15），测试环境没有
+	// plasma.pyz ⇒ 它被降级掉。那条降级本身由
+	// TestDelegateMeta_GatedByPlasmaAvailability 钉住。
+	if len(agent.surface.Adapters()) < 8 {
+		t.Errorf("expected at least 8 initial adapters, got %d", len(agent.surface.Adapters()))
 	}
 
 	// Verify all core adapters are present
 	coreNames := []string{
 		"agent_exit", "search_by_regex", "list_dir", "read_file", "print_dir_tree",
-		"delegate_repo", "delegate_coding", "delegate_chat", "delegate_meta",
+		"delegate_repo", "delegate_coding", "delegate_chat",
 	}
 	for _, name := range coreNames {
 		found := false

@@ -97,6 +97,12 @@ func delegateAvailable(target string) func(*toolspec.Deps) (bool, string) {
 		if d.IsDisabled(target) {
 			return false, "子 Agent " + target + " 已被 --disable-agents 关闭"
 		}
+		if target == "meta" {
+			// 生成职责在 Python（ADR-15）：生成器不可用时 delegate_meta **不进工具面**，
+			// 原因由 Surface.Skipped 带出去。Spec 本身不动 —— 工具名与 golden 是那道闸门，
+			// 降级只发生在这一层（删 Spec 等于把"暂不可用"写成"没有这个能力"）。
+			return plasmaAvailableFor(d)
+		}
 		return true, ""
 	}
 }
