@@ -128,7 +128,7 @@ func TestResumeReplaysExactMessages(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("重放期间模型被调用 %d 次, want 1", len(calls))
 	}
-	got := calls[0].messages
+	got := calls[0].Messages
 	if len(got) != len(replay.Messages) {
 		t.Fatalf("重放第一步发送 %d 条消息, want %d（暂停前的条数）", len(got), len(replay.Messages))
 	}

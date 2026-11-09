@@ -117,7 +117,7 @@ func TestPauseStopsAtStepBoundary(t *testing.T) {
 		t.Fatalf("恢复后只有 %d 次调用，没有接着往下跑", len(calls))
 	}
 	// 恢复后模型看到的第一件事必须是那条已提交的结果 —— 否则"停住"丢东西了。
-	if text := messagesText(calls[1].messages); !strings.Contains(text, "first-batch-committed") {
+	if text := messagesText(calls[1].Messages); !strings.Contains(text, "first-batch-committed") {
 		t.Errorf("恢复后的调用里没有已提交的工具结果：\n%s", truncateForFailure(text))
 	}
 }
@@ -217,7 +217,7 @@ func TestPauseMidDelegationKeepsTheDelegationWhole(t *testing.T) {
 	if len(calls) < 2 {
 		t.Fatalf("Director 只被调用 %d 次，委派结果没有回到上下文", len(calls))
 	}
-	text := messagesText(calls[len(calls)-1].messages)
+	text := messagesText(calls[len(calls)-1].Messages)
 	if strings.Contains(text, "context canceled") {
 		t.Errorf("恢复后的委派里混进了取消文本（§2 R1 的降级又出现了）：\n%s", truncateForFailure(text))
 	}
@@ -227,6 +227,6 @@ func TestPauseMidDelegationKeepsTheDelegationWhole(t *testing.T) {
 			tail = "…" + string(r[len(r)-1600:])
 		}
 		t.Errorf("委派的真实结果没有回到 Director 上下文：\n%s\n识别到的 Agent：%s",
-			tail, engine.seenAgents())
+			tail, seenAgents(engine))
 	}
 }

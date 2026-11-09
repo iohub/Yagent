@@ -58,7 +58,7 @@ func (a *MetaAgent) Run(ctx context.Context, input string) (AgentResult, error) 
 	slog.Debug("MetaAgent calling LLM (design-only, no tools)", "input", input)
 
 	// Create opts with streaming handler for real-time output
-	opts := &llm.CallOptions{}
+	opts := &llm.CallOptions{AgentName: a.Name()}
 	if a.Publisher != nil {
 		opts.StreamHandler = func(ctx context.Context, chunk []byte) error {
 			if len(chunk) > 0 {

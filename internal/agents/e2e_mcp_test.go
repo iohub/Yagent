@@ -186,7 +186,7 @@ func TestE2EExternalToolReachesModel(t *testing.T) {
 	// 1) load_tool 的回执里有完整参数声明（否则模型不知道传什么）。
 	loadEcho := ""
 	for _, call := range engine.CallsFor("coding") {
-		for _, m := range call.messages {
+		for _, m := range call.Messages {
 			if m.Role == llm.RoleTool && m.ToolName == "load_tool" {
 				loadEcho = m.Content
 			}
@@ -199,7 +199,7 @@ func TestE2EExternalToolReachesModel(t *testing.T) {
 	// 2) 外部工具的结果回到了对话里。
 	callEcho := ""
 	for _, call := range engine.CallsFor("coding") {
-		for _, m := range call.messages {
+		for _, m := range call.Messages {
 			if m.Role == llm.RoleTool && m.ToolName == "mcp__fake__alpha" {
 				callEcho = m.Content
 			}
