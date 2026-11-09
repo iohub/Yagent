@@ -45,6 +45,9 @@ func (c *Compiler) Compile(ctx context.Context, b *Bundle) *Report {
 	}
 
 	c.parse(b, r)
+	// 结构夹具随编译生成：落进 bundle 就意味着 hash 覆盖夹具，"改夹具 ⇒ 换 hash ⇒
+	// grade 不继承"是机械保证而不是额外逻辑（ADR-5）。只在为空时填，作者提供的不覆盖。
+	ensureStructuralFixtures(b)
 	selected, rejected := c.resolve(b, r)
 	c.typecheck(b, selected, rejected, r)
 	c.consistency(b, r)

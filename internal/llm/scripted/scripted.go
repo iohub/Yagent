@@ -231,6 +231,23 @@ func ToolCall(tool string, args map[string]interface{}) Step {
 	}
 }
 
+// TextAndToolCall 构造"同一条响应里既有正文又有工具调用"的步骤。
+//
+// 真实模型经常这样回（先说结论再调工具），而执行循环只在**没有** tool_calls 时才
+// 当作纯文本收尾。5a 的 exit-contract 依赖这一点：它要验的是"交付文本取自那条
+// assistant 消息、而不是 agent_exit 返回的小 JSON"，而"先纯文本再退出"的脚本
+// 在循环里根本走不到第二步。
+func TextAndToolCall(text, tool string, args map[string]interface{}) Step {
+	base := ToolCall(tool, args)
+	return func(messages []llm.Message, tools []llm.ToolDef) *llm.Response {
+		resp := base(messages, tools)
+		if resp != nil && len(resp.Choices) > 0 {
+			resp.Choices[0].Content = text
+		}
+		return resp
+	}
+}
+
 // MessagesText 把一次调用的全部消息拼成一串，供"这段链路有没有把 X 送到"式断言。
 func MessagesText(msgs []llm.Message) string {
 	var b strings.Builder

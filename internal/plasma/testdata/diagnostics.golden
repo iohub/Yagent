@@ -186,3 +186,28 @@ bundle.tools[0]: warning[PLS-306]: 工具 "read_filez" 声明了但系统提示�
 bundle.tools[1]: warning[PLS-306]: 工具 "run_bash" 声明了但系统提示里从未提及
                  note: 模型不知道何时该用它；要么写进提示，要么从清单里去掉
 grade: (none)
+
+### verify-exit-contract
+fixtures.structural[0]: error[PLS-502]: 结构夹具 "exit-contract" 失败
+                        note: corpus stub: fixture forced to fail
+grade: (none)
+
+### verify-step-budget
+fixtures.structural[0]: error[PLS-503]: 结构夹具 "step-budget" 失败
+                        note: corpus stub: fixture forced to fail
+grade: (none)
+
+### verify-tool-containment
+fixtures.structural[0]: error[PLS-504]: 结构夹具 "tool-containment" 失败
+                        note: corpus stub: fixture forced to fail
+grade: (none)
+
+### verify-palette-containment
+fixtures.structural[0]: error[PLS-505]: 结构夹具 "palette-containment" 失败
+                        note: corpus stub: fixture forced to fail
+grade: (none)
+
+### verify-unclassified-fixture
+fixtures.structural[0]: error[PLS-501]: 结构夹具 "author-made" 失败
+                        note: corpus stub: fixture forced to fail
+grade: (none)

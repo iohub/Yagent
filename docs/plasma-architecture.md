@@ -1127,5 +1127,58 @@ snake_case 正则恒真 / 去掉 did-you-mean / 下标恒 0 / Elaborate 无视�
 
 **待办**：P6（`FixtureRunner` 窄接口 + `agents` 侧实现 + 5a 四夹具 + grade 棘轮）。
 
+### P6 已落地（2026-11-09）
+
+**新增**：`internal/plasma/fixture.go`（叶子包）—— `Outcome`/`Outcomes`、`FixtureRunner`
+窄接口、`StructuralFixtures` 四条自动夹具、`ensureStructuralFixtures`、`VerifyStructural`、
+`Ratchet`/`CanPromote`；`diag.go` 补 5 个 5xx 码（`PLS-501`–`505`）。
+`internal/agents/plasma_fixture.go` —— `PlasmaFixtureRunner`：静态夹具经 `surfaceFor` 装配真实
+Surface，行为夹具经 `scripted.NewForIdentity` + `RunAgentLoop` 在**生产路径**上回放；
+`evaluateExpect` 是 Expect 的唯一求值点。测试：`internal/plasma/fixture_test.go`（10 条，外部
+测试包 `plasma_test`）、`internal/agents/plasma_fixture_test.go`（7 条，四夹具**各一绿一红**）。
+
+**顺带修的真实缺陷**：`Link` 原先给 `Profile.Names` 的是一份原始 `b.Tools`（不含 `MatchNames`
+自动追加的 `agent_exit`，也没有 `Palette`）。而 Surface 的按名通道（`toolspec.matchByNames`）
+**只认清单、不补收尾工具** —— 拿这份 LinkPlan 装配出的 Agent 会无法收尾，只能烧到 `max_steps`。
+`tool-containment` 夹具第一次跑就红在这条上；现已改为 `Names`=解析后名单（与 `Agent.Tools`
+同源）、`Palette`/`Grant`=`effective()`，夹具判据与阶段 3 的 typecheck 因此同源。
+
+**与本文的偏差**：
+1. **exit-contract 的脚本是一条响应**（正文 + `agent_exit` 同一个 Choice），不是 §4.3 写的
+   "先一条 assistant 文本、再一条工具调用"。执行器在"没有 tool_calls"的响应上直接按纯文本
+   收尾，两步写法走不到第二步（实测表现：`stop_kind=plain_text`、`must_call agent_exit 未被调用`）。
+   为此在 `internal/llm/scripted` 增加 `TextAndToolCall`（真实模型本来就会这样回）。**断言语义
+   不变**：仍是"交付文本取自那条 assistant 消息，而不是退出 JSON"。
+2. **`Expect.ExitShape` 是既有字段 `[]string`**（§7.1 的示意写成标量），实现按"必须命中的形状
+   集合"解释（`agent_exit` / `handoff`），未改字段名或类型。
+3. **静态夹具不是纯静态推导**：`tool-containment` 走真实 `surfaceFor` 装配（`ProbeDeps` + 真实
+   `FlowControlTool`），因为它要验的正是"装配后模型看到什么"；`ProbeDeps` 的 Flow 是空实现，
+   直接用它会让 exit-contract 永远拿不到可解析的退出 JSON（夹具自己装错，不是契约被违反）。
+4. **`Outcome.Steps` 在预算耗尽口由 runner 补齐**：`executor` 的 max_steps 出口返回零值结果 +
+   error（错误路径不伪造成功结果），所以步数判据用 runner 算出的 `stepsDone`；直接读
+   `exec.Steps` 会让"步数超限"永远为假。
+5. **自动夹具同时补齐 `fixtures.provenance`**（`plasma-compiler-auto`/`compiler`）：否则
+   `store.Put` 的 `checkFixtureProvenance` 会按「自己出题自己考」拒收（编译能过、存不进去）。
+6. 5xx 码按夹具 ID 分派（502 exit / 503 step / 504 tool / 505 palette），未登记的一类回落 501；
+   §6.1 只写了"5xx verify"，没规定到码级。
+7. `Ratchet` 把"没跑"与"通过"分开：空 `structural` 或空 `behavioral` 都**不**算通过（空集的
+   `AllPassed()` 为真，照搬会白送 provisional/verified）。
+
+**验证**：`go build ./...` / `go vet ./...` 干净；`go test ./internal/plasma/`（新 9 条）、
+`go test ./internal/agents/`（9 个 e2e 回归 + 新 7 条）、`go test ./internal/blueprint/`
+（自扫仍 **46 片 / 151 边** —— 新增的 `agents → llm/scripted` 生产边未改变片/边计数）全绿；
+`check_plasma_leaf.sh` 与 `check_llm_scripted.sh` exit 0；`bash scripts/check_all.sh` **exit 0**
+（13 把守卫 + 全量单测）。`internal/agents/testdata/tool_surfaces.golden` 与
+`internal/toolspec/schemas.json` **零改动**；`diagnostics.golden` 为 **`25 insertions(+)`**，
+即 5 段新增、无删除无重排（`git diff --stat` 可核）。
+
+**行数结算**：根 `AGENTS.md` 仍 **608**；`internal/agents/AGENTS.md` 仍 **212**；
+`internal/plasma/AGENTS.md` 167 → **196**（≤200 硬上限）；新增 `fixture.go` 293 行、
+`plasma_fixture.go` 420 行（都不在 `check_file_sizes.sh` 的 `internal/agents/director` 范围）。
+`check_agents_md_size.sh` exit 0。
+
+**待办**：P7（`yagent plasma` CLI：compile / sample / test / manifest / list / promote）。
+5b（真 LLM 行为夹具）仍在 P11，`RunBehavioral` 目前恒返回"未执行"。
+
 （后续每个 P 完成后在此追加。方案落地后本文可能被删——届时不变量须已同步进
 `internal/plasma/AGENTS.md`、`internal/llm/scripted` 的局部文档与根 `AGENTS.md` §4/§5.3/§9.2/§11。）
