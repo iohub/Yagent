@@ -1251,5 +1251,58 @@ exit 0；`bash scripts/check_all.sh` **exit 0**。`tool_surfaces.golden` 与 `sc
 判据、升级批准的用户回路）。P10（进化器 —— `evolve_*` 与 `proposal_dir` 目前只有配置没有读者）。
 P11（5b 真 LLM 行为夹具）。
 
+### P8 已落地（2026-11-09）
+
+**新增**：`internal/plasma/workdir.go` + `workdir_test.go` —— 退出码契约（`ExitOK/Failed/Usage/
+Timeout/Sampling`）、契约文件名常数（`FileReq`/`FileManifest`/`FileState`/`FileDiag`/`FileBundle`）、
+`Workdir`（`NewWorkdir` 0700 + 绝对路径、`LLMReq/LLMResp` 的 `%03d` 序号、`WriteReq`/`WriteManifest`/
+`WriteDiagnostics`/`ReadDiagnostics`/`ReadBundleRaw`/`WriteBundleRaw`/`WriteLLMResp` 全部走
+`util.AtomicWrite`、`Cleanup` 幂等）、`GCWorkdirs`、`Spawner` 窄接口、`SpawnError` + `NewSpawnError`
+（stderr 尾部截断到 2KB）、`ExitCodeName`、`TruncateTail`（按 UTF-8 边界回退）。
+`internal/agents/trampoline.go` + `trampoline_test.go` —— `PlasmaTrampoline`（`Generate` 的
+spawn → `exit 4` 采样 → respawn → 编译 → `--fix` 循环；`validate` 逐个点名缺失依赖）、
+`llmRequestFile`、`TrampolineResult`、Go 侧 `chunkPublisher` 与 `ai_stream_*` 事件。
+`internal/agents/spawner.go` —— `ExecSpawner`（`exec.CommandContext` + `cmd.WaitDelay` +
+有界 `tailBuffer`；`exit 4` 返回 `(4, nil)`，ctx 结束优先判成 `ExitTimeout`）。
+`diag.go`：`Diagnostic`/`Report` 加跨语言 JSON tag（`code`/`severity`/`path`/`message`/`note`、
+`diagnostics`/`grade`/`escalation_required`）。
+
+**与本文的偏差**：
+1. **`Spawner` 与退出码落在 `workdir.go`，不新开 `trampoline.go`**：契约（文件名 + 退出码 + 接口）
+   必须待在同一文件才挡得住"改一半"；驱动器在 agents 侧（`trampoline.go`），因为循环要 llm/EventBus/os/exec。
+2. **`llm_req` 刻意没有 `tier` 字段**：引擎本身绑定档位，Go 侧拿到一个 tier 字符串也无处施加
+   （`CallOptions` 没有该字段）。多一个没人使用的键就是坑 35 的装饰性配置。
+3. **`Elaborate` 失败也写成一份 `diagnostics.json`**：把 `*DiagError` 转成单条 `Report` 再落盘。
+   直接终止的话 `--fix` 轮永远看不到"上一轮为什么被拒"，Python 只会重复生成同一份坏 JSON。
+4. **`max_llm_calls` 按全局采样计数**（跨 `attempt` 累加，不每轮重置）：T9 要防的是整次生成的
+   死循环；每轮重置会让 `meta_retry_count × max_llm_calls` 变成实际上限。
+5. **启动期 GC 不在 `Generate` 内**：驱动器只导出一个可调用点（`plasma.GCWorkdirs(base, ttl, now)`），
+   由装配层（P9）在建 Director 时调一次 —— 每次委派都扫一遍父目录是无谓的 IO，而且 TTL 判据要配置值。
+6. **单次 spawn 的超时是"驱动器套 ctx + 实现设 `WaitDelay`"两件事**：只有 `context.WithTimeout`
+   时，子进程的子孙持有 stdout 管道会让 `cmd.Wait` 一直等 EOF，看门狗形同虚设（根 AGENTS.md 坑 46）。
+
+**验证**：`go build ./...` / `go vet ./...` 干净；`go test ./internal/plasma/ ./internal/agents/`
+全绿（含 9 个 e2e 与 P6 夹具回归）；`go test -race ./internal/agents/ -run 'Trampoline|Spawn|Workdir'`
+全绿；`check_plasma_leaf.sh`（plasma 仍只依赖 stdlib + toolspec/util/projectid/tokenutil/thinklink）与
+`check_llm_scripted.sh` exit 0；`bash scripts/check_all.sh` **exit 0**；`tool_surfaces.golden` 与
+`schemas.json` **零改动**。**假 Python 五条**（全部真 `/bin/sh` 脚本，PATH 无关）：`exit 4 → 采样 →
+respawn` 且序号从 `llm_req_000.json` 起、`diagnostics.json`(含 `PLS-101`) → `--fix` 重生成、`sleep 30`
+在 `SpawnTimeout=300ms` 下被杀且 workdir 已删、无限 `exit 4` 停在 `max_llm_calls=3`（用例自带 10s
+死循环保护）、`ai_chunk` 由 Go 侧 `StreamHandler` 产生（事件顺序 start < chunk < end，end 带 usage）。
+**变异四条全部转红并还原**：attempt>0 去掉 `--fix` ⇒ `TestTrampoline_CompileFailureWritesDiagnosticsAndFixes` 红；
+序号改 `%d` ⇒ `TestWorkdir_ContractFileNames` 红；删 `defer w.Cleanup()` ⇒
+`TestTrampoline_SamplingThenRespawnSequence` 的 workdir 泄漏断言红；`res.LLMCalls <= MaxLLMCalls` ⇒
+`TestTrampoline_MaxLLMCallsStopsRunaway`（LLM 被调 4 次）红。
+
+**行数结算**：`internal/plasma/AGENTS.md` 仍 **200**（新增硬约束 26 与 P8 闸门，等量压缩 12/13/15/17/18/20/24）；
+`internal/agents/AGENTS.md` 仍 **212**（闸门段加一条 P8，等量压缩超时样例与步数事实两条）；
+根 `AGENTS.md` 未动。新增 `internal/plasma/workdir.go` 329 行、`workdir_test.go` 373 行、
+`internal/agents/trampoline.go` 334 行、`spawner.go` 201 行、`trampoline_test.go` 565 行（都不在
+`check_file_sizes.sh` 的 `internal/agents/director` 范围）。`check_agents_md_size.sh` exit 0。
+
+**待办**：P9（把 `PlasmaTrampoline.Generate` 接进 `runMetaDesign`、装配 `ExecSpawner`（`[plasma] python`
++ 内嵌 pyz 路径）、启动期 `GCWorkdirs`、加载期接线与升级批准回路）。P10（Python zipapp —— 本阶段
+全部用例都用假 Python 脚本，真包一次都没跑）。P11（5b 真 LLM 行为夹具）。
+
 （后续每个 P 完成后在此追加。方案落地后本文可能被删——届时不变量须已同步进
 `internal/plasma/AGENTS.md`、`internal/llm/scripted` 的局部文档与根 `AGENTS.md` §4/§5.3/§9.2/§11。）

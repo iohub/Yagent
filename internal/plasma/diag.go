@@ -49,12 +49,16 @@ const (
 )
 
 // Diagnostic 的 Path 用 bundle 相对定位（bundle.tools[3]），让生成侧能精确改一处而不是整份重写。
+//
+// json tag 是跨语言契约（P8）：diagnostics.json 由 Python 的 --fix 轮读取，
+// 键名必须小写且稳定。没有 tag 时 encoding/json 会写字段名（"Severity"），
+// Python 侧读到的是另一套拼写 —— 而它不会报错，只会认为每条诊断都缺严重度。
 type Diagnostic struct {
-	Code     string
-	Severity Severity
-	Path     string
-	Message  string
-	Note     string
+	Code     string   `json:"code"`
+	Severity Severity `json:"severity"`
+	Path     string   `json:"path"`
+	Message  string   `json:"message"`
+	Note     string   `json:"note,omitempty"`
 }
 
 // CodeInfo 是码表的一行：码 + 它在发射点的严重度 + 一句话说明。
@@ -125,13 +129,13 @@ func (e *DiagError) Error() string { return e.Diag.Code + ": " + e.Diag.Message 
 // 排序会把"先解析错还是先越权"这条因果线索抹掉，而生成侧靠它决定先修哪一处。
 // 发射路径上一律不遍历 map，所以顺序是确定的。
 type Report struct {
-	Diagnostics []Diagnostic
+	Diagnostics []Diagnostic `json:"diagnostics"`
 	// Grade 是本次编译能达到的上限；P0 只可能产出 provisional（5a/5b 尚未接入）。
-	Grade Grade
+	Grade Grade `json:"grade"`
 	// EscalationRequired 表示这份 bundle 用到了 base palette 之外的能力。
 	// 它为真时 grade 上限钉在 provisional，直到用户批准 + 行为夹具通过（ADR-4/ADR-9）。
 	// 即使升级已批准也要置真：防线生效过必须留下可见账目（坑 43）。
-	EscalationRequired bool
+	EscalationRequired bool `json:"escalation_required"`
 }
 
 func (r *Report) add(code string, sev Severity, path, msg, note string) {
