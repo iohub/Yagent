@@ -33,6 +33,12 @@ type AgentResult struct {
 	// 模型永远不知道自己白交了四条、Director 看到的只是"这次委派成功了"（2026-10-20 实测）。
 	// 空串 = 无话可说（蓝图未装配、或这一轮本来就不该有蓝图）。
 	BlueprintAccount string
+
+	// 执行指标（ADR-13）：只给遥测/评分与可观测性用，不进交付物。
+	// StopKind 复用 memory.StopKind* 词表；Steps/Usage 由 RunAgentLoop 逐轮累加。
+	Steps    int
+	Usage    llm.TokenUsage
+	StopKind string
 }
 
 // Agent defines the interface for all agents in the system.

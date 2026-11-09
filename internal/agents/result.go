@@ -112,7 +112,16 @@ func reasonFromExitJSON(text string) string {
 
 // FinalizeResult 统一构造函数：完整结果落盘为 artifact，生成分级摘要。
 // Save 失败时降级为全文摘要（信息完整性优先，绝不静默丢内容，不返回 error、不阻断委派）。
+// FinalizeResult 把执行结果分级（摘要 / artifact / 交付全文），并在**唯一一处**盖上
+// ADR-13 的执行指标。指标用包装而不是逐个 return 字面量赋值：FinalizeResult 有四个
+// 返回分支，漏一个就是"某些路径的 Steps 恒 0 且不报错"——正是 ADR-13 补偿控制要防的形状。
 func FinalizeResult(agentName, task string, exec ExecutorResult) AgentResult {
+	r := finalizeResult(agentName, task, exec)
+	r.Steps, r.Usage, r.StopKind = exec.Steps, exec.Usage, exec.StopKind
+	return r
+}
+
+func finalizeResult(agentName, task string, exec ExecutorResult) AgentResult {
 	mem := ConvertLLMHistoryToMemory(exec.History)
 	full := deliverableText(exec)
 	handoff := collectHandoff(exec, full)
