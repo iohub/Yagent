@@ -220,6 +220,10 @@ type CallOptions struct {
 	// ReasoningEffort overrides the provider-level reasoning effort for this call.
 	// Non-empty value ("high" or "max") enables DeepSeek thinking mode.
 	ReasoningEffort string
+	// AgentName 是发起这次调用的 Agent（显示名，如 "Repo-Agent"）。
+	// 只给可编程引擎（internal/llm/scripted）用来把脚本分派给正确的身份，
+	// 生产 provider 忽略它；它不进任何 wire 字段。
+	AgentName string
 }
 
 // StreamHandler is called for each chunk during streaming.

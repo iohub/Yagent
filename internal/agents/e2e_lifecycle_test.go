@@ -115,7 +115,7 @@ func TestE2E_DelegateIdleTimeoutAbortsAndLeavesANote(t *testing.T) {
 	// 失败的委派不会带上 [Sub-Agent Result] 头部（applyEnhancedCommander 在 err != nil
 	// 时直接回吐错误），所以这里断言的是 Director 看到的错误文本必须点明是 idle ——
 	// 只说 "timed out" 的话，模型分不清该重试还是该换路子。
-	text := engine.callTextContaining(t, "timed out")
+	text := callTextContaining(t, engine, "timed out")
 	if !strings.Contains(text, "timed out (idle)") {
 		t.Errorf("委派错误没标明是 idle 超时: %s", truncateForFailure(text))
 	}
@@ -217,7 +217,7 @@ func TestE2E_DelegateTotalTimeoutAlsoFires(t *testing.T) {
 	if calls >= 10 {
 		t.Errorf("子 Agent 跑满了 MaxSteps(10)（%d 轮），说明 total 超时没有收口，而是让它自然结束", calls)
 	}
-	text := engine.callTextContaining(t, "timed out")
+	text := callTextContaining(t, engine, "timed out")
 	if !strings.Contains(text, "timed out (total)") {
 		t.Errorf("委派错误没标明是 total 超时: %s", truncateForFailure(text))
 	}

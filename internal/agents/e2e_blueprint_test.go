@@ -257,9 +257,9 @@ func TestBlueprintResidentNeverEntersMemory(t *testing.T) {
 		t.Fatalf("委派失败: %v", err)
 	}
 	// 断言一：模型这一轮**看见**了它（否则下一条断言是在证明空气）。
-	call := engine.lastCallFor(t, "repo")
-	if !strings.Contains(messagesText(call.messages), marker) {
-		t.Errorf("常驻骨架没进这次 LLM 调用的 system prompt:\n%s", truncateForFailure(messagesText(call.messages)))
+	call := lastCallFor(t, engine, "repo")
+	if !strings.Contains(messagesText(call.Messages), marker) {
+		t.Errorf("常驻骨架没进这次 LLM 调用的 system prompt:\n%s", truncateForFailure(messagesText(call.Messages)))
 	}
 	// 断言二：它在对话里只出现一次。Repo 的 system prompt 以 human 角色下发
 	// （SystemAsHuman），"就在头部那一条"正是它扛住上下文压缩的机制（压缩动的是
@@ -358,7 +358,7 @@ func TestE2EPlainTextRepoRunIsNudgedIntoSubmitting(t *testing.T) {
 	if len(engine.CallsFor("repo")) < 2 {
 		t.Fatalf("Repo 只被调用 %d 次，提醒分支根本没进", len(engine.CallsFor("repo")))
 	}
-	second := messagesText(engine.CallsFor("repo")[1].messages)
+	second := messagesText(engine.CallsFor("repo")[1].Messages)
 	if !strings.Contains(second, "Call `agent_exit` now") {
 		t.Errorf("第二次调用里没有收尾契约的提醒:\n%s", truncateForFailure(second))
 	}

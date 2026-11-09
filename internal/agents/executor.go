@@ -267,7 +267,7 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 		return cfg.Surface.Defs()
 	}
 
-	opts := &llm.CallOptions{}
+	opts := &llm.CallOptions{AgentName: cfg.AgentName}
 
 	if cfg.Publisher != nil {
 		opts.StreamHandler = func(ctx context.Context, chunk []byte) error {

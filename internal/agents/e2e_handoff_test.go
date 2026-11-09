@@ -132,7 +132,7 @@ func TestE2E_Handoff_SecondDelegationSeesFirstNote(t *testing.T) {
 	//    injectSubAgentMemory 生成的摘要，它刻意不带 ref —— ref 是派生态，
 	//    每轮从磁盘重扫的 Board Index 才是权威入口（见 pitfall #11）。
 	boardID := blackboard.SanitizeBoardID(sessionID)
-	ref := mustNoteRef(t, engine.callTextContaining(t, "[Sub-Agent Result: repo]"))
+	ref := mustNoteRef(t, callTextContaining(t, engine, "[Sub-Agent Result: repo]"))
 	note, err := blackboard.ReadNote(boardID, ref)
 	if err != nil {
 		t.Fatalf("ReadNote(%s,%s): %v", boardID, ref, err)
@@ -159,7 +159,7 @@ func TestE2E_Handoff_SecondDelegationSeesFirstNote(t *testing.T) {
 
 	// 4) 第二次委派的任务前缀带着 Board Index 与上一条结论 ——
 	//    子 Agent 不必重新调查一遍，这是这块板存在的理由。
-	codingText := engine.callTextContaining(t, "CODING-TASK-MARKER")
+	codingText := callTextContaining(t, engine, "CODING-TASK-MARKER")
 	if !strings.Contains(codingText, "## Board Index (") {
 		t.Errorf("第二次委派没有 Board Index:\n%s", truncateForFailure(codingText))
 	}
@@ -168,8 +168,8 @@ func TestE2E_Handoff_SecondDelegationSeesFirstNote(t *testing.T) {
 	}
 
 	// 5) Director 自己最后一轮也拿得到索引（注入的是 messages）。
-	last := engine.lastCallFor(t, "director")
-	if !strings.Contains(messagesText(last.messages), "## Board Index (") {
+	last := lastCallFor(t, engine, "director")
+	if !strings.Contains(messagesText(last.Messages), "## Board Index (") {
 		t.Error("Director 最后一轮没有 Board Index")
 	}
 
