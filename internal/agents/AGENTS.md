@@ -178,8 +178,9 @@ Resume 成免费心跳）。监视 goroutine 挂到**父** ctx 的域上，不�
   `TestRunAgentLoop_ParentCancel_AllCallsAccounted`（`executor_parallel_test.go:514`）就卡在这里，
   改法是 `time.AfterFunc` 从批次外部取消（`:531`，理由写在 `:528-530` 的注释里）。
 - 超时类用例走 `restoreToolTimeout(t, …)` 这个 seam（`executor_test.go:59-66`，临时改短
-  `defaultToolTimeout`），`TestRunAgentLoop_MultipleToolCalls`（`executor_test.go:232`，用法 `:234`）
-  是样例；不许用 `time.Sleep` 等真实超时。
+  `defaultToolTimeout`）。样例 `TestRunAgentLoop_MultipleToolCalls`（`executor_test.go:232`）；不许 `time.Sleep` 等真实超时。
+- P8 trampoline（`trampoline_test.go`，假 Python 是测试自己写的 `/bin/sh` 脚本）：`exit 4 → Go 采样 → respawn`
+  序号对齐 / `diagnostics.json → --fix` 重生成 / kill 后超时 + workdir 清理 / `max_llm_calls` 上限 / `ai_chunk` 来自 Go 侧。
 - `TestSpawnForDelegation_CodingGetsItsOwnThinkLink`（`spawn_test.go:21`）：把 store 挂回单例即红。
 - `TestStopKindClassifiersAgree`（`resume_test.go:175`）：本包 `classifyStop` 与
   `director.StopKindOf` 因分层守卫只能各写一份，靠这条对齐。
@@ -202,9 +203,8 @@ Resume 成免费心跳）。监视 goroutine 挂到**父** ctx 的域上，不�
 - `TestEvidenceSetIncludesSearchResults` / `_ReadsAllPathParams` /
   `_IgnoresNonPathToolOutput`（`blueprint_evidence_test.go:50,77,140`）：证据集口径；
   `TestEvidenceCollectedOnlyForRealSubmissions`（`:116`）：非 `agent_exit` 收尾还去采集证据即红。
-- 步数事实的读侧闸门在**另一个包**：`TestReadRolloutMemory_StepAndTurnCount`
-  （`internal/memory/rollout_reader_test.go:946`）。本包没有测试钉住"每个有工具调用的 step 都写
-  `sub_agent_activity`"——这是当前覆盖缺口，改 `executor.go:922-926` 之前先补一条。
+- 步数事实的读侧闸门在**另一个包**：`TestReadRolloutMemory_StepAndTurnCount`（`internal/memory/rollout_reader_test.go:946`）。
+  本包没有测试钉住"每个有工具调用的 step 都写 `sub_agent_activity`"——这是覆盖缺口，改 `executor.go:922-926` 前先补一条。
 
 脚本守卫：`check_no_agents_import.sh` 管的是 `director/` 子包；本包受
 `check_no_bare_go.sh` 与 `check_no_manual_lookup.sh`（FORBIDDEN 名单必须为零）约束。
