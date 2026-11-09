@@ -74,6 +74,10 @@ type DirectorAgent struct {
 	delegateIdleTimeout  time.Duration
 	delegateTotalTimeout time.Duration
 
+	// onDelegationMetrics 是遥测接缝（ADR-6，P4 提供机制，P9 由 app 接线）。nil = 关闭。
+	// 写入点是 directorToolRunner.Call 的 outcome 汇聚处 —— 三条委派分支唯一的共同出口。
+	onDelegationMetrics func(DelegationMetrics)
+
 	maxParallelReadOnlyTools int
 
 	maxParallelDelegations int
@@ -723,6 +727,7 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 	if outcome != nil && outcome.has {
 		a.injectSubAgentMemory(outcome.result, callID, name)
 		r.state.SetPendingSubAgentMemory(toSubAgentMemory(&outcome.result))
+		a.emitDelegationMetrics(name, callID, err, outcome.result)
 	}
 
 	if strings.HasPrefix(ad.Name(), "delegate_") {
