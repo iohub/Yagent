@@ -88,7 +88,11 @@ type AgentConfig struct {
 	RepoMaxSteps     int  `toml:"repo_max_steps"`
 	DevOpsMaxSteps   int  `toml:"devops_max_steps"`
 	BrowserMaxSteps  int  `toml:"browser_max_steps"`
-	MetaRetryCount   int  `toml:"meta_retry_count"`
+	// MetaRetryCount 现在有两层含义：Meta 一次 LLM 调用「产出非法 JSON 后重试」的次数（既有），
+	// 以及 P9 起复用同一预算作「plasma 编译失败后重生成」的上限。**P7 只改这行注释**：
+	// 值、归一化与消费点都不动 —— 两处语义共用同一个数字是刻意的（都是 meta 档的一次重试），
+	// 拆成两个键会让用户在升级后发现自己原本设的 5 突然只对一半路径生效。
+	MetaRetryCount int `toml:"meta_retry_count"`
 
 	DelegateIdleTimeout time.Duration `toml:"delegate_idle_timeout" json:"delegate_idle_timeout" yaml:"delegate_idle_timeout"`
 
@@ -221,6 +225,9 @@ type Config struct {
 	// Skills 是用户技能目录与注入预算。
 	Skills SkillsConfig `toml:"skills"`
 
+	// Plasma 是生成式 Agent 编译器（docs/plasma-architecture.md §7.4）的开关与预算。
+	Plasma PlasmaConfig `toml:"plasma"`
+
 	EnhancedCommander EnhancedCommanderConfig `toml:"enhanced_commander" json:"enhanced_commander"`
 
 	TUI TUIConfig `toml:"tui"`
@@ -240,6 +247,10 @@ type Config struct {
 	// mcpSectionDefined / skillsSectionDefined 同理：两者的 enable 缺省都是"开"。
 	mcpSectionDefined    bool
 	skillsSectionDefined bool
+
+	// plasmaSectionDefined 同理；另外三个 presence 键（catalog_line_chars /
+	// workdir_ttl / store_ttl）的 0 本身有语义，必须看键的存在性（坑 13/26）。
+	plasmaSectionDefined bool
 
 	// 同理，但必须看段的存在性而不是某个字段是否为空：老写法"前缀为空就整段换默认值"会把 enabled = false 顶回 true。
 	gitCheckpointSectionDefined bool
@@ -554,6 +565,24 @@ func LoadFromFile(path string) (*Config, error) {
 		Enable:     md.IsDefined("skills", "enable"),
 		InjectInto: md.IsDefined("skills", "inject_into"),
 	})
+	// [plasma]：18 个键，其中三个的显式 0 有语义（不裁剪 / 不清理 / 不清理孤儿目录）。
+	cfg.plasmaSectionDefined = sectionHasDecodedKey(md, "plasma")
+	if stale := staleKeysIn(md, "plasma"); len(stale) > 0 {
+		slog.Warn("[plasma] 段存在不认识的键，将被忽略",
+			"stale_keys", strings.Join(stale, ", "),
+			"hint", plasmaKeyHint)
+	}
+	// 归一化会拒收非法时长与非法 grade：这里必须把错误传出去，否则一个拼错的
+	// auto_delegate_min_grade 会让自动委派边界静默变成默认档。
+	if err := SetGlobalPlasma(cfg.Plasma, PlasmaPresence{
+		Section:          cfg.plasmaSectionDefined,
+		Enable:           md.IsDefined("plasma", "enable"),
+		CatalogLineChars: md.IsDefined("plasma", "catalog_line_chars"),
+		WorkdirTTL:       md.IsDefined("plasma", "workdir_ttl"),
+		StoreTTL:         md.IsDefined("plasma", "store_ttl"),
+	}); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}

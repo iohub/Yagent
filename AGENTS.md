@@ -412,12 +412,12 @@ go build -o yagent .          # 快速验证 Go 侧（dist/bin 已有文件时�
 
 ```bash
 ./yagent                      # 默认 TUI；./yagent -p "问题"（非交互单轮）；./yagent http --port 9080（--port 0 = 系统分配）
+./yagent plasma <compile|test|sample|manifest|list|promote>   # 生成式 Agent 的编译/夹具/采样/store（不装配 Agent）
 # 通用 flag: -d/--disable-agents  -c/--config  -y/--yolo  -Y/--full-yolo  -Q/--force-quit
 ```
 
-工作目录即项目根（`os.Getwd()`），没有 `--cwd` 类参数。版本号经 ldflags 注入
-`internal/globalctx.{Version,BuildTime,GitCommit}`——**这三个字段不存在**，注入的是空气（见导览的
-globalctx 一节）。**没有 CI 质量闸门**：`release.yml` 只做跨平台构建 + 发布，不跑测试/lint。
+工作目录即项目根（`os.Getwd()`），没有 `--cwd` 类参数。版本号经 ldflags 注入 `internal/globalctx.{Version,BuildTime,GitCommit}`
+——**这三个字段不存在**，注入的是空气（见导览的 globalctx 一节）。**没有 CI 质量闸门**：`release.yml` 只做构建 + 发布。
 
 ### 8.3 测试
 

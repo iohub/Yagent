@@ -228,6 +228,35 @@ func (s *Store) Promote(name, hash string) error {
 	return s.pointIndex(name, hash)
 }
 
+// SetGrade 覆盖某个 hash 的 grade（promote 用）。bundle.json 不可变，grade 属可变状态，
+// 所以只改 meta.json，且走 util.AtomicWrite（index.json 不会被这次写坏）。
+//
+// hash 目录不存在时**报错**而不是顺手建一个：那意味着调用方拿着一个不该存在的坐标，
+// 建目录的后果是 store 里多出一份没有 bundle.json 的"幽灵条目"，而 List 只读 index、
+// 看不到它 —— 失败会以"promote 成功但 list 里没有"的形式过很久才暴露。
+func (s *Store) SetGrade(name, hash string, g Grade) error {
+	switch g {
+	case GradeProvisional, GradeVerified, GradePromoted:
+	default:
+		return fmt.Errorf("set grade: %q 不是合法档位（provisional / verified / promoted）", g)
+	}
+	dir := filepath.Join(s.Root, name, hash)
+	if _, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("set grade: %s@%s 不存在: %w", name, hash, err)
+	}
+	path := filepath.Join(dir, "meta.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("set grade: read meta: %w", err)
+	}
+	var meta Meta
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return fmt.Errorf("set grade: parse meta: %w", err)
+	}
+	meta.Grade = g
+	return s.writeJSON(path, meta)
+}
+
 // ApproveEscalation 按 hash 记批准。新 hash（进化出的新版本）没有这条记录 ⇒ 批准自然失效。
 func (s *Store) ApproveEscalation(name, hash string) error {
 	path := filepath.Join(s.Root, name, hash, "meta.json")

@@ -78,6 +78,9 @@ false，用它判等于把新能力静默关掉（`:488` 明写，`:352` 同句�
 `[blackboard]` 的三个显式 0 阀门（关索引注入 / 不裁剪行 / 不清理）逐键走 `md.IsDefined`（`:505-507`），
 而 `summary_max_runes`/`max_notes_per_board` **没有**"关"的语义，<=0 一律归默认、不加标记
 （`blackboard.go:26,33`，判据全文 `:50-61`）——同一段里两种键并存，逐条核对再决定要不要 presence 字段。
+`[plasma]` 走同一条（`plasmaSectionDefined`，`config.go:565`），但它的 presence 有**四个**键：
+`enable`（缺省 true，与 Go 零值相反）/ `catalog_line_chars` / `workdir_ttl` / `store_ttl`
+（`plasma.go:PlasmaPresence`），后三个的显式 0 各自表示"不裁剪 / 不清理孤儿目录 / 不清理"。
 
 **12. 认不出的字符串枚举值必须 warn 后回落默认，不许静默按其中一种策略走。**
 `degrade_on_workspace_change` 两态是常量而非裸串（`resume.go:15-20`，注释给出理由："写错一个字母的表现
@@ -85,6 +88,10 @@ false，用它判等于把新能力静默关掉（`:488` 明写，`:352` 同句�
 缺省选 `warn` 而不是 `block`：换机器/pull 后 HEAD 必然变，默认 block 会让 B 层在最主要的场景里失效。
 闸门 `TestResumeUnknownWorkspacePolicyFallsBackToWarn`（`resume_test.go:76`）与
 `TestResumeExplicitBlockPolicyKept`（`:86`）。
+**唯一例外是 `[plasma] auto_delegate_min_grade` 与负时长**：`NormalizePlasma` 返回 error 而不是回落
+（`plasma.go:checkPlasmaGrade` / `checkPlasmaDurations`）。理由：回落成任何一档 grade 都可能在自动委派
+时放行未验证的 Agent（fail-closed），而负时长静默归零会把超时 / 清理变成"没有"。闸门
+`TestPlasmaRejectsInvalidValues`（`plasma_test.go`）。改这段前先看两条判据的取向，别把它"修"成 warn。
 
 **13. `removedKeyHints` 的登记形态本身就是判据：键名一律小写、只登记会出现的最长路径。**
 父表本身不进 `Undecoded()`，子键靠向上归并落到父表这一行（`config.go:254`）——登记写短路径永远匹配不上，
