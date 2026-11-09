@@ -66,6 +66,13 @@ func DefaultExecutorConfig() ExecutorConfig {
 type ExecutorResult struct {
 	Text    string
 	History []llm.Message
+
+	// 以下三项是 ADR-13 的执行指标：只给遥测/评分与可观测性用，不进交付物。
+	// Steps 是已完成步数；Usage 是本轮所有 LLM 调用的累加；StopKind 复用
+	// memory.StopKind* 词表（rollout_types.go），不另造一套。
+	Steps    int
+	Usage    llm.TokenUsage
+	StopKind string
 }
 
 const DefaultMaxParallelReadOnlyTools = 4
@@ -314,6 +321,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 
 	var agentErr error
 	stepNumber := startStep
+	// totalUsage 跨步累加；ADR-13 的遥测要"这次委派一共花了多少"。
+	var totalUsage llm.TokenUsage
 	stopKind := newStopKindTracker(ctx)
 	defer func() {
 		r := recover()
@@ -650,6 +659,16 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			totalTokens = promptTokens + completionTokens
 		}
 
+		// 跨步累加：遥测要的是"这次委派一共花了多少"，不是最后一步花了多少。
+		totalUsage.PromptTokens += promptTokens
+		totalUsage.CompletionTokens += completionTokens
+		totalUsage.TotalTokens += totalTokens
+		totalUsage.CacheCreationInputTokens += cacheCreationTokens
+		totalUsage.CacheReadInputTokens += cacheReadTokens
+		if resp.Usage != nil {
+			totalUsage.TotalInputTokens += resp.Usage.TotalInputTokens
+		}
+
 		if rw := memory.GetRolloutWriter(ctx); rw != nil && rw.Enabled() {
 			if writeErr := rw.WriteTokenCount(promptTokens, completionTokens, totalTokens, cacheCreationTokens, cacheReadTokens); writeErr != nil {
 				slog.Warn("Rollout: failed to write token_count", "error", writeErr)
@@ -733,7 +752,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 				continue
 			}
 			stopKind.record(StopKindPlainTextReply, nil)
-			return ExecutorResult{Text: assistantMsg.Content, History: history}, nil
+			return ExecutorResult{Text: assistantMsg.Content, History: history,
+				Steps: stepNumber, Usage: totalUsage, StopKind: StopKindPlainTextReply}, nil
 		}
 
 		toolCalls := choice.ToolCalls
@@ -784,7 +804,8 @@ func RunAgentLoop(ctx context.Context, cfg ExecutorConfig) (result ExecutorResul
 			commitToolCall(tc, toolResult, true)
 
 			if exitpolicy.TerminateOnAgentExit(cfg.StopOnFinish, tc.Function.Name, execErr != nil) {
-				return &ExecutorResult{Text: toolResult, History: history}
+				return &ExecutorResult{Text: toolResult, History: history,
+					Steps: stepNumber, Usage: totalUsage, StopKind: StopKindAgentExit}
 			}
 			return nil
 		}
