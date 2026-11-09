@@ -121,37 +121,6 @@ func makeMetaOutput(agentName, systemPrompt string, toolsUsed []string) string {
 	return string(b)
 }
 
-// ─── toSnakeCase Tests ──────────────────────────────────────────────────────
-
-func TestToSnakeCase(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"Security Auditor", "security_auditor"},
-		{"Data-Export Agent", "data_export_agent"},
-		{"SQL Injection Scanner", "sql_injection_scanner"},
-		{"Simple", "simple"},
-		{"", "custom_agent"},
-		{"!!!Special!!!", "special"},
-		{"UPPER CASE", "upper_case"},
-		{"Multi   Space   Agent", "multi_space_agent"},
-		{"_Leading_Trailing_", "leading_trailing"},
-		{"Test__Double__Underscore", "test_double_underscore"},
-		{"agent123", "agent123"},
-		{"   ", "custom_agent"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.input, func(t *testing.T) {
-			got := toSnakeCase(tc.input)
-			if got != tc.expected {
-				t.Errorf("toSnakeCase(%q) = %q, want %q", tc.input, got, tc.expected)
-			}
-		})
-	}
-}
-
 // ─── Custom Agent 工具池（取代原 getToolFunc）────────────────────────────────
 // 过去 Custom Agent 能拿什么由 director.go 里第二个 switch 硬编码；现在由注册表按
 // 名字解析 + Director 的 Palette 上限约束。这里钉住"历史可用集合仍然可用"。

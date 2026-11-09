@@ -1,7 +1,7 @@
 # Yagent Agent 开发知识库
 
 > **本文件是 Agent 理解仓库和进行开发的标准指南。** 只收两类句子：**会改变跨模块决策的判据**，
-> 和**告诉读者去哪儿查的指针**。包内"这么做会静默坏在哪里"写在 `internal/**/AGENTS.md`（17 份，
+> 和**告诉读者去哪儿查的指针**。包内"这么做会静默坏在哪里"写在 `internal/**/AGENTS.md`（18 份，
 > 导览在 `internal/AGENTS.md`），模块结构与文件计数由 `internal/blueprint` 每轮派生——
 > 抄进任何文档就是第二份会漂走的事实。
 > **编号是契约**：`§5.x`、`§6.x`、`§8.3`、`§9.3` 与 `§11` 的 46 条坑编号被 13 份嵌套文档共 25 处
@@ -65,7 +65,7 @@ Chrome 缺一则 Browser-Agent 不可用，`delegate_browser` 的描述会自动
 | 层 | 内容 | 谁读它 |
 |----|------|--------|
 | 根 `AGENTS.md`（本文件） | 跨模块决策面 + 路由 + 坑索引 | 外部 agent；yagent 侧**不预置**，需要就 `read_file`（§3.2） |
-| `internal/**/AGENTS.md`（17 份） | 包内不可派生约束：边界 / 硬约束 N / 入口 / 闸门 | 外部 agent；yagent 侧随委派注入（§3.2） |
+| `internal/**/AGENTS.md`（18 份） | 包内不可派生约束：边界 / 硬约束 N / 入口 / 闸门 | 外部 agent；yagent 侧随委派注入（§3.2） |
 | `internal/blueprint` | 模块集合、文件计数、依赖边、入口与 manifest | 运行时每轮派生；`read_blueprint` |
 | `docs/` | 只有 `config-guide.md` 与 `skills-and-mcp-*` 是活的 | 人 |
 
@@ -422,7 +422,7 @@ globalctx 一节）。**没有 CI 质量闸门**：`release.yml` 只做跨平台
 ### 8.3 测试
 
 ```bash
-bash scripts/check_all.sh                 # 本地闸门：build + vet + 十一把守卫 + 全量单测
+bash scripts/check_all.sh                 # 本地闸门：build + vet + 十二把守卫 + 全量单测
 RACE=true bash scripts/check_all.sh       # 再对并发包跑 -race（慢 3-8 倍，改到并发时手动跑）
 bash scripts/check_all.sh --fast          # 只跑 ./internal/... 的单测
 go test ./... -count=1 -timeout 600s      # 26 个测试包，墙钟约 12s
@@ -469,24 +469,24 @@ go test ./internal/agents/... -count=1    # 最慢的一档，约 10.5s
 
 ### 9.2 守卫与全局不变量
 
-**十一把守卫**（`bash scripts/check_all.sh` 一条命令跑完；每条都对应一次"曾经静默漂移"）：
+**十二把守卫**（`bash scripts/check_all.sh` 一条命令跑完；每条都对应一次"曾经静默漂移"）：
 
 ```
 check_no_manual_lookup        不许重新出现按名字查工具（FORBIDDEN 名单必须为零）
 check_toolspec_leaf           toolspec 不得反向依赖 agents/tools
 check_no_agents_import        director/ 子包不得 import internal/agents（扫传递闭包，防循环）
 check_blueprint_leaf          internal/blueprint 只准标准库 + util + projectid
+check_plasma_leaf             internal/plasma 只准标准库 + toolspec + util + projectid + tokenutil
 check_supervise_leaf          internal/supervise 只准标准库
 check_shutdown_leaf           internal/shutdown 只准标准库 + supervise
 check_no_bare_go              裸 go 全仓硬禁，**无 PENDING 名单**（唯一例外：supervise 自己）
 check_no_inline_atomic_write  tmp+rename 只准 internal/util/atomic.go 一处
 check_file_sizes              director/ 非测试文件 ≤300 行，存量按 PENDING 冻结
-check_agents_md_size          根 + 17 份 AGENTS.md 的体积棘轮（防本文件再次膨胀）
+check_agents_md_size          根 + 18 份 AGENTS.md 的体积棘轮（防本文件再次膨胀）
 check_test_hygiene            每个 Test* 必须能失败；裸 t.Skip 要有条件；同包只准一个 ANSI 剥离辅助
 ```
 
-> **棘轮的纪律**：超限即红、**长回去即红、改小了必须同步下调 PENDING 的数字**否则脚本主动报失步。
-> 一条常红的守卫等于没有守卫——所以 `check_no_bare_go.sh` 刻意不留名单（带名单的棘轮就是第二份会漂走的事实）。
+> **棘轮的纪律**：超限即红、长回去即红、改小了必须同步下调 PENDING 否则脚本主动报失步；一条常红的守卫等于没有守卫，所以 `check_no_bare_go.sh` 刻意不留名单（带名单的棘轮就是第二份会漂走的事实）。
 
 **跨模块不变量**（包内的写在各包文档）：
 

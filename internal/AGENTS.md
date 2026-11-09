@@ -19,6 +19,7 @@
 | `internal/memory/AGENTS.md` | rollout 账本与重放读侧 |
 | `internal/compression/AGENTS.md` | 三档上下文压缩与判定口径 |
 | `internal/blueprint/AGENTS.md` | 仓库蓝图：派生层 + 落盘层 + fold |
+| `internal/plasma/AGENTS.md` | 生成式 Agent 的编译器与 IR：叶子包、诊断码、扩充器 |
 | `internal/blackboard/AGENTS.md` | 跨 Agent 便签与派生索引 |
 | `internal/llm/AGENTS.md` | 引擎、路由、故障转移、在飞闸门 |
 | `internal/config/AGENTS.md` | TOML 加载、归一化、文本级写回 |

@@ -299,30 +299,6 @@ func (a *DirectorAgent) refreshSubAgentEngines() {
 	}
 }
 
-func toSnakeCase(name string) string {
-	var result strings.Builder
-	for i, r := range strings.ToLower(name) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			result.WriteRune(r)
-		} else if r == ' ' || r == '-' || r == '_' {
-			if i > 0 {
-				result.WriteRune('_')
-			}
-		} else {
-			result.WriteRune('_')
-		}
-	}
-	raw := result.String()
-	for strings.Contains(raw, "__") {
-		raw = strings.ReplaceAll(raw, "__", "_")
-	}
-	raw = strings.Trim(raw, "_")
-	if raw == "" {
-		raw = "custom_agent"
-	}
-	return raw
-}
-
 func (a *DirectorAgent) currentLLMTimeout() time.Duration {
 	if t := config.GlobalLLMTimeout(); t > 0 {
 		return t
