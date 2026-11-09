@@ -13,8 +13,8 @@ import (
 // 本文件是 Python 侧唯一的**只读**能力/码表来源（设计稿 §6.3 的 manifest.json）。
 //
 // 为什么必须由 Go 发布而不是让 Python 自己写一份：
-//   - 工具集合的唯一判据是 toolspec 注册表 + PlasmaPalette（与
-//     agents.renderCustomAgentToolPool 同一句 `Effect.Has(palette)`）；
+//   - 工具集合的唯一判据是 toolspec 注册表 + PlasmaPalette（`Effect.Has(palette)`，
+//     与准入侧 `runCustomAgent` 的 `MatchNames` 同一个常量）；
 //   - 诊断码的唯一来源是 diag.go 的码表；
 //   - IR 默认值的唯一来源是 Elaborate 用的 Defaults。
 //
@@ -89,8 +89,9 @@ func (c *Compiler) Manifest() *Manifest {
 	return m
 }
 
-// manifestTools 是**唯一**的工具池判据的另一半：与 agents.renderCustomAgentToolPool
-// 同一句 `s.Effect.Has(palette)`。刻意不调 Spec.AvailableFor —— 那是运行期装配属性
+// manifestTools 是工具池判据的唯一实现（`Effect.Has(palette)`）：P9a 之前 agents 侧还有
+// 一半（`renderCustomAgentToolPool` 渲染给 Meta-Agent prompt 的表格），Go 侧生成器删除后
+// 那半份一起消失 —— 表格现在由 Python 从本 manifest 渲染。刻意不调 Spec.AvailableFor —— 那是运行期装配属性
 // （某个 MCP server 没起来），而 manifest 描述的是**能力契约**，不是这台机器的状态。
 func manifestTools(palette toolspec.Effect) []ManifestTool {
 	out := make([]ManifestTool, 0, len(toolspec.Specs()))

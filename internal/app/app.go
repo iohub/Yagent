@@ -24,6 +24,7 @@ import (
 	"yagent/internal/mcp"
 	"yagent/internal/memory"
 	"yagent/internal/messaging"
+	"yagent/internal/plasma"
 	"yagent/internal/skills"
 	"yagent/internal/supervise"
 	"yagent/internal/tools"
@@ -386,7 +387,13 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			Blueprint:   ca.blueprint.viewFor("chat"),
 			External:    agents.ExternalFrom(ca),
 		})
-		metaAgent := agents.NewMetaAgent(&gctx, publisher, metaEngine, stepRetries)
+		// 生成式 Agent：可用则装配 trampoline（流式走父进程 publisher），不可用则记下原因。
+		// P10 之前 plasma.pyz 不存在 ⇒ 这里是降级，delegate_meta 不进工具面（ADR-15）。
+		gcPlasmaWorkdirs(ca.config)
+		plasmaGen, plasmaWhy := buildPlasmaGenerator(ca.config, publisher, metaEngine)
+		if plasmaGen == nil {
+			slog.Info("plasma: 生成器降级", "reason", plasmaWhy)
+		}
 		devopsAgent := agents.NewDevOpsAgent(agents.DevOpsAgentParams{
 			Formatter:            &gctx,
 			Publisher:            publisher,
@@ -449,34 +456,36 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		})
 
 		ca.director = agents.NewDirectorAgent(agents.DirectorAgentParams{
-			Formatter:      &gctx,
-			Publisher:      publisher,
-			Env:            env,
-			Files:          gctx.FileOps,
-			Search:         gctx.SearchOps,
-			Sys:            gctx.SysOps,
-			Edit:           gctx.ReplaceTool,
-			Flow:           gctx.FlowOps,
-			Thinker:        gctx.ThinkingTool,
-			MicroAgent:     gctx.MicroAgentTool,
-			DeepThinker:    gctx.DeepThinkingTool,
-			Repo:           gctx.RepoOps,
-			Guard:          guard,
-			RepoCtx:        repoCtx,
-			LLM:            directorEngine,
-			RepoAgent:      repoAgent,
-			CodingAgent:    codingAgent,
-			ChatAgent:      chatAgent,
-			MetaAgent:      metaAgent,
-			DevOpsAgent:    devopsAgent,
-			BrowserAgent:   browserAgent,
-			MaxSteps:       directorMaxSteps,
-			DisabledAgents: disabledAgents,
-			MetaRetryCount: metaRetryCount,
-			Config:         *ca.config,
-			LLMClient:      ca.client,
-			Blueprint:      ca.blueprint.viewFor("director"),
-			External:       agents.ExternalFrom(ca),
+			Formatter:         &gctx,
+			Publisher:         publisher,
+			Env:               env,
+			Files:             gctx.FileOps,
+			Search:            gctx.SearchOps,
+			Sys:               gctx.SysOps,
+			Edit:              gctx.ReplaceTool,
+			Flow:              gctx.FlowOps,
+			Thinker:           gctx.ThinkingTool,
+			MicroAgent:        gctx.MicroAgentTool,
+			DeepThinker:       gctx.DeepThinkingTool,
+			Repo:              gctx.RepoOps,
+			Guard:             guard,
+			RepoCtx:           repoCtx,
+			LLM:               directorEngine,
+			RepoAgent:         repoAgent,
+			CodingAgent:       codingAgent,
+			ChatAgent:         chatAgent,
+			DevOpsAgent:       devopsAgent,
+			BrowserAgent:      browserAgent,
+			PlasmaGenerator:   plasmaGen,
+			PlasmaUnavailable: plasmaWhy,
+			PlasmaStore:       plasma.NewStore(config.PlasmaStoreDir()),
+			MaxSteps:          directorMaxSteps,
+			DisabledAgents:    disabledAgents,
+			MetaRetryCount:    metaRetryCount,
+			Config:            *ca.config,
+			LLMClient:         ca.client,
+			Blueprint:         ca.blueprint.viewFor("director"),
+			External:          agents.ExternalFrom(ca),
 		})
 
 		codingAgent.SetBoardWriter(ca.director)

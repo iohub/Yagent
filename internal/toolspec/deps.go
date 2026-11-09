@@ -90,6 +90,16 @@ type BrowserResolver interface {
 	Available() (ok bool, reason string)
 }
 
+// PlasmaResolver 报告生成式 Agent 生成器（plasma，ADR-15）此刻是否可用。
+//
+// 为什么是端口而不是直接查配置：判据要读 `[plasma]` 配置、解释器与 zipapp 文件，
+// 三者都不在本包的依赖白名单里；而 `delegate_meta` 的**可用性**必须由本包的
+// Available 决定（golden 与 Surface 走同一句判定）。生产实现由 agents 侧注入，
+// 探针实现返回"已装配"——与 BrowserResolver 同一取向：缺依赖即降级，且必须带原因。
+type PlasmaResolver interface {
+	Available() (ok bool, reason string)
+}
+
 // DelegateFunc 是委派工具的统一步骤。target 是目标 Agent 名（"repo"/"coding"/
 // "security_auditor" 等），由 Director 的实现负责解析 context_refs、写便签、
 // 路由档位与超预算落盘。
@@ -151,6 +161,10 @@ type Deps struct {
 	Browser  BrowserResolver
 	Guard    Guard
 	Delegate DelegateFunc
+
+	// Plasma 是生成器可用性端口。nil = 未装配：delegate_meta 不进工具面，
+	// 原因写进 Surface.Skipped（ADR-15：降级必须可见，不许只在 Debug 日志里）。
+	Plasma PlasmaResolver
 
 	// Blueprint 是 read_blueprint 的执行器。它**恒非 nil**：
 	// 没有蓝图时工具要返回"为什么没有 + 怎么修"，而不是从工具面上静默消失（设计稿 §8）。

@@ -156,7 +156,6 @@ func newFullChainDirector(t *testing.T, workDir string, mock llm.Engine) *Direct
 		LLM:         mock,
 		MaxSteps:    10,
 	})
-	metaAgent := NewMetaAgent(gctx, publisher, mock, 3)
 	devopsAgent := NewDevOpsAgent(DevOpsAgentParams{
 		Formatter:  gctx,
 		Publisher:  publisher,
@@ -190,7 +189,6 @@ func newFullChainDirector(t *testing.T, workDir string, mock llm.Engine) *Direct
 		RepoAgent:      repoAgent,
 		CodingAgent:    codingAgent,
 		ChatAgent:      chatAgent,
-		MetaAgent:      metaAgent,
 		DevOpsAgent:    devopsAgent,
 		MaxSteps:       10,
 		MetaRetryCount: 3,
@@ -309,7 +307,10 @@ func TestFullChain_FullYoloMode(t *testing.T) {
 		t.Error("agent_exit should be registered")
 	}
 
-	delegateTools := []string{"delegate_repo", "delegate_coding", "delegate_chat", "delegate_meta"}
+	// delegate_meta 不在这份恒定清单里：它的可用性由生成器（plasma）决定（ADR-15），
+	// 默认部署（没有 plasma.pyz）下它本来就不在工具面上。判据与降级可见性见
+	// plasma_meta_test.go 的 TestDelegateMeta_GatedByPlasmaAvailability。
+	delegateTools := []string{"delegate_repo", "delegate_coding", "delegate_chat", "delegate_devops", "delegate_browser"}
 	for _, tool := range delegateTools {
 		if !adapterNames[tool] {
 			t.Errorf("delegate tool %q should be registered", tool)

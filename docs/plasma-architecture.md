@@ -1306,3 +1306,77 @@ respawn` 且序号从 `llm_req_000.json` 起、`diagnostics.json`(含 `PLS-101`)
 
 （后续每个 P 完成后在此追加。方案落地后本文可能被删——届时不变量须已同步进
 `internal/plasma/AGENTS.md`、`internal/llm/scripted` 的局部文档与根 `AGENTS.md` §4/§5.3/§9.2/§11。）
+
+### P9a 已落地（2026-11-09）
+
+**删除**（Go 侧不再有任何生成器，ADR-15）：`internal/agents/meta.go`（180 行：`MetaAgent` + 单次 LLM
+调用 + 流式）与 `internal/agents/meta.prompt.md`（108 行）；`director/meta_handler.go` 的
+`ParseMetaAgentOutput` / `ExtractJSONObject`（`MetaAgentHandler` 的 List/Register/Get 原样保留，
+P9b 还要用）；`director/types.go` 的 `MetaAgentResult`；`agents/deps.go` 的
+`renderCustomAgentToolPool` + `effectCategory`（第二套"广告源"）；`DirectorAgent.MetaAgent` 字段与
+`DirectorAgentParams.MetaAgent`（`refreshSubAgentEngines` 的 meta 分支随之删除）。
+`internal/config` 的 `MetaRetry` / `[agent] meta_retry_count` **保留不动** —— 语义已改为"编译失败后
+`--fix` 的轮数"（ADR-11），没有再新加第二个旋钮。`delegate_meta` 的 Spec 与
+`testdata/tool_surfaces.golden` **一个字节都没动**（降级发生在 `AvailableFor` 这一层，不是删 Spec）。
+
+**迁入**：`meta.prompt.md` 的 108 行提示工程原则 + 5 字段输出契约 + `{{TOOL_POOL_TABLE}}` 占位符整体
+搬到 `plasma/prompts/generate_seed.md`（118 行，头部注明来源与"Go 侧不再有生成器"）。新顶层目录
+`plasma/` 目前只有这一个文件，Python 包在 P10 落地；行数/文档/扫描三类守卫都无需改动即通过。
+Go 侧不再渲染工具池表格：`plasma.Manifest().Tools`（判据仍是 `Effect.Has(PlasmaPalette)`）由 Python 读、
+表格由 Python 填 —— 两份表必然漂移，那正是当年"广告了实现不了的工具"的形状。闸门
+`TestPlasmaToolPoolMatchesPalette`（由 `TestMetaPromptToolPoolMatchesPalette` 改写）同时钉
+"manifest 与 PlasmaPalette 一致"与"种子里只留占位符、没有硬编码工具表"。
+
+**驱动器**：`runMetaDesign` 整段换成 `internal/agents/plasma_meta.go`：
+`Generate → Compile（归一化字节，先补结构夹具再算 hash）→ Link（对活注册表复核）→
+VerifyStructural（5a，在线必跑）→ Ratchet（behavioral 传空、escalationApproved=false ⇒ 最高
+provisional）→ Store.Put（report 里写这个 grade）→ registerCustomAgent → setExecutorConfig →
+runCustomAgent → rollout/workdir 收尾`。错误文案改成"可执行的下一步"：Link 失败与 5a 失败都带
+`report.Text()` 前 5 行 + `plasmaFixHint`，"your output was NOT valid JSON" 这类只描述格式的文案已删除。
+`DirectorAgent` 新增窄接口 `plasmaGenerator`（`Generate(ctx, task, contextNote)`），`nil` = 降级；
+`Publisher` 直接用 Director 的父进程 publisher（不新建 dispatcher，否则 TUI 会多出一条不归任何
+Agent 的 chunk）；`Store`/`FixtureRunner` 可注入 —— 用例指到临时目录，绝不写用户 home 的产物仓。
+
+**降级可见（ADR-15）**：`internal/agents/plasma_gate.go` 的 `plasmaAvailable() (bool, string)` 三段判据
+（`[plasma] enable` → 解释器（显式路径存在，否则 PATH 上的 `python3`）→ zipapp 存在），每条原因都是
+"缺什么 + 怎么修"。`toolspec` 只声明 `PlasmaResolver` 窄接口（叶子约束），生产实现是
+`plasmaGate{gen, reason}`，由 `DirectorAgent.toolDeps()` 注入；`delegateAvailable("meta")` 改判它 ——
+不可用时 `delegate_meta` **不进 `Defs()`**，原因进 `Surface.Skipped` 并由 `surfaceFor` warn 出来
+（不是 `slog.Debug`）。装配层 `internal/app/plasma.go`：`buildPlasmaGenerator`（判据不过就连
+trampoline 都不建，避免"每次委派 exit 1"）+ `gcPlasmaWorkdirs`（启动期一次 `plasma.GCWorkdirs`，
+结果一行 `plasma-gc` 日志）。P10 之前 `plasma.pyz` 天然不存在 ⇒ 默认部署就是降级，这是**预期**状态。
+
+**执行参数改读 `LinkPlan.Config`**：`executeCustomAgent` 不再硬编码 `MaxSteps=15 / StopOnFinish=true /
+LLMTimeout=currentLLMTimeout()`，改由 `setExecutorConfig` 登记的 `plasma.ExecutorConfigView` 套用
+（`MaxSteps`/`StopOnFinish`/`LLMTimeout`/`MaxParallelReadOnlyTools`/`KeepToolResultTokens`/
+`CompressionEnable`；`Compression.Threshold` 等其余字段保持 `DefaultExecutorConfig` 的值）。
+**没有 plan 的老路径整套回落历史值并 warn**：第一版把零值 view 套上去，`StopOnFinish` 的零值 false
+让 `agent_exit` 不再终止循环，`TestCustomAgentDelegateTool_FinishTerminates` 从 1 次 LLM 调用变 2 次 ——
+这条用例就是那个回落的闸门。
+
+**验证**：`go build ./... && go vet ./...` 干净；`go test ./internal/agents/... ./internal/app/...
+./internal/config/` 全绿（9 个 e2e 与 P6/P8 用例未动）；`bash scripts/check_all.sh` **exit 0**；
+`git diff --stat internal/agents/testdata/tool_surfaces.golden internal/toolspec/schemas.json` **零输出**。
+**降级断言两份**：`TestDelegateMeta_GatedByPlasmaAvailability`（不可用 ⇒ 不在 `Defs()`、`Skipped()`
+含 `plasma.pyz` 与"修复"；同一条用例带正面对照"接上生成器就出现"，否则"被误删"也会让它绿）、
+`TestPlasmaAvailableWith_ReasonsAreActionable`（三段原因各含关键词与"修复"）。
+**变异两条全部转红并还原**：`plasmaAvailableWith` 改恒 `true` ⇒ 前者的三个子用例红；
+`plasmaAvailableFor` 改恒 `true` ⇒ `TestDelegateMeta_GatedByPlasmaAvailability` 红。
+**新驱动器用例 5 条**（假生成器 + 假夹具执行器）：注册+执行+落盘+参数登记、同名不覆盖、
+生成失败文案、Link 拒越权工具、5a 红则不注册不落盘。
+
+**行数结算**：根 `AGENTS.md` 仍 **608**（§4 删掉 Meta 行、把 Meta 段换成 plasma 驱动器三段式，
+等量压缩补回一行）；`internal/agents/AGENTS.md` 仍 **212**（硬约束 18 去掉 `meta.go` 引用）；
+`internal/plasma/AGENTS.md` 仍 **200**；`check_agents_md_size.sh` exit 0。新增
+`internal/agents/plasma_meta.go` 241 行、`plasma_gate.go` 154 行、`plasma_defaults.go` 56 行、
+`internal/app/plasma.go` 98 行、`plasma_meta_test.go` 345 行 —— 都不在 `check_file_sizes.sh` 的
+`internal/agents/director` 范围。
+**一处基线因"新增依赖边"上调**：`internal/blueprint` 自扫描 153/153 → **155/155**，来源逐条
+`git grep` 对照 HEAD 确认：`internal/app` 首次 import plasma（`app/plasma.go`）、
+`internal/agents` 首次 import embedbin（`plasma_gate.go` 让判定与 spawner 读同一个 zipapp 路径）。
+
+**待办（P9b，本阶段明确未做）**：① 加载期 `store → Surface` 接线（`plasma.LoadAll` 与它的
+`skipped` 账目进装配）；② 升级批准的用户回路（`escalation_approved` 现在恒 false，所以在线止于
+`provisional`）；③ 遥测账本（`plasma/telemetry.go` 已有形状，还没有读者）。
+另：`docs/ARCHITECTURE.md` / `ARCHITECTURE.en.md` 里的 `MetaAgent` 类图与表格仍是 P9a 之前的状态，
+需在 P10 文档收口时一并改（本轮只同步了根 `AGENTS.md` §4 与本文）。

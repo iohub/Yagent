@@ -7,10 +7,8 @@
 //   - Get 命中返回同一指针；未命中（空/非空注册表）返回 (nil, false)；
 //   - List/Names/Len 按注册（插入）序确定性返回，且为副本（外部修改不影响内部）；
 //   - 空注册表 List/Names/Len 返回空结果不 panic；
-//   - ParseMetaAgentOutput：合法输出（纯 JSON / markdown 围栏 / 周围文本，含
-//     systemPrompt 与执行结果字段）解析正确；非法输出返回 error 且错误文案
-//     与实现逐字一致（no JSON / 非法 JSON / 缺 agent_design / 空 agent_name）；
-//   - ExtractJSONObject：围栏剥离、周围文本、嵌套花括号原样保留、未闭合返回空串；
+//   - （P9a 删除）ParseMetaAgentOutput / ExtractJSONObject：生成职责移交 Python 之后，
+//     "解析 LLM 裸输出"这几条用例随函数一起删除；注册表三组保留。
 //   - 并发安全：多 goroutine 并发 Register/Get/List/Names 无 data race；
 //     同 key 并发注册恰一个成功、其余 ErrAlreadyRegistered（防重复语义并发成立）。
 
@@ -20,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -172,134 +169,6 @@ func TestMetaAgentHandlerEmptyRegistry(t *testing.T) {
 	}
 	if n := h.Names(); len(n) != 0 {
 		t.Errorf("Names() on empty registry = %v, want empty", n)
-	}
-}
-
-// ─── ParseMetaAgentOutput Tests ──────────────────────────────────────────
-
-// TestParseMetaAgentOutputValid 固化合法输出解析：
-// 纯 JSON / markdown 围栏（含与不含语言标签）/ 周围文本均能提取并解析；
-// systemPrompt 等于 agent_design 字段，执行结果字段（AgentName/ToolsUsed/
-// TaskForAgent/Thinking）逐字段校验。
-func TestParseMetaAgentOutputValid(t *testing.T) {
-	const validJSON = `{"thinking": "Designing agent for the task.", "agent_name": "Security Auditor", "agent_design": "You are a security auditor.", "tools_used": ["read_file", "search_by_regex"], "task_for_agent": "Audit the code."}`
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{"pure json", validJSON},
-		{"markdown fence with language tag", "```json\n" + validJSON + "\n```"},
-		{"markdown fence without language tag", "```\n" + validJSON + "\n```"},
-		{"surrounding text", "Here is the design:\n" + validJSON + "\nDone."},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			prompt, res, err := ParseMetaAgentOutput(tc.input)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if prompt != "You are a security auditor." {
-				t.Errorf("systemPrompt = %q, want %q", prompt, "You are a security auditor.")
-			}
-			if res == nil {
-				t.Fatal("execResult should not be nil on success")
-			}
-			if res.AgentName != "Security Auditor" {
-				t.Errorf("AgentName = %q, want %q", res.AgentName, "Security Auditor")
-			}
-			if res.AgentDesign != "You are a security auditor." {
-				t.Errorf("AgentDesign = %q, want the agent_design content", res.AgentDesign)
-			}
-			if len(res.ToolsUsed) != 2 || res.ToolsUsed[0] != "read_file" || res.ToolsUsed[1] != "search_by_regex" {
-				t.Errorf("ToolsUsed = %v, want [read_file search_by_regex]", res.ToolsUsed)
-			}
-			if res.TaskForAgent != "Audit the code." {
-				t.Errorf("TaskForAgent = %q, want %q", res.TaskForAgent, "Audit the code.")
-			}
-			if res.Thinking != "Designing agent for the task." {
-				t.Errorf("Thinking = %q, want %q", res.Thinking, "Designing agent for the task.")
-			}
-		})
-	}
-}
-
-// TestParseMetaAgentOutputErrors 固化非法输出语义：
-// 四类非法输出均返回 error，错误文案与实现逐字一致；
-// 失败时 systemPrompt/execResult 为零值。
-func TestParseMetaAgentOutputErrors(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     string
-		wantErr   string // 精确文案（无动态部分时使用）
-		errPrefix string // 非空时改用前缀断言（%w 包装含动态部分）
-	}{
-		{
-			name:    "no json object",
-			input:   "Just some plain text without JSON.",
-			wantErr: "no JSON object found in Meta-Agent output",
-		},
-		{
-			name:      "invalid json",
-			input:     `{"thinking": "test", "agent_name": "Test", "agent_design": "prompt", "tools_used": ["read_file"], "result": {not valid json}}`,
-			errPrefix: "failed to parse Meta-Agent JSON:",
-		},
-		{
-			name:    "missing agent_design",
-			input:   `{"thinking": "designing...", "agent_name": "Test", "tools_used": ["read_file"]}`,
-			wantErr: "agent_design is empty in Meta-Agent JSON",
-		},
-		{
-			name:    "empty agent_name",
-			input:   `{"thinking": "test", "agent_name": "", "agent_design": "Some prompt"}`,
-			wantErr: "agent_name is empty in Meta-Agent JSON",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			prompt, res, err := ParseMetaAgentOutput(tc.input)
-			if err == nil {
-				t.Fatalf("expected error, got nil (prompt=%q, res=%+v)", prompt, res)
-			}
-			if tc.errPrefix != "" {
-				if !strings.HasPrefix(err.Error(), tc.errPrefix) {
-					t.Errorf("error = %q, want prefix %q", err.Error(), tc.errPrefix)
-				}
-			} else if err.Error() != tc.wantErr {
-				t.Errorf("error = %q, want %q", err.Error(), tc.wantErr)
-			}
-			if prompt != "" || res != nil {
-				t.Errorf("on error systemPrompt/execResult should be zero, got %q / %+v", prompt, res)
-			}
-		})
-	}
-}
-
-// ─── ExtractJSONObject Tests ─────────────────────────────────────────────
-
-// TestExtractJSONObject 固化 JSON 提取行为（与门面层 director_test.go 同源锁定）：
-// 纯 JSON 原样、围栏剥离（含语言标签）、周围文本剥离、嵌套花括号返回外层完整对象、
-// 无花括号与未闭合花括号返回空串。
-func TestExtractJSONObject(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{"pure json", `{"key": "value"}`, `{"key": "value"}`},
-		{"markdown fence with language tag", "```json\n{\"key\": \"value\"}\n```", `{"key": "value"}`},
-		{"markdown fence plain", "```\n{\"key\": \"value\"}\n```", `{"key": "value"}`},
-		{"surrounding text", `Here's the output: {"key": "value"} with trailing text.`, `{"key": "value"}`},
-		{"nested braces", `{"key": {"nested": true}, "list": [1,2,3]}`, `{"key": {"nested": true}, "list": [1,2,3]}`},
-		{"no braces", "Just plain text without any braces.", ""},
-		{"unclosed brace", `{"key": "value"`, ""},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ExtractJSONObject(tc.input)
-			if got != tc.expected {
-				t.Errorf("ExtractJSONObject = %q, want %q", got, tc.expected)
-			}
-		})
 	}
 }
 

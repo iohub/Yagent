@@ -1,7 +1,8 @@
 package toolspec
 
-// 七个内建 Agent 的能力画像。这里是"谁能干什么"的唯一表达：
+// 六个内建 Agent 的能力画像。这里是"谁能干什么"的唯一表达：
 // 过去它散在 5 个 lookupToolFunc/switch 里，漏一个 case 就是一个工具静默消失。
+// （Meta 不再是内建 Agent —— 它的生成职责在 plasma/Python，见 ADR-15；所以这里没有它的画像。）
 //
 // 阅读方式：Grant 是能力白名单，Deny 在其后生效，Audience 由 Spec 自己声明受众。
 // 每个画像的解析结果由 golden_test.go 钉死在 testdata/tool_surfaces.golden，
@@ -18,9 +19,11 @@ const BrowserAll = EffectBrowserObserve | EffectBrowserAct | EffectBrowserEval |
 
 // ProfileDirector 是唯一的用户接口：只读分析 + 委派，绝不直接写文件。
 //
-// Palette 是 Meta 设计的 Custom Agent 能拿到的能力上限。今天它等价于
-// director.go 里那个独立的 getToolFunc switch；额外补进 CodeSemantic，
-// 因为 meta.prompt.md 一直在向模型广告这三个工具却没有实现（背景文档 §8 缺口）。
+// Palette 是生成式（plasma）Custom Agent 能拿到的能力上限的**历史来源**：真正的上限
+// 现在是 plasma.PlasmaPalette（只读族，ADR-4），这里保留是因为 Director 自己的 Palette
+// 仍决定"哪些工具能被搜出来"。
+// 额外补进 CodeSemantic，因为当年的 meta.prompt.md（现在是 plasma/prompts/generate_seed.md）
+// 一直在向模型广告这三个工具却没有实现（背景文档 §8 缺口）。
 var ProfileDirector = Profile{
 	Agent: "director",
 	Grant: EffectFSRead | EffectSearchRegex | EffectCogDeep | EffectFlow |

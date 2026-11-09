@@ -48,6 +48,11 @@ func (p Profile) testDeps() *Deps {
 		Deep:        probeDeep{},
 		Design:      probeDesign{},
 		Browser:     probeBrowser{},
+		// 探针按"生成器已装配"建模：golden 钉的是画像的能力数学（生成器接上之后
+		// delegate_meta 应在这个面上），而不是这台机器上有没有 plasma.pyz ——
+		// 后者是运行期降级，判据在 agents.plasmaAvailable()。写反的后果是 golden
+		// 随开发机的文件系统漂移。
+		Plasma: probePlasma{},
 		Delegate: func(context.Context, string, map[string]interface{}) (interface{}, error) {
 			return nil, nil
 		},
@@ -77,6 +82,15 @@ type probeSkills struct{}
 func (probeSkills) Catalog(int) string { return "" }
 
 func (probeSkills) Body(string, int, int) (SkillBody, error) { return SkillBody{}, ErrSkillNotFound }
+
+// probePlasma 是 PlasmaResolver 的探针：恒"已装配"。
+//
+// 它不猜本机有没有 plasma.pyz —— 那是 agents.plasmaAvailable() 的事，也是
+// Surface 在真实运行里要记进 Skipped 的那条降级。探针的职责只有一条：
+// 让 golden 描述"能力齐备时这个画像该有什么"，否则基线会随开发机漂移。
+type probePlasma struct{}
+
+func (probePlasma) Available() (bool, string) { return true, "" }
 
 // Match 返回画像应得的全部 Spec：Grant 命中 → Deny 排除 → Audience 允许 → Available 通过。
 // 结果按名字排序，与发给模型的 toolDefs 顺序一致。

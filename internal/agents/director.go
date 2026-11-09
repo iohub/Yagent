@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -20,6 +21,7 @@ import (
 	"yagent/internal/llm"
 	"yagent/internal/memory"
 	"yagent/internal/pause"
+	"yagent/internal/plasma"
 	"yagent/internal/thinklink"
 	"yagent/internal/tokenutil"
 	"yagent/internal/tools"
@@ -35,7 +37,6 @@ type DirectorAgent struct {
 	RepoAgent    *RepoAgent
 	CodingAgent  *CodingAgent
 	ChatAgent    *ChatAgent
-	MetaAgent    *MetaAgent
 	DevOpsAgent  *DevOpsAgent
 	BrowserAgent *BrowserAgent
 	promptFmt    PromptFormatter
@@ -61,6 +62,23 @@ type DirectorAgent struct {
 	metaHandler             *director.MetaAgentHandler
 	adapter                 *DirectorAdapter
 	llmClient               *llm.Client
+
+	// plasmaGen 是生成式 Agent 的**唯一**生成入口（ADR-14/15）。nil = 不可用：
+	// delegate_meta 不进工具面，原因进 Surface.Skipped。Director 不认识 spawner/
+	// workdir/--fix —— 它只知道"给我一份编译通过的 bundle，或一句可读的失败原因"。
+	plasmaGen plasmaGenerator
+	// plasmaWhy 是装配期判出的降级原因（nil 生成器时给模型与日志看）。
+	plasmaWhy string
+	// plasmaStore 是产物仓（nil ⇒ config.PlasmaStoreDir()）。测试必须能指到临时目录，
+	// 否则一条单测会把 bundle 写进用户的 home。
+	plasmaStore *plasma.Store
+	// plasmaRunner 是 5a 结构夹具的执行器（nil ⇒ 零值 PlasmaFixtureRunner）。
+	plasmaRunner plasma.FixtureRunner
+	// execConfigs 是 LinkPlan.Config 的存放处（key = CustomAgent.Name）。
+	// 为什么不在 CustomAgent 上加字段：那是 director 子包的纯数据类型，加一个
+	// plasma 的 view 会让"编排内核"认识装配参数；执行参数归门面层。
+	execConfigs map[string]plasma.ExecutorConfigView
+	execMu      sync.RWMutex
 
 	blueprint *BlueprintView
 
@@ -129,9 +147,18 @@ type DirectorAgentParams struct {
 	RepoAgent    *RepoAgent
 	CodingAgent  *CodingAgent
 	ChatAgent    *ChatAgent
-	MetaAgent    *MetaAgent
 	DevOpsAgent  *DevOpsAgent
 	BrowserAgent *BrowserAgent
+
+	// PlasmaGenerator 是生成器（nil = 不可用，走降级）。类型窄到一次 Generate：
+	// 装配层传 *PlasmaTrampoline，测试传假实现 —— 都不必起子进程。
+	PlasmaGenerator plasmaGenerator
+	// PlasmaUnavailable 是装配期判出的降级原因（nil 生成器时进 Skipped 与错误文案）。
+	PlasmaUnavailable string
+	// PlasmaStore 是产物仓（nil ⇒ config.PlasmaStoreDir()）。
+	PlasmaStore *plasma.Store
+	// PlasmaFixtureRunner 是 5a 执行器（nil ⇒ 零值 PlasmaFixtureRunner，与 CLI 同形）。
+	PlasmaFixtureRunner plasma.FixtureRunner
 
 	MaxSteps       int
 	DisabledAgents map[string]bool
@@ -156,9 +183,13 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 		RepoAgent:      p.RepoAgent,
 		CodingAgent:    p.CodingAgent,
 		ChatAgent:      p.ChatAgent,
-		MetaAgent:      p.MetaAgent,
 		DevOpsAgent:    p.DevOpsAgent,
 		BrowserAgent:   p.BrowserAgent,
+		plasmaGen:      p.PlasmaGenerator,
+		plasmaWhy:      p.PlasmaUnavailable,
+		plasmaStore:    p.PlasmaStore,
+		plasmaRunner:   p.PlasmaFixtureRunner,
+		execConfigs:    make(map[string]plasma.ExecutorConfigView),
 		promptFmt:      p.Formatter,
 		env:            p.Env,
 		files:          p.Files,
@@ -286,11 +317,6 @@ func (a *DirectorAgent) refreshSubAgentEngines() {
 			a.ChatAgent.LLM = e
 		}
 	}
-	if a.MetaAgent != nil {
-		if e := a.routingEngine("meta"); e != nil {
-			a.MetaAgent.LLM = e
-		}
-	}
 	if a.DevOpsAgent != nil {
 		if e := a.routingEngine("devops"); e != nil {
 			a.DevOpsAgent.LLM = e
@@ -322,11 +348,24 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	cfg.UserInput = task
 	cfg.Surface = surface
 	cfg.LLM = a.LLM
-	cfg.MaxSteps = 15
 	cfg.Publisher = a.Publisher
 	cfg.AgentName = ca.DisplayName
-	cfg.StopOnFinish = true
-	cfg.LLMTimeout = a.currentLLMTimeout()
+	// 执行参数来自 bundle.runtime（LinkPlan.Config），不再硬编码：写死 MaxSteps=15 会让
+	// step-budget 夹具永远绿，也让"plasma 决定运行时"变成空话。
+	//
+	// 没有计划（老路径直接 registerCustomAgent 的 Agent）时**整套回落**历史值，而不是把
+	// 零值 view 套上去：view.StopOnFinish 的零值是 false，套上去的后果是 agent_exit 不再
+	// 终止循环（用例：TestCustomAgentDelegateTool_FinishTerminates 从 1 次 LLM 调用变 2 次）。
+	planCfg, fromPlan := a.executorConfigFor(ca.Name)
+	if fromPlan {
+		applyExecutorConfig(&cfg, planCfg, a.currentLLMTimeout())
+	} else {
+		slog.Warn("custom agent 没有 plasma 装配计划，回落历史执行参数",
+			"agent", ca.Name, "max_steps", defaultCustomAgentMaxSteps, "stop_on_finish", true)
+		cfg.MaxSteps = defaultCustomAgentMaxSteps
+		cfg.StopOnFinish = true
+		cfg.LLMTimeout = a.currentLLMTimeout()
+	}
 
 	if rolloutWriter := a.createRolloutWriter(ctx, ca.DisplayName, task); rolloutWriter != nil {
 		defer rolloutWriter.Close()
@@ -344,6 +383,38 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	a.writeDelegateNote(ca.Name, "delegate_"+ca.Name, task, agentResult, nil)
 	return result.Text, nil
 }
+
+// applyExecutorConfig 把 plasma 的运行时视图套到 ExecutorConfig 上。
+//
+// 三条守卫，缺一条都会让"配置读到了但没生效"变成静默缺陷：
+//   - MaxSteps ≤0 → 兜底 15：0 会让循环立刻停下（生成侧写了个空字段就等于 Agent 不动）；
+//   - LLMTimeout ≤0 → 用调用方给的全局超时：0 会被当作"不设超时"，与 [llm] timeout 脱钩；
+//   - found=false（老路径的 CustomAgent）→ 整套值保持历史硬编码并 warn，
+//     **不许**静默用零值 —— 那正是上面两条要挡的东西。
+func applyExecutorConfig(cfg *ExecutorConfig, view plasma.ExecutorConfigView, fallbackTimeout time.Duration) {
+	if view.MaxSteps <= 0 {
+		view.MaxSteps = defaultCustomAgentMaxSteps
+	}
+	if view.LLMTimeout <= 0 {
+		view.LLMTimeout = fallbackTimeout
+	}
+	cfg.MaxSteps = view.MaxSteps
+	cfg.StopOnFinish = view.StopOnFinish
+	cfg.LLMTimeout = view.LLMTimeout
+	if view.MaxParallelReadOnlyTools > 0 {
+		cfg.MaxParallelReadOnlyTools = NormalizeMaxParallelReadOnlyTools(view.MaxParallelReadOnlyTools)
+	}
+	// 只覆盖 bundle 声明的那两个旋钮：compression.Options 的其余字段（Threshold/
+	// UltimateEnabled…）来自 DefaultExecutorConfig，整份替换会把它们清零。
+	cfg.Compression.Enabled = view.CompressionEnable
+	if view.KeepToolResultTokens > 0 {
+		cfg.Compression.KeepTokens = view.KeepToolResultTokens
+	}
+}
+
+// defaultCustomAgentMaxSteps 是"没有 plan"时的兜底步数，与历史硬编码同值。
+// 它现在只服务老路径（P9a 之前的 CustomAgent），不是可调参数。
+const defaultCustomAgentMaxSteps = 15
 
 func (a *DirectorAgent) injectSubAgentMemory(result AgentResult, toolCallID string, toolName string) {
 	if a.currentMemory == nil {
