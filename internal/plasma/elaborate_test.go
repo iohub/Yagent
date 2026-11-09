@@ -12,7 +12,7 @@ import (
 const minimalSpecJSON = `{
   "thinking": "需要只读审计能力",
   "agent_name": "Security Auditor",
-  "agent_design": "You are a security auditor. Inspect code and report findings.",
+  "agent_design": "You are a security auditor. Use ` + "`read_file`" + ` and ` + "`search_by_regex`" + ` to inspect code. When done call ` + "`agent_exit`" + ` with reason and a handoff conclusion.\n<thought>\ngoal: 审计注入风险\nreason: 先读代码再判断\nplan:\n[>] 读取文件\n[ ] 报告发现\n</thought>",
   "tools_used": ["read_file", "search_by_regex"],
   "task_for_agent": "审计 internal/foo 的注入风险"
 }`

@@ -9,6 +9,7 @@ package tokenutil
 import (
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pkoukk/tiktoken-go"
 )
@@ -21,6 +22,16 @@ var encoderInit sync.Once
 
 // estimateFallback 记录降级估算是否已启用（warn 只打印一次）。
 var estimateFallback sync.Once
+
+// fallbackEngaged 是"降级已经发生过"的粘滞事实，供判据侧读出来写进诊断。
+// 用 atomic 而不是裸 bool：EstimateTokens 会被并发调用（工具批次并行）。
+var fallbackEngaged atomic.Bool
+
+// IsFallback 报告本进程是否已经退回 len(text)/4 估算。
+// 降级是一次性粘滞的（首次离线失败后整个进程都走 len/4），对中文约 4 倍低估，
+// 所以任何拿 EstimateTokens 当预算判据的地方都应当把这件事说出来，
+// 而不是让人以为读到的是精确 token 数。
+func IsFallback() bool { return fallbackEngaged.Load() }
 
 // EstimateTokens 使用 tiktoken-go cl100k_base 精确估算文本的 token 数量。
 //
@@ -37,6 +48,7 @@ func EstimateTokens(text string) int {
 	})
 
 	if encoder == nil {
+		fallbackEngaged.Store(true)
 		estimateFallback.Do(func() {
 			slog.Warn("tokenutil: 编码器加载失败，后续所有 token 估算使用 len(text)/4 降级")
 		})
@@ -45,6 +57,7 @@ func EstimateTokens(text string) int {
 
 	tokens := encoder.Encode(text, nil, nil)
 	if tokens == nil {
+		fallbackEngaged.Store(true)
 		return len(text) / 4
 	}
 	return len(tokens)

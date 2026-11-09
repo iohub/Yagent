@@ -14,10 +14,12 @@
 ## 硬约束
 
 **1. 叶子包**，由 `scripts/check_plasma_leaf.sh` 守：只准标准库 + `toolspec` + `util` +
-`projectid` + `tokenutil`。需要的外部能力一律作为值或窄接口传进来 ——
-`Compiler.Palette`（P1 起是 `PlasmaPalette`）、`Defaults`（配置值）、
+`projectid` + `tokenutil` + `thinklink`。需要的外部能力一律作为值或窄接口传进来 ——
+`Compiler.Palette`（生产注入 `PlasmaPalette`）、`Defaults`（配置值）、
 `FixtureRunner`（P6，夹具执行）、`Spawner`（P8，trampoline）。
 **不要 import agents / tools / llm / config / messaging。**
+`tokenutil` 与 `thinklink` 进白名单是为了**复用判据而不是重写**：预算必须与压缩阈值同一个计数器，
+`<thought>` 契约必须走 `ThoughtPlan.Validate`。两者都已实测是叶子包。
 
 **2. `Palette` 刻意不给默认值。** 零值 palette 会拒掉一切工具（`TestCompile_ZeroPaletteRejectsEverything`）
 —— "忘配 palette"必须是全拒而不是全放行。生产由装配层注入 `PlasmaPalette`（`palette.go`）。
@@ -72,6 +74,22 @@ P0 只可能产出 `provisional`（5a/5b 尚未接入），更高的档必须有
 **11. `SnakeCase` 单源在 `internal/util/snakecase.go`。** 它原先是 `agents.toSnakeCase`
 （只有一个生产调用点），P0 把它移到 util 供两侧共用；各写一份就是"两份同形实现各自漂走"。
 空结果回落 `custom_agent`，保证调用方永远拿到合法标识符。
+
+**12. 阶段 4 全是 warning，不阻断**（`consistency.go`）。它指出"会静默坏掉"的形状，
+但不足以断定 bundle 不可用；阻断由阶段 1-3 的 error 负责。warning 经 `Report.Warnings()`
+交给 Emit（P4）写进 `quality.lint`，作为进化适应度的一项。
+**刻意不做"从自然语言推断调用图/终止性"**：那构不出来，写进诊断只是文档表演。
+
+**13. 按形状识别的规则必须放过同形正常散文**（根 `AGENTS.md` §11 坑 42）。
+PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 token，且那个 token **是别的注册工具的
+参数名**"——最后这一条把普通散文里的反引号词挡在外面。
+`TestConsistency_ParamMismatchSparesNormalProse` 用 `` `注入风险` `` 作同形反例，删掉那个
+"是别的工具参数"的条件它就红。参数名实测：`read_file`/`create_file` 用 `target_file`，
+`search_replace_in_file` 用 `file_path`（**不是** `path`，设计稿早期例子写错过）。
+
+**14. token 预算必须说出降级状态。** `tokenutil.IsFallback()`（P2 新增）报告本进程是否已退回
+`len/4`。降级是一次性粘滞的、对中文约 4 倍低估，所以 PLS-304 的 note 必须把这件事说出来，
+否则读诊断的人会以为那是精确 token 数。`PromptTokenBudget=8000` 留余量也是为它。
 
 ## 测试必须与生产同形（坑 39）
 

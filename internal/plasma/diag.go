@@ -31,6 +31,13 @@ const (
 	CodeDenyConflict   = "PLS-206"
 	CodeUnknownEffect  = "PLS-207"
 	CodeEscalation     = "PLS-210"
+
+	CodeNoExitContract  = "PLS-301"
+	CodeParamMismatch   = "PLS-302"
+	CodeThoughtContract = "PLS-303"
+	CodePromptBudget    = "PLS-304"
+	CodeDeadSelection   = "PLS-306"
+	CodeDeniedMention   = "PLS-307"
 )
 
 // Diagnostic 的 Path 用 bundle 相对定位（bundle.tools[3]），让生成侧能精确改一处而不是整份重写。

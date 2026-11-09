@@ -22,15 +22,14 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
-	// 149/149：P1 让 agents 首次 import plasma（renderCustomAgentToolPool 与 runCustomAgent
-	// 都改用 plasma.PlasmaPalette，广告侧与准入侧必须同一个常量），新增一条 agents→plasma。
-	// 上一版 148/148 的归因：新增 internal/plasma（Plasma P0）带来三条边——
-	// plasma→toolspec（MatchNames/EffectOf/EffectFromNames/ExitToolName，判据的单一来源）、
-	// plasma→util（SnakeCase）、agents→util（同一处 SnakeCase：原先 agents.toSnakeCase 是包内私有，
-	// 单源化到 util 后 agents 首次模块级依赖它）。更新前用 go list -f '{{.Imports}}' 逐条确认过。
+	// 151/151：P2 让 plasma 再 import thinklink（复用 ThoughtPlan.Validate，不重写 thought 契约）
+	// 与 tokenutil（阶段 4 的预算必须与压缩阈值同一个计数器），两条新边。两者都已实测是叶子包。
+	// 上一版 149/149：P1 让 agents 首次 import plasma（工具池广告与准入同改用 PlasmaPalette）。
+	// 148/148：新增 internal/plasma（P0）带来 plasma→toolspec、plasma→util、agents→util
+	//（`toSnakeCase` 单源化成 `util.SnakeCase`）。更新前用 go list -f '{{.Imports}}' 逐条确认过。
 	// 更早 145/145：求助与授权从弹窗改成 footer 面板，components/user_help_dialog.go 随之删除。
-	if out != 149 || in != 149 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 149/149 —— 形状变了，先确认变化来源", out, in)
+	if out != 151 || in != 151 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 151/151 —— 形状变了，先确认变化来源", out, in)
 	}
 	for i := 1; i < len(snap.Leaves); i++ {
 		if snap.Leaves[i-1].Dir >= snap.Leaves[i].Dir {

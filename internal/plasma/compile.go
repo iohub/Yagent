@@ -35,7 +35,7 @@ type Compiler struct {
 // effective 是本次编译真正使用的上限。未批准的升级位不在里面，所以那些工具照旧被拒。
 func (c *Compiler) effective() toolspec.Effect { return c.Palette | c.EscalationApproved }
 
-// Compile 跑阶段 1-3（Parse / Resolve / Typecheck）。阶段 4 属 P2、5 属 P6、6 属 P4。
+// Compile 跑阶段 1-4（Parse / Resolve / Typecheck / Consistency）。阶段 5 属 P6、6 属 P4。
 // 一次跑完全部阶段而不是遇错即停：生成侧需要一轮拿到所有问题，否则每修一处就要一次往返。
 func (c *Compiler) Compile(ctx context.Context, b *Bundle) *Report {
 	r := &Report{Grade: GradeProvisional}
@@ -47,6 +47,7 @@ func (c *Compiler) Compile(ctx context.Context, b *Bundle) *Report {
 	c.parse(b, r)
 	selected, rejected := c.resolve(b, r)
 	c.typecheck(b, selected, rejected, r)
+	c.consistency(b, r)
 
 	if r.HasErrors() {
 		r.Grade = ""

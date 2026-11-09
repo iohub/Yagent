@@ -15,12 +15,22 @@ import (
 var testPalette = toolspec.EffectFSRead | toolspec.EffectSearchRegex |
 	toolspec.EffectCodeGraph | toolspec.EffectFlow | toolspec.EffectToolLoad
 
+// goodPrompt 是一份真正合规的系统提示：点名全部所选工具 + agent_exit 收尾契约 +
+// 合规的 <thought> 模板。阶段 4 的一致性对账要求这些，所以"干净 bundle"必须真的干净，
+// 否则每条规则用例都会带上无关的 warning，精确码集断言就失去意义。
+const goodPrompt = "You are a security auditor.\n" +
+	"Use `read_file` to inspect code, `search_by_regex` to locate patterns, " +
+	"and `find_function_caller` to trace callers.\n" +
+	"When done, call `agent_exit` with reason and a handoff conclusion.\n" +
+	"<thought>\ngoal: 审计目标模块的注入风险\nreason: 需要先读代码再判断\n" +
+	"plan:\n[>] 读取目标文件\n[ ] 报告发现\n</thought>"
+
 func cleanBundle() *plasma.Bundle {
 	return &plasma.Bundle{
 		SchemaVersion: plasma.SchemaVersion,
 		Name:          "security_auditor",
 		DisplayName:   "Security Auditor",
-		Prompt:        plasma.Prompt{System: "You are a security auditor.", Lang: "Chinese"},
+		Prompt:        plasma.Prompt{System: goodPrompt, Lang: "Chinese"},
 		Tools:         []string{"read_file", "search_by_regex", "find_function_caller"},
 		Policy:        plasma.Policy{Deny: []string{"fs_write", "shell"}, WorkspaceScoped: true},
 		Runtime: plasma.Runtime{
@@ -35,6 +45,17 @@ func cleanBundle() *plasma.Bundle {
 func codes(r *plasma.Report) []string {
 	out := make([]string, 0, len(r.Diagnostics))
 	for _, d := range r.Diagnostics {
+		out = append(out, d.Code)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// errorCodes 只取 error 档：阶段 4 的 warning 是另一组判据（consistency_test.go 单独钉），
+// 混进来会让每条规则用例都带上无关噪声，"只触发它自己"这条隔离断言就失去意义。
+func errorCodes(r *plasma.Report) []string {
+	out := make([]string, 0, len(r.Diagnostics))
+	for _, d := range r.Errors() {
 		out = append(out, d.Code)
 	}
 	sort.Strings(out)
@@ -100,7 +121,7 @@ func TestCompile_ReportsEachRule(t *testing.T) {
 		{
 			name:   "工具超出 palette",
 			mutate: func(b *plasma.Bundle) { b.Tools = append(b.Tools, "run_bash") },
-			want:   []string{plasma.CodeOutsidePalette, plasma.CodeEscalation},
+			want:   []string{plasma.CodeOutsidePalette}, // PLS-210 是 warning，由 palette_test 钉
 		},
 		{
 			name:    "palette 不含 flow 就没有收尾通道",
@@ -151,14 +172,19 @@ func TestCompile_ReportsEachRule(t *testing.T) {
 			}
 			c := &plasma.Compiler{Palette: pal}
 			r := c.Compile(context.Background(), b)
-			got := codes(r)
+			got := errorCodes(r)
 			want := append([]string(nil), tc.want...)
 			sort.Strings(want)
 			if !equalCodes(got, want) {
-				t.Errorf("诊断码 = %v, want %v\n%s", got, want, r.Text())
+				t.Errorf("error 码 = %v, want %v\n%s", got, want, r.Text())
 			}
-			if len(want) == 0 && r.HasErrors() {
-				t.Errorf("干净 bundle 不该有 error:\n%s", r.Text())
+			if len(want) == 0 {
+				if r.HasErrors() {
+					t.Errorf("干净 bundle 不该有 error:\n%s", r.Text())
+				}
+				if len(r.Warnings()) != 0 {
+					t.Errorf("干净 bundle 也不该有 warning（夹具必须真的合规）:\n%s", r.Text())
+				}
 			}
 			if len(want) > 0 && !r.HasErrors() {
 				t.Errorf("期望 %v 但 HasErrors()=false（规则没响）", want)
