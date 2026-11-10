@@ -1532,3 +1532,89 @@ checkout 都换字节）：内联 Python 手写 ZIP，成员按名字排序、�
 **待办（P11）**：① 5b 行为夹具（真 LLM 回放）+ `judge` rubric；② `evolve` 的评分/变异/选择
 与 Goodhart 三防线；③ `author-fixtures` 接 LLM 出题（当前只产草稿）；④ `propose` 的内建
 Agent diff 提案与 TUI `/plasma` `/proposals`（P12）。
+
+### P11 已落地（2026-11-10）
+
+**5b 行为夹具（`internal/agents/plasma_behavioral.go`，217 行）。** `RunBehavioral` 不再是
+"需要真 LLM"的占位。四条纪律写死在实现里：① 引擎**只由调用方注入**（`PlasmaFixtureRunner.LLM`），
+runner 自己 new 引擎会让"测试跑 scripted、生产跑另一个"的差异永不出现在任何用例里；② 工作区
+先 `plasma.CopyTree` 复制到 `os.MkdirTemp` + `0700` 的沙箱，文件/检索/项目路径三处 `Deps` 全部
+改指沙箱，跑完 `RemoveAll` —— 5b 读不到 store 里的原始快照（ADR-5）；③ 判据复用 5a 的
+`evaluateExpect`（**单一实现**），`Rubric` 只随 `Outcome` 带给 judge，Go 侧不评分；
+④ 双预算（ADR-3 补偿控制）：token 超 `behavioral_token_budget` 或墙钟超
+`behavioral_fixture_timeout` ⇒ `Passed=false` 且 `Reason` 明写"未验证：…（used/budget / 上限）"，
+**绝不静默通过**；预算判定在 Expect 之后、原因用 `；` 拼接，所以"契约不符 + 还超预算"两条
+一起说。`<=0` 的预算按"没配"处理（fail-closed）：当成"不限"等于让一次忘配白送一个 verified。
+
+**`fixture_run` 只有一个生产者。** `emitFixtureMetrics` 在写账本前**强制**置
+`FixtureRun=true`，调用方不需要记得（需要调用方记住的标记迟早会在某条新路径上漏掉）。
+5a 与 5b 都走它，CLI 侧再把 `PlasmaTelemetrySink` 接上 —— 生产统计因此不可能被夹具样本污染。
+
+**`compile --behavioral` 的棘轮。** 流程是 `VerifyStructural`（5a）→ 逐条 `RunBehavioral`（5b）→
+`Ratchet(...)`：5a 全过 + 5b 非空且全过 + 无未批准升级 ⇒ `verified`；否则停在 `provisional`
+并**逐个点名**失败夹具（`failedFixtureNames`）。只有这条路径 `store.Put` 落盘 —— 不带
+`--behavioral` 时行为与 P9 完全一致（CLI 不写 store、在线止于 provisional）。引擎构造抽成
+`plasmaEngineFor` 接缝（生产 `llm.NewClient`、测试 `internal/llm/scripted`），并且**只在真有
+behavior fixtures 要跑时**才要求引擎可用：零条夹具时 `--behavioral` 的语义是"没有可跑的题"，
+不是"你要的那一步做不了"，混淆这两种会让没配 provider 的机器连"bundle 里没有行为夹具"都问不出来。
+
+**`judge`（`plasma/judge.py`，235 行）。** `--in outcomes.json --out verdict.json`，stdout 只有一份
+JSON、口径与逐条理由一律 stderr，退出码 0=pass / 1=fail / 2=用法错 / 3=内部错。首版是**确定性
+启发式**（不调 LLM）：`score = 50×fixture_pass_rate + 15×exit_contract_ok + 10×deliverable_nonempty
++ 15×steps_efficiency + 10×token_efficiency − 2×lint`，截断到 [0,100]。**判决是门槛不是分数的
+别名**：必须"全部夹具通过 + exit 契约成立 + 交付非空 + score ≥ 60"，四条缺一即 fail ——
+否则"夹具全红但 token 很省"能拿到 60 分。空 `fixtures` 恒 fail（没有观测的通过是最危险的绿灯）。
+
+**`evolve`（`plasma/evolve.py`，424 行 + `cmd_plasma_evolve.go` 401 行）。** 分工是 ADR-1 的直接
+结果：Python 产出候选（评分 + 变异），Go 裁决候选（编译 1–4 + 5a + 5b + judge）。适应度按 §6.7：
+`成功率 + 1/(1+平均步数) + 1/(1+平均token) + 批准率 − 降级率 − lint率`；样本数 <
+`promote_min_runs` **只影响升档**、不丢弃（仍作变异父本）。三种确定性变异：`tool-add`（池子
+只放**真实注册 + Effect 落在 PlasmaPalette 内**的名字，否则那种变异恒被 PLS-101/201 拒）、
+`prompt-local`（追加一条自检句式）、`runtime-knob`（`max_steps` 往下收 3 步 —— 放宽不是变异
+而是"花钱买通过"）。每个候选带 `lineage: {parent_hash, mutation, rejected: []}`，且**不继承**
+父本的 `fixtures`/`quality`（抄一份等于让新 hash 白拿旧的一次通过）。Go 侧流程：读 telemetry →
+Python `evolve` → 逐候选 `Compile`+`5a` → Python `author-fixtures`（独立谱系）→ `5b` → Python
+`judge` → 全过才 `Put` 成 `verified`。一个候选失败**不中断整批**：诊断码进 `lineage.rejected[]`
+（免费的负样本）。
+
+**Goodhart 三防线（每条都有能红的用例）。** ① *夹具不可变*：`Store.Put` 对已存在的 hash 目录
+**逐字节比较** `bundle.json`，不一致 ⇒ `ErrImmutable` + `PLS-601` 拒写；新 hash 的 grade 天然
+`provisional` 不继承（`store.go`、`TestStore_RejectsBundleThatDiffersUnderSameHash`、
+`TestStore_FixtureChangeStartsFreshGrade`）。② *出题谱系分离*：判据只有一份
+`CheckFixtureProvenance`（导出，三处调用），变异体（`lineage.mutation` 非空）的
+`fixtures.provenance.lineage` 必须**不同**，否则 `ErrFixtureProvenance` + `PLS-602`；
+`evolve` 在跑 5b **之前**就问一次 —— 让注定被拒收的 bundle 先烧一轮真 LLM 是把防线做成事后检查。
+③ *适应度含生产项*：`_production_records` 只吃 `fixture_run` 不为真的样本，`fixture_run` 缺失
+按 false 处理（P9b 之前的老行确实是生产样本）；`test_evolve.EvolveFitness.test_fixture_samples_are_excluded`
+用"生产全失败 + 夹具全成功"的混合样本证明夹具被排除（若计入，`success_rate` 会从 0 抬到 0.5）。
+
+**三条变异验证（在 `/tmp` 副本上跑，逐条确认会红）。** ① 删掉 5b 的 token 预算分支 ⇒
+`TestPlasmaFixtureRunner_BehavioralTokenBudget` 红（"token 超预算必须失败"）；② 把
+`store.go` 的 `prov == mutation` 改成恒假 ⇒ `TestStore_RejectsSameLineageFixtures` 红
+（"同谱系出题应被拒，得到 `<nil>`"）；③ 把 `evolve._production_records` 的过滤去掉 ⇒
+`test_evolve` 红（`samples_used` 6 ≠ 5）。
+
+**端到端 dry-run（隔离 HOME，6 行 telemetry：5 生产 + 1 夹具）。**
+`yagent plasma evolve --in /tmp/telemetry.jsonl --out /tmp/cand --dry-run` 实测输出：
+`samples: 5 条生产样本（已排除夹具样本 1 条）`、父本 `fitness=1.9675 promote_eligible=true`、
+三个候选各自记账（`0-tool-add` / `1-prompt-local` / `2-runtime-knob`，structural 4/4 通过，
+5b 因本机无 provider 记"未验证" ⇒ `rejected: 5b 未全绿`）、`next: 下次建议运行时间…（本阶段无
+后台调度，需手动触发）`。整批没有因任何一个候选被拒而中断。
+
+**与文档的偏差（显式记录）。** ① **没有后台调度**：`evolve_interval` 本阶段只做配置解析与
+"下次可运行"提示，定时器留 P12；② `judge` 首版是确定性启发式，不调 LLM（评分口径写进
+stderr，便于解释）；③ `evolve` 首版只做三种**确定性**变异，需要 LLM 的 prompt 重写留 P12
+（`--sample-cmd` 接缝未启用，Python 侧不直连 provider）；④ `author-fixtures` 仍是机械推导草稿，
+尚未接 LLM 出题（谱系分离已生效，出题质量留给 P12）；⑤ `propose` 与 TUI `/plasma` 未动。
+
+**行数结算**：根 `AGENTS.md` 仍 **608**；`internal/agents/AGENTS.md` 仍 **212**；
+`internal/plasma/AGENTS.md` 仍 **200**；`tool_surfaces.golden` 与 `schemas.json` **零改动**。
+新增文件：`plasma_behavioral.go` 217、`cmd_plasma_evolve.go` 401、`cmd_plasma_render_evolve.go` 199、
+`fixture_workspace.go` 158、`judge.py` 235、`evolve.py` 424。`bash scripts/check_all.sh` exit 0
+（14 把守卫 + 全量单测）；`python3 -m unittest discover plasma/tests` **52 tests OK**；
+`dist/bin/plasma.pyz` 已重建（12 个文件）且 `check_plasma_pyz_sync.sh` 逐字节一致。
+
+**待办（P12）**：① `propose` 的内建 Agent diff 提案与 TUI `/plasma` `/proposals`；
+② `evolve` 的后台调度（定时器 + 与 `evolve_interval` 对齐的"下次可运行"落地）；
+③ `author-fixtures` 接 LLM 出题 + 用 `lineage.rejected[]` 作反例喂回；
+④ `judge` 引入 LLM 评审（`Rubric` 已随 `Outcome` 传到 Python 侧）。

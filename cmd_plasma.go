@@ -36,6 +36,10 @@ var plasmaFlags struct {
 	minRuns    int
 	force      bool
 	asJSON     bool
+	evolveIn   string
+	evolveOut  string
+	maxCands   int
+	dryRun     bool
 }
 
 // usageError 标记"命令用法错"（exit 2），与"这次操作失败"（exit 1）区分开。
@@ -118,6 +122,26 @@ var plasmaPromoteCmd = &cobra.Command{
 	},
 }
 
+var plasmaEvolveCmd = &cobra.Command{
+	Use:   "evolve [--in <telemetry.jsonl>] [--out <dir>] [--max-candidates N] [--dry-run]",
+	Short: "Offline evolution: telemetry -> fitness -> candidates -> compile/5a/5b/judge",
+	Long: `Evolve is the offline pipeline. It is **off by default** ([plasma] evolve_enable):
+it is the only switch that changes system behaviour without a user action.
+
+One candidate failing does not stop the batch: its diagnostic codes go into
+lineage.rejected[], and the rest keep going.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		failPlasma(runPlasmaWithLogging(func() error {
+			return runPlasmaEvolve(plasmaEvolveOptions{
+				In:            plasmaFlags.evolveIn,
+				Out:           plasmaFlags.evolveOut,
+				MaxCandidates: plasmaFlags.maxCands,
+				DryRun:        plasmaFlags.dryRun,
+			}, os.Stdout)
+		}))
+	},
+}
+
 func init() {
 	plasmaCompileCmd.Flags().StringVar(&plasmaFlags.bundle, "bundle", "", "path to bundle.json")
 	plasmaCompileCmd.Flags().BoolVar(&plasmaFlags.behavioral, "behavioral", false,
@@ -145,8 +169,17 @@ func init() {
 		"skip the grade/runs gate (still records the grade)")
 	plasmaPromoteCmd.Flags().BoolVar(&plasmaFlags.asJSON, "json", false, "emit JSON instead of text")
 
+	plasmaEvolveCmd.Flags().StringVar(&plasmaFlags.evolveIn, "in", "",
+		"telemetry ledger (default: <store>/telemetry.jsonl)")
+	plasmaEvolveCmd.Flags().StringVar(&plasmaFlags.evolveOut, "out", "",
+		"output directory (default: <store>/evolve)")
+	plasmaEvolveCmd.Flags().IntVar(&plasmaFlags.maxCands, "max-candidates", 3,
+		"how many candidates to produce")
+	plasmaEvolveCmd.Flags().BoolVar(&plasmaFlags.dryRun, "dry-run", false,
+		"evaluate candidates without writing them to the store")
+
 	plasmaCmd.AddCommand(plasmaCompileCmd, plasmaTestCmd, plasmaSampleCmd,
-		plasmaManifestCmd, plasmaListCmd, plasmaPromoteCmd)
+		plasmaManifestCmd, plasmaListCmd, plasmaPromoteCmd, plasmaEvolveCmd)
 	rootCmd.AddCommand(plasmaCmd)
 }
 

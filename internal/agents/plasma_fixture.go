@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"yagent/internal/compression"
 	"yagent/internal/llm"
@@ -40,6 +42,22 @@ type PlasmaFixtureRunner struct {
 	// FixtureRun 由本文件**强制**置 true，调用方不需要记得 —— 一个需要调用方记住的
 	// 标记迟早会在某条新路径上漏掉，而漏掉的表现是"夹具样本污染生产评分"。
 	Metrics func(DelegationMetrics)
+
+	// LLM 是 5b 的行为夹具引擎（生产传真引擎、测试传 `internal/llm/scripted`）。
+	//
+	// **只由调用方注入**：runner 自己 new 一个引擎的后果是"测试跑 scripted、生产跑的
+	// 是另一个"，而两侧的差异永远不会在任何一条用例里出现。nil ⇒ 5b 报"未验证"，
+	// 绝不静默通过（ADR-3：超预算/未执行都不许白送 verified）。
+	LLM llm.Engine
+	// BehavioralTokenBudget 是 5b 的 token 预算（[plasma] behavioral_token_budget）。
+	// **<=0 = 没配**，5b 直接判"未验证"：把它当"不限"等于让一次忘配变成一次白送的 verified。
+	BehavioralTokenBudget int
+	// BehavioralTimeout 是单条 5b 的墙钟上限（[plasma] behavioral_fixture_timeout）。
+	// <=0 = 只受调用方 ctx 约束；生产一律显式配上（双预算是 ADR-3 的补偿控制）。
+	BehavioralTimeout time.Duration
+	// WorkspaceRoot 是夹具 `workspace` 相对路径的基准目录（生产上是 bundle.json
+	// 所在目录）。空 ⇒ 相对路径的 workspace 直接报错，不回落到 CWD。
+	WorkspaceRoot string
 }
 
 // 编译期确认：接口漂移在 build 阶段就红，而不是等到某个调用点。
@@ -67,17 +85,9 @@ func (r *PlasmaFixtureRunner) RunStructural(ctx context.Context, plan *plasma.Li
 	return r.runScript(ctx, plan, f), nil
 }
 
-// RunBehavioral 是 5b 的占位：真 LLM 调用属 P11。
-//
-// 返回"未执行"而不是 error：error 会被上层当成"这一次验证失败"重试或中断，
-// 而事实是"离线才跑"。也不返回 Passed=true —— 那等于把 5b 的门白送掉。
-func (r *PlasmaFixtureRunner) RunBehavioral(_ context.Context, _ *plasma.LinkPlan, f plasma.Fixture) (plasma.Outcome, error) {
-	return plasma.Outcome{
-		FixtureID: f.ID,
-		Passed:    false,
-		Reason:    "behavioral fixtures require a real LLM (offline only; P11)",
-	}, nil
-}
+// RunBehavioral 的实现在 plasma_behavioral.go（阶段 5b）：它要沙箱 + 双预算，
+// 与 5a 的四条断言不是同一种东西，混在一个文件里会让"5a 用脚本、5b 用真引擎"
+// 这条分工变得不明显。
 
 // checkToolContainment 断言 Surface 恰好是 plan.Agent.Tools ∪ {agent_exit}。
 //
@@ -198,6 +208,10 @@ func (r *PlasmaFixtureRunner) runScript(ctx context.Context, plan *plasma.LinkPl
 		TokensIn:  int(exec.Usage.PromptTokens),
 		TokensOut: int(exec.Usage.CompletionTokens),
 		StopKind:  kind,
+		// Rubric / DeliverableChars 与 5b 同一口径：5a 的观测同样会进 outcomes.json，
+		// 评分侧读到的两条通道必须同形，否则 judge 要对两种输入写两份解析。
+		Rubric:           append([]string(nil), f.Rubric...),
+		DeliverableChars: utf8.RuneCountInString(strings.TrimSpace(deliverableText(exec))),
 	}
 	r.emitFixtureMetrics(plan, f, out, err)
 	return out
@@ -228,7 +242,14 @@ func (r *PlasmaFixtureRunner) emitFixtureMetrics(plan *plasma.LinkPlan, f plasma
 
 // surfaceOf 是只此一处的装配入口：生产、夹具、静态断言都经 surfaceFor。
 func (r *PlasmaFixtureRunner) surfaceOf(plan *plasma.LinkPlan) *tools.Surface {
-	return surfaceFor(r.profileFor(plan), r.fixtureDeps(plan), plan.Agent.DisplayName)
+	return r.surfaceWithDeps(plan, r.fixtureDeps(plan))
+}
+
+// surfaceWithDeps 是 surfaceOf 的可注入形态：5b 把文件/检索依赖换成沙箱版，
+// 装配路径仍然只有 surfaceFor 一条（否则"夹具的 Surface"与"生产的 Surface"
+// 会成为两份实现，而它们的分歧只会在某个夹具静默通过时暴露）。
+func (r *PlasmaFixtureRunner) surfaceWithDeps(plan *plasma.LinkPlan, deps *toolspec.Deps) *tools.Surface {
+	return surfaceFor(r.profileFor(plan), deps, plan.Agent.DisplayName)
 }
 
 func (r *PlasmaFixtureRunner) profileFor(plan *plasma.LinkPlan) toolspec.Profile {

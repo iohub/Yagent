@@ -61,6 +61,14 @@ type Outcome struct {
 	TokensIn  int
 	TokensOut int
 	StopKind  string
+	// Rubric 是出题者给的评审要点，**不是** Go 侧的评分依据：Go 只做能机械判定的
+	// Expect，主观部分交给 judge（P11 的 Python 侧）。放在这里是因为它属于
+	// "这一条夹具的观测"，评分侧要拿到它才知道该说什么。
+	Rubric []string
+	// DeliverableChars 是本次交付文本的字符数。评分侧靠它判 deliverable_nonempty ——
+	// 只传 Passed 的话，judge 只能拿夹具结论当交付质量，而"夹具过了但交付是空"是
+	// 一条真实存在的路径（Expect 里没有 DeliverableContains 时就会这样）。
+	DeliverableChars int
 }
 
 // Outcomes 是有序的观测集合（顺序 = 夹具声明顺序，诊断按同一顺序发射）。

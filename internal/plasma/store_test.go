@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,6 +131,40 @@ func TestStore_RejectsSameLineageFixtures(t *testing.T) {
 	b.Fixtures.Provenance.Lineage = ""
 	if _, err := s.Put(b, nil); !errors.Is(err, plasma.ErrFixtureProvenance) {
 		t.Fatalf("空 provenance 应被拒，得到 %v", err)
+	}
+}
+
+// 夹具不可变（ADR-5 第一条防线）：同 hash 目录里已有 bundle.json 且字节不一致 ⇒ 拒写。
+//
+// hash 是"归一化 IR 的 sha256"，落盘的是 MarshalIndent 的字节；两者正常同源，
+// 但一旦有人在中间做了归一化行为变更（或手改了那目录），"hash 相同"就不再等价于
+// "内容相同"。此处的复现方式就是后者：磁盘被改过一个字节，而内存里的 b 没动。
+func TestStore_RejectsBundleThatDiffersUnderSameHash(t *testing.T) {
+	s, root := newStore(t)
+	b := cleanBundle()
+	h, err := s.Put(b, nil)
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	path := filepath.Join(root, b.Name, h, "bundle.json")
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 仍然合法 JSON，只是字节与本次要写的不一致（比"改坏文件"更接近真实事故：
+	// 有人在同目录里手改了一个字段值）。
+	mutated := strings.Replace(string(onDisk), "{", "{ ", 1)
+	if mutated == string(onDisk) {
+		t.Fatal("改写没有生效，用例前提不成立")
+	}
+	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Put(b, nil); !errors.Is(err, plasma.ErrImmutable) {
+		t.Fatalf("同 hash 下字节不一致必须拒写（否则夹具不可变性被绕过），得到 %v", err)
+	} else if !strings.Contains(err.Error(), plasma.CodeStoreImmutable) {
+		t.Errorf("拒写的错误里要带 %s（可 grep、可断言），得到: %v", plasma.CodeStoreImmutable, err)
 	}
 }
 

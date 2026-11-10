@@ -5,12 +5,14 @@
     在线   generate [--resume] [--fix] --workdir W
     离线   author-fixtures --bundle B [--out PATH]
            explain --in report.json [--out PATH]
-    未实现 evolve / judge / propose（P11/P12）—— 注册但立即 exit 2 并说明，
-           不要静默"命令不存在"：那样调用方分不清"没实现"与"拼错了"。
+           judge --in outcomes.json [--out PATH]
+           evolve --in telemetry.jsonl --store STORE --out DIR [--max-candidates N]
+    未实现 propose（P12）—— 注册但立即 exit 2 并说明，不要静默"命令不存在"：
+           那样调用方分不清"没实现"与"拼错了"。
 
 用法错由 argparse 自己 exit 2（与 `EXIT_USAGE` 同值）；业务失败一律 exit 1，
-并且**只写 stderr** —— stdout 是数据通道（`explain`/`author-fixtures` 各发一份 JSON，
-`generate` 什么都不发）。
+并且**只写 stderr** —— stdout 是数据通道（`explain`/`author-fixtures`/`judge`/`evolve`
+各发一份 JSON，`generate` 什么都不发）。
 """
 
 import argparse
@@ -18,8 +20,10 @@ import sys
 
 import author_fixtures
 import contract
+import evolve
 import explain
 import generate
+import judge
 
 
 def build_parser():
@@ -42,10 +46,20 @@ def build_parser():
     exp.add_argument("--in", dest="in_path", required=True, help="diagnostics.json / compile --format json 的产物")
     exp.add_argument("--out", default="", help="写纯文本到该路径（缺省只打印 JSON 信封）")
 
-    for name, stage in (("evolve", "P11"), ("judge", "P11"), ("propose", "P12")):
-        stub = sub.add_parser(name, help="未实现（%s）" % stage)
-        stub.add_argument("--in", dest="in_path", default="", help=argparse.SUPPRESS)
-        stub.add_argument("--out", dest="out_path", default="", help=argparse.SUPPRESS)
+    jud = sub.add_parser("judge", help="离线评分：把 5a+5b 的观测折成 0-100 分与判决")
+    jud.add_argument("--in", dest="in_path", required=True, help="outcomes.json（Go 侧写出的夹具观测）")
+    jud.add_argument("--out", default="", help="verdict JSON 的输出路径（缺省只打印到 stdout）")
+
+    evo = sub.add_parser("evolve", help="离线进化：遥测 → 适应度 → 确定性变异候选")
+    evo.add_argument("--in", dest="in_path", required=True, help="telemetry.jsonl")
+    evo.add_argument("--store", dest="store_dir", required=True, help="plasma store 根（取父 bundle 原文）")
+    evo.add_argument("--out", dest="out_dir", required=True, help="输出目录（必须已含 policy.json）")
+    evo.add_argument("--max-candidates", dest="max_candidates", type=int, default=3,
+                     help="最多产出几个候选（默认 3）")
+
+    stub = sub.add_parser("propose", help="未实现（P12）")
+    stub.add_argument("--in", dest="in_path", default="", help=argparse.SUPPRESS)
+    stub.add_argument("--out", dest="out_path", default="", help=argparse.SUPPRESS)
 
     return parser
 
@@ -70,9 +84,13 @@ def main(argv=None):
             return author_fixtures.run(args.bundle, args.out)
         if args.command == "explain":
             return explain.run(args.in_path, args.out)
-        if args.command in ("evolve", "judge", "propose"):
-            stage = "P11" if args.command in ("evolve", "judge") else "P12"
-            print("plasma %s: 未实现（计划在 %s 落地）" % (args.command, stage), file=sys.stderr)
+        if args.command == "judge":
+            return judge.run(args.in_path, args.out)
+        if args.command == "evolve":
+            return evolve.run(args.in_path, args.out_dir, args.store_dir,
+                              max_candidates=args.max_candidates)
+        if args.command == "propose":
+            print("plasma propose: 未实现（计划在 P12 落地）", file=sys.stderr)
             return contract.EXIT_USAGE
     except KeyboardInterrupt:
         print("plasma: 被中断", file=sys.stderr)

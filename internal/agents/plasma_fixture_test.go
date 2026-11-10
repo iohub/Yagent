@@ -2,10 +2,16 @@ package agents
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"yagent/internal/llm"
+	"yagent/internal/llm/scripted"
 	"yagent/internal/plasma"
+	"yagent/internal/toolspec"
 )
 
 // fixtureSpecJSON 是 5a 的被测对象：一份只读、单工具、能收尾的最小 spec。
@@ -213,19 +219,251 @@ func TestPlasmaFixtureRunner_PaletteContainment(t *testing.T) {
 	}
 }
 
-// 5b 在 P6 里是占位：不许真调 LLM，也不许白送"通过"。
-func TestPlasmaFixtureRunner_BehavioralIsPlaceholder(t *testing.T) {
+// 5b 的引擎/预算是**注入**的：没注入时不许真调 LLM，也不许白送"通过"。
+// 三条"没资格判通过"的入口逐条钉住 —— 任何一条静默变绿都等于 verified 的门被白送。
+func TestPlasmaFixtureRunner_BehavioralWithoutEngineOrBudget(t *testing.T) {
 	_, plan := fixturePlan(t)
-	out, err := (&PlasmaFixtureRunner{}).RunBehavioral(
-		context.Background(), plan, plasma.Fixture{ID: "behavioral-1"})
+	fixture := plasma.Fixture{ID: "behavioral-1", Expect: plasma.Expect{StopKind: plasma.FixtureStopKindAgentExit}}
+
+	cases := []struct {
+		name    string
+		runner  *PlasmaFixtureRunner
+		wantSub string
+	}{
+		{"没注入引擎", &PlasmaFixtureRunner{BehavioralTokenBudget: 1000}, "没有注入 LLM 引擎"},
+		{"没配 token 预算", &PlasmaFixtureRunner{LLM: scripted.NewForIdentity("x", nil)}, "token 预算"},
+	}
+	for _, tc := range cases {
+		out, err := tc.runner.RunBehavioral(context.Background(), plan, fixture)
+		if err != nil {
+			t.Fatalf("%s: 不该返回 error（那不是可重试的失败）: %v", tc.name, err)
+		}
+		if out.Passed {
+			t.Fatalf("%s: 报通过了 —— verified 的门被白送", tc.name)
+		}
+		if !strings.Contains(out.Reason, tc.wantSub) {
+			t.Errorf("%s: Reason 要说清缺什么，得到 %q", tc.name, out.Reason)
+		}
+	}
+}
+
+// behavioralPlan 把 fixture bundle 的 runtime 调小：5b 的步数预算来自 LinkPlan，
+// 而默认 15 步会让"超时"用例跑很久。
+func behavioralPlan(t *testing.T) (*plasma.Bundle, *plasma.LinkPlan) {
+	t.Helper()
+	b, plan := fixturePlan(t)
+	plan.Config.MaxSteps = 3
+	return b, plan
+}
+
+// behavioralSteps 构造"一次响应里带正文 + agent_exit"的脚本（与 5a 同形状）。
+func behavioralSteps(body string) []scripted.Step {
+	return []scripted.Step{
+		scripted.TextAndToolCall(body, toolspec.ExitToolName, map[string]interface{}{
+			"reason": "done",
+			"handoff": map[string]interface{}{
+				"conclusion": "behavioral fixture completed",
+				"status":     "ok",
+			},
+		}),
+	}
+}
+
+// 5b 绿：注入的引擎走通，Expect 全中，grade 的门因此可以开。
+func TestPlasmaFixtureRunner_BehavioralPass(t *testing.T) {
+	_, plan := behavioralPlan(t)
+	engine := scripted.NewForIdentity(plan.Agent.Name, behavioralSteps("分析完成：给出结论"))
+	runner := &PlasmaFixtureRunner{LLM: engine, BehavioralTokenBudget: 60000}
+
+	fixture := plasma.Fixture{
+		ID:    "behavioral-pass",
+		Input: "跑一遍行为夹具",
+		Expect: plasma.Expect{
+			MustCall:            []string{toolspec.ExitToolName},
+			StopKind:            plasma.FixtureStopKindAgentExit,
+			DeliverableContains: []string{"分析完成"},
+		},
+		Rubric: []string{"是否给出了可核对的结论"},
+	}
+	out, err := runner.RunBehavioral(context.Background(), plan, fixture)
 	if err != nil {
-		t.Fatalf("占位不该返回 error（error 会被当成一次失败的重试）: %v", err)
+		t.Fatalf("RunBehavioral: %v", err)
+	}
+	if !out.Passed {
+		t.Fatalf("应当通过: %s", out.Reason)
+	}
+	if out.StopKind != StopKindAgentExit {
+		t.Errorf("StopKind = %q, want %q", out.StopKind, StopKindAgentExit)
+	}
+	if out.DeliverableChars == 0 {
+		t.Error("DeliverableChars = 0：评分侧无法判 deliverable_nonempty")
+	}
+	if len(out.Rubric) != 1 {
+		t.Errorf("Rubric 没有带到 Outcome 上（judge 看不到评审要点）: %+v", out.Rubric)
+	}
+}
+
+// 5b 红：交付内容不符 ⇒ 失败且原因里带实际交付文本（不是一句 "failed"）。
+func TestPlasmaFixtureRunner_BehavioralDeliverableMismatch(t *testing.T) {
+	_, plan := behavioralPlan(t)
+	engine := scripted.NewForIdentity(plan.Agent.Name, behavioralSteps("分析完成：给出结论"))
+	runner := &PlasmaFixtureRunner{LLM: engine, BehavioralTokenBudget: 60000}
+
+	fixture := plasma.Fixture{
+		ID: "behavioral-mismatch",
+		Expect: plasma.Expect{
+			StopKind:            plasma.FixtureStopKindAgentExit,
+			DeliverableContains: []string{"必须出现的关键结论"},
+		},
+	}
+	out, err := runner.RunBehavioral(context.Background(), plan, fixture)
+	if err != nil {
+		t.Fatalf("RunBehavioral: %v", err)
 	}
 	if out.Passed {
-		t.Fatal("5b 未实现却报通过 —— verified 的门被白送")
+		t.Fatal("交付内容不符必须失败 —— 否则 5b 只是「跑了一遍」")
 	}
-	if !strings.Contains(out.Reason, "offline") {
-		t.Errorf("Reason 要说明只在离线跑，得到: %q", out.Reason)
+	if !strings.Contains(out.Reason, "必须出现的关键结论") {
+		t.Errorf("失败原因要点名缺什么，得到: %s", out.Reason)
+	}
+	if !strings.Contains(out.Reason, "分析完成") {
+		t.Errorf("失败原因要带实际交付文本，得到: %s", out.Reason)
+	}
+}
+
+// 5b 超预算：引擎报了远超预算的 usage ⇒ **不许**为 true，Reason 明写 used/budget。
+func TestPlasmaFixtureRunner_BehavioralTokenBudget(t *testing.T) {
+	_, plan := behavioralPlan(t)
+	// 超大 usage 必须挂在**第一步**响应上。早先这里用的是 SetExhaust（脚本耗尽后的
+	// 兜底），而 behavioralSteps 的第一步就走 agent_exit，于是兜底从未被调用 ——
+	// 用例绿了但走的是"预算根本没被观测"的路。给 Step 包一层才真的把 100k 送进循环。
+	forced := behavioralSteps("超额的一次响应")[0]
+	bigUsage := func(messages []llm.Message, defs []llm.ToolDef) *llm.Response {
+		resp := forced(messages, defs)
+		if resp != nil {
+			resp.Usage = &llm.TokenUsage{PromptTokens: 90000, CompletionTokens: 10000, TotalTokens: 100000}
+		}
+		return resp
+	}
+	engine := scripted.NewForIdentity(plan.Agent.Name, []scripted.Step{bigUsage})
+	runner := &PlasmaFixtureRunner{LLM: engine, BehavioralTokenBudget: 1000}
+
+	fixture := plasma.Fixture{
+		ID:     "behavioral-budget",
+		Expect: plasma.Expect{DeliverableContains: []string{"超额"}},
+	}
+	out, err := runner.RunBehavioral(context.Background(), plan, fixture)
+	if err != nil {
+		t.Fatalf("RunBehavioral: %v", err)
+	}
+	if out.Passed {
+		t.Fatal("token 超预算必须失败 —— 静默通过会让 verified 变成「花钱买的」")
+	}
+	if !strings.Contains(out.Reason, "token 预算耗尽") {
+		t.Errorf("Reason 要明写预算耗尽，得到: %s", out.Reason)
+	}
+	if !strings.Contains(out.Reason, "100000/1000") {
+		t.Errorf("Reason 要带上 used/budget（诊断靠它），得到: %s", out.Reason)
+	}
+}
+
+// 5b 超时：seam 把墙上限定成 100ms，脚本 sleep 300ms ⇒ 必须判"未验证：墙钟超时"。
+func TestPlasmaFixtureRunner_BehavioralWallClockTimeout(t *testing.T) {
+	_, plan := behavioralPlan(t)
+	slow := func([]llm.Message, []llm.ToolDef) *llm.Response {
+		time.Sleep(300 * time.Millisecond)
+		return scripted.TextResponse("慢响应")
+	}
+	engine := scripted.NewForIdentity(plan.Agent.Name, []scripted.Step{slow})
+	runner := &PlasmaFixtureRunner{
+		LLM:                   engine,
+		BehavioralTokenBudget: 60000,
+		BehavioralTimeout:     100 * time.Millisecond,
+	}
+
+	fixture := plasma.Fixture{ID: "behavioral-timeout", Expect: plasma.Expect{DeliverableContains: []string{"慢"}}}
+	out, err := runner.RunBehavioral(context.Background(), plan, fixture)
+	if err != nil {
+		t.Fatalf("RunBehavioral: %v", err)
+	}
+	if out.Passed {
+		t.Fatal("墙钟超时必须失败 —— 超时的夹具不算通过（ADR-3 的补偿控制）")
+	}
+	if !strings.Contains(out.Reason, "墙钟超时") {
+		t.Errorf("Reason 要明写超时，得到: %s", out.Reason)
+	}
+	if !strings.Contains(out.Reason, "100ms") {
+		t.Errorf("Reason 要带上限值（排障靠它），得到: %s", out.Reason)
+	}
+}
+
+// 沙箱：夹具 workspace 必须被**复制**到临时目录，执行后清理，
+// 且原始快照一个字节都不能被改动（ADR-5 的夹具不可变）。
+func TestPlasmaFixtureRunner_BehavioralSandboxIsCopy(t *testing.T) {
+	_, plan := behavioralPlan(t)
+	root := t.TempDir()
+	workspace := filepath.Join(root, "ws")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	marker := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(marker, []byte("原始内容"), 0o600); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	// 模型读一次 note.txt：读到的是沙箱里的副本。脚本里带上绝对路径是不可能的
+	// （沙箱路径在运行期才生成），所以断言放在"快照没被改"这一侧。
+	engine := scripted.NewForIdentity(plan.Agent.Name, behavioralSteps("读完了"))
+	runner := &PlasmaFixtureRunner{
+		LLM: engine, BehavioralTokenBudget: 60000, WorkspaceRoot: root,
+	}
+	fixture := plasma.Fixture{ID: "behavioral-workspace", Workspace: "ws"}
+
+	before, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	out, runErr := runner.RunBehavioral(context.Background(), plan, fixture)
+	if runErr != nil {
+		t.Fatalf("RunBehavioral: %v", runErr)
+	}
+	if !out.Passed {
+		t.Fatalf("应当通过: %s", out.Reason)
+	}
+	after, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker after: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("夹具快照被改动了 —— 5b 必须跑在副本上（ADR-5）")
+	}
+
+	// workspace 不存在 ⇒ 必须报"未验证"，不许当成"没有工作区"静默跑。
+	missing := plasma.Fixture{ID: "behavioral-missing", Workspace: "no-such-dir"}
+	got, _ := runner.RunBehavioral(context.Background(), plan, missing)
+	if got.Passed || !strings.Contains(got.Reason, "工作区不可用") {
+		t.Fatalf("缺工作区必须明确失败，得到: %+v", got)
+	}
+}
+
+// 夹具运行必须进账本且 fixture_run=true：评分侧只统计 false，漏标就是污染生产评分。
+func TestPlasmaFixtureRunner_BehavioralMarksFixtureRun(t *testing.T) {
+	_, plan := behavioralPlan(t)
+	engine := scripted.NewForIdentity(plan.Agent.Name, behavioralSteps("分析完成"))
+	var got []DelegationMetrics
+	runner := &PlasmaFixtureRunner{
+		LLM: engine, BehavioralTokenBudget: 60000,
+		Metrics: func(m DelegationMetrics) { got = append(got, m) },
+	}
+	if _, err := runner.RunBehavioral(context.Background(), plan,
+		plasma.Fixture{ID: "behavioral-metrics"}); err != nil {
+		t.Fatalf("RunBehavioral: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("账本行数 = %d, want 1", len(got))
+	}
+	if !got[0].FixtureRun {
+		t.Fatal("fixture_run 没置真 —— 夹具样本会混进生产评分（Goodhart）")
 	}
 }
 
