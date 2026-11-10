@@ -135,11 +135,24 @@ class AuthorFixturesTest(unittest.TestCase):
 
 
 class StubCommandTest(unittest.TestCase):
-    def test_unimplemented_commands_exit_usage(self):
-        for name in ("evolve", "judge", "propose"):
+    def test_only_propose_is_still_unimplemented(self):
+        """evolve / judge 已在 P11 落地，只剩 propose（P12）。
+
+        留一条 stub 用例的理由不是覆盖，而是**分类**：`--in/--out` 拼错时 argparse
+        自己 exit 2，而"命令存在但没实现"必须说清是哪一种，否则调用方分不清
+        \"我拼错了\" 与 \"还没做\"。
+        """
+        code, _, err = _run_cli(["propose"])
+        self.assertEqual(code, contract.EXIT_USAGE)
+        self.assertIn("未实现", err)
+
+    def test_judge_and_evolve_are_real_commands_now(self):
+        """两个子命令都必须因**缺必需参数**而 exit 2（argparse），而不是"未实现"。"""
+        for name in ("judge", "evolve"):
             code, _, err = _run_cli([name])
             self.assertEqual(code, contract.EXIT_USAGE)
-            self.assertIn("未实现", err)
+            self.assertNotIn("未实现", err)
+            self.assertIn("required", err)
 
     def test_no_command_prints_help_to_stderr(self):
         code, _, err = _run_cli([])

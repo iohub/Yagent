@@ -26,6 +26,10 @@ type plasmaOutcomeJSON struct {
 	TokensIn  int    `json:"tokens_in,omitempty"`
 	TokensOut int    `json:"tokens_out,omitempty"`
 	StopKind  string `json:"stop_kind,omitempty"`
+	// DeliverableChars / Rubric 是给 judge 的输入（P11）：前者让评分侧能判
+	// deliverable_nonempty（只看 passed 判不出来），后者是出题者的评审要点。
+	DeliverableChars int      `json:"deliverable_chars,omitempty"`
+	Rubric           []string `json:"rubric,omitempty"`
 }
 
 type plasmaDiagnosticJSON struct {
@@ -56,6 +60,7 @@ func toOutcomesJSON(in plasma.Outcomes) []plasmaOutcomeJSON {
 		out = append(out, plasmaOutcomeJSON{
 			FixtureID: o.FixtureID, Passed: o.Passed, Reason: o.Reason,
 			Steps: o.Steps, TokensIn: o.TokensIn, TokensOut: o.TokensOut, StopKind: o.StopKind,
+			DeliverableChars: o.DeliverableChars, Rubric: o.Rubric,
 		})
 	}
 	return out
@@ -120,16 +125,28 @@ func renderPlasmaCompile(w io.Writer, res *plasmaCompileResult, asJSON bool) err
 	if res.BehavioralRuns > 0 {
 		fmt.Fprintln(w, "behavioral:")
 		for _, o := range res.Behavioral {
-			fmt.Fprintf(w, "  %s  %s  %s\n", o.FixtureID, passLabel(o.Passed), o.Reason)
+			fmt.Fprintf(w, "  %s  %s  steps=%d", o.FixtureID, passLabel(o.Passed), o.Steps)
+			if o.TokensIn+o.TokensOut > 0 {
+				fmt.Fprintf(w, "  tokens=%d/%d", o.TokensIn, o.TokensOut)
+			}
+			if o.StopKind != "" {
+				fmt.Fprintf(w, "  stop=%s", o.StopKind)
+			}
+			fmt.Fprintln(w)
+			// 未通过的**必须**把原因写出来：超预算/超时/契约不符的修法完全不同，
+			// 而一句 "FAIL" 会让调用方去改错的地方。
+			if !o.Passed {
+				fmt.Fprintf(w, "    reason: %s\n", o.Reason)
+			}
 		}
 	} else if res.BehavioralRequested {
 		// 给了 --behavioral 却一条都没跑：原因是 bundle 里没有 behavior fixtures，
 		// 不能说成"--behavioral 才跑"（用户明明给了）——两种"没跑"的原因不同，
 		// 混成一句就是把"我请求了但它没跑"伪装成"我没请求"。
-		fmt.Fprintln(w, "behavioral: 未执行（--behavioral 已给，但 bundle 里没有 behavior fixtures；5b 属 P11）")
+		fmt.Fprintln(w, "behavioral: 未执行（--behavioral 已给，但 bundle 里没有 behavior fixtures）")
 	} else {
 		// 如实写"没跑"：--behavioral 没给 = 5b 没有证据，不能让人误以为验过。
-		fmt.Fprintln(w, "behavioral: 未执行（--behavioral 才跑；5b 属 P11）")
+		fmt.Fprintln(w, "behavioral: 未执行（--behavioral 才跑；不带它时 grade 止于 provisional）")
 	}
 	switch {
 	case res.Grade != "":

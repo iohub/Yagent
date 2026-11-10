@@ -1,6 +1,7 @@
 package plasma
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -55,6 +56,10 @@ type Meta struct {
 // 就是自己出题自己考（Goodhart）。store 层直接拒收，不给"先存下来再说"留口子。
 var ErrFixtureProvenance = errors.New("fixture provenance lineage must differ from the agent's own lineage")
 
+// ErrImmutable 表示同 hash 目录里已有的 bundle.json 与本次要写的字节不一致。
+// 它是 ADR-5 第一条防线的落点：夹具不可变，改夹具必须换 hash。
+var ErrImmutable = errors.New("plasma store: bundle is immutable")
+
 // HashBundle 是主键：归一化 IR 的 sha256。encoding/json 对结构体字段与 map 键都排序输出，
 // 所以同一份 IR 永远得到同一个 hash（幂等是 RFC 的硬约束，测试钉住）。
 func HashBundle(b *Bundle) (string, error) {
@@ -84,14 +89,26 @@ func (s *Store) Put(b *Bundle, r *Report) (string, error) {
 		return "", err
 	}
 	dir := filepath.Join(s.Root, b.Name, hash)
-	if _, err := os.Stat(filepath.Join(dir, "bundle.json")); err == nil {
-		return hash, nil // 已存在：不可变，直接返回
-	}
-
 	bundleRaw, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal bundle: %w", err)
 	}
+	if existing, err := os.ReadFile(filepath.Join(dir, "bundle.json")); err == nil {
+		// 同一个 hash 目录里已有 bundle.json：**必须逐字节一致**才允许当作"已存在"返回。
+		//
+		// 为什么不是简单地 `return hash, nil`：hash 是"归一化 IR 的 sha256"，而落盘的是
+		// MarshalIndent 之后的字节。两者在正常路径上同源，但一旦有人在中间做了归一化
+		// 的行为变更（或在同目录里手改了内容），"hash 相同"就不再等价于"内容相同"。
+		// 静默复用的后果是**夹具不可变性被绕过**：调用方以为写进去的是新夹具，磁盘上
+		// 还是旧的，而 List/Current 都指向那一份。ADR-5 的整条防线就建立在这里。
+		if !bytes.Equal(existing, append(bundleRaw, '\n')) && !bytes.Equal(existing, bundleRaw) {
+			return "", fmt.Errorf("%s: %w — %s 已存在且内容与本次要写的不一致；"+
+				"夹具与 contract 一经落盘即不可变（ADR-5），改夹具必须得到新 hash（改完重新 Compile 会自然换 hash）",
+				CodeStoreImmutable, ErrImmutable, filepath.Join(dir, "bundle.json"))
+		}
+		return hash, nil
+	}
+
 	if err := util.AtomicWrite(filepath.Join(dir, "bundle.json"), bundleRaw,
 		util.AtomicWriteOptions{DirPerm: 0o700, FilePerm: 0o600, Label: "plasma/store"}); err != nil {
 		return "", err
@@ -126,19 +143,41 @@ func (s *Store) Put(b *Bundle, r *Report) (string, error) {
 	return hash, nil
 }
 
-func checkFixtureProvenance(b *Bundle) error {
-	if b.Fixtures == nil || (len(b.Fixtures.Structural) == 0 && len(b.Fixtures.Behavioral) == 0) {
+// CheckFixtureProvenance 是"出题谱系必须独立于变异谱系"的**唯一**判据（ADR-5 / T3）。
+//
+// 两个调用点：Compile 落定夹具之后（`ensureStructuralFixtures` 补完 provenance 那一刻，
+// 也就是 5b 之前）与 Store.Put 之前。导出它是因为 agents 侧的进化管线要在**跑 5b 之前**
+// 就问一次 —— 让一份注定被拒收的 bundle 先烧掉一轮真 LLM，是把防线做成了事后检查。
+//
+// 判据刻意比"字符串不相等"更严一点：变异体（Lineage.Mutation 非空）必须由**另一条**
+// 谱系出题。没有变异的 bundle（首次生成、内建提案）不受限制，因为不存在"自己考自己"。
+func CheckFixtureProvenance(b *Bundle) error {
+	if b == nil || b.Fixtures == nil ||
+		(len(b.Fixtures.Structural) == 0 && len(b.Fixtures.Behavioral) == 0) {
 		return nil // 没有夹具就谈不上"自己出题自己考"
 	}
 	prov := strings.TrimSpace(b.Fixtures.Provenance.Lineage)
 	if prov == "" {
-		return fmt.Errorf("%w: fixtures 存在但 provenance.lineage 为空", ErrFixtureProvenance)
+		return fmt.Errorf("%w: %s 夹具存在但 provenance.lineage 为空；"+
+			"note: 出题者必须自我标识，否则无法判定它是不是变异体自己出的题",
+			ErrFixtureProvenance, CodeFixtureProvenance)
 	}
-	if b.Lineage != nil && prov == strings.TrimSpace(b.Lineage.Mutation) {
-		return fmt.Errorf("%w: %q", ErrFixtureProvenance, prov)
+	if b.Lineage == nil {
+		return nil
+	}
+	mutation := strings.TrimSpace(b.Lineage.Mutation)
+	if mutation == "" {
+		return nil // 不是变异体：没有"自己出题自己考"这回事
+	}
+	if prov == mutation {
+		return fmt.Errorf("%w: %s 变异谱系与出题谱系同为 %q；"+
+			"note: 同谱系不得为自己的变异出题（Goodhart 防线二）",
+			ErrFixtureProvenance, CodeFixtureProvenance, prov)
 	}
 	return nil
 }
+
+func checkFixtureProvenance(b *Bundle) error { return CheckFixtureProvenance(b) }
 
 func fixtureProvenance(b *Bundle) Provenance {
 	if b.Fixtures == nil {
@@ -148,14 +187,22 @@ func fixtureProvenance(b *Bundle) Provenance {
 }
 
 // reportRecord 是落盘的诊断快照（不是 Report 全量：Report 里有非导出字段）。
+// Outcomes 一并落盘：进化的评分侧与 `yagent plasma list` 的读者要能看到"哪条夹具红了"，
+// 而 reasons 只写在 report.json 里，别处没有第二份。
 type reportRecord struct {
 	Grade              Grade        `json:"grade"`
 	EscalationRequired bool         `json:"escalation_required"`
 	Diagnostics        []Diagnostic `json:"diagnostics,omitempty"`
+	Outcomes           Outcomes     `json:"outcomes,omitempty"`
 }
 
 func newReportRecord(r *Report) reportRecord {
-	return reportRecord{Grade: r.Grade, EscalationRequired: r.EscalationRequired, Diagnostics: r.Diagnostics}
+	return reportRecord{
+		Grade:              r.Grade,
+		EscalationRequired: r.EscalationRequired,
+		Diagnostics:        r.Diagnostics,
+		Outcomes:           r.Outcomes,
+	}
 }
 
 // Load 读回一份 bundle 与 meta，并校验 hash：磁盘被改过一个字节就拒载。

@@ -47,6 +47,15 @@ const (
 	CodeFixtureToolScope  = "PLS-504" // Surface 含未声明工具（或多出、或缺失）
 	CodeFixturePalette    = "PLS-505" // 工具能力超出 PlasmaPalette 且未批准
 
+	// 6xx 是**落盘期**码族：store 的不可变性与出题谱系分离（P11 的 Goodhart 防线）。
+	//
+	// 与 7xx 同一取向，它们**不进** diagCatalog：那张表是发给 Python 的只读码表，
+	// 而 Python 从不写 store；`TestDiagCatalogMatchesCorpus` 又要求"码表里的每个码都被
+	// corpus 发射过"，把落盘期码塞进去就必须为 corpus 开第五条通道，连带 golden 与
+	// 50 条基线一起漂。诊断码本身照样是稳定契约（可 grep、可断言），只是不进那张表。
+	CodeStoreImmutable = "PLS-601" // 同 hash 目录里已有 bundle.json，但字节不一致
+	CodeFixtureProvenance = "PLS-602" // 出题谱系与变异谱系相同（自己出题自己考）
+
 	// 7xx 是**加载期**码族（§6.1 的"加载期"一段）：hash 重算不符 / 活注册表复核失败。
 	//
 	// 它们刻意**不进** diagCatalog：那张表是发给 Python 侧的只读码表，而 Python 从不读 store；
@@ -146,6 +155,12 @@ type Report struct {
 	// 它为真时 grade 上限钉在 provisional，直到用户批准 + 行为夹具通过（ADR-4/ADR-9）。
 	// 即使升级已批准也要置真：防线生效过必须留下可见账目（坑 43）。
 	EscalationRequired bool `json:"escalation_required"`
+	// Outcomes 是本次验证的逐条观测（5a + 5b，按执行顺序）。
+	//
+	// 它进 Report 的理由只有一条：落盘时 report.json 要保留每条夹具的结论
+	//（任务 §二：`report.json` 里保留每条 Outcome）。判据仍然只认 Ratchet 的入参 ——
+	// 往这里塞一份"通过"不会让棘轮升档，少了它也不会把一次通过改成失败。
+	Outcomes Outcomes `json:"outcomes,omitempty"`
 }
 
 func (r *Report) add(code string, sev Severity, path, msg, note string) {
