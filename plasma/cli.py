@@ -7,8 +7,11 @@
            explain --in report.json [--out PATH]
            judge --in outcomes.json [--out PATH]
            evolve --in telemetry.jsonl --store STORE --out DIR [--max-candidates N]
-    未实现 propose（P12）—— 注册但立即 exit 2 并说明，不要静默"命令不存在"：
-           那样调用方分不清"没实现"与"拼错了"。
+           propose --in input.json --out PROPOSAL_DIR
+
+`propose` 是"内建 Agent 提案"（§6.9）：产出 JSON + Markdown 两个文件，**永不自动
+apply**，也绝不写任何 `*.prompt.md`。它的输入由 Go 侧装配（prompt 全文 + 遥测摘要），
+Python 只做确定性启发式 —— 不碰工作区、不连 provider、不持密钥。
 
 用法错由 argparse 自己 exit 2（与 `EXIT_USAGE` 同值）；业务失败一律 exit 1，
 并且**只写 stderr** —— stdout 是数据通道（`explain`/`author-fixtures`/`judge`/`evolve`
@@ -24,6 +27,7 @@ import evolve
 import explain
 import generate
 import judge
+import propose
 
 
 def build_parser():
@@ -57,9 +61,11 @@ def build_parser():
     evo.add_argument("--max-candidates", dest="max_candidates", type=int, default=3,
                      help="最多产出几个候选（默认 3）")
 
-    stub = sub.add_parser("propose", help="未实现（P12）")
-    stub.add_argument("--in", dest="in_path", default="", help=argparse.SUPPRESS)
-    stub.add_argument("--out", dest="out_path", default="", help=argparse.SUPPRESS)
+    prop = sub.add_parser("propose", help="离线提案：给内建 Agent 出一份 prompt diff 提案（永不自动 apply）")
+    prop.add_argument("--in", dest="in_path", required=True,
+                      help="Go 侧写好的输入 JSON（agent + prompt 全文 + 遥测摘要）")
+    prop.add_argument("--out", dest="out_path", required=True,
+                      help="提案目录：写 <agent>-<ts>.json 与 .md（不碰任何 *.prompt.md）")
 
     return parser
 
@@ -90,8 +96,7 @@ def main(argv=None):
             return evolve.run(args.in_path, args.out_dir, args.store_dir,
                               max_candidates=args.max_candidates)
         if args.command == "propose":
-            print("plasma propose: 未实现（计划在 P12 落地）", file=sys.stderr)
-            return contract.EXIT_USAGE
+            return propose.run(args.in_path, args.out_path)
     except KeyboardInterrupt:
         print("plasma: 被中断", file=sys.stderr)
         return contract.EXIT_TIMEOUT
