@@ -509,7 +509,6 @@ func TestCharacterizationRetryWithBackoff(t *testing.T) {
 // 新路径的特征固化在 plasma_meta_test.go：可用性判据、降级、Link→5a→Ratchet 顺序、
 // 以及"执行参数来自 bundle.runtime"这一条。
 
-
 // 组 4（工作区根知识文件的加载与缓存）已随该注入一并删除：Director 不再预置任何根文件，
 // 子 Agent 只经 module_docs.go 拿目录级 AGENTS.md（browser 目标不注入），判据与闸门在
 // internal/agents/module_docs_test.go。

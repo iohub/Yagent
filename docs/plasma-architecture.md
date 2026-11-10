@@ -678,8 +678,10 @@ warning 进 `quality.lint[]`，作为进化适应度的一项。
 会改 hash，所以必须分文件。
 
 - **加载时机**：Director 构造期（`metaHandler` 今天在 `director.go:172` 建为空）。
-- **字典序**加载与呈现：`customAgentPromptSection()` 拼在 blueprint/skills/mcp **之前**
-  （`director.go:816-821`），顺序抖动会 invalidate 后面全部前缀缓存。
+- **字典序**加载与呈现：`customAgentPromptSection()` 拼在 blueprint/skills/mcp **之后**
+  （system prompt 末尾，`run()` 的拼装点）—— 它是唯一随 Agent 注册表变化的段，放末尾使一次
+  抖动的代价仅限于本段自身，不波及前面各段的前缀缓存；但本段**内部**的逐行顺序仍然必须稳定，
+  否则段内被改动行之后的前缀照样逐行失效。
   `metaHandler.List()` 今天按插入序（`meta_handler.go:71`），跨进程不确定 ⇒ 必须改字典序。
 - **预算**：`max_loaded_agents=12` + `catalog_line_chars=120`，超预算按 grade→score→name 截断
   + 一行可见省略账。
@@ -1387,8 +1389,9 @@ LLMTimeout=currentLLMTimeout()`，改由 `setExecutorConfig` 登记的 `plasma.E
 在 `NewDirectorAgent` 的 `rebuildSurface()` **之后**调用一次（`registerCustomAgent` 追加到
 "当前那一份 Surface"，而 `rebuildSurface` 会把它整份换掉）。三件配套缺一不可：
 ① `MetaAgentHandler.List/Names` 从插入序改成**字典序**（`meta_handler.go`）—— 插入序只在
-单进程内确定，而 `customAgentPromptSection` 拼在 blueprint/skills/mcp **之前**，顺序抖一次
-后面全部前缀缓存失效；② `rebuildSurface` 新增 `mountRegisteredAgents()`：每次重建都从
+单进程内确定，而 `customAgentPromptSection` 的顺序抖一次，它之后的缓存就全部失效（该段现在拼在
+blueprint/skills/mcp **之后**、system prompt 末尾，位置本身就吸收掉大部分代价，但本段自身的
+逐行顺序仍必须跨进程确定）；② `rebuildSurface` 新增 `mountRegisteredAgents()`：每次重建都从
 `metaHandler` 把已注册的生成式 Agent 重新挂回去（P9a 期间它们活不过一个 Run 的根因就在这里）；
 ③ 单项拒载/预算省略/超预算各留一行可见账目，`Skipped` 里带 name + hash + 原因
 （`PLS-701` 磁盘被改、`PLS-702` 活注册表复核失败）。

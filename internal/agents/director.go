@@ -916,18 +916,21 @@ func (a *DirectorAgent) run(ctx context.Context, input string, mem *memory.Conve
 	}
 
 	prompts := func(ctx context.Context, in director.PromptInput) (string, error) {
+		// 拼接顺序 = 稳定 → 易变。前缀缓存按段失效，最易变的段必须放在末尾：
+		// customAgentPromptSection 只要注册/加载一个 plasma Agent 就会变，
+		// 放在中间会把 blueprint / skills / mcp 三段的缓存一起作废。
 		systemPrompt := a.promptFmt.FormatPrompt(directorPrompt)
 		if a.surface != nil {
 			if catalog := a.surface.Catalog(); catalog != "" {
 				systemPrompt += "\n\n" + catalog
 			}
 		}
-		systemPrompt += a.customAgentPromptSection()
 
 		systemPrompt += a.blueprint.Resident()
 
 		systemPrompt += a.skillCatalog()
 		systemPrompt += a.mcpStatusLine()
+		systemPrompt += a.customAgentPromptSection()
 		return systemPrompt, nil
 	}
 

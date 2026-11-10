@@ -113,8 +113,9 @@ func TestMetaAgentHandlerGet(t *testing.T) {
 //
 // 为什么不再是插入序：加载期（P9b）从 store 灌入的 Agent，其注册顺序取决于目录读取
 // 顺序 —— 那在不同进程之间**不**确定。插入序在本进程内稳定，跨进程却会抖，而
-// `customAgentPromptSection` 拼在 blueprint/skills/mcp **之前**：这一段抖一次，后面
-// 全部前缀缓存失效（花的真金白银，症状只是"慢"）。字典序是唯一跨进程确定的顺序。
+// `customAgentPromptSection` 拼在 blueprint/skills/mcp **之后、system prompt 末尾**：
+// 放在末尾只让本段自身的缓存失效，但本段内部的顺序仍然必须跨进程确定（花的真金白银，
+// 症状只是"慢"）。字典序是唯一跨进程确定的顺序。
 //
 // 副本语义不变：返回切片是副本，外部修改不影响内部状态。
 func TestMetaAgentHandlerListIsSorted(t *testing.T) {

@@ -155,8 +155,9 @@ type Loaded struct {
 
 // LoadAll 按 name 字典序加载 store 里所有 Agent。
 //
-// 字典序不是审美：agents 侧的 customAgentPromptSection 拼在 blueprint/skills/mcp 之前，
-// 顺序抖动会让后面全部前缀缓存失效。
+// 字典序仍然不是审美：agents 侧的 customAgentPromptSection 现在拼在 system prompt 末尾
+// （blueprint/skills/mcp 之后），放末尾只保住了前面各段的前缀缓存 —— 这一段**自身**的
+// 顺序一旦抖动，段内被改动行之后的缓存照样逐行作废。
 // max <= 0 用 DefaultMaxLoadedAgents；超预算按 grade→score→name 截断并返回 omitted 条数，
 // 调用方必须把省略写出来（静默少一个 Agent = 模型以为自己没有这个能力）。
 func LoadAll(s *Store, c *Compiler, max int) (loaded []Loaded, skipped []Skipped, omitted int) {
