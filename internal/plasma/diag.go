@@ -53,7 +53,7 @@ const (
 	// 而 Python 从不写 store；`TestDiagCatalogMatchesCorpus` 又要求"码表里的每个码都被
 	// corpus 发射过"，把落盘期码塞进去就必须为 corpus 开第五条通道，连带 golden 与
 	// 50 条基线一起漂。诊断码本身照样是稳定契约（可 grep、可断言），只是不进那张表。
-	CodeStoreImmutable = "PLS-601" // 同 hash 目录里已有 bundle.json，但字节不一致
+	CodeStoreImmutable    = "PLS-601" // 同 hash 目录里已有 bundle.json，但字节不一致
 	CodeFixtureProvenance = "PLS-602" // 出题谱系与变异谱系相同（自己出题自己考）
 
 	// 7xx 是**加载期**码族（§6.1 的"加载期"一段）：hash 重算不符 / 活注册表复核失败。

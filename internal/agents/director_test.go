@@ -368,7 +368,7 @@ func TestCustomAgentDelegateTool_FinishTerminates(t *testing.T) {
 }
 
 // ─── System Prompt Custom Agents Tests ───────────────────────────────────────
-// 断言走生产构造器 customAgentPromptSection()（director.go:832 拼进 system prompt 的
+// 断言走生产构造器 customAgentPromptSection()（run() 里的 system prompt 拼装点拼进去的
 // 就是它），此前测试自己重写了一遍拼接逻辑，生产改文案测试也不会红。
 
 func TestSystemPrompt_NoCustomAgents(t *testing.T) {

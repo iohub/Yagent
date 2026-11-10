@@ -315,7 +315,9 @@ func describeSkipped(skipped []toolspec.SkippedTool) []string {
 //
 // 三条纪律：
 //   - 顺序是 metaHandler.List 的**字典序**（跨进程确定）。这一段拼在
-//     blueprint / skills / mcp **之前**（run() 的拼装点），顺序一抖后面全部前缀缓存失效。
+//     blueprint / skills / mcp **之后（system prompt 末尾）**（run() 的拼装点），是唯一
+//     随 Agent 注册表变化的最易变段：字典序保证跨进程确定性，而放在末尾使抖动代价仅限于
+//     本段自身，不波及前面各段的前缀缓存。
 //   - 每行按 `[plasma] catalog_line_chars` 截断（显式 0 = 不裁剪）。描述来自 bundle，
 //     长度不可控：一个 Agent 写 800 字描述就会把目录撑成正文，而模型只需要认得出它。
 //   - 截断必须留**省略账**：哪几行被剪了、阈值是多少、去哪看全文。静默剪短与静默丢失同形。
