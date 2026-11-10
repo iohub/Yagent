@@ -163,8 +163,14 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			designEngine = ca.client.GetToolEngine("design")
 		}
 
-		// 认知类工具的单次 LLM 预算在工具侧按名字取，解析器注入一次即可：
-		// 工具每次 Execute 都重新调用它，所以 /model 或改配置之后新值立即生效。
+		// 认知类工具的单次 LLM 预算在工具侧按名字取，解析器注入一次即可：工具每次 Execute
+		// 都重新调用它，但"重新调用"不等于"重新读配置"——三种键的生效时机不同，说错一句就是
+		// §11 坑 25 的"配置项存在但不生效"式误导：
+		//   · 显式 [tools.llm.<slot>].timeout：读的是本进程启动时解析出的 ca.config 快照，
+		//     改它必须重启进程（本仓没有配置热载，见 docs/config-guide.md §1.3）；
+		//   · 全局 [llm].timeout（TUI :timeout → llm.Client.SetLLMTimeout → config.SetGlobalLLMTimeout）：
+		//     对**没有显式 per-tool timeout** 的槽位立即生效 —— 回落分支每次现取 GlobalLLMTimeout()；
+		//   · 显式配过的槽位不吃回落，所以改全局值对它无效（override 优先）。
 		// ca.config 为 nil 时 CogToolTimeout 是 nil-receiver 安全的（回落 DefaultCogToolTimeout）。
 		tools.CogToolBudget = ca.config.CogToolTimeout
 
