@@ -29,16 +29,10 @@ func plasmaDefaults(cfg *config.Config) plasma.Defaults { return agents.PlasmaDe
 // 而 store 里按 hash 记的批准没有细分到具体位 —— 按 hash 批准就是批准这份 bundle
 // 声明的全部 beyond。用 BeyondBase（既有导出函数）算出那一集，不重新写一份能力数学。
 func approvedEffects(b *plasma.Bundle, palette toolspec.Effect) toolspec.Effect {
-	if b == nil {
-		return 0
-	}
-	var used toolspec.Effect
-	for _, name := range b.Tools {
-		used |= toolspec.EffectOf(name)
-	}
-	declared, _ := toolspec.EffectFromNames(b.Policy.EffectsRequired)
-	used |= declared
-	return plasma.BeyondBase(used, palette)
+	// 判据只有一份：plasma.EscalationEffects（阶段 3 的 escalation 账目与加载期批准位
+	// 也是它）。这里是**委托**而不是第二份实现 —— 抄一份的后果是"CLI 批准的能力位"
+	// 与"加载期批准的能力位"在某次改动后不再相同，而两者的症状都是"工具静默消失"。
+	return plasma.EscalationEffects(b, palette)
 }
 
 // plasmaCompileResult 是 compile / test 共用的观测结果（渲染在 cmd_plasma_render.go）。

@@ -16,6 +16,7 @@ package director
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -28,13 +29,16 @@ var ErrAlreadyRegistered = errors.New("custom agent already registered")
 //
 // 与原实现的差异（可控改进）：原 customAgents 为普通 map，列举时遍历顺序随机，
 // 导致 system prompt 的 "### Custom Agents" 段落顺序不稳定（不利于 LLM Prompt
-// Cache 复用）。本组件维护插入序切片，List/Names 按注册序确定性返回。
+// Cache 复用）。本组件维护插入序切片，但 List/Names **按 delegate 名字典序**返回 ——
+// 插入序只在本进程内确定，而加载期（P9b）从 store 灌入的 Agent 在不同进程里
+// 可能因目录读取顺序不同而不同；字典序是跨进程确定的唯一顺序，而 prompt 前缀缓存
+// 恰恰要求"同样的输入产生同样的字节"。
 //
 // 并发安全：内部使用 RWMutex 保护 map 与插入序。
 type MetaAgentHandler struct {
 	mu     sync.RWMutex
 	agents map[string]*CustomAgent // key: "delegate_<name>" → agent design
-	order  []string                // 注册序（delegate name），保证 List/Names 确定性
+	order  []string                // 注册序（delegate name）；List/Names 排序后返回
 }
 
 // NewMetaAgentHandler 创建空的注册表。
@@ -65,24 +69,32 @@ func (h *MetaAgentHandler) Get(name string) (*CustomAgent, bool) {
 	return ca, ok
 }
 
-// List 按注册（插入）序返回全部已注册的自定义 agent。
+// List 按 delegate 名字典序返回全部已注册的自定义 agent。
 // 返回切片为副本，调用方修改不影响内部状态。
 func (h *MetaAgentHandler) List() []*CustomAgent {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	result := make([]*CustomAgent, 0, len(h.order))
-	for _, name := range h.order {
+	names := h.sortedKeysLocked()
+	result := make([]*CustomAgent, 0, len(names))
+	for _, name := range names {
 		result = append(result, h.agents[name])
 	}
 	return result
 }
 
-// Names 按注册（插入）序返回全部 delegate 工具名。
+// Names 按 delegate 名字典序返回全部 delegate 工具名。
 // 返回切片为副本，调用方修改不影响内部状态。
 func (h *MetaAgentHandler) Names() []string {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return append([]string(nil), h.order...)
+	return h.sortedKeysLocked()
+}
+
+// sortedKeysLocked 返回字典序的 delegate 名副本。调用方必须已持锁。
+func (h *MetaAgentHandler) sortedKeysLocked() []string {
+	out := append([]string(nil), h.order...)
+	sort.Strings(out)
+	return out
 }
 
 // Len 返回已注册的自定义 agent 数量。

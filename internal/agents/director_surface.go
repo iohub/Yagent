@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"yagent/internal/blackboard"
+	"yagent/internal/config"
 	"yagent/internal/memory"
 	"yagent/internal/plasma"
 	"yagent/internal/tools"
@@ -97,6 +98,13 @@ func (a *DirectorAgent) toolDeps() *toolspec.Deps {
 }
 
 // rebuildSurface 按当前依赖重建工具面。
+//
+// 重建后必须把**已注册的生成式 Agent**重新挂回去：`registerCustomAgent` 追加到的是
+// "当前那一份 Surface"，而本函数会把它整份换掉。漏了这一步的症状是"加载期装进来的
+// Agent 在第二轮对话里从工具面消失"（不报错、注册表里还在、模型就是看不见）——
+// P9a 期间 `runMetaDesign` 生成的 Agent 正是这样活不过一个 Run。
+//
+// 遍历的是 metaHandler（唯一注册表）而不是某份快照：两份列表必然漂走。
 func (a *DirectorAgent) rebuildSurface() *tools.Surface {
 	s := surfaceFor(toolspec.ProfileDirector, a.toolDeps(), a.Name())
 	if len(a.materializedAcrossTurns) > 0 {
@@ -107,7 +115,23 @@ func (a *DirectorAgent) rebuildSurface() *tools.Surface {
 		s.RestoreMaterialized(names)
 	}
 	a.surface = s
+	a.mountRegisteredAgents()
 	return s
+}
+
+// mountRegisteredAgents 把注册表里的生成式 Agent 挂到当前 Surface 上。
+// 顺序是 metaHandler.List 的字典序（跨进程确定，prompt 前缀缓存靠它）。
+func (a *DirectorAgent) mountRegisteredAgents() {
+	if a.surface == nil || a.metaHandler == nil {
+		return
+	}
+	for _, ca := range a.metaHandler.List() {
+		if skipped := a.surface.Add(customAgentSpec(ca)); len(skipped) > 0 {
+			// 同名/依赖缺失都会落到这里。不是致命错误（工具面仍然可用），但必须可见。
+			slog.Warn("custom agent tool mount skipped", "delegate", "delegate_"+ca.Name,
+				"reasons", describeSkipped(skipped))
+		}
+	}
 }
 
 // carryOverMaterialized 在本轮结束前把已取回的冷工具带回进程级记忆，
@@ -174,6 +198,9 @@ func (a *DirectorAgent) delegateTo(ctx context.Context, target string, params ma
 	// 这里不直接碰 Director 上的全局槽 —— 并行委派下那会串味（见 delegationOutcome）。
 	recordDelegationOutcome(ctx, result)
 	noteRef := a.writeDelegateNote(spec.noteAgent, "delegate_"+target, task, result, err)
+	// 便签引用进遥测账本（ADR-6 的 note_ref）：只记工具名的话，事后无法从一次委派
+	// 追到它写下的结论。
+	recordDelegationNoteRef(ctx, noteRef)
 	return a.applyEnhancedCommander(target, task, result, err, noteRef, unresolved)
 }
 
@@ -185,8 +212,23 @@ func (a *DirectorAgent) delegateTo(ctx context.Context, target string, params ma
 // 步数/超时/压缩等运行参数不在这里决定：它们来自 bundle.runtime（LinkPlan.Config），
 // 由 executeCustomAgent 的 applyExecutorConfig 套上去。
 func (a *DirectorAgent) runCustomAgent(ctx context.Context, ca *CustomAgent, task string) (string, error) {
+	// 升级门在装配**之前**：未批准时越权工具根本不在清单里，装出来的 Agent 是个
+	// 能力残缺的版本 —— 先让它跑起来再失败，烧掉的是步数与 token，而用户什么也没看到。
+	if err := a.ensureEscalationApproved(ctx, ca.Name); err != nil {
+		return "", err
+	}
+
+	// 生效工具面与能力上限：plasma 产物读加载期登记的坐标（批准后会换成复核过的版本），
+	// 老路径（没有坐标）回落到 CustomAgent 自身字段 + PlasmaPalette。
+	toolsUsed := ca.ToolsUsed
+	palette := plasma.PlasmaPalette
+	if info, ok := a.plasmaAgentInfoOf(ca.Name); ok {
+		toolsUsed = info.Tools
+		palette = info.Palette
+	}
+
 	deps := a.toolDeps()
-	selected, unknown, rejected := toolspec.MatchNames(ca.ToolsUsed, plasma.PlasmaPalette, deps)
+	selected, unknown, rejected := toolspec.MatchNames(toolsUsed, palette, deps)
 	if len(unknown) > 0 {
 		slog.Warn("custom agent asked for unregistered tools", "agent", ca.Name, "unknown", unknown)
 	}
@@ -214,7 +256,28 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) bool {
 		return false
 	}
 
-	spec := &toolspec.Spec{
+	// Surface.Add 是 Custom Agent 唯一的注册通道：它挂的就是"模型下一步要看的东西"，
+	// 所以同名工具重复注册会被拒绝并记进返回值，而不是静默换一个执行器。
+	if a.surface == nil {
+		a.rebuildSurface()
+		return true // rebuildSurface 会从注册表里把它挂上
+	}
+	if skipped := a.surface.Add(customAgentSpec(ca)); len(skipped) > 0 {
+		slog.Warn("custom agent tool registration skipped", "delegate", delegateName,
+			"reasons", describeSkipped(skipped))
+	}
+	slog.Info("Custom agent registered", "delegate_name", delegateName, "display_name", ca.DisplayName, "tools", ca.ToolsUsed)
+	return true
+}
+
+// customAgentSpec 是一个生成式 Agent 的**唯一** Spec 表达式。
+//
+// 两处消费：registerCustomAgent（本回合立即可用）与 mountRegisteredAgents（每次
+// rebuildSurface 重新挂回）。写两份的后果是"注册时能跑、下一轮换个描述/少了校验"，
+// 而那种漂移只会在某个回合突然表现成"工具不见了"。
+func customAgentSpec(ca *CustomAgent) *toolspec.Spec {
+	delegateName := "delegate_" + ca.Name
+	return &toolspec.Spec{
 		Name:      delegateName,
 		Effect:    toolspec.EffectDelegate,
 		Frequency: toolspec.Hot,
@@ -237,18 +300,6 @@ func (a *DirectorAgent) registerCustomAgent(ca *CustomAgent) bool {
 			}, nil
 		},
 	}
-
-	// Surface.Add 是 Custom Agent 唯一的注册通道：它挂的就是"模型下一步要看的东西"，
-	// 所以同名工具重复注册会被拒绝并记进返回值，而不是静默换一个执行器。
-	if a.surface == nil {
-		a.rebuildSurface()
-	}
-	if skipped := a.surface.Add(spec); len(skipped) > 0 {
-		slog.Warn("custom agent tool registration skipped", "delegate", delegateName,
-			"reasons", describeSkipped(skipped))
-	}
-	slog.Info("Custom agent registered", "delegate_name", delegateName, "display_name", ca.DisplayName, "tools", ca.ToolsUsed)
-	return true
 }
 
 func describeSkipped(skipped []toolspec.SkippedTool) []string {
@@ -261,15 +312,32 @@ func describeSkipped(skipped []toolspec.SkippedTool) []string {
 
 // customAgentPromptSection 生成 system prompt 里的自定义 Agent 清单。
 // 名字与描述都取自注册表与 metaHandler，不再依赖手写 prompt 片段。
+//
+// 三条纪律：
+//   - 顺序是 metaHandler.List 的**字典序**（跨进程确定）。这一段拼在
+//     blueprint / skills / mcp **之前**（run() 的拼装点），顺序一抖后面全部前缀缓存失效。
+//   - 每行按 `[plasma] catalog_line_chars` 截断（显式 0 = 不裁剪）。描述来自 bundle，
+//     长度不可控：一个 Agent 写 800 字描述就会把目录撑成正文，而模型只需要认得出它。
+//   - 截断必须留**省略账**：哪几行被剪了、阈值是多少、去哪看全文。静默剪短与静默丢失同形。
 func (a *DirectorAgent) customAgentPromptSection() string {
 	agents := a.metaHandler.List()
 	if len(agents) == 0 {
 		return ""
 	}
+	lineChars := config.GlobalPlasma().CatalogLineChars
 	var b strings.Builder
-	b.WriteString("\n\n### Custom Agents\nThe following specialized agents have been designed by Meta-Agent and are permanently available for delegation:\n\n")
+	b.WriteString("\n\n### Custom Agents\nThese agents were generated by plasma and are available for delegation:\n\n")
+	clipped := 0
 	for _, ca := range agents {
-		fmt.Fprintf(&b, "- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, ca.Description)
+		desc, cut := clipCatalogLine(ca.Description, lineChars)
+		if cut {
+			clipped++
+		}
+		fmt.Fprintf(&b, "- **%s** (`delegate_%s`): %s\n", ca.DisplayName, ca.Name, desc)
+	}
+	if clipped > 0 {
+		fmt.Fprintf(&b, "\n(%d of %d descriptions truncated to %d chars by [plasma] catalog_line_chars; "+
+			"full text: `yagent plasma list`)\n", clipped, len(agents), lineChars)
 	}
 	b.WriteString("\nUse these agents via their delegate tools for tasks matching their specializations.\n")
 	return b.String()

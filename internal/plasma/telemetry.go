@@ -24,6 +24,9 @@ type TelemetryRecord struct {
 	Degraded     bool   `json:"degraded"`
 	Escalated    bool   `json:"escalated"`
 	NoteRef      string `json:"note_ref,omitempty"`
+	// Err 是这次委派的失败原因（成功时空串）。它必须进账本：只记停因不记错误，
+	// 评分侧会把"超时"与"provider 报错"算成同一种失败，而这俩的修法完全不同。
+	Err string `json:"err"`
 	// FixtureRun 标记这次是 5a/5b 的夹具运行；评分只统计 fixture_run=false 的记录。
 	FixtureRun bool `json:"fixture_run"`
 }

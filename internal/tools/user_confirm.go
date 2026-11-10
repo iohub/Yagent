@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"yagent/internal/messaging"
@@ -28,6 +29,20 @@ func NewUserConfirmManager() *UserConfirmManager {
 	return &UserConfirmManager{
 		pending:     make(map[string]chan string),
 		pendingHelp: make(map[string]chan *protocol.UserHelpResponseData),
+	}
+}
+
+// IsAffirmativeAnswer 是"用户答复算不算同意"的**唯一**判据。
+//
+// 两个消费点共用它：WorkspaceGuard 的逐次授权与 plasma 升级批准门（P9b）。
+// 各写一份词表的后果是"`y` 在守卫里算同意、在升级门里算拒绝"——而用户永远猜不到
+// 哪一套在生效，只会觉得"我明明点了同意"。空串/取消一律不算同意（fail-closed）。
+func IsAffirmativeAnswer(response string) bool {
+	switch strings.ToLower(strings.TrimSpace(response)) {
+	case "allow", "yes", "y", "允许", "同意":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -110,14 +125,14 @@ func (m *UserConfirmManager) requestUserHelpInternal(ctx context.Context, data *
 
 	// 发布事件
 	content := map[string]interface{}{
-		"question":          data.Question,
-		"context":           data.Context,
-		"interaction_type":  string(data.InteractionType),
-		"options":           data.Options,
-		"default_value":     data.DefaultValue,
-		"placeholder":       data.Placeholder,
-		"allow_custom":      data.AllowCustom,
-		"request_id":        data.RequestID,
+		"question":         data.Question,
+		"context":          data.Context,
+		"interaction_type": string(data.InteractionType),
+		"options":          data.Options,
+		"default_value":    data.DefaultValue,
+		"placeholder":      data.Placeholder,
+		"allow_custom":     data.AllowCustom,
+		"request_id":       data.RequestID,
 	}
 
 	m.publisher.Publish("user_help_needed", content, "Agent")

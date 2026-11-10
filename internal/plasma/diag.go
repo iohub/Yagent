@@ -46,6 +46,16 @@ const (
 	CodeFixtureStepBudget = "PLS-503" // 步数预算未生效：stop_kind 或步数不符
 	CodeFixtureToolScope  = "PLS-504" // Surface 含未声明工具（或多出、或缺失）
 	CodeFixturePalette    = "PLS-505" // 工具能力超出 PlasmaPalette 且未批准
+
+	// 7xx 是**加载期**码族（§6.1 的"加载期"一段）：hash 重算不符 / 活注册表复核失败。
+	//
+	// 它们刻意**不进** diagCatalog：那张表是发给 Python 侧的只读码表，而 Python 从不读 store；
+	// 而 `TestDiagCatalogMatchesCorpus` 要求"码表里的每个码都被 corpus 发射过" —— corpus 走
+	// Elaborate→Compile→VerifyStructural，Load 根本不在那条路上。把它们塞进码表就必须给
+	// corpus 开第四条通道，连带 golden 与 50 条基线一起漂（本阶段的硬边界是"golden 零改动"）。
+	// 于是 7xx 以常量 + 可读文本的形式落在 Load 层，账目照样可 grep、可断言。
+	CodeLoadTampered = "PLS-701" // 磁盘字节与主键 hash 不符
+	CodeLoadDrift    = "PLS-702" // hash 对得上，但活注册表复核（阶段 1–3）不过
 )
 
 // Diagnostic 的 Path 用 bundle 相对定位（bundle.tools[3]），让生成侧能精确改一处而不是整份重写。

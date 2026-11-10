@@ -93,7 +93,7 @@ yagent/
 │   ├── agents/            # Agent 系统核心
 │   │   ├── activity/      # 委派活动感知的空闲/总时长超时监视器
 │   │   ├── director/      # Planner 主循环、RunState、恢复、指标、
-│   │   │                  # Meta-Agent 处理器、项目上下文加载器
+│   │   │                  # Custom Agent 注册表、项目上下文加载器
 │   │   ├── toolbatch/     # 只读工具运行组规划 + 并行执行
 │   │   ├── director.go         # DirectorAgent 编排器（委派适配器、压缩接线）
 │   │   ├── director_adapter.go # DirectorAdapter（指标 + 恢复集成门面）
@@ -171,7 +171,7 @@ graph TB
                 REPO[RepoAgent]
                 CODE[CodingAgent]
                 CHAT[ChatAgent]
-                META[MetaAgent]
+                META[plasma 生成的 Agent]
                 DEVOPS[DevOpsAgent]
                 BR[BrowserAgent]
             end
@@ -315,7 +315,8 @@ type DirectorAgent struct {
     RepoAgent    *RepoAgent
     CodingAgent  *CodingAgent
     ChatAgent    *ChatAgent
-    MetaAgent    *MetaAgent
+    // MetaAgent 已删除（ADR-15）：生成职责在 Python（plasma.pyz），Go 侧只有驱动器
+    plasmaGen    plasmaGenerator
     DevOpsAgent  *DevOpsAgent
     BrowserAgent *BrowserAgent
 
@@ -342,7 +343,7 @@ type DirectorAgent struct {
     toolDefMap map[string]tools.ToolDefinition // 工具名 → tools.json 中的定义
 
     // ── 动态 Agent 注册与集成切面 ──
-    metaHandler      *director.MetaAgentHandler     // Meta 设计的自定义 Agent（Phase 2d）
+    metaHandler      *director.MetaAgentHandler     // plasma 生成的自定义 Agent（加载期 + 在线生成）
     adapter          *DirectorAdapter               // 指标 + 恢复集成门面
     llmClient        *llm.Client                    // 运行时引擎重解析
     projectCtxLoader *director.ProjectContextLoader // 项目上下文加载（Phase 2a，带缓存）
@@ -379,7 +380,7 @@ Director 通过 Adapters 向 LLM 暴露工具，其中核心是 6 个委派工�
 | `delegate_repo` | RepoAgent | 代码分析、语义搜索（标记为只读——在并行运行组内安全） |
 | `delegate_coding` | CodingAgent | 文件读写、代码编辑 |
 | `delegate_chat` | ChatAgent | 通用对话、讲解 |
-| `delegate_meta` | MetaAgent | 自定义 Agent 生成（被禁止进入并行组） |
+| `delegate_meta` | plasma 生成器 | 生成 → 编译 → 注册 → 首次执行（被禁止进入并行组） |
 | `delegate_devops` | DevOpsAgent | 系统操作、Shell 命令 |
 | `delegate_browser` | BrowserAgent | 浏览器自动化 |
 | `read_artifact` | — | 按 artifact ID 分页取回先前被卸载的 AgentResult |
@@ -484,23 +485,21 @@ type DirectorAdapter struct {
 | **RepoAgent** | `repo.go` | semantic_search、query_code_skeleton、query_code_snippet、find_function_callee/caller、query_call_graph、read_file、search_by_regex | 经 MCP 调用 codeseek；将系统提示词放入 Human 角色消息（`SystemAsHuman`）以受益于提示词缓存；写入 `repoCtx` 摘要 |
 | **CodingAgent** | `coding.go` | create_file、search_replace_in_file、delete_file、rename_file、run_bash、thinking、micro_agent、deepthinking | 在系统提示词中接收 `repoCtx`；持有 Git checkpoint 配置 |
 | **ChatAgent** | `chat.go` | thinking、micro_agent、deepthinking | 无文件操作权限；纯对话 Agent |
-| **MetaAgent** | `meta.go` | thinking | 单次 LLM 调用生成 JSON Agent 设计；经 MetaAgentHandler 注册并立即执行 |
+| **plasma 驱动器** | `plasma_meta.go` | —（无自己的 LLM 循环） | `Generate` → `Compile`/`Link` → 5a 结构夹具 → `Ratchet` → `Store.Put` → 注册 → 立即执行；生成策略在 Python 侧 |
 | **DevOpsAgent** | `devops.go` | run_bash、read_file、search_by_regex、文件操作 | 系统管理、日志分析、临时 Shell |
 | **BrowserAgent** | `browser_agent.go` | browser_* 工具（10 个） | 驱动 BrowserManager（go-rod、Headless Chrome） |
 
-#### MetaAgent 输出格式
+#### plasma 生成契约（取代 MetaAgent 的 JSON 直出）
 
-```json
-{
-  "thinking": "...",
-  "agent_name": "my_custom_agent",
-  "agent_design": "System prompt...",
-  "tools_used": ["read_file", "search_by_regex"],
-  "task_for_agent": "Task description template..."
-}
-```
-
-JSON 设计由 `director.MetaAgentHandler.ParseMetaAgentOutput` / `ExtractJSONObject` 解析（解析失败时最多重试 `metaRetryCount` 次），注册为永久的 `delegate_<name>` 工具，并立即执行以完成当前任务。
+Python 侧（`plasma/prompts/generate_seed.md`，P10 落地）产出 5 字段最小 spec
+（`thinking` / `agent_name` / `agent_design` / `tools_used` / `task_for_agent`），Go 侧
+`plasma.Elaborate` 把它扩充成完整 IR，再由 `Compiler` 跑阶段 1–4（`internal/plasma`）。
+`ParseMetaAgentOutput` / `ExtractJSONObject` 已随 MetaAgent 一起删除 —— 解析器不再是
+"能不能装"的判据，判据是编译报告：`Link` 对活注册表复核工具名与能力位，5a 结构夹具验
+`agent_exit` 契约，`Ratchet` 给出档位（在线最高 `provisional`）。失败时把
+`report.Text()` 前几行写进 `diagnostics.json`，驱动 Python 带 `--fix` 重生成
+（`metaRetryCount` = 重生成轮数）。注册成功的 Agent 经 `registerCustomAgent` 成为
+`delegate_<name>` 工具，并立即执行一次以完成当前任务。
 
 ### 3.4 委派模型
 
@@ -515,12 +514,13 @@ graph LR
     COND --> DEVOPS[DevOps]
     COND --> BR[Browser]
     META -. register .-> CUSTOM[delegate_x - MetaAgentHandler]
+    note over META: 生成策略在 Python；Go 侧是驱动器
 ```
 
 **委派来源**：
 
 1. **内建 delegate 工具**——除定义于 `tools.json` 清单的 `delegate_browser` 外，其余 5 个在 `NewDirectorAgent()` 中以 `tools.NewAdapter("delegate_repo", ...)` 等方式内联创建（见 4.4）。每个闭包经 `executeCustomAgent` / `applyEnhancedCommander` 运行目标子 Agent，并通过 `takePendingSubAgentMemory` 将结果路由至内存注入。
-2. **动态 delegate 工具**——由 MetaAgent 设计，经 `director.MetaAgentHandler.Register()` / `DirectorAgent.registerCustomAgent()` 注册；它们在进程的剩余生命周期内成为永久的 `delegate_<name>` 工具。
+2. **动态 delegate 工具**——由 plasma 生成器（Python）设计，经 `plasma.LoadAll`（加载期，`metaHandler` + `Surface.Add`）或 `runMetaDesign`（在线生成）注册；它们在进程的剩余生命周期内成为永久的 `delegate_<name>` 工具。加载期按字典序装载，以便 prompt 前缀缓存跨进程稳定。
 
 **委派生命周期与超时**（`internal/agents/activity/`）：每次委派调用都在一个活动感知的空闲超时监视器下运行：
 
@@ -742,7 +742,7 @@ delegateCoding := tools.NewAdapter("delegate_coding", "Delegate coding task to C
 // ... delegate_chat, delegate_devops, delegate_browser, delegate_meta
 ```
 
-由 MetaAgent 设计的自定义 Agent 经 `DirectorAgent.registerCustomAgent(ca *CustomAgent)` 注册，会额外创建一个 `delegate_<name>` 适配器并加入活动的 Adapters 列表与 `toolDefMap`。
+由 plasma 生成的自定义 Agent 经 `DirectorAgent.registerCustomAgent(ca *CustomAgent)` 注册，会额外创建一个 `delegate_<name>` 适配器并加入活动的工具面（`Surface.Add` 是唯一通道）；每次 `rebuildSurface` 会从 `metaHandler` 按字典序重新挂回，否则它们活不过一个 Run。
 
 ### 4.5 核心工具列表
 
@@ -1514,7 +1514,7 @@ VS Code 扩展经 WebSocket 与 Yagent 通信：
 3. **认知工具**：`MicroAgentTool`、`DeepThinkingTool`（带专用引擎）
 4. **知识注入器**：`knowledge.NewKnowledgeInjector(codeSeekMCP, knowledgeCfg, publisher)`
 5. **安全**：`tools.NewWorkspaceGuard(workDir, userConfirmMgr)`、仓库上下文存储 + 环境视图（`globalctx.NewRepoContextStore`、`NewEnvView`）
-6. **子 Agent**：`NewRepoAgent` → `NewChatAgent` → `NewMetaAgent` → `NewDevOpsAgent` → `NewBrowserAgent`（带 `BrowserManager`）→ `NewCodingAgent`
+6. **子 Agent**：`NewRepoAgent` → `NewChatAgent` → `NewDevOpsAgent` → `NewBrowserAgent`（带 `BrowserManager`）→ `NewCodingAgent`（`NewMetaAgent` 已随 ADR-15 删除）
 7. **共享内存 + 记忆整理**：`memory.NewSharedMemory(100)` 与 `agents.NewConsolidationWorker(repoMemStore, repoEngine, codeSeekMCP)`
 8. **Director**：`agents.NewDirectorAgent(...)`（接收全部端口、工具集、子 Agent、完整 `config.Config` 与 `llm.Client`）
 9. **表示层**：消息调度器 + 消费者（TUI / WebSocket）、HTTP 服务器
@@ -1596,7 +1596,7 @@ flowchart TB
             REPO[RepoAgent]
             CODE[CodingAgent]
             CHAT[ChatAgent]
-            META[MetaAgent]
+            META[plasma 生成的 Agent]
             DEVOPS[DevOpsAgent]
             BR[BrowserAgent]
         end
@@ -1727,9 +1727,9 @@ flowchart LR
 | `internal/agents/director/planner_run.go` | Planner 主循环实现 |
 | `internal/agents/director/recovery.go` | `RecoveryHandler`（重试 + LLM 失败统计） |
 | `internal/agents/director/metrics.go` | `MetricsCollector` |
-| `internal/agents/director/meta_handler.go` | `MetaAgentHandler`（动态 Agent 注册） |
+| `internal/agents/director/meta_handler.go` | `MetaAgentHandler`（动态 Agent 注册表，List/Names 按字典序） |
 | `internal/agents/director/project_context.go` | `ProjectContextLoader` + `ComputeProjectID` |
-| `internal/agents/director/types.go` | Director 类型（`CustomAgent`、`MetaAgentResult`、事件） |
+| `internal/agents/director/types.go` | Director 类型（`CustomAgent`、事件；`MetaAgentResult` 已删） |
 | `internal/agents/toolbatch/plan.go` | 只读运行组规划 |
 | `internal/agents/toolbatch/run.go` | 运行组并行执行 |
 | `internal/agents/activity/activity.go` | 委派空闲/总时长超时监视器 |

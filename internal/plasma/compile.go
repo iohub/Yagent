@@ -81,6 +81,85 @@ func (c *Compiler) parse(b *Bundle, r *Report) {
 	}
 }
 
+// loadReport 是**加载期**复核：只跑阶段 1–3，不跑阶段 4，也不补结构夹具。
+//
+// 与 Compile 的两点差别都是加载期特有的，不是"更宽松的编译"：
+//   - 不调 `ensureStructuralFixtures`：它会**改 bundle 字节**，而加载期的前提是"磁盘上这一份
+//     字节的 hash 已被校验过"（§6.1：store → 重算 hash → 复核阶段 2–3）。改完之后再算 hash
+//     得到的是另一个坐标，等于把加载期判据偷偷换成"另一份 bundle 合不合法"。
+//   - 不跑 consistency：阶段 4 要数 token（`tokenutil`），§6.1 明写"加载期不跑阶段 4"，
+//     而加载预算只有 25ms 量级（§9.2）。
+//
+// 阶段 4 全是 warning 且不参与 `HasErrors()`，所以跳过它**不会**放宽"能不能装配"这条判据 ——
+// 它只省掉那笔不该在启动路径上付的成本。
+func (c *Compiler) loadReport(b *Bundle) *Report {
+	r := &Report{Grade: GradeProvisional}
+	if b == nil {
+		r.errorf(CodeBadJSON, "bundle", "bundle 为 nil", "")
+		return r
+	}
+	c.parse(b, r)
+	selected, rejected := c.resolve(b, r)
+	c.typecheck(b, selected, rejected, r)
+	if r.HasErrors() {
+		r.Grade = ""
+	}
+	return r
+}
+
+// errorsOnlyEscalation 判断"这份 bundle 的 error 是否**全部**来自越权工具"。
+//
+// 为什么需要它：阶段 3 把越权工具报成 error（PLS-201），于是"未批准的越权 bundle"
+// 在加载期会被整份拒掉。但升级门（ADR-4）的批准只会发生在**首次委派**上 —— 不注册就
+// 没有首次委派，批准永远问不出口，`escalation_approved` 也就永远写不下去。于是加载期
+// 对这种情况放行成一个"能力受限 + grade 钉 provisional + 等批准"的 Agent，
+// 而真正的越权工具仍然不在工具面里（阶段 2 已拒）。
+//
+// 判据刻意收窄到**只有一个码**：PLS-201（工具能力超出 palette）。任何别的 error
+// （幻觉工具名、缺 agent_exit、旋钮越界…）都说明这份 bundle 本身有问题，照旧拒载。
+func (r *Report) errorsOnlyEscalation() bool {
+	if r == nil {
+		return false
+	}
+	saw := false
+	for _, d := range r.Diagnostics {
+		if d.Severity != SeverityError {
+			continue
+		}
+		if d.Code != CodeOutsidePalette {
+			return false
+		}
+		saw = true
+	}
+	return saw
+}
+
+// bundleEffects 是一份 bundle 声明/请求的全部能力位：选中的工具 + **被拒的工具** + 显式声明。
+//
+// 被拒的那批必须算进来：它们恰恰是最需要账目的部分（漏掉的话"需要升级"就永远不会出现在
+// 真正越权的那份 bundle 上，批准门也无从问起 —— P1 实施时实测踩到）。
+// 三处消费点共用它：阶段 3 的 escalation 账目、加载期的批准位、CLI 的 --approve 复核。
+func bundleEffects(b *Bundle) toolspec.Effect {
+	if b == nil {
+		return 0
+	}
+	var used toolspec.Effect
+	for _, name := range b.Tools {
+		used |= toolspec.EffectOf(name)
+	}
+	declared, _ := toolspec.EffectFromNames(b.Policy.EffectsRequired)
+	return used | declared
+}
+
+// EscalationEffects 返回这份 bundle 相对 palette 需要的额外能力位。
+//
+// 批准是按 bundle hash 记的（`meta.json` 的 escalation_approved），而 store 里那条记录
+// 没有细分到具体位 —— 按 hash 批准就是批准这份 bundle 声明的全部 beyond。所以"批准生效"
+// 的唯一表达是：把这里算出的位集注入 `Compiler.EscalationApproved`。
+func EscalationEffects(b *Bundle, palette toolspec.Effect) toolspec.Effect {
+	return BeyondBase(bundleEffects(b), palette)
+}
+
 // 阶段 2：对着活注册表解析工具名。MatchNames 忽略 deps（profile.go:175 的 `_ = deps`），
 // 所以传 nil 是安全的；它同时自动追加 agent_exit（:196），那条规则只此一份。
 func (c *Compiler) resolve(b *Bundle, r *Report) (selected []*toolspec.Spec, rejected []string) {
@@ -146,18 +225,10 @@ func (c *Compiler) typecheck(b *Bundle, selected []*toolspec.Spec, rejected []st
 // 无论批准与否（坑 43：防线生效过却没人知道，与静默丢失只差一步）。
 // 未批准的那些工具已经在 resolve 里被拒（PLS-201），这里只负责"这份 bundle 需要升级"这个事实，
 // 以及把 grade 上限钉住 —— 批准状态由调用方按 hash 注入，本包不认识 store。
-func (c *Compiler) escalation(b *Bundle, selected []*toolspec.Spec, rejected []string, r *Report) {
-	var used toolspec.Effect
-	for _, s := range selected {
-		used |= s.Effect
-	}
-	// 被拒的工具恰恰是最需要留账目的那批：漏掉它们，"需要升级"就永远不会出现在
-	// 真正越权的那份 bundle 上，批准门也就无从问起。
-	for _, name := range rejected {
-		used |= toolspec.EffectOf(name)
-	}
-	declared, _ := toolspec.EffectFromNames(b.Policy.EffectsRequired)
-	used |= declared
+func (c *Compiler) escalation(b *Bundle, _ []*toolspec.Spec, _ []string, r *Report) {
+	// 能力位集合只有一份实现（bundleEffects）：选中的 + 被拒的 + 显式声明的。
+	// 这里不再各自遍历一次 —— 两份同形实现必有一边漂走（P1 的 GL 校验就是那条教训）。
+	used := bundleEffects(b)
 
 	beyond := BeyondBase(used, c.Palette)
 	if beyond == 0 {

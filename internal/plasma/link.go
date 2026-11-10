@@ -37,6 +37,13 @@ type LinkPlan struct {
 	Config  ExecutorConfigView
 	Hash    string
 	Grade   Grade
+	// EscalationRequired 是"这份 bundle 用到了 PlasmaPalette 之外的能力"（ADR-4 升级门）。
+	// 它为真而 EscalationApproved 为假时：工具面里那些能力位的工具**不在** Agent.Tools 里
+	// （阶段 2 已按未批准的上限拒掉了），grade 也钉在 provisional —— 首次委派必须先问用户。
+	EscalationRequired bool
+	// EscalationApproved 由加载期从 `{name}/{hash}/meta.json` 读出（按 hash 记）。
+	// 它是"这一次装配能不能把越权能力发出去"的唯一判据，bundle 本身不认识它（写进 bundle 会改 hash）。
+	EscalationApproved bool
 }
 
 // Link 对**活注册表**重跑阶段 1-4，然后产出装配计划。
@@ -45,12 +52,37 @@ type LinkPlan struct {
 // （工具改名/删除/能力位调整）。hash 只保证"文件没被改"，不保证"它依赖的东西还在"。
 // 加载期是防磁盘篡改与注册表漂移的最后一道闸。
 func (c *Compiler) Link(b *Bundle, hash string) (*LinkPlan, error) {
+	r := c.Compile(context.Background(), b) // 阶段 1-4 是纯计算，不读 ctx
+	return c.planFrom(b, hash, r, false)
+}
+
+// LoadLink 是**加载期**的复核入口：只跑阶段 1–3（§6.1「加载期不跑阶段 4」）。
+//
+// 与 Link 的差别有两处，都是加载期特有的：
+//   - 阶段集合：跳过阶段 4（token 计数）与结构夹具补齐（后者会改 bundle 字节）；
+//   - 容忍"只因为越权而被拒"的那一份：`errorsOnlyEscalation` 为真时照样产出计划，
+//     只是 `Agent.Tools` 里没有那些越权工具、grade 钉 provisional。理由见该函数。
+//
+// plan 的构造与 Link 是同一份（planFrom）——两条路径各自拼一份的后果是"编译期装出来的
+// Agent 与加载期装出来的不是同一套工具面"，而那要等到某个工具在某一侧消失才会暴露。
+func (c *Compiler) LoadLink(b *Bundle, hash string) (*LinkPlan, error) {
+	r := c.loadReport(b)
+	return c.planFrom(b, hash, r, true)
+}
+
+// planFrom 把一份复核报告投影成装配计划。Link 与 LoadLink 的**唯一**共同出口。
+//
+// allowEscalationOnly=true 是加载期语义：越权导致的那几条 error 不阻断装配，
+// 因为升级门（P9b）需要在"Agent 已注册"的前提下才有机会问用户 —— 不注册就没有首次委派，
+// 也就永远走不到批准那一步。真正的越权工具仍然不在工具面里（阶段 2 已拒）。
+func (c *Compiler) planFrom(b *Bundle, hash string, r *Report, allowEscalationOnly bool) (*LinkPlan, error) {
 	if b == nil {
 		return nil, fmt.Errorf("nil bundle")
 	}
-	r := c.Compile(context.Background(), b) // 阶段 1-4 是纯计算，不读 ctx
 	if r.HasErrors() {
-		return nil, fmt.Errorf("link %s@%s 失败:\n%s", b.Name, hash, r.Text())
+		if !allowEscalationOnly || !r.errorsOnlyEscalation() {
+			return nil, fmt.Errorf("link %s@%s 失败:\n%s", b.Name, hash, r.Text())
+		}
 	}
 	selected, _, _ := toolspec.MatchNames(b.Tools, c.effective(), nil)
 	tools := make([]string, 0, len(selected))
@@ -71,6 +103,11 @@ func (c *Compiler) Link(b *Bundle, hash string) (*LinkPlan, error) {
 		RequiresExit: true,
 	}
 	grade := r.Grade
+	if grade == "" && r.EscalationRequired {
+		// 加载期容忍的那一类：报告里没有 grade（有 error），但升级门接管后它仍然是
+		// "可人工点名委派、不可自动委派"的 provisional。
+		grade = GradeProvisional
+	}
 	if r.EscalationRequired && grade != "" && grade != GradeProvisional {
 		grade = GradeProvisional // 升级必须有夹具证据，不能凭报告拿高等级
 	}
@@ -92,15 +129,21 @@ func (c *Compiler) Link(b *Bundle, hash string) (*LinkPlan, error) {
 			KeepToolResultTokens:     b.Runtime.Compression.KeepToolResultTokens,
 			MaxParallelReadOnlyTools: b.Runtime.MaxParallelReadOnlyTools,
 		},
-		Hash:  hash,
-		Grade: grade,
+		Hash:               hash,
+		Grade:              grade,
+		EscalationRequired: r.EscalationRequired,
+		EscalationApproved: c.EscalationApproved != 0,
 	}, nil
 }
 
 // Skipped 是"这份 bundle 没被加载"的可读原因。绝不静默跳过：
 // 一个 Agent 从工具面消失而没人知道原因，与它从来没存在过无法区分（坑 43）。
+//
+// Hash 一并带上：同一个 name 在 store 里可能有多个 hash，只说 name 的账目让人无法判断
+// "当前指针指向的那一份"出了什么问题。
 type Skipped struct {
 	Name   string
+	Hash   string
 	Reason string
 }
 
@@ -140,12 +183,27 @@ func LoadAll(s *Store, c *Compiler, max int) (loaded []Loaded, skipped []Skipped
 		}
 		b, meta, err := s.Load(e.Name, e.Hash)
 		if err != nil {
-			skipped = append(skipped, Skipped{Name: e.Name, Reason: err.Error()})
+			skipped = append(skipped, Skipped{Name: e.Name, Hash: e.Hash, Reason: err.Error()})
 			continue
 		}
-		plan, err := c.Link(b, e.Hash)
+		// 批准**按 hash** 逐个注入：LoadAll 用一个共享 Compiler 的话，A 的批准会漏到 B 上。
+		// 先克隆再改，是为了让调用方传进来的 Compiler 保持"用户给定的上限"这一语义
+		// （它可能是 CLI 里带 --approve 的那个实例）。
+		cc := *c
+		if meta != nil && meta.EscalationApproved {
+			cc.EscalationApproved = EscalationEffects(b, cc.Palette)
+		} else {
+			cc.EscalationApproved = 0
+		}
+		plan, err := cc.LoadLink(b, e.Hash)
 		if err != nil {
-			skipped = append(skipped, Skipped{Name: e.Name, Reason: err.Error()})
+			// PLS-702：hash 对得上但活注册表复核不过（工具被改名/删除/能力位变了）。
+			// 与 PLS-701（磁盘被改）分开，是因为修法完全不同：一个是重装/回滚，
+			// 一个是改注册表或重新生成。错误正文已逐条点名是哪个工具。
+			skipped = append(skipped, Skipped{
+				Name: e.Name, Hash: e.Hash,
+				Reason: fmt.Sprintf("%s 加载期复核失败（工具被改名/删除？）：%v", CodeLoadDrift, err),
+			})
 			continue
 		}
 		loaded = append(loaded, Loaded{Plan: plan, Meta: *meta})

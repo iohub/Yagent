@@ -196,7 +196,7 @@ func (g *WorkspaceGuard) RequestAuth(ctx context.Context, toolName string, reaso
 		return nil
 	}
 
-	if response != "allow" && response != "yes" && response != "y" && response != "允许" {
+	if !IsAffirmativeAnswer(response) {
 		return fmt.Errorf("用户拒绝了操作: %s", toolName)
 	}
 
