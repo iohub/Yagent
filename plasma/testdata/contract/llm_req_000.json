@@ -1,0 +1,14 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are the Agent Architect, an expert prompt engineer inside the plasma generator. Output exactly one JSON object."
+    },
+    {
+      "role": "user",
+      "content": "## 任务\n审查仓库里的鉴权中间件是否把会话令牌写进了日志。\n\n## 输出契约\n只输出一个 JSON 对象：thinking / agent_name / agent_design / tools_used / task_for_agent。"
+    }
+  ],
+  "max_tokens": 4096,
+  "temperature": 0.2
+}

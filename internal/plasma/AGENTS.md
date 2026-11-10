@@ -135,20 +135,28 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
 本包 `manifestTools` 的唯一实现 `Effect.Has(Palette)`（P9a 后广告表格由 Python 从它渲染）；`Codes` 来自 `DiagCatalog()`
 （唯一来源，`TestDiagCatalogMatchesCorpus` 双向对账 corpus）；`CapabilityLock` 是整份 manifest 的 sha256。
 
-**26. workdir 文件名与退出码是跨语言契约**（`workdir.go`）。文件名与 `exit 0/1/2/3/4` 改一处
-必须同时改 Python zipapp，而两侧不同步的表现是"子进程 exit 0 但 Go 找不到产物"。`llm_req`/
-`llm_resp` 按**调用下标**对齐（`%03d`，从 000 起），不靠时间戳、不扫目录；`exit 4` 是"我需要
-一次采样"的信号，`Spawner` 实现必须返回 `(4, nil)` —— 当失败处理会把正常往返判成一次错误。
+**26. workdir 文件名与退出码是跨语言契约**（`workdir.go`；Python 镜像见 27）。改一处必须同时改
+zipapp，不同步的表现是"子进程 exit 0 但 Go 找不到产物"。`llm_req`/`llm_resp` 按**调用下标**对齐
+（`%03d`，从 000 起）；`exit 4` 是"我需要一次采样"的信号，`Spawner` 必须返回 `(4, nil)`。
+
+**27. `plasma/contract.py` 是契约的 Python 镜像，由 Go 侧反向对账。** 文件名/退出码/`%03d` 序号/
+manifest schema_version 两侧各一份不可避免，但漂了**不会崩**：表现是"子进程 exit 0 但 Go 找不到
+产物"。闸门 `contract_py_test.go` 读 `plasma/contract.py` 源码、正则提取 `NAME = <literal>` 逐条
+对账 —— 常量必须**一行一条字面量**（计算式会让提取失败即红）。共享样例 `plasma/testdata/contract/
+*.json` 是形状的唯一证据：Go 反序列化进 `llm.Response`（agents 侧进 `llmRequestFile`），Python 断言能产出同形状。
+
+**28. `dist/bin/plasma.pyz` 是生成物，不是源码。** 改 `plasma/*.py` 或 `prompts/*.md` 后必须
+`bash scripts/build_plasma.sh` 并**提交产物**，否则 `check_plasma_pyz_sync.sh` 红（重建后逐字节比较）；
+漂的后果是生产跑旧策略而单测全绿。构建用内联 Python 手写 ZIP（排序 + 固定时间戳 + STORED）——
+**不要换回 `python3 -m zipapp`**：它用文件 mtime，每次 checkout 都换字节。
 
 ## 测试必须与生产同形（坑 39）
 
-`toolspec` 的注册表由**实现侧的 `init()`** populate：只 import `tools` 得到 37 条，
-再加 `agents` 才是生产的 50 条。所以测试用**外部测试包** `package plasma_test` 并 blank-import
-两者（`main_test.go`），`TestRegistryIsProductionShaped` 钉住"50 条 + `Validate()` 干净"。
-
-少 import 一个的后果不是编译错误，而是 did-you-mean 与能力派生对着一个生产不存在的注册表算。
-`go list -deps` 不含测试 import，所以这不会打穿叶子守卫（已实测）。
-外部测试包可以 import 依赖 plasma 的包，因此 P9 之后 `agents → plasma` 也不成环。
+`toolspec` 的注册表由**实现侧的 `init()`** populate：只 import `tools` 得到 37 条，再加 `agents`
+才是生产的 50 条。所以测试用**外部测试包** `package plasma_test` 并 blank-import 两者
+（`main_test.go`），`TestRegistryIsProductionShaped` 钉住"50 条 + `Validate()` 干净"。
+少 import 一个不是编译错误，而是 did-you-mean 与能力派生对着生产不存在的注册表算；
+`go list -deps` 不含测试 import，所以这不会打穿叶子守卫，`agents → plasma` 也不成环。
 
 ## 入口
 
@@ -158,8 +166,7 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
 
 ## 闸门
 
-- `TestCompile_ReportsEachRule`（`compile_test.go`）：13 个码各一条负样本，**且断言精确码集**
-  —— 后半句防止规则互相误响。删任一判定即红（已实测 6 条变异全红）。
+- `TestCompile_ReportsEachRule`：13 个码各一条负样本，**且断言精确码集**（防规则互相误响）。删任一判定即红。
 - `TestCompile_ZeroPaletteRejectsEverything`：忘配 palette 变成全放行即红。
 - `TestCompile_FailureClearsGrade` / `_CleanBundleIsProvisional`：grade 语义。
 - `TestCompile_ExitIsAutoAppended`：有人在本包重写自动追加规则即红。
@@ -172,29 +179,22 @@ PLS-302 的判据刻意收窄到"同一行里反引号工具名 + 反引号 toke
   的精确诊断文本。改码表/文案必须显式 `-update`，那个 diff 就是评审物。
 - `TestCorpusCoversEveryCode`：corpus 没触发某个码即红（防止 golden 看着很长、实际有规则从未被渲染）。
 - `TestRegistryIsProductionShaped`（`main_test.go`）：注册表不是 50 条即红。
-- `fixture_test.go` 十条：四条夹具的 ID/形状/步数/幂等、作者夹具不被覆盖、改夹具换 hash 且
-  store 接受自动谱系、`Ratchet` 四臂 + `CanPromote` 边界、5 个 5xx 码各一条、以及"缺 runner /
-  缺 plan / runner 报错 / 失败不给 Reason"四种必须点名的失败（`Reason` 非空是硬约束 21）。
-- agents 侧 `TestPlasmaFixtureRunner_*`：四夹具**各一绿一红**（负样本证明判据会失败，见硬约束 23）、
-  5b 占位不白送通过、`stop_kind` 词表对账、端到端 `VerifyStructural` + `Ratchet` 停在 provisional。
-- `palette_test.go` 七条：`TestPlasmaPaletteIsReadOnly`（11 项禁用能力逐个断言 + flow/tool_load 必须在）、
-  `_UnapprovedIsRejectedButAccounted`（PLS-201 与 PLS-210 必须同时在场）、
-  `_ApprovedPassesButStillAccounted`（批准后仍留账目）、`_ApprovalIsPerBit`（只批 fs_write 时 shell 仍被拒）、
-  `_ReadOnlyBundleHasNoEscalation`（只读 bundle 不该带噪声 warning）、
-  `_DeclaredIntentIsAccounted`（光声明意图也要账目）、`TestBeyondBase`。
-- agents 侧配套：`TestMetaPromptToolPoolMatchesPalette`（`registry_gate_test.go`）同时断言
-  **广告与准入**两侧都用 PlasmaPalette，且 run_bash/create_file 两侧都拒、load_tool 必须在。
+- `fixture_test.go` 十条：夹具 ID/形状/步数/幂等、作者夹具不被覆盖、改夹具换 hash 且 store 接受
+  自动谱系、`Ratchet` 四臂 + `CanPromote`、5 个 5xx 码各一条、"缺 runner/缺 plan/报错/失败不给
+  Reason"四种必须点名（硬约束 21）。agents 侧 `TestPlasmaFixtureRunner_*`：各一绿一红、5b 占位
+  不白送通过、`stop_kind` 对账、`VerifyStructural` + `Ratchet` 停在 provisional。
+- `palette_test.go` 七条：`_IsReadOnly`（11 项禁用能力 + flow/tool_load 必须在）、`_UnapprovedIsRejected
+  ButAccounted`（PLS-201 与 PLS-210 同时在场）、`_ApprovedPassesButStillAccounted`、`_ApprovalIsPerBit`
+  （只批 fs_write 时 shell 仍被拒）、`_ReadOnlyBundleHasNoEscalation`、`_DeclaredIntentIsAccounted`、`TestBeyondBase`。
+- agents 侧配套：`TestMetaPromptToolPoolMatchesPalette` 同时断言**广告与准入**两侧都用 PlasmaPalette。
 - `workdir_test.go` + agents 侧 `trampoline_test.go`（P8）：契约文件名与 `%03d` 序号、diagnostics.json
   小写键、0700/唯一目录、`Cleanup` 幂等、GC 只删过期 `plasma-*`；trampoline 五条 = exit 4 序号对齐 /
   `diagnostics → --fix` / kill 后超时+workdir 清理 / `max_llm_calls` 上限 / `ai_chunk` 来自 Go 侧。
 
-脚本守卫：`check_plasma_leaf.sh`（硬约束 1）。
-`testdata/` 落地后要跑 `gofmt -l internal/plasma/testdata`（根 `AGENTS.md` §11 坑 41：
-`go build/vet/test` 都不看它）。
+脚本守卫：`check_plasma_leaf.sh`（硬约束 1）、`check_plasma_pyz_sync.sh`（硬约束 28）。
+`testdata/` 落地后跑 `gofmt -l internal/plasma/testdata`（`go build/vet/test` 都不看它，坑 41）。
 
 ## 尚未落地（别当成已有能力引用）
 
-5a 已落地：`StructuralFixtures` + `VerifyStructural` + `Ratchet`；`promoted` 只由 `CanPromote` 判"够不够"，
-写回 store 归 P9。**5b 仍是占位**（`RunBehavioral` 恒返回"未执行"，属 P11）。**P8 的 trampoline 驱动器 +
-`Spawner` 已落地但未接线**（`agents/trampoline.go`/`spawner.go`，接进 `runMetaDesign` 是 P9）；CLI 已落地（P7）。
-升级批准的用户回路仍等 P9 接线。
+**5b 仍是占位**（`RunBehavioral` 恒返回"未执行"，属 P11）；`promoted` 只由 `CanPromote` 判"够不够"，
+写回 store 归 P9。在线 trampoline + Python zipapp 已落地（P8/P10），升级批准回路接在 P9b；CLI 在 P7。

@@ -27,7 +27,7 @@ import (
 //
 // 注意这里**没有 Go 兜底实现**：ADR-15 明确"缺 Python 就降级"，因为一条"Go 也能生成"
 // 的第二路径必然与 Python 侧的判定漂移，而且它正是 P9a 删掉的那份代码。
-func buildPlasmaGenerator(cfg *config.Config, publisher agents.EventBus, engine llm.Engine) (agents.PlasmaGenerator, string) {
+func buildPlasmaGenerator(cfg *config.Config, publisher agents.EventBus, engine llm.Engine, extractErr error) (agents.PlasmaGenerator, string) {
 	if cfg == nil {
 		return nil, "plasma 生成器未装配：配置未加载（cfg == nil）；修复：先完成 config 初始化"
 	}
@@ -40,6 +40,11 @@ func buildPlasmaGenerator(cfg *config.Config, publisher agents.EventBus, engine 
 	if ok, reason := agents.PlasmaAvailableWith(cfg.Plasma, pyz); !ok {
 		// 判据失败：连 trampoline 都不建。建了也会在第一次 Generate 时炸，
 		// 而那时的错误与"生成失败了"无法区分。
+		if extractErr != nil {
+			// 把提取失败接在**同一句原因**后面：Surface.Skipped 只显示一句，
+			// 少了它读的人会以为是包没做出来，而实际是权限/磁盘问题（P9a 的 Debug 坑）。
+			reason += "；另外，内嵌二进制提取失败：" + extractErr.Error() + "（修复：检查 ~/.yagent/bin 是否可写）"
+		}
 		return nil, reason
 	}
 

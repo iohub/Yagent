@@ -422,7 +422,7 @@ go build -o yagent .          # 快速验证 Go 侧（dist/bin 已有文件时�
 ### 8.3 测试
 
 ```bash
-bash scripts/check_all.sh                 # 本地闸门：build + vet + 十三把守卫 + 全量单测
+bash scripts/check_all.sh                 # 本地闸门：build + vet + 十四把守卫 + 全量单测
 RACE=true bash scripts/check_all.sh       # 再对并发包跑 -race（慢 3-8 倍，改到并发时手动跑）
 bash scripts/check_all.sh --fast          # 只跑 ./internal/... 的单测
 go test ./... -count=1 -timeout 600s      # 26 个测试包，墙钟约 12s
@@ -469,14 +469,14 @@ go test ./internal/agents/... -count=1    # 最慢的一档，约 10.5s
 
 ### 9.2 守卫与全局不变量
 
-**十三把守卫**（`bash scripts/check_all.sh` 一条命令跑完；每条都对应一次"曾经静默漂移"）：
+**十四把守卫**（`bash scripts/check_all.sh` 一条命令跑完；每条都对应一次"曾经静默漂移"）：
 
 ```
 check_no_manual_lookup        不许重新出现按名字查工具（FORBIDDEN 名单必须为零）
 check_toolspec_leaf           toolspec 不得反向依赖 agents/tools
 check_no_agents_import        director/ 子包不得 import internal/agents（扫传递闭包，防循环）
 check_blueprint_leaf          internal/blueprint 只准标准库 + util + projectid
-check_plasma_leaf / check_llm_scripted  plasma 只准 stdlib + toolspec + util + projectid + tokenutil；scripted 只准 stdlib + llm
+check_plasma_leaf / check_llm_scripted / check_plasma_pyz_sync  plasma 只准 stdlib + toolspec + util + projectid + tokenutil；scripted 只准 stdlib + llm；pyz 生成物必须与源逐字节同步
 check_supervise_leaf          internal/supervise 只准标准库
 check_shutdown_leaf           internal/shutdown 只准标准库 + supervise
 check_no_bare_go              裸 go 全仓硬禁，**无 PENDING 名单**（唯一例外：supervise 自己）

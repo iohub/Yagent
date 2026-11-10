@@ -1,15 +1,16 @@
 package embedbin
 
 import (
-	"embed"
-	"fmt"
-	"io/fs"
 	"crypto/md5"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ExtractBinaries extracts embedded binaries from the given embed.FS to ~/.yagent/bin/
@@ -82,10 +83,16 @@ func ExtractBinaries(binFS embed.FS, subDir string) (string, error) {
 		}
 
 		if needWrite {
-			if err := os.WriteFile(destPath, data, 0755); err != nil {
+			if err := os.WriteFile(destPath, data, filePerm(name)); err != nil {
 				return "", fmt.Errorf("failed to write binary %s: %w", name, err)
 			}
 			slog.Info("Updated binary", "name", name)
+		} else {
+			// 权限修正：早期版本把所有文件写成 0755。脚本类产物（plasma.pyz）不是
+			// 原生可执行文件，0700 才是它该有的权限（P10）。
+			if chmodErr := os.Chmod(destPath, filePerm(name)); chmodErr != nil {
+				slog.Warn("Failed to adjust permissions", "name", name, "error", chmodErr)
+			}
 		}
 
 		// 更新 checksums
@@ -158,6 +165,19 @@ func isExecutableName(name string) bool {
 		return false
 	}
 	return true
+}
+
+// filePerm 决定落盘权限：原生可执行 0755；脚本类（zipapp/.py）0700。
+//
+// 为什么区分：plasma.pyz 由 python3 解释执行，不需要 exec 位给同组/其他用户；
+// 它内含生成策略（可读即泄漏提示词），0700 与 workdir 的 0700 同一取向。
+func filePerm(name string) os.FileMode {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".pyz", ".py":
+		return 0o700
+	default:
+		return 0o755
+	}
 }
 
 // BinPath returns the full path to an extracted binary in ~/.yagent/bin/

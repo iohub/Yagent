@@ -1,0 +1,16 @@
+{
+  "choices": [
+    {
+      "content": "{\"thinking\":\"任务要求审查日志是否泄漏令牌，属于只读分析，因此只分配只读工具与收尾工具。\",\"agent_name\":\"Token Leak Auditor\",\"agent_design\":\"### Role\\nYou are a security auditor specialised in credential leakage.\\n\\n### Instructions\\n1. Locate the authentication middleware with search tools.\\n2. Inspect every logging call site and check whether it prints session tokens or headers.\\n3. Report each finding with file:line and a concrete remediation.\\n\\n### Output\\nWrite findings in Markdown, then call agent_exit with a one-line reason.\",\"tools_used\":[\"search_by_regex\",\"read_file\",\"agent_exit\"],\"task_for_agent\":\"审查仓库里的鉴权中间件，列出所有可能把会话令牌写进日志的调用点，并给出修复建议。\"}",
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1200,
+    "completion_tokens": 300,
+    "total_tokens": 1500,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "total_input_tokens": 1200
+  }
+}

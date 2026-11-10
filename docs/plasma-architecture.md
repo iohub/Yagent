@@ -1465,7 +1465,70 @@ internal/toolspec/schemas.json` **零输出**（`delegate_meta` Spec 一个字�
 全部改成 plasma 现状（`MetaAgentHandler` 保留，`MetaAgent` / `MetaAgentResult` /
 `ParseMetaAgentOutput` 标注为已删除）。
 
-**待办（P10）**：① Python 包 `plasma/py/` + `plasma.pyz` 打包与 `embedbin` 落地（当前
+**待办（P10；① 已由本节 P10 记录结算）**：① Python 包 `plasma/py/` + `plasma.pyz` 打包与
+`embedbin` 落地（当前
 `plasmaAvailable()` 恒降级属预期）；② 进化器的 store 读写与 `store_ttl` GC 接线；
 ③ 5b 行为夹具的评分侧（只统计 `fixture_run=false` 的记录）与 `promote_min_runs` 棘轮；
 ④ `yagent plasma list` 的统计栏接 telemetry 聚合。
+
+### P10 已落地（2026-11-10）
+
+**Python 包（`plasma/`，stdlib-only，≥3.9）。** 十个模块：`contract.py`（契约镜像）、
+`state.py`（状态机）、`manifest.py`（只读能力清单）、`sampling.py`（写 `llm_req_NNN.json` /
+读 `llm_resp_NNN.json`）、`generate.py`（draft→critique→refine + `--fix`）、
+`author_fixtures.py`（离线出题草稿）、`explain.py`（诊断渲染）、`cli.py` / `__main__.py`
+（入口）、`tests/`（28 条 stdlib unittest）。零第三方依赖；Python 不碰 provider、不持密钥、
+不碰工作区、不起 shell。
+
+**`generate` 状态机每次 respawn 只推进一步**（ADR-14）：`start` → 写 `llm_req_NNN.json` +
+`state.json` → `exit 4` → 被 respawn 后 `waiting` → 读 `llm_resp_NNN.json` → 本地自检
+（必填字段非空 / `tools_used ⊆ manifest.tools` / 必须含 `agent_exit`）→ 通过则写
+`bundle.json`（最小 spec，OD-2）`exit 0`；不通过则追加一条带**具体问题**的 refine 消息并请求
+下一轮（上限 `MAX_ROUNDS=3`，超限 `exit 1`）。`state.json` 带 `schema_version`，不匹配
+**清状态重来**；`--fix` 把 Go 诊断的 `code / path / message / note` 原文喂进对话。
+`waiting` 却读不到响应 ⇒ `exit 1` 并点名（重发同一请求会安静烧掉 `max_llm_calls`）。
+日志一律 stderr，`generate` 不写 stdout。
+
+**契约镜像与反漂移闸门。** `plasma/contract.py` 的常量**一行一条字面量**（计算式会让正则
+提取失败即红）；`internal/plasma/contract_py_test.go` 读它的源码文本，与 `plasma.Exit*` /
+`File*` / `ManifestSchemaVersion` 及 `LLMReq/LLMResp` 的 `%03d` 渲染**逐条对账**，并断言
+`plasma/*.py` 只 import 白名单内的标准库。两侧共用
+`plasma/testdata/contract/{llm_req_000,llm_resp_000}.json`：Go 侧反序列化进生产结构体
+`llm.Response`（`agents` 侧进 `llmRequestFile`），Python 侧断言能产出同形状对象 —— 契约只有一份。
+
+**字节稳定打包。** `scripts/build_plasma.sh` 不用 `python3 -m zipapp`（它用文件 mtime，每次
+checkout 都换字节）：内联 Python 手写 ZIP，成员按名字排序、时间戳固定 1980-01-01、
+`ZIP_STORED`（跨 zlib 版本也逐字节相同）。产物 `dist/bin/plasma.pyz`（10 个文件，约 49 KB），
+连跑两次 `sha256sum` 相同；因 `dist/` 在 `.gitignore` 里，产物用 `git add -f` 纳入版本库。
+`scripts/check_plasma_pyz_sync.sh` 重建到临时文件 `cmp` 逐字节比较，已注册进 `check_all.sh`
+（13 → **14** 把守卫）；缺 `python3` 时打印 WARN 跳过（不是"验证通过"）。
+
+**嵌入与降级。** `//go:embed dist/bin/*` 已覆盖 pyz；`internal/embedbin` 新增 `filePerm`：
+`.pyz`/`.py` 落盘 **0700**（内含生成策略，与 workdir 同一取向），其余仍 0755，并对已存在文件
+`chmod` 修正历史 0755。`app.Init` 的提取失败从 `slog.Debug` 改成 `slog.Warn`
+（`category=plasma-bin`），错误经 `buildPlasmaGenerator(..., extractErr)` 接进 `delegate_meta`
+的 `Surface.Skipped` 原因。`plasmaAvailableWith` 的"缺 pyz"文案改成可执行的修复方向
+（重装 yagent / 跑 build 脚本），不再写"P10 前属预期"。
+
+**真实跨语言冒烟（`internal/agents/trampoline_python_test.go`）。** 真 `python3` + 真
+`dist/bin/plasma.pyz` + 真 `ExecSpawner`：首次 spawn `exit 4` → 读 `llm_req_000.json` 解进
+`llmRequestFile`（断言 system 里有工具池表格）→ 测试用 `llm.Response` 写响应 → respawn
+`--resume`（最多 4 轮，多轮策略再要采样时喂同一份合法响应）→ 断言 `bundle.json` 可被
+`plasma.Elaborate` 解析且保留 `agent_exit`。同时覆盖离线单向：`--help` exit 0、
+`explain --in … --out …` exit 0 且 stdout 只有一份 JSON 信封。实测往返 0.19 s。
+`python3 -m unittest discover plasma/tests`：**28 tests OK**。
+
+**与文档的偏差（显式记录）。** ① 首版只产**最小 spec**（OD-2 已定），完整 IR 留给进化路径；
+② `state.json` 状态机粒度是"每 respawn 一步"，不是每轮多步（策略简单换来可重放）；
+③ `author-fixtures` 首版是**机械推导草稿**（带 provenance，供 P11 的 LLM 出题细化），
+`evolve` / `judge` / `propose` 注册为桩并 `exit 2` 说明"未实现"，不是静默缺失；
+④ `explain` 的 stdout 是 JSON 信封（`errors/warnings/diagnostics/out`），纯文本只走 `--out`
+—— 与 §7.3 的"stdout 仅一份 JSON"一致，而不是让文本占数据通道。
+
+**行数结算**：根 `AGENTS.md` 仍 **608**（守卫数 13→14 与守卫列表都是等行替换）；
+`internal/agents/AGENTS.md` 仍 **212**；`internal/plasma/AGENTS.md` 仍 **200**（新增硬约束
+27/28，等量压缩 7 处）。`tool_surfaces.golden` 与 `schemas.json` 零改动。
+
+**待办（P11）**：① 5b 行为夹具（真 LLM 回放）+ `judge` rubric；② `evolve` 的评分/变异/选择
+与 Goodhart 三防线；③ `author-fixtures` 接 LLM 出题（当前只产草稿）；④ `propose` 的内建
+Agent diff 提案与 TUI `/plasma` `/proposals`（P12）。
