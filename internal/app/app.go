@@ -164,9 +164,14 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 		}
 
 		binDir := ""
+		// 提取失败必须留下可见账：内嵌的 plasma.pyz 就在这里落地，而
+		// "plasma 不可用"的原因要能进 Surface.Skipped（ADR-15 明写不许只 Debug）。
+		var binExtractErr error
 		if ca.config != nil {
 			if dir, err := embedbin.ExtractBinaries(ca.embeddedBinFS, "dist/bin"); err != nil {
-				slog.Debug("Failed to extract embedded binaries; tools will fall back to PATH lookup", "error", err)
+				binExtractErr = err
+				slog.Warn("plasma: 内嵌二进制提取失败；tools 会回落到 PATH 查找，plasma.pyz 将不可用",
+					"category", "plasma-bin", "error", err)
 			} else {
 				binDir = dir
 			}
@@ -388,9 +393,10 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			External:    agents.ExternalFrom(ca),
 		})
 		// 生成式 Agent：可用则装配 trampoline（流式走父进程 publisher），不可用则记下原因。
-		// P10 之前 plasma.pyz 不存在 ⇒ 这里是降级，delegate_meta 不进工具面（ADR-15）。
+		// P10 之后 plasma.pyz 内嵌在 dist/bin 并解到 ~/.yagent/bin，所以不可用只剩三种：
+		// [plasma] enable=false、解释器不可用、pyz 没落地（含提取失败，见上面的 Warn）。
 		gcPlasmaWorkdirs(ca.config)
-		plasmaGen, plasmaWhy := buildPlasmaGenerator(ca.config, publisher, metaEngine)
+		plasmaGen, plasmaWhy := buildPlasmaGenerator(ca.config, publisher, metaEngine, binExtractErr)
 		if plasmaGen == nil {
 			slog.Info("plasma: 生成器降级", "reason", plasmaWhy)
 		}

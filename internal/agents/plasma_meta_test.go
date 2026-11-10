@@ -265,7 +265,21 @@ func TestDelegateMeta_StructuralFixtureFailureBlocksRegistration(t *testing.T) {
 // 反面对照（同一份断言结构、只把生成器接上）证明"消失"确实来自可用性判定，
 // 而不是别的副产物 —— 只写前半段的话，一条"delegate_meta 被谁误删"的改动也会让它变绿。
 func TestDelegateMeta_GatedByPlasmaAvailability(t *testing.T) {
-	const why = "plasma 生成器未装配：未找到 plasma.pyz（P10 前属预期）；修复：等 Python 包落地"
+	// 降级理由由**真实判据**生成，不手写字符串：这样 plasmaAvailableWith 退化成
+	// 恒 true、或文案丢掉"怎么修"，这条测试都会红（P10 把 P9a 的占位文案换掉了）。
+	interp := filepath.Join(t.TempDir(), "python3")
+	if err := os.WriteFile(interp, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatalf("准备解释器桩失败：%v", err)
+	}
+	missingPyz := filepath.Join(t.TempDir(), plasmaPyzName)
+	ok, why := plasmaAvailableWith(config.PlasmaConfig{Enable: true, Python: interp},
+		func() (string, error) { return missingPyz, nil })
+	if ok {
+		t.Fatalf("空 zipapp 应判不可用：reason=%q", why)
+	}
+	if !strings.Contains(why, plasmaPyzName) || !strings.Contains(why, "修复") {
+		t.Fatalf("降级理由不可执行：%q", why)
+	}
 
 	degraded := newPlasmaDirector(t, nil, fakeFixtureRunner{})
 	degraded.plasmaWhy = why

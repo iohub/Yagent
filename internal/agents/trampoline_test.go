@@ -15,7 +15,8 @@ import (
 )
 
 // 这组用例用**真 /bin/sh + 假 Python 脚本**打通 trampoline（设计稿 §8.1 的 T8/T9
-// 与 ADR-14 的补偿控制）：不依赖真 zipapp（P10 才产），也不需要 PATH 上有 python3。
+// 与 ADR-14 的补偿控制）：不依赖真 zipapp（P10 之前没有；真件的往返见
+// trampoline_python_test.go），也不需要 PATH 上有 python3。
 //
 // 每个用例都能死在一条具体契约上：
 //   - 序号对齐（llm_req_000 ↔ llm_resp_000）；

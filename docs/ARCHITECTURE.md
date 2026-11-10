@@ -491,7 +491,7 @@ type DirectorAdapter struct {
 
 #### plasma 生成契约（取代 MetaAgent 的 JSON 直出）
 
-Python 侧（`plasma/prompts/generate_seed.md`，P10 落地）产出 5 字段最小 spec
+Python 侧（`plasma/prompts/generate_seed.md`，P10 已落地）产出 5 字段最小 spec
 （`thinking` / `agent_name` / `agent_design` / `tools_used` / `task_for_agent`），Go 侧
 `plasma.Elaborate` 把它扩充成完整 IR，再由 `Compiler` 跑阶段 1–4（`internal/plasma`）。
 `ParseMetaAgentOutput` / `ExtractJSONObject` 已随 MetaAgent 一起删除 —— 解析器不再是

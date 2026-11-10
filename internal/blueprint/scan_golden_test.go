@@ -14,8 +14,12 @@ func TestScanSelfGolden(t *testing.T) {
 	if snap.ModulePath != "yagent" {
 		t.Fatalf("ModulePath = %q, 要 %q", snap.ModulePath, "yagent")
 	}
-	if len(snap.Leaves) != 46 {
-		t.Fatalf("片数 = %d, golden 是 46 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
+	if len(snap.Leaves) != 47 {
+		// 47：P10 新增顶层 `plasma/` Python 包（contract/state/sampling/generate/explain/cli 等
+		// 13 个文件）—— 它是仓库里第一个 .py 代码片，因此多出一片；`plasma/tests` 与
+		// `plasma/testdata` 不单独成片（前者折叠进父片、后者被 testdata 规则排除）。
+		// 边数不变（155/155）：Python 不产生 Go import 边。
+		t.Fatalf("片数 = %d, golden 是 47 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
 	}
 	out, in := 0, 0
 	for i := range snap.Leaves {

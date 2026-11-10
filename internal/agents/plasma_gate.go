@@ -48,15 +48,16 @@ func plasmaAvailableWith(cfg config.PlasmaConfig, pyzPath func() (string, error)
 	path, err := pyzPath()
 	if err != nil {
 		return false, "plasma 生成器未装配：定位不到 " + plasmaPyzName + "（" + err.Error() + "）；" +
-			"修复：检查 $HOME 可读，或等 Python 包落地"
+			"修复：检查 $HOME 可读（内嵌二进制要解到 ~/.yagent/bin）"
 	}
 	if strings.TrimSpace(path) == "" {
 		return false, "plasma 生成器未装配：定位不到 " + plasmaPyzName + "（路径为空）；" +
-			"修复：检查 $HOME 可读，或等 Python 包落地"
+			"修复：检查 $HOME 可读（内嵌二进制要解到 ~/.yagent/bin）"
 	}
 	if info, statErr := os.Stat(path); statErr != nil || info.IsDir() {
-		return false, "plasma 生成器未装配：未找到 " + path + "（P10 前属预期）；" +
-			"修复：等 Python 包落地（plasma.pyz），或把 zipapp 放到该路径（解释器 " + python + " 已就绪）"
+		return false, "plasma 生成器未装配：未找到 " + path + "（内嵌的 " + plasmaPyzName + " 没有落地）；" +
+			"修复：重编译/重装 yagent（内嵌 dist/bin/" + plasmaPyzName + "），" +
+			"或运行 bash scripts/build_plasma.sh 后把产物放到该路径；解释器 " + python + " 已就绪"
 	}
 	return true, ""
 }

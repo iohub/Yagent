@@ -1,7 +1,7 @@
 # plasma 生成策略种子（generate_seed）
 
 > **来源与归属**：本文件由 `internal/agents/meta.prompt.md` 迁入（P9a）。
-> 它现在只供** Python 生成器**（`plasma.pyz generate`，P10 落地）当策略种子使用；
+> 它现在只供 **Python 生成器**（`plasma.pyz generate`，P10 已落地）当策略种子使用；
 > **Go 侧不再有任何生成器**（`MetaAgent` / `meta.prompt.md` 已删除，ADR-15）。
 > 改这里等于改生成策略，改 `internal/agents/**` 不会再影响生成行为。
 >

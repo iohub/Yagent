@@ -28,7 +28,8 @@ import (
 
 // ExecSpawner 用 os/exec 跑 `python3 plasma.pyz <args> --workdir <W>`。
 //
-// P8 阶段没有真 zipapp（P10 才产）：测试把 Pkg 指向自己写的 shell 脚本、Python 指向
+// P8 阶段还没有真 zipapp（P10 才产；现在生产跑 dist/bin/plasma.pyz）：测试把 Pkg 指向
+// 自己写的 shell 脚本、Python 指向
 // /bin/sh，于是契约（argv 形状、exit code、workdir 标志）能独立于 Python 实现被测死。
 type ExecSpawner struct {
 	// Python 是解释器路径。空 = PATH 上的 python3（ADR-15：缺解释器 ⇒ 能力不可用，
