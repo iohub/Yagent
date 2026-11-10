@@ -40,6 +40,11 @@ var plasmaFlags struct {
 	evolveOut  string
 	maxCands   int
 	dryRun     bool
+	// propose（P12a）：--agent 选内建 Agent，--out 是提案目录。
+	// 与 evolve 的 --out 分开两个字段而不是复用 evolveOut：两个命令都可能被同一次
+	// 进程调用（测试直接调 runPlasmaXxx），共用一个落点会让后一次覆盖前一次的观测。
+	proposeAgent string
+	proposeOut   string
 }
 
 // usageError 标记"命令用法错"（exit 2），与"这次操作失败"（exit 1）区分开。
@@ -179,7 +184,7 @@ func init() {
 		"evaluate candidates without writing them to the store")
 
 	plasmaCmd.AddCommand(plasmaCompileCmd, plasmaTestCmd, plasmaSampleCmd,
-		plasmaManifestCmd, plasmaListCmd, plasmaPromoteCmd, plasmaEvolveCmd)
+		plasmaManifestCmd, plasmaListCmd, plasmaPromoteCmd, plasmaEvolveCmd, plasmaProposeCmd)
 	rootCmd.AddCommand(plasmaCmd)
 }
 

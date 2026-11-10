@@ -148,11 +148,16 @@ func TestPythonContractPythonIsStdlibOnly(t *testing.T) {
 		"argparse": true, "os": true, "sys": true, "json": true, "zipfile": true,
 		"difflib": true, "tempfile": true, "unittest": true, "io": true,
 		"contextlib": true, "hashlib": true, "typing": true, "re": true,
+		// P12：propose 的 created_at（提案时间戳）用 datetime；它仍是标准库，
+		// 白名单要逐个开一次口 —— 这正是"不许悄悄引入第三方"的落点。
+		"datetime": true,
 		"contract": true, "manifest": true, "sampling": true, "state": true,
 		"generate": true, "explain": true, "author_fixtures": true, "cli": true,
 		// P11：离线评分与进化。白名单是**逐个模块**列的，所以新增一个本地模块
 		// 必须在这里显式开一次口 —— 这正是"不许引入第三方依赖"的落点。
 		"judge": true, "evolve": true,
+		// P12：内建 Agent 的提案生成（离线、确定性启发式）。
+		"propose": true,
 	}
 	importLine := regexp.MustCompile(`(?m)^[ \t]*(?:import|from)[ \t]+([A-Za-z_][A-Za-z0-9_]*)`)
 	dir := "../../plasma"
