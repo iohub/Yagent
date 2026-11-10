@@ -84,7 +84,7 @@ const MaxMaxParallelReadOnlyTools = 8
 var defaultToolTimeout = 180 * time.Second
 
 // toolHeartbeatInterval 是工具执行期间的 activity 心跳间隔。写成 var 只为让测试
-// 把它调小（否则一条用例要等 30 秒）；必须 > 0。
+// 把它调小（否则一条用例要等 30 秒）；<= 0 = 关闭心跳，语义见 startToolHeartbeat 的守卫。
 var toolHeartbeatInterval = 30 * time.Second
 
 var stepRetryBackoffBase = time.Second
@@ -97,6 +97,15 @@ var stepRetryBackoffBase = time.Second
 // 表现是"模型明明还在生成，任务却说卡住了"。
 // 心跳必须打在**父 ctx** 上：toolCtx 会在工具返回前后被取消，打在它上面等于什么都没续。
 func startToolHeartbeat(ctx context.Context, toolName string) (stop func()) {
+	// 间隔 <= 0 = 明确的"关掉心跳"语义，不是配置错误：调用方本来就可以选择不心跳
+	// （短工具不需要续 idle），把它当错误只会逼调用方传一个魔法正数。守卫必须写在起
+	// goroutine 之前：time.NewTicker 对非正间隔直接 panic，而这条 goroutine 经 supervise
+	// 启动、panic 会被 recover 成一条 ERR —— 表现是"心跳静默消失、看门狗退回长工具被杀"，
+	// 没有返回值、没有日志能让人把它和"没配心跳"区分开。
+	noop := func() {}
+	if toolHeartbeatInterval <= 0 {
+		return noop
+	}
 	stopped := make(chan struct{})
 	done := make(chan struct{})
 	var once sync.Once

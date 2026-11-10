@@ -11,7 +11,9 @@ import (
 
 // CogToolBudget 由装配层（internal/app）注入，把 [tools.llm.<slot>.timeout]
 // 解析成实际预算；返回 ≤0 表示未配置。用包级变量注入而非构造参数，
-// 是为了让运行期改配置也能生效，并让测试可以直接替换。
+// 是为了让测试可以直接替换，并把解析留在装配层一处：注入的是
+// (*config.Config).CogToolTimeout，显式 [tools.llm.<slot>].timeout 改值要重启；
+// 只有它回落时现取的全局 [llm].timeout 是运行期可改的。
 var CogToolBudget func(toolName string) time.Duration
 
 // cogToolBudget 返回工具预算：注入的解析器优先，未装配时用兜底常量。
