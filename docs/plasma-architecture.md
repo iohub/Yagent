@@ -1,6 +1,6 @@
 # Plasma 架构设计 — Go 机制层 / Python 策略层
 
-> **状态**：设计定稿待实施（2026-11-09）。
+> **状态**：**P0–P12 已全部实施完成**（2026-11-10 收口）；§16 的实施记录是逐阶段的结算账，本文其余章节保留为设计依据。
 >
 > **读者**：架构师。§15 是引用索引，全部行号已逐条核实（改前坐标）。
 >
@@ -1695,3 +1695,82 @@ exit 0（14 把守卫 + 全量单测）。
 里的 `status`，**永不**自动 apply）；② 提案的最终收口（审批后如何把 diff 变成"同时改
 prompt 与 Go 代码"的人工流程）；③ `evolve` 的后台调度、`author-fixtures`/`judge` 接 LLM
 （P11 的三条待办顺延）。
+
+### P12 已落地（2026-11-10）
+
+**拆成两步，理由是失败面彼此独立。** 一次做完会把三条互不相干的失败面（Python 提案契约 /
+Go 子进程接线 / TUI 交互）压进一个提交，出问题无法二分。P12c（本节所在轮次）只做本文收口与
+全量验证，**未改任何生产代码**。
+
+| 子阶段 | 产物 | 提交 |
+|---|---|---|
+| P12a | `plasma/propose.py`（启发式提案；不碰工作区、不直连 provider、不持密钥）+ `yagent plasma propose`（材料全部由 Go 写：`prompt`/`prompt_hash`/`telemetry`/`editable_fields`/`lint`）+ `dist/bin/plasma.pyz` 重建 | `e228e95` |
+| P12b | `internal/tui/tui_plasma.go`（249 行：`list`/`explain`/`promote`/`help`）、`tui_proposals.go`（213 行：`list`/`show`/`approve`/`reject`/`help`）、`internal/plasma/{proposal,render,report}.go` | `ff904f4` |
+
+**TUI 复用既有斜杠命令分发点，不新开解析层。** 唯一分发点是 `tui_update_commands.go:63-70` 的 `/`
+分支（末尾仍是 `runSearch`），命中判据是 `matchSlashCommand`（`:22`）——**首个 token 精确匹配**，
+`/plasmafoo` 继续回落搜索（`TestPlasmaCommandDoesNotEatSearch`）。补全列表只补名字
+（`tui_completion.go:42-43`），执行仍走精确命中：两处各写一份匹配规则，结局是"补全能补出来、
+敲回车不认"。多行输出走 `components.NewTextPanel` 入弹窗栈，**不**混进日志条目（否则 `alt+l`
+一回滚就找不到了）。
+
+**人读渲染整体下沉到 `internal/plasma/render.go`，CLI 与 TUI 共用一份。** 四个出口
+`FormatEntries:30` / `PromoteBlockedReason:65` / `FormatPromote:86` / `FormatOutcomes:105`，
+`cmd_plasma_render*.go` 只保留 `--json` 契约。"同一句话在终端与 TUI 里措辞不同"是坑 18 的标准形状
+——两个渲染器不会同时被改，所以只留一个。
+
+**`/proposals` 只改 `status`，永不写 `*.prompt.md`。** 唯一写入口是 `plasma.SetProposalStatus`
+（`proposal.go:161`，按 `json.RawMessage` 改写以保住未知字段），`PromptPath` 在本文件里只当文本显示。
+闸门五条：`TestSetProposalStatusOnlyChangesStatus`、`…LeavesPromptFilesUntouched`（sha256 前后比对）、
+`…RejectsNonPending`、`…RejectsSymlink`（防"审批时路径被换成指向 prompt 的软链"）、
+`TestProposalIDRejectsTraversal`。**变异实测会红**：在 `decideProposal` 里插一行
+`os.WriteFile(p.PromptPath, …)` ⇒ `TestProposalsCommandApproveOnlyTouchesStatus` 当场红，
+报错逐字给出 sha256 前后值（`befd25ab… → 6dd130b5…`），证明"字节未变"这条断言真的在守。
+
+**`promote` 不静默失败。** 判据是 `plasma.CanPromote`；不足时打印 `runs 不足（n/N）` 且**不动
+`index.json`**（`TestPlasmaCommandPromoteRefusesWithoutRuns`，成功路径
+`TestPlasmaCommandPromoteSucceeds`）。提案**永不自动 apply**：`approve` 只把 `status` 从 `pending`
+改成 `approved`，"改 prompt + 改 Go 代码"仍是人工流程（§6.9 的原判据没变）。
+
+**一处必须记账的副作用**：`internal/tui` **首次** import `internal/plasma`，模块级边数
+**155 → 156**，`internal/blueprint/scan_golden_test.go` 已按既定格式更新并写明理由。
+
+**字节与行数结算（本轮实测）**：`dist/bin/plasma.pyz` **13 个文件 / 91269 字节**，
+`sha256=9e3560a7aa0cae6139a920e7d18510f48f296ef68f59a555d972992006634fab`（P12a 起；P12b 未改
+Python 策略，故字节不变）；`check_plasma_pyz_sync.sh` exit 0。行数棘轮：根 `AGENTS.md` **608**、
+`internal/agents/AGENTS.md` **212**、`internal/tui/AGENTS.md` **226**、`internal/plasma/AGENTS.md`
+**200**、`internal/llm/scripted/AGENTS.md` **68**。`tool_surfaces.golden` 与 `schemas.json` 零改动。
+
+**P12 之后仍悬空的三条（P11 顺延，不是新缺口）**：① `evolve` 没有后台定时器
+（`evolve_interval` 只做配置解析与"下次可运行"提示，进化只能手动 `yagent plasma evolve`）；
+② `judge` 是确定性启发式、`author-fixtures` 未接 LLM 出题；③ `propose` 首版是启发式 diff，
+不是模型改写。
+
+### 总结账（P0–P12）
+
+| P | 关键产物（文件 / 命令） | 闸门或测试锚点 | 与设计的偏差（如实记账） |
+|---|---|---|---|
+| P0 | `7da9b52`：`internal/plasma` 叶子包（`ir`/`diag`/`elaborate`/`compile`/`suggest`）+ `testdata/diagnostics.golden`（16 corpus） | `scripts/check_plasma_leaf.sh`（守卫 11→12）、`TestCorpusCoversEveryCode`、`TestDiagnosticsGolden` | `Elaborate` 多一个 `Defaults` 参数（叶子包不能 import config）；`Compiler.Palette` 是字段且**刻意无默认值**（零 palette 全拒，不是全放行）；`PlasmaPalette` 延到 P1；ADR-4 原稿多算的 `EffectExternalRead\|EffectSkill` 已删 |
+| P1 | `26e63ae`：`palette.go`（`PlasmaPalette` 只读收窄）+ 越权判定与升级账目 | `TestPlasmaPaletteIsReadOnly`、`TestPlasmaAdmitsExitTool`、`TestEscalation_*`（4 条）、`registry_gate_test.go` | 用户批准回路不在本阶段：`escalation_required` 只记账、`escalation_approved` 恒 false，回路留到 P9b（不注册就没有首次委派，批准问不出口——ADR-4 的死锁） |
+| P2 | `d8ea1d3`：`consistency.go`（阶段 4：参数名、exit 契约、thought 契约、prompt 预算） | `TestConsistency_*`（8 条）、`TestDiagCatalogMatchesCorpus` | 阶段 4 与阶段 1–3 同一个 `Compiler`、同一进程，没有拆成独立可执行的 check 阶段；告警不阻断（`TestConsistency_WarningsDoNotBlock`） |
+| P3 | `db9a807`（ADR-13）：`ExecutorResult`/`AgentResult` 携带 `steps`/`tokens`/`stop_reason` 等执行指标 | 既有 agents 回归；P9b 起由 `TestE2E_Plasma_GenerateFixRegisterRunTelemetry` 对账 | 只增字段、不改既有字段语义；指标由执行器填，渲染侧不得二次推算（推算必然与账本分叉） |
+| P4 | `13234e3`：`store.go`（内容寻址 `{name}/{hash}/`、`Load` 重算 hash、`index.json`）+ `telemetry.go` | `TestStore_*`（10 条）、`TestAppendTelemetry_*`（2 条） | 不可变逐字节校验与 `CheckFixtureProvenance` 到 P11 才补齐（P4 只有雏形）；`SetGrade` 到 P7 才加；遥测账本当时**没有读者** |
+| P5 | `internal/llm/scripted`（253 行，唯一替身；`New`/`NewWithResolver`/`NewForIdentity`）+ `llm.CallOptions.AgentName` + `scripts/check_llm_scripted.sh` | `TestEngine_*`（8 条）、`check_llm_scripted.sh`（守卫 12→13）、9 个 e2e 经 `e2e_engine_test.go:18-22` 的别名 | 守卫必须查**直接 import**：`-deps` 会把 `internal/llm` 自己的 config/logging/models/util 全误报成越界；`internal/llm/scripted/AGENTS.md` 是**新建**而非同步既有文档；两处 `agentIdentity` 过期引用一并清掉 |
+| P6 | `fixture.go`（5a 四夹具 + `EnsureStructuralFixtures`/`Ratchet`/`CanPromote`）、`internal/agents/plasma_fixture.go`（`PlasmaFixtureRunner`，`evaluateExpect` 是 Expect 的唯一求值点） | `fixture_test.go`（10 条）、`plasma_fixture_test.go`（7 条，四夹具**各一绿一红**） | `exit-contract` 用**一条**响应（正文 + `agent_exit` 同一个 Choice），为此新增 `TextAndToolCall`——两步写法走不到第二步；静态夹具走真实 `surfaceFor` 装配而非纯静态断言；`RunBehavioral` 当时是占位（P11 才实现）；`Outcome.Steps` 由 runner 补齐（executor 的 max_steps 出口返回零值结果） |
+| P7 | `config/plasma.go`（18 键 + `NormalizePlasma` 返回 error）、`manifest.go`（`CapabilityLock`/`DiagCatalog`）、根包 `cmd_plasma*.go` 六子命令 + `cmd_plasma_render*.go` | `internal/config/plasma_test.go`（10 条）、`TestRunPlasma*`（7 条）、`TestManifestToolsMatchPalette`、`TestManifestCapabilityLockIsStableAndPaletteSensitive` | `NormalizePlasma` 违法即 error，与包内"warn + 回落"纪律刻意不同（自动委派的安全边界）；`compile` 只读不落盘；`--behavioral` 首版占位且两种"未执行"分开措辞；`--tier` 复用 `Router.EngineFor`/`llm.ParseTier` 不新写词表；`plasma test` 的 grade 打印 `n/a` |
+| P8 | `workdir.go`（契约文件名、退出码 `ExitOK/Failed/Usage/Timeout/Sampling`、`Spawner`、`GCWorkdirs`）、`agents/trampoline.go` + `spawner.go`（有界 `tailBuffer`） | `TestWorkdir_*`、`TestTrampoline_*`（7 条）、`TestExecSpawner_*`（6 条）、`TestTailBuffer_*` | 全部用例用假 `/bin/sh` Python，**真 zipapp 到 P10 才接**；`llm_req` 刻意无 `tier` 字段（多一个没人用的键就是装饰性配置）；启动期 GC 只在装配层调一次；单次 spawn 超时靠 ctx + `WaitDelay` 两件事（只 `WithTimeout` 时 `cmd.Wait` 会等管道 EOF） |
+| P9a | 删除 Go 侧生成器（`meta.go`、`meta.prompt.md`、`ParseMetaAgentOutput`、`MetaAgentResult`、`renderCustomAgentToolPool`）；新增 `plasma_meta.go` 驱动器、`plasma_gate.go` 三段降级判据、`app/plasma.go` | `TestDelegateMeta_*`（6 条）、`TestPlasmaAvailableWith_ReasonsAreActionable`、`TestPlasmaToolPoolMatchesPalette` | 拆成 P9a/P9b 两步；`plasma/prompts/generate_seed.md` 承接 108 行原则（Go 侧不再渲染工具池表，两张表必然漂移）；`meta_retry_count` 只改语义不新增旋钮；执行参数改读 `LinkPlan.Config`，**无 plan 的老路径整套回落历史值并 warn**（否则 `StopOnFinish` 零值让 `agent_exit` 不再终止） |
+| P9b | `plasma_load.go`（`LoadAll` 字典序 + 预算 + 拒载/省略账目）、升级批准回环（按 bundle hash 落 `{name}/{hash}/meta.json`）、遥测唯一写入点 `directorToolRunner.Call` | `TestE2E_Plasma_*`（4 条，含 `TestE2E_Plasma_LoadStaysWithinFrameBudget`）、`TestLoadAll_SortedBudgetAndSkipped`、`TestStore_EscalationApprovalIsPerHash` | 7xx 码族**不进** `diagCatalog`（那是发给 Python 的只读码表，而 Python 从不读 store）；运行期不热替换（版本变更只在下一轮加载生效）；`YOLO(-y)` 放行但**不写** `meta.json`；实测 12 个 Agent 1.57 ms < 25 ms 预算 |
+| P10 | `plasma/` 十模块（stdlib-only、≥3.9）、`scripts/build_plasma.sh`（字节稳定：成员按名排序 + 固定 1980 时间戳 + `ZIP_STORED`）、`embedbin` 的 `.pyz`/`.py` 落盘 0700、`scripts/check_plasma_pyz_sync.sh` | `plasma/tests`（28 条起）、`TestPythonZipappOfflineCommands`、`TestPythonZipappTrampolineRoundTrip`、`contract_py_test.go`（契约镜像逐条对账）、`check_plasma_pyz_sync.sh`（守卫 13→14） | 首版只产**最小 spec**（OD-2 已定）；`state.json` 粒度是"每 respawn 一步"；`author-fixtures` 只产机械草稿、`evolve`/`judge`/`propose` 注册为桩并 `exit 2` 说明"未实现"；`explain` 的 stdout 只有 JSON 信封，纯文本只走 `--out` |
+| P11 | `agents/plasma_behavioral.go`（5b：引擎只由调用方注入 + `CopyTree` 沙箱 + 双预算 fail-closed + 复用 `evaluateExpect`）；`judge.py`/`evolve.py` + `cmd_plasma_evolve.go`；Goodhart 三防线（`PLS-601` 逐字节、`PLS-602` 同谱系拒收、适应度只吃 `fixture_run=false`） | `TestPlasmaFixtureRunner_Behavioral*`（8 条）、`TestStore_RejectsBundleThatDiffersUnderSameHash`、`TestStore_RejectsSameLineageFixtures`、`TestStore_FixtureChangeStartsFreshGrade`、`test_judge.py`/`test_evolve.py` | **没有后台定时进化**（`evolve_interval` 只解析 + 提示"下次可运行"，只能手动触发）；`judge` 首版是确定性启发式、不调 LLM；`author-fixtures` 未接 LLM 出题；`evolve` 只做三种确定性变异（放宽不是变异，是花钱买通过） |
+| P12 | `e228e95` + `ff904f4`：`plasma/propose.py` + `yagent plasma propose`（材料全由 Go 写、临时 workdir 0600/0700 且立即删）；`/plasma` `/proposals` + `internal/plasma/{proposal,render,report}.go` | `TestSetProposalStatus*`（5 条）、`TestPlasmaCommand*`（7 条）、`TestProposalsCommand*`（6 条）、`test_propose.py` | `propose` 首版是启发式 diff（不是模型改写）；提案**永不自动 apply**（`approve` 只改 `status`）；TUI 复用既有 `/` 分发点与 `matchSlashCommand`，不新开解析层；`internal/tui` 首次 import `plasma`（边 155→156） |
+
+**不变量去向（本文之外的唯一权威）**：`internal/plasma/AGENTS.md`（硬约束 1–28 + 闸门清单）、
+`internal/llm/scripted/AGENTS.md`（10 条）、`internal/agents/AGENTS.md`（20 条）、
+`internal/tui/AGENTS.md`、根 `AGENTS.md` §4/§5.3/§9.2/§11 已全部同步。**§1–§15 从本节起只是设计依据，
+不是待办清单**；判据以代码 + 上述四份包内 `AGENTS.md` + `scripts/check_*.sh` 为准。
+
+**一处流程事实（不影响交付，但必须记账）**：P5–P11 的代码**没有**各用一个 `feat(plasma)` 提交，
+而是落在 10 个 `checkpoint: uncommitted changes before exit` 提交里；按 P 号命名的提交只有
+P0–P4（`7da9b52`/`26e63ae`/`d8ea1d3`/`db9a807`/`13234e3`）、P12a（`e228e95`）、P12b（`ff904f4`）。
+回溯历史时以本节各小节标题 + 文件清单为准，**不要拿 `git log --grep` 当阶段索引**。
