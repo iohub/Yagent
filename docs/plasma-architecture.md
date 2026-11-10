@@ -1618,3 +1618,80 @@ stderr，便于解释）；③ `evolve` 首版只做三种**确定性**变异，
 ② `evolve` 的后台调度（定时器 + 与 `evolve_interval` 对齐的"下次可运行"落地）；
 ③ `author-fixtures` 接 LLM 出题 + 用 `lineage.rejected[]` 作反例喂回；
 ④ `judge` 引入 LLM 评审（`Rubric` 已随 `Outcome` 传到 Python 侧）。
+
+### P12a 已落地（2026-11-10）
+
+**范围**：把 `propose` 的 **Go 侧**接通（命令、材料装配、子进程、渲染），并先清掉红守卫。
+**TUI `/plasma` `/proposals` 与提案收口留 P12b**。
+
+**分工与安全边界（§1.2 / §8.1 T5 原样成立）**。Python 不碰工作区、不直连 provider、
+不持密钥；它只读一个由 Go 递过去的 JSON。所以材料全部由 Go 写：
+
+| 材料 | 来源 | 口径 |
+|---|---|---|
+| `prompt` / `prompt_hash` / `prompt_path` | `agents.LookupPrompt(agent)`（新导出，直接引用既有 `//go:embed` 变量，**不读盘、不重新 embed**） | `prompt_hash` = sha256(prompt 原文) 小写 hex，Python 会重算对账，对不上直接 fail |
+| `telemetry` | `<store>/telemetry.jsonl` 尾部 | 按 agent 过滤（接受 `agent` 与 `delegate_agent` 两种写法）→ 取最近 **200** 条匹配样本 → 再派生 `runs/failures/escalations/stop_reasons/avg_steps/top_errors`；**坏行只计数不中断**，计数以 `yagent plasma propose: 遥测账本跳过 N 行…` 打到 stderr |
+| `editable_fields` | 常量 `["prompt.system","runtime.max_steps"]` | §6.9 里"提案可以提、apply 必须同时改 Go 代码"的两项 |
+| `lint` | 非 nil 空数组 | `[]` 与 `null` 必须能区分（后者会被 Python 当成"忘了填"） |
+
+`prompt_hash` 只在 Go 侧算一次：两侧用同一个 sha256 才是"同一个基准"，而 `base_hash`
+是 TUI 审批时唯一能把提案对回原文的东西。
+
+**子进程层：复用 `agents.PlasmaCLI`，不用 `ExecSpawner`。** `ExecSpawner.Spawn` 会**强制**
+追加 `--workdir <W>`，而 `propose` 的 CLI 是 `--in/--out`（argparse 不认识 `--workdir`
+⇒ 每次 exit 2，症状却像"Python 挂了"）。`PlasmaCLI` 正是"退出码 + stdout 上一份 JSON、
+无 workdir"的那条既有路径（P10 起 evolve/judge/author-fixtures 都在用）。参数形状由
+`TestPlasmaProposeArgvHasNoWorkdir` 钉死（恰 5 个 token，含 `--workdir` 即红）。
+
+**四条"失败必须可见"（ADR-15 形状）。** ①解释器/zipapp 不可用 ⇒ 直接返回
+`plasma propose 不可用：<原因>；修复：…`（原因来自唯一判据 `plasmaAvailableWith`，
+不在这里另写一份检查），且**不启动子进程**；②Python exit 非 0 ⇒ 带 stderr 尾，
+exit 2 额外提示"参数契约漂移，先重建 pyz"；③stdout 不是 JSON 信封 ⇒ 报字节数与开头
+240 字节的片段；④信封指向的 `.json`/`.md` 不存在 ⇒ 点名路径。没有一条走 `slog.Debug`。
+
+**临时 workdir**：`plasma.NewWorkdir(os.TempDir())` → 0700 目录，`propose-input.json`
+0600（复用 `writeJSONFile`），`defer workdir.Cleanup()` 整目录删除。prompt 全文因此会
+短暂落盘 —— 这是"Python 不读工作区"的必然代价，靠 0600 + 0700 + 立即删除收窄，属显式
+接受的取舍（提案产物本身由 Python 按自己的 umask 写 0644，但目录是 0700，同组用户读不到）。
+
+**绝不写 `*.prompt.md`**：`plasma propose` 的写路径只有两处 —— 提案目录（Python 写
+`<agent>-<ts>.json` / `.md`）与临时 workdir。Go 侧没有任何打开 `*.prompt.md` 的代码。
+测试对 `--out` 目录逐项断言"恰好 2 个文件、且没有任何 `*.prompt.md`"。
+
+**pyz 重建与确定性。** `bash scripts/build_plasma.sh` 产出 13 个文件 / 91269 字节，
+`sha256=9e3560a7aa0cae6139a920e7d18510f48f296ef68f59a555d972992006634fab`；**连建两次
+逐字节相同**（脚本自带"文件名排序 + 固定 1980-01-01 时间戳 + STORED"，不依赖源文件
+mtime）。`check_plasma_pyz_sync.sh` 由红转绿。
+
+**一条变异（已实测会红）。** 在 `runPlasmaPropose` 建完 `--out` 之后临时插一行
+`os.WriteFile(filepath.Join(outDir, "mutation-check.prompt.md"), …)` ⇒
+`TestPlasmaProposeHandsPromptToPython` 立刻红：
+`提案目录里应有恰好 2 个文件，实际 3 个：[coding-fake.json coding-fake.md mutation-check.prompt.md]`。
+还原后回绿。
+
+**验证结果。** `go build ./...` / `go vet ./...` 干净；`go test . -run PlasmaPropose`
+与 `go test ./internal/agents/ -run Prompt` 全绿；`check_plasma_pyz_sync.sh`、
+`check_llm_scripted.sh`、`check_plasma_leaf.sh` 均 exit 0；`bash scripts/check_all.sh`
+exit 0（14 把守卫 + 全量单测）。
+
+**真二进制冒烟（隔离 HOME）**。`HOME=/tmp/p12a-home yagent plasma propose --out /tmp/props`
+实测 exit 0，stdout 打出 `id/agent/status/json/md` 与 `telemetry: …（0 条样本，跳过 0 行）`，
+`/tmp/props` 下恰好 `coding-<ts>.json` + `.md`；`--json` 输出长度 1 的摘要数组（`agent` /
+`path` / `base_hash` / `status=pending`）；`--agent nope` exit 2 且列出六个可用取值；
+`--out` 缺省落到 `$HOME/.yagent/agents/proposals`（自动建 0700）。
+
+**一个已知前提（与 `evolve` 相同，不是新缺口）**：zipapp 由 app 启动时
+`embedbin.ExtractBinaries` 解到 `~/.yagent/bin/`。从未跑过 TUI/Agent 的机器上先跑
+`plasma propose` 会得到"未找到 …/plasma.pyz；修复：重编译/重装 yagent…"——可见且可修，
+不伪造一个退出码。
+
+**行数结算**：根 `AGENTS.md` 608、`internal/agents/AGENTS.md` 212、`internal/plasma/AGENTS.md`
+200、`internal/tui/AGENTS.md` 226 均未变；`tool_surfaces.golden` 与 `schemas.json` 零改动。
+新增文件：`internal/agents/prompt_export.go` 66、`cmd_plasma_propose.go` 153、
+`cmd_plasma_propose_run.go` 259、`cmd_plasma_propose_input.go` 234，加三个测试文件。
+`plasma/propose.py`、`plasma/cli.py`、`dist/bin/plasma.pyz` 的策略逻辑未改（pyz 只是重建）。
+
+**待办（P12b）**：① TUI `/plasma` 与 `/proposals`（list / approve / reject —— 只改 JSON
+里的 `status`，**永不**自动 apply）；② 提案的最终收口（审批后如何把 diff 变成"同时改
+prompt 与 Go 代码"的人工流程）；③ `evolve` 的后台调度、`author-fixtures`/`judge` 接 LLM
+（P11 的三条待办顺延）。
