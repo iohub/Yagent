@@ -33,6 +33,11 @@ const DefaultLLMCallTimeout = 10 * time.Minute
 // 只在 [llm] max_in_flight_requests 没写时生效；显式写 0 = 不限。
 const DefaultMaxInFlightRequests = 8
 
+// DefaultCogToolTimeout 是认知类工具（deepthinking/design）LLM 预算的兜底下限。
+// 工具需要比普通 LLM 调用更长的预算：一次深度分析的输出常达数千 token，
+// 慢速/推理型模型的生成时间会超过全局 [llm].timeout。
+const DefaultCogToolTimeout = 10 * time.Minute
+
 // DefaultLLMConfig 返回默认的 LLM 推理兜底配置
 func DefaultLLMConfig() *LLMConfig {
 	return &LLMConfig{

@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"yagent/internal/llm"
+	"yagent/internal/util"
 )
 
 // DesignTool produces an agent-friendly implementation design BEFORE coding.
@@ -82,10 +82,12 @@ func (t *DesignTool) Execute(ctx context.Context, params map[string]interface{})
 		},
 	}
 
-	// 脱离父级 deadline 但保留取消信号
-	// design 是编码前的方案设计，同样可能耗时较长，需要预留超时
-	llmCtx := context.WithoutCancel(ctx)
-	llmCtx, llmCancel := context.WithTimeout(llmCtx, 10*time.Minute)
+	// 预算取 [tools.llm.design].timeout（装配层注入 CogToolBudget），
+	// 未配置时是 max(10m, 全局 LLM 超时)。
+	budget := cogToolBudget("design")
+	// 脱离父级 deadline 但保留取消信号：executor 给每个工具的 180s 看门狗不适用于
+	// 一次完整方案设计，但用户按停止必须能立刻中断（旧代码用 WithoutCancel 丢掉了取消信号）。
+	llmCtx, llmCancel := context.WithTimeout(util.DetachDeadline(ctx), budget)
 	defer llmCancel()
 
 	// 如果设置了 StreamHandler，则使用流式推理
@@ -96,7 +98,7 @@ func (t *DesignTool) Execute(ctx context.Context, params map[string]interface{})
 
 	resp, err := t.currentEngine().GenerateContent(llmCtx, messages, nil, opts)
 	if err != nil {
-		return nil, fmt.Errorf("design LLM call failed: %w", err)
+		return nil, cogToolCallError("design", budget, err)
 	}
 
 	choice, err := resp.FirstChoice()

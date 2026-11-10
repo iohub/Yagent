@@ -141,6 +141,10 @@ type AgentsLLMConfig struct {
 
 type ToolLLMOverride struct {
 	UseProvider string `toml:"use_provider"`
+
+	// Timeout 是本工具一次 LLM 调用的预算（认知类工具用："45m" 这类 Duration 字符串）。
+	// 0 = 没配，由 CogToolTimeout 回落到 max(DefaultCogToolTimeout, 全局 LLM 超时)。
+	Timeout time.Duration `toml:"timeout"`
 }
 
 type ToolsLLMConfig struct {
@@ -701,6 +705,39 @@ func (c *Config) validate() error {
 				"delegate_total_timeout", c.Agent.DelegateTotalTimeout,
 				"delegate_idle_timeout", c.Agent.DelegateIdleTimeout,
 			)
+		}
+	}
+	// [tools.llm.<slot>.timeout] 是认知类工具一次 LLM 调用的预算（CogToolTimeout 是唯一解析点）。
+	// 负时长会让 ctx 当场过期，没有任何语义，按"没配"处理。归一化与看门狗告警只做在真正消费
+	// 该字段的槽位上；另外两个槽位的 timeout 完全不起作用，下面单独点名。
+	for _, slot := range cogToolSlots {
+		if override := c.getToolOverride(slot); override != nil && override.Timeout < 0 {
+			slog.Warn("[tools.llm] 的 timeout 为负，按未配置处理", "tool", slot, "timeout", override.Timeout)
+			override.Timeout = 0
+		}
+	}
+	// 反向的一半：thinking / micro_agent 的段里也接受 timeout，但它们不读这个字段
+	//（thinking 根本不调 LLM；micro_agent 的预算来自外层 ctx）。设了就是静默无效，
+	// 点名说出来比让用户以为"改了个能生效的旋钮"便宜（根 AGENTS.md §9.2）。
+	if override := c.Tools.LLM.Thinking; override != nil && override.Timeout != 0 {
+		slog.Warn("[tools.llm.thinking].timeout 无效：thinking 不发起 LLM 调用", "timeout", override.Timeout)
+	}
+	if override := c.Tools.LLM.MicroAgent; override != nil && override.Timeout != 0 {
+		slog.Warn("[tools.llm.micro_agent].timeout 无效：该槽位不读超时字段，预算来自调用方 ctx", "timeout", override.Timeout)
+	}
+	if c.Agent.DelegateIdleTimeout > 0 {
+		for _, slot := range cogToolSlots {
+			override := c.getToolOverride(slot)
+			if override == nil || override.Timeout <= c.Agent.DelegateIdleTimeout {
+				continue
+			}
+			// 工具执行期间会周期上报 activity 心跳（agents/executor.go 的 runToolCall），
+			// 所以 idle 看门狗不再按"无动作"判死；真正会先到的是不可续期的 delegate_total_timeout。
+			slog.Warn("认知工具的 LLM 预算大于 delegate_idle_timeout：idle 看门狗已被心跳续期，但 delegate_total_timeout 不会被续期，委派可能在工具跑完前被总上限杀掉",
+				"tool", slot, "timeout", override.Timeout,
+				"delegate_idle_timeout", c.Agent.DelegateIdleTimeout,
+				"delegate_total_timeout", c.Agent.DelegateTotalTimeout,
+				"hint", "raise [agent] delegate_total_timeout or lower [tools.llm."+slot+"].timeout")
 		}
 	}
 

@@ -163,6 +163,11 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			designEngine = ca.client.GetToolEngine("design")
 		}
 
+		// 认知类工具的单次 LLM 预算在工具侧按名字取，解析器注入一次即可：
+		// 工具每次 Execute 都重新调用它，所以 /model 或改配置之后新值立即生效。
+		// ca.config 为 nil 时 CogToolTimeout 是 nil-receiver 安全的（回落 DefaultCogToolTimeout）。
+		tools.CogToolBudget = ca.config.CogToolTimeout
+
 		binDir := ""
 		// 提取失败必须留下可见账：内嵌的 plasma.pyz 就在这里落地，而
 		// "plasma 不可用"的原因要能进 Surface.Skipped（ADR-15 明写不许只 Debug）。

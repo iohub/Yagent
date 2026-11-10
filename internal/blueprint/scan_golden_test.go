@@ -26,6 +26,12 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
+	// 158/158：认知类工具（deepthinking/design）的 LLM 预算必须能配（此前是硬编码 10m，
+	// 且用 WithoutCancel 丢掉了取消信号），修复带来两条**新增依赖**，逐条用 `go list` 确认过来源：
+	//   ① internal/tools 首次 import internal/config（tools/cog_budget.go 复用
+	//      config.DefaultCogToolTimeout，兜底常量只留一处；config 只依赖 util，不成环）；
+	//   ② internal/agents 首次 import internal/supervise（executor.go 在工具执行期起心跳
+	//      goroutine —— 裸 go 全仓硬禁，supervise 仍是不回指的叶子）。
 	// 156/156：P12b 让 internal/tui 首次 import plasma —— `/plasma` 与 `/proposals`
 	// 两个斜杠命令要读的是**同一批账目**（store 列表、report.json 诊断、promote 结果、
 	// 提案落盘与判决）。在 TUI 侧另写一份格式化必然与 CLI 漂，
@@ -44,8 +50,8 @@ func TestScanSelfGolden(t *testing.T) {
 	// 148/148：新增 internal/plasma（P0）带来 plasma→toolspec、plasma→util、agents→util
 	//（`toSnakeCase` 单源化成 `util.SnakeCase`）。更新前用 go list -f '{{.Imports}}' 逐条确认过。
 	// 更早 145/145：求助与授权从弹窗改成 footer 面板，components/user_help_dialog.go 随之删除。
-	if out != 156 || in != 156 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 156/156 —— 形状变了，先确认变化来源", out, in)
+	if out != 158 || in != 158 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 158/158 —— 形状变了，先确认变化来源", out, in)
 	}
 	for i := 1; i < len(snap.Leaves); i++ {
 		if snap.Leaves[i-1].Dir >= snap.Leaves[i].Dir {

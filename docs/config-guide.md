@@ -267,7 +267,17 @@ Precedence above this static override: a model picked in the TUI at runtime outr
 ```toml
 [tools.llm.deepthinking]
 use_provider = "deepseek_v4_pro"
+timeout = "30m"
 ```
+
+`timeout` is the budget for **one** isolated LLM call made by a cognitive tool, and only
+`deepthinking` / `design` consume it (`thinking` and `micro_agent` take their budget from the
+outer context). Unset or `0` → `max(10m, [llm].timeout)`; a negative value warns and is treated as
+unset. The tool budget outranks `[llm].timeout`, and the engines no longer re-wrap a context that
+already carries a deadline — so a 30m tool budget is not truncated by a 10m global default.
+A budget above `[agent] delegate_idle_timeout` is legal: the tool reports an activity heartbeat
+while it runs, so the idle watchdog keeps watching instead of killing the call. `delegate_total_timeout`
+is *not* renewable — raise it too if one tool call must finish inside a single delegation.
 
 ### 4.5 Failover (`fallback_providers`)
 
