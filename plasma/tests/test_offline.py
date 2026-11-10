@@ -134,17 +134,20 @@ class AuthorFixturesTest(unittest.TestCase):
         self.assertEqual(explain.render(REPORT, items), explain.render(REPORT, items))
 
 
-class StubCommandTest(unittest.TestCase):
-    def test_only_propose_is_still_unimplemented(self):
-        """evolve / judge 已在 P11 落地，只剩 propose（P12）。
+class RealCommandTest(unittest.TestCase):
+    def test_every_offline_command_is_real(self):
+        """P12 之后没有 stub：每个离线子命令都因缺必需参数而 exit 2。
 
-        留一条 stub 用例的理由不是覆盖，而是**分类**：`--in/--out` 拼错时 argparse
-        自己 exit 2，而"命令存在但没实现"必须说清是哪一种，否则调用方分不清
-        \"我拼错了\" 与 \"还没做\"。
+        留这条用例的理由不是覆盖，而是**分类**：`--in/--out` 拼错时 argparse
+        自己 exit 2，而"命令存在但没实现"曾经也 exit 2 —— 两者混在一起时，
+        调用方分不清"我拼错了"与"还没做"。所以断言里必须同时有 `required`
+        而**没有**"未实现"。
         """
-        code, _, err = _run_cli(["propose"])
-        self.assertEqual(code, contract.EXIT_USAGE)
-        self.assertIn("未实现", err)
+        for name in ("author-fixtures", "explain", "judge", "evolve", "propose"):
+            code, _, err = _run_cli([name])
+            self.assertEqual(code, contract.EXIT_USAGE, name)
+            self.assertNotIn("未实现", err, name)
+            self.assertIn("required", err, name)
 
     def test_judge_and_evolve_are_real_commands_now(self):
         """两个子命令都必须因**缺必需参数**而 exit 2（argparse），而不是"未实现"。"""
