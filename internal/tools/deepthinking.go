@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"yagent/internal/llm"
+	"yagent/internal/util"
 )
 
 // DeepThinkingTool provides system-level analysis and design capabilities.
@@ -78,10 +78,12 @@ func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interf
 		},
 	}
 
-	// 脱离父级 deadline 但保留取消信号
-	// deepthinking 是长时间运行的深度分析，需要更长的超时
-	llmCtx := context.WithoutCancel(ctx)
-	llmCtx, llmCancel := context.WithTimeout(llmCtx, 10*time.Minute)
+	// 预算取 [tools.llm.deepthinking].timeout（装配层注入 CogToolBudget），
+	// 未配置时是 max(10m, 全局 LLM 超时)。
+	budget := cogToolBudget("deepthinking")
+	// 脱离父级 deadline 但保留取消信号：executor 给每个工具的 180s 看门狗不适用于
+	// 长时间深度分析，但用户按停止必须能立刻中断（旧代码用 WithoutCancel 丢掉了取消信号）。
+	llmCtx, llmCancel := context.WithTimeout(util.DetachDeadline(ctx), budget)
 	defer llmCancel()
 
 	// 如果设置了 StreamHandler，则使用流式推理
@@ -92,7 +94,7 @@ func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interf
 
 	resp, err := t.currentEngine().GenerateContent(llmCtx, messages, nil, opts)
 	if err != nil {
-		return nil, fmt.Errorf("deepthinking LLM call failed: %w", err)
+		return nil, cogToolCallError("deepthinking", budget, err)
 	}
 
 	choice, err := resp.FirstChoice()

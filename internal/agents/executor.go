@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"yagent/internal/agents/activity"
@@ -21,6 +22,7 @@ import (
 	"yagent/internal/memory"
 	"yagent/internal/messaging"
 	"yagent/internal/pause"
+	"yagent/internal/supervise"
 	"yagent/internal/tokenutil"
 	"yagent/internal/tools"
 	"yagent/internal/toolspec"
@@ -81,7 +83,41 @@ const MaxMaxParallelReadOnlyTools = 8
 
 var defaultToolTimeout = 180 * time.Second
 
+// toolHeartbeatInterval 是工具执行期间的 activity 心跳间隔。写成 var 只为让测试
+// 把它调小（否则一条用例要等 30 秒）；必须 > 0。
+var toolHeartbeatInterval = 30 * time.Second
+
 var stepRetryBackoffBase = time.Second
+
+// startToolHeartbeat 在工具执行期间周期性上报 activity 心跳，返回的函数停掉心跳
+// 并等那条 goroutine 退出（调用方直接 defer）。
+//
+// 为什么需要它：一次认知类工具调用期间不产生任何 step，而 delegate 的空闲看门狗
+// 只看"有没有心跳"——预算是 30 分钟时，工具会在 15 分钟的 idle 阈值处被杀掉，
+// 表现是"模型明明还在生成，任务却说卡住了"。
+// 心跳必须打在**父 ctx** 上：toolCtx 会在工具返回前后被取消，打在它上面等于什么都没续。
+func startToolHeartbeat(ctx context.Context, toolName string) (stop func()) {
+	stopped := make(chan struct{})
+	done := make(chan struct{})
+	var once sync.Once
+	supervise.From(ctx).Go("agents/tool-heartbeat", func(context.Context) {
+		defer close(done)
+		ticker := time.NewTicker(toolHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopped:
+				return
+			case <-ticker.C:
+				activity.Heartbeat(ctx, "tool:running:"+toolName)
+			}
+		}
+	})
+	return func() {
+		once.Do(func() { close(stopped) })
+		<-done
+	}
+}
 
 func isSerialTool(name string) bool { return toolspec.IsSerial(name) }
 
@@ -132,6 +168,10 @@ func runToolCall(ctx context.Context, cfg *ExecutorConfig, tc llm.ToolCall) (str
 	if !isInteractiveUserTool(tc.Function.Name) {
 		toolCtx, toolCancel = context.WithTimeout(cancelCtx, defaultToolTimeout)
 	}
+	// 工具执行期间续 activity 的 idle：deepthinking/design 的预算可以有 30 分钟，
+	// 而这段时间没有任何 LLM step 心跳，delegate 的空闲看门狗会把"在等模型"判成"卡住了"。
+	stopHeartbeat := startToolHeartbeat(ctx, tc.Function.Name)
+	defer stopHeartbeat()
 	toolResult, execErr := ad.Call(toolCtx, tc.Function.Arguments)
 	cancelCtxCancel()
 	toolCancel()

@@ -98,6 +98,15 @@ false，用它判等于把新能力静默关掉（`:488` 明写，`:352` 同句�
 且不报错。provider 名是用户自定义的，`removedProviderKeyHints` 按**第四段**匹配而不是整条路径（`:272`）。
 闸门 `TestRemovedProviderKeysAreNamed`（`removed_keys_test.go:67`）与硬约束 4 的两条同族。
 
+**14. 工具级 LLM 预算的唯一解析点是 `CogToolTimeout`（`tool_timeout.go`），只服务 `cogToolSlots`。**
+优先级 `[tools.llm.<slot>.timeout] > max(DefaultCogToolTimeout, GlobalLLMTimeout())`，返回值恒 > 0；
+`thinking` / `micro_agent` 有 override 段但**不读**这个字段（预算来自外层 ctx），所以既不进
+`cogToolSlots`、也不参与 `validate()` 的看门狗告警——给没人读的槽位告警等于制造"设了却没用"的错觉。
+负时长在 `validate()` 里归零（负超时会让 ctx 当场过期，没有语义）；超过 `delegate_idle_timeout` 时
+只 warn：工具执行期会周期性上报 activity 心跳（`internal/agents` 硬约束 9 的邻居），真正不可续期的是
+`delegate_total_timeout`。工具侧消费点是 `internal/tools` 的 `CogToolBudget`，由装配层注入本方法。
+闸门 `tool_timeout_test.go`（TOML 解码 / 回落 / 负值归一化）与 `internal/tools/deepthinking_test.go`。
+
 ## 入口
 
 `config.go`（结构 + `LoadFromFile:477-561` + `validate:576-`）、`persist.go`、`setup.go`、`defaults.go`。

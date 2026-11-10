@@ -77,8 +77,11 @@ max_tokens = 3000
 # Cognitive tools (these outrank every agent-level setting):
 # [tools.llm.deepthinking]
 # use_provider = "aliyun"
+# timeout = "30m"          # 单次深度分析的 LLM 预算；不设时取 max(10m, [llm].timeout)。
+#                          # 慢速模型（长 reasoning / 低吞吐）建议显式调大。
 # [tools.llm.design]
 # use_provider = "aliyun"
+# timeout = "30m"          # 同上：编码前方案设计的一次 LLM 调用预算。
 
 # ── Deferred tool schemas ──
 # Each step carries only the tool declarations it needs; the rest sit in a catalog

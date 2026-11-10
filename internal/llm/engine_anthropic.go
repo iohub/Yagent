@@ -170,15 +170,14 @@ func (e *AnthropicEngine) GenerateContent(ctx context.Context, messages []Messag
 	// Apply timeout if configured.
 	// 取值优先级：全局运行时值（TUI 模型设置面板可动态修改）> 构造期局部配置。
 	// 全局值未初始化时为 0，回落 e.cfg.Timeout，保证既有显式配置行为不变。
+	// 只在 ctx 还没有 deadline 时才套这一层：调用方（deepthinking 的
+	// [tools.llm.deepthinking].timeout 等）给的预算必须原样生效，二次收紧会把长任务砍断。
 	timeout := e.cfg.Timeout
 	if t := config.GlobalLLMTimeout(); t > 0 {
 		timeout = t
 	}
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
+	ctx, cancel := ApplyCallTimeout(ctx, timeout)
+	defer cancel()
 
 	messages = NormalizeMessages(messages)
 
