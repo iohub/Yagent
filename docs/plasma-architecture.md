@@ -1380,3 +1380,92 @@ LLMTimeout=currentLLMTimeout()`，改由 `setExecutorConfig` 登记的 `plasma.E
 `provisional`）；③ 遥测账本（`plasma/telemetry.go` 已有形状，还没有读者）。
 另：`docs/ARCHITECTURE.md` / `ARCHITECTURE.en.md` 里的 `MetaAgent` 类图与表格仍是 P9a 之前的状态，
 需在 P10 文档收口时一并改（本轮只同步了根 `AGENTS.md` §4 与本文）。
+
+### P9b 已落地（2026-11-10）
+
+**加载期（§6.5）——`plasma.LoadAll` 上生产。** `internal/agents/plasma_load.go` 是唯一装配点，
+在 `NewDirectorAgent` 的 `rebuildSurface()` **之后**调用一次（`registerCustomAgent` 追加到
+"当前那一份 Surface"，而 `rebuildSurface` 会把它整份换掉）。三件配套缺一不可：
+① `MetaAgentHandler.List/Names` 从插入序改成**字典序**（`meta_handler.go`）—— 插入序只在
+单进程内确定，而 `customAgentPromptSection` 拼在 blueprint/skills/mcp **之前**，顺序抖一次
+后面全部前缀缓存失效；② `rebuildSurface` 新增 `mountRegisteredAgents()`：每次重建都从
+`metaHandler` 把已注册的生成式 Agent 重新挂回去（P9a 期间它们活不过一个 Run 的根因就在这里）；
+③ 单项拒载/预算省略/超预算各留一行可见账目，`Skipped` 里带 name + hash + 原因
+（`PLS-701` 磁盘被改、`PLS-702` 活注册表复核失败）。
+加载期只跑 `Compiler.LoadLink`（阶段 1–3，跳过阶段 4 的 token 计数与结构夹具补齐——后者会改
+bundle 字节、进而改 hash）。**实测**：12 个 Agent（预算满编）总计 **1.57 ms**，预算是 §9.2 的
+25 ms，因此**不**改首轮惰性加载；`plasmaLoadBudget` 常量与用例
+`TestE2E_Plasma_LoadStaysWithinFrameBudget` 一起钉住这条结论。超预算按
+`grade → score → name` 截断，被截断的条数写进一行 WARN（不是 Debug）。
+提示区新增 `catalog_line_chars`（默认 120，**显式 0 = 不裁剪**）逐行截断 + 一行省略账
+（"N of M descriptions truncated … full text: `yagent plasma list`"）。
+运行中**不**热替换：`plasmaAgentInfo.Hash` 在加载时固定，版本变更只在下一轮加载（新进程/新 Run）
+生效；同一进程内同名 Agent 不覆盖（bundle 不可变，执行器也不能被悄悄换掉）。
+
+**升级批准回路（§6.6 / ADR-4）。** 越权 bundle（`bundle.tools` 里有 `PlasmaPalette` 之外的能力）
+照旧在阶段 2 被拒，但 `Compiler.LoadLink` 增加一条**收窄的**容忍：当报告里的 error **全部**是
+`PLS-201`（越权）时照样产出计划（`errorsOnlyEscalation`），于是 Agent 能注册、`grade` 钉
+`provisional`、越权工具不在 `Tools` 里、`AutoDelegate=false` —— 这解掉了 ADR-4 的死锁
+（不注册就没有首次委派，批准永远问不出口）。首次委派由 `ensureEscalationApproved`
+（`plasma_load.go`）现场问一次：**复用** `tools.UserConfirmManager`（窄接口 `UserConfirmer`），
+回答判据统一为 `tools.IsAffirmativeAnswer`（`user_confirm.go` 与 `WorkspaceGuard` 共用一份词表）。
+批准**按 bundle hash** 落 `{name}/{hash}/meta.json` 的 `escalation_approved`（`Store.ApproveEscalation`），
+**不写** `bundle.json`（会改 hash）；写入失败即不放行。批准后用批准位重新 `LoadLink` 一次并把
+生效工具面换成复核结果 —— 只翻 bool 的话"已批准"是个空话（未批准时越权工具根本没进过 `Tools`）。
+`YOLO(-y)` 照旧绕过询问，但**不写** `meta.json`（用户批准与策略放行不是一件事），账本记
+`escalated=true`。拒绝批准是一次可读的收尾文案（"需要用户批准写/shell 能力"），不是崩溃。
+自动委派判据只有一份：`plasma.CanAutoDelegate(grade, required, approved, minGrade)`
+（`internal/plasma/grade.go`），`escalation_required && !approved` 一票否决，
+`[plasma] auto_delegate_min_grade` 与 `grade` 比较（空 grade 永远不达标）。
+
+**遥测账本（§6.7 / ADR-6）。** 写入点固定在 `directorToolRunner.Call` 的 `outcome.has` 分支
+（`director.go:855-861`）—— meta / custom / builtin 三条路的唯一共同出口；
+`applyEnhancedCommander` 只在 builtin 分支跑，选它会漏掉全部 plasma Agent（§2.4）。
+执行者身份取新增的 `delegationOutcome.agent`（`executeCustomAgent` 填 `ca.Name`）：
+按工具名后缀反推会把 `delegate_meta` 的首次执行记成"meta 跑了 N 步"（meta 没有 LLM 循环），
+而评分正是按 agent 名字分组的。一行 JSON 追加到 `~/.yagent/agents/telemetry.jsonl`
+（`plasma.AppendTelemetry`，O_APPEND，进程被 kill 只丢最后一行）；字段
+`ts / agent / bundle_hash / grade / delegation_id / note_ref / err / stop_reason / steps /
+tokens_in / tokens_out / degraded / escalated / fixture_run`。`fixture_run` 由
+`PlasmaFixtureRunner` **强制**置真（另加 `Metrics` 出口），调用方不需要记得 —— 需要人记住的
+标记迟早在某条新路径上漏掉，而漏掉的表现是夹具样本污染生产评分。写入失败不阻断委派，
+但留一条 `slog.Warn`（坑 43：只 Debug 等于没有账目）。
+
+**E2E 四条（`internal/agents/e2e_plasma_test.go`，只 mock 模型与子进程）。** 真 Store、真
+trampoline（`/bin/sh` 假 python）、真 `RunAgentLoop`、真 `telemetry.jsonl`：
+① 生成 → `--fix` → 注册 → 执行 → 遥测：首轮产出幻觉工具名（`PLS-101`）被拒，
+`diagnostics.json` 落盘后驱动器带 `--fix` 重生成（`Attempts==2` 只可能来自这条路径），
+注册后**当场可委派**，账本里 `steps/tokens_in/stop_reason` 三个字段全非零（§1.3 第 9 条）
+且 `bundle_hash` 非空、`fixture_run=false`；
+② 越权 → 升级门 → 按 hash 批准 → 新 hash 失效：`report.json` 里有 `PLS-210`、
+grade 钉 `provisional`、越权工具不在工具面、未批准不可自动委派；无确认通道 / 用户拒绝都是
+可读收尾，同意后 `meta.json` 的 `escalation_approved=true` 且工具面补回 `run_bash`
+（档位不变）；**新实例**加载新 hash 时批准不继承（旧 hash 的批准记录仍在，只是不适用）；
+③ 改一个字节（保持 JSON 合法）⇒ `LoadAll` 返回 `PLS-701` 拒载该 Agent，另一个照常加载，
+被篡改的 `delegate_*` 不出现在 `Surface.Names()`；
+④ 加载期预算：12 个 Agent 满编 < `plasmaLoadBudget`。
+
+**变异三条全部转红并还原**（`/tmp` 副本，还原后回绿）：① 遥测 `steps` 恒写 0 ⇒ 链路①红
+（"账本 steps = 0"）；② 批准改成"按 name 记"（`LoadAll` 扫该 name 任一 hash 的批准）⇒
+链路②的新 hash 断言红；③ `Store.Load` 去掉 hash 重算 ⇒ 链路③红（`loaded/skipped = 2/0`）。
+
+**7xx 码族不进 `diagCatalog`。** 那张表是发给 Python 侧的只读码表，而 Python 从不读 store；
+`TestDiagCatalogMatchesCorpus` 要求"码表里的每个码都被 corpus 发射过"，而 corpus 走
+`Elaborate→Compile→VerifyStructural`，`Load` 不在那条路上。于是 `PLS-701/702` 以常量 +
+可读文本落在 Load 层（`diag.go` 的注释写清了理由），账目照样可 grep、可断言，
+`schemas.json` 与 50 条基线零改动。
+
+**行数结算**：根 `AGENTS.md` 仍 **608**；`internal/agents/AGENTS.md` 仍 **212**（新增硬约束 20
+"遥测账本只有一个写入点"，等量压缩 7 处措辞补回）；`internal/plasma/AGENTS.md` 仍 **200**。
+`check_all.sh` exit 0；`git diff --stat internal/agents/testdata/tool_surfaces.golden
+internal/toolspec/schemas.json` **零输出**（`delegate_meta` Spec 一个字节都没动）。
+
+**文档收口（P9a 待办第 2 条）**：`docs/ARCHITECTURE.md` / `docs/ARCHITECTURE.en.md` 里
+`MetaAgent` 的类图节点、`DirectorAgent` 字段、子 Agent 表、"输出格式"段、接线顺序与文件表
+全部改成 plasma 现状（`MetaAgentHandler` 保留，`MetaAgent` / `MetaAgentResult` /
+`ParseMetaAgentOutput` 标注为已删除）。
+
+**待办（P10）**：① Python 包 `plasma/py/` + `plasma.pyz` 打包与 `embedbin` 落地（当前
+`plasmaAvailable()` 恒降级属预期）；② 进化器的 store 读写与 `store_ttl` GC 接线；
+③ 5b 行为夹具的评分侧（只统计 `fixture_run=false` 的记录）与 `promote_min_runs` 棘轮；
+④ `yagent plasma list` 的统计栏接 telemetry 聚合。

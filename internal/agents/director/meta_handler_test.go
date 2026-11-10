@@ -109,10 +109,15 @@ func TestMetaAgentHandlerGet(t *testing.T) {
 
 // ─── List / Names Tests ──────────────────────────────────────────────────
 
-// TestMetaAgentHandlerListOrder 固化插入序与副本语义：
-// 乱序注册时 List/Names 按注册序确定性返回（对齐可控改进：原 map 随机序已消除）；
-// 返回切片为副本，外部修改不影响内部状态。
-func TestMetaAgentHandlerListOrder(t *testing.T) {
+// TestMetaAgentHandlerListIsSorted 固化**字典序**与副本语义。
+//
+// 为什么不再是插入序：加载期（P9b）从 store 灌入的 Agent，其注册顺序取决于目录读取
+// 顺序 —— 那在不同进程之间**不**确定。插入序在本进程内稳定，跨进程却会抖，而
+// `customAgentPromptSection` 拼在 blueprint/skills/mcp **之前**：这一段抖一次，后面
+// 全部前缀缓存失效（花的真金白银，症状只是"慢"）。字典序是唯一跨进程确定的顺序。
+//
+// 副本语义不变：返回切片是副本，外部修改不影响内部状态。
+func TestMetaAgentHandlerListIsSorted(t *testing.T) {
 	h := NewMetaAgentHandler()
 	agents := []*CustomAgent{
 		makeCustomAgent("beta", "B"),
@@ -125,14 +130,16 @@ func TestMetaAgentHandlerListOrder(t *testing.T) {
 		}
 	}
 
-	wantNames := []string{"delegate_beta", "delegate_alpha", "delegate_gamma"}
+	// 注册序 beta→alpha→gamma，字典序是 alpha→beta→gamma：两个断言值必须不同，
+	// 否则这个测试在插入序实现下也会绿（那就什么也没钉住）。
+	wantNames := []string{"delegate_alpha", "delegate_beta", "delegate_gamma"}
 	gotNames := h.Names()
 	if len(gotNames) != len(wantNames) {
 		t.Fatalf("Names() = %v, want %v", gotNames, wantNames)
 	}
 	for i := range wantNames {
 		if gotNames[i] != wantNames[i] {
-			t.Errorf("Names()[%d] = %q, want %q (insertion order)", i, gotNames[i], wantNames[i])
+			t.Errorf("Names()[%d] = %q, want %q (lexicographic order)", i, gotNames[i], wantNames[i])
 		}
 	}
 
@@ -140,19 +147,19 @@ func TestMetaAgentHandlerListOrder(t *testing.T) {
 	if len(gotList) != 3 {
 		t.Fatalf("List() length = %d, want 3", len(gotList))
 	}
-	for i := range agents {
-		if gotList[i] != agents[i] {
-			t.Errorf("List()[%d] should be the agent registered at position %d", i, i)
+	for i, want := range []*CustomAgent{agents[1], agents[0], agents[2]} {
+		if gotList[i] != want {
+			t.Errorf("List()[%d] = %q, want %q (lexicographic order)", i, gotList[i].Name, want.Name)
 		}
 	}
 
 	// 副本语义：修改返回切片不得影响内部状态。
 	gotNames[0] = "MUTATED"
 	gotList[0] = nil
-	if h.Names()[0] != "delegate_beta" {
+	if h.Names()[0] != "delegate_alpha" {
 		t.Error("Names() should return a copy; internal state was mutated")
 	}
-	if h.List()[0] != agents[0] {
+	if h.List()[0] != agents[1] {
 		t.Error("List() should return a copy; internal state was mutated")
 	}
 }

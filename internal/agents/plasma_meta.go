@@ -136,6 +136,9 @@ func (a *DirectorAgent) runMetaDesign(ctx context.Context, task string) (interfa
 	}
 	// 注册之后立刻登记执行参数：runCustomAgent 下一步就要读它。
 	a.setExecutorConfig(ca.Name, verdict.plan.Config)
+	// 坐标也要登记（hash/grade/工具面）：遥测账本的 `bundle_hash`/`grade` 与升级门
+	// 都从这一份读。漏了它的症状是"账本里这条委派没有 hash、grade 恒空"。
+	a.rememberPlasmaAgent(verdict.plan, plasma.Meta{Grade: verdict.grade})
 
 	agentTask := strings.TrimSpace(res.Bundle.TaskForAgent)
 	if agentTask == "" {

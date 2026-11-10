@@ -33,6 +33,13 @@ type PlasmaFixtureRunner struct {
 	// Demote 是与生产一致的降级名单（可选）。档位不影响可用性，但会影响
 	// "哪些工具只出现在目录里"，所以夹具要能复刻生产画像。
 	Demote []string
+	// Metrics 是夹具运行的遥测出口（nil = 不写）。生产**不设**它：夹具跑在 CLI 与
+	// 编译期，不是一次委派。P11 的 5b 与 `yagent plasma test` 设上它，账本里才会有
+	// `fixture_run=true` 的记录，评分侧（只统计 false）才分得开这两类样本。
+	//
+	// FixtureRun 由本文件**强制**置 true，调用方不需要记得 —— 一个需要调用方记住的
+	// 标记迟早会在某条新路径上漏掉，而漏掉的表现是"夹具样本污染生产评分"。
+	Metrics func(DelegationMetrics)
 }
 
 // 编译期确认：接口漂移在 build 阶段就红，而不是等到某个调用点。
@@ -183,7 +190,7 @@ func (r *PlasmaFixtureRunner) runScript(ctx context.Context, plan *plasma.LinkPl
 	if !passed && err != nil && !strings.Contains(reason, err.Error()) {
 		reason += "；循环返回错误: " + err.Error()
 	}
-	return plasma.Outcome{
+	out := plasma.Outcome{
 		FixtureID: f.ID,
 		Passed:    passed,
 		Reason:    reason,
@@ -192,6 +199,31 @@ func (r *PlasmaFixtureRunner) runScript(ctx context.Context, plan *plasma.LinkPl
 		TokensOut: int(exec.Usage.CompletionTokens),
 		StopKind:  kind,
 	}
+	r.emitFixtureMetrics(plan, f, out, err)
+	return out
+}
+
+// emitFixtureMetrics 把一次夹具运行喂给遥测出口。FixtureRun 在这里**强制**置 true：
+// 夹具样本一旦混进生产评分，`promote_min_runs` 与成功率都会被自己的出题动作抬高（Goodhart）。
+func (r *PlasmaFixtureRunner) emitFixtureMetrics(plan *plasma.LinkPlan, f plasma.Fixture, out plasma.Outcome, err error) {
+	if r.Metrics == nil || plan == nil {
+		return
+	}
+	m := DelegationMetrics{
+		Tool:       "fixture:" + f.ID,
+		Agent:      plan.Agent.Name,
+		StopReason: out.StopKind,
+		Steps:      out.Steps,
+		TokensIn:   int64(out.TokensIn),
+		TokensOut:  int64(out.TokensOut),
+		HadResult:  out.Passed,
+		Err:        err != nil,
+		FixtureRun: true, // 由本文件强制，不看调用方
+	}
+	if err != nil {
+		m.ErrText = err.Error()
+	}
+	r.Metrics(m)
 }
 
 // surfaceOf 是只此一处的装配入口：生产、夹具、静态断言都经 surfaceFor。

@@ -178,7 +178,11 @@ func (s *Store) Load(name, hash string) (*Bundle, *Meta, error) {
 		return nil, nil, err
 	}
 	if actual != hash {
-		return nil, nil, fmt.Errorf("%w: 磁盘 hash %s 与内容 %s 不符", ErrTampered, hash, actual)
+		// PLS-701：磁盘字节与主键不再一致。文案带两个 hash —— "被改过"与"读错了目录"
+		// 在这句话之前无法区分，而修法完全不同（重装 vs 修 index）。
+		return nil, nil, fmt.Errorf("%s: %w — 目录 hash %s 与内容 hash %s 不符；"+
+			"修法：用 `yagent plasma list` 找到可用 bundle 后回滚 index，或重新生成",
+			CodeLoadTampered, ErrTampered, hash, actual)
 	}
 	var meta Meta
 	metaRaw, err := os.ReadFile(filepath.Join(dir, "meta.json"))

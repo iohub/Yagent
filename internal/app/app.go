@@ -478,15 +478,27 @@ func (ca *Yagent) Init(engine llm.Engine, workDir string) {
 			BrowserAgent:      browserAgent,
 			PlasmaGenerator:   plasmaGen,
 			PlasmaUnavailable: plasmaWhy,
-			PlasmaStore:       plasma.NewStore(config.PlasmaStoreDir()),
-			MaxSteps:          directorMaxSteps,
-			DisabledAgents:    disabledAgents,
-			MetaRetryCount:    metaRetryCount,
-			Config:            *ca.config,
-			LLMClient:         ca.client,
-			Blueprint:         ca.blueprint.viewFor("director"),
-			External:          agents.ExternalFrom(ca),
+			// 加载期（§6.5）从**装配层给的**仓库读：store 是显式参数而不是现场回落到
+			// config.PlasmaStoreDir()，否则单测会把开发机 home 里的 Agent 装进来。
+			PlasmaStore:           plasma.NewStore(config.PlasmaStoreDir()),
+			PlasmaMaxLoadedAgents: ca.config.Plasma.MaxLoadedAgents,
+			// 升级批准回路（§6.6）：复用 app 已在用的用户确认通道，不另造一套确认机制。
+			UserConfirm:    gctx.UserConfirmMgr,
+			MaxSteps:       directorMaxSteps,
+			DisabledAgents: disabledAgents,
+			MetaRetryCount: metaRetryCount,
+			Config:         *ca.config,
+			LLMClient:      ca.client,
+			Blueprint:      ca.blueprint.viewFor("director"),
+			External:       agents.ExternalFrom(ca),
 		})
+
+		// 遥测账本（ADR-6）：写入点已经固定在 directorToolRunner.Call 的 outcome 汇聚处，
+		// 这里只装出口。plasma 关闭时不装 —— 没有生成式 Agent 就没有可评分的样本，
+		// 而"装了但永远写空记录"会让 `yagent plasma list` 的统计栏看起来像有数据。
+		if config.PlasmaEnabled() {
+			ca.director.SetDelegationMetricsHook(agents.PlasmaTelemetrySink(config.PlasmaStoreDir()))
+		}
 
 		codingAgent.SetBoardWriter(ca.director)
 	})

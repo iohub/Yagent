@@ -95,7 +95,7 @@ yagent/
 │   ├── agents/            # Agent system core
 │   │   ├── activity/      # Delegate activity-aware idle/total timeout monitor
 │   │   ├── director/      # Planner main loop, RunState, recovery, metrics,
-│   │   │                  # Meta-Agent handler, project-context loader
+│   │   │                  # Custom Agent registry, project-context loader
 │   │   ├── toolbatch/     # Read-only tool run-group planning + parallel execution
 │   │   ├── director.go         # DirectorAgent orchestrator (delegation adapters, compression wiring)
 │   │   ├── director_adapter.go # DirectorAdapter (metrics + recovery integration facade)
@@ -173,7 +173,7 @@ graph TB
                 REPO[RepoAgent]
                 CODE[CodingAgent]
                 CHAT[ChatAgent]
-                META[MetaAgent]
+                META[plasma-generated Agent]
                 DEVOPS[DevOpsAgent]
                 BR[BrowserAgent]
             end
@@ -316,7 +316,8 @@ type DirectorAgent struct {
     RepoAgent    *RepoAgent
     CodingAgent  *CodingAgent
     ChatAgent    *ChatAgent
-    MetaAgent    *MetaAgent
+    // MetaAgent deleted (ADR-15): generation lives in Python (plasma.pyz); Go keeps only the driver
+    plasmaGen    plasmaGenerator
     DevOpsAgent  *DevOpsAgent
     BrowserAgent *BrowserAgent
 
@@ -343,7 +344,7 @@ type DirectorAgent struct {
     toolDefMap map[string]tools.ToolDefinition // tool name → definition from tools.json
 
     // ── Dynamic Agent registration & integration facets ──
-    metaHandler      *director.MetaAgentHandler     // Meta-Agent designed custom agents (Phase 2d)
+    metaHandler      *director.MetaAgentHandler     // plasma-generated custom agents (load time + online)
     adapter          *DirectorAdapter               // metrics + recovery integration facade
     llmClient        *llm.Client                    // runtime engine re-resolution
     projectCtxLoader *director.ProjectContextLoader // project context loading (Phase 2a, cached)
@@ -380,7 +381,7 @@ Director exposes tools to the LLM through Adapters, with the core being 6 delega
 | `delegate_repo` | RepoAgent | Code analysis, semantic search (marked read-only — safe inside parallel run groups) |
 | `delegate_coding` | CodingAgent | File read/write, code editing |
 | `delegate_chat` | ChatAgent | General conversation, explanations |
-| `delegate_meta` | MetaAgent | Custom Agent generation (deny-listed from parallel groups) |
+| `delegate_meta` | plasma generator | Generate → compile → register → first run (deny-listed from parallel groups) |
 | `delegate_devops` | DevOpsAgent | System operations, Shell commands |
 | `delegate_browser` | BrowserAgent | Browser automation |
 | `read_artifact` | — | Paged retrieval of a previously offloaded AgentResult by artifact ID |
@@ -485,23 +486,23 @@ Methods: `RecordLLMDuration`, `RecordLLMSuccess` / `RecordLLMFailure` / `RecordL
 | **RepoAgent** | `repo.go` | semantic_search, query_code_skeleton, query_code_snippet, find_function_callee/caller, query_call_graph, read_file, search_by_regex | Calls codeseek via MCP; places the system prompt in a Human role message (`SystemAsHuman`) to benefit from prompt caching; writes the `repoCtx` summary |
 | **CodingAgent** | `coding.go` | create_file, search_replace_in_file, delete_file, rename_file, run_bash, thinking, micro_agent, deepthinking | Receives `repoCtx` in its system prompt; owns the Git-checkpoint config |
 | **ChatAgent** | `chat.go` | thinking, micro_agent, deepthinking | No file-operation permissions; pure conversation Agent |
-| **MetaAgent** | `meta.go` | thinking | Single LLM call generates a JSON agent design; registered via MetaAgentHandler and immediately executed |
+| **plasma driver** | `plasma_meta.go` | — (no LLM loop of its own) | `Generate` → `Compile`/`Link` → 5a structural fixtures → `Ratchet` → `Store.Put` → register → run once; generation strategy lives in Python |
 | **DevOpsAgent** | `devops.go` | run_bash, read_file, search_by_regex, file operations | System administration, log analysis, ad-hoc shell |
 | **BrowserAgent** | `browser_agent.go` | browser_* tools (11) | Drives BrowserManager (go-rod, headless Chrome) |
 
-#### MetaAgent Output Format
+#### plasma generation contract (replaces the MetaAgent JSON reply)
 
-```json
-{
-  "thinking": "...",
-  "agent_name": "my_custom_agent",
-  "agent_design": "System prompt...",
-  "tools_used": ["read_file", "search_by_regex"],
-  "task_for_agent": "Task description template..."
-}
-```
-
-The JSON design is parsed by `director.MetaAgentHandler.ParseMetaAgentOutput` / `ExtractJSONObject` (retrying up to `metaRetryCount` times on parse failure), registered as a permanent `delegate_<name>` tool, and immediately executed to complete the current task.
+The Python side (`plasma/prompts/generate_seed.md`, shipped in P10) emits a 5-field minimal
+spec (`thinking` / `agent_name` / `agent_design` / `tools_used` / `task_for_agent`);
+`plasma.Elaborate` expands it into the full IR and `Compiler` runs stages 1–4
+(`internal/plasma`). `ParseMetaAgentOutput` / `ExtractJSONObject` were deleted along with
+the MetaAgent — the verdict is no longer "can it be parsed" but the compile report: `Link`
+re-checks tool names and effect bits against the live registry, 5a structural fixtures
+verify the `agent_exit` contract, and `Ratchet` assigns the grade (online caps at
+`provisional`). On failure the first lines of `report.Text()` are written to
+`diagnostics.json`, which drives a `--fix` regeneration in Python (`metaRetryCount` = number
+of regeneration rounds). A registered agent becomes a `delegate_<name>` tool and is executed
+once to finish the current task.
 
 ### 3.4 Delegation Model
 
@@ -516,12 +517,13 @@ graph LR
     COND --> DEVOPS[DevOps]
     COND --> BR[Browser]
     META -. register .-> CUSTOM[delegate_x - MetaAgentHandler]
+    note over META: strategy lives in Python; Go is the driver
 ```
 
 **Delegation sources**:
 
 1. **Six built-in delegate tools** — created inline in `NewDirectorAgent()` as `tools.NewAdapter("delegate_repo", ...)` etc. (see 4.4). Each closure runs the target sub-Agent through `executeCustomAgent` / `applyEnhancedCommander` and routes results via `takePendingSubAgentMemory` for memory injection.
-2. **Dynamic delegate tools** — designed by the MetaAgent and registered through `director.MetaAgentHandler.Register()` / `DirectorAgent.registerCustomAgent()`; they become permanent `delegate_<name>` tools for the remainder of the process lifetime.
+2. **Dynamic delegate tools** — designed by the plasma generator (Python) and registered through `plasma.LoadAll` (load time: `metaHandler` + `Surface.Add`) or `runMetaDesign` (online generation); they become permanent `delegate_<name>` tools for the remainder of the process lifetime. Load-time registration is lexicographic so the prompt prefix cache stays stable across processes.
 
 **Delegation lifecycle & timeouts** (`internal/agents/activity/`): every delegate invocation runs under an activity-aware idle-timeout monitor:
 
@@ -742,7 +744,7 @@ delegateCoding := tools.NewAdapter("delegate_coding", "Delegate coding task to C
 // ... delegate_chat, delegate_devops, delegate_browser, delegate_meta
 ```
 
-Custom agents designed by the MetaAgent are registered by `DirectorAgent.registerCustomAgent(ca *CustomAgent)`, which creates an additional `delegate_<name>` adapter and adds it to the live Adapters list and `toolDefMap`.
+Custom agents generated by plasma are registered by `DirectorAgent.registerCustomAgent(ca *CustomAgent)`, which creates an additional `delegate_<name>` adapter and adds it to the live tool surface (`Surface.Add` is the only channel); every `rebuildSurface` re-mounts them from `metaHandler` in lexicographic order — otherwise they do not survive a single Run.
 
 ### 4.5 Core Tool List
 
@@ -1504,7 +1506,7 @@ VS Code extension communicates with Yagent via WebSocket:
 3. **Cognitive tools**: `MicroAgentTool`, `DeepThinkingTool` (with dedicated engines)
 4. **Knowledge injector**: `knowledge.NewKnowledgeInjector(codeSeekMCP, knowledgeCfg, publisher)`
 5. **Safety**: `tools.NewWorkspaceGuard(workDir, userConfirmMgr)`, repo context store + env view (`globalctx.NewRepoContextStore`, `NewEnvView`)
-6. **Sub-Agents**: `NewRepoAgent` → `NewChatAgent` → `NewMetaAgent` → `NewDevOpsAgent` → `NewBrowserAgent` (with `BrowserManager`) → `NewCodingAgent`
+6. **Sub-Agents**: `NewRepoAgent` → `NewChatAgent` → `NewDevOpsAgent` → `NewBrowserAgent` (with `BrowserManager`) → `NewCodingAgent` (`NewMetaAgent` was deleted with ADR-15)
 7. **Shared memory + consolidation**: `memory.NewSharedMemory(100)` and `agents.NewConsolidationWorker(repoMemStore, repoEngine, codeSeekMCP)`
 8. **Director**: `agents.NewDirectorAgent(...)` (receives all ports, tool sets, sub-Agents, full `config.Config`, and `llm.Client`)
 9. **Presentation**: message dispatcher + consumers (TUI / WebSocket), HTTP server
@@ -1585,7 +1587,7 @@ flowchart TB
             REPO[RepoAgent]
             CODE[CodingAgent]
             CHAT[ChatAgent]
-            META[MetaAgent]
+            META[plasma-generated Agent]
             DEVOPS[DevOpsAgent]
             BR[BrowserAgent]
         end
@@ -1716,9 +1718,9 @@ flowchart LR
 | `internal/agents/director/planner_run.go` | Planner main loop implementation |
 | `internal/agents/director/recovery.go` | `RecoveryHandler` (retries + LLM failure stats) |
 | `internal/agents/director/metrics.go` | `MetricsCollector` |
-| `internal/agents/director/meta_handler.go` | `MetaAgentHandler` (dynamic agent registration) |
+| `internal/agents/director/meta_handler.go` | `MetaAgentHandler` (dynamic agent registry, List/Names sorted) |
 | `internal/agents/director/project_context.go` | `ProjectContextLoader` + `ComputeProjectID` |
-| `internal/agents/director/types.go` | Director types (`CustomAgent`, `MetaAgentResult`, events) |
+| `internal/agents/director/types.go` | Director types (`CustomAgent`, events; `MetaAgentResult` deleted) |
 | `internal/agents/toolbatch/plan.go` | Read-only run-group planning |
 | `internal/agents/toolbatch/run.go` | Run-group parallel execution |
 | `internal/agents/activity/activity.go` | Delegate idle/total timeout monitor |

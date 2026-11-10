@@ -80,6 +80,15 @@ type DirectorAgent struct {
 	execConfigs map[string]plasma.ExecutorConfigView
 	execMu      sync.RWMutex
 
+	// plasmaAgents 是加载期/生成期登记下来的坐标（hash/grade/批准态/生效工具面）。
+	// 它是遥测的 `bundle_hash`/`grade` 与升级门的**唯一**来源。nil = 还没装过任何 Agent。
+	plasmaAgents map[string]plasmaAgentInfo
+	plasmaMu     sync.RWMutex
+	// plasmaMaxLoadedAgents 是加载预算（0 = 读 [plasma] max_loaded_agents）。
+	plasmaMaxLoadedAgents int
+	// userConfirm 是升级批准的用户确认通道（nil = 未装配 ⇒ 越权 Agent 一律不放行）。
+	userConfirm UserConfirmer
+
 	blueprint *BlueprintView
 
 	external External
@@ -159,6 +168,11 @@ type DirectorAgentParams struct {
 	PlasmaStore *plasma.Store
 	// PlasmaFixtureRunner 是 5a 执行器（nil ⇒ 零值 PlasmaFixtureRunner，与 CLI 同形）。
 	PlasmaFixtureRunner plasma.FixtureRunner
+	// PlasmaMaxLoadedAgents 是加载预算（0 ⇒ 读 [plasma] max_loaded_agents）。
+	// 显式参数存在的理由与 PlasmaStore 相同：测试要能把"预算 1"钉死，不必改全局配置。
+	PlasmaMaxLoadedAgents int
+	// UserConfirm 是升级批准的用户确认通道（nil ⇒ 越权 Agent 一律不放行并给出可读原因）。
+	UserConfirm UserConfirmer
 
 	MaxSteps       int
 	DisabledAgents map[string]bool
@@ -179,36 +193,40 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 	adapterCfg.LLMRetries = p.Config.LLM.StepRetries
 
 	self := &DirectorAgent{
-		BaseAgent:      BaseAgent{LLM: p.LLM, Publisher: p.Publisher},
-		RepoAgent:      p.RepoAgent,
-		CodingAgent:    p.CodingAgent,
-		ChatAgent:      p.ChatAgent,
-		DevOpsAgent:    p.DevOpsAgent,
-		BrowserAgent:   p.BrowserAgent,
-		plasmaGen:      p.PlasmaGenerator,
-		plasmaWhy:      p.PlasmaUnavailable,
-		plasmaStore:    p.PlasmaStore,
-		plasmaRunner:   p.PlasmaFixtureRunner,
-		execConfigs:    make(map[string]plasma.ExecutorConfigView),
-		promptFmt:      p.Formatter,
-		env:            p.Env,
-		files:          p.Files,
-		search:         p.Search,
-		sys:            p.Sys,
-		edit:           p.Edit,
-		flow:           p.Flow,
-		thinker:        p.Thinker,
-		microAgent:     p.MicroAgent,
-		deepThinker:    p.DeepThinker,
-		guard:          p.Guard,
-		repoCtx:        p.RepoCtx,
-		maxSteps:       p.MaxSteps,
-		metaRetryCount: p.MetaRetryCount,
-		metaHandler:    director.NewMetaAgentHandler(),
-		adapter:        NewDirectorAdapter(true, adapterCfg),
-		llmClient:      p.LLMClient,
-		blueprint:      p.Blueprint,
-		external:       p.External,
+		BaseAgent:    BaseAgent{LLM: p.LLM, Publisher: p.Publisher},
+		RepoAgent:    p.RepoAgent,
+		CodingAgent:  p.CodingAgent,
+		ChatAgent:    p.ChatAgent,
+		DevOpsAgent:  p.DevOpsAgent,
+		BrowserAgent: p.BrowserAgent,
+		plasmaGen:    p.PlasmaGenerator,
+		plasmaWhy:    p.PlasmaUnavailable,
+		plasmaStore:  p.PlasmaStore,
+		plasmaRunner: p.PlasmaFixtureRunner,
+		execConfigs:  make(map[string]plasma.ExecutorConfigView),
+		plasmaAgents: make(map[string]plasmaAgentInfo),
+
+		plasmaMaxLoadedAgents: p.PlasmaMaxLoadedAgents,
+		userConfirm:           p.UserConfirm,
+		promptFmt:             p.Formatter,
+		env:                   p.Env,
+		files:                 p.Files,
+		search:                p.Search,
+		sys:                   p.Sys,
+		edit:                  p.Edit,
+		flow:                  p.Flow,
+		thinker:               p.Thinker,
+		microAgent:            p.MicroAgent,
+		deepThinker:           p.DeepThinker,
+		guard:                 p.Guard,
+		repoCtx:               p.RepoCtx,
+		maxSteps:              p.MaxSteps,
+		metaRetryCount:        p.MetaRetryCount,
+		metaHandler:           director.NewMetaAgentHandler(),
+		adapter:               NewDirectorAdapter(true, adapterCfg),
+		llmClient:             p.LLMClient,
+		blueprint:             p.Blueprint,
+		external:              p.External,
 
 		llmTimeout: func() time.Duration {
 			if t := config.GlobalLLMTimeout(); t > 0 {
@@ -250,6 +268,11 @@ func NewDirectorAgent(p DirectorAgentParams) *DirectorAgent {
 	}
 
 	self.rebuildSurface()
+	// 加载期接线（§6.5）：store → metaHandler + 工具面。必须在 rebuildSurface **之后** ——
+	// registerCustomAgent 往"当前那一份 Surface"追加，而 rebuildSurface 会把它整份换掉。
+	// 之后的每一轮 rebuildSurface 会从 metaHandler 重新挂上这些 spec（见 rebuildSurface）。
+	self.loadPlasmaAgents(self.plasmaMaxLoadedAgents)
+
 	defs := self.surface.Defs()
 	names := make([]string, 0, len(defs))
 	for _, td := range defs {
@@ -378,9 +401,12 @@ func (a *DirectorAgent) executeCustomAgent(ctx context.Context, ca *CustomAgent,
 	}
 
 	agentResult := FinalizeResultFull(ca.DisplayName, task, result)
-	recordDelegationOutcome(ctx, agentResult)
+	// custom 分支的执行者是 ca.Name（plasma 的 snake 名，与 delegate_ 后缀一致）：
+	// 遥测按这个名字分组，从工具名反推会把 delegate_meta 的首次执行记到 "meta" 头上。
+	recordDelegationOutcomeFor(ctx, ca.Name, agentResult)
 
-	a.writeDelegateNote(ca.Name, "delegate_"+ca.Name, task, agentResult, nil)
+	noteRef := a.writeDelegateNote(ca.Name, "delegate_"+ca.Name, task, agentResult, nil)
+	recordDelegationNoteRef(ctx, noteRef)
 	return result.Text, nil
 }
 
@@ -492,7 +518,15 @@ func (a *DirectorAgent) computeProjectID() string {
 
 type delegationOutcome struct {
 	result AgentResult
-	has    bool
+	// agent 是**真正执行这次委派**的 Agent 名（plasma 的 snake 名，与工具名后缀一致）。
+	// 只有 custom 分支填它：`delegate_meta` 的执行者是它刚生成的 Agent，不是 "meta" ——
+	// 从工具名反推会把一行 security_auditor 的步数/token 记在 "meta" 名下，而评分侧
+	// 正是按这个名字分组的（ADR-6）。空串 = 从工具名反推（内建委派）。
+	agent string
+	// noteRef 是这次委派写下的便签引用（blackboard 关闭时为空）。它跟着 outcome 走而不是
+	// 挂 Director 的字段：并行委派下那个字段会串味（与 result 同一个理由）。
+	noteRef string
+	has     bool
 }
 
 type delegationOutcomeKey struct{}
@@ -508,6 +542,29 @@ func recordDelegationOutcome(ctx context.Context, result AgentResult) {
 		return
 	}
 	o.result, o.has = result, true
+}
+
+// recordDelegationOutcomeFor 是 custom 分支的版本：额外记下**执行者**名字。
+//
+// 为什么不能省：`delegate_meta` 的 ad.Call 返回时，outcome.result 是它刚生成并跑完的
+// 那个 Agent 的结果。从工具名反推会把 agent 记成 "meta"，于是账本里出现一条
+// "meta 跑了 1 步、花了 N token" —— 而 meta 根本没有 LLM 循环（它只驱动生成器）。
+func recordDelegationOutcomeFor(ctx context.Context, agent string, result AgentResult) {
+	o, ok := ctx.Value(delegationOutcomeKey{}).(*delegationOutcome)
+	if !ok || o == nil {
+		return
+	}
+	o.result, o.agent, o.has = result, agent, true
+}
+
+// recordDelegationNoteRef 记下便签引用（在 writeDelegateNote 之后调用）。
+// 与 result 分开两个函数：写便签晚于取结果，而"结果有了、便签没写成"是合法状态。
+func recordDelegationNoteRef(ctx context.Context, ref string) {
+	o, ok := ctx.Value(delegationOutcomeKey{}).(*delegationOutcome)
+	if !ok || o == nil {
+		return
+	}
+	o.noteRef = ref
 }
 
 func (a *DirectorAgent) applyEnhancedCommander(
@@ -798,7 +855,7 @@ func (r *directorToolRunner) Call(ctx context.Context, name string, argsJSON str
 	if outcome != nil && outcome.has {
 		a.injectSubAgentMemory(outcome.result, callID, name)
 		r.state.SetPendingSubAgentMemory(toSubAgentMemory(&outcome.result))
-		a.emitDelegationMetrics(name, callID, err, outcome.result)
+		a.emitDelegationMetrics(name, callID, outcome.noteRef, outcome.agent, err, outcome.result)
 	}
 
 	if strings.HasPrefix(ad.Name(), "delegate_") {

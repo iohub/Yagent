@@ -81,7 +81,7 @@ ctx 不取消，恢复后原地往下走。不要把它挪进批次中间——�
 **13. 降级交回的是"报告 + 理由清单"，不是 error。** `resumeDelegation` 的签名就是
 `(string, []string)`（`resume_delegation.go:209`），`assessReplay`（`:105`）命中判据时走
 `degradedHandoff`；把它写成 error 的表现是 Director 以为"这次委派失败了"，于是把已经做完的工作
-重做一遍。理由必须逐条显示出来——`DelegationStop.Reasons`（`:44-47`）存在的理由就是"不能继续
+重做一遍。理由必须逐条显示出来——`DelegationStop.Reasons`（`:44-47`）的存在理由就是"不能继续
 而不说原因是另一种静默"。重放成功那一侧交回的是**同一个 `call_id` 的第二条 tool output**
 （last-wins，见 `director/AGENTS.md` 硬约束 4），模型看到的是"那次委派成功返回了"。
 重放接缝只有三个回填点，少任何一个都不报错：`ScanDelegationStops`（本包 `resume_delegation.go:53`，
@@ -95,34 +95,40 @@ ctx 不取消，恢复后原地往下走。不要把它挪进批次中间——�
 Contract（答案写完、同一轮调 `agent_exit`）、循环补的一次收尾提醒（`repo.go:171` 置
 `NoActionRetryLimit = 1` + 覆盖文案，消费点 `executor.go:800`）、零提交留下一句可区分的账
 （`blueprint_commit.go:55-58` 的 `noSubmissionNote` 与 `:61-66` 的"本次 run 不是 agent_exit 收尾"）。
-缺任何一件的症状都是"目录建了、文件没有、不报错"，与"蓝图从来没写过"逐字相同，差别只在日志里
-那两行 WARN。变异：`NoActionRetryLimit` 调回 0 → 蓝图当场不落盘。
+缺任何一件的症状都是"目录建了、文件没有、不报错"，与"蓝图从来没写过"逐字相同，差别只在日志那两行
+WARN。变异：`NoActionRetryLimit` 调回 0 → 蓝图当场不落盘。
 
 **15. 蓝图的账目必须从返回值离开本包，两处出口、不进 conclusion。** `repo.go:202` 把 `Commit`
 返回的那行账目写进 `AgentResult.BlueprintAccount`（`types.go:30-35`）而**不是** `Handoff`；两处出口
 = `FormatForDirector`（`result.go:220,230` → `appendBlueprintAccount:234-243`，落在交付正文之外）与
 便签正文的 `> [blueprint]` 尾注（`director.go:590-593`）。只修一边，另一边就是新的静默：工具输出
-会被上下文压缩卷走，而便签正文不进每轮重扫的索引。混进 `conclusion` 等于替模型下结论。
+会被上下文压缩卷走，而便签正文不进每轮重扫的索引。混进 `conclusion` 等于替模型下结论；
 `blueprintAccount`（`blueprint_commit.go:126-131`）只搬 fold 已做出的判据、不重复任何校验。
 
 **16. 证据集 = 本次 run 真打开过的文件，入参侧 ∪ 出参侧，判不了就少收。**
 `evidenceFiles`（`blueprint_evidence.go:81-105`）先收工具调用参数里的路径，再按
 `toolspec.ResultPathsOf` 分派收工具结果里的路径（`:93-102`）——出参侧的形态问注册表、不 switch
 工具名，`list_dir`/`print_dir_tree` 的裸文件名必须排除（收进来会映射到错误的片：宁可少一块证据，
-不要一条假证据）。`pathsFromJSON` 解析失败返回 nil，容错方向永远是"少收"（`:109-113`）。
-只有以 `agent_exit` 收尾的 run 才有交付物可作证据（`blueprint_commit.go:61-66`）。
+不要一条假证据）。`pathsFromJSON` 解析失败返回 nil，容错方向永远是"少收"（`:109-113`）；只有以
+`agent_exit` 收尾的 run 才有交付物可作证据（`blueprint_commit.go:61-66`）。
 
 **17. `sub_agent_activity` 必须在每个有工具调用的 step 落 rollout。** `executor.go:922-926` 是读侧
 推 `EffectiveSteps` 的唯一凭据；它曾挂在已删除的 `OnStepEnd` 钩子里，于是**只有"Coding + git
 checkpoint"那一条路径**写步数事实，其余子 Agent 的 `/resume` 步数只能靠 assistant 轮次猜。
-`ExecutorConfig` 里没有 `OnStepEnd`，不要加回来（那个钩子剩下的唯一作用是每步打一条 deprecation
-警告）。
+`ExecutorConfig` 里没有 `OnStepEnd`，不要加回来（它剩下的唯一作用是每步打一条 deprecation 警告）。
 
 **18. `ExecutorConfig` 的按-Agent 标志没有中心默认，漏一个就是那条路径静默少一套行为。**
 `StepRetries` 由各子 Agent 自己从 `[llm] step_retries` 带进来（`coding.go:367`、`repo.go:158`、
 `chat.go:82`、`devops.go:91`、`browser_agent.go:125`），漏设的
 那个 Agent 恒 0 步级重试且不报错。`NoActionRetryLimit` 同理（历史上只有 Coding 设 2，
 `coding.go:372`；Repo 现在设 1）。同类先例见硬约束 2（`StopOnFinish`）。
+
+**20. 遥测账本只有一个写入点：`directorToolRunner.Call` 的 `outcome.has` 分支**（`director.go:855-861`
+是 meta/custom/builtin 三条路的唯一共同出口；`applyEnhancedCommander` 只在 builtin 分支跑，选它会漏掉
+全部 plasma Agent）。执行者身份取 `delegationOutcome.agent`（`executeCustomAgent` 填 `ca.Name`）——按工具名
+后缀反推会把 `delegate_meta` 的首次执行记成"meta 跑了 N 步"。`steps`/`tokens_in`/`stop_reason` 全零
+= 加了字段没人填（§1.3 第 9 条）；写入失败只许留可见 WARN、不许阻断委派；`fixture_run` 由
+`PlasmaFixtureRunner` 强制置真（评分只统计 false）。
 
 ## 子目录
 
@@ -166,13 +172,14 @@ Resume 成免费心跳）。监视 goroutine 挂到**父** ctx 的域上，不�
   `_SerialKillSwitch`（`:695`）：证明"峰值 ≥2"不是计量器自证。把谓词改回恒 false 立刻红。
 - `TestParallelAdmission_*`（`parallel_admission_test.go:17,42,59`）：刻意不自己拼工具列表，直接拿
   **真实画像** `ProfileRepo/ProfileCoding/ProfileChat` 问判据；画像或能力标签漂走即红。
-- e2e 五链路：`e2e_authorization_test.go:270`、`e2e_handoff_test.go:95`、
+- e2e 六链路：`e2e_authorization_test.go:270`、`e2e_handoff_test.go:95`、
   `e2e_lifecycle_test.go:70`、`e2e_resume_test.go:36`、`e2e_replay_test.go:74`、
-  `e2e_blueprint_test.go:127`（验收断言就是"文件出现"）。harness 的接线顺序照抄 `internal/app/app.go:112-292`。
-- 那五条链路共用的模型替身已提升为**生产包** `internal/llm/scripted`（ADR-12；5a 结构夹具要跑生产路径）：
+  `e2e_blueprint_test.go:127`、`e2e_plasma_test.go:190`（生成→--fix→注册→执行→遥测 / 越权→按 hash
+  批准→新 hash 失效 / 篡改 store 拒载）。harness 的接线顺序照抄 `internal/app/app.go:112-292`。
+- 这些链路共用的模型替身已提升为**生产包** `internal/llm/scripted`（ADR-12；5a 结构夹具要跑生产路径）：
   `e2e_engine_test.go:18-22` 只剩本地别名（`agentScriptedEngine`/`scriptStep`/`newScripted` → `scripted.Engine`），
   身份分派在 `scripted.Engine`（嗅探 `scripted.sniffIdentity` 认 Prompt 首行；`NewForIdentity` 绕开嗅探），且
-  `GenerateContent` **必须先看 ctx**（`internal/llm/scripted/scripted.go:65`）——忽略 ctx 的 mock 会把"取消没传播"直接掩盖掉。
+  `GenerateContent` **必须先看 ctx**（`internal/llm/scripted/scripted.go:65`）——忽略 ctx 的 mock 会把"取消没传播"掩盖掉。
 - **取消不许从批次内部发起**：`toolbatch` 不保证组内启动顺序，负责取消的那个工具一旦排在信号量队列里，
   在飞调用就无人可取消，只能等 `defaultToolTimeout`(180s，`executor.go:90`) 逐波解开。历史用例
   `TestRunAgentLoop_ParentCancel_AllCallsAccounted`（`executor_parallel_test.go:514`）就卡在这里，
@@ -182,31 +189,24 @@ Resume 成免费心跳）。监视 goroutine 挂到**父** ctx 的域上，不�
 - P8 trampoline（`trampoline_test.go`，假 Python 是测试自己写的 `/bin/sh` 脚本）：`exit 4 → Go 采样 → respawn`
   序号对齐 / `diagnostics.json → --fix` 重生成 / kill 后超时 + workdir 清理 / `max_llm_calls` 上限 / `ai_chunk` 来自 Go 侧。
 - `TestSpawnForDelegation_CodingGetsItsOwnThinkLink`（`spawn_test.go:21`）：把 store 挂回单例即红。
-- `TestStopKindClassifiersAgree`（`resume_test.go:175`）：本包 `classifyStop` 与
-  `director.StopKindOf` 因分层守卫只能各写一份，靠这条对齐。
+- `TestStopKindClassifiersAgree`（`resume_test.go:175`）：本包 `classifyStop` 与 `director.StopKindOf` 因分层守卫只能各写一份，靠这条对齐。
 - `TestRunAgentLoopStampsDelegationOnEveryEvent`（`event_delegation_test.go:40`）：漏一个发布点就红。
 - `TestAgentSurfacesGolden`（`registry_gate_test.go:48`）：工具面变化必须以显式 `-update` 重写 golden。
-- `TestNoSubmissionNote*`（`blueprint_commit_test.go:34,52,69`）+
-  `TestE2EPlainTextRepoRunIsNudgedIntoSubmitting`（`e2e_blueprint_test.go:332`）：模型不调 `agent_exit`
-  时必须留下一句可区分的话（根 AGENTS.md §11 坑 40）。
+- `TestNoSubmissionNote*`（`blueprint_commit_test.go:34,52,69`）+ `TestE2EPlainTextRepoRunIsNudgedIntoSubmitting`
+  （`e2e_blueprint_test.go:332`）：模型不调 `agent_exit` 时必须留下一句可区分的话（根 AGENTS.md §11 坑 40）。
 - `TestDelegatePoolCapsConcurrentDelegations`（`delegate_concurrency_test.go:128`）：池子漏建即红。
-  `TestKillSwitchReachesDirectorAgentPool`（`:222`）与
-  `TestConcurrencyKillSwitchForcesSerialDelegations`（`:160`）：`YAGENT_CONCURRENCY=0` 没到达委派侧即红。
+  `TestKillSwitchReachesDirectorAgentPool`（`:222`）与 `TestConcurrencyKillSwitchForcesSerialDelegations`（`:160`）：`YAGENT_CONCURRENCY=0` 没到达委派侧即红。
 - `TestE2E_DelegateTotalTimeoutAlsoFires`（`e2e_lifecycle_test.go:184`）：`delegate_total_timeout`
   真的收口"每轮都成功但不肯收尾"的委派（idle 刻意设大以排除 idle 分支），并留下一张便签。
-- `TestRunAgentLoop_AbandonedPauseReportsPaused`（`executor_stopkind_test.go:371`）：把
-  `AbandonedError` Unwrap 成裸取消（记成 cancelled）即红。
-  `TestAbandonedDelegationWritesNoNote`（`resume_degrade_test.go:444`）钉另一侧：停住不等于失败。
+- `TestRunAgentLoop_AbandonedPauseReportsPaused`（`executor_stopkind_test.go:371`）：把 `AbandonedError`
+  Unwrap 成裸取消（记成 cancelled）即红；`TestAbandonedDelegationWritesNoNote`（`resume_degrade_test.go:444`）钉另一侧。
 - `TestReplayFailureDegradesInsteadOfErroring`（`resume_degrade_test.go:282`）：降级写成 error 即红；
-  `TestDegradedReportSectionsComeFromTheLedger`（`:255`）、
-  `TestDegradedHandoffWritesDegradedNote`（`:301`）。
-- `TestEvidenceSetIncludesSearchResults` / `_ReadsAllPathParams` /
-  `_IgnoresNonPathToolOutput`（`blueprint_evidence_test.go:50,77,140`）：证据集口径；
-  `TestEvidenceCollectedOnlyForRealSubmissions`（`:116`）：非 `agent_exit` 收尾还去采集证据即红。
+  `TestDegradedReportSectionsComeFromTheLedger`（`:255`）、`TestDegradedHandoffWritesDegradedNote`（`:301`）。
+- `TestEvidenceSetIncludesSearchResults` / `_ReadsAllPathParams` / `_IgnoresNonPathToolOutput`
+  （`blueprint_evidence_test.go:50,77,140`）：证据集口径；`TestEvidenceCollectedOnlyForRealSubmissions`（`:116`）钉"非 `agent_exit` 收尾还去采集"。
 - 步数事实的读侧闸门在**另一个包**：`TestReadRolloutMemory_StepAndTurnCount`（`internal/memory/rollout_reader_test.go:946`）。
   本包没有测试钉住"每个有工具调用的 step 都写 `sub_agent_activity`"——这是覆盖缺口，改 `executor.go:922-926` 前先补一条。
 
-脚本守卫：`check_no_agents_import.sh` 管的是 `director/` 子包；本包受
-`check_no_bare_go.sh` 与 `check_no_manual_lookup.sh`（FORBIDDEN 名单必须为零）约束。
+脚本守卫：`check_no_agents_import.sh` 管的是 `director/` 子包；本包受 `check_no_bare_go.sh` 与 `check_no_manual_lookup.sh`（FORBIDDEN 名单必须为零）约束。
 测试侧：`TestMain` 用 `os.Setenv`（不是 `t.Setenv`）把 `$HOME` 隔离到临时目录，因为本包有
 7 个 `t.Parallel()` 用例与 `t.Setenv` 互斥（`main_test.go:6-18`）。
