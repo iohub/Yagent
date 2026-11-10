@@ -111,33 +111,16 @@ func renderPlasmaCompile(w io.Writer, res *plasmaCompileResult, asJSON bool) err
 	}
 	if len(res.Outcomes) > 0 {
 		fmt.Fprintln(w, "structural:")
-		for _, o := range res.Outcomes {
-			fmt.Fprintf(w, "  %s  %s  steps=%d", o.FixtureID, passLabel(o.Passed), o.Steps)
-			if o.StopKind != "" {
-				fmt.Fprintf(w, "  stop=%s", o.StopKind)
-			}
-			fmt.Fprintln(w)
-			if !o.Passed {
-				fmt.Fprintf(w, "    reason: %s\n", o.Reason)
-			}
+		// 每条夹具怎么念只有一份实现（plasma.FormatOutcomes）—— TUI 的 explain 面板
+		// 读的是同一份，分组标题留给各自写。
+		if err := plasma.FormatOutcomes(w, res.Outcomes); err != nil {
+			return err
 		}
 	}
 	if res.BehavioralRuns > 0 {
 		fmt.Fprintln(w, "behavioral:")
-		for _, o := range res.Behavioral {
-			fmt.Fprintf(w, "  %s  %s  steps=%d", o.FixtureID, passLabel(o.Passed), o.Steps)
-			if o.TokensIn+o.TokensOut > 0 {
-				fmt.Fprintf(w, "  tokens=%d/%d", o.TokensIn, o.TokensOut)
-			}
-			if o.StopKind != "" {
-				fmt.Fprintf(w, "  stop=%s", o.StopKind)
-			}
-			fmt.Fprintln(w)
-			// 未通过的**必须**把原因写出来：超预算/超时/契约不符的修法完全不同，
-			// 而一句 "FAIL" 会让调用方去改错的地方。
-			if !o.Passed {
-				fmt.Fprintf(w, "    reason: %s\n", o.Reason)
-			}
+		if err := plasma.FormatOutcomes(w, res.Behavioral); err != nil {
+			return err
 		}
 	} else if res.BehavioralRequested {
 		// 给了 --behavioral 却一条都没跑：原因是 bundle 里没有 behavior fixtures，
@@ -159,13 +142,6 @@ func renderPlasmaCompile(w io.Writer, res *plasmaCompileResult, asJSON bool) err
 		fmt.Fprintf(w, "grade:  (none)\n")
 	}
 	return nil
-}
-
-func passLabel(ok bool) string {
-	if ok {
-		return "PASS"
-	}
-	return "FAIL"
 }
 
 // renderPlasmaSample 输出引擎的原始响应。

@@ -151,7 +151,7 @@ func runPlasmaEvolveWith(py plasmaPythonRunner, engine llm.Engine, settings conf
 			ctx, py, runner, store, cand, cfg, settings, outDir, opts.DryRun))
 	}
 	for _, skip := range ledger.Skipped {
-		res.Skipped = append(res.Skipped, skip.Agent+"@"+shortHash(skip.BundleHash)+"："+skip.Reason)
+		res.Skipped = append(res.Skipped, skip.Agent+"@"+plasma.ShortHash(skip.BundleHash)+"："+skip.Reason)
 	}
 	return renderPlasmaEvolve(out, res)
 }

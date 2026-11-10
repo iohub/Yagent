@@ -145,7 +145,7 @@ func renderPlasmaEvolve(w io.Writer, res *plasmaEvolveResult) error {
 		fmt.Fprintln(w, "父本（按适应度降序）：")
 		for _, g := range res.Groups {
 			fmt.Fprintf(w, "  %s@%s  samples=%d  fitness=%.4f  promote_eligible=%v\n",
-				g.Agent, shortHash(g.BundleHash), g.Samples, g.Fitness, g.PromoteEligible)
+				g.Agent, plasma.ShortHash(g.BundleHash), g.Samples, g.Fitness, g.PromoteEligible)
 		}
 	}
 	if len(res.Candidates) == 0 {

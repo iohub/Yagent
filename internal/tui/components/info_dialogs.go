@@ -63,8 +63,14 @@ func newInfoDialogBase(id, title string, header []string, hint string) infoDialo
 }
 
 // View 渲染。尺寸过小时返回空串（与 model_select_dialog.go 的守卫一致）。
+//
+// 阈值是 `infoDialogChrome` 而不是随手写的 5：固定部分就有 9 行（border 2 + padding 2 +
+// 标题 1 + 分隔线 1 + 表头 1 + 空行 1 + 提示 1），再加 `ListBudget` 至少给的 1 行列表，
+// 终端高度 ≤ 9 时**必然**溢出 —— 而 AltScreen 里溢出的行既看不见也滚不回去
+// （internal/tui/AGENTS.md 硬约束 11）。旧的 `height < 5` 让 5..9 行悄悄画破框，
+// 尺寸矩阵没发现只是因为矩阵里没有那几个高度。
 func (d *infoDialogBase) View() string {
-	if d.width < 40 || d.height < 5 {
+	if d.width < 40 || d.height <= infoDialogChrome {
 		return ""
 	}
 

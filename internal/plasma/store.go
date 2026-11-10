@@ -186,25 +186,6 @@ func fixtureProvenance(b *Bundle) Provenance {
 	return b.Fixtures.Provenance
 }
 
-// reportRecord 是落盘的诊断快照（不是 Report 全量：Report 里有非导出字段）。
-// Outcomes 一并落盘：进化的评分侧与 `yagent plasma list` 的读者要能看到"哪条夹具红了"，
-// 而 reasons 只写在 report.json 里，别处没有第二份。
-type reportRecord struct {
-	Grade              Grade        `json:"grade"`
-	EscalationRequired bool         `json:"escalation_required"`
-	Diagnostics        []Diagnostic `json:"diagnostics,omitempty"`
-	Outcomes           Outcomes     `json:"outcomes,omitempty"`
-}
-
-func newReportRecord(r *Report) reportRecord {
-	return reportRecord{
-		Grade:              r.Grade,
-		EscalationRequired: r.EscalationRequired,
-		Diagnostics:        r.Diagnostics,
-		Outcomes:           r.Outcomes,
-	}
-}
-
 // Load 读回一份 bundle 与 meta，并校验 hash：磁盘被改过一个字节就拒载。
 func (s *Store) Load(name, hash string) (*Bundle, *Meta, error) {
 	dir := filepath.Join(s.Root, name, hash)

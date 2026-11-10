@@ -18,7 +18,7 @@ func TestScanSelfGolden(t *testing.T) {
 		// 47：P10 新增顶层 `plasma/` Python 包（contract/state/sampling/generate/explain/cli 等
 		// 13 个文件）—— 它是仓库里第一个 .py 代码片，因此多出一片；`plasma/tests` 与
 		// `plasma/testdata` 不单独成片（前者折叠进父片、后者被 testdata 规则排除）。
-		// 边数不变（155/155）：Python 不产生 Go import 边。
+		// 边数不变（155/155，P10 当时）：Python 不产生 Go import 边。
 		t.Fatalf("片数 = %d, golden 是 47 —— 形状变了，先确认变化来源再更新数字", len(snap.Leaves))
 	}
 	out, in := 0, 0
@@ -26,6 +26,11 @@ func TestScanSelfGolden(t *testing.T) {
 		out += snap.Leaves[i].EdgesOutTotal
 		in += snap.Leaves[i].EdgesInTotal
 	}
+	// 156/156：P12b 让 internal/tui 首次 import plasma —— `/plasma` 与 `/proposals`
+	// 两个斜杠命令要读的是**同一批账目**（store 列表、report.json 诊断、promote 结果、
+	// 提案落盘与判决）。在 TUI 侧另写一份格式化必然与 CLI 漂，
+	// 所以复用的是 plasma 的导出函数；`go list` 逐条确认过只多这一条边，
+	// plasma 自身的 import 集合没动（它仍是 leaf 包）。
 	// 155/155：P9a 删掉 Go 侧 Meta-Agent、把生成职责交给 plasma 之后，
 	//   ① internal/app 首次 import plasma（装配 trampoline 与启动期 workdir GC，app/plasma.go）；
 	//   ② internal/agents 首次 import embedbin（plasma 可用性判据要定位 plasma.pyz，
@@ -39,8 +44,8 @@ func TestScanSelfGolden(t *testing.T) {
 	// 148/148：新增 internal/plasma（P0）带来 plasma→toolspec、plasma→util、agents→util
 	//（`toSnakeCase` 单源化成 `util.SnakeCase`）。更新前用 go list -f '{{.Imports}}' 逐条确认过。
 	// 更早 145/145：求助与授权从弹窗改成 footer 面板，components/user_help_dialog.go 随之删除。
-	if out != 155 || in != 155 {
-		t.Fatalf("模块级边数 out=%d in=%d, golden 是 155/155 —— 形状变了，先确认变化来源", out, in)
+	if out != 156 || in != 156 {
+		t.Fatalf("模块级边数 out=%d in=%d, golden 是 156/156 —— 形状变了，先确认变化来源", out, in)
 	}
 	for i := 1; i < len(snap.Leaves); i++ {
 		if snap.Leaves[i-1].Dir >= snap.Leaves[i].Dir {

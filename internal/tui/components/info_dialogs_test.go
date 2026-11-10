@@ -69,6 +69,15 @@ func TestInfoDialog_SizeGuard(t *testing.T) {
 	if got := d.View(); got != "" {
 		t.Errorf("height=4 时渲染了 %q，want 空串", got)
 	}
+	// 边界是"固定 chrome + 至少一行列表"：9 行装不下 chrome 本身，10 行才够一行内容。
+	d.SetBounds(80, infoDialogChrome)
+	if got := d.View(); got != "" {
+		t.Errorf("height=%d（= chrome）时渲染了 %q，want 空串", infoDialogChrome, got)
+	}
+	d.SetBounds(80, infoDialogChrome+1)
+	if got := d.View(); got == "" {
+		t.Errorf("height=%d（= chrome+1）应该渲染一行内容", infoDialogChrome+1)
+	}
 }
 
 // 滚动必须能到列表末尾，且滚动指示行不会把总高撑破。
