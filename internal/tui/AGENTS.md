@@ -79,10 +79,10 @@ key 只含宽度/行高/cwd；**头部分支不许算 footer 行高**，那条�
 压缩区块同理在 `compressSnapshot()`、耗时区块同理在 `latencySnapshot()`（`latency_panel.go`）。**不要在任何表面另取计数器直接格式化**（根 AGENTS.md §6.8）。
 三个压缩事件名在本包只有一份字面量副本，加档位要同改三张表（`compress_panel.go:20-22`）。⧗ 段的 `total` 是唯一每 tick 会变的数字：显示粒度必须等于进 `dashboardCacheKey` 的粒度（1s），任务收尾必须 `freezeTotal` 定格 —— 不定格的话空闲态每秒白重画一次，而 `handleTickMsg` 永远不肯停 tick。
 
-**6. 斜杠命令必须显式列进 `/` 分支**（`tui_update_commands.go:33`）：`/` 前缀在 TUI 里**默认是搜索**
-（`processCommand` 的该分支末尾是 `m.runSearch`，`:20,27-56`），不列进那条 switch 链的 `/name` 就是在搜
-字符串 "name"，界面上什么都没发生。**暂停态绝不能走 `handleTaskCompleteMsg` 的换 ctx 分支**
-（`tui_update_commands.go:199-201`）——那会丢掉闸门所在的那棵 ctx。
+**6. 斜杠命令必须显式列进 `/` 分支**（`tui_update_commands.go:42`）：`/` 前缀在 TUI 里**默认是搜索**（`processCommand` 的分支末尾是 `m.runSearch`，`:80`），不列进那条 if 链的 `/name` 就是在搜字符串 "name"，界面上什么都没发生；匹配只认首个 token **精确**命中（`matchSlashCommand`，`:22`，`/plasmafoo` 必须继续回落搜索）。
+`/plasma`、`/proposals`（`tui_plasma.go` / `tui_proposals.go`）与 `/skills`、`/mcp` 同走 `components.TextPanel`（复用 `infoDialogBase` 几何 + `InfoPanel` 按键认领，入栈前必须 `SetBounds`）：**多行输出不许进日志条目**（`formatLogEntry` 把 `\n` 换成空格再截断），单行结果走 `appendStatusLine`、参数错误走 `setInfoMsg`，不直写 stdout、不新开 goroutine。
+**`/proposals` 的 approve/reject 只改提案 JSON 的 `status`**（唯一写入口 `plasma.SetProposalStatus`，按 `RawMessage` 改写以保住未知字段），**绝不写任何 `*.prompt.md`** —— 内建 prompt 与 Go 代码是"改行为要同时改两处"的耦合，自动 apply 会把两者改成不一致（根 AGENTS.md §4、§6.9）；`/plasma promote` 判据不过就**不碰盘**（静默切指针比拒绝更危险），参数缺项 / id 不存在只打可读提示，不 panic、不退 TUI。
+**暂停态绝不能走 `handleTaskCompleteMsg` 的换 ctx 分支**（`tui_update_commands.go:244-246`）——那会丢掉闸门所在的那棵 ctx。
 
 **7. 列表/表单的共用原语只有一份。** `common/list_metrics.go:1-6` 就是"两份同形实现"的修法：
 `components` 只留别名（`components/dialog_list.go:28-31`），引导向导共用同一份。**不许在任一边再抄一份**。

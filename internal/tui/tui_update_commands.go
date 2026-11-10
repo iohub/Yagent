@@ -14,6 +14,21 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+// matchSlashCommand 判定 cmd 是否是 `name` 本体或 `name args...`，返回剩余参数。
+//
+// 只认"完全相同"或"后跟空格"两种形态：`/plasmafoo` 必须继续回落到搜索
+// （与 splitSlashSkill 的"首个 token 精确命中"同一取向）。参数用 strings.Fields 切，
+// 不另写分词器 —— 这些命令的参数都是不含空格的 id / agent 名。
+func matchSlashCommand(cmd, name string) ([]string, bool) {
+	if cmd == name {
+		return nil, true
+	}
+	if !strings.HasPrefix(cmd, name+" ") {
+		return nil, false
+	}
+	return strings.Fields(cmd[len(name):]), true
+}
+
 // processCommand 执行 ":" 命令行内容，或驱动 "/" 搜索。
 // 参数形如 ":q" / "/pattern"（含前缀）；无前缀的裸文本按命令处理，
 // 这样 ":w" 与 "w" 都能走到同一套解析。
@@ -43,6 +58,15 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		}
 		if cmd == "/mcp" {
 			return m.showMCPDialog()
+		}
+		// plasma 账目与内建 Agent 提案：同样必须显式列出，否则 /plasma 是在搜字符串
+		// "plasma"（本分支末尾就是 runSearch）。首个 token 精确命中才认，`/plasmafoo`
+		// 继续回落搜索 —— 与下面 splitSlashSkill 的取向相同。
+		if args, ok := matchSlashCommand(cmd, "/plasma"); ok {
+			return m.plasmaCommand(args)
+		}
+		if args, ok := matchSlashCommand(cmd, "/proposals"); ok {
+			return m.proposalsCommand(args)
 		}
 		// 手打 `/name args` + Enter 直接执行技能：首个 token 精确命中技能名才走这条路，
 		// 否则照旧搜索（技能名是 kebab-case，搜索词通常不是）。
