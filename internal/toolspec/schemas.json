@@ -536,13 +536,13 @@
   },
   {
     "name": "delegate_browser",
-    "description": "Delegate a task to Browser-Agent, which drives a real Chrome over CDP: open pages, click/fill/wait, read rendered text, take screenshots. Use it when the task needs JS rendering, an existing login session, or page interaction — not for static docs you can fetch with read-only tools. The task string must be self-contained: target URL, what to do, and what evidence to return.",
+    "description": "Delegate a task to Browser-Agent, which drives a real Chrome over CDP: open pages, click/fill/wait, read rendered text, take screenshots. This is the PREFERRED route to web content and online knowledge — docs, API references, release notes, issue threads, current facts — static pages included, not only JS rendering, an existing login session, or page interaction. Do not substitute model memory or a shell fetch for a page that can be opened here; fall back only if this tool reports UNAVAILABLE. The task string must be self-contained: target URL, what to do, and what evidence to return.",
     "parameters": {
       "type": "object",
       "properties": {
         "task": {
           "type": "string",
-          "description": "Clear, self-contained research task, e.g., 'Search for the latest docs on Python's asyncio.run' or 'Find solutions for Go error: undefined: sql.NullString'."
+          "description": "Clear, self-contained browser task, e.g. 'Read the release notes at https://example.com/changelog and summarize the breaking changes' or 'Fill the contact form and submit it, then capture the confirmation screenshot'."
         },
         "context_refs": {
           "type": "array",
