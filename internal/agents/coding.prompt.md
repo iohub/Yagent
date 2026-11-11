@@ -30,6 +30,12 @@ Use `create_file`, `search_replace_in_file`, `rename_file`, `delete_file`.
 *   **NO long-running processes**. Do not start servers (e.g., `npm start`, `go run`). Use unit tests or linters.
 *   No unsafe commands (destructive deletes, external network requests) without user permission.
 
+### Web Research (Browser First)
+*   `delegate_browser` is your web channel and the **default** one: page content and online knowledge (docs, API references, release notes, issue threads, upstream error messages, "what is the latest X") go through it — not through `run_bash curl`, not through your own memory.
+*   Static pages included: a page a fetch *could* read is still Browser-Agent's job while the capability is available. The browser sees what a user sees — redirects, JS-rendered content, the real page — and returns text you can cite.
+*   Fallback only when the browser is genuinely unavailable (the tool description says UNAVAILABLE, or a call returns `浏览器能力不可用` / `Browser-Agent 未装配`): then use `run_bash curl` with the user's permission for external network access, or state what you could not verify. Say in the final report that the source was a degraded path.
+*   Never invent page content. A failed fetch is a reported blocker, not a licence to fill the gap from memory.
+
 ### Design & Deep Thinking
 *   `design`: proactive solution design BEFORE coding. MANDATORY for complex tasks after Explore. Full guidelines below.
 *   `deepthinking`: reactive deep analysis for failures or stuck situations. Optional: complex tasks or failure recovery only. Full guidelines below.

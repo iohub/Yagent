@@ -147,8 +147,8 @@ func browserDelegateDescription(available bool, reason string) string {
 	if available {
 		return "Delegate a browser task to Browser-Agent, which drives a real Chrome browser: open pages, click/fill/wait, " +
 			"read rendered text, run read-only page scripts, and capture screenshots as evidence. " +
-			"Use it when the task needs JS-rendered content, an interactive flow, or visual verification — " +
-			"not for static docs you can read with read-only tools or `run_bash curl`. " +
+			"This is the PREFERRED route to web content and online knowledge — docs, release notes, issues, current facts — " +
+			"not only JS-rendered or interactive pages; do not substitute `run_bash curl` or model memory for a page that can be opened here. " +
 			"The task string must be self-contained: target URL, what to do, and what evidence to return."
 	}
 	return fmt.Sprintf("Browser-Agent is currently UNAVAILABLE and every call will fail: %s. "+
