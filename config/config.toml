@@ -216,6 +216,23 @@ max_in_flight_requests = 8           # concurrent provider calls across the whol
                                      # A 429 is a property of the provider rather than of one engine, so this
                                      # gate is shared by every engine. Retries and streams hold their slot.
 
+# Streaming liveness. Three layers, each covering a different kind of silence; without
+# them a silently dropped connection (or a provider stuck thinking) blocks the read loop
+# forever and only the total `timeout` above ends it — the "frozen, then timeout" UX.
+stream_idle_timeout = "90s"   # max silence between two chunks/SSE events before the read loop is
+                              # aborted with `stream stalled: no data received for ...`. Cannot be
+                              # switched off (0 → default). Runtime-configurable. A value ≥ timeout
+                              # only logs a WARN (the watchdog would never fire first). Raise it if
+                              # your gateway buffers the whole SSE body and flushes it at the end.
+first_byte_timeout = "60s"    # request → response headers (http.Transport.ResponseHeaderTimeout).
+                              # NEEDS A RESTART (the transport is built together with the engine).
+                              # Deliberately NOT http.Client.Timeout: that field bounds the whole
+                              # response body and would kill healthy long streams.
+retry_attempt_timeout = "0s"  # cap on ONE attempt's total wall-clock, outer backstop to the idle watchdog.
+                              # 0 = no extra limit (an attempt is then bounded only by the caller's total
+                              # budget). NOTE it caps healthy long streams too — for streaming leave it 0,
+                              # the idle watchdog already catches silent ones.
+
 # ── CodeSeek MCP code-analysis engine ──
 [codeseek]
 binary_path = ""                     # empty → extract the embedded dist/bin into ~/.yagent/bin/codeseek;

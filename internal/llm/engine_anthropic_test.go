@@ -491,7 +491,7 @@ func TestAnthropicStream_StopReasonReachesChoice(t *testing.T) {
 		"",
 	}, "\n")
 
-	resp, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil)
+	resp, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil, nil)
 	if err != nil {
 		t.Fatalf("parseStreamResponse: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestAnthropicStream_NothingProducedIsError(t *testing.T) {
 		"",
 	}, "\n")
 
-	if _, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil); !errors.Is(err, ErrEmptyCompletion) {
+	if _, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil, nil); !errors.Is(err, ErrEmptyCompletion) {
 		t.Errorf("err = %v, want errors.Is(ErrEmptyCompletion)", err)
 	}
 }
@@ -564,7 +564,7 @@ func TestAnthropicParseStreamResponse(t *testing.T) {
 		func(_ context.Context, chunk []byte) error {
 			streamed.Write(chunk)
 			return nil
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("parseStreamResponse: %v", err)
 	}
@@ -612,7 +612,7 @@ func TestAnthropicParseStreamResponse_NoHandlerAndUnknownEvents(t *testing.T) {
 		"event: content_block_delta\n" +
 		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}` + "\n\n"
 
-	resp, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil)
+	resp, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil, nil)
 	if err != nil {
 		t.Fatalf("未知 SSE 事件导致失败: %v", err)
 	}
@@ -819,7 +819,7 @@ func TestAnthropicStream_RefusalIsError(t *testing.T) {
 		"",
 	}, "\n")
 
-	if _, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil); !errors.Is(err, ErrRefusedCompletion) {
+	if _, err := e.parseStreamResponse(context.Background(), strings.NewReader(sse), nil, nil); !errors.Is(err, ErrRefusedCompletion) {
 		t.Errorf("err = %v, want errors.Is(ErrRefusedCompletion)", err)
 	}
 }

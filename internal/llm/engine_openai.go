@@ -20,7 +20,9 @@ import (
 
 type OpenAIEngine struct {
 	client          *openai.Client
+	streamClient    *openai.Client
 	transport       *http.Transport
+	streamTransport *http.Transport
 	model           string
 	cfg             config.LLMConfig
 	reasoningEffort string
@@ -31,7 +33,7 @@ type OpenAIEngine struct {
 func NewOpenAIEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) *OpenAIEngine {
 	baseURL := provider.APIBaseURL
 	apiKey := provider.APIKey
-	transport := &http.Transport{
+	plainTransport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -44,23 +46,39 @@ func NewOpenAIEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) *
 		DisableKeepAlives:     false,
 	}
 
-	httpClient := &http.Client{
-		Transport: transport,
-	}
+	// 流式与非流式必须是**两个** transport，只差一个 ResponseHeaderTimeout：
+	//   · 流式：SSE 的响应头在开始生成时就到，这个字段量的是真正的首字节（TTFT），
+	//     卡住不吐头的连接在这里被 60s 判死；
+	//   · 非流式：**响应头要等整轮生成完才开始写**，同一个字段于是变成"整轮生成
+	//     上限"——一条正常跑 3 分钟的调用会在 60s 被杀。所以非流式那份不设它。
+	streamTransport := plainTransport.Clone()
+	streamTransport.ResponseHeaderTimeout = resolveFirstByteTimeout(llmCfg)
 
-	opts := []option.RequestOption{
-		option.WithAPIKey(apiKey),
-		option.WithHTTPClient(httpClient),
-		option.WithMaxRetries(0),
+	// 刻意**不设** http.Client.Timeout（两份都不设）：它覆盖"从发请求到读完响应体"
+	// 的**总时长**，而本项目的常用形态恰恰是几分钟的流式长响应（推理模型边想边吐）。
+	// 一旦设了它，健康的长流会在中途被就地杀掉，报的还是一个与真实原因无关的
+	// "Client.Timeout exceeded while awaiting headers/body"。正确的分层是：
+	// 首字节 → ResponseHeaderTimeout（仅流式，上面），流内静默 → idleWatchdog
+	// （本包 stream_watchdog.go），总预算 → ctx 的 deadline（ApplyCallTimeout）。
+	newClient := func(transport *http.Transport) *openai.Client {
+		opts := []option.RequestOption{
+			option.WithAPIKey(apiKey),
+			option.WithHTTPClient(&http.Client{Transport: transport}),
+			// SDK 自带重试必须关着：退避自己算并钳到 ctx 剩余预算。
+			option.WithMaxRetries(0),
+		}
+		if baseURL != "" {
+			opts = append(opts, option.WithBaseURL(baseURL))
+		}
+		client := openai.NewClient(opts...)
+		return &client
 	}
-	if baseURL != "" {
-		opts = append(opts, option.WithBaseURL(baseURL))
-	}
-	client := openai.NewClient(opts...)
 
 	return &OpenAIEngine{
-		client:          &client,
-		transport:       transport,
+		client:          newClient(plainTransport),
+		streamClient:    newClient(streamTransport),
+		transport:       plainTransport,
+		streamTransport: streamTransport,
 		model:           provider.Model,
 		cfg:             llmCfg,
 		reasoningEffort: provider.ReasoningEffort,
@@ -76,6 +94,9 @@ func (e *OpenAIEngine) Model() string {
 func (e *OpenAIEngine) CloseIdleConnections() {
 	if e.transport != nil {
 		e.transport.CloseIdleConnections()
+	}
+	if e.streamTransport != nil {
+		e.streamTransport.CloseIdleConnections()
 	}
 }
 
@@ -104,7 +125,8 @@ func (e *OpenAIEngine) GenerateContent(ctx context.Context, messages []Message, 
 		return e.generateStreaming(ctx, params, opts.StreamHandler)
 	}
 
-	completion, err := e.retryChatCompletion(ctx, params)
+	// handler 传 nil：这条路上没有流式通道，重试提示没有收件人。
+	completion, err := e.retryChatCompletion(ctx, params, nil)
 	if err != nil {
 		return nil, fmt.Errorf("openai chat completion: %w", err)
 	}
@@ -159,7 +181,18 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 	streamParams.StreamOptions = openai.ChatCompletionStreamOptionsParam{
 		IncludeUsage: openai.Bool(true),
 	}
-	stream := e.client.Chat.Completions.NewStreaming(ctx, streamParams)
+
+	// 本次尝试一层：单次上限（外层兜底）+ 流内空闲看门狗（主力）。
+	// 见 stream_watchdog.go：每读到一个 chunk 就 touch 续期，沉默超过阈值就
+	// cancel 这个 ctx，于是阻塞在 Next() 里的读立刻返回。
+	attemptCtx, cancelAttempt := withAttemptTimeout(ctx, e.cfg.RetryAttemptTimeout)
+	defer cancelAttempt()
+	attemptCtx, wd := newIdleWatchdog(attemptCtx, resolveStreamIdleTimeout(e.cfg))
+	defer wd.release()
+
+	// 用 streamClient：只有它的 transport 带 ResponseHeaderTimeout（首字节兜底）。
+	// 非流式那份刻意不带 —— 那个字段在非流式下等于"整轮生成上限"。
+	stream := e.streamClient.Chat.Completions.NewStreaming(attemptCtx, streamParams)
 	defer stream.Close()
 
 	var content string
@@ -168,6 +201,9 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 	var finish FinishReason
 
 	for stream.Next() {
+		// 走到这里说明至少收到了一个 chunk —— 无论它带的是正文、思维链、
+		// 工具分片还是纯 usage，都算"链路活着"，看门狗由此续期。
+		wd.touch()
 		chunk := stream.Current()
 		if len(chunk.Choices) > 0 {
 			if fr := chunk.Choices[0].FinishReason; fr != "" {
@@ -211,8 +247,16 @@ func (e *OpenAIEngine) generateStreaming(ctx context.Context, params openai.Chat
 	}
 
 	if err := stream.Err(); err != nil {
+		// 空闲看门狗判死优先：此时底层读到的是"我们自己取消导致的 ctx 错误"，
+		// 直接透出它只会得到一句 context canceled，谁都看不出真正原因是静默。
+		if stalled := wd.err(); stalled != nil {
+			return nil, fmt.Errorf("openai streaming: %w", stalled)
+		}
 		if isRetriableError(err) {
-			completion, retryErr := e.retryChatCompletion(ctx, params)
+			// 这一跳必须让用户看见：流式失败后静默改走非流式，UI 上就是
+			// "打了几个字然后卡住半天"，看起来与死机一样。
+			notifyStream(ctx, handler, streamFallbackNotice)
+			completion, retryErr := e.retryChatCompletion(ctx, params, handler)
 			if retryErr != nil {
 				return nil, fmt.Errorf("openai streaming failed and non-streaming fallback also failed: %w", retryErr)
 			}
@@ -468,7 +512,7 @@ func isRetriableError(err error) bool {
 	return false
 }
 
-func (e *OpenAIEngine) retryChatCompletion(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+func (e *OpenAIEngine) retryChatCompletion(ctx context.Context, params openai.ChatCompletionNewParams, handler StreamHandler) (*openai.ChatCompletion, error) {
 	maxRetries := e.cfg.MaxRetries
 	if maxRetries <= 0 {
 		maxRetries = 5
@@ -482,6 +526,10 @@ func (e *OpenAIEngine) retryChatCompletion(ctx context.Context, params openai.Ch
 		}
 
 		if attempt > 0 {
+			// 提示放在退避**之前**：退避从 10s 起跳，那段时间用户没有任何别的
+			// 信号；等退避结束再提示，观感与"卡住不动"完全一样。
+			notifyStream(ctx, handler, retryNoticeText(attempt, maxRetries))
+
 			delay := baseDelay * (1 << (attempt - 1))
 
 			if deadline, ok := ctx.Deadline(); ok {
@@ -502,12 +550,15 @@ func (e *OpenAIEngine) retryChatCompletion(ctx context.Context, params openai.Ch
 			}
 		}
 
-		completion, err := e.client.Chat.Completions.New(ctx, params)
+		completion, err := e.chatOnce(ctx, params)
 		if err == nil {
 			return completion, nil
 		}
 
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		// 判据是 parent 的 ctx.Err()，不是 err 的类型：单次尝试上限
+		// （[llm] retry_attempt_timeout）也会给出 DeadlineExceeded，而它的用途
+		// 恰恰是"砍掉这次卡住的尝试、换一次重试"，把它当用户取消就等于白配。
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			return nil, fmt.Errorf("llm call cancelled (attempt %d): %w", attempt, err)
 		}
 
@@ -519,4 +570,13 @@ func (e *OpenAIEngine) retryChatCompletion(ctx context.Context, params openai.Ch
 	}
 
 	return nil, fmt.Errorf("max retries (%d) exceeded: %w", maxRetries, lastErr)
+}
+
+// chatOnce 发一次非流式请求，并套上单次尝试上限（外层兜底）。
+// 总预算仍由 ctx 把关：这里只防"某一次尝试自己就能无限期挂着"，
+// 使得 N 次重试的总耗时不会变成"N × 无上限"。
+func (e *OpenAIEngine) chatOnce(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+	attemptCtx, cancel := withAttemptTimeout(ctx, e.cfg.RetryAttemptTimeout)
+	defer cancel()
+	return e.client.Chat.Completions.New(attemptCtx, params)
 }

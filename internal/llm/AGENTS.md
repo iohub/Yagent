@@ -89,10 +89,29 @@ rollout 指纹与 llm 日志吃的是它。`ToolCallNote`（`:204`）的判据�
 那边硬约束 9 的另一半）——判据不一致时"回执说明截断"会挂在一条
 生产永远不成立的条件上。
 
+**14. 流式的"活着没有"分三层，`http.Client.Timeout` 是禁用位。**
+首字节 → `http.Transport.ResponseHeaderTimeout`（`engine_openai.go:55`、`engine_anthropic.go:132`，
+`[llm].first_byte_timeout`，**改了要重启**，Transport 是构造期建的）；流内静默 → `idleWatchdog`
+（`stream_watchdog.go`，`[llm].stream_idle_timeout`，默认 90s，运行期可改）；总预算 → ctx 的 deadline
+（`ApplyCallTimeout`）。**每个引擎必须是两个 transport / 两个 client，只有流式那份带
+ResponseHeaderTimeout**：非流式响应要等**整轮生成完**才开始写响应头，同一个字段在那边等于给
+"整轮生成"设上限，一条正常跑几分钟的调用会在 60s 被杀（闸门：
+`TestOpenAIEngine_FirstByteTimeoutOnlyAppliesToStreaming`）。**绝不设 `http.Client.Timeout`**：
+它覆盖"发请求到读完响应体"的总时长，本事就是把几分钟的正常长流就地杀掉，报的还是与真实原因
+无关的一句 Client.Timeout。看门狗的 ctx 必须是**发请求的那个**（cancel 子 ctx 不会波及父 ctx，
+anthropic 侧因此在 `attempt()` 里建看门狗、再把 wd 传给 `parseStreamResponse`）；每个 chunk/SSE 行
+都要 `touch()`（`engine_openai.go:206`、`engine_anthropic.go:614`），所有退出路径 `defer wd.release()`
+（AfterFunc 计时器没有可 drain 的通道，但 `stopped` 必须先置，否则一次迟到的 fire 会取消下一轮）。
+判死错误是 `ErrStreamStalled`，**刻意不包裹 `context.Canceled`**（`netretry.go:44-53` 靠那条判据
+把用户取消排除在重试之外），并且**不可重试**（已经等满一整个 idle 窗口，重试只是把同样的等待再来一遍）。
+openai 侧 `touch` 只在"SDK 解出的事件"上触发（裸注释行被 SDK 吃掉），anthropic 侧按**原始行**续期；
+所以**完全缓冲到结束才 flush 的网关会被判死** —— 那一侧只能靠调大 `stream_idle_timeout`，
+模板注释里已写明。
+
 ## 入口
 
 `engine.go`（接口与 CallOptions）、`inflight.go`、`engine_anthropic.go`（`buildRequestBody` 一段最集中）、
-`router.go`。
+`router.go`、`stream_watchdog.go`（流式"活着没有"的两层：空闲看门狗 + 单次尝试上限）。
 
 ## 闸门
 
@@ -137,6 +156,14 @@ rollout 指纹与 llm 日志吃的是它。`ToolCallNote`（`:204`）的判据�
 - 跨包契约（不在本包，但去掉 `*RoutingEngine` 包装就会红）：
   `TestAgentEngineAlwaysWrapsWithRoutingEngine`（`internal/app/assembly_test.go:37`）——
   它只看返回类型、不驱动 `resolve()`。
+- 流式"活着没有"那一组（`stream_watchdog_test.go`）：`_StreamIdleWatchdogStalls`（两个协议各一条：
+  假服务端吐 2~3 个 SSE 后永久静默，阈值 200ms；断言错误含 `stream stalled`、
+  `errors.Is(err, ErrStreamStalled)`、**假服务端自己观察到请求 ctx 结束**）、
+  `_StreamIdleWatchdogKeepsAlive`（总时长超阈值但单次间隔不超 → 不许误杀）、
+  `_StreamFallbackIsVisibleToHandler` / `_RetryNoticeIsVisibleToHandler`（回退与重试必须
+  经 handler 可见）、`TestIdleWatchdogLifecycle`（release 停表 + 不复活）、
+  `TestWithAttemptTimeout`。配置侧 `internal/config/stream_timeout_test.go` 钉缺省归一化
+  与"把时长写成裸整数会被解码成纳秒"那条陷阱。
 
 **耗时教训**（根 AGENTS.md §8.3）：不要在这包里跑完整重试序列——baseDelay 是 10s。用短 `cfg.Timeout`
 把退避钳到剩余预算，然后断言"服务端只收到 1 次请求"。

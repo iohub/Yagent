@@ -92,7 +92,9 @@ type anthropicErrorBody struct {
 // It supports text generation, tool use, streaming, and extended thinking.
 type AnthropicEngine struct {
 	client          *http.Client
+	streamClient    *http.Client
 	transport       *http.Transport
+	streamTransport *http.Transport
 	baseURL         string
 	apiKey          string
 	model           string
@@ -110,7 +112,7 @@ const defaultAnthropicMaxTokens = 8192
 //
 // 与 NewOpenAIEngine 同理：收整个 provider，配置里新增的键才不会"写了没人读"。
 func NewAnthropicEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig) *AnthropicEngine {
-	transport := &http.Transport{
+	plainTransport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -123,9 +125,15 @@ func NewAnthropicEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig
 		DisableKeepAlives:     false,
 	}
 
-	httpClient := &http.Client{
-		Transport: transport,
-	}
+	// 流式 / 非流式两个 transport（与 OpenAI 引擎同理由，见 engine_openai.go）：
+	// 只有流式那份设 ResponseHeaderTimeout —— 非流式的响应头要等整轮生成完才写，
+	// 同一个字段在那边等于"整轮生成上限"。
+	streamTransport := plainTransport.Clone()
+	streamTransport.ResponseHeaderTimeout = resolveFirstByteTimeout(llmCfg)
+
+	// 刻意**不设** http.Client.Timeout：它覆盖"发请求到读完响应体"的总时长，
+	// 会把正常的长流（thinking 模型连续吐 token 几分钟）就地杀掉。分层见
+	// stream_watchdog.go 的注释。
 
 	maxTokens := provider.MaxTokens
 	if maxTokens <= 0 {
@@ -133,8 +141,10 @@ func NewAnthropicEngine(provider *config.ProviderConfig, llmCfg config.LLMConfig
 	}
 
 	return &AnthropicEngine{
-		client:          httpClient,
-		transport:       transport,
+		client:          &http.Client{Transport: plainTransport},
+		streamClient:    &http.Client{Transport: streamTransport},
+		transport:       plainTransport,
+		streamTransport: streamTransport,
 		baseURL:         strings.TrimRight(provider.APIBaseURL, "/"),
 		apiKey:          provider.APIKey,
 		model:           provider.Model,
@@ -152,6 +162,9 @@ func (e *AnthropicEngine) Model() string { return e.model }
 func (e *AnthropicEngine) CloseIdleConnections() {
 	if e.transport != nil {
 		e.transport.CloseIdleConnections()
+	}
+	if e.streamTransport != nil {
+		e.streamTransport.CloseIdleConnections()
 	}
 }
 
@@ -379,7 +392,12 @@ func (e *AnthropicEngine) executeRequest(ctx context.Context, req *anthropicRequ
 		httpReq.Header.Set("anthropic-beta", "interleaved-thinking-2025-05-14")
 	}
 
-	return e.client.Do(httpReq)
+	// 流式走 streamClient：只有它的 transport 带 ResponseHeaderTimeout（首字节兜底）。
+	client := e.client
+	if req.Stream && e.streamClient != nil {
+		client = e.streamClient
+	}
+	return client.Do(httpReq)
 }
 
 // ─── Non-Streaming ───────────────────────────────────────────────────────────
@@ -412,6 +430,11 @@ func (e *AnthropicEngine) retryRequest(ctx context.Context, req *anthropicReques
 		}
 
 		if attempt > 0 {
+			// 提示放在退避**之前**（理由同 engine_openai.go 的 retryChatCompletion）：
+			// 退避从 10s 起跳，那段时间用户没有任何别的信号，静默的重试在 UI 上
+			// 与卡死无法区分。
+			notifyStream(ctx, handler, retryNoticeText(attempt, maxRetries))
+
 			delay := baseDelay * (1 << (attempt - 1))
 
 			// 钳制退避时间：不超过 ctx 剩余预算，避免最后一次重试被 sleep 吞掉
@@ -434,51 +457,64 @@ func (e *AnthropicEngine) retryRequest(ctx context.Context, req *anthropicReques
 			}
 		}
 
-		httpResp, err := e.executeRequest(ctx, req)
-		if err != nil {
-			if !isHTTPRetriableError(err) {
-				return nil, err
-			}
-			lastErr = err
-			continue
-		}
-
-		if httpResp.StatusCode != 200 {
-			errResp := e.parseErrorResponse(httpResp)
-			httpResp.Body.Close()
-			if !isRetriableHTTPStatus(httpResp.StatusCode) {
-				return nil, errResp
-			}
-			lastErr = errResp
-			continue
-		}
-
-		if isStream {
-			resp, err := e.parseStreamResponse(ctx, httpResp.Body, handler)
-			httpResp.Body.Close()
-			if err != nil {
-				if !isHTTPRetriableError(err) {
-					return nil, err
-				}
-				lastErr = err
-				continue
-			}
-			return resp, nil
-		} else {
-			resp, err := e.parseNonStreamResponse(httpResp.Body)
-			httpResp.Body.Close()
-			if err != nil {
-				if !isHTTPRetriableError(err) {
-					return nil, err
-				}
-				lastErr = err
-				continue
-			}
+		resp, retriable, err := e.attempt(ctx, req, isStream, handler)
+		if err == nil {
 			return resp, nil
 		}
+		if !retriable {
+			return nil, err
+		}
+		lastErr = err
 	}
 
 	return nil, fmt.Errorf("anthropic max retries (%d) exceeded: %w", maxRetries, lastErr)
+}
+
+// attempt 执行一次完整尝试（发请求 + 解析响应），并套上单次尝试上限（外层兜底）。
+//
+// retriable 仍由既有的两套判据决定（isHTTPRetriableError / isRetriableHTTPStatus），
+// 重试语义没有改动 —— 这里只是把"一次尝试"从循环里提出来，好让单次上限有一个
+// 明确的作用域（total budget 仍在 ctx 上，二者是"外层兜底 / 总闸"的关系）。
+//
+// 流内空闲看门狗判死（stream stalled）返回的是不可重试错误：它已经等满一整个
+// idle 窗口，重试只会把同样的等待再来一遍；上层看到的是一个可识别的哨兵，
+// 而不是一句 context canceled。
+func (e *AnthropicEngine) attempt(ctx context.Context, req *anthropicRequest, isStream bool, handler StreamHandler) (*Response, bool, error) {
+	attemptCtx, cancelAttempt := withAttemptTimeout(ctx, e.cfg.RetryAttemptTimeout)
+	defer cancelAttempt()
+
+	// 流内空闲看门狗必须建在**发请求之前**：它 cancel 的是本次尝试的 ctx，而被
+	// 阻塞的正是那次请求 body 的读（cancel 一个子 ctx 不会波及父 ctx，所以看门狗
+	// 的 ctx 必须就是 executeRequest 收到的那一个）。非流式没有"流内静默"这回事，
+	// 也没有续期点，不挂看门狗。
+	var wd *idleWatchdog
+	if isStream {
+		attemptCtx, wd = newIdleWatchdog(attemptCtx, resolveStreamIdleTimeout(e.cfg))
+		defer wd.release()
+	}
+
+	httpResp, err := e.executeRequest(attemptCtx, req)
+	if err != nil {
+		return nil, isHTTPRetriableError(err), err
+	}
+
+	if httpResp.StatusCode != 200 {
+		errResp := e.parseErrorResponse(httpResp)
+		httpResp.Body.Close()
+		return nil, isRetriableHTTPStatus(httpResp.StatusCode), errResp
+	}
+
+	var resp *Response
+	if isStream {
+		resp, err = e.parseStreamResponse(attemptCtx, httpResp.Body, handler, wd)
+	} else {
+		resp, err = e.parseNonStreamResponse(httpResp.Body)
+	}
+	httpResp.Body.Close()
+	if err != nil {
+		return nil, isHTTPRetriableError(err), err
+	}
+	return resp, false, nil
 }
 
 // ─── Response Parsing ────────────────────────────────────────────────────────
@@ -543,9 +579,14 @@ func (e *AnthropicEngine) convertResponse(ar *anthropicResponse) (*Response, err
 
 // ─── SSE Stream Parsing ──────────────────────────────────────────────────────
 
-func (e *AnthropicEngine) parseStreamResponse(ctx context.Context, body io.Reader, handler StreamHandler) (*Response, error) {
+// wd 是本次尝试的空闲看门狗（可为 nil，nil 上所有方法都是空操作）：每读到一行
+// SSE 就续期一次 —— 看门狗只关心"有没有字节"，ping、空行、注释行都算活着。
+func (e *AnthropicEngine) parseStreamResponse(ctx context.Context, body io.Reader, handler StreamHandler, wd *idleWatchdog) (*Response, error) {
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 512*1024)
+	// 1MB 上限（原来是 512KB）：SSE 的单行可能非常长 —— 一次 input_json_delta 里
+	// 塞进整段工具参数、或网关把整轮内容压成一行，都会触发
+	// `bufio.Scanner: token too long`，而那个错误的表象只是"流莫名其妙断了"。
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	// streamToolCall tracks partial tool call data during streaming
 	type streamToolCall struct {
@@ -567,6 +608,10 @@ func (e *AnthropicEngine) parseStreamResponse(ctx context.Context, body io.Reade
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		// 任意一行到账都算链路活着（包括 event:/data:/空行/ping 事件）：
+		// 看门狗判的是"有没有字节到"，不是"有没有正文到"。慢思考阶段
+		// provider 通常只发 ping，那正是它该被续期的时候。
+		wd.touch()
 
 		if strings.HasPrefix(line, "event: ") {
 			currentEvent = strings.TrimPrefix(line, "event: ")
@@ -715,6 +760,12 @@ func (e *AnthropicEngine) parseStreamResponse(ctx context.Context, body io.Reade
 	}
 
 	if err := scanner.Err(); err != nil {
+		// 看门狗判死优先：取消子 ctx 会让这个读返回，此时 scanner.Err() 报的是
+		// "我们自己的取消"，直接透出就是一句 context canceled —— 真正原因（静默）
+		// 就彻底看不见了。
+		if stalled := wd.err(); stalled != nil {
+			return nil, stalled
+		}
 		return nil, fmt.Errorf("anthropic stream scan: %w", err)
 	}
 

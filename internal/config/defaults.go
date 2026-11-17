@@ -49,6 +49,11 @@ func DefaultLLMConfig() *LLMConfig {
 		EnableFallback:             false,
 		FallbackMaxRetries:         2,
 		MaxInFlightRequests:        DefaultMaxInFlightRequests,
+		// 流式"活着没有"的三层：首字节（需重启）、流内空闲（运行期可改）、单次尝试上限
+		//（0 = 不额外限制）。取值理由见 stream_timeout.go。
+		StreamIdleTimeout:   DefaultLLMStreamIdleTimeout,
+		FirstByteTimeout:    DefaultLLMFirstByteTimeout,
+		RetryAttemptTimeout: 0,
 	}
 }
 

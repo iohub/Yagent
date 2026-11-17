@@ -268,6 +268,15 @@ func LoadConfig(configPath string) (*config.Config, error) {
 	if cfg.LLM.Timeout > 0 {
 		config.SetGlobalLLMTimeout(cfg.LLM.Timeout)
 	}
+	// 流式"活着没有"的两个全局值：流内空闲运行期可改，首字节只影响引擎构造
+	//（下面 NewEngine 会读它），这里都先落一次，保证"用零值 LLMConfig 重建引擎"
+	// 的路径不会退化成没有超时。
+	if cfg.LLM.StreamIdleTimeout > 0 {
+		config.SetGlobalStreamIdleTimeout(cfg.LLM.StreamIdleTimeout)
+	}
+	if cfg.LLM.FirstByteTimeout > 0 {
+		config.SetGlobalFirstByteTimeout(cfg.LLM.FirstByteTimeout)
+	}
 	config.SetGlobalDeferredTools(cfg.Tools.Deferred)
 	SetInFlightLimit(cfg.LLM.MaxInFlightRequests)
 
@@ -306,6 +315,12 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	// 构造路径；仅当配置值 > 0 时生效，TUI 模型设置面板可动态修改）。
 	if cfg.LLM.Timeout > 0 {
 		config.SetGlobalLLMTimeout(cfg.LLM.Timeout)
+	}
+	if cfg.LLM.StreamIdleTimeout > 0 {
+		config.SetGlobalStreamIdleTimeout(cfg.LLM.StreamIdleTimeout)
+	}
+	if cfg.LLM.FirstByteTimeout > 0 {
+		config.SetGlobalFirstByteTimeout(cfg.LLM.FirstByteTimeout)
 	}
 	config.SetGlobalDeferredTools(cfg.Tools.Deferred)
 	SetInFlightLimit(cfg.LLM.MaxInFlightRequests)

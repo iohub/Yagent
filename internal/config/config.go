@@ -185,6 +185,24 @@ type LLMConfig struct {
 
 	// 全进程同时在飞的 provider 调用上限（429 是 provider 的全局属性，不是某个引擎的）。**显式写 0 = 不限**，而"没写这个键"解析出来也是 0 —— 判定必须看键的存在性（§11 坑 26）。
 	MaxInFlightRequests int `toml:"max_in_flight_requests" json:"max_in_flight_requests" yaml:"max_in_flight_requests"`
+
+	// 流内空闲看门狗：超过这么久没有任何 chunk / SSE 事件到达就主动中止这次请求
+	//（错误文本 `stream stalled: no data received for ...`）。<=0 或 <1s 按
+	// DefaultLLMStreamIdleTimeout 生效 —— 这个旋钮**不能关**：关掉它就等于恢复
+	// "连接被静默丢弃后永久阻塞"那个缺陷。运行期可改。
+	StreamIdleTimeout time.Duration `toml:"stream_idle_timeout" json:"stream_idle_timeout" yaml:"stream_idle_timeout"`
+
+	// 首字节（响应头）超时，落在 http.Transport.ResponseHeaderTimeout 上。
+	// <=0 或 <1s 按 DefaultLLMFirstByteTimeout 生效。**改它要重启**：
+	// Transport 是引擎构造期建的。刻意不用 http.Client.Timeout —— 那个字段覆盖
+	// "发请求到读完响应体"的总时长，会把正常的长流就地杀掉。
+	FirstByteTimeout time.Duration `toml:"first_byte_timeout" json:"first_byte_timeout" yaml:"first_byte_timeout"`
+
+	// 单次尝试的上限（外层兜底，空闲看门狗是主力）：一次尝试**总墙钟**的上限。
+	// **0 = 不额外限制**，此时单次尝试只受调用方 ctx 的总预算约束。负值/小于 1s
+	// 按 0 处理。注意它同样会砍掉健康的长流——流式场景请留 0，静默已由
+	// stream_idle_timeout 覆盖。
+	RetryAttemptTimeout time.Duration `toml:"retry_attempt_timeout" json:"retry_attempt_timeout" yaml:"retry_attempt_timeout"`
 }
 
 type RoutingConfig struct {
@@ -762,6 +780,9 @@ func (c *Config) validate() error {
 	if c.LLM.FallbackMaxRetries == 0 {
 		c.LLM.FallbackMaxRetries = c.LLM.MaxRetries
 	}
+	// 流式"活着没有"的三个旋钮（首字节 / 流内空闲 / 单次尝试上限）：
+	// 归一化与"写错单位"的告警只有这一处实现。
+	c.normalizeStreamTimeouts(*llmDefaults)
 
 	if c.EnhancedCommander.ToolResultKeepTokens == 0 {
 		c.EnhancedCommander.ToolResultKeepTokens = 200
