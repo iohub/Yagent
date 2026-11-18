@@ -26,8 +26,9 @@ in `main.go` picks the first applicable entry:
 |:-----:|------|------------------------|
 | 1 | `--config` / `-c <path>` | Used verbatim; **never created**, never defaulted. A path that cannot be loaded is a startup failure — the wizard in TUI mode, otherwise the stderr report in §9 |
 | 2 | `--profile` / `-P <name>`, or `$YAGENT_PROFILE` | That profile's file: `<config-dir>/<name>.toml` (see [§1.4](#14-profiles--several-complete-config-files)). Generated from the embedded template when missing, exactly like the default profile |
-| 3 | `default` profile → `$HOME/.yagent/config/config.toml` | Generated from the embedded template (this is the normal path) |
-| 4 | `./config/config.toml` | Reached **only** if the home-directory lookup itself fails — it is not a second-tier search, and a project-level file is never consulted on a normal machine |
+| 3 | `~/.yagent/active_profile` (written by `yagent profile use` / the TUI's `:profile`) | A missing file means "no preference": fall through to `default`. A **corrupt** file is ignored with a `slog.Warn` — it never blocks startup |
+| 4 | `default` profile → `$HOME/.yagent/config/config.toml` | Generated from the embedded template (this is the normal path) |
+| 5 | `./config/config.toml` | Reached **only** if the home-directory lookup itself fails — it is not a second-tier search, and a project-level file is never consulted on a normal machine |
 
 The repo's `config/config.toml` is therefore an **annotated reference catalogue**, not an active config
 layer: the file that actually runs is the one in `~/.yagent/config/`, generated from
@@ -95,7 +96,16 @@ When the home-directory lookup fails, both collapse to `./config/config.toml` an
    `--profile`, that flag is ignored and a warning is printed so you do not think you switched.
 2. `--profile <name>` / `-P <name>` — note the capital `-P`, `-p` is `--prompt`.
 3. `$YAGENT_PROFILE` — an empty value counts as unset.
-4. Nothing set → `default`.
+4. `~/.yagent/active_profile` — the profile you last picked with `yagent profile use <name>` or the
+   TUI's `:profile`. A **missing** file means "no preference" (this is the compatibility path: an
+   upgrade never forces a profile on you), and an **unreadable or malformed** file is ignored with a
+   single `slog.Warn` — a hand-edited typo must never be able to brick the startup.
+5. Nothing set → `default`.
+
+`active_profile` lives in `~/.yagent/`, **not** `~/.yagent/config/`: everything with a `.toml`
+suffix in the config directory is treated as a profile, and the preference is not a profile. The file
+holds one bare profile name. `yagent profile use default` **deletes** it rather than writing
+`default` — a missing file already means "no preference", so the two states never diverge.
 
 A missing profile file is generated from the embedded template on startup, the same way the default
 profile always has been (0600, never overwriting an existing file). A **typo** in a profile name is
@@ -123,6 +133,8 @@ yagent profile create lab --from work   # copies an existing profile instead
 yagent profile path work           # absolute path — scriptable, does not check existence
 yagent profile path                # the file this process would actually load
 yagent profile delete work         # refuses `default`; warns but proceeds when deleting the active one
+yagent profile use work            # select the profile the *next* launch uses (needs work.toml to exist)
+yagent profile use default         # clear the preference (removes ~/.yagent/active_profile)
 ```
 
 `list` reads `~/.yagent/config/*.toml`. `default` is **always listed** — that is the built-in
@@ -133,6 +145,25 @@ startup; with `--config` it follows that file's name instead.
 
 `path` only resolves a name to a path — it does **not** verify that the file exists (use `list` for
 that). That is deliberate: scripts compute the target path before the profile is created.
+
+`use` writes `~/.yagent/active_profile` (0600, atomic) and prints the effective path. The named
+profile must already exist (exit 1, with a hint to run `profile create`) — picking a typo would
+otherwise look like a switch while the next launch silently generates a fresh template. `default` is
+exempt: it is the built-in profile, so it works even on a machine where `config.toml` has not been
+written yet, and it stays available as the escape hatch. `use` never touches the running process.
+
+**Switching from inside the TUI.** `:profile` (or `/profile`) opens a picker; `/profile work` switches
+directly and skips it. Keys: `↑`/`↓` or `j`/`k` move, `PgUp`/`PgDn` page, `g`/`G` jump to the first /
+last row, `1`-`9` pick a row directly, `Enter` confirms, `Esc` cancels. The active profile carries a
+`*` and the cursor starts on it. A `default` row whose file has not been written yet is annotated
+`(not created yet — run yagent setup)`, the same wording `profile list` uses.
+
+Confirming does **exactly** what `yagent profile use <name>` does — it writes the preference file —
+and then says so in the footer: `已切换为 work — 重启 yagent 生效（本次进程继续使用 default）`. The
+"this process keeps using …" half is not decoration. The TUI cannot hot-swap the config: `app.Init`
+is guarded by a `sync.Once` (one assembly per instance), `supervise.Root()` is a process-wide
+singleton, and the TUI's event channel is a one-shot command with no replay queue. Restart `yagent`
+and the new profile loads exactly as if you had started it with `-P work`.
 
 `create` draws from three sources in this order: `--from <name>`, then `default` when `config.toml`
 exists, then the embedded template. On a brand-new machine `--from default` therefore falls back to
@@ -149,8 +180,9 @@ profile `config-rea` and can be selected with `--profile config-rea`. If it shou
 move it out of that directory (or into a subdirectory — only one level is scanned).
 
 **Two things profiles do not do.** There is no hot reload — the file is parsed once at startup, so
-switching requires a new process (`yagent -P work`). And a profile carries no state: sessions, logs,
-memory and the browser profile all stay shared under `~/.yagent/`.
+switching requires a new process (`yagent -P work`, or `yagent profile use work` followed by a
+restart). And a profile carries no state: sessions, logs, memory and the browser profile all stay
+shared under `~/.yagent/` — only `active_profile` itself is per-selection, and it is shared too.
 
 ---
 

@@ -9,7 +9,12 @@ package main
 //  1. --config/-c <path>   原样使用，**永不自动创建**（与加 profile 之前完全一致）
 //  2. --profile/-P <name>  命名档 → <configDir>/<name>.toml
 //  3. $YAGENT_PROFILE      空值视为未设置
-//  4. 都没有               → default → <configDir>/config.toml（历史路径）
+//  4. ~/.yagent/active_profile  用户上次在 TUI / `yagent profile use` 里选定的档
+//  5. 都没有               → default → <configDir>/config.toml（历史路径）
+//
+// 第 4 级的两种失败**都不算错误**：文件缺失是向前兼容的主路径（老用户根本没有它），
+// 内容非法则是"用户手改了一份文本文件"，warn 一句降级到 default 即可 —— 让一份坏掉的
+// 偏好把 yagent 卡死在启动失败上，代价远大于它带来的信息量。
 //
 // $HOME 可用时 configDir = ~/.yagent/config；拿不到 home 才退 CWD 相对的 config/
 // —— 这一条不是"第二级查找"，是 home 不可用时的兜底（与历史行为一致）。
@@ -18,7 +23,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"yagent/internal/config"
@@ -28,11 +32,15 @@ import (
 // 否则一个空导出就会把"没指定"变成"非法名字"。
 const profileEnvVar = "YAGENT_PROFILE"
 
-// resolveProfileName 返回本次进程要用的档名：--profile → $YAGENT_PROFILE → default。
+// resolveProfileName 返回本次进程要用的档名：
+// --profile → $YAGENT_PROFILE → ~/.yagent/active_profile → default。
 //
 // 名字非法时返回 *usageError（退出码 2）：这类错误的修法是"改命令行/改环境变量"，
 // 与"这次操作失败"（1）不是一回事。--config 同时给出时本函数**不被调用**，
 // 因为那时 profile 被忽略，一个写错的 --profile 不该让 --config 也起不来。
+//
+// 偏好文件（第 4 级）**不产生 usageError**：用户没在命令行写错任何东西，
+// 让一份手改坏的文本文件把 CLI 的退出码变成 2 是错误归因。
 func resolveProfileName() (string, error) {
 	var name, source string
 	switch {
@@ -41,7 +49,9 @@ func resolveProfileName() (string, error) {
 	case os.Getenv(profileEnvVar) != "":
 		name, source = os.Getenv(profileEnvVar), profileEnvVar
 	default:
-		return config.DefaultProfileName, nil
+		// 偏好文件读取是在**默认分支**里做的，而不是先在 switch 之前读一遍：
+		// 前三级命中时连文件都不该碰（一个读失败也不该在 --profile 生效时冒出来）。
+		return persistedProfileName(), nil
 	}
 
 	name = config.NormalizeProfileName(name)
@@ -51,15 +61,35 @@ func resolveProfileName() (string, error) {
 	return name, nil
 }
 
+// persistedProfileName 读第 4 级：~/.yagent/active_profile。
+//
+// 任何失败（文件读不了、内容过不了文法）都降级成 default，只留一条 slog.Warn。
+// 降级在这里是**唯一**的处置：那份文件是纯文本，用户完全可能手改错，而
+// "启动不了"与"忽略一次偏好"的代价差着两个数量级。
+//
+// 名字的校验由 config.ReadActiveProfile 做完（它返回的要么是空串，要么是合法名字），
+// 所以这里不需要再验一遍 —— 别在校验层加第二份判据。
+func persistedProfileName() string {
+	name, err := config.ReadActiveProfile(configHomeDir())
+	if err != nil {
+		slog.Warn("ignoring unusable active_profile preference, falling back to "+config.DefaultProfileName,
+			"error", err, "path", config.ActiveProfilePath(configHomeDir()))
+		return config.DefaultProfileName
+	}
+	if name == "" {
+		// 没有偏好文件 / 内容为空：这是**绝大多数用户**走的那条路，不 warn。
+		return config.DefaultProfileName
+	}
+	return name
+}
+
 // profileConfigDir 是 profile 文件的目录：$HOME/.yagent/config，home 不可用时退 config/。
 //
-// 与 config.ConfigDir() 同源但不是同一份实现：那个函数是"引导页展示用"的，
-// 且 home 失败时返回相对 "config"；这里必须与 getConfigPath 的历史兜底逐字节一致。
+// 直接转调 config.ConfigDir()：两份实现曾经逐字节相同，但"相同"是靠人肉同步维系的。
+// 一旦有一边改了兜底路径，`yagent profile path`（走这里）与 TUI 的档列表（走
+// config.ConfigDir）就会指向不同目录 —— 那种 bug 的表现是"面板里能看到、启动时读不到"。
 func profileConfigDir() string {
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".yagent", "config")
-	}
-	return "config"
+	return config.ConfigDir()
 }
 
 // resolveConfigPath 是配置路径的**唯一**解析点（主启动与 plasma 共用，避免两套优先级分叉）。

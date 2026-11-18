@@ -308,6 +308,30 @@ func (m *model) handleDialogStackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		}
 		return m, nil, true
 
+	case *components.ProfileSelectDialog:
+		// 与 ModelSelectDialog 同一套形状：先让组件吃掉按键，看它是否给出了确认。
+		_, cmd := d.Update(msg)
+		if cmd != nil {
+			return m, cmd, true
+		}
+		if d.Confirmed && d.Selected != "" {
+			selected := d.Selected
+			m.dialogStack.Pop()
+			// 先出栈再落盘：applyProfileSelection 只写一个偏好文件 + 一条 infoMsg，
+			// 万一它 panic（不该发生），栈里也别留着一个已经用过的对话框。
+			m.applyProfileSelection(selected)
+			return m, nil, true
+		}
+		switch key {
+		case "enter", "esc", "q", "Q":
+			// 走到这里说明 enter 时列表为空（Confirmed 没置上），或用户取消。
+			// esc/q/Q 在 Update 里已经把 Selected 清空，这里只负责出栈。
+			d.Selected = ""
+			m.dialogStack.Pop()
+			return m, nil, true
+		}
+		return m, nil, true
+
 	case *components.RoutingDialog:
 		_, cmd := d.Update(msg)
 		if cmd != nil {

@@ -68,6 +68,11 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 		if args, ok := matchSlashCommand(cmd, "/proposals"); ok {
 			return m.proposalsCommand(args)
 		}
+		// 配置档切换：同样必须显式列出，否则 `/profile` 是在搜字符串 "profile"。
+		// `:profile` 与 `/profile` 指向同一个入口（见下面对 "profile" 的 case）。
+		if args, ok := matchSlashCommand(cmd, "/profile"); ok {
+			return m.profileCommand(args)
+		}
 		// 手打 `/name args` + Enter 直接执行技能：首个 token 精确命中技能名才走这条路，
 		// 否则照旧搜索（技能名是 kebab-case，搜索词通常不是）。
 		if name, args := splitSlashSkill(cmd); name != "" {
@@ -123,6 +128,11 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 
 	case "timeout":
 		return m.showTimeoutDialog()
+
+	case "profile":
+		// 与 :model / :timeout 并列。它只改"下次启动读哪个文件"，本次进程不变 ——
+		// 理由与全部代码见 tui_profile.go 的头注。
+		return m.profileCommand(nil)
 
 	case "clear":
 		m.clearCurrentSession()

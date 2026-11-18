@@ -508,11 +508,13 @@ func failWithConfigError(path string, reason config.SetupReason, detail string, 
 	os.Exit(2)
 }
 
+// configHomeDir 是 ~/.yagent 的根包视图。
+//
+// 它**只是** config.HomeDir() 的别名，不再自己读 $HOME：home 推导与"偏好文件放哪"
+// 必须同一份判据，否则 active_profile 会被写到与 TUI/CLI 展示不同的位置去。
+// 保留这个薄壳是因为它在 main.go:507 的失败诊断里读起来比 config.HomeDir() 自然。
 func configHomeDir() string {
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".yagent")
-	}
-	return ".yagent"
+	return config.HomeDir()
 }
 
 // terminalAvailable 判断还能不能把终端交给 bubbletea：管道里跑 --prompt 时两者都不是字符设备。

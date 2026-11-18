@@ -41,6 +41,7 @@ var slashBuiltins = []struct {
 	{"mcp", "查看 MCP server 状态"},
 	{"plasma", "plasma agent 账目（list/explain/promote）"},
 	{"proposals", "内建 Agent prompt 提案（show/approve/reject）"},
+	{"profile", "切换 config 档（重启生效）"},
 }
 
 // skillCompletionItems 组装斜杠补全列表：内置命令在前，技能在后。

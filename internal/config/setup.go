@@ -5,7 +5,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -395,10 +394,13 @@ func NeedsSetup(cfg *Config, path string, fileCreated bool, loadErr error) (Setu
 }
 
 // ConfigDir 返回引导页要落盘的配置目录（~/.yagent/config），供"该写哪个文件"的展示用。
+//
+// home 推导统一走 active_profile.go 的 userHome()：全仓只许有一份 os.UserHomeDir
+// 调用，否则某个落点迟早跑到别的 home 下去（TUI 面板列 A 目录、CLI 写 B 目录）。
+// 兜底仍是相对 "config"（逐字节保持加 profile 之前的行为）。
 func ConfigDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "config"
+	if home, ok := userHome(); ok {
+		return filepath.Join(home, ".yagent", "config")
 	}
-	return filepath.Join(home, ".yagent", "config")
+	return "config"
 }

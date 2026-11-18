@@ -41,6 +41,9 @@ Layout (flat, no inheritance):
   <name>             -> ~/.yagent/config/<name>.toml
 
 Select one with --profile/-P <name> or YAGENT_PROFILE; --config still wins over both.
+With neither, ~/.yagent/active_profile decides (written by "yagent profile use <name>")
+and it sits above nothing but the built-in default. Nothing is hot-reloaded — the
+selection takes effect on the next launch.
 Profile operations never re-encode a TOML file: create copies bytes, nothing is rewritten.`,
 }
 
@@ -85,6 +88,72 @@ var profilePathCmd = &cobra.Command{
 	},
 }
 
+var profileUseCmd = &cobra.Command{
+	Use:   "use <name>",
+	Short: "Select the profile the next launch uses (persisted in ~/.yagent/active_profile)",
+	Long: `Write <name> into ~/.yagent/active_profile, which sits right below $YAGENT_PROFILE in
+the resolution chain:
+
+  --config/-c > --profile/-P > $YAGENT_PROFILE > ~/.yagent/active_profile > default
+
+"use default" deletes the file instead of writing "default": a missing file already
+means "no preference", so the two states never diverge. Nothing is hot-reloaded —
+the selected profile takes effect on the next launch.`,
+	Args: usageArgs(cobra.ExactArgs(1)),
+	Run: func(cmd *cobra.Command, args []string) {
+		failProfile(runProfileUse(os.Stdout, args[0]))
+	},
+}
+
+// runProfileUse 把 name 写成持久化偏好（下次启动生效）。
+//
+// 三条判据：
+//   - 名字必须合法（用法错误 → 退出码 2）；
+//   - 命名档的文件必须已存在（不存在 → 退出码 1，并提示先 create）——
+//     "选中一个不存在的档"会让下次启动凭空生成一份模板，而用户以为切到了他的配置；
+//   - default 一律合法且**不需要**文件存在：它是内置档，全新机器上它的 config.toml
+//     也常常还没生成，而"切回 default"必须是永远可用的逃生通道。
+//
+// 刻意不写任何提示到 stderr 之外：结果一律 stdout（可脚本化），错误一律 stderr，
+// 与 list/create/delete/path 同一条输出契约。
+func runProfileUse(out io.Writer, name string) error {
+	dir := profileConfigDir()
+
+	// 与 create/delete 同一条：原样校验，空串是用法错误而不是 default。
+	name = strings.TrimSpace(name)
+	if err := config.ValidateProfileName(name); err != nil {
+		return newUsageError("%v", err)
+	}
+	path, err := config.ProfileConfigPath(dir, name)
+	if err != nil {
+		return newUsageError("%v", err)
+	}
+
+	if name != config.DefaultProfileName {
+		exists, err := profileFileExists(dir, name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("profile %q does not exist: %s (run `yagent profile create %s` first)",
+				name, path, name)
+		}
+	}
+
+	if err := config.WriteActiveProfile(config.HomeDir(), name); err != nil {
+		return err
+	}
+
+	if name == config.DefaultProfileName {
+		// 成功语要说清"清掉了偏好"，否则 `use default` 的输出与 `use work` 一样，
+		// 用户无法确认自己回到了内置档。
+		fmt.Fprintf(out, "active profile cleared (back to %q) — takes effect on the next launch\n", name)
+		return nil
+	}
+	fmt.Fprintf(out, "active profile set to %q (%s) — takes effect on the next launch\n", name, path)
+	return nil
+}
+
 // failProfile 与 failPlasma 是同一条约定，只是前缀不同：*usageError → 2，其余 → 1。
 // 刻意不复用 failPlasma —— 那会把 "yagent plasma: " 前缀打在这个命令的错误上。
 func failProfile(err error) {
@@ -123,7 +192,12 @@ func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 // activeProfileName 是"本次进程真正会用哪个档"。
 //
 // 有 --config 时从它的路径反推（`--config /tmp/team.toml` → `team`），因为那份文件才是
-// 真正会被读写的；否则走与启动完全相同的优先级（--profile → $YAGENT_PROFILE → default）。
+// 真正会被读写的；否则走与启动完全相同的优先级
+// （--profile → $YAGENT_PROFILE → ~/.yagent/active_profile → default）。
+//
+// 它**不需要**为 active_profile 加任何代码：resolveProfileName 已经带上第 4 级，
+// 于是 `profile list` 的 `*` 自动跟随 `profile use` 的选择。加一级偏好却忘了同步
+// `*` 标记，用户会看到"切了档但列表还标着旧档"—— 那种分叉靠复用同一条链条避免。
 func activeProfileName() (string, error) {
 	if configPathFlag != "" {
 		return config.ProfileNameFromPath(configPathFlag), nil
@@ -396,6 +470,6 @@ func init() {
 		return newUsageError("%v", err)
 	})
 
-	profileCmd.AddCommand(profileListCmd, profileCreateCmd, profileDeleteCmd, profilePathCmd)
+	profileCmd.AddCommand(profileListCmd, profileCreateCmd, profileDeleteCmd, profilePathCmd, profileUseCmd)
 	rootCmd.AddCommand(profileCmd)
 }
