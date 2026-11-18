@@ -168,6 +168,12 @@ func main() {
 	}
 
 	if err := rootCmd.Execute(); err != nil {
+		// 用法错误（例如 `profile create -x` 的 flag 解析失败）契约是退出码 2：
+		// 改命令行就能修好，与"这次操作失败"（1）不是一回事。这类错误由各命令树的
+		// flagErrorFunc 包成 *usageError；其余错误仍退 1。
+		if isUsageError(err) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }

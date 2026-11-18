@@ -102,6 +102,10 @@ profile always has been (0600, never overwriting an existing file). A **typo** i
 therefore a new template, not an error: `yagent profile list` shows what actually exists, and the
 startup log records `profile=` next to `config_path=`.
 
+`default` is the built-in profile and **logically always exists**: it owns `config.toml`, and the
+first launch (or `yagent setup`) writes that file. On a machine where the file is still missing, the
+profile is listed anyway with a "not created yet" note — see below.
+
 **Names.** `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` — 1–64 characters, first character a letter or digit.
 Dots, slashes and backslashes are rejected, so `..`, `a/b` and `a\b` cannot escape the config
 directory, and a leading `.`/`-` cannot create a hidden or option-looking file. `default` is reserved
@@ -121,12 +125,28 @@ yagent profile path                # the file this process would actually load
 yagent profile delete work         # refuses `default`; warns but proceeds when deleting the active one
 ```
 
-`list` reads `~/.yagent/config/*.toml`, shows `config.toml` as `default`, and prints
-`(no profiles in …)` on a machine with no config yet. The `*` follows the same precedence as startup;
-with `--config` it follows that file's name instead.
+`list` reads `~/.yagent/config/*.toml`. `default` is **always listed** — that is the built-in
+profile, so it shows up even where `config.toml` has not been written yet, annotated
+`(not created yet — run yagent setup)`; the first launch then creates the file. Named profiles have
+no such identity: they appear only once their file exists. The `*` follows the same precedence as
+startup; with `--config` it follows that file's name instead.
 
-Exit codes match `yagent plasma`: `0` success, `2` usage/name problems (bad name, deleting `default`),
-`1` operation failures (already exists, does not exist, I/O error).
+`path` only resolves a name to a path — it does **not** verify that the file exists (use `list` for
+that). That is deliberate: scripts compute the target path before the profile is created.
+
+`create` draws from three sources in this order: `--from <name>`, then `default` when `config.toml`
+exists, then the embedded template. On a brand-new machine `--from default` therefore falls back to
+the template — the default file not having been written yet is not a "source does not exist" error —
+and it does **not** create `config.toml` as a side effect (`create` is not half a `setup`).
+`--from <named>` with a missing file is still an error (exit 1).
+
+Exit codes match `yagent plasma`: `0` success, `2` usage problems (bad name, unknown flag, deleting
+`default`), `1` operation failures (already exists, does not exist, I/O error).
+
+**Flat layout's one sharp edge.** Every `*.toml` in `~/.yagent/config/` is treated as a profile, so a
+file kept there for other reasons shows up as one too: an existing `config-rea.toml` appears as
+profile `config-rea` and can be selected with `--profile config-rea`. If it should not be a profile,
+move it out of that directory (or into a subdirectory — only one level is scanned).
 
 **Two things profiles do not do.** There is no hot reload — the file is parsed once at startup, so
 switching requires a new process (`yagent -P work`). And a profile carries no state: sessions, logs,

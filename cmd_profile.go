@@ -48,7 +48,7 @@ var profileListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List profiles; the one this process would use is marked with *",
-	Args:    cobra.NoArgs,
+	Args:    usageArgs(cobra.NoArgs),
 	Run: func(cmd *cobra.Command, args []string) {
 		failProfile(runProfileList(os.Stdout))
 	},
@@ -57,7 +57,7 @@ var profileListCmd = &cobra.Command{
 var profileCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a profile (copied from default, or from --from, or from the built-in template)",
-	Args:  cobra.ExactArgs(1),
+	Args:  usageArgs(cobra.ExactArgs(1)),
 	Run: func(cmd *cobra.Command, args []string) {
 		failProfile(runProfileCreate(os.Stdout, args[0], profileFromFlag))
 	},
@@ -66,7 +66,7 @@ var profileCreateCmd = &cobra.Command{
 var profileDeleteCmd = &cobra.Command{
 	Use:   "delete <name>",
 	Short: "Delete a profile file (default is built in and cannot be deleted)",
-	Args:  cobra.ExactArgs(1),
+	Args:  usageArgs(cobra.ExactArgs(1)),
 	Run: func(cmd *cobra.Command, args []string) {
 		failProfile(runProfileDelete(os.Stdout, args[0]))
 	},
@@ -75,7 +75,7 @@ var profileDeleteCmd = &cobra.Command{
 var profilePathCmd = &cobra.Command{
 	Use:   "path [name]",
 	Short: "Print the absolute path of a profile (no argument: the active one)",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  usageArgs(cobra.MaximumNArgs(1)),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := ""
 		if len(args) > 0 {
@@ -92,11 +92,32 @@ func failProfile(err error) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "yagent profile: %v\n", err)
-	var ue *usageError
-	if errors.As(err, &ue) {
+	if isUsageError(err) {
 		os.Exit(2)
 	}
 	os.Exit(1)
+}
+
+// isUsageError 报告 err 是否属于"改命令行就能修好"的那一类（契约退出码 2）。
+//
+// 单独抽出来是给 main 用的：flag 解析错误（`profile create -x`）发生在 Run 之前，
+// 到不了 failProfile，只能从 rootCmd.Execute() 的返回值里翻。
+func isUsageError(err error) bool {
+	var ue *usageError
+	return errors.As(err, &ue)
+}
+
+// usageArgs 把 cobra 的位置参数校验器包成用法错误。
+//
+// `profile create`（少给名字）与 `profile create -x`（flag 写错）是同一类失败 —— 改命令行就能
+// 修，契约退出码 2 —— 但 cobra 走的是两个机制（Args 校验 / FlagErrorFunc），所以两边各包一次。
+func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := validate(cmd, args); err != nil {
+			return newUsageError("%v", err)
+		}
+		return nil
+	}
 }
 
 // activeProfileName 是"本次进程真正会用哪个档"。
@@ -112,8 +133,13 @@ func activeProfileName() (string, error) {
 
 // runProfileList 打印目录里所有可用的档。
 //
-// 目录不存在（全新机器）时输出一行提示而不是错误：`profile list` 是"看看我有什么"，
-// 空集合是合法答案。
+// default 是**内置档**，逻辑上永远存在：它的 config.toml 还没生成（全新机器）时也必须
+// 列出来，否则 `profile list` 看上去像"没有 default 这个东西"，而首次启动又会凭空造出
+// 一份 config.toml —— 那是最容易被当成 bug 的落差。
+//
+// 只对 default 做这个特判：命名档没有"内置"身份，文件不在就是不在，凭空列出来只会
+// 让人以为 `--profile <name>` 能用。补默认项是本函数的展示决定，
+// config.ProfileNamesInDir 保持原语义（它回答的是"磁盘上有什么文件"）。
 func runProfileList(out io.Writer) error {
 	dir := profileConfigDir()
 	names, err := config.ProfileNamesInDir(dir)
@@ -126,9 +152,12 @@ func runProfileList(out io.Writer) error {
 		return err
 	}
 
-	if len(names) == 0 {
-		fmt.Fprintf(out, "(no profiles in %s — run `yagent setup` or `yagent profile create <name>`)\n", dir)
-		return nil
+	defaultCreated, err := profileFileExists(dir, config.DefaultProfileName)
+	if err != nil {
+		return err
+	}
+	if !defaultCreated && !containsProfile(names, config.DefaultProfileName) {
+		names = append([]string{config.DefaultProfileName}, names...)
 	}
 
 	for _, name := range names {
@@ -140,9 +169,44 @@ func runProfileList(out io.Writer) error {
 		if name == active {
 			marker = "*"
 		}
-		fmt.Fprintf(out, "%s %-16s %s\n", marker, name, path)
+		// 只有 default 会带上这条标注：Fprintf 的 %-16s 对齐不受影响，
+		// 因为标注接在路径后面。
+		note := ""
+		if name == config.DefaultProfileName && !defaultCreated {
+			note = " (not created yet — run `yagent setup`)"
+		}
+		fmt.Fprintf(out, "%s %-16s %s%s\n", marker, name, path, note)
 	}
 	return nil
+}
+
+// containsProfile 判断档名是否已在列表里：`default.toml` 这种文件会被
+// ProfileNamesInDir 归成 default，于是列表里可能已经有它，不能再补一行。
+func containsProfile(names []string, want string) bool {
+	for _, name := range names {
+		if name == want {
+			return true
+		}
+	}
+	return false
+}
+
+// profileFileExists 报告某个档的文件是否已经落盘。
+//
+// 只回答"存在吗"：目录不存在也算不存在（全新机器就是这么来的），
+// 其它 IO 错误（权限、路径过长）照样上报 —— 把它们当成"不存在"会让我们
+// 去覆盖一份读不到的文件。
+func profileFileExists(dir, name string) (bool, error) {
+	path, err := config.ProfileConfigPath(dir, name)
+	if err != nil {
+		return false, err
+	}
+	if _, err := os.Stat(path); err == nil {
+		return true, nil
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("stat %s: %w", path, err)
+	}
+	return false, nil
 }
 
 // runProfileCreate 建一份新档：名字必须合法且文件尚不存在，绝不覆盖既有档。
@@ -169,21 +233,44 @@ func runProfileCreate(out io.Writer, name, from string) error {
 	}
 
 	if from = strings.TrimSpace(from); from != "" {
+		// `--from default` 在全新机器上不是"源不存在"：default 是内置档，它的内容来自
+		// 内嵌模板。这里回退到模板，且刻意**不**顺手生成 default 的 config.toml ——
+		// create 一旦会创建 default，就变成了半个 setup。
+		// 命名档没有这个豁免：`--from work` 而 work.toml 不在，那就是真的源不存在。
+		if from == config.DefaultProfileName {
+			exists, err := profileFileExists(dir, from)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return createProfileFromTemplate(out, name, target,
+					"default has not been created yet; used the built-in template")
+			}
+		}
 		return copyProfile(out, dir, name, from, target)
 	}
 
 	// 没给 --from：default 存在就照抄（用户看到的那份设置最可能是他想要的起点）；
 	// default 也没有（全新机器）就走首启同一条路径 —— 内嵌模板 + 0600。
-	defaultPath, derr := config.ProfileConfigPath(dir, config.DefaultProfileName)
-	if derr == nil {
-		if _, statErr := os.Stat(defaultPath); statErr == nil {
-			return copyProfile(out, dir, name, config.DefaultProfileName, target)
-		}
+	defaultExists, derr := profileFileExists(dir, config.DefaultProfileName)
+	if derr != nil {
+		return derr
 	}
+	if defaultExists {
+		return copyProfile(out, dir, name, config.DefaultProfileName, target)
+	}
+	return createProfileFromTemplate(out, name, target, "from the built-in template")
+}
+
+// createProfileFromTemplate 是 create 的最后一条来源：内嵌模板。
+//
+// 全新机器上它是唯一可用的起点（连 default 都还没生成），所以规格必须与首启逐项一致：
+// 目录 0755 / 文件 0600 / 原子写 —— 直接复用 config.EnsureConfigExists，不自己写盘。
+func createProfileFromTemplate(out io.Writer, name, target, source string) error {
 	if _, err := config.EnsureConfigExists(target); err != nil {
 		return fmt.Errorf("create profile %q: %w", name, err)
 	}
-	fmt.Fprintf(out, "created profile %q (from the built-in template): %s\n", name, target)
+	fmt.Fprintf(out, "created profile %q (%s): %s\n", name, source, target)
 	return nil
 }
 
@@ -298,6 +385,17 @@ func runProfilePath(out io.Writer, name string) error {
 func init() {
 	profileCreateCmd.Flags().StringVar(&profileFromFlag, "from", "",
 		"copy an existing profile instead of the built-in template")
+
+	// flag 解析错误（`profile create -x`）由 cobra 在参数解析阶段抛出，绕过了名字校验层，
+	// 于是退出码落成 1 —— 与"用法问题退 2"的契约（failProfile 里那套）不符。
+	// 包成 *usageError 之后，main 从 rootCmd.Execute() 的返回值里把它翻成 2。
+	//
+	// cobra 的 FlagErrorFunc 沿父链查找，设在 profileCmd 上就覆盖 list/create/delete/path。
+	// 刻意不设到 rootCmd：那会顺手改掉 plasma 等既有子命令的退出码行为。
+	profileCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return newUsageError("%v", err)
+	})
+
 	profileCmd.AddCommand(profileListCmd, profileCreateCmd, profileDeleteCmd, profilePathCmd)
 	rootCmd.AddCommand(profileCmd)
 }
