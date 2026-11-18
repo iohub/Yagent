@@ -251,6 +251,8 @@ won't load).
 
 `~/.yagent/config/config.toml` is generated from an embedded template on first run (mode `0600`, since
 it can hold a literal key), or point at your own with `-c` — that path is used verbatim and never created.
+`-P <name>` (or `$YAGENT_PROFILE`) loads `~/.yagent/config/<name>.toml` instead, so several complete
+config files can live side by side (`yagent profile list|create|path|delete`).
 
 ```toml
 [global.llm]

@@ -3,6 +3,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -138,10 +139,20 @@ func (w *setupWizard) rowHint(i int) string {
 		if w.keyMode == keyFromEnv {
 			return "name of the variable · startup names it if unset · f2 types the key instead"
 		}
-		return "stays in config.toml (0600) · f2 keeps it in $ENV instead"
+		return fmt.Sprintf("stays in %s (0600) · f2 keeps it in $ENV instead", configFileLabel(w.path))
 	default:
 		return r.hint
 	}
+}
+
+// configFileLabel 是"该写哪个文件"的展示名：当前 profile 的文件名（自定义档下是 <name>.toml，
+// default 档下就是 config.toml）。路径本身在欢迎屏完整展示过（setup_screens.go），
+// 这里只放文件名，免得把行撑爆。profile 化之后硬编码 "config.toml" 会骗人。
+func configFileLabel(path string) string {
+	if path == "" {
+		return "config.toml"
+	}
+	return filepath.Base(path)
 }
 
 // ensureInputs 按表规格准备 textarea。样式沿用主输入框那套令牌（见 newInputTextarea）：

@@ -107,6 +107,16 @@ false，用它判等于把新能力静默关掉（`:488` 明写，`:352` 同句�
 `delegate_total_timeout`。工具侧消费点是 `internal/tools` 的 `CogToolBudget`，由装配层注入本方法。
 闸门 `tool_timeout_test.go`（TOML 解码 / 回落 / 负值归一化）与 `internal/tools/deepthinking_test.go`。
 
+**15. profile（多配置档）只决定"读写哪个文件"，不是 TOML 里的键。** `profile.go` 是叶子层规则：
+`default` ↔ `<configDir>/config.toml`（历史路径，老用户零迁移），命名档 ↔ `<configDir>/<name>.toml`；
+`ValidateProfileName` 只认 `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`（点号/分隔符全被挡掉 = 防穿越的主闸门），
+空串是**错误**而不是 default（`NormalizeProfileName` 只服务于"flag/env 都没写"）。`config` 这个名字文法
+合法但**路径层拒绝**（`ProfileConfigPath`）：它映射到 default 自己的 `config.toml`，放行会让
+`profile delete config` 删掉 default。优先级（`--config` > `--profile/-P` > `$YAGENT_PROFILE` > default）
+在根包 `profile_resolve.go`，不在本包；本包不得感知 flag/env。`Config` 结构与 `validate()` 完全不参与，
+写回仍然打在被选中的文件上（`llm.Client.ConfigPath`），所以 `/model` `/route` `/timeout` 天然落到当前档。
+闸门 `profile_test.go`（文法/布局/反向推导/列举，含 `work.toml.1.tmp` 中间态与 macOS 大小写不敏感陷阱）。
+
 ## 入口
 
 `config.go`（结构 + `LoadFromFile:477-561` + `validate:576-`）、`persist.go`、`setup.go`、`defaults.go`。

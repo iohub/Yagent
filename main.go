@@ -38,6 +38,9 @@ var (
 	forceQuit     bool // --force-quit: 强制退出模式，agent_exit 时直接退出，不等待 codeseek 进程安全退出
 	// Config path override
 	configPathFlag string
+	// Config profile（多配置档）选择：--profile/-P，与 --config 互斥时 --config 胜出。
+	// 短名用大写 -P：-p 已经是 --prompt。
+	profileFlag string
 )
 
 // rootCmd 根命令 — 无子命令时默认启动 TUI
@@ -140,6 +143,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&disableAgents, "disable-agents", "d", "", "Disable specified agents (comma-separated)")
 	// Config path override
 	rootCmd.PersistentFlags().StringVarP(&configPathFlag, "config", "c", "", "Path to config.toml file (overrides default config path)")
+	// Config profile：整份配置文件切换。--config 优先（同时给出时 --profile 被忽略并告警）。
+	rootCmd.PersistentFlags().StringVarP(&profileFlag, "profile", "P", "", "Config profile to load (default: \"default\"; each profile is a whole config.toml)")
 	// http 子命令专属 flags
 	httpCmd.Flags().IntVar(&httpPort, "port", 0, "HTTP server port (0 = auto-detect from 9800)")
 	// YOLO 模式：跳过所有授权检查
@@ -424,31 +429,13 @@ func noticeSignal(sig os.Signal) {
 }
 
 // getConfigPath 返回配置文件路径，并报告"这次是不是刚生成的模板"。
-// 优先级：--config 指定的路径（不自动创建）→ $HOME/.yagent/config/config.toml（缺失则生成）。
-// 只有在拿不到 home 目录时才会退到 CWD 相对的 config/config.toml —— 那不是第二级查找。
+//
+// 优先级：--config（原样使用，**永不自动创建**）→ --profile / $YAGENT_PROFILE 指定的档
+// （缺失则用内嵌模板生成）→ default 档 `~/.yagent/config/config.toml`（同一个生成规则）。
+// 拿不到 home 目录时退到 CWD 相对的 `config/` 下 —— 那不是第二级查找，只是 home 不可用的兜底。
+// 规则本体在 profile_resolve.go 的 resolveConfigPath，这里只是"要创建"的那一档。
 func getConfigPath() (path string, created bool, err error) {
-	if configPathFlag != "" {
-		return configPathFlag, false, nil
-	}
-
-	homeDir, homeErr := os.UserHomeDir()
-	if homeErr != nil {
-		localPath := "config/config.toml"
-		if _, statErr := os.Stat(localPath); os.IsNotExist(statErr) {
-			created, err = config.EnsureConfigExists(localPath)
-			if err != nil {
-				return "", false, fmt.Errorf("无法创建配置文件: %w", err)
-			}
-		}
-		return localPath, created, nil
-	}
-
-	configPath := filepath.Join(homeDir, ".yagent", "config", "config.toml")
-	created, err = config.EnsureConfigExists(configPath)
-	if err != nil {
-		return "", false, fmt.Errorf("无法创建配置文件: %w", err)
-	}
-	return configPath, created, nil
+	return resolveConfigPath(true)
 }
 
 // loadConfigForStartup 是三入口（tui / http / prompt）共用的配置装配点：
@@ -462,11 +449,14 @@ func loadConfigForStartup(mode string) (*config.Config, string) {
 
 	path, created, err := getConfigPath()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "yagent: %v\n配置文件: %s\n", err, "~/.yagent/config/config.toml")
+		// 路径解析失败只可能是"名字写错了 / 生成模板失败"：错误本身已经点名文件或档名，
+		// 这里不再补一句硬编码路径（profile 下那句模板文案会是错的）。
+		fmt.Fprintf(os.Stderr, "yagent: %v\n", err)
 		os.Exit(2)
 	}
 
-	slog.Info("Loading configuration", "config_path", path, "created", created)
+	slog.Info("Loading configuration", "config_path", path,
+		"profile", config.ProfileNameFromPath(path), "created", created)
 	cfg, loadErr := llm.LoadConfig(path)
 	if loadErr != nil {
 		slog.Error("Failed to load configuration", "error", util.WrapError(ctx, loadErr, "main::LoadConfig"))
@@ -506,6 +496,7 @@ func failWithConfigError(path string, reason config.SetupReason, detail string, 
 		fmt.Fprintf(os.Stderr, "  reason: %s\n", reason)
 	}
 	fmt.Fprintf(os.Stderr, "  file:   %s\n", path)
+	fmt.Fprintf(os.Stderr, "  profile: %s\n", config.ProfileNameFromPath(path))
 	fmt.Fprintln(os.Stderr, "  fix:    run `yagent setup` (or edit the file; see docs/config-guide.md)")
 	fmt.Fprintf(os.Stderr, "  logs:   %s\n", filepath.Join(configHomeDir(), "logs"))
 	os.Exit(2)

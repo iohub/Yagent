@@ -313,9 +313,9 @@ Bubble Tea **v2**（`internal/tui`）。渲染与输入契约全部在 `internal
 
 ## 7. 配置系统
 
-**解析顺序**：`--config` 指定路径（原样使用，**绝不自动创建**）→ `~/.yagent/config/config.toml`
-（不存在则用内嵌模板生成，0600）。`./config/config.toml` **不是第二级查找**（只有 `UserHomeDir()`
-失败才走 CWD 相对路径），仓库里那份是注释参考。`EnsureConfigExists` 返回的 `created` 是首启判据之一。
+**解析顺序**：`--config`（原样使用，**绝不自动创建**）→ `--profile/-P` 或 `$YAGENT_PROFILE` 选的档（default =
+`~/.yagent/config/config.toml`，命名档 = `config/<name>.toml`，缺失则用内嵌模板生成 0600，`created` 是首启判据）→ default；
+`./config/config.toml` **不是第二级查找**（只有 `UserHomeDir()` 失败才走 CWD 相对路径）；一个 profile 就是一整份文件、互不继承（`yagent profile list|create|delete|path`；plasma 子命令同样按 profile 解析路径）。
 
 **三级 Provider 覆盖**：`ResolveProvider(agent, tool)` = 工具指定 → `tools.llm.use_provider` →
 Agent 指定 → `agents.llm.use_provider` → `global.llm.use_provider`。Agent 名七个：

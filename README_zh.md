@@ -243,6 +243,8 @@ go build -o yagent .    # 只构建 Go 侧，复用已编译好的 dist/bin
 ### 配置
 
 首次运行会用内嵌模板生成 `~/.yagent/config/config.toml`（也可以用 `-c` 指定你自己的路径）：
+用 `-P <name>`（或环境变量 `$YAGENT_PROFILE`）可以改读 `~/.yagent/config/<name>.toml`，于是几份完整
+配置可以并存（`yagent profile list|create|path|delete`）。
 
 ```toml
 [global.llm]

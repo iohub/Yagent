@@ -13,11 +13,17 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// setupConfigPath 取当前进程用的 config.toml 路径。它只在 llm.Client 上，
-// 那是运行期唯一的配置文件事实来源（main.go 赋值）。
+// setupConfigPath 取当前进程用的配置文件路径。它只在 llm.Client 上，
+// 那是运行期唯一的配置文件事实来源（main.go 按 profile 解析后赋值）。
+//
+// 兜底走 default profile 的路径规则（不是拼 "config.toml" 字面量）：client 不可用时
+// 展示的文件名仍要与 profile 布局同源，否则改名一次就要在两处对账。
 func (m *model) setupConfigPath() string {
 	if client := m.assistant.GetClient(); client != nil && client.ConfigPath != "" {
 		return client.ConfigPath
+	}
+	if path, err := config.ProfileConfigPath(config.ConfigDir(), config.DefaultProfileName); err == nil {
+		return path
 	}
 	return config.ConfigDir() + "/config.toml"
 }
@@ -79,7 +85,7 @@ func (m *model) updateSetupMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setInfoMsg(fmt.Sprintf(
 				"setup wrote %s — restart yagent to load the new providers (the running process keeps its current engine)", path))
 		default:
-			m.setInfoMsg("setup exited without writing — config.toml unchanged")
+			m.setInfoMsg("setup exited without writing — " + configFileLabel(path) + " unchanged")
 		}
 		return m, tea.Batch(cmd, listenForEvents(m.eventCh))
 	}

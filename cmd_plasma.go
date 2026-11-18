@@ -215,18 +215,22 @@ func runPlasmaWithLogging(fn func() error) error {
 	return fn()
 }
 
-// plasmaConfigPath 是 plasma 子命令的配置路径：--config 优先，否则 ~/.yagent/config/config.toml。
+// plasmaConfigPath 是 plasma 子命令的配置路径，与主启动同一套优先级
+// （`--config` > `--profile/-P` > `$YAGENT_PROFILE` > default），复用 resolveConfigPath
+// 以免两套规则分叉。
 //
-// **刻意不调 getConfigPath()**：那个函数会 EnsureConfigExists（首次运行生成模板），
-// 而 `yagent plasma list` 只是列一个目录。读配置不能有写文件的副作用。
+// **传 false**：那正是本函数历史上的语义 —— `yagent plasma list` 只是列一个目录，
+// 读配置不能有写文件的副作用（不 EnsureConfigExists、不生成模板）。
+//
+// 名字非法/与 default 冲突时直接 failPlasma（退出码 2），不退回默认档：
+// plasma 的 store 路径来自配置，静默用错档就会对着错误的目录做 promote。
 func plasmaConfigPath() string {
-	if configPathFlag != "" {
-		return configPathFlag
+	path, _, err := resolveConfigPath(false)
+	if err != nil {
+		failPlasma(err) // 直接退出，不会走到下面那行
+		return ""
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		return home + "/.yagent/config/config.toml"
-	}
-	return "config/config.toml"
+	return path
 }
 
 // plasmaRuntime 读配置并返回 [plasma] 与整份 config。

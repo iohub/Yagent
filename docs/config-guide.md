@@ -25,8 +25,9 @@ in `main.go` picks the first applicable entry:
 | Order | Path | Behaviour when missing |
 |:-----:|------|------------------------|
 | 1 | `--config` / `-c <path>` | Used verbatim; **never created**, never defaulted. A path that cannot be loaded is a startup failure — the wizard in TUI mode, otherwise the stderr report in §9 |
-| 2 | `$HOME/.yagent/config/config.toml` | Generated from the embedded template (this is the normal path) |
-| 3 | `./config/config.toml` | Reached **only** if the home-directory lookup itself fails — it is not a second-tier search, and a project-level file is never consulted on a normal machine |
+| 2 | `--profile` / `-P <name>`, or `$YAGENT_PROFILE` | That profile's file: `<config-dir>/<name>.toml` (see [§1.4](#14-profiles--several-complete-config-files)). Generated from the embedded template when missing, exactly like the default profile |
+| 3 | `default` profile → `$HOME/.yagent/config/config.toml` | Generated from the embedded template (this is the normal path) |
+| 4 | `./config/config.toml` | Reached **only** if the home-directory lookup itself fails — it is not a second-tier search, and a project-level file is never consulted on a normal machine |
 
 The repo's `config/config.toml` is therefore an **annotated reference catalogue**, not an active config
 layer: the file that actually runs is the one in `~/.yagent/config/`, generated from
@@ -71,6 +72,65 @@ thin wrappers over that one function.
 
 Keys that no longer exist are named on every startup (§7), so an old file tells you what to change
 instead of quietly ignoring what you wrote.
+
+### 1.4 Profiles — several complete config files
+
+A **profile** is one complete `config.toml`. Switching profiles switches the whole file; nothing is
+merged, inherited or overridden between them. Two profiles that differ only in `[llm] timeout` are two
+files, and the one you did not select is never read.
+
+Layout is flat, and the default profile keeps the historical path — an existing installation needs no
+migration and sees no change without asking for one:
+
+| Profile | File |
+|---------|------|
+| `default` (built in) | `~/.yagent/config/config.toml` |
+| any name you pick | `~/.yagent/config/<name>.toml` |
+
+When the home-directory lookup fails, both collapse to `./config/config.toml` and `./config/<name>.toml`.
+
+**Selection order** (highest first):
+
+1. `--config` / `-c <path>` — used verbatim, never created. Wins over everything; if you also pass
+   `--profile`, that flag is ignored and a warning is printed so you do not think you switched.
+2. `--profile <name>` / `-P <name>` — note the capital `-P`, `-p` is `--prompt`.
+3. `$YAGENT_PROFILE` — an empty value counts as unset.
+4. Nothing set → `default`.
+
+A missing profile file is generated from the embedded template on startup, the same way the default
+profile always has been (0600, never overwriting an existing file). A **typo** in a profile name is
+therefore a new template, not an error: `yagent profile list` shows what actually exists, and the
+startup log records `profile=` next to `config_path=`.
+
+**Names.** `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` — 1–64 characters, first character a letter or digit.
+Dots, slashes and backslashes are rejected, so `..`, `a/b` and `a\b` cannot escape the config
+directory, and a leading `.`/`-` cannot create a hidden or option-looking file. `default` is reserved
+for the built-in profile, and `config` is rejected as well: it would map onto `config.toml`, i.e. the
+default profile's own file. An invalid name fails at startup with exit code 2, before anything is
+loaded — there is no wizard to fall back to when the file cannot even be located.
+
+**Managing profiles** (all four are plain file operations; none of them starts the TUI, MCP or the
+agent runtime, and none re-encodes TOML — `create` copies bytes so your comments survive):
+
+```bash
+yagent profile list                # * marks the profile this process would use
+yagent profile create work         # copies the default profile (or the template when there is none)
+yagent profile create lab --from work   # copies an existing profile instead
+yagent profile path work           # absolute path — scriptable, does not check existence
+yagent profile path                # the file this process would actually load
+yagent profile delete work         # refuses `default`; warns but proceeds when deleting the active one
+```
+
+`list` reads `~/.yagent/config/*.toml`, shows `config.toml` as `default`, and prints
+`(no profiles in …)` on a machine with no config yet. The `*` follows the same precedence as startup;
+with `--config` it follows that file's name instead.
+
+Exit codes match `yagent plasma`: `0` success, `2` usage/name problems (bad name, deleting `default`),
+`1` operation failures (already exists, does not exist, I/O error).
+
+**Two things profiles do not do.** There is no hot reload — the file is parsed once at startup, so
+switching requires a new process (`yagent -P work`). And a profile carries no state: sessions, logs,
+memory and the browser profile all stay shared under `~/.yagent/`.
 
 ---
 
@@ -908,9 +968,13 @@ That is the whole failure report for non-interactive entries — before it, the 
 yagent: configuration is not usable
   reason: <the validation error, or: provider "aliyun" still has api_key = "your-key">
   file:   /Users/you/.yagent/config/config.toml
+  profile: default
   fix:    run `yagent setup` (or edit the file; see docs/config-guide.md)
   logs:   ~/.yagent/logs
 ```
+
+`profile:` names the selected profile (§1.4) — the file name is not always `config.toml`, so it cannot
+be inferred from the `file:` line alone when a profile is active.
 
 In TUI mode with a terminal available you get the wizard instead (§2.3); `--prompt` and `http` get these
 lines and exit code 2. The reason is one of: the file was just created, the effective provider's key is
