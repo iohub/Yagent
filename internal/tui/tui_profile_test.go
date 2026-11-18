@@ -120,39 +120,54 @@ func yagentTreeSnapshot(t *testing.T, home string) map[string]string {
 
 // TestProfileCommandOpensDialog 无参命令弹面板：default 行必须在，且文件没生成时
 // 带"未创建"标注（否则用户会以为 default 不存在，而首启又会凭空造出一份）。
+//
+// 两种界面语言各跑一遍，并各自断言**完整**标注：标注自成一行、不再与路径共用可省略
+// 单元格（9d2e33f 修的正是这一点），所以"完整"是当前实现的硬事实 —— 断言里出现省略号
+// 就说明实现退回了与路径同格。只断言尾部片段（如 "yagent setup"）等于拆掉闸门：中间
+// 省略**保留首尾**，缺陷形态下尾部照样在，正是这条断言原先失效的原因。
+// 顺带钉住语言透传：profileCommand 用 components.Language(m.currentLang) 建面板，
+// 面板语言在创建时快照，所以标题同样按语言精确断言。
 func TestProfileCommandOpensDialog(t *testing.T) {
-	tuiProfileHome(t)
-	m := chromeTestModel(t, 100, 40)
-	m.currentLang = LangChinese
+	for _, tc := range []struct {
+		name  string
+		lang  Language
+		note  string
+		title string
+	}{
+		{name: "chinese", lang: LangChinese, note: "尚未创建 — 运行 yagent setup", title: "选择配置档"},
+		{name: "english", lang: LangEnglish, note: "not created yet — run yagent setup", title: "Select Config Profile"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tuiProfileHome(t)
+			m := chromeTestModel(t, 100, 40)
+			m.currentLang = tc.lang
 
-	if cmd := m.profileCommand(nil); cmd != nil {
-		t.Fatalf("profileCommand(nil) = %v, want nil（它只弹窗，不发起异步动作）", cmd)
-	}
-	if m.dialogStack.Len() != 1 {
-		t.Fatalf("dialogStack.Len() = %d, want 1", m.dialogStack.Len())
-	}
-	d, ok := m.dialogStack.Top().(*components.ProfileSelectDialog)
-	if !ok {
-		t.Fatalf("栈顶 = %T, want *components.ProfileSelectDialog", m.dialogStack.Top())
-	}
-	// 入栈前必须 SetBounds：漏设时 View() 会因 width<40 返回空串（见组件测试）。
-	if w, h := d.Bounds(); w != m.termWidth || h != m.termHeight {
-		t.Errorf("bounds = (%d,%d), want (%d,%d)", w, h, m.termWidth, m.termHeight)
-	}
+			if cmd := m.profileCommand(nil); cmd != nil {
+				t.Fatalf("profileCommand(nil) = %v, want nil（它只弹窗，不发起异步动作）", cmd)
+			}
+			if m.dialogStack.Len() != 1 {
+				t.Fatalf("dialogStack.Len() = %d, want 1", m.dialogStack.Len())
+			}
+			d, ok := m.dialogStack.Top().(*components.ProfileSelectDialog)
+			if !ok {
+				t.Fatalf("栈顶 = %T, want *components.ProfileSelectDialog", m.dialogStack.Top())
+			}
+			// 入栈前必须 SetBounds：漏设时 View() 会因 width<40 返回空串（见组件测试）。
+			if w, h := d.Bounds(); w != m.termWidth || h != m.termHeight {
+				t.Errorf("bounds = (%d,%d), want (%d,%d)", w, h, m.termWidth, m.termHeight)
+			}
 
-	out := stripANSI(d.View())
-	if !strings.Contains(out, config.DefaultProfileName) {
-		t.Errorf("面板没有 default 行：\n%s", out)
-	}
-	// 断言尾部片段而不是完整的 "not created yet"：路径与标注被拼进同一个可省略单元格，
-	// 再由 common.Ellipsize 做**中间**省略（保留首尾）。macOS 的临时 home 很长，
-	// 于是 "no" 会被切掉、剩下的尾部一定还在。这一条同时记录了那个可读性缺陷
-	// （见交付说明的自查结论），而不是假装它不存在。
-	if !strings.Contains(out, "run yagent setup") {
-		t.Errorf("全新 home 下 default 行应带未创建标注：\n%s", out)
-	}
-	if !strings.Contains(out, "选择配置档") {
-		t.Errorf("中文界面没有中文标题：\n%s", out)
+			out := stripANSI(d.View())
+			if !strings.Contains(out, config.DefaultProfileName) {
+				t.Errorf("面板没有 default 行：\n%s", out)
+			}
+			if !strings.Contains(out, tc.note) {
+				t.Errorf("全新 home 下 default 行应带完整的未创建标注 %q：\n%s", tc.note, out)
+			}
+			if !strings.Contains(out, tc.title) {
+				t.Errorf("界面语言 %q 下标题应为 %q：\n%s", tc.lang, tc.title, out)
+			}
+		})
 	}
 }
 
