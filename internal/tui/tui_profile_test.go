@@ -1,0 +1,516 @@
+package tui
+
+// `:profile` / `/profile` 的闸门：面板弹出、直接切换、以及最要紧的那条铁律 ——
+// **切换只写一个偏好文件，本次进程的任何状态都不许动**。
+//
+// 为什么这条铁律值得单独一个用例：profile 切换最容易被"顺手优化"成热切换
+// （改 m.com.Config、改 client.ConfigPath、重建 app）。而那一步会立刻踩到
+// app.Init 的 sync.Once、supervise.Root() 的进程级单例、以及事件通道没有重放队列
+// 这三件既成事实 —— 症状不是报错，是若干个 Agent 拿着旧配置继续跑。
+//
+// 全部用例靠 t.Setenv("HOME") 隔离，绝不写真实 ~/.yagent。
+
+import (
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"yagent/internal/app"
+	"yagent/internal/config"
+	"yagent/internal/llm"
+	"yagent/internal/tui/common"
+	"yagent/internal/tui/components"
+)
+
+// tuiProfileHome 接管 $HOME 并返回临时 home。
+//
+// 必须显式清掉 YAGENT_PROFILE：TUI 的 activeProfileName() 不读环境变量，
+// 但同一进程里跑着的其它用例（根包的 isolateConfigEnv 已清理）之外，
+// 开发机上真实导出的值会穿过子进程边界 —— 清掉它让这条文件只依赖注入的 HOME。
+func tuiProfileHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("YAGENT_PROFILE", "")
+	want := filepath.Join(home, ".yagent")
+	if got := config.HomeDir(); got != want {
+		t.Fatalf("config.HomeDir() = %q, want %q (HOME 注入失效，后续断言不可信)", got, want)
+	}
+	return home
+}
+
+// tuiActiveProfilePath 返回本次用例的偏好文件路径（$HOME/.yagent/active_profile）。
+func tuiActiveProfilePath(t *testing.T, home string) string {
+	t.Helper()
+	return config.ActiveProfilePath(filepath.Join(home, ".yagent"))
+}
+
+// seedProfileToml 在 <configDir>/<name>.toml 造一份档文件，返回其路径。
+//
+// 内容不重要（applyProfileSelection 只看 os.Stat），刻意写成一行注释而不是完整
+// TOML：这条用例不该因为模板改动而变红。
+func seedProfileToml(t *testing.T, home, name string) string {
+	t.Helper()
+	dir := filepath.Join(home, ".yagent", "config")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	path, err := config.ProfileConfigPath(dir, name)
+	if err != nil {
+		t.Fatalf("ProfileConfigPath(%q): %v", name, err)
+	}
+	if err := os.WriteFile(path, []byte("# profile "+name+"\n"), 0o600); err != nil {
+		t.Fatalf("write profile %q: %v", name, err)
+	}
+	return path
+}
+
+// readActiveProfilePreference 读回偏好文件内容，缺失时返回空串（缺失是常态）。
+func readActiveProfilePreference(t *testing.T, home string) string {
+	t.Helper()
+	got, err := config.ReadActiveProfile(filepath.Join(home, ".yagent"))
+	if err != nil {
+		t.Fatalf("ReadActiveProfile unexpected error: %v", err)
+	}
+	return got
+}
+
+// yagentTreeSnapshot 记录 $HOME/.yagent 下每个文件的"权限位|内容"。
+//
+// 用来证明 applyProfileSelection 只碰了一个文件：逐文件比对而不是只数个数，
+// 因为"改了 config.toml 但文件数没变"正是最危险的退化。
+func yagentTreeSnapshot(t *testing.T, home string) map[string]string {
+	t.Helper()
+	root := filepath.Join(home, ".yagent")
+	snap := make(map[string]string)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// 目录根本不存在（全新机器）：空快照，不是错误。
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		st, statErr := os.Stat(path)
+		if statErr != nil {
+			return statErr
+		}
+		snap[rel] = fmt.Sprintf("%o|%s", st.Mode().Perm(), data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot %s: %v", root, err)
+	}
+	return snap
+}
+
+// TestProfileCommandOpensDialog 无参命令弹面板：default 行必须在，且文件没生成时
+// 带"未创建"标注（否则用户会以为 default 不存在，而首启又会凭空造出一份）。
+func TestProfileCommandOpensDialog(t *testing.T) {
+	tuiProfileHome(t)
+	m := chromeTestModel(t, 100, 40)
+	m.currentLang = LangChinese
+
+	if cmd := m.profileCommand(nil); cmd != nil {
+		t.Fatalf("profileCommand(nil) = %v, want nil（它只弹窗，不发起异步动作）", cmd)
+	}
+	if m.dialogStack.Len() != 1 {
+		t.Fatalf("dialogStack.Len() = %d, want 1", m.dialogStack.Len())
+	}
+	d, ok := m.dialogStack.Top().(*components.ProfileSelectDialog)
+	if !ok {
+		t.Fatalf("栈顶 = %T, want *components.ProfileSelectDialog", m.dialogStack.Top())
+	}
+	// 入栈前必须 SetBounds：漏设时 View() 会因 width<40 返回空串（见组件测试）。
+	if w, h := d.Bounds(); w != m.termWidth || h != m.termHeight {
+		t.Errorf("bounds = (%d,%d), want (%d,%d)", w, h, m.termWidth, m.termHeight)
+	}
+
+	out := stripANSI(d.View())
+	if !strings.Contains(out, config.DefaultProfileName) {
+		t.Errorf("面板没有 default 行：\n%s", out)
+	}
+	// 断言尾部片段而不是完整的 "not created yet"：路径与标注被拼进同一个可省略单元格，
+	// 再由 common.Ellipsize 做**中间**省略（保留首尾）。macOS 的临时 home 很长，
+	// 于是 "no" 会被切掉、剩下的尾部一定还在。这一条同时记录了那个可读性缺陷
+	// （见交付说明的自查结论），而不是假装它不存在。
+	if !strings.Contains(out, "run yagent setup") {
+		t.Errorf("全新 home 下 default 行应带未创建标注：\n%s", out)
+	}
+	if !strings.Contains(out, "选择配置档") {
+		t.Errorf("中文界面没有中文标题：\n%s", out)
+	}
+}
+
+// TestProfileCommandWiringFromBothPrefixes 斜杠与冒号两条命令必须都进同一个入口。
+//
+// 补全列表与分发点是两份注册表（历史坑），漏掉斜杠分支时 `/profile` 会退化成
+// "搜索字符串 profile"，界面上什么都不发生。
+func TestProfileCommandWiringFromBothPrefixes(t *testing.T) {
+	home := tuiProfileHome(t)
+
+	m := chromeTestModel(t, 100, 40)
+	if cmd := m.processCommand("/profile"); cmd != nil {
+		t.Errorf("/profile 返回了 cmd %v, want nil", cmd)
+	}
+	if m.dialogStack.Len() != 1 {
+		t.Fatalf("/profile 没有打开面板（%d 层）", m.dialogStack.Len())
+	}
+	m.dialogStack.Pop()
+
+	if cmd := m.processCommand(":profile"); cmd != nil {
+		t.Errorf(":profile 返回了 cmd %v, want nil", cmd)
+	}
+	if m.dialogStack.Len() != 1 {
+		t.Fatalf(":profile 没有打开面板（%d 层）", m.dialogStack.Len())
+	}
+	m.dialogStack.Pop()
+
+	// 带参数的斜杠形态直接切换，不弹面板。
+	seedProfileToml(t, home, "work")
+	if cmd := m.processCommand("/profile work"); cmd != nil {
+		t.Errorf("/profile work 返回了 cmd %v, want nil", cmd)
+	}
+	if m.dialogStack.Len() != 0 {
+		t.Errorf("/profile work 不该弹面板，却有 %d 层", m.dialogStack.Len())
+	}
+	if got := readActiveProfilePreference(t, home); got != "work" {
+		t.Errorf("active_profile = %q, want work", got)
+	}
+}
+
+// TestProfileCommandSwitchesToExistingProfile 有参直接切：落盘 + 明确说清生效时机。
+//
+// 只说"已切换"会让人以为配置已经换了 —— 接下来几十轮对话都在用旧 provider。
+func TestProfileCommandSwitchesToExistingProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		lang    Language
+		restart string
+	}{
+		{name: "chinese", lang: LangChinese, restart: "重启"},
+		{name: "english", lang: LangEnglish, restart: "restart"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := tuiProfileHome(t)
+			seedProfileToml(t, home, "work")
+
+			m := chromeTestModel(t, 100, 40)
+			m.currentLang = tc.lang
+			m.profileCommand([]string{"work"})
+
+			if got := readActiveProfilePreference(t, home); got != "work" {
+				t.Errorf("active_profile = %q, want work", got)
+			}
+			if !strings.Contains(m.infoMsg, "work") {
+				t.Errorf("infoMsg = %q, want it to name the selected profile", m.infoMsg)
+			}
+			if !strings.Contains(m.infoMsg, tc.restart) {
+				t.Errorf("infoMsg = %q, want it to say the change applies after a %q", m.infoMsg, tc.restart)
+			}
+		})
+	}
+}
+
+// TestProfileCommandRejectsMissingProfile 命名档必须已经存在：
+// 允许选中一个空档会让下次启动凭空生成模板，而用户以为切到了自己的配置。
+func TestProfileCommandRejectsMissingProfile(t *testing.T) {
+	home := tuiProfileHome(t)
+	m := chromeTestModel(t, 100, 40)
+	m.currentLang = LangChinese
+
+	m.profileCommand([]string{"nosuch"})
+
+	if _, err := os.Stat(tuiActiveProfilePath(t, home)); !os.IsNotExist(err) {
+		t.Fatalf("拒绝了不存在的档却写了偏好文件（stat err = %v）", err)
+	}
+	if !strings.Contains(m.infoMsg, "profile create") {
+		t.Errorf("infoMsg = %q, want it to point at `yagent profile create`", m.infoMsg)
+	}
+	if m.dialogStack.Len() != 0 {
+		t.Errorf("有参形态不该弹面板，却有 %d 层", m.dialogStack.Len())
+	}
+}
+
+// TestProfileCommandRejectsInvalidName 非法名字在写盘之前就被拒，且提示里带上原样输入。
+func TestProfileCommandRejectsInvalidName(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		lang  Language
+		input string
+		want  string
+	}{
+		{name: "traversal zh", lang: LangChinese, input: "../evil", want: "非法档名"},
+		{name: "traversal en", lang: LangEnglish, input: "../evil", want: "Invalid profile name"},
+		{name: "dotfile", lang: LangChinese, input: ".hidden", want: "非法档名"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := tuiProfileHome(t)
+			m := chromeTestModel(t, 100, 40)
+			m.currentLang = tc.lang
+
+			m.profileCommand([]string{tc.input})
+
+			if _, err := os.Stat(tuiActiveProfilePath(t, home)); !os.IsNotExist(err) {
+				t.Fatalf("非法名 %q 却写了偏好文件（stat err = %v）", tc.input, err)
+			}
+			if !strings.Contains(m.infoMsg, tc.want) {
+				t.Errorf("infoMsg = %q, want it to contain %q", m.infoMsg, tc.want)
+			}
+		})
+	}
+}
+
+// TestProfileCommandDefaultClearsPreference "切回 default" = 删偏好文件。
+//
+// default 的 config.toml 不在磁盘上也必须成功：它是内置档，全新机器上那是常态，
+// 而这条通道是任何错误配置的逃生出口。
+func TestProfileCommandDefaultClearsPreference(t *testing.T) {
+	home := tuiProfileHome(t)
+	if err := config.WriteActiveProfile(filepath.Join(home, ".yagent"), "work"); err != nil {
+		t.Fatalf("seed preference: %v", err)
+	}
+	// 刻意不造 default 的 config.toml：内置档豁免文件存在性检查。
+	m := chromeTestModel(t, 100, 40)
+	m.currentLang = LangChinese
+
+	m.profileCommand([]string{config.DefaultProfileName})
+
+	if _, err := os.Stat(tuiActiveProfilePath(t, home)); !os.IsNotExist(err) {
+		t.Fatalf("切回 default 之后偏好文件仍在（stat err = %v）", err)
+	}
+	if got := readActiveProfilePreference(t, home); got != "" {
+		t.Errorf("active_profile = %q, want the empty string", got)
+	}
+	if !strings.Contains(m.infoMsg, config.DefaultProfileName) {
+		t.Errorf("infoMsg = %q, want it to name default", m.infoMsg)
+	}
+}
+
+// TestProfileDialogConfirmAppliesSelection 面板确认那条链路：出栈 + 落盘 + 提示。
+//
+// 只造一个命名档，于是行序确定：default 恒排首位（内置档），work 第二 ——
+// 数字键 2 就是 work，不必依赖游标初始位置。
+func TestProfileDialogConfirmAppliesSelection(t *testing.T) {
+	home := tuiProfileHome(t)
+	seedProfileToml(t, home, "work")
+
+	m := chromeTestModel(t, 100, 40)
+	m.currentLang = LangChinese
+	m.profileCommand(nil)
+	if m.dialogStack.Len() != 1 {
+		t.Fatalf("面板没有打开（%d 层）", m.dialogStack.Len())
+	}
+
+	if _, _, handled := m.handleDialogStackKey(keyMsgFor("2")); !handled {
+		t.Fatal("数字键没有被对话框层消费")
+	}
+
+	if m.dialogStack.Len() != 0 {
+		t.Errorf("确认后对话框没有收起，剩余 %d 层", m.dialogStack.Len())
+	}
+	if got := readActiveProfilePreference(t, home); got != "work" {
+		t.Errorf("active_profile = %q, want work", got)
+	}
+	if !strings.Contains(m.infoMsg, "work") || !strings.Contains(m.infoMsg, "重启") {
+		t.Errorf("infoMsg = %q, want the name plus the restart hint", m.infoMsg)
+	}
+}
+
+// TestProfileDialogCancelWritesNothing 取消必须什么都不写：这条是"面板只是选择器"的闸门。
+func TestProfileDialogCancelWritesNothing(t *testing.T) {
+	home := tuiProfileHome(t)
+	seedProfileToml(t, home, "work")
+
+	m := chromeTestModel(t, 100, 40)
+	m.currentLang = LangChinese
+	m.profileCommand(nil)
+
+	if _, _, handled := m.handleDialogStackKey(keyMsgFor("esc")); !handled {
+		t.Fatal("Esc 没有被对话框层消费")
+	}
+	if m.dialogStack.Len() != 0 {
+		t.Errorf("Esc 之后面板还在（%d 层）", m.dialogStack.Len())
+	}
+	if _, err := os.Stat(tuiActiveProfilePath(t, home)); !os.IsNotExist(err) {
+		t.Fatalf("取消却写了偏好文件（stat err = %v）", err)
+	}
+	if m.infoMsg != "" {
+		t.Errorf("infoMsg = %q, want it untouched on cancel", m.infoMsg)
+	}
+}
+
+// TestApplyProfileSelectionKeepsRuntimeUntouched 方案 A 的三条铁律，逐条显式断言：
+//  1. m.com.Config 指针不变；
+//  2. client.ConfigPath 字符串不变；
+//  3. ~/.yagent 下除 active_profile 外没有新增/修改/删除的文件。
+//
+// 任何一条破了，就说明有人把"写偏好"偷偷实现成了热切换。
+func TestApplyProfileSelectionKeepsRuntimeUntouched(t *testing.T) {
+	home := tuiProfileHome(t)
+	workPath := seedProfileToml(t, home, "work")
+	seedProfileToml(t, home, "infra")
+
+	cfg := &config.Config{}
+	client := &llm.Client{Config: cfg, ConfigPath: workPath}
+	assistant, err := app.NewYagent(client)
+	if err != nil {
+		t.Fatalf("NewYagent: %v", err)
+	}
+
+	m := chromeTestModel(t, 100, 40)
+	m.assistant = assistant
+	m.com = &common.Common{Config: cfg}
+	m.currentLang = LangChinese
+
+	configPtr := m.com.Config
+	configPath := client.ConfigPath
+	before := yagentTreeSnapshot(t, home)
+
+	m.applyProfileSelection("infra")
+
+	if m.com.Config != configPtr {
+		t.Error("m.com.Config 指针被换掉了：配置被热切换了（工具引擎 / 六个 Agent / MCP 都还持着启动那一刻的旧值）")
+	}
+	if client.ConfigPath != configPath {
+		t.Errorf("client.ConfigPath = %q, want %q unchanged", client.ConfigPath, configPath)
+	}
+	if got := readActiveProfilePreference(t, home); got != "infra" {
+		t.Errorf("active_profile = %q, want infra", got)
+	}
+	// 本次进程还跑在 work 上：提示必须点明这一点，不能只报"已切换"。
+	if !strings.Contains(m.infoMsg, "本次进程继续使用 work") {
+		t.Errorf("infoMsg = %q, want the old profile named as still in use", m.infoMsg)
+	}
+
+	after := yagentTreeSnapshot(t, home)
+	for path, sig := range after {
+		if path == "active_profile" {
+			continue
+		}
+		old, existed := before[path]
+		if !existed {
+			t.Errorf("applyProfileSelection 新建了 %s（只允许写 active_profile）", path)
+			continue
+		}
+		if old != sig {
+			t.Errorf("%s 被改写了（只允许写 active_profile）", path)
+		}
+	}
+	for path := range before {
+		if path == "active_profile" {
+			continue
+		}
+		if _, stillThere := after[path]; !stillThere {
+			t.Errorf("applyProfileSelection 删除了 %s（只允许写 active_profile）", path)
+		}
+	}
+}
+
+// TestActiveProfileNameChain "本次进程在用哪个档"的兜底链：
+// client.ConfigPath → 偏好文件 → default。
+func TestActiveProfileNameChain(t *testing.T) {
+	t.Run("config path decides", func(t *testing.T) {
+		home := tuiProfileHome(t)
+		workPath := seedProfileToml(t, home, "work")
+		// 偏好文件写的是另一个档：ConfigPath 必须压过它（--config 可以指向任意文件名）。
+		if err := config.WriteActiveProfile(filepath.Join(home, ".yagent"), "infra"); err != nil {
+			t.Fatalf("seed preference: %v", err)
+		}
+		client := &llm.Client{Config: &config.Config{}, ConfigPath: workPath}
+		assistant, err := app.NewYagent(client)
+		if err != nil {
+			t.Fatalf("NewYagent: %v", err)
+		}
+		m := chromeTestModel(t, 100, 40)
+		m.assistant = assistant
+
+		if got := m.activeProfileName(); got != "work" {
+			t.Errorf("activeProfileName() = %q, want work (ConfigPath is the runtime source of truth)", got)
+		}
+	})
+
+	t.Run("preference when config path is empty", func(t *testing.T) {
+		home := tuiProfileHome(t)
+		if err := config.WriteActiveProfile(filepath.Join(home, ".yagent"), "infra"); err != nil {
+			t.Fatalf("seed preference: %v", err)
+		}
+		m := chromeTestModel(t, 100, 40)
+
+		if got := m.activeProfileName(); got != "infra" {
+			t.Errorf("activeProfileName() = %q, want infra", got)
+		}
+	})
+
+	t.Run("default when nothing is set", func(t *testing.T) {
+		tuiProfileHome(t)
+		m := chromeTestModel(t, 100, 40)
+
+		if got := m.activeProfileName(); got != config.DefaultProfileName {
+			t.Errorf("activeProfileName() = %q, want default", got)
+		}
+	})
+
+	t.Run("nil client falls back to preference", func(t *testing.T) {
+		home := tuiProfileHome(t)
+		if err := config.WriteActiveProfile(filepath.Join(home, ".yagent"), "work"); err != nil {
+			t.Fatalf("seed preference: %v", err)
+		}
+		m := chromeTestModel(t, 100, 40)
+		m.assistant = &app.Yagent{} // GetClient() 返回 nil，必须走兜底而不是 panic
+
+		if got := m.activeProfileName(); got != "work" {
+			t.Errorf("activeProfileName() = %q, want work", got)
+		}
+	})
+}
+
+// TestApplyProfileSelectionReportsOldProfileBeforeWrite 钉住 current := m.activeProfileName()
+// 必须在 WriteActiveProfile **之前**调用。
+//
+// 顺序写反时提示会变成"本次进程继续使用 infra — 重启后使用 infra"，读起来像没切换，
+// 而真正的错是那句话自相矛盾 —— 它不会 panic，也不会让任何既有用例变红。
+func TestApplyProfileSelectionReportsOldProfileBeforeWrite(t *testing.T) {
+	home := tuiProfileHome(t)
+	seedProfileToml(t, home, "infra")
+	// 偏好文件里是 work（work.toml 是否存在无关紧要：这条用例只关心"写入前读到什么"）。
+	if err := config.WriteActiveProfile(filepath.Join(home, ".yagent"), "work"); err != nil {
+		t.Fatalf("seed preference: %v", err)
+	}
+
+	// ConfigPath 为空：activeProfileName() 会回落到偏好文件，即 work。
+	client := &llm.Client{Config: &config.Config{}}
+	assistant, err := app.NewYagent(client)
+	if err != nil {
+		t.Fatalf("NewYagent: %v", err)
+	}
+	m := chromeTestModel(t, 100, 40)
+	m.assistant = assistant
+	m.currentLang = LangChinese
+
+	m.applyProfileSelection("infra")
+
+	if got := readActiveProfilePreference(t, home); got != "infra" {
+		t.Fatalf("active_profile = %q, want infra", got)
+	}
+	if !strings.Contains(m.infoMsg, "本次进程继续使用 work") {
+		t.Errorf("infoMsg = %q, want the pre-write profile (work) named as still in use", m.infoMsg)
+	}
+	if strings.Contains(m.infoMsg, "本次进程继续使用 infra") {
+		t.Error("提示里把新档当成\"本次进程在用\"：current 读晚了，顺序写反了")
+	}
+}

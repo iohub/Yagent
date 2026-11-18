@@ -515,3 +515,179 @@ func TestProfilePathHonorsConfigFlag(t *testing.T) {
 		t.Errorf("stderr = %q, want the --profile-ignored warning", stderr)
 	}
 }
+
+// profileActivePath 返回本次用例的偏好文件路径。与 config.HomeDir() 同源，
+// 但显式用 home 拼一次：断言的是"文件落在哪"，不该复用被测代码的推导。
+func profileActivePath(home string) string {
+	return filepath.Join(home, ".yagent", "active_profile")
+}
+
+// profileListMarker 返回 `profile list` 输出里 name 那一行的标记列（"*" 或 " "）。
+//
+// 逐字段比对而不是 Contains(name)：路径列里也含档名（work.toml），
+// 用子串匹配会让"看了路径就以为找到了标记"。
+func profileListMarker(t *testing.T, out, name string) string {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line[1:])
+		if len(fields) == 0 || fields[0] != name {
+			continue
+		}
+		return line[:1]
+	}
+	t.Fatalf("`profile list` 输出里没有 %q 这一行：\n%s", name, out)
+	return ""
+}
+
+// TestProfileUsePersistsSelection `profile use work` 的正向契约：
+// 偏好文件写成 "work\n"，stdout 说明"下次启动生效"。
+func TestProfileUsePersistsSelection(t *testing.T) {
+	home := isolateConfigEnv(t, "", "")
+	seedDefault(t)
+	if err := runProfileCreate(&bytes.Buffer{}, "work", ""); err != nil {
+		t.Fatalf("runProfileCreate(work) unexpected error: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runProfileUse(&out, "work"); err != nil {
+		t.Fatalf("runProfileUse(work) unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(profileActivePath(home))
+	if err != nil {
+		t.Fatalf("read active_profile: %v", err)
+	}
+	if string(data) != "work\n" {
+		t.Errorf("active_profile = %q, want %q", data, "work\n")
+	}
+	if !strings.Contains(out.String(), `active profile set to "work"`) {
+		t.Errorf("stdout = %q, want it to name the selected profile", out.String())
+	}
+	// 没有"下次启动生效"这句话，用户会以为当前进程已经换了配置。
+	if !strings.Contains(out.String(), "next launch") {
+		t.Errorf("stdout = %q, want it to say the change applies on the next launch", out.String())
+	}
+}
+
+// TestProfileUseRejectsMissingProfile 命名档必须已经存在（exit 1，不是用法错）：
+// 允许选中空档会让下次启动凭空生成模板，而用户以为切到了自己的配置。
+func TestProfileUseRejectsMissingProfile(t *testing.T) {
+	home := isolateConfigEnv(t, "", "")
+
+	var out bytes.Buffer
+	err := runProfileUse(&out, "nosuch")
+	if err == nil {
+		t.Fatal("runProfileUse(nosuch) = nil, want an error")
+	}
+	if isUsageError(err) {
+		t.Errorf("error %v is a usage error, want a plain failure (exit 1): 缺文件不是命令行写错", err)
+	}
+	if !strings.Contains(err.Error(), "profile create") {
+		t.Errorf("error = %q, want it to point at `yagent profile create`", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing on failure", out.String())
+	}
+	if _, statErr := os.Stat(profileActivePath(home)); !os.IsNotExist(statErr) {
+		t.Errorf("failed use still wrote the preference (stat err = %v)", statErr)
+	}
+}
+
+// TestProfileUseDefaultClearsPreferenceIdempotent `use default` = 删偏好文件，
+// 且不要求 default 的 config.toml 存在（全新机器上它是逃生通道）。
+func TestProfileUseDefaultClearsPreferenceIdempotent(t *testing.T) {
+	home := isolateConfigEnv(t, "", "")
+	// 刻意不 seedDefault：内置档豁免文件存在性检查。
+	if err := config.WriteActiveProfile(config.HomeDir(), "work"); err != nil {
+		t.Fatalf("seed preference: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runProfileUse(&out, config.DefaultProfileName); err != nil {
+		t.Fatalf("runProfileUse(default) unexpected error: %v", err)
+	}
+	if _, err := os.Stat(profileActivePath(home)); !os.IsNotExist(err) {
+		t.Fatalf("active_profile still exists after use default (stat err = %v)", err)
+	}
+	if !strings.Contains(out.String(), `active profile cleared (back to "default")`) {
+		t.Errorf("stdout = %q, want it to say the preference was cleared", out.String())
+	}
+	if !strings.Contains(out.String(), "next launch") {
+		t.Errorf("stdout = %q, want it to say the change applies on the next launch", out.String())
+	}
+
+	// 幂等：文件已不存在时再跑一次也必须成功。
+	out.Reset()
+	if err := runProfileUse(&out, config.DefaultProfileName); err != nil {
+		t.Errorf("second runProfileUse(default) unexpected error: %v", err)
+	}
+}
+
+// TestProfileUseRejectsInvalidName 名字非法是用法错误（exit 2）：
+// 改命令行就能修，与"这次操作失败"（1）不是一回事。
+func TestProfileUseRejectsInvalidName(t *testing.T) {
+	home := isolateConfigEnv(t, "", "")
+
+	for _, name := range []string{"../evil", "", "a/b", "..", "config"} {
+		err := runProfileUse(&bytes.Buffer{}, name)
+		if err == nil {
+			t.Fatalf("runProfileUse(%q) = nil, want a usage error", name)
+		}
+		var ue *usageError
+		if !errors.As(err, &ue) {
+			t.Errorf("runProfileUse(%q) error %T = %v, want *usageError (exit 2)", name, err, err)
+		}
+	}
+
+	if _, statErr := os.Stat(profileActivePath(home)); !os.IsNotExist(statErr) {
+		t.Errorf("a rejected name still wrote the preference (stat err = %v)", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, "evil")); !os.IsNotExist(statErr) {
+		t.Errorf("traversal name created %s (stat err = %v)", filepath.Join(home, "evil"), statErr)
+	}
+}
+
+// TestProfileListMarkerFollowsActiveProfile `profile list` 的 `*` 必须跟随偏好文件，
+// 而环境变量压过偏好。
+//
+// 这条盯的是"加了一级偏好却忘了同步 `*`"的分叉 —— 用户会看到"切了档但列表还标着旧档"。
+func TestProfileListMarkerFollowsActiveProfile(t *testing.T) {
+	isolateConfigEnv(t, "", "")
+	seedDefault(t)
+	for _, name := range []string{"work", "other"} {
+		if err := runProfileCreate(&bytes.Buffer{}, name, ""); err != nil {
+			t.Fatalf("runProfileCreate(%s) unexpected error: %v", name, err)
+		}
+	}
+	// 只写偏好文件，不设 $YAGENT_PROFILE：走的是第 4 级。
+	if err := config.WriteActiveProfile(config.HomeDir(), "work"); err != nil {
+		t.Fatalf("seed preference: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runProfileList(&out); err != nil {
+		t.Fatalf("runProfileList unexpected error: %v", err)
+	}
+	if got := profileListMarker(t, out.String(), "work"); got != "*" {
+		t.Errorf("work 行标记 = %q, want * (偏好文件)\n%s", got, out.String())
+	}
+	if got := profileListMarker(t, out.String(), "default"); got != " " {
+		t.Errorf("default 行标记 = %q, want unmarked\n%s", got, out.String())
+	}
+
+	// 环境变量压过偏好：`*` 移到 other，work 回到未标记。
+	t.Setenv(profileEnvVar, "other")
+	out.Reset()
+	if err := runProfileList(&out); err != nil {
+		t.Fatalf("runProfileList with env unexpected error: %v", err)
+	}
+	if got := profileListMarker(t, out.String(), "other"); got != "*" {
+		t.Errorf("other 行标记 = %q, want * (env wins over the preference)\n%s", got, out.String())
+	}
+	if got := profileListMarker(t, out.String(), "work"); got != " " {
+		t.Errorf("work 行标记 = %q after the env override, want unmarked\n%s", got, out.String())
+	}
+}

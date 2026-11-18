@@ -278,3 +278,177 @@ func TestGetConfigPathMatchesResolve(t *testing.T) {
 		t.Errorf("getConfigPath() = %q, want %q", gotPath, want)
 	}
 }
+
+// writeActivePreferenceRaw 把**原样字节**写进 ~/.yagent/active_profile。
+//
+// 不走 config.WriteActiveProfile：那个会在写盘前过文法校验，而这条文件专门要造
+// "用户手改坏了的"偏好（正常路径写不进去）。这也正是 profile_resolve.go 必须
+// 降级而不是报错的场景。
+func writeActivePreferenceRaw(t *testing.T, home, content string) string {
+	t.Helper()
+	dir := filepath.Join(home, ".yagent")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	path := filepath.Join(dir, "active_profile")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	return path
+}
+
+// TestResolveProfileFallsBackToActiveProfile 钉住第 4 级（~/.yagent/active_profile）
+// 以及它与前三级的关系。
+//
+// 概览里的优先级是 `--config > --profile > $YAGENT_PROFILE > active_profile > default`，
+// 而前三级由 flag/env 决定、只有根包看得见 —— 所以这一级只能在这里验证。
+func TestResolveProfileFallsBackToActiveProfile(t *testing.T) {
+	t.Run("preference is used when flag and env are empty", func(t *testing.T) {
+		home := isolateConfigEnv(t, "", "")
+		if err := config.WriteActiveProfile(config.HomeDir(), "work"); err != nil {
+			t.Fatalf("seed preference: %v", err)
+		}
+
+		got, err := resolveProfileName()
+		if err != nil {
+			t.Fatalf("resolveProfileName() unexpected error: %v", err)
+		}
+		if got != "work" {
+			t.Errorf("resolveProfileName() = %q, want work", got)
+		}
+
+		path, created, err := resolveConfigPath(false)
+		if err != nil {
+			t.Fatalf("resolveConfigPath(false) unexpected error: %v", err)
+		}
+		if want := filepath.Join(home, ".yagent", "config", "work.toml"); path != want {
+			t.Errorf("resolveConfigPath(false) = %q, want %q", path, want)
+		}
+		if created {
+			t.Error("created = true with createIfMissing=false, want false")
+		}
+	})
+
+	t.Run("env beats the preference", func(t *testing.T) {
+		home := isolateConfigEnv(t, "", "")
+		if err := config.WriteActiveProfile(config.HomeDir(), "work"); err != nil {
+			t.Fatalf("seed preference: %v", err)
+		}
+		t.Setenv(profileEnvVar, "infra")
+
+		got, err := resolveProfileName()
+		if err != nil {
+			t.Fatalf("resolveProfileName() unexpected error: %v", err)
+		}
+		if got != "infra" {
+			t.Errorf("resolveProfileName() = %q, want infra (env wins over the preference)", got)
+		}
+		if path, _, err := resolveConfigPath(false); err != nil {
+			t.Fatalf("resolveConfigPath(false) unexpected error: %v", err)
+		} else if want := filepath.Join(home, ".yagent", "config", "infra.toml"); path != want {
+			t.Errorf("path = %q, want %q", path, want)
+		}
+	})
+
+	t.Run("flag beats everything but --config", func(t *testing.T) {
+		home := isolateConfigEnv(t, "", "lab")
+		if err := config.WriteActiveProfile(config.HomeDir(), "work"); err != nil {
+			t.Fatalf("seed preference: %v", err)
+		}
+		t.Setenv(profileEnvVar, "infra")
+
+		got, err := resolveProfileName()
+		if err != nil {
+			t.Fatalf("resolveProfileName() unexpected error: %v", err)
+		}
+		if got != "lab" {
+			t.Errorf("resolveProfileName() = %q, want lab (flag wins)", got)
+		}
+		if path, _, err := resolveConfigPath(false); err != nil {
+			t.Fatalf("resolveConfigPath(false) unexpected error: %v", err)
+		} else if want := filepath.Join(home, ".yagent", "config", "lab.toml"); path != want {
+			t.Errorf("path = %q, want %q", path, want)
+		}
+	})
+
+	t.Run("config flag ignores the preference entirely", func(t *testing.T) {
+		explicit := filepath.Join(t.TempDir(), "explicit.toml")
+		isolateConfigEnv(t, explicit, "")
+		if err := config.WriteActiveProfile(config.HomeDir(), "work"); err != nil {
+			t.Fatalf("seed preference: %v", err)
+		}
+
+		var path string
+		var err error
+		// 偏好文件存在也不该被读：--config 命中时连文件都不碰，
+		// 所以一份写坏的偏好不可能让 --config 起不来。这里的 stderr 只有 --profile 警告，
+		// 没有警告时为空 —— 不因此断言 stderr。
+		stderr := captureStderr(t, func() {
+			path, _, err = resolveConfigPath(true)
+		})
+		if err != nil {
+			t.Fatalf("resolveConfigPath(true) with --config unexpected error: %v", err)
+		}
+		if path != explicit {
+			t.Errorf("path = %q, want verbatim --config path %q", path, explicit)
+		}
+		if strings.Contains(stderr, "active_profile") {
+			t.Errorf("stderr = %q, want nothing about the preference (it must not be read)", stderr)
+		}
+	})
+
+	// 用户没在命令行写错任何东西：一份手改坏的偏好不该把启动卡住，
+	// 也不该让退出码变成 2（那是"命令行写错了"的语义）。
+	t.Run("unusable preference degrades to default without error", func(t *testing.T) {
+		home := isolateConfigEnv(t, "", "")
+		writeActivePreferenceRaw(t, home, "garbage/../x\n")
+
+		var got string
+		var err error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("resolveProfileName panicked on an unusable preference: %v", r)
+				}
+			}()
+			got, err = resolveProfileName()
+		}()
+
+		if err != nil {
+			t.Fatalf("resolveProfileName() = (%q, %v), want the default with no error", got, err)
+		}
+		if got != config.DefaultProfileName {
+			t.Errorf("resolveProfileName() = %q, want %q", got, config.DefaultProfileName)
+		}
+		var ue *usageError
+		if errors.As(err, &ue) {
+			t.Error("error is a usage error (exit 2), want a silent fallback")
+		}
+
+		path, _, pathErr := resolveConfigPath(false)
+		if pathErr != nil {
+			t.Fatalf("resolveConfigPath(false) unexpected error: %v", pathErr)
+		}
+		if want := filepath.Join(home, ".yagent", "config", "config.toml"); path != want {
+			t.Errorf("path = %q, want the default config path %q", path, want)
+		}
+	})
+
+	// 向前兼容基线：老用户升级后根本没有这份文件。
+	t.Run("missing preference is the default baseline", func(t *testing.T) {
+		home := isolateConfigEnv(t, "", "")
+
+		got, err := resolveProfileName()
+		if err != nil {
+			t.Fatalf("resolveProfileName() unexpected error: %v", err)
+		}
+		if got != config.DefaultProfileName {
+			t.Errorf("resolveProfileName() = %q, want %q", got, config.DefaultProfileName)
+		}
+		// 缺失不算"读写失败"：连 ~/.yagent 都不该被创建出来。
+		if _, statErr := os.Stat(filepath.Join(home, ".yagent")); !os.IsNotExist(statErr) {
+			t.Errorf("%s was created by a read-only resolve (stat err = %v)",
+				filepath.Join(home, ".yagent"), statErr)
+		}
+	})
+}
