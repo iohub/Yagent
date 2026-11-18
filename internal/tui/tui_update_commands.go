@@ -89,6 +89,14 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 	// 命令行里 ":" 可以省略（"q" 等价 ":q"）
 	name := strings.TrimPrefix(cmd, ":")
 
+	// 带参命令必须在 switch 之前匹配：switch 只认**完整**命令名，而
+	// `:profile create work` 的 name 是 "profile create work" —— 落到 default 分支
+	// 就成了 Unknown command。`:profile` 与 `/profile` 因此指向同一个入口
+	// （斜杠那条在上面走 matchSlashCommand(cmd, "/profile")）。
+	if args, ok := matchSlashCommand(name, "profile"); ok {
+		return m.profileCommand(args)
+	}
+
 	switch name {
 	case "q", "quit":
 		d := components.NewQuitConfirmDialogForQuit(components.Language(m.currentLang))
@@ -128,11 +136,6 @@ func (m *model) processCommand(cmd string) tea.Cmd {
 
 	case "timeout":
 		return m.showTimeoutDialog()
-
-	case "profile":
-		// 与 :model / :timeout 并列。它只改"下次启动读哪个文件"，本次进程不变 ——
-		// 理由与全部代码见 tui_profile.go 的头注。
-		return m.profileCommand(nil)
 
 	case "clear":
 		m.clearCurrentSession()

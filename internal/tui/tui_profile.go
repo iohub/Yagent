@@ -25,7 +25,14 @@ import (
 //
 // 有参形态存在的原因与 `/plasma list` 一样：脚本化与"我知道我要什么"的用户不需要
 // 经过一层浮层；两条路径最终走同一个 applyProfileSelection，判据不会分叉。
+//
+// `create` 是唯一的子动作（`/profile create work`、`/profile create work from infra`），
+// 解析与文案在 tui_profile_create.go —— 它同样只碰磁盘，不碰任何运行期状态。
 func (m *model) profileCommand(args []string) tea.Cmd {
+	if len(args) > 0 && args[0] == "create" {
+		m.createProfile(args[1:])
+		return nil
+	}
 	if len(args) > 0 {
 		m.applyProfileSelection(args[0])
 		return nil
@@ -144,12 +151,15 @@ func (m *model) applyProfileSelection(raw string) {
 
 	// 命名档必须已经存在。default 豁免：它是内置档，全新机器上它的 config.toml
 	// 也常常还没生成，而"切回 default"必须是永远可用的逃生通道。
+	//
+	// 不存在的提示必须给**TUI 内**的出路：让用户切到 shell 去跑 CLI，就等于承认
+	// 这个界面缺一块（`create` 现在是同一条命令行的子动作）。
 	if name != config.DefaultProfileName {
 		if _, statErr := os.Stat(path); statErr != nil {
 			if os.IsNotExist(statErr) {
 				m.setInfoMsg(profileText(m.currentLang,
-					fmt.Sprintf("档 %q 不存在 — 先在 shell 里运行 `yagent profile create %s`", name, name),
-					fmt.Sprintf("profile %q not found — run `yagent profile create %s` in a shell", name, name)))
+					fmt.Sprintf("档 %q 不存在 — 用 :profile create %s 新建，或用 :profile 查看已有档", name, name),
+					fmt.Sprintf("profile %q not found — create it with :profile create %s, or :profile to see existing profiles", name, name)))
 				return
 			}
 			m.setInfoMsg(profileText(m.currentLang,

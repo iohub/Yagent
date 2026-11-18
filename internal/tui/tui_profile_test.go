@@ -529,3 +529,310 @@ func TestApplyProfileSelectionReportsOldProfileBeforeWrite(t *testing.T) {
 		t.Error("提示里把新档当成\"本次进程在用\"：current 读晚了，顺序写反了")
 	}
 }
+
+// ── `:profile create` ────────────────────────────────────────────────────────
+//
+// 这一组用例盯的是"新建"能力的四条不变量：
+//  1. 建出来的是**磁盘上的档**（内容来自指定来源），不是内存里的一份配置；
+//  2. 建完**不**选中 —— active_profile 不许被写（用户可能只是想先建好再挑）；
+//  3. 方案 A 的铁律照旧：m.com.Config 指针与 client.ConfigPath 都不动；
+//  4. 参数写错给用法行、非法名/已存在/源缺失各给一句说清后果的话，且磁盘零新增。
+
+// tuiProfileFilePath 返回 <configDir>/<name>.toml 的期望路径。
+// 刻意自己算一遍：断言"文件落在哪"不该复用被测代码的返回值。
+func tuiProfileFilePath(t *testing.T, name string) string {
+	t.Helper()
+	path, err := config.ProfileConfigPath(config.ConfigDir(), name)
+	if err != nil {
+		t.Fatalf("ProfileConfigPath(%q): %v", name, err)
+	}
+	return path
+}
+
+// addedYagentPaths 列出 after 里有、before 里没有的相对路径（$HOME/.yagent 之下）。
+//
+// 用它而不是"数文件个数"：命令只该新建一个档，而"改了一个文件但个数没变"
+// 正是最危险的退化形态。
+func addedYagentPaths(before, after map[string]string) []string {
+	added := make([]string, 0, len(after))
+	for path := range after {
+		if _, ok := before[path]; !ok {
+			added = append(added, path)
+		}
+	}
+	return added
+}
+
+// TestProfileCommandCreateFromTemplate 全新机器上 `:profile create work`：
+// 用内置模板建出 work.toml，提示说清"建了什么、从哪来、路径、下一步"。
+//
+// 同时断言运行期状态原样：这是"create 只碰磁盘"的闸门 —— 它不是隐藏的热切换。
+func TestProfileCommandCreateFromTemplate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		lang Language
+		want []string
+	}{
+		{name: "chinese", lang: LangChinese, want: []string{"已创建配置档 work", "内置模板", ":profile", "重启"}},
+		{name: "english", lang: LangEnglish, want: []string{`created profile "work"`, "built-in template", ":profile", "restart"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := tuiProfileHome(t)
+
+			cfg := &config.Config{}
+			activePath := tuiProfileFilePath(t, config.DefaultProfileName)
+			client := &llm.Client{Config: cfg, ConfigPath: activePath}
+			assistant, err := app.NewYagent(client)
+			if err != nil {
+				t.Fatalf("NewYagent: %v", err)
+			}
+
+			m := chromeTestModel(t, 100, 40)
+			m.assistant = assistant
+			m.com = &common.Common{Config: cfg}
+			m.currentLang = tc.lang
+
+			configPtr := m.com.Config
+			before := yagentTreeSnapshot(t, home)
+
+			if cmd := m.profileCommand([]string{"create", "work"}); cmd != nil {
+				t.Fatalf("profileCommand(create work) = %v, want nil（建档是同步的磁盘操作，不起异步动作）", cmd)
+			}
+
+			created := tuiProfileFilePath(t, "work")
+			data, err := os.ReadFile(created)
+			if err != nil {
+				t.Fatalf("work 档没有被创建（%v）", err)
+			}
+			// 内容来自内嵌模板：抽样一个模板必有的键，而不是断言非空
+			// （非空在"模板被换成半份"时照样通过；字节级比对在 config 包那侧）。
+			if !strings.Contains(string(data), "use_provider") {
+				t.Errorf("新建的档不像模板内容：%q", string(data))
+			}
+			if perm := fileMode(t, created); perm != 0o600 {
+				t.Errorf("新建档权限 = %o, want 600（里面有明文 api_key）", perm)
+			}
+
+			for _, want := range tc.want {
+				if !strings.Contains(m.infoMsg, want) {
+					t.Errorf("infoMsg = %q, want it to contain %q", m.infoMsg, want)
+				}
+			}
+
+			// 建完不选中：偏好文件不许出现。
+			if got := readActiveProfilePreference(t, home); got != "" {
+				t.Errorf("active_profile = %q, want it untouched（create 不自动选中）", got)
+			}
+			// 方案 A：运行期状态一个字都不许动。
+			if m.com.Config != configPtr {
+				t.Error("m.com.Config 指针被换掉了：create 热切换了配置")
+			}
+			if client.ConfigPath != activePath {
+				t.Errorf("client.ConfigPath = %q, want %q unchanged", client.ConfigPath, activePath)
+			}
+			if m.dialogStack.Len() != 0 {
+				t.Errorf("create 不该弹面板，却有 %d 层", m.dialogStack.Len())
+			}
+
+			added := addedYagentPaths(before, yagentTreeSnapshot(t, home))
+			if len(added) != 1 || added[0] != filepath.Join("config", "work.toml") {
+				t.Errorf("新增条目 = %v, want exactly [config/work.toml]", added)
+			}
+		})
+	}
+}
+
+// fileMode 返回路径的权限位。
+func fileMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return st.Mode().Perm()
+}
+
+// TestProfileCommandCreateFromNamedSource `from <src>` 抄的是指定档的**字节**，
+// 同时钉住 `:` 前缀也认得带参形态（`:profile create work from infra`）——
+// switch 只认完整命令名，带参分支必须走 matchSlashCommand 那一层。
+func TestProfileCommandCreateFromNamedSource(t *testing.T) {
+	home := tuiProfileHome(t)
+	seedProfileToml(t, home, "infra")
+
+	m := chromeTestModel(t, 100, 40)
+	m.currentLang = LangChinese
+
+	if cmd := m.processCommand(":profile create work from infra"); cmd != nil {
+		t.Fatalf("`:profile create work from infra` 返回了 cmd %v, want nil", cmd)
+	}
+
+	data, err := os.ReadFile(tuiProfileFilePath(t, "work"))
+	if err != nil {
+		t.Fatalf("work 档没有被创建（%v）", err)
+	}
+	if string(data) != "# profile infra\n" {
+		t.Errorf("work 内容 = %q, want infra 的字节", data)
+	}
+	if !strings.Contains(m.infoMsg, "infra") {
+		t.Errorf("infoMsg = %q, want it to name the source profile", m.infoMsg)
+	}
+	if got := readActiveProfilePreference(t, home); got != "" {
+		t.Errorf("active_profile = %q, want it untouched", got)
+	}
+}
+
+// TestProfileCommandCreateAcceptsDoubleDashFrom `--from` 与 `from` 等价（CLI 肌肉记忆），
+// 顺带钉住 `/` 前缀那条注册表。
+func TestProfileCommandCreateAcceptsDoubleDashFrom(t *testing.T) {
+	home := tuiProfileHome(t)
+	seedProfileToml(t, home, "infra")
+
+	m := chromeTestModel(t, 100, 40)
+	m.currentLang = LangEnglish
+
+	if cmd := m.processCommand("/profile create work --from infra"); cmd != nil {
+		t.Fatalf("`/profile create work --from infra` 返回了 cmd %v, want nil", cmd)
+	}
+	data, err := os.ReadFile(tuiProfileFilePath(t, "work"))
+	if err != nil {
+		t.Fatalf("work 档没有被创建（%v）", err)
+	}
+	if string(data) != "# profile infra\n" {
+		t.Errorf("work 内容 = %q, want infra 的字节", data)
+	}
+	if !strings.Contains(m.infoMsg, `copied from "infra"`) {
+		t.Errorf("infoMsg = %q, want it to say what was copied", m.infoMsg)
+	}
+}
+
+// TestProfileCommandCreateRejectsExisting 已存在时明确说"不会覆盖"，且原文件不被改写。
+func TestProfileCommandCreateRejectsExisting(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		lang Language
+		want string
+	}{
+		{name: "chinese", lang: LangChinese, want: "已存在"},
+		{name: "english", lang: LangEnglish, want: "already exists"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := tuiProfileHome(t)
+			workPath := seedProfileToml(t, home, "work")
+
+			m := chromeTestModel(t, 100, 40)
+			m.currentLang = tc.lang
+			before := yagentTreeSnapshot(t, home)
+			permBefore := fileMode(t, workPath)
+
+			m.profileCommand([]string{"create", "work"})
+
+			if !strings.Contains(m.infoMsg, tc.want) {
+				t.Errorf("infoMsg = %q, want it to contain %q", m.infoMsg, tc.want)
+			}
+			data, err := os.ReadFile(workPath)
+			if err != nil {
+				t.Fatalf("read work: %v", err)
+			}
+			if string(data) != "# profile work\n" {
+				t.Errorf("已存在的档被改写了：%q", data)
+			}
+			if got := fileMode(t, workPath); got != permBefore {
+				t.Errorf("已存在的档权限从 %o 变成 %o", permBefore, got)
+			}
+			if added := addedYagentPaths(before, yagentTreeSnapshot(t, home)); len(added) != 0 {
+				t.Errorf("失败的 create 新增了 %v, want none", added)
+			}
+		})
+	}
+}
+
+// TestProfileCommandCreateUsageErrors 参数写错要回**用法行**，不是 Unknown command、
+// 不 panic、更不许建出文件来。`create work from`（缺源值）是最容易被静默忽略的一例：
+// 忽略掉的结果是从 default 抄了一份，而用户以为他指定了来源。
+func TestProfileCommandCreateUsageErrors(t *testing.T) {
+	cases := [][]string{
+		{"create"},
+		{"create", "work", "from"},
+		{"create", "work", "--from"},
+		{"create", "work", "from", "base", "extra"},
+		{"create", "work", "--from=base"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			home := tuiProfileHome(t)
+			m := chromeTestModel(t, 100, 40)
+			m.currentLang = LangChinese
+			before := yagentTreeSnapshot(t, home)
+
+			m.profileCommand(args)
+
+			if !strings.Contains(m.infoMsg, "用法：:profile create") {
+				t.Errorf("infoMsg = %q, want the usage line", m.infoMsg)
+			}
+			if added := addedYagentPaths(before, yagentTreeSnapshot(t, home)); len(added) != 0 {
+				t.Errorf("参数错误却建出了 %v", added)
+			}
+		})
+	}
+}
+
+// TestProfileCommandCreateRejectsInvalidName 非法名在写盘之前就被拒：提示说非法，
+// 且 $HOME 下零新增（`../evil` 这类不能变成"写到别处去"）。
+func TestProfileCommandCreateRejectsInvalidName(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		lang Language
+		want string
+	}{
+		{name: "chinese", lang: LangChinese, want: "非法档名或参数"},
+		{name: "english", lang: LangEnglish, want: "invalid profile name or arguments"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := tuiProfileHome(t)
+			m := chromeTestModel(t, 100, 40)
+			m.currentLang = tc.lang
+			before := yagentTreeSnapshot(t, home)
+
+			m.profileCommand([]string{"create", "../evil"})
+
+			if !strings.Contains(m.infoMsg, tc.want) {
+				t.Errorf("infoMsg = %q, want it to contain %q", m.infoMsg, tc.want)
+			}
+			if added := addedYagentPaths(before, yagentTreeSnapshot(t, home)); len(added) != 0 {
+				t.Errorf("非法名却新建了 %v", added)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".yagent", "evil.toml")); !os.IsNotExist(err) {
+				t.Errorf("越界路径被写出来了（stat err = %v）", err)
+			}
+		})
+	}
+}
+
+// TestProfileCommandCreateRejectsMissingSource 源档不存在与"参数写错"是两类失败：
+// 前者的错在磁盘上（缺文件），后者的错在命令行里 —— 这里钉住它给的是源缺失的提示。
+func TestProfileCommandCreateRejectsMissingSource(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		lang Language
+		want string
+	}{
+		{name: "chinese", lang: LangChinese, want: "源配置档不存在"},
+		{name: "english", lang: LangEnglish, want: "source profile does not exist"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := tuiProfileHome(t)
+			m := chromeTestModel(t, 100, 40)
+			m.currentLang = tc.lang
+			before := yagentTreeSnapshot(t, home)
+
+			m.profileCommand([]string{"create", "work", "from", "ghost"})
+
+			if !strings.Contains(m.infoMsg, tc.want) {
+				t.Errorf("infoMsg = %q, want it to contain %q", m.infoMsg, tc.want)
+			}
+			if added := addedYagentPaths(before, yagentTreeSnapshot(t, home)); len(added) != 0 {
+				t.Errorf("源缺失却新建了 %v", added)
+			}
+		})
+	}
+}

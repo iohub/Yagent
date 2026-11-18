@@ -113,3 +113,31 @@ func TestSplitSectionsBalanced_Single(t *testing.T) {
 		t.Errorf("单组应全归左栏，left=%d right=%v", len(left), right)
 	}
 }
+
+// TestHelpDialog_DocumentsProfileCreate `:profile create` 必须出现在中英两套"命令行"分组里。
+//
+// 值得一条守卫的理由：help 面板是用户在界面内唯一能查到命令的地方，而中英两套数据是
+// 两份**手写**表 —— 漏掉一边不会报错，只会让一半用户看不到这条命令。
+// 顺带钉住描述里要提到 `from <src>`：只说"新建配置档"的话，复制来源这个能力没人会发现。
+func TestHelpDialog_DocumentsProfileCreate(t *testing.T) {
+	for _, lang := range []Language{LanguageZh, LanguageEn} {
+		data := buildHelpData(lang)
+		found := false
+		for _, section := range data.Sections {
+			for _, item := range section.Items {
+				for _, key := range item.Keys {
+					if key != ":profile create" {
+						continue
+					}
+					found = true
+					if !strings.Contains(item.Desc, "from") {
+						t.Errorf("lang=%s：%q 的描述 %q 没提到 from <src>", lang, key, item.Desc)
+					}
+				}
+			}
+		}
+		if !found {
+			t.Errorf("lang=%s：帮助里没有 :profile create 这一行", lang)
+		}
+	}
+}

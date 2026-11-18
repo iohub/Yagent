@@ -117,9 +117,21 @@ false，用它判等于把新能力静默关掉（`:488` 明写，`:352` 同句�
 写回仍然打在被选中的文件上（`llm.Client.ConfigPath`），所以 `/model` `/route` `/timeout` 天然落到当前档。
 闸门 `profile_test.go`（文法/布局/反向推导/列举，含 `work.toml.1.tmp` 中间态与 macOS 大小写不敏感陷阱）。
 
+**16. `CreateProfile` 是"新建一个档"的唯一实现**（`profile_create.go:CreateProfile`）：CLI
+`yagent profile create`（根包 `cmd_profile.go` 只保留 stdout 文案与退出码映射）与 TUI
+`:profile create`（`internal/tui/tui_profile_create.go` 只保留参数解析与文案）都调它。在两个入口各抄
+一遍的第一次分叉一定发生在边角规则上——"`from=default` 但 `config.toml` 还没生成算不算源不存在"，
+而那种分叉不报错，只让两个入口对同一条命令给出不同结果。返回的 `source` 是文案契约：来源档名，
+**空串 = 用了内嵌模板**。错误分类由错误自己携带（`*ProfileUsageError` = 命令行写错；`ErrProfileExists`
+/ `ErrProfileSourceMissing` = 操作失败），调用方据此给退出码 2/1 与本地化文案，**不许匹配错误文本**。
+两条边界：判定顺序是目标已存在**先于**来源解析（所以 `create work from work`（work 已存在）报"已存在"）；
+隐式来源（from 为空）等于 default，于是 `create default` 在全新机器上仍是"把模板落成 config.toml"，
+自拷错误只对**显式** from 成立。闸门 `profile_create_test.go`。
+
 ## 入口
 
-`config.go`（结构 + `LoadFromFile:477-561` + `validate:576-`）、`persist.go`、`setup.go`、`defaults.go`。
+`config.go`（结构 + `LoadFromFile:477-561` + `validate:576-`）、`persist.go`、`setup.go`、`defaults.go`、
+`profile_create.go`（16）。
 
 ## 闸门
 

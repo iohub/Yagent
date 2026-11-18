@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"yagent/internal/config"
-	"yagent/internal/util"
 
 	"github.com/spf13/cobra"
 )
@@ -285,103 +284,47 @@ func profileFileExists(dir, name string) (bool, error) {
 
 // runProfileCreate 建一份新档：名字必须合法且文件尚不存在，绝不覆盖既有档。
 //
-// 内容来源三档优先：--from <name> → default（存在时）→ 内嵌模板。
-// 复制走读字节 + 原子写，不经 TOML 编解码：注释必须原样带过去。
+// 全部判定都在 config.CreateProfile —— CLI 与 TUI 的 `:profile create` 因此共用同一份
+// 实现。两份逻辑第一次分叉总发生在边角规则上（"default 的 config.toml 还没生成时算不算
+// 源不存在"是最容易分叉的一条），而那种分叉不报错，只让两个入口对同一条命令给出不同结果。
+//
+// 这里只剩两件 CLI 专属的事：把"改命令行就能修好"的错误映射成退出码 2，以及输出契约 ——
+// 成功才往 stdout 写一行，失败时一个字节都不写（这行会被脚本读）。
 func runProfileCreate(out io.Writer, name, from string) error {
-	dir := profileConfigDir()
-
-	// 先按原样校验：空串在这里是"用户写错了"，不能经 NormalizeProfileName 变成
-	// "创建 default"（那会静默改写历史档）。
 	name = strings.TrimSpace(name)
-	if err := config.ValidateProfileName(name); err != nil {
+	path, source, err := config.CreateProfile(profileConfigDir(), name, from)
+	if err != nil {
+		return profileCreateError(err)
+	}
+	fmt.Fprintf(out, "created profile %q (%s): %s\n", name, profileCreateNote(source, from), path)
+	return nil
+}
+
+// profileCreateNote 说明这份新档的内容从哪来。
+//
+// 括号里那句话是用户唯一能确认"抄的是哪一份"的凭据，所以三条来源各有一句固定措辞：
+// "copied from %q"、"from the built-in template"，以及 `--from default` 在全新机器上的
+// 回落说明（"default has not been created yet; used the built-in template"）——
+// 后者必须点名 default，否则用户会以为自己抄到的是一份空配置。
+func profileCreateNote(source, from string) string {
+	if source != "" {
+		return fmt.Sprintf("copied from %q", source)
+	}
+	if strings.TrimSpace(from) == config.DefaultProfileName {
+		return "default has not been created yet; used the built-in template"
+	}
+	return "from the built-in template"
+}
+
+// profileCreateError 把 create 的失败分成两类：改命令行就能修的（退出码 2），与这次
+// 操作失败的（退出码 1）。分类判据由错误自己携带（*config.ProfileUsageError），
+// 不靠匹配错误文本 —— 文本为了可读性随时会改，而退出码会被脚本依赖。
+func profileCreateError(err error) error {
+	var usage *config.ProfileUsageError
+	if errors.As(err, &usage) {
 		return newUsageError("%v", err)
 	}
-	target, err := config.ProfileConfigPath(dir, name)
-	if err != nil {
-		return newUsageError("%v", err)
-	}
-	if _, statErr := os.Stat(target); statErr == nil {
-		return fmt.Errorf("profile %q already exists: %s", name, target)
-	} else if !os.IsNotExist(statErr) {
-		return fmt.Errorf("stat %s: %w", target, statErr)
-	}
-
-	if from = strings.TrimSpace(from); from != "" {
-		// `--from default` 在全新机器上不是"源不存在"：default 是内置档，它的内容来自
-		// 内嵌模板。这里回退到模板，且刻意**不**顺手生成 default 的 config.toml ——
-		// create 一旦会创建 default，就变成了半个 setup。
-		// 命名档没有这个豁免：`--from work` 而 work.toml 不在，那就是真的源不存在。
-		if from == config.DefaultProfileName {
-			exists, err := profileFileExists(dir, from)
-			if err != nil {
-				return err
-			}
-			if !exists {
-				return createProfileFromTemplate(out, name, target,
-					"default has not been created yet; used the built-in template")
-			}
-		}
-		return copyProfile(out, dir, name, from, target)
-	}
-
-	// 没给 --from：default 存在就照抄（用户看到的那份设置最可能是他想要的起点）；
-	// default 也没有（全新机器）就走首启同一条路径 —— 内嵌模板 + 0600。
-	defaultExists, derr := profileFileExists(dir, config.DefaultProfileName)
-	if derr != nil {
-		return derr
-	}
-	if defaultExists {
-		return copyProfile(out, dir, name, config.DefaultProfileName, target)
-	}
-	return createProfileFromTemplate(out, name, target, "from the built-in template")
-}
-
-// createProfileFromTemplate 是 create 的最后一条来源：内嵌模板。
-//
-// 全新机器上它是唯一可用的起点（连 default 都还没生成），所以规格必须与首启逐项一致：
-// 目录 0755 / 文件 0600 / 原子写 —— 直接复用 config.EnsureConfigExists，不自己写盘。
-func createProfileFromTemplate(out io.Writer, name, target, source string) error {
-	if _, err := config.EnsureConfigExists(target); err != nil {
-		return fmt.Errorf("create profile %q: %w", name, err)
-	}
-	fmt.Fprintf(out, "created profile %q (%s): %s\n", name, source, target)
-	return nil
-}
-
-// copyProfile 把 from 档的字节抄到 target。
-//
-// 同档自拷直接拒绝：它只会让人以为"复制了一份备份"，实际什么都没发生。
-func copyProfile(out io.Writer, dir, name, from, target string) error {
-	src, err := config.ProfileConfigPath(dir, from)
-	if err != nil {
-		return newUsageError("--from: %v", err)
-	}
-	if src == target {
-		return newUsageError("--from %q is the profile being created", from)
-	}
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return fmt.Errorf("read source profile %q (%s): %w", from, src, err)
-	}
-	if err := writeProfileFile(target, data); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "created profile %q (copied from %q): %s\n", name, from, target)
-	return nil
-}
-
-// writeProfileFile 与 config.EnsureConfigExists 同规格：目录 0755 / 文件 0600 / 原子写。
-// 0600 不是形式主义：profile 里同样会有明文 api_key。
-func writeProfileFile(path string, data []byte) error {
-	if err := util.AtomicWrite(path, data, util.AtomicWriteOptions{
-		DirPerm:   0o755,
-		FilePerm:  0o600,
-		TmpSuffix: ".tmp",
-		Label:     "profile",
-	}); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
+	return err
 }
 
 // runProfileDelete 删一份档。三条判据：default 拒删、不存在报错、删当前档只警告。

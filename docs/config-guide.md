@@ -152,8 +152,8 @@ otherwise look like a switch while the next launch silently generates a fresh te
 exempt: it is the built-in profile, so it works even on a machine where `config.toml` has not been
 written yet, and it stays available as the escape hatch. `use` never touches the running process.
 
-**Switching from inside the TUI.** `:profile` (or `/profile`) opens a picker; `/profile work` switches
-directly and skips it. Keys: `↑`/`↓` or `j`/`k` move, `PgUp`/`PgDn` page, `g`/`G` jump to the first /
+**Switching from inside the TUI.** `:profile` (or `/profile`) opens a picker; `:profile work` (or
+`/profile work`) switches directly and skips it. Keys: `↑`/`↓` or `j`/`k` move, `PgUp`/`PgDn` page, `g`/`G` jump to the first /
 last row, `1`-`9` pick a row directly, `Enter` confirms, `Esc` cancels. The active profile carries a
 `*` and the cursor starts on it. A `default` row whose file has not been written yet is annotated
 `(not created yet — run yagent setup)`, the same wording `profile list` uses.
@@ -170,6 +170,26 @@ exists, then the embedded template. On a brand-new machine `--from default` ther
 the template — the default file not having been written yet is not a "source does not exist" error —
 and it does **not** create `config.toml` as a side effect (`create` is not half a `setup`).
 `--from <named>` with a missing file is still an error (exit 1).
+
+**Creating from inside the TUI.** `create` is also a sub-command of the same command line, so you
+never have to drop to a shell to get a new profile:
+
+```
+:profile create work                  # copy default, or the embedded template when there is none
+:profile create work from infra       # copy an existing profile
+:profile create work --from infra     # same; --from is accepted for CLI muscle memory
+```
+
+Whitespace separates the arguments — `--from=infra` (one token) is rejected with a usage line rather
+than silently ignored, and so is a trailing `from` with no value. Both prefixes work (`:profile` and
+`/profile`), the CLI and the TUI share one implementation (`config.CreateProfile`), so the three
+sources above decide identically in both. Success names the profile, where it came from and the file
+path, e.g. `已创建配置档 work（复制自 default）: ~/.yagent/config/work.toml — 用 :profile 选中它，重启 yagent 生效`.
+
+`create` only writes a file: it does **not** select the new profile (no `active_profile` write) and
+it does not touch the running process — pick it with `:profile` afterwards and restart. An existing
+profile is never overwritten (`create` fails and says so), and an invalid name fails before anything
+is written.
 
 Exit codes match `yagent plasma`: `0` success, `2` usage problems (bad name, unknown flag, deleting
 `default`), `1` operation failures (already exists, does not exist, I/O error).
