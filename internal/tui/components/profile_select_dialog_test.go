@@ -8,8 +8,14 @@ package components
 // 越界取下标；未 SetBounds 时若按 0×0 渲染，View 会返回堆叠的空行把整屏顶歪。
 //
 // 组件层不碰磁盘、不碰配置：本文件只用 ProfileOption 造数据。
+//
+// 后半段（TestProfileSelectDialogNotCreated*）钉的是 "not created yet" 标注：它曾经与
+// opt.Path 拼进同一个可省略单元格，被 common.Ellipsize 的**中间省略**切成
+// "…t created yet — run yagent setup)"（真实 40 字符 home 下必现）。现在标注独占一行，
+// 于是这几条断言可以直接要求**完整文案**，而不必只认尾部片段。
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -218,5 +224,178 @@ func TestProfileSelectDialogCursorStartsOnActiveRow(t *testing.T) {
 	}
 	if d := NewProfileSelectDialog(noActive, LanguageEn); d.cursor != 0 {
 		t.Errorf("cursor = %d with no active row, want 0", d.cursor)
+	}
+}
+
+// profileLongPath 比 88 宽面板的路径列（63 格）还长 —— 用来同时证明两件事：
+// 路径**确实**被省略了，而标注**没有**被省略。
+//
+// 形状刻意贴近真实：macOS 的 home 是 /Users/<username>，较长的用户名加 "Library/Preferences"
+// 就能顶到 70+ 格，不需要造畸形串。
+const profileLongPath = "/Users/someverylongusername/Library/Preferences/yagent/config/config.toml"
+
+// profileLineContaining 返回第一条包含 sub 的渲染行。
+//
+// 按行取而不是整段 contains：这条缺陷的外观正是"串还在、中间被吃掉一截"，
+// 只有把标注从它所在的那一行单独拎出来，才能判断它旁边有没有省略号。
+func profileLineContaining(rendered, sub string) (string, bool) {
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, sub) {
+			return line, true
+		}
+	}
+	return "", false
+}
+
+// TestProfileSelectDialogNotCreatedNoteIsNeverEllipsized 标注是"事实"，任何合法宽度下都
+// 不许被切。这正是上一版的缺陷：路径太长时 ellipsize 把 "not created yet" 的首尾各留一半，
+// 屏幕上出现 "…t created yet — run yagent setup)" —— 一句读不通的话。
+//
+// 四个宽度覆盖 dialogWidths 的整个合法区间：40 是 View 的下限（innerWidth 恰好取到
+// common.PanelWidths 的 30 下限，最窄的一档），200 则被 dialogMaxWidth=88 顶住。
+func TestProfileSelectDialogNotCreatedNoteIsNeverEllipsized(t *testing.T) {
+	opts := []ProfileOption{
+		{Name: "default", Path: profileLongPath, Active: true, NotCreated: true},
+		{Name: "work", Path: "/home/u/.yagent/config/work.toml"},
+	}
+
+	for _, width := range []int{40, 60, 88, 200} {
+		d := NewProfileSelectDialog(opts, LanguageEn)
+		d.SetBounds(width, 20)
+
+		out := stripANSICodes(d.View())
+		if out == "" {
+			t.Fatalf("width=%d: rendered nothing, want a dialog", width)
+		}
+		for _, line := range strings.Split(out, "\n") {
+			if got := lipgloss.Width(line); got > width {
+				t.Fatalf("width=%d: a line is %d cells wide, want <= %d:\n%s", width, got, width, line)
+			}
+		}
+
+		noteLine, ok := profileLineContaining(out, "not created yet")
+		if !ok {
+			t.Fatalf("width=%d: 完整的 \"not created yet\" 不在渲染结果里（标注又被切了）:\n%s", width, out)
+		}
+		// 省略号是"标注被截断"的唯一外观特征，它出现在标注行上就是回归。
+		if strings.Contains(noteLine, "…") {
+			t.Errorf("width=%d: 标注行被省略了，want 完整标注:\n%s", width, noteLine)
+		}
+
+		switch {
+		case width >= 60:
+			// 放得下时后半句（怎么修）也必须完整：前半句完整不足以说明没丢信息。
+			if !strings.Contains(noteLine, "not created yet — run yagent setup") {
+				t.Errorf("width=%d: 标注不完整，want \"not created yet — run yagent setup\":\n%s", width, noteLine)
+			}
+		default:
+			// 40 格放不下整条（innerWidth 30 - 缩进 6 = 24 < 35）：规则是**整段丢弃**
+			// 后半句，而不是把它切成半截（与 common.HintBar 同一取向）。
+			if strings.Contains(out, "run yagent setup") {
+				t.Errorf("width=%d: 后半句放不下时应整段丢弃，而不是显示一部分:\n%s", width, out)
+			}
+		}
+	}
+}
+
+// TestProfileSelectDialogNotCreatedNoteOwnsItsLine 标注必须在档位行的**下一行**、
+// 且是该行唯一的内容。
+//
+// 这一条钉的是修复的形态本身：只要标注还和路径共用一格，路径的省略就迟早会吃掉标注
+//（两个信息的可见性耦合在一起）。同时证明路径的省略仍在生效 —— 修法不是"把省略关掉"。
+func TestProfileSelectDialogNotCreatedNoteOwnsItsLine(t *testing.T) {
+	opts := []ProfileOption{{Name: "default", Path: profileLongPath, Active: true, NotCreated: true}}
+	d := NewProfileSelectDialog(opts, LanguageEn)
+	d.SetBounds(88, 20)
+
+	out := stripANSICodes(d.View())
+	lines := strings.Split(out, "\n")
+	pathIdx, noteIdx := -1, -1
+	for i, line := range lines {
+		if pathIdx < 0 && strings.Contains(line, "/Users/") {
+			pathIdx = i
+		}
+		if noteIdx < 0 && strings.Contains(line, "not created yet") {
+			noteIdx = i
+		}
+	}
+	if pathIdx < 0 {
+		t.Fatalf("路径列不见了:\n%s", out)
+	}
+	if noteIdx < 0 {
+		t.Fatalf("标注不见了:\n%s", out)
+	}
+	if noteIdx != pathIdx+1 {
+		t.Fatalf("标注应在档位行的下一行（path 行 %d，标注行 %d）:\n%s", pathIdx, noteIdx, out)
+	}
+
+	// 标注行前面只许有边框与缩进：有别的字符就说明它还挂在别的单元格里。
+	if idx := strings.Index(lines[noteIdx], "not created yet"); idx > 0 {
+		if prefix := strings.TrimLeft(lines[noteIdx][:idx], " │"); prefix != "" {
+			t.Errorf("标注行前面还有别的内容 %q，want 只有边框与缩进:\n%s", prefix, lines[noteIdx])
+		}
+	}
+
+	// 路径该省略还得省略：73 格塞不进 63 格的路径列。
+	if !strings.Contains(lines[pathIdx], "…") {
+		t.Errorf("超长路径没有被省略（省略失效了）:\n%s", lines[pathIdx])
+	}
+}
+
+// TestProfileSelectDialogNotCreatedNoteFitsHeightBudget 标注行必须算进高度预算。
+//
+// 扫一整段高度而不是只挑一档：溢出只发生在"行预算刚好被终端按死"的那几个高度上
+// （6 条档位下实测 12 与 16 两处无标注不溢出、带标注溢出），单挑一档很容易挑到不溢出的那一档
+// 而让闸门变成摆设。11 行是物理下限（chrome 10 + 1 行列表），加标注就是 12 行 —— 那一档
+// 任何实现都装不下，所以从 12 行起要求。
+func TestProfileSelectDialogNotCreatedNoteFitsHeightBudget(t *testing.T) {
+	opts := make([]ProfileOption, 0, 6)
+	for i := 0; i < 6; i++ {
+		opts = append(opts, ProfileOption{Name: fmt.Sprintf("p%d", i), Path: "/h/p.toml"})
+	}
+	opts[0].NotCreated = true
+
+	for height := 12; height <= 26; height++ {
+		d := NewProfileSelectDialog(opts, LanguageEn)
+		d.SetBounds(88, height)
+		out := stripANSICodes(d.View())
+		if !strings.Contains(out, "not created yet") {
+			t.Fatalf("height=%d: 标注没渲染出来，这条闸门就成了摆设:\n%s", height, out)
+		}
+		if got := lipgloss.Height(out); got > height {
+			t.Fatalf("height=%d: 渲染 %d 行，比终端高 —— 标注行没进高度预算:\n%s", height, got, out)
+		}
+	}
+
+	// 对照：不带标注时同样不溢出，说明上面那条不是靠"把列表压到只剩一行"骗过去的。
+	for i := range opts {
+		opts[i].NotCreated = false
+	}
+	d := NewProfileSelectDialog(opts, LanguageEn)
+	d.SetBounds(88, 16)
+	if out := stripANSICodes(d.View()); lipgloss.Height(out) > 16 {
+		t.Fatalf("对照组（无标注）在 16 行终端里渲染 %d 行:\n%s", lipgloss.Height(out), out)
+	}
+}
+
+// TestProfileSelectDialogNotCreatedNoteFollowsLanguage 两套文案都要完整出现。
+//
+// 标注是**界面语言**（同标题、同提示条），不是数据（档名/路径不翻译）。中文缺失时
+// 中文面板会夹一句英文，与"档名与路径是数据"的既有约定并不冲突 —— 那句话是提示。
+func TestProfileSelectDialogNotCreatedNoteFollowsLanguage(t *testing.T) {
+	opts := []ProfileOption{{Name: "default", Path: "/h/config.toml", Active: true, NotCreated: true}}
+
+	for _, tc := range []struct {
+		lang Language
+		want string
+	}{
+		{LanguageEn, "not created yet — run yagent setup"},
+		{LanguageZh, "尚未创建 — 运行 yagent setup"},
+	} {
+		d := NewProfileSelectDialog(opts, tc.lang)
+		d.SetBounds(88, 20)
+		if out := stripANSICodes(d.View()); !strings.Contains(out, tc.want) {
+			t.Errorf("lang=%v: 缺完整标注 %q:\n%s", tc.lang, tc.want, out)
+		}
 	}
 }

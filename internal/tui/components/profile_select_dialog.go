@@ -52,9 +52,21 @@ const (
 	profilePathHeader = "PATH"
 	// profileActiveMark 当前激活档的标记，与 CLI `profile list` 的 `*` 同一符号。
 	profileActiveMark = "*"
-	// profileNoteNotCreated 与 CLI `runProfileList` 的文案保持一致：
-	// 同一个事实在两处用两种说法，用户会以为是两件事。
-	profileNoteNotCreated = " (not created yet — run yagent setup)"
+	// profileNoteNotCreated / profileNoteSetupHint 是"档位文件尚未创建"的标注。
+	//
+	// 它**独占一行**渲染，不参与路径列的省略 —— 曾经它与 opt.Path 拼进同一个可省略
+	// 单元格，再被 common.Ellipsize 的**中间省略**（保留首尾）切成
+	// "…t created yet — run yagent setup)"：40 字符的真实 home 下必现，不是理论边界。
+	// 路径可以被截断（尾部随时能在 `yagent profile path` 里查到），事实不能。
+	//
+	// 拆成"是什么 / 怎么修"两段，是为了窄终端能**整段丢掉**后半句，而不是把整条标注
+	// 切成半截：规则与 common.HintBar 同源（放不下就从尾部整段丢弃，书写顺序 = 优先级）。
+	// 英文与 CLI `runProfileList` 的文案逐字一致 —— 同一个事实在两处用两种说法，
+	// 用户会以为是两件事；中文只在面板里出现（CLI 没有中文），结构刻意与英文同构。
+	profileNoteNotCreated   = "not created yet"
+	profileNoteSetupHint    = " — run yagent setup"
+	profileNoteNotCreatedZh = "尚未创建"
+	profileNoteSetupHintZh  = " — 运行 yagent setup"
 )
 
 // NewProfileSelectDialog 创建选择器，游标初始落在当前激活的档上（未找到则为首行）。
@@ -197,6 +209,9 @@ func (d *ProfileSelectDialog) View() string {
 
 	// 固定开销：游标 2 + 序号 idxW + 空格 + 激活标记 1 + 空格 + 列间距 2
 	fixed := 2 + idxW + 1 + 1 + 1 + 2
+	// 标注行的缩进对齐档名列：它属于上一行，不属于路径列 —— 窄终端会把路径整列舍弃，
+	// 而"这个档的文件还没生成"这件事与路径列在不在无关。
+	noteIndent := fixed - 2
 	pathW := innerWidth - fixed - nameW
 	showPath := pathW >= profilePathMinWidth
 	if !showPath {
@@ -213,6 +228,8 @@ func (d *ProfileSelectDialog) View() string {
 	}
 
 	// ── 列表 ──
+	// 标注自身恒为次要样式：它描述的是一个事实，不该跟着游标变色去抢注意力。
+	noteStyle := lipgloss.NewStyle().Foreground(c.TextMuted).Italic(true)
 	lines := make([]string, 0, len(visible)+2)
 	lines = append(lines, header)
 	for i, opt := range visible {
@@ -244,13 +261,18 @@ func (d *ProfileSelectDialog) View() string {
 		row := marker + idxStyle.Render(padLeft(strconv.Itoa(index+1), idxW)) + " " +
 			mark + " " + nameStyle.Render(ellipsize(opt.Name, nameW))
 		if showPath {
-			cell := opt.Path
-			if opt.NotCreated {
-				cell += profileNoteNotCreated
-			}
-			row += "  " + pathStyle.Render(ellipsize(cell, pathW))
+			// 这一格里只有路径：把它单独省略，标注在下一行（见紧跟的 if）。
+			row += "  " + pathStyle.Render(ellipsize(opt.Path, pathW))
 		}
 		lines = append(lines, row)
+
+		if opt.NotCreated {
+			// 标注**独占一行**，不参与路径的省略。路径与标注同格时，ellipsize 的中间省略
+			// 会把 "not created yet" 切成 "…t created yet"（首尾各留一半），而这一行
+			// 正是用户在面板里判断"要不要先跑 setup"的唯一依据。
+			lines = append(lines, strings.Repeat(" ", noteIndent)+
+				noteStyle.Render(d.notCreatedNote(innerWidth-noteIndent)))
+		}
 	}
 	if showMore && start > 0 {
 		lines = append(lines, moreLine(start, true, innerWidth, c))
@@ -301,9 +323,46 @@ func profileDialogHint(innerWidth int, zh, multi bool) string {
 	return common.HintBar(hints, innerWidth)
 }
 
+// notCreatedNote 返回"档位文件尚未创建"的标注：核心句恒完整，后半句（怎么修）在宽度
+// 不够时**整段**让位 —— 半个提示比没有提示更糟（既读不懂也不可信）。
+//
+// 不变式（决定了这里不必再做任何截断）：调用方传入的 avail = innerWidth - noteIndent，
+// 而 innerWidth ≥ 30（common.PanelWidths 的下限，dialogWidths 传的就是 30）、
+// noteIndent = idxW+5 ≤ 7（档数 ≤ 99），所以 avail ≥ 23 > 核心句的 15 格。
+func (d *ProfileSelectDialog) notCreatedNote(avail int) string {
+	core, hint := profileNoteNotCreated, profileNoteSetupHint
+	if d.isZh() {
+		core, hint = profileNoteNotCreatedZh, profileNoteSetupHintZh
+	}
+	if lipgloss.Width(core+hint) <= avail {
+		return core + hint
+	}
+	return core
+}
+
+// noteRowCount 是列表里额外需要一行来放"未创建"标注的条目数。
+//
+// 按全量条目算，不按可见区算：可见区依赖行预算、行预算又要减去标注行，按可见区算就成了
+// 环（答案取决于它自己）。ProfileOption 的注释写明 NotCreated 只对 default 有实际含义，
+// 所以这个数是 0 或 1 —— 多算一行的代价只是少显示一行列表，少算一行的后果是对话框
+// 比终端高一行（提示换行撑破高度是同一类事故）。
+func (d *ProfileSelectDialog) noteRowCount() int {
+	n := 0
+	for _, o := range d.options {
+		if o.NotCreated {
+			n++
+		}
+	}
+	return n
+}
+
 // listRows 返回列表可占用的行数，以及是否渲染上下滚动指示行。
 func (d *ProfileSelectDialog) listRows() (int, bool) {
-	return listBudget(d.height, len(d.options))
+	// 标注行是跟着条目走的额外行，**不是**固定 chrome：dialogListChrome 是三个选择类
+	// 对话框共用的一份事实，为一个面板的条目级附加行去改它，等于把代价摊给另外两个。
+	// 这里改成把终端高度按标注数垫低，再走同一套 ListBudget —— 抄一份"扣 chrome、
+	// 留指示行"的逻辑会变成第二个会漂走的实现（根 AGENTS.md §11 坑 18）。
+	return listBudget(d.height-d.noteRowCount(), len(d.options))
 }
 
 // scrollWindow 返回可见条目的 [start, end) 区间，游标尽量居中。
