@@ -152,7 +152,7 @@
   },
   {
     "name": "deepthinking",
-    "description": "Deep system analysis for complex problems. Multi-dimensional analysis (root cause, system impact, constraints, solution architecture) via isolated LLM call. Use ONLY when: 1) conventional methods (thinking, micro_agent, repo analysis, sub-agent delegation) have failed, 2) the problem requires systematic design, or 3) multiple failures indicate fundamental misunderstanding. Skip for simple issues. Input: context (problem context, errors, constraints, what was tried) and goal (specific objective).",
+    "description": "Deep system analysis for complex problems. Returns a concise solution-level document (root cause, decision, ordered steps, risks & verification) via isolated LLM call. Use ONLY when: 1) conventional methods (thinking, micro_agent, repo analysis, sub-agent delegation) have failed, 2) the problem requires systematic design, or 3) multiple failures indicate fundamental misunderstanding. Skip for simple issues. Input: context (problem context, errors, constraints, what was tried) and goal (specific objective).",
     "parameters": {
       "type": "object",
       "properties": {
@@ -162,7 +162,7 @@
         },
         "goal": {
           "type": "string",
-          "description": "Specific objective. What should the deep analysis produce? A solution design, debugging strategy, architectural decision, or comprehensive plan."
+          "description": "Specific objective. What should the deep analysis produce? A solution design, debugging strategy, architectural decision, or a plan."
         }
       },
       "required": [
@@ -173,13 +173,13 @@
   },
   {
     "name": "design",
-    "description": "Agent-friendly solution design BEFORE coding. Produces a structured implementation plan (goal, affected files, ordered steps, risks, verification). MANDATORY for complex tasks after code exploration, before implementation. Input: context (task requirements, explored codebase findings, constraints) and goal (what the design must decide/produce).",
+    "description": "Agent-friendly solution design BEFORE coding. Produces a concise solution-level plan (goal & scope, files, ordered steps, risks & verification) — no code, no restating of context. MANDATORY for complex tasks after code exploration, before implementation. Input: context (task requirements, explored codebase findings, constraints) and goal (what the design must decide/produce).",
     "parameters": {
       "type": "object",
       "properties": {
         "context": {
           "type": "string",
-          "description": "Task requirements, explored codebase findings (key file paths, types/functions, existing patterns), constraints, and any other relevant info for designing the implementation."
+          "description": "Task requirements, explored codebase findings (key file paths, types/functions, existing patterns), constraints, and any other relevant info. Keep it focused."
         },
         "goal": {
           "type": "string",

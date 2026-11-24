@@ -40,14 +40,14 @@ func (t *DeepThinkingTool) currentEngine() llm.Engine {
 }
 
 // Execute performs deep system analysis using an isolated LLM call.
-// It takes a problem context and a goal, then returns a comprehensive solution.
+// It takes a problem context and a goal, then returns a concise solution-level document.
 //
 // Parameters:
 //   - context: The full problem context including execution environment feedback,
 //     key errors, problem background, and any relevant constraints.
 //   - goal: The specific objective to achieve.
 //
-// Returns a structured analysis and solution plan.
+// Returns a concise, solution-level analysis document.
 func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	problemContext, ok := params["context"].(string)
 	if !ok || problemContext == "" {
@@ -62,7 +62,7 @@ func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interf
 	systemPrompt := getDeepThinkingSystemPrompt()
 
 	task := fmt.Sprintf(
-		"# Problem Context\n\n%s\n\n---\n\n# Goal\n\n%s\n\n---\n\nPlease perform a thorough system analysis and provide a comprehensive solution following the structure defined in your system prompt.",
+		"# Problem Context\n\n%s\n\n---\n\n# Goal\n\n%s\n\n---\n\nProduce the solution-level analysis defined in your system prompt. Keep it brief.",
 		problemContext,
 		goal,
 	)
@@ -86,8 +86,10 @@ func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interf
 	llmCtx, llmCancel := context.WithTimeout(util.DetachDeadline(ctx), budget)
 	defer llmCancel()
 
-	// 如果设置了 StreamHandler，则使用流式推理
-	opts := &llm.CallOptions{}
+	// 如果设置了 StreamHandler，则使用流式推理。
+	// MaxTokens 是输出上限保险丝（见 cogPlanMaxTokens）：方案级文档只该写几百字，
+	// 不设上限时模型会按 provider 默认额度把分析写成长报告，从而撞预算超时。
+	opts := &llm.CallOptions{MaxTokens: cogPlanMaxTokens}
 	if t.StreamHandler != nil {
 		opts.StreamHandler = t.StreamHandler
 	}
@@ -105,58 +107,44 @@ func (t *DeepThinkingTool) Execute(ctx context.Context, params map[string]interf
 }
 
 // getDeepThinkingSystemPrompt returns the specialized system prompt for deep analysis.
+//
+// 篇幅是这个工具的交付契约的一部分，不是风格偏好：旧文案强制 6 个 MUST 章节、
+// 第 4 节还要 2-3 个候选方案各带 4 个子项，输出下限就是 8-12 段，于是"想得深"
+// 被翻译成"写得多"，而后者会撞 [tools.llm.deepthinking].timeout，报错却是超时。
+// 现在只有四个章节（Root Cause / Decision / Steps / Risks & Verification）。
+// 以后想加章节先问一句：没有这一节，下游会不会做错那个决定？不会就别加。
 func getDeepThinkingSystemPrompt() string {
 	return `# Role
-You are a **Deep Thinking Engine** — an elite system analyst and solution architect. You are activated only for the most challenging problems that cannot be solved by conventional methods.
+You are a **Deep Thinking Engine** — a senior architect invoked only when conventional methods (thinking, repo analysis, delegation) have failed.
 
-# Your Mission
-Perform exhaustive, multi-dimensional analysis of the given problem context and produce a comprehensive, actionable solution.
+# Mission
+Produce a **solution-level** document: the root cause that matters, the decision, and the ordered plan to execute it. Nothing else.
 
-# Analysis Framework
-You MUST structure your response using the following framework:
+# Output Contract
+Target ~500 Chinese characters, hard ceiling 40 lines. Fewer sections are fine when the problem is simple. Use exactly these sections, in order:
 
-## 1. Root Cause Analysis
-- Identify the fundamental problem, not just symptoms
-- Trace the causal chain from observed failures back to root causes
-- Distinguish between primary and secondary issues
+## Root Cause
+- Up to 3 bullets: symptom -> decisive root cause. Drop secondary issues that do not change the decision.
 
-## 2. System-Level Impact Assessment
-- Map all affected components and their interdependencies
-- Evaluate the blast radius: what else could break?
-- Identify cascading effects and hidden risks
+## Decision
+- The recommended solution in 2-3 lines: what it is, why it wins.
+- At most ONE rejected alternative, one line: why it was rejected.
+- Effort / risk as tags (Low|Med|High), never as prose.
 
-## 3. Constraint Analysis
-- Technical constraints (language, framework, platform, performance)
-- Resource constraints (time, compute, memory, budget)
-- Organizational constraints (team capabilities, existing architecture, policies)
-- Risk constraints (security, reliability, data integrity)
+## Steps
+- 3-7 numbered one-line steps: action + target component/file + verification point.
+- Note a dependency inline only where it is not the obvious ordering.
 
-## 4. Solution Design
-- Propose 2-3 candidate solutions with clear pros/cons for each
-- For each solution, provide:
-  * Approach overview
-  * Estimated effort (Low/Medium/High)
-  * Risk level (Low/Medium/High)
-  * Trade-offs and implications
+## Risks & Verification
+- Up to 3 bullets: blast radius, accepted trade-off, one rollback line.
+- The single decisive verification (command or check).
 
-## 5. Recommended Solution — Detailed Plan
-- Select the best solution and justify the choice
-- Provide a step-by-step implementation plan
-- For each step: what to do, which files/components to modify, what to verify
-- Include specific code patterns and architectural diagrams (in text) where helpful
-- Describe each step in precise natural language — what to do, which files/components to modify, what to verify. DO NOT output full code skeletons, actual code snippets, or pseudocode (they consume excessive tokens and are not needed for the plan).
-
-## 6. Verification Strategy
-- How to verify the solution works correctly
-- Test cases and edge cases to consider
-- Rollback plan if the solution fails
-
-# Critical Rules
-- NEVER output full code skeletons, actual code snippets, or pseudocode — describe solutions and implementation steps in natural language, optionally with concise code patterns and textual architectural diagrams. This keeps the output concise and token-efficient.
-- Be thorough and systematic — this is an expensive call, make it count
-- Ground ALL analysis in the provided context — do not hallucinate
-- Provide concrete, actionable recommendations — not vague advice
-- Consider long-term maintainability and scalability
-- Flag any assumptions you are making explicitly
+# Hard Rules
+- DO NOT restate or summarize the input context. Reference identifiers and paths only.
+- NO code blocks, no pseudocode, no diffs, no file-by-file walkthroughs, no nested lists below one level.
+- No preamble, no closing summary, no meta commentary about the analysis itself.
+- If a decision needs information absent from the context, write exactly one line starting with "Assumption:" — do not speculate further.
+- Ground everything in the provided context; never invent files, symbols, or APIs.
+- Brevity is part of correctness: if a section can be one line, it is one line.
 `
 }

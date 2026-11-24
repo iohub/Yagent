@@ -28,6 +28,18 @@ func cogToolBudget(toolName string) time.Duration {
 	return config.DefaultCogToolTimeout
 }
 
+// cogPlanMaxTokens 是 deepthinking / design 两个认知工具的**输出上限保险丝**，不是目标长度。
+//
+// 为什么需要它：两个工具的 system prompt 都只给"方案级"篇幅约束（目标约 500 字），
+// 但 prompt 本身没有强制力——provider 的默认 max_tokens（如 anthropic 8192）足够模型
+// 把一次分析写成一万字的报告，输出越长、墙钟时间越久，最终撞的是工具预算的 deadline，
+// 报出来的却是"provider 慢"或"超时"，成因与现象错位。给它一个上限，超长的可能性在
+// 协议层就被掐掉，prompt 只负责"该写多长"，这里负责"最多能写多长"。
+//
+// 取值 6000：约合 4000 汉字 / 4-5 倍于目标篇幅，正常方案级文档（目标 500 字、
+// 硬顶 40~45 行）距离上限还有一个数量级的余量，只有模型失控时才会触及。
+const cogPlanMaxTokens = 6000
+
 // cogToolCallError 把认知类工具的 LLM 失败翻译成可诊断的错误。
 //
 // 为什么值得单独判：旧实现只有一句 "deepthinking LLM call failed"，于是"预算不够"
